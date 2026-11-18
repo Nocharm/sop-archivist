@@ -33,6 +33,8 @@ export interface PaperModel {
   order: number[];
   /** 단위가 번호 범위를 갖는 추출이다 - 번호 칸이 그 줄의 번호를 보인다. 거짓이면(옛 추출) 절 첫 줄의 절 번호만 보인다 */
   hasNumberRanges: boolean;
+  /** 벗긴 표(레이아웃 표) - 칸이 표가 아니라 보통 문장 줄로 놓인다(lib/unwrap-model, MD 1 F1) */
+  unwrapped: ReadonlyMap<number, ViewTable>;
 }
 
 const TOP_PARTS = new Set(["header"]);
@@ -68,6 +70,7 @@ export function buildPaperModel(view: DocumentView): PaperModel {
   for (const block of view.blocks) segments.set(block.id, buildSegments(block, spansByBlock.get(block.id) ?? []));
 
   const tables = new Map(view.tables.map((table) => [table.id, table]));
+  const unwrapped = new Map(view.tables.filter((table) => table.is_layout).map((table) => [table.id, table]));
   const tableUnit = new Map<number, number>();
   for (const unit of view.units) {
     if (unit.kind === "table" && unit.table_id !== null) tableUnit.set(unit.table_id, unit.id);
@@ -84,7 +87,8 @@ export function buildPaperModel(view: DocumentView): PaperModel {
     const group = groups.get(groupKey) ?? { key: groupKey, part: block.part, items: [] };
     groups.set(groupKey, group);
     const target = { push: (item: PaperItem) => void (edge.push(item), group.items.push(item)) };
-    if (block.kind === "table_cell" && block.table_id !== null) {
+    // 벗긴 표의 칸은 표로 묶지 않고 문단처럼 제자리(원문 순 = 행 → 왼쪽부터)에 놓는다 - 칸 줄이 보통 문장 카드가 된다(F1)
+    if (block.kind === "table_cell" && block.table_id !== null && !unwrapped.has(block.table_id)) {
       // 표는 첫 칸 자리에 통째로 - 안쪽 표는 바깥 칸 안에서 그리지 않고 바로 뒤에 둔다(1차)
       if (seenTables.has(block.table_id)) continue;
       seenTables.add(block.table_id);
@@ -104,7 +108,7 @@ export function buildPaperModel(view: DocumentView): PaperModel {
     .filter((unit) => unit.kind !== "table_row" || unit.spans.length > 0)
     .sort((a, b) => a.pos_seq - b.pos_seq || (a.spans[0]?.[1] ?? 0) - (b.spans[0]?.[1] ?? 0) || a.id - b.id)
     .map((unit) => unit.id);
-  return { header, body, footer, groups: [...groups.values()], segments, units, order, hasNumberRanges: view.has_number_ranges };
+  return { header, body, footer, groups: [...groups.values()], segments, units, order, hasNumberRanges: view.has_number_ranges, unwrapped };
 }
 
 /**

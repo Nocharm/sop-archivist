@@ -8021,6 +8021,121 @@ await runStep("assign: heading to sentence - the group head's ↺ To heading tur
   check("a second Undo restores the original heading", (await waitView((view) => view.units.some((item) => item.id === unit.id))) !== null);
 });
 
+// 표 벗기기(MD 1 F1) - 통째인 표를 Shape의 Unwrap table로 벗기면 표 선 · TABLE 머리가 걷히고 칸 글이 보통 문장 줄(칸마다 · 칸 안 문단마다)이 된다.
+// 벗긴 줄 묶음은 왼쪽 세로선 하나와 머리 "↺ Back to table" 하나만 갖는다. 편집 한 번이라 Undo 한 번에 표로 돌아온다(시드 묶음을 처음 그대로 둔다)
+const findTableOnScreen = async (page, readView, docs) => {
+  for (const candidate of docs.filter((item) => item.side === "old" && item.status === "ready")) {
+    const view = await readView(candidate.id);
+    const tables = view.units.filter((item) => item.kind === "table" && item.status === "unassigned" && !view.tables.find((table) => table.id === item.table_id)?.is_layout);
+    if (tables.length === 0) continue;
+    await page.locator('[data-testid="assign-old-doc"]').click();
+    await page.locator(`[data-testid="assign-old-doc-option-${candidate.id}"]`).click();
+    await page.locator('[data-testid="assign-old"]').waitFor({ timeout: T });
+    await page.waitForTimeout(600);
+    for (const item of tables) {
+      if ((await page.locator(`[data-testid="assign-paper-piece-${item.id}"]`).count()) > 0) return { doc: candidate, unit: item };
+    }
+  }
+  return { doc: null, unit: null };
+};
+
+await runStep("assign: unwrap table - Unwrap table turns the table into sentence lines with one rail and ↺ Back to table, Undo steps back", {}, async ({ page, takeShot }) => {
+  const headers = { "X-Dev-User": "qa.member" };
+  const docs = await (await page.request.get(`${BASE}/api/bundles/${halfBundleId}/documents`, { headers })).json();
+  const readView = async (docId) => (await page.request.get(`${BASE}/api/bundles/${halfBundleId}/documents/${docId}/view`, { headers })).json();
+  await page.goto(`${BASE}/bundles/${halfBundleId}/assign`);
+  await wait(page, "assign-bar");
+  const { doc, unit } = await findTableOnScreen(page, readView, docs);
+  check("the bundle has an unassigned table on screen", unit !== null);
+  if (unit === null) return;
+  const isLayout = (view) => view.tables.find((table) => table.id === unit.table_id)?.is_layout === true;
+  const waitView = async (isDone) => {
+    for (let tries = 0; tries < 60; tries += 1) {
+      const view = await readView(doc.id);
+      if (isDone(view)) return view;
+      await page.waitForTimeout(250);
+    }
+    return null;
+  };
+  const piece = page.locator(`[data-testid="assign-paper-piece-${unit.id}"]`);
+  await piece.scrollIntoViewIfNeeded();
+  await piece.click();
+  await wait(page, `assign-shape-table_layout-${unit.id}`);
+  await page.locator(`[data-testid="assign-shape-table_layout-${unit.id}"]`).click();
+  const unwrapped = await waitView(isLayout);
+  check("Unwrap table makes the table a layout table", unwrapped !== null);
+  if (unwrapped === null) return;
+  const lines = unwrapped.units.filter((item) => item.kind === "cell_sentence" && item.table_id === unit.table_id && item.group_unit_id === null);
+  check("every cell paragraph is its own line", lines.length > 0);
+  await page.locator(`[data-testid="assign-paper-piece-${lines[0].id}"]`).waitFor({ timeout: T });
+  check("the table line is gone from the paper", (await page.locator(`[data-testid="assign-paper-piece-${unit.id}"]`).count()) === 0);
+  check("a cell line is a sentence card, not a table cell", (await page.locator(`[data-testid="assign-paper-piece-${lines[0].id}"]`).getAttribute("data-kind")) === "piece");
+  await wait(page, `assign-paper-unwrap-head-${unit.table_id}`);
+  check("the group head holds only ↺ Back to table", (await getText(page, `assign-paper-unwrap-head-${unit.table_id}`)).trim() === "↺ Back to table", await getText(page, `assign-paper-unwrap-head-${unit.table_id}`));
+  check("the lines carry the left rail", (await page.locator(`[data-unwrap-scope="t${unit.table_id}"] .unwrap-rail`).count()) >= lines.length);
+  await takeShot("sop-assign-unwrap.png");
+  // 벗긴 줄을 고르면 Shape 맨 아래에도 ↺ Back to table(F12 A3)
+  await page.locator(`[data-testid="assign-paper-piece-${lines[0].id}"]`).click();
+  await wait(page, "assign-shape-rewrap");
+  // Undo 한 번이면 처음 표 한 줄로 돌아온다
+  await page.locator('[data-testid="assign-undo"]').click();
+  check("Undo wraps the table back into one line", (await waitView((view) => !isLayout(view) && view.units.some((item) => item.id === unit.id))) !== null);
+  await page.locator(`[data-testid="assign-paper-unwrap-head-${unit.table_id}"]`).waitFor({ state: "detached", timeout: T });
+});
+
+await runStep("assign: unwrap table - ↺ Back to table asks once when a line is assigned and wraps the table back", {}, async ({ page }) => {
+  const headers = { "X-Dev-User": "qa.member" };
+  const docs = await (await page.request.get(`${BASE}/api/bundles/${halfBundleId}/documents`, { headers })).json();
+  const readView = async (docId) => (await page.request.get(`${BASE}/api/bundles/${halfBundleId}/documents/${docId}/view`, { headers })).json();
+  await page.goto(`${BASE}/bundles/${halfBundleId}/assign`);
+  await wait(page, "assign-bar");
+  const { doc, unit } = await findTableOnScreen(page, readView, docs);
+  check("the bundle has an unassigned table on screen", unit !== null);
+  if (unit === null) return;
+  const isLayout = (view) => view.tables.find((table) => table.id === unit.table_id)?.is_layout === true;
+  const waitView = async (isDone) => {
+    for (let tries = 0; tries < 60; tries += 1) {
+      const view = await readView(doc.id);
+      if (isDone(view)) return view;
+      await page.waitForTimeout(250);
+    }
+    return null;
+  };
+  const piece = page.locator(`[data-testid="assign-paper-piece-${unit.id}"]`);
+  await piece.scrollIntoViewIfNeeded();
+  await piece.click();
+  await wait(page, `assign-shape-table_layout-${unit.id}`);
+  await page.locator(`[data-testid="assign-shape-table_layout-${unit.id}"]`).click();
+  const unwrapped = await waitView(isLayout);
+  check("the table is unwrapped first", unwrapped !== null);
+  if (unwrapped === null) return;
+  const line = unwrapped.units.find((item) => item.kind === "cell_sentence" && item.table_id === unit.table_id && item.group_unit_id === null);
+  await page.locator(`[data-testid="assign-paper-piece-${line.id}"]`).click();
+  await wait(page, "assign-row-id");
+  await pickFirstPlace(page);
+  await page.locator('[data-testid="assign-primary"]').click();
+  check("a line of the unwrapped table is assigned", (await waitView((view) => view.units.some((item) => item.id === line.id && item.status === "confirmed"))) !== null);
+  // 다시 표로 - 배정이 있으면 확인창이 한 번 묻는다. 취소하면 그대로다
+  await page.locator(`[data-testid="assign-paper-rewrap-${unit.table_id}"]`).click();
+  await wait(page, "assign-edit-confirm");
+  check("the confirm names the table", (await getText(page, "assign-edit-confirm")).includes("Wrap table"), await getText(page, "assign-edit-confirm"));
+  await page.locator('[data-testid="assign-edit-confirm-cancel"]').click();
+  await page.locator('[data-testid="assign-edit-confirm"]').waitFor({ state: "detached", timeout: T });
+  check("cancelling keeps the table unwrapped", isLayout(await readView(doc.id)));
+  await page.locator(`[data-testid="assign-paper-rewrap-${unit.table_id}"]`).click();
+  await wait(page, "assign-edit-confirm");
+  await page.locator('[data-testid="assign-edit-confirm-confirm"]').click();
+  const wrapped = await waitView((view) => !isLayout(view));
+  check("Back to table wraps it into one table line", wrapped !== null && wrapped.units.some((item) => item.kind === "table" && item.table_id === unit.table_id));
+  check("the line's assignment is cleared", wrapped?.units.find((item) => item.id === line.id)?.status === "unassigned");
+  // 되돌려 시드 묶음을 처음 그대로 둔다 - 다시 표로 → 배정 → 벗기기
+  for (let step = 0; step < 3; step += 1) {
+    await page.locator('[data-testid="assign-undo"]').click();
+    await page.waitForTimeout(800);
+  }
+  check("three Undos bring the original table line back", (await waitView((view) => !isLayout(view) && view.units.some((item) => item.id === unit.id))) !== null);
+});
+
 // 끌어서 보내기(끌어다 놓기 설계 §6, 3걸음) - Old 조각을 아직 쓰지 않은 New 문서(New · from Assign)의 두 문장 사이나 빈 칸에 놓으면 그 줄의 초안이 되고(저장하지 않는다),
 // Confirm 때 문장 사이면 그 자리까지 저장한다. 자리를 받은 저장은 그 문서의 순서를 굳히고(manual_order) 화면에서 되돌릴 길이 없다 - 그래서 시드 묶음을 쓰는 Assign·Order 단계가 모두 끝난 뒤에 둔다.
 // 자료는 이 단계가 API로 만든다(A·B·C를 칸 K에, P를 칸 K2에). 끝에 이 단계가 확정한 줄은 Clear(U)로 되돌린다(굳힌 순서는 남는다)

@@ -315,7 +315,7 @@ def test_split_keeps_the_number_on_the_front_piece_and_merge_takes_the_front_num
 
 
 def test_band_table_number_shows_once_after_unwrapping_and_merging(client: TestClient) -> None:
-    # 띠 표를 풀고 번호 칸과 제목 칸을 한 줄로 합치면 번호 칸 블록 전체가 그 줄의 번호 범위다 — "7"이 글에 또 나오지 않는다
+    # 띠 표를 풀면 번호 칸이 같은 행 첫 줄의 번호가 되고(F3), 잘랐다가 다시 합쳐도 번호 칸 블록 전체가 그 줄의 번호 범위다 — "7"이 글에 또 나오지 않는다
     bundle_id, _, doc_id = _setup(client)
     view = get_view(client, bundle_id, doc_id)
     table = next(unit for unit in view["units"] if unit["kind"] == "table")
@@ -323,6 +323,10 @@ def test_band_table_number_shows_once_after_unwrapping_and_merging(client: TestC
         client, bundle_id, doc_id, {"type": "set_layout_table", "table_id": table["table_id"], "is_layout": True}
     )
     assert unwrap.status_code == 200, unwrap.text
+    joined = find_unit(get_view(client, bundle_id, doc_id), "7\n합성 띠 제목")
+    assert (joined["number"]["value"], _content(joined)) == ("7", "합성 띠 제목")
+    cut = _edit(client, bundle_id, doc_id, {"type": "split", "unit_id": joined["id"], "at": joined["number"]["content_start"]})
+    assert cut.status_code == 200, cut.text
     view = get_view(client, bundle_id, doc_id)
 
     merged = _edit(

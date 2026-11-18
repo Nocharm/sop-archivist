@@ -52,7 +52,7 @@ import { ClampText } from "@/components/ui/clamp-text";
 import { ConfirmModal } from "@/components/ui/confirm-modal";
 import { EmptyState } from "@/components/ui/empty-state";
 import { BundleLoadError } from "@/components/bundle-load-error";
-import { flashElement, Truncate } from "@/components/ui/motion";
+import { flashElement, Truncate, useUnwrapMotion } from "@/components/ui/motion";
 import { showToast } from "@/components/ui/toast";
 import { Tooltip } from "@/components/ui/tooltip";
 import { ApiError } from "@/lib/api";
@@ -155,6 +155,7 @@ import {
 } from "@/lib/assign-model";
 import { buildAssignMenu, getPairPickBlocker, getPairSetBlocker, planAssignJoin, planShapeMode, type AssignMenuAction, type AssignMenuGroups } from "@/lib/assign-context-menu-model";
 import { listHeadingBackUnits } from "@/lib/heading-shift-model";
+import { getTableNumber, getUnitUnwrapTable } from "@/lib/unwrap-model";
 import { resolveLineParam } from "@/lib/assign-line-param";
 import { readAssignView, writeAssignView } from "@/lib/assign-view-prefs";
 import { loadBundle, useBundle } from "@/lib/bundle-store";
@@ -412,7 +413,10 @@ export default function AssignPage() {
   const refLookups = countRefLookups(written);
   useEquisPolling(refLookups > 0, writtenList.reload, refLookups);
   const writtenMap = useMemo(() => new Map(written.map((row) => [row.target_id, row])), [written]);
-  const viewList = views.data;
+  // 표 벗기기 · 다시 표로가 풀기 전환 안에서 바로 그린 새 원문 보기 - 다시 받는 동안만 쓰고, 받으면 버린다(렌더 중 상태 맞추기)
+  const [freshViews, setFreshViews] = useState<DocumentView[] | null>(null);
+  if (freshViews !== null && !views.isLoading) setFreshViews(null);
+  const viewList = freshViews !== null && views.isLoading ? freshViews : views.data;
   const rows = useMemo(() => (viewList ? buildRows(viewList, unitMap) : []), [viewList, unitMap]);
   const rowMap = new Map(rows.map((row) => [row.key, row]));
   const rowOfUnit = new Map(rows.flatMap((row) => row.unitIds.map((id) => [id, row.key] as const)));
@@ -786,6 +790,9 @@ export default function AssignPage() {
   // 배정이 걸린 문장을 자르거나 합치려 할 때 - 서버가 409 confirm_required로 물으면 확인을 받아 배정을 풀며 다시 보낸다(원문 고치기와 같은 규칙, 설계 2026-11-15 §3.5)
   // 다시 보낼 일은 함수가 아니라 값으로 둔다 - 확인을 누른 그때의 화면 값(원문 보기·문서 판)으로 보내야 고친 뒤 새 줄을 따라간다
   const [editConfirm, setEditConfirm] = useState<{ count: number; retry: ConfirmedEdit } | null>(null);
+  // 표 벗기기 · 다시 표로의 풀기 전환(걷기 · 펼치기 · 붙이기, F10) - Old 칸 안에서 바뀌는 표를 찾고 잰다
+  const oldPaneRef = useRef<HTMLElement | null>(null);
+  const unwrapMotion = useUnwrapMotion(oldPaneRef);
   // 되돌리기 기록은 이 화면을 연 동안만 - 세션 키가 서버 기록을 가른다(설계 docs/superpowers/specs/2026-11-13-assign-undo-design.md)
   const undoSession = useRef(genId());
   const [undoState, setUndoState] = useState({ canUndo: false, canRedo: false });
@@ -1191,6 +1198,9 @@ export default function AssignPage() {
   // 고른 줄이 제목에서 바꾼 문장이면 다듬기 맨 아래 [제목으로 되돌리기] - 짝이면 두 조항 줄을 함께(F12 D2)
   const headingBackIds = shapeLines.length > 0 ? listHeadingBackUnits(rowViewUnits) : [];
   const headingBack = headingBackIds.length > 0 ? { reasonKey: rowViewUnits.some(hasUnitDraft) ? "assign.ctx.why.unsaved" : null, onBack: () => revertHeadings(headingBackIds) } : null;
+  // 고른 줄이 벗긴 표의 줄이면 다듬기 맨 아래 [↺ 다시 표로] - 용지 묶음 머리 단추와 같은 일(F12 A3)
+  const rewrapTableId = shapeLines.length > 0 && paperModel && !isSolo ? getUnitUnwrapTable(rowViewUnits, paperModel.unwrapped) : null;
+  const rewrap = rewrapTableId !== null ? { reasonKey: rowViewUnits.some(hasUnitDraft) ? "assign.ctx.why.unsaved" : null, onRewrap: () => rewrapTable(rewrapTableId) } : null;
   const stepBase = shapeLines.length > 0 ? 1 : 0;
   const refPendingIds = (shapeTabs?.order ?? []).filter((id) => isRefPending(shapeModel?.units.get(id)) && (hasSolo || rowOfUnit.has(id)));
   // 캡션이 필요한 표·그림의 줄 - 머리 줄의 Caption needed와 같은 규칙(lib/caption-model). 위쪽 줄에 남은 수, 누르면 다음 줄
@@ -1250,6 +1260,7 @@ export default function AssignPage() {
     if (!shapeView || busy) return;
     setBusy(true);
     let isAsking = false;
+    let isReloaded = false;
     try {
       // 자르기·합치기·언어 바꾸기 모두 Assign 기록에 넣는다(설계 §4.4) - 서버는 Split 편집 기록 번호만 가리킨다
       const undo = buildUndo({ focus_unit_id: op.type === "split" ? op.unit_id : (followId ?? undefined) });
@@ -1270,6 +1281,20 @@ export default function AssignPage() {
       // 고친 줄의 Unit은 은퇴했을 수 있다 - 다시 받는 동안 그 Unit의 묶음·후보를 부르지 않게 고름을 비우고, 새 줄이 생기면 follow가 고른다.
       // 제자리에서 바뀌는 편집(언어·참조)은 Unit이 그대로라 고름을 두어 고른 표시·오른쪽 칸·포커스가 깜빡이지 않게 한다
       if (op.type !== "set_language" && op.type !== "set_ref" && op.type !== "clear_ref" && op.type !== "set_number") setSelectedKey(null);
+      // 표 벗기기 · 다시 표로 - 새 원문 보기를 먼저 받아 풀기 전환 안에서 그린다(F10, 화면 안만 움직이고 움직임 줄이기면 번쩍임만). 알림은 전환 뒤
+      const docId = shapeView.document.id;
+      const current = views.data ?? [];
+      if (op.type === "set_layout_table" && current.some((view) => view.document.id === docId)) {
+        const fresh = await getDocumentView(bundleId, docId);
+        isReloaded = true;
+        await unwrapMotion.run(
+          () => {
+            setFreshViews(current.map((view) => (view.document.id === docId ? fresh : view)));
+            reloadAfterEdit();
+          },
+          { scopes: [`t${op.table_id}`], reverse: !op.is_layout },
+        );
+      }
       showToast(okText);
       const next = result.created_unit_ids[0] ?? followId;
       if (next !== null && next !== undefined) followUnit(next);
@@ -1281,9 +1306,28 @@ export default function AssignPage() {
       else showToast(humanizeApiError(err, t), "error");
     } finally {
       // 되묻는 동안은 다시 받지 않는다 - 바뀐 것이 없고, 늦게 닿은 응답이 확인 뒤의 편집과 엇갈리면 새 줄을 따라가지 못한다
-      if (!isAsking) reloadAfterEdit();
+      if (!isAsking && !isReloaded) reloadAfterEdit();
       setBusy(false);
     }
+  }
+
+  /** 다시 표로(F1) - 벗긴 표 전체를 표 한 줄로 되돌린다. 그 표의 줄에 배정이 있으면 서버가 되묻고 확인창이 한 번 묻는다(표 밖 줄의 배정은 그대로) */
+  function rewrapTable(tableId: number) {
+    void runUnitEdit({ type: "set_layout_table", table_id: tableId, is_layout: false }, t("assign.unwrap.didRewrap"), null);
+  }
+
+  /** 편집 확인창의 글 - 다시 표로면 그 표의 말(표 번호 · 확정된 줄 수, F12 A6), 아니면 판단이 지워진다는 공통 글 */
+  function describeEditConfirm({ count, retry }: { count: number; retry: ConfirmedEdit }): { title: string; summary: string; confirmLabel: string } {
+    const op = retry.kind === "edit" ? retry.op : null;
+    if (op?.type === "set_layout_table" && !op.is_layout) {
+      const table = (viewList ?? []).flatMap((view) => view.tables).find((item) => item.id === op.table_id);
+      return {
+        title: t("assign.unwrap.confirmTitle", { n: table ? getTableNumber(table) : "" }),
+        summary: t("assign.unwrap.confirmBody", { m: count }),
+        confirmLabel: t("assign.unwrap.confirmRun"),
+      };
+    }
+    return { title: t("split.confirmTitle"), summary: t("split.confirmBody", { n: count }), confirmLabel: t("split.confirmRun") };
   }
 
   /** 목차 아님(줄 하나) · 모두 목차 아님(블록 전체) - 표시만 비우는 편집. 목차 고름을 놓고, 다시 받은 뒤 돌아온 첫 줄을 보통 줄로 고른다(F12 G4) */
@@ -1521,7 +1565,7 @@ export default function AssignPage() {
       if (pairId !== null) void runPairChange((docId, revision) => deletePair(bundleId, docId, pairId, revision), t("split.pairRemoved"), target.id);
     } else if (action === "table_rows" && table) void runUnitEdit({ type: "split_table_rows", table_unit_id: table.id }, t("split.didSplit"), null);
     else if (action === "table_merge" && table && table.table_id !== null) void runUnitEdit({ type: "merge_table_rows", table_id: table.table_id }, t("split.didMerge"), null);
-    else if (action === "table_layout" && table && table.table_id !== null) void runUnitEdit({ type: "set_layout_table", table_id: table.table_id, is_layout: true }, t("common.saved"), null);
+    else if (action === "table_layout" && table && table.table_id !== null) void runUnitEdit({ type: "set_layout_table", table_id: table.table_id, is_layout: true }, t("assign.unwrap.didUnwrap"), null);
     else if (action === "caption_attach_prev" || action === "caption_attach_next") {
       // 같은 일, 대상에 따라 짝이 바뀐다 - 묶음 대상이면 이웃 글을, 글 대상이면 이웃 묶음에 붙인다. 붙인 뒤 묶음 줄을 고른다
       const neighbor = findNeighbors(target)[action === "caption_attach_prev" ? "prev" : "next"];
@@ -3438,7 +3482,7 @@ export default function AssignPage() {
         {shapeLines.length > 0 && (
           <>
             {renderStep(n, t("assign.step.shape"))}
-            <ShapeTools lines={shapeLines} cutUnitId={cutLine.at !== null ? cutUnitId : null} busy={busy} onAction={(unit, action, lang) => runUnitAction(unit, action, lang)} mode={shapeMode} onMode={switchShapeMode} headingBack={headingBack} />
+            <ShapeTools lines={shapeLines} cutUnitId={cutLine.at !== null ? cutUnitId : null} busy={busy} onAction={(unit, action, lang) => runUnitAction(unit, action, lang)} mode={shapeMode} onMode={switchShapeMode} headingBack={headingBack} rewrap={rewrap} />
           </>
         )}
         {rowRefUnit && shapeView && (
@@ -4251,6 +4295,9 @@ export default function AssignPage() {
                 }
                 // 제목에서 바꾼 조항 묶음 머리(F8b) - 되돌리기는 다듬는 원문이 그 Old 문서일 때만
                 headingShift={isSolo ? undefined : { canRevert: canEdit && !isNewEdit, busy, onRevert: revertHeadings }}
+                // 벗긴 표의 줄 묶음 머리 "↺ 다시 표로"(F1) - 다듬는 원문이 그 Old 문서일 때만
+                unwrap={isSolo ? undefined : { canRewrap: canEdit && !isNewEdit, busy, onRewrap: rewrapTable }}
+                paneRef={oldPaneRef}
                 renderPills={(unitId) => {
                   const targets = linkedTargets.get(unitId);
                   return targets ? <LinkBadge unitId={unitId} targets={targets} currentDocId={newDocId} onJump={(_unitId, targetId) => showInNew(targetId)} /> : null;
@@ -4428,9 +4475,7 @@ export default function AssignPage() {
       )}
       {editConfirm && (
         <ConfirmModal
-          title={t("split.confirmTitle")}
-          summary={t("split.confirmBody", { n: editConfirm.count })}
-          confirmLabel={t("split.confirmRun")}
+          {...describeEditConfirm(editConfirm)}
           busy={busy}
           testId="assign-edit-confirm"
           onConfirm={() => {

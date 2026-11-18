@@ -1334,6 +1334,8 @@ export interface OutputSummary {
   single_language: number;
   /** 목차 · 저절로 삭제 - 목차 줄 수(old_rows·assigned에 들고 deleted에는 들지 않는다) */
   toc_deleted: number;
+  /** 풀린 표에서 온 줄 - 벗긴 표(레이아웃 표)의 칸 줄이 든 줄(MD 1 F11) */
+  unwrapped_rows: number;
 }
 
 export function getOutputA(bundleId: number, labelLang: OutputLang): Promise<OutputARow[]> {

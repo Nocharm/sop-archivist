@@ -3,7 +3,7 @@
 "use client";
 
 import { ListFilter } from "lucide-react";
-import type { ComponentProps, ReactNode } from "react";
+import type { ComponentProps, ReactNode, RefObject } from "react";
 
 import { PaneZoom } from "@/components/assign/pane-zoom";
 import { Paper, type CutDragPos, type PaperCut } from "@/components/paper/paper";
@@ -47,6 +47,10 @@ interface OldPaneProps {
   toc?: NonNullable<NonNullable<ComponentProps<typeof Paper>["strips"]>["toc"]>;
   /** 제목에서 바꾼 조항 묶음의 머리 "[제목 → 문장] … · ↺ 제목으로"(F8b) - 없으면 머리를 달지 않는다 */
   headingShift?: NonNullable<ComponentProps<typeof Paper>["strips"]>["headingShift"];
+  /** 벗긴 표의 줄 묶음 머리 "↺ 다시 표로"(F1) - 없으면 머리 없이 왼쪽 세로선만 */
+  unwrap?: NonNullable<ComponentProps<typeof Paper>["strips"]>["unwrap"];
+  /** 칸 전체 - 풀기 전환(useUnwrapMotion)이 이 안에서 바뀌는 곳을 찾고 잰다 */
+  paneRef?: RefObject<HTMLElement | null>;
   /** 내용이 있는 본문·머리말·꼬리말 탭 - 둘 이상일 때만 탭 줄을 그린다 */
   partKeys: readonly PaperTabKey[];
   activePart: PaperTabKey;
@@ -87,7 +91,7 @@ interface OldPaneProps {
   docDash?: ReactNode;
 }
 
-export function OldPane(props: OldPaneProps) {
+export function OldPane({ paneRef, ...props }: OldPaneProps) {
   const { t } = useI18n();
   const { model } = props;
 
@@ -117,7 +121,7 @@ export function OldPane(props: OldPaneProps) {
         onCutNudge={props.onCutNudge}
         renderAtCut={props.cut ? props.renderAtCut : undefined}
         figureSource={props.figureSource}
-        strips={{ statusOf: props.statusOf, renderNote: props.renderNote, renderPills: props.renderPills, fold: props.fold, join: props.join, isCaptionNeeded: props.isCaptionNeeded, toc: props.toc, headingShift: props.headingShift }}
+        strips={{ statusOf: props.statusOf, renderNote: props.renderNote, renderPills: props.renderPills, fold: props.fold, join: props.join, isCaptionNeeded: props.isCaptionNeeded, toc: props.toc, headingShift: props.headingShift, unwrap: props.unwrap }}
         renderUnitActions={props.renderUnitActions}
         dragBoxes={props.dragBoxes}
         numberCell={props.numberCell}
@@ -127,7 +131,7 @@ export function OldPane(props: OldPaneProps) {
   }
 
   return (
-    <section className="assign-pane" style={{ "--z": props.zoom }} data-pane="old" data-testid="assign-old">
+    <section ref={paneRef} className="assign-pane" style={{ "--z": props.zoom }} data-pane="old" data-testid="assign-old">
       <div className="pane-head">
         {props.docOptions.length > 1 ? (
           <Select testId="assign-old-doc" ariaLabel={t("assign.oldDoc")} size="sm" mono value={props.docId} options={props.docOptions} onChange={props.onDocChange} />

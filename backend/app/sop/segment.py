@@ -402,9 +402,13 @@ def build_unit_drafts(
 
 
 def _is_number_cell(block: BlockView, draft: UnitDraft) -> bool:
-    """칸의 글 전체가 번호 꼴인가 — 추출기가 남긴 cell 신호가 그 칸의 한 줄과 같은 범위일 때."""
     _, start, end = draft.spans[0]
-    return [start, end, NUMBER_CELL] in [list(number) for number in (block.signals or {}).get(NUMBERS_SIGNAL) or ()]
+    return is_number_cell_range(block.signals, start, end)
+
+
+def is_number_cell_range(signals: Mapping[str, object] | None, start: int, end: int) -> bool:
+    """칸의 글 전체가 번호 꼴인가 — 추출기가 남긴 cell 신호가 그 칸의 한 줄과 같은 범위일 때. 표 벗기기 편집도 같은 판정을 쓴다."""
+    return [start, end, NUMBER_CELL] in [list(number) for number in (signals or {}).get(NUMBERS_SIGNAL) or ()]
 
 
 def _is_same_row_cell(block: BlockView, number_cell: UnitDraft) -> bool:
