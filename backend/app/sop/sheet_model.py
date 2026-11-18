@@ -17,6 +17,7 @@ from app.sop.captions import join_caption_texts
 from app.sop.constants import NUMBER_BULLET, NUMBER_NOTE
 from app.sop.excel_export import ExportMeta, build_export_file_name, clean_cell_text, format_kst, split_cell_text
 from app.sop.flow_image import draw_flow_png
+from app.sop.noise import NOISE_TOC
 from app.sop.output_labels import LABELS
 from app.sop.outputs import (
     ARow,
@@ -94,6 +95,7 @@ SUMMARY_NAMES = (
     "Old rows", "Assigned", "No destination", "Duplicate assignments", "Deleted", "Moved", "New", "Translated",
     "Confirmed rate", "Single language",
 )
+TOC_SUMMARY_NAME = "Contents · auto-deleted"  # 목차 줄 수(summary.toc_deleted) — 목차 줄이 있는 묶음에만 싣는다
 INFO_NAMES = (
     "Bundle title", "Status", "Created by", "Created at (KST)", "Exported by", "Exported at (KST)", "Guideline version",
     "Synthetic data",
@@ -103,8 +105,8 @@ _MARKERS = {"table": "[Table]", "figure": "[Figure]"}  # 확정한 캡션 글이
 _BULLET = "•"  # 글머리 기호 줄의 No. 칸(C 시트) — 화면의 줄 머리와 같은 기호
 _CAPTION_POSITION = "Caption"  # 캡션 줄의 Cell position 칸 — 칸 줄의 "R 1 C 1" 자리
 _NO_WRAP_KINDS = ("status", "plain")  # 상태 줄·제목·이름 칸은 옆 칸으로 넘쳐 보이게 접지 않는다
-# 상태 코드 → 칩 색. 보류(on_hold)는 명세가 색을 정하지 않아 칩 없이 글로 남고, "del"은 Status가 Deleted로 적히는 줄(목차 등 저절로 지우는 줄)이 생길 때 쓴다
-_STATUS_TONES: dict[str, CellTone] = {"confirmed": "ok", "ai_suggested": "ai", "unassigned": "un"}
+# 상태 코드 → 칩 색. 보류(on_hold)는 명세가 색을 정하지 않아 칩 없이 글로 남고, "del"은 Status가 Deleted로 적히는 줄(목차 줄 — 저절로 지운 줄)
+_STATUS_TONES: dict[str, CellTone] = {"confirmed": "ok", "ai_suggested": "ai", "unassigned": "un", "deleted": "del"}
 
 
 class SheetCell(BaseModel):
@@ -128,7 +130,7 @@ class SheetRow(BaseModel):
     # 아래 셋은 미리보기 전용(A의 자료 줄에만) — 화면이 칸 글을 읽지 않고 고른 줄·같은 무리·목차 줄을 맞춘다
     unit_id: int | None = None  # 이 줄의 옛 단위(이어진 줄도 같은 값), 번역·신규 줄은 None
     group_id: str | None = None  # Group ID 칸과 같은 관계 묶음
-    toc: bool = False  # 목차 줄 — 화면이 연달아 오는 줄을 한 줄로 접는다. 목차 표시가 생길 때까지 늘 False
+    toc: bool = False  # 목차 줄(ARow.noise_kind == "toc") — 화면이 연달아 오는 줄을 한 줄로 접는다
 
 
 class SheetBand(BaseModel):
@@ -296,6 +298,7 @@ def _build_a_sheet(snap: BundleSnapshot, people: Mapping[str, str]) -> Sheet:
             starts = a_row.is_group_start and offset == 0
             row = _make_row("group_start" if starts else "in_group", line, italic=italic, numeric=(A_ROW_COLUMN,))
             row.unit_id, row.group_id = a_row.unit_id, a_row.group_id
+            row.toc = a_row.noise_kind == NOISE_TOC
             status_cell = row.cells[A_STATUS_COLUMN - 1]
             if status_cell.text:  # 이어진 줄의 빈 Status 칸에는 칩이 없다
                 status_cell.tone = _STATUS_TONES.get(a_row.status)
@@ -342,6 +345,9 @@ def _build_b_sheet(snap: BundleSnapshot) -> Sheet:
     )
     for name, value in zip(SUMMARY_NAMES, values, strict=True):
         rows.append(_make_row("plain", _pad([name, str(value)], width), numeric=() if isinstance(value, str) else (2,)))
+    # 목차 줄이 있을 때만 — 없는 묶음의 파일은 그대로다
+    if summary.toc_deleted:
+        rows.append(_make_row("plain", _pad([TOC_SUMMARY_NAME, str(summary.toc_deleted)], width), numeric=(2,)))
 
     rows.append(_make_row("plain", _pad([], width)))
     rows.append(_make_row("plain", _pad(["Old documents × destinations (count)"], width), bold=(1,)))

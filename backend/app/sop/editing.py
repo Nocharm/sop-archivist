@@ -1,4 +1,4 @@
-"""쪼개기 편집 — 나누기·합치기·경계 옮기기·골라 만들기·언어 바꾸기·표 행 나누기·다시 합치기·레이아웃 표 바꾸기·캡션 붙이기·떼기와 서버 쪽
+"""쪼개기 편집 — 나누기·합치기·경계 옮기기·골라 만들기·언어 바꾸기·표 행 나누기·다시 합치기·레이아웃 표 바꾸기·캡션 붙이기·떼기·잡음 표시 풀기와 서버 쪽
 선형 되돌리기·다시 하기, 경계 확인 표시 (스펙 §6.4, §7.5).
 
 단위는 제자리에서 바뀌지 않는다: 편집은 옛 단위를 은퇴시키고 새 단위를 만들며, 되돌리기는 은퇴한 단위를 원래 ID로 되살린다.
@@ -170,9 +170,16 @@ class ClearRefOp(BaseModel):
     unit_id: DbId
 
 
+class ClearNoiseOp(BaseModel):
+    """잡음 표시 풀기 — 목차 아님(줄 하나) · 모두 목차 아님(블록 전체). 단위는 그대로이고 표시만 비운다(되돌리기가 다시 붙인다)."""
+
+    type: Literal["clear_noise"]
+    unit_ids: list[DbId] = Field(min_length=1, max_length=MAX_EDIT_UNITS)
+
+
 EditOp = Annotated[
     SplitOp | MergeOp | UnmergeOp | MoveBoundaryOp | CarveOp | SetLanguageOp | SplitTableRowsOp
-    | MergeTableRowsOp | SetLayoutTableOp | AttachCaptionOp | DetachCaptionOp | SetRefOp | ClearRefOp,
+    | MergeTableRowsOp | SetLayoutTableOp | AttachCaptionOp | DetachCaptionOp | SetRefOp | ClearRefOp | ClearNoiseOp,
     Field(discriminator="type"),
 ]
 
@@ -259,6 +266,8 @@ class _Change:
     retired_shapes: list[Shape] = field(default_factory=list)
     # 캡션 붙이기·떼기로 묶인 단위가 바뀌는 묶음 — 판단이 있으면 다시 묶인 칸처럼 확인을 묻고 떼어 낸다
     bundles: list[int] = field(default_factory=list)
+    # 단위 → (지금 잡음 표시, 바꿀 잡음 표시) — 제자리에서 바뀐다(목차 아님과 그 되돌리기)
+    noises: dict[int, tuple[str | None, str | None]] = field(default_factory=dict)
 
     def list_regrouped_cells(self) -> list[int]:
         return sorted({*self.regroup, *(cell_id for draft in self.drafts for cell_id in draft.cells)})
@@ -270,7 +279,7 @@ class _Change:
         (스펙 §6.4) 같은 범위를 새 ID로 다시 만들면 표시 ID가 바뀌고 확정 판단이 이유 없이 떼어진다. 캡션 붙이기·떼기는
         범위가 그대로여도 종류·묶음이 바뀐다. 표·행 단위는 범위가 없어 범위로는 견줄 수 없으므로 묶음·표 표시가 바뀌면 바뀐 것이다.
         """
-        if self.revive or self.langs or self.layouts or self.list_regrouped_cells():
+        if self.revive or self.langs or self.layouts or self.noises or self.list_regrouped_cells():
             return False
         drafts = Counter((tuple(draft.spans), draft.kind, draft.group_unit_id) for draft in self.drafts)
         return drafts == Counter(self.retired_shapes)
@@ -579,6 +588,15 @@ async def _plan_clear_ref(session: AsyncSession, extraction_id: ExtractionId, op
     return _Change(langs={unit.id: (REF_LANG, lang)})
 
 
+async def _plan_clear_noise(session: AsyncSession, extraction_id: ExtractionId, op: ClearNoiseOp) -> _Change:
+    """표시가 붙은 단위만 비운다 — 이미 표시가 없는 단위는 바뀌는 게 없다(블록 전체 풀기에 섞여 와도 된다)."""
+    ensure_unique_units(op.unit_ids)
+    units = await load_active_units(session, extraction_id, op.unit_ids)
+    return _Change(
+        noises={unit_id: (unit.noise_kind, None) for unit_id, unit in sorted(units.items()) if unit.noise_kind is not None}
+    )
+
+
 async def _save_ref_mark(session: AsyncSession, op: SetRefOp | ClearRefOp, actor: str) -> None:
     """사람의 뜻(참조다·아니다)과 번호를 남긴다 — 언어를 바꾸기 전에 불러 그 전 언어를 기억한다."""
     unit = await session.get_one(Unit, op.unit_id)
@@ -861,6 +879,8 @@ async def _plan(session: AsyncSession, document_id: int, extraction_id: Extracti
             return await _plan_set_ref(session, extraction_id, op)
         case ClearRefOp():
             return await _plan_clear_ref(session, extraction_id, op)
+        case ClearNoiseOp():
+            return await _plan_clear_noise(session, extraction_id, op)
         case _:
             assert_never(op)
 
@@ -971,6 +991,21 @@ async def _set_languages(session: AsyncSession, langs: Mapping[int, tuple[str, s
             await session.execute(update(Unit).where(Unit.id.in_(chunk)).values(lang=lang))
 
 
+async def _set_noises(session: AsyncSession, noises: Mapping[int, tuple[str | None, str | None]]) -> None:
+    """잡음 표시를 바꾼다 — 지금 표시가 기록과 다른 단위가 있으면 편집 기록과 어긋난 것이라 RuntimeError(버그 가드)."""
+    by_move: dict[tuple[str | None, str | None], list[int]] = defaultdict(list)
+    for unit_id, move in noises.items():
+        by_move[move].append(unit_id)
+    changed = 0
+    for (old, new), unit_ids in by_move.items():
+        current = Unit.noise_kind.is_(None) if old is None else Unit.noise_kind == old
+        for chunk in iter_chunks(unit_ids):
+            result = await session.execute(update(Unit).where(Unit.id.in_(chunk), current).values(noise_kind=new))
+            changed += result.rowcount
+    if changed != len(noises):
+        raise RuntimeError(f"unit edit history out of sync: {changed} of {len(noises)} units had the recorded noise mark")
+
+
 async def _leave_pairs(session: AsyncSession, unit_ids: Collection[int]) -> None:
     """은퇴하거나 언어가 바뀐 단위는 한/영 짝에서 빠지고, 남은 짝에 한쪽 언어가 없으면 짝을 지운다.
 
@@ -1065,7 +1100,9 @@ async def _write_change(
     # 언어를 제자리에서 바꾸는 단위만 사람 결정과 어긋난다(R31) - 같은 변경에서 은퇴하거나 되살아나는 단위(합치기 풀기와
     # 그 되돌리기)는 글 그대로의 언어를 따라가는 것이라 묻지 않는다(은퇴는 아래 확인 플래그가 묻는다)
     moving = {*change.retire, *change.revive}
-    in_place = [unit_id for unit_id in change.langs if unit_id not in moving]
+    # 잡음 표시를 다시 붙이는 단위(목차 아님 되돌리기)도 사람 결정과 어긋난다 — 그 사이 배정했으면 표시로 덮지 않는다
+    marking = [unit_id for unit_id, (_, noise) in change.noises.items() if noise is not None]
+    in_place = [unit_id for unit_id in [*change.langs, *marking] if unit_id not in moving]
     if in_place:
         decided = await _find_decided_units(session, document, in_place)
         if decided:
@@ -1085,7 +1122,9 @@ async def _write_change(
     for draft, unit_id in inserted:
         change.regroup.update({cell_id: (group_id, unit_id) for cell_id, group_id in draft.cells.items()})
     await _set_languages(session, change.langs)
-    await _leave_pairs(session, [*change.retire, *change.langs])
+    await _set_noises(session, change.noises)
+    # 다시 목차가 된 단위는 짝을 맺지 않는다(units._find_code_pairs와 같은 규칙)
+    await _leave_pairs(session, [*change.retire, *change.langs, *marking])
     await session.flush()
     activated = [*change.revive, *(unit_id for _, unit_id in inserted)]
     detach = None
@@ -1135,7 +1174,8 @@ def _record(
 ) -> None:
     """작업 기록 — 대상은 은퇴한·활성이 된·언어가 바뀐·다시 묶인 단위, 사유 칸에 편집 종류(split 등)."""
     unit_ids = sorted(
-        {*result.created_unit_ids, *result.retired_unit_ids, *change.langs, *change.regroup, *change.bundles}
+        {*result.created_unit_ids, *result.retired_unit_ids, *change.langs, *change.regroup, *change.bundles,
+         *change.noises}
     )
     record_event(
         session, bundle_id=document.bundle_id, actor=actor, action=action, target_type="unit", target_ids=unit_ids,
@@ -1179,7 +1219,8 @@ async def apply_edit(
             created_unit_ids=result.created_unit_ids, retired_unit_ids=result.retired_unit_ids,
             regrouped={str(cell_id): list(move) for cell_id, move in change.regroup.items()},
             lang_changes={str(unit_id): list(langs) for unit_id, langs in change.langs.items()},
-            layout_changes={str(table_id): list(flags) for table_id, flags in change.layouts.items()}, actor=actor,
+            layout_changes={str(table_id): list(flags) for table_id, flags in change.layouts.items()},
+            noise_changes={str(unit_id): list(noises) for unit_id, noises in change.noises.items()}, actor=actor,
         )
     )
     _record(session, document, "unit.edit", op.type, result, change, actor)
@@ -1214,6 +1255,8 @@ def _replay(edit: UnitEdit, *, backwards: bool) -> _Change:
         layouts={
             int(table_id): _orient(flags, backwards=backwards) for table_id, flags in edit.layout_changes.items()
         },
+        # 0027 전 기록은 빈 객체다(잡음 표시를 바꾼 편집이 없었다)
+        noises={int(unit_id): _orient(noises, backwards=backwards) for unit_id, noises in (edit.noise_changes or {}).items()},
     )
 
 

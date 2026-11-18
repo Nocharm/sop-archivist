@@ -183,7 +183,8 @@ async def _load_wants(session: AsyncSession, document: Document) -> list[_Want]:
             # 단위 자리(pos_seq)의 블록이 부분·제목 단계·칸 자리를 준다(표 단위는 첫 칸, 칸 문장은 자기 칸)
             .join(SourceBlock, (SourceBlock.extraction_id == Unit.extraction_id) & (SourceBlock.seq == Unit.pos_seq))
             .outerjoin(SourceTable, SourceTable.id == Unit.table_id)
-            .where(Unit.extraction_id == extraction_id, Unit.status == UNIT_ACTIVE)
+            # 잡음 표시 단위(목차 줄)는 새 문장을 만들지 않는다(설계 2c) — 목차 줄은 문장 단위라 절 경로(제목)에도 닿지 않는다
+            .where(Unit.extraction_id == extraction_id, Unit.status == UNIT_ACTIVE, Unit.noise_kind.is_(None))
             .order_by(Unit.pos_seq, Unit.pos_start, Unit.id)
         )
     ).all()
@@ -343,7 +344,7 @@ async def list_identical_candidates(session: AsyncSession, bundle_id: int) -> li
             .outerjoin(group_decision, group_decision.unit_id == Unit.group_unit_id)
             .where(
                 Document.bundle_id == bundle_id, Document.side == "old", Unit.status == UNIT_ACTIVE,
-                Unit.kind.in_(SENTENCE_SOURCE_KINDS),
+                Unit.kind.in_(SENTENCE_SOURCE_KINDS), Unit.noise_kind.is_(None),
                 # 묶인 칸 문장은 그룹 단위의 판단을 따른다(get_cover_status와 같은 규칙)
                 func.coalesce(group_decision.status, UnitDecision.status) == UNASSIGNED,
                 func.coalesce(group_decision.disposition, UnitDecision.disposition) == UNASSIGNED,
