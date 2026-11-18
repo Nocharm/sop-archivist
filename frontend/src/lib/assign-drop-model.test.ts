@@ -82,7 +82,7 @@ const WI_LIST: DropSection = { key: "document_relationships.work_instructions", 
 
 describe("buildDropSections", () => {
   it("keys each line by the Old row of its first source unit", () => {
-    const item = (target_id: number, source_unit_ids: number[]) => ({ target_id, kind: "sentence" as const, lang: "en" as const, text: "", status: "confirmed" as const, change_type: "as_is" as const, number: null, source_unit_ids });
+    const item = (target_id: number, source_unit_ids: number[]) => ({ target_id, kind: "sentence" as const, lang: "en" as const, text: "", status: "confirmed" as const, change_type: "as_is" as const, number: null, number_style: "bullet" as const, indent_level: 0, meaning_key: null, source_unit_ids });
     const rowKeyOf = (id: number) => ({ 10: "u10", 20: "u20", 21: "u20" } as Record<number, string>)[id];
     expect(buildDropSections([
       { location_key: "purpose", na_reason: null, kind: "general", items: [item(1, [10]), item(2, [20]), item(3, [21]), item(4, [])] },

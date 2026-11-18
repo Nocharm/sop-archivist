@@ -1659,6 +1659,10 @@ class ComposedItem(BaseModel):
     status: str
     change_type: str | None
     number: str | None  # 그 문장 자기 번호(칸마다 한 줄, 생략·주석은 None)
+    # 아래 셋은 결과물 C 항목(CItem)과 같은 값 — New 칸 템플릿 보기가 글머리 기호 깊이·주석 줄과 한/영 짝(같은 묶음 키)을 읽는다
+    number_style: str
+    indent_level: int
+    meaning_key: str | None
     # 출처 단위 — 번역은 번역 출처 단위(Old 쪽으로 잇는 선과 칩이 쓴다)
     source_unit_ids: list[int]
     table: BundleTableOut | None = None  # 표 줄이면 칸 새 문장 격자
@@ -1717,15 +1721,15 @@ def build_composed_doc(snap: BundleSnapshot, target_doc_id: int, lang: Lang) -> 
     if doc is None:
         return None
     labels = LABELS[lang]
-    index = _build_index(snap)
-    numbers = number_targets(index, labels)
-    renumbering = build_renumbering(index, labels)
+    # 결과물 C와 같은 계산 재료 — 번호·다시 매긴 글·묶음 키가 C 항목과 같아야 템플릿 보기가 C와 다른 것을 보이지 않는다
+    ctx = _build_c_context(snap, labels)
+    index, numbers = ctx.index, ctx.numbers
 
     def build_item(target: TargetInfo) -> ComposedItem:
         sources = list(target.source_unit_ids)
         if not sources and target.translation_source_unit_id in snap.units:
             sources = [target.translation_source_unit_id]
-        text = renumbering.texts.get(target.id) or target.confirmed_text or target.ai_text or " ".join(
+        text = ctx.texts.get(target.id) or target.confirmed_text or target.ai_text or " ".join(
             snap.units[uid].text for uid in sources if uid in snap.units
         )
         table = None
@@ -1740,12 +1744,13 @@ def build_composed_doc(snap: BundleSnapshot, target_doc_id: int, lang: Lang) -> 
             ]
             table = build_bundle_table(target.grid, cells)
         figure = _find_figure_block(snap, [target.new_unit_id] if target.new_unit_id else sources) if target.kind == "figure" else None
-        change = renumbering.changes.get(target.id)
+        change = ctx.changes.get(target.id)
         return ComposedItem(
             target_id=target.id, kind=target.kind, lang=target.lang, text=text, status=target.status,
             change_type=target.change_type, number=numbers.get(target.id),
-            source_unit_ids=sources, table=table, figure=figure,
-            caption=_pick_caption_text(index, target, renumbering.texts) if target.kind in BUNDLE_TARGET_KINDS else None,
+            number_style=_get_number_style(index, target), indent_level=target.indent_level,
+            meaning_key=_format_meaning_key(ctx, target), source_unit_ids=sources, table=table, figure=figure,
+            caption=_pick_caption_text(index, target, ctx.texts) if target.kind in BUNDLE_TARGET_KINDS else None,
             renumber=RenumberOut(from_label=change[0], to_label=change[1]) if change else None,
         )
 
