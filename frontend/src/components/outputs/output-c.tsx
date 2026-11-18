@@ -15,6 +15,8 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { Menu, MenuRadio } from "@/components/ui/menu";
 import { flashElement, useFlip } from "@/components/ui/motion";
 import { Tooltip } from "@/components/ui/tooltip";
+import { ViewSwitch } from "@/components/ui/view-switch";
+import { TemplateView } from "@/components/template/template-view";
 import type { EquisInfo, NumberStyle, OutputC, OutputCItem } from "@/lib/api-sop";
 import type { BoxDragConfig, DragCard, DragHover, DragPoint } from "@/lib/box-drag";
 import {
@@ -37,6 +39,7 @@ import { splitCTable } from "@/lib/composed-model";
 import { useI18n } from "@/lib/i18n";
 import { buildCLines, hasMergedSource, listMeaningStarts, type CLine } from "@/lib/output-groups";
 import { shouldRecenter } from "@/lib/paper-model";
+import type { TemplateTitles } from "@/lib/template-model";
 import { canChangeDepth, canChangeStyle, canIndent, getSectionDepths, listBullets, listCounted, readBulletSymbol, readIndentKey, readStyleChoices, type IndentDir } from "@/lib/section-number";
 import { canMoveTarget, readMoveKey, type MoveDir } from "@/lib/target-order";
 import { useBoxDrag } from "@/lib/use-box-drag";
@@ -478,10 +481,44 @@ interface OutputCViewProps {
   tobeHref?: string;
   /** "target:<새 문서 id>" → 그 문서 번호의 EQUIS 표시(결과물 B의 노드 id와 같은 열쇠) - 문서 머리에 붙인다 */
   equis?: ReadonlyMap<string, EquisInfo>;
+  /** 기본 | 템플릿 보기(MD 2 S5) - 넘기면 문서 머리에 전환이 생긴다. 템플릿은 보기만 한다(줄 끝 단추 · 끌기 없음) */
+  template?: OrderTemplate;
 }
 
-export function OutputCView({ data, onMove, onIndent, onMark, onPlace, resetKey = "c", tobeHref, equis }: OutputCViewProps) {
+export interface OrderTemplate {
+  on: boolean;
+  onChange: (on: boolean) => void;
+  titles: TemplateTitles;
+  /** "번역 없음" 자리를 누름 - 없으면 자리는 읽기만 한다 */
+  onMissing?: (source: OutputCItem) => void;
+}
+
+/** 문서 머리 - 번호 · 제목, 기본 | 템플릿 전환(있으면), EQUIS 표시, 문서 종류 칩. 머리가 좁으면 전환이 아이콘만 남는다(styles/template.css .c-doc-head) */
+function DocHead({ doc, equis, template }: { doc: Doc; equis: EquisInfo | undefined; template?: OrderTemplate }) {
   const { t } = useI18n();
+  return (
+    <header className="c-doc-head flex items-baseline gap-2 border-b border-line pb-2" style={{ fontFamily: "var(--font-ui)" }}>
+      <span className="font-mono text-[13px] font-semibold">{doc.code}</span>
+      <span className="min-w-0 font-semibold [overflow-wrap:anywhere]">{doc.title}</span>
+      {template && (
+        <span className="ml-auto flex shrink-0 self-center">
+          <ViewSwitch template={template.on} onChange={template.onChange} label={t("order.view")} testId="order-view" />
+        </span>
+      )}
+      {/* 긴 제목이 먼저 감기고 표시는 제 폭을 지킨다(머리의 절반까지, 넘으면 말줄임) */}
+      {equis && (
+        <span className={`${template ? "" : "ml-auto "}flex max-w-[50%] shrink-0 self-center`}>
+          <EquisStatus equis={equis} testId={`output-c-equis-${doc.target_doc_id}`} canEdit={false} />
+        </span>
+      )}
+      <span className={`tag ${equis || template ? "" : "ml-auto"}`}>{doc.doc_type.toUpperCase()}</span>
+    </header>
+  );
+}
+
+export function OutputCView({ data, onMove, onIndent, onMark, onPlace, resetKey = "c", tobeHref, equis, template }: OutputCViewProps) {
+  const { t } = useI18n();
+  const isTemplate = template?.on === true;
   const rootRef = useRef<HTMLDivElement>(null);
   const pendingMoveRef = useRef<PendingMove | null>(null);
   const dropLineRef = useRef<HTMLDivElement>(null);
@@ -771,8 +808,8 @@ export function OutputCView({ data, onMove, onIndent, onMark, onPlace, resetKey 
       clearDropPlan(false);
     },
   };
-  // 빈 C는 root를 그리지 않는다 - 문서가 생기면 다시 붙도록 조건에 넣는다
-  useBoxDrag(rootRef, onPlace && data.docs.length > 0 ? dragConfig : null);
+  // 빈 C는 root를 그리지 않는다 - 문서가 생기면 다시 붙도록 조건에 넣는다. 템플릿 보기는 보기만 하니 끌지 않는다
+  useBoxDrag(rootRef, onPlace && data.docs.length > 0 && !isTemplate ? dragConfig : null);
 
   if (data.docs.length === 0) {
     return (
@@ -795,24 +832,25 @@ export function OutputCView({ data, onMove, onIndent, onMark, onPlace, resetKey 
   return (
     // c-order - 줄 끝 단추가 용지 옆에 뜨는 틀. 용지 폭 상한은 CSS가 정한다(단추 한 칸 자리를 늘 남긴다)
     <div ref={rootRef} className={`grid gap-6 p-[var(--pad)] ${onMove ? "c-order" : ""}`} data-testid="output-c">
-      {blocks.map(({ doc, sections }, blockIndex) => {
+      {/* 템플릿 보기 - 줄·번호·순서는 아래 기본 보기와 같은 C이고 그리기만 다르다. 문서 머리는 종이 밖에 두어 전환이 늘 같은 자리에 있다 */}
+      {template?.on &&
+        data.docs.map((doc) => (
+          <article key={doc.target_doc_id} className="grid max-w-[760px] content-start gap-2" data-doc-id={doc.target_doc_id} data-testid={`output-c-template-${doc.target_doc_id}`}>
+            <DocHead doc={doc} equis={equis?.get(`target:${doc.target_doc_id}`)} template={template} />
+            <p className="text-xs text-ink-3" style={{ fontFamily: "var(--font-ui)" }} data-testid="order-template-note">
+              {t("order.template.note")}
+            </p>
+            <TemplateView doc={doc} titles={template.titles} onMissing={template.onMissing} renderBlock={(item) => <CItemView item={item} />} testId="order-tpl" />
+          </article>
+        ))}
+      {(isTemplate ? [] : blocks).map(({ doc, sections }, blockIndex) => {
         const docEquis = equis?.get(`target:${doc.target_doc_id}`);
         return (
         // data-doc-id·data-location-key·data-na - 끌기가 포인터 아래 용지·칸을 찾고 CSS가 끄는 동안 흐리게 할 칸을 고른다
         <article key={doc.target_doc_id} className={`sheet mx-0 ${onMove ? "" : "max-w-[760px]"}`} data-doc-id={doc.target_doc_id}>
           {/* 줄마다 자기 언어(lang)로 글꼴을 고른다 - 한 칸에 두 언어가 섞인다 */}
           <div className="pg">
-            <header className="flex items-baseline gap-2 border-b border-line pb-2" style={{ fontFamily: "var(--font-ui)" }}>
-              <span className="font-mono text-[13px] font-semibold">{doc.code}</span>
-              <span className="font-semibold">{doc.title}</span>
-              {/* 긴 제목이 먼저 감기고 표시는 제 폭을 지킨다(머리의 절반까지, 넘으면 말줄임) */}
-              {docEquis && (
-                <span className="ml-auto flex max-w-[50%] shrink-0 self-center">
-                  <EquisStatus equis={docEquis} testId={`output-c-equis-${doc.target_doc_id}`} canEdit={false} />
-                </span>
-              )}
-              <span className={`tag ${docEquis ? "" : "ml-auto"}`}>{doc.doc_type.toUpperCase()}</span>
-            </header>
+            <DocHead doc={doc} equis={docEquis} template={template} />
             {sections.map(({ sectionIndex, itemIndexes }) => {
               const section = doc.sections[sectionIndex];
               // 깊이·의미 선은 칸 전체 줄로 센다 - 아직 그리지 않은 줄도 앞줄 기준에 든다

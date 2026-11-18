@@ -4996,6 +4996,93 @@ await runStep("order: a line merged from several Old lines shows its source tag 
   }
 });
 
+// 템플릿 보기(MD 2 §S5 ③) - Order 문서 머리의 기본 | 템플릿 전환: 보기만 하는 화면(줄 끝 단추 · 끌기 없음), 줄과 번호는 기본 보기(C)와 같고, 문서 머리가 넘치지 않는다
+await runStep("order: template view switch draws the same lines view-only, with no row-end buttons and no drag", {}, async ({ page, takeShot }) => {
+  const headers = { "X-Dev-User": "qa.member" };
+  await page.goto(`${BASE}/bundles/${halfBundleId}/order`);
+  await wait(page, "output-c");
+  const basic = page.locator('[data-testid="order-view-basic"]');
+  const template = page.locator('[data-testid="order-view-template"]');
+  await template.waitFor({ timeout: T });
+  check("the switch sits in the document head and starts on Basic", (await basic.getAttribute("aria-pressed")) === "true" && (await page.locator('header.c-doc-head [data-testid="order-view"]').count()) === 1);
+  check("the basic view has row-end buttons and no template", (await page.locator('[data-testid^="output-c-acts-"]').count()) > 0 && (await page.locator('[data-testid="order-tpl"]').count()) === 0);
+  const docId = await page.locator('[data-testid="output-c"] article[data-doc-id]').first().getAttribute("data-doc-id");
+  const output = await (await page.request.get(`${BASE}/api/bundles/${halfBundleId}/outputs/c?lang=en`, { headers })).json();
+  const doc = output.docs.find((item) => String(item.target_doc_id) === docId);
+  await template.click();
+  await wait(page, "order-tpl");
+  check("the template is on and the basic rows are gone", (await template.getAttribute("aria-pressed")) === "true" && (await page.locator('[data-testid^="output-c-row-"]').count()) === 0);
+  check("the view-only note sits above the template", (await page.locator('[data-testid="order-template-note"]').innerText()).includes("view-only"));
+  check("no row-end buttons, menus or drag boxes in the template", (await page.locator('[data-testid^="output-c-acts-"], .c-more, [data-drag-box]').count()) === 0);
+  check("the app's table of contents and both halves are drawn", (await page.locator('[data-testid="order-tpl-toc"]').count()) === 1 && (await page.locator('[data-testid^="order-tpl-half-"]').count()) === 2);
+  // 줄은 기본 보기(C)와 같다 - 두 절반에 그려진 새 문장 id가 C 줄의 id 집합과 같다(번역 없음 자리는 id가 아니라 -miss-)
+  const expected = new Set(doc.sections.flatMap((section) => section.items.map((item) => item.target_id)));
+  const drawn = await page.locator('[data-testid^="order-tpl-"]').evaluateAll((els) => els.map((el) => /^order-tpl-(?:en|ko)-(\d+)$/.exec(el.getAttribute("data-testid"))?.[1]).filter(Boolean).map(Number));
+  check("the template holds exactly the lines Output C has", new Set(drawn).size === expected.size && drawn.every((id) => expected.has(id)), `${new Set(drawn).size}/${expected.size}`);
+  // 번호도 C와 같다 - 번호 줄의 앞 표시가 C 번호 그대로(1:2 짝의 남는 줄 · 따로 놓인 짝도 자기 C 번호)
+  const numbered = doc.sections.flatMap((section) => section.items).find((item) => item.number_style === "numbered" && item.number !== null && item.kind === "sentence");
+  if (numbered) {
+    // WI는 번호가 장 표의 라벨 칸(.tpl-wi-num)에 있다
+    const marks = await page.locator('[data-testid="order-tpl"] :is(.tpl-mark, .tpl-wi-num)').allInnerTexts();
+    check("a numbered line carries its Output C number", marks.some((text) => text.trim() === numbered.number), `${numbered.number} among ${marks.length} marks`);
+  }
+  // 머리 - 전환이 용지 밖으로 넘치지 않는다(1120 · 1280 창에서 같은 틀)
+  const head = await page.locator('header.c-doc-head').first().boundingBox();
+  const box = await page.locator('[data-testid="order-view"]').boundingBox();
+  check("the switch stays inside the document head", Boolean(head && box) && box.x >= head.x - 1 && box.x + box.width <= head.x + head.width + 1, JSON.stringify({ head, box }));
+  await takeShot("sop-order-template.png");
+  await page.reload();
+  await wait(page, "order-tpl");
+  check("after a reload the template view is still on", (await page.locator('[data-testid="order-view-template"]').getAttribute("aria-pressed")) === "true");
+  await page.locator('[data-testid="order-view-basic"]').click();
+  await wait(page, "output-c");
+  check("Basic brings the row-end buttons back", (await page.locator('[data-testid^="output-c-acts-"]').count()) > 0 && (await page.locator('[data-testid="order-tpl"]').count()) === 0);
+});
+
+// 번역 없음 자리(4-d) - 템플릿 보기에서만 보이고, 누르면 그 줄의 Old 출처를 고른 채 Assign이 열린다(Order에는 번역 만들기 · 직접 쓰기가 없다)
+await runStep("order: the No translation slot shows only in the template view and opens Assign on the Old line", {}, async ({ page }) => {
+  await page.goto(`${BASE}/bundles/${halfBundleId}/order`);
+  await wait(page, "output-c");
+  await page.locator('[data-testid="order-view-template"]').waitFor({ timeout: T });
+  check("the basic view draws no No translation slot", (await page.locator('[data-testid="output-c"] [class~="tpl-miss"]').count()) === 0 && (await page.locator('[data-testid="output-c"]').getByText("No translation").count()) === 0);
+  await page.locator('[data-testid="order-view-template"]').click();
+  await wait(page, "order-tpl");
+  const fill = page.locator('[data-testid^="order-tpl-"][data-testid$="-fill"]');
+  const docIds = await page.locator('[data-testid^="order-doc-"]').evaluateAll((els) => els.map((el) => el.getAttribute("data-testid").replace("order-doc-", "")));
+  let found = (await fill.count()) > 0;
+  for (const docId of docIds) {
+    if (found) break;
+    await page.locator(`[data-testid="order-doc-${docId}"]`).click();
+    await wait(page, "order-tpl");
+    found = (await fill.count()) > 0;
+  }
+  if (!found) {
+    check("no No translation slot in this bundle (nothing to open)", true);
+    await page.locator('[data-testid="order-view-basic"]').click();
+    return;
+  }
+  const slot = fill.first();
+  await slot.scrollIntoViewIfNeeded({ timeout: T });
+  check("the slot is an orange dashed box", await slot.evaluate((el) => getComputedStyle(el).borderStyle === "dashed"));
+  await slot.click();
+  await page.waitForURL(/\/bundles\/\d+\/assign/, { timeout: T });
+  await wait(page, "assign-bar");
+  // 출처 없는 New 문장(새로 쓴 줄)의 자리면 고를 Old 줄이 없어 Assign 처음으로 간다 - 주소에 줄이 있을 때만 고름을 본다
+  if (new URL(page.url()).search === "") {
+    check("a line with no Old source opens Assign at its start", true);
+  } else {
+    const picked = await page
+      .waitForFunction(() => document.querySelectorAll('[data-pane="old"] [data-sel]').length > 0, null, { timeout: 5000 })
+      .then(() => true, () => false);
+    check("Assign opens with the Old line picked", picked);
+  }
+  // 이 브라우저의 보기 기억을 되돌린다 - 뒤 장면은 기본 보기로 연다
+  await page.goto(`${BASE}/bundles/${halfBundleId}/order`);
+  await wait(page, "output-c");
+  await page.locator('[data-testid="order-view-basic"]').click();
+  await wait(page, "output-c");
+});
+
 await runStep("order: Alt+ArrowDown moves the picked line and keeps it picked", {}, async ({ page }) => {
   await page.goto(`${BASE}/bundles/${halfBundleId}/order`);
   await wait(page, "output-c");

@@ -4,6 +4,11 @@
 
 ## 2026-11-18
 
+- **Order 템플릿 보기(v1.1.41, `feat/order-template-view`, MD 2 §S5 ③ · 4-a · 4-d)** — Order 문서 머리(번호 · 제목 줄 오른쪽, 문서 종류 칩 앞)에 **Basic | Template** 전환(`sopa.order.template`). Assign과 같은 부품 `components/ui/view-switch.tsx`로 뽑아 둘이 함께 쓴다 — 좁은 머리는 컨테이너 쿼리로 아이콘만(`.c-doc-head`). 템플릿은 보기만 한다: 위에 안내 한 줄, 줄 끝 단추 · 끌기 없음, 같은 `TemplateView`(branch 11)에 C 문서를 그대로 넘기니 번호는 C 번호다. "번역 없음" 자리는 템플릿에서만 보인다.
+  - 결정(최소·되돌리기 쉬운 쪽): Order에는 번역 만들기 · 직접 쓰기가 없어, 자리를 누르면 그 줄의 Old 출처(`getGroupByTarget` 첫 단위)를 고른 채 Assign을 연다(`getAssignSourceHref`) — 포커스를 번역 만들기 단추까지 옮기지는 않는다. 작성자만 누를 수 있다. To-Be를 받기 전에는 전환이 없다(이름 사전 때문).
+  - 확인: vitest 1,460 · lint · tsc. 스모크 `order: template view switch …` · `order: the No translation slot …` 둘은 써 두고 돌리지 않았다.
+  - 메인 세션 확인(dev v1.1.40을 합친 뒤): vitest · lint · tsc, `order:` · `outputs` 스모크 330 통과 — 실패 1은 스모크가 고른 "번역 없음" 자리가 Old 출처 없는 줄이라 Assign 처음으로 간 것(명세대로) → 주소에 줄이 있을 때만 고름을 보게 고쳤다. 1120에서 문서 머리가 넘치지 않는 것을 쟀다. 남은 다듬을 것: 출처 없는 줄의 "번역 없음" 자리는 Order에서 누를 곳이 Assign 처음뿐이다, 자리 툴팁 글이 Assign 기준이다.
+
 - **템플릿 보기 끌어 놓기(v1.1.40, `feat/template-dnd`, MD 1 §10 브랜치 12 — F9 끌어 놓기)** — Old 조각을 New 칸 템플릿 보기에 놓으면 기본 보기와 같은 저장 · 바로 확정 · Undo다. 판단은 새 순수 모델 `lib/place-spot-model.ts`(자리 목록 — 칸 자리 · 줄 사이 · 앱이 만드는 것 → 갈 칸 + `position` + 꼬리표 번호 + 못 놓는 까닭) 하나이고, 줄 사이는 `resolveGapDrop`을 그대로 불러 기본 보기와 답이 같다(시험으로 맞춤). 다음 브랜치 e(클릭 배치)가 같은 모델을 쓴다.
   - 칸 자리(장·절 제목 · 범주 행 · 빈 칸 · 3·4장 표 머리)는 칸 끝(마지막 줄 뒤, 빈 칸은 자리 없음), 줄 위는 묶음 앞·뒤에 선 + "after 6.1.1 (becomes 6.1.2)". 거절: 묶음 제목(7 · 7.1) · 7.2 · 목차 · 표지 · 2장 빈 표 · 8장 Attachment 1 + 기본 보기의 N/A · 같은 칸. 6 · 9장 머리는 그대로 받는다(사용자 결정 C), 선언한 부록이 없는 9장은 꼬리표에 알림만.
   - 끄는 동안 칠하기는 시작 때 DOM에 `data-tpl-open`을 바로 단다(움직일 때 React를 다시 그리지 않음 — 시작·끝에 결정 칸 안내 글 상태만 바뀜). 확인: vitest 1,476 · lint · tsc. 스모크 `assign: template view drag …` 둘은 써 두고 돌리지 않았다.
