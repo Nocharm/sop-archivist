@@ -404,6 +404,8 @@ export interface ViewUnit {
   ref: UnitRefMark | null;
   /** 이 단위의 글이 가리키는 표·그림("표 3"·"아래 표") - 캡션 자기 머리 번호는 빠진다 */
   caption_refs: ViewCaptionRef[];
+  /** 잡음 표시 - "toc"면 목차 줄: 배정 줄이 없고(남은 수에서 빠짐) Assign 용지가 목차 블록으로 접는다. 편집 clear_noise가 비운다 */
+  noise_kind?: "toc" | null;
 }
 
 /** 표·그림 참조 하나 - number가 null이면 위치 참조("아래 표"), target_unit_id는 이은 표·그림 묶음 단위(못 찾으면 null) */
@@ -474,7 +476,9 @@ export type EditOp =
   /** 참조 줄로 - 번호는 그 단위의 글 안에 있어야 한다. 이미 참조 줄이면 번호만 고친다 */
   | { type: "set_ref"; unit_id: number; number: string }
   /** 참조 아님 - 참조 줄이면 그 전 언어로 돌리고, 제안뿐이었으면 다시 제안하지 않는다 */
-  | { type: "clear_ref"; unit_id: number };
+  | { type: "clear_ref"; unit_id: number }
+  /** 목차 아님(줄 하나) · 모두 목차 아님(블록 전체) - 잡음 표시만 비운다(단위는 그대로, 되돌리기가 다시 붙인다) */
+  | { type: "clear_noise"; unit_ids: number[] };
 
 export interface EditResult {
   document_revision: number;
@@ -1201,6 +1205,8 @@ export interface OutputARow {
   confirmed_at: string | null;
   group_id: string | null;
   warnings: Array<Record<string, string>>;
+  /** "toc"면 목차 줄 - 보낸 곳 Deleted, status "deleted"(판단 상태가 아니다), 저절로 */
+  noise_kind?: string | null;
 }
 
 export interface FlowGraph {
@@ -1296,6 +1302,8 @@ export interface OutputSummary {
   translated: number;
   confirmed_rate: number;
   single_language: number;
+  /** 목차 · 저절로 삭제 - 목차 줄 수(old_rows·assigned에 들고 deleted에는 들지 않는다) */
+  toc_deleted: number;
 }
 
 export function getOutputA(bundleId: number, labelLang: OutputLang): Promise<OutputARow[]> {
