@@ -160,7 +160,7 @@ import {
 } from "@/lib/assign-model";
 import { buildAssignMenu, getPairPickBlocker, getPairSetBlocker, planAssignJoin, planShapeMode, type AssignMenuAction, type AssignMenuGroups } from "@/lib/assign-context-menu-model";
 import { listHeadingBackUnits } from "@/lib/heading-shift-model";
-import { countDecidedLines, getTableNumber, getUnitUnwrapTable } from "@/lib/unwrap-model";
+import { countDecidedLines, getTableNumber, getUnitUnwrapTable, listUnwrapScopes } from "@/lib/unwrap-model";
 import { resolveLineParam } from "@/lib/assign-line-param";
 import { readAssignView, writeAssignView } from "@/lib/assign-view-prefs";
 import { loadBundle, useBundle } from "@/lib/bundle-store";
@@ -1331,7 +1331,10 @@ export default function AssignPage() {
       // (F10, 화면 안만 움직이고 움직임 줄이기면 번쩍임만). 캡션은 글이 캡션 자리로 미끄러져 들어간다. 알림은 전환 뒤
       const docId = shapeView.document.id;
       const current = views.data ?? [];
-      const motion = op.type === "set_layout_table" ? { scopes: [`t${op.table_id}`], reverse: !op.is_layout } : getCaptionMotion(op, followId);
+      // 표는 바로 안쪽 띠 표도 함께 제목 줄 ↔ 표로 바뀐다(F2)
+      const motion = op.type === "set_layout_table"
+        ? { scopes: listUnwrapScopes(new Map(shapeView.tables.map((table) => [table.id, table])), op.table_id), reverse: !op.is_layout }
+        : getCaptionMotion(op, followId);
       if (motion !== null && current.some((view) => view.document.id === docId)) {
         const fresh = await getDocumentView(bundleId, docId);
         isReloaded = true;
@@ -1361,7 +1364,7 @@ export default function AssignPage() {
     const op: EditOp = { type: "set_layout_table", table_id: tableId, is_layout: false };
     const okText = t("assign.unwrap.didRewrap");
     // 판단이 풀릴 줄이 있으면 서버에 보내기 전에 확인창부터 - 확인하면 confirm을 켜고 보낸다(409를 거쳐 되묻지 않는다)
-    const decided = paperModel ? countDecidedLines(paperModel.units.values(), tableId, (unitId) => unitMap.get(unitId)?.status) : 0;
+    const decided = paperModel ? countDecidedLines(paperModel.units.values(), tableId, (unitId) => unitMap.get(unitId)?.status, paperModel.tables) : 0;
     if (decided > 0) setEditConfirm({ count: decided, retry: { kind: "edit", op, okText, followId: null } });
     else void runUnitEdit(op, okText, null);
   }

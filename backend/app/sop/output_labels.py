@@ -18,6 +18,7 @@ class OutputLabels:
     figure: str
     band_table: str  # 띠 표 제목 줄의 위치(자리) — 번호는 절 칸에, 원문 칸은 제목만(F4 · F11)
     cell_template: str  # {table} {row} {col}
+    nested_separator: str  # 안쪽 표 위치의 앞붙이 — 바깥 칸과 안쪽 자리 사이(F2 · F11, "표 3 · 1행 1열 › 표 4 · 2행 1열")
     table_template: str  # {table}
     table_row_template: str  # {table} {row}
     table_source_template: str  # 결과물 A 표 줄의 원문 칸 — {table} {rows} {cols}
@@ -50,6 +51,7 @@ LABELS = {
         figure="그림",
         band_table="띠 표",
         cell_template="표 {table} · {row}행 {col}열",
+        nested_separator=" › ",
         table_template="표 {table}",
         table_row_template="표 {table} · {row}행",
         table_source_template="[표 {table}, {rows}×{cols}]",
@@ -83,6 +85,7 @@ LABELS = {
         figure="Figure",
         band_table="Band table",
         cell_template="Table {table} · R {row} C {col}",
+        nested_separator=" › ",
         table_template="Table {table}",
         table_row_template="Table {table} · R {row}",
         table_source_template="[Table {table}, {rows}×{cols}]",

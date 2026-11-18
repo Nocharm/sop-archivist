@@ -23,7 +23,7 @@ import { isNoiseUnit } from "@/lib/classify-model";
 import { useI18n } from "@/lib/i18n";
 import { pickNearChunks, sliceCards } from "@/lib/paper-chunk-model";
 import { buildFoldPlan, type FoldEntry, type FoldItem, type FoldOpen } from "@/lib/paper-fold-model";
-import { buildRows, foldCaptionRows, getBundleHeader, getGapMerge, getMarks, getTags, isBandHeading, MERGE_BLOCKER_KEYS, resolvePickUnit, type CaptionPiece, type PaperItem, type PaperModel, type PaperRow, type Segment, type UnitMark } from "@/lib/paper-model";
+import { buildRows, foldCaptionRows, getBundleHeader, getGapMerge, getItemSegments, getMarks, getTags, isBandHeading, MERGE_BLOCKER_KEYS, resolvePickUnit, type CaptionPiece, type PaperItem, type PaperModel, type PaperRow, type Segment, type UnitMark } from "@/lib/paper-model";
 import type { JoinKind, JoinPlan } from "@/lib/split-menu-model";
 import { getHiddenEnds, listFollowPreview } from "@/lib/number-model";
 import { getCardTops, getHiddenPrefixLength, getPairBrackets, getPillWidth, getSectionHeads, getTabWidths, getSectionLevel, getSectionPill, getVisibleSkip, sliceVisible, type PairBracket } from "@/lib/strip-pill-model";
@@ -489,7 +489,7 @@ export function Paper({
     return getTabWidths(rows);
   }, [sections, cardTops, model]);
   // 벗긴 표의 줄 덩이마다 첫 줄 - 그 줄 위에 묶음 머리("↺ 다시 표로")를 단다(F1). 부분마다 문서 순서로
-  const unwrapHeads = useMemo(() => new Map(sections.flatMap((section) => [...findUnwrapHeads(section.rows, model.unwrapped)])), [sections, model]);
+  const unwrapHeads = useMemo(() => new Map(sections.flatMap((section) => [...findUnwrapHeads(section.rows, model.unwrapped, model.tables)])), [sections, model]);
   // 표 칸 안의 조각 줄 - 칸이 많은 표에서 고를 때마다 다시 펴지 않게
   const cellRows = useMemo(() => {
     const map = new Map<number, PaperRow[]>();
@@ -920,9 +920,10 @@ export function Paper({
     if (item.type === "table") return <Fragment key={`t${item.table.id}`}>{renderTable(item)}</Fragment>;
     const { block } = item;
     if (block.kind === "figure") return <Fragment key={block.id}>{renderFigure(block)}</Fragment>;
+    // 벗긴 바깥 칸이 안쪽 표 자리에서 둘로 나뉜 조각이면 그 범위의 글만(F2)
     return (
-      <p key={block.id} data-block={block.id} className={block.heading_level !== null ? "h" : undefined}>
-        {renderBlockText(block)}
+      <p key={item.range ? `${block.id}-${item.range[0]}` : block.id} data-block={block.id} className={block.heading_level !== null ? "h" : undefined}>
+        {getItemSegments(item, model.segments).map((segment, index) => renderSegment(block, segment, index))}
       </p>
     );
   }
@@ -961,7 +962,7 @@ export function Paper({
     const foot = note ? <div className="strip-foot">{note}</div> : null;
     const isHold = unit !== undefined && getTags({ ...unit, status: strips?.statusOf?.(unit.id) ?? unit.status }).hold;
     // 벗긴 표의 줄은 왼쪽 세로선 하나(F1), 표 줄과 벗긴 줄은 풀기 전환이 바꾸는 곳(data-unwrap-scope)이다
-    const unwrapTable = getRowUnwrapTable(row, model.unwrapped);
+    const unwrapTable = getRowUnwrapTable(row, model.unwrapped, model.tables);
     const scopeTable = row.type === "table" ? row.item.table.id : unwrapTable;
     return (
       <div
@@ -1023,8 +1024,8 @@ export function Paper({
 
   /** 두 조각 사이 틈 */
   function renderGap(prev: PaperRow, row: PaperRow): ReactNode {
-    const unwrapTable = getRowUnwrapTable(row, model.unwrapped);
-    const hasRail = unwrapTable !== null && unwrapTable === getRowUnwrapTable(prev, model.unwrapped);
+    const unwrapTable = getRowUnwrapTable(row, model.unwrapped, model.tables);
+    const hasRail = unwrapTable !== null && unwrapTable === getRowUnwrapTable(prev, model.unwrapped, model.tables);
     return (
       <div
         className="strip-gap"

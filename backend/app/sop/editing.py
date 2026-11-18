@@ -1127,14 +1127,50 @@ async def _plan_set_layout_table(
     그 줄의 번호가 된다(_find_number_joins). 레이아웃 → 데이터: 새 표 단위에 칸 문장을 묶는다 — 번호를 받은 줄은 그대로 한 줄로
     묶인다(표 안에서는 보이는 모양이 같다, 되돌리기는 Ctrl+Z가 처음 모양으로 돌린다).
 
-    칸 안의 표는 따로 바뀐다(table_id가 다르다). 이미 그 표시면 바뀌는 게 없다. 띠 표는 단위 모양이 바뀐다(_plan_band_layout).
+    칸 안의 표는 따로 바뀐다(table_id가 다르다, 누른 표만 — F2). 다만 바로 안쪽의 띠 표는 바깥 표를 벗기면 함께 제목 줄이 되고
+    다시 묶으면 함께 표로 돌아간다(F2 · F4, 한 편집이라 Ctrl+Z 한 번). 이미 그 표시면 바뀌는 게 없다. 띠 표는 단위 모양이
+    바뀐다(_plan_band_layout).
     """
     table = await _load_table(session, extraction_id, op.table_id)
     if table.is_layout == op.is_layout:
         return _Change()
     if is_band_table(table.signals):
         return await _plan_band_layout(session, document_id, extraction_id, table, op.is_layout)
-    if op.is_layout:
+    change = await _plan_plain_layout(session, extraction_id, table, op.is_layout)
+    inner_tables = (
+        await session.scalars(
+            select(SourceTable)
+            .where(
+                SourceTable.extraction_id == extraction_id, SourceTable.parent_table_id == table.id,
+                SourceTable.is_layout != op.is_layout,
+            )
+            .order_by(SourceTable.table_index)
+        )
+    ).all()
+    for band in inner_tables:
+        if is_band_table(band.signals):
+            _merge_change(change, await _plan_band_layout(session, document_id, extraction_id, band, op.is_layout))
+    return change
+
+
+def _merge_change(change: _Change, other: _Change) -> None:
+    """other를 change에 더한다 — 표 벗기기와 안쪽 띠 표 바꾸기를 한 편집으로. 같은 변경 안 표 단위를 가리키는 순번(group_draft)은 민다."""
+    offset = len(change.drafts)
+    for draft in other.drafts:
+        if draft.group_draft is not None:
+            draft.group_draft += offset
+    change.retire = sorted({*change.retire, *other.retire})
+    change.drafts.extend(other.drafts)
+    change.retired_shapes.extend(other.retired_shapes)
+    change.regroup.update(other.regroup)
+    change.layouts.update(other.layouts)
+
+
+async def _plan_plain_layout(
+    session: AsyncSession, extraction_id: ExtractionId, table: SourceTable, to_layout: bool
+) -> _Change:
+    """띠 표가 아닌 표 하나의 데이터 ↔ 레이아웃(_plan_set_layout_table의 몸통)."""
+    if to_layout:
         groups = await _load_table_units(session, extraction_id, table.id, TABLE_UNIT_KINDS)
         members = await _load_grouped_cells(session, [group.id for group in groups])
         # 레이아웃 표의 캡션은 보통 문장으로 돌아간다(명세 §3.1) — 같은 범위·언어의 묶이지 않은 문장 단위로 바꾼다
@@ -1163,7 +1199,7 @@ async def _plan_set_layout_table(
             drafts=[_build_group_draft("table", table.id, None, min(first_seqs.values()), dict.fromkeys(own))]
             if first_seqs else []
         )
-    change.layouts = {table.id: (table.is_layout, op.is_layout)}
+    change.layouts = {table.id: (table.is_layout, to_layout)}
     return change
 
 

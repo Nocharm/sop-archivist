@@ -58,6 +58,9 @@ NUMBERS_SIGNAL = "numbers"
 NUMBER_CELL = "cell"
 # docx_reader.SIGNAL_BAND와 같은 값 — 띠 표(1행 3칸: 번호 칸 | 빈 칸 | 제목 칸)의 표 신호 {"number", "level"}
 BAND_SIGNAL = "band"
+# docx_reader.SIGNAL_PLACE·SIGNAL_PARAS와 같은 값 — 안쪽 표의 바깥 칸 자리 {"row", "col", "para"}와 칸 안 문단 시작 자리
+PLACE_SIGNAL = "place"
+PARAS_SIGNAL = "paras"
 NEUTRAL = "neutral"
 # 제목다움(F8b · 설계 2d) — 라벨 뒤 글이 이보다 길고 마침표로 끝나는 "제목"은 문장이다. 합성 자료로 잡은 값이다(실제 SOP 시험 뒤 다시 정한다)
 HEADING_SENTENCE_MIN_CHARS = 60
@@ -263,6 +266,21 @@ def is_certain_band(signals: Mapping[str, object] | None, parent_table_id: int |
 def is_band_heading(kind: str, table_id: int | None) -> bool:
     """띠 표 제목 줄인가 — 제목 단위 가운데 원문 표를 가리키는 것은 벗긴 띠 표에서 나온 것뿐이다(표 칸 문단은 제목 스타일이어도 칸 문장)."""
     return kind == "heading" and table_id is not None
+
+
+def read_table_place(signals: Mapping[str, object] | None) -> tuple[int, int, int] | None:
+    """안쪽 표가 바깥 칸에서 놓인 자리 (행, 격자 열, 그 칸에서 표 앞에 있던 문단 수) — 바깥 표·추출기 5 전의 추출은 None(F2)."""
+    place = (signals or {}).get(PLACE_SIGNAL)
+    if not isinstance(place, Mapping):
+        return None
+    return int(place["row"]), int(place["col"]), int(place["para"])
+
+
+def find_anchor_offset(cell_text: str, cell_signals: Mapping[str, object] | None, para: int) -> int:
+    """바깥 칸 블록 글에서 안쪽 표가 놓인 글자 자리 — 표 앞 문단이 para개면 para번째 문단의 시작, 모든 문단 뒤면 글 길이(F2).
+    칸 안 문단 시작 자리(신호 paras)는 문단이 둘 이상일 때만 남으니 없으면 문단 하나(0에서 시작)다."""
+    starts = list((cell_signals or {}).get(PARAS_SIGNAL) or [0])
+    return int(starts[para]) if para < len(starts) else len(cell_text)
 
 
 @dataclass(frozen=True)

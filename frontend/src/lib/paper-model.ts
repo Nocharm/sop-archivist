@@ -10,7 +10,8 @@ export interface Segment {
 }
 
 export type PaperItem =
-  | { type: "block"; block: ViewBlock }
+  /** range가 있으면 블록의 그 글자 범위만 - 벗긴 바깥 칸이 안쪽 표 자리에서 둘로 나뉜 조각(F2, orderBlockPieces) */
+  | { type: "block"; block: ViewBlock; range?: readonly [number, number] }
   | { type: "table"; table: ViewTable; rows: ViewBlock[][]; unitId: number | null };
 
 /** 부분 묶음 하나의 용지 내용 - key는 블록의 part_group */
@@ -35,6 +36,8 @@ export interface PaperModel {
   hasNumberRanges: boolean;
   /** 벗긴 표(레이아웃 표) - 칸이 표가 아니라 보통 문장 줄로 놓인다(lib/unwrap-model, MD 1 F1) */
   unwrapped: ReadonlyMap<number, ViewTable>;
+  /** 모든 원문 표 - 안쪽 표의 바깥 표(parent_table_id)를 따라 올라갈 때 쓴다(F2) */
+  tables: ReadonlyMap<number, ViewTable>;
 }
 
 const TOP_PARTS = new Set(["header"]);
@@ -90,7 +93,9 @@ export function buildPaperModel(view: DocumentView): PaperModel {
   const groups = new Map<string, PaperGroup>();
   const seenTables = new Set<number>();
   const blocks = [...view.blocks].sort((a, b) => a.seq - b.seq);
-  for (const block of blocks) {
+  const pieces = orderBlockPieces(blocks, tables, unwrapped);
+  for (const piece of pieces) {
+    const { block } = piece;
     const edge = TOP_PARTS.has(block.part) ? header : BOTTOM_PARTS.has(block.part) ? footer : body;
     const groupKey = block.part_group || block.part;
     const group = groups.get(groupKey) ?? { key: groupKey, part: block.part, items: [] };
@@ -103,7 +108,7 @@ export function buildPaperModel(view: DocumentView): PaperModel {
     }
     // 벗긴 표의 칸은 표로 묶지 않고 문단처럼 제자리(원문 순 = 행 → 왼쪽부터)에 놓는다 - 칸 줄이 보통 문장 카드가 된다(F1)
     if (block.kind === "table_cell" && block.table_id !== null && !unwrapped.has(block.table_id)) {
-      // 표는 첫 칸 자리에 통째로 - 안쪽 표는 바깥 칸 안에서 그리지 않고 바로 뒤에 둔다(1차)
+      // 표는 첫 칸 자리에 통째로 - 데이터 표 안의 표는 바깥 칸 안에 그리지 않고 바로 뒤에 둔다. 바깥 표를 벗기면 칸 글 사이 제 자리다(F2)
       if (seenTables.has(block.table_id)) continue;
       seenTables.add(block.table_id);
       const table = tables.get(block.table_id);
@@ -115,14 +120,85 @@ export function buildPaperModel(view: DocumentView): PaperModel {
       target.push({ type: "table", table, rows, unitId: tableUnit.get(table.id) ?? null });
       continue;
     }
-    target.push({ type: "block", block });
+    const isWhole = piece.start === 0 && piece.end === block.text.length;
+    target.push(isWhole ? { type: "block", block } : { type: "block", block, range: [piece.start, piece.end] });
   }
 
+  // J/K 순서도 용지 순서 - 안쪽 표를 칸 글 사이로 옮겼으면 그 표의 줄이 칸의 뒤 문단보다 먼저다
+  const rank = rankPieces(pieces);
+  const readRank = (unit: ViewUnit) => {
+    const [blockId, start] = unit.spans[0] ?? [unit.block_id, 0];
+    return rank.get(blockId)?.findLast((entry) => entry.start <= start)?.rank ?? 0;
+  };
+  const unitRank = new Map(view.units.map((unit) => [unit.id, readRank(unit)]));
   const order = [...view.units]
     .filter((unit) => unit.kind !== "table_row" || unit.spans.length > 0)
-    .sort((a, b) => a.pos_seq - b.pos_seq || (a.spans[0]?.[1] ?? 0) - (b.spans[0]?.[1] ?? 0) || a.id - b.id)
+    .sort((a, b) => (unitRank.get(a.id) ?? 0) - (unitRank.get(b.id) ?? 0) || a.pos_seq - b.pos_seq || (a.spans[0]?.[1] ?? 0) - (b.spans[0]?.[1] ?? 0) || a.id - b.id)
     .map((unit) => unit.id);
-  return { header, body, footer, groups: [...groups.values()], segments, units, order, hasNumberRanges: view.has_number_ranges, unwrapped };
+  return { header, body, footer, groups: [...groups.values()], segments, units, order, hasNumberRanges: view.has_number_ranges, unwrapped, tables };
+}
+
+/** 용지에 놓을 블록 조각 하나 - 블록 글의 [start, end) */
+export interface BlockPiece {
+  block: ViewBlock;
+  start: number;
+  end: number;
+}
+
+/**
+ * 블록(원문 순) → 용지에 놓을 조각 순서. 보통은 블록 하나가 조각 하나다. 벗긴 바깥 표의 칸 안에 든 안쪽 표는(그 안의 표·그림까지)
+ * 바깥 칸 글을 그 표가 놓였던 자리(anchor.at, 서버가 신호 place로 정한다)에서 둘로 나눈 사이로 옮긴다 - 추출은 안쪽 표를 칸의 모든
+ * 문단 뒤에 내기 때문이다(F2). 칸 끝 뒤에 놓였던 표는 원문 순 그대로가 이미 그 자리라 옮기지 않는다. 바깥 표가 데이터 표면 표 통째로
+ * 그리니 옮기지 않는다. 몇 겹이든 바깥부터(표 순번) 같은 규칙이다.
+ */
+export function orderBlockPieces(blocks: readonly ViewBlock[], tables: ReadonlyMap<number, ViewTable>, unwrapped: ReadonlyMap<number, ViewTable>): BlockPiece[] {
+  let pieces: BlockPiece[] = blocks.map((block) => ({ block, start: 0, end: block.text.length }));
+  const anchored = [...tables.values()]
+    .filter((table) => table.anchor !== null && table.parent_table_id !== null && unwrapped.has(table.parent_table_id))
+    .sort((a, b) => a.table_index - b.table_index);
+  for (const table of anchored) {
+    const { block_id: hostId, at } = table.anchor!;
+    const inside = listTableSubtree(tables, table.id);
+    const moved = pieces.filter((piece) => piece.block.table_id !== null && inside.has(piece.block.table_id));
+    const rest = pieces.filter((piece) => !(piece.block.table_id !== null && inside.has(piece.block.table_id)));
+    const index = rest.findIndex((piece) => piece.block.id === hostId && piece.start <= at && at < piece.end);
+    if (moved.length === 0 || index < 0) continue;
+    const host = rest[index];
+    const before = at > host.start ? [{ ...host, end: at }] : [];
+    pieces = [...rest.slice(0, index), ...before, ...moved, { ...host, start: at }, ...rest.slice(index + 1)];
+  }
+  return pieces;
+}
+
+/** 표와 그 안의 표들(몇 겹이든) id */
+export function listTableSubtree(tables: ReadonlyMap<number, ViewTable>, tableId: number): Set<number> {
+  const inside = new Set([tableId]);
+  let grew = true;
+  while (grew) {
+    grew = false;
+    for (const table of tables.values()) {
+      if (table.parent_table_id !== null && inside.has(table.parent_table_id) && !inside.has(table.id)) {
+        inside.add(table.id);
+        grew = true;
+      }
+    }
+  }
+  return inside;
+}
+
+/** 블록 → 그 블록 조각들의 (시작 자리, 용지 차례) - 시작 자리 순 */
+function rankPieces(pieces: readonly BlockPiece[]): Map<number, Array<{ start: number; rank: number }>> {
+  const rank = new Map<number, Array<{ start: number; rank: number }>>();
+  pieces.forEach((piece, index) => rank.set(piece.block.id, [...(rank.get(piece.block.id) ?? []), { start: piece.start, rank: index }].sort((a, b) => a.start - b.start)));
+  return rank;
+}
+
+/** 용지 항목의 글자 조각 - 블록 일부(range)면 그 범위에서 시작하는 조각만 */
+export function getItemSegments(item: Extract<PaperItem, { type: "block" }>, segments: ReadonlyMap<number, Segment[]>): Segment[] {
+  const all = segments.get(item.block.id) ?? [];
+  if (!item.range) return all;
+  const [start, end] = item.range;
+  return all.filter((segment) => segment.start >= start && segment.start < end);
 }
 
 /**
@@ -322,7 +398,7 @@ export function buildRows(items: readonly PaperItem[], segments: ReadonlyMap<num
       continue;
     }
     const { block } = item;
-    const blockSegments = segments.get(block.id) ?? [];
+    const blockSegments = getItemSegments(item, segments);
     if (block.kind === "figure") {
       rows.push({ type: "figure", key: `f${block.id}`, block, unitId: blockSegments.find((segment) => segment.unitId !== null)?.unitId ?? null });
       open = null;

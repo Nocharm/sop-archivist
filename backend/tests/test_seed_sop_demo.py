@@ -14,7 +14,17 @@ from fastapi.testclient import TestClient
 
 from app.settings import settings
 from app.sop.refs import is_document_number
-from scripts.seed_sop_demo import TOC_AFTER, TOC_EN, TOC_KO, TOC_TITLE, DemoStage, drive_stage, find_seed_refusal, main
+from scripts.seed_sop_demo import (
+    NESTED_TITLE,
+    TOC_AFTER,
+    TOC_EN,
+    TOC_KO,
+    TOC_TITLE,
+    DemoStage,
+    drive_stage,
+    find_seed_refusal,
+    main,
+)
 from scripts.synthetic_sop import BALANCE, LEVEL_BENCH, MOVE_TARGET_CODE, build_synthetic_bundle
 from tests.fake_ai import fake_ai_session
 from tests.sop_helpers import AUTHOR
@@ -29,6 +39,7 @@ EXPECTED_BUNDLES = [
     ("SYNTHETIC 5 UV 분광광도계", "in_progress"),
     ("SYNTHETIC 6 문서 관리", "in_progress"),
     (TOC_TITLE, "in_progress"),
+    (NESTED_TITLE, "in_progress"),
 ]
 DOCUMENTS_PER_BUNDLE = 9  # 옛 문서 7개 + 입구 2 새 문서 2개
 
@@ -105,7 +116,7 @@ def test_seed_creates_bundles_at_stages(seed_runs: SeedRuns) -> None:
     assert [(title, status) for _, title, status in bundles] == EXPECTED_BUNDLES
     ids = [bundle_id for bundle_id, _, _ in bundles]
     documents = _query(database_path, "SELECT bundle_id, count(*) FROM documents GROUP BY bundle_id ORDER BY bundle_id")
-    assert documents == [(bundle_id, DOCUMENTS_PER_BUNDLE) for bundle_id in ids[:4]] + [(ids[4], 1), (ids[5], 1), (ids[6], 1)]
+    assert documents == [(bundle_id, DOCUMENTS_PER_BUNDLE) for bundle_id in ids[:4]] + [(bundle_id, 1) for bundle_id in ids[4:]]
     confirmed = dict(_query(
         database_path,
         "SELECT bundle_id, count(*) FROM unit_decisions WHERE status = 'confirmed' GROUP BY bundle_id",
@@ -169,6 +180,22 @@ def test_toc_bundle_marks_its_contents_lines(seed_runs: SeedRuns) -> None:
     decided = f"SELECT count(*) FROM unit_decisions WHERE bundle_id = {bundle_id} AND status != 'unassigned'"
     assert _query(database_path, decided) == [(0,)]
     assert TOC_AFTER not in first.stdout
+
+
+def test_nested_bundle_has_inner_tables_in_one_work_table(seed_runs: SeedRuns) -> None:
+    """표 안 표 묶음 — 작업 표 하나의 칸 안에 띠 표 · 값 표 · 권한 표가 들고(안쪽 표 자리 신호 포함) 판단은 없다(Assign 표 안 표 스모크가 쓴다)."""
+    database_path, _, _, bundles = seed_runs
+    (bundle_id,) = [bundle_id for bundle_id, title, _ in bundles if title == NESTED_TITLE]
+
+    tables = _query(database_path, f"""
+        SELECT t.table_index, t.parent_table_id IS NOT NULL, t.signals LIKE '%"place"%', t.is_layout FROM source_tables t
+        JOIN extractions e ON e.id = t.extraction_id JOIN documents d ON d.id = e.document_id
+        WHERE d.bundle_id = {bundle_id} ORDER BY t.table_index
+    """)
+
+    assert tables == [(0, 0, 0, 0), (1, 1, 1, 0), (2, 1, 1, 0), (3, 1, 1, 0)]
+    decided = f"SELECT count(*) FROM unit_decisions WHERE bundle_id = {bundle_id} AND status != 'unassigned'"
+    assert _query(database_path, decided) == [(0,)]
 
 
 def test_half_stage_leaves_a_captionless_table_unassigned(seed_runs: SeedRuns) -> None:
