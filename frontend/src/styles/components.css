@@ -1456,6 +1456,27 @@
   .strip-lead { flex: none; align-self: stretch; display: flex; padding-right: 5px; box-sizing: border-box; }
   .strip-lead-num { flex: 1 1 auto; min-width: 0; height: 33px; padding: 6px 5px 0 0; overflow: hidden; text-align: right; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-3); font: 500 11px / 27px var(--font-mono); box-sizing: border-box; }
   .strip-lead-gap { flex: none; }
+  /* 번호 칸 손잡이(문단 번호, number-cell.tsx) - 번호는 단추이고 누르면 그 자리에 입력 상자가 뜬다. 번호 없는 줄의 "+"는 못 읽은 줄에서만 늘 보이고 나머지는 줄에 올리거나 포커스가 갔을 때만 보인다 */
+  .strip-lead[data-num-open] { position: relative; z-index: 5; }
+  button.num-cell { border: 0; background: none; cursor: pointer; }
+  button.num-cell:disabled { cursor: default; }
+  button.num-cell:is(:hover, :focus-visible):not(:disabled) { color: var(--accent); }
+  button.num-cell[data-fixed] { color: var(--ink-2); font-weight: 600; }
+  /* 따라 바뀔 번호 - 점선으로 미리 보인다(저장 전) */
+  button.num-cell[data-preview] { color: var(--accent); text-decoration: underline dashed; text-underline-offset: 3px; }
+  button.num-add { color: var(--ink-4); }
+  button.num-add[data-quiet] { opacity: 0; }
+  .strip-row:hover > .strip-lead > button.num-add[data-quiet], button.num-add[data-quiet]:focus-visible { opacity: 1; }
+  .num-edit { position: absolute; left: 0; top: 2px; display: flex; flex-direction: column; gap: 6px; width: max-content; max-width: min(320px, 80vw); padding: 6px; border: 1px solid var(--line-2); border-radius: var(--r-3); background: var(--raised); box-shadow: var(--shadow-2); font: 400 12px / 1.4 var(--font-ui); color: var(--ink-2); cursor: default; }
+  .num-edit-row { display: flex; align-items: center; gap: 6px; }
+  .num-edit-input { width: 9ch; min-width: 0; height: 24px; padding: 0 6px; border: 1px solid var(--accent-line); border-radius: var(--r-2); background: var(--surface); color: var(--ink); font: 500 12px / 22px var(--font-mono); }
+  .num-edit-input:focus-visible { outline: 2px solid var(--accent); outline-offset: -1px; }
+  .num-edit-none { height: 24px; padding: 0 8px; border: 1px solid var(--line-2); border-radius: var(--r-2); background: var(--surface); color: var(--ink-2); font: inherit; white-space: nowrap; cursor: pointer; }
+  .num-edit-none:is(:hover, :focus-visible):not(:disabled) { border-color: var(--accent-line); color: var(--accent); }
+  .num-follow { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+  .num-follow-preview { display: flex; flex-wrap: wrap; gap: 4px 8px; font-family: var(--font-mono); font-size: 11px; color: var(--accent); }
+  .num-follow-item { padding: 0 4px; border: 1px dashed var(--accent-line); border-radius: var(--r-1); white-space: nowrap; }
+  .num-follow-more { color: var(--ink-3); }
   /* 카드 강조 테두리 - 조각 바깥 2px. 짝 카드(.strip-card, 줄 수와 상관없이)는 한 줄이라도 강조면 모든 줄에 두르되 맞닿는 쪽은 열어 한 테두리로 읽힌다(줄마다 그림자 고리를 두면 사이에 선이 생긴다) */
   .strip-card { display: contents; }
   /* 고른 조각(문단)과 그 짝에 두른다. 맞은편 강조(data-link-hover)는 바탕만 - 마우스를 올린 곳이 고른 것처럼 보이지 않게 */

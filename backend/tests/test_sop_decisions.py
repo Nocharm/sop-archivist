@@ -221,7 +221,8 @@ def test_pair_units_saved_together(client: TestClient) -> None:
         (ko["id"], "confirmed", None), (en["id"], "confirmed", None),
     ]
     assert [(t["lang"], t["confirmed_text"], t["change_type"], t["group_id"]) for t in group["targets"]] == [
-        ("ko", "1. 목적", "as_is", None), ("en", "1. Purpose", "as_is", None),
+        # 제목의 타자 번호는 번호 칸의 것이라 새 문장에 따라가지 않는다(문단 번호 F5)
+        ("ko", "목적", "as_is", None), ("en", "Purpose", "as_is", None),
     ]
 
 

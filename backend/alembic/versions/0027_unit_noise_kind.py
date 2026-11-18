@@ -12,7 +12,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "0027"
-# 같은 때 따로 만든 0026(다른 브랜치)이 먼저 합쳐지면 이 한 줄만 "0026"으로 바꾼다 — 두 리비전은 서로 다른 열을 건드린다
+# 같은 때 따로 만든 번호 칸 리비전은 이 뒤(0028)에 온다 — 0026은 없다
 down_revision: str | Sequence[str] | None = "0025"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None

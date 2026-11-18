@@ -157,6 +157,13 @@ def test_toc_lines_are_marked_one_unit_per_line_and_leave_the_rows(client: TestC
     assert {unit["kind"] for unit in toc} == {"sentence"}
     assert [unit["lang"] for unit in toc] == ["ko"] * 4 + ["en"] * 3 + ["ko"]
     assert all(unit["pair_id"] is None for unit in toc)
+    # 목차 줄은 번호 칸이 없다 — 줄 앞 번호도 목차 글이고 번호 고치기를 받지 않는다
+    assert all(unit["number"] is None for unit in toc)
+    refused = client.post(
+        f"/api/bundles/{fx.bundle_id}/documents/{fx.doc_id}/edits", headers=AUTHOR,
+        json={"revision": fx.view["document"]["revision"], "op": {"type": "set_number", "unit_id": toc[0]["id"], "number": "1"}},
+    )
+    assert (refused.status_code, refused.json()["detail"]["code"]) == (422, "invalid_unit_kind")
     # 남은 수(진행 숫자)는 목차 줄을 세지 않는다 — 제목과 본문 문장 두 줄
     assert _total(client, fx) == len(fx.view["units"]) - len(TOC_TEXTS) == 2
 

@@ -7,6 +7,7 @@ import { findNearestCut } from "./paper-model";
 function makeUnit(id: number, over: Partial<ViewUnit> = {}): ViewUnit {
   return {
     id,
+    number: null,
     display_id: `U${id}`,
     kind: "sentence",
     spans: [],
