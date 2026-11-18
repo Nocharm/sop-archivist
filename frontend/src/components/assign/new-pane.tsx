@@ -528,8 +528,8 @@ export function NewPane(props: NewPaneProps) {
         ) : (
           <span className="pane-title">{props.docOptions[0]?.label}</span>
         )}
-        <span className="tag" data-testid="assign-new-tag">
-          {props.tag}
+        <span className="tag new-pane-tag" data-testid="assign-new-tag">
+          <Truncate text={props.tag} revealOnFocus />
         </span>
         {props.headExtra}
         <span className="flex-1" />

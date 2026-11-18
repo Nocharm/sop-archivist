@@ -3504,7 +3504,7 @@ export default function AssignPage() {
   // 출처 없는 New 문장 거르기 - New 문서에 거는 거르기라 New 칸 머리에 둔다(1.2.0 피드백, 한 단·Pair view에서는 New 칸이 없어 보이지 않는다). Old 거르기 칩을 누르면 풀린다
   const unsourcedChip =
     written.length > 0 ? (
-      <span role="tablist" aria-label={t("assign.filterUnsourced")} className="flex">
+      <span role="tablist" aria-label={t("assign.filterUnsourced")} className="flex new-unsourced">
         <FilterChip
           tone="danger"
           label={t("assign.filterUnsourced")}
@@ -3513,6 +3513,7 @@ export default function AssignPage() {
           onClick={() => setMode("unsourced")}
           testId="assign-filter-unsourced"
           icon={TriangleAlert}
+          shrinks
         />
       </span>
     ) : null;

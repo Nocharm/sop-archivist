@@ -6,6 +6,7 @@ import { Circle, CircleCheck, CircleDashed, CirclePause, CircleX, Clock, type Lu
 import type { BundleStatus, CoverStatus, MemberRole } from "@/lib/api-sop";
 import { translateOrRaw } from "@/lib/admin-format";
 import { useI18n } from "@/lib/i18n";
+import { Truncate } from "@/components/ui/motion";
 
 // 진하기로 단계를 보인다(components.css .pill 3단): 진행 중은 연한 파랑, 검토 대기는 다른 사람 차례라 연한 호박, 끝난 일은 꽉 찬 회색
 const BUNDLE_STATUS: Record<BundleStatus, { tone: string; Icon: typeof Circle }> = {
@@ -63,12 +64,12 @@ export function UnitStatusChip({ status, size = "md", testId }: { status: CoverS
   );
 }
 
-// 필터 단추 - 누르는 칩(26px), 고르면 꽉 찬 색. 수는 뒤에 옅게
-export function FilterChip({ tone, label, count, selected, onClick, testId, icon: Icon }: { tone: ChipTone; label: string; count: number; selected: boolean; onClick: () => void; testId: string; icon: LucideIcon }) {
+// 필터 단추 - 누르는 칩(26px), 고르면 꽉 찬 색. 수는 뒤에 옅게. shrinks면 좁은 머리에서 이름이 말줄임으로 줄고(아이콘 · 수는 남는다) 잘린 이름은 툴팁
+export function FilterChip({ tone, label, count, selected, onClick, testId, icon: Icon, shrinks = false }: { tone: ChipTone; label: string; count: number; selected: boolean; onClick: () => void; testId: string; icon: LucideIcon; shrinks?: boolean }) {
   return (
     <button type="button" role="tab" aria-selected={selected} className="schip schip-btn" data-tone={tone} data-testid={testId} onClick={onClick}>
-      <Icon size={13} strokeWidth={1.75} aria-hidden />
-      {label}
+      <Icon size={13} strokeWidth={1.75} className="flex-none" aria-hidden />
+      {shrinks ? <Truncate text={label} revealOnFocus /> : label}
       <span className="schip-n">{count}</span>
     </button>
   );

@@ -1839,6 +1839,14 @@
   .schip.new-ai-chip[aria-pressed="true"] { border-style: solid; border-color: var(--sc-ink); background: var(--sc-ink); color: var(--surface); }
   .pane-head > .new-ai-chip { flex-shrink: 1000; min-width: 30px; overflow: hidden; }
   .pane-head > .new-ai-hint { flex-shrink: 100000; }
+  /* 출처 없는 New 칩도 AI 칩 다음으로 줄어든다(아이콘 · 수만 남을 때까지) - 1280 창 반반에서 확대 단추가 칸 밖(결정 칸 위)으로 나갔다(겹침 감사) */
+  .pane-head > .new-unsourced { flex-shrink: 500; min-width: 58px; }
+  .pane-head > .new-unsourced > .schip { min-width: 58px; overflow: hidden; }
+  .pane-head > .new-unsourced .schip-n { flex: none; }
+  /* 문서 고르기는 맨 나중에 줄고 문서 번호 앞머리는 남긴다 */
+  .assign-pane[data-pane="new"] > .pane-head > .select-trigger { min-width: 72px; }
+  /* "New · not written" 꼬리표도 칩 다음으로 줄어든다(잘린 글은 툴팁) - 1280 반반에서 머리가 19px 넘쳤다(잰 값) */
+  .assign-pane[data-pane="new"] > .pane-head > .new-pane-tag { flex-shrink: 200; min-width: 56px; }
   /* 고른 줄의 AI 제안이 다른 New 문서에 있을 때 칸 머리 아래 한 줄 - 자리 글이 길면 말줄임하고 "→ Open"은 늘 보인다 */
   .new-ai-row { display: flex; min-width: 0; }
   .new-ai-pill { display: inline-flex; align-items: center; gap: 6px; min-width: 0; max-width: 100%; height: 22px; padding: 0 9px; border: 1px solid var(--st-ai-line); border-radius: var(--r-3); background: var(--surface); color: var(--st-ai-ink); font: var(--fs-cap) / 1 var(--font-ui); white-space: nowrap; cursor: pointer; }
