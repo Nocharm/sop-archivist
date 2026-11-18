@@ -1376,7 +1376,16 @@ await runStep("order: a removed chapter shifts the C section numbers up, Restore
     await wait(page, "output-c");
     await page.locator(`[data-testid="order-doc-${sop.id}"]`).click();
     await headOf(target.key).waitFor({ timeout: T });
-    check("the chapter to remove is empty and says Empty", (await page.locator(`[data-testid="output-c-empty-required-${sop.id}-${target.key}"]`).count()) === 1 && (await readHead(target.key)).startsWith(target.number), await readHead(target.key));
+    // Empty는 서버가 정한 절에만 - 줄이 없는 장도 자동 목록(7.2)이 자식 WI로 차 있으면 비어 있지 않다
+    const cDoc = (await (await page.request.get(`${BASE}/api/bundles/${halfBundleId}/outputs/c?lang=en`, { headers })).json()).docs.find((doc) => doc.target_doc_id === sop.id);
+    const emptyKeys = cDoc.sections.filter((section) => section.is_empty_required).map((section) => section.location_key);
+    const marked = [];
+    for (const key of cDoc.sections.map((section) => section.location_key)) {
+      if ((await page.locator(`[data-testid="output-c-empty-required-${sop.id}-${key}"]`).count()) > 0) marked.push(key);
+    }
+    check("the seed has an empty required section", emptyKeys.length > 0);
+    check("exactly the sections the server calls empty say Empty", marked.join(",") === emptyKeys.join(","), `${marked.join(",")} | ${emptyKeys.join(",")}`);
+    check("the chapter to remove shows its number", (await readHead(target.key)).startsWith(target.number), await readHead(target.key));
     const removed = await page.request.patch(itemUrl, { headers, data: { is_removed: true, reason: "Smoke: not used in this SOP" } });
     check("removing the chapter with a reason is accepted", removed.status() === 200, String(removed.status()));
     await page.reload();

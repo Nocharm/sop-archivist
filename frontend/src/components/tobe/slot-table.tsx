@@ -405,7 +405,7 @@ export function SlotTable({ prefix, docKey, rows, summary, isWritten, canEdit, s
           {isWritten ? t("tobe.row.na", { n: summary.na }) : t("tobe.slots.summary", { filled: summary.filled, empty: summary.empty, na: summary.na })}
         </span>
       </div>
-      <div className="slot-cols">
+      <div className="slot-cols" data-outline-edit={canEditOutline ? "" : undefined}>
         {/* 가를 곳이 없는 골격(최상위 칸 하나)은 오른쪽 단이 비어 그리지 않는다 */}
         {splitSlotColumns(rows).map(
           (column) =>

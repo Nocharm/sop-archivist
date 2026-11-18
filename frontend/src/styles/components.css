@@ -460,7 +460,9 @@
   /* 단의 최소 420px - 펼친 곳의 오른쪽 칸(1248 창 약 770px)에 두 단을 넣으면 칸 이름이 낱자로 접혔다(잰 값 2026-11-17, 단추 자리 135px) */
   .slot-cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(420px, 100%), 1fr)); gap: 0 28px; align-items: start; }
   /* 단 하나가 열을 정하고 줄은 그 열을 나눠 쓴다(subgrid) - 단추가 없는 줄과 있는 줄의 상태 글이 같은 자리에 선다 */
-  .slot-col { display: grid; grid-template-columns: 30px minmax(0, 1fr) auto auto; column-gap: 8px; align-content: start; }
+  .slot-col { display: grid; grid-template-columns: 30px minmax(0, 1fr) minmax(64px, auto) auto; column-gap: 8px; align-content: start; }
+  /* 한 단으로 쌓이면(좁은 폭) 위아래 두 덩어리의 상태 · 단추 열이 같은 자리에 서게 - 단추 열은 이름 · 빼기 · 하위 더하기 · Mark N/A가 다 들어가는 폭 */
+  .slot-cols[data-outline-edit] .slot-col { grid-template-columns: 30px minmax(0, 1fr) minmax(64px, auto) minmax(148px, auto); }
   .slot-row { grid-column: 1 / -1; display: grid; grid-template-columns: subgrid; align-items: center; row-gap: 2px; min-height: 32px; padding: 3px 0; border-bottom: 1px solid var(--line); }
   /* 하위 칸은 이름과 그 아래 글을 24px 들인다(번호 열은 그대로). 더 깊은 수준(7.1.x)은 줄이 단마다 24px씩 더 들인다(slot-table.tsx의 인라인 값) */
   .slot-row[data-child] { --slot-indent: 24px; }
