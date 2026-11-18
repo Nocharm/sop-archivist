@@ -42,6 +42,11 @@ const BOTTOM_PARTS = new Set(["footer", "footnote", "endnote"]);
 // 범위가 없는 단위(표·행)는 칸 문장이 글자를 덮는다
 const SPANLESS_KINDS = new Set(["table", "table_row"]);
 
+/** 띠 표 제목 줄인가(F4) - 원문 표를 가리키는 제목 단위는 벗긴 띠 표에서 나온 것뿐이다(서버 segment.is_band_heading) */
+export function isBandHeading(unit: Pick<ViewUnit, "kind" | "table_id">): boolean {
+  return unit.kind === "heading" && unit.table_id !== null;
+}
+
 function buildSegments(block: ViewBlock, spans: Array<[number, number, number]>): Segment[] {
   const sorted = [...spans].sort((a, b) => a[0] - b[0]);
   const segments: Segment[] = [];
@@ -70,11 +75,15 @@ export function buildPaperModel(view: DocumentView): PaperModel {
   for (const block of view.blocks) segments.set(block.id, buildSegments(block, spansByBlock.get(block.id) ?? []));
 
   const tables = new Map(view.tables.map((table) => [table.id, table]));
-  const unwrapped = new Map(view.tables.filter((table) => table.is_layout).map((table) => [table.id, table]));
   const tableUnit = new Map<number, number>();
+  // 벗긴 띠 표는 표가 아니라 제목 줄 하나로 그린다 - 칸 블록을 문단처럼 이어 두면 번호 칸 + 제목 칸이 한 조각이 된다(F4)
+  const bandTables = new Set<number>();
   for (const unit of view.units) {
     if (unit.kind === "table" && unit.table_id !== null) tableUnit.set(unit.table_id, unit.id);
+    if (isBandHeading(unit) && unit.table_id !== null) bandTables.add(unit.table_id);
   }
+  // 벗긴 보통 표 - 띠 표는 제목 줄이 되어 세로선 · "↺ 다시 표로"가 없다(되돌리기는 Back to band table)
+  const unwrapped = new Map(view.tables.filter((table) => table.is_layout && !bandTables.has(table.id)).map((table) => [table.id, table]));
   const header: PaperItem[] = [];
   const body: PaperItem[] = [];
   const footer: PaperItem[] = [];
@@ -87,6 +96,11 @@ export function buildPaperModel(view: DocumentView): PaperModel {
     const group = groups.get(groupKey) ?? { key: groupKey, part: block.part, items: [] };
     groups.set(groupKey, group);
     const target = { push: (item: PaperItem) => void (edge.push(item), group.items.push(item)) };
+    if (block.kind === "table_cell" && block.table_id !== null && bandTables.has(block.table_id) && tables.get(block.table_id)?.is_layout) {
+      // 띠 표의 빈 가운데 칸은 그릴 글자가 없다
+      if (block.text.trim() !== "") target.push({ type: "block", block });
+      continue;
+    }
     // 벗긴 표의 칸은 표로 묶지 않고 문단처럼 제자리(원문 순 = 행 → 왼쪽부터)에 놓는다 - 칸 줄이 보통 문장 카드가 된다(F1)
     if (block.kind === "table_cell" && block.table_id !== null && !unwrapped.has(block.table_id)) {
       // 표는 첫 칸 자리에 통째로 - 안쪽 표는 바깥 칸 안에서 그리지 않고 바로 뒤에 둔다(1차)

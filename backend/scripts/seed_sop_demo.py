@@ -5,7 +5,8 @@
 작성자 qa.member, 검토자 qa.lead. 앱 API를 TestClient로 그대로 불러(X-Dev-User) 화면이 쓰는 경로와 로직을 두 벌 두지 않는다.
 지도용: 5 UV 분광광도계(qa.member 작성자·qa.lead 검토자 — 작성자에게 구성원 Bundle), 6 문서 관리(끝에 prod.member 혼자 —
 작성자에게 남의 Bundle). 단계 Bundle 넷의 OLD-1이 5번 문서 번호를, 단계 2·3의 이동 줄이 6번 New 문서를 가리키고 5·6번이 OLD-1~3을 가리킨다.
-목차: 7 목차(qa.member 작성자 — 목차 스타일 줄 7과 점 끌기 보통 줄 1이 든 Old 문서 하나, 배정 없음. Assign 목차 블록 스모크용).
+목차: 7 목차(qa.member 작성자 — 목차 스타일 줄 7과 점 끌기 보통 줄 1, 본문에 띠 표 하나가 든 Old 문서 하나, 배정 없음.
+Assign 목차 블록·띠 표 제목 줄 스모크용).
 이미 같은 제목 묶음이 있으면 그 묶음은 건너뛰어 여러 번 돌려도 같은 결과다. 끝에 묶음별 상태·진행 숫자만 찍고 원문 글자는 찍지 않는다.
 
 개발 전용이다 — 합성 생성기가 개발 의존성 python-docx와 테스트 팩토리(tests.pdf_factory)를 쓰고, 합성 파일은 임시 디렉터리에
@@ -34,7 +35,7 @@ from app.sop.ai.runner import run_jobs_until_idle
 from scripts.reset_db import count_hr_rows, should_refuse_reset
 from scripts.sop_demo_driver import SyntheticDriver
 from scripts.synthetic_sop import MOVE_TARGET_CODE, SyntheticBundle, build_synthetic_bundle
-from tests.docx_factory import build_docx, make_style, p
+from tests.docx_factory import build_docx, make_band_table, make_style, p
 from tests.fake_ai import SyntheticAnswers, fake_ai_session
 from tests.sop_helpers import (
     AUTHOR,
@@ -215,6 +216,7 @@ TOC_KO = ("1. 목적 ........ 3", "2. 범위 ........ 3", "3. 책임 ........ 4"
 TOC_EN = ("1. Purpose ........ 3", "2. Scope ........ 3", "3. Responsibility ........ 4")
 TOC_AFTER = "관련 서식 : F-601 합성 기록지 ........ 별첨"
 TOC_BODY = ("이 절차는 합성 정제수 시스템의 필터 관리를 정한다.", "필터 차압이 0.8 bar를 넘으면 교체한다.")
+TOC_BAND = ("7.4", "필터 교체 (Filter change)")  # 본문의 띠 표(F4) — 올리자마자 번호 칸에 7.4를 품은 제목 줄 하나가 된다
 
 
 def _build_toc_bundle(client: TestClient, bundle_id: int) -> None:
@@ -223,7 +225,7 @@ def _build_toc_bundle(client: TestClient, bundle_id: int) -> None:
     put_tobe_codes(client, bundle_id, [build_tobe_doc("SOP-PW", "SYNTHETIC Purified water filters")])
     body = (
         "".join(p(line, "TOC1") for line in (*TOC_KO, *TOC_EN)) + p(TOC_AFTER)
-        + p("목적 (Purpose)", "Heading1") + "".join(p(line) for line in TOC_BODY)
+        + p("목적 (Purpose)", "Heading1") + p(TOC_BODY[0]) + make_band_table(*TOC_BAND) + p(TOC_BODY[1])
     )
     styles = make_style("TOC1", "toc 1") + make_style("Heading1", "heading 1", outline=0)
     response = upload(client, bundle_id, build_docx(body, styles=styles), "SYNTHETIC_SOP-ABC-1030_Contents.docx")

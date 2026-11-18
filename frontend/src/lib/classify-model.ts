@@ -101,6 +101,8 @@ export type Destination =
   | { kind: "step"; docId: number; step: number | null; part: WiPart }
   /** 이미 쓴 문서(입구 2)의 문장에 출처로 잇기 - 여럿이면 나눔 */
   | { kind: "link"; targetIds: number[] }
+  /** 아직 안 쓴 문서에 놓인 새 문장(docId의 target)에 이 줄을 출처로 더하기 - Old 여러 줄 → New 한 문장(합침). 글은 그대로 두고 그 뒤 고쳐 쓴다 */
+  | { kind: "join"; docId: number; targetId: number }
   | { kind: "delete" }
   | { kind: "move" };
 
@@ -125,6 +127,8 @@ export function getDestinationId(destination: Destination): string {
       return `step:${destination.docId}:${destination.step ?? "none"}:${destination.part}`;
     case "link":
       return `link:${[...destination.targetIds].sort((a, b) => a - b).join(",")}`;
+    case "join":
+      return `join:${destination.targetId}`;
     default:
       return destination.kind;
   }
@@ -337,13 +341,19 @@ export function pickLinkUnits<T extends { lang: ViewUnit["lang"] }>(units: T[], 
   return same.length > 0 ? same : units;
 }
 
+/** 이 보낼 곳이 출처로 이어 받는 기존 새 문장들 - 이미 쓴 문서의 문장(link)이거나 놓인 새 문장(join) */
+export function listJoinedTargetIds(destination: Destination | null): number[] {
+  if (destination?.kind === "link") return destination.targetIds;
+  return destination?.kind === "join" ? [destination.targetId] : [];
+}
+
 /**
  * 이미 쓴 문장을 한 언어만 이을 때 줄에 남는 단위 - 이은 문장이 없는 언어이고 아직 판단이 없는(처분 unassigned) 줄 단위.
  * 확정 저장은 판단 없는 단위를 받지 않아(서버 hold_required) 요청에서 빼고 release_unit_ids로 실어 서버가 같은 저장 안에서 짝을 푼다(제품 명세 §6.5).
  */
 export function listLinkLeftovers(destination: Destination | null, context: Pick<SaveContext, "units" | "group">): number[] {
-  if (destination?.kind !== "link") return [];
-  const picked = new Set(destination.targetIds);
+  if (destination?.kind !== "link" && destination?.kind !== "join") return [];
+  const picked = new Set(listJoinedTargetIds(destination));
   const pickedLangs = new Set((context.group?.targets ?? []).filter((target) => picked.has(target.id)).map((target) => target.lang));
   // 고른 문장의 묶음이 아직 오지 않았으면 어느 언어가 남는지 모른다
   if (pickedLangs.size === 0) return [];
@@ -547,10 +557,11 @@ export function buildGroupSave(draft: RowDraft, context: SaveContext, action: "c
   const { destination } = draft;
   if (!destination && action !== "hold") throw new Error("destination required");
   const existing = context.group?.targets ?? [];
-  const picked = new Set(destination?.kind === "link" ? destination.targetIds : []);
+  const picked = new Set(listJoinedTargetIds(destination));
+  const isJoining = destination?.kind === "link" || destination?.kind === "join";
   // 이은 문장이 없는 언어의 줄 단위는 이번 저장의 줄이 아니다(설계 §5) - 판단이 있으면 묶음의 다른 단위처럼 지금 그대로 싣고, 없으면 뺀다(아래)
   const pickedLangs = new Set(existing.filter((target) => picked.has(target.id)).map((target) => target.lang));
-  const active = destination?.kind === "link" ? pickLinkUnits(context.units, pickedLangs) : context.units;
+  const active = isJoining ? pickLinkUnits(context.units, pickedLangs) : context.units;
   const rowIds = new Set(active.map((unit) => unit.id));
   const units: GroupSaveInput["units"] = active.map((unit) => ({
     unit_id: unit.id,
@@ -646,6 +657,11 @@ export function buildGroupSave(draft: RowDraft, context: SaveContext, action: "c
       continue;
     }
     const touchesRow = target.source_unit_ids.some((id) => rowIds.has(id)) || (target.translation_source_unit_id !== null && rowIds.has(target.translation_source_unit_id));
+    // 놓인 새 문장에 잇기 - 그 문장은 글·자리 그대로 출처만 더한다(출처가 둘 이상이라 종류는 서버가 합침으로 정한다)
+    if (destination?.kind === "join" && target.id === destination.targetId) {
+      targets.push(echoTarget(target, [...new Set([...target.source_unit_ids, ...active.map((unit) => unit.id)])]));
+      continue;
+    }
     if (target.origin === "new_doc") {
       const others = target.source_unit_ids.filter((id) => !rowIds.has(id));
       const sameLang = active.filter((unit) => unit.lang === target.lang);

@@ -27,6 +27,7 @@ import { PendingCount, type PendingItem } from "@/components/assign/pending-coun
 import { createDragLinkLine, type DragLinkLine } from "@/components/assign/drag-link-line";
 import { createDropGapLine, type DropGapLine } from "@/components/assign/drop-gap-line";
 import { findNewLine, findOldStrip, LinkLines, readNewLineEnd, readOldLineStart } from "@/components/assign/link-lines";
+import { JoinMenu, type JoinMenuItem } from "@/components/assign/join-menu";
 import { LinkMenu } from "@/components/assign/link-menu";
 import { LinkBadge } from "@/components/assign/link-badge";
 import { MoveTargetField } from "@/components/assign/move-target-field";
@@ -134,6 +135,7 @@ import {
 } from "@/lib/api-sop";
 import { listRefCandidates } from "@/lib/caption-ref-model";
 import { isBundleCaptionNeeded, isBundleKind, isCaptionGate, listCaptionFields, listCaptionPendingRowKeys, makeIsLinkedToWritten, type CaptionUnit } from "@/lib/caption-model";
+import { applyJoinedSources, countJoinedLines, listJoinableIds, shouldAdvanceAfterSave } from "@/lib/join-sentence-model";
 import { applySavedTargets, buildComposedRows, isWrittenRow, listHeadingNotes, listSectionMarks, readSectionHead, removeClearedUnits, type NewPaneRow } from "@/lib/composed-model";
 import {
   addPartnerTargets,
@@ -179,6 +181,7 @@ import {
   isSentenceUnit,
   isTextChangeType,
   isTranslationOf,
+  listJoinedTargetIds,
   listLinkLeftovers,
   listUnpairedKeys,
   pickLinkUnits,
@@ -206,7 +209,7 @@ import { navigate } from "@/lib/nav-buffer";
 import { buildNewAiFilter, listNewAiLinks, readNewAiPill } from "@/lib/new-ai-filter-model";
 import { buildSheetDraft } from "@/lib/space-preview-model";
 import { EMPTY_FOLD_OPEN, type FoldOpen } from "@/lib/paper-fold-model";
-import { buildPaperModel, buildPaperTabs, findNearestCut, listPartSheets, resolvePickUnit, shouldRecenter, type PaperTabKey } from "@/lib/paper-model";
+import { buildPaperModel, buildPaperTabs, findNearestCut, isBandHeading, listPartSheets, resolvePickUnit, shouldRecenter, type PaperTabKey } from "@/lib/paper-model";
 import { buildPairColumns, canUndoPair, listPairLinks, PAIR_REFUSAL_KEYS, resolvePairDrop, type PairDrop, type PairDropContext, type PairLang } from "@/lib/pair-drop-model";
 import { ASSIGN_DOC_PARAM, ASSIGN_UNIT_PARAM, EDIT_ORIGINAL_PARAM, getNewDocumentsHref, getStageHref } from "@/lib/stages";
 import { buildTemplateTitles } from "@/lib/template-model";
@@ -522,6 +525,9 @@ export default function AssignPage() {
   const [jump, setJump] = useState<{ side: "old" | "new"; id: number; targetId: number; rowKey: string; quiet?: boolean; at?: { x: number; y: number }; confirm?: boolean } | null>(null);
   // 고른 줄이 어떤 길로든 바뀌면(↑↓·저장 뒤 다음 줄·짝 풀림·문서 바꾸기) 메뉴를 닫는다 - 다른 줄에서 낡은 메뉴가 되살아나지 않게(렌더 중 상태 맞추기)
   if (menu !== null && menu.rowKey !== activeKey) setMenu(null);
+  // 놓인 New 문장을 눌러 연 작은 메뉴(이 문장에 잇기 · 이 줄 다음에 놓기) - 그 문장 줄 상자, 누른 자리. 고른 줄이 바뀌면 닫는다
+  const [joinMenu, setJoinMenu] = useState<{ seq: number; rowKey: string; targetId: number; anchor: HTMLElement; offset: { x: number; y: number } | null } | null>(null);
+  if (joinMenu !== null && joinMenu.rowKey !== activeKey) setJoinMenu(null);
   // Old 문장 우클릭 메뉴 - 누른 Unit, 그 줄 상자, 누른 자리와 글자 자리(키보드로 열었으면 없음). 고른 줄이 바뀌면 닫는다
   const [ctxMenu, setCtxMenu] = useState<{ seq: number; unitId: number; rowKey: string; anchor: HTMLElement; click: { x: number; y: number } | null; caret: { blockId: number; offset: number } | null } | null>(null);
   if (ctxMenu !== null && ctxMenu.rowKey !== (activeKey ?? (hasSolo ? SOLO_ROW_KEY : null))) setCtxMenu(null);
@@ -596,12 +602,13 @@ export default function AssignPage() {
         aiPlaces: isAiRow && savedDestination && savedDestination.kind !== "link" ? [{ destination: savedDestination, why: aiWhy }] : [],
         identical: (identical.data ?? []).filter((item) => row.unitIds.includes(item.unit_id)).map((item) => item.target_id),
         similar: similar.data ?? [],
+        headingPlaces: rowUnits.some(isBandHeading),
       }, (ids) => addPartnerTargets(ids, writtenMap))
     : [];
   const linkIds = destination?.kind === "link" ? destination.targetIds : [];
   // 고른 문장의 관계 묶음(합쳐진 다른 출처 등)은 고를 때 부른다 - 함께 확정되는 것을 미리 보이고 저장도 같은 묶음으로 한다
   const knownTargets = new Set(groupData?.targets.map((target) => target.id) ?? []);
-  const missingIds = linkIds.filter((id) => !knownTargets.has(id));
+  const missingIds = listJoinedTargetIds(destination).filter((id) => !knownTargets.has(id));
   const pickedGroups = useLoaded<Group[]>(
     () => (missingIds.length > 0 ? Promise.all(missingIds.map((id) => getGroupByTarget(bundleId, id))) : Promise.resolve([])),
     `${rowKey}:${missingIds.join(",")}`,
@@ -722,6 +729,9 @@ export default function AssignPage() {
   // 엮은 문서의 칸 머리 옆 칸 제목 출처 - 이미 쓴 문서에는 칸 제목이 없다
   const headingNotes = isComposedDoc && composedDoc ? listHeadingNotes(composedDoc) : undefined;
   const sectionMarks = isComposedDoc && composedDoc ? listSectionMarks(composedDoc) : undefined;
+  // 고른 Old 줄을 더 이을 수 있는 놓인 문장 - 글 단위가 있는 줄(표·그림 줄은 아니다)을 고르고 편집할 수 있을 때만. 누르면 작은 메뉴가 뜬다
+  const joinRowUnits = rowUnits.filter((unit) => isSentenceUnit(unit.kind)).map((unit) => ({ id: unit.unit_id, lang: unit.lang }));
+  const joinableIds = listJoinableIds(isComposedDoc ? composedDoc : null, joinRowUnits, canEdit && mode === "old" && !isNewEdit && row !== null && joinRowUnits.length === rowUnits.length);
   // 템플릿 보기의 이름 사전(한글 절반의 6장 절 · 5장 범주 이름, WI 단계 이름) - 문서나 To-Be가 바뀔 때만 다시 짓는다(보기 모양 계산이 이것을 기억 키로 쓴다)
   const composedCode = composedDoc?.code ?? null;
   const templateTitles = useMemo(() => (tobeData && composedCode !== null ? buildTemplateTitles(tobeData, composedCode) : null), [tobeData, composedCode]);
@@ -1198,9 +1208,14 @@ export default function AssignPage() {
   // 고른 줄이 제목에서 바꾼 문장이면 다듬기 맨 아래 [제목으로 되돌리기] - 짝이면 두 조항 줄을 함께(F12 D2)
   const headingBackIds = shapeLines.length > 0 ? listHeadingBackUnits(rowViewUnits) : [];
   const headingBack = headingBackIds.length > 0 ? { reasonKey: rowViewUnits.some(hasUnitDraft) ? "assign.ctx.why.unsaved" : null, onBack: () => revertHeadings(headingBackIds) } : null;
-  // 고른 줄이 벗긴 표의 줄이면 다듬기 맨 아래 [↺ 다시 표로] - 용지 묶음 머리 단추와 같은 일(F12 A3)
+  // 고른 줄이 벗긴 표의 줄이면 다듬기 맨 아래 [↺ 다시 표로] - 용지 묶음 머리 단추와 같은 일(F12 A3). 띠 표는 벗긴 표 목록에 없어 아래 [표로 되돌리기]만 선다
   const rewrapTableId = shapeLines.length > 0 && paperModel && !isSolo ? getUnitUnwrapTable(rowViewUnits, paperModel.unwrapped) : null;
-  const rewrap = rewrapTableId !== null ? { reasonKey: rowViewUnits.some(hasUnitDraft) ? "assign.ctx.why.unsaved" : null, onRewrap: () => rewrapTable(rewrapTableId) } : null;
+  const rewrap = rewrapTableId !== null ? { reasonKey: rowViewUnits.some(hasUnitDraft) ? "assign.ctx.why.unsaved" : null, onBack: () => rewrapTable(rewrapTableId) } : null;
+  // 고른 줄이 띠 표 제목 줄이면 다듬기 맨 아래 [표로 되돌리기] - 그 띠 표를 표 한 줄로(F4 · F12 G5, 한 편집이라 Ctrl+Z로 다시 제목 줄)
+  const bandTableId = shapeLines.length > 0 ? (rowViewUnits.find(isBandHeading)?.table_id ?? null) : null;
+  const bandBack = bandTableId !== null
+    ? { reasonKey: rowViewUnits.some(hasUnitDraft) ? "assign.ctx.why.unsaved" : null, onBack: () => void runUnitEdit({ type: "set_layout_table", table_id: bandTableId, is_layout: false }, t("assign.band.didTable"), null) }
+    : null;
   const stepBase = shapeLines.length > 0 ? 1 : 0;
   const refPendingIds = (shapeTabs?.order ?? []).filter((id) => isRefPending(shapeModel?.units.get(id)) && (hasSolo || rowOfUnit.has(id)));
   // 캡션이 필요한 표·그림의 줄 - 머리 줄의 Caption needed와 같은 규칙(lib/caption-model). 위쪽 줄에 남은 수, 누르면 다음 줄
@@ -1712,7 +1727,8 @@ export default function AssignPage() {
       // 끌어 놓은 자리를 실은 저장이면 미리 고침도 그 자리에 넣는다 - 끝에 넣으면 다시 읽을 때 줄이 뛴다
       const sectionKey = getSectionKey(destination);
       const at = draft.position && sectionKey !== null && body.targets.some((target) => target.position !== undefined) ? { sectionKey, after: draft.position.after } : null;
-      const op = pickSaveOp({ action, destinationKind: destination?.kind ?? null, savedLinkIds: savedDestination?.kind === "link" ? savedDestination.targetIds : [], nextLinkIds: linkIds });
+      // 놓인 문장에 잇기도 출처를 잇는 일이라 알림의 되돌리기 이름이 잇기다
+      const op = destination?.kind === "join" && action === "confirm" ? "link" : pickSaveOp({ action, destinationKind: destination?.kind ?? null, savedLinkIds: savedDestination?.kind === "link" ? savedDestination.targetIds : [], nextLinkIds: linkIds });
       const saved = await saveGroup(bundleId, body, buildUndo({ op, focus_unit_id: row.unitIds[0] }));
       markRecorded();
       // 저장했으면 메뉴의 고름은 끝났다 - 다음 줄이 없거나 같은 줄에 남아도 닫는다
@@ -1720,7 +1736,9 @@ export default function AssignPage() {
       showToast(action === "hold" ? t("classify.held") : t("classify.confirmed"));
       const isSplit = applyPairSettle(row, saved, leftovers) && leftovers.length > 0;
       // 다음 미확정 줄로 - 지금 줄은 거르기 자리에 남는다. 남는 쪽을 풀었으면 남은 문장의 줄이 다음이다
-      const next = action === "confirm" && !isSplit ? findNextOpen(listKeys, rowMap, row.key) : null;
+      // 놓인 문장에 잇기는 그 줄에 머문다 - 곧바로 그 문장의 연필(Rewrite)로 포커스를 옮겨 고쳐 쓰게(MD 1 F12 E4)
+      const next = shouldAdvanceAfterSave({ action, destinationKind: destination?.kind ?? null, isSplit }) ? findNextOpen(listKeys, rowMap, row.key) : null;
+      if (action === "confirm" && destination?.kind === "join" && !isSplit) setEditFocus({ key: row.key });
       if (action === "confirm") showSent(row, saved, next ?? row.key, at);
       dropDraft(row.key);
       if (isSplit) setSplitRow({ from: row.key, unit: leftovers[0] });
@@ -1753,12 +1771,16 @@ export default function AssignPage() {
    * 그 문장이 그려지면 NewPane이 화면에 들이고, 잇는 선은 진하게 그린다. at은 저장이 실은 놓은 자리(칸 끝 대신 그 자리에 넣는다)
    */
   function showSent(savedRow: ClassifyRow, saved: Group, nextKey: string, at: { sectionKey: string; after: number | null } | null) {
-    const docId = destination?.kind === "slot" || destination?.kind === "step" ? destination.docId : destination?.kind === "link" ? (writtenMap.get(destination.targetIds[0])?.target_doc_id ?? null) : null;
+    const docId = destination?.kind === "slot" || destination?.kind === "step" || destination?.kind === "join" ? destination.docId : destination?.kind === "link" ? (writtenMap.get(destination.targetIds[0])?.target_doc_id ?? null) : null;
     if (docId === null || !destination) return;
     const isMine = (target: Group["targets"][number]) => target.source_unit_ids.some((id) => savedRow.unitIds.includes(id)) || (target.translation_source_unit_id !== null && savedRow.unitIds.includes(target.translation_source_unit_id));
-    const targetIds = destination.kind === "link" ? destination.targetIds : saved.targets.filter((target) => target.target_doc_id === docId && target.parent_target_id === null && isMine(target)).map((target) => target.id);
+    const targetIds = destination.kind === "link" ? destination.targetIds : destination.kind === "join" ? [destination.targetId] : saved.targets.filter((target) => target.target_doc_id === docId && target.parent_target_id === null && isMine(target)).map((target) => target.id);
     setLiveNew((prev) => ({ key: nextKey, docId, targetIds, seq: (prev?.seq ?? 0) + 1 }));
-    if (composed.data?.target_doc_id === docId) {
+    if (composed.data?.target_doc_id === docId && destination.kind === "join") {
+      // 놓인 문장은 그 자리에서 출처만 늘고 번호·글은 그대로다 - 칸 끝에 다시 넣지 않는다
+      const joined = saved.targets.find((target) => target.id === destination.targetId);
+      if (joined) setComposedPatch({ base: composed.data, doc: applyJoinedSources(composedDoc ?? composed.data, joined.id, joined.source_unit_ids) });
+    } else if (composed.data?.target_doc_id === docId) {
       const textOf = (unitIds: number[]) => unitIds.map((id) => unitMap.get(id)?.text ?? "").join(" ");
       // 앞 저장의 미리 고침 위에 얹는다 - 다시 읽기가 오기 전에 연달아 확정해도 앞 문장이 빠지지 않게
       setComposedPatch({ base: composed.data, doc: applySavedTargets(composedDoc ?? composed.data, saved.targets, textOf, at) });
@@ -2037,6 +2059,34 @@ export default function AssignPage() {
     if (pickNewSentence(targetId, additive) && row) openMenu(anchor, event, row.key, additive ? null : targetId);
   }
 
+  /** 놓인 New 문장을 누름(엮은 문서) - 그 줄 옆에 작은 메뉴를 연다. 고르기만 하고 저장은 결정 칸의 Confirm이 한다 */
+  function handleJoinPick(targetId: number, anchor: HTMLElement, event: MouseEvent) {
+    if (activeKey === null) return;
+    setJoinMenu((prev) => ({ seq: (prev?.seq ?? 0) + 1, rowKey: activeKey, targetId, anchor, offset: readMenuOffset(anchor, event) }));
+  }
+
+  /** 놓인 문장 뒤에 놓으면 - 끌어 놓기와 같은 규칙(그 문장이 든 의미 묶음 뒤, 고른 줄이 이미 그 칸에 있으면 자리를 못 바꾼다) */
+  function readJoinAfter(targetId: number): SendDrop {
+    const section = composedDoc ? buildDropSections(composedDoc.sections, (unitId) => rowOfUnit.get(unitId)).find((candidate) => candidate.items.some((item) => item.targetId === targetId)) : undefined;
+    return section && row ? resolveGapDrop(section, targetId, false, row.unitIds) : { kind: "none" };
+  }
+
+  /** 작은 메뉴의 항목 - "이 문장에 잇기"는 그 문장이 보낼 곳이 되고, "이 줄 다음에 놓기"는 그 칸의 그 자리가 된다. 둘 다 Confirm으로 포커스를 옮겨 ↵가 확정한다 */
+  function pickJoinMenu(item: JoinMenuItem) {
+    const target = joinMenu?.targetId;
+    setJoinMenu(null);
+    if (target === undefined || !composedDoc) return;
+    if (item === "join") pickDestination({ kind: "join", docId: composedDoc.target_doc_id, targetId: target });
+    else {
+      const drop = readJoinAfter(target);
+      const destination = drop.kind === "gap" ? readSectionDestination(composedDoc.target_doc_id, drop.sectionKey) : null;
+      if (drop.kind !== "gap" || destination === null) return;
+      setDraft({ destination, position: { placeId: getDestinationId(destination), after: drop.after }, linkChangeTypes: {} });
+      setPickSeq((seq) => seq + 1);
+    }
+    requestAnimationFrame(() => document.querySelector<HTMLElement>('[data-testid="assign-primary"]')?.focus({ preventScroll: true }));
+  }
+
   /** Old 조각 아래 "→ 간 곳"을 누름 - 그 줄을 고르고 New 문서(닫혀 있거나 다른 문서면 열어서)의 그 문장으로 간다 */
   function jumpToNew(unitId: number, targetId: number) {
     const key = rowOfUnit.get(unitId);
@@ -2091,6 +2141,25 @@ export default function AssignPage() {
     const unitId = item.source_unit_ids[0];
     if (unitId !== undefined && newDocId !== null) jumpToOld(unitId, item.target_id, { docId: newDocId });
   }
+
+  // 놓인 문장에 잇고 난 뒤 - 그 줄의 결정 칸이 다시 그려지면(묶음을 다시 받기까지 몇 프레임) 문장 줄의 연필(Rewrite)로 포커스
+  const [editFocus, setEditFocus] = useState<{ key: string } | null>(null);
+  useEffect(() => {
+    if (editFocus === null) return;
+    let tries = 0;
+    let frame = requestAnimationFrame(function step() {
+      const button = document.querySelector<HTMLButtonElement>('[data-testid="assign-edit"]');
+      if (button && !button.disabled) {
+        button.focus();
+        setEditFocus(null);
+        return;
+      }
+      tries += 1;
+      if (tries < 180) frame = requestAnimationFrame(step);
+      else setEditFocus(null);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [editFocus]);
 
   // "번역 없음" 자리를 누른 뒤 - 고른 줄의 결정 칸이 그려지면(관계 묶음이 오기까지 몇 프레임) 번역 만들기(없으면 직접 쓰기) 단추로 포커스
   const [fillOtherSeq, setFillOtherSeq] = useState(0);
@@ -2901,6 +2970,7 @@ export default function AssignPage() {
     const find = (id: number) => document.querySelector<HTMLElement>(`[data-pane="new"] [data-testid="assign-new-${id}"]`);
     let els: (HTMLElement | null)[] = [];
     if (dest.kind === "link") els = addPartnerTargets(dest.targetIds, writtenMap).map(find);
+    else if (dest.kind === "join") els = composedDoc?.target_doc_id === dest.docId ? [find(dest.targetId)] : [];
     else if ("docId" in dest && composedDoc?.target_doc_id === dest.docId) {
       const key = dest.kind === "step" ? getSectionKey(dest) : dest.slotKey;
       const section = composedDoc.sections.find((item) => item.location_key === key);
@@ -3018,7 +3088,7 @@ export default function AssignPage() {
         icon={MapPin}
         title={
           <>
-            <b>{label.title}</b> · {t("assign.chosen.place")}
+            <b>{label.title}</b> · {t(rec.destination.kind === "slot_heading" ? "assign.slotHeading" : "assign.chosen.place")}
           </>
         }
         text={label.text}
@@ -3258,6 +3328,11 @@ export default function AssignPage() {
       );
     }
     const placeLabel = isPlace ? renderPlaceLabel(destination) : null;
+    // 놓인 문장에 잇기 - 그 문장(번호·글)과 잇고 나면 한 문장에 든 Old 줄 수. 문서를 다시 읽는 중이거나 다른 문서를 열었으면 문서 번호만
+    const joinItem = destination.kind === "join" && composedDoc?.target_doc_id === destination.docId ? composedDoc.sections.flatMap((section) => section.items).find((item) => item.target_id === destination.targetId) : undefined;
+    const joinCode = destination.kind === "join" ? ((tobeData?.docs ?? []).find((doc) => doc.id === destination.docId)?.code ?? "") : "";
+    // 여러 Old 줄이 한 New 문장으로 합쳐진 곳(잇기로 이은 문장) - 머리가 "Old n줄 → New 1문장 · 고쳐 씀"
+    const mergedLines = isPlace ? Math.max(0, ...slots.filter((slot) => slot.target !== null && slot.sourceIds.length > 1).map((slot) => countJoinedLines(slot.sourceIds, activeKey ?? "", (unitId) => rowOfUnit.get(unitId)))) : 0;
     const isConfirmedView = row?.status === "confirmed" && draft.destination === null;
     const pickedRows = linkIds.map((id) => writtenMap.get(id)).filter((item): item is WrittenSentence => item !== undefined);
     // 줄에 없는 언어의 문장은 번역이다 - 종류를 고르지 않고, 나눔도 같은 언어 문장끼리만 센다(제품 명세 §6.7)
@@ -3268,17 +3343,17 @@ export default function AssignPage() {
     const auto = [...byLang.values()].some((count) => count > 1) ? "split" : mergedWith.length > 0 ? "merged" : null;
     // 잇지 않는 언어의 짝 조각은 판단이 있으면 지금 그대로 함께 저장된다 - 줄이 아니라 함께 확정되는 쪽으로 보인다.
     // 판단이 없으면 저장에서 빠지고 서버가 같은 저장 안에서 짝을 풀어 제 줄로 남긴다(아래 알림)
-    const linkedLangs = new Set(pickedRows.map((item) => item.lang));
-    const savedRowIds = destination.kind === "link" ? pickLinkUnits(rowUnits, linkedLangs).map((unit) => unit.unit_id) : (row?.unitIds ?? []);
+    const linkedLangs = new Set(destination.kind === "join" && joinItem ? [joinItem.lang] : pickedRows.map((item) => item.lang));
+    const savedRowIds = destination.kind === "link" || destination.kind === "join" ? pickLinkUnits(rowUnits, linkedLangs).map((unit) => unit.unit_id) : (row?.unitIds ?? []);
     const leftovers = pickedGroups.isLoading ? [] : listLinkLeftovers(destination, { units: saveUnits, group: saveGroupData });
-    const coConfirmed = saveGroupData ? listCoConfirmed(saveGroupData, [...savedRowIds, ...leftovers], linkIds) : [];
+    const coConfirmed = saveGroupData ? listCoConfirmed(saveGroupData, [...savedRowIds, ...leftovers], listJoinedTargetIds(destination)) : [];
     const spansDocs = new Set(pickedRows.map((item) => item.target_doc_id)).size > 1;
     return (
       <div className="chosen-box" data-testid="assign-chosen">
         <span className="chosen-label">
           {isConfirmedView && <Check size={13} strokeWidth={2} className="flex-none" aria-hidden />}
           <Truncate
-            text={`${isConfirmedView ? `${t("assign.chosen.confirmed")} · ` : ""}${destination.kind === "link" ? `${t("assign.chosen.link")} · ${[...new Set(pickedRows.map((item) => item.doc_code))].join(", ")}` : destination.kind === "slot_heading" ? t("assign.slotHeading") : isPlace ? t("assign.chosen.place") : t("assign.acc.move")}`}
+            text={`${isConfirmedView ? `${t("assign.chosen.confirmed")} · ` : ""}${destination.kind === "link" ? `${t("assign.chosen.link")} · ${[...new Set(pickedRows.map((item) => item.doc_code))].join(", ")}` : destination.kind === "join" ? t("assign.chosen.join") : destination.kind === "slot_heading" ? t("assign.slotHeading") : isPlace ? (mergedLines >= 2 ? t("assign.chosen.merged", { n: mergedLines }) : t("assign.chosen.place")) : t("assign.acc.move")}`}
           />
         </span>
         {(destination.kind === "delete" || destination.kind === "move") && (
@@ -3299,6 +3374,17 @@ export default function AssignPage() {
             onChange={(targetId, value) => setDraft({ linkChangeTypes: { ...(draft.linkChangeTypes ?? {}), [targetId]: value } })}
             renderNote={renderRefLinkAdvice}
           />
+        )}
+        {destination.kind === "join" && (
+          <>
+            <span className="flex min-w-0 items-baseline gap-1.5 text-[13px] font-semibold text-ink" data-testid="assign-chosen-join">
+              <b className="flex-none font-mono text-[11px]">{[joinCode, joinItem?.number].filter(Boolean).join(" ")}</b>
+              {joinItem && <Truncate text={joinItem.text} lang={joinItem.lang === "neutral" ? undefined : joinItem.lang} />}
+            </span>
+            <span className="text-xs text-ink-2" data-testid="assign-chosen-join-note">
+              {t("assign.chosen.joinNote", { n: countJoinedLines(joinItem?.source_unit_ids ?? [], activeKey ?? "", (unitId) => rowOfUnit.get(unitId)) })}
+            </span>
+          </>
         )}
         {placeLabel && (
           <>
@@ -3331,7 +3417,7 @@ export default function AssignPage() {
             ))}
           </div>
         )}
-        {otherLang && destination.kind !== "link" && canEdit && (
+        {otherLang && destination.kind !== "link" && destination.kind !== "join" && canEdit && (
           <div className="flex flex-wrap gap-1.5">
             {aiOn && (
               <button type="button" className="btn h-7" data-testid="assign-make-other" disabled={busy} onClick={() => row && void askAiScope("translate", { unit_ids: row.unitIds, direction: otherLang === "en" ? "ko_to_en" : "en_to_ko" })}>
@@ -3483,7 +3569,7 @@ export default function AssignPage() {
         {shapeLines.length > 0 && (
           <>
             {renderStep(n, t("assign.step.shape"))}
-            <ShapeTools lines={shapeLines} cutUnitId={cutLine.at !== null ? cutUnitId : null} busy={busy} onAction={(unit, action, lang) => runUnitAction(unit, action, lang)} mode={shapeMode} onMode={switchShapeMode} headingBack={headingBack} rewrap={rewrap} />
+            <ShapeTools lines={shapeLines} cutUnitId={cutLine.at !== null ? cutUnitId : null} busy={busy} onAction={(unit, action, lang) => runUnitAction(unit, action, lang)} mode={shapeMode} onMode={switchShapeMode} headingBack={headingBack} bandBack={bandBack} rewrap={rewrap} />
           </>
         )}
         {rowRefUnit && shapeView && (
@@ -4075,7 +4161,7 @@ export default function AssignPage() {
   const cutTargetId = isNewEdit && cutUnit !== null ? (written.find((item) => item.new_unit_id === cutUnit.id)?.target_id ?? null) : null;
   // 고른 New 문장 - 이을 문장, 또는 양 단에서 New 문장의 짝을 고르는 중이면 모은 문장
   const isNewPairPick = isNewEdit && pairSource !== null && pairFrom !== null;
-  const pickedNew = new Set(isNewPairPick ? pairFrom.picked.flatMap((unitId) => written.find((item) => item.new_unit_id === unitId)?.target_id ?? []) : linkIds);
+  const pickedNew = new Set(isNewPairPick ? pairFrom.picked.flatMap((unitId) => written.find((item) => item.new_unit_id === unitId)?.target_id ?? []) : [...linkIds, ...(destination?.kind === "join" ? [destination.targetId] : [])]);
   // 확인이 남은 누락 의심 경고의 문단 - 용지의 그 줄에 표시한다. 위쪽 줄의 목록에서 확인하면(문서 목록을 다시 받아) 사라진다
   const warnBlockIds = new Set(listAckWarnings(docs.data ?? []).flatMap((item) => (item.docId === oldDocId && item.warning.acked_by === null && item.warning.block_id !== null ? [item.warning.block_id] : [])));
   // Shift로 고른 줄, 그리고 짝 고르기에서 모은 문장
@@ -4381,6 +4467,8 @@ export default function AssignPage() {
                     tag={isComposedDoc ? t("assign.composedTag") : t("assign.writtenTag")}
                     onEditOriginal={!isComposedDoc && newFileId !== null ? () => openSolo(newFileId) : undefined}
                     readOnly={isComposedDoc}
+                    joinableIds={joinableIds}
+                    onJoinPick={handleJoinPick}
                     live={liveDoc && liveDoc.docId === newDocId ? { seq: liveDoc.seq, targetIds: liveDoc.targetIds } : null}
                     onReveal={(el, flash) => {
                       revealElement(el);
@@ -4448,6 +4536,17 @@ export default function AssignPage() {
           <AssignHelp />
         </aside>
       </div>
+      {joinMenu && composedDoc && (
+        <JoinMenu
+          key={joinMenu.seq}
+          anchor={joinMenu.anchor}
+          offset={joinMenu.offset}
+          lineCount={countJoinedLines(composedDoc.sections.flatMap((section) => section.items).find((item) => item.target_id === joinMenu.targetId)?.source_unit_ids ?? [], joinMenu.rowKey, (unitId) => rowOfUnit.get(unitId))}
+          canPlaceAfter={readJoinAfter(joinMenu.targetId).kind === "gap"}
+          onPick={pickJoinMenu}
+          onClose={() => setJoinMenu(null)}
+        />
+      )}
       {menu && menuItems.length > 0 && (
         <LinkMenu key={menu.seq} anchor={menu.anchor} cover={readMenuCover(menu.anchor, rowMap.get(menu.rowKey)?.unitIds ?? [])} offset={menu.offset} lineUnits={rowMap.get(menu.rowKey)?.unitIds ?? []} items={menuItems} isUnsaved={menuItems.includes("cancel")} confirmBlock={confirmBlockKey ? t(confirmBlockKey) : null} busy={busy} onAction={runMenu} onClose={() => setMenu(null)} />
       )}

@@ -208,6 +208,36 @@ def test_merge_two_units_is_merged(client: TestClient) -> None:
     assert by_target.json() == group
 
 
+def test_join_second_unit_into_a_placed_target_merges_sources(client: TestClient) -> None:
+    """프런트 "이 문장에 잇기" - 이미 놓인 새 문장에 다른 줄의 단위를 출처로 더한다(글·자리 그대로, 종류는 합침, 그 줄의 옛 문장은 지운다)."""
+    fx = _setup(client)
+    first, second = find_unit(fx.view, WARM_UP), find_unit(fx.view, RECORDS)
+    placed = save_group(
+        client, fx.bundle_id, _body([_unit_in(first)], [_target("a", fx.sop_id, [first], slot_key="general_requirements.work")])
+    ).json()["targets"][0]
+    own = save_group(
+        client, fx.bundle_id, _body([_unit_in(second)], [_target("b", fx.sop_id, [second], slot_key="responsibilities")])
+    ).json()["targets"][0]
+    echo = {
+        "key": f"t{placed['id']}", "id": placed["id"], "revision": placed["revision"], "kind": "sentence",
+        "source_unit_ids": [first["id"], second["id"]], "target_doc_id": placed["target_doc_id"],
+        "slot_key": placed["slot_key"], "wi_step": None, "wi_part": None,
+    }
+
+    response = save_group(
+        client, fx.bundle_id,
+        _body([_unit_in(second, 2), _unit_in(first, 2)], [echo], removed_target_ids=[own["id"]]),
+    )
+
+    assert response.status_code == 200, response.text
+    (joined,) = response.json()["targets"]
+    assert (joined["id"], joined["change_type"], joined["source_unit_ids"]) == (placed["id"], "merged", [first["id"], second["id"]])
+    assert (joined["confirmed_text"], joined["slot_key"], joined["target_doc_id"]) == (WARM_UP, "general_requirements.work", fx.sop_id)
+    assert _count_rows(TargetSentence, id=own["id"]) == 0
+    group = get_group_by_unit(client, fx.bundle_id, second["id"])
+    assert [(entry["unit_id"], entry["decision"]["status"]) for entry in group["units"]] == [(first["id"], "confirmed"), (second["id"], "confirmed")]
+
+
 def test_pair_units_saved_together(client: TestClient) -> None:
     fx = _setup(client)
     ko, en = find_unit(fx.view, "1. 목적"), find_unit(fx.view, "1. Purpose")

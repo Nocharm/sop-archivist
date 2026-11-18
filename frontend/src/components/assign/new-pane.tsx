@@ -4,6 +4,7 @@
 // 점선 = 후보, 채움 = 고른 문장, 칩 = 붙은 Old 출처(누르면 Old의 그 조각으로), 왼쪽 끝 위험색 막대 = 출처 없음. 엮은 문서의 빈 칸은 옅은 자리 표시.
 // 엮은 문서의 문장을 받지 않는 절은 자리 표시가 없다 - 묶음은 칸 머리만, 앱이 채우는 목록(자식 WI)은 읽기만 하는 줄.
 // 엮은 문서의 두 문장 사이에 Old 조각을 놓았으면 그 자리에 저장 전 문장(점선 초안), 빈 칸에 놓았으면 그 자리 표시에 강조 테두리(끌어서 보내기).
+// 엮은 문서도 고른 Old 줄을 더 이을 수 있는 확정 문장(joinableIds)은 눌러 작은 메뉴를 연다(onJoinPick) - 그 밖의 문장은 읽기만 한다.
 // 줄 상자(.new-item)마다 data-row(t:<id> | slot:<칸>) - 끄는 동안 놓을 자리를 이것으로 읽는다.
 // 참조 줄이 EQUIS와 어긋나면 칩 줄 끝에 작은 표시(RefMark) - 출처 없는 줄은 그 표시만 있는 칩 줄이 생긴다.
 // 칩 오른쪽 갈매기는 그 Old 조각이 왼쪽 칸 화면 위·아래 밖에 있다는 표시 - 스크롤마다 바뀌어 LinkLines가 data-dir로 단다(Old 배지와 같은 방식).
@@ -50,8 +51,12 @@ interface NewPaneProps {
   rowsKey: string;
   /** 머리 표지 - 이미 쓴 문서인지 배정으로 엮는 문서인지 */
   tag: string;
-  /** 엮은 문서 - 문장을 눌러 고르지 않는다(잇는 대상은 이미 쓴 문서 문장뿐) */
+  /** 엮은 문서 - 문장을 눌러 고르지 않는다(잇는 대상은 이미 쓴 문서 문장뿐). 단 joinableIds의 문장은 눌러 작은 메뉴(이 문장에 잇기)를 연다 */
   readOnly: boolean;
+  /** 엮은 문서에서 고른 Old 줄을 더 이을 수 있는 문장(target id) - 이 문장들만 누를 수 있다. 없으면 모두 읽기만 */
+  joinableIds?: ReadonlySet<number>;
+  /** 이을 수 있는 문장을 누름 - anchor는 그 줄 상자(메뉴가 붙는다) */
+  onJoinPick?: (targetId: number, anchor: HTMLElement, event: MouseEvent) => void;
   candidateIds: ReadonlySet<number>;
   pickedIds: ReadonlySet<number>;
   /** 출처 없는 New 모드에서 고른 문장 */
@@ -376,7 +381,23 @@ export function NewPane(props: NewPaneProps) {
           >
             {(row.source_unit_ids.length > 0 || row.change_type === "new" || readWrittenRefMark(row) !== null) && renderSources(row)}
             {props.readOnly ? (
-              <span className="new-hit is-static">{text}</span>
+              props.joinableIds?.has(row.target_id) && props.onJoinPick ? (
+                <button
+                  type="button"
+                  className="new-hit"
+                  aria-haspopup="menu"
+                  aria-pressed={props.pickedIds.has(row.target_id)}
+                  data-testid={`assign-new-join-${row.target_id}`}
+                  onClick={(event) => {
+                    const line = event.currentTarget.parentElement;
+                    if (line) props.onJoinPick?.(row.target_id, line, event);
+                  }}
+                >
+                  {text}
+                </button>
+              ) : (
+                <span className="new-hit is-static">{text}</span>
+              )
             ) : (
               <button
                 type="button"

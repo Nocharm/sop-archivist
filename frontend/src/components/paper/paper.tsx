@@ -22,7 +22,7 @@ import { isNoiseUnit } from "@/lib/classify-model";
 import { useI18n } from "@/lib/i18n";
 import { pickNearChunks, sliceCards } from "@/lib/paper-chunk-model";
 import { buildFoldPlan, type FoldEntry, type FoldItem, type FoldOpen } from "@/lib/paper-fold-model";
-import { buildRows, foldCaptionRows, getBundleHeader, getGapMerge, getMarks, getTags, MERGE_BLOCKER_KEYS, resolvePickUnit, type PaperItem, type PaperModel, type PaperRow, type Segment, type UnitMark } from "@/lib/paper-model";
+import { buildRows, foldCaptionRows, getBundleHeader, getGapMerge, getMarks, getTags, isBandHeading, MERGE_BLOCKER_KEYS, resolvePickUnit, type PaperItem, type PaperModel, type PaperRow, type Segment, type UnitMark } from "@/lib/paper-model";
 import type { JoinKind, JoinPlan } from "@/lib/split-menu-model";
 import { getHiddenEnds, listFollowPreview } from "@/lib/number-model";
 import { getCardTops, getHiddenPrefixLength, getPairBrackets, getPillWidth, getSectionHeads, getTabWidths, getSectionLevel, getSectionPill, getVisibleSkip, sliceVisible, type PairBracket } from "@/lib/strip-pill-model";
@@ -938,8 +938,9 @@ export function Paper({
                   const skip = partIndex === 0 ? readHiddenPrefix(part.block, unit) : 0;
                   // 번호 칸으로 간 번호만 든 칸 블록 - 빈 줄을 두지 않는다
                   if (skip > 0 && part.segments.every((segment) => segment.end <= skip)) return null;
+                  // 띠 표 제목 줄은 칸 블록이라 제목 스타일이 없다 - 제목처럼 그린다(F4)
                   return (
-                    <p key={part.block.id} data-block={part.block.id} className={part.block.heading_level !== null ? "h" : undefined}>
+                    <p key={part.block.id} data-block={part.block.id} className={part.block.heading_level !== null || (unit !== undefined && isBandHeading(unit)) ? "h" : undefined}>
                       {/* 보류 칩 - .su·data-start 밖이라 눌러도 글자 위치로 읽히지 않고 조각 상자를 누른 것으로 그 줄을 고른다 */}
                       {partIndex === 0 && isHold && <UnitStatusChip status="on_hold" size="sm" testId={`${testId}-hold-${unit?.id}`} />}
                       {part.segments.map((segment, index) => renderSegment(part.block, segment, index, skip))}

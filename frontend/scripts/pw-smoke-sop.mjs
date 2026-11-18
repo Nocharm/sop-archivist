@@ -4370,7 +4370,7 @@ await runStep("outputs: A, B, C and the Excel preview", {}, async ({ page, takeS
   await page.waitForFunction(() => document.querySelector('[data-testid="outputs-check-numbers"]')?.checked === false, null, { timeout: T });
 });
 
-// --- 목차 블록(MD 1 F6) - 시드 7번 묶음 "SYNTHETIC 7 목차": 목차 스타일 줄 7(한글 4 · 영어 3)과 그 뒤 점 끌기 보통 줄 1이 목차로 잡히고 본문 3줄 ---
+// --- 목차 블록(MD 1 F6) - 시드 7번 묶음 "SYNTHETIC 7 목차": 목차 스타일 줄 7(한글 4 · 영어 3)과 그 뒤 점 끌기 보통 줄 1이 목차로 잡히고 본문 4줄(띠 표 제목 줄 하나 포함) ---
 const TOC_TITLE = "SYNTHETIC 7 목차";
 const TOC_LINES = 8;
 const TOC_AFTER_TEXT = "관련 서식";
@@ -4404,7 +4404,7 @@ await runStep("assign: TOC block folds the contents, Not contents returns one li
   check("the folded block shows the automatic delete line", await page.locator(`[data-testid="assign-paper-toc-note-${key}"]`).isVisible());
   check("no contents line is drawn as a normal piece while folded", (await page.locator('[data-testid^="assign-paper-toc-line-"]').count()) === 0);
   const before = await readAllCount(page);
-  check("the remaining count leaves the contents lines out", before === toc.progress.total && before === 3, `${before} | ${toc.progress.total}`);
+  check("the remaining count leaves the contents lines out", before === toc.progress.total && before === 4, `${before} | ${toc.progress.total}`);
 
   await head.click();
   await page.waitForFunction((testId) => document.querySelector(`[data-testid="${testId}"]`)?.getAttribute("aria-expanded") === "true", `assign-paper-toc-head-${key}`, { timeout: T });
@@ -4467,6 +4467,68 @@ await runStep("assign: TOC block None of these are contents returns the whole bl
   await page.locator('[data-testid="assign-undo"]').click();
   await waitTocLines(page, TOC_LINES);
   check("undo folds the block back, closed", (await page.locator('[data-testid^="assign-paper-toc-head-"]').getAttribute("aria-expanded")) === "false" && (await readAllCount(page)) === before);
+});
+
+// --- 띠 표 → 제목 줄(MD 1 F4) - 시드 7번 묶음 본문의 띠 표 "7.4 | | 필터 교체 (Filter change)"는 올리자마자 제목 줄 하나다.
+// 번호는 번호 칸에만 있고 글은 제목뿐이다. Shape의 Back to band table이 표 한 줄로 되돌리고 Undo가 다시 제목 줄로 만든다(시드 그대로 둔다)
+const BAND_NUMBER = "7.4";
+const BAND_TITLE = "필터 교체 (Filter change)";
+
+await runStep("assign: band heading - one heading line with 7.4 in the number cell, Back to band table, Undo makes it a heading again", {}, async ({ page, takeShot }) => {
+  const toc = await findTocBundle(page);
+  check("the demo seed has the contents bundle", toc !== null);
+  if (!toc) return;
+  const headers = { "X-Dev-User": "qa.member" };
+  const docs = await (await page.request.get(`${BASE}/api/bundles/${toc.id}/documents`, { headers })).json();
+  const readView = async () => (await page.request.get(`${BASE}/api/bundles/${toc.id}/documents/${docs[0].id}/view`, { headers })).json();
+  const waitView = async (isDone) => {
+    for (let tries = 0; tries < 60; tries += 1) {
+      const view = await readView();
+      if (isDone(view)) return view;
+      await page.waitForTimeout(250);
+    }
+    return null;
+  };
+  const band = (await readView()).units.find((unit) => unit.kind === "heading" && unit.table_id !== null);
+  check("the band table is a heading line from upload", band !== undefined && band.number?.value === BAND_NUMBER);
+  if (!band) return;
+  await page.goto(`${BASE}/bundles/${toc.id}/assign`);
+  const piece = page.locator(`[data-testid="assign-paper-piece-${band.id}"]`);
+  await piece.waitFor({ timeout: T });
+  await piece.scrollIntoViewIfNeeded();
+  // 표가 아니라 글 조각 하나 - 번호는 번호 칸(조각 밖 왼쪽)에 한 번, 조각 글은 제목만
+  check("it is drawn as one text piece, not a table", (await piece.getAttribute("data-kind")) === "piece");
+  const pieceText = await piece.innerText();
+  check("the piece shows the title without the number", pieceText.includes(BAND_TITLE) && !pieceText.includes(BAND_NUMBER), pieceText);
+  const rowText = await piece.locator("xpath=..").innerText();
+  check("the number shows once, in the number cell", rowText.split(BAND_NUMBER).length - 1 === 1, rowText);
+  await piece.click();
+  await wait(page, "assign-shape-band-back");
+  const line = await getText(page, `assign-shape-line-${band.id}`);
+  check("the Shape line reads the title only", line.includes(BAND_TITLE) && !line.includes(BAND_NUMBER), line);
+  check("a band heading has no Turn into sentences button", (await page.locator(`[data-testid="assign-shape-to_sentence-${band.id}"]`).count()) === 0);
+  await takeShot("sop-assign-band-heading.png");
+  await page.locator('[data-testid="assign-shape-band-back"]').click();
+  const table = await waitView((view) => !view.units.some((unit) => unit.id === band.id));
+  const tableUnit = table?.units.find((unit) => unit.kind === "table" && unit.table_id === band.table_id);
+  check("Back to band table makes it one table line again", tableUnit !== undefined);
+  if (tableUnit) await page.locator(`[data-testid="assign-paper-piece-${tableUnit.id}"]`).waitFor({ timeout: T });
+  // 한 편집이라 Undo 한 번에 같은 제목 줄(같은 Unit id)로 돌아온다
+  await page.locator('[data-testid="assign-undo"]').click();
+  check("Undo brings the same heading line back", (await waitView((view) => view.units.some((unit) => unit.id === band.id && unit.kind === "heading"))) !== null);
+  await piece.waitFor({ timeout: T });
+});
+
+// 결과물 A(API) - 위치 칸은 띠 표 번호와 "띠 표", 원문 칸은 제목만(F11)
+await runStep("assign: band heading - Output A puts it at § 7.4 · 띠 표 with the title only", {}, async ({ page }) => {
+  const toc = await findTocBundle(page);
+  if (!toc) return;
+  const headers = { "X-Dev-User": "qa.member" };
+  const rows = await (await page.request.get(`${BASE}/api/bundles/${toc.id}/outputs/a?lang=ko`, { headers })).json();
+  const row = rows.find((item) => item.source_text === BAND_TITLE);
+  check("Output A has the band heading row", row !== undefined);
+  if (!row) return;
+  check("its location is the band number and Band table", row.location.section === BAND_NUMBER && row.location.place === "띠 표", JSON.stringify(row.location));
 });
 
 await runStep("outputs: export preview folds TOC rows and Output A keeps them as automatic deletes", {}, async ({ page, takeShot }) => {
@@ -9025,6 +9087,122 @@ await runStep("assign: drag an Old piece into a WI step, on its row in the All l
   const left = new Map((await readUnits()).map((unit) => [unit.unit_id, unit.status]));
   const removed = await page.request.delete(`${api}/tobe/docs/${wi.id}`, { headers });
   check("the step's rows are cleared and the WI is removed", stepUnits.every((unit) => left.get(unit.unit_id) === "unassigned") && removed.ok(), `${removed.status()} ${JSON.stringify(stepUnits.map((unit) => left.get(unit.unit_id)))}`);
+});
+
+// 놓인 New 문장 잇기(MD 2 S3의 일부) - 아직 안 쓴 문서에 놓인 확정 문장을 누르면 작은 메뉴, "이 문장에 잇기"는 고르기만 하고 ↵가 저장한다(Old 2줄 → New 1문장).
+// 준비로 한 줄을 API로 5장 범주에 확정해 두고(문장 a), 다른 미배정 줄(b)을 골라 그 문장에 잇는다. 뒷정리로 두 줄의 배정을 지운다
+await runStep("assign: join a picked Old line to a placed New sentence of an unwritten document, Esc closes the menu, Enter saves it as a merged sentence", {}, async ({ page, takeShot }) => {
+  const headers = { "X-Dev-User": "qa.member" };
+  const api = `${BASE}/api/bundles/${halfBundleId}`;
+  const getJson = async (path) => (await page.request.get(`${api}${path}`, { headers })).json();
+  const readUnits = async () => (await getJson("/units?limit=1000")).items;
+  const sop = (await getJson("/tobe")).docs.find((doc) => doc.entrance === "assign" && doc.doc_type === "sop");
+  const place = sop ? (await getJson(`/outputs/c/docs/${sop.id}?lang=en`)).sections.find((section) => section.location_key.startsWith("general_requirements.") && section.na_reason === null) : null;
+  // 같은 Old 문서의 짝 없는 한글 미배정 문장 둘 - a는 먼저 놓고 b를 잇는다
+  const loose = (await readUnits()).filter((unit) => unit.kind === "sentence" && unit.lang === "ko" && unit.status === "unassigned" && unit.decision.disposition === "unassigned" && unit.pair_id === null);
+  const sameDoc = loose.filter((unit) => unit.document_id === loose[0]?.document_id);
+  const [unitA, unitB] = sameDoc;
+  check("the bundle has an SOP category and two loose Korean Old sentences", Boolean(sop && place && unitA && unitB), `${sop?.code} ${place?.location_key} ${unitA?.unit_id} ${unitB?.unit_id}`);
+  if (!sop || !place || !unitA || !unitB) return;
+  const savedA = await page.request.post(`${api}/groups/save`, {
+    headers,
+    data: {
+      action: "confirm",
+      hold_reason: "",
+      units: [{ unit_id: unitA.unit_id, revision: unitA.decision.revision, disposition: "assigned", move_target_code: "", reason: "" }],
+      targets: [{ key: "u", target_doc_id: sop.id, slot_key: place.location_key, kind: "sentence", source_unit_ids: [unitA.unit_id] }],
+      removed_target_ids: [],
+      release_unit_ids: [],
+    },
+  });
+  const placed = (await savedA.json()).targets?.[0];
+  check("one Old sentence is placed in the SOP first", savedA.ok() && placed !== undefined, String(savedA.status()));
+  if (!placed) return;
+  const readSources = async () => (await (await page.request.get(`${api}/groups/by-target/${placed.id}`, { headers })).json()).targets.find((target) => target.id === placed.id);
+  let saveRequests = 0;
+  page.on("request", (request) => {
+    if (request.url().includes("/groups/save") && request.method() === "POST") saveRequests += 1;
+  });
+  await page.goto(`${BASE}/bundles/${halfBundleId}/assign`);
+  await wait(page, "assign-bar");
+  const pieceB = page.locator(`[data-testid="assign-paper-piece-${unitB.unit_id}"]`);
+  await page.locator('[data-pane="old"] .strip[data-strip-unit]').first().waitFor({ timeout: T });
+  if ((await pieceB.count()) === 0) {
+    await page.locator('[data-testid="assign-old-doc"]').click();
+    await page.locator(`[data-testid="assign-old-doc-option-${unitB.document_id}"]`).click();
+  }
+  await pieceB.waitFor({ timeout: T });
+  const pointB = await page.locator(`[data-testid="assign-paper-unit-${unitB.unit_id}"]`).first().evaluate((el) => {
+    el.scrollIntoView({ block: "center" });
+    const rect = el.getClientRects()[0];
+    return { x: rect.left + Math.min(24, rect.width / 2), y: rect.top + rect.height / 2 };
+  });
+  await page.mouse.click(pointB.x, pointB.y);
+  await wait(page, "assign-new");
+  if ((await page.locator('[data-testid="assign-new"]').getAttribute("data-doc")) !== String(sop.id)) {
+    await page.locator('[data-testid="assign-new-doc"]').click();
+    await page.locator(`[data-testid="assign-new-doc-option-${sop.id}"]`).click();
+  }
+  const joinLine = page.locator(`[data-testid="assign-new-join-${placed.id}"]`);
+  await joinLine.waitFor({ timeout: T });
+  check("with an Old line picked the placed sentence is a button", (await joinLine.evaluate((el) => el.tagName)) === "BUTTON");
+
+  // 메뉴 - 두 항목, Esc로 닫힘
+  await joinLine.click();
+  const menu = page.locator('[data-testid="assign-join-menu"]');
+  await menu.waitFor({ timeout: T });
+  check("the small menu offers joining and placing after", (await page.locator('[data-testid="assign-join-menu-join"]').count()) === 1 && (await page.locator('[data-testid="assign-join-menu-after"]').count()) === 1);
+  check("the join item says two Old lines make one New sentence", ((await page.locator('[data-testid="assign-join-menu-join"]').textContent()) ?? "").includes("2 Old lines → 1 New sentence"), await page.locator('[data-testid="assign-join-menu-join"]').textContent());
+  await takeShot("sop-assign-join-menu.png");
+  await page.keyboard.press("Escape");
+  await menu.waitFor({ state: "detached", timeout: T });
+  check("Esc closes the menu and saves nothing", saveRequests === 0);
+  await joinLine.click();
+  await menu.waitFor({ timeout: T });
+  await page.mouse.click(5, 5);
+  await menu.waitFor({ state: "detached", timeout: T });
+  check("clicking outside closes the menu too", saveRequests === 0);
+
+  // 이 문장에 잇기 - 고른 곳 상자에 그 문장과 글, 저장은 아직 없다
+  await joinLine.click();
+  await menu.waitFor({ timeout: T });
+  await page.locator('[data-testid="assign-join-menu-join"]').click();
+  await wait(page, "assign-chosen-join");
+  const chosen = ((await page.locator('[data-testid="assign-chosen-join"]').textContent()) ?? "").trim();
+  const chosenNote = ((await page.locator('[data-testid="assign-chosen-join-note"]').textContent()) ?? "").trim();
+  check("the picked-place box shows the sentence and the join note", chosen.includes(sop.code) && chosenNote === "Link to this sentence (2 Old lines → 1 New sentence)", `${chosen} | ${chosenNote}`);
+  check("picking it saves nothing yet and Confirm has the focus", saveRequests === 0 && (await page.evaluate(() => document.activeElement?.getAttribute("data-testid"))) === "assign-primary");
+  check("the joined sentence is drawn as picked", (await joinLine.getAttribute("aria-pressed")) === "true");
+
+  // ↵로 확정 - 그 문장에 출처가 둘, 글은 그대로, 종류는 합침
+  const saveRequest = page.waitForRequest((request) => request.url().includes("/groups/save") && request.method() === "POST", { timeout: T });
+  const saved = page.waitForResponse((response) => response.url().includes("/groups/save"), { timeout: T });
+  await page.keyboard.press("Enter");
+  const body = (await saveRequest).postDataJSON();
+  await saved;
+  await page.waitForLoadState("networkidle");
+  const sent = body.targets.find((target) => target.id === placed.id);
+  check("the save sends the placed sentence with both Old units and no new text", sent !== undefined && JSON.stringify(sent.source_unit_ids) === JSON.stringify([unitA.unit_id, unitB.unit_id]) && sent.text === undefined, JSON.stringify(sent));
+  const joined = await readSources();
+  check("the server keeps one merged sentence with both sources", joined?.change_type === "merged" && joined.source_unit_ids.length === 2 && joined.confirmed_text === placed.confirmed_text, JSON.stringify(joined));
+  check("the placed line keeps its place and number after saving", (await page.locator(`[data-testid="assign-new-${placed.id}"]`).count()) === 1);
+  // 그 줄에 머문다 - 다음 줄로 넘어가지 않고, 고른 곳 상자 머리가 N:1 글이고 연필(Rewrite)에 포커스가 있다
+  await page.locator('[data-testid="assign-edit"]').waitFor({ timeout: T });
+  check("after joining the picked line stays and the box head names the merge", (await page.locator(`[data-testid="assign-paper-piece-${unitB.unit_id}"]`).evaluate((el) => el.hasAttribute("data-sel"))) && (((await page.locator('[data-testid="assign-chosen"] .chosen-label').textContent()) ?? "").includes("Old 2 lines → 1 New sentence · rewrite")), await page.locator('[data-testid="assign-chosen"] .chosen-label').textContent());
+  check("the Rewrite pencil of that sentence has the focus", (await page.evaluate(() => document.activeElement?.getAttribute("data-testid"))) === "assign-edit");
+
+  // 되돌리기 - 출처가 다시 하나
+  await page.keyboard.press("ControlOrMeta+z");
+  for (let step = 0; step < 30 && (await readSources())?.source_unit_ids.length !== 1; step += 1) await page.waitForTimeout(300);
+  check("Ctrl+Z takes the second source back", (await readSources())?.source_unit_ids.length === 1);
+
+  // 뒷정리 - 준비로 놓은 줄과 b의 배정을 지운다
+  for (const unit of [unitA, unitB]) {
+    const now = (await readUnits()).find((item) => item.unit_id === unit.unit_id);
+    await page.request.post(`${api}/decisions/clear`, { headers, data: { unit_id: unit.unit_id, revision: now.decision.revision } });
+  }
+  const left = new Map((await readUnits()).map((unit) => [unit.unit_id, unit.status]));
+  check("both lines are unassigned again", [unitA, unitB].every((unit) => left.get(unit.unit_id) === "unassigned"));
 });
 
 // Pair view(끌어다 놓기 4걸음) - 한/영 따로 문서(합성 OLD-3)를 KO | EN 두 칸으로 펴고 끄면 보던 화면으로 돌아온다.

@@ -26,6 +26,7 @@ LEVELS = [("decimal", "%1"), ("decimal", "%1.%2"), ("decimal", "%1.%2.%3")]
 TOP, CHECK, MISREAD, CHANGE = "1 합성 절차", "1.1 합성 필터 점검", "1.2 합성 필터 확인", "1.3 합성 필터 교체"
 STEP, TYPED, UNREAD, PLAIN = "1.3.1 합성 필터를 교체한다.", "2.1 합성 타자 번호 줄이다.", "합성 못 읽은 줄이다.", "합성 보통 문장이다."
 TYPED_HEADING = "3. 합성 타자 제목"
+BAND = "7\n합성 띠 제목"  # 띠 표 제목 줄 — 번호 칸 블록과 제목 칸 블록을 줄바꿈으로 잇는다
 BODY = (
     numbered("합성 절차", 1, 0, "Heading1") + numbered("합성 필터 점검", 1, 1, "Heading2")
     + numbered("합성 필터 확인", 1, 1, "Heading2") + p("합성 확인 내용이다.") + numbered("합성 필터 교체", 1, 1, "Heading2")
@@ -175,7 +176,9 @@ def test_auto_numbers_go_to_the_number_cell_and_typed_numbers_stay_text(client: 
         "value": "3.", "read": "3.", "source": "typed", "is_set": False, "content_start": 3, "typed_len": 0,
     }
     assert _content(heading) == "합성 타자 제목"
-    assert next(unit for unit in view["units"] if unit["kind"] == "table")["number"] is None
+    # 띠 표는 올리자마자 제목 줄이다 — 번호 칸 블록 전체가 번호 범위라 글에는 제목만 남는다(F4)
+    band = find_unit(view, BAND)
+    assert (band["kind"], band["number"]["value"], band["number"]["source"], _content(band)) == ("heading", "7", "cell", "합성 띠 제목")
     # 단위 목록의 줄도 같은 내용 경계를 싣는다 — 배정 화면의 새 문장 초안이 쓴다
     listed = client.get(f"/api/bundles/{bundle_id}/units", params={"document_id": doc_id}, headers=AUTHOR).json()["items"]
     starts = {row["unit_id"]: row["content_start"] for row in listed}
@@ -280,6 +283,9 @@ def test_set_number_that_changes_nothing_writes_nothing(client: TestClient) -> N
 
 def test_set_number_refuses_units_without_a_number_cell(client: TestClient) -> None:
     bundle_id, _, doc_id = _setup(client)
+    band = find_unit(get_view(client, bundle_id, doc_id), BAND)
+    back = _edit(client, bundle_id, doc_id, {"type": "set_layout_table", "table_id": band["table_id"], "is_layout": False})
+    assert back.status_code == 200, back.text
     view = get_view(client, bundle_id, doc_id)
     table = next(unit for unit in view["units"] if unit["kind"] == "table")
 
@@ -314,29 +320,18 @@ def test_split_keeps_the_number_on_the_front_piece_and_merge_takes_the_front_num
     assert (again["number"]["value"], _content(again)) == ("1.3.9", "합성 필터를 교체한다.")
 
 
-def test_band_table_number_shows_once_after_unwrapping_and_merging(client: TestClient) -> None:
-    # 띠 표를 풀면 번호 칸이 같은 행 첫 줄의 번호가 되고(F3), 잘랐다가 다시 합쳐도 번호 칸 블록 전체가 그 줄의 번호 범위다 — "7"이 글에 또 나오지 않는다
+def test_band_table_number_shows_once_after_back_to_table_and_unwrapping(client: TestClient) -> None:
+    # 표로 되돌린 띠 표를 다시 벗기면 번호 칸 블록 전체가 제목 줄의 번호 범위다 — "7"이 글에 또 나오지 않는다(F4)
     bundle_id, _, doc_id = _setup(client)
-    view = get_view(client, bundle_id, doc_id)
-    table = next(unit for unit in view["units"] if unit["kind"] == "table")
-    unwrap = _edit(
-        client, bundle_id, doc_id, {"type": "set_layout_table", "table_id": table["table_id"], "is_layout": True}
-    )
-    assert unwrap.status_code == 200, unwrap.text
-    joined = find_unit(get_view(client, bundle_id, doc_id), "7\n합성 띠 제목")
-    assert (joined["number"]["value"], _content(joined)) == ("7", "합성 띠 제목")
-    cut = _edit(client, bundle_id, doc_id, {"type": "split", "unit_id": joined["id"], "at": joined["number"]["content_start"]})
-    assert cut.status_code == 200, cut.text
-    view = get_view(client, bundle_id, doc_id)
+    table_id = find_unit(get_view(client, bundle_id, doc_id), BAND)["table_id"]
+    for is_layout in (False, True):
+        response = _edit(client, bundle_id, doc_id, {"type": "set_layout_table", "table_id": table_id, "is_layout": is_layout})
+        assert response.status_code == 200, response.text
 
-    merged = _edit(
-        client, bundle_id, doc_id,
-        {"type": "merge", "unit_ids": [find_unit(view, "7")["id"], find_unit(view, "합성 띠 제목")["id"]]},
+    title = find_unit(get_view(client, bundle_id, doc_id), BAND)
+    assert (title["kind"], title["number"]["value"], title["number"]["source"], _content(title)) == (
+        "heading", "7", "cell", "합성 띠 제목",
     )
-    assert merged.status_code == 200, merged.text
-
-    title = find_unit(get_view(client, bundle_id, doc_id), "7\n합성 띠 제목")
-    assert (title["number"]["value"], title["number"]["source"], _content(title)) == ("7", "cell", "합성 띠 제목")
 
 
 # --- 내용(번호를 뺀 글) ---

@@ -109,6 +109,18 @@ describe("buildRecommendations", () => {
     ]);
   });
 
+  it("puts the slot heading of an AI slot first on a band heading row (F12 G5)", () => {
+    const slot = { kind: "slot", docId: 6, slotKey: "procedures.p1" } as const;
+    const input = { aiLinks: [], aiPlaces: [{ destination: slot, why: "절 제목" }, { destination: { kind: "delete" } as const, why: "" }], identical: [], similar: [] };
+
+    expect(buildRecommendations({ ...input, headingPlaces: true }).map((rec) => rec.destination)).toEqual([
+      { kind: "slot_heading", docId: 6, slotKey: "procedures.p1" },
+      slot,
+      { kind: "delete" },
+    ]);
+    expect(buildRecommendations(input).map((rec) => rec.destination.kind)).toEqual(["slot", "delete"]);
+  });
+
   it("keeps at most five", () => {
     const recs = buildRecommendations({ aiLinks: [], aiPlaces: [], identical: [], similar: [1, 2, 3, 4, 5, 6, 7].map(similar) });
     expect(recs).toHaveLength(5);
