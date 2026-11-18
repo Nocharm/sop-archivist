@@ -2,6 +2,7 @@
 
 계산은 app/sop/outputs.py가 끝냈고 여기서는 그 결과를 칸 글로 옮긴다. 시스템 표시 값은 영어 한 벌이다(Excel·미리보기는 늘 en).
 32,767자 나누기도 여기서 해 미리보기와 파일이 같은 줄이 된다. xlsx 쓰기는 excel_export.build_workbook.
+미리보기 전용 값(A의 fit_widths·bands·column_keys, 줄의 unit_id·group_id·toc, 칸의 tone)은 화면만 읽고 xlsx에는 쓰지 않는다.
 """
 
 import base64
@@ -30,6 +31,8 @@ from app.sop.outputs import (
 from app.sop.snapshot import BundleSnapshot
 
 RowKind = Literal["status", "header", "group_start", "in_group", "doc", "section", "plain"]
+CellTone = Literal["ok", "ai", "del", "un"]  # 상태 칩 색 — 확정·AI 제안·삭제(흐림)·미배정
+BandTone = Literal["asis", "tobe", "decision", "tracking"]
 
 SHEET_NAMES = ("A Comparison", "B Flow", "C New documents", "Info", "Documents")
 A_HEADERS = (
@@ -38,6 +41,19 @@ A_HEADERS = (
     "Checks",
 )
 A_COLUMN_WIDTHS = (8, 12, 8, 26, 14, 50, 14, 14, 26, 28, 12, 50, 40, 18, 28, 12, 24, 18, 14, 40)
+# 미리보기 전용(A) — 아래 넷(A_PREVIEW_WIDTHS·A_BANDS·A_COLUMN_KEYS·A_STATUS_COLUMN)은 시트 보기 화면만 읽는다.
+# xlsx(excel_export)는 쓰지 않아 파일 모양은 그대로다(제품 명세 §7.14 시트 모델).
+# 폭에 맞춘 한 장의 열 비율(합 1,610). 1,568px 폭에서 Unit ID·Change·Status 값이 한 줄에 들고 머리 글이 낱말 가운데서 끊기지 않게 시안에서 잰 값
+A_PREVIEW_WIDTHS = (34, 46, 32, 108, 72, 186, 68, 60, 82, 116, 36, 186, 100, 66, 104, 92, 64, 62, 46, 50)
+# 머리 위 열 무리 띠 — (라벨, 열 수, 색 갈래). 열 수의 합은 A_HEADERS 길이와 같다
+A_BANDS = (("As-is", 6, "asis"), ("To-be", 6, "tobe"), ("Decision", 3, "decision"), ("Tracking", 5, "tracking"))
+# 열의 뜻(A_HEADERS 순서) — 화면이 머리 글을 읽지 않고 확정 전 값·목차 접힌 줄을 놓을 열을 찾는다
+A_COLUMN_KEYS = (
+    "row", "old_doc", "version", "location", "unit_id", "old_text", "destination", "new_doc", "new_doc_title", "place",
+    "number", "new_text", "ai_suggestion", "change", "remark", "status", "confirmed_by", "confirmed_at", "group_id",
+    "checks",
+)
+A_STATUS_COLUMN = 16  # Status(1부터) — 칩 색(tone)을 싣는 칸
 A_SHARED_COLUMNS = (1, 7, 8, 9, 15)  # Row·Destination·New doc·New doc title·Remark (1부터) — 묶음이 함께 쓰는 칸(제품 명세 §7.13 줄 규칙 (5))
 A_ROW_COLUMN = 1
 A_ID_COLUMN = 5  # Unit ID — 이어진 줄의 이어짐 표시가 들어가는 칸
@@ -85,6 +101,8 @@ _MARKERS = {"table": "[Table]", "figure": "[Figure]"}  # 확정한 캡션 글이
 _BULLET = "•"  # 글머리 기호 줄의 No. 칸(C 시트) — 화면의 줄 머리와 같은 기호
 _CAPTION_POSITION = "Caption"  # 캡션 줄의 Cell position 칸 — 칸 줄의 "R 1 C 1" 자리
 _NO_WRAP_KINDS = ("status", "plain")  # 상태 줄·제목·이름 칸은 옆 칸으로 넘쳐 보이게 접지 않는다
+# 상태 코드 → 칩 색. 보류(on_hold)는 명세가 색을 정하지 않아 칩 없이 글로 남고, "del"은 Status가 Deleted로 적히는 줄(목차 등 저절로 지우는 줄)이 생길 때 쓴다
+_STATUS_TONES: dict[str, CellTone] = {"confirmed": "ok", "ai_suggested": "ai", "unassigned": "un"}
 
 
 class SheetCell(BaseModel):
@@ -96,6 +114,7 @@ class SheetCell(BaseModel):
     italic: bool = False  # 주석 줄의 글 칸
     bold: bool = False
     numeric: bool = False  # 글이 정수인 칸(Row·건수) — xlsx에는 숫자로 쓴다
+    tone: CellTone | None = None  # 미리보기 전용 — 색 칩으로 그리는 칸(A의 Status)의 색. 화면이 글자를 보고 색을 정하지 않는다
 
 
 class SheetRow(BaseModel):
@@ -104,6 +123,18 @@ class SheetRow(BaseModel):
     kind: RowKind
     wrap: bool  # 칸 글을 칸 폭 안에서 접는다(위 맞춤). False(상태 줄·plain 줄)면 접지 않아 옆 빈 칸으로 넘쳐 보인다
     cells: list[SheetCell]  # 늘 시트 열 수(widths)만큼 — 빈 칸도 싣는다
+    # 아래 셋은 미리보기 전용(A의 자료 줄에만) — 화면이 칸 글을 읽지 않고 고른 줄·같은 무리·목차 줄을 맞춘다
+    unit_id: int | None = None  # 이 줄의 옛 단위(이어진 줄도 같은 값), 번역·신규 줄은 None
+    group_id: str | None = None  # Group ID 칸과 같은 관계 묶음
+    toc: bool = False  # 목차 줄 — 화면이 연달아 오는 줄을 한 줄로 접는다. 목차 표시가 생길 때까지 늘 False
+
+
+class SheetBand(BaseModel):
+    """머리 위 열 무리 띠 한 칸 — 미리보기 전용."""
+
+    label: str
+    span: int  # 덮는 열 수
+    tone: BandTone
 
 
 class Sheet(BaseModel):
@@ -116,6 +147,10 @@ class Sheet(BaseModel):
     image_row: int | None  # 그림을 놓는 줄(1부터)
     total_rows: int  # 자르기 전 줄 수
     truncated: bool  # 미리보기가 줄을 잘랐다 — 파일에는 전체가 있다
+    # 아래 셋은 미리보기 전용(A에만) — xlsx는 widths만 쓴다
+    fit_widths: list[int] | None = None  # 폭에 맞춘 한 장의 열 비율. None이면 화면이 widths를 비율로 쓴다
+    bands: list[SheetBand] = []
+    column_keys: list[str] | None = None  # 열의 뜻(A_COLUMN_KEYS)
 
 
 class WorkbookModel(BaseModel):
@@ -189,10 +224,15 @@ def _make_sheet(
     filter_columns: int = 0,
     image_png: str | None = None,
     image_row: int | None = None,
+    fit_widths: Sequence[int] | None = None,
+    bands: Sequence[SheetBand] = (),
+    column_keys: Sequence[str] | None = None,
 ) -> Sheet:
     return Sheet(
         name=name, widths=list(widths), rows=rows, freeze=freeze, filter_columns=filter_columns, image_png=image_png,
         image_row=image_row, total_rows=len(rows), truncated=False,
+        fit_widths=list(fit_widths) if fit_widths is not None else None, bands=list(bands),
+        column_keys=list(column_keys) if column_keys is not None else None,
     )
 
 
@@ -244,7 +284,7 @@ def _list_a_texts(row: ARow) -> list[str]:
 def _build_a_sheet(snap: BundleSnapshot, people: Mapping[str, str]) -> Sheet:
     """ARow 하나가 한 줄(넘는 글은 이어진 줄) — 묶음 첫 줄 말고는 함께 쓰는 칸이 바로 윗줄과 같으면 흐리게(제품 명세 §7.14 되풀이 + 흐림, O6).
 
-    흐림은 보이는 글(clean_cell_text를 거친 칸 글)끼리 견준다.
+    흐림은 보이는 글(clean_cell_text를 거친 칸 글)끼리 견준다. 줄의 단위·관계 묶음과 Status 칸의 칩 색은 미리보기만 읽는다.
     """
     rows = [_build_status_row(snap, len(A_HEADERS)), _make_row("header", A_HEADERS)]
     above: SheetRow | None = None
@@ -253,13 +293,21 @@ def _build_a_sheet(snap: BundleSnapshot, people: Mapping[str, str]) -> Sheet:
         for offset, line in enumerate(_split_line(_list_a_texts(a_row), A_ID_COLUMN, A_SHARED_COLUMNS)):
             starts = a_row.is_group_start and offset == 0
             row = _make_row("group_start" if starts else "in_group", line, italic=italic, numeric=(A_ROW_COLUMN,))
+            row.unit_id, row.group_id = a_row.unit_id, a_row.group_id
+            status_cell = row.cells[A_STATUS_COLUMN - 1]
+            if status_cell.text:  # 이어진 줄의 빈 Status 칸에는 칩이 없다
+                status_cell.tone = _STATUS_TONES.get(a_row.status)
             if not starts and above is not None:
                 for column in A_SHARED_COLUMNS:
                     cell = row.cells[column - 1]
                     cell.faint = cell.text == above.cells[column - 1].text
             rows.append(row)
             above = row
-    return _make_sheet(SHEET_NAMES[0], A_COLUMN_WIDTHS, rows, freeze="A3", filter_columns=len(A_HEADERS))
+    bands = [SheetBand(label=label, span=span, tone=tone) for label, span, tone in A_BANDS]
+    return _make_sheet(
+        SHEET_NAMES[0], A_COLUMN_WIDTHS, rows, freeze="A3", filter_columns=len(A_HEADERS), fit_widths=A_PREVIEW_WIDTHS,
+        bands=bands, column_keys=A_COLUMN_KEYS,
+    )
 
 
 # --- B Flow ---
