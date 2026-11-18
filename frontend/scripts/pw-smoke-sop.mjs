@@ -4570,6 +4570,9 @@ async function openNestedBundle(page) {
 
 const readTableUnit = (view, table) => view.units.find((unit) => unit.kind === "table" && unit.table_id === table.id);
 const readTop = async (page, unitId) => (await page.locator(`[data-testid="assign-paper-piece-${unitId}"]`).boundingBox())?.y ?? Number.NaN;
+// 풀기 전환(useUnwrapMotion)이 끝날 때까지 - 펼치는 동안 줄은 transform으로 옛 자리(표 칸 안)에 붙들려 있어 boundingBox가 옛 자리를 잰다
+const waitForOldMotion = (page) =>
+  page.waitForFunction(() => (document.querySelector('[data-testid="assign-old"]')?.getAnimations({ subtree: true }) ?? []).every((animation) => animation.playState !== "running"), null, { timeout: T });
 
 await runStep("assign: nested table - unwrapping the work table puts the value table between its cell paragraphs and turns the inner band into a heading line", {}, async ({ page, takeShot }) => {
   const nested = await openNestedBundle(page);
@@ -4598,7 +4601,8 @@ await runStep("assign: nested table - unwrapping the work table puts the value t
   await page.locator(`[data-testid="assign-paper-piece-${valueUnit.id}"]`).waitFor({ timeout: T });
   check("the band heading is drawn as a text piece", (await page.locator(`[data-testid="assign-paper-piece-${heading.id}"]`).getAttribute("data-kind")) === "piece");
   check("the value table is drawn as a table", (await page.locator(`[data-testid="assign-paper-piece-${valueUnit.id}"]`).getAttribute("data-kind")) === "table");
-  // 제 행 자리 - 칸의 첫 문단 아래, 둘째 문단 위(바깥 표 뒤가 아니다)
+  // 제 행 자리 - 칸의 첫 문단 아래, 둘째 문단 위(바깥 표 뒤가 아니다). 전환이 끝난 뒤의 자리로 잰다
+  await waitForOldMotion(page);
   const [topFirst, topValue, topSecond] = [await readTop(page, first.id), await readTop(page, valueUnit.id), await readTop(page, second.id)];
   check("the value table sits between the two paragraphs of its cell", topFirst < topValue && topValue < topSecond, `${topFirst} < ${topValue} < ${topSecond}`);
   const valueRow = page.locator(`[data-testid="assign-paper-piece-${valueUnit.id}"]`).locator("xpath=..");

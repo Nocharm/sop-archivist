@@ -4,6 +4,8 @@
 
 ## 2026-11-18
 
+- **표 안 표 스모크 자리 재기(`fix/nested-place`)** — `assign: nested table - unwrapping …`의 "값 표가 칸 두 문단 사이" 검사가 풀기 전환 도중에 재서 실패했다(197 < 346 < 230 — 문단 줄은 펼치는 동안 transform으로 옛 표 칸 자리에 붙들려 있고, 키 없는 값 표 줄 상자만 새 자리). 화면 · 모델은 그대로이고, 스모크가 Old 칸의 애니메이션이 끝나기를 기다린 뒤 잰다(`waitForOldMotion`).
+
 - **표 안 표(v1.1.47, `feat/unwrap-nested`, MD 1 §10 브랜치 6 — F2, 같은 꼴 표 함께 벗기기는 뺌: 사용자 결정 2026-11-19 "표는 하나씩")** — 벗긴 바깥 표의 칸 줄 사이, 안쪽 표가 원래 놓인 문단 자리에 안쪽 표를 다시 보통 표 한 줄로 그린다(추출은 안쪽 표를 칸의 모든 문단 뒤에 내므로 칸 글을 그 자리에서 둘로 나눈다 — `paper-model.orderBlockPieces`, 블록 일부 항목 `range`, J/K 순서도 용지 순서). 안쪽 표도 같은 **Unwrap table**로 또 벗기고, **↺ Back to table**은 누른 표만(겹마다 제 세로선 · 제 머리). 바깥 묶음의 세로선은 아직 표인 안쪽 표 줄을 지나 이어진다(`getRowUnwrapTable`이 표 줄은 바깥으로 올라가 찾는다).
   - 데이터 · API: Alembic 없음. 문서 보기 `tables[]`에 `is_band`와 `anchor {block_id, at}`(신호 `place`의 문단 수를 바깥 칸 블록 신호 `paras`로 글자 자리로 — `segment.read_table_place` · `find_anchor_offset`). 편집 `set_layout_table`이 띠 표가 아닌 표를 바꿀 때 바로 안쪽 띠 표도 함께 제목 줄 ↔ 표로(`editing._merge_change`로 한 편집, 되돌리기 한 번) — 판단 있는 안쪽 제목 줄은 확인창이 함께 센다(`countDecidedLines`), 전환 범위도 함께(`listUnwrapScopes`). 결과물 A · Excel A 위치는 바깥 칸부터 `표 4 · 3행 2열 › 표 6 · 2행 1열`(`outputs._format_outer_cells`, 라벨 `nested_separator`, 스냅숏 `TableInfo.parent_id · place`, `BlockInfo.table_id`).
   - 정한 것(명세에 없던 것 — 열린 질문): 바깥을 다시 표로 묶으면 바깥과 함께 제목 줄이 된 띠 표만 함께 표로(따로 벗긴 안쪽 표는 그대로). 띠 표 제목 줄 위치도 `… › 띠 표`, 표 단위는 `… › 표 4`, 칸 자리를 모르는 옛 추출은 `표 3 › …`. 띠 표 제목 줄은 바깥 묶음 세로선에 들지 않는다(줄 중간이면 그 뒤에 머리가 다시 선다). 결과물 A의 줄 순서는 지금처럼 단위 자리(pos) 순이라 칸 두 문단 사이 안쪽 표의 줄은 그 칸의 뒤 문단 뒤에 온다(용지와 다름). 데이터 바깥 표는 지금처럼 안쪽 표를 바깥 표 뒤에 그린다.
