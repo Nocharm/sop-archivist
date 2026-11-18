@@ -20,19 +20,22 @@ from app.sop.models import (
     Document,
     TargetDoc,
     TargetDocNaSlot,
-    TargetDocOutlineItem,
     TargetSentence,
     WiStep,
 )
 from app.sop.outline import (
     KIND_AUTO_LIST,
+    LABEL_SEPARATOR,
     DocOutline,
+    OutlineItemInfo,
     copy_standard_to_doc,
     get_parent_key,
+    is_deviation,
     list_emitted_keys,
     load_doc_outlines,
     load_standard_outline,
     number_outline,
+    retire_doc_outline,
 )
 from app.sop.schemas import NO_NUL
 
@@ -113,8 +116,10 @@ class OutlineItemOut(BaseModel):
     counts_lines: bool  # 직접 놓인 줄에 번호를 세는가
     shows_number: bool  # 제목 앞에 번호를 따로 적는가 — 라벨에 번호가 든 부록("Appendix 1. 이름")만 거짓
     origin: OutlineOrigin
+    # 뺀 표준 항목 — 목록에 제자리로 실려 화면이 되살리기를 그린다(번호 없음, 줄을 받지 않음). 하위는 함께 빠져 실리지 않는다
     is_removed: bool
-    deviation_reason: str | None
+    deviation_reason: str | None  # 벗어난 사유 — 사용자 항목, 이름을 바꾸거나 필수인데 뺀 표준 항목
+    is_deviation: bool  # 표준과 다름(outline.is_deviation) — 선택 항목을 뺀 것·N/A·선언은 아니다
 
 
 class ToBeOut(BaseModel):
@@ -127,19 +132,30 @@ class ToBeOut(BaseModel):
 
 
 def _build_outline_items(code: str, outline: DocOutline, numbers: dict[str, str | None]) -> list[OutlineItemOut]:
-    """골격 사본의 항목 전부 — 번호(numbers)는 결과물이 내보낼 항목끼리 센 값이라, 비어 있는 선택 항목과 번호 없는 항목(범주)은 None이다."""
+    """골격 사본의 항목 전부와 뺀 표준 항목 — 번호(numbers)는 결과물이 내보낼 항목끼리 센 값이라, 비어 있는 선택 항목과 번호 없는 항목(범주),
+    뺀 항목은 None이다."""
     return [
         OutlineItemOut(
             code=code, key=item.key, parent_key=get_parent_key(item.key), level=outline.get_level(item.key),
             number=numbers.get(item.key), title_en=item.title_en, title_ko=item.title_ko,
-            label=outline.get_label(item.key, numbers), kind=item.kind, is_required=item.is_required,
+            label=_get_listed_label(outline, item, numbers), kind=item.kind, is_required=item.is_required,
             default_style=item.default_style, is_assignable=outline.is_assignable(item.key),
             counts_lines=outline.counts_lines(item.key), shows_number=outline.shows_number(item.key),
             origin=item.origin, is_removed=item.is_removed,
-            deviation_reason=item.deviation_reason,
+            deviation_reason=item.deviation_reason, is_deviation=is_deviation(item),
         )
-        for item in outline.items
+        for item in outline.listed_items
     ]
+
+
+def _get_listed_label(outline: DocOutline, item: OutlineItemInfo, numbers: dict[str, str | None]) -> str:
+    """목록에 적는 라벨 — 뺀 항목은 골격에 없어 부모 라벨 뒤에 제 제목을 잇는다."""
+    if not item.is_removed:
+        return outline.get_label(item.key, numbers)
+    parent_key = get_parent_key(item.key)
+    if parent_key is None:
+        return item.title_en
+    return f"{outline.get_label(parent_key, numbers)}{LABEL_SEPARATOR}{item.title_en}"
 
 
 def _get_outline_position(outline: DocOutline, key: str, default: int) -> int:
@@ -392,10 +408,10 @@ def is_within_slot(slot_key: str, slot: str) -> bool:
     return slot_key == slot or slot_key.startswith(f"{slot}.")
 
 
-async def _find_blocked_slots(
+async def find_blocked_slots(
     session: AsyncSession, wanted_na: Collection[tuple[str, str]], by_code: dict[str, TargetDoc]
 ) -> list[dict[str, str]]:
-    """N/A로 표시하려는 칸(하위 칸 포함) 중 새 문장이 이미 있는 칸 — 새로 만드는 문서에는 문장이 없다."""
+    """N/A로 표시하거나 골격에서 빼려는 칸(하위 칸 포함) 중 새 문장이 이미 있는 칸 — 새로 만드는 문서에는 문장이 없다."""
     counts = await _count_targets_by(
         session, TargetSentence.slot_key, [by_code[code].id for code, _ in wanted_na if code in by_code]
     )
@@ -461,7 +477,7 @@ async def _write_docs(
     for item in items:
         doc = docs_by_code[item.code]
         if doc.doc_type != item.doc_type:  # 종류가 바뀐 기존 문서 — 문장이 없는 문서만 여기까지 온다(doc_has_targets)
-            await session.execute(delete(TargetDocOutlineItem).where(TargetDocOutlineItem.target_doc_id == doc.id))
+            await retire_doc_outline(session, doc.id)
             if item.doc_type == "sop":
                 await copy_standard_to_doc(session, doc.id)
         fields = {
@@ -554,8 +570,12 @@ async def apply_tobe(
 
     문서는 문서 번호로 기존 줄과 합친다(id 유지). assign 문서만 만들고 고치며, 요청에서 빠진 assign 문서는 지운다.
     match 문서는 종류를 바꿀 수 없고 빠져도 지우지 않는다. N/A와 단계는 이 요청이 가리킨 문서의 것을 통째로 바꾼다
-    (N/A가 None이면 건드리지 않는다 — Excel 가져오기). 모든 검사는 쓰기 전에 끝나 거절된 요청은 아무것도 남기지 않는다.
+    (N/A가 None이면 건드리지 않는다 — Excel 가져오기). Excel에 "SOP 절차" 시트가 있으면 거기 나온 SOP의 6장 절차를 시트에 맞춘다
+    (outline_edit). 모든 검사는 쓰기 전에 끝나 거절된 요청은 아무것도 남기지 않는다.
     """
+    # outline_edit이 이 모듈을 들여와 위에서 들이면 순환한다
+    from app.sop.outline_edit import apply_procedure_plans, plan_procedures
+
     existing = list(await session.scalars(select(TargetDoc).where(TargetDoc.bundle_id == bundle.id)))
     by_code = {doc.code: doc for doc in existing}
     code_by_id = {doc.id: doc.code for doc in existing}
@@ -568,6 +588,12 @@ async def apply_tobe(
         return outlines[doc.id] if doc is not None and doc.id in outlines else standard
 
     final_types = _check_list_rules(payload, existing, code_by_id, get_outline)
+    # 절차 시트는 Excel 가져오기에만 있다 — 시트가 없으면(None) 골격을 건드리지 않는다
+    procedure_rows = None if isinstance(payload, ToBeIn) else payload.procedures
+    # 파일이 붙은 문서(입구 2)는 구조가 파일의 것이라 절차를 선언하지 않는다 — SOP가 아닌 것으로 넘겨 거절받는다
+    match_codes = {doc.code for doc in existing if doc.entrance == "match"}
+    declarable_types = {code: "match" if code in match_codes else doc_type for code, doc_type in final_types.items()}
+    procedure_plans = plan_procedures(procedure_rows or (), declarable_types, get_outline)
 
     listed = {item.code: item for item in payload.docs}
     removed = [doc for doc in existing if doc.entrance == "assign" and doc.code not in listed]
@@ -589,7 +615,8 @@ async def apply_tobe(
     step_scope = {*listed, *(code for code, _ in wanted_steps)}
     na_rows = await _load_na_rows(session, kept_ids)
     step_rows = await _load_step_rows(session, kept_ids)
-    blocked_slots = await _find_blocked_slots(session, wanted_na, by_code)
+    dropped_slots = {(plan.code, key) for plan in procedure_plans for key in plan.removed}
+    blocked_slots = await find_blocked_slots(session, {*wanted_na, *dropped_slots}, by_code)
     if blocked_slots:
         raise_rule(409, "slot_has_targets", slots=blocked_slots)
     blocked_steps = await _find_blocked_steps(session, step_rows, wanted_steps, step_scope, code_by_id)
@@ -603,6 +630,7 @@ async def apply_tobe(
         session, na_rows, wanted_na, docs_by_code, code_by_id, final_types, na_scope, replace_na, actor
     )
     changed |= await _write_step_rows(session, step_rows, wanted_steps, docs_by_code, code_by_id, step_scope)
+    changed |= await apply_procedure_plans(session, procedure_plans, docs_by_code, actor=actor)
 
     if not changed:  # 바뀐 게 없으면 revision을 올리지 않고 기록도 남기지 않는다(멤버 바꾸기와 같은 규칙)
         return
@@ -651,7 +679,7 @@ def _ensure_room(rows: Collection[object]) -> None:
         raise_rule(422, "tobe_list_full", limit=MAX_TOBE_ROWS)
 
 
-async def _get_target_doc(session: AsyncSession, bundle_id: int, target_doc_id: int) -> TargetDoc:
+async def get_target_doc(session: AsyncSession, bundle_id: int, target_doc_id: int) -> TargetDoc:
     doc = await session.scalar(
         select(TargetDoc).where(TargetDoc.id == target_doc_id, TargetDoc.bundle_id == bundle_id)
     )
@@ -673,7 +701,7 @@ async def add_tobe_doc(session: AsyncSession, bundle: Bundle, item: NewDocIn, *,
 
 async def add_wi_step(session: AsyncSession, bundle: Bundle, target_doc_id: int, title: str, *, actor: str) -> None:
     """WI에 단계 한 줄을 더한다. 번호는 가장 큰 번호 다음이다 — 지운 번호를 다시 쓰지 않는다."""
-    doc = await _get_target_doc(session, bundle.id, target_doc_id)
+    doc = await get_target_doc(session, bundle.id, target_doc_id)
     payload = await _read_list(session, bundle)
     _ensure_room(payload.wi_steps)
     step_no = max((row.step_no for row in payload.wi_steps if row.code == doc.code), default=0) + 1
@@ -683,7 +711,7 @@ async def add_wi_step(session: AsyncSession, bundle: Bundle, target_doc_id: int,
 
 async def remove_tobe_doc(session: AsyncSession, bundle: Bundle, target_doc_id: int, *, actor: str) -> None:
     """문서 한 줄을 지운다. 문장이 든 문서와 아래 WI가 남은 SOP는 apply_tobe가 거절하고, 올린 파일의 문서는 여기서 거절한다."""
-    doc = await _get_target_doc(session, bundle.id, target_doc_id)
+    doc = await get_target_doc(session, bundle.id, target_doc_id)
     if doc.entrance != "assign":
         raise_rule(409, "match_doc_locked", codes=[doc.code])
     payload = await _read_list(session, bundle)
@@ -697,7 +725,7 @@ async def remove_wi_step(
     session: AsyncSession, bundle: Bundle, target_doc_id: int, step_no: int, *, actor: str
 ) -> None:
     """WI 단계 한 줄을 지운다. 문장이 든 단계는 apply_tobe가 거절한다."""
-    doc = await _get_target_doc(session, bundle.id, target_doc_id)
+    doc = await get_target_doc(session, bundle.id, target_doc_id)
     payload = await _read_list(session, bundle)
     kept = [row for row in payload.wi_steps if (row.code, row.step_no) != (doc.code, step_no)]
     if len(kept) == len(payload.wi_steps):
@@ -733,7 +761,7 @@ async def update_tobe_doc(
     것이 된다(문장이 든 줄에서 거절된다). 올린 파일의 줄은 409 match_doc_locked(그 번호는 파일의 번호다).
     종류를 바꾸면 그 줄의 N/A와 단계를 비우고, SOP가 되면 부모도 비운다.
     """
-    doc = await _get_target_doc(session, bundle.id, target_doc_id)
+    doc = await get_target_doc(session, bundle.id, target_doc_id)
     sent = patch.model_fields_set
     is_renamed = "code" in sent and patch.code is not None and patch.code != doc.code
     if is_renamed:
@@ -768,7 +796,7 @@ async def set_na_slot(
     session: AsyncSession, bundle: Bundle, target_doc_id: int, slot_key: str, reason: str | None, *, actor: str
 ) -> None:
     """SOP의 칸 하나를 N/A로 두거나(사유와 함께) 되돌린다(reason이 None). 문장이 든 칸은 apply_tobe가 거절한다."""
-    doc = await _get_target_doc(session, bundle.id, target_doc_id)
+    doc = await get_target_doc(session, bundle.id, target_doc_id)
     payload = await _read_list(session, bundle)
     payload.na_slots = [item for item in payload.na_slots if (item.code, item.slot_key) != (doc.code, slot_key)]
     if reason is not None:
@@ -781,7 +809,7 @@ async def rename_wi_step(
     session: AsyncSession, bundle: Bundle, target_doc_id: int, step_no: int, title: str, *, actor: str
 ) -> None:
     """WI 단계 한 줄의 제목을 고친다."""
-    doc = await _get_target_doc(session, bundle.id, target_doc_id)
+    doc = await get_target_doc(session, bundle.id, target_doc_id)
     payload = await _read_list(session, bundle)
     row = next((item for item in payload.wi_steps if (item.code, item.step_no) == (doc.code, step_no)), None)
     if row is None:

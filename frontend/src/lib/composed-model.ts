@@ -173,6 +173,22 @@ export function listHeadingNotes(doc: ComposedDoc): Map<string, string> {
   return notes;
 }
 
+/** 칸 머리의 알림 - 표준과 다른 절의 사유(없으면 null)와 비어 있는 필수 절 */
+export interface SectionMark {
+  deviationReason: string | null;
+  isEmptyRequired: boolean;
+}
+
+/** 칸 머리 줄 → 알림 - 알릴 것이 있는 절만. buildComposedRows의 section_path와 같은 열쇠 */
+export function listSectionMarks(doc: ComposedDoc): Map<string, SectionMark> {
+  const marks = new Map<string, SectionMark>();
+  for (const section of doc.sections) {
+    if (section.deviation_reason === null && !section.is_empty_required) continue;
+    marks.set(readSectionHead(section), { deviationReason: section.deviation_reason, isEmptyRequired: section.is_empty_required });
+  }
+  return marks;
+}
+
 /** 저장한 새 문장이 놓일 칸 키 - 서버 _plan_sections의 키와 같은 모양 */
 function readSectionKey(target: GroupTarget): string | null {
   if (target.slot_key !== null) return target.slot_key;

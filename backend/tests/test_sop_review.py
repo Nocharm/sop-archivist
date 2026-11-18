@@ -441,6 +441,27 @@ def test_equipment_sop_has_no_fixed_sections_to_fill(client: TestClient) -> None
     assert requested.json()["status"] == "in_review"
 
 
+def test_review_request_not_blocked_by_empty_required(client: TestClient) -> None:
+    # 빈 필수 절(범위·정의 …)과 표준과 다른 항목은 알림일 뿐이다 — 검토 요청 조건에 들지 않는다
+    fx = _make_ready(client)
+    renamed = client.patch(
+        f"/api/bundles/{fx.bundle_id}/tobe/docs/{fx.sop_id}/outline/definitions",
+        json={"title_en": "Terms", "reason": "Synthetic: house style"}, headers=AUTHOR,
+    )
+    assert renamed.status_code == 200, renamed.text
+    assert _put_checks(client, fx.bundle_id).status_code == 200
+    output = client.get(f"/api/bundles/{fx.bundle_id}/outputs/c", headers=AUTHOR).json()
+    sections = {section["location_key"]: section for doc in output["docs"] for section in doc["sections"]}
+    assert (sections["scope"]["is_empty_required"], sections["definitions"]["deviation_reason"]) == (True, "Synthetic: house style")
+
+    readiness = _get_readiness(client, fx.bundle_id)
+    requested = _request(client, fx.bundle_id)
+
+    assert (readiness["ready"], readiness["blockers"], readiness["notices"]) == (True, [], [])
+    assert requested.status_code == 200, requested.text
+    assert requested.json()["status"] == "in_review"
+
+
 def test_sentence_warnings_notice_counts_sentences(client: TestClient) -> None:
     fx = _make_ready(client)
     ids = [get_group_by_unit(client, fx.bundle_id, _unit_id(fx, text))["targets"][0]["id"] for text in (KO_1, KO_2)]
