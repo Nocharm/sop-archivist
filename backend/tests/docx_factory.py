@@ -116,6 +116,26 @@ def tbl(rows: list[list[str]]) -> str:
     return f'<w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/></w:tblPr><w:tblGrid>{grid}</w:tblGrid>{body}</w:tbl>'
 
 
+def make_row(cells: list[str], *, header: bool = False, spans: list[int] | None = None) -> str:
+    """표 행 하나 — spans는 칸마다 gridSpan, header면 표 머리 행(w:tblHeader). 칸 글이 "<"로 시작하면 XML 그대로 넣는다."""
+    row_pr = "<w:trPr><w:tblHeader/></w:trPr>" if header else ""
+    spans = spans or [1] * len(cells)
+    tcs = "".join(
+        "<w:tc>"
+        + (f'<w:tcPr><w:gridSpan w:val="{span}"/></w:tcPr>' if span > 1 else "")
+        + (text if text.startswith("<") else p(text))
+        + "</w:tc>"
+        for text, span in zip(cells, spans, strict=True)
+    )
+    return f"<w:tr>{row_pr}{tcs}</w:tr>"
+
+
+def make_grid_table(n_cols: int, rows_xml: str, widths: Sequence[int] | None = None) -> str:
+    """격자 열 수를 정한 표 — widths는 열 폭(twip, 없으면 모두 2000)."""
+    grid = "".join(f'<w:gridCol w:w="{width}"/>' for width in (widths or [2000] * n_cols))
+    return f"<w:tbl><w:tblGrid>{grid}</w:tblGrid>{rows_xml}</w:tbl>"
+
+
 def get_media_rel_id(name: str) -> str:
     """build_docx(media=…)가 미디어마다 붙이는 관계 id."""
     return "rIdMedia_" + name.replace(".", "_")

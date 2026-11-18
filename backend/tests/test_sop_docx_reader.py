@@ -13,6 +13,8 @@ from app.sop.extract.docx_reader import read_docx
 from app.sop.extract.types import ExtractedWarning, ExtractionRejected, ExtractLimits
 from tests.docx_factory import (
     make_abstract,
+    make_grid_table,
+    make_row,
     make_levels,
     make_list,
     make_style,
@@ -987,29 +989,13 @@ def test_docx_drm_mark_only_counts_in_the_head_of_a_non_ole_file(data: bytes) ->
     assert caught.value.code == "not_a_zip_or_encrypted"
 
 
-def _make_row(cells: list[str], *, header: bool = False, spans: list[int] | None = None) -> str:
-    """표 행 하나 — spans는 칸마다 gridSpan, header면 표 머리 행(w:tblHeader)."""
-    row_pr = "<w:trPr><w:tblHeader/></w:trPr>" if header else ""
-    spans = spans or [1] * len(cells)
-    tcs = "".join(
-        f'<w:tc><w:tcPr><w:gridSpan w:val="{span}"/></w:tcPr>{p(text)}</w:tc>' if span > 1 else f"<w:tc>{p(text)}</w:tc>"
-        for text, span in zip(cells, spans, strict=True)
-    )
-    return f"<w:tr>{row_pr}{tcs}</w:tr>"
-
-
-def _make_grid_table(n_cols: int, rows_xml: str) -> str:
-    grid = "".join('<w:gridCol w:w="2000"/>' for _ in range(n_cols))
-    return f"<w:tbl><w:tblGrid>{grid}</w:tblGrid>{rows_xml}</w:tbl>"
-
-
 def test_docx_full_width_structure_rows_do_not_raise_the_merged_cell_warning() -> None:
     # P-MERGEWARN: 템플릿 WI의 장 표 — 장 제목(표 머리 행, 3칸 병합)과 단계 제목(전체 폭 한 칸) 행은 양식의 구조다
-    table = _make_grid_table(
+    table = make_grid_table(
         3,
-        _make_row(["Chapter 1. 준비"], header=True, spans=[3])
-        + _make_row(["1.1. 필터를 꺼낸다"], spans=[3])
-        + _make_row(["A", "덮개를 연다.", ""]),
+        make_row(["Chapter 1. 준비"], header=True, spans=[3])
+        + make_row(["1.1. 필터를 꺼낸다"], spans=[3])
+        + make_row(["A", "덮개를 연다.", ""]),
     )
 
     result = read_docx(build_docx(table), LIMITS)
@@ -1023,11 +1009,40 @@ def test_docx_full_width_structure_rows_do_not_raise_the_merged_cell_warning() -
 
 def test_docx_other_merges_in_a_table_with_structure_rows_still_warn() -> None:
     # 구조 행이 있어도 내용 칸의 병합(두 칸만 합친 칸)은 그 칸을 가리켜 경고한다
-    table = _make_grid_table(
+    table = make_grid_table(
         3,
-        _make_row(["Chapter 1. 준비"], header=True, spans=[3]) + _make_row(["A", "두 칸을 합친 내용"], spans=[1, 2]),
+        make_row(["Chapter 1. 준비"], header=True, spans=[3]) + make_row(["A", "두 칸을 합친 내용"], spans=[1, 2]),
     )
 
     result = read_docx(build_docx(table), LIMITS)
 
     assert result.warnings == (ExtractedWarning(kind="merged_cell", block_seq=2, detail={"table_index": "0"}),)
+
+
+def _bookmark(name: str) -> str:
+    return f'<w:p><w:bookmarkStart w:id="1" w:name="{name}"/><w:bookmarkEnd w:id="1"/></w:p>'
+
+
+@pytest.mark.parametrize(
+    ("body", "styles", "expected"),
+    [
+        pytest.param(_bookmark("Eng") + p("Purpose") + _bookmark("Kor") + p("목적"), None, True, id="sop_bookmarks"),
+        pytest.param(_bookmark("korchap1") + p("목적") + _bookmark("Engchap1") + p("Purpose"), None, True, id="wi_bookmarks"),
+        pytest.param(_bookmark("Eng") + p("Purpose") + _bookmark("English_terms") + p("목적"), None, False, id="one_half_only"),
+        pytest.param(
+            p("단계", "StepK") + p("Step", "StepE"),
+            make_style("StepK", "SYN_Process Step [Kor]") + make_style("StepE", "SYN_Process Step [Eng]"),
+            True,
+            id="half_styles",
+        ),
+        pytest.param(
+            p("단계", "TextE") + p("Step", "TextK"),
+            make_style("TextK", "SYN_Text 1_Kor") + make_style("TextE", "SYN_Text 1_Eng"),
+            False,
+            id="underscore_styles_are_not_trusted",
+        ),
+    ],
+)
+def test_docx_reads_language_half_marks(body: str, styles: str | None, expected: bool) -> None:
+    # P-LAYOUT: 절반 책갈피 한 쌍이나 절반 스타일 한 쌍이 언어 배치의 강한 신호다
+    assert read_docx(build_docx(body, styles=styles), LIMITS).has_language_halves is expected

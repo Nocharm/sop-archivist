@@ -84,6 +84,10 @@ _ROMAN_PARTS = (
 )
 MAX_ROMAN = 3999
 _DRIVE_RE = re.compile(r"^[A-Za-z]:")
+# 언어 절반을 가르는 책갈피 이름 — 템플릿 SOP의 Eng·Kor, 템플릿 WI의 Engchap1·korchap1
+_HALF_BOOKMARK_RE = re.compile(r"(eng|kor)(?:chap\d+)?", re.IGNORECASE)
+# 언어 절반마다 따로 둔 문단 스타일의 이름 끝 — "… [Kor]"·"… [Eng]". "_Eng"·"_Kor" 끝은 한글 절반이 _Eng를 쓴 문서가 있어 믿지 않는다
+_HALF_STYLE_RE = re.compile(r"\[(eng|kor)\]$", re.IGNORECASE)
 
 
 def _w(local: str) -> str:
@@ -116,6 +120,7 @@ W_DRAWING, W_PICT, W_OBJECT = _w("drawing"), _w("pict"), _w("object")
 W_INS, W_DEL, W_MOVE_FROM, W_MOVE_TO, W_ALT_CHUNK = _w("ins"), _w("del"), _w("moveFrom"), _w("moveTo"), _w("altChunk")
 W_STYLE, W_NAME, W_BASED_ON, W_FOOTNOTE, W_ENDNOTE = _w("style"), _w("name"), _w("basedOn"), _w("footnote"), _w("endnote")
 W_VAL, W_TYPE, W_CHAR, W_STYLE_ID = _w("val"), _w("type"), _w("char"), _w("styleId")
+W_BOOKMARK_START = _w("bookmarkStart")
 MC_ALTERNATE_CONTENT, MC_CHOICE, MC_FALLBACK = (
     f"{{{MC}}}AlternateContent", f"{{{MC}}}Choice", f"{{{MC}}}Fallback",
 )
@@ -468,7 +473,27 @@ def read_docx(data: bytes, limits: ExtractLimits) -> ExtractResult:
         blocks=tuple(blocks),
         tables=tuple(sorted(collector.tables, key=lambda table: table.index)),
         warnings=writer.build_warnings(),
+        has_language_halves=_has_language_halves(body, styles),
     )
+
+
+def _has_language_halves(body: Element, styles: dict[str, _Style]) -> bool:
+    """본문에 한글 절반과 영어 절반을 가르는 강한 신호가 둘 다 있는지 — 절반 책갈피 한 쌍, 또는 절반마다 따로 쓴 문단 스타일 한 쌍."""
+    bookmarks = {
+        match.group(1).lower()
+        for element in body.iter(W_BOOKMARK_START)
+        if (match := _HALF_BOOKMARK_RE.fullmatch(element.get(W_NAME, ""))) is not None
+    }
+    if len(bookmarks) == 2:
+        return True
+    style_halves: set[str] = set()
+    for element in body.iter(W_PSTYLE):
+        style_id = element.get(W_VAL, "")
+        style = styles.get(style_id)
+        match = _HALF_STYLE_RE.search((style.name if style is not None and style.name else style_id).strip())
+        if match is not None:
+            style_halves.add(match.group(1).lower())
+    return len(style_halves) == 2
 
 
 def _open_zip(data: bytes, limits: ExtractLimits) -> zipfile.ZipFile:

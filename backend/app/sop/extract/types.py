@@ -5,7 +5,8 @@ from dataclasses import dataclass
 # 추출 규칙이 바뀌면 올린다 — 같은 파일의 예전 추출과 새 추출을 구별하는 근거(extractions.extractor_version)
 # 2: Word 자동 번호를 글 앞에 써 넣고 머리말·꼬리말에 구역 표시(section_ref)를 남긴다 — 1로 뽑은 추출은 번호·표시가 없다
 # 3: 캡션 문단을 그림 블록 글로 넣지 않고 제 문단 블록으로 남겨 caption_of 표시로 그림·표를 가리킨다 — 표 캡션도 찾는다
-EXTRACTOR_VERSION = "3"
+# 4: 스타일이 물려받은 목록의 수준과 숨긴 윗수준 문단 뒤의 번호를 Word처럼 센다 — 3으로 뽑은 추출은 그런 문단의 번호가 다르다
+EXTRACTOR_VERSION = "4"
 
 
 @dataclass(frozen=True)
@@ -70,6 +71,8 @@ class ExtractResult:
     blocks: tuple[ExtractedBlock, ...]
     tables: tuple[ExtractedTable, ...]
     warnings: tuple[ExtractedWarning, ...]
+    # 한글 절반·영어 절반을 가르는 책갈피나 스타일이 문서에 있다 — 언어 배치 판정(doc_meta)이 줄 순서보다 먼저 믿는다
+    has_language_halves: bool = False
 
 
 class ExtractionRejected(Exception):

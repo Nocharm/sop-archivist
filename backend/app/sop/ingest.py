@@ -126,7 +126,9 @@ async def ingest_upload(
     )
     # 언어 배치는 Unit을 만들기 전에 정한다(배치가 Unit 언어를 가른다) — 사람은 문서 목록에서 바꿀 수 있다
     if outcome.result is not None:
-        document.language_layout = detect_language_layout(outcome.result.blocks)
+        document.language_layout = detect_language_layout(
+            outcome.result.blocks, has_language_halves=outcome.result.has_language_halves
+        )
     session.add(document)
     try:
         await session.flush()

@@ -28,7 +28,11 @@ _LINK_TARGET_RE = re.compile(rf"\]{_LINK_TARGET}")
 # \w에는 _가 들어 있어 따로 받는다 — 마크다운은 "\_"로 이스케이프한다
 _ESCAPE_RE = re.compile(r"\\([^\w\s]|_)")
 # 줄 머리 표시 — 제목 #, 인용 >, 글머리표(- + 와 중첩 들여쓰기; * 는 글 모양 표시로 먼저 지워진다), 번호 목록 "1."
-_LINE_HEAD_RE = re.compile(r"^(?:[ \t]*(?:#{1,6}[ \t]+|>[ \t]?|[-+][ \t]+|\d+\.[ \t]+))+", re.MULTILINE)
+# Word 글머리 기호(• ● ■ – 와 기호 글꼴의 U+F09F, 글자 "o")도 걷는다 — 메인 추출은 기호를 글 앞에 써 넣고 MarkItDown은 "*"로
+# 바꿔, 글머리 기호가 여럿인 칸이 통째로 "빠진 글"이 되기 때문이다
+_LINE_HEAD_RE = re.compile(
+    r"^(?:[ \t]*(?:#{1,6}[ \t]+|>[ \t]?|[-+][ \t]+|[•●■–\uf09f][ \t]*|o[ \t]+|\d+\.[ \t]+))+", re.MULTILINE
+)
 # 글 모양 표시 — 강조 * _, 코드 `, 삭제선 ~~, 밑줄 <u></u>, 링크 글을 감싼 대괄호
 _MARK_RE = re.compile(r"[*_`\[\]]|~~|</?u>")
 _BLANK_REMOVAL = str.maketrans("", "", INVISIBLE_CHARS)
