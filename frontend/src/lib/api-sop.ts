@@ -1353,6 +1353,10 @@ export interface ComposedItem {
   status: CoverStatus;
   change_type: ChangeType | null;
   number: string | null;
+  /** 아래 셋은 결과물 C 항목(OutputCItem)과 같은 값 - 템플릿 보기가 글머리 기호 깊이·주석 줄과 한/영 짝(같은 묶음 키)을 읽는다 */
+  number_style: NumberStyle;
+  indent_level: number;
+  meaning_key: string | null;
   /** 출처 Old 단위 - 번역은 번역 출처 단위 */
   source_unit_ids: number[];
   table?: BundleTable | null;

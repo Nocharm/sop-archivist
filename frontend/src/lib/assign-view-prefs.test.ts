@@ -8,12 +8,12 @@ describe("assign view prefs", () => {
   afterEach(() => vi.restoreAllMocks());
 
   it("reads defaults when nothing is stored", () => {
-    expect(readAssignView()).toEqual({ zoomOld: 1, zoomNew: 1, split: 0.5, lines: true, single: false, newAiOnly: false });
+    expect(readAssignView()).toEqual({ zoomOld: 1, zoomNew: 1, split: 0.5, lines: true, single: false, newAiOnly: false, newTemplate: false });
   });
 
   it("round-trips stored values", () => {
     writeAssignView({ zoomNew: 1.2, split: 0.6, lines: true });
-    expect(readAssignView()).toEqual({ zoomOld: 1, zoomNew: 1.2, split: 0.6, lines: true, single: false, newAiOnly: false });
+    expect(readAssignView()).toEqual({ zoomOld: 1, zoomNew: 1.2, split: 0.6, lines: true, single: false, newAiOnly: false, newTemplate: false });
   });
 
   it("remembers turning the link lines off", () => {
@@ -26,7 +26,7 @@ describe("assign view prefs", () => {
   it("remembers the one-document view", () => {
     writeAssignView({ single: true });
     expect(readAssignView().single).toBe(true);
-    writeAssignView({ single: false, newAiOnly: false });
+    writeAssignView({ single: false, newAiOnly: false, newTemplate: false });
     expect(readAssignView().single).toBe(false);
   });
 
@@ -37,17 +37,24 @@ describe("assign view prefs", () => {
     expect(readAssignView().newAiOnly).toBe(true);
   });
 
+  it("remembers the New template view, basic until it is turned on", () => {
+    expect(readAssignView().newTemplate).toBe(false);
+    writeAssignView({ newTemplate: true });
+    expect(window.localStorage.getItem("sopa.assign.newTemplate")).toBe("1");
+    expect(readAssignView().newTemplate).toBe(true);
+  });
+
   it("clamps out-of-range and junk values", () => {
     window.localStorage.setItem("sopa.assign.zoomOld", "3");
     window.localStorage.setItem("sopa.assign.split", "abc");
-    expect(readAssignView()).toEqual({ zoomOld: 1.6, zoomNew: 1, split: 0.5, lines: true, single: false, newAiOnly: false });
+    expect(readAssignView()).toEqual({ zoomOld: 1.6, zoomNew: 1, split: 0.5, lines: true, single: false, newAiOnly: false, newTemplate: false });
   });
 
   it("falls back to defaults when storage throws", () => {
     vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
       throw new Error("blocked");
     });
-    expect(readAssignView()).toEqual({ zoomOld: 1, zoomNew: 1, split: 0.5, lines: true, single: false, newAiOnly: false });
+    expect(readAssignView()).toEqual({ zoomOld: 1, zoomNew: 1, split: 0.5, lines: true, single: false, newAiOnly: false, newTemplate: false });
   });
 
   it("counts Space preview opens for the small hint, zero when unknown or blocked", () => {

@@ -3948,6 +3948,118 @@ await runStep("assign: the New pane shows a real table and figure", {}, async ({
   await takeShot("sop-assign-new-table-figure.png");
 });
 
+// New 칸 템플릿 보기(MD 1 F9 · F8c) - 같은 줄을 회사 템플릿 모양으로: 결과물 C와 같은 줄 · 같은 번호, SOP는 영어 → 한글 절반, 짝은 두 절반에 같은 번호
+/** 한/영 짝이 든 아직 쓰지 않은 문서(doc_type) - 같은 묶음 키에 영어·한글 문장이 다 있는 줄이 있는 첫 문서 */
+async function findTemplateDoc(page, docType) {
+  const headers = { "X-Dev-User": "qa.member" };
+  const getJson = async (path) => (await page.request.get(`${BASE}/api/bundles/${halfBundleId}${path}`, { headers })).json();
+  for (const doc of (await getJson("/tobe")).docs.filter((item) => item.entrance === "assign" && item.doc_type === docType)) {
+    const composed = await getJson(`/outputs/c/docs/${doc.id}?lang=en`);
+    const items = composed.sections.flatMap((section) => section.items);
+    const pair = items.find((item) => item.lang === "en" && item.meaning_key !== null && items.some((other) => other.lang === "ko" && other.meaning_key === item.meaning_key));
+    if (pair) return { doc, composed, items, pair, partner: items.find((other) => other.lang === "ko" && other.meaning_key === pair.meaning_key) };
+  }
+  return null;
+}
+
+async function openTemplateView(page, docId) {
+  await page.goto(`${BASE}/bundles/${halfBundleId}/assign`);
+  await wait(page, "assign-bar");
+  await page.locator('[data-testid="assign-new-doc"]').click();
+  await page.locator(`[data-testid="assign-new-doc-option-${docId}"]`).click();
+  await page.locator('[data-testid="assign-new-view-template"]').click();
+  await wait(page, "assign-new-tpl");
+}
+
+await runStep("assign: New template view draws the same lines as Output C in two halves", {}, async ({ page, takeShot }) => {
+  const found = await findTemplateDoc(page, "sop");
+  check("the bundle has a composed SOP with a KO/EN pair", Boolean(found), found ? `${found.doc.code} ${found.pair.target_id}/${found.partner.target_id}` : "none");
+  if (!found) return;
+  await openTemplateView(page, found.doc.id);
+  const paper = page.locator('[data-testid="assign-new-tpl"]');
+  check("the template paper is an SOP", (await paper.getAttribute("data-doc-type")) === "sop");
+  check("the cover table fills only Document No. with the To-Be number", (await getText(page, "assign-new-tpl-doc-no")).trim() === found.doc.code);
+  check("the contents list is drawn by the app", (await page.locator('[data-testid="assign-new-tpl-toc"] .tpl-toc-line').count()) >= 9);
+  const enBeforeKo = await page.evaluate(() => {
+    const en = document.querySelector('[data-testid="assign-new-tpl-half-en"]');
+    const ko = document.querySelector('[data-testid="assign-new-tpl-half-ko"]');
+    return Boolean(en && ko && en.compareDocumentPosition(ko) & Node.DOCUMENT_POSITION_FOLLOWING);
+  });
+  check("the English half comes before the Korean half", enBeforeKo);
+  // 템플릿의 줄 = 결과물 C(엮은 문서)의 줄 - 언어 문장은 제 절반에 한 번, 표·그림은 두 절반에
+  const drawn = await paper.evaluate((el) => [...el.querySelectorAll("[data-row]")].map((node) => node.getAttribute("data-row")));
+  const expected = new Set(found.items.map((item) => `t:${item.target_id}`));
+  check("the template holds exactly the composed lines", new Set(drawn).size === expected.size && drawn.every((key) => expected.has(key)), `${new Set(drawn).size}/${expected.size}`);
+  const sentences = found.items.filter((item) => item.kind === "sentence" && (item.lang === "en" || item.lang === "ko"));
+  const counts = await Promise.all(sentences.map((item) => page.locator(`[data-testid="assign-new-tpl-${item.lang}-${item.target_id}"]`).count()));
+  check("each KO/EN sentence is drawn once, in its own half", counts.every((count) => count === 1), counts.join(","));
+  // 짝은 두 절반에 같은 표시(번호 · 기호)로
+  const markOf = async (lang, id) => ((await page.locator(`[data-testid="assign-new-tpl-${lang}-${id}"] .tpl-mark`).first().textContent()) ?? "").trim();
+  const enMark = await markOf("en", found.pair.target_id);
+  const koMark = await markOf("ko", found.partner.target_id);
+  check("the pair shows the same mark in both halves", enMark === koMark, `${enMark} | ${koMark}`);
+  if (found.pair.number) check("a numbered line keeps its Output C number", enMark === found.pair.number, `${enMark} vs ${found.pair.number}`);
+  check("the view is remembered in this browser", (await page.evaluate(() => window.localStorage.getItem("sopa.assign.newTemplate"))) === "1");
+  await takeShot("sop-assign-new-template.png");
+  await page.reload();
+  await wait(page, "assign-bar");
+  await page.locator('[data-testid="assign-new-doc"]').click();
+  await page.locator(`[data-testid="assign-new-doc-option-${found.doc.id}"]`).click();
+  await wait(page, "assign-new-tpl");
+  check("after a reload the template view is still on", (await page.locator('[data-testid="assign-new-view-template"]').getAttribute("aria-pressed")) === "true");
+  await page.locator('[data-testid="assign-new-view-basic"]').click();
+  await page.locator('[data-pane="new"] .new-sheet').waitFor({ timeout: T });
+  check("Basic brings back the usual New pane", (await page.locator('[data-testid="assign-new-tpl"]').count()) === 0);
+});
+
+await runStep("assign: New template view lights a pair in both halves and fills a missing translation", {}, async ({ page, takeShot }) => {
+  const found = await findTemplateDoc(page, "sop");
+  check("the bundle has a composed SOP with a KO/EN pair", Boolean(found));
+  if (!found) return;
+  await openTemplateView(page, found.doc.id);
+  const enLine = page.locator(`[data-testid="assign-new-tpl-en-${found.pair.target_id}"]`);
+  await enLine.scrollIntoViewIfNeeded({ timeout: T });
+  await enLine.click();
+  const koLine = page.locator(`[data-testid="assign-new-tpl-ko-${found.partner.target_id}"]`);
+  await koLine.and(page.locator("[data-sel]")).waitFor({ timeout: T });
+  check("picking a line lights its pair in both halves", (await enLine.getAttribute("data-sel")) !== null && (await koLine.getAttribute("data-sel")) !== null);
+  check("picking a line picks its Old row", (await page.locator('[data-pane="old"] .strip[data-sel]').count()) > 0);
+  check("the template stays on the same document", (await page.locator('[data-testid="assign-new-tpl"]').count()) === 1);
+  await takeShot("sop-assign-new-template-pair.png");
+  const fill = page.locator('[data-testid^="assign-new-tpl-"][data-testid$="-fill"]').first();
+  if ((await fill.count()) === 0) {
+    check("no No translation slot in this document (nothing to fill)", true);
+    return;
+  }
+  await fill.scrollIntoViewIfNeeded({ timeout: T });
+  check("the No translation slot is an orange dashed box", await fill.evaluate((el) => getComputedStyle(el).borderStyle === "dashed"));
+  await fill.click();
+  // 칸에 확정한 한 언어 줄이면 결정 칸의 번역 만들기 · 직접 쓰기로 포커스가 간다(그 단추가 없는 줄이면 줄만 골라진다)
+  const focused = await page
+    .waitForFunction(() => ["assign-make-other", "assign-write-other"].includes(document.activeElement?.getAttribute("data-testid") ?? ""), null, { timeout: 3000 })
+    .then(() => true, () => false);
+  const offered = (await page.locator('[data-testid="assign-make-other"], [data-testid="assign-write-other"]').count()) > 0;
+  check("a missing translation leads to Make / Write the other language", focused || !offered, `focused=${focused} offered=${offered}`);
+});
+
+await runStep("assign: New template view draws a WI in chapter tables, Korean half first", {}, async ({ page, takeShot }) => {
+  const headers = { "X-Dev-User": "qa.member" };
+  const wi = (await (await page.request.get(`${BASE}/api/bundles/${halfBundleId}/tobe`, { headers })).json()).docs.find((doc) => doc.entrance === "assign" && doc.doc_type === "wi");
+  check("the bundle has a WI not written yet", Boolean(wi));
+  if (!wi) return;
+  await openTemplateView(page, wi.id);
+  check("the template paper is a WI", (await page.locator('[data-testid="assign-new-tpl"]').getAttribute("data-doc-type")) === "wi");
+  const koBeforeEn = await page.evaluate(() => {
+    const ko = document.querySelector('[data-testid="assign-new-tpl-half-ko"]');
+    const en = document.querySelector('[data-testid="assign-new-tpl-half-en"]');
+    return Boolean(en && ko && ko.compareDocumentPosition(en) & Node.DOCUMENT_POSITION_FOLLOWING);
+  });
+  check("the Korean half comes before the English half", koBeforeEn);
+  const heads = await page.locator('[data-testid="assign-new-tpl-half-ko"] .tpl-wi thead th').allInnerTexts();
+  check("each step is a chapter table headed Chapter N.", heads.length > 0 && heads.every((text) => /^(Chapter \d+\.|No step|단계 없음)/.test(text.trim())), heads.join(" | "));
+  await takeShot("sop-assign-new-template-wi.png");
+});
+
 // 원문 글의 "표 3"은 올릴 때 그 표에 이어진다 - 고른 줄의 참조 카드가 대상을 보이고, 떼고 다시 이으면 처음 상태로 돌아온다
 await runStep("assign: a table reference shows its target and can be detached and linked again", {}, async ({ page, takeShot }) => {
   const headers = { "X-Dev-User": "qa.member" };

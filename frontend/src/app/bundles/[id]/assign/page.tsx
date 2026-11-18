@@ -31,6 +31,7 @@ import { LinkMenu } from "@/components/assign/link-menu";
 import { LinkBadge } from "@/components/assign/link-badge";
 import { MoveTargetField } from "@/components/assign/move-target-field";
 import { runPickFlight, type FlightSource } from "@/components/assign/pick-flight";
+import { NewBundle } from "@/components/assign/new-bundle";
 import { NewPane, NewPaneEmpty } from "@/components/assign/new-pane";
 import { DocDashboard } from "@/components/assign/doc-dashboard";
 import { OldPane } from "@/components/assign/old-pane";
@@ -43,6 +44,7 @@ import { ResetModal, type ResetScope } from "@/components/assign/reset-modal";
 import { type AiAskItem } from "@/components/manage/ai-ask-menu";
 import { Modal } from "@/components/modal";
 import { ReadOnlyNote } from "@/components/read-only-note";
+import { TemplateView } from "@/components/template/template-view";
 import { CutPop } from "@/components/paper/cut-pop";
 import { LangToken } from "@/components/paper/lang-token";
 import { FilterChip, UnitStatusChip } from "@/components/status";
@@ -115,6 +117,7 @@ import {
   type ChangeType,
   type ChangeTypeInput,
   type ComposedDoc,
+  type ComposedItem,
   type DecisionStepResult,
   type DocumentView,
   type EditOp,
@@ -203,6 +206,7 @@ import { EMPTY_FOLD_OPEN, type FoldOpen } from "@/lib/paper-fold-model";
 import { buildPaperModel, buildPaperTabs, findNearestCut, listPartSheets, resolvePickUnit, shouldRecenter, type PaperTabKey } from "@/lib/paper-model";
 import { buildPairColumns, canUndoPair, listPairLinks, PAIR_REFUSAL_KEYS, resolvePairDrop, type PairDrop, type PairDropContext, type PairLang } from "@/lib/pair-drop-model";
 import { ASSIGN_DOC_PARAM, ASSIGN_UNIT_PARAM, EDIT_ORIGINAL_PARAM, getNewDocumentsHref, getStageHref } from "@/lib/stages";
+import { buildTemplateTitles } from "@/lib/template-model";
 import { useAiJobs } from "@/lib/use-ai-jobs";
 import { useAiPrepare } from "@/lib/use-ai-prepare";
 import { useDelayedFlag } from "@/lib/use-delayed-flag";
@@ -712,6 +716,9 @@ export default function AssignPage() {
   // 엮은 문서의 칸 머리 옆 칸 제목 출처 - 이미 쓴 문서에는 칸 제목이 없다
   const headingNotes = isComposedDoc && composedDoc ? listHeadingNotes(composedDoc) : undefined;
   const sectionMarks = isComposedDoc && composedDoc ? listSectionMarks(composedDoc) : undefined;
+  // 템플릿 보기의 이름 사전(한글 절반의 6장 절 · 5장 범주 이름, WI 단계 이름) - 문서나 To-Be가 바뀔 때만 다시 짓는다(보기 모양 계산이 이것을 기억 키로 쓴다)
+  const composedCode = composedDoc?.code ?? null;
+  const templateTitles = useMemo(() => (tobeData && composedCode !== null ? buildTemplateTitles(tobeData, composedCode) : null), [tobeData, composedCode]);
   // 두 문서 사이 이음 - 저장된 출처와 고른 줄의 저장 전 고름
   const oldUnitIds = useMemo(() => new Set(oldView?.units.map((unit) => unit.id) ?? []), [oldView]);
   const linkPairs = buildLinkPairs(newRows.filter(isWrittenRow), oldUnitIds, draft.destination?.kind === "link" ? { units: rowUnits.map((unit) => ({ id: unit.unit_id, lang: unit.lang })), targetIds: draft.destination.targetIds } : null);
@@ -2003,11 +2010,14 @@ export default function AssignPage() {
     setJump({ side: "new", id: targetId, targetId, rowKey: "", quiet: true });
   }
 
-  /** New 문장의 "← 출처" 칩을 누름 - 그 출처 줄을 고르고(다른 Old 문서면 그 문서로) Old의 그 조각으로 간다 */
-  function jumpToOld(unitId: number, targetId: number) {
+  /**
+   * New 문장의 "← 출처" 칩을 누름 - 그 출처 줄을 고르고(다른 Old 문서면 그 문서로) Old의 그 조각으로 간다.
+   * keep.docId는 엮은 문서(템플릿 보기)에서 그대로 둘 New 문서, keep.quiet면 그 자리 메뉴를 띄우지 않는다
+   */
+  function jumpToOld(unitId: number, targetId: number, keep: { docId?: number; quiet?: boolean } = {}) {
     setPairViewDoc(null);
     const key = rowOfUnit.get(unitId);
-    const docId = writtenMap.get(targetId)?.target_doc_id;
+    const docId = keep.docId ?? writtenMap.get(targetId)?.target_doc_id;
     if (!key) return;
     setMode("old");
     setSelectedKey(key);
@@ -2015,7 +2025,38 @@ export default function AssignPage() {
     setMenu(null);
     // 지금 보던 New 문서를 그대로 둔다 - 줄이 바뀌어도 이 문장 옆에서 이어 보게
     if (docId !== undefined) setManualNewDoc({ key, docId });
-    setJump({ side: "old", id: unitId, targetId, rowKey: key });
+    setJump({ side: "old", id: unitId, targetId, rowKey: key, quiet: keep.quiet });
+  }
+
+  /** 템플릿 보기의 줄을 누름 - 출처 칩과 같은 길로 그 줄의 Old 출처를 고른다(지금 New 문서와 보기는 그대로) */
+  function pickTemplateLine(item: ComposedItem) {
+    const unitId = item.source_unit_ids[0];
+    if (unitId !== undefined && newDocId !== null) jumpToOld(unitId, item.target_id, { docId: newDocId });
+  }
+
+  // "번역 없음" 자리를 누른 뒤 - 고른 줄의 결정 칸이 그려지면(관계 묶음이 오기까지 몇 프레임) 번역 만들기(없으면 직접 쓰기) 단추로 포커스
+  const [fillOtherSeq, setFillOtherSeq] = useState(0);
+  useEffect(() => {
+    if (fillOtherSeq === 0) return;
+    let tries = 0;
+    let frame = requestAnimationFrame(function step() {
+      const button = document.querySelector<HTMLButtonElement>('[data-testid="assign-make-other"], [data-testid="assign-write-other"]');
+      if (button && !button.disabled) {
+        button.focus();
+        return;
+      }
+      tries += 1;
+      if (tries < 60) frame = requestAnimationFrame(step);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [fillOtherSeq]);
+
+  /** 템플릿 보기의 "번역 없음" 자리를 누름 - 비춘 줄의 Old 출처를 메뉴 없이 고르고, 빠진 언어는 지금 있는 번역 만들기 · 직접 쓰기로 채운다 */
+  function fillTemplateMissing(source: ComposedItem) {
+    const unitId = source.source_unit_ids[0];
+    if (unitId === undefined || newDocId === null) return;
+    jumpToOld(unitId, source.target_id, { docId: newDocId, quiet: true });
+    setFillOtherSeq((seq) => seq + 1);
   }
 
   // 이동한 뒤 - 그 자리가 그려지면 보이게 하고 번쩍인 뒤 그 옆에 메뉴를 띄운다(다른 문서를 받는 중이면 몇 프레임 기다린다)
@@ -3859,6 +3900,8 @@ export default function AssignPage() {
     })),
   ];
   const highlightIds = new Set(isSolo ? soloUnits.map((unit) => unit.id) : (row?.unitIds ?? []));
+  // 템플릿 보기에서 칠할 줄 - 고른 Old 줄에서 온 새 문장(짝이면 두 절반 모두)
+  const templateSelected = new Set((composedDoc?.sections ?? []).flatMap((section) => section.items.filter((item) => item.source_unit_ids.some((id) => highlightIds.has(id))).map((item) => item.target_id)));
   // 양 단에서 다듬으려고 고른 New 문장의 줄, 그리고 나눌 선이 놓인 줄
   const editTargetId = isNewEdit && soloUnit !== null ? (written.find((item) => item.new_unit_id === soloUnit.id)?.target_id ?? null) : null;
   const cutTargetId = isNewEdit && cutUnit !== null ? (written.find((item) => item.new_unit_id === cutUnit.id)?.target_id ?? null) : null;
@@ -4195,6 +4238,27 @@ export default function AssignPage() {
                       </>
                     }
                     aiFilter={newAiFilter}
+                    viewSwitch={
+                      isComposedDoc && composedDoc && templateTitles
+                        ? {
+                            template: view.newTemplate,
+                            onChange: (template) => changeView({ newTemplate: template }),
+                            body: (
+                              <TemplateView
+                                doc={composedDoc}
+                                titles={templateTitles}
+                                selectedIds={templateSelected}
+                                onPickLine={pickTemplateLine}
+                                onMissing={canEdit ? fillTemplateMissing : undefined}
+                                renderBlock={(item) => (
+                                  <NewBundle kind={item.kind === "figure" ? "figure" : "table"} table={item.table} figure={item.figure} caption={item.caption} renumber={item.renumber ?? null} captionRequired bundleId={bundleId} testId={`assign-new-tpl-block-${item.target_id}`} />
+                                )}
+                                testId="assign-new-tpl"
+                              />
+                            ),
+                          }
+                        : null
+                    }
                   />
                   <LinkLines pairs={listNewAiLinks(linkPairs, newAiFilter, row?.unitIds ?? [])} focusUnits={highlightIds} focusTargets={liveDoc ? new Set([...pickedNew, ...liveDoc.targetIds]) : pickedNew} visible={view.lines} />
                 </>

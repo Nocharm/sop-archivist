@@ -231,8 +231,12 @@ export function applySavedTargets(
       text: target.confirmed_text || target.ai_text || textOf(target.source_unit_ids),
       status: target.status,
       change_type: target.change_type,
-      // 번호는 칸 안 자리·깊이·표시로 서버가 센다 - 짐작한 번호가 C와 어긋나 보이지 않게 다시 읽기 전까지 비워 둔다(남은 줄은 서버 번호 그대로)
+      // 번호는 칸 안 자리·깊이·표시로 서버가 센다 - 짐작한 번호가 C와 어긋나 보이지 않게 다시 읽기 전까지 비워 둔다(남은 줄은 서버 번호 그대로).
+      // 표시도 다시 읽기 전까지는 표시 없음(생략)으로 둔다. 짝 묶음 키는 같은 저장의 관계 묶음으로 잠시 대신한다 - 템플릿 보기에서 막 놓인 짝이 "번역 없음"으로 번쩍이지 않게
       number: null,
+      number_style: "omitted",
+      indent_level: target.indent_level,
+      meaning_key: target.group_id === null ? null : `group:${target.group_id}`,
       source_unit_ids: target.source_unit_ids,
     };
     placed.set(key, [...(placed.get(key) ?? []), item]);

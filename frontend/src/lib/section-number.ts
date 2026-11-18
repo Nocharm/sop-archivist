@@ -72,7 +72,7 @@ export function numberLines(base: string, depths: readonly (number | null)[]): (
  * 그 뒤는 앞 번호 줄 깊이 + 1까지. 생략·주석 줄은 다음 줄의 상한에 끼지 않는다. 0으로 그리면 사람이 정한 들여쓰기가 사라진다.
  * 줄을 세지 않는 칸은 세는 줄이 없어(listCounted) 모든 줄이 0이다 - 번호 줄이 하나도 없는 칸의 생략·주석 줄과 같다.
  */
-export function getSectionDepths(section: Pick<Section, "counts_lines" | "number" | "items">): number[] {
+export function getSectionDepths(section: Pick<Section, "counts_lines" | "number"> & { items: readonly Pick<OutputCItem, "number_style" | "indent_level" | "number">[] }): number[] {
   const baseParts = section.number === null ? 0 : section.number.split(".").length;
   const counted = listCounted(section);
   const depths: number[] = [];
