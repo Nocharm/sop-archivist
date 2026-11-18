@@ -9,6 +9,7 @@ import Link from "next/link";
 import { useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { EquisStatus } from "@/components/equis/equis-status";
+import { DeviationMark, EmptyRequiredMark } from "@/components/tobe/deviation-mark";
 import { RenumberMark } from "@/components/paper/renumber-mark";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Menu, MenuRadio } from "@/components/ui/menu";
@@ -811,6 +812,9 @@ export function OutputCView({ data, onMove, onIndent, onMark, onPlace, resetKey 
                     {/* 부록은 이름("Appendix 2. 제목")에 번호가 들어 있어 번호를 따로 적지 않는다(shows_number) - 줄 번호의 머리는 그대로 section.number다 */}
                     {section.number !== null && section.shows_number && <span className="mr-1.5 font-mono">{section.number}</span>}
                     {section.label}
+                    {section.deviation_reason !== null && <DeviationMark reason={section.deviation_reason} testId={`output-c-differs-${doc.target_doc_id}-${section.location_key}`} />}
+                    {/* 비어 있는 필수 절 - 알림일 뿐 검토 요청을 막지 않는다(뜻은 툴팁) */}
+                    {section.is_empty_required && <EmptyRequiredMark testId={`output-c-empty-required-${doc.target_doc_id}-${section.location_key}`} />}
                     {/* 칸 제목으로 간 옛 제목 - 칸 항목이 아니라 머리 옆에 흐리게. 길면 감긴다 */}
                     {section.heading_note !== "" && (
                       <span className="ml-2 font-normal text-ink-3 [overflow-wrap:anywhere]" data-testid={`output-c-heading-note-${doc.target_doc_id}-${section.location_key}`}>

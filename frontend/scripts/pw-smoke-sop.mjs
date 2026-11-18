@@ -1295,6 +1295,105 @@ await runStep("new documents: declare a procedure, rename it, see it in the sect
   }
 });
 
+// 표준과 다름(표준 골격 계획 스텝 6) - 비어 있는 필수 장 하나를 사유와 함께 빼면 뒤 장의 번호가 당겨지고, 뺀 줄은 줄이 그어진 채 남아 되살린다.
+// 사유 없이는 저장 단추가 꺼져 서버에 거절이 가지 않으니 콘솔 오류를 허용하지 않는다. 중간에 멈췄으면 API로 되살린다
+/** 반쪽 Bundle SOP의 최상위 장 가운데 뺄 수 있는 것 - 표준 · 필수이고, N/A가 아니고, 자기와 하위에 문장 · 칸 제목이 없고, 뒤에 장이 있는 것 */
+function findRemovableChapter(tobe, sop) {
+  const tops = readOutline(tobe, sop.code).filter((item) => item.parent_key === null);
+  const naKeys = new Set(tobe.na_slots.filter((na) => na.code === sop.code).map((na) => na.slot_key));
+  const isWithin = (key, top) => key === top || key.startsWith(`${top}.`);
+  const held = (key) => (tobe.slot_counts ?? []).some((row) => row.target_doc_id === sop.id && isWithin(row.slot_key, key) && row.count + row.heading_count > 0);
+  const index = tops.slice(0, -1).findIndex((item) => item.origin === "standard" && item.is_required && !naKeys.has(item.key) && !held(item.key));
+  return index < 0 ? null : { target: tops[index], next: tops[index + 1] };
+}
+
+await runStep("new documents: remove a standard chapter with a reason, later chapters shift up, restore it", {}, async ({ page }) => {
+  const headers = { "X-Dev-User": "qa.member" };
+  const REASON = "Smoke: not used in this SOP";
+  const start = await readToBe(page, halfBundleId);
+  const sop = start.docs.find((doc) => doc.doc_type === "sop" && doc.entrance === "assign");
+  const prefix = `tobe-id-${sop.id}`;
+  const found = findRemovableChapter(start, sop);
+  check("the SOP has an empty required chapter that can be removed", found !== null, readOutline(start, sop.code).map((item) => item.key).join(","));
+  if (found === null) return;
+  const { target, next } = found;
+  const findItem = (tobe, key) => tobe.outline_items.find((item) => item.code === sop.code && item.key === key);
+  const deviationsBefore = start.outline_items.filter((item) => item.code === sop.code && item.is_deviation).length;
+  const slotText = async (key, cell) => ((await page.locator(`[data-testid="${prefix}-slot-${key}"] .${cell}`).textContent()) ?? "").trim();
+  const editor = (name) => page.locator(`[data-testid="${prefix}-remove-${target.key}-${name}"]`);
+  try {
+    await page.goto(`${BASE}/bundles/${halfBundleId}/documents`);
+    await page.locator(`[data-testid="${prefix}-toggle"]`).click();
+    await wait(page, `${prefix}-slots`);
+    // 1. 빼기 - 줄 끝 단추가 사유 칸을 열고, 사유가 비면 저장 단추가 꺼져 있다
+    await page.locator(`[data-testid="${prefix}-slot-${target.key}"]`).hover();
+    await page.locator(`[data-testid="${prefix}-outline-${target.key}-remove"]`).click();
+    await wait(page, `${prefix}-remove-${target.key}-editor`);
+    check("Remove is off until a reason is typed", await editor("save").isDisabled());
+    await editor("reason").fill(REASON);
+    await editor("reason").press("Enter");
+    await settleToBe(page);
+    const after = await readToBe(page, halfBundleId);
+    const removed = findItem(after, target.key);
+    check("the chapter is removed with its reason and counts as differing", removed?.is_removed === true && removed.is_deviation && removed.deviation_reason === REASON, JSON.stringify(removed));
+    check("the next chapter takes its number", findItem(after, next.key)?.number === target.number, `${findItem(after, next.key)?.number} vs ${target.number}`);
+    await page.waitForFunction((id) => document.querySelector(`[data-testid="${id}"]`)?.dataset.state === "removed", `${prefix}-slot-${target.key}`, { timeout: T });
+    check("the row stays as Removed with no number and the differs mark", (await slotText(target.key, "slot-num")) === "" && (await getText(page, `${prefix}-slot-${target.key}-state`)).includes("Removed") && (await page.locator(`[data-testid="${prefix}-slot-${target.key}-differs"]`).count()) === 1);
+    check("the sections table shows the next chapter with the freed number", (await slotText(next.key, "slot-num")) === target.number);
+    check("the document row counts the deviation", (await getText(page, `${prefix}-deviations`)).includes(`${deviationsBefore + 1} differ from standard`));
+    // 2. 되살리기 - 표준 그대로, 번호도 제자리
+    await page.locator(`[data-testid="${prefix}-slot-${target.key}"]`).hover();
+    await page.locator(`[data-testid="${prefix}-outline-${target.key}-restore"]`).click();
+    await settleToBe(page);
+    const restored = await readToBe(page, halfBundleId);
+    check("Restore brings the standard chapter back with its number and no reason", findItem(restored, target.key)?.is_removed === false && findItem(restored, target.key)?.is_deviation === false && findItem(restored, target.key)?.number === target.number && findItem(restored, next.key)?.number === next.number);
+    await page.waitForFunction((id) => document.querySelector(`[data-testid="${id}"]`)?.dataset.state !== "removed", `${prefix}-slot-${target.key}`, { timeout: T });
+    check("the row is back with its number and without the mark", (await slotText(target.key, "slot-num")) === target.number && (await page.locator(`[data-testid="${prefix}-slot-${target.key}-differs"]`).count()) === 0);
+  } finally {
+    if (findItem(await readToBe(page, halfBundleId), target.key)?.is_removed) {
+      await page.request.patch(`${BASE}/api/bundles/${halfBundleId}/tobe/docs/${sop.id}/outline/${encodeURIComponent(target.key)}`, { headers, data: { is_removed: false } });
+    }
+  }
+});
+
+// 같은 일이 Order의 결과물 C에 - 장을 빼면 C 절 머리의 번호가 당겨지고, 되살리면 돌아온다. 빈 필수 절은 머리에 Empty가 붙는다. 빼기 · 되살리기는 API로 한다(화면은 위 단계)
+await runStep("order: a removed chapter shifts the C section numbers up, Restore brings them back, and an empty required section says Empty", {}, async ({ page }) => {
+  const headers = { "X-Dev-User": "qa.member" };
+  const start = await readToBe(page, halfBundleId);
+  const sop = start.docs.find((doc) => doc.doc_type === "sop" && doc.entrance === "assign");
+  const found = findRemovableChapter(start, sop);
+  check("the SOP has an empty required chapter that can be removed", found !== null);
+  if (found === null) return;
+  const { target, next } = found;
+  const itemUrl = `${BASE}/api/bundles/${halfBundleId}/tobe/docs/${sop.id}/outline/${encodeURIComponent(target.key)}`;
+  const headOf = (key) => page.locator(`[data-testid="output-c-section-${sop.id}-${key}"]`);
+  const readHead = async (key) => ((await headOf(key).textContent()) ?? "").trim();
+  try {
+    await page.goto(`${BASE}/bundles/${halfBundleId}/order`);
+    await wait(page, "output-c");
+    await page.locator(`[data-testid="order-doc-${sop.id}"]`).click();
+    await headOf(target.key).waitFor({ timeout: T });
+    check("the chapter to remove is empty and says Empty", (await page.locator(`[data-testid="output-c-empty-required-${sop.id}-${target.key}"]`).count()) === 1 && (await readHead(target.key)).startsWith(target.number), await readHead(target.key));
+    const removed = await page.request.patch(itemUrl, { headers, data: { is_removed: true, reason: "Smoke: not used in this SOP" } });
+    check("removing the chapter with a reason is accepted", removed.status() === 200, String(removed.status()));
+    await page.reload();
+    await wait(page, "output-c");
+    await page.locator(`[data-testid="order-doc-${sop.id}"]`).click();
+    await headOf(next.key).waitFor({ timeout: T });
+    check("C has no section for the removed chapter and the next one takes its number", (await headOf(target.key).count()) === 0 && (await readHead(next.key)).startsWith(target.number), await readHead(next.key));
+    const back = await page.request.patch(itemUrl, { headers, data: { is_removed: false } });
+    check("restoring is accepted", back.status() === 200, String(back.status()));
+    await page.reload();
+    await wait(page, "output-c");
+    await page.locator(`[data-testid="order-doc-${sop.id}"]`).click();
+    await headOf(target.key).waitFor({ timeout: T });
+    check("after Restore the numbers are back", (await readHead(target.key)).startsWith(target.number) && (await readHead(next.key)).startsWith(next.number), `${await readHead(target.key)} | ${await readHead(next.key)}`);
+  } finally {
+    const item = (await readToBe(page, halfBundleId)).outline_items.find((row) => row.code === sop.code && row.key === target.key);
+    if (item?.is_removed) await page.request.patch(itemUrl, { headers, data: { is_removed: false } });
+  }
+});
+
 // 거절된 N/A 저장 - 409 slot_has_targets(그 사이 문장이 들어왔다)는 둘 곳이 없어 편집기를 닫고, 그 밖의 실패는 적던 사유를 남긴다.
 // 거절 응답이 콘솔에 찍혀 이 단계만 콘솔 오류를 허용한다
 await runStep("new documents: a refused N/A save closes the editor, any other failure keeps the reason", { allowConsoleErrors: true }, async ({ page }) => {

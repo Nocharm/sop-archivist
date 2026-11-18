@@ -472,6 +472,14 @@
   .slot-sub { border-bottom: 1px dotted var(--ink-4); cursor: help; }
   .slot-acts { display: inline-flex; justify-content: flex-end; gap: 2px; }
   .slot-btn { height: 24px; padding: 0 6px; font-size: var(--fs-cap); }
+  /* 골격 단추(이름 · 빼기 · 더하기) - 아이콘만, 이름은 툴팁 */
+  .slot-icon { width: 24px; padding: 0; justify-content: center; }
+  /* 표준과 다름 표시 - 이름 뒤 아이콘, 사유는 툴팁 */
+  .slot-dev { display: inline-flex; margin-left: 6px; vertical-align: -1px; color: var(--warn-ink); cursor: help; }
+  /* 뺀 표준 항목 - 이름에 줄을 긋고 흐리게(되살리기 단추만 남는다) */
+  .slot-name[data-removed] { color: var(--ink-3); text-decoration: line-through; }
+  /* 비어 있는 필수 절 - 절 머리(결과물 C · Assign New 칸) 이름 뒤의 작은 경고 */
+  .empty-required { height: 18px; margin-left: 6px; vertical-align: 1px; font: 400 var(--fs-cap) / 16px var(--font-ui); }
   /* 빈 칸의 Mark N/A, N/A 칸의 Edit reason · Restore - 줄에 올리거나 포커스가 갈 때만(자리는 늘 잡고 opacity만 바꾼다) */
   .slot-hover { opacity: 0; transition: opacity var(--dur-fast); }
   .slot-row:hover .slot-hover, .slot-row:focus-within .slot-hover { opacity: 1; }

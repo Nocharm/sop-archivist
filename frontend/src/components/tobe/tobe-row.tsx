@@ -1,7 +1,7 @@
 // New 목록의 줄 하나(Documents 화면 설계 §6) - 식별(종류 · 번호 · EQUIS), 제목 줄, 딸린 정보 줄을 글자로 읽는다. 고치는 칸은 펼친 곳(ToBePanel)에 있다.
 "use client";
 
-import { Pencil, Trash2, Wrench } from "lucide-react";
+import { GitFork, Pencil, Trash2, Wrench } from "lucide-react";
 import { useState, type ReactNode } from "react";
 
 import { DocRow, type RowAction } from "@/components/documents/doc-row";
@@ -15,7 +15,7 @@ import type { EquisInfo, SopDocument, TargetDoc, ToBe } from "@/lib/api-sop";
 import { isBoxDragActive } from "@/lib/box-drag";
 import { getDocRemoveBlock } from "@/lib/destination-manage-model";
 import { useI18n } from "@/lib/i18n";
-import { formatSlotName, type SlotRow, type SlotSummary } from "@/lib/slot-status-model";
+import { countDeviations, formatSlotName, type SlotRow, type SlotSummary } from "@/lib/slot-status-model";
 import type { DraftDoc } from "@/lib/tobe-draft";
 
 const REMOVE_BLOCK_KEYS = {
@@ -80,6 +80,8 @@ export function ToBeRow({ doc, isChild, tobe, saved, written, equis, stepCount, 
   const isWritten = doc.entrance === "match";
   // 줄에 이름을 적는 N/A 칸 - 덮인 칸도 N/A로 센다(요약의 na와 같은 집합)
   const firstNa = slots?.rows.find((row) => row.state.kind === "na" || row.state.kind === "covered");
+  // 표준과 다른 항목 수 - 뺀 필수 항목도 센다(펼친 곳의 칸 표가 줄마다 표시와 사유를 보인다)
+  const deviations = slots === null ? 0 : countDeviations(slots.rows);
   const actions: RowAction[] = canEdit
     ? [
         { key: "edit", icon: Pencil, label: t("common.edit"), testId: `${prefix}-edit`, run: openToEdit },
@@ -149,6 +151,12 @@ export function ToBeRow({ doc, isChild, tobe, saved, written, equis, stepCount, 
                 </Tooltip>
                 {slots.summary.na > 1 && <span className="flex-none">{` +${slots.summary.na - 1}`}</span>}
               </span>
+            </span>
+          )}
+          {deviations > 0 && (
+            <span className="pill quiet" data-testid={`${prefix}-deviations`}>
+              <GitFork size={12} strokeWidth={1.5} className="text-warn" aria-hidden />
+              {t("tobe.row.deviations", { n: deviations })}
             </span>
           )}
           {written ? (

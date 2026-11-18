@@ -128,7 +128,7 @@ import {
 } from "@/lib/api-sop";
 import { listRefCandidates } from "@/lib/caption-ref-model";
 import { isBundleCaptionNeeded, isBundleKind, isCaptionGate, listCaptionFields, listCaptionPendingRowKeys, makeIsLinkedToWritten, type CaptionUnit } from "@/lib/caption-model";
-import { applySavedTargets, buildComposedRows, isWrittenRow, listHeadingNotes, readSectionHead, removeClearedUnits, type NewPaneRow } from "@/lib/composed-model";
+import { applySavedTargets, buildComposedRows, isWrittenRow, listHeadingNotes, listSectionMarks, readSectionHead, removeClearedUnits, type NewPaneRow } from "@/lib/composed-model";
 import {
   addPartnerTargets,
   buildLinkPairs,
@@ -690,6 +690,7 @@ export default function AssignPage() {
   const newRows: NewPaneRow[] = isComposedDoc ? (composedDoc ? buildComposedRows(composedDoc) : []) : written.filter((item) => item.target_doc_id === newDocId);
   // 엮은 문서의 칸 머리 옆 칸 제목 출처 - 이미 쓴 문서에는 칸 제목이 없다
   const headingNotes = isComposedDoc && composedDoc ? listHeadingNotes(composedDoc) : undefined;
+  const sectionMarks = isComposedDoc && composedDoc ? listSectionMarks(composedDoc) : undefined;
   // 두 문서 사이 이음 - 저장된 출처와 고른 줄의 저장 전 고름
   const oldUnitIds = useMemo(() => new Set(oldView?.units.map((unit) => unit.id) ?? []), [oldView]);
   const linkPairs = buildLinkPairs(newRows.filter(isWrittenRow), oldUnitIds, draft.destination?.kind === "link" ? { units: rowUnits.map((unit) => ({ id: unit.unit_id, lang: unit.lang })), targetIds: draft.destination.targetIds } : null);
@@ -3908,6 +3909,7 @@ export default function AssignPage() {
                     onDocChange={(value) => setManualNewDoc({ key: toggleKey, docId: Number(value) })}
                     rows={newRows}
                     headingNotes={headingNotes}
+                    sectionMarks={sectionMarks}
                     rowsKey={isComposedDoc && !composedDoc ? `${newDocId}:loading` : String(newDocId)}
                     tag={isComposedDoc ? t("assign.composedTag") : t("assign.writtenTag")}
                     onEditOriginal={!isComposedDoc && newFileId !== null ? () => openSolo(newFileId) : undefined}

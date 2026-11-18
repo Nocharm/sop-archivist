@@ -54,7 +54,20 @@ import { navigate } from "@/lib/nav-buffer";
 import { PARENT_REFUSAL_KEYS, buildParentCard, canDragParent, canUndoParentMove, resolveParentDrop } from "@/lib/parent-drop-model";
 import { getRevealScrollTop, readUntransformedBox } from "@/lib/reveal-scroll";
 import { saveBlob } from "@/lib/save-file";
-import { buildSlotRows, canUndoRestore, formatSlotName, isNaEditDirty, listUsedReasons, summarizeSlots, type NaEdit, type SlotKey, type SlotRow, type SlotSummary } from "@/lib/slot-status-model";
+import {
+  buildSlotRows,
+  canUndoRestore,
+  formatSlotName,
+  isNaEditDirty,
+  listUsedReasons,
+  summarizeSlots,
+  type NaEdit,
+  type OutlineAction,
+  type SlotEditMode,
+  type SlotKey,
+  type SlotRow,
+  type SlotSummary,
+} from "@/lib/slot-status-model";
 import { NEW_DOCUMENTS_ANCHOR } from "@/lib/stages";
 import { ADD_PREVIEW_KEYS, describeAdd, listEquisHints, planAddRows, readCodes, type AddPreview } from "@/lib/tobe-add-model";
 import { createDraft, orderDocs, type DraftDoc } from "@/lib/tobe-draft";
@@ -287,6 +300,29 @@ export function ToBeSection({ bundleId, documents, file }: ToBeSectionProps) {
       action: { label: t("common.undo"), run: () => void naUndoRef.current(restoredIn, docId, row.key, reason) },
     });
     setNaEdit((current) => (current !== null && current.docKey === doc.key && current.slotKey === row.key ? null : current));
+  }
+
+  /** 칸 상태 표의 골격 쓰기 - 성공하면 그 일의 편집기만 닫는다(저장하는 사이 다른 칸에 적기 시작했으면 그것은 둔다). 실패하면 적던 글이 남는다 */
+  async function saveOutline(docId: number, action: OutlineAction, mode: SlotEditMode) {
+    if (writesRef.current > 0) return;
+    const write = (): Promise<ToBe> => {
+      switch (action.kind) {
+        case "rename":
+          return patchOutlineItem(bundleId, docId, action.key, { title_en: action.titleEn, reason: action.reason });
+        case "remove":
+          return patchOutlineItem(bundleId, docId, action.key, { is_removed: true, reason: action.reason });
+        case "restore":
+          return patchOutlineItem(bundleId, docId, action.key, { is_removed: false });
+        case "add":
+          return addOutlineItem(bundleId, docId, action.parentKey, action.titleEn, "", action.reason);
+        case "delete":
+          return removeOutlineItem(bundleId, docId, action.key);
+      }
+    };
+    if (!(await runWrite(write))) return;
+    const docKey = `id-${docId}`;
+    const slotKey = action.kind === "add" ? action.parentKey : action.key;
+    setNaEdit((current) => (current !== null && current.docKey === docKey && current.slotKey === slotKey && (current.mode ?? "na") === mode ? null : current));
   }
 
   /** Undo의 다시 읽기와 쓰기 - 진행 중인 쓰기로 세어 그동안 끌기 · Restore · N/A 저장이 시작되지 않게 한다(늦은 Undo가 그 사이의 놓기를 덮지 않게) */
@@ -527,6 +563,7 @@ export function ToBeSection({ bundleId, documents, file }: ToBeSectionProps) {
         onEdit={editNa}
         onSave={(slotKey, reason) => saveNa(docId, slotKey, reason)}
         onRestore={(row) => void restoreNa(doc, row)}
+        onOutline={(action, mode) => saveOutline(docId, action, mode)}
       />
     );
   }

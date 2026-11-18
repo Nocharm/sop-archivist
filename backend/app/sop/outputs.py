@@ -464,10 +464,9 @@ def _find_na_reason(doc: TargetDocInfo, slot_key: str) -> str | None:
 def _get_line_base(outline: DocOutline, key: str, numbers: Mapping[str, str | None]) -> str | None:
     """SOP 절에 직접 놓인 줄 번호의 머리 — 줄을 세는 절의 자기 번호다(6장 절차 "6.1" → 6.1.1). 세지 않는 절과 번호 없는 절(범주)은 None.
 
-    부록도 자기 번호가 머리다("2" → 2.1, 2.2, 2.1.1).
+    부록도 자기 번호가 머리다("Appendix 2" 안의 줄 → 2.1, 2.2, 2.1.1 — 사용자 확인 2026-11-18). 다른 곳은 이 값을 읽기만 한다
+    (프런트는 절 응답의 number·counts_lines).
     """
-    # 확인 필요(계획 "확인받을 것" 6): 템플릿의 "Appendix 2 안은 2., 2.1."을 "부록 자신이 2., 그 안의 첫 수준 줄이 2.1"로 읽었다.
-    # 원본에서 첫 수준 줄이 "2."부터라면 부록의 머리만 여기서 바꾼다(다른 곳은 이 값을 읽기만 한다 — 프런트는 절 응답의 number·counts_lines)
     return numbers.get(key) if outline.counts_lines(key) else None
 
 

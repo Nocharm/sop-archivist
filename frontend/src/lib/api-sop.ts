@@ -618,10 +618,14 @@ export interface OutlineItem {
   is_assignable: boolean;
   /** 직접 놓인 줄에 번호를 세는가 - false면 줄의 표시와 상관없이 번호가 없다(하위 항목 번호와 겹치므로) */
   counts_lines: boolean;
+  /** standard 표준에서 복사 · declared 문서가 선언(6장 절차 · 9장 부록 · 5장 범주) · custom 표준에서 벗어나 더한 항목 */
   origin: "standard" | "declared" | "custom";
-  /** 이 문서에서 뺀 항목 - 화면은 그리지 않는다 */
+  /** 이 문서에서 뺀 표준 항목 - 되살릴 수 있게 제자리로 실린다(번호 없음, 문장을 받지 않음, 하위는 함께 빠져 실리지 않는다). 칸 목록 · 나무는 거른다 */
   is_removed: boolean;
+  /** 표준과 다른 까닭 - 사용자 항목, 이름을 바꾸거나 필수인데 뺀 표준 항목. 그 밖은 null */
   deviation_reason: string | null;
+  /** 표준과 다름 - 선택 항목을 뺀 것 · N/A · 선언은 아니다 */
+  is_deviation: boolean;
 }
 
 export interface ToBe {
@@ -705,16 +709,24 @@ export function renameWiStep(bundleId: number, targetDocId: number, stepNo: numb
 }
 
 // SOP가 선언하는 골격 항목(6장 절차 · 9장 부록 · 5장 범주) - 한 번에 하나씩 쓰고 새 목록이 돌아온다(revision을 보내지 않는다)
-/** 골격 항목 고치기 - 보낸 칸만 바뀐다. position은 같은 부모의 항목들 안에서의 자리(0부터). 키는 그대로이고 번호만 따라간다 */
+/**
+ * 골격 항목 고치기 - 보낸 칸만 바뀐다. position은 같은 부모의 항목들 안에서의 자리(0부터, 표준 항목은 422 outline_standard_item). 키는 그대로이고 번호만 따라간다.
+ * is_removed는 표준 항목을 빼거나(true) 되살린다(false). reason은 표준에서 벗어나는 쓰기(표준 항목 영어 이름 바꾸기 · 필수 항목 빼기)의 사유 - 없으면 422 deviation_reason_required
+ */
 export interface OutlineItemPatch {
   title_en?: string;
   title_ko?: string;
   position?: number;
+  is_removed?: boolean;
+  reason?: string;
 }
 
-/** 부모 항목 아래에 항목 하나를 선언한다 - 끝자리에 놓이고 키는 서버가 정한다 */
-export function addOutlineItem(bundleId: number, targetDocId: number, parentKey: string, titleEn: string, titleKo?: string): Promise<ToBe> {
-  return apiFetch<ToBe>(`/bundles/${bundleId}/tobe/docs/${targetDocId}/outline`, { method: "POST", body: JSON.stringify({ parent_key: parentKey, title_en: titleEn, title_ko: titleKo }) });
+/**
+ * 부모 항목 아래에 항목 하나를 더한다 - 끝자리에 놓이고 키는 서버가 정한다. 하위를 선언하는 부모(6장 · 9장 · 5장) 아래는 선언이고,
+ * 묶음 제목 아래와 최상위(parentKey "")는 표준에서 벗어난 사용자 항목이라 reason이 있어야 한다
+ */
+export function addOutlineItem(bundleId: number, targetDocId: number, parentKey: string, titleEn: string, titleKo?: string, reason?: string): Promise<ToBe> {
+  return apiFetch<ToBe>(`/bundles/${bundleId}/tobe/docs/${targetDocId}/outline`, { method: "POST", body: JSON.stringify({ parent_key: parentKey, title_en: titleEn, title_ko: titleKo, reason }) });
 }
 
 export function patchOutlineItem(bundleId: number, targetDocId: number, key: string, patch: OutlineItemPatch): Promise<ToBe> {
@@ -1217,6 +1229,10 @@ export interface SectionOutline {
   shows_number: boolean;
   /** 앱이 채우는 목록 절(auto_list)의 줄 - To-Be 순서. 그 밖의 절은 빈 배열 */
   auto_items: AutoItem[];
+  /** 표준과 다른 SOP 절(사용자 항목 · 이름을 바꾼 표준 항목)의 사유 - 그 밖은 null */
+  deviation_reason: string | null;
+  /** 필수 절인데 비었다(자기와 하위에 줄이 없고 N/A도 아니다, 자동 목록은 자식 WI가 없다) - 알림일 뿐 검토 요청을 막지 않는다 */
+  is_empty_required: boolean;
 }
 
 export interface OutputCItem {
