@@ -6059,6 +6059,65 @@ await runStep("assign: AI suggestions come first and confirm one by one", {}, as
   check("figure image loads on the paper", true);
 });
 
+// New 쪽 AI 제안 필터(MD 2 S4) - 칩을 켜고 Old 줄을 고르면 다른 줄의 AI 제안은 접히고 확정된 줄은 흐려진다. 켠 채로 새로 고쳐도 켜져 있다
+await runStep("assign: New-side AI filter keeps only the picked line's suggestions", {}, async ({ page, takeShot }) => {
+  await page.goto(`${BASE}/`);
+  await page.locator('[data-testid^="bundles-row-"]').first().waitFor({ timeout: T });
+  const aiRow = page.locator('[data-testid^="bundles-row-"]', { hasText: "AI 제안" });
+  if ((await aiRow.count()) === 0) {
+    console.log("  (no AI demo bundle in this seed - skipped)");
+    return;
+  }
+  const aiId = Number((await aiRow.getAttribute("data-testid")).replace("bundles-row-", ""));
+  await page.goto(`${BASE}/bundles/${aiId}/assign`);
+  await wait(page, "assign-bar");
+  const chip = page.locator('[data-testid="assign-new-ai-only"]');
+  if ((await chip.count()) === 0) {
+    console.log("  (no New pane in this bundle - skipped)");
+    return;
+  }
+  check("the chip starts off", (await chip.getAttribute("aria-pressed")) === "false");
+  // 켜기 전에 줄을 하나 고른다(AI 제안 필터 탭에서 첫 줄)
+  await page.locator('[data-testid="assign-filter-ai_suggested"]').click();
+  await page.locator('[data-testid="assign-filter-ai_suggested"]').blur();
+  await page.keyboard.press("j");
+  await wait(page, "assign-rec-0");
+  await chip.click();
+  check("the chip turns on", (await chip.getAttribute("aria-pressed")) === "true");
+  check("a picked line means no 'pick a line' hint", (await page.locator('[data-testid="assign-new-ai-hint"]').count()) === 0);
+  // 다른 줄의 AI 제안이 있으면 칸마다 띠 하나로 접힌다 - 띠 글에 숨긴 수가 있고 누르면 펼쳐진다
+  const bands = page.locator('[data-testid^="assign-new-ai-hidden-"]');
+  const bandCount = await bands.count();
+  const dimCount = await page.locator('.new-item[data-ai-view="dim"]').count();
+  console.log(`  (hidden bands ${bandCount}, dimmed rows ${dimCount}, picked line's tags ${await page.locator('[data-testid^="assign-new-ai-tag-"]').count()})`);
+  if (bandCount > 0) {
+    check("a band tells how many suggestions it hides", /\d/.test(await bands.first().innerText()));
+    const before = await page.locator(".new-item").count();
+    await bands.first().click();
+    check("clicking a band opens that section's suggestions", (await page.locator(".new-item").count()) > before);
+  }
+  await takeShot("sop-assign-new-ai-filter.png");
+  // 알약 - 고른 줄의 제안이 다른 New 문서에 있을 때만 뜬다. 누르면 그 문서가 열리고 알약이 돌아가기가 된다
+  const pill = page.locator('[data-testid="assign-new-ai-open"]');
+  if ((await pill.count()) > 0 && (await pill.getAttribute("data-kind")) === "open") {
+    await pill.click();
+    await page.waitForFunction(() => document.querySelector('[data-testid="assign-new-ai-open"]')?.getAttribute("data-kind") === "back", null, { timeout: T });
+    check("the pill opens the other New document and becomes Back", true);
+    await page.locator('[data-testid="assign-new-ai-open"]').click();
+    await page.waitForFunction(() => document.querySelector('[data-testid="assign-new-ai-open"]')?.getAttribute("data-kind") === "open", null, { timeout: T });
+    check("Back returns to the document that was open", true);
+  } else {
+    console.log("  (the picked suggestion is in the open document - no pill)");
+  }
+  // 새로 고쳐도 켜진 채, 끄면 거르지 않는다
+  await page.reload();
+  await wait(page, "assign-bar");
+  check("the chip stays on after a reload", (await page.locator('[data-testid="assign-new-ai-only"]').getAttribute("aria-pressed")) === "true");
+  await page.locator('[data-testid="assign-new-ai-only"]').click();
+  check("the chip turns off again", (await page.locator('[data-testid="assign-new-ai-only"]').getAttribute("aria-pressed")) === "false");
+  check("off means nothing is hidden or dimmed", (await page.locator('[data-testid^="assign-new-ai-hidden-"], .new-item[data-ai-view]').count()) === 0);
+});
+
 // 필터 접기(2026-11-12) - 필터를 걸면 맞는 문장만 제 모양, 앞뒤 한 줄, 나머지는 묶음 한 줄. 목록은 걸 때의 스냅숏이라 확정해도 접히지 않는다
 await runStep("assign: a status filter folds the Old paper", {}, async ({ page, takeShot }) => {
   await page.goto(`${BASE}/`);

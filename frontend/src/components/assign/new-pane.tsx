@@ -7,10 +7,11 @@
 // 줄 상자(.new-item)마다 data-row(t:<id> | slot:<칸>) - 끄는 동안 놓을 자리를 이것으로 읽는다.
 // 참조 줄이 EQUIS와 어긋나면 칩 줄 끝에 작은 표시(RefMark) - 출처 없는 줄은 그 표시만 있는 칩 줄이 생긴다.
 // 칩 오른쪽 갈매기는 그 Old 조각이 왼쪽 칸 화면 위·아래 밖에 있다는 표시 - 스크롤마다 바뀌어 LinkLines가 data-dir로 단다(Old 배지와 같은 방식).
+// AI 제안 거르기(aiFilter, lib/new-ai-filter-model)가 걸리면 고른 줄의 제안·간 곳은 강조 테두리와 꼬리표, 다른 줄의 AI 제안은 칸마다 띠 하나로 접히고(누르면 흐리게 펼침), 나머지 줄은 흐리다.
 // 줄이 새로 들어오면 펼치며 나타나고 빠지면 접히며 사라진다(확정이 곧 보이는 실시간 넣기). 표·그림은 실제 표(좌우 스크롤)·그림 이미지로 보인다(new-bundle.tsx).
 "use client";
 
-import { ChevronDown, ChevronUp, FilePlus2, Scissors, Spline } from "lucide-react";
+import { ChevronDown, ChevronUp, FilePlus2, Scissors, Sparkles, Spline } from "lucide-react";
 import { Fragment, useEffect, useEffectEvent, useRef, useState, type MouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 
 import { NewBundle } from "@/components/assign/new-bundle";
@@ -28,6 +29,7 @@ import type { DraftLine } from "@/lib/assign-drop-model";
 import { readCaretPoint } from "@/lib/caret-point";
 import { diffRows, getComposedLeadWidths, getNewRowKey, isComposedRow, isWrittenRow, readSectionNumber, type NewPaneRow, type SectionMark } from "@/lib/composed-model";
 import { useI18n } from "@/lib/i18n";
+import { readNewAiSectionKey, type NewAiFilter } from "@/lib/new-ai-filter-model";
 import { readWrittenRefMark } from "@/lib/ref-model";
 import { getCardTops, getHiddenPrefixLength, getPairBrackets, getPillWidth, getSectionPill, getTabWidths } from "@/lib/strip-pill-model";
 
@@ -88,6 +90,8 @@ interface NewPaneProps {
   draft?: { anchorKey: string; side: "before" | "after"; lines: DraftLine[] } | null;
   /** 고른 줄의 초안이 든 빈 칸(칸 키) - 그 자리 표시에 테두리만 단다 */
   draftSlotKey?: string | null;
+  /** 고른 줄의 AI 제안만 남기는 거르기 - 그 줄의 것은 밝게 꼬리표, 다른 줄의 AI 제안은 칸마다 띠로 접고, 나머지는 흐리게. 거르지 않으면 null */
+  aiFilter?: NewAiFilter | null;
 }
 
 function readState(row: WrittenSentence, props: NewPaneProps): string | undefined {
@@ -190,6 +194,10 @@ export function NewPane(props: NewPaneProps) {
     const to = props.docOptions.findIndex((option) => option.value === props.docId);
     setSlide({ docId: props.docId, dir: from < 0 || to < 0 ? null : to > from ? "next" : "prev" });
   }
+  // AI 제안 거르기에서 띠를 눌러 펼친 칸 - 고른 줄이나 문서가 바뀌면 다시 접는다(렌더 중 상태 맞추기)
+  const aiFoldKey = `${props.docId}:${props.aiFilter?.key ?? ""}`;
+  const [aiOpen, setAiOpen] = useState<{ key: string; sections: ReadonlySet<string> }>({ key: aiFoldKey, sections: new Set() });
+  if (aiOpen.key !== aiFoldKey) setAiOpen({ key: aiFoldKey, sections: new Set() });
   // 그릴 줄 - 지금 줄 사이사이에 빠지는 줄을 제자리(바로 뒤에 남은 줄 앞)에 끼운다
   const shown: Array<{ row: NewPaneRow; leaving: boolean }> = [];
   for (const row of props.rows) {
@@ -264,6 +272,17 @@ export function NewPane(props: NewPaneProps) {
     setIsCutDragging(true);
   }
 
+  /** AI 제안 거르기의 꼬리표 - 고른 줄의 AI 제안이거나 고른 줄이 이미 간 곳일 때만 */
+  function renderAiTag(row: WrittenSentence): ReactNode {
+    const mark = props.aiFilter?.marks.get(getNewRowKey(row));
+    if (mark !== "mine_ai" && mark !== "mine_went") return null;
+    return (
+      <span className="new-ai-tag" data-testid={`assign-new-ai-tag-${row.target_id}`}>
+        {t(mark === "mine_ai" ? "assign.newAi.mine" : "assign.newAi.went")}
+      </span>
+    );
+  }
+
   function renderSources(row: WrittenSentence) {
     const isOpen = openSources.has(row.target_id);
     const ids = row.source_unit_ids;
@@ -302,6 +321,7 @@ export function NewPane(props: NewPaneProps) {
         {row.change_type === "new" && <span className="new-src is-new">{t("assign.markedNew")}</span>}
         {/* 참조 줄이 EQUIS와 어긋난다(번호·이름·EQUIS에 없음·폐기) - 출처가 없는 줄에도 뜬다. 이 문서의 글은 여기서 고치지 않아 알리기만 한다 */}
         <RefMark row={row} />
+        {renderAiTag(row)}
       </span>
     );
   }
@@ -508,8 +528,8 @@ export function NewPane(props: NewPaneProps) {
         ) : (
           <span className="pane-title">{props.docOptions[0]?.label}</span>
         )}
-        <span className="tag" data-testid="assign-new-tag">
-          {props.tag}
+        <span className="tag new-pane-tag" data-testid="assign-new-tag">
+          <Truncate text={props.tag} revealOnFocus />
         </span>
         {props.headExtra}
         <span className="flex-1" />
@@ -545,13 +565,42 @@ export function NewPane(props: NewPaneProps) {
               const isNumberInLead = isSectionStart && row.kind === "sentence" && !cardTops.has(row.target_id) && !isComposedRow(row);
               // 점선 초안은 엮은 문서에서 기준 줄(빠지는 줄이 아닌) 바로 앞이나 뒤에
               const draftSide = props.readOnly && props.draft && !leaving && props.draft.anchorKey === key ? props.draft.side : null;
+              // AI 제안 거르기 - 다른 줄의 AI 제안은 그 칸의 띠를 펼치기 전까지 그리지 않는다(칸 머리는 남긴다 - 번호가 접힌 줄의 앞머리에 있었으면 머리 글로 돌려 준다)
+              const aiMark = leaving ? undefined : props.aiFilter?.marks.get(key);
+              const aiSection = readNewAiSectionKey(row.section_path);
+              const isAiFolded = aiMark === "other_ai" && !aiOpen.sections.has(aiSection);
+              const aiBand = isAiFolded ? props.aiFilter?.bands.get(key) : undefined;
               return (
                 <Fragment key={key}>
-                  {isSectionStart && renderSectionHead(row, isNumberInLead)}
+                  {isSectionStart && renderSectionHead(row, isNumberInLead && !isAiFolded)}
                   {draftSide === "before" && props.draft && renderDraft(row, props.draft.lines)}
-                  <div className="new-item" data-row={key} data-enter={presence.added.has(key) ? "" : undefined} data-leave={leaving ? "" : undefined} inert={leaving || undefined}>
-                    <div className="new-item-inner">{renderRow(row, isSectionStart, previous)}</div>
-                  </div>
+                  {aiBand && (
+                    <button
+                      type="button"
+                      className="new-ai-band"
+                      aria-expanded={false}
+                      data-testid={`assign-new-ai-hidden-${aiBand.sectionKey}`}
+                      onClick={() => setAiOpen((prev) => ({ key: prev.key, sections: new Set(prev.sections).add(aiSection) }))}
+                    >
+                      <Sparkles size={12} strokeWidth={1.75} className="flex-none" aria-hidden />
+                      {t("assign.newAi.hidden", { n: aiBand.count })}
+                    </button>
+                  )}
+                  {!isAiFolded && (
+                    <div
+                      className="new-item"
+                      data-row={key}
+                      data-enter={presence.added.has(key) ? "" : undefined}
+                      data-leave={leaving ? "" : undefined}
+                      data-ai-view={aiMark === undefined ? undefined : aiMark === "mine_ai" || aiMark === "mine_went" ? "mine" : "dim"}
+                      inert={leaving || undefined}
+                    >
+                      <div className="new-item-inner">
+                        {row.kind !== "empty" && row.kind !== "sentence" && renderAiTag(row)}
+                        {renderRow(row, isSectionStart, previous)}
+                      </div>
+                    </div>
+                  )}
                   {draftSide === "after" && props.draft && renderDraft(row, props.draft.lines)}
                 </Fragment>
               );
