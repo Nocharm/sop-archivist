@@ -11,7 +11,8 @@ export type AssignMenuAction =
   | "split" | "merge_prev" | "merge_next" | "pair_prev" | "pair_next" | "pair_pick" | "unpair" | "lang"
   | "ref_mark" | "ref_clear"
   | "table_rows" | "table_merge" | "table_layout"
-  | "caption_attach_prev" | "caption_attach_next" | "caption_detach";
+  | "caption_attach_prev" | "caption_attach_next" | "caption_detach"
+  | "to_sentence" | "to_heading";
 
 export interface AssignMenuItem {
   action: AssignMenuAction;
@@ -163,6 +164,18 @@ function buildTextCaptionItems(ctx: AssignMenuContext): AssignMenuItem[] {
   });
 }
 
+/**
+ * 제목 ↔ 문장 항목(F8b) - 묶이지 않은 제목은 "문장으로 바꾸기", 문장은 "제목으로"(제목에서 바꾼 문장이면 "제목으로 되돌리기" - 그 조항 줄 전체).
+ * 단위를 새로 만드는 고치기라 배정이 있어도 막지 않는다(서버가 묻고 배정을 풀어 준다). 목차 줄·참조 줄·칸 문장·캡션에는 없다
+ */
+function buildHeadingItems(ctx: AssignMenuContext, retireReason: string | null): AssignMenuItem[] {
+  const { target } = ctx;
+  if (target.group_unit_id !== null || target.noise_kind || target.lang === "ref") return [];
+  if (target.kind === "heading") return [build("to_sentence", retireReason)];
+  if (target.kind !== "sentence") return [];
+  return [{ ...build("to_heading", retireReason), labelKey: target.from_heading ? "assign.headingShift.back" : "assign.ctx.toHeading" }];
+}
+
 /** 묶음 대상의 캡션 항목 - 묶음 바로 앞(뒤)이 묶이지 않은 글일 때만 "위(아래) 문장을 캡션으로 붙이기" */
 function buildBundleCaptionItems(ctx: AssignMenuContext): AssignMenuItem[] {
   return (["prev", "next"] as const).flatMap((side) => {
@@ -209,6 +222,7 @@ export function buildAssignMenu(ctx: AssignMenuContext): AssignMenuGroups {
       // 참조 줄은 언어가 없다 - 언어를 주려면 먼저 "참조 아님"으로 돌린다
       langItem,
       buildRefItem(ctx, editReason),
+      ...buildHeadingItems(ctx, retireReason),
       ...buildTableItems(ctx),
       ...buildTextCaptionItems(ctx),
     ],
@@ -247,7 +261,7 @@ export function getPairSetBlocker(units: ViewUnit[]): string | null {
 // 다듬기 줄에 단추로 두는 일 - 언어는 세 칸이, 참조 줄 표시는 아래 카드가, 확정·지우기는 3번이 맡는다
 const SHAPE_LINE_ACTIONS: ReadonlySet<AssignMenuAction> = new Set([
   "split", "merge_prev", "pair_prev", "merge_next", "pair_next", "pair_pick", "unpair", "table_rows", "table_layout", "table_merge",
-  "caption_attach_prev", "caption_attach_next", "caption_detach",
+  "caption_attach_prev", "caption_attach_next", "caption_detach", "to_sentence",
 ]);
 
 // 다듬기 줄에서 꺼 둔 채 보이지도 않는 까닭 - 그 자리에서는 풀 길이 없는 모양 탓이다(옆에 문장이 없다·이미 짝·글이 아니다).

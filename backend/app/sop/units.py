@@ -18,7 +18,13 @@ from app.sop.models import (
     UnitPair,
     UnitPairMember,
 )
-from app.sop.numbering import build_number_columns
+from app.sop.numbering import (
+    NUMBER_PAIR,
+    ClauseLine,
+    build_number_columns,
+    find_inherited_numbers,
+    read_draft_number,
+)
 from app.sop.segment import (
     NEUTRAL,
     BlockView,
@@ -70,7 +76,7 @@ async def create_initial_units(session: AsyncSession, document: Document, extrac
     # 200만 자 쪼개기는 수 초까지 걸린다 — 단일 워커 backend가 묶음 잠금을 쥔 채 이벤트 루프를 막지 않게 스레드에서 돈다
     drafts, unit_rows = await asyncio.to_thread(
         _build_unit_rows, extraction.id, block_rows.all(), table_rows.all(), document.language_layout,
-        document.file_format == LINE_SPLIT_FORMAT,
+        document.file_format == LINE_SPLIT_FORMAT, document.side == "old",
     )
     if not drafts:
         return
@@ -107,10 +113,16 @@ def _build_unit_rows(
     table_rows: Sequence[Sequence[object]],
     layout: str,
     split_lines: bool,
+    shift_headings: bool = False,
 ) -> tuple[list[UnitDraft], list[dict[str, object]]]:
-    """블록·표 행 → 단위 초안과 INSERT 행(local_no는 1부터) — DB를 쓰지 않는 순수 계산이라 스레드에서 돌린다."""
+    """블록·표 행 → 단위 초안과 INSERT 행(local_no는 1부터) — DB를 쓰지 않는 순수 계산이라 스레드에서 돌린다.
+
+    shift_headings(옛 문서)면 제목답지 않은 제목 줄을 문장으로 바꾸고(F8b), 번호 없는 번역 조항의 첫 문장이 앞 조항의 번호를 물려받는다.
+    """
     blocks = [BlockView(*row) for row in block_rows]
-    drafts = build_unit_drafts(blocks, [TableView(*row) for row in table_rows], layout, split_lines=split_lines)
+    drafts = build_unit_drafts(
+        blocks, [TableView(*row) for row in table_rows], layout, split_lines=split_lines, shift_headings=shift_headings
+    )
     block_texts = {block.id: block.text for block in blocks}
     signals = {block.id: block.signals for block in blocks if block.signals}
     rows = [
@@ -119,11 +131,21 @@ def _build_unit_rows(
             "spans": [list(span) for span in draft.spans], "text": build_unit_text(draft.spans, block_texts),
             "lang": draft.lang, "table_id": draft.table_id, "row_index": draft.row_index,
             "pos_seq": draft.pos_seq, "pos_start": draft.pos_start, "noise_kind": draft.noise_kind,
+            "from_heading": draft.from_heading,
             # 목차 줄은 번호 칸이 없다 — 줄 앞 번호도 목차 글이다
             **build_number_columns(draft.kind if draft.noise_kind is None else "", draft.spans, signals, block_texts),
         }
         for local_no, draft in enumerate(drafts, start=1)
     ]
+    lines = [
+        ClauseLine(
+            draft.pos_seq, draft.lang, draft.kind, draft.from_heading,
+            read_draft_number(draft.kind, draft.from_heading, row) if draft.noise_kind is None else None,
+        )
+        for draft, row in zip(drafts, rows, strict=True)
+    ]
+    for index, number in find_inherited_numbers(lines).items():
+        rows[index].update(number_read=number, number_source=NUMBER_PAIR, number_len=0)
     return drafts, rows
 
 
@@ -167,7 +189,10 @@ async def _find_code_pairs(session: AsyncSession, extraction_id: int) -> list[tu
     잡음 표시가 붙은 단위(목차 줄)는 짝을 맺지 않고 짝이 있는 단위처럼 순서를 끊는다 — 한글 목차와 영어 목차가 짝지어지지 않게.
     """
     rows = await session.execute(
-        select(Unit.id, Unit.lang, Unit.text, Unit.table_id, SourceBlock.part, UnitPairMember.pair_id, Unit.noise_kind)
+        select(
+            Unit.id, Unit.lang, Unit.text, Unit.table_id, SourceBlock.part, UnitPairMember.pair_id, Unit.noise_kind,
+            Unit.from_heading, Unit.pos_seq,
+        )
         # 단위 자리(pos_seq)의 블록이 그 단위의 부분이다
         .join(SourceBlock, (SourceBlock.extraction_id == Unit.extraction_id) & (SourceBlock.seq == Unit.pos_seq))
         .outerjoin(UnitPairMember, UnitPairMember.unit_id == Unit.id)
@@ -175,9 +200,13 @@ async def _find_code_pairs(session: AsyncSession, extraction_id: int) -> list[tu
         .order_by(Unit.pos_seq, Unit.pos_start, Unit.id)
     )
     segments: list[list[tuple[int, str, str]]] = [[]]
+    # 제목에서 바꾼 조항의 문장 → 조항 블록 — 조항마다 덩어리가 되어 문장 수가 같은 한/영 조항은 문장마다 1:1 짝이다(F8b)
+    clauses: dict[int, int] = {}
     previous_part = None
     previous_table: int | None = None
-    for unit_id, lang, text, table_id, part, pair_id, noise_kind in rows:
+    for unit_id, lang, text, table_id, part, pair_id, noise_kind, from_heading, pos_seq in rows:
+        if from_heading:
+            clauses[unit_id] = pos_seq
         is_table_change = lang != NEUTRAL and table_id != previous_table
         is_closed = pair_id is not None or noise_kind is not None
         if (is_closed or part != previous_part or is_table_change) and segments[-1]:
@@ -188,10 +217,33 @@ async def _find_code_pairs(session: AsyncSession, extraction_id: int) -> list[tu
         if lang != NEUTRAL:
             previous_table = table_id
     # 번호·숫자가 없어 두 방향이 같은 수로 잡히는 구간은 문서 전체에서 더 많이 잡힌 순서를 따른다
-    totals = [count_pair_directions(segment) for segment in segments]
+    totals = [count_pair_directions(segment, clauses) for segment in segments]
     ko_en_total, en_ko_total = sum(t[0] for t in totals), sum(t[1] for t in totals)
     preferred = "en_ko" if en_ko_total > ko_en_total else "ko_en"
-    return [pair for segment in segments for pair in suggest_interleaved_pairs(segment, preferred)]
+    return [pair for segment in segments for pair in suggest_interleaved_pairs(segment, preferred, clauses)]
+
+
+async def pair_new_units(session: AsyncSession, document: Document, unit_ids: Sequence[int], actor: str) -> None:
+    """막 활성이 된 단위(제목 ↔ 문장 편집과 그 되돌리기)가 든 코드 짝만 새로 제안한다 — 다른 줄의 짝·사람이 푼 짝은 건드리지 않는다.
+
+    은퇴한 단위는 편집 쓰기 길이 이미 짝에서 뺐다(editing._leave_pairs). 판단이 서로 다른 곳으로 간 단위끼리는 짝짓지 않는다.
+    """
+    # pair_settle → units로 이어지는 순환 import라 여기서 부른다
+    from app.sop.pair_settle import has_diverging_fates, load_decided_fates, settle_pairs
+
+    if document.language_layout != INTERLEAVED_LAYOUT or not unit_ids:
+        return
+    extraction_id = await get_latest_extraction_id(session, document.id)
+    if extraction_id is None:
+        return
+    touched = set(unit_ids)
+    pairs = [(left, right) for left, right in await _find_code_pairs(session, extraction_id) if touched & {*left, *right}]
+    paired_ids = [unit_id for left, right in pairs for unit_id in (*left, *right)]
+    fates = await load_decided_fates(session, paired_ids)
+    await _insert_pairs(
+        session, document.id, [(left, right) for left, right in pairs if not has_diverging_fates(fates, [*left, *right])]
+    )
+    await settle_pairs(session, document.bundle_id, paired_ids, actor)
 
 
 async def _insert_pairs(

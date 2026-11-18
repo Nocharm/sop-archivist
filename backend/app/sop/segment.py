@@ -57,6 +57,10 @@ CAPTION_OF_FLAG = "caption_of"
 NUMBERS_SIGNAL = "numbers"
 NUMBER_CELL = "cell"
 NEUTRAL = "neutral"
+# 제목다움(F8b · 설계 2d) — 라벨 뒤 글이 이보다 길고 마침표로 끝나는 "제목"은 문장이다. 합성 자료로 잡은 값이다(실제 SOP 시험 뒤 다시 정한다)
+HEADING_SENTENCE_MIN_CHARS = 60
+# 제목 줄 머리의 번호 라벨("5.2.1" "5.2.1." "(3)") — 제목다움은 그 뒤 글로 잰다
+_HEADING_LABEL_RE = re.compile(r"\s*\(?\d+(?:\.\d+)*[.)]?(?=\s)")
 
 
 def has_unstorable_char(text: str) -> bool:
@@ -258,10 +262,37 @@ class UnitDraft:
     pos_seq: int
     pos_start: int
     noise_kind: str | None = None  # 잡음 표시(noise.py) — 목차 줄이면 "toc"
+    from_heading: bool = False  # 제목 스타일 줄을 제목답지 않아 문장으로 바꾼 것(F8b) — units.from_heading
+
+
+def is_heading_like(text: str) -> bool:
+    """제목 스타일 줄이 제목다운가(F8b · 설계 2d) — 문장 끝이 둘 이상이거나, 라벨 뒤 글이 HEADING_SENTENCE_MIN_CHARS를 넘고
+    마침표로 끝나면 문장이다. "5.2 Pre-cleaning"·"1. Purpose"·"Note."는 제목이다. 원문 글자는 읽기만 한다."""
+    ends = sum(1 for start, end in split_sentences(text) if _is_terminated(text, start, end))
+    if ends >= 2:
+        return False
+    label = _HEADING_LABEL_RE.match(text)
+    body = text[label.end() if label is not None else 0:].strip()
+    return not (len(body) > HEADING_SENTENCE_MIN_CHARS and body.rstrip(SENTENCE_CLOSERS).endswith((".", "。")))
+
+
+def _is_terminated(text: str, start: int, end: int) -> bool:
+    """문장 범위가 문장 끝 글자(와 닫는 글자)로 끝나는가 — 라벨 마침표("Chapter 1.")는 split_sentences가 이미 범위 안에 묶는다."""
+    return text[start:end].rstrip(SENTENCE_CLOSERS)[-1:] in tuple(SENTENCE_TERMINATORS)
+
+
+def _has_leading_number(block: BlockView) -> bool:
+    """블록 글 앞에 번호가 있는가 — 추출 신호(자동·타자 번호)가 있거나 글이 숫자 번호로 시작한다."""
+    return bool((block.signals or {}).get(NUMBERS_SIGNAL)) or _HEADING_LABEL_RE.match(block.text) is not None
 
 
 def build_unit_drafts(
-    blocks: Sequence[BlockView], tables: Sequence[TableView], layout: str, *, split_lines: bool = False
+    blocks: Sequence[BlockView],
+    tables: Sequence[TableView],
+    layout: str,
+    *,
+    split_lines: bool = False,
+    shift_headings: bool = True,
 ) -> list[UnitDraft]:
     """블록(seq 순) → 단위 초안(정렬 키 순). 규칙은 설계 §6.4·§7.4, 데이터 규칙은 공용 계약.
 
@@ -277,6 +308,8 @@ def build_unit_drafts(
       이을 초안이 없으면(레이아웃 표) 표시를 무시하고 보통 문장으로 쪼갠다.
     - 목차 줄(noise.find_toc_block_ids): 문장으로 쪼개지 않고 블록 전체 범위 하나의 문장 단위에 잡음 표시 "toc"를 붙인다 —
       점 끌기("1. 목적 ........ 3")의 점에서 잘리면 목차 한 줄이 두 단위가 된다.
+    - shift_headings(옛 문서)면 제목답지 않은 제목 줄(is_heading_like)은 문장으로 쪼개고 from_heading 표시를 단다(F8b) — 조항형 옛 SOP의
+      "제목 N수준" 조항. 번호 없는 제목 블록이 다른 언어의 바뀐 조항 바로 뒤에 오면 그 번역으로 보고 함께 바꾼다(짝이 문장마다 서게).
     """
     toc_block_ids = find_toc_block_ids(blocks)
     layout_table_ids = {table.id for table in tables if table.is_layout}
@@ -295,7 +328,9 @@ def build_unit_drafts(
     bundle_draft_index: dict[int, int] = {}  # 묶음 블록 seq → 그 그림·표 초안의 목록 번호
     caption_targets: dict[int, int] = {}  # 캡션 초안 목록 번호 → 가리키는 묶음 블록 seq
     number_cell: UnitDraft | None = None  # 같은 행 다음 칸의 첫 줄을 기다리는 번호 칸 초안
+    shifted_lang: str | None = None  # 바로 앞 블록이 문장으로 바꾼 제목 줄이면 그 언어 — 뒤따르는 번호 없는 번역 블록이 따라 바뀐다
     for block in blocks:
+        previous_shifted, shifted_lang = shifted_lang, None
         if number_cell is not None and not _is_same_row_cell(block, number_cell):
             drafts.append(number_cell)
             number_cell = None
@@ -342,9 +377,18 @@ def build_unit_drafts(
                 number_cell = None
             drafts.extend(cells)
         elif block.heading_level is not None or CLAUSE_NUMBER_FLAG in block.flags:
-            drafts.extend(
-                _build_text_draft("heading", block, start, end) for start, end in _split_heading(block.text, split_lines)
+            follows_shift = (
+                previous_shifted is not None and not _has_leading_number(block)
+                and detect_language(block.text) not in (None, previous_shifted)
             )
+            for start, end in _split_heading(block.text, split_lines):
+                if not shift_headings or (is_heading_like(block.text[start:end]) and not follows_shift):
+                    drafts.append(_build_text_draft("heading", block, start, end))
+                    continue
+                for sentence_start, sentence_end in split_sentences(block.text[start:end]):
+                    draft = _build_text_draft("sentence", block, start + sentence_start, start + sentence_end)
+                    drafts.append(replace(draft, from_heading=True))
+                shifted_lang = detect_language(block.text[start:end])
         else:
             drafts.extend(
                 _build_text_draft("sentence", block, start, end)
@@ -431,11 +475,13 @@ def build_unit_text(spans: Sequence[Sequence[int]], block_texts: Mapping[int, st
 
 
 PairDirection = Literal["ko_en", "en_ko"]
-_PairRun = tuple[str, list[int], list[str]]
+_PairRun = tuple[str, list[int], list[str], int | None]  # (언어, 단위들, 글들, 바꾼 조항 블록 seq — 보통 단위는 None)
 
 
 def suggest_interleaved_pairs(
-    units: Sequence[tuple[int, str, str]], preferred: PairDirection | None = None
+    units: Sequence[tuple[int, str, str]],
+    preferred: PairDirection | None = None,
+    clauses: Mapping[int, int] | None = None,
 ) -> list[tuple[list[int], list[int]]]:
     """(단위 id, 언어, 글) 순서 목록 → 코드 짝 제안 [(한글 단위들, 영어 단위들)]. 중립을 건너뛰고 같은 언어가 이어진 덩어리를 만든다.
 
@@ -444,8 +490,10 @@ def suggest_interleaved_pairs(
     한 방향 안에서는 왼쪽부터 첫 언어 덩어리 바로 뒤에 다음 언어 덩어리가 오고 둘이 번역 짝으로 보이면 둘을 잇고 그 뒤로 넘어가고,
     아니면 그 덩어리 하나만 건너뛴다(앞머리의 외톨이 회사명·제목 줄 하나가 문서 전체 짝을 한 칸씩 밀지 않게).
     어느 쪽이든 MAX_PAIR_SIDE를 넘으면 그 두 덩어리는 짝 없이 넘어간다. 머리말·본문처럼 부분이 다른 단위는 부르는 쪽이 나눠 넘긴다.
+    clauses(단위 id → 조항 블록 seq)는 제목에서 문장으로 바꾼 조항의 단위다(F8b) — 조항마다 따로 덩어리가 되고, 문장 수가 같은
+    두 조항은 문장마다 1:1 짝이 된다(한쪽 MAX_PAIR_SIDE는 1:1로 나눈 짝에는 걸지 않는다).
     """
-    runs = _build_language_runs(units)
+    runs = _build_language_runs(units, clauses or {})
     ko_en = _pair_runs(runs, "ko_en")
     en_ko = _pair_runs(runs, "en_ko")
     if len(ko_en) == len(en_ko):
@@ -453,22 +501,26 @@ def suggest_interleaved_pairs(
     return ko_en if len(ko_en) > len(en_ko) else en_ko
 
 
-def count_pair_directions(units: Sequence[tuple[int, str, str]]) -> tuple[int, int]:
+def count_pair_directions(
+    units: Sequence[tuple[int, str, str]], clauses: Mapping[int, int] | None = None
+) -> tuple[int, int]:
     """(한글 먼저로 잡히는 짝 수, 영어 먼저로 잡히는 짝 수) — 문서 전체의 우세 순서를 정할 때 구간마다 모은다."""
-    runs = _build_language_runs(units)
+    runs = _build_language_runs(units, clauses or {})
     return len(_pair_runs(runs, "ko_en")), len(_pair_runs(runs, "en_ko"))
 
 
-def _build_language_runs(units: Sequence[tuple[int, str, str]]) -> list[_PairRun]:
+def _build_language_runs(units: Sequence[tuple[int, str, str]], clauses: Mapping[int, int]) -> list[_PairRun]:
+    """같은 언어가 이어진 덩어리 — 바꾼 조항(clauses)은 조항 블록이 달라지는 자리에서도 끊는다(조항 하나가 덩어리 하나)."""
     runs: list[_PairRun] = []
     for unit_id, lang, text in units:
         if lang == NEUTRAL:
             continue
-        if runs and runs[-1][0] == lang:
+        clause = clauses.get(unit_id)
+        if runs and runs[-1][0] == lang and runs[-1][3] == clause:
             runs[-1][1].append(unit_id)
             runs[-1][2].append(text)
         else:
-            runs.append((lang, [unit_id], [text]))
+            runs.append((lang, [unit_id], [text], clause))
     return runs
 
 
@@ -480,11 +532,16 @@ def _pair_runs(runs: Sequence[_PairRun], direction: PairDirection) -> list[tuple
         if runs[index][0] == first_lang and index + 1 < len(runs) and runs[index + 1][0] == second_lang:
             first, second = runs[index], runs[index + 1]
             korean, english = (first, second) if direction == "ko_en" else (second, first)
-            if len(korean[1]) > MAX_PAIR_SIDE or len(english[1]) > MAX_PAIR_SIDE:
+            # 문장 수가 같은 바꾼 조항 둘은 문장마다 1:1 짝이다(F8b)
+            is_clause_pair = korean[3] is not None and english[3] is not None and len(korean[1]) == len(english[1])
+            if not is_clause_pair and (len(korean[1]) > MAX_PAIR_SIDE or len(english[1]) > MAX_PAIR_SIDE):
                 index += 2
                 continue
             if _is_likely_pair(korean[2], english[2]):
-                pairs.append((korean[1], english[1]))
+                if is_clause_pair:
+                    pairs.extend(([korean_id], [english_id]) for korean_id, english_id in zip(korean[1], english[1], strict=True))
+                else:
+                    pairs.append((korean[1], english[1]))
                 index += 2
                 continue
         index += 1

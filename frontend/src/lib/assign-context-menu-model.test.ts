@@ -53,7 +53,7 @@ describe("buildAssignMenu", () => {
   it("groups assign actions before edit actions", () => {
     const groups = buildAssignMenu(ctx());
     expect(groups.assign.map((item) => item.action)).toEqual(["clear"]);
-    expect(groups.edit.map((item) => item.action)).toEqual(["split", "merge_prev", "merge_next", "pair_pick", "lang", "ref_mark"]);
+    expect(groups.edit.map((item) => item.action)).toEqual(["split", "merge_prev", "merge_next", "pair_pick", "lang", "ref_mark", "to_heading"]);
   });
 
   it("enables every edit on an unassigned sentence with same-language neighbours", () => {
@@ -120,7 +120,7 @@ describe("KO/EN pairing from the Assign menu", () => {
   it("offers pairing instead of merging when the neighbour is the other language", () => {
     const groups = buildAssignMenu(ctx({ next: makeUnit(3, { lang: "en" }) }));
 
-    expect(groups.edit.map((item) => item.action)).toEqual(["split", "merge_prev", "pair_next", "pair_pick", "lang", "ref_mark"]);
+    expect(groups.edit.map((item) => item.action)).toEqual(["split", "merge_prev", "pair_next", "pair_pick", "lang", "ref_mark", "to_heading"]);
     expect(find(ctx({ next: makeUnit(3, { lang: "en" }) }), "pair_next").enabled).toBe(true);
     expect(find(ctx({ target: makeUnit(2, { lang: "en" }), prev: makeUnit(1) }), "pair_prev").enabled).toBe(true);
   });
@@ -146,7 +146,7 @@ describe("KO/EN pairing from the Assign menu", () => {
     const paired = ctx({ target: makeUnit(2, { pair_id: 7 }), next: makeUnit(3, { lang: "en", pair_id: 7 }) });
 
     expect(buildAssignMenu(ctx()).edit.some((item) => item.action === "unpair")).toBe(false);
-    expect(buildAssignMenu(paired).edit.map((item) => item.action)).toEqual(["split", "merge_prev", "pair_next", "unpair", "lang", "ref_mark"]);
+    expect(buildAssignMenu(paired).edit.map((item) => item.action)).toEqual(["split", "merge_prev", "pair_next", "unpair", "lang", "ref_mark", "to_heading"]);
     expect(find(paired, "unpair").enabled).toBe(true);
     expect(find({ ...paired, isDecided: (unit) => unit.id === 2 }, "unpair").reasonKey).toBe("assign.ctx.why.assigned");
   });
@@ -419,5 +419,32 @@ describe("listShapeLineItems (buttons on a Shape line)", () => {
     const ref = makeUnit(2, { lang: "ref", ref: { state: "confirmed", number: "SOP-A-1" } });
 
     expect(actions(ref, ctx({ target: ref, prev: makeUnit(1, { lang: "ref" }) }))).toEqual([]);
+  });
+});
+
+describe("heading ↔ sentence (F8b)", () => {
+  it("offers Turn into sentences on a heading and keeps it on the shape line", () => {
+    const heading = makeUnit(2, { kind: "heading" });
+    const item = find(ctx({ target: heading }), "to_sentence");
+
+    expect(item.enabled).toBe(true);
+    expect(listShapeLineItems(heading, buildAssignMenu(ctx({ target: heading })).edit, false).map((entry) => entry.action)).toContain("to_sentence");
+  });
+
+  it("names the way back Back to heading on a shifted sentence, and keeps it off the shape line", () => {
+    const shifted = makeUnit(2, { from_heading: true });
+    const item = find(ctx({ target: shifted }), "to_heading");
+
+    expect(item.labelKey).toBe("assign.headingShift.back");
+    expect(find(ctx(), "to_heading").labelKey).toBe("assign.ctx.toHeading");
+    expect(listShapeLineItems(shifted, buildAssignMenu(ctx({ target: shifted })).edit, false).map((entry) => entry.action)).not.toContain("to_heading");
+  });
+
+  it("asks to save first and leaves contents, references and bound cells alone", () => {
+    expect(find(ctx({ hasDraft: () => true }), "to_heading").reasonKey).toBe("assign.ctx.why.unsaved");
+    for (const target of [makeUnit(2, { noise_kind: "toc" }), makeUnit(2, { kind: "cell_sentence", group_unit_id: 9 })]) {
+      const { edit } = buildAssignMenu(ctx({ target }));
+      expect(edit.some((entry) => entry.action === "to_heading" || entry.action === "to_sentence")).toBe(false);
+    }
   });
 });

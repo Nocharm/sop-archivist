@@ -45,6 +45,8 @@ interface OldPaneProps {
   isCaptionNeeded: (unitId: number, hasCaption: boolean) => boolean;
   /** 목차 줄을 흐린 블록 하나로 접는다(Old 문서) - 없으면 보통 조각(한 단으로 연 New 문서) */
   toc?: NonNullable<NonNullable<ComponentProps<typeof Paper>["strips"]>["toc"]>;
+  /** 제목에서 바꾼 조항 묶음의 머리 "[제목 → 문장] … · ↺ 제목으로"(F8b) - 없으면 머리를 달지 않는다 */
+  headingShift?: NonNullable<ComponentProps<typeof Paper>["strips"]>["headingShift"];
   /** 내용이 있는 본문·머리말·꼬리말 탭 - 둘 이상일 때만 탭 줄을 그린다 */
   partKeys: readonly PaperTabKey[];
   activePart: PaperTabKey;
@@ -115,7 +117,7 @@ export function OldPane(props: OldPaneProps) {
         onCutNudge={props.onCutNudge}
         renderAtCut={props.cut ? props.renderAtCut : undefined}
         figureSource={props.figureSource}
-        strips={{ statusOf: props.statusOf, renderNote: props.renderNote, renderPills: props.renderPills, fold: props.fold, join: props.join, isCaptionNeeded: props.isCaptionNeeded, toc: props.toc }}
+        strips={{ statusOf: props.statusOf, renderNote: props.renderNote, renderPills: props.renderPills, fold: props.fold, join: props.join, isCaptionNeeded: props.isCaptionNeeded, toc: props.toc, headingShift: props.headingShift }}
         renderUnitActions={props.renderUnitActions}
         dragBoxes={props.dragBoxes}
         numberCell={props.numberCell}

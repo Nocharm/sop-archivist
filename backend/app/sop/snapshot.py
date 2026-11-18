@@ -116,6 +116,7 @@ class UnitInfo:
     number_len: int = 0
     number_set: str | None = None
     noise_kind: str | None = None  # 잡음 표시(noise.py) — 목차 줄은 판단 줄이 아니라 결과물 A의 "삭제 · 목차" 줄이다
+    from_heading: bool = False  # 제목에서 바꾼 조항 문장(F8b) — 타자 번호가 처음부터 번호다(numbering)
 
 
 @dataclass(frozen=True)
@@ -288,7 +289,7 @@ async def load_bundle_snapshot(session: AsyncSession, bundle_id: int, *, include
             block_id=unit.spans[0][0] if unit.spans else block_by_seq[(unit.extraction_id, unit.pos_seq)],
             spans=tuple((block_id, start, end) for block_id, start, end in unit.spans), noise_kind=unit.noise_kind,
             number_read=unit.number_read, number_source=unit.number_source, number_len=unit.number_len,
-            number_set=unit.number_set,
+            number_set=unit.number_set, from_heading=unit.from_heading,
         )
     caption_refs = tuple(
         CaptionRefInfo(

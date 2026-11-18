@@ -26,6 +26,7 @@ import { buildRows, foldCaptionRows, getBundleHeader, getGapMerge, getMarks, get
 import type { JoinKind, JoinPlan } from "@/lib/split-menu-model";
 import { getHiddenEnds, listFollowPreview } from "@/lib/number-model";
 import { getCardTops, getHiddenPrefixLength, getPairBrackets, getPillWidth, getSectionHeads, getTabWidths, getSectionLevel, getSectionPill, getVisibleSkip, sliceVisible, type PairBracket } from "@/lib/strip-pill-model";
+import { buildHeadingShiftGroups, readHeadingShiftHead, type HeadingShiftGroup } from "@/lib/heading-shift-model";
 import { buildTocBlock, shouldJoinTocCard } from "@/lib/toc-block-model";
 
 /** 조각 끝 표시 - 단위의 것(UnitMark)에 그 조각이 놓인 블록의 경고를 더한다 */
@@ -194,6 +195,9 @@ interface PaperProps {
       onToggle: (key: number) => void;
       onPick: (key: number, unitId: number | null) => void;
     };
+    /** Assign - 제목에서 바꾼 조항 묶음마다 첫 줄 위에 머리 "[제목 → 문장] 제목 n개를 문장 짝 m개로 · ↺ 제목으로"(F8b).
+     *  canRevert면 "↺ 제목으로"가 onRevert(묶음의 바꾼 문장들)로 편집 set_heading(제목으로)을 부른다 */
+    headingShift?: { canRevert: boolean; busy: boolean; onRevert: (unitIds: number[]) => void };
   };
   /** strips에서 고른 조각의 글 바로 아래 줄(확인·짝 풀기 등 단추) - 조각 상자가 펼쳐지며 밀려 내려오고, 고름이 옮겨 가면 접힌다 */
   renderUnitActions?: (unitId: number) => ReactNode;
@@ -300,6 +304,14 @@ export function Paper({
   if (actionIds.current !== selectedId) setActionIds({ current: selectedId, previous: actionIds.current });
   // 목차 블록 - 펼침·고름은 화면(strips.toc)이 쥔다
   const hasToc = strips?.toc !== undefined;
+  // 제목 → 문장 묶음 - 첫 단위 → 묶음(그 줄이 든 카드 위에 머리를 단다)
+  const hasHeadingShift = strips?.headingShift !== undefined;
+  const shiftGroups = useMemo(() => {
+    const map = new Map<number, HeadingShiftGroup>();
+    if (!hasHeadingShift) return map;
+    for (const group of buildHeadingShiftGroups(model.units.values())) map.set(group.firstUnitId, group);
+    return map;
+  }, [hasHeadingShift, model]);
 
   // 조각 줄 - 모델이 바뀔 때만 다시 편다(고르기·확인으로는 그대로)
   const sections = useMemo(() => {
@@ -1027,6 +1039,34 @@ export function Paper({
     );
   }
 
+  /** 제목 → 문장 묶음 머리(F8b) - 카드에 묶음의 첫 줄이 있으면 그 카드 위 한 줄. 원문 글자 없이 꼬리표·수·되돌리기만 */
+  function renderShiftHead(rows: readonly PaperRow[]): ReactNode {
+    const shift = strips?.headingShift;
+    const group = shift ? rows.map((row) => shiftGroups.get(readRowUnitId(row) ?? -1)).find((item) => item !== undefined) : undefined;
+    if (!shift || !group) return null;
+    const head = readHeadingShiftHead(group);
+    return (
+      <div className="strip-row" data-testid={`${testId}-shift-${group.firstUnitId}`}>
+        <span className="strip-lead-gap" style={{ width: readTabWidth(rows[0]) + STRIP_LEAD_EXTRA }} />
+        <div className="shift-head">
+          <span className="toc-tag">{t("assign.headingShift.tag")}</span>
+          <span className="shift-head-text">{t(head.key, head.values)}</span>
+          {shift.canRevert && (
+            <button
+              type="button"
+              className="btn toc-act"
+              disabled={shift.busy}
+              data-testid={`${testId}-shift-revert-${group.firstUnitId}`}
+              onClick={() => shift.onRevert(group.unitIds)}
+            >
+              {t("assign.headingShift.revert")}
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  }
+
   /** 한 칸(외톨이 줄 하나 또는 짝 카드 한 장) - 카드는 .strip-card로 감싸 강조 테두리가 줄 수와 상관없이 카드 전체에 둘린다(감싼 요소는 display: contents라 배치는 그대로) */
   function renderCard(rows: readonly PaperRow[], isPeek = false): ReactNode {
     if (hasToc && isTocRow(rows[0], model.units)) return renderTocBlock(rows);
@@ -1047,6 +1087,7 @@ export function Paper({
         return (
           <Fragment key={card[0].key}>
             {index > 0 && renderGap(cards[index - 1][cards[index - 1].length - 1], card[0])}
+            {hasHeadingShift && renderShiftHead(card)}
             {renderCard(card)}
           </Fragment>
         );
@@ -1056,7 +1097,7 @@ export function Paper({
       <PaperChunk
         key={group.cards[0][0].key}
         live={nearChunks === null || (group.index >= nearChunks.from && group.index <= nearChunks.to) || liveChunkIds.has(group.index)}
-        deps={[cardGroups, t, testId, dragBoxes, pickWholeBundle, strips?.toc?.open, strips?.toc?.selected, strips?.toc?.busy, strips?.toc?.canClear]}
+        deps={[cardGroups, t, testId, dragBoxes, pickWholeBundle, strips?.toc?.open, strips?.toc?.selected, strips?.toc?.busy, strips?.toc?.canClear, shiftGroups, strips?.headingShift?.busy, strips?.headingShift?.canRevert]}
         render={() => renderCards(group)}
       />
     ));

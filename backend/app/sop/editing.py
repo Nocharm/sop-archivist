@@ -1,4 +1,4 @@
-"""쪼개기 편집 — 나누기·합치기·경계 옮기기·골라 만들기·언어 바꾸기·표 행 나누기·다시 합치기·레이아웃 표 바꾸기·캡션 붙이기·떼기·잡음 표시 풀기·번호 고치기와 서버 쪽
+"""쪼개기 편집 — 나누기·합치기·경계 옮기기·골라 만들기·언어 바꾸기·표 행 나누기·다시 합치기·레이아웃 표 바꾸기·캡션 붙이기·떼기·잡음 표시 풀기·번호 고치기·제목 ↔ 문장과 서버 쪽
 선형 되돌리기·다시 하기, 경계 확인 표시 (스펙 §6.4, §7.5).
 
 단위는 제자리에서 바뀌지 않는다: 편집은 옛 단위를 은퇴시키고 새 단위를 만들며, 되돌리기는 은퇴한 단위를 원래 ID로 되살린다.
@@ -48,16 +48,20 @@ from app.sop.models import (
 from app.sop.numbering import (
     MAX_NUMBER_CHARS,
     NO_NUMBER,
+    NUMBER_PAIR,
     NUMBERED_KINDS,
+    ClauseLine,
     build_number_columns,
+    find_inherited_numbers,
     get_hidden_len,
     get_number,
     normalize_number,
     plan_follow,
+    read_draft_number,
 )
 from app.sop.refs import REF_CONFIRMED, REF_LANG, REF_REJECTED, read_number_in_text
 from app.sop.schemas import NO_NUL
-from app.sop.segment import build_unit_text, detect_language, has_visible_char
+from app.sop.segment import build_unit_text, detect_language, has_visible_char, split_sentences
 from app.sop.spans import (
     NEUTRAL,
     Span,
@@ -71,7 +75,14 @@ from app.sop.spans import (
     trim_span,
 )
 from app.sop.tobe import MAX_DB_INT
-from app.sop.units import UNIT_ACTIVE, get_latest_extraction_id, refresh_code_pairs, verify_document_coverage
+from app.sop.units import (
+    LINE_SPLIT_FORMAT,
+    UNIT_ACTIVE,
+    get_latest_extraction_id,
+    pair_new_units,
+    refresh_code_pairs,
+    verify_document_coverage,
+)
 
 UNIT_RETIRED = "retired"
 EDIT_APPLIED = "applied"
@@ -202,10 +213,23 @@ class ClearNoiseOp(BaseModel):
     unit_ids: list[DbId] = Field(min_length=1, max_length=MAX_EDIT_UNITS)
 
 
+class SetHeadingOp(BaseModel):
+    """제목 ↔ 문장(F8b · 설계 2d) — 범위·글자는 그대로이고 단위 모양만 바뀐다(옛 단위 은퇴, 새 단위 생성 — 되돌리기 한 번).
+
+    heading이 거짓이면 제목 단위마다 보통 문장 나누기를 하고 바꾼 표시(from_heading)를 단다. 참이면 바꾼 문장은 그 조항 줄의 문장을 모두
+    모아 제목 하나로 되돌리고(제목으로 되돌리기), 보통 문장(굵은 글씨로만 쓴 제목 등)은 그 문장이 제목이 된다. 한/영 코드 짝은 새 단위로
+    다시 선다(units.pair_new_units).
+    """
+
+    type: Literal["set_heading"]
+    unit_ids: list[DbId] = Field(min_length=1, max_length=MAX_EDIT_UNITS)
+    heading: bool
+
+
 EditOp = Annotated[
     SplitOp | MergeOp | UnmergeOp | MoveBoundaryOp | CarveOp | SetLanguageOp | SplitTableRowsOp
     | MergeTableRowsOp | SetLayoutTableOp | AttachCaptionOp | DetachCaptionOp | SetRefOp | ClearRefOp | ClearNoiseOp
-    | SetNumberOp,
+    | SetNumberOp | SetHeadingOp,
     Field(discriminator="type"),
 ]
 
@@ -273,6 +297,8 @@ class _Draft:
     cells: dict[int, int | None] = field(default_factory=dict)
     # 번호 열(units.number_*) — 읽은 값·출처·길이는 범위와 신호에서, number_set은 같은 자리에서 시작하던 옛 단위에서 물려받는다
     number: dict[str, object] = field(default_factory=dict)
+    # 제목에서 바꾼 문장(units.from_heading) — 바꾼 문장을 자르고 합쳐도 문장으로 남으면 물려받는다
+    from_heading: bool = False
 
 
 Move = tuple[int | None, int | None]  # 칸 문장의 (지금 묶음, 바꿀 묶음)
@@ -302,6 +328,8 @@ class _Change:
     sections: list[SectionMove] = field(default_factory=list)
     # 단위 → (지금 잡음 표시, 바꿀 잡음 표시) — 제자리에서 바뀐다(목차 아님과 그 되돌리기)
     noises: dict[int, tuple[str | None, str | None]] = field(default_factory=dict)
+    # 제목 ↔ 문장(set_heading)과 그 되돌리기·다시 하기 — 활성이 된 단위로 한/영 코드 짝을 다시 세운다(짝은 기록 밖이다)
+    repair_pairs: bool = False
 
     def list_regrouped_cells(self) -> list[int]:
         return sorted({*self.regroup, *(cell_id for draft in self.drafts for cell_id in draft.cells)})
@@ -402,10 +430,13 @@ def _build_draft(
     number = build_number_columns(kind, spans, signals, texts)
     if like.spans and tuple(like.spans[0][:2]) == tuple(spans[0][:2]) and kind in NUMBERED_KINDS:
         number["number_set"] = like.number_set
+        if like.number_source == NUMBER_PAIR and number["number_read"] is None and kind == "sentence":
+            # 물려받은 번호(F8b)는 범위가 없어 다시 읽히지 않는다 — 같은 자리에서 시작하는 문장 조각이 그대로 갖는다(제목으로 되돌리면 버린다)
+            number.update(number_read=like.number_read, number_source=NUMBER_PAIR, number_len=0)
     return _Draft(
         kind=kind, spans=spans, text=text, lang=lang or detect_language(text) or "", table_id=table_id,
         row_index=row_index, group_unit_id=like.group_unit_id, pos_seq=first.seq, pos_start=spans[0][1],
-        number=number,
+        number=number, from_heading=like.from_heading and kind == "sentence",
     )
 
 
@@ -637,6 +668,122 @@ async def _plan_clear_noise(session: AsyncSession, extraction_id: ExtractionId, 
     return _Change(
         noises={unit_id: (unit.noise_kind, None) for unit_id, unit in sorted(units.items()) if unit.noise_kind is not None}
     )
+
+
+async def _plan_set_heading(
+    session: AsyncSession, document_id: int, extraction_id: ExtractionId, op: SetHeadingOp
+) -> _Change:
+    """제목 ↔ 문장 — 제목은 문장마다 나눠 바꾼 표시를 달고(번호 없는 번역 조항은 앞 조항의 번호를 물려받는다), 문장은 제목 하나로.
+
+    바꿀 수 없는 단위(heading이면 문장 아닌 것, 아니면 제목 아닌 것, 묶인 칸 문장·목차 줄)는 422 heading_shift_kind —
+    제목 스타일 조항은 표 밖 문단이다.
+    """
+    ensure_unique_units(op.unit_ids)
+    units = await load_active_units(session, extraction_id, op.unit_ids)
+    wanted = "sentence" if op.heading else "heading"
+    wrong = sorted(
+        unit.id for unit in units.values()
+        if unit.kind != wanted or unit.noise_kind is not None or unit.group_unit_id is not None
+    )
+    if wrong:
+        raise_rule(422, "heading_shift_kind", unit_ids=wrong)
+    if op.heading:
+        document = await session.get_one(Document, document_id)
+        groups = await _gather_heading_lines(session, extraction_id, units.values(), document.file_format == LINE_SPLIT_FORMAT)
+        replaced = [unit for group in groups for unit in group]
+        blocks = await _load_unit_blocks(session, extraction_id, replaced)
+        drafts = [_build_heading_draft(group, blocks) for group in groups]
+    else:
+        replaced = sorted(units.values(), key=_get_position)
+        blocks = await _load_unit_blocks(session, extraction_id, replaced)
+        drafts = [draft for unit in replaced for draft in _build_sentence_drafts(unit, blocks)]
+        await _inherit_numbers(session, extraction_id, drafts, {unit.id for unit in replaced})
+    change = _build_replacement(replaced, drafts)
+    change.repair_pairs = True
+    return change
+
+
+async def _gather_heading_lines(
+    session: AsyncSession, extraction_id: ExtractionId, units: Iterable[Unit], split_lines: bool
+) -> list[list[Unit]]:
+    """제목으로 되돌릴 묶음들(원문 순서) — 바꾼 문장은 그 조항 줄(블록, split_lines면 블록 안 줄)의 바꾼 문장 모두, 보통 문장은 그 하나."""
+    groups: dict[tuple[int, int], list[Unit]] = {}
+    for unit in sorted(units, key=_get_position):
+        if not unit.from_heading:
+            groups[(unit.pos_seq, unit.pos_start)] = [unit]
+            continue
+        block = (await _load_blocks(session, extraction_id, [unit.spans[0][0]]))[unit.spans[0][0]]
+        line_start = block.text.rfind("\n", 0, unit.pos_start) + 1 if split_lines else 0
+        line_end = block.text.find("\n", unit.pos_start) if split_lines else -1
+        line_end = len(block.text) if line_end < 0 else line_end
+        if (unit.pos_seq, line_start) in groups:
+            continue
+        siblings = await session.scalars(
+            select(Unit)
+            .where(
+                Unit.extraction_id == extraction_id, Unit.status == UNIT_ACTIVE, Unit.pos_seq == unit.pos_seq,
+                Unit.pos_start >= line_start, Unit.pos_start < line_end, Unit.kind == "sentence",
+                Unit.from_heading.is_(True), Unit.noise_kind.is_(None), Unit.group_unit_id.is_(None),
+            )
+            .order_by(Unit.pos_start, Unit.id)
+        )
+        groups[(unit.pos_seq, line_start)] = list(siblings)
+    return [groups[key] for key in sorted(groups)]
+
+
+def _build_heading_draft(group: Sequence[Unit], blocks: Mapping[int, _Block]) -> _Draft:
+    """문장들을 제목 하나로 — 합치기처럼 범위를 원문 순서로 잇고, 언어가 같으면 그 언어(섞이면 글자로)."""
+    spans = sorted(
+        (span for unit in group for span in to_spans(unit.spans)), key=lambda span: (blocks[span[0]].seq, span[1])
+    )
+    langs = {unit.lang for unit in group}
+    return _build_draft(
+        group[0], join_close_spans(spans, _get_texts(blocks)), blocks, kind="heading",
+        lang=next(iter(langs)) if len(langs) == 1 else None,
+    )
+
+
+def _build_sentence_drafts(unit: Unit, blocks: Mapping[int, _Block]) -> list[_Draft]:
+    """제목 하나 → 범위마다 보통 문장 나누기(segment.split_sentences)로 나눈 문장들. 언어는 제목의 것을 잇는다."""
+    drafts: list[_Draft] = []
+    for block_id, start, end in to_spans(unit.spans):
+        for sentence_start, sentence_end in split_sentences(blocks[block_id].text[start:end]):
+            span = (block_id, start + sentence_start, start + sentence_end)
+            draft = _build_draft(unit, [span], blocks, kind="sentence", lang=unit.lang)
+            draft.from_heading = True
+            drafts.append(draft)
+    return drafts
+
+
+async def _inherit_numbers(
+    session: AsyncSession, extraction_id: ExtractionId, drafts: Sequence[_Draft], retiring: Collection[int]
+) -> None:
+    """바꾼 문장 초안의 번호 물려받기(F8b) — 처음 쪼개기와 같은 규칙(numbering.find_inherited_numbers)을 초안과 앞 블록의 활성 단위로 본다."""
+    seqs = {draft.pos_seq for draft in drafts} | {draft.pos_seq - 1 for draft in drafts}
+    existing = [
+        unit
+        for unit in await session.scalars(
+            select(Unit).where(
+                Unit.extraction_id == extraction_id, Unit.status == UNIT_ACTIVE, Unit.pos_seq.in_(seqs),
+                Unit.noise_kind.is_(None),
+            )
+        )
+        if unit.id not in retiring
+    ]
+    entries: list[tuple[tuple[int, int], ClauseLine, _Draft | None]] = [
+        ((unit.pos_seq, unit.pos_start), ClauseLine(unit.pos_seq, unit.lang, unit.kind, unit.from_heading, get_number(unit)), None)
+        for unit in existing
+    ]
+    for draft in drafts:
+        number = read_draft_number(draft.kind, draft.from_heading, draft.number)
+        if draft.number.get("number_set") is not None:
+            number = draft.number["number_set"] or None
+        entries.append(((draft.pos_seq, draft.pos_start), ClauseLine(draft.pos_seq, draft.lang, draft.kind, True, number), draft))
+    entries.sort(key=lambda entry: entry[0])
+    for index, number in find_inherited_numbers([entry[1] for entry in entries]).items():
+        draft = entries[index][2]
+        if draft is not None:
+            draft.number.update(number_read=number, number_source=NUMBER_PAIR, number_len=0)
 
 
 async def _save_ref_mark(session: AsyncSession, op: SetRefOp | ClearRefOp, actor: str) -> None:
@@ -1002,6 +1149,8 @@ async def _plan(session: AsyncSession, document_id: int, extraction_id: Extracti
             return await _plan_set_number(session, extraction_id, op)
         case ClearNoiseOp():
             return await _plan_clear_noise(session, extraction_id, op)
+        case SetHeadingOp():
+            return await _plan_set_heading(session, document_id, extraction_id, op)
         case _:
             assert_never(op)
 
@@ -1092,7 +1241,7 @@ async def _insert_units(
             extraction_id=extraction_id, local_no=last_no + offset, kind=draft.kind,
             spans=[list(span) for span in draft.spans], text=draft.text, lang=draft.lang, table_id=draft.table_id,
             row_index=draft.row_index, group_unit_id=draft.group_unit_id, pos_seq=draft.pos_seq,
-            pos_start=draft.pos_start, **draft.number,
+            pos_start=draft.pos_start, from_heading=draft.from_heading, **draft.number,
         )
         for offset, draft in enumerate(ordered, start=1)
     ]
@@ -1299,6 +1448,10 @@ async def _write_change(
         # 레이아웃 표의 칸 문장은 묶이지 않아 한/영 두 열이 이웃 짝으로 제안되고, 다시 데이터 표가 되면 그 제안이 빠진다
         await session.flush()
         await refresh_code_pairs(session, document, actor)
+    if change.repair_pairs:
+        # 제목 ↔ 문장은 짝의 단위를 바꾼다 — 새로 활성이 된 단위만 다시 짝짓는다(F8b, 조항마다 문장 1:1)
+        await session.flush()
+        await pair_new_units(session, document, activated, actor)
     await session.flush()
     await verify_document_coverage(session, document.id)
     document.revision += 1
@@ -1409,6 +1562,7 @@ def _replay(edit: UnitEdit, *, backwards: bool) -> _Change:
         sections=[(first, last, *_orient((old, new), backwards=backwards)) for first, last, old, new in numbers.get("sections", [])],
         # 0027 전 기록은 빈 객체다(잡음 표시를 바꾼 편집이 없었다)
         noises={int(unit_id): _orient(noises, backwards=backwards) for unit_id, noises in (edit.noise_changes or {}).items()},
+        repair_pairs=edit.op == "set_heading",
     )
 
 

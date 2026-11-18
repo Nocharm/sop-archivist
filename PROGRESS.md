@@ -4,6 +4,14 @@
 
 ## 2026-11-18
 
+- **제목 → 문장(v1.1.42, `feat/heading-sentence`, MD 1 §10 브랜치 9 — F8b = 설계 2d, 짝 1:1 · 번호 물려받기)** — 조항형 옛 SOP의 "제목 N수준" 조항을 문장으로 바꾼다. 규칙 `segment.is_heading_like`(문장 끝 둘 이상, 또는 머리 번호 뒤 글 60자 초과 + 마침표 — 합성 값)를 쪼개기와 추출기 절 이름이 함께 쓴다. **옛 문서를 올릴 때 앱이 먼저 한다**(명세 자신의 규칙이라 원칙 1의 "확실할 때"로 봄) — 새 문서·이미 쓴 문서와 그 전에 올린 문서는 그대로. 바꾼 조항 바로 뒤의 번호 없는 다른 언어 제목(번역)도 함께 바꾸고 절을 잇는다.
+  - 데이터: Alembic `0029` `units.from_heading`(bool, 기본 거짓). 번호 물려받기는 `number_source = "pair"`(범위 없음 · `number_len` 0, `numbering.find_inherited_numbers`) — 번호 없는 바꾼 조항의 첫 문장이 바로 앞 블록의 다른 언어 번호 조항에서 받는다. 바꾼 문장의 타자 번호는 제목 줄처럼 처음부터 번호다.
+  - 짝: 코드 짝은 바꾼 조항마다 덩어리, 문장 수가 같은 두 조항은 문장마다 1:1(`suggest_interleaved_pairs`의 `clauses`). 그 밖의 짝 규칙은 그대로다.
+  - 편집 `set_heading {unit_ids, heading}` — 제목 → 문장마다(표시 · 번호 물려받기), 문장 → 제목(바꾼 문장은 조항 줄 전체를 모아 하나로). 한 편집이라 되돌리기 한 번, 뒤에 새로 활성이 된 단위의 짝만 다시 세운다(`units.pair_new_units`). 거절 `heading_shift_kind`.
+  - 화면: Old 용지에 바꾼 조항 짝마다 머리 "[Heading → sentence] Headings n → sentence pairs m · ↺ To heading"(`lib/heading-shift-model.ts`), Shape 맨 아래 **Back to heading**(짝이면 두 조항 줄), 우클릭 **Turn into sentences** · **Make it a heading** / **Back to heading**, 제목 줄 Shape에 문단 기호 단추. 설명서 `#assign-heading-shift`, API 계약 한 줄.
+  - 확인: pytest `test_sop_heading_sentence` 15(합성 `SYN-HEADING-1` — 규칙 · 1:1 짝 · 물려받기 · 진짜 제목 · 되돌리기/다시 하기 · 커버리지) · backend 전체 3,017 · ruff, vitest(`heading-shift-model` 3 · 메뉴 3) · lint · tsc. 스모크 `assign: heading to sentence …` 둘은 써 두고 돌리지 않았다.
+  - 메인 세션 확인(dev v1.1.41을 합친 뒤): backend 3,017 · ruff · vitest 1,501 · lint · tsc, 전체 스모크 1,655 통과. 실패 중 새 것은 단위를 고친 직후 사라진 단위의 묶음을 한 번 더 받다 나는 콘솔 404(`groups/by-unit`, 제목 ↔ 문장 두 단계와 끌어 고른 글 단위 만들기 — 기능 확인은 통과) — 저장 직후 고른 줄과 단위 목록이 맞물리는 순서 문제라 스모크 정리 브랜치로 넘겼다. 나머지는 흔들리는 단계(Documents WI 끌기는 따로 돌리면 통과, dev에서도 통과). 진짜 제목 짝("1. Purpose"/"목적")은 번호를 물려받지 않는다(지금 그대로 — 사용자에게 알림). PostgreSQL에서 `0029`는 돌려 보지 못했다.
+
 - **Order 템플릿 보기(v1.1.41, `feat/order-template-view`, MD 2 §S5 ③ · 4-a · 4-d)** — Order 문서 머리(번호 · 제목 줄 오른쪽, 문서 종류 칩 앞)에 **Basic | Template** 전환(`sopa.order.template`). Assign과 같은 부품 `components/ui/view-switch.tsx`로 뽑아 둘이 함께 쓴다 — 좁은 머리는 컨테이너 쿼리로 아이콘만(`.c-doc-head`). 템플릿은 보기만 한다: 위에 안내 한 줄, 줄 끝 단추 · 끌기 없음, 같은 `TemplateView`(branch 11)에 C 문서를 그대로 넘기니 번호는 C 번호다. "번역 없음" 자리는 템플릿에서만 보인다.
   - 결정(최소·되돌리기 쉬운 쪽): Order에는 번역 만들기 · 직접 쓰기가 없어, 자리를 누르면 그 줄의 Old 출처(`getGroupByTarget` 첫 단위)를 고른 채 Assign을 연다(`getAssignSourceHref`) — 포커스를 번역 만들기 단추까지 옮기지는 않는다. 작성자만 누를 수 있다. To-Be를 받기 전에는 전환이 없다(이름 사전 때문).
   - 확인: vitest 1,460 · lint · tsc. 스모크 `order: template view switch …` · `order: the No translation slot …` 둘은 써 두고 돌리지 않았다.

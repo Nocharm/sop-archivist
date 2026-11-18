@@ -27,7 +27,8 @@ from app.sop.extract.types import (
     ExtractResult,
 )
 from app.sop.renumber import FIGURE_CAPTION_RE, TABLE_CAPTION_RE  # 캡션 머리 정규식은 renumber 한 벌
-from app.sop.segment import has_visible_char, trim_blank_range  # 빈 글자 판정은 쪼개기·커버리지와 하나를 쓴다
+# 빈 글자 판정은 쪼개기·커버리지와 하나를 쓰고, 제목다움(F8b)은 쪼개기와 같은 규칙이다
+from app.sop.segment import detect_language, has_visible_char, is_heading_like, trim_blank_range
 
 W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 MC = "http://schemas.openxmlformats.org/markup-compatibility/2006"
@@ -1294,6 +1295,7 @@ class _BlockWriter:
         self._band_numbers = band_numbers
         self.blocks: list[ExtractedBlock] = []
         self._section_label = ""
+        self._shifted_lang: str | None = None  # 바로 앞 문단이 제목답지 않은 조항이면 그 언어(F8b) — 뒤따르는 번호 없는 번역이 절을 잇는다
         self._body_chars = 0
         self._continuation_seqs: dict[int, list[int]] = {}  # 표 → 글이 남은 vMerge 이어지는 칸 블록들
         self._structural_merge_seqs: set[int] = set()  # 병합 경고에서 빼는 구조 행의 병합 칸 블록들
@@ -1308,8 +1310,18 @@ class _BlockWriter:
         """
         if record.text:
             is_clause = _CLAUSE_LINE_RE.match(record.text) is not None
+            previous_shifted, self._shifted_lang = self._shifted_lang, None
             if record.part == PART_BODY and (record.style.heading_level is not None or is_clause):
-                self._update_section_label(record.text)
+                # 제목답지 않은 조항(F8b · 설계 2d) — 번호가 있으면 그 번호가 절 이름이고, 번호 없는 조항(앞 조항의 번역)은 앞 절을 잇는다.
+                # 쪼개기(segment.build_unit_drafts)가 같은 조항을 문장으로 바꾸는 규칙과 같다
+                is_numbered = record.number is not None or _LABEL_NUMBER_RE.match(record.text.strip()) is not None
+                lang = detect_language(record.text)
+                follows_shift = previous_shifted is not None and not is_numbered and lang not in (None, previous_shifted)
+                is_shifted = follows_shift or not is_heading_like(record.text)
+                if is_numbered or not is_shifted:
+                    self._update_section_label(record.text)
+                if is_shifted:
+                    self._shifted_lang = lang
             flags = _pick_flags((FLAG_AUTO_NUMBERING, record.is_number_unresolved), (FLAG_CLAUSE_NUMBER, is_clause))
             if record.caption_for is not None:
                 self._caption_seqs.append((len(self.blocks), record.caption_for))
