@@ -2453,7 +2453,7 @@ const ko: Record<MessageKey, string> = {
   "assign.headingShift.revert": "↺ 제목으로",
   "assign.headingShift.back": "제목으로 되돌리기",
   "assign.unwrap.rewrap": "↺ 다시 표로",
-  "assign.unwrap.confirmTitle": "표 {n} · 다시 표로 묶을까요?",
+  "assign.unwrap.confirmTitle": "표 {n}{p} 다시 표로 묶을까요?",
   "assign.unwrap.confirmBody": "이 표에서 풀린 줄 {m}개가 확정돼 있습니다. 다시 표로 묶으면 그 배정이 풀리고 표 한 줄로 돌아갑니다. 원문 글자는 그대로입니다.",
   "assign.unwrap.confirmRun": "다시 표로",
   "assign.unwrap.didUnwrap": "표를 벗겼습니다",

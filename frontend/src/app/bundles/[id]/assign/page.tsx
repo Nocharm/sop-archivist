@@ -78,7 +78,7 @@ import {
   type SendDrop,
   type TreeDrop,
 } from "@/lib/assign-drop-model";
-import { buildPlaceSections, findPlaceBlock, formatPlacement, isSpotOpen, PLACE_REFUSAL_KEYS, readFixedSpot, resolvePlaceSpot, type PlaceSection, type PlaceSpot, type Placement } from "@/lib/place-spot-model";
+import { buildPlaceSections, findPlaceBlock, formatPlacement, isSpotOpen, PLACE_REFUSAL_KEYS, readFixedSpot, readObjectParticle, resolvePlaceSpot, type PlaceSection, type PlaceSpot, type Placement } from "@/lib/place-spot-model";
 import { findUnderPoint, type BoxDragConfig, type DragHover, type DragPoint } from "@/lib/box-drag";
 import { useBoxDrag } from "@/lib/use-box-drag";
 import { findLastStep } from "@/lib/destination-manage-model";
@@ -1322,7 +1322,8 @@ export default function AssignPage() {
     if (op?.type === "set_layout_table" && !op.is_layout) {
       const table = (viewList ?? []).flatMap((view) => view.tables).find((item) => item.id === op.table_id);
       return {
-        title: t("assign.unwrap.confirmTitle", { n: table ? getTableNumber(table) : "" }),
+        // ko는 표 번호 끝자리 소리로 을/를(F12 A6 "표 3을 다시 표로 묶을까요?"), en은 {p}를 쓰지 않는다
+        title: t("assign.unwrap.confirmTitle", { n: table ? getTableNumber(table) : "", p: table ? readObjectParticle(getTableNumber(table)) : "을" }),
         summary: t("assign.unwrap.confirmBody", { m: count }),
         confirmLabel: t("assign.unwrap.confirmRun"),
       };
