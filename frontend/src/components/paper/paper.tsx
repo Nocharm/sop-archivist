@@ -11,6 +11,7 @@ import { Fragment, memo, useEffect, useEffectEvent, useLayoutEffect, useMemo, us
 import { BundleHead } from "@/components/paper/bundle-head";
 import { FigureImage } from "@/components/paper/figure-image";
 import { LangToken } from "@/components/paper/lang-token";
+import { NumberCell, type NumberEdit } from "@/components/paper/number-cell";
 import { StripLead, STRIP_LEAD_EXTRA } from "@/components/paper/strip-lead";
 import { UnitStatusChip } from "@/components/status";
 import { Collapse } from "@/components/ui/motion";
@@ -22,6 +23,7 @@ import { pickNearChunks, sliceCards } from "@/lib/paper-chunk-model";
 import { buildFoldPlan, type FoldEntry, type FoldItem, type FoldOpen } from "@/lib/paper-fold-model";
 import { buildRows, foldCaptionRows, getBundleHeader, getGapMerge, getMarks, getTags, MERGE_BLOCKER_KEYS, resolvePickUnit, type PaperItem, type PaperModel, type PaperRow, type Segment, type UnitMark } from "@/lib/paper-model";
 import type { JoinKind, JoinPlan } from "@/lib/split-menu-model";
+import { getHiddenEnds, listFollowPreview } from "@/lib/number-model";
 import { getCardTops, getHiddenPrefixLength, getPairBrackets, getPillWidth, getSectionHeads, getTabWidths, getSectionLevel, getSectionPill, getVisibleSkip, sliceVisible, type PairBracket } from "@/lib/strip-pill-model";
 
 /** 조각 끝 표시 - 단위의 것(UnitMark)에 그 조각이 놓인 블록의 경고를 더한다 */
@@ -105,6 +107,13 @@ function findScrollParent(element: HTMLElement): HTMLElement | null {
 }
 
 /** 줄이 놓인 첫 블록의 절 번호 - 표는 없다 */
+/** 번호 칸 폭을 정하는 글 - 번호 범위가 있는 문서는 그 줄의 번호(없으면 빈 글이라 앞 줄 폭을 따른다), 옛 추출은 절 번호 */
+function readRowLabel(row: PaperRow, model: PaperModel): string {
+  if (!model.hasNumberRanges) return readRowSection(row);
+  const unitId = readRowUnitId(row);
+  return (unitId === null ? null : model.units.get(unitId)?.number?.value) ?? "";
+}
+
 function readRowSection(row: PaperRow): string {
   if (row.type === "piece") return row.parts[0]?.block.section_label ?? "";
   if (row.type === "figure") return row.block.section_label;
@@ -178,6 +187,8 @@ interface PaperProps {
   onUnitContextMenu?: (unitId: number, at: { x: number; y: number }, caret: { blockId: number; offset: number } | null) => void;
   /** Unit이 있는 조각을 끌 수 있는 상자로(data-drag-box, lib/box-drag.ts) - 끌기는 화면이 붙인다. 표 칸 조각은 표 조각이 감싸 따로 달지 않는다 */
   dragBoxes?: boolean;
+  /** 번호 칸 손잡이(Assign) - 주면 번호 범위가 있는 문서의 번호 칸을 눌러 고친다. number가 null이면 번호 없음 */
+  numberCell?: { busy: boolean; onSave: (unitId: number, number: string | null, follow: boolean) => void };
 }
 
 /** 화면 좌표 → 블록 위치. 글자 조각 요소의 data-start에 글자 노드 안 위치를 더한다 */
@@ -238,8 +249,25 @@ export function Paper({
   onUnitDoubleClick,
   onUnitContextMenu,
   dragBoxes = false,
+  numberCell,
 }: PaperProps) {
   const { t } = useI18n();
+  // 고치는 중인 번호 칸 - 한 번에 한 줄. 따라 바뀔 번호는 다른 줄의 번호 칸에 점선으로 미리 보인다
+  const [numberEdit, setNumberEdit] = useState<NumberEdit | null>(null);
+  const followed = useMemo(() => {
+    if (!numberEdit || !numberEdit.follow) return [];
+    const startOf = (unit: ViewUnit) => unit.spans[0]?.[1] ?? -1;
+    const ordered = [...model.units.values()].sort((a, b) => a.pos_seq - b.pos_seq || startOf(a) - startOf(b) || a.id - b.id);
+    return listFollowPreview(ordered, numberEdit.unitId, numberEdit.text);
+  }, [numberEdit, model]);
+  const previewOf = useMemo(() => new Map(followed.map((item) => [item.unitId, item])), [followed]);
+  const unreadBlockIds = useMemo(() => {
+    const ids = new Set<number>();
+    for (const item of [...model.header, ...model.body, ...model.footer]) {
+      if (item.type === "block" && item.block.flags.includes("auto_numbering")) ids.add(item.block.id);
+    }
+    return ids;
+  }, [model]);
   const pageRef = useRef<HTMLDivElement>(null);
   // 첫 누름 때 누른 조각과 그 높이 - 고르자마자 곁 틈이 벌어져 글이 밀려도 두 번 누름(나눌 자리)을 처음 누른 글자로 되돌린다
   const pressRef = useRef<{ el: HTMLElement; top: number } | null>(null);
@@ -413,11 +441,11 @@ export function Paper({
         const unitId = readRowUnitId(row);
         const topId = unitId === null ? undefined : cardTops.get(unitId);
         const topRow = topId === undefined ? undefined : section.rows.find((candidate) => readRowUnitId(candidate) === topId);
-        return { key: row.key, part: section.edge ?? "body", sectionLabel: readRowSection(row), pairTopOf: topRow?.key ?? null };
+        return { key: row.key, part: section.edge ?? "body", sectionLabel: readRowLabel(row, model), pairTopOf: topRow?.key ?? null };
       }),
     );
     return getTabWidths(rows);
-  }, [sections, cardTops]);
+  }, [sections, cardTops, model]);
   // 표 칸 안의 조각 줄 - 칸이 많은 표에서 고를 때마다 다시 펴지 않게
   const cellRows = useMemo(() => {
     const map = new Map<number, PaperRow[]>();
@@ -642,6 +670,31 @@ export function Paper({
 
   /** 줄 왼쪽 밖 앞머리 - 절 번호 칸(절의 첫 블록에만, 깊이마다 정해진 폭). 짝 카드는 첫 줄만 번호를 보이고 둘째 줄부터는 첫 줄의 절 머리를 따른다 */
   function renderLead(unit: ViewUnit, section: string, width: number, bracket: PairBracket | undefined): ReactNode {
+    if (model.hasNumberRanges) {
+      // 번호는 늘 번호 칸에 - 줄마다 제 번호(짝 카드의 둘째 줄도 자기 번호다). 번호 칸이 없는 단위(표·그림)는 빈 칸
+      if (!unit.number) return <StripLead width={width} number={null} bracket={bracket} dim tip={describeTab(unit)} testId={testId} id={unit.id} />;
+      return (
+        <NumberCell
+          width={width}
+          bracket={bracket}
+          tip={describeTab(unit)}
+          testId={testId}
+          unitId={unit.id}
+          number={unit.number}
+          isUnread={unreadBlockIds.has(unit.block_id)}
+          canEdit={numberCell !== undefined}
+          busy={numberCell?.busy ?? false}
+          edit={numberEdit?.unitId === unit.id ? numberEdit : null}
+          followed={numberEdit?.unitId === unit.id ? followed : []}
+          preview={previewOf.get(unit.id) ?? null}
+          onEditChange={setNumberEdit}
+          onSave={(number, follow) => {
+            setNumberEdit(null);
+            numberCell?.onSave(unit.id, number, follow);
+          }}
+        />
+      );
+    }
     const topId = cardTops.get(unit.id);
     const isHead = sectionHeads.has(topId ?? unit.id);
     return (
@@ -768,13 +821,19 @@ export function Paper({
   }
 
   function readTabWidth(row: PaperRow): number {
-    return tabWidths.get(row.key) ?? getPillWidth(getSectionLevel(readRowSection(row)));
+    return tabWidths.get(row.key) ?? getPillWidth(getSectionLevel(readRowLabel(row, model)));
   }
 
   /** 절 첫 블록 글 앞의 절 번호를 숨길 글자 수 - 그 블록이 이 단위로 시작할 때만(짝 카드의 둘째 줄부터는 첫 줄이 머리면 같이). 표시만이고 원문은 그대로다.
    *  번호뿐인 단위는 숨기지 않고, 나눌 선이 번호 안으로 들어오면 그동안 번호를 드러낸다(getVisibleSkip) */
   function readHiddenPrefix(block: ViewBlock, unit: ViewUnit | undefined): number {
     if (!unit) return 0;
+    if (model.hasNumberRanges) {
+      // 번호 범위가 있는 문서 - 번호 칸으로 간 범위(번호와 뒤 빈 글자)를 가린다. 번호만 든 칸 블록은 통째로 가려진다
+      const contentStart = unit.number?.content_start ?? 0;
+      const end = contentStart > 0 ? (getHiddenEnds(unit.spans, contentStart).get(block.id) ?? 0) : 0;
+      return cut?.blockId === block.id && cut.offset < end ? 0 : end;
+    }
     const isHead = sectionHeads.has(cardTops.get(unit.id) ?? unit.id);
     const first = model.segments.get(block.id)?.[0];
     if (!isHead || first?.unitId !== unit.id || first.start !== 0) return 0;
@@ -820,6 +879,8 @@ export function Paper({
               ? renderFigure(row.block, renderBundleHead(row, unit), (row.captions?.length ?? 0) > 0 || row.block.text.trim() === "")
               : row.parts.map((part, partIndex) => {
                   const skip = partIndex === 0 ? readHiddenPrefix(part.block, unit) : 0;
+                  // 번호 칸으로 간 번호만 든 칸 블록 - 빈 줄을 두지 않는다
+                  if (skip > 0 && part.segments.every((segment) => segment.end <= skip)) return null;
                   return (
                     <p key={part.block.id} data-block={part.block.id} className={part.block.heading_level !== null ? "h" : undefined}>
                       {/* 보류 칩 - .su·data-start 밖이라 눌러도 글자 위치로 읽히지 않고 조각 상자를 누른 것으로 그 줄을 고른다 */}
@@ -943,6 +1004,7 @@ export function Paper({
         const width = first ? readTabWidth(first) : 0;
         // 절 머리면 번호를 남긴다 - 짝 카드는 첫 줄이 first다
         const isHead = unit !== undefined && sectionHeads.has(unit.id);
+        const foldNumber = model.hasNumberRanges ? (unit?.number?.value ?? null) : isHead && first ? getSectionPill(readRowSection(first)) : null;
         return (
           <button
             key={`line-${entry.key}`}
@@ -952,7 +1014,7 @@ export function Paper({
             onClick={() => onOpenChange({ runs: open.runs, peeks: new Set([...open.peeks, entry.key]) })}
           >
             {unit ? (
-              <StripLead width={width} number={isHead && first ? getSectionPill(readRowSection(first)) : null} dim={!isHead} tip={describeTab(unit)} testId={`${testId}-fold`} id={unit.id} />
+              <StripLead width={width} number={foldNumber} dim={foldNumber === null} tip={describeTab(unit)} testId={`${testId}-fold`} id={unit.id} />
             ) : (
               <span className="strip-lead-gap" style={{ width: width + STRIP_LEAD_EXTRA }} />
             )}

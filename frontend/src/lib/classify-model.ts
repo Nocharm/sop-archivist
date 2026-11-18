@@ -20,6 +20,7 @@ import type {
 } from "./api-sop";
 import { listCaptionChildren, planCaptions } from "./caption-model";
 import type { CaptionUnit } from "./caption-model";
+import { getContent } from "./number-model";
 
 export interface ClassifyRow {
   key: string;
@@ -300,6 +301,8 @@ interface SourceUnit {
   kind: string;
   lang: ViewUnit["lang"];
   text: string;
+  /** text에서 내용이 시작하는 자리(문단 번호 뒤) - 새 문장의 원문은 번호를 뺀 내용이다. 없으면 0 */
+  content_start?: number;
   revision: number;
 }
 
@@ -417,7 +420,8 @@ export function buildSentenceSlots(group: Group | null, units: SourceUnit[], ext
   const owned = (group?.targets ?? [])
     .filter((target) => target.parent_target_id === null && target.kind === "sentence" && target.origin === "units" && target.source_unit_ids.some((id) => unitIds.has(id)))
     .sort((a, b) => firstPosition(a) - firstPosition(b) || a.order_index - b.order_index || a.id - b.id);
-  const textOf = new Map(sentenceUnits.map((unit) => [unit.id, unit.text]));
+  // 새 문장의 원문 = 번호를 뺀 내용 - 문단 번호는 번호 칸의 것이라 초안에 따라가지 않는다(F5)
+  const textOf = new Map(sentenceUnits.map((unit) => [unit.id, getContent(unit)]));
   const slots: SentenceSlot[] = [];
   for (const unit of sentenceUnits) {
     const mine = owned.filter((target) => firstPosition(target) === position.get(unit.id));
@@ -434,7 +438,7 @@ export function buildSentenceSlots(group: Group | null, units: SourceUnit[], ext
       });
     }
     if (!owned.some((target) => target.source_unit_ids.includes(unit.id))) {
-      slots.push({ key: `u${unit.id}`, target: null, lang: unit.lang, sourceIds: [unit.id], text: unit.text, sourceText: unit.text, isAiPending: false, isTranslated: false });
+      slots.push({ key: `u${unit.id}`, target: null, lang: unit.lang, sourceIds: [unit.id], text: getContent(unit), sourceText: getContent(unit), isAiPending: false, isTranslated: false });
     }
   }
   if (extra) slots.push({ key: `x${extra.unitId}`, target: null, lang: extra.lang, sourceIds: [extra.unitId], text: "", sourceText: null, isAiPending: false, isTranslated: true });
@@ -509,9 +513,10 @@ function readPosition(draft: RowDraft, place: ReturnType<typeof placeTarget>, ow
 }
 
 /** 사람이 고르지 않은 연결의 변경 종류 - 같은 언어 원문과 글이 같으면 그대로, 사람이 고른 적 있으면 그 값, 아니면 고쳐 씀 */
-export function readLinkDefault(target: Pick<GroupTarget, "lang" | "confirmed_text" | "change_type" | "status">, units: Array<Pick<SourceUnit, "lang" | "text">>): ChangeTypeInput {
+export function readLinkDefault(target: Pick<GroupTarget, "lang" | "confirmed_text" | "change_type" | "status">, units: Array<Pick<SourceUnit, "lang" | "text" | "content_start">>): ChangeTypeInput {
   const same = units.find((unit) => unit.lang === target.lang);
-  if (same && same.text.trim() === target.confirmed_text.trim()) return "as_is";
+  // 번호를 뺀 내용과 같아도 그대로다(서버 _decide_change_type과 같다)
+  if (same && [same.text.trim(), getContent(same).trim()].includes(target.confirmed_text.trim())) return "as_is";
   return isTextChangeType(target.change_type) && target.status !== "ai_suggested" ? target.change_type : "rewritten";
 }
 

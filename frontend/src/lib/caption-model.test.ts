@@ -22,7 +22,7 @@ describe("isCaptionNeeded", () => {
 
 function makeUnit(id: number, extra: Partial<ViewUnit> = {}): ViewUnit {
   return {
-    id, display_id: `D-${id}`, kind: "sentence", spans: [], text: "", lang: "ko", table_id: null, row_index: null, group_unit_id: null, status: "unassigned",
+    id, display_id: `D-${id}`, kind: "sentence", spans: [], text: "", lang: "ko", number: null, table_id: null, row_index: null, group_unit_id: null, status: "unassigned",
     pair_id: null, pos_seq: id, block_id: id, is_edited: false, can_unmerge: false, split_suggestion_id: null, ref: null, caption_refs: [], ...extra,
   };
 }
@@ -106,7 +106,7 @@ describe("listCaptionFields", () => {
 
 describe("listCaptionPendingRowKeys", () => {
   const unitRow = (id: number, extra: Partial<UnitRow>): UnitRow => ({
-    unit_id: id, document_id: 1, display_id: `D-${id}`, kind: "sentence", lang: "ko", text: "", table_id: null, row_index: null, group_unit_id: null,
+    unit_id: id, document_id: 1, display_id: `D-${id}`, kind: "sentence", lang: "ko", text: "", content_start: 0, table_id: null, row_index: null, group_unit_id: null,
     status: "unassigned", target_ids: [], target_doc_ids: [], pair_id: null,
     decision: { disposition: "unassigned", move_target_code: "", reason: "", status: "unassigned", hold_reason: "", confirmed_by: null, confirmed_at: null, revision: 1 },
     ...extra,

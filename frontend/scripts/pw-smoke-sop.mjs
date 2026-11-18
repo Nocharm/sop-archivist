@@ -7075,6 +7075,152 @@ await runStep("assign: cutting an assigned sentence asks once, then clears its a
   check("Undo brings the sentence back as one", await waitUnits(before));
 });
 
+// 번호 칸(문단 번호, F5) - 번호는 늘 번호 칸에 산다. 타자로 친 번호는 "↤"로 번호가 되고, 번호를 고치면 같은 목록의 뒤 번호가 점선 미리 보기대로 따라 바뀐다.
+// 원문 글자와 배정은 그대로이고 쪼개기 편집이라 Undo 한 번에 한 걸음씩 돌아온다. 끝에 이 단계가 한 편집을 모두 되돌려 시드 묶음을 처음 그대로 둔다
+await runStep("assign: number cell - a typed number becomes the number, a fix renumbers the list after a dashed preview, Undo steps back", {}, async ({ page }) => {
+  const headers = { "X-Dev-User": "qa.member" };
+  const docs = await (await page.request.get(`${BASE}/api/bundles/${halfBundleId}/documents`, { headers })).json();
+  const readView = async (docId) => (await page.request.get(`${BASE}/api/bundles/${halfBundleId}/documents/${docId}/view`, { headers })).json();
+  await page.goto(`${BASE}/bundles/${halfBundleId}/assign`);
+  await wait(page, "assign-bar");
+  // 본문에 타자 번호("1." "2.")가 같은 언어로 둘 이상 있는 Old 문서 - 번호 범위는 추출기 5부터라 다시 시드한 자료여야 한다
+  let doc = null;
+  let first = null;
+  let second = null;
+  for (const candidate of docs.filter((item) => item.side === "old" && item.status === "ready")) {
+    const view = await readView(candidate.id);
+    if (!view.has_number_ranges) continue;
+    const typed = view.units.filter((item) => item.number && item.number.typed_len > 0 && /^\d+\.$/.test(item.number.read ?? "") && item.table_id === null);
+    await page.locator('[data-testid="assign-old-doc"]').click();
+    await page.locator(`[data-testid="assign-old-doc-option-${candidate.id}"]`).click();
+    await page.locator(`[data-testid="assign-old"]`).waitFor({ timeout: T });
+    await page.waitForTimeout(600);
+    for (const item of typed) {
+      const next = typed.find((other) => other.pos_seq > item.pos_seq && other.lang === item.lang && Number.parseInt(other.number.read, 10) === Number.parseInt(item.number.read, 10) + 1);
+      if (!next) continue;
+      if ((await page.locator(`[data-testid="assign-paper-num-typed-${item.id}"]`).count()) === 0 || (await page.locator(`[data-testid="assign-paper-num-typed-${next.id}"]`).count()) === 0) continue;
+      doc = candidate;
+      first = item;
+      second = next;
+      break;
+    }
+    if (first !== null) break;
+  }
+  check("the bundle has two typed numbers in a row on screen", first !== null);
+  if (first === null) return;
+  const readNumber = async (unitId) => (await readView(doc.id)).units.find((item) => item.id === unitId)?.number ?? null;
+  const waitNumber = async (unitId, isDone) => {
+    for (let tries = 0; tries < 60; tries += 1) {
+      const number = await readNumber(unitId);
+      if (number && isDone(number)) return true;
+      await page.waitForTimeout(250);
+    }
+    return false;
+  };
+  const pieceText = async (unitId) => (await page.locator(`[data-testid="assign-paper-piece-${unitId}"] [data-testid="assign-paper-unit-${unitId}"]`).first().innerText()).trim();
+  check("a typed number starts as text", (await pieceText(first.id)).startsWith(first.number.read), await pieceText(first.id));
+  // "↤" - 글 앞 번호가 번호 칸으로 간다
+  for (const item of [first, second]) {
+    const handle = page.locator(`[data-testid="assign-paper-num-typed-${item.id}"]`);
+    await handle.scrollIntoViewIfNeeded();
+    await handle.click();
+    check(`the typed number ${item.number.read} becomes the number`, await waitNumber(item.id, (number) => number.value === item.number.read && number.content_start > 0));
+    await page.locator(`[data-testid="assign-paper-num-${item.id}"]`).waitFor({ timeout: T });
+  }
+  check("the number cell shows it", (await getText(page, `assign-paper-num-${first.id}`)).trim() === first.number.read);
+  check("the text no longer starts with the number", !(await pieceText(first.id)).startsWith(first.number.read), await pieceText(first.id));
+  // 번호 칸을 누르면 그 자리가 입력이 된다 - 뒤 번호 따라 고치기는 기본 켬이고 바뀔 번호가 점선으로 보인다
+  await page.locator(`[data-testid="assign-paper-num-${first.id}"]`).click();
+  await wait(page, "assign-paper-num-input");
+  check("renumbering the rest of the list is on by default", await page.locator('[data-testid="assign-paper-num-follow"]').isChecked());
+  await page.locator('[data-testid="assign-paper-num-input"]').fill("8.");
+  await wait(page, "assign-paper-num-preview");
+  check("the strip previews the following number", (await getText(page, "assign-paper-num-preview")).includes(`${second.number.read} → 9.`), await getText(page, "assign-paper-num-preview"));
+  check("the following number cell shows the preview dashed", (await page.locator(`[data-testid="assign-paper-num-${second.id}"]`).getAttribute("data-preview")) !== null);
+  check("nothing is saved while previewing", (await readNumber(second.id)).value === second.number.read);
+  await page.locator('[data-testid="assign-paper-num-input"]').press("Enter");
+  check("Enter saves the fixed number", await waitNumber(first.id, (number) => number.value === "8." && number.is_set));
+  check("the following number follows in the same edit", await waitNumber(second.id, (number) => number.value === "9."));
+  check("the read value stays on record", (await readNumber(first.id)).read === first.number.read);
+  // Undo 한 번 = 고침과 따라 고침 한 걸음
+  await page.locator('[data-testid="assign-undo"]').click();
+  check("one Undo brings both numbers back", (await waitNumber(first.id, (number) => number.value === first.number.read)) && (await waitNumber(second.id, (number) => number.value === second.number.read)));
+  // Esc는 저장하지 않고 닫는다
+  await page.locator(`[data-testid="assign-paper-num-${first.id}"]`).click();
+  await wait(page, "assign-paper-num-input");
+  await page.locator('[data-testid="assign-paper-num-input"]').fill("5.");
+  await page.locator('[data-testid="assign-paper-num-input"]').press("Escape");
+  await page.locator('[data-testid="assign-paper-num-input"]').waitFor({ state: "detached", timeout: T });
+  check("Escape closes the input without saving", (await readNumber(first.id)).value === first.number.read);
+  // 두 "↤"도 되돌려 처음 그대로 둔다
+  for (const item of [second, first]) {
+    await page.locator('[data-testid="assign-undo"]').click();
+    check(`Undo turns ${item.number.read} back into text`, await waitNumber(item.id, (number) => number.value === null && number.typed_len > 0));
+  }
+});
+
+// 번호 칸 - 번호가 없는 줄은 빈 번호 칸의 "+"로 써 넣고(줄에 올리면 보인다), "No number"는 번호를 글로 되돌린다. 끝에 모두 되돌린다
+await runStep("assign: number cell - Add number on a line without one, No number turns it back into text", {}, async ({ page }) => {
+  const headers = { "X-Dev-User": "qa.member" };
+  const docs = await (await page.request.get(`${BASE}/api/bundles/${halfBundleId}/documents`, { headers })).json();
+  const readView = async (docId) => (await page.request.get(`${BASE}/api/bundles/${halfBundleId}/documents/${docId}/view`, { headers })).json();
+  await page.goto(`${BASE}/bundles/${halfBundleId}/assign`);
+  await wait(page, "assign-bar");
+  let doc = null;
+  let unit = null;
+  for (const candidate of docs.filter((item) => item.side === "old" && item.status === "ready")) {
+    const view = await readView(candidate.id);
+    if (!view.has_number_ranges) continue;
+    const plain = view.units.filter((item) => item.kind === "sentence" && item.number && item.number.value === null && item.number.typed_len === 0 && item.table_id === null);
+    await page.locator('[data-testid="assign-old-doc"]').click();
+    await page.locator(`[data-testid="assign-old-doc-option-${candidate.id}"]`).click();
+    await page.locator(`[data-testid="assign-old"]`).waitFor({ timeout: T });
+    await page.waitForTimeout(600);
+    for (const item of plain) {
+      if ((await page.locator(`[data-testid="assign-paper-num-add-${item.id}"]`).count()) === 0) continue;
+      doc = candidate;
+      unit = item;
+      break;
+    }
+    if (unit !== null) break;
+  }
+  check("the bundle has a line without a number on screen", unit !== null);
+  if (unit === null) return;
+  const waitNumber = async (isDone) => {
+    for (let tries = 0; tries < 60; tries += 1) {
+      const number = (await readView(doc.id)).units.find((item) => item.id === unit.id)?.number;
+      if (number && isDone(number)) return true;
+      await page.waitForTimeout(250);
+    }
+    return false;
+  };
+  const statusBefore = (await readView(doc.id)).units.find((item) => item.id === unit.id).status;
+  const add = page.locator(`[data-testid="assign-paper-num-add-${unit.id}"]`);
+  await add.scrollIntoViewIfNeeded();
+  await page.locator(`[data-testid="assign-paper-piece-${unit.id}"]`).hover();
+  await add.click();
+  await wait(page, "assign-paper-num-input");
+  check("a line without a number offers no No number button", (await page.locator('[data-testid="assign-paper-num-none"]').count()) === 0);
+  await page.locator('[data-testid="assign-paper-num-follow"]').uncheck();
+  await page.locator('[data-testid="assign-paper-num-input"]').fill("7.7");
+  await page.locator('[data-testid="assign-paper-num-input"]').press("Enter");
+  check("the typed-in number is saved", await waitNumber((number) => number.value === "7.7" && number.is_set && number.content_start === 0));
+  await page.locator(`[data-testid="assign-paper-num-${unit.id}"]`).waitFor({ timeout: T });
+  check("the number cell shows it", (await getText(page, `assign-paper-num-${unit.id}`)).trim() === "7.7");
+  check("the line keeps its status", (await readView(doc.id)).units.find((item) => item.id === unit.id).status === statusBefore);
+  // 번호 없음 - 번호가 사라지고 줄은 번호 없는 줄로 돌아간다
+  await page.locator(`[data-testid="assign-paper-num-${unit.id}"]`).click();
+  await wait(page, "assign-paper-num-none");
+  await page.locator('[data-testid="assign-paper-num-none"]').click();
+  check("No number clears it", await waitNumber((number) => number.value === null));
+  await page.locator(`[data-testid="assign-paper-num-add-${unit.id}"]`).waitFor({ state: "attached", timeout: T });
+  // 두 편집을 되돌려 처음 그대로 둔다
+  await page.locator('[data-testid="assign-undo"]').click();
+  check("Undo brings the number back", await waitNumber((number) => number.value === "7.7"));
+  await page.locator('[data-testid="assign-undo"]').click();
+  check("a second Undo removes it again", await waitNumber((number) => number.value === null && !number.is_set));
+});
+
 // 끌어서 보내기(끌어다 놓기 설계 §6, 3걸음) - Old 조각을 아직 쓰지 않은 New 문서(New · from Assign)의 두 문장 사이나 빈 칸에 놓으면 그 줄의 초안이 되고(저장하지 않는다),
 // Confirm 때 문장 사이면 그 자리까지 저장한다. 자리를 받은 저장은 그 문서의 순서를 굳히고(manual_order) 화면에서 되돌릴 길이 없다 - 그래서 시드 묶음을 쓰는 Assign·Order 단계가 모두 끝난 뒤에 둔다.
 // 자료는 이 단계가 API로 만든다(A·B·C를 칸 K에, P를 칸 K2에). 끝에 이 단계가 확정한 줄은 Clear(U)로 되돌린다(굳힌 순서는 남는다)

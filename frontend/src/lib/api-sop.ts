@@ -380,6 +380,21 @@ export interface ViewPartGroup {
   same_as: string | null;
 }
 
+/** 문단 번호 칸(서버 numbering.py) - 값과 내용 경계는 서버가 정한다. 원문 글자(text)는 번호를 품은 그대로다 */
+export interface ViewNumber {
+  /** 번호 칸에 보일 값 - 사람이 고친 값, 없으면 읽은 값(자동 번호·번호만 든 칸). 없으면 null */
+  value: string | null;
+  /** 추출기가 읽은 값 - 타자로 친 번호는 번호로 삼기 전에도 여기 있다 */
+  read: string | null;
+  source: "auto" | "typed" | "cell" | null;
+  /** 사람이 고쳤다("번호 없음" 포함) */
+  is_set: boolean;
+  /** text에서 내용이 시작하는 자리 - 번호가 번호 칸으로 갔으면 그 뒤, 아니면 0 */
+  content_start: number;
+  /** 번호로 삼을 수 있는 글 앞 타자 번호의 글자 수 - 없거나 이미 번호면 0 */
+  typed_len: number;
+}
+
 export interface ViewUnit {
   id: number;
   display_id: string;
@@ -387,6 +402,8 @@ export interface ViewUnit {
   spans: UnitSpan[];
   text: string;
   lang: UnitLang;
+  /** 번호 칸이 없는 단위(그림·표·행·캡션)는 null */
+  number: ViewNumber | null;
   table_id: number | null;
   row_index: number | null;
   group_unit_id: number | null;
@@ -448,6 +465,8 @@ export interface ViewPair {
 export interface DocumentView {
   document: Omit<SopDocument, "extraction">;
   extraction: SopDocument["extraction"];
+  /** 추출이 번호 범위 신호를 남겼다 - 거짓이면(옛 추출) 용지가 절 첫 줄의 번호만 가리는 옛 방식으로 그린다 */
+  has_number_ranges: boolean;
   tables: ViewTable[];
   blocks: ViewBlock[];
   /** 처음 나온 순서 */
@@ -474,7 +493,9 @@ export type EditOp =
   /** 참조 줄로 - 번호는 그 단위의 글 안에 있어야 한다. 이미 참조 줄이면 번호만 고친다 */
   | { type: "set_ref"; unit_id: number; number: string }
   /** 참조 아님 - 참조 줄이면 그 전 언어로 돌리고, 제안뿐이었으면 다시 제안하지 않는다 */
-  | { type: "clear_ref"; unit_id: number };
+  | { type: "clear_ref"; unit_id: number }
+  /** 문단 번호 고치기 - number가 null이면 번호 없음(번호 범위가 글로 돌아간다). follow면 같은 목록의 뒤 번호도 한 편집으로 따라 고친다 */
+  | { type: "set_number"; unit_id: number; number: string | null; follow: boolean };
 
 export interface EditResult {
   document_revision: number;
@@ -815,6 +836,8 @@ export interface UnitRow {
   kind: UnitKind;
   lang: UnitLang;
   text: string;
+  /** text에서 내용이 시작하는 자리 - 문단 번호가 번호 칸으로 갔으면 그 뒤, 아니면 0(문서 보기의 number.content_start와 같다) */
+  content_start: number;
   table_id: number | null;
   row_index: number | null;
   group_unit_id: number | null;

@@ -8,6 +8,7 @@ import {
   buildGroupSave,
   buildRows,
   buildSentenceSlots,
+  readLinkDefault,
   buildViewsKey,
   findNextOpen,
   findSystemHold,
@@ -33,14 +34,14 @@ import { makeDeepOutline, makeTemplateOutline, TEMPLATE_PLACE_KEYS } from "./out
 
 function makeViewUnit(id: number, lang: "ko" | "en", pos: number): ViewUnit {
   return {
-    id, display_id: `D-${id}`, kind: "sentence", spans: [[pos, 0, 3]], text: `t${id}`, lang, table_id: null, row_index: null,
+    id, display_id: `D-${id}`, kind: "sentence", spans: [[pos, 0, 3]], text: `t${id}`, lang, number: null, table_id: null, row_index: null,
     group_unit_id: null, status: "unassigned", pair_id: null, pos_seq: pos, block_id: pos, is_edited: false, can_unmerge: false, split_suggestion_id: null, ref: null, caption_refs: [],
   };
 }
 
 function makeUnitRow(id: number, status: UnitRow["status"]): UnitRow {
   return {
-    unit_id: id, document_id: 1, display_id: `D-${id}`, kind: "sentence", lang: "ko", text: `t${id}`, table_id: null, row_index: null,
+    unit_id: id, document_id: 1, display_id: `D-${id}`, kind: "sentence", lang: "ko", text: `t${id}`, content_start: 0, table_id: null, row_index: null,
     group_unit_id: null, status, target_ids: [], target_doc_ids: [], pair_id: null,
     decision: { disposition: "unassigned", move_target_code: "", reason: "", status, hold_reason: "", confirmed_by: null, confirmed_at: null, revision: 1 },
   };
@@ -967,5 +968,27 @@ describe("buildGroupSave with a drop position", () => {
     const tables = new Map([[10, { rows: 1, cols: 1, cells: [{ id: 11, lang: "ko" as const, text: "칸", row: 0, col: 0 }] }]]);
     const body = buildGroupSave(makeDraft({ position }), { units: [{ id: 10, kind: "table", lang: "neutral" as const, text: "", revision: 1 }], group: null, tables }, "confirm");
     expect(body.targets.map((target) => [target.key, target.position ?? null])).toEqual([["u10", { after_target_id: 41 }], ["c11", null]]);
+  });
+});
+
+describe("paragraph number stays in the number cell", () => {
+  // 번호 범위(content_start)가 있는 줄 - New 초안은 번호를 뺀 내용이다
+  const numbered = { id: 10, kind: "sentence", lang: "ko" as const, text: "6.2 합성 필터를 확인한다.", content_start: 4, revision: 1 };
+
+  it("drafts the New sentence without the number and saves it as is", () => {
+    expect(buildSentenceSlots(null, [numbered])).toMatchObject([{ key: "u10", text: "합성 필터를 확인한다.", sourceText: "합성 필터를 확인한다." }]);
+    const body = buildGroupSave(makeDraft(), { units: [numbered], group: null, tables: new Map() }, "confirm");
+    expect(body.targets).toMatchObject([{ key: "u10", text: "합성 필터를 확인한다.", change_type: "as_is" }]);
+  });
+
+  it("keeps the number in the draft while it is still text", () => {
+    const typed = { ...numbered, content_start: 0 };
+    expect(buildSentenceSlots(null, [typed])[0].text).toBe("6.2 합성 필터를 확인한다.");
+  });
+
+  it("reads a confirmed sentence equal to the content as as-is", () => {
+    const target = { lang: "ko" as const, confirmed_text: "합성 필터를 확인한다.", change_type: null, status: "confirmed" as const };
+    expect(readLinkDefault(target, [numbered])).toBe("as_is");
+    expect(readLinkDefault({ ...target, confirmed_text: numbered.text }, [numbered])).toBe("as_is");
   });
 });

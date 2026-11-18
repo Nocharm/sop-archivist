@@ -14,14 +14,14 @@ function makeBlock(id: number, seq: number, text: string, extra: Partial<ViewBlo
 
 function makeUnit(id: number, spans: Array<[number, number, number]>, text: string, extra: Partial<ViewUnit> = {}): ViewUnit {
   return {
-    id, display_id: `D-${id}`, kind: "sentence", spans, text, lang: "en", table_id: null, row_index: null, group_unit_id: null,
+    id, display_id: `D-${id}`, kind: "sentence", spans, text, lang: "en", number: null, table_id: null, row_index: null, group_unit_id: null,
     status: "unassigned", pair_id: null, pos_seq: spans[0]?.[0] ?? 0, block_id: spans[0]?.[0] ?? 0, is_edited: false, can_unmerge: false, split_suggestion_id: null, ref: null, caption_refs: [], ...extra,
   };
 }
 
 function makeView(blocks: ViewBlock[], units: ViewUnit[], partGroups: ViewPartGroup[] = []): DocumentView {
   return {
-    document: {} as DocumentView["document"], extraction: null, tables: [], blocks, units, pairs: [], part_groups: partGroups,
+    document: {} as DocumentView["document"], extraction: null, has_number_ranges: false, tables: [], blocks, units, pairs: [], part_groups: partGroups,
     edits: { can_undo: false, can_redo: false },
   };
 }
@@ -95,6 +95,7 @@ describe("extraction warnings", () => {
 function makeSplitUnit(over: Partial<ViewUnit> = {}): ViewUnit {
   return {
     id: 1,
+    number: null,
     display_id: "OLD-1-001",
     kind: "sentence",
     spans: [[10, 0, 5]],

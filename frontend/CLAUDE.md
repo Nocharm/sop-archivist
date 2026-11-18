@@ -10,6 +10,7 @@ frontend(Next.js) 세부 구조와 frontend에만 걸리는 체크리스트. 루
 
 - **프런트 텍스트:** en·ko 메시지를 한 쌍으로 추가한다(`i18n-messages.test.ts`가 키 집합을 가드). 인터랙티브 요소에는 `data-testid`(`rules/frontend/identifiers.md`).
 - **화면·동작·라벨을 바꾸면 사용 설명서의 글도 같은 커밋에서, 그림은 정식 업데이트 때(사용자 결정 2026-11-15):** `frontend/public/manual/user-manual.md`의 해당 조각을 고친다. 그림은 PATCH마다 다시 뽑지 않고 `dev`→`main` 정식 업데이트(MINOR) 때 한 번에 뽑는다(`MANUAL=app node scripts/pw-manual-shots.mjs`, 위 Commands) — 새 그림이 필요한 조각은 그때까지 글로만 적고, 그림 줄(`![…](img/…)`)과 찍는 장면은 정식 업데이트 때 더한다(없는 그림을 가리키면 아래 시험이 실패한다). 설명서는 화면 라벨을 영어 화면 글자 그대로 **굵게** 적는다 — `manual-content.test.ts`가 굵은 영어 글자를 en 문구 사전과 대조하고(라벨을 바꾸면 여기서 걸린다), 권한 키 전부·그림 빠짐과 남음·도움말이 여는 조각·바깥 주소와 IP 없음을 본다.
+- **문단 번호 칸(표 풀기·표준화 명세 F5):** 번호 칸의 값과 내용 경계는 서버가 정해 보낸다(문서 보기 `units[].number`, 단위 목록 `content_start`) — 화면은 읽기만 하고 다시 정하지 않는다. 용지(`components/paper/paper.tsx`)는 `model.hasNumberRanges`일 때 번호 칸(`number-cell.tsx`)에 그 줄의 번호를 보이고 번호 범위를 가리며(`lib/number-model.ts` `getHiddenEnds`), 옛 추출은 전처럼 절 첫 줄의 번호만 가린다(`strip-pill-model.ts`). New 초안의 원문은 번호를 뺀 내용이다(`classify-model.ts` `getContent`). 따라 고치기 미리 보기 `planFollow`는 서버 `numbering.plan_follow`의 사본이라 함께 고친다.
 
 ## 규칙 — frontend에서 불러오는 것
 

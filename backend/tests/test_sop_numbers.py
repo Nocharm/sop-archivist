@@ -168,6 +168,10 @@ def test_auto_numbers_go_to_the_number_cell_and_typed_numbers_stay_text(client: 
     }
     assert find_unit(view, UNREAD)["number"]["value"] is None
     assert next(unit for unit in view["units"] if unit["kind"] == "table")["number"] is None
+    # 단위 목록의 줄도 같은 내용 경계를 싣는다 — 배정 화면의 새 문장 초안이 쓴다
+    listed = client.get(f"/api/bundles/{bundle_id}/units", params={"document_id": doc_id}, headers=AUTHOR).json()["items"]
+    starts = {row["unit_id"]: row["content_start"] for row in listed}
+    assert (starts[misread["id"]], starts[typed["id"]]) == (4, 0)
 
 
 # --- 번호 고치기 ---
