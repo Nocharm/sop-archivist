@@ -2,6 +2,10 @@
 
 프로젝트 진행 현황 로그. 커밋 직전 갱신한다 (`rules/common/git.md` 규칙). v1.1.0(2026-11-16 정식 업데이트)까지의 항목은 [`docs/history/PROGRESS-archive.md`](docs/history/PROGRESS-archive.md)에 있다 — 정식 업데이트마다 그 릴리스까지의 항목을 거기로 옮긴다(`rules/common/git.md` "정식 업데이트 때 문서 정리").
 
+## 2026-11-18
+
+- **풀기 전환 부품(`feat/unwrap-motion`, F10 바탕)** — `useUnwrapMotion`(`motion.tsx`) + `lib/unwrap-motion.ts`: 걷기 160 → 펼치기 520(시차 28, 최대 280) → 붙이기 200 ms, 토큰 `--dur-spread/attach`·`--stagger-*`, 움직임 줄이기는 토큰 0 + 바로 바꿈·번쩍, 긴 문서는 화면 안만. `useFlip`은 그대로. 쓰는 곳은 뒤 브랜치들.
+
 ## 2026-11-17
 
 - **표준을 회사 템플릿 1–9장으로(`feat/outline-4-template`, 표준 골격 계획 스텝 4)** — 표준 골격의 내용을 회사 SOP 템플릿으로 바꾸고(`outline.TEMPLATE_OUTLINE`: 1–4장, 5장 범주 표, 6장 절차, 7장 묶음 제목 아래 7.1 · 7.1.x(선택) · 7.2 자동 목록 · 7.3, 8장, 9장 부록) Alembic `0024`가 개발 데이터를 옮긴다(옛 키 → 새 키, 쓰이던 옛 하위 칸은 선언 항목으로, JSON 안의 키, 1–5 · 7 · 8장의 번호 줄은 글머리 기호로). 내용은 6장 · 부록만 번호이고 나머지는 글머리 기호가 기본이다. 번호는 실제로 내보내는 항목끼리 센다(빈 선택 항목 7.1.x는 건너뛴다). 묶음 제목 · 자동 목록에는 줄을 놓을 수 없다(`slot_not_assignable`). 7.2는 그 SOP의 자식 WI로 채운다. 장비 SOP의 N/A 권장과 검토 알림은 없앴다. AI 후보는 문서 사본에서 만들고 옛 규칙 ID에 잇는다(`match_rule_slot`, 규칙 · 프롬프트 글은 그대로).
