@@ -4418,6 +4418,117 @@ await runStep("order: indent a line on C and its section number changes", {}, as
   check("Shift+Tab on the picked row outdents it back", (await number.innerText()).trim() === before);
 });
 
+// 글머리 기호 줄은 번호 줄과 따로 센다 - 5장(General Requirements) 범주의 글머리 기호 줄은 앞 글머리 기호 줄 + 1까지, 단계 기호는 • ○ ▪(2026-11-18 MD 2 §S5 ①).
+// 5장 범주는 글머리 기호가 기본이라 번호 줄이 없다. 글머리 기호 줄이 둘 이상 든 5장 범주가 있는 문서를 찾아 연다. 들였다가 도로 내어 써 자료를 그대로 둔다
+await runStep("order: a chapter 5 bullet line indents with Tab to the second symbol and goes back with Shift+Tab", {}, async ({ page, takeShot }) => {
+  await page.goto(`${BASE}/bundles/${halfBundleId}/order`);
+  await wait(page, "output-c");
+  const [hit] = await findOrderDocs(page, () => {
+    for (const section of document.querySelectorAll('[data-testid="output-c"] section[data-location-key^="general_requirements."]')) {
+      const bullets = [...section.querySelectorAll('[data-testid^="output-c-bullet-"]')].map((node) => node.getAttribute("data-testid").replace("output-c-bullet-", ""));
+      // 둘째 줄이 들여지고(Indent가 켜짐) 첫 줄은 못 들이는 범주 - 둘 다 깊이 0인 글머리 기호 줄이다
+      const [first, second] = bullets;
+      if (!first || !second) continue;
+      const indentOf = (id) => document.querySelector(`[data-testid="output-c-indent-${id}"]`);
+      if (indentOf(first)?.disabled === true && indentOf(second)?.disabled === false) return { first, second };
+    }
+    return null;
+  });
+  const pair = hit ? hit[1] : null;
+  check("a chapter 5 category has two bullet lines, the first one not indentable", pair !== null);
+  if (!pair) return;
+  const symbol = (id) => page.locator(`[data-testid="output-c-bullet-${id}"]`).innerText().then((text) => text.trim());
+  check("both lines show the first symbol", (await symbol(pair.first)) === "•" && (await symbol(pair.second)) === "•", `${await symbol(pair.first)} ${await symbol(pair.second)}`);
+  const row = page.locator(`[data-testid="output-c-row-${pair.second}"]`);
+  await row.click({ position: { x: 4, y: 4 } });
+  const indented = waitOrderSave(page);
+  await page.keyboard.press("Tab");
+  check("Tab on the picked bullet line saves", (await indented).ok());
+  check("the second line now shows the second symbol", (await symbol(pair.second)) === "○", await symbol(pair.second));
+  check("and no number appears", (await page.locator(`[data-testid="output-c-number-${pair.second}"]`).count()) === 0);
+  const padding = await row.locator(".c-line").evaluate((node) => parseFloat(getComputedStyle(node).paddingLeft));
+  check("its text is indented by one level", padding > 0, String(padding));
+  // 앞 글머리 기호 줄(깊이 0) + 1에 닿았으니 더 들일 수 없고, 못 들이는 Tab은 삼키지 않는다
+  await row.hover();
+  check("one level below the previous bullet line, Indent is off", await page.locator(`[data-testid="output-c-indent-${pair.second}"]`).isDisabled());
+  await takeShot("sop-outputs-c-bullet-indent.png");
+  await row.click({ position: { x: 4, y: 4 } });
+  const outdented = waitOrderSave(page);
+  await page.keyboard.press("Shift+Tab");
+  check("Shift+Tab saves", (await outdented).ok());
+  check("the line is back to the first symbol", (await symbol(pair.second)) === "•", await symbol(pair.second));
+});
+
+// 번호 줄 규칙은 그대로다 - 6장 절차(번호가 기본)의 첫 번호 줄은 들일 수 없고, 둘째 번호 줄을 들이면 번호가 한 마디 늘고 기호는 없다
+await runStep("order: a chapter 6 numbered line keeps the numbered indent rule", {}, async ({ page }) => {
+  await page.goto(`${BASE}/bundles/${halfBundleId}/order`);
+  await wait(page, "output-c");
+  const [hit] = await findOrderDocs(page, () => {
+    for (const section of document.querySelectorAll('[data-testid="output-c"] section[data-location-key^="procedures."]')) {
+      const numbered = [...section.querySelectorAll('[data-testid^="output-c-number-"]')].map((node) => node.getAttribute("data-testid").replace("output-c-number-", ""));
+      const [first, second] = numbered;
+      if (!first || !second) continue;
+      const indentOf = (id) => document.querySelector(`[data-testid="output-c-indent-${id}"]`);
+      if (indentOf(first)?.disabled === true && indentOf(second)?.disabled === false) return { first, second };
+    }
+    return null;
+  });
+  const pair = hit ? hit[1] : null;
+  check("a chapter 6 procedure has two numbered lines, the first one not indentable", pair !== null);
+  if (!pair) return;
+  const number = page.locator(`[data-testid="output-c-number-${pair.second}"]`);
+  const before = (await number.innerText()).trim();
+  const row = page.locator(`[data-testid="output-c-row-${pair.second}"]`);
+  await row.click({ position: { x: 4, y: 4 } });
+  const indented = waitOrderSave(page);
+  await page.keyboard.press("Tab");
+  check("Tab saves", (await indented).ok());
+  const after = (await number.innerText()).trim();
+  check("the number gains a level", after.split(".").length === before.split(".").length + 1, `${before} -> ${after}`);
+  check("a numbered line never shows a bullet symbol", (await page.locator(`[data-testid="output-c-bullet-${pair.second}"]`).count()) === 0);
+  await row.click({ position: { x: 4, y: 4 } });
+  const outdented = waitOrderSave(page);
+  await page.keyboard.press("Shift+Tab");
+  check("Shift+Tab saves", (await outdented).ok());
+  check("the number is back", (await number.innerText()).trim() === before);
+});
+
+// N:1 출처 꼬리표 - 옛 두 줄 이상에서 온 줄에 올리거나 그 줄을 고르면 줄 아래에 source_note 그대로 뜨고, 출처가 하나인 줄에는 꼬리표가 없다(MD 2 §S5 ②)
+await runStep("order: a line merged from several Old lines shows its source tag on hover and when picked", {}, async ({ page }) => {
+  const headers = { "X-Dev-User": "qa.member" };
+  const output = await (await page.request.get(`${BASE}/api/bundles/${halfBundleId}/outputs/c?lang=en`, { headers })).json();
+  const lines = output.docs.flatMap((doc) => doc.sections.flatMap((section) => section.items.map((item) => ({ ...item, docId: doc.target_doc_id }))));
+  const merged = lines.find((item) => item.source_count >= 2 && item.source_note !== "");
+  const single = lines.find((item) => item.source_count === 1 && item.docId === merged?.docId);
+  check("a New line comes from two or more Old lines", merged !== undefined);
+  if (!merged) return;
+  await page.goto(`${BASE}/bundles/${halfBundleId}/order`);
+  await wait(page, "output-c");
+  await page.locator(`[data-testid="order-doc-${merged.docId}"]`).click();
+  const rowOf = (id) => page.locator(`[data-testid="output-c-row-${id}"]`);
+  // 긴 문서는 나눠 그린다 - 그 줄이 그려질 때까지 이어 그리기 표지를 화면에 들인다
+  const more = page.locator('[data-testid="output-c-more"]');
+  for (let i = 0; i < 40 && (await rowOf(merged.target_id).count()) === 0 && (await more.count()) > 0; i += 1) {
+    await more.scrollIntoViewIfNeeded();
+    await page.waitForTimeout(100);
+  }
+  await rowOf(merged.target_id).waitFor({ timeout: T });
+  const tag = page.locator(`[data-testid="output-c-source-${merged.target_id}"]`);
+  await page.mouse.move(0, 0);
+  check("the tag is hidden while the line is neither hovered nor picked", !(await tag.isVisible()));
+  await rowOf(merged.target_id).scrollIntoViewIfNeeded();
+  await rowOf(merged.target_id).hover();
+  check("hovering the line shows the tag", await tag.isVisible());
+  check("it carries the source note as is", (await tag.innerText()).trim() === merged.source_note.trim(), `${await tag.innerText()} | ${merged.source_note}`);
+  await rowOf(merged.target_id).click({ position: { x: 4, y: 4 } });
+  await page.mouse.move(0, 0);
+  check("a picked line keeps the tag", await tag.isVisible());
+  await page.keyboard.press("Escape");
+  if (single) {
+    check("a line from a single Old line has no tag", (await page.locator(`[data-testid="output-c-source-${single.target_id}"]`).count()) === 0);
+  }
+});
+
 await runStep("order: Alt+ArrowDown moves the picked line and keeps it picked", {}, async ({ page }) => {
   await page.goto(`${BASE}/bundles/${halfBundleId}/order`);
   await wait(page, "output-c");

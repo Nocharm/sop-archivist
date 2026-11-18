@@ -10,7 +10,7 @@ import { SheetView } from "./sheet-view";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-const cell = (text: string, extra: Partial<PreviewCell> = {}): PreviewCell => ({ text, faint: false, italic: false, bold: false, head: false, numeric: false, ...extra });
+const cell = (text: string, extra: Partial<PreviewCell> = {}): PreviewCell => ({ text, faint: false, italic: false, bold: false, head: false, numeric: false, indent: 0, ...extra });
 const row = (kind: PreviewRow["kind"], wrap: boolean, cells: PreviewCell[]): PreviewRow => ({ kind, wrap, cells });
 
 function render(sheet: PreviewSheet): HTMLElement {
@@ -43,6 +43,13 @@ describe("SheetView", () => {
     expect(status.classList.contains("whitespace-pre")).toBe(true);
     expect(inGroup.classList.contains("whitespace-pre-wrap")).toBe(true);
     expect(host.querySelector('tr[data-row-kind="in_group"] td:nth-child(2)')?.getAttribute("style")).toContain("italic");
+  });
+
+  it("indents a cell by the model's indent steps", () => {
+    const host = render({ ...BASE, rows: [row("group_start", true, [cell("○"), cell("child", { indent: 1 })]), row("in_group", true, [cell("•"), cell("plain")])] });
+    const [, indented, , plain] = Array.from(host.querySelectorAll("td")) as HTMLElement[];
+    expect(indented.style.paddingLeft).toBe("15px");
+    expect(plain.style.paddingLeft).toBe("");
   });
 
   it("puts a flow image after the last carried row when the model's image row lies past a truncated sheet", () => {

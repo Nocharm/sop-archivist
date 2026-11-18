@@ -3,10 +3,10 @@ import { describe, expect, it } from "vitest";
 
 import type { NumberStyle, OutputCItem } from "./api-sop";
 import { makeDeepOutline, makeSectionOutline } from "./outline-fixture";
-import { canChangeDepth, canChangeStyle, canIndent, getSectionDepths, isCounted, listCounted, numberLines, readIndentKey, readStyleChoices } from "./section-number";
+import { BULLET_SYMBOLS, canChangeDepth, canChangeStyle, canIndent, getSectionDepths, isCounted, listBullets, listCounted, MAX_BULLET_LEVEL, numberLines, readBulletSymbol, readIndentKey, readStyleChoices } from "./section-number";
 
 function item(id: number, number: string | null, indent = 0, style: NumberStyle = "numbered"): OutputCItem {
-  return { target_id: id, kind: "sentence", lang: "ko", text: "", ai_text: "", change_type: null, status: "confirmed", source_note: "", origin: "units", meaning_key: null, number, indent_level: indent, number_style: style, cell_row: null, cell_col: null, children: [] };
+  return { target_id: id, kind: "sentence", lang: "ko", text: "", ai_text: "", change_type: null, status: "confirmed", source_note: "", source_count: 1, origin: "units", meaning_key: null, number, indent_level: indent, number_style: style, cell_row: null, cell_col: null, children: [] };
 }
 
 // backend tests/test_sop_numbering.py의 두 표 그대로 - 사본이 서버 outputs.number_lines와 같은 번호를 미리 센다
@@ -164,6 +164,67 @@ describe("canIndent", () => {
     // 앞에 번호 줄이 없으면 들일 수 없다
     expect(canIndent([0, 0], [false, true], 1, 1)).toBe(false);
     expect(canIndent([0, 0], [false, false], 1, 1)).toBe(false);
+  });
+});
+
+describe("bullet lines", () => {
+  const bullet = (id: number, indent = 0) => item(id, null, indent, "bullet");
+  const bulletSection = (items: OutputCItem[], number: string | null = "5") => ({ counts_lines: false, number, items });
+  const toDepths = (items: OutputCItem[]) => getSectionDepths(bulletSection(items));
+  const canIn = (items: OutputCItem[], index: number, dir: 1 | -1 = 1) => canIndent(toDepths(items), listCounted(bulletSection(items)), index, dir, listBullets({ items }));
+
+  it("reads the symbol of each level and stops at the third", () => {
+    expect([0, 1, 2].map(readBulletSymbol)).toEqual(["•", "○", "▪"]);
+    expect(BULLET_SYMBOLS).toHaveLength(MAX_BULLET_LEVEL + 1);
+    expect(readBulletSymbol(7)).toBe("▪");
+  });
+
+  it("lets a bullet line go at most one deeper than the bullet line before it, and the first one stays at 0", () => {
+    const items = [bullet(1), bullet(2), bullet(3)];
+    expect([canIn(items, 0), canIn(items, 1), canIn(items, 2)]).toEqual([false, true, true]);
+    const nested = [bullet(1), bullet(2, 1), bullet(3, 1)];
+    expect(toDepths(nested)).toEqual([0, 1, 1]);
+    expect([canIn(nested, 1), canIn(nested, 2)]).toEqual([false, true]);
+  });
+
+  it("caps the depth at the third level (depth 2) and clamps stored deeper values", () => {
+    const items = [bullet(1), bullet(2, 1), bullet(3, 2), bullet(4, 2)];
+    expect(toDepths(items)).toEqual([0, 1, 2, 2]);
+    expect([canIn(items, 2), canIn(items, 3)]).toEqual([false, false]);
+    // 저장된 9는 눌러 읽는다 - 앞 줄(0) + 1
+    expect(toDepths([bullet(1), bullet(2, 9)])).toEqual([0, 1]);
+    // 내어쓰기는 0보다 깊을 때만
+    expect([canIn(items, 0, -1), canIn(items, 1, -1), canIn(items, 3, -1)]).toEqual([false, true, true]);
+  });
+
+  it("counts bullet lines apart from numbered lines in a mixed section", () => {
+    // numbered(0) / bullet / numbered(1) / bullet - 글머리 기호 줄은 앞 번호 줄이 아니라 앞 글머리 기호 줄의 깊이만 본다
+    const items = [item(1, "6.1.1", 0), bullet(2), item(3, "6.1.1.1", 1), bullet(4, 5)];
+    const section = { counts_lines: true, number: "6.1", items };
+    const depths = getSectionDepths(section);
+    expect(depths).toEqual([0, 0, 1, 1]);
+    const canAt = (index: number) => canIndent(depths, listCounted(section), index, 1, listBullets(section));
+    // 첫 글머리 기호 줄은 못 들인다(앞 번호 줄이 있어도). 둘째 글머리 기호 줄은 앞 글머리 기호 줄(0) + 1인 1에 이미 닿았다. 번호 줄 규칙은 그대로다
+    expect([canAt(0), canAt(1), canAt(2), canAt(3)]).toEqual([false, false, false, false]);
+    // 앞 글머리 기호 줄이 있으면 번호 줄이 어떻든 들인다
+    const flat = [item(1, "6.1.1", 0), bullet(2), item(3, "6.1.1.1", 1), bullet(4)];
+    const flatSection = { counts_lines: true, number: "6.1", items: flat };
+    const flatDepths = getSectionDepths(flatSection);
+    expect(flatDepths).toEqual([0, 0, 1, 0]);
+    expect(canIndent(flatDepths, listCounted(flatSection), 3, 1, listBullets(flatSection))).toBe(true);
+  });
+
+  it("skips numbered, omitted and note lines when looking for the previous bullet line", () => {
+    const items = [bullet(1), item(2, null, 4, "omitted"), item(3, null, 4, "note"), item(4, null, 0), bullet(5, 0)];
+    expect(getSectionDepths({ counts_lines: false, number: "5", items })).toEqual([0, 0, 0, 0, 0]);
+    expect(canIn(items, 4)).toBe(true);
+    // 생략·주석 줄은 앞 글머리 기호 줄이 없어도 번호 줄 규칙대로다 - 글머리 기호 갈래가 가로채지 않는다
+    expect(canIndent([0, 0], [false, false], 1, 1, [false, false])).toBe(false);
+  });
+
+  it("keeps the numbered rule when no bullet array is given", () => {
+    expect(canIndent([0, 0], [true, true], 1, 1)).toBe(true);
+    expect(canIndent([0, 0], [true, true], 1, 1, [false, false])).toBe(true);
   });
 });
 

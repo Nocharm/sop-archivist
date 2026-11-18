@@ -16,7 +16,7 @@ import { OutputCView } from "./output-c";
 type Section = OutputC["docs"][number]["sections"][number];
 
 function makeItem(extra: Partial<OutputCItem>): OutputCItem {
-  return { target_id: 1, kind: "sentence", lang: "ko", text: "", ai_text: "", change_type: null, status: "ai_suggested", source_note: "", origin: "units", meaning_key: null, number: null, indent_level: 0, number_style: "numbered", cell_row: null, cell_col: null, children: [], ...extra };
+  return { target_id: 1, kind: "sentence", lang: "ko", text: "", ai_text: "", change_type: null, status: "ai_suggested", source_note: "", source_count: 1, origin: "units", meaning_key: null, number: null, indent_level: 0, number_style: "numbered", cell_row: null, cell_col: null, children: [], ...extra };
 }
 
 function makeOutput(items: OutputCItem[], extra: Partial<Section> = {}): OutputC {
@@ -125,6 +125,62 @@ describe("OutputCView", () => {
     act(() => host.querySelector<HTMLButtonElement>('[data-testid="output-c-mark-bullet-1"]')?.click());
     expect(onMark).toHaveBeenCalledWith(1, 1, "bullet");
     unmount();
+  });
+
+  it("draws the level symbol of a bullet line in the number place and indents it per level, in the editable and the read-only view", () => {
+    const items = [
+      makeItem({ target_id: 1, text: "가", status: "confirmed", number: null, number_style: "bullet" }),
+      makeItem({ target_id: 2, text: "나", status: "confirmed", number: null, number_style: "bullet", indent_level: 1 }),
+      makeItem({ target_id: 3, text: "다", status: "confirmed", number: null, number_style: "bullet", indent_level: 2 }),
+      makeItem({ target_id: 4, text: "라", status: "confirmed", number: null, number_style: "bullet", indent_level: 9 }),
+    ];
+    for (const props of [{ data: makeOutput(items), onMove: () => {}, onIndent: () => {}, onMark: () => {} }, { data: makeOutput(items) }]) {
+      const { host, unmount } = render(props);
+      expect([1, 2, 3, 4].map((id) => host.querySelector('[data-testid="output-c-bullet-' + id + '"]')?.textContent)).toEqual(["•", "○", "▪", "▪"]);
+      expect([1, 2, 3, 4].map((id) => host.querySelector<HTMLElement>('[data-testid="output-c-row-' + id + '"] .c-line')?.style.paddingLeft)).toEqual([
+        "calc(0 * var(--c-indent))", "calc(1 * var(--c-indent))", "calc(2 * var(--c-indent))", "calc(2 * var(--c-indent))",
+      ]);
+      unmount();
+    }
+  });
+
+  it("offers Indent on a bullet line only below the previous bullet line's depth + 1, up to depth 2", () => {
+    const items = [
+      makeItem({ target_id: 1, text: "가", status: "confirmed", number: null, number_style: "bullet" }),
+      makeItem({ target_id: 2, text: "나", status: "confirmed", number: null, number_style: "bullet" }),
+      makeItem({ target_id: 3, text: "다", status: "confirmed", number: null, number_style: "bullet", indent_level: 1 }),
+      makeItem({ target_id: 4, text: "라", status: "confirmed", number: null, number_style: "bullet", indent_level: 2 }),
+      makeItem({ target_id: 5, text: "마", status: "confirmed", number: null, number_style: "bullet" }),
+    ];
+    const onIndent = vi.fn();
+    const { host, unmount } = render({ data: makeOutput(items, { counts_lines: false }), onMove: () => {}, onIndent, onMark: () => {} });
+    const disabled = (id: number) => host.querySelector<HTMLButtonElement>('[data-testid="output-c-indent-' + id + '"]')?.disabled;
+    // 첫 줄(0)과 앞 줄 + 1에 닿은 줄(셋째 1, 넷째 2)은 못 들이고, 앞 줄이 2여도 둘째·다섯째 줄은 자기 앞 글머리 기호 줄 + 1까지 들인다
+    expect([1, 2, 3, 4, 5].map(disabled)).toEqual([true, false, true, true, false]);
+    // 둘째 줄에서 Tab - 깊이 0 → 1로 한 단 들인다
+    const row = host.querySelector<HTMLElement>('[data-testid="output-c-row-2"]');
+    const tab = new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true });
+    act(() => row?.dispatchEvent(tab));
+    expect(onIndent).toHaveBeenCalledWith(1, 2, 1);
+    unmount();
+  });
+
+  it("shows the source note as a tag only on a line that came from two or more Old lines", () => {
+    const items = [
+      makeItem({ target_id: 1, text: "합침", status: "confirmed", source_note: "← OLD-1 §5.1, OLD-2 §5.1 (merged)", source_count: 2 }),
+      makeItem({ target_id: 2, text: "하나", status: "confirmed", source_note: "← OLD-1 §5.1", source_count: 1 }),
+      makeItem({ target_id: 3, text: "신규", status: "confirmed", source_note: "", source_count: 0 }),
+    ];
+    for (const props of [{ data: makeOutput(items), onMove: () => {}, onIndent: () => {}, onMark: () => {} }, { data: makeOutput(items) }]) {
+      const { host, unmount } = render(props);
+      // 글은 서버의 source_note 그대로, 늘 보이는 칩이 아니라 줄 안(CSS가 올리거나 고를 때만 보인다)에 있다
+      const tag = host.querySelector('[data-testid="output-c-source-1"]');
+      expect(tag?.textContent).toBe("← OLD-1 §5.1, OLD-2 §5.1 (merged)");
+      expect(tag?.closest('[data-testid="output-c-row-1"]')).not.toBeNull();
+      expect(host.querySelector('[data-testid="output-c-source-2"]')).toBeNull();
+      expect(host.querySelector('[data-testid="output-c-source-3"]')).toBeNull();
+      unmount();
+    }
   });
 
   it("shows a note in italics without a number, indents it, and sends a mark change for that line only", () => {

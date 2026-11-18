@@ -4,6 +4,9 @@
 
 ## 2026-11-18
 
+- **글머리 기호 들여쓰기 · N:1 출처 꼬리표(`feat/order-bullet-indent`, MD 2 S5 ①②, 버전 올리기 전)** — 글머리 기호 줄이 번호 줄과 따로 앞 글머리 기호 줄 + 1까지(3단계 • ○ ▪) 들여진다: `canIndent`에 갈래를 더해 Tab · 단추 · ⋯ · 끌기가 같이 쓰고, 서버는 `get_bullet_depths`로 같은 규칙을 눌러 읽는다(저장 범위 0–9는 그대로 — Alembic 없음). Order · 결과물 C는 번호 자리에 단계 기호, Excel C는 No. 칸 기호 + Item 칸 들여쓰기(`SheetCell.indent`). `CItem.source_count`를 더해 옛 두 줄 이상에서 온 줄에 올리거나 고르면 `source_note`를 그대로 어두운 꼬리표로 보인다. ③ 템플릿 보기는 브랜치 f, ④⑤는 코드 변경 없음.
+  - 확인: pytest · vitest · lint · tsc는 돌렸다. 스모크 `order:` 셋(5장 글머리 기호 Tab → ○ · 6장 번호 줄 규칙 그대로 · N:1 꼬리표)은 써만 두고 돌리지 않았다.
+
 - **풀기 전환 부품(v1.1.31, `feat/unwrap-motion`, F10 바탕)** — `useUnwrapMotion`(`motion.tsx`) + `lib/unwrap-motion.ts`: 걷기 160 → 펼치기 520(시차 28, 최대 280) → 붙이기 200 ms, 토큰 `--dur-spread/attach`·`--stagger-*`, 움직임 줄이기는 토큰 0 + 바로 바꿈·번쩍, 긴 문서는 화면 안만. `useFlip`은 그대로. 쓰는 곳은 뒤 브랜치들.
 
 - **표준 골격(v1.1.30, `feat/outline` 스텝 1–6, 계획 `2026-11-17-template-fit-1-outline-plan.md`)** — SOP 칸을 코드 상수 15개에서 "관리자가 고치는 표준 골격 + 문서마다 사본"으로 바꾸고(Alembic `0022`–`0024`), 표준을 회사 SOP 템플릿 1–9장으로 했다. 순서는 먼저 15칸을 그대로 사본으로 옮겨 읽는 쪽만 바꾸고(동작 그대로) 그다음 내용을 바꿨다 — 키의 점 위계는 남겨 접두사로 부모를 찾는 코드가 그대로 산다.

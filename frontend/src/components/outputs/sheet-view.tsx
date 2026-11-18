@@ -1,4 +1,4 @@
-// Excel 시트 한 장을 그린다 - 서버 시트 모델(kind·wrap·head·faint·italic·bold·numeric)을 그대로 옮기고 모양을 다시 판정하지 않는다(제품 명세 §7.14 시트 모델).
+// Excel 시트 한 장을 그린다 - 서버 시트 모델(kind·wrap·head·faint·italic·bold·numeric·indent)을 그대로 옮기고 모양을 다시 판정하지 않는다(제품 명세 §7.14 시트 모델).
 // 종이 색은 테마와 무관한 --sheet-* 토큰이다(제품 명세 §7.14 Graphite 테마). 함께 쓰는 칸의 흐림·머리 칠·접힘은 모두 모델이 정한 값이다.
 "use client";
 
@@ -31,6 +31,8 @@ function getCellStyle(cell: PreviewCell, row: PreviewRow): CSSProperties {
   if (cell.bold || cell.head) style.fontWeight = 700;
   if (cell.italic) style.fontStyle = "italic";
   if (cell.numeric) style.textAlign = "right";
+  // 칸 안 들여쓰기(C 글머리 기호 줄의 Item 칸) - 기본 안쪽 여백 6px에 단계마다 9px(Excel의 들여쓰기 한 단계와 비슷한 폭)
+  if (cell.indent > 0) style.paddingLeft = `${6 + cell.indent * 9}px`;
   return style;
 }
 

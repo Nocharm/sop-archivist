@@ -8,7 +8,7 @@ import { makeSectionOutline } from "./outline-fixture";
 type Section = OutputCDoc["sections"][number];
 
 function line(id: number, number: string | null, extra: Partial<OutputCItem> = {}): OutputCItem {
-  return { target_id: id, kind: "sentence", lang: "ko", text: `t${id}`, ai_text: "", change_type: null, status: "confirmed", source_note: "", origin: "units", meaning_key: null, number, indent_level: 0, number_style: "numbered", cell_row: null, cell_col: null, children: [], ...extra };
+  return { target_id: id, kind: "sentence", lang: "ko", text: `t${id}`, ai_text: "", change_type: null, status: "confirmed", source_note: "", source_count: 1, origin: "units", meaning_key: null, number, indent_level: 0, number_style: "numbered", cell_row: null, cell_col: null, children: [], ...extra };
 }
 
 /** outline은 그 절이 골격에서 받은 값 - 기본은 줄을 세는 칸, 하위 칸을 선언하는 칸은 { counts_lines: false } */
