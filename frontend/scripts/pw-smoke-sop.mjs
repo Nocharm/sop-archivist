@@ -8377,10 +8377,13 @@ await runStep("assign: counterpart table - unwrapping asks once with the most si
   const texts = new Map(both.units.map((item) => [item.id, item.text]));
   const korean = both.units.find((item) => item.text === "세척액 농도를 확인한다.");
   const english = both.units.find((item) => item.text === "Check the detergent concentration.");
-  check("the same row and order lines are a suggested KO/EN pair", both.pairs.some((pair) => pair.unit_ids.includes(korean?.id) && pair.unit_ids.includes(english?.id)), JSON.stringify(both.pairs.map((pair) => pair.unit_ids.map((id) => texts.get(id)))));
-  // 짝 하나를 고르면 멀리 있는 다른 절반의 짝이 점선 테두리로 함께 보이고 오른쪽 칸에 두 줄이 같이 뜬다(지금 dev 그대로)
+  const isPaired = both.pairs.some((pair) => pair.unit_ids.includes(korean?.id) && pair.unit_ids.includes(english?.id));
+  check("the same row and order lines are a suggested KO/EN pair", isPaired, JSON.stringify(both.pairs.map((pair) => pair.unit_ids.map((id) => texts.get(id)))));
+  if (!isPaired) return;
+  // 짝 하나를 고르면 그 줄(짝 한 줄)이 골라져 멀리 있는 다른 절반의 짝도 함께 칠해지고 오른쪽 칸에 두 줄이 같이 뜬다(지금 dev 그대로).
+  // Assign은 고른 줄의 Unit을 모두 highlightIds로 칠한다 - 글 조각(assign-paper-unit-*)에 data-sel(data-partner는 Assign이 쓰지 않는다)
   await page.locator(`[data-testid="assign-paper-piece-${korean.id}"]`).click();
-  await page.locator(`[data-testid="assign-paper-piece-${english.id}"][data-partner]`).waitFor({ timeout: T });
+  await page.locator(`[data-testid="assign-paper-unit-${english.id}"][data-sel]`).waitFor({ timeout: T });
   check("the right panel shows both lines", (await getText(page, "assign-shape")).includes("Check the detergent"), await getText(page, "assign-shape"));
 
   // Undo 한 번에 두 표가 함께 표로 돌아온다
