@@ -2982,23 +2982,32 @@ await runStep("assign: attach and detach a caption from Shape", {}, async ({ pag
 await runStep("assign: caption slot - drag a sentence onto the table and drag the chip back out", {}, async ({ page, takeShot }) => {
   const headers = { "X-Dev-User": "qa.member" };
   const getJson = async (path) => (await page.request.get(`${BASE}/api/bundles/${halfBundleId}${path}`, { headers })).json();
-  const units = (await getJson("/units?limit=1000")).items;
-  const captioned = new Set(units.filter((unit) => unit.kind === "caption").map((unit) => unit.group_unit_id));
-  const table = units.find((unit) => unit.kind === "table" && unit.status === "unassigned" && !captioned.has(unit.unit_id) && !unit.has_caption_target);
+  // 표를 하나 가정하지 않고 찾는다 - 배정 안 된 데이터 표 가운데 바로 위가 묶이지 않은 문장이고 그 문장 언어의 캡션이 아직 없는 표(다른 단계가 캡션을 남겨도 된다)
   let doc = null;
+  let table = null;
   let sentence = null;
   for (const candidate of (await getJson("/documents")).filter((item) => item.side === "old" && item.status === "ready")) {
     const view = await getJson(`/documents/${candidate.id}/view`);
-    if (!table || !view.units.some((unit) => unit.id === table.unit_id)) continue;
     const ordered = [...view.units].sort((a, b) => a.pos_seq - b.pos_seq || (a.spans[0]?.[1] ?? 0) - (b.spans[0]?.[1] ?? 0) || a.id - b.id);
-    doc = candidate;
-    sentence = ordered[ordered.findIndex((unit) => unit.id === table.unit_id || unit.group_unit_id === table.unit_id) - 1] ?? null;
+    for (const item of ordered.filter((unit) => unit.kind === "table" && unit.status === "unassigned" && !view.tables.find((entry) => entry.id === unit.table_id)?.is_layout)) {
+      const above = ordered[ordered.findIndex((unit) => unit.id === item.id || unit.group_unit_id === item.id) - 1] ?? null;
+      const langs = ordered.filter((unit) => unit.kind === "caption" && unit.group_unit_id === item.id).map((unit) => unit.lang);
+      if (above && above.kind === "sentence" && above.group_unit_id === null && (above.lang === "ko" || above.lang === "en") && !langs.includes(above.lang)) {
+        doc = candidate;
+        table = { unit_id: item.id, display_id: item.display_id };
+        sentence = above;
+        break;
+      }
+    }
+    if (doc) break;
   }
-  check("the half bundle has a captionless table with a free sentence right above", sentence !== null && sentence.kind === "sentence" && sentence.group_unit_id === null, sentence?.text);
-  if (!doc || !sentence) return;
-  const captionsOf = async () => (await getJson(`/documents/${doc.id}/view`)).units.filter((unit) => unit.kind === "caption" && unit.group_unit_id === table.unit_id);
+  check("the half bundle has an unassigned table with a free sentence right above", sentence !== null, sentence?.text);
+  if (!doc || !table || !sentence) return;
+  const captionsOf = async () => (await getJson(`/documents/${doc.id}/view`)).units.filter((unit) => unit.kind === "caption" && unit.group_unit_id === table.unit_id && unit.lang === sentence.lang);
   await page.goto(`${BASE}/bundles/${halfBundleId}/assign`);
   await wait(page, "assign-bar");
+  await page.locator('[data-testid="assign-old-doc"]').click();
+  await page.locator(`[data-testid="assign-old-doc-option-${doc.id}"]`).click();
   await selectRowById(page, table.display_id);
   const piece = page.locator(`[data-pane="old"] [data-testid="assign-paper-piece-${sentence.id}"]`).first();
   const head = page.locator(`[data-pane="old"] [data-testid="assign-paper-head-${table.unit_id}"]`).first();
@@ -3017,9 +3026,12 @@ await runStep("assign: caption slot - drag a sentence onto the table and drag th
   const chip = page.locator(`[data-pane="old"] [data-caption-chip="${caption.id}"]`).first();
   await chip.waitFor({ timeout: T });
   await takeShot("sop-assign-caption-slot-drop.png");
+  await chip.scrollIntoViewIfNeeded();
   const chipBox = await chip.boundingBox();
-  // 칩을 표 아래 용지로 끌어낸다 - 제 자리 밖이면 떼서 문장으로
-  await dragThrough(page, { x: chipBox.x + 6, y: chipBox.y + chipBox.height / 2 }, [{ x: chipBox.x + 40, y: chipBox.y + 260 }]);
+  // 칩을 Old 용지 안의 다른 자리로 끌어낸다 - 제 자리 밖이면 떼서 문장으로. 고정 거리로 끌면 칸 아래 화면 밖이나 가장자리 자동 스크롤 띠에 닿는다
+  const paneBox = await page.locator('[data-pane="old"] .pane-body').first().boundingBox();
+  const outY = chipBox.y - paneBox.y > 140 ? chipBox.y - 90 : Math.min(paneBox.y + paneBox.height - 70, chipBox.y + 160);
+  await dragThrough(page, { x: chipBox.x + 6, y: chipBox.y + chipBox.height / 2 }, [{ x: paneBox.x + paneBox.width / 2, y: outY }]);
   const outNote = await page.locator('[data-testid="drag-card"] .drag-card-note').evaluate((el) => (el.hidden ? null : (el.textContent ?? "").trim()));
   check("dragging the chip off the slot says Detach as sentence", outNote === "Detach as sentence", outNote);
   await page.mouse.up();

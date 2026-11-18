@@ -2569,7 +2569,8 @@ export default function AssignPage() {
     const detach = resolveCaptionDetach({
       captionBundleId: caption.group_unit_id,
       slotBundleId: slot ? Number(slot.dataset.captionSlot) : null,
-      isOverOld: findUnderPoint(point, '[data-pane="old"] .pane-body') !== null,
+      // Old 칸 어디든(용지 여백 포함) - 칩을 놓은 곳이 글 위가 아니어도 뗀다
+      isOverOld: findUnderPoint(point, '[data-pane="old"]') !== null,
       isFixed: isFixedCaption(caption),
     });
     return { detach, bundleId: caption.group_unit_id };
