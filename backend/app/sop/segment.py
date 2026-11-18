@@ -53,6 +53,9 @@ PAIR_DIGIT_OVERLAP_MIN = 0.5
 CLAUSE_NUMBER_FLAG = "clause_number"
 # docx_reader.FLAG_CAPTION_OF와 같은 값 — 캡션 문단 블록이 "caption_of:<그림 블록 seq | 표 첫 칸 블록 seq>"로 제 묶음을 가리킨다
 CAPTION_OF_FLAG = "caption_of"
+# docx_reader.SIGNAL_NUMBERS·NUMBER_CELL과 같은 값 — 블록 신호의 번호 범위 [[시작, 끝, 출처], …]와 글 전체가 번호 꼴인 칸
+NUMBERS_SIGNAL = "numbers"
+NUMBER_CELL = "cell"
 NEUTRAL = "neutral"
 
 
@@ -230,7 +233,7 @@ class BlockView:
     flags: Sequence[str]
     table_id: int | None
     row_index: int | None
-    signals: Mapping[str, object] | None = None  # 블록 신호(source_blocks.signals) — 목차 판정(noise.py)이 읽는다
+    signals: Mapping[str, object] | None = None  # 블록 신호(source_blocks.signals) — 목차 판정(noise.py)과 번호 칸 붙이기가 읽는다. 추출기 5 전의 추출은 없다
 
 
 @dataclass(frozen=True)
@@ -266,7 +269,8 @@ def build_unit_drafts(
     - 문단: 제목 스타일이나 조항 번호만 있는 줄은 블록 전체가 제목(split_lines면 줄마다 제목 — "목적"/"Purpose" 두 줄 제목이
       언어별로 나뉜다), 아니면 문장마다. 머리말·각주 등도 같은 규칙.
     - 표 칸: 데이터 표는 표마다 첫 칸 자리에 표 단위(범위 없음·중립)를 두고 칸 문장을 묶는다. 레이아웃 표는 묶지 않는다.
-      병합 칸(merged_cell)도 보통 칸이다.
+      병합 칸(merged_cell)도 보통 칸이다. 레이아웃 표의 번호만 든 칸("A", "7" — 신호 cell)은 제 줄이 되지 않고 같은 행 다음 칸의
+      첫 줄 앞에 붙어 그 줄의 번호 범위가 된다(붙을 줄이 없으면 제 줄, §11-7).
     - 그림: 그림 블록 글자(새 추출은 비었다, 예전 추출은 캡션)를 범위로 갖는 중립 단위 하나. 칸 안 그림도 표에 묶지 않는
       독립 단위다.
     - 캡션: caption_of 표시가 있는 블록은 문장으로 쪼개지 않고 블록 전체 범위 하나의 캡션 단위로 그 그림·표 초안에 묶는다.
@@ -290,7 +294,11 @@ def build_unit_drafts(
     table_draft_index: dict[int, int] = {}
     bundle_draft_index: dict[int, int] = {}  # 묶음 블록 seq → 그 그림·표 초안의 목록 번호
     caption_targets: dict[int, int] = {}  # 캡션 초안 목록 번호 → 가리키는 묶음 블록 seq
+    number_cell: UnitDraft | None = None  # 같은 행 다음 칸의 첫 줄을 기다리는 번호 칸 초안
     for block in blocks:
+        if number_cell is not None and not _is_same_row_cell(block, number_cell):
+            drafts.append(number_cell)
+            number_cell = None
         if block.id in toc_block_ids:
             line = trim_blank_range(block.text, 0, len(block.text))
             if line is not None:
@@ -316,10 +324,23 @@ def build_unit_drafts(
                 if group_index is None:
                     group_index = table_draft_index[block.table_id] = bundle_draft_index[block.seq] = len(drafts)
                     drafts.append(UnitDraft("table", [], NEUTRAL, block.table_id, None, None, block.seq, -1))
-            drafts.extend(
+            cells = [
                 _build_text_draft("cell_sentence", block, start, end, block.table_id, block.row_index, group_index)
                 for start, end in split_sentences(block.text, split_lines=split_lines)
-            )
+            ]
+            if group_index is None and len(cells) == 1 and _is_number_cell(block, cells[0]):
+                if number_cell is not None:  # 번호 칸이 잇달아 오면 앞의 것은 제 줄이다
+                    drafts.append(number_cell)
+                number_cell = cells[0]
+                continue
+            if number_cell is not None and cells:
+                # 번호 칸 블록 전체가 그 줄 범위의 첫 조각이 된다 — 자리도 번호 칸의 것이다
+                cells[0] = replace(
+                    cells[0], spans=[*number_cell.spans, *cells[0].spans], pos_seq=number_cell.pos_seq,
+                    pos_start=number_cell.pos_start,
+                )
+                number_cell = None
+            drafts.extend(cells)
         elif block.heading_level is not None or CLAUSE_NUMBER_FLAG in block.flags:
             drafts.extend(
                 _build_text_draft("heading", block, start, end) for start, end in _split_heading(block.text, split_lines)
@@ -329,9 +350,25 @@ def build_unit_drafts(
                 _build_text_draft("sentence", block, start, end)
                 for start, end in split_sentences(block.text, split_lines=split_lines)
             )
+    if number_cell is not None:
+        drafts.append(number_cell)
     for index, target_seq in caption_targets.items():
         drafts[index] = replace(drafts[index], group_index=bundle_draft_index[target_seq])
     return _fill_languages(drafts, layout)
+
+
+def _is_number_cell(block: BlockView, draft: UnitDraft) -> bool:
+    """칸의 글 전체가 번호 꼴인가 — 추출기가 남긴 cell 신호가 그 칸의 한 줄과 같은 범위일 때."""
+    _, start, end = draft.spans[0]
+    return [start, end, NUMBER_CELL] in [list(number) for number in (block.signals or {}).get(NUMBERS_SIGNAL) or ()]
+
+
+def _is_same_row_cell(block: BlockView, number_cell: UnitDraft) -> bool:
+    """번호 칸이 기다릴 블록인가 — 같은 표 같은 행의 칸. 다른 행·표 밖 문단·그림이 오면 번호 칸은 제 줄이 된다."""
+    return (
+        block.kind == "table_cell" and block.table_id == number_cell.table_id
+        and block.row_index == number_cell.row_index
+    )
 
 
 def _read_caption_of(flags: Sequence[str]) -> int | None:

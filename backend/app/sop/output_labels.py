@@ -20,6 +20,7 @@ class OutputLabels:
     table_template: str  # {table}
     table_row_template: str  # {table} {row}
     table_source_template: str  # 결과물 A 표 줄의 원문 칸 — {table} {rows} {cols}
+    read_number_template: str  # 번호를 고친 줄의 절 — {number}는 고친 번호, {read}는 추출기가 읽은 값
     wi_step_template: str  # {step} {part}
     wi_unstepped_template: str  # {part}
     no_section: str
@@ -50,6 +51,7 @@ LABELS = {
         table_template="표 {table}",
         table_row_template="표 {table} · {row}행",
         table_source_template="[표 {table}, {rows}×{cols}]",
+        read_number_template="{number} (읽은 값 {read})",
         wi_step_template="{step}단계 · {part}",
         wi_unstepped_template="단계 없음 · {part}",
         no_section="(절 없음)",
@@ -81,6 +83,7 @@ LABELS = {
         table_template="Table {table}",
         table_row_template="Table {table} · R {row}",
         table_source_template="[Table {table}, {rows}×{cols}]",
+        read_number_template="{number} (read as {read})",
         wi_step_template="Step {step} · {part}",
         wi_unstepped_template="No step · {part}",
         no_section="(No section)",

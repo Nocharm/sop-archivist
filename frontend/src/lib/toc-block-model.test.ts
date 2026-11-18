@@ -85,7 +85,7 @@ describe("listTocBlocks / buildNavKeys", () => {
 
 describe("buildRows with contents lines", () => {
   const unit = (id: number, noise: "toc" | null): ViewUnit => ({
-    id, display_id: `D-${id}`, kind: "sentence", spans: [[1, id, id + 1]], text: `t${id}`, lang: "ko", table_id: null,
+    id, display_id: `D-${id}`, kind: "sentence", spans: [[1, id, id + 1]], text: `t${id}`, lang: "ko", number: null, table_id: null,
     row_index: null, group_unit_id: null, status: "unassigned", pair_id: null, pos_seq: id, block_id: id, is_edited: false,
     can_unmerge: false, split_suggestion_id: null, ref: null, caption_refs: [], noise_kind: noise,
   });

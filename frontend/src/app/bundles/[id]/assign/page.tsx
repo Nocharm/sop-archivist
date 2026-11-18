@@ -806,7 +806,7 @@ export default function AssignPage() {
     setOpenAcc({ key: toggleKey, open: next });
   }
 
-  const saveUnits = rowUnits.map((unit) => ({ id: unit.unit_id, kind: unit.kind, lang: unit.lang, text: unit.text, revision: unit.decision.revision }));
+  const saveUnits = rowUnits.map((unit) => ({ id: unit.unit_id, kind: unit.kind, lang: unit.lang, text: unit.text, content_start: unit.content_start, revision: unit.decision.revision }));
   // 새 문장 칸 - AI가 나눈 문장은 칸 여럿, 합친 문장은 칸 하나다
   const slots = buildSentenceSlots(groupData, saveUnits, draft.otherLang ?? null);
 
@@ -1264,7 +1264,7 @@ export default function AssignPage() {
       setCutUnitId(null);
       // 고친 줄의 Unit은 은퇴했을 수 있다 - 다시 받는 동안 그 Unit의 묶음·후보를 부르지 않게 고름을 비우고, 새 줄이 생기면 follow가 고른다.
       // 제자리에서 바뀌는 편집(언어·참조)은 Unit이 그대로라 고름을 두어 고른 표시·오른쪽 칸·포커스가 깜빡이지 않게 한다
-      if (op.type !== "set_language" && op.type !== "set_ref" && op.type !== "clear_ref") setSelectedKey(null);
+      if (op.type !== "set_language" && op.type !== "set_ref" && op.type !== "clear_ref" && op.type !== "set_number") setSelectedKey(null);
       showToast(okText);
       const next = result.created_unit_ids[0] ?? followId;
       if (next !== null && next !== undefined) followUnit(next);
@@ -1869,7 +1869,7 @@ export default function AssignPage() {
       const extra = await Promise.all(targetIds.map((id) => getGroupByTarget(bundleId, id)));
       const link: Destination = { kind: "link", targetIds };
       const context = {
-        units: sourceUnits.map((unit) => ({ id: unit.unit_id, kind: unit.kind, lang: unit.lang, text: unit.text, revision: unit.decision.revision })),
+        units: sourceUnits.map((unit) => ({ id: unit.unit_id, kind: unit.kind, lang: unit.lang, text: unit.text, content_start: unit.content_start, revision: unit.decision.revision })),
         group: mergeGroups([rowGroup, ...extra]),
         tables: new Map(),
       };
@@ -4139,6 +4139,16 @@ export default function AssignPage() {
                 onUnitClick={handleOldClick}
                 onUnitContextMenu={(unitId, at, caret) => openCtxMenu(unitId, at, caret)}
                 onUnitDoubleClick={canEdit ? handleOldDoubleClick : undefined}
+                // 번호 칸 - 원문 글자는 그대로 두고 번호 범위만 바꾸는 쪼개기 편집이라 줄의 배정은 그대로다
+                numberCell={
+                  canEdit && mode === "old" && !isNewEdit && !isSolo
+                    ? {
+                        busy,
+                        onSave: (unitId, number, follow) =>
+                          void runUnitEdit({ type: "set_number", unit_id: unitId, number, follow }, number === null ? t("assign.number.didClear") : t("assign.number.didSet", { n: number }), unitId),
+                      }
+                    : undefined
+                }
                 onRangeSelect={canEdit && mode === "old" && oldView ? (range) => setCarvePick({ docId: oldView.document.id, ...range }) : undefined}
                 banner={
                   pairBanner !== null && !isNewEdit ? (

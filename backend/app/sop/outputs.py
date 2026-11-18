@@ -34,6 +34,7 @@ from app.sop.constants import (
     OutlineKind,
 )
 from app.sop.groups import TABLE_UNIT_KINDS, build_group_ids, collapse_table_members
+from app.sop.numbering import SECTION_KIND, is_number_fixed, normalize_number, strip_number
 from app.sop.outline import KIND_AUTO_LIST, DocOutline, get_parent_key, list_emitted_keys, number_outline
 from app.sop.output_labels import LABELS, OutputLabels
 from app.sop.output_rows import (
@@ -1016,11 +1017,12 @@ def _format_place(index: _Index, unit: UnitInfo, labels: OutputLabels) -> str:
 def _format_source_text(index: _Index, unit: UnitInfo, labels: OutputLabels) -> str:
     """원문 칸 — 표·그림 단위는 묶인 원문 캡션 글(표는 뒤에 " [행×열]"), 캡션 없는 표·행 단위는 "[표 n, 행×열]"(행 단위는 그 행 하나).
 
-    나머지는 단위 글자 그대로다. 옛 문서 칸이라 번호도 원문 그대로다.
+    나머지는 단위 글자에서 문단 번호를 뺀 내용이다 — 번호는 위치 칸에 적는다(F5·F11). 번호 범위가 없는 단위(옛 추출, 타자로 친
+    번호)는 번호가 글에 남은 그대로다.
     """
     caption = "\n".join(member.text for member in index.cells.get(unit.id, ()) if member.kind == CAPTION_KIND)
     if unit.kind not in TABLE_UNIT_KINDS:
-        return caption or unit.text
+        return caption or strip_number(unit.text, unit)
     table = index.snap.tables[unit.table_id]
     rows = 1 if unit.kind == "table_row" else table.n_rows
     if caption:
@@ -1062,9 +1064,16 @@ def _is_note(index: _Index, target: TargetInfo) -> bool:
 
 def _locate_unit(index: _Index, unit: UnitInfo, labels: OutputLabels) -> LocationOut:
     block = index.snap.blocks[unit.block_id]
+    section = block.section_label
+    if unit.number_set:
+        # 사람이 고친 번호 — 읽은 값과 다르면 그 사실을 남긴다(변경 관리의 근거). 절을 여는 줄은 고친 번호가 곧 절이고,
+        # 본문 줄은 속한 절 뒤에 그 줄의 번호를 잇는다("2 · 2.1 (읽은 값 2.2)")
+        number = normalize_number(unit.number_set)
+        if is_number_fixed(unit):
+            number = labels.read_number_template.format(number=number, read=normalize_number(unit.number_read or ""))
+        section = number if unit.kind == SECTION_KIND or not section else f"{section} · {number}"
     return LocationOut(
-        section=block.section_label, place=_format_place(index, unit, labels), page=block.page,
-        page_basis=block.page_basis,
+        section=section, place=_format_place(index, unit, labels), page=block.page, page_basis=block.page_basis,
     )
 
 
@@ -1730,7 +1739,7 @@ def build_composed_doc(snap: BundleSnapshot, target_doc_id: int, lang: Lang) -> 
         if not sources and target.translation_source_unit_id in snap.units:
             sources = [target.translation_source_unit_id]
         text = ctx.texts.get(target.id) or target.confirmed_text or target.ai_text or " ".join(
-            snap.units[uid].text for uid in sources if uid in snap.units
+            strip_number(snap.units[uid].text, snap.units[uid]) for uid in sources if uid in snap.units
         )
         table = None
         if target.kind == "table":

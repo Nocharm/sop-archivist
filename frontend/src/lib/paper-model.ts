@@ -31,6 +31,8 @@ export interface PaperModel {
   units: Map<number, ViewUnit>;
   /** J/K가 따라가는 순서 - 원문 순 */
   order: number[];
+  /** 단위가 번호 범위를 갖는 추출이다 - 번호 칸이 그 줄의 번호를 보인다. 거짓이면(옛 추출) 절 첫 줄의 절 번호만 보인다 */
+  hasNumberRanges: boolean;
 }
 
 const TOP_PARTS = new Set(["header"]);
@@ -102,7 +104,7 @@ export function buildPaperModel(view: DocumentView): PaperModel {
     .filter((unit) => unit.kind !== "table_row" || unit.spans.length > 0)
     .sort((a, b) => a.pos_seq - b.pos_seq || (a.spans[0]?.[1] ?? 0) - (b.spans[0]?.[1] ?? 0) || a.id - b.id)
     .map((unit) => unit.id);
-  return { header, body, footer, groups: [...groups.values()], segments, units, order };
+  return { header, body, footer, groups: [...groups.values()], segments, units, order, hasNumberRanges: view.has_number_ranges };
 }
 
 /**

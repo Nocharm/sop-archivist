@@ -360,6 +360,12 @@ class Unit(Base):
     # 정렬 키 — 첫 범위의 블록 seq와 블록 안 시작 위치(표 단위는 pos_start=-1)
     pos_seq: Mapped[int] = mapped_column(Integer)
     pos_start: Mapped[int] = mapped_column(Integer)
+    # 문단 번호(numbering.py) — 읽은 값·출처(auto | typed | cell)·text 앞에서 번호가 차지한 글자 수는 범위와 추출 신호에서 나온 값이고,
+    # number_set만 사람이 고친다(NULL 고치지 않음, "" 번호 없음). 번호는 범위로 표시할 뿐 text에서 빼지 않는다
+    number_read: Mapped[str | None] = mapped_column(String(40), default=None)
+    number_source: Mapped[str | None] = mapped_column(String(5), default=None)
+    number_len: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    number_set: Mapped[str | None] = mapped_column(String(40), default=None)
     # 잡음 표시(noise.NOISE_KINDS, 지금은 "toc"만) — 옮기지 않는 글이라 배정 줄·남은 수에서 빠지고 결과물에는 "삭제 · 목차"로 남는다.
     # 결정 행이 아니라 표시다(사람이 확정한 것처럼 꾸미지 않는다). 단위를 만들 때 붙이고, 편집 clear_noise가 비운다
     noise_kind: Mapped[str | None] = mapped_column(String(8), default=None)
@@ -380,6 +386,8 @@ class UnitEdit(Base):
     regrouped: Mapped[dict] = mapped_column(JSON, default=dict)
     lang_changes: Mapped[dict] = mapped_column(JSON, default=dict)
     layout_changes: Mapped[dict] = mapped_column(JSON, default=dict)
+    # 번호 고침(set_number) — {"units": {단위: [전, 후 number_set]}, "sections": [[첫 블록 seq, 끝 seq, 전, 후 절 이름]]}. 다른 편집은 NULL
+    number_changes: Mapped[dict | None] = mapped_column(JSON(none_as_null=True), default=None)
     # 단위 → [지금 잡음 표시, 바꿀 잡음 표시] — 목차 아님(clear_noise)과 그 되돌리기
     noise_changes: Mapped[dict] = mapped_column(JSON, default=dict)
     state: Mapped[str] = mapped_column(String(8), default="applied")

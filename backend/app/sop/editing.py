@@ -1,8 +1,9 @@
-"""쪼개기 편집 — 나누기·합치기·경계 옮기기·골라 만들기·언어 바꾸기·표 행 나누기·다시 합치기·레이아웃 표 바꾸기·캡션 붙이기·떼기·잡음 표시 풀기와 서버 쪽
+"""쪼개기 편집 — 나누기·합치기·경계 옮기기·골라 만들기·언어 바꾸기·표 행 나누기·다시 합치기·레이아웃 표 바꾸기·캡션 붙이기·떼기·잡음 표시 풀기·번호 고치기와 서버 쪽
 선형 되돌리기·다시 하기, 경계 확인 표시 (스펙 §6.4, §7.5).
 
 단위는 제자리에서 바뀌지 않는다: 편집은 옛 단위를 은퇴시키고 새 단위를 만들며, 되돌리기는 은퇴한 단위를 원래 ID로 되살린다.
 칸 문장은 제자리에 두고 묶음(group_unit_id)만 바꾸며, 그 바뀜과 레이아웃 표 표시도 기록해 되돌린다.
+번호 고치기도 제자리다 — 단위의 number_set과 그 번호가 여는 절 이름(블록 section_label)만 바꾸고 기록해 되돌린다(범위·글자는 그대로).
 묶음 잠금·문서 revision·작업 중 검사와 커밋은 부르는 쪽(라우터)이 한다.
 """
 
@@ -43,6 +44,16 @@ from app.sop.models import (
     UnitPair,
     UnitPairMember,
     UnitRef,
+)
+from app.sop.numbering import (
+    MAX_NUMBER_CHARS,
+    NO_NUMBER,
+    NUMBERED_KINDS,
+    build_number_columns,
+    get_hidden_len,
+    get_number,
+    normalize_number,
+    plan_follow,
 )
 from app.sop.refs import REF_CONFIRMED, REF_LANG, REF_REJECTED, read_number_in_text
 from app.sop.schemas import NO_NUL
@@ -170,6 +181,20 @@ class ClearRefOp(BaseModel):
     unit_id: DbId
 
 
+class SetNumberOp(BaseModel):
+    """글 단위의 문단 번호를 고친다 — 번호 칸의 값만 바뀌고 원문 글자·범위는 그대로다.
+
+    number가 null이면 "번호 없음"(번호 범위가 글로 돌아간다). 글 앞에 타자로 친 번호를 번호로 삼을 때는 그 읽은 값을 보낸다.
+    follow면 같은 목록의 뒤 번호도 같은 편집으로 따라 고친다(numbering.plan_follow) — 되돌리기도 한 번이다.
+    """
+
+    type: Literal["set_number"]
+    unit_id: DbId
+    number: Annotated[
+        str, StringConstraints(strip_whitespace=True, min_length=1, max_length=MAX_NUMBER_CHARS, pattern=r"^[^\r\n]+$"),
+        NO_NUL,
+    ] | None
+    follow: bool = True
 class ClearNoiseOp(BaseModel):
     """잡음 표시 풀기 — 목차 아님(줄 하나) · 모두 목차 아님(블록 전체). 단위는 그대로이고 표시만 비운다(되돌리기가 다시 붙인다)."""
 
@@ -179,7 +204,8 @@ class ClearNoiseOp(BaseModel):
 
 EditOp = Annotated[
     SplitOp | MergeOp | UnmergeOp | MoveBoundaryOp | CarveOp | SetLanguageOp | SplitTableRowsOp
-    | MergeTableRowsOp | SetLayoutTableOp | AttachCaptionOp | DetachCaptionOp | SetRefOp | ClearRefOp | ClearNoiseOp,
+    | MergeTableRowsOp | SetLayoutTableOp | AttachCaptionOp | DetachCaptionOp | SetRefOp | ClearRefOp | ClearNoiseOp
+    | SetNumberOp,
     Field(discriminator="type"),
 ]
 
@@ -227,6 +253,7 @@ class _Block:
     kind: str
     table_id: int | None
     row_index: int | None
+    signals: dict | None = None
 
 
 @dataclass
@@ -244,10 +271,14 @@ class _Draft:
     pos_start: int
     # 표·행 단위만 — 이 단위에 묶을 칸 문장 → 지금 묶음(만든 뒤 _Change.regroup으로 옮긴다)
     cells: dict[int, int | None] = field(default_factory=dict)
+    # 번호 열(units.number_*) — 읽은 값·출처·길이는 범위와 신호에서, number_set은 같은 자리에서 시작하던 옛 단위에서 물려받는다
+    number: dict[str, object] = field(default_factory=dict)
 
 
 Move = tuple[int | None, int | None]  # 칸 문장의 (지금 묶음, 바꿀 묶음)
 Shape = tuple[tuple[Span, ...], str, int | None]  # 단위의 (범위, 종류, 묶음) — 이것이 같으면 같은 단위다
+NumberSet = str | None  # units.number_set — None 고치지 않음, "" 번호 없음
+SectionMove = tuple[int, int, str, str]  # 블록 seq [첫, 끝]의 절 이름 (지금, 바꿀)
 
 
 @dataclass
@@ -266,6 +297,9 @@ class _Change:
     retired_shapes: list[Shape] = field(default_factory=list)
     # 캡션 붙이기·떼기로 묶인 단위가 바뀌는 묶음 — 판단이 있으면 다시 묶인 칸처럼 확인을 묻고 떼어 낸다
     bundles: list[int] = field(default_factory=list)
+    # 번호 고치기 — 단위 → (지금 number_set, 바꿀 number_set)과 그 번호가 열던 절의 블록들
+    numbers: dict[int, tuple[NumberSet, NumberSet]] = field(default_factory=dict)
+    sections: list[SectionMove] = field(default_factory=list)
     # 단위 → (지금 잡음 표시, 바꿀 잡음 표시) — 제자리에서 바뀐다(목차 아님과 그 되돌리기)
     noises: dict[int, tuple[str | None, str | None]] = field(default_factory=dict)
 
@@ -279,7 +313,7 @@ class _Change:
         (스펙 §6.4) 같은 범위를 새 ID로 다시 만들면 표시 ID가 바뀌고 확정 판단이 이유 없이 떼어진다. 캡션 붙이기·떼기는
         범위가 그대로여도 종류·묶음이 바뀐다. 표·행 단위는 범위가 없어 범위로는 견줄 수 없으므로 묶음·표 표시가 바뀌면 바뀐 것이다.
         """
-        if self.revive or self.langs or self.layouts or self.noises or self.list_regrouped_cells():
+        if self.revive or self.langs or self.layouts or self.noises or self.numbers or self.list_regrouped_cells():
             return False
         drafts = Counter((tuple(draft.spans), draft.kind, draft.group_unit_id) for draft in self.drafts)
         return drafts == Counter(self.retired_shapes)
@@ -335,7 +369,7 @@ async def _load_blocks(
         session,
         lambda chunk: select(
             SourceBlock.id, SourceBlock.seq, SourceBlock.text, SourceBlock.kind, SourceBlock.table_id,
-            SourceBlock.row_index,
+            SourceBlock.row_index, SourceBlock.signals,
         ).where(SourceBlock.id.in_(chunk), SourceBlock.extraction_id == extraction_id),
         block_ids,
     )
@@ -355,15 +389,23 @@ def _build_draft(
 
     칸 문장의 표·행 번호는 첫 범위 칸 블록의 것이다(R33) — 행을 넘어 합친 칸을 다시 나누면 조각마다 자기 행을 가져야
     표를 행 단위로 나눌 때(Task 14) 칸이 제 행에 묶인다. 문장·제목은 like를 따른다(표 밖이라 없음).
+    문단 번호는 앞 조각에 남는다(§11-10) — 번호 범위는 새 범위와 블록 신호로 다시 읽고, 사람이 고친 값은 like와 같은 자리에서
+    시작하는 조각만 물려받는다(자른 뒤 조각은 번호 없음, 합친 단위는 앞 단위의 번호).
     """
     kind = kind or like.kind
     first = blocks[spans[0][0]]
     is_cell = kind == "cell_sentence"
     table_id, row_index = (first.table_id, first.row_index) if is_cell else (like.table_id, like.row_index)
-    text = build_unit_text(spans, _get_texts(blocks))
+    texts = _get_texts(blocks)
+    text = build_unit_text(spans, texts)
+    signals = {block_id: block.signals for block_id, block in blocks.items()}
+    number = build_number_columns(kind, spans, signals, texts)
+    if like.spans and tuple(like.spans[0][:2]) == tuple(spans[0][:2]) and kind in NUMBERED_KINDS:
+        number["number_set"] = like.number_set
     return _Draft(
         kind=kind, spans=spans, text=text, lang=lang or detect_language(text) or "", table_id=table_id,
         row_index=row_index, group_unit_id=like.group_unit_id, pos_seq=first.seq, pos_start=spans[0][1],
+        number=number,
     )
 
 
@@ -613,6 +655,83 @@ async def _save_ref_mark(session: AsyncSession, op: SetRefOp | ClearRefOp, actor
         mark.state = REF_REJECTED
     mark.decided_by = actor
     mark.decided_at = clock.now()
+
+
+async def _plan_set_number(session: AsyncSession, extraction_id: ExtractionId, op: SetNumberOp) -> _Change:
+    """고칠 단위와(follow면) 같은 목록의 뒤 단위들의 number_set, 그 번호가 열던 절의 블록 범위.
+
+    같은 목록 후보는 같은 언어 · 같은 표(표 밖이면 표 밖)의 글 단위다 — 한/영이 번갈아 놓인 문서에서 한 언어의 고침이 다른
+    언어 줄을 밀지 않게 한다(짝은 Unit마다 자기 번호, F5).
+    """
+    unit = (await load_active_units(session, extraction_id, [op.unit_id]))[op.unit_id]
+    if unit.kind not in NUMBERED_KINDS or unit.noise_kind is not None:  # 목차 줄은 번호 칸이 없다
+        raise_rule(422, "invalid_unit_kind", unit_ids=[unit.id])
+    targets: dict[int, tuple[Unit, str]] = {unit.id: (unit, NO_NUMBER if op.number is None else op.number)}
+    if op.follow and op.number is not None:
+        siblings = list(
+            await session.scalars(
+                select(Unit)
+                .where(
+                    Unit.extraction_id == extraction_id, Unit.status == UNIT_ACTIVE, Unit.kind.in_(NUMBERED_KINDS),
+                    Unit.lang == unit.lang, Unit.noise_kind.is_(None),
+                    Unit.table_id.is_(None) if unit.table_id is None else Unit.table_id == unit.table_id,
+                )
+                .order_by(Unit.pos_seq, Unit.pos_start, Unit.id)
+            )
+        )
+        index = next(position for position, sibling in enumerate(siblings) if sibling.id == unit.id)
+        followed = plan_follow([get_number(sibling) for sibling in siblings], index, op.number)
+        targets.update(
+            {siblings[position].id: (siblings[position], number) for position, number in followed.items()
+             if len(number) <= MAX_NUMBER_CHARS}
+        )
+    change = _Change()
+    renamed: list[tuple[Unit, str | None, str]] = []
+    for target, number in targets.values():
+        before = (get_number(target), get_hidden_len(target))
+        after_set: NumberSet = number
+        if number and target.number_set is None and number == before[0]:
+            after_set = None  # 읽은 값 그대로면 고친 것이 아니다
+        if after_set == NO_NUMBER and before == (None, 0):
+            continue  # 번호가 없던 줄의 "번호 없음"
+        if after_set != target.number_set:
+            change.numbers[target.id] = (target.number_set, after_set)
+            if number:
+                renamed.append((target, before[0], number))
+    change.sections = await _find_section_moves(session, extraction_id, renamed)
+    return change
+
+
+async def _find_section_moves(
+    session: AsyncSession, extraction_id: ExtractionId, renamed: Sequence[tuple[Unit, str | None, str]]
+) -> list[SectionMove]:
+    """번호가 바뀐 단위(단위, 옛 번호, 새 번호) 가운데 절을 여는 줄의 블록 범위 — 그 아래 줄의 절이 고친 번호를 따라온다.
+
+    절을 여는 줄 = 자리 블록의 절 이름이 그 줄의 옛 번호이고(번호를 못 읽은 제목은 제목 글) 앞 블록의 절 이름과 다른 줄.
+    범위는 그 블록부터 같은 절 이름이 이어지는 데까지다.
+    """
+    if not renamed:
+        return []
+    rows = await session.execute(
+        select(SourceBlock.seq, SourceBlock.section_label)
+        .where(SourceBlock.extraction_id == extraction_id)
+        .order_by(SourceBlock.seq)
+    )
+    labels = dict(rows.tuples().all())
+    moves: dict[int, SectionMove] = {}
+    for unit, old, new in renamed:
+        label = labels.get(unit.pos_seq)
+        opens = old is not None and label == normalize_number(old)
+        if old is None and unit.kind == "heading":
+            opens = label == unit.text.strip()[: SourceBlock.section_label.type.length]
+        new_label = normalize_number(new)[: SourceBlock.section_label.type.length]
+        if not opens or label == new_label or labels.get(unit.pos_seq - 1) == label:
+            continue
+        last = unit.pos_seq
+        while labels.get(last + 1) == label:
+            last += 1
+        moves[unit.pos_seq] = (unit.pos_seq, last, label, new_label)
+    return [moves[seq] for seq in sorted(moves)]
 
 
 async def _load_table(session: AsyncSession, extraction_id: ExtractionId, table_id: int) -> SourceTable:
@@ -879,6 +998,8 @@ async def _plan(session: AsyncSession, document_id: int, extraction_id: Extracti
             return await _plan_set_ref(session, extraction_id, op)
         case ClearRefOp():
             return await _plan_clear_ref(session, extraction_id, op)
+        case SetNumberOp():
+            return await _plan_set_number(session, extraction_id, op)
         case ClearNoiseOp():
             return await _plan_clear_noise(session, extraction_id, op)
         case _:
@@ -971,7 +1092,7 @@ async def _insert_units(
             extraction_id=extraction_id, local_no=last_no + offset, kind=draft.kind,
             spans=[list(span) for span in draft.spans], text=draft.text, lang=draft.lang, table_id=draft.table_id,
             row_index=draft.row_index, group_unit_id=draft.group_unit_id, pos_seq=draft.pos_seq,
-            pos_start=draft.pos_start,
+            pos_start=draft.pos_start, **draft.number,
         )
         for offset, draft in enumerate(ordered, start=1)
     ]
@@ -991,6 +1112,22 @@ async def _set_languages(session: AsyncSession, langs: Mapping[int, tuple[str, s
             await session.execute(update(Unit).where(Unit.id.in_(chunk)).values(lang=lang))
 
 
+async def _set_numbers(session: AsyncSession, numbers: Mapping[int, tuple[NumberSet, NumberSet]]) -> None:
+    for unit_id, (_, number_set) in numbers.items():
+        await session.execute(update(Unit).where(Unit.id == unit_id).values(number_set=number_set))
+
+
+async def _apply_sections(session: AsyncSession, extraction_id: ExtractionId, sections: Sequence[SectionMove]) -> None:
+    """절 이름을 옮긴다 — 기록된 범위에서 지금 이름이 기록과 같은 블록만(그 사이 다른 번호 고침이 바꾼 블록은 두고 간다)."""
+    for first, last, old, new in sections:
+        await session.execute(
+            update(SourceBlock)
+            .where(
+                SourceBlock.extraction_id == extraction_id, SourceBlock.seq >= first, SourceBlock.seq <= last,
+                SourceBlock.section_label == old,
+            )
+            .values(section_label=new)
+        )
 async def _set_noises(session: AsyncSession, noises: Mapping[int, tuple[str | None, str | None]]) -> None:
     """잡음 표시를 바꾼다 — 지금 표시가 기록과 다른 단위가 있으면 편집 기록과 어긋난 것이라 RuntimeError(버그 가드)."""
     by_move: dict[tuple[str | None, str | None], list[int]] = defaultdict(list)
@@ -1122,6 +1259,8 @@ async def _write_change(
     for draft, unit_id in inserted:
         change.regroup.update({cell_id: (group_id, unit_id) for cell_id, group_id in draft.cells.items()})
     await _set_languages(session, change.langs)
+    await _set_numbers(session, change.numbers)
+    await _apply_sections(session, extraction_id, change.sections)
     await _set_noises(session, change.noises)
     # 다시 목차가 된 단위는 짝을 맺지 않는다(units._find_code_pairs와 같은 규칙)
     await _leave_pairs(session, [*change.retire, *change.langs, *marking])
@@ -1175,7 +1314,7 @@ def _record(
     """작업 기록 — 대상은 은퇴한·활성이 된·언어가 바뀐·다시 묶인 단위, 사유 칸에 편집 종류(split 등)."""
     unit_ids = sorted(
         {*result.created_unit_ids, *result.retired_unit_ids, *change.langs, *change.regroup, *change.bundles,
-         *change.noises}
+         *change.noises, *change.numbers}
     )
     record_event(
         session, bundle_id=document.bundle_id, actor=actor, action=action, target_type="unit", target_ids=unit_ids,
@@ -1220,7 +1359,8 @@ async def apply_edit(
             regrouped={str(cell_id): list(move) for cell_id, move in change.regroup.items()},
             lang_changes={str(unit_id): list(langs) for unit_id, langs in change.langs.items()},
             layout_changes={str(table_id): list(flags) for table_id, flags in change.layouts.items()},
-            noise_changes={str(unit_id): list(noises) for unit_id, noises in change.noises.items()}, actor=actor,
+            noise_changes={str(unit_id): list(noises) for unit_id, noises in change.noises.items()},
+            number_changes=_dump_numbers(change), actor=actor,
         )
     )
     _record(session, document, "unit.edit", op.type, result, change, actor)
@@ -1238,6 +1378,15 @@ async def _find_caption_bundles(session: AsyncSession, unit_ids: Collection[int]
     return sorted({row[0] for row in rows if row[0] is not None})
 
 
+def _dump_numbers(change: _Change) -> dict[str, object] | None:
+    if not change.numbers:
+        return None
+    return {
+        "units": {str(unit_id): list(values) for unit_id, values in change.numbers.items()},
+        "sections": [list(move) for move in change.sections],
+    }
+
+
 def _orient(before_after: Sequence[T], *, backwards: bool) -> tuple[T, T]:
     """기록된 (전, 후) 값 — 되돌리기면 (후, 전)."""
     before, after = before_after
@@ -1247,6 +1396,7 @@ def _orient(before_after: Sequence[T], *, backwards: bool) -> tuple[T, T]:
 def _replay(edit: UnitEdit, *, backwards: bool) -> _Change:
     """기록된 편집을 되돌리기(backwards) 또는 다시 하기로 — 같은 단위 ID·같은 칸 묶음·같은 표 표시로 뒤집거나 되풀이한다."""
     created, retired = list(edit.created_unit_ids), list(edit.retired_unit_ids)
+    numbers = edit.number_changes or {}
     return _Change(
         retire=created if backwards else retired,
         revive=retired if backwards else created,
@@ -1255,6 +1405,8 @@ def _replay(edit: UnitEdit, *, backwards: bool) -> _Change:
         layouts={
             int(table_id): _orient(flags, backwards=backwards) for table_id, flags in edit.layout_changes.items()
         },
+        numbers={int(unit_id): _orient(values, backwards=backwards) for unit_id, values in numbers.get("units", {}).items()},
+        sections=[(first, last, *_orient((old, new), backwards=backwards)) for first, last, old, new in numbers.get("sections", [])],
         # 0027 전 기록은 빈 객체다(잡음 표시를 바꾼 편집이 없었다)
         noises={int(unit_id): _orient(noises, backwards=backwards) for unit_id, noises in (edit.noise_changes or {}).items()},
     )

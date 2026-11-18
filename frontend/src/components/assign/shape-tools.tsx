@@ -115,7 +115,7 @@ export function ShapeTools({ lines, cutUnitId, busy, onAction, mode, onMode }: S
       {lines.map(({ unit, items }) => (
         <div key={unit.id} className="shape-line" data-testid={`assign-shape-line-${unit.id}`}>
           {renderLangs(unit, items)}
-          <Truncate className="min-w-0 flex-1 text-xs text-ink-2" text={unit.text.trim() || unit.display_id} />
+          <Truncate className="min-w-0 flex-1 text-xs text-ink-2" text={unit.text.slice(unit.number?.content_start ?? 0).trim() || unit.display_id} />
           <span className="shape-acts">
             {listShapeLineItems(unit, items, isPairRow).map((item) => renderAction(unit, item))}
           </span>
