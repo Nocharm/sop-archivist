@@ -270,9 +270,9 @@ describe("captions from the Assign menu", () => {
     expect(getPairPickBlocker(caption, { isDecided: () => false, hasDraft: () => false })).toBe("assign.ctx.why.notText");
   });
 
-  it("shows the caption tools as Shape buttons", () => {
+  it("shows the caption tools as Shape buttons - a table's caption attach moves to its caption slot (F12)", () => {
     expect(listShapeLineItems(caption, buildAssignMenu(ctx({ target: caption })).edit, false).map((item) => item.action)).toEqual(["split", "caption_detach"]);
-    expect(listShapeLineItems(table, buildAssignMenu(ctx({ target: table, table, prev: sentence, next: null })).edit, false).map((item) => item.action)).toEqual(["table_rows", "table_layout", "caption_attach_prev"]);
+    expect(listShapeLineItems(table, buildAssignMenu(ctx({ target: table, table, prev: sentence, next: null })).edit, false).map((item) => item.action)).toEqual(["table_rows", "table_layout"]);
   });
 });
 

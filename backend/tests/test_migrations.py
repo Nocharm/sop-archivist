@@ -362,6 +362,8 @@ _UNIT_NUMBER_COLUMNS = {
     "number_set": "VARCHAR(40)",
     # 바꾼 조항 표시(0029)도 그 앞 리비전에서는 잠시 더했다 뺀다
     "from_heading": "BOOLEAN NOT NULL DEFAULT 0",
+    # 그림 캡션 묶음(0030)도 그 앞 리비전에서는 잠시 더했다 뺀다
+    "caption_figure_id": "INTEGER",
 }
 
 

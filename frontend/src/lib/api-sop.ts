@@ -429,6 +429,8 @@ export interface ViewUnit {
   noise_kind?: "toc" | null;
   /** 제목 스타일 줄을 문장으로 바꾼 문장(F8b) - Assign의 "제목으로 되돌리기"와 묶음 머리 "[제목 → 문장]". 편집 set_heading이 오간다 */
   from_heading?: boolean;
+  /** 캡션 하나를 같이 쓰는 그림 묶음(F7 ⑥)의 첫 그림 - 이 그림이 그 그림의 캡션을 같이 쓴다. 첫 그림 자신·묶이지 않은 단위는 null. 편집 group_figures·ungroup_figures가 오간다 */
+  caption_figure_id?: number | null;
 }
 
 /** 표·그림 참조 하나 - number가 null이면 위치 참조("아래 표"), target_unit_id는 이은 표·그림 묶음 단위(못 찾으면 null) */
@@ -494,10 +496,17 @@ export type EditOp =
   | { type: "split_table_rows"; table_unit_id: number }
   | { type: "merge_table_rows"; table_id: number }
   | { type: "set_layout_table"; table_id: number; is_layout: boolean }
-  /** 바로 이웃한 묶이지 않은 글 단위를 표·행·그림의 캡션으로 - 묶음마다 언어당 하나(caption_exists), 판단이 있는 묶음이면 서버가 묻는다 */
+  /** 블록 자리 2 안(caption-slot-model CAPTION_REACH)의 묶이지 않은 글 단위를 표·행·그림의 캡션으로 - 사이 문단은 그대로,
+   *  묶음마다 언어당 하나(caption_exists), 먼 글은 caption_not_adjacent, 다른 그림의 캡션을 같이 쓰는 그림은 caption_shared. 판단이 있는 묶음이면 서버가 묻는다 */
   | { type: "attach_caption"; unit_id: number; bundle_unit_id: number }
-  /** 캡션을 같은 자리·언어의 묶이지 않은 문장으로 */
+  /** 캡션을 같은 자리·언어의 묶이지 않은 문장으로 - 첫 행에서 올린 캡션은 그 표의 칸 문장으로 돌아간다 */
   | { type: "detach_caption"; unit_id: number }
+  /** 표 첫 행 ↔ 캡션(F7 ③) - caption이면 첫 행 칸 문장이 그 표의 캡션이 되고, 아니면 칸 블록 위 캡션이 모두 첫 행으로 돌아간다(↩ 다시 첫 행으로) */
+  | { type: "set_first_row_caption"; table_unit_id: number; caption: boolean }
+  /** 그림 묶기(F7 ⑥) - 원문 순 첫 그림이 캡션을 갖고 나머지 그림이 그 캡션을 같이 쓴다 */
+  | { type: "group_figures"; unit_ids: number[] }
+  /** 그림 풀기 - 그 그림이 든 묶음의 그림이 모두 따로 선다(캡션은 첫 그림에 남는다) */
+  | { type: "ungroup_figures"; unit_id: number }
   /** 참조 줄로 - 번호는 그 단위의 글 안에 있어야 한다. 이미 참조 줄이면 번호만 고친다 */
   | { type: "set_ref"; unit_id: number; number: string }
   /** 참조 아님 - 참조 줄이면 그 전 언어로 돌리고, 제안뿐이었으면 다시 제안하지 않는다 */
@@ -863,6 +872,8 @@ export interface UnitRow {
   pair_id: number | null;
   /** 표·그림 단위의 새 문장 아래 캡션 새 문장이 있다 - 써 넣은 캡션(캡션 단위 없음)도 센다 */
   has_caption_target?: boolean;
+  /** 캡션 하나를 같이 쓰는 그림 묶음의 첫 그림(F7 ⑥) - 그 그림의 캡션이 이 그림의 캡션이다 */
+  caption_figure_id?: number | null;
 }
 
 export interface GroupUnit {

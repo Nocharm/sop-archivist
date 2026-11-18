@@ -302,6 +302,8 @@ class ViewUnitOut(BaseModel):
     noise_kind: str | None = None
     # 제목 스타일 줄을 문장으로 바꾼 문장(F8b) — Assign의 "제목으로 되돌리기"와 묶음 머리 "[제목 → 문장]"이 읽는다. 편집 set_heading이 오간다
     from_heading: bool = False
+    # 캡션 하나를 같이 쓰는 그림 묶음(F7 ⑥)의 첫 그림 — 이 그림이 그 그림의 캡션을 같이 쓴다. 첫 그림 자신·묶이지 않은 단위는 null
+    caption_figure_id: int | None = None
 
 
 def _to_ref_out(state: RefState | None) -> ViewUnitRefOut | None:
@@ -542,6 +544,7 @@ async def build_document_view(session: AsyncSession, document: Document) -> Docu
                 caption_refs=refs_by_unit.get(unit.id, []),
                 noise_kind=unit.noise_kind,
                 from_heading=unit.from_heading,
+                caption_figure_id=unit.caption_figure_id,
             )
             for unit in units
         ],

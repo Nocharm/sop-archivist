@@ -17,12 +17,13 @@ import { UnitStatusChip } from "@/components/status";
 import { Collapse } from "@/components/ui/motion";
 import { useDelegatedTip } from "@/components/ui/delegated-tip";
 import type { ViewBlock, ViewUnit } from "@/lib/api-sop";
+import { getBundleShape, getCaptionScope, isSentenceLike, type BundleShape } from "@/lib/caption-slot-model";
 import { readCaretPoint } from "@/lib/caret-point";
 import { isNoiseUnit } from "@/lib/classify-model";
 import { useI18n } from "@/lib/i18n";
 import { pickNearChunks, sliceCards } from "@/lib/paper-chunk-model";
 import { buildFoldPlan, type FoldEntry, type FoldItem, type FoldOpen } from "@/lib/paper-fold-model";
-import { buildRows, foldCaptionRows, getBundleHeader, getGapMerge, getItemSegments, getMarks, getTags, isBandHeading, MERGE_BLOCKER_KEYS, resolvePickUnit, type PaperItem, type PaperModel, type PaperRow, type Segment, type UnitMark } from "@/lib/paper-model";
+import { buildRows, foldCaptionRows, getBundleHeader, getGapMerge, getItemSegments, getMarks, getTags, isBandHeading, MERGE_BLOCKER_KEYS, resolvePickUnit, type CaptionPiece, type PaperItem, type PaperModel, type PaperRow, type Segment, type UnitMark } from "@/lib/paper-model";
 import type { JoinKind, JoinPlan } from "@/lib/split-menu-model";
 import { getHiddenEnds, listFollowPreview } from "@/lib/number-model";
 import { getCardTops, getHiddenPrefixLength, getPairBrackets, getPillWidth, getSectionHeads, getTabWidths, getSectionLevel, getSectionPill, getVisibleSkip, sliceVisible, type PairBracket } from "@/lib/strip-pill-model";
@@ -782,35 +783,92 @@ export function Paper({
     });
   }
 
-  /** 표·그림 조각 위 머리 줄 - 묶음 단위가 있을 때만(행으로 나눈 표는 행마다 단위라 없다).
-   *  캡션은 글자 조각(.su) 그대로라 Alt 긁기·나눌 자리·우클릭이 캡션 단위에 가고, 누르면 묶음으로 올려 고른다(resolvePickUnit) */
-  function renderBundleHead(row: Extract<PaperRow, { type: "table" | "figure" }>, unit: ViewUnit | undefined): ReactNode {
-    if (!unit) return null;
-    const captions = row.captions ?? [];
-    const caption =
-      captions.length === 0 ? undefined : (
-        <span className="bundle-head-caption" data-testid={`${testId}-caption-${unit.id}`}>
-          {captions.map((piece, index) => (
-            <Fragment key={piece.key}>
-              {index > 0 && <span aria-hidden> / </span>}
-              <span data-strip-unit={piece.unitId ?? undefined}>
-                {piece.parts.map((part) => (
-                  <span key={part.block.id} data-block={part.block.id}>
-                    {part.segments.map((segment, at) => renderSegment(part.block, segment, at))}
-                  </span>
-                ))}
-              </span>
-            </Fragment>
-          ))}
-        </span>
-      );
-    const isMissing = strips?.isCaptionNeeded ? strips.isCaptionNeeded(unit.id, captions.length > 0) : captions.length === 0;
-    // 캡션 단위를 바로 고른 때(짝 고르기·나눌 선)도 펼친 채 - 나눌 선 아래에서 다시 접히지 않게
-    const isSelected = unit.id === selectedId || (highlightIds?.has(unit.id) ?? false) || captions.some((piece) => piece.unitId !== null && piece.unitId === selectedId);
-    return <BundleHead head={getBundleHeader(row, model)} selected={isSelected} testId={testId} caption={caption} captionMissing={isMissing} />;
+  /** 캡션 칩 - 캡션 단위의 글자 조각(.su) 그대로라 Alt 긁기·나눌 자리·우클릭이 캡션 단위에 가고, 누르면 묶음으로 올려 고른다(resolvePickUnit).
+   *  칩째 끌어 자리 밖에 놓으면 뗀다(data-caption-chip). 문장 같은 캡션은 테두리가 주황이다(F7). 전환 키는 칸·문장 줄과 같은 블록 · 시작 자리 -
+   *  그림 줄은 줄째 키를 달아 그 안에 또 달지 않는다(안팎이 두 번 움직인다), 그림 캡션은 나타나기만 한다 */
+  function renderCaptionChip(piece: CaptionPiece, shape: BundleShape): ReactNode {
+    const caption = piece.unitId === null ? undefined : model.units.get(piece.unitId);
+    const first = piece.parts[0];
+    return (
+      <span
+        key={piece.key}
+        className="caption-chip"
+        data-caption-chip={piece.unitId ?? undefined}
+        data-odd={caption && isSentenceLike(caption.text, shape) ? "" : undefined}
+        data-flip-key={shape === "table" ? `${first.block.id}:${first.segments[0]?.start ?? 0}` : undefined}
+        data-unwrap-enter="frame"
+        data-strip-unit={piece.unitId ?? undefined}
+      >
+        {piece.parts.map((part) => (
+          <span key={part.block.id} data-block={part.block.id}>
+            {part.segments.map((segment, at) => renderSegment(part.block, segment, at))}
+          </span>
+        ))}
+      </span>
+    );
   }
 
-  function renderTable(item: Extract<PaperItem, { type: "table" }>, head: ReactNode = null): ReactNode {
+  /** 첫 그림의 캡션을 같이 쓰는 그림(F7 ⑥) - 그 캡션 글을 흐린 칩으로(고르거나 끌 수 없다, 고치기는 첫 그림에서) */
+  function renderSharedCaption(unit: ViewUnit): ReactNode {
+    const head = unit.caption_figure_id ? model.units.get(unit.caption_figure_id) : undefined;
+    if (!head) return null;
+    const texts = [...model.units.values()].filter((other) => other.kind === "caption" && other.group_unit_id === head.id).map((caption) => caption.text.trim());
+    if (texts.length === 0) return null;
+    return (
+      <span className="caption-chip" data-shared="" data-testid={`${testId}-caption-shared-${unit.id}`}>
+        {texts.join(" / ")}
+      </span>
+    );
+  }
+
+  /**
+   * 표·그림의 캡션 자리(F7 - 템플릿 규칙대로 표는 위, 그림은 아래) - 표는 머리 줄이 그 자리이고, 그림은 그림 아래 따로 둔다.
+   * 머리 줄은 묶음 단위가 있을 때만(행으로 나눈 표는 행마다 단위라 없다). 캡션 자리는 끌어 놓을 곳(data-caption-slot)이고 칩이 나고 드는 전환 범위다
+   */
+  function renderBundleHead(row: Extract<PaperRow, { type: "table" | "figure" }>, unit: ViewUnit | undefined): { head: ReactNode; slot: ReactNode } {
+    if (!unit) return { head: null, slot: null };
+    const shape = getBundleShape(unit.kind);
+    const captions = row.captions ?? [];
+    const shared = captions.length === 0 && row.type === "figure" ? renderSharedCaption(unit) : null;
+    const hasCaption = captions.length > 0 || shared !== null;
+    const chips = captions.length === 0 ? null : (
+      <span className="bundle-head-caption" data-testid={`${testId}-caption-${unit.id}`}>
+        {captions.map((piece) => renderCaptionChip(piece, shape))}
+      </span>
+    );
+    const isMissing = strips?.isCaptionNeeded ? strips.isCaptionNeeded(unit.id, hasCaption) : !hasCaption;
+    // 캡션 단위를 바로 고른 때(짝 고르기·나눌 선)도 펼친 채 - 나눌 선 아래에서 다시 접히지 않게
+    const isSelected = unit.id === selectedId || (highlightIds?.has(unit.id) ?? false) || captions.some((piece) => piece.unitId !== null && piece.unitId === selectedId);
+    const header = getBundleHeader(row, model);
+    if (row.type === "table") {
+      return { head: <BundleHead head={header} selected={isSelected} testId={testId} caption={chips ?? undefined} captionMissing={isMissing} slotId={unit.id} />, slot: null };
+    }
+    const slot = (
+      <div
+        className="caption-slot bundle-head"
+        data-sel={isSelected ? "" : undefined}
+        data-caption-slot={unit.id}
+        data-unwrap-scope={getCaptionScope(unit.id)}
+        data-empty={hasCaption ? undefined : ""}
+        data-testid={`${testId}-caption-slot-${unit.id}`}
+      >
+        {chips ?? shared}
+      </div>
+    );
+    return { head: <BundleHead head={header} selected={isSelected} testId={testId} captionMissing={isMissing} hidePreview={hasCaption} />, slot };
+  }
+
+  /** 첫 행에서 올린 캡션(F7 ③)만 남은 표 행 - 표에서 빠져 캡션 자리에 있으니 다시 그리지 않는다 */
+  function listLiftedRows(item: Extract<PaperItem, { type: "table" }>, captions: readonly CaptionPiece[]): Set<number> {
+    const lifted = new Set(captions.flatMap((piece) => piece.parts.map((part) => part.block.id)));
+    const rows = new Set<number>();
+    item.rows.forEach((cells, index) => {
+      if (cells.some((cell) => lifted.has(cell.id)) && cells.every((cell) => lifted.has(cell.id) || cell.text.trim() === "")) rows.add(index);
+    });
+    return rows;
+  }
+
+  function renderTable(item: Extract<PaperItem, { type: "table" }>, head: ReactNode = null, hiddenRows: ReadonlySet<number> = new Set()): ReactNode {
     return (
       <div className="grid grid-cols-[minmax(0,1fr)] gap-1">
         {head !== null && <div data-unwrap-leave="">{head}</div>}
@@ -819,15 +877,17 @@ export function Paper({
           {/* 표 벗기기 · 다시 표로 때 표 선이 옅어지고(나타나고) 칸 글은 남아 미끄러진다(F10) */}
           <table className="ptbl" data-unwrap-leave="frame">
             <tbody>
-              {item.rows.map((row, rowIndex) => (
-                <tr key={rowIndex}>
-                  {row.map((cell) => (
-                    <td key={cell.id} colSpan={cell.grid_span} rowSpan={cell.row_span}>
-                      {renderCell(cell)}
-                    </td>
-                  ))}
-                </tr>
-              ))}
+              {item.rows.map((row, rowIndex) =>
+                hiddenRows.has(rowIndex) ? null : (
+                  <tr key={rowIndex}>
+                    {row.map((cell) => (
+                      <td key={cell.id} colSpan={cell.grid_span} rowSpan={cell.row_span}>
+                        {renderCell(cell)}
+                      </td>
+                    ))}
+                  </tr>
+                ),
+              )}
             </tbody>
           </table>
         </div>
@@ -835,8 +895,8 @@ export function Paper({
     );
   }
 
-  /** 그림 - 그림 블록 글(옛 추출 캡션)이 머리 줄의 캡션으로 읽히면(hideText) 아래에 다시 두지 않는다 */
-  function renderFigure(block: ViewBlock, head: ReactNode = null, hideText = false): ReactNode {
+  /** 그림 - 그림 블록 글(옛 추출 캡션)이 캡션 자리의 캡션으로 읽히면(hideText) 다시 두지 않는다. 캡션 자리(slot)는 그림 아래다 */
+  function renderFigure(block: ViewBlock, head: ReactNode = null, hideText = false, slot: ReactNode = null): ReactNode {
     return (
       <>
         {head}
@@ -850,6 +910,7 @@ export function Paper({
           )}
           {!hideText && <p data-block={block.id}>{renderBlockText(block)}</p>}
         </figure>
+        {slot}
       </>
     );
   }
@@ -932,9 +993,12 @@ export function Paper({
             </div>
           )}
           {row.type === "table"
-            ? renderTable(row.item, renderBundleHead(row, unit))
+            ? renderTable(row.item, renderBundleHead(row, unit).head, listLiftedRows(row.item, row.captions ?? []))
             : row.type === "figure"
-              ? renderFigure(row.block, renderBundleHead(row, unit), (row.captions?.length ?? 0) > 0 || row.block.text.trim() === "")
+              ? (() => {
+                  const { head, slot } = renderBundleHead(row, unit);
+                  return renderFigure(row.block, head, (row.captions?.length ?? 0) > 0 || row.block.text.trim() === "", slot);
+                })()
               : row.parts.map((part, partIndex) => {
                   const skip = partIndex === 0 ? readHiddenPrefix(part.block, unit) : 0;
                   // 번호 칸으로 간 번호만 든 칸 블록 - 빈 줄을 두지 않는다
