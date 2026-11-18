@@ -60,9 +60,17 @@ export function isBoxDragActive(): boolean {
   return document.documentElement.hasAttribute("data-box-drag");
 }
 
-export function findUnderPoint(point: DragPoint, selector: string): HTMLElement | null {
-  const el = document.elementFromPoint(point.x, point.y);
+/**
+ * 포인터 밑에서 끌기가 읽을 요소 - 위에서부터 보되 data-drag-pass(끌기가 지나치는 것, 예: 클릭 배치의 틈 띠)는 건너뛴다.
+ * 놓을 때는 html의 data-box-drag가 이미 걷혀 CSS pointer-events로 비켜 세울 수 없어서 여기서 거른다
+ */
+export function pickUnderPoint(stack: readonly Element[], selector: string): HTMLElement | null {
+  const el = stack.find((candidate) => !candidate.closest("[data-drag-pass]"));
   return el instanceof HTMLElement ? el.closest<HTMLElement>(selector) : null;
+}
+
+export function findUnderPoint(point: DragPoint, selector: string): HTMLElement | null {
+  return pickUnderPoint(document.elementsFromPoint(point.x, point.y), selector);
 }
 
 // --- Alt 글자 긁기 모드: 붙은 root가 하나라도 있는 동안만 리스너를 건다 ---

@@ -46,12 +46,14 @@ export function getSpotAttrs(view: PlaceSpotView): SpotAttrs {
   };
 }
 
-/** 번호 줄 사이의 틈 - 높이 없이 앞뒤 줄에 걸친 누름 띠. 올리면 가로선과 꼬리표("6.1.1 다음 — 6.1.2가 된다") */
+/** 번호 줄 사이의 틈 - 높이 없이 앞뒤 줄에 걸친 누름 띠. 올리면 가로선과 꼬리표("6.1.1 다음 — 6.1.2가 된다").
+ *  끌기는 이 띠를 지나쳐 그 밑의 줄을 읽는다(data-drag-pass) - 띠가 줄 끝 4px를 덮어도 끌어 놓기의 답이 바뀌지 않게 */
 export function PlaceGap({ view, testId }: { view: PlaceSpotView; testId: string }) {
   return (
     <button
       type="button"
       className="place-gap"
+      data-drag-pass=""
       data-place={view.open ? "open" : "refused"}
       data-place-label={view.label || undefined}
       data-place-picked={view.picked ? "" : undefined}
