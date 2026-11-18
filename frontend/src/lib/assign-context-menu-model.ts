@@ -3,7 +3,7 @@
 // 표·행·그림(묶음)은 묶음 도구(행으로 나누기·표 벗기기·캡션 붙이기)만, 캡션은 문장 도구 일부와 캡션 떼기를 받는다(명세 2026-11-16 §4.2).
 // 고치기는 Split의 편집을 그대로 부르므로 판단이 없는 단위만 받는다 - 배정된 문장은 먼저 배정을 취소한다(서버도 판단이 걸린 단위는 확인을 요구한다).
 import type { CoverStatus, ViewUnit } from "./api-sop";
-import { MERGE_BLOCKER_KEYS } from "./paper-model";
+import { isBandHeading, MERGE_BLOCKER_KEYS } from "./paper-model";
 import { getPairMergeReason, hasBothScripts, planJoin, type JoinPlan } from "./split-menu-model";
 
 export type AssignMenuAction =
@@ -170,7 +170,8 @@ function buildTextCaptionItems(ctx: AssignMenuContext): AssignMenuItem[] {
  */
 function buildHeadingItems(ctx: AssignMenuContext, retireReason: string | null): AssignMenuItem[] {
   const { target } = ctx;
-  if (target.group_unit_id !== null || target.noise_kind || target.lang === "ref") return [];
+  // 띠 표 제목 줄(F4)의 반대 길은 다듬기 칸의 "표로 되돌리기"다 - 문장으로 바꾸지 않는다
+  if (target.group_unit_id !== null || target.noise_kind || target.lang === "ref" || isBandHeading(target)) return [];
   if (target.kind === "heading") return [build("to_sentence", retireReason)];
   if (target.kind !== "sentence") return [];
   return [{ ...build("to_heading", retireReason), labelKey: target.from_heading ? "assign.headingShift.back" : "assign.ctx.toHeading" }];

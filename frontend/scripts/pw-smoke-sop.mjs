@@ -4370,7 +4370,7 @@ await runStep("outputs: A, B, C and the Excel preview", {}, async ({ page, takeS
   await page.waitForFunction(() => document.querySelector('[data-testid="outputs-check-numbers"]')?.checked === false, null, { timeout: T });
 });
 
-// --- 목차 블록(MD 1 F6) - 시드 7번 묶음 "SYNTHETIC 7 목차": 목차 스타일 줄 7(한글 4 · 영어 3)과 그 뒤 점 끌기 보통 줄 1이 목차로 잡히고 본문 3줄 ---
+// --- 목차 블록(MD 1 F6) - 시드 7번 묶음 "SYNTHETIC 7 목차": 목차 스타일 줄 7(한글 4 · 영어 3)과 그 뒤 점 끌기 보통 줄 1이 목차로 잡히고 본문 4줄(띠 표 제목 줄 하나 포함) ---
 const TOC_TITLE = "SYNTHETIC 7 목차";
 const TOC_LINES = 8;
 const TOC_AFTER_TEXT = "관련 서식";
@@ -4404,7 +4404,7 @@ await runStep("assign: TOC block folds the contents, Not contents returns one li
   check("the folded block shows the automatic delete line", await page.locator(`[data-testid="assign-paper-toc-note-${key}"]`).isVisible());
   check("no contents line is drawn as a normal piece while folded", (await page.locator('[data-testid^="assign-paper-toc-line-"]').count()) === 0);
   const before = await readAllCount(page);
-  check("the remaining count leaves the contents lines out", before === toc.progress.total && before === 3, `${before} | ${toc.progress.total}`);
+  check("the remaining count leaves the contents lines out", before === toc.progress.total && before === 4, `${before} | ${toc.progress.total}`);
 
   await head.click();
   await page.waitForFunction((testId) => document.querySelector(`[data-testid="${testId}"]`)?.getAttribute("aria-expanded") === "true", `assign-paper-toc-head-${key}`, { timeout: T });
@@ -4467,6 +4467,68 @@ await runStep("assign: TOC block None of these are contents returns the whole bl
   await page.locator('[data-testid="assign-undo"]').click();
   await waitTocLines(page, TOC_LINES);
   check("undo folds the block back, closed", (await page.locator('[data-testid^="assign-paper-toc-head-"]').getAttribute("aria-expanded")) === "false" && (await readAllCount(page)) === before);
+});
+
+// --- 띠 표 → 제목 줄(MD 1 F4) - 시드 7번 묶음 본문의 띠 표 "7.4 | | 필터 교체 (Filter change)"는 올리자마자 제목 줄 하나다.
+// 번호는 번호 칸에만 있고 글은 제목뿐이다. Shape의 Back to band table이 표 한 줄로 되돌리고 Undo가 다시 제목 줄로 만든다(시드 그대로 둔다)
+const BAND_NUMBER = "7.4";
+const BAND_TITLE = "필터 교체 (Filter change)";
+
+await runStep("assign: band heading - one heading line with 7.4 in the number cell, Back to band table, Undo makes it a heading again", {}, async ({ page, takeShot }) => {
+  const toc = await findTocBundle(page);
+  check("the demo seed has the contents bundle", toc !== null);
+  if (!toc) return;
+  const headers = { "X-Dev-User": "qa.member" };
+  const docs = await (await page.request.get(`${BASE}/api/bundles/${toc.id}/documents`, { headers })).json();
+  const readView = async () => (await page.request.get(`${BASE}/api/bundles/${toc.id}/documents/${docs[0].id}/view`, { headers })).json();
+  const waitView = async (isDone) => {
+    for (let tries = 0; tries < 60; tries += 1) {
+      const view = await readView();
+      if (isDone(view)) return view;
+      await page.waitForTimeout(250);
+    }
+    return null;
+  };
+  const band = (await readView()).units.find((unit) => unit.kind === "heading" && unit.table_id !== null);
+  check("the band table is a heading line from upload", band !== undefined && band.number?.value === BAND_NUMBER);
+  if (!band) return;
+  await page.goto(`${BASE}/bundles/${toc.id}/assign`);
+  const piece = page.locator(`[data-testid="assign-paper-piece-${band.id}"]`);
+  await piece.waitFor({ timeout: T });
+  await piece.scrollIntoViewIfNeeded();
+  // 표가 아니라 글 조각 하나 - 번호는 번호 칸(조각 밖 왼쪽)에 한 번, 조각 글은 제목만
+  check("it is drawn as one text piece, not a table", (await piece.getAttribute("data-kind")) === "piece");
+  const pieceText = await piece.innerText();
+  check("the piece shows the title without the number", pieceText.includes(BAND_TITLE) && !pieceText.includes(BAND_NUMBER), pieceText);
+  const rowText = await piece.locator("xpath=..").innerText();
+  check("the number shows once, in the number cell", rowText.split(BAND_NUMBER).length - 1 === 1, rowText);
+  await piece.click();
+  await wait(page, "assign-shape-band-back");
+  const line = await getText(page, `assign-shape-line-${band.id}`);
+  check("the Shape line reads the title only", line.includes(BAND_TITLE) && !line.includes(BAND_NUMBER), line);
+  check("a band heading has no Turn into sentences button", (await page.locator(`[data-testid="assign-shape-to_sentence-${band.id}"]`).count()) === 0);
+  await takeShot("sop-assign-band-heading.png");
+  await page.locator('[data-testid="assign-shape-band-back"]').click();
+  const table = await waitView((view) => !view.units.some((unit) => unit.id === band.id));
+  const tableUnit = table?.units.find((unit) => unit.kind === "table" && unit.table_id === band.table_id);
+  check("Back to band table makes it one table line again", tableUnit !== undefined);
+  if (tableUnit) await page.locator(`[data-testid="assign-paper-piece-${tableUnit.id}"]`).waitFor({ timeout: T });
+  // 한 편집이라 Undo 한 번에 같은 제목 줄(같은 Unit id)로 돌아온다
+  await page.locator('[data-testid="assign-undo"]').click();
+  check("Undo brings the same heading line back", (await waitView((view) => view.units.some((unit) => unit.id === band.id && unit.kind === "heading"))) !== null);
+  await piece.waitFor({ timeout: T });
+});
+
+// 결과물 A(API) - 위치 칸은 띠 표 번호와 "띠 표", 원문 칸은 제목만(F11)
+await runStep("assign: band heading - Output A puts it at § 7.4 · 띠 표 with the title only", {}, async ({ page }) => {
+  const toc = await findTocBundle(page);
+  if (!toc) return;
+  const headers = { "X-Dev-User": "qa.member" };
+  const rows = await (await page.request.get(`${BASE}/api/bundles/${toc.id}/outputs/a?lang=ko`, { headers })).json();
+  const row = rows.find((item) => item.source_text === BAND_TITLE);
+  check("Output A has the band heading row", row !== undefined);
+  if (!row) return;
+  check("its location is the band number and Band table", row.location.section === BAND_NUMBER && row.location.place === "띠 표", JSON.stringify(row.location));
 });
 
 await runStep("outputs: export preview folds TOC rows and Output A keeps them as automatic deletes", {}, async ({ page, takeShot }) => {

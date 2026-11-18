@@ -5,6 +5,7 @@
 // 줄이 한/영 짝이거나 합친 한 문장이면 맨 아래에 둘 사이를 바꾸는 전환(One sentence | KO/EN pair)이 붙는다 - 언어 판정이 틀려 잘못 묶였을 때 고치는 길이다. 짝 줄의 짝 풀기도 그 옆에 한 번.
 // 보낼 곳(2번)을 고르기 전에 문장 모양부터 맞추는 자리다. 참조 줄 확인과 AI 나누기 제안은 이 줄 아래의 카드가 맡는다.
 // 제목에서 바꾼 문장(F8b) 줄이면 맨 아래에 [제목으로 되돌리기] 단추 하나 - 짝이면 두 조항 줄을 함께 되돌린다(F12).
+// 띠 표 제목 줄(F4)이면 맨 아래에 [표로 되돌리기] 단추 하나 - 그 띠 표를 표 한 줄로 되돌린다(한 편집이라 Ctrl+Z로 다시 제목 줄).
 "use client";
 
 import { ASSIGN_ACTION_ICONS, ASSIGN_ACTION_LABELS } from "@/components/assign/assign-context-menu";
@@ -32,13 +33,21 @@ interface ShapeToolsProps {
   mode: ShapeMode | null;
   onMode: (next: ShapeMode["current"]) => void;
   /** 고른 줄이 제목에서 바꾼 문장이면 "제목으로 되돌리기"(onBack) - 아니면 null. reasonKey면 꺼 두고 까닭을 툴팁으로 */
-  headingBack?: { reasonKey: string | null; onBack: () => void } | null;
+  headingBack?: ShapeBack | null;
+  /** 고른 줄이 띠 표 제목 줄이면 "표로 되돌리기"(onBack) - 아니면 null */
+  bandBack?: ShapeBack | null;
+}
+
+/** 다듬기 맨 아래 되돌리기 단추 하나 - reasonKey면 꺼 두고 까닭을 툴팁으로 */
+export interface ShapeBack {
+  reasonKey: string | null;
+  onBack: () => void;
 }
 
 const MODE_LABELS = { one: "split.join.one", pair: "split.join.pair" } as const;
 const LANGS = ["ko", "en", "ref"] as const;
 
-export function ShapeTools({ lines, cutUnitId, busy, onAction, mode, onMode, headingBack = null }: ShapeToolsProps) {
+export function ShapeTools({ lines, cutUnitId, busy, onAction, mode, onMode, headingBack = null, bandBack = null }: ShapeToolsProps) {
   const { t } = useI18n();
   const isPairRow = mode?.current === "pair";
   // 짝 풀기는 짝 전체를 푼다 - 짝 줄이면 줄마다 두지 않고 모양 전환 옆에 한 번
@@ -68,6 +77,24 @@ export function ShapeTools({ lines, cutUnitId, busy, onAction, mode, onMode, hea
           <Icon size={13} strokeWidth={1.6} aria-hidden />
         </button>
       </Tooltip>
+    );
+  }
+
+  function renderBack(back: ShapeBack, labelKey: string, testId: string): ReactNode {
+    return (
+      <div className="shape-mode-row">
+        <Tooltip label={back.reasonKey ? t(back.reasonKey) : ""} suppressed={back.reasonKey === null} align="start">
+          <button
+            type="button"
+            className="btn h-7 text-xs"
+            aria-disabled={back.reasonKey !== null || busy ? "true" : undefined}
+            data-testid={testId}
+            onClick={() => back.reasonKey === null && !busy && back.onBack()}
+          >
+            {t(labelKey)}
+          </button>
+        </Tooltip>
+      </div>
     );
   }
 
@@ -150,21 +177,8 @@ export function ShapeTools({ lines, cutUnitId, busy, onAction, mode, onMode, hea
           {unpairLine && unpairItem && renderAction(unpairLine.unit, unpairItem)}
         </div>
       )}
-      {headingBack && (
-        <div className="shape-mode-row">
-          <Tooltip label={headingBack.reasonKey ? t(headingBack.reasonKey) : ""} suppressed={headingBack.reasonKey === null} align="start">
-            <button
-              type="button"
-              className="btn h-7 text-xs"
-              aria-disabled={headingBack.reasonKey !== null || busy ? "true" : undefined}
-              data-testid="assign-shape-heading-back"
-              onClick={() => headingBack.reasonKey === null && !busy && headingBack.onBack()}
-            >
-              {t("assign.headingShift.back")}
-            </button>
-          </Tooltip>
-        </div>
-      )}
+      {headingBack && renderBack(headingBack, "assign.headingShift.back", "assign-shape-heading-back")}
+      {bandBack && renderBack(bandBack, "assign.band.back", "assign-shape-band-back")}
     </div>
   );
 }

@@ -56,6 +56,8 @@ CAPTION_OF_FLAG = "caption_of"
 # docx_reader.SIGNAL_NUMBERS·NUMBER_CELL과 같은 값 — 블록 신호의 번호 범위 [[시작, 끝, 출처], …]와 글 전체가 번호 꼴인 칸
 NUMBERS_SIGNAL = "numbers"
 NUMBER_CELL = "cell"
+# docx_reader.SIGNAL_BAND와 같은 값 — 띠 표(1행 3칸: 번호 칸 | 빈 칸 | 제목 칸)의 표 신호 {"number", "level"}
+BAND_SIGNAL = "band"
 NEUTRAL = "neutral"
 # 제목다움(F8b · 설계 2d) — 라벨 뒤 글이 이보다 길고 마침표로 끝나는 "제목"은 문장이다. 합성 자료로 잡은 값이다(실제 SOP 시험 뒤 다시 정한다)
 HEADING_SENTENCE_MIN_CHARS = 60
@@ -244,6 +246,23 @@ class BlockView:
 class TableView:
     id: int
     is_layout: bool
+    is_band: bool = False  # 띠 표 신호가 있다 — 레이아웃(벗긴) 띠 표는 제목 칸이 번호 칸을 품은 제목 줄이 된다(F4)
+
+
+def is_band_table(signals: Mapping[str, object] | None) -> bool:
+    """추출기가 띠 표 신호를 남긴 표인가 — 꼴(1행 3칸 · 번호 꼴 첫 칸 · 빈 가운데 칸 · 글 있는 셋째 칸)은 docx_reader가 본다."""
+    return bool((signals or {}).get(BAND_SIGNAL))
+
+
+def is_certain_band(signals: Mapping[str, object] | None, parent_table_id: int | None, part: str) -> bool:
+    """올리자마자 제목 줄로 만들 띠 표인가(F4 · §11-1) — 띠 표 신호가 있는 본문의 바깥 표. 데이터 표 안의 띠 표는 바깥 표를 벗길 때까지
+    표 안에 두고(브랜치 6), 머리말·꼬리말의 띠 표 꼴은 절을 열지 않아 표로 둔다. 표로 둔 띠 표도 사람이 벗기면 제목 줄이 된다."""
+    return is_band_table(signals) and parent_table_id is None and part == "body"
+
+
+def is_band_heading(kind: str, table_id: int | None) -> bool:
+    """띠 표 제목 줄인가 — 제목 단위 가운데 원문 표를 가리키는 것은 벗긴 띠 표에서 나온 것뿐이다(표 칸 문단은 제목 스타일이어도 칸 문장)."""
+    return kind == "heading" and table_id is not None
 
 
 @dataclass(frozen=True)
@@ -301,7 +320,8 @@ def build_unit_drafts(
       언어별로 나뉜다), 아니면 문장마다. 머리말·각주 등도 같은 규칙.
     - 표 칸: 데이터 표는 표마다 첫 칸 자리에 표 단위(범위 없음·중립)를 두고 칸 문장을 묶는다. 레이아웃 표는 묶지 않는다.
       병합 칸(merged_cell)도 보통 칸이다. 레이아웃 표의 번호만 든 칸("A", "7" — 신호 cell)은 제 줄이 되지 않고 같은 행 다음 칸의
-      첫 줄 앞에 붙어 그 줄의 번호 범위가 된다(붙을 줄이 없으면 제 줄, §11-7).
+      첫 줄 앞에 붙어 그 줄의 번호 범위가 된다(붙을 줄이 없으면 제 줄, §11-7). 레이아웃 띠 표(is_band)는 칸 글이 제목 줄이라
+      번호 칸 + 제목 칸이 제목 단위 하나가 된다(F4 — 번호는 번호 칸에만, 글은 제목만).
     - 그림: 그림 블록 글자(새 추출은 비었다, 예전 추출은 캡션)를 범위로 갖는 중립 단위 하나. 칸 안 그림도 표에 묶지 않는
       독립 단위다.
     - 캡션: caption_of 표시가 있는 블록은 문장으로 쪼개지 않고 블록 전체 범위 하나의 캡션 단위로 그 그림·표 초안에 묶는다.
@@ -313,6 +333,7 @@ def build_unit_drafts(
     """
     toc_block_ids = find_toc_block_ids(blocks)
     layout_table_ids = {table.id for table in tables if table.is_layout}
+    band_heading_ids = {table.id for table in tables if table.is_layout and table.is_band}
     # 캡션이 묶음보다 앞에 올 수 있어 묶음 초안이 생길 블록 seq를 먼저 모은다 — 그림 블록, 데이터 표의 첫 칸 블록
     bundle_seqs: set[int] = set()
     first_cell_tables: set[int] = set()
@@ -359,10 +380,17 @@ def build_unit_drafts(
                 if group_index is None:
                     group_index = table_draft_index[block.table_id] = bundle_draft_index[block.seq] = len(drafts)
                     drafts.append(UnitDraft("table", [], NEUTRAL, block.table_id, None, None, block.seq, -1))
-            cells = [
-                _build_text_draft("cell_sentence", block, start, end, block.table_id, block.row_index, group_index)
-                for start, end in split_sentences(block.text, split_lines=split_lines)
-            ]
+            if block.table_id in band_heading_ids:
+                # 벗긴 띠 표 — 칸 글은 제목이고(문장으로 쪼개지 않는다) 번호 칸은 아래 번호 칸 규칙으로 그 제목 줄의 번호 범위가 된다
+                cells = [
+                    _build_text_draft("heading", block, start, end, block.table_id, block.row_index)
+                    for start, end in _split_heading(block.text, split_lines)
+                ]
+            else:
+                cells = [
+                    _build_text_draft("cell_sentence", block, start, end, block.table_id, block.row_index, group_index)
+                    for start, end in split_sentences(block.text, split_lines=split_lines)
+                ]
             if group_index is None and len(cells) == 1 and _is_number_cell(block, cells[0]):
                 if number_cell is not None:  # 번호 칸이 잇달아 오면 앞의 것은 제 줄이다
                     drafts.append(number_cell)

@@ -61,7 +61,17 @@ from app.sop.numbering import (
 )
 from app.sop.refs import REF_CONFIRMED, REF_LANG, REF_REJECTED, read_number_in_text
 from app.sop.schemas import NO_NUL
-from app.sop.segment import build_unit_text, detect_language, has_visible_char, split_sentences
+from app.sop.segment import (
+    BlockView,
+    TableView,
+    build_unit_drafts,
+    build_unit_text,
+    detect_language,
+    has_visible_char,
+    is_band_heading,
+    is_band_table,
+    split_sentences,
+)
 from app.sop.spans import (
     NEUTRAL,
     Span,
@@ -299,6 +309,8 @@ class _Draft:
     number: dict[str, object] = field(default_factory=dict)
     # 제목에서 바꾼 문장(units.from_heading) — 바꾼 문장을 자르고 합쳐도 문장으로 남으면 물려받는다
     from_heading: bool = False
+    # 같은 변경에서 만드는 표 단위(_Change.drafts의 순번)에 묶을 새 칸 문장 — 띠 표를 표로 되돌릴 때(_plan_band_layout)
+    group_draft: int | None = None
 
 
 Move = tuple[int | None, int | None]  # 칸 문장의 (지금 묶음, 바꿀 묶음)
@@ -684,6 +696,8 @@ async def _plan_set_heading(
     wrong = sorted(
         unit.id for unit in units.values()
         if unit.kind != wanted or unit.noise_kind is not None or unit.group_unit_id is not None
+        # 띠 표 제목 줄의 반대 길은 "표로 되돌리기"(set_layout_table)다
+        or is_band_heading(unit.kind, unit.table_id)
     )
     if wrong:
         raise_rule(422, "heading_shift_kind", unit_ids=wrong)
@@ -1020,14 +1034,18 @@ def _build_sentence_from(caption: Unit) -> _Draft:
     )
 
 
-async def _plan_set_layout_table(session: AsyncSession, extraction_id: ExtractionId, op: SetLayoutTableOp) -> _Change:
+async def _plan_set_layout_table(
+    session: AsyncSession, document_id: int, extraction_id: ExtractionId, op: SetLayoutTableOp
+) -> _Change:
     """데이터 → 레이아웃: 표·행 단위를 은퇴시키고 칸 문장의 묶음을 푼다. 레이아웃 → 데이터: 새 표 단위에 칸 문장을 묶는다.
 
-    칸 안의 표는 따로 바뀐다(table_id가 다르다). 이미 그 표시면 바뀌는 게 없다.
+    칸 안의 표는 따로 바뀐다(table_id가 다르다). 이미 그 표시면 바뀌는 게 없다. 띠 표는 단위 모양이 바뀐다(_plan_band_layout).
     """
     table = await _load_table(session, extraction_id, op.table_id)
     if table.is_layout == op.is_layout:
         return _Change()
+    if is_band_table(table.signals):
+        return await _plan_band_layout(session, document_id, extraction_id, table, op.is_layout)
     if op.is_layout:
         groups = await _load_table_units(session, extraction_id, table.id, TABLE_UNIT_KINDS)
         members = await _load_grouped_cells(session, [group.id for group in groups])
@@ -1047,6 +1065,88 @@ async def _plan_set_layout_table(session: AsyncSession, extraction_id: Extractio
         )
     change.layouts = {table.id: (table.is_layout, op.is_layout)}
     return change
+
+
+async def _plan_band_layout(
+    session: AsyncSession, document_id: int, extraction_id: ExtractionId, table: SourceTable, to_layout: bool
+) -> _Change:
+    """띠 표 ↔ 제목 줄(F4) — 벗기면 표·행·칸 단위를 거두고 번호 칸을 품은 제목 줄을, "표로 되돌리기"는 제목 줄을 거두고 데이터 표
+    (표 단위 + 묶인 칸 문장)를 만든다. 두 쪽 모두 처음 쪼개기(segment.build_unit_drafts)가 만드는 단위 그대로다. 편집 하나라
+    되돌리기·다시 하기는 같은 단위 ID로 오간다. 칸 밖까지 이은 줄이 있으면 표로 되돌리지 않는다(422 cell_crosses_table).
+    """
+    extra: list[_Draft] = []
+    if to_layout:
+        groups = await _load_table_units(session, extraction_id, table.id, TABLE_UNIT_KINDS)
+        members = await _load_grouped_cells(session, [group.id for group in groups])
+        replaced = [*groups, *members]
+        # 캡션은 보통 레이아웃 표처럼 문장으로 돌아간다
+        extra = [_build_sentence_from(member) for member in members if member.kind == CAPTION_KIND]
+    else:
+        replaced = await _find_band_units(session, extraction_id, table.id)
+    document = await session.get_one(Document, document_id)
+    change = _build_replacement(replaced, [*await _build_band_drafts(session, document, extraction_id, table.id, to_layout), *extra])
+    change.layouts = {table.id: (table.is_layout, to_layout)}
+    return change
+
+
+async def _find_band_units(session: AsyncSession, extraction_id: ExtractionId, table_id: int) -> list[Unit]:
+    """벗긴 띠 표의 블록만 덮는 활성 단위(제목 줄과 그 조각) — 표 밖 단위와 이은 것이 있으면 422 cell_crosses_table."""
+    table_blocks = set(
+        await session.scalars(
+            select(SourceBlock.id).where(SourceBlock.extraction_id == extraction_id, SourceBlock.table_id == table_id)
+        )
+    )
+    rows = await session.execute(
+        select(Unit.id, Unit.spans).where(
+            Unit.extraction_id == extraction_id, Unit.status == UNIT_ACTIVE, Unit.group_unit_id.is_(None),
+            Unit.kind.in_(TEXT_KINDS),
+        )
+    )
+    own: list[int] = []
+    crossing: list[int] = []
+    for unit_id, spans in rows:
+        inside = [span[0] in table_blocks for span in spans]
+        if inside and all(inside):
+            own.append(unit_id)
+        elif any(inside):
+            crossing.append(unit_id)
+    if crossing:
+        raise_rule(422, "cell_crosses_table", unit_ids=sorted(crossing))
+    return sorted((await load_active_units(session, extraction_id, own)).values(), key=_get_position)
+
+
+async def _build_band_drafts(
+    session: AsyncSession, document: Document, extraction_id: ExtractionId, table_id: int, is_layout: bool
+) -> list[_Draft]:
+    """띠 표 칸 블록을 처음 쪼개기 규칙으로 — 레이아웃이면 제목 줄, 아니면 표 단위와 그 표에 묶일 칸 문장(group_draft)."""
+    rows = await session.execute(
+        select(
+            SourceBlock.id, SourceBlock.seq, SourceBlock.kind, SourceBlock.part, SourceBlock.text,
+            SourceBlock.heading_level, SourceBlock.flags, SourceBlock.table_id, SourceBlock.row_index,
+            SourceBlock.signals,
+        )
+        .where(
+            SourceBlock.extraction_id == extraction_id, SourceBlock.table_id == table_id,
+            SourceBlock.kind == "table_cell",
+        )
+        .order_by(SourceBlock.seq)
+    )
+    blocks = [BlockView(*row) for row in rows]
+    drafts = build_unit_drafts(
+        blocks, [TableView(table_id, is_layout, True)], document.language_layout,
+        split_lines=document.file_format == LINE_SPLIT_FORMAT,
+    )
+    texts = {block.id: block.text for block in blocks}
+    signals = {block.id: block.signals for block in blocks if block.signals}
+    return [
+        _Draft(
+            kind=draft.kind, spans=list(draft.spans), text=build_unit_text(draft.spans, texts), lang=draft.lang,
+            table_id=draft.table_id, row_index=draft.row_index, group_unit_id=None, pos_seq=draft.pos_seq,
+            pos_start=draft.pos_start, number=build_number_columns(draft.kind, draft.spans, signals, texts),
+            group_draft=draft.group_index,
+        )
+        for draft in drafts
+    ]
 
 
 async def _find_bundle_neighbors(
@@ -1136,7 +1236,7 @@ async def _plan(session: AsyncSession, document_id: int, extraction_id: Extracti
         case MergeTableRowsOp():
             return await _plan_merge_table_rows(session, extraction_id, op)
         case SetLayoutTableOp():
-            return await _plan_set_layout_table(session, extraction_id, op)
+            return await _plan_set_layout_table(session, document_id, extraction_id, op)
         case AttachCaptionOp():
             return await _plan_attach_caption(session, extraction_id, op)
         case DetachCaptionOp():
@@ -1247,6 +1347,15 @@ async def _insert_units(
     ]
     session.add_all(units)
     await session.flush()
+    # 같은 변경에서 만든 표 단위에 묶을 새 칸 문장 — 표 단위 id는 INSERT 뒤에야 알므로 한 번 더 쓴다(처음 쪼개기와 같다)
+    made = {id(draft): unit for draft, unit in zip(ordered, units, strict=True)}
+    grouped = False
+    for draft, unit in zip(ordered, units, strict=True):
+        if draft.group_draft is not None:
+            unit.group_unit_id = made[id(drafts[draft.group_draft])].id
+            grouped = True
+    if grouped:
+        await session.flush()
     if document.side == "old":
         session.add_all(UnitDecision(unit_id=unit.id, bundle_id=document.bundle_id) for unit in units)
     return [(draft, unit.id) for draft, unit in zip(ordered, units, strict=True)]

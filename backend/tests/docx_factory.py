@@ -136,6 +136,23 @@ def make_grid_table(n_cols: int, rows_xml: str, widths: Sequence[int] | None = N
     return f"<w:tbl><w:tblGrid>{grid}</w:tblGrid>{rows_xml}</w:tbl>"
 
 
+# 띠 표(표형 옛 SOP의 절 제목 표) 열 폭 0.9 / 0.4 / 8.0 cm(twip, 1 cm = 567)와 칸 음영 — 장은 번호 칸 1F497D · 제목 칸 EAF1DD, 절은 회색
+BAND_WIDTHS = (510, 227, 4536)
+BAND_CHAPTER_FILLS = ("1F497D", "EAF1DD", "EAF1DD")
+BAND_SECTION_FILLS = ("D9D9D9", "D9D9D9", "D9D9D9")
+
+
+def make_band_table(number: str, title: str, *, middle: str = "") -> str:
+    """합성 띠 표 하나 — 1행 3칸(번호 칸 | 좁은 빈 칸 | 제목 칸). 번호에 점이 있으면 절 음영, 없으면 장 음영.
+    middle에 글을 넣으면 띠 표 꼴이 아니다(애매한 표)."""
+    fills = BAND_SECTION_FILLS if "." in number.rstrip(".") else BAND_CHAPTER_FILLS
+    cells = "".join(
+        f'<w:tc><w:tcPr><w:shd w:val="clear" w:color="auto" w:fill="{fill}"/></w:tcPr>{p(text)}</w:tc>'
+        for text, fill in zip((number, middle, title), fills, strict=True)
+    )
+    return make_grid_table(3, f"<w:tr>{cells}</w:tr>", BAND_WIDTHS)
+
+
 def get_media_rel_id(name: str) -> str:
     """build_docx(media=…)가 미디어마다 붙이는 관계 id."""
     return "rIdMedia_" + name.replace(".", "_")
