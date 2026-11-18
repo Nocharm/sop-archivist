@@ -4444,7 +4444,10 @@ await runStep("order: indent a line on C and its section number changes", {}, as
   await page.goto(`${BASE}/bundles/${halfBundleId}/order`);
   await wait(page, "output-c");
   // 들일 수 있는 첫 줄(앞줄이 있고 번호가 있는 줄) - SOP의 내용은 대부분 글머리 기호라 번호 줄이 있는 문서(WI나 절차가 든 SOP)를 찾아 연다
-  const [indentHit] = await findOrderDocs(page, () => document.querySelector('[data-testid^="output-c-indent-"]:not([disabled])')?.getAttribute("data-testid").replace("output-c-indent-", "") ?? null);
+  // 번호 줄만 - 글머리 기호 줄도 들일 수 있게 된 뒤로(MD 2 §S5 ①) 첫 들임 단추가 번호 없는 줄일 수 있다
+  const [indentHit] = await findOrderDocs(page, () => [...document.querySelectorAll('[data-testid^="output-c-indent-"]:not([disabled])')]
+    .map((node) => node.getAttribute("data-testid").replace("output-c-indent-", ""))
+    .find((id) => document.querySelector(`[data-testid="output-c-number-${id}"]`) !== null) ?? null);
   check("a document has a line that can be indented", Boolean(indentHit));
   if (!indentHit) return;
   const targetId = indentHit[1];
@@ -4512,7 +4515,8 @@ await runStep("order: a chapter 6 numbered line keeps the numbered indent rule",
   await page.goto(`${BASE}/bundles/${halfBundleId}/order`);
   await wait(page, "output-c");
   const [hit] = await findOrderDocs(page, () => {
-    for (const section of document.querySelectorAll('[data-testid="output-c"] section[data-location-key^="procedures."]')) {
+    // 데모 시드의 6장 절차에는 번호 줄이 둘 이상인 곳이 없을 수 있어 번호 줄이 든 칸이면 어디든(WI 단계 포함) 본다 - 규칙은 같다
+    for (const section of document.querySelectorAll('[data-testid="output-c"] section[data-location-key]')) {
       const numbered = [...section.querySelectorAll('[data-testid^="output-c-number-"]')].map((node) => node.getAttribute("data-testid").replace("output-c-number-", ""));
       const [first, second] = numbered;
       if (!first || !second) continue;
@@ -4522,7 +4526,7 @@ await runStep("order: a chapter 6 numbered line keeps the numbered indent rule",
     return null;
   });
   const pair = hit ? hit[1] : null;
-  check("a chapter 6 procedure has two numbered lines, the first one not indentable", pair !== null);
+  check("a section has two numbered lines, the first one not indentable", pair !== null);
   if (!pair) return;
   const number = page.locator(`[data-testid="output-c-number-${pair.second}"]`);
   const before = (await number.innerText()).trim();
