@@ -38,6 +38,7 @@ import { PairColumn, PairViewToggle } from "@/components/assign/pair-column";
 import { PairLines, readPairAnchor } from "@/components/assign/pair-lines";
 import { PaneDivider } from "@/components/assign/pane-divider";
 import { RecentRemarks, REMARK_MAX_LENGTH, RemarkLine, RemarkModal } from "@/components/assign/remark-modal";
+import { SpacePreview } from "@/components/assign/space-preview";
 import { ResetModal, type ResetScope } from "@/components/assign/reset-modal";
 import { type AiAskItem } from "@/components/manage/ai-ask-menu";
 import { Modal } from "@/components/modal";
@@ -111,6 +112,7 @@ import {
   undoDecision,
   updateCaptionRef,
   type AiSuggestion,
+  type ChangeType,
   type ChangeTypeInput,
   type ComposedDoc,
   type DecisionStepResult,
@@ -196,6 +198,7 @@ import { useLeaveGuard } from "@/lib/leave-guard";
 import { buildIdenticalBatches } from "@/lib/match-model";
 import { navigate } from "@/lib/nav-buffer";
 import { buildNewAiFilter, listNewAiLinks, readNewAiPill } from "@/lib/new-ai-filter-model";
+import { buildSheetDraft } from "@/lib/space-preview-model";
 import { EMPTY_FOLD_OPEN, type FoldOpen } from "@/lib/paper-fold-model";
 import { buildPaperModel, buildPaperTabs, findNearestCut, listPartSheets, resolvePickUnit, shouldRecenter, type PaperTabKey } from "@/lib/paper-model";
 import { buildPairColumns, canUndoPair, listPairLinks, PAIR_REFUSAL_KEYS, resolvePairDrop, type PairDrop, type PairDropContext, type PairLang } from "@/lib/pair-drop-model";
@@ -3790,9 +3793,47 @@ export default function AssignPage() {
     );
   };
 
+  // Space 미리보기에 덮어 그릴 확정 전 고른 곳 - 새 SOP 칸 · WI 자리를 골랐고 아직 저장하지 않았을 때만(값은 서버에 보내지 않는다)
+  const pendingPlace = draft.destination?.kind === "slot" || draft.destination?.kind === "slot_heading" || draft.destination?.kind === "step" ? draft.destination : null;
+  const pendingDoc = pendingPlace ? (tobeData?.docs ?? []).find((doc) => doc.id === pendingPlace.docId) : undefined;
+  const pendingOption = pendingPlace ? options.find((option) => option.id === getDestinationId(pendingPlace)) : undefined;
+  // 문장마다의 변경 종류 - 결정 칸의 고르개와 같은 규칙(구조 종류가 먼저, 고친 글이면 고른 값, 아니면 그대로)
+  const readPendingChange = (slot: (typeof slots)[number]): ChangeType => {
+    const structural = readSlotKind(slot, slots);
+    if (structural !== null) return structural;
+    const text = draft.texts[slot.key] ?? slot.text;
+    const changed = slot.sourceText !== null && text.trim() !== "" && text.trim() !== slot.sourceText.trim();
+    const keptType = isTextChangeType(slot.target?.change_type) ? slot.target.change_type : null;
+    return changed ? (draft.changeTypes[slot.key] ?? keptType ?? "rewritten") : "as_is";
+  };
+  const isHeadingPick = pendingPlace?.kind === "slot_heading" || slots.length === 0;
+  const spaceDraft =
+    pendingDoc && pendingOption
+      ? buildSheetDraft({
+          docType: pendingDoc.doc_type,
+          docCode: pendingDoc.code,
+          docTitle: pendingDoc.title,
+          place: pendingOption.label,
+          // MD 1 브랜치 3 전에는 지금 글(번호 포함)을 쓴다
+          texts: isHeadingPick ? rowUnits.map((unit) => unit.text) : slots.map((slot) => draft.texts[slot.key] ?? slot.text),
+          changes: pendingPlace?.kind === "slot_heading" ? ["heading"] : slots.length === 0 ? ["as_is"] : slots.map(readPendingChange),
+        })
+      : undefined;
+
   return (
     <>
-      <div className="grid h-full min-h-0 grid-cols-[minmax(0,1fr)_clamp(280px,24vw,420px)]" data-testid="assign">
+      <div className="relative grid h-full min-h-0 grid-cols-[minmax(0,1fr)_clamp(280px,24vw,420px)]" data-testid="assign">
+        {/* 절대 위치라 격자 칸을 차지하지 않는다 - 작업 화면 바닥에서 올라온다 */}
+        <SpacePreview
+          bundleId={bundleId}
+          enabled={!isNewEdit && oldView !== null && rows.length > 0}
+          docId={oldDocId}
+          docCode={oldView?.document.doc_code ?? ""}
+          unitsKey={unitsKey}
+          unitIds={row?.unitIds ?? []}
+          picked={row && rowUnits.length > 0 ? { id: rowUnits[0].display_id, text: rowUnits.map((unit) => unit.text).join(" ") } : null}
+          draft={spaceDraft}
+        />
         <div className="assign-desk">
           {bar}
           {rows.length === 0 ? (

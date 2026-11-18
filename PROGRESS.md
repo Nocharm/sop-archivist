@@ -4,6 +4,10 @@
 
 ## 2026-11-18
 
+- **Space 미리보기(v1.1.36, `feat/assign-space-preview`, MD 2 S2 · 1.2.0 피드백 7번, 새로 만듦)** — Assign에서 글 칸·단추 밖의 Space를 누르고 있으면 작업 화면 바닥에서 시트(높이 70%)가 올라와 지금 Old 문서의 Excel A를 `SheetView`로 보인다(고른 줄 · 같은 Group ID 칠함, 확정 전 고른 곳 점선 덮어 그리기). 짧게 탁(250ms 미만, 끌지 않음)이면 열어 두고 Space 탁 · Esc로 닫고, 끌었으면 떼는 순간 닫는다(상태 기계 `lib/space-preview-model.ts`). role=dialog를 쓰지 않아 열어 둔 동안에도 ↵ 등 단축키가 돈다. 새 API `GET /export/preview/a?doc_id&around_unit_id` — 그 문서의 묶음만, 긴 문서는 고른 단위를 가운데로 500줄 창 + `Sheet.offset`(사용자 결정 §9-2). 머리 Download는 묶음 전체 파일(§9-3), 닫혀 있을 때 안내는 세 번 열 때까지만(`sopa.assign.spacePreviewOpens`, §9-4). 연 동안만 불러오고 저장(unitsKey)이 바뀌면 다시 부른다.
+  - 확인: pytest `test_sop_excel` 33 · backend 2,903 · vitest 1,420 · lint · tsc. 스모크 `assign: Space preview …` 둘은 써 두고 돌리지 않았다.
+  - 메인 세션 확인(dev v1.1.35를 합친 뒤): vitest 1,432 · lint · tsc, `assign:` 스모크 569 통과(실패 셋은 흔들리는 단계 — 끌어 놓기 React 그리기 수 단계는 dev에서도 거듭 돌리면 실패, Pair view 단계는 따로 두 번 통과). 미리보기를 1440 · 1120에서 직접 봤고, 왼쪽 아래 안내가 Old 칸 맨 아래 카드 글을 덮어 작업 화면 바닥에 제 줄(36px)을 비워 거기 놓게 고쳤다. 명세와 다르게 한 것: Destination 값은 받는 파일과 같은 "WI"(명세 "New WI"), 비구성원은 다른 미리보기 API와 같은 404.
+
 - **글머리 기호 들여쓰기 · N:1 출처 꼬리표(v1.1.35, `feat/order-bullet-indent`, MD 2 S5 ①②④⑤)** — 글머리 기호 줄이 번호 줄과 따로 앞 글머리 기호 줄 + 1까지(3단계 • ○ ▪) 들여진다: `canIndent`에 갈래를 더해 Tab · 단추 · ⋯ · 끌기가 같이 쓰고, 서버는 `get_bullet_depths`로 같은 규칙을 눌러 읽는다(저장 범위 0–9는 그대로 — Alembic 없음). Order · 결과물 C는 번호 자리에 단계 기호, Excel C는 No. 칸 기호 + Item 칸 들여쓰기(`SheetCell.indent`). `CItem.source_count`를 더해 옛 두 줄 이상에서 온 줄에 올리거나 고르면 `source_note`를 그대로 어두운 꼬리표로 보인다. ③ 템플릿 보기는 브랜치 f, ④⑤는 코드 변경 없음.
   - 확인: pytest · vitest · lint · tsc는 돌렸다. 스모크 `order:` 셋(5장 글머리 기호 Tab → ○ · 6장 번호 줄 규칙 그대로 · N:1 꼬리표)은 써만 두고 돌리지 않았다.
   - 메인 세션 확인(dev v1.1.34를 합친 뒤): `order:` · `outputs` 스모크 299 통과 — 실패 둘은 스모크 탓이라 고쳤다(글머리 기호 줄도 들일 수 있게 되어 번호 들임 단계가 번호 없는 줄을 골랐다, 데모 시드의 6장 절차에는 번호 줄이 둘 이상인 곳이 없다 — 번호 줄이 든 칸이면 어디든 본다). 5장 범주 글머리 기호 줄을 Tab으로 들이면 ○로 바뀌는 것을 화면으로 봤다.

@@ -150,6 +150,9 @@ class Sheet(BaseModel):
     image_row: int | None  # 그림을 놓는 줄(1부터)
     total_rows: int  # 자르기 전 줄 수
     truncated: bool  # 미리보기가 줄을 잘랐다 — 파일에는 전체가 있다
+    # 실린 첫 자료 줄 앞에서 뺀 줄 수(머리 줄 다음부터 센다) — Assign 미리보기의 가운데 창만 0보다 크다.
+    # 아래로 더 있는 줄 수는 total_rows - offset - len(rows)
+    offset: int = 0
     # 아래 셋은 미리보기 전용(A에만) — xlsx는 widths만 쓴다
     fit_widths: list[int] | None = None  # 폭에 맞춘 한 장의 열 비율. None이면 화면이 widths를 비율로 쓴다
     bands: list[SheetBand] = []
@@ -286,14 +289,32 @@ def _list_a_texts(row: ARow) -> list[str]:
     ]
 
 
-def _build_a_sheet(snap: BundleSnapshot, people: Mapping[str, str]) -> Sheet:
+def _keep_document_groups(snap: BundleSnapshot, a_rows: list[ARow], document_id: int) -> list[ARow]:
+    """그 옛 문서의 단위가 든 묶음만 — 묶음째 남겨 흐림·Row 번호가 파일과 같다. 고아 번역·입구 2 신규 묶음은 옛 문서가 없어 빠진다."""
+    kept: list[ARow] = []
+    group: list[ARow] = []
+    for a_row in [*a_rows, None]:
+        if a_row is None or a_row.is_group_start:
+            if any(row.unit_id is not None and snap.units[row.unit_id].document_id == document_id for row in group):
+                kept.extend(group)
+            group = []
+        if a_row is not None:
+            group.append(a_row)
+    return kept
+
+
+def _build_a_sheet(snap: BundleSnapshot, people: Mapping[str, str], document_id: int | None = None) -> Sheet:
     """ARow 하나가 한 줄(넘는 글은 이어진 줄) — 묶음 첫 줄 말고는 함께 쓰는 칸이 바로 윗줄과 같으면 흐리게(제품 명세 §7.14 되풀이 + 흐림, O6).
 
     흐림은 보이는 글(clean_cell_text를 거친 칸 글)끼리 견준다. 줄의 단위·관계 묶음과 Status 칸의 칩 색은 미리보기만 읽는다.
+    document_id를 주면 그 옛 문서의 묶음만 싣는다(Assign 미리보기).
     """
     rows = [_build_status_row(snap, len(A_HEADERS)), _make_row("header", A_HEADERS)]
     above: SheetRow | None = None
-    for a_row in build_output_a(snap, "en", people):
+    a_rows = build_output_a(snap, "en", people)
+    if document_id is not None:
+        a_rows = _keep_document_groups(snap, a_rows, document_id)
+    for a_row in a_rows:
         italic = A_NOTE_COLUMNS if a_row.dest_is_note else ()
         for offset, line in enumerate(_split_line(_list_a_texts(a_row), A_ID_COLUMN, A_SHARED_COLUMNS)):
             starts = a_row.is_group_start and offset == 0
@@ -551,3 +572,25 @@ def limit_preview(model: WorkbookModel, max_rows: int = MAX_PREVIEW_ROWS) -> Wor
         for sheet in model.sheets
     ]
     return model.model_copy(update={"sheets": sheets})
+
+
+A_HEAD_ROWS = 2  # A의 상태 줄 + 머리 줄 — 창을 잘라도 늘 싣는다(freeze "A3")
+
+
+def build_a_preview(
+    snap: BundleSnapshot, people: Mapping[str, str], document_id: int, around_unit_id: int | None,
+    max_rows: int = MAX_PREVIEW_ROWS,
+) -> Sheet:
+    """Assign Space 미리보기 — 옛 문서 하나의 A 시트를 max_rows줄(머리 줄 포함)까지, 고른 단위의 첫 줄을 가운데로 한 창으로 싣는다.
+
+    긴 문서에서 고른 줄이 앞 max_rows줄 밖이어도 보이게 한다. 고른 단위가 없거나 시트에 없으면 처음부터다. 뺀 위쪽 줄 수는 offset.
+    """
+    sheet = _build_a_sheet(snap, people, document_id)
+    body = sheet.rows[A_HEAD_ROWS:]
+    room = max_rows - A_HEAD_ROWS
+    if len(body) <= room:
+        return sheet
+    centre = next((index for index, row in enumerate(body) if row.unit_id == around_unit_id), 0) if around_unit_id is not None else 0
+    start = min(max(centre - room // 2, 0), len(body) - room)
+    rows = [*sheet.rows[:A_HEAD_ROWS], *body[start:start + room]]
+    return sheet.model_copy(update={"rows": rows, "truncated": True, "offset": start})

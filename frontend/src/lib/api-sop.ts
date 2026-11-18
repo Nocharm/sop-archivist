@@ -1406,6 +1406,8 @@ export interface PreviewSheet {
   image_row: number | null;
   total_rows: number;
   truncated: boolean;
+  /** 실린 첫 자료 줄 앞에서 뺀 줄 수(머리 줄 다음부터) - Assign 미리보기의 가운데 창만 0보다 크다 */
+  offset: number;
   /** 아래 셋은 미리보기에만 있다(A에만, 파일에는 쓰지 않는다) - 폭에 맞춘 열 비율(null이면 widths가 비율) · 열 무리 띠 · 열의 뜻 */
   fit_widths: number[] | null;
   bands: PreviewBand[];
@@ -1419,6 +1421,12 @@ export interface WorkbookPreview {
 
 export function getExportPreview(bundleId: number): Promise<WorkbookPreview> {
   return apiFetch<WorkbookPreview>(`/bundles/${bundleId}/export/preview`);
+}
+
+/** Assign Space 미리보기 - Old 문서 하나의 A 시트를 고른 단위를 가운데로 500줄 창까지(파일과 같은 줄) */
+export function getAssignSheetPreview(bundleId: number, docId: number, aroundUnitId: number | null): Promise<PreviewSheet> {
+  const around = aroundUnitId !== null ? `&around_unit_id=${aroundUnitId}` : "";
+  return apiFetch<PreviewSheet>(`/bundles/${bundleId}/export/preview/a?doc_id=${docId}${around}`);
 }
 
 /** 묶음당 파일 하나 - 판(lang)이 없다. 저장 이름은 서버가 짓는다(Content-Disposition) */
