@@ -279,6 +279,8 @@ class SourceTable(Base):
     n_rows: Mapped[int] = mapped_column(Integer)
     n_cols: Mapped[int] = mapped_column(Integer)
     is_layout: Mapped[bool] = mapped_column(Boolean, default=False)
+    # 표 꼴 신호(extract.types.ExtractedTable.signals) — 신호가 없거나 추출기 5 전의 추출이면 NULL
+    signals: Mapped[dict | None] = mapped_column(JSON(none_as_null=True), default=None)
 
 
 class SourceBlock(Base):
@@ -307,6 +309,8 @@ class SourceBlock(Base):
     row_span: Mapped[int] = mapped_column(Integer, default=1)
     image_part: Mapped[str | None] = mapped_column(String(200), default=None)
     flags: Mapped[list] = mapped_column(JSON, default=list)
+    # 블록 신호(extract.types.ExtractedBlock.signals) — 신호가 없거나 추출기 5 전의 추출이면 NULL
+    signals: Mapped[dict | None] = mapped_column(JSON(none_as_null=True), default=None)
 
 
 class ExtractionWarning(Base):

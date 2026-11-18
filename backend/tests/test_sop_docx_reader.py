@@ -12,7 +12,12 @@ import pytest
 from app.sop.extract.docx_reader import read_docx
 from app.sop.extract.types import ExtractedWarning, ExtractionRejected, ExtractLimits
 from tests.docx_factory import (
+    make_abstract,
+    make_grid_table,
+    make_row,
+    make_levels,
     make_list,
+    make_style,
     numbered,
     NAMESPACES,
     TINY_PNG,
@@ -900,3 +905,144 @@ def test_docx_cell_table_and_cell_figure_take_no_caption() -> None:
     blocks = _read(body, media={"image1.png": TINY_PNG})
 
     assert not any(f.startswith("caption_of:") for b in blocks for f in b.flags)
+
+
+TEMPLATE_HEADING_STYLES = (
+    make_style("H1", "SYN Text 1", num_id=3, outline=0)
+    + make_style("H2", "SYN Text 2", num_id=3, level=1, outline=1)
+    # numId는 H2에서 물려받고 자기 ilvl만 적는다 — 회사 템플릿 영어 절반의 셋째 수준 스타일 꼴
+    + make_style("H3", "SYN Text 3", based_on="H2", level=2, outline=2)
+)
+TEMPLATE_HEADING_LIST = make_abstract(
+    7,
+    make_levels([("decimal", "%1.", "H1", 1), ("decimal", "%1.%2.", "H2", 1), ("decimal", "%1.%2.%3.", "H3", 1)]),
+    [3],
+)
+
+
+def test_docx_style_that_inherits_the_list_keeps_its_own_level() -> None:
+    # P-NUM1: 조상 스타일(H2)의 수준을 먼저 잡으면 "1.1.1."이 "1.2."가 되고 뒤 번호가 밀린다
+    body = p("가", "H1") + p("나", "H2") + p("다", "H3") + p("라", "H3") + p("마", "H2")
+
+    result = read_docx(build_docx(body, numbering=TEMPLATE_HEADING_LIST, styles=TEMPLATE_HEADING_STYLES), LIMITS)
+
+    assert [b.text for b in result.blocks] == ["1. 가", "1.1. 나", "1.1.1. 다", "1.1.2. 라", "1.2. 마"]
+    assert [b.heading_level for b in result.blocks] == [1, 2, 3, 3, 2]
+    assert result.warnings == ()
+
+
+def test_docx_style_level_comes_from_the_nearest_style_when_no_level_is_linked() -> None:
+    # 목록 정의가 스타일을 묶지 않아도(pStyle 없음) 스타일이 적은 ilvl로 수준을 찾는다 — 자기 ilvl이 없으면 가장 가까운 조상 것
+    styles = TEMPLATE_HEADING_STYLES + make_style("H3Kor", "SYN Text 3 Kor", based_on="H3")
+    unlinked = make_abstract(
+        7, make_levels([("decimal", "%1.", None, 1), ("decimal", "%1.%2.", None, 1), ("decimal", "%1.%2.%3.", None, 1)]), [3]
+    )
+    body = p("가", "H1") + p("나", "H2") + p("다", "H3") + p("라", "H3Kor") + p("마", "H2")
+
+    blocks = _read(body, numbering=unlinked, styles=styles)
+
+    assert [b.text for b in blocks] == ["1. 가", "1.1. 나", "1.1.1. 다", "1.1.2. 라", "1.2. 마"]
+
+
+def test_docx_own_linked_level_wins_over_an_inherited_level() -> None:
+    # 자기 ilvl 없이 H2를 물려받은 스타일이라도 목록 정의가 그 스타일을 셋째 수준에 묶었으면 셋째 수준이다
+    styles = (
+        make_style("H1", "SYN Text 1", num_id=3, outline=0)
+        + make_style("H2", "SYN Text 2", num_id=3, level=1, outline=1)
+        + make_style("H3", "SYN Text 3", based_on="H2", outline=2)
+    )
+
+    blocks = _read(p("가", "H1") + p("나", "H2") + p("다", "H3"), numbering=TEMPLATE_HEADING_LIST, styles=styles)
+
+    assert [b.text for b in blocks] == ["1. 가", "1.1. 나", "1.1.1. 다"]
+
+
+def test_docx_shown_start_of_an_unused_upper_level_is_counted() -> None:
+    # P-NUM2: 장 번호를 lvl0 시작 값으로 넣고 lvl0 문단 없이 단계(ilvl 1)만 쓰는 WI — 숨긴 빈 lvl0 문단이 다음 장으로 넘긴다
+    numbering = make_abstract(0, make_levels([("decimal", "%1.", None, 2), ("decimal", "%1.%2.", None, 1)]), [1])
+    body = numbered("단계 하나", 1, 1) + numbered("단계 둘", 1, 1) + numbered("", 1, 0) + numbered("다음 장 단계", 1, 1)
+
+    blocks = _read(body, numbering=numbering)
+
+    assert [b.text for b in blocks] == ["2.1. 단계 하나", "2.2. 단계 둘", "3.1. 다음 장 단계"]
+
+
+def test_docx_drm_wrapped_file_gets_its_own_reject_code() -> None:
+    # P-DRM: ZIP도 OLE도 아니고 앞 64바이트 안에 "DRM"이 있다 — 손상·암호와 달리 "보호를 푼 사본을 올리라"고 알린다
+    wrapped = b"<## TEST DRM FILE ##>" + bytes(range(256)) * 8
+
+    with pytest.raises(ExtractionRejected) as caught:
+        read_docx(wrapped, LIMITS)
+
+    assert caught.value.code == "drm_protected"
+
+
+@pytest.mark.parametrize(
+    "data",
+    [b"x" * 64 + b"DRM" + b"y" * 100, OLE_BYTES[:8] + b"DRM" + OLE_BYTES[8:]],
+    ids=["mark-past-the-head", "ole-with-mark"],
+)
+def test_docx_drm_mark_only_counts_in_the_head_of_a_non_ole_file(data: bytes) -> None:
+    with pytest.raises(ExtractionRejected) as caught:
+        read_docx(data, LIMITS)
+
+    assert caught.value.code == "not_a_zip_or_encrypted"
+
+
+def test_docx_full_width_structure_rows_do_not_raise_the_merged_cell_warning() -> None:
+    # P-MERGEWARN: 템플릿 WI의 장 표 — 장 제목(표 머리 행, 3칸 병합)과 단계 제목(전체 폭 한 칸) 행은 양식의 구조다
+    table = make_grid_table(
+        3,
+        make_row(["Chapter 1. 준비"], header=True, spans=[3])
+        + make_row(["1.1. 필터를 꺼낸다"], spans=[3])
+        + make_row(["A", "덮개를 연다.", ""]),
+    )
+
+    result = read_docx(build_docx(table), LIMITS)
+
+    # 블록의 병합 표시는 그대로 남는다(칸 모양은 사실이다) — 경고만 내지 않는다
+    assert [(b.text, b.grid_span, "merged_cell" in b.flags) for b in result.blocks][:2] == [
+        ("Chapter 1. 준비", 3, True), ("1.1. 필터를 꺼낸다", 3, True),
+    ]
+    assert result.warnings == ()
+
+
+def test_docx_other_merges_in_a_table_with_structure_rows_still_warn() -> None:
+    # 구조 행이 있어도 내용 칸의 병합(두 칸만 합친 칸)은 그 칸을 가리켜 경고한다
+    table = make_grid_table(
+        3,
+        make_row(["Chapter 1. 준비"], header=True, spans=[3]) + make_row(["A", "두 칸을 합친 내용"], spans=[1, 2]),
+    )
+
+    result = read_docx(build_docx(table), LIMITS)
+
+    assert result.warnings == (ExtractedWarning(kind="merged_cell", block_seq=2, detail={"table_index": "0"}),)
+
+
+def _bookmark(name: str) -> str:
+    return f'<w:p><w:bookmarkStart w:id="1" w:name="{name}"/><w:bookmarkEnd w:id="1"/></w:p>'
+
+
+@pytest.mark.parametrize(
+    ("body", "styles", "expected"),
+    [
+        pytest.param(_bookmark("Eng") + p("Purpose") + _bookmark("Kor") + p("목적"), None, True, id="sop_bookmarks"),
+        pytest.param(_bookmark("korchap1") + p("목적") + _bookmark("Engchap1") + p("Purpose"), None, True, id="wi_bookmarks"),
+        pytest.param(_bookmark("Eng") + p("Purpose") + _bookmark("English_terms") + p("목적"), None, False, id="one_half_only"),
+        pytest.param(
+            p("단계", "StepK") + p("Step", "StepE"),
+            make_style("StepK", "SYN_Process Step [Kor]") + make_style("StepE", "SYN_Process Step [Eng]"),
+            True,
+            id="half_styles",
+        ),
+        pytest.param(
+            p("단계", "TextE") + p("Step", "TextK"),
+            make_style("TextK", "SYN_Text 1_Kor") + make_style("TextE", "SYN_Text 1_Eng"),
+            False,
+            id="underscore_styles_are_not_trusted",
+        ),
+    ],
+)
+def test_docx_reads_language_half_marks(body: str, styles: str | None, expected: bool) -> None:
+    # P-LAYOUT: 절반 책갈피 한 쌍이나 절반 스타일 한 쌍이 언어 배치의 강한 신호다
+    assert read_docx(build_docx(body, styles=styles), LIMITS).has_language_halves is expected
