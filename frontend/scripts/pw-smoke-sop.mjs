@@ -9130,17 +9130,26 @@ async function prepareClickPlace(page, needed) {
     });
     return response.ok();
   };
+  // 화면이 보이는 것에서 고른다 - 앞 단계가 남긴 거르기(상태 탭)는 All로, Old 문서는 그 줄의 문서로 연다(앞 단계가 남긴 고름 · 연 문서에 기대지 않는다)
+  const pieceOf = (unit) => page.locator(`[data-testid="assign-paper-piece-${unit.unit_id}"]`);
+  const showOld = async (unit) => {
+    const all = page.locator('[data-testid="assign-filter-all"]');
+    if ((await all.count()) > 0 && (await all.getAttribute("aria-selected")) !== "true") await all.click();
+    if ((await pieceOf(unit).count()) === 0 && (await page.locator('[data-testid="assign-old-doc"]').count()) > 0) {
+      await page.locator('[data-testid="assign-old-doc"]').click();
+      await page.locator(`[data-testid="assign-old-doc-option-${unit.document_id}"]`).click();
+    }
+    const found = await pieceOf(unit).first().waitFor({ state: "attached", timeout: T }).then(() => true, () => false);
+    if (found) await pieceOf(unit).first().evaluate((el) => el.scrollIntoView({ block: "center" }));
+    return found;
+  };
   await page.goto(`${BASE}/bundles/${halfBundleId}/assign`);
   await wait(page, "assign-bar");
   await page.locator('[data-pane="old"] .strip[data-strip-unit]').first().waitFor({ timeout: T });
-  if (loose[0] && (await page.locator(`[data-testid="assign-paper-piece-${loose[0].unit_id}"]`).count()) === 0) {
-    await page.locator('[data-testid="assign-old-doc"]').click();
-    await page.locator(`[data-testid="assign-old-doc-option-${loose[0].document_id}"]`).click();
-    await page.locator(`[data-testid="assign-paper-piece-${loose[0].unit_id}"]`).waitFor({ timeout: T });
-  }
+  if (loose[0]) await showOld(loose[0]);
   // 본문 용지에 조각이 보이는 것만(머리말·꼬리말 탭의 문장은 뺀다)
   const shown = [];
-  for (const unit of loose) if ((await page.locator(`[data-testid="assign-paper-piece-${unit.unit_id}"]`).count()) > 0) shown.push(unit);
+  for (const unit of loose) if ((await pieceOf(unit).count()) > 0) shown.push(unit);
   if (shown.length < needed + 2) return { error: `only ${shown.length} loose sentences on one Old paper` };
   const [unitA, unitB, ...rest] = shown;
   if (!(await saveTo(unitA, counted.location_key)) || !(await saveTo(unitB, counted.location_key))) return { error: "could not place A and B" };
@@ -9152,7 +9161,9 @@ async function prepareClickPlace(page, needed) {
   });
   await page.reload();
   await wait(page, "assign-bar");
-  await page.locator(`[data-testid="assign-paper-piece-${unitA.unit_id}"]`).waitFor({ timeout: T });
+  await page.locator('[data-pane="old"] .strip[data-strip-unit]').first().waitFor({ timeout: T });
+  // A · B는 이제 확정이라 거르기에 따라 접힐 수 있다 - 화면에서 고를 첫 줄로 기다린다
+  if (!(await showOld(rest[0]))) return { error: `the Old piece of ${rest[0].display_id} does not show after reload` };
   return {
     sop,
     sections,
@@ -9163,6 +9174,8 @@ async function prepareClickPlace(page, needed) {
     saveCount: () => saveRequests,
     // 줄을 고르고 New 칸을 그 SOP로
     pickOld: async (unit) => {
+      // 앞 확정이 다음 줄로 넘어가며 다른 Old 문서를 열었을 수 있다
+      await showOld(unit);
       const point = await page.locator(`[data-testid="assign-paper-unit-${unit.unit_id}"]`).first().evaluate((el) => {
         el.scrollIntoView({ block: "center" });
         const rect = el.getClientRects()[0];
