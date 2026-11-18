@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from typing import Annotated
 
 from pydantic import BaseModel, Field, StringConstraints
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.sop.constants import NUMBER_BULLET, NUMBERED, OUTLINE_KINDS, NumberStyle
@@ -42,6 +42,16 @@ def get_parent_key(key: str) -> str | None:
     """부모 항목의 키 — 마지막 점 앞("a.b.c" → "a.b"), 최상위면 None."""
     parent, _, child = key.rpartition(".")
     return parent if child and parent else None
+
+
+def build_next_declared_key(parent_key: str, used_keys: Iterable[str]) -> str:
+    """새 선언 항목의 키 "부모.n<수>" — 수는 그 부모 아래에서 쓴 적 없는 다음 수다(뺀 항목의 키도 센다).
+
+    뺀 키를 다시 쓰면 그 키를 든 옛 판단 단계(되돌리기)가 다른 항목에 줄을 놓는다.
+    """
+    pattern = re.compile(rf"{re.escape(parent_key)}\.n(\d+)")
+    used = [int(match.group(1)) for key in used_keys if (match := pattern.fullmatch(key)) is not None]
+    return f"{parent_key}.n{max(used, default=0) + 1}"
 
 
 @dataclass(frozen=True)
@@ -383,16 +393,38 @@ async def load_standard_outline(session: AsyncSession) -> DocOutline:
 
 
 async def copy_standard_to_doc(session: AsyncSession, target_doc_id: int) -> None:
-    """SOP 문서의 골격 사본을 지금 표준으로 만든다 — 그 뒤 표준이 바뀌어도 사본은 그대로다."""
-    session.add_all(
-        TargetDocOutlineItem(
-            target_doc_id=target_doc_id, key=item.key, order_index=item.order_index, title_en=item.title_en,
+    """SOP 문서의 골격 사본을 지금 표준으로 만든다 — 그 뒤 표준이 바뀌어도 사본은 그대로다.
+
+    WI였다가 돌아온 문서는 뺀 표시 행(retire_doc_outline)이 남아 있다 — 기본 첫 절차의 키가 그중에 있으면 새 수를 받는다.
+    """
+    used = set(await session.scalars(
+        select(TargetDocOutlineItem.key).where(TargetDocOutlineItem.target_doc_id == target_doc_id)
+    ))
+    rows = []
+    for item in await _build_new_doc_items(session):
+        key = item.key
+        if key in used:  # 표준 행은 retire_doc_outline이 지웠으니 여기 걸리는 것은 선언 항목(첫 절차)뿐이다
+            key = build_next_declared_key(get_parent_key(key) or "", used)
+            used.add(key)
+        rows.append(TargetDocOutlineItem(
+            target_doc_id=target_doc_id, key=key, order_index=item.order_index, title_en=item.title_en,
             title_ko=item.title_ko, kind=item.kind, is_required=item.is_required, default_style=item.default_style,
             child_prefix=item.child_prefix, origin=item.origin,
-        )
-        for item in await _build_new_doc_items(session)
-    )
+        ))
+    session.add_all(rows)
     await session.flush()
+
+
+async def retire_doc_outline(session: AsyncSession, target_doc_id: int) -> None:
+    """종류가 바뀐 문서의 골격 사본을 걷는다 — 표준 항목은 지우고 선언·사용자 항목은 뺀 표시로 남긴다.
+
+    선언 키를 다시 쓰지 않아야 되돌리기가 옛 줄을 같은 키의 새 항목에 되살리지 않는다(SOP → WI → SOP 뒤 새 절차가 n1을 받는 경우).
+    """
+    owned = TargetDocOutlineItem.target_doc_id == target_doc_id
+    await session.execute(delete(TargetDocOutlineItem).where(owned, TargetDocOutlineItem.origin == ORIGIN_STANDARD))
+    await session.execute(
+        update(TargetDocOutlineItem).where(owned, TargetDocOutlineItem.origin != ORIGIN_STANDARD).values(is_removed=True)
+    )
 
 
 async def load_doc_outlines(session: AsyncSession, doc_ids: Iterable[int]) -> dict[int, DocOutline]:

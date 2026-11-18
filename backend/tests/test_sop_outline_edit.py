@@ -33,6 +33,7 @@ from tests.test_sop_outline_admin import (
 )
 from tests.test_sop_slot_heading import _link_headings_recorded, _read_heads
 from tests.test_sop_slot_heading import _setup as _setup_headings
+from tests.test_sop_tobe import _seed_match_doc
 
 pytestmark = pytest.mark.usefixtures("clean_sop")
 
@@ -309,6 +310,37 @@ def test_removed_number_is_not_reused(client: TestClient) -> None:
     ]
     # 다른 부모는 따로 센다
     assert _added(client, bundle_id, sop_id, "appendices", "Alarm list")["key"] == "appendices.n1"
+
+
+def test_retyped_doc_does_not_reuse_declared_keys(client: TestClient) -> None:
+    # Arrange — 절차를 선언한 SOP를 WI로 바꿨다가 다시 SOP로(문장이 없어 종류를 바꿀 수 있다)
+    bundle_id = create_bundle(client, is_synthetic=True)["id"]
+    parent = {"code": "SOP-A", "title": "Synthetic parent", "doc_type": "sop", "parent_code": None}
+    sop = {"code": "SOP-B", "title": "Synthetic SOP", "doc_type": "sop", "parent_code": None}
+    saved = put_tobe(client, bundle_id, [parent, sop])
+    sop_id = next(doc["id"] for doc in saved.json()["docs"] if doc["code"] == "SOP-B")
+    assert _added(client, bundle_id, sop_id, "procedures", "Cleaning")["key"] == "procedures.n1"
+    assert put_tobe(client, bundle_id, [parent, {**sop, "doc_type": "wi", "parent_code": "SOP-A"}]).status_code == 200
+    assert put_tobe(client, bundle_id, [parent, sop]).status_code == 200
+
+    # Act
+    added = _added(client, bundle_id, sop_id, "procedures", "Calibration")
+
+    # Assert — 옛 선언 키(n1, 기본 p1)는 뺀 표시로 남아 다시 쓰이지 않는다: 새 첫 절차가 n2, 더한 것이 n3
+    assert added["key"] == "procedures.n3"
+    children = [item for item in _list_children(_get_tobe(client, bundle_id), "procedures") if item["code"] == "SOP-B"]
+    assert [(item["key"], item["title_en"]) for item in children] == [
+        ("procedures.n2", "Procedure 1"), ("procedures.n3", "Calibration"),
+    ]
+
+
+def test_uploaded_sop_has_no_outline_to_declare(client: TestClient) -> None:
+    bundle_id = create_bundle(client, is_synthetic=True)["id"]
+    match_id = _seed_match_doc(bundle_id, "UP-SOP", "sop")
+
+    added = _add(client, bundle_id, match_id, "procedures", "Synthetic item")
+
+    _assert_rejected(added, 422, "outline_parent_not_declarable", doc_code="UP-SOP", parent_key="procedures")
 
 
 # ── 이름·순서 ─────────────────────────────────────────────────────────────────

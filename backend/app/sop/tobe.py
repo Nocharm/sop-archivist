@@ -20,7 +20,6 @@ from app.sop.models import (
     Document,
     TargetDoc,
     TargetDocNaSlot,
-    TargetDocOutlineItem,
     TargetSentence,
     WiStep,
 )
@@ -33,6 +32,7 @@ from app.sop.outline import (
     load_doc_outlines,
     load_standard_outline,
     number_outline,
+    retire_doc_outline,
 )
 from app.sop.schemas import NO_NUL
 
@@ -461,7 +461,7 @@ async def _write_docs(
     for item in items:
         doc = docs_by_code[item.code]
         if doc.doc_type != item.doc_type:  # 종류가 바뀐 기존 문서 — 문장이 없는 문서만 여기까지 온다(doc_has_targets)
-            await session.execute(delete(TargetDocOutlineItem).where(TargetDocOutlineItem.target_doc_id == doc.id))
+            await retire_doc_outline(session, doc.id)
             if item.doc_type == "sop":
                 await copy_standard_to_doc(session, doc.id)
         fields = {
@@ -574,7 +574,10 @@ async def apply_tobe(
     final_types = _check_list_rules(payload, existing, code_by_id, get_outline)
     # 절차 시트는 Excel 가져오기에만 있다 — 시트가 없으면(None) 골격을 건드리지 않는다
     procedure_rows = None if isinstance(payload, ToBeIn) else payload.procedures
-    procedure_plans = plan_procedures(procedure_rows or (), final_types, get_outline)
+    # 파일이 붙은 문서(입구 2)는 구조가 파일의 것이라 절차를 선언하지 않는다 — SOP가 아닌 것으로 넘겨 거절받는다
+    match_codes = {doc.code for doc in existing if doc.entrance == "match"}
+    declarable_types = {code: "match" if code in match_codes else doc_type for code, doc_type in final_types.items()}
+    procedure_plans = plan_procedures(procedure_rows or (), declarable_types, get_outline)
 
     listed = {item.code: item for item in payload.docs}
     removed = [doc for doc in existing if doc.entrance == "assign" and doc.code not in listed]

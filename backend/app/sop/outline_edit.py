@@ -4,7 +4,6 @@
 (벗어남은 사유와 함께 따로 다룬다 — 계획 `2026-11-17-template-fit-1-outline-plan.md` 스텝 6).
 """
 
-import re
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Annotated
@@ -27,6 +26,7 @@ from app.sop.outline import (
     DocOutline,
     OutlineItemInfo,
     build_declared_item,
+    build_next_declared_key,
     get_parent_key,
     load_doc_outlines,
 )
@@ -83,8 +83,8 @@ async def _load_rows(session: AsyncSession, target_doc_id: int) -> dict[str, Tar
 
 
 async def _open_edit(session: AsyncSession, doc: TargetDoc, **context: str) -> _Edit:
-    """골격 사본은 SOP에만 있다 — WI는 422 outline_parent_not_declarable(선언할 자리가 없는 문서다)."""
-    if doc.doc_type != "sop":
+    """골격 사본은 SOP에만 있다 — WI와 파일이 붙은 SOP(입구 2, 구조가 파일의 것)는 422 outline_parent_not_declarable."""
+    if doc.doc_type != "sop" or doc.entrance != "assign":
         raise_rule(422, "outline_parent_not_declarable", doc_code=doc.code, **context)
     outline = (await load_doc_outlines(session, [doc.id]))[doc.id]
     return _Edit(outline, await _load_rows(session, doc.id))
@@ -109,13 +109,8 @@ def _ensure_title_free(doc: TargetDoc, parent_key: str | None, siblings: Sequenc
 
 
 def _build_next_key(parent_key: str, rows: Mapping[str, TargetDocOutlineItem]) -> str:
-    """새 선언 항목의 키 "부모.n<수>" — 수는 그 부모 아래에서 쓴 적 없는 다음 수다.
-
-    뺀 항목의 행이 남아 있어(_retire) 뺀 수도 센다. 뺀 키를 다시 쓰면 그 키를 든 옛 판단 단계(되돌리기)가 다른 항목에 줄을 놓는다.
-    """
-    pattern = re.compile(rf"{re.escape(parent_key)}\.n(\d+)")
-    used = [int(match.group(1)) for key in rows if (match := pattern.fullmatch(key)) is not None]
-    return f"{parent_key}.n{max(used, default=0) + 1}"
+    """새 선언 항목의 키 — 뺀 항목의 행이 남아 있어(_retire) 뺀 수도 센다(build_next_declared_key)."""
+    return build_next_declared_key(parent_key, rows)
 
 
 def _add_row(

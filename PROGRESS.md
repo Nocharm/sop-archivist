@@ -2,6 +2,11 @@
 
 프로젝트 진행 현황 로그. 커밋 직전 갱신한다 (`rules/common/git.md` 규칙). v1.1.0(2026-11-16 정식 업데이트)까지의 항목은 [`docs/history/PROGRESS-archive.md`](docs/history/PROGRESS-archive.md)에 있다 — 정식 업데이트마다 그 릴리스까지의 항목을 거기로 옮긴다(`rules/common/git.md` "정식 업데이트 때 문서 정리").
 
+## 2026-11-18
+
+- **절차 · 부록 · 범주 선언(`feat/outline-5-declare`, 표준 골격 계획 스텝 5)** — Documents의 SOP 갈래에 Procedures(6) · Appendices(9) · Categories(5) 묶음을 두고 항목을 더하기 · 이름 · 순서 · 빼기(줄이 있으면 못 뺀다), `POST`·`PATCH`·`DELETE …/tobe/docs/{id}/outline`, To-Be Excel 시트 `SOP 절차`. 새 키는 `부모.n<수>`이고 뺀 항목은 행을 남겨(`is_removed`) 수를 다시 쓰지 않는다 — 다시 쓰면 그 키를 든 되돌리기가 다른 항목에 옛 줄을 되살린다. 같은 까닭으로 문서 종류를 SOP → WI로 바꿔도 선언 항목은 뺀 표시로 남기고(표준 항목만 지움), 다시 SOP가 되면 기본 첫 절차가 새 수를 받는다. 이름 · 순서가 바뀐 칸 제목을 되살리는 되돌리기는 409 `undo_conflict`. 파일이 붙은 SOP(입구 2)는 API · Excel 모두 선언을 거절한다(화면은 원래 그리지 않음).
+  - 확인: backend 2,884 · vitest · lint · tsc, `new documents:` 스모크 225 통과(WI 끌기 단계 1건은 따로 두 번 돌려 통과 — 흔들림). Documents 화면을 1440 · 1120에서 직접 봤다. 표준 항목의 순서 바꾸기는 API는 거절하고 Excel은 허용한다(코드의 "확인 필요" — 스텝 6에서 사유와 함께 정한다).
+
 ## 2026-11-17
 
 - **표준을 회사 템플릿 1–9장으로(`feat/outline-4-template`, 표준 골격 계획 스텝 4)** — 표준 골격의 내용을 회사 SOP 템플릿으로 바꾸고(`outline.TEMPLATE_OUTLINE`: 1–4장, 5장 범주 표, 6장 절차, 7장 묶음 제목 아래 7.1 · 7.1.x(선택) · 7.2 자동 목록 · 7.3, 8장, 9장 부록) Alembic `0024`가 개발 데이터를 옮긴다(옛 키 → 새 키, 쓰이던 옛 하위 칸은 선언 항목으로, JSON 안의 키, 1–5 · 7 · 8장의 번호 줄은 글머리 기호로). 내용은 6장 · 부록만 번호이고 나머지는 글머리 기호가 기본이다. 번호는 실제로 내보내는 항목끼리 센다(빈 선택 항목 7.1.x는 건너뛴다). 묶음 제목 · 자동 목록에는 줄을 놓을 수 없다(`slot_not_assignable`). 7.2는 그 SOP의 자식 WI로 채운다. 장비 SOP의 N/A 권장과 검토 알림은 없앴다. AI 후보는 문서 사본에서 만들고 옛 규칙 ID에 잇는다(`match_rule_slot`, 규칙 · 프롬프트 글은 그대로).
