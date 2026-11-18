@@ -32,6 +32,16 @@ export function getUnitUnwrapTable(units: readonly ViewUnit[], unwrapped: Readon
   return null;
 }
 
+/** 다시 표로 묶으면 판단이 풀릴 줄 수 - 그 벗긴 표의 줄 가운데 미배정이 아닌 것. 0보다 크면 서버에 묻기 전에 확인창부터 연다(F12 A6, 한 번 묻는다).
+ *  서버가 같은 규칙을 다시 본다(409 confirm_required) - 화면 상태가 낡았으면 그쪽 확인창이 대신 뜬다 */
+export function countDecidedLines(units: Iterable<ViewUnit>, tableId: number, statusOf: (unitId: number) => ViewUnit["status"] | undefined): number {
+  let count = 0;
+  for (const unit of units) {
+    if (unit.kind === "cell_sentence" && unit.group_unit_id === null && unit.table_id === tableId && (statusOf(unit.id) ?? unit.status) !== "unassigned") count += 1;
+  }
+  return count;
+}
+
 /** 확인창·알림의 표 번호 - 그 Old 문서 안 표 순번(1부터, 결과물 A 위치 칸의 "표 n"과 같다) */
 export function getTableNumber(table: ViewTable): number {
   return table.table_index + 1;

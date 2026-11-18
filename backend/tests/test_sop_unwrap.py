@@ -180,3 +180,20 @@ def test_output_a_places_unwrapped_lines_by_cell_and_the_summary_counts_them(cli
     unwrapped = len(_table_lines(view, 0)) + len(_table_lines(view, 2))
     assert summary["unwrapped_rows"] == unwrapped == 12
     assert summary["old_rows"] == unwrapped + 4  # 제목 · 앞 문장 · 표 2를 가리키는 문장 · 값 표 한 줄
+
+
+def test_two_document_undos_after_a_confirmed_back_to_table_restore_the_first_table(client: TestClient) -> None:
+    # 스모크가 시드를 처음 그대로 두는 길 — 다시 표로(확인) → 벗기기를 문서 편집 기록으로 되돌리면 처음 표 Unit이 같은 id로 돌아온다
+    bundle_id, sop_id, doc_id = _setup(client)
+    before = get_view(client, bundle_id, doc_id)
+    _unwrap(client, bundle_id, doc_id, 2)
+    view = get_view(client, bundle_id, doc_id)
+    assign_as_is(client, bundle_id, find_unit(view, f"A\n{STEP_A}"), sop_id, slot_key="purpose")
+    assert _set_layout(client, bundle_id, doc_id, 2, False, confirm=True).status_code == 200
+
+    _step(client, bundle_id, doc_id, "undo")
+    _step(client, bundle_id, doc_id, "undo")
+
+    view = get_view(client, bundle_id, doc_id)
+    assert sorted(unit["id"] for unit in view["units"]) == sorted(unit["id"] for unit in before["units"])
+    assert {unit["status"] for unit in view["units"] if unit["table_id"] == view["tables"][2]["id"]} == {"unassigned"}

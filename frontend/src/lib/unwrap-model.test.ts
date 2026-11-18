@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import type { DocumentView, ViewBlock, ViewTable, ViewUnit } from "./api-sop";
 import { buildPaperModel, buildRows } from "./paper-model";
-import { findUnwrapHeads, getRowUnwrapTable, getTableNumber, getUnitUnwrapTable } from "./unwrap-model";
+import { countDecidedLines, findUnwrapHeads, getRowUnwrapTable, getTableNumber, getUnitUnwrapTable } from "./unwrap-model";
 
 function makeBlock(id: number, seq: number, text: string, extra: Partial<ViewBlock> = {}): ViewBlock {
   return {
@@ -74,5 +74,11 @@ describe("unwrapped tables on the paper", () => {
     expect(getUnitUnwrapTable([units.get(10)!], model.unwrapped)).toBeNull();
     expect(getUnitUnwrapTable([units.get(41)!], model.unwrapped)).toBeNull(); // 표에 묶인 칸 문장
     expect(getTableNumber(view.tables[1])).toBe(2);
+  });
+
+  it("counts the decided lines of an unwrapped table before asking the server", () => {
+    const statuses = new Map<number, ViewUnit["status"]>([[21, "confirmed"], [23, "on_hold"], [30, "confirmed"]]);
+    expect(countDecidedLines(view.units, 7, (id) => statuses.get(id))).toBe(2); // 표 밖 줄(30)은 세지 않는다
+    expect(countDecidedLines(view.units, 7, () => undefined)).toBe(0);
   });
 });

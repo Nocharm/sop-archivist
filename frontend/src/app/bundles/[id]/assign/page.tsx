@@ -157,7 +157,7 @@ import {
 } from "@/lib/assign-model";
 import { buildAssignMenu, getPairPickBlocker, getPairSetBlocker, planAssignJoin, planShapeMode, type AssignMenuAction, type AssignMenuGroups } from "@/lib/assign-context-menu-model";
 import { listHeadingBackUnits } from "@/lib/heading-shift-model";
-import { getTableNumber, getUnitUnwrapTable } from "@/lib/unwrap-model";
+import { countDecidedLines, getTableNumber, getUnitUnwrapTable } from "@/lib/unwrap-model";
 import { resolveLineParam } from "@/lib/assign-line-param";
 import { readAssignView, writeAssignView } from "@/lib/assign-view-prefs";
 import { loadBundle, useBundle } from "@/lib/bundle-store";
@@ -1328,7 +1328,12 @@ export default function AssignPage() {
 
   /** 다시 표로(F1) - 벗긴 표 전체를 표 한 줄로 되돌린다. 그 표의 줄에 배정이 있으면 서버가 되묻고 확인창이 한 번 묻는다(표 밖 줄의 배정은 그대로) */
   function rewrapTable(tableId: number) {
-    void runUnitEdit({ type: "set_layout_table", table_id: tableId, is_layout: false }, t("assign.unwrap.didRewrap"), null);
+    const op: EditOp = { type: "set_layout_table", table_id: tableId, is_layout: false };
+    const okText = t("assign.unwrap.didRewrap");
+    // 판단이 풀릴 줄이 있으면 서버에 보내기 전에 확인창부터 - 확인하면 confirm을 켜고 보낸다(409를 거쳐 되묻지 않는다)
+    const decided = paperModel ? countDecidedLines(paperModel.units.values(), tableId, (unitId) => unitMap.get(unitId)?.status) : 0;
+    if (decided > 0) setEditConfirm({ count: decided, retry: { kind: "edit", op, okText, followId: null } });
+    else void runUnitEdit(op, okText, null);
   }
 
   /** 편집 확인창의 글 - 다시 표로면 그 표의 말(표 번호 · 확정된 줄 수, F12 A6), 아니면 판단이 지워진다는 공통 글 */

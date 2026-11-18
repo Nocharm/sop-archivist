@@ -8177,7 +8177,7 @@ await runStep("assign: unwrap table - ↺ Back to table asks once when a line is
   await pickFirstPlace(page);
   await page.locator('[data-testid="assign-primary"]').click();
   check("a line of the unwrapped table is assigned", (await waitView((view) => view.units.some((item) => item.id === line.id && item.status === "confirmed"))) !== null);
-  // 다시 표로 - 배정이 있으면 확인창이 한 번 묻는다. 취소하면 그대로다
+  // 다시 표로 - 배정이 있으면 서버에 보내기 전에 확인창이 한 번 묻는다(409 없이). 취소하면 그대로다
   await page.locator(`[data-testid="assign-paper-rewrap-${unit.table_id}"]`).click();
   await wait(page, "assign-edit-confirm");
   check("the confirm names the table", (await getText(page, "assign-edit-confirm")).includes("Wrap table"), await getText(page, "assign-edit-confirm"));
@@ -8190,12 +8190,15 @@ await runStep("assign: unwrap table - ↺ Back to table asks once when a line is
   const wrapped = await waitView((view) => !isLayout(view));
   check("Back to table wraps it into one table line", wrapped !== null && wrapped.units.some((item) => item.kind === "table" && item.table_id === unit.table_id));
   check("the line's assignment is cleared", wrapped?.units.find((item) => item.id === line.id)?.status === "unassigned");
-  // 되돌려 시드 묶음을 처음 그대로 둔다 - 다시 표로 → 배정 → 벗기기
-  for (let step = 0; step < 3; step += 1) {
-    await page.locator('[data-testid="assign-undo"]').click();
-    await page.waitForTimeout(800);
+  // 시드 묶음을 처음 그대로 둔다. Assign Undo로는 못 돌아간다 - 확인하고 한 편집이 푼 배정은 되돌리기가 살리지 않아(Assign 되돌리기 설계 §4.4)
+  // 배정 단계의 되돌리기가 거절되고, 그 밑의 벗기기에 닿지 못한다. 다시 표로 묶어도 처음 모양은 아니다(벗길 때 문장이 된 캡션 · 번호 칸을 받은 줄은
+  // 그대로 남는다). 그래서 문서 편집 기록을 API로 두 번 되돌린다(다시 표로 → 벗기기) - 처음 표 Unit과 캡션이 같은 id로 돌아오고, 배정은 이미 풀렸다
+  for (let step = 0; step < 2; step += 1) {
+    const revision = (await readView(doc.id)).document.revision;
+    const response = await page.request.post(`${BASE}/api/bundles/${halfBundleId}/documents/${doc.id}/edits/undo`, { headers, data: { revision } });
+    check(`document edit undo ${step + 1} goes through`, response.ok(), String(response.status()));
   }
-  check("three Undos bring the original table line back", (await waitView((view) => !isLayout(view) && view.units.some((item) => item.id === unit.id))) !== null);
+  check("the original table line is back", (await waitView((view) => !isLayout(view) && view.units.some((item) => item.id === unit.id && item.status === "unassigned"))) !== null);
 });
 
 // 끌어서 보내기(끌어다 놓기 설계 §6, 3걸음) - Old 조각을 아직 쓰지 않은 New 문서(New · from Assign)의 두 문장 사이나 빈 칸에 놓으면 그 줄의 초안이 되고(저장하지 않는다),
