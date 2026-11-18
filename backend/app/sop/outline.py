@@ -25,6 +25,7 @@ KIND_AUTO_LIST = "auto_list"
 KIND_GROUP = "group"
 ORIGIN_STANDARD = "standard"
 ORIGIN_DECLARED = "declared"
+ORIGIN_CUSTOM = "custom"  # 표준에서 벗어나 사용자가 더한 항목(사유가 따른다) — 선언할 수 없는 부모 아래나 최상위
 # 직접 줄을 받는 종류 — group은 하위만 두고 auto_list는 앱이 채운다
 ASSIGNABLE_KINDS = (KIND_GENERAL, KIND_CATEGORY_TABLE, KIND_NAMED_CHILDREN)
 # 하위 항목을 두지 않는 종류 — 표준을 고칠 때 이 종류 아래에 항목을 달지 못한다
@@ -45,13 +46,22 @@ def get_parent_key(key: str) -> str | None:
 
 
 def build_next_declared_key(parent_key: str, used_keys: Iterable[str]) -> str:
-    """새 선언 항목의 키 "부모.n<수>" — 수는 그 부모 아래에서 쓴 적 없는 다음 수다(뺀 항목의 키도 센다).
+    """새 선언·사용자 항목의 키 "부모.n<수>"(부모가 빈 글이면 최상위 "n<수>") — 수는 그 부모 아래에서 쓴 적 없는 다음 수다(뺀 항목의 키도 센다).
 
     뺀 키를 다시 쓰면 그 키를 든 옛 판단 단계(되돌리기)가 다른 항목에 줄을 놓는다.
     """
-    pattern = re.compile(rf"{re.escape(parent_key)}\.n(\d+)")
+    head = f"{parent_key}." if parent_key else ""
+    pattern = re.compile(rf"{re.escape(head)}n(\d+)")
     used = [int(match.group(1)) for key in used_keys if (match := pattern.fullmatch(key)) is not None]
-    return f"{parent_key}.n{max(used, default=0) + 1}"
+    return f"{head}n{max(used, default=0) + 1}"
+
+
+def is_deviation(item: "OutlineItemInfo") -> bool:
+    """표준에서 벗어난 항목인가 — 사용자 항목, 그리고 이름을 바꾸거나 필수인데 뺀 표준 항목(사유가 남아 있다).
+
+    선택 항목(7.1.x)을 뺀 것·N/A·선언(6장 절차·9장 부록·5장 범주)은 벗어남이 아니다.
+    """
+    return item.origin == ORIGIN_CUSTOM or (item.origin == ORIGIN_STANDARD and item.deviation_reason is not None)
 
 
 @dataclass(frozen=True)
@@ -80,15 +90,22 @@ class DocOutline:
     def __init__(self, items: Sequence[OutlineItemInfo]) -> None:
         children: dict[str | None, list[OutlineItemInfo]] = defaultdict(list)
         for item in sorted(items, key=lambda item: (item.order_index, item.key)):
-            if not item.is_removed:
+            # 뺀 표준 항목은 되살릴 수 있어 자리를 기억한다(listed_items). 뺀 선언·사용자 항목은 키만 막는 행이라 어디에도 없다
+            if not item.is_removed or item.origin == ORIGIN_STANDARD:
                 children[get_parent_key(item.key)].append(item)
         ordered: list[OutlineItemInfo] = []
+        listed: list[OutlineItemInfo] = []
         pending = children[None][::-1]
         while pending:  # 깊이 먼저 — 부모 바로 뒤에 그 하위가 온다
             item = pending.pop()
+            listed.append(item)
+            if item.is_removed:  # 빠진 항목은 하위까지 함께 빠진다
+                continue
             ordered.append(item)
             pending.extend(children[item.key][::-1])
         self.items: tuple[OutlineItemInfo, ...] = tuple(ordered)
+        # items에 뺀 표준 항목(하위는 빼고)을 제자리에 더한 것 — To-Be 목록이 되살리기 단추를 그 자리에 그린다
+        self.listed_items: tuple[OutlineItemInfo, ...] = tuple(listed)
         self._by_key = {item.key: item for item in ordered}
         self._numbers = number_outline(self, self._by_key.keys())
 
@@ -360,6 +377,17 @@ def build_declared_item(
         key=key, title_en=title_en, title_ko=title_ko, kind=KIND_GENERAL, is_required=True,
         default_style=parent.default_style, child_prefix="", order_index=order_index, origin=ORIGIN_DECLARED,
         is_removed=False, deviation_reason=None,
+    )
+
+
+def build_custom_item(
+    parent: OutlineItemInfo | None, key: str, title_en: str, *, title_ko: str, order_index: int, reason: str
+) -> OutlineItemInfo:
+    """사용자 항목 하나(표준에서 벗어남, 사유가 따른다) — 줄을 받는 일반 항목이고 필수다. 기본 표시는 부모의 것, 최상위면 글머리 기호(템플릿 내용의 기본)."""
+    return OutlineItemInfo(
+        key=key, title_en=title_en, title_ko=title_ko, kind=KIND_GENERAL, is_required=True,
+        default_style=parent.default_style if parent is not None else NUMBER_BULLET, child_prefix="",
+        order_index=order_index, origin=ORIGIN_CUSTOM, is_removed=False, deviation_reason=reason,
     )
 
 

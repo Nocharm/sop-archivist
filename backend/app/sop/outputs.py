@@ -195,6 +195,10 @@ class CSection(BaseModel):
     # 칸 머리에 번호를 라벨과 따로 적는가 — 라벨에 번호가 이미 든 부록("Appendix 1. 이름")만 거짓이고 그 밖(WI·절 경로 칸 포함)은 참이다.
     # 거짓이어도 number는 그대로다(줄 번호의 머리)
     shows_number: bool = True
+    # 표준과 다른 SOP 절(사용자 항목·이름을 바꾼 표준 항목)의 사유 — 그 밖의 절은 None
+    deviation_reason: str | None = None
+    # 필수 절인데 비었다 — 줄을 받는 절·묶음 제목은 자기와 하위에 줄이 없고, 자동 목록은 자식 WI가 없고, N/A도 아니다. 알림일 뿐 검토 요청을 막지 않는다
+    is_empty_required: bool = False
 
 
 class CDoc(BaseModel):
@@ -295,6 +299,8 @@ class _SectionPlan:
     # 글머리 기호 줄의 No.에 적는 번호 — 자기 번호, 번호 없는 SOP 절(범주)은 가장 가까운 번호 있는 상위 절의 번호
     nearest_number: str | None = None
     shows_number: bool = True  # 칸 머리에 번호를 라벨과 따로 적는가 — 라벨에 번호가 든 부록만 거짓(outline.DocOutline.shows_number)
+    deviation_reason: str | None = None  # 표준과 다른 SOP 절의 사유(CSection.deviation_reason)
+    is_empty_required: bool = False  # 비어 있는 필수 SOP 절(CSection.is_empty_required)
 
 
 def _order_target_docs(snap: BundleSnapshot) -> list[TargetDocInfo]:
@@ -465,6 +471,14 @@ def _get_line_base(outline: DocOutline, key: str, numbers: Mapping[str, str | No
     return numbers.get(key) if outline.counts_lines(key) else None
 
 
+def _list_filled_keys(index: _Index, doc: TargetDocInfo, by_slot: Mapping[str | None, list[TargetInfo]]) -> set[str]:
+    """SOP 절 가운데 채워진 것 — 줄(칸 제목 제외)이 놓인 절과, 자식 WI가 있는 자동 목록 절. 비어 있는 필수 절 판정의 재료다."""
+    filled = {key for key, targets in by_slot.items() if key is not None and targets}
+    if any(child.doc_type == "wi" and child.parent_id == doc.id for child in index.snap.target_docs.values()):
+        filled |= {item.key for item in doc.outline.items if item.kind == KIND_AUTO_LIST}
+    return filled
+
+
 def _find_nearest_number(key: str, numbers: Mapping[str, str | None]) -> str | None:
     """그 절이나 가장 가까운 상위 절의 번호 — 번호 없는 절(5장 범주)의 줄이 결과물 A·Excel의 No.에 적는 값("5")."""
     current: str | None = key
@@ -503,16 +517,23 @@ def _plan_sections(index: _Index, doc: TargetDocInfo, labels: OutputLabels) -> l
             if target.kind == SLOT_HEADING:
                 headings[target.slot_key].append(target)
         outline, numbers = doc.outline, index.outline_numbers[doc.id]
+        filled = _list_filled_keys(index, doc, by_slot)
         return [
             _SectionPlan(
-                item.key, outline.get_label(item.key, numbers), numbers[item.key], _find_na_reason(doc, item.key),
+                item.key, outline.get_label(item.key, numbers), numbers[item.key], na_reason,
                 by_slot.get(item.key, []), keep_empty=True, headings=tuple(headings.get(item.key, ())),
                 kind=item.kind, level=outline.get_level(item.key), counts_lines=outline.counts_lines(item.key),
                 default_style=item.default_style, line_base=_get_line_base(outline, item.key, numbers), run=item.key,
                 nearest_number=_find_nearest_number(item.key, numbers), shows_number=outline.shows_number(item.key),
+                deviation_reason=item.deviation_reason,
+                # 종류마다 "채움"이 다르다(_list_filled_keys) — 줄을 받는 절은 줄, 묶음 제목은 하위의 것, 자동 목록은 자식 WI
+                is_empty_required=item.is_required and na_reason is None and not any(
+                    outline.is_within(key, item.key) for key in filled
+                ),
             )
             for item in outline.items
             if item.key in numbers
+            for na_reason in (_find_na_reason(doc, item.key),)
         ]
     by_place: dict[tuple[int | None, str | None], list[TargetInfo]] = defaultdict(list)
     for target in tops:
@@ -1459,6 +1480,7 @@ def _build_c_doc(ctx: _CContext, doc: TargetDocInfo) -> CDoc:
                     heading_note=_format_heading_note(snap, plan.headings), items=items,
                     kind=plan.kind, level=plan.level, counts_lines=plan.counts_lines, default_style=plan.default_style,
                     auto_items=_list_auto_items(snap, doc, plan), shows_number=plan.shows_number,
+                    deviation_reason=plan.deviation_reason, is_empty_required=plan.is_empty_required,
                 )
             )
     parent = snap.target_docs.get(doc.parent_id) if doc.parent_id is not None else None
@@ -1560,13 +1582,15 @@ class ComposedSection(BaseModel):
     na_reason: str | None
     heading_note: str  # 칸 제목 출처 — 결과물 C 칸 머리와 같은 "← OLD-1 §5", 없으면 빈 글
     items: list[ComposedItem]
-    # 아래 여섯은 결과물 C 칸(CSection)과 같은 값이다
+    # 아래 여덟은 결과물 C 칸(CSection)과 같은 값이다
     kind: OutlineKind | None
     level: int
     counts_lines: bool
     default_style: NumberStyle
     auto_items: list[AutoItem] = []
     shows_number: bool = True
+    deviation_reason: str | None = None
+    is_empty_required: bool = False
 
 
 class ComposedDoc(BaseModel):
@@ -1639,6 +1663,7 @@ def build_composed_doc(snap: BundleSnapshot, target_doc_id: int, lang: Lang) -> 
             heading_note=_format_heading_note(snap, plan.headings), items=[build_item(target) for target in plan.targets],
             kind=plan.kind, level=plan.level, counts_lines=plan.counts_lines, default_style=plan.default_style,
             auto_items=_list_auto_items(snap, doc, plan), shows_number=plan.shows_number,
+            deviation_reason=plan.deviation_reason, is_empty_required=plan.is_empty_required,
         )
         for plan in _plan_sections(index, doc, labels)
         if plan.targets or plan.keep_empty
