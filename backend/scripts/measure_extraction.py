@@ -29,7 +29,8 @@ from app.sop.segment import BlockView, TableView, build_unit_drafts, build_unit_
 from app.sop.units import LINE_SPLIT_FORMAT
 
 SENTENCE_LIKE_LABEL_CHARS = 20  # 절 이름이 이보다 길면 제목이 아니라 문장을 절 이름으로 삼은 것으로 센다
-_BARE_LABEL_RE = re.compile(r"[A-Z](?:-\d+)?|\d+(?:\.\d+)*\.?")
+# 번호만 든 칸의 꼴 — 추출 신호(docx_reader._NUMBER_CELL_RE)와 같다: "A-1-2"까지(MD 1 F3, 사용자 결정 2026-11-18)
+_BARE_LABEL_RE = re.compile(r"[A-Z](?:-\d+)*|\d+(?:\.\d+)*\.?")
 _READERS = {"docx": read_docx, "pdf": read_pdf}
 _NOT_MEASURED = ("icon_marks", "icon_figures", "noise_marked_units", "en_units_in_ko_half", "numbering_mismatch")
 
