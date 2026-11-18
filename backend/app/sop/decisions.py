@@ -62,6 +62,7 @@ from app.sop.models import (
     UnitPairMember,
     WiStep,
 )
+from app.sop.numbering import get_content_start, get_hidden_len, strip_number
 from app.sop.outline import DocOutline, load_doc_outlines
 from app.sop.pair_settle import settle_pairs
 from app.sop.refs import REF_LANG
@@ -219,6 +220,8 @@ class UnitRowOut(BaseModel):
     kind: str
     lang: str
     text: str
+    # text에서 내용이 시작하는 자리 — 문단 번호가 번호 칸으로 갔으면 그 뒤, 아니면 0(문서 보기의 number.content_start와 같은 값)
+    content_start: int
     table_id: int | None
     row_index: int | None
     group_unit_id: int | None
@@ -757,7 +760,9 @@ def _resolve_text(item: TargetIn, row: TargetSentence | None, doc: TargetDoc, st
     elif row is not None:
         text = row.confirmed_text or row.ai_text
     elif len(item.source_unit_ids) == 1:
-        text = state.units[item.source_unit_ids[0]].text
+        # 글 없이 보낸 새 문장은 원문의 내용이다 — 문단 번호는 번호 칸의 것이라 따라가지 않는다(F5)
+        unit = state.units[item.source_unit_ids[0]]
+        text = strip_number(unit.text, unit)
     else:
         _reject("empty_text", keys=keys)
     if not has_visible_char(text):
@@ -898,7 +903,8 @@ def _decide_change_type(
         return "translated"
     if not plan.is_cell and spread[(source_id, plan.doc.id)] >= 2:
         return "split"
-    if plan.text == state.units[source_id].text:
+    source = state.units[source_id]
+    if plan.text in (source.text, strip_number(source.text, source)):
         return "as_is"
     if requested is None and plan.item.text is None and plan.row is not None and (
         plan.row.ai_text or (plan.row.suggestion_id is not None and set(plan.sources) == state.sources[plan.row.id])
@@ -1127,6 +1133,19 @@ def _is_echoed(plan: _Plan, changed: set[int], state: _State) -> bool:
     return source is not None and source.id in changed
 
 
+def _check_against_sources(plan: _Plan, state: _State, check_texts: list[str]) -> list[dict[str, str]]:
+    """문장 검사 — 새 문장은 원문에서 문단 번호를 뺀 내용이어도 되고 번호를 품어도 된다. 번호 칸으로 간 번호("6.2")가 새 문장에
+    없다고 숫자 불일치를 내지 않게, 번호를 뺀 내용과 견준 결과가 더 깨끗하면 그것을 쓴다."""
+    warnings = check_sentence(check_texts, plan.text)
+    if not warnings or plan.origin == ORIGIN_TRANSLATION:
+        return warnings
+    contents = [strip_number(state.units[unit_id].text, state.units[unit_id]) for unit_id in plan.sources]
+    if contents == check_texts:
+        return warnings
+    stripped = check_sentence(contents, plan.text)
+    return stripped if len(stripped) < len(warnings) else warnings
+
+
 def _list_check_texts(plan: _Plan, state: _State) -> list[str]:
     """문장 검사의 원문 — 번역은 출처 연결이 없어 번역 출처 단위의 글과 언어를 넘어 비교한다(스펙 §7.12)."""
     if plan.origin == ORIGIN_TRANSLATION:
@@ -1184,7 +1203,7 @@ def _apply_plan(
     check_texts = _list_check_texts(plan, state)
     # 참조 줄(REF)은 번호를 지금 번호로 바꿔 쓰는 글이라 숫자 불일치 검사를 하지 않는다
     is_checked = plan.item.kind == "sentence" and plan.lang != REF_LANG and bool(check_texts)
-    target.warnings = check_sentence(check_texts, plan.text) if is_checked else []
+    target.warnings = _check_against_sources(plan, state, check_texts) if is_checked else []
     _set_human_status(target, action, hold_reason, actor, stamp)
     target.revision += 1
     plan.row = target
@@ -1764,7 +1783,9 @@ async def list_units(
         items.append(
             UnitRowOut(
                 unit_id=unit.id, document_id=document.id, display_id=compute_display_id(document, unit),
-                kind=unit.kind, lang=unit.lang, text=unit.text, table_id=unit.table_id, row_index=unit.row_index,
+                kind=unit.kind, lang=unit.lang, text=unit.text,
+                content_start=get_content_start(unit.text, get_hidden_len(unit)), table_id=unit.table_id,
+                row_index=unit.row_index,
                 group_unit_id=unit.group_unit_id, pair_id=pair_ids.get(unit.id), status=get_cover_status(unit, decisions),
                 decision=DecisionOut.model_validate(decision), target_ids=target_ids.get(unit.id, []),
                 target_doc_ids=sorted(target_doc_ids.get(unit.id, ())),

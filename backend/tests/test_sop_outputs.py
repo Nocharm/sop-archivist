@@ -970,11 +970,12 @@ def test_output_c_one_list_per_slot(client: TestClient) -> None:
 
     # 삭제·이동은 줄마다 한 번 — 짝이 없어 단위 하나씩
     assert [(d["display_id"], d["doc_code"], d["section"], d["source_text"], d["reason"]) for d in output["deleted"]] == [
-        (d1(OLD1_HEADINGS[0]), "OLD-1", "5", OLD1_HEADINGS[0], HEADING_REASON),
-        (d1(OLD1_HEADINGS[1]), "OLD-1", "5.1", OLD1_HEADINGS[1], HEADING_REASON),
+        # 원문 글은 번호를 뺀 내용이다 — 번호는 절 칸에 있다(문단 번호 F5)
+        (d1(OLD1_HEADINGS[0]), "OLD-1", "5", "절차", HEADING_REASON),
+        (d1(OLD1_HEADINGS[1]), "OLD-1", "5.1", "준비", HEADING_REASON),
         (d1(DELETED), "OLD-1", "5.1", DELETED, DELETE_REASON),
-        (d2(OLD2_HEADINGS[0]), "OLD-2", "5", OLD2_HEADINGS[0], HEADING_REASON),
-        (d2(OLD2_HEADINGS[1]), "OLD-2", "5.1", OLD2_HEADINGS[1], HEADING_REASON),
+        (d2(OLD2_HEADINGS[0]), "OLD-2", "5", "기록", HEADING_REASON),
+        (d2(OLD2_HEADINGS[1]), "OLD-2", "5.1", "보관", HEADING_REASON),
     ]
     assert output["moved"] == [{
         "display_id": d1(MOVED), "doc_code": "OLD-1", "section": "5.1", "source_text": MOVED,
