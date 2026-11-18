@@ -3225,7 +3225,8 @@ await runStep("assign: written New document - identical, link by clicking, split
   // 문서별 확대 - Old 위에서 Ctrl+휠, New는 그대로
   await page.waitForLoadState("networkidle");
   await page.waitForTimeout(400);
-  await wait(page, "assign-new-zoom-value");
+  // 좁은 New 칸 머리(1280 반반 이하)에서는 확대 %를 접는다(v1.1.38) - 보이지 않아도 값은 그대로라 붙어 있기만 기다린다
+  await page.locator('[data-testid="assign-new-zoom-value"]').first().waitFor({ state: "attached", timeout: T });
   const oldZoom = await getText(page, "assign-old-zoom-value");
   const newZoom = await getText(page, "assign-new-zoom-value");
   await page.locator('[data-testid="assign-old"] .pane-body').hover();
@@ -4060,6 +4061,184 @@ await runStep("assign: New template view draws a WI in chapter tables, Korean ha
   await takeShot("sop-assign-new-template-wi.png");
 });
 
+// 템플릿 보기에 끌어 놓기(MD 1 F9) - 자리 목록 모델(place-spot-model)이 기본 보기와 같은 규칙으로 판단한다. 마우스는 걸음으로 움직인다(dragTo는 쓰지 않는다)
+/** 미배정·짝 없는 Old 문장 하나를 고르고, 아직 쓰지 않은 SOP를 New 칸 템플릿 보기로 연다 - 끌기 도우미를 돌려준다 */
+async function openTemplateDrag(page) {
+  const headers = { "X-Dev-User": "qa.member" };
+  const getJson = async (path) => (await page.request.get(`${BASE}/api/bundles/${halfBundleId}${path}`, { headers })).json();
+  const sop = (await getJson("/tobe")).docs.find((doc) => doc.entrance === "assign" && doc.doc_type === "sop");
+  const unit = (await getJson("/units?limit=1000")).items.find((item) => item.kind === "sentence" && item.status === "unassigned" && item.decision.disposition === "unassigned" && item.pair_id === null);
+  check("the bundle has an SOP to write and a loose Old sentence", Boolean(sop && unit));
+  if (!sop || !unit) return null;
+  await page.goto(`${BASE}/bundles/${halfBundleId}/assign`);
+  await wait(page, "assign-bar");
+  const piece = page.locator(`[data-testid="assign-paper-piece-${unit.unit_id}"]`);
+  await page.locator('[data-pane="old"] .strip[data-strip-unit]').first().waitFor({ timeout: T });
+  if ((await piece.count()) === 0) {
+    await page.locator('[data-testid="assign-old-doc"]').click();
+    await page.locator(`[data-testid="assign-old-doc-option-${unit.document_id}"]`).click();
+  }
+  await piece.waitFor({ timeout: T });
+  const pointInUnit = async () => {
+    await piece.evaluate((el) => el.scrollIntoView({ block: "center" }));
+    await page.waitForTimeout(150);
+    return page.locator(`[data-testid="assign-paper-unit-${unit.unit_id}"]`).first().evaluate((el) => {
+      const rect = el.getClientRects()[0];
+      return { x: rect.left + Math.min(24, rect.width / 2), y: rect.top + rect.height / 2 };
+    });
+  };
+  // 끌 줄을 먼저 골라 결정 칸이 보이게 하고, 그 줄의 New 칸 문서를 SOP로 바꾼 뒤 템플릿 보기
+  const from = await pointInUnit();
+  await page.mouse.click(from.x, from.y);
+  await wait(page, "assign-new");
+  if ((await page.locator('[data-testid="assign-new"]').getAttribute("data-doc")) !== String(sop.id)) {
+    await page.locator('[data-testid="assign-new-doc"]').click();
+    await page.locator(`[data-testid="assign-new-doc-option-${sop.id}"]`).click();
+  }
+  await page.locator('[data-testid="assign-new-view-template"]').click();
+  await wait(page, "assign-new-tpl");
+  // 템플릿 자리 한 점 - 칸 가운데로 스크롤하고 왼쪽 가까이(top · bottom은 그 자리의 위·아래 끝 가까이)
+  const pointInSpot = async (testId, where = "middle") => {
+    const spot = page.locator(`[data-testid="${testId}"]`).first();
+    await spot.evaluate((el) => el.scrollIntoView({ block: "center" }));
+    await page.waitForTimeout(150);
+    const box = await spot.boundingBox();
+    const y = where === "bottom" ? box.y + box.height - 2 : where === "top" ? box.y + 2 : box.y + box.height / 2;
+    return { x: box.x + Math.min(40, box.width / 2), y };
+  };
+  const readCard = () => page.evaluate(() => ({
+    note: document.querySelector('[data-testid="drag-card"] .drag-card-note')?.textContent ?? "",
+    refused: document.querySelector('[data-testid="drag-card"]')?.hasAttribute("data-refused") ?? false,
+  }));
+  const composed = await getJson(`/outputs/c/docs/${sop.id}?lang=en`);
+  // 5장 범주(N/A 아님) - 템플릿 보기의 범주 행
+  const category = composed.sections.find((section) => section.location_key.startsWith("general_requirements.") && section.na_reason === null);
+  check("the SOP has a chapter-5 category", Boolean(category));
+  return { getJson, sop, unit, pointInUnit, pointInSpot, readCard, composed, category };
+}
+
+await runStep("assign: template view drag lights open spots, names the destination and refuses app-built spots with a reason", {}, async ({ page, takeShot }) => {
+  await installCommitCounter(page);
+  const ctx = await openTemplateDrag(page);
+  if (!ctx?.category) return;
+  const { sop, pointInUnit, pointInSpot, readCard, category } = ctx;
+  let saveRequests = 0;
+  page.on("request", (request) => {
+    if (request.url().includes("/groups/save")) saveRequests += 1;
+  });
+  const rowId = (lang) => `assign-new-tpl-${lang}-${category.location_key}-row`;
+  await dragThrough(page, await pointInUnit(), [await pointInSpot(rowId("en"))]);
+  await page.waitForTimeout(100);
+  const during = await page.evaluate(() => ({
+    open: document.querySelectorAll(".tpl-paper [data-tpl-open]").length,
+    note: document.querySelector('[data-testid="assign-tpl-drag-note"]') !== null,
+  }));
+  check("open spots light up while dragging", during.open > 0, JSON.stringify(during));
+  check("the decision panel tells where to drop instead of the list", during.note);
+  const onRow = await readCard();
+  check("over a category row the card names that category", !onRow.refused && onRow.note.startsWith("→ ") && onRow.note.includes(category.label.split(" › ").at(-1)), onRow.note);
+  await takeShot("sop-assign-template-drag.png");
+  // 한글 절반의 같은 범주 행도 같은 자리
+  const koPoint = await pointInSpot(rowId("ko"));
+  await page.mouse.move(koPoint.x, koPoint.y, { steps: 8 });
+  const onKo = await readCard();
+  check("the Korean half names the same destination", onKo.note === onRow.note, `${onKo.note} / ${onRow.note}`);
+  // 못 놓는 곳 - 표가 빨갛게(거절) 되고 까닭이 뜬다. 그 사이 React는 다시 그리지 않는다
+  const refusedSpots = [
+    ["the app-built contents", "assign-new-tpl-toc"],
+    ["the cover table", "assign-new-tpl-cover"],
+    ["a group title (7)", "assign-new-tpl-en-document_relationships-head"],
+    ["7.2 Work Instructions", "assign-new-tpl-en-document_relationships.work_instructions-head"],
+    ["8 Attachment 1", "assign-new-tpl-en-attachments-system"],
+    ["the chapter-2 Site table", "assign-new-tpl-en-scope-grid"],
+  ];
+  const commitsBefore = await page.evaluate(() => window.__commits ?? -1);
+  for (const [label, testId] of refusedSpots) {
+    if ((await page.locator(`[data-testid="${testId}"]`).count()) === 0) continue;
+    const point = await pointInSpot(testId);
+    await page.mouse.move(point.x, point.y, { steps: 8 });
+    const card = await readCard();
+    check(`over ${label} the card is refused with a reason`, card.refused && card.note.length > 0, card.note);
+  }
+  const commitsAfter = await page.evaluate(() => window.__commits ?? -1);
+  check("no React commit while dragging over the template", commitsBefore > 0 && commitsBefore === commitsAfter, `${commitsBefore} -> ${commitsAfter}`);
+  // 못 놓는 곳에 놓으면 아무 일도 없다
+  await page.mouse.up();
+  await page.waitForTimeout(400);
+  const after = await page.evaluate(() => ({ open: document.querySelectorAll("[data-tpl-open]").length, cards: document.querySelectorAll('[data-testid="drag-card"]').length, note: document.querySelector('[data-testid="assign-tpl-drag-note"]') !== null }));
+  check("a refused drop saves nothing and leaves no marks", saveRequests === 0 && after.open === 0 && after.cards === 0 && !after.note, JSON.stringify({ saveRequests, ...after }));
+  check("the template view stays on the SOP", (await page.locator('[data-testid="assign-new"]').getAttribute("data-doc")) === String(sop.id));
+});
+
+await runStep("assign: template view drag onto a category row or between numbered lines confirms like the basic view, Undo takes it back", {}, async ({ page }) => {
+  const ctx = await openTemplateDrag(page);
+  if (!ctx?.category) return;
+  const { getJson, sop, unit, pointInUnit, pointInSpot, readCard, composed, category } = ctx;
+  const readSection = async (key) => (await getJson(`/outputs/c/docs/${sop.id}?lang=en`)).sections.find((section) => section.location_key === key);
+  // 놓으면 그 자리 메뉴 없이 바로 확정한다(기본 보기와 같다) - 놓기가 보낸 저장 요청에서 끈 Unit이 출처인 최상위 새 문장
+  const dropAndSave = async (label) => {
+    const request = page.waitForRequest((item) => item.url().includes("/groups/save") && item.method() === "POST", { timeout: T });
+    const response = page.waitForResponse((item) => item.url().includes("/groups/save"), { timeout: T });
+    await page.mouse.up();
+    const body = (await request).postDataJSON();
+    const ok = (await response).ok();
+    await page.waitForLoadState("networkidle");
+    check(`${label}: the drop saves at once with no in-place menu`, ok && (await page.locator('[data-testid="assign-link-menu"]').count()) === 0);
+    return body.targets.filter((target) => !target.parent_key && target.source_unit_ids.includes(unit.unit_id));
+  };
+  const undo = async (label, key) => {
+    // 되돌리기 알림은 10초 머문다 - 그사이 보기를 오가며 확인했으면 사라졌을 수 있어 Ctrl+Z로 되돌린다(같은 되돌리기)
+    const action = page.locator('[data-testid="toast-ok"] [data-testid^="toast-action-"]').last();
+    if (await action.isVisible()) await action.click();
+    else await page.keyboard.press("ControlOrMeta+z");
+    await page.waitForLoadState("networkidle");
+    await page.waitForTimeout(400);
+    const section = await readSection(key);
+    check(`${label}: Undo takes the line back out`, !section.items.some((item) => item.source_unit_ids.includes(unit.unit_id)));
+  };
+
+  // 1. 범주 행 - 그 범주 끝(줄이 있으면 마지막 줄 뒤, 없으면 자리 없음)에 확정되고, 기본 보기에서도 같은 줄이 보인다
+  await dragThrough(page, await pointInUnit(), [await pointInSpot(`assign-new-tpl-en-${category.location_key}-row`)]);
+  const sent = await dropAndSave("category row");
+  const lastId = category.items.at(-1)?.target_id;
+  check(
+    "the drop saves into that category at its end",
+    sent.length === 1 && sent[0].slot_key === category.location_key && JSON.stringify(sent[0].position) === JSON.stringify(lastId === undefined ? undefined : { after_target_id: lastId }),
+    JSON.stringify(sent.map((target) => [target.slot_key, target.position])),
+  );
+  const placed = (await readSection(category.location_key)).items.find((item) => item.source_unit_ids.includes(unit.unit_id));
+  check("the line now sits in that category", Boolean(placed));
+  if (placed) {
+    const inRow = await page.locator(`:is([data-testid="assign-new-tpl-en-${category.location_key}-row"], [data-testid="assign-new-tpl-ko-${category.location_key}-row"]) [data-row="t:${placed.target_id}"]`).count();
+    check("the template draws it in the category row", inRow > 0);
+    await page.locator('[data-testid="assign-new-view-basic"]').click();
+    const basic = await page.locator(`[data-testid="assign-new-${placed.target_id}"]`).waitFor({ timeout: T }).then(() => true, () => false);
+    check("Basic shows the same line", basic);
+    await page.locator('[data-testid="assign-new-view-template"]').click();
+    await wait(page, "assign-new-tpl");
+  }
+  await undo("category row", category.location_key);
+
+  // 2. 번호를 세는 칸의 줄 아래 끝 - 표에 "after 6.x.y (becomes …)", 줄 사이 선, 놓으면 그 묶음 뒤 자리로 확정
+  const numbered = composed.sections.find((section) => section.counts_lines && section.na_reason === null && section.items.some((item) => item.number !== null && item.lang === "en"));
+  // 데모 시드의 반쯤 한 SOP에는 번호를 세는 칸에 영어 번호 줄이 없을 수 있다 - 그때는 이 절반을 건너뛴다
+  if (!numbered) {
+    console.log("  (no section with numbered English lines in this seed - skipped the between-lines drop)");
+    return;
+  }
+  const first = numbered.items.find((item) => item.number !== null && item.lang === "en");
+  await dragThrough(page, await pointInUnit(), [await pointInSpot(`assign-new-tpl-en-${first.target_id}`, "bottom")]);
+  await page.waitForTimeout(100);
+  const card = await readCard();
+  const gapShown = await page.evaluate(() => [...document.querySelectorAll('[data-testid="assign-drop-gap"]')].some((el) => !el.hidden));
+  check("between numbered lines the card names the number the line will get", !card.refused && card.note.includes(`after ${first.number}`) && card.note.includes("becomes"), card.note);
+  check("a drop line is drawn between the lines", gapShown);
+  const gapSent = await dropAndSave("between numbered lines");
+  const ids = numbered.items.map((item) => item.target_id);
+  check("the drop saves the place after that line's block", gapSent.length === 1 && gapSent[0].slot_key === numbered.location_key && ids.includes(gapSent[0].position?.after_target_id), JSON.stringify(gapSent.map((target) => [target.slot_key, target.position])));
+  await undo("between numbered lines", numbered.location_key);
+});
+
 // 원문 글의 "표 3"은 올릴 때 그 표에 이어진다 - 고른 줄의 참조 카드가 대상을 보이고, 떼고 다시 이으면 처음 상태로 돌아온다
 await runStep("assign: a table reference shows its target and can be detached and linked again", {}, async ({ page, takeShot }) => {
   const headers = { "X-Dev-User": "qa.member" };
@@ -4815,6 +4994,93 @@ await runStep("order: a line merged from several Old lines shows its source tag 
   if (single) {
     check("a line from a single Old line has no tag", (await page.locator(`[data-testid="output-c-source-${single.target_id}"]`).count()) === 0);
   }
+});
+
+// 템플릿 보기(MD 2 §S5 ③) - Order 문서 머리의 기본 | 템플릿 전환: 보기만 하는 화면(줄 끝 단추 · 끌기 없음), 줄과 번호는 기본 보기(C)와 같고, 문서 머리가 넘치지 않는다
+await runStep("order: template view switch draws the same lines view-only, with no row-end buttons and no drag", {}, async ({ page, takeShot }) => {
+  const headers = { "X-Dev-User": "qa.member" };
+  await page.goto(`${BASE}/bundles/${halfBundleId}/order`);
+  await wait(page, "output-c");
+  const basic = page.locator('[data-testid="order-view-basic"]');
+  const template = page.locator('[data-testid="order-view-template"]');
+  await template.waitFor({ timeout: T });
+  check("the switch sits in the document head and starts on Basic", (await basic.getAttribute("aria-pressed")) === "true" && (await page.locator('header.c-doc-head [data-testid="order-view"]').count()) === 1);
+  check("the basic view has row-end buttons and no template", (await page.locator('[data-testid^="output-c-acts-"]').count()) > 0 && (await page.locator('[data-testid="order-tpl"]').count()) === 0);
+  const docId = await page.locator('[data-testid="output-c"] article[data-doc-id]').first().getAttribute("data-doc-id");
+  const output = await (await page.request.get(`${BASE}/api/bundles/${halfBundleId}/outputs/c?lang=en`, { headers })).json();
+  const doc = output.docs.find((item) => String(item.target_doc_id) === docId);
+  await template.click();
+  await wait(page, "order-tpl");
+  check("the template is on and the basic rows are gone", (await template.getAttribute("aria-pressed")) === "true" && (await page.locator('[data-testid^="output-c-row-"]').count()) === 0);
+  check("the view-only note sits above the template", (await page.locator('[data-testid="order-template-note"]').innerText()).includes("view-only"));
+  check("no row-end buttons, menus or drag boxes in the template", (await page.locator('[data-testid^="output-c-acts-"], .c-more, [data-drag-box]').count()) === 0);
+  check("the app's table of contents and both halves are drawn", (await page.locator('[data-testid="order-tpl-toc"]').count()) === 1 && (await page.locator('[data-testid^="order-tpl-half-"]').count()) === 2);
+  // 줄은 기본 보기(C)와 같다 - 두 절반에 그려진 새 문장 id가 C 줄의 id 집합과 같다(번역 없음 자리는 id가 아니라 -miss-)
+  const expected = new Set(doc.sections.flatMap((section) => section.items.map((item) => item.target_id)));
+  const drawn = await page.locator('[data-testid^="order-tpl-"]').evaluateAll((els) => els.map((el) => /^order-tpl-(?:en|ko)-(\d+)$/.exec(el.getAttribute("data-testid"))?.[1]).filter(Boolean).map(Number));
+  check("the template holds exactly the lines Output C has", new Set(drawn).size === expected.size && drawn.every((id) => expected.has(id)), `${new Set(drawn).size}/${expected.size}`);
+  // 번호도 C와 같다 - 번호 줄의 앞 표시가 C 번호 그대로(1:2 짝의 남는 줄 · 따로 놓인 짝도 자기 C 번호)
+  const numbered = doc.sections.flatMap((section) => section.items).find((item) => item.number_style === "numbered" && item.number !== null && item.kind === "sentence");
+  if (numbered) {
+    // WI는 번호가 장 표의 라벨 칸(.tpl-wi-num)에 있다
+    const marks = await page.locator('[data-testid="order-tpl"] :is(.tpl-mark, .tpl-wi-num)').allInnerTexts();
+    check("a numbered line carries its Output C number", marks.some((text) => text.trim() === numbered.number), `${numbered.number} among ${marks.length} marks`);
+  }
+  // 머리 - 전환이 용지 밖으로 넘치지 않는다(1120 · 1280 창에서 같은 틀)
+  const head = await page.locator('header.c-doc-head').first().boundingBox();
+  const box = await page.locator('[data-testid="order-view"]').boundingBox();
+  check("the switch stays inside the document head", Boolean(head && box) && box.x >= head.x - 1 && box.x + box.width <= head.x + head.width + 1, JSON.stringify({ head, box }));
+  await takeShot("sop-order-template.png");
+  await page.reload();
+  await wait(page, "order-tpl");
+  check("after a reload the template view is still on", (await page.locator('[data-testid="order-view-template"]').getAttribute("aria-pressed")) === "true");
+  await page.locator('[data-testid="order-view-basic"]').click();
+  await wait(page, "output-c");
+  check("Basic brings the row-end buttons back", (await page.locator('[data-testid^="output-c-acts-"]').count()) > 0 && (await page.locator('[data-testid="order-tpl"]').count()) === 0);
+});
+
+// 번역 없음 자리(4-d) - 템플릿 보기에서만 보이고, 누르면 그 줄의 Old 출처를 고른 채 Assign이 열린다(Order에는 번역 만들기 · 직접 쓰기가 없다)
+await runStep("order: the No translation slot shows only in the template view and opens Assign on the Old line", {}, async ({ page }) => {
+  await page.goto(`${BASE}/bundles/${halfBundleId}/order`);
+  await wait(page, "output-c");
+  await page.locator('[data-testid="order-view-template"]').waitFor({ timeout: T });
+  check("the basic view draws no No translation slot", (await page.locator('[data-testid="output-c"] [class~="tpl-miss"]').count()) === 0 && (await page.locator('[data-testid="output-c"]').getByText("No translation").count()) === 0);
+  await page.locator('[data-testid="order-view-template"]').click();
+  await wait(page, "order-tpl");
+  const fill = page.locator('[data-testid^="order-tpl-"][data-testid$="-fill"]');
+  const docIds = await page.locator('[data-testid^="order-doc-"]').evaluateAll((els) => els.map((el) => el.getAttribute("data-testid").replace("order-doc-", "")));
+  let found = (await fill.count()) > 0;
+  for (const docId of docIds) {
+    if (found) break;
+    await page.locator(`[data-testid="order-doc-${docId}"]`).click();
+    await wait(page, "order-tpl");
+    found = (await fill.count()) > 0;
+  }
+  if (!found) {
+    check("no No translation slot in this bundle (nothing to open)", true);
+    await page.locator('[data-testid="order-view-basic"]').click();
+    return;
+  }
+  const slot = fill.first();
+  await slot.scrollIntoViewIfNeeded({ timeout: T });
+  check("the slot is an orange dashed box", await slot.evaluate((el) => getComputedStyle(el).borderStyle === "dashed"));
+  await slot.click();
+  await page.waitForURL(/\/bundles\/\d+\/assign/, { timeout: T });
+  await wait(page, "assign-bar");
+  // 출처 없는 New 문장(새로 쓴 줄)의 자리면 고를 Old 줄이 없어 Assign 처음으로 간다 - 주소에 줄이 있을 때만 고름을 본다
+  if (new URL(page.url()).search === "") {
+    check("a line with no Old source opens Assign at its start", true);
+  } else {
+    const picked = await page
+      .waitForFunction(() => document.querySelectorAll('[data-pane="old"] [data-sel]').length > 0, null, { timeout: 5000 })
+      .then(() => true, () => false);
+    check("Assign opens with the Old line picked", picked);
+  }
+  // 이 브라우저의 보기 기억을 되돌린다 - 뒤 장면은 기본 보기로 연다
+  await page.goto(`${BASE}/bundles/${halfBundleId}/order`);
+  await wait(page, "output-c");
+  await page.locator('[data-testid="order-view-basic"]').click();
+  await wait(page, "output-c");
 });
 
 await runStep("order: Alt+ArrowDown moves the picked line and keeps it picked", {}, async ({ page }) => {

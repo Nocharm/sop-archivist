@@ -78,6 +78,7 @@ import {
   type SendDrop,
   type TreeDrop,
 } from "@/lib/assign-drop-model";
+import { buildPlaceSections, findPlaceBlock, formatPlacement, isSpotOpen, PLACE_REFUSAL_KEYS, readFixedSpot, resolvePlaceSpot, type PlaceSection, type PlaceSpot, type Placement } from "@/lib/place-spot-model";
 import { findUnderPoint, type BoxDragConfig, type DragHover, type DragPoint } from "@/lib/box-drag";
 import { useBoxDrag } from "@/lib/use-box-drag";
 import { findLastStep } from "@/lib/destination-manage-model";
@@ -2107,10 +2108,11 @@ export default function AssignPage() {
   }
   // --- 끌어서 보내기(3걸음) - New · from Assign 문서의 두 문장 사이·빈 칸에 놓으면 그 줄의 초안이 된다(저장은 하지 않는다). 잇기와 같이 관계 묶음이 온 뒤 렌더 중에 푼다 ---
   // position은 문장 사이에 놓은 자리(없으면 빈 칸 - 클릭과 같은 pickDestination). menu면 이어서 점선 초안(빈 칸이면 그 자리 표시)에 그 자리 메뉴를 띄운다
-  const [dropPlace, setDropPlace] = useState<{ rowKey: string; destination: Destination; position: DropPosition | null; menu: boolean } | null>(null);
+  // anchor는 템플릿 보기에 놓았을 때 메뉴를 띄울 자리(그 보기에는 점선 초안이 없다)
+  const [dropPlace, setDropPlace] = useState<{ rowKey: string; destination: Destination; position: DropPosition | null; menu: boolean; anchor?: string } | null>(null);
   // 나무 줄에 놓은 뒤 - 그 칸이 보낼 곳이 된 다음 렌더에서 바로 확정한다
   const [treeConfirm, setTreeConfirm] = useState<string | null>(null);
-  const [draftMenu, setDraftMenu] = useState<{ rowKey: string } | null>(null);
+  const [draftMenu, setDraftMenu] = useState<{ rowKey: string; anchor?: string } | null>(null);
   if (dropPlace !== null && activeKey !== dropPlace.rowKey) setDropPlace(null);
   else if (dropPlace !== null && !groupPending) {
     setDropPlace(null);
@@ -2119,7 +2121,7 @@ export default function AssignPage() {
       setDraft({ destination: dropPlace.destination, position: dropPlace.position, linkChangeTypes: {} });
       setPickSeq((seq) => seq + 1);
     }
-    if (dropPlace.menu) setDraftMenu({ rowKey: dropPlace.rowKey });
+    if (dropPlace.menu) setDraftMenu({ rowKey: dropPlace.rowKey, anchor: dropPlace.anchor });
     else setTreeConfirm(dropPlace.rowKey);
   }
   if (treeConfirm !== null && treeConfirm !== activeKey) setTreeConfirm(null);
@@ -2130,7 +2132,7 @@ export default function AssignPage() {
     if (!draftMenu) return;
     let tries = 0;
     let frame = requestAnimationFrame(function step() {
-      const el = document.querySelector<HTMLElement>('[data-testid="assign-new-draft"]') ?? document.querySelector<HTMLElement>(".new-slot-empty[data-draft]");
+      const el = draftMenu.anchor ? document.querySelector<HTMLElement>(draftMenu.anchor) : (document.querySelector<HTMLElement>('[data-testid="assign-new-draft"]') ?? document.querySelector<HTMLElement>(".new-slot-empty[data-draft]"));
       if (!el) {
         tries += 1;
         if (tries < 60) frame = requestAnimationFrame(step);
@@ -2229,6 +2231,93 @@ export default function AssignPage() {
     setManualNewDoc({ key: rowKey, docId: newDocId });
     setDropPlace({ rowKey, destination, position: drop.kind === "gap" ? { placeId: getDestinationId(destination), after: drop.after } : null, menu: true });
   }
+  // --- 템플릿 보기에 끌어 놓기(MD 1 F9) - 자리 목록 모델(place-spot-model)이 기본 보기와 같은 규칙으로 판단한다. 놓으면 기본 보기와 같이 바로 확정 ---
+  const placeSectionsRef = useRef<{ doc: ComposedDoc; sections: PlaceSection[] } | null>(null);
+  function readPlaceSections(): PlaceSection[] {
+    if (!isComposedDoc || !composedDoc) return [];
+    if (placeSectionsRef.current?.doc !== composedDoc) placeSectionsRef.current = { doc: composedDoc, sections: buildPlaceSections(composedDoc.sections, (unitId) => rowOfUnit.get(unitId)) };
+    return placeSectionsRef.current.sections;
+  }
+  // 끄는 동안 결정 칸의 보낼 곳 목록 대신 놓는 법 글 - 끌기를 시작·끝낼 때만 바뀐다(포인터가 움직일 때는 그리지 않는다)
+  const [isTemplateDrag, setTemplateDrag] = useState(false);
+  /** 템플릿 줄의 의미 묶음 상자 - 같은 절반 안의 첫·끝 줄(짝의 반대 언어 줄은 다른 절반에 있어 없으면 올린 줄) */
+  interface TemplateBox {
+    first: Element;
+    last: Element;
+  }
+  /** 템플릿 자리 요소가 가리키는 자리 - 줄은 의미 묶음 상자의 중간선으로 앞·뒤를 정한다 */
+  function readTemplateSpot(el: HTMLElement, point: DragPoint, sections: readonly PlaceSection[]): { spot: PlaceSpot | null; box: TemplateBox | null } {
+    const kind = el.dataset.tplSpot;
+    if (kind === "fixed") {
+      const what = readFixedSpot(el.dataset.tplFixed);
+      return { spot: what ? { kind: "fixed", what } : null, box: null };
+    }
+    if (kind === "section") return { spot: el.dataset.section ? { kind: "section", sectionKey: el.dataset.section } : null, box: null };
+    if (kind !== "line") return { spot: null, box: null };
+    const targetId = Number((el.dataset.row ?? "").slice("t:".length));
+    const block = findPlaceBlock(sections, targetId);
+    const half = el.closest(".tpl-half");
+    const first = (block && half?.querySelector(`[data-tpl-spot="line"][data-row="t:${block.firstId}"]`)) || el;
+    const last = (block && half?.querySelector(`[data-tpl-spot="line"][data-row="t:${block.lastId}"]`)) || el;
+    const middle = (first.getBoundingClientRect().top + last.getBoundingClientRect().bottom) / 2;
+    return { spot: { kind: "line", targetId, isUpperHalf: point.y < middle }, box: { first, last } };
+  }
+  /** 포인터 밑의 템플릿 자리와 거기 놓으면 - 템플릿 보기가 아니면 none */
+  function readTemplateAt(point: DragPoint, dragUnitIds: readonly number[]): { placement: Placement; el: HTMLElement | null; box: TemplateBox | null } {
+    const el = findUnderPoint(point, '[data-pane="new"] .tpl-paper [data-tpl-spot]');
+    if (!el) return { placement: { kind: "none" }, el: null, box: null };
+    const sections = readPlaceSections();
+    const { spot, box } = readTemplateSpot(el, point, sections);
+    return { placement: spot ? resolvePlaceSpot(sections, spot, dragUnitIds) : { kind: "none" }, el, box };
+  }
+  /** 템플릿 줄 사이 선 - 올린 절반의 묶음 상자 그 변(위면 첫 줄 위, 아래면 끝 줄 아래). 칸 화면 밖이면 감춘다. 선의 왼쪽 끝을 돌려준다 */
+  function showTemplateGap(placement: Placement, box: TemplateBox | null): DragPoint | null {
+    const edge = placement.kind === "place" ? placement.edge : null;
+    const edgeEl = edge && box ? (edge.side === "top" ? box.first : box.last) : null;
+    const frame = edgeEl?.closest(".pane-body")?.getBoundingClientRect();
+    if (!edge || !edgeEl || !frame) {
+      dropGapRef.current?.hide();
+      return null;
+    }
+    const rect = edgeEl.getBoundingClientRect();
+    const y = edge.side === "top" ? rect.top : rect.bottom;
+    if (y < frame.top || y > frame.bottom) {
+      dropGapRef.current?.hide();
+      return null;
+    }
+    dropGapRef.current?.show({ left: rect.left, top: y, width: rect.width });
+    return { x: rect.left, y };
+  }
+  /** 템플릿 자리의 꼬리표와 테두리 - 칸 자리는 그 자리에, 줄 사이는 선만(테두리 없음) */
+  function readTemplateHover(placement: Placement, el: HTMLElement | null): DragHover {
+    if (placement.kind === "place") return { state: "ok", note: formatPlacement(placement, t), target: placement.edge ? null : el };
+    if (placement.kind === "refused") return { state: "refused", note: t(PLACE_REFUSAL_KEYS[placement.reason]), target: el };
+    return { state: "none" };
+  }
+  /** 템플릿 자리에 놓음 - 기본 보기 보내기와 같은 길(줄 고르기 → 관계 묶음이 온 뒤 초안 → 바로 확정). 막는 까닭이 있으면 메뉴를 그 자리 옆에 띄운다 */
+  function applyTemplateDrop(rowKey: string, placement: Placement, el: HTMLElement | null) {
+    if (placement.kind !== "place" || newDocId === null) return;
+    const destination = readSectionDestination(newDocId, placement.sectionKey);
+    if (destination === null) return;
+    const scope = '[data-testid="assign-new-tpl"]';
+    const anchor = placement.edge ? `${scope} [data-tpl-spot="line"][data-row="t:${placement.edge.targetId}"]` : `${scope} [data-tpl-spot="section"][data-section="${CSS.escape(el?.dataset.section ?? placement.sectionKey)}"]`;
+    setChecked(new Set());
+    setCtxMenu(null);
+    selectRow(rowKey, false);
+    setManualNewDoc({ key: rowKey, docId: newDocId });
+    setDropPlace({ rowKey, destination, position: placement.position ? { placeId: getDestinationId(destination), after: placement.position.after } : null, menu: true, anchor });
+  }
+  /** 끌기를 시작하면 놓을 수 있는 칸 자리를 칠한다 - DOM에 바로 달아 끄는 동안 종이를 다시 그리지 않는다 */
+  function lightTemplateSpots(root: HTMLElement, dragUnitIds: readonly number[]): boolean {
+    const paper = root.querySelector<HTMLElement>('[data-pane="new"] .tpl-paper');
+    if (!paper) return false;
+    const sections = readPlaceSections();
+    for (const el of paper.querySelectorAll<HTMLElement>('[data-tpl-spot="section"]')) {
+      const key = el.dataset.section;
+      if (key && isSpotOpen(sections, { kind: "section", sectionKey: key }, dragUnitIds)) el.dataset.tplOpen = "";
+    }
+    return true;
+  }
   /** 포인터 밑의 옆 패널 All 나무 줄과 거기 놓으면 할 일 - 칸·step 줄만 받고 N/A는 거절(클릭이 받는 그대로). 칸 제목 줄은 모델이 none으로 본다 */
   function readTreeAt(point: DragPoint): { drop: TreeDrop; row: HTMLElement | null; option: DestinationOption | undefined } {
     const row = findUnderPoint(point, ".dest-tree .tree-row[data-place]");
@@ -2277,6 +2366,8 @@ export default function AssignPage() {
       dragLineRef.current = createDragLinkLine(root);
       dropGapRef.current = createDropGapLine(root);
       dropSectionsRef.current = null;
+      placeSectionsRef.current = null;
+      if (lightTemplateSpots(root, unitIds)) setTemplateDrag(true);
     },
     onMove: ({ unitIds }, point) => {
       const root = panesBoxRef.current;
@@ -2306,6 +2397,13 @@ export default function AssignPage() {
         dragLineRef.current?.update(isStartShown ? start : null, point);
         return readPairHover(pair.drop, pair.target, pair.el);
       }
+      // 템플릿 보기의 자리 - 줄 사이면 점선이 선의 왼쪽 끝에 닿는다
+      const tpl = readTemplateAt(point, unitIds);
+      if (tpl.placement.kind !== "none") {
+        const tplEnd = showTemplateGap(tpl.placement, tpl.box);
+        dragLineRef.current?.update(isStartShown ? start : null, tplEnd ?? point);
+        return readTemplateHover(tpl.placement, tpl.el);
+      }
       // 이음도 짝도 아니면 보내기 - 문장 사이면 점선이 놓을 자리 선의 왼쪽 끝에 닿는다
       const send = readSendAt(point, unitIds);
       const gapEnd = showDropGap(send.drop, send.item);
@@ -2322,6 +2420,11 @@ export default function AssignPage() {
         const pair = readPairAt(point, unitIds).drop;
         if (pair.kind === "pair" || pair.kind === "confirm") void runPairDrop(pair);
         if (pair.kind !== "none") return;
+        const tpl = readTemplateAt(point, unitIds);
+        if (tpl.placement.kind !== "none") {
+          applyTemplateDrop(rowKey, tpl.placement, tpl.el);
+          return;
+        }
         applySendDrop(rowKey, readSendAt(point, unitIds).drop);
         return;
       }
@@ -2340,6 +2443,8 @@ export default function AssignPage() {
       dragLineRef.current = null;
       dropGapRef.current?.remove();
       dropGapRef.current = null;
+      for (const el of panesBoxRef.current?.querySelectorAll<HTMLElement>("[data-tpl-open]") ?? []) delete el.dataset.tplOpen;
+      setTemplateDrag(false);
     },
   };
   // 두 문서 틀은 불러온 뒤에야 그려진다 - 그려지면 다시 붙도록 조건에 넣는다. Pair view에서는 짝 끌기만 붙는다(KO 칸도 data-pane="old"라 둘이 한 누름을 다투지 않게)
@@ -3607,7 +3712,13 @@ export default function AssignPage() {
         <div className="assign-pick" data-testid="assign-pick" onClickCapture={handlePickClickCapture}>
           {renderShapeCards(1)}
           {renderStep(stepBase + 1, t("assign.step.pick"))}
-          <DestinationAccordion sections={accSections} open={accOpen} onToggle={toggleAcc} />
+          {isTemplateDrag ? (
+            <p className="chosen-box is-empty mx-[var(--pad)] mb-[var(--pad)]" data-testid="assign-tpl-drag-note">
+              {t("template.drop.dragging")}
+            </p>
+          ) : (
+            <DestinationAccordion sections={accSections} open={accOpen} onToggle={toggleAcc} />
+          )}
           {/* 한 단에서는 New 칸이 없어 이미 쓴 문장을 직접 눌러 고르지 못한다 - 까닭과 양 단으로 넘어가는 길을 그 자리에(추천 카드로 잇는 것은 된다) */}
           {view.single && writtenDocs.length > 0 && (
             <p className="mx-[var(--pad)] mt-1 grid justify-items-start gap-1 rounded-md bg-sunken px-2.5 py-2 text-xs text-ink-2" data-testid="assign-single-hint">

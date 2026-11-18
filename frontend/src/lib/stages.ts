@@ -69,6 +69,12 @@ export function getAssignLineHref(bundleId: number, docId: number, unitId: numbe
   return `${getStageHref(bundleId, "assign")}?${ASSIGN_DOC_PARAM}=${docId}&${ASSIGN_UNIT_PARAM}=${unitId}`;
 }
 
+/** 줄의 출처 Unit 가운데 첫째를 고른 채 배정 화면을 여는 주소 - 출처가 없으면(새로 쓴 줄) 배정 화면 처음 */
+export function getAssignSourceHref(bundleId: number, units: ReadonlyArray<{ document_id: number; unit_id: number }>): string {
+  const first = units[0];
+  return first ? getAssignLineHref(bundleId, first.document_id, first.unit_id) : getStageHref(bundleId, "assign");
+}
+
 export function getStageHref(bundleId: number, key: StageKey): string {
   const stage = STAGES.find((item) => item.key === key);
   return `/bundles/${bundleId}${stage?.path ?? ""}`;

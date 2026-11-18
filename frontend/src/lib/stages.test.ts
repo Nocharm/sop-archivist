@@ -1,7 +1,7 @@
 // 묶음 주소 읽기 - 단계 경로와 묶음 밖 주소를 가른다.
 import { describe, expect, it } from "vitest";
 
-import { getAssignLineHref, getEditOriginalHref, getNewDocumentsHref, getNextActionHref, getStageHref, isStageLocked, NEXT_ACTION_STAGE, parseBundlePath, STAGES } from "./stages";
+import { getAssignLineHref, getAssignSourceHref, getEditOriginalHref, getNewDocumentsHref, getNextActionHref, getStageHref, isStageLocked, NEXT_ACTION_STAGE, parseBundlePath, STAGES } from "./stages";
 
 describe("parseBundlePath", () => {
   it("reads the overview and a stage", () => {
@@ -106,6 +106,11 @@ describe("STAGES", () => {
 
   it("builds the address that opens Assign on one line", () => {
     expect(getAssignLineHref(4, 101, 5012)).toBe("/bundles/4/assign?doc=101&unit=5012");
+  });
+
+  it("opens Assign on the first source of a line, or on Assign itself when there is none", () => {
+    expect(getAssignSourceHref(4, [{ document_id: 101, unit_id: 5012 }, { document_id: 102, unit_id: 6001 }])).toBe("/bundles/4/assign?doc=101&unit=5012");
+    expect(getAssignSourceHref(4, [])).toBe("/bundles/4/assign");
   });
 
   it("reads the Order page path", () => {
