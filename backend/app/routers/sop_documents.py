@@ -88,6 +88,7 @@ from app.sop.pairs import (
 )
 from app.sop.refs import RefState, build_ref_text, read_ref_state
 from app.sop.schemas import NO_NUL, NoNulStr
+from app.sop.segment import find_anchor_offset, is_band_table, read_table_place
 from app.sop.status import get_cover_status
 from app.sop.tobe import MAX_DB_INT, release_match_doc, rename_match_doc, temp_match_code
 from app.sop.units import (
@@ -202,9 +203,14 @@ class WarningAckIn(BaseModel):
     note: Annotated[str, StringConstraints(strip_whitespace=True, max_length=MAX_ACK_NOTE_CHARS), NO_NUL] = ""
 
 
-class ViewTableOut(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
+class ViewTableAnchorOut(BaseModel):
+    """안쪽 표가 바깥 칸에서 놓인 자리 — 바깥 칸 블록과 그 글에서 표 앞 글자 수(F2, 신호 place). 벗긴 바깥 표의 칸 줄 사이에 그린다."""
 
+    block_id: int
+    at: int
+
+
+class ViewTableOut(BaseModel):
     id: int
     table_index: int
     parent_table_id: int | None
@@ -212,6 +218,10 @@ class ViewTableOut(BaseModel):
     n_rows: int
     n_cols: int
     is_layout: bool
+    # 띠 표 신호가 있다 — 바깥 표를 벗기거나 다시 묶을 때 함께 제목 줄 ↔ 표로 바뀐다(F2 · F4)
+    is_band: bool
+    # 안쪽 표만, 추출기 5 전의 추출은 None
+    anchor: ViewTableAnchorOut | None
     # 칸 줄 언어가 많은 쪽 — "ko" | "en" | None(두 언어 표 · 빈 표). 한/영 따로 문서의 대응 표 판정에 쓴다(F8a)
     lang: str | None = None
     # 한/영 따로 문서에서 아직 벗기지 않은 이 표와 함께 벗길 대응 표 후보(비슷한 차례, 맨 앞이 같은 꼴인 가장 비슷한 표) — 비면 묻지 않는다
@@ -399,19 +409,47 @@ async def _get_document(session: AsyncSession, bundle_id: int, doc_id: int) -> D
     return document
 
 
-def _build_view_tables(
-    document: Document, tables: Sequence[SourceTable], units: Sequence[Unit]
+async def _build_view_tables(
+    session: AsyncSession, document: Document, extraction_id: int, tables: Sequence[SourceTable],
+    blocks: Sequence[ViewBlockOut], units: Sequence[Unit],
 ) -> list[ViewTableOut]:
-    """원문 표마다 언어와(한/영 따로 문서만) 함께 벗길 대응 표 후보 — 단위는 이미 읽은 활성 단위다(쿼리를 더하지 않는다)."""
+    """표 목록 — 안쪽 표는 바깥 칸 블록의 문단 시작 자리(블록 신호 paras)로 놓인 글자 자리를 함께 싣는다(F2).
+
+    표마다 칸 줄 언어와, 한/영 따로 문서면 함께 벗길 대응 표 후보도 싣는다(F8a) — 단위는 이미 읽은 활성 단위다(쿼리를 더하지 않는다).
+    """
     facts = build_table_facts(tables, count_table_langs((unit.table_id, unit.lang) for unit in units))
     lang_by_table = {table.id: table.lang for table in facts}
     options = list_counterpart_options(facts) if document.language_layout == SEPARATE_LAYOUT else {}
-    return [
-        ViewTableOut.model_validate(table).model_copy(
-            update={"lang": lang_by_table[table.id], "counterparts": options.get(table.id, [])}
+    places = {table.id: place for table in tables if (place := read_table_place(table.signals)) is not None}
+    parents = {table.parent_table_id for table in tables if table.id in places}
+    cells: dict[tuple[int, int, int], tuple[int, dict | None]] = {}
+    if parents:
+        rows = await session.execute(
+            select(SourceBlock.id, SourceBlock.table_id, SourceBlock.row_index, SourceBlock.col_index, SourceBlock.signals)
+            .where(
+                SourceBlock.extraction_id == extraction_id, SourceBlock.table_id.in_(parents),
+                SourceBlock.kind == "table_cell",
+            )
         )
-        for table in tables
-    ]
+        cells = {(table_id, row, col): (block_id, signals) for block_id, table_id, row, col, signals in rows}
+    texts = {block.id: block.text for block in blocks}
+    out: list[ViewTableOut] = []
+    for table in tables:
+        anchor = None
+        place = places.get(table.id)
+        cell = cells.get((table.parent_table_id, place[0], place[1])) if place is not None else None
+        if place is not None and cell is not None:
+            block_id, signals = cell
+            anchor = ViewTableAnchorOut(block_id=block_id, at=find_anchor_offset(texts[block_id], signals, place[2]))
+        out.append(
+            ViewTableOut(
+                id=table.id, table_index=table.table_index, parent_table_id=table.parent_table_id, part=table.part,
+                n_rows=table.n_rows, n_cols=table.n_cols, is_layout=table.is_layout,
+                is_band=is_band_table(table.signals), anchor=anchor, lang=lang_by_table[table.id],
+                counterparts=options.get(table.id, []),
+            )
+        )
+    return out
 
 
 async def build_document_view(session: AsyncSession, document: Document) -> DocumentViewOut:
@@ -488,7 +526,7 @@ async def build_document_view(session: AsyncSession, document: Document) -> Docu
         has_number_ranges=has_number_ranges(
             await session.scalar(select(Extraction.extractor_version).where(Extraction.id == extraction.id)) or ""
         ),
-        tables=_build_view_tables(document, tables, units),
+        tables=await _build_view_tables(session, document, extraction.id, list(tables), blocks, units),
         blocks=blocks,
         part_groups=[
             ViewPartGroupOut(

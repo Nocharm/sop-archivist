@@ -341,6 +341,10 @@ export interface ViewTable {
   n_rows: number;
   n_cols: number;
   is_layout: boolean;
+  /** 띠 표 신호가 있다 - 바로 바깥 표를 벗기거나 다시 묶으면 함께 제목 줄 ↔ 표로 바뀐다(F2 · F4) */
+  is_band: boolean;
+  /** 안쪽 표가 놓인 바깥 칸 블록과 그 글에서 표 앞 글자 수(F2) - 바깥 표·옛 추출은 null */
+  anchor: { block_id: number; at: number } | null;
   /** 칸 줄 언어가 많은 쪽 - 두 언어 표 · 빈 표는 null. 서버는 늘 싣는다(시험 자료가 줄여 쓰게 선택 칸) */
   lang?: "ko" | "en" | null;
   /** 한/영 따로 문서에서 아직 벗기지 않은 이 표와 함께 벗길 대응 표 후보(F8a) - 맨 앞이 같은 꼴인 가장 비슷한 표, 비면 묻지 않는다 */

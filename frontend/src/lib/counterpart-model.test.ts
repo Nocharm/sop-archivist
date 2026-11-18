@@ -4,7 +4,7 @@ import type { ViewBlock, ViewTable } from "./api-sop";
 import { buildUnwrapOp, listCounterpartChoices, readFirstCellText, readOtherHalf } from "./counterpart-model";
 
 function makeTable(id: number, tableIndex: number, rows: number, extra: Partial<ViewTable> = {}): ViewTable {
-  return { id, table_index: tableIndex, parent_table_id: null, part: "body", n_rows: rows, n_cols: 2, is_layout: false, ...extra };
+  return { id, table_index: tableIndex, parent_table_id: null, part: "body", n_rows: rows, n_cols: 2, is_layout: false, is_band: false, anchor: null, ...extra };
 }
 
 function makeCell(id: number, seq: number, tableId: number, text: string): ViewBlock {

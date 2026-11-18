@@ -18,7 +18,7 @@ from app.sop.caption_ref_rules import REF_LINKED, match_covering_units
 from app.sop.captions import CAPTION_KIND
 from app.sop.detach import UNASSIGNED
 from app.sop.errors import raise_rule
-from app.sop.groups import build_unit_order_key
+from app.sop.groups import build_unit_order_key, select_in_chunks
 from app.sop.models import (
     Bundle,
     CaptionRef,
@@ -38,6 +38,7 @@ from app.sop.models import (
 )
 from app.sop.outline import DocOutline, load_doc_outlines
 from app.sop.refs import REF_LANG
+from app.sop.segment import read_table_place
 from app.sop.status import ROW_STATUS_ORDER
 from app.sop.units import UNIT_ACTIVE, compute_display_id
 
@@ -79,6 +80,8 @@ class TableInfo:
     table_index: int  # 추출 안 순번(0부터)
     n_rows: int
     n_cols: int
+    parent_id: int | None = None  # 칸 안의 표면 바깥 표
+    place: tuple[int, int] | None = None  # 안쪽 표가 놓인 바깥 칸 (행, 격자 열)(0부터, 신호 place — 옛 추출은 None)
 
 
 @dataclass(frozen=True)
@@ -90,6 +93,7 @@ class BlockInfo:
     page_basis: str
     section_label: str
     table_index: int | None  # 표 칸·칸 안 그림이면 그 표의 순번(0부터)
+    table_id: int | None  # 그 표(결과물 A 위치의 안쪽 표 앞붙이가 바깥 표를 따라간다)
     row_index: int | None
     col_index: int | None
     has_image: bool  # 그림 이미지(figures/{block_id})를 받을 수 있는지 — New 칸이 그림을 그릴지 정한다
@@ -249,13 +253,22 @@ async def load_bundle_snapshot(session: AsyncSession, bundle_id: int, *, include
     extraction_ids = list(document_by_extraction)
 
     tables = {
-        table_id: TableInfo(table_id, table_index, n_rows, n_cols)
-        for table_id, table_index, n_rows, n_cols in await session.execute(
-            select(SourceTable.id, SourceTable.table_index, SourceTable.n_rows, SourceTable.n_cols).where(
-                SourceTable.extraction_id.in_(extraction_ids)
-            )
+        table_id: TableInfo(table_id, table_index, n_rows, n_cols, parent_id=parent_id)
+        for table_id, table_index, n_rows, n_cols, parent_id in await session.execute(
+            select(
+                SourceTable.id, SourceTable.table_index, SourceTable.n_rows, SourceTable.n_cols,
+                SourceTable.parent_table_id,
+            ).where(SourceTable.extraction_id.in_(extraction_ids))
         )
     }
+    # 안쪽 표가 놓인 바깥 칸(신호 place) — 안쪽 표가 있을 때만 신호를 읽는다(결과물 A 위치의 앞붙이, F2)
+    inner_ids = [table.id for table in tables.values() if table.parent_id is not None]
+    if inner_ids:
+        for table_id, signals in await select_in_chunks(
+            session, lambda chunk: select(SourceTable.id, SourceTable.signals).where(SourceTable.id.in_(chunk)), inner_ids
+        ):
+            if (place := read_table_place(signals)) is not None:
+                tables[table_id] = replace(tables[table_id], place=place[:2])
     block_rows = (
         await session.execute(
             select(
@@ -270,7 +283,7 @@ async def load_bundle_snapshot(session: AsyncSession, bundle_id: int, *, include
             id=row.id, part=row.part, kind=row.kind, page=row.page, page_basis=row.page_basis,
             section_label=row.section_label,
             table_index=tables[row.table_id].table_index if row.table_id is not None else None,
-            row_index=row.row_index, col_index=row.col_index, has_image=bool(row.has_image),
+            table_id=row.table_id, row_index=row.row_index, col_index=row.col_index, has_image=bool(row.has_image),
         )
         for row in block_rows
     }

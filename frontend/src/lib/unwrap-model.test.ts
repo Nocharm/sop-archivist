@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import type { DocumentView, ViewBlock, ViewTable, ViewUnit } from "./api-sop";
 import { buildPaperModel, buildRows } from "./paper-model";
-import { countDecidedLines, findUnwrapHeads, getRowUnwrapTable, getTableNumber, getUnitUnwrapTable } from "./unwrap-model";
+import { countDecidedLines, findUnwrapHeads, getRowUnwrapTable, getTableNumber, getUnitUnwrapTable, listUnwrapScopes } from "./unwrap-model";
 
 function makeBlock(id: number, seq: number, text: string, extra: Partial<ViewBlock> = {}): ViewBlock {
   return {
@@ -20,7 +20,7 @@ function makeUnit(id: number, spans: Array<[number, number, number]>, text: stri
 }
 
 function makeTable(id: number, tableIndex: number, isLayout: boolean): ViewTable {
-  return { id, table_index: tableIndex, parent_table_id: null, part: "body", n_rows: 2, n_cols: 2, is_layout: isLayout };
+  return { id, table_index: tableIndex, parent_table_id: null, part: "body", n_rows: 2, n_cols: 2, is_layout: isLayout, is_band: false, anchor: null };
 }
 
 function cell(id: number, seq: number, text: string, tableId: number, row: number, col: number): ViewBlock {
@@ -80,5 +80,83 @@ describe("unwrapped tables on the paper", () => {
     const statuses = new Map<number, ViewUnit["status"]>([[21, "confirmed"], [23, "on_hold"], [30, "confirmed"]]);
     expect(countDecidedLines(view.units, 7, (id) => statuses.get(id))).toBe(2); // 표 밖 줄(30)은 세지 않는다
     expect(countDecidedLines(view.units, 7, () => undefined)).toBe(0);
+  });
+});
+
+// 표 안 표(F2) - 벗긴 바깥 표 7의 둘째 칸 "가 문장.\n나 문장." 두 문단 사이에 안쪽 값 표 8, 둘째 행 첫 칸 앞에 안쪽 띠 표 9
+const nestedIntro = makeBlock(1, 0, "앞 문단이다.");
+const outerCells = [cell(2, 1, "점검 항목", 7, 0, 0), cell(3, 2, "가 문장.\n나 문장.", 7, 0, 1)];
+const innerCells = [cell(4, 3, "공장", 8, 0, 0), cell(5, 4, "120 Pa", 8, 0, 1)];
+const bandCells = [cell(8, 5, "7.1", 9, 0, 0), cell(9, 6, "일상 점검", 9, 0, 2)];
+const lastCells = [cell(6, 7, "기준", 7, 1, 0), cell(7, 8, "다 문장.", 7, 1, 1)];
+
+function makeNested(outerLayout: boolean, innerLayout: boolean, bandHeading: boolean, at = 6): DocumentView {
+  const outer = makeTable(7, 0, outerLayout);
+  const inner = { ...makeTable(8, 1, innerLayout), parent_table_id: 7, anchor: { block_id: 3, at } };
+  const band = { ...makeTable(9, 2, bandHeading), parent_table_id: 7, is_band: true, anchor: { block_id: 6, at: 0 } };
+  const group = (id: number | null) => (outerLayout ? {} : { group_unit_id: id });
+  return {
+    document: {} as DocumentView["document"], extraction: null, has_number_ranges: true, tables: [outer, inner, band],
+    blocks: [nestedIntro, ...outerCells, ...innerCells, ...bandCells, ...lastCells],
+    units: [
+      makeUnit(10, [[1, 0, nestedIntro.text.length]], nestedIntro.text),
+      ...(outerLayout ? [] : [makeUnit(70, [], "", { kind: "table", table_id: 7, pos_seq: 1, block_id: 2 })]),
+      cellUnit(20, outerCells[0], group(70)),
+      makeUnit(21, [[3, 0, 5]], "가 문장.", { kind: "cell_sentence", table_id: 7, row_index: 0, pos_seq: 2, ...group(70) }),
+      makeUnit(22, [[3, 6, 11]], "나 문장.", { kind: "cell_sentence", table_id: 7, row_index: 0, pos_seq: 2, ...group(70) }),
+      ...(innerLayout ? [] : [makeUnit(30, [], "", { kind: "table", table_id: 8, pos_seq: 3, block_id: 4 })]),
+      ...innerCells.map((block, index) => cellUnit(31 + index, block, innerLayout ? {} : { group_unit_id: 30 })),
+      ...(bandHeading
+        ? [makeUnit(50, [[8, 0, 3], [9, 0, 5]], "7.1\n일상 점검", { kind: "heading", table_id: 9, pos_seq: 5 })]
+        : [makeUnit(51, [], "", { kind: "table", table_id: 9, pos_seq: 5, block_id: 8 }), ...bandCells.map((block, index) => cellUnit(52 + index, block, { group_unit_id: 51 }))]),
+      cellUnit(40, lastCells[0], group(70)),
+      cellUnit(41, lastCells[1], group(70)),
+    ],
+    pairs: [], part_groups: [], edits: { can_undo: false, can_redo: false },
+  };
+}
+
+const describeRows = (rows: ReturnType<typeof buildRows>) => rows.map((row) => (row.type === "piece" ? row.unitId : row.type === "table" ? `t${row.item.table.id}` : row.type));
+
+describe("tables inside tables", () => {
+  it("puts an inner table between the paragraphs of its cell once the outer table is unwrapped", () => {
+    const nested = buildPaperModel(makeNested(true, false, true));
+    const nestedRows = buildRows(nested.body, nested.segments);
+    expect(describeRows(nestedRows)).toEqual([10, 20, 21, "t8", 22, 50, 40, 41]);
+    // 칸 둘로 나뉜 조각은 저마다 그 범위의 글만
+    expect(nested.body.filter((item) => item.type === "block" && item.block.id === 3).map((item) => item.type === "block" && item.range)).toEqual([[0, 6], [6, 11]]);
+    // J/K도 용지 순서 - 안쪽 표가 칸의 뒤 문단보다 먼저
+    expect(nested.order).toEqual([10, 20, 21, 30, 31, 32, 22, 50, 40, 41]);
+  });
+
+  it("keeps a data outer table whole with its inner tables after it", () => {
+    const whole = buildPaperModel(makeNested(false, false, false));
+    expect(describeRows(buildRows(whole.body, whole.segments))).toEqual([10, "t7", "t8", "t9"]);
+  });
+
+  it("does not move an inner table that sat after the whole cell", () => {
+    const after = buildPaperModel(makeNested(true, false, true, 11));
+    expect(describeRows(buildRows(after.body, after.segments))).toEqual([10, 20, 21, 22, "t8", 50, 40, 41]);
+  });
+
+  it("keeps the outer rail through an inner table and gives an unwrapped inner table its own head", () => {
+    const outerOnly = buildPaperModel(makeNested(true, false, true));
+    const outerRows = buildRows(outerOnly.body, outerOnly.segments);
+    expect(outerRows.map((row) => getRowUnwrapTable(row, outerOnly.unwrapped, outerOnly.tables))).toEqual([null, 7, 7, 7, 7, null, 7, 7]);
+    expect([...findUnwrapHeads(outerRows, outerOnly.unwrapped, outerOnly.tables).values()]).toEqual([7, 7]); // 띠 표 제목 줄 뒤에 다시 선다
+
+    const both = buildPaperModel(makeNested(true, true, true));
+    const bothRows = buildRows(both.body, both.segments);
+    expect(describeRows(bothRows)).toEqual([10, 20, 21, 31, 32, 22, 50, 40, 41]);
+    expect([...findUnwrapHeads(bothRows, both.unwrapped, both.tables)]).toEqual([[bothRows[1].key, 7], [bothRows[3].key, 8], [bothRows[5].key, 7], [bothRows[7].key, 7]]);
+  });
+
+  it("counts an assigned inner band heading before wrapping the outer table back, and moves the band with it", () => {
+    const nested = buildPaperModel(makeNested(true, false, true));
+    const statuses = new Map<number, ViewUnit["status"]>([[50, "confirmed"], [21, "confirmed"]]);
+    expect(countDecidedLines(nested.units.values(), 7, (id) => statuses.get(id), nested.tables)).toBe(2);
+    expect(countDecidedLines(nested.units.values(), 8, (id) => statuses.get(id), nested.tables)).toBe(0);
+    expect(listUnwrapScopes(nested.tables, 7)).toEqual(["t7", "t9"]); // 누르지 않은 안쪽 값 표는 그대로 표
+    expect(listUnwrapScopes(nested.tables, 8)).toEqual(["t8"]);
   });
 });

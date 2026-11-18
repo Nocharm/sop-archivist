@@ -1,4 +1,4 @@
-"""로컬 데모 시드 — 합성 SOP 묶음 네 개를 서로 다른 단계로, 그 뒤에 참조 지도용 묶음 둘과 목차 묶음 · 한/영 따로 표 묶음 하나씩을 앱 API에 만든다. 로컬 개발 전용, 운영 실행 금지.
+"""로컬 데모 시드 — 합성 SOP 묶음 네 개를 서로 다른 단계로, 그 뒤에 참조 지도용 묶음 둘과 목차 묶음 · 표 안 표 묶음 · 한/영 따로 표 묶음 하나씩을 앱 API에 만든다. 로컬 개발 전용, 운영 실행 금지.
 
 단계: 1 쪼개기 직후(업로드·언어 배치·편집까지), 2 분류 절반(입구 1 답의 절반 저장), 3 검토 대기(전부 저장 후 검토 요청),
 4 AI 제안(가짜 AI의 분류·입구 2 짝 제안까지, 확정하지 않는다 — 합성 응답이고 실제 모델이 아니다).
@@ -7,7 +7,9 @@
 작성자에게 남의 Bundle). 단계 Bundle 넷의 OLD-1이 5번 문서 번호를, 단계 2·3의 이동 줄이 6번 New 문서를 가리키고 5·6번이 OLD-1~3을 가리킨다.
 목차: 7 목차(qa.member 작성자 — 목차 스타일 줄 7과 점 끌기 보통 줄 1, 본문에 띠 표 하나가 든 Old 문서 하나, 배정 없음.
 Assign 목차 블록·띠 표 제목 줄 스모크용).
-한/영 따로 표: 8 한/영 따로 표(qa.member 작성자 — 한글 절반 표 둘 다음 영어 절반 표 둘, 값 표는 행 수가 다름, 배정 없음.
+표 안 표: 8 표 안 표(qa.member 작성자 — 첫 행 칸에 띠 표, 칸 안 두 문단 사이에 값 표, 다른 칸에 권한 표가 든 작업 표 하나, 배정 없음.
+Assign 표 안 표 스모크용, MD 1 F2).
+한/영 따로 표: 9 한/영 따로 표(qa.member 작성자 — 한글 절반 표 둘 다음 영어 절반 표 둘, 값 표는 행 수가 다름, 배정 없음.
 Assign 대응 표 함께 벗기기 스모크용).
 이미 같은 제목 묶음이 있으면 그 묶음은 건너뛰어 여러 번 돌려도 같은 결과다. 끝에 묶음별 상태·진행 숫자만 찍고 원문 글자는 찍지 않는다.
 
@@ -235,9 +237,43 @@ def _build_toc_bundle(client: TestClient, bundle_id: int) -> None:
     assert response.json()["status"] == "ready", response.json()["status"]
 
 
-# --- 한/영 따로 표 Bundle(8번) — Assign 대응 표 함께 벗기기 스모크용(MD 1 F8a) ---
+# --- 표 안 표 Bundle(8번) — Assign 표 안 표 스모크용(MD 1 F2) ---
 
-PAIR_TABLES_TITLE = "SYNTHETIC 8 한/영 따로 표"
+NESTED_TITLE = "SYNTHETIC 8 표 안 표"
+NESTED_BAND = ("7.1", "일상 점검 (Daily check)")
+NESTED_CHECK = ("전원 표시등이 켜졌는지 본다.", "차압계 값을 기록한다.")
+NESTED_ADMIN = "설정 값을 바꾸고 기록을 승인한다."
+# 작업 표(2열 2.8 / 14.2 cm, 명세 §7 사례 1) — 표 순번: 작업 표 0, 띠 표 1, 값 표 2(점검 항목 칸의 두 문단 사이), 권한 표 3
+NESTED_BODY = p("이 절차는 합성 공조기 점검을 정한다.") + make_grid_table(2, (
+    make_row([make_band_table(*NESTED_BAND) + p("")], spans=[2])
+    + make_row([
+        "점검 항목",
+        p(NESTED_CHECK[0])
+        + make_grid_table(3, make_row(["공장", "1공장", "2공장"]) + make_row(["차압", "120 Pa", "150 Pa"]))
+        + p(NESTED_CHECK[1]),
+    ])
+    + make_row([
+        "권한 표",
+        make_grid_table(2, (
+            make_row(["권한 레벨", "할 수 있는 일"], header=True) + make_row(["관리자", NESTED_ADMIN])
+            + make_row(["작업자", "점검 결과를 입력한다."])
+        )) + p(""),
+    ])
+), widths=[1588, 8050])
+
+
+def _build_nested_bundle(client: TestClient, bundle_id: int) -> None:
+    response = set_members(client, bundle_id, [("qa.member", "author"), ("qa.lead", "reviewer")])
+    assert response.status_code == 200, response.text
+    put_tobe_codes(client, bundle_id, [build_tobe_doc("SOP-AHU", "SYNTHETIC Air handling unit check")])
+    response = upload(client, bundle_id, build_docx(NESTED_BODY), "SYNTHETIC_SOP-ABC-1040_Nested_tables.docx")
+    assert response.status_code == 201, response.text
+    assert response.json()["status"] == "ready", response.json()["status"]
+
+
+# --- 한/영 따로 표 Bundle(9번) — Assign 대응 표 함께 벗기기 스모크용(MD 1 F8a) ---
+
+PAIR_TABLES_TITLE = "SYNTHETIC 9 한/영 따로 표"
 # 작업 표(2열 2.8 / 14.2 cm, 3행)는 두 절반이 같은 꼴 · 같은 행 수, 값 표(3열)는 영어 쪽이 한 행 더 많다
 PAIR_WORK_WIDTHS, PAIR_VALUE_WIDTHS = (1588, 8050), (2000, 2000, 2000)
 PAIR_KO_WORK = (("단계", "작업 내용"), ("준비", "세척액 농도를 확인한다."), ("점검", "펌프 압력을 기록한다."))
@@ -276,12 +312,13 @@ MAP_BUNDLES = (
     MapBundle(MAP_UV_TITLE, AUTHOR, _build_uv_bundle),
     MapBundle(MAP_DOC_TITLE, OUTSIDER, _build_doc_bundle),
     MapBundle(TOC_TITLE, AUTHOR, _build_toc_bundle),
+    MapBundle(NESTED_TITLE, AUTHOR, _build_nested_bundle),
     MapBundle(PAIR_TABLES_TITLE, AUTHOR, _build_pair_tables_bundle),
 )
 
 
 def seed_map_bundles(client: TestClient) -> dict[str, str]:
-    """지도용·목차·한/영 따로 표 Bundle을 만들고 제목 → "created"|"skipped". 단계 Bundle 넷 뒤에 불러 id가 5-8이 되게 한다."""
+    """지도용·목차·표 안 표·한/영 따로 표 Bundle을 만들고 제목 → "created"|"skipped". 단계 Bundle 넷 뒤에 불러 id가 5-9가 되게 한다."""
     outcomes: dict[str, str] = {}
     for bundle in MAP_BUNDLES:
         if any(row["title"] == bundle.title for row in _list_bundles(client, bundle.lister)):

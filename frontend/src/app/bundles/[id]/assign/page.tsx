@@ -160,7 +160,7 @@ import {
 } from "@/lib/assign-model";
 import { buildAssignMenu, getPairPickBlocker, getPairSetBlocker, planAssignJoin, planShapeMode, type AssignMenuAction, type AssignMenuGroups } from "@/lib/assign-context-menu-model";
 import { listHeadingBackUnits } from "@/lib/heading-shift-model";
-import { countDecidedLines, getTableNumber, getUnitUnwrapTable } from "@/lib/unwrap-model";
+import { countDecidedLines, getTableNumber, getUnitUnwrapTable, listUnwrapScopes } from "@/lib/unwrap-model";
 import { buildUnwrapOp, listCounterpartChoices, readOtherHalf, type CounterpartChoice } from "@/lib/counterpart-model";
 import { resolveLineParam } from "@/lib/assign-line-param";
 import { readAssignView, writeAssignView } from "@/lib/assign-view-prefs";
@@ -1337,8 +1337,8 @@ export default function AssignPage() {
             setFreshViews(current.map((view) => (view.document.id === docId ? fresh : view)));
             reloadAfterEdit();
           },
-          // 대응 표를 함께 벗기면(F8a) 두 표가 함께 풀린다
-          { scopes: [op.table_id, ...(op.is_layout && op.counterpart_table_id !== undefined ? [op.counterpart_table_id] : [])].map((id) => `t${id}`), reverse: !op.is_layout },
+          // 바로 안쪽 띠 표도 함께 제목 줄 ↔ 표로 바뀌고(F2), 대응 표를 함께 벗기면(F8a) 두 표가 함께 풀린다
+          { scopes: [op.table_id, ...(op.is_layout && op.counterpart_table_id !== undefined ? [op.counterpart_table_id] : [])].flatMap((id) => listUnwrapScopes(new Map(shapeView.tables.map((table) => [table.id, table])), id)), reverse: !op.is_layout },
         );
       }
       showToast(okText);
@@ -1380,7 +1380,7 @@ export default function AssignPage() {
     const op: EditOp = { type: "set_layout_table", table_id: tableId, is_layout: false };
     const okText = t("assign.unwrap.didRewrap");
     // 판단이 풀릴 줄이 있으면 서버에 보내기 전에 확인창부터 - 확인하면 confirm을 켜고 보낸다(409를 거쳐 되묻지 않는다)
-    const decided = paperModel ? countDecidedLines(paperModel.units.values(), tableId, (unitId) => unitMap.get(unitId)?.status) : 0;
+    const decided = paperModel ? countDecidedLines(paperModel.units.values(), tableId, (unitId) => unitMap.get(unitId)?.status, paperModel.tables) : 0;
     if (decided > 0) setEditConfirm({ count: decided, retry: { kind: "edit", op, okText, followId: null } });
     else void runUnitEdit(op, okText, null);
   }

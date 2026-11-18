@@ -46,7 +46,7 @@ describe("buildPaperModel", () => {
       makeBlock(4, 3, "FOOT", { part: "footer" }),
     ];
     const view = makeView(blocks, [makeUnit(20, [], "", { kind: "table", table_id: 7, pos_seq: 1 })]);
-    view.tables = [{ id: 7, table_index: 0, parent_table_id: null, part: "body", n_rows: 1, n_cols: 2, is_layout: false }];
+    view.tables = [{ id: 7, table_index: 0, parent_table_id: null, part: "body", n_rows: 1, n_cols: 2, is_layout: false, is_band: false, anchor: null }];
     const model = buildPaperModel(view);
     expect(model.header).toHaveLength(1);
     expect(model.footer).toHaveLength(1);
@@ -62,7 +62,7 @@ describe("buildPaperModel", () => {
     const blocks = [cell(1, 0, "7.4"), cell(2, 1, ""), cell(3, 2, "Filter change")];
     const band = makeUnit(30, [[1, 0, 3], [3, 0, 13]], "7.4\nFilter change", { kind: "heading", table_id: 7, row_index: 0 });
     const view = makeView(blocks, [band]);
-    view.tables = [{ id: 7, table_index: 0, parent_table_id: null, part: "body", n_rows: 1, n_cols: 3, is_layout: true }];
+    view.tables = [{ id: 7, table_index: 0, parent_table_id: null, part: "body", n_rows: 1, n_cols: 3, is_layout: true, is_band: false, anchor: null }];
     const model = buildPaperModel(view);
     expect(model.body.map((item) => (item.type === "block" ? item.block.id : "table"))).toEqual([1, 3]);
     const rows = buildRows(model.body, model.segments);
@@ -244,7 +244,7 @@ describe("getBundleHeader", () => {
     ],
     [makeUnit(20, [], "", { kind: "table", table_id: 7, pos_seq: 0 }), makeUnit(21, [[5, 0, 7]], "그림 1 로터", { kind: "figure" })],
   );
-  view.tables = [{ id: 7, table_index: 0, parent_table_id: null, part: "body", n_rows: 2, n_cols: 2, is_layout: false }];
+  view.tables = [{ id: 7, table_index: 0, parent_table_id: null, part: "body", n_rows: 2, n_cols: 2, is_layout: false, is_band: false, anchor: null }];
   const model = buildPaperModel(view);
   const rows = buildRows(model.body, model.segments);
   const tableRow = rows.find((row) => row.type === "table")!;
@@ -261,7 +261,7 @@ describe("foldCaptionRows", () => {
     return { type: "piece", key: `u${unitId}`, unitId, parts: [{ block: makeBlock(unitId, unitId, "캡션"), segments: [{ start: 0, end: 2, unitId }] }] };
   }
   function tableRow(unitId: number): PaperRow {
-    const table = { id: 70, table_index: 0, parent_table_id: null, part: "body", n_rows: 0, n_cols: 0, is_layout: false };
+    const table = { id: 70, table_index: 0, parent_table_id: null, part: "body", n_rows: 0, n_cols: 0, is_layout: false, is_band: false, anchor: null };
     return { type: "table", key: "t70", item: { type: "table", table, rows: [], unitId } };
   }
   function units(spec: Record<number, Partial<ViewUnit>>): Map<number, ViewUnit> {
