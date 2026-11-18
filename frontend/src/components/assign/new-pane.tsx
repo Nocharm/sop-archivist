@@ -12,7 +12,7 @@
 // 엮은 문서는 머리의 "기본 | 템플릿" 전환(viewSwitch)으로 같은 줄을 회사 템플릿 모양(components/template/template-view)으로도 본다 - 템플릿이면 몸에 그 보기를 그린다.
 "use client";
 
-import { AlignLeft, ChevronDown, ChevronUp, FilePlus2, LayoutTemplate, Scissors, Sparkles, Spline } from "lucide-react";
+import { ChevronDown, ChevronUp, FilePlus2, Scissors, Sparkles, Spline } from "lucide-react";
 import { Fragment, useEffect, useEffectEvent, useRef, useState, type MouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 
 import { NewBundle } from "@/components/assign/new-bundle";
@@ -25,6 +25,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { Truncate } from "@/components/ui/motion";
 import { Select, type SelectOption } from "@/components/ui/select";
 import { Tooltip } from "@/components/ui/tooltip";
+import { ViewSwitch } from "@/components/ui/view-switch";
 import type { WrittenSentence } from "@/lib/api-sop";
 import type { DraftLine } from "@/lib/assign-drop-model";
 import { readCaretPoint } from "@/lib/caret-point";
@@ -536,7 +537,7 @@ export function NewPane(props: NewPaneProps) {
         </span>
         {props.headExtra}
         <span className="flex-1" />
-        {props.viewSwitch && <ViewSwitch template={props.viewSwitch.template} onChange={props.viewSwitch.onChange} />}
+        {props.viewSwitch && <ViewSwitch template={props.viewSwitch.template} onChange={props.viewSwitch.onChange} label={t("assign.newView")} testId="assign-new-view" />}
         {props.onEditOriginal && (
           <Tooltip label={t("assign.openSplitTip")}>
             <button type="button" className="pane-toggle" aria-label={t("assign.openSplit")} data-testid="assign-new-edit-original" onClick={props.onEditOriginal}>
@@ -619,27 +620,5 @@ export function NewPane(props: NewPaneProps) {
         </div>
       )}
     </section>
-  );
-}
-
-/** New 칸 머리의 기본 | 템플릿 - 같은 줄을 다르게 그리기만 한다(고른 보기는 이 브라우저에 남는다) */
-function ViewSwitch({ template, onChange }: { template: boolean; onChange: (template: boolean) => void }) {
-  const { t } = useI18n();
-  return (
-    <div className="view-switch" role="group" aria-label={t("assign.newView")} data-testid="assign-new-view">
-      {/* 칸 머리가 좁으면 글을 접고 아이콘만(이름은 툴팁) - 1280 반반에서 머리가 칸 밖으로 넘쳤다 */}
-      <Tooltip label={t("assign.newView.basic")}>
-        <button type="button" aria-pressed={!template} aria-label={t("assign.newView.basic")} data-testid="assign-new-view-basic" onClick={() => onChange(false)}>
-          <AlignLeft size={13} strokeWidth={1.75} className="view-switch-icon" aria-hidden />
-          <span className="view-switch-label">{t("assign.newView.basic")}</span>
-        </button>
-      </Tooltip>
-      <Tooltip label={t("assign.newView.template")}>
-        <button type="button" aria-pressed={template} aria-label={t("assign.newView.template")} data-testid="assign-new-view-template" onClick={() => onChange(true)}>
-          <LayoutTemplate size={13} strokeWidth={1.75} className="view-switch-icon" aria-hidden />
-          <span className="view-switch-label">{t("assign.newView.template")}</span>
-        </button>
-      </Tooltip>
-    </div>
   );
 }

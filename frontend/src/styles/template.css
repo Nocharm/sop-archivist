@@ -85,6 +85,9 @@
     .view-switch-icon { display: block; }
     .pane-zoom span { display: none; }
   }
+  /* Order 문서 머리(.c-doc-head)도 같은 전환을 쓴다 - 머리 폭을 기준으로 아이콘만 남긴다(1120 · 1280 창에서 머리가 용지 밖으로 넘치지 않게). 템플릿 종이는 기본 보기 용지(760px)와 같은 폭 */
+  .c-doc-head { container-type: inline-size; }
+  .c-order .tpl-sheet { max-width: none; }
   /* 1120 창 반반(342px)에서는 그래도 66px 넘쳤다 - 꼬리표("New · not written")를 접고 간격을 줄인다. 어느 문서인지는 문서 고르기가 보인다 */
   @container (max-width: 400px) {
     .assign-pane[data-pane="new"] > .pane-head { gap: 6px; }

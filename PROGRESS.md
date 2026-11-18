@@ -4,6 +4,10 @@
 
 ## 2026-11-18
 
+- **Order 템플릿 보기(`feat/order-template-view`, MD 2 §S5 ③ · 4-a · 4-d)** — Order 문서 머리(번호 · 제목 줄 오른쪽, 문서 종류 칩 앞)에 **Basic | Template** 전환(`sopa.order.template`). Assign과 같은 부품 `components/ui/view-switch.tsx`로 뽑아 둘이 함께 쓴다 — 좁은 머리는 컨테이너 쿼리로 아이콘만(`.c-doc-head`). 템플릿은 보기만 한다: 위에 안내 한 줄, 줄 끝 단추 · 끌기 없음, 같은 `TemplateView`(branch 11)에 C 문서를 그대로 넘기니 번호는 C 번호다. "번역 없음" 자리는 템플릿에서만 보인다.
+  - 결정(최소·되돌리기 쉬운 쪽): Order에는 번역 만들기 · 직접 쓰기가 없어, 자리를 누르면 그 줄의 Old 출처(`getGroupByTarget` 첫 단위)를 고른 채 Assign을 연다(`getAssignSourceHref`) — 포커스를 번역 만들기 단추까지 옮기지는 않는다. 작성자만 누를 수 있다. To-Be를 받기 전에는 전환이 없다(이름 사전 때문).
+  - 확인: vitest 1,460 · lint · tsc. 스모크 `order: template view switch …` · `order: the No translation slot …` 둘은 써 두고 돌리지 않았다.
+
 - **New 칸 템플릿 보기 · 미러링(v1.1.38, `feat/new-template-view`, MD 1 §10 브랜치 11 — F9 보기 + F8c)** — 아직 안 쓴 New 문서의 머리에 **Basic | Template** 전환(`sopa.assign.newTemplate`, 처음 기본). 결과물 C 꼴 문서를 회사 템플릿 모양으로 그리는 부품 하나(`components/template/template-view.tsx` + 순수 모델 `lib/template-model.ts`) — 머리글 · 빈 표지 표(Document No.만) · 앱 목차 · SOP 영어 → 한글 / WI 한글 → 영어 절반, 2장 빈 Site 표 + In Scope, 3·4장 표 머리, 5장 범주 표, 6장 번호, 7.2 WI 목록, 8장 Attachment 1, 벗어남 · Empty 표시. 짝은 같은 묶음 키(`meaning_key`)로 두 절반에 비추고(생략 줄만 상대의 번호 · 기호를 빌림), 반대 언어가 없는 줄은 "번역 없음" 자리(누르면 그 Old 줄을 고르고 번역 만들기 · 직접 쓰기 단추로). WI는 단계 = Chapter 표, 줄 = 세부 단계 행(지금 번호), Why는 아래 기울임, 그림은 그림 칸. 보기 + 고르기만(끌기는 브랜치 12, 클릭 배치는 e) — 쓰는 쪽이 `onPickLine` · `onMissing` · `renderBlock` · `spotProps`로 켠다.
   - 서버: 엮은 문서 항목(`ComposedItem`)에 결과물 C 항목과 같은 `number_style` · `indent_level` · `meaning_key`를 더했다(Alembic 없음, 계산은 `_build_c_context` 하나를 같이 쓴다).
   - 확인: pytest 손댄 셋 146 · backend 전체 2,964 · ruff, vitest 1,447 · lint · tsc. 스모크 `assign: New template view …` 셋은 써 두고 돌리지 않았다(공용 부품이라 메인 세션이 전체 스모크 · 감사).
