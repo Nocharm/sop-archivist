@@ -29,6 +29,8 @@ ORIGIN_DECLARED = "declared"
 ASSIGNABLE_KINDS = (KIND_GENERAL, KIND_CATEGORY_TABLE, KIND_NAMED_CHILDREN)
 # 하위 항목을 두지 않는 종류 — 표준을 고칠 때 이 종류 아래에 항목을 달지 못한다
 LEAF_KINDS = (KIND_GENERAL, KIND_AUTO_LIST)
+# 문서마다 하위 항목을 선언하는 종류(6장 절차·9장 부록, 5장 범주) — 선언은 outline_edit, 권장 이름도 이 종류의 것만 화면에 보낸다
+DECLARABLE_KINDS = (KIND_NAMED_CHILDREN, KIND_CATEGORY_TABLE)
 LABEL_SEPARATOR = " › "  # 라벨에서 상위와 하위 제목 사이("General Requirements › Safety")
 # 항목 키의 꼴 — 점으로 위계를 적고 ":"을 쓰지 않는다(프런트가 자리 키를 ":"으로 가른다). frontend lib/outline-admin-model.ts와 같은 값
 KEY_PATTERN = re.compile(r"[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)*")
@@ -261,6 +263,16 @@ async def load_standard_rows(session: AsyncSession) -> list[OutlineStandardItem]
     """지금 표준 골격의 줄 — 표가 비어 있으면 먼저 시드한다(기동 시드를 거치지 않은 DB에서도 문서가 골격 없이 생기지 않게)."""
     await seed_outline_standard(session)
     return list(await session.scalars(select(OutlineStandardItem).order_by(OutlineStandardItem.order_index)))
+
+
+async def load_outline_suggestions(session: AsyncSession) -> dict[str, list[str]]:
+    """지금 표준의 권장 이름 — 하위를 선언하는 항목의 키 → 이름들. 권장 이름이 없는 항목은 싣지 않는다(읽기만 해서 시드하지 않는다)."""
+    rows = await session.execute(
+        select(OutlineStandardItem.key, OutlineStandardItem.suggestions)
+        .where(OutlineStandardItem.kind.in_(DECLARABLE_KINDS))
+        .order_by(OutlineStandardItem.order_index)
+    )
+    return {key: list(suggestions) for key, suggestions in rows if suggestions}
 
 
 class OutlineStandardItemIn(BaseModel):

@@ -26,6 +26,7 @@ const tobe: ToBe = {
   ],
   wi_steps: [],
   outline_items: makeTemplateOutline("SOP-CF"),
+  outline_suggestions: {},
   slot_counts: [
     makeCount("purpose", 2, 0),
     makeCount("scope", 0, 1),
@@ -282,7 +283,7 @@ describe("the one N/A editor", () => {
 });
 
 describe("canUndoRestore", () => {
-  const restored: ToBe = { revision: 1, docs: [makeDoc({ id: 1 })], na_slots: [{ code: "SOP-CF", slot_key: "document_relationships", reason: "r" }], wi_steps: [], outline_items: [] };
+  const restored: ToBe = { revision: 1, docs: [makeDoc({ id: 1 })], na_slots: [{ code: "SOP-CF", slot_key: "document_relationships", reason: "r" }], wi_steps: [], outline_items: [], outline_suggestions: {} };
   it("undoes only while the row is still an SOP and the slot has no N/A saved", () => {
     expect(canUndoRestore(restored, 1, "scope")).toBe(true);
     // 상위 칸만 N/A인 하위 칸 - 그 칸 자체에는 저장된 N/A가 없다
