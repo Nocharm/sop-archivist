@@ -973,6 +973,24 @@ def test_undo_refused_when_slot_became_na(client: TestClient) -> None:
     _assert_stuck_cleanly(client, fx.bundle_id, [unit["id"]])
 
 
+def test_undo_refused_when_outline_item_was_removed(client: TestClient) -> None:
+    fx = _setup_decisions(client)
+    unit = find_unit(fx.view, STORAGE)
+    base = f"/api/bundles/{fx.bundle_id}/tobe/docs/{fx.sop_id}/outline"
+    added = client.post(base, json={"parent_key": "appendices", "title_en": "Synthetic appendix"}, headers=AUTHOR)
+    assert added.status_code == 201, added.text
+    _confirm_clear_then(client, fx.bundle_id, unit, _target("t", fx.sop_id, [unit], slot_key="appendices.n1"))
+    removed = client.delete(f"{base}/appendices.n1", headers=AUTHOR)
+    assert removed.status_code == 200, removed.text
+
+    _assert_stuck_cleanly(client, fx.bundle_id, [unit["id"]])  # 뺀 부록에 줄을 되살리지 않는다
+
+    # 같은 부모에 다시 더한 항목은 새 키라, 옛 단계가 그 자리로 줄을 놓지도 않는다
+    again = client.post(base, json={"parent_key": "appendices", "title_en": "Synthetic appendix"}, headers=AUTHOR)
+    assert [item["key"] for item in again.json()["outline_items"] if item["parent_key"] == "appendices"] == ["appendices.n2"]
+    _assert_stuck_cleanly(client, fx.bundle_id, [unit["id"]])
+
+
 def test_undo_refused_when_another_author_linked_to_my_new_sentence(client: TestClient) -> None:
     fx = _setup_rich(client)
     assert set_members(client, fx.bundle_id, [("qa.member", "author"), ("qa.lead", "author")]).status_code == 200

@@ -60,13 +60,15 @@ A_ID_COLUMN = 5  # Unit ID — 이어진 줄의 이어짐 표시가 들어가는
 A_NOTE_COLUMNS = (12, 13)  # 보낸 새 문장이 주석 줄이면 기울여 쓰는 칸 — New text·AI suggestion
 C_HEADERS = (
     "Document", "Slot", "No.", "Item", "Table cell", "Cell position", "Unit ID", "AI-suggested sentence", "Change type",
-    "Status", "Old units", "Moved to", "Reason",
+    "Status", "Old units", "Differs from standard", "Moved to", "Reason",
 )
 # 결과물 C — 문서·칸·항목·표 칸이 들여쓰기 열이고 나머지는 항목의 세부다(0부터). 번호 열은 칸·항목의 섹션 번호(outputs가 센 값)
-(C_DOC, C_SECTION, C_NUMBER, C_ITEM, C_CELL, C_POSITION, C_ID, C_AI, C_CHANGE, C_STATUS, C_SOURCE, C_MOVE, C_REASON) = (
-    range(13)
-)
-C_COLUMN_WIDTHS = (34, 30, 12, 50, 40, 12, 14, 40, 14, 10, 30, 18, 30)
+# 표준과 다름(C_DEVIATION)은 칸 줄에만 — 표준과 다른 SOP 절(사용자 항목·이름을 바꾼 표준 항목)의 사유
+(
+    C_DOC, C_SECTION, C_NUMBER, C_ITEM, C_CELL, C_POSITION, C_ID, C_AI, C_CHANGE, C_STATUS, C_SOURCE, C_DEVIATION, C_MOVE,
+    C_REASON,
+) = range(14)
+C_COLUMN_WIDTHS = (34, 30, 12, 50, 40, 12, 14, 40, 14, 10, 30, 30, 18, 30)
 B_COLUMN_WIDTHS = (34, 12)  # 이름·건수, 그 뒤로 보낸 곳마다 B_DEST_WIDTH
 B_DEST_WIDTH = 18
 INFO_COLUMN_WIDTHS = (24, 60)
@@ -414,7 +416,7 @@ def _build_c_sheet(snap: BundleSnapshot) -> Sheet:
         heading = f"{doc.doc_type.upper()} {doc.code}{title}{parent}"
         rows.append(_make_row("doc", _make_c_texts({C_DOC: heading}), bold=(C_DOC + 1,)))
         for section in doc.sections:
-            values = {C_SECTION: section.label, C_SOURCE: section.heading_note}
+            values = {C_SECTION: section.label, C_SOURCE: section.heading_note, C_DEVIATION: section.deviation_reason or ""}
             if section.number is not None and section.shows_number:  # 부록은 라벨("Appendix 1. 이름")에 번호가 들어 있다
                 values[C_NUMBER] = section.number
             if section.na_reason is not None:

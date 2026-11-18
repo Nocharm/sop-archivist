@@ -238,13 +238,13 @@ def test_new_sop_doc_gets_outline_copy(client: TestClient) -> None:
         "code": "SOP-1", "key": "procedures", "parent_key": None, "level": 0, "number": "6",
         "title_en": "Procedures", "title_ko": "", "label": "Procedures", "kind": "named_children",
         "is_required": True, "default_style": "numbered", "is_assignable": True, "counts_lines": False,
-        "shows_number": True, "origin": "standard", "is_removed": False, "deviation_reason": None,
+        "shows_number": True, "origin": "standard", "is_removed": False, "deviation_reason": None, "is_deviation": False,
     }
     assert by_key["procedures.p1"] == {
         "code": "SOP-1", "key": "procedures.p1", "parent_key": "procedures", "level": 1, "number": "6.1",
         "title_en": "Procedure 1", "title_ko": "", "label": "Procedures › Procedure 1", "kind": "general",
         "is_required": True, "default_style": "numbered", "is_assignable": True, "counts_lines": True,
-        "shows_number": True, "origin": "declared", "is_removed": False, "deviation_reason": None,
+        "shows_number": True, "origin": "declared", "is_removed": False, "deviation_reason": None, "is_deviation": False,
     }
     # 번호는 결과물이 내보낼 항목끼리 센 값이다 — 비어 있는 선택 항목(7.1.x)은 번호가 없다
     assert {key: item["number"] for key, item in by_key.items()} == {
@@ -287,8 +287,10 @@ def test_doc_type_change_drops_and_recopies_outline(client: TestClient) -> None:
     as_sop = client.patch(url, json={"doc_type": "sop"}, headers=AUTHOR)
 
     assert as_sop.status_code == 200, as_sop.text
-    assert _load_outline_keys(doc_id) == list(NEW_SOP_KEYS)
-    assert [item["key"] for item in as_sop.json()["outline_items"] if item["code"] == "SOP-2"] == list(NEW_SOP_KEYS)
+    # 옛 첫 절차(p1)는 뺀 표시로 남아 키를 다시 쓰지 않는다 — 새 첫 절차는 다음 수를 받는다
+    expected = [key.replace("procedures.p1", "procedures.n1") for key in NEW_SOP_KEYS]
+    assert _load_outline_keys(doc_id) == expected
+    assert [item["key"] for item in as_sop.json()["outline_items"] if item["code"] == "SOP-2"] == expected
 
 
 def test_uploaded_sop_doc_gets_outline_copy(client: TestClient) -> None:

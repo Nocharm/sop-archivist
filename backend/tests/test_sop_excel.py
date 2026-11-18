@@ -329,7 +329,7 @@ def test_sheet_c_indents_docs_slots_items_and_tails(client: TestClient) -> None:
     doc, doc_col, slot_col, number_col, item_col, cell_col = "SOP SOP-NEW · Synthetic SOP", 0, 1, 2, 3, 4
     assert rows[0][doc_col] == doc
     scope = next(row for row in rows if row[slot_col] == "Scope")
-    assert (scope[number_col], scope[9], scope[12]) == ("2", "N/A", na_reason)
+    assert (scope[number_col], scope[9], scope[13]) == ("2", "N/A", na_reason)
 
     responsibilities = rows.index(next(row for row in rows if row[slot_col] == "Responsibilities"))
     assert rows[responsibilities][number_col] == "4"
@@ -350,7 +350,7 @@ def test_sheet_c_indents_docs_slots_items_and_tails(client: TestClient) -> None:
     tail = rows.index(next(row for row in rows if row[doc_col] == "Moved to another document"))
     assert rows[tail + 1][item_col] == DROP
     moved_row = rows[tail + 1]
-    assert (moved_row[6], moved_row[11], moved_row[12]) == (dropped["display_id"], "SOP-OTHER-1", moved_reason)
+    assert (moved_row[6], moved_row[12], moved_row[13]) == (dropped["display_id"], "SOP-OTHER-1", moved_reason)
 
     # 결과물 A의 No. 열은 결과물 A 응답의 dest_number를 옮겨 쓴 값이다
     sheet_a = workbook["A Comparison"]
@@ -876,3 +876,23 @@ def test_export_failure_is_reported_apart_from_save_failure(
     assert response.status_code == 500
     assert response.json() == {"detail": {"code": "export_failed"}}  # 원문·예외 메시지가 응답에 새지 않는다
     assert _load_events(fx.bundle_id, "export") == []
+
+
+def test_c_sheet_has_deviation_reason_column(client: TestClient) -> None:
+    bundle_id = create_bundle(client, is_synthetic=True)["id"]
+    saved = put_tobe(client, bundle_id, [{"code": "SOP-D", "title": "Synthetic SOP", "doc_type": "sop", "parent_code": None}])
+    sop_id = saved.json()["docs"][0]["id"]
+    renamed = client.patch(
+        f"/api/bundles/{bundle_id}/tobe/docs/{sop_id}/outline/definitions",
+        json={"title_en": "Terms", "reason": "Synthetic: house style"}, headers=AUTHOR,
+    )
+    assert renamed.status_code == 200, renamed.text
+
+    sheet = _load(client, bundle_id)["C New documents"]
+
+    rows = [[cell.value for cell in row] for row in sheet.iter_rows(min_row=2)]
+    # 표준과 다름 사유는 칸 제목 출처(Old units) 옆 칸, 칸 줄에만
+    assert rows[0][10:12] == ["Old units", "Differs from standard"]
+    terms = next(row for row in rows if row[1] == "Terms")
+    assert terms[11] == "Synthetic: house style"
+    assert next(row for row in rows if row[1] == "Scope")[11] is None

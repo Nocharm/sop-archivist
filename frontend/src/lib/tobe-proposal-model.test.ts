@@ -91,6 +91,7 @@ describe("buildProposalInput", () => {
     na_slots: [{ code: "SOP-CF", slot_key: "definitions", reason: "none" }],
     wi_steps: [{ code: "WI-04", step_no: 1, title: "Start" }],
     outline_items: [],
+    outline_suggestions: {},
   };
 
   it("sends the whole list once: what was there, then the picked rows with SOPs first", () => {
@@ -123,7 +124,7 @@ describe("buildProposalInput", () => {
   });
 
   it("starts the order at 0 on an empty list", () => {
-    const input = buildProposalInput({ revision: 1, docs: [], na_slots: [], wi_steps: [], outline_items: [] }, buildProposalRows({ ...PROPOSAL, listed_codes: [] }).filter((row) => row.doc_type === "sop"));
+    const input = buildProposalInput({ revision: 1, docs: [], na_slots: [], wi_steps: [], outline_items: [], outline_suggestions: {} },buildProposalRows({ ...PROPOSAL, listed_codes: [] }).filter((row) => row.doc_type === "sop"));
     expect(input.docs.map((doc) => doc.order_index)).toEqual([0, 1]);
   });
 });

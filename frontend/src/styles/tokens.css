@@ -25,6 +25,12 @@
   --dur-fast: 100ms;
   --dur-base: 160ms;
   --dur-slow: 240ms;
+  /* 풀기 전환(useUnwrapMotion - 걷기 · 펼치기 · 붙이기). 걷기는 --dur-base. 펼치기는 글이 새 자리로 미끄러지는 시간, 붙이기는 그 뒤 새 표시가 나타나는 시간.
+     펼치기는 위 줄부터 --stagger-step씩 늦게 떠나고 늦춤은 --stagger-max에서 멈춘다(긴 표도 마지막 줄이 0.8초 안에 닿는다) */
+  --dur-spread: 520ms;
+  --dur-attach: 200ms;
+  --stagger-step: 28ms;
+  --stagger-max: 280ms;
   /* 모핑 단추 - 올리면 색이 먼저 바뀌고 이만큼 쉬었다가 폭이 펼쳐진다(올리자마자 커지면 지나가는 포인터에도 튀어 산만). 돌아갈 때와 키보드 포커스는 기다리지 않는다 */
   --morph-delay: 180ms;
   --ease-enter: cubic-bezier(.16, 1, .3, 1);
@@ -243,6 +249,10 @@
     --dur-fast: 0ms !important;
     --dur-base: 0ms !important;
     --dur-slow: 0ms !important;
+    --dur-spread: 0ms !important;
+    --dur-attach: 0ms !important;
+    --stagger-step: 0ms !important;
+    --stagger-max: 0ms !important;
     --morph-delay: 0ms !important;
     --press: 1 !important;
     --rise: 0px !important;

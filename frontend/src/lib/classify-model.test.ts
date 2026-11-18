@@ -98,6 +98,7 @@ const TOBE: ToBe = {
   na_slots: [{ code: "SOP-CF", slot_key: "procedures", reason: "x" }],
   wi_steps: [{ code: "WI-01", step_no: 1, title: "Load" }],
   outline_items: makeTemplateOutline("SOP-CF"),
+  outline_suggestions: {},
 };
 
 const DOCS = "document_relationships";

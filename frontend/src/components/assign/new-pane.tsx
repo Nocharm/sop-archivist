@@ -17,6 +17,7 @@ import { NewBundle } from "@/components/assign/new-bundle";
 import { PaneZoom } from "@/components/assign/pane-zoom";
 import { RefMark } from "@/components/assign/ref-mark";
 import { LangToken } from "@/components/paper/lang-token";
+import { DeviationMark, EmptyRequiredMark } from "@/components/tobe/deviation-mark";
 import { StripLead, STRIP_LEAD_EXTRA } from "@/components/paper/strip-lead";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Truncate } from "@/components/ui/motion";
@@ -25,7 +26,7 @@ import { Tooltip } from "@/components/ui/tooltip";
 import type { WrittenSentence } from "@/lib/api-sop";
 import type { DraftLine } from "@/lib/assign-drop-model";
 import { readCaretPoint } from "@/lib/caret-point";
-import { diffRows, getComposedLeadWidths, getNewRowKey, isComposedRow, isWrittenRow, readSectionNumber, type NewPaneRow } from "@/lib/composed-model";
+import { diffRows, getComposedLeadWidths, getNewRowKey, isComposedRow, isWrittenRow, readSectionNumber, type NewPaneRow, type SectionMark } from "@/lib/composed-model";
 import { useI18n } from "@/lib/i18n";
 import { readWrittenRefMark } from "@/lib/ref-model";
 import { getCardTops, getHiddenPrefixLength, getPairBrackets, getPillWidth, getSectionPill, getTabWidths } from "@/lib/strip-pill-model";
@@ -39,6 +40,8 @@ interface NewPaneProps {
   rows: NewPaneRow[];
   /** 엮은 문서의 칸 머리(section_path) → 칸 제목 출처("← OLD-1 §5") - 서버 값 그대로 칸 이름 뒤에 흐리게 */
   headingNotes?: ReadonlyMap<string, string>;
+  /** 엮은 문서의 칸 머리(section_path) → 표준과 다름 · 비어 있음 알림 - 칸 이름 뒤에 */
+  sectionMarks?: ReadonlyMap<string, SectionMark>;
   /** 줄 들고 남의 기준 - 바뀌면(문서를 바꿈·처음 받음) 움직임 없이 새로 시작한다 */
   rowsKey: string;
   /** 머리 표지 - 이미 쓴 문서인지 배정으로 엮는 문서인지 */
@@ -376,11 +379,29 @@ export function NewPane(props: NewPaneProps) {
   function renderSectionHead(row: NewPaneRow, isNumberInLead: boolean): ReactNode {
     const label = isNumberInLead ? row.section_path.slice(getHiddenPrefixLength(row.section_path, readSectionNumber(row.section_path))) : row.section_path;
     const note = props.headingNotes?.get(row.section_path);
-    if (!note) return <p className="new-sec">{label}</p>;
+    const mark = props.sectionMarks?.get(row.section_path);
+    // 번호 없는 절(5장의 범주)은 머리 글을 키로 - 범주끼리 같은 식별자가 되지 않게
+    const idKey = readSectionNumber(row.section_path) || row.section_path;
+    const marks = mark && (
+      <>
+        {mark.deviationReason !== null && <DeviationMark reason={mark.deviationReason} testId={`assign-new-differs-${idKey}`} />}
+        {mark.isEmptyRequired && <EmptyRequiredMark testId={`assign-new-empty-required-${idKey}`} />}
+      </>
+    );
+    if (!note)
+      return (
+        <p className="new-sec">
+          {label}
+          {marks}
+        </p>
+      );
     // 출처 글은 칸 오른쪽 끝까지 가서, 첫 줄의 언어 탭(위 테두리에서 8px 위로 나온다)이 글에 닿지 않게 아래 여백을 4px 더 둔다
     return (
       <p className="new-sec mb-2 flex gap-1.5">
-        <span>{label}</span>
+        <span>
+          {label}
+          {marks}
+        </span>
         <span className="min-w-[8ch] flex-1 font-normal text-ink-3">
           {/* 번호 없는 절(5장의 범주)은 머리 글을 키로 - 범주끼리 같은 식별자가 되지 않게 */}
           <Truncate text={note} testId={`assign-new-heading-note-${readSectionNumber(row.section_path) || row.section_path}`} />
