@@ -195,6 +195,7 @@ import { genId } from "@/lib/id";
 import { useLeaveGuard } from "@/lib/leave-guard";
 import { buildIdenticalBatches } from "@/lib/match-model";
 import { navigate } from "@/lib/nav-buffer";
+import { buildNewAiFilter, listNewAiLinks, readNewAiPill } from "@/lib/new-ai-filter-model";
 import { EMPTY_FOLD_OPEN, type FoldOpen } from "@/lib/paper-fold-model";
 import { buildPaperModel, buildPaperTabs, findNearestCut, listPartSheets, resolvePickUnit, shouldRecenter, type PaperTabKey } from "@/lib/paper-model";
 import { buildPairColumns, canUndoPair, listPairLinks, PAIR_REFUSAL_KEYS, resolvePairDrop, type PairDrop, type PairDropContext, type PairLang } from "@/lib/pair-drop-model";
@@ -676,6 +677,8 @@ export default function AssignPage() {
   const isNewDocOpen = (docId: number | null) => docId !== null && (writtenDocs.some(([id]) => id === docId) || composedDocs.some((doc) => doc.id === docId));
   const newDocId = (manualNewDoc?.key === toggleKey ? manualNewDoc.docId : null) ?? liveDoc?.docId ?? unsourcedDoc ?? (isNewDocOpen(heldNewDoc) ? heldNewDoc : null) ?? writtenDocs[0]?.[0] ?? composedDocs[0]?.id ?? null;
   if (newDocId !== null && newDocId !== heldNewDoc) setHeldNewDoc(newDocId);
+  // AI 제안 알약으로 다른 New 문서를 열기 전에 보던 문서 - 그 줄(key)에 있는 동안 알약이 돌아가기가 된다
+  const [newAiReturn, setNewAiReturn] = useState<{ key: string; docId: number } | null>(null);
   const isComposedDoc = newDocId !== null && !writtenDocs.some(([docId]) => docId === newDocId);
   // 이미 쓴 New 문서의 올린 파일(문서) id - 원문 고치기를 그 문서로 연다
   const newFileId = (tobeData?.docs ?? []).find((doc) => doc.id === newDocId)?.document_id ?? null;
@@ -3512,6 +3515,51 @@ export default function AssignPage() {
         />
       </span>
     ) : null;
+  // 고른 줄의 AI 제안만 New 칸에 남기는 거르기 - New 칸 머리의 칩으로 켜고 브라우저에 기억한다(규칙은 lib/new-ai-filter-model). 출처 없는 New 모드는 고른 Old 줄이 없는 것으로 본다
+  const newAiUnitIds = mode === "old" ? (row?.unitIds ?? null) : null;
+  const newAiFilter = buildNewAiFilter(view.newAiOnly, newAiUnitIds, newRows);
+  // 그 줄의 확정 전 AI 제안이 다른 New 문서에 있으면 New 칸은 그대로 두고 칸 머리 아래 알약으로 연다 - 연 뒤에는 보던 문서로 돌아가기
+  const newAiDest = newAiUnitIds !== null && isAiRow ? savedDestination : null;
+  const newAiDocId = findDestinationDoc(newAiDest, writtenMap);
+  const newAiPill = readNewAiPill({ isOn: view.newAiOnly, suggestionDocId: isNewDocOpen(newAiDocId) ? newAiDocId : null, openDocId: newDocId, returnDocId: newAiReturn?.key === toggleKey ? newAiReturn.docId : null });
+  const newAiLinked = newAiDest?.kind === "link" ? writtenMap.get(newAiDest.targetIds[0]) : undefined;
+  const newAiPlace = newAiDest === null ? null : newAiLinked ? { title: newAiLinked.doc_code, text: newAiLinked.section_path } : renderPlaceLabel(newAiDest);
+  const newAiChip = (
+    <>
+      <button type="button" className="schip schip-btn new-ai-chip" data-tone="ai_suggested" aria-pressed={view.newAiOnly} data-testid="assign-new-ai-only" onClick={() => changeView({ newAiOnly: !view.newAiOnly })}>
+        <Sparkles size={13} strokeWidth={1.75} className="flex-none" aria-hidden />
+        <Truncate text={t("assign.newAi.only")} revealOnFocus />
+      </button>
+      {view.newAiOnly && newAiFilter === null && (
+        <span className="pane-sub new-ai-hint" data-testid="assign-new-ai-hint">
+          {t("assign.newAi.pick")}
+        </span>
+      )}
+    </>
+  );
+  const newAiBanner = newAiPill ? (
+    <div className="new-ai-row">
+      <button
+        type="button"
+        className="new-ai-pill"
+        data-kind={newAiPill.kind}
+        data-testid="assign-new-ai-open"
+        onClick={() => {
+          setNewAiReturn(newAiPill.kind === "open" && newDocId !== null ? { key: toggleKey, docId: newDocId } : null);
+          setManualNewDoc({ key: toggleKey, docId: newAiPill.docId });
+        }}
+      >
+        {newAiPill.kind === "open" ? (
+          <>
+            <Truncate text={t("assign.newAi.elsewhere", { doc: newAiPlace?.title ?? "", place: newAiPlace?.text ?? "" })} revealOnFocus />
+            <span className="flex-none">→ {t("assign.newAi.open")}</span>
+          </>
+        ) : (
+          <Truncate text={t("assign.newAi.back", { doc: writtenDocs.find(([docId]) => docId === newAiPill.docId)?.[1] ?? composedDocs.find((doc) => doc.id === newAiPill.docId)?.code ?? "" })} revealOnFocus />
+        )}
+      </button>
+    </div>
+  ) : null;
   const done = countDone(rows);
   const identicalCount = identical.data?.length ?? 0;
   const bar = (
@@ -3925,7 +3973,7 @@ export default function AssignPage() {
                     cut={isNewEdit && cutUnit !== null && cutLine.at !== null && cutTargetId !== null ? { targetId: cutTargetId, at: cutLine.at } : null}
                     cutPop={<CutPop busy={busy} onRun={splitAtCut} onCancel={cutLine.clear} testIdPrefix="assign" />}
                     onCutDrag={canEdit && isNewEdit ? cutLine.dragTo : undefined}
-                    banner={isNewEdit ? pairBanner : null}
+                    banner={isNewEdit ? pairBanner : newAiBanner}
                     sourceLabel={(unitId) => (unitMap.get(unitId)?.display_id ?? String(unitId)).replace(/^OLD-/, "")}
                     onPick={handleNewPick}
                     onJumpSource={jumpToOld}
@@ -3935,9 +3983,15 @@ export default function AssignPage() {
                     onToggleLines={() => changeView({ lines: !view.lines })}
                     draft={newDraft}
                     draftSlotKey={draftSlotKey}
-                    headExtra={unsourcedChip}
+                    headExtra={
+                      <>
+                        {unsourcedChip}
+                        {newAiChip}
+                      </>
+                    }
+                    aiFilter={newAiFilter}
                   />
-                  <LinkLines pairs={linkPairs} focusUnits={highlightIds} focusTargets={liveDoc ? new Set([...pickedNew, ...liveDoc.targetIds]) : pickedNew} visible={view.lines} />
+                  <LinkLines pairs={listNewAiLinks(linkPairs, newAiFilter, row?.unitIds ?? [])} focusUnits={highlightIds} focusTargets={liveDoc ? new Set([...pickedNew, ...liveDoc.targetIds]) : pickedNew} visible={view.lines} />
                 </>
               )}
               </>
