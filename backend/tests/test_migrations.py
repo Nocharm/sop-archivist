@@ -360,6 +360,8 @@ def _insert_old_bundle(conn: Any) -> dict[str, int]:
 _UNIT_NUMBER_COLUMNS = {
     "number_read": "VARCHAR(40)", "number_source": "VARCHAR(5)", "number_len": "INTEGER NOT NULL DEFAULT 0",
     "number_set": "VARCHAR(40)",
+    # 바꾼 조항 표시(0029)도 그 앞 리비전에서는 잠시 더했다 뺀다
+    "from_heading": "BOOLEAN NOT NULL DEFAULT 0",
 }
 
 

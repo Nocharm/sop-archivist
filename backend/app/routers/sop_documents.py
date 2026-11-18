@@ -290,6 +290,8 @@ class ViewUnitOut(BaseModel):
     caption_refs: list[CaptionRefOut] = []
     # 잡음 표시(noise.py) — "toc"면 목차 줄: 배정 줄이 없고 Assign 용지가 목차 블록으로 접는다. 편집 clear_noise가 비운다
     noise_kind: str | None = None
+    # 제목 스타일 줄을 문장으로 바꾼 문장(F8b) — Assign의 "제목으로 되돌리기"와 묶음 머리 "[제목 → 문장]"이 읽는다. 편집 set_heading이 오간다
+    from_heading: bool = False
 
 
 def _to_ref_out(state: RefState | None) -> ViewUnitRefOut | None:
@@ -494,6 +496,7 @@ async def build_document_view(session: AsyncSession, document: Document) -> Docu
                 ref=_to_ref_out(read_ref_state(unit, ref_marks.get(unit.id))),
                 caption_refs=refs_by_unit.get(unit.id, []),
                 noise_kind=unit.noise_kind,
+                from_heading=unit.from_heading,
             )
             for unit in units
         ],

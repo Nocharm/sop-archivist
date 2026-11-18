@@ -7650,6 +7650,111 @@ await runStep("assign: number cell - Add number on a line without one, No number
   check("a second Undo removes it again", await waitNumber((number) => number.value === null && !number.is_set));
 });
 
+// 제목 → 문장(F8b) - 시드 문서에는 조항형 옛 SOP가 없어 진짜 제목 하나를 사람이 문장으로 바꿔 본다(우클릭 Turn into sentences).
+// 바꾼 줄 위에 묶음 머리 "[Heading → sentence] …"가 붙고, 고르면 Shape 맨 아래에 Back to heading이 있다. 편집 한 번이라 Undo 한 번씩 돌아온다.
+// 끝에 두 편집을 모두 되돌려 시드 묶음을 처음 그대로 둔다(되돌리기는 원래 Unit id로 되살린다)
+const findHeadingOnScreen = async (page, readView, docs) => {
+  for (const candidate of docs.filter((item) => item.side === "old" && item.status === "ready")) {
+    const view = await readView(candidate.id);
+    const headings = view.units.filter((item) => item.kind === "heading" && !item.noise_kind && item.group_unit_id === null && (item.lang === "ko" || item.lang === "en") && item.status === "unassigned");
+    if (headings.length === 0) continue;
+    await page.locator('[data-testid="assign-old-doc"]').click();
+    await page.locator(`[data-testid="assign-old-doc-option-${candidate.id}"]`).click();
+    await page.locator('[data-testid="assign-old"]').waitFor({ timeout: T });
+    await page.waitForTimeout(600);
+    for (const item of headings) {
+      if ((await page.locator(`[data-testid="assign-paper-piece-${item.id}"]`).count()) > 0) return { doc: candidate, unit: item };
+    }
+  }
+  return { doc: null, unit: null };
+};
+
+await runStep("assign: heading to sentence - Turn into sentences from the right-click menu, the group head and Back to heading, Undo steps back", {}, async ({ page, takeShot }) => {
+  const headers = { "X-Dev-User": "qa.member" };
+  const docs = await (await page.request.get(`${BASE}/api/bundles/${halfBundleId}/documents`, { headers })).json();
+  const readView = async (docId) => (await page.request.get(`${BASE}/api/bundles/${halfBundleId}/documents/${docId}/view`, { headers })).json();
+  await page.goto(`${BASE}/bundles/${halfBundleId}/assign`);
+  await wait(page, "assign-bar");
+  const { doc, unit } = await findHeadingOnScreen(page, readView, docs);
+  check("the bundle has an unassigned heading on screen", unit !== null);
+  if (unit === null) return;
+  const waitView = async (isDone) => {
+    for (let tries = 0; tries < 60; tries += 1) {
+      const view = await readView(doc.id);
+      if (isDone(view)) return view;
+      await page.waitForTimeout(250);
+    }
+    return null;
+  };
+  const piece = page.locator(`[data-testid="assign-paper-piece-${unit.id}"]`);
+  await piece.scrollIntoViewIfNeeded();
+  await piece.click({ button: "right" });
+  await wait(page, "assign-ctx-to_sentence");
+  check("Turn into sentences is offered on a heading", (await page.locator('[data-testid="assign-ctx-to_sentence"]').getAttribute("aria-disabled")) === null);
+  await page.locator('[data-testid="assign-ctx-to_sentence"]').click();
+  const shifted = await waitView((view) => !view.units.some((item) => item.id === unit.id));
+  check("the heading is replaced by sentences", shifted !== null);
+  if (shifted === null) return;
+  const sentences = shifted.units.filter((item) => item.from_heading && item.pos_seq === unit.pos_seq);
+  check("the new lines are marked as shifted sentences", sentences.length > 0 && sentences.every((item) => item.kind === "sentence"), sentences.map((item) => item.kind).join(", "));
+  check("their text covers the heading's text", sentences.map((item) => item.text).join(" ") === unit.text, sentences.map((item) => item.text).join(" | "));
+  // 바꾼 줄 위 묶음 머리 - 꼬리표와 수, 줄 끝 되돌리기
+  const head = page.locator(`[data-testid="assign-paper-shift-${sentences[0].id}"]`);
+  await head.waitFor({ timeout: T });
+  check("a group head sits above the shifted lines", (await head.innerText()).includes("Heading → sentence"), await head.innerText());
+  await takeShot("sop-assign-heading-shift.png");
+  // 바꾼 줄을 고르면 Shape 맨 아래에 Back to heading
+  await page.locator(`[data-testid="assign-paper-piece-${sentences[0].id}"]`).click();
+  await wait(page, "assign-shape-heading-back");
+  await page.locator('[data-testid="assign-shape-heading-back"]').click();
+  const back = await waitView((view) => !view.units.some((item) => item.id === sentences[0].id));
+  const heading = back?.units.find((item) => item.kind === "heading" && item.pos_seq === unit.pos_seq && item.text === unit.text);
+  check("Back to heading makes one heading of the line again", heading !== undefined);
+  // 두 편집을 Undo로 하나씩 - 처음 Unit id로 돌아온다
+  await page.locator('[data-testid="assign-undo"]').click();
+  check("Undo brings the sentences back", (await waitView((view) => sentences.every((item) => view.units.some((other) => other.id === item.id)))) !== null);
+  await page.locator('[data-testid="assign-undo"]').click();
+  check("a second Undo brings the original heading back", (await waitView((view) => view.units.some((item) => item.id === unit.id && item.kind === "heading"))) !== null);
+});
+
+await runStep("assign: heading to sentence - the group head's ↺ To heading turns the clause back in one edit", {}, async ({ page }) => {
+  const headers = { "X-Dev-User": "qa.member" };
+  const docs = await (await page.request.get(`${BASE}/api/bundles/${halfBundleId}/documents`, { headers })).json();
+  const readView = async (docId) => (await page.request.get(`${BASE}/api/bundles/${halfBundleId}/documents/${docId}/view`, { headers })).json();
+  await page.goto(`${BASE}/bundles/${halfBundleId}/assign`);
+  await wait(page, "assign-bar");
+  const { doc, unit } = await findHeadingOnScreen(page, readView, docs);
+  check("the bundle has an unassigned heading on screen", unit !== null);
+  if (unit === null) return;
+  const waitView = async (isDone) => {
+    for (let tries = 0; tries < 60; tries += 1) {
+      const view = await readView(doc.id);
+      if (isDone(view)) return view;
+      await page.waitForTimeout(250);
+    }
+    return null;
+  };
+  const piece = page.locator(`[data-testid="assign-paper-piece-${unit.id}"]`);
+  await piece.scrollIntoViewIfNeeded();
+  await piece.click({ button: "right" });
+  await wait(page, "assign-ctx-to_sentence");
+  await page.locator('[data-testid="assign-ctx-to_sentence"]').click();
+  const shifted = await waitView((view) => !view.units.some((item) => item.id === unit.id));
+  check("the heading turns into sentences", shifted !== null);
+  if (shifted === null) return;
+  const first = shifted.units.filter((item) => item.from_heading && item.pos_seq === unit.pos_seq)[0];
+  await wait(page, `assign-paper-shift-revert-${first.id}`);
+  await page.locator(`[data-testid="assign-paper-shift-revert-${first.id}"]`).click();
+  const back = await waitView((view) => !view.units.some((item) => item.from_heading && item.pos_seq === unit.pos_seq));
+  check("↺ To heading turns the whole group back into a heading", back !== null && back.units.some((item) => item.kind === "heading" && item.pos_seq === unit.pos_seq));
+  await page.locator(`[data-testid="assign-paper-shift-${first.id}"]`).waitFor({ state: "detached", timeout: T });
+  // 두 편집을 되돌려 처음 그대로 둔다
+  await page.locator('[data-testid="assign-undo"]').click();
+  check("Undo shows the sentences again", (await waitView((view) => view.units.some((item) => item.id === first.id))) !== null);
+  await page.locator('[data-testid="assign-undo"]').click();
+  check("a second Undo restores the original heading", (await waitView((view) => view.units.some((item) => item.id === unit.id))) !== null);
+});
+
 // 끌어서 보내기(끌어다 놓기 설계 §6, 3걸음) - Old 조각을 아직 쓰지 않은 New 문서(New · from Assign)의 두 문장 사이나 빈 칸에 놓으면 그 줄의 초안이 되고(저장하지 않는다),
 // Confirm 때 문장 사이면 그 자리까지 저장한다. 자리를 받은 저장은 그 문서의 순서를 굳히고(manual_order) 화면에서 되돌릴 길이 없다 - 그래서 시드 묶음을 쓰는 Assign·Order 단계가 모두 끝난 뒤에 둔다.
 // 자료는 이 단계가 API로 만든다(A·B·C를 칸 K에, P를 칸 K2에). 끝에 이 단계가 확정한 줄은 Clear(U)로 되돌린다(굳힌 순서는 남는다)

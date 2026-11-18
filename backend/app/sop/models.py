@@ -17,6 +17,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    false,
     text,
 )
 from sqlalchemy.orm import Mapped, mapped_column
@@ -360,8 +361,9 @@ class Unit(Base):
     # 정렬 키 — 첫 범위의 블록 seq와 블록 안 시작 위치(표 단위는 pos_start=-1)
     pos_seq: Mapped[int] = mapped_column(Integer)
     pos_start: Mapped[int] = mapped_column(Integer)
-    # 문단 번호(numbering.py) — 읽은 값·출처(auto | typed | cell)·text 앞에서 번호가 차지한 글자 수는 범위와 추출 신호에서 나온 값이고,
-    # number_set만 사람이 고친다(NULL 고치지 않음, "" 번호 없음). 번호는 범위로 표시할 뿐 text에서 빼지 않는다
+    # 문단 번호(numbering.py) — 읽은 값·출처(auto | typed | cell | pair)·text 앞에서 번호가 차지한 글자 수는 범위와 추출 신호에서 나온 값이고,
+    # number_set만 사람이 고친다(NULL 고치지 않음, "" 번호 없음). 번호는 범위로 표시할 뿐 text에서 빼지 않는다.
+    # pair는 번호 없는 바꾼 조항이 앞 다른 언어 조항에서 물려받은 번호다(F8b, 범위 없음)
     number_read: Mapped[str | None] = mapped_column(String(40), default=None)
     number_source: Mapped[str | None] = mapped_column(String(5), default=None)
     number_len: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
@@ -369,6 +371,9 @@ class Unit(Base):
     # 잡음 표시(noise.NOISE_KINDS, 지금은 "toc"만) — 옮기지 않는 글이라 배정 줄·남은 수에서 빠지고 결과물에는 "삭제 · 목차"로 남는다.
     # 결정 행이 아니라 표시다(사람이 확정한 것처럼 꾸미지 않는다). 단위를 만들 때 붙이고, 편집 clear_noise가 비운다
     noise_kind: Mapped[str | None] = mapped_column(String(8), default=None)
+    # 제목 스타일 줄을 문장으로 바꾼 문장 단위(F8b) — 처음 쪼개기(제목답지 않은 조항)와 편집 set_heading이 단다. 화면의 "제목으로
+    # 되돌리기"·묶음 머리, 조항마다 1:1 짝(units._find_code_pairs), 번호 물려받기, 타자 번호를 처음부터 번호로 보기(numbering)가 읽는다
+    from_heading: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
 
 
 class UnitEdit(Base):

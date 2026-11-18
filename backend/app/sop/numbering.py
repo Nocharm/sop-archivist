@@ -12,6 +12,8 @@ from typing import Protocol
 from app.sop.segment import NUMBER_CELL, NUMBERS_SIGNAL, is_blank_char
 
 NUMBER_AUTO, NUMBER_TYPED = "auto", "typed"  # docx_reader의 번호 출처와 같은 값(테스트가 같음을 지킨다)
+# 번호 없는 바꾼 조항(F8b)이 앞 다른 언어 조항에서 물려받은 번호 — 범위가 없다(number_len 0, 글자는 그대로 내용)
+NUMBER_PAIR = "pair"
 MAX_NUMBER_CHARS = 40  # units.number_read·number_set 열 길이
 NUMBERED_KINDS = ("sentence", "heading", "cell_sentence")  # 번호 칸이 있는 단위 — 캡션·그림·표는 없다
 FIRST_SIGNAL_VERSION = 5  # extract.types.EXTRACTOR_VERSION — 블록 신호(numbers)가 생긴 추출기
@@ -32,6 +34,7 @@ class NumberedUnit(Protocol):
     number_source: str | None
     number_len: int
     number_set: str | None
+    from_heading: bool  # 제목 줄을 문장으로 바꾼 단위(F8b) — 그 타자 번호는 제목 줄처럼 처음부터 번호다
 
 
 @dataclass(frozen=True)
@@ -81,6 +84,46 @@ def build_number_columns(
     return {"number_read": found.read, "number_source": found.source, "number_len": found.length}
 
 
+@dataclass(frozen=True)
+class ClauseLine:
+    """번호 물려받기(F8b)가 보는 단위 하나 — 문서 순서로 넘긴다. number는 번호 칸 값(get_number)이다."""
+
+    pos_seq: int
+    lang: str
+    kind: str
+    from_heading: bool
+    number: str | None
+
+
+def find_inherited_numbers(lines: Sequence[ClauseLine]) -> dict[int, str]:
+    """목록 위치 → 물려받을 번호. 번호 없는 바꾼 조항(from_heading)의 첫 단위가, 바로 앞 블록의 첫 단위가 다른 언어(한·영)의
+    번호 있는 조항(제목이거나 바꾼 조항)이면 그 번호를 받는다 — "5.2.1 Close … Confirm …" 다음의 한글 번역 첫 문장이 5.2.1이다.
+    조항의 둘째 문장부터는 받지 않는다(그 영어 짝도 번호가 없다)."""
+    inherited: dict[int, str] = {}
+    first_of_block: dict[int, int] = {}
+    for index, line in enumerate(lines):
+        if line.pos_seq in first_of_block:
+            continue
+        first_of_block[line.pos_seq] = index
+        source_index = first_of_block.get(line.pos_seq - 1)
+        if source_index is None or not line.from_heading or line.number:
+            continue
+        source = lines[source_index]
+        is_clause = source.kind == SECTION_KIND or source.from_heading
+        if is_clause and source.number and {source.lang, line.lang} == {"ko", "en"}:
+            inherited[index] = source.number
+    return inherited
+
+
+def read_draft_number(kind: str, from_heading: bool, columns: Mapping[str, object]) -> str | None:
+    """막 만든 단위(사람이 고치기 전)의 번호 칸 값 — get_number와 같은 규칙을 번호 열 값으로."""
+    read = columns.get("number_read")
+    if not isinstance(read, str):
+        return None
+    is_typed_text = columns.get("number_source") == NUMBER_TYPED and kind != SECTION_KIND and not from_heading
+    return None if is_typed_text else read
+
+
 def _read_label(label: str) -> str:
     stripped = label.strip()
     doubled = _DOUBLED_RE.fullmatch(stripped)
@@ -98,8 +141,11 @@ def get_number(unit: NumberedUnit) -> str | None:
 
 def _is_typed_text(unit: NumberedUnit) -> bool:
     """타자로 친 번호가 아직 글인가 — 절을 여는 줄(제목)의 타자 번호는 처음부터 번호 칸으로 가고(전에도 화면이 가리던 번호다),
-    본문 줄의 타자 번호는 사람이 "번호로"를 누르기 전에는 글이다(사용자 결정 2026-11-18)."""
-    return unit.number_source == NUMBER_TYPED and unit.number_set is None and unit.kind != SECTION_KIND
+    본문 줄의 타자 번호는 사람이 "번호로"를 누르기 전에는 글이다(사용자 결정 2026-11-18). 제목에서 바꾼 조항 문장(F8b)은 제목 줄과 같다."""
+    return (
+        unit.number_source == NUMBER_TYPED and unit.number_set is None and unit.kind != SECTION_KIND
+        and not unit.from_heading
+    )
 
 
 def get_hidden_len(unit: NumberedUnit) -> int:

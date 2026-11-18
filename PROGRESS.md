@@ -4,6 +4,13 @@
 
 ## 2026-11-18
 
+- **제목 → 문장(`feat/heading-sentence`, MD 1 §10 브랜치 9 — F8b = 설계 2d, 짝 1:1 · 번호 물려받기)** — 조항형 옛 SOP의 "제목 N수준" 조항을 문장으로 바꾼다. 규칙 `segment.is_heading_like`(문장 끝 둘 이상, 또는 머리 번호 뒤 글 60자 초과 + 마침표 — 합성 값)를 쪼개기와 추출기 절 이름이 함께 쓴다. **옛 문서를 올릴 때 앱이 먼저 한다**(명세 자신의 규칙이라 원칙 1의 "확실할 때"로 봄) — 새 문서·이미 쓴 문서와 그 전에 올린 문서는 그대로. 바꾼 조항 바로 뒤의 번호 없는 다른 언어 제목(번역)도 함께 바꾸고 절을 잇는다.
+  - 데이터: Alembic `0029` `units.from_heading`(bool, 기본 거짓). 번호 물려받기는 `number_source = "pair"`(범위 없음 · `number_len` 0, `numbering.find_inherited_numbers`) — 번호 없는 바꾼 조항의 첫 문장이 바로 앞 블록의 다른 언어 번호 조항에서 받는다. 바꾼 문장의 타자 번호는 제목 줄처럼 처음부터 번호다.
+  - 짝: 코드 짝은 바꾼 조항마다 덩어리, 문장 수가 같은 두 조항은 문장마다 1:1(`suggest_interleaved_pairs`의 `clauses`). 그 밖의 짝 규칙은 그대로다.
+  - 편집 `set_heading {unit_ids, heading}` — 제목 → 문장마다(표시 · 번호 물려받기), 문장 → 제목(바꾼 문장은 조항 줄 전체를 모아 하나로). 한 편집이라 되돌리기 한 번, 뒤에 새로 활성이 된 단위의 짝만 다시 세운다(`units.pair_new_units`). 거절 `heading_shift_kind`.
+  - 화면: Old 용지에 바꾼 조항 짝마다 머리 "[Heading → sentence] Headings n → sentence pairs m · ↺ To heading"(`lib/heading-shift-model.ts`), Shape 맨 아래 **Back to heading**(짝이면 두 조항 줄), 우클릭 **Turn into sentences** · **Make it a heading** / **Back to heading**, 제목 줄 Shape에 문단 기호 단추. 설명서 `#assign-heading-shift`, API 계약 한 줄.
+  - 확인: pytest `test_sop_heading_sentence` 15(합성 `SYN-HEADING-1` — 규칙 · 1:1 짝 · 물려받기 · 진짜 제목 · 되돌리기/다시 하기 · 커버리지) · backend 전체 3,017 · ruff, vitest(`heading-shift-model` 3 · 메뉴 3) · lint · tsc. 스모크 `assign: heading to sentence …` 둘은 써 두고 돌리지 않았다.
+
 - **문단 번호 — 번호는 늘 번호 칸에(v1.1.39, `feat/number-pill`, MD 1 §10 브랜치 3, F5 + F11의 번호 부분)** — 번호를 단위에 둔다(Alembic `0028` — `0027` 목차 표시 뒤로 옮김: `units.number_read`·`number_source`·`number_len`·`number_set`, `unit_edits.number_changes`). 읽은 값·출처·범위 길이는 단위 범위와 블록 신호(`signals.numbers`)에서 나오는 값이고 사람이 고치는 것은 `number_set` 하나다 — 글자는 그대로라 커버리지가 안 바뀐다. 자동 번호와 제목 줄(절을 여는 줄)의 타자 번호는 처음부터 번호 칸으로 가고, 본문 줄의 타자 번호만 `↤`를 눌러야 번호가 된다(사용자 결정 2026-11-18 — 전에 화면이 가리던 절 첫 줄 번호가 그대로 번호 칸에 남게). 새 편집 `set_number`는 단위를 은퇴시키지 않아 배정이 그대로이고, `follow`면 같은 목록의 뒤 번호와 그 번호가 여는 절 이름(`section_label`)까지 한 편집으로 옮긴다(되돌리기 한 번).
   - 번호를 뺀 "내용"을 쓰는 곳: New 초안(프런트)·글 없이 저장한 새 문장·결과물 A 원문 칸·엮은 문서의 줄. 문장 검사는 번호를 뺀 내용과도 견줘, 번호 칸으로 간 번호가 새 문장에 없다고 숫자 불일치를 내지 않는다. 결과물 A 위치는 사람이 고친 줄만 바뀐다 — 제목 줄은 고친 번호가 절이고(`§6.1.1 (읽은 값 6.2)`), 본문 줄은 속한 절 뒤에 줄 번호를 잇는다(`§2 · 2.1 (읽은 값 2.2)`, 사용자 결정). AI 입력 글은 그대로다(§11-8).
   - 정한 것(명세에 없던 것): ① 따라 고치기의 같은 목록 후보는 같은 언어 · 같은 표(표 밖이면 표 밖) — 한/영 번갈아 문서에서 한 언어의 고침이 다른 언어 줄을 밀지 않게. ② 숫자와 대문자 한 글자 마디만 센다(가나다·로마 숫자는 그 줄만). ③ 같은 수준에서 고친 줄의 아래 줄(6.2.1)은 앞머리가 따라가고, 수준이 바뀐 줄의 아래 줄은 두고 간다. ④ 번호뿐인 단위는 번호가 아니라 글이다(내용이 남을 때만 번호). ⑤ 번호 범위가 있는 문서의 번호 칸은 줄마다 제 번호를 보인다(전의 "절 첫 줄에 절 번호"는 옛 추출에만 남는다).

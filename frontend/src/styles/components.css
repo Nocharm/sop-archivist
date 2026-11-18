@@ -1357,6 +1357,10 @@
   .toc-head-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .toc-note { margin: 2px 0 0 19px; font-size: var(--fs-micro); }
   .toc-act { flex: none; height: 22px; padding: 0 8px; font-size: 11.5px; }
+  /* 제목 → 문장 묶음 머리(F8b) - 바꾼 조항 짝의 첫 줄 위 한 줄. 목차 머리와 같은 흐린 꼬리표, 되돌리기는 줄 끝 */
+  .shift-head { display: flex; align-items: center; gap: 6px; min-width: 0; margin: 4px 0 2px; color: var(--ink-3); font-size: 12px; }
+  .shift-head .toc-tag { color: var(--ink-2); }
+  .shift-head-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   /* Assign 결정 칸의 목차 다듬기 줄(F12 G2 · G3) - 용지 블록과 같은 흐린 점선 상자 */
   .toc-panel-shape { display: grid; gap: 8px; margin: 0 var(--pad) var(--pad); padding: 8px 10px; border: 1px dashed var(--line-2); border-radius: var(--r-1); background: var(--sunken); }
   .toc-panel-line { display: flex; align-items: baseline; gap: 6px; min-width: 0; margin: 0; color: var(--ink-2); font-size: 12.5px; overflow-wrap: anywhere; }
