@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import type { DocumentView, ViewBlock, ViewPartGroup, ViewUnit } from "./api-sop";
 import type { PaperRow } from "./paper-model";
-import { buildPaperModel, buildPaperTabs, buildRows, foldCaptionRows, listPartSheets, canSplitAt, clampSplitAt, getBundleHeader, getGapMerge, getMergeBlocker, resolveCutDrag, getMarks, getTags, readWarningText, resolvePickUnit, shouldRecenter, toBlockOffset, toUnitOffset } from "./paper-model";
+import { buildPaperModel, buildPaperTabs, buildRows, foldCaptionRows, listPartSheets, canSplitAt, clampSplitAt, getBundleHeader, getGapMerge, getMergeBlocker, resolveCutDrag, getMarks, getTags, isBandHeading, readWarningText, resolvePickUnit, shouldRecenter, toBlockOffset, toUnitOffset } from "./paper-model";
 
 function makeBlock(id: number, seq: number, text: string, extra: Partial<ViewBlock> = {}): ViewBlock {
   return {
@@ -54,6 +54,33 @@ describe("buildPaperModel", () => {
     const table = model.body[0];
     expect(table.type === "table" && table.rows[0].map((cell) => cell.text)).toEqual(["b", "a"]);
     expect(table.type === "table" && table.unitId).toBe(20);
+  });
+
+  it("draws an unwrapped band table as one heading piece, not a table (F4)", () => {
+    // 번호 칸 | 빈 칸 | 제목 칸 - 제목 줄 하나가 번호 칸 블록 전체와 제목 칸을 덮는다
+    const cell = (id: number, col: number, text: string) => makeBlock(id, id, text, { kind: "table_cell", table_id: 7, row_index: 0, col_index: col });
+    const blocks = [cell(1, 0, "7.4"), cell(2, 1, ""), cell(3, 2, "Filter change")];
+    const band = makeUnit(30, [[1, 0, 3], [3, 0, 13]], "7.4\nFilter change", { kind: "heading", table_id: 7, row_index: 0 });
+    const view = makeView(blocks, [band]);
+    view.tables = [{ id: 7, table_index: 0, parent_table_id: null, part: "body", n_rows: 1, n_cols: 3, is_layout: true }];
+    const model = buildPaperModel(view);
+    expect(model.body.map((item) => (item.type === "block" ? item.block.id : "table"))).toEqual([1, 3]);
+    const rows = buildRows(model.body, model.segments);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].type === "piece" && rows[0].unitId).toBe(30);
+    expect(rows[0].type === "piece" && rows[0].parts.map((part) => part.block.id)).toEqual([1, 3]);
+    // 표로 되돌린(데이터 표) 띠 표는 다시 표로 그린다
+    view.tables = [{ ...view.tables[0], is_layout: false }];
+    view.units = [makeUnit(31, [], "", { kind: "table", table_id: 7, pos_seq: 1 })];
+    expect(buildPaperModel(view).body.map((item) => item.type)).toEqual(["table"]);
+  });
+});
+
+describe("isBandHeading", () => {
+  it("is a heading unit that points at a source table", () => {
+    expect(isBandHeading({ kind: "heading", table_id: 7 })).toBe(true);
+    expect(isBandHeading({ kind: "heading", table_id: null })).toBe(false);
+    expect(isBandHeading({ kind: "cell_sentence", table_id: 7 })).toBe(false);
   });
 });
 

@@ -55,6 +55,8 @@ export interface RecommendInput {
   aiPlaces: Array<{ destination: Destination; why: string }>;
   identical: number[];
   similar: NewCandidate[];
+  /** 칸 제목으로 갈 줄(띠 표 제목 줄, F12 G5) - AI가 고른 SOP 칸은 그 칸의 칸 제목 자리를 바로 앞에 함께 권한다 */
+  headingPlaces?: boolean;
 }
 
 const MAX_RECOMMENDATIONS = 5;
@@ -68,14 +70,19 @@ function keyOf(destination: Destination): string {
 }
 
 /**
- * ① 추천 - AI 연결 → AI 칸·삭제 → 같은 글자 → 비슷한 문장, 같은 곳은 한 번만, 최대 5.
+ * ① 추천 - AI 연결 → AI 칸·삭제 → 같은 글자 → 비슷한 문장, 같은 곳은 한 번만, 최대 5. 칸 제목으로 갈 줄은 AI 칸 앞에 그 칸 제목 자리.
  * expandLink는 고를 때 더해질 문장(New 짝, addPartnerTargets)을 미리 더한다 - 짝의 두 문장이 카드 둘로 갈리지 않게.
  */
 export function buildRecommendations(input: RecommendInput, expandLink: (targetIds: number[]) => number[] = (ids) => ids): Recommendation[] {
   const link = (targetIds: number[]): Destination => ({ kind: "link", targetIds: expandLink(targetIds) });
   const all: Recommendation[] = [
     ...input.aiLinks.map((item): Omit<Recommendation, "key"> => ({ destination: link(item.targetIds), why: item.why, source: "ai" })),
-    ...input.aiPlaces.map((item): Omit<Recommendation, "key"> => ({ destination: item.destination, why: item.why, source: "ai" })),
+    ...input.aiPlaces.flatMap((item): Array<Omit<Recommendation, "key">> => [
+      ...(input.headingPlaces && item.destination.kind === "slot"
+        ? [{ destination: { kind: "slot_heading", docId: item.destination.docId, slotKey: item.destination.slotKey } as const, why: item.why, source: "ai" as const }]
+        : []),
+      { destination: item.destination, why: item.why, source: "ai" },
+    ]),
     ...input.identical.map((id): Omit<Recommendation, "key"> => ({ destination: link([id]), why: "", source: "identical" })),
     ...input.similar.map((item): Omit<Recommendation, "key"> => ({ destination: link([item.target_id]), why: "", source: "similar" })),
   ].map((rec) => ({ ...rec, key: keyOf(rec.destination) }));

@@ -52,6 +52,7 @@ from app.sop.renumber import (
     has_caption_head,
     replace_numbers,
 )
+from app.sop.segment import is_band_heading
 from app.sop.snapshot import (
     BundleSnapshot,
     CaptionRefInfo,
@@ -1003,6 +1004,10 @@ def _format_place(index: _Index, unit: UnitInfo, labels: OutputLabels) -> str:
             pieces.append(labels.table_template.format(table=table_no))
         else:
             pieces.append(labels.table_row_template.format(table=table_no, row=(unit.row_index or 0) + 1))
+        return " · ".join(pieces)
+    if is_band_heading(unit.kind, unit.table_id):
+        # 띠 표 제목 줄은 칸 좌표가 아니라 "띠 표" — 번호(절)는 절 칸에 있다(F11)
+        pieces.append(labels.band_table)
         return " · ".join(pieces)
     if block.table_index is not None and block.row_index is not None and block.col_index is not None:
         pieces.append(
