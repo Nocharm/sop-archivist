@@ -16,6 +16,7 @@ const BASE: ToBe = {
     { code: "WI-01", step_no: 1, title: "A" },
   ],
   outline_items: [],
+  outline_suggestions: {},
 };
 
 describe("the New list as the screen shows it", () => {

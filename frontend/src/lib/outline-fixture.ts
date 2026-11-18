@@ -35,6 +35,7 @@ export function makeOutline(code: string, slots: readonly SlotSeed[], patches: R
       origin: "standard",
       is_removed: false,
       deviation_reason: null,
+      is_deviation: false,
       ...patches[key],
     };
     made.set(key, item);
@@ -107,6 +108,7 @@ export function makeTemplateOutline(code: string, patches: Readonly<Record<strin
       origin: parent !== undefined && parent.kind !== "group" ? "declared" : "standard",
       is_removed: false,
       deviation_reason: null,
+      is_deviation: false,
       ...patches[key],
     };
     made.set(key, item);
@@ -121,5 +123,5 @@ export function makeDeepOutline(code: string, patches: Readonly<Record<string, P
 
 /** 절 시험 값에 얹는 골격 칸 - 기본은 줄을 세는 최상위 일반 칸(앱이 채우는 줄 없음) */
 export function makeSectionOutline(patch: Partial<SectionOutline> = {}): SectionOutline {
-  return { kind: "general", level: 0, counts_lines: true, default_style: "numbered", shows_number: true, auto_items: [], ...patch };
+  return { kind: "general", level: 0, counts_lines: true, default_style: "numbered", shows_number: true, auto_items: [], deviation_reason: null, is_empty_required: false, ...patch };
 }

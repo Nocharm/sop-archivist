@@ -10,6 +10,7 @@ import {
   groupTableCells,
   isComposedRow,
   listHeadingNotes,
+  listSectionMarks,
   readSectionNumber,
   removeClearedUnits,
   splitCTable,
@@ -249,6 +250,23 @@ describe("listHeadingNotes", () => {
     const doc = makeDoc([makeSection("6.1", "Procedure", "← OLD-1 §5"), makeSection("6.2", "Records", "")]);
 
     expect(listHeadingNotes(doc)).toEqual(new Map([["6.1. Procedure", "← OLD-1 §5"]]));
+  });
+});
+
+describe("listSectionMarks", () => {
+  it("lists only sections that differ from the standard or are empty but required, by the section path the rows use", () => {
+    const doc = makeDoc([
+      { ...makeSection("1", "Aim", ""), deviation_reason: "House style" },
+      { ...makeSection("2", "Scope", ""), is_empty_required: true },
+      makeSection("3", "Definitions", ""),
+    ]);
+
+    expect(listSectionMarks(doc)).toEqual(
+      new Map([
+        ["1. Aim", { deviationReason: "House style", isEmptyRequired: false }],
+        ["2. Scope", { deviationReason: null, isEmptyRequired: true }],
+      ]),
+    );
   });
 });
 

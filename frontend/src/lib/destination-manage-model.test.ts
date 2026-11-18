@@ -22,6 +22,7 @@ const tobe: ToBe = {
     { code: "WI-A", step_no: 3, title: "" },
   ],
   outline_items: [],
+  outline_suggestions: {},
   sentence_counts: [{ target_doc_id: 2, wi_step: 1, count: 2 }],
 };
 

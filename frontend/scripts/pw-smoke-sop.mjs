@@ -975,15 +975,15 @@ await runStep("new documents: the section table shows each section's state and s
     const naRows = rows.filter(([, state]) => state === "na" || state === "covered").length;
     const summary = (await getText(page, `${prefix}-slots-summary`)).trim();
     check("the head counts what the rows say", summary === `${tally("filled", "sub")} with sentences · ${tally("empty")} empty · ${naRows} N/A`, summary);
-    // 2. 문장이 든 칸 - 수를 적고 단추가 없다. 자기 수가 없는 상위 칸은 "하위 칸에 있음"
+    // 2. 문장이 든 칸 - 수를 적고 N/A 단추가 없다. 자기 수가 없는 상위 칸은 "하위 칸에 있음"
     const counts = (start.slot_counts ?? []).filter((row) => row.target_doc_id === sop.id && row.count > 0);
     const countOf = new Map(counts.map((row) => [row.slot_key, row.count]));
     check("the seed has sections with sentences", counts.length > 0);
     for (const { slot_key: key, count } of counts) {
       const state = await readState(key);
       const text = await stateText(key);
-      const buttons = await slot(key).locator("button").count();
-      check(`${key} shows its sentences and has no button`, state === "filled" && text === (count === 1 ? "1 sentence" : `${count} sentences`) && buttons === 0, `${state} ${text} ${buttons}`);
+      const buttons = await slot(key).locator(`button:not([data-testid*="-outline-"])`).count(); // 이름 바꾸기(골격) 단추는 따로 센다
+      check(`${key} shows its sentences and has no N/A button`, state === "filled" && text === (count === 1 ? "1 sentence" : `${count} sentences`) && buttons === 0, `${state} ${text} ${buttons}`);
       const parent = slotParent(key);
       if (parent !== null && !countOf.has(parent)) check(`${parent} holds sentences in its sub-sections`, (await readState(parent)) === "sub", await readState(parent));
     }
@@ -1185,6 +1185,227 @@ await runStep("new documents: the section table shows each section's state and s
   }
 });
 
+// 절차 선언(표준 골격 계획 스텝 5) - 6장의 절차를 문서마다 더하고, 이름을 고치고, 순서를 바꾸고, 뺀다. 더한 절차는 칸 상태 표에 6.x로 보인다.
+// 서버에 가는 저장은 모두 받아들여지는 것뿐이라 콘솔 오류를 허용하지 않는다(같은 제목 · 빈 제목은 화면이 보내기 전에 거둔다). 더한 절차는 끝에 화면에서 빼고, 중간에 멈췄으면 API로 지워 처음 골격으로 되돌린다
+await runStep("new documents: declare a procedure, rename it, see it in the sections table as 6.x, remove it", {}, async ({ page }) => {
+  const headers = { "X-Dev-User": "qa.member" };
+  const PARENT = "procedures";
+  const ADDED_TITLE = "Smoke declared procedure";
+  const RENAMED_TITLE = "Smoke renamed procedure";
+  const start = await readToBe(page, halfBundleId);
+  const sop = start.docs.find((doc) => doc.doc_type === "sop" && doc.entrance === "assign");
+  const prefix = `tobe-id-${sop.id}`;
+  const startKeys = readOutline(start, sop.code).map((item) => item.key);
+  const parent = readOutline(start, sop.code).find((item) => item.key === PARENT);
+  const listSiblings = (tobe) => readOutline(tobe, sop.code).filter((item) => item.parent_key === PARENT);
+  const siblings = listSiblings(start);
+  const rowId = (key) => `${prefix}-outline-${key}`;
+  const part = (key, name) => page.locator(`[data-testid="${rowId(key)}-${name}"]`);
+  const addInput = page.locator(`[data-testid="${prefix}-outline-add-${PARENT}-input"]`);
+  const addButton = page.locator(`[data-testid="${prefix}-outline-add-${PARENT}"]`);
+  const slotText = async (key, cell) => ((await page.locator(`[data-testid="${prefix}-slot-${key}"] .${cell}`).textContent()) ?? "").trim();
+  try {
+    await page.goto(`${BASE}/bundles/${halfBundleId}/documents`);
+    await page.locator(`[data-testid="${prefix}-toggle"]`).click();
+    await wait(page, `${prefix}-outline-group-${PARENT}`);
+    // 펼침 전환이 끝날 때까지 - 전환 중에는 접힘 틀이 내용보다 낮다
+    await page.waitForFunction((id) => {
+      const fold = document.querySelector(`[data-testid="${id}"]`)?.closest(".fold-inner");
+      return fold !== null && fold !== undefined && fold.clientHeight >= fold.scrollHeight;
+    }, `${prefix}-slots`, { timeout: T });
+
+    // 1. 묶음 - 머리는 골격이 준 부모의 이름과 번호이고, 줄은 서버가 준 절차 그대로다. 묶음은 칸 상태 표 위에 있다
+    const groupText = await getText(page, `${prefix}-outline-group-${PARENT}`);
+    check("the group is titled with the parent's name and number", groupText.includes(`${parent.title_en} (${parent.number})`), groupText.slice(0, 80));
+    const shownKeys = await page.locator(`[data-testid="${prefix}-outline-group-${PARENT}"] > [data-testid^="${prefix}-outline-${PARENT}."]`).evaluateAll((els, p) => els.map((el) => el.dataset.testid.slice(p.length)), `${prefix}-outline-`);
+    check("the group lists the document's procedures in the server's order", JSON.stringify(shownKeys) === JSON.stringify(siblings.map((item) => item.key)), shownKeys.join(","));
+    const groupBox = await page.locator(`[data-testid="${prefix}-outline-group-${PARENT}"]`).boundingBox();
+    const tableBox = await page.locator(`[data-testid="${prefix}-slots"]`).boundingBox();
+    check("the declare lists sit above the sections table", groupBox !== null && tableBox !== null && groupBox.y + groupBox.height <= tableBox.y + 1, JSON.stringify({ groupBox, tableBox }));
+    const offered = sop.is_equipment_sop ? (start.outline_suggestions?.[PARENT] ?? []).filter((name) => !siblings.some((item) => item.title_en.trim().toLowerCase() === name.trim().toLowerCase())) : [];
+    const chips = await page.locator(`[data-testid^="${prefix}-outline-chip-${PARENT}-"]`).allInnerTexts();
+    check("the chips are the suggested names not used yet", JSON.stringify(chips.map((text) => text.trim())) === JSON.stringify(offered), `${chips.join(",")} vs ${offered.join(",")}`);
+    // 줄이 든 절차는 줄 수를 적고 빼기 단추가 없다
+    const busy = siblings.find((item) => (start.slot_counts ?? []).some((row) => row.target_doc_id === sop.id && row.slot_key === item.key && row.count + row.heading_count > 0));
+    if (busy) check("a procedure that holds lines shows the count and has no Remove", (await part(busy.key, "count").count()) === 1 && (await part(busy.key, "remove").count()) === 0);
+
+    // 2. 더하기 - 끝자리에 다음 번호로 들어가고 칸 상태 표에 6.x로 보인다. 칸은 비워진다
+    check("Add is off while the field is empty", await addButton.isDisabled());
+    await addInput.fill(ADDED_TITLE);
+    await addButton.click();
+    await settleToBe(page);
+    const added = listSiblings(await readToBe(page, halfBundleId)).find((item) => item.title_en === ADDED_TITLE);
+    check("Add declares a procedure at the end with the next number", added?.origin === "declared" && added.number === `${parent.number}.${siblings.length + 1}`, JSON.stringify(added));
+    await wait(page, rowId(added.key));
+    check("the new row shows its number and title, and the add field is cleared", (await getText(page, rowId(added.key))).trim().startsWith(added.number) && (await part(added.key, "title-en").inputValue()) === ADDED_TITLE && (await addInput.inputValue()) === "");
+    check("the sections table lists it as 6.x", (await slotText(added.key, "slot-num")) === added.number && (await slotText(added.key, "slot-name")) === ADDED_TITLE);
+    check("a new procedure holds no lines: no count, and Remove is there", (await part(added.key, "count").count()) === 0 && (await part(added.key, "remove").count()) === 1);
+
+    // 3. 이름 - Enter로 저장되고 키와 번호는 그대로다. 칸 상태 표의 이름이 따라간다. 한글 제목도 같은 줄에서 적는다
+    await part(added.key, "title-en").fill(RENAMED_TITLE);
+    await part(added.key, "title-en").press("Enter");
+    await settleToBe(page);
+    await part(added.key, "title-ko").fill("스모크 절차");
+    await part(added.key, "title-ko").press("Enter");
+    await settleToBe(page);
+    const renamed = listSiblings(await readToBe(page, halfBundleId)).find((item) => item.key === added.key);
+    check("renaming saves on Enter and keeps the key and the number", renamed?.title_en === RENAMED_TITLE && renamed.title_ko === "스모크 절차" && renamed.number === added.number, JSON.stringify(renamed));
+    check("the sections table follows the new name", (await slotText(added.key, "slot-name")) === RENAMED_TITLE);
+
+    // 4. 서버에 보내기 전에 거두는 것 - 같은 제목(대소문자 무시)은 Add가 꺼지고, 비운 영어 제목은 저장된 제목으로 돌아간다
+    await addInput.fill(RENAMED_TITLE.toUpperCase());
+    check("a title already in the list cannot be added again", (await addButton.isDisabled()) && (await page.locator(`[data-testid="${prefix}-outline-add-${PARENT}-problem"]`).count()) === 1);
+    await addInput.fill("");
+    const errorsBefore = await page.locator('[data-testid="toast-error"]').count();
+    await part(added.key, "title-en").fill("");
+    await part(added.key, "title-en").press("Enter");
+    await page.waitForFunction((n) => document.querySelectorAll('[data-testid="toast-error"]').length > n, errorsBefore, { timeout: T });
+    check("an empty English title is refused and the saved title comes back", (await part(added.key, "title-en").inputValue()) === RENAMED_TITLE && listSiblings(await readToBe(page, halfBundleId)).find((item) => item.key === added.key)?.title_en === RENAMED_TITLE);
+
+    // 5. 순서 - 위로 올리면 번호만 따라가고 키는 그대로다. 아래로 내려 제자리로
+    if (siblings.length > 0) {
+      const above = siblings[siblings.length - 1];
+      await page.locator(`[data-testid="${rowId(added.key)}"]`).hover();
+      await part(added.key, "up").click();
+      await settleToBe(page);
+      const raised = listSiblings(await readToBe(page, halfBundleId));
+      check(
+        "Move up trades places with the row above: the numbers follow, the keys stay",
+        raised.find((item) => item.key === added.key)?.number === above.number && raised.find((item) => item.key === above.key)?.number === added.number,
+        raised.map((item) => `${item.key}=${item.number}`).join(","),
+      );
+      check("the sections table shows the new number", (await slotText(added.key, "slot-num")) === above.number);
+      await page.locator(`[data-testid="${rowId(added.key)}"]`).hover();
+      await part(added.key, "down").click();
+      await settleToBe(page);
+      check("Move down puts it back at the end", listSiblings(await readToBe(page, halfBundleId)).find((item) => item.key === added.key)?.number === added.number && (await part(added.key, "down").isDisabled()));
+    }
+
+    // 6. 빼기 - 줄과 칸 상태 표의 줄이 함께 사라지고 골격은 처음 그대로다
+    await page.locator(`[data-testid="${rowId(added.key)}"]`).hover();
+    await part(added.key, "remove").click();
+    await settleToBe(page);
+    const endKeys = readOutline(await readToBe(page, halfBundleId), sop.code).map((item) => item.key);
+    check("Remove takes the procedure out and the outline is as it was", JSON.stringify(endKeys) === JSON.stringify(startKeys), endKeys.join(","));
+    check("its row is gone from the list and from the sections table", (await page.locator(`[data-testid="${rowId(added.key)}"]`).count()) === 0 && (await page.locator(`[data-testid="${prefix}-slot-${added.key}"]`).count()) === 0);
+  } finally {
+    // 중간에 멈췄으면 더한 절차를 API로 지운다
+    const left = listSiblings(await readToBe(page, halfBundleId)).filter((item) => !startKeys.includes(item.key));
+    for (const item of left) await page.request.delete(`${BASE}/api/bundles/${halfBundleId}/tobe/docs/${sop.id}/outline/${encodeURIComponent(item.key)}`, { headers });
+  }
+});
+
+// 표준과 다름(표준 골격 계획 스텝 6) - 비어 있는 필수 장 하나를 사유와 함께 빼면 뒤 장의 번호가 당겨지고, 뺀 줄은 줄이 그어진 채 남아 되살린다.
+// 사유 없이는 저장 단추가 꺼져 서버에 거절이 가지 않으니 콘솔 오류를 허용하지 않는다. 중간에 멈췄으면 API로 되살린다
+/**
+ * 반쪽 Bundle SOP의 최상위 장 가운데 뺄 수 있는 것 - 표준 · 필수이고, 자기와 하위에 N/A도 문장 · 칸 제목도 없고, 뒤에 장이 있는 것.
+ * 하위의 N/A까지 본다 - 장을 빼면 하위의 N/A가 지워지고 되살려도 돌아오지 않아, 뒤 단계가 기대는 시드의 N/A(procedures.troubleshooting)를 잃는다
+ */
+function findRemovableChapter(tobe, sop) {
+  const tops = readOutline(tobe, sop.code).filter((item) => item.parent_key === null);
+  const isWithin = (key, top) => key === top || key.startsWith(`${top}.`);
+  const hasNa = (key) => tobe.na_slots.some((na) => na.code === sop.code && isWithin(na.slot_key, key));
+  const held = (key) => (tobe.slot_counts ?? []).some((row) => row.target_doc_id === sop.id && isWithin(row.slot_key, key) && row.count + row.heading_count > 0);
+  const index = tops.slice(0, -1).findIndex((item) => item.origin === "standard" && item.is_required && !hasNa(item.key) && !held(item.key));
+  return index < 0 ? null : { target: tops[index], next: tops[index + 1] };
+}
+
+await runStep("new documents: remove a standard chapter with a reason, later chapters shift up, restore it", {}, async ({ page }) => {
+  const headers = { "X-Dev-User": "qa.member" };
+  const REASON = "Smoke: not used in this SOP";
+  const start = await readToBe(page, halfBundleId);
+  const sop = start.docs.find((doc) => doc.doc_type === "sop" && doc.entrance === "assign");
+  const prefix = `tobe-id-${sop.id}`;
+  const found = findRemovableChapter(start, sop);
+  check("the SOP has an empty required chapter that can be removed", found !== null, readOutline(start, sop.code).map((item) => item.key).join(","));
+  if (found === null) return;
+  const { target, next } = found;
+  const findItem = (tobe, key) => tobe.outline_items.find((item) => item.code === sop.code && item.key === key);
+  const deviationsBefore = start.outline_items.filter((item) => item.code === sop.code && item.is_deviation).length;
+  const slotText = async (key, cell) => ((await page.locator(`[data-testid="${prefix}-slot-${key}"] .${cell}`).textContent()) ?? "").trim();
+  const editor = (name) => page.locator(`[data-testid="${prefix}-remove-${target.key}-${name}"]`);
+  try {
+    await page.goto(`${BASE}/bundles/${halfBundleId}/documents`);
+    await page.locator(`[data-testid="${prefix}-toggle"]`).click();
+    await wait(page, `${prefix}-slots`);
+    // 1. 빼기 - 줄 끝 단추가 사유 칸을 열고, 사유가 비면 저장 단추가 꺼져 있다
+    await page.locator(`[data-testid="${prefix}-slot-${target.key}"]`).hover();
+    await page.locator(`[data-testid="${prefix}-outline-${target.key}-remove"]`).click();
+    await wait(page, `${prefix}-remove-${target.key}-editor`);
+    check("Remove is off until a reason is typed", await editor("save").isDisabled());
+    await editor("reason").fill(REASON);
+    await editor("reason").press("Enter");
+    await settleToBe(page);
+    const after = await readToBe(page, halfBundleId);
+    const removed = findItem(after, target.key);
+    check("the chapter is removed with its reason and counts as differing", removed?.is_removed === true && removed.is_deviation && removed.deviation_reason === REASON, JSON.stringify(removed));
+    check("the next chapter takes its number", findItem(after, next.key)?.number === target.number, `${findItem(after, next.key)?.number} vs ${target.number}`);
+    await page.waitForFunction((id) => document.querySelector(`[data-testid="${id}"]`)?.dataset.state === "removed", `${prefix}-slot-${target.key}`, { timeout: T });
+    check("the row stays as Removed with no number and the differs mark", (await slotText(target.key, "slot-num")) === "" && (await getText(page, `${prefix}-slot-${target.key}-state`)).includes("Removed") && (await page.locator(`[data-testid="${prefix}-slot-${target.key}-differs"]`).count()) === 1);
+    check("the sections table shows the next chapter with the freed number", (await slotText(next.key, "slot-num")) === target.number);
+    check("the document row counts the deviation", (await getText(page, `${prefix}-deviations`)).includes(`${deviationsBefore + 1} differ from standard`));
+    // 2. 되살리기 - 표준 그대로, 번호도 제자리
+    await page.locator(`[data-testid="${prefix}-slot-${target.key}"]`).hover();
+    await page.locator(`[data-testid="${prefix}-outline-${target.key}-restore"]`).click();
+    await settleToBe(page);
+    const restored = await readToBe(page, halfBundleId);
+    check("Restore brings the standard chapter back with its number and no reason", findItem(restored, target.key)?.is_removed === false && findItem(restored, target.key)?.is_deviation === false && findItem(restored, target.key)?.number === target.number && findItem(restored, next.key)?.number === next.number);
+    await page.waitForFunction((id) => document.querySelector(`[data-testid="${id}"]`)?.dataset.state !== "removed", `${prefix}-slot-${target.key}`, { timeout: T });
+    check("the row is back with its number and without the mark", (await slotText(target.key, "slot-num")) === target.number && (await page.locator(`[data-testid="${prefix}-slot-${target.key}-differs"]`).count()) === 0);
+  } finally {
+    if (findItem(await readToBe(page, halfBundleId), target.key)?.is_removed) {
+      await page.request.patch(`${BASE}/api/bundles/${halfBundleId}/tobe/docs/${sop.id}/outline/${encodeURIComponent(target.key)}`, { headers, data: { is_removed: false } });
+    }
+  }
+});
+
+// 같은 일이 Order의 결과물 C에 - 장을 빼면 C 절 머리의 번호가 당겨지고, 되살리면 돌아온다. 빈 필수 절은 머리에 Empty가 붙는다. 빼기 · 되살리기는 API로 한다(화면은 위 단계)
+await runStep("order: a removed chapter shifts the C section numbers up, Restore brings them back, and an empty required section says Empty", {}, async ({ page }) => {
+  const headers = { "X-Dev-User": "qa.member" };
+  const start = await readToBe(page, halfBundleId);
+  const sop = start.docs.find((doc) => doc.doc_type === "sop" && doc.entrance === "assign");
+  const found = findRemovableChapter(start, sop);
+  check("the SOP has an empty required chapter that can be removed", found !== null);
+  if (found === null) return;
+  const { target, next } = found;
+  const itemUrl = `${BASE}/api/bundles/${halfBundleId}/tobe/docs/${sop.id}/outline/${encodeURIComponent(target.key)}`;
+  const headOf = (key) => page.locator(`[data-testid="output-c-section-${sop.id}-${key}"]`);
+  const readHead = async (key) => ((await headOf(key).textContent()) ?? "").trim();
+  try {
+    await page.goto(`${BASE}/bundles/${halfBundleId}/order`);
+    await wait(page, "output-c");
+    await page.locator(`[data-testid="order-doc-${sop.id}"]`).click();
+    await headOf(target.key).waitFor({ timeout: T });
+    // Empty는 서버가 정한 절에만 - 줄이 없는 장도 자동 목록(7.2)이 자식 WI로 차 있으면 비어 있지 않다
+    const cDoc = (await (await page.request.get(`${BASE}/api/bundles/${halfBundleId}/outputs/c?lang=en`, { headers })).json()).docs.find((doc) => doc.target_doc_id === sop.id);
+    const emptyKeys = cDoc.sections.filter((section) => section.is_empty_required).map((section) => section.location_key);
+    const marked = [];
+    for (const key of cDoc.sections.map((section) => section.location_key)) {
+      if ((await page.locator(`[data-testid="output-c-empty-required-${sop.id}-${key}"]`).count()) > 0) marked.push(key);
+    }
+    check("the seed has an empty required section", emptyKeys.length > 0);
+    check("exactly the sections the server calls empty say Empty", marked.join(",") === emptyKeys.join(","), `${marked.join(",")} | ${emptyKeys.join(",")}`);
+    check("the chapter to remove shows its number", (await readHead(target.key)).startsWith(target.number), await readHead(target.key));
+    const removed = await page.request.patch(itemUrl, { headers, data: { is_removed: true, reason: "Smoke: not used in this SOP" } });
+    check("removing the chapter with a reason is accepted", removed.status() === 200, String(removed.status()));
+    await page.reload();
+    await wait(page, "output-c");
+    await page.locator(`[data-testid="order-doc-${sop.id}"]`).click();
+    await headOf(next.key).waitFor({ timeout: T });
+    check("C has no section for the removed chapter and the next one takes its number", (await headOf(target.key).count()) === 0 && (await readHead(next.key)).startsWith(target.number), await readHead(next.key));
+    const back = await page.request.patch(itemUrl, { headers, data: { is_removed: false } });
+    check("restoring is accepted", back.status() === 200, String(back.status()));
+    await page.reload();
+    await wait(page, "output-c");
+    await page.locator(`[data-testid="order-doc-${sop.id}"]`).click();
+    await headOf(target.key).waitFor({ timeout: T });
+    check("after Restore the numbers are back", (await readHead(target.key)).startsWith(target.number) && (await readHead(next.key)).startsWith(next.number), `${await readHead(target.key)} | ${await readHead(next.key)}`);
+  } finally {
+    const item = (await readToBe(page, halfBundleId)).outline_items.find((row) => row.code === sop.code && row.key === target.key);
+    if (item?.is_removed) await page.request.patch(itemUrl, { headers, data: { is_removed: false } });
+  }
+});
+
 // 거절된 N/A 저장 - 409 slot_has_targets(그 사이 문장이 들어왔다)는 둘 곳이 없어 편집기를 닫고, 그 밖의 실패는 적던 사유를 남긴다.
 // 거절 응답이 콘솔에 찍혀 이 단계만 콘솔 오류를 허용한다
 await runStep("new documents: a refused N/A save closes the editor, any other failure keeps the reason", { allowConsoleErrors: true }, async ({ page }) => {
@@ -1224,7 +1445,7 @@ await runStep("new documents: a refused N/A save closes the editor, any other fa
     await reason.press("Enter");
     const conflictText = await waitNewError(errorsBefore);
     await settleToBe(page);
-    check("a 409 says why and closes the editor", conflictText.includes("A section with new sentences cannot be N/A.") && (await editor.count()) === 0, conflictText);
+    check("a 409 says why and closes the editor", conflictText.includes("A section with new sentences cannot be N/A or removed.") && (await editor.count()) === 0, conflictText);
     answer = 500;
     errorsBefore = await countErrors();
     await slot.hover();
