@@ -49,6 +49,9 @@ WARNING_MERGED_CELL_CONTENT = "merged_cell_content"
 
 DOCUMENT_PART = "word/document.xml"
 OLE_SIGNATURE = b"\xd0\xcf\x11\xe0"  # 암호·DRM이 걸린 Office 파일은 ZIP이 아니라 OLE 복합 문서다
+# 문서 보호(DRM) 도구가 감싼 파일 — ZIP도 OLE도 아니고 앞머리에 ASCII "DRM"이 있다. 업체마다 머리 모양이 달라 이 글자만 본다
+DRM_MARK = b"DRM"
+DRM_HEAD_BYTES = 64  # DRM 글자를 찾는 앞머리 길이(바이트) — 본문 어딘가의 우연한 "DRM"을 집지 않게 짧게 둔다
 # 압축 비율은 이 크기 이상인 항목만 본다 — 작은 XML은 비율이 높아도 풀린 크기가 작아 해가 없다
 RATIO_CHECK_MIN_BYTES = 1024 * 1024
 # 쪽 나눔 정보가 전혀 없을 때 한 쪽으로 치는 글자 수 — 추정 쪽(estimated)임을 함께 표시한다
@@ -100,9 +103,10 @@ W_START, W_NUM_FMT, W_LVL_TEXT, W_SUFF, W_NUM_STYLE_LINK = (
 W_LVL_OVERRIDE, W_START_OVERRIDE = _w("lvlOverride"), _w("startOverride")
 W_HEADER_REFERENCE, W_FOOTER_REFERENCE = _w("headerReference"), _w("footerReference")
 W_TBL_PR, W_TBL_GRID, W_GRID_COL, W_TBL_PR_EX = _w("tblPr"), _w("tblGrid"), _w("gridCol"), _w("tblPrEx")
-W_TR_PR, W_TC_PR, W_GRID_BEFORE, W_GRID_SPAN, W_V_MERGE = (
-    _w("trPr"), _w("tcPr"), _w("gridBefore"), _w("gridSpan"), _w("vMerge"),
+W_TR_PR, W_TC_PR, W_GRID_BEFORE, W_GRID_SPAN, W_V_MERGE, W_TBL_HEADER = (
+    _w("trPr"), _w("tcPr"), _w("gridBefore"), _w("gridSpan"), _w("vMerge"), _w("tblHeader"),
 )
+_OFF_VALUES = frozenset({"0", "false", "off"})  # 켜고 끄는 속성(w:tblHeader·w:b…)의 "끔" 값 — 값이 없으면 켬이다
 W_SECT_PR, W_SDT_PR, W_SDT_END_PR, W_CUSTOM_XML_PR = _w("sectPr"), _w("sdtPr"), _w("sdtEndPr"), _w("customXmlPr")
 W_T, W_TAB, W_PTAB, W_BR, W_CR = _w("t"), _w("tab"), _w("ptab"), _w("br"), _w("cr")
 W_NO_BREAK_HYPHEN, W_SOFT_HYPHEN, W_SYM = _w("noBreakHyphen"), _w("softHyphen"), _w("sym")
@@ -178,11 +182,12 @@ class _Style:
 
 @dataclass(frozen=True)
 class _ParaNumber:
-    """문단에 걸린 자동 번호 — level이 None이면 스타일로 걸린 번호라 목록 정의의 pStyle로 수준을 찾는다."""
+    """문단에 걸린 자동 번호 — level이 None이면 스타일로 걸린 번호라 목록 정의의 pStyle과 스타일의 ilvl로 수준을 찾는다."""
 
     num_id: str
     level: int | None
-    style_ids: tuple[str, ...]
+    style_ids: tuple[str, ...]  # 문단 스타일이 맨 앞, 이어서 basedOn 조상
+    style_level: int | None = None  # 스타일 조상 가운데 가장 가까운 것이 적은 ilvl
 
 
 @dataclass(frozen=True)
@@ -225,8 +230,7 @@ class _Numbering:
             return None
         level = number.level
         if level is None:
-            linked = (key for key, spec in instance.levels.items() if spec.style_id in number.style_ids)
-            level = next(linked, 0)
+            level = _pick_style_level(instance, number)
         spec = instance.levels.get(level)
         if spec is None:
             return None
@@ -246,12 +250,27 @@ class _Numbering:
         return label + spec.suffix if has_visible_char(label) else ""
 
 
+def _pick_style_level(instance: _NumInstance, number: _ParaNumber) -> int:
+    """스타일로 걸린 번호의 수준 — 자기 스타일에 묶인 수준(pStyle) → 스타일이 적은 ilvl → 조상 스타일에 묶인 수준 → 0.
+
+    조상에 묶인 수준을 먼저 잡으면 numId를 물려받은 아래 수준 스타일이 윗수준 번호를 받는다(6.1.1이 6.2로 읽히고 뒤가 밀린다).
+    """
+    linked = {spec.style_id: key for key, spec in sorted(instance.levels.items(), reverse=True)}
+    own, ancestors = number.style_ids[:1], number.style_ids[1:]
+    if own and own[0] in linked:
+        return linked[own[0]]
+    if number.style_level is not None:
+        return number.style_level
+    return next((linked[style_id] for style_id in ancestors if style_id in linked), 0)
+
+
 def _format_level(instance: _NumInstance, counters: dict[int, int], level: int) -> str:
     spec = instance.levels.get(level)
     if spec is None:
         return ""
-    # 아직 쓰이지 않은 위 수준은 Word처럼 시작 값으로 보인다
-    return _format_number(counters.get(level, spec.start), spec.fmt)
+    # 아직 쓰이지 않은 위 수준은 Word처럼 시작 값으로 보이고, 보인 값은 센 것으로 남긴다 — 남기지 않으면 뒤에 오는
+    # 위 수준 문단(장을 넘기는 숨긴 빈 문단)이 시작 값을 다시 받아 다음 장의 단계가 앞 장 번호로 나온다
+    return _format_number(counters.setdefault(level, spec.start), spec.fmt)
 
 
 def _format_number(value: int, fmt: str) -> str:
@@ -384,6 +403,8 @@ class _CellRecord:
     grid_span: int
     row_span: int = 1  # 아래 행의 vMerge 이어지는 칸을 만날 때마다 는다
     is_merge_continuation: bool = False  # 글이 남은 vMerge 이어지는 칸 — 제자리 블록으로 내고 경고한다
+    is_header_row: bool = False  # 쪽마다 되풀이하는 표 머리 행(w:tblHeader)의 칸
+    is_full_row: bool = False  # 여러 열 표에서 한 칸이 행 전체를 차지한다(장 제목·단계 제목 같은 구조 행)
 
 
 @dataclass
@@ -457,7 +478,9 @@ def _open_zip(data: bytes, limits: ExtractLimits) -> zipfile.ZipFile:
     try:
         archive = zipfile.ZipFile(BytesIO(data))
     except zipfile.BadZipFile as error:
-        raise ExtractionRejected("not_a_zip_or_encrypted") from error
+        # 보호를 푼 사본을 올리라고 알릴 수 있게 손상·암호와 구별한다
+        code = "drm_protected" if DRM_MARK in data[:DRM_HEAD_BYTES] else "not_a_zip_or_encrypted"
+        raise ExtractionRejected(code) from error
     entries = archive.infolist()
     if (
         len(entries) > limits.max_zip_entries
@@ -754,6 +777,11 @@ def _read_numbering(p_pr: Element | None) -> _NumRef | None:
     )
 
 
+def _is_on(element: Element | None) -> bool:
+    """켜고 끄는 속성 요소 — 요소가 있고 값이 "끔"이 아니면 켬이다."""
+    return element is not None and element.get(W_VAL, "true") not in _OFF_VALUES
+
+
 def _read_int(element: Element | None, default: int) -> int:
     value = element.get(W_VAL, "") if element is not None else ""
     # 자릿수 상한: 아주 긴 숫자 글자는 int()가 거절한다(조작한 파일)
@@ -798,8 +826,9 @@ def _read_para_style(paragraph: Element, styles: dict[str, _Style]) -> _ParaStyl
 def _read_para_number(direct: _NumRef | None, style_id: str | None, chain: list[_Style]) -> _ParaNumber | None:
     """문단의 자동 번호 — numId는 문단, 없으면 스타일 조상 순. numId 0은 번호 끄기다.
 
-    문단이 numId를 직접 적으면 수준은 ilvl(없으면 0)이다. 스타일로 걸린 번호는 문단이 ilvl을 적지 않는 한 None으로 두어
-    목록 정의의 pStyle 연결로 찾는다(여러 수준 목록에 묶인 제목 스타일).
+    문단이 numId를 직접 적으면 수준은 ilvl(없으면 0)이다. 스타일로 걸린 번호는 문단이 ilvl을 적지 않는 한 None으로 두고,
+    목록 정의의 pStyle 연결과 스타일이 적은 ilvl로 찾는다(_pick_style_level) — numId는 상위 스타일에서 물려받고 자기 ilvl만
+    적는 스타일이 있어 가장 가까운 스타일의 ilvl을 함께 싣는다.
     """
     style_refs = [style.num_ref for style in chain if style.num_ref is not None]
     if direct is not None and direct.num_id is not None:
@@ -811,7 +840,8 @@ def _read_para_number(direct: _NumRef | None, style_id: str | None, chain: list[
         return None
     # 문단 스타일 id는 styles.xml에 없어도 싣는다 — 목록 정의의 pStyle과는 id로 견준다
     style_ids = dict.fromkeys([style_id, *(style.style_id for style in chain)])
-    return _ParaNumber(num_id, level, tuple(item for item in style_ids if item))
+    style_level = next((ref.level for ref in style_refs if ref.level is not None), None)
+    return _ParaNumber(num_id, level, tuple(item for item in style_ids if item), style_level)
 
 
 class _Collector:
@@ -920,15 +950,18 @@ class _Collector:
             self.table_slots[index] = slot
         grid = table.find(W_TBL_GRID)
         rows = list(_iter_tagged(table, path, _ROW_TAGS))
+        n_cols = len(grid.findall(W_GRID_COL)) if grid is not None else 0
         open_merges: dict[int, _CellRecord] = {}  # 격자 열 → vMerge를 시작한 칸
         for row_index, (row, row_path) in enumerate(rows):
             row_pr = row.find(W_TR_PR)
             col = _read_int(row_pr.find(W_GRID_BEFORE) if row_pr is not None else None, 0)
+            is_header_row = _is_on(row_pr.find(W_TBL_HEADER) if row_pr is not None else None)
+            cells = list(_iter_tagged(row, row_path, _CELL_TAGS))
             # 한 행의 칸들은 나란히 놓인 흐름이다 — 칸마다 행 시작 쪽에서 출발하고, 행 뒤는 가장 멀리 간 칸을 따른다
             row_start = marks.snapshot() if marks is not None else None
             cell_ends: list[tuple[int, int]] = []
             still_open: dict[int, _CellRecord] = {}
-            for cell, cell_path in _iter_tagged(row, row_path, _CELL_TAGS):
+            for cell, cell_path in cells:
                 if marks is not None and row_start is not None:
                     marks.restore(row_start)
                 cell_pr = cell.find(W_TC_PR)
@@ -936,6 +969,8 @@ class _Collector:
                 v_merge = cell_pr.find(W_V_MERGE) if cell_pr is not None else None
                 merge = None if v_merge is None else v_merge.get(W_VAL, "continue")
                 record, extras = self._read_cell(cell, cell_path, context, marks, host_marks, (index, row_index, col, span))
+                record.is_header_row = is_header_row
+                record.is_full_row = len(cells) == 1 and col == 0 and n_cols > 1 and span >= n_cols
                 started = open_merges.get(col)
                 if merge == "continue" and started is not None:
                     started.row_span += 1
@@ -957,7 +992,6 @@ class _Collector:
             if marks is not None and cell_ends:
                 marks.restore((max(end[0] for end in cell_ends), max(end[1] for end in cell_ends)))
             open_merges = still_open
-        n_cols = len(grid.findall(W_GRID_COL)) if grid is not None else 0
         self.tables.append(
             ExtractedTable(
                 index=index,
@@ -1090,6 +1124,7 @@ class _BlockWriter:
         self._section_label = ""
         self._body_chars = 0
         self._continuation_seqs: dict[int, list[int]] = {}  # 표 → 글이 남은 vMerge 이어지는 칸 블록들
+        self._structural_merge_seqs: set[int] = set()  # 병합 경고에서 빼는 구조 행의 병합 칸 블록들
         self._figure_seqs: dict[int, int] = {}  # 그림 문단 레코드의 목록 위치 → 그림 블록 seq
         self._first_cell_seqs: dict[int, int] = {}  # table_index → 첫 칸 블록 seq
         self._caption_seqs: list[tuple[int, tuple[Literal["figure", "table"], int]]] = []  # (캡션 블록 seq, 묶음)
@@ -1118,6 +1153,10 @@ class _BlockWriter:
         flags = _pick_flags((FLAG_AUTO_NUMBERING, record.is_number_unresolved), (FLAG_MERGED_CELL, is_merged))
         if record.is_merge_continuation:
             self._continuation_seqs.setdefault(record.table_index, []).append(len(self.blocks))
+        # 표 머리 행의 병합과, 한 칸이 행 전체를 차지하는 가로 병합은 양식의 구조다 — 표마다 하나씩 경고해 봐야 볼 것이 없다
+        is_row_wide_only = record.is_full_row and record.row_span == 1 and not record.is_merge_continuation
+        if is_merged and (record.is_header_row or is_row_wide_only):
+            self._structural_merge_seqs.add(len(self.blocks))
         self._first_cell_seqs.setdefault(record.table_index, len(self.blocks))
         self._append(
             record,
@@ -1150,11 +1189,13 @@ class _BlockWriter:
             self.blocks[caption_seq] = replace(block, flags=(*block.flags, f"{FLAG_CAPTION_OF}:{target_seq}"))
 
     def build_warnings(self) -> tuple[ExtractedWarning, ...]:
-        """병합 칸 경고는 표마다 하나(첫 병합 칸을 가리킨다), 글이 남은 이어지는 칸 경고도 표마다 하나(개수),
+        """병합 칸 경고는 표마다 하나(구조 행이 아닌 첫 병합 칸을 가리킨다), 글이 남은 이어지는 칸 경고도 표마다 하나(개수),
         자동 번호 경고는 번호를 글에 붙이지 못한 블록이 있을 때 문서에 하나(블록 수)."""
         warnings: list[ExtractedWarning] = []
         merged_tables: set[int | None] = set()
         for block in self.blocks:
+            if block.seq in self._structural_merge_seqs:
+                continue
             if FLAG_MERGED_CELL in block.flags and block.table_index not in merged_tables:
                 merged_tables.add(block.table_index)
                 warnings.append(ExtractedWarning(FLAG_MERGED_CELL, block.seq, {"table_index": str(block.table_index)}))

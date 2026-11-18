@@ -74,7 +74,7 @@ class ExtractResult:
 
 class ExtractionRejected(Exception):
     """파일을 받지 않는 이유 — code: not_a_zip_or_encrypted | unsafe_zip | invalid_format | tracked_changes
-    | alt_chunk | too_many_chars | empty_document | encrypted_pdf | scanned_pdf | too_many_pages."""
+    | alt_chunk | too_many_chars | empty_document | encrypted_pdf | scanned_pdf | too_many_pages | drm_protected."""
 
     def __init__(self, code: str) -> None:
         # args에 code를 넣어야 자식 프로세스에서 피클로 넘어온 뒤에도 같은 예외로 되살아난다

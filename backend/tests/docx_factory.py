@@ -67,6 +67,48 @@ def make_list(abstract_id: int, levels: Sequence[tuple[str, str]], num_ids: Sequ
     return f'<w:abstractNum w:abstractNumId="{abstract_id}">{extra}{level_xml}</w:abstractNum>{nums}'
 
 
+def make_style(
+    style_id: str,
+    name: str,
+    *,
+    based_on: str | None = None,
+    num_id: int | None = None,
+    level: int | None = None,
+    outline: int | None = None,
+    bold: bool = False,
+) -> str:
+    """문단 스타일 하나 — 번호(numId·ilvl은 따로 줄 수 있다)·개요 수준·굵게를 스타일에 둔다(회사 양식 꼴)."""
+    based = f'<w:basedOn w:val="{based_on}"/>' if based_on else ""
+    num_pr = ""
+    if num_id is not None or level is not None:
+        ilvl = f'<w:ilvl w:val="{level}"/>' if level is not None else ""
+        num = f'<w:numId w:val="{num_id}"/>' if num_id is not None else ""
+        num_pr = f"<w:numPr>{ilvl}{num}</w:numPr>"
+    outline_xml = f'<w:outlineLvl w:val="{outline}"/>' if outline is not None else ""
+    p_pr = f"<w:pPr>{num_pr}{outline_xml}</w:pPr>" if num_pr or outline_xml else ""
+    r_pr = "<w:rPr><w:b/></w:rPr>" if bold else ""
+    return (
+        f'<w:style w:type="paragraph" w:styleId="{style_id}"><w:name w:val="{escape(name)}"/>{based}{p_pr}{r_pr}'
+        "</w:style>"
+    )
+
+
+def make_levels(levels: Sequence[tuple[str, str, str | None, int]]) -> str:
+    """목록 수준들 — 수준 0부터 (numFmt, lvlText, 묶인 문단 스타일 id | None, 시작 값)."""
+    return "".join(
+        f'<w:lvl w:ilvl="{index}"><w:start w:val="{start}"/><w:numFmt w:val="{fmt}"/>'
+        + (f'<w:pStyle w:val="{style}"/>' if style else "")
+        + f'<w:lvlText w:val="{escape(text)}"/></w:lvl>'
+        for index, (fmt, text, style, start) in enumerate(levels)
+    )
+
+
+def make_abstract(abstract_id: int, levels_xml: str, num_ids: Sequence[int]) -> str:
+    """make_levels로 만든 수준들을 담은 목록 정의 하나와 그것을 쓰는 num들."""
+    nums = "".join(f'<w:num w:numId="{n}"><w:abstractNumId w:val="{abstract_id}"/></w:num>' for n in num_ids)
+    return f'<w:abstractNum w:abstractNumId="{abstract_id}">{levels_xml}</w:abstractNum>{nums}'
+
+
 def tbl(rows: list[list[str]]) -> str:
     """병합 없는 표 — 칸마다 글자 문단 하나, 열 수는 첫 행 기준."""
     grid = "".join('<w:gridCol w:w="2000"/>' for _ in rows[0])
@@ -125,12 +167,15 @@ def build_docx(
     media: Mapping[str, bytes] = {},
     alt_chunks: Sequence[str] = (),
     numbering: str = "",
+    styles: str | None = None,
 ) -> bytes:
     """최소 DOCX 바이트 — 머리말·꼬리말은 구역에 걸고, 미디어 관계 id는 get_media_rel_id, altChunk는 rIdAltChunk{n}.
 
     numbering은 w:numbering 안에 넣을 XML(abstractNum·num)이다 — 주면 번호 부분(word/numbering.xml)을 만든다.
+    styles는 w:styles 안에 넣을 XML(make_style들)이다 — 주면 기본 스타일(STYLES_XML) 대신 쓴다.
     """
-    files: dict[str, bytes] = {"word/styles.xml": (XML_DECL + STYLES_XML).encode()}
+    styles_xml = STYLES_XML if styles is None else f"<w:styles {NAMESPACES}>{styles}</w:styles>"
+    files: dict[str, bytes] = {"word/styles.xml": (XML_DECL + styles_xml).encode()}
     overrides = {"/word/document.xml": f"{CT}.document.main+xml", "/word/styles.xml": f"{CT}.styles+xml"}
     defaults = {"rels": "application/vnd.openxmlformats-package.relationships+xml", "xml": "application/xml"}
     rels = [("rIdStyles", f"{REL}/styles", "styles.xml")]
