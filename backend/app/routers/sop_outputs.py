@@ -44,7 +44,7 @@ from app.sop.outputs import (
     build_output_c_doc,
     build_summary,
 )
-from app.sop.sheet_model import WorkbookModel, build_equis_key, build_workbook_model, limit_preview
+from app.sop.sheet_model import Sheet, WorkbookModel, build_equis_key, build_workbook_model, limit_preview
 from app.sop.snapshot import BundleSnapshot, list_confirmer_ids, load_bundle_snapshot, load_people_names
 from app.sop.target_placement import restyle_moved
 from app.sop.tobe import MAX_DB_INT, is_within_slot
@@ -236,6 +236,31 @@ async def get_export_preview(
         _raise_export_failed(ctx.bundle.id, error)
     # 상한은 부를 때 읽는다 — 시험이 모듈 값을 바꿔 자르기를 본다
     return limit_preview(model, sheet_model.MAX_PREVIEW_ROWS)
+
+
+@router.get("/{bundle_id}/export/preview/a", response_model=Sheet)
+async def get_export_preview_a(
+    doc_id: Annotated[int, Query(ge=1, le=MAX_DB_INT)],
+    around_unit_id: Annotated[int | None, Query(ge=1, le=MAX_DB_INT)] = None,
+    ctx: BundleContext = Depends(_require_member),
+    session: AsyncSession = Depends(get_session),
+) -> Sheet:
+    """Assign Space 미리보기 — 옛 문서 하나의 A 시트(받을 파일과 같은 줄)를 고른 단위를 가운데로 MAX_PREVIEW_ROWS줄까지.
+
+    B 그림·C·Info·Documents는 짓지 않는다. 작업 기록은 남기지 않는다. 이 묶음의 옛 문서가 아니면 404 document_not_found.
+    """
+    snap = await load_bundle_snapshot(session, ctx.bundle.id)
+    people = await load_people_names(session, list_confirmer_ids(snap))
+    await session.commit()
+    document = snap.documents.get(doc_id)
+    if document is None or document.side != "old":
+        raise_rule(404, "document_not_found")
+    try:
+        return await asyncio.to_thread(
+            sheet_model.build_a_preview, snap, people, doc_id, around_unit_id, sheet_model.MAX_PREVIEW_ROWS
+        )
+    except Exception as error:
+        _raise_export_failed(ctx.bundle.id, error)
 
 
 async def _check_translation_moves(

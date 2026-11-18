@@ -1,4 +1,4 @@
-// Assign 보기 설정 - 문서별 확대(Old·New)·두 문서 폭·연결선 켜기·한 단 보기·New 쪽 AI 제안 거르기를 사람마다 브라우저에 기억한다. 저장소가 막혀 있으면 기본값으로 그린다.
+// Assign 보기 설정 - 문서별 확대(Old·New)·두 문서 폭·연결선 켜기·한 단 보기·New 쪽 AI 제안 거르기 · Space 미리보기를 연 횟수를 사람마다 브라우저에 기억한다. 저장소가 막혀 있으면 기본값으로 그린다.
 import { clampSplit, clampZoom } from "./assign-model";
 
 export interface AssignView {
@@ -50,5 +50,20 @@ export function writeAssignView(patch: Partial<AssignView>): void {
     for (const [name, value] of Object.entries(patch) as Array<[keyof AssignView, number | boolean]>) window.localStorage.setItem(KEYS[name], String(Number(value)));
   } catch {
     // 기억하지 못해도 지금 화면은 그대로 쓴다
+  }
+}
+
+const SPACE_OPENS_KEY = "sopa.assign.spacePreviewOpens";
+
+/** Space 미리보기를 연 횟수 - 닫혀 있을 때의 작은 안내를 처음 몇 번만 보이는 데 쓴다 */
+export function readSpacePreviewOpens(): number {
+  return Math.max(readNumber(SPACE_OPENS_KEY) ?? 0, 0);
+}
+
+export function writeSpacePreviewOpens(count: number): void {
+  try {
+    window.localStorage.setItem(SPACE_OPENS_KEY, String(count));
+  } catch {
+    // 기억하지 못하면 다음에도 안내가 보일 뿐이다
   }
 }

@@ -1620,6 +1620,24 @@
   .assign-bar-end { display: flex; flex: none; flex-wrap: nowrap; align-items: center; gap: 4px; margin-left: auto; }
   .assign-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 4px; min-height: 30px; }
   .assign-panes { position: relative; display: grid; grid-template-columns: minmax(0, var(--split, 50%)) 12px minmax(0, 1fr); min-height: 0; }
+  /* Space 미리보기(components/assign/space-preview.tsx) - 작업 화면 바닥에서 올라오는 시트, 높이는 작업 화면의 약 70%. 여는 움직임은 --dur-base(움직임 줄이기면 0) */
+  .space-sheet { position: absolute; inset-inline: 0; bottom: 0; z-index: 40; display: flex; flex-direction: column; height: 70%; min-height: 0; border-top: 1px solid var(--line-2); border-radius: 10px 10px 0 0; background: var(--surface); box-shadow: 0 -14px 30px -14px oklch(0 0 0 / .4); animation: space-sheet-in var(--dur-base) var(--ease-enter); }
+  @keyframes space-sheet-in { from { transform: translateY(100%); } }
+  .space-sheet-grip { flex: none; width: 44px; height: 4px; margin: 6px auto 0; border-radius: 2px; background: var(--line-2); }
+  .space-sheet-head { display: flex; flex: none; align-items: center; gap: 10px; min-width: 0; padding: 6px 14px 8px; border-bottom: 1px solid var(--line); font-size: 12.5px; color: var(--ink-2); white-space: nowrap; }
+  .space-sheet-tab { flex: none; padding: 2px 9px; border-radius: var(--r-1); box-shadow: 0 0 0 1px var(--line-2); font-size: 12px; font-weight: 600; color: var(--ink); }
+  .space-sheet-state { flex: none; margin-left: auto; font-size: 11.5px; color: var(--accent); }
+  .space-sheet-state[data-kept] { color: var(--st-hold-ink); }
+  .space-sheet-body { display: flex; flex: 1 1 auto; flex-direction: column; min-height: 0; padding: 8px 14px 0; }
+  .space-sheet-foot { display: flex; flex: none; flex-wrap: wrap; align-items: center; gap: 4px 14px; padding: 6px 14px; font-size: 11.5px; color: var(--ink-3); }
+  .space-key { display: inline-block; width: 12px; height: 10px; margin-right: 4px; border-radius: 2px; vertical-align: -1px; }
+  .space-key[data-mark="picked"] { background: var(--sheet-picked); box-shadow: inset 3px 0 0 var(--sheet-accent); }
+  .space-key[data-mark="group"] { background: var(--sheet-group); }
+  /* 닫혀 있을 때의 작은 안내 - 처음 몇 번만, 누를 수 없다 */
+  /* 안내가 있는 동안 작업 화면 바닥에 제 줄을 비워 두고 거기 놓는다 - 위에 띄우면 Old 칸 맨 아래 카드 글을 덮었다(1120에서 잰 것) */
+  [data-testid="assign"]:has(> .space-hint) > .assign-desk { padding-bottom: 36px; }
+  .space-hint { position: absolute; left: 14px; bottom: 8px; z-index: 5; margin: 0; padding: 2px 8px; border: 1px solid var(--line); border-radius: var(--r-2); background: color-mix(in oklab, var(--surface) 92%, transparent); font-size: 11px; line-height: 18px; color: var(--ink-3); pointer-events: none; }
+  .space-hint kbd { padding: 0 4px; border: 1px solid var(--line-2); border-radius: var(--r-1); font: 500 10px / 14px var(--font-mono); }
   .assign-pane { display: flex; flex-direction: column; gap: 6px; min-width: 0; min-height: 0; }
   .assign-pane > .pane-body { flex: 1 1 0; }
   .pane-sub { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-3); }
@@ -2104,7 +2122,7 @@
 
 /* ---- 결과물 C 섹션 번호(2026-11-10): 줄 앞 번호와 깊이만큼 들여쓰기, 눌러 고른 줄(Tab으로 들이기) ---- */
 @layer components {
-  .c-line { --c-indent: 1.5em; }
+  .c-line, .c-src-wrap { --c-indent: 1.5em; }
   /* 줄은 글 + 줄 끝 단추 묶음의 감김 줄 - 터치 화면(hover: none)에서는 묶음이 늘 보이고, 글이 폭을 채우면 글 바로 아래 제 줄로 내려간다 */
   /* position - 끌 때 놓을 자리 선(.c-dropline)의 기준 */
   .c-order { container: c-order / inline-size; position: relative; }
@@ -2170,6 +2188,13 @@
   html[data-box-drag] .c-order .c-row > :is(.c-acts, .c-more) { opacity: 0; pointer-events: none; }
   html[data-box-drag] .c-order .c-row:not(:focus) { background: none; }
   html[data-box-drag] .c-order .c-row::after { content: none; }
+  /* N:1 출처 꼬리표(옛 두 줄 이상에서 온 줄) - 줄에 올리거나 줄을 고를 때만 줄 바로 아래에 어두운 꼬리표로 뜬다(.tip과 같은 색). 줄 높이를 바꾸지 않고(떠 있다),
+     마우스를 받지 않아 아래 줄 호버를 막지 않으며, 끄는 동안은 숨긴다 */
+  .c-row:has(> .c-src-wrap) { position: relative; }
+  .c-src-wrap { display: none; position: absolute; top: 100%; left: 0; right: 0; z-index: 2; margin-top: -2px; pointer-events: none; }
+  .c-src { display: inline-block; max-width: 100%; padding: 2px 8px; border-radius: var(--r-2); background: var(--ink); color: var(--surface); font-family: var(--font-ui); font-size: var(--fs-cap); line-height: var(--lh-cap); overflow-wrap: anywhere; }
+  .c-row:is(:hover, :focus, :focus-within) > .c-src-wrap { display: block; }
+  html[data-box-drag] .c-row > .c-src-wrap { display: none; }
   .c-line:is([data-numbered], [data-bullet]) { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: baseline; column-gap: 0.6em; }
   .c-no { font-family: var(--font-mono); font-size: 0.8em; color: var(--ink-3); font-variant-numeric: tabular-nums; white-space: nowrap; }
   /* 글머리 기호 - 번호 글꼴 크기(0.8em)로는 점이 너무 작아 본문 크기로 그린다 */

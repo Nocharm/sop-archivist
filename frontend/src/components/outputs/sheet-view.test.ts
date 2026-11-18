@@ -16,7 +16,7 @@ globalThis.ResizeObserver ??= class {
   disconnect() {}
 } as unknown as typeof ResizeObserver;
 
-const cell = (text: string, extra: Partial<PreviewCell> = {}): PreviewCell => ({ text, faint: false, italic: false, bold: false, head: false, numeric: false, tone: null, ...extra });
+const cell = (text: string, extra: Partial<PreviewCell> = {}): PreviewCell => ({ text, faint: false, italic: false, bold: false, head: false, numeric: false, indent: 0, tone: null, ...extra });
 const row = (kind: PreviewRow["kind"], wrap: boolean, cells: PreviewCell[], extra: Partial<PreviewRow> = {}): PreviewRow => ({ kind, wrap, cells, unit_id: null, group_id: null, toc: false, ...extra });
 
 function render(props: SheetViewProps): HTMLElement {
@@ -27,7 +27,7 @@ function render(props: SheetViewProps): HTMLElement {
 }
 
 const BASE: PreviewSheet = {
-  name: "A Comparison", widths: [8, 20], freeze: "A3", filter_columns: 0, image_png: null, image_row: null, total_rows: 4, truncated: false,
+  name: "A Comparison", widths: [8, 20], freeze: "A3", filter_columns: 0, image_png: null, image_row: null, total_rows: 4, truncated: false, offset: 0,
   fit_widths: null, bands: [], column_keys: null,
   rows: [
     row("status", false, [cell("Status: In progress", { bold: true }), cell("")]),
@@ -73,6 +73,14 @@ describe("SheetView", () => {
     const host = render({ sheet: BASE });
     expect(Array.from(host.querySelectorAll('[data-testid="export-preview-head"] tr')).map((tr) => tr.getAttribute("data-row-kind"))).toEqual(["status", "header"]);
     expect(Array.from(host.querySelectorAll('[data-testid="export-preview-body"] tr')).map((tr) => tr.getAttribute("data-row-number"))).toEqual(["3", "4"]);
+  });
+
+  it("indents a cell by the model's indent steps", () => {
+    const rows = [row("group_start", true, [cell("○"), cell("child", { indent: 1 })]), row("in_group", true, [cell("•"), cell("plain")])];
+    const host = render({ sheet: { ...BASE, rows, total_rows: rows.length, freeze: null } });
+    const byText = (text: string) => Array.from(host.querySelectorAll("td")).find((td) => td.textContent === text) as HTMLElement;
+    expect(byText("child").style.paddingLeft).toBe("14px");
+    expect(byText("plain").style.paddingLeft).toBe("");
   });
 
   it("puts a flow image after the last carried row when the model's image row lies past a truncated sheet", () => {

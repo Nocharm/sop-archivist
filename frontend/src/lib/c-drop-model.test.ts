@@ -5,7 +5,7 @@ import { previewEdit } from "./c-edit-model";
 import { makeSectionOutline } from "./outline-fixture";
 
 function line(id: number, extra: Partial<OutputCItem> = {}): OutputCItem {
-  return { target_id: id, kind: "sentence", lang: "ko", text: `t${id}`, ai_text: "", change_type: null, status: "confirmed", source_note: "", origin: "units", meaning_key: null, number: null, indent_level: 0, number_style: "numbered", cell_row: null, cell_col: null, children: [], ...extra };
+  return { target_id: id, kind: "sentence", lang: "ko", text: `t${id}`, ai_text: "", change_type: null, status: "confirmed", source_note: "", source_count: 1, origin: "units", meaning_key: null, number: null, indent_level: 0, number_style: "numbered", cell_row: null, cell_col: null, children: [], ...extra };
 }
 
 /** 줄마다 20px - 화면 순서대로 */
@@ -62,6 +62,18 @@ describe("planDrop", () => {
     expect(plan).toMatchObject({ depth: 8, edit: { targetIds: [1, 2], beforeId: 4, depths: null } });
     const deep = planDrop({ ...base, depths: [7, 8, 9, 0, 0], block: { start: 0, end: 1, baseDepth: 7, isDepthLocked: false }, rows: box([3, 4, 5]), pointerY: 25, dx: 48 });
     expect(deep).toMatchObject({ depth: 8, edit: { depths: [8, 9] } });
+  });
+  it("measures a bullet block against the previous bullet line, up to depth 2, whatever numbered lines sit between", () => {
+    const bullets = [1, 2, 3, 4].map((id) => line(id, { number_style: "bullet" }));
+    const mixed = [bullets[0], line(9, { number: "6.1.1" }), bullets[1], bullets[2], bullets[3]];
+    const input = { ...base, countsLines: true, items: mixed, depths: [0, 0, 0, 0, 0], block: { start: 4, end: 4, baseDepth: 0, isDepthLocked: false }, rows: box([1, 9, 2, 3]), dx: 100 };
+    // 위 가까운 글머리 기호 줄(3, 깊이 0) + 1 = 1 - 번호 줄(9)은 상한에 끼지 않는다
+    expect(planDrop({ ...input, pointerY: 100 }).depth).toBe(1);
+    expect(planDrop({ ...input, pointerY: 100, depths: [0, 0, 1, 1, 0] }).depth).toBe(2);
+    // 상한은 셋째 단계(깊이 2)다 - 앞 줄이 2여도 그 이상은 없다
+    expect(planDrop({ ...input, pointerY: 100, depths: [0, 0, 1, 2, 0] }).depth).toBe(2);
+    // 앞에 글머리 기호 줄이 없으면 0
+    expect(planDrop({ ...input, pointerY: 5 }).depth).toBe(0);
   });
   it("outdents a block whose base depth is above 0", () => {
     const plan = planDrop({ ...base, depths: [0, 1, 2, 0, 0], block: { start: 2, end: 2, baseDepth: 2, isDepthLocked: false }, rows: box([1, 2, 4, 5]), pointerY: 35, dx: -24 });

@@ -75,7 +75,7 @@ describe("groupTableCells", () => {
 describe("splitCTable", () => {
   it("takes caption children out of the grid and stacks a translated cell in its own position", () => {
     const item = (target_id: number, cell_row: number | null, cell_col: number | null): OutputCItem => ({
-      target_id, kind: "sentence", lang: "ko", text: String(target_id), ai_text: "", change_type: null, status: "confirmed", source_note: "",
+      target_id, kind: "sentence", lang: "ko", text: String(target_id), ai_text: "", change_type: null, status: "confirmed", source_note: "", source_count: 1,
       origin: "units", meaning_key: null, number: null, indent_level: 0, number_style: "numbered", cell_row, cell_col, children: [],
     });
 
