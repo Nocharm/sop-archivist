@@ -4,6 +4,10 @@
 
 ## 2026-11-18
 
+- **템플릿 보기 끌어 놓기(`feat/template-dnd`, MD 1 §10 브랜치 12 — F9 끌어 놓기)** — Old 조각을 New 칸 템플릿 보기에 놓으면 기본 보기와 같은 저장 · 바로 확정 · Undo다. 판단은 새 순수 모델 `lib/place-spot-model.ts`(자리 목록 — 칸 자리 · 줄 사이 · 앱이 만드는 것 → 갈 칸 + `position` + 꼬리표 번호 + 못 놓는 까닭) 하나이고, 줄 사이는 `resolveGapDrop`을 그대로 불러 기본 보기와 답이 같다(시험으로 맞춤). 다음 브랜치 e(클릭 배치)가 같은 모델을 쓴다.
+  - 칸 자리(장·절 제목 · 범주 행 · 빈 칸 · 3·4장 표 머리)는 칸 끝(마지막 줄 뒤, 빈 칸은 자리 없음), 줄 위는 묶음 앞·뒤에 선 + "after 6.1.1 (becomes 6.1.2)". 거절: 묶음 제목(7 · 7.1) · 7.2 · 목차 · 표지 · 2장 빈 표 · 8장 Attachment 1 + 기본 보기의 N/A · 같은 칸. 6 · 9장 머리는 그대로 받는다(사용자 결정 C), 선언한 부록이 없는 9장은 꼬리표에 알림만.
+  - 끄는 동안 칠하기는 시작 때 DOM에 `data-tpl-open`을 바로 단다(움직일 때 React를 다시 그리지 않음 — 시작·끝에 결정 칸 안내 글 상태만 바뀜). 확인: vitest 1,476 · lint · tsc. 스모크 `assign: template view drag …` 둘은 써 두고 돌리지 않았다.
+
 - **New 칸 템플릿 보기 · 미러링(v1.1.38, `feat/new-template-view`, MD 1 §10 브랜치 11 — F9 보기 + F8c)** — 아직 안 쓴 New 문서의 머리에 **Basic | Template** 전환(`sopa.assign.newTemplate`, 처음 기본). 결과물 C 꼴 문서를 회사 템플릿 모양으로 그리는 부품 하나(`components/template/template-view.tsx` + 순수 모델 `lib/template-model.ts`) — 머리글 · 빈 표지 표(Document No.만) · 앱 목차 · SOP 영어 → 한글 / WI 한글 → 영어 절반, 2장 빈 Site 표 + In Scope, 3·4장 표 머리, 5장 범주 표, 6장 번호, 7.2 WI 목록, 8장 Attachment 1, 벗어남 · Empty 표시. 짝은 같은 묶음 키(`meaning_key`)로 두 절반에 비추고(생략 줄만 상대의 번호 · 기호를 빌림), 반대 언어가 없는 줄은 "번역 없음" 자리(누르면 그 Old 줄을 고르고 번역 만들기 · 직접 쓰기 단추로). WI는 단계 = Chapter 표, 줄 = 세부 단계 행(지금 번호), Why는 아래 기울임, 그림은 그림 칸. 보기 + 고르기만(끌기는 브랜치 12, 클릭 배치는 e) — 쓰는 쪽이 `onPickLine` · `onMissing` · `renderBlock` · `spotProps`로 켠다.
   - 서버: 엮은 문서 항목(`ComposedItem`)에 결과물 C 항목과 같은 `number_style` · `indent_level` · `meaning_key`를 더했다(Alembic 없음, 계산은 `_build_c_context` 하나를 같이 쓴다).
   - 확인: pytest 손댄 셋 146 · backend 전체 2,964 · ruff, vitest 1,447 · lint · tsc. 스모크 `assign: New template view …` 셋은 써 두고 돌리지 않았다(공용 부품이라 메인 세션이 전체 스모크 · 감사).

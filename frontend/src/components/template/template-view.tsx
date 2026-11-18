@@ -1,7 +1,7 @@
 // 템플릿 보기(MD 1 F9 · F8c) - 결과물 C 꼴의 문서(엮은 문서 · 결과물 C 문서)를 회사 템플릿 모양으로 그리는 부품 하나. 모양 규칙은 lib/template-model이고 여기는 그리기만 한다.
 // 머리글(글자만, 로고 없음) · 제목 · 빈 표지 표(Document No.만) · 앱이 만든 목차(읽기 전용) · 두 절반(SOP 영어 → 한글, WI 한글 → 영어) · CONFIDENTIAL.
 // 쓰는 쪽이 켜는 것: 줄 누르기(onPickLine), "번역 없음" 자리 누르기(onMissing), 표·그림 그리기(renderBlock), 자리마다 속성·핸들러(spotProps - 클릭 배치 · 끌어 놓기가 단다).
-// 아무것도 넘기지 않으면 읽기만 하는 보기다. 자리(장·절 제목 · 범주 행 · 빈 칸 · 줄)에는 늘 data-tpl-spot · data-section(줄은 data-row)이 달린다.
+// 아무것도 넘기지 않으면 읽기만 하는 보기다. 자리(장·절 제목 · 범주 행 · 빈 칸 · 줄)에는 늘 data-tpl-spot · data-section(줄은 data-row), 앱이 만드는 것에는 data-tpl-fixed가 달린다.
 "use client";
 
 import { Fragment, useMemo, type CSSProperties, type HTMLAttributes, type ReactNode } from "react";
@@ -174,7 +174,13 @@ export function TemplateView<T extends TemplateItem>({ doc, titles, selectedIds 
         );
       case "grid":
         return (
-          <table key={block.key} className="tpl-table" {...spotProps?.({ kind: "fixed", what: "scope_table" })} data-tpl-spot="fixed" data-testid={`${idKey}-grid`}>
+          // 2장 빈 표는 앱이 그리는 것(놓을 수 없음), 3·4장 표 머리는 그 장의 자리다 - 칸마다 따로 놓지 않고 장 제목과 같이 그 장의 줄이 된다(F9)
+          <table
+            key={block.key}
+            className="tpl-table"
+            {...(block.blankRow ? { ...spotProps?.({ kind: "fixed", what: "scope_table" }), "data-tpl-spot": "fixed", "data-tpl-fixed": "scope_table" } : { ...spotProps?.({ kind: "section", sectionKey: block.sectionKey }), "data-tpl-spot": "section", "data-section": block.sectionKey })}
+            data-testid={`${idKey}-grid`}
+          >
             <thead>
               <tr>
                 {block.heads.map((head) => (
@@ -204,7 +210,7 @@ export function TemplateView<T extends TemplateItem>({ doc, titles, selectedIds 
         );
       case "system":
         return (
-          <p key={block.key} className="tpl-line" {...spotProps?.({ kind: "fixed", what: "system" })} data-tpl-spot="fixed" data-testid={`${idKey}-system`}>
+          <p key={block.key} className="tpl-line" {...spotProps?.({ kind: "fixed", what: "system" })} data-tpl-spot="fixed" data-tpl-fixed="system" data-testid={`${idKey}-system`}>
             <span className="tpl-mark">•</span>
             <span className="tpl-text">{block.text}</span>
           </p>
@@ -275,7 +281,7 @@ export function TemplateView<T extends TemplateItem>({ doc, titles, selectedIds 
       <div className="pg tpl-paper" data-doc-type={layout.docType} data-testid={testId} {...tip.handlers}>
         <p className="tpl-header">{HEADER[layout.docType]}</p>
         <p className="tpl-title">{layout.title || layout.code}</p>
-        <table className="tpl-table tpl-cover" {...spotProps?.({ kind: "fixed", what: "cover" })} data-tpl-spot="fixed" data-testid={`${testId}-cover`}>
+        <table className="tpl-table tpl-cover" {...spotProps?.({ kind: "fixed", what: "cover" })} data-tpl-spot="fixed" data-tpl-fixed="cover" data-testid={`${testId}-cover`}>
           <tbody>
             <tr>
               <th colSpan={4}>{COVER_TITLE}</th>
@@ -315,7 +321,7 @@ export function TemplateView<T extends TemplateItem>({ doc, titles, selectedIds 
             </tr>
           </tbody>
         </table>
-        <nav className="tpl-toc" aria-label={t("template.toc")} {...spotProps?.({ kind: "fixed", what: "toc" })} data-tpl-spot="fixed" data-testid={`${testId}-toc`}>
+        <nav className="tpl-toc" aria-label={t("template.toc")} {...spotProps?.({ kind: "fixed", what: "toc" })} data-tpl-spot="fixed" data-tpl-fixed="toc" data-testid={`${testId}-toc`}>
           <p className="tpl-toc-head">
             Table of Contents <span className="tpl-toc-note">{t("template.tocNote")}</span>
           </p>
