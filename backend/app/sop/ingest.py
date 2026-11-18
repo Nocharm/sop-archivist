@@ -257,6 +257,7 @@ async def _insert_tables(
             {
                 "extraction_id": extraction_id, "table_index": table.index, "part": table.part,
                 "xml_path": table.xml_path, "n_rows": table.n_rows, "n_cols": table.n_cols,
+                "signals": table.signals or None,
             }
             for table in tables
         ],
@@ -286,6 +287,7 @@ async def _insert_blocks(
                 "table_id": table_ids[block.table_index] if block.table_index is not None else None,
                 "row_index": block.row_index, "col_index": block.col_index, "grid_span": block.grid_span,
                 "row_span": block.row_span, "image_part": block.image_part, "flags": list(block.flags),
+                "signals": block.signals or None,
             }
             for block in blocks
         ],
