@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from typing import Annotated
 
 from pydantic import BaseModel, Field, StringConstraints
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.sop.constants import NUMBER_BULLET, NUMBERED, OUTLINE_KINDS, NumberStyle
@@ -25,10 +25,13 @@ KIND_AUTO_LIST = "auto_list"
 KIND_GROUP = "group"
 ORIGIN_STANDARD = "standard"
 ORIGIN_DECLARED = "declared"
+ORIGIN_CUSTOM = "custom"  # 표준에서 벗어나 사용자가 더한 항목(사유가 따른다) — 선언할 수 없는 부모 아래나 최상위
 # 직접 줄을 받는 종류 — group은 하위만 두고 auto_list는 앱이 채운다
 ASSIGNABLE_KINDS = (KIND_GENERAL, KIND_CATEGORY_TABLE, KIND_NAMED_CHILDREN)
 # 하위 항목을 두지 않는 종류 — 표준을 고칠 때 이 종류 아래에 항목을 달지 못한다
 LEAF_KINDS = (KIND_GENERAL, KIND_AUTO_LIST)
+# 문서마다 하위 항목을 선언하는 종류(6장 절차·9장 부록, 5장 범주) — 선언은 outline_edit, 권장 이름도 이 종류의 것만 화면에 보낸다
+DECLARABLE_KINDS = (KIND_NAMED_CHILDREN, KIND_CATEGORY_TABLE)
 LABEL_SEPARATOR = " › "  # 라벨에서 상위와 하위 제목 사이("General Requirements › Safety")
 # 항목 키의 꼴 — 점으로 위계를 적고 ":"을 쓰지 않는다(프런트가 자리 키를 ":"으로 가른다). frontend lib/outline-admin-model.ts와 같은 값
 KEY_PATTERN = re.compile(r"[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)*")
@@ -40,6 +43,25 @@ def get_parent_key(key: str) -> str | None:
     """부모 항목의 키 — 마지막 점 앞("a.b.c" → "a.b"), 최상위면 None."""
     parent, _, child = key.rpartition(".")
     return parent if child and parent else None
+
+
+def build_next_declared_key(parent_key: str, used_keys: Iterable[str]) -> str:
+    """새 선언·사용자 항목의 키 "부모.n<수>"(부모가 빈 글이면 최상위 "n<수>") — 수는 그 부모 아래에서 쓴 적 없는 다음 수다(뺀 항목의 키도 센다).
+
+    뺀 키를 다시 쓰면 그 키를 든 옛 판단 단계(되돌리기)가 다른 항목에 줄을 놓는다.
+    """
+    head = f"{parent_key}." if parent_key else ""
+    pattern = re.compile(rf"{re.escape(head)}n(\d+)")
+    used = [int(match.group(1)) for key in used_keys if (match := pattern.fullmatch(key)) is not None]
+    return f"{head}n{max(used, default=0) + 1}"
+
+
+def is_deviation(item: "OutlineItemInfo") -> bool:
+    """표준에서 벗어난 항목인가 — 사용자 항목, 그리고 이름을 바꾸거나 필수인데 뺀 표준 항목(사유가 남아 있다).
+
+    선택 항목(7.1.x)을 뺀 것·N/A·선언(6장 절차·9장 부록·5장 범주)은 벗어남이 아니다.
+    """
+    return item.origin == ORIGIN_CUSTOM or (item.origin == ORIGIN_STANDARD and item.deviation_reason is not None)
 
 
 @dataclass(frozen=True)
@@ -68,15 +90,22 @@ class DocOutline:
     def __init__(self, items: Sequence[OutlineItemInfo]) -> None:
         children: dict[str | None, list[OutlineItemInfo]] = defaultdict(list)
         for item in sorted(items, key=lambda item: (item.order_index, item.key)):
-            if not item.is_removed:
+            # 뺀 표준 항목은 되살릴 수 있어 자리를 기억한다(listed_items). 뺀 선언·사용자 항목은 키만 막는 행이라 어디에도 없다
+            if not item.is_removed or item.origin == ORIGIN_STANDARD:
                 children[get_parent_key(item.key)].append(item)
         ordered: list[OutlineItemInfo] = []
+        listed: list[OutlineItemInfo] = []
         pending = children[None][::-1]
         while pending:  # 깊이 먼저 — 부모 바로 뒤에 그 하위가 온다
             item = pending.pop()
+            listed.append(item)
+            if item.is_removed:  # 빠진 항목은 하위까지 함께 빠진다
+                continue
             ordered.append(item)
             pending.extend(children[item.key][::-1])
         self.items: tuple[OutlineItemInfo, ...] = tuple(ordered)
+        # items에 뺀 표준 항목(하위는 빼고)을 제자리에 더한 것 — To-Be 목록이 되살리기 단추를 그 자리에 그린다
+        self.listed_items: tuple[OutlineItemInfo, ...] = tuple(listed)
         self._by_key = {item.key: item for item in ordered}
         self._numbers = number_outline(self, self._by_key.keys())
 
@@ -263,6 +292,16 @@ async def load_standard_rows(session: AsyncSession) -> list[OutlineStandardItem]
     return list(await session.scalars(select(OutlineStandardItem).order_by(OutlineStandardItem.order_index)))
 
 
+async def load_outline_suggestions(session: AsyncSession) -> dict[str, list[str]]:
+    """지금 표준의 권장 이름 — 하위를 선언하는 항목의 키 → 이름들. 권장 이름이 없는 항목은 싣지 않는다(읽기만 해서 시드하지 않는다)."""
+    rows = await session.execute(
+        select(OutlineStandardItem.key, OutlineStandardItem.suggestions)
+        .where(OutlineStandardItem.kind.in_(DECLARABLE_KINDS))
+        .order_by(OutlineStandardItem.order_index)
+    )
+    return {key: list(suggestions) for key, suggestions in rows if suggestions}
+
+
 class OutlineStandardItemIn(BaseModel):
     """관리자가 보내는 표준 항목 한 줄 — 순서는 목록에서의 자리다(order_index를 받지 않는다).
 
@@ -341,6 +380,17 @@ def build_declared_item(
     )
 
 
+def build_custom_item(
+    parent: OutlineItemInfo | None, key: str, title_en: str, *, title_ko: str, order_index: int, reason: str
+) -> OutlineItemInfo:
+    """사용자 항목 하나(표준에서 벗어남, 사유가 따른다) — 줄을 받는 일반 항목이고 필수다. 기본 표시는 부모의 것, 최상위면 글머리 기호(템플릿 내용의 기본)."""
+    return OutlineItemInfo(
+        key=key, title_en=title_en, title_ko=title_ko, kind=KIND_GENERAL, is_required=True,
+        default_style=parent.default_style if parent is not None else NUMBER_BULLET, child_prefix="",
+        order_index=order_index, origin=ORIGIN_CUSTOM, is_removed=False, deviation_reason=reason,
+    )
+
+
 def build_new_doc_items(standard: Sequence[OutlineItemInfo]) -> list[OutlineItemInfo]:
     """새 SOP 문서가 받을 골격 — 표준 그대로에, 6장(하위를 선언하는 `procedures`)이 표준에서 비어 있으면 첫 절차 "Procedure 1"을 더한다."""
     items = list(standard)
@@ -371,16 +421,38 @@ async def load_standard_outline(session: AsyncSession) -> DocOutline:
 
 
 async def copy_standard_to_doc(session: AsyncSession, target_doc_id: int) -> None:
-    """SOP 문서의 골격 사본을 지금 표준으로 만든다 — 그 뒤 표준이 바뀌어도 사본은 그대로다."""
-    session.add_all(
-        TargetDocOutlineItem(
-            target_doc_id=target_doc_id, key=item.key, order_index=item.order_index, title_en=item.title_en,
+    """SOP 문서의 골격 사본을 지금 표준으로 만든다 — 그 뒤 표준이 바뀌어도 사본은 그대로다.
+
+    WI였다가 돌아온 문서는 뺀 표시 행(retire_doc_outline)이 남아 있다 — 기본 첫 절차의 키가 그중에 있으면 새 수를 받는다.
+    """
+    used = set(await session.scalars(
+        select(TargetDocOutlineItem.key).where(TargetDocOutlineItem.target_doc_id == target_doc_id)
+    ))
+    rows = []
+    for item in await _build_new_doc_items(session):
+        key = item.key
+        if key in used:  # 표준 행은 retire_doc_outline이 지웠으니 여기 걸리는 것은 선언 항목(첫 절차)뿐이다
+            key = build_next_declared_key(get_parent_key(key) or "", used)
+            used.add(key)
+        rows.append(TargetDocOutlineItem(
+            target_doc_id=target_doc_id, key=key, order_index=item.order_index, title_en=item.title_en,
             title_ko=item.title_ko, kind=item.kind, is_required=item.is_required, default_style=item.default_style,
             child_prefix=item.child_prefix, origin=item.origin,
-        )
-        for item in await _build_new_doc_items(session)
-    )
+        ))
+    session.add_all(rows)
     await session.flush()
+
+
+async def retire_doc_outline(session: AsyncSession, target_doc_id: int) -> None:
+    """종류가 바뀐 문서의 골격 사본을 걷는다 — 표준 항목은 지우고 선언·사용자 항목은 뺀 표시로 남긴다.
+
+    선언 키를 다시 쓰지 않아야 되돌리기가 옛 줄을 같은 키의 새 항목에 되살리지 않는다(SOP → WI → SOP 뒤 새 절차가 n1을 받는 경우).
+    """
+    owned = TargetDocOutlineItem.target_doc_id == target_doc_id
+    await session.execute(delete(TargetDocOutlineItem).where(owned, TargetDocOutlineItem.origin == ORIGIN_STANDARD))
+    await session.execute(
+        update(TargetDocOutlineItem).where(owned, TargetDocOutlineItem.origin != ORIGIN_STANDARD).values(is_removed=True)
+    )
 
 
 async def load_doc_outlines(session: AsyncSession, doc_ids: Iterable[int]) -> dict[int, DocOutline]:

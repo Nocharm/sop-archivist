@@ -1,7 +1,7 @@
 // New 목록의 줄 하나(Documents 화면 설계 §6) - 식별(종류 · 번호 · EQUIS), 제목 줄, 딸린 정보 줄을 글자로 읽는다. 고치는 칸은 펼친 곳(ToBePanel)에 있다.
 "use client";
 
-import { Pencil, Trash2, Wrench } from "lucide-react";
+import { GitFork, Pencil, Trash2, Wrench } from "lucide-react";
 import { useState, type ReactNode } from "react";
 
 import { DocRow, type RowAction } from "@/components/documents/doc-row";
@@ -15,7 +15,7 @@ import type { EquisInfo, SopDocument, TargetDoc, ToBe } from "@/lib/api-sop";
 import { isBoxDragActive } from "@/lib/box-drag";
 import { getDocRemoveBlock } from "@/lib/destination-manage-model";
 import { useI18n } from "@/lib/i18n";
-import { formatSlotName, type SlotRow, type SlotSummary } from "@/lib/slot-status-model";
+import { countDeviations, formatSlotName, type SlotRow, type SlotSummary } from "@/lib/slot-status-model";
 import type { DraftDoc } from "@/lib/tobe-draft";
 
 const REMOVE_BLOCK_KEYS = {
@@ -46,14 +46,14 @@ interface ToBeRowProps {
   draggable: boolean;
   open: boolean;
   onToggle: () => void;
-  /** 접어도 남은, 저장하지 않은 N/A 사유가 이 줄에 있다 */
-  hasUnsavedNa: boolean;
+  /** 접어도 남은, 저장하지 않은 편집기 글이 이 줄에 있다 - na는 N/A 사유, outline은 골격 쓰기(이름 · 빼기 · 더하기). 없으면 null */
+  unsavedEdit: "na" | "outline" | null;
   onRemove: () => void;
   onEquisRefresh: () => void;
   panel: () => ReactNode;
 }
 
-export function ToBeRow({ doc, isChild, tobe, saved, written, equis, stepCount, slots, hintCount, noParent, canEdit, draggable, open, onToggle, hasUnsavedNa, onRemove, onEquisRefresh, panel }: ToBeRowProps) {
+export function ToBeRow({ doc, isChild, tobe, saved, written, equis, stepCount, slots, hintCount, noParent, canEdit, draggable, open, onToggle, unsavedEdit, onRemove, onEquisRefresh, panel }: ToBeRowProps) {
   const { t } = useI18n();
   const prefix = `tobe-${doc.key}`;
   const block = saved ? getDocRemoveBlock(tobe, saved) : null;
@@ -80,6 +80,8 @@ export function ToBeRow({ doc, isChild, tobe, saved, written, equis, stepCount, 
   const isWritten = doc.entrance === "match";
   // 줄에 이름을 적는 N/A 칸 - 덮인 칸도 N/A로 센다(요약의 na와 같은 집합)
   const firstNa = slots?.rows.find((row) => row.state.kind === "na" || row.state.kind === "covered");
+  // 표준과 다른 항목 수 - 뺀 필수 항목도 센다(펼친 곳의 칸 표가 줄마다 표시와 사유를 보인다)
+  const deviations = slots === null ? 0 : countDeviations(slots.rows);
   const actions: RowAction[] = canEdit
     ? [
         { key: "edit", icon: Pencil, label: t("common.edit"), testId: `${prefix}-edit`, run: openToEdit },
@@ -151,6 +153,12 @@ export function ToBeRow({ doc, isChild, tobe, saved, written, equis, stepCount, 
               </span>
             </span>
           )}
+          {deviations > 0 && (
+            <span className="pill quiet" data-testid={`${prefix}-deviations`}>
+              <GitFork size={12} strokeWidth={1.5} className="text-warn" aria-hidden />
+              {t("tobe.row.deviations", { n: deviations })}
+            </span>
+          )}
           {written ? (
             <span className="doc-meta-file">
               <FileName name={written.file_name} testId={`${prefix}-written`} />
@@ -186,9 +194,9 @@ export function ToBeRow({ doc, isChild, tobe, saved, written, equis, stepCount, 
               {t("tobe.row.noParent")}
             </span>
           )}
-          {hasUnsavedNa && (
+          {unsavedEdit !== null && (
             <span className="pill warn" data-testid={`${prefix}-unsaved`}>
-              {t("tobe.slots.unsaved")}
+              {unsavedEdit === "na" ? t("tobe.slots.unsaved") : t("tobe.outline.unsaved")}
             </span>
           )}
         </>

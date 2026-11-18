@@ -1,4 +1,4 @@
-// New 줄을 펼친 곳(Documents 화면 설계 §6) - 왼쪽 Document(번호 · 제목 · 종류 · 상위 SOP · 장비 SOP · 쓴 파일), 오른쪽 SOP는 칸 상태 표, WI는 단계.
+// New 줄을 펼친 곳(Documents 화면 설계 §6) - 왼쪽 Document(번호 · 제목 · 종류 · 상위 SOP · 장비 SOP · 쓴 파일), 오른쪽 SOP는 선언 목록(범주 · 절차 · 부록)과 칸 상태 표, WI는 단계.
 // 칸마다 바로 저장한다(글 칸은 떠나거나 Enter, 고르는 칸은 고르는 즉시). 읽기 전용이면 값을 글자로만 보이고 쓴 파일의 미리 보기 · 내려받기만 남는다.
 "use client";
 
@@ -8,15 +8,17 @@ import type { ReactNode } from "react";
 import { LayoutLabel } from "@/components/documents/layout-picto";
 import { FileName } from "@/components/documents/file-name";
 import { TitleLock } from "@/components/equis/title-lock";
+import { OutlineDeclare } from "@/components/tobe/outline-declare";
 import { Checkbox } from "@/components/ui/checkbox";
 import { CommitInput } from "@/components/ui/commit-input";
 import { MorphButton } from "@/components/ui/morph-button";
 import { Select } from "@/components/ui/select";
 import { Tooltip } from "@/components/ui/tooltip";
 import { VersionInput } from "@/components/ui/version-input";
-import { LANGUAGE_LAYOUTS, type DocumentUpdateInput, type SopDocument, type TargetDoc, type ToBe, type ToBeDocPatch } from "@/lib/api-sop";
+import { LANGUAGE_LAYOUTS, type DocumentUpdateInput, type OutlineItemPatch, type SopDocument, type TargetDoc, type ToBe, type ToBeDocPatch } from "@/lib/api-sop";
 import { getStepCount, getStepRemoveBlock } from "@/lib/destination-manage-model";
 import { useI18n } from "@/lib/i18n";
+import { buildDeclareGroups } from "@/lib/outline-declare-model";
 import type { EquisHint } from "@/lib/tobe-add-model";
 import type { DraftDoc, DraftStep } from "@/lib/tobe-draft";
 
@@ -43,6 +45,10 @@ interface ToBePanelProps {
   onAddStep: () => void;
   onRenameStep: (stepNo: number, title: string) => Promise<boolean>;
   onRemoveStep: (stepNo: number) => void;
+  /** SOP가 선언하는 골격 항목(범주 · 절차 · 부록) 쓰기 - 더하기 · 제목과 자리 고치기 · 빼기 */
+  onAddOutline: (parentKey: string, titleEn: string) => Promise<boolean>;
+  onPatchOutline: (key: string, patch: OutlineItemPatch) => Promise<boolean>;
+  onRemoveOutline: (key: string) => void;
   file: {
     onPreview: (document: SopDocument) => void;
     onDownload: (document: SopDocument) => void;
@@ -53,7 +59,7 @@ interface ToBePanelProps {
   sections: ReactNode;
 }
 
-export function ToBePanel({ doc, tobe, saved, sops, steps, written, hints, isTitleLocked, canEdit, saving, saveDoc, changeType, onAddStep, onRenameStep, onRemoveStep, file, sections }: ToBePanelProps) {
+export function ToBePanel({ doc, tobe, saved, sops, steps, written, hints, isTitleLocked, canEdit, saving, saveDoc, changeType, onAddStep, onRenameStep, onRemoveStep, onAddOutline, onPatchOutline, onRemoveOutline, file, sections }: ToBePanelProps) {
   const { t } = useI18n();
   const prefix = `tobe-${doc.key}`;
   // 쓴 파일이 붙은 줄의 번호와 종류는 그 파일의 것이다
@@ -238,7 +244,11 @@ export function ToBePanel({ doc, tobe, saved, sops, steps, written, hints, isTit
       </section>
 
       {doc.doc_type === "sop" ? (
-        <div className="doc-panel-col">{sections}</div>
+        <div className="doc-panel-col">
+          {/* 범주 · 절차 · 부록 선언 - 이미 쓴 SOP는 구조가 파일의 것이라 묶음이 없다(buildDeclareGroups가 빈 목록을 준다) */}
+          {saved !== undefined && <OutlineDeclare prefix={prefix} groups={buildDeclareGroups(tobe, saved)} canEdit={canEdit} saving={saving} onAdd={onAddOutline} onPatch={onPatchOutline} onRemove={onRemoveOutline} />}
+          {sections}
+        </div>
       ) : (
         <section className="doc-panel-col" aria-label={t("tobe.panel.steps")}>
           <h3 className="doc-panel-head">{t("tobe.panel.steps")}</h3>

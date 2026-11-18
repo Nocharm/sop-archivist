@@ -12,6 +12,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.clock import now
+from app.sop.constants import SLOT_HEADING
 from app.sop.detach import ORIGIN_TRANSLATION, load_source_target_ids
 from app.sop.errors import raise_rule
 from app.sop.events import record_event
@@ -35,6 +36,7 @@ from app.sop.models import (
     UnitPairMember,
     WiStep,
 )
+from app.sop.outline import DocOutline, load_doc_outlines
 from app.sop.pair_settle import has_diverging_fates, load_decided_fates
 from app.sop.schemas import NO_NUL
 from app.sop.tobe import MAX_DB_INT, is_within_slot
@@ -631,13 +633,15 @@ def _find_repaired_units(expected: Snapshot, restore: Snapshot, current: Snapsho
 async def _find_misplaced_targets(session: AsyncSession, bundle_id: int, restore: Snapshot) -> list[int] | None:
     """되쓸 새 문장 중 자리가 지금 To-Be에 없는 것의 출처 unit_id들 — 모두 제자리면 None.
 
-    문서가 있어야 하고, SOP 칸은 N/A가 아니어야 하며(상위 칸 N/A는 하위 칸도 덮는다), WI 단계는 선언되어 있어야 한다.
-    문서 종류가 바뀌어 칸·단계가 맞지 않는 경우도 걸린다.
+    문서가 있어야 하고, SOP 칸은 그 문서의 골격에 남아 있고(뺀 절차·부록·범주의 키는 없다) N/A가 아니어야 하며(상위 칸 N/A는
+    하위 칸도 덮는다), WI 단계는 선언되어 있어야 한다. 문서 종류가 바뀌어 칸·단계가 맞지 않는 경우도 걸린다.
+    되살릴 칸 제목의 글이 지금 칸 이름과 다르면(그 뒤 항목의 이름·순서를 바꿨다) 옛 이름이 결과물에 나가니 그것도 되쓰지 않는다.
     """
     rows = restore.get("target_sentences", {})
     if not rows:
         return None
     docs = {doc.id: doc for doc in await session.scalars(select(TargetDoc).where(TargetDoc.bundle_id == bundle_id))}
+    outlines = await load_doc_outlines(session, [doc.id for doc in docs.values() if doc.doc_type == "sop"])
     na_slots: dict[int, list[str]] = {}
     for doc_id, slot_key in await session.execute(
         select(TargetDocNaSlot.target_doc_id, TargetDocNaSlot.slot_key).where(TargetDocNaSlot.target_doc_id.in_(docs))
@@ -651,9 +655,7 @@ async def _find_misplaced_targets(session: AsyncSession, bundle_id: int, restore
         doc = docs.get(row["target_doc_id"])
         slot_key, wi_step = row["slot_key"], row["wi_step"]
         is_placed = doc is not None and (
-            (slot_key is None or (doc.doc_type == "sop" and not any(
-                is_within_slot(slot_key, na_slot) for na_slot in na_slots.get(doc.id, ())
-            )))
+            (slot_key is None or _is_slot_open(row, outlines.get(doc.id), na_slots.get(doc.id, ())))
             and (wi_step is None or (doc.doc_type == "wi" and (doc.id, wi_step) in steps))
         )
         if not is_placed:
@@ -661,6 +663,16 @@ async def _find_misplaced_targets(session: AsyncSession, bundle_id: int, restore
     if not misplaced:
         return None
     return sorted({unit_id for target_id in misplaced for unit_id in _list_source_units(restore, target_id)})
+
+
+def _is_slot_open(row: dict, outline: DocOutline | None, na_slots: Collection[str]) -> bool:
+    """되쓸 새 문장의 SOP 칸이 지금도 줄을 받는 자리인가 — outline은 그 문서의 골격(SOP가 아니면 None)."""
+    slot_key = row["slot_key"]
+    if outline is None or outline.find(slot_key) is None:
+        return False
+    if any(is_within_slot(slot_key, na_slot) for na_slot in na_slots):
+        return False
+    return row["kind"] != SLOT_HEADING or row["confirmed_text"] == outline.get_label(slot_key)
 
 
 def _list_source_units(state: Snapshot, target_id: int) -> list[int]:

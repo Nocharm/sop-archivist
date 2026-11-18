@@ -38,8 +38,9 @@ def build_sop_outline(declared: Iterable[tuple[str, str]] = ()) -> DocOutline:
 def declare_outline_item(client: TestClient, target_doc_id: int, key: str, title_en: str) -> None:
     """SOP 문서의 골격 사본에 선언 항목(6장 절차·9장 부록·5장 범주) 하나를 DB에 바로 넣는다 — 부모는 키의 마지막 점 앞, 자리는 형제 끝.
 
-    문서마다 선언하는 API는 표준 골격 계획 스텝 5에서 생긴다. 그때까지 시험과 시드가 선언 항목을 만드는 한 곳이다(묶음 revision은
-    올리지 않는다). 앱의 이벤트 루프에서 돌려(client.portal) 앱과 같은 연결 풀을 쓴다 — client는 `with TestClient(app)` 안의 것이어야 한다.
+    선언 API(`POST …/tobe/docs/{id}/outline`, outline_edit)는 키를 서버가 짓는다("부모.n<수>"). 이 헬퍼는 정해진 키가 필요한 시험과
+    시드만 쓴다(묶음 revision은 올리지 않는다) — API 자체의 시험은 test_sop_outline_edit.
+    앱의 이벤트 루프에서 돌려(client.portal) 앱과 같은 연결 풀을 쓴다 — client는 `with TestClient(app)` 안의 것이어야 한다.
     """
     async def _insert() -> None:
         async with SessionLocal() as session:

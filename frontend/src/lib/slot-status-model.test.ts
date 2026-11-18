@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import type { SlotCount, TargetDoc, ToBe } from "./api-sop";
 import { makeDeepOutline, makeOutline, makeTemplateOutline, TEMPLATE_KEYS } from "./outline-fixture";
-import { buildSlotRows, canUndoRestore, formatSlotName, isNaEditDirty, listUsedReasons, openNaEdit, splitSlotColumns, summarizeSlots, type NaEdit } from "./slot-status-model";
+import { buildSlotRows, canSubmitSlotEdit, canUndoRestore, countDeviations, formatSlotName, isNaEditDirty, listUsedReasons, openNaEdit, splitSlotColumns, summarizeSlots, type NaEdit } from "./slot-status-model";
 
 function makeDoc(patch: Partial<TargetDoc> = {}): TargetDoc {
   return { id: 12, code: "SOP-CF", title: "", doc_type: "sop", parent_code: null, entrance: "assign", is_equipment_sop: true, order_index: 1, document_id: null, ...patch };
@@ -26,6 +26,7 @@ const tobe: ToBe = {
   ],
   wi_steps: [],
   outline_items: makeTemplateOutline("SOP-CF"),
+  outline_suggestions: {},
   slot_counts: [
     makeCount("purpose", 2, 0),
     makeCount("scope", 0, 1),
@@ -175,6 +176,32 @@ describe("rows from the document's outline", () => {
     expect(rows.some((row) => row.key === "procedures.p1" || row.label === "Other")).toBe(false);
   });
 
+  it("keeps a removed standard item in its place with no number, marked as differing when it was required", () => {
+    const outline = makeTemplateOutline("SOP-CF", {
+      definitions: { is_removed: true, number: null, is_assignable: false, is_deviation: true, deviation_reason: "No terms" },
+      purpose: { is_deviation: true, deviation_reason: "Renamed" },
+    });
+    const rows = buildSlotRows({ ...tobe, outline_items: outline }, sop);
+    const removed = rows.find((row) => row.key === "definitions");
+    expect(removed).toMatchObject({ number: "", state: { kind: "removed" }, canMarkNa: false, canRemove: false, isDeviation: true, deviationReason: "No terms" });
+    expect(summarizeSlots(rows).total).toBe(summarizeSlots(buildSlotRows(tobe, sop)).total - 1);
+    expect(countDeviations(rows)).toBe(2);
+  });
+
+  it("offers remove only where no sentence or section title sits, and adding only under a group", () => {
+    const rows = buildSlotRows(tobe, sop);
+    const byKey = new Map(rows.map((row) => [row.key, row]));
+    // 문장 · 칸 제목이 있는 칸(자기나 하위)은 뺄 수 없다
+    expect([byKey.get("purpose")?.canRemove, byKey.get("scope")?.canRemove, byKey.get("procedures")?.canRemove]).toEqual([false, false, false]);
+    expect(byKey.get("definitions")?.canRemove).toBe(true);
+    // 선언 항목은 선언 목록이 고친다
+    expect(byKey.get("procedures.p1")?.origin).toBe("declared");
+    expect([byKey.get("document_relationships")?.canAddChild, byKey.get("purpose")?.canAddChild]).toEqual([true, false]);
+    // 이미 쓴 SOP는 골격을 고치지 않는다
+    const written = buildSlotRows(tobe, makeDoc({ entrance: "match" }));
+    expect(written.some((row) => row.canRemove || row.canAddChild)).toBe(false);
+  });
+
   it("has no rows for a document without an outline", () => {
     expect(buildSlotRows({ ...tobe, outline_items: [] }, sop)).toEqual([]);
   });
@@ -281,8 +308,33 @@ describe("the one N/A editor", () => {
   });
 });
 
+describe("outline editors", () => {
+  const base = { docKey: "id-12", slotKey: "purpose", saved: "" };
+
+  it("treats another kind of edit on the same section as another editor", () => {
+    const na = openNaEdit(null, base);
+    const rename = openNaEdit(na, { ...base, mode: "rename", savedTitle: "Purpose" });
+    expect(rename).toMatchObject({ mode: "rename", title: "Purpose", savedTitle: "Purpose", text: "" });
+    // 적던 이름이 있으면 다른 일로 옮기지 않는다
+    const typed = { ...rename, title: "Aim" };
+    expect(isNaEditDirty(typed)).toBe(true);
+    expect(openNaEdit(typed, { ...base, mode: "remove" })).toMatchObject({ mode: "rename", refused: true });
+  });
+
+  it("needs a reason to remove or add, and only a title to rename", () => {
+    const make = (patch: Partial<NaEdit>): NaEdit => ({ ...base, text: "", refused: false, ...patch });
+    expect(canSubmitSlotEdit(make({ mode: "remove" }))).toBe(false);
+    expect(canSubmitSlotEdit(make({ mode: "remove", text: "No terms" }))).toBe(true);
+    expect(canSubmitSlotEdit(make({ mode: "rename", title: "Aim" }))).toBe(true);
+    expect(canSubmitSlotEdit(make({ mode: "rename", title: " " }))).toBe(false);
+    expect(canSubmitSlotEdit(make({ mode: "add", title: "Glossary" }))).toBe(false);
+    expect(canSubmitSlotEdit(make({ mode: "add", title: "Glossary", text: "Long list" }))).toBe(true);
+    expect(canSubmitSlotEdit(make({ text: "N/A reason" }))).toBe(true);
+  });
+});
+
 describe("canUndoRestore", () => {
-  const restored: ToBe = { revision: 1, docs: [makeDoc({ id: 1 })], na_slots: [{ code: "SOP-CF", slot_key: "document_relationships", reason: "r" }], wi_steps: [], outline_items: [] };
+  const restored: ToBe = { revision: 1, docs: [makeDoc({ id: 1 })], na_slots: [{ code: "SOP-CF", slot_key: "document_relationships", reason: "r" }], wi_steps: [], outline_items: [], outline_suggestions: {} };
   it("undoes only while the row is still an SOP and the slot has no N/A saved", () => {
     expect(canUndoRestore(restored, 1, "scope")).toBe(true);
     // 상위 칸만 N/A인 하위 칸 - 그 칸 자체에는 저장된 N/A가 없다
