@@ -1254,6 +1254,16 @@
   /* content-visibility는 칠 영역을 줄 안쪽으로 자르므로 조각 그림자(--shadow-1, 아래로 24px)가 잘리지 않게 자르는 선을 바깥으로 민다 */
   .pg[data-strips] .strip-row { display: flex; align-items: stretch; content-visibility: auto; overflow-clip-margin: 32px; contain-intrinsic-size: auto 46px; }
   .pg[data-strips] .strip-row:has(.strip[data-sel], .cut-anchor, :focus-visible) { content-visibility: visible; }
+  /* 조각 사이 틈도 화면 밖이면 그리지 않는다 - 틈마다 합치기 단추·아이콘이 들어, 1,300문단 문서에서 틈 1,300개가 스크롤·호버마다 배치·칠하기·히트 테스트를 다시 탔다.
+     올림 자리(::before, 위아래 10px)와 알약이 틈 밖으로 나오니 자르는 선을 12px 민다 - 줄이면 틈 가장자리에서 호버가 안 걸린다 */
+  .pg[data-strips] .strip-gap { content-visibility: auto; overflow-clip-margin: 12px; contain-intrinsic-size: auto 4px; }
+  /* 긴 문서의 카드 덩어리(Paper의 PaperChunk, 카드 40장) - 화면 밖 덩어리는 통째로 배치·칠하기를 건너뛴다. 줄·틈마다 건 것만으로는 그 수(1,300문단이면 약 2,650개)만큼
+     교차 계산과 배치가 남아 스크롤 한 프레임이 35ms였다(CPU 4배) → 덩어리째 16ms. 어림 높이 1840px = 카드 40장 × 줄 어림 46px.
+     고른 줄·나눌 선·포커스가 든 덩어리는 줄과 같이 늘 그린다 - 가두기(contain)가 안의 고정 위치 팝업 기준을 덩어리로 바꾼다.
+     덩어리 안의 줄·틈은 건너뛰지 않는다 - 두 겹이면 위로 굴릴 때 스크롤 고정이 가끔 놓쳐 화면이 1,000px 넘게 튀었다(한 겹이면 0) */
+  .pg[data-strips] .strip-chunk { content-visibility: auto; overflow-clip-margin: 32px; contain-intrinsic-size: auto 1840px; }
+  .pg[data-strips] .strip-chunk:has(.strip[data-sel], .cut-anchor, :focus-visible) { content-visibility: visible; }
+  .pg[data-strips] .strip-chunk :is(.strip-row, .strip-gap) { content-visibility: visible; }
   .pg[data-strips] .strip-row > .strip { flex: 1 1 0; min-width: 0; }
   /* 화면 밖 조각은 그리지 않는다(Unit 수천 개) - 고른 조각·나눌 선이 있는 조각은 팝업·윤곽이 잘리지 않게 뺀다 */
   .pg[data-strips] .strip { position: relative; min-width: 0; padding: 6px var(--pg-pad-r) 6px var(--pg-pad-l); background: var(--paper); border: 1px solid var(--line-2); border-left: 0; border-radius: 0 var(--r-1) var(--r-1) 0; box-shadow: var(--shadow-1); }
