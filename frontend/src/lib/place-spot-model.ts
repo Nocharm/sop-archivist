@@ -239,6 +239,11 @@ export function readSubjectParticle(number: string): "이" | "가" {
   return /[2459]$/.test(number) ? "가" : "이";
 }
 
+/** 한글 번호 뒤 목적격 조사 - 끝자리를 읽은 소리로(2 이 · 4 사 · 5 오 · 9 구는 "를", 나머지는 "을" - 0으로 끝나면 영 · 십 · 백 · 천도 받침이 있다) */
+export function readObjectParticle(number: string | number): "을" | "를" {
+  return /[2459]$/.test(String(number)) ? "를" : "을";
+}
+
 type Translate = (key: string, vars?: Record<string, string | number>) => string;
 
 /** 끌기 꼬리표 · 고른 곳 글 - "→ 칸 머리", 번호를 세는 칸은 "· 6.1.1 다음 (6.1.2가 된다)", 선언한 부록이 없는 9장은 알림을 붙인다 */

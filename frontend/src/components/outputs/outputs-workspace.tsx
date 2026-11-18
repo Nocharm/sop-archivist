@@ -77,9 +77,9 @@ import { useProgressiveList } from "@/lib/use-progressive-list";
 import { getAssignSourceHref, getNewDocumentsHref, getStageHref } from "@/lib/stages";
 import { buildTemplateTitles } from "@/lib/template-model";
 
-/** 요약 숫자 순서 - 확정률은 따로 % 글로. 목차 · 저절로 삭제는 목차 줄이 있을 때만(Excel B 요약과 같다) */
-const SUMMARY_ITEMS = ["old_rows", "assigned", "no_destination", "duplicate", "deleted", "toc_deleted", "moved", "new", "translated", "single_language"] as const;
-const OPTIONAL_SUMMARY_ITEMS: ReadonlySet<string> = new Set(["toc_deleted"]);
+/** 요약 숫자 순서 - 확정률은 따로 % 글로. 목차 · 저절로 삭제와 풀린 표에서 온 줄은 그런 줄이 있을 때만(Excel B 요약과 같다) */
+const SUMMARY_ITEMS = ["old_rows", "unwrapped_rows", "assigned", "no_destination", "duplicate", "deleted", "toc_deleted", "moved", "new", "translated", "single_language"] as const;
+const OPTIONAL_SUMMARY_ITEMS: ReadonlySet<string> = new Set(["toc_deleted", "unwrapped_rows"]);
 
 // 삭제·바깥 문서 이동처럼 자리가 없는 보낸 곳과 변경 종류는 코드값 대신 화면 문구로 보인다(모르는 값은 그대로)
 function labelCode(t: (key: string) => string, prefix: string, code: string): string {

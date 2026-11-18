@@ -97,6 +97,7 @@ SUMMARY_NAMES = (
     "Confirmed rate", "Single language",
 )
 TOC_SUMMARY_NAME = "Contents · auto-deleted"  # 목차 줄 수(summary.toc_deleted) — 목차 줄이 있는 묶음에만 싣는다
+UNWRAPPED_SUMMARY_NAME = "Lines from unwrapped tables"  # 풀린 표에서 온 줄 수(summary.unwrapped_rows) — 그런 줄이 있을 때만 싣는다
 INFO_NAMES = (
     "Bundle title", "Status", "Created by", "Created at (KST)", "Exported by", "Exported at (KST)", "Guideline version",
     "Synthetic data",
@@ -369,9 +370,11 @@ def _build_b_sheet(snap: BundleSnapshot) -> Sheet:
     )
     for name, value in zip(SUMMARY_NAMES, values, strict=True):
         rows.append(_make_row("plain", _pad([name, str(value)], width), numeric=() if isinstance(value, str) else (2,)))
-    # 목차 줄이 있을 때만 — 없는 묶음의 파일은 그대로다
+    # 목차 줄 · 풀린 표의 줄이 있을 때만 — 없는 묶음의 파일은 그대로다
     if summary.toc_deleted:
         rows.append(_make_row("plain", _pad([TOC_SUMMARY_NAME, str(summary.toc_deleted)], width), numeric=(2,)))
+    if summary.unwrapped_rows:
+        rows.append(_make_row("plain", _pad([UNWRAPPED_SUMMARY_NAME, str(summary.unwrapped_rows)], width), numeric=(2,)))
 
     rows.append(_make_row("plain", _pad([], width)))
     rows.append(_make_row("plain", _pad(["Old documents × destinations (count)"], width), bold=(1,)))

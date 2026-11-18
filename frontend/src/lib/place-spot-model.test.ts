@@ -2,23 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { ComposedItem, ComposedSection, OutlineKind } from "./api-sop";
 import { resolveGapDrop, resolveSlotDrop } from "./assign-drop-model";
-import {
-  buildGapBlocks,
-  buildPlaceSections,
-  findPlaceBlock,
-  formatGapLabel,
-  formatPlacement,
-  formatPlacePosition,
-  isSpotOpen,
-  listGapSpots,
-  PLACE_REFUSAL_KEYS,
-  readFixedSpot,
-  readGapKey,
-  readPlacePosition,
-  readSubjectParticle,
-  resolvePlaceSpot,
-  type Placement,
-} from "./place-spot-model";
+import { buildGapBlocks, buildPlaceSections, findPlaceBlock, formatGapLabel, formatPlacement, formatPlacePosition, isSpotOpen, listGapSpots, PLACE_REFUSAL_KEYS, readFixedSpot, readGapKey, readObjectParticle, readPlacePosition, readSubjectParticle, resolvePlaceSpot, type Placement } from "./place-spot-model";
 
 function makeItem(target_id: number, unit: number, number: string | null = null, lang: ComposedItem["lang"] = "en"): ComposedItem {
   return { target_id, kind: "sentence", lang, text: `t${target_id}`, status: "confirmed", change_type: null, number, number_style: number ? "numbered" : "bullet", indent_level: 0, meaning_key: null, source_unit_ids: [unit] };
@@ -176,6 +160,9 @@ describe("formatPlacement · refusal keys", () => {
   });
   it("picks the Korean particle by the last digit", () => {
     expect(["6.1.1", "6.1.2", "6.1.3", "6.1.4", "6.1.5", "6.1.9", "6.1.10"].map(readSubjectParticle)).toEqual(["이", "가", "이", "가", "가", "가", "이"]);
+  });
+  it("picks the object particle by how the last digit is read", () => {
+    expect([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 100].map(readObjectParticle)).toEqual(["을", "를", "을", "를", "를", "을", "을", "을", "를", "을", "를", "을"]);
   });
   it("reads only known fixed spots", () => {
     expect(readFixedSpot("toc")).toBe("toc");

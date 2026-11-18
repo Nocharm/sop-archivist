@@ -70,6 +70,7 @@ from app.sop.segment import (
     has_visible_char,
     is_band_heading,
     is_band_table,
+    is_number_cell_range,
     split_sentences,
 )
 from app.sop.spans import (
@@ -1034,10 +1035,51 @@ def _build_sentence_from(caption: Unit) -> _Draft:
     )
 
 
+async def _find_number_joins(
+    session: AsyncSession, extraction_id: ExtractionId, table_id: int, cells: Sequence[Unit]
+) -> list[tuple[Unit, Unit]]:
+    """푸는 표에서 (번호만 든 칸의 줄, 그 번호를 받을 줄) — 처음 쪼개기의 레이아웃 표 규칙(segment.build_unit_drafts)과 같다.
+
+    번호 칸("A", "7" — 추출 신호 cell)은 같은 행 다음 칸의 첫 줄 앞에 붙는다. 빈 칸은 건너뛰고, 다른 행·다른 표(안쪽 표)·표 밖
+    블록이 먼저 오거나 번호 칸이 잇달아 오면 그 번호 칸은 제 줄로 남는다(§11-7). 칸 줄을 사람이 나눠 칸에 줄이 둘 이상이면 번호 칸이 아니다.
+    """
+    if not cells:
+        return []
+    by_block: dict[int, list[Unit]] = defaultdict(list)
+    for cell in sorted(cells, key=_get_position):
+        by_block[cell.spans[0][0]].append(cell)
+    seqs = await session.execute(
+        select(func.min(SourceBlock.seq), func.max(SourceBlock.seq)).where(
+            SourceBlock.extraction_id == extraction_id, SourceBlock.table_id == table_id
+        )
+    )
+    first_seq, last_seq = seqs.one()
+    rows = await session.execute(
+        select(SourceBlock.id, SourceBlock.kind, SourceBlock.table_id, SourceBlock.row_index, SourceBlock.signals)
+        .where(SourceBlock.extraction_id == extraction_id, SourceBlock.seq.between(first_seq, last_seq))
+        .order_by(SourceBlock.seq)
+    )
+    joins: list[tuple[Unit, Unit]] = []
+    waiting: tuple[Unit, int | None] | None = None  # 번호 칸의 줄과 그 행
+    for block_id, kind, block_table_id, row_index, signals in rows.tuples():
+        is_same_row = kind == "table_cell" and block_table_id == table_id
+        if waiting is not None and not (is_same_row and row_index == waiting[1]):
+            waiting = None
+        own = by_block.get(block_id, []) if block_table_id == table_id else []
+        if len(own) == 1 and len(own[0].spans) == 1 and is_number_cell_range(signals, own[0].spans[0][1], own[0].spans[0][2]):
+            waiting = (own[0], row_index)
+        elif waiting is not None and own:
+            joins.append((waiting[0], own[0]))
+            waiting = None
+    return joins
+
+
 async def _plan_set_layout_table(
     session: AsyncSession, document_id: int, extraction_id: ExtractionId, op: SetLayoutTableOp
 ) -> _Change:
-    """데이터 → 레이아웃: 표·행 단위를 은퇴시키고 칸 문장의 묶음을 푼다. 레이아웃 → 데이터: 새 표 단위에 칸 문장을 묶는다.
+    """데이터 → 레이아웃: 표·행 단위를 은퇴시키고 칸 문장의 묶음을 푼다. 번호만 든 칸은 같은 행 다음 칸의 첫 줄과 한 줄이 되어
+    그 줄의 번호가 된다(_find_number_joins). 레이아웃 → 데이터: 새 표 단위에 칸 문장을 묶는다 — 번호를 받은 줄은 그대로 한 줄로
+    묶인다(표 안에서는 보이는 모양이 같다, 되돌리기는 Ctrl+Z가 처음 모양으로 돌린다).
 
     칸 안의 표는 따로 바뀐다(table_id가 다르다). 이미 그 표시면 바뀌는 게 없다. 띠 표는 단위 모양이 바뀐다(_plan_band_layout).
     """
@@ -1051,8 +1093,19 @@ async def _plan_set_layout_table(
         members = await _load_grouped_cells(session, [group.id for group in groups])
         # 레이아웃 표의 캡션은 보통 문장으로 돌아간다(명세 §3.1) — 같은 범위·언어의 묶이지 않은 문장 단위로 바꾼다
         captions = [member for member in members if member.kind == CAPTION_KIND]
-        change = _build_replacement([*groups, *captions], [_build_sentence_from(caption) for caption in captions])
-        change.regroup = {cell.id: (cell.group_unit_id, None) for cell in members if cell.kind != CAPTION_KIND}
+        cells = [member for member in members if member.kind != CAPTION_KIND]
+        joins = await _find_number_joins(session, extraction_id, table.id, cells)
+        joined = [unit for pair in joins for unit in pair]
+        blocks = await _load_unit_blocks(session, extraction_id, joined)
+        drafts = [_build_sentence_from(caption) for caption in captions]
+        for number, content in joins:
+            # 번호 칸 블록 전체가 그 줄 범위의 첫 조각 — 처음 쪼개기의 레이아웃 표와 같은 단위(§11-7), 묶음은 풀린다
+            draft = _build_draft(content, [*to_spans(number.spans), *to_spans(content.spans)], blocks, lang=content.lang)
+            draft.group_unit_id = None
+            drafts.append(draft)
+        change = _build_replacement([*groups, *captions, *joined], drafts)
+        joined_ids = {unit.id for unit in joined}
+        change.regroup = {cell.id: (cell.group_unit_id, None) for cell in cells if cell.id not in joined_ids}
     else:
         own, crossing = await _find_crossing_cells(session, extraction_id, table.id)
         if crossing:

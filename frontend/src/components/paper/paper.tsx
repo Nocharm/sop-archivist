@@ -28,6 +28,7 @@ import { getHiddenEnds, listFollowPreview } from "@/lib/number-model";
 import { getCardTops, getHiddenPrefixLength, getPairBrackets, getPillWidth, getSectionHeads, getTabWidths, getSectionLevel, getSectionPill, getVisibleSkip, sliceVisible, type PairBracket } from "@/lib/strip-pill-model";
 import { buildHeadingShiftGroups, readHeadingShiftHead, type HeadingShiftGroup } from "@/lib/heading-shift-model";
 import { buildTocBlock, shouldJoinTocCard } from "@/lib/toc-block-model";
+import { findUnwrapHeads, getRowUnwrapTable } from "@/lib/unwrap-model";
 
 /** 조각 끝 표시 - 단위의 것(UnitMark)에 그 조각이 놓인 블록의 경고를 더한다 */
 type PaperMark = UnitMark | "warn";
@@ -198,6 +199,8 @@ interface PaperProps {
     /** Assign - 제목에서 바꾼 조항 묶음마다 첫 줄 위에 머리 "[제목 → 문장] 제목 n개를 문장 짝 m개로 · ↺ 제목으로"(F8b).
      *  canRevert면 "↺ 제목으로"가 onRevert(묶음의 바꾼 문장들)로 편집 set_heading(제목으로)을 부른다 */
     headingShift?: { canRevert: boolean; busy: boolean; onRevert: (unitIds: number[]) => void };
+    /** Assign - 벗긴 표의 줄 묶음 머리에 "↺ 다시 표로"(F1). canRewrap이 거짓이면 머리 없이 왼쪽 세로선만. onRewrap(표 id)은 편집 set_layout_table(표로) */
+    unwrap?: { canRewrap: boolean; busy: boolean; onRewrap: (tableId: number) => void };
   };
   /** strips에서 고른 조각의 글 바로 아래 줄(확인·짝 풀기 등 단추) - 조각 상자가 펼쳐지며 밀려 내려오고, 고름이 옮겨 가면 접힌다 */
   renderUnitActions?: (unitId: number) => ReactNode;
@@ -484,6 +487,8 @@ export function Paper({
     );
     return getTabWidths(rows);
   }, [sections, cardTops, model]);
+  // 벗긴 표의 줄 덩이마다 첫 줄 - 그 줄 위에 묶음 머리("↺ 다시 표로")를 단다(F1). 부분마다 문서 순서로
+  const unwrapHeads = useMemo(() => new Map(sections.flatMap((section) => [...findUnwrapHeads(section.rows, model.unwrapped)])), [sections, model]);
   // 표 칸 안의 조각 줄 - 칸이 많은 표에서 고를 때마다 다시 펴지 않게
   const cellRows = useMemo(() => {
     const map = new Map<number, PaperRow[]>();
@@ -761,6 +766,8 @@ export function Paper({
           {index > 0 && <div className="cell-gap">{renderMerge(rows[index - 1], row)}</div>}
           <div
             className="cell-piece"
+            // 풀기 전환(useUnwrapMotion)이 칸 글을 벗긴 뒤의 문장 줄과 잇는 키 - 같은 블록 · 같은 시작 자리(readFlipKey)
+            data-flip-key={`${cell.id}:${row.parts[0].segments[0]?.start ?? 0}`}
             data-strip-unit={unit?.id}
             data-sel={unit !== undefined && unit.id === selectedId ? "" : undefined}
             data-partner={unit !== undefined && partnerIds?.has(unit.id) ? "" : undefined}
@@ -806,10 +813,11 @@ export function Paper({
   function renderTable(item: Extract<PaperItem, { type: "table" }>, head: ReactNode = null): ReactNode {
     return (
       <div className="grid grid-cols-[minmax(0,1fr)] gap-1">
-        {head}
+        {head !== null && <div data-unwrap-leave="">{head}</div>}
         {/* 가로 스크롤은 표만 - 조각 상자가 스크롤하면 위 테두리의 종류 표시가 잘린다 */}
         <div className="ptbl-scroll">
-          <table className="ptbl">
+          {/* 표 벗기기 · 다시 표로 때 표 선이 옅어지고(나타나고) 칸 글은 남아 미끄러진다(F10) */}
+          <table className="ptbl" data-unwrap-leave="frame">
             <tbody>
               {item.rows.map((row, rowIndex) => (
                 <tr key={rowIndex}>
@@ -891,8 +899,19 @@ export function Paper({
     const pills = unit && row.type !== "table" ? strips?.renderPills?.(unit.id) : null;
     const foot = note ? <div className="strip-foot">{note}</div> : null;
     const isHold = unit !== undefined && getTags({ ...unit, status: strips?.statusOf?.(unit.id) ?? unit.status }).hold;
+    // 벗긴 표의 줄은 왼쪽 세로선 하나(F1), 표 줄과 벗긴 줄은 풀기 전환이 바꾸는 곳(data-unwrap-scope)이다
+    const unwrapTable = getRowUnwrapTable(row, model.unwrapped);
+    const scopeTable = row.type === "table" ? row.item.table.id : unwrapTable;
     return (
-      <div key={row.key} className="strip-row" data-peek={isPeek ? "" : undefined}>
+      <div
+        key={row.key}
+        className="strip-row"
+        data-peek={isPeek ? "" : undefined}
+        data-unwrap-scope={scopeTable === null ? undefined : `t${scopeTable}`}
+        // 표 줄은 키를 달지 않는다 - 안의 칸 조각이 저마다 키를 단다(키 안에 키를 두지 않는다)
+        data-flip-key={row.type === "piece" ? readFlipKey(row, unit) : row.type === "figure" ? `f${row.block.id}` : undefined}
+      >
+        {unwrapTable !== null && renderRail(width)}
         {unit && renderLead(unit, section, width, bracket)}
         {!unit && <span className="strip-lead-gap" style={{ width: width + STRIP_LEAD_EXTRA }} />}
         <div
@@ -940,9 +959,12 @@ export function Paper({
 
   /** 두 조각 사이 틈 */
   function renderGap(prev: PaperRow, row: PaperRow): ReactNode {
+    const unwrapTable = getRowUnwrapTable(row, model.unwrapped);
+    const hasRail = unwrapTable !== null && unwrapTable === getRowUnwrapTable(prev, model.unwrapped);
     return (
       <div
         className="strip-gap"
+        data-unwrap-scope={hasRail ? `t${unwrapTable}` : undefined}
         // 카드 안 틈 - 둘째 줄부터의 바로 위는 늘 같은 카드다
         data-pair={cardTops.has(readRowUnitId(row) ?? -1) ? "" : undefined}
         data-near-selected={selectedBlock.has(readRowUnitId(prev) ?? -1) || selectedBlock.has(readRowUnitId(row) ?? -1) ? "" : undefined}
@@ -950,6 +972,7 @@ export function Paper({
         style={{ "--gap-tab": `${Math.max(readTabWidth(prev), readTabWidth(row)) + STRIP_LEAD_EXTRA}px` }}
         data-testid={`${testId}-gap-${row.key}`}
       >
+        {hasRail && renderRail(Math.min(readTabWidth(prev), readTabWidth(row)))}
         {/* 목차 블록 곁에는 합치기를 두지 않는다 - 목차 줄은 "목차 아님"으로 먼저 보통 줄로 돌린다 */}
         {!(hasToc && (isTocRow(prev, model.units) || isTocRow(row, model.units))) && renderMerge(prev, row)}
       </div>
@@ -1040,6 +1063,35 @@ export function Paper({
     );
   }
 
+  /** 풀기 전환의 키 - 줄에서 처음 보이는 조각의 블록과 시작 자리. 번호 칸으로 가 통째로 가려진 번호 칸 블록은 건너뛴다(표 안 칸 조각의 키와 같은 꼴) */
+  function readFlipKey(row: Extract<PaperRow, { type: "piece" }>, unit: ViewUnit | undefined): string {
+    const skip = readHiddenPrefix(row.parts[0].block, unit);
+    const part = row.parts.find((one, index) => index > 0 || !(skip > 0 && one.segments.every((segment) => segment.end <= skip))) ?? row.parts[0];
+    return `${part.block.id}:${part.segments[0]?.start ?? 0}`;
+  }
+
+  /** 벗긴 표 줄 묶음의 왼쪽 세로선 - 줄과 줄 사이 틈에도 그어 한 줄로 이어진다. 앞머리(번호 칸) 바로 뒤, 조각 왼쪽 테두리 앞 */
+  function renderRail(leadWidth: number): ReactNode {
+    return <span className="unwrap-rail" style={{ left: leadWidth + STRIP_LEAD_EXTRA - 4 }} data-unwrap-enter="frame" aria-hidden />;
+  }
+
+  /** 벗긴 표의 줄 덩이 머리 - "↺ 다시 표로" 단추 하나만(F1). 고칠 수 없으면 머리를 두지 않는다 */
+  function renderUnwrapHead(row: PaperRow): ReactNode {
+    const unwrap = strips?.unwrap;
+    const tableId = unwrapHeads.get(row.key);
+    if (!unwrap?.canRewrap || tableId === undefined) return null;
+    return (
+      <div className="strip-row unwrap-head-row" data-unwrap-scope={`t${tableId}`} data-unwrap-enter="" data-testid={`${testId}-unwrap-head-${tableId}`}>
+        <span className="strip-lead-gap" style={{ width: readTabWidth(row) + STRIP_LEAD_EXTRA }} />
+        <div className="unwrap-head">
+          <button type="button" className="btn toc-act" disabled={unwrap.busy} data-testid={`${testId}-rewrap-${tableId}`} onClick={() => unwrap.onRewrap(tableId)}>
+            {t("assign.unwrap.rewrap")}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   /** 제목 → 문장 묶음 머리(F8b) - 카드에 묶음의 첫 줄이 있으면 그 카드 위 한 줄. 원문 글자 없이 꼬리표·수·되돌리기만 */
   function renderShiftHead(rows: readonly PaperRow[]): ReactNode {
     const shift = strips?.headingShift;
@@ -1074,6 +1126,7 @@ export function Paper({
     const content = rows.map((row, index) => (
       <Fragment key={row.key}>
         {index > 0 && renderGap(rows[index - 1], row)}
+        {!isPeek && renderUnwrapHead(row)}
         {renderRow(row, isPeek)}
       </Fragment>
     ));
@@ -1098,7 +1151,7 @@ export function Paper({
       <PaperChunk
         key={group.cards[0][0].key}
         live={nearChunks === null || (group.index >= nearChunks.from && group.index <= nearChunks.to) || liveChunkIds.has(group.index)}
-        deps={[cardGroups, t, testId, dragBoxes, pickWholeBundle, strips?.toc?.open, strips?.toc?.selected, strips?.toc?.busy, strips?.toc?.canClear, shiftGroups, strips?.headingShift?.busy, strips?.headingShift?.canRevert]}
+        deps={[cardGroups, t, testId, dragBoxes, pickWholeBundle, strips?.toc?.open, strips?.toc?.selected, strips?.toc?.busy, strips?.toc?.canClear, shiftGroups, strips?.headingShift?.busy, strips?.headingShift?.canRevert, unwrapHeads, strips?.unwrap?.busy, strips?.unwrap?.canRewrap]}
         render={() => renderCards(group)}
       />
     ));

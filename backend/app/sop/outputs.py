@@ -34,7 +34,7 @@ from app.sop.constants import (
     OutlineKind,
 )
 from app.sop.groups import TABLE_UNIT_KINDS, build_group_ids, collapse_table_members
-from app.sop.numbering import SECTION_KIND, is_number_fixed, normalize_number, strip_number
+from app.sop.numbering import NUMBER_CELL, SECTION_KIND, is_number_fixed, normalize_number, strip_number
 from app.sop.outline import KIND_AUTO_LIST, DocOutline, get_parent_key, list_emitted_keys, number_outline
 from app.sop.output_labels import LABELS, OutputLabels
 from app.sop.output_rows import (
@@ -266,6 +266,7 @@ class Summary(BaseModel):
     confirmed_rate: float
     single_language: int
     toc_deleted: int = 0  # 목차 · 저절로 삭제 — 잡음 표시가 붙은 줄
+    unwrapped_rows: int = 0  # 풀린 표에서 온 줄 — 레이아웃 표(표 벗기기)의 칸 줄이 든 줄(MD 1 F1 · F11)
 
 
 # --- 공용 색인 ---
@@ -996,7 +997,9 @@ def _format_target_location(index: _Index, doc: TargetDocInfo, target: TargetInf
 
 
 def _format_place(index: _Index, unit: UnitInfo, labels: OutputLabels) -> str:
-    block = index.snap.blocks[unit.block_id]
+    # 번호 칸("A" · "7")을 앞 조각으로 받은 풀린 표의 줄은 내용 칸을 가리킨다 — 번호는 번호 칸의 몫이다(F3)
+    has_number_cell = unit.number_source == NUMBER_CELL and len(unit.spans) > 1
+    block = index.snap.blocks[unit.spans[1][0] if has_number_cell else unit.block_id]
     pieces = [labels.parts[block.part]] if block.part in labels.parts else []
     if unit.kind in TABLE_UNIT_KINDS:
         table_no = index.snap.tables[unit.table_id].table_index + 1  # 표·행 단위는 늘 원문 표를 가리킨다
@@ -1816,7 +1819,13 @@ def build_summary(snap: BundleSnapshot) -> Summary:
         confirmed_rate=round(confirmed / len(rows), 4) if rows else 0.0,
         single_language=count_single_language(snap),
         toc_deleted=toc_rows,
+        unwrapped_rows=sum(any(_is_unwrapped_cell(snap.units[unit_id]) for unit_id in meaning.unit_ids) for meaning in rows),
     )
+
+
+def _is_unwrapped_cell(unit: UnitInfo) -> bool:
+    """풀린 표(레이아웃 표)의 칸 줄인가 — 데이터 표의 칸 문장은 표·행 단위에 묶여 판단 줄이 아니다."""
+    return unit.kind == "cell_sentence" and unit.group_unit_id is None
 
 
 # --- 검토 요청 조건 재료 ---
