@@ -1814,6 +1814,11 @@
   .link-menu-note { display: inline-flex; align-items: center; gap: 5px; padding: 0 2px; font-size: var(--fs-micro); font-weight: 600; color: var(--st-hold-ink); }
   .link-menu-note::before, .dest-card-pending::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
   .link-menu .link-menu-unlink { color: var(--danger-ink); }
+  /* 놓인 New 문장 메뉴 - 항목마다 이름 한 줄 + 작은 설명. 바로 눌러야 하는 메뉴라 .link-menu처럼 늦게 보이지 않는다 */
+  .join-menu { position: fixed; z-index: 40; display: grid; gap: 2px; min-width: 232px; padding: 4px; border: 1px solid var(--line-2); border-radius: var(--r-3); background: var(--raised); box-shadow: var(--shadow-2); font-family: var(--font-ui); animation: cut-pop-in-fixed 160ms cubic-bezier(.16, 1, .3, 1) both; }
+  .join-menu-item { display: grid; gap: 1px; padding: 6px 8px; border-radius: var(--r-2); text-align: left; font-size: var(--fs-body); font-weight: 600; color: var(--ink); cursor: pointer; }
+  .join-menu-item em { font-size: var(--fs-micro); font-style: normal; font-weight: 400; color: var(--ink-3); }
+  .join-menu-item:hover, .join-menu-item:focus-visible { background: var(--accent-tint); outline: none; }
   @keyframes cut-pop-in-fixed { from { opacity: 0; visibility: hidden; translate: 0 -5px; } }
 
   /* New 원문 줄 - Old와 같은 종이 조각(왼쪽 탭 = 절 깊이 들여쓰기). 출처 칩(.new-srcs)은 본문 위 줄 - 연결선이 칩 사이(10px)·위 틈·칩 줄 아래 틈(6px)으로 들어와 칩 왼쪽에 닿는다(link-route-model). 점선 후보, 채움 고름, 위험색 출처 없음 */
@@ -2142,6 +2147,7 @@
   @media (prefers-reduced-motion: reduce) {
     .pane-zoom, .pane-divider::before, .dest-acc-chev, .tree-chev, .tree-act, .dest-card { transition: none; }
     .link-menu { animation: cut-pop-wait 1ms linear 380ms both; }
+    .join-menu { animation: none; }
   }
 }
 

@@ -12,6 +12,7 @@ import {
   buildViewsKey,
   findNextOpen,
   findSystemHold,
+  getDestinationId,
   getRowStep,
   hasDraftChange,
   hasRowLanguage,
@@ -20,6 +21,7 @@ import {
   listTreeRows,
   isSentenceUnit,
   isTranslationOf,
+  listJoinedTargetIds,
   listLinkLeftovers,
   listUnpairedKeys,
   readCheckKey,
@@ -990,5 +992,51 @@ describe("paragraph number stays in the number cell", () => {
     const target = { lang: "ko" as const, confirmed_text: "합성 필터를 확인한다.", change_type: null, status: "confirmed" as const };
     expect(readLinkDefault(target, [numbered])).toBe("as_is");
     expect(readLinkDefault({ ...target, confirmed_text: numbered.text }, [numbered])).toBe("as_is");
+  });
+});
+
+describe("join destination adds the row as a source of a placed sentence", () => {
+  // 안 쓴 문서에 놓인 새 문장(origin units)은 글·자리를 지금 그대로 되보내고 출처만 늘린다
+  const placed = makeTarget({ id: 60, target_doc_id: 6, slot_key: "scope", confirmed_text: "관리자는 설정 값을 바꾼다.", status: "confirmed", change_type: "as_is", source_unit_ids: [11], revision: 4 });
+  const first: Group["units"][number] = {
+    unit_id: 11, display_id: "OLD-5-001", document_id: 5, kind: "sentence", lang: "ko", text: "설정 값을 바꾼다.", group_id: null, cell_unit_ids: [],
+    decision: { disposition: "assigned", move_target_code: "", reason: "", status: "confirmed", hold_reason: "", confirmed_by: null, confirmed_at: null, revision: 3 },
+  };
+  const join: Destination = { kind: "join", docId: 6, targetId: 60 };
+  const context = (targets: GroupTarget[]) => ({ units: ONE_UNIT, group: { units: [first], targets }, tables: new Map() });
+
+  it("sends the placed sentence with both sources and no text or change type", () => {
+    const body = buildGroupSave(makeDraft({ destination: join }), context([placed]), "confirm");
+    expect(body.targets).toEqual([expect.objectContaining({ id: 60, revision: 4, source_unit_ids: [11, 10], target_doc_id: 6, slot_key: "scope" })]);
+    expect(body.targets[0]).not.toHaveProperty("text");
+    expect(body.targets[0]).not.toHaveProperty("change_type");
+    expect(body.units).toEqual([expect.objectContaining({ unit_id: 10, disposition: "assigned" }), { unit_id: 11, revision: 3, disposition: "assigned", move_target_code: "", reason: "" }]);
+  });
+
+  it("removes the row's own earlier sentence and keeps unrelated ones", () => {
+    const own = makeTarget({ id: 80, source_unit_ids: [10] });
+    const body = buildGroupSave(makeDraft({ destination: join }), context([placed, own]), "confirm");
+    expect(body.removed_target_ids).toEqual([80]);
+    expect(body.targets.map((target) => target.id)).toEqual([60]);
+  });
+
+  it("does not repeat a source that is already there", () => {
+    const already = makeTarget({ ...placed, source_unit_ids: [11, 10] });
+    const body = buildGroupSave(makeDraft({ destination: join }), context([already]), "confirm");
+    expect(body.targets[0].source_unit_ids).toEqual([11, 10]);
+  });
+
+  it("leaves the other language of a pair open like a link does", () => {
+    const pairUnits = [ONE_UNIT[0], { id: 20, kind: "sentence", lang: "en" as const, text: "Source", revision: 2 }];
+    const body = buildGroupSave(makeDraft({ destination: join }), { units: pairUnits, group: { units: [first, { ...first, unit_id: 20, lang: "en", decision: { ...first.decision, disposition: "unassigned", status: "unassigned" } }], targets: [placed] }, tables: new Map() }, "confirm");
+    expect(body.units.map((unit) => unit.unit_id)).toEqual([10, 11]);
+    expect(body.release_unit_ids).toEqual([20]);
+  });
+
+  it("has its own destination id and lists the joined target", () => {
+    expect(getDestinationId(join)).toBe("join:60");
+    expect(listJoinedTargetIds(join)).toEqual([60]);
+    expect(listJoinedTargetIds({ kind: "link", targetIds: [3, 4] })).toEqual([3, 4]);
+    expect(listJoinedTargetIds(SCOPE)).toEqual([]);
   });
 });

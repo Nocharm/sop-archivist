@@ -8912,6 +8912,118 @@ await runStep("assign: drag an Old piece into a WI step, on its row in the All l
   check("the step's rows are cleared and the WI is removed", stepUnits.every((unit) => left.get(unit.unit_id) === "unassigned") && removed.ok(), `${removed.status()} ${JSON.stringify(stepUnits.map((unit) => left.get(unit.unit_id)))}`);
 });
 
+// 놓인 New 문장 잇기(MD 2 S3의 일부) - 아직 안 쓴 문서에 놓인 확정 문장을 누르면 작은 메뉴, "이 문장에 잇기"는 고르기만 하고 ↵가 저장한다(Old 2줄 → New 1문장).
+// 준비로 한 줄을 API로 5장 범주에 확정해 두고(문장 a), 다른 미배정 줄(b)을 골라 그 문장에 잇는다. 뒷정리로 두 줄의 배정을 지운다
+await runStep("assign: join a picked Old line to a placed New sentence of an unwritten document, Esc closes the menu, Enter saves it as a merged sentence", {}, async ({ page, takeShot }) => {
+  const headers = { "X-Dev-User": "qa.member" };
+  const api = `${BASE}/api/bundles/${halfBundleId}`;
+  const getJson = async (path) => (await page.request.get(`${api}${path}`, { headers })).json();
+  const readUnits = async () => (await getJson("/units?limit=1000")).items;
+  const sop = (await getJson("/tobe")).docs.find((doc) => doc.entrance === "assign" && doc.doc_type === "sop");
+  const place = sop ? (await getJson(`/outputs/c/docs/${sop.id}?lang=en`)).sections.find((section) => section.location_key.startsWith("general_requirements.") && section.na_reason === null) : null;
+  // 같은 Old 문서의 짝 없는 한글 미배정 문장 둘 - a는 먼저 놓고 b를 잇는다
+  const loose = (await readUnits()).filter((unit) => unit.kind === "sentence" && unit.lang === "ko" && unit.status === "unassigned" && unit.decision.disposition === "unassigned" && unit.pair_id === null);
+  const sameDoc = loose.filter((unit) => unit.document_id === loose[0]?.document_id);
+  const [unitA, unitB] = sameDoc;
+  check("the bundle has an SOP category and two loose Korean Old sentences", Boolean(sop && place && unitA && unitB), `${sop?.code} ${place?.location_key} ${unitA?.unit_id} ${unitB?.unit_id}`);
+  if (!sop || !place || !unitA || !unitB) return;
+  const savedA = await page.request.post(`${api}/groups/save`, {
+    headers,
+    data: {
+      action: "confirm",
+      hold_reason: "",
+      units: [{ unit_id: unitA.unit_id, revision: unitA.decision.revision, disposition: "assigned", move_target_code: "", reason: "" }],
+      targets: [{ key: "u", target_doc_id: sop.id, slot_key: place.location_key, kind: "sentence", source_unit_ids: [unitA.unit_id] }],
+      removed_target_ids: [],
+      release_unit_ids: [],
+    },
+  });
+  const placed = (await savedA.json()).targets?.[0];
+  check("one Old sentence is placed in the SOP first", savedA.ok() && placed !== undefined, String(savedA.status()));
+  if (!placed) return;
+  const readSources = async () => (await (await page.request.get(`${api}/groups/by-target/${placed.id}`, { headers })).json()).targets.find((target) => target.id === placed.id);
+  let saveRequests = 0;
+  page.on("request", (request) => {
+    if (request.url().includes("/groups/save") && request.method() === "POST") saveRequests += 1;
+  });
+  await page.goto(`${BASE}/bundles/${halfBundleId}/assign`);
+  await wait(page, "assign-bar");
+  const pieceB = page.locator(`[data-testid="assign-paper-piece-${unitB.unit_id}"]`);
+  await page.locator('[data-pane="old"] .strip[data-strip-unit]').first().waitFor({ timeout: T });
+  if ((await pieceB.count()) === 0) {
+    await page.locator('[data-testid="assign-old-doc"]').click();
+    await page.locator(`[data-testid="assign-old-doc-option-${unitB.document_id}"]`).click();
+  }
+  await pieceB.waitFor({ timeout: T });
+  const pointB = await page.locator(`[data-testid="assign-paper-unit-${unitB.unit_id}"]`).first().evaluate((el) => {
+    el.scrollIntoView({ block: "center" });
+    const rect = el.getClientRects()[0];
+    return { x: rect.left + Math.min(24, rect.width / 2), y: rect.top + rect.height / 2 };
+  });
+  await page.mouse.click(pointB.x, pointB.y);
+  await wait(page, "assign-new");
+  if ((await page.locator('[data-testid="assign-new"]').getAttribute("data-doc")) !== String(sop.id)) {
+    await page.locator('[data-testid="assign-new-doc"]').click();
+    await page.locator(`[data-testid="assign-new-doc-option-${sop.id}"]`).click();
+  }
+  const joinLine = page.locator(`[data-testid="assign-new-join-${placed.id}"]`);
+  await joinLine.waitFor({ timeout: T });
+  check("with an Old line picked the placed sentence is a button", (await joinLine.evaluate((el) => el.tagName)) === "BUTTON");
+
+  // 메뉴 - 두 항목, Esc로 닫힘
+  await joinLine.click();
+  const menu = page.locator('[data-testid="assign-join-menu"]');
+  await menu.waitFor({ timeout: T });
+  check("the small menu offers joining and placing after", (await page.locator('[data-testid="assign-join-menu-join"]').count()) === 1 && (await page.locator('[data-testid="assign-join-menu-after"]').count()) === 1);
+  check("the join item says two Old lines make one New sentence", ((await page.locator('[data-testid="assign-join-menu-join"]').textContent()) ?? "").includes("2 Old lines → 1 New sentence"), await page.locator('[data-testid="assign-join-menu-join"]').textContent());
+  await takeShot("sop-assign-join-menu.png");
+  await page.keyboard.press("Escape");
+  await menu.waitFor({ state: "detached", timeout: T });
+  check("Esc closes the menu and saves nothing", saveRequests === 0);
+  await joinLine.click();
+  await menu.waitFor({ timeout: T });
+  await page.mouse.click(5, 5);
+  await menu.waitFor({ state: "detached", timeout: T });
+  check("clicking outside closes the menu too", saveRequests === 0);
+
+  // 이 문장에 잇기 - 고른 곳 상자에 그 문장과 글, 저장은 아직 없다
+  await joinLine.click();
+  await menu.waitFor({ timeout: T });
+  await page.locator('[data-testid="assign-join-menu-join"]').click();
+  await wait(page, "assign-chosen-join");
+  const chosen = ((await page.locator('[data-testid="assign-chosen-join"]').textContent()) ?? "").trim();
+  const chosenNote = ((await page.locator('[data-testid="assign-chosen-join-note"]').textContent()) ?? "").trim();
+  check("the picked-place box shows the sentence and the join note", chosen.includes(sop.code) && chosenNote === "Link to this sentence (2 Old lines → 1 New sentence)", `${chosen} | ${chosenNote}`);
+  check("picking it saves nothing yet and Confirm has the focus", saveRequests === 0 && (await page.evaluate(() => document.activeElement?.getAttribute("data-testid"))) === "assign-primary");
+  check("the joined sentence is drawn as picked", (await joinLine.getAttribute("aria-pressed")) === "true");
+
+  // ↵로 확정 - 그 문장에 출처가 둘, 글은 그대로, 종류는 합침
+  const saveRequest = page.waitForRequest((request) => request.url().includes("/groups/save") && request.method() === "POST", { timeout: T });
+  const saved = page.waitForResponse((response) => response.url().includes("/groups/save"), { timeout: T });
+  await page.keyboard.press("Enter");
+  const body = (await saveRequest).postDataJSON();
+  await saved;
+  await page.waitForLoadState("networkidle");
+  const sent = body.targets.find((target) => target.id === placed.id);
+  check("the save sends the placed sentence with both Old units and no new text", sent !== undefined && JSON.stringify(sent.source_unit_ids) === JSON.stringify([unitA.unit_id, unitB.unit_id]) && sent.text === undefined, JSON.stringify(sent));
+  const joined = await readSources();
+  check("the server keeps one merged sentence with both sources", joined?.change_type === "merged" && joined.source_unit_ids.length === 2 && joined.confirmed_text === placed.confirmed_text, JSON.stringify(joined));
+  check("the placed line keeps its place and number after saving", (await page.locator(`[data-testid="assign-new-${placed.id}"]`).count()) === 1);
+
+  // 되돌리기 - 출처가 다시 하나
+  await page.keyboard.press("ControlOrMeta+z");
+  for (let step = 0; step < 30 && (await readSources())?.source_unit_ids.length !== 1; step += 1) await page.waitForTimeout(300);
+  check("Ctrl+Z takes the second source back", (await readSources())?.source_unit_ids.length === 1);
+
+  // 뒷정리 - 준비로 놓은 줄과 b의 배정을 지운다
+  for (const unit of [unitA, unitB]) {
+    const now = (await readUnits()).find((item) => item.unit_id === unit.unit_id);
+    await page.request.post(`${api}/decisions/clear`, { headers, data: { unit_id: unit.unit_id, revision: now.decision.revision } });
+  }
+  const left = new Map((await readUnits()).map((unit) => [unit.unit_id, unit.status]));
+  check("both lines are unassigned again", [unitA, unitB].every((unit) => left.get(unit.unit_id) === "unassigned"));
+});
+
 // Pair view(끌어다 놓기 4걸음) - 한/영 따로 문서(합성 OLD-3)를 KO | EN 두 칸으로 펴고 끄면 보던 화면으로 돌아온다.
 // 검증 스택에는 임베딩이 없어 이 문서에 진짜 제안 짝을 만들 길이 없고, 합성 OLD-3에는 언어 없는 Unit이 없다 - 그 둘은 원문 보기 응답을 브라우저에서 바꿔(page.route) 그린다.
 // 자료는 API로 만들고 끝에 푼다. 이 뒤 단계는 이 묶음의 배정·짝을 읽지 않는다
