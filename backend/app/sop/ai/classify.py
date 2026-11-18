@@ -131,7 +131,8 @@ async def _load_scope_rows(
         )
         .join(UnitDecision, UnitDecision.unit_id == Unit.id)
         .outerjoin(AiSuggestion, AiSuggestion.id == UnitDecision.suggestion_id)
-        .where(Unit.extraction_id.in_(list(extraction_ids)), Unit.status == UNIT_ACTIVE)
+        # 잡음 표시 줄(목차)은 판단 줄이 아니다 — AI도 칸을 고르지 않는다
+        .where(Unit.extraction_id.in_(list(extraction_ids)), Unit.status == UNIT_ACTIVE, Unit.noise_kind.is_(None))
     )
     if unit_ids:
         rows = await select_in_chunks(session, lambda chunk: statement.where(Unit.id.in_(chunk)), unit_ids)

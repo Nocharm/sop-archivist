@@ -212,6 +212,7 @@ import { useAiPrepare } from "@/lib/use-ai-prepare";
 import { useDelayedFlag } from "@/lib/use-delayed-flag";
 import { useCutLine } from "@/lib/use-cut-line";
 import { countRefLookups, isRefPending, pickRefUnit, readRefAdvice } from "@/lib/ref-model";
+import { buildNavKeys, buildTocBlock, describeTocParts, listTocBlocks, readTocNavKey, toggleTocOpen, toTocNavKey } from "@/lib/toc-block-model";
 import { useEquisPolling } from "@/lib/use-equis-polling";
 import { useLoaded } from "@/lib/use-loaded";
 import { usePaneSlide } from "@/lib/use-pane-slide";
@@ -463,6 +464,20 @@ export default function AssignPage() {
   const isSolo = solo !== null && !solo.inPlace && row === null;
   const isNewEdit = solo !== null && solo.inPlace && row === null;
   const hasSolo = isSolo || isNewEdit;
+  // 목차 블록 고름(MD 1 F6 · F12) - 배정 줄(row)이 아니라 남은 수·필터 수에 들지 않는다. 줄이나 New 문서를 고르면 가려진다.
+  // unitId가 null이면 블록 전체, 아니면 펼친 블록의 줄 하나. 펼침은 블록 키(첫 줄 단위 id)로 이 화면을 연 동안만 기억한다(처음엔 접힘)
+  const [tocSel, setTocSel] = useState<{ docId: number; key: number; unitId: number | null } | null>(null);
+  const [tocOpen, setTocOpen] = useState<ReadonlySet<number>>(() => new Set());
+  const tocPick = mode === "old" && row === null && !hasSolo ? tocSel : null;
+  // 줄 이동(↑↓·J/K) 순서에 끼우는 목차 블록 - 문서 순 → 원문 순
+  const tocBlocks = useMemo(() => (viewList ?? []).flatMap((view) => listTocBlocks(view.units).map((block) => ({ ...block, docId: view.document.id }))), [viewList]);
+  const navKeys = useMemo(() => {
+    const position = new Map<number, readonly [number, number, number]>();
+    (viewList ?? []).forEach((view, docAt) => {
+      for (const unit of view.units) position.set(unit.id, [docAt, unit.pos_seq, unit.spans[0]?.[1] ?? 0]);
+    });
+    return buildNavKeys(rows, tocBlocks, position);
+  }, [viewList, rows, tocBlocks]);
   const [soloKey, setSoloKey] = useState(0);
   const soloLoad = useLoaded<DocumentView | null>(() => (solo !== null ? getDocumentView(bundleId, solo.docId) : Promise.resolve(null)), `${bundleId}:${solo?.docId ?? ""}:${soloKey}`);
   // 편집 뒤 고를 문장 - 그 문서의 원문 보기를 다시 받으면 고른다(follow의 New 문서판)
@@ -915,9 +930,26 @@ export default function AssignPage() {
   // 양 단에서 New 문장을 다듬는 중이면 그 New 문서의 문장이다(shapeView)
   const pairSource = pairFrom !== null && pairFrom.docId === shapeView?.document.id ? (shapeModel?.units.get(pairFrom.unitId) ?? null) : null;
 
+  /** 목차 블록(unitId null) 또는 그 줄 하나를 고른다 - 배정 줄 고름을 놓고 그 Old 문서를 연다. 결정 칸이 목차 칸(F12 G2 · G3)을 보인다 */
+  function selectToc(docId: number, key: number, unitId: number | null, scroll = true) {
+    setMode("old");
+    setSelectedKey(null);
+    setSolo(null);
+    setChecked(new Set());
+    setMenu(null);
+    setCtxMenu(null);
+    setCarvePick(null);
+    setCutUnitId(null);
+    setRefEntryId(null);
+    setManualOldDoc(docId);
+    setTocSel({ docId, key, unitId });
+    if (scroll) requestAnimationFrame(() => document.querySelector(`[data-testid="assign-paper-toc-${key}"]`)?.scrollIntoView({ block: "nearest" }));
+  }
+
   function selectRow(key: string, scroll = true) {
     setMode("old");
     setCarvePick(null);
+    setTocSel(null);
     setSelectedKey(key);
     setMenu(null);
     setCtxMenu(null);
@@ -1022,8 +1054,15 @@ export default function AssignPage() {
       }
       return;
     }
-    const next = stepInList(rows.map((item) => item.key), listKeys, activeKey, step);
-    if (next !== null) selectRow(next);
+    // 목차 블록도 한 자리로 밟는다(All에서만 - 다른 필터는 상태로 거른 줄 목록이다). 남은 수·필터 수에는 들지 않는다
+    const listed = new Set(listKeys);
+    const walk = filter === "all" ? navKeys.filter((key) => readTocNavKey(key) !== null || listed.has(key)) : listKeys;
+    const current = tocPick !== null ? toTocNavKey(tocPick.key) : activeKey;
+    const next = stepInList(navKeys, walk, current, step);
+    const tocKey = next === null ? null : readTocNavKey(next);
+    const block = tocKey === null ? undefined : tocBlocks.find((item) => item.key === tocKey);
+    if (block) selectToc(block.docId, block.key, null);
+    else if (next !== null && tocKey === null) selectRow(next);
   }
 
   // --- Old 문장 고치기(우클릭 메뉴·두 번 누르기) - Split의 편집을 그대로 부른다. 판단이 없는 문장만(모델이 막는다) ---
@@ -1240,6 +1279,15 @@ export default function AssignPage() {
       if (!isAsking) reloadAfterEdit();
       setBusy(false);
     }
+  }
+
+  /** 목차 아님(줄 하나) · 모두 목차 아님(블록 전체) - 표시만 비우는 편집. 목차 고름을 놓고, 다시 받은 뒤 돌아온 첫 줄을 보통 줄로 고른다(F12 G4) */
+  function clearToc(unitIds: number[]) {
+    if (unitIds.length === 0) return;
+    setTocSel(null);
+    // 블록 전체(또는 첫 줄)를 돌리면 그 키의 블록이 없어진다 - 되돌려 다시 생긴 블록은 처음처럼 접혀 있다
+    setTocOpen((open) => new Set([...open].filter((key) => !unitIds.includes(key))));
+    void runUnitEdit({ type: "clear_noise", unit_ids: unitIds }, t(unitIds.length > 1 ? "assign.toc.didClearAll" : "assign.toc.didClear"), unitIds[0]);
   }
 
   /** 한/영 짝을 맺거나 푼다 - 편집 기록(되돌리기)에는 들어가지 않는다. 반대 동작이 같은 메뉴에 있다 */
@@ -3320,6 +3368,91 @@ export default function AssignPage() {
     );
   }
 
+  /** 목차 칸(F12 G2 · G3) - 머리는 상태 칩 없이 "목차 · n줄"(블록)·"목차 · n행"(줄), 1 다듬기는 목차 줄과 그 단추, 2 보낼 곳은 추천 대신 까닭 글,
+   *  3 결정은 "따로 할 일 없음"과 꺼진 Confirm(Hold · Unassign은 그리지 않는다). 용지 블록 머리의 손잡이는 표가 적은 것만 여기 둔다 */
+  function renderTocPanel(pick: { docId: number; key: number; unitId: number | null }): ReactNode {
+    const view = viewOf(pick.docId);
+    const info = tocBlocks.find((item) => item.docId === pick.docId && item.key === pick.key);
+    if (!view || !info) return null;
+    const unitById = new Map(view.units.map((unit) => [unit.id, unit]));
+    const units = info.unitIds.flatMap((id) => unitById.get(id) ?? []);
+    const block = buildTocBlock(units);
+    if (!block) return null;
+    const lineAt = pick.unitId === null ? -1 : block.unitIds.indexOf(pick.unitId);
+    const line = lineAt >= 0 ? block.lines[lineAt] : null;
+    const isOpen = tocOpen.has(block.key);
+    const canClear = canEdit && !isNewEdit;
+    const parts = describeTocParts(units.map((unit) => unit.lang))
+      .map((part) => t(`assign.toc.part.${part.part}`, { n: part.n }))
+      .join(" · ");
+    return (
+      <div className="assign-side-body" data-testid="assign-toc-panel">
+        <div className="assign-side-head">
+          <div className="flex items-center gap-2">
+            <span className="min-w-0 flex-1 font-mono text-sm font-semibold" data-testid="assign-toc-head">
+              {line ? t("assign.toc.panelLine", { n: lineAt + 1 }) : t("assign.toc.panelBlock", { n: block.counts.total })}
+            </span>
+            <span className="flex flex-none gap-0.5">
+              <Tooltip label={t("assign.rowPrev")} align="end">
+                <button type="button" className="btn ghost icon h-6 w-6" aria-label={t("assign.rowPrev")} data-testid="assign-row-prev" onClick={() => moveRow(-1)}>
+                  <ArrowUp size={13} strokeWidth={1.6} aria-hidden />
+                </button>
+              </Tooltip>
+              <Tooltip label={t("assign.rowNext")} align="end">
+                <button type="button" className="btn ghost icon h-6 w-6" aria-label={t("assign.rowNext")} data-testid="assign-row-next" onClick={() => moveRow(1)}>
+                  <ArrowDown size={13} strokeWidth={1.6} aria-hidden />
+                </button>
+              </Tooltip>
+            </span>
+          </div>
+        </div>
+        <div className="assign-pick" data-testid="assign-pick">
+          {renderStep(1, t("assign.step.shape"))}
+          <div className="toc-panel-shape" data-testid="assign-toc-shape">
+            <p className="toc-panel-line">
+              <span className="toc-tag">{t("assign.toc.tag")}</span>
+              <span className="min-w-0" style={line ? { fontFamily: "var(--font-source)" } : undefined}>
+                {line ? line.text : t("assign.toc.summary", { n: block.counts.total, parts, state: t(isOpen ? "assign.toc.stateOpen" : "assign.toc.stateFolded") })}
+              </span>
+            </p>
+            <div className="flex flex-wrap gap-1.5">
+              {line === null && (
+                <button type="button" className="btn h-7" aria-expanded={isOpen} data-testid="assign-toc-toggle" onClick={() => setTocOpen((open) => toggleTocOpen(open, block.key))}>
+                  {t(isOpen ? "assign.toc.collapse" : "assign.toc.expand")}
+                </button>
+              )}
+              {line === null && canClear && (
+                <button type="button" className="btn h-7" disabled={busy} data-testid="assign-toc-all" onClick={() => clearToc(block.unitIds)}>
+                  {t("assign.toc.allNot")}
+                </button>
+              )}
+              {line !== null && canClear && (
+                <button type="button" className="btn h-7" disabled={busy} data-testid="assign-toc-not" onClick={() => clearToc([line.unitId])}>
+                  {t("assign.toc.notThis")}
+                </button>
+              )}
+            </div>
+          </div>
+          {renderStep(2, t("assign.step.pick"))}
+          <p className="chosen-box is-empty mx-[var(--pad)] mb-[var(--pad)]" data-testid="assign-toc-why">
+            {line ? t("assign.toc.lineWhy", { n: block.counts.total - 1 }) : t("assign.toc.blockWhy")}
+          </p>
+        </div>
+        <div className="assign-decide" data-testid="assign-decide">
+          <div className="assign-decide-body">
+            {renderStep(3, t("assign.step.decide"))}
+            <p className="text-xs text-st-hold" role="status" data-testid="assign-toc-nothing">
+              {t("assign.toc.nothing")}
+            </p>
+          </div>
+          <button type="button" className="btn pri assign-confirm" data-testid="assign-primary" disabled>
+            {t("classify.confirm")} <kbd>↵</kbd>
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   function renderSideBody() {
     if (mode === "unsourced") {
       const target = writtenMap.get(focusNew ?? -1);
@@ -3407,6 +3540,8 @@ export default function AssignPage() {
         </div>
       );
     }
+    const tocPanel = !row && tocPick ? renderTocPanel(tocPick) : null;
+    if (tocPanel) return tocPanel;
     if (!row) {
       return (
         <div className="assign-side-body">
@@ -3975,6 +4110,22 @@ export default function AssignPage() {
                 renderNote={placeOf}
                 // 삭제·이동한 묶음, 이미 쓴 New 문서(혼자 연 문서)의 묶음과 그 문서에 이은 묶음(입구 2 - 캡션을 그 문서가 정한다)은 캡션이 필요 없다
                 isCaptionNeeded={(unitId, hasCaption) => isBundleCaptionNeeded(unitMap.get(unitId), hasCaption, isLinkedToWritten(unitId))}
+                // 목차 줄은 Old 문서에서만 흐린 블록으로 접는다(MD 1 F6). 목차 아님은 다듬는 원문이 그 Old 문서일 때만 - New 문장을 고치는 동안은 접고 펴기만
+                toc={
+                  isSolo
+                    ? undefined
+                    : {
+                        canClear: canEdit && !isNewEdit,
+                        busy,
+                        onClear: clearToc,
+                        open: tocOpen,
+                        selected: tocPick !== null && tocPick.docId === oldView?.document.id ? tocPick : null,
+                        onToggle: (key) => setTocOpen((open) => toggleTocOpen(open, key)),
+                        onPick: (key, unitId) => {
+                          if (oldView) selectToc(oldView.document.id, key, unitId, false);
+                        },
+                      }
+                }
                 renderPills={(unitId) => {
                   const targets = linkedTargets.get(unitId);
                   return targets ? <LinkBadge unitId={unitId} targets={targets} currentDocId={newDocId} onJump={(_unitId, targetId) => showInNew(targetId)} /> : null;

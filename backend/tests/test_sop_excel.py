@@ -635,7 +635,7 @@ def test_preview_a_rows_carry_unit_group_tone_and_toc(client: TestClient) -> Non
     assert all(row["group_id"] == (row["cells"][column["Group ID"]]["text"] or None) for row in data)
     duplicate = [row for row in data if row["unit_id"] == find_unit(fx.old1, DUPLICATE)["id"]]
     assert len(duplicate) == 2 and len({row["group_id"] for row in duplicate}) == 1 and duplicate[0]["group_id"]
-    assert not any(row["toc"] for row in a["rows"])  # 목차 표시는 뒤 브랜치에서 생긴다
+    assert not any(row["toc"] for row in a["rows"])  # 목차가 없는 묶음 — 목차 줄은 test_sop_toc가 본다
 
 
 def test_preview_only_fields_follow_continued_rows_and_stay_out_of_the_file(client: TestClient) -> None:

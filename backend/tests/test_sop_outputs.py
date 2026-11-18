@@ -1238,7 +1238,7 @@ def test_composed_doc_rejects_other_bundles_and_outsiders(client: TestClient) ->
 
 SUMMARY_KEYS = (
     "old_rows", "assigned", "no_destination", "duplicate", "deleted", "moved", "new", "translated", "confirmed_rate",
-    "single_language",
+    "single_language", "toc_deleted",
 )
 # 줄 기준 — 짝이 없어 단위마다 한 줄이고 표는 칸 넷을 묶어 한 줄이다: OLD-1 10줄(그림 보류·영어 미배정) + OLD-2 5줄.
 # 한 언어 글은 두 언어 문서(ko_en_separate)의 짝 없는 문장·제목 13개와 보류(처분은 배정)한 그림의 한글 캡션 하나다(번역 새 문장이 없다)
@@ -1255,7 +1255,7 @@ def test_summary_numbers(client: TestClient) -> None:
     # 한 벌 — 판 키가 없다. 줄 15(진행 숫자와 같은 줄), 확정 13(그림 보류·영어 미배정), 배정은 삭제·이동을 포함한다
     assert summary == {
         "old_rows": 15, "assigned": 14, "no_destination": 1, "duplicate": 1, "deleted": 5, "moved": 1, "new": 1,
-        "translated": 0, "confirmed_rate": 0.8667, "single_language": 14,
+        "translated": 0, "confirmed_rate": 0.8667, "single_language": 14, "toc_deleted": 0,
     }
     assert set(summary) == set(SUMMARY_KEYS)
     assert summary["old_rows"] == progress["total"]

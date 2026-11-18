@@ -19,7 +19,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 # backend/ — 배포 런타임과 같은 Python 3.11 venv
 python3.11 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
 .venv/bin/python -m scripts.reset_db        # 로컬 데모 DB(backend/dev.db). 서버 실행 금지
-.venv/bin/python -m scripts.seed_sop_demo   # 합성 SOP 묶음 4개 + 지도용 2개(로컬 전용, AUTH_MODE=dev). 극단 자료는 seed_sop_worst
+.venv/bin/python -m scripts.seed_sop_demo   # 합성 SOP 묶음 4개 + 지도용 2개 + 목차 1개(로컬 전용, AUTH_MODE=dev). 극단 자료는 seed_sop_worst
 AUTH_MODE=dev DEV_ENFORCE_PERMISSIONS=true APP_SYSADMINS=dev.admin .venv/bin/uvicorn app.main:app --reload --port 8777
 .venv/bin/python -m pytest tests/ -q -n auto   # 작업자마다 DB 파일이 따로. 한 파일만 볼 때는 -n 없이
 .venv/bin/ruff check app/ tests/

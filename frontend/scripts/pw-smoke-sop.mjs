@@ -1,5 +1,5 @@
 // SOP 화면 스모크(Playwright + 시스템 Chrome) - 묶음 목록, 개요, 단계 이동(레일·상단 탭), 배치 메뉴, 첫 페인트 전 설정.
-// 전제: backend/에서 reset_db → seed_sop_demo(합성 묶음 4개 + 지도용 2개) 직후, backend 8777 + frontend 3777. 고친 값은 시나리오 안에서 되돌린다.
+// 전제: backend/에서 reset_db → seed_sop_demo(합성 묶음 4개 + 지도용 2개 + 목차 1개) 직후, backend 8777 + frontend 3777. 고친 값은 시나리오 안에서 되돌린다.
 // AI 나눔 확정 시나리오는 backend가 AI를 켜고 가짜 AI(FAKE_AI_SPLIT=1 node scripts/fake-ai-server.mjs)를 볼 때만 돈다 - 꺼져 있으면 건너뛴다.
 // PREPARE=1이면 "배정 화면 첫 진입 미리 분류" 시나리오 하나만 돈다(나머지는 건너뛴다). 전제: reset_db → seed_sop_demo 직후(시드는 AI_AUTO_PREPARE=false),
 // 가짜 AI(node scripts/fake-ai-server.mjs)를 보는 backend를 AI_ENABLED=true AI_AUTO_PREPARE=true로 띄운다. 이 backend에서는 작성자가 배정 화면에 들어갈 때마다
@@ -4191,8 +4191,132 @@ await runStep("outputs: A, B, C and the Excel preview", {}, async ({ page, takeS
   await page.waitForFunction(() => document.querySelector('[data-testid="outputs-check-numbers"]')?.checked === false, null, { timeout: T });
 });
 
+// --- 목차 블록(MD 1 F6) - 시드 7번 묶음 "SYNTHETIC 7 목차": 목차 스타일 줄 7(한글 4 · 영어 3)과 그 뒤 점 끌기 보통 줄 1이 목차로 잡히고 본문 3줄 ---
+const TOC_TITLE = "SYNTHETIC 7 목차";
+const TOC_LINES = 8;
+const TOC_AFTER_TEXT = "관련 서식";
+
+async function findTocBundle(page) {
+  const bundles = await (await page.request.get(`${BASE}/api/bundles`, { headers: { "X-Dev-User": "qa.member" } })).json();
+  return bundles.find((bundle) => bundle.title === TOC_TITLE) ?? null;
+}
+
+const readAllCount = async (page) => Number(await page.locator('[data-testid="assign-filter-all"] .schip-n').innerText());
+
+// 목차 블록 머리가 그 줄 수를 말할 때까지 - 편집 뒤 보기를 다시 받는다
+async function waitTocLines(page, n) {
+  await page.waitForFunction(
+    (expected) => [...document.querySelectorAll('[data-testid^="assign-paper-toc-head-"]')].some((el) => (el.textContent ?? "").includes(`${expected} lines`)),
+    n,
+    { timeout: T },
+  );
+}
+
+await runStep("assign: TOC block folds the contents, Not contents returns one line and undo puts it back", {}, async ({ page, takeShot }) => {
+  const toc = await findTocBundle(page);
+  check("the demo seed has the contents bundle", toc !== null);
+  if (!toc) return;
+  await page.goto(`${BASE}/bundles/${toc.id}/assign`);
+  const head = page.locator('[data-testid^="assign-paper-toc-head-"]');
+  await head.first().waitFor({ timeout: T });
+  const key = (await head.first().getAttribute("data-testid")).replace("assign-paper-toc-head-", "");
+  check("the contents are one folded block", (await head.count()) === 1 && (await head.getAttribute("aria-expanded")) === "false");
+  check("the block head says how many lines", (await head.innerText()).includes(`${TOC_LINES} lines`), await head.innerText());
+  check("the folded block shows the automatic delete line", await page.locator(`[data-testid="assign-paper-toc-note-${key}"]`).isVisible());
+  check("no contents line is drawn as a normal piece while folded", (await page.locator('[data-testid^="assign-paper-toc-line-"]').count()) === 0);
+  const before = await readAllCount(page);
+  check("the remaining count leaves the contents lines out", before === toc.progress.total && before === 3, `${before} | ${toc.progress.total}`);
+
+  await head.click();
+  await page.waitForFunction((testId) => document.querySelector(`[data-testid="${testId}"]`)?.getAttribute("aria-expanded") === "true", `assign-paper-toc-head-${key}`, { timeout: T });
+  const lines = page.locator('[data-testid^="assign-paper-toc-line-"]');
+  check("expanding shows every contents line", (await lines.count()) === TOC_LINES);
+  check("a dashed break sits between the Korean and English contents", (await page.locator(".toc-line[data-break]").count()) >= 1);
+  check("the expanded head offers None of these are contents", await page.locator(`[data-testid="assign-paper-toc-all-${key}"]`).isVisible());
+  check("Not contents waits until a line is picked", (await page.locator('[data-testid^="assign-paper-toc-not-"]').count()) === 0);
+  // 결정 칸(F12 G2) - 머리를 누르면 블록이 골라진다: 상태 칩 없는 머리, 줄 수와 언어별 수, 펼치기 · 모두 목차 아님, 까닭 글, 따로 할 일 없음 · 꺼진 Confirm
+  await wait(page, "assign-toc-panel");
+  check("the panel head reads Contents · 8 lines without a status chip", (await getText(page, "assign-toc-head")).trim() === `Contents · ${TOC_LINES} lines` && (await page.locator('[data-testid="assign-row-status"]').count()) === 0, await getText(page, "assign-toc-head"));
+  check("section 1 counts the lines by language", (await getText(page, "assign-toc-shape")).includes("Korean 4 · English 3 · then 1"), await getText(page, "assign-toc-shape"));
+  check("section 1 offers collapse and None of these are contents", (await getText(page, "assign-toc-toggle")).includes("Collapse") && (await page.locator('[data-testid="assign-toc-all"]').isVisible()));
+  check("section 2 explains instead of recommending", (await page.locator('[data-testid="assign-toc-why"]').isVisible()) && (await page.locator(".assign-pick .dest-card").count()) === 0);
+  check("section 3 has nothing to do and Confirm is off", (await getText(page, "assign-toc-nothing")).trim() === "Nothing to do here" && (await page.locator('[data-testid="assign-primary"]').isDisabled()));
+  const after = lines.filter({ hasText: TOC_AFTER_TEXT });
+  const afterId = (await after.getAttribute("data-testid")).replace("assign-paper-toc-line-", "");
+  await after.click();
+  check("picking a line shows Not contents on that line only", (await page.locator('[data-testid^="assign-paper-toc-not-"]').count()) === 1 && (await page.locator(`[data-testid="assign-paper-toc-not-${afterId}"]`).isVisible()));
+  // 결정 칸(F12 G3) - 줄 하나: "목차 · n행", 그 줄 글과 목차 아님 (이 줄만)
+  await page.waitForFunction((n) => document.querySelector('[data-testid="assign-toc-head"]')?.textContent?.trim() === `Contents · line ${n}`, TOC_LINES, { timeout: T });
+  check("the panel shows the picked line and Not contents (this line only)", (await getText(page, "assign-toc-shape")).includes(TOC_AFTER_TEXT) && (await getText(page, "assign-toc-not")).includes("this line only"));
+  await takeShot("sop-assign-toc-open.png");
+  await page.locator('[data-testid="assign-toc-not"]').click();
+  await waitTocLines(page, TOC_LINES - 1);
+  await page.locator(`[data-testid="assign-paper-piece-${afterId}"]`).waitFor({ timeout: T });
+  check("the returned line is a normal piece and counts again", (await readAllCount(page)) === before + 1);
+  // G4 - 돌린 줄이 골라져 보통 줄(Unassigned)의 결정 칸이 된다
+  await page.waitForFunction(() => document.querySelector('[data-testid="assign-row-status"]')?.textContent?.includes("Unassigned"), null, { timeout: T });
+  check("selection moves to the returned line as an Unassigned row", (await page.locator('[data-testid="assign-toc-panel"]').count()) === 0);
+
+  await page.locator('[data-testid="assign-undo"]').click();
+  await waitTocLines(page, TOC_LINES);
+  check("undo puts the line back into the contents", (await page.locator(`[data-testid="assign-paper-piece-${afterId}"]`).count()) === 0 && (await readAllCount(page)) === before);
+});
+
+await runStep("assign: TOC block None of these are contents returns the whole block and undo folds it back", {}, async ({ page }) => {
+  const toc = await findTocBundle(page);
+  if (!toc) return;
+  await page.goto(`${BASE}/bundles/${toc.id}/assign`);
+  const head = page.locator('[data-testid^="assign-paper-toc-head-"]');
+  await head.first().waitFor({ timeout: T });
+  const key = (await head.first().getAttribute("data-testid")).replace("assign-paper-toc-head-", "");
+  const before = await readAllCount(page);
+  // J로 줄을 밟으면 목차 블록이 한 자리로 골라진다(접힌 채) - 남은 수는 그대로
+  await page.keyboard.press("j");
+  await wait(page, "assign-toc-panel");
+  check("J lands on the folded contents block", (await getText(page, "assign-toc-shape")).includes("folded") && (await head.getAttribute("aria-expanded")) === "false" && (await readAllCount(page)) === before, await getText(page, "assign-toc-shape"));
+  await page.locator('[data-testid="assign-toc-toggle"]').click();
+  await page.waitForFunction((testId) => document.querySelector(`[data-testid="${testId}"]`)?.getAttribute("aria-expanded") === "true", `assign-paper-toc-head-${key}`, { timeout: T });
+  check("the panel's Expand opens the block in the paper", true);
+  await page.keyboard.press("j");
+  await page.locator('[data-testid="assign-row-status"]').waitFor({ timeout: T });
+  check("the next J goes on to the first body row", (await page.locator('[data-testid="assign-toc-panel"]').count()) === 0);
+  await page.keyboard.press("k");
+  await wait(page, "assign-toc-panel");
+  await page.locator('[data-testid="assign-toc-all"]').click();
+  await page.waitForFunction(() => document.querySelectorAll('[data-testid^="assign-paper-toc-head-"]').length === 0, null, { timeout: T });
+  check("every contents line becomes a normal row", (await readAllCount(page)) === before + TOC_LINES);
+  await page.locator('[data-testid="assign-undo"]').click();
+  await waitTocLines(page, TOC_LINES);
+  check("undo folds the block back, closed", (await page.locator('[data-testid^="assign-paper-toc-head-"]').getAttribute("aria-expanded")) === "false" && (await readAllCount(page)) === before);
+});
+
+await runStep("outputs: export preview folds TOC rows and Output A keeps them as automatic deletes", {}, async ({ page, takeShot }) => {
+  const toc = await findTocBundle(page);
+  if (!toc) return;
+  await page.goto(`${BASE}/bundles/${toc.id}/outputs`);
+  // 결과물 화면은 진행 상태에 따라 C 탭으로 열린다 - A를 눌러 연다
+  await page.locator('[data-testid="outputs-tab-a"]').click();
+  await wait(page, "output-a");
+  check("Output A has one Deleted row per contents line", (await page.locator('[data-testid^="output-a-toc-"]').count()) === TOC_LINES);
+  check("the summary counts the contents lines", (await getText(page, "outputs-sum-toc_deleted")).trim() === String(TOC_LINES));
+  await page.locator('[data-testid="outputs-export-open"]').click();
+  await wait(page, "export-preview-sheet");
+  const folded = page.locator('[data-testid^="export-preview-toc-"][data-toc="folded"]');
+  check("the A sheet folds the contents rows into one line", (await folded.count()) === 1 && (await folded.innerText()).includes(`${TOC_LINES} lines`), await folded.first().innerText());
+  const rowsBefore = await page.locator('[data-testid="export-preview-body"] tr').count();
+  await folded.click();
+  await page.locator('[data-testid^="export-preview-toc-"][data-toc="open"]').waitFor({ timeout: T });
+  check("clicking the folded line shows every contents row", (await page.locator('[data-testid="export-preview-body"] tr').count()) === rowsBefore + TOC_LINES - 1);
+  await takeShot("sop-outputs-preview-toc.png");
+  await page.locator('[data-testid^="export-preview-toc-"][data-toc="open"]').click();
+  await folded.first().waitFor({ timeout: T });
+  check("clicking the first row folds them again", (await folded.count()) === 1);
+  await page.keyboard.press("Escape");
+  await page.locator('[data-testid="export-preview"]').waitFor({ state: "detached", timeout: T });
+});
+
 // 시트 보기(MD 2 S1) - 폭에 맞춘 한 장이라 20번째 열 머리까지 틀 안에 보이고, 스크롤바 없이 끌면 본문 transform이 바뀐다.
-// 높이가 낮은 창(560px)에서 본다 - 반쯤 한 묶음의 A 시트가 창 높이에 다 들어가면 옮길 것이 없어 끌기를 확인할 수 없다. 목차 줄 펼침은 목차 표시(MD 1 브랜치 7) 뒤에 더한다.
+// 높이가 낮은 창(560px)에서 본다 - 반쯤 한 묶음의 A 시트가 창 높이에 다 들어가면 옮길 것이 없어 끌기를 확인할 수 없다. 목차 줄 펼침은 위 "outputs: export preview folds TOC rows …"가 본다.
 await runStep("outputs: export preview fits the sheet, drags and switches tabs", {}, async ({ page, takeShot }) => {
   await page.setViewportSize({ width: 1280, height: 560 });
   await page.goto(`${BASE}/bundles/${halfBundleId}/outputs`);

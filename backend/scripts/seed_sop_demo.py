@@ -1,10 +1,11 @@
-"""로컬 데모 시드 — 합성 SOP 묶음 네 개를 서로 다른 단계로, 그 뒤에 참조 지도용 묶음 둘을 앱 API에 만든다. 로컬 개발 전용, 운영 실행 금지.
+"""로컬 데모 시드 — 합성 SOP 묶음 네 개를 서로 다른 단계로, 그 뒤에 참조 지도용 묶음 둘과 목차 묶음 하나를 앱 API에 만든다. 로컬 개발 전용, 운영 실행 금지.
 
 단계: 1 쪼개기 직후(업로드·언어 배치·편집까지), 2 분류 절반(입구 1 답의 절반 저장), 3 검토 대기(전부 저장 후 검토 요청),
 4 AI 제안(가짜 AI의 분류·입구 2 짝 제안까지, 확정하지 않는다 — 합성 응답이고 실제 모델이 아니다).
 작성자 qa.member, 검토자 qa.lead. 앱 API를 TestClient로 그대로 불러(X-Dev-User) 화면이 쓰는 경로와 로직을 두 벌 두지 않는다.
 지도용: 5 UV 분광광도계(qa.member 작성자·qa.lead 검토자 — 작성자에게 구성원 Bundle), 6 문서 관리(끝에 prod.member 혼자 —
 작성자에게 남의 Bundle). 단계 Bundle 넷의 OLD-1이 5번 문서 번호를, 단계 2·3의 이동 줄이 6번 New 문서를 가리키고 5·6번이 OLD-1~3을 가리킨다.
+목차: 7 목차(qa.member 작성자 — 목차 스타일 줄 7과 점 끌기 보통 줄 1이 든 Old 문서 하나, 배정 없음. Assign 목차 블록 스모크용).
 이미 같은 제목 묶음이 있으면 그 묶음은 건너뛰어 여러 번 돌려도 같은 결과다. 끝에 묶음별 상태·진행 숫자만 찍고 원문 글자는 찍지 않는다.
 
 개발 전용이다 — 합성 생성기가 개발 의존성 python-docx와 테스트 팩토리(tests.pdf_factory)를 쓰고, 합성 파일은 임시 디렉터리에
@@ -33,7 +34,7 @@ from app.sop.ai.runner import run_jobs_until_idle
 from scripts.reset_db import count_hr_rows, should_refuse_reset
 from scripts.sop_demo_driver import SyntheticDriver
 from scripts.synthetic_sop import MOVE_TARGET_CODE, SyntheticBundle, build_synthetic_bundle
-from tests.docx_factory import build_docx, p
+from tests.docx_factory import build_docx, make_style, p
 from tests.fake_ai import SyntheticAnswers, fake_ai_session
 from tests.sop_helpers import (
     AUTHOR,
@@ -206,6 +207,30 @@ def _build_doc_bundle(client: TestClient, bundle_id: int) -> None:
     assert response.status_code == 200, response.text
 
 
+# --- 목차 Bundle(7번) — Assign 목차 블록·결과물 A 목차 줄 스모크용(MD 1 F6) ---
+
+TOC_TITLE = "SYNTHETIC 7 목차"
+# 한글 목차 4줄 · 영어 목차 3줄(목차 스타일, 점 끌기 + 쪽 번호)과 목차 바로 뒤 점 끌기 보통 줄 — 이 줄도 목차로 함께 잡힌다
+TOC_KO = ("1. 목적 ........ 3", "2. 범위 ........ 3", "3. 책임 ........ 4", "7. 절차 ........ 5")
+TOC_EN = ("1. Purpose ........ 3", "2. Scope ........ 3", "3. Responsibility ........ 4")
+TOC_AFTER = "관련 서식 : F-601 합성 기록지 ........ 별첨"
+TOC_BODY = ("이 절차는 합성 정제수 시스템의 필터 관리를 정한다.", "필터 차압이 0.8 bar를 넘으면 교체한다.")
+
+
+def _build_toc_bundle(client: TestClient, bundle_id: int) -> None:
+    response = set_members(client, bundle_id, [("qa.member", "author"), ("qa.lead", "reviewer")])
+    assert response.status_code == 200, response.text
+    put_tobe_codes(client, bundle_id, [build_tobe_doc("SOP-PW", "SYNTHETIC Purified water filters")])
+    body = (
+        "".join(p(line, "TOC1") for line in (*TOC_KO, *TOC_EN)) + p(TOC_AFTER)
+        + p("목적 (Purpose)", "Heading1") + "".join(p(line) for line in TOC_BODY)
+    )
+    styles = make_style("TOC1", "toc 1") + make_style("Heading1", "heading 1", outline=0)
+    response = upload(client, bundle_id, build_docx(body, styles=styles), "SYNTHETIC_SOP-ABC-1030_Contents.docx")
+    assert response.status_code == 201, response.text
+    assert response.json()["status"] == "ready", response.json()["status"]
+
+
 @dataclass(frozen=True)
 class MapBundle:
     title: str
@@ -216,11 +241,12 @@ class MapBundle:
 MAP_BUNDLES = (
     MapBundle(MAP_UV_TITLE, AUTHOR, _build_uv_bundle),
     MapBundle(MAP_DOC_TITLE, OUTSIDER, _build_doc_bundle),
+    MapBundle(TOC_TITLE, AUTHOR, _build_toc_bundle),
 )
 
 
 def seed_map_bundles(client: TestClient) -> dict[str, str]:
-    """지도용 Bundle을 만들고 제목 → "created"|"skipped". 단계 Bundle 넷 뒤에 불러 id가 5·6이 되게 한다."""
+    """지도용·목차 Bundle을 만들고 제목 → "created"|"skipped". 단계 Bundle 넷 뒤에 불러 id가 5·6·7이 되게 한다."""
     outcomes: dict[str, str] = {}
     for bundle in MAP_BUNDLES:
         if any(row["title"] == bundle.title for row in _list_bundles(client, bundle.lister)):

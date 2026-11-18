@@ -383,6 +383,11 @@ def _read_outputs(db_path: pathlib.Path) -> tuple[Any, list[Any], list[list[str]
                 ]
                 for table in created:
                     await conn.run_sync(table.create)
+                # 단위의 잡음 표시 열(0027)도 그 앞 리비전에서는 잠시 더했다 뺀다
+                unit_columns = await conn.run_sync(lambda sync: {column["name"] for column in inspect(sync).get_columns("units")})
+                added_noise = "noise_kind" not in unit_columns
+                if added_noise:
+                    await conn.execute(text("ALTER TABLE units ADD COLUMN noise_kind VARCHAR(8)"))
             try:
                 async with AsyncSession(engine) as session:
                     return await load_bundle_snapshot(session, 1)
@@ -390,6 +395,8 @@ def _read_outputs(db_path: pathlib.Path) -> tuple[Any, list[Any], list[list[str]
                 async with engine.begin() as conn:
                     for table in created:
                         await conn.run_sync(table.drop)
+                    if added_noise:
+                        await conn.execute(text("ALTER TABLE units DROP COLUMN noise_kind"))
         finally:
             await engine.dispose()
 
