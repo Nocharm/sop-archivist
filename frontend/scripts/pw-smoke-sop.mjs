@@ -6118,6 +6118,79 @@ await runStep("assign: New-side AI filter keeps only the picked line's suggestio
   check("off means nothing is hidden or dimmed", (await page.locator('[data-testid^="assign-new-ai-hidden-"], .new-item[data-ai-view]').count()) === 0);
 });
 
+// Space 미리보기(1.2.0 피드백 7번, MD 2 S2) - 누르는 동안 아래 시트에 지금 Old 문서의 Excel A, 짧게 탁이면 열어 둠, Esc · 탁으로 닫힘, 끌고 떼면 닫힘
+async function openFirstAssign(page) {
+  await page.goto(`${BASE}/`);
+  await page.locator('[data-testid^="bundles-row-"]').first().waitFor({ timeout: T });
+  const firstId = Number((await page.locator('[data-testid^="bundles-row-"]').first().getAttribute("data-testid")).replace("bundles-row-", ""));
+  await page.goto(`${BASE}/bundles/${firstId}/assign`);
+  await wait(page, "assign-bar");
+  // 단축키가 듣도록 포커스를 화면 바탕에 두고 줄 하나를 고른다
+  await page.evaluate(() => (document.activeElement instanceof HTMLElement ? document.activeElement.blur() : undefined));
+  await page.keyboard.press("j");
+}
+
+await runStep("assign: Space preview - hold shows the sheet, drag moves it, release closes", {}, async ({ page, takeShot }) => {
+  await openFirstAssign(page);
+  const sheet = page.locator('[data-testid="assign-space-preview"]');
+  console.log(`  (small hint shown: ${(await page.locator('[data-testid="assign-space-hint"]').count()) > 0})`);
+
+  // 단추에 포커스가 있으면 Space는 그 단추의 것이다
+  const rowNext = page.locator('[data-testid="assign-row-next"]').first();
+  if ((await rowNext.count()) > 0) {
+    await rowNext.focus();
+    await page.keyboard.down(" ");
+    check("Space on a focused button does not open the sheet", (await sheet.count()) === 0);
+    await page.keyboard.up(" ");
+    await page.evaluate(() => (document.activeElement instanceof HTMLElement ? document.activeElement.blur() : undefined));
+  }
+
+  await page.keyboard.down(" ");
+  await wait(page, "assign-space-preview");
+  check("holding Space shows the sheet", (await sheet.getAttribute("data-state")) === "held");
+  await wait(page, "assign-space-preview-body");
+  check("the picked line is painted", (await page.locator('[data-testid="assign-space-preview-body"] tr[data-mark="picked"]').count()) > 0);
+  check("the sheet stays inside the window", await sheet.evaluate((el) => el.getBoundingClientRect().right <= window.innerWidth + 1 && el.scrollWidth <= el.clientWidth + 1));
+  await takeShot("sop-assign-space-preview.png");
+  const frame = page.locator('[data-testid="assign-space-preview-sheet"]');
+  if ((await frame.getAttribute("data-movable")) !== null) {
+    const body = page.locator('[data-testid="assign-space-preview-body"]');
+    const before = await body.evaluate((el) => el.style.transform);
+    const box = await frame.boundingBox();
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(box.x + box.width / 2 - 120, box.y + box.height / 2 - 60, { steps: 6 });
+    await page.mouse.up();
+    check("dragging the sheet moves its body", (await body.evaluate((el) => el.style.transform)) !== before);
+    await page.keyboard.up(" ");
+    check("releasing Space after a drag closes the sheet, even after a short press", (await sheet.count()) === 0);
+  } else {
+    console.log("  (the sheet fits - nothing to drag)");
+    await page.waitForTimeout(300); // 짧게 탁(250ms 미만)이 되지 않게
+    await page.keyboard.up(" ");
+    check("releasing a long hold closes the sheet", (await sheet.count()) === 0);
+  }
+});
+
+await runStep("assign: Space preview - a short tap keeps it open, Esc and another tap close it", {}, async ({ page }) => {
+  await openFirstAssign(page);
+  const sheet = page.locator('[data-testid="assign-space-preview"]');
+  await page.keyboard.press(" ");
+  await wait(page, "assign-space-preview");
+  check("a short tap keeps the sheet open", (await sheet.getAttribute("data-state")) === "kept");
+  check("the head says how to close it", (await page.locator('[data-testid="assign-space-preview-state"]').innerText()).includes("Esc"));
+  // 열어 둔 동안에도 줄 옮기기는 그대로 - 시트는 남는다
+  await page.keyboard.press("j");
+  check("moving to the next line keeps the sheet", (await sheet.count()) === 1);
+  await page.keyboard.press("Escape");
+  check("Esc closes a kept sheet", (await sheet.count()) === 0);
+
+  await page.keyboard.press(" ");
+  await wait(page, "assign-space-preview");
+  await page.keyboard.press(" ");
+  check("another short tap closes it", (await sheet.count()) === 0);
+});
+
 // 필터 접기(2026-11-12) - 필터를 걸면 맞는 문장만 제 모양, 앞뒤 한 줄, 나머지는 묶음 한 줄. 목록은 걸 때의 스냅숏이라 확정해도 접히지 않는다
 await runStep("assign: a status filter folds the Old paper", {}, async ({ page, takeShot }) => {
   await page.goto(`${BASE}/`);

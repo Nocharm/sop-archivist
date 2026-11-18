@@ -27,7 +27,7 @@ function render(props: SheetViewProps): HTMLElement {
 }
 
 const BASE: PreviewSheet = {
-  name: "A Comparison", widths: [8, 20], freeze: "A3", filter_columns: 0, image_png: null, image_row: null, total_rows: 4, truncated: false,
+  name: "A Comparison", widths: [8, 20], freeze: "A3", filter_columns: 0, image_png: null, image_row: null, total_rows: 4, truncated: false, offset: 0,
   fit_widths: null, bands: [], column_keys: null,
   rows: [
     row("status", false, [cell("Status: In progress", { bold: true }), cell("")]),

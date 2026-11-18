@@ -633,6 +633,71 @@ def test_preview_only_fields_follow_continued_rows_and_stay_out_of_the_file(clie
     assert (sheet.max_row, sheet.cell(3, status_col + 1).value) == (len(a["rows"]), "Confirmed")
 
 
+# ── Assign Space 미리보기(옛 문서 하나의 A) ──────────────────────────────────
+
+
+def _get_a_preview(
+    client: TestClient, bundle_id: int, doc_id: int, around: int | None = None, headers: dict[str, str] = AUTHOR
+) -> httpx2.Response:
+    query = f"doc_id={doc_id}" + (f"&around_unit_id={around}" if around is not None else "")
+    return client.get(f"/api/bundles/{bundle_id}/export/preview/a?{query}", headers=headers)
+
+
+def test_assign_preview_lists_only_that_old_documents_groups(client: TestClient) -> None:
+    fx = _setup_outputs_bundle(client)  # OLD-1·OLD-2, 합침 묶음 하나가 두 문서에 걸친다
+    full = _get_preview(client, fx.bundle_id)["sheets"][0]
+
+    response = _get_a_preview(client, fx.bundle_id, fx.old1["document"]["id"])
+
+    assert response.status_code == 200, response.text
+    sheet = response.json()
+    assert (sheet["name"], sheet["offset"], sheet["truncated"]) == ("A Comparison", 0, False)
+    assert sheet["rows"][:2] == full["rows"][:2] and sheet["column_keys"] == full["column_keys"]
+    old1_ids = {unit["id"] for unit in fx.old1["units"]}
+    ids = {row["unit_id"] for row in sheet["rows"] if row["unit_id"] is not None}
+    full_ids = {row["unit_id"] for row in full["rows"] if row["unit_id"] is not None}
+    assert old1_ids & full_ids == ids
+    assert full_ids - old1_ids  # 파일에는 OLD-2의 줄이 있는데 빠졌다
+    # 줄은 파일과 같은 값·차례다(묶음째 남겨 흐림·Row 번호가 그대로)
+    data = iter(full["rows"])
+    assert all(row in data for row in sheet["rows"])
+    assert sheet["total_rows"] == len(sheet["rows"])
+    assert _load_events(fx.bundle_id, "export") == []  # 미리보기는 기록을 남기지 않는다
+
+
+def test_assign_preview_windows_long_documents_around_the_picked_unit(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    texts = [f"합성 문장 {index}번을 적는다." for index in range(1, 11)]
+    fx = _setup(client, texts)
+    picked = find_unit(fx.view, texts[7])["id"]
+    monkeypatch.setattr(sheet_model, "MAX_PREVIEW_ROWS", 6)  # 머리 둘 + 자료 넷
+
+    sheet = _get_a_preview(client, fx.bundle_id, fx.doc_id, picked).json()
+
+    data_ids = [row["unit_id"] for row in sheet["rows"][2:]]
+    assert [row["kind"] for row in sheet["rows"][:2]] == ["status", "header"]
+    assert (len(sheet["rows"]), sheet["truncated"], sheet["total_rows"]) == (6, True, 12)
+    assert picked in data_ids
+    assert data_ids == [find_unit(fx.view, text)["id"] for text in texts[5:9]]  # 고른 줄(8번째)이 가운데
+    assert sheet["offset"] == 5 and sheet["total_rows"] - sheet["offset"] - len(sheet["rows"]) == 1
+    # 끝 가까이를 고르면 창은 끝에 붙고, 고른 단위가 없으면 처음부터다
+    last = _get_a_preview(client, fx.bundle_id, fx.doc_id, find_unit(fx.view, texts[9])["id"]).json()
+    assert last["offset"] == 6
+    assert _get_a_preview(client, fx.bundle_id, fx.doc_id).json()["offset"] == 0
+
+
+def test_assign_preview_refuses_outsiders_and_other_documents(client: TestClient) -> None:
+    fx = _setup(client, [KEEP])
+
+    outsider = _get_a_preview(client, fx.bundle_id, fx.doc_id, headers=OUTSIDER)
+    unknown = _get_a_preview(client, fx.bundle_id, fx.doc_id + 1000)
+
+    assert (outsider.status_code, outsider.json()["detail"]["code"]) == (404, "bundle_not_found")
+    assert (unknown.status_code, unknown.json()["detail"]["code"]) == (404, "document_not_found")
+    assert _get_a_preview(client, fx.bundle_id, fx.doc_id, headers=REVIEWER).status_code == 200
+
+
 # ── 제어 문자·수식 글 ────────────────────────────────────────────────────────
 
 

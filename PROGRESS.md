@@ -4,6 +4,9 @@
 
 ## 2026-11-18
 
+- **Space 미리보기(`feat/assign-space-preview`, MD 2 S2 · 1.2.0 피드백 7번, 새로 만듦)** — Assign에서 글 칸·단추 밖의 Space를 누르고 있으면 작업 화면 바닥에서 시트(높이 70%)가 올라와 지금 Old 문서의 Excel A를 `SheetView`로 보인다(고른 줄 · 같은 Group ID 칠함, 확정 전 고른 곳 점선 덮어 그리기). 짧게 탁(250ms 미만, 끌지 않음)이면 열어 두고 Space 탁 · Esc로 닫고, 끌었으면 떼는 순간 닫는다(상태 기계 `lib/space-preview-model.ts`). role=dialog를 쓰지 않아 열어 둔 동안에도 ↵ 등 단축키가 돈다. 새 API `GET /export/preview/a?doc_id&around_unit_id` — 그 문서의 묶음만, 긴 문서는 고른 단위를 가운데로 500줄 창 + `Sheet.offset`(사용자 결정 §9-2). 머리 Download는 묶음 전체 파일(§9-3), 닫혀 있을 때 안내는 세 번 열 때까지만(`sopa.assign.spacePreviewOpens`, §9-4). 연 동안만 불러오고 저장(unitsKey)이 바뀌면 다시 부른다.
+  - 확인: pytest `test_sop_excel` 33 · backend 2,903 · vitest 1,420 · lint · tsc. 스모크 `assign: Space preview …` 둘은 써 두고 돌리지 않았다.
+
 - **New 쪽 AI 제안 필터(v1.1.33, `feat/assign-new-ai-filter`, MD 2 S4)** — New 칸 머리 칩 "고른 줄의 AI 제안만"(`sopa.assign.newAiOnly`, 처음 꺼짐)을 켜고 Old 줄을 고르면 그 줄의 제안·간 곳만 강조, 다른 줄 제안은 칸마다 띠로 접고 확정 줄은 흐리게, 다른 New 문서에 있으면 알약으로 열기·돌아가기. 규칙은 `lib/new-ai-filter-model.ts`, 프런트만(API·저장 무관). 스모크 단계는 써 두었으나 아직 돌리지 않았다.
   - 메인 세션 확인(dev v1.1.31을 합친 뒤): vitest 1,370 · lint · tsc. 가짜 AI(나누기 모드)를 붙인 새 시드에서 `assign:` 스모크 580 통과(KO/EN 짝 추천 1건은 전부터 흔들림), AI 필터 단계 18 통과. New 칸 머리가 1280 반반에서 결정 칸 위로 넘치던 것(dev에도 있던 겹침 감사 실패, 칩이 하나 늘어 더 심해짐)을 고쳤다 — 출처 없는 New 칩과 "New · not written" 꼬리표가 말줄임으로 줄고(아이콘 · 수는 남음, 잘린 글은 툴팁), 겹침 감사 1280 · 1920 통과.
 
