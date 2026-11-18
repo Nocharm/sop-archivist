@@ -1,7 +1,7 @@
 // Order 화면 줄 끌기의 순수 모델 - 함께 움직일 덩어리, 포인터가 놓을 수 있는 칸 위인지, 놓을 자리·깊이와 그에 맞는 place 편집을 정한다.
 import type { OutlineKind, OutputCItem } from "./api-sop";
 import { readLocationPlace, type PlaceEdit } from "./c-edit-model";
-import { canChangeDepth, listCounted, MAX_INDENT_LEVEL } from "./section-number";
+import { canChangeDepth, listBullets, listCounted, MAX_BULLET_LEVEL, MAX_INDENT_LEVEL } from "./section-number";
 
 /** 좌우로 이만큼 움직이면 깊이가 한 단 */
 export const DEPTH_STEP_PX = 24;
@@ -120,15 +120,16 @@ function findInsertIndex(items: readonly OutputCItem[], rows: readonly RowBox[],
  * 넣을 자리(insertAt)에서 덩어리 첫 줄의 깊이 - 시작 깊이 + round(dx / 24)를 0 ~ 넣을 자리 위 가장 가까운 번호 줄 깊이 + 1로 자른다(앞 줄이 없으면 0).
  * skip은 옮기고 나면 그 자리에 없는 줄(같은 칸 안 끌기의 덩어리 자신). 서버 상한(MAX_INDENT_LEVEL)은 덩어리의 가장 깊은 줄에 건다 -
  * 첫 줄을 그만큼 덜 들여 아래 줄들이 자기 단 차이를 지킨다. 깊이가 잠긴 덩어리는 dx를 안 받고 baseDepth 그대로다 - 다만 다른 칸(isCross)에서는 그 칸의 한계도 받는다(앞 줄이 없는 자리에 깊이 2로 놓이면 번호가 비므로).
- * countsLines는 놓는 칸의 값(절의 counts_lines) - 줄을 세지 않는 칸은 세는 줄이 없어(listCounted) 어느 자리든 0이다
+ * countsLines는 놓는 칸의 값(절의 counts_lines) - 줄을 세지 않는 칸은 세는 줄이 없어(listCounted) 어느 자리든 0이다.
+ * isBullet(같은 칸 안 끌기에서 덩어리 첫 줄이 글머리 기호)이면 번호 줄과 따로 앞 글머리 기호 줄 + 1, 상한 MAX_BULLET_LEVEL로 자른다
  */
-function calcDropDepth(input: { countsLines: boolean; items: readonly OutputCItem[]; depths: readonly number[]; insertAt: number; skip?: (index: number) => boolean; block: DragBlock; blockDepths: readonly number[]; dx: number; isCross?: boolean }): number {
+function calcDropDepth(input: { isBullet?: boolean; countsLines: boolean; items: readonly OutputCItem[]; depths: readonly number[]; insertAt: number; skip?: (index: number) => boolean; block: DragBlock; blockDepths: readonly number[]; dx: number; isCross?: boolean }): number {
   const { items, depths, block } = input;
-  const counted = listCounted({ counts_lines: input.countsLines, items });
+  const counted = input.isBullet ? listBullets({ items }) : listCounted({ counts_lines: input.countsLines, items });
   let above = input.insertAt - 1;
   while (above >= 0 && (input.skip?.(above) || !counted[above])) above -= 1;
   const deepestOffset = Math.max(...input.blockDepths) - block.baseDepth;
-  const max = above < 0 ? 0 : Math.min(depths[above] + 1, MAX_INDENT_LEVEL - deepestOffset);
+  const max = above < 0 ? 0 : Math.min(depths[above] + 1, (input.isBullet ? MAX_BULLET_LEVEL : MAX_INDENT_LEVEL) - deepestOffset);
   if (block.isDepthLocked) return input.isCross ? Math.min(block.baseDepth, max) : block.baseDepth;
   return Math.max(0, Math.min(max, block.baseDepth + Math.round(input.dx / DEPTH_STEP_PX)));
 }
@@ -162,7 +163,7 @@ export function planDrop(input: {
 
   const insertAt = beforeId === null ? items.length : items.findIndex((item) => item.target_id === beforeId);
   const blockDepths = depths.slice(block.start, block.end + 1);
-  const depth = calcDropDepth({ countsLines: input.countsLines, items, depths, insertAt, skip: inBlock, block, blockDepths, dx: input.dx });
+  const depth = calcDropDepth({ isBullet: items[block.start].number_style === "bullet", countsLines: input.countsLines, items, depths, insertAt, skip: inBlock, block, blockDepths, dx: input.dx });
 
   const targetIds = items.slice(block.start, block.end + 1).map((item) => item.target_id);
   const rest = items.filter((_, index) => !inBlock(index));

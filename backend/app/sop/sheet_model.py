@@ -14,7 +14,7 @@ from pydantic import BaseModel
 
 from app.equis.view import EquisOut
 from app.sop.captions import join_caption_texts
-from app.sop.constants import NUMBER_BULLET, NUMBER_NOTE
+from app.sop.constants import BULLET_SYMBOLS, NUMBER_BULLET, NUMBER_NOTE
 from app.sop.excel_export import ExportMeta, build_export_file_name, clean_cell_text, format_kst, split_cell_text
 from app.sop.flow_image import draw_flow_png
 from app.sop.output_labels import LABELS
@@ -27,6 +27,7 @@ from app.sop.outputs import (
     build_output_b,
     build_output_c,
     build_summary,
+    get_bullet_depths,
 )
 from app.sop.snapshot import BundleSnapshot
 
@@ -100,7 +101,6 @@ INFO_NAMES = (
 )
 _LABELS = LABELS["en"]
 _MARKERS = {"table": "[Table]", "figure": "[Figure]"}  # 확정한 캡션 글이 없는 표·그림 줄에만
-_BULLET = "•"  # 글머리 기호 줄의 No. 칸(C 시트) — 화면의 줄 머리와 같은 기호
 _CAPTION_POSITION = "Caption"  # 캡션 줄의 Cell position 칸 — 칸 줄의 "R 1 C 1" 자리
 _NO_WRAP_KINDS = ("status", "plain")  # 상태 줄·제목·이름 칸은 옆 칸으로 넘쳐 보이게 접지 않는다
 # 상태 코드 → 칩 색. 보류(on_hold)는 명세가 색을 정하지 않아 칩 없이 글로 남고, "del"은 Status가 Deleted로 적히는 줄(목차 등 저절로 지우는 줄)이 생길 때 쓴다
@@ -116,6 +116,7 @@ class SheetCell(BaseModel):
     italic: bool = False  # 주석 줄의 글 칸
     bold: bool = False
     numeric: bool = False  # 글이 정수인 칸(Row·건수) — xlsx에는 숫자로 쓴다
+    indent: int = 0  # 칸 안 들여쓰기 단계(C 시트 글머리 기호 줄의 Item 칸) — xlsx 맞춤 indent, 미리보기는 단계만큼 안쪽 여백
     tone: CellTone | None = None  # 미리보기 전용 — 색 칩으로 그리는 칸(A의 Status)의 색. 화면이 글자를 보고 색을 정하지 않는다
 
 
@@ -173,10 +174,12 @@ def _make_row(
     bold: Collection[int] = (),
     italic: Collection[int] = (),
     numeric: Collection[int] = (),
+    indents: Mapping[int, int] | None = None,
 ) -> SheetRow:
     """칸 글 목록으로 한 줄 — 글은 여기서 한 번 clean_cell_text를 거친다. 모양 집합은 1부터 센 열 번호다.
 
     머리 모양은 글이 있는 머리 줄 칸에만(B의 두 칸짜리 Item·Value 머리가 뒤 열까지 칠하지 않게), 상태·plain 줄은 접지 않는다.
+    indents는 열 번호(1부터) → 들여쓰기 단계다.
     """
     cells = []
     for column, raw in enumerate(texts, start=1):
@@ -184,7 +187,7 @@ def _make_row(
         cells.append(
             SheetCell(
                 text=text, head=kind == "header" and bool(text), bold=column in bold, italic=column in italic,
-                numeric=column in numeric and bool(text),
+                numeric=column in numeric and bool(text), indent=(indents or {}).get(column, 0) if text else 0,
             )
         )
     return SheetRow(kind=kind, wrap=kind not in _NO_WRAP_KINDS, cells=cells)
@@ -386,8 +389,12 @@ def _make_c_texts(values: Mapping[int, str]) -> list[str]:
     return [values.get(column, "") for column in range(len(C_HEADERS))]
 
 
-def _list_c_item_lines(item: CItem, depth: int) -> Iterator[tuple[list[str], tuple[int, ...]]]:
-    """새 문장 한 줄과, 표·그림 새 문장이면 그 자식들(한 단계 더 들여쓴 열) — (칸 글, 기울일 열(1부터)). 주석 줄은 항목·AI 글을 기울인다.
+def _list_c_item_lines(
+    item: CItem, depth: int, bullet_depth: int | None = None,
+) -> Iterator[tuple[list[str], tuple[int, ...], dict[int, int]]]:
+    """새 문장 한 줄과, 표·그림 새 문장이면 그 자식들(한 단계 더 들여쓴 열) — (칸 글, 기울일 열(1부터), 칸 들여쓰기(열 → 단계)). 주석 줄은 항목·AI 글을 기울인다.
+
+    bullet_depth는 글머리 기호 줄(최상위)의 눌러 읽은 깊이(outputs.get_bullet_depths) — No. 칸에 그 단계의 기호를 적고 Item 칸을 그 단계만큼 들인다.
 
     표·그림 줄의 항목 칸은 [Table]·[Figure] 대신 확정한 캡션 글(AI 글은 쓰지 않는다 — 캡션 줄의 AI 칸에 있다)이다. 자식은 캡션 줄이
     칸 줄 앞에 오고(서버 순서), 칸 줄처럼 자기 확정 글·AI 글·변경 종류·상태·출처를 싣는다.
@@ -405,21 +412,24 @@ def _list_c_item_lines(item: CItem, depth: int) -> Iterator[tuple[list[str], tup
     if depth == 0 and item.number is not None:  # 표 칸은 표의 번호라 표 줄에만 적는다
         values[C_NUMBER] = item.number
     elif depth == 0 and item.number_style == NUMBER_BULLET:
-        values[C_NUMBER] = _BULLET
+        values[C_NUMBER] = BULLET_SYMBOLS[bullet_depth or 0]
     if item.cell_row is not None and item.cell_col is not None:
         values[C_POSITION] = f"R {item.cell_row + 1} C {item.cell_col + 1}"
     elif depth > 0:  # 표·그림 아래 칸 좌표 없는 자식 = 캡션 줄
         values[C_POSITION] = _CAPTION_POSITION
     italic = (C_ITEM + depth + 1, C_AI + 1) if item.number_style == NUMBER_NOTE else ()
-    yield _make_c_texts(values), italic
+    indents = {C_ITEM + depth + 1: bullet_depth} if bullet_depth else {}
+    yield _make_c_texts(values), italic, indents
     for child in item.children:
         yield from _list_c_item_lines(child, depth + 1)
 
 
-def _append_c_lines(rows: list[SheetRow], texts: list[str], starts: bool, italic: Collection[int] = ()) -> None:
+def _append_c_lines(
+    rows: list[SheetRow], texts: list[str], starts: bool, italic: Collection[int] = (), indents: Mapping[int, int] | None = None,
+) -> None:
     """C 한 줄과 그 이어진 줄들 — 이어진 줄은 같은 묶음(in_group)이다."""
     for offset, line in enumerate(_split_line(texts, C_ID + 1)):
-        rows.append(_make_row("group_start" if starts and offset == 0 else "in_group", line, italic=italic))
+        rows.append(_make_row("group_start" if starts and offset == 0 else "in_group", line, italic=italic, indents=indents))
 
 
 def _format_old_ref(doc_code: str, section: str) -> str:
@@ -447,11 +457,12 @@ def _build_c_sheet(snap: BundleSnapshot) -> Sheet:
                 text = f"{auto.code} · {auto.title}" if auto.title else auto.code
                 _append_c_lines(rows, _make_c_texts({C_ITEM: text}), True)
             previous_key: str | None = None
+            bullet_depths = get_bullet_depths(section.items)
             for index, item in enumerate(section.items):
                 # 칸의 첫 항목·묶음 키가 없는 항목(고아 번역)·키가 바뀐 항목이 새 묶음을 연다 — 표 칸은 표 묶음 안이다
                 starts = index == 0 or item.meaning_key is None or item.meaning_key != previous_key
-                for depth_index, (texts, italic) in enumerate(_list_c_item_lines(item, 0)):
-                    _append_c_lines(rows, texts, starts and depth_index == 0, italic)
+                for depth_index, (texts, italic, indents) in enumerate(_list_c_item_lines(item, 0, bullet_depths[index])):
+                    _append_c_lines(rows, texts, starts and depth_index == 0, italic, indents)
                 previous_key = item.meaning_key
     tails = (
         (_LABELS.dest_kinds["delete"], [(entry, "") for entry in result.deleted]),

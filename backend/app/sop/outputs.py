@@ -24,6 +24,7 @@ from app.sop.caption_ref_rules import (
 from app.sop.captions import CAPTION_KIND, get_caption_lang_rank, is_caption_target, join_caption_texts
 from app.sop.constants import (
     COVER_KINDS,
+    MAX_BULLET_LEVEL,
     NUMBER_BULLET,
     NUMBER_NOTE,
     NUMBERED,
@@ -151,6 +152,8 @@ class CItem(BaseModel):
     change_type: str | None
     status: str
     source_note: str
+    # 줄이 받은 옛 단위 수(중복 없이) — 2 이상이면 C 화면이 줄에 올리거나 고를 때 source_note를 꼬리표로 보인다(N:1)
+    source_count: int
     origin: str  # units | translation | new_doc — 프런트가 번역 기원의 깊이 단추만 숨긴다
     # 굵은 선 묶음 키(A와 같은 묶음) — "old:<옛 줄 키>" | "new:<새 문서 쪽 짝 키>" | None(출처가 은퇴한 번역)
     meaning_key: str | None
@@ -605,6 +608,21 @@ def number_lines(base: str, depths: Sequence[int | None]) -> list[str | None]:
         counters[level] += 1
         numbers.append(".".join([base, *map(str, counters)]))
     return numbers
+
+
+def get_bullet_depths(items: Sequence[CItem]) -> list[int | None]:
+    """칸 안 줄마다 글머리 기호 깊이 — 글머리 기호가 아닌 줄은 None. 번호 줄과 따로 세어 앞 글머리 기호 줄 깊이 + 1(상한 MAX_BULLET_LEVEL)까지만 읽고,
+    첫 글머리 기호 줄은 0이다. 번호 줄·생략·주석 줄은 건너뛴다. 저장한 깊이는 바꾸지 않는다(프런트 section-number.getSectionDepths와 같은 규칙)."""
+    previous: int | None = None
+    depths: list[int | None] = []
+    for item in items:
+        if item.number_style != NUMBER_BULLET:
+            depths.append(None)
+            continue
+        depth = max(0, min(item.indent_level, MAX_BULLET_LEVEL, 0 if previous is None else previous + 1))
+        depths.append(depth)
+        previous = depth
+    return depths
 
 
 def number_targets(index: _Index, labels: OutputLabels) -> dict[int, str]:
@@ -1368,12 +1386,17 @@ def _format_unit_refs(snap: BundleSnapshot, unit_ids: Iterable[int]) -> str:
     return "← " + ", ".join(dict.fromkeys(refs)) if refs else ""
 
 
+def _list_source_unit_ids(snap: BundleSnapshot, target: TargetInfo) -> tuple[int, ...]:
+    """줄이 받은 옛 단위 — 번역은 번역 출처 단위 하나다."""
+    if target.translation_source_unit_id in snap.units:
+        return (target.translation_source_unit_id,)
+    return tuple(target.source_unit_ids)
+
+
 def _format_source_note(index: _Index, target: TargetInfo, labels: OutputLabels) -> str:
     """받은 옛 단위 — "← OLD-1 §5.1, OLD-2 §5.1 (합침)". 번역은 번역 출처 단위."""
     snap = index.snap
-    unit_ids = target.source_unit_ids
-    if target.translation_source_unit_id in snap.units:
-        unit_ids = (target.translation_source_unit_id,)
+    unit_ids = _list_source_unit_ids(snap, target)
     note = _format_unit_refs(snap, unit_ids)
     suffix = {"merged": labels.merged, "split": labels.split, "translated": labels.translated}.get(target.change_type or "")
     return f"{note} {suffix}" if note and suffix else note
@@ -1437,7 +1460,7 @@ def _build_item(ctx: _CContext, target: TargetInfo) -> CItem:
     return CItem(
         target_id=target.id, kind=target.kind, lang=target.lang, text=text, ai_text=ai_text,
         change_type=target.change_type, status=target.status, source_note=_format_source_note(index, target, ctx.labels),
-        origin=target.origin, meaning_key=_format_meaning_key(ctx, target),
+        source_count=len(set(_list_source_unit_ids(index.snap, target))), origin=target.origin, meaning_key=_format_meaning_key(ctx, target),
         number=ctx.numbers.get(target.id), indent_level=target.indent_level,
         number_style=_get_number_style(index, target), cell_row=target.cell_row,
         cell_col=target.cell_col, children=[_build_item(ctx, child) for child in index.children.get(target.id, [])], caption=caption,

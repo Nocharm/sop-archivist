@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import type { OutputARow, OutputC, OutputCItem } from "./api-sop";
 import { makeSectionOutline } from "./outline-fixture";
-import { buildAScreenLines, buildCLines, listMeaningStarts } from "./output-groups";
+import { buildAScreenLines, buildCLines, hasMergedSource, listMeaningStarts } from "./output-groups";
 
 function row(rowNo: number, isGroupStart: boolean, destKind: string, destDocCode: string): OutputARow {
   return {
@@ -31,7 +31,7 @@ describe("buildAScreenLines", () => {
 
 describe("buildCLines", () => {
   function item(id: number): OutputCItem {
-    return { target_id: id, kind: "sentence", lang: "ko", text: "", ai_text: "", change_type: null, status: "confirmed", source_note: "", origin: "units", meaning_key: null, number: null, indent_level: 0, number_style: "numbered", cell_row: null, cell_col: null, children: [] };
+    return { target_id: id, kind: "sentence", lang: "ko", text: "", ai_text: "", change_type: null, status: "confirmed", source_note: "", source_count: 1, origin: "units", meaning_key: null, number: null, indent_level: 0, number_style: "numbered", cell_row: null, cell_col: null, children: [] };
   }
   const section = (key: string, items: OutputCItem[], naReason: string | null = null) => ({ ...makeSectionOutline(), location_key: key, label: key, number: null, na_reason: naReason, heading_note: "", items });
   const doc = (id: number, sections: ReturnType<typeof section>[]) => ({ target_doc_id: id, code: `D${id}`, title: "", doc_type: "sop", parent_code: null, entrance: "assign", sections });
@@ -58,5 +58,16 @@ describe("listMeaningStarts", () => {
   it("starts each line without a meaning key on its own", () => {
     expect(listMeaningStarts([{ meaning_key: null }, { meaning_key: null }])).toEqual([true, true]);
     expect(listMeaningStarts([])).toEqual([]);
+  });
+});
+
+describe("hasMergedSource", () => {
+  it("is true only for a line that came from two or more Old lines and has a source note", () => {
+    expect(hasMergedSource({ source_count: 2, source_note: "← OLD-1 §5.1, OLD-2 §5.1 (merged)" })).toBe(true);
+    expect(hasMergedSource({ source_count: 3, source_note: "← OLD-1 §5.1 (merged)" })).toBe(true);
+    expect(hasMergedSource({ source_count: 1, source_note: "← OLD-1 §5.1" })).toBe(false);
+    expect(hasMergedSource({ source_count: 0, source_note: "" })).toBe(false);
+    // 출처 글이 비면 보일 것이 없다
+    expect(hasMergedSource({ source_count: 2, source_note: "" })).toBe(false);
   });
 });

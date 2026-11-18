@@ -22,7 +22,16 @@ from app.db import engine
 from app.models import Employee
 from app.sop.models import TargetSentence, TargetSource, UnitDecision, UnitPair, UnitPairMember
 from app.sop.output_labels import LABELS
-from app.sop.outputs import BundleCellOut, Lang, Renumbering, _build_index, build_bundle_table, build_renumbering
+from app.sop.outputs import (
+    BundleCellOut,
+    CItem,
+    Lang,
+    Renumbering,
+    _build_index,
+    build_bundle_table,
+    build_renumbering,
+    get_bullet_depths,
+)
 from app.sop.snapshot import BundleSnapshot, load_bundle_snapshot
 from tests.access_helpers import run_in_session
 from tests.docx_factory import TINY_PNG, build_docx, make_drawing_run, p, tbl
@@ -1348,6 +1357,31 @@ def test_progress_in_list_and_overview(client: TestClient) -> None:
     assert get_bundle(client, fx.bundle_id)["progress"] == PROGRESS
     assert get_bundle(client, empty)["progress"] == EMPTY_PROGRESS
     assert PROGRESS["total"] == sum(PROGRESS[status] for status in ("unassigned", "ai_suggested", "confirmed", "on_hold"))
+
+
+def test_output_c_item_counts_the_old_units_it_came_from(client: TestClient) -> None:
+    fx = _setup(client)
+    sop = _get_output(client, fx.bundle_id, "outputs/c")["docs"][0]
+
+    merged, single = _items_in(sop, "general_requirements.work")
+    (duplicate,) = _items_in(sop, "responsibilities")
+
+    # 옛 두 줄이 합쳐진 줄만 2 — 화면이 이 줄에 올리거나 고를 때 source_note를 꼬리표로 보인다
+    assert (merged["source_count"], single["source_count"], duplicate["source_count"]) == (2, 1, 1)
+    assert merged["source_note"] == "← OLD-1 §5.1, OLD-2 §5.1 (merged)"
+
+
+def _bullet_items(*levels: tuple[str, int]) -> list[CItem]:
+    return [CItem.model_construct(number_style=style, indent_level=level) for style, level in levels]
+
+
+def test_get_bullet_depths_count_bullets_apart_from_numbered_lines() -> None:
+    items = _bullet_items(("bullet", 5), ("numbered", 3), ("bullet", 1), ("omitted", 2), ("bullet", 9), ("bullet", 0), ("bullet", 2))
+
+    # 첫 글머리 기호는 0, 이어서 앞 글머리 기호 + 1(번호·생략 줄은 건너뜀), 상한 2, 내려갔다 다시 앞 줄 + 1까지
+    assert get_bullet_depths(items) == [0, None, 1, None, 2, 0, 1]
+    assert get_bullet_depths(_bullet_items(("bullet", 2), ("bullet", 2), ("bullet", 2))) == [0, 1, 2]
+    assert get_bullet_depths([]) == []
 
 
 # ── C 순서 바꾸기 ─────────────────────────────────────────────────────────────

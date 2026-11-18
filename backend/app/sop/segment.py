@@ -20,6 +20,19 @@ ABBREVIATIONS = (
     "e.g", "i.e", "etc", "no", "nos", "fig", "figs", "vol", "approx", "dr", "mr", "ms", "vs", "eq", "ref", "cf",
     "ca", "sec", "min", "rev", "ver",
 )
+# 다음 글자와 상관없이 문장 끝이 아닌 약줄임 — "(e.g. ABC)"처럼 대문자·고유 이름이 바로 뒤에 온다
+NEVER_END_ABBREVIATIONS = ("e.g", "i.e")
+# 번호 약줄임 "No." "Nos."는 숫자 말고 여는 괄호·따옴표 앞에서도 문장 끝이 아니다 — '"Lot No. (a)"'
+NUMBER_ABBREVIATIONS = ("no", "nos")
+NUMBER_ABBREVIATION_FOLLOWERS = "(\"'“‘"
+# 줄 맨 앞(글머리 기호·목록 번호·여는 따옴표 바로 뒤 포함)의 라벨 낱말 + 선택 번호 + 마침표는 문장 끝이 아니다 —
+# "Chapter 1. Filter setup", "Note. Plant X …", "그림. 장비 사진". 줄 가운데의 같은 낱말은 보통 문장 끝일 수 있어 보호하지 않는다.
+_LINE_LABEL_RE = re.compile(
+    r"(?:(?:[•*\-–●■]|o(?=[ \t]))[ \t]*)?[\"'“‘]?"
+    r"(?:Chapter|Appendix|Attachment|Section|Step|Figure|Fig|Table|Notes?|그림|표|참고|주의|예)"
+    r"(?:(\.)?[ \t]*\d+(?:[.\-]\d+)*)?(?=\.)",
+    re.IGNORECASE,
+)
 # 줄 첫 토큰인 목록 번호 "1." "5.1." "a." "iv." "가." "ㄱ." — 그 마침표는 문장 끝이 아니다(번호에 이어 마침표가 오는 자리를 찾는다).
 # 추출기가 Word 자동 번호를 글 앞에 써 넣으므로(docx_reader) 숫자 말고 글자·로마 숫자·가나다 번호도 본다.
 _LIST_NUMBER_RE = re.compile(r"(?:\d+(?:\.\d+)*|[A-Za-z]|[ivx]{2,5}|[IVX]{2,5}|[가나다라마바사아자차카타파하ㄱ-ㅎ])(?=\.)")
@@ -102,7 +115,15 @@ def _is_sentence_end(text: str, terminator: int, after: int) -> bool:
         return False
     if text[terminator] == ".":
         token = _read_token_before(text, terminator)
-        if token.lower() in ABBREVIATIONS and "0" <= following <= "9":
+        lowered = token.lower()
+        if lowered in NEVER_END_ABBREVIATIONS:
+            return False
+        if lowered in ABBREVIATIONS and "0" <= following <= "9":
+            return False
+        if lowered in NUMBER_ABBREVIATIONS and following in NUMBER_ABBREVIATION_FOLLOWERS:
+            return False
+        # 괄호 안 보기 "(예. 솔로)" — 줄 첫 "예."는 줄 라벨 규칙(_find_label_dots)이 본다
+        if terminator >= 2 and text[terminator - 1] == "예" and text[terminator - 2] in "(（":
             return False
         # 이니셜 — 마침표로 나눈 마지막 조각이 대문자 한 글자("J. Smith", "J.R. Smith", "U.S. FDA")
         initial = token.rsplit(".", 1)[-1]
@@ -120,6 +141,21 @@ def _find_list_number_dot(text: str, line_start: int) -> int:
     return -1 if number is None else number.end()
 
 
+def _find_label_dots(text: str, line_start: int, list_number_dot: int) -> tuple[int, ...]:
+    """line_start에서 시작하는 줄 맨 앞의 라벨("Chapter 1." "Note." "그림.")이 품은 마침표 자리들 — 라벨이 없으면 빈 튜플.
+
+    목록 번호(추출기가 글 앞에 써 넣은 자동 번호 포함) 뒤의 라벨도 줄 맨 앞으로 본다 — "1. Note. …".
+    """
+    first = line_start if list_number_dot < 0 else list_number_dot + 1
+    while first < len(text) and text[first] != "\n" and is_blank_char(text[first]):
+        first += 1
+    label = _LINE_LABEL_RE.match(text, first)
+    if label is None:
+        return ()
+    # "Fig. 1."처럼 낱말 뒤 마침표와 번호 뒤 마침표가 둘 다 라벨 안이다
+    return (label.end(),) if label.start(1) < 0 else (label.start(1), label.end())
+
+
 def split_sentences(text: str, *, split_lines: bool = False) -> list[tuple[int, int]]:
     """문장 범위 목록 — 범위는 앞뒤 빈 글자를 빼고, 빈 글자 아닌 글자를 빠짐없이 덮는다.
 
@@ -131,6 +167,7 @@ def split_sentences(text: str, *, split_lines: bool = False) -> list[tuple[int, 
     index = 0
     length = len(text)
     list_number_dot = _find_list_number_dot(text, 0)
+    label_dots = _find_label_dots(text, 0, list_number_dot)
     while index < length:
         if text[index] == "\n":
             if split_lines:
@@ -138,6 +175,7 @@ def split_sentences(text: str, *, split_lines: bool = False) -> list[tuple[int, 
                 start = index + 1
             index += 1
             list_number_dot = _find_list_number_dot(text, index)
+            label_dots = _find_label_dots(text, index, list_number_dot)
             continue
         if text[index] not in SENTENCE_TERMINATORS:
             index += 1
@@ -149,7 +187,8 @@ def split_sentences(text: str, *, split_lines: bool = False) -> list[tuple[int, 
             after += 1
         # 문장 끝 글자 뒤에 빈 글자가 오거나 글이 끝날 때만 경계 후보다 — "3.5", "SOP-QC.01"은 후보가 아니다
         is_candidate = after == length or is_blank_char(text[after])
-        if is_candidate and index != list_number_dot and _is_sentence_end(text, index, after):
+        is_protected = index == list_number_dot or index in label_dots
+        if is_candidate and not is_protected and _is_sentence_end(text, index, after):
             _append_trimmed(ranges, text, start, after)
             start = after
         index = after

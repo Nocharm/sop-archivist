@@ -3,6 +3,7 @@
 // numberLines는 그 서버 함수의 사본이다 - 순서·깊이·표시를 바꾼 뒤 저장 응답이 오기 전에만 번호를 미리 센다(응답의 번호가 늘 이긴다). 서버 규칙을 바꾸면 함께 고친다.
 // 어느 줄을 세는지(서버 outputs.number_targets)의 사본은 c-edit-model.numberDoc이다.
 // 번호 생략·주석 줄은 번호가 없고 세지 않는다 - 깊이 상한도 앞 "번호 줄"만 본다(서버와 같은 규칙). 깊이·표시는 바꾼 그 줄에만 붙는다(짝 상대에 옮기지 않는다).
+// 글머리 기호 줄은 번호 줄과 따로 센다 - 같은 칸의 앞 글머리 기호 줄 깊이 + 1까지 들이고(번호·생략·주석 줄은 건너뜀) 단계는 셋(0~2)이며, 기호는 • ○ ▪다(서버 outputs.get_bullet_depths의 사본).
 // 줄을 세지 않는 칸(서버가 절마다 주는 counts_lines가 false - 하위 칸을 선언하는 칸)에 직접 놓인 줄은 저장된 표시와 상관없이 번호가 없고 세지 않는다.
 // 어느 칸이 그런지는 그 문서의 골격이 정하므로 화면은 칸 키로 풀지 않고 절의 값을 읽는다. 이 파일에서 읽는 곳은 listCounted(세는 줄)와 readStyleChoices(표시 단추) 둘이다.
 import type { NumberStyle, OutputC, OutputCItem } from "./api-sop";
@@ -13,6 +14,20 @@ type Section = OutputC["docs"][number]["sections"][number];
 
 /** 고를 수 있는 번호 표시 - 화면 단추 순서이기도 하다. backend app/sop/constants.py NUMBER_STYLES와 같은 값 */
 export const NUMBER_STYLES: readonly NumberStyle[] = ["numbered", "bullet", "omitted", "note"];
+
+/** 글머리 기호 줄의 깊이 상한(단계 셋: 0 · 1 · 2)과 단계별 기호 - backend app/sop/constants.py MAX_BULLET_LEVEL·BULLET_SYMBOLS와 같은 값 */
+export const MAX_BULLET_LEVEL = 2;
+export const BULLET_SYMBOLS = ["•", "○", "▪"] as const;
+
+/** 글머리 기호 줄 깊이의 기호 - 상한을 넘는 깊이는 마지막 기호 */
+export function readBulletSymbol(depth: number): string {
+  return BULLET_SYMBOLS[Math.max(0, Math.min(depth, MAX_BULLET_LEVEL))];
+}
+
+/** 칸의 줄마다 글머리 기호 표시인가 - 번호 줄과 따로 세는 깊이 상한(canIndent·getSectionDepths)이 읽는다 */
+export function listBullets(section: { items: readonly Pick<OutputCItem, "number_style">[] }): boolean[] {
+  return section.items.map((item) => item.number_style === "bullet");
+}
 
 /** 번호를 세는 표시인가 - 생략·주석 줄은 세지 않고 다음 번호 줄이 이어 센다. 칸까지 본 답은 listCounted */
 export function isCounted(item: Pick<OutputCItem, "number_style">): boolean {
@@ -62,7 +77,15 @@ export function getSectionDepths(section: Pick<Section, "counts_lines" | "number
   const counted = listCounted(section);
   const depths: number[] = [];
   let previous: number | null = null;
+  // 글머리 기호 줄은 번호 줄과 따로 센다 - 앞 글머리 기호 줄 깊이 + 1(상한 MAX_BULLET_LEVEL)까지
+  let previousBullet: number | null = null;
   for (const [index, item] of section.items.entries()) {
+    if (item.number_style === "bullet") {
+      const depth = Math.max(0, Math.min(item.indent_level, MAX_BULLET_LEVEL, previousBullet === null ? 0 : previousBullet + 1));
+      depths.push(depth);
+      previousBullet = depth;
+      continue;
+    }
     const fromNumber = section.number !== null && item.number !== null ? Math.max(0, item.number.split(".").length - baseParts - 1) : null;
     const depth: number = fromNumber ?? Math.max(0, Math.min(item.indent_level, previous === null ? 0 : previous + 1));
     depths.push(depth);
@@ -74,15 +97,21 @@ export function getSectionDepths(section: Pick<Section, "counts_lines" | "number
 /**
  * 한 단계 들이거나 내어 쓸 수 있는가. 들이기는 앞 번호 줄 깊이 + 1까지(counted가 false인 생략·주석 줄은 건너뛴다. 칸의 첫 번호 줄 앞은 0 -
  * WI의 Why 첫 줄처럼 앞 칸에 이어 세는 경우도 0으로 둔다),
- * 내어쓰기는 0보다 깊을 때만. 입구 2 문서(번호를 새로 매기지 않음)와 AI 번역 줄(출처를 따라감)은 깊이를 따로 바꾸지 않는다(canChangeDepth).
+ * 내어쓰기는 0보다 깊을 때만. 글머리 기호 줄(bullets[index])은 번호 줄과 따로 세어 앞 글머리 기호 줄 깊이 + 1까지, 단계 상한 MAX_BULLET_LEVEL까지다
+ * (번호·생략·주석 줄은 건너뛰고, 앞에 글머리 기호 줄이 없으면 들일 수 없다). 입구 2 문서(번호를 새로 매기지 않음)와 AI 번역 줄(출처를 따라감)은 깊이를 따로 바꾸지 않는다(canChangeDepth).
  */
 /** backend app/sop/constants.py MAX_INDENT_LEVEL과 같은 값 - 넘기면 API가 422로 거절한다 */
 export const MAX_INDENT_LEVEL = 9;
 
-export function canIndent(depths: readonly number[], counted: readonly boolean[], index: number, dir: IndentDir): boolean {
+export function canIndent(depths: readonly number[], counted: readonly boolean[], index: number, dir: IndentDir, bullets: readonly boolean[] = []): boolean {
   const depth = depths[index];
   if (depth === undefined) return false;
   if (dir < 0) return depth > 0;
+  if (bullets[index]) {
+    let previousBullet = index - 1;
+    while (previousBullet >= 0 && !bullets[previousBullet]) previousBullet -= 1;
+    return previousBullet >= 0 && depth <= depths[previousBullet] && depth < MAX_BULLET_LEVEL;
+  }
   // 상한은 앞 번호 줄 깊이 + 1 - 생략·주석 줄은 건너뛰고, 앞에 번호 줄이 없으면 들일 수 없다
   let previous = index - 1;
   while (previous >= 0 && !counted[previous]) previous -= 1;

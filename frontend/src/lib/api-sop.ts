@@ -1245,6 +1245,8 @@ export interface OutputCItem {
   change_type: string | null;
   status: string;
   source_note: string;
+  /** 줄이 받은 옛 단위 수 - 2 이상(N:1)이면 C 화면이 줄에 올리거나 고를 때 source_note를 꼬리표로 보인다 */
+  source_count: number;
   /** units | translation | new_doc - AI 번역(translation)은 깊이가 출처를 따른다 */
   origin: string;
   /** 굵은 선 묶음 키(A와 같은 묶음) - "old:…" | "new:…", 출처가 은퇴한 번역은 null */
@@ -1366,6 +1368,8 @@ export interface PreviewCell {
   bold: boolean;
   head: boolean;
   numeric: boolean;
+  /** 칸 안 들여쓰기 단계 - C 시트 글머리 기호 줄의 Item 칸 */
+  indent: number;
   /** 색 칩으로 그리는 칸(A의 Status)의 색 - 확정 · AI 제안 · 삭제(흐림) · 미배정. 칩이 아닌 칸은 null */
   tone: PreviewTone | null;
 }
