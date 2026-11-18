@@ -4888,10 +4888,15 @@ await runStep("order: the No translation slot shows only in the template view an
   await slot.click();
   await page.waitForURL(/\/bundles\/\d+\/assign/, { timeout: T });
   await wait(page, "assign-bar");
-  const picked = await page
-    .waitForFunction(() => document.querySelectorAll('[data-pane="old"] .strip[data-sel]').length > 0, null, { timeout: 5000 })
-    .then(() => true, () => false);
-  check("Assign opens with the Old line picked", picked);
+  // 출처 없는 New 문장(새로 쓴 줄)의 자리면 고를 Old 줄이 없어 Assign 처음으로 간다 - 주소에 줄이 있을 때만 고름을 본다
+  if (new URL(page.url()).search === "") {
+    check("a line with no Old source opens Assign at its start", true);
+  } else {
+    const picked = await page
+      .waitForFunction(() => document.querySelectorAll('[data-pane="old"] [data-sel]').length > 0, null, { timeout: 5000 })
+      .then(() => true, () => false);
+    check("Assign opens with the Old line picked", picked);
+  }
   // 이 브라우저의 보기 기억을 되돌린다 - 뒤 장면은 기본 보기로 연다
   await page.goto(`${BASE}/bundles/${halfBundleId}/order`);
   await wait(page, "output-c");
