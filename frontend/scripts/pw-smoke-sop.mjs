@@ -4570,6 +4570,9 @@ async function openNestedBundle(page) {
 
 const readTableUnit = (view, table) => view.units.find((unit) => unit.kind === "table" && unit.table_id === table.id);
 const readTop = async (page, unitId) => (await page.locator(`[data-testid="assign-paper-piece-${unitId}"]`).boundingBox())?.y ?? Number.NaN;
+// 풀기 전환(useUnwrapMotion)이 끝날 때까지 - 펼치는 동안 줄은 transform으로 옛 자리(표 칸 안)에 붙들려 있어 boundingBox가 옛 자리를 잰다
+const waitForOldMotion = (page) =>
+  page.waitForFunction(() => (document.querySelector('[data-testid="assign-old"]')?.getAnimations({ subtree: true }) ?? []).every((animation) => animation.playState !== "running"), null, { timeout: T });
 
 await runStep("assign: nested table - unwrapping the work table puts the value table between its cell paragraphs and turns the inner band into a heading line", {}, async ({ page, takeShot }) => {
   const nested = await openNestedBundle(page);
@@ -4598,7 +4601,8 @@ await runStep("assign: nested table - unwrapping the work table puts the value t
   await page.locator(`[data-testid="assign-paper-piece-${valueUnit.id}"]`).waitFor({ timeout: T });
   check("the band heading is drawn as a text piece", (await page.locator(`[data-testid="assign-paper-piece-${heading.id}"]`).getAttribute("data-kind")) === "piece");
   check("the value table is drawn as a table", (await page.locator(`[data-testid="assign-paper-piece-${valueUnit.id}"]`).getAttribute("data-kind")) === "table");
-  // 제 행 자리 - 칸의 첫 문단 아래, 둘째 문단 위(바깥 표 뒤가 아니다)
+  // 제 행 자리 - 칸의 첫 문단 아래, 둘째 문단 위(바깥 표 뒤가 아니다). 전환이 끝난 뒤의 자리로 잰다
+  await waitForOldMotion(page);
   const [topFirst, topValue, topSecond] = [await readTop(page, first.id), await readTop(page, valueUnit.id), await readTop(page, second.id)];
   check("the value table sits between the two paragraphs of its cell", topFirst < topValue && topValue < topSecond, `${topFirst} < ${topValue} < ${topSecond}`);
   const valueRow = page.locator(`[data-testid="assign-paper-piece-${valueUnit.id}"]`).locator("xpath=..");
@@ -8255,8 +8259,10 @@ await runStep("assign: unwrap table - Unwrap table turns the table into sentence
   if (unwrapped === null) return;
   const lines = unwrapped.units.filter((item) => item.kind === "cell_sentence" && item.table_id === unit.table_id && item.group_unit_id === null);
   check("every cell paragraph is its own line", lines.length > 0);
-  await page.locator(`[data-testid="assign-paper-piece-${lines[0].id}"]`).waitFor({ timeout: T });
-  check("the table line is gone from the paper", (await page.locator(`[data-testid="assign-paper-piece-${unit.id}"]`).count()) === 0);
+  // 서버가 먼저 바뀌고 화면은 새 원문 보기를 받아 걷기(160ms) 뒤에 바뀐다 - 칸 줄의 testid는 표 안에도 있어 그것만 기다리면 화면이 바뀌기 전에 잰다
+  const isGone = await page.locator(`[data-testid="assign-paper-piece-${unit.id}"]`).waitFor({ state: "detached", timeout: T }).then(() => true, () => false);
+  check("the table line is gone from the paper", isGone);
+  await waitForOldMotion(page);
   check("a cell line is a sentence card, not a table cell", (await page.locator(`[data-testid="assign-paper-piece-${lines[0].id}"]`).getAttribute("data-kind")) === "piece");
   await wait(page, `assign-paper-unwrap-head-${unit.table_id}`);
   check("the group head holds only ↺ Back to table", (await getText(page, `assign-paper-unwrap-head-${unit.table_id}`)).trim() === "↺ Back to table", await getText(page, `assign-paper-unwrap-head-${unit.table_id}`));
@@ -8298,6 +8304,9 @@ await runStep("assign: unwrap table - ↺ Back to table asks once when a line is
   check("the table is unwrapped first", unwrapped !== null);
   if (unwrapped === null) return;
   const line = unwrapped.units.find((item) => item.kind === "cell_sentence" && item.table_id === unit.table_id && item.group_unit_id === null);
+  // 화면이 벗긴 표로 바뀐 뒤에 누른다 - 그 전에는 같은 testid의 칸 조각이 표 안에 있어 누르면 표 전체가 골라진다
+  await piece.waitFor({ state: "detached", timeout: T });
+  await waitForOldMotion(page);
   await page.locator(`[data-testid="assign-paper-piece-${line.id}"]`).click();
   await wait(page, "assign-row-id");
   await pickFirstPlace(page);
