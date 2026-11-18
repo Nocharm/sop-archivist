@@ -158,6 +158,10 @@
   --lang-ref-line: color-mix(in oklab, var(--lang-ref-ink) 45%, var(--surface));
   --peer-bg: color-mix(in oklab, var(--peer-fill) 12%, var(--surface));
   --peer-line: color-mix(in oklab, var(--peer-fill) 55%, var(--surface));
+  /* Template view paper (Assign New "Template"): table rules and shaded heads from the paper ink, so dark mode follows. Head = template E6E6E6, WI chapter row = D9D9D9 */
+  --tpl-rule: color-mix(in oklab, var(--paper-ink) 55%, var(--paper));
+  --tpl-head: color-mix(in oklab, var(--paper-ink) 10%, var(--paper));
+  --tpl-head-strong: color-mix(in oklab, var(--paper-ink) 16%, var(--paper));
   --split-a: color-mix(in oklab, oklch(.62 .13 250) var(--tint2), var(--paper));
   --split-b: color-mix(in oklab, oklch(.80 .13 85) var(--tint2), var(--paper));
   /* Modal backdrop. Stays dark in both themes (app-side addition; the mock used the same value inline). */

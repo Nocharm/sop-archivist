@@ -26,7 +26,7 @@ function makeDoc(sections?: ComposedSection[]): ComposedDoc {
     doc_type: "sop",
     entrance: "assign",
     sections: sections ?? [
-      { ...makeSectionOutline(), location_key: "purpose", label: "Purpose", number: "1", na_reason: null, heading_note: "", items: [{ target_id: 1, kind: "sentence", lang: "ko", text: "목적", status: "confirmed", change_type: "as_is", number: "1.1", source_unit_ids: [10] }] },
+      { ...makeSectionOutline(), location_key: "purpose", label: "Purpose", number: "1", na_reason: null, heading_note: "", items: [{ target_id: 1, kind: "sentence", lang: "ko", text: "목적", status: "confirmed", change_type: "as_is", number: "1.1", number_style: "numbered", indent_level: 0, meaning_key: null, source_unit_ids: [10] }] },
       { ...makeSectionOutline(), location_key: "scope", label: "Scope", number: "2", na_reason: "Synthetic", heading_note: "", items: [] },
       { ...makeSectionOutline({ kind: null }), location_key: "step:1:instruction", label: "Step 1 · Instruction", number: "1", na_reason: null, heading_note: "", items: [] },
     ],
@@ -38,7 +38,7 @@ function makeSection(number: string, label: string, headingNote: string): Compos
 }
 
 function makeItem(targetId: number, number: string | null, kind: ComposedItem["kind"] = "sentence"): ComposedItem {
-  return { target_id: targetId, kind, lang: "en", text: `t${targetId}`, status: "confirmed", change_type: "as_is", number, source_unit_ids: [targetId] };
+  return { target_id: targetId, kind, lang: "en", text: `t${targetId}`, status: "confirmed", change_type: "as_is", number, number_style: number === null ? "omitted" : "numbered", indent_level: 0, meaning_key: null, source_unit_ids: [targetId] };
 }
 
 function makeCell(targetId: number, row: number, col: number, text: string, lang: BundleCell["lang"] = "ko"): BundleCell {

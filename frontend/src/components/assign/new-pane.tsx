@@ -9,6 +9,7 @@
 // 칩 오른쪽 갈매기는 그 Old 조각이 왼쪽 칸 화면 위·아래 밖에 있다는 표시 - 스크롤마다 바뀌어 LinkLines가 data-dir로 단다(Old 배지와 같은 방식).
 // AI 제안 거르기(aiFilter, lib/new-ai-filter-model)가 걸리면 고른 줄의 제안·간 곳은 강조 테두리와 꼬리표, 다른 줄의 AI 제안은 칸마다 띠 하나로 접히고(누르면 흐리게 펼침), 나머지 줄은 흐리다.
 // 줄이 새로 들어오면 펼치며 나타나고 빠지면 접히며 사라진다(확정이 곧 보이는 실시간 넣기). 표·그림은 실제 표(좌우 스크롤)·그림 이미지로 보인다(new-bundle.tsx).
+// 엮은 문서는 머리의 "기본 | 템플릿" 전환(viewSwitch)으로 같은 줄을 회사 템플릿 모양(components/template/template-view)으로도 본다 - 템플릿이면 몸에 그 보기를 그린다.
 "use client";
 
 import { ChevronDown, ChevronUp, FilePlus2, Scissors, Sparkles, Spline } from "lucide-react";
@@ -92,6 +93,8 @@ interface NewPaneProps {
   draftSlotKey?: string | null;
   /** 고른 줄의 AI 제안만 남기는 거르기 - 그 줄의 것은 밝게 꼬리표, 다른 줄의 AI 제안은 칸마다 띠로 접고, 나머지는 흐리게. 거르지 않으면 null */
   aiFilter?: NewAiFilter | null;
+  /** 기본 | 템플릿 전환(엮은 문서만) - 넘기면 머리에 전환이 생기고, template이면 몸에 body(템플릿 보기)를 그린다 */
+  viewSwitch?: { template: boolean; onChange: (template: boolean) => void; body: ReactNode } | null;
 }
 
 function readState(row: WrittenSentence, props: NewPaneProps): string | undefined {
@@ -533,6 +536,7 @@ export function NewPane(props: NewPaneProps) {
         </span>
         {props.headExtra}
         <span className="flex-1" />
+        {props.viewSwitch && <ViewSwitch template={props.viewSwitch.template} onChange={props.viewSwitch.onChange} />}
         {props.onEditOriginal && (
           <Tooltip label={t("assign.openSplitTip")}>
             <button type="button" className="pane-toggle" aria-label={t("assign.openSplit")} data-testid="assign-new-edit-original" onClick={props.onEditOriginal}>
@@ -548,66 +552,87 @@ export function NewPane(props: NewPaneProps) {
         <PaneZoom value={props.zoom} onStep={props.onZoom} testId="assign-new-zoom" />
       </div>
       {props.banner}
-      <div className="pane-body">
-        <div className="sheet" key={props.docId} data-slide={slide.dir ?? undefined}>
-          <div
-            className="pg new-sheet"
-            data-strips=""
-            data-dragging={isCutDragging ? "" : undefined}
-            data-read-only={props.readOnly ? "" : undefined}
-          >
-            {shown.map(({ row, leaving }, index) => {
-              const previous = shown[index - 1]?.row;
-              const key = getNewRowKey(row);
-              // 절이 바뀌는 첫 줄 앞에만 절 머리 - 접히며 빠지는 줄과 들어오는 줄이 같은 절이면 머리는 하나
-              const isSectionStart = row.section_path !== "" && row.section_path !== previous?.section_path;
-              // 번호는 앞머리가 보일 때만 머리 글에서 뺀다 - 표·그림·빈 칸이나 짝 카드의 둘째 줄부터가 절을 열면 앞머리에 번호가 없다. 엮은 문서는 앞머리가 줄 자기 번호라 칸 번호를 머리에 남긴다
-              const isNumberInLead = isSectionStart && row.kind === "sentence" && !cardTops.has(row.target_id) && !isComposedRow(row);
-              // 점선 초안은 엮은 문서에서 기준 줄(빠지는 줄이 아닌) 바로 앞이나 뒤에
-              const draftSide = props.readOnly && props.draft && !leaving && props.draft.anchorKey === key ? props.draft.side : null;
-              // AI 제안 거르기 - 다른 줄의 AI 제안은 그 칸의 띠를 펼치기 전까지 그리지 않는다(칸 머리는 남긴다 - 번호가 접힌 줄의 앞머리에 있었으면 머리 글로 돌려 준다)
-              const aiMark = leaving ? undefined : props.aiFilter?.marks.get(key);
-              const aiSection = readNewAiSectionKey(row.section_path);
-              const isAiFolded = aiMark === "other_ai" && !aiOpen.sections.has(aiSection);
-              const aiBand = isAiFolded ? props.aiFilter?.bands.get(key) : undefined;
-              return (
-                <Fragment key={key}>
-                  {isSectionStart && renderSectionHead(row, isNumberInLead && !isAiFolded)}
-                  {draftSide === "before" && props.draft && renderDraft(row, props.draft.lines)}
-                  {aiBand && (
-                    <button
-                      type="button"
-                      className="new-ai-band"
-                      aria-expanded={false}
-                      data-testid={`assign-new-ai-hidden-${aiBand.sectionKey}`}
-                      onClick={() => setAiOpen((prev) => ({ key: prev.key, sections: new Set(prev.sections).add(aiSection) }))}
-                    >
-                      <Sparkles size={12} strokeWidth={1.75} className="flex-none" aria-hidden />
-                      {t("assign.newAi.hidden", { n: aiBand.count })}
-                    </button>
-                  )}
-                  {!isAiFolded && (
-                    <div
-                      className="new-item"
-                      data-row={key}
-                      data-enter={presence.added.has(key) ? "" : undefined}
-                      data-leave={leaving ? "" : undefined}
-                      data-ai-view={aiMark === undefined ? undefined : aiMark === "mine_ai" || aiMark === "mine_went" ? "mine" : "dim"}
-                      inert={leaving || undefined}
-                    >
-                      <div className="new-item-inner">
-                        {row.kind !== "empty" && row.kind !== "sentence" && renderAiTag(row)}
-                        {renderRow(row, isSectionStart, previous)}
+      {props.viewSwitch?.template ? (
+        <div className="pane-body" key={props.docId}>
+          {props.viewSwitch.body}
+        </div>
+      ) : (
+        <div className="pane-body">
+          <div className="sheet" key={props.docId} data-slide={slide.dir ?? undefined}>
+            <div
+              className="pg new-sheet"
+              data-strips=""
+              data-dragging={isCutDragging ? "" : undefined}
+              data-read-only={props.readOnly ? "" : undefined}
+            >
+              {shown.map(({ row, leaving }, index) => {
+                const previous = shown[index - 1]?.row;
+                const key = getNewRowKey(row);
+                // 절이 바뀌는 첫 줄 앞에만 절 머리 - 접히며 빠지는 줄과 들어오는 줄이 같은 절이면 머리는 하나
+                const isSectionStart = row.section_path !== "" && row.section_path !== previous?.section_path;
+                // 번호는 앞머리가 보일 때만 머리 글에서 뺀다 - 표·그림·빈 칸이나 짝 카드의 둘째 줄부터가 절을 열면 앞머리에 번호가 없다. 엮은 문서는 앞머리가 줄 자기 번호라 칸 번호를 머리에 남긴다
+                const isNumberInLead = isSectionStart && row.kind === "sentence" && !cardTops.has(row.target_id) && !isComposedRow(row);
+                // 점선 초안은 엮은 문서에서 기준 줄(빠지는 줄이 아닌) 바로 앞이나 뒤에
+                const draftSide = props.readOnly && props.draft && !leaving && props.draft.anchorKey === key ? props.draft.side : null;
+                // AI 제안 거르기 - 다른 줄의 AI 제안은 그 칸의 띠를 펼치기 전까지 그리지 않는다(칸 머리는 남긴다 - 번호가 접힌 줄의 앞머리에 있었으면 머리 글로 돌려 준다)
+                const aiMark = leaving ? undefined : props.aiFilter?.marks.get(key);
+                const aiSection = readNewAiSectionKey(row.section_path);
+                const isAiFolded = aiMark === "other_ai" && !aiOpen.sections.has(aiSection);
+                const aiBand = isAiFolded ? props.aiFilter?.bands.get(key) : undefined;
+                return (
+                  <Fragment key={key}>
+                    {isSectionStart && renderSectionHead(row, isNumberInLead && !isAiFolded)}
+                    {draftSide === "before" && props.draft && renderDraft(row, props.draft.lines)}
+                    {aiBand && (
+                      <button
+                        type="button"
+                        className="new-ai-band"
+                        aria-expanded={false}
+                        data-testid={`assign-new-ai-hidden-${aiBand.sectionKey}`}
+                        onClick={() => setAiOpen((prev) => ({ key: prev.key, sections: new Set(prev.sections).add(aiSection) }))}
+                      >
+                        <Sparkles size={12} strokeWidth={1.75} className="flex-none" aria-hidden />
+                        {t("assign.newAi.hidden", { n: aiBand.count })}
+                      </button>
+                    )}
+                    {!isAiFolded && (
+                      <div
+                        className="new-item"
+                        data-row={key}
+                        data-enter={presence.added.has(key) ? "" : undefined}
+                        data-leave={leaving ? "" : undefined}
+                        data-ai-view={aiMark === undefined ? undefined : aiMark === "mine_ai" || aiMark === "mine_went" ? "mine" : "dim"}
+                        inert={leaving || undefined}
+                      >
+                        <div className="new-item-inner">
+                          {row.kind !== "empty" && row.kind !== "sentence" && renderAiTag(row)}
+                          {renderRow(row, isSectionStart, previous)}
+                        </div>
                       </div>
-                    </div>
-                  )}
-                  {draftSide === "after" && props.draft && renderDraft(row, props.draft.lines)}
-                </Fragment>
-              );
-            })}
+                    )}
+                    {draftSide === "after" && props.draft && renderDraft(row, props.draft.lines)}
+                  </Fragment>
+                );
+              })}
+            </div>
           </div>
         </div>
-      </div>
+      )}
     </section>
+  );
+}
+
+/** New 칸 머리의 기본 | 템플릿 - 같은 줄을 다르게 그리기만 한다(고른 보기는 이 브라우저에 남는다) */
+function ViewSwitch({ template, onChange }: { template: boolean; onChange: (template: boolean) => void }) {
+  const { t } = useI18n();
+  return (
+    <div className="view-switch" role="group" aria-label={t("assign.newView")} data-testid="assign-new-view">
+      <button type="button" aria-pressed={!template} data-testid="assign-new-view-basic" onClick={() => onChange(false)}>
+        {t("assign.newView.basic")}
+      </button>
+      <button type="button" aria-pressed={template} data-testid="assign-new-view-template" onClick={() => onChange(true)}>
+        {t("assign.newView.template")}
+      </button>
+    </div>
   );
 }

@@ -4,6 +4,11 @@
 
 ## 2026-11-18
 
+- **New 칸 템플릿 보기 · 미러링(`feat/new-template-view`, MD 1 §10 브랜치 11 — F9 보기 + F8c)** — 아직 안 쓴 New 문서의 머리에 **Basic | Template** 전환(`sopa.assign.newTemplate`, 처음 기본). 결과물 C 꼴 문서를 회사 템플릿 모양으로 그리는 부품 하나(`components/template/template-view.tsx` + 순수 모델 `lib/template-model.ts`) — 머리글 · 빈 표지 표(Document No.만) · 앱 목차 · SOP 영어 → 한글 / WI 한글 → 영어 절반, 2장 빈 Site 표 + In Scope, 3·4장 표 머리, 5장 범주 표, 6장 번호, 7.2 WI 목록, 8장 Attachment 1, 벗어남 · Empty 표시. 짝은 같은 묶음 키(`meaning_key`)로 두 절반에 비추고(생략 줄만 상대의 번호 · 기호를 빌림), 반대 언어가 없는 줄은 "번역 없음" 자리(누르면 그 Old 줄을 고르고 번역 만들기 · 직접 쓰기 단추로). WI는 단계 = Chapter 표, 줄 = 세부 단계 행(지금 번호), Why는 아래 기울임, 그림은 그림 칸. 보기 + 고르기만(끌기는 브랜치 12, 클릭 배치는 e) — 쓰는 쪽이 `onPickLine` · `onMissing` · `renderBlock` · `spotProps`로 켠다.
+  - 서버: 엮은 문서 항목(`ComposedItem`)에 결과물 C 항목과 같은 `number_style` · `indent_level` · `meaning_key`를 더했다(Alembic 없음, 계산은 `_build_c_context` 하나를 같이 쓴다).
+  - 확인: pytest 손댄 셋 146 · backend 전체 2,964 · ruff, vitest 1,447 · lint · tsc. 스모크 `assign: New template view …` 셋은 써 두고 돌리지 않았다(공용 부품이라 메인 세션이 전체 스모크 · 감사).
+  - 열린 물음: 1:2 짝의 번호(지금은 C 그대로 — 첫 한글 줄만 영어 번호를 빌리고 둘째는 번호 없음), 따로 저장해 둘 다 번호인 짝은 두 절반 번호가 다르다(6.1.1 | 6.1.2), 표 · 그림은 짝 없이 두 절반에 같이 그린다.
+
 - **Space 미리보기(v1.1.36, `feat/assign-space-preview`, MD 2 S2 · 1.2.0 피드백 7번, 새로 만듦)** — Assign에서 글 칸·단추 밖의 Space를 누르고 있으면 작업 화면 바닥에서 시트(높이 70%)가 올라와 지금 Old 문서의 Excel A를 `SheetView`로 보인다(고른 줄 · 같은 Group ID 칠함, 확정 전 고른 곳 점선 덮어 그리기). 짧게 탁(250ms 미만, 끌지 않음)이면 열어 두고 Space 탁 · Esc로 닫고, 끌었으면 떼는 순간 닫는다(상태 기계 `lib/space-preview-model.ts`). role=dialog를 쓰지 않아 열어 둔 동안에도 ↵ 등 단축키가 돈다. 새 API `GET /export/preview/a?doc_id&around_unit_id` — 그 문서의 묶음만, 긴 문서는 고른 단위를 가운데로 500줄 창 + `Sheet.offset`(사용자 결정 §9-2). 머리 Download는 묶음 전체 파일(§9-3), 닫혀 있을 때 안내는 세 번 열 때까지만(`sopa.assign.spacePreviewOpens`, §9-4). 연 동안만 불러오고 저장(unitsKey)이 바뀌면 다시 부른다.
   - 확인: pytest `test_sop_excel` 33 · backend 2,903 · vitest 1,420 · lint · tsc. 스모크 `assign: Space preview …` 둘은 써 두고 돌리지 않았다.
   - 메인 세션 확인(dev v1.1.35를 합친 뒤): vitest 1,432 · lint · tsc, `assign:` 스모크 569 통과(실패 셋은 흔들리는 단계 — 끌어 놓기 React 그리기 수 단계는 dev에서도 거듭 돌리면 실패, Pair view 단계는 따로 두 번 통과). 미리보기를 1440 · 1120에서 직접 봤고, 왼쪽 아래 안내가 Old 칸 맨 아래 카드 글을 덮어 작업 화면 바닥에 제 줄(36px)을 비워 거기 놓게 고쳤다. 명세와 다르게 한 것: Destination 값은 받는 파일과 같은 "WI"(명세 "New WI"), 비구성원은 다른 미리보기 API와 같은 404.
