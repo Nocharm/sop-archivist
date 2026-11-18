@@ -46,14 +46,14 @@ interface ToBeRowProps {
   draggable: boolean;
   open: boolean;
   onToggle: () => void;
-  /** 접어도 남은, 저장하지 않은 N/A 사유가 이 줄에 있다 */
-  hasUnsavedNa: boolean;
+  /** 접어도 남은, 저장하지 않은 편집기 글이 이 줄에 있다 - na는 N/A 사유, outline은 골격 쓰기(이름 · 빼기 · 더하기). 없으면 null */
+  unsavedEdit: "na" | "outline" | null;
   onRemove: () => void;
   onEquisRefresh: () => void;
   panel: () => ReactNode;
 }
 
-export function ToBeRow({ doc, isChild, tobe, saved, written, equis, stepCount, slots, hintCount, noParent, canEdit, draggable, open, onToggle, hasUnsavedNa, onRemove, onEquisRefresh, panel }: ToBeRowProps) {
+export function ToBeRow({ doc, isChild, tobe, saved, written, equis, stepCount, slots, hintCount, noParent, canEdit, draggable, open, onToggle, unsavedEdit, onRemove, onEquisRefresh, panel }: ToBeRowProps) {
   const { t } = useI18n();
   const prefix = `tobe-${doc.key}`;
   const block = saved ? getDocRemoveBlock(tobe, saved) : null;
@@ -194,9 +194,9 @@ export function ToBeRow({ doc, isChild, tobe, saved, written, equis, stepCount, 
               {t("tobe.row.noParent")}
             </span>
           )}
-          {hasUnsavedNa && (
+          {unsavedEdit !== null && (
             <span className="pill warn" data-testid={`${prefix}-unsaved`}>
-              {t("tobe.slots.unsaved")}
+              {unsavedEdit === "na" ? t("tobe.slots.unsaved") : t("tobe.outline.unsaved")}
             </span>
           )}
         </>

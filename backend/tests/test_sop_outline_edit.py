@@ -676,3 +676,38 @@ def test_na_is_not_a_deviation(client: TestClient) -> None:
     after = removed.json()
     assert _find_item(after, optional)["is_removed"] is True
     assert [item["key"] for item in after["outline_items"] if item["is_deviation"]] == []
+
+
+def test_restored_item_returns_to_its_place(client: TestClient) -> None:
+    # 뺀 동안 더하거나 옮긴 사용자 항목이 뺀 표준 항목의 자리를 차지하지 않는다
+    bundle_id, sop_id, _doc_id = _create_sop_bundle(client, BODY)
+    reason = {"reason": "Synthetic: not used"}
+    assert _patch(client, bundle_id, sop_id, "document_relationships.references", is_removed=True, **reason).status_code == 200
+    assert _patch(client, bundle_id, sop_id, "definitions", is_removed=True, **reason).status_code == 200
+    for parent_key, title in (("document_relationships", "Audit Trail"), ("", "Glossary")):
+        body = {"parent_key": parent_key, "title_en": title, **reason}
+        assert client.post(_url(bundle_id, sop_id), json=body, headers=AUTHOR).status_code == 201
+    assert _patch(client, bundle_id, sop_id, "n1", position=2).status_code == 200  # Glossary를 Scope 뒤로(빠진 Definitions 자리 앞)
+
+    for key in ("document_relationships.references", "definitions"):
+        assert _patch(client, bundle_id, sop_id, key, is_removed=False).status_code == 200
+
+    after = _get_tobe(client, bundle_id)
+    numbers = {item["key"]: item["number"] for item in after["outline_items"]}
+    assert (numbers["document_relationships.references"], numbers["document_relationships.n1"]) == ("8.3", "8.4")  # Glossary가 장 하나
+    assert [item["key"] for item in after["outline_items"] if item["parent_key"] is None][:4] == [
+        "purpose", "scope", "n1", "definitions",
+    ]
+
+
+def test_restore_refuses_a_title_taken_meanwhile(client: TestClient) -> None:
+    bundle_id, sop_id, _doc_id = _create_sop_bundle(client, BODY)
+    assert _patch(client, bundle_id, sop_id, "definitions", is_removed=True, reason="Synthetic").status_code == 200
+    body = {"parent_key": "", "title_en": "definitions", "reason": "Synthetic: own list"}
+    assert client.post(_url(bundle_id, sop_id), json=body, headers=AUTHOR).status_code == 201
+    before = _get_tobe(client, bundle_id)
+
+    response = _patch(client, bundle_id, sop_id, "definitions", is_removed=False)
+
+    _assert_rejected(response, 422, "duplicate_outline_title", doc_code=SOP, parent_key=None)
+    assert _get_tobe(client, bundle_id) == before

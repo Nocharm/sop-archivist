@@ -478,6 +478,25 @@ def _list_filled_keys(index: _Index, doc: TargetDocInfo, by_slot: Mapping[str | 
     return filled
 
 
+def _list_empty_required_keys(doc: TargetDocInfo, numbers: Mapping[str, str | None], filled: set[str]) -> set[str]:
+    """비어 있는 필수 SOP 절 — 내보내는 절(numbers의 키) 가운데 필수이고 N/A가 아니며 자기와 하위에 채움(_list_filled_keys)이 없는 것.
+
+    하위 절을 둔 절(묶음 제목 · 절차 · 범주 표)은 하위가 모두 N/A이거나 채워졌으면 비어 있음이 아니다 — 하위 가운데 비어 있는 필수 절이
+    있을 때만 함께 비어 있다(하위가 하나도 없으면 자기만 본다). 자동 목록은 자식 WI가 없을 때, 빈 선택 항목은 절이 없어 오지 않는다.
+    """
+    outline = doc.outline
+    empty: set[str] = set()
+    for item in reversed(outline.items):  # 위계 순서의 거꾸로 — 하위의 판정이 먼저 끝난다
+        if item.key not in numbers or not item.is_required or _find_na_reason(doc, item.key) is not None:
+            continue
+        if any(outline.is_within(key, item.key) for key in filled):
+            continue
+        children = [child.key for child in outline.list_children(item.key) if child.key in numbers]
+        if not children or any(key in empty for key in children):
+            empty.add(item.key)
+    return empty
+
+
 def _find_nearest_number(key: str, numbers: Mapping[str, str | None]) -> str | None:
     """그 절이나 가장 가까운 상위 절의 번호 — 번호 없는 절(5장 범주)의 줄이 결과물 A·Excel의 No.에 적는 값("5")."""
     current: str | None = key
@@ -516,7 +535,7 @@ def _plan_sections(index: _Index, doc: TargetDocInfo, labels: OutputLabels) -> l
             if target.kind == SLOT_HEADING:
                 headings[target.slot_key].append(target)
         outline, numbers = doc.outline, index.outline_numbers[doc.id]
-        filled = _list_filled_keys(index, doc, by_slot)
+        empty = _list_empty_required_keys(doc, numbers, _list_filled_keys(index, doc, by_slot))
         return [
             _SectionPlan(
                 item.key, outline.get_label(item.key, numbers), numbers[item.key], na_reason,
@@ -524,11 +543,7 @@ def _plan_sections(index: _Index, doc: TargetDocInfo, labels: OutputLabels) -> l
                 kind=item.kind, level=outline.get_level(item.key), counts_lines=outline.counts_lines(item.key),
                 default_style=item.default_style, line_base=_get_line_base(outline, item.key, numbers), run=item.key,
                 nearest_number=_find_nearest_number(item.key, numbers), shows_number=outline.shows_number(item.key),
-                deviation_reason=item.deviation_reason,
-                # 종류마다 "채움"이 다르다(_list_filled_keys) — 줄을 받는 절은 줄, 묶음 제목은 하위의 것, 자동 목록은 자식 WI
-                is_empty_required=item.is_required and na_reason is None and not any(
-                    outline.is_within(key, item.key) for key in filled
-                ),
+                deviation_reason=item.deviation_reason, is_empty_required=item.key in empty,
             )
             for item in outline.items
             if item.key in numbers

@@ -86,12 +86,14 @@ def build_tobe_template(tobe: ToBeOut) -> bytes:
     for step in tobe.wi_steps:
         if step.code in assign_codes:
             _append_row(step_sheet, [step.code, step.step_no, step.title])
-    # 6장이 하위를 선언하는 항목인 SOP만 — 가져오기가 그런 SOP의 절차만 받는다(outline_edit.plan_procedures)
+    # 6장이 하위를 선언하는 항목인 SOP만 — 가져오기가 그런 SOP의 절차만 받는다(outline_edit.plan_procedures).
+    # 뺀 표준 항목은 되살리게 목록에 실려 오지만 시트에는 싣지 않는다(실으면 가져오기가 새 선언 절차로 더한다)
+    live = [item for item in tobe.outline_items if not item.is_removed]
     declaring = assign_codes & {
-        item.code for item in tobe.outline_items if item.key == PROCEDURE_PARENT and item.kind == KIND_NAMED_CHILDREN
+        item.code for item in live if item.key == PROCEDURE_PARENT and item.kind == KIND_NAMED_CHILDREN
     }
     positions: dict[str, int] = {}
-    for item in tobe.outline_items:
+    for item in live:
         if item.code in declaring and item.parent_key == PROCEDURE_PARENT:
             positions[item.code] = positions.get(item.code, 0) + 1
             _append_row(procedure_sheet, [item.code, positions[item.code], item.title_en, item.title_ko])

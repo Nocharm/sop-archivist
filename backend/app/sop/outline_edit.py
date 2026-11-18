@@ -5,7 +5,8 @@
 셋 다 사유가 없으면 422 deviation_reason_required다. 표준 항목의 순서는 API와 Excel 모두 바꾸지 못한다(422 outline_standard_item).
 """
 
-from collections.abc import Callable, Mapping, Sequence
+from collections import defaultdict
+from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Annotated
 
@@ -142,8 +143,8 @@ def _ensure_title_free(doc: TargetDoc, parent_key: str | None, siblings: Sequenc
 def _add_row(
     session: AsyncSession, doc: TargetDoc, rows: dict[str, TargetDocOutlineItem], parent: OutlineItemInfo | None,
     title_en: str, title_ko: str, order_index: int, *, reason: str | None = None,
-) -> None:
-    """새 항목의 행 — reason이 있으면 사용자 항목(부모가 없으면 최상위), 없으면 선언 항목(부모가 있다).
+) -> str:
+    """새 항목의 행을 더하고 키를 돌려준다 — reason이 있으면 사용자 항목(부모가 없으면 최상위), 없으면 선언 항목(부모가 있다).
 
     키는 뺀 항목의 행도 세어 짓는다(build_next_declared_key — 뺀 수를 다시 쓰지 않는다).
     """
@@ -161,6 +162,7 @@ def _add_row(
         child_prefix=item.child_prefix, origin=item.origin, deviation_reason=item.deviation_reason,
     )
     session.add(rows[key])
+    return key
 
 
 async def _clear_na_within(session: AsyncSession, doc: TargetDoc, key: str) -> None:
@@ -273,7 +275,11 @@ async def add_outline_item(
     if len(siblings) >= MAX_DECLARED_ITEMS:
         raise_rule(422, "tobe_list_full", limit=MAX_DECLARED_ITEMS)
     _ensure_title_free(doc, parent.key if parent is not None else None, siblings, body.title_en)
-    order_index = max((sibling.order_index for sibling in siblings), default=-1) + 1
+    # 뺀 항목의 행까지 보고 끝에 둔다 — 뺀 표준 항목을 되살리면 제자리(순서 값)로 돌아와야 한다
+    parent_key = parent.key if parent is not None else None
+    order_index = max(
+        (row.order_index for row in edit.rows.values() if get_parent_key(row.key) == parent_key), default=-1
+    ) + 1
     _add_row(session, doc, edit.rows, parent, body.title_en, body.title_ko, order_index, reason=reason)
     await _finish_edit(session, bundle, doc, actor)
 
@@ -321,9 +327,49 @@ def _patch_declared_item(doc: TargetDoc, edit: _Edit, item: OutlineItemInfo, bod
         after = [sibling_key for sibling_key in before if sibling_key != item.key]
         after.insert(min(body.position, len(after)), item.key)
         if after != before:
-            _write_order(edit.rows, after)
+            removed = _list_removed_standard(edit.rows, parent_key)
+            _write_order(edit.rows, _merge_removed(_list_listed_keys(edit.rows, parent_key), after, removed))
             is_changed = True
     return is_changed
+
+
+def _merge_removed(full_before: Sequence[str], live_after: Sequence[str], removed: Collection[str]) -> list[str]:
+    """형제의 새 순서에 뺀 표준 형제를 끼운다 — 뺀 항목도 제 순서 값을 받아, 되살리면 다른 형제와 겹치지 않고 제자리로 돌아온다.
+
+    full_before는 지금 순서(뺀 항목 포함), live_after는 남은 항목의 새 순서. 뺀 항목은 지금 순서에서 바로 뒤에 있던 남는 항목에 붙어 다닌다
+    (뒤에 남는 항목이 없으면 끝).
+    """
+    surviving = set(live_after)
+    attached: dict[str | None, list[str]] = defaultdict(list)
+    pending: list[str] = []
+    for key in full_before:
+        if key in removed:
+            pending.append(key)
+        elif key in surviving:
+            attached[key] += pending
+            pending = []
+    attached[None] += pending
+    merged: list[str] = []
+    for key in live_after:
+        merged += attached[key]
+        merged.append(key)
+    return merged + attached[None]
+
+
+def _list_removed_standard(rows: Mapping[str, TargetDocOutlineItem], parent_key: str | None) -> set[str]:
+    return {
+        row.key for row in rows.values()
+        if row.is_removed and row.origin == ORIGIN_STANDARD and get_parent_key(row.key) == parent_key
+    }
+
+
+def _list_listed_keys(rows: Mapping[str, TargetDocOutlineItem], parent_key: str | None) -> list[str]:
+    """그 부모 아래 남은 항목과 뺀 표준 항목의 키 — 골격 순서(DocOutline.listed_items와 같은 정렬)."""
+    siblings = [
+        row for row in rows.values()
+        if get_parent_key(row.key) == parent_key and (not row.is_removed or row.origin == ORIGIN_STANDARD)
+    ]
+    return [row.key for row in sorted(siblings, key=lambda row: (row.order_index, row.key))]
 
 
 async def _patch_standard_item(
@@ -341,9 +387,11 @@ async def _patch_standard_item(
         if body.is_removed is not False:  # 빠진 항목은 되살리기 말고는 고칠 것이 없다
             raise_rule(404, "outline_item_not_found", doc_code=doc.code, key=item.key)
         standard = await _load_standard_titles(session, item.key)
+        title_en, title_ko = standard if standard is not None else (row.title_en, row.title_ko)
+        # 빠진 동안 같은 영어 제목의 형제(사용자 항목 등)가 생겼으면 되살리지 않는다 — Excel이 제목으로 짝짓는다
+        _ensure_title_free(doc, get_parent_key(item.key), edit.outline.list_children(get_parent_key(item.key)), title_en)
         row.is_removed, row.deviation_reason = False, None
-        if standard is not None:
-            row.title_en, row.title_ko = standard
+        row.title_en, row.title_ko = title_en, title_ko
         return True
     if body.is_removed:
         reason = _require_reason(doc, body.reason, key=item.key) if item.is_required else None
@@ -460,17 +508,21 @@ async def apply_procedure_plans(
         doc = docs_by_code[plan.code]
         rows = await _load_rows(session, doc.id)
         before = _list_sibling_keys(rows, plan.parent.key)
+        listed_before = _list_listed_keys(rows, plan.parent.key)
         is_changed = bool(plan.removed)
+        live_after: list[str] = []
         for position, (key, wanted) in enumerate(plan.wanted):
             if key is None:
-                _add_row(session, doc, rows, plan.parent, wanted.title_en, wanted.title_ko, position)
+                live_after.append(_add_row(session, doc, rows, plan.parent, wanted.title_en, wanted.title_ko, position))
                 is_changed = True
                 continue
             row = rows[key]
             if (row.title_en, row.title_ko) != (wanted.title_en, wanted.title_ko):
                 row.title_en, row.title_ko = wanted.title_en, wanted.title_ko
                 is_changed = True
-            row.order_index = position
+            live_after.append(key)
+        # 시트 순서로 놓되 뺀 표준 절차는 제자리에 남긴다(되살리면 거기로 돌아온다)
+        _write_order(rows, _merge_removed(listed_before, live_after, _list_removed_standard(rows, plan.parent.key)))
         for key in plan.removed:
             await _retire(session, doc, rows[key])
         if is_changed or _list_sibling_keys(rows, plan.parent.key) != before:

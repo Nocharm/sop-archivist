@@ -2256,6 +2256,16 @@ def test_empty_required_flag(client: TestClient) -> None:
         section["location_key"]: (section["is_empty_required"], section["deviation_reason"]) for section in composed["sections"]
     } == flags
 
+    # 하위가 모두 N/A인 묶음 제목은 비어 있음이 아니다(7.1 아래 선택 항목 Form만 N/A로 둔 경우)
+    na_slots = [
+        {"code": "SOP-E", "slot_key": "responsibilities", "reason": "Synthetic"},
+        {"code": "SOP-E", "slot_key": "document_relationships.associated_documents.form", "reason": "Synthetic"},
+    ]
+    assert put_tobe(client, bundle_id, [sop], na_slots=na_slots).status_code == 200
+    c_doc = next(doc for doc in _get_output(client, bundle_id, "outputs/c")["docs"] if doc["target_doc_id"] == sop_id)
+    covered = {section["location_key"]: section["is_empty_required"] for section in c_doc["sections"]}
+    assert (covered["document_relationships.associated_documents"], covered["document_relationships"]) == (False, True)
+
     # 자식 WI가 생기면 자동 목록과 그 묶음 제목은 비어 있지 않다
     wi = {"code": "WI-E", "title": "Synthetic WI", "doc_type": "wi", "parent_code": "SOP-E"}
     assert put_tobe(client, bundle_id, [sop, wi], na_slots=[{"code": "SOP-E", "slot_key": "responsibilities", "reason": "Synthetic"}]).status_code == 200

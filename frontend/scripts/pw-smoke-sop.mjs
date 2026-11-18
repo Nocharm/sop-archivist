@@ -975,15 +975,15 @@ await runStep("new documents: the section table shows each section's state and s
     const naRows = rows.filter(([, state]) => state === "na" || state === "covered").length;
     const summary = (await getText(page, `${prefix}-slots-summary`)).trim();
     check("the head counts what the rows say", summary === `${tally("filled", "sub")} with sentences · ${tally("empty")} empty · ${naRows} N/A`, summary);
-    // 2. 문장이 든 칸 - 수를 적고 단추가 없다. 자기 수가 없는 상위 칸은 "하위 칸에 있음"
+    // 2. 문장이 든 칸 - 수를 적고 N/A 단추가 없다. 자기 수가 없는 상위 칸은 "하위 칸에 있음"
     const counts = (start.slot_counts ?? []).filter((row) => row.target_doc_id === sop.id && row.count > 0);
     const countOf = new Map(counts.map((row) => [row.slot_key, row.count]));
     check("the seed has sections with sentences", counts.length > 0);
     for (const { slot_key: key, count } of counts) {
       const state = await readState(key);
       const text = await stateText(key);
-      const buttons = await slot(key).locator("button").count();
-      check(`${key} shows its sentences and has no button`, state === "filled" && text === (count === 1 ? "1 sentence" : `${count} sentences`) && buttons === 0, `${state} ${text} ${buttons}`);
+      const buttons = await slot(key).locator(`button:not([data-testid*="-outline-"])`).count(); // 이름 바꾸기(골격) 단추는 따로 센다
+      check(`${key} shows its sentences and has no N/A button`, state === "filled" && text === (count === 1 ? "1 sentence" : `${count} sentences`) && buttons === 0, `${state} ${text} ${buttons}`);
       const parent = slotParent(key);
       if (parent !== null && !countOf.has(parent)) check(`${parent} holds sentences in its sub-sections`, (await readState(parent)) === "sub", await readState(parent));
     }
@@ -1297,13 +1297,16 @@ await runStep("new documents: declare a procedure, rename it, see it in the sect
 
 // 표준과 다름(표준 골격 계획 스텝 6) - 비어 있는 필수 장 하나를 사유와 함께 빼면 뒤 장의 번호가 당겨지고, 뺀 줄은 줄이 그어진 채 남아 되살린다.
 // 사유 없이는 저장 단추가 꺼져 서버에 거절이 가지 않으니 콘솔 오류를 허용하지 않는다. 중간에 멈췄으면 API로 되살린다
-/** 반쪽 Bundle SOP의 최상위 장 가운데 뺄 수 있는 것 - 표준 · 필수이고, N/A가 아니고, 자기와 하위에 문장 · 칸 제목이 없고, 뒤에 장이 있는 것 */
+/**
+ * 반쪽 Bundle SOP의 최상위 장 가운데 뺄 수 있는 것 - 표준 · 필수이고, 자기와 하위에 N/A도 문장 · 칸 제목도 없고, 뒤에 장이 있는 것.
+ * 하위의 N/A까지 본다 - 장을 빼면 하위의 N/A가 지워지고 되살려도 돌아오지 않아, 뒤 단계가 기대는 시드의 N/A(procedures.troubleshooting)를 잃는다
+ */
 function findRemovableChapter(tobe, sop) {
   const tops = readOutline(tobe, sop.code).filter((item) => item.parent_key === null);
-  const naKeys = new Set(tobe.na_slots.filter((na) => na.code === sop.code).map((na) => na.slot_key));
   const isWithin = (key, top) => key === top || key.startsWith(`${top}.`);
+  const hasNa = (key) => tobe.na_slots.some((na) => na.code === sop.code && isWithin(na.slot_key, key));
   const held = (key) => (tobe.slot_counts ?? []).some((row) => row.target_doc_id === sop.id && isWithin(row.slot_key, key) && row.count + row.heading_count > 0);
-  const index = tops.slice(0, -1).findIndex((item) => item.origin === "standard" && item.is_required && !naKeys.has(item.key) && !held(item.key));
+  const index = tops.slice(0, -1).findIndex((item) => item.origin === "standard" && item.is_required && !hasNa(item.key) && !held(item.key));
   return index < 0 ? null : { target: tops[index], next: tops[index + 1] };
 }
 

@@ -59,6 +59,8 @@ export function SlotTable({ prefix, docKey, rows, summary, isWritten, canEdit, s
   // 바로 전 그림에서 편집기가 열려 있던 칸 - 닫힐 때 포커스를 그 칸의 다음 할 일로 옮긴다
   const lastEditKeyRef = useRef<SlotKey | null>(null);
   const editingKey = myEdit?.slotKey ?? null;
+  const editingMode: SlotEditMode = myEdit?.mode ?? "na";
+  const lastEditModeRef = useRef<SlotEditMode>("na");
   // 이미 쓴 SOP(입구 2)는 골격이 파일의 것이라 고치지 않는다
   const canEditOutline = canEdit && !isWritten;
   // 저장 중 - saving은 다시 그린 뒤에야 닿아, 같은 작업 안의 두 번째 Enter·누름은 이 값으로 막는다
@@ -86,12 +88,18 @@ export function SlotTable({ prefix, docKey, rows, summary, isWritten, canEdit, s
   // 편집기가 닫히며(저장 · 취소 · Esc) 포커스가 쪽으로 떨어졌으면 그 칸의 다음 할 일(Edit reason · Mark N/A)로 - 키보드 사용자가 제자리에 남는다
   useEffect(() => {
     const closed = lastEditKeyRef.current;
+    const closedMode = lastEditModeRef.current;
     lastEditKeyRef.current = editingKey;
+    lastEditModeRef.current = editingMode;
     if (closed === null || editingKey !== null) return;
     const active = document.activeElement;
     if (active !== null && active !== document.body) return;
-    tableRef.current?.querySelector<HTMLElement>(`[data-slot="${closed}"] .slot-acts button`)?.focus();
-  }, [editingKey]);
+    // 그 편집기를 연 단추로 - 줄 끝 단추가 여럿이라 첫 단추로 보내면 N/A 편집기를 닫고 이름 단추에 선다
+    const suffixes = closedMode === "na" ? [`na-${closed}-edit`, `na-${closed}-mark`] : [`outline-${closed}-${closedMode}`, `outline-${closed}-restore`];
+    const row = tableRef.current?.querySelector<HTMLElement>(`[data-slot="${closed}"]`);
+    const target = suffixes.map((suffix) => row?.querySelector<HTMLElement>(`[data-testid="${prefix}-${suffix}"]`)).find((el) => el != null);
+    (target ?? row?.querySelector<HTMLElement>(".slot-acts button"))?.focus();
+  }, [editingKey, editingMode, prefix]);
 
   function openEditor(row: SlotRow) {
     const saved = row.state.kind === "na" ? row.state.reason : "";

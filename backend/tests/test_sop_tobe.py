@@ -764,6 +764,34 @@ def test_import_refuses_reordering_standard_procedures(client: TestClient) -> No
     ]
 
 
+@pytest.mark.usefixtures("restore_outline_standard")
+def test_template_leaves_out_removed_procedures(client: TestClient) -> None:
+    # 뺀 표준 절차는 To-Be 목록에 되살리게 실려 오지만 시트에는 없다 — 그대로 가져와도 새 선언 절차로 돌아오지 않는다
+    items = _get_standard_items(client)
+    at = next(index for index, item in enumerate(items) if item["key"] == "procedures") + 1
+    extra = [
+        {**items[at - 1], "key": f"procedures.{name.lower()}", "title_en": name, "kind": "general", "suggestions": []}
+        for name in ("Alpha", "Beta")
+    ]
+    assert _put_standard(client, items[:at] + extra + items[at:]).status_code == 200
+    bundle_id = create_bundle(client)["id"]
+    sop_id = put_tobe(client, bundle_id, [_doc("SOP-1")]).json()["docs"][0]["id"]
+    removed = client.patch(
+        f"/api/bundles/{bundle_id}/tobe/docs/{sop_id}/outline/procedures.alpha",
+        json={"is_removed": True, "reason": "Synthetic: not used"}, headers=AUTHOR,
+    )
+    assert removed.status_code == 200, removed.text
+    before = _get_tobe(client, bundle_id)
+
+    template = client.get(f"/api/bundles/{bundle_id}/tobe/template.xlsx", headers=AUTHOR)
+
+    workbook = load_workbook(BytesIO(template.content), data_only=True)
+    assert [tuple(row) for row in workbook[PROCEDURE_SHEET].iter_rows(values_only=True)] == [
+        PROCEDURE_HEADER, ("SOP-1", 1, "Beta", None),
+    ]
+    assert _post_import(client, bundle_id, template.content).json() == before
+
+
 def test_import_without_sheet_leaves_outline(client: TestClient) -> None:
     bundle_id, _ids = _setup_two_sops(client)
     before = _get_tobe(client, bundle_id)

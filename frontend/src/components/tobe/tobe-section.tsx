@@ -743,7 +743,7 @@ export function ToBeSection({ bundleId, documents, file }: ToBeSectionProps) {
                       draggable={canDragParent(doc, dragState)}
                       open={open.has(doc.key)}
                       onToggle={() => toggleOpen(doc.key)}
-                      hasUnsavedNa={naEdit?.docKey === doc.key && isNaEditDirty(naEdit)}
+                      unsavedEdit={naEdit?.docKey === doc.key && isNaEditDirty(naEdit) ? ((naEdit.mode ?? "na") === "na" ? "na" : "outline") : null}
                       onRemove={() => void runWrite(() => removeToBeDoc(bundleId, docId))}
                       onEquisRefresh={() => void handleEquisRefresh(doc.code)}
                       panel={() => (
@@ -821,8 +821,9 @@ export function ToBeSection({ bundleId, documents, file }: ToBeSectionProps) {
       )}
       {leaveTo !== null && (
         <ConfirmModal
-          title={t("tobe.leaveTitle")}
-          summary={t("tobe.leaveBody")}
+          // 남은 편집기가 N/A 사유인지 골격 쓰기인지에 따라 문구만 다르다
+          title={(naEdit?.mode ?? "na") === "na" ? t("tobe.leaveTitle") : t("tobe.outline.leaveTitle")}
+          summary={(naEdit?.mode ?? "na") === "na" ? t("tobe.leaveBody") : t("tobe.outline.leaveBody")}
           confirmLabel={t("tobe.leaveConfirm")}
           danger
           testId="tobe-leave"
