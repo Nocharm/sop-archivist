@@ -250,7 +250,7 @@ def test_rows_get_own_destinations(client: TestClient) -> None:
     _ok(_edit(client, fx.bundle_id, fx.doc["id"], _split_rows(table)))
     rows = _units_of_kind(get_view(client, fx.bundle_id, fx.doc["id"]), "table_row")
 
-    assign_as_is(client, fx.bundle_id, rows[0], fx.sop_id, slot_key="procedures.procedure")
+    assign_as_is(client, fx.bundle_id, rows[0], fx.sop_id, slot_key="procedures.p1")
     assign_as_is(client, fx.bundle_id, rows[1], fx.wi_id, wi_part="instruction")
     assign_as_is(
         client, fx.bundle_id, rows[2], fx.wi_id, wi_part="instruction", hold_reason="Synthetic: check the step"

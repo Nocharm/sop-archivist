@@ -1,7 +1,7 @@
-// 묶음 관리·AI 요청·관리자 묶음·AI 지침 API - 백엔드에는 있었지만 화면이 없던 엔드포인트의 프런트 계약.
-// 모양은 backend routers/sop_bundles.py·sop_ai.py·sop_admin.py·sop_guidelines.py와 계획 2 문서 "API 계약"을 따른다.
+// 묶음 관리·AI 요청·관리자 묶음·AI 지침·SOP 표준 골격 API - 백엔드에는 있었지만 화면이 없던 엔드포인트의 프런트 계약.
+// 모양은 backend routers/sop_bundles.py·sop_ai.py·sop_admin.py·sop_guidelines.py·sop_outline.py와 계획 2 문서 "API 계약"을 따른다.
 import { apiFetch, apiFetchBlob } from "./api";
-import type { AiJobKind, AiSuggestion, Bundle, BundleMember, BundleStatus, MemberRole, RowProgress } from "./api-sop";
+import type { AiJobKind, AiSuggestion, Bundle, BundleMember, BundleStatus, MemberRole, NumberStyle, OutlineKind, RowProgress } from "./api-sop";
 
 // ---- 묶음 관리 -------------------------------------------------------------
 
@@ -184,4 +184,29 @@ export function createGuidelineVersion(key: string, content: string, note: strin
 
 export function activateGuidelineVersion(key: string, version: number): Promise<GuidelineVersion> {
   return apiFetch<GuidelineVersion>(`/admin/guidelines/${encodeURIComponent(key)}/versions/${version}/activate`, { method: "POST" });
+}
+
+// ---- 관리자: SOP 표준 골격 ---------------------------------------------------
+
+/** 표준 골격의 항목 한 줄 - 순서는 목록에서의 자리이고 위계는 키의 점이다(부모 = 마지막 점 앞) */
+export interface OutlineStandardItem {
+  key: string;
+  title_en: string;
+  title_ko: string;
+  kind: OutlineKind;
+  is_required: boolean;
+  default_style: NumberStyle;
+  /** 빈 글이면 하위 번호가 "부모.n", "Appendix"면 "Appendix n." */
+  child_prefix: string;
+  /** 문서가 하위 항목을 선언할 때 권하는 이름 */
+  suggestions: string[];
+}
+
+export function getOutlineStandard(): Promise<OutlineStandardItem[]> {
+  return apiFetch<{ items: OutlineStandardItem[] }>("/admin/outline").then((body) => body.items);
+}
+
+/** 목록을 통째로 바꾼다 - 이미 만든 문서의 골격은 그대로이고 그 뒤에 만드는 SOP 문서부터 적용된다 */
+export function putOutlineStandard(items: OutlineStandardItem[]): Promise<OutlineStandardItem[]> {
+  return apiFetch<{ items: OutlineStandardItem[] }>("/admin/outline", { method: "PUT", body: JSON.stringify({ items }) }).then((body) => body.items);
 }

@@ -425,11 +425,14 @@ def _is_place_alive(candidate: Candidate, docs: Mapping[int, TargetDocInfo]) -> 
 
 
 def _build_target(job: AiJob, candidate: Candidate, suggestion_id: int, **fields: Any) -> TargetSentence:
-    """AI 새 문장 — 확정 글은 비워 두고 ai_text에만 쓴다. 자리는 후보, 나머지는 종류별로 다르다."""
+    """AI 새 문장 — 확정 글은 비워 두고 ai_text에만 쓴다. 자리는 후보, 나머지는 종류별로 다르다.
+
+    번호 표시는 그 자리의 기본값(사람 저장과 같다 — 표·그림도). 문장은 _arrange_sentences가 짝 규칙으로 다시 정한다.
+    """
     return TargetSentence(
         bundle_id=job.bundle_id, target_doc_id=candidate.target_doc_id, slot_key=candidate.slot_key,
         wi_step=candidate.wi_step, wi_part=candidate.wi_part, confirmed_text="", origin=ORIGIN_UNITS,
-        status=AI_SUGGESTED, suggestion_id=suggestion_id, revision=1, **fields,
+        status=AI_SUGGESTED, suggestion_id=suggestion_id, revision=1, number_style=candidate.default_style, **fields,
     )
 
 
@@ -488,6 +491,7 @@ async def _arrange_sentences(
         NewTarget(
             key=str(index), place=_get_place(candidate), meaning=pair_ids.get(sources[0].id, -sources[0].id),
             lang=target.lang, source_unit_id=sources[0].id, is_translation=False, source_placed=False,
+            default_style=candidate.default_style,
         )
         for index, (target, sources) in enumerate(sentences)
     ])

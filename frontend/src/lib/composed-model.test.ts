@@ -10,10 +10,12 @@ import {
   groupTableCells,
   isComposedRow,
   listHeadingNotes,
+  listSectionMarks,
   readSectionNumber,
   removeClearedUnits,
   splitCTable,
 } from "@/lib/composed-model";
+import { makeSectionOutline } from "@/lib/outline-fixture";
 import { getPillWidth } from "@/lib/strip-pill-model";
 
 function makeDoc(sections?: ComposedSection[]): ComposedDoc {
@@ -24,15 +26,15 @@ function makeDoc(sections?: ComposedSection[]): ComposedDoc {
     doc_type: "sop",
     entrance: "assign",
     sections: sections ?? [
-      { location_key: "purpose", label: "Purpose", number: "1", na_reason: null, heading_note: "", items: [{ target_id: 1, kind: "sentence", lang: "ko", text: "목적", status: "confirmed", change_type: "as_is", number: "1.1", source_unit_ids: [10] }] },
-      { location_key: "scope", label: "Scope", number: "2", na_reason: "Synthetic", heading_note: "", items: [] },
-      { location_key: "step:1:instruction", label: "Step 1 · Instruction", number: "1", na_reason: null, heading_note: "", items: [] },
+      { ...makeSectionOutline(), location_key: "purpose", label: "Purpose", number: "1", na_reason: null, heading_note: "", items: [{ target_id: 1, kind: "sentence", lang: "ko", text: "목적", status: "confirmed", change_type: "as_is", number: "1.1", source_unit_ids: [10] }] },
+      { ...makeSectionOutline(), location_key: "scope", label: "Scope", number: "2", na_reason: "Synthetic", heading_note: "", items: [] },
+      { ...makeSectionOutline({ kind: null }), location_key: "step:1:instruction", label: "Step 1 · Instruction", number: "1", na_reason: null, heading_note: "", items: [] },
     ],
   };
 }
 
 function makeSection(number: string, label: string, headingNote: string): ComposedSection {
-  return { location_key: `slot:${number}`, label, number, na_reason: null, heading_note: headingNote, items: [] };
+  return { ...makeSectionOutline(), location_key: `slot:${number}`, label, number, na_reason: null, heading_note: headingNote, items: [] };
 }
 
 function makeItem(targetId: number, number: string | null, kind: ComposedItem["kind"] = "sentence"): ComposedItem {
@@ -44,7 +46,7 @@ function makeCell(targetId: number, row: number, col: number, text: string, lang
 }
 
 function makeSlot(locationKey: string, number: string | null, label: string, items: ComposedItem[]): ComposedSection {
-  return { location_key: locationKey, label, number, na_reason: null, heading_note: "", items };
+  return { ...makeSectionOutline(), location_key: locationKey, label, number, na_reason: null, heading_note: "", items };
 }
 
 function makeTarget(fields: Partial<GroupTarget>): GroupTarget {
@@ -93,7 +95,24 @@ describe("buildComposedRows", () => {
 
     expect(rows.map(getNewRowKey)).toEqual(["t:1", "slot:scope", "slot:step:1:instruction"]);
     expect(rows[0]).toMatchObject({ section_path: "1. Purpose", doc_code: "SOP-CF", source_unit_ids: [10], lang: "ko" });
-    expect(rows[1]).toMatchObject({ kind: "empty", section_path: "2. Scope", na: true });
+    expect(rows[1]).toMatchObject({ kind: "empty", section_path: "2. Scope", na: true, fixed: null, autoItems: [] });
+  });
+
+  it("marks the sections that take no sentences: a group is a heading only, the auto list carries the SOP's work instructions", () => {
+    const section = (location_key: string, number: string | null, label: string, outline: Parameters<typeof makeSectionOutline>[0] = {}): ComposedSection => ({ ...makeSectionOutline(outline), location_key, label, number, na_reason: null, heading_note: "", items: [] });
+    const wis = [{ code: "WI-CF-01", title: "Rotor change" }];
+    const rows = buildComposedRows(makeDoc([
+      section("general_requirements.safety", null, "General Requirements › Safety", { level: 1 }),
+      section("document_relationships", "7", "Document Relationships", { kind: "group", counts_lines: false }),
+      section("document_relationships.work_instructions", "7.2", "Document Relationships › Work Instructions", { kind: "auto_list", counts_lines: false, level: 1, auto_items: wis }),
+    ]));
+
+    // 범주는 번호 없이 이름만이 칸 머리 글이다
+    expect(rows.map((row) => [row.section_path, row.kind === "empty" ? row.fixed : "", row.kind === "empty" ? row.autoItems : []])).toEqual([
+      ["General Requirements › Safety", null, []],
+      ["7. Document Relationships", "group", []],
+      ["7.2. Document Relationships › Work Instructions", "auto", wis],
+    ]);
   });
 
   it("carries each item's own output C number while the slot header keeps the slot number", () => {
@@ -175,6 +194,20 @@ describe("getComposedLeadWidths", () => {
     expect(widths.get("6")).toBe(getPillWidth(4));
     expect(widths.get("7")).toBe(getPillWidth(1));
   });
+
+  it("heads an appendix with its label alone, and still sizes its lines under the appendix number", () => {
+    // 부록은 이름에 번호가 들어 있어 머리에 번호를 따로 적지 않는다(shows_number false) - 줄 번호의 머리는 그대로 number "2"다
+    const appendix: ComposedSection = { ...makeSlot("appendices.a2", "2", "Appendix 2. Alarm list", [makeItem(1, null), makeItem(2, "2.1")]), shows_number: false, heading_note: "← OLD-1 §9" };
+    const doc = makeDoc([makeSlot("scope", "2", "Scope", [makeItem(3, null)]), appendix]);
+
+    const rows = buildComposedRows(doc);
+
+    expect(rows.map((row) => row.section_path)).toEqual(["2. Scope", "Appendix 2. Alarm list", "Appendix 2. Alarm list"]);
+    expect(listHeadingNotes(doc).get("Appendix 2. Alarm list")).toBe("← OLD-1 §9");
+    // 칸을 여는 번호 없는 줄은 그 칸 첫 깊이(2.1의 깊이)의 폭 - 머리 글에서 번호를 읽었다면 1단 폭이 된다
+    expect(getComposedLeadWidths(rows).get("1")).toBe(getPillWidth(2));
+    expect(getComposedLeadWidths(rows).get("2")).toBe(getPillWidth(2));
+  });
 });
 
 describe("applySavedTargets", () => {
@@ -217,6 +250,23 @@ describe("listHeadingNotes", () => {
     const doc = makeDoc([makeSection("6.1", "Procedure", "← OLD-1 §5"), makeSection("6.2", "Records", "")]);
 
     expect(listHeadingNotes(doc)).toEqual(new Map([["6.1. Procedure", "← OLD-1 §5"]]));
+  });
+});
+
+describe("listSectionMarks", () => {
+  it("lists only sections that differ from the standard or are empty but required, by the section path the rows use", () => {
+    const doc = makeDoc([
+      { ...makeSection("1", "Aim", ""), deviation_reason: "House style" },
+      { ...makeSection("2", "Scope", ""), is_empty_required: true },
+      makeSection("3", "Definitions", ""),
+    ]);
+
+    expect(listSectionMarks(doc)).toEqual(
+      new Map([
+        ["1. Aim", { deviationReason: "House style", isEmptyRequired: false }],
+        ["2. Scope", { deviationReason: null, isEmptyRequired: true }],
+      ]),
+    );
   });
 });
 

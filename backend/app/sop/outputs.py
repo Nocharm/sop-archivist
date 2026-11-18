@@ -22,8 +22,18 @@ from app.sop.caption_ref_rules import (
     resolve_numbered_group,
 )
 from app.sop.captions import CAPTION_KIND, get_caption_lang_rank, is_caption_target, join_caption_texts
-from app.sop.constants import COVER_KINDS, NUMBER_NOTE, NUMBERED, SLOT_HEADING, SLOT_KEYS, WI_PARTS
+from app.sop.constants import (
+    COVER_KINDS,
+    NUMBER_BULLET,
+    NUMBER_NOTE,
+    NUMBERED,
+    SLOT_HEADING,
+    WI_PARTS,
+    NumberStyle,
+    OutlineKind,
+)
 from app.sop.groups import TABLE_UNIT_KINDS, build_group_ids, collapse_table_members
+from app.sop.outline import KIND_AUTO_LIST, DocOutline, get_parent_key, list_emitted_keys, number_outline
 from app.sop.output_labels import LABELS, OutputLabels
 from app.sop.output_rows import (
     MeaningRow,
@@ -159,14 +169,36 @@ class CItem(BaseModel):
     renumber: RenumberOut | None = None  # 표·그림 줄의 번호가 바뀌면 원문 → 새 번호(Renumbering.changes, Assign New 칸과 같은 값)
 
 
+class AutoItem(BaseModel):
+    """자동 목록 절(SOP 7.2 Work Instructions)의 한 줄 — 앱이 채우는 그 SOP의 자식 WI. 배정하는 줄이 아니다."""
+
+    code: str
+    title: str
+
+
 class CSection(BaseModel):
     location_key: str  # SOP 칸 키 | step:<n>:<부분> | unstepped:<부분> | path:<절 경로>
     label: str
-    number: str | None  # SOP 칸 번호(5.1)·WI 단계 번호(3), 번호가 없는 칸은 None
+    # SOP 절 번호(6.1, 부록은 그 부록의 번호 2)·WI 단계 번호(3). 번호가 없는 칸(5장 범주·단계 없는 WI·절 경로)은 None
+    number: str | None
     na_reason: str | None
     # 칸 제목에 이은 옛 제목(두 언어) — "← OLD-1 §5, OLD-2 §5", 없으면 빈 글. 칸 제목은 items에 넣지 않는다(제품 명세 §7.13 칸 제목)
     heading_note: str
     items: list[CItem]
+    kind: OutlineKind | None  # SOP 골격 항목의 종류 — WI 단계·입구 2 절 경로 칸은 None
+    level: int  # 골격 위계 깊이(최상위 0) — WI·절 경로 칸은 0
+    # 이 칸에 직접 놓인 줄을 세는가 — SOP에서 범주 표·하위 항목을 선언하는 칸만 거짓이고 WI·절 경로 칸은 늘 참이다(프런트의 미리 세기·깊이 한도가 읽는다).
+    # 번호 없는 칸(number가 null)의 줄은 참이어도 번호가 없다
+    counts_lines: bool
+    default_style: NumberStyle  # 이 칸에 새로 놓이는 줄의 기본 번호 표시
+    auto_items: list[AutoItem] = []  # 자동 목록 절(kind가 auto_list)만 — 그 SOP의 자식 WI(To-Be 순서). 다른 칸은 빈 목록
+    # 칸 머리에 번호를 라벨과 따로 적는가 — 라벨에 번호가 이미 든 부록("Appendix 1. 이름")만 거짓이고 그 밖(WI·절 경로 칸 포함)은 참이다.
+    # 거짓이어도 number는 그대로다(줄 번호의 머리)
+    shows_number: bool = True
+    # 표준과 다른 SOP 절(사용자 항목·이름을 바꾼 표준 항목)의 사유 — 그 밖의 절은 None
+    deviation_reason: str | None = None
+    # 필수 절인데 비었다 — 줄을 받는 절·묶음 제목은 자기와 하위에 줄이 없고, 자동 목록은 자식 WI가 없고, N/A도 아니다. 알림일 뿐 검토 요청을 막지 않는다
+    is_empty_required: bool = False
 
 
 class CDoc(BaseModel):
@@ -241,18 +273,34 @@ class _Index:
     meaning_anchor: dict[int, tuple[int, ...]]
     # (새 문서, 옛 단위) → 그 옛 단위를 출처로 둔 입구 2 새 문장의 자리(새 문서 단위 order_key) — 그 새 문장의 번역을 바로 뒤에 둔다
     new_doc_places: dict[tuple[int, int], tuple[int, ...]]
+    # 새 문서 → 내보낼 골격 항목의 번호(outline.number_outline — 내보내는 항목만 담긴다, 번호 없는 항목은 None). 비어 있는 선택 항목을
+    # 빼고 센 값이라 A·C·요약이 모두 이것으로 절 번호·라벨을 읽는다
+    outline_numbers: dict[int, dict[str, str | None]]
 
 
 @dataclass(frozen=True)
 class _SectionPlan:
     key: str
     label: str
-    # 줄 번호의 머리 — 같은 번호의 칸(WI 한 단계의 Instruction·Why)은 줄 번호를 이어 센다. 하위 칸이 있는 칸은 줄을 세지 않아 칸 제목의 번호로만 쓴다
-    number: str | None
+    number: str | None  # 칸 제목의 번호 — SOP 절 번호·WI 단계 번호, 번호 없는 칸은 None
     na_reason: str | None
     targets: list[TargetInfo]  # 칸 새 문장이 아닌 새 문장(두 언어 모두), 칸 안 순서 — 칸 제목은 빠진다
     keep_empty: bool  # SOP 칸·선언 단계는 비어도 싣고, 단계 없음·절 경로 칸은 새 문장이 있을 때만
     headings: tuple[TargetInfo, ...] = ()  # SOP 칸의 칸 제목(두 언어) — 번호를 세지 않고 칸 항목도 아니다
+    kind: str | None = None  # SOP 골격 항목의 종류 — WI·절 경로 칸은 None
+    level: int = 0
+    # 직접 놓인 줄을 세는 칸인가 — SOP에서 범주 표·하위 항목을 선언하는 칸(직접 줄이 하위 제목 번호와 겹친다)만 거짓이다.
+    # 번호 없는 칸(number가 None)은 참이어도 번호를 받지 않는다 — 화면은 이 값으로 깊이 한도만 가른다
+    counts_lines: bool = True
+    default_style: str = NUMBERED
+    # 줄 번호의 머리("6.1" → 6.1.1) — 줄을 세지 않는 칸은 None. 같은 run의 칸(WI 한 단계의 Instruction·Why)은 줄 번호를 이어 센다
+    line_base: str | None = None
+    run: str = ""  # 줄 번호를 이어 세는 범위 — SOP는 절마다(부록 1과 1장은 머리가 같은 "1"이어도 따로 센다), WI는 단계마다
+    # 글머리 기호 줄의 No.에 적는 번호 — 자기 번호, 번호 없는 SOP 절(범주)은 가장 가까운 번호 있는 상위 절의 번호
+    nearest_number: str | None = None
+    shows_number: bool = True  # 칸 머리에 번호를 라벨과 따로 적는가 — 라벨에 번호가 든 부록만 거짓(outline.DocOutline.shows_number)
+    deviation_reason: str | None = None  # 표준과 다른 SOP 절의 사유(CSection.deviation_reason)
+    is_empty_required: bool = False  # 비어 있는 필수 SOP 절(CSection.is_empty_required)
 
 
 def _order_target_docs(snap: BundleSnapshot) -> list[TargetDocInfo]:
@@ -342,11 +390,21 @@ def _build_index(snap: BundleSnapshot) -> _Index:
                 key = (target.target_doc_id, unit_id)
                 if key not in new_doc_places or place < new_doc_places[key]:
                     new_doc_places[key] = place
+    outline_numbers = {
+        doc.id: number_outline(
+            doc.outline,
+            # 줄이나 칸 제목이 놓인 항목 — To-Be 목록(tobe.build_tobe_out)과 같은 기준이다
+            list_emitted_keys(
+                doc.outline, {target.slot_key for target in doc_targets.get(doc.id, ()) if target.slot_key}, doc.na_slots
+            ),
+        )
+        for doc in doc_order
+    }
     return _Index(
         snap=snap, old_units=old_units, cells=cells, unit_targets=unit_targets, doc_targets=doc_targets,
         children=children, translations=translations, unit_groups=unit_groups, target_groups=target_groups, doc_order=doc_order,
         doc_rank={doc.id: rank for rank, doc in enumerate(doc_order)}, meaning_anchor=meaning_anchor,
-        new_doc_places=new_doc_places,
+        new_doc_places=new_doc_places, outline_numbers=outline_numbers,
     )
 
 
@@ -394,17 +452,66 @@ def _get_item_key(index: _Index, doc: TargetDocInfo, target: TargetInfo) -> tupl
 
 
 def _find_na_reason(doc: TargetDocInfo, slot_key: str) -> str | None:
-    """N/A 사유 — 상위 칸이 N/A면 하위 칸도 그 사유로 N/A다(R8)."""
-    if slot_key in doc.na_slots:
-        return doc.na_slots[slot_key]
-    parent = slot_key.split(".", 1)[0]
-    return doc.na_slots.get(parent) if parent != slot_key else None
+    """N/A 사유 — 상위 칸이 N/A면 하위 칸도 그 사유로 N/A다(R8). 자기 것이 먼저고, 없으면 가까운 조상부터 끝까지 본다."""
+    key: str | None = slot_key
+    while key is not None:
+        if key in doc.na_slots:
+            return doc.na_slots[key]
+        key = get_parent_key(key)
+    return None
+
+
+def _get_line_base(outline: DocOutline, key: str, numbers: Mapping[str, str | None]) -> str | None:
+    """SOP 절에 직접 놓인 줄 번호의 머리 — 줄을 세는 절의 자기 번호다(6장 절차 "6.1" → 6.1.1). 세지 않는 절과 번호 없는 절(범주)은 None.
+
+    부록도 자기 번호가 머리다("Appendix 2" 안의 줄 → 2.1, 2.2, 2.1.1 — 사용자 확인 2026-11-18). 다른 곳은 이 값을 읽기만 한다
+    (프런트는 절 응답의 number·counts_lines).
+    """
+    return numbers.get(key) if outline.counts_lines(key) else None
+
+
+def _list_filled_keys(index: _Index, doc: TargetDocInfo, by_slot: Mapping[str | None, list[TargetInfo]]) -> set[str]:
+    """SOP 절 가운데 채워진 것 — 줄(칸 제목 제외)이 놓인 절과, 자식 WI가 있는 자동 목록 절. 비어 있는 필수 절 판정의 재료다."""
+    filled = {key for key, targets in by_slot.items() if key is not None and targets}
+    if any(child.doc_type == "wi" and child.parent_id == doc.id for child in index.snap.target_docs.values()):
+        filled |= {item.key for item in doc.outline.items if item.kind == KIND_AUTO_LIST}
+    return filled
+
+
+def _list_empty_required_keys(doc: TargetDocInfo, numbers: Mapping[str, str | None], filled: set[str]) -> set[str]:
+    """비어 있는 필수 SOP 절 — 내보내는 절(numbers의 키) 가운데 필수이고 N/A가 아니며 자기와 하위에 채움(_list_filled_keys)이 없는 것.
+
+    하위 절을 둔 절(묶음 제목 · 절차 · 범주 표)은 하위가 모두 N/A이거나 채워졌으면 비어 있음이 아니다 — 하위 가운데 비어 있는 필수 절이
+    있을 때만 함께 비어 있다(하위가 하나도 없으면 자기만 본다). 자동 목록은 자식 WI가 없을 때, 빈 선택 항목은 절이 없어 오지 않는다.
+    """
+    outline = doc.outline
+    empty: set[str] = set()
+    for item in reversed(outline.items):  # 위계 순서의 거꾸로 — 하위의 판정이 먼저 끝난다
+        if item.key not in numbers or not item.is_required or _find_na_reason(doc, item.key) is not None:
+            continue
+        if any(outline.is_within(key, item.key) for key in filled):
+            continue
+        children = [child.key for child in outline.list_children(item.key) if child.key in numbers]
+        if not children or any(key in empty for key in children):
+            empty.add(item.key)
+    return empty
+
+
+def _find_nearest_number(key: str, numbers: Mapping[str, str | None]) -> str | None:
+    """그 절이나 가장 가까운 상위 절의 번호 — 번호 없는 절(5장 범주)의 줄이 결과물 A·Excel의 No.에 적는 값("5")."""
+    current: str | None = key
+    while current is not None:
+        if numbers.get(current) is not None:
+            return numbers[current]
+        current = get_parent_key(current)
+    return None
 
 
 def _plan_sections(index: _Index, doc: TargetDocInfo, labels: OutputLabels) -> list[_SectionPlan]:
-    """새 문서의 칸 — 입구 2 문서는 절 경로가 처음 나온 순서, SOP는 SLOT_KEYS 순서, WI는 단계마다 Instruction·Why.
+    """새 문서의 칸 — 입구 2 문서는 절 경로가 처음 나온 순서, SOP는 그 문서 골격 사본의 순서, WI는 단계마다 Instruction·Why.
 
     칸 제목은 칸 항목이 아니라 SOP 칸의 headings로 따로 싣는다(저장이 SOP의 N/A 아닌 칸에만 둔다).
+    SOP는 내보낼 항목만 싣는다 — 비어 있고 N/A도 아닌 선택 항목(7.1.x)은 빠지고 번호도 세지 않는다(_Index.outline_numbers).
     """
     doc_targets = index.doc_targets.get(doc.id, [])
     tops = sorted(
@@ -427,12 +534,20 @@ def _plan_sections(index: _Index, doc: TargetDocInfo, labels: OutputLabels) -> l
         for target in doc_targets:
             if target.kind == SLOT_HEADING:
                 headings[target.slot_key].append(target)
+        outline, numbers = doc.outline, index.outline_numbers[doc.id]
+        empty = _list_empty_required_keys(doc, numbers, _list_filled_keys(index, doc, by_slot))
         return [
             _SectionPlan(
-                key, labels.slots[key], SLOT_NUMBERS[key], _find_na_reason(doc, key), by_slot.get(key, []),
-                keep_empty=True, headings=tuple(headings.get(key, ())),
+                item.key, outline.get_label(item.key, numbers), numbers[item.key], na_reason,
+                by_slot.get(item.key, []), keep_empty=True, headings=tuple(headings.get(item.key, ())),
+                kind=item.kind, level=outline.get_level(item.key), counts_lines=outline.counts_lines(item.key),
+                default_style=item.default_style, line_base=_get_line_base(outline, item.key, numbers), run=item.key,
+                nearest_number=_find_nearest_number(item.key, numbers), shows_number=outline.shows_number(item.key),
+                deviation_reason=item.deviation_reason, is_empty_required=item.key in empty,
             )
-            for key in SLOT_KEYS
+            for item in outline.items
+            if item.key in numbers
+            for na_reason in (_find_na_reason(doc, item.key),)
         ]
     by_place: dict[tuple[int | None, str | None], list[TargetInfo]] = defaultdict(list)
     for target in tops:
@@ -444,6 +559,7 @@ def _plan_sections(index: _Index, doc: TargetDocInfo, labels: OutputLabels) -> l
         _SectionPlan(
             f"step:{step}:{part}", labels.wi_step_template.format(step=step, part=labels.wi_parts[part]), str(step),
             None, by_place.get((step, part), []), keep_empty=step in declared,
+            line_base=str(step), run=f"step:{step}", nearest_number=str(step),
         )
         for step in steps
         for part in WI_PARTS
@@ -467,33 +583,6 @@ def list_target_order(snap: BundleSnapshot, target_doc_id: int) -> list[int]:
 
 
 # --- 섹션 번호 ---
-
-
-def _build_slot_numbers() -> dict[str, str]:
-    """SOP 칸 번호 — SLOT_KEYS의 고정 자리(도메인 문서 §2의 S1…S7, 하위 칸은 5.1)라 칸을 N/A로 바꿔도 다른 칸 번호가 그대로다."""
-    numbers: dict[str, str] = {}
-    tops = 0
-    children: Counter[str] = Counter()
-    for key in SLOT_KEYS:
-        parent, _, child = key.partition(".")
-        if child:
-            children[parent] += 1
-            numbers[key] = f"{numbers[parent]}.{children[parent]}"
-        else:
-            tops += 1
-            numbers[key] = str(tops)
-    return numbers
-
-
-SLOT_NUMBERS = _build_slot_numbers()
-
-
-def has_sub_slots(slot_key: str) -> bool:
-    """하위 칸이 있는 칸인가(지금은 5·6·7) — 이 칸에 직접 놓인 줄은 번호가 없다(number_targets).
-
-    SLOT_KEYS에서 읽는다. 칸 번호가 고정 자리라, 그 문서에서 하위 칸이 N/A여도 답은 같다.
-    """
-    return any(key.startswith(f"{slot_key}.") for key in SLOT_KEYS)
 
 
 def number_lines(base: str, depths: Sequence[int | None]) -> list[str | None]:
@@ -522,20 +611,21 @@ def number_targets(index: _Index, labels: OutputLabels) -> dict[int, str]:
     """새 문장 → 섹션 번호(제품 명세 §7.13 섹션 번호 세는 법). 한 칸(WI는 같은 단계의 Instruction·Why를 이어)의 칸 새 문장이 아닌 새 문장 전부를
     언어를 가리지 않고 결과물 C 순서대로 한 줄로 센다.
 
-    번호 생략·주석 줄은 번호가 없고 세지 않는다. 표 칸 새 문장은 표의 번호를 따른다(표가 번호가 없으면 칸도 없다).
-    입구 2 문서·단계 없는 WI 칸은 번호가 없다. 칸 제목은 세지 않고 칸 번호가 곧 그 번호다(제품 명세 §7.13 칸 제목 — 결과물 A의 No.).
-    하위 칸이 있는 칸(has_sub_slots)에 직접 놓인 줄은 저장된 표시·깊이와 상관없이 번호가 없고 세지 않는다(사용자 결정 2026-11-17) —
-    세면 5 칸의 첫 줄이 5.1이 되어 하위 칸 제목 "5.1 Safety"와 번호가 겹친다. 저장값은 건드리지 않아 하위 칸으로 옮기면 다시 센다.
+    번호 생략·주석·글머리 기호 줄은 번호가 없고 세지 않는다. 표 칸 새 문장은 표의 번호를 따른다(표가 번호가 없으면 칸도 없다).
+    입구 2 문서·단계 없는 WI 칸·SOP 5장 범주는 번호가 없다. 칸 제목은 세지 않고 칸 번호가 곧 그 번호다(제품 명세 §7.13 칸 제목 — 결과물 A의 No.).
+    줄을 세지 않는 칸(_SectionPlan.line_base가 None — 범주 표와 하위 항목을 선언하는 칸, 템플릿의 5·6·9장)에 직접 놓인 줄은 저장된
+    표시·깊이와 상관없이 번호가 없고 세지 않는다(사용자 결정 2026-11-17) — 세면 6장의 머리 글 첫 줄이 6.1이 되어 절차 제목 "6.1"과 번호가 겹친다.
+    저장값은 건드리지 않아 하위 칸으로 옮기면 다시 센다. 줄 번호의 머리는 _get_line_base(절차 6.1 → 6.1.1, 부록 2 → 2.1).
     """
     numbers: dict[int, str] = {}
     for doc in index.doc_order:
-        runs: dict[str, list[TargetInfo]] = {}
+        runs: dict[str, tuple[str, list[TargetInfo]]] = {}
         for plan in _plan_sections(index, doc, labels):
             if plan.number is not None:
                 numbers.update(dict.fromkeys((heading.id for heading in plan.headings), plan.number))
-                if not has_sub_slots(plan.key):
-                    runs.setdefault(plan.number, []).extend(plan.targets)
-        for base, targets in runs.items():
+            if plan.line_base is not None:
+                runs.setdefault(plan.run, (plan.line_base, []))[1].extend(plan.targets)
+        for base, targets in runs.values():
             depths = [target.indent_level if target.number_style == NUMBERED else None for target in targets]
             for target, number in zip(targets, number_lines(base, depths), strict=True):
                 if number is None:
@@ -543,6 +633,31 @@ def number_targets(index: _Index, labels: OutputLabels) -> dict[int, str]:
                 numbers[target.id] = number
                 for child in index.children.get(target.id, []):
                     numbers[child.id] = number
+    return numbers
+
+
+def number_bullets(index: _Index, labels: OutputLabels) -> dict[int, str]:
+    """글머리 기호 새 문장(과 그 표 칸) → 놓인 절의 번호. 결과물 A·Excel의 No.에만 쓴다 — 줄 번호가 없어도 어느 절의 항목인지는 적는다.
+
+    번호 없는 SOP 절(5장 범주)의 줄은 가장 가까운 번호 있는 상위 절의 번호("5")를 적는다 — 그 절에서는 번호 표시 줄도 번호를 받지
+    못하니 글머리 기호 줄과 같이 적고, 그 절의 칸 제목도 같다. 번호 생략·주석 줄은 다른 절처럼 비운다.
+    결과물 C의 줄 번호(number_targets)에는 넣지 않는다(화면이 번호 자리에 기호를 그린다). 번호를 댈 절이 없는 칸(입구 2 문서·단계 없는 WI)의 줄은 없다.
+    """
+    numbers: dict[int, str] = {}
+    for doc in index.doc_order:
+        for plan in _plan_sections(index, doc, labels):
+            if plan.nearest_number is None:
+                continue
+            styles = (NUMBER_BULLET,) if plan.number is not None else (NUMBER_BULLET, NUMBERED)
+            for target in plan.targets:
+                if target.number_style in styles:
+                    numbers.update(
+                        dict.fromkeys(
+                            (target.id, *(child.id for child in index.children.get(target.id, []))), plan.nearest_number
+                        )
+                    )
+            if plan.number is None:
+                numbers.update(dict.fromkeys((heading.id for heading in plan.headings), plan.nearest_number))
     return numbers
 
 
@@ -838,10 +953,10 @@ def _number_lines(texts: list[str]) -> str:
     return "\n".join(f"{mark} {text}" for mark, text in zip(marks, texts, strict=True))
 
 
-def _format_target_location(target: TargetInfo, labels: OutputLabels) -> str:
-    """새 문서 안 위치 — SOP 칸, WI 단계·부분, 입구 2 문서는 새 문서의 실제 절 경로."""
+def _format_target_location(index: _Index, doc: TargetDocInfo, target: TargetInfo, labels: OutputLabels) -> str:
+    """새 문서(doc) 안 위치 — SOP 칸(그 문서 골격의 라벨, 부록 번호는 결과물 C와 같은 값), WI 단계·부분, 입구 2 문서는 새 문서의 실제 절 경로."""
     if target.slot_key is not None:
-        return labels.slots.get(target.slot_key, target.slot_key)
+        return doc.outline.get_label(target.slot_key, index.outline_numbers[doc.id])
     if target.wi_part is not None:
         part = labels.wi_parts[target.wi_part]
         if target.wi_step is None:
@@ -925,9 +1040,9 @@ def _locate_unit(index: _Index, unit: UnitInfo, labels: OutputLabels) -> Locatio
     )
 
 
-def _format_locations(targets: list[TargetInfo], labels: OutputLabels) -> str:
-    """새 문장들의 새 문서 안 위치 — 모두 같으면 하나, 다르면 확정 문장 칸과 같은 ①② 순서로."""
-    locations = [_format_target_location(target, labels) for target in targets]
+def _format_locations(index: _Index, doc: TargetDocInfo, targets: list[TargetInfo], labels: OutputLabels) -> str:
+    """새 문장들의 새 문서(doc) 안 위치 — 모두 같으면 하나, 다르면 확정 문장 칸과 같은 ①② 순서로."""
+    locations = [_format_target_location(index, doc, target, labels) for target in targets]
     return locations[0] if len(set(locations)) == 1 else _number_lines(locations)
 
 
@@ -940,9 +1055,9 @@ def _describe_dest(
         shown = [target for target in targets if target.change_type != TRANSLATED]
         if not shown:
             # 이 새 문서에는 번역 새 문장만 있다 — 보낸 곳(종류·문서·자리)만 적고 글·번호·변경 종류는 번역 줄에 맡긴다
-            return _Dest(doc.doc_type, doc.code, doc.title, _format_locations(targets, labels), "", False, "", "", "", [])
+            return _Dest(doc.doc_type, doc.code, doc.title, _format_locations(index, doc, targets, labels), "", False, "", "", "", [])
         targets = shown
-    location = _format_locations(targets, labels)
+    location = _format_locations(index, doc, targets, labels)
     # 번호는 새 문장마다 다르므로 여러 새 문장이면 확정 문장 칸과 같은 ①② 순서로 적는다
     number = _number_lines([number_of(target) for target in targets])
     if not is_own:
@@ -1060,7 +1175,7 @@ def _build_target_row(
         location=_locate_unit(index, unit, ctx.labels) if unit else _NO_LOCATION, unit_id=source_id,
         display_id=unit.display_id if unit else "", source_text="",
         dest_kind=doc.doc_type, dest_doc_code=doc.code, dest_doc_title=doc.title,
-        dest_location=_format_target_location(target, ctx.labels), dest_number=ctx.number_of(target),
+        dest_location=_format_target_location(index, doc, target, ctx.labels), dest_number=ctx.number_of(target),
         dest_is_note=_is_note(index, target), confirmed_text=confirmed_text, ai_text=ai_text,
         change_type=change_type, remark=slot.remark, status=target.status,
         confirmed_by=format_confirmer(target.confirmed_by, ctx.people), confirmed_at=target.confirmed_at,
@@ -1153,7 +1268,7 @@ def _split_new_targets(
 def _build_a_groups(index: _Index, labels: OutputLabels, people: Mapping[str, str]) -> list[list[ARow]]:
     """결과물 A의 묶음 — 의미 묶음 순서(output_rows)의 옛 문서 줄, 그 뒤 고아 번역, 끝에 입구 2 신규 묶음. 요약의 번역 숫자도 이것을 센다."""
     snap = index.snap
-    numbers = number_targets(index, labels)
+    numbers = {**number_bullets(index, labels), **number_targets(index, labels)}
 
     def get_number(target: TargetInfo) -> str:
         return numbers.get(target.id, "")
@@ -1355,6 +1470,17 @@ def _build_c_context(snap: BundleSnapshot, labels: OutputLabels) -> _CContext:
     )
 
 
+def _list_auto_items(snap: BundleSnapshot, doc: TargetDocInfo, plan: _SectionPlan) -> list[AutoItem]:
+    """자동 목록 절(7.2 Work Instructions)의 줄 — 그 SOP의 자식 WI를 To-Be 순서로. 다른 칸과 N/A인 절(상위 칸의 N/A가 덮은 것 포함)은 빈 목록."""
+    if plan.kind != KIND_AUTO_LIST or plan.na_reason is not None:
+        return []
+    children = sorted(
+        (child for child in snap.target_docs.values() if child.doc_type == "wi" and child.parent_id == doc.id),
+        key=lambda child: (child.order_index, child.id),
+    )
+    return [AutoItem(code=child.code, title=child.title) for child in children]
+
+
 def _build_c_doc(ctx: _CContext, doc: TargetDocInfo) -> CDoc:
     """결과물 C의 새 문서 하나 — 결과물 C 전체와 순서 저장 응답이 이것 하나로 짓는다(같은 값이어야 화면이 그 문서만 바꾼다)."""
     snap = ctx.index.snap
@@ -1366,6 +1492,9 @@ def _build_c_doc(ctx: _CContext, doc: TargetDocInfo) -> CDoc:
                 CSection(
                     location_key=plan.key, label=plan.label, number=plan.number, na_reason=plan.na_reason,
                     heading_note=_format_heading_note(snap, plan.headings), items=items,
+                    kind=plan.kind, level=plan.level, counts_lines=plan.counts_lines, default_style=plan.default_style,
+                    auto_items=_list_auto_items(snap, doc, plan), shows_number=plan.shows_number,
+                    deviation_reason=plan.deviation_reason, is_empty_required=plan.is_empty_required,
                 )
             )
     parent = snap.target_docs.get(doc.parent_id) if doc.parent_id is not None else None
@@ -1467,6 +1596,15 @@ class ComposedSection(BaseModel):
     na_reason: str | None
     heading_note: str  # 칸 제목 출처 — 결과물 C 칸 머리와 같은 "← OLD-1 §5", 없으면 빈 글
     items: list[ComposedItem]
+    # 아래 여덟은 결과물 C 칸(CSection)과 같은 값이다
+    kind: OutlineKind | None
+    level: int
+    counts_lines: bool
+    default_style: NumberStyle
+    auto_items: list[AutoItem] = []
+    shows_number: bool = True
+    deviation_reason: str | None = None
+    is_empty_required: bool = False
 
 
 class ComposedDoc(BaseModel):
@@ -1537,6 +1675,9 @@ def build_composed_doc(snap: BundleSnapshot, target_doc_id: int, lang: Lang) -> 
         ComposedSection(
             location_key=plan.key, label=plan.label, number=plan.number, na_reason=plan.na_reason,
             heading_note=_format_heading_note(snap, plan.headings), items=[build_item(target) for target in plan.targets],
+            kind=plan.kind, level=plan.level, counts_lines=plan.counts_lines, default_style=plan.default_style,
+            auto_items=_list_auto_items(snap, doc, plan), shows_number=plan.shows_number,
+            deviation_reason=plan.deviation_reason, is_empty_required=plan.is_empty_required,
         )
         for plan in _plan_sections(index, doc, labels)
         if plan.targets or plan.keep_empty

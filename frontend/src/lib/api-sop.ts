@@ -589,11 +589,54 @@ export interface SlotCount {
   heading_count: number;
 }
 
+/** 골격 항목의 종류 - backend app/sop/models.py OUTLINE_KINDS와 같은 값. 직접 배정·줄 세기는 서버가 is_assignable·counts_lines로 풀어 준다 */
+export type OutlineKind = "general" | "category_table" | "named_children" | "auto_list" | "group";
+
+/**
+ * SOP 문서 하나의 골격 항목(칸) - 표준 골격을 문서마다 복사한 것이라 문서마다 다를 수 있다. 화면은 칸 목록을 따로 갖지 않고 이것만 읽는다.
+ * 한 문서의 항목은 위계 순서로 온다(부모 바로 뒤에 하위). 수준은 둘로 정해져 있지 않다(level 0부터)
+ */
+export interface OutlineItem {
+  /** 새 문서 코드 - NaSlot.code·WiStep.code와 같은 키 */
+  code: string;
+  /** 점으로 위계를 적은 키("procedures.maintenance") - 자리 키(slot_key·location_key)와 같은 값 */
+  key: string;
+  parent_key: string | null;
+  level: number;
+  /** "5"·"5.1" - 번호 없는 항목은 null */
+  number: string | null;
+  /** 번호를 이름 앞에 적는가 - 머리말을 쓰는 부모의 하위(부록)만 false: 이름(label "Appendix 2. …")에 번호가 이미 들어 있어 label만 적는다. number("2")는 줄 번호의 머리로 그대로 쓴다 */
+  shows_number: boolean;
+  title_en: string;
+  title_ko: string;
+  /** 조상까지 이은 이름 "General Requirements › Safety" - 부록은 "Appendix n. 제목" */
+  label: string;
+  kind: OutlineKind;
+  is_required: boolean;
+  default_style: NumberStyle;
+  /** 문장을 직접 받는 항목인가 - 아니면 보낼 곳 목록에 없다 */
+  is_assignable: boolean;
+  /** 직접 놓인 줄에 번호를 세는가 - false면 줄의 표시와 상관없이 번호가 없다(하위 항목 번호와 겹치므로) */
+  counts_lines: boolean;
+  /** standard 표준에서 복사 · declared 문서가 선언(6장 절차 · 9장 부록 · 5장 범주) · custom 표준에서 벗어나 더한 항목 */
+  origin: "standard" | "declared" | "custom";
+  /** 이 문서에서 뺀 표준 항목 - 되살릴 수 있게 제자리로 실린다(번호 없음, 문장을 받지 않음, 하위는 함께 빠져 실리지 않는다). 칸 목록 · 나무는 거른다 */
+  is_removed: boolean;
+  /** 표준과 다른 까닭 - 사용자 항목, 이름을 바꾸거나 필수인데 뺀 표준 항목. 그 밖은 null */
+  deviation_reason: string | null;
+  /** 표준과 다름 - 선택 항목을 뺀 것 · N/A · 선언은 아니다 */
+  is_deviation: boolean;
+}
+
 export interface ToBe {
   revision: number;
   docs: TargetDoc[];
   na_slots: NaSlot[];
   wi_steps: WiStep[];
+  /** SOP 문서마다의 골격 항목 - 문서(code)별로 위계 순서. WI는 항목이 없다 */
+  outline_items: OutlineItem[];
+  /** 문서가 하위 항목을 선언할 때 권하는 이름 - 선언을 받는 부모 항목의 키마다(표준 골격의 것이라 문서와 상관없다). 없으면 빈 객체 */
+  outline_suggestions: Record<string, string[]>;
   /** 문장이 든 자리만 실린다 - 배정 화면이 지울 수 없는 문서·단계의 지우기 단추를 잠근다 */
   sentence_counts?: PlaceCount[];
   /** 문장이나 칸 제목이 든 SOP 칸만 실린다 - N/A 칸 상태 표가 N/A로 둘 수 없는 칸을 가린다 */
@@ -606,25 +649,6 @@ export interface ToBeInput {
   na_slots: NaSlot[];
   wi_steps: WiStep[];
 }
-
-/** SOP 칸 - backend constants.SLOT_KEYS와 같은 값·순서. 점이 있으면 하위 칸 */
-export const SLOT_KEYS = [
-  "purpose",
-  "scope",
-  "definitions",
-  "responsibilities",
-  "general_requirements",
-  "general_requirements.safety",
-  "general_requirements.operation",
-  "procedures",
-  "procedures.procedure",
-  "procedures.electronic_record_control",
-  "procedures.troubleshooting",
-  "procedures.maintenance",
-  "document_relationships",
-  "document_relationships.attachments",
-  "document_relationships.appendices",
-] as const;
 
 export function getToBe(bundleId: number): Promise<ToBe> {
   return apiFetch<ToBe>(`/bundles/${bundleId}/tobe`);
@@ -682,6 +706,35 @@ export function clearNaSlot(bundleId: number, targetDocId: number, slotKey: stri
 
 export function renameWiStep(bundleId: number, targetDocId: number, stepNo: number, title: string): Promise<ToBe> {
   return apiFetch<ToBe>(`/bundles/${bundleId}/tobe/docs/${targetDocId}/steps/${stepNo}`, { method: "PATCH", body: JSON.stringify({ title }) });
+}
+
+// SOP가 선언하는 골격 항목(6장 절차 · 9장 부록 · 5장 범주) - 한 번에 하나씩 쓰고 새 목록이 돌아온다(revision을 보내지 않는다)
+/**
+ * 골격 항목 고치기 - 보낸 칸만 바뀐다. position은 같은 부모의 항목들 안에서의 자리(0부터, 표준 항목은 422 outline_standard_item). 키는 그대로이고 번호만 따라간다.
+ * is_removed는 표준 항목을 빼거나(true) 되살린다(false). reason은 표준에서 벗어나는 쓰기(표준 항목 영어 이름 바꾸기 · 필수 항목 빼기)의 사유 - 없으면 422 deviation_reason_required
+ */
+export interface OutlineItemPatch {
+  title_en?: string;
+  title_ko?: string;
+  position?: number;
+  is_removed?: boolean;
+  reason?: string;
+}
+
+/**
+ * 부모 항목 아래에 항목 하나를 더한다 - 끝자리에 놓이고 키는 서버가 정한다. 하위를 선언하는 부모(6장 · 9장 · 5장) 아래는 선언이고,
+ * 묶음 제목 아래와 최상위(parentKey "")는 표준에서 벗어난 사용자 항목이라 reason이 있어야 한다
+ */
+export function addOutlineItem(bundleId: number, targetDocId: number, parentKey: string, titleEn: string, titleKo?: string, reason?: string): Promise<ToBe> {
+  return apiFetch<ToBe>(`/bundles/${bundleId}/tobe/docs/${targetDocId}/outline`, { method: "POST", body: JSON.stringify({ parent_key: parentKey, title_en: titleEn, title_ko: titleKo, reason }) });
+}
+
+export function patchOutlineItem(bundleId: number, targetDocId: number, key: string, patch: OutlineItemPatch): Promise<ToBe> {
+  return apiFetch<ToBe>(`/bundles/${bundleId}/tobe/docs/${targetDocId}/outline/${encodeURIComponent(key)}`, { method: "PATCH", body: JSON.stringify(patch) });
+}
+
+export function removeOutlineItem(bundleId: number, targetDocId: number, key: string): Promise<ToBe> {
+  return apiFetch<ToBe>(`/bundles/${bundleId}/tobe/docs/${targetDocId}/outline/${encodeURIComponent(key)}`, { method: "DELETE" });
 }
 
 // 새 문서 목록 AI 읽기 - 템플릿에 맞지 않는 계획 파일이나 붙여 넣은 글에서 AI가 목록을 읽어 제안한다. AI는 목록에 쓰지 않는다
@@ -1156,7 +1209,31 @@ export interface FlowGraph {
 }
 
 /** 줄 번호 표시 - backend app/sop/constants.py NumberStyle과 같은 값 */
-export type NumberStyle = "numbered" | "omitted" | "note";
+export type NumberStyle = "numbered" | "bullet" | "omitted" | "note";
+
+/** 앱이 채우는 목록 절(auto_list)의 한 줄 - 그 SOP의 자식 WI. 사람이 고치지 않는다 */
+export interface AutoItem {
+  code: string;
+  title: string;
+}
+
+/** 결과물 C·Assign New 칸의 절이 골격에서 받아 오는 것 - 화면이 칸 키로 규칙을 다시 풀지 않는다 */
+export interface SectionOutline {
+  /** 골격 항목의 종류 - WI 단계·입구 2 문서의 절(path:)은 null. group·auto_list 절은 문장을 받지 않는다(items가 늘 비어 있다) */
+  kind: OutlineKind | null;
+  level: number;
+  /** 이 절에 직접 놓인 줄에 번호를 세는가(OutlineItem.counts_lines) */
+  counts_lines: boolean;
+  default_style: NumberStyle;
+  /** 절 머리에 번호를 적는가(OutlineItem.shows_number) - 부록만 false이고 머리는 label만 적는다. 그때도 절의 number는 줄 번호의 머리다. WI 단계·path: 절은 true */
+  shows_number: boolean;
+  /** 앱이 채우는 목록 절(auto_list)의 줄 - To-Be 순서. 그 밖의 절은 빈 배열 */
+  auto_items: AutoItem[];
+  /** 표준과 다른 SOP 절(사용자 항목 · 이름을 바꾼 표준 항목)의 사유 - 그 밖은 null */
+  deviation_reason: string | null;
+  /** 필수 절인데 비었다(자기와 하위에 줄이 없고 N/A도 아니다, 자동 목록은 자식 WI가 없다) - 알림일 뿐 검토 요청을 막지 않는다 */
+  is_empty_required: boolean;
+}
 
 export interface OutputCItem {
   target_id: number;
@@ -1200,7 +1277,7 @@ export interface OutputC {
      * number: SOP 칸 번호(5.1)·WI 단계 번호(3), 번호가 없는 칸은 null.
      * heading_note: 칸 제목에 이은 옛 제목 "← OLD-1 §5", 없으면 빈 글 - 칸 제목은 items에 넣지 않는다
      */
-    sections: Array<{ location_key: string; label: string; number: string | null; na_reason: string | null; heading_note: string; items: OutputCItem[] }>;
+    sections: Array<SectionOutline & { location_key: string; label: string; number: string | null; na_reason: string | null; heading_note: string; items: OutputCItem[] }>;
   }>;
   /** 삭제·이동은 옛 줄마다 한 번 - 짝이면 표시 ID·원문이 줄바꿈으로 이어진다 */
   deleted: Array<{ display_id: string; doc_code: string; section: string; source_text: string; reason: string }>;
@@ -1253,7 +1330,7 @@ export interface ComposedItem {
   renumber?: RenumberChange | null;
 }
 
-export interface ComposedSection {
+export interface ComposedSection extends SectionOutline {
   location_key: string;
   label: string;
   number: string | null;

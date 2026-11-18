@@ -17,7 +17,7 @@ from app.sop.ai.adoption import record_group_adoption, record_unit_adoption, rej
 from app.sop.ai.apply import clear_previous_suggestion
 from app.sop.captions import CAPTION_KIND
 from app.sop.checks import check_sentence
-from app.sop.constants import SLOT_HEADING, SLOT_KEYS
+from app.sop.constants import SLOT_HEADING
 from app.sop.decision_steps import UndoMetaIn
 from app.sop.detach import (
     AI_SUGGESTED,
@@ -45,7 +45,6 @@ from app.sop.groups import (
     select_in_chunks,
 )
 from app.sop.membership import ensure_editable, lock_bundle
-from app.sop.output_labels import SLOT_LABELS
 from app.sop.models import (
     AiJob,
     Bundle,
@@ -63,6 +62,7 @@ from app.sop.models import (
     UnitPairMember,
     WiStep,
 )
+from app.sop.outline import DocOutline, load_doc_outlines
 from app.sop.pair_settle import settle_pairs
 from app.sop.refs import REF_LANG
 from app.sop.schemas import NO_NUL, NoNulStr
@@ -74,8 +74,10 @@ from app.sop.target_placement import (
     Spot,
     arrange_new_targets,
     freeze_order,
+    get_default_style,
     insert_after,
     open_gap,
+    restyle_moved,
 )
 from app.sop.tobe import MAX_DB_INT, is_within_slot
 from app.sop.units import UNIT_ACTIVE, compute_display_id
@@ -261,6 +263,7 @@ class _State:
     component_units: set[int]
     component_targets: set[int]
     docs: dict[int, TargetDoc]
+    outlines: dict[int, DocOutline]  # 새 문서 → 골격 사본(SOP가 아니면 빈 골격)
     na_slots: dict[int, list[str]]
     steps: dict[int, set[int]]
     table_shapes: dict[int, tuple[int, int]]  # 원문 표 id → (행 수, 열 수)
@@ -464,7 +467,7 @@ async def _load_state(session: AsyncSession, bundle_id: int, payload: GroupSaveI
         },
         translation_texts={unit_id: text for unit_id, text in translation_rows},
         member_unit_ids=member_unit_ids, component_units=component_units, component_targets=component_targets,
-        docs=docs, na_slots=na_slots, steps=steps,
+        docs=docs, outlines=await load_doc_outlines(session, docs), na_slots=na_slots, steps=steps,
         table_shapes=await load_table_shapes(session, [units[unit_id] for unit_id in bundle_unit_ids if units[unit_id].kind in TABLE_UNIT_KINDS]),
         cell_positions=await load_cell_positions(session, [units[cell_id] for ids in cells.values() for cell_id in ids]),
         pair_of={
@@ -594,15 +597,20 @@ def _check_dispositions(payload: GroupSaveIn, state: _State) -> None:
 
 
 def _check_location(item: TargetIn, doc: TargetDoc, state: _State) -> None:
-    """SOP는 N/A가 아닌 칸(상위 칸 N/A는 하위 칸도 덮는다, R8), WI는 부분과 선언된 단계(또는 단계 없음). 칸 제목은 SOP에만 있다."""
+    """SOP는 줄을 받는 종류의 N/A가 아닌 칸(상위 칸 N/A는 하위 칸도 덮는다, R8), WI는 부분과 선언된 단계(또는 단계 없음). 칸 제목은 SOP에만 있다.
+
+    묶음 제목(group)과 자동 목록(auto_list) 항목에는 줄도 칸 제목도 놓지 못한다(slot_not_assignable).
+    """
     keys = [item.key]
     if item.kind == SLOT_HEADING and doc.doc_type != "sop":
         _reject("slot_heading_not_allowed", keys=keys)
     if doc.doc_type == "sop":
         if item.wi_step is not None or item.wi_part is not None:
             _reject("invalid_location", keys=keys)
-        if item.slot_key not in SLOT_KEYS:
+        if item.slot_key is None or state.outlines[doc.id].find(item.slot_key) is None:
             _reject("unknown_slot", keys=keys)
+        if not state.outlines[doc.id].is_assignable(item.slot_key):
+            _reject("slot_not_assignable", keys=keys)
         if any(is_within_slot(item.slot_key, na_slot) for na_slot in state.na_slots.get(doc.id, ())):
             _reject("na_slot", keys=keys)
         return
@@ -721,15 +729,15 @@ def _resolve_lang(item: TargetIn, row: TargetSentence | None, state: _State, tex
     return detect_language(text) or state.units[item.source_unit_ids[0]].lang
 
 
-def _resolve_text(item: TargetIn, row: TargetSentence | None, state: _State) -> str:
+def _resolve_text(item: TargetIn, row: TargetSentence | None, doc: TargetDoc, state: _State) -> str:
     """확정 글자 — 비운 새 새 문장에 출처가 하나면 원문 그대로(그대로 보내기, 스펙 §7.7). 표·그림은 글자가 없다.
 
     비운 기존 새 문장은 지금 글을 두고, 아직 확정 글이 없는 AI 새 문장이면 제안 글로 확정한다.
-    칸 제목은 칸 이름이고 사람이 고치지 않는다 — 비우거나 칸 이름 그대로 보내야 한다(칸 키는 _check_location이 먼저 봤다).
+    칸 제목은 그 문서 골격의 칸 이름이고 사람이 고치지 않는다 — 비우거나 칸 이름 그대로 보내야 한다(칸 키는 _check_location이 먼저 봤다).
     """
     keys = [item.key]
     if item.kind == SLOT_HEADING:
-        label = SLOT_LABELS[item.slot_key]
+        label = state.outlines[doc.id].get_label(item.slot_key)
         if item.text and item.text != label:
             _reject("slot_heading_text_locked", keys=keys)
         return label
@@ -787,7 +795,7 @@ def _plan_target(item: TargetIn, state: _State) -> _Plan:
             _reject("sources_required", keys=keys)
         _check_location(item, doc, state)
     _check_source_kinds(item, state, is_caption=is_caption, origin=origin)
-    text = _resolve_text(item, row, state)
+    text = _resolve_text(item, row, doc, state)
     return _Plan(
         item=item, row=row, doc=doc, origin=origin, sources=list(item.source_unit_ids),
         lang=_resolve_lang(item, row, state, text), text=text, grid=_resolve_grid(item, row),
@@ -1152,6 +1160,12 @@ def _apply_plan(
         place = (plan.doc.id, plan.item.slot_key, plan.item.wi_step, plan.item.wi_part)
         if place != (target.target_doc_id, target.slot_key, target.wi_step, target.wi_part):
             target.indent_level = 0  # 깊이는 그 칸 앞뒤 줄에 기댄 값이라 다른 칸으로 가면 맨 바깥에서 다시 시작한다
+            # 기존 줄을 다른 절로 옮기면 번호 ↔ 글머리 기호만 도착한 절의 기본으로 바꾼다. 새 줄은 _place_new_targets가 정하고,
+            # 표 칸·캡션은 표의 표시를 따르며 칸 제목은 표시가 없다
+            if plan.row is not None and not plan.is_cell and plan.item.kind != SLOT_HEADING:
+                target.number_style = restyle_moved(
+                    target.number_style, state.outlines[plan.doc.id], plan.item.slot_key
+                )
         target.target_doc_id = plan.doc.id
         target.slot_key, target.wi_step, target.wi_part = plan.item.slot_key, plan.item.wi_step, plan.item.wi_part
         target.kind, target.lang, target.confirmed_text, target.grid = plan.item.kind, plan.lang, plan.text, plan.grid
@@ -1199,6 +1213,7 @@ def _build_new_target(plan: _Plan, placed: dict[tuple[Spot, int], list[_Plan]], 
         key=plan.item.key, place=spot, meaning=state.pair_of.get(source_unit_id, -source_unit_id), lang=plan.lang,
         source_unit_id=source_unit_id, is_translation=plan.change_type == "translated",
         source_placed=(spot, source_unit_id) in placed,
+        default_style=get_default_style(state.outlines[plan.doc.id], spot[1]),
     )
 
 
@@ -1212,7 +1227,8 @@ async def _place_new_targets(
     """새로 만든 새 문장에 기본 표시를 쓰고, 순서를 사람이 정한 문서면 받은 순서대로 끝에 붙이거나 나중 번역을 기존 출처 바로 뒤에 끼운다.
 
     끼우면 출처 뒤 새 문장이 한 칸씩 밀려 그 문서의 최댓값도 하나 늘므로 다음 끝자리도 하나 민다. 한 출처 뒤에 번역이 둘 오면 앞
-    번역 뒤에 잇는다. 기존 새 문장을 다른 칸으로 옮기는 저장은 여기 오지 않는다 — 사람이 고른 표시를 덮지 않는다(제품 명세 §7.13 섹션 번호, O10).
+    번역 뒤에 잇는다. 기존 새 문장을 다른 칸으로 옮기는 저장은 여기 오지 않는다 — 그쪽은 _apply_plan이 번호 ↔ 글머리 기호만 도착한 절의
+    기본으로 바꾸고 생략·주석은 그대로 둔다(제품 명세 §7.13 섹션 번호, O10).
     """
     for item in arranged:
         new_plans[item.key].row.number_style = item.number_style

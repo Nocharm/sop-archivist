@@ -2,7 +2,6 @@
 // 응답(서버가 그 문서를 C 모양으로 돌려준다)이 오면 그 문서를 서버 값으로 맞춘 뒤 보낸 뒤에 누른 편집만 다시 얹는다. 실패하면 저장 안 된 편집을 모두 버린다.
 import type { NumberStyle, OutputCDoc, OutputCItem, TargetOrderItem } from "./api-sop";
 import { numberLines } from "./section-number";
-import { hasSubSlots } from "./slot-status-model";
 import type { MoveDir } from "./target-order";
 
 /**
@@ -50,18 +49,20 @@ function setLineNumber(item: OutputCItem, number: string | null): OutputCItem {
 /**
  * 줄 번호만 다시 센다(서버 outputs.number_targets의 사본 - 서버 규칙을 바꾸면 함께 고친다) - 칸 번호가 같은 칸끼리 한 줄(WI 한 단계의 Instruction·Why),
  * 번호 생략·주석 줄은 null, 표 칸은 표의 번호, 번호 없는 칸(입구 2 문서·단계 없는 WI)은 null.
- * 하위 칸이 있는 칸(hasSubSlots)에 직접 놓인 줄도 표시·깊이와 상관없이 null이고 세지 않는다 - 세면 하위 칸 제목 번호(5.1)와 겹친다.
+ * 줄을 세지 않는 칸(절의 counts_lines가 false - 하위 칸을 선언하는 칸)에 직접 놓인 줄도 표시·깊이와 상관없이 null이고 세지 않는다 - 세면 하위 칸 제목 번호(5.1)와 겹친다.
  */
 export function numberDoc(doc: OutputCDoc): OutputCDoc {
-  const runs = new Map<string, Array<[number, number]>>();
+  const runs = new Map<string, { base: string; run: Array<[number, number]> }>();
   doc.sections.forEach((section, sectionIndex) => {
-    if (section.number === null || hasSubSlots(section.location_key)) return;
-    const run = runs.get(section.number) ?? [];
-    section.items.forEach((_, itemIndex) => run.push([sectionIndex, itemIndex]));
-    runs.set(section.number, run);
+    if (section.number === null || !section.counts_lines) return;
+    // 부록(머리에 번호를 적지 않는 절)의 번호는 장 번호와 따로 센 것이다 - 첫 부록("1")의 줄이 1장의 줄과 한 줄로 이어 세지지 않게 가른다
+    const key = `${section.shows_number ? "" : "appendix:"}${section.number}`;
+    const entry = runs.get(key) ?? { base: section.number, run: [] };
+    section.items.forEach((_, itemIndex) => entry.run.push([sectionIndex, itemIndex]));
+    runs.set(key, entry);
   });
   const numbers = new Map<string, string | null>();
-  for (const [base, run] of runs) {
+  for (const { base, run } of runs.values()) {
     const depths = run.map(([s, i]) => {
       const item = doc.sections[s].items[i];
       return item.number_style === "numbered" ? item.indent_level : null;
@@ -82,11 +83,17 @@ function updateLine(doc: OutputCDoc, targetId: number, update: (item: OutputCIte
   return { ...doc, sections };
 }
 
-/** 칸을 넘는 place - 출발 칸에서 덩어리를 빼 도착 칸의 beforeId 앞(null이면 끝)에 넣고 두 칸을 다시 센다. 서버가 받지 않을 모양이면 null */
+/**
+ * 칸을 넘는 place - 출발 칸에서 덩어리를 빼 도착 칸의 beforeId 앞(null이면 끝)에 넣고 두 칸을 다시 센다. 서버가 받지 않을 모양이면 null
+ * (N/A 칸, 문장을 받지 않는 칸 - 묶음 · 앱이 채우는 목록).
+ * SOP의 다른 칸으로 간 줄은 번호 ↔ 글머리 기호를 도착한 칸의 기본 표시로 바꾼다(서버 target_placement.restyle_moved의 사본 - 서버 규칙을 바꾸면 함께 고친다).
+ * 생략·주석은 그 줄의 성격이라 그대로이고, WI 단계로 간 줄도 그대로다
+ */
 function previewCrossPlace(doc: OutputCDoc, edit: PlaceEdit, toKey: string): OutputCDoc | null {
   const from = doc.sections.findIndex((section) => section.location_key === edit.locationKey);
   const to = doc.sections.findIndex((section) => section.location_key === toKey);
   if (from < 0 || to < 0 || doc.sections[to].na_reason !== null || !edit.depths) return null;
+  if (doc.sections[to].kind === "group" || doc.sections[to].kind === "auto_list") return null;
   const picked = new Set(edit.targetIds);
   if (picked.size === 0 || picked.size !== edit.targetIds.length || edit.depths.length !== edit.targetIds.length) return null;
   const fromPlace = readLocationPlace(edit.locationKey);
@@ -97,7 +104,13 @@ function previewCrossPlace(doc: OutputCDoc, edit: PlaceEdit, toKey: string): Out
   const target = doc.sections[to].items;
   if (block.some((item) => !item) || (edit.beforeId !== null && (picked.has(edit.beforeId) || !target.some((item) => item.target_id === edit.beforeId)))) return null;
   const depths = edit.depths;
-  const placed = block.map((item, k) => (depths[k] !== item!.indent_level ? { ...item!, indent_level: depths[k] } : item!));
+  const style = doc.sections[to].default_style;
+  const restyle = (item: OutputCItem): OutputCItem => {
+    if (!("slot_key" in toPlace) || (item.number_style !== "numbered" && item.number_style !== "bullet") || item.number_style === style) return item;
+    // 표 칸은 표의 표시를 싣는다
+    return { ...item, number_style: style, children: item.children.map((child) => ({ ...child, number_style: style })) };
+  };
+  const placed = block.map((item, k) => restyle(depths[k] !== item!.indent_level ? { ...item!, indent_level: depths[k] } : item!));
   const at = edit.beforeId === null ? target.length : target.findIndex((item) => item.target_id === edit.beforeId);
   const sections = doc.sections.map((section, s) => {
     if (s === from) return { ...section, items: section.items.filter((item) => !picked.has(item.target_id)) };
@@ -167,7 +180,8 @@ export function sendDraft(draft: DocDraft): { draft: DocDraft; items: TargetOrde
         ...(place ? ("slot_key" in place ? { slot_key: place.slot_key } : { wi_step: place.wi_step }) : {}),
         ...(place ? { indent_level: item.indent_level } : {}),
         ...(!place && before && before.indent_level !== item.indent_level ? { indent_level: item.indent_level } : {}),
-        ...(before && before.number_style !== item.number_style ? { number_style: item.number_style } : {}),
+        // 칸이 바뀐 줄은 표시도 늘 싣는다 - 서버는 표시가 없는 옮김을 도착 칸의 기본 표시로 바꾸므로, 옮긴 뒤 표시를 도로 고른 줄이 그 값을 잃지 않게 한다
+        ...(place || (before && before.number_style !== item.number_style) ? { number_style: item.number_style } : {}),
       };
     }),
   );

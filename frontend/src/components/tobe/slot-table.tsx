@@ -1,13 +1,31 @@
 // SOP 한 줄의 칸 상태 표(New 목록의 펼친 곳) - 칸마다 지금 상태(문장 수·Empty·N/A)를 먼저 보이고 하는 일(Mark N/A·Edit reason·Restore)을 단추로 둔다.
+// 문장을 받지 않는 줄은 상태가 다르다 - 하위만 묶는 항목은 하위의 문장 수만(없으면 빈 자리), 앱이 채우는 목록은 그 설명만 있고 N/A 단추가 없다.
 // 사유 편집기는 화면에 하나다(ToBeSection의 naEdit) - Save N/A·Cancel로만 닫히고, 칸을 떠나거나 줄을 접어도 적던 사유는 남는다.
+// 표준에서 벗어나는 일(이름 바꾸기 · 빼기 · 되살리기 · 사용자 항목 더하기)도 같은 편집기(mode)와 줄 끝 아이콘 단추로 한다 - 표준과 다른 줄은 이름 옆 표시에 사유 툴팁.
 // 설계: docs/superpowers/specs/2026-11-17-documents-screen-design.md §8
 "use client";
 
+import { Minus, Pencil, Plus } from "lucide-react";
 import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 
+import { DeviationMark } from "@/components/tobe/deviation-mark";
 import { Tooltip } from "@/components/ui/tooltip";
 import { useI18n } from "@/lib/i18n";
-import { openNaEdit, SLOT_COLUMNS, type NaEdit, type SlotKey, type SlotRow, type SlotSummary } from "@/lib/slot-status-model";
+import {
+  canSubmitSlotEdit,
+  formatSlotName,
+  openNaEdit,
+  splitSlotColumns,
+  type NaEdit,
+  type OutlineAction,
+  type SlotEditMode,
+  type SlotKey,
+  type SlotRow,
+  type SlotSummary,
+} from "@/lib/slot-status-model";
+
+/** 최상위에 더할 때의 편집기 칸 키(부모가 없다) - 시험 ID에는 "top"으로 적는다 */
+const TOP_KEY = "";
 
 interface SlotTableProps {
   /** `tobe-id-<줄 id>` */
@@ -25,9 +43,11 @@ interface SlotTableProps {
   onEdit: (next: NaEdit | null) => void;
   onSave: (slotKey: SlotKey, reason: string) => Promise<void>;
   onRestore: (row: SlotRow) => void;
+  /** 골격 쓰기(표준에서 벗어나기 · 되살리기) - 편집기로 한 쓰기는 성공하면 부른 쪽이 그 편집기를 닫는다 */
+  onOutline: (action: OutlineAction, mode: SlotEditMode) => Promise<void>;
 }
 
-export function SlotTable({ prefix, docKey, rows, summary, isWritten, canEdit, saving, usedReasons, edit, onEdit, onSave, onRestore }: SlotTableProps): ReactNode {
+export function SlotTable({ prefix, docKey, rows, summary, isWritten, canEdit, saving, usedReasons, edit, onEdit, onSave, onRestore, onOutline }: SlotTableProps): ReactNode {
   const { t } = useI18n();
   // 고칠 수 없게 되면(검토 요청 등으로 다시 받은 Bundle) 편집기를 그리지 않는다 - 목록이 편집기도 닫는다
   const myEdit = canEdit && edit !== null && edit.docKey === docKey ? edit : null;
@@ -39,6 +59,10 @@ export function SlotTable({ prefix, docKey, rows, summary, isWritten, canEdit, s
   // 바로 전 그림에서 편집기가 열려 있던 칸 - 닫힐 때 포커스를 그 칸의 다음 할 일로 옮긴다
   const lastEditKeyRef = useRef<SlotKey | null>(null);
   const editingKey = myEdit?.slotKey ?? null;
+  const editingMode: SlotEditMode = myEdit?.mode ?? "na";
+  const lastEditModeRef = useRef<SlotEditMode>("na");
+  // 이미 쓴 SOP(입구 2)는 골격이 파일의 것이라 고치지 않는다
+  const canEditOutline = canEdit && !isWritten;
   // 저장 중 - saving은 다시 그린 뒤에야 닿아, 같은 작업 안의 두 번째 Enter·누름은 이 값으로 막는다
   const submittingRef = useRef(false);
 
@@ -64,16 +88,36 @@ export function SlotTable({ prefix, docKey, rows, summary, isWritten, canEdit, s
   // 편집기가 닫히며(저장 · 취소 · Esc) 포커스가 쪽으로 떨어졌으면 그 칸의 다음 할 일(Edit reason · Mark N/A)로 - 키보드 사용자가 제자리에 남는다
   useEffect(() => {
     const closed = lastEditKeyRef.current;
+    const closedMode = lastEditModeRef.current;
     lastEditKeyRef.current = editingKey;
+    lastEditModeRef.current = editingMode;
     if (closed === null || editingKey !== null) return;
     const active = document.activeElement;
     if (active !== null && active !== document.body) return;
-    tableRef.current?.querySelector<HTMLElement>(`[data-slot="${closed}"] .slot-acts button`)?.focus();
-  }, [editingKey]);
+    // 그 편집기를 연 단추로 - 줄 끝 단추가 여럿이라 첫 단추로 보내면 N/A 편집기를 닫고 이름 단추에 선다
+    const suffixes = closedMode === "na" ? [`na-${closed}-edit`, `na-${closed}-mark`] : [`outline-${closed}-${closedMode}`, `outline-${closed}-restore`];
+    const row = tableRef.current?.querySelector<HTMLElement>(`[data-slot="${closed}"]`);
+    const target = suffixes.map((suffix) => row?.querySelector<HTMLElement>(`[data-testid="${prefix}-${suffix}"]`)).find((el) => el != null);
+    (target ?? row?.querySelector<HTMLElement>(".slot-acts button"))?.focus();
+  }, [editingKey, editingMode, prefix]);
 
   function openEditor(row: SlotRow) {
     const saved = row.state.kind === "na" ? row.state.reason : "";
     onEdit(openNaEdit(edit, { docKey, slotKey: row.key, saved }));
+  }
+
+  /** 골격 편집기 - 이름은 지금 이름과 사유로, 빼기는 빈 사유로, 더하기는 빈 이름 · 사유로 연다 */
+  function openOutlineEditor(slotKey: SlotKey, mode: Exclude<SlotEditMode, "na">, row?: SlotRow) {
+    const saved = mode === "rename" ? (row?.deviationReason ?? "") : "";
+    const savedTitle = mode === "rename" ? row?.titleEn : mode === "add" ? "" : undefined;
+    onEdit(openNaEdit(edit, { docKey, slotKey, saved, mode, savedTitle }));
+  }
+
+  /** 빼기 - 필수 표준 항목만 사유를 묻고, 선택 항목(7.1.x)은 바로 빼고 사용자 항목은 바로 지운다 */
+  function removeItem(row: SlotRow) {
+    if (row.origin === "custom") void onOutline({ kind: "delete", key: row.key }, "remove");
+    else if (row.isRequired) openOutlineEditor(row.key, "remove");
+    else void onOutline({ kind: "remove", key: row.key, reason: "" }, "remove");
   }
 
   function toggleReason(key: SlotKey) {
@@ -87,10 +131,16 @@ export function SlotTable({ prefix, docKey, rows, summary, isWritten, canEdit, s
 
   async function submit(current: NaEdit) {
     const reason = current.text.trim();
-    if (reason === "" || saving || submittingRef.current) return;
+    const titleEn = (current.title ?? "").trim();
+    if (!canSubmitSlotEdit(current) || saving || submittingRef.current) return;
     submittingRef.current = true;
+    const key = current.slotKey;
     try {
-      await onSave(current.slotKey, reason);
+      const mode = current.mode ?? "na";
+      if (mode === "na") await onSave(key, reason);
+      else if (mode === "rename") await onOutline({ kind: "rename", key, titleEn, reason }, mode);
+      else if (mode === "remove") await onOutline({ kind: "remove", key, reason }, mode);
+      else await onOutline({ kind: "add", parentKey: key, titleEn, reason }, mode);
     } finally {
       submittingRef.current = false;
     }
@@ -128,19 +178,61 @@ export function SlotTable({ prefix, docKey, rows, summary, isWritten, canEdit, s
             </span>
           </Tooltip>
         );
-      case "decide":
-        return <span className="pill warn">{t("tobe.slots.fill")}</span>;
+      case "auto":
+        // 설명은 문장이라 줄 아래 글로 둔다(상태 열에 두면 그 단의 이름 열이 좁아진다). 이미 쓴 SOP는 이 절도 파일을 따른다
+        return isWritten ? <span className="text-ink-3">{t("tobe.slots.fromFile")}</span> : null;
+      case "group":
+        // 하위만 묶는 항목 - 그 아래에 문장이 없으면 적을 상태가 없다
+        return null;
       case "empty":
         return <span className="text-ink-3">{isWritten ? t("tobe.slots.fromFile") : t("tobe.slots.empty")}</span>;
       case "na":
       case "covered":
         return <span className="pill quiet">{t("tobe.slots.na")}</span>;
+      case "removed":
+        return <span className="text-ink-3">{t("tobe.outline.removed")}</span>;
     }
+  }
+
+  /** 줄 끝 아이콘 단추 하나 - 아이콘만이라 툴팁과 이름을 단다. 줄에 올리거나 포커스가 갈 때만 보인다 */
+  function renderIconButton(label: string, testId: string, icon: ReactNode, run: () => void): ReactNode {
+    return (
+      <Tooltip label={label} align="end">
+        <button type="button" className="btn ghost slot-btn slot-icon slot-hover" aria-label={label} data-testid={testId} disabled={saving} onClick={run}>
+          {icon}
+        </button>
+      </Tooltip>
+    );
+  }
+
+  /** 골격 단추 - 이름 바꾸기(표준 · 사용자 항목), 빼기(문장 · 칸 제목이 없을 때), 하위에 더하기(묶음 제목). 선언 항목은 선언 목록이 고친다 */
+  function renderOutlineActions(row: SlotRow): ReactNode {
+    if (!canEditOutline || row.origin === "declared") return null;
+    const name = formatSlotName(row);
+    return (
+      <>
+        {renderIconButton(t("tobe.outline.rename", { name }), `${prefix}-outline-${row.key}-rename`, <Pencil size={14} strokeWidth={1.5} aria-hidden />, () =>
+          openOutlineEditor(row.key, "rename", row),
+        )}
+        {row.canRemove && renderIconButton(t("tobe.outline.remove", { name }), `${prefix}-outline-${row.key}-remove`, <Minus size={14} strokeWidth={1.5} aria-hidden />, () => removeItem(row))}
+        {row.canAddChild &&
+          renderIconButton(t("tobe.outline.addChild", { name }), `${prefix}-outline-${row.key}-add`, <Plus size={14} strokeWidth={1.5} aria-hidden />, () => openOutlineEditor(row.key, "add"))}
+      </>
+    );
   }
 
   function renderActions(row: SlotRow, isEditing: boolean): ReactNode {
     if (!canEdit || isEditing) return null;
     const key = row.key;
+    if (row.state.kind === "removed") {
+      if (!canEditOutline) return null;
+      return (
+        <button type="button" className="btn ghost slot-btn slot-hover" data-testid={`${prefix}-outline-${key}-restore`} disabled={saving} onClick={() => void onOutline({ kind: "restore", key }, "remove")}>
+          {t("tobe.outline.restore")}
+        </button>
+      );
+    }
+    // N/A 줄은 Edit reason · Restore만 - 단추 열이 넓어지면 칸 이름이 좁아진다(N/A를 되돌린 뒤 이름 · 빼기)
     if (row.state.kind === "na") {
       return (
         <>
@@ -153,37 +245,65 @@ export function SlotTable({ prefix, docKey, rows, summary, isWritten, canEdit, s
         </>
       );
     }
-    if (!row.canMarkNa) return null;
-    // 정할 칸은 다음 할 일이라 늘 보이고, 빈 칸은 줄에 올리거나 포커스가 갈 때만
+    // 줄에 올리거나 포커스가 갈 때만
     return (
-      <button type="button" className={`btn ghost slot-btn ${row.state.kind === "decide" ? "" : "slot-hover"}`} data-testid={`${prefix}-na-${key}-mark`} onClick={() => openEditor(row)}>
-        {t("tobe.slots.mark")}
-      </button>
+      <>
+        {renderOutlineActions(row)}
+        {row.canMarkNa && (
+          <button type="button" className="btn ghost slot-btn slot-hover" data-testid={`${prefix}-na-${key}-mark`} onClick={() => openEditor(row)}>
+            {t("tobe.slots.mark")}
+          </button>
+        )}
+      </>
     );
   }
 
-  function renderEditor(row: SlotRow, current: NaEdit): ReactNode {
-    const key = row.key;
-    const inputId = `${prefix}-na-${key}-input`;
+  /** 편집기 - N/A 사유, 또는 골격 쓰기(이름 · 빼기 · 더하기)의 이름과 사유. name은 자리 표시 글에 넣는 칸 이름(더하기는 부모) */
+  function renderEditor(slotKey: SlotKey, name: string, current: NaEdit, isStandard: boolean): ReactNode {
+    const mode = current.mode ?? "na";
+    const base = `${prefix}-${mode}-${slotKey === TOP_KEY ? "top" : slotKey}`;
+    const hasTitle = mode === "rename" || mode === "add";
+    const reasonId = `${base}-input`;
+    const titleId = `${base}-title`;
+    const saveLabel = { na: t("tobe.slots.save"), rename: t("tobe.outline.saveRename"), remove: t("tobe.outline.saveRemove"), add: t("tobe.outline.saveAdd") }[mode];
+    const placeholder = mode === "na" ? t("tobe.slots.reasonPlaceholder", { name }) : mode === "rename" && isStandard ? t("tobe.outline.reasonOptional") : undefined;
     return (
-      <div className="slot-editor" data-testid={`${prefix}-na-${key}-editor`} onKeyDown={handleEditorKey}>
-        <label htmlFor={inputId} className="text-xs text-ink-3">
-          {t("tobe.slots.reasonLabel")}
+      <div className="slot-editor" data-testid={`${base}-editor`} onKeyDown={handleEditorKey}>
+        {hasTitle && (
+          <>
+            <label htmlFor={titleId} className="text-xs text-ink-3">
+              {t("tobe.outline.titleLabel")}
+            </label>
+            <input
+              ref={inputRef}
+              id={titleId}
+              className="slot-input"
+              data-testid={titleId}
+              value={current.title ?? ""}
+              maxLength={200}
+              autoFocus
+              onChange={(event) => onEdit({ ...current, title: event.target.value })}
+              onKeyDown={(event) => handleReasonKey(event, current)}
+            />
+          </>
+        )}
+        <label htmlFor={reasonId} className="text-xs text-ink-3">
+          {mode === "na" ? t("tobe.slots.reasonLabel") : t("tobe.outline.reasonLabel")}
         </label>
         <input
-          ref={inputRef}
-          id={inputId}
+          ref={hasTitle ? undefined : inputRef}
+          id={reasonId}
           className="slot-input"
-          data-testid={`${prefix}-na-${key}-reason`}
+          data-testid={`${base}-reason`}
           value={current.text}
           maxLength={2000}
-          placeholder={t("tobe.slots.reasonPlaceholder", { name: row.label })}
-          // 열리면 사유 칸으로 - 떠나도 아무 일도 없다(onBlur를 걸지 않는다)
-          autoFocus
+          placeholder={placeholder}
+          // 열리면 첫 칸으로 - 떠나도 아무 일도 없다(onBlur를 걸지 않는다)
+          autoFocus={!hasTitle}
           onChange={(event) => onEdit({ ...current, text: event.target.value })}
           onKeyDown={(event) => handleReasonKey(event, current)}
         />
-        {usedReasons.length > 0 && (
+        {mode === "na" && usedReasons.length > 0 && (
           <div className="slot-used">
             <span className="text-xs text-ink-3">{t("tobe.slots.used")}</span>
             {usedReasons.map((reason, index) => (
@@ -191,7 +311,7 @@ export function SlotTable({ prefix, docKey, rows, summary, isWritten, canEdit, s
                 <button
                   type="button"
                   className="slot-chip"
-                  data-testid={`${prefix}-na-${key}-chip-${index}`}
+                  data-testid={`${base}-chip-${index}`}
                   onClick={() => {
                     onEdit({ ...current, text: reason, refused: false });
                     inputRef.current?.focus();
@@ -204,17 +324,17 @@ export function SlotTable({ prefix, docKey, rows, summary, isWritten, canEdit, s
           </div>
         )}
         <div className="flex flex-wrap items-center gap-2">
-          <button type="button" className="btn pri h-7" data-testid={`${prefix}-na-${key}-save`} disabled={current.text.trim() === "" || saving} onClick={() => void submit(current)}>
-            {t("tobe.slots.save")}
+          <button type="button" className="btn pri h-7" data-testid={`${base}-save`} disabled={!canSubmitSlotEdit(current) || saving} onClick={() => void submit(current)}>
+            {saveLabel}
             <kbd>↵</kbd>
           </button>
-          <button type="button" className="btn h-7" data-testid={`${prefix}-na-${key}-cancel`} onClick={() => onEdit(null)}>
+          <button type="button" className="btn h-7" data-testid={`${base}-cancel`} onClick={() => onEdit(null)}>
             {t("common.cancel")}
             <kbd>Esc</kbd>
           </button>
         </div>
         {current.refused && (
-          <p role="status" className="text-xs text-warn" data-testid={`${prefix}-na-${key}-finish-first`}>
+          <p role="status" className="text-xs text-warn" data-testid={`${base}-finish-first`}>
             {t("tobe.slots.finishFirst")}
           </p>
         )}
@@ -228,9 +348,22 @@ export function SlotTable({ prefix, docKey, rows, summary, isWritten, canEdit, s
     const coveredBy = row.state.kind === "covered" ? byKey.get(row.state.by) : undefined;
     const isReasonOpen = openReasons.has(key);
     return (
-      <div key={key} className="slot-row" data-slot={key} data-state={row.state.kind} data-child={row.isChild ? "" : undefined} data-editing={isEditing ? "" : undefined} data-testid={`${prefix}-slot-${key}`}>
+      <div
+        key={key}
+        className="slot-row"
+        data-slot={key}
+        data-state={row.state.kind}
+        data-child={row.level > 0 ? "" : undefined}
+        // 하위 칸의 들여쓰기 24px은 CSS(data-child)가 건다 - 그보다 깊은 수준만 단마다 24px씩 더 들인다
+        style={row.level > 1 ? { "--slot-indent": `${row.level * 24}px` } : undefined}
+        data-editing={isEditing ? "" : undefined}
+        data-testid={`${prefix}-slot-${key}`}
+      >
         <span className="slot-num">{row.number}</span>
-        <span className="slot-name">{row.label}</span>
+        <span className="slot-name" data-removed={row.state.kind === "removed" ? "" : undefined}>
+          {row.label}
+          {row.isDeviation && <DeviationMark reason={row.deviationReason} testId={`${prefix}-slot-${key}-differs`} />}
+        </span>
         <span className="slot-state" data-testid={`${prefix}-slot-${key}-state`}>
           {renderState(row)}
         </span>
@@ -244,7 +377,12 @@ export function SlotTable({ prefix, docKey, rows, summary, isWritten, canEdit, s
         )}
         {coveredBy && (
           <span className="slot-note" data-testid={`${prefix}-na-${key}-text`}>
-            {t("tobe.slots.covered", { number: coveredBy.number, name: coveredBy.label })}
+            {t("tobe.slots.covered", { name: formatSlotName(coveredBy) })}
+          </span>
+        )}
+        {row.state.kind === "auto" && !isWritten && (
+          <span className="slot-note" data-testid={`${prefix}-slot-${key}-auto-note`}>
+            {t("tobe.slots.autoList")}
           </span>
         )}
         {/* 칸 제목에 옛 제목이 이어진 칸 - 서버가 N/A를 막으므로 단추 대신 까닭(문장이라 단추 열이 아니라 줄 아래 글로 둔다) */}
@@ -253,7 +391,7 @@ export function SlotTable({ prefix, docKey, rows, summary, isWritten, canEdit, s
             {t("tobe.slots.headingLinked")}
           </span>
         )}
-        {isEditing && myEdit !== null && renderEditor(row, myEdit)}
+        {isEditing && myEdit !== null && renderEditor(key, (myEdit.mode ?? "na") === "add" ? formatSlotName(row) : row.label, myEdit, row.origin === "standard")}
       </div>
     );
   }
@@ -266,22 +404,30 @@ export function SlotTable({ prefix, docKey, rows, summary, isWritten, canEdit, s
           {/* 이미 쓴 SOP는 문장 수를 세지 않는다 - "0 with sentences"는 거짓이라 N/A 수만 */}
           {isWritten ? t("tobe.row.na", { n: summary.na }) : t("tobe.slots.summary", { filled: summary.filled, empty: summary.empty, na: summary.na })}
         </span>
-        {summary.decide > 0 && (
-          <span className="pill warn" data-testid={`${prefix}-slots-decide`}>
-            {t("tobe.slots.decide", { n: summary.decide })}
-          </span>
+      </div>
+      <div className="slot-cols" data-outline-edit={canEditOutline ? "" : undefined}>
+        {/* 가를 곳이 없는 골격(최상위 칸 하나)은 오른쪽 단이 비어 그리지 않는다 */}
+        {splitSlotColumns(rows).map(
+          (column) =>
+            column.length > 0 && (
+              <div key={column[0].key} className="slot-col">
+                {column.map(renderRow)}
+              </div>
+            ),
         )}
       </div>
-      <div className="slot-cols">
-        {SLOT_COLUMNS.map((column) => (
-          <div key={column[0]} className="slot-col">
-            {column.map((key) => {
-              const row = byKey.get(key);
-              return row ? renderRow(row) : null;
-            })}
+      {canEditOutline &&
+        (myEdit !== null && myEdit.slotKey === TOP_KEY && myEdit.mode === "add" ? (
+          // 표의 격자 밖이라 블록으로 감싼다(편집기의 grid-column이 표에 새 열을 만들지 않게)
+          <div>{renderEditor(TOP_KEY, "", myEdit, false)}</div>
+        ) : (
+          <div>
+            <button type="button" className="btn ghost slot-btn" data-testid={`${prefix}-outline-add-top`} disabled={saving} onClick={() => openOutlineEditor(TOP_KEY, "add")}>
+              <Plus size={14} strokeWidth={1.5} aria-hidden />
+              {t("tobe.outline.addTop")}
+            </button>
           </div>
         ))}
-      </div>
       <p className="slot-help">{t("tobe.slots.help")}</p>
     </div>
   );

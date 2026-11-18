@@ -22,6 +22,14 @@ from app.sop.errors import check_revision, raise_rule
 from app.sop.events import record_event
 from app.sop.membership import BundleContext, ensure_editable, lock_bundle, require_bundle_role
 from app.sop.models import Bundle
+from app.sop.outline import load_outline_suggestions
+from app.sop.outline_edit import (
+    NewOutlineItemIn,
+    OutlineItemPatchIn,
+    add_outline_item,
+    patch_outline_item,
+    remove_outline_item,
+)
 from app.sop.tobe import (
     DocPatchIn,
     NaReasonIn,
@@ -65,6 +73,8 @@ class ToBeViewOut(ToBeOut):
     sentence_counts: list[PlaceCountOut] = []
     # 칸에 보이는 항목 수와 칸 제목 수 — Documents 화면의 N/A 칸 상태 표가 N/A로 둘 수 없는 칸을 가린다
     slot_counts: list[SlotCountOut] = []
+    # 지금 표준의 권장 이름 — 하위를 선언하는 항목의 키 → 이름들(5장 범주 후보, 6장의 장비 SOP용 절 이름). 없으면 빈 객체
+    outline_suggestions: dict[str, list[str]] = {}
 
 
 async def _build_tobe_view(
@@ -83,7 +93,8 @@ async def _build_tobe_view(
     slot_counts = await count_targets_by_slot(session, [doc.id for doc in tobe.docs])
     return ToBeViewOut(
         revision=tobe.revision, docs=docs, na_slots=tobe.na_slots, wi_steps=tobe.wi_steps,
-        sentence_counts=sentence_counts, slot_counts=slot_counts,
+        outline_items=tobe.outline_items, sentence_counts=sentence_counts, slot_counts=slot_counts,
+        outline_suggestions=await load_outline_suggestions(session),
     )
 
 
@@ -249,6 +260,52 @@ async def patch_wi_step(
 ) -> ToBeViewOut:
     bundle = await _open_row_write(session, ctx)
     await rename_wi_step(session, bundle, target_doc_id, step_no, body.title, actor=ctx.login_id)
+    await session.commit()
+    return await _build_tobe_view(session, background_tasks, bundle, sync_titles=False)
+
+
+# --- 골격의 선언 항목(6장 절차·9장 부록·5장 범주) — 한 줄 쓰기와 같은 길이다: 묶음을 잠그고 revision을 묻지 않는다 ---
+
+
+@router.post("/{bundle_id}/tobe/docs/{target_doc_id}/outline", response_model=ToBeViewOut, status_code=201)
+async def post_outline_item(
+    target_doc_id: int,
+    body: NewOutlineItemIn,
+    background_tasks: BackgroundTasks,
+    ctx: BundleContext = Depends(_require_author),
+    session: AsyncSession = Depends(get_session),
+) -> ToBeViewOut:
+    bundle = await _open_row_write(session, ctx)
+    await add_outline_item(session, bundle, target_doc_id, body, actor=ctx.login_id)
+    await session.commit()
+    return await _build_tobe_view(session, background_tasks, bundle, sync_titles=False)
+
+
+@router.patch("/{bundle_id}/tobe/docs/{target_doc_id}/outline/{key}", response_model=ToBeViewOut)
+async def update_outline_item(
+    target_doc_id: int,
+    key: str,
+    body: OutlineItemPatchIn,
+    background_tasks: BackgroundTasks,
+    ctx: BundleContext = Depends(_require_author),
+    session: AsyncSession = Depends(get_session),
+) -> ToBeViewOut:
+    bundle = await _open_row_write(session, ctx)
+    await patch_outline_item(session, bundle, target_doc_id, key, body, actor=ctx.login_id)
+    await session.commit()
+    return await _build_tobe_view(session, background_tasks, bundle, sync_titles=False)
+
+
+@router.delete("/{bundle_id}/tobe/docs/{target_doc_id}/outline/{key}", response_model=ToBeViewOut)
+async def delete_outline_item(
+    target_doc_id: int,
+    key: str,
+    background_tasks: BackgroundTasks,
+    ctx: BundleContext = Depends(_require_author),
+    session: AsyncSession = Depends(get_session),
+) -> ToBeViewOut:
+    bundle = await _open_row_write(session, ctx)
+    await remove_outline_item(session, bundle, target_doc_id, key, actor=ctx.login_id)
     await session.commit()
     return await _build_tobe_view(session, background_tasks, bundle, sync_titles=False)
 

@@ -2,6 +2,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { NumberStyle, OutputCItem } from "./api-sop";
+import { makeDeepOutline, makeSectionOutline } from "./outline-fixture";
 import { canChangeDepth, canChangeStyle, canIndent, getSectionDepths, isCounted, listCounted, numberLines, readIndentKey, readStyleChoices } from "./section-number";
 
 function item(id: number, number: string | null, indent = 0, style: NumberStyle = "numbered"): OutputCItem {
@@ -37,13 +38,13 @@ describe("numberLines", () => {
 
 describe("getSectionDepths", () => {
   it("reads the depth from the number under the section number", () => {
-    const section = { location_key: "s5.1", number: "5.1", items: [item(1, "5.1.1"), item(2, "5.1.1.1", 4), item(3, "5.1.2")] };
+    const section = { counts_lines: true, number: "5.1", items: [item(1, "5.1.1"), item(2, "5.1.1.1", 4), item(3, "5.1.2")] };
     expect(getSectionDepths(section)).toEqual([0, 1, 0]);
   });
 
   it("clamps the stored depth where the section has no number", () => {
     // 서버 number_lines와 같은 눌러 읽기 - 첫 줄 0, 앞줄의 눌러 읽은 깊이 + 1까지
-    const depths = (stored: number[]) => getSectionDepths({ location_key: "path:a", number: null, items: stored.map((depth, index) => item(index, null, depth)) });
+    const depths = (stored: number[]) => getSectionDepths({ counts_lines: true, number: null, items: stored.map((depth, index) => item(index, null, depth)) });
     expect(depths([2, 4, 4, 0, 3])).toEqual([0, 1, 2, 0, 1]);
     expect(depths([])).toEqual([]);
   });
@@ -55,26 +56,32 @@ describe("getSectionDepths", () => {
     { name: "an unnumbered first line stays at 0", items: [item(1, null, 2, "note"), item(2, "5.1")], want: [0, 0] },
     { name: "a deep note does not raise the limit for the next line", items: [item(1, "5.1"), item(2, "5.1.1", 1), item(3, null, 2, "note"), item(4, null, 9, "omitted")], want: [0, 1, 2, 2] },
   ])("$name", ({ items, want }) => {
-    expect(getSectionDepths({ location_key: "s5", number: "5", items })).toEqual(want);
+    expect(getSectionDepths({ counts_lines: true, number: "5", items })).toEqual(want);
   });
 
   it("skips unnumbered lines for the limit in a section without a number too", () => {
     const items = [item(1, null, 0), item(2, null, 1, "note"), item(3, null, 2, "omitted"), item(4, null, 2)];
-    expect(getSectionDepths({ location_key: "path:a", number: null, items })).toEqual([0, 1, 1, 1]);
+    expect(getSectionDepths({ counts_lines: true, number: null, items })).toEqual([0, 1, 1, 1]);
   });
 
   it("draws a numbered-style line without a number at its clamped stored depth, and it counts for the next limit", () => {
     // 번호 칸 안에서 번호 표시인데 서버 번호가 빈 줄(예전에는 늘 0) - 사람이 정한 깊이를 앞 번호 줄 + 1까지로 그리고,
     // 번호 표시라 다음 줄의 상한에도 낀다. 저장값을 버리고 0으로 그리면 들여쓰기가 사라진다
     const items = [item(1, "5.1"), item(2, null, 3), item(3, null, 5)];
-    expect(getSectionDepths({ location_key: "s5", number: "5", items })).toEqual([0, 1, 2]);
+    expect(getSectionDepths({ counts_lines: true, number: "5", items })).toEqual([0, 1, 2]);
   });
 
-  it("draws the lines of a section with sub sections at depth 0 - none is counted, so none sets a limit", () => {
+  it("draws the lines of a section that does not count lines at depth 0 - none is counted, so none sets a limit", () => {
     const items = [item(1, null, 0), item(2, null, 1), item(3, null, 2, "note")];
-    expect(getSectionDepths({ location_key: "procedures", number: "6", items })).toEqual([0, 0, 0]);
+    expect(getSectionDepths({ counts_lines: false, number: "6", items })).toEqual([0, 0, 0]);
     // 같은 줄이 하위 칸에서는 저장된 깊이로 그려진다
-    expect(getSectionDepths({ location_key: "procedures.procedure", number: "6.1", items })).toEqual([0, 1, 2]);
+    expect(getSectionDepths({ counts_lines: true, number: "6.1", items })).toEqual([0, 1, 2]);
+  });
+
+  it("reads the depth under a section number of any length - a level 2 section", () => {
+    // 세 수준 골격의 맨 아래 칸(6.1.2) - 줄 번호는 칸 번호 마디 수를 뺀 만큼이 깊이다
+    const section = { ...makeSectionOutline({ level: 2 }), number: "6.1.2", items: [item(1, "6.1.2.1"), item(2, "6.1.2.1.1", 1), item(3, "6.1.2.2")] };
+    expect(getSectionDepths(section)).toEqual([0, 1, 0]);
   });
 });
 
@@ -90,26 +97,40 @@ describe("listCounted", () => {
   const items = [item(1, null), item(2, null, 1, "note")];
 
   it("counts by style in a section whose lines are numbered", () => {
-    expect(listCounted({ location_key: "general_requirements.safety", items })).toEqual([true, false]);
-    expect(listCounted({ location_key: "purpose", items })).toEqual([true, false]);
-    expect(listCounted({ location_key: "step:1:instruction", items })).toEqual([true, false]);
+    expect(listCounted({ counts_lines: true, items })).toEqual([true, false]);
   });
 
-  it("counts no line placed directly in a section that has sub sections, whatever its style", () => {
-    expect(listCounted({ location_key: "general_requirements", items })).toEqual([false, false]);
+  it("counts no line placed directly in a section that does not count lines, whatever its style", () => {
+    expect(listCounted({ counts_lines: false, items })).toEqual([false, false]);
   });
 });
 
 describe("readStyleChoices", () => {
-  it("offers all three styles and presses the stored one where lines are numbered", () => {
-    expect(readStyleChoices("general_requirements.safety", "numbered")).toEqual({ choices: ["numbered", "omitted", "note"], pressed: "numbered" });
-    expect(readStyleChoices("purpose", "note")).toEqual({ choices: ["numbered", "omitted", "note"], pressed: "note" });
+  const counting = makeSectionOutline();
+  const notCounting = makeSectionOutline({ kind: "named_children", counts_lines: false });
+
+  it("offers all four styles and presses the stored one where lines are numbered", () => {
+    expect(readStyleChoices(counting, "numbered")).toEqual({ choices: ["numbered", "bullet", "omitted", "note"], pressed: "numbered" });
+    expect(readStyleChoices(counting, "note")).toEqual({ choices: ["numbered", "bullet", "omitted", "note"], pressed: "note" });
+    expect(readStyleChoices(counting, "bullet").pressed).toBe("bullet");
   });
 
-  it("hides Numbered in a section with sub sections and shows a line stored as numbered as No number", () => {
-    expect(readStyleChoices("general_requirements", "numbered")).toEqual({ choices: ["omitted", "note"], pressed: "omitted" });
-    expect(readStyleChoices("general_requirements", "omitted")).toEqual({ choices: ["omitted", "note"], pressed: "omitted" });
-    expect(readStyleChoices("general_requirements", "note")).toEqual({ choices: ["omitted", "note"], pressed: "note" });
+  it("hides Numbered in a section that does not count lines and shows a line stored as numbered as No number", () => {
+    expect(readStyleChoices(notCounting, "numbered")).toEqual({ choices: ["bullet", "omitted", "note"], pressed: "omitted" });
+    expect(readStyleChoices(notCounting, "omitted")).toEqual({ choices: ["bullet", "omitted", "note"], pressed: "omitted" });
+    expect(readStyleChoices(notCounting, "note")).toEqual({ choices: ["bullet", "omitted", "note"], pressed: "note" });
+    expect(readStyleChoices(notCounting, "bullet").pressed).toBe("bullet");
+  });
+
+  it("reads the section's own value, not its place in the outline - a middle level that declares sub sections, a bottom level that counts", () => {
+    // 세 수준 골격: a.b(수준 1)는 하위 칸을 선언해 줄을 세지 않고, a.b.c(수준 2)는 센다
+    const outline = makeDeepOutline("SOP-1");
+    const [middle, bottom] = ["a.b", "a.b.c"].map((key) => outline.find((entry) => entry.key === key)!);
+    expect([middle.level, bottom.level]).toEqual([1, 2]);
+    expect(readStyleChoices(middle, "numbered").pressed).toBe("omitted");
+    expect(readStyleChoices(bottom, "numbered").choices).toContain("numbered");
+    expect(listCounted({ ...middle, items: [item(1, null)] })).toEqual([false]);
+    expect(listCounted({ ...bottom, items: [item(1, null)] })).toEqual([true]);
   });
 });
 

@@ -1,7 +1,7 @@
 // Assign New 칸의 아직 쓰지 않은 문서 - 서버가 결과물 C 규칙으로 엮은 문서(ComposedDoc)를 New 칸 줄로 펴고,
 // 저장 응답으로 서버 다시 읽기 전에 미리 고친다(칸 끝에 넣기·지우기). 순서·번호는 다시 읽은 서버 값이 정한다.
 // 줄 앞머리에는 결과물 C와 같은 그 줄 자기 번호("5.1.1", 생략·주석은 없음)를 두고, 칸 번호는 칸 머리 줄에 남긴다.
-import type { ComposedDoc, ComposedItem, GroupTarget, OutputCItem, RenumberChange, WrittenSentence } from "@/lib/api-sop";
+import type { AutoItem, ComposedDoc, ComposedItem, ComposedSection, GroupTarget, OutputCItem, RenumberChange, WrittenSentence } from "@/lib/api-sop";
 import { getPillWidth, getSectionLevel } from "@/lib/strip-pill-model";
 
 /** 아무것도 받지 않은 칸 - 옅은 자리 표시. key는 칸 키라 칸이 차고 비어도 같은 줄로 읽힌다 */
@@ -11,11 +11,17 @@ export interface EmptySlotRow {
   section_path: string;
   /** N/A 칸 */
   na: boolean;
+  /** 문장을 받지 않는 절 - "group"은 칸 머리만 있고(자리 표시가 없다) "auto"는 앱이 채운 읽기 전용 목록(autoItems). null이면 놓을 수 있는 빈 칸 */
+  fixed: "group" | "auto" | null;
+  /** 앱이 채운 목록의 줄(그 SOP의 자식 WI) - 그 밖의 칸은 빈 배열 */
+  autoItems: readonly AutoItem[];
 }
 
 /** 엮은 문서의 줄 - number는 결과물 C의 그 줄 자기 번호(서버 number_targets), 생략·주석 줄과 저장 직후 미리 넣은 줄은 null */
 export interface ComposedRow extends WrittenSentence {
   number: string | null;
+  /** 그 줄이 놓인 칸의 번호 - 줄 번호의 머리. 칸 머리 글(section_path)에 번호를 적지 않는 칸(부록)에도 있다 */
+  section_number: string | null;
   /** 표·그림 줄의 다시 매긴 번호(결과물 C와 같은 값) - 바뀌지 않았으면 null */
   renumber: RenumberChange | null;
 }
@@ -46,13 +52,22 @@ export function formatSectionPath(number: string | null, label: string): string 
   return number ? `${number}. ${label}` : label;
 }
 
-/** 엮은 문서를 New 칸 줄로 - 칸 순서대로 받은 새 문장(자기 번호를 싣는다), 빈 칸은 자리 표시 한 줄. 쓰지 않은 문서라 Remark·짝 카드는 없다 */
+/** 엮은 문서 절의 칸 머리 글 - 번호를 적지 않는 절(부록 - 이름 "Appendix 2. 제목"에 번호가 들어 있다)은 이름만 */
+export function readSectionHead(section: Pick<ComposedSection, "number" | "label" | "shows_number">): string {
+  return formatSectionPath(section.shows_number ? section.number : null, section.label);
+}
+
+/**
+ * 엮은 문서를 New 칸 줄로 - 칸 순서대로 받은 새 문장(자기 번호를 싣는다), 빈 칸은 자리 표시 한 줄. 쓰지 않은 문서라 Remark·짝 카드는 없다.
+ * 문장을 받지 않는 절(묶음 · 앱이 채우는 목록)도 줄 없는 칸으로 한 줄이다 - 칸 머리가 그려지고, 무엇을 보일지는 fixed가 정한다
+ */
 export function buildComposedRows(doc: ComposedDoc): Array<ComposedRow | EmptySlotRow> {
   const rows: Array<ComposedRow | EmptySlotRow> = [];
   for (const section of doc.sections) {
-    const path = formatSectionPath(section.number, section.label);
+    const path = readSectionHead(section);
     if (section.items.length === 0) {
-      rows.push({ kind: "empty", key: section.location_key, section_path: path, na: section.na_reason !== null });
+      const fixed = section.kind === "group" ? "group" : section.kind === "auto_list" ? "auto" : null;
+      rows.push({ kind: "empty", key: section.location_key, section_path: path, na: section.na_reason !== null, fixed, autoItems: section.auto_items });
       continue;
     }
     section.items.forEach((item, index) => {
@@ -75,6 +90,7 @@ export function buildComposedRows(doc: ComposedDoc): Array<ComposedRow | EmptySl
         remark: "",
         revision: 0,
         number: item.number,
+        section_number: section.number,
         renumber: item.renumber ?? null,
       });
     });
@@ -138,7 +154,8 @@ export function getComposedLeadWidths(rows: readonly NewPaneRow[]): Map<string, 
       path = row.section_path;
       previous = null;
     }
-    const slotLevel = getSectionLevel(readSectionNumber(row.section_path));
+    // 칸 번호는 머리 글이 아니라 줄이 실은 값에서 - 머리에 번호를 적지 않는 부록도 줄 번호는 그 번호 아래다
+    const slotLevel = getSectionLevel(row.section_number ?? "");
     const opening = slotLevel > 0 ? getLevelWidth(slotLevel + 1) : getPillWidth(1);
     const width: number = row.number !== null ? getLevelWidth(getSectionLevel(row.number)) : (previous ?? opening);
     widths.set(String(row.target_id), width);
@@ -151,9 +168,25 @@ export function getComposedLeadWidths(rows: readonly NewPaneRow[]): Map<string, 
 export function listHeadingNotes(doc: ComposedDoc): Map<string, string> {
   const notes = new Map<string, string>();
   for (const section of doc.sections) {
-    if (section.heading_note !== "") notes.set(formatSectionPath(section.number, section.label), section.heading_note);
+    if (section.heading_note !== "") notes.set(readSectionHead(section), section.heading_note);
   }
   return notes;
+}
+
+/** 칸 머리의 알림 - 표준과 다른 절의 사유(없으면 null)와 비어 있는 필수 절 */
+export interface SectionMark {
+  deviationReason: string | null;
+  isEmptyRequired: boolean;
+}
+
+/** 칸 머리 줄 → 알림 - 알릴 것이 있는 절만. buildComposedRows의 section_path와 같은 열쇠 */
+export function listSectionMarks(doc: ComposedDoc): Map<string, SectionMark> {
+  const marks = new Map<string, SectionMark>();
+  for (const section of doc.sections) {
+    if (section.deviation_reason === null && !section.is_empty_required) continue;
+    marks.set(readSectionHead(section), { deviationReason: section.deviation_reason, isEmptyRequired: section.is_empty_required });
+  }
+  return marks;
 }
 
 /** 저장한 새 문장이 놓일 칸 키 - 서버 _plan_sections의 키와 같은 모양 */

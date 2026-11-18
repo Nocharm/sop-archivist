@@ -14,6 +14,7 @@ import pytest
 
 from app.settings import settings
 from app.sop.ai.candidates import list_candidates
+from app.sop.outline import EMPTY_OUTLINE
 from app.sop.snapshot import TargetDocInfo
 from scripts.synthetic_sop import TOBE_DOCS, TOBE_STEPS
 from tests.ai_helpers import (
@@ -25,6 +26,7 @@ from tests.ai_helpers import (
     read_payload,
     vector_for,
 )
+from tests.sop_helpers import build_sop_outline
 
 # wrap_data가 내보내는 구분 줄 사이의 JSON 한 줄 — 여는 줄과 닫는 줄의 nonce가 같아야 한 구간이다
 _DATA_BLOCK_RE = re.compile(r"^<<<DATA (?P<nonce>[0-9a-f]+)>>>\n(?P<body>.*)\n<<<END DATA (?P=nonce)>>>$", re.MULTILINE)
@@ -129,11 +131,16 @@ def _build_place_labels(expected: dict) -> dict[_Place, str]:
     na_slots: dict[str, dict[str, str]] = defaultdict(dict)
     for slot in expected["tobe_na_slots"]:
         na_slots[slot["code"]][slot["slot_key"]] = slot["reason"]
+    declared: dict[str, list[tuple[str, str]]] = defaultdict(list)
+    for item in expected.get("tobe_outline_items", ()):
+        declared[item["code"]].append((item["key"], item["title_en"]))
     docs = [
         TargetDocInfo(
             id=ids[code], code=code, title=title, doc_type=doc_type.lower(), parent_id=ids.get(parent), entrance="assign",
             is_equipment_sop=equipment == "Y", order_index=ids[code], manual_order=False, na_slots=na_slots[code],
             steps=tuple((step_no, name) for wi_code, step_no, name in TOBE_STEPS if wi_code == code),
+            # 합성 묶음의 SOP는 기본 표준(회사 템플릿)과 첫 절차를 받고, 드라이버가 정답의 선언 항목을 더한다
+            outline=build_sop_outline(declared[code]) if doc_type.lower() == "sop" else EMPTY_OUTLINE,
         )
         for code, title, doc_type, parent, equipment in TOBE_DOCS
     ]

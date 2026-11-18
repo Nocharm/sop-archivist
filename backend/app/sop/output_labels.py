@@ -1,25 +1,6 @@
-"""결과물 A·B·C와 Excel의 언어별 문구 — 코드 값의 표시 이름·위치 표기·이어짐/합침/나눔 표시. SOP 칸 이름은 두 언어 모두 영문 그대로."""
+"""결과물 A·B·C와 Excel의 언어별 문구 — 코드 값의 표시 이름·위치 표기·이어짐/합침/나눔 표시. SOP 칸 이름은 여기 없다(문서 골격 outline.DocOutline.get_label, 두 언어 모두 영문)."""
 
 from dataclasses import dataclass
-
-# 칸 키(SLOT_KEYS)마다 하나 — 칸 이름은 도메인 문서 §2의 영문 이름 그대로 — 새 문서가 영문 칸 제목을 쓰므로 한글판도 바꾸지 않는다
-SLOT_LABELS = {
-    "purpose": "Purpose",
-    "scope": "Scope",
-    "definitions": "Definitions",
-    "responsibilities": "Responsibilities",
-    "general_requirements": "General Requirements",
-    "general_requirements.safety": "General Requirements › Safety",
-    "general_requirements.operation": "General Requirements › Operation",
-    "procedures": "Procedures",
-    "procedures.procedure": "Procedures › Procedure",
-    "procedures.electronic_record_control": "Procedures › Electronic Record Control",
-    "procedures.troubleshooting": "Procedures › Troubleshooting",
-    "procedures.maintenance": "Procedures › Maintenance",
-    "document_relationships": "Document Relationships",
-    "document_relationships.attachments": "Document Relationships › Attachments",
-    "document_relationships.appendices": "Document Relationships › Appendices",
-}
 
 WI_PART_LABELS = {"instruction": "Instruction", "why": "Why"}
 
@@ -46,7 +27,6 @@ class OutputLabels:
     merged: str
     split: str
     translated: str
-    slots: dict[str, str]
     wi_parts: dict[str, str]
 
 
@@ -74,7 +54,6 @@ LABELS = {
         merged="(합침)",
         split="(나눔)",
         translated="(번역)",
-        slots=SLOT_LABELS,
         wi_parts=WI_PART_LABELS,
     ),
     "en": OutputLabels(
@@ -100,7 +79,6 @@ LABELS = {
         merged="(merged)",
         split="(split)",
         translated="(translated)",
-        slots=SLOT_LABELS,
         wi_parts=WI_PART_LABELS,
     ),
 }

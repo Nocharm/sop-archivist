@@ -14,6 +14,7 @@ from scripts.synthetic_sop import SyntheticBundle
 from tests.sop_helpers import (
     REVIEWER,
     create_bundle,
+    declare_outline_item,
     get_bundle,
     get_view,
     put_tobe,
@@ -105,6 +106,10 @@ class SyntheticDriver:
         )
         assert response.status_code == 200, response.text
         tobe = response.json()
+        # 새 SOP는 표준 골격과 첫 절차만 받는다 — 정답이 쓰는 범주·절차를 선언한다(N/A가 그 항목을 가리키니 PUT보다 먼저)
+        doc_ids = {doc["code"]: doc["id"] for doc in tobe["docs"]}
+        for item in self.expected.get("tobe_outline_items", ()):
+            declare_outline_item(self.client, doc_ids[item["code"]], item["key"], item["title_en"])
         # Excel 템플릿에는 N/A 칸이 없어 가져온 목록을 그대로 두고 N/A만 더해 PUT한다
         docs = [
             {key: doc[key] for key in ("code", "title", "doc_type", "parent_code", "is_equipment_sop", "order_index")}

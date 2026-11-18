@@ -13,7 +13,7 @@ from pydantic import BaseModel
 
 from app.equis.view import EquisOut
 from app.sop.captions import join_caption_texts
-from app.sop.constants import NUMBER_NOTE
+from app.sop.constants import NUMBER_BULLET, NUMBER_NOTE
 from app.sop.excel_export import ExportMeta, build_export_file_name, clean_cell_text, format_kst, split_cell_text
 from app.sop.flow_image import draw_flow_png
 from app.sop.output_labels import LABELS
@@ -44,13 +44,15 @@ A_ID_COLUMN = 5  # Unit ID — 이어진 줄의 이어짐 표시가 들어가는
 A_NOTE_COLUMNS = (12, 13)  # 보낸 새 문장이 주석 줄이면 기울여 쓰는 칸 — New text·AI suggestion
 C_HEADERS = (
     "Document", "Slot", "No.", "Item", "Table cell", "Cell position", "Unit ID", "AI-suggested sentence", "Change type",
-    "Status", "Old units", "Moved to", "Reason",
+    "Status", "Old units", "Differs from standard", "Moved to", "Reason",
 )
 # 결과물 C — 문서·칸·항목·표 칸이 들여쓰기 열이고 나머지는 항목의 세부다(0부터). 번호 열은 칸·항목의 섹션 번호(outputs가 센 값)
-(C_DOC, C_SECTION, C_NUMBER, C_ITEM, C_CELL, C_POSITION, C_ID, C_AI, C_CHANGE, C_STATUS, C_SOURCE, C_MOVE, C_REASON) = (
-    range(13)
-)
-C_COLUMN_WIDTHS = (34, 30, 12, 50, 40, 12, 14, 40, 14, 10, 30, 18, 30)
+# 표준과 다름(C_DEVIATION)은 칸 줄에만 — 표준과 다른 SOP 절(사용자 항목·이름을 바꾼 표준 항목)의 사유
+(
+    C_DOC, C_SECTION, C_NUMBER, C_ITEM, C_CELL, C_POSITION, C_ID, C_AI, C_CHANGE, C_STATUS, C_SOURCE, C_DEVIATION, C_MOVE,
+    C_REASON,
+) = range(14)
+C_COLUMN_WIDTHS = (34, 30, 12, 50, 40, 12, 14, 40, 14, 10, 30, 30, 18, 30)
 B_COLUMN_WIDTHS = (34, 12)  # 이름·건수, 그 뒤로 보낸 곳마다 B_DEST_WIDTH
 B_DEST_WIDTH = 18
 INFO_COLUMN_WIDTHS = (24, 60)
@@ -82,6 +84,7 @@ INFO_NAMES = (
 )
 _LABELS = LABELS["en"]
 _MARKERS = {"table": "[Table]", "figure": "[Figure]"}  # 확정한 캡션 글이 없는 표·그림 줄에만
+_BULLET = "•"  # 글머리 기호 줄의 No. 칸(C 시트) — 화면의 줄 머리와 같은 기호
 _CAPTION_POSITION = "Caption"  # 캡션 줄의 Cell position 칸 — 칸 줄의 "R 1 C 1" 자리
 _NO_WRAP_KINDS = ("status", "plain")  # 상태 줄·제목·이름 칸은 옆 칸으로 넘쳐 보이게 접지 않는다
 
@@ -332,6 +335,8 @@ def _list_c_item_lines(item: CItem, depth: int) -> Iterator[tuple[list[str], tup
     }
     if depth == 0 and item.number is not None:  # 표 칸은 표의 번호라 표 줄에만 적는다
         values[C_NUMBER] = item.number
+    elif depth == 0 and item.number_style == NUMBER_BULLET:
+        values[C_NUMBER] = _BULLET
     if item.cell_row is not None and item.cell_col is not None:
         values[C_POSITION] = f"R {item.cell_row + 1} C {item.cell_col + 1}"
     elif depth > 0:  # 표·그림 아래 칸 좌표 없는 자식 = 캡션 줄
@@ -363,12 +368,15 @@ def _build_c_sheet(snap: BundleSnapshot) -> Sheet:
         heading = f"{doc.doc_type.upper()} {doc.code}{title}{parent}"
         rows.append(_make_row("doc", _make_c_texts({C_DOC: heading}), bold=(C_DOC + 1,)))
         for section in doc.sections:
-            values = {C_SECTION: section.label, C_SOURCE: section.heading_note}
-            if section.number is not None:
+            values = {C_SECTION: section.label, C_SOURCE: section.heading_note, C_DEVIATION: section.deviation_reason or ""}
+            if section.number is not None and section.shows_number:  # 부록은 라벨("Appendix 1. 이름")에 번호가 들어 있다
                 values[C_NUMBER] = section.number
             if section.na_reason is not None:
                 values |= {C_STATUS: "N/A", C_REASON: section.na_reason}
             rows.append(_make_row("section", _make_c_texts(values), bold=(C_SECTION + 1,)))
+            for auto in section.auto_items:  # 자동 목록 절(7.2 Work Instructions) — 앱이 채운 자식 WI, 배정한 줄이 아니다
+                text = f"{auto.code} · {auto.title}" if auto.title else auto.code
+                _append_c_lines(rows, _make_c_texts({C_ITEM: text}), True)
             previous_key: str | None = None
             for index, item in enumerate(section.items):
                 # 칸의 첫 항목·묶음 키가 없는 항목(고아 번역)·키가 바뀐 항목이 새 묶음을 연다 — 표 칸은 표 묶음 안이다

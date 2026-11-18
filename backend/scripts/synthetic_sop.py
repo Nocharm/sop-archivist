@@ -13,6 +13,8 @@
 
 expected.json 형식:
 - `bundle_title`: 묶음 제목.
+- `tobe_outline_items`: [{code, key, title_en}] — 그 SOP가 선언하는 골격 항목(5장 범주·6장 절차). 새 SOP는 표준 골격(회사 템플릿
+  1–9장)과 첫 절차 `procedures.p1`만 받으므로, To-Be 가져오기 뒤 N/A를 싣기 전에 드라이버가 더한다(선언 API가 생기기 전이라 DB에 바로).
 - `tobe_na_slots`: [{code, slot_key, reason}] — Excel 템플릿에 N/A 칸이 없어 To-Be 가져오기 뒤 PUT /tobe로 싣는다(선택 키).
 - `edits`: 쪼개기 편집. split은 {doc, op, unit_text, at_text}(at = unit_text 안 at_text 위치),
   set_layout_table은 {doc, op, table_index, is_layout}(table_index는 문서 안 표 번호, 0부터).
@@ -85,6 +87,16 @@ MOVE_REASON = "합성: 교정 절차는 장비 교정 SOP가 관리한다."
 SHAPE_REASON = "합성: 글 상자의 도형 틀은 그림이 아니다(상자 글은 따로 옮겼다)."
 MISSING_TABLE_REASON = "합성: 가리키는 표 9가 문서에 없다."
 NA_REASON = "합성: QC 원심분리기는 별도 문제 해결 절차 없이 제조사 지원으로 처리한다."
+# SOP가 선언하는 골격 항목 (키, 영문 제목) — 5장 범주 둘과 6장 절차 넷(장비 SOP의 권장 절 이름 포함). 줄이 없는 항목(Work·Electronic
+# Record Control)도 선언해 빈 절로 남기고, Troubleshooting은 N/A로 둔다. 첫 절차 procedures.p1("Procedure 1")은 선언하지 않아도 있다(비어 있다)
+TOBE_OUTLINE_ITEMS = (
+    ("general_requirements.safety", "Safety"),
+    ("general_requirements.work", "Work"),
+    ("procedures.procedure", "Procedure"),
+    ("procedures.electronic_record_control", "Electronic Record Control"),
+    ("procedures.troubleshooting", "Troubleshooting"),
+    ("procedures.maintenance", "Maintenance"),
+)
 
 TOBE_DOCS = (
     # (번호, 제목, 종류, 부모 SOP 번호, 장비 SOP 여부)
@@ -467,10 +479,10 @@ def _build_old_1(sheet: _AnswerSheet) -> tuple[bytes, list[dict]]:
     manual_ko, manual_en = "제조사 사용 설명서를 참고한다.", "Refer to the manufacturer's operating manual."
     _add_paragraphs(
         document,
-        add(doc, manual_ko, "ko", _sop("document_relationships", manual_ko, "as_is", "ko")),
-        add(doc, manual_en, "en", _sop("document_relationships", manual_en, "as_is", "en")),
+        add(doc, manual_ko, "ko", _sop("document_relationships.references",manual_ko, "as_is", "ko")),
+        add(doc, manual_en, "en", _sop("document_relationships.references",manual_en, "as_is", "en")),
         # 참조 줄 — 다른 문서를 번호로 가리키는 한 줄(짝 없음). 번호와 이름은 지어낸 값이다
-        add(doc, REFERENCE_LINE, "en", _sop("document_relationships", REFERENCE_LINE, "as_is", "en")),
+        add(doc, REFERENCE_LINE, "en", _sop("document_relationships.references",REFERENCE_LINE, "as_is", "en")),
     )
     edits = [{"doc": doc, "op": "split", "unit_text": compound_ko, "at_text": start_ko}]
     return _save_docx(document), edits
@@ -631,7 +643,7 @@ def _build_old_6(sheet: _AnswerSheet) -> bytes:
 def _build_old_7(sheet: _AnswerSheet) -> tuple[bytes, list[dict]]:
     """OLD-7 표·그림 캡션 — 원문 번호가 1이 아닌 캡션, 표 앞·뒤 캡션, 스타일 없는 캡션, 캡션 없는 표, 없는 번호를 가리키는 참조, 템플릿 표.
 
-    모두 SOP 절차(procedures.procedure)로 그대로 옮긴다. 캡션 문단은 표·그림에 묶인 캡션 단위라 답이 없고(묶음의 처분을 따른다),
+    모두 SOP가 선언한 절차 Procedure(procedures.procedure)로 그대로 옮긴다. 캡션 문단은 표·그림에 묶인 캡션 단위라 답이 없고(묶음의 처분을 따른다),
     템플릿 표의 캡션은 레이아웃 편집 뒤 캡션 범위 그대로 문장 하나가 된다.
     """
     doc, add = "OLD-7", sheet.add
@@ -793,6 +805,9 @@ def build_synthetic_bundle(out_dir: Path) -> SyntheticBundle:
     identical_count = sum(bool(answer.get("identical")) for answer in sheet.answers)
     expected = {
         "bundle_title": BUNDLE_TITLE,
+        "tobe_outline_items": [
+            {"code": SOP_CODE, "key": key, "title_en": title_en} for key, title_en in TOBE_OUTLINE_ITEMS
+        ],
         "tobe_na_slots": [{"code": SOP_CODE, "slot_key": "procedures.troubleshooting", "reason": NA_REASON}],
         "edits": split_edits + layout_edits + caption_edits,
         "answers": sheet.answers,

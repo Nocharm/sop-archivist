@@ -14,18 +14,20 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.sop import tobe_excel
-from app.sop.constants import SLOT_KEYS
 from app.sop.models import Bundle, Document, TargetDoc, TargetDocNaSlot, TargetSentence
+from app.sop.outline import TEMPLATE_SUGGESTIONS
 from app.sop.tobe import is_within_slot
 from app.sop.tobe_excel import parse_tobe_workbook
 from tests.access_helpers import run_in_session, update_row
 from tests.docx_factory import build_docx, p, tbl
 from tests.sop_helpers import (
     AUTHOR,
+    NEW_SOP_KEYS,
     OUTSIDER,
     REVIEWER,
     assign_as_is,
     create_bundle,
+    declare_outline_item,
     find_unit,
     get_bundle,
     get_view,
@@ -34,6 +36,11 @@ from tests.sop_helpers import (
     upload,
 )
 from tests.test_sop_numbering import PAIR_SLOT, _setup_pairs
+from tests.test_sop_outline_admin import _get_items as _get_standard_items
+from tests.test_sop_outline_admin import _put as _put_standard
+from tests.test_sop_outline_admin import (
+    restore_outline_standard,  # noqa: F401 -- 픽스처는 usefixtures가 이름으로 찾는다
+)
 from tests.test_sop_slot_heading import _link_headings, _setup
 
 pytestmark = pytest.mark.usefixtures("clean_sop")
@@ -41,8 +48,15 @@ pytestmark = pytest.mark.usefixtures("clean_sop")
 XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 DOC_SHEET = "새 문서"
 STEP_SHEET = "WI 단계"
+PROCEDURE_SHEET = "SOP 절차"
 DOC_HEADER = ("문서 번호", "제목", "종류", "부모 SOP 번호", "장비 SOP 여부")
 STEP_HEADER = ("WI 번호", "단계 번호", "단계 제목")
+PROCEDURE_HEADER = ("SOP 번호", "절차 번호", "영어 제목", "한글 제목")
+# 문서가 없는 목록 — 권장 이름은 문서와 상관없이 지금 표준의 것이다
+EMPTY_TOBE = {
+    "revision": 1, "docs": [], "na_slots": [], "wi_steps": [], "outline_items": [], "sentence_counts": [],
+    "slot_counts": [], "outline_suggestions": {key: list(names) for key, names in TEMPLATE_SUGGESTIONS.items()},
+}
 
 
 def _doc(
@@ -76,7 +90,7 @@ def _sample_list() -> tuple[list[dict], list[dict], list[dict]]:
         _doc("WI-01", "wi", title="First WI", parent="SOP-NEW", order=1),
         _doc("WI-02", "wi", title="Second WI", parent="SOP-NEW", order=2),
     ]
-    na_slots = [_na("SOP-NEW", "procedures.troubleshooting", "No faults expected")]
+    na_slots = [_na("SOP-NEW", "attachments", "No attachments expected")]
     wi_steps = [_step("WI-01", 1, "Prepare"), _step("WI-01", 2)]
     return docs, na_slots, wi_steps
 
@@ -177,9 +191,7 @@ def test_put_and_get_tobe_roundtrip(client: TestClient) -> None:
 def test_new_bundle_has_an_empty_tobe_list(client: TestClient) -> None:
     bundle = create_bundle(client)
 
-    assert _get_tobe(client, bundle["id"]) == {
-        "revision": 1, "docs": [], "na_slots": [], "wi_steps": [], "sentence_counts": [], "slot_counts": [],
-    }
+    assert _get_tobe(client, bundle["id"]) == EMPTY_TOBE
 
 
 def test_tobe_keeps_ids_when_merging_by_code(client: TestClient) -> None:
@@ -307,9 +319,7 @@ def test_tobe_rejects_bad_lists(client: TestClient, expected_code: str, docs, na
     assert response.status_code == 422, response.text
     assert response.json()["detail"]["code"] == expected_code
     # 거절된 요청은 아무것도 남기지 않는다
-    assert _get_tobe(client, bundle["id"]) == {
-        "revision": 1, "docs": [], "na_slots": [], "wi_steps": [], "sentence_counts": [], "slot_counts": [],
-    }
+    assert _get_tobe(client, bundle["id"]) == EMPTY_TOBE
 
 
 @pytest.mark.parametrize(
@@ -340,13 +350,13 @@ def test_tobe_rejects_malformed_input_with_the_default_422(client: TestClient, b
     ("slot_key", "slot", "expected"),
     [
         ("procedures", "procedures", True),
-        ("procedures.procedure", "procedures", True),
-        ("procedures.maintenance", "procedures", True),
-        ("procedures.procedure", "procedures.procedure", True),
+        ("procedures.p1", "procedures", True),
+        ("document_relationships.associated_documents.form", "document_relationships", True),
+        ("procedures.p1", "procedures.p1", True),
         ("purpose", "procedures", False),
-        ("procedures", "procedures.procedure", False),  # 하위 칸의 N/A는 상위 칸을 덮지 않는다
+        ("procedures", "procedures.p1", False),  # 하위 칸의 N/A는 상위 칸을 덮지 않는다
         ("procedures_extra", "procedures", False),  # 접두 글자만 같은 다른 칸
-        ("general_requirements.safety", "general_requirements.operation", False),
+        ("general_requirements.safety", "general_requirements.work", False),
     ],
 )
 def test_na_on_a_slot_covers_its_sub_slots_only(slot_key: str, slot: str, expected: bool) -> None:
@@ -363,7 +373,7 @@ def test_tobe_rejects_changes_under_targets(client: TestClient) -> None:
     uploaded = upload(client, bundle["id"], build_docx(body), "SYNTHETIC_OLD-1_Tobe.docx")
     assert uploaded.status_code == 201, uploaded.text
     view = get_view(client, bundle["id"], uploaded.json()["id"])
-    assign_as_is(client, bundle["id"], find_unit(view, "합성 첫 문장이다."), ids["SOP-A"], slot_key="procedures.maintenance")
+    assign_as_is(client, bundle["id"], find_unit(view, "합성 첫 문장이다."), ids["SOP-A"], slot_key="procedures.p1")
     assign_as_is(
         client, bundle["id"], find_unit(view, "합성 둘째 문장이다."), ids["WI-A"], wi_step=1, wi_part="instruction"
     )
@@ -373,8 +383,8 @@ def test_tobe_rejects_changes_under_targets(client: TestClient) -> None:
     cases = [
         (put_tobe(client, bundle["id"], docs[:2], wi_steps=steps), {"code": "doc_has_targets", "codes": ["SOP-B"]}),
         (
-            put_tobe(client, bundle["id"], docs, na_slots=[_na("SOP-A", "procedures.maintenance")], wi_steps=steps),
-            {"code": "slot_has_targets", "slots": [{"doc_code": "SOP-A", "slot_key": "procedures.maintenance"}]},
+            put_tobe(client, bundle["id"], docs, na_slots=[_na("SOP-A", "procedures.p1")], wi_steps=steps),
+            {"code": "slot_has_targets", "slots": [{"doc_code": "SOP-A", "slot_key": "procedures.p1"}]},
         ),
         # 상위 칸 N/A는 하위 칸에 든 문장도 막는다
         (
@@ -566,7 +576,7 @@ def test_template_roundtrip_imports_same_list(client: TestClient) -> None:
     assert template.headers["content-type"] == XLSX
     assert 'attachment; filename="tobe-template.xlsx"' in template.headers["content-disposition"]
     workbook = load_workbook(BytesIO(template.content), data_only=True)
-    assert workbook.sheetnames == [DOC_SHEET, STEP_SHEET]
+    assert workbook.sheetnames == [DOC_SHEET, STEP_SHEET, PROCEDURE_SHEET]
     assert [tuple(row) for row in workbook[DOC_SHEET].iter_rows(values_only=True)] == [
         DOC_HEADER,
         ("SOP-NEW", "New SOP", "SOP", None, "Y"),
@@ -593,6 +603,7 @@ def test_empty_template_has_only_the_header_rows(client: TestClient) -> None:
     workbook = load_workbook(BytesIO(template.content), data_only=True)
     assert [tuple(row) for row in workbook[DOC_SHEET].iter_rows(values_only=True)] == [DOC_HEADER]
     assert [tuple(row) for row in workbook[STEP_SHEET].iter_rows(values_only=True)] == [STEP_HEADER]
+    assert [tuple(row) for row in workbook[PROCEDURE_SHEET].iter_rows(values_only=True)] == [PROCEDURE_HEADER]
     assert _post_import(client, bundle["id"], template.content).status_code == 200
 
 
@@ -605,6 +616,237 @@ def test_template_lists_only_assign_docs(client: TestClient) -> None:
 
     workbook = load_workbook(BytesIO(template.content), data_only=True)
     assert [row[0] for row in workbook[DOC_SHEET].iter_rows(min_row=2, values_only=True)] == ["SOP-1"]
+
+
+# ── Excel "SOP 절차" 시트 ─────────────────────────────────────────────────────
+
+
+def _add_outline_item(client: TestClient, bundle_id: int, doc_id: int, parent_key: str, title_en: str, title_ko: str = "") -> dict:
+    response = client.post(
+        f"/api/bundles/{bundle_id}/tobe/docs/{doc_id}/outline",
+        json={"parent_key": parent_key, "title_en": title_en, "title_ko": title_ko}, headers=AUTHOR,
+    )
+    assert response.status_code == 201, response.text
+    return response.json()
+
+
+def _list_procedures(tobe: dict, code: str) -> list[tuple[str, str, str, str]]:
+    """그 SOP의 절차 — (키, 번호, 영어 제목, 한글 제목), 골격 순서."""
+    return [
+        (item["key"], item["number"], item["title_en"], item["title_ko"])
+        for item in tobe["outline_items"] if item["code"] == code and item["parent_key"] == "procedures"
+    ]
+
+
+def _build_template_with_procedures(client: TestClient, bundle_id: int, rows: list[list] | None) -> bytes:
+    """지금 목록의 템플릿에서 "SOP 절차" 시트의 줄만 rows로 바꾼 파일 — rows가 None이면 그 시트를 뺀다."""
+    template = client.get(f"/api/bundles/{bundle_id}/tobe/template.xlsx", headers=AUTHOR)
+    workbook = load_workbook(BytesIO(template.content))
+    del workbook[PROCEDURE_SHEET]
+    if rows is not None:
+        sheet = workbook.create_sheet(PROCEDURE_SHEET)
+        sheet.append(list(PROCEDURE_HEADER))
+        for row in rows:
+            sheet.append(row)
+    return _to_bytes(workbook)
+
+
+def _setup_two_sops(client: TestClient) -> tuple[int, dict[str, int]]:
+    """SOP 둘(SOP-1에는 절차 Cleaning을 더했다)과 WI 하나, 올린 파일의 SOP 하나."""
+    bundle = create_bundle(client)
+    _seed_match_doc(bundle["id"], "UP-SOP", "sop", with_file=True)
+    saved = put_tobe(client, bundle["id"], [_doc("SOP-1"), _doc("SOP-2", order=1), _doc("WI-1", "wi", parent="SOP-1", order=2)])
+    ids = {doc["code"]: doc["id"] for doc in saved.json()["docs"]}
+    _add_outline_item(client, bundle["id"], ids["SOP-1"], "procedures", "Cleaning", "세척")
+    return bundle["id"], ids
+
+
+def test_template_has_procedure_sheet(client: TestClient) -> None:
+    bundle_id, ids = _setup_two_sops(client)
+    _add_outline_item(client, bundle_id, ids["SOP-1"], "appendices", "Alarm list")  # 부록·범주는 시트에 없다
+
+    template = client.get(f"/api/bundles/{bundle_id}/tobe/template.xlsx", headers=AUTHOR)
+
+    workbook = load_workbook(BytesIO(template.content), data_only=True)
+    # SOP마다 6장의 절차를 순서대로 — 절차 번호는 그 SOP 안의 자리다. WI와 올린 파일의 SOP는 싣지 않는다
+    assert [tuple(row) for row in workbook[PROCEDURE_SHEET].iter_rows(values_only=True)] == [
+        PROCEDURE_HEADER,
+        ("SOP-1", 1, "Procedure 1", None),
+        ("SOP-1", 2, "Cleaning", "세척"),
+        ("SOP-2", 1, "Procedure 1", None),
+    ]
+    before = _get_tobe(client, bundle_id)
+    assert _post_import(client, bundle_id, template.content).json() == before  # 그대로 가져오면 revision도 그대로다
+
+
+def test_import_adds_and_keeps_procedures(client: TestClient) -> None:
+    bundle_id, ids = _setup_two_sops(client)
+    revision = get_bundle(client, bundle_id)["revision"]
+
+    data = _build_template_with_procedures(client, bundle_id, [
+        ["SOP-1", 2, "cleaning", "세척 절차"],  # 영어 제목으로 짝짓는다(대소문자 무시) — 키가 그대로다
+        ["SOP-1", 1, "Operation", "운전"],  # 없던 절차는 더하고, 순서는 절차 번호를 따른다
+    ])
+    response = _post_import(client, bundle_id, data)
+
+    assert response.status_code == 200, response.text
+    after = response.json()
+    assert after["revision"] == revision + 1
+    # 시트에서 빠진 "Procedure 1"은 줄이 없어 빠진다
+    assert _list_procedures(after, "SOP-1") == [
+        ("procedures.n2", "6.1", "Operation", "운전"), ("procedures.n1", "6.2", "cleaning", "세척 절차"),
+    ]
+    assert _list_procedures(after, "SOP-2") == [("procedures.p1", "6.1", "Procedure 1", "")]  # 시트에 없는 SOP는 그대로
+    events = client.get(f"/api/bundles/{bundle_id}/events", headers=AUTHOR).json()
+    assert [e["target_ids"] for e in events if e["action"] == "tobe.import"] == [[ids["SOP-1"]]]
+
+
+def test_import_declares_procedures_of_a_sop_the_file_creates(client: TestClient) -> None:
+    bundle = create_bundle(client)
+    workbook = _make_workbook([["SOP-NEW", "From file", "SOP", None, "N"]])
+    sheet = workbook.create_sheet(PROCEDURE_SHEET)
+    sheet.append(list(PROCEDURE_HEADER))
+    sheet.append(["SOP-NEW", 1, "Procedure 1", "첫 절차"])
+    sheet.append(["SOP-NEW", 2, "Cleaning", None])
+
+    response = _post_import(client, bundle["id"], _to_bytes(workbook))
+
+    assert response.status_code == 200, response.text
+    assert _list_procedures(response.json(), "SOP-NEW") == [
+        ("procedures.p1", "6.1", "Procedure 1", "첫 절차"), ("procedures.n1", "6.2", "Cleaning", ""),
+    ]
+
+
+def test_import_refuses_to_drop_a_procedure_with_lines(client: TestClient) -> None:
+    fx = _setup(client)
+    _link_headings(client, fx, fx.old1)  # 첫 절차(procedures.p1)에 칸 제목이 놓인다
+    before = _get_tobe(client, fx.bundle_id)
+
+    data = _build_template_with_procedures(client, fx.bundle_id, [["SOP-NEW", 1, "Cleaning", None]])
+    response = _post_import(client, fx.bundle_id, data)
+
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"] == {
+        "code": "slot_has_targets", "slots": [{"doc_code": "SOP-NEW", "slot_key": "procedures.p1"}],
+    }
+    assert _get_tobe(client, fx.bundle_id) == before
+
+
+@pytest.mark.usefixtures("restore_outline_standard")
+def test_import_refuses_reordering_standard_procedures(client: TestClient) -> None:
+    # Arrange — 표준에 절차 둘(Alpha · Beta)이 든 SOP
+    items = _get_standard_items(client)
+    at = next(index for index, item in enumerate(items) if item["key"] == "procedures") + 1
+    extra = [
+        {**items[at - 1], "key": f"procedures.{name.lower()}", "title_en": name, "kind": "general", "suggestions": []}
+        for name in ("Alpha", "Beta")
+    ]
+    assert _put_standard(client, items[:at] + extra + items[at:]).status_code == 200
+    bundle_id = create_bundle(client)["id"]
+    put_tobe(client, bundle_id, [_doc("SOP-1")])
+    before = _get_tobe(client, bundle_id)
+
+    # Act — 표준 절차끼리 순서를 바꾼 시트
+    swapped = _build_template_with_procedures(client, bundle_id, [["SOP-1", 1, "Beta", None], ["SOP-1", 2, "Alpha", None]])
+    response = _post_import(client, bundle_id, swapped)
+
+    # Assert — API의 순서 바꾸기와 같이 거절한다. 선언 절차를 그 사이에 두는 것은 된다
+    assert response.status_code == 422, response.text
+    assert response.json()["detail"] == {"code": "outline_standard_item", "doc_code": "SOP-1", "key": "procedures.beta"}
+    assert _get_tobe(client, bundle_id) == before
+    between = _build_template_with_procedures(
+        client, bundle_id, [["SOP-1", 1, "Alpha", None], ["SOP-1", 2, "Cleaning", None], ["SOP-1", 3, "Beta", "베타"]],
+    )
+    imported = _post_import(client, bundle_id, between)
+    assert imported.status_code == 200, imported.text
+    assert [row[2:] for row in _list_procedures(imported.json(), "SOP-1")] == [
+        ("Alpha", ""), ("Cleaning", ""), ("Beta", "베타"),  # 표준 절차의 한글 제목은 바꿀 수 있다
+    ]
+
+
+@pytest.mark.usefixtures("restore_outline_standard")
+def test_template_leaves_out_removed_procedures(client: TestClient) -> None:
+    # 뺀 표준 절차는 To-Be 목록에 되살리게 실려 오지만 시트에는 없다 — 그대로 가져와도 새 선언 절차로 돌아오지 않는다
+    items = _get_standard_items(client)
+    at = next(index for index, item in enumerate(items) if item["key"] == "procedures") + 1
+    extra = [
+        {**items[at - 1], "key": f"procedures.{name.lower()}", "title_en": name, "kind": "general", "suggestions": []}
+        for name in ("Alpha", "Beta")
+    ]
+    assert _put_standard(client, items[:at] + extra + items[at:]).status_code == 200
+    bundle_id = create_bundle(client)["id"]
+    sop_id = put_tobe(client, bundle_id, [_doc("SOP-1")]).json()["docs"][0]["id"]
+    removed = client.patch(
+        f"/api/bundles/{bundle_id}/tobe/docs/{sop_id}/outline/procedures.alpha",
+        json={"is_removed": True, "reason": "Synthetic: not used"}, headers=AUTHOR,
+    )
+    assert removed.status_code == 200, removed.text
+    before = _get_tobe(client, bundle_id)
+
+    template = client.get(f"/api/bundles/{bundle_id}/tobe/template.xlsx", headers=AUTHOR)
+
+    workbook = load_workbook(BytesIO(template.content), data_only=True)
+    assert [tuple(row) for row in workbook[PROCEDURE_SHEET].iter_rows(values_only=True)] == [
+        PROCEDURE_HEADER, ("SOP-1", 1, "Beta", None),
+    ]
+    assert _post_import(client, bundle_id, template.content).json() == before
+
+
+def test_import_without_sheet_leaves_outline(client: TestClient) -> None:
+    bundle_id, _ids = _setup_two_sops(client)
+    before = _get_tobe(client, bundle_id)
+    data = _build_template_with_procedures(client, bundle_id, None)
+
+    assert parse_tobe_workbook(data).procedures is None
+    response = _post_import(client, bundle_id, data)
+
+    assert response.status_code == 200, response.text
+    assert response.json() == before  # 옛 템플릿(시트 없음)은 골격을 건드리지 않는다
+
+
+@pytest.mark.parametrize(
+    ("rows", "detail"),
+    [
+        pytest.param(
+            [["SOP-1", "x", "Cleaning", None]],
+            {"code": "invalid_tobe_file", "sheet": PROCEDURE_SHEET, "row": 2, "column": "절차 번호"}, id="number_text",
+        ),
+        pytest.param(
+            [["SOP-1", 1, "Cleaning", None], ["SOP-1", 0, "Operation", None]],
+            {"code": "invalid_tobe_file", "sheet": PROCEDURE_SHEET, "row": 3, "column": "절차 번호"}, id="number_zero",
+        ),
+        pytest.param(
+            [["SOP-1", 1, None, "세척"]],
+            {"code": "invalid_tobe_file", "sheet": PROCEDURE_SHEET, "row": 2, "column": "영어 제목"}, id="blank_title",
+        ),
+        pytest.param(
+            [["SOP-1", 1, "Cleaning", "가" * 201]],
+            {"code": "invalid_tobe_file", "sheet": PROCEDURE_SHEET, "row": 2, "column": "한글 제목"}, id="long_korean_title",
+        ),
+        pytest.param(
+            [[None, 1, "Cleaning", None]],
+            {"code": "invalid_tobe_file", "sheet": PROCEDURE_SHEET, "row": 2, "column": "SOP 번호"}, id="missing_code",
+        ),
+        pytest.param([["SOP-9", 1, "Cleaning", None]], {"code": "unknown_doc", "doc_code": "SOP-9"}, id="unknown_doc"),
+        pytest.param(
+            [["WI-1", 1, "Cleaning", None]],
+            {"code": "outline_parent_not_declarable", "doc_code": "WI-1", "parent_key": "procedures"}, id="wi",
+        ),
+        pytest.param(
+            [["SOP-1", 1, "Cleaning", None], ["SOP-1", 2, " cleaning ", None]],
+            {"code": "duplicate_outline_title", "doc_code": "SOP-1", "parent_key": "procedures"}, id="duplicate_title",
+        ),
+    ],
+)
+def test_import_rejects_bad_procedure_rows(client: TestClient, rows: list[list], detail: dict) -> None:
+    bundle_id, _ids = _setup_two_sops(client)
+    before = _get_tobe(client, bundle_id)
+
+    response = _post_import(client, bundle_id, _build_template_with_procedures(client, bundle_id, rows))
+
+    assert response.status_code == 422, response.text
+    assert response.json()["detail"] == detail
+    assert _get_tobe(client, bundle_id) == before
 
 
 def test_import_merges_by_code_replaces_steps_and_leaves_na_alone(client: TestClient) -> None:
@@ -1259,7 +1501,7 @@ def test_slot_counts_count_the_items_each_sop_slot_holds(client: TestClient) -> 
     assign_as_is(client, bundle_id, find_unit(view, "합성 첫 문장이다."), ids["SOP-A"], slot_key="purpose")
     assign_as_is(
         client, bundle_id, find_unit(view, "합성 둘째 문장이다."), ids["SOP-A"],
-        slot_key="procedures.maintenance", hold_reason="Synthetic: check",
+        slot_key="procedures.p1", hold_reason="Synthetic: check",
     )
     assign_as_is(client, bundle_id, find_unit(view, "합성 셋째 문장이다."), ids["WI-A"], wi_step=1, wi_part="instruction")
     assign_as_is(client, bundle_id, table, ids["SOP-A"], slot_key="scope")
@@ -1271,7 +1513,7 @@ def test_slot_counts_count_the_items_each_sop_slot_holds(client: TestClient) -> 
     assert tobe["slot_counts"] == [
         {"target_doc_id": ids["SOP-A"], "slot_key": "purpose", "count": 1, "heading_count": 0},
         {"target_doc_id": ids["SOP-A"], "slot_key": "scope", "count": 1, "heading_count": 0},
-        {"target_doc_id": ids["SOP-A"], "slot_key": "procedures.maintenance", "count": 1, "heading_count": 0},
+        {"target_doc_id": ids["SOP-A"], "slot_key": "procedures.p1", "count": 1, "heading_count": 0},
     ]
     # sentence_counts의 모양은 그대로다 - SOP는 문서마다 한 줄, WI는 단계마다(값은 지금 있는 시험 둘이 지킨다)
     assert [(row["target_doc_id"], row["wi_step"]) for row in tobe["sentence_counts"]] == [
@@ -1291,9 +1533,9 @@ def test_a_slot_heading_counts_apart_and_still_blocks_na(client: TestClient) -> 
 
     tobe = _get_tobe(client, fx.bundle_id)
 
-    assert _slot_rows(tobe, fx.sop_id) == [("procedures.procedure", 0, 2)]
+    assert _slot_rows(tobe, fx.sop_id) == [("procedures.p1", 0, 2)]
     base = f"/api/bundles/{fx.bundle_id}/tobe/docs/{fx.sop_id}/na"
-    for slot_key in ("procedures.procedure", "procedures"):
+    for slot_key in ("procedures.p1", "procedures"):
         refused = client.put(f"{base}/{slot_key}", json={"reason": "Synthetic: not needed"}, headers=AUTHOR)
         assert refused.status_code == 409, refused.text
         assert refused.json()["detail"]["code"] == "slot_has_targets"
@@ -1368,6 +1610,7 @@ def test_slot_counts_mark_exactly_the_slots_na_refuses(client: TestClient) -> No
         name="SYNTHETIC_OLD-3_Slots.docx",
     )
     (table,) = [unit for unit in view["units"] if unit["kind"] == "table"]
+    declare_outline_item(client, fx.sop_id, "general_requirements.safety", "Safety")
     assign_as_is(client, fx.bundle_id, find_unit(view, "합성 목적 문장이다."), fx.sop_id, slot_key="purpose")
     assign_as_is(
         client, fx.bundle_id, find_unit(view, "합성 안전 문장이다."), fx.sop_id, slot_key="general_requirements.safety"
@@ -1379,8 +1622,11 @@ def test_slot_counts_mark_exactly_the_slots_na_refuses(client: TestClient) -> No
     counted_rows = [row for row in _get_tobe(client, fx.bundle_id)["slot_counts"] if row["target_doc_id"] == fx.sop_id]
     refused: set[str] = set()
     counted: set[str] = set()
-    for key in SLOT_KEYS:
+    for key in (*NEW_SOP_KEYS, "general_requirements.safety"):  # 묶음 제목(7·7.1)도 N/A로 둘 수 있다
         response = client.put(f"{base}/{key}", json={"reason": "Synthetic: probe"}, headers=AUTHOR)
+        if key == "document_relationships.work_instructions":  # 자동 목록은 N/A로 두지 못한다 — 줄 수와 상관없는 거절
+            assert (response.status_code, response.json()["detail"]["code"]) == (422, "slot_not_assignable")
+            continue
         if response.status_code == 409:
             refused.add(key)
         else:
@@ -1391,6 +1637,6 @@ def test_slot_counts_mark_exactly_the_slots_na_refuses(client: TestClient) -> No
 
     expected = {
         "purpose", "definitions", "general_requirements", "general_requirements.safety",
-        "procedures", "procedures.procedure",
+        "procedures", "procedures.p1",
     }
     assert refused == counted == expected

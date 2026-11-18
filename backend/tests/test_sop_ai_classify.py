@@ -20,7 +20,7 @@ from app.sop.ai.classify import ClassifyReply
 from app.sop.ai.constants import CANDIDATE_TOP_K, MAX_REWRITE_SENTENCES
 from app.sop.ai.guidelines import SEEDS_DIR
 from app.sop.checks import check_sentence
-from app.sop.constants import AI_PRIORITY_PRE_CLASSIFY, AI_PRIORITY_USER, SLOT_KEYS, SYSTEM_HOLD_AI_INVALID
+from app.sop.constants import AI_PRIORITY_PRE_CLASSIFY, AI_PRIORITY_USER, SYSTEM_HOLD_AI_INVALID
 from app.sop.models import (
     AiJob,
     AiSuggestion,
@@ -64,6 +64,7 @@ from tests.docx_factory import TINY_PNG, make_drawing_run, p, tbl
 from tests.fake_ai import FakeAi, extract_data, hash_vector, install_fake_ai
 from tests.sop_helpers import (
     AUTHOR,
+    NEW_SOP_KEYS,
     REVIEWER,
     assign_as_is,
     build_missing_caption,
@@ -834,7 +835,9 @@ def test_pair_proposed_into_one_slot_numbers_english_and_omits_korean(
     run_jobs()
 
     rows = {row.lang: row for row in read_rows(TargetSentence)}
-    assert (rows["en"].number_style, rows["ko"].number_style) == ("numbered", "omitted")
+    # 놓인 절(1장 Purpose)의 기본 표시가 글머리 기호다 — 첫 영어가 그 표시를 받고 한글은 생략
+    assert {row.slot_key for row in rows.values()} == {"purpose"}
+    assert (rows["en"].number_style, rows["ko"].number_style) == ("bullet", "omitted")
     if is_manual_order:
         assert (rows["en"].order_index, rows["ko"].order_index) == (0, 1)
     else:
@@ -1039,7 +1042,7 @@ def test_no_candidates_fails_the_job_before_any_call(client: TestClient, fake_ai
     bundle = make_ai_bundle(client)
     na_slots = [
         {"code": AI_SOP_DOC["code"], "slot_key": slot_key, "reason": "합성 사유"}
-        for slot_key in SLOT_KEYS if "." not in slot_key
+        for slot_key in NEW_SOP_KEYS if "." not in slot_key
     ]
     assert put_tobe(client, bundle.id, [AI_SOP_DOC], na_slots=na_slots).status_code == 200
     ko, en = find_ids(client, bundle, AI_KO_1, AI_EN_1)

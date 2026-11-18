@@ -14,8 +14,10 @@ import numpy as np
 from app.sop.ai.constants import CANDIDATE_TOP_K, MAX_TEXT_CANDIDATES
 from app.sop.ai.embeddings import EmbeddingUnavailable, UnavailableReason, embed_texts
 from app.sop.ai.similarity import build_text_bigrams, compare_bigrams, cosine_matrix, top_k_indices
-from app.sop.constants import SLOT_KEYS, WI_PARTS
+from app.sop.constants import NUMBERED, WI_PARTS, NumberStyle
+from app.sop.outline import DocOutline, get_parent_key
 from app.sop.snapshot import TargetDocInfo
+from app.sop.target_placement import get_default_style
 from app.sop.tobe import is_within_slot
 
 Retrieval = Literal["embedding", "embedding_failed", "no_index"]  # 후보를 어떻게 골랐나 — 셋은 화면에서 서로 다른 상태다
@@ -23,24 +25,67 @@ Retrieval = Literal["embedding", "embedding_failed", "no_index"]  # 후보를 �
 # 임베딩이 꺼진 것(색인 없음)과 호출이 끝내 실패한 것(검색 실패)은 같은 폴백이어도 다른 상태로 남긴다
 RETRIEVAL_OF_UNAVAILABLE: dict[UnavailableReason, Retrieval] = {"disabled": "no_index", "failed": "embedding_failed"}
 
-# 칸 키 → (이름, 넣는 것). 도메인 문서 §2 — 하위 칸은 이름 앞에 상위 칸을 붙이고(라벨만 봐도 어느 칸인지 보이게), 문서가 비워 둔 "넣는 것"은 비운다
-SLOT_GUIDE: dict[str, tuple[str, str]] = {
-    "purpose": ("Purpose", "절차가 필요한 이유, 관리 목적"),
-    "scope": ("Scope", "적용 대상(공정, 장비, 시스템, 부서)"),
-    "definitions": ("Definitions", "문서 이해에 꼭 필요한 용어"),
-    "responsibilities": ("Responsibilities", "절차 안의 역할별 주요 책임"),
-    "general_requirements": ("General Requirements", "이 SOP의 모든 절차에 공통인 요구사항"),
-    "general_requirements.safety": ("General Requirements > 안전(Safety)", ""),
-    "general_requirements.operation": ("General Requirements > 작업(Operation)", ""),
-    "procedures": ("Procedures", "업무·절차별 목적과 적용 시점, 업무 흐름, 주요 수행 단계"),
-    "procedures.procedure": ("Procedures > Procedure", ""),
-    "procedures.electronic_record_control": ("Procedures > Electronic Record Control (Audit Trail, Recipe 등)", ""),
-    "procedures.troubleshooting": ("Procedures > Troubleshooting", ""),
-    "procedures.maintenance": ("Procedures > Maintenance", ""),
-    "document_relationships": ("Document Relationships", "관련 문서 맵핑"),
-    "document_relationships.attachments": ("Document Relationships > Attachments", ""),
-    "document_relationships.appendices": ("Document Relationships > Appendices", ""),
+# AI 규칙 글(seeds/rules.md)의 칸 ID → (이름, 넣는 것). 도메인 문서 §2의 일곱 칸 — 규칙 글은 옛 칸 이름으로 남아 있고(바꾸지 않는다),
+# 실제 후보는 문서의 골격 사본에서 나온다. match_rule_slot이 골격 항목을 이 ID에 대어 후보 라벨의 안내 글("넣는 것")을 고른다
+RULE_SLOT_GUIDE: dict[str, tuple[str, str]] = {
+    "S1": ("Purpose", "절차가 필요한 이유, 관리 목적"),
+    "S2": ("Scope", "적용 대상(공정, 장비, 시스템, 부서)"),
+    "S3": ("Definitions", "문서 이해에 꼭 필요한 용어"),
+    "S4": ("Responsibilities", "절차 안의 역할별 주요 책임"),
+    "S5": ("General Requirements", "이 SOP의 모든 절차에 공통인 요구사항"),
+    "S5.1": ("General Requirements > 안전(Safety)", ""),
+    "S5.2": ("General Requirements > 작업(Operation)", ""),
+    "S6": ("Procedures", "업무·절차별 목적과 적용 시점, 업무 흐름, 주요 수행 단계"),
+    "S6.1": ("Procedures > Procedure", ""),
+    "S6.2": ("Procedures > Electronic Record Control (Audit Trail, Recipe 등)", ""),
+    "S6.3": ("Procedures > Troubleshooting", ""),
+    "S6.4": ("Procedures > Maintenance", ""),
+    "S7": ("Document Relationships", "관련 문서 맵핑"),
+    "S7.1": ("Document Relationships > Attachments", ""),
+    "S7.2": ("Document Relationships > Appendices", ""),
 }
+# 표준 골격의 최상위 키 → 그 항목 자신의 규칙 칸 ID(7장 묶음 제목은 줄을 받지 않아 여기 없다)
+_RULE_OF_TOP_KEY = {
+    "purpose": "S1", "scope": "S2", "definitions": "S3", "responsibilities": "S4", "general_requirements": "S5",
+    "procedures": "S6", "attachments": "S7.1", "appendices": "S7.2",
+}
+_RULE_OF_CATEGORY = {"safety": "S5.1", "work": "S5.2"}  # 5장 범주의 영문 제목(소문자) → 규칙 칸 ID, 그 밖의 범주는 S5
+# 6장 절차의 영문 제목에 든 말(소문자) → 규칙 칸 ID, 어느 것도 없으면 S6.1
+_RULE_OF_PROCEDURE_WORD = (("electronic record", "S6.2"), ("troubleshoot", "S6.3"), ("maintenance", "S6.4"))
+
+
+def match_rule_slot(outline: DocOutline, key: str) -> str | None:
+    """골격 항목이 AI 규칙의 어느 칸(S1 … S7.2)에 해당하는가 — 줄을 받지 않는 항목(묶음 제목·자동 목록)과 표준 밖 항목은 None.
+
+    문서마다 선언한 하위 항목은 영문 제목으로 댄다(설계 2026-11-17-template-fit §6 작업 1 #11).
+    """
+    item = outline.find(key)
+    if item is None or not outline.is_assignable(key):
+        return None
+    top_key = key.split(".", 1)[0]
+    if key == top_key:
+        return _RULE_OF_TOP_KEY.get(key)
+    title = item.title_en.strip().casefold()
+    if top_key == "general_requirements":
+        return _RULE_OF_CATEGORY.get(title, "S5")
+    if top_key == "procedures":
+        return next((rule for word, rule in _RULE_OF_PROCEDURE_WORD if word in title), "S6.1")
+    if top_key == "document_relationships":
+        return "S7"
+    if top_key == "appendices":
+        return "S7.2"
+    return None
+
+
+def _find_guide(outline: DocOutline, key: str) -> str:
+    """후보 라벨의 안내 글 — 그 항목이 대응하는 규칙 칸의 "넣는 것", 대응이 없으면 가장 가까운 조상의 것(끝까지 없으면 빈 글)."""
+    current: str | None = key
+    while current is not None:
+        rule = match_rule_slot(outline, current)
+        if rule is not None:
+            return RULE_SLOT_GUIDE[rule][1]
+        current = get_parent_key(current)
+    return ""
 
 
 @dataclass(frozen=True)
@@ -53,6 +98,7 @@ class Candidate:
     wi_step: int | None
     wi_part: str | None
     label: str
+    default_style: NumberStyle = NUMBERED  # 그 자리에 놓이는 줄의 기본 번호 표시(SOP 골격 항목의 것, WI는 번호)
 
 
 DELETE_CANDIDATE = Candidate(
@@ -69,11 +115,15 @@ def _name_of(doc: TargetDocInfo) -> str:
 
 
 def _list_sop_places(doc: TargetDocInfo) -> Iterator[_Place]:
+    """그 SOP의 골격 사본에서 줄을 받는 항목을 골격 순서대로 — 묶음 제목·자동 목록과 N/A 항목은 후보가 아니다. 문서에 없는 절을 지어내지 않는다."""
     head = _name_of(doc)
-    for slot_key in SLOT_KEYS:
+    for item in doc.outline.items:
+        slot_key = item.key
+        if not doc.outline.is_assignable(slot_key):
+            continue
         if any(is_within_slot(slot_key, na_slot) for na_slot in doc.na_slots):  # 상위 칸 N/A는 하위 칸도 덮는다
             continue
-        name, guide = SLOT_GUIDE[slot_key]
+        name, guide = doc.outline.get_label(slot_key), _find_guide(doc.outline, slot_key)
         yield slot_key, None, None, (f"{head} / {name}: {guide}" if guide else f"{head} / {name}")
 
 
@@ -101,7 +151,12 @@ def list_candidates(docs: Iterable[TargetDocInfo]) -> list[Candidate]:
             else _list_wi_places(doc, by_id.get(doc.parent_id) if doc.parent_id is not None else None)
         )
         for slot_key, wi_step, wi_part, label in places:
-            candidates.append(Candidate(f"c{len(candidates) + 1}", doc.id, slot_key, wi_step, wi_part, label))
+            candidates.append(
+                Candidate(
+                    f"c{len(candidates) + 1}", doc.id, slot_key, wi_step, wi_part, label,
+                    get_default_style(doc.outline, slot_key),
+                )
+            )
     return candidates
 
 

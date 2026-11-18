@@ -33,6 +33,8 @@ from app.sop.constants import (
     MEMBER_ROLES,
     NUMBER_STYLES,
     NUMBERED,
+    OUTLINE_KINDS,
+    OUTLINE_ORIGINS,
     STATUSES,
 )
 
@@ -135,6 +137,54 @@ class TargetDoc(Base):
     order_index: Mapped[int] = mapped_column(Integer, default=0)
     # 사람이 순서를 직접 바꿨으면 자동 정렬이 덮어쓰지 않는다
     manual_order: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
+class OutlineStandardItem(Base):
+    """SOP 표준 골격의 항목 — 새 SOP 문서가 복사해 가는 본. 위계는 키의 점으로 적는다(부모 = 마지막 점 앞)."""
+
+    __tablename__ = "outline_standard_items"
+    __table_args__ = (
+        CheckConstraint(_build_in_check("kind", OUTLINE_KINDS), name="kind"),
+        CheckConstraint(_build_in_check("default_style", NUMBER_STYLES), name="default_style"),
+    )
+
+    key: Mapped[str] = mapped_column(String(100), primary_key=True)
+    order_index: Mapped[int] = mapped_column(Integer)
+    title_en: Mapped[str] = mapped_column(String(200))
+    title_ko: Mapped[str] = mapped_column(String(200), default="")
+    kind: Mapped[str] = mapped_column(String(16))
+    is_required: Mapped[bool] = mapped_column(Boolean, default=True)
+    default_style: Mapped[str] = mapped_column(String(8), default=NUMBERED)
+    # 빈 글이면 하위 번호가 "부모.n", "Appendix"면 "Appendix n."
+    child_prefix: Mapped[str] = mapped_column(String(40), default="")
+    suggestions: Mapped[list] = mapped_column(JSON, default=list)  # 권장 이름(범주·절 이름)
+
+
+class TargetDocOutlineItem(Base):
+    """SOP 문서의 골격 사본 한 항목 — 문서를 만들 때 표준에서 복사하고, 그 뒤로는 표준이 바뀌어도 그대로다.
+
+    새 문장의 자리(target_sentences.slot_key)와 N/A(target_doc_na_slots.slot_key)가 이 표의 key를 가리킨다(FK는 없다).
+    """
+
+    __tablename__ = "target_doc_outline_items"
+    __table_args__ = (
+        CheckConstraint(_build_in_check("kind", OUTLINE_KINDS), name="kind"),
+        CheckConstraint(_build_in_check("default_style", NUMBER_STYLES), name="default_style"),
+        CheckConstraint(_build_in_check("origin", OUTLINE_ORIGINS), name="origin"),
+    )
+
+    target_doc_id: Mapped[int] = mapped_column(ForeignKey("target_docs.id", ondelete="CASCADE"), primary_key=True)
+    key: Mapped[str] = mapped_column(String(100), primary_key=True)
+    order_index: Mapped[int] = mapped_column(Integer)
+    title_en: Mapped[str] = mapped_column(String(200))
+    title_ko: Mapped[str] = mapped_column(String(200), default="")
+    kind: Mapped[str] = mapped_column(String(16))
+    is_required: Mapped[bool] = mapped_column(Boolean, default=True)
+    default_style: Mapped[str] = mapped_column(String(8), default=NUMBERED)
+    child_prefix: Mapped[str] = mapped_column(String(40), default="")
+    origin: Mapped[str] = mapped_column(String(8), default="standard")
+    is_removed: Mapped[bool] = mapped_column(Boolean, default=False)  # 표준에서 벗어나 뺀 항목 — 줄은 남기고 읽을 때 건너뛴다
+    deviation_reason: Mapped[str | None] = mapped_column(Text, default=None)
 
 
 class TargetDocNaSlot(Base):

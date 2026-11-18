@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { OutputC, OutputCItem } from "@/lib/api-sop";
 import { addEdit, startDraft } from "@/lib/c-edit-model";
 import { LangProvider } from "@/lib/i18n";
+import { makeSectionOutline } from "@/lib/outline-fixture";
 import type { MoveDir } from "@/lib/target-order";
 
 import { OutputCView } from "./output-c";
@@ -20,7 +21,7 @@ function makeItem(extra: Partial<OutputCItem>): OutputCItem {
 
 function makeOutput(items: OutputCItem[], extra: Partial<Section> = {}): OutputC {
   return {
-    docs: [{ target_doc_id: 1, code: "SOP-1", title: "T", doc_type: "sop", parent_code: null, entrance: "assign", sections: [{ location_key: "scope", label: "Scope", number: "2", na_reason: null, heading_note: "", items, ...extra }] }],
+    docs: [{ target_doc_id: 1, code: "SOP-1", title: "T", doc_type: "sop", parent_code: null, entrance: "assign", sections: [{ ...makeSectionOutline(), location_key: "scope", label: "Scope", number: "2", na_reason: null, heading_note: "", items, ...extra }] }],
     deleted: [],
     moved: [],
   };
@@ -106,6 +107,26 @@ describe("OutputCView", () => {
     unmount();
   });
 
+  it("draws a bullet in the number place of a bullet line and offers Bullet next to Numbered", () => {
+    const items = [
+      makeItem({ target_id: 1, text: "가", status: "confirmed", number: "2.1" }),
+      makeItem({ target_id: 2, text: "항목", status: "confirmed", number: null, number_style: "bullet" }),
+      makeItem({ target_id: 3, text: "생략", status: "confirmed", number: null, number_style: "omitted" }),
+    ];
+    const onMark = vi.fn();
+    const { host, unmount } = render({ data: makeOutput(items), onMove: () => {}, onIndent: () => {}, onMark });
+    expect(host.querySelector('[data-testid="output-c-number-2"]')).toBeNull();
+    expect(host.querySelector('[data-testid="output-c-bullet-2"]')?.textContent).toBe("•");
+    // 번호 생략 줄에는 기호도 없다
+    expect(host.querySelector('[data-testid="output-c-bullet-3"]')).toBeNull();
+    expect(host.querySelector('[data-testid="output-c-mark-bullet-2"]')?.getAttribute("aria-pressed")).toBe("true");
+    const group = [...host.querySelectorAll('[data-testid="output-c-mark-1"] button')].map((button) => button.getAttribute("data-testid"));
+    expect(group).toEqual(["output-c-mark-numbered-1", "output-c-mark-bullet-1", "output-c-mark-omitted-1", "output-c-mark-note-1"]);
+    act(() => host.querySelector<HTMLButtonElement>('[data-testid="output-c-mark-bullet-1"]')?.click());
+    expect(onMark).toHaveBeenCalledWith(1, 1, "bullet");
+    unmount();
+  });
+
   it("shows a note in italics without a number, indents it, and sends a mark change for that line only", () => {
     const items = [
       makeItem({ target_id: 1, text: "가", status: "confirmed", number: "2.1" }),
@@ -154,7 +175,7 @@ describe("OutputCView", () => {
     expect(more?.closest(".c-more")?.hasAttribute("data-no-drag")).toBe(true);
     act(() => more?.click());
     const menu = document.querySelector('[data-testid="output-c-menu-list-1"]');
-    expect([...(menu?.querySelectorAll('[role^="menuitem"]') ?? [])].map((el) => el.textContent)).toEqual(["Numbered", "No number", "Note", "Outdent", "Indent", "Move up", "Move down"]);
+    expect([...(menu?.querySelectorAll('[role^="menuitem"]') ?? [])].map((el) => el.textContent)).toEqual(["Numbered", "Bullet", "No number", "Note", "Outdent", "Indent", "Move up", "Move down"]);
     expect(menu?.querySelector('[data-testid="output-c-menu-numbered-1"]')?.getAttribute("aria-checked")).toBe("true");
     // 첫 줄 - 내어쓰기·들여쓰기·위로는 단추처럼 막히고 아래로만 된다
     for (const key of ["outdent", "indent", "up"]) expect(menu?.querySelector<HTMLButtonElement>(`[data-testid="output-c-menu-${key}-1"]`)?.disabled).toBe(true);
@@ -176,28 +197,29 @@ describe("OutputCView", () => {
     host.remove();
   });
 
-  it("offers no Numbered choice on a line placed directly in a section with sub sections, and shows it as No number", () => {
+  it("offers no Numbered choice on a line placed directly in a section that does not count lines, and shows it as No number", () => {
     const items = [
       makeItem({ target_id: 1, text: "가", status: "confirmed", indent_level: 0 }),
       makeItem({ target_id: 2, text: "나", status: "confirmed", indent_level: 1 }),
       makeItem({ target_id: 3, text: "주석", status: "confirmed", number_style: "note" }),
     ];
     const onMark = vi.fn();
-    const data = makeOutput(items, { location_key: "general_requirements", label: "General Requirements", number: "5" });
+    // 어느 칸이 그런지는 서버가 절에 싣는다(counts_lines) - 화면은 칸 키로 풀지 않는다
+    const data = makeOutput(items, { location_key: "general_requirements", label: "General Requirements", number: "5", kind: "named_children", counts_lines: false });
     const { host, unmount } = render({ data, onMove: () => {}, onIndent: () => {}, onMark });
     document.body.append(host);
     expect(host.querySelector('[data-testid="output-c-number-1"]')).toBeNull();
     // 쓸 수 없는 번호 단추는 숨기고, 번호로 저장된 줄은 번호 생략이 눌린 것으로 보인다 - 주석은 주석 그대로
     const pressed = (id: number) => [...host.querySelectorAll(`[data-testid="output-c-mark-${id}"] button`)].map((el) => [el.getAttribute("aria-label"), el.getAttribute("aria-pressed")]);
-    expect(pressed(1)).toEqual([["No number", "true"], ["Note", "false"]]);
-    expect(pressed(3)).toEqual([["No number", "false"], ["Note", "true"]]);
+    expect(pressed(1)).toEqual([["Bullet", "false"], ["No number", "true"], ["Note", "false"]]);
+    expect(pressed(3)).toEqual([["Bullet", "false"], ["No number", "false"], ["Note", "true"]]);
     // 번호를 세는 줄이 없어 저장된 깊이와 상관없이 맨 바깥에 그리고 들이거나 내어 쓸 수 없다
     expect(host.querySelector<HTMLElement>('[data-testid="output-c-row-2"] .c-line')?.style.paddingLeft).toBe("calc(0 * var(--c-indent))");
     for (const key of ["indent", "outdent"]) expect(host.querySelector<HTMLButtonElement>(`[data-testid="output-c-${key}-2"]`)?.disabled).toBe(true);
-    // ⋯ 메뉴도 같은 두 가지만
+    // ⋯ 메뉴도 같은 세 가지만
     act(() => host.querySelector<HTMLButtonElement>('[data-testid="output-c-menu-1"]')?.click());
     const menu = document.querySelector('[data-testid="output-c-menu-list-1"]');
-    expect([...(menu?.querySelectorAll('[role="menuitemradio"]') ?? [])].map((el) => [el.textContent, el.getAttribute("aria-checked")])).toEqual([["No number", "true"], ["Note", "false"]]);
+    expect([...(menu?.querySelectorAll('[role="menuitemradio"]') ?? [])].map((el) => [el.textContent, el.getAttribute("aria-checked")])).toEqual([["Bullet", "false"], ["No number", "true"], ["Note", "false"]]);
     // 눌린 것으로 보여도 저장값은 번호라, 번호 생략을 고르면 그 값을 저장한다
     act(() => menu?.querySelector<HTMLButtonElement>('[data-testid="output-c-menu-omitted-1"]')?.click());
     expect(onMark).toHaveBeenCalledWith(1, 1, "omitted");
@@ -305,6 +327,82 @@ describe("OutputCView", () => {
     expect(host.querySelector('[data-testid="output-c-renumber-31"]')).toBeNull();
     const chip = host.querySelector('[data-testid="output-c-renumber-41"]');
     expect(chip?.closest('[data-testid^="output-c-caption-"]')?.getAttribute("data-testid")).toBe("output-c-caption-43");
+    unmount();
+  });
+});
+
+describe("OutputCView sections that take no sentences", () => {
+  const base = makeOutput([]).docs[0];
+  function makeSection(location_key: string, number: string | null, label: string, extra: Partial<Section> = {}): Section {
+    return { ...makeSectionOutline({ default_style: "bullet" }), location_key, label, number, na_reason: null, heading_note: "", items: [], ...extra };
+  }
+  const WI_LIST = "document_relationships.work_instructions";
+  const sections: Section[] = [
+    makeSection("general_requirements.safety", null, "General Requirements › Safety", { level: 1, items: [makeItem({ target_id: 1, text: "보호구", status: "confirmed", number_style: "bullet" })] }),
+    makeSection("document_relationships", "7", "Document Relationships", { kind: "group", counts_lines: false }),
+    makeSection(WI_LIST, "7.2", "Document Relationships › Work Instructions", {
+      kind: "auto_list",
+      level: 1,
+      counts_lines: false,
+      auto_items: [{ code: "WI-CF-01", title: "Rotor change" }, { code: "WI-CF-02", title: "" }],
+    }),
+    makeSection("document_relationships.references", "7.3", "Document Relationships › References", { level: 1 }),
+  ];
+  const data: OutputC = { docs: [{ ...base, sections }], deleted: [], moved: [] };
+  const edit = { onMove: () => {}, onIndent: () => {}, onMark: () => {}, onPlace: () => {} };
+  const find = (host: HTMLElement, testId: string) => host.querySelector(`[data-testid="${testId}"]`);
+
+  it("lists the SOP's work instructions as read-only lines under the auto-list heading", () => {
+    const { host, unmount } = render({ data, ...edit });
+    const list = find(host, `output-c-auto-1-${WI_LIST}`);
+    expect([...(list?.querySelectorAll("li") ?? [])].map((item) => item.textContent)).toEqual(["WI-CF-01 — Rotor change", "WI-CF-02"]);
+    // 끌 상자도 줄 끝 단추도 없고, 빈 칸 표시("–")로 그리지도 않는다
+    expect(list?.querySelector("[data-drag-box], button")).toBeNull();
+    expect(find(host, `output-c-empty-1-${WI_LIST}`)).toBeNull();
+    expect(find(host, `output-c-section-1-${WI_LIST}`)?.textContent).toBe("7.2Document Relationships › Work Instructions");
+    unmount();
+  });
+
+  it("says so when the SOP has no work instructions yet", () => {
+    const empty: OutputC = { ...data, docs: [{ ...base, sections: [makeSection(WI_LIST, "7.2", "Work Instructions", { kind: "auto_list", counts_lines: false })] }] };
+    const { host, unmount } = render({ data: empty });
+    expect(find(host, `output-c-auto-1-${WI_LIST}`)?.textContent).toBe("No work instructions yet");
+    unmount();
+  });
+
+  it("draws a group as its heading only, and an empty section that takes sentences with the empty mark", () => {
+    const { host, unmount } = render({ data, ...edit });
+    const group = host.querySelector('section[data-location-key="document_relationships"]');
+    expect(group?.children).toHaveLength(1);
+    expect(find(host, "output-c-section-1-document_relationships")?.textContent).toBe("7Document Relationships");
+    expect(find(host, "output-c-empty-1-document_relationships")).toBeNull();
+    expect(find(host, "output-c-empty-1-document_relationships.references")).not.toBeNull();
+    unmount();
+  });
+
+  it("shows an N/A group with its reason like any other section", () => {
+    const na: OutputC = { ...data, docs: [{ ...base, sections: [makeSection("document_relationships", "7", "Document Relationships", { kind: "group", counts_lines: false, na_reason: "No related documents" })] }] };
+    const { host, unmount } = render({ data: na });
+    expect(host.querySelector("[data-na-reason]")?.textContent).toBe("N/A · No related documents");
+    unmount();
+  });
+
+  it("titles a category section without a number and draws its lines as bullets", () => {
+    const { host, unmount } = render({ data });
+    expect(find(host, "output-c-section-1-general_requirements.safety")?.textContent).toBe("General Requirements › Safety");
+    expect(find(host, "output-c-bullet-1")).not.toBeNull();
+    expect(find(host, "output-c-number-1")).toBeNull();
+    unmount();
+  });
+
+  it("heads an appendix with its label alone while its lines keep the appendix number", () => {
+    // 부록의 이름에 번호가 들어 있다 - 머리에 번호를 또 적으면 "1Appendix 1. …"이 된다
+    const appendix = makeSection("appendices.a1", "1", "Appendix 1. Alarm list", { shows_number: false, default_style: "numbered", items: [makeItem({ target_id: 5, text: "경보", status: "confirmed", number: "1.1" })] });
+    const numbered = makeSection("purpose", "1", "Purpose");
+    const { host, unmount } = render({ data: { ...data, docs: [{ ...base, sections: [numbered, appendix] }] } });
+    expect(find(host, "output-c-section-1-appendices.a1")?.textContent).toBe("Appendix 1. Alarm list");
+    expect(find(host, "output-c-section-1-purpose")?.textContent).toBe("1Purpose");
+    expect(find(host, "output-c-number-5")?.textContent).toBe("1.1");
     unmount();
   });
 });

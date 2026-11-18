@@ -54,7 +54,7 @@ function makeDoc(patch: Partial<TargetDoc>): TargetDoc {
 }
 
 function makeToBe(docs: TargetDoc[]): ToBe {
-  return { revision: 1, docs, na_slots: [], wi_steps: [] };
+  return { revision: 1, docs, na_slots: [], wi_steps: [], outline_items: [], outline_suggestions: {} };
 }
 
 describe("canUndoParentMove", () => {

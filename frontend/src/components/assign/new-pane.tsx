@@ -2,6 +2,7 @@
 // Old와 같은 종이 조각: 왼쪽 밖 앞머리(절 번호 칸, 폭 = 절 깊이라 들여쓴 것처럼 읽힌다), 본문 위 줄에 출처 칩, 위 테두리 오른쪽에 올리거나 고를 때만 KO/EN 탭(짝은 모두).
 // 엮은 문서의 앞머리는 결과물 C와 같은 줄마다 자기 번호(생략·주석은 없음)이고 칸 번호는 칸 머리 줄에 남는다.
 // 점선 = 후보, 채움 = 고른 문장, 칩 = 붙은 Old 출처(누르면 Old의 그 조각으로), 왼쪽 끝 위험색 막대 = 출처 없음. 엮은 문서의 빈 칸은 옅은 자리 표시.
+// 엮은 문서의 문장을 받지 않는 절은 자리 표시가 없다 - 묶음은 칸 머리만, 앱이 채우는 목록(자식 WI)은 읽기만 하는 줄.
 // 엮은 문서의 두 문장 사이에 Old 조각을 놓았으면 그 자리에 저장 전 문장(점선 초안), 빈 칸에 놓았으면 그 자리 표시에 강조 테두리(끌어서 보내기).
 // 줄 상자(.new-item)마다 data-row(t:<id> | slot:<칸>) - 끄는 동안 놓을 자리를 이것으로 읽는다.
 // 참조 줄이 EQUIS와 어긋나면 칩 줄 끝에 작은 표시(RefMark) - 출처 없는 줄은 그 표시만 있는 칩 줄이 생긴다.
@@ -16,6 +17,7 @@ import { NewBundle } from "@/components/assign/new-bundle";
 import { PaneZoom } from "@/components/assign/pane-zoom";
 import { RefMark } from "@/components/assign/ref-mark";
 import { LangToken } from "@/components/paper/lang-token";
+import { DeviationMark, EmptyRequiredMark } from "@/components/tobe/deviation-mark";
 import { StripLead, STRIP_LEAD_EXTRA } from "@/components/paper/strip-lead";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Truncate } from "@/components/ui/motion";
@@ -24,7 +26,7 @@ import { Tooltip } from "@/components/ui/tooltip";
 import type { WrittenSentence } from "@/lib/api-sop";
 import type { DraftLine } from "@/lib/assign-drop-model";
 import { readCaretPoint } from "@/lib/caret-point";
-import { diffRows, getComposedLeadWidths, getNewRowKey, isComposedRow, isWrittenRow, readSectionNumber, type NewPaneRow } from "@/lib/composed-model";
+import { diffRows, getComposedLeadWidths, getNewRowKey, isComposedRow, isWrittenRow, readSectionNumber, type NewPaneRow, type SectionMark } from "@/lib/composed-model";
 import { useI18n } from "@/lib/i18n";
 import { readWrittenRefMark } from "@/lib/ref-model";
 import { getCardTops, getHiddenPrefixLength, getPairBrackets, getPillWidth, getSectionPill, getTabWidths } from "@/lib/strip-pill-model";
@@ -38,6 +40,8 @@ interface NewPaneProps {
   rows: NewPaneRow[];
   /** 엮은 문서의 칸 머리(section_path) → 칸 제목 출처("← OLD-1 §5") - 서버 값 그대로 칸 이름 뒤에 흐리게 */
   headingNotes?: ReadonlyMap<string, string>;
+  /** 엮은 문서의 칸 머리(section_path) → 표준과 다름 · 비어 있음 알림 - 칸 이름 뒤에 */
+  sectionMarks?: ReadonlyMap<string, SectionMark>;
   /** 줄 들고 남의 기준 - 바뀌면(문서를 바꿈·처음 받음) 움직임 없이 새로 시작한다 */
   rowsKey: string;
   /** 머리 표지 - 이미 쓴 문서인지 배정으로 엮는 문서인지 */
@@ -375,13 +379,32 @@ export function NewPane(props: NewPaneProps) {
   function renderSectionHead(row: NewPaneRow, isNumberInLead: boolean): ReactNode {
     const label = isNumberInLead ? row.section_path.slice(getHiddenPrefixLength(row.section_path, readSectionNumber(row.section_path))) : row.section_path;
     const note = props.headingNotes?.get(row.section_path);
-    if (!note) return <p className="new-sec">{label}</p>;
+    const mark = props.sectionMarks?.get(row.section_path);
+    // 번호 없는 절(5장의 범주)은 머리 글을 키로 - 범주끼리 같은 식별자가 되지 않게
+    const idKey = readSectionNumber(row.section_path) || row.section_path;
+    const marks = mark && (
+      <>
+        {mark.deviationReason !== null && <DeviationMark reason={mark.deviationReason} testId={`assign-new-differs-${idKey}`} />}
+        {mark.isEmptyRequired && <EmptyRequiredMark testId={`assign-new-empty-required-${idKey}`} />}
+      </>
+    );
+    if (!note)
+      return (
+        <p className="new-sec">
+          {label}
+          {marks}
+        </p>
+      );
     // 출처 글은 칸 오른쪽 끝까지 가서, 첫 줄의 언어 탭(위 테두리에서 8px 위로 나온다)이 글에 닿지 않게 아래 여백을 4px 더 둔다
     return (
       <p className="new-sec mb-2 flex gap-1.5">
-        <span>{label}</span>
+        <span>
+          {label}
+          {marks}
+        </span>
         <span className="min-w-[8ch] flex-1 font-normal text-ink-3">
-          <Truncate text={note} testId={`assign-new-heading-note-${readSectionNumber(row.section_path)}`} />
+          {/* 번호 없는 절(5장의 범주)은 머리 글을 키로 - 범주끼리 같은 식별자가 되지 않게 */}
+          <Truncate text={note} testId={`assign-new-heading-note-${readSectionNumber(row.section_path) || row.section_path}`} />
         </span>
       </p>
     );
@@ -389,6 +412,24 @@ export function NewPane(props: NewPaneProps) {
 
   function renderRow(row: NewPaneRow, isSectionStart: boolean, previous: NewPaneRow | undefined): ReactNode {
     if (row.kind === "empty") {
+      // 문장을 받지 않는 절(N/A가 아닐 때) - 묶음은 칸 머리만 있고, 앱이 채우는 목록은 읽기만 하는 줄이다(고르기·놓을 자리 없음)
+      if (row.fixed === "group" && !row.na) return null;
+      if (row.fixed === "auto" && !row.na) {
+        return (
+          <div className="strip-row">
+            <span className="strip-lead-gap" style={{ width: getPillWidth(1) + STRIP_LEAD_EXTRA }} />
+            <ul className="new-auto" data-testid={`assign-new-auto-${row.key}`}>
+              {row.autoItems.length === 0 && <li className="text-ink-3">{t("outputs.autoEmpty")}</li>}
+              {row.autoItems.map((item) => (
+                <li key={item.code}>
+                  <span className="font-mono">{item.code}</span>
+                  {item.title !== "" && ` — ${item.title}`}
+                </li>
+              ))}
+            </ul>
+          </div>
+        );
+      }
       return (
         <div className="strip-row">
           <span className="strip-lead-gap" style={{ width: getPillWidth(1) + STRIP_LEAD_EXTRA }} />

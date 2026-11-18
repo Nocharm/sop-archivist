@@ -20,7 +20,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import engine
 from app.models import Employee
-from app.sop.constants import SLOT_KEYS
 from app.sop.models import TargetSentence, TargetSource, UnitDecision, UnitPair, UnitPairMember
 from app.sop.output_labels import LABELS
 from app.sop.outputs import BundleCellOut, Lang, Renumbering, _build_index, build_bundle_table, build_renumbering
@@ -30,11 +29,13 @@ from tests.docx_factory import TINY_PNG, build_docx, make_drawing_run, p, tbl
 from tests.sop_helpers import (
     ADMIN,
     AUTHOR,
+    NEW_SOP_KEYS,
     REVIEWER,
     WRITTEN_CAPTION,
     assign_as_is,
     build_as_is_targets,
     create_bundle,
+    declare_outline_item,
     find_unit,
     get_bundle,
     get_group_by_unit,
@@ -97,6 +98,13 @@ NA_SLOTS = [
     {"code": "SOP-NEW", "slot_key": "document_relationships", "reason": RELATIONS_REASON},
 ]
 WI_STEPS = [{"code": "WI-01", "step_no": 1, "title": "Prepare"}, {"code": "WI-01", "step_no": 2, "title": "Load"}]
+# 픽스처 SOP(SOP-NEW)가 내보내는 절 — 새 SOP의 골격에 범주 Work(_setup이 선언)를 더하고, 비어 있는 선택 항목(7.1.x)은 뺀다
+SOP_SECTION_KEYS = [
+    key
+    for base in NEW_SOP_KEYS
+    if not base.startswith("document_relationships.associated_documents.")
+    for key in ((base, "general_requirements.work") if base == "general_requirements" else (base,))
+]
 HEADING_REASON = "Synthetic: structure heading"
 DELETE_REASON = "Synthetic: obsolete note"
 MOVE_REASON = "Synthetic: owned by another SOP"
@@ -165,6 +173,7 @@ def _setup(client: TestClient) -> Fixture:
     assert response.status_code == 200, response.text
     codes = {doc["code"]: doc["id"] for doc in response.json()["docs"]}
     sop_id, wi_id = codes["SOP-NEW"], codes["WI-01"]
+    declare_outline_item(client, sop_id, "general_requirements.work", "Work")  # 5장 범주 하나
     old1_doc = _upload_ready(client, bundle_id, build_docx(OLD1_BODY, media={"image1.png": TINY_PNG}), OLD1_NAME)
     old2_doc = _upload_ready(client, bundle_id, build_docx(OLD2_BODY), OLD2_NAME)
     new_doc = _upload_ready(client, bundle_id, build_docx(NEW_BODY), NEW_NAME, side="new", doc_type="sop")
@@ -181,7 +190,7 @@ def _setup(client: TestClient) -> Fixture:
     ])
     first, second = find_unit(old1, MERGE_1), find_unit(old2, MERGE_2)
     _save(client, bundle_id, [_unit_in(first), _unit_in(second)], [
-        _target("m", sop_id, [first, second], slot_key="general_requirements.operation", text=MERGED),
+        _target("m", sop_id, [first, second], slot_key="general_requirements.work", text=MERGED),
     ])
     duplicate = find_unit(old1, DUPLICATE)
     _save(client, bundle_id, [_unit_in(duplicate, reason=DUPLICATE_REASON)], [
@@ -192,7 +201,7 @@ def _setup(client: TestClient) -> Fixture:
     assign_as_is(client, bundle_id, table, sop_id, slot_key="general_requirements")
     figure = next(unit for unit in old1["units"] if unit["kind"] == "figure")
     assign_as_is(client, bundle_id, figure, wi_id, wi_step=2, wi_part="instruction", hold_reason=FIGURE_HOLD)
-    assign_as_is(client, bundle_id, find_unit(old2, RECORDS_EN), sop_id, slot_key="general_requirements.operation")
+    assign_as_is(client, bundle_id, find_unit(old2, RECORDS_EN), sop_id, slot_key="general_requirements.work")
 
     # 입구 2 — 같은 글자 짝 하나와 출처 없는 신규 하나
     match_id = new_doc["target_doc_id"]
@@ -285,7 +294,7 @@ def test_output_a_rows_follow_line_rules(client: TestClient) -> None:
     assert split["confirmed_at"].endswith("+09:00")
     merged = [row for row in rows if row["change_type"] == "merged"]
     assert [(row["confirmed_text"], row["dest_location"]) for row in merged] == [
-        (MERGED, "General Requirements › Operation"),
+        (MERGED, "General Requirements › Work"),
     ] * 2
     duplicate_rows = [row for row in rows if row["display_id"] == d1(DUPLICATE)]
     assert [(row["dest_location"], row["remark"]) for row in duplicate_rows] == [
@@ -461,7 +470,7 @@ def test_one_to_two_pair_is_three_lines_in_one_group(client: TestClient) -> None
     fx = _setup_pair_edges(client)
     units = _units(fx, KO_LOAD, KO_KEEP, EN_BOTH)
     _save(client, fx.bundle_id, [_unit_in(unit) for unit in units], [
-        _target(str(n), fx.sop_id, [unit], slot_key="procedures.procedure") for n, unit in enumerate(units)
+        _target(str(n), fx.sop_id, [unit], slot_key="procedures.p1") for n, unit in enumerate(units)
     ])
 
     lines = _group_lines(_get_output(client, fx.bundle_id, "outputs/a"), units[0]["display_id"])
@@ -724,14 +733,14 @@ def test_output_a_table_lines_for_rows_empty_tables_and_dropped_cells(client: Te
     assert split.status_code == 200, split.text
     view = get_view(client, bundle_id, doc["id"])
     first_row, second_row = [unit for unit in view["units"] if unit["kind"] == "table_row"]
-    assign_as_is(client, bundle_id, first_row, sop_id, slot_key="procedures.procedure")
+    assign_as_is(client, bundle_id, first_row, sop_id, slot_key="procedures.p1")
     # 둘째 행은 한글 칸만 남긴 표 구성 변경 — 영어 칸 문장에는 칸 새 문장이 없다
     kept = find_unit(view, "합성 값 둘.")
     _save(client, bundle_id, [_unit_in(second_row, reason="Synthetic: drop the English cell")], [
-        _target("t", sop_id, [second_row], slot_key="procedures.procedure", kind="table", grid={"rows": 1, "cols": 1},
+        _target("t", sop_id, [second_row], slot_key="procedures.p1", kind="table", grid={"rows": 1, "cols": 1},
                 change_type="table_restructured"),
-        _target("c", sop_id, [kept], slot_key="procedures.procedure", parent_key="t", cell_row=0, cell_col=0),
-        _target("cap", sop_id, [], slot_key="procedures.procedure", parent_key="t", text="합성 표 둘째 행", lang="ko"),
+        _target("c", sop_id, [kept], slot_key="procedures.p1", parent_key="t", cell_row=0, cell_col=0),
+        _target("cap", sop_id, [], slot_key="procedures.p1", parent_key="t", text="합성 표 둘째 행", lang="ko"),
     ])
     d = partial(_display, view)
 
@@ -889,20 +898,23 @@ def test_output_c_one_list_per_slot(client: TestClient) -> None:
     assert [(doc["code"], doc["doc_type"], doc["parent_code"], doc["entrance"]) for doc in output["docs"]] == [
         ("SOP-NEW", "sop", None, "assign"), ("WI-01", "wi", "SOP-NEW", "assign"), ("SOP-9", "sop", None, "match"),
     ]
-    # SOP 칸은 SLOT_KEYS 순서로 빈 칸까지, N/A 상위 칸의 하위 칸도 N/A(R8)
-    assert [section["location_key"] for section in sop["sections"]] == list(SLOT_KEYS)
+    # SOP 칸은 골격 순서로 빈 필수 항목까지(비어 있는 선택 항목 7.1.x는 빠진다), N/A 상위 칸의 하위 칸도 N/A(R8)
+    assert [section["location_key"] for section in sop["sections"]] == SOP_SECTION_KEYS
     sections = {section["location_key"]: section for section in sop["sections"]}
     assert {key: section["na_reason"] for key, section in sections.items() if section["na_reason"]} == {
         "scope": SCOPE_REASON,
         "document_relationships": RELATIONS_REASON,
-        "document_relationships.attachments": RELATIONS_REASON,
-        "document_relationships.appendices": RELATIONS_REASON,
+        "document_relationships.associated_documents": RELATIONS_REASON,
+        "document_relationships.work_instructions": RELATIONS_REASON,
+        "document_relationships.references": RELATIONS_REASON,
     }
-    assert sections["procedures.maintenance"]["label"] == "Procedures › Maintenance"
+    assert sections["procedures.p1"]["label"] == "Procedures › Procedure 1"
+    # 7장이 N/A라 덮인 자동 목록 절(7.2)도 자식 WI를 싣지 않는다 — 화면이 사유만 보이는 것과 같다(싣는 경우는 test_sop_outline)
+    assert {key: section["auto_items"] for key, section in sections.items() if section["auto_items"]} == {}
     assert _section_items(sections["responsibilities"]) == [(DUPLICATE, "as_is", "confirmed", "← OLD-1 §5.1")]
     # 한 칸은 언어를 가리지 않는 한 목록 — 한글 합침 문장 뒤에 영어 문장(원문에서 앞선 출처 순)
-    operation = sections["general_requirements.operation"]["items"]
-    assert _section_items(sections["general_requirements.operation"]) == [
+    operation = sections["general_requirements.work"]["items"]
+    assert _section_items(sections["general_requirements.work"]) == [
         (MERGED, "merged", "confirmed", "← OLD-1 §5.1, OLD-2 §5.1 (merged)"),
         (RECORDS_EN, "as_is", "confirmed", "← OLD-2 §5.1"),
     ]
@@ -1000,21 +1012,21 @@ def test_composed_doc_carries_both_languages_in_c_order(client: TestClient) -> N
     c_sop = next(doc for doc in _get_output(client, fx.bundle_id, "outputs/c", "en")["docs"] if doc["target_doc_id"] == fx.sop_id)
 
     assert (sop["code"], sop["entrance"]) == ("SOP-NEW", "assign")
-    # 칸은 결과물 C와 같다 - 빈 칸까지 SLOT_KEYS 순서, N/A 사유 그대로
-    assert [section["location_key"] for section in sop["sections"]] == list(SLOT_KEYS)
+    # 칸은 결과물 C와 같다 - 빈 필수 항목까지 골격 순서, N/A 사유 그대로
+    assert [section["location_key"] for section in sop["sections"]] == SOP_SECTION_KEYS
     sections = {section["location_key"]: section for section in sop["sections"]}
     assert sections["scope"]["na_reason"] == SCOPE_REASON
     assert sections["purpose"]["items"] == []
     # 한 칸에 두 언어가 함께, 출처 단위가 실린다 - 칸 안 순서·번호는 같은 lang의 결과물 C 그 문서 그대로, 칸 이름은 lang의 언어
-    operation = sections["general_requirements.operation"]["items"]
-    c_operation = next(s for s in c_sop["sections"] if s["location_key"] == "general_requirements.operation")["items"]
+    operation = sections["general_requirements.work"]["items"]
+    c_operation = next(s for s in c_sop["sections"] if s["location_key"] == "general_requirements.work")["items"]
     assert [(item["target_id"], item["number"]) for item in operation] == [
         (item["target_id"], item["number"]) for item in c_operation
     ]
     assert sorted((item["text"], item["lang"], item["source_unit_ids"]) for item in operation) == sorted([
         (MERGED, "ko", merged_sources), (RECORDS_EN, "en", [find_unit(fx.old2, RECORDS_EN)["id"]]),
     ])
-    assert sections["general_requirements.operation"]["label"] == "General Requirements › Operation"
+    assert sections["general_requirements.work"]["label"] == "General Requirements › Work"
     # 보류한 그림은 글이 없고(그림 단위 글자도 비었다) 딸린 캡션 새 문장의 글을 caption으로 싣는다
     (step2,) = [section for section in wi["sections"] if section["location_key"] == "step:2:instruction"]
     assert [(item["text"], item["status"], item["source_unit_ids"], item["caption"]) for item in step2["items"]] == [
@@ -1505,19 +1517,21 @@ def test_reorder_moves_a_line_to_another_slot(client: TestClient) -> None:
     sop = _get_output(client, fx.bundle_id, "outputs/c")["docs"][0]
     (duplicate,) = _items_in(sop, "responsibilities")
     target_id = duplicate["target_id"]
-    body = _order_body(client, fx, 0, fx.sop_id, {target_id: {"slot_key": "procedures.procedure", "indent_level": 0}})
+    body = _order_body(client, fx, 0, fx.sop_id, {target_id: {"slot_key": "procedures.p1", "indent_level": 0}})
     before = _load_places(fx.sop_id)[target_id]
 
     response = _put_order(client, fx.bundle_id, body)
 
     assert response.status_code == 200, response.text
     out = next(i for i in response.json()["items"] if i["target_id"] == target_id)
-    assert out["slot_key"] == "procedures.procedure"
+    assert out["slot_key"] == "procedures.p1"
+    # 글머리 기호가 기본인 4장의 줄이 번호가 기본인 절차로 가면 번호 줄이 된다
+    assert (duplicate["number_style"], out["number_style"]) == ("bullet", "numbered")
     sop = _get_output(client, fx.bundle_id, "outputs/c")["docs"][0]
     assert _items_in(sop, "responsibilities") == []
-    # 칸 번호는 SLOT_KEYS 고정 자리 — procedures = 6, procedures.procedure = 6.1
-    assert [(i["target_id"], i["number"]) for i in _items_in(sop, "procedures.procedure")] == [(target_id, "6.1.1")]
-    assert _load_places(fx.sop_id)[target_id] == ("procedures.procedure", 0, before[2] + 1)
+    # 절 번호는 골격의 순서 — procedures = 6, 첫 절차 = 6.1
+    assert [(i["target_id"], i["number"]) for i in _items_in(sop, "procedures.p1")] == [(target_id, "6.1.1")]
+    assert _load_places(fx.sop_id)[target_id] == ("procedures.p1", 0, before[2] + 1)
     assert response.json()["doc"] == sop
     events = client.get(f"/api/bundles/{fx.bundle_id}/events", headers=AUTHOR).json()
     assert (events[0]["action"], events[0]["target_ids"]) == ("targets.reorder", [fx.sop_id])
@@ -1526,12 +1540,12 @@ def test_reorder_moves_a_line_to_another_slot(client: TestClient) -> None:
 def test_reorder_slot_move_takes_the_table_cells_and_resets_an_unsent_depth(client: TestClient) -> None:
     fx = _setup(client)
     sop = _get_output(client, fx.bundle_id, "outputs/c")["docs"][0]
-    line_id = _items_in(sop, "general_requirements.operation")[-1]["target_id"]
+    line_id = _items_in(sop, "general_requirements.work")[-1]["target_id"]
     (table,) = _items_in(sop, "general_requirements")
     table_id, cell_ids = table["target_id"], [cell["target_id"] for cell in table["children"]]
     assert _put_order(client, fx.bundle_id, _order_body(client, fx, 0, fx.sop_id, {line_id: {"indent_level": 1}})).status_code == 200
     before = _load_places(fx.sop_id)
-    assert before[line_id][:2] == ("general_requirements.operation", 1)
+    assert before[line_id][:2] == ("general_requirements.work", 1)
 
     edits = {line_id: {"slot_key": "purpose"}, table_id: {"slot_key": "definitions", "indent_level": 2}}
     response = _put_order(client, fx.bundle_id, _order_body(client, fx, 0, fx.sop_id, edits))
@@ -1554,7 +1568,10 @@ def test_reorder_slot_move_rejects(client: TestClient) -> None:
         "unknown": (0, fx.sop_id, "nope", "unknown_slot"),
         "null": (0, fx.sop_id, None, "unknown_slot"),
         "na": (0, fx.sop_id, "scope", "na_slot"),
-        "na_parent": (0, fx.sop_id, "document_relationships.appendices", "na_slot"),
+        "na_parent": (0, fx.sop_id, "document_relationships.references", "na_slot"),
+        # 묶음 제목(7)과 자동 목록(7.2)은 줄을 받지 않는다 — N/A보다 먼저 걸린다
+        "group": (0, fx.sop_id, "document_relationships", "slot_not_assignable"),
+        "auto_list": (0, fx.sop_id, "document_relationships.work_instructions", "slot_not_assignable"),
         "wi": (1, fx.wi_id, "purpose", "slot_not_allowed"),
     }
     revision = get_bundle(client, fx.bundle_id)["revision"]
@@ -2206,3 +2223,52 @@ def test_merged_sentence_with_a_detached_same_number_reference_is_left(client: T
     merged = _target_of(snap, first["id"])
     assert _codes(renum) == [("caption_ref_ambiguous", merged, first["id"])]
     assert merged not in renum.texts
+
+
+def test_empty_required_flag(client: TestClient) -> None:
+    # Arrange — 목적에만 줄이 있고, 정의는 이름을 바꿨고(표준과 다름), 책임은 N/A인 SOP
+    bundle_id = create_bundle(client, is_synthetic=True)["id"]
+    sop = {"code": "SOP-E", "title": "Synthetic SOP", "doc_type": "sop", "parent_code": None}
+    saved = put_tobe(client, bundle_id, [sop], na_slots=[{"code": "SOP-E", "slot_key": "responsibilities", "reason": "Synthetic"}])
+    sop_id = saved.json()["docs"][0]["id"]
+    uploaded = upload(client, bundle_id, build_docx(p(KO_KEEP)), "SYNTHETIC_OLD-E_Empty.docx")
+    assign_as_is(client, bundle_id, find_unit(get_view(client, bundle_id, uploaded.json()["id"]), KO_KEEP), sop_id, slot_key="purpose")
+    renamed = client.patch(
+        f"/api/bundles/{bundle_id}/tobe/docs/{sop_id}/outline/definitions",
+        json={"title_en": "Terms", "reason": "Synthetic: house style"}, headers=AUTHOR,
+    )
+    assert renamed.status_code == 200, renamed.text
+
+    # Act
+    c_doc = next(doc for doc in _get_output(client, bundle_id, "outputs/c")["docs"] if doc["target_doc_id"] == sop_id)
+    composed = _get_output(client, bundle_id, f"outputs/c/docs/{sop_id}", "en")
+
+    # Assert — 빈 필수 절과 표준과 다름은 결과물 C와 New 칸(쓰는 중 문서)이 같은 값이다
+    flags = {section["location_key"]: (section["is_empty_required"], section["deviation_reason"]) for section in c_doc["sections"]}
+    assert flags["purpose"] == (False, None)
+    assert flags["scope"] == (True, None)
+    assert flags["definitions"] == (True, "Synthetic: house style")
+    assert flags["responsibilities"] == (False, None)  # N/A는 비어 있음이 아니다
+    assert (flags["procedures"], flags["procedures.p1"]) == ((True, None), (True, None))
+    assert flags["document_relationships.work_instructions"] == (True, None)  # 자식 WI가 없는 자동 목록
+    assert "document_relationships.associated_documents.form" not in flags  # 빈 선택 항목은 절 자체가 없다
+    assert {
+        section["location_key"]: (section["is_empty_required"], section["deviation_reason"]) for section in composed["sections"]
+    } == flags
+
+    # 하위가 모두 N/A인 묶음 제목은 비어 있음이 아니다(7.1 아래 선택 항목 Form만 N/A로 둔 경우)
+    na_slots = [
+        {"code": "SOP-E", "slot_key": "responsibilities", "reason": "Synthetic"},
+        {"code": "SOP-E", "slot_key": "document_relationships.associated_documents.form", "reason": "Synthetic"},
+    ]
+    assert put_tobe(client, bundle_id, [sop], na_slots=na_slots).status_code == 200
+    c_doc = next(doc for doc in _get_output(client, bundle_id, "outputs/c")["docs"] if doc["target_doc_id"] == sop_id)
+    covered = {section["location_key"]: section["is_empty_required"] for section in c_doc["sections"]}
+    assert (covered["document_relationships.associated_documents"], covered["document_relationships"]) == (False, True)
+
+    # 자식 WI가 생기면 자동 목록과 그 묶음 제목은 비어 있지 않다
+    wi = {"code": "WI-E", "title": "Synthetic WI", "doc_type": "wi", "parent_code": "SOP-E"}
+    assert put_tobe(client, bundle_id, [sop, wi], na_slots=[{"code": "SOP-E", "slot_key": "responsibilities", "reason": "Synthetic"}]).status_code == 200
+    c_doc = next(doc for doc in _get_output(client, bundle_id, "outputs/c")["docs"] if doc["target_doc_id"] == sop_id)
+    after = {section["location_key"]: section["is_empty_required"] for section in c_doc["sections"]}
+    assert (after["document_relationships.work_instructions"], after["document_relationships"]) == (False, False)
