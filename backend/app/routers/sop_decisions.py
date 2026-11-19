@@ -1,7 +1,7 @@
-"""판단 API — 단위 목록·관계 묶음·같은 글자 후보 읽기(멤버)와 관계 묶음 저장·일괄 처분·배정 지우기·입구 2 한 번에 확정(작성자·작업 중).
+"""판단 API — 단위 목록·관계 묶음·같은 글자 후보 읽기(멤버)와 관계 묶음 저장·일괄 처분·배정 지우기·입구 2 한 번에 확정·AI 제안 일괄 수락(작성자·작업 중).
 Remark 고르기 도움(내 최근 사유 — 묶음 밖 `remarks_router`, 외부 이동 대상 후보 — 멤버)도 여기 둔다.
 
-검사와 쓰기는 app/sop/decisions.py(입구 2 한 번에 확정은 app/sop/match.py).
+검사와 쓰기는 app/sop/decisions.py(입구 2 한 번에 확정은 app/sop/match.py, AI 제안 일괄 수락은 app/sop/accept_suggestions.py).
 """
 
 from typing import Annotated, Literal
@@ -13,6 +13,7 @@ from app.auth import get_current_user
 from app.db import get_session
 from app.equis import service as equis_service
 from app.routers.sop_equis import start_lookups
+from app.sop.accept_suggestions import AcceptIn, AcceptKind, AcceptOut, AcceptPreviewOut, accept_suggestions, preview_accept
 from app.sop.constants import MEMBER_ROLES
 from app.sop.decision_steps import DecisionStepIn, DecisionStepResult, record_snapshot_step, redo_step, undo_step
 from app.sop.decisions import (
@@ -185,6 +186,30 @@ async def confirm_matches_in_bulk(
     )
     await session.commit()
     return group
+
+
+@router.get("/{bundle_id}/ai/accept-preview", response_model=AcceptPreviewOut)
+async def get_accept_preview(
+    kind: AcceptKind = Query(...),
+    document_id: int | None = Query(None, ge=1, le=MAX_DB_INT),
+    ctx: BundleContext = Depends(_require_member),
+    session: AsyncSession = Depends(get_session),
+) -> AcceptPreviewOut:
+    """종류별 일괄 수락의 확인 창 — 지금 받을 수 있는 제안과 빼는 제안의 수(설계 2026-11-19-ai-suggest-only D3)."""
+    return await preview_accept(session, ctx.bundle.id, kind, document_id)
+
+
+@router.post("/{bundle_id}/ai/accept", response_model=AcceptOut)
+async def accept_ai_suggestions(
+    body: AcceptIn, ctx: BundleContext = Depends(_require_author), session: AsyncSession = Depends(get_session)
+) -> AcceptOut:
+    """고른 AI 제안을 사람의 저장 경로로 한 번에 받는다 — 되돌리기 한 단계로 거둔다."""
+    out = await record_snapshot_step(
+        session, ctx.bundle, ctx.login_id, body.undo, "accept_ai",
+        lambda: accept_suggestions(session, ctx.bundle, body, ctx.login_id),
+    )
+    await session.commit()
+    return out
 
 
 @router.post("/{bundle_id}/decisions/undo", response_model=DecisionStepResult)

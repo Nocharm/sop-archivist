@@ -655,7 +655,7 @@ def test_unmatched_new_table_takes_its_cells_along(client: TestClient, fake_ai: 
 def test_new_rows_left_by_the_plan_can_be_confirmed_in_bulk(client: TestClient, fake_ai: FakeAi) -> None:
     """신규 제안이 덮은 새 문장은 미배정 그대로라 같은 글자·신규 일괄 확정이 받는다.
 
-    일괄 확정은 제안을 받는 저장(suggestion_id)이 아니라 채택은 비어 있다 — 종류별 일괄 수락은 따로 온다(설계 D3).
+    신규 확정은 신규 제안과 같은 결정이라 그 제안을 그대로 받은 것으로 남긴다 — 종류별 일괄 수락의 신규도 이 길이다(설계 §5 3-5).
     """
     bundle = make_match_bundle(client, p(LONE_OLD), p(LONE_NEW) + tbl(CELLS))
     plan(client, bundle.id)
@@ -669,7 +669,7 @@ def test_new_rows_left_by_the_plan_can_be_confirmed_in_bulk(client: TestClient, 
 
     assert response.status_code == 200, response.text
     assert {(row.status, row.change_type) for row in read_rows(TargetSentence)} == {("confirmed", "new")}
-    assert {row.adoption for row in read_rows(AiSuggestion) if row.content["shape"] == "new"} == {None}
+    assert {row.adoption for row in read_rows(AiSuggestion) if row.content["shape"] == "new"} == {"as_is"}
 
 
 # --- 표·그림 ---

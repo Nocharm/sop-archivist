@@ -13,7 +13,7 @@ from sqlalchemy.orm import aliased
 
 from app.clock import now
 from app.sop.ai.adoption import adopt_suggestions
-from app.sop.ai.apply import close_unused_suggestions
+from app.sop.ai.apply import close_unused_suggestions, find_covering, load_live_suggestions
 from app.sop.captions import CAPTION_KIND
 from app.sop.checks import check_sentence
 from app.sop.decision_steps import UndoMetaIn
@@ -52,6 +52,8 @@ REPEATED_PARTS = ("header", "footer")
 TRAILING_PARTS = ("header", "footer", "footnote", "endnote")
 SECTION_SEPARATOR = " › "
 MAX_BULK_MATCH = 1000  # 한 번에 확정 요청의 같은 글자 짝 + 신규 항목 합계 상한
+NEW_SHAPE = "new"  # 묶기 제안의 신규 모양 — 짝 없는 입구 2 새 문장(ai/match_jobs의 계획이 쓴다)
+_MATCH_KIND = "match"
 
 
 # --- 요청·응답 ---
@@ -516,7 +518,7 @@ def _confirm(item: UnitDecision | TargetSentence, actor: str, stamp: datetime) -
     item.revision += 1
 
 
-async def _write_bulk(session: AsyncSession, payload: BulkMatchIn, state: _BulkState, actor: str) -> None:
+async def _write_bulk(session: AsyncSession, bundle_id: int, payload: BulkMatchIn, state: _BulkState, actor: str) -> None:
     """같은 글자 짝은 출처 연결·그대로·양쪽 확정, 신규는 신규 확정(AI 제안이었으면 그대로 채택). 글자가 같아도 쓰기 길은 관계 묶음 저장처럼 문장 검사를 거친다."""
     stamp = now()
     links = []
@@ -535,15 +537,35 @@ async def _write_bulk(session: AsyncSession, payload: BulkMatchIn, state: _BulkS
         _confirm(target, actor, stamp)
     if links:
         await session.execute(insert(TargetSource), links)
+    await _link_new_suggestions(session, bundle_id, payload, state)
     suggestion_ids = {state.targets[item.target_id].suggestion_id for item in payload.new}
     await adopt_suggestions(session, suggestion_ids - {None}, actor, stamp)
+
+
+async def _link_new_suggestions(session: AsyncSession, bundle_id: int, payload: BulkMatchIn, state: _BulkState) -> None:
+    """신규로 확정하는 새 문장을 덮는 살아 있는 신규 제안에 잇는다 — 신규 확정은 제안과 같은 결정이라 받은 것으로 센다(설계 §5 3-5).
+
+    제안의 새 문장(표·그림은 칸·캡션까지)이 모두 이번에 신규로 확정될 때만 잇는다. 사람이 Use로 이미 이어 둔 새 문장은 그대로 둔다.
+    """
+    listed = {item.target_id for item in payload.new}
+    if not listed:
+        return
+    live = await load_live_suggestions(session, bundle_id, (_MATCH_KIND,))
+    for suggestion in find_covering(live, target_ids=listed):
+        target_ids = suggestion.content.get("target_ids", ())
+        if suggestion.content.get("shape") != NEW_SHAPE or not set(target_ids) <= listed:
+            continue
+        for target_id in target_ids:
+            target = state.targets[target_id]
+            if target.suggestion_id is None:
+                target.suggestion_id = suggestion.id
 
 
 async def confirm_in_bulk(session: AsyncSession, bundle: Bundle, payload: BulkMatchIn, actor: str) -> GroupOut:
     """같은 글자 1:1 짝(그대로)과 출처 없는 입구 2 새 문장(신규)을 한 트랜잭션으로 확정한다. 커밋은 호출부가 한다.
 
-    항목마다 서버가 다시 확인하고 하나라도 어긋나면 아무것도 쓰지 않는다. AI 제안 짝은 이 길로 확정하지 않는다(스펙 §7.7) —
-    같은 글자 짝은 미배정만 받고, 신규는 코드가 확인할 수 있어 AI 제안이어도 받는다.
+    항목마다 서버가 다시 확인하고 하나라도 어긋나면 아무것도 쓰지 않는다. 같은 글자 짝은 미배정만 받는다. 신규는 코드가 확인할 수 있어
+    살아 있는 신규 제안이 덮는 새 문장이면 그 제안을 그대로 받은 것으로 남긴다 — AI 제안 일괄 수락(accept_suggestions)의 신규도 이 길이다.
     """
     await lock_bundle(session, bundle)
     ensure_editable(bundle)
@@ -556,7 +578,7 @@ async def confirm_in_bulk(session: AsyncSession, bundle: Bundle, payload: BulkMa
     state = await _load_bulk_state(session, bundle.id, payload, unit_ids, target_ids)
     _check_bulk_revisions(payload, state)
     _check_bulk_items(payload, state)
-    await _write_bulk(session, payload, state, actor)
+    await _write_bulk(session, bundle.id, payload, state, actor)
     await close_unused_suggestions(session, bundle.id, unit_ids=unit_ids, target_ids=target_ids)
     await settle_pairs(session, bundle.id, unit_ids, actor)
     record_event(
