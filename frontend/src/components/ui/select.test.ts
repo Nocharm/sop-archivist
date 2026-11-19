@@ -96,7 +96,7 @@ describe("Select", () => {
     const onClose = vi.fn();
     const select = createElement(Select<string>, { value: "apple", options: OPTIONS, onChange: vi.fn(), testId: "s" });
     // .ts 시험이라 JSX가 없다 - children이 필수 prop이어서 createElement의 셋째 인자로는 타입이 맞지 않는다
-    // eslint-disable-next-line react/no-children-prop
+    // eslint-disable-next-line react/no-children-prop -- .ts test without JSX; children is a required prop
     render(createElement(Modal, { title: "T", testId: "m", onClose, children: select }));
     act(() => byTestId("s")?.click());
     await flushFrame();

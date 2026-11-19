@@ -59,7 +59,7 @@ def test_reads_word_paragraphs_and_table_rows() -> None:
 
 
 def test_reads_plain_text_in_utf8_or_cp949() -> None:
-    assert read_list_file("plan.txt", "합성 계획\n\nSOP-QC-0100  합성 제목".encode("utf-8")).text == "합성 계획\nSOP-QC-0100 합성 제목"
+    assert read_list_file("plan.txt", "합성 계획\n\nSOP-QC-0100  합성 제목".encode()).text == "합성 계획\nSOP-QC-0100 합성 제목"
     assert read_list_file("plan.csv", "SOP-QC-0100,합성 제목".encode("cp949")).text == "SOP-QC-0100,합성 제목"
     assert read_list_text("  WI-QC-0101\t단계  \n").text == "WI-QC-0101 단계"
 
