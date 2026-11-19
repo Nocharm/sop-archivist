@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { ComposedItem, ComposedSection, OutlineKind } from "./api-sop";
 import { resolveGapDrop, resolveSlotDrop } from "./assign-drop-model";
-import { buildGapBlocks, buildPlaceSections, findPlaceBlock, formatGapLabel, formatPlacement, formatPlacePosition, isSpotOpen, listGapSpots, PLACE_REFUSAL_KEYS, readFixedSpot, readGapKey, readObjectParticle, readPlacePosition, readSubjectParticle, resolvePlaceSpot, type Placement } from "./place-spot-model";
+import { buildGapBlocks, buildPlaceSections, findPlaceBlock, formatGapLabel, formatPlacement, formatPlacementDest, formatPlacePosition, isSpotOpen, listGapSpots, PLACE_REFUSAL_KEYS, readFixedSpot, readGapKey, readObjectParticle, readPlacePosition, readSubjectParticle, resolvePlaceSpot, type Placement } from "./place-spot-model";
 
 function makeItem(target_id: number, unit: number, number: string | null = null, lang: ComposedItem["lang"] = "en"): ComposedItem {
   return { target_id, kind: "sentence", lang, text: `t${target_id}`, status: "confirmed", change_type: null, number, number_style: number ? "numbered" : "bullet", indent_level: 0, meaning_key: null, source_unit_ids: [unit] };
@@ -157,6 +157,11 @@ describe("formatPlacement · refusal keys", () => {
     expect(formatPlacement(expectPlace(resolvePlaceSpot(sections, { kind: "section", sectionKey: "general_requirements.safety" }, [999])), t)).toBe("→ 5.1. General Requirements › Safety");
     expect(formatPlacement(expectPlace(resolvePlaceSpot(sections, { kind: "line", targetId: 20, isUpperHalf: false }, [999])), t)).toBe('→ 6.1. Procedures › Filter change · template.drop.after{"n":"6.1.2","p":"가","after":"6.1.1"}');
     expect(formatPlacement(expectPlace(resolvePlaceSpot(sections, { kind: "section", sectionKey: "appendices" }, [999])), t)).toBe("→ 9. Appendices · template.drop.declareAppendix");
+  });
+  it("shortens the destination for the drag card: the number it becomes, else the section head, never the appendix hint", () => {
+    expect(formatPlacementDest(expectPlace(resolvePlaceSpot(sections, { kind: "line", targetId: 20, isUpperHalf: false }, [999])))).toBe("→ 6.1.2");
+    expect(formatPlacementDest(expectPlace(resolvePlaceSpot(sections, { kind: "section", sectionKey: "general_requirements.safety" }, [999])))).toBe("→ 5.1. General Requirements › Safety");
+    expect(formatPlacementDest(expectPlace(resolvePlaceSpot(sections, { kind: "section", sectionKey: "appendices" }, [999])))).toBe("→ 9. Appendices");
   });
   it("picks the Korean particle by the last digit", () => {
     expect(["6.1.1", "6.1.2", "6.1.3", "6.1.4", "6.1.5", "6.1.9", "6.1.10"].map(readSubjectParticle)).toEqual(["이", "가", "이", "가", "가", "가", "이"]);

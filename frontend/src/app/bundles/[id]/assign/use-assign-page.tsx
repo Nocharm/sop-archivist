@@ -18,7 +18,7 @@ import { showToast } from "@/components/ui/toast";
 import { ApiError } from "@/lib/api";
 import { humanizeApiError } from "@/lib/api-errors";
 import { buildDropSections, buildOldDragCard, canDragOld, findAssignDrop, findDropBlock, getSectionKey, isPositionLive, listDraftLines, readSectionDestination, REFUSAL_KEYS, resolveDropLink, resolveGapDrop, resolveSlotDrop, resolveTreeDrop, type AssignDrop, type DraftLine, type DropSection, type SendDrop, type TreeDrop } from "@/lib/assign-drop-model";
-import { buildGapBlocks, buildPlaceSections, findPlaceBlock, formatPlacement, isSpotOpen, listGapSpots, PLACE_REFUSAL_KEYS, readFixedSpot, readObjectParticle, readPlacePosition, resolvePlaceSpot, type Placement, type PlaceSection, type PlaceSpot } from "@/lib/place-spot-model";
+import { buildGapBlocks, buildPlaceSections, findPlaceBlock, formatPlacement, formatPlacementDest, isSpotOpen, listGapSpots, PLACE_REFUSAL_KEYS, readFixedSpot, readObjectParticle, readPlacePosition, resolvePlaceSpot, type Placement, type PlaceSection, type PlaceSpot } from "@/lib/place-spot-model";
 import { findUnderPoint, type BoxDragConfig, type DragHover, type DragPoint } from "@/lib/box-drag";
 import { DROP_LINE_HALF_PX, type DropLineAt } from "@/lib/drop-line";
 import { useBoxDrag } from "@/lib/use-box-drag";
@@ -2479,7 +2479,7 @@ export function useAssignPage() {
     if (drop.kind === "gap" || drop.kind === "slot") {
       const section = composedDoc?.sections.find((candidate) => candidate.location_key === drop.sectionKey);
       const note = section ? `→ ${readSectionHead(section)}` : undefined;
-      return drop.kind === "slot" ? { state: "ok", note, target: item?.querySelector<HTMLElement>(".new-slot-empty") } : { state: "ok", note };
+      return drop.kind === "slot" ? { state: "ok", note, dest: note, target: item?.querySelector<HTMLElement>(".new-slot-empty") } : { state: "ok", note, dest: note };
     }
     if (drop.kind === "refused") {
       const target = drop.reason === "written_doc" ? null : (item?.querySelector<HTMLElement>(".new-slot-empty, .new-line, .new-block") ?? null);
@@ -2550,7 +2550,7 @@ export function useAssignPage() {
   }
   /** 템플릿 자리의 상태 글과 테두리 - 칸 자리는 그 자리에, 줄 사이는 선만(테두리 없음) */
   function readTemplateHover(placement: Placement, el: HTMLElement | null): DragHover {
-    if (placement.kind === "place") return { state: "ok", note: formatPlacement(placement, t), target: placement.edge ? null : el };
+    if (placement.kind === "place") return { state: "ok", note: formatPlacement(placement, t), dest: formatPlacementDest(placement), target: placement.edge ? null : el };
     if (placement.kind === "refused") return { state: "refused", note: t(PLACE_REFUSAL_KEYS[placement.reason]), target: el };
     return { state: "none" };
   }
@@ -2664,19 +2664,20 @@ export function useAssignPage() {
       // 캡션 칩 - 제 자리 밖 Old 용지 위면 "떼서 문장으로", 그 밖은 놓을 자리가 아니다
       if (captionId !== null) {
         const { detach } = readCaptionDetachAt(point, captionId);
-        if (detach.kind === "detach") return unlinked({ state: "ok", note: t("assign.captionSlot.drag.detach") });
+        if (detach.kind === "detach") return unlinked({ state: "ok", note: t("assign.captionSlot.drag.detach"), dest: t("assign.drag.dest.sentence") });
         return unlinked(detach.kind === "refused" ? { state: "refused", note: t(detach.reasonKey) } : { state: "none" });
       }
       // Old 캡션 자리 위면 캡션으로 붙이기(그 자리에 테두리) - 그 묶음 자신을 끌어 왔으면 다른 놓을 곳을 본다
       const slot = readCaptionDropAt(point, unitIds);
       if (slot !== null && slot.drop.kind !== "none") {
-        return unlinked(slot.drop.kind === "attach" ? { state: "ok", note: t("assign.captionSlot.drag.attach"), target: slot.el } : { state: "refused", note: t(slot.drop.reasonKey), target: slot.el });
+        return unlinked(slot.drop.kind === "attach" ? { state: "ok", note: t("assign.captionSlot.drag.attach"), dest: t("assign.drag.dest.caption"), target: slot.el } : { state: "refused", note: t(slot.drop.reasonKey), target: slot.el });
       }
       // 옆 패널 나무를 먼저 본다 - 칸·step 줄이면 "→ 문서 번호 · 칸 이름", N/A면 이유. 줄 상자에 테두리
       const tree = readTreeAt(point);
       if (tree.drop.kind !== "none") {
         if (tree.drop.kind === "refused") return unlinked({ state: "refused", note: t(REFUSAL_KEYS[tree.drop.reason]), target: tree.row });
-        return unlinked({ state: "ok", note: tree.option ? `→ ${tree.option.docCode} · ${tree.option.label}` : undefined, target: tree.row });
+        const note = tree.option ? `→ ${tree.option.docCode} · ${tree.option.label}` : undefined;
+        return unlinked({ state: "ok", note, dest: note, target: tree.row });
       }
       const { line, drop } = readDropAt(point);
       if (drop.kind === "link" && line !== null) {
@@ -2687,7 +2688,7 @@ export function useAssignPage() {
         const start = strip ? readOldLineStart(strip) : null;
         const isStartShown = start !== null && frame !== undefined && start.y >= frame.top && start.y <= frame.bottom;
         dragLineRef.current?.update(isStartShown ? start : null, readNewLineEnd(line, unitIds[0]));
-        return { state: "ok", note: t("assign.drag.link"), target: line };
+        return { state: "ok", note: t("assign.drag.link"), dest: t("assign.drag.dest.link"), target: line };
       }
       // 한/영 연달아 문서의 Old 조각 위면 짝 맺기(5걸음)
       const pair = readPairAt(point, unitIds);
@@ -2773,8 +2774,8 @@ export function useAssignPage() {
   }
   /** 짝 놓기의 상태 글과 테두리 - pair는 "Pair with <번호>", confirm은 "Confirm this suggested pair", refused는 이유, none은 놓을 자리 밖 */
   function readPairHover(drop: PairDrop, target: ViewUnit | undefined, el: HTMLElement | null): DragHover {
-    if (drop.kind === "pair") return { state: "ok", note: t("assign.pairDrag.pair", { id: target?.display_id ?? "" }), target: el };
-    if (drop.kind === "confirm") return { state: "ok", note: t("assign.pairDrag.confirm"), target: el };
+    if (drop.kind === "pair") return { state: "ok", note: t("assign.pairDrag.pair", { id: target?.display_id ?? "" }), dest: t("assign.drag.dest.pair"), target: el };
+    if (drop.kind === "confirm") return { state: "ok", note: t("assign.pairDrag.confirm"), dest: t("assign.drag.dest.pair"), target: el };
     if (drop.kind === "refused") return { state: "refused", note: t(PAIR_REFUSAL_KEYS[drop.reason]), target: el };
     return { state: "none" };
   }

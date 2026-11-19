@@ -143,9 +143,10 @@
     will-change: transform;
   }
   .drag-card-id { color: var(--accent); font: 600 11px/16px var(--font-mono); white-space: nowrap; }
-  /* 표는 한 줄 - 글 칸만 줄고 말줄임 */
-  .drag-card-text { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* 표는 한 줄 - 넘치면 끝의 갈 곳이 먼저 줄고(높은 shrink, 앞머리는 남긴다) 그다음 글 칸이 말줄임. id · 개수는 줄지 않는다 */
+  .drag-card-text { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .drag-card-count { padding: 0 5px; border-radius: 8px; background: var(--accent); color: var(--on-accent); font: 600 10px/16px var(--font-mono); white-space: nowrap; }
+  .drag-card-dest { flex: 0 1000 auto; min-width: 3.5em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-2); font-weight: 500; }
   .drag-card[data-refused] { border: 1px dashed var(--ink-4); color: var(--ink-3); }
   /* 놓을 자리의 글(갈 곳 · 못 놓는 이유) - 화면에는 그리지 않고 읽기 프로그램이 읽는다(lib/box-drag.ts) */
   .drag-status { position: fixed; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }

@@ -1591,6 +1591,8 @@ await runStep("new documents: drag a WI onto another SOP to change its parent, U
   const titleOf = (doc) => page.locator(`[data-testid="tobe-id-${doc.id}-title-text"]`);
   const card = page.locator('[data-testid="drag-card"]');
   const noteText = () => page.locator('[data-testid="drag-status"]').evaluate((el) => (el.textContent ?? "").trim() || null);
+  // 갈 곳은 표 끝에도 짧게(놓을 수 있을 때만) - 거절 이유는 상태 글에만
+  const destText = () => card.locator(".drag-card-dest").evaluate((el) => (el.textContent ?? "").trim() || null);
   const dropOf = (locator) => locator.getAttribute("data-drop");
   const dropCount = () => page.locator("[data-drop]").count();
   const opacityOf = (locator) => locator.evaluate((el) => Number(getComputedStyle(el).opacity));
@@ -1695,6 +1697,7 @@ await runStep("new documents: drag a WI onto another SOP to change its parent, U
     check("passing over rows for 30 steps does not re-render", (await commits()) === before, `${before} -> ${await commits()}`);
     await moveOver(row(sopDrag));
     check("the card reads Parent SOP: SOP-DRAG over another SOP", (await noteText()) === "Parent SOP: SOP-DRAG", await noteText());
+    check("the card ends with → SOP-DRAG", (await destText()) === "→ SOP-DRAG", String(await destText()));
     check(
       "the SOP row is the drop target, the WI row is the source, the screen is marked",
       (await dropOf(row(sopDrag))) === "over" && (await row(w).getAttribute("data-drag-src")) !== null && (await page.locator('[data-testid="documents-drop"]').getAttribute("data-parent-drag")) !== null,
@@ -1717,9 +1720,9 @@ await runStep("new documents: drag a WI onto another SOP to change its parent, U
 
     // 4. 못 놓는 곳은 이유를 말한다 - 그 밖은 표시도 메모도 없다
     await moveOver(row(x));
-    check("over another WI: refused, A WI cannot be a parent", (await card.getAttribute("data-refused")) !== null && (await noteText()) === "A WI cannot be a parent" && (await dropOf(row(x))) === "refused", await noteText());
+    check("over another WI: refused, A WI cannot be a parent", (await card.getAttribute("data-refused")) !== null && (await noteText()) === "A WI cannot be a parent" && (await destText()) === null && (await dropOf(row(x))) === "refused", await noteText());
     await moveOver(row(sopCf));
-    check("over its own parent: refused, Already under this SOP", (await noteText()) === "Already under this SOP" && (await dropOf(row(sopCf))) === "refused", await noteText());
+    check("over its own parent: refused, Already under this SOP", (await noteText()) === "Already under this SOP" && (await destText()) === null && (await dropOf(row(sopCf))) === "refused", await noteText());
     const silentOver = {};
     for (const [name, locator] of [
       ["own row", row(w)],
@@ -1729,9 +1732,9 @@ await runStep("new documents: drag a WI onto another SOP to change its parent, U
       ["empty", page.locator('[data-testid="tobe-count"]')],
     ]) {
       await moveOver(locator, 0.5);
-      silentOver[name] = `${await dropCount()}:${await noteText()}`;
+      silentOver[name] = `${await dropCount()}:${await noteText()}:${await destText()}`;
     }
-    check("nothing is marked over its own row, an Old row, an open panel, the add row or empty space", Object.values(silentOver).every((value) => value === "0:null"), JSON.stringify(silentOver));
+    check("nothing is marked over its own row, an Old row, an open panel, the add row or empty space", Object.values(silentOver).every((value) => value === "0:null:null"), JSON.stringify(silentOver));
 
     // 5. 놓이지 않는 것 - Esc, WI 위에 놓기, 빈 곳에 놓기
     await moveOver(row(sopDrag));
@@ -1954,7 +1957,8 @@ await runStep("new documents: a WI dragged far down a long list stays in view wh
     const targetBox = await rowOf(sopB).boundingBox();
     await page.mouse.move(from.x, targetBox.y + Math.min(targetBox.height / 2, 24), { steps: 6 });
     const note = await page.locator('[data-testid="drag-status"]').evaluate((el) => (el.textContent ?? "").trim() || null);
-    check("auto-scroll brought SOP-LONG-B under the pointer", note === "Parent SOP: SOP-LONG-B", note);
+    const dest = await page.locator('[data-testid="drag-card"] .drag-card-dest').evaluate((el) => (el.textContent ?? "").trim() || null);
+    check("auto-scroll brought SOP-LONG-B under the pointer", note === "Parent SOP: SOP-LONG-B" && dest === "→ SOP-LONG-B", `${note} / ${dest}`);
     const scrollAtDrop = await frameScroll();
     const saved = page.waitForResponse((response) => response.request().method() === "PATCH" && new URL(response.url()).pathname.endsWith(`/tobe/docs/${moving.id}`), { timeout: T });
     await page.mouse.up();
@@ -2126,6 +2130,7 @@ await runStep("documents: the upload window sorts files into Old and New groups,
   const rowCount = () => page.locator('[data-testid="upload"] .upload-item').count();
   const waitSubmit = (state) => page.locator(`[data-testid="upload-submit"]${state === "on" ? ":not([disabled])" : "[disabled]"}`).waitFor({ timeout: T }).then(() => true, () => false);
   const cardNote = () => page.locator('[data-testid="drag-status"]').evaluate((el) => (el.textContent ?? "").trim() || null);
+  const cardDest = () => card.locator(".drag-card-dest").evaluate((el) => (el.textContent ?? "").trim() || null);
   const centerOf = async (locator) => {
     const box = await locator.boundingBox();
     return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
@@ -2197,9 +2202,10 @@ await runStep("documents: the upload window sorts files into Old and New groups,
     await startDrag(2);
     check("the card carries the side the row is on and the file name", (await card.locator(".drag-card-id").innerText()).trim() === "Old" && (await card.locator(".drag-card-text").innerText()).includes("WI-04"));
     await moveOver("old");
-    check("over its own group nothing is marked and the card says nothing", (await page.locator("[data-drop]").count()) === 0 && (await cardNote()) === null, String(await cardNote()));
+    check("over its own group nothing is marked and the card says nothing", (await page.locator("[data-drop]").count()) === 0 && (await cardNote()) === null && (await cardDest()) === null, String(await cardNote()));
     await moveOver("new");
     check("over the other group the card reads Side: New and that group is the drop target", (await cardNote()) === "Side: New" && (await group("new").getAttribute("data-drop")) === "over", String(await cardNote()));
+    check("over the other group the card ends with → New", (await cardDest()) === "→ New", String(await cardDest()));
     await page.mouse.up();
     await waitGroup(2, "new");
     check("dropping moves the row to the New group, the same as pressing New", (await pressed(2)) === "new" && (await note(2)).startsWith("Creates"), await note(2));

@@ -1,5 +1,5 @@
 // 상자 전체를 끄는 공통 포인터 끌기 엔진 - 손잡이 없이 4px 넘게 움직이면 끌기, 한 줄 표가 따라오고 놓을 자리 표시는 DOM 속성과 점 달린 선 하나로만 한다.
-// 놓을 자리의 글(이유 · 갈 곳)은 표에 적지 않고 화면 밖 상태 글(drag-status)에 둔다 - 읽기 프로그램과 스모크가 같은 글을 읽는다.
+// 놓을 자리의 글(이유 · 갈 곳)은 화면 밖 상태 글(drag-status)에 둔다 - 읽기 프로그램과 스모크가 같은 글을 읽는다. 표 끝에는 갈 곳만 짧게(dest, 놓을 수 있을 때).
 // React를 모른다(React 상태를 프레임마다 바꾸지 않는다). 쓰는 쪽은 `attachBoxDrag`나 `useBoxDrag`로 붙인다.
 // 설계: docs/superpowers/specs/2026-11-16-drag-and-drop-design.md §4, 모양은 docs/superpowers/specs/2026-11-20-assign-mockup1-design.md D7
 import { createDropLine, type DropLine, type DropLineAt } from "@/lib/drop-line";
@@ -18,9 +18,10 @@ export interface DragPoint { x: number; y: number } // clientX·clientY
 export interface DragCard { id: string; text: string; count: string | null } // count는 이미 번역한 글("3 lines")
 /**
  * state "ok" = 놓을 수 있음, "refused" = 못 놓음(note가 이유), "none" = 놓을 자리 밖. note는 상태 글로만 간다.
+ * dest는 표 끝에 짧게 보일 갈 곳("→ 5.2 · indent", "→ link") - ok일 때만 그린다. 거절 이유는 표에 적지 않는다(놓으면 알림).
  * target은 테두리를 그릴 상자(없어도 된다), line은 두 줄 사이 놓을 자리 선(없으면 선을 감춘다)
  */
-export interface DragHover { state: "ok" | "refused" | "none"; note?: string; target?: HTMLElement | null; line?: DropLineAt | null }
+export interface DragHover { state: "ok" | "refused" | "none"; note?: string; dest?: string; target?: HTMLElement | null; line?: DropLineAt | null }
 export interface BoxDragConfig<S> {
   pick: (event: PointerEvent) => S | null; // 끌 것이 없거나 읽기 전용이면 null
   getCard: (source: S) => DragCard;
@@ -148,12 +149,14 @@ function removeAltModeListeners(): void {
 
 // --- 끌려가는 표(한 줄: id · 글 말줄임 · 개수) ---
 
-interface CardView {
+export interface CardView {
   el: HTMLElement;
-  width: number; // 글이 바뀌지 않으니 붙일 때 한 번 잰다
+  dest: HTMLElement; // 끝의 갈 곳 - 없으면 hidden
+  width: number; // 갈 곳이 바뀔 때만 다시 잰다
 }
 
-function buildCard(card: DragCard): HTMLElement {
+/** 한 줄 표(id · 글 말줄임 · 개수 · 갈 곳) - 붙이지 않은 채 돌려준다. 폭은 붙인 뒤 applyCardDest가 잰다 */
+export function buildCard(card: DragCard): CardView {
   const el = document.createElement("div");
   el.className = "drag-card";
   el.dataset.testid = "drag-card";
@@ -167,7 +170,20 @@ function buildCard(card: DragCard): HTMLElement {
   add("drag-card-id", card.id);
   add("drag-card-text", card.text);
   if (card.count !== null) add("drag-card-count", card.count);
-  return el;
+  const dest = document.createElement("span");
+  dest.className = "drag-card-dest";
+  dest.hidden = true;
+  el.append(dest);
+  return { el, dest, width: 0 };
+}
+
+/** 표 끝의 갈 곳을 바꾼다 - 놓을 수 있는 자리의 짧은 글만, 거절 · 자리 밖이면 감춘다. 글이 바뀌면 폭을 다시 잰다 */
+export function applyCardDest(view: CardView, hover: DragHover): void {
+  const text = hover.state === "ok" ? (hover.dest ?? "") : "";
+  if (view.dest.textContent === text) return;
+  view.dest.textContent = text;
+  view.dest.hidden = text === "";
+  view.width = view.el.offsetWidth;
 }
 
 function applyHover(view: CardView, hover: DragHover, previous: HTMLElement | null): HTMLElement | null {
@@ -177,6 +193,7 @@ function applyHover(view: CardView, hover: DragHover, previous: HTMLElement | nu
   const flag = isRefused ? "refused" : "";
   if (document.documentElement.getAttribute("data-box-drag") !== flag) document.documentElement.setAttribute("data-box-drag", flag);
   setStatus(hover.note ?? "");
+  applyCardDest(view, hover);
   const target = hover.state === "none" ? null : (hover.target ?? null);
   if (previous && previous !== target) delete previous.dataset.drop;
   if (target) target.dataset.drop = hover.state === "ok" ? "over" : "refused";
@@ -249,9 +266,9 @@ export function attachBoxDrag<S>(root: HTMLElement, config: BoxDragConfig<S>): (
         dragLive = true;
         window.getSelection()?.removeAllRanges();
         document.documentElement.setAttribute("data-box-drag", "");
-        const el = buildCard(config.getCard(source));
-        document.body.append(el);
-        view = { el, width: el.offsetWidth };
+        view = buildCard(config.getCard(source));
+        document.body.append(view.el);
+        view.width = view.el.offsetWidth;
         config.onStart?.(source, start);
         raf = window.requestAnimationFrame(tick);
       }

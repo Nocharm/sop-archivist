@@ -40,12 +40,12 @@ const readSectionIds = (page, key) => page.evaluate((k) => [...(document.querySe
 // 그 줄이 든 칸의 키
 const readRowKey = (page, id) => page.evaluate((rowId) => document.querySelector(`[data-testid="output-c-row-${rowId}"]`)?.closest("section")?.dataset.locationKey ?? null, id);
 const readRowNumber = (page, id) => page.evaluate((rowId) => document.querySelector(`[data-testid="output-c-number-${rowId}"]`)?.textContent.trim() ?? null, id);
-// 끌리는 표 - 거절 표시, 글 전체, 끌리는 덩어리 줄(src). 이유·번호(note)는 표가 아니라 화면 밖 상태 글(drag-status)에 있다
+// 끌리는 표 - 거절 표시, 글 전체, 끌리는 덩어리 줄(src). 이유·번호(note)는 화면 밖 상태 글(drag-status)에, 받을 번호는 표 끝(dest)에도 짧게(놓을 수 있을 때만)
 const readDragCard = (page) => page.evaluate(() => {
   const card = document.querySelector('[data-testid="drag-card"]');
   const status = document.querySelector('[data-testid="drag-status"]');
   const src = [...document.querySelectorAll("[data-drag-src]")].map((row) => row.dataset.flipKey);
-  return { shown: Boolean(card), refused: card?.hasAttribute("data-refused") ?? false, note: card && status ? status.textContent.trim() : "", text: card?.textContent ?? "", src };
+  return { shown: Boolean(card), refused: card?.hasAttribute("data-refused") ?? false, note: card && status ? status.textContent.trim() : "", dest: card?.querySelector(".drag-card-dest")?.textContent.trim() ?? "", text: card?.textContent ?? "", src };
 });
 // 끌기가 남긴 표시 - 끝나면 모두 0이어야 한다
 const readDragMarks = (page) => page.evaluate(() => ({
@@ -871,6 +871,8 @@ await runStep("order: drag a line to reorder and indent", {}, async ({ page, tak
   const card = page.locator('[data-testid="drag-card"]');
   // 놓을 자리의 미리 센 번호는 상태 글(drag-status, 화면 밖)의 note("→ 5.1", 깊이가 바뀌면 "· indent"가 붙는다)에 적힌다
   const readNote = async () => ((await card.count()) > 0 ? ((await page.locator('[data-testid="drag-status"]').textContent()) ?? "").trim() : "");
+  // 같은 번호가 표 끝에도 짧게 보인다
+  const readDest = async () => ((await card.count()) > 0 ? ((await card.locator(".drag-card-dest").textContent()) ?? "").trim() : "");
   // 선에 붙은 표시(있다면)가 덮는 글 상자 - 모든 칸의 줄 번호·글과 겹친 것
   const readLineCover = () => page.evaluate(() => {
     const marks = [...document.querySelectorAll('[data-testid="drop-line"] *')].map((el) => el.getBoundingClientRect()).filter((box) => box.width > 0 && box.height > 0);
@@ -912,8 +914,10 @@ await runStep("order: drag a line to reorder and indent", {}, async ({ page, tak
   await page.mouse.move(target.x, target.y, { steps: 12 });
   await settle();
   const lineText = await readNote();
+  const lineDest = await readDest();
   check("the drag shows the flag, the card and the drop line", (await isDragging()) && (await card.isVisible()) && (await rowOf(l).getAttribute("data-drag-src")) === "" && (await dropLine.isVisible()), lineText);
   check("the card shows the number the line will get", lineText === `→ ${firstNumber}`, `${lineText} vs → ${firstNumber}`);
+  check("the card ends with the same number", lineDest === `→ ${firstNumber}`, `${lineDest} vs → ${firstNumber}`);
   const covered = await readLineCover();
   check("the drop line covers no line's number or text", covered.length === 0, JSON.stringify(covered));
   // 3. 끄는 동안 다른 호버 효과는 꺼진다(G10)
@@ -979,7 +983,7 @@ await runStep("order: drag a line to reorder and indent", {}, async ({ page, tak
     await page.mouse.down();
     await page.mouse.move(point.x + dx, point.y, { steps: 12 });
     const lineLeft = (await dropLine.isVisible()) ? (await dropLine.boundingBox()).x : null;
-    return { text: await readNote(), dragging: await isDragging(), lineLeft };
+    return { text: await readNote(), dest: await readDest(), dragging: await isDragging(), lineLeft };
   };
   // 그 깊이의 줄이 시작하는 x - 줄 상자(.c-line) 왼쪽 + 들여쓴 만큼(padding-left)
   const readTextStart = (id) => page.locator(`[data-testid="output-c-row-${id}"] .c-line`).evaluate((el) => el.getBoundingClientRect().left + parseFloat(getComputedStyle(el).paddingLeft));
@@ -993,7 +997,7 @@ await runStep("order: drag a line to reorder and indent", {}, async ({ page, tak
   await page.mouse.up();
   const indentedOk = (await indented).ok();
   const deeper = await readNumber(indentId);
-  check("dragging sideways 30px indents one level", right.dragging && right.text.includes("indent") && !right.text.includes("outdent") && indentedOk && deeper.split(".").length === indentNumber.split(".").length + 1, `${right.text} | ${indentNumber} -> ${deeper}`);
+  check("dragging sideways 30px indents one level", right.dragging && right.text.includes("indent") && !right.text.includes("outdent") && right.dest === right.text && indentedOk && deeper.split(".").length === indentNumber.split(".").length + 1, `${right.text} | ${indentNumber} -> ${deeper}`);
   // 끄는 동안의 선은 들여 쓴 뒤 그 줄이 시작하는 자리에서 시작한다(글의 들여쓰기 1.5em과 같은 폭)
   await page.waitForTimeout(400);
   const indentedStart = await readTextStart(indentId);
@@ -1001,7 +1005,7 @@ await runStep("order: drag a line to reorder and indent", {}, async ({ page, tak
   const left = await dragSideways(indentId, -30);
   const outdented = waitOrderSave(page);
   await page.mouse.up();
-  check("dragging 30px back outdents it and saves", left.text.includes("outdent") && (await outdented).ok() && (await readNumber(indentId)) === indentNumber, `${left.text} | ${await readNumber(indentId)}`);
+  check("dragging 30px back outdents it and saves", left.text.includes("outdent") && left.dest === left.text && (await outdented).ok() && (await readNumber(indentId)) === indentNumber, `${left.text} | ${await readNumber(indentId)}`);
 
   // 11. 깊이가 잠긴 줄(이미 쓴 문서 WI-04) - 같은 몸짓은 아무것도 바꾸지 않는다
   const [locked] = await findOrderDocs(page, () => {
@@ -1020,7 +1024,7 @@ await runStep("order: drag a line to reorder and indent", {}, async ({ page, tak
   const lockedDrag = await dragSideways(lockedId, 30);
   await page.mouse.up();
   await page.waitForTimeout(400);
-  check("on a depth-locked line the same gesture changes nothing", lockedDrag.dragging && !lockedDrag.text.includes("indent") && puts.length === lockedPuts && (await padding()) === lockedPadding, JSON.stringify({ lockedDrag, puts: puts.length - lockedPuts }));
+  check("on a depth-locked line the same gesture changes nothing", lockedDrag.dragging && !lockedDrag.text.includes("indent") && !lockedDrag.dest.includes("indent") && puts.length === lockedPuts && (await padding()) === lockedPadding, JSON.stringify({ lockedDrag, puts: puts.length - lockedPuts }));
 
   // 12. N/A 칸 위로(데모 시드 SOP-CF의 절차 Troubleshooting) - 앞서 같은 칸에서 놓을 자리를 잡았어도 표에 이유를 적고, 놓으면 아무것도 저장하지 않는다(G7·G8).
   //     출발은 N/A 칸 위쪽에서 줄이 있는 가장 가까운 칸(같은 시드의 첫 절차)
@@ -1047,7 +1051,7 @@ await runStep("order: drag a line to reorder and indent", {}, async ({ page, tak
   const naFit = await readOutlineFit(page, naCase.na);
   check("the refused outline clears the N/A section's heading and reason", isOutlineClear(naFit), JSON.stringify(naFit));
   await takeShot("order-xsec-refused-na.png");
-  check("an N/A section refuses with a reason", validFirst && refusal.refused && refusal.note.includes("That section is N/A in the To-Be list.") && (await dropLine.isHidden()) && refusal.section?.opacity < 1 && refusal.section?.drop === "refused", JSON.stringify({ validFirst, ...refusal }));
+  check("an N/A section refuses with a reason", validFirst && refusal.refused && refusal.note.includes("That section is N/A in the To-Be list.") && refusal.dest === "" && (await dropLine.isHidden()) && refusal.section?.opacity < 1 && refusal.section?.drop === "refused", JSON.stringify({ validFirst, ...refusal }));
   check("the dimmed N/A section keeps its N/A reason line undimmed", refusal.section?.reasonOpacity === 1, JSON.stringify(refusal.section));
   const refusalPuts = puts.length;
   await page.mouse.up();
@@ -1208,7 +1212,7 @@ await runStep("order: drag a block into another section, a sub-slot and an empty
   const rBetween = await page.locator(`[data-testid="output-c-row-${r.between}"]`).boundingBox();
   await dragThrough(page, await pointInRow(page, lead), [{ x: rBetween.x + 40, y: rBetween.y + 2 }]);
   const overR = { card: await readDragCard(page), section: await readSectionState(page, r.key), home: await readSectionState(page, a.key) };
-  check("over another section the card shows the number the line will get there, or the section's name for a line without a number", !overR.card.refused && overR.card.note === noteFor(expectedBetween, r) && overR.section?.drop === "over" && overR.section.opacity === 1 && overR.home?.opacity === 1, JSON.stringify(overR));
+  check("over another section the card shows the number the line will get there, or the section's name for a line without a number", !overR.card.refused && overR.card.dest === overR.card.note && overR.card.note === noteFor(expectedBetween, r) && overR.section?.drop === "over" && overR.section.opacity === 1 && overR.home?.opacity === 1, JSON.stringify(overR));
   const fitR = await readOutlineFit(page, r.key);
   check("the outline of a section with lines clears its heading, numbers, text and the drop line", isOutlineClear(fitR), JSON.stringify(fitR));
   const barDragged = await readBarClear(page, lead);
@@ -1244,7 +1248,7 @@ await runStep("order: drag a block into another section, a sub-slot and an empty
   await takeShot("order-xsec-landed.png");
   // 놓인 줄이 번호를 받았으면 표의 note가 그 번호(B의 번호 아래)였고, 번호 없는 줄이면(범주의 글머리 기호 줄) B의 이름이었다
   const landedB = await readRowNumber(page, lead);
-  check("dropping into a sub-slot moves it there with what the card showed", overB.src.includes(lead) && overB.note === noteFor(landedB, b) && (landedB === null || (b.number !== null && landedB.startsWith(`${b.number}.`))) && (await subSave).ok() && (await readRowKey(page, lead)) === b.key && flashedSub, JSON.stringify({ overB, b, key: await readRowKey(page, lead), number: landedB, flashedSub }));
+  check("dropping into a sub-slot moves it there with what the card showed", overB.src.includes(lead) && overB.dest === overB.note && overB.note === noteFor(landedB, b) && (landedB === null || (b.number !== null && landedB.startsWith(`${b.number}.`))) && (await subSave).ok() && (await readRowKey(page, lead)) === b.key && flashedSub, JSON.stringify({ overB, b, key: await readRowKey(page, lead), number: landedB, flashedSub }));
 
   // 3. 빈 칸 E로 - 표는 E의 첫 번호(번호 없는 줄이면 E의 이름), 놓으면 그 칸의 첫 줄들이 되고 다시 받아도 남는다
   await scrollRowToTop(page, lead, 120);
@@ -1258,7 +1262,7 @@ await runStep("order: drag a block into another section, a sub-slot and an empty
   check("dropping into an empty section saves", (await emptySave).ok());
   await reopenOrderDoc(page, docId, lead);
   const landedE = await readRowNumber(page, lead);
-  check("over an empty section the card shows its first number, or its name for a line without a number, and the line is drawn", overE.card.src.includes(lead) && overE.card.note === noteFor(landedE, e) && (landedE === null || landedE === `${e.number}.1`) && overE.section?.drop === "over" && overE.lineShown, JSON.stringify({ overE, e, number: landedE }));
+  check("over an empty section the card shows its first number, or its name for a line without a number, and the line is drawn", overE.card.src.includes(lead) && overE.card.dest === overE.card.note && overE.card.note === noteFor(landedE, e) && (landedE === null || landedE === `${e.number}.1`) && overE.section?.drop === "over" && overE.lineShown, JSON.stringify({ overE, e, number: landedE }));
   check("after a reload the block is the empty section's first lines", JSON.stringify(await readSectionIds(page, e.key)) === JSON.stringify(a.ids), JSON.stringify({ ids: await readSectionIds(page, e.key), number: landedE }));
 
   // 4. 되돌린다 - E에서 R의 두 묶음 사이로, 거기서 빈 A로(한 화면에 든 칸끼리)
@@ -1277,7 +1281,7 @@ await runStep("order: drag a block into another section, a sub-slot and an empty
   const backSaved = (await toA).ok();
   await reopenOrderDoc(page, docId, lead);
   const landedA = await readRowNumber(page, lead);
-  check("the block goes back into the empty first section", overA.note === noteFor(landedA, a) && (landedA === null || landedA === `${a.number}.1`) && backSaved, JSON.stringify({ overA, a, number: landedA }));
+  check("the block goes back into the empty first section", overA.dest === overA.note && overA.note === noteFor(landedA, a) && (landedA === null || landedA === `${a.number}.1`) && backSaved, JSON.stringify({ overA, a, number: landedA }));
   check("after a reload both sections are as they were", JSON.stringify(await readSectionIds(page, a.key)) === JSON.stringify(a.ids) && JSON.stringify(await readSectionIds(page, r.key)) === JSON.stringify(r.ids), JSON.stringify({ a: await readSectionIds(page, a.key), r: await readSectionIds(page, r.key) }));
 
   // 5. 다른 칸 위에서 Esc - 저장 없음, 표시는 모두 치워지고 줄은 그대로
@@ -1359,7 +1363,7 @@ await runStep("order: drag a WI line to another step", {}, async ({ page }) => {
   await dragThrough(page, from, [await pointInSectionEnd(page, wi.why)]);
   const overWhy = { card: await readDragCard(page), section: await readSectionState(page, wi.why) };
   const whyFit = await readOutlineFit(page, wi.why);
-  check("over the other part (Why) the drag is refused with its reason", overWhy.card.refused && overWhy.card.note.includes("Instruction or Why: change it in Assign") && overWhy.section?.drop === "refused" && isOutlineClear(whyFit), JSON.stringify({ ...overWhy, whyFit }));
+  check("over the other part (Why) the drag is refused with its reason", overWhy.card.refused && overWhy.card.dest === "" && overWhy.card.note.includes("Instruction or Why: change it in Assign") && overWhy.section?.drop === "refused" && isOutlineClear(whyFit), JSON.stringify({ ...overWhy, whyFit }));
   await page.mouse.move(from.x, (await pointInSectionEnd(page, wi.to)).y, { steps: 12 });
   const overTo = await readDragCard(page);
   // 받을 수 없는 다른 부분(Why)은 그 위에 있지 않아도 끄는 내내 흐리고, 받는 칸은 흐리지 않다
@@ -1371,7 +1375,7 @@ await runStep("order: drag a WI line to another step", {}, async ({ page }) => {
   const whyAfter = await readSectionState(page, wi.why);
   check("after the drop the other part is no longer dimmed and no marks are left", whyAfter?.opacity === 1 && (await readDragMarks(page)).marks === 0, JSON.stringify({ whyAfter, marks: await readDragMarks(page) }));
   const moved = bodies[0]?.items.filter((item) => wi.ids.includes(String(item.target_id))) ?? [];
-  check("dropping into another step's instruction sends the new step and depth", !overTo.refused && overTo.note.startsWith(`→ ${wi.toStep}.`) && savedOk && moved.length === wi.ids.length && moved.every((item) => item.wi_step === wi.toStep && "indent_level" in item), JSON.stringify({ overTo, moved }));
+  check("dropping into another step's instruction sends the new step and depth", !overTo.refused && overTo.note.startsWith(`→ ${wi.toStep}.`) && overTo.dest === overTo.note && savedOk && moved.length === wi.ids.length && moved.every((item) => item.wi_step === wi.toStep && "indent_level" in item), JSON.stringify({ overTo, moved }));
   await reopenOrderDoc(page, docId, lead);
   check("after a reload the lines are in the other step", (await readRowKey(page, lead)) === wi.to && JSON.stringify((await readSectionIds(page, wi.to)).slice(-wi.ids.length)) === JSON.stringify(wi.ids), JSON.stringify(await readSectionIds(page, wi.to)));
   // 되돌린다 - 비어 있는 원래 칸으로
@@ -1403,7 +1407,7 @@ await runStep("order: a written document's block cannot leave its section", {}, 
   await scrollRowToTop(page, written.from);
   await dragThrough(page, await pointInRow(page, written.from), [await pointInSectionEnd(page, written.to)]);
   const over = { card: await readDragCard(page), section: await readSectionState(page, written.to), locked: await page.evaluate(() => document.querySelectorAll("[data-drag-locked]").length) };
-  check("over another section the written block is refused with the step reason and the other sections are dimmed", over.card.refused && over.card.note.includes("Only sentences written here for a WI can change step.") && over.section?.drop === "refused" && over.section.opacity < 1 && over.locked === 1, JSON.stringify(over));
+  check("over another section the written block is refused with the step reason and the other sections are dimmed", over.card.refused && over.card.dest === "" && over.card.note.includes("Only sentences written here for a WI can change step.") && over.section?.drop === "refused" && over.section.opacity < 1 && over.locked === 1, JSON.stringify(over));
   await page.mouse.up();
   await page.waitForTimeout(400);
   check("releasing it saves nothing", puts.length === 0 && JSON.stringify(await readSectionIds(page, written.fromKey)) === JSON.stringify(order), JSON.stringify({ puts: puts.length, order: await readSectionIds(page, written.fromKey) }));
@@ -1729,7 +1733,7 @@ await runStep("order: a save landing mid-drag keeps the drop line and the saved 
   const crossReplanned = page.waitForResponse((response) => isOrderSave(response.request()), { timeout: 3000 }).catch(() => null);
   await page.mouse.up();
   const crossReplannedSave = await crossReplanned;
-  check("releasing without moving after the destination changed plans again and saves", !beforeDestRollback.refused && beforeDestRollback.note.startsWith("→ ") && crossReplannedSave?.ok() === true, JSON.stringify({ beforeDestRollback, saved: crossReplannedSave?.status() ?? null }));
+  check("releasing without moving after the destination changed plans again and saves", !beforeDestRollback.refused && beforeDestRollback.note.startsWith("→ ") && beforeDestRollback.dest === beforeDestRollback.note && crossReplannedSave?.ok() === true, JSON.stringify({ beforeDestRollback, saved: crossReplannedSave?.status() ?? null }));
   await reopenOrderDoc(page, docId, l);
   check("the block was saved at the top of the destination, above the rolled-back first line", JSON.stringify(await readOrder()) === JSON.stringify([...above.ids, ...original]), JSON.stringify(await readOrder()));
   // 되돌린다 - 덩어리를 비어 있는 원래 칸으로

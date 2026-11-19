@@ -258,6 +258,11 @@ export function formatPlacement(placement: Extract<Placement, { kind: "place" }>
   return parts.join(" · ");
 }
 
+/** 끄는 표 끝에 짧게 - 번호를 세는 자리면 받을 번호("→ 6.1.2"), 아니면 칸 머리. 부록 안내는 상태 글(formatPlacement)에만 */
+export function formatPlacementDest(placement: Extract<Placement, { kind: "place" }>): string {
+  return `→ ${placement.numbers?.becomes ?? placement.head}`;
+}
+
 function readNumberVars(numbers: PlaceNumbers): Record<string, string> {
   return { n: numbers.becomes, p: readSubjectParticle(numbers.becomes), after: numbers.after ?? "" };
 }
