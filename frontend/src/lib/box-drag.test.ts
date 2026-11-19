@@ -10,6 +10,7 @@ import {
   getEdgeScrollDir,
   hasPassedThreshold,
   isBoxDragActive,
+  isPressForConfig,
   pickUnderPoint,
   type BoxDragConfig,
   type DragHover,
@@ -110,6 +111,22 @@ describe("attachBoxDrag", () => {
     window.getSelection()?.removeAllRanges();
     html.removeAttribute("data-box-drag");
     html.removeAttribute("data-box-select");
+  });
+
+  it("a handle press goes only to the handle drag, a press elsewhere only to the whole-box drag", () => {
+    expect([isPressForConfig(true, true), isPressForConfig(false, false), isPressForConfig(true, false), isPressForConfig(false, true)]).toEqual([true, true, false, false]);
+    const handle = document.createElement("span");
+    handle.dataset.dragHandle = "";
+    box.append(handle);
+    const wholePicks: EventTarget[] = [];
+    const gripPicks: EventTarget[] = [];
+    attach({ pick: (event) => (wholePicks.push(event.target!), null) });
+    const detachGrip = attachBoxDrag(root, { handleOnly: true, pick: (event) => (gripPicks.push(event.target!), null), getCard: () => ({ id: "", text: "", count: null }), getScrollers: () => [], onMove: () => ({ state: "none" }), onDrop: () => {} });
+    press(handle);
+    press(box.querySelector("p")!);
+    detachGrip();
+    expect(wholePicks).toEqual([box.querySelector("p")]);
+    expect(gripPicks).toEqual([handle]);
   });
 
   it("a press released within 4px stays a click", () => {

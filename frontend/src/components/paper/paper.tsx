@@ -5,7 +5,7 @@
 // strips.fold(Assign 필터)가 있으면 맞는 조각만 제 모양, 곁은 한 줄 판, 먼 구간은 묶음 한 줄로 접는다(paper-fold-model.ts) - 한 줄 판·묶음은 단추라 눌러도 조각을 고르지 않는다.
 "use client";
 
-import { BookMarked, ChevronRight, ChevronsDownUp, Ellipsis, FoldVertical, FolderCheck, ImageIcon, Link2, Scissors, Sparkles, TriangleAlert, WandSparkles, type LucideIcon } from "lucide-react";
+import { BookMarked, ChevronRight, ChevronsDownUp, Ellipsis, FoldVertical, FolderCheck, GripVertical, ImageIcon, Link2, Scissors, Sparkles, TriangleAlert, WandSparkles, type LucideIcon } from "lucide-react";
 import { Fragment, memo, useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 
 import { BundleHead } from "@/components/paper/bundle-head";
@@ -30,6 +30,7 @@ import { getHiddenEnds, listFollowPreview } from "@/lib/number-model";
 import { getCardTops, getHiddenPrefixLength, getPairBrackets, getPillWidth, getSectionHeads, getTabWidths, getSectionLevel, getSectionPill, getVisibleSkip, sliceVisible, type PairBracket } from "@/lib/strip-pill-model";
 import { buildHeadingShiftGroups, readHeadingShiftHead, type HeadingShiftGroup } from "@/lib/heading-shift-model";
 import { getPairHint, type PairHintUnit } from "@/lib/pair-hint-model";
+import { orderPairRuns } from "@/lib/pair-order-model";
 import { readDeletedLine, type DeletedFold, type DeletedLine } from "@/lib/deleted-fold-model";
 import { buildTocBlock, shouldJoinTocCard } from "@/lib/toc-block-model";
 import { findUnwrapHeads, getRowUnwrapTable } from "@/lib/unwrap-model";
@@ -219,6 +220,9 @@ interface PaperProps {
     deleted?: { folds: ReadonlyMap<number, DeletedFold>; onOpen: (rowKey: string) => void };
     /** Assign - 처리 중인 일. 잠긴 박스는 끌리지 않고 그 곁 틈 · 머리 단추가 꺼진다(고르기 · 우클릭은 화면이 막는다) */
     pending?: PaperPending;
+    /** Assign - 고른 박스가 짝 전부가 이어 붙은 카드 안에 있으면 그 박스 왼쪽 가장자리에 점 여섯 손잡이(data-drag-handle, 설계 D8).
+     *  손잡이 끌기(카드 안 순서)는 화면이 붙인다. isAllowed가 거짓인 박스(배정이 걸림 등)에는 그리지 않는다 */
+    pairGrip?: { isAllowed: (unitId: number) => boolean };
   };
   /** strips에서 고른 조각의 글 바로 아래 줄(확인·짝 풀기 등 단추) - 조각 상자가 펼쳐지며 밀려 내려오고, 고름이 옮겨 가면 접힌다 */
   renderUnitActions?: (unitId: number) => ReactNode;
@@ -344,7 +348,11 @@ export function Paper({
           { edge: null, items: model.body },
           { edge: "bottom", items: model.footer },
         ];
-    return lists.filter((list) => list.items.length > 0).map((list) => ({ edge: list.edge, rows: foldCaptionRows(buildRows(list.items, model.segments), model.units) }));
+    // 이어 붙은 짝 카드 안은 사람이 바꾼 순서(pair_seq)로 - 떨어진 구성원은 제자리(lib/pair-order-model)
+    return lists.filter((list) => list.items.length > 0).map((list) => ({
+      edge: list.edge,
+      rows: orderPairRuns(foldCaptionRows(buildRows(list.items, model.segments), model.units), (row) => model.units.get(readRowUnitId(row) ?? -1)),
+    }));
   }, [hasStrips, items, model]);
   // 짝 - 단위 → 같은 짝의 다른 구성원(원문 순서, 떨어진 구성원 포함). 한 카드는 아래 brackets가 정한다(같은 쪽·같은 부분의 끊김 없는 줄만)
   const matesOf = useMemo(() => {
@@ -663,6 +671,20 @@ export function Paper({
   /** 처리 중인 일이 잡은 박스 - 끌기 · 틈 단추 · 머리 단추를 받지 않는다 */
   function isLocked(unitId: number | null | undefined): boolean {
     return unitId !== null && unitId !== undefined && (strips?.pending?.lockedIds.has(unitId) ?? false);
+  }
+
+  /** 고른 박스의 카드 안 순서 손잡이 - 짝 구성원 전부가 한 카드에 이어 붙었을 때만(떨어진 구성원이 있으면 순서가 없다) */
+  function renderPairGrip(unit: ViewUnit): ReactNode {
+    const grip = strips?.pairGrip;
+    if (!grip || unit.id !== selectedId || !brackets.has(unit.id) || isLocked(unit.id) || !grip.isAllowed(unit.id)) return null;
+    const top = cardTops.get(unit.id) ?? unit.id;
+    const cardSize = 1 + [...cardTops.values()].filter((id) => id === top).length;
+    if (cardSize !== (matesOf.get(unit.id)?.length ?? 0) + 1) return null;
+    return (
+      <span className="strip-grip" data-drag-handle="" data-grip-unit={unit.id} data-tip={t("paper.pairGrip.tip")} data-testid={`${testId}-grip-${unit.id}`}>
+        <GripVertical aria-hidden="true" />
+      </span>
+    );
   }
 
   /** 빛이 지나가는 박스(처리 중) - 움직임 줄이기면 CSS가 옅은 바탕만 */
@@ -1095,6 +1117,7 @@ export function Paper({
           data-pending={readPendingMark(unitId)}
           data-testid={`${testId}-piece-${unitId ?? row.key}`}
         >
+          {unit !== undefined && renderPairGrip(unit)}
           {/* 표·그림의 보류 칩 - 표 위 제 줄(data-start 밖)이라 표를 덮지 않고, 눌러도 조각 상자를 누른 것으로 그 단위를 고른다 */}
           {row.type !== "piece" && isHold && (
             <div className="strip-hold">

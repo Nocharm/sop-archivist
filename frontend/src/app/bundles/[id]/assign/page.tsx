@@ -76,7 +76,7 @@ export default function AssignPage() {
     setConfirmingIdentical, resetScope, setResetScope, slots, newDraft, draftSlotKey, placeResolved, canPlaceClick, pickedSpotKey,
     setCarvePick, carve, carveText, clearCarve, togglePairViewByButton, pairFrom, setPairFrom, pairSource, selectToc, openNewCtxMenu,
     openSolo, goToUnit, ctxGroups, confirmBlockKey, refPendingIds, isLinkedToWritten, captionPendingKeys, docDashboard, openCtxMenu, runUnitEdit,
-    rewrapTable, describeEditConfirm, clearToc, switchToPair, applySplitSuggestion, splitAtCut, handleOldDoubleClick,
+    rewrapTable, describeEditConfirm, pairGrip, clearToc, switchToPair, applySplitSuggestion, splitAtCut, handleOldDoubleClick,
     runCtx, revertHeadings, planOldJoin, joinOld, renderOldActions, runSave, runClear, confirmIdenticalAll, acceptAll, pickDestination,
     pickNewSentence, handleNewPick, handleJoinPick, readJoinAfter, pickJoinMenu, pickPlaceSpot, pickOwnAiLine, jumpToNew, openNewDoc,
     showInNew, jumpToOld, pickTemplateLine, fillTemplateMissing, isOldDrag, finishPairPick, handleOldClick, markRecHover, revealPick,
@@ -542,6 +542,8 @@ export default function AssignPage() {
                 highlightIds={mode === "old" ? highlightIds : NO_NUMBERS}
                 // 떨어진 짝 안내 줄 - 누르면 짝의 원래 자리로 가 그 박스를 고른다(설계 D3)
                 pairHint={mode === "old" && !isNewEdit ? { onGo: goToUnit } : undefined}
+                // 짝 카드 안 순서 손잡이 - 고른 박스가 짝 전부가 이어 붙은 카드 안이면(설계 D8)
+                pairGrip={pairGrip}
                 // 삭제로 확정한 줄의 접힌 한 줄 - 한 단으로 연 New 문서에는 줄이 없다
                 deleted={isSolo ? undefined : { folds: deletedFolds, onOpen: (key) => setDeletedOpen((open) => new Set(open).add(key)) }}
                 pickedIds={pickedOld}

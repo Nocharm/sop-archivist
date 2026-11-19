@@ -312,6 +312,8 @@ class ViewUnitOut(BaseModel):
     from_heading: bool = False
     # 캡션 하나를 같이 쓰는 그림 묶음(F7 ⑥)의 첫 그림 — 이 그림이 그 그림의 캡션을 같이 쓴다. 첫 그림 자신·묶이지 않은 단위는 null
     caption_figure_id: int | None = None
+    # 짝 카드 안 순서(pair_order.py, 편집 reorder_pair) — 바꾼 적 없으면 null(원문 순서)
+    pair_seq: int | None = None
 
 
 def _to_ref_out(state: RefState | None) -> ViewUnitRefOut | None:
@@ -558,6 +560,7 @@ async def build_document_view(session: AsyncSession, document: Document) -> Docu
                 noise_kind=unit.noise_kind,
                 from_heading=unit.from_heading,
                 caption_figure_id=unit.caption_figure_id,
+                pair_seq=unit.pair_seq,
             )
             for unit in units
         ],

@@ -24,6 +24,10 @@ export function useBoxDrag<S>(rootRef: RefObject<HTMLElement | null>, config: Bo
       return latestRef.current;
     };
     return attachBoxDrag<S>(root, {
+      // 손잡이 끌기인지는 config마다 정해져 바뀌지 않는다 - 누를 때 최신 config에서 읽는다
+      get handleOnly() {
+        return current().handleOnly;
+      },
       pick: (event) => current().pick(event),
       getCard: (source) => current().getCard(source),
       getScrollers: () => current().getScrollers(),

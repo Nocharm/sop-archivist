@@ -364,6 +364,8 @@ _UNIT_NUMBER_COLUMNS = {
     "from_heading": "BOOLEAN NOT NULL DEFAULT 0",
     # 그림 캡션 묶음(0030)도 그 앞 리비전에서는 잠시 더했다 뺀다
     "caption_figure_id": "INTEGER",
+    # 짝 카드 안 순서(0033)도 그 앞 리비전에서는 잠시 더했다 뺀다
+    "pair_seq": "INTEGER",
 }
 
 

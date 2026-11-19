@@ -1518,6 +1518,12 @@
   .pair-hint { display: flex; align-items: center; gap: 6px; margin-top: 2px; margin-inline: -4px; padding: 0 4px; border-radius: var(--r-1); font: 500 var(--fs-micro) / 16px var(--font-mono); color: var(--ink-3); text-align: left; cursor: pointer; }
   .pair-hint:hover { color: var(--accent); background: var(--hover); }
   .pair-hint:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  /* 짝 카드 안 순서 손잡이(설계 D8) - 고른 박스 왼쪽 가장자리의 안쪽 여백(--pg-pad-l)에 세로 가운데로. 번호 칸(.strip-lead)도 글도 덮지 않는다.
+     박스 전체 끌기와 나뉘는 자리라 커서도 다르다(grab) */
+  .pg[data-strips] .strip-grip { position: absolute; left: 0; top: 0; bottom: 0; z-index: 1; display: flex; align-items: center; justify-content: center; width: var(--pg-pad-l); color: var(--ink-4); cursor: grab; }
+  .pg[data-strips] .strip-grip:hover { color: var(--accent); }
+  .pg[data-strips] .strip-grip > svg { width: 12px; height: 12px; }
+  html[data-box-drag] .pg[data-strips] .strip-grip { cursor: grabbing; }
   /* 처리 중 알약 - 누르는 즉시 그 자리에(설계 2026-11-20 D4). 박스는 위 테두리 왼쪽에 걸쳐(글 첫 줄 위 여백과 틈에 앉아 글을 덮지 않는다), 틈은 합치기 단추 자리,
      표 머리는 "다시 표로" 옆. 줄의 content-visibility 자르는 선(32px · 틈 12px) 안이다. 눌러지지 않는다(밑의 박스를 누른 것으로) */
   .pending-pill { position: absolute; z-index: 3; display: inline-flex; align-items: center; height: 18px; padding: 0 8px; border: 1px solid var(--accent); border-radius: 9px; background: var(--surface); color: var(--accent); font: 600 var(--fs-cap) / 1 var(--font-ui); white-space: nowrap; box-shadow: var(--shadow-1); pointer-events: none; }
