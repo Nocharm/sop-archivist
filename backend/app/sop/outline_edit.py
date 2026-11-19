@@ -489,7 +489,7 @@ def plan_procedures(
         # 표준 절차끼리의 순서는 그대로여야 한다 — 선언 절차를 그 앞뒤로 옮기는 것은 된다(API의 순서 바꾸기와 같다)
         standard_keys = [child.key for child in children.values() if child.origin == ORIGIN_STANDARD]
         wanted_standard = [key for key, _ in wanted.values() if key in standard_keys]
-        moved = next((key for key, expected in zip(wanted_standard, standard_keys) if key != expected), None)
+        moved = next((key for key, expected in zip(wanted_standard, standard_keys, strict=False) if key != expected), None)
         if moved is not None:
             raise_rule(422, "outline_standard_item", doc_code=code, key=moved)
         plans.append(ProcedurePlan(code, parent, tuple(wanted.values()), tuple(child.key for child in removed)))

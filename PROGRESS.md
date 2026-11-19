@@ -2,6 +2,14 @@
 
 프로젝트 진행 현황 로그. 커밋 직전 갱신한다 (`rules/common/git.md` 규칙). v1.1.0(2026-11-16 정식 업데이트)까지의 항목은 [`docs/history/PROGRESS-archive.md`](docs/history/PROGRESS-archive.md)에 있다 — 정식 업데이트마다 그 릴리스까지의 항목을 거기로 옮긴다(`rules/common/git.md` "정식 업데이트 때 문서 정리").
 
+## 2026-11-19
+
+- **신뢰 기반 먼저(v1.1.54, `docs/trust-direction` — 스텝 브랜치 `chore/static-gate` · `test/invariants` · `docs/feature-map` · `test/smoke-split`)** — Lauren Tan 방식으로 dev를 점검했다: 검증 층은 두꺼운데 ESLint·ruff가 기본값이고 hook·경계 검사가 없어 같은 화면 fix가 되풀이되고 스모크 기대값을 낮춰 합치는 일이 있었다. 사용자 결정으로 교정 사다리(`/harden`, 루트 CLAUDE.md "신뢰 기반 먼저")를 두고 기반을 깔았다(계획 `docs/superpowers/plans/2026-11-19-trust-foundation-plan.md`).
+  - 정적 관문: effect·타이머 기준선(`frontend/effect-baseline.json`, 새 파일은 ESLint가 막고 파일별 개수는 래칫 시험), lessons §9·§10 · 사유 없는 `eslint-disable` · 프런트 "한 길" 규칙 7개를 `src/source-rules.test.ts`로, ruff `B`·`BLE`·`UP`·`TID`(맨 `datetime.now()` 금지), 고친 파일 하나를 lint하는 PostToolUse hook.
+  - 불변식: `backend/CLAUDE.md` 글 규칙 7개를 `tests/test_invariants.py`로, 프런트가 사본을 둔 서버 규칙은 `scripts/dump_rule_cases.py` → `rule-cases.json` ↔ vitest. 첫 실행에서 캡션 자리 빈 문단 판정 어긋남(`\x1c`–`\x1f`·`\x85`)을 찾아 프런트를 고쳤다(앱 동작 변경 → PATCH).
+  - 검증: 에이전트용 기능 맵 `docs/qa/feature-map.md`, 스모크를 실행기 + `scripts/smoke/` 화면 파일 여섯으로(글자 그대로 옮기고 대조), 검토 완료 단계가 시드를 남겨 다시 돌리면 첫 단계부터 깨지던 것을 되돌리기로 고쳤다.
+  - 확인: backend 3,068 + 새 시험, ruff, lint · tsc · vitest, 같은 시드에서 나누기 전 · 뒤 전체 스모크 ALL PASS 1,824. 남은 것: 쓴 DB로 다시 돌린 전체 스모크의 Assign 제목 → 문장 콘솔 404(`groups/by-unit`) — 앱 쪽, 따로. assign 화면 쪼개기(스텝 4)는 미채택.
+
 ## 2026-11-18
 
 - **스모크 흔들림 고치기(v1.1.53, `fix/smoke-flaky`)** — 전체 실행·쓴 DB에서만 깨지던 스모크 단계의 원인을 코드로 찾아 고쳤다.
