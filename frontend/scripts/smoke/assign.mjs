@@ -3812,12 +3812,39 @@ await runStep("assign: heading to sentence - Turn into sentences from the right-
   // 바꾼 줄을 고르면 Shape 맨 아래에 Back to heading
   await page.locator(`[data-testid="assign-paper-piece-${sentences[0].id}"]`).click();
   await wait(page, "assign-shape-heading-back");
+  // 경합을 늘 재현한다: Back to heading 뒤 다시 받는 원문 보기(편집 직후 값)를 붙들어 두고, 서버에서 Undo가 끝난 뒤 그 보기를
+  // Undo 응답보다 먼저 건넨다. 그때 편집의 따라가기가 남아 있으면 Undo로 은퇴한 제목 Unit을 골라 묶음을 부르다 404가 난다(콘솔 오류 검사).
+  // 손잡이를 도중에 떼면(unroute · times) 붙든 요청이 그대로 흘러가 버린다 - 첫 요청만 붙들고 나머지는 흘려보낸 뒤 끝에서 뗀다
+  const VIEW_URL = /\/api\/bundles\/\d+\/documents\/\d+\/view$/;
+  const UNDO_URL = /\/api\/bundles\/\d+\/decisions\/undo$/;
+  let releaseView = () => undefined;
+  const viewHeld = new Promise((resolve) => { releaseView = resolve; });
+  let isViewTaken = false;
+  let isUndoTaken = false;
+  await page.route(VIEW_URL, async (route) => {
+    if (isViewTaken) return route.continue();
+    isViewTaken = true;
+    const response = await route.fetch();
+    await viewHeld;
+    await route.fulfill({ response });
+  });
+  await page.route(UNDO_URL, async (route) => {
+    if (isUndoTaken) return route.continue();
+    isUndoTaken = true;
+    const response = await route.fetch();
+    releaseView();
+    await new Promise((resolve) => setTimeout(resolve, 800));
+    await route.fulfill({ response });
+  });
   await page.locator('[data-testid="assign-shape-heading-back"]').click();
   const back = await waitView((view) => !view.units.some((item) => item.id === sentences[0].id));
   const heading = back?.units.find((item) => item.kind === "heading" && item.pos_seq === unit.pos_seq && item.text === unit.text);
   check("Back to heading makes one heading of the line again", heading !== undefined);
-  // 두 편집을 Undo로 하나씩 - 처음 Unit id로 돌아온다
+  // 두 편집을 Undo로 하나씩 - 처음 Unit id로 돌아온다(첫 Undo는 붙든 응답이 건네질 때까지 기다린다)
+  const undone = page.waitForResponse(UNDO_URL);
   await page.locator('[data-testid="assign-undo"]').click();
+  await undone;
+  await page.unrouteAll({ behavior: "wait" });
   check("Undo brings the sentences back", (await waitView((view) => sentences.every((item) => view.units.some((other) => other.id === item.id)))) !== null);
   await page.locator('[data-testid="assign-undo"]').click();
   check("a second Undo brings the original heading back", (await waitView((view) => view.units.some((item) => item.id === unit.id && item.kind === "heading"))) !== null);
