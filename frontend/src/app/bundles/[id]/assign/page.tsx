@@ -1000,6 +1000,8 @@ export default function AssignPage() {
   }
 
   function selectRow(key: string, scroll = true) {
+    // 편집 뒤 다시 받기를 기다리던 따라가기는 버린다 - 받는 동안 다른 줄을 고르면 늦게 온 보기가 고름을 편집한 줄로 되돌렸다
+    setFollow(null);
     setMode("old");
     setCarvePick(null);
     setTocSel(null);
