@@ -225,3 +225,20 @@ def test_follow_renumbering_reaches_the_next_band_chapter_and_the_lines_under_it
     numbers = {_content(unit): unit["number"]["value"] for unit in view["units"] if unit["number"]}
     assert numbers[purpose] == "6" and numbers[scope] == "7"
     assert numbers["The synthetic purpose line."] == "6.1" and numbers["The synthetic scope line."] == "7.1"
+
+
+def test_a_fixed_band_number_survives_back_to_table_and_unwrapping_again(client: TestClient) -> None:
+    # 제목 줄 번호를 사람이 고쳤으면 표의 번호 칸 줄도, 다시 벗긴 제목 줄도 고친 번호다
+    bundle_id, _, doc_id = _setup(client)
+    heading = find_unit(get_view(client, bundle_id, doc_id), BAND)
+    fixed = _edit(client, bundle_id, doc_id, {"type": "set_number", "unit_id": heading["id"], "number": "7.5", "follow": False})
+    assert fixed.status_code == 200, fixed.text
+
+    back = _edit(client, bundle_id, doc_id, {"type": "set_layout_table", "table_id": heading["table_id"], "is_layout": False})
+    assert back.status_code == 200, back.text
+    cell = find_unit(get_view(client, bundle_id, doc_id), "7.4")
+    assert (cell["kind"], cell["number"]["value"], cell["number"]["is_set"]) == ("cell_sentence", "7.5", True)
+
+    again = _edit(client, bundle_id, doc_id, {"type": "set_layout_table", "table_id": heading["table_id"], "is_layout": True})
+    assert again.status_code == 200, again.text
+    assert find_unit(get_view(client, bundle_id, doc_id), BAND)["number"]["value"] == "7.5"

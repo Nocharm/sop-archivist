@@ -1197,8 +1197,10 @@ async def _plan_plain_layout(
         # 첫 행에서 올린 캡션은 풀린 표의 칸 줄로 돌아간다(묶이지 않은 칸 문장 — 다른 칸 줄과 같다)
         drafts = [_build_freed_caption(caption, blocks, None) for caption in captions]
         for number, content in joins:
-            # 번호 칸 블록 전체가 그 줄 범위의 첫 조각 — 처음 쪼개기의 레이아웃 표와 같은 단위(§11-7), 묶음은 풀린다
-            draft = _build_draft(content, [*to_spans(number.spans), *to_spans(content.spans)], blocks, lang=content.lang)
+            # 번호 칸 블록 전체가 그 줄 범위의 첫 조각 — 처음 쪼개기의 레이아웃 표와 같은 단위(§11-7), 묶음은 풀린다.
+            # 같은 자리에서 시작하는 번호 칸 줄을 like로 — 사람이 고친 번호(number_set)를 이은 줄이 물려받는다
+            spans = [*to_spans(number.spans), *to_spans(content.spans)]
+            draft = _build_draft(number, spans, blocks, kind=content.kind, lang=content.lang)
             draft.group_unit_id = None
             drafts.append(draft)
         change = _build_replacement([*groups, *captions, *joined], drafts)
@@ -1267,9 +1269,24 @@ async def _plan_band_layout(
     else:
         replaced = await _find_band_units(session, extraction_id, table.id)
     document = await session.get_one(Document, document_id)
-    change = _build_replacement(replaced, [*await _build_band_drafts(session, document, extraction_id, table.id, to_layout), *extra])
+    drafts = await _build_band_drafts(session, document, extraction_id, table.id, to_layout)
+    _carry_number_sets(replaced, drafts)
+    change = _build_replacement(replaced, [*drafts, *extra])
     change.layouts = {table.id: (table.is_layout, to_layout)}
     return change
+
+
+def _carry_number_sets(replaced: Iterable[Unit], drafts: Iterable[_Draft]) -> None:
+    """사람이 고친 번호(number_set)를 같은 자리(첫 범위의 블록 · 시작)에서 시작하는 새 단위로 — 띠 표 제목 줄의 번호 칸 범위와
+    표의 번호 칸 줄은 같은 자리에서 시작하므로 벗기기 · 표로 되돌리기를 오가도 고친 번호가 남는다(_build_draft의 물려받기와 같은 규칙)."""
+    fixed = {
+        tuple(unit.spans[0][:2]): unit.number_set
+        for unit in replaced if unit.spans and unit.number_set is not None and unit.kind in NUMBERED_KINDS
+    }
+    for draft in drafts:
+        number_set = fixed.get(tuple(draft.spans[0][:2])) if draft.spans and draft.kind in NUMBERED_KINDS else None
+        if number_set is not None:
+            draft.number["number_set"] = number_set
 
 
 async def _find_band_units(session: AsyncSession, extraction_id: ExtractionId, table_id: int) -> list[Unit]:
