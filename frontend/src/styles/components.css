@@ -842,6 +842,16 @@
   .bundle-head[data-sel] .bundle-head-caption { display: block; -webkit-line-clamp: none; overflow: visible; }
   .pg .bundle-head .bundle-head-caption .su:is(:lang(ko), :lang(en)), .pg .bundle-head .bundle-head-caption .su { line-height: inherit; }
   .bundle-head-id { flex: none; margin-left: auto; font-family: var(--font-mono); font-size: var(--fs-micro); color: var(--ink-3); }
+  /* 캡션 칩(F7) - 캡션 자리의 캡션 하나. 풀기 전환이 칩을 옮기도록 inline-block(접힌 머리 줄에서는 칩마다 두 줄 말줄임).
+     문장 같은 캡션은 테두리만 주황, 써 넣은 캡션(출처 없음)과 첫 그림의 캡션을 같이 쓰는 그림은 점선 */
+  .caption-chip { display: inline-block; max-width: 100%; margin-right: 4px; padding: 0 4px; border: 1px solid var(--line-2); border-radius: var(--r-1); vertical-align: top; overflow-wrap: anywhere; }
+  .bundle-head:not([data-sel]) .caption-chip { display: -webkit-inline-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+  .caption-chip[data-odd] { border-color: var(--warn-fill); }
+  .caption-chip:is([data-written], [data-shared]) { border-style: dashed; }
+  .caption-chip[data-shared] { color: var(--ink-3); }
+  /* 그림의 캡션 자리는 그림 아래 - 비었으면 자리를 차지하지 않고, 상자를 끄는 동안만 놓을 자리로 점선이 보인다 */
+  .caption-slot[data-empty] { min-height: 0; margin-top: 0; }
+  html[data-box-drag] .caption-slot[data-empty] { min-height: 22px; margin-top: 4px; outline: 1px dashed var(--line-2); outline-offset: 1px; }
   .pfig { display: grid; gap: 6px; justify-items: start; }
   .pfig-box {
     display: grid;
@@ -2001,6 +2011,21 @@
   :is(.shape-line, .shape-mode-row) .btn[aria-disabled="true"] { color: var(--ink-4); cursor: not-allowed; }
   :is(.shape-line, .shape-mode-row) .btn[aria-disabled="true"]:hover { background: none; }
   .shape-line .btn[data-on] { background: var(--accent-tint); color: var(--accent); }
+  /* 다듬기 아래 캡션 자리(components/assign/caption-slot.tsx, F7 · F12) - 칸 제목, 칩 줄 또는 후보 단추(오른쪽에 작은 설명), 손잡이, 도움말 */
+  .cap-slot { display: grid; gap: 3px; margin-top: 4px; padding: 6px 8px; border: 1px solid var(--line); border-radius: var(--r-2); background: var(--sunken); }
+  .cap-slot-title { font-size: var(--fs-cap); font-weight: 600; color: var(--ink-2); }
+  .cap-chip-row { display: flex; align-items: center; gap: 6px; min-width: 0; min-height: 26px; font-size: var(--fs-cap); }
+  .cap-chip-row .caption-chip { display: block; }
+  .cap-cand { display: flex; align-items: baseline; gap: 8px; width: 100%; min-width: 0; padding: 3px 6px; border: 1px solid var(--line); border-radius: var(--r-1); background: var(--surface); color: var(--ink); font-size: var(--fs-cap); text-align: left; cursor: pointer; }
+  .cap-cand:hover:not([aria-disabled="true"]) { background: var(--menu-hover); }
+  .cap-cand[data-best] { border-color: var(--accent-line); background: var(--accent-tint); }
+  .cap-cand[aria-disabled="true"] { color: var(--ink-4); cursor: not-allowed; }
+  .cap-cand-label { flex: 1 1 auto; min-width: 0; }
+  .cap-cand-note { flex: none; color: var(--ink-3); font-size: var(--fs-micro); }
+  .cap-chip-row .cap-cand { width: auto; flex: none; }
+  .cap-slot-acts { display: flex; flex-wrap: wrap; gap: 4px; }
+  .cap-slot-acts .cap-cand { width: auto; }
+  .cap-slot-help { margin: 2px 0 0; color: var(--ink-3); font-size: var(--fs-micro); }
   /* 줄의 단추 - 줄에 마우스를 올리거나 포커스가 갈 때만(자를 선이 놓인 줄은 늘). 자리는 늘 차지해 드러날 때 글 폭이 바뀌지 않는다 */
   .shape-acts { display: flex; flex: none; gap: 2px; opacity: 0; transition: opacity var(--dur-fast); }
   .shape-line:is(:hover, :focus-within) > .shape-acts, .shape-acts:has([data-on]) { opacity: 1; }

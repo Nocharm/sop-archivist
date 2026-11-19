@@ -1,9 +1,11 @@
-"""쪼개기 편집 — 나누기·합치기·경계 옮기기·골라 만들기·언어 바꾸기·표 행 나누기·다시 합치기·레이아웃 표 바꾸기·캡션 붙이기·떼기·잡음 표시 풀기·번호 고치기·제목 ↔ 문장과 서버 쪽
+"""쪼개기 편집 — 나누기·합치기·경계 옮기기·골라 만들기·언어 바꾸기·표 행 나누기·다시 합치기·레이아웃 표 바꾸기·캡션 붙이기·떼기·첫 행 ↔ 캡션·
+그림 묶기·풀기·잡음 표시 풀기·번호 고치기·제목 ↔ 문장과 서버 쪽
 선형 되돌리기·다시 하기, 경계 확인 표시 (스펙 §6.4, §7.5).
 
 단위는 제자리에서 바뀌지 않는다: 편집은 옛 단위를 은퇴시키고 새 단위를 만들며, 되돌리기는 은퇴한 단위를 원래 ID로 되살린다.
 칸 문장은 제자리에 두고 묶음(group_unit_id)만 바꾸며, 그 바뀜과 레이아웃 표 표시도 기록해 되돌린다.
 번호 고치기도 제자리다 — 단위의 number_set과 그 번호가 여는 절 이름(블록 section_label)만 바꾸고 기록해 되돌린다(범위·글자는 그대로).
+그림 묶기·풀기도 제자리다 — 그림 단위의 caption_figure_id만 바꾸고(옮기는 캡션은 칸 묶음처럼 regroup) 기록해 되돌린다.
 묶음 잠금·문서 revision·작업 중 검사와 커밋은 부르는 쪽(라우터)이 한다.
 """
 
@@ -13,10 +15,11 @@ from dataclasses import dataclass, field
 from typing import Annotated, Literal, TypeVar, assert_never
 
 from pydantic import BaseModel, Field, StringConstraints, model_validator
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import clock
+from app.sop.caption_slot import CAPTION_REACH, PlaceBlock, build_block_places, get_place_distance
 from app.sop.captions import CAPTION_KIND
 from app.sop.decision_steps import UndoMetaIn
 from app.sop.decisions import DbId
@@ -101,7 +104,9 @@ EDIT_UNDONE = "undone"
 # 경계 확인 표시만 바꾼 옛 기록 - 확인 동작은 없어졌지만(v1.0.18) 이미 쌓인 기록은 되돌리기 줄에 남아 있어 계속 돌린다.
 # 단위 집합은 그대로라 되돌릴 때 표시만 거꾸로 돌린다(payload: unit_ids·confirmed)
 BOUNDARY_OPS = ("boundary", "check_all")
-CAPTION_OPS = ("attach_caption", "detach_caption")  # 묶음의 묶인 단위를 바꾸는 편집 — 판단이 있는 묶음을 떼어 낸다
+# 묶음의 묶인 단위를 바꾸는 편집 — 판단이 있는 묶음을 떼어 낸다
+CAPTION_OPS = ("attach_caption", "detach_caption", "set_first_row_caption")
+FIGURE_OPS = ("group_figures", "ungroup_figures")  # 그림 묶음(caption_figure_id)을 바꾸는 편집 — 든 그림 모두가 바뀐 묶음이다
 # 글자 범위를 고칠 수 있는 단위 — 그림·표·행은 범위를 나누거나 잇지 않는다
 TEXT_KINDS = ("sentence", "heading", "cell_sentence", CAPTION_KIND)
 CAPTIONABLE_KINDS = ("sentence", "heading")  # 캡션으로 붙일 수 있는 글 단위
@@ -184,7 +189,10 @@ class SetLayoutTableOp(BaseModel):
 
 
 class AttachCaptionOp(BaseModel):
-    """묶이지 않은 글 단위(문장·제목, REF 아님)를 바로 이웃한 표·행·그림 단위의 캡션으로 — 같은 범위·언어의 캡션 단위가 된다."""
+    """묶이지 않은 글 단위(문장·제목, REF 아님)를 표·행·그림 단위의 캡션으로 — 같은 범위·언어의 캡션 단위가 된다.
+
+    글은 묶음에서 블록 자리 CAPTION_REACH 안에 있어야 한다(caption_slot — 사이의 문단은 그대로 남는다, F7 ④).
+    """
 
     type: Literal["attach_caption"]
     unit_id: DbId
@@ -192,9 +200,33 @@ class AttachCaptionOp(BaseModel):
 
 
 class DetachCaptionOp(BaseModel):
-    """캡션 단위를 같은 범위·언어의 묶이지 않은 문장 단위로."""
+    """캡션 단위를 같은 범위·언어의 묶이지 않은 문장 단위로 — 표 첫 행에서 올린 캡션(칸 블록 위)은 그 표의 칸 문장으로 돌아간다."""
 
     type: Literal["detach_caption"]
+    unit_id: DbId
+
+
+class SetFirstRowCaptionOp(BaseModel):
+    """표 첫 행 ↔ 캡션(F7 ③) — caption이면 첫 행의 칸 문장을 같은 범위·언어의 캡션 단위로 그 표에 묶고("첫 행에서 올림"),
+    아니면 그 표의 칸 블록 위 캡션을 모두 다시 첫 행 칸 문장으로("↩ 다시 첫 행으로"). 통째인 표(table 단위)만 받는다."""
+
+    type: Literal["set_first_row_caption"]
+    table_unit_id: DbId
+    caption: bool
+
+
+class GroupFiguresOp(BaseModel):
+    """그림 묶기(F7 ⑥) — 고른 그림(과 그 그림이 이미 든 묶음)이 캡션 하나를 같이 쓴다. 원문 순 첫 그림이 캡션을 갖고(나머지 그림의
+    캡션은 첫 그림으로 옮긴다) 나머지 그림의 caption_figure_id가 첫 그림을 가리킨다."""
+
+    type: Literal["group_figures"]
+    unit_ids: list[DbId] = Field(min_length=2, max_length=MAX_EDIT_UNITS)
+
+
+class UngroupFiguresOp(BaseModel):
+    """그림 풀기 — 그 그림이 든 묶음의 그림이 모두 따로 선다. 캡션은 첫 그림에 남는다."""
+
+    type: Literal["ungroup_figures"]
     unit_id: DbId
 
 
@@ -249,8 +281,8 @@ class SetHeadingOp(BaseModel):
 
 EditOp = Annotated[
     SplitOp | MergeOp | UnmergeOp | MoveBoundaryOp | CarveOp | SetLanguageOp | SplitTableRowsOp
-    | MergeTableRowsOp | SetLayoutTableOp | AttachCaptionOp | DetachCaptionOp | SetRefOp | ClearRefOp | ClearNoiseOp
-    | SetNumberOp | SetHeadingOp,
+    | MergeTableRowsOp | SetLayoutTableOp | AttachCaptionOp | DetachCaptionOp | SetFirstRowCaptionOp | GroupFiguresOp
+    | UngroupFiguresOp | SetRefOp | ClearRefOp | ClearNoiseOp | SetNumberOp | SetHeadingOp,
     Field(discriminator="type"),
 ]
 
@@ -351,6 +383,8 @@ class _Change:
     sections: list[SectionMove] = field(default_factory=list)
     # 단위 → (지금 잡음 표시, 바꿀 잡음 표시) — 제자리에서 바뀐다(목차 아님과 그 되돌리기)
     noises: dict[int, tuple[str | None, str | None]] = field(default_factory=dict)
+    # 그림 → (지금 caption_figure_id, 바꿀 caption_figure_id) — 제자리에서 바뀐다(그림 묶기·풀기와 그 되돌리기)
+    figures: dict[int, tuple[int | None, int | None]] = field(default_factory=dict)
     # 제목 ↔ 문장(set_heading)과 그 되돌리기·다시 하기 — 활성이 된 단위로 한/영 코드 짝을 다시 세운다(짝은 기록 밖이다)
     repair_pairs: bool = False
     # 함께 벗긴 대응 표 (표, 대응 표)(F8a) — 이 변경 뒤 짝을 다시 세울 때 같은 꼴 판정보다 먼저 맺는다. 다시 하기는 기록에서 채운다
@@ -366,7 +400,10 @@ class _Change:
         (스펙 §6.4) 같은 범위를 새 ID로 다시 만들면 표시 ID가 바뀌고 확정 판단이 이유 없이 떼어진다. 캡션 붙이기·떼기는
         범위가 그대로여도 종류·묶음이 바뀐다. 표·행 단위는 범위가 없어 범위로는 견줄 수 없으므로 묶음·표 표시가 바뀌면 바뀐 것이다.
         """
-        if self.revive or self.langs or self.layouts or self.noises or self.numbers or self.list_regrouped_cells():
+        if (
+            self.revive or self.langs or self.layouts or self.noises or self.numbers or self.figures
+            or self.list_regrouped_cells()
+        ):
             return False
         drafts = Counter((tuple(draft.spans), draft.kind, draft.group_unit_id) for draft in self.drafts)
         return drafts == Counter(self.retired_shapes)
@@ -1047,6 +1084,15 @@ def _build_sentence_from(caption: Unit) -> _Draft:
     )
 
 
+def _build_freed_caption(caption: Unit, blocks: Mapping[int, _Block], group_unit_id: int | None) -> _Draft:
+    """캡션을 뗀 글 단위 — 표 첫 행에서 올린 캡션(칸 블록 위)은 그 칸의 칸 문장(group_unit_id에 묶임), 아니면 묶이지 않은 문장."""
+    if blocks[caption.spans[0][0]].kind != "table_cell":
+        return _build_sentence_from(caption)
+    draft = _build_draft(caption, to_spans(caption.spans), blocks, kind="cell_sentence", lang=caption.lang)
+    draft.group_unit_id = group_unit_id
+    return draft
+
+
 async def _find_number_joins(
     session: AsyncSession, extraction_id: ExtractionId, table_id: int, cells: Sequence[Unit]
 ) -> list[tuple[Unit, Unit]]:
@@ -1144,8 +1190,9 @@ async def _plan_plain_layout(
         cells = [member for member in members if member.kind != CAPTION_KIND]
         joins = await _find_number_joins(session, extraction_id, table.id, cells)
         joined = [unit for pair in joins for unit in pair]
-        blocks = await _load_unit_blocks(session, extraction_id, joined)
-        drafts = [_build_sentence_from(caption) for caption in captions]
+        blocks = await _load_unit_blocks(session, extraction_id, [*joined, *captions])
+        # 첫 행에서 올린 캡션은 풀린 표의 칸 줄로 돌아간다(묶이지 않은 칸 문장 — 다른 칸 줄과 같다)
+        drafts = [_build_freed_caption(caption, blocks, None) for caption in captions]
         for number, content in joins:
             # 번호 칸 블록 전체가 그 줄 범위의 첫 조각 — 처음 쪼개기의 레이아웃 표와 같은 단위(§11-7), 묶음은 풀린다
             draft = _build_draft(content, [*to_spans(number.spans), *to_spans(content.spans)], blocks, lang=content.lang)
@@ -1195,7 +1242,8 @@ def _merge_changes(first: _Change, second: _Change) -> _Change:
         regroup={**first.regroup, **second.regroup}, layouts={**first.layouts, **second.layouts},
         retired_shapes=[*first.retired_shapes, *second.retired_shapes], bundles=[*first.bundles, *second.bundles],
         numbers={**first.numbers, **second.numbers}, sections=[*first.sections, *second.sections],
-        noises={**first.noises, **second.noises}, repair_pairs=first.repair_pairs or second.repair_pairs,
+        noises={**first.noises, **second.noises}, figures={**first.figures, **second.figures},
+        repair_pairs=first.repair_pairs or second.repair_pairs,
     )
 
 
@@ -1281,28 +1329,32 @@ async def _build_band_drafts(
     ]
 
 
-async def _find_bundle_neighbors(
-    session: AsyncSession, extraction_id: ExtractionId, bundle_ids: Collection[int]
-) -> set[int]:
-    """원문 순서로 묶음들 바로 앞·뒤의 활성 단위 — 묶음과 그 묶인 단위(칸 문장·캡션)는 건너뛴다."""
-    rows = (
-        await session.execute(
-            select(Unit.id, Unit.group_unit_id, Unit.pos_seq, Unit.pos_start)
-            .where(Unit.extraction_id == extraction_id, Unit.status == UNIT_ACTIVE)
-            .order_by(Unit.pos_seq, Unit.pos_start, Unit.id)
+async def _measure_caption_distance(session: AsyncSession, extraction_id: ExtractionId, unit: Unit, bundle: Unit) -> int | None:
+    """글 단위와 묶음(표는 바깥 표, 그림은 그 블록) 사이의 블록 자리 거리(caption_slot) — 어느 쪽이든 자리가 없으면 None."""
+    rows = await session.execute(
+        select(SourceBlock.id, SourceBlock.seq, SourceBlock.kind, SourceBlock.text, SourceBlock.table_id).where(
+            SourceBlock.extraction_id == extraction_id
         )
-    ).all()
-    inside = [
-        n for n, (unit_id, group_unit_id, _, _) in enumerate(rows) if unit_id in bundle_ids or group_unit_id in bundle_ids
-    ]
-    first, last = min(inside), max(inside)
-    return {rows[n].id for n in (first - 1, last + 1) if 0 <= n < len(rows)}
+    )
+    blocks = [PlaceBlock(*row) for row in rows.tuples()]
+    parents = dict(
+        (await session.execute(
+            select(SourceTable.id, SourceTable.parent_table_id).where(SourceTable.extraction_id == extraction_id)
+        )).tuples().all()
+    )
+    places = build_block_places(blocks, parents)
+    if bundle.kind in TABLE_UNIT_KINDS:
+        bundle_blocks = [block.id for block in blocks if block.table_id == bundle.table_id]
+    else:
+        bundle_blocks = [block.id for block in blocks if block.seq == bundle.pos_seq]
+    return get_place_distance(places, [span[0] for span in unit.spans], bundle_blocks)
 
 
 async def _plan_attach_caption(session: AsyncSession, extraction_id: ExtractionId, op: AttachCaptionOp) -> _Change:
     """글 단위를 은퇴시키고 같은 범위·언어의 캡션 단위를 그 묶음에 묶어 만든다 — 묶음마다 언어당 캡션 하나.
 
-    행으로 나눈 표는 행 단위 모두가 한 묶음 자리다 — 표 앞·뒤 이웃을 붙이고 캡션은 가장 앞 행에 둔다(행 나누기와 같다).
+    글은 묶음에서 블록 자리 CAPTION_REACH 안이어야 하고 사이의 문단은 그대로 남는다(F7 ④). 행으로 나눈 표는 행 단위 모두가
+    한 묶음 자리라 캡션은 가장 앞 행에 둔다(행 나누기와 같다). 다른 그림의 캡션을 같이 쓰는 그림은 제 캡션을 받지 않는다(먼저 푼다).
     """
     units = await load_active_units(session, extraction_id, [op.unit_id, op.bundle_unit_id])
     unit, bundle = units[op.unit_id], units[op.bundle_unit_id]
@@ -1310,12 +1362,13 @@ async def _plan_attach_caption(session: AsyncSession, extraction_id: ExtractionI
         raise_rule(422, "invalid_unit_kind", unit_ids=[unit.id])
     if bundle.kind not in BUNDLE_UNIT_KINDS:
         raise_rule(422, "invalid_unit_kind", unit_ids=[bundle.id])
-    span_ids = [bundle.id]
-    if bundle.kind == "table_row":
-        rows = await _load_table_units(session, extraction_id, bundle.table_id, ["table_row"])
-        bundle, span_ids = rows[0], [row.id for row in rows]
-    if unit.id not in await _find_bundle_neighbors(session, extraction_id, span_ids):
+    if bundle.caption_figure_id is not None:
+        raise_rule(422, "caption_shared", unit_ids=[bundle.id], figure_id=bundle.caption_figure_id)
+    distance = await _measure_caption_distance(session, extraction_id, unit, bundle)
+    if distance is None or distance > CAPTION_REACH:
         raise_rule(422, "caption_not_adjacent", unit_ids=[unit.id, op.bundle_unit_id])
+    if bundle.kind == "table_row":
+        bundle = (await _load_table_units(session, extraction_id, bundle.table_id, ["table_row"]))[0]
     taken = await session.scalar(
         select(Unit.id).where(
             Unit.group_unit_id == bundle.id, Unit.status == UNIT_ACTIVE, Unit.kind == CAPTION_KIND,
@@ -1344,9 +1397,118 @@ async def _plan_detach_caption(session: AsyncSession, extraction_id: ExtractionI
     blocks = await _load_unit_blocks(session, extraction_id, [unit])
     if any(blocks[span[0]].kind == "figure" for span in to_spans(unit.spans)):
         raise_rule(422, "caption_in_figure_block", unit_ids=[unit.id])
-    change = _build_replacement([unit], [_build_sentence_from(unit)])
+    change = _build_replacement([unit], [_build_freed_caption(unit, blocks, unit.group_unit_id)])
     change.bundles = [unit.group_unit_id]
     return change
+
+
+async def _plan_first_row_caption(
+    session: AsyncSession, extraction_id: ExtractionId, op: SetFirstRowCaptionOp
+) -> _Change:
+    """첫 행 ↔ 캡션(F7 ③) — 범위·언어는 그대로이고 종류만 칸 문장 ↔ 캡션으로 바뀐다(단위 은퇴·생성, 되돌리기 한 번).
+
+    첫 행은 묶인 칸 문장 가운데 가장 앞 행이다. 묶음마다 언어당 캡션 하나라 첫 행에 같은 언어 줄이 둘이거나 그 언어 캡션이
+    이미 있으면 422 caption_exists(reason first_row), 참조 줄이 있으면 invalid_unit_kind, 첫 행뿐인 표는 표가 비어 empty_table이다.
+    """
+    table = (await load_active_units(session, extraction_id, [op.table_unit_id]))[op.table_unit_id]
+    if table.kind != "table":
+        raise_rule(422, "invalid_unit_kind", unit_ids=[table.id])
+    members = await _load_grouped_cells(session, [table.id])
+    blocks = await _load_unit_blocks(session, extraction_id, members)
+    captions = [member for member in members if member.kind == CAPTION_KIND]
+    if not op.caption:
+        lifted = [caption for caption in captions if blocks[caption.spans[0][0]].kind == "table_cell"]
+        change = _build_replacement(lifted, [_build_freed_caption(caption, blocks, table.id) for caption in lifted])
+        change.bundles = [table.id] if lifted else []
+        return change
+    cells = [member for member in members if member.kind == "cell_sentence"]
+    first_row = min((cell.row_index for cell in cells), default=None)
+    row_cells = [cell for cell in cells if cell.row_index == first_row]
+    if len(row_cells) == len(cells):  # 칸 문장이 없거나 첫 행뿐이면 올리고 나서 표가 빈다
+        raise_rule(422, "empty_table", unit_id=table.id, reason="first_row")
+    refs = [cell.id for cell in row_cells if cell.lang == REF_LANG]
+    if refs:
+        raise_rule(422, "invalid_unit_kind", unit_ids=refs)
+    langs = Counter([*(caption.lang for caption in captions), *(cell.lang for cell in row_cells)])
+    clashing = sorted(cell.id for cell in row_cells if langs[cell.lang] > 1)
+    if clashing:
+        raise_rule(422, "caption_exists", unit_ids=clashing, reason="first_row")
+    drafts = [
+        _Draft(
+            kind=CAPTION_KIND, spans=to_spans(cell.spans), text=cell.text, lang=cell.lang, table_id=None, row_index=None,
+            group_unit_id=table.id, pos_seq=cell.pos_seq, pos_start=cell.pos_start,
+        )
+        for cell in row_cells
+    ]
+    change = _build_replacement(row_cells, drafts)
+    change.bundles = [table.id]
+    return change
+
+
+async def _load_figure_group(session: AsyncSession, extraction_id: ExtractionId, head_ids: Collection[int]) -> list[Unit]:
+    """첫 그림들과 그 그림을 가리키는 활성 그림 단위(원문 순) — 캡션 하나를 같이 쓰는 묶음."""
+    rows = await session.scalars(
+        select(Unit).where(
+            Unit.extraction_id == extraction_id, Unit.status == UNIT_ACTIVE, Unit.kind == "figure",
+            or_(Unit.id.in_(head_ids), Unit.caption_figure_id.in_(head_ids)),
+        )
+    )
+    return sorted(rows, key=_get_position)
+
+
+async def _load_bound_captions(session: AsyncSession, bundle_ids: Collection[int]) -> list[Unit]:
+    rows = await session.scalars(
+        select(Unit).where(
+            Unit.group_unit_id.in_(bundle_ids), Unit.status == UNIT_ACTIVE, Unit.kind == CAPTION_KIND
+        )
+    )
+    return sorted(rows, key=_get_position)
+
+
+async def _plan_group_figures(session: AsyncSession, extraction_id: ExtractionId, op: GroupFiguresOp) -> _Change:
+    """그림 묶기(F7 ⑥) — 원문 순 첫 그림을 묶음 머리로 두고 나머지 그림이 그 그림을 가리킨다. 나머지 그림의 캡션은 첫 그림으로 옮긴다.
+
+    묶음마다 언어당 캡션 하나라 옮긴 뒤 같은 언어 캡션이 둘이면 422 caption_exists(reason figures). 그림 블록 위 옛 캡션(0020)은
+    옮기면 그 그림 블록 글이 따로 돌므로 422 caption_in_figure_block. 묶음은 범위·단위를 바꾸지 않고 caption_figure_id만 바꾼다.
+    """
+    ensure_unique_units(op.unit_ids)
+    units = await load_active_units(session, extraction_id, op.unit_ids)
+    wrong = sorted(unit.id for unit in units.values() if unit.kind != "figure")
+    if wrong:
+        raise_rule(422, "invalid_unit_kind", unit_ids=wrong)
+    members = await _load_figure_group(
+        session, extraction_id, {unit.caption_figure_id or unit.id for unit in units.values()}
+    )
+    head = members[0]
+    captions = await _load_bound_captions(session, [member.id for member in members])
+    langs = Counter(caption.lang for caption in captions)
+    clashing = sorted(caption.id for caption in captions if langs[caption.lang] > 1)
+    if clashing:
+        raise_rule(422, "caption_exists", unit_ids=clashing, reason="figures")
+    moving = [caption for caption in captions if caption.group_unit_id != head.id]
+    blocks = await _load_unit_blocks(session, extraction_id, moving)
+    fixed = sorted(caption.id for caption in moving if any(blocks[span[0]].kind == "figure" for span in caption.spans))
+    if fixed:
+        raise_rule(422, "caption_in_figure_block", unit_ids=fixed)
+    figures = {
+        member.id: (member.caption_figure_id, target)
+        for member in members
+        if member.caption_figure_id != (target := None if member.id == head.id else head.id)
+    }
+    return _Change(
+        figures=figures, regroup={caption.id: (caption.group_unit_id, head.id) for caption in moving},
+        bundles=[member.id for member in members],
+    )
+
+
+async def _plan_ungroup_figures(session: AsyncSession, extraction_id: ExtractionId, op: UngroupFiguresOp) -> _Change:
+    """그림 풀기 — 그 그림이 든 묶음의 그림이 모두 따로 선다(첫 그림이 캡션을 그대로 갖는다). 묶이지 않은 그림이면 바뀌는 게 없다."""
+    unit = (await load_active_units(session, extraction_id, [op.unit_id]))[op.unit_id]
+    if unit.kind != "figure":
+        raise_rule(422, "invalid_unit_kind", unit_ids=[unit.id])
+    members = await _load_figure_group(session, extraction_id, [unit.caption_figure_id or unit.id])
+    figures = {member.id: (member.caption_figure_id, None) for member in members if member.caption_figure_id is not None}
+    return _Change(figures=figures, bundles=[member.id for member in members] if figures else [])
 
 
 async def _plan(session: AsyncSession, document_id: int, extraction_id: ExtractionId, op: EditOp) -> _Change:
@@ -1375,6 +1537,12 @@ async def _plan(session: AsyncSession, document_id: int, extraction_id: Extracti
             return await _plan_attach_caption(session, extraction_id, op)
         case DetachCaptionOp():
             return await _plan_detach_caption(session, extraction_id, op)
+        case SetFirstRowCaptionOp():
+            return await _plan_first_row_caption(session, extraction_id, op)
+        case GroupFiguresOp():
+            return await _plan_group_figures(session, extraction_id, op)
+        case UngroupFiguresOp():
+            return await _plan_ungroup_figures(session, extraction_id, op)
         case SetRefOp():
             return await _plan_set_ref(session, extraction_id, op)
         case ClearRefOp():
@@ -1535,6 +1703,17 @@ async def _set_noises(session: AsyncSession, noises: Mapping[int, tuple[str | No
         raise RuntimeError(f"unit edit history out of sync: {changed} of {len(noises)} units had the recorded noise mark")
 
 
+async def _set_figures(session: AsyncSession, figures: Mapping[int, tuple[int | None, int | None]]) -> None:
+    """그림 묶음(caption_figure_id)을 바꾼다 — 지금 값이 기록과 다른 그림이 있으면 편집 기록과 어긋난 것이라 RuntimeError(버그 가드)."""
+    changed = 0
+    for unit_id, (old, new) in figures.items():
+        current = Unit.caption_figure_id.is_(None) if old is None else Unit.caption_figure_id == old
+        result = await session.execute(update(Unit).where(Unit.id == unit_id, current).values(caption_figure_id=new))
+        changed += result.rowcount
+    if changed != len(figures):
+        raise RuntimeError(f"unit edit history out of sync: {changed} of {len(figures)} figures had the recorded group")
+
+
 async def _leave_pairs(session: AsyncSession, unit_ids: Collection[int]) -> None:
     """은퇴하거나 언어가 바뀐 단위는 한/영 짝에서 빠지고, 남은 짝에 한쪽 언어가 없으면 짝을 지운다.
 
@@ -1654,6 +1833,7 @@ async def _write_change(
     await _set_numbers(session, change.numbers)
     await _apply_sections(session, extraction_id, change.sections)
     await _set_noises(session, change.noises)
+    await _set_figures(session, change.figures)
     # 다시 목차가 된 단위는 짝을 맺지 않는다(units._find_code_pairs와 같은 규칙)
     await _leave_pairs(session, [*change.retire, *change.langs, *marking])
     await session.flush()
@@ -1711,7 +1891,7 @@ def _record(
     """작업 기록 — 대상은 은퇴한·활성이 된·언어가 바뀐·다시 묶인 단위, 사유 칸에 편집 종류(split 등)."""
     unit_ids = sorted(
         {*result.created_unit_ids, *result.retired_unit_ids, *change.langs, *change.regroup, *change.bundles,
-         *change.noises, *change.numbers}
+         *change.noises, *change.numbers, *change.figures}
     )
     record_event(
         session, bundle_id=document.bundle_id, actor=actor, action=action, target_type="unit", target_ids=unit_ids,
@@ -1757,6 +1937,7 @@ async def apply_edit(
             lang_changes={str(unit_id): list(langs) for unit_id, langs in change.langs.items()},
             layout_changes={str(table_id): list(flags) for table_id, flags in change.layouts.items()},
             noise_changes={str(unit_id): list(noises) for unit_id, noises in change.noises.items()},
+            figure_changes={str(unit_id): list(figures) for unit_id, figures in change.figures.items()},
             number_changes=_dump_numbers(change), actor=actor,
         )
     )
@@ -1806,6 +1987,10 @@ def _replay(edit: UnitEdit, *, backwards: bool) -> _Change:
         sections=[(first, last, *_orient((old, new), backwards=backwards)) for first, last, old, new in numbers.get("sections", [])],
         # 0027 전 기록은 빈 객체다(잡음 표시를 바꾼 편집이 없었다)
         noises={int(unit_id): _orient(noises, backwards=backwards) for unit_id, noises in (edit.noise_changes or {}).items()},
+        # 0030 전 기록은 빈 객체다(그림 묶음을 바꾼 편집이 없었다)
+        figures={
+            int(unit_id): _orient(figures, backwards=backwards) for unit_id, figures in (edit.figure_changes or {}).items()
+        },
         repair_pairs=edit.op == "set_heading",
         # 함께 벗긴 대응 표는 다시 하기 때 같은 표끼리 다시 맺는다 — 그때 이 기록은 아직 되돌린 상태라 기록에서 읽히지 않는다
         links=[(edit.payload["table_id"], edit.payload["counterpart_table_id"])]
@@ -1836,6 +2021,9 @@ async def _step_edit(
     change = _replay(edit, backwards=backwards)
     if edit.op in CAPTION_OPS:
         change.bundles = await _find_caption_bundles(session, [*change.retire, *change.revive])
+    elif edit.op in FIGURE_OPS:
+        # 묶음 머리와 든 그림 모두 — 기록의 전·후 값이 머리를 가리킨다
+        change.bundles = sorted({*change.figures, *(head for move in change.figures.values() for head in move if head is not None)})
     result = await _write_change(
         session, document, await get_latest_extraction_id(session, document.id), change, confirm=confirm, actor=actor
     )

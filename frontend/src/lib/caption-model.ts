@@ -1,6 +1,7 @@
 // 표·그림 캡션 규칙 - 화면이 "캡션이 있어야 하는데 없다"를 같은 기준으로 판단한다(Old 머리 줄의 Caption needed, 위쪽 줄 남은 수, Confirm 막기)와 저장할 캡션 출처.
 
 import type { Disposition, Group, GroupTarget, UnitLang, UnitRow, ViewUnit } from "./api-sop";
+import { isSharedCaptioned } from "./caption-slot-model";
 import type { ClassifyRow, Destination, RowDraft } from "./classify-model";
 
 export interface CaptionNeedInput {
@@ -140,12 +141,15 @@ export function listCaptionFields(bundle: ViewUnit, units: readonly ViewUnit[], 
   });
 }
 
-/** Confirm을 막는가 - 새 문서 자리로 보내는 줄의 표·행·그림에 캡션이 하나도 없다. 삭제·이동·보류·입구 2 잇기는 막지 않는다 */
+/**
+ * Confirm을 막는가 - 새 문서 자리로 보내는 줄의 표·행·그림에 캡션이 하나도 없다. 삭제·이동·보류·입구 2 잇기는 막지 않는다.
+ * 캡션 있는 첫 그림의 캡션을 같이 쓰는 그림(F7 ⑥)은 캡션이 있다(서버 decisions._check_captions와 같다)
+ */
 export function isCaptionGate(row: ClassifyRow, destination: Destination | null, units: ReadonlyMap<number, ViewUnit>, draft: CaptionDraft, group: Group | null = null): boolean {
   if (destination?.kind !== "slot" && destination?.kind !== "step") return false;
   return row.unitIds.some((id) => {
     const unit = units.get(id);
-    if (!unit || !isBundleKind(unit.kind)) return false;
+    if (!unit || !isBundleKind(unit.kind) || isSharedCaptioned(unit, units)) return false;
     return planCaptions(id, listBoundCaptions(id, units.values()), listCaptionChildren(group, id), draft?.captionTexts).length === 0;
   });
 }
@@ -162,7 +166,8 @@ export function listCaptionPendingRowKeys(rows: readonly ClassifyRow[], units: R
       row.unitIds.some((id) => {
         const unit = units.get(id);
         if (!unit || !isBundleKind(unit.kind)) return false;
-        return isBundleCaptionNeeded(unit, captioned.has(id), isLinkedToWritten(id));
+        // 첫 그림의 캡션을 같이 쓰는 그림(F7 ⑥)은 그 첫 그림의 캡션이 제 캡션이다
+        return isBundleCaptionNeeded(unit, captioned.has(unit.caption_figure_id ?? id), isLinkedToWritten(id));
       }),
     )
     .map((row) => row.key);

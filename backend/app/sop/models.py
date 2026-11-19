@@ -374,6 +374,9 @@ class Unit(Base):
     # 제목 스타일 줄을 문장으로 바꾼 문장 단위(F8b) — 처음 쪼개기(제목답지 않은 조항)와 편집 set_heading이 단다. 화면의 "제목으로
     # 되돌리기"·묶음 머리, 조항마다 1:1 짝(units._find_code_pairs), 번호 물려받기, 타자 번호를 처음부터 번호로 보기(numbering)가 읽는다
     from_heading: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
+    # 캡션 하나를 같이 쓰는 그림 묶음(F7 ⑥) — 그림 단위가 그 묶음의 첫 그림(캡션을 가진 그림)을 가리킨다. 첫 그림 자신과 묶이지 않은 그림은 NULL.
+    # 편집 group_figures·ungroup_figures가 이 열만 바꾸고 unit_edits.figure_changes에 적어 되돌린다
+    caption_figure_id: Mapped[int | None] = mapped_column(ForeignKey("units.id", ondelete="SET NULL"), default=None)
 
 
 class UnitEdit(Base):
@@ -395,6 +398,8 @@ class UnitEdit(Base):
     number_changes: Mapped[dict | None] = mapped_column(JSON(none_as_null=True), default=None)
     # 단위 → [지금 잡음 표시, 바꿀 잡음 표시] — 목차 아님(clear_noise)과 그 되돌리기
     noise_changes: Mapped[dict] = mapped_column(JSON, default=dict)
+    # 그림 단위 → [지금 caption_figure_id, 바꿀 caption_figure_id] — 그림 묶기·풀기(group_figures·ungroup_figures)와 그 되돌리기
+    figure_changes: Mapped[dict] = mapped_column(JSON, default=dict)
     state: Mapped[str] = mapped_column(String(8), default="applied")
     actor: Mapped[str] = mapped_column(String(100))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)

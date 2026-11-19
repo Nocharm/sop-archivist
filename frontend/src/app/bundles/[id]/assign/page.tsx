@@ -16,6 +16,7 @@ import { DestinationAccordion, type AccordionSection } from "@/components/assign
 import { DestinationTree, type DestinationManage } from "@/components/assign/destination-tree";
 import { MissingWarnings } from "@/components/assign/missing-warnings";
 import { CaptionRefList, type CaptionRefEntry } from "@/components/assign/caption-ref-list";
+import { CaptionSlot } from "@/components/assign/caption-slot";
 import { RefCard } from "@/components/assign/ref-card";
 import { ShapeTools, type ShapeLine } from "@/components/assign/shape-tools";
 import { SplitSuggestionCard } from "@/components/assign/split-suggestion";
@@ -138,6 +139,7 @@ import {
 } from "@/lib/api-sop";
 import { listRefCandidates } from "@/lib/caption-ref-model";
 import { isBundleCaptionNeeded, isBundleKind, isCaptionGate, listCaptionFields, listCaptionPendingRowKeys, makeIsLinkedToWritten, type CaptionUnit } from "@/lib/caption-model";
+import { buildBlockPlaces, buildCaptionSlot, getCaptionMotion, resolveCaptionDetach, resolveCaptionDrop, type CaptionCandidate, type CaptionDetach, type CaptionDrop } from "@/lib/caption-slot-model";
 import { applyJoinedSources, countJoinedLines, listJoinableIds, shouldAdvanceAfterSave } from "@/lib/join-sentence-model";
 import { applySavedTargets, buildComposedRows, isWrittenRow, listHeadingNotes, listSectionMarks, readSectionHead, removeClearedUnits, type NewPaneRow } from "@/lib/composed-model";
 import {
@@ -1232,7 +1234,11 @@ export default function AssignPage() {
   // 고른 줄의 글(캡션 포함)이 가리키는 표·그림 - 단위마다의 참조를 한 카드에. 다시 이을 후보는 같은 문서의 표·그림 묶음
   const rowCaptionRefs: CaptionRefEntry[] = shapeUnits.flatMap((unit) => unit.caption_refs.map((ref) => ({ ref, from: unit })));
   const refCandidates = rowCaptionRefs.length > 0 && shapeModel !== null ? [...listRefCandidates("table", shapeModel.units), ...listRefCandidates("figure", shapeModel.units)] : [];
-  const shapeLines: ShapeLine[] = canEdit && mode === "old" ? shapeUnits.flatMap((unit) => { const menu = buildUnitMenu(unit); return menu ? [{ unit, items: menu.edit }] : []; }) : [];
+  // 표·그림의 캡션은 다듬기 줄 대신 아래 캡션 자리(F7)가 칩으로 보인다 - 캡션의 언어 바꾸기는 우클릭 메뉴에 남는다
+  const shapeLines: ShapeLine[] = canEdit && mode === "old" ? rowViewUnits.flatMap((unit) => { const menu = buildUnitMenu(unit); return menu ? [{ unit, items: menu.edit }] : []; }) : [];
+  // 캡션 자리의 블록 자리(문단 · 표 · 그림 하나가 한 자리) - 후보와 끌어 놓기가 같은 거리를 잰다(서버 caption_slot.py와 같다)
+  const slotPlaces = useMemo(() => (shapeView ? buildBlockPlaces(shapeView.blocks, shapeView.tables) : null), [shapeView]);
+  const slotBlockKinds = useMemo(() => new Map((shapeView?.blocks ?? []).map((block) => [block.id, block.kind])), [shapeView]);
   // 고른 줄이 한/영 짝이거나 합친 한 문장이면 둘 사이를 바꾸는 전환을 다듬기에 둔다
   const shapeMode = shapeLines.length > 0 ? planShapeMode(rowViewUnits, shapeTabs?.order ?? [], hasUnitDraft) : null;
   // 고른 줄이 제목에서 바꾼 문장이면 다듬기 맨 아래 [제목으로 되돌리기] - 짝이면 두 조항 줄을 함께(F12 D2)
@@ -1326,20 +1332,21 @@ export default function AssignPage() {
       // 고친 줄의 Unit은 은퇴했을 수 있다 - 다시 받는 동안 그 Unit의 묶음·후보를 부르지 않게 고름을 비우고, 새 줄이 생기면 follow가 고른다.
       // 제자리에서 바뀌는 편집(언어·참조)은 Unit이 그대로라 고름을 두어 고른 표시·오른쪽 칸·포커스가 깜빡이지 않게 한다
       if (op.type !== "set_language" && op.type !== "set_ref" && op.type !== "clear_ref" && op.type !== "set_number") setSelectedKey(null);
-      // 표 벗기기 · 다시 표로 - 새 원문 보기를 먼저 받아 풀기 전환 안에서 그린다(F10, 화면 안만 움직이고 움직임 줄이기면 번쩍임만). 알림은 전환 뒤
+      // 표 벗기기 · 다시 표로와 캡션 붙이기 · 떼기 · 첫 행 올리기 · 그림 묶기 - 새 원문 보기를 먼저 받아 풀기 전환 안에서 그린다
+      // (F10, 화면 안만 움직이고 움직임 줄이기면 번쩍임만). 캡션은 글이 캡션 자리로 미끄러져 들어간다. 알림은 전환 뒤
       const docId = shapeView.document.id;
       const current = views.data ?? [];
-      if (op.type === "set_layout_table" && current.some((view) => view.document.id === docId)) {
+      // 표는 바로 안쪽 띠 표도 함께 제목 줄 ↔ 표로 바뀌고(F2), 대응 표를 함께 벗기면(F8a) 두 표가 함께 풀린다
+      const motion = op.type === "set_layout_table"
+        ? { scopes: [op.table_id, ...(op.is_layout && op.counterpart_table_id !== undefined ? [op.counterpart_table_id] : [])].flatMap((id) => listUnwrapScopes(new Map(shapeView.tables.map((table) => [table.id, table])), id)), reverse: !op.is_layout }
+        : getCaptionMotion(op, followId);
+      if (motion !== null && current.some((view) => view.document.id === docId)) {
         const fresh = await getDocumentView(bundleId, docId);
         isReloaded = true;
-        await unwrapMotion.run(
-          () => {
-            setFreshViews(current.map((view) => (view.document.id === docId ? fresh : view)));
-            reloadAfterEdit();
-          },
-          // 바로 안쪽 띠 표도 함께 제목 줄 ↔ 표로 바뀌고(F2), 대응 표를 함께 벗기면(F8a) 두 표가 함께 풀린다
-          { scopes: [op.table_id, ...(op.is_layout && op.counterpart_table_id !== undefined ? [op.counterpart_table_id] : [])].flatMap((id) => listUnwrapScopes(new Map(shapeView.tables.map((table) => [table.id, table])), id)), reverse: !op.is_layout },
-        );
+        await unwrapMotion.run(() => {
+          setFreshViews(current.map((view) => (view.document.id === docId ? fresh : view)));
+          reloadAfterEdit();
+        }, motion);
       }
       showToast(okText);
       const next = result.created_unit_ids[0] ?? followId;
@@ -2570,18 +2577,44 @@ export default function AssignPage() {
     const hit = line ? { targetId: Number(line.dataset.target), isReadOnly: line.closest(".pg[data-read-only]") !== null, hasPickButton: line.querySelector("button.new-hit") !== null } : null;
     return { line, drop: findAssignDrop(hit) };
   }
-  const dragConfig: BoxDragConfig<{ rowKey: string; unitIds: number[] }> = {
+  /** 포인터 밑의 Old 캡션 자리(표 머리 줄 · 그림 아래)와 끈 줄을 거기 놓으면 할 일(F7 - 2칸 안 글 한 줄이면 캡션으로 붙인다) */
+  function readCaptionDropAt(point: DragPoint, unitIds: readonly number[]): { drop: CaptionDrop; el: HTMLElement } | null {
+    const el = findUnderPoint(point, '[data-pane="old"] [data-caption-slot]');
+    const bundle = el ? shapeModel?.units.get(Number(el.dataset.captionSlot)) : undefined;
+    if (!el || !bundle || !shapeModel || !slotPlaces) return null;
+    return { drop: resolveCaptionDrop(unitIds.flatMap((id) => shapeModel.units.get(id) ?? []), bundle, shapeModel.units, slotPlaces), el };
+  }
+  /** 캡션 칩을 끈 곳 - 제 캡션 자리 밖 Old 용지 위면 떼서 문장으로(F7) */
+  function readCaptionDetachAt(point: DragPoint, captionId: number): { detach: CaptionDetach; bundleId: number | null } {
+    const caption = shapeModel?.units.get(captionId);
+    if (!caption || caption.group_unit_id === null) return { detach: { kind: "none" }, bundleId: null };
+    const slot = findUnderPoint(point, '[data-pane="old"] [data-caption-slot]');
+    const detach = resolveCaptionDetach({
+      captionBundleId: caption.group_unit_id,
+      slotBundleId: slot ? Number(slot.dataset.captionSlot) : null,
+      // Old 칸 어디든(용지 여백 포함) - 칩을 놓은 곳이 글 위가 아니어도 뗀다
+      isOverOld: findUnderPoint(point, '[data-pane="old"]') !== null,
+      isFixed: isFixedCaption(caption),
+    });
+    return { detach, bundleId: caption.group_unit_id };
+  }
+  const dragConfig: BoxDragConfig<{ rowKey: string; unitIds: number[]; captionId: number | null }> = {
     pick: (event) => {
       const target = event.target instanceof Element ? event.target : null;
       const box = target?.closest<HTMLElement>('[data-pane="old"] [data-drag-box]');
       if (!target || !box) return null;
+      // 캡션 칩은 칩째 끈다 - 제 자리 밖에 놓으면 떼어져 문장으로 돌아간다(F7). 칩의 줄은 그 묶음의 줄이다
+      const chipId = Number(target.closest<HTMLElement>("[data-caption-chip]")?.dataset.captionChip);
+      const chipBundle = Number.isFinite(chipId) ? shapeModel?.units.get(chipId)?.group_unit_id : null;
+      const chipKey = chipBundle != null ? rowOfUnit.get(chipBundle) : undefined;
+      if (chipKey !== undefined) return { rowKey: chipKey, unitIds: [chipId], captionId: chipId };
       // 누른 곳의 가장 안쪽 Unit(글 조각·표 칸 조각·캡션), 없으면 그 조각의 Unit. 묶음에 든 칸·캡션은 누를 때처럼 그 묶음으로 올린다(resolvePickUnit) - 끄는 것과 누르면 골라지는 것이 같다
       const holder = target.closest<HTMLElement>("[data-unit], [data-strip-unit]");
       const pressedId = Number(holder?.dataset.unit ?? holder?.dataset.stripUnit ?? box.dataset.stripUnit);
       const unitId = paperModel ? resolvePickUnit(pressedId, paperModel.units) : pressedId;
       const key = rowOfUnit.get(unitId) ?? rowOfUnit.get(Number(box.dataset.stripUnit));
       const unitIds = key === undefined ? undefined : rowMap.get(key)?.unitIds;
-      return key !== undefined && unitIds ? { rowKey: key, unitIds } : null;
+      return key !== undefined && unitIds ? { rowKey: key, unitIds, captionId: null } : null;
     },
     getCard: ({ unitIds }) => buildOldDragCard(unitIds.flatMap((id) => unitMap.get(id) ?? []), (count) => t("assign.drag.units", { count })),
     // 옆 패널(두 문서 틀 밖)의 스크롤 칸도 넣는다 - 긴 나무가 끄는 동안 가장자리에서 스스로 스크롤하게
@@ -2601,7 +2634,19 @@ export default function AssignPage() {
       placeSectionsRef.current = null;
       if (lightTemplateSpots(root, unitIds)) setTemplateDrag(true);
     },
-    onMove: ({ unitIds }, point) => {
+    onMove: ({ unitIds, captionId }, point) => {
+      // 캡션 칩 - 제 자리 밖 Old 용지 위면 "떼서 문장으로", 그 밖은 놓을 자리가 아니다
+      if (captionId !== null) {
+        const { detach } = readCaptionDetachAt(point, captionId);
+        if (detach.kind === "detach") return { state: "ok", note: t("assign.captionSlot.drag.detach") };
+        return detach.kind === "refused" ? { state: "refused", note: t(detach.reasonKey) } : { state: "none" };
+      }
+      // Old 캡션 자리 위면 캡션으로 붙이기(그 자리에 테두리) - 그 묶음 자신을 끌어 왔으면 다른 놓을 곳을 본다
+      const slot = readCaptionDropAt(point, unitIds);
+      if (slot !== null && slot.drop.kind !== "none") {
+        dropGapRef.current?.hide();
+        return slot.drop.kind === "attach" ? { state: "ok", note: t("assign.captionSlot.drag.attach"), target: slot.el } : { state: "refused", note: t(slot.drop.reasonKey), target: slot.el };
+      }
       const root = panesBoxRef.current;
       // 점선의 시작 - 이음 선과 같은 자리, 출발 조각이 Old 칸 화면 밖이면 감춘다
       const strip = root ? findOldStrip(root, unitIds[0]) : null;
@@ -2642,7 +2687,17 @@ export default function AssignPage() {
       dragLineRef.current?.update(isStartShown ? start : null, gapEnd ?? point);
       return readSendHover(send.drop, send.item);
     },
-    onDrop: ({ rowKey, unitIds }, point) => {
+    onDrop: ({ rowKey, unitIds, captionId }, point) => {
+      if (captionId !== null) {
+        const { detach, bundleId } = readCaptionDetachAt(point, captionId);
+        if (detach.kind === "detach") void runUnitEdit({ type: "detach_caption", unit_id: captionId }, t("assign.ctx.didDetachCaption"), bundleId);
+        return;
+      }
+      const slot = readCaptionDropAt(point, unitIds);
+      if (slot !== null && slot.drop.kind !== "none") {
+        if (slot.drop.kind === "attach") void runUnitEdit({ type: "attach_caption", unit_id: slot.drop.unitId, bundle_unit_id: slot.drop.bundleId }, t("assign.ctx.didAttachCaption"), slot.drop.bundleId);
+        return;
+      }
       const tree = readTreeAt(point).drop;
       if (tree.kind === "place") applyTreeDrop(rowKey, tree.destination);
       if (tree.kind !== "none") return;
@@ -3688,6 +3743,48 @@ export default function AssignPage() {
   );
 
   /** 다듬기 걸음과 그 줄에 걸린 카드(참조 줄 확인·AI 나누기 제안) - Old 줄과 한 단의 New 문장이 같은 것을 쓴다 */
+  // 고른 줄이 표·그림이면 다듬기 아래 그 캡션 자리(F7 · F12) - 써 넣은 캡션은 Edit and confirm의 캡션 칸(captionFields)에서 온다
+  const rowBundle = shapeLines.length > 0 && !hasSolo ? (rowViewUnits.find((unit) => isBundleKind(unit.kind)) ?? null) : null;
+  const captionSlot = rowBundle && shapeModel && slotPlaces
+    ? buildCaptionSlot({ bundle: rowBundle, units: shapeModel.units, places: slotPlaces, blockKinds: slotBlockKinds, written: captionFields.filter((field) => field.unitId === null) })
+    : null;
+  /** 캡션 자리의 후보 하나 - 글은 캡션으로 붙이고(2칸 안), 첫 행은 캡션으로 올리고, 캡션 있는 이웃 그림과는 묶는다. 모두 쪼개기 편집이라 Ctrl+Z로 되돌린다 */
+  function runCaptionCandidate(candidate: Exclude<CaptionCandidate, { kind: "write" }>) {
+    if (!rowBundle || !captionSlot) return;
+    const { bundleId } = captionSlot;
+    if (candidate.kind === "near") void runUnitEdit({ type: "attach_caption", unit_id: candidate.unitId, bundle_unit_id: bundleId }, t("assign.ctx.didAttachCaption"), bundleId);
+    else if (candidate.kind === "first_row") void runUnitEdit({ type: "set_first_row_caption", table_unit_id: bundleId, caption: true }, t("assign.captionSlot.didFirstRow"), bundleId);
+    else void runUnitEdit({ type: "group_figures", unit_ids: [rowBundle.id, candidate.figureId] }, t("assign.captionSlot.didGroup"), rowBundle.id);
+  }
+  /** ✂ 한/영 나누기 - 모델이 고른 자리를 나눌 수 있는 자리로 맞춰 자른다(두 조각 모두 그 묶음의 캡션으로 남는다) */
+  function splitCaption(unitId: number, at: number) {
+    const unit = shapeModel?.units.get(unitId);
+    const cut = unit ? findNearestCut(unit, at) : null;
+    if (cut !== null && captionSlot) void runUnitEdit({ type: "split", unit_id: unitId, at: cut }, t("assign.captionSlot.didSplit"), captionSlot.bundleId);
+  }
+  function renderCaptionSlot(): ReactNode {
+    if (!captionSlot || !rowBundle) return null;
+    const { bundleId, groupHeadId } = captionSlot;
+    return (
+      <CaptionSlot
+        slot={captionSlot}
+        busy={busy}
+        blockedKey={rowViewUnits.some(hasUnitDraft) ? "assign.ctx.why.unsaved" : null}
+        writeBlockedKey={isPlace ? null : "assign.captionSlot.why.pickPlace"}
+        readDetachBlock={(unitId) => {
+          const caption = shapeModel?.units.get(unitId);
+          return caption && isFixedCaption(caption) ? "assign.ctx.why.captionInFigure" : null;
+        }}
+        onCandidate={runCaptionCandidate}
+        onWrite={startEdit}
+        onDetach={(unitId) => void runUnitEdit({ type: "detach_caption", unit_id: unitId }, t("assign.ctx.didDetachCaption"), bundleId)}
+        onSplit={splitCaption}
+        onBackFirstRow={() => void runUnitEdit({ type: "set_first_row_caption", table_unit_id: bundleId, caption: false }, t("assign.captionSlot.didBackFirstRow"), bundleId)}
+        onUngroup={() => void runUnitEdit({ type: "ungroup_figures", unit_id: rowBundle.id }, t("assign.captionSlot.didUngroup"), groupHeadId)}
+      />
+    );
+  }
+
   function renderShapeCards(n: number) {
     return (
       <>
@@ -3695,6 +3792,7 @@ export default function AssignPage() {
           <>
             {renderStep(n, t("assign.step.shape"))}
             <ShapeTools lines={shapeLines} cutUnitId={cutLine.at !== null ? cutUnitId : null} busy={busy} onAction={(unit, action, lang) => runUnitAction(unit, action, lang)} mode={shapeMode} onMode={switchShapeMode} headingBack={headingBack} bandBack={bandBack} rewrap={rewrap} />
+            {renderCaptionSlot()}
           </>
         )}
         {rowRefUnit && shapeView && (

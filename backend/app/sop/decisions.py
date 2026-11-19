@@ -2,7 +2,7 @@
 
 from collections import Counter, defaultdict
 from collections.abc import Collection, Hashable, Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Annotated, Any, Literal, NamedTuple, NoReturn, Self
 
@@ -236,6 +236,8 @@ class UnitRowOut(BaseModel):
     target_doc_ids: list[int] = []
     # 표·그림 단위의 새 문장 아래 캡션 새 문장이 있다 — 써 넣은 캡션(출처 없음)도 센다. 화면의 "캡션 필요"·남은 수가 쓴다
     has_caption_target: bool = False
+    # 캡션 하나를 같이 쓰는 그림 묶음의 첫 그림(F7 ⑥) — 그 그림의 캡션이 이 그림의 캡션이다. 화면의 "캡션 필요"·남은 수가 쓴다
+    caption_figure_id: int | None = None
 
 
 class UnitsPageOut(BaseModel):
@@ -276,6 +278,8 @@ class _State:
     slot_heading_sources: dict[int, list[int]]  # 칸 제목 → 지금 출처 단위(seq 순)
     slot_heading_decisions: dict[int, UnitDecision]  # 칸 제목 출처 단위 → 판단 — 칸 제목 상태를 다시 정할 때 다른 문서 출처도 본다
     anchors: dict[int, TargetSentence]  # 보낸 position.after_target_id가 가리키는 이 묶음의 새 문장 — 없는 id는 빠진다
+    # 보낸 그림 중 첫 그림의 캡션을 같이 쓰는 그림(F7 ⑥) — 첫 그림에 활성 캡션 단위가 있으면 제 캡션 새 문장 없이 확정된다
+    shared_captioned: set[int] = field(default_factory=set)
 
 
 class _Place(NamedTuple):
@@ -492,7 +496,23 @@ async def _load_state(session: AsyncSession, bundle_id: int, payload: GroupSaveI
         },
         slot_headings=slot_headings, slot_heading_sources=slot_heading_sources,
         slot_heading_decisions=slot_heading_decisions, anchors=anchors,
+        shared_captioned=await _find_shared_captioned(session, units.values()),
     )
+
+
+async def _find_shared_captioned(session: AsyncSession, units: Iterable[Unit]) -> set[int]:
+    """첫 그림의 캡션을 같이 쓰는 그림 가운데 그 첫 그림에 활성 캡션 단위가 있는 것(F7 ⑥) — 프런트 caption-model의 같은 판단과 같다."""
+    heads = {unit.id: unit.caption_figure_id for unit in units if unit.caption_figure_id is not None}
+    if not heads:
+        return set()
+    captioned = set(
+        await session.scalars(
+            select(Unit.group_unit_id).where(
+                Unit.group_unit_id.in_(set(heads.values())), Unit.status == UNIT_ACTIVE, Unit.kind == CAPTION_KIND
+            )
+        )
+    )
+    return {unit_id for unit_id, head in heads.items() if head in captioned}
 
 
 async def load_table_shapes(session: AsyncSession, table_units: list[Unit]) -> dict[int, tuple[int, int]]:
@@ -980,11 +1000,12 @@ def _check_duplicates(payload: GroupSaveIn, plans: list[_Plan], state: _State) -
         _reject("duplicate_without_reason", unit_ids=offenders)
 
 
-def _check_captions(payload: GroupSaveIn, plans: list[_Plan]) -> None:
+def _check_captions(payload: GroupSaveIn, plans: list[_Plan], state: _State) -> None:
     """확정은 배정한 단위를 출처로 둔 표·그림 새 문장마다 캡션 새 문장이 하나 이상 있어야 한다(표·그림 명세 §3.4).
 
     캡션은 자동으로 묶인 것·붙인 것·써 넣은 것 모두 센다. 보류는 캡션 없이 둘 수 있고, 삭제·이동은 새 문장이 없어 걸리지 않는다.
     입구 2 표·그림은 새 문서 원문 그대로라(캡션을 써 넣을 수 없다, match_doc_new_target) 보지 않는다.
+    캡션 있는 첫 그림의 캡션을 같이 쓰는 그림(F7 ⑥ — state.shared_captioned)은 제 캡션 새 문장 없이 확정된다.
     """
     if payload.action != "confirm":
         return
@@ -995,6 +1016,7 @@ def _check_captions(payload: GroupSaveIn, plans: list[_Plan]) -> None:
         plan.item.key for plan in plans
         if plan.item.kind in ("table", "figure") and plan.origin == ORIGIN_UNITS
         and assigned & set(plan.sources) and id(plan) not in captioned
+        and not set(plan.sources) <= state.shared_captioned
     ]
     if missing:
         raise_rule(422, "caption_required", keys=missing)
@@ -1513,7 +1535,7 @@ async def check_group(session: AsyncSession, bundle: Bundle, payload: GroupSaveI
         _check_as_is_table(plan, by_row_id, state)
     _check_as_is_table_cells(plans, by_row_id, state)
     _check_duplicates(payload, plans, state)
-    _check_captions(payload, plans)
+    _check_captions(payload, plans, state)
     # 모은 칸 제목에 섞여 쓰기에서 빠지는 칸 제목 항목도 자리를 실었으면 거절한다 — 그래서 모으기 전 계획 전부를 본다
     _check_positions(by_key.values(), by_row_id, state)
     if payload.action == "hold" and not payload.hold_reason.strip():
@@ -1790,6 +1812,7 @@ async def list_units(
                 decision=DecisionOut.model_validate(decision), target_ids=target_ids.get(unit.id, []),
                 target_doc_ids=sorted(target_doc_ids.get(unit.id, ())),
                 has_caption_target=unit.id in captioned,
+                caption_figure_id=unit.caption_figure_id,
             )
         )
     return UnitsPageOut(total=total or 0, items=items)

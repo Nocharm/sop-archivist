@@ -276,13 +276,16 @@ const SHAPE_HIDDEN_REASONS: ReadonlySet<string> = new Set([
 /**
  * 다듬기 한 줄에 보일 단추 - 그 문장의 고치기 항목 중 단추로 두는 일만, 풀 길이 없는 까닭으로 꺼진 것은 뺀다.
  * 참조 줄은 나누거나 묶을 일이 없어 단추가 없다(언어 세 칸만). 한/영 짝 줄(isPairRow)의 짝 풀기는 줄마다 두지 않고 모양 전환 옆에 한 번 둔다.
+ * 표·행·그림의 캡션 붙이기는 그 아래 캡션 자리의 후보가 맡는다(F12 - [캡션 붙이기] 대신 캡션 자리 칸, 우클릭 메뉴에는 남는다).
  */
 export function listShapeLineItems(unit: ViewUnit, items: readonly AssignMenuItem[], isPairRow: boolean): AssignMenuItem[] {
   if (unit.lang === "ref") return [];
+  const isBundle = BUNDLE_KINDS.has(unit.kind);
   return items.filter((item) =>
     SHAPE_LINE_ACTIONS.has(item.action)
     && !(item.reasonKey !== undefined && SHAPE_HIDDEN_REASONS.has(item.reasonKey))
-    && !(isPairRow && item.action === "unpair"));
+    && !(isPairRow && item.action === "unpair")
+    && !(isBundle && (item.action === "caption_attach_prev" || item.action === "caption_attach_next")));
 }
 
 export interface ShapeMode {

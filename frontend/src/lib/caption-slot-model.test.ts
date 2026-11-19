@@ -1,0 +1,195 @@
+// 캡션 자리(F7) - 블록 자리 거리(서버 caption_slot.py와 같은 사례), 캡션 꼴 · 문장 같음, 한/영 나눌 자리, 후보 · 칩, 끌어 놓기 판단.
+import { describe, expect, it } from "vitest";
+
+import type { ViewBlock, ViewUnit } from "./api-sop";
+import {
+  buildBlockPlaces,
+  buildCaptionSlot,
+  findLangCut,
+  getCaptionMotion,
+  isCaptionShaped,
+  isSentenceLike,
+  resolveCaptionDetach,
+  resolveCaptionDrop,
+  type CaptionSlotInput,
+} from "./caption-slot-model";
+
+function makeUnit(id: number, extra: Partial<ViewUnit> = {}): ViewUnit {
+  return {
+    id, display_id: `D-${id}`, kind: "sentence", spans: [], text: "", lang: "ko", number: null, table_id: null, row_index: null, group_unit_id: null, status: "unassigned",
+    pair_id: null, pos_seq: id, block_id: id, is_edited: false, can_unmerge: false, split_suggestion_id: null, ref: null, caption_refs: [], ...extra,
+  };
+}
+
+function block(id: number, seq: number, kind: ViewBlock["kind"], text: string, tableId: number | null = null): Pick<ViewBlock, "id" | "seq" | "kind" | "text" | "table_id"> {
+  return { id, seq, kind, text, table_id: tableId };
+}
+
+/** 글 단위 - 블록 하나를 통째로 덮는다 */
+function textUnit(id: number, blockId: number, text: string, extra: Partial<ViewUnit> = {}): ViewUnit {
+  return makeUnit(id, { spans: [[blockId, 0, text.length]], text, block_id: blockId, pos_seq: blockId, ...extra });
+}
+
+// 캡션 꼴 문단 · 빈 문단 · 참고 문단 · 표(2행) · 뒤 문단
+const FAR = "표 3. 소모품 목록";
+const BLOCKS = [
+  block(1, 0, "paragraph", FAR), block(2, 1, "paragraph", " "), block(3, 2, "paragraph", "이 표는 참고용이다."),
+  block(4, 3, "table_cell", "부품", 10), block(5, 4, "table_cell", "합성 칸이다.", 10), block(6, 5, "paragraph", "합성 표 뒤 문장이다."),
+];
+const TABLE = makeUnit(20, { kind: "table", table_id: 10, block_id: 4, pos_seq: 4, lang: "neutral" });
+
+function makeInput(extra: ViewUnit[] = [], overrides: Partial<CaptionSlotInput> = {}): CaptionSlotInput {
+  const all = [
+    textUnit(11, 1, FAR), textUnit(13, 3, "이 표는 참고용이다."), TABLE,
+    textUnit(21, 4, "부품", { kind: "cell_sentence", group_unit_id: 20, table_id: 10, row_index: 0 }),
+    textUnit(22, 5, "합성 칸이다.", { kind: "cell_sentence", group_unit_id: 20, table_id: 10, row_index: 1 }),
+    textUnit(16, 6, "합성 표 뒤 문장이다."), ...extra,
+  ];
+  return {
+    bundle: TABLE, units: new Map(all.map((unit) => [unit.id, unit])), places: buildBlockPlaces(BLOCKS, [{ id: 10, parent_table_id: null }]),
+    blockKinds: new Map(BLOCKS.map((item) => [item.id, item.kind])), written: [], ...overrides,
+  };
+}
+
+describe("buildBlockPlaces", () => {
+  it("counts a table (with its inner tables) once and skips empty paragraphs - same case as the backend", () => {
+    const blocks = [
+      block(1, 0, "paragraph", FAR), block(2, 1, "paragraph", "  "), block(3, 2, "paragraph", "참고"),
+      block(4, 3, "table_cell", "a", 10), block(5, 4, "table_cell", "b", 11), block(6, 5, "table_cell", "c", 10),
+      block(7, 6, "figure", ""), block(8, 7, "table_cell", "d", 12),
+    ];
+    const places = buildBlockPlaces(blocks, [{ id: 10, parent_table_id: null }, { id: 11, parent_table_id: 10 }, { id: 12, parent_table_id: null }]);
+    expect(Object.fromEntries(places)).toEqual({ 1: 0, 3: 1, 4: 2, 5: 2, 6: 2, 7: 3, 8: 4 });
+  });
+});
+
+describe("caption shape", () => {
+  it("reads caption heads of the bundle's own kind only", () => {
+    expect(isCaptionShaped("표 3. 소모품 목록", "table")).toBe(true);
+    expect(isCaptionShaped("Table 3 Consumables", "table")).toBe(true);
+    expect(isCaptionShaped("그림 1. 구조", "table")).toBe(false);
+    expect(isCaptionShaped("Fig 2 Layout", "figure")).toBe(true);
+    expect(isCaptionShaped("표 1에 따라 정한다.", "table")).toBe(false);
+  });
+
+  it("calls a caption sentence-like when it is not caption-shaped, or ends with a period with more than 40 characters after the number", () => {
+    expect(isSentenceLike("표 2. 경보 목록", "table")).toBe(false);
+    expect(isSentenceLike("경보 목록", "table")).toBe(true);
+    expect(isSentenceLike("표 4. 이 표는 설비마다 점검 주기를 정한 것으로 모든 설비를 매월 한 번씩 확인하고 결과를 남겨야 한다.", "table")).toBe(true);
+    expect(isSentenceLike("표 4. 이 표는 설비마다 점검 주기를 정한 것으로 모든 설비를 매월 한 번씩 확인하고 결과를 남겨야 한다", "table")).toBe(false);
+  });
+});
+
+describe("findLangCut", () => {
+  it("cuts before the second caption head of the other script, or before the other script", () => {
+    expect(findLangCut("표 2. 경보 목록 Table 2. Alarm list")).toBe("표 2. 경보 목록 ".length);
+    expect(findLangCut("그림 1. 로터 구조 (Figure 1. Rotor layout)")).toBe("그림 1. 로터 구조 ".length);
+    expect(findLangCut("경보 목록 Alarm list")).toBe("경보 목록 ".length);
+    expect(findLangCut("표 2. 경보 목록")).toBeNull();
+  });
+});
+
+describe("buildCaptionSlot", () => {
+  it("offers paragraphs within two blocks, the first row and writing in when the slot is empty - the caption-shaped one above is best", () => {
+    const slot = buildCaptionSlot(makeInput());
+    expect(slot.state).toBe("empty");
+    expect(slot.candidates.map((candidate) => (candidate.kind === "near" ? `${candidate.side}${candidate.distance}:${candidate.unitId}` : candidate.kind))).toEqual([
+      "above2:11", "above1:13", "below1:16", "first_row", "write",
+    ]);
+    const best = slot.candidates.filter((candidate) => candidate.kind !== "write" && candidate.isBest);
+    expect(best).toMatchObject([{ kind: "near", unitId: 11, isShaped: true, number: "3" }]);
+    expect(slot.candidates.find((candidate) => candidate.kind === "first_row")).toMatchObject({ text: "부품", isShaped: false, reasonKey: null });
+  });
+
+  it("turns off the first row when it is the only row", () => {
+    const input = makeInput();
+    const units = new Map([...input.units].filter(([id]) => id !== 22));
+    const slot = buildCaptionSlot({ ...input, units });
+    expect(slot.candidates.find((candidate) => candidate.kind === "first_row")).toMatchObject({ reasonKey: "assign.captionSlot.why.oneRow" });
+  });
+
+  it("shows a bound KO/EN one-line caption as a chip that can be split - not when the other language already has a caption", () => {
+    const pair = "표 3. 소모품 목록 Table 3. Consumables";
+    const slot = buildCaptionSlot(makeInput([textUnit(30, 1, pair, { kind: "caption", group_unit_id: 20 })]));
+    expect(slot).toMatchObject({ state: "filled", hasFirstRow: false, candidates: [] });
+    expect(slot.chips).toMatchObject([{ unitId: 30, origin: "unit", isOdd: false, splitAt: "표 3. 소모품 목록 ".length }]);
+
+    const input = makeInput([textUnit(30, 1, pair, { kind: "caption", group_unit_id: 20 }), textUnit(31, 3, "Table 3", { kind: "caption", group_unit_id: 20, lang: "en" })]);
+    expect(buildCaptionSlot(input).chips[0].splitAt).toBeNull();
+  });
+
+  it("marks a caption lifted from the first row and a sentence-like one", () => {
+    const input = makeInput();
+    const units = new Map(input.units);
+    units.set(21, { ...units.get(21) as ViewUnit, kind: "caption" });
+    const slot = buildCaptionSlot({ ...input, units });
+    expect(slot.hasFirstRow).toBe(true);
+    expect(slot.chips).toMatchObject([{ unitId: 21, origin: "first_row", isOdd: true }]);
+  });
+
+  it("shows written-in captions as their own chips", () => {
+    const slot = buildCaptionSlot(makeInput([], { written: [{ lang: "en", text: "Table 4. Check interval" }, { lang: "ko", text: " " }] }));
+    expect(slot.state).toBe("written");
+    expect(slot.chips).toMatchObject([{ unitId: null, origin: "written", text: "Table 4. Check interval" }]);
+  });
+
+  it("lets a figure share a neighbouring figure's caption, and shows the shared caption on the grouped figure", () => {
+    const blocks = [block(1, 0, "figure", ""), block(2, 1, "figure", ""), block(3, 2, "paragraph", "그림 1. 펌프 구조")];
+    const places = buildBlockPlaces(blocks, []);
+    const first = makeUnit(40, { kind: "figure", block_id: 1, pos_seq: 0, lang: "neutral" });
+    const second = makeUnit(41, { kind: "figure", block_id: 2, pos_seq: 1, lang: "neutral" });
+    const caption = textUnit(42, 3, "그림 1. 펌프 구조", { kind: "caption", group_unit_id: 41 });
+    const units = new Map([first, second, caption].map((unit) => [unit.id, unit]));
+    const slot = buildCaptionSlot({ bundle: first, units, places, blockKinds: new Map(), written: [] });
+    expect(slot.candidates).toContainEqual({ kind: "figure", figureId: 41, side: "below", text: "그림 1. 펌프 구조", isBest: true });
+
+    const grouped = new Map(units);
+    grouped.set(41, { ...second, caption_figure_id: 40 });
+    grouped.set(42, { ...caption, group_unit_id: 40 });
+    const shared = buildCaptionSlot({ bundle: grouped.get(41) as ViewUnit, units: grouped, places, blockKinds: new Map(), written: [] });
+    expect(shared).toMatchObject({ state: "shared", groupHeadId: 40, chips: [{ unitId: 42, origin: "shared" }] });
+    expect(buildCaptionSlot({ bundle: first, units: grouped, places, blockKinds: new Map(), written: [] }).groupHeadId).toBe(40);
+  });
+});
+
+describe("resolveCaptionDrop", () => {
+  const { units, places } = makeInput([textUnit(17, 7, "먼 문장이다.")]);
+  const far = new Map(places).set(7, 9);
+  const get = (id: number) => units.get(id) as ViewUnit;
+
+  it("attaches one free sentence within two blocks", () => {
+    expect(resolveCaptionDrop([get(11)], TABLE, units, places)).toEqual({ kind: "attach", unitId: 11, bundleId: 20 });
+  });
+
+  it("refuses a far sentence, a pair, a shared figure and a language that already has a caption", () => {
+    expect(resolveCaptionDrop([get(17)], TABLE, units, far)).toEqual({ kind: "refused", reasonKey: "assign.captionSlot.why.tooFar" });
+    expect(resolveCaptionDrop([get(11), get(13)], TABLE, units, places)).toEqual({ kind: "refused", reasonKey: "assign.captionSlot.why.oneLine" });
+    expect(resolveCaptionDrop([get(11)], { ...TABLE, caption_figure_id: 5 }, units, places)).toEqual({ kind: "refused", reasonKey: "assign.captionSlot.why.shared" });
+    const withCaption = new Map(units).set(30, textUnit(30, 3, "표 9", { kind: "caption", group_unit_id: 20 }));
+    expect(resolveCaptionDrop([get(11)], TABLE, withCaption, places)).toEqual({ kind: "refused", reasonKey: "assign.ctx.why.captionExists" });
+  });
+
+  it("is not a drop when the table itself or its own cell is dragged", () => {
+    expect(resolveCaptionDrop([get(21)], TABLE, units, places)).toEqual({ kind: "none" });
+    expect(resolveCaptionDrop([TABLE], TABLE, units, places)).toEqual({ kind: "none" });
+  });
+});
+
+describe("resolveCaptionDetach", () => {
+  it("detaches outside its own slot on the Old paper, and refuses a legacy figure-block caption", () => {
+    expect(resolveCaptionDetach({ captionBundleId: 20, slotBundleId: null, isOverOld: true, isFixed: false })).toEqual({ kind: "detach" });
+    expect(resolveCaptionDetach({ captionBundleId: 20, slotBundleId: 20, isOverOld: true, isFixed: false })).toEqual({ kind: "none" });
+    expect(resolveCaptionDetach({ captionBundleId: 20, slotBundleId: null, isOverOld: false, isFixed: false })).toEqual({ kind: "none" });
+    expect(resolveCaptionDetach({ captionBundleId: 20, slotBundleId: null, isOverOld: true, isFixed: true })).toEqual({ kind: "refused", reasonKey: "assign.ctx.why.captionInFigure" });
+  });
+});
+
+describe("getCaptionMotion", () => {
+  it("slides into the slot on attach and back out on detach", () => {
+    expect(getCaptionMotion({ type: "attach_caption", unit_id: 1, bundle_unit_id: 20 }, null)).toEqual({ scopes: ["c20"], reverse: false });
+    expect(getCaptionMotion({ type: "set_first_row_caption", table_unit_id: 20, caption: false }, null)).toEqual({ scopes: ["c20"], reverse: true });
+    expect(getCaptionMotion({ type: "detach_caption", unit_id: 30 }, 20)).toEqual({ scopes: ["c20"], reverse: true });
+    expect(getCaptionMotion({ type: "group_figures", unit_ids: [40, 41] }, 40)).toEqual({ scopes: ["c40", "c41"], reverse: false });
+    expect(getCaptionMotion({ type: "split", unit_id: 1, at: 2 }, 20)).toBeNull();
+  });
+});

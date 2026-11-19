@@ -141,4 +141,22 @@ describe("listCaptionPendingRowKeys", () => {
     expect(isBundleCaptionNeeded(undefined, false, isLinkedToWritten(90))).toBe(false);
     expect(isBundleCaptionNeeded(map.get(1), true, false)).toBe(false);
   });
+
+  it("does not count a figure that shares the caption of its group's first figure (F7 ⑥)", () => {
+    const map = new Map([
+      [2, unitRow(2, { kind: "figure" })],
+      [3, unitRow(3, { kind: "caption", group_unit_id: 2 })],
+      [4, unitRow(4, { kind: "figure", caption_figure_id: 2 })],
+      [5, unitRow(5, { kind: "figure", caption_figure_id: 9 })],
+    ]);
+    expect(listCaptionPendingRowKeys([2, 4, 5].map(row), map, () => false)).toEqual(["u5"]);
+  });
+});
+
+describe("isCaptionGate - shared figure caption", () => {
+  it("lets a figure through when the first figure of its group has a caption unit", () => {
+    const row: ClassifyRow = { key: "u11", documentId: 1, unitIds: [11], status: "unassigned", pairStatus: null, pairId: null };
+    expect(isCaptionGate(row, placeDest, units({ 9: { kind: "figure" }, 10: { kind: "caption", group_unit_id: 9 }, 11: { kind: "figure", caption_figure_id: 9 } }), undefined)).toBe(false);
+    expect(isCaptionGate(row, placeDest, units({ 9: { kind: "figure" }, 11: { kind: "figure", caption_figure_id: 9 } }), undefined)).toBe(true);
+  });
 });

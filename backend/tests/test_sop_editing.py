@@ -688,7 +688,9 @@ def test_attach_after_the_last_row_goes_to_the_first_row(client: TestClient) -> 
 
 
 def test_attach_rejects_a_far_sentence(client: TestClient) -> None:
-    fx, table = _setup_table_with_neighbors(client)
+    """캡션은 블록 자리 2 안까지(F7 ④) — 표 뒤 세 번째 문단은 멀다."""
+    fx = _setup(client, p(HEADING) + tbl([["합성 칸이다."]]) + p(AFTER_TABLE) + p(RECORD) + p(FAR))
+    table = next(unit for unit in fx.view["units"] if unit["kind"] == "table")
 
     assert _code(_attach(client, fx, find_unit(fx.view, FAR), table)) == (422, "caption_not_adjacent")
 
