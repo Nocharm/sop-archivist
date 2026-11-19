@@ -6,6 +6,7 @@
 |------|------|
 | [superpowers/specs/2026-11-05-sop-restructuring-e2e-design.md](superpowers/specs/2026-11-05-sop-restructuring-e2e-design.md) | 제품 설계: SOP 재구성 End-to-End(쪼개기 → 분류·제안 → 결과물 A·B·C, 두 입구, 데이터 모델, AI 경계, 화면 인수인계) |
 | [superpowers/plans/2026-11-06-sop-restructuring-plan2-ai.md](superpowers/plans/2026-11-06-sop-restructuring-plan2-ai.md) | 구현 계획 2: AI 층(v0.3.0 — 구현 완료, 다시 실행하지 않는다). 살아 있는 부분은 프런트와 맞춘 "API 계약" 블록. 계획 1(결정적 코어, v0.2.0)과 기반 세팅 계획(v0.1.0)은 끝나서 지웠다(git history) — 계획이 정한 세부는 설계 문서에 "(계획 N에서 정함)"으로 반영 |
+| [superpowers/specs/2026-11-20-change-type-two-design.md](superpowers/specs/2026-11-20-change-type-two-design.md) | 변경 종류 둘("=" / "수정", 요청서 16번) 설계 — 서버가 글로 정함, tone · table_restructured → rewritten(Alembic 0032), LLM `match` 작업 걷기, 스텝 셋 |
 | [superpowers/specs/2026-11-09-assign-unified-design.md](superpowers/specs/2026-11-09-assign-unified-design.md) | 3단계 Assign 통합 화면(v0.10.0) 설계 — 분류·짝 맞추기를 Old 조각 한 줄씩 처리하는 한 화면으로, 두 문서 나란히·문서별 확대·우선순위 아코디언. 구현 계획과 목업은 main 머지 뒤 지웠다(git history) |
 | [superpowers/specs/2026-11-13-assign-undo-design.md](superpowers/specs/2026-11-13-assign-undo-design.md) | Assign 되돌리기·다시 하기(v0.16.13) 설계 — 판단 단계 스냅숏, 거절(409 `undo_conflict`) 목록 §5.3. 코드 주석이 절 번호로 가리키는 살아 있는 계약 |
 | [superpowers/specs/2026-11-13-equis-lookup-design.md](superpowers/specs/2026-11-13-equis-lookup-design.md) | EQUIS 문서 번호 조회 1단계(v1.0.1) 설계 — 줄마다의 표시와 판정 규칙(§6), 옛 번호 따라가기(§7), 제목 따라가기와 잠금(§8.3), 조회 창구(db-viewer의 `dbv-query`). 2·3단계(REF 문단, 결과물)는 워크플로우 개편 뒤 |
