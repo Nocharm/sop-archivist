@@ -32,7 +32,9 @@ NextAction = Literal[
 ]
 Issue = dict[str, object]
 
-PENDING_STATUSES = ("unassigned", "ai_suggested", "on_hold")  # 확정 전 상태 — 막는 이유 코드의 꼬리
+# 확정 전 상태 — 막는 이유 코드의 꼬리. 판단은 사람만 써서 AI 제안 상태가 없고, 새 문장은 확정 안 한 AI 번역 줄이 AI 제안이다
+UNIT_PENDING_STATUSES = ("unassigned", "on_hold")
+TARGET_PENDING_STATUSES = ("unassigned", "ai_suggested", "on_hold")
 REASON_DISPOSITIONS = ("delete", "move_external")  # 사유가 필수인 처분
 UNRESOLVED_DOC_STATUSES = ("rejected", "failed")
 TABLE_RESTRUCTURED = "table_restructured"
@@ -50,9 +52,9 @@ class Readiness(BaseModel):
 # --- 막는 이유와 알림 ---
 
 
-def _list_pending_blockers(subject: str, counts: Mapping[str, int]) -> list[Issue]:
-    """확정 전 상태(미배정·AI 제안·보류)별 건수 — 코드는 {subject}_{상태}."""
-    return [{"code": f"{subject}_{status}", "count": counts[status]} for status in PENDING_STATUSES if counts[status]]
+def _list_pending_blockers(subject: str, counts: Mapping[str, int], statuses: Iterable[str]) -> list[Issue]:
+    """확정 전 상태별 건수 — 코드는 {subject}_{상태}."""
+    return [{"code": f"{subject}_{status}", "count": counts[status]} for status in statuses if counts[status]]
 
 
 def _count_target_statuses(snap: BundleSnapshot) -> Counter[str]:
@@ -121,8 +123,8 @@ def evaluate_readiness(
     """스냅숏과 질의 몇 개로 읽은 숫자만으로 조건을 가린다 — 순수 함수라 큰 묶음도 스레드에서 돈다."""
     facts = build_review_facts(snap)
     documents = snap.documents.values()
-    blockers = _list_pending_blockers("units", facts.row_status_counts)
-    blockers += _list_pending_blockers("targets", _count_target_statuses(snap))
+    blockers = _list_pending_blockers("units", facts.row_status_counts, UNIT_PENDING_STATUSES)
+    blockers += _list_pending_blockers("targets", _count_target_statuses(snap), TARGET_PENDING_STATUSES)
 
     # 중복 배정의 사유도 판단 단위에 적힌다 — 판단 행이 없으면 사유도 없는 것이다(조회 경로가 KeyError로 죽지 않게)
     unreasoned = [

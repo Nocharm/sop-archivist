@@ -13,6 +13,7 @@ from sqlalchemy.orm import aliased
 
 from app.clock import now
 from app.sop.ai.adoption import adopt_suggestions
+from app.sop.ai.apply import close_unused_suggestions
 from app.sop.captions import CAPTION_KIND
 from app.sop.checks import check_sentence
 from app.sop.decision_steps import UndoMetaIn
@@ -556,6 +557,7 @@ async def confirm_in_bulk(session: AsyncSession, bundle: Bundle, payload: BulkMa
     _check_bulk_revisions(payload, state)
     _check_bulk_items(payload, state)
     await _write_bulk(session, payload, state, actor)
+    await close_unused_suggestions(session, bundle.id, unit_ids=unit_ids, target_ids=target_ids)
     await settle_pairs(session, bundle.id, unit_ids, actor)
     record_event(
         session, bundle_id=bundle.id, actor=actor, action="match.bulk_confirm", target_type="target",

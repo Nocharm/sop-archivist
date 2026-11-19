@@ -240,7 +240,12 @@ def test_seed_creates_the_ai_stage(seed_runs: SeedRuns) -> None:
     statuses = dict(_query(
         database_path, f"SELECT status, count(*) FROM unit_decisions WHERE bundle_id = {bundle_id} GROUP BY status"
     ))
-    assert statuses["ai_suggested"] > 0 and statuses["on_hold"] > 0  # 정답은 제안으로, 합침·중복 배정·표는 보류로 간다
+    # AI는 제안 행만 쓴다 — AI가 고른 줄도 사람이 받을 때까지 미배정이다(확정은 시드가 앞 단계에서 사람으로 한 것)
+    assert "ai_suggested" not in statuses and statuses["unassigned"] > 0
+    results = dict(_query(
+        database_path, f"SELECT result, count(*) FROM ai_suggestions WHERE bundle_id = {bundle_id} GROUP BY result"
+    ))
+    assert results["applied"] > 0
     assert _query(database_path, "SELECT DISTINCT bundle_id FROM ai_jobs") == [(bundle_id,)]
     jobs = dict(_query(database_path, "SELECT status, count(*) FROM ai_jobs GROUP BY status"))
     assert jobs.keys() == {"done"}

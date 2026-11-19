@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { countPending, getConfirmedPercent } from "./progress-model";
 
-const base = { total: 61, unassigned: 5, ai_suggested: 33, on_hold: 7, confirmed: 16, single_language: 17 };
+const base = { total: 61, unassigned: 38, on_hold: 7, confirmed: 16, single_language: 17 };
 
 describe("progress-model", () => {
   it("counts rows that are not confirmed", () => expect(countPending(base)).toBe(45));

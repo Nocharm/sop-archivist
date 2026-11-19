@@ -64,6 +64,36 @@ def writes_confirmed_text(node: ast.AST) -> bool:
     return False
 
 
+_DECIDED_MODELS = frozenset({"UnitDecision", "TargetSentence", "TargetSource"})
+# Columns only decisions / New sentences have — status is left out because AiJob.status is the runner's to set
+_DECIDED_COLUMNS = frozenset({
+    "disposition", "move_target_code", "hold_reason", "confirmed_by", "confirmed_at", "suggestion_id", "revision",
+    "ai_text", "change_type", "order_index", "number_style", "parent_target_id",
+})
+# Paths that write decisions / New sentences for the caller
+_DECIDING_CALLS = frozenset({
+    "reset_decision", "reset_target", "detach_units", "sweep_translations", "settle_pairs", "apply_slot_heading_status",
+    "sync_new_doc_targets", "save_group", "dispose_units",
+})
+
+
+def _iter_assigned(node: ast.AST) -> Iterable[ast.AST]:
+    targets = node.targets if isinstance(node, ast.Assign) else [node.target]  # type: ignore[attr-defined]
+    for target in targets:
+        yield from (target.elts if isinstance(target, ast.Tuple) else [target])
+
+
+def writes_decision_or_target(node: ast.AST) -> bool:
+    if isinstance(node, (ast.Assign, ast.AugAssign, ast.AnnAssign)):
+        return any(isinstance(t, ast.Attribute) and t.attr in _DECIDED_COLUMNS for t in _iter_assigned(node))
+    if not isinstance(node, ast.Call):
+        return False
+    name = ast.unparse(node.func).rsplit(".", 1)[-1]
+    if name in _DECIDED_MODELS or name in _DECIDING_CALLS:
+        return True
+    return name in {"insert", "update", "delete"} and any(ast.unparse(arg) in _DECIDED_MODELS for arg in node.args)
+
+
 def compute_holds_session(node: ast.AST) -> bool:
     if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) or node.name != "compute":
         return False
@@ -107,6 +137,17 @@ def test_ai_layer_never_writes_confirmed_text() -> None:
     assert found == [], f"The AI layer writes ai_text and suggestions only; confirmed_text belongs to people: {found}"
 
 
+def test_ai_handlers_write_only_suggestions() -> None:
+    # AI suggests only (design 2026-11-19-ai-suggest-only D1): classify / match write ai_suggestions rows; a person's save writes
+    # decisions, New sentences and their source links when they take a suggestion. Translation (D5) and pairing (D6) stay as they were.
+    allowed = frozenset({"app/sop/ai/translate.py", "app/sop/ai/pairing.py"})
+    found = _find(writes_decision_or_target, (APP / "sop" / "ai").rglob("*.py"), allowed)
+    assert found == [], (
+        "AI handlers write only ai_suggestions rows: put the place, rewrites, links and change types in the suggestion's content "
+        f"and let the person's save (decisions.save_group with suggestion_id) write decisions and New sentences: {found}"
+    )
+
+
 def test_ai_compute_holds_no_db_session() -> None:
     # load/compute/apply: compute runs the slow model call, so it must not hold a DB connection.
     found = _find(compute_holds_session, (APP / "sop" / "ai").rglob("*.py"))
@@ -136,6 +177,11 @@ def test_noqa_comments_give_a_reason() -> None:
         (uses_call_ai, "from app.ai_client import call_ai", "from app.ai_usage import call_ai_recorded"),
         (writes_confirmed_text, "TargetSentence(confirmed_text=reply)", "TargetSentence(confirmed_text='', ai_text=reply)"),
         (writes_confirmed_text, "row.confirmed_text = reply", "row.ai_text = reply"),
+        (writes_decision_or_target, "decision.status, decision.disposition = 'ai_suggested', 'assigned'", "suggestion.result = 'stale'"),
+        (writes_decision_or_target, "decision.revision += 1", "job.status = 'done'"),
+        (writes_decision_or_target, "session.add(TargetSentence(ai_text=text))", "session.add(AiSuggestion(content=content))"),
+        (writes_decision_or_target, "await session.execute(insert(TargetSource), rows)", "await session.execute(update(AiJob))"),
+        (writes_decision_or_target, "await sweep_translations(session, bundle_id, ids)", "await load_live_suggestions(session, 1, kinds)"),
         (compute_holds_session, "async def compute(self, job, loaded, session): ...", "async def compute(self, job, loaded): ..."),
         (compute_holds_session, "async def compute(self, job, loaded):\n    async with SessionLocal() as s: ...", "async def load(self): SessionLocal()"),
         (raises_http_exception, "raise HTTPException(409, 'taken')", "raise_rule(409, 'taken')"),

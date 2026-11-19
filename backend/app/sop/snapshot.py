@@ -511,7 +511,6 @@ class RowProgress(BaseModel):
 
     total: int = 0
     unassigned: int = 0
-    ai_suggested: int = 0
     confirmed: int = 0
     on_hold: int = 0
     single_language: int = 0

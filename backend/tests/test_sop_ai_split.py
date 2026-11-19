@@ -217,22 +217,22 @@ def test_document_scope_skips_short_and_decided_units(client: TestClient, fake_a
     assert {(job.kind, job.document_id) for job in jobs} == {("split", view["document"]["id"])}
 
 
-def test_document_scope_skips_held_and_non_classify_suggested_units(client: TestClient, fake_ai: FakeAi) -> None:
+def test_document_scope_skips_held_units_but_takes_match_suggested_ones(client: TestClient, fake_ai: FakeAi) -> None:
+    # 사람이 보류한 줄은 자르면 배정이 풀려 받지 않는다 — AI 제안은 판단을 쓰지 않아 묶기 제안이 있는 줄도 미배정이다
     bundle, view = make_split_bundle(client, p(COMPOUND), p(OTHER_COMPOUND))
     held, matched = find_unit(view, COMPOUND), find_unit(view, OTHER_COMPOUND)
     assign_as_is(client, bundle.id, held, bundle.sop_id, hold_reason="합성 보류", slot_key="purpose")
-    attach_suggestion(bundle.id, matched["id"], "match")  # 분류가 아닌 AI 제안 위에는 쓰지 않는다
+    attach_suggestion(bundle.id, matched["id"], "match")
 
     body = request_split(client, bundle.id, document_id=view["document"]["id"]).json()
 
-    assert body["queued"] == 0
-    assert {(item["unit_id"], item["reason"]) for item in body["skipped"]} == {
-        (held["id"], "not_unassigned"), (matched["id"], "not_unassigned"),
-    }
+    assert body["queued"] == 1
+    assert body["skipped"] == [{"unit_id": held["id"], "reason": "not_unassigned"}]
+    assert [job.unit_ids for job in read_rows(AiJob) if job.kind == "split"] == [[matched["id"]]]
 
 
 def test_classify_suggested_units_are_split_candidates(client: TestClient, fake_ai: FakeAi) -> None:
-    # 배정 화면 첫 진입의 미리 분류가 거의 모든 줄을 AI 분류 제안으로 채운다 — 나누기는 판단을 쓰지 않으니 그 위에서도 묻는다
+    # 배정 화면 첫 진입의 미리 분류가 거의 모든 줄에 AI 분류 제안을 낸다 — 제안은 판단을 쓰지 않아 그 줄도 미배정이고 나누기를 묻는다
     bundle, view = make_split_bundle(client, p(COMPOUND), p(OTHER_COMPOUND))
     suggested, picked = find_unit(view, COMPOUND), find_unit(view, OTHER_COMPOUND)
     attach_suggestion(bundle.id, suggested["id"], "classify")
@@ -244,11 +244,13 @@ def test_classify_suggested_units_are_split_candidates(client: TestClient, fake_
 
     assert [job.status for job in read_rows(AiJob) if job.kind == "split" and job.unit_ids == [suggested["id"]]] == ["done"]
     assert any(item.result == "applied" and item.content["unit_id"] == suggested["id"] for item in read_split_suggestions())
-    assert read_decision(suggested["id"]).status == "ai_suggested"  # 분류 제안은 그대로다
+    assert read_decision(suggested["id"]).status == "unassigned"
+    classify = [item for item in read_rows(AiSuggestion) if item.kind == "classify"]
+    assert [item.result for item in classify] == ["applied", "applied"]  # 분류 제안은 그대로 살아 있다
 
 
-def test_classify_rewritten_during_the_call_keeps_the_split(client: TestClient, fake_ai: FakeAi) -> None:
-    # 함께 도는 미리 분류가 판단 revision을 올려도 위치는 글자에만 기대어 그대로 쓴다
+def test_classify_suggestion_arriving_during_the_call_keeps_the_split(client: TestClient, fake_ai: FakeAi) -> None:
+    # 함께 도는 미리 분류가 같은 줄에 제안을 내도 판단은 미배정 그대로이고, 위치는 글자에만 기대어 그대로 쓴다
     bundle, view = make_split_bundle(client, p(COMPOUND))
     unit = find_unit(view, COMPOUND)
     use_compound_parts(fake_ai)

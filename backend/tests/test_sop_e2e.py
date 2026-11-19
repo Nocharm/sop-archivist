@@ -17,7 +17,7 @@ from app.settings import settings
 from app.sop.constants import COVER_KINDS
 from app.sop.coverage import find_coverage_problems
 from app.sop.renumber import find_number_tokens, read_caption_number
-from scripts.sop_demo_driver import SyntheticDriver, find_unit_by_text, iter_c_items
+from scripts.sop_demo_driver import REQUESTABLE_CHANGE_TYPES, SyntheticDriver, find_unit_by_text, iter_c_items
 from scripts.synthetic_sop import (
     FIXED_ZIP_TIME,
     SyntheticBundle,
@@ -29,7 +29,7 @@ from tests.ai_fixtures import (
     run_jobs,
 )
 from tests.fake_ai import SyntheticAnswers, install_fake_ai
-from tests.sop_helpers import AUTHOR, REVIEWER, save_group
+from tests.sop_helpers import AUTHOR, BUNDLE_KINDS, REVIEWER, build_as_is_targets, save_group
 
 pytestmark = pytest.mark.usefixtures("clean_sop", "clean_ai_jobs", "clean_embedding_cache")
 
@@ -260,6 +260,94 @@ def test_two_authors_get_identical_output_format(client: TestClient, synthetic: 
     assert first == second
 
 
+def _build_classify_use(run: SyntheticDriver, content: dict, answers: dict[int, dict]) -> tuple[str, list[dict]]:
+    """분류 제안의 처분과 그 자리에 둘 새 문장 — Assign의 Use가 초안에 채우는 것.
+
+    글 단위는 제 언어의 고쳐 쓴 글마다 새 문장 하나, 표·그림은 원문 그대로의 묶음 새 문장과 딸린 캡션이다. 캡션 단위가 없는
+    그림은 사람이 정답의 캡션 새 문장을 더한다(캡션 없는 묶음은 확정할 수 없다).
+    """
+    units = {unit["id"]: unit for view in run.views.values() for unit in view["units"]}
+    location = {key: content[key] for key in ("slot_key", "wi_step", "wi_part")}
+    place = {"target_doc_id": content["target_doc_id"], **location}
+    change_type = content["change_type"] if content["change_type"] in REQUESTABLE_CHANGE_TYPES else None
+    targets = []
+    for unit_id in content["unit_ids"] if content["disposition"] == "assigned" else ():
+        unit = units[unit_id]
+        if unit["kind"] in BUNDLE_KINDS:
+            assert content["unit_ids"] == [unit_id], content  # 묶음 단위는 홀로 분류된다 — 새 문장 key "t"가 겹치지 않는다
+            built, caption_ids = build_as_is_targets(run.client, run.bundle_id, unit, content["target_doc_id"], **location)
+            captions = [
+                {**place, "key": f"caption-{caption_id}", "parent_key": "t", "source_unit_ids": [caption_id]}
+                for caption_id in caption_ids
+            ] or [
+                {**run._build_target(spec, answers[unit_id]), "parent_key": "t"}
+                for spec in answers[unit_id]["targets"] if "parent_key" in spec and "cell_row" not in spec
+            ]
+            targets += [*built, *captions]
+            continue
+        targets += [
+            {
+                "key": f"{unit_id}-{index}", **place, "kind": "sentence", "text": text, "change_type": change_type,
+                "source_unit_ids": [unit_id],
+            }
+            for index, text in enumerate(content["rewrites"][unit["lang"]])
+        ]
+    return content["disposition"], targets
+
+
+def _build_match_use(run: SyntheticDriver, content: dict, answers: dict[int, dict]) -> tuple[str, list[dict]]:
+    """묶기 제안의 묶음 — 새 문서의 새 문장마다 제안의 출처 연결(links)과 변경 종류, 칸·캡션 새 문장은 부모 아래 그대로."""
+    if content["shape"] == "delete_candidate":
+        return "delete", []
+    targets = []
+    for target_id in content["target_ids"]:
+        group = run.get(f"/groups/by-target/{target_id}")
+        target = next(item for item in group["targets"] if item["id"] == target_id)
+        change_type = content["target_change_types"].get(str(target_id))
+        item = {
+            "key": str(target_id), "id": target_id, "revision": target["revision"], "kind": target["kind"],
+            "change_type": change_type if change_type in REQUESTABLE_CHANGE_TYPES else None,
+            "source_unit_ids": [unit_id for linked_id, unit_id in content["links"] if linked_id == target_id],
+        }
+        if target["parent_target_id"] is not None:
+            item["parent_key"] = str(target["parent_target_id"])
+        targets.append(item)
+    return "assigned", targets
+
+
+def _use_suggestions(run: SyntheticDriver) -> int:
+    """적용된 분류·묶기 제안을 사람이 받아(Use) 그대로 확정한다 — 제안마다 suggestion_id를 실은 관계 묶음 저장 한 번, 받은 수를 돌려준다.
+
+    AI는 판단·새 문장을 쓰지 않으니 초안은 제안 내용에서 만들고, 사유만 사람이 정답대로 적는다(설계 2026-11-19-ai-suggest-only D2).
+    다듬기를 기다리는 잠정 문장 묶음은 받지 않고 사람 저장 길(settle_remaining)로 보낸다 — 변경 종류가 코드가 정한 잠정값이다.
+    """
+    answers = {run.find_answer_unit(answer)["id"]: answer for answer in run.expected["answers"]}
+    page = run.get("/ai/suggestions", result="applied", limit="1000")
+    assert page["total"] == len(page["items"])
+    accepted = [suggestion for suggestion in page["items"] if not suggestion["content"].get("provisional")]
+    for suggestion in accepted:
+        content = suggestion["content"]
+        assert suggestion["kind"] in ("classify", "match"), suggestion["kind"]
+        build = _build_classify_use if suggestion["kind"] == "classify" else _build_match_use
+        disposition, targets = build(run, content, answers)
+        revisions = run.load_decision_revisions()
+        body = {
+            "action": "confirm",
+            "units": [
+                {
+                    "unit_id": unit_id, "revision": revisions[unit_id], "disposition": disposition,
+                    "reason": answers[unit_id]["reason"],
+                }
+                for unit_id in content["unit_ids"]
+            ],
+            "targets": targets,
+            "suggestion_id": suggestion["id"],
+        }
+        response = save_group(run.client, run.bundle_id, body, run.headers)
+        assert response.status_code == 200, response.text
+    return len(accepted)
+
+
 def test_end_to_end_with_fake_ai(
     client: TestClient, synthetic: SyntheticBundle, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -273,7 +361,7 @@ def test_end_to_end_with_fake_ai(
 
     assert run.get("/ai/status")["jobs"]["failed"] == 0
     assert run.get("/ai/suggestions", result="invalid")["total"] > 0  # 합침·중복 배정·표는 사람 경로로 간다
-    confirmed = run.confirm_suggestions()
+    confirmed = _use_suggestions(run)
     assert confirmed > 0
     run.settle_remaining()  # 보류를 지우고 정답대로 저장, 입구 2 포함
     run.put_semantic_checks()

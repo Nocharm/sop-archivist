@@ -232,20 +232,18 @@ def test_blockers_cover_each_condition(client: TestClient, spoil: Callable[[Test
 
 
 def test_blockers_come_from_stored_state(client: TestClient) -> None:
-    """AI 제안 단위와 새 문장의 상태는 계획 1 API로 만들 수 없어 DB에 직접 써서 확인한다 — 새 문장마다 한 번 센다."""
+    """새 문장의 상태는 DB에 직접 써서 확인한다 — 새 문장마다 한 번 센다. 확정 안 한 AI 번역 줄(ai_suggested)은 새 문장 쪽에서 막는다."""
     fx = _make_ready(client)
     target_id = {
         text: get_group_by_unit(client, fx.bundle_id, _unit_id(fx, text))["targets"][0]["id"] for text in (KO_1, EN_1)
     }
-    update_row(UnitDecision, _unit_id(fx, KO_1), status="ai_suggested")
     update_row(TargetSentence, target_id[EN_1], status="on_hold", hold_reason=HOLD_REASON)
-    update_row(TargetSentence, target_id[KO_1], status="unassigned")
+    update_row(TargetSentence, target_id[KO_1], status="ai_suggested")
 
     blockers = _get_readiness(client, fx.bundle_id)["blockers"]
 
     assert blockers == [
-        {"code": "units_ai_suggested", "count": 1},
-        {"code": "targets_unassigned", "count": 1},
+        {"code": "targets_ai_suggested", "count": 1},
         {"code": "targets_on_hold", "count": 1},
     ]
 
@@ -286,18 +284,18 @@ def test_progress_and_readiness_count_the_same_rows(client: TestClient) -> None:
     assert (blockers["units_unassigned"], blockers["units_on_hold"]) == (progress["unassigned"], progress["on_hold"])
 
 
-def test_a_pair_of_held_and_ai_suggested_members_is_one_ai_suggested_row(client: TestClient) -> None:
-    """줄 상태 순서(미배정 < AI 제안 < 보류 < 확정)를 두 집계가 같이 쓴다 — 보류와 AI 제안이 섞인 짝은 AI 제안 한 줄이다."""
+def test_a_pair_of_held_and_unassigned_members_is_one_unassigned_row(client: TestClient) -> None:
+    """줄 상태 순서(미배정 < 보류 < 확정)를 두 집계가 같이 쓴다 — 보류와 미배정이 섞인 짝은 미배정 한 줄이다. 판단에는 AI 제안 상태가 없다."""
     fx = _setup(client)
     _pair_ko_1_with_en_1(client, fx)
     update_row(UnitDecision, _unit_id(fx, KO_1), status="on_hold", hold_reason=HOLD_REASON)
-    update_row(UnitDecision, _unit_id(fx, EN_1), status="ai_suggested")
 
     progress = get_bundle(client, fx.bundle_id)["progress"]
     blockers = {item["code"]: item.get("count") for item in _get_readiness(client, fx.bundle_id)["blockers"]}
 
-    assert (progress["ai_suggested"], progress["on_hold"], progress["unassigned"], progress["total"]) == (1, 0, 1, 2)
-    assert (blockers["units_ai_suggested"], blockers.get("units_on_hold")) == (1, None)
+    assert "ai_suggested" not in progress
+    assert (progress["on_hold"], progress["unassigned"], progress["total"]) == (0, 2, 2)
+    assert (blockers["units_unassigned"], blockers.get("units_on_hold")) == (2, None)
 
 
 def test_reason_blockers(client: TestClient) -> None:

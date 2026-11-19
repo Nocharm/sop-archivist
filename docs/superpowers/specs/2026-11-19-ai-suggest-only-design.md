@@ -1,6 +1,6 @@
 # AI는 제안 기록에만 — 판단·New 문장은 사람이 받을 때만 (설계)
 
-상태: 설계 확정 대기 → 구현 전. 사용자 결정 2026-11-19. 제품 명세(`2026-11-05-sop-restructuring-e2e-design.md`) §1·§3·§6.5·§6.6·§6.8의 "AI 제안 상태" 부분을 이 문서가 바꾼다(구현 스텝 1에서 명세 본문을 함께 고친다).
+상태: 구현 중 — 스텝 1(서버) 브랜치 `feat/ai-suggest-only-1-server`. 사용자 결정 2026-11-19. 스텝 1에서 채택 기록의 서버 쪽(저장의 `suggestion_id`, D2 일부)을 함께 했다(사용자 결정 2026-11-19). 제품 명세(`2026-11-05-sop-restructuring-e2e-design.md`) §1·§3·§6.5·§6.6·§6.8의 "AI 제안 상태" 부분을 이 문서가 바꾼다(구현 스텝 1에서 명세 본문을 함께 고친다).
 
 ## 1. 왜
 
@@ -29,7 +29,7 @@
 
 하나만 `dev`에 올리면 화면이 반쪽이 되므로 모음 브랜치 `feat/ai-suggest-only`에서 스텝 브랜치를 딴다(루트 CLAUDE.md "브랜치에서 다시 브랜치").
 
-1. `feat/ai-suggest-only-1-server` — D1·D7 서버, 진행 숫자·검토 조건·결과물에서 `ai_suggested` 걷기, 불변식 시험, 명세 본문 고치기. 확인: pytest 전체, ruff.
+1. `feat/ai-suggest-only-1-server` — D1·D7 서버, 진행 숫자·검토 조건에서 판단의 `ai_suggested` 걷기(새 문장의 `ai_suggested`는 AI 번역 줄로 남아 `targets_ai_suggested`와 결과물 라벨·톤도 남는다 — 사용자 결정 2026-11-19), 저장의 `suggestion_id`와 채택 기록, 불변식 시험, 명세 본문 고치기. 확인: pytest 전체, ruff.
 2. `feat/ai-suggest-only-2-assign` — D2 Assign 카드 · **Use** · 채택 기록, 거르기·상태 정리, New 칸 추천 표시, AI 끝남 때 제안만 다시 받기, 설명서. 확인: vitest·lint·tsc, `assign:` 스모크(가짜 AI 켠 시나리오 포함).
 3. `feat/ai-suggest-only-3-bulk` — D3 일괄 수락(API + 범위·건수 확인 창 + 되돌리기), 설명서. 확인: pytest 새 시험, `assign:` 스모크.
 

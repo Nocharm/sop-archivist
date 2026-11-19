@@ -14,7 +14,7 @@ from sqlalchemy import Row, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.sop.ai.apply import add_suggestion, can_receive_suggestion, load_open_decisions
-from app.sop.ai.classify import CLASSIFY_KIND, AiWarning, build_warning, check_rule_ids, load_input_refs, load_latest_extractions
+from app.sop.ai.classify import AiWarning, build_warning, check_rule_ids, load_input_refs, load_latest_extractions
 from app.sop.ai.constants import MAX_SPLIT_PARTS, MIN_SPLIT_CHARS
 from app.sop.ai.context import UnitContext, load_unit_context
 from app.sop.ai.guidelines import RULES_KEY, GuidelineRef, format_guideline_versions, load_active_guidelines
@@ -28,9 +28,7 @@ from app.sop.segment import has_visible_char, trim_blank_range
 from app.sop.units import UNIT_ACTIVE
 
 SPLIT_KIND = "split"
-# 나누기 제안은 판단을 쓰지 않아 AI 분류 제안 위에서도 물을 수 있다 — 배정 화면 첫 진입이 거의 모든 줄을 미리 분류해
-# 미배정만 받으면 줄 요청·문서 요청이 대부분 건너뛰었다. 사람이 확정·보류한 줄은 자르면 배정이 풀리니 받지 않는다
-_KINDS: tuple[str, ...] = (CLASSIFY_KIND,)
+# 미배정 줄만 받는다 — 사람이 확정·보류한 줄은 자르면 배정이 풀린다. AI 제안은 판단을 쓰지 않아 제안이 있는 줄도 미배정이다
 _PROMPT_KEY = "prompt.split"
 _FEATURE = "sop.split"
 _SPLIT_UNIT_KINDS = ("sentence", "cell_sentence")  # 제목·그림·표는 문장이 아니라 나누기 후보가 아니다
@@ -89,10 +87,8 @@ async def _load_scope_rows(
         select(
             Unit.id, Unit.extraction_id, Unit.kind, Unit.group_unit_id, Unit.pos_seq, Unit.pos_start,
             func.length(Unit.text).label("n_chars"), UnitDecision.status, UnitDecision.disposition,
-            AiSuggestion.kind.label("suggestion_kind"),
         )
         .join(UnitDecision, UnitDecision.unit_id == Unit.id)
-        .outerjoin(AiSuggestion, AiSuggestion.id == UnitDecision.suggestion_id)
         # 목차 줄(잡음 표시)은 나누지 않는다 — 한 줄이 한 단위다
         .where(Unit.extraction_id.in_(list(extraction_ids)), Unit.status == UNIT_ACTIVE, Unit.noise_kind.is_(None))
     )
@@ -132,7 +128,7 @@ def _find_skip_reason(
         return "not_splittable"  # 제목·그림·표는 나누기 편집도 받지 않는다 — 문서 범위는 이런 단위를 읽지 않는다
     if row.group_unit_id is not None:
         return "bound_cell"  # 칸 문장의 처분은 그룹 단위가 담는다 — 문서 범위는 이런 칸을 읽지 않는다
-    if not can_receive_suggestion(row.status, row.disposition, row.suggestion_kind, _KINDS):
+    if not can_receive_suggestion(row.status, row.disposition):
         return "not_unassigned"
     if row.id in queued:
         return "already_queued"
@@ -249,9 +245,9 @@ def _add_result(session: AsyncSession, job: AiJob, loaded: _Loaded, verdict: _Ve
 async def _is_stale(session: AsyncSession, job: AiJob) -> bool:
     """호출 동안 단위가 은퇴했거나 사람이 정했거나 글이 바뀌었으면 위치를 쓸 수 없다.
 
-    판단 revision은 보지 않는다 — 위치는 글자에만 기대고, 함께 도는 미리 분류가 AI 제안을 다시 써 revision을 올려도 위치는 그대로 맞다.
+    판단 revision은 보지 않는다 — 위치는 글자에만 기댄다.
     """
-    if await load_open_decisions(session, unit_ids=job.unit_ids, kinds=_KINDS) is None:
+    if await load_open_decisions(session, unit_ids=job.unit_ids) is None:
         return True
     unit = await session.get_one(Unit, job.unit_ids[0])
     return _hash_text(unit.text) != job.input_snapshot["hashes"][str(unit.id)]
@@ -272,7 +268,7 @@ class SplitHandler:
 
     async def load(self, session: AsyncSession, job: AiJob) -> _Loaded | None:
         """입력을 읽고 작업 시작 시점의 스냅숏을 적는다 — 다시 시도도 이 단계를 지나므로 그때의 상태가 기준이 된다."""
-        decisions = await load_open_decisions(session, unit_ids=job.unit_ids, kinds=_KINDS)
+        decisions = await load_open_decisions(session, unit_ids=job.unit_ids)
         if decisions is None:
             return None
         try:
