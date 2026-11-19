@@ -37,7 +37,7 @@ from app.sop.models import (
     UnitRef,
 )
 from app.sop.outputs import BundleCellOut, BundleFigureOut, BundleTableOut, build_bundle_table
-from app.sop.refs import REF_LANG, check_ref_text, find_leading_number, read_ref_state
+from app.sop.refs import REF_LANG, check_ref_text, find_leading_number, load_proposing_extractions, read_ref_state
 
 Basis = Literal["embedding", "text"]
 
@@ -295,8 +295,9 @@ async def _find_refs(
         lambda chunk: select(Unit, UnitRef).outerjoin(UnitRef, UnitRef.unit_id == Unit.id).where(Unit.id.in_(chunk)),
         list(own_units),
     )
+    proposing = await load_proposing_extractions(session, {unit.extraction_id for unit, _ in own_rows})
     for unit, mark in own_rows:
-        state = read_ref_state(unit, mark)
+        state = read_ref_state(unit, mark, propose=unit.extraction_id in proposing)
         if state is not None and state.number:
             refs[own_units[unit.id]] = _Ref(state.number, unit.text)
     return refs

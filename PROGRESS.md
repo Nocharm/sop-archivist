@@ -2,6 +2,10 @@
 
 프로젝트 진행 현황 로그. 커밋 직전 갱신한다 (`rules/common/git.md` 규칙). v1.2.0(2026-11-19 정식 업데이트)까지의 항목은 [`docs/history/PROGRESS-archive.md`](docs/history/PROGRESS-archive.md)에 있다 — 정식 업데이트마다 그 릴리스까지의 항목을 거기로 옮긴다(`rules/common/git.md` "정식 업데이트 때 문서 정리").
 
+## 2026-11-20
+
+- **Reference 절 아래 줄은 올릴 때 REF로(v1.2.9, `feat/ref-section-confirm`, 요청서 12 · 14)** — "REF는 뒤쪽 Reference 절 이후만, 제안은 기본 확정". 쪼개기(`units._build_unit_rows`)가 이름이 맞는 본문 제목 아래(같거나 높은 단계의 다음 제목 전까지) 줄을 REF로 만들고 `unit_refs`에 `system` 확정을 남겨 "참조 아님"이 원래 언어로 돌린다. 사용자 답: 이름에 Work Instruction(s), EQUIS에 없는 줄도 참조, 번호 없는 한/영 짝 문장은 보통 문장(연달아 = 바로 앞뒤 다른 언어, 따로 = 절들의 한 · 영 줄 차례 맞춤). 추출기 판을 6으로 올려 6의 추출은 글에서 제안하지 않고 5까지는 그대로(`refs.is_proposing_version`, `read_ref_state(propose=)` — 문서 보기 · REF 카드 · 지도 · 쓴 문장 검사). 남은 `REF?`는 Shape 언어 칸의 REF로도 확정(14). 시드: 1번 묶음과 지도용 5 · 6번을 옛 추출기 5로 올려 REF? 확인 · 지도 REF? 선 스모크가 계속 돈다. 시험: 지도 · REF 제안 모듈은 `legacy_ref_proposals` 픽스처로 옛 길을, 새 길은 `test_sop_ref_section.py`. 스모크: REF 단계에 REF 필 확정을 더하고, 새 단계 "a line under References is a reference line from upload…"; 참조 줄이 REF가 되며 OLD-1의 남은 한/영 문장이 짝이 돼 "짝 없는 줄" 단계 둘이 짝 없는 줄이 가장 많은 문서를 열게 했다(기대값 그대로). 확인: pytest 3128 · ruff, vitest 1643 · lint · tsc, 스모크 `assign:` 845 · `map,outputs` 287 ALL PASS.
+
 ## 2026-11-19
 
 - **표 행으로 나누기 걷기(v1.2.8, `fix/table-rows-remove`, 요청서 7번)** — 실제 경우가 없고 헷갈리기만 해 나누기 · 합치기 편집, 메뉴 · Shape 단추, Unit 종류 `table_row`와 그 처리(결정 저장의 1행 표 검사, 결과물 · AI 매칭 · 일괄 수락의 행 좌표, 캡션 첫 행, AI 지침)를 모두 걷었다. 사용자가 운영 DB에 나뉜 표가 없다고 보고 Alembic은 두지 않았다(옛 리비전 0021과 그 시험은 그대로). 표는 "표로 유지 / 벗기기" 둘뿐이다. 스모크: 행 나누기 · 합치기만 보던 단계 "split rows of a table, then assign a row as a table"는 지우고, 우클릭 표 메뉴 단계는 **Unwrap table**을 보는 검사로 바꿨다. 서버 · 화면을 하위 에이전트 둘(opus)이 나눠 걷었다. 확인: pytest 3111 · ruff, vitest 1643 · lint · tsc, `assign:` 스모크 ALL PASS 839.

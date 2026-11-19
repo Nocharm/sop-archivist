@@ -481,8 +481,8 @@ def _build_old_1(sheet: _AnswerSheet) -> tuple[bytes, list[dict]]:
         document,
         add(doc, manual_ko, "ko", _sop("document_relationships.references",manual_ko, "as_is", "ko")),
         add(doc, manual_en, "en", _sop("document_relationships.references",manual_en, "as_is", "en")),
-        # 참조 줄 — 다른 문서를 번호로 가리키는 한 줄(짝 없음). 번호와 이름은 지어낸 값이다
-        add(doc, REFERENCE_LINE, "en", _sop("document_relationships.references",REFERENCE_LINE, "as_is", "en")),
+        # 참조 줄 — 다른 문서를 번호로 가리키는 한 줄(짝 없음). 번호와 이름은 지어낸 값이다. References 절 아래라 쪼갤 때 REF로 확정된다
+        add(doc, REFERENCE_LINE, "ref", _sop("document_relationships.references", REFERENCE_LINE, "as_is", "ref")),
     )
     edits = [{"doc": doc, "op": "split", "unit_text": compound_ko, "at_text": start_ko}]
     return _save_docx(document), edits

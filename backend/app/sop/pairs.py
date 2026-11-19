@@ -55,7 +55,7 @@ async def create_pair(session: AsyncSession, document: Document, unit_ids: Seque
     """
     ensure_unique_units(unit_ids)
     units = await load_active_units(session, await get_latest_extraction_id(session, document.id), unit_ids)
-    # 그림·표은 언어가 중립이라 짝의 어느 쪽도 아니다
+    # 그림·표는 언어가 중립이라 짝의 어느 쪽도 아니다
     wrong = sorted(unit.id for unit in units.values() if unit.kind not in TEXT_KINDS)
     if wrong:
         raise_rule(422, "invalid_unit_kind", unit_ids=wrong)

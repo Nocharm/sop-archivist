@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.sop.constants import COVER_KINDS
 from app.sop.counterparts import (
+    BODY_PART,
     TableFacts,
     build_row_pairs,
     build_table_facts,
@@ -25,6 +26,7 @@ from app.sop.models import (
     UnitDecision,
     UnitPair,
     UnitPairMember,
+    UnitRef,
 )
 from app.sop.numbering import (
     NUMBER_PAIR,
@@ -32,6 +34,15 @@ from app.sop.numbering import (
     build_number_columns,
     find_inherited_numbers,
     read_draft_number,
+)
+from app.sop.refs import (
+    REF_CONFIRMED,
+    REF_LANG,
+    REF_SPLIT_ACTOR,
+    SectionLine,
+    find_ref_section_lines,
+    is_proposing_version,
+    read_leading_ref_number,
 )
 from app.sop.segment import (
     NEUTRAL,
@@ -106,6 +117,8 @@ async def create_initial_units(session: AsyncSession, document: Document, extrac
     drafts, unit_rows = await asyncio.to_thread(
         _build_unit_rows, extraction.id, block_rows.all(), table_rows, document.language_layout,
         document.file_format == LINE_SPLIT_FORMAT, document.side == "old",
+        # 옛 추출기의 추출은 Reference 절을 확정하지 않고 글에서 제안한다(다시 쪼개도 같은 추출의 규칙을 따른다)
+        not is_proposing_version(extraction.extractor_version),
     )
     if not drafts:
         return
@@ -118,6 +131,17 @@ async def create_initial_units(session: AsyncSession, document: Document, extrac
     ]
     if groups:
         await session.execute(update(Unit), groups)
+    # Reference 절 아래라 쪼개기가 REF로 확정한 줄 — 사람이 확정한 것과 같은 표시를 남겨 "참조 아님"이 원래 언어로 돌린다
+    refs = [
+        {
+            "unit_id": unit_id, "state": REF_CONFIRMED, "prev_lang": draft.lang, "decided_by": REF_SPLIT_ACTOR,
+            "number": read_leading_ref_number(str(row["text"])),
+        }
+        for unit_id, draft, row in zip(unit_ids, drafts, unit_rows, strict=True)
+        if row["lang"] == REF_LANG
+    ]
+    if refs:
+        await session.execute(insert(UnitRef), refs)
     if document.side == "old":
         await session.execute(
             insert(UnitDecision), [{"unit_id": unit_id, "bundle_id": document.bundle_id} for unit_id in unit_ids]
@@ -143,10 +167,12 @@ def _build_unit_rows(
     layout: str,
     split_lines: bool,
     shift_headings: bool = False,
+    confirm_ref_sections: bool = False,
 ) -> tuple[list[UnitDraft], list[dict[str, object]]]:
     """블록·표 행 → 단위 초안과 INSERT 행(local_no는 1부터) — DB를 쓰지 않는 순수 계산이라 스레드에서 돌린다.
 
     shift_headings(옛 문서)면 제목답지 않은 제목 줄을 문장으로 바꾸고(F8b), 번호 없는 번역 조항의 첫 문장이 앞 조항의 번호를 물려받는다.
+    confirm_ref_sections면 Reference 절 아래 줄을 REF로 둔다(refs.find_ref_section_lines).
     """
     blocks = [BlockView(*row) for row in block_rows]
     drafts = build_unit_drafts(
@@ -175,6 +201,21 @@ def _build_unit_rows(
     ]
     for index, number in find_inherited_numbers(lines).items():
         rows[index].update(number_read=number, number_source=NUMBER_PAIR, number_len=0)
+    if not confirm_ref_sections:
+        return drafts, rows
+    by_block = {block.id: block for block in blocks}
+    section_lines = [
+        SectionLine(
+            draft.kind, str(row["text"]), draft.lang,
+            by_block[draft.spans[0][0]].heading_level if draft.spans else None,
+            not draft.spans or by_block[draft.spans[0][0]].part == BODY_PART, draft.noise_kind is not None,
+        )
+        for draft, row in zip(drafts, rows, strict=True)
+    ]
+    for index in find_ref_section_lines(
+        section_lines, interleaved=layout == INTERLEAVED_LAYOUT, separate=layout == SEPARATE_LAYOUT
+    ):
+        rows[index]["lang"] = REF_LANG
     return drafts, rows
 
 

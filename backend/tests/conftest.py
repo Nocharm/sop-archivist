@@ -142,6 +142,15 @@ def clean_sop(client: TestClient) -> Iterator[None]:
 
 
 @pytest.fixture
+def legacy_ref_proposals(monkeypatch: pytest.MonkeyPatch) -> None:
+    """올리는 문서를 추출기 5로 적는다 — REF를 글에서 제안하던 옛 추출(refs.FIRST_SECTION_REF_VERSION 전)의 길을 보는 시험용.
+
+    새 추출은 Reference 절 아래 줄만 쪼갤 때 확정하고 제안하지 않는다(test_sop_ref_section.py). 블록은 5와 6이 같다.
+    """
+    monkeypatch.setattr("app.sop.ingest.EXTRACTOR_VERSION", "5")
+
+
+@pytest.fixture
 def restore_guidelines(client: TestClient) -> Iterator[None]:
     """지침·프롬프트 버전 표를 테스트 전 상태로 되돌린다.
 

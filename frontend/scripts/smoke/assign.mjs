@@ -256,6 +256,24 @@ const findTableOnScreen = async (page, readView, docs) => {
   return { doc: null, unit: null };
 };
 
+// 짝 없는(줄 하나가 Unit 하나인) 미배정 문장이 가장 많은 Old 문서를 Old 칸에 연다 - 첫 문서는 한/영 짝이 다 서 있을 수 있다
+// (Reference 절 아래 참조 줄이 REF가 되며 OLD-1의 남은 문장도 짝이 됐다, 요청서 12)
+async function openLooseOldDoc(page, bundleId) {
+  const headers = { "X-Dev-User": "qa.member" };
+  const api = `${BASE}/api/bundles/${bundleId}`;
+  const getJson = async (path) => (await page.request.get(`${api}${path}`, { headers })).json();
+  const units = new Map((await getJson("/units?limit=1000")).items.map((unit) => [unit.unit_id, unit]));
+  let best = null;
+  for (const doc of (await getJson("/documents")).filter((item) => item.side === "old" && item.status === "ready")) {
+    const view = await getJson(`/documents/${doc.id}/view`);
+    const loose = view.units.filter((unit) => units.get(unit.id)?.kind === "sentence" && units.get(unit.id)?.status === "unassigned" && units.get(unit.id)?.pair_id === null).length;
+    if (best === null || loose > best.loose) best = { docId: doc.id, loose };
+  }
+  await page.locator('[data-testid="assign-old-doc"]').click();
+  await page.locator(`[data-testid="assign-old-doc-option-${best.docId}"]`).click();
+  await page.locator('[data-pane="old"] .strip[data-strip-unit]').first().waitFor({ timeout: T });
+}
+
 // 대응 표의 한/영 짝(MD 1 F8a) - 시드 9번 묶음은 한/영 따로 문서 하나(표 1 한글 작업 표 · 표 2 한글 값 표 · 표 3 영어 작업 표 · 표 4 영어 값 표, 값 표는 행 수가 다르다).
 // 표는 창 없이 하나씩 벗기고(함께 벗기기는 걷었다 - 요청서 8번), 대응 표도 벗기면 같은 행끼리 한/영 짝이 선다(시드 그대로 둔다)
 const PAIR_TABLES_TITLE = "SYNTHETIC 9 한/영 따로 표";
@@ -534,12 +552,36 @@ await runStep("assign: a reference line asks for its number before it can be dec
   await page.locator('[data-testid="assign-undo"]').click();
   await page.locator('[data-testid="assign-ref"][data-state="proposed"]').waitFor({ timeout: T });
   check("undo brings the proposal back", true);
+  // 언어 칸의 점선 REF를 눌러도 같은 확정이다(요청서 14)
+  await page.locator('[data-testid="assign-shape"] button[data-lang="ref"][data-proposed]').click();
+  await page.locator('[data-testid="assign-ref"][data-state="confirmed"]').waitFor({ timeout: T });
+  check("the REF pill confirms the proposed number", (await getText(page, "assign-ref-title")) === "Reference line" && (await page.locator('[data-testid="assign-ref-pending"]').count()) === 0);
+  await page.locator('[data-testid="assign-undo"]').click();
+  await page.locator('[data-testid="assign-ref"][data-state="proposed"]').waitFor({ timeout: T });
   // 참조 아님 - 카드와 남은 수가 사라지고 다시 제안하지 않는다
   await page.locator('[data-testid="assign-ref-reject"]').click();
   await page.locator('[data-testid="assign-ref"]').waitFor({ state: "detached", timeout: T });
   // 원문을 다시 받은 뒤에 남은 수가 사라진다
   const isCountGone = await page.locator('[data-testid="assign-ref-pending"]').waitFor({ state: "detached", timeout: T }).then(() => true, () => false);
   check("Not a reference removes the card and the count", isCountGone);
+});
+
+// Reference 절 아래 줄(요청서 12) - 지금 추출기로 올린 문서는 References 절의 번호 줄이 올릴 때 이미 참조 줄이라 확인할 것이 없다(1번 묶음만 옛 추출기)
+await runStep("assign: a line under References is a reference line from upload, with nothing to check", {}, async ({ page }) => {
+  const headers = { "X-Dev-User": "qa.member" };
+  const units = (await (await page.request.get(`${BASE}/api/bundles/${halfBundleId}/units?limit=1000`, { headers })).json()).items;
+  const refLine = units.find((unit) => unit.text.startsWith("SOP-ABC-1016"));
+  check("the References line is REF from upload", refLine?.lang === "ref", JSON.stringify(refLine?.lang));
+  await page.goto(`${BASE}/bundles/${halfBundleId}/assign`);
+  await wait(page, "assign-bar");
+  check("no reference waits for a check", (await page.locator('[data-testid="assign-ref-pending"]').count()) === 0);
+  check("no line on the paper is a REF? proposal", (await page.locator('.strip-lang[data-proposed]').count()) === 0);
+  if (!refLine) return;
+  const piece = page.locator(`[data-testid="assign-paper-piece-${refLine.unit_id}"]`);
+  await piece.scrollIntoViewIfNeeded();
+  await piece.click();
+  await wait(page, "assign-ref");
+  check("its card reads Reference line", (await getText(page, "assign-ref-title")) === "Reference line" && (await page.locator('[data-testid="assign-ref"]').getAttribute("data-state")) === "confirmed");
 });
 
 await runStep("assign: the document dashboard counts the Old document and downloads its paragraphs", {}, async ({ page, takeShot }) => {
@@ -1291,7 +1333,7 @@ await runStep("assign: drag an Old piece onto a written New sentence, it links l
   const loose = new Map((await readUnits()).filter((unit) => unit.status === "unassigned" && unit.kind === "sentence" && unit.pair_id === null).map((unit) => [unit.unit_id, unit]));
   await page.goto(`${BASE}/bundles/${halfBundleId}/assign`);
   await wait(page, "assign-bar");
-  await page.locator('[data-pane="old"] .strip[data-strip-unit]').first().waitFor({ timeout: T });
+  await openLooseOldDoc(page, halfBundleId);
   const shownIds = await page.locator('[data-pane="old"] .strip[data-strip-unit]').evaluateAll((els) => els.map((el) => Number(el.dataset.stripUnit)));
   const [aId, bId] = shownIds.filter((id) => loose.has(id));
   check("the Old paper shows two loose unassigned sentences", aId !== undefined && bId !== undefined, `${aId} ${bId}`);
@@ -1580,7 +1622,7 @@ await runStep("assign: a text selection does not deaden clicks on Old pieces, Al
   await page.goto(`${BASE}/bundles/${halfBundleId}/assign`);
   await wait(page, "assign-bar");
   await page.locator('[data-testid="assign-filter-all"]').click();
-  await page.locator('[data-pane="old"] .strip[data-strip-unit]').first().waitFor({ timeout: T });
+  await openLooseOldDoc(page, halfBundleId);
   // 짝 없는(줄 하나가 Unit 하나인) 글 조각 셋, 글이 넉넉한 것(조각의 Unit 번호)
   const single = (await (await page.request.get(`${BASE}/api/bundles/${halfBundleId}/units?limit=1000`, { headers })).json()).items.filter((unit) => unit.pair_id === null).map((unit) => unit.unit_id);
   const pieces = await page.locator('[data-pane="old"] .strip[data-kind="piece"][data-drag-box]').evaluateAll((els, ids) => els.filter((el) => ids.includes(Number(el.dataset.stripUnit)) && (el.querySelector(".su")?.textContent ?? "").length > 30).slice(0, 3).map((el) => Number(el.dataset.stripUnit)), single);

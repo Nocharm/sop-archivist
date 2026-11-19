@@ -1486,6 +1486,8 @@ export function useAssignPage() {
   function runUnitAction(target: ViewUnit, action: AssignMenuAction, lang?: "ko" | "en", caret: { blockId: number; offset: number } | null = null) {
     const table = findTableOf(target);
     if (action === "clear") void runClear();
+    // 앱이 제안한 참조 줄(옛 추출의 REF?)은 언어 칸의 REF를 누르면 그 번호로 바로 확정한다(요청서 14) - 확인 단추와 같은 편집
+    else if (action === "ref_mark" && target.ref?.state === "proposed") void runUnitEdit({ type: "set_ref", unit_id: target.id, number: target.ref.number }, t("assign.ref.didConfirm"), target.id);
     else if (action === "ref_mark") setRefEntryId(target.id);
     else if (action === "ref_clear") void runUnitEdit({ type: "clear_ref", unit_id: target.id }, t("assign.ref.didReject"), target.id);
     else if (action === "split") {

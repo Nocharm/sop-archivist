@@ -8,7 +8,9 @@ from dataclasses import dataclass, field
 # 4: 스타일이 물려받은 목록의 수준과 숨긴 윗수준 문단 뒤의 번호를 Word처럼 센다 — 3으로 뽑은 추출은 그런 문단의 번호가 다르다
 # 5: 블록·표에 구조 신호(signals — 번호 범위, 목차, 띠 표, 표 꼴, 안쪽 표 자리)를 남기고 띠 표 번호로 절 경로를 잡는다 —
 #    4까지의 추출은 signals가 비어 있다(다시 올려야 생긴다)
-EXTRACTOR_VERSION = "5"
+# 6: 블록은 5와 같다. 쪼개기가 Reference 절 아래 줄을 REF로 확정하고 글을 보고 제안하지 않는다(refs.FIRST_SECTION_REF_VERSION) —
+#    5까지의 추출은 전처럼 제안한다
+EXTRACTOR_VERSION = "6"
 
 
 @dataclass(frozen=True)

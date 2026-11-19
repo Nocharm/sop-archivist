@@ -86,7 +86,7 @@ from app.sop.pairs import (
     create_pair,
     delete_pair,
 )
-from app.sop.refs import RefState, build_ref_text, read_ref_state
+from app.sop.refs import RefState, build_ref_text, is_proposing_version, load_proposing_extractions, read_ref_state
 from app.sop.schemas import NO_NUL, NoNulStr
 from app.sop.segment import find_anchor_offset, is_band_table, read_table_place
 from app.sop.status import get_cover_status
@@ -517,12 +517,11 @@ async def build_document_view(session: AsyncSession, document: Document) -> Docu
     refs_by_unit: dict[int, list[CaptionRefOut]] = {}
     for ref_id, unit_id in find_covering_unit_ids(ref_rows, units).items():
         refs_by_unit.setdefault(unit_id, []).append(ref_outs[ref_id])
+    extractor_version = await session.scalar(select(Extraction.extractor_version).where(Extraction.id == extraction.id)) or ""
     return DocumentViewOut(
         document=document_out,
         extraction=extraction,
-        has_number_ranges=has_number_ranges(
-            await session.scalar(select(Extraction.extractor_version).where(Extraction.id == extraction.id)) or ""
-        ),
+        has_number_ranges=has_number_ranges(extractor_version),
         tables=await _build_view_tables(session, document, extraction.id, list(tables), blocks, units),
         blocks=blocks,
         part_groups=[
@@ -554,7 +553,7 @@ async def build_document_view(session: AsyncSession, document: Document) -> Docu
                 pos_seq=unit.pos_seq,
                 block_id=unit.spans[0][0] if unit.spans else block_id_by_seq[unit.pos_seq],
                 split_suggestion_id=split_suggestions.get(unit.id),
-                ref=_to_ref_out(read_ref_state(unit, ref_marks.get(unit.id))),
+                ref=_to_ref_out(read_ref_state(unit, ref_marks.get(unit.id), propose=is_proposing_version(extractor_version))),
                 caption_refs=refs_by_unit.get(unit.id, []),
                 noise_kind=unit.noise_kind,
                 from_heading=unit.from_heading,
@@ -781,7 +780,8 @@ async def get_unit_ref(
     document = await _get_document(session, ctx.bundle.id, doc_id)
     extraction_id = await get_latest_extraction_id(session, document.id)
     unit = (await load_active_units(session, extraction_id, [unit_id]))[unit_id]
-    state = read_ref_state(unit, await session.get(UnitRef, unit.id))
+    proposing = await load_proposing_extractions(session, [extraction_id])
+    state = read_ref_state(unit, await session.get(UnitRef, unit.id), propose=extraction_id in proposing)
     if state is None or not state.number:
         return UnitRefDetailOut(state=state.state if state else None)
     lookups = await equis_service.load_lookups(session, [state.number])
