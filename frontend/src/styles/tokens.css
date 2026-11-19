@@ -29,6 +29,8 @@
      펼치기는 위 줄부터 --stagger-step씩 늦게 떠나고 늦춤은 --stagger-max에서 멈춘다(긴 표도 마지막 줄이 0.8초 안에 닿는다) */
   --dur-spread: 520ms;
   --dur-attach: 200ms;
+  /* 같은 자리 쉬머(Refresh - 내용이 바뀐 상자 위를 한 번 쓸고 지나간다). 움직임 줄이기에서 0이면 쓸기를 그리지 않는다 */
+  --dur-refresh: 700ms;
   --stagger-step: 28ms;
   --stagger-max: 280ms;
   /* 모핑 단추 - 올리면 색이 먼저 바뀌고 이만큼 쉬었다가 폭이 펼쳐진다(올리자마자 커지면 지나가는 포인터에도 튀어 산만). 돌아갈 때와 키보드 포커스는 기다리지 않는다 */
@@ -255,6 +257,7 @@
     --dur-slow: 0ms !important;
     --dur-spread: 0ms !important;
     --dur-attach: 0ms !important;
+    --dur-refresh: 0ms !important;
     --stagger-step: 0ms !important;
     --stagger-max: 0ms !important;
     --morph-delay: 0ms !important;

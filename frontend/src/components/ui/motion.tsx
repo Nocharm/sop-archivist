@@ -308,12 +308,12 @@ export function Collapse({ open, children, testId, className, appear = false }: 
   );
 }
 
-/** token이 바뀔 때마다 위를 한 번 쓸고 지나가는 쉬머 - 같은 자리의 내용이 바뀌었음을 알린다. 첫 그림에는 쓸지 않는다 */
-export function Refresh({ token, children, className = "" }: { token: string | number; children: ReactNode; className?: string }) {
+/** token이 바뀔 때마다 위를 한 번 쓸고 지나가는 쉬머 - 같은 자리의 내용이 바뀌었음을 알린다. 첫 그림에는 쓸지 않는다(움직임 줄이기면 --dur-refresh 0으로 그리지 않는다) */
+export function Refresh({ token, children, className = "", testId }: { token: string | number; children: ReactNode; className?: string; testId?: string }) {
   const [first] = useState(token);
   const isFirst = first === token;
   return (
-    <div className={`refresh ${className}`}>
+    <div className={`refresh ${className}`} data-testid={testId}>
       {children}
       {!isFirst && <span key={String(token)} className="refresh-sweep" aria-hidden />}
     </div>

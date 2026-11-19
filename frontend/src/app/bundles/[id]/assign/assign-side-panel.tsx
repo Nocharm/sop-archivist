@@ -19,7 +19,7 @@ import { LangToken } from "@/components/paper/lang-token";
 import { UnitStatusChip } from "@/components/status";
 import { ClampText } from "@/components/ui/clamp-text";
 import { EmptyState } from "@/components/ui/empty-state";
-import { Truncate } from "@/components/ui/motion";
+import { Refresh, Truncate } from "@/components/ui/motion";
 import { Tooltip } from "@/components/ui/tooltip";
 import { formatPlacePosition, readPlacePosition } from "@/lib/place-spot-model";
 import { type ViewUnit, type WrittenSentence } from "@/lib/api-sop";
@@ -28,7 +28,7 @@ import { buildCaptionSlot, type CaptionCandidate } from "@/lib/caption-slot-mode
 import { countJoinedLines } from "@/lib/join-sentence-model";
 import { canMakeOtherLanguage, isRecommendationPicked, listCoConfirmed, listSiblingPlaces, pickNearby, type Recommendation } from "@/lib/assign-model";
 import { readRewrites } from "@/lib/ai-suggestion-model";
-import { hasRowLanguage, isHeadingSourceUnit, isPlaceOption, listTreeOptions, listTreeRows, isSentenceUnit, isTranslationOf, listJoinedTargetIds, listLinkLeftovers, pickLinkUnits, previewLinkChange, previewSlotChange, readCheckKey, readSlotKind, type DestinationOption } from "@/lib/classify-model";
+import { getDestinationId, hasRowLanguage, isHeadingSourceUnit, isPlaceOption, listTreeOptions, listTreeRows, isSentenceUnit, isTranslationOf, listJoinedTargetIds, listLinkLeftovers, pickLinkUnits, previewLinkChange, previewSlotChange, readCheckKey, readSlotKind, type DestinationOption } from "@/lib/classify-model";
 import { formatKst } from "@/lib/datetime";
 import { findNearestCut } from "@/lib/paper-model";
 import { getNewDocumentsHref } from "@/lib/stages";
@@ -54,7 +54,7 @@ export function AssignSidePanel({ state }: { state: AssignPageState }) {
     refBlocked, isRefGate, isCaptionGateOn, confirmBlockKey, rowCaptionRefs, refCandidates, shapeLines, shapeFirstId, slotPlaces, slotBlockKinds,
     shapeMode, headingBack, rewrap, bandBack, stepBase, refPendingIds, refDetail, refInfo, runUnitEdit, clearToc, runCaptionRefChange,
     switchShapeMode, applySplitSuggestion, dismissSplitSuggestion, selectNextSplit, selectNextRef, runUnitAction, readReasonNeed, runSave,
-    runClear, markNew, placeManage, pickDestination, pickNewSentence, isTemplateDrag, handlePrimary, startEdit, handlePickClickCapture,
+    runClear, markNew, placeManage, pickDestination, pickNewSentence, isTemplateDrag, handlePrimary, startEdit,
     pickRecommendation, markRecHover, renderPlaceLabel, listDestinationEls, canClear,
   } = state;
 
@@ -69,6 +69,9 @@ export function AssignSidePanel({ state }: { state: AssignPageState }) {
   const otherLang = missingLang !== null && !hasRowLanguage(missingLang, slots, groupData, row?.unitIds ?? []) ? missingLang : null;
   // 직접 쓰는 다른 언어 문장의 출처 - 줄의 글 단위(문장·제목·묶이지 않은 칸 문장. 표·그림은 칸 문장을 따로 쓰지 않는다)
   const writeOtherUnit = rowUnits.find((unit) => isSentenceUnit(unit.kind))?.unit_id ?? null;
+  // 고른 곳 상자의 쉬머 열쇠 - 고른 보낼 곳과 자리(설계 2026-11-20 D5). 보낼 곳을 고르거나 바꾸면 한 번 쓸고, 다른 박스를 고르면
+  // 상자를 새로 붙여(key) 쓸지 않는다 - 그때는 결정 칸 전체가 고른 Unit 열쇠로 한 번 쓴다(겹쳐 두 번 쓸지 않게)
+  const chosenToken = draft.destination ? `${getDestinationId(draft.destination)}@${draft.position ? String(draft.position.after) : "end"}` : "";
 
   /** 다른 언어 직접 쓰기 - 고쳐 쓰기로 들어가 빈 칸 하나를 더하고 그 칸에 포커스 */
   function startWriteOther(lang: "ko" | "en", unitId: number) {
@@ -365,9 +368,9 @@ export function AssignSidePanel({ state }: { state: AssignPageState }) {
   function renderChosen() {
     if (!destination) {
       return (
-        <div className="chosen-box is-empty" data-testid="assign-chosen">
+        <Refresh key={shapeFirstId ?? ""} token={chosenToken} className="chosen-box is-empty" testId="assign-chosen">
           {t("assign.chosen.empty")}
-        </div>
+        </Refresh>
       );
     }
     const placeLabel = isPlace ? renderPlaceLabel(destination) : null;
@@ -394,7 +397,7 @@ export function AssignSidePanel({ state }: { state: AssignPageState }) {
     const coConfirmed = saveGroupData ? listCoConfirmed(saveGroupData, [...savedRowIds, ...leftovers], listJoinedTargetIds(destination)) : [];
     const spansDocs = new Set(pickedRows.map((item) => item.target_doc_id)).size > 1;
     return (
-      <div className="chosen-box" data-testid="assign-chosen">
+      <Refresh key={shapeFirstId ?? ""} token={chosenToken} className="chosen-box" testId="assign-chosen">
         <span className="chosen-label">
           {isConfirmedView && <Check size={13} strokeWidth={2} className="flex-none" aria-hidden />}
           <Truncate
@@ -481,7 +484,7 @@ export function AssignSidePanel({ state }: { state: AssignPageState }) {
             )}
           </div>
         )}
-      </div>
+      </Refresh>
     );
   }
 
@@ -944,7 +947,7 @@ export function AssignSidePanel({ state }: { state: AssignPageState }) {
           )}
         </div>
         {/* ① 다듬기 → ② 보낼 곳 - 패널에서 이곳만 스크롤된다. 바로 아래 결정 칸(③)이 붙어 있어 고른 곳에서 확정까지 손이 짧다 */}
-        <div className="assign-pick" data-testid="assign-pick" onClickCapture={handlePickClickCapture}>
+        <div className="assign-pick" data-testid="assign-pick">
           {renderShapeCards(1)}
           {renderStep(stepBase + 1, t("assign.step.pick"))}
           {isTemplateDrag ? (
@@ -966,8 +969,9 @@ export function AssignSidePanel({ state }: { state: AssignPageState }) {
           )}
           <div className="px-[var(--pad)] pb-[var(--pad)] pt-1">{aiNote}</div>
         </div>
-        {/* ② 결정 칸 - 패널 아래에 붙는다. 다른 길 셋 · 고른 곳(높이 상한 안에서 이 부분만 스크롤) · 대상 문서 · Remark · 맨 아래 확정 */}
-        <div className="assign-decide" data-testid="assign-decide">
+        {/* ② 결정 칸 - 패널 아래에 붙는다. 다른 길 셋 · 고른 곳(높이 상한 안에서 이 부분만 스크롤) · 대상 문서 · Remark · 맨 아래 확정.
+            다른 박스를 고르면 내용이 통째로 바뀌니 그 자리에서 한 번 쓸고 지나간다(스크롤로 끌지 않는다, 설계 2026-11-20 D5) */}
+        <Refresh token={shapeFirstId ?? ""} className="assign-decide" testId="assign-decide">
           <div className="assign-decide-body">
             {renderStep(stepBase + 2, t("assign.step.decide"))}
             {actions}
@@ -983,7 +987,7 @@ export function AssignSidePanel({ state }: { state: AssignPageState }) {
           )}
           {remarkRow}
           {confirmButton}
-        </div>
+        </Refresh>
       </div>
     );
   }

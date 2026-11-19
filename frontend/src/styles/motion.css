@@ -64,7 +64,7 @@
     border-radius: inherit;
     background: linear-gradient(100deg, transparent 20%, color-mix(in oklab, var(--accent) 12%, transparent) 50%, transparent 80%);
     background-size: 220% 100%;
-    animation: refresh-sweep 700ms var(--ease-move) both;
+    animation: refresh-sweep var(--dur-refresh) var(--ease-move) both;
   }
   @keyframes refresh-sweep { from { background-position: 120% 0; opacity: 1; } to { background-position: -120% 0; opacity: 0; } }
 

@@ -12,7 +12,6 @@ import { createDragLinkLine, type DragLinkLine } from "@/components/assign/drag-
 import { createDropGapLine, type DropGapLine } from "@/components/assign/drop-gap-line";
 import { findNewLine, findOldStrip, readNewLineEnd, readOldLineStart } from "@/components/assign/link-lines";
 import { type JoinMenuItem } from "@/components/assign/join-menu";
-import { runPickFlight, type FlightSource } from "@/components/assign/pick-flight";
 import { readPairAnchor } from "@/components/assign/pair-lines";
 import { type ResetScope } from "@/components/assign/reset-modal";
 import { type AiAskItem } from "@/components/manage/ai-ask-menu";
@@ -737,9 +736,6 @@ export function useAssignPage() {
   if (oldView?.document.language_layout === "ko_en_separate") aiMenuItems.push({ key: "pair-document", label: t("ai.askPairShort"), run: () => askAiScope("pair", { document_id: oldView.document.id }) });
 
   const [remarkEdit, setRemarkEdit] = useState<RemarkEdit | null>(null);
-  // 목록에서 고를 때마다 늘어 결정 칸의 고른 곳 상자를 다시 그린다(그때만 잠깐 번쩍여 눈이 따라가게 - 줄을 옮길 때는 그대로)
-  const [pickSeq, setPickSeq] = useState(0);
-  const flightRef = useRef<FlightSource | null>(null);
   // Remark 창을 닫은 뒤 포커스를 둘 단추(testid) - 창이 여는 곳으로 되돌린 뒤에 옮겨 ↵가 바로 확정이 되게
   const focusAfterRef = useRef<string | null>(null);
   const firstTextRef = useRef<HTMLTextAreaElement>(null);
@@ -2081,7 +2077,6 @@ export function useAssignPage() {
       suggestionId: use?.suggestionId ?? null,
       ...(use ? { texts: { ...draft.texts, ...use.texts } } : {}),
     });
-    setPickSeq((seq) => seq + 1);
     // 고른 곳의 New 문서로 칸을 옮긴다 - Old 줄을 바꾸는 것만으로는 옮기지 않으니 여기가 따라가는 길이다
     const docId = findDestinationDoc(next, writtenMap);
     if (docId !== null && docId !== newDocId && isNewDocOpen(docId)) setManualNewDoc({ key: toggleKey, docId });
@@ -2100,10 +2095,8 @@ export function useAssignPage() {
     const next = additive ? (isRemoving ? current.filter((id) => id !== targetId) : [...current, targetId]) : [targetId];
     if (next.length === 0) setDraft({ destination: null });
     // 함께 골라진 짝 문장을 Ctrl로 빼면 다시 붙이지 않는다 - 뺀 문장은 출처 없이 남아 신규가 된다(제품 명세 §7.7)
-    else if (isRemoving) {
-      setDraft({ destination: { kind: "link", targetIds: next } });
-      setPickSeq((seq) => seq + 1);
-    } else pickDestination({ kind: "link", targetIds: next });
+    else if (isRemoving) setDraft({ destination: { kind: "link", targetIds: next } });
+    else pickDestination({ kind: "link", targetIds: next });
     return next.length > 0;
   }
 
@@ -2150,7 +2143,6 @@ export function useAssignPage() {
       const destination = drop.kind === "gap" ? readSectionDestination(composedDoc.target_doc_id, drop.sectionKey) : null;
       if (drop.kind !== "gap" || destination === null) return;
       setDraft({ destination, position: { placeId: getDestinationId(destination), after: drop.after } });
-      setPickSeq((seq) => seq + 1);
     }
     requestAnimationFrame(() => document.querySelector<HTMLElement>('[data-testid="assign-primary"]')?.focus({ preventScroll: true }));
   }
@@ -2170,10 +2162,7 @@ export function useAssignPage() {
     const placeId = getDestinationId(destination);
     // 빈 칸은 자리 없이(position 키를 넣지 않는다), 칸 끝 · 틈은 그 자리 - 저장 꼴은 TargetPosition 약속 그대로
     if (placement.position === null) pickDestination(destination);
-    else {
-      setDraft({ destination, position: { placeId, after: placement.position.after } });
-      setPickSeq((seq) => seq + 1);
-    }
+    else setDraft({ destination, position: { placeId, after: placement.position.after } });
     setSpotPick({ rowKey: row.key, key, placeId, after: placement.position ? placement.position.after : "none" });
     focusPrimary();
   }
@@ -2344,10 +2333,7 @@ export function useAssignPage() {
   else if (dropPlace !== null && !groupPending) {
     setDropPlace(null);
     if (dropPlace.position === null) pickDestination(dropPlace.destination);
-    else {
-      setDraft({ destination: dropPlace.destination, position: dropPlace.position });
-      setPickSeq((seq) => seq + 1);
-    }
+    else setDraft({ destination: dropPlace.destination, position: dropPlace.position });
     if (dropPlace.menu) setDraftMenu({ rowKey: dropPlace.rowKey, anchor: dropPlace.anchor });
     else setTreeConfirm(dropPlace.rowKey);
   }
@@ -3074,27 +3060,6 @@ export function useAssignPage() {
     return () => cancelAnimationFrame(frame);
   }, [newFocusId, newDocId]);
 
-  // 고르면 결정 칸의 고른 곳 상자가 보이게 한 뒤(결정 칸이 제 안에서 스크롤되어 있어도) 시선을 그리로 끈다 -
-  // 위 목록을 마우스로 눌렀으면 그 항목이 상자로 날아가고, 키보드·New 원문·메뉴로 골랐으면 상자 번쩍임만
-  useEffect(() => {
-    if (pickSeq === 0) return;
-    const source = flightRef.current;
-    flightRef.current = null;
-    const frame = requestAnimationFrame(() => {
-      const box = document.querySelector<HTMLElement>('[data-testid="assign-chosen"]');
-      if (!box) return;
-      box.scrollIntoView({ block: "nearest" });
-      runPickFlight(box, source);
-    });
-    return () => cancelAnimationFrame(frame);
-  }, [pickSeq]);
-
-  /** 위 목록의 마우스 클릭을 고름보다 먼저 잰다(캡처) - 날릴 그림자의 출발 자리. 키보드로 누른 클릭(detail 0)은 날리지 않는다 */
-  function handlePickClickCapture(event: MouseEvent<HTMLDivElement>) {
-    const item = event.target instanceof Element ? event.target.closest<HTMLElement>(".dest-card, .tree-leaf") : null;
-    flightRef.current = item && event.detail > 0 ? { rect: item.getBoundingClientRect(), text: item.innerText, at: performance.now() } : null;
-  }
-
   // Remark 창이 닫히고(창을 거친 저장이면 저장이 끝난 뒤) 확정 단추로 포커스 - 꺼진 단추면 창이 되돌린 자리 그대로
   useEffect(() => {
     const testId = focusAfterRef.current;
@@ -3177,7 +3142,7 @@ export function useAssignPage() {
     runSave, runClear, runUndoStep, confirmIdenticalAll, acceptAll, markNew, placeManage, pickDestination, pickNewSentence, handleNewPick,
     handleJoinPick, readJoinAfter, pickJoinMenu, pickPlaceSpot, pickOwnAiLine, jumpToNew, openNewDoc, showInNew, jumpToOld,
     pickTemplateLine, fillTemplateMissing, isTemplateDrag, isOldDrag, finishPairPick, handleOldClick, handlePrimary, startEdit,
-    handlePickClickCapture, pickRecommendation, markRecHover, revealPick, setRevealPick, done, renderPlaceLabel, listDestinationEls,
+    pickRecommendation, markRecHover, revealPick, setRevealPick, done, renderPlaceLabel, listDestinationEls,
     canClear, error,
   };
 }
