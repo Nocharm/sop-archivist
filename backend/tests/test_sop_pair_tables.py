@@ -232,3 +232,35 @@ def test_counterpart_is_only_for_unwrapping_another_table(client: TestClient) ->
         body = {"revision": view["document"]["revision"], "confirm": False, "op": op}
         response = client.post(f"/api/bundles/{bundle_id}/documents/{doc_id}/edits", json=body, headers=AUTHOR)
         assert response.status_code == 422, response.text
+
+
+def test_counterpart_must_be_one_of_the_offered_tables(client: TestClient) -> None:
+    # 대응 표는 보기가 싣는 후보만 — 같은 언어 표 · 이미 벗긴 표 · 다른 문서의 표는 422(같은 단위를 두 번 세워 500이 되지 않게)
+    bundle_id, doc_id = _setup(client)
+    _unwrap(client, bundle_id, doc_id, EN_LATER_TABLE)
+    view = get_view(client, bundle_id, doc_id)
+    table_id = _table_id(view, KO_TABLE)
+
+    for counterpart in (_table_id(view, KO_VALUE_TABLE), _table_id(view, EN_LATER_TABLE), 999_999):
+        op = {"type": "set_layout_table", "table_id": table_id, "is_layout": True, "counterpart_table_id": counterpart}
+        body = {"revision": view["document"]["revision"], "confirm": False, "op": op}
+        response = client.post(f"/api/bundles/{bundle_id}/documents/{doc_id}/edits", json=body, headers=AUTHOR)
+        assert (response.status_code, response.json()["detail"]["code"]) == (422, "invalid_counterpart"), response.text
+    assert _layouts(get_view(client, bundle_id, doc_id)) == [False, False, False, False, True]
+
+
+def test_undoing_a_combined_unwrap_leaves_no_stale_pairs(client: TestClient) -> None:
+    # 다른 표를 골라 함께 벗긴 편집(링크)을 되돌리면 그 링크는 짝 다시 세우기에 읽히지 않는다 — 남은 벗긴 표에 짝이 남지 않는다
+    bundle_id, doc_id = _setup(client)
+    _unwrap(client, bundle_id, doc_id, EN_TABLE)
+    _unwrap(client, bundle_id, doc_id, KO_TABLE, EN_LATER_TABLE)
+    assert _pairs(get_view(client, bundle_id, doc_id))
+
+    _step(client, bundle_id, doc_id, "undo")
+
+    undone = get_view(client, bundle_id, doc_id)
+    assert _layouts(undone) == [False, False, True, False, False]
+    assert undone["pairs"] == []
+    # 되돌린 링크가 없으니 한글 표만 벗기면 가장 비슷한 벗긴 영어 표와 맺는다
+    _unwrap(client, bundle_id, doc_id, KO_TABLE)
+    assert _pairs(get_view(client, bundle_id, doc_id)) == WORK_PAIRS

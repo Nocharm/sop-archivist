@@ -130,14 +130,20 @@ export interface NumberPreview {
   to: string;
 }
 
+/** 번호 목록을 가르는 표 - 띠 표 제목 줄(표를 가리키는 제목, 서버 segment.is_band_heading)은 장마다 표가 달라도 표 밖 목록이다. */
+function getListTable(unit: ViewUnit): number | null {
+  return unit.kind === "heading" && unit.table_id !== null ? null : unit.table_id;
+}
+
 /**
  * 고칠 줄 뒤로 따라 바뀔 번호들(문서 순서) - 번호 칸이 점선으로 미리 보인다. 후보는 서버와 같이 같은 언어 · 같은 표(표 밖이면 표 밖)의
- * 번호 칸 있는 단위다. units는 용지 순서(원문 순)로 넘긴다.
+ * 번호 칸 있는 단위다(띠 표 제목 줄은 표 밖으로 친다). units는 용지 순서(원문 순)로 넘긴다.
  */
 export function listFollowPreview(units: readonly ViewUnit[], unitId: number, next: string): NumberPreview[] {
   const edited = units.find((unit) => unit.id === unitId);
   if (!edited || next.trim() === "") return [];
-  const candidates = units.filter((unit) => unit.number !== null && unit.lang === edited.lang && unit.table_id === edited.table_id);
+  const scope = getListTable(edited);
+  const candidates = units.filter((unit) => unit.number !== null && unit.lang === edited.lang && getListTable(unit) === scope);
   const index = candidates.findIndex((unit) => unit.id === unitId);
   const changes = planFollow(
     candidates.map((unit) => unit.number?.value ?? null),

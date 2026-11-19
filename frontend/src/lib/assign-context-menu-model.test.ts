@@ -457,3 +457,23 @@ describe("band heading line (F4)", () => {
     expect(edit.some((entry) => entry.action === "to_sentence" || entry.action === "to_heading")).toBe(false);
   });
 });
+
+describe("contents (TOC) lines", () => {
+  // 사용자 결정(2026-11-19) - 목차 줄은 나누거나 합치지 않는다, 먼저 목차 아님(서버 422 toc_line_locked)
+  const toc = makeUnit(2, { noise_kind: "toc" });
+
+  it("greys out Split and merging on a contents line in the menu", () => {
+    expect(find(ctx({ target: toc }), "split")).toMatchObject({ enabled: false, reasonKey: "assign.ctx.why.tocLine" });
+    expect(find(ctx({ target: toc }), "merge_prev")).toMatchObject({ enabled: false, reasonKey: "assign.ctx.why.tocLine" });
+  });
+
+  it("will not merge a sentence into a contents line next to it", () => {
+    expect(find(ctx({ next: makeUnit(3, { noise_kind: "toc" }) }), "merge_next")).toMatchObject({ enabled: false, reasonKey: "split.noMergeToc" });
+  });
+
+  it("shows no split or merge buttons on a contents line in Shape", () => {
+    const actions = listShapeLineItems(toc, buildAssignMenu(ctx({ target: toc })).edit, false).map((item) => item.action);
+
+    expect(actions.some((action) => action === "split" || action.startsWith("merge_"))).toBe(false);
+  });
+});

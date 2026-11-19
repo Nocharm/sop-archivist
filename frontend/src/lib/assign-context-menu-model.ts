@@ -82,6 +82,8 @@ function build(action: AssignMenuAction, reasonKey: string | null): AssignMenuIt
 function getRetireBlocker(ctx: AssignMenuContext, unit: ViewUnit): string | null {
   if (ctx.readOnly) return why("readOnly");
   if (!EDITABLE_KINDS.has(unit.kind)) return why("notText");
+  // 목차 줄은 나누거나 합치지 않는다 - 먼저 목차 아님(서버 422 toc_line_locked, 사용자 결정 2026-11-19)
+  if (unit.noise_kind) return why("tocLine");
   return ctx.hasDraft(unit) ? why("unsaved") : null;
 }
 
@@ -268,7 +270,7 @@ const SHAPE_LINE_ACTIONS: ReadonlySet<AssignMenuAction> = new Set([
 // 다듬기 줄에서 꺼 둔 채 보이지도 않는 까닭 - 그 자리에서는 풀 길이 없는 모양 탓이다(옆에 문장이 없다·이미 짝·글이 아니다).
 // 저장 전·배정처럼 먼저 할 일이 있는 까닭은 꺼 둔 채 보여 툴팁으로 알린다. 우클릭 메뉴는 그대로 다 보인다
 const SHAPE_HIDDEN_REASONS: ReadonlySet<string> = new Set([
-  why("captionInFigure"), why("nothingToSplit"), why("noNeighbor"), why("neighborNotText"), why("notText"),
+  why("captionInFigure"), why("nothingToSplit"), why("noNeighbor"), why("neighborNotText"), why("notText"), why("tocLine"),
   "split.menu.why.alreadyPaired", "split.menu.why.noLanguage", "split.menu.why.notText",
   ...Object.values(MERGE_BLOCKER_KEYS),
 ]);

@@ -11,7 +11,7 @@
 
 from collections import Counter, defaultdict
 from collections.abc import Collection, Iterable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from typing import Annotated, Literal, TypeVar, assert_never
 
 from pydantic import BaseModel, Field, StringConstraints, model_validator
@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app import clock
 from app.sop.caption_slot import CAPTION_REACH, PlaceBlock, build_block_places, get_place_distance
 from app.sop.captions import CAPTION_KIND
+from app.sop.counterparts import list_counterpart_options
 from app.sop.decision_steps import UndoMetaIn
 from app.sop.decisions import DbId
 from app.sop.detach import (
@@ -48,6 +49,7 @@ from app.sop.models import (
     UnitPairMember,
     UnitRef,
 )
+from app.sop.noise import NOISE_TOC
 from app.sop.numbering import (
     MAX_NUMBER_CHARS,
     NO_NUMBER,
@@ -91,8 +93,10 @@ from app.sop.spans import (
 from app.sop.tobe import MAX_DB_INT
 from app.sop.units import (
     LINE_SPLIT_FORMAT,
+    SEPARATE_LAYOUT,
     UNIT_ACTIVE,
     get_latest_extraction_id,
+    load_table_facts,
     pair_new_units,
     refresh_code_pairs,
     verify_document_coverage,
@@ -434,6 +438,13 @@ def _ensure_text_kinds(units: Iterable[Unit]) -> None:
         raise_rule(422, "invalid_unit_kind", unit_ids=wrong)
 
 
+def _ensure_not_toc(units: Iterable[Unit]) -> None:
+    """목차 줄은 나누기 · 합치기 · 골라 만들기 · 경계 옮기기를 받지 않는다(사용자 결정 2026-11-19) — 먼저 목차 아님(clear_noise)."""
+    locked = sorted(unit.id for unit in units if unit.noise_kind == NOISE_TOC)
+    if locked:
+        raise_rule(422, "toc_line_locked", unit_ids=locked)
+
+
 async def load_active_units(
     session: AsyncSession, extraction_id: ExtractionId, unit_ids: Collection[int]
 ) -> dict[int, Unit]:
@@ -527,6 +538,7 @@ def _decide_merged_kind(units: Iterable[Unit]) -> str:
 async def _plan_split(session: AsyncSession, extraction_id: ExtractionId, op: SplitOp) -> _Change:
     unit = (await load_active_units(session, extraction_id, [op.unit_id]))[op.unit_id]
     _ensure_text_kinds([unit])
+    _ensure_not_toc([unit])
     spans = to_spans(unit.spans)
     located = locate_text_offset(spans, op.at) if 0 < op.at < len(unit.text) else None
     if located is None:
@@ -561,6 +573,7 @@ async def _plan_merge(session: AsyncSession, extraction_id: ExtractionId, op: Me
     ensure_unique_units(op.unit_ids)
     units = sorted((await load_active_units(session, extraction_id, op.unit_ids)).values(), key=_get_position)
     _ensure_text_kinds(units)
+    _ensure_not_toc(units)
     _ensure_mergeable(units)
     langs = {unit.lang for unit in units}
     blocks = await _load_unit_blocks(session, extraction_id, units)
@@ -621,6 +634,7 @@ async def _plan_move_boundary(session: AsyncSession, extraction_id: ExtractionId
     units = await load_active_units(session, extraction_id, [op.left_unit_id, op.right_unit_id])
     left, right = units[op.left_unit_id], units[op.right_unit_id]
     _ensure_text_kinds([left, right])
+    _ensure_not_toc([left, right])
     left_spans, right_spans = to_spans(left.spans), to_spans(right.spans)
     block_id, left_start, left_end = left_spans[-1]
     right_block_id, right_start, right_end = right_spans[0]
@@ -661,6 +675,7 @@ async def _plan_carve(session: AsyncSession, extraction_id: ExtractionId, op: Ca
     )
     hit_ids = [unit_id for unit_id, spans in rows if overlaps(to_spans(spans), op.block_id, start, end)]
     units = sorted((await load_active_units(session, extraction_id, hit_ids)).values(), key=_get_position)
+    _ensure_not_toc(units)
     # 붙인 캡션은 문단 안 다른 문장과 한 블록에 있을 수 있다 — 골라 만든 조각이 묶음 둘에 걸치지 않게 합치기와 같이 막는다
     _ensure_mergeable(units)
     blocks = await _load_unit_blocks(session, extraction_id, units)
@@ -872,7 +887,7 @@ async def _plan_set_number(session: AsyncSession, extraction_id: ExtractionId, o
     """고칠 단위와(follow면) 같은 목록의 뒤 단위들의 number_set, 그 번호가 열던 절의 블록 범위.
 
     같은 목록 후보는 같은 언어 · 같은 표(표 밖이면 표 밖)의 글 단위다 — 한/영이 번갈아 놓인 문서에서 한 언어의 고침이 다른
-    언어 줄을 밀지 않게 한다(짝은 Unit마다 자기 번호, F5).
+    언어 줄을 밀지 않게 한다(짝은 Unit마다 자기 번호, F5). 띠 표 제목 줄은 표 밖 줄로 친다(프런트 number-model.ts와 같은 규칙).
     """
     unit = (await load_active_units(session, extraction_id, [op.unit_id]))[op.unit_id]
     if unit.kind not in NUMBERED_KINDS or unit.noise_kind is not None:  # 목차 줄은 번호 칸이 없다
@@ -885,7 +900,10 @@ async def _plan_set_number(session: AsyncSession, extraction_id: ExtractionId, o
                 .where(
                     Unit.extraction_id == extraction_id, Unit.status == UNIT_ACTIVE, Unit.kind.in_(NUMBERED_KINDS),
                     Unit.lang == unit.lang, Unit.noise_kind.is_(None),
-                    Unit.table_id.is_(None) if unit.table_id is None else Unit.table_id == unit.table_id,
+                    # 띠 표 제목 줄은 장마다 자기 원문 표를 가리키지만 표 밖 줄과 한 목록이다(F4) — 표 밖이면 띠 표 제목도 후보
+                    or_(Unit.table_id.is_(None), Unit.kind == "heading")
+                    if unit.table_id is None or is_band_heading(unit.kind, unit.table_id)
+                    else Unit.table_id == unit.table_id,
                 )
                 .order_by(Unit.pos_seq, Unit.pos_start, Unit.id)
             )
@@ -1161,21 +1179,8 @@ async def _plan_set_layout_table(
     ).all()
     for band in inner_tables:
         if is_band_table(band.signals):
-            _merge_change(change, await _plan_band_layout(session, document_id, extraction_id, band, op.is_layout))
+            change = _merge_changes(change, await _plan_band_layout(session, document_id, extraction_id, band, op.is_layout))
     return change
-
-
-def _merge_change(change: _Change, other: _Change) -> None:
-    """other를 change에 더한다 — 표 벗기기와 안쪽 띠 표 바꾸기를 한 편집으로. 같은 변경 안 표 단위를 가리키는 순번(group_draft)은 민다."""
-    offset = len(change.drafts)
-    for draft in other.drafts:
-        if draft.group_draft is not None:
-            draft.group_draft += offset
-    change.retire = sorted({*change.retire, *other.retire})
-    change.drafts.extend(other.drafts)
-    change.retired_shapes.extend(other.retired_shapes)
-    change.regroup.update(other.regroup)
-    change.layouts.update(other.layouts)
 
 
 async def _plan_plain_layout(
@@ -1194,8 +1199,10 @@ async def _plan_plain_layout(
         # 첫 행에서 올린 캡션은 풀린 표의 칸 줄로 돌아간다(묶이지 않은 칸 문장 — 다른 칸 줄과 같다)
         drafts = [_build_freed_caption(caption, blocks, None) for caption in captions]
         for number, content in joins:
-            # 번호 칸 블록 전체가 그 줄 범위의 첫 조각 — 처음 쪼개기의 레이아웃 표와 같은 단위(§11-7), 묶음은 풀린다
-            draft = _build_draft(content, [*to_spans(number.spans), *to_spans(content.spans)], blocks, lang=content.lang)
+            # 번호 칸 블록 전체가 그 줄 범위의 첫 조각 — 처음 쪼개기의 레이아웃 표와 같은 단위(§11-7), 묶음은 풀린다.
+            # 같은 자리에서 시작하는 번호 칸 줄을 like로 — 사람이 고친 번호(number_set)를 이은 줄이 물려받는다
+            spans = [*to_spans(number.spans), *to_spans(content.spans)]
+            draft = _build_draft(number, spans, blocks, kind=content.kind, lang=content.lang)
             draft.group_unit_id = None
             drafts.append(draft)
         change = _build_replacement([*groups, *captions, *joined], drafts)
@@ -1218,8 +1225,20 @@ async def _plan_plain_layout(
 async def _plan_unwrap_pair(
     session: AsyncSession, document_id: int, extraction_id: ExtractionId, op: SetLayoutTableOp
 ) -> _Change:
-    """표와 다른 언어 절반의 대응 표를 한 편집으로 벗긴다(F8a) — 표마다 보통 벗기기를 세워 하나로 합친다(되돌리기 한 번)."""
+    """표와 다른 언어 절반의 대응 표를 한 편집으로 벗긴다(F8a) — 표마다 보통 벗기기를 세워 하나로 합친다(되돌리기 한 번).
+
+    대응 표는 문서 보기가 싣는 후보(counterparts.list_counterpart_options)만 받는다 — 같은 언어 표 · 이미 벗긴 표 · 누른 표의 안쪽
+    띠 표나 바깥 표를 받으면 같은 단위를 두 번 세운다(422 invalid_counterpart).
+    """
     assert op.counterpart_table_id is not None
+    await _load_table(session, extraction_id, op.table_id)  # 다른 문서의 표면 404
+    document = await session.get_one(Document, document_id)
+    options = (
+        list_counterpart_options(await load_table_facts(session, extraction_id))
+        if document.language_layout == SEPARATE_LAYOUT else {}
+    )
+    if op.counterpart_table_id not in options.get(op.table_id, []):
+        raise_rule(422, "invalid_counterpart", table_id=op.table_id, counterpart_table_id=op.counterpart_table_id)
     first = await _plan_set_layout_table(session, document_id, extraction_id, op)
     second = await _plan_set_layout_table(
         session, document_id, extraction_id,
@@ -1231,20 +1250,28 @@ async def _plan_unwrap_pair(
 
 
 def _merge_changes(first: _Change, second: _Change) -> _Change:
-    """두 표의 벗기기 변경을 하나로 — 둘은 다른 표의 단위만 건드린다. 같은 변경 안 표 단위를 가리키는 칸(group_draft)은 번호를 민다."""
+    """두 변경을 한 편집으로 — 표 벗기기와 안쪽 띠 표 바꾸기, 표와 대응 표 벗기기. 둘은 다른 표의 단위만 건드린다.
+
+    _Change의 모든 칸을 칸 꼴대로 합친다(목록은 잇고 사전은 더하고 참거짓은 또는) — 칸을 더해도 여기서 조용히 빠지지 않는다.
+    같은 변경 안 표 단위를 가리키는 칸(group_draft)은 앞 변경의 초안 수만큼 민다.
+    """
     offset = len(first.drafts)
     for draft in second.drafts:
         if draft.group_draft is not None:
             draft.group_draft += offset
-    return _Change(
-        retire=[*first.retire, *second.retire], revive=[*first.revive, *second.revive],
-        drafts=[*first.drafts, *second.drafts], langs={**first.langs, **second.langs},
-        regroup={**first.regroup, **second.regroup}, layouts={**first.layouts, **second.layouts},
-        retired_shapes=[*first.retired_shapes, *second.retired_shapes], bundles=[*first.bundles, *second.bundles],
-        numbers={**first.numbers, **second.numbers}, sections=[*first.sections, *second.sections],
-        noises={**first.noises, **second.noises}, figures={**first.figures, **second.figures},
-        repair_pairs=first.repair_pairs or second.repair_pairs,
-    )
+    merged: dict[str, object] = {}
+    for item in fields(_Change):
+        left, right = getattr(first, item.name), getattr(second, item.name)
+        if isinstance(left, bool):
+            merged[item.name] = left or right
+        elif isinstance(left, list):
+            merged[item.name] = [*left, *right]
+        elif isinstance(left, dict):
+            merged[item.name] = {**left, **right}
+        else:
+            raise TypeError(f"_Change.{item.name} has no merge rule: {type(left).__name__}")
+    merged["retire"] = sorted({*first.retire, *second.retire})
+    return _Change(**merged)
 
 
 async def _plan_band_layout(
@@ -1264,9 +1291,24 @@ async def _plan_band_layout(
     else:
         replaced = await _find_band_units(session, extraction_id, table.id)
     document = await session.get_one(Document, document_id)
-    change = _build_replacement(replaced, [*await _build_band_drafts(session, document, extraction_id, table.id, to_layout), *extra])
+    drafts = await _build_band_drafts(session, document, extraction_id, table.id, to_layout)
+    _carry_number_sets(replaced, drafts)
+    change = _build_replacement(replaced, [*drafts, *extra])
     change.layouts = {table.id: (table.is_layout, to_layout)}
     return change
+
+
+def _carry_number_sets(replaced: Iterable[Unit], drafts: Iterable[_Draft]) -> None:
+    """사람이 고친 번호(number_set)를 같은 자리(첫 범위의 블록 · 시작)에서 시작하는 새 단위로 — 띠 표 제목 줄의 번호 칸 범위와
+    표의 번호 칸 줄은 같은 자리에서 시작하므로 벗기기 · 표로 되돌리기를 오가도 고친 번호가 남는다(_build_draft의 물려받기와 같은 규칙)."""
+    fixed = {
+        tuple(unit.spans[0][:2]): unit.number_set
+        for unit in replaced if unit.spans and unit.number_set is not None and unit.kind in NUMBERED_KINDS
+    }
+    for draft in drafts:
+        number_set = fixed.get(tuple(draft.spans[0][:2])) if draft.spans and draft.kind in NUMBERED_KINDS else None
+        if number_set is not None:
+            draft.number["number_set"] = number_set
 
 
 async def _find_band_units(session: AsyncSession, extraction_id: ExtractionId, table_id: int) -> list[Unit]:
@@ -2042,10 +2084,11 @@ async def undo_edit(session: AsyncSession, document: Document, *, confirm: bool,
     )
     if edit is None:
         raise_rule(409, "nothing_to_undo")
-    result = await _step_edit(session, document, edit, backwards=True, confirm=confirm, actor=actor)
+    # 되돌리는 기록을 먼저 내린다 — 짝 다시 세우기(units.refresh_code_pairs)가 남은 기록에서 함께 벗긴 표 짝을 읽을 때 이 기록을
+    # 아직 적용된 것으로 읽지 않게. 실패하면 요청이 커밋하지 않아 상태도 그대로다
     edit.state = EDIT_UNDONE
     await session.flush()
-    return result
+    return await _step_edit(session, document, edit, backwards=True, confirm=confirm, actor=actor)
 
 
 async def redo_edit(session: AsyncSession, document: Document, *, confirm: bool, actor: str) -> EditStepResult:
