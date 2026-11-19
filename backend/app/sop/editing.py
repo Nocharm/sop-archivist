@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app import clock
 from app.sop.caption_slot import CAPTION_REACH, PlaceBlock, build_block_places, get_place_distance
 from app.sop.captions import CAPTION_KIND
+from app.sop.counterparts import list_counterpart_options
 from app.sop.decision_steps import UndoMetaIn
 from app.sop.decisions import DbId
 from app.sop.detach import (
@@ -91,8 +92,10 @@ from app.sop.spans import (
 from app.sop.tobe import MAX_DB_INT
 from app.sop.units import (
     LINE_SPLIT_FORMAT,
+    SEPARATE_LAYOUT,
     UNIT_ACTIVE,
     get_latest_extraction_id,
+    load_table_facts,
     pair_new_units,
     refresh_code_pairs,
     verify_document_coverage,
@@ -1223,8 +1226,20 @@ async def _plan_plain_layout(
 async def _plan_unwrap_pair(
     session: AsyncSession, document_id: int, extraction_id: ExtractionId, op: SetLayoutTableOp
 ) -> _Change:
-    """표와 다른 언어 절반의 대응 표를 한 편집으로 벗긴다(F8a) — 표마다 보통 벗기기를 세워 하나로 합친다(되돌리기 한 번)."""
+    """표와 다른 언어 절반의 대응 표를 한 편집으로 벗긴다(F8a) — 표마다 보통 벗기기를 세워 하나로 합친다(되돌리기 한 번).
+
+    대응 표는 문서 보기가 싣는 후보(counterparts.list_counterpart_options)만 받는다 — 같은 언어 표 · 이미 벗긴 표 · 누른 표의 안쪽
+    띠 표나 바깥 표를 받으면 같은 단위를 두 번 세운다(422 invalid_counterpart).
+    """
     assert op.counterpart_table_id is not None
+    await _load_table(session, extraction_id, op.table_id)  # 다른 문서의 표면 404
+    document = await session.get_one(Document, document_id)
+    options = (
+        list_counterpart_options(await load_table_facts(session, extraction_id))
+        if document.language_layout == SEPARATE_LAYOUT else {}
+    )
+    if op.counterpart_table_id not in options.get(op.table_id, []):
+        raise_rule(422, "invalid_counterpart", table_id=op.table_id, counterpart_table_id=op.counterpart_table_id)
     first = await _plan_set_layout_table(session, document_id, extraction_id, op)
     second = await _plan_set_layout_table(
         session, document_id, extraction_id,
