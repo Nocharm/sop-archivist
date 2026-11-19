@@ -120,7 +120,6 @@ import {
   updateCaptionRef,
   type AiSuggestion,
   type ChangeType,
-  type ChangeTypeInput,
   type ComposedDoc,
   type ComposedItem,
   type DecisionStepResult,
@@ -160,6 +159,7 @@ import {
   type LinkMenuItem,
   type Recommendation,
 } from "@/lib/assign-model";
+import { buildUseDraft, findRowSuggestion, indexLiveSuggestions, readRewrites, readSuggestedDestination } from "@/lib/ai-suggestion-model";
 import { buildAssignMenu, getPairPickBlocker, getPairSetBlocker, planAssignJoin, planShapeMode, type AssignMenuAction, type AssignMenuGroups } from "@/lib/assign-context-menu-model";
 import { listHeadingBackUnits } from "@/lib/heading-shift-model";
 import { countDecidedLines, getTableNumber, getUnitUnwrapTable, listUnwrapScopes } from "@/lib/unwrap-model";
@@ -252,9 +252,11 @@ interface PageDraft extends Omit<RowDraft, "reason" | "moveCode"> {
   reason: string | null;
   moveCode: string | null;
   editing: boolean;
+  /** Use로 받은 AI 제안 - 저장이 실어 보내 서버가 채택을 남긴다(설계 2026-11-19-ai-suggest-only D2). 다른 곳을 고르면 비운다 */
+  suggestionId?: number | null;
 }
 
-const EMPTY_DRAFT: PageDraft = { destination: null, texts: {}, changeTypes: {}, linkChangeTypes: {}, reason: null, moveCode: null, editing: false };
+const EMPTY_DRAFT: PageDraft = { destination: null, texts: {}, changeTypes: {}, linkChangeTypes: {}, reason: null, moveCode: null, editing: false, suggestionId: null };
 const NO_NUMBERS: ReadonlySet<number> = new Set();
 
 // 고름을 두는 편집·되돌리기의 판단은 decision-step-model(IN_PLACE_EDIT_OPS · shouldDropSelectionOnStep)
@@ -270,6 +272,11 @@ type ConfirmedEdit =
   | { kind: "edit"; op: EditOp; okText: string; followId: number | null }
   | { kind: "to_pair"; unit: ViewUnit }
   | { kind: "ai_split"; unit: ViewUnit; suggestion: AiSuggestion };
+
+/** 거르기 - "AI 추천"은 상태가 아니라 미배정이면서 살아 있는 제안이 있는 줄이다(설계 §5 2-3) */
+function matchesFilter(item: { unitIds: number[]; status: string }, next: Filter, liveIndex: ReadonlyMap<number, AiSuggestion>): boolean {
+  return next === "all" || (next === "ai_suggested" ? findRowSuggestion(item.unitIds, item.status, liveIndex) !== null : item.status === next);
+}
 
 function isTypingTarget(target: EventTarget | null): boolean {
   return target instanceof HTMLElement && (target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName));
@@ -409,12 +416,32 @@ export default function AssignPage() {
   const aiBusy = (aiJobs.status?.jobs.queued ?? 0) + (aiJobs.status?.jobs.running ?? 0);
   const suggestions = useLoaded(() => listSuggestions(bundleId, "classify"), dataKey);
   const matchSuggestions = useLoaded(() => listAppliedSuggestions(bundleId, "match"), dataKey);
+  // 답이 무효였던 분류 - 그 줄은 미배정 그대로라 카드 자리에 "고르지 못했다" 한 줄만(설계 §5 2-6)
+  const invalidSuggestions = useLoaded(() => listSuggestions(bundleId, "classify", "invalid"), dataKey);
+  const invalidUnitIds = useMemo(() => new Set((invalidSuggestions.data ?? []).flatMap((item) => item.content.unit_ids ?? [])), [invalidSuggestions.data]);
   // 단위마다 가장 최근의 적용된 제안(분류·짝) - 이유를 보이는 데만 쓴다. 보낼 곳 자체는 저장된 묶음에서 읽는다
   const suggestionOf = useMemo(() => {
     const map = new Map<number, AiSuggestion>();
     for (const item of [...(suggestions.data ?? []), ...(matchSuggestions.data ?? [])]) for (const id of item.content.unit_ids ?? []) if ((map.get(id)?.id ?? 0) < item.id) map.set(id, item);
     return map;
   }, [suggestions.data, matchSuggestions.data]);
+  /** 용지 줄 끝 표시의 상태 - 살아 있는 제안이 있는 미배정 단위는 AI 표시(✦, 호버 설명)를 단다(설계 §5 2-4). 판단 상태는 바꾸지 않는다 */
+  function readMarkStatus(unitId: number): UnitRow["status"] | undefined {
+    const status = unitMap.get(unitId)?.status;
+    return status === "unassigned" && liveIndex.has(unitId) ? "ai_suggested" : status;
+  }
+  // 살아 있는 제안(사람이 아직 받거나 버리지 않은 것) - AI는 판단을 쓰지 않으니 줄의 AI 추천은 여기서만 나온다
+  const liveIndex = useMemo(() => indexLiveSuggestions([...(suggestions.data ?? []), ...(matchSuggestions.data ?? [])]), [suggestions.data, matchSuggestions.data]);
+  // 살아 있는 묶기 제안이 잇자고 한 새 문장 → 그 제안의 Old 단위 - New 칸의 "고른 줄의 AI만" 거르기가 읽는다
+  const suggestedTargetUnits = useMemo(() => {
+    const map = new Map<number, number[]>();
+    for (const item of new Set(liveIndex.values())) {
+      if (item.kind !== "match") continue;
+      const destination = readSuggestedDestination(item);
+      if (destination?.kind === "link") for (const id of destination.targetIds) map.set(id, item.content.unit_ids ?? []);
+    }
+    return map;
+  }, [liveIndex]);
 
   const unitMap = useMemo(() => new Map((units.data ?? []).map((row) => [row.unit_id, row])), [units.data]);
   const written = useMemo(() => writtenList.data ?? [], [writtenList.data]);
@@ -440,11 +467,14 @@ export default function AssignPage() {
   const [filter, setFilter] = useState<Filter>("all");
   const [snapshot, setSnapshot] = useState<{ filter: Filter; keys: string[] } | null>(null);
   const counts: Record<Filter, number> = { unassigned: 0, ai_suggested: 0, on_hold: 0, confirmed: 0, all: rows.length };
-  for (const row of rows) counts[row.status] += 1;
+  for (const row of rows) {
+    counts[row.status] += 1;
+    if (matchesFilter(row, "ai_suggested", liveIndex)) counts.ai_suggested += 1;
+  }
   const listKeys = useMemo(() => {
     const keys = new Set(rows.map((row) => row.key));
-    return snapshot && snapshot.filter === filter ? snapshot.keys.filter((key) => keys.has(key)) : rows.filter((row) => filter === "all" || row.status === filter).map((row) => row.key);
-  }, [snapshot, filter, rows]);
+    return snapshot && snapshot.filter === filter ? snapshot.keys.filter((key) => keys.has(key)) : rows.filter((row) => matchesFilter(row, filter, liveIndex)).map((row) => row.key);
+  }, [snapshot, filter, rows, liveIndex]);
 
   // 처음 불러온 순간의 목록을 붙잡는다 - 그래야 확정한 줄이 거르기에서 바로 빠지지 않는다(렌더 중 상태 맞추기)
   if (snapshot === null && rows.length > 0 && units.data !== null) {
@@ -457,7 +487,7 @@ export default function AssignPage() {
   function applyFilter(next: Filter) {
     setMode("old");
     setFilter(next);
-    setSnapshot({ filter: next, keys: rows.filter((row) => next === "all" || row.status === next).map((row) => row.key) });
+    setSnapshot({ filter: next, keys: rows.filter((row) => matchesFilter(row, next, liveIndex)).map((row) => row.key) });
     setFoldOpen(EMPTY_FOLD_OPEN);
   }
   // 접을 때 맞는 Unit - 필터를 건 때의 목록(스냅숏)이라 확정·보류로 상태가 바뀌어도 그 자리에서 접히지 않는다. 출처 없는 New 모드는 Old를 넓게 훑으니 접지 않는다
@@ -582,7 +612,6 @@ export default function AssignPage() {
   const systemHold = rowUnits.map((unit) => findSystemHold(unit.decision)).find((code) => code !== null) ?? null;
   const reasonNow = draft.reason ?? savedReason;
   const moveCode = draft.moveCode ?? firstDecision?.move_target_code ?? "";
-  const rowSuggestion = row ? (row.unitIds.map((id) => suggestionOf.get(id)).find(Boolean) ?? null) : null;
 
   function setDraft(patch: Partial<PageDraft>, nextEditing = editing) {
     if (!activeKey) return;
@@ -603,12 +632,15 @@ export default function AssignPage() {
   useLeaveGuard(unsavedCount > 0, setLeaveTo);
 
   // --- 추천(① 추천 카드) - 저장된 AI 제안 → 같은 글자 → 비슷한 문장 ---
-  const aiWhy = typeof rowSuggestion?.content.reason === "string" ? rowSuggestion.content.reason : "";
-  const isAiRow = row?.status === "ai_suggested" && savedDestination !== null;
+  // 줄의 AI 추천 - 미배정 줄을 덮는 살아 있는 제안. 카드를 누르거나 A(Use)로 받으면 초안이 채워지고 확정은 사람이 한다(설계 §5 2-1)
+  const rowLive = row ? findRowSuggestion(row.unitIds, row.status, liveIndex) : null;
+  const aiDest = rowLive ? readSuggestedDestination(rowLive) : null;
+  const aiWhy = typeof rowLive?.content.reason === "string" ? rowLive.content.reason : "";
+  const isAiRow = aiDest !== null;
   const recommendations: Recommendation[] = row
     ? buildRecommendations({
-        aiLinks: isAiRow && savedDestination?.kind === "link" ? [{ targetIds: savedDestination.targetIds, why: aiWhy }] : [],
-        aiPlaces: isAiRow && savedDestination && savedDestination.kind !== "link" ? [{ destination: savedDestination, why: aiWhy }] : [],
+        aiLinks: aiDest?.kind === "link" ? [{ targetIds: aiDest.targetIds, why: aiWhy }] : [],
+        aiPlaces: aiDest && aiDest.kind !== "link" ? [{ destination: aiDest, why: aiWhy }] : [],
         identical: (identical.data ?? []).filter((item) => row.unitIds.includes(item.unit_id)).map((item) => item.target_id),
         similar: similar.data ?? [],
         headingPlaces: rowUnits.some(isBandHeading),
@@ -839,6 +871,10 @@ export default function AssignPage() {
   const saveUnits = rowUnits.map((unit) => ({ id: unit.unit_id, kind: unit.kind, lang: unit.lang, text: unit.text, content_start: unit.content_start, revision: unit.decision.revision }));
   // 새 문장 칸 - AI가 나눈 문장은 칸 여럿, 합친 문장은 칸 하나다
   const slots = buildSentenceSlots(groupData, saveUnits, draft.otherLang ?? null);
+  // Use(A)가 받는 카드 - 줄의 AI 추천 중 첫째
+  const aiRecommendation = recommendations.find((rec) => rec.source === "ai") ?? null;
+  // AI가 나누거나 합쳐 칸에 채우지 못한 고쳐 쓴 글 - 받을 때 카드에 글을 보여 사람이 옮긴다
+  const aiUnfilled = rowLive ? buildUseDraft(rowLive, slots).unfilledLangs : [];
 
   // 지금 줄의 초안이 열린 엮은 문서의 칸이면 New 칸에 그린다 - 문장 사이에 놓은 자리면 점선 초안, 자리 없이 빈 칸이면 그 자리 표시의 테두리
   const draftPlace = draft.destination?.kind === "slot" || draft.destination?.kind === "step" ? draft.destination : null;
@@ -1791,6 +1827,8 @@ export default function AssignPage() {
       // 고친 칸만 글을 보낸다 - 손대지 않은 AI 제안은 글·종류를 비워 보내 제안 그대로 받는다
       const context = { units: saveUnits, group: saveGroupData, tables: buildTables(), captions: buildCaptions() };
       const body = buildGroupSave({ ...draft, destination, reason, moveCode }, context, action, action === "hold" ? reason.trim() : "");
+      // Use로 받은 제안을 싣는다 - 서버가 판단에 잇고 채택(그대로·고침·버림)을 남긴다
+      if (draft.suggestionId) body.suggestion_id = draft.suggestionId;
       const leftovers = body.release_unit_ids ?? [];
       // 끌어 놓은 자리를 실은 저장이면 미리 고침도 그 자리에 넣는다 - 끝에 넣으면 다시 읽을 때 줄이 뛴다
       const sectionKey = getSectionKey(destination);
@@ -2096,12 +2134,16 @@ export default function AssignPage() {
         }
       : undefined;
 
-  function pickDestination(next: Destination) {
-    const linkTypes: Record<number, ChangeTypeInput | null> = {};
-    // AI가 이어 둔 문장을 다시 고르면 기본은 제안 그대로 받기
-    if (next.kind === "link") for (const id of next.targetIds) if (writtenMap.get(id)?.status === "ai_suggested") linkTypes[id] = null;
+  /** use - Use로 받은 AI 제안의 초안(고쳐 쓴 글·변경 종류)과 제안 id. 없으면 다른 곳을 고른 것이라 받은 제안을 비운다 */
+  function pickDestination(next: Destination, use: Pick<PageDraft, "texts" | "changeTypes" | "linkChangeTypes" | "suggestionId"> | null = null) {
     // 보낼 곳을 다시 고르면 끌어 놓은 자리는 버린다
-    setDraft({ destination: next.kind === "link" ? { kind: "link", targetIds: addPartnerTargets(next.targetIds, writtenMap) } : next, linkChangeTypes: linkTypes, position: null });
+    setDraft({
+      destination: next.kind === "link" ? { kind: "link", targetIds: addPartnerTargets(next.targetIds, writtenMap) } : next,
+      linkChangeTypes: use?.linkChangeTypes ?? {},
+      position: null,
+      suggestionId: use?.suggestionId ?? null,
+      ...(use ? { texts: { ...draft.texts, ...use.texts }, changeTypes: { ...draft.changeTypes, ...use.changeTypes } } : {}),
+    });
     setPickSeq((seq) => seq + 1);
     // 고른 곳의 New 문서로 칸을 옮긴다 - Old 줄을 바꾸는 것만으로는 옮기지 않으니 여기가 따라가는 길이다
     const docId = findDestinationDoc(next, writtenMap);
@@ -3018,6 +3060,7 @@ export default function AssignPage() {
     else if (!canEdit || !row) return;
     else if (key === "s" && cutLine.at !== null) splitAtCut();
     else if (key === "enter") handlePrimary();
+    else if (key === "a" && canEdit && aiRecommendation) pickRecommendation(aiRecommendation); // Use - 줄의 AI 추천을 초안으로 받는다
     else if (key === "e") startEdit();
     else if (key === "h") void runSave("hold");
     else if (key === "u") void runClear();
@@ -3147,7 +3190,10 @@ export default function AssignPage() {
   /** 추천을 누름 - 고르고 New 칸을 그 자리로 옮긴다(다른 문서면 넘긴다). 확정은 결정 칸의 Confirm 하나 - 카드 옆 확정 메뉴는 띄우지 않는다(1.2.0 피드백).
    *  포커스는 Confirm으로 - 카드에 남으면 ↵가 확정 대신 카드를 다시 누른다 */
   function pickRecommendation(rec: Recommendation) {
-    pickDestination(rec.destination);
+    if (rec.source === "ai" && rowLive) {
+      const use = buildUseDraft(rowLive, slots);
+      pickDestination(rec.destination, { texts: use.texts, changeTypes: use.changeTypes, linkChangeTypes: use.linkChangeTypes, suggestionId: rowLive.id });
+    } else pickDestination(rec.destination);
     markRecHover([]);
     setRevealPick({ destination: rec.destination, rowKey: activeKey });
     requestAnimationFrame(() => document.querySelector<HTMLElement>('[data-testid="assign-primary"]')?.focus({ preventScroll: true }));
@@ -4068,12 +4114,27 @@ export default function AssignPage() {
           </div>
           {meta}
           {/* 머리는 스크롤되지 않으니 긴 AI 사유는 두 줄까지(전체는 올리거나 포커스하면 툴팁) */}
-          {rowSuggestion && row.status === "ai_suggested" && aiWhy && (
-            <div className="flex items-start gap-1.5 text-xs text-st-ai" data-testid="assign-ai-reason">
+          {rowLive && aiDest && (
+            <div className="grid gap-0.5 text-xs text-st-ai" data-testid="assign-ai-reason">
+              <div className="flex items-start gap-1.5">
+                <Sparkles size={13} strokeWidth={1.5} className="mt-0.5 shrink-0" aria-hidden />
+                <span className="min-w-0 flex-1">{aiWhy ? <ClampText text={aiWhy} /> : t("assign.ai.useHint")}</span>
+              </div>
+              {aiWhy && canEdit && draft.suggestionId !== rowLive.id && <span className="pl-[19px] text-ink-3" data-testid="assign-ai-use-hint">{t("assign.ai.useHint")}</span>}
+              {draft.suggestionId === rowLive.id && aiUnfilled.length > 0 && (
+                <span className="grid gap-0.5 pl-[19px] text-ink-2" data-testid="assign-ai-unfilled">
+                  <span>{t("assign.ai.unfilled")}</span>
+                  {aiUnfilled.map((lang) => (
+                    <span key={lang} lang={lang} className="select-text">{readRewrites(rowLive)[lang].join(" / ")}</span>
+                  ))}
+                </span>
+              )}
+            </div>
+          )}
+          {!rowLive && row.status === "unassigned" && row.unitIds.some((id) => invalidUnitIds.has(id)) && (
+            <div className="flex items-start gap-1.5 text-xs text-ink-3" data-testid="assign-ai-invalid">
               <Sparkles size={13} strokeWidth={1.5} className="mt-0.5 shrink-0" aria-hidden />
-              <span className="min-w-0 flex-1">
-                <ClampText text={aiWhy} />
-              </span>
+              <span className="min-w-0 flex-1">{t("assign.ai.invalid")}</span>
             </div>
           )}
         </div>
@@ -4217,7 +4278,7 @@ export default function AssignPage() {
     ) : null;
   // 고른 줄의 AI 제안만 New 칸에 남기는 거르기 - New 칸 머리의 칩으로 켜고 브라우저에 기억한다(규칙은 lib/new-ai-filter-model). 출처 없는 New 모드는 고른 Old 줄이 없는 것으로 본다
   const newAiUnitIds = mode === "old" ? (row?.unitIds ?? null) : null;
-  const newAiFilter = buildNewAiFilter(view.newAiOnly, newAiUnitIds, newRows);
+  const newAiFilter = buildNewAiFilter(view.newAiOnly, newAiUnitIds, newRows, suggestedTargetUnits);
   // 그 줄의 확정 전 AI 제안이 다른 New 문서에 있으면 New 칸은 그대로 두고 칸 머리 아래 알약으로 연다 - 연 뒤에는 보던 문서로 돌아가기
   const newAiDest = newAiUnitIds !== null && isAiRow ? savedDestination : null;
   const newAiDocId = findDestinationDoc(newAiDest, writtenMap);
@@ -4270,7 +4331,7 @@ export default function AssignPage() {
             <FilterChip
               key={item}
               tone={item}
-              label={item === "all" ? t("assign.acc.all") : t(`status.unit.${item}`)}
+              label={item === "all" ? t("assign.acc.all") : item === "ai_suggested" ? t("assign.filter.suggested") : t(`status.unit.${item}`)}
               count={counts[item]}
               selected={mode === "old" && filter === item}
               onClick={() => applyFilter(item)}
@@ -4604,7 +4665,7 @@ export default function AssignPage() {
                 banner={pairBanner !== null && !isNewEdit ? pairBanner : null}
                 selectedIds={highlightIds}
                 pickedIds={pickedOld}
-                statusOf={(unitId) => unitMap.get(unitId)?.status}
+                statusOf={readMarkStatus}
                 canDrag={isOldDrag}
                 onUnitClick={handleOldClick}
                 zoom={view.zoomOld}
@@ -4616,7 +4677,7 @@ export default function AssignPage() {
                 items={pairColumns.en}
                 selectedIds={highlightIds}
                 pickedIds={pickedOld}
-                statusOf={(unitId) => unitMap.get(unitId)?.status}
+                statusOf={readMarkStatus}
                 canDrag={isOldDrag}
                 onUnitClick={handleOldClick}
                 zoom={view.zoomNew}
@@ -4670,7 +4731,7 @@ export default function AssignPage() {
                 highlightIds={mode === "old" ? highlightIds : NO_NUMBERS}
                 pickedIds={pickedOld}
                 warnBlockIds={warnBlockIds}
-                statusOf={(unitId) => unitMap.get(unitId)?.status}
+                statusOf={readMarkStatus}
                 renderNote={placeOf}
                 // 삭제·이동한 묶음, 이미 쓴 New 문서(혼자 연 문서)의 묶음과 그 문서에 이은 묶음(입구 2 - 캡션을 그 문서가 정한다)은 캡션이 필요 없다
                 isCaptionNeeded={(unitId, hasCaption) => isBundleCaptionNeeded(unitMap.get(unitId), hasCaption, isLinkedToWritten(unitId))}

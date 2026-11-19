@@ -776,8 +776,8 @@ def test_clear_after_confirm_keeps_the_first_adoption(client: TestClient, fake_a
 
 
 @pytest.mark.parametrize("action", ["delete", "move_external"])
-def test_bulk_disposal_leaves_an_untaken_suggestion_undecided(client: TestClient, fake_ai: FakeAi, action: str) -> None:
-    # 받지 않은 제안이 덮는 줄 — 일괄 처분은 채택을 남기지 않고 그 제안을 밀어낸다(받을 수 없게 됐다)
+def test_bulk_disposal_rejects_an_untaken_suggestion_it_differs_from(client: TestClient, fake_ai: FakeAi, action: str) -> None:
+    # 받지 않은 제안(배정)이 덮는 줄을 사람이 다르게(삭제·이동) 정했다 — 버림으로 남는다(설계 §5 2-7)
     bundle, ko, en = suggest_first_pair(client, fake_ai)
     assert get_adoption(client, bundle.id)["classify"]["pending"] == 1
 
@@ -788,8 +788,8 @@ def test_bulk_disposal_leaves_an_untaken_suggestion_undecided(client: TestClient
         decision = read_decision(unit_id)
         assert (decision.status, decision.disposition, decision.suggestion_id) == ("confirmed", action, None)
     (suggestion,) = read_suggestions()
-    assert (suggestion.adoption, suggestion.result) == (None, "stale")
-    assert "classify" not in get_adoption(client, bundle.id)
+    assert (suggestion.adoption, suggestion.adopted_by) == ("rejected", "qa.member")
+    assert get_adoption(client, bundle.id)["classify"]["rejected"] == 1
     assert read_rows(TargetSentence) == []
 
 
@@ -816,7 +816,7 @@ def test_bulk_over_one_side_of_a_pair_leaves_the_other_side(client: TestClient, 
     assert (other.status, other.disposition, other.suggestion_id, other.revision) == (
         "unassigned", "unassigned", None, en_before.revision,
     )
-    assert read_suggestions()[0].adoption is None
+    assert read_suggestions()[0].adoption == "rejected"  # 제안(배정)과 다르게 삭제했다 — 설계 §5 2-7
     # settle_pairs: 정한 운명은 삭제 하나뿐이고 다른 쪽은 미배정이라 짝을 풀지도 확정하지도 않는다
     assert read_pair_of(ko) == pair_before
 
@@ -845,7 +845,7 @@ def test_bulk_over_a_unit_with_a_match_suggestion_leaves_the_new_sentence(
         written.id, "unassigned", None, written.revision,
     )
     assert read_links() == set()
-    assert read_suggestions()[0].adoption is None
+    assert read_suggestions()[0].adoption == "rejected"  # 잇자는 제안과 다르게 삭제했다 — 설계 §5 2-7
 
 
 def test_bulk_still_refuses_units_with_confirmed_targets(client: TestClient, fake_ai: FakeAi) -> None:

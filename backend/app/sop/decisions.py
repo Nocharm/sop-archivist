@@ -13,8 +13,8 @@ from sqlalchemy.orm import aliased
 from sqlalchemy.orm.util import AliasedClass
 
 from app.clock import now
-from app.sop.ai.adoption import record_group_adoption, record_unit_adoption, reject_suggestions
-from app.sop.ai.apply import OFFERED_KINDS, close_unused_suggestions
+from app.sop.ai.adoption import judge_unused_suggestions, record_group_adoption, record_unit_adoption, reject_suggestions
+from app.sop.ai.apply import OFFERED_KINDS
 from app.sop.captions import CAPTION_KIND
 from app.sop.checks import check_sentence
 from app.sop.constants import SLOT_HEADING
@@ -1482,9 +1482,10 @@ async def _write_group(
         session, plans=plans, payload=payload, decisions=state.decisions, actor=actor, stamp=stamp
     )
     if payload.action == "confirm":
-        await close_unused_suggestions(
-            session, bundle_id, unit_ids=[item.unit_id for item in payload.units],
+        await judge_unused_suggestions(
+            session, bundle_id, plans=plans, dispositions={item.unit_id: item.disposition for item in payload.units},
             target_ids=[plan.row.id for plan in plans if plan.row is not None and plan.origin == ORIGIN_NEW_DOC],
+            actor=actor, stamp=stamp,
         )
     swept = await sweep_translations(session, bundle_id, changed, exempt=edited)
     await _follow_positioned_sources(session, bundle_id, positioned)
@@ -1653,7 +1654,9 @@ async def dispose_units(
         session, plans=(), dispositions=dict.fromkeys(unit_ids, payload.action), decisions=decisions,
         actor=actor, stamp=stamp,
     )
-    await close_unused_suggestions(session, bundle.id, unit_ids=unit_ids)
+    await judge_unused_suggestions(
+        session, bundle.id, plans=(), dispositions=dict.fromkeys(unit_ids, payload.action), actor=actor, stamp=stamp
+    )
     for decision in decisions.values():
         decision.disposition, decision.reason = payload.action, payload.reason
         decision.move_target_code = payload.move_target_code if payload.action == "move_external" else ""
