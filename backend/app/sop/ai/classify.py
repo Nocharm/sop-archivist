@@ -243,7 +243,7 @@ async def load_units(session: AsyncSession, unit_ids: Collection[int]) -> list[U
     return sorted((row[0] for row in rows), key=lambda unit: (unit.pos_seq, unit.pos_start, unit.id))
 
 
-def _hash_unit(unit: Unit) -> str:
+def hash_unit(unit: Unit) -> str:
     """글자와 언어의 해시 — 언어 고치기는 판단 revision을 올리지 않지만 언어별 고쳐 쓰기를 어긋나게 한다."""
     return hashlib.sha256(f"{unit.lang}\n{unit.text}".encode()).hexdigest()
 
@@ -458,7 +458,7 @@ class ClassifyHandler:
         units = await load_units(session, job.unit_ids)
         job.input_snapshot = {
             "revisions": {str(unit_id): decision.revision for unit_id, decision in decisions.items()},
-            "hashes": {str(unit.id): _hash_unit(unit) for unit in units},
+            "hashes": {str(unit.id): hash_unit(unit) for unit in units},
         }
         return _Loaded(
             units=tuple(units),
@@ -490,7 +490,7 @@ class ClassifyHandler:
             *await load_live_suggestions(session, job.bundle_id, (_MATCH_KIND,)),  # 문서를 가로지른 묶음도 본다
         ]
         candidate = computed.candidate
-        is_text_changed = any(_hash_unit(unit) != job.input_snapshot["hashes"].get(str(unit.id)) for unit in units)
+        is_text_changed = any(hash_unit(unit) != job.input_snapshot["hashes"].get(str(unit.id)) for unit in units)
         is_place_lost = candidate not in (None, DELETE_CANDIDATE) and not _is_place_alive(candidate, docs)
         is_matched = bool(find_covering(_pick_kind(live, _MATCH_KIND), unit_ids=job.unit_ids))  # 그 사이 묶기가 제안했다
         if decisions is None or is_text_changed or is_place_lost or is_matched:

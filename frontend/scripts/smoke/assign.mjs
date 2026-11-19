@@ -1116,7 +1116,9 @@ await runStep("assign: a bundle without a caption cannot be confirmed until one 
   check("output C carries the written caption", inC);
 });
 
-await runStep("assign: an AI split keeps both sentences when confirmed", {}, async ({ page }) => {
+// AI는 제안만 한다(설계 2026-11-19-ai-suggest-only) - 요청한 분류는 줄 상태를 바꾸지 않고 AI 카드로 온다. 상단 바 AI 메뉴의 일괄 수락이
+// 나눈 고쳐 쓰기도 제안 모양 그대로 받고(D3), 되돌리기 한 번에 받은 것이 모두 추천으로 돌아간다
+await runStep("assign: an AI split is taken whole from the top bar and one undo takes it back", {}, async ({ page, takeShot }) => {
   const status = await page.request.get(`${BASE}/api/bundles/${freshBundleId}/ai/status`, { headers: { "X-Dev-User": "qa.member" } });
   if (!status.ok() || !(await status.json()).ai_enabled) {
     console.log("  (AI is off in this backend - skipped)");
@@ -1130,13 +1132,16 @@ await runStep("assign: an AI split keeps both sentences when confirmed", {}, asy
     await page.keyboard.press("j");
     await page.waitForTimeout(200);
   }
+  const ids = await rowIds(page);
   await aiRequest.click();
   // 상단 바 표시가 대기·실행 중을 보인다(워커가 2초마다 꺼내므로 요청 직후에는 대기 중이다)
   await page.locator('[data-testid="top-bar-ai"][data-state="active"]').waitFor({ timeout: T });
   check("the top bar shows the AI job in progress", (await getText(page, "top-bar-ai-active")).trim() === "1");
-  // 폴링으로 제안이 저절로 들어온다(새로고침 없이)
-  await page.waitForFunction(() => document.querySelector('[data-testid="assign-row-status"]')?.textContent?.includes("AI suggested"), null, { timeout: 30000 });
-  check("the AI suggestion appears without a reload", true);
+  // 폴링으로 추천이 저절로 들어온다(새로고침 없이) - 줄은 사람이 받을 때까지 미배정이다
+  const aiCard = page.locator('[data-testid^="assign-rec-"] .dest-chip[data-source="ai"]');
+  await aiCard.first().waitFor({ timeout: 30000 });
+  check("the AI suggestion appears as a card without a reload", true);
+  check("the row stays unassigned until a person takes it", (await page.locator('[data-testid="assign-row-status"]').getAttribute("data-tone")) === "unassigned");
   // 내가 한 요청이 끝나면 알림이 뜨고, 목록에는 끝난 요청이 n / N과 함께 남는다
   await page.locator('[data-testid="toast-ok"]', { hasText: /^AI Classify finished · BND-/ }).first().waitFor({ timeout: 30000 });
   check("a toast says the request finished", true);
@@ -1147,17 +1152,43 @@ await runStep("assign: an AI split keeps both sentences when confirmed", {}, asy
   await doneRow.waitFor({ timeout: T });
   const progress = (await doneRow.locator('[data-testid$="-progress"]').innerText()).trim();
   check("the job list shows the finished request with its progress", /^(\d+) \/ \1$/.test(progress), progress);
-  await page.keyboard.press("Escape");
-  await page.locator('[data-testid="ai-jobs-popover"]').waitFor({ state: "detached", timeout: T });
+
+  // 같은 목록 맨 위의 AI 추천 받기 - 이 화면이 묶음과 지금 Old 문서의 건수를 올려 둔다(§5 3-1)
+  const takeAll = async () => {
+    if ((await page.locator('[data-testid="ai-jobs-popover"]').count()) === 0) await page.locator('[data-testid="top-bar-ai"]').click();
+    await wait(page, "ai-accept-classify");
+    const offered = Number((await getText(page, "ai-accept-classify-count")).trim());
+    await page.locator('[data-testid="ai-accept-classify"]').click();
+    await wait(page, "assign-accept-modal-shape-assigned");
+    const shown = Number((await getText(page, "assign-accept-modal-shape-assigned")).replace(/\D+/g, ""));
+    return { offered, shown };
+  };
+  const first = await takeAll();
+  check("the AI menu offers this document's classify suggestions", first.offered >= 1, String(first.offered));
+  check("the confirm window counts them before taking (this Old document by default)", first.shown >= 1 && (await page.locator('[data-testid="assign-accept-modal-scope-document"]').isChecked()), String(first.shown));
+  await takeShot("sop-assign-ai-accept.png");
+  await page.locator('[data-testid="assign-accept-modal-confirm"]').click();
+  await page.locator('[data-testid="toast-ok"]', { hasText: /^Took \d+ AI suggestions/ }).first().waitFor({ timeout: T });
+  await page.locator('[data-testid="assign-accept-modal"]').waitFor({ state: "detached", timeout: T });
+  await selectRowById(page, ids.split(" · ")[0]);
   await page.locator('[data-testid^="assign-text-t"]').nth(1).waitFor({ timeout: T });
   const slots = await page.locator('[data-testid^="assign-text-t"]').count();
-  check("both split sentences are shown", slots >= 2, String(slots));
-  const ids = await rowIds(page);
-  await page.locator('[data-testid="assign-primary"]').click();
-  await page.locator('[data-testid="toast-ok"]').first().waitFor({ timeout: T });
+  check("both split sentences are saved as the AI suggested them", slots >= 2, String(slots));
+  check("the taken row is confirmed", (await page.locator('[data-testid="assign-row-status"]').getAttribute("data-tone")) === "confirmed");
+
+  // 되돌리기 한 번 - 받은 줄이 모두 미배정으로, 추천은 다시 카드로 돌아온다
+  await page.locator('[data-testid="assign-undo"]:not([disabled])').click();
+  await page.waitForFunction(() => document.querySelector('[data-testid="assign-row-status"]')?.getAttribute("data-tone") === "unassigned", null, { timeout: T });
+  await aiCard.first().waitFor({ timeout: T });
+  check("one undo takes the whole accept back and the AI card returns", true);
+
+  // 다시 받아 둔다 - 이 단계가 끝에 남기던 모습(확정된 두 문장)
+  await takeAll();
+  await page.locator('[data-testid="assign-accept-modal-confirm"]').click();
+  await page.locator('[data-testid="toast-ok"]', { hasText: /^Took \d+ AI suggestions/ }).first().waitFor({ timeout: T });
   await selectRowById(page, ids.split(" · ")[0]);
   await page.locator('[data-testid^="assign-text-t"]').first().waitFor({ timeout: T });
-  check("both sentences are still there after confirming", (await page.locator('[data-testid^="assign-text-t"]').count()) === slots);
+  check("both sentences are there after taking it again", (await page.locator('[data-testid^="assign-text-t"]').count()) === slots);
 });
 
 // 한 단 · 양 단 보기(v1.0.20) - 문서 하나만 넓게 보고 돌아온다. 고른 보기는 브라우저에 기억된다
@@ -6234,7 +6265,8 @@ await runStep("assign: drag an Old piece onto a nearby piece in the other langua
   check("the API pairs y and y′ again", repaired.status() === 201 && isPaired(await readView(), y, y2));
 });
 
-await runStep("assign: an AI-suggested figure shows its caption and confirms with it", {}, async ({ page, takeShot }) => {
+// AI는 제안만 한다(설계 2026-11-19-ai-suggest-only) - 그림의 분류 추천은 카드로 오고, 사람이 Use(A)로 받으면 그림 아래 캡션이 초안에 함께 따라온다
+await runStep("assign: an AI-suggested figure takes its caption along when used", {}, async ({ page, takeShot }) => {
   const headers = { "X-Dev-User": "qa.member" };
   const api = (path, body) => (body === undefined ? page.request.get(`${BASE}/api/bundles/${freshBundleId}${path}`, { headers }) : page.request.post(`${BASE}/api/bundles/${freshBundleId}${path}`, { headers, data: body }));
   const status = await api("/ai/status");
@@ -6242,34 +6274,42 @@ await runStep("assign: an AI-suggested figure shows its caption and confirms wit
     console.log("  (AI is off in this backend - skipped)");
     return;
   }
-  // 캡션 단위가 딸린 미확정 그림 - AI 분류가 그림과 그 아래 캡션 새 문장을 함께 제안한다(첫 진입 미리 분류가 이미 했으면 그대로 쓴다)
+  // 캡션 단위가 딸린 미배정 그림 - 분류 추천이 없으면 요청한다(첫 진입 미리 분류가 이미 했으면 그대로 쓴다)
   const units = (await (await api("/units?limit=1000")).json()).items;
-  const caption = units.find((unit) => unit.kind === "caption" && units.some((other) => other.unit_id === unit.group_unit_id && other.kind === "figure" && ["unassigned", "ai_suggested"].includes(other.status)));
+  const caption = units.find((unit) => unit.kind === "caption" && units.some((other) => other.unit_id === unit.group_unit_id && other.kind === "figure" && other.status === "unassigned"));
   check("the fresh bundle has an open figure with a caption", Boolean(caption));
   if (!caption) return;
   const figure = units.find((unit) => unit.unit_id === caption.group_unit_id);
-  if (figure.status === "unassigned") await api("/ai/classify", { unit_ids: [figure.unit_id] });
+  const readLive = async () => (await (await api("/ai/suggestions?kind=classify&result=applied&limit=500")).json()).items.find((item) => item.adoption === null && (item.content.unit_ids ?? []).includes(figure.unit_id));
+  if (!(await readLive())) await api("/ai/classify", { unit_ids: [figure.unit_id] });
   for (let tries = 0; tries < 60; tries += 1) {
     const jobs = (await (await api("/ai/status")).json()).jobs;
     if (jobs.queued + jobs.running === 0) break;
     await page.waitForTimeout(500);
   }
-  const suggested = (await (await api(`/groups/by-unit/${figure.unit_id}`)).json()).targets.find((target) => target.parent_target_id !== null && target.source_unit_ids.includes(caption.unit_id));
-  check("the AI suggestion carries the caption under the figure", suggested?.status === "ai_suggested", suggested?.status);
-  if (!suggested) return;
+  const suggestion = await readLive();
+  const figureNow = (await (await api("/units?limit=1000")).json()).items.find((unit) => unit.unit_id === figure.unit_id);
+  check("the AI suggestion for the figure waits as a card - the figure stays unassigned", Boolean(suggestion) && figureNow?.status === "unassigned", figureNow?.status);
+  if (!suggestion) return;
   await page.goto(`${BASE}/bundles/${freshBundleId}/assign`);
   await wait(page, "assign-bar");
   await selectRowById(page, figure.display_id);
+  await page.locator('[data-testid^="assign-rec-"] .dest-chip[data-source="ai"]').first().waitFor({ timeout: T });
+  await page.keyboard.press("a");
   const line = page.locator(`[data-testid="assign-caption-${caption.lang}"]`);
   await line.waitFor({ timeout: T });
-  check("the decide box shows the suggested caption", (await line.innerText()).trim() === (suggested.confirmed_text || suggested.ai_text).trim(), await line.innerText());
+  check("Use puts the figure's caption in the decide box", (await line.innerText()).trim() === caption.text.trim(), await line.innerText());
   const primary = page.locator('[data-testid="assign-primary"]');
   check("Confirm is on for a captioned figure", await primary.isEnabled());
   await takeShot("sop-assign-ai-figure-caption.png");
   await primary.click();
   await page.locator('[data-testid="toast-ok"]').first().waitFor({ timeout: T });
-  const saved = (await (await api(`/groups/by-unit/${figure.unit_id}`)).json()).targets.find((target) => target.id === suggested.id);
-  check("the caption is confirmed in place under the figure", saved?.status === "confirmed" && saved.parent_target_id === suggested.parent_target_id, saved?.status);
+  const targets = (await (await api(`/groups/by-unit/${figure.unit_id}`)).json()).targets;
+  const figureTarget = targets.find((target) => target.kind === "figure");
+  const saved = targets.find((target) => target.source_unit_ids.includes(caption.unit_id));
+  check("the caption is confirmed in place under the figure", saved?.status === "confirmed" && figureTarget !== undefined && saved.parent_target_id === figureTarget.id, saved?.status);
+  const taken = (await (await api(`/ai/suggestions/${suggestion.id}`)).json()).adoption;
+  check("the used suggestion counts as taken as is", taken === "as_is", taken);
 });
 
 // 배정 화면 첫 진입(설계 2026-11-15-ai-prepare-queue §5.2·§8) - PREPARE=1일 때만(머리말의 전제). 알림 → 상단 바 목록의 Background 줄 → 끝나면 AI suggested 수

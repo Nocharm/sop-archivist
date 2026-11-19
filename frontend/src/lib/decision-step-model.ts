@@ -43,7 +43,7 @@ export function describeDecisionStep(
 export const IN_PLACE_EDIT_OPS: ReadonlySet<string> = new Set(["set_language", "set_ref", "clear_ref", "set_number"]);
 
 /** 판단 저장 단계(되돌리기 기록의 op) - 판단만 바꾸고 Unit은 은퇴시키지 않는다. 되돌려도 고른 줄을 둔다 */
-const DECISION_STEP_OPS: ReadonlySet<string> = new Set(["confirm", "hold", "link", "unlink", "mark_new", "link_source", "confirm_identical", "delete", "move_out", "clear", "reset"]);
+const DECISION_STEP_OPS: ReadonlySet<string> = new Set(["confirm", "hold", "link", "unlink", "mark_new", "link_source", "confirm_identical", "accept_ai", "delete", "move_out", "clear", "reset"]);
 
 /**
  * 되돌리기·다시 하기가 고른 줄을 비워야 하는가 - 단위가 걸린 모양 편집(자르기·합치기·제목↔문장 등)은 Unit이 은퇴할 수 있어,

@@ -53,6 +53,7 @@ import { LangToken } from "@/components/paper/lang-token";
 import { FilterChip, UnitStatusChip } from "@/components/status";
 import { ClampText } from "@/components/ui/clamp-text";
 import { ConfirmModal } from "@/components/ui/confirm-modal";
+import { AcceptSuggestionsModal } from "@/components/assign/accept-suggestions-modal";
 import { CounterpartModal } from "@/components/assign/counterpart-modal";
 import { EmptyState } from "@/components/ui/empty-state";
 import { BundleLoadError } from "@/components/bundle-load-error";
@@ -93,6 +94,8 @@ import { listAppliedSuggestions, requestAi, setSuggestionAdoption, type AiKind, 
 import {
   addToBeDoc,
   addWiStep,
+  acceptSuggestions,
+  MAX_ACCEPT,
   bulkDecide,
   confirmPair,
   createPair,
@@ -118,6 +121,7 @@ import {
   saveGroup,
   undoDecision,
   updateCaptionRef,
+  type AcceptKind,
   type AiSuggestion,
   type ChangeType,
   type ComposedDoc,
@@ -159,6 +163,7 @@ import {
   type LinkMenuItem,
   type Recommendation,
 } from "@/lib/assign-model";
+import { countLiveOffer, splitAcceptIds } from "@/lib/ai-accept-model";
 import { buildUseDraft, findRowSuggestion, indexLiveSuggestions, readRewrites, readSuggestedDestination } from "@/lib/ai-suggestion-model";
 import { buildAssignMenu, getPairPickBlocker, getPairSetBlocker, planAssignJoin, planShapeMode, type AssignMenuAction, type AssignMenuGroups } from "@/lib/assign-context-menu-model";
 import { listHeadingBackUnits } from "@/lib/heading-shift-model";
@@ -220,6 +225,7 @@ import { buildPaperModel, buildPaperTabs, findNearestCut, hasTocLineIn, isBandHe
 import { buildPairColumns, canUndoPair, listPairLinks, PAIR_REFUSAL_KEYS, resolvePairDrop, type PairDrop, type PairDropContext, type PairLang } from "@/lib/pair-drop-model";
 import { ASSIGN_DOC_PARAM, ASSIGN_UNIT_PARAM, EDIT_ORIGINAL_PARAM, getNewDocumentsHref, getStageHref } from "@/lib/stages";
 import { buildTemplateTitles } from "@/lib/template-model";
+import { useRegisterAiAcceptOffer } from "@/lib/use-ai-accept-offer";
 import { useAiJobs } from "@/lib/use-ai-jobs";
 import { useAiPrepare } from "@/lib/use-ai-prepare";
 import { useDelayedFlag } from "@/lib/use-delayed-flag";
@@ -672,6 +678,11 @@ export default function AssignPage() {
   const [manualOldDoc, setManualOldDoc] = useState<number | null>(null);
   const soloView = hasSolo && soloLoad.data?.document.id === solo.docId ? soloLoad.data : null;
   const oldView = isSolo ? soloView : viewOf(row?.documentId ?? manualOldDoc ?? oldDocIds[0]);
+  // AI 추천 일괄 수락 - 상단 바 AI 알약 메뉴가 연다(그 알약은 묶음을 몰라 이 화면이 묶음·지금 Old 문서의 건수를 올려 둔다, 설계 §5 3-1)
+  const [acceptKind, setAcceptKind] = useState<AcceptKind | null>(null);
+  const acceptDoc = oldView && oldView.document.side === "old" ? { id: oldView.document.id, label: oldView.document.doc_code || oldView.document.file_name } : null;
+  const acceptCounts = countLiveOffer([...(suggestions.data ?? []), ...(matchSuggestions.data ?? [])], acceptDoc?.id ?? null);
+  useRegisterAiAcceptOffer(canEdit ? { bundleId, counts: acceptCounts } : null, setAcceptKind);
   const paperModel = useMemo(() => (oldView ? buildPaperModel(oldView) : null), [oldView]);
   // Pair view - 한/영 따로 문서를 KO | EN 두 칸으로 편 문서 id. 이 화면을 연 동안만 기억한다(새로 고치면 꺼져 있다).
   // 다른 문서·한 단의 New 문서 원문·출처 없는 New로 가면 꺼진다(렌더 중 상태 맞추기 - dropLink와 같은 짜임)
@@ -2046,6 +2057,33 @@ export default function AssignPage() {
       }, t("match.identicalDone", { n: items.length }));
     }
     setConfirmingIdentical(false);
+  }
+
+  /** 고른 AI 추천을 한 번에 받는다 - 서버가 제안마다 사람의 저장 경로로 확정하고 한 되돌리기 단계로 남긴다. 그 사이 바뀐 것은 건너뛴 수로 알린다 */
+  async function acceptAll(kind: AcceptKind, ids: number[], deleteReason: string) {
+    if (busy) return;
+    setBusy(true);
+    try {
+      // 서버 상한(2000)씩 차례로 - 나눠 보낸 요청 모두가 같은 step_key라 Ctrl+Z 한 번에 한꺼번에 되돌아간다
+      const undo = buildUndo({ step_key: genId() });
+      const out = { accepted: 0, skipped: 0 };
+      for (const batch of splitAcceptIds(ids, MAX_ACCEPT)) {
+        const done = await acceptSuggestions(bundleId, { kind, suggestion_ids: batch, delete_reason: deleteReason }, undo);
+        out.accepted += done.accepted;
+        out.skipped += done.skipped;
+      }
+      if (out.accepted > 0) markRecorded();
+      showToast(t(out.skipped > 0 ? "aiAccept.doneSkipped" : "aiAccept.done", { n: out.accepted, skipped: out.skipped }));
+      setAcceptKind(null);
+      // 받은 줄의 짝을 서버가 정리한다 - 짝 모양·문서 revision을 다시 받는다(같은 글자 한 번에 확정과 같다)
+      views.reload();
+    } catch (err) {
+      showToast(humanizeApiError(err, t), "error");
+    } finally {
+      setBusy(false);
+      setUnitsKey((key) => key + 1);
+      void loadBundle(bundleId);
+    }
   }
 
   /** 출처 없는 New 문장을 신규로 확정 - Remark를 같이 싣는다(단위 판단이 없어 새 문장이 글을 담는다, 제품 명세 §7.7) */
@@ -4950,6 +4988,16 @@ export default function AssignPage() {
           testId="assign-identical-modal"
           onConfirm={() => void confirmIdenticalAll()}
           onClose={() => setConfirmingIdentical(false)}
+        />
+      )}
+      {acceptKind && (
+        <AcceptSuggestionsModal
+          bundleId={bundleId}
+          kind={acceptKind}
+          document={acceptDoc}
+          busy={busy}
+          onAccept={(ids, reason) => void acceptAll(acceptKind, ids, reason)}
+          onClose={() => setAcceptKind(null)}
         />
       )}
       {counterpartAsk && (
