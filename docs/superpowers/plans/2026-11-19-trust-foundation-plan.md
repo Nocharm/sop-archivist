@@ -32,6 +32,7 @@ Lauren Tan의 에이전트 개발 방식(코드 구조 → 정적 검사 → 검
 - **backend 소스 검사 시험** `tests/test_invariants.py`: `backend/CLAUDE.md` "이중 사용 지점" 가운데 기계로 잴 수 있는 것을 시험으로(예: `segment.py` 밖 `isspace()` 판정 금지(허용 목록과 사유), 앱 코드의 `create_all` 금지, DB로 가는 글자 입력 칸의 `NoNulStr`). 잴 수 없는 것은 남기되 "왜 검사로 못 하는지"를 한 줄 적는다. 옮긴 항목의 CLAUDE.md 글은 시험 이름으로 줄인다.
 - **프런트 사본 공용 사례**: backend 스크립트가 규칙 함수의 입력·답을 JSON으로 뽑고(저장소에 둔다), vitest가 프런트 사본으로 같은 답을 내는지 본다. pytest는 JSON이 지금 규칙과 같은지(다시 뽑아 비교) 본다 — 어느 쪽이 바뀌어도 CI가 깨진다. 대상: `caption-slot-model` · `number-model` · `section-number` · `c-edit-model`.
 - 크면 2a(backend) · 2b(공용 사례)로 나눈다.
+- **됨(2026-11-19)**: `backend/tests/test_invariants.py`(빈 글자 판정 · `create_all` · `call_ai_recorded` · AI의 `confirmed_text` · `compute` 세션 · `raise_rule` · `noqa` 사유, 술어마다 나쁜 꼴·좋은 꼴 시험), ruff `TID251`로 맨 `datetime.now()` 금지, `scripts/dump_rule_cases.py` → `frontend/src/lib/rule-cases.json` ↔ `rule-cases.test.ts`(`numberLines` · 글머리 기호 깊이 · `planFollow` · `buildBlockPlaces` · 상수). 첫 실행에서 실제 어긋남 하나를 찾아 고쳤다 — 프런트 빈 문단 판정이 `\x1c`–`\x1f`·`\x85`를 보이는 글자로 봐 캡션 자리 거리가 서버와 달랐다. 프런트 "한 길" 규칙(raw hex · `<select>` · `router.push` · 체크박스 · `dangerouslySetInnerHTML` · `title`)도 `source-rules.test.ts`로. 기계로 잴 수 없어 글로 남긴 것: SQL로 다시 쓴 커버 상태 사본, 관계 묶음 그래프 · 짝의 운명 · 편집 쓰기 길의 "한 함수로" 규칙(호출 경로를 정적으로 가릴 표지가 없다), DB로 가는 입력 칸의 `NoNulStr`(출력 스키마와 구별할 표지가 없다). `c-edit-model.numberDoc` ↔ `number_targets`는 입력이 스냅숏 전체라 사례로 뽑지 않았다.
 
 ### 스텝 3 — 검증 정비 · `test/smoke-split`
 
