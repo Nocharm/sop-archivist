@@ -63,7 +63,7 @@ export default function AssignPage() {
   const {
     t, bundleId, bundle, canEdit, docs, oldDocs, views, unitsKey, setUnitsKey, units, tobe, tobeData, writtenList, identical,
     readMarkStatus, suggestedTargetUnits, unitMap, written, writtenMap, rows, rowMap, rowOfUnit, options, ready, showSkeleton, unsourced,
-    mode, setMode, foldOpen, setFoldOpen, foldMatch, setSelectedKey, activeKey, row, solo, setSolo, isSolo, isNewEdit, tocOpen, setTocOpen,
+    mode, setMode, foldOpen, setFoldOpen, foldMatch, clearRowPick, activeKey, row, solo, setSolo, isSolo, isNewEdit, tocOpen, setTocOpen,
     tocPick, checked, setChecked, newRemarks, setNewRemarks, menu, setMenu, joinMenu, setJoinMenu, ctxMenu, setCtxMenu, focusNew,
     setDrafts, draft, groupPending, savedDestination, destination, rowUnits, reasonNow, setDraft, unsavedCount, leaveTo, setLeaveTo,
     aiDest, isAiRow, recommendations, linkIds, candidateIds, setManualOldDoc, oldView, acceptKind, setAcceptKind, acceptDoc, paperModel,
@@ -518,7 +518,7 @@ export default function AssignPage() {
                   }
                   setSolo(null);
                   setManualOldDoc(Number(value));
-                  setSelectedKey(null);
+                  clearRowPick();
                 }}
                 model={paperModel}
                 fold={foldMatch && !isSolo ? { matchIds: foldMatch, open: foldOpen, onOpenChange: setFoldOpen } : undefined}
@@ -529,7 +529,7 @@ export default function AssignPage() {
                 }
                 onFoldGo={(docId, part) => {
                   setManualOldDoc(docId);
-                  setSelectedKey(null);
+                  clearRowPick();
                   setManualPart({ key: "", part });
                 }}
                 placeholder={<span className="sk h-[480px] w-full" />}

@@ -43,9 +43,10 @@ import { countDecidedLines, getTableNumber, getUnitUnwrapTable, listUnwrapScopes
 import { resolveLineParam } from "@/lib/assign-line-param";
 import { readAssignView, writeAssignView } from "@/lib/assign-view-prefs";
 import { loadBundle, useBundle } from "@/lib/bundle-store";
-import { describeDecisionStep, getAssignUndoKey, IN_PLACE_EDIT_OPS, pickSaveOp, shouldDropSelectionOnStep } from "@/lib/decision-step-model";
+import { describeDecisionStep, getAssignUndoKey, pickSaveOp, shouldDropSelectionOnStep } from "@/lib/decision-step-model";
 import { buildDestinationOptions, buildGroupSave, buildRows, buildSentenceSlots, buildViewsKey, findNextOpen, findSystemHold, getDestinationId, getRowStep, hasDraftChange, isSentenceUnit, listJoinedTargetIds, listUnpairedKeys, readDestination, readHumanReason, stepInList, type CellSource, type ClassifyFilter, type ClassifyRow, type Destination, type DestinationOption, type DropPosition, type RowDraft } from "@/lib/classify-model";
 import { buildDocDashboard } from "@/lib/doc-dashboard-model";
+import { listEditUnitIds, NO_FOCUS, NO_PLACE, readEditKind } from "@/lib/assign-focus-model";
 import { pickDocRevision } from "@/lib/doc-revision";
 import { useI18n } from "@/lib/i18n";
 import { genId } from "@/lib/id";
@@ -59,6 +60,7 @@ import { buildTemplateTitles } from "@/lib/template-model";
 import { useRegisterAiAcceptOffer } from "@/lib/use-ai-accept-offer";
 import { useAiJobs } from "@/lib/use-ai-jobs";
 import { useAiPrepare } from "@/lib/use-ai-prepare";
+import { useAssignFocus } from "@/lib/use-assign-focus";
 import { useDelayedFlag } from "@/lib/use-delayed-flag";
 import { useCutLine } from "@/lib/use-cut-line";
 import { countRefLookups, isRefPending, pickRefUnit } from "@/lib/ref-model";
@@ -96,10 +98,17 @@ export interface PageDraft extends Omit<RowDraft, "reason" | "moveCode"> {
 export const EMPTY_DRAFT: PageDraft = { destination: null, texts: {}, reason: null, moveCode: null, editing: false, suggestionId: null };
 export const NO_NUMBERS: ReadonlySet<number> = new Set();
 
-// 고름을 두는 편집·되돌리기의 판단은 decision-step-model(IN_PLACE_EDIT_OPS · shouldDropSelectionOnStep)
+// 고름 · 처리 중 · 따라가기는 assign-focus-model(설계 2026-11-20 D1) - 편집 중에도 고름은 그대로다
 
 // 한 단으로 연 New 문서에서 연 우클릭 메뉴의 줄 키 자리 - 그 문서에는 줄이 없다
 export const SOLO_ROW_KEY = "solo";
+
+/** 고른 New 문서와 그 문장 - focus의 "new" 고름에서 kind를 뺀 것 */
+interface SoloPick {
+  docId: number;
+  unitId: number | null;
+  inPlace: boolean;
+}
 
 // Pair view를 끈 뒤 스크롤 자리 맞추기를 멈추는 사람의 입력 - 굴림(휠·스크롤 막대 누름)·글쇠가 이긴다
 export const PAIR_RESTORE_STOPS = ["wheel", "pointerdown", "keydown", "touchstart"] as const;
@@ -306,6 +315,8 @@ export function useAssignPage() {
   const [freshViews, setFreshViews] = useState<DocumentView[] | null>(null);
   if (freshViews !== null && !views.isLoading) setFreshViews(null);
   const viewList = freshViews !== null && views.isLoading ? freshViews : views.data;
+  // 원문 보기가 편집 뒤 다시 받는 중이면 줄의 Unit은 이미 은퇴했을 수 있다 - 새 보기가 올 때까지 고른 줄의 묶음·후보를 부르지 않고, 고름도 맞추지 않는다
+  const isViewSettled = !views.isLoading || freshViews !== null;
   const rows = useMemo(() => (viewList ? buildRows(viewList, unitMap) : []), [viewList, unitMap]);
   const rowMap = new Map(rows.map((row) => [row.key, row]));
   const rowOfUnit = new Map(rows.flatMap((row) => row.unitIds.map((id) => [id, row.key] as const)));
@@ -350,21 +361,39 @@ export function useAssignPage() {
     return new Set(listKeys.flatMap((key) => unitIdsOf.get(key) ?? []));
   }, [mode, filter, listKeys, rows]);
 
+  // 고름 · 처리 중 · 따라가기 한 곳(설계 2026-11-20 D1) - 줄 · 목차 블록 · New 문서 고름이 모두 focus 하나에서 나온다.
   // 처음에는 아무 조각도 고르지 않는다 - 오른쪽 칸이 범례를 보인다
-  const [selectedKey, setSelectedKey] = useState<string | null>(null);
-  const activeKey = selectedKey && rowMap.has(selectedKey) ? selectedKey : null;
+  const focusCtl = useAssignFocus();
+  const { focus } = focusCtl;
+  const busy = focusCtl.isAnyPending;
+  // 줄은 고른 Unit에서 파생한다 - 짝이 맺히거나 풀려 줄이 다시 묶여도 그 Unit의 줄을 그대로 고른다
+  const activeKey = (focus.kind === "unit" ? rowOfUnit.get(focus.unitId) : undefined) ?? null;
   const row: ClassifyRow | null = activeKey ? (rowMap.get(activeKey) ?? null) : null;
   // 한 단 보기에서 연 이미 쓴 New 문서(그 파일의 문서 id)와 거기서 고른 문장 - Old 원문 자리에 그 원문을 놓고 같은 도구로 다듬는다.
   // 이 문서의 문장은 배정하지 않으므로 줄(row)이 없다. 줄을 고르면(Old 문서로 돌아가는 것이다) 닫힌다
   // inPlace는 양 단에서 New 칸의 문장을 그 자리에서 고른 것이다 - 왼쪽은 Old 문서 그대로이고, 다듬는 대상만 그 New 문서가 된다
-  const [solo, setSolo] = useState<{ docId: number; unitId: number | null; inPlace: boolean } | null>(null);
-  if (solo !== null && row !== null) setSolo(null);
+  const solo = focus.kind === "new" ? focus : null;
+  /** New 문서 고름을 바꾼다 - null이면 New 문서 고름만 놓는다(Old 줄 · 목차 고름은 그대로) */
+  function setSolo(next: SoloPick | null | ((prev: SoloPick | null) => SoloPick | null)) {
+    const value = typeof next === "function" ? next(solo) : next;
+    if (value !== null) focusCtl.pick({ kind: "new", docId: value.docId, unitId: value.unitId, inPlace: value.inPlace });
+    else if (focus.kind === "new") focusCtl.pick(NO_FOCUS);
+  }
+  /** 줄 키로 고른다 - 그 줄의 첫 Unit을 고른다(용지가 고른 박스로 받는 Unit, 짝 고름은 스텝 3) */
+  function pickRowKey(key: string) {
+    const target = rowMap.get(key);
+    focusCtl.pick(target ? { kind: "unit", docId: target.documentId, unitId: target.unitIds[0] } : NO_FOCUS);
+  }
+  /** Old 줄 고름만 놓는다 - New 문서 · 목차 고름은 그대로 */
+  function clearRowPick() {
+    if (focus.kind === "unit") focusCtl.pick(NO_FOCUS);
+  }
   const isSolo = solo !== null && !solo.inPlace && row === null;
   const isNewEdit = solo !== null && solo.inPlace && row === null;
   const hasSolo = isSolo || isNewEdit;
   // 목차 블록 고름(MD 1 F6 · F12) - 배정 줄(row)이 아니라 남은 수·필터 수에 들지 않는다. 줄이나 New 문서를 고르면 가려진다.
   // unitId가 null이면 블록 전체, 아니면 펼친 블록의 줄 하나. 펼침은 블록 키(첫 줄 단위 id)로 이 화면을 연 동안만 기억한다(처음엔 접힘)
-  const [tocSel, setTocSel] = useState<{ docId: number; key: number; unitId: number | null } | null>(null);
+  const tocSel = focus.kind === "toc" ? focus : null;
   const [tocOpen, setTocOpen] = useState<ReadonlySet<number>>(() => new Set());
   const tocPick = mode === "old" && row === null && !hasSolo ? tocSel : null;
   // 줄 이동(↑↓·J/K) 순서에 끼우는 목차 블록 - 문서 순 → 원문 순
@@ -378,24 +407,36 @@ export function useAssignPage() {
   }, [viewList, rows, tocBlocks]);
   const [soloKey, setSoloKey] = useState(0);
   const soloLoad = useLoaded<DocumentView | null>(() => (solo !== null ? getDocumentView(bundleId, solo.docId) : Promise.resolve(null)), `${bundleId}:${solo?.docId ?? ""}:${soloKey}`);
-  // 편집 뒤 고를 문장 - 그 문서의 원문 보기를 다시 받으면 고른다(follow의 New 문서판)
-  const [soloFollow, setSoloFollow] = useState<{ unitId: number; stale: DocumentView | null } | null>(null);
-  if (soloFollow !== null && soloLoad.data !== null && soloLoad.data !== soloFollow.stale) {
-    setSoloFollow(null);
-    if (solo !== null && soloLoad.data.units.some((unit) => unit.id === soloFollow.unitId)) {
-      setSolo({ ...solo, unitId: soloFollow.unitId });
-      if (!solo.inPlace) scrollToUnit(soloFollow.unitId);
+  // 받은 보기를 고름에 알린다 - 편집 응답에서 건 따라가기가 그 박스를 고르고(고름이 누른 때 그대로일 때만), 사라진 Unit의 고름은 놓는다
+  // (렌더 중 상태 맞추기, D1 규칙 3 · 5). Old 문서는 보기와 단위 목록을 둘 다 받은 뒤에 - 줄은 둘 다에서 나온다
+  const [seenLoad, setSeenLoad] = useState<{ views: DocumentView[] | null; units: UnitRow[] | null; solo: DocumentView | null }>({ views: null, units: null, solo: null });
+  if (viewList !== null && units.data !== null && isViewSettled && !units.isLoading && (viewList !== seenLoad.views || units.data !== seenLoad.units)) {
+    const seen = { views: viewList, units: units.data };
+    setSeenLoad((prev) => ({ ...prev, ...seen }));
+    const groupOf = new Map(viewList.flatMap((view) => view.units.map((unit) => [unit.id, unit.group_unit_id] as const)));
+    const loaded = focusCtl.load({
+      type: "loaded",
+      docs: viewList.map((view) => ({ docId: view.document.id, revision: view.document.revision, unitIds: new Set(view.units.map((unit) => unit.id)) })),
+      // 칸 문장은 묶인 표의 줄이다 - 줄이 없는 Unit은 묶음으로 올린다
+      liftUnit: (unitId) => {
+        const groupId = groupOf.get(unitId) ?? null;
+        return rowOfUnit.has(unitId) ? unitId : groupId !== null && rowOfUnit.has(groupId) ? groupId : null;
+      },
+    });
+    // 편집 뒤에는 거르기 목록도 새 줄로 다시 잡는다 - 따라간 줄은 거르기에 맞지 않아도 남긴다.
+    // 판단 저장 뒤(짝을 풀고 남은 문장으로 옮김)는 다시 잡지 않는다 - 확정한 줄이 거르기에서 바로 빠지지 않게
+    if (loaded.consumed.some((follow) => follow.kind !== "save")) {
+      const key = loaded.picked !== null && loaded.focus.kind === "unit" ? rowOfUnit.get(loaded.focus.unitId) : undefined;
+      setSnapshot((prev) => prev && { filter: prev.filter, keys: rows.filter((item) => prev.filter === "all" || item.status === prev.filter || item.key === key).map((item) => item.key) });
     }
+    if (loaded.picked !== null) scrollToUnit(loaded.picked.pickUnitId);
   }
-  // 한 언어만 이어 짝을 푼 줄 - 원문 보기를 다시 받아 남은 문장의 줄이 생기면 그 줄로 옮긴다(렌더 중 상태 맞추기)
-  const [splitRow, setSplitRow] = useState<{ from: string; unit: number } | null>(null);
-  if (splitRow !== null) {
-    // 그 사이 사람이 다른 줄을 골랐으면 따라가지 않는다
-    if (selectedKey !== splitRow.from) setSplitRow(null);
-    else if (rowMap.get(`u${splitRow.unit}`)?.unitIds.length === 1) {
-      setSplitRow(null);
-      setSelectedKey(`u${splitRow.unit}`);
-    }
+  if (soloLoad.data !== null && !soloLoad.isLoading && soloLoad.data !== seenLoad.solo) {
+    const soloData = soloLoad.data;
+    setSeenLoad((prev) => ({ ...prev, solo: soloData }));
+    const unitIds = new Set(soloData.units.map((unit) => unit.id));
+    const loaded = focusCtl.load({ type: "loaded", docs: [{ docId: soloData.document.id, revision: soloData.document.revision, unitIds }], liftUnit: (unitId) => (unitIds.has(unitId) ? unitId : null) });
+    if (loaded.picked !== null && loaded.focus.kind === "new" && !loaded.focus.inPlace) scrollToUnit(loaded.picked.pickUnitId);
   }
   const [checked, setChecked] = useState<Set<string>>(new Set());
   const [selNew, setSelNew] = useState<number | null>(null);
@@ -422,26 +463,12 @@ export function useAssignPage() {
   if (ctxMenu !== null && ctxMenu.rowKey !== (activeKey ?? (hasSolo ? SOLO_ROW_KEY : null))) setCtxMenu(null);
   // 나눌 선이 놓인 Unit - 고른 줄 안의 것만 산다(줄을 바꾸면 선이 사라진다)
   const [cutUnitId, setCutUnitId] = useState<number | null>(null);
-  // 편집 뒤 고를 Unit - 원문 보기와 단위 목록을 둘 다 다시 받으면 그 줄을 고른다(stale…는 편집 전 것, 줄은 둘 다에서 나온다)
-  const [follow, setFollow] = useState<{ unitId: number; staleViews: DocumentView[] | null; staleUnits: UnitRow[] | null } | null>(null);
-  // 편집 뒤 - 원문 보기를 다시 받아 줄이 새로 생기면 편집한 문장의 줄을 고르고, 거르기 목록도 새 줄로 다시 잡는다(렌더 중 상태 맞추기)
-  if (follow !== null && viewList !== follow.staleViews && viewList !== null && units.data !== follow.staleUnits) {
-    const groupOf = viewList.flatMap((view) => view.units).find((unit) => unit.id === follow.unitId)?.group_unit_id ?? null;
-    const key = rowOfUnit.get(follow.unitId) ?? (groupOf !== null ? rowOfUnit.get(groupOf) : undefined);
-    setFollow(null);
-    setSnapshot((prev) => prev && { filter: prev.filter, keys: rows.filter((item) => prev.filter === "all" || item.status === prev.filter || item.key === key).map((item) => item.key) });
-    if (key) {
-      setSelectedKey(key);
-      scrollToUnit(follow.unitId);
-    }
-  }
   const focusNew = mode === "unsourced" ? (unsourced.find((item) => item.target_id === selNew)?.target_id ?? unsourced[0]?.target_id ?? null) : null;
 
   // --- 고른 줄의 관계 묶음·후보와 초안 ---
   // 짝을 풀면 줄 키는 그대로인데 단위가 달라질 수 있다 - 줄의 단위를 키에 넣어 묶음·후보를 다시 받는다
-  // 원문 보기가 편집 뒤 다시 받는 중이면 줄의 Unit은 이미 은퇴했을 수 있다 - 새 보기가 올 때까지 묶음·후보를 부르지 않는다
+  // 원문 보기를 다시 받는 동안(isViewSettled 거짓)은 묶음·후보를 부르지 않는다
   // (받는 동안 낡은 줄을 눌러도 없는 Unit의 묶음을 부르지 않게. 안 끝나는 약속은 그 자리의 이전 값을 두고 isLoading만 켠다)
-  const isViewSettled = !views.isLoading || freshViews !== null;
   const rowKey = `${activeKey}:${row?.unitIds.join(",") ?? ""}:${unitsKey}:${isViewSettled}`;
   const group = useLoaded<Group | null>(() => (!row ? Promise.resolve(null) : !isViewSettled ? new Promise<never>(() => undefined) : loadRowGroup(bundleId, row.unitIds)), rowKey);
   const groupData = group.data;
@@ -696,7 +723,6 @@ export function useAssignPage() {
   // Remark 창을 닫은 뒤 포커스를 둘 단추(testid) - 창이 여는 곳으로 되돌린 뒤에 옮겨 ↵가 바로 확정이 되게
   const focusAfterRef = useRef<string | null>(null);
   const firstTextRef = useRef<HTMLTextAreaElement>(null);
-  const [busy, setBusy] = useState(false);
   // 배정이 걸린 문장을 자르거나 합치려 할 때 - 서버가 409 confirm_required로 물으면 확인을 받아 배정을 풀며 다시 보낸다(원문 고치기와 같은 규칙, 설계 2026-11-15 §3.5)
   // 다시 보낼 일은 함수가 아니라 값으로 둔다 - 확인을 누른 그때의 화면 값(원문 보기·문서 판)으로 보내야 고친 뒤 새 줄을 따라간다
   const [editConfirm, setEditConfirm] = useState<{ count: number; retry: ConfirmedEdit } | null>(null);
@@ -880,8 +906,6 @@ export function useAssignPage() {
   /** 목차 블록(unitId null) 또는 그 줄 하나를 고른다 - 배정 줄 고름을 놓고 그 Old 문서를 연다. 결정 칸이 목차 칸(F12 G2 · G3)을 보인다 */
   function selectToc(docId: number, key: number, unitId: number | null, scroll = true) {
     setMode("old");
-    setSelectedKey(null);
-    setSolo(null);
     setChecked(new Set());
     setMenu(null);
     setCtxMenu(null);
@@ -889,17 +913,15 @@ export function useAssignPage() {
     setCutUnitId(null);
     setRefEntryId(null);
     setManualOldDoc(docId);
-    setTocSel({ docId, key, unitId });
+    focusCtl.pick({ kind: "toc", docId, key, unitId });
     if (scroll) requestAnimationFrame(() => document.querySelector(`[data-testid="assign-paper-toc-${key}"]`)?.scrollIntoView({ block: "nearest" }));
   }
 
   function selectRow(key: string, scroll = true) {
-    // 편집 뒤 다시 받기를 기다리던 따라가기는 버린다 - 받는 동안 다른 줄을 고르면 늦게 온 보기가 고름을 편집한 줄로 되돌렸다
-    setFollow(null);
+    // 다른 줄을 고르면 편집 뒤 다시 받기를 기다리던 따라가기는 버려진다(모델의 pick) - 늦게 온 보기가 고름을 편집한 줄로 되돌리지 않게
     setMode("old");
     setCarvePick(null);
-    setTocSel(null);
-    setSelectedKey(key);
+    pickRowKey(key);
     setMenu(null);
     setCtxMenu(null);
     if (key !== activeKey) {
@@ -935,7 +957,6 @@ export function useAssignPage() {
     if (unitId === null || docId === null) return false;
     if (solo?.inPlace && solo.docId === docId && solo.unitId === unitId && row === null) return true;
     setMode("old");
-    setSelectedKey(null);
     setChecked(new Set());
     setMenu(null);
     setCarvePick(null);
@@ -958,7 +979,6 @@ export function useAssignPage() {
   /** 이미 쓴 New 문서를 한 단으로 연다 - 고르던 줄을 놓고 그 문서의 원문을 넓게 보인다 */
   function openSolo(docId: number) {
     setMode("old");
-    setSelectedKey(null);
     setChecked(new Set());
     setMenu(null);
     setCtxMenu(null);
@@ -968,13 +988,6 @@ export function useAssignPage() {
     setPairFrom(null);
     setSolo({ docId, unitId: null, inPlace: false });
     if (!view.single) changeView({ single: true });
-  }
-
-  /** 편집·되돌리기 뒤 그 문장으로 - 다시 받은 뒤에 고른다(Old 문서면 그 문장의 줄, 한 단의 New 문서면 그 문장).
-   *  inSolo - 같은 이벤트에서 setSolo(null)로 New 문서 다듬기를 닫았으면 false를 넘긴다(이 렌더의 hasSolo는 아직 켜져 있다) */
-  function followUnit(unitId: number, inSolo = hasSolo) {
-    if (inSolo) setSoloFollow({ unitId, stale: soloLoad.data });
-    else setFollow({ unitId, staleViews: viewList, staleUnits: units.data });
   }
 
   /** 용지의 그 문장으로 간다 - Old 문서면 그 줄을, 한 단의 New 문서면 그 문장을 고른다 */
@@ -1197,7 +1210,8 @@ export function useAssignPage() {
   /** thenLang - 참조 줄을 푼 뒤 그 문장을 이 언어로(Shape 언어 세 칸에서 참조 줄의 KO·EN) */
   async function runUnitEdit(op: EditOp, okText: string, followId: number | null, confirm = false, thenLang: "ko" | "en" | null = null) {
     if (!shapeView || busy) return;
-    setBusy(true);
+    const docId = shapeView.document.id;
+    const job = focusCtl.start({ kind: readEditKind(op), docId, unitIds: listEditUnitIds(op), place: NO_PLACE, isGlobal: false });
     let isAsking = false;
     let isReloaded = false;
     try {
@@ -1219,12 +1233,11 @@ export function useAssignPage() {
       setRefEntryId(null);
       cutLine.clear();
       setCutUnitId(null);
-      // 고친 줄의 Unit은 은퇴했을 수 있다 - 다시 받는 동안 그 Unit의 묶음·후보를 부르지 않게 고름을 비우고, 새 줄이 생기면 follow가 고른다.
-      // 제자리에서 바뀌는 편집(언어·참조)은 Unit이 그대로라 고름을 두어 고른 표시·오른쪽 칸·포커스가 깜빡이지 않게 한다
-      if (!IN_PLACE_EDIT_OPS.has(op.type)) setSelectedKey(null);
+      // 고름은 처리 중에도 그대로 - 응답의 첫 새 Unit(합친 박스 · 나눈 앞 조각, 없으면 followId)을, 고름이 누른 때 그대로면 다시 받은 뒤 고른다.
+      // 다시 받기보다 먼저 건다 - 아래 풀기 전환이 기다리는 사이에 새 보기가 닿아도 따라가게(D1 규칙 2 · 3)
+      focusCtl.succeed(job, { docId, revision, pickUnitId: result.created_unit_ids[0] ?? followId });
       // 표 벗기기 · 다시 표로와 캡션 붙이기 · 떼기 · 첫 행 올리기 · 그림 묶기 - 새 원문 보기를 먼저 받아 풀기 전환 안에서 그린다
       // (F10, 화면 안만 움직이고 움직임 줄이기면 번쩍임만). 캡션은 글이 캡션 자리로 미끄러져 들어간다. 알림은 전환 뒤
-      const docId = shapeView.document.id;
       const current = views.data ?? [];
       // 표는 바로 안쪽 띠 표도 함께 제목 줄 ↔ 표로 바뀐다(F2)
       const motion = op.type === "set_layout_table"
@@ -1239,8 +1252,6 @@ export function useAssignPage() {
         }, motion);
       }
       showToast(okText);
-      const next = result.created_unit_ids[0] ?? followId;
-      if (next !== null && next !== undefined) followUnit(next);
     } catch (err) {
       // 판단이 걸린 단위를 바꾸는 편집은 한 번 묻는다 - 확인하면 배정을 풀며 다시 보낸다
       const count = readConfirmCount(err);
@@ -1250,7 +1261,7 @@ export function useAssignPage() {
     } finally {
       // 되묻는 동안은 다시 받지 않는다 - 바뀐 것이 없고, 늦게 닿은 응답이 확인 뒤의 편집과 엇갈리면 새 줄을 따라가지 못한다
       if (!isAsking && !isReloaded) reloadAfterEdit();
-      setBusy(false);
+      focusCtl.end(job);
     }
   }
 
@@ -1287,7 +1298,7 @@ export function useAssignPage() {
   /** 목차 아님(줄 하나) · 모두 목차 아님(블록 전체) - 표시만 비우는 편집. 목차 고름을 놓고, 다시 받은 뒤 돌아온 첫 줄을 보통 줄로 고른다(F12 G4) */
   function clearToc(unitIds: number[]) {
     if (unitIds.length === 0) return;
-    setTocSel(null);
+    if (focus.kind === "toc") focusCtl.pick(NO_FOCUS);
     // 블록 전체(또는 첫 줄)를 돌리면 그 키의 블록이 없어진다 - 되돌려 다시 생긴 블록은 처음처럼 접혀 있다
     setTocOpen((open) => new Set([...open].filter((key) => !unitIds.includes(key))));
     void runUnitEdit({ type: "clear_noise", unit_ids: unitIds }, t(unitIds.length > 1 ? "assign.toc.didClearAll" : "assign.toc.didClear"), unitIds[0]);
@@ -1296,26 +1307,26 @@ export function useAssignPage() {
   /** 한/영 짝을 맺거나 푼다 - 편집 기록(되돌리기)에는 들어가지 않는다. 반대 동작이 같은 메뉴에 있다 */
   async function runPairChange(write: (docId: number, revision: number) => Promise<unknown>, okText: string, followId: number) {
     if (!shapeView || busy) return;
-    setBusy(true);
+    const docId = shapeView.document.id;
+    const job = focusCtl.start({ kind: "pair", docId, unitIds: [followId], place: NO_PLACE, isGlobal: false });
     try {
-      await write(shapeView.document.id, shapeView.document.revision);
-      // 짝이 바뀌면 줄이 다시 묶인다 - 다시 받는 동안 옛 줄을 부르지 않게 고름을 비우고, 받은 뒤 그 문장의 줄을 고른다
-      setSelectedKey(null);
+      await write(docId, shapeView.document.revision);
+      // 짝이 바뀌면 줄이 다시 묶인다 - 고름은 두고(다시 받는 동안 옛 줄은 묶음을 부르지 않는다), 받은 뒤 그 문장의 줄을 고른다
       showToast(okText);
-      followUnit(followId);
+      focusCtl.succeed(job, { docId, revision: null, pickUnitId: followId });
     } catch (err) {
       const isLinked = err instanceof ApiError && err.rule?.code === "confirm_required";
       showToast(isLinked ? t("assign.ctx.why.assigned") : humanizeApiError(err, t), "error");
     } finally {
       reloadAfterEdit();
-      setBusy(false);
+      focusCtl.end(job);
     }
   }
 
   /** 표·그림 참조를 떼거나 다시 잇는다 - 단위는 그대로라 고름을 두고 보기만 다시 받는다. 편집 기록(되돌리기)에는 들어가지 않는다 */
   async function runCaptionRefChange(refId: number, change: { state: "detached" } | { target_unit_id: number }, okText: string) {
     if (!shapeView || busy) return;
-    setBusy(true);
+    const job = focusCtl.start({ kind: "caption", docId: shapeView.document.id, unitIds: [], place: NO_PLACE, isGlobal: false });
     try {
       await updateCaptionRef(bundleId, shapeView.document.id, refId, { revision: shapeView.document.revision, ...change });
       showToast(okText);
@@ -1323,7 +1334,7 @@ export function useAssignPage() {
       showToast(humanizeApiError(err, t), "error");
     } finally {
       reloadAfterEdit();
-      setBusy(false);
+      focusCtl.end(job);
     }
   }
 
@@ -1345,8 +1356,8 @@ export function useAssignPage() {
    */
   async function switchToPair(unit: ViewUnit, confirm = false) {
     if (!shapeView || busy) return;
-    setBusy(true);
     const docId = shapeView.document.id;
+    const job = focusCtl.start({ kind: "pair", docId, unitIds: [unit.id], place: NO_PLACE, isGlobal: false });
     let restoredIds: number[] | null = null;
     let isAsking = false;
     try {
@@ -1370,22 +1381,21 @@ export function useAssignPage() {
       else showToast(restoredIds !== null ? t("split.join.partly") : humanizeApiError(err, t), "error");
     } finally {
       if (restoredIds !== null) {
-        // 풀린 뒤로는 옛 단위가 없다 - 고름을 비우고, 다시 받은 뒤 되살아난 첫 문장의 줄을 고른다
+        // 풀린 뒤로는 옛 단위가 없다 - 다시 받은 뒤 되살아난 첫 문장의 줄을 고른다(고름이 그대로일 때)
         setRefEntryId(null);
         cutLine.clear();
         setCutUnitId(null);
-        setSelectedKey(null);
-        if (restoredIds.length > 0) followUnit(restoredIds[0]);
+        focusCtl.succeed(job, { docId, revision: null, pickUnitId: restoredIds[0] ?? null });
       }
       if (!isAsking) reloadAfterEdit();
-      setBusy(false);
+      focusCtl.end(job);
     }
   }
 
   /** AI 나누기 제안 적용 - 뒤쪽 위치부터 자르면 앞 조각의 위치가 바뀌지 않는다. 자를 때마다 되돌리기 기록에 한 단계씩 남는다 */
   async function applySplitSuggestion(unit: ViewUnit, suggestion: AiSuggestion, confirm = false) {
     if (!oldView || busy) return;
-    setBusy(true);
+    const job = focusCtl.start({ kind: "split", docId: oldView.document.id, unitIds: [unit.id], place: NO_PLACE, isGlobal: false });
     let isAsking = false;
     try {
       let unitId = unit.id;
@@ -1399,9 +1409,8 @@ export function useAssignPage() {
       markRecorded();
       cutLine.clear();
       setCutUnitId(null);
-      setSelectedKey(null);
       showToast(t("split.didSplit"));
-      followUnit(unitId);
+      focusCtl.succeed(job, { docId: oldView.document.id, revision, pickUnitId: unitId });
     } catch (err) {
       // 첫 자르기에서 묻는다(배정이 걸린 것은 자르기 전의 그 문장이다) - 확인하면 처음부터 다시 자른다
       const count = readConfirmCount(err);
@@ -1410,13 +1419,13 @@ export function useAssignPage() {
       else showToast(humanizeApiError(err, t), "error");
     } finally {
       if (!isAsking) reloadAfterEdit();
-      setBusy(false);
+      focusCtl.end(job);
     }
   }
 
   async function dismissSplitSuggestion(suggestion: AiSuggestion) {
     if (busy) return;
-    setBusy(true);
+    const job = focusCtl.start({ kind: "save", docId: null, unitIds: suggestion.content.unit_ids ?? [], place: NO_PLACE, isGlobal: false });
     try {
       await setSuggestionAdoption(bundleId, suggestion.id, "rejected");
     } catch (err) {
@@ -1426,7 +1435,7 @@ export function useAssignPage() {
       if (solo !== null) setSoloKey((key) => key + 1);
       views.reload();
       setUnitsKey((key) => key + 1);
-      setBusy(false);
+      focusCtl.end(job);
     }
   }
 
@@ -1652,7 +1661,7 @@ export function useAssignPage() {
       setRemarkEdit({ kind: "row", need, then: action });
       return;
     }
-    setBusy(true);
+    const job = focusCtl.start({ kind: "save", docId: row.documentId, unitIds: row.unitIds, place: NO_PLACE, isGlobal: false });
     try {
       // 고친 칸만 글을 보낸다 - 손대지 않은 AI 제안은 글·종류를 비워 보내 제안 그대로 받는다
       const context = { units: saveUnits, group: saveGroupData, tables: buildTables(), captions: buildCaptions() };
@@ -1680,7 +1689,8 @@ export function useAssignPage() {
       if (action === "confirm" && destination?.kind === "join" && !isSplit) setEditFocus({ key: row.key });
       if (action === "confirm") showSent(row, saved, next ?? row.key, at);
       dropDraft(row.key);
-      if (isSplit) setSplitRow({ from: row.key, unit: leftovers[0] });
+      // 한 언어만 이어 짝을 풀었으면 남은 문장의 줄로 옮긴다 - 다시 받아 그 줄이 생긴 뒤, 그 사이 다른 줄을 고르지 않았을 때
+      if (isSplit) focusCtl.succeed(job, { docId: row.documentId, revision: null, pickUnitId: leftovers[0] });
       if (next) selectRow(next);
       setUnitsKey((key) => key + 1);
       void loadBundle(bundleId);
@@ -1688,7 +1698,7 @@ export function useAssignPage() {
       showToast(humanizeApiError(err, t), "error");
       setUnitsKey((key) => key + 1);
     } finally {
-      setBusy(false);
+      focusCtl.end(job);
     }
   }
 
@@ -1730,7 +1740,7 @@ export function useAssignPage() {
     if (!row || busy) return;
     const decided = rowUnits.filter((unit) => unit.decision.disposition !== "unassigned" || unit.status !== "unassigned");
     if (decided.length === 0) return;
-    setBusy(true);
+    const job = focusCtl.start({ kind: "save", docId: row.documentId, unitIds: row.unitIds, place: NO_PLACE, isGlobal: false });
     try {
       await clearDecisions(bundleId, decided.map((unit) => ({ unit_id: unit.unit_id, revision: unit.decision.revision })), buildUndo({ step_key: genId(), focus_unit_id: row.unitIds[0] }));
       markRecorded();
@@ -1749,13 +1759,14 @@ export function useAssignPage() {
       showToast(humanizeApiError(err, t), "error");
       setUnitsKey((key) => key + 1);
     } finally {
-      setBusy(false);
+      focusCtl.end(job);
     }
   }
 
+  /** 묶음 전체 일 하나(같은 글자 일괄 확정) */
   async function run(action: () => Promise<unknown>, message: string) {
     if (busy) return;
-    setBusy(true);
+    const job = focusCtl.start({ kind: "bulk", docId: null, unitIds: [], place: NO_PLACE, isGlobal: true });
     try {
       await action();
       showToast(message);
@@ -1765,7 +1776,7 @@ export function useAssignPage() {
       showToast(humanizeApiError(err, t), "error");
       setUnitsKey((key) => key + 1);
     } finally {
-      setBusy(false);
+      focusCtl.end(job);
     }
   }
 
@@ -1788,11 +1799,9 @@ export function useAssignPage() {
 
   async function runUndoStep(kind: "undo" | "redo") {
     if (busy || !canEdit) return;
-    setBusy(true);
-    // 앞 편집의 따라가기는 요청을 보내기 전에 버린다 - 응답을 기다리는 사이 그 편집의 다시 받기가 오면 따라가기가 걸려,
+    // 묶음 전체 일이라 시작하면서 앞 편집의 따라가기를 버린다(모델의 start) - 응답을 기다리는 사이 그 편집의 다시 받기가 오면 따라가기가 걸려,
     // 서버에서 이미 은퇴한 Unit을 골라 묶음을 부른다(404). 되돌리기는 응답의 focus로 따로 따라간다
-    setFollow(null);
-    setSoloFollow(null);
+    const job = focusCtl.start({ kind: "undo", docId: null, unitIds: [], place: NO_PLACE, isGlobal: true });
     try {
       const result = await (kind === "undo" ? undoDecision : redoDecision)(bundleId, undoSession.current);
       setUndoState({ canUndo: result.can_undo, canRedo: result.can_redo });
@@ -1801,14 +1810,15 @@ export function useAssignPage() {
       setChecked(new Set());
       // 되돌린 줄의 초안은 바뀌기 전 판단 위의 고름이다
       for (const key of new Set(result.unit_ids.map((id) => rowOfUnit.get(id)).filter((key) => key !== undefined))) dropDraft(key);
-      // 모양 편집(자르기·합치기·제목↔문장·캡션·그림 묶기 …)을 거꾸로·다시 하면 Unit이 은퇴할 수 있다 - 다시 받는 동안 그 줄의 묶음·후보를 부르지 않게 고름을 비운다
+      // 모양 편집(자르기·합치기·제목↔문장·캡션·그림 묶기 …)을 거꾸로·다시 하면 Unit이 은퇴할 수 있다 - 그 Unit에 놓인 나눌 선을 거둔다.
+      // 고름은 둔다 - 다시 받은 보기에 없으면 모델이 놓는다(D1 규칙 5)
       if (shouldDropSelectionOnStep(result)) {
         cutLine.clear();
         setCutUnitId(null);
-        setSelectedKey(null);
       }
+      // 응답은 문서를 알려 주지 않는다 - New 문서를 고른 채면 그 문서에서, 아니면 다시 받은 Old 문서 어디서든 찾는다
       if (mode === "unsourced" && result.focus_target_id !== null) setSelNew(result.focus_target_id);
-      else if (result.focus_unit_id !== null) followUnit(result.focus_unit_id);
+      else if (result.focus_unit_id !== null) focusCtl.succeed(job, { docId: hasSolo && solo ? solo.docId : null, revision: null, pickUnitId: result.focus_unit_id });
       else if (result.focus_target_id !== null) showInNew(result.focus_target_id);
       showToast(formatDecisionStep(result, kind));
     } catch (err) {
@@ -1822,7 +1832,7 @@ export function useAssignPage() {
     } finally {
       // 거절도 그 사이 바뀐 것이 있다는 뜻이라 다시 받는다 - 짝 모양이 바뀌었을 수 있어 원문 보기도
       reloadAfterEdit();
-      setBusy(false);
+      focusCtl.end(job);
     }
   }
 
@@ -1874,7 +1884,7 @@ export function useAssignPage() {
   /** 고른 AI 추천을 한 번에 받는다 - 서버가 제안마다 사람의 저장 경로로 확정하고 한 되돌리기 단계로 남긴다. 그 사이 바뀐 것은 건너뛴 수로 알린다 */
   async function acceptAll(kind: AcceptKind, ids: number[], deleteReason: string) {
     if (busy) return;
-    setBusy(true);
+    const job = focusCtl.start({ kind: "bulk", docId: null, unitIds: [], place: NO_PLACE, isGlobal: true });
     try {
       // 서버 상한(2000)씩 차례로 - 나눠 보낸 요청 모두가 같은 step_key라 Ctrl+Z 한 번에 한꺼번에 되돌아간다
       const undo = buildUndo({ step_key: genId() });
@@ -1892,7 +1902,7 @@ export function useAssignPage() {
     } catch (err) {
       showToast(humanizeApiError(err, t), "error");
     } finally {
-      setBusy(false);
+      focusCtl.end(job);
       setUnitsKey((key) => key + 1);
       void loadBundle(bundleId);
     }
@@ -2122,7 +2132,7 @@ export function useAssignPage() {
     const docId = writtenMap.get(targetId)?.target_doc_id;
     if (!key || docId === undefined) return;
     setMode("old");
-    setSelectedKey(key);
+    pickRowKey(key);
     setChecked(new Set());
     setMenu(null);
     setManualNewDoc({ key, docId });
@@ -2157,7 +2167,7 @@ export function useAssignPage() {
     const docId = keep.docId ?? writtenMap.get(targetId)?.target_doc_id;
     if (!key) return;
     setMode("old");
-    setSelectedKey(key);
+    pickRowKey(key);
     setChecked(new Set());
     setMenu(null);
     // 지금 보던 New 문서를 그대로 둔다 - 줄이 바뀌어도 이 문장 옆에서 이어 보게
@@ -2612,7 +2622,7 @@ export function useAssignPage() {
       if (tree.kind !== "none") return;
       const { line, drop } = readDropAt(point);
       if (drop.kind !== "link" || line === null) {
-        // 짝 맺기는 줄을 고르지 않는다 - 저장 뒤 followUnit이 새 짝 줄을 고른다. 거절이면 아무 일도 없다
+        // 짝 맺기는 줄을 고르지 않는다 - 저장 뒤 따라가기가 새 짝 줄을 고른다. 거절이면 아무 일도 없다
         const pair = readPairAt(point, unitIds).drop;
         if (pair.kind === "pair" || pair.kind === "confirm") void runPairDrop(pair);
         if (pair.kind !== "none") return;
@@ -2719,30 +2729,29 @@ export function useAssignPage() {
     if (!oldView || busy) return;
     // 문서와 revision은 보던 Old 문서에서 - 양 단에서 New 문장을 다듬는 중이면 shapeView는 New 문서다
     const doc = oldView.document;
-    // New 문장 다듬기를 닫고(따라갈 New 문장도 버린다) 저장 뒤 Old 줄을 따라간다 - 이 렌더의 hasSolo는 아직 켜져 있어 followUnit에 false를 넘긴다
+    // New 문장 다듬기를 닫고(그 고름에서 건 따라가기도 버려진다) 저장 뒤 Old 줄을 따라간다
     setSolo(null);
-    setSoloFollow(null);
-    setBusy(true);
+    const job = focusCtl.start({ kind: "pair", docId: doc.id, unitIds: drop.kind === "pair" ? drop.unitIds : [], place: NO_PLACE, isGlobal: false });
     try {
       const { pair } = drop.kind === "pair" ? await createPair(bundleId, doc.id, doc.revision, drop.unitIds) : await confirmPair(bundleId, doc.id, drop.pairId, doc.revision);
       if (pair === null) return;
-      setSelectedKey(null);
       // 알림은 같은 글이면 앞의 것을 지운다 - 번호를 적어 잇달아 맺어도 알림마다 제 Undo가 남게
       const ids = pair.unit_ids.flatMap((unitId) => unitMap.get(unitId)?.display_id ?? []).join(" + ");
       showToast(t(drop.kind === "pair" ? "assign.pairDrag.done" : "assign.pairDrag.confirmed", { ids }), "ok", {
         action: { label: t("common.undo"), run: () => void pairUndoRef.current(doc.id, pair.id, pair.unit_ids) },
       });
-      followUnit(pair.unit_ids[0], false);
+      focusCtl.succeed(job, { docId: doc.id, revision: null, pickUnitId: pair.unit_ids[0] });
     } catch (err) {
       showToast(humanizeApiError(err, t), "error");
     } finally {
       reloadAfterEdit();
-      setBusy(false);
+      focusCtl.end(job);
     }
   }
 
   /** 알림의 Undo - 다시 읽어 그 짝이 같은 Unit들로 확정된 채이고 판단이 없을 때만 푼다. 아니면 아무것도 쓰지 않고 알린다. 알림의 단추는 한 번뿐이라 busy로 막지 않는다 */
   async function undoPairDrop(docId: number, pairId: number, unitIds: readonly number[]) {
+    const job = focusCtl.start({ kind: "unpair", docId, unitIds, place: NO_PLACE, isGlobal: false });
     try {
       const fresh = await getDocumentView(bundleId, docId);
       if (!canUndoPair(fresh, pairId, unitIds)) {
@@ -2751,12 +2760,12 @@ export function useAssignPage() {
       }
       await deletePair(bundleId, docId, pairId, fresh.document.revision);
       showToast(t("split.pairRemoved"));
-      setSelectedKey(null);
-      followUnit(unitIds[0]);
+      focusCtl.succeed(job, { docId, revision: null, pickUnitId: unitIds[0] });
     } catch (err) {
       showToast(humanizeApiError(err, t), "error");
     } finally {
       reloadAfterEdit();
+      focusCtl.end(job);
     }
   }
   // 알림은 화면을 넘어 남는다 - 콜백이 그 렌더의 함수를 붙들지 않게 가장 최근의 것을 미러한다(use-box-drag의 최신 config와 같은 짜임)
@@ -2938,7 +2947,7 @@ export function useAssignPage() {
     else if (doc) {
       setSolo(null);
       setManualOldDoc(doc.id);
-      setSelectedKey(null);
+      clearRowPick();
       if (!view.single) changeView({ single: true });
     }
     router.replace(getStageHref(bundleId, "assign"), { scroll: false });
@@ -2957,7 +2966,7 @@ export function useAssignPage() {
       unit: unitParam,
       oldDocIds,
       docOfUnit: (unitId) => lineUnits.find((unit) => unit.id === unitId)?.docId,
-      // 칸 문장은 묶인 표의 줄이다 - 편집 뒤 따라가기(follow)와 같은 식
+      // 칸 문장은 묶인 표의 줄이다 - 편집 뒤 따라가기(liftUnit)와 같은 식
       findRowKey: (unitId) => {
         const groupId = lineUnits.find((unit) => unit.id === unitId)?.groupId ?? null;
         return rowOfUnit.get(unitId) ?? (groupId !== null ? rowOfUnit.get(groupId) : undefined);
@@ -2977,7 +2986,7 @@ export function useAssignPage() {
     } else if (target.kind === "document") {
       setSolo(null);
       setManualOldDoc(target.docId);
-      setSelectedKey(null);
+      clearRowPick();
       if (target.isGone) showToast(t("map.assign.gone"));
     }
     router.replace(getStageHref(bundleId, "assign"), { scroll: false });
@@ -3075,8 +3084,8 @@ export function useAssignPage() {
     t, bundleId, bundle, canEdit, docs, oldDocs, oldDocIds, views, unitsKey, setUnitsKey, units, tobe, tobeData, writtenList, identical,
     aiJobs, aiOn, aiBusy, suggestions, invalidUnitIds, readMarkStatus, suggestedTargetUnits, unitMap, written, writtenMap, rows, rowMap,
     rowOfUnit, options, ready, showSkeleton, unsourced, mode, setMode, filter, counts, foldOpen, setFoldOpen, applyFilter, foldMatch,
-    setSelectedKey, activeKey, row, solo, setSolo, isSolo, isNewEdit, hasSolo, tocOpen, setTocOpen, tocPick, tocBlocks, checked,
-    setChecked, newRemarks, setNewRemarks, menu, setMenu, joinMenu, setJoinMenu, ctxMenu, setCtxMenu, cutUnitId, follow, focusNew,
+    clearRowPick, activeKey, row, solo, setSolo, isSolo, isNewEdit, hasSolo, tocOpen, setTocOpen, tocPick, tocBlocks, checked,
+    setChecked, newRemarks, setNewRemarks, menu, setMenu, joinMenu, setJoinMenu, ctxMenu, setCtxMenu, cutUnitId, focusNew,
     groupData, setDrafts, draft, editing, groupPending, savedDestination, destination, rowUnits, rowLangs, firstDecision, systemHold,
     reasonNow, moveCode, setDraft, unsavedCount, leaveTo, setLeaveTo, rowLive, aiDest, aiWhy, isAiRow, recommendations, linkIds,
     pickedGroups, saveGroupData, candidateIds, viewOf, setManualOldDoc, oldView, acceptKind, setAcceptKind, acceptDoc,
