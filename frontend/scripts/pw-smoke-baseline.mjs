@@ -414,6 +414,8 @@ await runStep("admin without permissions", { devUser: "ghost.user", allowConsole
 
 // 12) 운영 권한(ops.member) - HR 미설정·AI 꺼짐이 사람 말로 보이고 원문 503은 새지 않는다. 일부러 503을 일으키므로 콘솔 오류 검사는 건너뛴다.
 await runStep("admin ops panels as ops.member", { devUser: "ops.member", allowConsoleErrors: true }, async ({ page, takeShot }) => {
+  // 사용량은 DB에 쌓인다(가짜 AI로 돈 SOP 스모크·설명서 그림 뽑기가 행을 남긴다) - 빈 표 문구를 보려고 이 단계에서만 빈 목록으로 돌려준다. 행이 있는 표는 아래 가짜 응답 단계가 본다
+  await page.route("**/api/admin/ai/usage**", (route) => route.fulfill({ status: 200, contentType: "application/json", body: "[]" }));
   await page.goto(`${BASE}/admin`);
   await wait(page, "admin-tab-directory");
   check("access tab is hidden, the three ops tabs are shown", (await countById(page, "admin-tab-access")) === 0 && (await countById(page, "admin-tab-batch")) === 1 && (await countById(page, "admin-tab-ai")) === 1);
