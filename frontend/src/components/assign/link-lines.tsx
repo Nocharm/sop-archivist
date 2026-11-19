@@ -193,8 +193,8 @@ export function LinkLines({ pairs, focusUnits, focusTargets, visible }: LinkLine
     const targets = new Set(focusTargets);
     if (hover?.side === "old") units.add(hover.id);
     if (hover?.side === "new") targets.add(hover.id);
-    const next: DrawnLine[] = [];
-    for (const pair of pickDrawnLinks(pairs, units, targets)) {
+    const onScreen: Array<LinkPair & { start: { x: number; y: number }; end: { x: number; y: number } }> = [];
+    for (const pair of pairs) {
       const oldEl = findOld(pair.unitId);
       const newEl = findNewLine(newPane, pair.targetId);
       if (!oldEl || !newEl) continue;
@@ -203,6 +203,12 @@ export function LinkLines({ pairs, focusUnits, focusTargets, visible }: LinkLine
       const end = readNewLineEnd(newEl, pair.unitId);
       // 양쪽 끝이 다 보일 때만 - 한쪽이 스크롤 밖이면 선이 문서 머리나 화면 밖으로 뻗는다
       if (start.y < oldFrame.top || start.y > oldFrame.bottom || end.y < newFrame.top || end.y > newFrame.bottom) continue;
+      onScreen.push({ ...pair, start, end });
+    }
+    const next: DrawnLine[] = [];
+    // 많을 때 고른 것만 남기는 상한은 화면에 보이는 이음으로 센다 - 문서 전체로 세면 긴 문서에서 가까운 선까지 모두 사라졌다
+    for (const pair of pickDrawnLinks(onScreen, units, targets)) {
+      const { start, end } = pair;
       const shift = (point: { x: number; y: number }) => ({ x: point.x - base.left, y: point.y - base.top });
       // 먼 이음은 고르거나 올렸을 때(strong)만 선 전체 - 평소에는 두 끝 꼬리로 이음이 있다는 것만
       const stubs = !pair.strong && isFarLink(start, end) ? buildLinkStubs(shift(start), shift(end)) : null;
