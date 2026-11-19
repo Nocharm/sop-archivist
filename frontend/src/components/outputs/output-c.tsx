@@ -773,7 +773,8 @@ export function OutputCView({ data, onMove, onIndent, onMark, onPlace, resetKey 
       // 선은 root 기준으로 잰 자리 - 끄는 동안 칸이 스크롤했으면 root와 함께 옮긴다
       const rootBox = rootRef.current?.getBoundingClientRect();
       const line = next.line && rootBox ? { left: next.line.left + rootBox.left, top: next.line.top + rootBox.top, width: next.line.width } : null;
-      return { state: "ok", note: next.note, target, line };
+      // 받을 번호는 표 끝에도 짧게 - 선 위에는 적지 않는다
+      return { state: "ok", note: next.note, dest: next.note, target, line };
     },
     onDrop: (source, point, start) => {
       const frame = dragFrameRef.current;

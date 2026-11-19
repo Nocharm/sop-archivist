@@ -2,7 +2,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+  applyCardDest,
   attachBoxDrag,
+  buildCard,
   canStartDrag,
   getCardLeft,
   getEdgeScrollDir,
@@ -30,6 +32,29 @@ describe("drag decisions", () => {
   it("getCardLeft: right of the pointer, flipped to its left when the card would leave the window, never past the left edge", () => {
     const left = (x: number, width: number) => getCardLeft(x, width, 1120);
     expect([left(500, 300), left(806, 300), left(807, 300), left(1100, 300), left(200, 1200)]).toEqual([514, 820, 493, 786, 0]);
+  });
+});
+
+describe("buildCard", () => {
+  it("builds one line - id, text, count, then a hidden destination slot - with text as text only", () => {
+    const view = buildCard({ id: "A1", text: "<b>x</b>", count: "3 lines" });
+    expect([...view.el.children].map((el) => el.className)).toEqual(["drag-card-id", "drag-card-text", "drag-card-count", "drag-card-dest"]);
+    expect(view.el.querySelector("b")).toBeNull();
+    expect(view.dest.hidden).toBe(true);
+    expect([...buildCard({ id: "A1", text: "t", count: null }).el.children].map((el) => el.className)).toEqual(["drag-card-id", "drag-card-text", "drag-card-dest"]);
+  });
+  it("applyCardDest shows the short destination only where it can land; refusals and nowhere hide it", () => {
+    const view = buildCard({ id: "A1", text: "t", count: null });
+    applyCardDest(view, { state: "ok", note: "Parent SOP: SOP-PH", dest: "→ SOP-PH" });
+    expect([view.dest.hidden, view.dest.textContent]).toEqual([false, "→ SOP-PH"]);
+    applyCardDest(view, { state: "refused", note: "why", dest: "→ SOP-PH" });
+    expect([view.dest.hidden, view.dest.textContent]).toEqual([true, ""]);
+    applyCardDest(view, { state: "ok", dest: "→ 5.2 · indent" });
+    expect(view.dest.textContent).toBe("→ 5.2 · indent");
+    applyCardDest(view, { state: "ok", note: "go" });
+    expect(view.dest.hidden).toBe(true);
+    applyCardDest(view, { state: "none", dest: "→ x" });
+    expect(view.dest.hidden).toBe(true);
   });
 });
 
@@ -302,7 +327,7 @@ describe("attachBoxDrag", () => {
   it("shows a refusal on the card, the cursor flag and the target; the reason goes to the status text, not the card", () => {
     const target = document.createElement("div");
     document.body.append(target);
-    const answers: DragHover[] = [{ state: "refused", note: "why", target }, { state: "ok", note: "go", target }];
+    const answers: DragHover[] = [{ state: "refused", note: "why", target }, { state: "ok", note: "go", dest: "→ go", target }];
     attach({ onMove: () => answers.shift() ?? { state: "ok", target } });
     press(box);
     move(30, 10);
@@ -312,11 +337,13 @@ describe("attachBoxDrag", () => {
     expect(status()!.textContent).toBe("why");
     expect(status()!.getAttribute("role")).toBe("status");
     expect(target.dataset.drop).toBe("refused");
+    expect(card()!.querySelector<HTMLElement>(".drag-card-dest")!.hidden).toBe(true);
     move(31, 10);
     expect(target.dataset.drop).toBe("over");
     expect(card()!.hasAttribute("data-refused")).toBe(false);
     expect(html.getAttribute("data-box-drag")).toBe("");
     expect(status()!.textContent).toBe("go");
+    expect(card()!.querySelector(".drag-card-dest")!.textContent).toBe("→ go");
     move(32, 10);
     expect(status()!.textContent).toBe("");
     release(32, 10);

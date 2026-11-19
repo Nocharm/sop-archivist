@@ -423,7 +423,7 @@ export function ToBeSection({ bundleId, documents, file }: ToBeSectionProps) {
       const target = findDropRow(point);
       if (!source || !target) return { state: "none" };
       const drop = resolveParentDrop(source, target.doc);
-      if (drop.kind === "move") return { state: "ok", note: t("tobe.drag.parent", { code: drop.parentCode }), target: target.el };
+      if (drop.kind === "move") return { state: "ok", note: t("tobe.drag.parent", { code: drop.parentCode }), dest: `→ ${drop.parentCode}`, target: target.el };
       if (drop.kind === "refused") return { state: "refused", note: t(PARENT_REFUSAL_KEYS[drop.reason]), target: target.el };
       return { state: "none" };
     },

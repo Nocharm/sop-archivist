@@ -138,6 +138,7 @@ async function openTemplateDrag(page) {
   };
   const readCard = () => page.evaluate(() => ({
     note: document.querySelector('[data-testid="drag-status"]')?.textContent ?? "",
+        dest: document.querySelector('[data-testid="drag-card"] .drag-card-dest')?.textContent ?? "",
     refused: document.querySelector('[data-testid="drag-card"]')?.hasAttribute("data-refused") ?? false,
   }));
   const composed = await getJson(`/outputs/c/docs/${sop.id}?lang=en`);
@@ -923,7 +924,9 @@ await runStep("assign: caption slot - drag a sentence onto the table and drag th
   // 글자 위를 피해 조각 오른쪽 끝 빈 자리에서 누른다
   await dragThrough(page, { x: from.x + from.width - 12, y: from.y + from.height / 2 }, [{ x: to.x + to.width / 2, y: to.y + to.height / 2 }]);
   const note = await page.locator('[data-testid="drag-status"]').evaluate((el) => (el.textContent ?? "").trim() || null);
+  const noteDest = await page.locator('[data-testid="drag-card"] .drag-card-dest').evaluate((el) => (el.textContent ?? "").trim() || null);
   check("over the table head the drag card says Attach as caption", note === "Attach as caption", note);
+  check("over the table head the card ends with → caption", noteDest === "→ caption", noteDest);
   await page.mouse.up();
   await page.locator('[data-testid="toast-ok"]', { hasText: "Caption attached" }).first().waitFor({ timeout: T });
   const [caption] = await captionsOf();
@@ -939,7 +942,9 @@ await runStep("assign: caption slot - drag a sentence onto the table and drag th
   const outY = chipBox.y - paneBox.y > 140 ? chipBox.y - 90 : Math.min(paneBox.y + paneBox.height - 70, chipBox.y + 160);
   await dragThrough(page, { x: chipBox.x + 6, y: chipBox.y + chipBox.height / 2 }, [{ x: paneBox.x + paneBox.width / 2, y: outY }]);
   const outNote = await page.locator('[data-testid="drag-status"]').evaluate((el) => (el.textContent ?? "").trim() || null);
+  const outDest = await page.locator('[data-testid="drag-card"] .drag-card-dest').evaluate((el) => (el.textContent ?? "").trim() || null);
   check("dragging the chip off the slot says Detach as sentence", outNote === "Detach as sentence", outNote);
+  check("dragging the chip off the slot the card ends with → sentence", outDest === "→ sentence", outDest);
   await page.mouse.up();
   await page.locator('[data-testid="toast-ok"]', { hasText: "Caption detached" }).first().waitFor({ timeout: T });
   check("the chip dragged out goes back to a sentence", (await captionsOf()).length === 0);
@@ -1397,12 +1402,14 @@ await runStep("assign: drag an Old piece onto a written New sentence, it links l
   const during = await page.evaluate(({ b, t }) => ({
     card: document.querySelector('[data-testid="drag-card"]')?.textContent ?? null,
     note: document.querySelector('[data-testid="drag-status"]')?.textContent ?? "",
+        dest: document.querySelector('[data-testid="drag-card"] .drag-card-dest')?.textContent ?? "",
     drop: document.querySelector(`[data-testid="assign-new-${t}"]`)?.getAttribute("data-drop") ?? null,
     line: document.querySelector("svg[data-drag-line] path")?.getAttribute("d") ?? "",
     src: document.querySelector(`[data-testid="assign-paper-piece-${b}"]`)?.hasAttribute("data-drag-src") ?? false,
   }), { b: bId, t: tId });
   check("dragging an Old piece shows a card with its unit id", during.card !== null && during.card.includes(loose.get(bId).display_id), during.card);
   check("over a written sentence the line is marked and the card says link", during.drop === "over" && during.note === "Link to this sentence", JSON.stringify({ drop: during.drop, note: during.note }));
+  check("over a written sentence the card ends with → link", during.dest === "→ link", during.dest);
   check("a draft line follows from the piece", during.line.length > 0);
   check("the dragged piece stays dimmed in place", during.src);
   await takeShot("sop-assign-drag-link.png");
@@ -1486,6 +1493,7 @@ await runStep("assign: drag an Old piece onto a written New sentence, it links l
   const overComposed = await readMarks();
   const composedNote = await page.evaluate(() => ({
     note: document.querySelector('[data-testid="drag-status"]')?.textContent ?? "",
+        dest: document.querySelector('[data-testid="drag-card"] .drag-card-dest')?.textContent ?? "",
     lineDrops: document.querySelectorAll('[data-pane="new"] .new-line[data-drop]').length,
   }));
   // 끈 Unit은 미배정이라 어느 칸에도 문장이 없다 - "이미 이 칸에 있다" 거절이 될 수 없다
@@ -1493,7 +1501,7 @@ await runStep("assign: drag an Old piece onto a written New sentence, it links l
   check("the dragged unit has no sentence anywhere yet", bBefore?.status === "unassigned" && bBefore.target_ids.length === 0, JSON.stringify(bBefore?.target_ids));
   const sentByDrop = page.waitForResponse((response) => response.url().includes("/groups/save"), { timeout: T });
   await page.mouse.up();
-  check("a sentence of an unwritten document is not a link target", overComposed.cards === 1 && composedNote.lineDrops === 0 && composedNote.note.startsWith("→ "), JSON.stringify({ ...overComposed, ...composedNote }));
+  check("a sentence of an unwritten document is not a link target", overComposed.cards === 1 && composedNote.lineDrops === 0 && composedNote.note.startsWith("→ ") && composedNote.dest === composedNote.note, JSON.stringify({ ...overComposed, ...composedNote }));
   await sentByDrop;
   await page.waitForLoadState("networkidle");
   const sentUnit = (await readUnits()).find((unit) => unit.unit_id === bId);
@@ -2166,6 +2174,7 @@ await runStep("assign: template view drag lights open spots, names the destinati
   check("the decision panel tells where to drop instead of the list", during.note);
   const onRow = await readCard();
   check("over a category row the card names that category", !onRow.refused && onRow.note.startsWith("→ ") && onRow.note.includes(category.label.split(" › ").at(-1)), onRow.note);
+  check("over a category row the card ends with that category", onRow.dest.startsWith("→ ") && onRow.note.startsWith(onRow.dest), `${onRow.dest} / ${onRow.note}`);
   await takeShot("sop-assign-template-drag.png");
   // 한글 절반의 같은 범주 행도 같은 자리
   const koPoint = await pointInSpot(rowId("ko"));
@@ -2188,6 +2197,7 @@ await runStep("assign: template view drag lights open spots, names the destinati
     await page.mouse.move(point.x, point.y, { steps: 8 });
     const card = await readCard();
     check(`over ${label} the card is refused with a reason`, card.refused && card.note.length > 0, card.note);
+    check(`over ${label} the card shows no destination`, card.dest === "", card.dest);
   }
   const commitsAfter = await page.evaluate(() => window.__commits ?? -1);
   check("no React commit while dragging over the template", commitsBefore > 0 && commitsBefore === commitsAfter, `${commitsBefore} -> ${commitsAfter}`);
@@ -2261,6 +2271,7 @@ await runStep("assign: template view drag onto a category row or between numbere
   const card = await readCard();
   const gapShown = await page.evaluate(() => [...document.querySelectorAll('[data-testid="drop-line"]')].some((el) => !el.hidden));
   check("between numbered lines the card names the number the line will get", !card.refused && card.note.includes(`after ${first.number}`) && card.note.includes("becomes"), card.note);
+  check("between numbered lines the card ends with the number only", /^→ \S+$/.test(card.dest) && card.note.includes(`becomes ${card.dest.slice(2)}`), `${card.dest} / ${card.note}`);
   check("a drop line is drawn between the lines", gapShown);
   const gapSent = await dropAndSave("between numbered lines");
   const ids = numbered.items.map((item) => item.target_id);
@@ -4412,6 +4423,7 @@ await runStep("assign: drag an Old piece between two sentences of a New · from 
   }));
   const readCard = () => page.evaluate(() => ({
     note: document.querySelector('[data-testid="drag-status"]')?.textContent ?? "",
+        dest: document.querySelector('[data-testid="drag-card"] .drag-card-dest')?.textContent ?? "",
     refused: document.querySelector('[data-testid="drag-card"]')?.hasAttribute("data-refused") ?? false,
   }));
   const menu = page.locator('[data-testid="assign-link-menu"]');
@@ -4460,9 +4472,10 @@ await runStep("assign: drag an Old piece between two sentences of a New · from 
     const gap = document.querySelector('[data-testid="drop-line"]');
     const item = document.querySelector(`[data-pane="new"] .new-item[data-row="t:${id}"]`).getBoundingClientRect();
     const box = gap && !gap.hidden ? gap.getBoundingClientRect() : null;
-    return { note: document.querySelector('[data-testid="drag-status"]')?.textContent ?? "", lineY: box ? box.top + box.height / 2 : null, itemBottom: item.bottom, drops: document.querySelectorAll("[data-drop]").length };
+    return { note: document.querySelector('[data-testid="drag-status"]')?.textContent ?? "", dest: document.querySelector('[data-testid="drag-card"] .drag-card-dest')?.textContent ?? "", lineY: box ? box.top + box.height / 2 : null, itemBottom: item.bottom, drops: document.querySelectorAll("[data-drop]").length };
   }, a);
   check("between two sentences the card says where it goes", during.note.startsWith("→ "), during.note);
+  check("between two sentences the card ends with the same destination", during.dest === during.note, `${during.dest} / ${during.note}`);
   check("the drop line sits on the bottom edge of A", during.lineY !== null && Math.abs(during.lineY - during.itemBottom) <= 6, JSON.stringify(during));
   check("no box is outlined between sentences", during.drops === 0);
   await takeShot("sop-assign-drag-send.png");
@@ -4611,8 +4624,8 @@ await runStep("assign: drag an Old piece between two sentences of a New · from 
   refusals.push({ where: "written", ...(await readCard()), drop: null });
   await page.mouse.up();
   await page.waitForTimeout(600);
-  check("over an N/A section the card refuses and says why", refusals[0].refused && refusals[0].note === "That section is N/A in the To-Be list." && refusals[0].drop === "refused", JSON.stringify(refusals[0]));
-  check("over its own section the card refuses and points to Order", refusals[1].refused && refusals[1].note === "Already in this section. Change the order in Order" && refusals[1].drop === "refused", JSON.stringify(refusals[1]));
+  check("over an N/A section the card refuses and says why", refusals[0].refused && refusals[0].note === "That section is N/A in the To-Be list." && refusals[0].drop === "refused" && refusals[0].dest === "", JSON.stringify(refusals[0]));
+  check("over its own section the card refuses and points to Order", refusals[1].refused && refusals[1].note === "Already in this section. Change the order in Order" && refusals[1].drop === "refused" && refusals[1].dest === "", JSON.stringify(refusals[1]));
   check("between sentences of a written document the card refuses", refusals[2].refused && refusals[2].note === "A document that is already written takes no new sentences. Link to one of its sentences.", JSON.stringify(refusals[2]));
   check("refused drops send no save", saveRequests === savesBeforeRefusals, String(saveRequests - savesBeforeRefusals));
   check("refused drops make no draft, open no menu and write nothing", (await draft.count()) === 0 && (await menu.count()) === 0 && JSON.stringify((await readUnits()).map((unit) => [unit.unit_id, unit.status])) === unitsBefore && JSON.stringify(await readIds(slotK)) === JSON.stringify([a, x, b, c]));
@@ -4799,6 +4812,7 @@ await runStep("assign: drag an Old piece onto a slot in the All list, in both vi
   const readCard = () => page.evaluate(() => ({
     cards: document.querySelectorAll('[data-testid="drag-card"]').length,
     note: document.querySelector('[data-testid="drag-status"]')?.textContent ?? "",
+        dest: document.querySelector('[data-testid="drag-card"] .drag-card-dest')?.textContent ?? "",
     refused: document.querySelector('[data-testid="drag-card"]')?.hasAttribute("data-refused") ?? false,
     drops: document.querySelectorAll("[data-drop]").length,
   }));
@@ -4849,7 +4863,7 @@ await runStep("assign: drag an Old piece onto a slot in the All list, in both vi
   await page.waitForTimeout(100);
   const overK = await readCard();
   check("over a section row in the tree it is outlined", (await rowDropOf(kTestId)) === "over");
-  check("the card says the document and section", overK.note.startsWith("→ ") && overK.note.includes(sop.code) && !overK.refused, JSON.stringify(overK));
+  check("the card says the document and section", overK.note.startsWith("→ ") && overK.note.includes(sop.code) && !overK.refused && overK.dest === overK.note, JSON.stringify(overK));
   await takeShot("sop-assign-drag-tree.png");
   const commitsBefore = await page.evaluate(() => window.__commits ?? -1);
   for (let i = 0; i < 30; i += 1) {
@@ -4882,7 +4896,7 @@ await runStep("assign: drag an Old piece onto a slot in the All list, in both vi
   const nDrop = await rowDropOf(nTestId);
   await page.mouse.up();
   await page.waitForTimeout(600);
-  check("over an N/A row the card refuses and says why", overN.refused && overN.note === "That section is N/A in the To-Be list." && nDrop === "refused", JSON.stringify({ ...overN, nDrop }));
+  check("over an N/A row the card refuses and says why", overN.refused && overN.note === "That section is N/A in the To-Be list." && nDrop === "refused" && overN.dest === "", JSON.stringify({ ...overN, nDrop }));
   const quiet = [];
   const headingId = await page.locator('[data-testid^="assign-tree-place-heading:"]').first().getAttribute("data-testid").catch(() => null);
   if (headingId !== null) {
@@ -5083,6 +5097,7 @@ await runStep("assign: drag an Old piece into a WI step, on its row in the All l
   };
   const readCard = () => page.evaluate(() => ({
     note: document.querySelector('[data-testid="drag-status"]')?.textContent ?? "",
+        dest: document.querySelector('[data-testid="drag-card"] .drag-card-dest')?.textContent ?? "",
     refused: document.querySelector('[data-testid="drag-card"]')?.hasAttribute("data-refused") ?? false,
   }));
   const menu = page.locator('[data-testid="assign-link-menu"]');
@@ -5121,7 +5136,7 @@ await runStep("assign: drag an Old piece into a WI step, on its row in the All l
   await dragThrough(page, await pointInUnit(unitT.unit_id), [stepPoint]);
   await page.waitForTimeout(100);
   const overStep = { ...(await readCard()), drop: await page.locator(`[data-testid="${stepRow}"]`).evaluate((el) => el.closest(".tree-row")?.getAttribute("data-drop") ?? null) };
-  check("over a step row the row is outlined and the card names the WI", overStep.drop === "over" && overStep.note.startsWith("→ ") && overStep.note.includes(wiCode) && !overStep.refused, JSON.stringify(overStep));
+  check("over a step row the row is outlined and the card names the WI", overStep.drop === "over" && overStep.note.startsWith("→ ") && overStep.note.includes(wiCode) && !overStep.refused && overStep.dest === overStep.note, JSON.stringify(overStep));
   // 놓으면 그 step으로 바로 확정한다(그 자리 메뉴 없음, 1.2.0 피드백)
   const sentT = await saveByDrop();
   check("a step-row drop opens no in-place menu", (await menu.count()) === 0);
@@ -5135,7 +5150,7 @@ await runStep("assign: drag an Old piece into a WI step, on its row in the All l
   await dragThrough(page, await pointInUnit(unitX.unit_id), [await pointInItem(i1, "bottom")]);
   await page.waitForTimeout(100);
   const overGap = await readCard();
-  check("between two sentences of a step the card says where it goes", overGap.note.startsWith("→ ") && !overGap.refused, JSON.stringify(overGap));
+  check("between two sentences of a step the card says where it goes", overGap.note.startsWith("→ ") && !overGap.refused && overGap.dest === overGap.note, JSON.stringify(overGap));
   const sentX = await saveByDrop();
   check("a drop between step sentences saves at once with no in-place menu", sentX.ok && (await menu.count()) === 0);
   await takeShot("sop-assign-drag-send-wi.png");
@@ -5919,6 +5934,7 @@ await runStep("assign: Pair view - drag a piece onto its partner to pair or conf
   };
   const readCard = () => page.evaluate(() => ({
     note: document.querySelector('[data-testid="drag-status"]')?.textContent ?? "",
+        dest: document.querySelector('[data-testid="drag-card"] .drag-card-dest')?.textContent ?? "",
     refused: document.querySelector('[data-testid="drag-card"]')?.hasAttribute("data-refused") ?? false,
   }));
   const readMarks = () => page.evaluate(() => ({
@@ -5955,7 +5971,7 @@ await runStep("assign: Pair view - drag a piece onto its partner to pair or conf
     const drop = await pairPiece(toId).getAttribute("data-drop");
     await page.mouse.up();
     await page.waitForTimeout(400);
-    check(`${label}: the card says why and the piece is marked refused`, card.refused && card.note === text && drop === "refused", JSON.stringify({ card, drop }));
+    check(`${label}: the card says why and the piece is marked refused`, card.refused && card.note === text && card.dest === "" && drop === "refused", JSON.stringify({ card, drop }));
     check(`${label}: the drop writes nothing`, pairRequests.length === before.requests && JSON.stringify((await readView()).pairs) === before.pairs, String(pairRequests.length - before.requests));
   };
 
@@ -5976,6 +5992,7 @@ await runStep("assign: Pair view - drag a piece onto its partner to pair or conf
   await moveOnto(a2.id);
   const overPartner = await readCard();
   check("dragging a over a′ says Pair with a′", overPartner.note === `Pair with ${a2.display_id}` && !overPartner.refused, overPartner.note);
+  check("dragging a over a′ the card ends with → pair", overPartner.dest === "→ pair", overPartner.dest);
   // 출발 → 포인터 점선은 New 문장에 잇는 끌기에서만 그린다(설계 2026-11-20 D7) - 짝 놓기는 놓을 조각의 테두리가 자리를 말한다
   check("a′ is the drop target, a is the drag source and no pointer line follows", (await pairPiece(a2.id).getAttribute("data-drop")) === "over" && (await pairPiece(a.id).getAttribute("data-drag-src")) === "" && (await page.locator("svg[data-drag-line]").count()) === 0);
   const wanderPoints = await page.evaluate(() => {
@@ -6091,7 +6108,7 @@ await runStep("assign: Pair view - drag a piece onto its partner to pair or conf
   await startDrag(b.id);
   await moveOnto(b2.id);
   const overSuggestion = await readCard();
-  check("dragging b over its suggested partner says Confirm this suggested pair", overSuggestion.note === "Confirm this suggested pair" && !overSuggestion.refused, overSuggestion.note);
+  check("dragging b over its suggested partner says Confirm this suggested pair", overSuggestion.note === "Confirm this suggested pair" && !overSuggestion.refused && overSuggestion.dest === "→ pair", JSON.stringify(overSuggestion));
   const confirmed = await dropAndSave(POST_CONFIRM, `Confirmed the pair ${idsOf(b, b2)}`);
   const confirmBody = JSON.parse(pairRequests.at(-1).body);
   check("the drop confirms the suggestion (200) with only the revision", confirmed.response.status() === 200 && JSON.stringify(Object.keys(confirmBody)) === JSON.stringify(["revision"]), pairRequests.at(-1).body);
@@ -6311,6 +6328,7 @@ await runStep("assign: drag an Old piece onto a nearby piece in the other langua
   const moveOnto = async (toId) => moveTo(await pointOn(toId));
   const readCard = () => page.evaluate(() => ({
     note: document.querySelector('[data-testid="drag-status"]')?.textContent ?? "",
+        dest: document.querySelector('[data-testid="drag-card"] .drag-card-dest')?.textContent ?? "",
     refused: document.querySelector('[data-testid="drag-card"]')?.hasAttribute("data-refused") ?? false,
     drops: document.querySelectorAll("[data-drop]").length,
   }));
@@ -6334,7 +6352,7 @@ await runStep("assign: drag an Old piece onto a nearby piece in the other langua
     const drop = await pieceOf(toId).getAttribute("data-drop");
     await page.mouse.up();
     await page.waitForTimeout(400);
-    check(`${label}: the card says why and the piece is marked refused`, card.refused && card.note === text && drop === "refused", JSON.stringify({ card, drop }));
+    check(`${label}: the card says why and the piece is marked refused`, card.refused && card.note === text && card.dest === "" && drop === "refused", JSON.stringify({ card, drop }));
     check(`${label}: the drop writes nothing`, pairRequests.length === before.requests && JSON.stringify((await readView()).pairs) === before.pairs, String(pairRequests.length - before.requests));
   };
 
@@ -6353,7 +6371,7 @@ await runStep("assign: drag an Old piece onto a nearby piece in the other langua
   await startDrag(x.id);
   await moveOnto(x2.id);
   const overX2 = await readCard();
-  check("dragging x over x′ says Pair with x′", overX2.note === `Pair with ${x2.display_id}` && !overX2.refused, overX2.note);
+  check("dragging x over x′ says Pair with x′", overX2.note === `Pair with ${x2.display_id}` && !overX2.refused && overX2.dest === "→ pair", JSON.stringify(overX2));
   check("x′ is the drop target", (await pieceOf(x2.id).getAttribute("data-drop")) === "over");
   const stripOverOffset = await pieceOf(x2.id).evaluate((el) => getComputedStyle(el).outlineOffset);
   const wanderPoints = await page.evaluate(() => {
@@ -6431,7 +6449,7 @@ await runStep("assign: drag an Old piece onto a nearby piece in the other langua
   await startDrag(y.id);
   await moveTo({ x: lineBox.x + Math.min(60, lineBox.width / 2), y: lineBox.y + lineBox.height / 2 });
   const overLine = await readCard();
-  check("over a written New sentence the card still says link", overLine.note === "Link to this sentence" && (await line.getAttribute("data-drop")) === "over", overLine.note);
+  check("over a written New sentence the card still says link", overLine.note === "Link to this sentence" && overLine.dest === "→ link" && (await line.getAttribute("data-drop")) === "over", JSON.stringify(overLine));
   // 5걸음의 안쪽 테두리(-5px)는 Old 칸만 - New 문장의 잇기 테두리는 2걸음 값(-2px), 거절 테두리는 공통 값(-1px) 그대로다(New 칸도 .pg[data-strips]다)
   const offsetOf = (locator) => locator.evaluate((el) => getComputedStyle(el).outlineOffset);
   const lineOverOffset = await offsetOf(line);
