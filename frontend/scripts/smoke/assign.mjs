@@ -3397,6 +3397,106 @@ await runStep("assign: after Join only the edited document is fetched again", {}
   check("two undos return to the original sentence", (await readIds()).length === before);
 });
 
+// 처리 중 표시(설계 2026-11-20 D4, 시안 1 스텝 4) - 틈의 Join을 누르면 응답 전에 그 틈에 "Joining…" 알약이 뜨고 두 박스에 빛이 지나간다(data-pending).
+// 붙이기 요청을 붙들어(page.route) 응답 전 모습을 늘 본다 - 그동안 잠긴 박스는 눌러도 고름이 옮겨 가지 않는다. 놓아주면 알약 · 빛이 걷히고 합친 박스가 골라진다.
+// 끝에 되돌리기 두 번(붙이기 → 자르기)으로 시드를 처음 그대로 둔다
+await runStep("assign: a held Join shows the Joining pill and the shimmer at once, they go with the response and the merged box is picked", {}, async ({ page }) => {
+  await page.goto(`${BASE}/`);
+  const fresh = page.locator('[data-testid^="bundles-row-"]', { hasText: "쪼개기 직후" });
+  const freshId = Number((await fresh.getAttribute("data-testid")).replace("bundles-row-", ""));
+  const headers = { "X-Dev-User": "qa.member" };
+  const docs = await (await page.request.get(`${BASE}/api/bundles/${freshId}/documents`, { headers })).json();
+  const readView = async (docId) => (await page.request.get(`${BASE}/api/bundles/${freshId}/documents/${docId}/view`, { headers })).json();
+  await page.goto(`${BASE}/bundles/${freshId}/assign`);
+  await wait(page, "assign-bar");
+  const pieceOf = (unitId) => page.locator(`[data-testid="assign-paper-piece-${unitId}"], [data-testid="assign-paper-unit-${unitId}"]`).first();
+  const stripOf = (unitId) => page.locator(`.strip[data-testid="assign-paper-piece-${unitId}"]`);
+  let doc = null;
+  let unit = null;
+  for (const candidate of docs.filter((item) => item.side === "old" && item.status === "ready")) {
+    const view = await readView(candidate.id);
+    const found = view.units.filter((item) => item.kind === "sentence" && item.status === "unassigned" && item.lang === "en" && item.pair_id === null && item.text.trim().split(" ").length >= 6);
+    if (found.length === 0) continue;
+    await page.locator('[data-testid="assign-old-doc"]').click();
+    await page.locator(`[data-testid="assign-old-doc-option-${candidate.id}"]`).click();
+    await page.waitForTimeout(600);
+    for (const item of found) {
+      if ((await pieceOf(item.id).count()) === 0) continue;
+      doc = candidate;
+      unit = item;
+      break;
+    }
+    if (unit !== null) break;
+  }
+  check("the fresh bundle has an unpaired English sentence on screen", unit !== null);
+  if (unit === null) return;
+  const readIds = async () => (await readView(doc.id)).units.map((item) => item.id);
+  const waitCount = async (expected) => {
+    for (let tries = 0; tries < 60; tries += 1) {
+      if ((await readIds()).length === expected) return true;
+      await page.waitForTimeout(250);
+    }
+    return false;
+  };
+  const beforeIds = await readIds();
+  const before = beforeIds.length;
+  // 두 조각을 만든다 - 우클릭 메뉴의 Split here(앞 조각이 골라진다)
+  await pieceOf(unit.id).scrollIntoViewIfNeeded();
+  await pieceOf(unit.id).click({ button: "right" });
+  await wait(page, "assign-ctx-split");
+  await page.locator('[data-testid="assign-ctx-split"]').click();
+  await wait(page, "assign-cut-run");
+  await page.locator('[data-testid="assign-cut-run"]').click();
+  check("the sentence is cut in two", await waitCount(before + 1));
+  const halves = (await readView(doc.id)).units.filter((item) => !beforeIds.includes(item.id)).sort((a, b) => a.pos_seq - b.pos_seq);
+  await stripOf(halves[0].id).and(page.locator("[data-sel]")).waitFor({ timeout: T });
+  const join = page.locator(`[data-testid="assign-paper-join-${halves[0].id}-${halves[1].id}"]`);
+  await join.waitFor({ state: "attached", timeout: T });
+  await page.waitForLoadState("networkidle");
+  await page.waitForFunction(() => { const acts = document.querySelector(".strip-acts[data-open]"); return acts === null || acts.getAnimations().length === 0; }, null, { timeout: T });
+  await page.locator(".strip-gap", { has: join }).hover({ position: { x: 200, y: 2 } });
+  await page.waitForFunction(() => [...document.querySelectorAll(".strip-gap:hover .strip-merge")].some((el) => getComputedStyle(el).pointerEvents === "auto"), null, { timeout: T });
+  // 붙이기 요청을 서버에 닿기 전에 붙든다 - 첫 POST만 붙들고 나머지는 흘려보낸 뒤 끝에서 뗀다
+  const EDIT_URL = /\/api\/bundles\/\d+\/documents\/\d+\/edits$/;
+  let releaseEdit = () => undefined;
+  const editHeld = new Promise((resolve) => { releaseEdit = resolve; });
+  let isEditTaken = false;
+  await page.route(EDIT_URL, async (route) => {
+    if (isEditTaken || route.request().method() !== "POST") return route.continue();
+    isEditTaken = true;
+    await editHeld;
+    await route.continue();
+  });
+  await join.click();
+  const pill = page.locator('[data-testid="assign-paper-pending"][data-kind="join"]');
+  const isPillShown = await pill.waitFor({ timeout: T }).then(() => true, () => false);
+  check("the Joining pill shows at once in the gap that was pressed", isPillShown && (await pill.innerText()).includes("Joining") && (await pill.evaluate((el) => el.parentElement?.classList.contains("strip-gap") ?? false)), isPillShown ? await pill.innerText() : "no pill");
+  const sweeps = await page.evaluate((ids) => ids.map((id) => {
+    const el = document.querySelector(`.strip[data-testid="assign-paper-piece-${id}"]`);
+    return el !== null && el.hasAttribute("data-pending") && getComputedStyle(el).animationName === "pending-sweep";
+  }), [halves[0].id, halves[1].id]);
+  check("both boxes of the Join carry the shimmer while it is pending", sweeps.every(Boolean), JSON.stringify(sweeps));
+  // 처리 중인 박스는 잠긴다 - 눌러도 고름이 그 박스로 옮겨 가지 않는다(잠금은 그 박스만, 설계 D4)
+  await stripOf(halves[1].id).click();
+  await page.waitForTimeout(200);
+  check("a pending box takes no click - the pressed box stays picked", (await stripOf(halves[0].id).getAttribute("data-sel")) === "" && (await stripOf(halves[1].id).getAttribute("data-sel")) === null);
+  releaseEdit();
+  check("Join merges the two pieces back into one sentence", await waitCount(before));
+  const merged = (await readView(doc.id)).units.find((item) => !beforeIds.includes(item.id) && item.kind === "sentence");
+  const isPicked = merged !== undefined && (await stripOf(merged.id).and(page.locator("[data-sel]")).waitFor({ timeout: T }).then(() => true, () => false));
+  const isPillGone = await pill.waitFor({ state: "detached", timeout: T }).then(() => true, () => false);
+  check("after the response the pill and the shimmer go and the merged box is picked", isPicked && isPillGone && (await page.locator('[data-pane="old"] [data-pending]').count()) === 0);
+  await page.unrouteAll({ behavior: "wait" });
+  // 되돌리기 두 번으로 처음 모양까지(붙이기 → 자르기)
+  await page.waitForLoadState("networkidle");
+  for (const expected of [before + 1, before]) {
+    await page.locator('[data-testid="assign-undo"]:not([disabled])').click();
+    if (!(await waitCount(expected))) break;
+    await page.waitForLoadState("networkidle");
+  }
+  check("two undos return to the original sentence", (await readIds()).length === before);
+});
+
 // 배정 화면에서 고른 글자로 새 Unit 만들기(전에는 쪼개기 화면에서만 했다) - 끌어 고르면 용지 위에 줄이 뜨고, 만들고, 되돌린다
 await runStep("assign: make a unit from a dragged selection, then undo", {}, async ({ page, takeShot }) => {
   await page.goto(`${BASE}/`);
@@ -4095,7 +4195,8 @@ await runStep("assign: counterpart table - each table unwraps on its own with no
   const [koWork, koValue, enWork, enValue] = before.tables;
   check("the view offers no counterpart tables", before.tables.every((table) => !("counterparts" in table)));
   const tableUnit = (view, tableId) => view.units.find((item) => item.kind === "table" && item.table_id === tableId);
-  // 앞 편집 · Undo의 다시 받기가 끝날 때까지 결정 칸 단추가 잠겨 있고, 다시 받으면 따라가기가 고름을 바꾼다 - 단추가 풀린 것을 본 뒤에 누른다.
+  // 결정 칸 단추는 그 표가 처리 중이거나 묶음 전체 일(Undo) 중이면 잠기고(시안 1 스텝 4 - 다른 표의 벗기기는 막지 않고 같은 문서 쓰기 줄에 선다),
+  // 다시 받으면 따라가기가 고름을 바꾼다 - 단추가 풀린 것을 본 뒤에 누른다.
   // 누른 뒤에는 화면이 단위 목록을 다시 받을 때까지 기다린다(받기 전에 다른 줄을 누르면 늦게 온 목록이 고름을 되돌렸다)
   const unwrapFromShape = async (tableId) => {
     const unit = tableUnit(await readView(), tableId);
@@ -4139,11 +4240,10 @@ await runStep("assign: counterpart table - each table unwraps on its own with no
   // 오른쪽 칸에는 두 줄이 같이 뜬다
   const piece = (id) => page.locator(`[data-testid="assign-paper-piece-${id}"]`);
   const hintOf = (id) => page.locator(`[data-testid="assign-paper-pair-hint-${id}"]`);
-  // 벗기기의 풀기 전환이 끝나기 전 누름은 처리 중이라 묻힌다(처리 중인 박스만 잠그기는 시안 1 스텝 4) - 골라질 때까지 다시 누른다
-  for (let tries = 0; tries < 20 && (await piece(english.id).getAttribute("data-sel")) === null; tries += 1) {
-    await piece(english.id).click();
-    await page.waitForTimeout(250);
-  }
+  // 벗기는 동안(새 보기를 놓을 때까지) 그 표의 박스만 잠긴다(빛이 지나가는 data-pending, 시안 1 스텝 4) - 전에는 그 사이 누름이 표 안 칸 조각에 떨어져
+  // 은퇴할 표를 골랐다가 놓였다. 벗긴 줄이 되고 잠금이 풀린 것을 본 뒤 한 번 누른다(남은 전환 움직임은 click이 멎기를 기다린다)
+  await page.locator(`.strip[data-testid="assign-paper-piece-${english.id}"]:not([data-pending])`).waitFor({ timeout: T });
+  await piece(english.id).click();
   await piece(english.id).and(page.locator("[data-sel]")).waitFor({ timeout: T });
   check("clicking the lower box of a far pair picks that box, the upper one is marked as its mate", (await piece(korean.id).getAttribute("data-sel")) === null && (await piece(korean.id).getAttribute("data-mate")) === "");
   check("the right panel shows both lines", (await getText(page, "assign-shape")).includes("Check the detergent"), await getText(page, "assign-shape"));

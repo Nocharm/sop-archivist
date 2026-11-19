@@ -68,6 +68,26 @@
   }
   @keyframes refresh-sweep { from { background-position: 120% 0; opacity: 1; } to { background-position: -120% 0; opacity: 0; } }
 
+  /* 처리 중인 박스(Assign 용지 data-pending, 설계 2026-11-20 D4) - 응답까지 빛이 되풀이해 지나간다. CSS만(타이머 없음).
+     바탕 그림(background-image)만 얹어 짝 · 강조 바탕색은 그대로 - 선택자를 짝 바탕(.strip[data-partner]:not(...))보다 세게 둔다.
+     벗기는 표 안의 칸은 표 박스가 이미 빛나 따로 빛나지 않는다. 움직임 줄이기면 쓸지 않고 옅은 바탕만(알약은 그대로) */
+  .pg[data-strips] .strip-row > .strip[data-pending][data-strip-unit], .pg[data-strips] .cell-piece[data-pending][data-strip-unit] {
+    background-image: linear-gradient(100deg, transparent 30%, color-mix(in oklab, var(--accent) 16%, transparent) 50%, transparent 70%);
+    background-size: 250% 100%;
+    background-repeat: no-repeat;
+    animation: pending-sweep 1200ms linear infinite;
+    cursor: progress;
+  }
+  .pg[data-strips] .strip[data-pending] .cell-piece[data-pending] { background-image: none; animation: none; }
+  @keyframes pending-sweep { from { background-position: 130% 0; } to { background-position: -30% 0; } }
+  @media (prefers-reduced-motion: reduce) {
+    .pg[data-strips] .strip-row > .strip[data-pending][data-strip-unit], .pg[data-strips] .cell-piece[data-pending][data-strip-unit] {
+      background-image: linear-gradient(color-mix(in oklab, var(--accent) 8%, transparent) 0 0);
+      background-size: 100% 100%;
+      animation: none;
+    }
+  }
+
   /* 폭 모핑 - 바깥 폭이 안쪽 내용 폭을 따라 전환한다 */
   .morph { display: inline-flex; justify-content: center; overflow: hidden; white-space: nowrap; }
   .morph[data-animate] { transition: width var(--dur-base) var(--ease-move); }

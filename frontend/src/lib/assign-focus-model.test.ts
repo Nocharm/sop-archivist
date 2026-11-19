@@ -4,13 +4,18 @@ import {
   applyLoaded,
   canStart,
   INITIAL_FOCUS_STATE,
+  isGlobalPending,
   isSameFocus,
   isUnitLocked,
+  isUnitUnsettled,
   listEditUnitIds,
+  listTableUnitIds,
   NO_FOCUS,
   NO_PLACE,
   planReload,
   readEditKind,
+  readEditPlace,
+  readPendingLabelKey,
   reduceFocus,
   type Focus,
   type FocusEvent,
@@ -59,7 +64,8 @@ describe("start keeps the focus (rule 2)", () => {
 describe("follow (rule 3)", () => {
   it("picks the response's box once its document comes back at that revision", () => {
     const waiting = run(pick(unit(3)), start(job("a")), succeed("a", 10));
-    expect(waiting.pending).toEqual([]);
+    // 일은 부른 쪽이 걷을 때까지 처리 중이다(응답 뒤 전환 · 다시 받기를 거는 동안)
+    expect(waiting.pending.map((entry) => entry.id)).toEqual(["a"]);
     expect(waiting.follows.map((follow) => follow.kind)).toEqual(["join"]);
     // 낡은 판(늦게 온 앞 보기)은 기다린다
     expect(reduceFocus(waiting, loaded([doc(1, 4, [3, 4])])).focus).toEqual(unit(3));
@@ -112,12 +118,14 @@ describe("fail (rule 4)", () => {
   it("removes only that pending and keeps the focus and the follows", () => {
     const waiting = run(pick(unit(3)), start(job("a")), succeed("a", 10), start(job("b")));
     const state = reduceFocus(waiting, { type: "fail", pendingId: "b" });
-    expect(state.pending).toEqual([]);
+    expect(state.pending.map((entry) => entry.id)).toEqual(["a"]);
     expect(state.follows).toHaveLength(1);
     expect(state.focus).toEqual(unit(3));
   });
-  it("is a no-op after succeed (the caller always ends in finally)", () => {
-    const state = run(pick(unit(3)), start(job("a")), succeed("a", 10));
+  it("ends the work after succeed and keeps its follow (the caller always ends in finally)", () => {
+    const state = run(pick(unit(3)), start(job("a")), succeed("a", 10), { type: "fail", pendingId: "a" });
+    expect(state.pending).toEqual([]);
+    expect(state.follows).toHaveLength(1);
     expect(reduceFocus(state, { type: "fail", pendingId: "a" })).toBe(state);
   });
 });
@@ -170,6 +178,67 @@ describe("locks (rule 6)", () => {
     const state = run(pick(unit(3)), start(job("a")), succeed("a", 10), start(job("u", { kind: "undo", isGlobal: true })));
     expect(state.follows).toEqual([]);
     expect(state.focus).toEqual(unit(3));
+  });
+  it("keeps the units locked after the response until the work ends (the reload is not asked yet, an unwrap's new view not placed)", () => {
+    const state = run(start(job("a", { unitIds: [3, 4] })), succeed("a", 10));
+    expect(isUnitLocked(state, 3)).toBe(true);
+    expect(isUnitLocked(reduceFocus(state, { type: "fail", pendingId: "a" }), 3)).toBe(false);
+  });
+  it("tells global work apart", () => {
+    expect(isGlobalPending(run(start(job("a", { unitIds: [3] }))))).toBe(false);
+    expect(isGlobalPending(run(start(job("u", { kind: "undo", isGlobal: true }))))).toBe(true);
+  });
+});
+
+describe("no request for a unit pending work may have retired (rule 5 - the 404 guard)", () => {
+  it("holds back the units the work names, and nothing else in that document", () => {
+    const state = run(start(job("a", { unitIds: [3, 4] })));
+    expect(isUnitUnsettled(state, 1, 4)).toBe(true);
+    expect(isUnitUnsettled(state, 1, 5)).toBe(false);
+  });
+  it("holds back every unit while global work (Undo) runs - the second Undo retires rows the first one's reload still shows", () => {
+    const state = run(start(job("u", { kind: "undo", docId: null, isGlobal: true })));
+    expect(isUnitUnsettled(state, 1, 5)).toBe(true);
+    expect(isUnitUnsettled(state, 2, 9)).toBe(true);
+  });
+  it("holds back the whole document when the work names no unit (a carve, a caption reference)", () => {
+    const state = run(start(job("c", { kind: "caption", docId: 2, unitIds: [] })));
+    expect(isUnitUnsettled(state, 2, 9)).toBe(true);
+    expect(isUnitUnsettled(state, 1, 9)).toBe(false);
+  });
+  it("does not hold back for a decision save - it never retires a unit", () => {
+    expect(isUnitUnsettled(run(start(job("s", { kind: "save", unitIds: [3] }))), 1, 3)).toBe(false);
+  });
+});
+
+describe("pending pill (D4)", () => {
+  it("names the pill of each kind and draws none for a save or global work", () => {
+    expect(readPendingLabelKey("join")).toBe("assign.working.join");
+    expect(readPendingLabelKey("unmerge")).toBe("assign.working.split");
+    expect(readPendingLabelKey("rewrap")).toBe("assign.working.rewrap");
+    expect(readPendingLabelKey("unpair")).toBe("assign.working.unpair");
+    expect(readPendingLabelKey("lang")).toBe("assign.working.lang");
+    expect(readPendingLabelKey("caption")).toBe("assign.working.save");
+    expect(readPendingLabelKey("save")).toBeNull();
+    expect(readPendingLabelKey("undo")).toBeNull();
+  });
+  it("places a table change at the table head and other edits at their first box", () => {
+    expect(readEditPlace({ type: "set_layout_table", table_id: 4, is_layout: true })).toEqual({ at: "table", tableId: 4 });
+    expect(readEditPlace({ type: "split", unit_id: 7, at: 3 })).toEqual({ at: "box", unitId: 7 });
+    expect(readEditPlace({ type: "merge", unit_ids: [5, 6] })).toEqual({ at: "box", unitId: 5 });
+    expect(readEditPlace({ type: "carve", block_id: 1, start: 0, end: 3 })).toEqual(NO_PLACE);
+  });
+  it("locks a table's units, its inner band table's and the captions grouped under them", () => {
+    const units = [
+      { id: 1, table_id: 4, group_unit_id: null }, // 표 단위
+      { id: 2, table_id: 4, group_unit_id: 1 }, // 칸 문장
+      { id: 3, table_id: null, group_unit_id: 1 }, // 캡션
+      { id: 4, table_id: 5, group_unit_id: null }, // 안쪽 띠 표의 제목 줄
+      { id: 5, table_id: 6, group_unit_id: null }, // 다른 표
+      { id: 6, table_id: null, group_unit_id: null },
+    ];
+    const tables = [{ id: 4, parent_table_id: null, is_band: false }, { id: 5, parent_table_id: 4, is_band: true }, { id: 6, parent_table_id: 4, is_band: false }];
+    expect(listTableUnitIds(units, tables, 4)).toEqual([1, 2, 3, 4]);
   });
 });
 
