@@ -3079,7 +3079,60 @@ export function useAssignPage() {
   const [revealPick, setRevealPick] = useState<{ destination: Destination; rowKey: string | null } | null>(null);
   const done = countDone(rows);
 
-  return { t, bundleId, bundle, canEdit, docs, oldDocs, oldDocIds, views, unitsKey, setUnitsKey, units, tobe, tobeData, writtenList, identical, aiJobs, aiOn, aiBusy, suggestions, invalidUnitIds, readMarkStatus, suggestedTargetUnits, unitMap, written, writtenMap, rows, rowMap, rowOfUnit, options, ready, showSkeleton, unsourced, mode, setMode, filter, counts, foldOpen, setFoldOpen, applyFilter, foldMatch, setSelectedKey, activeKey, row, solo, setSolo, isSolo, isNewEdit, hasSolo, tocOpen, setTocOpen, tocPick, tocBlocks, checked, setChecked, newRemarks, setNewRemarks, menu, setMenu, joinMenu, setJoinMenu, ctxMenu, setCtxMenu, cutUnitId, follow, focusNew, groupData, setDrafts, draft, editing, groupPending, savedDestination, destination, rowUnits, rowLangs, firstDecision, systemHold, reasonNow, moveCode, setDraft, unsavedCount, leaveTo, setLeaveTo, rowLive, aiDest, aiWhy, isAiRow, recommendations, linkIds, pickedGroups, saveGroupData, candidateIds, aiPending, viewOf, setManualOldDoc, oldView, acceptKind, setAcceptKind, acceptDoc, paperModel, canPairView, isPairView, pairColumns, pairLinks, partKeys, oldDocId, splitByUnit, shapeView, shapeModel, soloUnit, soloUnits, cutUnit, cutLine, linkedTargets, setManualPart, activePart, isFoldEmpty, foldElsewhere, writtenDocs, composedDocs, setManualNewDoc, toggleKey, liveDoc, isNewDocOpen, newDocId, newAiReturn, setNewAiReturn, isComposedDoc, newFileId, composedDoc, newRows, headingNotes, sectionMarks, joinableIds, templateTitles, linkPairs, view, changeView, zoomPane, setPanes, askAiScope, aiMenuItems, remarkEdit, setRemarkEdit, focusAfterRef, firstTextRef, busy, editConfirm, setEditConfirm, counterpartAsk, setCounterpartAsk, oldPaneRef, undoState, buildUndo, markRecorded, bulk, setBulk, confirmingIdentical, setConfirmingIdentical, resetScope, setResetScope, accOpen, toggleAcc, saveUnits, slots, aiUnfilled, draftPlace, draftSectionKey, draftPosition, newDraft, draftSlotKey, placeResolved, canPlaceClick, pickedSpotKey, setCarvePick, carve, carveText, clearCarve, togglePairViewByButton, pairFrom, setPairFrom, setRefEntryId, pairSource, selectToc, selectRow, openNewCtxMenu, openSolo, goToUnit, moveRow, hasUnitDraft, isFixedCaption, ctxGroups, rowViewUnits, rowSplitUnit, rowSplit, splitBlocked, rowRefUnit, refBlocked, isRefGate, isCaptionGateOn, confirmBlockKey, rowCaptionRefs, refCandidates, shapeLines, slotPlaces, slotBlockKinds, shapeMode, headingBack, rewrap, bandBack, stepBase, refPendingIds, isLinkedToWritten, captionPendingKeys, docDashboard, refDetail, refInfo, openCtxMenu, runUnitEdit, confirmCounterpart, rewrapTable, describeEditConfirm, clearToc, runCaptionRefChange, switchShapeMode, switchToPair, applySplitSuggestion, dismissSplitSuggestion, splitPendingIds, readPendingItem, selectNextSplit, selectNextRef, selectNextCaption, splitAtCut, handleOldDoubleClick, runCtx, runUnitAction, revertHeadings, planOldJoin, joinOld, renderOldActions, readReasonNeed, runSave, runClear, runUndoStep, confirmIdenticalAll, acceptAll, markNew, placeManage, pickDestination, pickNewSentence, handleNewPick, handleJoinPick, readJoinAfter, pickJoinMenu, pickPlaceSpot, pickOwnAiLine, jumpToNew, openNewDoc, showInNew, jumpToOld, pickTemplateLine, fillTemplateMissing, isTemplateDrag, isOldDrag, finishPairPick, handleOldClick, handlePrimary, startEdit, handlePickClickCapture, pickRecommendation, markRecHover, revealPick, setRevealPick, done };
+  function renderPlaceLabel(dest: Destination): { title: string; text: string } {
+    const option = options.find((item) => getDestinationId(item.destination) === getDestinationId(dest));
+    return { title: option?.docCode ?? "", text: option?.label ?? "" };
+  }
+
+  /** 고른 곳이 New 칸에 그려진 상자 - 잇기는 그 문장(짝 포함), 엮은 문서의 칸·step은 그 칸의 줄(비었으면 빈 칸 자리). 지금 칸에 없으면 빈 목록 */
+  function listDestinationEls(dest: Destination): HTMLElement[] {
+    const find = (id: number) => document.querySelector<HTMLElement>(`[data-pane="new"] [data-testid="assign-new-${id}"]`);
+    let els: (HTMLElement | null)[] = [];
+    if (dest.kind === "link") els = addPartnerTargets(dest.targetIds, writtenMap).map(find);
+    else if (dest.kind === "join") els = composedDoc?.target_doc_id === dest.docId ? [find(dest.targetId)] : [];
+    else if ("docId" in dest && composedDoc?.target_doc_id === dest.docId) {
+      const key = dest.kind === "step" ? getSectionKey(dest) : dest.slotKey;
+      const section = composedDoc.sections.find((item) => item.location_key === key);
+      if (section && section.items.length > 0) els = section.items.map((item) => find(item.target_id));
+      else if (section) els = [document.querySelector<HTMLElement>(`[data-pane="new"] [data-testid="assign-new-slot-${CSS.escape(section.location_key)}"]`)];
+    }
+    return els.filter((el): el is HTMLElement => el !== null);
+  }
+
+  const canClear = row !== null && row.status !== "unassigned";
+
+  const error = docs.error ?? views.error ?? units.error ?? tobe.error ?? writtenList.error;
+
+  return {
+    t, bundleId, bundle, canEdit, docs, oldDocs, oldDocIds, views, unitsKey, setUnitsKey, units, tobe, tobeData, writtenList, identical,
+    aiJobs, aiOn, aiBusy, suggestions, invalidUnitIds, readMarkStatus, suggestedTargetUnits, unitMap, written, writtenMap, rows, rowMap,
+    rowOfUnit, options, ready, showSkeleton, unsourced, mode, setMode, filter, counts, foldOpen, setFoldOpen, applyFilter, foldMatch,
+    setSelectedKey, activeKey, row, solo, setSolo, isSolo, isNewEdit, hasSolo, tocOpen, setTocOpen, tocPick, tocBlocks, checked,
+    setChecked, newRemarks, setNewRemarks, menu, setMenu, joinMenu, setJoinMenu, ctxMenu, setCtxMenu, cutUnitId, follow, focusNew,
+    groupData, setDrafts, draft, editing, groupPending, savedDestination, destination, rowUnits, rowLangs, firstDecision, systemHold,
+    reasonNow, moveCode, setDraft, unsavedCount, leaveTo, setLeaveTo, rowLive, aiDest, aiWhy, isAiRow, recommendations, linkIds,
+    pickedGroups, saveGroupData, candidateIds, aiPending, viewOf, setManualOldDoc, oldView, acceptKind, setAcceptKind, acceptDoc,
+    paperModel, canPairView, isPairView, pairColumns, pairLinks, partKeys, oldDocId, splitByUnit, shapeView, shapeModel, soloUnit,
+    soloUnits, cutUnit, cutLine, linkedTargets, setManualPart, activePart, isFoldEmpty, foldElsewhere, writtenDocs, composedDocs,
+    setManualNewDoc, toggleKey, liveDoc, isNewDocOpen, newDocId, newAiReturn, setNewAiReturn, isComposedDoc, newFileId, composedDoc,
+    newRows, headingNotes, sectionMarks, joinableIds, templateTitles, linkPairs, view, changeView, zoomPane, setPanes, askAiScope,
+    aiMenuItems, remarkEdit, setRemarkEdit, focusAfterRef, firstTextRef, busy, editConfirm, setEditConfirm, counterpartAsk,
+    setCounterpartAsk, oldPaneRef, undoState, buildUndo, markRecorded, bulk, setBulk, confirmingIdentical, setConfirmingIdentical,
+    resetScope, setResetScope, accOpen, toggleAcc, saveUnits, slots, aiUnfilled, draftPlace, draftSectionKey, draftPosition, newDraft,
+    draftSlotKey, placeResolved, canPlaceClick, pickedSpotKey, setCarvePick, carve, carveText, clearCarve, togglePairViewByButton,
+    pairFrom, setPairFrom, setRefEntryId, pairSource, selectToc, selectRow, openNewCtxMenu, openSolo, goToUnit, moveRow, hasUnitDraft,
+    isFixedCaption, ctxGroups, rowViewUnits, rowSplitUnit, rowSplit, splitBlocked, rowRefUnit, refBlocked, isRefGate, isCaptionGateOn,
+    confirmBlockKey, rowCaptionRefs, refCandidates, shapeLines, slotPlaces, slotBlockKinds, shapeMode, headingBack, rewrap, bandBack,
+    stepBase, refPendingIds, isLinkedToWritten, captionPendingKeys, docDashboard, refDetail, refInfo, openCtxMenu, runUnitEdit,
+    confirmCounterpart, rewrapTable, describeEditConfirm, clearToc, runCaptionRefChange, switchShapeMode, switchToPair,
+    applySplitSuggestion, dismissSplitSuggestion, splitPendingIds, readPendingItem, selectNextSplit, selectNextRef, selectNextCaption,
+    splitAtCut, handleOldDoubleClick, runCtx, runUnitAction, revertHeadings, planOldJoin, joinOld, renderOldActions, readReasonNeed,
+    runSave, runClear, runUndoStep, confirmIdenticalAll, acceptAll, markNew, placeManage, pickDestination, pickNewSentence, handleNewPick,
+    handleJoinPick, readJoinAfter, pickJoinMenu, pickPlaceSpot, pickOwnAiLine, jumpToNew, openNewDoc, showInNew, jumpToOld,
+    pickTemplateLine, fillTemplateMissing, isTemplateDrag, isOldDrag, finishPairPick, handleOldClick, handlePrimary, startEdit,
+    handlePickClickCapture, pickRecommendation, markRecHover, revealPick, setRevealPick, done, renderPlaceLabel, listDestinationEls,
+    canClear, error,
+  };
 }
 
 export type AssignPageState = ReturnType<typeof useAssignPage>;
