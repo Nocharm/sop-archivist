@@ -19,6 +19,7 @@ from app.sop.detach import ORIGIN_NEW_DOC, ORIGIN_TRANSLATION, UNASSIGNED
 from app.sop.errors import raise_rule
 from app.sop.groups import TABLE_UNIT_KINDS, iter_chunks, select_in_chunks
 from app.sop.models import AiSuggestion, TargetSentence, Unit, UnitDecision, UnitPair
+from app.sop.numbering import strip_number
 from app.sop.units import UNIT_ACTIVE
 
 if TYPE_CHECKING:  # decisions가 이 모듈을 불러 쓰므로 타입만 가져온다
@@ -134,12 +135,12 @@ def _build_suggested_shape(suggestion: AiSuggestion, units: Iterable[Unit]) -> S
 def build_rewrite_shapes(place: Place, lang_units: Iterable[Unit], rewrites: Sequence[str] | None) -> list[TargetShape]:
     """한 언어 단위들의 제안 새 문장 — 일괄 수락의 저장과 채택 판정이 같은 모양을 쓴다.
 
-    고쳐 쓰지 않는 언어(참조 줄 REF)는 단위마다 원문 그대로다. 고쳐 쓴 글 수가 단위 수와 같으면 문서 순서로 하나씩 짝짓고
+    고쳐 쓰지 않는 언어(참조 줄 REF)는 단위마다 원문 그대로다 — 문단 번호는 번호 칸의 것이라 뺀 내용이다(화면 Use의 getContent와 같다). 고쳐 쓴 글 수가 단위 수와 같으면 문서 순서로 하나씩 짝짓고
     (화면 Use가 단위마다 칸 하나로 채우는 것과 같다 — 사용자 결정 2026-11-19), 다르면 AI가 나누거나 합친 것이라 글마다 그 언어 단위 전부가 출처다.
     """
     ordered = sorted(lang_units, key=lambda unit: (unit.pos_seq, unit.pos_start, unit.id))
     if rewrites is None:
-        return [TargetShape(place, unit.text, frozenset((unit.id,))) for unit in ordered]
+        return [TargetShape(place, strip_number(unit.text, unit), frozenset((unit.id,))) for unit in ordered]
     if len(rewrites) == len(ordered):
         return [TargetShape(place, text, frozenset((unit.id,))) for unit, text in zip(ordered, rewrites, strict=True)]
     sources = frozenset(unit.id for unit in ordered)

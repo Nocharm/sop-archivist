@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { canAccept, countDeletes, countLiveOffer, countShapes, pickAcceptIds } from "./ai-accept-model";
+import { canAccept, countDeletes, countLiveOffer, countShapes, pickAcceptIds, splitAcceptIds } from "./ai-accept-model";
 import type { AcceptItem, AiSuggestion } from "./api-sop";
 
 function item(suggestion_id: number, shape: string): AcceptItem {
@@ -36,6 +36,13 @@ describe("pickAcceptIds and canAccept", () => {
     expect(canAccept(ITEMS, false, "")).toBe(true);
     expect(canAccept([item(3, "delete")], false, "")).toBe(false);
     expect(canAccept([], true, "합성 사유")).toBe(false);
+  });
+});
+
+describe("splitAcceptIds", () => {
+  it("cuts the ids into requests of the server limit in order", () => {
+    expect(splitAcceptIds([1, 2, 3, 4, 5], 2)).toEqual([[1, 2], [3, 4], [5]]);
+    expect(splitAcceptIds([], 2)).toEqual([]);
   });
 });
 

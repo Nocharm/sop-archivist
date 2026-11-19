@@ -33,7 +33,7 @@ from app.sop.decisions import (
 from app.sop.detach import ORIGIN_NEW_DOC, UNASSIGNED
 from app.sop.errors import raise_rule
 from app.sop.groups import TABLE_UNIT_KINDS, select_in_chunks
-from app.sop.match import NEW_SHAPE, BulkMatchIn, NewItemIn, confirm_in_bulk
+from app.sop.match import MAX_BULK_MATCH, NEW_SHAPE, BulkMatchIn, NewItemIn, confirm_in_bulk
 from app.sop.membership import ensure_editable, lock_bundle
 from app.sop.models import AiJob, AiSuggestion, Bundle, TargetSentence, TargetSource, Unit, UnitDecision, UnitPairMember
 from app.sop.numbering import strip_number
@@ -47,8 +47,9 @@ _DELETE_CANDIDATE = "delete_candidate"
 _ASSIGNED_SHAPE = "assigned"  # 분류가 고른 칸·WI 단계에 놓기
 _TEXT_TYPES = ("tone", "rewritten")
 _LINK_TYPES = ("as_is", "tone", "rewritten", "table_restructured")  # 사람이 보낼 수 있는 변경 종류 — 합침·나눔·신규·번역은 구조에서 서버가 정한다
-# 받지 않는 까닭 — 확인 창이 따로 센다(§5 3-3). changed는 AI가 본 뒤 단위·새 문장·짝이 바뀌어 사람이 다시 볼 몫이다
-SKIP_WARNINGS, SKIP_PROVISIONAL, SKIP_CHANGED = "warnings", "provisional", "changed"
+# 받지 않는 까닭 — 확인 창이 따로 센다(§5 3-3). changed는 AI가 본 뒤 단위·새 문장·짝이 바뀌어 사람이 다시 볼 몫이고,
+# manual은 받으려면 사람이 더 적어야 하는 제안이다(표 구성 변경·두 New 문서에 걸친 나눔의 사유, 캡션 없는 표·그림의 캡션)
+SKIP_WARNINGS, SKIP_PROVISIONAL, SKIP_CHANGED, SKIP_MANUAL = "warnings", "provisional", "changed", "manual"
 
 
 class AcceptItemOut(BaseModel):
@@ -66,6 +67,7 @@ class AcceptPreviewOut(BaseModel):
     excluded_warnings: int
     excluded_provisional: int
     excluded_changed: int
+    excluded_manual: int
 
 
 class AcceptIn(BaseModel):
@@ -176,10 +178,32 @@ def _is_open_target(target_id: int, loaded: _Loaded) -> bool:
     )
 
 
-def _keeps_pairs_whole(unit_ids: Collection[int], loaded: _Loaded) -> bool:
-    """짝의 한쪽만 담은 제안은 받지 않는다 — 받으면 남은 쪽을 풀어야 해서(화면은 사람이 보고 푼다) 일괄로 짝을 조용히 풀지 않는다."""
+def _list_left_mates(unit_ids: Collection[int], loaded: _Loaded) -> list[int]:
+    """제안 밖에 남는 짝 상대 — 분류 작업은 짝을 한 덩어리로 다루지만 묶기 계획은 언어마다 따로 묶는다."""
     wanted = set(unit_ids)
-    return all(loaded.pair_members[loaded.mates[unit_id]] <= wanted for unit_id in wanted if unit_id in loaded.mates)
+    return sorted({
+        mate for unit_id in wanted if unit_id in loaded.mates for mate in loaded.pair_members[loaded.mates[unit_id]]
+    } - wanted)
+
+
+def _needs_person(suggestion: AiSuggestion, loaded: _Loaded) -> bool:
+    """받으면 저장 검사가 늘 거절하는 제안 — 사유(표 구성 변경, 두 New 문서에 걸친 나눔)나 캡션을 사람이 적어야 한다.
+
+    캡션을 같이 쓰는 그림(F7 ⑥)도 여기서는 캡션 없음으로 본다 — 사람이 하나씩 받으면 된다.
+    """
+    content = suggestion.content
+    if suggestion.kind == "classify":
+        if content.get("disposition") != _ASSIGNED_SHAPE:
+            return False
+        return any(
+            loaded.units[unit_id].kind in (*TABLE_UNIT_KINDS, "figure")
+            and not any(child.kind == "caption" for child in loaded.children.get(unit_id, ()))
+            for unit_id in content["unit_ids"]
+        )
+    if "table_restructured" in content.get("target_change_types", {}).values():
+        return True
+    docs = {loaded.targets[target_id].target_doc_id for target_id in content.get("target_ids", ())}
+    return content.get("shape") == "split" and len(docs) >= 2
 
 
 def find_skip_reason(suggestion: AiSuggestion, loaded: _Loaded) -> str | None:
@@ -199,8 +223,11 @@ def find_skip_reason(suggestion: AiSuggestion, loaded: _Loaded) -> str | None:
         is_fresh = is_fresh and bool(unit_ids) and all(
             hash_unit(loaded.units[unit_id]) == hashes.get(str(unit_id)) for unit_id in unit_ids
         )
-    if not is_fresh or not _keeps_pairs_whole(unit_ids, loaded):
+    # 분류 작업은 짝 전체가 한 작업이다 — 한쪽만 덮은 분류 제안은 그 사이 짝이 바뀐 것이다
+    if not is_fresh or (suggestion.kind == "classify" and _list_left_mates(unit_ids, loaded)):
         return SKIP_CHANGED
+    if _needs_person(suggestion, loaded):
+        return SKIP_MANUAL
     return None
 
 
@@ -222,6 +249,7 @@ async def preview_accept(
     return AcceptPreviewOut(
         kind=kind, document_id=document_id, items=items, excluded_warnings=excluded[SKIP_WARNINGS],
         excluded_provisional=excluded[SKIP_PROVISIONAL], excluded_changed=excluded[SKIP_CHANGED],
+        excluded_manual=excluded[SKIP_MANUAL],
     )
 
 
@@ -333,7 +361,10 @@ async def build_save(session: AsyncSession, suggestion: AiSuggestion, loaded: _L
         targets = await _build_classify_targets(session, suggestion, loaded)
     else:
         targets = _build_match_targets(suggestion, loaded)
-    return GroupSaveIn(action="confirm", units=units, targets=targets, suggestion_id=suggestion.id)
+    # 묶기는 언어마다 따로 묶어 짝의 한쪽만 담을 수 있다 — 화면 Use처럼 남는 쪽을 따로 줄로 풀어 보낸다(classify-model listLinkLeftovers).
+    # 상대 쪽 제안도 같은 요청에 있으면 그 저장이 제 줄로 받는다(이미 풀린 짝의 release는 settle_pairs가 지나친다)
+    release = _list_left_mates(unit_ids, loaded) if suggestion.kind == "match" else []
+    return GroupSaveIn(action="confirm", units=units, targets=targets, release_unit_ids=release, suggestion_id=suggestion.id)
 
 
 # --- 받기 ---
@@ -364,12 +395,18 @@ async def accept_suggestions(session: AsyncSession, bundle: Bundle, payload: Acc
     _check_delete_reason(suggestions, payload)
     loaded = await _load(session, suggestions)
     accepted = 0
-    new_items: list[NewItemIn] = []
+    new_batches: list[list[NewItemIn]] = [[]]
     for suggestion in suggestions:
         if find_skip_reason(suggestion, loaded) is not None:
             continue
         if get_shape(suggestion) == NEW_SHAPE:
-            new_items += [NewItemIn(target_id=target_id, revision=loaded.targets[target_id].revision) for target_id in suggestion.content["target_ids"]]
+            items = [NewItemIn(target_id=target_id, revision=loaded.targets[target_id].revision) for target_id in suggestion.content["target_ids"]]
+            if len(items) > MAX_BULK_MATCH:
+                continue  # 한 번에 확정 요청 하나에 다 들지 않는 표 — 사람이 하나씩 받는다
+            # 표의 칸·캡션은 같은 요청에 함께 담아야 한다(confirm_in_bulk의 not_new) — 제안을 쪼개지 않고 상한씩 나눈다
+            if len(new_batches[-1]) + len(items) > MAX_BULK_MATCH:
+                new_batches.append([])
+            new_batches[-1] += items
             accepted += 1
             continue
         try:
@@ -378,7 +415,8 @@ async def accept_suggestions(session: AsyncSession, bundle: Bundle, payload: Acc
             continue  # 검사는 쓰지 않으니 거절된 제안은 아무것도 바꾸지 않았다
         await save_group(session, bundle, checked, actor)
         accepted += 1
-    if new_items:
-        # 신규는 한 번에 확정 길 하나로 — 살아 있는 신규 제안을 그대로 받은 것으로 남긴다(§5 3-5)
-        await confirm_in_bulk(session, bundle, BulkMatchIn(new=new_items), actor)
+    for batch in new_batches:
+        # 신규는 한 번에 확정 길로 — 살아 있는 신규 제안을 그대로 받은 것으로 남긴다(§5 3-5)
+        if batch:
+            await confirm_in_bulk(session, bundle, BulkMatchIn(new=batch), actor)
     return AcceptOut(accepted=accepted, skipped=len(payload.suggestion_ids) - accepted)

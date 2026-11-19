@@ -28,6 +28,13 @@ export function pickAcceptIds(items: readonly AcceptItem[], includeDeletes: bool
   return items.filter((item) => includeDeletes || !item.is_delete).map((item) => item.suggestion_id);
 }
 
+/** 서버 상한씩 나눈 요청 - 나눠 보내도 같은 되돌리기 단계(step_key)로 묶는다 */
+export function splitAcceptIds(ids: readonly number[], size: number): number[][] {
+  const batches: number[][] = [];
+  for (let start = 0; start < ids.length; start += size) batches.push(ids.slice(start, start + size));
+  return batches;
+}
+
 /** 받을 수 있는가 - 고른 것이 있고, 삭제를 함께 받으면 공통 Remark가 있어야 한다(§5 3-4) */
 export function canAccept(items: readonly AcceptItem[], includeDeletes: boolean, remark: string): boolean {
   if (pickAcceptIds(items, includeDeletes).length === 0) return false;

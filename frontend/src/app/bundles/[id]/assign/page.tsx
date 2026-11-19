@@ -95,6 +95,7 @@ import {
   addToBeDoc,
   addWiStep,
   acceptSuggestions,
+  MAX_ACCEPT,
   bulkDecide,
   confirmPair,
   createPair,
@@ -162,7 +163,7 @@ import {
   type LinkMenuItem,
   type Recommendation,
 } from "@/lib/assign-model";
-import { countLiveOffer } from "@/lib/ai-accept-model";
+import { countLiveOffer, splitAcceptIds } from "@/lib/ai-accept-model";
 import { buildUseDraft, findRowSuggestion, indexLiveSuggestions, readRewrites, readSuggestedDestination } from "@/lib/ai-suggestion-model";
 import { buildAssignMenu, getPairPickBlocker, getPairSetBlocker, planAssignJoin, planShapeMode, type AssignMenuAction, type AssignMenuGroups } from "@/lib/assign-context-menu-model";
 import { listHeadingBackUnits } from "@/lib/heading-shift-model";
@@ -2063,7 +2064,14 @@ export default function AssignPage() {
     if (busy) return;
     setBusy(true);
     try {
-      const out = await acceptSuggestions(bundleId, { kind, suggestion_ids: ids, delete_reason: deleteReason }, buildUndo());
+      // 서버 상한(2000)씩 차례로 - 나눠 보낸 요청 모두가 같은 step_key라 Ctrl+Z 한 번에 한꺼번에 되돌아간다
+      const undo = buildUndo({ step_key: genId() });
+      const out = { accepted: 0, skipped: 0 };
+      for (const batch of splitAcceptIds(ids, MAX_ACCEPT)) {
+        const done = await acceptSuggestions(bundleId, { kind, suggestion_ids: batch, delete_reason: deleteReason }, undo);
+        out.accepted += done.accepted;
+        out.skipped += done.skipped;
+      }
       if (out.accepted > 0) markRecorded();
       showToast(t(out.skipped > 0 ? "aiAccept.doneSkipped" : "aiAccept.done", { n: out.accepted, skipped: out.skipped }));
       setAcceptKind(null);

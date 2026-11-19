@@ -13,6 +13,7 @@ from tests.access_helpers import update_row
 from tests.ai_fixtures import (
     AI_EN_1,
     AI_KO_1,
+    AI_KO_2,
     REWRITES,
     AiBundle,
     MatchBundle,
@@ -43,6 +44,8 @@ DELETE_REASON = "합성 일괄 삭제 사유"
 SPLIT_REWRITES = {"ko": ["합성 하나다.", "합성 둘이다."], "en": [REWRITES["en"]]}
 MATCH_OLD = "합성 장비의 전원을 켠 뒤 상태 표시등을 확인한다."
 MATCH_NEW = "합성 장비의 전원을 켠 뒤 상태 표시등을 확인하여야 한다."
+MATCH_OLD_EN = "Turn on the synthetic instrument and check the status lamp."
+MATCH_NEW_EN = "Turn on the synthetic instrument and always check the status lamp."
 LONE_OLD = "옛 문서에만 남은 교육 일정 공지문이다."
 LONE_NEW = "새로 넣은 비상 연락망 안내 문장이다."
 CELLS = [["합성 항목", "합성 값"], ["합성 압력", "10 bar"]]
@@ -190,18 +193,36 @@ def test_a_suggestion_over_one_side_of_a_pair_is_skipped(client: TestClient, fak
     assert preview(client, bundle.id, "classify", bundle.document_id)["excluded_changed"] == 1
 
 
-def test_a_save_check_refusal_skips_only_that_suggestion(client: TestClient, fake_ai: FakeAi) -> None:
-    # 캡션 없는 표는 확정할 수 없다(표·그림 명세 §3.4) — 그 제안만 건너뛰고 다른 제안은 받는다
+def test_a_captionless_table_is_left_for_a_person(client: TestClient, fake_ai: FakeAi) -> None:
+    # 캡션 없는 표는 확정할 수 없다(표·그림 명세 §3.4) — 받으면 늘 거절되니 받을 수에 넣지 않고 따로 센다
     bundle, ko, _ = suggest_first_pair(client, fake_ai)
     table = find_kind(upload_second_document(client, bundle.id, tbl(CELLS)), "table")
     use_reply(fake_ai)
     queue_units(client, bundle.id, [table["id"]])
     run_jobs()
 
-    out = accept_all(client, bundle.id, "classify")
+    out = preview(client, bundle.id, "classify")
+    result = accept_all(client, bundle.id, "classify")
+
+    assert (len(out["items"]), out["excluded_manual"]) == (1, 1)
+    assert result == {"accepted": 1, "skipped": 0}
+    assert (read_decision(ko).status, read_decision(table["id"]).status) == ("confirmed", "unassigned")
+
+
+def test_a_save_check_refusal_skips_only_that_suggestion(client: TestClient, fake_ai: FakeAi) -> None:
+    # 그 사이 칸이 사라진 것처럼 저장 검사가 거절하는 제안은 그것만 건너뛰고, 검사는 쓰지 않으니 아무것도 남기지 않는다
+    bundle, ko, _ = suggest_first_pair(client, fake_ai)
+    second, = find_ids(client, bundle, AI_KO_2)
+    queue_units(client, bundle.id, [second])
+    run_jobs()
+    broken = [row for row in read_rows(AiSuggestion) if second in row.content["unit_ids"]][0]
+    update_row(AiSuggestion, broken.id, content={**broken.content, "slot_key": "no_such_slot"})
+
+    out = accept_all(client, bundle.id, "classify", bundle.document_id)
 
     assert out == {"accepted": 1, "skipped": 1}
-    assert (read_decision(ko).status, read_decision(table["id"]).status) == ("confirmed", "unassigned")
+    assert (read_decision(ko).status, read_decision(second).status) == ("confirmed", "unassigned")
+    assert read_suggestion(broken.id).adoption is None
 
 
 def test_undo_takes_the_whole_accept_back_in_one_step(client: TestClient, fake_ai: FakeAi) -> None:
@@ -281,6 +302,24 @@ def test_new_and_delete_candidates_ride_the_match_accept(client: TestClient, fak
     assert target.suggestion_id is not None
 
 
+def test_one_side_of_a_pair_is_matched_and_the_pair_released_like_use(client: TestClient, fake_ai: FakeAi) -> None:
+    # 묶기 계획은 언어마다 따로 묶는다 — 화면 Use처럼 남는 쪽을 제 줄로 풀어 받고, 상대 쪽 제안도 같은 요청에서 받는다
+    bundle = make_match_bundle(client, p(MATCH_OLD) + p(MATCH_OLD_EN), p(MATCH_NEW) + p(MATCH_NEW_EN))
+    ko, en = read_old_ids(client, bundle, MATCH_OLD, MATCH_OLD_EN)
+    pair_of = {row.unit_id: row.pair_id for row in read_rows(UnitPairMember)}
+    assert ko in pair_of and pair_of[ko] == pair_of.get(en)
+    fake_ai.chat = lambda data: json.dumps({"change_type": "tone", "reason": "합성 이유.", "rule_ids": ["R02"]}, ensure_ascii=False)
+    assert request_match(client, bundle.id).status_code == 200
+    run_jobs()
+
+    out = preview(client, bundle.id, "match", bundle.old_document_id)
+    result = accept_all(client, bundle.id, "match", bundle.old_document_id)
+
+    assert (len(out["items"]), out["excluded_changed"]) == (2, 0)
+    assert result == {"accepted": 2, "skipped": 0}
+    assert (read_decision(ko).status, read_decision(en).status) == ("confirmed", "confirmed")
+
+
 # --- 채택 판정의 1:1 (사용자 결정 2026-11-19) ---
 
 
@@ -294,3 +333,12 @@ def test_rewrites_matching_the_unit_count_pair_up_in_document_order() -> None:
 
     assert [(shape.text, shape.sources) for shape in paired] == [("고친 첫째.", {11}), ("고친 둘째.", {12})]
     assert [(shape.text, shape.sources) for shape in reshaped] == [("합친 하나.", {11, 12})]
+
+
+def test_a_reference_line_keeps_its_text_without_the_paragraph_number() -> None:
+    # 고쳐 쓰지 않는 참조 줄은 원문 그대로지만 문단 번호는 번호 칸의 것이다(화면 Use의 getContent와 같다)
+    ref = Unit(id=21, pos_seq=1, pos_start=0, text="5.1 SOP-QA-001 합성 참조", lang="ref", number_len=3, number_set=None, number_source="auto")
+
+    (shape,) = build_rewrite_shapes((1, "purpose", None, None), [ref], None)
+
+    assert shape.text == "SOP-QA-001 합성 참조"
