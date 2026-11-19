@@ -4328,20 +4328,18 @@ await runStep("assign: drag an Old piece between two sentences of a New · from 
     check(`${label}: the drop saves at once with no in-place menu`, ok && (await menu.count()) === 0);
     return { body, ok };
   };
-  // 고름이 몇 번 적용됐나 - 고른 곳 상자의 번쩍임(data-landing)과 목록에서 날아가는 그림자(.pick-ghost). 놓기 뒤따르는 click이 한 번 더 고르면 는다
+  // 고름이 몇 번 적용됐나 - 고른 곳 상자 안에 새로 붙는 쉬머(.refresh-sweep, 보낼 곳이 바뀔 때마다 하나). 놓기 뒤따르는 click이 한 번 더 고르면 는다
   const watchPicks = () => page.evaluate(() => {
-    window.__landings = 0;
-    window.__ghosts = 0;
+    window.__sweeps = 0;
     if (window.__pickWatch) return;
     window.__pickWatch = new MutationObserver((records) => {
       for (const record of records) {
-        if (record.type === "attributes" && record.oldValue === null && record.target.matches('[data-testid="assign-chosen"]')) window.__landings += 1;
-        if (record.type === "childList") for (const node of record.addedNodes) if (node instanceof Element && node.matches(".pick-ghost")) window.__ghosts += 1;
+        if (record.target instanceof Element && record.target.matches('[data-testid="assign-chosen"]')) for (const node of record.addedNodes) if (node instanceof Element && node.matches(".refresh-sweep")) window.__sweeps += 1;
       }
     });
-    window.__pickWatch.observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ["data-landing"], attributeOldValue: true });
+    window.__pickWatch.observe(document.body, { subtree: true, childList: true });
   });
-  const readPicks = () => page.evaluate(() => ({ landings: window.__landings, ghosts: window.__ghosts }));
+  const readPicks = () => page.evaluate(() => ({ sweeps: window.__sweeps }));
   const selectedPiece = () => page.evaluate(() => document.querySelector('[data-pane="old"] [data-testid^="assign-paper-piece-"][data-sel]')?.dataset.testid ?? null);
   // 저장 요청의 최상위 새 문장 - 그 Unit이 출처인 것
   const topItemsOf = (body, unitId) => body.targets.filter((target) => !target.parent_key && target.source_unit_ids.includes(unitId));
@@ -4378,7 +4376,7 @@ await runStep("assign: drag an Old piece between two sentences of a New · from 
   await watchPicks();
   const sentFirst = await dropAndSave("between sentences");
   const dropPicks = await readPicks();
-  check("the drop picks once", dropPicks.landings <= 1 && dropPicks.ghosts === 0, JSON.stringify(dropPicks));
+  check("the drop picks once", dropPicks.sweeps <= 1, JSON.stringify(dropPicks));
   const firstItems = topItemsOf(sentFirst.body, unitX.unit_id);
   check("the drop saves the place right after A", firstItems.length === 1 && JSON.stringify(firstItems[0].position) === JSON.stringify({ after_target_id: a }), JSON.stringify(firstItems.map((item) => item.position)));
   const marksAfter = await readMarks();
@@ -4715,20 +4713,18 @@ await runStep("assign: drag an Old piece onto a slot in the All list, in both vi
     await page.waitForLoadState("networkidle");
     return { body, ok };
   };
-  // 고름이 몇 번 적용됐나 - 고른 곳 상자의 번쩍임(data-landing)과 나무 줄에서 날아가는 그림자(.pick-ghost). 놓기 뒤따르는 click이 나무 줄을 누르면 둘 다 는다
+  // 고름이 몇 번 적용됐나 - 고른 곳 상자 안에 새로 붙는 쉬머(.refresh-sweep, 보낼 곳이 바뀔 때마다 하나). 놓기 뒤따르는 click이 나무 줄을 누르면 는다
   const watchPicks = () => page.evaluate(() => {
-    window.__landings = 0;
-    window.__ghosts = 0;
+    window.__sweeps = 0;
     if (window.__pickWatch) return;
     window.__pickWatch = new MutationObserver((records) => {
       for (const record of records) {
-        if (record.type === "attributes" && record.oldValue === null && record.target.matches('[data-testid="assign-chosen"]')) window.__landings += 1;
-        if (record.type === "childList") for (const node of record.addedNodes) if (node instanceof Element && node.matches(".pick-ghost")) window.__ghosts += 1;
+        if (record.target instanceof Element && record.target.matches('[data-testid="assign-chosen"]')) for (const node of record.addedNodes) if (node instanceof Element && node.matches(".refresh-sweep")) window.__sweeps += 1;
       }
     });
-    window.__pickWatch.observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ["data-landing"], attributeOldValue: true });
+    window.__pickWatch.observe(document.body, { subtree: true, childList: true });
   });
-  const readPicks = () => page.evaluate(() => ({ landings: window.__landings, ghosts: window.__ghosts }));
+  const readPicks = () => page.evaluate(() => ({ sweeps: window.__sweeps }));
   const selectedPiece = () => page.evaluate(() => document.querySelector('[data-pane="old"] [data-testid^="assign-paper-piece-"][data-sel]')?.dataset.testid ?? null);
 
   // 1. 두 단 보기 - W를 골라 나무를 보이고, Z를 K 줄 위로
@@ -4765,9 +4761,9 @@ await runStep("assign: drag an Old piece onto a slot in the All list, in both vi
   const sentZ = await saveByDrop();
   // 확정처럼 고름은 다음 열린 줄로 넘어간다 - 저장 내용으로 끈 줄을 본다
   check("no in-place menu opens after a tree drop", (await linkMenu.count()) === 0);
-  // 놓기 뒤따르는 click이 나무 줄을 한 번 더 누르면 번쩍임이 둘, 그림자가 하나가 된다
+  // 놓기 뒤따르는 click이 나무 줄을 한 번 더 누르면 다음 줄의 고른 곳 상자가 한 번 더 쓸린다
   const treePicks = await readPicks();
-  check("the drop picks the section once (the click after it does not press a tree row)", treePicks.landings <= 1 && treePicks.ghosts === 0, JSON.stringify(treePicks));
+  check("the drop picks the section once (the click after it does not press a tree row)", treePicks.sweeps <= 1, JSON.stringify(treePicks));
   check("a tree drop saves at once without a place", sentZ.ok && sentZ.body.targets.every((target) => !("position" in target)), JSON.stringify(sentZ.body.targets));
   check("Z lands in K", (await readItems(slotK)).some((item) => item.source_unit_ids.includes(unitZ.unit_id)));
 
