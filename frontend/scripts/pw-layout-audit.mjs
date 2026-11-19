@@ -564,14 +564,14 @@ const AUDIT_ENTRIES = [
       await page.locator(`[data-testid="assign-old"] .su[data-unit="${found.unit}"]`).first().click();
       await page.waitForTimeout(SETTLE_MS);
     },
-    // Remark는 창에서 쓰고 결정 칸의 Remark 줄은 한 줄 읽기 보기다(전체 글은 툴팁·Edit remark 창) - 확정 단추가 화면 안에 남는지도 본다
+    // Remark는 창에서 쓰고 결정 칸의 Remark 줄은 두 줄까지 읽기 보기다(v1.1.18, ClampText clamp-2 · 20px 줄 — 전체 글은 툴팁·Edit remark 창) - 확정 단추가 화면 안에 남는지도 본다
     measure: (page) => page.evaluate(() => {
       const el = document.querySelector('[data-testid="assign-reason"]');
       const confirm = document.querySelector('[data-testid="assign-primary"]')?.getBoundingClientRect();
       return { tag: el?.tagName, h: Math.round(el?.getBoundingClientRect().height ?? 0), len: (el?.textContent ?? "").length, confirmBottom: Math.round(confirm?.bottom ?? 9999), vh: innerHeight };
     }),
-    expect: (value) => value.len >= 1000 && value.h >= 19 && value.h <= 21 && value.confirmBottom <= value.vh,
-    note: "a 1,200-char reason reads as one truncated line (19-21px) in the Decide area and Confirm stays on screen",
+    expect: (value) => value.len >= 1000 && value.h >= 39 && value.h <= 41 && value.confirmBottom <= value.vh,
+    note: "a 1,200-char reason reads as two clamped lines (39-41px) in the Decide area and Confirm stays on screen",
   },
   // ---- Task 7: 개요 ----
   {
