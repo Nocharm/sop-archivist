@@ -148,11 +148,11 @@ export function findLinkPartners(pairs: LinkPair[], side: "old" | "new", id: num
   return [...new Set(result)];
 }
 
-/** 이음이 이보다 많으면 고르거나 마우스를 올린 것만 그린다 - 선이 화면을 덮고 매 스크롤마다 잴 것이 많아진다 */
+/** 화면에 보이는 이음이 이보다 많으면 고르거나 마우스를 올린 것만 그린다 - 선이 화면을 덮는다. 두 문서의 이음 전체가 아니라 두 끝이 다 보이는 것만 센다 */
 export const MAX_LINES_ALL = 40;
 
-/** 그릴 선 - 고른 줄·고른 문장·마우스를 올린 것에 닿는 선은 진하게, 많을 때는 그것만 */
-export function pickDrawnLinks(pairs: LinkPair[], focusUnits: ReadonlySet<number>, focusTargets: ReadonlySet<number>, max = MAX_LINES_ALL): Array<LinkPair & { strong: boolean }> {
+/** 그릴 선 - 고른 줄·고른 문장·마우스를 올린 것에 닿는 선은 진하게, 많을 때는 그것만. pairs는 두 끝이 화면에 보이는 이음이다 */
+export function pickDrawnLinks<T extends LinkPair>(pairs: T[], focusUnits: ReadonlySet<number>, focusTargets: ReadonlySet<number>, max = MAX_LINES_ALL): Array<T & { strong: boolean }> {
   const marked = pairs.map((pair) => ({ ...pair, strong: pair.draft || focusUnits.has(pair.unitId) || focusTargets.has(pair.targetId) }));
   return marked.length > max ? marked.filter((pair) => pair.strong) : marked;
 }

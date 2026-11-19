@@ -1815,7 +1815,7 @@
   /* 두 문서 사이 이음 선 - 연결 배지·출처 칩·맞은편 강조와 같은 강조 파랑(시안 B, 2026-11-12). 쉴 때 옅게, 고른 것·마우스를 올린 것만 진하고 굵게. 아직 저장 안 한 고름은 점선.
      끝 점 없이 두 상자 테두리에 맞닿는다(끝 모양 butt - round는 상자 안으로 반 굵기만큼 비어져 들어간다) */
   .link-lines { position: absolute; inset: 0; z-index: 3; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
-  .link-lines g { color: var(--accent); opacity: 0.38; }
+  .link-lines g { color: var(--accent); opacity: 0.5; }
   .link-lines g[data-strong] { opacity: 1; }
   /* AI가 이어 두고 아직 확정하지 않은 이음 - 배지·추천의 AI 색(보라)과 같게 */
   .link-lines g[data-ai] { color: var(--st-ai-ink); }

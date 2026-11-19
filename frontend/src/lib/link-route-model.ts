@@ -16,8 +16,9 @@ export function buildLinkPath(start: RoutePoint, end: RoutePoint): string {
 }
 
 // 이보다 높이 차가 크면 먼 이음 - 두 칸 사이 좁은 틈(약 30px)에서 세로로 길게 달려 선끼리 겹친다(px).
-// 2026-11-13 데모 자료에서 나란한 짝의 높이 차는 0~8px였다
-export const FAR_LINK_DY = 24;
+// 처음(2026-11-13)에는 24px였다 - 데모의 나란한 짝은 0~8px였지만 Assign 문서는 한두 문단 어긋나는 것이 보통이라 확정한 이음이
+// 가까워도 꼬리만 남았다(사용자 보고 2026-11-19). 화면 높이의 약 3분의 1 안쪽은 선 전체를 긋는다
+export const FAR_LINK_DY = 240;
 
 // 먼 이음의 꼬리 - 상자에서 가로로 나가는 길이, 진행 방향으로 휘는 높이(px)
 const STUB_LENGTH = 14;
