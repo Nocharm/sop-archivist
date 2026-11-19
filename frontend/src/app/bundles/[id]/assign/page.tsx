@@ -63,7 +63,7 @@ export default function AssignPage() {
   const {
     t, bundleId, bundle, canEdit, docs, oldDocs, docViews, unitsKey, reloadData, tobe, tobeData, writtenList, identical,
     readMarkStatus, suggestedTargetUnits, unitMap, written, writtenMap, rows, rowMap, rowOfUnit, options, ready, showSkeleton, unsourced,
-    mode, setMode, foldOpen, setFoldOpen, foldMatch, clearRowPick, activeKey, row, solo, setSolo, isSolo, isNewEdit, tocOpen, setTocOpen,
+    mode, setMode, foldOpen, setFoldOpen, foldMatch, clearRowPick, activeKey, row, pickedId, solo, setSolo, isSolo, isNewEdit, tocOpen, setTocOpen,
     tocPick, checked, setChecked, newRemarks, setNewRemarks, menu, setMenu, joinMenu, setJoinMenu, ctxMenu, setCtxMenu, focusNew,
     setDrafts, draft, groupPending, savedDestination, destination, rowUnits, reasonNow, setDraft, unsavedCount, leaveTo, setLeaveTo,
     aiDest, isAiRow, recommendations, linkIds, candidateIds, setManualOldDoc, oldView, acceptKind, setAcceptKind, acceptDoc, paperModel,
@@ -74,7 +74,7 @@ export default function AssignPage() {
     setEditConfirm, oldPaneRef, buildUndo, markRecorded, bulk, setBulk, confirmingIdentical,
     setConfirmingIdentical, resetScope, setResetScope, slots, newDraft, draftSlotKey, placeResolved, canPlaceClick, pickedSpotKey,
     setCarvePick, carve, carveText, clearCarve, togglePairViewByButton, pairFrom, setPairFrom, pairSource, selectToc, openNewCtxMenu,
-    openSolo, ctxGroups, confirmBlockKey, refPendingIds, isLinkedToWritten, captionPendingKeys, docDashboard, openCtxMenu, runUnitEdit,
+    openSolo, goToUnit, ctxGroups, confirmBlockKey, refPendingIds, isLinkedToWritten, captionPendingKeys, docDashboard, openCtxMenu, runUnitEdit,
     rewrapTable, describeEditConfirm, clearToc, switchToPair, applySplitSuggestion, splitAtCut, handleOldDoubleClick,
     runCtx, revertHeadings, planOldJoin, joinOld, renderOldActions, runSave, runClear, confirmIdenticalAll, acceptAll, pickDestination,
     pickNewSentence, handleNewPick, handleJoinPick, readJoinAfter, pickJoinMenu, pickPlaceSpot, pickOwnAiLine, jumpToNew, openNewDoc,
@@ -534,8 +534,10 @@ export default function AssignPage() {
                   setManualPart({ key: "", part });
                 }}
                 placeholder={<span className="sk h-[480px] w-full" />}
-                selectedId={mode === "old" && !isNewEdit ? (cutUnit?.id ?? row?.unitIds[0] ?? soloUnit?.id ?? null) : null}
+                selectedId={mode === "old" && !isNewEdit ? (cutUnit?.id ?? pickedId ?? soloUnit?.id ?? null) : null}
                 highlightIds={mode === "old" ? highlightIds : NO_NUMBERS}
+                // 떨어진 짝 안내 줄 - 누르면 짝의 원래 자리로 가 그 박스를 고른다(설계 D3)
+                pairHint={mode === "old" && !isNewEdit ? { onGo: goToUnit } : undefined}
                 pickedIds={pickedOld}
                 warnBlockIds={warnBlockIds}
                 statusOf={readMarkStatus}

@@ -1503,6 +1503,16 @@
   /* 고른 조각(문단)과 그 짝에 두른다. 맞은편 강조(data-link-hover)는 바탕만 - 마우스를 올린 곳이 고른 것처럼 보이지 않게 */
   .pg[data-strips] .strip-lead + .strip:is([data-sel], [data-partner])::after,
   .strip-card:has(> .strip-row > .strip:is([data-sel], [data-partner])) > .strip-row > .strip-lead + .strip::after { content: ""; position: absolute; inset: var(--ring-inset, -2px); border: solid var(--accent); border-width: var(--ring-bw, 2px); border-radius: var(--ring-r, calc(var(--r-1) + 2px)); pointer-events: none; }
+  /* 고른 박스의 짝(data-mate) - 고른 것이 아니라 곁에 딸린 것이라 흐린 점선 테두리만(설계 2026-11-20 D3). 고른 박스와 한 카드면 위 카드 테두리가 이긴다 */
+  .pg[data-strips] .strip-lead + .strip[data-mate]::after { content: ""; position: absolute; inset: -2px; border: 1px dashed var(--accent-line); border-radius: calc(var(--r-1) + 2px); pointer-events: none; }
+  .cell-piece[data-mate] { outline: 1px dashed var(--accent-line); outline-offset: -1px; }
+  /* 떨어진 짝 안내 줄 - 고른 박스 글 아래 흐린 한 줄, 누르면 짝으로 간다(Paper renderPairHint) */
+  .pair-hint { display: flex; align-items: center; gap: 6px; margin-top: 2px; margin-inline: -4px; padding: 0 4px; border-radius: var(--r-1); font: 500 var(--fs-micro) / 16px var(--font-mono); color: var(--ink-3); text-align: left; cursor: pointer; }
+  .pair-hint:hover { color: var(--accent); background: var(--hover); }
+  .pair-hint:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  /* 안내 줄이 선 박스의 줄 끝 고리 표시 - 짝이 멀리 있다는 것을 같이 알린다 */
+  .pmark-host[data-on] { background: var(--accent-tint); }
+  .pmark-host[data-on] .pmark.pair { color: var(--accent); }
   /* 보류 칩 - 글 첫머리, 글자와 같은 줄에 앉는다 */
   .pg[data-strips] p > .schip:first-child { margin-right: 6px; vertical-align: 1px; }
   .pg[data-strips] .strip-hold { display: flex; margin-bottom: 4px; }
@@ -1544,7 +1554,7 @@
   .assign-pane .strip-lang { right: 30px; }
   .strip-lang:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
   /* 고른 조각·그 짝·New의 고른 줄에만 - 마우스를 올린 곳에도 뜨면 그 문장이 고른 것처럼 보였다 */
-  .strip:is([data-sel], [data-partner]) > .strip-lang,
+  .strip:is([data-sel], [data-partner], [data-mate]) > .strip-lang,
   .strip-card:has(> .strip-row > .strip[data-sel]) > .strip-row > .strip > .strip-lang,
   .new-line:is([data-state="picked"], [data-state="focus"], :focus-within) > .strip-lang,
   /* 참조 줄(제안은 점선 REF?)은 고르지 않아도 늘 - 나누고 묶는 글이 아니라는 것을 훑어보며 알게. 바탕색은 짝 카드·이음 호버·고른 줄이 쓰고 있어 태그로 */

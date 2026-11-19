@@ -28,6 +28,7 @@ import type { JoinKind, JoinPlan } from "@/lib/split-menu-model";
 import { getHiddenEnds, listFollowPreview } from "@/lib/number-model";
 import { getCardTops, getHiddenPrefixLength, getPairBrackets, getPillWidth, getSectionHeads, getTabWidths, getSectionLevel, getSectionPill, getVisibleSkip, sliceVisible, type PairBracket } from "@/lib/strip-pill-model";
 import { buildHeadingShiftGroups, readHeadingShiftHead, type HeadingShiftGroup } from "@/lib/heading-shift-model";
+import { getPairHint, type PairHintUnit } from "@/lib/pair-hint-model";
 import { buildTocBlock, shouldJoinTocCard } from "@/lib/toc-block-model";
 import { findUnwrapHeads, getRowUnwrapTable } from "@/lib/unwrap-model";
 
@@ -147,7 +148,7 @@ interface PaperProps {
   /** 이 용지에 그릴 것 - 주면 그 한 쪽만(Split의 탭·쪽), 없으면 머리말·본문·꼬리말을 한 장에 */
   items?: readonly PaperItem[];
   selectedId: number | null;
-  /** 함께 밑줄을 긋는 단위(분류에서 짝의 두 쪽) */
+  /** 고른 단위와 함께 가는 단위(Assign에서 고른 박스의 짝) - 고른 단위 밖의 것은 곁에 딸린 표시(data-mate, 흐린 점선 테두리)로 */
   highlightIds?: ReadonlySet<number>;
   /** 고른 단위의 한/영 짝 - 조각 바탕과 왼쪽 막대로 알린다 */
   partnerIds?: ReadonlySet<number>;
@@ -202,6 +203,8 @@ interface PaperProps {
     headingShift?: { canRevert: boolean; busy: boolean; onRevert: (unitIds: number[]) => void };
     /** Assign - 벗긴 표의 줄 묶음 머리에 "↺ 다시 표로"(F1). canRewrap이 거짓이면 머리 없이 왼쪽 세로선만. onRewrap(표 id)은 편집 set_layout_table(표로) */
     unwrap?: { canRewrap: boolean; busy: boolean; onRewrap: (tableId: number) => void };
+    /** Assign - 고른 박스 바로 아래 떨어진 짝 안내 줄 "↑ 짝 KO · 위 §1"(lib/pair-hint-model). onGo(짝)는 그 박스를 고르고 그 자리로 스크롤한다 */
+    pairHint?: { onGo: (unitId: number) => void };
   };
   /** strips에서 고른 조각의 글 바로 아래 줄(확인·짝 풀기 등 단추) - 조각 상자가 펼쳐지며 밀려 내려오고, 고름이 옮겨 가면 접힌다 */
   renderUnitActions?: (unitId: number) => ReactNode;
@@ -465,6 +468,24 @@ export function Paper({
     for (const mate of matesOf.get(selectedId) ?? []) ids.add(mate.id);
     return ids;
   }, [selectedId, matesOf]);
+  // 고른 박스의 떨어진 짝 - 이어 붙은 카드 안의 구성원은 바로 곁이라 안내하지 않는다. 자리 이름은 번호 칸 값(옛 추출은 절 번호), 없으면 표시 ID
+  const hasPairHint = strips?.pairHint !== undefined;
+  const pairHint = useMemo(() => {
+    const mates = selectedId === null ? undefined : matesOf.get(selectedId);
+    const selected = selectedId === null ? undefined : model.units.get(selectedId);
+    if (!hasPairHint || !mates || !selected) return null;
+    const orderAt = new Map(model.order.map((id, at) => [id, at]));
+    const labels = new Map(sections.flatMap((section) => section.rows.map((row) => [readRowUnitId(row) ?? -1, readRowLabel(row, model)] as const)));
+    const toHintUnit = (unit: ViewUnit): PairHintUnit | null => {
+      const at = orderAt.get(unit.id) ?? (unit.group_unit_id === null ? undefined : orderAt.get(unit.group_unit_id));
+      if (at === undefined) return null;
+      const label = labels.get(unit.id) ?? "";
+      const where = model.hasNumberRanges ? label : (getSectionPill(label) ?? "");
+      return { id: unit.id, lang: unit.lang, at, card: brackets.has(unit.id) ? (cardTops.get(unit.id) ?? unit.id) : null, label: where ? `§${where}` : unit.display_id };
+    };
+    const own = toHintUnit(selected);
+    return own === null ? null : getPairHint(own, mates.flatMap((mate) => toHintUnit(mate) ?? []));
+  }, [hasPairHint, selectedId, matesOf, model, sections, brackets, cardTops]);
   // 절 번호를 보일 첫 줄 - 부분(머리글·본문·바닥글)마다 문서 순서로
   const sectionHeads = useMemo(() => {
     const heads = new Set<number>();
@@ -578,7 +599,8 @@ export function Paper({
           lang={unit?.lang === "neutral" ? undefined : unit?.lang}
           data-unit={segment.unitId}
           data-testid={`${testId}-unit-${segment.unitId}`}
-          data-sel={segment.unitId === selectedId || highlightIds?.has(segment.unitId) ? "" : undefined}
+          data-sel={segment.unitId === selectedId ? "" : undefined}
+          data-mate={isMate(segment.unitId) ? "" : undefined}
           data-pick={pickedIds?.has(segment.unitId) ? "" : undefined}
           data-warn={warnBlockIds?.has(block.id) ? "" : undefined}
           data-done={isDone?.(segment.unitId) ? "" : undefined}
@@ -616,6 +638,35 @@ export function Paper({
           )}
         </span>
       </span>
+    );
+  }
+
+  /** 고른 단위와 함께 가는 다른 단위(고른 박스의 짝) - 고른 것처럼 보이지 않게 따로 표시한다 */
+  function isMate(unitId: number): boolean {
+    return unitId !== selectedId && (highlightIds?.has(unitId) ?? false);
+  }
+
+  /** 고른 박스 아래 흐린 한 줄 - 떨어진 짝이 위/아래 어디에 있는지. 누르면 짝으로 간다 */
+  function renderPairHint(unitId: number): ReactNode {
+    const onGo = strips?.pairHint?.onGo;
+    if (!onGo || pairHint === null) return null;
+    const label = t(pairHint.dir === "up" ? "paper.pairHint.above" : "paper.pairHint.below", { lang: pairHint.lang, where: pairHint.where });
+    return (
+      <button
+        type="button"
+        className="pair-hint"
+        data-dir={pairHint.dir}
+        aria-label={`${label} - ${t("paper.pairHint.go")}`}
+        data-testid={`${testId}-pair-hint-${unitId}`}
+        data-target={pairHint.targetUnitId}
+        onClick={(event) => {
+          event.stopPropagation();
+          onGo(pairHint.targetUnitId);
+        }}
+      >
+        {label}
+        {pairHint.more > 0 && <span>+{pairHint.more}</span>}
+      </button>
     );
   }
 
@@ -658,6 +709,8 @@ export function Paper({
               aria-label={label}
               data-tip={label}
               data-mark-unit={unit?.id}
+              // 떨어진 짝 안내 줄이 선 박스의 고리 표시는 강조한다(설계 D3)
+              data-on={mark === "pair" && pairHint !== null && unit !== undefined && unit.id === selectedId ? "" : undefined}
               tabIndex={unit !== undefined && unit.id === selectedId ? 0 : -1}
               data-testid={`${testId}-mark-${mark}-${unit?.id ?? "x"}`}
             >
@@ -778,6 +831,7 @@ export function Paper({
             data-flip-key={`${cell.id}:${row.parts[0].segments[0]?.start ?? 0}`}
             data-strip-unit={unit?.id}
             data-sel={unit !== undefined && unit.id === selectedId ? "" : undefined}
+            data-mate={unit !== undefined && isMate(unit.id) ? "" : undefined}
             data-partner={unit !== undefined && partnerIds?.has(unit.id) ? "" : undefined}
             data-testid={unit ? `${testId}-piece-${unit.id}` : undefined}
           >
@@ -987,6 +1041,7 @@ export function Paper({
           className="strip"
           data-kind={row.type}
           data-sel={unit !== undefined && unit.id === selectedId ? "" : undefined}
+          data-mate={unit !== undefined && isMate(unit.id) ? "" : undefined}
           data-partner={unit !== undefined && partnerIds?.has(unit.id) ? "" : undefined}
           data-bracket={bracket}
           data-strip-unit={unitId ?? undefined}
@@ -1021,6 +1076,7 @@ export function Paper({
                 })}
           {renderActions(unit?.id)}
           {foot}
+          {unit !== undefined && unit.id === selectedId && renderPairHint(unit.id)}
           {pills}
           {renderMarks(unit, hasWarn, "strip-marks")}
           {row.type === "piece" && renderLang(unit)}
