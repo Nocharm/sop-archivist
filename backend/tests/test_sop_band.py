@@ -206,3 +206,22 @@ def test_output_a_locates_the_band_heading_with_the_title_only(client: TestClien
     head = next(row for row in texts if "Location" in row)
     location, old_text = head.index("Location"), head.index("Old text")
     assert [row[location] for row in texts if row[old_text] == SECTION] == ["§7.4 · Band table · ~p. 1"]
+
+
+def test_follow_renumbering_reaches_the_next_band_chapter_and_the_lines_under_it(client: TestClient) -> None:
+    # 장 제목이 띠 표마다 자기 원문 표를 가리켜도 같은 목록이다 — 7 → 6이면 다음 장 8과 그 아래 8.1도 따라 내려간다
+    purpose, scope = "Purpose of the synthetic procedure", "Scope of the synthetic procedure"
+    body = (
+        make_band_table("7", purpose) + p("7.1 The synthetic purpose line.", "Heading2")
+        + make_band_table("8", scope) + p("8.1 The synthetic scope line.", "Heading2")
+    )
+    bundle_id, _, doc_id = _setup(client, body)
+    chapter = find_unit(get_view(client, bundle_id, doc_id), f"7\n{purpose}")
+
+    response = _edit(client, bundle_id, doc_id, {"type": "set_number", "unit_id": chapter["id"], "number": "6", "follow": True})
+    assert response.status_code == 200, response.text
+
+    view = get_view(client, bundle_id, doc_id)
+    numbers = {_content(unit): unit["number"]["value"] for unit in view["units"] if unit["number"]}
+    assert numbers[purpose] == "6" and numbers[scope] == "7"
+    assert numbers["The synthetic purpose line."] == "6.1" and numbers["The synthetic scope line."] == "7.1"

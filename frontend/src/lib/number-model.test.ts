@@ -39,6 +39,23 @@ describe("listFollowPreview", () => {
     ]);
   });
 
+  it("treats band heading lines as lines outside tables", () => {
+    // 띠 표 제목 줄은 장마다 자기 원문 표를 가리킨다 - 서버 _plan_set_number와 같이 표 밖 목록에 든다
+    const units = [
+      unit(1, "7", { kind: "heading", table_id: 11 }),
+      unit(2, "7.1", { kind: "heading" }),
+      unit(3, "8", { kind: "heading", table_id: 12 }),
+      unit(4, "8.1", { kind: "heading" }),
+      unit(5, "1", { kind: "cell_sentence", table_id: 13 }),
+    ];
+
+    expect(listFollowPreview(units, 1, "6")).toEqual([
+      { unitId: 2, from: "7.1", to: "6.1" },
+      { unitId: 3, from: "8", to: "7" },
+      { unitId: 4, from: "8.1", to: "7.1" },
+    ]);
+  });
+
   it("previews nothing for an empty number or an unknown unit", () => {
     const units = [unit(1, "6.1"), unit(2, "6.2")];
 

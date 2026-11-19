@@ -872,7 +872,7 @@ async def _plan_set_number(session: AsyncSession, extraction_id: ExtractionId, o
     """고칠 단위와(follow면) 같은 목록의 뒤 단위들의 number_set, 그 번호가 열던 절의 블록 범위.
 
     같은 목록 후보는 같은 언어 · 같은 표(표 밖이면 표 밖)의 글 단위다 — 한/영이 번갈아 놓인 문서에서 한 언어의 고침이 다른
-    언어 줄을 밀지 않게 한다(짝은 Unit마다 자기 번호, F5).
+    언어 줄을 밀지 않게 한다(짝은 Unit마다 자기 번호, F5). 띠 표 제목 줄은 표 밖 줄로 친다(프런트 number-model.ts와 같은 규칙).
     """
     unit = (await load_active_units(session, extraction_id, [op.unit_id]))[op.unit_id]
     if unit.kind not in NUMBERED_KINDS or unit.noise_kind is not None:  # 목차 줄은 번호 칸이 없다
@@ -885,7 +885,10 @@ async def _plan_set_number(session: AsyncSession, extraction_id: ExtractionId, o
                 .where(
                     Unit.extraction_id == extraction_id, Unit.status == UNIT_ACTIVE, Unit.kind.in_(NUMBERED_KINDS),
                     Unit.lang == unit.lang, Unit.noise_kind.is_(None),
-                    Unit.table_id.is_(None) if unit.table_id is None else Unit.table_id == unit.table_id,
+                    # 띠 표 제목 줄은 장마다 자기 원문 표를 가리키지만 표 밖 줄과 한 목록이다(F4) — 표 밖이면 띠 표 제목도 후보
+                    or_(Unit.table_id.is_(None), Unit.kind == "heading")
+                    if unit.table_id is None or is_band_heading(unit.kind, unit.table_id)
+                    else Unit.table_id == unit.table_id,
                 )
                 .order_by(Unit.pos_seq, Unit.pos_start, Unit.id)
             )
