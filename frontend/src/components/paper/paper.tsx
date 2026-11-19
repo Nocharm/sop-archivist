@@ -412,17 +412,19 @@ export function Paper({
       cancelAnimationFrame(frame);
     };
   }, [chunkCount]);
-  // 고른 줄과 방금 고른 줄(단추 줄이 접히는 동안)이 든 덩어리 - 그 앞뒤 덩어리도 함께 그린다(덩어리 첫 틈이 앞 덩어리 끝 줄의 고름을 따른다)
+  // 고른 줄과 방금 고른 줄(단추 줄이 접히는 동안)이 든 덩어리 - 그 앞뒤 덩어리도 함께 그린다(덩어리 첫 틈이 앞 덩어리 끝 줄의 고름을 따른다).
+  // 번호를 치는 줄도 같다 - 입력이 먼(얼린) 덩어리로 스크롤되어 들어가도 글자·점선 미리 보기가 계속 다시 그려진다
+  const numberEditUnitId = numberEdit?.unitId ?? null;
   const liveChunkIds = useMemo(() => {
     const ids = new Set<number>();
     for (const section of cardGroups) {
       if (!section.isChunked) continue;
       for (const group of section.groups) {
-        if ([selectedId, actionIds.previous].some((id) => id !== null && group.unitIds.has(id))) for (const index of [group.index - 1, group.index, group.index + 1]) ids.add(index);
+        if ([selectedId, actionIds.previous, numberEditUnitId].some((id) => id !== null && group.unitIds.has(id))) for (const index of [group.index - 1, group.index, group.index + 1]) ids.add(index);
       }
     }
     return ids;
-  }, [cardGroups, selectedId, actionIds.previous]);
+  }, [cardGroups, selectedId, actionIds.previous, numberEditUnitId]);
 
   // 고른 조각 곁 틈을 벌릴 조각 - 이웃한 짝은 한 카드라 고른 줄이 카드 어디에 있든 카드 위아래가 같이 벌어진다
   const selectedBlock = useMemo(() => {

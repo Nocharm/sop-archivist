@@ -167,7 +167,7 @@ import { buildUnwrapOp, listCounterpartChoices, readOtherHalf, type CounterpartC
 import { resolveLineParam } from "@/lib/assign-line-param";
 import { readAssignView, writeAssignView } from "@/lib/assign-view-prefs";
 import { loadBundle, useBundle } from "@/lib/bundle-store";
-import { describeDecisionStep, getAssignUndoKey, pickSaveOp } from "@/lib/decision-step-model";
+import { describeDecisionStep, getAssignUndoKey, IN_PLACE_EDIT_OPS, pickSaveOp, shouldDropSelectionOnStep } from "@/lib/decision-step-model";
 import {
   buildDestinationOptions,
   buildGroupSave,
@@ -256,8 +256,7 @@ interface PageDraft extends Omit<RowDraft, "reason" | "moveCode"> {
 const EMPTY_DRAFT: PageDraft = { destination: null, texts: {}, changeTypes: {}, linkChangeTypes: {}, reason: null, moveCode: null, editing: false };
 const NO_NUMBERS: ReadonlySet<number> = new Set();
 
-/** 되돌리면 단위가 은퇴할 수 있는 편집 - 그 줄을 고른 채 다시 받으면 없는 단위의 묶음을 부르게 된다 */
-const RETIRING_OPS: ReadonlySet<string> = new Set(["cut", "carve", "merge", "unmerge", "split_table_rows", "merge_table_rows", "set_layout_table", "attach_caption", "detach_caption"]);
+// 고름을 두는 편집·되돌리기의 판단은 decision-step-model(IN_PLACE_EDIT_OPS · shouldDropSelectionOnStep)
 
 // 한 단으로 연 New 문서에서 연 우클릭 메뉴의 줄 키 자리 - 그 문서에는 줄이 없다
 const SOLO_ROW_KEY = "solo";
@@ -556,12 +555,15 @@ export default function AssignPage() {
 
   // --- 고른 줄의 관계 묶음·후보와 초안 ---
   // 짝을 풀면 줄 키는 그대로인데 단위가 달라질 수 있다 - 줄의 단위를 키에 넣어 묶음·후보를 다시 받는다
-  const rowKey = `${activeKey}:${row?.unitIds.join(",") ?? ""}:${unitsKey}`;
-  const group = useLoaded<Group | null>(() => (row ? loadRowGroup(bundleId, row.unitIds) : Promise.resolve(null)), rowKey);
+  // 원문 보기가 편집 뒤 다시 받는 중이면 줄의 Unit은 이미 은퇴했을 수 있다 - 새 보기가 올 때까지 묶음·후보를 부르지 않는다
+  // (받는 동안 낡은 줄을 눌러도 없는 Unit의 묶음을 부르지 않게. 안 끝나는 약속은 그 자리의 이전 값을 두고 isLoading만 켠다)
+  const isViewSettled = !views.isLoading || freshViews !== null;
+  const rowKey = `${activeKey}:${row?.unitIds.join(",") ?? ""}:${unitsKey}:${isViewSettled}`;
+  const group = useLoaded<Group | null>(() => (!row ? Promise.resolve(null) : !isViewSettled ? new Promise<never>(() => undefined) : loadRowGroup(bundleId, row.unitIds)), rowKey);
   const groupData = group.data;
   const sentenceUnitIds = (row?.unitIds ?? []).filter((id) => unitMap.get(id)?.kind !== "table" && unitMap.get(id)?.kind !== "table_row" && unitMap.get(id)?.kind !== "figure");
   const similar = useLoaded<NewCandidate[]>(
-    () => (written.length > 0 && sentenceUnitIds.length > 0 ? loadRowCandidates(bundleId, sentenceUnitIds) : Promise.resolve([])),
+    () => (written.length > 0 && sentenceUnitIds.length > 0 ? (isViewSettled ? loadRowCandidates(bundleId, sentenceUnitIds) : new Promise<never>(() => undefined)) : Promise.resolve([])),
     `${rowKey}:${written.length > 0}`,
   );
   const [drafts, setDrafts] = useState<Record<string, PageDraft>>({});
@@ -1331,7 +1333,7 @@ export default function AssignPage() {
       setCutUnitId(null);
       // 고친 줄의 Unit은 은퇴했을 수 있다 - 다시 받는 동안 그 Unit의 묶음·후보를 부르지 않게 고름을 비우고, 새 줄이 생기면 follow가 고른다.
       // 제자리에서 바뀌는 편집(언어·참조)은 Unit이 그대로라 고름을 두어 고른 표시·오른쪽 칸·포커스가 깜빡이지 않게 한다
-      if (op.type !== "set_language" && op.type !== "set_ref" && op.type !== "clear_ref" && op.type !== "set_number") setSelectedKey(null);
+      if (!IN_PLACE_EDIT_OPS.has(op.type)) setSelectedKey(null);
       // 표 벗기기 · 다시 표로와 캡션 붙이기 · 떼기 · 첫 행 올리기 · 그림 묶기 - 새 원문 보기를 먼저 받아 풀기 전환 안에서 그린다
       // (F10, 화면 안만 움직이고 움직임 줄이기면 번쩍임만). 캡션은 글이 캡션 자리로 미끄러져 들어간다. 알림은 전환 뒤
       const docId = shapeView.document.id;
@@ -1922,8 +1924,8 @@ export default function AssignPage() {
       setChecked(new Set());
       // 되돌린 줄의 초안은 바뀌기 전 판단 위의 고름이다
       for (const key of new Set(result.unit_ids.map((id) => rowOfUnit.get(id)).filter((key) => key !== undefined))) dropDraft(key);
-      // 자르기·표 행 나누기(합치기)를 거꾸로 하면 Unit이 은퇴할 수 있다 - 다시 받는 동안 그 줄의 묶음·후보를 부르지 않게 고름을 비운다
-      if (RETIRING_OPS.has(result.op)) {
+      // 모양 편집(자르기·합치기·제목↔문장·캡션·그림 묶기 …)을 거꾸로·다시 하면 Unit이 은퇴할 수 있다 - 다시 받는 동안 그 줄의 묶음·후보를 부르지 않게 고름을 비운다
+      if (shouldDropSelectionOnStep(result)) {
         cutLine.clear();
         setCutUnitId(null);
         setSelectedKey(null);
