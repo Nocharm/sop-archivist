@@ -36,7 +36,6 @@ Issue = dict[str, object]
 UNIT_PENDING_STATUSES = ("unassigned", "on_hold")
 TARGET_PENDING_STATUSES = ("unassigned", "ai_suggested", "on_hold")
 UNRESOLVED_DOC_STATUSES = ("rejected", "failed")
-TABLE_RESTRUCTURED = "table_restructured"
 
 
 class Readiness(BaseModel):
@@ -59,17 +58,6 @@ def _list_pending_blockers(subject: str, counts: Mapping[str, int], statuses: It
 def _count_target_statuses(snap: BundleSnapshot) -> Counter[str]:
     """새 문장 상태 수 — 새 문장마다 한 번(언어를 가르지 않는다)."""
     return Counter(target.status for target in snap.targets.values())
-
-
-def _find_units_missing_reason(snap: BundleSnapshot) -> list[int]:
-    """사유가 비어 있는 표 구성 변경 표 단위 — 사유는 판단 단위에 적힌다. 삭제·이동의 사유는 선택이다(요청서 4번)."""
-    unit_ids: set[int] = set()
-    for target in snap.targets.values():
-        if target.change_type == TABLE_RESTRUCTURED and target.source_unit_ids:
-            decision = snap.decisions.get(target.source_unit_ids[0])
-            if decision is None or not decision.reason.strip():
-                unit_ids.add(target.source_unit_ids[0])
-    return sorted(unit_ids)
 
 
 def _list_caption_ref_notices(warnings: Iterable[CaptionRefWarning]) -> list[Issue]:
@@ -99,7 +87,7 @@ def _pick_next_action(snap: BundleSnapshot, codes: set[str]) -> NextAction:
         return "decide_units"
     if "unacked_missing_text" in codes:
         return "ack_warnings"
-    if codes & {"duplicate_without_reason", "missing_reason"}:
+    if "duplicate_without_reason" in codes:
         return "fill_reasons"
     if "semantic_checks_incomplete" in codes:
         return "semantic_checks"
@@ -129,9 +117,6 @@ def evaluate_readiness(
     ]
     if unreasoned:
         blockers.append({"code": "duplicate_without_reason", "count": len(unreasoned), "unit_ids": unreasoned})
-    missing_reason = _find_units_missing_reason(snap)
-    if missing_reason:
-        blockers.append({"code": "missing_reason", "count": len(missing_reason), "unit_ids": missing_reason})
     if unacked_missing_text:
         blockers.append({"code": "unacked_missing_text", "count": unacked_missing_text})
     # 옛 문서 버전은 Excel에 그대로 나간다 — 빈 채로 두면 검토에서 어느 판인지 알 수 없다

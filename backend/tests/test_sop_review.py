@@ -336,22 +336,19 @@ def test_reason_blockers(client: TestClient) -> None:
     ]
 
 
-def test_table_restructured_needs_a_reason(client: TestClient) -> None:
-    """표 구성 변경은 표 단위 판단에 사유가 있어야 한다 — 저장 경로가 강제하는 사유를 DB에서 비워 확인한다."""
+def test_restructured_table_needs_no_reason(client: TestClient) -> None:
+    """표 구성을 바꾼 표(고침)도 사유는 선택이다 — 사유 없는 고침 표가 검토 요청을 막지 않는다(설계 2026-11-20-change-type-two D2)."""
     fx = _setup(client)
     table_doc = upload(client, fx.bundle_id, build_docx(tbl([["항목", "Item"], ["합성 값", "Synthetic value"]])), "SYNTHETIC_TABLE.docx")
     assert table_doc.status_code == 201, table_doc.text
     table = next(u for u in get_view(client, fx.bundle_id, table_doc.json()["id"])["units"] if u["kind"] == "table")
     assign_as_is(client, fx.bundle_id, table, fx.sop_id, slot_key="purpose")
     table_target = next(t for t in get_group_by_unit(client, fx.bundle_id, table["id"])["targets"] if t["kind"] == "table")
+    as_is_blockers = _get_readiness(client, fx.bundle_id)["blockers"]
 
-    update_row(TargetSentence, table_target["id"], change_type="table_restructured")
+    update_row(TargetSentence, table_target["id"], change_type="rewritten")
 
-    assert {"code": "missing_reason", "count": 1, "unit_ids": [table["id"]]} in _get_readiness(client, fx.bundle_id)[
-        "blockers"
-    ]
-    update_row(UnitDecision, table["id"], reason="Synthetic: columns merged")
-    assert "missing_reason" not in {b["code"] for b in _get_readiness(client, fx.bundle_id)["blockers"]}
+    assert _get_readiness(client, fx.bundle_id)["blockers"] == as_is_blockers
 
 
 def test_acking_the_warning_clears_the_blocker(client: TestClient) -> None:

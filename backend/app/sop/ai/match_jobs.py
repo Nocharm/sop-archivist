@@ -78,7 +78,7 @@ _SENTENCE, _TABLE, _FIGURE = "sentence", "table", "figure"  # MatchItem.kind —
 _CELL_SEPARATOR = " "  # 양쪽 표 글을 같게 이어야 점수가 뜻이 있다
 _PROMPT_KEY = "prompt.match"
 _FEATURE = "sop.match"
-_CHANGE_ORDER = ("as_is", "tone", "rewritten", "split", "merged")  # 변화가 작은 순서 — 제안 기록의 한 칸을 정한다
+_CHANGE_ORDER = ("as_is", "rewritten", "split", "merged")  # 변화가 작은 순서 — 제안 기록의 한 칸을 정한다
 # 계획 작업 payload["origin"] — 누가 세웠는지가 다듬기 작업의 순위와 삭제 후보를 정한다(설계 §4의 표). 값은 "user" | "prepare" | "upload"
 PLAN_ORIGIN_USER = "user"  # Match 단추. 키가 없는 옛 계획도 이것으로 읽는다. 그대로 둔 잠정 묶음의 다듬기를 다시 쌓는 것은 이것뿐이다
 PLAN_ORIGIN_PREPARE = "prepare"  # 배정 화면 첫 진입
@@ -92,7 +92,7 @@ _CellKey = tuple[int, int, str, int]  # (행, 열, 언어, 칸 안 순서)
 class MatchReply(BaseModel):
     """LLM 응답 — 글 칸은 AiStr라 저장 전에 정리되고 상한을 지킨다. 나눔·합침은 구조에서 나와 받지 않는다(설계 §6.7)."""
 
-    change_type: Literal["as_is", "tone", "rewritten"]
+    change_type: Literal["as_is", "rewritten"]  # 받기만 한다 — 저장할 종류는 글자 비교가 정한다(_judge_reply)
     reason: AiStr
     rule_ids: list[AiStr]
 
@@ -491,7 +491,7 @@ def _plan_table(
 ) -> _Write:
     """격자가 같으면 (행, 열, 언어, 칸 안 순서)로 칸을 잇고, 다르면 표끼리만 잇는다. 캡션은 격자와 상관없이 언어마다 잇는다.
 
-    그대로인 표는 옛 칸 문장마다 칸 새 문장이 있어야 저장되므로(table_cells_missing) 옛 칸이 남으면 격자가 같아도 표 구성 변경이다.
+    저장은 옛 칸 문장마다 칸 새 문장이 있어야 표를 그대로로 정하므로(decisions._keeps_table_shape) 옛 칸이 남으면 격자가 같아도 고침이다.
     """
     links: dict[int, Unit] = {}
     is_as_is = False
@@ -500,7 +500,7 @@ def _plan_table(
         news = _number_cells((cell.cell_row, cell.cell_col, cell.lang, cell) for cell in new_cells)
         links = {news[key].id: olds[key] for key in olds.keys() & news.keys()}
         is_as_is = olds.keys() <= news.keys()
-    change_type = "as_is" if is_as_is else "table_restructured"
+    change_type = "as_is" if is_as_is else "rewritten"
     caption_writes, caption_links = captions
     return _Write(
         entry, _TABLE, change_type, unit_ids=(unit.id,),
@@ -573,19 +573,18 @@ def _plan_sentence(
     news: Mapping[int, _Entry],
     targets: Mapping[int, TargetSentence],
 ) -> _Write:
-    """문장 묶음 — 변경 종류는 코드가 정한 잠정값이고 다듬기 작업이 LLM 답으로 바꿔 쓴다(설계 §4). sources는 문서 순서다.
+    """문장 묶음 — 변경 종류는 구조와 글이 정하고(사람 저장과 같은 규칙) 다듬기 작업이 이유를 LLM 답으로 채운다(설계 §4). sources는 문서 순서다.
 
-    띄어쓰기만 다른 1:1은 뜻이 바뀔 수 없어 말투로 정하고 다듬지 않는다. 나머지는 고쳐 씀을 넘겨 합침·나눔·그대로는 구조와 글이 정한다.
+    띄어쓰기만 다른 1:1은 뜻이 바뀔 수 없어 다듬지 않는다.
     """
     is_spacing = (
         len(sources) == 1 and len(group.target_ids) == 1
         and is_spacing_change(sources[0].text, news[group.target_ids[0]].item.text)
     )
-    requested = "tone" if is_spacing else "rewritten"
     per_document = Counter(news[target_id].document_id for target_id in group.target_ids)  # 나눔은 같은 새 문서 안에서만이다
     change_types = {
         target_id: decide_ai_change_type(
-            sources, news[target_id].item.text, requested, sentence_count=per_document[news[target_id].document_id]
+            sources, news[target_id].item.text, sentence_count=per_document[news[target_id].document_id]
         )
         for target_id in group.target_ids
     }
@@ -915,7 +914,7 @@ def _build_pair_payload(
 
 
 def _judge_reply(reply: MatchReply | None, job: AiJob, loaded: _PairInput, model: str) -> _PairVerdict:
-    """응답 검사 — 형식이 틀리면 무효이고 규칙 ID는 빼고 경고한다. 구조와 글자 비교가 정한 종류가 응답보다 먼저다(설계 §6.7).
+    """응답 검사 — 형식이 틀리면 무효이고 규칙 ID는 빼고 경고한다. 종류는 응답이 아니라 구조와 글자 비교가 정한다(설계 2026-11-20-change-type-two D2).
 
     나눔은 같은 새 문서 안에서만이다 — 문서가 다르면 중복 배정이라(설계 §6.9) 새 문장마다 그 문서 안의 수로 판단한다.
     """
@@ -927,7 +926,7 @@ def _judge_reply(reply: MatchReply | None, job: AiJob, loaded: _PairInput, model
     per_document = Counter(entry.document_id for entry in news.values())
     change_types = {
         target_id: decide_ai_change_type(
-            loaded.units, entry.item.text, reply.change_type, sentence_count=per_document[entry.document_id]
+            loaded.units, entry.item.text, sentence_count=per_document[entry.document_id]
         )
         for target_id, entry in news.items()
     }

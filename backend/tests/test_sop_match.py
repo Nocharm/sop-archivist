@@ -469,8 +469,15 @@ def test_held_unit_without_destination_is_not_identical(client: TestClient) -> N
     }
 
 
-def test_linking_an_old_table_as_is_needs_every_cell_linked(client: TestClient) -> None:
-    """입구 2에서 옛 표를 새 문서 표에 그대로로 이어도 옛 칸 문장마다 칸 새 문장 하나가 있어야 한다(입구 1과 같은 R27).
+@pytest.mark.parametrize(("is_linked", "expected"), [
+    (True, {("as_is", "confirmed")}),
+    # 옛 칸 문장이 칸 새 문장에 이어지지 않으면 표는 원문 모양이 아니다 — 고침, 출처 없는 칸 새 문장은 신규
+    (False, {("rewritten", "confirmed"), ("new", "confirmed")}),
+])
+def test_linking_an_old_table_is_as_is_only_with_every_cell_linked(
+    client: TestClient, is_linked: bool, expected: set[tuple[str, str]]
+) -> None:
+    """입구 2에서 옛 표를 새 문서 표에 이으면 옛 칸 문장마다 칸 새 문장 하나가 있어야 그대로다(입구 1과 같은 R27).
 
     입구 2 칸 새 문장은 parent_key 없이 지금 부모(표 새 문장)로 묶인다.
     """
@@ -479,31 +486,26 @@ def test_linking_an_old_table_as_is_needs_every_cell_linked(client: TestClient) 
     table_unit = next(unit for unit in fx.old_view["units"] if unit["kind"] == "table")
     cells = [unit for unit in fx.old_view["units"] if unit["group_unit_id"] == table_unit["id"]]
     table, *cell_targets = _load_targets(fx.new_doc["target_doc_id"])
+    cell_sources = [[cell] for cell in cells] if is_linked else [[] for _ in cells]
+    targets = [
+        {
+            "key": f"t{row['id']}", "id": row["id"], "revision": row["revision"], "kind": row["kind"],
+            "source_unit_ids": [unit["id"] for unit in sources],
+        }
+        for row, sources in zip([table, *cell_targets], [[table_unit], *cell_sources], strict=True)
+    ]
+    units = [{"unit_id": table_unit["id"], "revision": 1, "disposition": "assigned"}]
 
-    def _save(cell_sources: list[list[dict]]) -> httpx2.Response:
-        targets = [
-            {
-                "key": f"t{row['id']}", "id": row["id"], "revision": row["revision"], "kind": row["kind"],
-                "source_unit_ids": [unit["id"] for unit in sources],
-            }
-            for row, sources in zip([table, *cell_targets], [[table_unit], *cell_sources], strict=True)
-        ]
-        units = [{"unit_id": table_unit["id"], "revision": 1, "disposition": "assigned"}]
-        return save_group(client, fx.bundle_id, {"action": "confirm", "units": units, "targets": targets})
+    response = save_group(client, fx.bundle_id, {"action": "confirm", "units": units, "targets": targets})
 
-    unlinked = _save([[], [], [], []])
-    assert (unlinked.status_code, unlinked.json()["detail"]) == (
-        422, {"code": "invalid_group", "reason": "table_cells_missing", "unit_ids": [cell["id"] for cell in cells]},
-    )
-    linked = _save([[cell] for cell in cells])
-    assert linked.status_code == 200, linked.text
-    assert {(t["change_type"], t["status"]) for t in _load_targets(fx.new_doc["target_doc_id"])} == {("as_is", "confirmed")}
+    assert response.status_code == 200, response.text
+    assert {(t["change_type"], t["status"]) for t in _load_targets(fx.new_doc["target_doc_id"])} == expected
 
 
-def test_linking_an_old_table_as_is_keeps_cells_in_place(client: TestClient) -> None:
-    """입구 2 칸 새 문장은 parent_key 없이 묶여도 그대로인 표의 칸 자리를 지킨다 — 칸이 뒤바뀐 표를 "그대로"로 적지 않게(스펙 §6.7).
+def test_linking_an_old_table_with_cells_moved_is_rewritten(client: TestClient) -> None:
+    """입구 2 칸 새 문장은 parent_key 없이 묶여도 칸 자리를 견준다 — 칸이 뒤바뀐 표를 "그대로"로 적지 않고 고침으로(스펙 §6.7).
 
-    자리가 바뀐 표는 표 구성 변경과 사유로만 저장된다.
+    사유는 선택이다(설계 2026-11-20-change-type-two D2). 칸 새 문장은 제 글이 출처와 같아 그대로다.
     """
     old_body = tbl([["합성 가 칸", "합성 나 칸"], ["합성 다 칸", "합성 라 칸"]])
     new_body = tbl([["합성 라 칸", "합성 나 칸"], ["합성 다 칸", "합성 가 칸"]])
@@ -511,25 +513,16 @@ def test_linking_an_old_table_as_is_keeps_cells_in_place(client: TestClient) -> 
     table_unit = next(unit for unit in fx.old_view["units"] if unit["kind"] == "table")
     cells = {unit["text"]: unit for unit in fx.old_view["units"] if unit["group_unit_id"] == table_unit["id"]}
     table, *cell_targets = _load_targets(fx.new_doc["target_doc_id"])
+    targets = [
+        _link("table", table, [table_unit], kind="table"),
+        *(_link(target["confirmed_text"], target, [cells[target["confirmed_text"]]]) for target in cell_targets),
+    ]
 
-    def _save(*, reason: str = "", **table_fields: str) -> httpx2.Response:
-        targets = [
-            _link("table", table, [table_unit], kind="table", **table_fields),
-            *(_link(target["confirmed_text"], target, [cells[target["confirmed_text"]]]) for target in cell_targets),
-        ]
-        units = [{**_assigned(table_unit), "reason": reason}]
-        return save_group(client, fx.bundle_id, {"action": "confirm", "units": units, "targets": targets})
+    swapped = save_group(client, fx.bundle_id, {"action": "confirm", "units": [_assigned(table_unit)], "targets": targets})
 
-    swapped = _save()
-    assert (swapped.status_code, swapped.json()["detail"]) == (
-        422, {"code": "invalid_group", "reason": "cell_position_mismatch", "keys": ["합성 라 칸"]},
-    )
-    assert {target["status"] for target in _load_targets(fx.new_doc["target_doc_id"])} == {"unassigned"}
-
-    restructured = _save(reason="Synthetic: swapped two cells", change_type="table_restructured")
-    assert restructured.status_code == 200, restructured.text
+    assert swapped.status_code == 200, swapped.text
     saved_table, *saved_cells = _load_targets(fx.new_doc["target_doc_id"])
-    assert (saved_table["change_type"], saved_table["status"]) == ("table_restructured", "confirmed")
+    assert (saved_table["change_type"], saved_table["status"]) == ("rewritten", "confirmed")
     assert {(t["change_type"], t["status"]) for t in saved_cells} == {("as_is", "confirmed")}
 
 

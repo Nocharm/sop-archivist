@@ -45,7 +45,7 @@ class TargetShape:
     place: Place
     text: str
     sources: frozenset[int]
-    # 사람이 표 구성을 바꿨다 — 칸 글이 같아도 그대로가 아니다(설계 §6.7). AI 표는 늘 그대로라 제안 쪽은 False다
+    # 사람이 표 구성을 바꿨다(표가 고침) — 칸 글이 같아도 그대로가 아니다(설계 §6.7). AI 표는 늘 그대로라 제안 쪽은 False다
     restructured: bool = False
     # 입구 2 짝 하나와 표의 변경 종류 — 나머지 모습과 입구 1은 비워 견주지 않는다
     change_type: str | None = None
@@ -87,7 +87,7 @@ def decide_adoption(suggested: SuggestedShape, saved: SavedShape) -> str:
 def _list_matched_targets(content: Mapping[str, Any]) -> Sequence[int]:
     """출처를 견줄 새 문장 — 제안 기록에 칸·캡션 연결이 없어 표·그림은 묶음 새 문장만 본다.
 
-    칸 자리를 지키는 저장 검사는 그대로인 표에만 걸린다. 표 구성 변경 제안에서 사람이 칸 연결만 고친 저장은 일부러 그대로 채택으로 둔다.
+    칸 연결은 표의 종류(원문 모양을 지키면 그대로, 아니면 고침)로만 견준다. 고침인 표 제안에서 사람이 칸 연결만 고친 저장은 일부러 그대로 채택으로 둔다.
     """
     target_ids = content["target_ids"]
     return target_ids[:1] if content["shape"] in _BUNDLE_SHAPES else target_ids
@@ -170,7 +170,7 @@ def _build_saved_shape(
     targets = tuple(
         TargetShape(
             (plan.doc.id, plan.item.slot_key, plan.item.wi_step, plan.item.wi_part), plan.text, frozenset(plan.sources),
-            restructured=plan.change_type == "table_restructured",
+            restructured=plan.item.kind == "table" and plan.change_type == "rewritten",
         )
         for plan in plans
         # 써 넣은 캡션(출처 없음)은 AI가 낼 수 없는 몫이다 — 캡션 없는 표·그림 확정에 꼭 붙어 늘 edited가 되지 않게 뺀다

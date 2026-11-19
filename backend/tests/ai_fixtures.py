@@ -105,7 +105,6 @@ def build_reply(data: dict, **changes: object) -> str:
         "reason": "합성 이유.",
         "rule_ids": ["R01"],
         "evidence": [{"unit_id": unit["id"], "quote": unit["text"]}] if unit["text"] else [],
-        "change_type": "tone" if langs else "as_is",
         "rewrites": {lang: [REWRITES[lang]] for lang in langs},
     }
     return json.dumps({**reply, **changes}, ensure_ascii=False)

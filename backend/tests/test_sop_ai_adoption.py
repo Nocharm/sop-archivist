@@ -161,11 +161,11 @@ def use_table(
     texts = {row.id: row.text for row in read_rows(Unit)}
     for index, cell in enumerate(cells):
         if edited_cell is not None and texts[cell["source_unit_ids"][0]] == edited_cell[0]:
-            cell.update(text=edited_cell[1], change_type="rewritten")
+            cell.update(text=edited_cell[1])
         if is_reshaped:
             cell.update(cell_row=index, cell_col=0)
     if is_reshaped:
-        table_target.update(grid={"rows": len(cells), "cols": 1}, change_type="table_restructured")
+        table_target.update(grid={"rows": len(cells), "cols": 1})
     caption = {
         "key": "caption", "target_doc_id": content["target_doc_id"], **location, "parent_key": "t", "lang": "en",
         "text": WRITTEN_CAPTION, "source_unit_ids": [],
@@ -328,7 +328,7 @@ def test_using_a_suggestion_confirms_its_rewrite(client: TestClient, fake_ai: Fa
     assert response.status_code == 200, response.text
     target_out = get_target(client, bundle.id, ko)
     assert (target_out["confirmed_text"], target_out["ai_text"]) == (REWRITE, "")
-    assert (target_out["status"], target_out["change_type"]) == ("confirmed", "tone")
+    assert (target_out["status"], target_out["change_type"]) == ("confirmed", "rewritten")
     assert read_rows(TargetTextHistory) == []
 
 
@@ -339,13 +339,13 @@ def test_using_a_suggestion_on_hold_links_it_without_adoption(client: TestClient
 
     assert response.status_code == 200, response.text
     target_out = get_target(client, bundle.id, ko)
-    assert (target_out["confirmed_text"], target_out["status"], target_out["change_type"]) == (REWRITE, "on_hold", "tone")
+    assert (target_out["confirmed_text"], target_out["status"], target_out["change_type"]) == (REWRITE, "on_hold", "rewritten")
     (suggestion,) = read_suggestions()
     assert (read_decision(ko).suggestion_id, suggestion.adoption) == (suggestion.id, None)
 
 
 def test_structural_change_type_is_not_inherited(client: TestClient, fake_ai: FakeAi) -> None:
-    # 받아 보류한 나눔 두 문장 중 하나를 버리면 나눔이 아니다 — 행의 종류를 이어받지 않고 사람에게 고르게 한다
+    # 받아 보류한 나눔 두 문장 중 하나를 버리면 나눔이 아니다 — 행의 종류를 이어받지 않고 글로 다시 정한다
     bundle, ko, _ = suggest_first_pair(client, fake_ai, rewrites=SPLIT_REWRITES)
     assert use_suggestion(client, bundle.id, ko, action="hold").status_code == 200
     group = get_group_by_unit(client, bundle.id, ko)
@@ -362,8 +362,8 @@ def test_structural_change_type_is_not_inherited(client: TestClient, fake_ai: Fa
         "removed_target_ids": [second["id"]],
     })
 
-    assert response.status_code == 422, response.text
-    assert response.json()["detail"]["reason"] == "change_type_required"
+    assert response.status_code == 200, response.text
+    assert next(t for t in response.json()["targets"] if t["id"] == first["id"])["change_type"] == "rewritten"
 
 
 def test_text_history_starts_from_the_first_confirmed_text(client: TestClient, fake_ai: FakeAi) -> None:
@@ -557,7 +557,7 @@ def test_reshaped_table_records_edited(client: TestClient, fake_ai: FakeAi) -> N
 
     assert response.status_code == 200, response.text
     (table_target,) = [item for item in response.json()["targets"] if item["kind"] == "table"]
-    assert (table_target["grid"], table_target["change_type"]) == ({"rows": 4, "cols": 1}, "table_restructured")
+    assert (table_target["grid"], table_target["change_type"]) == ({"rows": 4, "cols": 1}, "rewritten")
     assert read_suggestions()[0].adoption == "edited"
 
 
@@ -704,7 +704,7 @@ def test_held_units_of_two_suggestions_are_judged_apart_in_one_save(client: Test
     assert use_suggestion(client, bundle.id, first, action="hold").status_code == 200
     assert use_suggestion(client, bundle.id, second, action="hold").status_code == 200
 
-    response = save_unit(client, bundle.id, first, second, change_type="tone")
+    response = save_unit(client, bundle.id, first, second)
 
     assert response.status_code == 200, response.text
     assert [suggestion.adoption for suggestion in read_suggestions()] == ["as_is", "as_is"]
@@ -737,7 +737,7 @@ def test_held_side_confirmed_after_a_re_request_still_counts(client: TestClient,
     run_jobs()
     assert [suggestion.result for suggestion in read_suggestions()] == ["stale", "applied"]
 
-    response = save_unit(client, bundle.id, en, change_type="tone")
+    response = save_unit(client, bundle.id, en)
 
     assert response.status_code == 200, response.text
     assert [(row.result, row.adoption) for row in read_suggestions()] == [("stale", "as_is"), ("applied", None)]

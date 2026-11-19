@@ -96,7 +96,6 @@ CONTENT_KEYS = {
     "unit_ids", "target_ids", "shape", "change_type", "links", "target_change_types", "reason", "rule_ids", "retrieval",
     "provisional",
 }
-SAVED_TYPES = ("as_is", "tone", "rewritten", "table_restructured")  # 저장이 받는 변경 종류 — 나눔·합침·신규는 서버가 구조에서 정한다
 
 
 def make_figure(caption: str) -> str:
@@ -177,11 +176,10 @@ def find_live(*, unit_id: int | None = None, target_id: int | None = None) -> Ai
 
 
 def build_use_body(suggestion: AiSuggestion, *, action: str = "confirm", **unit_fields: object) -> dict:
-    """제안을 받는(Use) 저장 본문 — 화면이 제안 content의 묶음·출처·변경 종류로 초안을 채워 suggestion_id와 함께 보낸다."""
+    """제안을 받는(Use) 저장 본문 — 화면이 제안 content의 묶음·출처로 초안을 채워 suggestion_id와 함께 보낸다. 변경 종류는 서버가 정한다."""
     content = suggestion.content
     disposition = "delete" if content["shape"] == "delete_candidate" else "assigned"
     targets = {row.id: row for row in read_rows(TargetSentence)}
-    types = read_suggested_types(suggestion)
     sources: dict[int, list[int]] = {target_id: [] for target_id in content["target_ids"]}
     for target_id, unit_id in content["links"]:
         sources[target_id].append(unit_id)
@@ -196,7 +194,6 @@ def build_use_body(suggestion: AiSuggestion, *, action: str = "confirm", **unit_
             {
                 "key": str(target_id), "id": target_id, "revision": targets[target_id].revision,
                 "kind": targets[target_id].kind, "source_unit_ids": sources[target_id],
-                "change_type": types[target_id] if types[target_id] in SAVED_TYPES else None,
             }
             for target_id in content["target_ids"]
         ],
@@ -501,18 +498,19 @@ def test_plan_writes_sentence_groups_before_any_llm_call(
     assert fake_ai.requests == [] and len(read_jobs("match")) == 1  # 채팅 호출 없이 쓰였다
 
 
-def test_spacing_only_pair_is_tone_without_a_refine_job(
+def test_spacing_only_pair_is_rewritten_without_a_refine_job(
     client: TestClient, fake_ai: FakeAi, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    # 띄어쓰기만 달라도 글자가 다르면 고침이다(설계 2026-11-20-change-type-two D2) — 뜻이 바뀔 수 없어 다듬지 않는다
     bundle = make_match_bundle(client, p(SPACED_OLD), p(SPACED_NEW))
     use_vectors(monkeypatch, fake_ai, {SPACED_OLD: 0, SPACED_NEW: 0})
 
     plan(client, bundle.id)
 
     target, suggestion = read_target(SPACED_NEW), read_suggestion("one_to_one")
-    assert read_suggested_types(suggestion) == {target.id: "tone"}
+    assert read_suggested_types(suggestion) == {target.id: "rewritten"}
     assert_target_untouched(target)
-    assert suggestion.content["provisional"] is False and suggestion.content["change_type"] == "tone"
+    assert suggestion.content["provisional"] is False and suggestion.content["change_type"] == "rewritten"
     assert read_jobs("match") == []
 
 
@@ -730,9 +728,9 @@ def test_different_shape_table_suggests_restructured(client: TestClient, fake_ai
     suggestion = read_suggestion("table")
     (table,) = read_kind("table")
     assert read_suggested_links(suggestion) == {(table.id, table_unit)}  # 칸 연결은 없다
-    assert suggestion.content["change_type"] == "table_restructured"
+    assert suggestion.content["change_type"] == "rewritten"
     cells = [row for row in read_rows(TargetSentence) if row.parent_target_id == table.id]
-    assert read_suggested_types(suggestion) == {table.id: "table_restructured", **{row.id: "new" for row in cells}}
+    assert read_suggested_types(suggestion) == {table.id: "rewritten", **{row.id: "new" for row in cells}}
     assert_only_suggestions_written()
 
 
@@ -771,7 +769,7 @@ def test_captions_link_per_language_and_a_new_caption_without_an_old_one_is_new(
 
 
 def test_same_grid_with_an_old_cell_left_over_is_not_as_is(client: TestClient, fake_ai: FakeAi) -> None:
-    """옛 칸 문장이 남으면 그대로로 확정할 수 없다(table_cells_missing) — 격자가 같아도 표 구성 변경이다."""
+    """옛 칸 문장이 남으면 저장이 표를 그대로로 정하지 않는다(decisions._keeps_table_shape) — 격자가 같아도 고침이다."""
     two_sentences = [CELLS[0], [f"{CELLS[1][0]}. {EXTRA_CELL}", CELLS[1][1]]]
     bundle = make_match_bundle(client, tbl(two_sentences), tbl(CELLS))
     view = get_view(client, bundle.id, bundle.old_document_id)
@@ -782,7 +780,7 @@ def test_same_grid_with_an_old_cell_left_over_is_not_as_is(client: TestClient, f
     (table,) = read_kind("table")
     suggestion = read_suggestion("table")
     types = read_suggested_types(suggestion)
-    assert types[table.id] == "table_restructured"
+    assert types[table.id] == "rewritten"
     assert left_over not in {unit_id for _, unit_id in read_suggested_links(suggestion)}
     assert types[read_target(CELLS[0][0]).id] == "as_is"
 
@@ -1128,7 +1126,7 @@ def test_new_target_with_a_previous_suggestion_keeps_its_row_and_text(
 
 
 def use_refine_reply(ai: FakeAi) -> None:
-    ai.chat = lambda data: json.dumps({"change_type": "tone", "reason": "합성 다듬기 사유.", "rule_ids": ["R02"]})
+    ai.chat = lambda data: json.dumps({"change_type": "rewritten", "reason": "합성 다듬기 사유.", "rule_ids": ["R02"]})
 
 
 def add_new_document(client: TestClient, bundle_id: int, body: str) -> None:
@@ -1142,7 +1140,7 @@ def cancel_jobs(client: TestClient, bundle_id: int) -> None:
 
 
 def test_replan_keeps_unchanged_groups(client: TestClient, fake_ai: FakeAi, monkeypatch: pytest.MonkeyPatch) -> None:
-    # 계획 → 다듬기(tone) → New 문서 하나 더 → 계획
+    # 계획 → 다듬기 → New 문서 하나 더 → 계획
     bundle = make_match_bundle(client, p(OLD_1) + p(OLD_2), p(NEW_1))
     use_vectors(monkeypatch, fake_ai, {OLD_1: 0, NEW_1: 0, OLD_2: 1, NEW_2: 1})
     unit_id, lone = read_old_ids(client, bundle, OLD_1, OLD_2)
@@ -1150,7 +1148,7 @@ def test_replan_keeps_unchanged_groups(client: TestClient, fake_ai: FakeAi, monk
     plan(client, bundle.id)
     run_jobs()
     refined = find_live(unit_id=unit_id)
-    assert (refined.content["provisional"], read_suggested_types(refined)) == (False, {read_target(NEW_1).id: "tone"})
+    assert (refined.content["provisional"], read_suggested_types(refined)) == (False, {read_target(NEW_1).id: "rewritten"})
     jobs_before = len(read_jobs("match"))
     first_delete = find_live(unit_id=lone)
     assert first_delete.content["shape"] == "delete_candidate"

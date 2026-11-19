@@ -38,7 +38,7 @@ _Place = tuple[str, str | None, int | None, str | None]  # (새 문서 번호, �
 
 _DELETE_KEY = "delete"  # 분류 후보 목록 끝에 늘 붙는 삭제 후보의 키
 _ANSWER_KINDS = ("table", "figure")  # 기대 정답에서 `kind`로 찾는 단위 종류 — 나머지는 글 단위로 찾는다
-_REPLY_CHANGE_TYPES = ("as_is", "tone", "rewritten")  # LLM이 낼 수 있는 종류 — 나눔·합침은 서버가 구조로 정한다
+_REPLY_CHANGE_TYPES = ("as_is", "rewritten")  # LLM이 낼 수 있는 종류 — 나눔·합침은 서버가 구조로 정한다
 _REPLY_RULE_IDS = ["R01"]  # 규칙 문서에 있는 ID — 없는 ID는 서버가 경고를 남긴다
 _ANSWER_REASON = "합성: 기대 정답으로 답한 가짜 AI 제안이다."
 # 정답 임베딩의 차원 — 해시 바이트 32개를 다 쓴다. 8차원이면 정답이 아닌 글끼리도 코사인이 짝 임계값(0.75)을 넘어,
@@ -212,30 +212,27 @@ class SyntheticAnswers:
     def _answer_classify(self, data: dict) -> dict:
         answers = [self._find_answer(unit) for unit in data["units"]]
         if all(answer["disposition"] == "delete" for answer in answers):
-            return self._build_classify_reply(data, _DELETE_KEY, "as_is", {})
+            return self._build_classify_reply(data, _DELETE_KEY, {})
         if not all(self._is_simple(answer) for answer in answers):
             return {}
         specs = [self._list_top_specs(answer)[0] for answer in answers]
         places = {_get_place(spec) for spec in specs}
-        change_types = {spec["change_type"] for spec in specs} - {"as_is"}  # 글이 같은 쪽은 서버가 그대로로 둔다
-        if len(places) != 1 or len(change_types) > 1:
+        if len(places) != 1:
             return {}
         label = self._labels[places.pop()]
         candidate = next((item["key"] for item in data["candidates"] if item["label"] == label), None)
         if candidate is None:  # 글 없는 그림은 임베딩으로 자리를 추릴 수 없어 정답 자리가 후보에 없을 수 있다 — 사람 경로
             return {}
         rewrites = {spec["lang"]: [spec["text"]] for spec in specs if spec["kind"] == "sentence"}
-        return self._build_classify_reply(data, candidate, change_types.pop() if change_types else "as_is", rewrites)
+        return self._build_classify_reply(data, candidate, rewrites)
 
-    def _build_classify_reply(
-        self, data: dict, candidate: str, change_type: str, rewrites: dict[str, list[str]]
-    ) -> dict:
+    def _build_classify_reply(self, data: dict, candidate: str, rewrites: dict[str, list[str]]) -> dict:
+        """변경 종류는 싣지 않는다 — 서버가 고쳐 쓴 글로 정한다(설계 2026-11-20-change-type-two D5)."""
         return {
             "candidate": candidate,
             "reason": _ANSWER_REASON,
             "rule_ids": _REPLY_RULE_IDS,
             "evidence": [{"unit_id": unit["id"], "quote": unit["text"]} for unit in data["units"] if unit["text"]],
-            "change_type": change_type,
             "rewrites": rewrites,
         }
 

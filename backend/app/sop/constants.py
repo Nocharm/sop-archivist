@@ -18,9 +18,8 @@ TARGET_KINDS = ("sentence", "table", "figure", "slot_heading")
 # 새 SOP 칸 제목에 이은 옛 제목(제품 명세 §7.13 칸 제목) — 칸·언어마다 하나, 글은 칸 이름, 번호를 세지 않고 다른 문서의 같은 제목은 출처만 더한다
 SLOT_HEADING = "slot_heading"
 ORIGINS = ("units", "translation", "new_doc")
-CHANGE_TYPES = (
-    "as_is", "tone", "rewritten", "split", "merged", "translated", "deleted", "new", "table_restructured", "heading",
-)
+# 글자 비교 종류는 그대로·고침 둘이고 서버가 글·표 모양으로 정한다(설계 2026-11-20-change-type-two D1·D2). 나머지는 구조에서 나온다
+CHANGE_TYPES = ("as_is", "rewritten", "split", "merged", "translated", "deleted", "new", "heading")
 TARGET_DOC_TYPES = ("sop", "wi")
 ENTRANCES = ("assign", "match")
 WI_PARTS = ("instruction", "why")

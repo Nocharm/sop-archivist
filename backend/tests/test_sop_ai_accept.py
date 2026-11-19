@@ -64,7 +64,7 @@ def suggest_first_pair(client: TestClient, fake_ai: FakeAi, **reply: object) -> 
 def make_match(client: TestClient, fake_ai: FakeAi, old: str, new: str) -> MatchBundle:
     """옛 문서·입구 2 문서 하나씩에 묶기 계획과 다듬기를 끝까지 돌린 묶음."""
     bundle = make_match_bundle(client, p(old), p(new))
-    fake_ai.chat = lambda data: json.dumps({"change_type": "tone", "reason": "합성 이유.", "rule_ids": ["R02"]}, ensure_ascii=False)
+    fake_ai.chat = lambda data: json.dumps({"change_type": "rewritten", "reason": "합성 이유.", "rule_ids": ["R02"]}, ensure_ascii=False)
     response = request_match(client, bundle.id)
     assert response.status_code == 200, response.text
     run_jobs()
@@ -278,7 +278,7 @@ def test_accepting_a_refined_pair_links_and_records_as_is(client: TestClient, fa
     (unit_id,) = [row.id for row in read_rows(Unit) if row.text == MATCH_OLD]
     (target,) = [row for row in read_rows(TargetSentence) if row.confirmed_text == MATCH_NEW]
     assert (target.id, unit_id) in read_links()
-    assert (target.status, target.change_type, read_decision(unit_id).status) == ("confirmed", "tone", "confirmed")
+    assert (target.status, target.change_type, read_decision(unit_id).status) == ("confirmed", "rewritten", "confirmed")
     live = [row for row in read_rows(AiSuggestion) if row.result == "applied"]
     assert [row.adoption for row in live] == ["as_is"]
 
@@ -290,6 +290,22 @@ def test_a_provisional_pair_waits_for_refinement(client: TestClient, fake_ai: Fa
 
     out = preview(client, bundle.id, "match")
     assert (out["items"], out["excluded_provisional"]) == ([], 1)
+
+
+def test_a_restructured_table_is_accepted_without_a_reason(client: TestClient, fake_ai: FakeAi) -> None:
+    # 표 구성을 바꾼 묶기 제안도 사유 없이 받는다 — 사람이 더 적을 몫(manual)이 아니다(설계 2026-11-20-change-type-two D2)
+    wider = [[*row, "합성 비고"] for row in CELLS]
+    bundle = make_match_bundle(client, tbl(CELLS), tbl(wider))
+    assert request_match(client, bundle.id).status_code == 200
+    run_jobs()
+
+    out = preview(client, bundle.id, "match", bundle.old_document_id)
+    result = accept_all(client, bundle.id, "match", bundle.old_document_id)
+
+    assert ([item["shape"] for item in out["items"]], out["excluded_manual"]) == (["table"], 0)
+    assert result == {"accepted": 1, "skipped": 0}
+    (table,) = [row for row in read_rows(TargetSentence) if row.kind == "table"]
+    assert (table.status, table.change_type) == ("confirmed", "rewritten")
 
 
 def test_new_and_delete_candidates_ride_the_match_accept(client: TestClient, fake_ai: FakeAi) -> None:
@@ -318,7 +334,7 @@ def test_one_side_of_a_pair_is_matched_and_the_pair_released_like_use(client: Te
     ko, en = read_old_ids(client, bundle, MATCH_OLD, MATCH_OLD_EN)
     pair_of = {row.unit_id: row.pair_id for row in read_rows(UnitPairMember)}
     assert ko in pair_of and pair_of[ko] == pair_of.get(en)
-    fake_ai.chat = lambda data: json.dumps({"change_type": "tone", "reason": "합성 이유.", "rule_ids": ["R02"]}, ensure_ascii=False)
+    fake_ai.chat = lambda data: json.dumps({"change_type": "rewritten", "reason": "합성 이유.", "rule_ids": ["R02"]}, ensure_ascii=False)
     assert request_match(client, bundle.id).status_code == 200
     run_jobs()
 

@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.sop.detach import UNASSIGNED
 from app.sop.groups import select_in_chunks
 from app.sop.models import AiJob, AiSuggestion, Unit, UnitDecision
+from app.sop.numbering import strip_number
 from app.sop.units import UNIT_ACTIVE
 
 SUGGESTION_APPLIED = "applied"
@@ -136,15 +137,15 @@ def add_suggestion(
     return suggestion
 
 
-def decide_ai_change_type(sources: Sequence[Unit], text: str, requested: str, *, sentence_count: int) -> str:
-    """AI 새 문장의 변경 종류 — 구조에서 나오는 합침·나눔이 먼저, 그다음 글자 비교다(사람 저장의 판정과 같은 순서).
+def decide_ai_change_type(sources: Sequence[Unit], text: str, *, sentence_count: int) -> str:
+    """AI 새 문장의 변경 종류 — 구조에서 나오는 합침·나눔이 먼저, 그다음 글자 비교다(사람 저장 decisions._decide_change_type과 같은 규칙).
 
-    원문과 다른 글을 AI가 그대로라고 해도 결과물에 그대로라고 적히면 안 되므로 고쳐 씀으로 둔다.
+    글자가 원문(번호를 뺀 내용 포함)과 같으면 그대로, 다르면 고침이다 — AI가 고르지 않는다(설계 2026-11-20-change-type-two D2).
     """
     if len(sources) >= 2:
         return "merged"
     if sentence_count >= 2:
         return "split"
-    if text == sources[0].text:
+    if text in (sources[0].text, strip_number(sources[0].text, sources[0])):
         return "as_is"
-    return "rewritten" if requested == "as_is" else requested
+    return "rewritten"
