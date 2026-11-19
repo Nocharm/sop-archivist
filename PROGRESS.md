@@ -4,6 +4,7 @@
 
 ## 2026-11-19
 
+- **다음 작업 받음 — 문단 분리 · 문단 엑셀 개선 요청** — 사용자 요청서를 `docs/superpowers/handoff/2026-11-19-paragraph-split-requests.md`로 옮겨 적었다. 신뢰 기반 스텝 4-3은 따로 하지 않고 이 요청의 설계(쪼개기 사용감 통일 · 고름 · 처리 중 상태 기계)에 녹인다.
 - **Assign 쪼개기 2단계 — 결정 칸 · 위쪽 줄 컴포넌트(`refactor/assign-split-2-side-panel`)** — 그리기 가운데 오른쪽 결정 칸(`renderSideBody`와 그것만 쓰는 선언 38개)을 `assign-side-panel.tsx`로, 위쪽 줄(`bar`)을 `assign-bar.tsx`로 글자 그대로 옮겼다(둘이 함께 쓰던 `error` · `canClear` · `renderPlaceLabel` · `listDestinationEls`는 `useAssignPage`로). `page.tsx` 974줄. 컴포넌트 경계로 그리기 시점이 조금 바뀌어 클릭 배치 스모크가 자리를 누른 바로 다음 ↵(Confirm으로 포커스가 가는 한 그림 틀 전)를 누르는 경합이 드러났다(dev 5/5 · 이 브랜치 1/3 실패) — 사람은 한 틀 안에 못 누르므로 Confirm 포커스를 기다린 뒤 ↵. 남은 훅 나누기는 설계부터(계획 스텝 4-3).
   - 확인: tsc · lint · vitest 1,643, click place 6/6, 깨끗한 시드 Assign 스모크 ALL PASS 841. 동작 변화 없음이라 버전 그대로. effect · 타이머 총합 그대로(타이머 1개가 결정 칸 파일로).
 - **Assign 쪼개기 1단계 — 그리기와 상태 나누기(`refactor/assign-split-1-core`, 신뢰 기반 계획 스텝 4)** — 5,211줄 `page.tsx`에서 "그리기" 앞의 상태 · 데이터 · 동작을 `use-assign-page.tsx` `useAssignPage()`로 글자 그대로 옮겼다(TypeScript AST로 나눔 — 그리기 쪽 선언 가운데 동작이 부르던 `pickRecommendation` 등 5개는 함께 옮김). `page.tsx`는 2,081줄로 그리기만 하고 쓰는 이름 274개를 받는다. effect 19 · 타이머 26은 개수 그대로 새 파일로 옮겨 기준선을 옮겨 적었다(총합 effect 120 · 타이머 86 그대로). 다음 단계는 그리기를 컴포넌트로, 훅을 기능별로.
