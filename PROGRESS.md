@@ -4,6 +4,7 @@
 
 ## 2026-11-20
 
+- **시안 1 스텝 2 확인(메인 세션)** — `assign:` 스모크 1회차에 "attach and detach a caption from Shape"가 붙인 캡션을 15초 안에 못 봐 실패(뒤 두 검사는 그 여파), 2회차 전체 ALL PASS 845, 그 단계만 5회 모두 통과. 한 번 흔들린 것으로 두고, 다시 나오면 편집 뒤 그 문서 보기 · 줄 묶음 받기(`use-doc-views`)의 캡션 길을 본다.
 - **시안 1 스텝 2 — 편집 뒤 고친 문서만 다시 받기(`feat/mockup1-2-reload-scope`, 설계 D2)** — 붙이기 한 번이 모든 Old 문서 보기 · 전체 줄 · 목록 여덟 개를 다시 받아 "답답하다"(요청서 9 · 13). Old 문서 보기 · 줄을 문서마다 쥐는 `lib/use-doc-views.ts`가 편집 뒤 그 문서의 보기와 `units?document_id=`만 받아 한 번에 놓고(새 보기에 옛 줄이 섞여 결정 칸이 범례로 깜박이던 틈을 닫음), 나머지는 순수 `planReload`(표 한 줄씩 vitest)가 고른 목록만 뒤에서 받는다. 하나였던 `dataKey`는 판단 저장용 전체 키 + To-Be · New 문장 · 같은 글자 · 나누기 제안 키로, 고른 줄의 묶음 · 후보는 그 Unit들의 판단 revision으로, 풀기 전환은 받아 둔 보기를 그대로 놓아 같은 문서를 두 번 받지 않는다. 원문 편집의 되돌리기도 Old 보기 · 줄만(판단 저장 단계는 전처럼 전부). 가정(판단 안 걸린 합치기는 To-Be · New 문장을 바꾸지 않는다)은 pytest 하나로 못 박음. 확인: vitest 1693 · lint · tsc, pytest `test_sop_written.py`(스모크는 메인 세션).
 
 - **시안 1 스텝 1 — 고름 · 처리 중 · 따라가기를 한 곳에(`feat/mockup1-1-focus-model`, 설계 `docs/superpowers/specs/2026-11-20-assign-mockup1-design.md` D1)** — "결정 칸이 범례로 갔다 돌아온다"(요청서 9)와 거듭된 은퇴 Unit 경합(v1.1.51 · v1.1.53 · v1.2.2)의 바탕. `useAssignPage()` 안에 흩어진 `selectedKey` · `follow` · `soloFollow` · `splitRow` · `busy`를 순수 모델 `lib/assign-focus-model.ts`(규칙 1–6, vitest 28개) + 훅 `lib/use-assign-focus.ts`로 옮겼다. 편집 응답 전후로 고름을 지우던 일곱 곳을 걷어 처리 중에도 고름이 남고, 결과 박스는 고름이 누른 때 그대로일 때만 따라가며, 다시 받은 보기에 없는 Unit은 고르지 않는다. 잠금은 아직 화면 전체, 고름은 아직 줄 첫 Unit — 다시 받기 범위(D2) · 짝 고름(D3) · 처리 중 표시(D4)는 뒤 스텝. 확인: vitest 1674 · lint · tsc(스모크는 메인 세션).
