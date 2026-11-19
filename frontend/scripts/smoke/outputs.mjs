@@ -237,7 +237,7 @@ await runStep("outputs: read-only C rows do not start a drag", {}, async ({ page
   await page.locator('[data-testid="outputs-tab-c"]').click();
   const row = page.locator('[data-testid="output-c"] [data-testid^="output-c-row-"]').nth(1);
   await row.waitFor({ timeout: T });
-  check("read-only C rows are not drag boxes and have no drop line", (await page.locator("[data-drag-box]").count()) === 0 && (await page.locator('[data-testid="output-c-dropline"]').count()) === 0);
+  check("read-only C rows are not drag boxes and have no drop line", (await page.locator("[data-drag-box]").count()) === 0 && (await page.locator('[data-testid="drop-line"]').count()) === 0);
   await row.scrollIntoViewIfNeeded();
   const box = await row.boundingBox();
   await page.mouse.move(box.x + 20, box.y + 6);

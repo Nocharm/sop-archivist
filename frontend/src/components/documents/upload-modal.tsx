@@ -143,7 +143,7 @@ export function UploadModal({ bundleId, initialFiles = [], onClose, onUploaded, 
       return item ? { id: item.id } : null;
     },
     getCard: ({ id }) => {
-      // 표의 ID 자리에 지금 쪽을 적는다 - 놓으면 바뀔 쪽은 메모가 말한다
+      // 표의 ID 자리에 지금 쪽을 적는다 - 놓으면 바뀔 쪽은 묶음 테두리와 상태 글(drag-status)이 말한다
       const index = picked.findIndex((item) => item.id === id);
       return index < 0 ? { id: "", text: "", count: null } : { id: t(`upload.side.${plans[index].side}`), text: picked[index].file.name, count: null };
     },

@@ -40,19 +40,19 @@ const readSectionIds = (page, key) => page.evaluate((k) => [...(document.querySe
 // 그 줄이 든 칸의 키
 const readRowKey = (page, id) => page.evaluate((rowId) => document.querySelector(`[data-testid="output-c-row-${rowId}"]`)?.closest("section")?.dataset.locationKey ?? null, id);
 const readRowNumber = (page, id) => page.evaluate((rowId) => document.querySelector(`[data-testid="output-c-number-${rowId}"]`)?.textContent.trim() ?? null, id);
-// 끌리는 표 - 거절 표시, 이유·번호(note), 글 전체, 끌리는 덩어리 줄(src)
+// 끌리는 표 - 거절 표시, 글 전체, 끌리는 덩어리 줄(src). 이유·번호(note)는 표가 아니라 화면 밖 상태 글(drag-status)에 있다
 const readDragCard = (page) => page.evaluate(() => {
   const card = document.querySelector('[data-testid="drag-card"]');
-  const note = card?.querySelector(".drag-card-note");
+  const status = document.querySelector('[data-testid="drag-status"]');
   const src = [...document.querySelectorAll("[data-drag-src]")].map((row) => row.dataset.flipKey);
-  return { shown: Boolean(card), refused: card?.hasAttribute("data-refused") ?? false, note: note && !note.hidden ? note.textContent.trim() : "", text: card?.textContent ?? "", src };
+  return { shown: Boolean(card), refused: card?.hasAttribute("data-refused") ?? false, note: card && status ? status.textContent.trim() : "", text: card?.textContent ?? "", src };
 });
 // 끌기가 남긴 표시 - 끝나면 모두 0이어야 한다
 const readDragMarks = (page) => page.evaluate(() => ({
   flag: document.documentElement.hasAttribute("data-box-drag"),
   cards: document.querySelectorAll('[data-testid="drag-card"]').length,
   marks: document.querySelectorAll("[data-drag-src], [data-drag-home], [data-drag-seen], [data-drag-closed], [data-drag-sheet], [data-drag-locked], [data-drop]").length,
-  lineShown: document.querySelector('[data-testid="output-c-dropline"]')?.hidden === false,
+  lineShown: document.querySelector('[data-testid="drop-line"]')?.hidden === false,
 }));
 // 칸 하나의 상태 - 흐림(칸 머리에 닿는 opacity를 용지까지 곱한 값), N/A 사유 줄의 흐림, 올린 칸 테두리(data-drop).
 // 흐림은 칸이 아니라 칸 안 요소에 걸린다(N/A 사유 줄은 빼고) - 그래서 머리에서 잰다
@@ -93,7 +93,7 @@ const readOutlineFit = (page, key) => page.evaluate((k) => {
       for (const rect of range.getClientRects()) if (rect.width > 0 && rect.height > 0) texts.push(rect);
     }
   }
-  const line = document.querySelector('[data-testid="output-c-dropline"]');
+  const line = document.querySelector('[data-testid="drop-line"]');
   const marks = [];
   if (line && !line.hidden) {
     const lineBox = line.getBoundingClientRect();
@@ -867,14 +867,13 @@ await runStep("order: drag a line to reorder and indent", {}, async ({ page, tak
   const readNumber = async (id) => (await page.locator(`[data-testid="output-c-number-${id}"]`).innerText()).trim();
   const isDragging = () => page.evaluate(() => document.documentElement.hasAttribute("data-box-drag"));
   const readPane = () => page.locator('[data-testid="output-c"]').evaluate((el) => el.closest(".overflow-auto, .overflow-y-auto").scrollTop);
-  const dropLine = page.locator('[data-testid="output-c-dropline"]');
+  const dropLine = page.locator('[data-testid="drop-line"]');
   const card = page.locator('[data-testid="drag-card"]');
-  // 놓을 자리의 미리 센 번호는 표의 note("→ 5.1", 깊이가 바뀌면 "· indent"가 붙는다)에 적힌다
-  const cardNote = card.locator(".drag-card-note");
-  const readNote = async () => ((await cardNote.isVisible()) ? (await cardNote.innerText()).trim() : "");
+  // 놓을 자리의 미리 센 번호는 상태 글(drag-status, 화면 밖)의 note("→ 5.1", 깊이가 바뀌면 "· indent"가 붙는다)에 적힌다
+  const readNote = async () => ((await card.count()) > 0 ? ((await page.locator('[data-testid="drag-status"]').textContent()) ?? "").trim() : "");
   // 선에 붙은 표시(있다면)가 덮는 글 상자 - 모든 칸의 줄 번호·글과 겹친 것
   const readLineCover = () => page.evaluate(() => {
-    const marks = [...document.querySelectorAll('[data-testid="output-c-dropline"] *')].map((el) => el.getBoundingClientRect()).filter((box) => box.width > 0 && box.height > 0);
+    const marks = [...document.querySelectorAll('[data-testid="drop-line"] *')].map((el) => el.getBoundingClientRect()).filter((box) => box.width > 0 && box.height > 0);
     const texts = [...document.querySelectorAll('[data-testid="output-c"] [data-drag-box] :is([data-testid^="output-c-item-"], [data-testid^="output-c-number-"], td)')].map((el) => ({ id: el.getAttribute("data-testid") ?? "td", box: el.getBoundingClientRect() }));
     const isOver = (a, b) => Math.min(a.right, b.right) - Math.max(a.left, b.left) > 0.5 && Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top) > 0.5;
     return texts.filter(({ box }) => marks.some((mark) => isOver(mark, box))).map(({ id }) => id);
@@ -1048,7 +1047,7 @@ await runStep("order: drag a line to reorder and indent", {}, async ({ page, tak
   const naFit = await readOutlineFit(page, naCase.na);
   check("the refused outline clears the N/A section's heading and reason", isOutlineClear(naFit), JSON.stringify(naFit));
   await takeShot("order-xsec-refused-na.png");
-  check("an N/A section refuses with a reason", validFirst && refusal.refused && refusal.text.includes("That section is N/A in the To-Be list.") && (await dropLine.isHidden()) && refusal.section?.opacity < 1 && refusal.section?.drop === "refused", JSON.stringify({ validFirst, ...refusal }));
+  check("an N/A section refuses with a reason", validFirst && refusal.refused && refusal.note.includes("That section is N/A in the To-Be list.") && (await dropLine.isHidden()) && refusal.section?.opacity < 1 && refusal.section?.drop === "refused", JSON.stringify({ validFirst, ...refusal }));
   check("the dimmed N/A section keeps its N/A reason line undimmed", refusal.section?.reasonOpacity === 1, JSON.stringify(refusal.section));
   const refusalPuts = puts.length;
   await page.mouse.up();
@@ -1360,7 +1359,7 @@ await runStep("order: drag a WI line to another step", {}, async ({ page }) => {
   await dragThrough(page, from, [await pointInSectionEnd(page, wi.why)]);
   const overWhy = { card: await readDragCard(page), section: await readSectionState(page, wi.why) };
   const whyFit = await readOutlineFit(page, wi.why);
-  check("over the other part (Why) the drag is refused with its reason", overWhy.card.refused && overWhy.card.text.includes("Instruction or Why: change it in Assign") && overWhy.section?.drop === "refused" && isOutlineClear(whyFit), JSON.stringify({ ...overWhy, whyFit }));
+  check("over the other part (Why) the drag is refused with its reason", overWhy.card.refused && overWhy.card.note.includes("Instruction or Why: change it in Assign") && overWhy.section?.drop === "refused" && isOutlineClear(whyFit), JSON.stringify({ ...overWhy, whyFit }));
   await page.mouse.move(from.x, (await pointInSectionEnd(page, wi.to)).y, { steps: 12 });
   const overTo = await readDragCard(page);
   // 받을 수 없는 다른 부분(Why)은 그 위에 있지 않아도 끄는 내내 흐리고, 받는 칸은 흐리지 않다
@@ -1404,7 +1403,7 @@ await runStep("order: a written document's block cannot leave its section", {}, 
   await scrollRowToTop(page, written.from);
   await dragThrough(page, await pointInRow(page, written.from), [await pointInSectionEnd(page, written.to)]);
   const over = { card: await readDragCard(page), section: await readSectionState(page, written.to), locked: await page.evaluate(() => document.querySelectorAll("[data-drag-locked]").length) };
-  check("over another section the written block is refused with the step reason and the other sections are dimmed", over.card.refused && over.card.text.includes("Only sentences written here for a WI can change step.") && over.section?.drop === "refused" && over.section.opacity < 1 && over.locked === 1, JSON.stringify(over));
+  check("over another section the written block is refused with the step reason and the other sections are dimmed", over.card.refused && over.card.note.includes("Only sentences written here for a WI can change step.") && over.section?.drop === "refused" && over.section.opacity < 1 && over.locked === 1, JSON.stringify(over));
   await page.mouse.up();
   await page.waitForTimeout(400);
   check("releasing it saves nothing", puts.length === 0 && JSON.stringify(await readSectionIds(page, written.fromKey)) === JSON.stringify(order), JSON.stringify({ puts: puts.length, order: await readSectionIds(page, written.fromKey) }));
@@ -1519,18 +1518,21 @@ await runStep("order: a save landing mid-drag keeps the drop line and the saved 
   };
   // 끄는 중의 상태 - 선이 그어진 줄(선 바로 아래의 덩어리 밖 줄, 없으면 칸 끝)과 덩어리 줄
   const readDrag = () => page.evaluate(() => {
-    const line = document.querySelector('[data-testid="output-c-dropline"]');
+    // 선은 끌기 엔진이 처음 그을 때 붙인다 - 아직 없으면 감춘 것과 같다
+    const line = document.querySelector('[data-testid="drop-line"]');
+    const isLineShown = line !== null && !line.hidden;
     const home = document.querySelector("[data-drag-home]");
     const card = document.querySelector('[data-testid="drag-card"]');
-    const top = line.getBoundingClientRect().top;
-    const below = home && !line.hidden ? [...home.querySelectorAll("[data-drag-box]:not([data-drag-src])")].find((row) => row.getBoundingClientRect().top >= top - 1) : null;
+    const top = isLineShown ? line.getBoundingClientRect().top : 0;
+    const below = home && isLineShown ? [...home.querySelectorAll("[data-drag-box]:not([data-drag-src])")].find((row) => row.getBoundingClientRect().top >= top - 1) : null;
     return {
       flag: document.documentElement.hasAttribute("data-box-drag"),
-      lineShown: !line.hidden,
+      lineShown: isLineShown,
       before: below?.dataset.flipKey ?? null,
       block: home ? [...home.querySelectorAll("[data-drag-src]")].map((row) => row.dataset.flipKey) : [],
       refused: card?.hasAttribute("data-refused") ?? false,
-      note: card?.textContent ?? "",
+      // 이유는 표가 아니라 화면 밖 상태 글에 있다
+      note: card ? (document.querySelector('[data-testid="drag-status"]')?.textContent ?? "") : "",
     };
   });
   const puts = [];

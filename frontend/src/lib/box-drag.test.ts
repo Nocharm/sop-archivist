@@ -1,4 +1,4 @@
-// 공통 끌기 엔진 시험 - 판단 함수(문턱·가장자리·시작 조건)와 DOM 동작(표·표시·클릭 삼키기·Esc·Alt 모드).
+// 공통 끌기 엔진 시험 - 판단 함수(문턱·가장자리·시작 조건)와 DOM 동작(표·표시·상태 글·놓을 자리 선·클릭 삼키기·Esc·Alt 모드).
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -69,6 +69,7 @@ describe("attachBoxDrag", () => {
     return config;
   }
   const card = () => document.querySelector<HTMLElement>('[data-testid="drag-card"]');
+  const status = () => document.querySelector<HTMLElement>('[data-testid="drag-status"]');
 
   beforeEach(() => {
     root = document.createElement("div");
@@ -298,22 +299,85 @@ describe("attachBoxDrag", () => {
     expect(clicks).toHaveBeenCalledTimes(1);
   });
 
-  it("shows a refusal on the card and the target", () => {
+  it("shows a refusal on the card, the cursor flag and the target; the reason goes to the status text, not the card", () => {
     const target = document.createElement("div");
     document.body.append(target);
-    const answers: DragHover[] = [{ state: "refused", note: "why", target }, { state: "ok", target }];
+    const answers: DragHover[] = [{ state: "refused", note: "why", target }, { state: "ok", note: "go", target }];
     attach({ onMove: () => answers.shift() ?? { state: "ok", target } });
     press(box);
     move(30, 10);
     expect(card()!.hasAttribute("data-refused")).toBe(true);
-    expect(card()!.textContent).toContain("why");
+    expect(html.getAttribute("data-box-drag")).toBe("refused");
+    expect(card()!.textContent).not.toContain("why");
+    expect(status()!.textContent).toBe("why");
+    expect(status()!.getAttribute("role")).toBe("status");
     expect(target.dataset.drop).toBe("refused");
     move(31, 10);
     expect(target.dataset.drop).toBe("over");
     expect(card()!.hasAttribute("data-refused")).toBe(false);
-    release(31, 10);
+    expect(html.getAttribute("data-box-drag")).toBe("");
+    expect(status()!.textContent).toBe("go");
+    move(32, 10);
+    expect(status()!.textContent).toBe("");
+    release(32, 10);
     expect(target.hasAttribute("data-drop")).toBe(false);
+    expect(status()!.textContent).toBe("");
     target.remove();
+  });
+
+  it("keeps one status text while attached and removes it with the last detach", () => {
+    attach();
+    const second = attachBoxDrag(document.createElement("div"), { pick: () => null, getCard: () => ({ id: "", text: "", count: null }), getScrollers: () => [], onMove: () => ({ state: "none" }), onDrop: () => {} });
+    expect(document.querySelectorAll('[data-testid="drag-status"]').length).toBe(1);
+    second();
+    expect(status()).not.toBeNull();
+    detach!();
+    detach = null;
+    expect(status()).toBeNull();
+  });
+
+  it("dropping on a refused place reports the reason once; an ok place, a silent refusal or Esc do not", () => {
+    const onRefusedDrop = vi.fn();
+    let hover: DragHover = { state: "refused", note: "why" };
+    const config = attach({ onMove: () => hover, onRefusedDrop });
+    press(box);
+    move(30, 10);
+    move(31, 10);
+    release(31, 10);
+    expect(config.onDrop).toHaveBeenCalledTimes(1);
+    expect(onRefusedDrop).toHaveBeenCalledTimes(1);
+    expect(onRefusedDrop).toHaveBeenCalledWith("why");
+    for (const next of [{ state: "ok", note: "go" }, { state: "refused" }] as DragHover[]) {
+      hover = next;
+      press(box);
+      move(30, 10);
+      release(30, 10);
+    }
+    hover = { state: "refused", note: "why" };
+    press(box);
+    move(30, 10);
+    key("keydown", "Escape");
+    expect(onRefusedDrop).toHaveBeenCalledTimes(1);
+  });
+
+  it("draws one drop line in the root from the hover, hides it without one and removes it at the end", () => {
+    root.getBoundingClientRect = () => ({ left: 100, top: 50, right: 900, bottom: 650, width: 800, height: 600, x: 100, y: 50, toJSON: () => ({}) });
+    const answers: DragHover[] = [{ state: "none" }, { state: "ok", line: { left: 120, top: 80, width: 300 } }, { state: "ok", line: { left: 130, top: 90, width: 200 } }, { state: "none" }];
+    attach({ onMove: () => answers.shift() ?? { state: "none" } });
+    const line = () => root.querySelector<HTMLElement>('[data-testid="drop-line"]');
+    press(box);
+    move(30, 10);
+    expect(line()).toBeNull();
+    move(31, 10);
+    expect(line()!.hidden).toBe(false);
+    expect([line()!.style.left, line()!.style.top, line()!.style.width]).toEqual(["20px", "30px", "300px"]);
+    move(32, 10);
+    expect(root.querySelectorAll('[data-testid="drop-line"]').length).toBe(1);
+    expect([line()!.style.left, line()!.style.top, line()!.style.width]).toEqual(["30px", "40px", "200px"]);
+    move(33, 10);
+    expect(line()!.hidden).toBe(true);
+    release(33, 10);
+    expect(line()).toBeNull();
   });
 
   it("blur mid-drag cancels it and swallows the following click", async () => {

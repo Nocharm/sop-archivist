@@ -1,8 +1,10 @@
 // 끌기 엔진을 root에 붙이는 얇은 훅 - config가 null이면(읽기 전용 등) 붙이지 않는다. 콜백은 렌더마다 최신을 불러 다시 붙이지 않는다.
+// 못 놓는 자리에 놓으면 그 이유를 알림으로 한 번 띄운다 - 모든 화면이 같게(설계 2026-11-20-assign-mockup1-design.md D7)
 "use client";
 
 import { useEffect, useRef, type RefObject } from "react";
 
+import { showToast } from "@/components/ui/toast";
 import { attachBoxDrag, type BoxDragConfig } from "@/lib/box-drag";
 
 export function useBoxDrag<S>(rootRef: RefObject<HTMLElement | null>, config: BoxDragConfig<S> | null): void {
@@ -29,6 +31,7 @@ export function useBoxDrag<S>(rootRef: RefObject<HTMLElement | null>, config: Bo
       onMove: (source, point, start) => current().onMove(source, point, start),
       onDrop: (source, point, start) => current().onDrop(source, point, start),
       onEnd: (source, cancelled) => current().onEnd?.(source, cancelled),
+      onRefusedDrop: (note) => showToast(note, "info"),
     });
   }, [rootRef, enabled]);
 }

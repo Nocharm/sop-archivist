@@ -1590,7 +1590,7 @@ await runStep("new documents: drag a WI onto another SOP to change its parent, U
   const row = (doc) => page.locator(`[data-testid="tobe-id-${doc.id}-row"]`);
   const titleOf = (doc) => page.locator(`[data-testid="tobe-id-${doc.id}-title-text"]`);
   const card = page.locator('[data-testid="drag-card"]');
-  const noteText = () => card.locator(".drag-card-note").evaluate((el) => (el.hidden ? null : (el.textContent ?? "").trim()));
+  const noteText = () => page.locator('[data-testid="drag-status"]').evaluate((el) => (el.textContent ?? "").trim() || null);
   const dropOf = (locator) => locator.getAttribute("data-drop");
   const dropCount = () => page.locator("[data-drop]").count();
   const opacityOf = (locator) => locator.evaluate((el) => Number(getComputedStyle(el).opacity));
@@ -1953,7 +1953,7 @@ await runStep("new documents: a WI dragged far down a long list stays in view wh
     }, null, { timeout: T });
     const targetBox = await rowOf(sopB).boundingBox();
     await page.mouse.move(from.x, targetBox.y + Math.min(targetBox.height / 2, 24), { steps: 6 });
-    const note = await page.locator('[data-testid="drag-card"] .drag-card-note').evaluate((el) => (el.hidden ? null : (el.textContent ?? "").trim()));
+    const note = await page.locator('[data-testid="drag-status"]').evaluate((el) => (el.textContent ?? "").trim() || null);
     check("auto-scroll brought SOP-LONG-B under the pointer", note === "Parent SOP: SOP-LONG-B", note);
     const scrollAtDrop = await frameScroll();
     const saved = page.waitForResponse((response) => response.request().method() === "PATCH" && new URL(response.url()).pathname.endsWith(`/tobe/docs/${moving.id}`), { timeout: T });
@@ -2125,7 +2125,7 @@ await runStep("documents: the upload window sorts files into Old and New groups,
   const note = async (index) => (await getText(page, `upload-note-${index}`)).replace(/\s+/g, " ").trim();
   const rowCount = () => page.locator('[data-testid="upload"] .upload-item').count();
   const waitSubmit = (state) => page.locator(`[data-testid="upload-submit"]${state === "on" ? ":not([disabled])" : "[disabled]"}`).waitFor({ timeout: T }).then(() => true, () => false);
-  const cardNote = () => card.locator(".drag-card-note").evaluate((el) => (el.hidden ? null : (el.textContent ?? "").trim()));
+  const cardNote = () => page.locator('[data-testid="drag-status"]').evaluate((el) => (el.textContent ?? "").trim() || null);
   const centerOf = async (locator) => {
     const box = await locator.boundingBox();
     return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
