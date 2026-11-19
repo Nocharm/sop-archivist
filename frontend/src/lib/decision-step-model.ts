@@ -45,6 +45,20 @@ export const IN_PLACE_EDIT_OPS: ReadonlySet<string> = new Set(["set_language", "
 /** 판단 저장 단계(되돌리기 기록의 op) - 판단만 바꾸고 Unit은 은퇴시키지 않는다. 되돌려도 고른 줄을 둔다 */
 const DECISION_STEP_OPS: ReadonlySet<string> = new Set(["confirm", "hold", "link", "unlink", "mark_new", "link_source", "confirm_identical", "accept_ai", "delete", "move_out", "clear", "reset"]);
 
+/** 원문 편집 단계(되돌리기 기록의 op, 자르기는 cut) - 서버는 판단이 걸린 편집을 되돌리지 않는다(confirm 없이) */
+const UNIT_EDIT_STEP_OPS: ReadonlySet<string> = new Set([
+  "cut", "carve", "merge", "unmerge", "move_boundary", "set_layout_table", "attach_caption", "detach_caption", "set_first_row_caption",
+  "group_figures", "ungroup_figures", "set_heading", "clear_noise", ...IN_PLACE_EDIT_OPS,
+]);
+
+/**
+ * 되돌리기·다시 하기가 원문 편집이었나 - 그러면 판단 · 대상(Target)이 그대로라 Old 문서 보기 · 줄만 다시 받는다(설계 2026-11-20 D2).
+ * 판단 저장 단계와 모르는 op는 아니다(모두 다시 받는 안전한 쪽)
+ */
+export function isUnitEditStep(op: string): boolean {
+  return UNIT_EDIT_STEP_OPS.has(op);
+}
+
 /**
  * 되돌리기·다시 하기가 고른 줄을 비워야 하는가 - 단위가 걸린 모양 편집(자르기·합치기·제목↔문장 등)은 Unit이 은퇴할 수 있어,
  * 고른 채 다시 받으면 없는 Unit의 묶음·후보를 부른다. 제자리 편집과 판단 저장은 두고, 모르는 op는 안전한 쪽(비움)으로 본다

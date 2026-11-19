@@ -230,3 +230,61 @@ export function listEditUnitIds(op: EditOp): number[] {
       return [];
   }
 }
+
+/** 편집 뒤 다시 받기의 까닭(설계 D2) - isReleased는 판단을 풀며(confirm) 보낸 편집 */
+export type ReloadCause =
+  | { kind: "old_edit"; docId: number; isInPlace: boolean; isReleased: boolean }
+  | { kind: "new_edit"; docId: number }
+  | { kind: "pair"; docId: number }
+  | { kind: "caption_ref"; docId: number }
+  | { kind: "split_suggestion"; docId: number; isApplied: boolean }
+  // docId null - 되돌리기 응답은 문서를 알려 주지 않는다. 판단 저장 단계의 되돌리기는 이것이 아니라 전체 다시 받기다
+  | { kind: "edit_undo"; docId: number | null };
+
+/**
+ * 무엇을 다시 받나 - docs · units · newDoc는 따라가기가 기다리는 것(보기와 그 문서 줄은 한 번에 받아 한 번에 놓는다),
+ * 나머지는 뒤에서 받아 고름을 막지 않는다. 분류 · 묶기 · 무효 제안과 Remark 최근 목록은 편집이 바꾸지 않아 받지 않는다
+ */
+export interface ReloadPlan {
+  /** 다시 받을 문서 보기 - all이면 Old 문서 모두 */
+  docs: readonly number[] | "all";
+  /** 그 문서들의 Unit 줄도(보기와 한 번에) */
+  units: boolean;
+  /** 한 단 New 문서 보기 */
+  newDoc: number | null;
+  /** New 문장 목록(엮은 문서도 같이) */
+  written: boolean;
+  tobe: boolean;
+  identical: boolean;
+  /** 이 문서의 AI 나누기 제안(AI 켬일 때만) */
+  splitSuggestions: number | null;
+  bundle: boolean;
+}
+
+const NO_RELOAD: ReloadPlan = { docs: [], units: false, newDoc: null, written: false, tobe: false, identical: false, splitSuggestions: null, bundle: false };
+
+/** 편집 하나 뒤에 다시 받을 것 - 설계 D2의 표 "편집 | 기다림 | 뒤에서" 한 줄씩 */
+export function planReload(cause: ReloadCause, ctx: { aiOn: boolean }): ReloadPlan {
+  switch (cause.kind) {
+    case "old_edit": {
+      const own = { ...NO_RELOAD, docs: [cause.docId], units: true, bundle: true };
+      // 판단을 풀었으면 대상(Target)이 지워진다 - To-Be · New 문장(엮은 문서) · 같은 글자 후보까지
+      if (cause.isReleased) return { ...own, tobe: true, written: true, identical: true, splitSuggestions: cause.isInPlace || !ctx.aiOn ? null : cause.docId };
+      // 제자리 편집(언어 · 참조 · 번호)은 글도 Unit도 그대로다
+      if (cause.isInPlace) return own;
+      return { ...own, identical: true, splitSuggestions: ctx.aiOn ? cause.docId : null };
+    }
+    case "new_edit":
+      return { ...NO_RELOAD, newDoc: cause.docId, written: true, tobe: true };
+    case "pair":
+      return { ...NO_RELOAD, docs: [cause.docId], units: true, bundle: true };
+    case "caption_ref":
+      return { ...NO_RELOAD, docs: [cause.docId] };
+    case "split_suggestion":
+      // 제안 표시(split_suggestion_id)는 문서 보기에 실려 온다 - 버리기는 그 보기와 제안 목록만
+      if (!cause.isApplied) return { ...NO_RELOAD, docs: [cause.docId], splitSuggestions: ctx.aiOn ? cause.docId : null };
+      return planReload({ kind: "old_edit", docId: cause.docId, isInPlace: false, isReleased: false }, ctx);
+    case "edit_undo":
+      return { ...NO_RELOAD, docs: cause.docId === null ? "all" : [cause.docId], units: true, identical: true, bundle: true };
+  }
+}

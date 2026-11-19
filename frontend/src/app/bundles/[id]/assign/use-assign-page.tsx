@@ -28,7 +28,7 @@ import { findLastStep } from "@/lib/destination-manage-model";
 import { findSplitBlock, readSplitOffsets } from "@/lib/split-ai-tabs-model";
 import { planPairLanguages, type JoinKind, type JoinPlan } from "@/lib/split-menu-model";
 import { listAppliedSuggestions, requestAi, setSuggestionAdoption, type AiKind, type AiScope } from "@/lib/api-manage";
-import { addToBeDoc, addWiStep, acceptSuggestions, MAX_ACCEPT, confirmPair, createPair, deletePair, editUnits, clearDecisions, confirmMatchesInBulk, getComposedDoc, getDocumentView, getGroupByTarget, getUnitRef, getGroupByUnit, getToBe, listAllUnits, listDocuments, listIdenticalCandidates, listNewCandidates, listSuggestions, listWrittenSentences, redoDecision, removeToBeDoc, removeWiStep, saveGroup, undoDecision, updateCaptionRef, type AcceptKind, type AiSuggestion, type ComposedDoc, type ComposedItem, type DecisionStepResult, type DocumentView, type EditOp, type Group, type GroupSaveInput, type NewCandidate, type ToBe, type UndoMeta, type UnitRefDetail, type UnitRow, type ViewUnit, type WrittenSentence } from "@/lib/api-sop";
+import { addToBeDoc, addWiStep, acceptSuggestions, MAX_ACCEPT, confirmPair, createPair, deletePair, editUnits, clearDecisions, confirmMatchesInBulk, getComposedDoc, getDocumentView, getGroupByTarget, getUnitRef, getGroupByUnit, getToBe, listDocuments, listIdenticalCandidates, listNewCandidates, listSuggestions, listWrittenSentences, redoDecision, removeToBeDoc, removeWiStep, saveGroup, undoDecision, updateCaptionRef, type AcceptKind, type AiSuggestion, type ComposedDoc, type ComposedItem, type DecisionStepResult, type DocumentView, type EditOp, type Group, type GroupSaveInput, type NewCandidate, type ToBe, type UndoMeta, type UnitRefDetail, type UnitRow, type ViewUnit, type WrittenSentence } from "@/lib/api-sop";
 import { listRefCandidates } from "@/lib/caption-ref-model";
 import { isBundleKind, isCaptionGate, listCaptionPendingRowKeys, makeIsLinkedToWritten, type CaptionUnit } from "@/lib/caption-model";
 import { buildBlockPlaces, getCaptionMotion, resolveCaptionDetach, resolveCaptionDrop, type CaptionDetach, type CaptionDrop } from "@/lib/caption-slot-model";
@@ -43,10 +43,10 @@ import { countDecidedLines, getTableNumber, getUnitUnwrapTable, listUnwrapScopes
 import { resolveLineParam } from "@/lib/assign-line-param";
 import { readAssignView, writeAssignView } from "@/lib/assign-view-prefs";
 import { loadBundle, useBundle } from "@/lib/bundle-store";
-import { describeDecisionStep, getAssignUndoKey, pickSaveOp, shouldDropSelectionOnStep } from "@/lib/decision-step-model";
-import { buildDestinationOptions, buildGroupSave, buildRows, buildSentenceSlots, buildViewsKey, findNextOpen, findSystemHold, getDestinationId, getRowStep, hasDraftChange, isSentenceUnit, listJoinedTargetIds, listUnpairedKeys, readDestination, readHumanReason, stepInList, type CellSource, type ClassifyFilter, type ClassifyRow, type Destination, type DestinationOption, type DropPosition, type RowDraft } from "@/lib/classify-model";
+import { describeDecisionStep, getAssignUndoKey, IN_PLACE_EDIT_OPS, isUnitEditStep, pickSaveOp, shouldDropSelectionOnStep } from "@/lib/decision-step-model";
+import { buildDestinationOptions, buildGroupSave, buildRows, buildSentenceSlots, findNextOpen, findSystemHold, getDestinationId, getRowStep, hasDraftChange, isSentenceUnit, listJoinedTargetIds, listUnpairedKeys, readDestination, readHumanReason, stepInList, type CellSource, type ClassifyFilter, type ClassifyRow, type Destination, type DestinationOption, type DropPosition, type RowDraft } from "@/lib/classify-model";
 import { buildDocDashboard } from "@/lib/doc-dashboard-model";
-import { listEditUnitIds, NO_FOCUS, NO_PLACE, readEditKind } from "@/lib/assign-focus-model";
+import { listEditUnitIds, NO_FOCUS, NO_PLACE, planReload, readEditKind, type ReloadPlan } from "@/lib/assign-focus-model";
 import { pickDocRevision } from "@/lib/doc-revision";
 import { useI18n } from "@/lib/i18n";
 import { genId } from "@/lib/id";
@@ -66,6 +66,7 @@ import { useCutLine } from "@/lib/use-cut-line";
 import { countRefLookups, isRefPending, pickRefUnit } from "@/lib/ref-model";
 import { buildNavKeys, listTocBlocks, readTocNavKey, toTocNavKey } from "@/lib/toc-block-model";
 import { useEquisPolling } from "@/lib/use-equis-polling";
+import { useDocViews, type DocBatch } from "@/lib/use-doc-views";
 import { useLoaded } from "@/lib/use-loaded";
 import { usePaneSlide } from "@/lib/use-pane-slide";
 import { usePaneZoom, type PaneKey, type ZoomDir } from "@/lib/use-pane-zoom";
@@ -219,6 +220,9 @@ export function revealFarElement(el: HTMLElement) {
   requestAnimationFrame(check);
 }
 
+/** 편집 뒤 뒤에서 다시 받는 목록의 키 - planReload가 고른 것만 하나씩 오른다(설계 D2) */
+const NO_RELOAD_KEYS = { tobe: 0, written: 0, identical: 0, split: 0 };
+
 /** 끝낸 Old 줄 수 - 확정만 센다(보류는 아직 끝나지 않았다) */
 function countDone(rows: ClassifyRow[]): number {
   return rows.filter((row) => row.status === "confirmed").length;
@@ -243,28 +247,29 @@ export function useAssignPage() {
   const docs = useLoaded(() => listDocuments(bundleId), String(bundleId));
   const oldDocs = (docs.data ?? []).filter((doc) => doc.side === "old" && doc.status === "ready");
   const oldDocIds = oldDocs.map((doc) => doc.id);
-  const views = useLoaded<DocumentView[] | null>(
-    () => (docs.data === null ? Promise.resolve(null) : Promise.all(oldDocIds.map((id) => getDocumentView(bundleId, id)))),
-    buildViewsKey(docs.data === null ? null : oldDocIds),
-  );
+  // Old 문서 보기와 Unit 줄 - 문서마다 쥐고, 편집 뒤에는 고친 문서만 다시 받는다(설계 2026-11-20 D2)
+  const docViews = useDocViews(bundleId, docs.data === null ? null : oldDocIds);
+  // 판단 저장 · AI 작업 끝 · 일괄 일 뒤에 오른다 - 아래 목록이 모두 다시 받는다(분류 · 묶기 · 무효 제안과 Remark 최근 목록은 이때만).
+  // 편집 뒤에는 오르지 않고 planReload가 고른 목록의 키만 오른다
   const [unitsKey, setUnitsKey] = useState(0);
   const dataKey = `${bundleId}:${unitsKey}`;
-  const units = useLoaded(() => listAllUnits(bundleId), dataKey);
+  const [reloadKeys, setReloadKeys] = useState(NO_RELOAD_KEYS);
+  const tobeKey = `${dataKey}:${reloadKeys.tobe}`;
+  const writtenKey = `${dataKey}:${reloadKeys.written}`;
   // 저장할 때마다 다시 받는다 - 문장이 든 자리 수(sentence_counts)가 보낼 곳 지우기 단추를 잠근다
-  const tobe = useLoaded(() => getToBe(bundleId), dataKey);
+  const tobe = useLoaded(() => getToBe(bundleId), tobeKey);
   // 이 화면에서 보낼 곳을 더하거나 지운 응답 - 그 뒤에 다시 받은 목록이 올 때까지 이쪽이 더 새롭다
   const [tobeFresh, setTobeFresh] = useState<{ key: string; data: ToBe } | null>(null);
-  const tobeData = tobeFresh !== null && (tobeFresh.key === dataKey || tobe.isLoading) ? tobeFresh.data : tobe.data;
+  const tobeData = tobeFresh !== null && (tobeFresh.key === tobeKey || tobe.isLoading) ? tobeFresh.data : tobe.data;
   const [isPlaceBusy, setIsPlaceBusy] = useState(false);
-  const writtenList = useLoaded(() => listWrittenSentences(bundleId), dataKey);
-  const identical = useLoaded(() => listIdenticalCandidates(bundleId), dataKey);
+  const writtenList = useLoaded(() => listWrittenSentences(bundleId), writtenKey);
+  const identical = useLoaded(() => listIdenticalCandidates(bundleId), `${dataKey}:${reloadKeys.identical}`);
   // AI 작업이 끝나면 단위·제안·New 문장을 다시 불러온다 - 제안이 보이고 다음 저장이 낡은 revision으로 409가 나지 않는다.
   // 원문 보기도 다시 받는다 - 나누기 제안 표시(split_suggestion_id)와 AI가 제안한 한/영 짝이 거기 실려 온다
   const aiJobs = useAiJobs(bundleId, () => {
     // 한 단으로 연 New 문서의 원문 보기도(그 문서의 나누기 제안 표시)
     setSoloKey((key) => key + 1);
-    views.reload();
-    setUnitsKey((key) => key + 1);
+    reloadData(true);
     void loadBundle(bundleId);
   });
   const aiOn = aiJobs.status?.ai_enabled ?? false;
@@ -273,6 +278,12 @@ export function useAssignPage() {
   const matchSuggestions = useLoaded(() => listAppliedSuggestions(bundleId, "match"), dataKey);
   // 답이 무효였던 분류 - 그 줄은 미배정 그대로라 카드 자리에 "고르지 못했다" 한 줄만(설계 §5 2-6)
   const invalidSuggestions = useLoaded(() => listSuggestions(bundleId, "classify", "invalid"), dataKey);
+
+  /** 판단 저장 · AI 작업 끝 · 일괄 일 뒤 - Unit 줄 전체와 판단이 바꾸는 목록을 모두. withViews면 Old 문서 보기도(서버가 짝을 정리했다) */
+  function reloadData(withViews = false) {
+    void docViews.reload({ docs: withViews ? "all" : [], units: "all" });
+    setUnitsKey((key) => key + 1);
+  }
   // 단위마다 가장 새 분류 답이 무효인 것만 - 그 뒤에 나온 답이 있으면 무효는 지난 일이다
   const invalidUnitIds = useMemo(() => {
     const newest = new Map<number, AiSuggestion>();
@@ -305,23 +316,19 @@ export function useAssignPage() {
     return map;
   }, [liveIndex]);
 
-  const unitMap = useMemo(() => new Map((units.data ?? []).map((row) => [row.unit_id, row])), [units.data]);
+  const unitList = docViews.units;
+  const unitMap = useMemo(() => new Map((unitList ?? []).map((row) => [row.unit_id, row])), [unitList]);
   const written = useMemo(() => writtenList.data ?? [], [writtenList.data]);
   // New 원문의 참조 줄 번호는 이 목록을 읽는 요청이 조회한다(한 번에 10개) - 조회 중인 줄이 남은 동안 다시 읽어 표시가 새로 고침 없이 채워지게 한다
   const refLookups = countRefLookups(written);
   useEquisPolling(refLookups > 0, writtenList.reload, refLookups);
   const writtenMap = useMemo(() => new Map(written.map((row) => [row.target_id, row])), [written]);
-  // 표 벗기기 · 다시 표로가 풀기 전환 안에서 바로 그린 새 원문 보기 - 다시 받는 동안만 쓰고, 받으면 버린다(렌더 중 상태 맞추기)
-  const [freshViews, setFreshViews] = useState<DocumentView[] | null>(null);
-  if (freshViews !== null && !views.isLoading) setFreshViews(null);
-  const viewList = freshViews !== null && views.isLoading ? freshViews : views.data;
-  // 원문 보기가 편집 뒤 다시 받는 중이면 줄의 Unit은 이미 은퇴했을 수 있다 - 새 보기가 올 때까지 고른 줄의 묶음·후보를 부르지 않고, 고름도 맞추지 않는다
-  const isViewSettled = !views.isLoading || freshViews !== null;
+  const viewList = docViews.views;
   const rows = useMemo(() => (viewList ? buildRows(viewList, unitMap) : []), [viewList, unitMap]);
   const rowMap = new Map(rows.map((row) => [row.key, row]));
   const rowOfUnit = new Map(rows.flatMap((row) => row.unitIds.map((id) => [id, row.key] as const)));
   const options = useMemo(() => (tobeData ? buildDestinationOptions(tobeData) : []), [tobeData]);
-  const ready = viewList !== null && units.data !== null && tobeData !== null && writtenList.data !== null;
+  const ready = viewList !== null && unitList !== null && tobeData !== null && writtenList.data !== null;
   const showSkeleton = useDelayedFlag(!ready && docs.error === null);
   const unsourced = listUnsourced(written);
 
@@ -341,7 +348,7 @@ export function useAssignPage() {
   }, [snapshot, filter, rows, liveIndex]);
 
   // 처음 불러온 순간의 목록을 붙잡는다 - 그래야 확정한 줄이 거르기에서 바로 빠지지 않는다(렌더 중 상태 맞추기)
-  if (snapshot === null && rows.length > 0 && units.data !== null) {
+  if (snapshot === null && rows.length > 0 && unitList !== null) {
     setFilter("all");
     setSnapshot({ filter: "all", keys: rows.map((item) => item.key) });
   }
@@ -408,15 +415,18 @@ export function useAssignPage() {
   const [soloKey, setSoloKey] = useState(0);
   const soloLoad = useLoaded<DocumentView | null>(() => (solo !== null ? getDocumentView(bundleId, solo.docId) : Promise.resolve(null)), `${bundleId}:${solo?.docId ?? ""}:${soloKey}`);
   // 받은 보기를 고름에 알린다 - 편집 응답에서 건 따라가기가 그 박스를 고르고(고름이 누른 때 그대로일 때만), 사라진 Unit의 고름은 놓는다
-  // (렌더 중 상태 맞추기, D1 규칙 3 · 5). Old 문서는 보기와 단위 목록을 둘 다 받은 뒤에 - 줄은 둘 다에서 나온다
-  const [seenLoad, setSeenLoad] = useState<{ views: DocumentView[] | null; units: UnitRow[] | null; solo: DocumentView | null }>({ views: null, units: null, solo: null });
-  if (viewList !== null && units.data !== null && isViewSettled && !units.isLoading && (viewList !== seenLoad.views || units.data !== seenLoad.units)) {
-    const seen = { views: viewList, units: units.data };
-    setSeenLoad((prev) => ({ ...prev, ...seen }));
+  // (렌더 중 상태 맞추기, D1 규칙 3 · 5). Old 문서는 보기와 그 문서 줄을 한 번에 놓은 뒤에(useDocViews) - 줄은 둘 다에서 나와, 새 보기에 옛 줄이 섞인 렌더가 없다.
+  // 알리는 문서는 이번에 보기를 놓은 문서만(줄만 다시 받았으면 모든 문서) - 다른 문서의 고름은 그 문서 보기가 오지 않았으니 그대로다
+  const [seenLoad, setSeenLoad] = useState<{ placed: number; solo: DocumentView | null }>({ placed: 0, solo: null });
+  if (viewList !== null && unitList !== null && docViews.placed !== seenLoad.placed) {
+    const placed = docViews.placed;
+    const placedIds = docViews.listPlacedSince(seenLoad.placed);
+    setSeenLoad((prev) => ({ ...prev, placed }));
     const groupOf = new Map(viewList.flatMap((view) => view.units.map((unit) => [unit.id, unit.group_unit_id] as const)));
+    const batchViews = placedIds.length > 0 ? viewList.filter((view) => placedIds.includes(view.document.id)) : viewList;
     const loaded = focusCtl.load({
       type: "loaded",
-      docs: viewList.map((view) => ({ docId: view.document.id, revision: view.document.revision, unitIds: new Set(view.units.map((unit) => unit.id)) })),
+      docs: batchViews.map((view) => ({ docId: view.document.id, revision: view.document.revision, unitIds: new Set(view.units.map((unit) => unit.id)) })),
       // 칸 문장은 묶인 표의 줄이다 - 줄이 없는 Unit은 묶음으로 올린다
       liftUnit: (unitId) => {
         const groupId = groupOf.get(unitId) ?? null;
@@ -467,15 +477,18 @@ export function useAssignPage() {
 
   // --- 고른 줄의 관계 묶음·후보와 초안 ---
   // 짝을 풀면 줄 키는 그대로인데 단위가 달라질 수 있다 - 줄의 단위를 키에 넣어 묶음·후보를 다시 받는다
-  // 원문 보기를 다시 받는 동안(isViewSettled 거짓)은 묶음·후보를 부르지 않는다
+  // 판단이 바뀌면(저장 · 일괄 · 되돌리기) 그 Unit의 판단 revision이 오른다 - 키는 그것으로, 다른 줄 · 다른 문서의 편집 뒤에는 다시 받지 않는다(설계 D2).
+  // 그 줄의 문서 보기를 다시 받는 동안(isViewSettled 거짓)은 묶음·후보를 부르지 않는다
   // (받는 동안 낡은 줄을 눌러도 없는 Unit의 묶음을 부르지 않게. 안 끝나는 약속은 그 자리의 이전 값을 두고 isLoading만 켠다)
-  const rowKey = `${activeKey}:${row?.unitIds.join(",") ?? ""}:${unitsKey}:${isViewSettled}`;
+  const isViewSettled = row === null || !docViews.isReloading(row.documentId);
+  const rowKey = `${activeKey}:${row?.unitIds.map((id) => `${id}.${unitMap.get(id)?.decision.revision ?? ""}`).join(",") ?? ""}${isViewSettled ? "" : ":wait"}`;
   const group = useLoaded<Group | null>(() => (!row ? Promise.resolve(null) : !isViewSettled ? new Promise<never>(() => undefined) : loadRowGroup(bundleId, row.unitIds)), rowKey);
   const groupData = group.data;
   const sentenceUnitIds = (row?.unitIds ?? []).filter((id) => unitMap.get(id)?.kind !== "table" && unitMap.get(id)?.kind !== "figure");
   const similar = useLoaded<NewCandidate[]>(
     () => (written.length > 0 && sentenceUnitIds.length > 0 ? (isViewSettled ? loadRowCandidates(bundleId, sentenceUnitIds) : new Promise<never>(() => undefined)) : Promise.resolve([])),
-    `${rowKey}:${written.length > 0}`,
+    // 후보는 New 문장 목록에서 고른다 - 그 목록을 다시 받으면(판단 저장 · 판단을 푼 편집) 후보도
+    `${rowKey}:${written.length > 0}:${writtenKey}`,
   );
   const [drafts, setDrafts] = useState<Record<string, PageDraft>>({});
   const draft = (activeKey && drafts[activeKey]) || EMPTY_DRAFT;
@@ -568,7 +581,7 @@ export function useAssignPage() {
   // AI 나누기 제안 - 보는 Old 문서의 아직 정하지 않은 것. 문장마다 가장 새 제안 하나(전에는 쪼개기 화면에서만 적용·거절했다)
   const oldDocId = oldView?.document.id ?? null;
   useAiPrepare(bundleId, { enabled: canEdit && aiOn, documentId: oldDocId, onQueued: (n) => { showToast(t("ai.prepareQueued", { n })); aiJobs.watch(); } });
-  const splitSuggestions = useLoaded(() => (aiOn && oldDocId !== null ? listAppliedSuggestions(bundleId, "split", oldDocId) : Promise.resolve([])), `${aiOn}:${oldDocId}:${dataKey}`);
+  const splitSuggestions = useLoaded(() => (aiOn && oldDocId !== null ? listAppliedSuggestions(bundleId, "split", oldDocId) : Promise.resolve([])), `${aiOn}:${oldDocId}:${dataKey}:${reloadKeys.split}`);
   const splitByUnit = useMemo(() => {
     const map = new Map<number, AiSuggestion>();
     for (const item of splitSuggestions.data ?? []) {
@@ -646,7 +659,8 @@ export function useAssignPage() {
   const newFileId = (tobeData?.docs ?? []).find((doc) => doc.id === newDocId)?.document_id ?? null;
   const composed = useLoaded(
     () => (isComposedDoc && newDocId !== null ? getComposedDoc(bundleId, newDocId, uiLang) : Promise.resolve(null)),
-    `${isComposedDoc ? newDocId : ""}:${dataKey}:${uiLang}`,
+    // 엮은 문서는 New 문장 목록과 함께 바뀐다(판단 저장 · 판단을 푼 편집 · New 문서 편집)
+    `${isComposedDoc ? newDocId : ""}:${writtenKey}:${uiLang}`,
   );
   // 저장 응답으로 미리 고친 엮은 문서 - 그때 받아 둔 문서(base)가 그대로인 동안만, 다시 읽은 서버 값이 오면 그것
   const [composedPatch, setComposedPatch] = useState<{ base: ComposedDoc; doc: ComposedDoc } | null>(null);
@@ -1198,12 +1212,23 @@ export function useAssignPage() {
     return Array.isArray(unitIds) ? unitIds.length : null;
   }
 
-  /** 편집 뒤 - 원문 보기·단위·Bundle을 다시 받는다 */
-  function reloadAfterEdit() {
-    if (solo !== null) setSoloKey((key) => key + 1);
-    views.reload();
-    setUnitsKey((key) => key + 1);
-    void loadBundle(bundleId);
+  /**
+   * 편집 뒤 다시 받기(설계 D2) - 고친 Old 문서의 보기와 그 줄은 한 번에 받아 놓고(따라가기가 이것을 기다린다), 나머지는 planReload가 고른 목록만 뒤에서.
+   * ready - 이미 받아 둔 그 문서(같은 문서를 두 번 받지 않는다). Old 문서가 아닌 문서(한 단으로 연 New 문서)는 그 보기를 다시 받고,
+   * 그 문서의 Unit이 바뀌는 편집(나누기 제안 적용 · 짝)이면 New 문서 편집처럼 New 문장 목록 · To-Be도
+   */
+  function reloadAfterEdit(plan: ReloadPlan, ready: DocBatch | null = null) {
+    const oldIds = plan.docs === "all" ? "all" : plan.docs.filter((id) => oldDocIds.includes(id));
+    const isNewDoc = oldIds !== "all" && oldIds.length < plan.docs.length;
+    if (plan.newDoc !== null || isNewDoc) setSoloKey((key) => key + 1);
+    const tobe = plan.tobe || (isNewDoc && plan.units);
+    const written = plan.written || (isNewDoc && plan.units);
+    if (tobe || written || plan.identical || plan.splitSuggestions !== null) {
+      setReloadKeys((prev) => ({ tobe: prev.tobe + Number(tobe), written: prev.written + Number(written), identical: prev.identical + Number(plan.identical), split: prev.split + Number(plan.splitSuggestions !== null) }));
+    }
+    if (plan.bundle) void loadBundle(bundleId);
+    if (ready !== null) docViews.apply(ready);
+    else if (oldIds === "all" || oldIds.length > 0) void docViews.reload({ docs: oldIds, units: plan.units ? oldIds : null });
   }
 
   /** 편집 한 번 - 끝나면 원문 보기·단위를 다시 받고 followId(없으면 새로 생긴 첫 단위)의 줄을 고른다. confirm은 확인 창에서 다시 보낼 때만 켠다 */
@@ -1211,6 +1236,9 @@ export function useAssignPage() {
   async function runUnitEdit(op: EditOp, okText: string, followId: number | null, confirm = false, thenLang: "ko" | "en" | null = null) {
     if (!shapeView || busy) return;
     const docId = shapeView.document.id;
+    const isOld = oldDocIds.includes(docId);
+    // confirm은 판단을 풀며 보낸 편집이다 - 대상(Target)이 지워져 To-Be · New 문장도 다시 받는다
+    const plan = planReload(isOld ? { kind: "old_edit", docId, isInPlace: IN_PLACE_EDIT_OPS.has(op.type), isReleased: confirm } : { kind: "new_edit", docId }, { aiOn });
     const job = focusCtl.start({ kind: readEditKind(op), docId, unitIds: listEditUnitIds(op), place: NO_PLACE, isGlobal: false });
     let isAsking = false;
     let isReloaded = false;
@@ -1221,11 +1249,17 @@ export function useAssignPage() {
       const sentRevision = pickDocRevision(shapeView.document.id, shapeView.document.revision);
       const result = await editUnits(bundleId, shapeView.document.id, sentRevision, op, confirm, undo);
       let revision = result.document_revision;
+      // 받아 둔 그 문서의 새 보기 · 줄 - 아래에서 그대로 놓아 같은 문서를 또 받지 않는다
+      let ready: DocBatch | null = null;
       // 참조를 풀면 서버가 그 전 언어로 돌린다 - 고른 언어와 다를 때만 한 번 더 바꾼다
       if (thenLang !== null && op.type === "clear_ref") {
-        const restored = (await getDocumentView(bundleId, shapeView.document.id)).units.find((unit) => unit.id === op.unit_id);
+        ready = isOld ? await docViews.fetch({ docs: [docId], units: [docId] }) : null;
+        const restored = (ready?.views[0] ?? (await getDocumentView(bundleId, docId))).units.find((unit) => unit.id === op.unit_id);
         if (restored && restored.lang !== thenLang) {
           revision = (await editUnits(bundleId, shapeView.document.id, revision, { type: "set_language", unit_ids: [op.unit_id], lang: thenLang }, false, buildUndo({ focus_unit_id: op.unit_id }))).document_revision;
+          // 언어를 또 바꿨다 - 받아 둔 것은 그 사이 모습이라 놓고(따라가기는 revision이 모자라 기다린다) 다시 받는다
+          if (ready !== null) docViews.apply(ready);
+          ready = null;
         }
       }
       // 문서가 바뀌지 않은 편집(참조 제안 물리기)은 서버도 단계를 남기지 않는다
@@ -1236,20 +1270,19 @@ export function useAssignPage() {
       // 고름은 처리 중에도 그대로 - 응답의 첫 새 Unit(합친 박스 · 나눈 앞 조각, 없으면 followId)을, 고름이 누른 때 그대로면 다시 받은 뒤 고른다.
       // 다시 받기보다 먼저 건다 - 아래 풀기 전환이 기다리는 사이에 새 보기가 닿아도 따라가게(D1 규칙 2 · 3)
       focusCtl.succeed(job, { docId, revision, pickUnitId: result.created_unit_ids[0] ?? followId });
-      // 표 벗기기 · 다시 표로와 캡션 붙이기 · 떼기 · 첫 행 올리기 · 그림 묶기 - 새 원문 보기를 먼저 받아 풀기 전환 안에서 그린다
+      // 표 벗기기 · 다시 표로와 캡션 붙이기 · 떼기 · 첫 행 올리기 · 그림 묶기 - 새 원문 보기를 먼저 받아 풀기 전환 안에서 놓는다
       // (F10, 화면 안만 움직이고 움직임 줄이기면 번쩍임만). 캡션은 글이 캡션 자리로 미끄러져 들어간다. 알림은 전환 뒤
-      const current = views.data ?? [];
       // 표는 바로 안쪽 띠 표도 함께 제목 줄 ↔ 표로 바뀐다(F2)
       const motion = op.type === "set_layout_table"
         ? { scopes: listUnwrapScopes(new Map(shapeView.tables.map((table) => [table.id, table])), op.table_id), reverse: !op.is_layout }
         : getCaptionMotion(op, followId);
-      if (motion !== null && current.some((view) => view.document.id === docId)) {
-        const fresh = await getDocumentView(bundleId, docId);
+      if (motion !== null && isOld) {
+        const fresh = ready ?? (await docViews.fetch({ docs: [docId], units: [docId] }));
         isReloaded = true;
-        await unwrapMotion.run(() => {
-          setFreshViews(current.map((view) => (view.document.id === docId ? fresh : view)));
-          reloadAfterEdit();
-        }, motion);
+        await unwrapMotion.run(() => reloadAfterEdit(plan, fresh), motion);
+      } else if (ready !== null) {
+        isReloaded = true;
+        reloadAfterEdit(plan, ready);
       }
       showToast(okText);
     } catch (err) {
@@ -1260,7 +1293,7 @@ export function useAssignPage() {
       else showToast(humanizeApiError(err, t), "error");
     } finally {
       // 되묻는 동안은 다시 받지 않는다 - 바뀐 것이 없고, 늦게 닿은 응답이 확인 뒤의 편집과 엇갈리면 새 줄을 따라가지 못한다
-      if (!isAsking && !isReloaded) reloadAfterEdit();
+      if (!isAsking && !isReloaded) reloadAfterEdit(plan);
       focusCtl.end(job);
     }
   }
@@ -1318,7 +1351,7 @@ export function useAssignPage() {
       const isLinked = err instanceof ApiError && err.rule?.code === "confirm_required";
       showToast(isLinked ? t("assign.ctx.why.assigned") : humanizeApiError(err, t), "error");
     } finally {
-      reloadAfterEdit();
+      reloadAfterEdit(planReload({ kind: "pair", docId }, { aiOn }));
       focusCtl.end(job);
     }
   }
@@ -1326,14 +1359,15 @@ export function useAssignPage() {
   /** 표·그림 참조를 떼거나 다시 잇는다 - 단위는 그대로라 고름을 두고 보기만 다시 받는다. 편집 기록(되돌리기)에는 들어가지 않는다 */
   async function runCaptionRefChange(refId: number, change: { state: "detached" } | { target_unit_id: number }, okText: string) {
     if (!shapeView || busy) return;
-    const job = focusCtl.start({ kind: "caption", docId: shapeView.document.id, unitIds: [], place: NO_PLACE, isGlobal: false });
+    const docId = shapeView.document.id;
+    const job = focusCtl.start({ kind: "caption", docId, unitIds: [], place: NO_PLACE, isGlobal: false });
     try {
-      await updateCaptionRef(bundleId, shapeView.document.id, refId, { revision: shapeView.document.revision, ...change });
+      await updateCaptionRef(bundleId, docId, refId, { revision: shapeView.document.revision, ...change });
       showToast(okText);
     } catch (err) {
       showToast(humanizeApiError(err, t), "error");
     } finally {
-      reloadAfterEdit();
+      reloadAfterEdit(planReload({ kind: "caption_ref", docId }, { aiOn }));
       focusCtl.end(job);
     }
   }
@@ -1387,7 +1421,8 @@ export function useAssignPage() {
         setCutUnitId(null);
         focusCtl.succeed(job, { docId, revision: null, pickUnitId: restoredIds[0] ?? null });
       }
-      if (!isAsking) reloadAfterEdit();
+      // 풀기 · 언어 · 짝 맺기 - confirm이면 판단을 풀며 보냈다
+      if (!isAsking) reloadAfterEdit(planReload(oldDocIds.includes(docId) ? { kind: "old_edit", docId, isInPlace: false, isReleased: confirm } : { kind: "new_edit", docId }, { aiOn }));
       focusCtl.end(job);
     }
   }
@@ -1395,7 +1430,8 @@ export function useAssignPage() {
   /** AI 나누기 제안 적용 - 뒤쪽 위치부터 자르면 앞 조각의 위치가 바뀌지 않는다. 자를 때마다 되돌리기 기록에 한 단계씩 남는다 */
   async function applySplitSuggestion(unit: ViewUnit, suggestion: AiSuggestion, confirm = false) {
     if (!oldView || busy) return;
-    const job = focusCtl.start({ kind: "split", docId: oldView.document.id, unitIds: [unit.id], place: NO_PLACE, isGlobal: false });
+    const docId = oldView.document.id;
+    const job = focusCtl.start({ kind: "split", docId, unitIds: [unit.id], place: NO_PLACE, isGlobal: false });
     let isAsking = false;
     try {
       let unitId = unit.id;
@@ -1418,23 +1454,23 @@ export function useAssignPage() {
       if (count !== null && !confirm) setEditConfirm({ count, retry: { kind: "ai_split", unit, suggestion } });
       else showToast(humanizeApiError(err, t), "error");
     } finally {
-      if (!isAsking) reloadAfterEdit();
+      // 확인 창을 거쳐(confirm) 판단을 풀며 잘랐으면 판단을 푼 편집과 같다
+      if (!isAsking) reloadAfterEdit(planReload(confirm ? { kind: "old_edit", docId, isInPlace: false, isReleased: true } : { kind: "split_suggestion", docId, isApplied: true }, { aiOn }));
       focusCtl.end(job);
     }
   }
 
   async function dismissSplitSuggestion(suggestion: AiSuggestion) {
-    if (busy) return;
+    if (busy || !oldView) return;
+    const docId = oldView.document.id;
     const job = focusCtl.start({ kind: "save", docId: null, unitIds: suggestion.content.unit_ids ?? [], place: NO_PLACE, isGlobal: false });
     try {
       await setSuggestionAdoption(bundleId, suggestion.id, "rejected");
     } catch (err) {
       showToast(humanizeApiError(err, t), "error");
     } finally {
-      // 용지의 제안 표시는 문서 보기에서 온다
-      if (solo !== null) setSoloKey((key) => key + 1);
-      views.reload();
-      setUnitsKey((key) => key + 1);
+      // 용지의 제안 표시는 문서 보기에서 온다(한 단으로 연 New 문서면 그 보기)
+      reloadAfterEdit(planReload({ kind: "split_suggestion", docId, isApplied: false }, { aiOn }));
       focusCtl.end(job);
     }
   }
@@ -1615,7 +1651,7 @@ export function useAssignPage() {
    */
   function applyPairSettle(savedRow: ClassifyRow, saved: Group, leftovers: number[]): boolean {
     const dissolved = saved.pairs_dissolved ?? [];
-    if (dissolved.length > 0) views.reload();
+    if (dissolved.length > 0) void docViews.reload({ docs: "all", units: null });
     if (savedRow.pairId === null || !dissolved.includes(savedRow.pairId)) return false;
     setSnapshot((prev) => prev && { ...prev, keys: prev.keys.flatMap((key) => (key === savedRow.key ? listUnpairedKeys(savedRow) : [key])) });
     const ids = leftovers.map((id) => unitMap.get(id)?.display_id ?? String(id)).join(", ");
@@ -1692,11 +1728,11 @@ export function useAssignPage() {
       // 한 언어만 이어 짝을 풀었으면 남은 문장의 줄로 옮긴다 - 다시 받아 그 줄이 생긴 뒤, 그 사이 다른 줄을 고르지 않았을 때
       if (isSplit) focusCtl.succeed(job, { docId: row.documentId, revision: null, pickUnitId: leftovers[0] });
       if (next) selectRow(next);
-      setUnitsKey((key) => key + 1);
+      reloadData();
       void loadBundle(bundleId);
     } catch (err) {
       showToast(humanizeApiError(err, t), "error");
-      setUnitsKey((key) => key + 1);
+      reloadData();
     } finally {
       focusCtl.end(job);
     }
@@ -1753,28 +1789,28 @@ export function useAssignPage() {
       setMenu(null);
       showToast(t("classify.cleared"));
       dropDraft(row.key);
-      setUnitsKey((key) => key + 1);
+      reloadData();
       void loadBundle(bundleId);
     } catch (err) {
       showToast(humanizeApiError(err, t), "error");
-      setUnitsKey((key) => key + 1);
+      reloadData();
     } finally {
       focusCtl.end(job);
     }
   }
 
-  /** 묶음 전체 일 하나(같은 글자 일괄 확정) */
-  async function run(action: () => Promise<unknown>, message: string) {
+  /** 묶음 전체 일 하나(같은 글자 일괄 확정) - withViews면 원문 보기도(서버가 짝을 정리하지만 어느 짝인지 알려 주지 않는다) */
+  async function run(action: () => Promise<unknown>, message: string, withViews = false) {
     if (busy) return;
     const job = focusCtl.start({ kind: "bulk", docId: null, unitIds: [], place: NO_PLACE, isGlobal: true });
     try {
       await action();
       showToast(message);
-      setUnitsKey((key) => key + 1);
+      reloadData(withViews);
       void loadBundle(bundleId);
     } catch (err) {
       showToast(humanizeApiError(err, t), "error");
-      setUnitsKey((key) => key + 1);
+      reloadData();
     } finally {
       focusCtl.end(job);
     }
@@ -1802,8 +1838,10 @@ export function useAssignPage() {
     // 묶음 전체 일이라 시작하면서 앞 편집의 따라가기를 버린다(모델의 start) - 응답을 기다리는 사이 그 편집의 다시 받기가 오면 따라가기가 걸려,
     // 서버에서 이미 은퇴한 Unit을 골라 묶음을 부른다(404). 되돌리기는 응답의 focus로 따로 따라간다
     const job = focusCtl.start({ kind: "undo", docId: null, unitIds: [], place: NO_PLACE, isGlobal: true });
+    let stepOp: string | null = null;
     try {
       const result = await (kind === "undo" ? undoDecision : redoDecision)(bundleId, undoSession.current);
+      stepOp = result.op;
       setUndoState({ canUndo: result.can_undo, canRedo: result.can_redo });
       setMenu(null);
       setCtxMenu(null);
@@ -1830,8 +1868,14 @@ export function useAssignPage() {
       else if (code === "undo_conflict" && err instanceof ApiError) showToast(formatUndoRefusal(err.rule?.unit_ids, kind), "error");
       else showToast(humanizeApiError(err, t), "error");
     } finally {
-      // 거절도 그 사이 바뀐 것이 있다는 뜻이라 다시 받는다 - 짝 모양이 바뀌었을 수 있어 원문 보기도
-      reloadAfterEdit();
+      // Old 원문 편집의 되돌리기는 판단이 그대로라 Old 문서 보기 · 줄과 같은 글자 후보만(응답이 문서를 알려 주지 않아 모든 Old 문서, 설계 D2).
+      // 판단 저장 단계 · New 문서를 고른 채 · 거절은 지금처럼 모두 - 거절도 그 사이 바뀐 것이 있다는 뜻이고, 짝 모양이 바뀌었을 수 있어 원문 보기도
+      if (stepOp !== null && solo === null && isUnitEditStep(stepOp)) reloadAfterEdit(planReload({ kind: "edit_undo", docId: null }, { aiOn }));
+      else {
+        if (solo !== null) setSoloKey((key) => key + 1);
+        reloadData(true);
+        void loadBundle(bundleId);
+      }
       focusCtl.end(job);
     }
   }
@@ -1875,8 +1919,7 @@ export function useAssignPage() {
           markRecorded();
         }
         // 한 번에 확정도 서버가 짝을 정리하지만 어느 짝인지 알려 주지 않는다 - 짝 모양·문서 revision을 다시 받는다
-        views.reload();
-      }, t("match.identicalDone", { n: items.length }));
+      }, t("match.identicalDone", { n: items.length }), true);
     }
     setConfirmingIdentical(false);
   }
@@ -1897,13 +1940,12 @@ export function useAssignPage() {
       if (out.accepted > 0) markRecorded();
       showToast(t(out.skipped > 0 ? "aiAccept.doneSkipped" : "aiAccept.done", { n: out.accepted, skipped: out.skipped }));
       setAcceptKind(null);
-      // 받은 줄의 짝을 서버가 정리한다 - 짝 모양·문서 revision을 다시 받는다(같은 글자 한 번에 확정과 같다)
-      views.reload();
     } catch (err) {
       showToast(humanizeApiError(err, t), "error");
     } finally {
       focusCtl.end(job);
-      setUnitsKey((key) => key + 1);
+      // 받은 줄의 짝을 서버가 정리한다 - 짝 모양·문서 revision도 다시 받는다(같은 글자 한 번에 확정과 같다)
+      reloadData(true);
       void loadBundle(bundleId);
     }
   }
@@ -1963,7 +2005,7 @@ export function useAssignPage() {
     setIsPlaceBusy(true);
     try {
       const next = await write();
-      setTobeFresh({ key: dataKey, data: next });
+      setTobeFresh({ key: tobeKey, data: next });
       void loadBundle(bundleId);
       showToast(okText);
       return next;
@@ -2744,7 +2786,7 @@ export function useAssignPage() {
     } catch (err) {
       showToast(humanizeApiError(err, t), "error");
     } finally {
-      reloadAfterEdit();
+      reloadAfterEdit(planReload({ kind: "pair", docId: doc.id }, { aiOn }));
       focusCtl.end(job);
     }
   }
@@ -2764,7 +2806,7 @@ export function useAssignPage() {
     } catch (err) {
       showToast(humanizeApiError(err, t), "error");
     } finally {
-      reloadAfterEdit();
+      reloadAfterEdit(planReload({ kind: "pair", docId }, { aiOn }));
       focusCtl.end(job);
     }
   }
@@ -3078,10 +3120,10 @@ export function useAssignPage() {
 
   const canClear = row !== null && row.status !== "unassigned";
 
-  const error = docs.error ?? views.error ?? units.error ?? tobe.error ?? writtenList.error;
+  const error = docs.error ?? docViews.error ?? tobe.error ?? writtenList.error;
 
   return {
-    t, bundleId, bundle, canEdit, docs, oldDocs, oldDocIds, views, unitsKey, setUnitsKey, units, tobe, tobeData, writtenList, identical,
+    t, bundleId, bundle, canEdit, docs, oldDocs, oldDocIds, docViews, unitsKey, reloadData, tobe, tobeData, writtenList, identical,
     aiJobs, aiOn, aiBusy, suggestions, invalidUnitIds, readMarkStatus, suggestedTargetUnits, unitMap, written, writtenMap, rows, rowMap,
     rowOfUnit, options, ready, showSkeleton, unsourced, mode, setMode, filter, counts, foldOpen, setFoldOpen, applyFilter, foldMatch,
     clearRowPick, activeKey, row, solo, setSolo, isSolo, isNewEdit, hasSolo, tocOpen, setTocOpen, tocPick, tocBlocks, checked,

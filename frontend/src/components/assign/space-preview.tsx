@@ -44,7 +44,7 @@ function isTyping(target: EventTarget | null): boolean {
 interface SheetRequest {
   docId: number;
   around: number | null;
-  unitsKey: number;
+  reloadKey: string;
 }
 
 export interface SpacePreviewProps {
@@ -53,8 +53,8 @@ export interface SpacePreviewProps {
   enabled: boolean;
   docId: number | null;
   docCode: string;
-  /** 저장이 일어나면 바뀐다 - 연 동안이면 다시 불러온다 */
-  unitsKey: number;
+  /** 판단 저장이나 그 문서 편집(보기 revision)이 일어나면 바뀐다 - 연 동안이면 다시 불러온다 */
+  reloadKey: string;
   /** 고른 줄의 단위들 */
   unitIds: readonly number[];
   /** 시트에 가려지는 고른 줄을 머리에 글로 */
@@ -63,7 +63,7 @@ export interface SpacePreviewProps {
   draft?: SheetDraft;
 }
 
-export function SpacePreview({ bundleId, enabled, docId, docCode, unitsKey, unitIds, picked, draft }: SpacePreviewProps) {
+export function SpacePreview({ bundleId, enabled, docId, docCode, reloadKey, unitIds, picked, draft }: SpacePreviewProps) {
   const { t } = useI18n();
   const [space, setSpace] = useState<SpaceState>(SPACE_CLOSED);
   const [opens, setOpens] = useState(readSpacePreviewOpens);
@@ -78,16 +78,16 @@ export function SpacePreview({ bundleId, enabled, docId, docCode, unitsKey, unit
 
   const preview = useLoaded(
     () => (request ? getAssignSheetPreview(bundleId, request.docId, request.around) : Promise.resolve(null)),
-    request ? `${bundleId}:${request.docId}:${request.around ?? ""}:${request.unitsKey}` : "",
+    request ? `${bundleId}:${request.docId}:${request.around ?? ""}:${request.reloadKey}` : "",
   );
   const data = preview.data;
   const pickedInSheet = data !== null && unitIds.some((id) => data.rows.some((row) => row.unit_id === id));
   // 연 동안만 부른다 - 문서 · 저장이 바뀌었거나, 긴 문서의 창 밖 줄을 골랐으면 그 줄을 가운데로 다시. 닫혀 있는 동안의 저장은 다음에 열 때 부른다
   if (isOpen && docId !== null) {
     const around = unitIds[0] ?? null;
-    const isStale = request === null || request.docId !== docId || request.unitsKey !== unitsKey;
+    const isStale = request === null || request.docId !== docId || request.reloadKey !== reloadKey;
     const isOutside = !isStale && !preview.isLoading && data !== null && data.truncated && around !== null && around !== request.around && !pickedInSheet;
-    if (isStale || isOutside) setRequest({ docId, around, unitsKey });
+    if (isStale || isOutside) setRequest({ docId, around, reloadKey });
   }
 
   // 시트 보기에는 잘림 안내를 끄고 넘긴다 - 이 창은 위 · 아래로 잘린 수를 바닥에 따로 적는다(같은 객체를 넘겨 고른 줄 가운데 맞추기가 렌더마다 돌지 않게)

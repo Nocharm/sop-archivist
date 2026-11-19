@@ -39,7 +39,7 @@ import { type AssignPageState, SYSTEM_HOLDS } from "./use-assign-page";
 
 export function AssignSidePanel({ state }: { state: AssignPageState }) {
   const {
-    t, bundleId, canEdit, unitsKey, setUnitsKey, units, tobeData, aiJobs, aiOn, aiBusy, suggestions, invalidUnitIds, unitMap, written,
+    t, bundleId, canEdit, unitsKey, reloadData, docViews, tobeData, aiJobs, aiOn, aiBusy, suggestions, invalidUnitIds, unitMap, written,
     writtenMap, rowOfUnit, options, mode, activeKey, row, isNewEdit, hasSolo, tocOpen, setTocOpen, tocPick, tocBlocks, newRemarks,
     setNewRemarks, cutUnitId, focusNew, groupData, draft, editing, savedDestination, destination, rowUnits, rowLangs, firstDecision,
     systemHold, reasonNow, moveCode, setDraft, rowLive, aiDest, aiWhy, recommendations, linkIds, pickedGroups, saveGroupData,
@@ -905,8 +905,8 @@ export function AssignSidePanel({ state }: { state: AssignPageState }) {
                 </button>
               </Tooltip>
             </span>
-            {(units.error ?? suggestions.error) !== null && (
-              <button type="button" className="btn h-6 gap-1 px-1.5 text-xs font-normal text-st-hold" data-testid="assign-refresh-error" onClick={() => setUnitsKey((key) => key + 1)}>
+            {(docViews.error ?? suggestions.error) !== null && (
+              <button type="button" className="btn h-6 gap-1 px-1.5 text-xs font-normal text-st-hold" data-testid="assign-refresh-error" onClick={() => reloadData(true)}>
                 <RefreshCw size={12} strokeWidth={1.5} aria-hidden />
                 {t("classify.refreshFailed")}
               </button>

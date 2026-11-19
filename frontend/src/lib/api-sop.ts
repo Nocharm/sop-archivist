@@ -967,11 +967,13 @@ export interface GroupSaveInput {
   suggestion_id?: number;
 }
 
-export async function listAllUnits(bundleId: number): Promise<UnitRow[]> {
+/** documentId - 그 Old 문서의 줄만(편집 뒤 그 문서만 다시 받는다) */
+export async function listAllUnits(bundleId: number, documentId?: number): Promise<UnitRow[]> {
   const items: UnitRow[] = [];
+  const scope = documentId === undefined ? "" : `&document_id=${documentId}`;
   // 한 번에 1000개까지 - 묶음이 크면 이어서 받는다
   for (let offset = 0; ; offset += 1000) {
-    const page = await apiFetch<{ total: number; items: UnitRow[] }>(`/bundles/${bundleId}/units?limit=1000&offset=${offset}`);
+    const page = await apiFetch<{ total: number; items: UnitRow[] }>(`/bundles/${bundleId}/units?limit=1000&offset=${offset}${scope}`);
     items.push(...page.items);
     if (items.length >= page.total || page.items.length === 0) return items;
   }
