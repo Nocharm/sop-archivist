@@ -207,6 +207,23 @@ const readTop = async (page, unitId) => (await page.locator(`[data-testid="assig
 // 풀기 전환(useUnwrapMotion)이 끝날 때까지 - 펼치는 동안 줄은 transform으로 옛 자리(표 칸 안)에 붙들려 있어 boundingBox가 옛 자리를 잰다
 const waitForOldMotion = (page) =>
   page.waitForFunction(() => (document.querySelector('[data-testid="assign-old"]')?.getAnimations({ subtree: true }) ?? []).every((animation) => animation.playState !== "running"), null, { timeout: T });
+// 다시 표로 묶으면 화면은 그 편집이 만든 새 Unit(새 표 줄)을 따라가 고르고 그 관계 묶음을 받는다(시안 1 D1 규칙 3). 서버 보기가 바뀐 것만 보고
+// API로 문서 편집을 되돌리면 화면의 그 받기와 엇갈려 새 Unit이 먼저 지워지고 받기가 404(콘솔 오류)가 된다 - 되돌리기 전에 그 응답까지 기다린다.
+// 누르기 전에 부르고, 돌려준 함수에 그 편집으로 새로 생긴 Unit id들을 넘긴다(받았으면 true)
+function watchGroupLoads(page) {
+  const loaded = new Set();
+  const onResponse = (response) => {
+    const match = /\/groups\/by-unit\/(\d+)$/.exec(new URL(response.url()).pathname);
+    if (match && response.request().method() === "GET" && response.ok()) loaded.add(Number(match[1]));
+  };
+  page.on("response", onResponse);
+  return async (unitIds) => {
+    const isLoaded = () => unitIds.some((id) => loaded.has(id));
+    for (let tries = 0; tries < 60 && unitIds.length > 0 && !isLoaded(); tries += 1) await page.waitForTimeout(250);
+    page.off("response", onResponse);
+    return isLoaded();
+  };
+}
 
 // Space 미리보기(1.2.0 피드백 7번, MD 2 S2) - 누르는 동안 아래 시트에 지금 Old 문서의 Excel A, 짧게 탁이면 열어 둠, Esc · 탁으로 닫힘, 끌고 떼면 닫힘
 async function openFirstAssign(page) {
@@ -1587,12 +1604,15 @@ await runStep("assign: drag an Old piece onto a written New sentence, it links l
   // 11. 들림(G9) - 한/영 짝 카드는 한 장으로 끌리니 아래 줄에 올려도 카드 전체가 고리 하나로 들린다(윗줄은 네 변, 아래 줄은 위 변 없이).
   // 엿보기 조각(필터 밖, 점선 테두리)은 들지 않는다 - 점선 바로 바깥에 실선 고리가 겹친다. 값은 계산된 box-shadow로 본다(고리 = 퍼짐 1px)
   const readShadow = (selector) => page.locator(selector).first().evaluate((el) => getComputedStyle(el).boxShadow);
-  // 짝이 있는 Old 문서를 모두 보이게 연다
+  // 짝이 있는 Old 문서를 모두 보이게 연다. 삭제로 확정한 짝은 카드가 아니라 흐린 한 줄로 접히므로(시안 1 D6) 카드로 보이는 짝을 고른다
+  const unitsNow = new Map((await readUnits()).map((unit) => [unit.unit_id, unit]));
+  const isFoldedDeleted = (unitId) => unitsNow.get(unitId)?.status === "confirmed" && unitsNow.get(unitId)?.decision.disposition === "delete";
   let pairDoc = null;
   for (const doc of (await (await page.request.get(`${BASE}/api/bundles/${halfBundleId}/documents`, { headers })).json()).filter((item) => item.side === "old" && item.status === "ready")) {
     const view = await (await page.request.get(`${BASE}/api/bundles/${halfBundleId}/documents/${doc.id}/view`, { headers })).json();
-    if (view.pairs.length > 0) {
-      pairDoc = { id: doc.id, unitId: view.pairs[0].unit_ids[0] };
+    const shownPair = view.pairs.find((pair) => !pair.unit_ids.every(isFoldedDeleted));
+    if (shownPair) {
+      pairDoc = { id: doc.id, unitId: shownPair.unit_ids[0] };
       break;
     }
   }
@@ -2520,12 +2540,15 @@ await runStep("assign: nested table - an inner table unwraps again and ↺ Back 
   await wait(page, `assign-paper-unwrap-head-${access.id}`);
   check("the inner table has its own ↺ Back to table head", (await getText(page, `assign-paper-unwrap-head-${access.id}`)).trim() === "↺ Back to table");
   // 바깥만 다시 표로 - 안쪽 권한 표는 벗긴 그대로, 바깥과 함께 제목 줄이 된 띠 표는 함께 표로
+  const waitGroupLoad = watchGroupLoads(page);
   await page.locator(`[data-testid="assign-paper-rewrap-${outer.id}"]`).click();
   const wrapped = await nested.waitView((item) => !item.tables[0].is_layout);
   check("Back to table wraps the work table", wrapped !== null);
   check("the inner access table stays unwrapped", wrapped?.tables[3].is_layout === true);
   check("the inner band goes back to a table with the outer table", wrapped !== null && readTableUnit(wrapped, band) !== undefined);
   await page.locator(`[data-testid="assign-paper-unwrap-head-${access.id}"]`).waitFor({ timeout: T });
+  const innerIds = new Set((inner?.units ?? []).map((unit) => unit.id));
+  check("the screen follows the new table line and loads its group", await waitGroupLoad((wrapped?.units ?? []).filter((unit) => !innerIds.has(unit.id)).map((unit) => unit.id)));
   await nested.undo(3); // 다시 표로 → 안쪽 벗기기 → 바깥 벗기기
   check("the seed is back as it was", (await nested.waitView((item) => item.tables.every((table) => !table.is_layout) && item.units.some((unit) => unit.id === readTableUnit(before, outer).id))) !== null);
 });
@@ -4175,10 +4198,13 @@ await runStep("assign: unwrap table - ↺ Back to table asks once when a line is
   check("cancelling keeps the table unwrapped", isLayout(await readView(doc.id)));
   await page.locator(`[data-testid="assign-paper-rewrap-${unit.table_id}"]`).click();
   await wait(page, "assign-edit-confirm");
+  const beforeWrap = new Set((await readView(doc.id)).units.map((item) => item.id));
+  const waitGroupLoad = watchGroupLoads(page);
   await page.locator('[data-testid="assign-edit-confirm-confirm"]').click();
   const wrapped = await waitView((view) => !isLayout(view));
   check("Back to table wraps it into one table line", wrapped !== null && wrapped.units.some((item) => item.kind === "table" && item.table_id === unit.table_id));
   check("the line's assignment is cleared", wrapped?.units.find((item) => item.id === line.id)?.status === "unassigned");
+  check("the screen follows the new table line and loads its group", await waitGroupLoad((wrapped?.units ?? []).filter((item) => !beforeWrap.has(item.id)).map((item) => item.id)));
   // 시드 묶음을 처음 그대로 둔다. Assign Undo로는 못 돌아간다 - 확인하고 한 편집이 푼 배정은 되돌리기가 살리지 않아(Assign 되돌리기 설계 §4.4)
   // 배정 단계의 되돌리기가 거절되고, 그 밑의 벗기기에 닿지 못한다. 다시 표로 묶어도 처음 모양은 아니다(벗길 때 문장이 된 캡션 · 번호 칸을 받은 줄은
   // 그대로 남는다). 그래서 문서 편집 기록을 API로 두 번 되돌린다(다시 표로 → 벗기기) - 처음 표 Unit과 캡션이 같은 id로 돌아오고, 배정은 이미 풀렸다
