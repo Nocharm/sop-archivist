@@ -802,29 +802,6 @@ def test_same_grid_with_a_new_cell_sentence_stays_as_is(client: TestClient, fake
     assert_target_untouched(extra)
 
 
-def test_table_rows_pair_with_a_table_of_one_row(client: TestClient, fake_ai: FakeAi) -> None:
-    old_row = [CELLS[1]]
-    bundle = make_match_bundle(client, tbl(CELLS), tbl([["무관한 머리 칸", "다른 머리 칸"], *old_row]))
-    view = get_view(client, bundle.id, bundle.old_document_id)
-    edit_document(client, bundle.id, bundle.old_document_id, {"type": "split_table_rows", "table_unit_id": find_kind(view, "table")["id"]})
-    new_view = get_view(client, bundle.id, bundle.new_document_id)
-    edit_document(client, bundle.id, bundle.new_document_id, {"type": "split_table_rows", "table_unit_id": find_kind(new_view, "table")["id"]})
-
-    plan(client, bundle.id)
-
-    rows = [unit for unit in get_view(client, bundle.id, bundle.old_document_id)["units"] if unit["kind"] == "table_row"]
-    second = next(unit for unit in rows if unit["row_index"] == 1)
-    suggestion = next(
-        row for row in read_rows(AiSuggestion) if row.content["shape"] == "table" and row.content["change_type"] == "as_is"
-    )
-    target_id = suggestion.content["target_ids"][0]
-    assert (target_id, second["id"]) in read_suggested_links(suggestion)
-    types = read_suggested_types(suggestion)
-    cells = [row for row in read_rows(TargetSentence) if row.parent_target_id == target_id]
-    assert {(row.cell_row, row.cell_col, types[row.id]) for row in cells} == {(0, 0, "as_is"), (0, 1, "as_is")}
-    assert read_links() == set()
-
-
 def test_figures_pair_as_is_without_llm(client: TestClient, fake_ai: FakeAi) -> None:
     bundle = make_match_bundle(client, make_figure(CAPTION), make_figure(CAPTION), media=MEDIA)
     unit = find_kind(get_view(client, bundle.id, bundle.old_document_id), "figure")["id"]

@@ -1,4 +1,4 @@
-"""쪼개기 편집 — 나누기·합치기·경계 옮기기·골라 만들기·언어 바꾸기·표 행 나누기·다시 합치기·레이아웃 표 바꾸기·캡션 붙이기·떼기·첫 행 ↔ 캡션·
+"""쪼개기 편집 — 나누기·합치기·경계 옮기기·골라 만들기·언어 바꾸기·레이아웃 표 바꾸기·캡션 붙이기·떼기·첫 행 ↔ 캡션·
 그림 묶기·풀기·잡음 표시 풀기·번호 고치기·제목 ↔ 문장과 서버 쪽
 선형 되돌리기·다시 하기, 경계 확인 표시 (스펙 §6.4, §7.5).
 
@@ -108,7 +108,7 @@ BOUNDARY_OPS = ("boundary", "check_all")
 # 묶음의 묶인 단위를 바꾸는 편집 — 판단이 있는 묶음을 떼어 낸다
 CAPTION_OPS = ("attach_caption", "detach_caption", "set_first_row_caption")
 FIGURE_OPS = ("group_figures", "ungroup_figures")  # 그림 묶음(caption_figure_id)을 바꾸는 편집 — 든 그림 모두가 바뀐 묶음이다
-# 글자 범위를 고칠 수 있는 단위 — 그림·표·행은 범위를 나누거나 잇지 않는다
+# 글자 범위를 고칠 수 있는 단위 — 그림·표는 범위를 나누거나 잇지 않는다
 TEXT_KINDS = ("sentence", "heading", "cell_sentence", CAPTION_KIND)
 CAPTIONABLE_KINDS = ("sentence", "heading")  # 캡션으로 붙일 수 있는 글 단위
 PAIR_LANGS = {"ko", "en"}  # 짝의 두 쪽 — 한쪽이 비면 짝을 지운다
@@ -163,16 +163,6 @@ class SetLanguageOp(BaseModel):
     lang: Literal["ko", "en"]
 
 
-class SplitTableRowsOp(BaseModel):
-    type: Literal["split_table_rows"]
-    table_unit_id: DbId
-
-
-class MergeTableRowsOp(BaseModel):
-    type: Literal["merge_table_rows"]
-    table_id: DbId  # 원문 표(source_tables) — 그 표의 활성 행 단위를 모두 합친다
-
-
 class SetLayoutTableOp(BaseModel):
     """표 벗기기(is_layout) · 다시 표로. 표는 하나씩 벗긴다 — 한/영 따로 문서에서 둘 다 벗긴 대응 표는 짝을 다시 세울 때 같은 행끼리
     짝짓는다(F8a, units.refresh_code_pairs). 대응 표 함께 벗기기는 걷었다(사용자 결정 2026-11-19, 요청서 8번)."""
@@ -183,7 +173,7 @@ class SetLayoutTableOp(BaseModel):
 
 
 class AttachCaptionOp(BaseModel):
-    """묶이지 않은 글 단위(문장·제목, REF 아님)를 표·행·그림 단위의 캡션으로 — 같은 범위·언어의 캡션 단위가 된다.
+    """묶이지 않은 글 단위(문장·제목, REF 아님)를 표·그림 단위의 캡션으로 — 같은 범위·언어의 캡션 단위가 된다.
 
     글은 묶음에서 블록 자리 CAPTION_REACH 안에 있어야 한다(caption_slot — 사이의 문단은 그대로 남는다, F7 ④).
     """
@@ -274,8 +264,8 @@ class SetHeadingOp(BaseModel):
 
 
 EditOp = Annotated[
-    SplitOp | MergeOp | UnmergeOp | MoveBoundaryOp | CarveOp | SetLanguageOp | SplitTableRowsOp
-    | MergeTableRowsOp | SetLayoutTableOp | AttachCaptionOp | DetachCaptionOp | SetFirstRowCaptionOp | GroupFiguresOp
+    SplitOp | MergeOp | UnmergeOp | MoveBoundaryOp | CarveOp | SetLanguageOp
+    | SetLayoutTableOp | AttachCaptionOp | DetachCaptionOp | SetFirstRowCaptionOp | GroupFiguresOp
     | UngroupFiguresOp | SetRefOp | ClearRefOp | ClearNoiseOp | SetNumberOp | SetHeadingOp,
     Field(discriminator="type"),
 ]
@@ -340,7 +330,7 @@ class _Draft:
     group_unit_id: int | None
     pos_seq: int
     pos_start: int
-    # 표·행 단위만 — 이 단위에 묶을 칸 문장 → 지금 묶음(만든 뒤 _Change.regroup으로 옮긴다)
+    # 표 단위만 — 이 단위에 묶을 칸 문장 → 지금 묶음(만든 뒤 _Change.regroup으로 옮긴다)
     cells: dict[int, int | None] = field(default_factory=dict)
     # 번호 열(units.number_*) — 읽은 값·출처·길이는 범위와 신호에서, number_set은 같은 자리에서 시작하던 옛 단위에서 물려받는다
     number: dict[str, object] = field(default_factory=dict)
@@ -364,7 +354,7 @@ class _Change:
     revive: list[int] = field(default_factory=list)
     drafts: list[_Draft] = field(default_factory=list)
     langs: dict[int, tuple[str, str]] = field(default_factory=dict)
-    # 칸 문장 → 묶음 옮김. 만들 표·행 단위에 묶는 칸은 draft.cells에 있다가 그 단위를 쓴 뒤 여기 채워진다(기록용)
+    # 칸 문장 → 묶음 옮김. 만들 표 단위에 묶는 칸은 draft.cells에 있다가 그 단위를 쓴 뒤 여기 채워진다(기록용)
     regroup: dict[int, Move] = field(default_factory=dict)
     # 원문 표 → (지금 is_layout, 바꿀 is_layout)
     layouts: dict[int, tuple[bool, bool]] = field(default_factory=dict)
@@ -390,7 +380,7 @@ class _Change:
 
         경계를 처음 자리나 사이 빈 글자에 다시 놓거나 단위 하나의 범위를 그대로 골라 만든 경우다 — 단위는 범위 그 자체라
         (스펙 §6.4) 같은 범위를 새 ID로 다시 만들면 표시 ID가 바뀌고 확정 판단이 이유 없이 떼어진다. 캡션 붙이기·떼기는
-        범위가 그대로여도 종류·묶음이 바뀐다. 표·행 단위는 범위가 없어 범위로는 견줄 수 없으므로 묶음·표 표시가 바뀌면 바뀐 것이다.
+        범위가 그대로여도 종류·묶음이 바뀐다. 표 단위는 범위가 없어 범위로는 견줄 수 없으므로 묶음·표 표시가 바뀌면 바뀐 것이다.
         """
         if (
             self.revive or self.langs or self.layouts or self.noises or self.numbers or self.figures
@@ -476,8 +466,8 @@ def _build_draft(
 ) -> _Draft:
     """like의 묶음(그룹 단위)을 물려받는 새 단위 — 자리는 첫 범위의 블록·시작, 언어는 주지 않으면 글자로 판정한다.
 
-    칸 문장의 표·행 번호는 첫 범위 칸 블록의 것이다(R33) — 행을 넘어 합친 칸을 다시 나누면 조각마다 자기 행을 가져야
-    표를 행 단위로 나눌 때(Task 14) 칸이 제 행에 묶인다. 문장·제목은 like를 따른다(표 밖이라 없음).
+    칸 문장의 표·행 번호는 첫 범위 칸 블록의 것이다(R33) — 행을 넘어 합친 칸을 다시 나누면 조각마다 자기 행을 가진다.
+    문장·제목은 like를 따른다(표 밖이라 없음).
     문단 번호는 앞 조각에 남는다(§11-10) — 번호 범위는 새 범위와 블록 신호로 다시 읽고, 사람이 고친 값은 like와 같은 자리에서
     시작하는 조각만 물려받는다(자른 뒤 조각은 번호 없음, 합친 단위는 앞 단위의 번호).
     """
@@ -609,7 +599,7 @@ async def _plan_unmerge(session: AsyncSession, document_id: int, extraction_id: 
         langs={}
         if is_mixed
         else {original.id: (original.lang, unit.lang) for original in originals if original.lang != unit.lang},
-        # 합친 칸 문장이 그 뒤 다른 묶음(행 나누기 등)으로 옮겨졌으면 되살린 칸도 지금 묶음으로
+        # 합친 칸 문장이 그 뒤 다른 묶음(레이아웃 표 바꾸기 등)으로 옮겨졌으면 되살린 칸도 지금 묶음으로
         regroup={
             original.id: (original.group_unit_id, unit.group_unit_id)
             for original in originals if original.group_unit_id != unit.group_unit_id
@@ -963,7 +953,7 @@ async def _load_table(session: AsyncSession, extraction_id: ExtractionId, table_
 async def _load_table_units(
     session: AsyncSession, extraction_id: ExtractionId, table_id: int, kinds: Collection[str]
 ) -> list[Unit]:
-    """원문 표 하나의 활성 표·행 단위(원문 순) — 칸 안의 표는 table_id가 달라 섞이지 않는다."""
+    """원문 표 하나의 활성 표 단위(원문 순) — 칸 안의 표는 table_id가 달라 섞이지 않는다."""
     rows = await session.scalars(
         select(Unit)
         .where(
@@ -976,7 +966,7 @@ async def _load_table_units(
 
 
 async def _load_grouped_cells(session: AsyncSession, group_unit_ids: Collection[int]) -> list[Unit]:
-    """표·행 단위들에 묶인 활성 칸 문장(원문 순)."""
+    """표 단위들에 묶인 활성 칸 문장(원문 순)."""
     rows = await select_in_chunks(
         session,
         lambda chunk: select(Unit).where(Unit.group_unit_id.in_(chunk), Unit.status == UNIT_ACTIVE),
@@ -986,7 +976,7 @@ async def _load_grouped_cells(session: AsyncSession, group_unit_ids: Collection[
 
 
 async def _load_first_cell_seqs(session: AsyncSession, extraction_id: ExtractionId, table_id: int) -> dict[int, int]:
-    """원문 표의 행 → 그 행 첫 칸 블록 seq — 표·행 단위의 자리(처음 쪼개기처럼 빈 칸 블록도 센다)."""
+    """원문 표의 행 → 그 행 첫 칸 블록 seq — 표 단위의 자리(처음 쪼개기처럼 빈 칸 블록도 센다)."""
     rows = await session.execute(
         select(SourceBlock.row_index, func.min(SourceBlock.seq))
         .where(
@@ -1001,55 +991,11 @@ async def _load_first_cell_seqs(session: AsyncSession, extraction_id: Extraction
 def _build_group_draft(
     kind: str, table_id: int, row_index: int | None, pos_seq: int, cells: Mapping[int, int | None]
 ) -> _Draft:
-    """표·행 단위 — 범위·글자 없음, 중립, 자리는 첫 칸 블록의 칸 문장보다 앞(pos_start=-1). cells는 칸 문장 → 지금 묶음."""
+    """표 단위 — 범위·글자 없음, 중립, 자리는 첫 칸 블록의 칸 문장보다 앞(pos_start=-1). cells는 칸 문장 → 지금 묶음."""
     return _Draft(
         kind=kind, spans=[], text="", lang=NEUTRAL, table_id=table_id, row_index=row_index, group_unit_id=None,
         pos_seq=pos_seq, pos_start=-1, cells=dict(cells),
     )
-
-
-async def _plan_split_table_rows(session: AsyncSession, extraction_id: ExtractionId, op: SplitTableRowsOp) -> _Change:
-    """표 단위를 은퇴시키고 칸 문장이 있는 행마다 행 단위를 만들어 칸 문장을 자기 행(칸 블록의 행, R33)에 묶는다.
-
-    캡션은 행이 없어 가장 앞 행 단위로 옮긴다.
-    """
-    table_unit = (await load_active_units(session, extraction_id, [op.table_unit_id]))[op.table_unit_id]
-    if table_unit.kind != "table":
-        raise_rule(422, "invalid_unit_kind", unit_ids=[table_unit.id])
-    members = await _load_grouped_cells(session, [table_unit.id])
-    cells = [member for member in members if member.kind != CAPTION_KIND]
-    if not cells:  # 행 단위가 하나도 없으면 표가 처분할 곳 없이 사라진다
-        raise_rule(422, "empty_table", unit_id=table_unit.id)
-    blocks = await _load_unit_blocks(session, extraction_id, cells)
-    # 표 안에서 행을 넘어 합친 칸 문장은 자기 행이 없다 — 먼저 나눠야 한다
-    crossing = [cell.id for cell in cells if any(blocks[span[0]].row_index != cell.row_index for span in cell.spans)]
-    if crossing:
-        raise_rule(422, "cell_spans_rows", unit_ids=sorted(crossing))
-    by_row: dict[int, dict[int, int | None]] = defaultdict(dict)
-    for cell in cells:
-        by_row[cell.row_index][cell.id] = cell.group_unit_id
-    first_row = by_row[min(by_row)]
-    first_row.update((member.id, member.group_unit_id) for member in members if member.kind == CAPTION_KIND)
-    first_seqs = await _load_first_cell_seqs(session, extraction_id, table_unit.table_id)
-    drafts = [
-        _build_group_draft("table_row", table_unit.table_id, row, first_seqs[row], row_cells)
-        for row, row_cells in sorted(by_row.items())
-    ]
-    return _build_replacement([table_unit], drafts)
-
-
-async def _plan_merge_table_rows(session: AsyncSession, extraction_id: ExtractionId, op: MergeTableRowsOp) -> _Change:
-    """그 표의 활성 행 단위를 모두 은퇴시키고 새 표 단위 하나에 칸 문장을 다시 묶는다."""
-    table = await _load_table(session, extraction_id, op.table_id)
-    rows = await _load_table_units(session, extraction_id, table.id, ["table_row"])
-    if not rows:
-        raise_rule(422, "table_not_split", table_id=table.id)
-    cells = await _load_grouped_cells(session, [row.id for row in rows])
-    first_seqs = await _load_first_cell_seqs(session, extraction_id, table.id)
-    draft = _build_group_draft(
-        "table", table.id, None, min(first_seqs.values()), {cell.id: cell.group_unit_id for cell in cells}
-    )
-    return _build_replacement(rows, [draft])
 
 
 async def _find_crossing_cells(
@@ -1141,7 +1087,7 @@ async def _find_number_joins(
 async def _plan_set_layout_table(
     session: AsyncSession, document_id: int, extraction_id: ExtractionId, op: SetLayoutTableOp
 ) -> _Change:
-    """데이터 → 레이아웃: 표·행 단위를 은퇴시키고 칸 문장의 묶음을 푼다. 번호만 든 칸은 같은 행 다음 칸의 첫 줄과 한 줄이 되어
+    """데이터 → 레이아웃: 표 단위를 은퇴시키고 칸 문장의 묶음을 푼다. 번호만 든 칸은 같은 행 다음 칸의 첫 줄과 한 줄이 되어
     그 줄의 번호가 된다(_find_number_joins). 레이아웃 → 데이터: 새 표 단위에 칸 문장을 묶는다 — 번호를 받은 줄은 그대로 한 줄로
     묶인다(표 안에서는 보이는 모양이 같다, 되돌리기는 Ctrl+Z가 처음 모양으로 돌린다).
 
@@ -1238,7 +1184,7 @@ def _merge_changes(first: _Change, second: _Change) -> _Change:
 async def _plan_band_layout(
     session: AsyncSession, document_id: int, extraction_id: ExtractionId, table: SourceTable, to_layout: bool
 ) -> _Change:
-    """띠 표 ↔ 제목 줄(F4) — 벗기면 표·행·칸 단위를 거두고 번호 칸을 품은 제목 줄을, "표로 되돌리기"는 제목 줄을 거두고 데이터 표
+    """띠 표 ↔ 제목 줄(F4) — 벗기면 표·칸 단위를 거두고 번호 칸을 품은 제목 줄을, "표로 되돌리기"는 제목 줄을 거두고 데이터 표
     (표 단위 + 묶인 칸 문장)를 만든다. 두 쪽 모두 처음 쪼개기(segment.build_unit_drafts)가 만드는 단위 그대로다. 편집 하나라
     되돌리기·다시 하기는 같은 단위 ID로 오간다. 칸 밖까지 이은 줄이 있으면 표로 되돌리지 않는다(422 cell_crosses_table).
     """
@@ -1356,8 +1302,8 @@ async def _measure_caption_distance(session: AsyncSession, extraction_id: Extrac
 async def _plan_attach_caption(session: AsyncSession, extraction_id: ExtractionId, op: AttachCaptionOp) -> _Change:
     """글 단위를 은퇴시키고 같은 범위·언어의 캡션 단위를 그 묶음에 묶어 만든다 — 묶음마다 언어당 캡션 하나.
 
-    글은 묶음에서 블록 자리 CAPTION_REACH 안이어야 하고 사이의 문단은 그대로 남는다(F7 ④). 행으로 나눈 표는 행 단위 모두가
-    한 묶음 자리라 캡션은 가장 앞 행에 둔다(행 나누기와 같다). 다른 그림의 캡션을 같이 쓰는 그림은 제 캡션을 받지 않는다(먼저 푼다).
+    글은 묶음에서 블록 자리 CAPTION_REACH 안이어야 하고 사이의 문단은 그대로 남는다(F7 ④). 다른 그림의 캡션을 같이 쓰는 그림은
+    제 캡션을 받지 않는다(먼저 푼다).
     """
     units = await load_active_units(session, extraction_id, [op.unit_id, op.bundle_unit_id])
     unit, bundle = units[op.unit_id], units[op.bundle_unit_id]
@@ -1370,8 +1316,6 @@ async def _plan_attach_caption(session: AsyncSession, extraction_id: ExtractionI
     distance = await _measure_caption_distance(session, extraction_id, unit, bundle)
     if distance is None or distance > CAPTION_REACH:
         raise_rule(422, "caption_not_adjacent", unit_ids=[unit.id, op.bundle_unit_id])
-    if bundle.kind == "table_row":
-        bundle = (await _load_table_units(session, extraction_id, bundle.table_id, ["table_row"]))[0]
     taken = await session.scalar(
         select(Unit.id).where(
             Unit.group_unit_id == bundle.id, Unit.status == UNIT_ACTIVE, Unit.kind == CAPTION_KIND,
@@ -1528,10 +1472,6 @@ async def _plan(session: AsyncSession, document_id: int, extraction_id: Extracti
             return await _plan_carve(session, extraction_id, op)
         case SetLanguageOp():
             return await _plan_set_language(session, extraction_id, op)
-        case SplitTableRowsOp():
-            return await _plan_split_table_rows(session, extraction_id, op)
-        case MergeTableRowsOp():
-            return await _plan_merge_table_rows(session, extraction_id, op)
         case SetLayoutTableOp():
             return await _plan_set_layout_table(session, document_id, extraction_id, op)
         case AttachCaptionOp():

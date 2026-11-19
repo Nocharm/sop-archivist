@@ -45,7 +45,6 @@ def test_rows_put_one_unit_per_line_and_table_rows_across_columns() -> None:
         _line("heading", "1. 목적", block=1),
         _line("figure", "", block=2),
         _line("table", "", table=7),
-        _line("table_row", "", table=7, row=0),
         _line("cell_sentence", "Rotor", block=3, table=7, row=0, col=0),
         _line("cell_sentence", "Speed", block=4, table=7, row=0, col=1),
         _line("cell_sentence", "첫 문장.", block=5, table=7, row=1, col=1),

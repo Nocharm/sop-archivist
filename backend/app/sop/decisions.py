@@ -90,9 +90,9 @@ MAX_UNITS_PAGE = 1000
 MAX_BULK_UNITS = 2000  # 머리말·구조 제목 정리를 한 번에(R4)
 ORIGIN_UNITS = "units"
 NEUTRAL = "neutral"
-# 문장 새 문장의 출처가 될 수 있는 단위 — 그림은 그림 새 문장, 표·행은 표 새 문장으로만 간다(R28)
+# 문장 새 문장의 출처가 될 수 있는 단위 — 그림은 그림 새 문장, 표는 표 새 문장으로만 간다(R28)
 SENTENCE_SOURCE_KINDS = ("sentence", "heading", "cell_sentence")
-# 칸 제목에 이을 수 있는 글 단위(제품 명세 §7.13 칸 제목) — 칸 문장은 표·행의 처분을 따른다
+# 칸 제목에 이을 수 있는 글 단위(제품 명세 §7.13 칸 제목) — 칸 문장은 표의 처분을 따른다
 SLOT_HEADING_SOURCE_KINDS = ("heading", "sentence")
 TEXT_CHANGE_TYPES = ("tone", "rewritten")  # 글자가 출처와 다를 때 사람이 고르는 종류
 
@@ -258,9 +258,9 @@ _SlotKey = tuple[int, str, str]  # (새 문서, 칸 키, 언어) — 칸 제목�
 class _State:
     units: dict[int, Unit]  # 보낸 단위와 그 칸 문장(U*)
     decisions: dict[int, UnitDecision]  # 보낸 단위의 판단
-    cells: dict[int, list[int]]  # 표·행 단위 → 묶인 활성 칸 문장
-    captions: dict[int, list[int]]  # 표·행·그림 단위 → 묶인 활성 캡션
-    group_of: dict[int, int]  # 묶인 칸 문장·캡션 → 표·행·그림 단위
+    cells: dict[int, list[int]]  # 표 단위 → 묶인 활성 칸 문장
+    captions: dict[int, list[int]]  # 표·그림 단위 → 묶인 활성 캡션
+    group_of: dict[int, int]  # 묶인 칸 문장·캡션 → 표·그림 단위
     existing: dict[int, TargetSentence]  # 보낸 기존 새 문장과 지울 새 문장
     removed: set[int]  # 지울 새 문장
     sources: dict[int, set[int]]  # 기존 새 문장 → 지금 출처 단위
@@ -710,7 +710,7 @@ def _settle_translation_place(plan: _Plan, by_row_id: dict[int, _Plan], state: _
 
 
 def _check_source_kinds(item: TargetIn, state: _State, *, is_caption: bool, origin: str) -> None:
-    """문장은 문장·제목·칸 문장에서, 칸 제목은 제목·문장에서, 표는 표·행 단위 하나에서, 그림은 그림 단위 하나에서 온다(R28).
+    """문장은 문장·제목·칸 문장에서, 칸 제목은 제목·문장에서, 표는 표 단위 하나에서, 그림은 그림 단위 하나에서 온다(R28).
 
     캡션 새 문장은 캡션 단위 하나에서 오거나 출처 없이 써 넣는다. 캡션 단위는 캡션 새 문장의 출처로만 된다(표·그림 명세 §3.2).
     입구 2 캡션은 새 문서가 캡션으로 읽은 글이라 옛 쪽에서 캡션으로 읽히지 않은 보통 문장 하나도 출처가 된다(§3.3).
@@ -950,12 +950,12 @@ def _find_parent_plan(plan: _Plan, by_row_id: dict[int, _Plan]) -> _Plan | None:
 
 
 def _check_as_is_table(plan: _Plan, by_row_id: dict[int, _Plan], state: _State) -> None:
-    """그대로인 표는 원문 표 모양(행 단위면 한 행)을 지키고, 그 칸 새 문장은 원래 칸 자리에 있다(R27)."""
+    """그대로인 표는 원문 표 모양을 지키고, 그 칸 새 문장은 원래 칸 자리에 있다(R27)."""
     keys = [plan.item.key]
     if plan.item.kind == "table" and plan.change_type == "as_is":
         unit = state.units[plan.sources[0]]
         n_rows, n_cols = state.table_shapes[unit.table_id]
-        if plan.grid != {"rows": 1 if unit.kind == "table_row" else n_rows, "cols": n_cols}:
+        if plan.grid != {"rows": n_rows, "cols": n_cols}:
             _reject("grid_mismatch", keys=keys)
     parent = _find_parent_plan(plan, by_row_id)
     # 캡션은 칸 자리가 없다 — 그대로인 표의 모양과 무관하다
@@ -965,8 +965,6 @@ def _check_as_is_table(plan: _Plan, by_row_id: dict[int, _Plan], state: _State) 
     if state.group_of.get(plan.sources[0]) != table_unit.id:  # 입구 2 칸 새 문장이 칸 아닌 문장과 짝지어진 경우
         return
     row_index, col_index = state.cell_positions[plan.sources[0]]
-    if table_unit.kind == "table_row":
-        row_index -= table_unit.row_index or 0
     if (plan.cell_row, plan.cell_col) != (row_index, col_index):
         _reject("cell_position_mismatch", keys=keys)
 
@@ -1611,7 +1609,7 @@ async def save_group(session: AsyncSession, bundle: Bundle, checked: CheckedGrou
 
 
 async def _find_units_with_targets(session: AsyncSession, unit_ids: Collection[int]) -> list[int]:
-    """새 문장의 출처인 단위 — 표·행 단위는 칸 문장이 출처여도 센다."""
+    """새 문장의 출처인 단위 — 표 단위는 칸 문장이 출처여도 센다."""
     wanted = set(unit_ids)
     rows = await select_in_chunks(
         session,

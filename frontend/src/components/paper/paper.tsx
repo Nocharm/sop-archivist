@@ -830,7 +830,7 @@ export function Paper({
 
   /**
    * 표·그림의 캡션 자리(F7 - 템플릿 규칙대로 표는 위, 그림은 아래) - 표는 머리 줄이 그 자리이고, 그림은 그림 아래 따로 둔다.
-   * 머리 줄은 묶음 단위가 있을 때만(행으로 나눈 표는 행마다 단위라 없다). 캡션 자리는 끌어 놓을 곳(data-caption-slot)이고 칩이 나고 드는 전환 범위다
+   * 머리 줄은 묶음 단위가 있을 때만. 캡션 자리는 끌어 놓을 곳(data-caption-slot)이고 칩이 나고 드는 전환 범위다
    */
   function renderBundleHead(row: Extract<PaperRow, { type: "table" | "figure" }>, unit: ViewUnit | undefined): { head: ReactNode; slot: ReactNode } {
     if (!unit) return { head: null, slot: null };

@@ -32,7 +32,7 @@ interface CaptionRefListProps {
 const CAPTION_PREVIEW_CHARS = 48;
 
 function isKindOf(kind: ViewCaptionRef["kind"], unit: ViewUnit): boolean {
-  return kind === "figure" ? unit.kind === "figure" : unit.kind === "table" || unit.kind === "table_row";
+  return kind === "figure" ? unit.kind === "figure" : unit.kind === "table";
 }
 
 export function CaptionRefList({ refs, units, candidates, canEdit, busy, onDetach, onRelink }: CaptionRefListProps) {

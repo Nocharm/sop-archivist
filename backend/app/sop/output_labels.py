@@ -20,7 +20,6 @@ class OutputLabels:
     cell_template: str  # {table} {row} {col}
     nested_separator: str  # 안쪽 표 위치의 앞붙이 — 바깥 칸과 안쪽 자리 사이(F2 · F11, "표 3 · 1행 1열 › 표 4 · 2행 1열")
     table_template: str  # {table}
-    table_row_template: str  # {table} {row}
     table_source_template: str  # 결과물 A 표 줄의 원문 칸 — {table} {rows} {cols}
     read_number_template: str  # 번호를 고친 줄의 절 — {number}는 고친 번호, {read}는 추출기가 읽은 값
     wi_step_template: str  # {step} {part}
@@ -54,7 +53,6 @@ LABELS = {
         cell_template="표 {table} · {row}행 {col}열",
         nested_separator=" › ",
         table_template="표 {table}",
-        table_row_template="표 {table} · {row}행",
         table_source_template="[표 {table}, {rows}×{cols}]",
         read_number_template="{number} (읽은 값 {read})",
         wi_step_template="{step}단계 · {part}",
@@ -89,7 +87,6 @@ LABELS = {
         cell_template="Table {table} · R {row} C {col}",
         nested_separator=" › ",
         table_template="Table {table}",
-        table_row_template="Table {table} · R {row}",
         table_source_template="[Table {table}, {rows}×{cols}]",
         read_number_template="{number} (read as {read})",
         wi_step_template="Step {step} · {part}",

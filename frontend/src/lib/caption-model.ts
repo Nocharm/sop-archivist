@@ -28,8 +28,8 @@ export function isBundleCaptionNeeded(unit: Pick<UnitRow, "has_caption_target" |
   return isCaptionNeeded({ hasCaption: hasBoundCaption || unit?.has_caption_target === true, disposition: unit?.decision.disposition, isLinkedToWritten });
 }
 
-/** 캡션을 받는 묶음 단위 - 표·행·그림 */
-const BUNDLE_KINDS: readonly string[] = ["table", "table_row", "figure"];
+/** 캡션을 받는 묶음 단위 - 표·그림 */
+const BUNDLE_KINDS: readonly string[] = ["table", "figure"];
 
 export function isBundleKind(kind: string): boolean {
   return BUNDLE_KINDS.includes(kind);
@@ -142,7 +142,7 @@ export function listCaptionFields(bundle: ViewUnit, units: readonly ViewUnit[], 
 }
 
 /**
- * Confirm을 막는가 - 새 문서 자리로 보내는 줄의 표·행·그림에 캡션이 하나도 없다. 삭제·이동·보류·입구 2 잇기는 막지 않는다.
+ * Confirm을 막는가 - 새 문서 자리로 보내는 줄의 표·그림에 캡션이 하나도 없다. 삭제·이동·보류·입구 2 잇기는 막지 않는다.
  * 캡션 있는 첫 그림의 캡션을 같이 쓰는 그림(F7 ⑥)은 캡션이 있다(서버 decisions._check_captions와 같다)
  */
 export function isCaptionGate(row: ClassifyRow, destination: Destination | null, units: ReadonlyMap<number, ViewUnit>, draft: CaptionDraft, group: Group | null = null): boolean {

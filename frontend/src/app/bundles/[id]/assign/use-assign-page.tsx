@@ -445,7 +445,7 @@ export function useAssignPage() {
   const rowKey = `${activeKey}:${row?.unitIds.join(",") ?? ""}:${unitsKey}:${isViewSettled}`;
   const group = useLoaded<Group | null>(() => (!row ? Promise.resolve(null) : !isViewSettled ? new Promise<never>(() => undefined) : loadRowGroup(bundleId, row.unitIds)), rowKey);
   const groupData = group.data;
-  const sentenceUnitIds = (row?.unitIds ?? []).filter((id) => unitMap.get(id)?.kind !== "table" && unitMap.get(id)?.kind !== "table_row" && unitMap.get(id)?.kind !== "figure");
+  const sentenceUnitIds = (row?.unitIds ?? []).filter((id) => unitMap.get(id)?.kind !== "table" && unitMap.get(id)?.kind !== "figure");
   const similar = useLoaded<NewCandidate[]>(
     () => (written.length > 0 && sentenceUnitIds.length > 0 ? (isViewSettled ? loadRowCandidates(bundleId, sentenceUnitIds) : new Promise<never>(() => undefined)) : Promise.resolve([])),
     `${rowKey}:${written.length > 0}`,
@@ -748,7 +748,7 @@ export function useAssignPage() {
   if (draftSection && draftPosition && draftSection.items.length > 0) {
     // 표·그림 Unit은 글 대신 그 종류 한 줄
     const blockLines: DraftLine[] = rowUnits.flatMap((unit) =>
-      unit.kind === "table" || unit.kind === "table_row" ? [{ key: `b${unit.unit_id}`, lang: "neutral" as const, text: t("split.table") }] : unit.kind === "figure" ? [{ key: `b${unit.unit_id}`, lang: "neutral" as const, text: t("assign.newFigure") }] : [],
+      unit.kind === "table" ? [{ key: `b${unit.unit_id}`, lang: "neutral" as const, text: t("split.table") }] : unit.kind === "figure" ? [{ key: `b${unit.unit_id}`, lang: "neutral" as const, text: t("assign.newFigure") }] : [],
     );
     const anchor = draftPosition.after !== null ? { anchorKey: `t:${draftPosition.after}`, side: "after" as const } : { anchorKey: `t:${draftSection.items[0].target_id}`, side: "before" as const };
     newDraft = { ...anchor, lines: [...listDraftLines(slots, draft.texts), ...blockLines] };
@@ -1016,7 +1016,7 @@ export function useAssignPage() {
   }
 
   // --- Old 문장 고치기(우클릭 메뉴·두 번 누르기) - Split의 편집을 그대로 부른다. 판단이 없는 문장만(모델이 막는다) ---
-  /** 단위(칸 문장이면 묶인 표·행)의 줄 키 */
+  /** 단위(칸 문장이면 묶인 표)의 줄 키 */
   function findRowKey(unitId: number): string | undefined {
     const groupId = paperModel?.units.get(unitId)?.group_unit_id ?? null;
     return rowOfUnit.get(unitId) ?? (groupId !== null ? rowOfUnit.get(groupId) : undefined);
@@ -1034,15 +1034,15 @@ export function useAssignPage() {
   }
 
   const ctxTarget = ctxMenu ? (shapeModel?.units.get(ctxMenu.unitId) ?? null) : null;
-  // 우클릭한 것이 든 표(또는 행) 단위 - 칸 문장이면 묶인 표·행, 표·행을 직접 눌렀으면 그 단위
-  /** 그 단위가 든 표(또는 행) 단위 - 칸 문장이면 묶인 표·행, 표·행이면 그 단위 */
+  // 우클릭한 것이 든 표 단위 - 칸 문장이면 묶인 표, 표를 직접 눌렀으면 그 단위
+  /** 그 단위가 든 표 단위 - 칸 문장이면 묶인 표, 표면 그 단위 */
   function findTableOf(target: ViewUnit | null): ViewUnit | null {
     if (!target || !shapeModel) return null;
-    const holder = target.kind === "table" || target.kind === "table_row" ? target : target.group_unit_id !== null ? (shapeModel.units.get(target.group_unit_id) ?? null) : null;
-    return holder !== null && (holder.kind === "table" || holder.kind === "table_row") ? holder : null;
+    const holder = target.kind === "table" ? target : target.group_unit_id !== null ? (shapeModel.units.get(target.group_unit_id) ?? null) : null;
+    return holder !== null && holder.kind === "table" ? holder : null;
   }
 
-  /** 그 단위가 속한 묶음(표·행·그림) - 묶음이면 그 단위, 칸 문장·캡션이면 묶인 묶음, 아니면 null */
+  /** 그 단위가 속한 묶음(표·그림) - 묶음이면 그 단위, 칸 문장·캡션이면 묶인 묶음, 아니면 null */
   function findBundleOf(unit: ViewUnit | null): ViewUnit | null {
     if (!unit || !shapeModel) return null;
     if (isBundleKind(unit.kind)) return unit;
@@ -1050,17 +1050,10 @@ export function useAssignPage() {
     return holder && isBundleKind(holder.kind) ? holder : null;
   }
 
-  /** 묶음 자리의 단위 id - 행으로 나눈 표는 모든 행이 한 자리다(서버 _find_bundle_neighbors와 같다) */
-  function listBundleSpan(bundle: ViewUnit): Set<number> {
-    if (bundle.kind !== "table_row" || !shapeModel) return new Set([bundle.id]);
-    return new Set([...shapeModel.units.values()].filter((unit) => unit.kind === "table_row" && unit.table_id === bundle.table_id).map((unit) => unit.id));
-  }
-
-  /** 묶음에 이미 있는 캡션의 언어 - 행으로 나눈 표의 캡션은 첫 행에 딸린다 */
+  /** 묶음에 이미 있는 캡션의 언어 */
   function listCaptionLangs(bundle: ViewUnit): string[] {
     if (!shapeModel) return [];
-    const span = listBundleSpan(bundle);
-    return [...shapeModel.units.values()].filter((unit) => unit.kind === "caption" && unit.group_unit_id !== null && span.has(unit.group_unit_id)).map((unit) => unit.lang);
+    return [...shapeModel.units.values()].filter((unit) => unit.kind === "caption" && unit.group_unit_id === bundle.id).map((unit) => unit.lang);
   }
 
   /** 옛 이행(0020)이 그림 블록 위에 둔 캡션인가 - 떼면 그림 글이 문장이 되어 서버가 막는다(caption_in_figure_block) */
@@ -1075,10 +1068,9 @@ export function useAssignPage() {
     if (!shapeTabs || !shapeModel) return { prev: null, next: null };
     const order = shapeTabs.order;
     const isBundle = isBundleKind(target.kind);
-    const span = isBundle ? listBundleSpan(target) : new Set([target.id]);
     const inside = order.flatMap((id, index) => {
       const unit = shapeModel.units.get(id);
-      return unit && (span.has(id) || (isBundle && unit.group_unit_id !== null && span.has(unit.group_unit_id))) ? [index] : [];
+      return unit && (id === target.id || (isBundle && unit.group_unit_id === target.id)) ? [index] : [];
     });
     if (inside.length === 0) return { prev: null, next: null };
     return { prev: shapeModel.units.get(order[Math.min(...inside) - 1]) ?? null, next: shapeModel.units.get(order[Math.max(...inside) + 1]) ?? null };
@@ -1088,7 +1080,6 @@ export function useAssignPage() {
   function buildUnitMenu(target: ViewUnit): AssignMenuGroups | null {
     if (!shapeTabs || !shapeModel) return null;
     const { prev, next } = findNeighbors(target);
-    const table = findTableOf(target);
     return buildAssignMenu({
       target,
       prev,
@@ -1103,8 +1094,7 @@ export function useAssignPage() {
       isDecided: isUnitDecided,
       hasDraft: hasUnitDraft,
       canSplit: findNearestCut(target, Math.floor(target.text.length / 2)) !== null,
-      table,
-      tableRows: table?.kind === "table_row" ? [...shapeModel.units.values()].filter((unit) => unit.kind === "table_row" && unit.table_id === table.table_id) : [],
+      table: findTableOf(target),
     });
   }
   const ctxMenuGroups = ctxTarget ? buildUnitMenu(ctxTarget) : null;
@@ -1528,9 +1518,7 @@ export function useAssignPage() {
     } else if (action === "unpair") {
       const pairId = target.pair_id;
       if (pairId !== null) void runPairChange((docId, revision) => deletePair(bundleId, docId, pairId, revision), t("split.pairRemoved"), target.id);
-    } else if (action === "table_rows" && table) void runUnitEdit({ type: "split_table_rows", table_unit_id: table.id }, t("split.didSplit"), null);
-    else if (action === "table_merge" && table && table.table_id !== null) void runUnitEdit({ type: "merge_table_rows", table_id: table.table_id }, t("split.didMerge"), null);
-    else if (action === "table_layout" && table && table.table_id !== null) unwrapTable(table.table_id);
+    } else if (action === "table_layout" && table && table.table_id !== null) unwrapTable(table.table_id);
     else if (action === "caption_attach_prev" || action === "caption_attach_next") {
       // 같은 일, 대상에 따라 짝이 바뀐다 - 묶음 대상이면 이웃 글을, 글 대상이면 이웃 묶음에 붙인다. 붙인 뒤 묶음 줄을 고른다
       const neighbor = findNeighbors(target)[action === "caption_attach_prev" ? "prev" : "next"];
@@ -1585,23 +1573,20 @@ export function useAssignPage() {
     if (!source || !row) return tables;
     for (const unitId of row.unitIds) {
       const unit = source.units.find((item) => item.id === unitId);
-      if (!unit || (unit.kind !== "table" && unit.kind !== "table_row") || unit.table_id === null) continue;
+      if (!unit || unit.kind !== "table" || unit.table_id === null) continue;
       const table = source.tables.find((item) => item.id === unit.table_id);
-      // 행 단위("행으로 나누기")는 그 행 하나짜리 표이고 칸 자리는 그 행 기준이다 - 서버 칸 자리 검사(원문 칸 블록 좌표)와 같다
-      const isRow = unit.kind === "table_row";
-      const firstRow = isRow ? (unit.row_index ?? 0) : 0;
       const cells = source.units
         .filter((item) => item.group_unit_id === unit.id && item.kind === "cell_sentence")
         .map((item) => {
           const block = source.blocks.find((candidate) => candidate.id === item.block_id);
-          return { id: item.id, lang: item.lang, text: item.text, row: (block?.row_index ?? item.row_index ?? 0) - firstRow, col: block?.col_index ?? 0 };
+          return { id: item.id, lang: item.lang, text: item.text, row: block?.row_index ?? item.row_index ?? 0, col: block?.col_index ?? 0 };
         });
-      tables.set(unit.id, { rows: isRow ? 1 : (table?.n_rows ?? 1), cols: table?.n_cols ?? 1, cells });
+      tables.set(unit.id, { rows: table?.n_rows ?? 1, cols: table?.n_cols ?? 1, cells });
     }
     return tables;
   }
 
-  /** 줄의 표·행·그림에 묶인 캡션 단위 - 저장 요청의 캡션 새 문장 출처(buildTables의 칸 문장과 같은 길) */
+  /** 줄의 표·그림에 묶인 캡션 단위 - 저장 요청의 캡션 새 문장 출처(buildTables의 칸 문장과 같은 길) */
   function buildCaptions(): Map<number, CaptionUnit[]> {
     const captions = new Map<number, CaptionUnit[]>();
     const source = viewOf(row?.documentId);
@@ -2972,7 +2957,7 @@ export function useAssignPage() {
       unit: unitParam,
       oldDocIds,
       docOfUnit: (unitId) => lineUnits.find((unit) => unit.id === unitId)?.docId,
-      // 칸 문장은 묶인 표·행의 줄이다 - 편집 뒤 따라가기(follow)와 같은 식
+      // 칸 문장은 묶인 표의 줄이다 - 편집 뒤 따라가기(follow)와 같은 식
       findRowKey: (unitId) => {
         const groupId = lineUnits.find((unit) => unit.id === unitId)?.groupId ?? null;
         return rowOfUnit.get(unitId) ?? (groupId !== null ? rowOfUnit.get(groupId) : undefined);
@@ -2981,7 +2966,7 @@ export function useAssignPage() {
     if (target.kind === "row") {
       selectRow(target.rowKey, false);
       // 이펙트에서 바꾼 상태는 누름과 달리 다음 작업에서 그려진다 - 다른 문서의 줄이면 그 용지가 그려진 뒤에 조각을 찾도록 두 프레임 미룬다.
-      // 표 · 표 행으로 옮긴 줄은 글 조각(unit)이 없어 조각 상자(piece)로 간다 - scrollToUnit은 글 조각만 찾는다
+      // 표로 옮긴 줄은 글 조각(unit)이 없어 조각 상자(piece)로 간다 - scrollToUnit은 글 조각만 찾는다
       const { unitId } = target;
       requestAnimationFrame(() =>
         requestAnimationFrame(() => {

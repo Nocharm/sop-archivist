@@ -320,7 +320,7 @@ export function deleteDocument(bundleId: number, docId: number, revision: number
 
 // --- 원문 보기와 쪼개기 편집 ---
 
-export type UnitKind = "sentence" | "heading" | "figure" | "table" | "table_row" | "cell_sentence" | "caption";
+export type UnitKind = "sentence" | "heading" | "figure" | "table" | "cell_sentence" | "caption";
 /** ref는 참조 줄(다른 문서를 번호로 가리키는 글) - 한/영 짝이 없다 */
 export type UnitLang = "ko" | "en" | "ref" | "neutral";
 /** 참조 줄 상태 - proposed는 앱의 제안(사람이 번호를 확인하기 전), confirmed는 REF로 확정된 것 */
@@ -408,7 +408,7 @@ export interface ViewUnit {
   spans: UnitSpan[];
   text: string;
   lang: UnitLang;
-  /** 번호 칸이 없는 단위(그림·표·행·캡션)는 null */
+  /** 번호 칸이 없는 단위(그림·표·캡션)는 null */
   number: ViewNumber | null;
   table_id: number | null;
   row_index: number | null;
@@ -495,10 +495,8 @@ export type EditOp =
   | { type: "move_boundary"; left_unit_id: number; right_unit_id: number; at: number }
   | { type: "carve"; block_id: number; start: number; end: number }
   | { type: "set_language"; unit_ids: number[]; lang: "ko" | "en" }
-  | { type: "split_table_rows"; table_unit_id: number }
-  | { type: "merge_table_rows"; table_id: number }
   | { type: "set_layout_table"; table_id: number; is_layout: boolean }
-  /** 블록 자리 2 안(caption-slot-model CAPTION_REACH)의 묶이지 않은 글 단위를 표·행·그림의 캡션으로 - 사이 문단은 그대로,
+  /** 블록 자리 2 안(caption-slot-model CAPTION_REACH)의 묶이지 않은 글 단위를 표·그림의 캡션으로 - 사이 문단은 그대로,
    *  묶음마다 언어당 하나(caption_exists), 먼 글은 caption_not_adjacent, 다른 그림의 캡션을 같이 쓰는 그림은 caption_shared. 판단이 있는 묶음이면 서버가 묻는다 */
   | { type: "attach_caption"; unit_id: number; bundle_unit_id: number }
   /** 캡션을 같은 자리·언어의 묶이지 않은 문장으로 - 첫 행에서 올린 캡션은 그 표의 칸 문장으로 돌아간다 */

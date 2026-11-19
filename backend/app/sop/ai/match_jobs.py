@@ -194,7 +194,7 @@ async def _read_rows(
 
 
 def _get_match_kind(unit_kind: str) -> str:
-    """단위 종류를 새 문장 종류로 — 옛 제목·칸 문장도 글자를 견주는 문장이고, 행 단위는 한 행짜리 표다."""
+    """단위 종류를 새 문장 종류로 — 옛 제목·칸 문장도 글자를 견주는 문장이다."""
     if unit_kind in TABLE_UNIT_KINDS:
         return _TABLE
     return _FIGURE if unit_kind == _FIGURE else _SENTENCE
@@ -219,7 +219,7 @@ async def _load_old_entries(
     session: AsyncSession, bundle_id: int, unit_ids: Collection[int] | None = None
 ) -> dict[int, _Entry]:
     """AI가 쓸 수 있는 옛 단위 — 미배정이고 분류 제안이 살아 있지 않은 단위(분류 제안과 겹쳐 내지 않는다, 설계 §6.8).
-    입구 1로 간 단위는 상태에서 걸러지고, 칸 문장은 표·행 단위가 대신한다."""
+    입구 1로 간 단위는 상태에서 걸러지고, 칸 문장은 표 단위가 대신한다."""
     statement = (
         select(
             Unit.id, Unit.kind, Unit.lang, Unit.text, Unit.extraction_id, Document.id.label("document_id"),
@@ -415,7 +415,7 @@ async def _load_cell_targets(session: AsyncSession, table_ids: Collection[int]) 
 
 
 async def _load_cell_units(session: AsyncSession, table_unit_ids: Collection[int]) -> dict[int, list[Unit]]:
-    """표·행·그림 단위 → 묶인 활성 칸 문장·캡션(문서 순서) — 호출 동안 바뀐 칸도 맞게 지금 읽는다."""
+    """표·그림 단위 → 묶인 활성 칸 문장·캡션(문서 순서) — 호출 동안 바뀐 칸도 맞게 지금 읽는다."""
     rows = await select_in_chunks(
         session,
         lambda chunk: select(Unit)
@@ -439,12 +439,11 @@ def _number_cells(cells: Iterable[tuple[int, int, str, _CellT]]) -> dict[_CellKe
     return numbered
 
 
-def _iter_old_cells(unit: Unit, cells: Iterable[Unit], positions: Mapping[int, tuple[int, int]]) -> Iterator[tuple[int, int, str, Unit]]:
-    """칸 문장의 칸 자리 — 행 단위의 좌표는 새 문장처럼 그 행 기준이다."""
-    first_row = (unit.row_index or 0) if unit.kind == "table_row" else 0
+def _iter_old_cells(cells: Iterable[Unit], positions: Mapping[int, tuple[int, int]]) -> Iterator[tuple[int, int, str, Unit]]:
+    """칸 문장의 칸 자리."""
     for cell in cells:
         row_index, col_index = positions[cell.id]
-        yield row_index - first_row, col_index, cell.lang, cell
+        yield row_index, col_index, cell.lang, cell
 
 
 def _build_cell_write(cell: TargetSentence, source: Unit | None) -> _TargetWrite:
@@ -540,8 +539,8 @@ async def _plan_tables(
         old_cells, old_captions = members.get(unit.id, ([], []))
         new_cells, new_captions = children.get(target.id, ([], []))
         writes.append(_plan_table(
-            olds[unit.id], unit, target, grid={"rows": 1 if unit.kind == "table_row" else n_rows, "cols": n_cols},
-            old_cells=_iter_old_cells(unit, old_cells, positions), new_cells=new_cells,
+            olds[unit.id], unit, target, grid={"rows": n_rows, "cols": n_cols},
+            old_cells=_iter_old_cells(old_cells, positions), new_cells=new_cells,
             captions=_plan_captions(old_captions, new_captions),
         ))
     return writes

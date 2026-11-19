@@ -42,8 +42,8 @@ export interface PaperModel {
 
 const TOP_PARTS = new Set(["header"]);
 const BOTTOM_PARTS = new Set(["footer", "footnote", "endnote"]);
-// 범위가 없는 단위(표·행)는 칸 문장이 글자를 덮는다
-const SPANLESS_KINDS = new Set(["table", "table_row"]);
+// 범위가 없는 단위(표)는 칸 문장이 글자를 덮는다
+const SPANLESS_KINDS = new Set(["table"]);
 
 /** 띠 표 제목 줄인가(F4) - 원문 표를 가리키는 제목 단위는 벗긴 띠 표에서 나온 것뿐이다(서버 segment.is_band_heading) */
 export function isBandHeading(unit: Pick<ViewUnit, "kind" | "table_id">): boolean {
@@ -132,7 +132,6 @@ export function buildPaperModel(view: DocumentView): PaperModel {
   };
   const unitRank = new Map(view.units.map((unit) => [unit.id, readRank(unit)]));
   const order = [...view.units]
-    .filter((unit) => unit.kind !== "table_row" || unit.spans.length > 0)
     .sort((a, b) => (unitRank.get(a.id) ?? 0) - (unitRank.get(b.id) ?? 0) || a.pos_seq - b.pos_seq || (a.spans[0]?.[1] ?? 0) - (b.spans[0]?.[1] ?? 0) || a.id - b.id)
     .map((unit) => unit.id);
   return { header, body, footer, groups: [...groups.values()], segments, units, order, hasNumberRanges: view.has_number_ranges, unwrapped, tables };
@@ -293,7 +292,7 @@ export function getMergeBlocker(a: ViewUnit, b: ViewUnit): MergeBlocker | null {
   if (!TEXT_KINDS.has(a.kind) || !TEXT_KINDS.has(b.kind)) return "not_text";
   // 목차 줄은 먼저 목차 아님으로 돌린다(서버 422 toc_line_locked, 사용자 결정 2026-11-19)
   if (a.noise_kind || b.noise_kind) return "toc";
-  // 칸 문장은 같은 표·행 그룹(또는 모두 그룹 없음)끼리만
+  // 칸 문장은 같은 표 그룹(또는 모두 그룹 없음)끼리만
   if ((a.kind === "cell_sentence" || b.kind === "cell_sentence") && (a.kind !== b.kind || a.group_unit_id !== b.group_unit_id)) return "cell";
   return null;
 }
@@ -304,7 +303,7 @@ export function hasTocLineIn(units: Iterable<ViewUnit>, blockId: number): boolea
   return false;
 }
 
-/** 누른 단위 → 고를 단위. 표·행에 묶인 칸 문장이면 그 묶음 단위, 아니면 자기(Assign은 표·그림을 묶음째 배정한다) */
+/** 누른 단위 → 고를 단위. 표에 묶인 칸 문장이면 그 묶음 단위, 아니면 자기(Assign은 표·그림을 묶음째 배정한다) */
 export function resolvePickUnit(unitId: number, units: ReadonlyMap<number, ViewUnit>): number {
   return units.get(unitId)?.group_unit_id ?? unitId;
 }
@@ -362,7 +361,7 @@ function listInBlockCaptions(captions: readonly ViewUnit[], blocks: ReadonlyMap<
  * 캡션 단위의 조각 줄을 빼서 그 묶음(group_unit_id) 표·그림 줄의 captions에 담는다 - 캡션은 캡션 자리에서 한 번만 읽힌다.
  * 그림 줄은 그림 단위(범위 없음 - block_id로 찾는다)에 잇고, 옛 추출처럼 그림 블록 글을 범위로 가진 캡션도 그 그림의 캡션으로 둔다.
  * 표 첫 행에서 올린 캡션(F7 ③ - 표 칸 위 범위)도 그 표의 캡션으로 둔다.
- * 묶음 줄이 이 목록에 없는 캡션(행으로 나눈 표 등)은 제 조각 줄로 남는다. 표·그림 줄의 captions는 늘 채운다(없으면 빈 목록).
+ * 묶음 줄이 이 목록에 없는 캡션은 제 조각 줄로 남는다. 표·그림 줄의 captions는 늘 채운다(없으면 빈 목록).
  */
 export function foldCaptionRows(rows: PaperRow[], units: ReadonlyMap<number, ViewUnit>): PaperRow[] {
   const figureOfBlock = new Map<number, number>();

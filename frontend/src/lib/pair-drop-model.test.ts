@@ -196,7 +196,7 @@ describe("resolvePairDrop never pairs what the pair menu blocks (getPairPickBloc
   });
   // 손으로 고른 표만으로는 메뉴에 나중에 더한 막음을 못 본다 - 종류 × 언어 × 배정 × 저장 전 고름을 모두 돌며 "메뉴가 막으면 끌기도 맺거나 확정하지 않는다"
   it("over every kind, language, decided and unsaved pick: whatever the menu blocks never pairs or confirms by a drop", () => {
-    const kinds: ViewUnit["kind"][] = ["sentence", "heading", "figure", "table", "table_row", "cell_sentence"];
+    const kinds: ViewUnit["kind"][] = ["sentence", "heading", "figure", "table", "cell_sentence"];
     const langs: ViewUnit["lang"][] = ["ko", "en", "ref", "neutral"];
     let blockedCount = 0;
     for (const kind of kinds) for (const lang of langs) for (const decided of [false, true]) for (const draft of [false, true]) {
@@ -210,7 +210,7 @@ describe("resolvePairDrop never pairs what the pair menu blocks (getPairPickBloc
         expect(["pair", "confirm"], `${kind}/${lang}/decided=${decided}/draft=${draft} -> ${JSON.stringify(drop)}`).not.toContain(drop.kind);
       }
     }
-    // 96칸 중 메뉴가 받는 것은 글 종류 셋 × 한/영 둘 × 배정·고름 없음 하나뿐
-    expect(blockedCount).toBe(96 - 6);
+    // 80칸 중 메뉴가 받는 것은 글 종류 셋 × 한/영 둘 × 배정·고름 없음 하나뿐
+    expect(blockedCount).toBe(80 - 6);
   });
 });

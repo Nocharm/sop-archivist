@@ -733,16 +733,11 @@ def test_classify_table_sends_its_caption_and_taking_it_as_is_is_as_is(client: T
     assert fake_ai.requests[0]["context"][0]["caption"] == TABLE_CAPTION
 
 
-@pytest.mark.parametrize("kind", ["table", "table_row"])
-def test_taken_table_suggestion_passes_the_checks_of_a_human_save(client: TestClient, fake_ai: FakeAi, kind: str) -> None:
+def test_taken_table_suggestion_passes_the_checks_of_a_human_save(client: TestClient, fake_ai: FakeAi) -> None:
     # 받은 표가 원래 격자·칸 좌표로 사람 저장의 그대로 검사(R27)를 지나야 하고, 제안 모습(표·칸)과 견줘 그대로 채택이다
     bundle = make_ai_bundle(client)
     view = upload_second_document(client, bundle.id, tbl(CELLS))
-    document_id = view["document"]["id"]
-    if kind == "table_row":
-        edit_document(client, bundle.id, document_id, {"type": "split_table_rows", "table_unit_id": find_kind(view, "table")["id"]})
-        view = get_view(client, bundle.id, document_id)
-    unit = next(member for member in reversed(view["units"]) if member["kind"] == kind)  # 행 단위는 둘째 행을 본다
+    unit = find_kind(view, "table")
     use_reply(fake_ai)
     queue_units(client, bundle.id, [unit["id"]])
     run_jobs()
@@ -753,9 +748,6 @@ def test_taken_table_suggestion_passes_the_checks_of_a_human_save(client: TestCl
     (table_target,) = [target for target in group["targets"] if target["kind"] == "table"]
     assert (table_target["status"], table_target["change_type"]) == ("confirmed", "as_is")
     assert suggestion.adoption == "as_is"
-    if kind == "table_row":
-        assert table_target["grid"] == {"rows": 1, "cols": 2}
-        assert {target["cell_row"] for target in group["targets"] if target["kind"] == "sentence" and target["cell_row"] is not None} == {0}
 
 
 def test_figure_suggestion_records_the_place_without_rewrites(client: TestClient, fake_ai: FakeAi) -> None:
@@ -964,7 +956,7 @@ def test_seed_example_parses_as_classify_reply() -> None:
 def test_classify_seed_covers_tables_and_as_is_rewrites() -> None:
     seed = (SEEDS_DIR / "prompt.classify.md").read_text(encoding="utf-8")
 
-    assert "`table_row`" in seed and "cells stay exactly as they are" in seed
+    assert "`table`" in seed and "cells stay exactly as they are" in seed
     assert "repeat the original sentence" in seed
 
 

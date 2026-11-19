@@ -108,7 +108,7 @@ async def _load_document(session: AsyncSession, job: AiJob) -> Document | None:
 async def _load_items(
     session: AsyncSession, document_id: int
 ) -> tuple[int | None, dict[int, MatchItem], dict[int, str]]:
-    """(최신 추출 id, 짝 없는 활성 한글·영어 글자 단위, 단위의 원문 부분) — 표·행에 묶인 칸 문장은 표의 판단을 따라 코드 짝처럼 뺀다.
+    """(최신 추출 id, 짝 없는 활성 한글·영어 글자 단위, 단위의 원문 부분) — 표에 묶인 칸 문장은 표의 판단을 따라 코드 짝처럼 뺀다.
 
     글자가 없는 단위는 비교할 수 없어 임베딩에 보내지 않고 사람 몫으로 남긴다(설계 §7.10, 입구 2와 같다).
     """

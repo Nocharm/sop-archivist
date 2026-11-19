@@ -699,9 +699,9 @@ await runStep("assign: a click anywhere on a table picks the whole table, Alt st
   await cellText.waitFor({ timeout: T });
   await cellText.scrollIntoViewIfNeeded();
   await cellText.click();
-  const splitRows = page.locator(`[data-testid="assign-shape-table_rows-${table.id}"]`);
-  await splitRows.waitFor({ state: "attached", timeout: T });
-  check("clicking cell text picks the whole table (Shape offers Split into rows)", (await splitRows.getAttribute("aria-label")) === "Split into rows");
+  const unwrap = page.locator(`[data-testid="assign-shape-table_layout-${table.id}"]`);
+  await unwrap.waitFor({ state: "attached", timeout: T });
+  check("clicking cell text picks the whole table (Shape offers Unwrap table)", (await unwrap.getAttribute("aria-label")) === "Unwrap table");
   check("the table piece is the selected one", (await page.locator(`[data-testid="assign-paper-piece-${table.id}"]`).getAttribute("data-sel")) === "");
   // Alt+끌기 - 칸 글자 첫머리에서 끝까지
   const box = await cellText.boundingBox();
@@ -716,119 +716,37 @@ await runStep("assign: a click anywhere on a table picks the whole table, Alt st
   await page.evaluate(() => window.getSelection()?.removeAllRanges());
 });
 
-// 배정 화면에서 표를 행으로 나누거나 다시 합치고 되돌리기 - 우클릭 메뉴(전에는 쪼개기 화면에서만 했다). Ctrl+Z로 처음 모양으로 돌아온다
-await runStep("assign: table rows from the right-click menu, then undo", {}, async ({ page, takeShot }) => {
+// 배정 화면에서 표를 우클릭하면 표 메뉴(표 벗기기)가 뜬다 - 표 머리 줄을 우클릭한다(칸 위가 아니라 표 전체). 벗기기와 되돌리기는 아래 unwrap 단계가 본다
+await runStep("assign: right-clicking a table opens the table menu", {}, async ({ page, takeShot }) => {
   await page.goto(`${BASE}/`);
   const fresh = page.locator('[data-testid^="bundles-row-"]', { hasText: "쪼개기 직후" });
   const freshId = Number((await fresh.getAttribute("data-testid")).replace("bundles-row-", ""));
   const headers = { "X-Dev-User": "qa.member" };
   const docs = await (await page.request.get(`${BASE}/api/bundles/${freshId}/documents`, { headers })).json();
-  const readView = async (docId) => (await page.request.get(`${BASE}/api/bundles/${freshId}/documents/${docId}/view`, { headers })).json();
-  // 배정이 없는 표 - 통째면 행으로 나누고, 앞 시나리오가 이미 나눠 두었으면 다시 합친다
-  let doc = null;
-  let holder = null;
-  let cell = null;
-  for (const candidate of docs.filter((item) => item.side === "old" && item.status === "ready")) {
-    const view = await readView(candidate.id);
-    const found = view.units.find((unit) => (unit.kind === "table" || unit.kind === "table_row") && unit.status === "unassigned");
-    if (!found) continue;
-    doc = candidate;
-    holder = found;
-    cell = view.units.find((unit) => unit.kind === "cell_sentence" && unit.group_unit_id === found.id) ?? null;
-    break;
-  }
-  check("the fresh bundle has an unassigned table", holder !== null);
-  const action = holder.kind === "table" ? "table_rows" : "table_merge";
-  const countKinds = async () => {
-    const view = await readView(doc.id);
-    return `${view.units.filter((unit) => unit.kind === "table").length} tables, ${view.units.filter((unit) => unit.kind === "table_row").length} rows`;
-  };
-  const before = await countKinds();
-  await page.goto(`${BASE}/bundles/${freshId}/assign`);
-  await wait(page, "assign-bar");
-  // 표·행 단위는 제 조각이 없을 수 있다 - 그러면 그 표의 칸 문장을 누른다(그 문장의 줄이 골라지며 문서도 그리로 넘어간다)
-  const pieceOf = (unitId) => page.locator(`[data-testid="assign-paper-piece-${unitId}"], [data-testid="assign-paper-unit-${unitId}"]`).first();
-  if ((await pieceOf(holder.id).count()) === 0 && (cell === null || (await pieceOf(cell.id).count()) === 0)) {
-    await page.locator('[data-testid="assign-old-doc"]').click();
-    await page.locator(`[data-testid="assign-old-doc-option-${doc.id}"]`).click();
-  }
-  // 통째인 표는 머리 줄을 우클릭한다(칸 위가 아니라 표 전체), 행으로 나눈 표는 머리 줄이 없어 칸 문장으로
-  const headOf = (unitId) => page.locator(`[data-testid="assign-paper-head-${unitId}"]`).first();
-  const target = (await headOf(holder.id).count()) > 0 ? headOf(holder.id) : (await pieceOf(holder.id).count()) > 0 || cell === null ? pieceOf(holder.id) : pieceOf(cell.id);
-  await target.waitFor({ timeout: T });
-  await target.scrollIntoViewIfNeeded();
-  await target.click({ button: "right" });
-  await wait(page, `assign-ctx-${action}`);
-  check("the menu offers one direction only", (await page.locator(`[data-testid="assign-ctx-${action === "table_rows" ? "table_merge" : "table_rows"}"]`).count()) === 0);
-  await takeShot("sop-assign-table-menu.png");
-  if ((await page.locator(`[data-testid="assign-ctx-${action}"]`).getAttribute("aria-disabled")) === "true") {
-    // 다른 행에 배정이 있는 표는 다시 합치지 못한다 - 항목이 잠기고 까닭이 붙는다
-    check("a table with an assigned row keeps Merge rows back locked, with the reason", ((await page.locator(`[data-testid="assign-ctx-${action}"]`).getAttribute("data-tip")) ?? "").includes("row"));
-    return;
-  }
-  await page.locator(`[data-testid="assign-ctx-${action}"]`).click();
-  await page.waitForFunction(() => document.querySelector('[data-testid="assign-undo"]')?.disabled === false, null, { timeout: T });
-  const changed = await countKinds();
-  check(action === "table_rows" ? "the table becomes rows" : "the rows become one table again", changed !== before, `${before} -> ${changed}`);
-  // 화면이 새 줄을 고른 뒤에 되돌린다 - 그 전에 되돌리면 막 사라진 단위의 정보를 한 번 불러 404가 콘솔에 찍힌다(사람 손으로는 나오지 않는 속도)
-  await page.waitForLoadState("networkidle");
-  await page.locator('[data-testid="assign-undo"]').click();
-  await page.waitForFunction(() => [...document.querySelectorAll('[data-testid="toast-ok"]')].some((toast) => /table rows/i.test(toast.textContent ?? "")), null, { timeout: T });
-  check("Undo puts the table back as it was", (await countKinds()) === before, await countKinds());
-});
-
-await runStep("split rows of a table, then assign a row as a table", { allowConsoleErrors: true }, async ({ page }) => {
-  const headers = { "X-Dev-User": "qa.member" };
-  const docs = await (await page.request.get(`${BASE}/api/bundles/${freshBundleId}/documents`, { headers })).json();
-  const readView = async (docId) => (await page.request.get(`${BASE}/api/bundles/${freshBundleId}/documents/${docId}/view`, { headers })).json();
-  // 통째인 표가 있는 Old 문서 - 그 표의 칸 문장을 우클릭해 행으로 나눈다
   let doc = null;
   let table = null;
-  let cell = null;
   for (const candidate of docs.filter((item) => item.side === "old" && item.status === "ready")) {
-    const view = await readView(candidate.id);
-    const found = view.units.find((unit) => unit.kind === "table");
+    const view = await (await page.request.get(`${BASE}/api/bundles/${freshId}/documents/${candidate.id}/view`, { headers })).json();
+    const found = view.units.find((unit) => unit.kind === "table" && unit.status === "unassigned");
     if (!found) continue;
     doc = candidate;
     table = found;
-    cell = view.units.find((unit) => unit.kind === "cell_sentence" && unit.group_unit_id === found.id) ?? null;
     break;
   }
-  check("the fresh bundle has a whole table", table !== null);
+  check("the fresh bundle has an unassigned table", table !== null);
   if (table === null) return;
-  await page.goto(`${BASE}/bundles/${freshBundleId}/assign`);
+  await page.goto(`${BASE}/bundles/${freshId}/assign`);
   await wait(page, "assign-bar");
   await page.locator('[data-testid="assign-old-doc"]').click();
   await page.locator(`[data-testid="assign-old-doc-option-${doc.id}"]`).click();
-  const pieceOf = (unitId) => page.locator(`[data-testid="assign-paper-piece-${unitId}"], [data-testid="assign-paper-unit-${unitId}"]`).first();
-  const target = (await pieceOf(table.id).count()) > 0 || cell === null ? pieceOf(table.id) : pieceOf(cell.id);
-  await target.waitFor({ timeout: T });
-  await target.scrollIntoViewIfNeeded();
-  await target.click({ button: "right" });
-  await wait(page, "assign-ctx-table_rows");
-  await page.locator('[data-testid="assign-ctx-table_rows"]').click();
-  // 판단이 걸린 표면 서버가 먼저 묻는다
-  const confirm = page.locator('[data-testid="assign-edit-confirm-confirm"]');
-  if (await confirm.waitFor({ timeout: 2000 }).then(() => true, () => false)) await confirm.click();
-  let row = null;
-  for (let tries = 0; tries < 60 && row === null; tries += 1) {
-    row = (await readView(doc.id)).units.find((unit) => unit.kind === "table_row" && unit.table_id === table.table_id) ?? null;
-    if (row === null) await page.waitForTimeout(250);
-  }
-  check("rows are split", row !== null, row?.display_id);
-  if (row === null) return;
-  await page.waitForLoadState("networkidle");
-  await selectRowById(page, row.display_id);
-  await pickFirstPlace(page);
-  // 원문 캡션은 첫 행에 딸린다 - 캡션이 없는 행은 새 표라 Confirm이 꺼져 있고, 캡션을 써 넣어야 확정된다(명세 §3.4)
-  const primary = page.locator('[data-testid="assign-primary"]');
-  if (await primary.isDisabled()) {
-    await page.locator('[data-testid="assign-caption-write"]').click();
-    await page.locator('[data-testid^="assign-caption-text-"]').first().fill("SYNTHETIC row table caption");
-  }
-  await primary.click();
-  await page.locator('[data-testid="toast-ok"]').first().waitFor({ timeout: T });
-  check("a table row confirms as a one-row table", true);
+  const head = page.locator(`[data-testid="assign-paper-head-${table.id}"]`).first();
+  await head.waitFor({ timeout: T });
+  await head.scrollIntoViewIfNeeded();
+  await head.click({ button: "right" });
+  await wait(page, "assign-ctx-table_layout");
+  check("the table menu offers Unwrap table", (await page.locator('[data-testid="assign-ctx-table_layout"]').innerText()).includes("Unwrap table"));
+  await takeShot("sop-assign-table-menu.png");
+  await page.keyboard.press("Escape");
 });
 
 // 캡션 없는 표 바로 앞 문장을 Shape에서 붙였다 떼고, 되돌리기 두 번으로 처음대로 둔다 - 다음 단계가 같은 표에 캡션을 써 넣는다
@@ -848,7 +766,7 @@ await runStep("assign: attach and detach a caption from Shape", {}, async ({ pag
   for (const candidate of (await getJson("/documents")).filter((item) => item.side === "old" && item.status === "ready")) {
     const view = await getJson(`/documents/${candidate.id}/view`);
     if (!view.units.some((unit) => unit.id === table.unit_id)) continue;
-    const ordered = [...view.units].filter((unit) => unit.kind !== "table_row" || unit.spans.length > 0).sort((a, b) => a.pos_seq - b.pos_seq || (a.spans[0]?.[1] ?? 0) - (b.spans[0]?.[1] ?? 0) || a.id - b.id);
+    const ordered = [...view.units].sort((a, b) => a.pos_seq - b.pos_seq || (a.spans[0]?.[1] ?? 0) - (b.spans[0]?.[1] ?? 0) || a.id - b.id);
     const first = ordered.findIndex((unit) => unit.id === table.unit_id || unit.group_unit_id === table.unit_id);
     doc = candidate;
     sentence = ordered[first - 1] ?? null;

@@ -107,12 +107,12 @@ class _Want:
     text: str
     grid: dict[str, int] | None
     section_path: str
-    group_unit_id: int | None  # 묶인 칸 문장·캡션이면 그 표·행·그림 단위(그 단위도 새 문장을 가질 때만)
+    group_unit_id: int | None  # 묶인 칸 문장·캡션이면 그 표·그림 단위(그 단위도 새 문장을 가질 때만)
     cell_row: int | None
     cell_col: int | None
 
 
-def _build_want(row: Row[Any], rank: int, path: str, units: dict[int, Row[Any]], targeted: set[int]) -> _Want:
+def _build_want(row: Row[Any], rank: int, path: str, targeted: set[int]) -> _Want:
     """표·그림은 언어 중립에 글자 없음, 묶인 칸 문장은 칸 자리를, 캡션은 칸 좌표 없이 부모만 갖는다(captions.is_caption_target).
 
     그룹 단위가 새 문장을 갖지 않으면 보통 문장이다.
@@ -120,18 +120,14 @@ def _build_want(row: Row[Any], rank: int, path: str, units: dict[int, Row[Any]],
     kind, lang, text, grid = "sentence", row.lang, row.text, None
     group_unit_id = cell_row = cell_col = None
     if row.kind in TABLE_UNIT_KINDS:
-        # 행 단위의 표는 그 행 하나짜리 격자다 — 관계 묶음 저장의 "그대로" 표 모양(R27)과 같다
-        rows_in_grid = 1 if row.kind == "table_row" else row.n_rows
-        kind, lang, text, grid = "table", NEUTRAL, "", {"rows": rows_in_grid, "cols": row.n_cols}
+        # 관계 묶음 저장의 "그대로" 표 모양(R27)과 같다
+        kind, lang, text, grid = "table", NEUTRAL, "", {"rows": row.n_rows, "cols": row.n_cols}
     elif row.kind == "figure":
         kind, lang, text = "figure", NEUTRAL, ""
     elif row.group_unit_id in targeted:
         group_unit_id = row.group_unit_id
         if row.kind != CAPTION_KIND:
-            group = units[row.group_unit_id]
-            # 행 단위에 묶인 칸은 그 행 기준 좌표다
-            first_row = (group.unit_row_index or 0) if group.kind == "table_row" else 0
-            cell_row, cell_col = row.block_row_index - first_row, row.block_col_index
+            cell_row, cell_col = row.block_row_index, row.block_col_index
     return _Want(row.id, rank, kind, lang, text, grid, path, group_unit_id, cell_row, cell_col)
 
 
@@ -151,7 +147,6 @@ def _plan_targets(rows: Sequence[Row[Any]]) -> list[_Want]:
     has_levels = any(
         is_body and row.kind == "heading" and row.heading_level is not None for row, is_body in zip(rows, in_flow, strict=True)
     )
-    units = {row.id: row for row in rows}
     targeted = {row.id for row in rows if row.part not in REPEATED_PARTS and row.kind != "heading"}
     # 묶음 단위가 새 문장을 갖지 않는 캡션은 만들지 않는다 — 최상위 캡션 새 문장은 어디에도 없다(캡션은 늘 묶음의 자식)
     targeted -= {row.id for row in rows if row.kind == CAPTION_KIND and row.group_unit_id not in targeted}
@@ -160,7 +155,7 @@ def _plan_targets(rows: Sequence[Row[Any]]) -> list[_Want]:
     for row, is_body in zip(rows, in_flow, strict=True):
         if row.id in targeted:
             path = SECTION_SEPARATOR.join(text for _, text in stack) if is_body else ""
-            wants.append(_build_want(row, len(wants), path, units, targeted))
+            wants.append(_build_want(row, len(wants), path, targeted))
             continue
         level = row.heading_level if row.heading_level is not None else (None if has_levels else 1)
         if row.kind != "heading" or not is_body or level is None:
@@ -179,7 +174,7 @@ async def _load_wants(session: AsyncSession, document: Document) -> list[_Want]:
     rows = (
         await session.execute(
             select(
-                Unit.id, Unit.kind, Unit.text, Unit.lang, Unit.group_unit_id, Unit.row_index.label("unit_row_index"),
+                Unit.id, Unit.kind, Unit.text, Unit.lang, Unit.group_unit_id,
                 SourceBlock.part, SourceBlock.heading_level, SourceBlock.row_index.label("block_row_index"),
                 SourceBlock.col_index.label("block_col_index"), SourceTable.n_rows, SourceTable.n_cols,
             )
@@ -249,7 +244,7 @@ async def create_new_doc_targets(
 ) -> list[int]:
     """새 문서(입구 2)의 단위 중 새 문장이 없는 것마다 미배정 새 문장을 만든다 — 확정 글자는 원문 그대로. 커밋은 호출부가 한다.
 
-    unit_ids를 주면 그 단위들(과 묶인 칸 문장의 표·행 단위)만 만들고, 절 경로·순서는 문서 전체의 지금 단위로 계산한다.
+    unit_ids를 주면 그 단위들(과 묶인 칸 문장의 표 단위)만 만들고, 절 경로·순서는 문서 전체의 지금 단위로 계산한다.
     이미 있는 새 문장은 고치지 않는다(편집 뒤 전체 맞추기는 sync_new_doc_targets). 만든 새 문장 id를 순서대로 돌려준다.
     """
     if unit_ids is not None and not unit_ids:

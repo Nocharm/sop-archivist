@@ -285,7 +285,7 @@ class ViewUnitOut(BaseModel):
     spans: list[tuple[int, int, int]]
     text: str
     lang: str
-    # 번호 칸이 없는 단위(그림·표·행·캡션·목차 줄)는 null
+    # 번호 칸이 없는 단위(그림·표·캡션·목차 줄)는 null
     number: ViewNumberOut | None
     table_id: int | None
     row_index: int | None
@@ -297,7 +297,7 @@ class ViewUnitOut(BaseModel):
     is_edited: bool
     # 합치기로 생겨 그 뒤 바뀌지 않은 단위 — 합치기 전 단위들로 되돌릴 수 있다(편집 unmerge)
     can_unmerge: bool
-    # 단위 자리의 블록 — 범위가 없는 표·행·캡션 없는 그림도 어느 블록(그림 이미지)인지 알 수 있게
+    # 단위 자리의 블록 — 범위가 없는 표·캡션 없는 그림도 어느 블록(그림 이미지)인지 알 수 있게
     pos_seq: int
     block_id: int
     # 이 단위에 걸린 열린 AI 나누기 제안(적용됐고 사람이 아직 채택·거절하지 않은 것) — 없으면 null

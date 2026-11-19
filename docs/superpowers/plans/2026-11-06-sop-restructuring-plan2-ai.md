@@ -634,7 +634,7 @@ def test_reasoning_and_feature_are_recorded(client, fake_ai, clean_ai_usage): ..
 - [ ] **Step 2: 실패 확인** — `.venv/bin/python -m pytest tests/test_sop_ai_classify.py -q`
 
 - [ ] **Step 3: 구현**
-  - 요청 대상: 옛 문서 최신 추출의 활성 단위 중 묶이지 않은 커버 단위와 표·행 단위. 묶인 칸은 `bound_cell`로 건너뛴다. 문서 범위는 미배정만 받고(그 밖은 `not_unassigned`), `classify` AI 제안을 다시 받는 것은 `unit_ids`로만 한다. `unit_ids`는 고른 단위의 짝 구성원도 함께 담는다(미배정이거나 같은 종류 제안인 구성원만, 확정·보류 구성원은 건드리지 않는다). 작업은 `MAX_JOBS_PER_REQUEST`개까지이고 넘은 단위는 `limit_reached`로 알린다(모든 요청 공통). 짝(`UnitPair`, 제안 포함)의 대상 구성원을 한 작업으로 묶는다.
+  - 요청 대상: 옛 문서 최신 추출의 활성 단위 중 묶이지 않은 커버 단위와 표 단위. 묶인 칸은 `bound_cell`로 건너뛴다. 문서 범위는 미배정만 받고(그 밖은 `not_unassigned`), `classify` AI 제안을 다시 받는 것은 `unit_ids`로만 한다. `unit_ids`는 고른 단위의 짝 구성원도 함께 담는다(미배정이거나 같은 종류 제안인 구성원만, 확정·보류 구성원은 건드리지 않는다). 작업은 `MAX_JOBS_PER_REQUEST`개까지이고 넘은 단위는 `limit_reached`로 알린다(모든 요청 공통). 짝(`UnitPair`, 제안 포함)의 대상 구성원을 한 작업으로 묶는다.
   - `load`: 판단 revision과 글자 해시를 `input_snapshot`에 적어 저장한다(작업 시작 시점 스냅숏이라 다시 시도에도 그대로 맞다). 같은 곳에서 `load_unit_context`, `load_target_docs`, 활성 지침(`rules`·`prompt.classify`), 문서 `sha256`·추출 id(`input_refs`)를 읽는다. 칸 후보가 없으면 `AiCallFailed("no_candidates")`.
   - `compute`: 쿼리 글은 대상 단위 글을 줄바꿈으로 이은 것이다. `rank_candidates` → `call_llm(feature="sop.classify", reasoning="high")` → `parse_reply` → 검증. 데이터에는 `task="classify"`, `units`, `context`, `candidates`(key·label), `tobe`(번호·제목·종류·부모)를 싣는다.
   - 검증: 후보 소속(밖이면 무효), 언어별 고쳐 쓰기 존재(문장 단위가 있는 언어마다 보이는 글자 필요, `delete` 제외), 규칙 ID 거르기(`unknown_rule_id`), 근거 인용(`evidence_not_found`, 공백 정규화 비교).
@@ -642,7 +642,7 @@ def test_reasoning_and_feature_are_recorded(client, fake_ai, clean_ai_usage): ..
   - `clear_previous_suggestion`은 밀린 제안의 `result`를 `stale`로 바꾼다.
   - `apply`: `load_fresh_decisions`가 None이면 `add_suggestion(result="stale")` 뒤 `stale`. 고른 후보가 아직 유효한지(문서 존재, 칸 N/A 아님, WI 단계 존재) 다시 확인해 아니면 `stale`. 무효면 `clear_previous_suggestion` → `hold_invalid` + `result="invalid"` 뒤 `done`. 정상이면 `clear_previous_suggestion` → 제안 행 → 새 문장·출처 → 판단(`ai_suggested`, 처분, `suggestion_id`, `revision+1`).
   - 새 문장은 `confirmed_text=""`, `origin="units"`, `revision=1`이고, `manual_order` 문서면 `order_index`를 끝으로 둔다. `warnings = check_sentence(출처 글자, ai_text) + 제안 경고`.
-  - 표·행 단위: 표 새 문장(`grid`=원문 모양, `change_type="as_is"`)과 묶인 활성 칸마다 칸 새 문장(`ai_text`=칸 글자, `as_is`, `parent_target_id`, 칸 좌표)을 만든다.
+  - 표 단위: 표 새 문장(`grid`=원문 모양, `change_type="as_is"`)과 묶인 활성 칸마다 칸 새 문장(`ai_text`=칸 글자, `as_is`, `parent_target_id`, 칸 좌표)을 만든다.
   - 라우터 `POST /classify`: `require_ai_enabled`, `lock_bundle`, `ensure_editable`, `record_event(action="ai.request", reason="classify")`.
 
 - [ ] **Step 4: 통과 확인** — 위 명령.

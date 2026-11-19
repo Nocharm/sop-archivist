@@ -275,8 +275,8 @@ class Summary(BaseModel):
 @dataclass(frozen=True)
 class _Index:
     snap: BundleSnapshot
-    old_units: list[UnitInfo]  # 옛 문서의 커버·표·행 단위, 정렬 키 순(표·행 단위는 자기 칸 문장 앞)
-    cells: dict[int, list[UnitInfo]]  # 표·행 단위 → 묶인 칸 문장
+    old_units: list[UnitInfo]  # 옛 문서의 커버·표 단위, 정렬 키 순(표 단위는 자기 칸 문장 앞)
+    cells: dict[int, list[UnitInfo]]  # 표 단위 → 묶인 칸 문장
     unit_targets: dict[int, list[TargetInfo]]  # 출처 단위 → 그 단위를 출처로 둔 새 문장
     doc_targets: dict[int, list[TargetInfo]]  # 새 문서 → 그 문서의 새 문장
     children: dict[int, list[TargetInfo]]  # 표 새 문장 → 칸 새 문장(행·열 순)
@@ -425,7 +425,7 @@ def _build_index(snap: BundleSnapshot) -> _Index:
 
 
 def _get_decision_unit_id(unit: UnitInfo) -> int:
-    """처분을 담는 단위 — 묶인 칸 문장은 그룹(표·행) 단위의 판단을 따른다."""
+    """처분을 담는 단위 — 묶인 칸 문장은 그룹(표) 단위의 판단을 따른다."""
     return unit.group_unit_id if unit.group_unit_id is not None else unit.id
 
 
@@ -724,7 +724,7 @@ def _format_bundle_label(kind: str, number: int, labels: OutputLabels) -> str:
 class _RefLookup:
     """참조 대상 찾기 색인 — 스냅숏 단위를 한 번만 훑는다."""
 
-    table_units: Mapping[int, list[UnitInfo]]  # 표 id → 표·행 단위
+    table_units: Mapping[int, list[UnitInfo]]  # 표 id → 표 단위
     figure_units: Mapping[int, int]  # 그림 블록 id → 그림 단위 id
     # 문서 → (종류, 캡션 번호) → 그 캡션이 달린 묶음 단위들(caption_ref_rules.index_caption_groups)
     heads: Mapping[int, Mapping[tuple[str, int], set[int]]]
@@ -949,7 +949,7 @@ def _list_new_targets(index: _Index, labels: OutputLabels) -> list[TargetInfo]:
 
 
 def _list_row_units(index: _Index, meaning: MeaningRow) -> list[UnitInfo]:
-    """줄의 단위 — 구성 판단 단위(원문 순), 그 뒤에 표·행 단위에 묶인 칸 문장."""
+    """줄의 단위 — 구성 판단 단위(원문 순), 그 뒤에 표 단위에 묶인 칸 문장."""
     units = [index.snap.units[unit_id] for unit_id in meaning.unit_ids]
     return units + [cell for unit_id in meaning.unit_ids for cell in index.cells.get(unit_id, [])]
 
@@ -1018,12 +1018,8 @@ def _format_place(index: _Index, unit: UnitInfo, labels: OutputLabels) -> str:
     block = index.snap.blocks[unit.spans[1][0] if has_number_cell else unit.block_id]
     pieces = [labels.parts[block.part]] if block.part in labels.parts else []
     if unit.kind in TABLE_UNIT_KINDS:
-        table_no = index.snap.tables[unit.table_id].table_index + 1  # 표·행 단위는 늘 원문 표를 가리킨다
-        outer = _format_outer_cells(index, unit.table_id, labels)
-        if unit.kind == "table":
-            pieces.append(outer + labels.table_template.format(table=table_no))
-        else:
-            pieces.append(outer + labels.table_row_template.format(table=table_no, row=(unit.row_index or 0) + 1))
+        table_no = index.snap.tables[unit.table_id].table_index + 1  # 표 단위는 늘 원문 표를 가리킨다
+        pieces.append(_format_outer_cells(index, unit.table_id, labels) + labels.table_template.format(table=table_no))
         return " · ".join(pieces)
     if is_band_heading(unit.kind, unit.table_id):
         # 띠 표 제목 줄은 칸 좌표가 아니라 "띠 표" — 번호(절)는 절 칸에 있다(F11)
@@ -1041,7 +1037,7 @@ def _format_place(index: _Index, unit: UnitInfo, labels: OutputLabels) -> str:
 
 
 def _format_source_text(index: _Index, unit: UnitInfo, labels: OutputLabels) -> str:
-    """원문 칸 — 표·그림 단위는 묶인 원문 캡션 글(표는 뒤에 " [행×열]"), 캡션 없는 표·행 단위는 "[표 n, 행×열]"(행 단위는 그 행 하나).
+    """원문 칸 — 표·그림 단위는 묶인 원문 캡션 글(표는 뒤에 " [행×열]"), 캡션 없는 표 단위는 "[표 n, 행×열]".
 
     나머지는 단위 글자에서 문단 번호를 뺀 내용이다 — 번호는 위치 칸에 적는다(F5·F11). 번호 범위가 없는 단위(옛 추출, 타자로 친
     번호)는 번호가 글에 남은 그대로다.
@@ -1050,10 +1046,9 @@ def _format_source_text(index: _Index, unit: UnitInfo, labels: OutputLabels) -> 
     if unit.kind not in TABLE_UNIT_KINDS:
         return caption or strip_number(unit.text, unit)
     table = index.snap.tables[unit.table_id]
-    rows = 1 if unit.kind == "table_row" else table.n_rows
     if caption:
-        return f"{caption} [{rows}×{table.n_cols}]"
-    return labels.table_source_template.format(table=table.table_index + 1, rows=rows, cols=table.n_cols)
+        return f"{caption} [{table.n_rows}×{table.n_cols}]"
+    return labels.table_source_template.format(table=table.table_index + 1, rows=table.n_rows, cols=table.n_cols)
 
 
 def _get_shown_texts(target: TargetInfo, texts: Mapping[int, str]) -> tuple[str, str]:
@@ -1279,7 +1274,7 @@ def _build_old_remark(index: _Index, added: Mapping[int, list[TargetInfo]], mean
 
 
 def _build_old_group(ctx: _AContext, meaning: MeaningRow, row_no: int) -> list[ARow]:
-    """옛 문서 의미 묶음 — 구성 단위마다 단위 줄, 표·그림 단위면 그 뒤에 캡션 줄, 표·행 단위면 칸 문장 줄. 각 줄 바로 뒤에 그 단위의 번역 줄."""
+    """옛 문서 의미 묶음 — 구성 단위마다 단위 줄, 표·그림 단위면 그 뒤에 캡션 줄, 표 단위면 칸 문장 줄. 각 줄 바로 뒤에 그 단위의 번역 줄."""
     slot = _GroupSlot(row_no, _build_old_remark(ctx.index, ctx.added, meaning, ctx.labels))
     rows: list[ARow] = []
     for unit_id in meaning.unit_ids:
@@ -1518,7 +1513,7 @@ class _CContext:
 def _format_meaning_key(ctx: _CContext, target: TargetInfo) -> str | None:
     """굵은 선 묶음 키 — A와 같은 묶음: 기댄 옛 단위의 줄(old:), 출처 없는 입구 2 새 문장은 새 문서 쪽 짝(new:), 고아 번역은 None.
 
-    Translated · Added 새 문장은 A처럼 맞춘 옛 줄의 묶음이다. 칸 문장 출처는 표·행 단위의 줄을 따른다.
+    Translated · Added 새 문장은 A처럼 맞춘 옛 줄의 묶음이다. 칸 문장 출처는 표 단위의 줄을 따른다.
     """
     snap = ctx.index.snap
     unit_id = ctx.added_anchor.get(target.id)
@@ -1844,7 +1839,7 @@ def build_summary(snap: BundleSnapshot) -> Summary:
 
 
 def _is_unwrapped_cell(unit: UnitInfo) -> bool:
-    """풀린 표(레이아웃 표)의 칸 줄인가 — 데이터 표의 칸 문장은 표·행 단위에 묶여 판단 줄이 아니다."""
+    """풀린 표(레이아웃 표)의 칸 줄인가 — 데이터 표의 칸 문장은 표 단위에 묶여 판단 줄이 아니다."""
     return unit.kind == "cell_sentence" and unit.group_unit_id is None
 
 
@@ -1854,7 +1849,7 @@ def _is_unwrapped_cell(unit: UnitInfo) -> bool:
 @dataclass(frozen=True)
 class ReviewFacts:
     row_status_counts: Counter[str]  # 줄 상태 → 줄 수 (진행 숫자와 같은 규칙 — 짝 하나·짝 없는 단위 하나가 한 줄)
-    duplicate_unit_ids: list[int]  # 서로 다른 새 문서 둘 이상으로 간 판단 단위(칸 문장은 표·행 단위로 접는다), id 순
+    duplicate_unit_ids: list[int]  # 서로 다른 새 문서 둘 이상으로 간 판단 단위(칸 문장은 표 단위로 접는다), id 순
     caption_ref_warnings: tuple[CaptionRefWarning, ...] = ()  # 표·그림 참조 경고(build_renumbering) — 막지 않는다
 
 

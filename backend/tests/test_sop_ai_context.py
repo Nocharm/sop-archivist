@@ -118,18 +118,6 @@ def test_unit_context_has_neighbors_section_and_table(view: dict) -> None:
     assert contexts[table["id"]] == UnitContext(section=SECTION, before=(d, e), after=(f, g), table_markdown=TABLE_MARKDOWN, caption="")
 
 
-def test_table_row_unit_gets_the_same_table_markdown(view: dict, client: TestClient) -> None:
-    table = next(unit for unit in view["units"] if unit["kind"] == "table")
-
-    async def _make_row(session: AsyncSession) -> None:
-        await session.execute(update(Unit).where(Unit.id == table["id"]).values(kind="table_row", row_index=1))
-        await session.commit()
-
-    run_in_session(_make_row)
-
-    assert _load([table["id"]])[table["id"]].table_markdown == TABLE_MARKDOWN
-
-
 def test_context_skips_retired_neighbors(view: dict) -> None:
     retired = find_unit(view, BEFORE_TABLE[1])
     target = find_unit(view, BEFORE_TABLE[2])
@@ -265,21 +253,16 @@ def test_table_context_is_cut_at_the_char_cap(view: dict, monkeypatch: pytest.Mo
     assert markdown == TABLE_MARKDOWN[:30]
 
 
-def test_table_is_rendered_once_for_all_its_units(view: dict, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_only_the_table_unit_renders_its_table(view: dict, monkeypatch: pytest.MonkeyPatch) -> None:
     table = _get_table_unit(view)
     cells = [unit["id"] for unit in view["units"] if unit["kind"] == "cell_sentence"][:2]
-
-    async def _make_rows(session: AsyncSession) -> None:
-        await session.execute(update(Unit).where(Unit.id.in_(cells)).values(kind="table_row"))
-        await session.commit()
-
-    run_in_session(_make_rows)
     render_calls: list[int] = []
     real_render = context.render_table_markdown
     monkeypatch.setattr(context, "render_table_markdown", lambda grid: render_calls.append(1) or real_render(grid))
 
     contexts = _load([unit["id"] for unit in view["units"]])
 
-    # 표 단위 하나와 표 행 단위 둘이 같은 표를 쓰므로 표 하나를 한 번만 그리고, 표가 아닌 단위는 그리지 않는다
+    # 표 단위만 표를 그리고 그 표의 칸 문장은 그리지 않는다
     assert len(render_calls) == 1
-    assert {contexts[unit_id].table_markdown for unit_id in [table["id"], *cells]} == {TABLE_MARKDOWN}
+    assert contexts[table["id"]].table_markdown == TABLE_MARKDOWN
+    assert {contexts[unit_id].table_markdown for unit_id in cells} == {""}

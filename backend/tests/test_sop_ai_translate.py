@@ -2350,27 +2350,27 @@ def make_matched_table(
     return bundle, cell, get_view(client, bundle.id, uploaded.json()["id"]), target
 
 
-def split_new_table(client: TestClient, bundle_id: int, view: dict) -> None:
+def unwrap_new_table(client: TestClient, bundle_id: int, view: dict) -> None:
     edit_document(
         client, bundle_id, view["document"]["id"],
-        {"type": "split_table_rows", "table_unit_id": find_kind(view, "table")["id"]}, confirm=True,
+        {"type": "set_layout_table", "table_id": find_kind(view, "table")["table_id"], "is_layout": True}, confirm=True,
     )
 
 
-def test_splitting_a_new_table_deletes_an_ai_cell_translation(client: TestClient, fake_ai: FakeAi) -> None:
+def test_unwrapping_a_new_table_deletes_an_ai_cell_translation(client: TestClient, fake_ai: FakeAi) -> None:
     bundle, cell, view, _ = make_matched_table(client, fake_ai, settle=False)
 
-    split_new_table(client, bundle.id, view)
+    unwrap_new_table(client, bundle.id, view)
 
     assert_swept(client, bundle.id, cell["id"])
 
 
-def test_splitting_a_new_table_holds_a_confirmed_cell_translation(client: TestClient, fake_ai: FakeAi) -> None:
+def test_unwrapping_a_new_table_holds_a_confirmed_cell_translation(client: TestClient, fake_ai: FakeAi) -> None:
     bundle, cell, view, _ = make_matched_table(client, fake_ai, settle=True)
 
-    split_new_table(client, bundle.id, view)
+    unwrap_new_table(client, bundle.id, view)
 
-    # 칸 새 문장이 새 행 표 아래 새 id로 다시 생겨 출처가 없어졌다 — 번역은 표에서 떨어져 보류로 남는다
+    # 표 새 문장이 사라져 출처 칸 새 문장의 자리가 바뀌었다 — 번역은 표에서 떨어져 보류로 남는다
     assert_held(cell["id"], CELL_TRANSLATED)
     held = load_translation(cell["id"])
     assert (held.parent_target_id, held.cell_row, held.cell_col) == (None, None, None)

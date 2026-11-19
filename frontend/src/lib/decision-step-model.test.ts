@@ -67,7 +67,7 @@ describe("getAssignUndoKey", () => {
 describe("shouldDropSelectionOnStep", () => {
   const step = (op: string, unitIds = [4]) => ({ op, unit_ids: unitIds });
   it("drops the selection for every unit-shape edit that can retire units", () => {
-    for (const op of ["cut", "carve", "merge", "unmerge", "move_boundary", "split_table_rows", "merge_table_rows", "set_layout_table", "attach_caption", "detach_caption", "set_first_row_caption", "group_figures", "ungroup_figures", "set_heading", "clear_noise"]) {
+    for (const op of ["cut", "carve", "merge", "unmerge", "move_boundary", "set_layout_table", "attach_caption", "detach_caption", "set_first_row_caption", "group_figures", "ungroup_figures", "set_heading", "clear_noise"]) {
       expect(shouldDropSelectionOnStep(step(op)), op).toBe(true);
     }
   });

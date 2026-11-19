@@ -180,7 +180,7 @@ async def _load_open_mates(
 async def select_classify_items(
     session: AsyncSession, bundle_id: int, *, document_id: int | None, unit_ids: Sequence[int] | None
 ) -> tuple[list[JobItem], list[SkippedOut]]:
-    """요청 범위를 작업 줄로 — 옛 문서 최신 추출의 활성 단위 중 묶이지 않은 커버 단위와 표·행 단위만 받는다(설계 §7.8).
+    """요청 범위를 작업 줄로 — 옛 문서 최신 추출의 활성 단위 중 묶이지 않은 커버 단위와 표 단위만 받는다(설계 §7.8).
 
     미배정만 받고, 묶기 제안이 살아 있는 단위는 받지 않는다. 문서 범위는 분류 제안이 살아 있는 단위도 받지 않는다 — 끝난 앞쪽을 다시
     받으면 상한을 넘는 문서의 뒤쪽이 영영 처리되지 않아, 같은 종류 제안을 다시 받는 것은 단위를 고른 요청뿐이다. 고른 단위는 AI가 쓸 수
@@ -294,7 +294,7 @@ def check_rule_ids(
 
 
 def _read_unit_text(unit: Unit, context: UnitContext) -> str:
-    """단위의 글 — 표·행 단위는 자기 글이 없어 표 Markdown이 그 글이고, 표·그림은 캡션이 앞에 붙는다(새 추출의 그림 단위는 글이 비었다)."""
+    """단위의 글 — 표 단위는 자기 글이 없어 표 Markdown이 그 글이고, 표·그림은 캡션이 앞에 붙는다(새 추출의 그림 단위는 글이 비었다)."""
     return "\n".join(text for text in (context.caption, unit.text or context.table_markdown) if text)
 
 

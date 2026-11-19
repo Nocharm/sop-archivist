@@ -89,7 +89,7 @@ class _Loaded:
 
     decisions: Mapping[int, UnitDecision]
     units: Mapping[int, Unit]
-    children: Mapping[int, Sequence[Unit]]  # 표·행·그림 단위 → 묶인 칸 문장·캡션
+    children: Mapping[int, Sequence[Unit]]  # 표·그림 단위 → 묶인 칸 문장·캡션
     targets: Mapping[int, TargetSentence]
     sourced_target_ids: Collection[int]
     mates: Mapping[int, int]  # 단위 → 짝 id
@@ -266,24 +266,22 @@ def _pick_text_type(text: str, sources: Sequence[Unit], suggested: object) -> st
 async def _build_bundle_targets(
     session: AsyncSession, unit: Unit, children: Sequence[Unit], place: Mapping[str, Any]
 ) -> list[TargetIn]:
-    """표·행·그림 하나 — 원문 그대로의 표·그림 새 문장과 칸·캡션 새 문장(화면 buildGroupSave의 표·그림과 같은 모양)."""
+    """표·그림 하나 — 원문 그대로의 표·그림 새 문장과 칸·캡션 새 문장(화면 buildGroupSave의 표·그림과 같은 모양)."""
     key = f"u{unit.id}"
     targets: list[TargetIn] = []
     if unit.kind in TABLE_UNIT_KINDS:
-        is_row = unit.kind == "table_row"
         rows, cols = (await load_table_shapes(session, [unit])).get(unit.table_id, (1, 1)) if unit.table_id is not None else (1, 1)
         targets.append(TargetIn(
             key=key, **place, kind="table", lang="neutral", change_type="as_is", source_unit_ids=[unit.id],
-            grid={"rows": 1 if is_row else rows, "cols": cols},
+            grid={"rows": rows, "cols": cols},
         ))
         cells = [child for child in children if child.kind == "cell_sentence"]
         positions = await load_cell_positions(session, cells)
-        first_row = (unit.row_index or 0) if is_row else 0  # 행 단위는 그 행 하나짜리 표다
         for cell in cells:
             cell_row, cell_col = positions.get(cell.id, (0, 0))
             targets.append(TargetIn(
                 key=f"c{cell.id}", **place, kind="sentence", lang=cell.lang, text=cell.text, change_type="as_is",
-                source_unit_ids=[cell.id], parent_key=key, cell_row=cell_row - first_row, cell_col=cell_col,
+                source_unit_ids=[cell.id], parent_key=key, cell_row=cell_row, cell_col=cell_col,
             ))
     else:
         targets.append(TargetIn(key=key, **place, kind="figure", lang="neutral", change_type="as_is", source_unit_ids=[unit.id]))

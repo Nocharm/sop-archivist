@@ -40,7 +40,7 @@ export function pickRowStatus(statuses: CoverStatus[]): CoverStatus {
   return statuses.reduce<CoverStatus>((worst, status) => (STATUS_RANK[status] < STATUS_RANK[worst] ? status : worst), "confirmed");
 }
 
-/** 판단을 받는 단위 - 데이터 표에 묶인 칸 문장은 표·행 단위를 따르므로 따로 줄이 없다(레이아웃 표의 칸 문장은 묶이지 않아 줄이 있다) */
+/** 판단을 받는 단위 - 데이터 표에 묶인 칸 문장은 표 단위를 따르므로 따로 줄이 없다(레이아웃 표의 칸 문장은 묶이지 않아 줄이 있다) */
 export function isCoverUnit(unit: Pick<ViewUnit, "group_unit_id">): boolean {
   return unit.group_unit_id === null;
 }
@@ -266,8 +266,6 @@ export function readDestination(group: Group | null, unitIds: number[]): Destina
 
 // --- 저장 요청 ---
 
-/** 표 새 문장이 되는 단위 - 쪼개기의 "행으로 나누기"가 만든 행 단위도 한 행짜리 표다 */
-const TABLE_KINDS: readonly string[] = ["table", "table_row"];
 const SYSTEM_PREFIX = "system:";
 
 /** 문장 사이에 놓은 자리 - placeId는 놓은 곳의 getDestinationId, after는 그 뒤에 끼울 새 문장(null이면 칸의 맨 앞) */
@@ -328,7 +326,7 @@ export interface SaveContext {
   group: Group | null;
   /** 표 단위 id → 칸 문장과 표 크기 */
   tables: Map<number, { rows: number; cols: number; cells: CellSource[] }>;
-  /** 표·행·그림 단위 id → 묶인 캡션 단위. 없으면 캡션 단위가 없는 것으로 본다(써 넣은 캡션만) */
+  /** 표·그림 단위 id → 묶인 캡션 단위. 없으면 캡션 단위가 없는 것으로 본다(써 넣은 캡션만) */
   captions?: Map<number, CaptionUnit[]>;
 }
 
@@ -408,9 +406,9 @@ export function isHeadingSourceUnit(kind: string): boolean {
   return kind === "heading" || kind === "sentence";
 }
 
-/** 새 문장 칸이 되는 단위인가 - 표·행·그림이 아닌 글 단위(문장·제목·표에 묶이지 않은 칸 문장) */
+/** 새 문장 칸이 되는 단위인가 - 표·그림이 아닌 글 단위(문장·제목·표에 묶이지 않은 칸 문장) */
 export function isSentenceUnit(kind: string): boolean {
-  return !TABLE_KINDS.includes(kind) && kind !== "figure";
+  return kind !== "table" && kind !== "figure";
 }
 
 /**
@@ -607,7 +605,7 @@ export function buildGroupSave(draft: RowDraft, context: SaveContext, action: "c
     const place = placeTarget(destination);
     for (const unit of active) {
       const key = `u${unit.id}`;
-      if (TABLE_KINDS.includes(unit.kind)) {
+      if (unit.kind === "table") {
         const own = findOwnTarget(context.group, unit.id, "table");
         const ref = own ? { id: own.id, revision: own.revision } : {};
         if (own) kept.add(own.id);

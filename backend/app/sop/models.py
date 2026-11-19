@@ -352,7 +352,7 @@ class Unit(Base):
         ForeignKey("source_tables.id", ondelete="CASCADE"), index=True, default=None
     )
     row_index: Mapped[int | None] = mapped_column(Integer, default=None)
-    # 칸 문장이 따르는 표·행 단위 — 그 단위가 지워지면 그룹만 풀린다
+    # 칸 문장이 따르는 표 단위 — 그 단위가 지워지면 그룹만 풀린다
     group_unit_id: Mapped[int | None] = mapped_column(
         ForeignKey("units.id", ondelete="SET NULL"), index=True, default=None
     )

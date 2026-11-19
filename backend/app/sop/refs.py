@@ -15,7 +15,7 @@ from app.sop.models import Unit, UnitRef
 REF_LANG = "ref"
 REF_CONFIRMED = "confirmed"
 REF_REJECTED = "rejected"
-# 참조 줄이 될 수 있는 단위 — 그림·표·행은 번호 영역을 갖지 않는다
+# 참조 줄이 될 수 있는 단위 — 그림·표은 번호 영역을 갖지 않는다
 REF_KINDS = ("sentence", "heading", "cell_sentence")
 
 # 문서 번호 꼴(파일 이름에서 번호를 읽는 규칙과 같다, `filename.py`) — 영문 대문자 머리 + 하이픈 마디 + 숫자 끝

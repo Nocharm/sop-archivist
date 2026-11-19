@@ -10,7 +10,7 @@ The user message holds one data block: a line `<<<DATA {nonce}>>>`, a JSON objec
 
 The data object has these fields:
 
-- `units`: the old sentence or sentences to place. Each has an `id`, a `kind`, a `lang`, and its `text`. When there are several, they are the Korean and English versions of one sentence. A unit whose `kind` is `table`, `table_row`, or `figure` has no text of its own: the table and the caption are in `context`.
+- `units`: the old sentence or sentences to place. Each has an `id`, a `kind`, a `lang`, and its `text`. When there are several, they are the Korean and English versions of one sentence. A unit whose `kind` is `table` or `figure` has no text of its own: the table and the caption are in `context`.
 - `context`: neighbouring sentences, the section heading, the table as Markdown when the unit sits in a table, and the `caption` of a table or figure (empty when it has none). It is background for meaning only. Do not place or rewrite it.
 - `candidates`: the possible destinations. Each has a `key` and a `label` that names the new document and the slot or step.
 - `tobe`: the list of new documents (number, title, type, parent), so you can see how they relate.
@@ -26,7 +26,7 @@ Output a single JSON object and nothing else: no text before or after it, no cod
 - `change_type`: `as_is` when the sentence can move unchanged, `tone` when only its style changes to fit the destination (R02, RW06), `rewritten` when its wording or structure changes. For `delete`, use `as_is`.
 - `rewrites`: `{"ko": [...], "en": [...]}`, the sentences as they should read at the destination, one string per sentence. Fill a language only if `units` holds a unit in that language; leave the other as `[]`. When `units` holds a Korean/English pair, rewrite both together so they say the same thing (RW06). For `as_is`, repeat the original sentence unchanged: every language in `units` needs visible text, so `as_is` never means an empty list. For `delete`, both lists are `[]`. Give more than one sentence only when the old sentence carries more than one independent requirement or action.
 
-A unit whose `kind` is `table`, `table_row`, or `figure` picks a destination only: its cells stay exactly as they are, so `change_type` is `as_is` and both `rewrites` lists are `[]`.
+A unit whose `kind` is `table` or `figure` picks a destination only: its cells stay exactly as they are, so `change_type` is `as_is` and both `rewrites` lists are `[]`.
 
 ## How to decide
 

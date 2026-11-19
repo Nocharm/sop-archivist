@@ -197,23 +197,6 @@ def test_sentence_attached_as_caption_loses_its_own_head_reference(client: TestC
     assert caption["text"] == "Table 5 Test results" and caption["caption_refs"] == []
 
 
-def test_ref_to_a_row_split_table_targets_the_first_row(client: TestClient) -> None:
-    body = p("표 3. 운전 조건", "Caption") + tbl([["합성 칸 하나."], ["합성 칸 둘."]]) + p("운전 조건은 표 3을 따른다.")
-    bundle_id, doc, view = _setup_table(client, body)
-    table = next(unit for unit in view["units"] if unit["kind"] == "table")
-    result = client.post(
-        f"/api/bundles/{bundle_id}/documents/{doc['id']}/edits",
-        json={"revision": view["document"]["revision"], "confirm": False,
-              "op": {"type": "split_table_rows", "table_unit_id": table["id"]}},
-        headers=AUTHOR,
-    )
-    assert result.status_code == 200, result.text
-    after = get_view(client, bundle_id, doc["id"])
-    first_row = min((u for u in after["units"] if u["kind"] == "table_row"), key=lambda u: u["row_index"])
-    ref = _only(find_unit(after, "운전 조건은 표 3을 따른다.")["caption_refs"])
-    assert ref["target_unit_id"] == first_row["id"]
-
-
 def _draft_unit(unit_id: int, kind: str, spans: list, text: str, **extra: object) -> SimpleNamespace:
     values = {"id": unit_id, "kind": kind, "spans": spans, "text": text, "status": "active", "table_id": None,
               "group_unit_id": None, "pos_seq": 0, "pos_start": 0} | extra
@@ -241,19 +224,6 @@ def test_bracketed_caption_number_links_and_is_not_its_own_reference() -> None:
     ]
     drafts = build_ref_drafts(blocks, units)
     assert [(d.block_id, d.number, d.target_table_id) for d in drafts] == [(1, 3, 7)]
-
-
-def test_place_reference_finds_a_row_split_table() -> None:
-    # 행으로 나눈 표는 표 단위가 없다 — 행들이 그 표 하나의 자리다
-    blocks = {1: (0, "회전 속도는 아래 표를 따른다."), 2: (5, "값은 위 표와 같다.")}
-    units = [
-        _draft_unit(10, "sentence", [[1, 0, 16]], "회전 속도는 아래 표를 따른다."),
-        _draft_unit(30, "table_row", [], "", table_id=7, row_index=0, pos_seq=2, pos_start=-1),
-        _draft_unit(31, "table_row", [], "", table_id=7, row_index=1, pos_seq=3, pos_start=-1),
-        _draft_unit(11, "sentence", [[2, 0, 10]], "값은 위 표와 같다.", pos_seq=5),
-    ]
-    drafts = build_ref_drafts(blocks, units)
-    assert [(d.block_id, d.number, d.target_table_id) for d in drafts] == [(1, None, 7), (2, None, 7)]
 
 
 def test_attached_caption_resolves_a_target_less_reference_in_the_view(client: TestClient) -> None:

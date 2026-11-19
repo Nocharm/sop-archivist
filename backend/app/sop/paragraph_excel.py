@@ -18,7 +18,7 @@ from app.sop.models import Document, SourceBlock, Unit
 from app.sop.units import UNIT_ACTIVE, get_latest_extraction_id
 
 FIGURE_MARKER = "[Figure]"  # 결과물 Excel(sheet_model)의 그림 표시와 같은 글
-_SKIPPED_KINDS = ("table", "table_row")  # 칸 문장을 묶는 단위 — 자기 글이 없다
+_SKIPPED_KINDS = ("table",)  # 칸 문장을 묶는 단위 — 자기 글이 없다
 _SHEET_NAME_LIMIT = 31  # Excel 시트 이름 최대 글자 수
 _SHEET_NAME_FORBIDDEN = str.maketrans({char: "_" for char in "[]:*?/\\"})
 _COLUMN_WIDTH = 100  # 첫 열 너비(글자 수) — 긴 문장도 한눈에, 접지 않는다

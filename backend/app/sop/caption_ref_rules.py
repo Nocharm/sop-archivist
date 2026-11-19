@@ -30,7 +30,7 @@ class _CaptionUnitShape(Protocol):
 
 
 def get_bundle_kind(unit_kind: str) -> CaptionKind | None:
-    """묶음 단위 종류(표·행·그림) → 캡션 번호 종류."""
+    """묶음 단위 종류(표·그림) → 캡션 번호 종류."""
     if unit_kind in TABLE_UNIT_KINDS:
         return "table"
     return "figure" if unit_kind == "figure" else None
@@ -84,21 +84,12 @@ class _BundleShape(Protocol):
     def kind(self) -> str: ...
     @property
     def table_id(self) -> int | None: ...
-    @property
-    def row_index(self) -> int | None: ...
 
 
 def pick_table_unit_id(table_id: int, bundles: Iterable[_BundleShape]) -> int | None:
-    """대상 표의 묶음 단위 — 표 단위, 행으로 나눴으면 가장 작은 행. bundles는 활성 묶음 단위."""
-    members = [unit for unit in bundles if unit.table_id == table_id and unit.kind in TABLE_UNIT_KINDS]
-    tables = [unit for unit in members if unit.kind == "table"]
-    if tables:
-        return tables[0].id
-    rows = sorted(
-        (unit for unit in members if unit.kind == "table_row"),
-        key=lambda unit: (unit.row_index if unit.row_index is not None else 0, unit.id),
-    )
-    return rows[0].id if rows else None
+    """대상 표의 묶음 단위(표 단위). bundles는 활성 묶음 단위."""
+    tables = [unit for unit in bundles if unit.table_id == table_id and unit.kind in TABLE_UNIT_KINDS]
+    return tables[0].id if tables else None
 
 
 class _RefShape(Protocol):

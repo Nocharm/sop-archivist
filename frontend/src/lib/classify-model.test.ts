@@ -436,9 +436,9 @@ describe("caption targets under a table or figure", () => {
   });
 });
 
-describe("table rows and step-less WIs", () => {
-  it("saves a row unit from 'split into rows' as a one-row table with row-relative cells", () => {
-    const units = [{ id: 30, kind: "table_row", lang: "neutral" as const, text: "", revision: 1 }];
+describe("tables and step-less WIs", () => {
+  it("saves a table unit as a table with its cells", () => {
+    const units = [{ id: 30, kind: "table", lang: "neutral" as const, text: "", revision: 1 }];
     const tables = new Map([[30, { rows: 1, cols: 2, cells: [{ id: 31, lang: "ko" as const, text: "칸", row: 0, col: 1 }] }]]);
     const body = buildGroupSave(makeDraft(), { units, group: null, tables }, "confirm");
     expect(body.targets[0]).toMatchObject({ key: "u30", kind: "table", lang: "neutral", grid: { rows: 1, cols: 2 }, source_unit_ids: [30] });
@@ -832,7 +832,7 @@ describe("other language offers", () => {
 
   it("treats headings and unbound cell sentences as text units, not tables or figures", () => {
     expect(["sentence", "heading", "cell_sentence"].map(isSentenceUnit)).toEqual([true, true, true]);
-    expect(["table", "table_row", "figure"].map(isSentenceUnit)).toEqual([false, false, false]);
+    expect(["table", "figure"].map(isSentenceUnit)).toEqual([false, false]);
   });
 
   it("has the language once a hand-written sentence in it is placed", () => {

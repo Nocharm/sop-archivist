@@ -323,7 +323,7 @@ async def _sync_rows_warnings(session: AsyncSession, extraction_id: int, differ:
 
 
 async def _find_code_pairs(session: AsyncSession, extraction_id: int) -> list[tuple[list[int], list[int]]]:
-    """활성 단위 중 표·행에 묶이지 않은 것을 순서대로 이웃 짝지을 쌍을 고른다 — 쓰기는 부르는 쪽이 한다.
+    """활성 단위 중 표에 묶이지 않은 것을 순서대로 이웃 짝지을 쌍을 고른다 — 쓰기는 부르는 쪽이 한다.
 
     묶인 칸 문장은 표의 판단을 따르고, 넣으면 표 앞뒤 문단과 칸이 엇갈려 짝지어지므로 뺀다. 이미 짝이 있는 단위와 부분(본문·머리말·
     각주…)이 바뀌는 자리에서 순서를 끊는다 — 건너뛰면 그 너머의 단위끼리, 본문 끝 문장과 머리말이 짝지어진다.

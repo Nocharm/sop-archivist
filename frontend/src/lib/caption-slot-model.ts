@@ -26,7 +26,7 @@ const VISIBLE = /[^\s\x1c-\x1f\x85​‌‍⁠﻿]/;
 
 export type BundleShape = "table" | "figure";
 
-/** 묶음 단위의 꼴 - 그림 단위는 그림, 표·행은 표 */
+/** 묶음 단위의 꼴 - 그림 단위는 그림, 표는 표 */
 export function getBundleShape(kind: string): BundleShape {
   return kind === "figure" ? "figure" : "table";
 }
@@ -137,20 +137,13 @@ export function isCaptionableText(unit: ViewUnit): boolean {
   return (unit.kind === "sentence" || unit.kind === "heading") && unit.group_unit_id === null && unit.lang !== "ref" && !unit.noise_kind;
 }
 
-/** 묶음 자리의 단위들 - 행으로 나눈 표는 모든 행이 한 자리다(서버와 같다) */
-function listBundleSpan(bundle: ViewUnit, units: ReadonlyMap<number, ViewUnit>): ViewUnit[] {
-  if (bundle.kind !== "table_row") return [bundle];
-  return [...units.values()].filter((unit) => unit.kind === "table_row" && unit.table_id === bundle.table_id).sort((a, b) => (a.row_index ?? 0) - (b.row_index ?? 0));
-}
-
 function comparePosition(a: ViewUnit, b: ViewUnit): number {
   return a.pos_seq - b.pos_seq || (a.spans[0]?.[1] ?? -1) - (b.spans[0]?.[1] ?? -1) || a.id - b.id;
 }
 
-/** 묶음에 묶인 캡션 단위(원문 순) - 행으로 나눈 표는 모든 행의 것 */
+/** 묶음에 묶인 캡션 단위(원문 순) */
 export function listSlotCaptions(bundle: ViewUnit, units: ReadonlyMap<number, ViewUnit>): ViewUnit[] {
-  const span = new Set(listBundleSpan(bundle, units).map((unit) => unit.id));
-  return [...units.values()].filter((unit) => unit.kind === "caption" && unit.group_unit_id !== null && span.has(unit.group_unit_id)).sort(comparePosition);
+  return [...units.values()].filter((unit) => unit.kind === "caption" && unit.group_unit_id === bundle.id).sort(comparePosition);
 }
 
 /** 그림 묶음의 첫 그림 - 다른 그림의 캡션을 같이 쓰면 그 그림, 아니면 자기 */
@@ -190,7 +183,7 @@ export interface CaptionChip {
 }
 
 export interface CaptionSlotView {
-  /** 캡션을 받는 묶음 단위 - 행으로 나눈 표는 첫 행 */
+  /** 캡션을 받는 묶음 단위 */
   bundleId: number;
   shape: BundleShape;
   /** empty 비었음(후보) · filled 캡션 단위 · written 써 넣음 · shared 첫 그림의 캡션을 같이 씀 */
@@ -282,10 +275,9 @@ function markBest(candidates: CaptionCandidate[], shape: BundleShape): CaptionCa
 /** 캡션 자리 하나 - 채운 캡션 칩(첫 행에서 올림 · 써 넣음 · 같이 씀)과, 비었으면 후보 */
 export function buildCaptionSlot({ bundle, units, places, blockKinds, written }: CaptionSlotInput): CaptionSlotView {
   const shape = getBundleShape(bundle.kind);
-  const owner = listBundleSpan(bundle, units)[0] ?? bundle;
   const isGroupHead = bundle.kind === "figure" && [...units.values()].some((unit) => unit.kind === "figure" && unit.caption_figure_id === bundle.id);
   const groupHeadId = bundle.kind !== "figure" ? null : (bundle.caption_figure_id ?? (isGroupHead ? bundle.id : null));
-  const base = { bundleId: owner.id, shape, groupHeadId, candidates: [] as CaptionCandidate[] };
+  const base = { bundleId: bundle.id, shape, groupHeadId, candidates: [] as CaptionCandidate[] };
   const sharedHead = bundle.caption_figure_id ? units.get(bundle.caption_figure_id) : undefined;
   if (sharedHead) {
     const chips = listSlotCaptions(sharedHead, units).map((caption): CaptionChip => ({ key: `s${caption.id}`, unitId: caption.id, lang: caption.lang, text: caption.text.trim(), origin: "shared", isOdd: false, splitAt: null }));
@@ -303,7 +295,6 @@ export function buildCaptionSlot({ bundle, units, places, blockKinds, written }:
         isOdd: isSentenceLike(caption.text, shape), splitAt: canSplit ? findLangCut(caption.text) : null,
       };
     });
-    // 행으로 나눈 표는 첫 행으로 되돌리지 않는다(서버 set_first_row_caption은 통째인 표만 받는다)
     return { ...base, state: "filled", chips, hasFirstRow: bundle.kind === "table" && chips.some((chip) => chip.origin === "first_row") };
   }
   const writtenChips = written.filter((entry) => entry.text.trim() !== "").map((entry): CaptionChip => ({ key: `w${entry.lang}`, unitId: null, lang: entry.lang, text: entry.text.trim(), origin: "written", isOdd: false, splitAt: null }));
@@ -325,8 +316,7 @@ export type CaptionDrop = { kind: "attach"; unitId: number; bundleId: number } |
  * 그 묶음 자신이나 묶인 단위를 끌어 왔으면 놓을 자리가 아니다
  */
 export function resolveCaptionDrop(dragUnits: readonly ViewUnit[], bundle: ViewUnit, units: ReadonlyMap<number, ViewUnit>, places: ReadonlyMap<number, number>): CaptionDrop {
-  const span = new Set(listBundleSpan(bundle, units).map((unit) => unit.id));
-  if (dragUnits.some((unit) => span.has(unit.id) || (unit.group_unit_id !== null && span.has(unit.group_unit_id)))) return { kind: "none" };
+  if (dragUnits.some((unit) => unit.id === bundle.id || unit.group_unit_id === bundle.id)) return { kind: "none" };
   if (dragUnits.length !== 1) return { kind: "refused", reasonKey: "assign.captionSlot.why.oneLine" };
   const [unit] = dragUnits;
   if (!isCaptionableText(unit)) return { kind: "refused", reasonKey: "assign.ctx.why.notText" };

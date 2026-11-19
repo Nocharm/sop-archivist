@@ -27,17 +27,9 @@ export function describeCaptionRef(ref: ViewCaptionRef, units: ReadonlyMap<numbe
   return { label, targetDisplayId: target?.display_id ?? null, missing: target === undefined };
 }
 
-/** 참조를 다시 이을 수 있는 묶음 - 표는 표마다 하나(행으로 나눈 표는 첫 행), 그림은 전부. 용지 순서 */
+/** 참조를 다시 이을 수 있는 묶음 - 표 또는 그림 전부. 용지 순서 */
 export function listRefCandidates(kind: ViewCaptionRef["kind"], units: ReadonlyMap<number, ViewUnit>): ViewUnit[] {
-  if (kind === "figure") return [...units.values()].filter((unit) => unit.kind === "figure").sort((a, b) => a.pos_seq - b.pos_seq);
-  const byTable = new Map<number, ViewUnit>();
-  for (const unit of units.values()) {
-    if ((unit.kind !== "table" && unit.kind !== "table_row") || unit.table_id === null) continue;
-    const kept = byTable.get(unit.table_id);
-    // 표 단위가 있으면 그것, 행으로 나눴으면 가장 앞 행(서버가 보기의 대상으로 고르는 것과 같다)
-    if (kept === undefined || (kept.kind === "table_row" && (unit.kind === "table" || (unit.row_index ?? 0) < (kept.row_index ?? 0)))) byTable.set(unit.table_id, unit);
-  }
-  return [...byTable.values()].sort((a, b) => a.pos_seq - b.pos_seq);
+  return [...units.values()].filter((unit) => unit.kind === kind && (kind === "figure" || unit.table_id !== null)).sort((a, b) => a.pos_seq - b.pos_seq);
 }
 
 /** 다시 매긴 번호 표시 - "표 1 → 표 3", 원문 번호가 없어 붙였으면 "+ 표 3" */

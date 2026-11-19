@@ -673,20 +673,6 @@ def test_detach_from_a_bundle_confirmed_with_a_written_caption_needs_confirm(cli
     assert _find_coverage_problems(view) == []
 
 
-def test_attach_after_the_last_row_goes_to_the_first_row(client: TestClient) -> None:
-    """행으로 나눈 표의 캡션은 가장 앞 행에 산다 — 마지막 행 뒤 문장을 어느 행에 붙여도 첫 행 캡션이 된다."""
-    fx = _setup(client, p(HEADING) + tbl([["합성 칸 하나."], ["합성 칸 둘."]]) + p(AFTER_TABLE))
-    table = next(unit for unit in fx.view["units"] if unit["kind"] == "table")
-    _ok(_edit(client, fx.bundle_id, fx.doc["id"], {"type": "split_table_rows", "table_unit_id": table["id"]}))
-    view = get_view(client, fx.bundle_id, fx.doc["id"])
-    rows = sorted((unit for unit in view["units"] if unit["kind"] == "table_row"), key=lambda unit: unit["row_index"])
-
-    _ok(_attach(client, fx, find_unit(view, AFTER_TABLE), rows[-1]))
-
-    caption = find_unit(get_view(client, fx.bundle_id, fx.doc["id"]), AFTER_TABLE)
-    assert (caption["kind"], caption["group_unit_id"]) == ("caption", rows[0]["id"])
-
-
 def test_attach_rejects_a_far_sentence(client: TestClient) -> None:
     """캡션은 블록 자리 2 안까지(F7 ④) — 표 뒤 세 번째 문단은 멀다."""
     fx = _setup(client, p(HEADING) + tbl([["합성 칸이다."]]) + p(AFTER_TABLE) + p(RECORD) + p(FAR))
@@ -770,28 +756,6 @@ def test_merge_caption_with_plain_sentence_is_rejected(client: TestClient) -> No
     fx, _, caption = _setup_figure(client)
 
     assert _code(_merge(client, fx, caption, find_unit(fx.view, RECORD))) == (422, "cannot_merge")
-
-
-def test_split_table_rows_moves_caption_to_first_row(client: TestClient) -> None:
-    caption_text = "표 7. 기록 양식"
-    fx = _setup(client, p(HEADING) + p(caption_text, "Caption") + tbl([["합성 칸 하나."], ["합성 칸 둘."]]))
-    table = next(unit for unit in fx.view["units"] if unit["kind"] == "table")
-    caption = find_unit(fx.view, caption_text)
-
-    _ok(_edit(client, fx.bundle_id, fx.doc["id"], {"type": "split_table_rows", "table_unit_id": table["id"]}))
-
-    view = get_view(client, fx.bundle_id, fx.doc["id"])
-    rows = sorted((unit for unit in view["units"] if unit["kind"] == "table_row"), key=lambda unit: unit["row_index"])
-    assert find_unit(view, caption_text)["group_unit_id"] == rows[0]["id"]
-    _ok(_edit(client, fx.bundle_id, fx.doc["id"], {"type": "merge_table_rows", "table_id": table["table_id"]}))
-    view = get_view(client, fx.bundle_id, fx.doc["id"])
-    merged = next(unit for unit in view["units"] if unit["kind"] == "table")
-    assert (find_unit(view, caption_text)["id"], find_unit(view, caption_text)["group_unit_id"]) == (
-        caption["id"], merged["id"],
-    )
-    _ok(_step(client, fx.bundle_id, fx.doc["id"], "undo"))
-    _ok(_step(client, fx.bundle_id, fx.doc["id"], "undo"))
-    assert find_unit(get_view(client, fx.bundle_id, fx.doc["id"]), caption_text)["group_unit_id"] == table["id"]
 
 
 def test_rewrap_table_leaves_the_former_caption_a_sentence(client: TestClient) -> None:

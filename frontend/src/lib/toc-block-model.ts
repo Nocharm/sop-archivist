@@ -68,7 +68,6 @@ export function describeTocParts(langs: readonly string[]): TocPart[] {
  *  키는 첫 줄 단위 id - Paper가 같은 블록에 붙이는 키와 같다 */
 export function listTocBlocks(units: ReadonlyArray<Pick<ViewUnit, "id" | "kind" | "spans" | "pos_seq" | "noise_kind">>): Array<{ key: number; unitIds: number[] }> {
   const order = [...units]
-    .filter((unit) => unit.kind !== "table_row" || unit.spans.length > 0)
     .sort((a, b) => a.pos_seq - b.pos_seq || (a.spans[0]?.[1] ?? 0) - (b.spans[0]?.[1] ?? 0) || a.id - b.id);
   const blocks: Array<{ key: number; unitIds: number[] }> = [];
   let current: number[] | null = null;
