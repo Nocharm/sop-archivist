@@ -5,7 +5,7 @@
 """
 
 from collections import defaultdict
-from functools import lru_cache
+from functools import cache
 from io import BytesIO
 from pathlib import Path
 
@@ -42,7 +42,7 @@ CAPTIONS = {"ko": ("옛 문서 (단위 수)", "보낸 곳 (건수)"), "en": ("Ol
 OMITTED_NOTES = {"ko": "건수가 적은 {count}개는 그리지 않음 (표 참고)", "en": "{count} smaller nodes not drawn (see the table)"}
 
 
-@lru_cache(maxsize=None)
+@cache
 def _load_font(size: int) -> ImageFont.FreeTypeFont:
     return ImageFont.truetype(str(FONT_PATH), size * SCALE)
 

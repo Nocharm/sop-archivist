@@ -214,7 +214,7 @@ async def get_export(
     try:
         model = await asyncio.to_thread(build_workbook_model, snap, meta, people, equis)
         content = await asyncio.to_thread(build_workbook, model)
-    except Exception as error:
+    except Exception as error:  # noqa: BLE001 -- 파일 생성의 어떤 실패든 export_failed 500으로 알리고 클래스 이름만 남긴다
         _raise_export_failed(bundle.id, error)
     record_event(
         session, bundle_id=bundle.id, actor=ctx.login_id, action="export", target_type="bundle", target_ids=[bundle.id],
@@ -232,7 +232,7 @@ async def get_export_preview(
     snap, meta, people, equis = await _load_export_inputs(session, ctx)
     try:
         model = await asyncio.to_thread(build_workbook_model, snap, meta, people, equis)
-    except Exception as error:
+    except Exception as error:  # noqa: BLE001 -- 파일 생성의 어떤 실패든 export_failed 500으로 알리고 클래스 이름만 남긴다
         _raise_export_failed(ctx.bundle.id, error)
     # 상한은 부를 때 읽는다 — 시험이 모듈 값을 바꿔 자르기를 본다
     return limit_preview(model, sheet_model.MAX_PREVIEW_ROWS)
@@ -259,7 +259,7 @@ async def get_export_preview_a(
         return await asyncio.to_thread(
             sheet_model.build_a_preview, snap, people, doc_id, around_unit_id, sheet_model.MAX_PREVIEW_ROWS
         )
-    except Exception as error:
+    except Exception as error:  # noqa: BLE001 -- 파일 생성의 어떤 실패든 export_failed 500으로 알리고 클래스 이름만 남긴다
         _raise_export_failed(ctx.bundle.id, error)
 
 

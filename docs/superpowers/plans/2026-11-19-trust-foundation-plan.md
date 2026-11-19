@@ -25,6 +25,7 @@ Lauren Tan의 에이전트 개발 방식(코드 구조 → 정적 검사 → 검
 - **ruff 규칙 확대**: `B`·`BLE`·`UP`·`TID`를 켠다. 먼저 위반 수를 재 보고, 많으면 규칙마다 나눠 켠다(ruff에는 기준선 기능이 없다).
 - **Claude Code hook**: 프로젝트 `.claude/settings.json`에 PostToolUse(Edit·Write) → 고친 파일 하나만 eslint 또는 ruff를 돌려 결과를 돌려준다. 설정 문법은 현재 공식 문서를 확인한 뒤 쓴다.
 - 확인: `npm run lint`·`tsc`·`vitest`·`ruff`·`pytest` 0 실패, CI(`.gitlab-ci.yml`)가 같은 명령을 돈다.
+- **됨(2026-11-19)**: 기준선 `frontend/effect-baseline.json`, 시험 `frontend/src/source-rules.test.ts`, hook `.claude/hooks/lint-edited.sh`. 유틸리티를 일부러 덮는 선택자 4개(`truncate`·`flex-1`·`overflow-auto`·`overflow-y-auto`)는 사유와 함께 허용 목록. Python 타입 검사기는 넣지 않았다(계획 밖, 필요하면 따로).
 
 ### 스텝 2 — 불변식 시험 · `test/invariants`
 

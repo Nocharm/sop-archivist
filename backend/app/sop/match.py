@@ -146,7 +146,7 @@ def _plan_targets(rows: Sequence[Row[Any]]) -> list[_Want]:
         has_ended = has_ended or row.part in TRAILING_PARTS
         in_flow.append(not has_ended)
     has_levels = any(
-        is_body and row.kind == "heading" and row.heading_level is not None for row, is_body in zip(rows, in_flow)
+        is_body and row.kind == "heading" and row.heading_level is not None for row, is_body in zip(rows, in_flow, strict=True)
     )
     units = {row.id: row for row in rows}
     targeted = {row.id for row in rows if row.part not in REPEATED_PARTS and row.kind != "heading"}

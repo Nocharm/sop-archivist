@@ -4,6 +4,9 @@
 
 ## 2026-11-19
 
+- **스텝 1 정적 관문(`chore/static-gate`, 신뢰 기반 계획)** — 새 코드가 effect·타이머를 늘리지 못하게 기준선(`frontend/effect-baseline.json`: effect 49파일 120곳, 타이머 32파일 86곳, 공용 훅 `src/lib/use-*.ts`는 제외)을 두고 ESLint가 다른 파일을 막는다. `src/source-rules.test.ts`가 파일별 개수를 래칫으로 보고, lessons §9(display 이중)·§10(유틸리티 이름 겹침 — Tailwind 컴파일러로 대조)과 사유 없는 `eslint-disable`을 시험으로 옮겼다. ruff에 `B`·`BLE`·`UP`·`TID`(FastAPI `Depends` 등은 허용 호출), 경계의 `except Exception` 4곳에 사유, `zip` strict 2곳. `.claude/settings.json` PostToolUse hook이 고친 파일 하나만 eslint·ruff를 돌려 실패를 돌려준다(워크트리에서는 원본의 node_modules·venv를 쓴다).
+  - 확인: 일부러 만든 위반 파일로 ESLint 3건 · 시험 3건 · hook 종료 코드 2를 보고 지웠다. lint · tsc · vitest 1,585 · ruff 통과.
+
 - **개발 방향: 신뢰 기반 먼저(`docs/trust-direction`, 문서만)** — Lauren Tan 방식으로 dev v1.1.51을 점검했다. 검증 층은 두꺼운데 ESLint·ruff가 기본값이고 hook·import 경계·Python 타입 검사가 없어 `fix(assign)`이 되풀이되고 스모크 기대값을 낮춰 합치는 일이 생겼다. 사용자 결정: 스텝 1 정적 관문 → 2 불변식 시험 → 3 검증 정비, `/harden` 교정 사다리. 스텝 1·2가 오를 때까지 기능·병렬 에이전트 보류, assign 화면 쪼개기는 미채택(계획 `docs/superpowers/plans/2026-11-19-trust-foundation-plan.md`).
 
 ## 2026-11-18
