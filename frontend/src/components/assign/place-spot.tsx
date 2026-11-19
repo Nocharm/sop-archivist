@@ -22,14 +22,14 @@ function isInnerControl(event: MouseEvent<HTMLElement> | KeyboardEvent<HTMLEleme
   return target !== null && target !== event.currentTarget && event.currentTarget.contains(target);
 }
 
-/** 칸 자리(칸 머리 · 범주 행 · 빈 칸)에 다는 속성 - 누를 수 있으면 단추 역할(↵ · Space), 아니면 aria-disabled */
+/** 칸 자리(칸 머리 · 범주 행 · 빈 칸)에 다는 속성 - 누를 수 있으면 단추 역할(↵ · Space), 못 놓는 곳은 눌러도 아무 일 없는 꺼진 단추(까닭이 이름이라 보조기기도 읽는다) */
 export function getSpotAttrs(view: PlaceSpotView): SpotAttrs {
   const common: SpotAttrs = {
     "data-place": view.open ? "open" : "refused",
     "data-place-label": view.label || undefined,
     "data-place-picked": view.picked ? "" : undefined,
   };
-  if (!view.open) return { ...common, "aria-disabled": true };
+  if (!view.open) return { ...common, role: "button", tabIndex: 0, "aria-disabled": true, "aria-label": view.label || undefined };
   return {
     ...common,
     role: "button",

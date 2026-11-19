@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { DecisionStepResult } from "@/lib/api-sop";
 
-import { describeDecisionStep, getAssignUndoKey, pickSaveOp } from "./decision-step-model";
+import { describeDecisionStep, getAssignUndoKey, pickSaveOp, shouldDropSelectionOnStep } from "./decision-step-model";
 
 const base: DecisionStepResult = { op: "confirm", unit_ids: [], focus_unit_id: null, focus_target_id: null, scope_label: null, can_undo: false, can_redo: true };
 const key = (over: Partial<{ key: string; ctrlKey: boolean; metaKey: boolean; shiftKey: boolean }>) => ({ key: "z", ctrlKey: false, metaKey: false, altKey: false, shiftKey: false, ...over });
@@ -61,5 +61,26 @@ describe("getAssignUndoKey", () => {
     expect(getAssignUndoKey(key({}), ok)).toBeNull();
     expect(getAssignUndoKey(key({ ctrlKey: true }), { ...ok, layerOpen: true })).toBeNull();
     expect(getAssignUndoKey(key({ ctrlKey: true }), { ...ok, canEdit: false })).toBeNull();
+  });
+});
+
+describe("shouldDropSelectionOnStep", () => {
+  const step = (op: string, unitIds = [4]) => ({ op, unit_ids: unitIds });
+  it("drops the selection for every unit-shape edit that can retire units", () => {
+    for (const op of ["cut", "carve", "merge", "unmerge", "move_boundary", "split_table_rows", "merge_table_rows", "set_layout_table", "attach_caption", "detach_caption", "set_first_row_caption", "group_figures", "ungroup_figures", "set_heading", "clear_noise"]) {
+      expect(shouldDropSelectionOnStep(step(op)), op).toBe(true);
+    }
+  });
+  it("keeps the selection for in-place edits", () => {
+    for (const op of ["set_language", "set_ref", "clear_ref", "set_number"]) expect(shouldDropSelectionOnStep(step(op)), op).toBe(false);
+  });
+  it("keeps the selection for decision steps", () => {
+    for (const op of ["confirm", "hold", "link", "unlink", "mark_new", "link_source", "confirm_identical", "delete", "move_out", "clear", "reset"]) {
+      expect(shouldDropSelectionOnStep(step(op)), op).toBe(false);
+    }
+  });
+  it("keeps the selection when no unit is involved, and treats an unknown op as retiring", () => {
+    expect(shouldDropSelectionOnStep(step("set_heading", []))).toBe(false);
+    expect(shouldDropSelectionOnStep(step("future_op"))).toBe(true);
   });
 });
