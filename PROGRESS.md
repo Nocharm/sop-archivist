@@ -4,6 +4,8 @@
 
 ## 2026-11-19
 
+- **스텝 3 일부 — 에이전트용 기능 맵(`docs/feature-map`)** — `docs/qa/feature-map.md`: 화면마다 도달 주소(옛 주소가 넘기는 곳 포함)·조작 요점·알려진 함정·스모크 `ONLY` 머리·설명서 자리. 스모크 파일 나누기는 `fix/smoke-flaky`가 `dev`에 오른 뒤로 미뤘다(같은 파일).
+
 - **스텝 2 불변식 시험(`test/invariants`, 신뢰 기반 계획)** — `backend/CLAUDE.md`의 글 규칙 가운데 기계로 잴 수 있는 7개를 `tests/test_invariants.py`로(AST 술어마다 나쁜 꼴·좋은 꼴 시험), 맨 `datetime.now()`는 ruff `TID251`. 프런트가 사본을 둔 서버 규칙은 백엔드가 사례와 답을 `frontend/src/lib/rule-cases.json`으로 뽑고(`scripts/dump_rule_cases.py`, 낡으면 `test_rule_cases.py` 실패) vitest가 사본으로 대조한다. 첫 실행에서 캡션 자리의 빈 문단 판정 어긋남(`\x1c`–`\x1f`·`\x85`)을 찾아 프런트를 서버에 맞췄다. 프런트 "한 길" 규칙 7개도 소스 검사로(기본 체크박스 하나는 기준선).
   - 확인: pytest `test_invariants` · `test_rule_cases` · 캡션 자리 30, ruff, lint · tsc · vitest 1,619.
 
