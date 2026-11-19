@@ -2,7 +2,7 @@
 // 저장 응답으로 서버 다시 읽기 전에 미리 고친다(칸 끝에 넣기·지우기). 순서·번호는 다시 읽은 서버 값이 정한다.
 // 줄 앞머리에는 결과물 C와 같은 그 줄 자기 번호("5.1.1", 생략·주석은 없음)를 두고, 칸 번호는 칸 머리 줄에 남긴다.
 import type { AutoItem, ComposedDoc, ComposedItem, ComposedSection, GroupTarget, OutputCItem, RenumberChange, WrittenSentence } from "@/lib/api-sop";
-import { getPillWidth, getSectionLevel } from "@/lib/strip-pill-model";
+import { getLevelWidths, getPillWidth, getSectionLevel } from "@/lib/strip-pill-model";
 
 /** 아무것도 받지 않은 칸 - 옅은 자리 표시. key는 칸 키라 칸이 차고 비어도 같은 줄로 읽힌다 */
 export interface EmptySlotRow {
@@ -127,11 +127,6 @@ export function splitCTable(children: readonly OutputCItem[]): { captions: Outpu
   return { captions, grid: groupTableCells({ rows, cols, cells }) };
 }
 
-// 앞머리 번호 한 글자 폭(px) - .strip-lead-num(500 11px JetBrains Mono) 실측 6.6px. 글꼴·크기를 바꾸면 함께 고친다
-const LEAD_CHAR_PX = 6.6;
-// 번호 칸 안 여백(px) - .strip-lead-num 오른쪽 padding 5px에 왼쪽 숨 1px
-const LEAD_PAD_PX = 6;
-
 /**
  * 엮은 문서 줄마다 앞머리 번호 칸 폭(키 = target id 글자) - 자기 번호의 깊이별 폭(getPillWidth)이되, 그 깊이의 가장 긴 번호가 잘리지 않게
  * 그 깊이 전체를 넓힌다(같은 깊이는 같은 폭이라 들여쓰기로 읽힌다). 번호 없는 줄(생략·주석·저장 직후)은 같은 칸 앞 줄의 폭,
@@ -139,13 +134,7 @@ const LEAD_PAD_PX = 6;
  */
 export function getComposedLeadWidths(rows: readonly NewPaneRow[]): Map<string, number> {
   const composed = rows.filter(isComposedRow);
-  const byLevel = new Map<number, number>();
-  for (const { number } of composed) {
-    if (number === null) continue;
-    const level = getSectionLevel(number);
-    byLevel.set(level, Math.max(byLevel.get(level) ?? getPillWidth(level), Math.ceil(number.length * LEAD_CHAR_PX) + LEAD_PAD_PX));
-  }
-  const getLevelWidth = (level: number) => byLevel.get(level) ?? getPillWidth(level);
+  const getLevelWidth = getLevelWidths(composed.flatMap((row) => (row.number === null ? [] : [row.number])));
   const widths = new Map<string, number>();
   let path: string | null = null;
   let previous: number | null = null;

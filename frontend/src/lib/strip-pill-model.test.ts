@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { getCardTops, getPairBrackets, getPillWidth, getHiddenPrefixLength, getSectionHeads, getSectionLevel, getSectionPill, getTabWidths, getVisibleSkip, PILL_WIDTH_BY_LEVEL, sliceVisible } from "@/lib/strip-pill-model";
+import { getCardTops, getLevelWidths, getPairBrackets, getPillWidth, getHiddenPrefixLength, getSectionHeads, getSectionLevel, getSectionPill, getTabWidths, getVisibleSkip, PILL_WIDTH_BY_LEVEL, sliceVisible } from "@/lib/strip-pill-model";
 
 describe("getSectionPill", () => {
   it("returns numeric section numbers only", () => {
@@ -99,6 +99,25 @@ describe("getTabWidths", () => {
       { key: "next", part: "body", sectionLabel: "" },
     ]);
     expect([widths.get("top"), widths.get("bottom"), widths.get("next")]).toEqual([w(2), w(2), w(2)]);
+  });
+  it("widens a whole level so its longest number fits, leaving other levels alone", () => {
+    const widths = getTabWidths([
+      { key: "a", part: "body", sectionLabel: "5.2.1" },
+      { key: "b", part: "body", sectionLabel: "5.2.1.1" },
+      { key: "c", part: "body", sectionLabel: "5.2.1.10." },
+      { key: "d", part: "footer", sectionLabel: "1.1.1.1" },
+    ]);
+    // "5.2.1.10." = 9 chars × 6.6px + 6px padding → 66px, more than the level-4 default
+    expect(widths.get("c")).toBe(66);
+    expect([widths.get("b"), widths.get("d")]).toEqual([66, 66]);
+    expect(widths.get("a")).toBe(w(3));
+  });
+});
+
+describe("getLevelWidths", () => {
+  it("falls back to the level default and ignores non-numeric labels", () => {
+    const getWidth = getLevelWidths(["Scope", "1", "1.1"]);
+    expect([getWidth(1), getWidth(2), getWidth(5)]).toEqual([PILL_WIDTH_BY_LEVEL[0], PILL_WIDTH_BY_LEVEL[1], PILL_WIDTH_BY_LEVEL[4]]);
   });
 });
 
