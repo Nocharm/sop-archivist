@@ -37,6 +37,11 @@ import { buildTocBlock, describeTocParts, toggleTocOpen } from "@/lib/toc-block-
 
 import { type AssignPageState, SYSTEM_HOLDS } from "./use-assign-page";
 
+/** 고른 박스를 맨 앞으로(나머지는 그 순서대로) - 머리의 Unit 번호가 Shape 줄과 같은 차례로 읽힌다(설계 D3) */
+function putFirst<T>(items: readonly T[], isFirst: (item: T) => boolean): T[] {
+  return [...items.filter(isFirst), ...items.filter((item) => !isFirst(item))];
+}
+
 export function AssignSidePanel({ state }: { state: AssignPageState }) {
   const {
     t, bundleId, canEdit, unitsKey, reloadData, docViews, tobeData, aiJobs, aiOn, aiBusy, suggestions, invalidUnitIds, unitMap, written,
@@ -46,7 +51,7 @@ export function AssignSidePanel({ state }: { state: AssignPageState }) {
     viewOf, oldView, splitByUnit, shapeView, shapeModel, soloUnits, cutLine, writtenDocs, composedDoc, view, changeView, askAiScope,
     setRemarkEdit, firstTextRef, busy, accOpen, toggleAcc, saveUnits, slots, aiUnfilled, draftPlace, draftSectionKey, draftPosition,
     placeResolved, setRefEntryId, moveRow, hasUnitDraft, isFixedCaption, rowViewUnits, rowSplitUnit, rowSplit, splitBlocked, rowRefUnit,
-    refBlocked, isRefGate, isCaptionGateOn, confirmBlockKey, rowCaptionRefs, refCandidates, shapeLines, slotPlaces, slotBlockKinds,
+    refBlocked, isRefGate, isCaptionGateOn, confirmBlockKey, rowCaptionRefs, refCandidates, shapeLines, shapeFirstId, slotPlaces, slotBlockKinds,
     shapeMode, headingBack, rewrap, bandBack, stepBase, refPendingIds, refDetail, refInfo, runUnitEdit, clearToc, runCaptionRefChange,
     switchShapeMode, applySplitSuggestion, dismissSplitSuggestion, selectNextSplit, selectNextRef, runUnitAction, readReasonNeed, runSave,
     runClear, markNew, placeManage, pickDestination, pickNewSentence, isTemplateDrag, handlePrimary, startEdit, handlePickClickCapture,
@@ -839,7 +844,7 @@ export function AssignSidePanel({ state }: { state: AssignPageState }) {
         <div className="assign-side-body" data-testid="assign-solo">
           <div className="assign-side-head">
             <div className="flex items-center gap-2">
-              <Truncate className="min-w-0 flex-1 font-mono text-sm font-semibold" text={soloUnits.map((unit) => unit.display_id).join(" · ") || (shapeView?.document.doc_code ?? "–")} testId="assign-row-id" />
+              <Truncate className="min-w-0 flex-1 font-mono text-sm font-semibold" text={putFirst(soloUnits, (unit) => unit.id === shapeFirstId).map((unit) => unit.display_id).join(" · ") || (shapeView?.document.doc_code ?? "–")} testId="assign-row-id" />
               <span className="tag flex-none">{t("assign.writtenTag")}</span>
               <span className="flex flex-none gap-0.5">
                 <Tooltip label={t("assign.rowPrev")} align="end">
@@ -888,7 +893,7 @@ export function AssignSidePanel({ state }: { state: AssignPageState }) {
       <div className="assign-side-body">
         <div className="assign-side-head">
           <div className="flex items-center gap-2">
-            <Truncate className="min-w-0 flex-1 font-mono text-sm font-semibold" text={rowUnits.map((unit) => unit.display_id).join(" · ") || "–"} testId="assign-row-id" />
+            <Truncate className="min-w-0 flex-1 font-mono text-sm font-semibold" text={putFirst(rowUnits, (unit) => unit.unit_id === shapeFirstId).map((unit) => unit.display_id).join(" · ") || "–"} testId="assign-row-id" />
             <span className="flex-none">
               <UnitStatusChip status={row.status} testId="assign-row-status" />
             </span>

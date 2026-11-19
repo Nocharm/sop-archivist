@@ -4,6 +4,7 @@
 
 ## 2026-11-20
 
+- **시안 1 스텝 3 — 누른 박스만 고르고 짝은 곁에 표시(`feat/mockup1-3-pair-select`, 설계 D3, 요청서 1)** — 짝 줄의 첫 Unit을 고르던 탓에 떨어진 짝(1↔4)의 4를 눌러도 1이 잡혔다. 고름은 누른 박스(`pickedId`), 짝의 다른 구성원은 `data-mate`(흐린 점선 테두리), 보낼 곳 · 확정은 그대로 짝 전체. 떨어진 짝은 제자리에 두고 고른 박스 아래 안내 줄("↑ 짝 KO · 위 §1", 순수 `lib/pair-hint-model.ts`)을 누르면 짝으로 간다. J/K는 박스 하나씩(Pair view만 줄), Shape · 결정 칸 머리는 누른 박스 먼저, Old 우클릭 메뉴는 고른 박스가 바뀌면 닫힌다. 스모크: 짝 줄을 `[data-sel]`로 읽던 셋을 `data-sel`+`data-mate`로, 따로 쓴 문서의 짝 단계에 "아래 박스를 누르면 그 박스 · 안내 줄로 위 짝"을 더했고, 스텝 2가 남긴 "after Join only the edited document is fetched again"을 더했다(둘 다 아직 돌리지 않음).
 - **시안 1 스텝 2 확인(메인 세션)** — `assign:` 스모크 1회차에 "attach and detach a caption from Shape"가 붙인 캡션을 15초 안에 못 봐 실패(뒤 두 검사는 그 여파), 2회차 전체 ALL PASS 845, 그 단계만 5회 모두 통과. 한 번 흔들린 것으로 두고, 다시 나오면 편집 뒤 그 문서 보기 · 줄 묶음 받기(`use-doc-views`)의 캡션 길을 본다.
 - **시안 1 스텝 2 — 편집 뒤 고친 문서만 다시 받기(`feat/mockup1-2-reload-scope`, 설계 D2)** — 붙이기 한 번이 모든 Old 문서 보기 · 전체 줄 · 목록 여덟 개를 다시 받아 "답답하다"(요청서 9 · 13). Old 문서 보기 · 줄을 문서마다 쥐는 `lib/use-doc-views.ts`가 편집 뒤 그 문서의 보기와 `units?document_id=`만 받아 한 번에 놓고(새 보기에 옛 줄이 섞여 결정 칸이 범례로 깜박이던 틈을 닫음), 나머지는 순수 `planReload`(표 한 줄씩 vitest)가 고른 목록만 뒤에서 받는다. 하나였던 `dataKey`는 판단 저장용 전체 키 + To-Be · New 문장 · 같은 글자 · 나누기 제안 키로, 고른 줄의 묶음 · 후보는 그 Unit들의 판단 revision으로, 풀기 전환은 받아 둔 보기를 그대로 놓아 같은 문서를 두 번 받지 않는다. 원문 편집의 되돌리기도 Old 보기 · 줄만(판단 저장 단계는 전처럼 전부). 가정(판단 안 걸린 합치기는 To-Be · New 문장을 바꾸지 않는다)은 pytest 하나로 못 박음. 확인: vitest 1693 · lint · tsc, pytest `test_sop_written.py`(스모크는 메인 세션).
 

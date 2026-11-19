@@ -49,6 +49,8 @@ interface OldPaneProps {
   headingShift?: NonNullable<ComponentProps<typeof Paper>["strips"]>["headingShift"];
   /** 벗긴 표의 줄 묶음 머리 "↺ 다시 표로"(F1) - 없으면 머리 없이 왼쪽 세로선만 */
   unwrap?: NonNullable<ComponentProps<typeof Paper>["strips"]>["unwrap"];
+  /** 고른 박스 아래 떨어진 짝 안내 줄 - 누르면 짝으로 간다. 없으면 그리지 않는다 */
+  pairHint?: NonNullable<ComponentProps<typeof Paper>["strips"]>["pairHint"];
   /** 칸 전체 - 풀기 전환(useUnwrapMotion)이 이 안에서 바뀌는 곳을 찾고 잰다 */
   paneRef?: RefObject<HTMLElement | null>;
   /** 내용이 있는 본문·머리말·꼬리말 탭 - 둘 이상일 때만 탭 줄을 그린다 */
@@ -122,7 +124,7 @@ export function OldPane({ paneRef, ...props }: OldPaneProps) {
         onCutNudge={props.onCutNudge}
         renderAtCut={props.cut ? props.renderAtCut : undefined}
         figureSource={props.figureSource}
-        strips={{ statusOf: props.statusOf, renderNote: props.renderNote, renderPills: props.renderPills, fold: props.fold, join: props.join, isCaptionNeeded: props.isCaptionNeeded, toc: props.toc, headingShift: props.headingShift, unwrap: props.unwrap }}
+        strips={{ statusOf: props.statusOf, renderNote: props.renderNote, renderPills: props.renderPills, fold: props.fold, join: props.join, isCaptionNeeded: props.isCaptionNeeded, toc: props.toc, headingShift: props.headingShift, unwrap: props.unwrap, pairHint: props.pairHint }}
         renderUnitActions={props.renderUnitActions}
         dragBoxes={props.dragBoxes}
         numberCell={props.numberCell}

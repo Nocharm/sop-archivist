@@ -86,6 +86,7 @@ export function listTocBlocks(units: ReadonlyArray<Pick<ViewUnit, "id" | "kind" 
 }
 
 const TOC_NAV_PREFIX = "toc:";
+const UNIT_NAV_PREFIX = "unit:";
 
 /** 줄 목록(↑↓·J/K)에 끼우는 목차 블록 자리 키 - 배정 줄 키(`u<id>`)와 겹치지 않는다. 남은 수·필터 수에는 들지 않는다 */
 export function toTocNavKey(blockKey: number): string {
@@ -96,15 +97,26 @@ export function readTocNavKey(navKey: string): number | null {
   return navKey.startsWith(TOC_NAV_PREFIX) ? Number(navKey.slice(TOC_NAV_PREFIX.length)) : null;
 }
 
-/** 줄 이동 순서 - 배정 줄과 목차 블록을 문서 순 → 원문 순으로 섞는다. position은 단위 id → [문서 순번, pos_seq, 시작] */
+/** 박스(Unit) 하나의 자리 키 - 평소 J/K는 짝 줄도 박스 하나씩 밟는다(설계 2026-11-20 D3) */
+export function toUnitNavKey(unitId: number): string {
+  return `${UNIT_NAV_PREFIX}${unitId}`;
+}
+
+export function readUnitNavKey(navKey: string): number | null {
+  return navKey.startsWith(UNIT_NAV_PREFIX) ? Number(navKey.slice(UNIT_NAV_PREFIX.length)) : null;
+}
+
+/** 줄 이동 순서 - 배정 줄과 목차 블록을 문서 순 → 원문 순으로 섞는다. position은 단위 id → [문서 순번, pos_seq, 시작].
+ *  byUnit이면 줄 대신 줄의 박스마다 한 자리(toUnitNavKey, 떨어진 짝은 제 자리에), 아니면 줄 키 하나(줄의 첫 Unit 자리 - Pair view는 한 줄에 두 언어가 나란하다) */
 export function buildNavKeys(
   rows: ReadonlyArray<{ key: string; unitIds: readonly number[] }>,
   blocks: ReadonlyArray<{ key: number }>,
   position: ReadonlyMap<number, readonly [number, number, number]>,
+  { byUnit }: { byUnit: boolean },
 ): string[] {
   const far = [Number.MAX_SAFE_INTEGER, 0, 0] as const;
   const entries = [
-    ...rows.map((row) => ({ key: row.key, at: position.get(row.unitIds[0]) ?? far })),
+    ...rows.flatMap((row) => (byUnit ? row.unitIds.map((unitId) => ({ key: toUnitNavKey(unitId), at: position.get(unitId) ?? far })) : [{ key: row.key, at: position.get(row.unitIds[0]) ?? far }])),
     ...blocks.map((block) => ({ key: toTocNavKey(block.key), at: position.get(block.key) ?? far })),
   ];
   // 같은 자리면 원래 순서(줄 먼저) - sort는 안정적이다

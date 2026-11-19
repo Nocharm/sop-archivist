@@ -64,7 +64,7 @@ import { useAssignFocus } from "@/lib/use-assign-focus";
 import { useDelayedFlag } from "@/lib/use-delayed-flag";
 import { useCutLine } from "@/lib/use-cut-line";
 import { countRefLookups, isRefPending, pickRefUnit } from "@/lib/ref-model";
-import { buildNavKeys, listTocBlocks, readTocNavKey, toTocNavKey } from "@/lib/toc-block-model";
+import { buildNavKeys, listTocBlocks, readTocNavKey, readUnitNavKey, toTocNavKey, toUnitNavKey } from "@/lib/toc-block-model";
 import { useEquisPolling } from "@/lib/use-equis-polling";
 import { useDocViews, type DocBatch } from "@/lib/use-doc-views";
 import { useLoaded } from "@/lib/use-loaded";
@@ -386,10 +386,14 @@ export function useAssignPage() {
     if (value !== null) focusCtl.pick({ kind: "new", docId: value.docId, unitId: value.unitId, inPlace: value.inPlace });
     else if (focus.kind === "new") focusCtl.pick(NO_FOCUS);
   }
-  /** 줄 키로 고른다 - 그 줄의 첫 Unit을 고른다(용지가 고른 박스로 받는 Unit, 짝 고름은 스텝 3) */
-  function pickRowKey(key: string) {
+  // 고른 박스 - 짝 줄이어도 누른 박스 하나다(설계 D3). 짝의 다른 구성원은 용지가 곁에 딸린 표시(data-mate)로만 보인다
+  const pickedId = focus.kind === "unit" && row !== null ? focus.unitId : null;
+  /** 줄 키로 고른다 - unitId가 그 줄의 박스면 그 박스, 아니면 이미 고른 그 줄의 박스를 두고, 처음 고르는 줄이면 첫 박스. 고른 박스 id를 돌려준다 */
+  function pickRowKey(key: string, unitId?: number): number | null {
     const target = rowMap.get(key);
-    focusCtl.pick(target ? { kind: "unit", docId: target.documentId, unitId: target.unitIds[0] } : NO_FOCUS);
+    const boxId = target === undefined ? null : unitId !== undefined && target.unitIds.includes(unitId) ? unitId : pickedId !== null && target.unitIds.includes(pickedId) ? pickedId : target.unitIds[0];
+    focusCtl.pick(target && boxId !== null ? { kind: "unit", docId: target.documentId, unitId: boxId } : NO_FOCUS);
+    return boxId;
   }
   /** Old 줄 고름만 놓는다 - New 문서 · 목차 고름은 그대로 */
   function clearRowPick() {
@@ -405,13 +409,6 @@ export function useAssignPage() {
   const tocPick = mode === "old" && row === null && !hasSolo ? tocSel : null;
   // 줄 이동(↑↓·J/K) 순서에 끼우는 목차 블록 - 문서 순 → 원문 순
   const tocBlocks = useMemo(() => (viewList ?? []).flatMap((view) => listTocBlocks(view.units).map((block) => ({ ...block, docId: view.document.id }))), [viewList]);
-  const navKeys = useMemo(() => {
-    const position = new Map<number, readonly [number, number, number]>();
-    (viewList ?? []).forEach((view, docAt) => {
-      for (const unit of view.units) position.set(unit.id, [docAt, unit.pos_seq, unit.spans[0]?.[1] ?? 0]);
-    });
-    return buildNavKeys(rows, tocBlocks, position);
-  }, [viewList, rows, tocBlocks]);
   const [soloKey, setSoloKey] = useState(0);
   const soloLoad = useLoaded<DocumentView | null>(() => (solo !== null ? getDocumentView(bundleId, solo.docId) : Promise.resolve(null)), `${bundleId}:${solo?.docId ?? ""}:${soloKey}`);
   // 받은 보기를 고름에 알린다 - 편집 응답에서 건 따라가기가 그 박스를 고르고(고름이 누른 때 그대로일 때만), 사라진 Unit의 고름은 놓는다
@@ -468,9 +465,10 @@ export function useAssignPage() {
   // 놓인 New 문장을 눌러 연 작은 메뉴(이 문장에 잇기 · 이 줄 다음에 놓기) - 그 문장 줄 상자, 누른 자리. 고른 줄이 바뀌면 닫는다
   const [joinMenu, setJoinMenu] = useState<{ seq: number; rowKey: string; targetId: number; anchor: HTMLElement; offset: { x: number; y: number } | null } | null>(null);
   if (joinMenu !== null && joinMenu.rowKey !== activeKey) setJoinMenu(null);
-  // Old 문장 우클릭 메뉴 - 누른 Unit, 그 줄 상자, 누른 자리와 글자 자리(키보드로 열었으면 없음). 고른 줄이 바뀌면 닫는다
-  const [ctxMenu, setCtxMenu] = useState<{ seq: number; unitId: number; rowKey: string; anchor: HTMLElement; click: { x: number; y: number } | null; caret: { blockId: number; offset: number } | null } | null>(null);
-  if (ctxMenu !== null && ctxMenu.rowKey !== (activeKey ?? (hasSolo ? SOLO_ROW_KEY : null))) setCtxMenu(null);
+  // Old 문장 우클릭 메뉴 - 누른 Unit, 그 줄 상자, 연 때 고른 박스(boxId, New 문서면 null), 누른 자리와 글자 자리(키보드로 열었으면 없음).
+  // 고른 줄이 바뀌거나 같은 짝 줄에서 다른 박스를 고르면 닫는다(설계 D3 - 고름은 박스 하나)
+  const [ctxMenu, setCtxMenu] = useState<{ seq: number; unitId: number; boxId: number | null; rowKey: string; anchor: HTMLElement; click: { x: number; y: number } | null; caret: { blockId: number; offset: number } | null } | null>(null);
+  if (ctxMenu !== null && (ctxMenu.rowKey !== (activeKey ?? (hasSolo ? SOLO_ROW_KEY : null)) || (ctxMenu.boxId !== null && ctxMenu.boxId !== pickedId))) setCtxMenu(null);
   // 나눌 선이 놓인 Unit - 고른 줄 안의 것만 산다(줄을 바꾸면 선이 사라진다)
   const [cutUnitId, setCutUnitId] = useState<number | null>(null);
   const focusNew = mode === "unsourced" ? (unsourced.find((item) => item.target_id === selNew)?.target_id ?? unsourced[0]?.target_id ?? null) : null;
@@ -570,6 +568,14 @@ export function useAssignPage() {
   const isPairView = canPairView && pairViewDoc === oldView?.document.id;
   if (oldView && pairViewDoc !== null && !isPairView) setPairViewDoc(null);
   const pairColumns = useMemo(() => (isPairView && oldView ? buildPairColumns(oldView) : null), [isPairView, oldView]);
+  // 줄 이동(↑↓·J/K) 순서 - 평소는 박스 하나씩, Pair view는 한 줄에 두 언어가 나란하니 줄 하나씩(설계 D3). 목차 블록도 한 자리
+  const navKeys = useMemo(() => {
+    const position = new Map<number, readonly [number, number, number]>();
+    (viewList ?? []).forEach((view, docAt) => {
+      for (const unit of view.units) position.set(unit.id, [docAt, unit.pos_seq, unit.spans[0]?.[1] ?? 0]);
+    });
+    return buildNavKeys(rows, tocBlocks, position, { byUnit: !isPairView });
+  }, [viewList, rows, tocBlocks, isPairView]);
   const pairLinks = useMemo(() => (pairColumns ? listPairLinks(pairColumns) : []), [pairColumns]);
   // 켜기 전 Old 용지의 스크롤 자리 - 고른 줄 없이 끄면 이리로 돌아간다
   const pairScrollRef = useRef(0);
@@ -847,7 +853,7 @@ export function useAssignPage() {
 
   /** Pair view를 끈다 - 다시 그려진 Old 용지에서 고른 줄의 조각을 보이고, 고른 줄이 없으면 켜기 전 스크롤 자리로.
    *  unitId - 보일 조각(나누기는 나눌 문장). 끄는 길은 모두 여기를 지난다(단추·V·보기 단추·세로선 접기·New 칸으로 보내기·나누기). Old 자리로 뛰는 길(jumpToOld·다른 문서의 줄 고르기)은 그 길이 스크롤하니 상태만 끈다 */
-  function closePairView(unitId: number | undefined = row?.unitIds[0]) {
+  function closePairView(unitId: number | undefined = pickedId ?? undefined) {
     setPairViewDoc(null);
     if (unitId !== undefined) {
       scrollToUnit(unitId);
@@ -931,19 +937,20 @@ export function useAssignPage() {
     if (scroll) requestAnimationFrame(() => document.querySelector(`[data-testid="assign-paper-toc-${key}"]`)?.scrollIntoView({ block: "nearest" }));
   }
 
-  function selectRow(key: string, scroll = true) {
-    // 다른 줄을 고르면 편집 뒤 다시 받기를 기다리던 따라가기는 버려진다(모델의 pick) - 늦게 온 보기가 고름을 편집한 줄로 되돌리지 않게
+  /** 줄을 고른다 - unitId를 주면 그 박스(누른 박스, 짝의 다른 구성원이어도 그것), 아니면 pickRowKey의 규칙. 고른 박스 id를 돌려준다 */
+  function selectRow(key: string, scroll = true, unitId?: number): number | null {
+    // 다른 박스를 고르면 편집 뒤 다시 받기를 기다리던 따라가기는 버려진다(모델의 pick) - 늦게 온 보기가 고름을 편집한 줄로 되돌리지 않게
     setMode("old");
     setCarvePick(null);
-    pickRowKey(key);
+    const boxId = pickRowKey(key, unitId);
     setMenu(null);
     setCtxMenu(null);
     if (key !== activeKey) {
       setCutUnitId(null);
       setRefEntryId(null);
     }
-    const first = rowMap.get(key)?.unitIds[0];
-    if (scroll && first !== undefined) scrollToUnit(first);
+    if (scroll && boxId !== null) scrollToUnit(boxId);
+    return boxId;
   }
 
   /** 한 단의 New 문서에서 문장을 고른다 - 다른 문장으로 옮기면 나눌 선과 참조 칸을 거둔다 */
@@ -987,7 +994,7 @@ export function useAssignPage() {
     const anchor = document.querySelector<HTMLElement>(`[data-testid="assign-new-${targetId}"]`);
     if (!canEdit || mode !== "old" || unitId === null || !anchor || !selectNewSentence(targetId)) return;
     menuSeq.current += 1;
-    setCtxMenu({ seq: menuSeq.current, unitId, rowKey: SOLO_ROW_KEY, anchor, click, caret: null });
+    setCtxMenu({ seq: menuSeq.current, unitId, boxId: null, rowKey: SOLO_ROW_KEY, anchor, click, caret: null });
   }
 
   /** 이미 쓴 New 문서를 한 단으로 연다 - 고르던 줄을 놓고 그 문서의 원문을 넓게 보인다 */
@@ -1013,7 +1020,7 @@ export function useAssignPage() {
       return;
     }
     const key = rowOfUnit.get(unitId);
-    if (key !== undefined) selectRow(key);
+    if (key !== undefined) selectRow(key, true, unitId);
   }
 
   function moveRow(step: 1 | -1) {
@@ -1030,15 +1037,23 @@ export function useAssignPage() {
       }
       return;
     }
-    // 목차 블록도 한 자리로 밟는다(All에서만 - 다른 필터는 상태로 거른 줄 목록이다). 남은 수·필터 수에는 들지 않는다
+    // 목차 블록도 한 자리로 밟는다(All에서만 - 다른 필터는 상태로 거른 줄 목록이다). 남은 수·필터 수에는 들지 않는다.
+    // 평소는 박스 하나씩(떨어진 짝도 제 자리에서), Pair view는 줄 하나씩 - 거르기는 박스의 줄로 본다(설계 D3)
     const listed = new Set(listKeys);
-    const walk = filter === "all" ? navKeys.filter((key) => readTocNavKey(key) !== null || listed.has(key)) : listKeys;
-    const current = tocPick !== null ? toTocNavKey(tocPick.key) : activeKey;
+    const isListed = (key: string) => {
+      if (readTocNavKey(key) !== null) return filter === "all";
+      const unitId = readUnitNavKey(key);
+      return listed.has(unitId === null ? key : (rowOfUnit.get(unitId) ?? ""));
+    };
+    const walk = navKeys.filter(isListed);
+    const current = tocPick !== null ? toTocNavKey(tocPick.key) : isPairView ? activeKey : pickedId !== null ? toUnitNavKey(pickedId) : null;
     const next = stepInList(navKeys, walk, current, step);
     const tocKey = next === null ? null : readTocNavKey(next);
     const block = tocKey === null ? undefined : tocBlocks.find((item) => item.key === tocKey);
+    const nextUnit = next === null ? null : readUnitNavKey(next);
+    const nextRow = nextUnit === null ? next : (rowOfUnit.get(nextUnit) ?? null);
     if (block) selectToc(block.docId, block.key, null);
-    else if (next !== null && tocKey === null) selectRow(next);
+    else if (nextRow !== null && tocKey === null) selectRow(nextRow, true, nextUnit ?? undefined);
   }
 
   // --- Old 문장 고치기(우클릭 메뉴·두 번 누르기) - Split의 편집을 그대로 부른다. 판단이 없는 문장만(모델이 막는다) ---
@@ -1046,6 +1061,12 @@ export function useAssignPage() {
   function findRowKey(unitId: number): string | undefined {
     const groupId = paperModel?.units.get(unitId)?.group_unit_id ?? null;
     return rowOfUnit.get(unitId) ?? (groupId !== null ? rowOfUnit.get(groupId) : undefined);
+  }
+
+  /** 그 단위가 든 박스(줄의 Unit) - 칸 문장 · 캡션이면 그 묶음 */
+  function findBoxId(key: string, unitId: number): number | undefined {
+    const groupId = paperModel?.units.get(unitId)?.group_unit_id ?? null;
+    return rowMap.get(key)?.unitIds.find((id) => id === unitId || id === groupId);
   }
 
   function isUnitDecided(unit: { id: number; group_unit_id: number | null }): boolean {
@@ -1150,7 +1171,10 @@ export function useAssignPage() {
   const rowCaptionRefs: CaptionRefEntry[] = shapeUnits.flatMap((unit) => unit.caption_refs.map((ref) => ({ ref, from: unit })));
   const refCandidates = rowCaptionRefs.length > 0 && shapeModel !== null ? [...listRefCandidates("table", shapeModel.units), ...listRefCandidates("figure", shapeModel.units)] : [];
   // 표·그림의 캡션은 다듬기 줄 대신 아래 캡션 자리(F7)가 칩으로 보인다 - 캡션의 언어 바꾸기는 우클릭 메뉴에 남는다
-  const shapeLines: ShapeLine[] = canEdit && mode === "old" ? rowViewUnits.flatMap((unit) => { const menu = buildUnitMenu(unit); return menu ? [{ unit, items: menu.edit }] : []; }) : [];
+  // 누른 박스가 맨 앞(설계 D3) - 나머지는 문서 순서. 합치기 순서(switchShapeMode)는 문서 순서 그대로다
+  const shapeFirstId = hasSolo ? (soloUnit?.id ?? null) : pickedId;
+  const shapeLineUnits = shapeFirstId === null ? rowViewUnits : [...rowViewUnits].sort((a, b) => Number(b.id === shapeFirstId) - Number(a.id === shapeFirstId));
+  const shapeLines: ShapeLine[] = canEdit && mode === "old" ? shapeLineUnits.flatMap((unit) => { const menu = buildUnitMenu(unit); return menu ? [{ unit, items: menu.edit }] : []; }) : [];
   // 캡션 자리의 블록 자리(문단 · 표 · 그림 하나가 한 자리) - 후보와 끌어 놓기가 같은 거리를 잰다(서버 caption_slot.py와 같다)
   const slotPlaces = useMemo(() => (shapeView ? buildBlockPlaces(shapeView.blocks, shapeView.tables) : null), [shapeView]);
   const slotBlockKinds = useMemo(() => new Map((shapeView?.blocks ?? []).map((block) => [block.id, block.kind])), [shapeView]);
@@ -1198,12 +1222,15 @@ export function useAssignPage() {
     const key = isSolo ? SOLO_ROW_KEY : findRowKey(unitId);
     const anchor = document.querySelector<HTMLElement>(`[data-testid="assign-paper-piece-${unitId}"]`) ?? document.querySelector<HTMLElement>(`[data-testid="assign-paper-unit-${unitId}"]`);
     if (!key || !anchor) return;
+    // 누른 것이 든 박스(칸 문장 · 캡션이면 그 묶음) - 짝의 다른 구성원을 눌렀으면 그 박스로 옮겨 고른다
+    const boxId = isSolo ? null : (findBoxId(key, unitId) ?? null);
+    let picked = pickedId;
     if (isSolo) selectSolo(unitId);
-    else if (key !== activeKey) selectRow(key, false);
+    else if (key !== activeKey || (boxId !== null && boxId !== pickedId)) picked = selectRow(key, false, boxId ?? undefined);
     setChecked(new Set());
     setMenu(null);
     menuSeq.current += 1;
-    setCtxMenu({ seq: menuSeq.current, unitId, rowKey: key, anchor, click, caret });
+    setCtxMenu({ seq: menuSeq.current, unitId, boxId: isSolo ? null : picked, rowKey: key, anchor, click, caret });
   }
 
   /** 서버가 "판단이 걸린 단위를 바꾼다"고 물었으면 그 단위 수 - 다른 오류면 null */
@@ -2884,7 +2911,8 @@ export function useAssignPage() {
     }
     setChecked(new Set());
     setCtxMenu(null);
-    selectRow(key, false);
+    // 누른 박스를 고른다 - 짝의 아래 박스를 눌러도 위 박스가 잡히지 않는다(설계 D3)
+    selectRow(key, false, findBoxId(key, unitId));
   }
 
   function handlePrimary() {
@@ -2926,7 +2954,7 @@ export function useAssignPage() {
     const isMenuKey = event.key === "ContextMenu" || (event.key === "F10" && event.shiftKey);
     if (isMenuKey && row && mode === "old" && !bulk && !isTypingTarget(event.target) && !document.querySelector('[role="dialog"],[role="menu"],[role="listbox"]')) {
       event.preventDefault();
-      openCtxMenu(cutUnit?.id ?? row.unitIds[0], null, null);
+      openCtxMenu(cutUnit?.id ?? pickedId ?? row.unitIds[0], null, null);
       return;
     }
     // 그 자리 메뉴는 화면 단축키를 막지 않는다 - 메뉴가 떠 있어도 ↵가 확정이다(메뉴 안의 키는 메뉴가 먼저 받는다)
@@ -3126,7 +3154,7 @@ export function useAssignPage() {
     t, bundleId, bundle, canEdit, docs, oldDocs, oldDocIds, docViews, unitsKey, reloadData, tobe, tobeData, writtenList, identical,
     aiJobs, aiOn, aiBusy, suggestions, invalidUnitIds, readMarkStatus, suggestedTargetUnits, unitMap, written, writtenMap, rows, rowMap,
     rowOfUnit, options, ready, showSkeleton, unsourced, mode, setMode, filter, counts, foldOpen, setFoldOpen, applyFilter, foldMatch,
-    clearRowPick, activeKey, row, solo, setSolo, isSolo, isNewEdit, hasSolo, tocOpen, setTocOpen, tocPick, tocBlocks, checked,
+    clearRowPick, activeKey, row, pickedId, solo, setSolo, isSolo, isNewEdit, hasSolo, tocOpen, setTocOpen, tocPick, tocBlocks, checked,
     setChecked, newRemarks, setNewRemarks, menu, setMenu, joinMenu, setJoinMenu, ctxMenu, setCtxMenu, cutUnitId, focusNew,
     groupData, setDrafts, draft, editing, groupPending, savedDestination, destination, rowUnits, rowLangs, firstDecision, systemHold,
     reasonNow, moveCode, setDraft, unsavedCount, leaveTo, setLeaveTo, rowLive, aiDest, aiWhy, isAiRow, recommendations, linkIds,
@@ -3141,7 +3169,7 @@ export function useAssignPage() {
     draftSlotKey, placeResolved, canPlaceClick, pickedSpotKey, setCarvePick, carve, carveText, clearCarve, togglePairViewByButton,
     pairFrom, setPairFrom, setRefEntryId, pairSource, selectToc, selectRow, openNewCtxMenu, openSolo, goToUnit, moveRow, hasUnitDraft,
     isFixedCaption, ctxGroups, rowViewUnits, rowSplitUnit, rowSplit, splitBlocked, rowRefUnit, refBlocked, isRefGate, isCaptionGateOn,
-    confirmBlockKey, rowCaptionRefs, refCandidates, shapeLines, slotPlaces, slotBlockKinds, shapeMode, headingBack, rewrap, bandBack,
+    confirmBlockKey, rowCaptionRefs, refCandidates, shapeLines, shapeFirstId, slotPlaces, slotBlockKinds, shapeMode, headingBack, rewrap, bandBack,
     stepBase, refPendingIds, isLinkedToWritten, captionPendingKeys, docDashboard, refDetail, refInfo, openCtxMenu, runUnitEdit,
     rewrapTable, describeEditConfirm, clearToc, runCaptionRefChange, switchShapeMode, switchToPair,
     applySplitSuggestion, dismissSplitSuggestion, splitPendingIds, readPendingItem, selectNextSplit, selectNextRef, selectNextCaption,
