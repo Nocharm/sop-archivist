@@ -41,7 +41,6 @@ export function AcceptSuggestionsModal({ bundleId, kind, document, busy, onAccep
   const excluded = preview.data
     ? [
         { key: "warnings", n: preview.data.excluded_warnings },
-        { key: "provisional", n: preview.data.excluded_provisional },
         { key: "changed", n: preview.data.excluded_changed },
         { key: "manual", n: preview.data.excluded_manual },
       ].filter((entry) => entry.n > 0)

@@ -1214,9 +1214,8 @@ export interface AcceptPreview {
   document_id: number | null;
   items: AcceptItem[];
   excluded_warnings: number;
-  excluded_provisional: number;
   excluded_changed: number;
-  /** 받으면 저장 검사가 늘 거절하는 것 - 사유(표 구성 변경·두 New 문서에 걸친 나눔)나 캡션을 사람이 적어야 한다 */
+  /** 받으면 저장 검사가 늘 거절하는 것 - 사유(두 New 문서에 걸친 나눔)나 캡션을 사람이 적어야 한다 */
   excluded_manual: number;
 }
 
