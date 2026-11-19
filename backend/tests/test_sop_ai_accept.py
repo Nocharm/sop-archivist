@@ -1,7 +1,6 @@
 """AI 제안 일괄 수락 — 종류별 미리 보기(받을 것·뺄 것), 사람의 저장 경로로 받기(그대로 채택·누른 사람), 삭제 사유, 신규, 건너뛰기,
 되돌리기 한 단계 (설계 2026-11-19-ai-suggest-only D3, §5 3-2~3-5)."""
 
-import json
 
 import httpx2
 import pytest
@@ -30,7 +29,6 @@ from tests.ai_fixtures import (
     read_rows,
     request_match,
     run_jobs,
-    run_plan,
     upload_second_document,
     use_reply,
 )
@@ -62,9 +60,8 @@ def suggest_first_pair(client: TestClient, fake_ai: FakeAi, **reply: object) -> 
 
 
 def make_match(client: TestClient, fake_ai: FakeAi, old: str, new: str) -> MatchBundle:
-    """옛 문서·입구 2 문서 하나씩에 묶기 계획과 다듬기를 끝까지 돌린 묶음."""
+    """옛 문서·입구 2 문서 하나씩에 묶기 계획을 돌린 묶음."""
     bundle = make_match_bundle(client, p(old), p(new))
-    fake_ai.chat = lambda data: json.dumps({"change_type": "rewritten", "reason": "합성 이유.", "rule_ids": ["R02"]}, ensure_ascii=False)
     response = request_match(client, bundle.id)
     assert response.status_code == 200, response.text
     run_jobs()
@@ -105,7 +102,8 @@ def test_preview_lists_the_live_classify_suggestion_of_the_document(client: Test
     out = preview(client, bundle.id, "classify", bundle.document_id)
 
     assert [(item["shape"], item["is_delete"]) for item in out["items"]] == [("assigned", False)]
-    assert (out["excluded_warnings"], out["excluded_provisional"], out["excluded_changed"]) == (0, 0, 0)
+    assert (out["excluded_warnings"], out["excluded_changed"]) == (0, 0)
+    assert "excluded_provisional" not in out  # 다듬기 대기를 걷었다(설계 2026-11-20-change-type-two D6)
 
 
 def test_accepting_classify_confirms_by_the_person_and_records_as_is(client: TestClient, fake_ai: FakeAi) -> None:
@@ -266,7 +264,7 @@ def test_accept_is_for_authors_and_checks_its_input(client: TestClient, fake_ai:
 # --- 묶기 ---
 
 
-def test_accepting_a_refined_pair_links_and_records_as_is(client: TestClient, fake_ai: FakeAi) -> None:
+def test_accepting_a_planned_pair_links_and_records_as_is(client: TestClient, fake_ai: FakeAi) -> None:
     bundle = make_match(client, fake_ai, MATCH_OLD, MATCH_NEW)
     bundle_id, document_id = bundle.id, bundle.old_document_id
 
@@ -283,13 +281,18 @@ def test_accepting_a_refined_pair_links_and_records_as_is(client: TestClient, fa
     assert [row.adoption for row in live] == ["as_is"]
 
 
-def test_a_provisional_pair_waits_for_refinement(client: TestClient, fake_ai: FakeAi) -> None:
-    bundle = make_match_bundle(client, p(MATCH_OLD), p(MATCH_NEW))
-    assert request_match(client, bundle.id).status_code == 200
-    run_plan()  # 계획만 돌려 다듬기 작업을 큐에 남긴다
+def test_an_old_provisional_pair_is_accepted_like_any_other(client: TestClient, fake_ai: FakeAi) -> None:
+    # 다듬기를 걷기 전에 쓴 계획 제안에는 `provisional: true`가 남아 있다 — 종류는 그때도 계획이 정한 값이라 그대로 받는다(D6)
+    bundle = make_match(client, fake_ai, MATCH_OLD, MATCH_NEW)
+    (suggestion,) = [row for row in read_rows(AiSuggestion) if row.kind == "match"]
+    update_row(AiSuggestion, suggestion.id, content={**suggestion.content, "provisional": True})
 
     out = preview(client, bundle.id, "match")
-    assert (out["items"], out["excluded_provisional"]) == ([], 1)
+    result = accept_all(client, bundle.id, "match")
+
+    assert [item["shape"] for item in out["items"]] == ["one_to_one"]
+    assert result == {"accepted": 1, "skipped": 0}
+    assert read_suggestion(suggestion.id).adoption == "as_is"
 
 
 def test_a_restructured_table_is_accepted_without_a_reason(client: TestClient, fake_ai: FakeAi) -> None:
@@ -334,7 +337,6 @@ def test_one_side_of_a_pair_is_matched_and_the_pair_released_like_use(client: Te
     ko, en = read_old_ids(client, bundle, MATCH_OLD, MATCH_OLD_EN)
     pair_of = {row.unit_id: row.pair_id for row in read_rows(UnitPairMember)}
     assert ko in pair_of and pair_of[ko] == pair_of.get(en)
-    fake_ai.chat = lambda data: json.dumps({"change_type": "rewritten", "reason": "합성 이유.", "rule_ids": ["R02"]}, ensure_ascii=False)
     assert request_match(client, bundle.id).status_code == 200
     run_jobs()
 

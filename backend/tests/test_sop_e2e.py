@@ -315,13 +315,11 @@ def _use_suggestions(run: SyntheticDriver) -> int:
     """적용된 분류·묶기 제안을 사람이 받아(Use) 그대로 확정한다 — 제안마다 suggestion_id를 실은 관계 묶음 저장 한 번, 받은 수를 돌려준다.
 
     AI는 판단·새 문장을 쓰지 않으니 초안은 제안 내용에서 만들고, 사유만 사람이 정답대로 적는다(설계 2026-11-19-ai-suggest-only D2).
-    다듬기를 기다리는 잠정 문장 묶음은 받지 않고 사람 저장 길(settle_remaining)로 보낸다 — 변경 종류가 코드가 정한 잠정값이다.
     """
     answers = {run.find_answer_unit(answer)["id"]: answer for answer in run.expected["answers"]}
     page = run.get("/ai/suggestions", result="applied", limit="1000")
     assert page["total"] == len(page["items"])
-    accepted = [suggestion for suggestion in page["items"] if not suggestion["content"].get("provisional")]
-    for suggestion in accepted:
+    for suggestion in page["items"]:
         content = suggestion["content"]
         assert suggestion["kind"] in ("classify", "match"), suggestion["kind"]
         build = _build_classify_use if suggestion["kind"] == "classify" else _build_match_use
@@ -341,7 +339,7 @@ def _use_suggestions(run: SyntheticDriver) -> int:
         }
         response = save_group(run.client, run.bundle_id, body, run.headers)
         assert response.status_code == 200, response.text
-    return len(accepted)
+    return len(page["items"])
 
 
 def test_end_to_end_with_fake_ai(

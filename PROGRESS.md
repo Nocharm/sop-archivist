@@ -4,6 +4,9 @@
 
 ## 2026-11-20
 
+- **입구 2 LLM 다듬기 걷기(`feat/change-type-3-ai-match`, 변경 종류 둘 설계 D6)** — 종류가 "=" / "수정" 둘이 되어 말투·고침을 LLM에 다시 묻던 `match` 작업이 할 일이 없다. 계획(`match_plan`)이 정한 종류가 마지막이고 `MatchHandler`·`prompt.match` 시드·제안의 `provisional`·일괄 수락의 `excluded_provisional`·`AI_PRIORITY_PRE_REFINE`·`promote_match_jobs`를 걷었다. 옛 행은 지우지 않는다 — `ai_jobs.kind` CHECK는 그대로, 옛 실패 `match` 작업은 다시 시도로 줄 세우지 않고(`AI_RETIRED_JOB_KINDS`), 옛 `provisional: true` 제안은 보통 제안처럼 받고, 옛 `prompt.match` 지침 행은 목록에서 뺀다. 계획은 LLM을 안 부르지만 AI가 꺼지면 요청처럼 멈추는 것은 그대로다.
+  - 확인: pytest 전체 · ruff, 버린 DB에 데모 시드.
+
 - **Reference 절 아래 줄은 올릴 때 REF로(v1.2.9, `feat/ref-section-confirm`, 요청서 12 · 14)** — "REF는 뒤쪽 Reference 절 이후만, 제안은 기본 확정". 쪼개기(`units._build_unit_rows`)가 이름이 맞는 본문 제목 아래(같거나 높은 단계의 다음 제목 전까지) 줄을 REF로 만들고 `unit_refs`에 `system` 확정을 남겨 "참조 아님"이 원래 언어로 돌린다. 사용자 답: 이름에 Work Instruction(s), EQUIS에 없는 줄도 참조, 번호 없는 한/영 짝 문장은 보통 문장(연달아 = 바로 앞뒤 다른 언어, 따로 = 절들의 한 · 영 줄 차례 맞춤). 추출기 판을 6으로 올려 6의 추출은 글에서 제안하지 않고 5까지는 그대로(`refs.is_proposing_version`, `read_ref_state(propose=)` — 문서 보기 · REF 카드 · 지도 · 쓴 문장 검사). 남은 `REF?`는 Shape 언어 칸의 REF로도 확정(14). 시드: 1번 묶음과 지도용 5 · 6번을 옛 추출기 5로 올려 REF? 확인 · 지도 REF? 선 스모크가 계속 돈다. 시험: 지도 · REF 제안 모듈은 `legacy_ref_proposals` 픽스처로 옛 길을, 새 길은 `test_sop_ref_section.py`. 스모크: REF 단계에 REF 필 확정을 더하고, 새 단계 "a line under References is a reference line from upload…"; 참조 줄이 REF가 되며 OLD-1의 남은 한/영 문장이 짝이 돼 "짝 없는 줄" 단계 둘이 짝 없는 줄이 가장 많은 문서를 열게 했다(기대값 그대로). 확인: pytest 3128 · ruff, vitest 1643 · lint · tsc, 스모크 `assign:` 845 · `map,outputs` 287 ALL PASS.
 
 ## 2026-11-19

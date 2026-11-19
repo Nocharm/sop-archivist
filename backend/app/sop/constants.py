@@ -45,16 +45,17 @@ NUMBER_STYLES: tuple[NumberStyle, ...] = get_args(NumberStyle)
 NUMBERED, NUMBER_OMITTED, NUMBER_NOTE, NUMBER_BULLET = NUMBER_STYLES
 
 # --- AI 층(계획 2) ---
+# "match"는 계획이 쓰는 제안의 종류다. 같은 이름의 LLM 작업은 걷었고(설계 2026-11-20-change-type-two D6) 옛 작업 행 때문에 작업 쪽 CHECK에도 남는다
 AI_JOB_KINDS = ("classify", "translate", "match_plan", "match", "pair", "split", "doc_meta", "tobe_list")
+AI_RETIRED_JOB_KINDS = ("match",)  # 핸들러가 없는 옛 작업 종류 — 다시 시도로 줄 세우지 않는다(돌면 internal 실패다)
 AI_JOB_STATUSES = ("queued", "running", "done", "failed", "stale", "cancelled")
 AI_SUGGESTION_RESULTS = ("applied", "stale", "invalid")  # 적용됨 | 낡아서 안 씀 | 응답이 규칙 위반
 # 작업 순위 — 작은 수가 먼저 나간다. 같은 순위 안에서는 id 순
-AI_PRIORITY_PLAN = 0  # 짝 맞추기 계획(입구 2) — 뒤 작업을 쌓는 앞잡이라 맨 앞
+AI_PRIORITY_PLAN = 0  # 짝 맞추기 계획(입구 2) — 묶기 먼저라 맨 앞(분류는 계획이 남긴 미배정을 받는다)
 AI_PRIORITY_USER = 1  # 사람이 누른 요청
 AI_PRIORITY_PRE_CLASSIFY = 2  # 미리 돌리기: 분류
-AI_PRIORITY_PRE_REFINE = 3  # 미리 돌리기: 고쳐 쓰기
 AI_ADOPTIONS = ("as_is", "edited", "rejected")  # 사람의 결과: 그대로 채택 | 고쳐서 채택 | 버림
 GUIDELINE_KEYS = (
-    "rules", "prompt.classify", "prompt.translate", "prompt.match", "prompt.split", "prompt.doc_meta", "prompt.tobe_list",
+    "rules", "prompt.classify", "prompt.translate", "prompt.split", "prompt.doc_meta", "prompt.tobe_list",
 )
 SYSTEM_HOLD_AI_INVALID = "system:ai_invalid_response"  # AI 응답이 규칙을 어겨 보류된 행 — 화면은 "AI 응답 무효"로 보인다

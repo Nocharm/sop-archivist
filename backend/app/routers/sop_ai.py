@@ -21,7 +21,7 @@ from app.sop.ai.jobs import (
     promote_queued_jobs,
     retry_failed_jobs,
 )
-from app.sop.ai.match_jobs import MATCH_PLAN_KIND, promote_match_jobs, select_match_items
+from app.sop.ai.match_jobs import MATCH_PLAN_KIND, select_match_items
 from app.sop.ai.pairing import PAIR_KIND, select_pair_items
 from app.sop.ai.prepare import queue_prepare
 from app.sop.ai.recent import list_recent_jobs
@@ -133,9 +133,6 @@ async def request_match(
 ) -> AiRequestOut:
     await lock_bundle(session, ctx.bundle)
     ensure_editable(ctx.bundle)
-    promoted = await promote_match_jobs(session, ctx.bundle.id)
-    if promoted:  # 미리 돌리던 변경 종류 작업이 줄에 있다 — 새 계획 없이 순위만 올린다
-        return await _queue_request(session, ctx, MATCH_PLAN_KIND, [], [], promoted=promoted)
     items, skipped = await select_match_items(session, ctx.bundle.id)
     return await _queue_request(session, ctx, MATCH_PLAN_KIND, items, skipped, priority=AI_PRIORITY_PLAN)
 
