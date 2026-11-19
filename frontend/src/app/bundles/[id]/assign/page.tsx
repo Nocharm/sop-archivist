@@ -2899,7 +2899,13 @@ export default function AssignPage() {
     else setPairFrom({ ...pairFrom, picked: [...picked, other.id] });
   }
 
-  function handleOldClick(unitId: number, keys: { shiftKey: boolean }) {
+  /** isMargin - 문단 상자의 글 밖(여백·앞머리)을 눌렀다(용지만 안다, 짝 칸은 넘기지 않는다) */
+  function handleOldClick(unitId: number, keys: { shiftKey: boolean }, isMargin = false) {
+    // 나눌 선이 있는 문단 상자의 글 밖을 누르면 선을 거둔다 - 선을 풀 길이 Esc · 취소 단추뿐이라 어려웠다(사용자 보고 2026-11-19)
+    if (isMargin && cutLine.at !== null && cutUnitId !== null && !keys.shiftKey && findRowKey(unitId) === findRowKey(cutUnitId)) {
+      cutLine.clear();
+      return;
+    }
     if (mode === "unsourced") {
       void linkAsSource(unitId);
       return;

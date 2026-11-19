@@ -1590,9 +1590,12 @@
 
   /* 나눌 선 - 손잡이를 끌어 같은 Unit 안에서 옮긴다. 팝업은 잠깐 뒤에 부드럽게 뜨고 끄는 동안에는 숨는다 */
   .cut-anchor { position: relative; display: inline-block; width: 0; }
-  .cut-handle { position: absolute; left: -7px; top: -0.15em; width: 14px; height: 1.5em; cursor: ew-resize; touch-action: none; z-index: 3; border-radius: 3px; }
-  .cut-handle::before { content: ""; position: absolute; left: 3px; top: -5px; width: 8px; height: 8px; border-radius: 50%; background: var(--ink); }
+  /* 손잡이 잡는 자리는 선 양옆 14px · 위아래로 넉넉히 - 14px 폭에서는 잡기가 어려웠다(사용자 보고 2026-11-19). 올리거나 끄는 동안 잡는 자리를 옅은 강조색 띠로 보인다 */
+  .cut-handle { position: absolute; left: -14px; top: -0.5em; width: 28px; height: 2.2em; cursor: ew-resize; touch-action: none; z-index: 3; border-radius: 6px; }
+  .cut-handle::before { content: ""; position: absolute; left: 10px; top: calc(0.35em - 5px); width: 8px; height: 8px; border-radius: 50%; background: var(--ink); }
+  .cut-handle::after { content: ""; position: absolute; inset: 0; border-radius: inherit; background: color-mix(in oklab, var(--accent) 18%, transparent); opacity: 0; transition: opacity var(--dur-fast, 120ms) ease; pointer-events: none; }
   .cut-handle:hover::before, .cut-handle:focus-visible::before { background: var(--accent); scale: 1.25; }
+  .cut-handle:hover::after, .pg[data-dragging] .cut-handle::after { opacity: 1; }
   .cut-handle:focus-visible { outline: 2px solid var(--accent); outline-offset: 0; }
   .pg[data-dragging] { cursor: ew-resize; user-select: none; }
   .pg[data-dragging] .su, .pg[data-dragging] .strip-merge { cursor: ew-resize; }
@@ -1924,7 +1927,7 @@
   .new-cut::before { content: ""; position: absolute; left: -5px; top: -5px; width: 8px; height: 8px; border-radius: 50%; background: var(--ink); }
   /* 끌 수 있는 선 - 손잡이가 제 점을 그린다(올리면 강조색). 선의 가운데에 맞춘다 */
   .new-cut:has(> .cut-handle)::before { display: none; }
-  .new-cut > .cut-handle { left: -8px; }
+  .new-cut > .cut-handle { left: -15px; }
   /* 끄는 동안에는 줄을 덮은 누름 자리(::after)를 비켜 둔다 - 덮여 있으면 끄는 자리의 글자를 읽지 못해 선이 끝으로만 간다 */
   .pg[data-dragging] .new-hit::after { pointer-events: none; }
   .new-cut-pop { display: flex; padding-top: 6px; }

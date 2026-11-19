@@ -60,7 +60,8 @@ interface OldPaneProps {
   /** 표·그림 어디를 눌러도 묶음 전체를 고른다 - 한/영 짝을 고르거나 쓴 New 문서를 혼자 다듬는 중에는 꺼서 칸 문장을 그대로 고른다 */
   pickWholeBundle: boolean;
   /** Shift는 일괄 고르기 */
-  onUnitClick: (unitId: number, keys: { shiftKey: boolean }) => void;
+  /** isMargin - 문단 상자의 글 밖(여백·앞머리)을 눌렀다 */
+  onUnitClick: (unitId: number, keys: { shiftKey: boolean }, isMargin: boolean) => void;
   /** 우클릭·메뉴 글쇠 - 누른 자리와 글자 자리 */
   onUnitContextMenu?: (unitId: number, at: { x: number; y: number }, caret: { blockId: number; offset: number } | null) => void;
   /** 번호 칸 손잡이 - 주면 번호 칸을 눌러 문단 번호를 고친다(작성자만, 쪼개기 편집이라 Ctrl+Z로 되돌린다) */
@@ -110,7 +111,7 @@ export function OldPane({ paneRef, ...props }: OldPaneProps) {
         highlightIds={props.highlightIds}
         pickedIds={props.pickedIds}
         warnBlockIds={props.warnBlockIds}
-        onUnitClick={(unitId, _at, event) => props.onUnitClick(unitId, { shiftKey: event.shiftKey })}
+        onUnitClick={(unitId, _at, event) => props.onUnitClick(unitId, { shiftKey: event.shiftKey }, !(event.target as HTMLElement).closest(".su[data-unit]"))}
         onUnitContextMenu={props.onUnitContextMenu}
         onUnitDoubleClick={props.onUnitDoubleClick}
         onRangeSelect={props.onRangeSelect}
