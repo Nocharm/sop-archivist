@@ -1291,7 +1291,8 @@ export function Paper({
   /** 한 칸(외톨이 줄 하나 또는 짝 카드 한 장) - 카드는 .strip-card로 감싸 강조 테두리가 줄 수와 상관없이 카드 전체에 둘린다(감싼 요소는 display: contents라 배치는 그대로) */
   function renderCard(rows: readonly PaperRow[], isPeek = false): ReactNode {
     if (hasToc && isTocRow(rows[0], model.units)) return renderTocBlock(rows);
-    const deletedLine = strips?.deleted ? readDeletedLine(strips.deleted.folds, rows.map((row) => readRowUnitId(row) ?? -1), selectedId) : null;
+    // 거르기로 접힌 줄을 엿보기로 연 것은 살펴보려는 것이라 삭제 줄도 펼친다
+    const deletedLine = strips?.deleted && !isPeek ? readDeletedLine(strips.deleted.folds, rows.map((row) => readRowUnitId(row) ?? -1), selectedId) : null;
     if (deletedLine !== null) return renderDeletedLine(rows, deletedLine);
     const content = rows.map((row, index) => (
       <Fragment key={row.key}>
