@@ -16,6 +16,7 @@ from app.settings import settings
 from app.sop.refs import is_document_number
 from scripts.seed_sop_demo import (
     NESTED_TITLE,
+    PAIR_TABLES_TITLE,
     TOC_AFTER,
     TOC_EN,
     TOC_KO,
@@ -40,6 +41,7 @@ EXPECTED_BUNDLES = [
     ("SYNTHETIC 6 문서 관리", "in_progress"),
     (TOC_TITLE, "in_progress"),
     (NESTED_TITLE, "in_progress"),
+    (PAIR_TABLES_TITLE, "in_progress"),
 ]
 DOCUMENTS_PER_BUNDLE = 9  # 옛 문서 7개 + 입구 2 새 문서 2개
 
@@ -196,6 +198,20 @@ def test_nested_bundle_has_inner_tables_in_one_work_table(seed_runs: SeedRuns) -
     assert tables == [(0, 0, 0, 0), (1, 1, 1, 0), (2, 1, 1, 0), (3, 1, 1, 0)]
     decided = f"SELECT count(*) FROM unit_decisions WHERE bundle_id = {bundle_id} AND status != 'unassigned'"
     assert _query(database_path, decided) == [(0,)]
+
+
+def test_pair_tables_bundle_has_a_separate_document_with_wrapped_tables(seed_runs: SeedRuns) -> None:
+    """한/영 따로 표 묶음 — 한/영 따로 문서 하나에 아직 벗기지 않은 표 넷(Assign 대응 표 함께 벗기기 스모크가 쓴다)."""
+    database_path, _, _, bundles = seed_runs
+    (bundle_id,) = [bundle_id for bundle_id, title, _ in bundles if title == PAIR_TABLES_TITLE]
+
+    rows = _query(database_path, f"""
+        SELECT d.language_layout, count(t.id), sum(t.is_layout) FROM documents d
+        JOIN extractions e ON e.document_id = d.id JOIN source_tables t ON t.extraction_id = e.id
+        WHERE d.bundle_id = {bundle_id} GROUP BY d.id
+    """)
+
+    assert rows == [("ko_en_separate", 4, 0)]
 
 
 def test_half_stage_leaves_a_captionless_table_unassigned(seed_runs: SeedRuns) -> None:
