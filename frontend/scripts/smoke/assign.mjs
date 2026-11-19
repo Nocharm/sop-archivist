@@ -6256,8 +6256,8 @@ await runStep(PREPARE_STEP, {}, async ({ page, takeShot }) => {
   const headers = { "X-Dev-User": "qa.member" };
   const status = await (await page.request.get(`${BASE}/api/bundles/${bundleId}/ai/status`, { headers })).json();
   check("backend has AI on (PREPARE=1 needs the fake AI and AI_AUTO_PREPARE=true)", status.ai_enabled === true);
-  const before = await (await page.request.get(`${BASE}/api/bundles/${bundleId}`, { headers })).json();
-  check("no AI suggestion before the first entry", before.progress.ai_suggested === 0, String(before.progress.ai_suggested));
+  const before = await (await page.request.get(`${BASE}/api/bundles/${bundleId}/ai/suggestions?kind=classify`, { headers })).json();
+  check("no AI suggestion before the first entry", before.total === 0, String(before.total));
 
   await page.goto(`${BASE}/bundles/${bundleId}/assign`);
   const toast = page.locator('[data-testid="toast-ok"]', { hasText: "in the background" });

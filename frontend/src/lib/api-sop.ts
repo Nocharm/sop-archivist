@@ -13,7 +13,6 @@ export type MemberRole = "author" | "reviewer";
 export interface RowProgress {
   total: number;
   unassigned: number;
-  ai_suggested: number;
   confirmed: number;
   on_hold: number;
   /** 한 언어만 있는 줄 - 보조 표시, 검토 요청 조건이 아니다 */

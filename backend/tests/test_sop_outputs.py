@@ -1243,7 +1243,7 @@ SUMMARY_KEYS = (
 )
 # 줄 기준 — 짝이 없어 단위마다 한 줄이고 표는 칸 넷을 묶어 한 줄이다: OLD-1 10줄(그림 보류·영어 미배정) + OLD-2 5줄.
 # 한 언어 글은 두 언어 문서(ko_en_separate)의 짝 없는 문장·제목 13개와 보류(처분은 배정)한 그림의 한글 캡션 하나다(번역 새 문장이 없다)
-PROGRESS = {"total": 15, "unassigned": 1, "ai_suggested": 0, "confirmed": 13, "on_hold": 1, "single_language": 14}
+PROGRESS = {"total": 15, "unassigned": 1, "confirmed": 13, "on_hold": 1, "single_language": 14}
 EMPTY_PROGRESS = dict.fromkeys(PROGRESS, 0)
 
 
@@ -1357,7 +1357,7 @@ def test_progress_in_list_and_overview(client: TestClient) -> None:
     assert (admin_rows[fx.bundle_id]["progress"], admin_rows[empty]["progress"]) == (PROGRESS, EMPTY_PROGRESS)
     assert get_bundle(client, fx.bundle_id)["progress"] == PROGRESS
     assert get_bundle(client, empty)["progress"] == EMPTY_PROGRESS
-    assert PROGRESS["total"] == sum(PROGRESS[status] for status in ("unassigned", "ai_suggested", "confirmed", "on_hold"))
+    assert PROGRESS["total"] == sum(PROGRESS[status] for status in ("unassigned", "confirmed", "on_hold"))
 
 
 def test_output_c_item_counts_the_old_units_it_came_from(client: TestClient) -> None:

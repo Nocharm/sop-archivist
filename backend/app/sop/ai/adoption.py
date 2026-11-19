@@ -13,8 +13,9 @@ from sqlalchemy import case, exists, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.clock import now
+from app.sop.ai.apply import OFFERED_KINDS
 from app.sop.ai.schemas import AdoptionStats, SuggestionOut, SuggestionsPageOut
-from app.sop.detach import ORIGIN_NEW_DOC, ORIGIN_TRANSLATION
+from app.sop.detach import ORIGIN_NEW_DOC, ORIGIN_TRANSLATION, UNASSIGNED
 from app.sop.errors import raise_rule
 from app.sop.groups import TABLE_UNIT_KINDS, iter_chunks, select_in_chunks
 from app.sop.models import AiSuggestion, TargetSentence, Unit, UnitDecision, UnitPair
@@ -330,15 +331,16 @@ async def load_adoption_stats(session: AsyncSession, bundle_id: int) -> dict[str
     """종류별 채택 집계 — 제안이 적용된 적 없는 종류는 빠진다.
 
     applied는 지금 살아 있는 제안이고, 채택은 밀린 제안(보류한 짝)에 기록돼도 사람의 결정이라 함께 센다. pending은 사람이 아직
-    정할 수 있는 제안뿐이다 — 단위가 편집으로 은퇴해 아무 판단·새 문장·짝도 가리키지 않는 제안은 영영 줄지 않는 대기가 된다.
+    정할 수 있는 제안뿐이다 — 판단·새 문장·짝이 가리키는 제안과, 분류·묶기는 받기 전이라 아무것도 가리키지 않아 단위·새 문장이
+    모두 아직 미배정인 제안이다. 단위가 편집으로 은퇴하거나 사람이 제안을 받지 않고 정한 제안은 영영 줄지 않는 대기가 되니 세지 않는다.
     나누기 제안은 처음부터 이어진 행이 없어(나누면 단위가 은퇴하는 게 정상이다) 채택이 비어 있는 동안 늘 사람이 정할 몫이다.
     """
-    can_decide = or_(
-        AiSuggestion.kind == _SPLIT_KIND,
+    is_linked = or_(
         exists().where(UnitDecision.suggestion_id == AiSuggestion.id),
         exists().where(TargetSentence.suggestion_id == AiSuggestion.id),
         exists().where(UnitPair.suggestion_id == AiSuggestion.id),
     )
+    can_decide = or_(AiSuggestion.kind == _SPLIT_KIND, is_linked)
     rows = await session.execute(
         select(
             AiSuggestion.kind, AiSuggestion.result, AiSuggestion.adoption, func.count(),
@@ -355,7 +357,48 @@ async def load_adoption_stats(session: AsyncSession, bundle_id: int) -> dict[str
             counts[kind][adoption] += total
         elif result == "applied":
             counts[kind]["pending"] += decidable
+    for kind, offered in (await _count_offered(session, bundle_id, ~is_linked)).items():
+        counts[kind]["pending"] += offered
     return {kind: _build_stats(count) for kind, count in counts.items()}
+
+
+async def _count_offered(session: AsyncSession, bundle_id: int, unlinked: Any) -> Counter[str]:
+    """아무것도 가리키지 않는 살아 있는 분류·묶기 제안 중 단위·새 문장이 모두 아직 미배정인 것 — content가 JSON이라 읽은 뒤 센다."""
+    offered = list(await session.execute(
+        select(AiSuggestion.kind, AiSuggestion.content).where(
+            AiSuggestion.bundle_id == bundle_id, AiSuggestion.kind.in_(OFFERED_KINDS), AiSuggestion.result == "applied",
+            AiSuggestion.adoption.is_(None), unlinked,
+        )
+    ))
+    if not offered:
+        return Counter()
+    unit_ids = {unit_id for _, content in offered for unit_id in content.get("unit_ids", ())}
+    target_ids = {target_id for _, content in offered for target_id in content.get("target_ids", ())}
+    open_units = {
+        unit_id for (unit_id,) in await select_in_chunks(
+            session,
+            lambda chunk: select(UnitDecision.unit_id)
+            .join(Unit, Unit.id == UnitDecision.unit_id)
+            .where(
+                UnitDecision.unit_id.in_(chunk), Unit.status == UNIT_ACTIVE,
+                UnitDecision.status == UNASSIGNED, UnitDecision.disposition == UNASSIGNED,
+            ),
+            unit_ids,
+        )
+    }
+    open_targets = {
+        target_id for (target_id,) in await select_in_chunks(
+            session,
+            lambda chunk: select(TargetSentence.id).where(
+                TargetSentence.id.in_(chunk), TargetSentence.origin == ORIGIN_NEW_DOC, TargetSentence.status == UNASSIGNED
+            ),
+            target_ids,
+        )
+    }
+    return Counter(
+        kind for kind, content in offered
+        if open_units.issuperset(content.get("unit_ids", ())) and open_targets.issuperset(content.get("target_ids", ()))
+    )
 
 
 def _build_stats(count: Counter[str]) -> AdoptionStats:

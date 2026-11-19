@@ -235,8 +235,10 @@ def test_uploaded_before_the_new_list_then_prepare_classifies_lone_units(client:
     assert post_prepare(client, bundle.id).json()["queued"] >= 1
     run_jobs()
 
-    assert read_decision(lone).status == "ai_suggested"
-    assert any(row.kind == "classify" and lone in row.content["unit_ids"] for row in read_rows(AiSuggestion))
+    assert read_decision(lone).status == "unassigned"  # AI는 제안 기록에만 쓰고 판단은 사람이 받을 때 쓰인다
+    assert any(
+        row.kind == "classify" and row.result == "applied" and lone in row.content["unit_ids"] for row in read_rows(AiSuggestion)
+    )
 
 
 def test_user_classify_job_does_not_count_as_prepared(client: TestClient, auto_prepare: FakeAi) -> None:

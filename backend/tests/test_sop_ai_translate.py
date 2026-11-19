@@ -41,6 +41,7 @@ from tests.ai_fixtures import (
     use_reply,
 )
 from tests.ai_helpers import enable_embed
+from tests.test_sop_ai_adoption import use_suggestion, use_table
 from tests.docx_factory import build_docx, p, tbl
 from tests.fake_ai import FakeAi, hash_vector
 from tests.sop_helpers import (
@@ -49,6 +50,7 @@ from tests.sop_helpers import (
     assign_as_is,
     build_missing_caption,
     find_unit,
+    get_bundle,
     get_group_by_unit,
     get_view,
     put_tobe,
@@ -214,7 +216,8 @@ def save_table_as_read(
 # --- 요청 ---
 
 
-def test_translation_uses_confirmed_text_else_ai_text(client: TestClient, fake_ai: FakeAi) -> None:
+def test_translation_uses_the_text_a_person_saved(client: TestClient, fake_ai: FakeAi) -> None:
+    # 고쳐 확정한 글도, 분류 제안을 받아(Use) 보류해 둔 고쳐 쓴 글도 사람이 저장한 글이다 — AI는 출처 새 문장을 쓰지 않는다
     bundle = make_ai_bundle(client)
     view = upload_second_document(client, bundle.id, p(LONE_KO) + p(LONE_KO_2))
     confirmed, suggested = find_unit(view, LONE_KO)["id"], find_unit(view, LONE_KO_2)["id"]
@@ -230,6 +233,7 @@ def test_translation_uses_confirmed_text_else_ai_text(client: TestClient, fake_a
     use_reply(fake_ai)
     queue_units(client, bundle.id, [suggested])
     run_jobs()
+    assert use_suggestion(client, bundle.id, suggested, action="hold").status_code == 200
 
     use_translation(fake_ai)
     assert request_translate(client, bundle.id, unit_ids=[confirmed, suggested]).json()["queued"] == 2
@@ -1123,6 +1127,7 @@ def test_table_adoption_ignores_a_cell_translation_in_the_same_save(client: Test
     use_reply(fake_ai)
     queue_units(client, bundle.id, [table["id"]])
     run_jobs()
+    assert use_table(client, bundle.id, table, action="hold").status_code == 200
     translate(client, fake_ai, bundle.id, cell["id"], CELL_TRANSLATED)
 
     saved = save_table_as_read(client, bundle.id, table["id"])
@@ -1177,28 +1182,29 @@ def test_clearing_the_source_reports_a_removed_ai_translation(client: TestClient
     assert load_translations(unit["id"]) == []
 
 
-def test_new_classify_over_the_source_sweeps_its_translations(client: TestClient, fake_ai: FakeAi) -> None:
+def test_resetting_the_sources_sweeps_ai_translations_and_holds_confirmed(client: TestClient, fake_ai: FakeAi) -> None:
+    # 분류는 이제 출처 새 문장을 갈아 끼우지 않는다 — 출처를 한꺼번에 걷는 길은 사람의 배정 초기화다
     bundle = make_ai_bundle(client)
     view = upload_second_document(client, bundle.id, p(LONE_KO) + p(LONE_KO_2))
-    swept, confirmed = find_unit(view, LONE_KO)["id"], find_unit(view, LONE_KO_2)["id"]
-    use_reply(fake_ai)
-    queue_units(client, bundle.id, [swept, confirmed])
-    run_jobs()
-    old_source = get_target(client, bundle.id, confirmed)
-    translate(client, fake_ai, bundle.id, swept)
-    target = translate(client, fake_ai, bundle.id, confirmed, "A confirmed synthetic translation.")
+    swept, confirmed = find_unit(view, LONE_KO), find_unit(view, LONE_KO_2)
+    for unit in (swept, confirmed):
+        assign_as_is(client, bundle.id, unit, bundle.sop_id, slot_key=SLOT)
+    translate(client, fake_ai, bundle.id, swept["id"])
+    target = translate(client, fake_ai, bundle.id, confirmed["id"], "A confirmed synthetic translation.")
     assert save_translation(client, bundle.id, target).status_code == 200
 
-    use_reply(fake_ai)
-    queue_units(client, bundle.id, [swept, confirmed])
-    run_jobs()
+    response = client.post(
+        f"/api/bundles/{bundle.id}/decisions/reset",
+        json={"revision": get_bundle(client, bundle.id)["revision"], "document_id": view["document"]["id"]},
+        headers=AUTHOR,
+    )
 
-    assert load_translations(swept) == []
-    held = load_translation(confirmed)
+    assert response.status_code == 200, response.text
+    assert load_translations(swept["id"]) == []
+    held = load_translation(confirmed["id"])
     assert (held.status, held.hold_reason, held.confirmed_text) == (
         "on_hold", SYSTEM_HOLD_RELATED_CHANGED, "A confirmed synthetic translation.",
     )
-    assert get_target(client, bundle.id, confirmed)["id"] != old_source["id"]
     # 밀린 AI 번역의 제안은 낡은 것이고, 사람이 확정한 번역의 제안은 채택이 남는다
     assert sorted((row.result, row.adoption) for row in read_suggestions()) == [("applied", "as_is"), ("stale", None)]
 
@@ -1649,16 +1655,17 @@ def test_saving_the_source_unchanged_keeps_a_confirmed_translation(client: TestC
     assert (kept.status, kept.revision) == ("confirmed", target.revision)
 
 
-def test_confirming_an_ai_source_unchanged_keeps_its_translation(client: TestClient, fake_ai: FakeAi) -> None:
+def test_confirming_a_held_suggested_source_unchanged_keeps_its_translation(client: TestClient, fake_ai: FakeAi) -> None:
     bundle = make_ai_bundle(client)
     unit = upload_second_document(client, bundle.id, p(LONE_KO))["units"][0]
     use_reply(fake_ai)
     queue_units(client, bundle.id, [unit["id"]])
     run_jobs()
+    assert use_suggestion(client, bundle.id, unit["id"], action="hold").status_code == 200
     target = translate(client, fake_ai, bundle.id, unit["id"])
 
-    # text를 비우면 AI 글 그대로 확정이다 — 번역이 옮긴 글이 그대로라 바뀐 것이 아니다
-    response = save_source(client, bundle.id, unit["id"])
+    # text를 비우면 받아 둔 글 그대로 확정이다 — 번역이 옮긴 글이 그대로라 바뀐 것이 아니다
+    response = save_source(client, bundle.id, unit["id"], change_type="tone")
 
     assert response.status_code == 200, response.text
     kept = load_translation(unit["id"])
@@ -2266,19 +2273,19 @@ def test_restructure_removing_a_cell_source_deletes_its_ai_translation(client: T
     assert_swept(client, bundle.id, cell["id"])
 
 
-def test_reclassifying_an_ai_table_marks_its_ai_cell_translation_stale(client: TestClient, fake_ai: FakeAi) -> None:
-    # 칸 번역은 부모 표와 함께 CASCADE로 사라진다 — 지우기 전에 쓸어야 제안이 살아 있는 채 남지 않는다
+def test_clearing_a_held_suggested_table_marks_its_ai_cell_translation_stale(client: TestClient, fake_ai: FakeAi) -> None:
+    # 칸 번역은 부모 표와 함께 CASCADE로 사라진다 — 지우기 전에 쓸어야 제안이 살아 있는 채 남지 않는다.
+    # 분류는 이제 표를 갈아 끼우지 않아, 받아 보류한 표를 사람이 지우는 길로 본다
     bundle = make_ai_bundle(client)
     view = upload_second_document(client, bundle.id, tbl(CELLS))
     table, cell = find_kind(view, "table"), find_unit(view, CELL_TEXT)
     use_reply(fake_ai)
     queue_units(client, bundle.id, [table["id"]])
     run_jobs()
+    assert use_table(client, bundle.id, table, action="hold").status_code == 200
     translate(client, fake_ai, bundle.id, cell["id"], CELL_TRANSLATED)
 
-    use_reply(fake_ai)
-    queue_units(client, bundle.id, [table["id"]])
-    run_jobs()
+    assert clear_unit(client, bundle.id, table["id"]).status_code == 200
 
     assert_swept(client, bundle.id, cell["id"])
     listed = client.get(

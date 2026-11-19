@@ -14,13 +14,12 @@ from sqlalchemy.orm.util import AliasedClass
 
 from app.clock import now
 from app.sop.ai.adoption import record_group_adoption, record_unit_adoption, reject_suggestions
-from app.sop.ai.apply import clear_previous_suggestion
+from app.sop.ai.apply import OFFERED_KINDS, close_unused_suggestions
 from app.sop.captions import CAPTION_KIND
 from app.sop.checks import check_sentence
 from app.sop.constants import SLOT_HEADING
 from app.sop.decision_steps import UndoMetaIn
 from app.sop.detach import (
-    AI_SUGGESTED,
     CONFIRMED,
     ON_HOLD,
     ORIGIN_NEW_DOC,
@@ -47,6 +46,7 @@ from app.sop.groups import (
 from app.sop.membership import ensure_editable, lock_bundle
 from app.sop.models import (
     AiJob,
+    AiSuggestion,
     Bundle,
     Document,
     Extraction,
@@ -163,6 +163,9 @@ class GroupSaveIn(BaseModel):
     removed_target_ids: list[DbId] = Field(default_factory=list, max_length=2000)
     # 짝의 한쪽만 이을 때 남는 쪽을 따로 줄로 — 그 단위가 든 짝을 이 저장 안에서 푼다(pair_settle). 판단은 바꾸지 않는다
     release_unit_ids: list[DbId] = Field(default_factory=list, max_length=500)
+    # 사람이 받은 AI 제안(Assign의 Use) — 그 제안이 덮는 판단·입구 2 새 문장에 이어 두면 채택 기록이 그대로·고침·버림을 정한다
+    # (설계 2026-11-19-ai-suggest-only D2). AI는 판단을 쓰지 않으니 제안과 판단을 잇는 것은 이 저장뿐이다
+    suggestion_id: DbId | None = None
     undo: UndoMetaIn | None = None
 
 
@@ -1473,9 +1476,16 @@ async def _write_group(
     ] + [(row, kept) for row, kept in releases if kept]
     for row, unit_ids in touched_headings:
         apply_slot_heading_status(row, [decided[unit_id] for unit_id in unit_ids], preferred=state.member_unit_ids)
+    if payload.suggestion_id is not None:
+        _link_suggestion(await _load_used_suggestion(session, bundle_id, payload.suggestion_id), payload, plans, state)
     await record_group_adoption(
         session, plans=plans, payload=payload, decisions=state.decisions, actor=actor, stamp=stamp
     )
+    if payload.action == "confirm":
+        await close_unused_suggestions(
+            session, bundle_id, unit_ids=[item.unit_id for item in payload.units],
+            target_ids=[plan.row.id for plan in plans if plan.row is not None and plan.origin == ORIGIN_NEW_DOC],
+        )
     swept = await sweep_translations(session, bundle_id, changed, exempt=edited)
     await _follow_positioned_sources(session, bundle_id, positioned)
     unit_ids = [item.unit_id for item in payload.units]
@@ -1486,6 +1496,32 @@ async def _write_group(
     )
     await session.flush()
     return [*(target.id for target in written), *(echoed - swept)]
+
+
+async def _load_used_suggestion(session: AsyncSession, bundle_id: int, suggestion_id: int) -> AiSuggestion:
+    """저장이 받은 제안 — 이 묶음의 적용된 분류·묶기 제안이어야 한다. 밀린(stale) 제안도 사람이 보고 받은 것이라 받고, 무효 제안은 받을 내용이 없다."""
+    suggestion = await session.get(AiSuggestion, suggestion_id)
+    if (
+        suggestion is None or suggestion.bundle_id != bundle_id or suggestion.kind not in OFFERED_KINDS
+        or suggestion.result not in ("applied", "stale")
+    ):
+        raise_rule(404, "suggestion_not_found", suggestion_id=suggestion_id)
+    return suggestion
+
+
+def _link_suggestion(suggestion: AiSuggestion, payload: GroupSaveIn, plans: list[_Plan], state: _State) -> None:
+    """받은 제안이 덮는 판단과 입구 2 새 문장에 제안 id를 잇는다 — 채택 기록(record_group_adoption)과 뒤의 지우기가 이것을 읽는다.
+
+    보류 저장도 잇는다 — 나중의 확정이 채택을 정하고, 보류한 채 지우면 버림이다. 제안 밖의 단위·새 문장은 잇지 않는다.
+    """
+    unit_ids = set(suggestion.content.get("unit_ids", ()))
+    target_ids = set(suggestion.content.get("target_ids", ()))
+    for item in payload.units:
+        if item.unit_id in unit_ids:
+            state.decisions[item.unit_id].suggestion_id = suggestion.id
+    for plan in plans:
+        if plan.row is not None and plan.origin == ORIGIN_NEW_DOC and plan.row.id in target_ids:
+            plan.row.suggestion_id = suggestion.id
 
 
 # --- 진입점 ---
@@ -1574,29 +1610,14 @@ async def save_group(session: AsyncSession, bundle: Bundle, checked: CheckedGrou
     return out
 
 
-async def _find_units_with_targets(
-    session: AsyncSession, unit_ids: Collection[int], cleared_suggestion_ids: Collection[int]
-) -> list[int]:
-    """새 문장의 출처인 단위 — 표·행 단위는 칸 문장이 출처여도 센다.
-
-    cleared_suggestion_ids는 일괄 처분이 곧 걷을 제안이다 — 그 제안의 AI 새 문장만 빼고, 사람의 새 문장과 걷지 않을 AI 새 문장은
-    센다(걷지 않은 채 처분하면 처분한 단위에 매달린 AI 새 문장이 남는다).
-    """
+async def _find_units_with_targets(session: AsyncSession, unit_ids: Collection[int]) -> list[int]:
+    """새 문장의 출처인 단위 — 표·행 단위는 칸 문장이 출처여도 센다."""
     wanted = set(unit_ids)
-    cleared = set(cleared_suggestion_ids)
     rows = await select_in_chunks(
         session,
         lambda chunk: select(TargetSource.unit_id, Unit.group_unit_id)
         .join(Unit, Unit.id == TargetSource.unit_id)
-        .join(TargetSentence, TargetSentence.id == TargetSource.target_id)
-        .where(
-            or_(TargetSource.unit_id.in_(chunk), Unit.group_unit_id.in_(chunk)),
-            or_(
-                TargetSentence.status != AI_SUGGESTED,
-                TargetSentence.suggestion_id.is_(None),
-                TargetSentence.suggestion_id.not_in(cleared),
-            ),
-        ),
+        .where(or_(TargetSource.unit_id.in_(chunk), Unit.group_unit_id.in_(chunk))),
         unit_ids,
     )
     return sorted({unit_id if unit_id in wanted else group_unit_id for unit_id, group_unit_id in rows})
@@ -1607,9 +1628,7 @@ async def dispose_units(
 ) -> list[UnitDecisionRowOut]:
     """여러 단위를 같은 삭제·이동 사유로 확정한다 — 단위마다 따로 저장한 것과 같고, 사람의 새 문장이 달린 단위가 섞이면 409.
 
-    AI 제안 단위는 받는다(스펙 §7.7, 사용자 결정 2026-11-15) — 채택(같은 처분이면 그대로, 아니면 버림)을 먼저 남긴 뒤 제안을 걷고
-    사람의 처분으로 덮는다. 채택이 남은 제안은 걷혀도 applied다. 제안이 짝·묶음을 덮으면 고르지 않은 단위는 걷기 규칙대로 미배정이 된다.
-    사람이 보류해 둔 제안 단위도 지나며 채택을 남긴다.
+    사람이 제안을 받아(Use) 보류해 둔 단위는 지나며 채택을 남긴다(같은 처분이면 그대로, 아니면 버림).
     """
     await lock_bundle(session, bundle)
     ensure_editable(bundle)
@@ -1626,18 +1645,15 @@ async def dispose_units(
     if conflicts:
         raise_rule(409, "revision_conflict", conflicts=conflicts)
     decisions = {unit_id: loaded[unit_id][1] for unit_id in unit_ids}
-    suggested = [decision for decision in decisions.values() if decision.status == AI_SUGGESTED]
-    cleared = {decision.suggestion_id for decision in suggested if decision.suggestion_id is not None}
-    with_targets = await _find_units_with_targets(session, unit_ids, cleared)
+    with_targets = await _find_units_with_targets(session, unit_ids)
     if with_targets:
         raise_rule(409, "unit_has_targets", unit_ids=with_targets)
     stamp = now()
-    # 걷기가 판단의 제안 칸을 비우므로 채택을 먼저 남긴다
     await record_unit_adoption(
         session, plans=(), dispositions=dict.fromkeys(unit_ids, payload.action), decisions=decisions,
         actor=actor, stamp=stamp,
     )
-    await clear_previous_suggestion(session, suggested)
+    await close_unused_suggestions(session, bundle.id, unit_ids=unit_ids)
     for decision in decisions.values():
         decision.disposition, decision.reason = payload.action, payload.reason
         decision.move_target_code = payload.move_target_code if payload.action == "move_external" else ""

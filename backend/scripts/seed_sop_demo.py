@@ -54,7 +54,7 @@ from tests.sop_helpers import (
     upload,
 )
 
-PROGRESS_KEYS = ("total", "confirmed", "ai_suggested", "on_hold", "unassigned", "single_language")  # 출력하는 진행 숫자
+PROGRESS_KEYS = ("total", "confirmed", "on_hold", "unassigned", "single_language")  # 출력하는 진행 숫자
 
 
 @dataclass(frozen=True)
@@ -79,7 +79,7 @@ def _await_review(driver: SyntheticDriver) -> None:
 
 
 def _suggest_with_ai(driver: SyntheticDriver) -> None:
-    """가짜 AI의 제안까지만 — 프런트 분류 화면용이라 확정하지 않는다. 작업은 요청과 같은 앱 루프에서 돌린다(DB 연결이 그 루프에 묶여 있다)."""
+    """가짜 AI의 제안까지만 — 프런트 분류 화면용이라 받지 않는다(판단은 미배정, 제안 행만 쌓인다). 작업은 요청과 같은 앱 루프에서 돌린다(DB 연결이 그 루프에 묶여 있다)."""
     answers = SyntheticAnswers(driver.expected)
     with fake_ai_session() as fake:
         fake.chat, fake.embed = answers.chat, answers.embed
