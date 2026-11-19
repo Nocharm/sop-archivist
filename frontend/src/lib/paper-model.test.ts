@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import type { DocumentView, ViewBlock, ViewPartGroup, ViewUnit } from "./api-sop";
 import type { PaperRow } from "./paper-model";
-import { buildPaperModel, buildPaperTabs, buildRows, foldCaptionRows, listPartSheets, canSplitAt, clampSplitAt, getBundleHeader, getGapMerge, getMergeBlocker, resolveCutDrag, getMarks, getTags, isBandHeading, readWarningText, resolvePickUnit, shouldRecenter, toBlockOffset, toUnitOffset } from "./paper-model";
+import { buildPaperModel, buildPaperTabs, buildRows, foldCaptionRows, listPartSheets, canSplitAt, clampSplitAt, getBundleHeader, getGapMerge, getMergeBlocker, hasTocLineIn, resolveCutDrag, getMarks, getTags, isBandHeading, readWarningText, resolvePickUnit, shouldRecenter, toBlockOffset, toUnitOffset } from "./paper-model";
 
 function makeBlock(id: number, seq: number, text: string, extra: Partial<ViewBlock> = {}): ViewBlock {
   return {
@@ -183,6 +183,20 @@ describe("getMergeBlocker", () => {
 
   it("lets cell sentences of the same table or row group merge", () => {
     expect(getMergeBlocker(makeSplitUnit({ kind: "cell_sentence", group_unit_id: 7 }), makeSplitUnit({ id: 2, kind: "cell_sentence", group_unit_id: 7 }))).toBeNull();
+  });
+
+  it("will not merge a contents line with anything (server toc_line_locked)", () => {
+    expect(getMergeBlocker(makeSplitUnit({ noise_kind: "toc" }), makeSplitUnit({ id: 2 }))).toBe("toc");
+    expect(getMergeBlocker(makeSplitUnit(), makeSplitUnit({ id: 2, noise_kind: "toc" }))).toBe("toc");
+  });
+});
+
+describe("hasTocLineIn", () => {
+  it("finds a contents line over the block, so it is not carved", () => {
+    const units = [makeSplitUnit({ spans: [[10, 0, 5]] }), makeSplitUnit({ id: 2, noise_kind: "toc", spans: [[11, 0, 9]] })];
+
+    expect(hasTocLineIn(units, 11)).toBe(true);
+    expect(hasTocLineIn(units, 10)).toBe(false);
   });
 });
 

@@ -220,7 +220,7 @@ async def refresh_code_pairs(
     await settle_pairs(session, document.bundle_id, unit_ids, actor)
 
 
-async def _load_table_facts(session: AsyncSession, extraction_id: int) -> list[TableFacts]:
+async def load_table_facts(session: AsyncSession, extraction_id: int) -> list[TableFacts]:
     """추출의 원문 표와 표마다 칸 줄 언어 수 → 대응 표 판정의 표 사실(표 순번 순)."""
     tables = (
         await session.execute(
@@ -247,7 +247,7 @@ async def _find_table_pairs(
     벗긴 표와 맺는다(counterparts.match_unwrapped_tables). 칸 줄은 표의 언어인 묶이지 않은 칸 문장 가운데 이미 짝(확정 · 사람 · AI)에
     들지 않고 목차 표시가 없는 것이다 — 확정한 짝 하나가 그 행의 다른 줄 제안을 막지 않게 줄만 뺀다.
     """
-    facts = await _load_table_facts(session, extraction_id)
+    facts = await load_table_facts(session, extraction_id)
     layout = {table.id: table for table in facts if table.is_layout}
     if len(layout) < 2:
         return [], []

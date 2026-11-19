@@ -197,3 +197,20 @@ def test_two_document_undos_after_a_confirmed_back_to_table_restore_the_first_ta
     view = get_view(client, bundle_id, doc_id)
     assert sorted(unit["id"] for unit in view["units"]) == sorted(unit["id"] for unit in before["units"])
     assert {unit["status"] for unit in view["units"] if unit["table_id"] == view["tables"][2]["id"]} == {"unassigned"}
+
+
+def test_a_number_fixed_in_the_table_survives_unwrapping_and_wrapping_again(client: TestClient) -> None:
+    # 번호 칸 "A"를 사람이 "B"로 고쳤으면 칸 줄과 이은 줄도 "B"다 — 읽은 값으로 돌아가지 않는다
+    bundle_id, _, doc_id = _setup(client)
+    number_cell = next(unit for unit in get_view(client, bundle_id, doc_id)["units"] if unit["text"] == "A")
+    fixed = _edit(client, bundle_id, doc_id, {"type": "set_number", "unit_id": number_cell["id"], "number": "B", "follow": False})
+    assert fixed.status_code == 200, fixed.text
+
+    _unwrap(client, bundle_id, doc_id, 2)
+    joined = _table_lines(get_view(client, bundle_id, doc_id), 2)[0]
+    assert (joined["text"], joined["number"]["value"], joined["number"]["is_set"]) == (f"A\n{STEP_A}", "B", True)
+
+    rewrapped = _set_layout(client, bundle_id, doc_id, 2, False, confirm=True)
+    assert rewrapped.status_code == 200, rewrapped.text
+    _unwrap(client, bundle_id, doc_id, 2)
+    assert _table_lines(get_view(client, bundle_id, doc_id), 2)[0]["number"]["value"] == "B"

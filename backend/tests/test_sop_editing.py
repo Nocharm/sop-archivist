@@ -1211,3 +1211,41 @@ def test_view_marks_units_made_by_an_edit(client: TestClient) -> None:
 
     assert [member["is_edited"] for member in undone["units"] if member["id"] == unit["id"]] == [False]
     assert not any(member["is_edited"] for member in undone["units"])
+
+
+def test_merging_two_changes_keeps_every_field() -> None:
+    # 표 벗기기와 안쪽 띠 표 · 대응 표 벗기기를 한 편집으로 합칠 때 어느 칸도 조용히 빠지지 않는다(새 칸이 생겨도 이 시험이 잡는다)
+    from dataclasses import fields
+
+    from app.sop.editing import _Change, _Draft, _merge_changes
+
+    def make_draft(group_draft: int | None) -> _Draft:
+        return _Draft(
+            kind="cell_sentence", spans=[], text="", lang="ko", table_id=None, row_index=None, group_unit_id=None,
+            pos_seq=0, pos_start=0, group_draft=group_draft,
+        )
+
+    def fill(tag: int) -> _Change:
+        values: dict[str, object] = {}
+        for item in fields(_Change):
+            empty = getattr(_Change(), item.name)
+            if item.name == "drafts":
+                values[item.name] = [make_draft(None), make_draft(0)]
+            elif isinstance(empty, bool):
+                values[item.name] = tag == 2
+            elif isinstance(empty, list):
+                values[item.name] = [(tag, item.name)] if item.name not in ("retire", "revive") else [tag]
+            else:
+                values[item.name] = {tag: item.name}
+        return _Change(**values)
+
+    merged = _merge_changes(fill(1), fill(2))
+
+    for item in fields(_Change):
+        value = getattr(merged, item.name)
+        if isinstance(value, bool):
+            assert value is True, item.name
+        else:
+            assert len(value) == (4 if item.name == "drafts" else 2), item.name
+    # 뒤 변경의 표 단위 순번은 앞 변경의 초안 수만큼 민다
+    assert [draft.group_draft for draft in merged.drafts] == [None, 0, None, 2]

@@ -215,7 +215,7 @@ import { navigate } from "@/lib/nav-buffer";
 import { buildNewAiFilter, listNewAiLinks, readNewAiPill } from "@/lib/new-ai-filter-model";
 import { buildSheetDraft } from "@/lib/space-preview-model";
 import { EMPTY_FOLD_OPEN, type FoldOpen } from "@/lib/paper-fold-model";
-import { buildPaperModel, buildPaperTabs, findNearestCut, isBandHeading, listPartSheets, resolvePickUnit, shouldRecenter, type PaperTabKey } from "@/lib/paper-model";
+import { buildPaperModel, buildPaperTabs, findNearestCut, hasTocLineIn, isBandHeading, listPartSheets, resolvePickUnit, shouldRecenter, type PaperTabKey } from "@/lib/paper-model";
 import { buildPairColumns, canUndoPair, listPairLinks, PAIR_REFUSAL_KEYS, resolvePairDrop, type PairDrop, type PairDropContext, type PairLang } from "@/lib/pair-drop-model";
 import { ASSIGN_DOC_PARAM, ASSIGN_UNIT_PARAM, EDIT_ORIGINAL_PARAM, getNewDocumentsHref, getStageHref } from "@/lib/stages";
 import { buildTemplateTitles } from "@/lib/template-model";
@@ -1595,7 +1595,7 @@ export default function AssignPage() {
   /** 두 번 누른 자리에 나눌 선 - 메뉴의 "Split here"를 쓸 수 있는 문장만 */
   function handleOldDoubleClick(unitId: number, caret: { blockId: number; offset: number } | null) {
     const unit = paperModel?.units.get(unitId);
-    if (!unit || !canEdit || mode !== "old" || hasUnitDraft(unit) || !["sentence", "heading", "cell_sentence"].includes(unit.kind)) return;
+    if (!unit || !canEdit || mode !== "old" || hasUnitDraft(unit) || unit.noise_kind || !["sentence", "heading", "cell_sentence"].includes(unit.kind)) return;
     if (cutLine.placeAtCaret(unit, caret)) setCutUnitId(unit.id);
   }
 
@@ -4678,7 +4678,14 @@ export default function AssignPage() {
                       }
                     : undefined
                 }
-                onRangeSelect={canEdit && mode === "old" && oldView ? (range) => setCarvePick({ docId: oldView.document.id, ...range }) : undefined}
+                onRangeSelect={
+                  canEdit && mode === "old" && oldView
+                    ? (range) => {
+                        // 목차 줄의 글자는 떼어 내지 않는다(서버 toc_line_locked) - 먼저 목차 아님
+                        if (!hasTocLineIn(oldView.units, range.blockId)) setCarvePick({ docId: oldView.document.id, ...range });
+                      }
+                    : undefined
+                }
                 banner={
                   pairBanner !== null && !isNewEdit ? (
                     pairBanner

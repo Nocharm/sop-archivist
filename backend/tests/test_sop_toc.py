@@ -311,3 +311,25 @@ def test_a_written_new_document_makes_no_sentences_from_its_toc_lines(client: Te
     written = run_in_session(_load)
     assert written and not written & toc_ids
     assert _unit(view, BODY)["id"] in written
+
+
+def test_toc_lines_cannot_be_split_merged_carved_or_have_their_boundary_moved(client: TestClient) -> None:
+    # 사용자 결정(2026-11-19) — 목차 줄을 고치려면 먼저 목차 아님으로 보통 줄로 돌린다
+    fx = _setup(client)
+    first, second, body = _unit(fx.view, KO_TOC[0]), _unit(fx.view, KO_TOC[1]), _unit(fx.view, HEADING)
+    ops = [
+        {"type": "split", "unit_id": first["id"], "at": 3},
+        {"type": "merge", "unit_ids": [first["id"], second["id"]]},
+        {"type": "merge", "unit_ids": [_unit(fx.view, AFTER)["id"], body["id"]]},
+        {"type": "carve", "block_id": first["spans"][0][0], "start": 0, "end": 5},
+        {"type": "move_boundary", "left_unit_id": first["id"], "right_unit_id": second["id"], "at": 3},
+    ]
+
+    for op in ops:
+        response = _edit(client, fx, op)
+        assert (response.status_code, response.json()["detail"]["code"]) == (422, "toc_line_locked"), (op, response.text)
+    assert len(_toc_units(get_view(client, fx.bundle_id, fx.doc_id))) == len(TOC_TEXTS)
+
+    cleared = _edit(client, fx, {"type": "clear_noise", "unit_ids": [first["id"]]})
+    assert cleared.status_code == 200, cleared.text
+    assert _edit(client, fx, {"type": "split", "unit_id": first["id"], "at": 3}).status_code == 200
