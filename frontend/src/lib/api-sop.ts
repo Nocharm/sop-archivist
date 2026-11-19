@@ -433,6 +433,8 @@ export interface ViewUnit {
   from_heading?: boolean;
   /** 캡션 하나를 같이 쓰는 그림 묶음(F7 ⑥)의 첫 그림 - 이 그림이 그 그림의 캡션을 같이 쓴다. 첫 그림 자신·묶이지 않은 단위는 null. 편집 group_figures·ungroup_figures가 오간다 */
   caption_figure_id?: number | null;
+  /** 짝 카드 안 순서(lib/pair-order-model orderPairCard) - 편집 reorder_pair가 매긴다. 바꾼 적 없으면 null(원문 순서) */
+  pair_seq?: number | null;
 }
 
 /** 표·그림 참조 하나 - number가 null이면 위치 참조("아래 표"), target_unit_id는 이은 표·그림 묶음 단위(못 찾으면 null) */
@@ -517,7 +519,9 @@ export type EditOp =
   | { type: "clear_noise"; unit_ids: number[] }
   /** 제목 ↔ 문장(F8b) - heading이 거짓이면 제목을 문장마다 나눠 바꾼 표시를 단다(번역 조항은 앞 조항의 번호를 물려받는다).
    *  참이면 바꾼 문장은 그 조항 줄 전체가 제목 하나로 돌아가고, 보통 문장은 그 문장이 제목이 된다. 한/영 짝은 새 단위로 다시 선다 */
-  | { type: "set_heading"; unit_ids: number[]; heading: boolean };
+  | { type: "set_heading"; unit_ids: number[]; heading: boolean }
+  /** 짝 카드 안 순서(설계 2026-11-20-assign-mockup1 D8) - 그 짝의 구성원 전부를 새 순서로. 끊김 없이 이어진 카드만(pair_not_adjacent), 배정이 걸리면 409 */
+  | { type: "reorder_pair"; pair_id: number; unit_ids: number[] };
 
 export interface EditResult {
   document_revision: number;

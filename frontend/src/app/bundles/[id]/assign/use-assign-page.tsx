@@ -54,6 +54,7 @@ import { useLeaveGuard } from "@/lib/leave-guard";
 import { buildIdenticalBatches } from "@/lib/match-model";
 import { EMPTY_FOLD_OPEN, type FoldOpen } from "@/lib/paper-fold-model";
 import { buildPaperModel, buildPaperTabs, findNearestCut, isBandHeading, resolvePickUnit, shouldRecenter, type PaperTabKey } from "@/lib/paper-model";
+import { isSameOrder, movePairMember, orderPairCard, readPairSlot } from "@/lib/pair-order-model";
 import { buildPairColumns, canUndoPair, listPairLinks, PAIR_REFUSAL_KEYS, resolvePairDrop, type PairDrop, type PairDropContext } from "@/lib/pair-drop-model";
 import { ASSIGN_DOC_PARAM, ASSIGN_UNIT_PARAM, EDIT_ORIGINAL_PARAM, getStageHref } from "@/lib/stages";
 import { buildTemplateTitles } from "@/lib/template-model";
@@ -1196,9 +1197,10 @@ export function useAssignPage() {
   const rowCaptionRefs: CaptionRefEntry[] = shapeUnits.flatMap((unit) => unit.caption_refs.map((ref) => ({ ref, from: unit })));
   const refCandidates = rowCaptionRefs.length > 0 && shapeModel !== null ? [...listRefCandidates("table", shapeModel.units), ...listRefCandidates("figure", shapeModel.units)] : [];
   // 표·그림의 캡션은 다듬기 줄 대신 아래 캡션 자리(F7)가 칩으로 보인다 - 캡션의 언어 바꾸기는 우클릭 메뉴에 남는다
-  // 누른 박스가 맨 앞(설계 D3) - 나머지는 문서 순서. 합치기 순서(switchShapeMode)는 문서 순서 그대로다
+  // 누른 박스가 맨 앞(설계 D3) - 나머지는 짝 카드 안 순서(바꾼 적 없으면 문서 순서, lib/pair-order-model). 합치기(switchShapeMode)는 서버가 원문 범위 순서로 잇는다
   const shapeFirstId = hasSolo ? (soloUnit?.id ?? null) : pickedId;
-  const shapeLineUnits = shapeFirstId === null ? rowViewUnits : [...rowViewUnits].sort((a, b) => Number(b.id === shapeFirstId) - Number(a.id === shapeFirstId));
+  const shapeCardUnits = orderPairCard(rowViewUnits);
+  const shapeLineUnits = shapeFirstId === null ? shapeCardUnits : [...shapeCardUnits].sort((a, b) => Number(b.id === shapeFirstId) - Number(a.id === shapeFirstId));
   const shapeLines: ShapeLine[] = canEdit && mode === "old" ? shapeLineUnits.flatMap((unit) => { const menu = buildUnitMenu(unit); return menu ? [{ unit, items: menu.edit }] : []; }) : [];
   // 캡션 자리의 블록 자리(문단 · 표 · 그림 하나가 한 자리) - 후보와 끌어 놓기가 같은 거리를 잰다(서버 caption_slot.py와 같다)
   const slotPlaces = useMemo(() => (shapeView ? buildBlockPlaces(shapeView.blocks, shapeView.tables) : null), [shapeView]);
@@ -2807,6 +2809,57 @@ export function useAssignPage() {
   };
   useBoxDrag(panesBoxRef, isPairView && isOldDrag && ready ? pairDragConfig : null);
 
+  // --- 짝 카드 안 순서(설계 D8) - 고른 박스 왼쪽 손잡이를 끌어 카드 안 자리를 바꾼다. 박스 전체 끌기(잇기 · 보내기 · 짝)는 손잡이 밖의 누름만 받는다 ---
+  /** 손잡이를 그릴 박스 - 배정이 걸린 짝은 순서를 바꾸지 않는다(서버도 409 unit_has_decision) */
+  const pairGrip = canEdit && mode === "old" && !isNewEdit && !isSolo && !isPairView
+    ? { isAllowed: (unitId: number) => { const unit = paperModel?.units.get(unitId); return unit !== undefined && !isUnitDecided(unit); } }
+    : undefined;
+  /** 손잡이를 끈 자리 - 끄는 박스를 뺀 카드 상자들의 가운데 y로 자리를 세고, 그 자리에 놓은 새 순서와 놓일 선. 카드 위아래 밖이면 놓을 자리 밖 */
+  function readGripDrop(source: { unitId: number; order: number[] }, point: DragPoint): { order: number[]; line: DropLineAt } | null {
+    const root = panesBoxRef.current;
+    if (!root) return null;
+    const boxes = source.order.map((id) => ({ id, rect: findOldStrip(root, id)?.getBoundingClientRect() }));
+    if (boxes.some((box) => box.rect === undefined) || findUnderPoint(point, '[data-pane="old"]') === null) return null;
+    const rects = boxes.map((box) => box.rect as DOMRect);
+    const reach = 24; // 카드 위아래로 이만큼까지 - 맨 위 · 맨 아래 자리를 카드 가장자리 바로 바깥에서도 잡는다
+    if (point.y < rects[0].top - reach || point.y > rects[rects.length - 1].bottom + reach) return null;
+    const others = boxes.filter((box) => box.id !== source.unitId).map((box) => box.rect as DOMRect);
+    const slot = readPairSlot(others.map((rect) => (rect.top + rect.bottom) / 2), point.y);
+    const y = slot === 0 ? others[0].top : others[slot - 1].bottom;
+    return { order: movePairMember(source.order, source.unitId, slot), line: { left: rects[0].left, top: y - DROP_LINE_HALF_PX, width: rects[0].width } };
+  }
+  const gripConfig: BoxDragConfig<{ unitId: number; pairId: number; order: number[] }> = {
+    handleOnly: true,
+    pick: (event) => {
+      const grip = event.target instanceof Element ? event.target.closest<HTMLElement>('[data-pane="old"] [data-grip-unit]') : null;
+      const unit = grip ? paperModel?.units.get(Number(grip.dataset.gripUnit)) : undefined;
+      if (!unit || unit.pair_id === null || !oldView || focusCtl.isUnitLocked(unit.id)) return null;
+      const pairId = unit.pair_id;
+      const order = orderPairCard(oldView.units.filter((member) => member.pair_id === pairId)).map((member) => member.id);
+      return order.some(focusCtl.isUnitLocked) ? null : { unitId: unit.id, pairId, order };
+    },
+    getCard: ({ unitId }) => buildOldDragCard([unitId].flatMap((id) => unitMap.get(id) ?? []), (count) => t("assign.drag.units", { count })),
+    getScrollers: () => [...(panesBoxRef.current?.querySelectorAll<HTMLElement>(".pane-body") ?? [])],
+    onStart: ({ unitId }) => {
+      const root = panesBoxRef.current;
+      if (root) findOldStrip(root, unitId)?.setAttribute("data-drag-src", "");
+    },
+    onMove: (source, point) => {
+      const drop = readGripDrop(source, point);
+      if (drop === null || isSameOrder(drop.order, source.order)) return { state: "none" };
+      return { state: "ok", note: t("assign.pairOrder.drag"), dest: t("assign.drag.dest.order"), line: drop.line };
+    },
+    onDrop: (source, point) => {
+      const drop = readGripDrop(source, point);
+      if (drop === null || isSameOrder(drop.order, source.order)) return;
+      void runUnitEdit({ type: "reorder_pair", pair_id: source.pairId, unit_ids: drop.order }, t("assign.pairOrder.done"), source.unitId, false, null, { at: "box", unitId: source.unitId });
+    },
+    onEnd: () => {
+      for (const el of panesBoxRef.current?.querySelectorAll("[data-drag-src]") ?? []) el.removeAttribute("data-drag-src");
+    },
+  };
+  useBoxDrag(panesBoxRef, isOldDrag && ready && rows.length > 0 && !isPairView ? gripConfig : null);
+
   /** 놓아서 맺기·확정 - 바로 저장하고 Undo가 든 알림을 띄운다. 놓은 박스가 처리 중이거나 묶음 전체 일 중이면 버린다 */
   async function runPairDrop(drop: Extract<PairDrop, { kind: "pair" | "confirm" }>) {
     if (!oldView || focusCtl.isGlobalPending) return;
@@ -3175,7 +3228,7 @@ export function useAssignPage() {
     isFixedCaption, ctxGroups, rowViewUnits, rowSplitUnit, rowSplit, splitBlocked, rowRefUnit, refBlocked, isRefGate, isCaptionGateOn,
     confirmBlockKey, rowCaptionRefs, refCandidates, shapeLines, shapeFirstId, slotPlaces, slotBlockKinds, shapeMode, headingBack, rewrap, bandBack,
     stepBase, refPendingIds, isLinkedToWritten, captionPendingKeys, docDashboard, refDetail, refInfo, openCtxMenu, runUnitEdit,
-    rewrapTable, describeEditConfirm, clearToc, runCaptionRefChange, switchShapeMode, switchToPair,
+    rewrapTable, describeEditConfirm, pairGrip, clearToc, runCaptionRefChange, switchShapeMode, switchToPair,
     applySplitSuggestion, dismissSplitSuggestion, splitPendingIds, readPendingItem, selectNextSplit, selectNextRef, selectNextCaption,
     splitAtCut, handleOldDoubleClick, runCtx, runUnitAction, revertHeadings, planOldJoin, joinOld, renderOldActions, readReasonNeed,
     runSave, runClear, runUndoStep, confirmIdenticalAll, acceptAll, markNew, placeManage, pickDestination, pickNewSentence, handleNewPick,

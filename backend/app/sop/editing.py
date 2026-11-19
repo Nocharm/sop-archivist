@@ -1,11 +1,12 @@
 """쪼개기 편집 — 나누기·합치기·경계 옮기기·골라 만들기·언어 바꾸기·레이아웃 표 바꾸기·캡션 붙이기·떼기·첫 행 ↔ 캡션·
-그림 묶기·풀기·잡음 표시 풀기·번호 고치기·제목 ↔ 문장과 서버 쪽
+그림 묶기·풀기·잡음 표시 풀기·번호 고치기·제목 ↔ 문장·짝 카드 안 순서와 서버 쪽
 선형 되돌리기·다시 하기, 경계 확인 표시 (스펙 §6.4, §7.5).
 
 단위는 제자리에서 바뀌지 않는다: 편집은 옛 단위를 은퇴시키고 새 단위를 만들며, 되돌리기는 은퇴한 단위를 원래 ID로 되살린다.
 칸 문장은 제자리에 두고 묶음(group_unit_id)만 바꾸며, 그 바뀜과 레이아웃 표 표시도 기록해 되돌린다.
 번호 고치기도 제자리다 — 단위의 number_set과 그 번호가 여는 절 이름(블록 section_label)만 바꾸고 기록해 되돌린다(범위·글자는 그대로).
 그림 묶기·풀기도 제자리다 — 그림 단위의 caption_figure_id만 바꾸고(옮기는 캡션은 칸 묶음처럼 regroup) 기록해 되돌린다.
+짝 카드 안 순서도 제자리다 — 구성원의 pair_seq만 바꾸고(pair_order.py) 기록해 되돌린다.
 묶음 잠금·문서 revision·작업 중 검사와 커밋은 부르는 쪽(라우터)이 한다.
 """
 
@@ -21,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app import clock
 from app.sop.caption_slot import CAPTION_REACH, PlaceBlock, build_block_places, get_place_distance
 from app.sop.captions import CAPTION_KIND
+from app.sop.constants import MAX_PAIR_SIDE
 from app.sop.decision_steps import UndoMetaIn
 from app.sop.decisions import DbId
 from app.sop.detach import (
@@ -63,6 +65,7 @@ from app.sop.numbering import (
     plan_follow,
     read_draft_number,
 )
+from app.sop.pair_order import order_pair_card
 from app.sop.refs import REF_CONFIRMED, REF_LANG, REF_REJECTED, read_number_in_text
 from app.sop.schemas import NO_NUL
 from app.sop.segment import (
@@ -263,10 +266,19 @@ class SetHeadingOp(BaseModel):
     heading: bool
 
 
+class ReorderPairOp(BaseModel):
+    """짝 카드 안 순서 바꾸기(설계 2026-11-20-assign-mockup1 D8) — unit_ids는 그 짝의 구성원 전부를 새 순서로. 원문에서 끊김 없이
+    이어진 카드만 받는다(떨어진 짝은 제자리에 안내 줄로 보이고 카드 안 순서가 없다). 단위 · 범위 · 글은 그대로이고 pair_seq만 바뀐다."""
+
+    type: Literal["reorder_pair"]
+    pair_id: DbId
+    unit_ids: list[DbId] = Field(min_length=2, max_length=2 * MAX_PAIR_SIDE)
+
+
 EditOp = Annotated[
     SplitOp | MergeOp | UnmergeOp | MoveBoundaryOp | CarveOp | SetLanguageOp
     | SetLayoutTableOp | AttachCaptionOp | DetachCaptionOp | SetFirstRowCaptionOp | GroupFiguresOp
-    | UngroupFiguresOp | SetRefOp | ClearRefOp | ClearNoiseOp | SetNumberOp | SetHeadingOp,
+    | UngroupFiguresOp | SetRefOp | ClearRefOp | ClearNoiseOp | SetNumberOp | SetHeadingOp | ReorderPairOp,
     Field(discriminator="type"),
 ]
 
@@ -369,6 +381,8 @@ class _Change:
     noises: dict[int, tuple[str | None, str | None]] = field(default_factory=dict)
     # 그림 → (지금 caption_figure_id, 바꿀 caption_figure_id) — 제자리에서 바뀐다(그림 묶기·풀기와 그 되돌리기)
     figures: dict[int, tuple[int | None, int | None]] = field(default_factory=dict)
+    # 짝 구성원 → (지금 pair_seq, 바꿀 pair_seq) — 제자리에서 바뀐다(짝 카드 안 순서와 그 되돌리기)
+    pair_seqs: dict[int, tuple[int | None, int | None]] = field(default_factory=dict)
     # 제목 ↔ 문장(set_heading)과 그 되돌리기·다시 하기 — 활성이 된 단위로 한/영 코드 짝을 다시 세운다(짝은 기록 밖이다)
     repair_pairs: bool = False
 
@@ -383,7 +397,7 @@ class _Change:
         범위가 그대로여도 종류·묶음이 바뀐다. 표 단위는 범위가 없어 범위로는 견줄 수 없으므로 묶음·표 표시가 바뀌면 바뀐 것이다.
         """
         if (
-            self.revive or self.langs or self.layouts or self.noises or self.numbers or self.figures
+            self.revive or self.langs or self.layouts or self.noises or self.numbers or self.figures or self.pair_seqs
             or self.list_regrouped_cells()
         ):
             return False
@@ -1458,6 +1472,41 @@ async def _plan_ungroup_figures(session: AsyncSession, extraction_id: Extraction
     return _Change(figures=figures, bundles=[member.id for member in members] if figures else [])
 
 
+async def _plan_reorder_pair(
+    session: AsyncSession, document_id: int, extraction_id: ExtractionId, op: ReorderPairOp
+) -> _Change:
+    """짝 카드 안 순서 — 그 문서의 짝이 아니면 404 pair_not_found, unit_ids가 구성원 전부가 아니면 422 pair_members_mismatch,
+    구성원 사이에 다른 활성 단위가 있으면(카드가 아니다) 422 pair_not_adjacent. 지금 순서와 같으면 바뀌는 게 없다.
+    판단이 걸린 구성원은 쓰기 길(_write_change)이 409 unit_has_decision(reason pair_order)으로 막는다 — 되돌리기도 같다."""
+    ensure_unique_units(op.unit_ids)
+    pair = await session.scalar(select(UnitPair).where(UnitPair.id == op.pair_id, UnitPair.document_id == document_id))
+    if pair is None:
+        raise_rule(404, "pair_not_found", pair_id=op.pair_id)
+    member_ids = set(await session.scalars(select(UnitPairMember.unit_id).where(UnitPairMember.pair_id == pair.id)))
+    if member_ids != set(op.unit_ids):
+        raise_rule(422, "pair_members_mismatch", pair_id=pair.id, unit_ids=sorted(member_ids))
+    members = sorted((await load_active_units(session, extraction_id, op.unit_ids)).values(), key=_get_position)
+    first, last = _get_position(members[0]), _get_position(members[-1])
+    rows = await session.execute(
+        select(Unit.id, Unit.pos_seq, Unit.pos_start).where(
+            Unit.extraction_id == extraction_id, Unit.status == UNIT_ACTIVE,
+            Unit.pos_seq >= first[0], Unit.pos_seq <= last[0],
+        )
+    )
+    apart = sorted(
+        unit_id for unit_id, pos_seq, pos_start in rows
+        if unit_id not in member_ids and first < (pos_seq, pos_start, unit_id) < last
+    )
+    if apart:
+        raise_rule(422, "pair_not_adjacent", pair_id=pair.id, unit_ids=apart)
+    if [unit.id for unit in order_pair_card(members, lambda unit: unit.pair_seq)] == op.unit_ids:
+        return _Change()
+    current = {unit.id: unit.pair_seq for unit in members}
+    return _Change(pair_seqs={
+        unit_id: (current[unit_id], index) for index, unit_id in enumerate(op.unit_ids) if current[unit_id] != index
+    })
+
+
 async def _plan(session: AsyncSession, document_id: int, extraction_id: ExtractionId, op: EditOp) -> _Change:
     match op:
         case SplitOp():
@@ -1494,6 +1543,8 @@ async def _plan(session: AsyncSession, document_id: int, extraction_id: Extracti
             return await _plan_clear_noise(session, extraction_id, op)
         case SetHeadingOp():
             return await _plan_set_heading(session, document_id, extraction_id, op)
+        case ReorderPairOp():
+            return await _plan_reorder_pair(session, document_id, extraction_id, op)
         case _:
             assert_never(op)
 
@@ -1655,6 +1706,17 @@ async def _set_figures(session: AsyncSession, figures: Mapping[int, tuple[int | 
         raise RuntimeError(f"unit edit history out of sync: {changed} of {len(figures)} figures had the recorded group")
 
 
+async def _set_pair_seqs(session: AsyncSession, pair_seqs: Mapping[int, tuple[int | None, int | None]]) -> None:
+    """짝 카드 안 순서(pair_seq)를 바꾼다 — 지금 값이 기록과 다른 단위가 있으면 편집 기록과 어긋난 것이라 RuntimeError(버그 가드)."""
+    changed = 0
+    for unit_id, (old, new) in pair_seqs.items():
+        current = Unit.pair_seq.is_(None) if old is None else Unit.pair_seq == old
+        result = await session.execute(update(Unit).where(Unit.id == unit_id, current).values(pair_seq=new))
+        changed += result.rowcount
+    if changed != len(pair_seqs):
+        raise RuntimeError(f"unit edit history out of sync: {changed} of {len(pair_seqs)} units had the recorded pair order")
+
+
 async def _leave_pairs(session: AsyncSession, unit_ids: Collection[int]) -> None:
     """은퇴하거나 언어가 바뀐 단위는 한/영 짝에서 빠지고, 남은 짝에 한쪽 언어가 없으면 짝을 지운다.
 
@@ -1756,6 +1818,11 @@ async def _write_change(
         decided = await _find_decided_units(session, document, in_place)
         if decided:
             raise_rule(409, "unit_has_decision", unit_ids=decided)
+    if change.pair_seqs:
+        # 카드 안 순서는 묶을 때의 글 순서라(결과물이 따른다) 배정이 걸린 짝은 먼저 배정을 푼다
+        decided = await _find_decided_units(session, document, list(change.pair_seqs))
+        if decided:
+            raise_rule(409, "unit_has_decision", unit_ids=decided, reason="pair_order")
     regrouped = change.list_regrouped_cells()
     decided_bundles: list[int] = []
     if change.retire or regrouped or change.bundles:
@@ -1775,6 +1842,7 @@ async def _write_change(
     await _apply_sections(session, extraction_id, change.sections)
     await _set_noises(session, change.noises)
     await _set_figures(session, change.figures)
+    await _set_pair_seqs(session, change.pair_seqs)
     # 다시 목차가 된 단위는 짝을 맺지 않는다(units._find_code_pairs와 같은 규칙)
     await _leave_pairs(session, [*change.retire, *change.langs, *marking])
     await session.flush()
@@ -1832,7 +1900,7 @@ def _record(
     """작업 기록 — 대상은 은퇴한·활성이 된·언어가 바뀐·다시 묶인 단위, 사유 칸에 편집 종류(split 등)."""
     unit_ids = sorted(
         {*result.created_unit_ids, *result.retired_unit_ids, *change.langs, *change.regroup, *change.bundles,
-         *change.noises, *change.numbers, *change.figures}
+         *change.noises, *change.numbers, *change.figures, *change.pair_seqs}
     )
     record_event(
         session, bundle_id=document.bundle_id, actor=actor, action=action, target_type="unit", target_ids=unit_ids,
@@ -1879,6 +1947,7 @@ async def apply_edit(
             layout_changes={str(table_id): list(flags) for table_id, flags in change.layouts.items()},
             noise_changes={str(unit_id): list(noises) for unit_id, noises in change.noises.items()},
             figure_changes={str(unit_id): list(figures) for unit_id, figures in change.figures.items()},
+            pair_seq_changes={str(unit_id): list(seqs) for unit_id, seqs in change.pair_seqs.items()},
             number_changes=_dump_numbers(change), actor=actor,
         )
     )
@@ -1931,6 +2000,10 @@ def _replay(edit: UnitEdit, *, backwards: bool) -> _Change:
         # 0030 전 기록은 빈 객체다(그림 묶음을 바꾼 편집이 없었다)
         figures={
             int(unit_id): _orient(figures, backwards=backwards) for unit_id, figures in (edit.figure_changes or {}).items()
+        },
+        # 0033 전 기록은 빈 객체다(카드 안 순서를 바꾼 편집이 없었다)
+        pair_seqs={
+            int(unit_id): _orient(seqs, backwards=backwards) for unit_id, seqs in (edit.pair_seq_changes or {}).items()
         },
         repair_pairs=edit.op == "set_heading",
     )

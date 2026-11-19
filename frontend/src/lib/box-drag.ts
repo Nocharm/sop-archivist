@@ -6,6 +6,8 @@ import { createDropLine, type DropLine, type DropLineAt } from "@/lib/drop-line"
 
 export const DRAG_THRESHOLD_PX = 4;
 export const DRAG_GUARD_SELECTOR = "button, a, input, select, textarea, [role='slider'], [data-no-drag]";
+/** 손잡이 - 상자 안의 이것을 눌러 시작한 끌기는 손잡이 끌기(handleOnly)만 받고, 상자 전체 끌기는 받지 않는다(짝 카드 안 순서, 설계 2026-11-20 D8) */
+export const DRAG_HANDLE_SELECTOR = "[data-drag-handle]";
 export const EDGE_SCROLL_ZONE_PX = 44; // 가장자리에서 이 안이면 스크롤
 export const EDGE_SCROLL_STEP_PX = 9; // 프레임마다
 /** 스크롤 칸 위아래 바깥으로 이만큼까지는 아직 그 칸을 민다 - 칸 밖으로 살짝 나가도 스크롤이 끊기지 않게 */
@@ -23,6 +25,8 @@ export interface DragCard { id: string; text: string; count: string | null } // 
  */
 export interface DragHover { state: "ok" | "refused" | "none"; note?: string; dest?: string; target?: HTMLElement | null; line?: DropLineAt | null }
 export interface BoxDragConfig<S> {
+  /** 참이면 손잡이(DRAG_HANDLE_SELECTOR) 안에서 누른 것만, 거짓 · 없음이면 손잡이 밖에서 누른 것만 받는다 - 한 root에 두 끌기를 붙여도 한 누름을 다투지 않는다 */
+  handleOnly?: boolean;
   pick: (event: PointerEvent) => S | null; // 끌 것이 없거나 읽기 전용이면 null
   getCard: (source: S) => DragCard;
   getScrollers: () => readonly HTMLElement[]; // 출발 칸과 다른 스크롤 칸도 넣을 수 있다 - 포인터가 든 칸만 민다
@@ -42,6 +46,11 @@ export function canStartDrag(press: Pick<PointerEvent, "button" | "altKey" | "ct
 export function isOnHorizontalScrollbar(el: Element | null, clientY: number): boolean {
   if (!el || el.scrollWidth <= el.clientWidth) return false;
   return clientY > el.getBoundingClientRect().top + el.clientTop + el.clientHeight;
+}
+
+/** 이 누름을 이 끌기가 받나 - 손잡이 끌기는 손잡이 안의 누름만, 상자 전체 끌기는 손잡이 밖의 누름만 */
+export function isPressForConfig(isOnHandle: boolean, handleOnly: boolean): boolean {
+  return isOnHandle === handleOnly;
 }
 
 export function hasPassedThreshold(dx: number, dy: number): boolean {
@@ -215,6 +224,7 @@ export function attachBoxDrag<S>(root: HTMLElement, config: BoxDragConfig<S>): (
     const target = event.target instanceof Element ? event.target : null;
     if (event.altKey && target?.closest(DRAG_BOX_SELECTOR)) altPressedOnBox = true;
     if (dragLive || session) return;
+    if (!isPressForConfig(target?.closest(DRAG_HANDLE_SELECTOR) != null, config.handleOnly === true)) return;
     if (!canStartDrag(event, target?.closest(DRAG_GUARD_SELECTOR) != null || isOnHorizontalScrollbar(target, event.clientY))) return;
     const source = config.pick(event);
     if (source === null) return;

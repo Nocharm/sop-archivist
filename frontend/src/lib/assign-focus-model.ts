@@ -14,7 +14,7 @@ export type Focus =
 export const NO_FOCUS: Focus = { kind: "none" };
 
 export type PendingKind =
-  | "join" | "split" | "unmerge" | "unwrap" | "rewrap" | "pair" | "unpair" | "lang" | "heading" | "ref" | "caption" | "toc" | "figure" | "save" | "undo" | "bulk";
+  | "join" | "split" | "unmerge" | "unwrap" | "rewrap" | "pair" | "unpair" | "lang" | "heading" | "ref" | "caption" | "toc" | "figure" | "order" | "save" | "undo" | "bulk";
 export type PendingPlace = { at: "gap"; firstId: number; secondId: number } | { at: "box"; unitId: number } | { at: "table"; tableId: number } | { at: "none" };
 export const NO_PLACE: PendingPlace = { at: "none" };
 
@@ -207,6 +207,7 @@ export function readPendingLabelKey(kind: PendingKind): string | null {
     case "caption":
     case "toc":
     case "figure":
+    case "order":
       return "assign.working.save";
     case "save":
     case "undo":
@@ -263,6 +264,8 @@ export function readEditKind(op: EditOp): PendingKind {
       return "figure";
     case "clear_noise":
       return "toc";
+    case "reorder_pair":
+      return "order";
   }
 }
 
@@ -274,6 +277,7 @@ export function listEditUnitIds(op: EditOp): number[] {
     case "clear_noise":
     case "set_heading":
     case "group_figures":
+    case "reorder_pair":
       return [...op.unit_ids];
     case "split":
     case "unmerge":

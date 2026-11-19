@@ -4,6 +4,7 @@
 
 ## 2026-11-20
 
+- **시안 1 스텝 9 — 짝 카드 안 순서를 손잡이로(`feat/mockup1-9-pair-reorder`, 설계 D8 · 확인할 것 2 기본안)** — 카드 안 순서가 원문 자리라 바꿀 길이 없었다. 새 편집 `reorder_pair {pair_id, unit_ids}`가 `units.pair_seq`(Alembic `0033`, 기록 `unit_edits.pair_seq_changes`)만 바꿔 Split · Assign Undo/Redo가 따른다(그 문서의 짝 · 구성원 전부 · 끊김 없는 카드 · 배정 없음 — 거절 `pair_members_mismatch` · `pair_not_adjacent` · `unit_has_decision.pair_order`). 순서는 구성원 모두가 겹치지 않는 값을 가질 때만 따르고(`pair_order.py` ↔ `pair-order-model.ts`) 카드 그림 · Shape 줄 · 문단 Excel이 읽는다. 합친 글(One sentence)은 단위가 원문 범위라 원문 순서 그대로. 손잡이는 엔진의 `data-drag-handle` + `handleOnly` 끌기라 박스 전체 끌기와 한 누름을 다투지 않는다. 확인: pytest · ruff, vitest · lint · tsc, 스모크 새 단계는 `node --check`만.
 - **시안 1 전체 `assign:` 스모크 두 실패는 스모크의 가정 탓(앱 그대로)** — "↺ Back to table" 두 단계의 404 Unit(787 · 757)은 은퇴한 칸 문장이 아니라 다시 표로가 새로 만든 표 Unit이었다: 화면이 그것을 따라가(D1 규칙 3) 묶음을 받는 사이 스모크가 서버 보기만 보고 API로 되돌려 지웠다 → 되돌리기 전에 그 받기 응답을 기다리고 검사로 남긴다(`watchGroupLoads`). "drag … links like a click"의 piece-168 대기는 10번이 아니라 11번(첫 짝 카드)이었고, 시드 첫 짝(168/169)은 삭제 확정이라 D6로 흐린 한 줄에 접힌다 → 카드로 보이는 짝을 고른다.
 
 - **시안 1 스텝 7b — 끄는 카드 끝에 도착지를 짧게(`feat/mockup1-7b-card-dest`, 사용자 결정 2026-11-20)** — 스텝 7에서 Order "→ 5.2" · 템플릿 번호까지 상태 글로만 가 화면에서 사라졌다. `DragHover.dest`를 엔진이 한 줄 표 끝(`.drag-card-dest`, 넘치면 먼저 말줄임)에 놓을 수 있을 때만 그린다 — Order 받을 번호, 템플릿 "→ 6.1.2"(`formatPlacementDest`), 보내기 · 나무 "→ 칸", 잇기 "→ link", 짝 "→ pair", 캡션 "→ caption" · "→ sentence", To-Be "→ SOP", 올리기 "→ New". 거절 이유는 그대로 상태 글 + 알림, 선 위 글은 없음. 스모크는 상태 글을 읽는 갈 곳 검사마다 표 끝 확인을 더했다(거절은 표 끝이 비었는지).

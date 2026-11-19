@@ -39,8 +39,8 @@ export function describeDecisionStep(
   return { key: `assign.${kind === "undo" ? "undone" : "redone"}.what`, vars: { action: `assign.step.${result.op}`, target } };
 }
 
-/** 제자리에서 바뀌는 편집 - Unit이 그대로라(언어·참조·번호) 하고 난 뒤에도 고른 줄이 유효하다. 이름은 편집 요청의 type과 같다 */
-export const IN_PLACE_EDIT_OPS: ReadonlySet<string> = new Set(["set_language", "set_ref", "clear_ref", "set_number"]);
+/** 제자리에서 바뀌는 편집 - Unit이 그대로라(언어·참조·번호·짝 카드 안 순서) 하고 난 뒤에도 고른 줄이 유효하다. 이름은 편집 요청의 type과 같다 */
+export const IN_PLACE_EDIT_OPS: ReadonlySet<string> = new Set(["set_language", "set_ref", "clear_ref", "set_number", "reorder_pair"]);
 
 /** 판단 저장 단계(되돌리기 기록의 op) - 판단만 바꾸고 Unit은 은퇴시키지 않는다. 되돌려도 고른 줄을 둔다 */
 const DECISION_STEP_OPS: ReadonlySet<string> = new Set(["confirm", "hold", "link", "unlink", "mark_new", "link_source", "confirm_identical", "accept_ai", "delete", "move_out", "clear", "reset"]);

@@ -6539,6 +6539,107 @@ await runStep("assign: drag an Old piece onto a nearby piece in the other langua
   check("the API pairs y and y′ again", repaired.status() === 201 && isPaired(await readView(), y, y2));
 });
 
+// 짝 카드 안 순서(설계 2026-11-20-assign-mockup1 D8) - 고른 박스 왼쪽 손잡이를 끌어 짝 위로 놓으면 순서가 바뀌고(편집 reorder_pair) Undo가 되돌린다.
+// 박스 전체 끌기는 손잡이 누름을 받지 않는다(상태 글이 순서 옮기기다). 끝나면 pair_seq가 비어 시드가 처음 그대로다
+await runStep("assign: the grip reorders a pair card, Undo restores it", {}, async ({ page }) => {
+  const headers = { "X-Dev-User": "qa.member" };
+  const api = `${BASE}/api/bundles/${halfBundleId}`;
+  const getJson = async (path) => (await page.request.get(`${api}${path}`, { headers })).json();
+  const sourceOrder = (one, two) => one.pos_seq - two.pos_seq || (one.spans[0]?.[1] ?? 0) - (two.spans[0]?.[1] ?? 0) || one.id - two.id;
+  // 위아래로 붙은 미배정 한/영 문장 둘의 짝 - 카드 하나
+  const findCard = (view) => {
+    const order = view.units.filter((unit) => unit.group_unit_id === null).sort(sourceOrder);
+    const isFree = (unit) => unit.kind === "sentence" && (unit.status === null || unit.status === "unassigned") && (unit.pair_seq ?? null) === null;
+    for (const pair of view.pairs) {
+      const members = pair.unit_ids.map((id) => order.findIndex((unit) => unit.id === id)).sort((one, two) => one - two);
+      if (members.length !== 2 || members[0] < 0 || members[1] - members[0] !== 1) continue;
+      const [upper, lower] = members.map((index) => order[index]);
+      if (isFree(upper) && isFree(lower) && upper.lang !== lower.lang) return { pair, upper, lower };
+    }
+    return null;
+  };
+  let doc = null;
+  let card = null;
+  for (const item of (await getJson("/documents")).filter((entry) => entry.side === "old" && entry.status === "ready" && entry.language_layout === "ko_en_interleaved")) {
+    card = findCard(await getJson(`/documents/${item.id}/view`));
+    if (card) {
+      doc = item;
+      break;
+    }
+  }
+  check("an interleaved document has an open KO/EN pair card", card !== null, doc?.doc_code ?? "none");
+  if (!card) return;
+  const { pair, upper, lower } = card;
+  const readView = () => getJson(`/documents/${doc.id}/view`);
+  const seqOf = (view, unit) => view.units.find((entry) => entry.id === unit.id)?.pair_seq ?? null;
+  const pieceOf = (id) => page.locator(`[data-testid="assign-paper-piece-${id}"]`);
+  // 위 박스가 아래 박스보다 용지에서 먼저 오나
+  const isUpperFirst = () => page.evaluate(([one, two]) => {
+    const first = document.querySelector(`[data-testid="assign-paper-piece-${one}"]`);
+    const second = document.querySelector(`[data-testid="assign-paper-piece-${two}"]`);
+    return first !== null && second !== null && (first.compareDocumentPosition(second) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
+  }, [upper.id, lower.id]);
+  const isEditCall = (pattern) => (response) => response.request().method() === "POST" && pattern.test(new URL(response.url()).pathname);
+
+  await page.goto(`${BASE}/bundles/${halfBundleId}/assign`);
+  await wait(page, "assign-bar");
+  await page.locator('[data-testid="assign-old-doc"]').click();
+  await page.locator(`[data-testid="assign-old-doc-option-${doc.id}"]`).click();
+  await pieceOf(lower.id).waitFor({ timeout: T });
+  await page.waitForLoadState("networkidle");
+  check("the card shows the upper box first", await isUpperFirst());
+
+  // 아래 박스를 고르면 그 박스 왼쪽에 손잡이
+  await pieceOf(lower.id).evaluate((el) => el.scrollIntoView({ block: "center" }));
+  await pieceOf(lower.id).click();
+  const grip = page.locator(`[data-testid="assign-paper-grip-${lower.id}"]`);
+  await grip.waitFor({ timeout: T });
+  check("the picked box in the pair card has a grip, its partner has none", (await page.locator(`[data-testid="assign-paper-grip-${upper.id}"]`).count()) === 0);
+
+  // 손잡이를 위 박스 위쪽으로 끈다 - 상태 글은 카드 안 옮기기, 끝은 "→ order", 놓일 자리 선
+  const from = await grip.boundingBox();
+  const to = await pieceOf(upper.id).boundingBox();
+  await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2 - 10, { steps: 5 });
+  await page.mouse.move(from.x + from.width / 2, to.y + 3, { steps: 12 });
+  await page.waitForTimeout(100);
+  const during = await page.evaluate(() => ({
+    note: document.querySelector('[data-testid="drag-status"]')?.textContent ?? "",
+    dest: document.querySelector('[data-testid="drag-card"] .drag-card-dest')?.textContent ?? "",
+    line: !(document.querySelector('[data-testid="drop-line"]')?.hidden ?? true),
+  }));
+  check("dragging the grip says Move inside the pair card, → order, with a drop line", during.note === "Move inside the pair card" && during.dest === "→ order" && during.line, JSON.stringify(during));
+  const edited = page.waitForResponse(isEditCall(/\/documents\/\d+\/edits$/), { timeout: T });
+  await page.mouse.up();
+  const response = await edited;
+  const op = JSON.parse(response.request().postData()).op;
+  check("the drop sends reorder_pair with the lower box first (200)", response.status() === 200 && op.type === "reorder_pair" && op.pair_id === pair.id && JSON.stringify(op.unit_ids) === JSON.stringify([lower.id, upper.id]), `${response.status()} ${JSON.stringify(op)}`);
+  await page.waitForLoadState("networkidle");
+  const flipped = await page.waitForFunction(([one, two]) => {
+    const first = document.querySelector(`[data-testid="assign-paper-piece-${one}"]`);
+    const second = document.querySelector(`[data-testid="assign-paper-piece-${two}"]`);
+    return first !== null && second !== null && (first.compareDocumentPosition(second) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
+  }, [lower.id, upper.id], { timeout: T }).then(() => true, () => false);
+  const after = await readView();
+  check("the card now shows the lower box first", flipped);
+  check("the view API orders the card lower → upper", seqOf(after, lower) === 0 && seqOf(after, upper) === 1, JSON.stringify([seqOf(after, lower), seqOf(after, upper)]));
+
+  // Undo가 원문 순서로 되돌린다 - pair_seq가 비어 시드가 처음 그대로다
+  const undone = page.waitForResponse(isEditCall(/\/decisions\/undo$/), { timeout: T });
+  await page.locator('[data-testid="assign-undo"]:not([disabled])').click();
+  check("Undo answers 200", (await undone).status() === 200);
+  await page.waitForLoadState("networkidle");
+  const restored = await page.waitForFunction(([one, two]) => {
+    const first = document.querySelector(`[data-testid="assign-paper-piece-${one}"]`);
+    const second = document.querySelector(`[data-testid="assign-paper-piece-${two}"]`);
+    return first !== null && second !== null && (first.compareDocumentPosition(second) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
+  }, [upper.id, lower.id], { timeout: T }).then(() => true, () => false);
+  const back = await readView();
+  check("after Undo the card shows the upper box first again", restored);
+  check("after Undo the view API has no card order", seqOf(back, lower) === null && seqOf(back, upper) === null);
+});
+
 // AI는 제안만 한다(설계 2026-11-19-ai-suggest-only) - 그림의 분류 추천은 카드로 오고, 사람이 Use(A)로 받으면 그림 아래 캡션이 초안에 함께 따라온다
 await runStep("assign: an AI-suggested figure takes its caption along when used", {}, async ({ page, takeShot }) => {
   const headers = { "X-Dev-User": "qa.member" };

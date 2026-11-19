@@ -3,6 +3,7 @@
 Word에서 복사해 Excel에 붙인 것처럼 머리 줄·모양 없이 글만 쓴다. 자동 번호는 추출이 글 앞에 붙여 두었으므로(docx_reader
 _add_number) 단위 글 그대로다. 본문(body)만 쓴다 — 머리말·꼬리말·각주·글상자는 Old 칸의 다른 탭이다.
 표는 고를 수 있다 — 넣으면 표 한 행이 한 줄, 칸은 옆 열(같은 칸의 문장은 한 칸에)이다.
+이어 붙은 한/영 짝 카드 안은 사람이 바꾼 순서(pair_order.py)를 따른다 — Assign 용지의 카드와 같은 줄 순서다.
 """
 
 from collections.abc import Sequence
@@ -14,7 +15,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.sop.excel_export import split_cell_text, write_text_cell
-from app.sop.models import Document, SourceBlock, Unit
+from app.sop.models import Document, SourceBlock, Unit, UnitPairMember
+from app.sop.pair_order import order_pair_card
 from app.sop.units import UNIT_ACTIVE, get_latest_extraction_id
 
 FIGURE_MARKER = "[Figure]"  # 결과물 Excel(sheet_model)의 그림 표시와 같은 글
@@ -114,10 +116,17 @@ async def load_unit_lines(session: AsyncSession, document: Document) -> list[Uni
             )
         )
     }
-    units = await session.scalars(
-        select(Unit)
-        .where(Unit.extraction_id == extraction_id, Unit.status == UNIT_ACTIVE)
-        .order_by(Unit.pos_seq, Unit.pos_start, Unit.id)
+    units = _order_pair_cards(
+        list(await session.scalars(
+            select(Unit)
+            .where(Unit.extraction_id == extraction_id, Unit.status == UNIT_ACTIVE)
+            .order_by(Unit.pos_seq, Unit.pos_start, Unit.id)
+        )),
+        dict((await session.execute(
+            select(UnitPairMember.unit_id, UnitPairMember.pair_id)
+            .join(Unit, Unit.id == UnitPairMember.unit_id)
+            .where(Unit.extraction_id == extraction_id, Unit.status == UNIT_ACTIVE)
+        )).tuples().all()),
     )
     block_at = {block.seq: block for block in blocks.values()}
     lines: list[UnitLine] = []
@@ -131,3 +140,17 @@ async def load_unit_lines(session: AsyncSession, document: Document) -> list[Uni
             table_id=unit.table_id, row_index=unit.row_index, col_index=block.col_index,
         ))
     return lines
+
+
+def _order_pair_cards(units: Sequence[Unit], pair_of: dict[int, int]) -> list[Unit]:
+    """원문 순서에서 같은 짝이 끊김 없이 이어진 줄(용지의 한 카드)만 그 카드 안 순서로 — 떨어진 구성원은 제자리다."""
+    ordered: list[Unit] = []
+    start = 0
+    while start < len(units):
+        pair_id = pair_of.get(units[start].id)
+        end = start + 1
+        while pair_id is not None and end < len(units) and pair_of.get(units[end].id) == pair_id:
+            end += 1
+        ordered += order_pair_card(units[start:end], lambda unit: unit.pair_seq)
+        start = end
+    return ordered
