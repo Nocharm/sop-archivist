@@ -835,7 +835,11 @@ await runStep("assign: attach and detach a caption from Shape", {}, async ({ pag
   check("right-click on the sentence offers Use as caption of the table below", (await page.locator('[data-testid="assign-ctx-caption_attach_next"]').innerText()).includes("Use as caption of the table below"));
   await page.keyboard.press("Escape");
   if (figure) {
+    // 삭제로 확정한 그림(합성 묶음의 모양 그림)은 흐린 한 줄로 접혀 있다(설계 2026-11-20 D6) - 그 줄을 눌러 펼친 뒤 그림 조각을 우클릭한다
+    const figureFold = page.locator(`[data-testid="assign-paper-deleted-u${figure.id}"]`);
+    if ((await figureFold.count()) > 0) await figureFold.click();
     const figurePiece = page.locator(`[data-testid="assign-paper-piece-${figure.id}"]`).first();
+    await figurePiece.waitFor({ timeout: T });
     await figurePiece.scrollIntoViewIfNeeded();
     await figurePiece.click({ button: "right" });
     await wait(page, "assign-ctx-menu");
