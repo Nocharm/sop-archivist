@@ -2772,10 +2772,11 @@ await runStep("assign: a status filter folds the Old paper", {}, async ({ page, 
   await page.locator('[data-testid="toast-ok"]').first().waitFor({ timeout: T });
   // 확정하면 다음 미확정 줄(다른 문서일 수 있다)로 간다 - K로 돌아오면 목록에 그대로 있고 제 모양이다
   await page.waitForFunction((id) => document.querySelector('[data-pane="old"] .strip[data-sel]')?.getAttribute("data-strip-unit") !== id, pickedId, { timeout: T });
+  // K는 박스 하나씩 움직인다(시안 1 스텝 3) - 확정한 줄이 짝이면 그 줄의 다른 박스가 먼저 골라지고 pickedId는 곁에 딸린 표시다
   await page.keyboard.press("k");
-  await page.locator(`${old} .strip[data-sel][data-strip-unit="${pickedId}"]`).waitFor({ timeout: T });
+  await page.locator(`${old} .strip:is([data-sel], [data-mate])[data-strip-unit="${pickedId}"]`).waitFor({ timeout: T });
   await page.waitForFunction(() => document.querySelector('[data-testid="assign-row-status"]')?.textContent?.includes("Confirmed"), null, { timeout: T });
-  check("a confirmed matched row stays in the list in full, not folded", (await countOf(`${old} .strip-row:not([data-peek]) > .strip[data-sel][data-strip-unit="${pickedId}"]`)) === 1);
+  check("a confirmed matched row stays in the list in full, not folded", (await countOf(`${old} .strip-row:not([data-peek]) > .strip:is([data-sel], [data-mate])[data-strip-unit="${pickedId}"]`)) === 1);
   // New 출처 칩으로 필터 밖(접힌) Unit에 가면 저절로 엿보기로 펼쳐 보인다 - 고른 줄을 따라 New 문서가 바뀌므로 다 받은 뒤에 칩을 찾는다
   await page.waitForLoadState("networkidle");
   await page.waitForTimeout(500);
@@ -4138,7 +4139,11 @@ await runStep("assign: counterpart table - each table unwraps on its own with no
   // 오른쪽 칸에는 두 줄이 같이 뜬다
   const piece = (id) => page.locator(`[data-testid="assign-paper-piece-${id}"]`);
   const hintOf = (id) => page.locator(`[data-testid="assign-paper-pair-hint-${id}"]`);
-  await piece(english.id).click();
+  // 벗기기의 풀기 전환이 끝나기 전 누름은 처리 중이라 묻힌다(처리 중인 박스만 잠그기는 시안 1 스텝 4) - 골라질 때까지 다시 누른다
+  for (let tries = 0; tries < 20 && (await piece(english.id).getAttribute("data-sel")) === null; tries += 1) {
+    await piece(english.id).click();
+    await page.waitForTimeout(250);
+  }
   await piece(english.id).and(page.locator("[data-sel]")).waitFor({ timeout: T });
   check("clicking the lower box of a far pair picks that box, the upper one is marked as its mate", (await piece(korean.id).getAttribute("data-sel")) === null && (await piece(korean.id).getAttribute("data-mate")) === "");
   check("the right panel shows both lines", (await getText(page, "assign-shape")).includes("Check the detergent"), await getText(page, "assign-shape"));
