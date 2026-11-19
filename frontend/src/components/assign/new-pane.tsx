@@ -25,7 +25,7 @@ import { LangToken } from "@/components/paper/lang-token";
 import { DeviationMark, EmptyRequiredMark } from "@/components/tobe/deviation-mark";
 import { StripLead, STRIP_LEAD_EXTRA } from "@/components/paper/strip-lead";
 import { EmptyState } from "@/components/ui/empty-state";
-import { Truncate } from "@/components/ui/motion";
+import { Collapse, Truncate } from "@/components/ui/motion";
 import { Select, type SelectOption } from "@/components/ui/select";
 import { Tooltip } from "@/components/ui/tooltip";
 import { ViewSwitch } from "@/components/ui/view-switch";
@@ -49,6 +49,8 @@ export interface NewPlaceSpots {
 }
 
 interface NewPaneProps {
+  /** 누른 문단 안에 펼쳐 넣을 단추 줄(그 자리 메뉴) - targetId 줄의 글 아래에 미끄러지듯 열린다 */
+  lineActions?: { targetId: number; node: ReactNode } | null;
   /** 그림 이미지를 받을 묶음 */
   bundleId: number;
   docOptions: SelectOption<string>[];
@@ -434,6 +436,11 @@ export function NewPane(props: NewPaneProps) {
             )}
             <LangToken lang={row.lang} className="strip-lang" testId={`assign-new-lang-${row.target_id}`} />
             {cutAt !== null && <div className="new-cut-pop">{props.cutPop}</div>}
+            {props.lineActions?.targetId === row.target_id && (
+              <Collapse open appear className="strip-acts new-line-acts">
+                {props.lineActions.node}
+              </Collapse>
+            )}
           </div>
         </div>
       </>

@@ -1,5 +1,6 @@
 // Assign 놓인 New 문장 메뉴 - 아직 안 쓴 문서에 놓인 문장을 누르면 그 줄 오른쪽 아래에 뜨는 작은 메뉴("이 문장에 잇기", 자리를 고를 수 있으면 "이 줄 다음에 놓기").
 // 고르기만 하고 저장하지 않는다(결정 칸의 Confirm). 바깥을 누르거나 Esc를 누르면 닫히고, 누른 줄을 따라 스크롤에 함께 움직인다.
+// inline이면 떠 있지 않고 누른 문장 상자 안 아래에 단추 줄로 들어간다(NewPane이 펼치며 넣는다, 사용자 결정 2026-11-19).
 "use client";
 
 import { useEffect, useEffectEvent, useRef, useState, type KeyboardEvent } from "react";
@@ -22,11 +23,13 @@ interface JoinMenuProps {
   canPlaceAfter: boolean;
   onPick: (item: JoinMenuItem) => void;
   onClose: () => void;
+  /** 누른 문장 상자 안에 단추 줄로 - 자리를 재지 않고 문서 흐름에 놓인다 */
+  inline?: boolean;
 }
 
 const ITEM_SELECTOR = "[role=menuitem]:not(:disabled)";
 
-export function JoinMenu({ anchor, offset, lineCount, canPlaceAfter, onPick, onClose }: JoinMenuProps) {
+export function JoinMenu({ anchor, offset, lineCount, canPlaceAfter, onPick, onClose, inline = false }: JoinMenuProps) {
   const { t } = useI18n();
   const menuRef = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
@@ -40,6 +43,7 @@ export function JoinMenu({ anchor, offset, lineCount, canPlaceAfter, onPick, onC
       requestClose();
       return;
     }
+    if (inline) return; // 문장 상자 안에 있어 스스로 따라 움직인다
     const rect = anchor.getBoundingClientRect();
     if (rect.bottom < 0 || rect.top > window.innerHeight) {
       setPos(null);
@@ -59,8 +63,16 @@ export function JoinMenu({ anchor, offset, lineCount, canPlaceAfter, onPick, onC
       frame = requestAnimationFrame(() => measure());
     };
     menuEl?.querySelector<HTMLElement>(ITEM_SELECTOR)?.focus({ preventScroll: true });
+    let alive = true;
+    // 문단 안 단추 줄(inline)은 누른 순간 접으면 그 아래 줄이 올라와 누른 것이 다른 곳에 닿는다 - 클릭이 끝난 뒤에 닫는다.
+    // 그 클릭이 다른 문단을 골라 새 메뉴를 열었으면 이 메뉴는 이미 떼어져(alive=false) 새 메뉴를 닫지 않는다
+    const closeAfterClick = () => queueMicrotask(() => {
+      if (alive) requestClose();
+    });
     const handleDown = (event: PointerEvent) => {
-      if (!menuEl?.contains(event.target as Node)) requestClose();
+      if (menuEl?.contains(event.target as Node)) return;
+      if (inline) document.addEventListener("click", closeAfterClick, { once: true });
+      else requestClose();
     };
     const handleKey = (event: globalThis.KeyboardEvent) => {
       if (event.key !== "Escape" || !isTopEscLayer(layer)) return;
@@ -76,20 +88,23 @@ export function JoinMenu({ anchor, offset, lineCount, canPlaceAfter, onPick, onC
       popEscLayer(layer);
       window.removeEventListener("scroll", schedule, true);
       window.removeEventListener("resize", schedule);
+      alive = false;
       document.removeEventListener("pointerdown", handleDown);
+      document.removeEventListener("click", closeAfterClick);
       window.removeEventListener("keydown", handleKey, true);
       // 메뉴 안에 있던 포커스는 누른 줄의 단추로 돌린다 - 키보드 사용자가 제자리에서 이어 가게(고르면 페이지가 Confirm으로 옮긴다)
       const active = document.activeElement;
       if (!active || active === document.body || menuEl?.contains(active)) anchor.querySelector<HTMLElement>("button")?.focus({ preventScroll: true });
     };
-  }, [anchor]);
+  }, [anchor, inline]);
 
   function handleKeyDown(event: KeyboardEvent<HTMLDivElement>) {
     const list = Array.from(menuRef.current?.querySelectorAll<HTMLElement>(ITEM_SELECTOR) ?? []);
     const index = list.indexOf(document.activeElement as HTMLElement);
     let next: number | null = null;
-    if (event.key === "ArrowDown") next = (index + 1) % list.length;
-    else if (event.key === "ArrowUp") next = (index - 1 + list.length) % list.length;
+    // 단추 줄(inline)은 옆으로 놓여 ←→도 받는다
+    if (event.key === "ArrowDown" || event.key === "ArrowRight") next = (index + 1) % list.length;
+    else if (event.key === "ArrowUp" || event.key === "ArrowLeft") next = (index - 1 + list.length) % list.length;
     else if (event.key === "Tab") {
       onClose();
       return;
@@ -101,27 +116,36 @@ export function JoinMenu({ anchor, offset, lineCount, canPlaceAfter, onPick, onC
     list[next]?.focus();
   }
 
-  return createPortal(
-    <div
-      ref={menuRef}
-      role="menu"
-      aria-label={t("assign.joinMenu.label")}
-      data-testid="assign-join-menu"
-      className="join-menu"
-      style={pos ? { top: pos.top, left: pos.left } : { top: 0, left: 0, visibility: "hidden" }}
-      onKeyDown={handleKeyDown}
-    >
-      <button type="button" role="menuitem" className="join-menu-item" data-testid="assign-join-menu-join" onClick={() => onPick("join")}>
+  const itemClass = inline ? "strip-act join-act" : "join-menu-item";
+  const items = (
+    <>
+      <button type="button" role="menuitem" className={itemClass} data-tone={inline ? "primary" : undefined} data-testid="assign-join-menu-join" onClick={() => onPick("join")}>
         <span>{t("assign.joinMenu.join")}</span>
         <em>{t("assign.joinMenu.joinNote", { n: lineCount })}</em>
       </button>
       {canPlaceAfter && (
-        <button type="button" role="menuitem" className="join-menu-item" data-testid="assign-join-menu-after" onClick={() => onPick("after")}>
+        <button type="button" role="menuitem" className={itemClass} data-tone={inline ? "quiet" : undefined} data-testid="assign-join-menu-after" onClick={() => onPick("after")}>
           <span>{t("assign.joinMenu.after")}</span>
           <em>{t("assign.joinMenu.afterNote")}</em>
         </button>
       )}
-    </div>,
-    document.body,
+    </>
   );
+  const menu = (
+    <div
+      ref={menuRef}
+      role="menu"
+      aria-label={t("assign.joinMenu.label")}
+      data-inline={inline ? "" : undefined}
+      data-testid="assign-join-menu"
+      className={inline ? "line-acts" : "join-menu"}
+      style={inline ? undefined : pos ? { top: pos.top, left: pos.left } : { top: 0, left: 0, visibility: "hidden" }}
+      onKeyDown={handleKeyDown}
+      // 문장 상자 안 - 단추 줄을 눌러도 그 문장을 다시 누른 것으로 치지 않게
+      onClick={inline ? (event) => event.stopPropagation() : undefined}
+    >
+      {inline ? <span className="line-acts-row">{items}</span> : items}
+    </div>
+  );
+  return inline ? menu : createPortal(menu, document.body);
 }

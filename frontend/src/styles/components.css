@@ -1834,6 +1834,17 @@
   .link-menu-note { display: inline-flex; align-items: center; gap: 5px; padding: 0 2px; font-size: var(--fs-micro); font-weight: 600; color: var(--st-hold-ink); }
   .link-menu-note::before, .dest-card-pending::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
   .link-menu .link-menu-unlink { color: var(--danger-ink); }
+  /* 그 자리 메뉴를 누른 New 문단 안에 펼친 것 - 문단 상자가 아래로 늘며(.fold) 글 아래에 단추 줄이 드러난다. 따로 뜨는 상자 대신 눈이 누른 문단에 머문다(사용자 결정 2026-11-19).
+     줄 전체를 덮은 누름 자리(.new-hit::after) 위에 둔다 - 아래에 깔리면 단추가 눌리지 않는다 */
+  .new-line-acts { position: relative; z-index: 2; }
+  .new-line-acts > .fold-inner { margin: 0 -2px; }
+  .line-acts { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin-top: 8px; padding: 8px 2px 2px; border-top: 1px dashed var(--line-2); font-family: var(--font-ui); cursor: default; }
+  .line-acts-row { display: inline-flex; flex-wrap: wrap; gap: 6px; }
+  .line-acts .strip-act[data-tone="unlink"] { color: var(--danger-ink); }
+  .line-acts .strip-act[data-tone="unlink"]:not(:disabled):hover { border-color: var(--danger-ink); background: var(--danger-tint); }
+  /* 잇기 · 다음에 놓기 - 이름 아래 한 줄 설명이 붙어 두 줄 단추다 */
+  .line-acts .join-act { height: auto; padding: 5px 9px; display: inline-grid; gap: 2px; justify-items: start; text-align: left; line-height: 1.2; }
+  .line-acts .join-act em { font-style: normal; font-weight: 400; font-size: var(--fs-micro); opacity: .8; }
   /* 놓인 New 문장 메뉴 - 항목마다 이름 한 줄 + 작은 설명. 바로 눌러야 하는 메뉴라 .link-menu처럼 늦게 보이지 않는다 */
   .join-menu { position: fixed; z-index: 40; display: grid; gap: 2px; min-width: 232px; padding: 4px; border: 1px solid var(--line-2); border-radius: var(--r-3); background: var(--raised); box-shadow: var(--shadow-2); font-family: var(--font-ui); animation: cut-pop-in-fixed 160ms cubic-bezier(.16, 1, .3, 1) both; }
   .join-menu-item { display: grid; gap: 1px; padding: 6px 8px; border-radius: var(--r-2); text-align: left; font-size: var(--fs-body); font-weight: 600; color: var(--ink); cursor: pointer; }

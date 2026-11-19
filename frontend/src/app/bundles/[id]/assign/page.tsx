@@ -4158,6 +4158,33 @@ export default function AssignPage() {
     }
   }
 
+  // 그 자리 메뉴를 New 칸의 문단을 눌러 열었으면 떠 있지 않고 그 문단 상자 안에 단추 줄로 펼친다 - 눈이 누른 문단에 머문다(사용자 결정 2026-11-19).
+  // 추천 카드·Old 조각·끌어 놓은 초안에서 연 메뉴는 그대로 떠 있다
+  const readInlineTarget = (anchor: HTMLElement): number | null => (anchor.matches('[data-pane="new"] .new-line') ? Number(anchor.dataset.target) : null);
+  const menuLineId = menu && menuItems.length > 0 ? readInlineTarget(menu.anchor) : null;
+  const joinLineId = joinMenu && composedDoc ? readInlineTarget(joinMenu.anchor) : null;
+  function renderLinkMenu(inline: boolean): ReactNode {
+    if (!menu || menuItems.length === 0) return null;
+    const unitIds = rowMap.get(menu.rowKey)?.unitIds ?? [];
+    return <LinkMenu key={menu.seq} anchor={menu.anchor} cover={readMenuCover(menu.anchor, unitIds)} offset={menu.offset} lineUnits={unitIds} items={menuItems} isUnsaved={menuItems.includes("cancel")} confirmBlock={confirmBlockKey ? t(confirmBlockKey) : null} busy={busy} onAction={runMenu} onClose={() => setMenu(null)} inline={inline} />;
+  }
+  function renderJoinMenu(inline: boolean): ReactNode {
+    if (!joinMenu || !composedDoc) return null;
+    const sources = composedDoc.sections.flatMap((section) => section.items).find((item) => item.target_id === joinMenu.targetId)?.source_unit_ids ?? [];
+    return (
+      <JoinMenu
+        key={joinMenu.seq}
+        anchor={joinMenu.anchor}
+        offset={joinMenu.offset}
+        lineCount={countJoinedLines(sources, joinMenu.rowKey, (unitId) => rowOfUnit.get(unitId))}
+        canPlaceAfter={readJoinAfter(joinMenu.targetId).kind === "gap"}
+        onPick={pickJoinMenu}
+        onClose={() => setJoinMenu(null)}
+        inline={inline}
+      />
+    );
+  }
+
   const error = docs.error ?? views.error ?? units.error ?? tobe.error ?? writtenList.error;
   const reloadAll = () => {
     for (const source of [docs, views, units, tobe, writtenList]) if (source.error !== null) source.reload();
@@ -4746,6 +4773,7 @@ export default function AssignPage() {
               ) : (
                 <>
                   <NewPane
+                    lineActions={menuLineId !== null ? { targetId: menuLineId, node: renderLinkMenu(true) } : joinLineId !== null ? { targetId: joinLineId, node: renderJoinMenu(true) } : null}
                     bundleId={bundleId}
                     docOptions={newDocOptions}
                     docId={String(newDocId)}
@@ -4829,20 +4857,8 @@ export default function AssignPage() {
           <AssignHelp />
         </aside>
       </div>
-      {joinMenu && composedDoc && (
-        <JoinMenu
-          key={joinMenu.seq}
-          anchor={joinMenu.anchor}
-          offset={joinMenu.offset}
-          lineCount={countJoinedLines(composedDoc.sections.flatMap((section) => section.items).find((item) => item.target_id === joinMenu.targetId)?.source_unit_ids ?? [], joinMenu.rowKey, (unitId) => rowOfUnit.get(unitId))}
-          canPlaceAfter={readJoinAfter(joinMenu.targetId).kind === "gap"}
-          onPick={pickJoinMenu}
-          onClose={() => setJoinMenu(null)}
-        />
-      )}
-      {menu && menuItems.length > 0 && (
-        <LinkMenu key={menu.seq} anchor={menu.anchor} cover={readMenuCover(menu.anchor, rowMap.get(menu.rowKey)?.unitIds ?? [])} offset={menu.offset} lineUnits={rowMap.get(menu.rowKey)?.unitIds ?? []} items={menuItems} isUnsaved={menuItems.includes("cancel")} confirmBlock={confirmBlockKey ? t(confirmBlockKey) : null} busy={busy} onAction={runMenu} onClose={() => setMenu(null)} />
-      )}
+      {joinLineId === null && renderJoinMenu(false)}
+      {menuLineId === null && renderLinkMenu(false)}
       {ctxMenu && ctxGroups && (
         <AssignContextMenu
           key={ctxMenu.seq}

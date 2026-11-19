@@ -1916,18 +1916,21 @@ await runStep("assign: KO/EN pair - recommendation shows picked, in-place menu c
   const linkedLines = [found.targetId, found.partnerId].filter((id) => id !== null);
   for (const id of linkedLines) await page.locator(`[data-testid="assign-new-${id}"][data-state="picked"]`).waitFor({ timeout: T });
   check("after reload the row is confirmed and its New sentences are shown as its place", true);
-  // 이은 New 문장을 마우스로 누르면(글 오른쪽 끝) 끊기 메뉴가 누른 자리가 아니라 그 선의 New 쪽 끝(문장 왼쪽 테두리) 옆에 뜬다
+  // 이은 New 문장을 마우스로 누르면(글 오른쪽 끝) 끊기 메뉴가 떠 있지 않고 그 문장 상자 안 아래에 단추 줄로 펼쳐진다(사용자 결정 2026-11-19 - 예전에는 선의 New 쪽 끝 옆에 떴다)
   const pickBtn = page.locator(`[data-testid="assign-new-pick-${found.targetId}"]`);
   const pickBox = await pickBtn.boundingBox();
   await pickBtn.click({ position: { x: pickBox.width - 6, y: Math.min(8, pickBox.height / 2) } });
   await page.locator('[data-testid="assign-link-menu-unlink"]').waitFor({ state: "visible", timeout: T });
   await page.waitForFunction(() => document.activeElement?.closest('[data-testid="assign-link-menu"]') !== null, null, { timeout: T });
   const placed = await page.evaluate((id) => {
-    const line = document.querySelector(`.new-line[data-target="${id}"]`).getBoundingClientRect();
-    const menu = document.querySelector('[data-testid="assign-link-menu"]').getBoundingClientRect();
-    return { lineLeft: line.left, lineRight: line.right, menuLeft: menu.left, drawn: document.querySelector(`[data-testid="assign-link-lines"] [data-link$=":${id}"]`) !== null };
+    const lineEl = document.querySelector(`.new-line[data-target="${id}"]`);
+    const menuEl = document.querySelector('[data-testid="assign-link-menu"]');
+    const line = lineEl.getBoundingClientRect();
+    const menu = menuEl.getBoundingClientRect();
+    const text = lineEl.querySelector(".new-text").getBoundingClientRect();
+    return { inside: lineEl.contains(menuEl), below: menu.top >= text.bottom - 1, within: menu.left >= line.left - 1 && menu.right <= line.right + 1, drawn: document.querySelector(`[data-testid="assign-link-lines"] [data-link$=":${id}"]`) !== null };
   }, found.targetId);
-  check("the unlink menu sits at the New end of the drawn line", placed.drawn && Math.abs(placed.menuLeft - placed.lineLeft) <= 1, JSON.stringify(placed));
+  check("the unlink menu opens inside the clicked New sentence, under its text", placed.drawn && placed.inside && placed.below && placed.within, JSON.stringify(placed));
   await page.keyboard.press("Escape");
   await page.locator('[data-testid="assign-link-menu"]').waitFor({ state: "detached", timeout: T });
   // 뒷정리 - 그 저장을 저장한 화면의 되돌리기 세션으로 거둔다(새로 고침 뒤라 화면의 Undo로는 닿지 않는다). 배정 지우기는 New 문장의 다른 출처를 보류로 돌릴 수 있어 쓰지 않는다
@@ -3051,7 +3054,8 @@ await runStep("assign: shape a written New sentence in place, in the two-documen
   await page.locator('[data-testid="assign-old"] [data-testid^="assign-paper-unit-"]').first().click();
   await wait(page, "assign-decide");
   await page.locator(`[data-testid="assign-new-pick-${again.target_id}"]`).click();
-  await page.locator(".link-menu").waitFor({ timeout: T });
+  // 그 자리 메뉴는 이제 누른 New 문장 안에 펼쳐진다(.line-acts, 사용자 결정 2026-11-19) - 떠 있을 때의 클래스가 아니라 testid로 찾는다
+  await page.locator('[data-testid="assign-link-menu"]').waitFor({ timeout: T });
   check("with an Old row picked, clicking a New sentence still links", (await page.locator('[data-testid="assign-solo"]').count()) === 0);
   await page.keyboard.press("Escape");
 });
