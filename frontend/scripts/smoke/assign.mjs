@@ -3704,6 +3704,20 @@ await runStep("assign: number cell - a heading number sits in the cell, a fix re
   await page.locator('[data-testid="assign-paper-num-input"]').press("Escape");
   await page.locator('[data-testid="assign-paper-num-input"]').waitFor({ state: "detached", timeout: T });
   check("Escape closes the input without saving", (await readNumber(first.id)).value === first.number.value);
+  // 포커스가 입력 밖(따라 고치기 체크)에 있어도 Esc로 닫히고, 바깥을 눌러도 저장 없이 닫힌다
+  await page.locator(`[data-testid="assign-paper-num-${first.id}"]`).click();
+  await wait(page, "assign-paper-num-input");
+  await page.locator('[data-testid="assign-paper-num-follow"]').click();
+  await page.keyboard.press("Escape");
+  await page.locator('[data-testid="assign-paper-num-input"]').waitFor({ state: "detached", timeout: T });
+  check("Escape closes the number box with focus off the input", true);
+  await page.locator(`[data-testid="assign-paper-num-${first.id}"]`).click();
+  await wait(page, "assign-paper-num-input");
+  await page.locator('[data-testid="assign-paper-num-input"]').fill("6.");
+  const viewport = page.viewportSize();
+  await page.mouse.click(4, (viewport?.height ?? 800) - 4);
+  await page.locator('[data-testid="assign-paper-num-input"]').waitFor({ state: "detached", timeout: T });
+  check("a press outside closes the number box without saving", (await readNumber(first.id)).value === first.number.value);
   // 본문 줄의 타자 번호 - "↤"로 번호가 되고 Undo로 글로 돌아온다(그런 줄이 화면에 있을 때만)
   if (typed !== null) {
     const handle = page.locator(`[data-testid="assign-paper-num-typed-${typed.id}"]`);

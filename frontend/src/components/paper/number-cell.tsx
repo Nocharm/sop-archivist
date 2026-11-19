@@ -6,6 +6,7 @@ import { useEffect, useRef, type KeyboardEvent } from "react";
 
 import type { ViewNumber } from "@/lib/api-sop";
 import { useI18n } from "@/lib/i18n";
+import { useDismiss } from "@/lib/use-dismiss";
 import { MAX_NUMBER_CHARS, type NumberPreview } from "@/lib/number-model";
 import type { PairBracket } from "@/lib/strip-pill-model";
 
@@ -44,7 +45,10 @@ interface NumberCellProps {
 export function NumberCell({ width, bracket, tip, testId, unitId, number, isUnread, canEdit, busy, edit, followed, preview, onEditChange, onSave }: NumberCellProps) {
   const { t } = useI18n();
   const inputRef = useRef<HTMLInputElement>(null);
+  const cellRef = useRef<HTMLSpanElement>(null);
   const isEditing = edit !== null;
+  // 고치는 칸은 바깥을 누르거나 Esc(입력 밖에 포커스가 있어도)로 닫는다 - 저장하지 않고 닫는다
+  useDismiss(cellRef, isEditing, () => onEditChange(null));
   useEffect(() => {
     if (!isEditing) return;
     inputRef.current?.focus();
@@ -111,7 +115,7 @@ export function NumberCell({ width, bracket, tip, testId, unitId, number, isUnre
   }
 
   return (
-    <span className="strip-lead" style={base} data-bracket={bracket} data-dim={shown === null ? "" : undefined} data-num-open={isEditing ? "" : undefined} data-testid={`${testId}-lead-${unitId}`}>
+    <span ref={cellRef} className="strip-lead" style={base} data-bracket={bracket} data-dim={shown === null ? "" : undefined} data-num-open={isEditing ? "" : undefined} data-testid={`${testId}-lead-${unitId}`}>
       {tipAttr && <span className="sr-only">{tipAttr}</span>}
       {renderBody()}
       {edit && (
