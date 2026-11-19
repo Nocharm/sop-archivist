@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { OutputCItem } from "./api-sop";
 import { findDragBlock, findEnterRefusal, findDropSection, findDropSectionByKey, findLeaveRefusal, findLiveBlock, listDropRows, planCrossDrop, planDrop } from "./c-drop-model";
 import { previewEdit } from "./c-edit-model";
+import { getSectionDepths } from "./section-number";
 import { makeSectionOutline } from "./outline-fixture";
 
 function line(id: number, extra: Partial<OutputCItem> = {}): OutputCItem {
@@ -380,5 +381,62 @@ describe("planCrossDrop guards", () => {
     expect(planCrossDrop({ ...args, dest: { countsLines: true, items: dest.slice(0, 4), depths: [0, 0, 0, 0] }, rows: box([10, 11, 12]), pointerY: 500 }).beforeId).toBeNull();
     // 이어지지 않으면 안 그려진 첫 줄 앞 그대로
     expect(planCrossDrop({ ...args, dest: { countsLines: true, items: [line(10), line(11, { meaning_key: "old:k" }), line(12)], depths: [0, 0, 0] }, rows: box([10, 11]), pointerY: 500 }).beforeId).toBe(12);
+  });
+});
+
+describe("drop depth by the line's final style", () => {
+  const bullet = (id: number, extra: Partial<OutputCItem> = {}) => line(id, { number_style: "bullet", ...extra });
+  const block = (start: number, end: number, baseDepth = 0) => ({ start, end, baseDepth, isDepthLocked: false });
+  const sec = (key: string, number: string, items: OutputCItem[], defaultStyle: "numbered" | "bullet") => ({ ...makeSectionOutline({ counts_lines: true }), location_key: key, label: key, number, na_reason: null, heading_note: "", default_style: defaultStyle, items });
+  // 도착 칸: 번호 줄 넷(깊이 0 · 1 · 2 · 3) - 맨 끝에 놓는다
+  const deepNumbered = [line(10), line(11, { indent_level: 1 }), line(12, { indent_level: 2 }), line(13, { indent_level: 3 })];
+  const cross = (extra: Partial<Parameters<typeof planCrossDrop>[0]>) => planCrossDrop({ fromKey: "s5", toKey: "s6", source: { countsLines: true, items: [bullet(1)], depths: [0], block: block(0, 0) }, dest: { countsLines: true, items: deepNumbered, depths: [0, 1, 2, 3], defaultStyle: "numbered" }, rows: box([10, 11, 12, 13]), pointerY: 500, dx: 480, emptyTop: 0, ...extra });
+
+  it("keeps a bullet block to the bullet rule under a deep numbered line - no depth 4 for a bullet", () => {
+    // 번호 줄 13(깊이 3) 아래라도 도착 칸이 SOP 번호 칸이면 글머리 기호가 번호로 바뀌어 번호 규칙이다 - WI 단계에서 글머리 기호로 남는 경우를 따로 본다
+    const toStep = (items: OutputCItem[], depths: number[]) => cross({ toKey: "step:1:instruction", dest: { countsLines: true, items, depths, defaultStyle: "numbered" }, rows: box(items.map((item) => item.target_id)) });
+    expect(toStep(deepNumbered, [0, 1, 2, 3]).depth).toBe(0);
+    expect(toStep([bullet(14), bullet(15, { indent_level: 1 })], [0, 1]).depth).toBe(2);
+    const mixedAbove = [...deepNumbered, bullet(14)];
+    expect(toStep(mixedAbove, [0, 1, 2, 3, 0])).toMatchObject({ depth: 1, edit: { depths: [1] } });
+  });
+  it("still lets a numbered line go as deep as the numbered rule allows", () => {
+    expect(cross({ source: { countsLines: true, items: [line(1)], depths: [0], block: block(0, 0) } }).depth).toBe(4);
+  });
+  it("applies the bullet rule to a numbered line that a bullet-default section restyles", () => {
+    const numbered = { countsLines: true, items: [line(1)], depths: [0], block: block(0, 0) };
+    expect(cross({ source: numbered, dest: { countsLines: true, items: deepNumbered, depths: [0, 1, 2, 3], defaultStyle: "bullet" } }).depth).toBe(0);
+    const bullets = [bullet(14), bullet(15, { indent_level: 1 })];
+    expect(cross({ source: numbered, dest: { countsLines: true, items: bullets, depths: [0, 1], defaultStyle: "bullet" }, rows: box([14, 15]) })).toMatchObject({ depth: 2, edit: { depths: [2] } });
+    // 깊은 번호 줄 덩어리는 글머리 기호가 되며 한 단씩 다시 눌린다(깊이 [0, 3] → [0, 1])
+    const deepBlock = { countsLines: true, items: [line(1), line(2, { indent_level: 3 })], depths: [0, 3], block: block(0, 1) };
+    expect(cross({ source: deepBlock, dest: { countsLines: true, items: [], depths: [], defaultStyle: "bullet" }, rows: [] })).toMatchObject({ depth: 0, edit: { depths: [0, 1] } });
+  });
+  it("agrees with previewEdit: the stored depth is the one the screen shows after the drop", () => {
+    const show = (fromItems: OutputCItem[], fromDepths: number[], toStyle: "numbered" | "bullet") => {
+      const from = sec("s5", "5", fromItems, "numbered");
+      const to = sec("s6", "6", deepNumbered, toStyle);
+      const doc = { target_doc_id: 7, code: "C", title: "T", doc_type: "sop", parent_code: null, entrance: "assign", sections: [from, to] };
+      const plan = planCrossDrop({ fromKey: "s5", toKey: "s6", source: { countsLines: true, items: fromItems, depths: fromDepths, block: block(0, fromItems.length - 1) }, dest: { countsLines: true, items: deepNumbered, depths: getSectionDepths(to), defaultStyle: toStyle }, rows: box([10, 11, 12, 13]), pointerY: 500, dx: 480, emptyTop: 0 });
+      const placed = previewEdit(doc as never, plan.edit!)!.sections[1];
+      return { plan, placed, saved: plan.edit && "depths" in plan.edit ? plan.edit.depths : null };
+    };
+    // 번호 줄 덩어리를 글머리 기호 칸으로: 글머리 기호가 되고 0 · 1로 눌린 깊이를 저장한다 - 화면과 같다
+    const toBullet = show([line(1), line(2, { indent_level: 1 })], [0, 1], "bullet");
+    expect(toBullet.placed.items.slice(4).map((item) => item.number_style)).toEqual(["bullet", "bullet"]);
+    expect(getSectionDepths(toBullet.placed).slice(4)).toEqual(toBullet.saved);
+    // 번호 칸으로: 번호 규칙(깊이 4)
+    const toNumbered = show([line(1)], [0], "numbered");
+    expect(getSectionDepths(toNumbered.placed).slice(4)).toEqual([4]);
+    expect(toNumbered.saved).toEqual([4]);
+  });
+  it("moves a mixed block inside one section by each line's own rule - bullets under a numbered first line do not take the numbered delta", () => {
+    // 줄 1(번호, 깊이 3) 아래 글머리 기호 줄 2(0)·3(1)이 한 덩어리 - 줄 4(번호) · 줄 5(글머리 기호) · 줄 6(번호) 뒤로 오른쪽으로 끈다
+    const items = [line(1, { indent_level: 3 }), bullet(2), bullet(3, { indent_level: 1 }), line(4), bullet(5), line(6)];
+    const input = { locationKey: "s5", countsLines: true, items, depths: [3, 0, 1, 0, 0, 0], block: block(0, 2, 0), rows: box([4, 5, 6]), pointerY: 500, homeTop: 0 };
+    // 번호 줄은 번호 줄(6, 깊이 0) + 1 = 1, 글머리 기호 줄은 글머리 기호 줄(5, 깊이 0) + 1 = 1부터 [1, 2] (아래 줄은 단 차이를 지킨다)
+    expect(planDrop({ ...input, dx: 480 }).edit).toMatchObject({ targetIds: [1, 2, 3], beforeId: null, depths: [1, 1, 2] });
+    // 왼쪽으로: 번호 줄만 3 → 0, 글머리 기호 줄은 이미 0이라 그대로
+    expect(planDrop({ ...input, dx: -480 }).edit).toMatchObject({ depths: [0, 0, 1] });
   });
 });
