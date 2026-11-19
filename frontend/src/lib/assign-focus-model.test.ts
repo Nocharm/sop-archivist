@@ -9,6 +9,7 @@ import {
   listEditUnitIds,
   NO_FOCUS,
   NO_PLACE,
+  planReload,
   readEditKind,
   reduceFocus,
   type Focus,
@@ -186,5 +187,54 @@ describe("readEditKind · listEditUnitIds", () => {
     expect(listEditUnitIds({ type: "move_boundary", left_unit_id: 1, right_unit_id: 2, at: 3 })).toEqual([1, 2]);
     expect(listEditUnitIds({ type: "attach_caption", unit_id: 5, bundle_unit_id: 6 })).toEqual([5, 6]);
     expect(listEditUnitIds({ type: "carve", block_id: 1, start: 0, end: 3 })).toEqual([]);
+  });
+});
+
+describe("planReload (D2 table)", () => {
+  const ai = { aiOn: true };
+  const off = { aiOn: false };
+  it("an Old structure edit waits for that document's view and rows only, then refreshes the bundle, same-text candidates and AI split offers behind", () => {
+    expect(planReload({ kind: "old_edit", docId: 4, isInPlace: false, isReleased: false }, ai)).toEqual({
+      docs: [4], units: true, newDoc: null, written: false, tobe: false, identical: true, splitSuggestions: 4, bundle: true,
+    });
+    expect(planReload({ kind: "old_edit", docId: 4, isInPlace: false, isReleased: false }, off).splitSuggestions).toBeNull();
+  });
+  it("an in-place edit (language, reference, number) refreshes only the bundle behind", () => {
+    expect(planReload({ kind: "old_edit", docId: 4, isInPlace: true, isReleased: false }, ai)).toEqual({
+      docs: [4], units: true, newDoc: null, written: false, tobe: false, identical: false, splitSuggestions: null, bundle: true,
+    });
+  });
+  it("an edit that released decisions also refreshes To-Be, the New sentences and same-text candidates", () => {
+    const plan = planReload({ kind: "old_edit", docId: 4, isInPlace: false, isReleased: true }, ai);
+    expect(plan).toMatchObject({ docs: [4], units: true, tobe: true, written: true, identical: true, splitSuggestions: 4, bundle: true });
+    expect(planReload({ kind: "old_edit", docId: 4, isInPlace: true, isReleased: true }, ai)).toMatchObject({ tobe: true, written: true, identical: true, splitSuggestions: null });
+  });
+  it("pairing waits for the view and rows and refreshes the bundle", () => {
+    expect(planReload({ kind: "pair", docId: 4 }, ai)).toEqual({ docs: [4], units: true, newDoc: null, written: false, tobe: false, identical: false, splitSuggestions: null, bundle: true });
+  });
+  it("a caption reference change waits for the view only", () => {
+    expect(planReload({ kind: "caption_ref", docId: 4 }, ai)).toEqual({ docs: [4], units: false, newDoc: null, written: false, tobe: false, identical: false, splitSuggestions: null, bundle: false });
+  });
+  it("an applied AI split is an Old structure edit, a dismissed one reloads the view and the offers", () => {
+    expect(planReload({ kind: "split_suggestion", docId: 4, isApplied: true }, ai)).toEqual(planReload({ kind: "old_edit", docId: 4, isInPlace: false, isReleased: false }, ai));
+    expect(planReload({ kind: "split_suggestion", docId: 4, isApplied: false }, ai)).toEqual({ docs: [4], units: false, newDoc: null, written: false, tobe: false, identical: false, splitSuggestions: 4, bundle: false });
+  });
+  it("a New document edit waits for that document and the New sentences, To-Be behind", () => {
+    expect(planReload({ kind: "new_edit", docId: 9 }, ai)).toEqual({ docs: [], units: false, newDoc: 9, written: true, tobe: true, identical: false, splitSuggestions: null, bundle: false });
+  });
+  it("an edit Undo reloads every Old document when the response does not name one", () => {
+    expect(planReload({ kind: "edit_undo", docId: null }, ai)).toEqual({ docs: "all", units: true, newDoc: null, written: false, tobe: false, identical: true, splitSuggestions: null, bundle: true });
+    expect(planReload({ kind: "edit_undo", docId: 4 }, ai).docs).toEqual([4]);
+  });
+});
+
+describe("loaded with only the edited document", () => {
+  it("follows the merged box from that document's batch and leaves a focus in another document alone", () => {
+    // Join in doc 1 - the batch carries doc 1's view and rows together, so the follow lands in one event
+    const waiting = run(pick(unit(3)), start(job("a", { unitIds: [3, 4] })), succeed("a", 10));
+    expect(run(pick(unit(3)), start(job("a", { unitIds: [3, 4] })), succeed("a", 10), loaded([doc(1, 5, [10, 5])])).focus).toEqual(unit(10));
+    expect(reduceFocus(waiting, loaded([doc(2, 9, [7])])).focus).toEqual(unit(3));
+    // a box in doc 2 is not dropped by a batch that did not carry doc 2
+    expect(run(pick(unit(7, 2)), loaded([doc(1, 5, [10])])).focus).toEqual(unit(7, 2));
   });
 });

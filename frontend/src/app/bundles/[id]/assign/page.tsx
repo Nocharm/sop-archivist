@@ -61,7 +61,7 @@ import { useAssignPage, NO_NUMBERS, findDestinationDoc, readMenuCover, revealEle
 export default function AssignPage() {
   const state = useAssignPage();
   const {
-    t, bundleId, bundle, canEdit, docs, oldDocs, views, unitsKey, setUnitsKey, units, tobe, tobeData, writtenList, identical,
+    t, bundleId, bundle, canEdit, docs, oldDocs, docViews, unitsKey, reloadData, tobe, tobeData, writtenList, identical,
     readMarkStatus, suggestedTargetUnits, unitMap, written, writtenMap, rows, rowMap, rowOfUnit, options, ready, showSkeleton, unsourced,
     mode, setMode, foldOpen, setFoldOpen, foldMatch, clearRowPick, activeKey, row, solo, setSolo, isSolo, isNewEdit, tocOpen, setTocOpen,
     tocPick, checked, setChecked, newRemarks, setNewRemarks, menu, setMenu, joinMenu, setJoinMenu, ctxMenu, setCtxMenu, focusNew,
@@ -182,7 +182,8 @@ export default function AssignPage() {
     );
   }
   const reloadAll = () => {
-    for (const source of [docs, views, units, tobe, writtenList]) if (source.error !== null) source.reload();
+    for (const source of [docs, tobe, writtenList]) if (source.error !== null) source.reload();
+    if (docViews.error !== null) docViews.retry();
   };
   if (!ready) {
     return error !== null ? (
@@ -438,7 +439,7 @@ export default function AssignPage() {
           enabled={!isNewEdit && oldView !== null && rows.length > 0}
           docId={oldDocId}
           docCode={oldView?.document.doc_code ?? ""}
-          unitsKey={unitsKey}
+          reloadKey={`${unitsKey}:${oldView?.document.revision ?? ""}`}
           unitIds={row?.unitIds ?? []}
           picked={row && rowUnits.length > 0 ? { id: rowUnits[0].display_id, text: rowUnits.map((unit) => unit.text).join(" ") } : null}
           draft={spaceDraft}
@@ -787,7 +788,7 @@ export default function AssignPage() {
             setDrafts((prev) => Object.fromEntries(Object.entries(prev).filter(([key]) => scope.kind === "document" && rowMap.get(key)?.documentId !== scope.documentId)));
             setResetScope(null);
             setMenu(null);
-            setUnitsKey((key) => key + 1);
+            reloadData();
             void loadBundle(bundleId);
           }}
           onClose={() => setResetScope(null)}
@@ -870,13 +871,12 @@ export default function AssignPage() {
               setBulk(null);
               setChecked(new Set());
               // 한 번에 삭제·이동도 서버가 짝을 정리하지만 어느 짝인지 알려 주지 않는다 - 짝 모양·문서 revision을 다시 받는다
-              views.reload();
-              setUnitsKey((key) => key + 1);
+              reloadData(true);
               void loadBundle(bundleId);
             } catch (err) {
               showToast(humanizeApiError(err, t), "error");
               // revision이 낡아 거절됐을 수 있다 - 다시 불러와야 다음 시도가 같은 이유로 실패하지 않는다
-              setUnitsKey((key) => key + 1);
+              reloadData();
             }
           }}
         />
