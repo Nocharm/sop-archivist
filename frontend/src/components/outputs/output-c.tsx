@@ -700,7 +700,7 @@ export function OutputCView({ data, onMove, onIndent, onMark, onPlace, resetKey 
       fromKey: live.section.location_key,
       toKey: dest.location_key,
       source: { countsLines: live.section.counts_lines, items: live.section.items, depths: live.depths, block: live.block },
-      dest: { countsLines: dest.counts_lines, items: dest.items, depths: getSectionDepths(dest) },
+      dest: { countsLines: dest.counts_lines, items: dest.items, depths: getSectionDepths(dest), defaultStyle: dest.default_style },
       rows: listDropRows(dest.items, null, measureRows(target)),
       pointerY: point.y,
       dx: point.x - start.x,
