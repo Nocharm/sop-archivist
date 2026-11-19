@@ -89,7 +89,8 @@ async def list_guidelines(
     )
     by_key: dict[str, list[GuidelineVersion]] = {key: [] for key in GUIDELINE_KEYS}
     for row in rows:
-        by_key.setdefault(row.key, []).append(row)
+        if row.key in by_key:  # 걷은 키(prompt.match)의 옛 행은 표에 남지만 상세 조회가 404라 목록에도 싣지 않는다
+            by_key[row.key].append(row)
     return [
         GuidelineOut(
             key=key,

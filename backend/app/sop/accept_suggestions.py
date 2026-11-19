@@ -46,7 +46,7 @@ _DELETE_CANDIDATE = "delete_candidate"
 _ASSIGNED_SHAPE = "assigned"  # 분류가 고른 칸·WI 단계에 놓기
 # 받지 않는 까닭 — 확인 창이 따로 센다(§5 3-3). changed는 AI가 본 뒤 단위·새 문장·짝이 바뀌어 사람이 다시 볼 몫이고,
 # manual은 받으려면 사람이 더 적어야 하는 제안이다(두 New 문서에 걸친 나눔의 사유, 캡션 없는 표·그림의 캡션)
-SKIP_WARNINGS, SKIP_PROVISIONAL, SKIP_CHANGED, SKIP_MANUAL = "warnings", "provisional", "changed", "manual"
+SKIP_WARNINGS, SKIP_CHANGED, SKIP_MANUAL = "warnings", "changed", "manual"
 
 
 class AcceptItemOut(BaseModel):
@@ -62,7 +62,6 @@ class AcceptPreviewOut(BaseModel):
     document_id: int | None
     items: list[AcceptItemOut]
     excluded_warnings: int
-    excluded_provisional: int
     excluded_changed: int
     excluded_manual: int
 
@@ -202,12 +201,13 @@ def _needs_person(suggestion: AiSuggestion, loaded: _Loaded) -> bool:
 
 
 def find_skip_reason(suggestion: AiSuggestion, loaded: _Loaded) -> str | None:
-    """받지 않는 까닭, 받을 수 있으면 None — 경고·다듬기 대기(§5 3-3)와, 사람이 정했거나 원문·언어·짝이 AI가 본 것과 달라진 제안."""
+    """받지 않는 까닭, 받을 수 있으면 None — 경고(§5 3-3)와, 사람이 정했거나 원문·언어·짝이 AI가 본 것과 달라진 제안.
+
+    옛 묶기 제안에 남은 `provisional`(다듬기 대기)은 읽지 않는다 — 다듬기를 걷어 계획의 종류가 마지막이다(설계 2026-11-20-change-type-two D6).
+    """
     content = suggestion.content
     if suggestion.warnings:
         return SKIP_WARNINGS
-    if suggestion.kind == "match" and content.get("provisional"):
-        return SKIP_PROVISIONAL
     unit_ids, target_ids = content.get("unit_ids", ()), content.get("target_ids", ())
     is_fresh = all(_is_open_unit(unit_id, loaded) for unit_id in unit_ids) and all(
         _is_open_target(target_id, loaded) for target_id in target_ids
@@ -243,7 +243,7 @@ async def preview_accept(
         items.append(AcceptItemOut(suggestion_id=suggestion.id, shape=shape, is_delete=is_delete_shape(shape)))
     return AcceptPreviewOut(
         kind=kind, document_id=document_id, items=items, excluded_warnings=excluded[SKIP_WARNINGS],
-        excluded_provisional=excluded[SKIP_PROVISIONAL], excluded_changed=excluded[SKIP_CHANGED],
+        excluded_changed=excluded[SKIP_CHANGED],
         excluded_manual=excluded[SKIP_MANUAL],
     )
 

@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.clock import now
 from app.sop.ai.constants import MAX_JOBS_PER_REQUEST, MAX_SKIPPED_REPORTED
 from app.sop.ai.schemas import AiJobCounts, AiRequestOut, SkippedOut
-from app.sop.constants import AI_PRIORITY_USER
+from app.sop.constants import AI_PRIORITY_USER, AI_RETIRED_JOB_KINDS
 from app.sop.errors import raise_rule
 from app.sop.groups import iter_chunks
 from app.sop.models import AiJob, generate_request_id
@@ -173,10 +173,12 @@ async def cancel_active_jobs(session: AsyncSession, bundle_id: int, kind: str | 
 
 
 async def retry_failed_jobs(session: AsyncSession, bundle_id: int, kind: str | None = None) -> int:
-    """실패한 작업만 다시 쌓고 건수를 돌려준다 — 낡음·취소는 사람이 새로 요청한다."""
+    """실패한 작업만 다시 쌓고 건수를 돌려준다 — 낡음·취소는 사람이 새로 요청한다. 걷은 종류의 옛 실패는 돌 핸들러가 없어 그대로 둔다."""
     result = await session.execute(
         update(AiJob)
-        .where(*_build_job_filter(bundle_id, kind), AiJob.status == "failed")
+        .where(
+            *_build_job_filter(bundle_id, kind), AiJob.status == "failed", AiJob.kind.not_in(AI_RETIRED_JOB_KINDS)
+        )
         .values(status="queued", attempts=0, error="", started_at=None, finished_at=None)
         .execution_options(synchronize_session=False)
     )

@@ -38,7 +38,6 @@ _Place = tuple[str, str | None, int | None, str | None]  # (새 문서 번호, �
 
 _DELETE_KEY = "delete"  # 분류 후보 목록 끝에 늘 붙는 삭제 후보의 키
 _ANSWER_KINDS = ("table", "figure")  # 기대 정답에서 `kind`로 찾는 단위 종류 — 나머지는 글 단위로 찾는다
-_REPLY_CHANGE_TYPES = ("as_is", "rewritten")  # LLM이 낼 수 있는 종류 — 나눔·합침은 서버가 구조로 정한다
 _REPLY_RULE_IDS = ["R01"]  # 규칙 문서에 있는 ID — 없는 ID는 서버가 경고를 남긴다
 _ANSWER_REASON = "합성: 기대 정답으로 답한 가짜 AI 제안이다."
 # 정답 임베딩의 차원 — 해시 바이트 32개를 다 쓴다. 8차원이면 정답이 아닌 글끼리도 코사인이 짝 임계값(0.75)을 넘어,
@@ -186,8 +185,7 @@ class SyntheticAnswers:
         return vector_for(self._anchors.get(text.partition("\n")[0], text), _ANSWER_VECTOR_DIM)
 
     def chat(self, data: dict) -> str:
-        reply = {"classify": self._answer_classify, "match": self._answer_match}[data["task"]](data)
-        return json.dumps(reply, ensure_ascii=False)
+        return json.dumps(self._answer_classify(data), ensure_ascii=False)
 
     def _find_answer(self, unit: dict) -> dict:
         """단위의 정답 — 같은 글이 되풀이되면(같은 문장 반복) 처음 본 순서가 몇 번째인지다."""
@@ -234,14 +232,4 @@ class SyntheticAnswers:
             "rule_ids": _REPLY_RULE_IDS,
             "evidence": [{"unit_id": unit["id"], "quote": unit["text"]} for unit in data["units"] if unit["text"]],
             "rewrites": rewrites,
-        }
-
-    def _answer_match(self, data: dict) -> dict:
-        """문장 그룹의 변경 종류 — 나눔은 구조에서 나와 응답 값이 쓰이지 않는다. 입구 2 옛 글은 합성 자료에서 되풀이되지 않는다."""
-        answer = self._answers[(None, data["old"][0]["text"], 1)]
-        change_type = answer["targets"][0]["change_type"]
-        return {
-            "change_type": change_type if change_type in _REPLY_CHANGE_TYPES else "rewritten",
-            "reason": _ANSWER_REASON,
-            "rule_ids": _REPLY_RULE_IDS,
         }

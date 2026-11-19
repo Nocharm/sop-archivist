@@ -137,7 +137,7 @@ def request_pair(
 
 
 def run_plan() -> None:
-    """맨 앞 작업 하나만 돌린다 — 계획이 쌓은 변경 종류 작업은 큐에 남겨 그대로 본다."""
+    """맨 앞 작업 하나만 돌린다 — 계획 뒤에 줄 선 작업(분류 등)은 큐에 남겨 그대로 본다."""
 
     async def _run() -> None:
         job_id = await claim_next_job()
@@ -262,7 +262,6 @@ def attach_new_target_suggestion(bundle_id: int, target_doc_id: int) -> int:
         content = {
             "unit_ids": [], "target_ids": [target.id], "shape": "new", "change_type": "new", "links": [],
             "target_change_types": {str(target.id): "new"}, "reason": "", "rule_ids": [], "retrieval": "embedding",
-            "provisional": False,
         }
         document_id = await session.scalar(
             select(Extraction.document_id).join(Unit, Unit.extraction_id == Extraction.id).where(Unit.id == target.new_unit_id)

@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 
 from app.sop.ai.constants import MATCH_TEXT_THRESHOLD
-from app.sop.ai.matching import MatchGroup, MatchItem, build_text_scores, is_spacing_change, propose_groups
+from app.sop.ai.matching import MatchGroup, MatchItem, build_text_scores, propose_groups
 from app.sop.ai.similarity import text_similarity
 from tests.ai_helpers import record_bigram_counts
 
@@ -281,15 +281,3 @@ def test_text_scores_equal_text_similarity_on_every_pair() -> None:
 
 def test_text_scores_of_an_empty_side_are_an_empty_matrix() -> None:
     assert build_text_scores([], [item(10)]).shape == (0, 1)
-
-
-@pytest.mark.parametrize(("old", "new", "expected"), [
-    ("사용 전에 밸브상태를 확인한다.", "사용 전에 밸브 상태를 확인한다.", True),  # 띄어쓰기만
-    ("사용 전에 밸브 상태를 확인한다.", "사용 전에 밸브 상태를 확인한다.", False),  # 같은 글은 여기서 다루지 않는다
-    ("사용 전에 밸브 상태를 확인한다.", "사용 후에 밸브 상태를 확인한다.", False),  # 한 글자가 뜻을 뒤집는다
-    ("온도는 30℃ 이상으로 둔다.", "온도는 30℃ 이하로 둔다.", False),
-    ("사용 전에 밸브 상태를 확인한다.", "사용 전에 밸브 상태를 확인하여야 한다.", False),  # 어미 — LLM에 묻는다
-    ("시료 1 0개를 꺼낸다.", "시료 10개를 꺼낸다.", False),  # 빈 글자를 걷으면 같지만 숫자 검사가 다르다
-])
-def test_is_spacing_change(old: str, new: str, expected: bool) -> None:
-    assert is_spacing_change(old, new) is expected
