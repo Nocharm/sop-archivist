@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **SOP Archivist — SOP Restructuring T/F가 쓰는 사내 AI 에이전트 웹 서비스** (FastAPI + Next.js, 사내 서버에 docker compose로 배포). 옛 SOP 묶음을 새 SOP·WI 구조로 다시 짜는 일(문서 쪼개기 → 배정·고쳐 쓰기 → 결과물 A·B·C·Excel → 검토)을 돕는다. **제품 명세: [`docs/superpowers/specs/2026-11-05-sop-restructuring-e2e-design.md`](docs/superpowers/specs/2026-11-05-sop-restructuring-e2e-design.md)**(판단 기준 `docs/domain/`), 기반 명세 `docs/superpowers/specs/2026-11-04-sop-archivist-baseline-design.md`, 프런트와 맞춘 API 계약은 `docs/superpowers/plans/2026-11-06-sop-restructuring-plan2-ai.md`의 "API 계약" 블록, 프런트 디자인 기초 `frontend/docs/design/2026-11-07-frontend-design-foundations.md`.
 
-> 상태: **v1.1.0 — 운영 배포 2026-11-16**(운영 :7777, 개발 스택 :4444). 기능 이력은 `CHANGELOG.md`, 지금 진행은 `PROGRESS.md`. **실제 SOP·실제 모델 미검증** — AI 층은 합성 SOP·가짜 AI로만 검증했고 유사도 임계값은 합성 자료로 잡은 값이다(실제 시험 뒤 다시 정한다).
+> 상태: **v1.2.0 — 정식 업데이트 2026-11-19**(운영 배포는 사용자가 GitLab 파이프라인으로 올린 뒤 `CHANGELOG.md`에 날짜를 적는다. 그전 운영은 v1.1.0, 2026-11-16. 운영 :7777, 개발 스택 :4444). 기능 이력은 `CHANGELOG.md`, 지금 진행은 `PROGRESS.md`. **실제 SOP·실제 모델 미검증** — AI 층은 합성 SOP·가짜 AI로만 검증했고 유사도 임계값은 합성 자료로 잡은 값이다(실제 시험 뒤 다시 정한다).
 > **서비스 버전**: 단일 소스 `frontend/package.json` `version`(상단 바에 표시). `dev`에 올릴 때마다 PATCH, `dev`→`main` 정식 업데이트마다 MINOR + `vX.Y.Z` 태그(`rules/common/git.md`). 커밋·푸시는 GitHub에만, 사내 GitLab push·배포는 사용자. 운영 배포일은 CHANGELOG에 적는다.
 > **DB**: 로컬은 sqlite 파일(연결마다 `PRAGMA foreign_keys=ON`), 서버는 postgres. 스키마는 **Alembic**(backend 기동 때 head까지 자동 적용).
 > **원칙**: AI는 제안만 하고 사람이 줄마다 확정한다 — AI가 꺼지거나 실패해도 사람 경로는 돈다. AI 페이로드에 직원 실명을 싣지 않는다(역할·부서만). 공개 저장소라 실서버 IP·사내 호스트명·시크릿은 추적 파일에 넣지 않는다(`<server-ip>` 등).
