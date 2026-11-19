@@ -8,6 +8,7 @@
 - 자료: `backend/`에서 `scripts.reset_db` → `scripts.seed_sop_demo`(합성 묶음 4 + 지도용 2 + 목차 1). 극단 자료는 따로 sqlite에 `seed_sop_worst`. **DB를 바꾸면 backend를 다시 띄운다**(실행 중 교체는 readonly).
 - 사용자: dev 로그인은 localStorage `sopa.devUser`(API는 헤더 `X-Dev-User`). 스모크 기본은 `qa.member`, 권한 차등은 `dev.admin`(sysadmin).
 - 화면 하나만 확인: `frontend/`에서 `QUIET=1 ONLY="<머리>" node scripts/pw-smoke-sop.mjs`(첫 단계 `bundle list`는 늘 함께 돈다).
+- 스모크 단계는 화면별 파일 `frontend/scripts/smoke/{shell,outputs,documents,order,assign,map}.mjs`에, 공용 도우미와 첫 단계는 `smoke/common.mjs`에 있다. `pw-smoke-sop.mjs`는 그 차례로 부르는 실행기다.
 
 ## 화면
 
