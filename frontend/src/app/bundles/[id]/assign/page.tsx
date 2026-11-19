@@ -1979,6 +1979,10 @@ export default function AssignPage() {
   async function runUndoStep(kind: "undo" | "redo") {
     if (busy || !canEdit) return;
     setBusy(true);
+    // 앞 편집의 따라가기는 요청을 보내기 전에 버린다 - 응답을 기다리는 사이 그 편집의 다시 받기가 오면 따라가기가 걸려,
+    // 서버에서 이미 은퇴한 Unit을 골라 묶음을 부른다(404). 되돌리기는 응답의 focus로 따로 따라간다
+    setFollow(null);
+    setSoloFollow(null);
     try {
       const result = await (kind === "undo" ? undoDecision : redoDecision)(bundleId, undoSession.current);
       setUndoState({ canUndo: result.can_undo, canRedo: result.can_redo });
@@ -1992,8 +1996,6 @@ export default function AssignPage() {
         cutLine.clear();
         setCutUnitId(null);
         setSelectedKey(null);
-        // 편집 직후 곧바로 되돌리면 그 편집의 따라가기가 아직 남아, 다시 받은 뒤 은퇴한 Unit을 고른다
-        setFollow(null);
       }
       if (mode === "unsourced" && result.focus_target_id !== null) setSelNew(result.focus_target_id);
       else if (result.focus_unit_id !== null) followUnit(result.focus_unit_id);
