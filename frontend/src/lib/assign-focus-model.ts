@@ -1,0 +1,232 @@
+// Assign 고름 · 처리 중 · 따라가기를 한 상태로 - 화면 훅(use-assign-focus)이 useReducer로 쥔다. 규칙은 설계
+// docs/superpowers/specs/2026-11-20-assign-mockup1-design.md D1(규칙 1-6). 화면 · 요청 · 시간은 모른다.
+
+import type { EditOp } from "./api-sop";
+
+/** 고름 - Old 박스(Unit) 하나 · 목차 블록 · New 문서. 줄(row)은 고름에서 파생한다(rowOfUnit) */
+export type Focus =
+  | { kind: "none" }
+  // docId - 다시 받은 보기가 그 문서 것일 때만 "사라졌는지"를 본다(문서마다 따로 받는 날을 위해)
+  | { kind: "unit"; docId: number; unitId: number }
+  | { kind: "toc"; docId: number; key: number; unitId: number | null }
+  | { kind: "new"; docId: number; unitId: number | null; inPlace: boolean };
+
+export const NO_FOCUS: Focus = { kind: "none" };
+
+export type PendingKind =
+  | "join" | "split" | "unmerge" | "unwrap" | "rewrap" | "pair" | "unpair" | "lang" | "heading" | "ref" | "caption" | "toc" | "figure" | "save" | "undo" | "bulk";
+export type PendingPlace = { at: "gap"; firstId: number; secondId: number } | { at: "box"; unitId: number } | { at: "table"; tableId: number } | { at: "none" };
+export const NO_PLACE: PendingPlace = { at: "none" };
+
+/** 보낸 일 하나 - isGlobal이면 묶음 전체가 바뀌는 일(초기화 · 일괄 수락 · 같은 글자 일괄 확정 · Undo/Redo) */
+export interface Pending {
+  id: string;
+  kind: PendingKind;
+  docId: number | null;
+  unitIds: readonly number[];
+  place: PendingPlace;
+  isGlobal: boolean;
+}
+
+/** 처리 중인 일과 누른 때의 고름 - 응답 뒤 따라가기는 고름이 이것과 같을 때만 건다 */
+export interface PendingEntry extends Pending {
+  from: Focus;
+}
+
+/** 응답 뒤 고를 박스 - 그 문서 보기가 minRevision 이상으로 다시 오면 고른다. docId null은 응답이 문서를 알려 주지 않은 것(Undo) - 다음에 받은 보기 어디서든 찾는다 */
+export interface Follow {
+  pendingId: string;
+  /** 건 일의 종류 - 판단 저장(save) 뒤 따라가기는 화면이 거르기 목록을 다시 잡지 않는다 */
+  kind: PendingKind;
+  docId: number | null;
+  minRevision: number | null;
+  pickUnitId: number;
+  from: Focus;
+}
+
+export interface FocusState {
+  focus: Focus;
+  pending: readonly PendingEntry[];
+  follows: readonly Follow[];
+}
+
+export const INITIAL_FOCUS_STATE: FocusState = { focus: NO_FOCUS, pending: [], follows: [] };
+
+/** 다시 받은 문서 하나 - unitIds는 그 보기의 살아 있는 Unit 전부 */
+export interface LoadedDoc {
+  docId: number;
+  revision: number;
+  unitIds: ReadonlySet<number>;
+}
+
+export type FocusEvent =
+  | { type: "pick"; focus: Focus }
+  | { type: "start"; pending: Pending }
+  | { type: "succeed"; pendingId: string; docId: number | null; revision: number | null; pickUnitId: number | null }
+  | { type: "fail"; pendingId: string }
+  // 한 번에 받은 문서들(지금은 Old 문서 전부 또는 한 단 New 문서 하나). liftUnit - 고를 수 있는 Unit으로 올린다(자기 · 묶음 · 없으면 null)
+  | { type: "loaded"; docs: readonly LoadedDoc[]; liftUnit: (unitId: number) => number | null };
+
+export function isSameFocus(a: Focus, b: Focus): boolean {
+  if (a.kind === "none" || b.kind === "none") return a.kind === b.kind;
+  if (a.kind === "unit") return b.kind === "unit" && a.docId === b.docId && a.unitId === b.unitId;
+  if (a.kind === "toc") return b.kind === "toc" && a.docId === b.docId && a.key === b.key && a.unitId === b.unitId;
+  return b.kind === "new" && a.docId === b.docId && a.unitId === b.unitId && a.inPlace === b.inPlace;
+}
+
+export function reduceFocus(state: FocusState, event: FocusEvent): FocusState {
+  switch (event.type) {
+    case "pick": {
+      // 사람이 다른 것을 고르면 앞 고름에서 건 따라가기는 버린다(같은 것을 다시 고르면 둔다)
+      const follows = state.follows.filter((follow) => isSameFocus(follow.from, event.focus));
+      if (isSameFocus(state.focus, event.focus) && follows.length === state.follows.length) return state;
+      return { ...state, focus: event.focus, follows };
+    }
+    case "start": {
+      if (state.pending.some((entry) => entry.id === event.pending.id)) return state;
+      // 고름은 그대로(규칙 2). 묶음 전체가 바뀌는 일은 앞 편집의 따라가기를 버린다 - 그 사이 은퇴할 Unit을 고르지 않게
+      const pending = [...state.pending, { ...event.pending, from: state.focus }];
+      return { ...state, pending, follows: event.pending.isGlobal ? [] : state.follows };
+    }
+    case "succeed": {
+      const entry = state.pending.find((item) => item.id === event.pendingId);
+      if (!entry) return state;
+      const pending = state.pending.filter((item) => item !== entry);
+      // 따라갈 박스가 없거나 그 사이 다른 것을 골랐으면 고름을 둔다(규칙 3)
+      if (event.pickUnitId === null || !isSameFocus(entry.from, state.focus)) return { ...state, pending };
+      const follow: Follow = { pendingId: entry.id, kind: entry.kind, docId: event.docId, minRevision: event.revision, pickUnitId: event.pickUnitId, from: entry.from };
+      return { ...state, pending, follows: [...state.follows, follow] };
+    }
+    case "fail": {
+      // 그 일만 걷는다 - 고름 · 따라가기는 그대로(규칙 4)
+      const pending = state.pending.filter((item) => item.id !== event.pendingId);
+      return pending.length === state.pending.length ? state : { ...state, pending };
+    }
+    case "loaded":
+      return applyLoaded(state, event).state;
+  }
+}
+
+/** 받은 보기로 따라가기와 사라진 고름을 맞춘다 - picked는 고른 따라가기(화면이 스크롤한다), consumed는 이번에 끝난 따라가기 전부 */
+export function applyLoaded(state: FocusState, event: Extract<FocusEvent, { type: "loaded" }>): { state: FocusState; picked: Follow | null; consumed: readonly Follow[] } {
+  let focus = state.focus;
+  let picked: Follow | null = null;
+  const consumed: Follow[] = [];
+  const kept: Follow[] = [];
+  for (const follow of state.follows) {
+    if (!isFollowReady(follow, event.docs)) {
+      kept.push(follow);
+      continue;
+    }
+    consumed.push(follow);
+    if (!isSameFocus(follow.from, focus)) continue;
+    const unitId = event.liftUnit(follow.pickUnitId);
+    const doc = unitId === null ? undefined : event.docs.find((item) => item.unitIds.has(unitId));
+    if (unitId === null || !doc) continue;
+    const next = buildFollowFocus(follow.from, doc.docId, unitId);
+    if (next === null) continue;
+    focus = next;
+    picked = follow;
+  }
+  // 사라진 Unit은 고르지 않는다 - 그 고름에서 건 따라가기가 아직 기다리면 둔다(규칙 5)
+  if (picked === null && !kept.some((follow) => isSameFocus(follow.from, focus))) focus = dropVanished(focus, event.docs);
+  if (consumed.length === 0 && focus === state.focus) return { state, picked, consumed };
+  return { state: { ...state, focus, follows: kept }, picked, consumed };
+}
+
+/** 그 따라가기가 이번에 받은 보기를 기다렸는가 - 문서를 모르면 받은 보기 무엇이든 */
+function isFollowReady(follow: Follow, docs: readonly LoadedDoc[]): boolean {
+  if (follow.docId === null) return docs.length > 0;
+  const doc = docs.find((item) => item.docId === follow.docId);
+  return doc !== undefined && (follow.minRevision === null || doc.revision >= follow.minRevision);
+}
+
+/** 따라가서 고를 것 - New 문서를 고른 채 건 따라가기는 그 문서 안에서만(다른 문서면 null), 그 밖은 Old 박스 */
+function buildFollowFocus(from: Focus, docId: number, unitId: number): Focus | null {
+  if (from.kind === "new") return from.docId === docId ? { ...from, unitId } : null;
+  return { kind: "unit", docId, unitId };
+}
+
+/** 받은 문서에서 사라진 고름을 놓는다 - Old 박스 · 목차 블록은 고름 없음, 목차 줄 · New 문장은 그 블록 · 문서만 남긴다 */
+function dropVanished(focus: Focus, docs: readonly LoadedDoc[]): Focus {
+  if (focus.kind === "none") return focus;
+  const doc = docs.find((item) => item.docId === focus.docId);
+  if (!doc) return focus;
+  if (focus.kind === "unit") return doc.unitIds.has(focus.unitId) ? focus : NO_FOCUS;
+  if (focus.kind === "toc" && !doc.unitIds.has(focus.key)) return NO_FOCUS;
+  return focus.unitId !== null && !doc.unitIds.has(focus.unitId) ? { ...focus, unitId: null } : focus;
+}
+
+/** 처리 중인 일이 잡은 Unit인가 */
+export function isUnitLocked(state: FocusState, unitId: number): boolean {
+  return state.pending.some((entry) => entry.unitIds.includes(unitId));
+}
+
+/** 이 일을 지금 시작할 수 있는가 - 잠긴 Unit과 겹치거나, 묶음 전체 일과 다른 일이 함께면 안 된다(규칙 6) */
+export function canStart(state: FocusState, pending: Pending): boolean {
+  if (state.pending.length === 0) return true;
+  if (pending.isGlobal || state.pending.some((entry) => entry.isGlobal)) return false;
+  return !pending.unitIds.some((unitId) => isUnitLocked(state, unitId));
+}
+
+/** 원문 편집의 처리 중 종류 - 알약 글(스텝 4)이 이것으로 갈린다 */
+export function readEditKind(op: EditOp): PendingKind {
+  switch (op.type) {
+    case "merge":
+      return "join";
+    case "split":
+    case "carve":
+    case "move_boundary":
+      return "split";
+    case "unmerge":
+      return "unmerge";
+    case "set_layout_table":
+      return op.is_layout ? "unwrap" : "rewrap";
+    case "set_language":
+      return "lang";
+    case "set_ref":
+    case "clear_ref":
+    case "set_number":
+      return "ref";
+    case "set_heading":
+      return "heading";
+    case "attach_caption":
+    case "detach_caption":
+    case "set_first_row_caption":
+      return "caption";
+    case "group_figures":
+    case "ungroup_figures":
+      return "figure";
+    case "clear_noise":
+      return "toc";
+  }
+}
+
+/** 원문 편집이 가리키는 Unit - 잠금(스텝 4)이 쓴다. 글자 범위 · 표로 가리키는 편집은 비어 있다 */
+export function listEditUnitIds(op: EditOp): number[] {
+  switch (op.type) {
+    case "merge":
+    case "set_language":
+    case "clear_noise":
+    case "set_heading":
+    case "group_figures":
+      return [...op.unit_ids];
+    case "split":
+    case "unmerge":
+    case "detach_caption":
+    case "ungroup_figures":
+    case "set_ref":
+    case "clear_ref":
+    case "set_number":
+      return [op.unit_id];
+    case "move_boundary":
+      return [op.left_unit_id, op.right_unit_id];
+    case "attach_caption":
+      return [op.unit_id, op.bundle_unit_id];
+    case "set_first_row_caption":
+      return [op.table_unit_id];
+    case "carve":
+    case "set_layout_table":
+      return [];
+  }
+}
