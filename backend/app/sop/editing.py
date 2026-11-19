@@ -11,7 +11,7 @@
 
 from collections import Counter, defaultdict
 from collections.abc import Collection, Iterable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from typing import Annotated, Literal, TypeVar, assert_never
 
 from pydantic import BaseModel, Field, StringConstraints, model_validator
@@ -1179,21 +1179,8 @@ async def _plan_set_layout_table(
     ).all()
     for band in inner_tables:
         if is_band_table(band.signals):
-            _merge_change(change, await _plan_band_layout(session, document_id, extraction_id, band, op.is_layout))
+            change = _merge_changes(change, await _plan_band_layout(session, document_id, extraction_id, band, op.is_layout))
     return change
-
-
-def _merge_change(change: _Change, other: _Change) -> None:
-    """other를 change에 더한다 — 표 벗기기와 안쪽 띠 표 바꾸기를 한 편집으로. 같은 변경 안 표 단위를 가리키는 순번(group_draft)은 민다."""
-    offset = len(change.drafts)
-    for draft in other.drafts:
-        if draft.group_draft is not None:
-            draft.group_draft += offset
-    change.retire = sorted({*change.retire, *other.retire})
-    change.drafts.extend(other.drafts)
-    change.retired_shapes.extend(other.retired_shapes)
-    change.regroup.update(other.regroup)
-    change.layouts.update(other.layouts)
 
 
 async def _plan_plain_layout(
@@ -1263,20 +1250,28 @@ async def _plan_unwrap_pair(
 
 
 def _merge_changes(first: _Change, second: _Change) -> _Change:
-    """두 표의 벗기기 변경을 하나로 — 둘은 다른 표의 단위만 건드린다. 같은 변경 안 표 단위를 가리키는 칸(group_draft)은 번호를 민다."""
+    """두 변경을 한 편집으로 — 표 벗기기와 안쪽 띠 표 바꾸기, 표와 대응 표 벗기기. 둘은 다른 표의 단위만 건드린다.
+
+    _Change의 모든 칸을 칸 꼴대로 합친다(목록은 잇고 사전은 더하고 참거짓은 또는) — 칸을 더해도 여기서 조용히 빠지지 않는다.
+    같은 변경 안 표 단위를 가리키는 칸(group_draft)은 앞 변경의 초안 수만큼 민다.
+    """
     offset = len(first.drafts)
     for draft in second.drafts:
         if draft.group_draft is not None:
             draft.group_draft += offset
-    return _Change(
-        retire=[*first.retire, *second.retire], revive=[*first.revive, *second.revive],
-        drafts=[*first.drafts, *second.drafts], langs={**first.langs, **second.langs},
-        regroup={**first.regroup, **second.regroup}, layouts={**first.layouts, **second.layouts},
-        retired_shapes=[*first.retired_shapes, *second.retired_shapes], bundles=[*first.bundles, *second.bundles],
-        numbers={**first.numbers, **second.numbers}, sections=[*first.sections, *second.sections],
-        noises={**first.noises, **second.noises}, figures={**first.figures, **second.figures},
-        repair_pairs=first.repair_pairs or second.repair_pairs,
-    )
+    merged: dict[str, object] = {}
+    for item in fields(_Change):
+        left, right = getattr(first, item.name), getattr(second, item.name)
+        if isinstance(left, bool):
+            merged[item.name] = left or right
+        elif isinstance(left, list):
+            merged[item.name] = [*left, *right]
+        elif isinstance(left, dict):
+            merged[item.name] = {**left, **right}
+        else:
+            raise TypeError(f"_Change.{item.name} has no merge rule: {type(left).__name__}")
+    merged["retire"] = sorted({*first.retire, *second.retire})
+    return _Change(**merged)
 
 
 async def _plan_band_layout(
@@ -2089,10 +2084,11 @@ async def undo_edit(session: AsyncSession, document: Document, *, confirm: bool,
     )
     if edit is None:
         raise_rule(409, "nothing_to_undo")
-    result = await _step_edit(session, document, edit, backwards=True, confirm=confirm, actor=actor)
+    # 되돌리는 기록을 먼저 내린다 — 짝 다시 세우기(units.refresh_code_pairs)가 남은 기록에서 함께 벗긴 표 짝을 읽을 때 이 기록을
+    # 아직 적용된 것으로 읽지 않게. 실패하면 요청이 커밋하지 않아 상태도 그대로다
     edit.state = EDIT_UNDONE
     await session.flush()
-    return result
+    return await _step_edit(session, document, edit, backwards=True, confirm=confirm, actor=actor)
 
 
 async def redo_edit(session: AsyncSession, document: Document, *, confirm: bool, actor: str) -> EditStepResult:
