@@ -35,7 +35,6 @@ Issue = dict[str, object]
 # 확정 전 상태 — 막는 이유 코드의 꼬리. 판단은 사람만 써서 AI 제안 상태가 없고, 새 문장은 확정 안 한 AI 번역 줄이 AI 제안이다
 UNIT_PENDING_STATUSES = ("unassigned", "on_hold")
 TARGET_PENDING_STATUSES = ("unassigned", "ai_suggested", "on_hold")
-REASON_DISPOSITIONS = ("delete", "move_external")  # 사유가 필수인 처분
 UNRESOLVED_DOC_STATUSES = ("rejected", "failed")
 TABLE_RESTRUCTURED = "table_restructured"
 
@@ -63,12 +62,8 @@ def _count_target_statuses(snap: BundleSnapshot) -> Counter[str]:
 
 
 def _find_units_missing_reason(snap: BundleSnapshot) -> list[int]:
-    """사유가 비어 있는 삭제·이동 판단과 표 구성 변경 표 단위 — 사유는 모두 판단 단위에 적힌다."""
-    unit_ids = {
-        decision.unit_id
-        for decision in snap.decisions.values()
-        if decision.disposition in REASON_DISPOSITIONS and not decision.reason.strip()
-    }
+    """사유가 비어 있는 표 구성 변경 표 단위 — 사유는 판단 단위에 적힌다. 삭제·이동의 사유는 선택이다(요청서 4번)."""
+    unit_ids: set[int] = set()
     for target in snap.targets.values():
         if target.change_type == TABLE_RESTRUCTURED and target.source_unit_ids:
             decision = snap.decisions.get(target.source_unit_ids[0])

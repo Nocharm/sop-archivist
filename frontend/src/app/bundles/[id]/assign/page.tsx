@@ -919,7 +919,8 @@ function BulkModal({ bundleId, action, count, onClose, onConfirm }: BulkModalPro
   const [reason, setReason] = useState("");
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
-  const ready = reason.trim() !== "" && (action === "delete" || code.trim() !== "");
+  // Remark는 선택 - 비우면 결과물이 "삭제"·"이동"으로 적는다(요청서 4번)
+  const ready = action === "delete" || code.trim() !== "";
   return (
     <Modal
       title={action === "delete" ? t("classify.bulkDeleteTitle") : t("classify.bulkMoveTitle")}
@@ -957,6 +958,7 @@ function BulkModal({ bundleId, action, count, onClose, onConfirm }: BulkModalPro
           rows={3}
           className="block w-full resize-y rounded-md border border-line-2 bg-surface px-2 py-[5px] text-[13px] leading-[19px] text-ink focus:border-accent focus:outline-none"
           data-testid="assign-bulk-reason"
+          placeholder={t(action === "delete" ? "remark.blankDelete" : "remark.blankMove")}
           value={reason}
           maxLength={REMARK_MAX_LENGTH}
           autoFocus

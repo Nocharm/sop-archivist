@@ -30,12 +30,12 @@ describe("pickAcceptIds and canAccept", () => {
     expect(pickAcceptIds(ITEMS, true)).toEqual([1, 2, 3, 4, 5]);
   });
 
-  it("needs a common remark to take deletes and something to take", () => {
-    expect(canAccept(ITEMS, true, "  ")).toBe(false);
-    expect(canAccept(ITEMS, true, "합성 사유")).toBe(true);
-    expect(canAccept(ITEMS, false, "")).toBe(true);
-    expect(canAccept([item(3, "delete")], false, "")).toBe(false);
-    expect(canAccept([], true, "합성 사유")).toBe(false);
+  it("needs something to take - the common remark for deletes is optional", () => {
+    expect(canAccept(ITEMS, true)).toBe(true);
+    expect(canAccept(ITEMS, false)).toBe(true);
+    expect(canAccept([item(3, "delete")], false)).toBe(false);
+    expect(canAccept([item(3, "delete")], true)).toBe(true);
+    expect(canAccept([], true)).toBe(false);
   });
 });
 

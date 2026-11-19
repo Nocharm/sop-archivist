@@ -1012,6 +1012,19 @@ def test_output_c_pair_lines_share_a_meaning_and_one_disposal_line(client: TestC
     }]
 
 
+def test_output_blank_disposal_remark_reads_as_the_disposition(client: TestClient) -> None:
+    """삭제·이동의 Remark는 선택이다(요청서 4번) — 비워 두면 결과물이 처분 이름을 라벨 언어로 적는다."""
+    fx = _setup_pair_edges(client)
+    trio = _units(fx, KO_LOAD, KO_KEEP, EN_BOTH)
+    _bulk(client, fx.bundle_id, "delete", trio, "")
+
+    en = _get_output(client, fx.bundle_id, "outputs/c")
+    ko = _get_output(client, fx.bundle_id, "outputs/c", "ko")
+
+    assert [row["reason"] for row in en["deleted"]] == ["Deleted"]
+    assert [row["reason"] for row in ko["deleted"]] == ["삭제"]
+
+
 def test_composed_doc_carries_both_languages_in_c_order(client: TestClient) -> None:
     fx = _setup(client)
     merged_sources = [find_unit(fx.old1, MERGE_1)["id"], find_unit(fx.old2, MERGE_2)["id"]]

@@ -1257,12 +1257,13 @@ def _build_after_rows(ctx: _AContext, unit: UnitInfo, slot: _GroupSlot) -> list[
     ]
 
 
-def _build_old_remark(index: _Index, added: Mapping[int, list[TargetInfo]], meaning: MeaningRow) -> str:
+def _build_old_remark(index: _Index, added: Mapping[int, list[TargetInfo]], meaning: MeaningRow, labels: OutputLabels) -> str:
     """옛 묶음의 Remark(제품 명세 §7.13 줄 규칙 (6)) — 판단 이유, 출처 있는 새 문장의 remark, Translated · Added 새 문장(added)의 remark 순.
 
     출처 있는 새 문장은 구성 단위(칸 포함)를 출처로 둔 것이다. Translated · Added 새 문장은 출처가 없어 신규 묶음 대신
     이 묶음에 들므로 그 remark도 여기서 보인다. 결과물 C의 삭제·이동 줄 이유도 이 값이다. 칸 제목은 여러 옛 문서가 함께
-    쓰는 한 줄이라 그 remark를 한 옛 묶음에 싣지 않는다(다른 옛 문서의 묶음으로 새지 않게).
+    쓰는 한 줄이라 그 remark를 한 옛 묶음에 싣지 않는다(다른 옛 문서의 묶음으로 새지 않게). 삭제·이동 줄의 Remark가 비면
+    처분 이름("삭제"·"이동")을 적는다 — 사유는 선택이다(요청서 4번).
     """
     units = _list_row_units(index, meaning)
     reasons = [index.snap.decisions[unit_id].reason for unit_id in meaning.unit_ids]
@@ -1273,12 +1274,13 @@ def _build_old_remark(index: _Index, added: Mapping[int, list[TargetInfo]], mean
         if target.kind != SLOT_HEADING
     ]
     added_remarks = [target.remark for unit in units for target in added.get(unit.id, [])]
-    return _join_remarks([*reasons, *sourced, *added_remarks])
+    remark = _join_remarks([*reasons, *sourced, *added_remarks])
+    return remark or labels.disposed_remarks.get(_get_row_disposition(index.snap, meaning), "")
 
 
 def _build_old_group(ctx: _AContext, meaning: MeaningRow, row_no: int) -> list[ARow]:
     """옛 문서 의미 묶음 — 구성 단위마다 단위 줄, 표·그림 단위면 그 뒤에 캡션 줄, 표·행 단위면 칸 문장 줄. 각 줄 바로 뒤에 그 단위의 번역 줄."""
-    slot = _GroupSlot(row_no, _build_old_remark(ctx.index, ctx.added, meaning))
+    slot = _GroupSlot(row_no, _build_old_remark(ctx.index, ctx.added, meaning, ctx.labels))
     rows: list[ARow] = []
     for unit_id in meaning.unit_ids:
         unit = ctx.index.snap.units[unit_id]
@@ -1640,7 +1642,7 @@ def build_output_c(snap: BundleSnapshot, lang: Lang) -> COutput:
         if disposition not in DISPOSITION_NODES:
             continue
         # 삭제·이동은 새 문장이 없어(저장 검사) Translated · Added도 없지만, Remark는 A 묶음과 같은 함수로 짓는다
-        fields = _describe_disposed_row(index, meaning, labels, _build_old_remark(index, ctx.added, meaning))
+        fields = _describe_disposed_row(index, meaning, labels, _build_old_remark(index, ctx.added, meaning, labels))
         if disposition == "delete":
             deleted.append(CDeleted(**fields))
         else:

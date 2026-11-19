@@ -384,7 +384,7 @@ async function prepareClickPlace(page, needed) {
 
 export async function run() {
 
-await runStep("assign: legend first, place, delete with reason, edit, clear, bulk", { allowConsoleErrors: true }, async ({ page, takeShot }) => {
+await runStep("assign: legend first, place, delete without a reason, edit, clear, bulk", { allowConsoleErrors: true }, async ({ page, takeShot }) => {
   await page.goto(`${BASE}/bundles/${halfBundleId}/assign`);
   await wait(page, "assign-pick-prompt");
   check("help panel sits at the bottom of the inspector, folded by default", (await page.locator('[data-testid="assign-inspector"] [data-testid="assign-help"]').count()) === 1 && (await page.locator('[data-testid="assign-help-toggle"]').getAttribute("aria-expanded")) === "false");
@@ -409,16 +409,13 @@ await runStep("assign: legend first, place, delete with reason, edit, clear, bul
   await page.locator('[data-testid="assign-primary"]').click();
   await page.waitForFunction((done) => Number(document.querySelector('[data-testid="assign-progress"]')?.textContent?.split("/")[0]) === done + 1, before, { timeout: T });
   check("Enter-path confirm moves on to the next unit", (await rowIds(page)) !== firstIds);
-  // 삭제는 사유가 있어야 한다 - 사유 없이 저장하면 Remark 창이 열리고, 확인하면 저장을 잇는다
+  // 삭제의 사유는 선택이다(요청서 4번) - 빈 Remark 자리에 기록될 말(Deleted)이 보이고, 확정은 Remark 창 없이 바로 된다
   await page.locator('[data-testid="assign-acc-move"]').click();
   await page.locator('[data-testid="assign-pick-delete"]').click();
+  check("an empty Remark shows what delete records", ((await page.locator('[data-testid="assign-reason"]').textContent()) ?? "").trim() === "Deleted", await page.locator('[data-testid="assign-reason"]').textContent());
   await page.locator('[data-testid="assign-primary"]').click();
-  await wait(page, "assign-remark-modal");
-  check("delete without a reason opens the Remark window, confirm off", await page.locator('[data-testid="assign-remark-modal-confirm"]').isDisabled());
-  await page.locator('[data-testid="assign-remark-modal-text"]').fill("Structural heading");
-  await page.locator('[data-testid="assign-remark-modal-confirm"]').click();
   await page.waitForFunction((done) => Number(document.querySelector('[data-testid="assign-progress"]')?.textContent?.split("/")[0]) === done + 2, before, { timeout: T });
-  check("delete with a reason confirms", true);
+  check("delete without a reason confirms without the Remark window", (await page.locator('[data-testid="assign-remark-modal"]').count()) === 0);
   // 고쳐 확정 - E로 새 문장을 고치면 변경 종류를 고른다. 고쳐 쓰기는 문장 줄에서만 되니 그림·표 줄이면 다음 줄로 넘어간다(합성 문서의 줄 순서에 기대지 않게)
   const isSentenceRow = () => page.locator('[data-testid="assign-old"] [data-testid^="assign-paper-unit-"][data-sel]').evaluateAll((els) => els.length > 0 && els.every((el) => ["ko", "en"].includes(el.getAttribute("lang") ?? "")));
   for (let step = 0; step < 10 && !(await isSentenceRow()); step += 1) {
@@ -583,12 +580,11 @@ await runStep("assign: move picks its target doc from the dropdown", {}, async (
   await takeShot("sop-assign-move-dropdown.png");
   await option.click();
   check("a suggested target doc fills the field", (await page.locator('[data-testid="assign-move-code"]').inputValue()) === code, code);
-  await page.locator('[data-testid="assign-primary"]').click();
-  await wait(page, "assign-remark-modal");
-  await page.locator('[data-testid="assign-remark-modal-text"]').fill("Smoke: belongs to another bundle");
+  // 이동의 사유도 선택이다 - Remark 창 없이 저장된다
   const saved = page.waitForResponse((response) => response.url().includes("/groups/save"), { timeout: T });
-  await page.locator('[data-testid="assign-remark-modal-confirm"]').click();
+  await page.locator('[data-testid="assign-primary"]').click();
   check("move saves with the picked target", (await saved).ok());
+  check("move needs no Remark window", (await page.locator('[data-testid="assign-remark-modal"]').count()) === 0);
 });
 
 // Old 문장 우클릭 메뉴(배정 + 문장 고치기) - 미배정 문장은 여기서 나누고 언어를 바꾸며, 배정된 문장의 고치기는 까닭과 함께 꺼져 있다

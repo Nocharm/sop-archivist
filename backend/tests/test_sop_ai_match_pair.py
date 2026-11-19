@@ -18,7 +18,7 @@ from app.sop.ai.llm import parse_reply
 from app.sop.ai.jobs import JobItem, enqueue_jobs
 from app.sop.ai.match_jobs import MatchReply
 from app.sop.constants import AI_PRIORITY_PLAN
-from app.sop.models import AiJob, AiSuggestion, GuidelineVersion, TargetSentence, TargetSource
+from app.sop.models import AiJob, AiSuggestion, GuidelineVersion, TargetSentence, TargetSource, UnitDecision
 from tests.access_helpers import run_in_session
 from tests.ai_fixtures import (
     MatchBundle,
@@ -1185,7 +1185,8 @@ def test_dropping_one_piece_of_a_split_records_edited(
     assert suggestion.adoption == "edited"
 
 
-def test_confirming_delete_candidate_needs_a_reason(client: TestClient, fake_ai: FakeAi) -> None:
+def test_confirming_delete_candidate_without_a_reason(client: TestClient, fake_ai: FakeAi) -> None:
+    """삭제의 Remark는 선택이다(요청서 4번) — 이유 없는 삭제 후보도 그대로 받아 삭제로 확정된다."""
     bundle = make_match_bundle(client, p(LONE_OLD), p(LONE_NEW))
     (unit_id,) = read_old_ids(client, bundle, LONE_OLD)
     pair_up(client, bundle.id)
@@ -1196,9 +1197,9 @@ def test_confirming_delete_candidate_needs_a_reason(client: TestClient, fake_ai:
 
     response = save_group(client, bundle.id, build_use_body(candidate))
 
-    assert response.status_code == 422, response.text
-    assert response.json()["detail"]["reason"] == "reason_required"
-    assert_unit_untouched(unit_id)
+    assert response.status_code == 200, response.text
+    decision = next(row for row in read_rows(UnitDecision) if row.unit_id == unit_id)
+    assert (decision.disposition, decision.reason) == ("delete", "")
 
 
 def test_confirming_delete_candidate_records_as_is(client: TestClient, fake_ai: FakeAi) -> None:

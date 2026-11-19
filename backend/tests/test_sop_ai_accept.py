@@ -136,20 +136,30 @@ def test_an_ai_split_is_saved_in_its_own_shape(client: TestClient, fake_ai: Fake
     assert read_rows(AiSuggestion)[0].adoption == "as_is"
 
 
-def test_delete_suggestions_need_the_common_remark(client: TestClient, fake_ai: FakeAi) -> None:
+def test_delete_suggestions_take_an_optional_common_remark(client: TestClient, fake_ai: FakeAi) -> None:
     bundle, ko, _ = suggest_first_pair(client, fake_ai, candidate="delete", change_type="as_is", rewrites={})
     out = preview(client, bundle.id, "classify", bundle.document_id)
     assert [(item["shape"], item["is_delete"]) for item in out["items"]] == [("delete", True)]
     ids = [item["suggestion_id"] for item in out["items"]]
 
-    refused = accept(client, bundle.id, "classify", ids)
     accepted = accept(client, bundle.id, "classify", ids, delete_reason=f"  {DELETE_REASON} ")
 
-    assert refused.status_code == 422 and refused.json()["detail"]["code"] == "delete_reason_required"
     assert accepted.status_code == 200, accepted.text
     decision = read_decision(ko)
     assert (decision.status, decision.disposition, decision.reason) == ("confirmed", "delete", DELETE_REASON)
     assert read_rows(AiSuggestion)[0].adoption == "as_is"
+
+
+def test_delete_suggestions_go_through_without_a_remark(client: TestClient, fake_ai: FakeAi) -> None:
+    """Remark는 선택이다(요청서 4번) — 비우고 받아도 삭제로 확정된다."""
+    bundle, ko, _ = suggest_first_pair(client, fake_ai, candidate="delete", change_type="as_is", rewrites={})
+    ids = [item["suggestion_id"] for item in preview(client, bundle.id, "classify", bundle.document_id)["items"]]
+
+    accepted = accept(client, bundle.id, "classify", ids)
+
+    assert accepted.status_code == 200, accepted.text
+    decision = read_decision(ko)
+    assert (decision.status, decision.disposition, decision.reason) == ("confirmed", "delete", "")
 
 
 def test_suggestions_with_warnings_stay_out(client: TestClient, fake_ai: FakeAi) -> None:

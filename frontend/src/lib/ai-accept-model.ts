@@ -36,9 +36,8 @@ export function splitAcceptIds(ids: readonly number[], size: number): number[][]
 }
 
 /** 받을 수 있는가 - 고른 것이 있고, 삭제를 함께 받으면 공통 Remark가 있어야 한다(§5 3-4) */
-export function canAccept(items: readonly AcceptItem[], includeDeletes: boolean, remark: string): boolean {
-  if (pickAcceptIds(items, includeDeletes).length === 0) return false;
-  return !(includeDeletes && countDeletes(items) > 0 && remark.trim() === "");
+export function canAccept(items: readonly AcceptItem[], includeDeletes: boolean): boolean {
+  return pickAcceptIds(items, includeDeletes).length > 0;
 }
 
 /** 알약 메뉴의 건수 - 지금 연 Old 문서의 살아 있는 제안을 종류별로 센다(받을 수 있는지는 확인 창이 서버에 묻는다) */

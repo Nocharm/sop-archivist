@@ -176,7 +176,7 @@ class BulkUnitIn(BaseModel):
 
 class BulkDecisionIn(BaseModel):
     action: Literal["delete", "move_external"]
-    reason: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=2000), NO_NUL]
+    reason: Annotated[str, StringConstraints(strip_whitespace=True, max_length=2000), NO_NUL] = ""  # 선택 — 비면 결과물이 처분 이름으로 적는다
     move_target_code: Annotated[str, StringConstraints(strip_whitespace=True, max_length=100), NO_NUL] = ""
     units: list[BulkUnitIn] = Field(min_length=1, max_length=MAX_BULK_UNITS)
     undo: UndoMetaIn | None = None
@@ -623,8 +623,7 @@ def _check_dispositions(payload: GroupSaveIn, state: _State) -> None:
             continue
         if has_targets:
             _reject("disposed_with_targets", unit_ids=unit_ids)
-        if not item.reason.strip():
-            _reject("reason_required", unit_ids=unit_ids)
+        # 삭제·이동의 Remark는 선택이다 — 비면 결과물이 "삭제"·"이동"으로 적는다(요청서 4번, 사용자 결정 2026-11-19)
         if item.disposition == "move_external" and not item.move_target_code.strip():
             _reject("move_target_code_required", unit_ids=unit_ids)
 

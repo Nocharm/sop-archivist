@@ -7,7 +7,7 @@
 """
 
 from collections import defaultdict
-from collections.abc import Collection, Iterable, Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Annotated, Any, Literal
 
@@ -377,11 +377,6 @@ async def _load_requested(session: AsyncSession, bundle_id: int, payload: Accept
     return [suggestion for suggestion in live if suggestion.id in wanted]
 
 
-def _check_delete_reason(suggestions: Iterable[AiSuggestion], payload: AcceptIn) -> None:
-    if not payload.delete_reason and any(is_delete_shape(get_shape(suggestion)) for suggestion in suggestions):
-        raise_rule(422, "delete_reason_required")
-
-
 async def accept_suggestions(session: AsyncSession, bundle: Bundle, payload: AcceptIn, actor: str) -> AcceptOut:
     """고른 제안을 받는다 — 제안마다 지금 모습이 AI가 본 그대로일 때만, 사람의 저장 경로로. 커밋은 호출부가 한다.
 
@@ -392,7 +387,6 @@ async def accept_suggestions(session: AsyncSession, bundle: Bundle, payload: Acc
     if len(set(payload.suggestion_ids)) != len(payload.suggestion_ids):
         raise_rule(422, "duplicate_items")
     suggestions = await _load_requested(session, bundle.id, payload)
-    _check_delete_reason(suggestions, payload)
     loaded = await _load(session, suggestions)
     accepted = 0
     new_batches: list[list[NewItemIn]] = [[]]

@@ -530,7 +530,8 @@ export function AssignSidePanel({ state }: { state: AssignPageState }) {
   const remarkRow = (
     <RemarkLine
       text={reasonNow}
-      emptyLabel="–"
+      // 삭제·이동은 Remark를 비우면 처분 이름으로 기록된다 - 빈 자리에 그 글을 흐리게 보인다
+      emptyLabel={destination?.kind === "delete" ? t("remark.defaultDelete") : destination?.kind === "move" ? t("remark.defaultMove") : "–"}
       needMessage={isRemarkMissing ? t(`remark.need.${remarkNeed}`) : null}
       canEdit={canEdit}
       disabled={!row}

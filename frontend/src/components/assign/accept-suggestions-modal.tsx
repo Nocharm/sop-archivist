@@ -1,5 +1,5 @@
 // AI 추천 일괄 수락 확인 창 - 종류(분류·묶기) 하나의 남은 추천을 범위(지금 Old 문서 / Bundle 전체)마다 서버에 물어 모양별 건수를 먼저 보인다.
-// 경고가 있는 것·다듬기를 기다리는 묶기·AI가 본 뒤 바뀐 것은 빼고 그 수를 알리며, 삭제 추천은 따로 체크하고 공통 Remark를 적어야 받는다
+// 경고가 있는 것·다듬기를 기다리는 묶기·AI가 본 뒤 바뀐 것은 빼고 그 수를 알리며, 삭제 추천은 따로 체크해야 받는다(공통 Remark는 선택)
 // (설계 2026-11-19-ai-suggest-only D3, §5 3-2~3-4). 받은 것은 되돌리기 한 단계다.
 "use client";
 
@@ -64,7 +64,7 @@ export function AcceptSuggestionsModal({ bundleId, kind, document, busy, onAccep
             type="button"
             className="btn pri"
             data-testid={`${testId}-confirm`}
-            disabled={busy || preview.data === null || !canAccept(items, includeDeletes, remark)}
+            disabled={busy || preview.data === null || !canAccept(items, includeDeletes)}
             onClick={() => onAccept(pickAcceptIds(items, includeDeletes), includeDeletes ? remark.trim() : "")}
           >
             <BusyLabel busy={busy} icon={<Sparkles size={16} strokeWidth={1.5} aria-hidden />} label={t("aiAccept.confirm", { n: total })} />
@@ -119,7 +119,7 @@ export function AcceptSuggestionsModal({ bundleId, kind, document, busy, onAccep
                 value={remark}
                 maxLength={2000}
                 data-testid={`${testId}-remark`}
-                placeholder={t("aiAccept.deleteRemarkHint")}
+                placeholder={t("remark.blankDelete")}
                 onChange={(event) => setRemark(event.target.value)}
               />
             </label>

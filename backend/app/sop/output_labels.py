@@ -34,6 +34,7 @@ class OutputLabels:
     toc_place_template: str  # 목차 줄의 위치(자리) — {lang} {n}(그 문서·언어 안 차례)
     toc_langs: dict[str, str]  # 목차 줄 위치의 언어 이름
     toc_remark: str  # 목차 줄의 Remark(저절로)
+    disposed_remarks: dict[str, str]  # Remark를 비운 삭제·이동 줄의 Remark — 처분 → 글
 
 
 LABELS = {
@@ -67,6 +68,7 @@ LABELS = {
         toc_place_template="목차 · {lang} · {n}행",
         toc_langs={"ko": "한글", "en": "영어"},
         toc_remark="목차 · 새 문서 목차는 앱이 만든다 (저절로)",
+        disposed_remarks={"delete": "삭제", "move_external": "이동"},
     ),
     "en": OutputLabels(
         change_types={
@@ -101,5 +103,6 @@ LABELS = {
         toc_place_template="Contents · {lang} · line {n}",
         toc_langs={"ko": "Korean", "en": "English"},
         toc_remark="Contents · the app builds the new contents (automatic)",
+        disposed_remarks={"delete": "Deleted", "move_external": "Moved"},
     ),
 }

@@ -1644,10 +1644,9 @@ export function useAssignPage() {
     return true;
   }
 
-  /** 이 저장에 사유가 꼭 있어야 하는 까닭 - 없으면 null */
-  function readReasonNeed(action: "confirm" | "hold"): "delete" | "move" | "hold" | "duplicate" | null {
+  /** 이 저장에 사유가 꼭 있어야 하는 까닭 - 없으면 null. 삭제·이동은 선택이다(비면 결과물이 "삭제"·"이동"으로 적는다, 요청서 4번) */
+  function readReasonNeed(action: "confirm" | "hold"): "hold" | "duplicate" | null {
     if (action === "hold") return "hold";
-    if (destination?.kind === "delete" || destination?.kind === "move") return destination.kind;
     return new Set(linkIds.map((id) => writtenMap.get(id)?.target_doc_id)).size > 1 ? "duplicate" : null;
   }
 

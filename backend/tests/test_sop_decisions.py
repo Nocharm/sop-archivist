@@ -697,7 +697,6 @@ def test_group_rules_reject_without_writing(client: TestClient) -> None:
         (_body([_unit_in(unit)], [target, {**target}]), "duplicate_key"),
         (_body([_unit_in(unit)], []), "assigned_without_targets"),
         (_body([_unit_in(unit, disposition="delete")], [target]), "disposed_with_targets"),
-        (_body([_unit_in(unit, disposition="delete")], []), "reason_required"),
         (_body([_unit_in(unit, disposition="move_external", reason="Synthetic")], []), "move_target_code_required"),
         (_body([_unit_in(unit)], [{**target, "text": " ​ "}]), "empty_text"),
         (_body([_unit_in(unit), _unit_in(other)], [{**target, "source_unit_ids": [unit["id"], other["id"]]}]),

@@ -330,9 +330,9 @@ def test_reason_blockers(client: TestClient) -> None:
     update_row(UnitDecision, ko_2["id"], reason="")
     update_row(UnitDecision, en_1["id"], reason="")
 
+    # 삭제·이동의 사유는 선택이라(요청서 4번) 막지 않고, 중복 배정의 사유만 막는다
     assert _get_readiness(client, fx.bundle_id)["blockers"] == [
         {"code": "duplicate_without_reason", "count": 1, "unit_ids": [en_1["id"]]},
-        {"code": "missing_reason", "count": 1, "unit_ids": [ko_2["id"]]},
     ]
 
 
@@ -770,8 +770,9 @@ def test_next_action_follows_the_first_unmet_condition(client: TestClient) -> No
     assert get_bundle(client, fx.bundle_id)["next_action"] == "add_reviewer"
     assert _put_checks(client, fx.bundle_id, numbers=False).status_code == 200
     assert get_bundle(client, fx.bundle_id)["next_action"] == "semantic_checks"
+    # 삭제의 사유는 선택이라(요청서 4번) 비워도 다음 할 일이 사유 채우기로 바뀌지 않는다
     update_row(UnitDecision, _unit_id(fx, KO_2), disposition="delete", reason="")
-    assert get_bundle(client, fx.bundle_id)["next_action"] == "fill_reasons"
+    assert get_bundle(client, fx.bundle_id)["next_action"] == "semantic_checks"
     _add_warning(fx)
     assert get_bundle(client, fx.bundle_id)["next_action"] == "ack_warnings"
     update_row(UnitDecision, _unit_id(fx, EN_1), status="on_hold", hold_reason=HOLD_REASON)
