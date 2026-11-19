@@ -13,7 +13,7 @@ from sqlalchemy import case, exists, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.clock import now
-from app.sop.ai.apply import OFFERED_KINDS
+from app.sop.ai.apply import OFFERED_KINDS, find_covering, load_live_suggestions
 from app.sop.ai.schemas import AdoptionStats, SuggestionOut, SuggestionsPageOut
 from app.sop.detach import ORIGIN_NEW_DOC, ORIGIN_TRANSLATION, UNASSIGNED
 from app.sop.errors import raise_rule
@@ -118,16 +118,21 @@ def _build_suggested_shape(suggestion: AiSuggestion, units: Iterable[Unit]) -> S
         return SuggestedShape(disposition, ())
     place = (content["target_doc_id"], content["slot_key"], content["wi_step"], content["wi_part"])
     targets: list[TargetShape] = []
-    sources_by_lang: dict[str, set[int]] = defaultdict(set)
+    units_by_lang: dict[str, list[Unit]] = defaultdict(list)
     for unit in units:
         if unit.group_unit_id is not None:
             targets.append(TargetShape(place, unit.text, frozenset((unit.id,))))
         elif unit.kind in _NO_TEXT_KINDS:
             targets.append(TargetShape(place, "", frozenset((unit.id,))))
         else:
-            sources_by_lang[unit.lang].add(unit.id)
-    for lang, sources in sources_by_lang.items():
-        targets += [TargetShape(place, text, frozenset(sources)) for text in content["rewrites"][lang]]
+            units_by_lang[unit.lang].append(unit)
+    for lang, lang_units in units_by_lang.items():
+        rewrites = content["rewrites"].get(lang)
+        if rewrites is None:  # 고쳐 쓰지 않는 언어(참조 줄 REF) - 원문 그대로 간다
+            targets += [TargetShape(place, unit.text, frozenset((unit.id,))) for unit in lang_units]
+        else:
+            sources = frozenset(unit.id for unit in lang_units)
+            targets += [TargetShape(place, text, sources) for text in rewrites]
     return SuggestedShape(disposition, tuple(targets))
 
 
@@ -237,6 +242,44 @@ async def record_unit_adoption(
         suggested = _build_suggested_shape(suggestion, (unit for unit_id in unit_ids for unit in units[unit_id]))
         saved = _build_saved_shape(plans, suggestion, unit_ids, (dispositions[unit_id] for unit_id in unit_ids))
         _set_adoption(suggestion, decide_adoption(suggested, saved), actor, stamp)
+
+
+async def judge_unused_suggestions(
+    session: AsyncSession,
+    bundle_id: int,
+    *,
+    plans: Sequence["_Plan"],
+    dispositions: Mapping[int, str],
+    target_ids: Collection[int] = (),
+    actor: str,
+    stamp: datetime,
+) -> None:
+    """사람이 제안을 받지 않고(Use 없이) 확정한 줄의 살아 있는 분류·묶기 제안 — 저장이 제안과 다르면 버림, 같으면 채택 없이 밀어낸다.
+
+    추천 카드를 보고도 다르게 정한 것은 버린 것이라 채택률에 든다(사용자 결정 2026-11-19, 설계 §5 2-7). 같게 정한 것은 받은 것이
+    아니라(Use를 누르지 않았다) 채택으로 세지 않고 stale로만 둔다. 받은 제안은 저장이 이미 채택을 남겨 살아 있지 않다 — 채택 기록 뒤에 부른다.
+    """
+    if not dispositions and not target_ids:
+        return
+    await session.flush()  # 같은 저장이 방금 남긴 채택이 살아 있는 제안 질의에 보이게
+    covering = find_covering(
+        await load_live_suggestions(session, bundle_id, OFFERED_KINDS), unit_ids=dispositions.keys(), target_ids=target_ids
+    )
+    if not covering:
+        return
+    unit_ids_of = {
+        suggestion.id: [unit_id for unit_id in suggestion.content.get("unit_ids", ()) if unit_id in dispositions]
+        for suggestion in covering
+    }
+    units = await _load_units_with_cells(session, {unit_id for ids in unit_ids_of.values() for unit_id in ids})
+    for suggestion in covering:
+        unit_ids = unit_ids_of[suggestion.id]
+        suggested = _build_suggested_shape(suggestion, (unit for unit_id in unit_ids for unit in units[unit_id]))
+        saved = _build_saved_shape(plans, suggestion, unit_ids, (dispositions[unit_id] for unit_id in unit_ids))
+        if decide_adoption(suggested, saved) == "rejected":
+            _set_adoption(suggestion, "rejected", actor, stamp)
+        else:
+            suggestion.result = "stale"
 
 
 async def record_group_adoption(

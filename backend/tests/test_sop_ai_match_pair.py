@@ -1119,9 +1119,9 @@ def test_human_changing_sources_records_edited(
 
     (pair,) = read_suggestions("one_to_one")
     assert pair.adoption == "edited"  # 처분이 바뀌어도 새 문장에 출처가 있으면 고친 것이다
-    # 저장이 받은 제안은 짝 하나다 — 다른 단위의 삭제 후보는 판단에 이어진 적이 없어 채택이 비어 있다
+    # 저장이 받은 제안은 짝 하나다 — 다른 단위의 삭제 후보는 받지 않고 배정으로 정해 버림이다(설계 §5 2-7)
     (candidate,) = read_suggestions("delete_candidate")
-    assert candidate.adoption is None
+    assert candidate.adoption == "rejected"
     assert read_decision(other).suggestion_id is None
 
 
@@ -1266,9 +1266,9 @@ def test_giving_a_new_target_a_source_records_edited(client: TestClient, fake_ai
 
     (new,) = read_suggestions("new")
     assert new.adoption == "edited"
-    # 저장이 받은 제안은 신규 하나다 — 그 단위의 삭제 후보는 판단에 이어진 적이 없어 채택이 비어 있다
+    # 저장이 받은 제안은 신규 하나다 — 그 단위의 삭제 후보는 받지 않고 배정으로 정해 버림이다(설계 §5 2-7)
     (candidate,) = read_suggestions("delete_candidate")
-    assert candidate.adoption is None
+    assert candidate.adoption == "rejected"
 
 
 def test_removing_a_held_new_target_records_rejected(client: TestClient, fake_ai: FakeAi) -> None:

@@ -7,7 +7,7 @@ import httpx2
 import pytest
 from fastapi.testclient import TestClient
 
-from app.sop.ai.adoption import SavedShape, SuggestedShape, TargetShape, decide_adoption
+from app.sop.ai.adoption import SavedShape, SuggestedShape, TargetShape, _build_suggested_shape, decide_adoption
 from app.sop.models import (
     AiJob,
     AiSuggestion,
@@ -596,6 +596,19 @@ def test_later_edit_keeps_the_first_adoption(client: TestClient, fake_ai: FakeAi
     assert read_decision(ko).suggestion_id == suggestion.id
 
 
+def test_suggested_shape_keeps_a_ref_line_as_is() -> None:
+    # 분류는 참조 줄(REF)을 고쳐 쓰지 않아 rewrites에 그 언어가 없다 - 받지 않고 확정할 때 판정이 KeyError(500)로 죽었다(스텝 2 검토)
+    suggestion = AiSuggestion(kind="classify", content={
+        "disposition": "assigned", "target_doc_id": 1, "slot_key": "references", "wi_step": None, "wi_part": None,
+        "rewrites": {"ko": [], "en": []},
+    })
+    ref = Unit(id=7, kind="sentence", lang="ref", text="SOP-ABC-1016", group_unit_id=None)
+
+    shape = _build_suggested_shape(suggestion, [ref])
+
+    assert shape.targets == (TargetShape((1, "references", None, None), "SOP-ABC-1016", frozenset({7})),)
+
+
 def test_save_without_suggestion_id_leaves_the_suggestion_undecided(client: TestClient, fake_ai: FakeAi) -> None:
     # 제안과 똑같이 저장해도 사람이 받지(Use) 않았으면 채택이 아니다 — 판단도 제안에 잇지 않는다
     bundle, ko, _ = suggest_first_pair(client, fake_ai)
@@ -776,8 +789,8 @@ def test_clear_after_confirm_keeps_the_first_adoption(client: TestClient, fake_a
 
 
 @pytest.mark.parametrize("action", ["delete", "move_external"])
-def test_bulk_disposal_leaves_an_untaken_suggestion_undecided(client: TestClient, fake_ai: FakeAi, action: str) -> None:
-    # 받지 않은 제안이 덮는 줄 — 일괄 처분은 채택을 남기지 않고 그 제안을 밀어낸다(받을 수 없게 됐다)
+def test_bulk_disposal_rejects_an_untaken_suggestion_it_differs_from(client: TestClient, fake_ai: FakeAi, action: str) -> None:
+    # 받지 않은 제안(배정)이 덮는 줄을 사람이 다르게(삭제·이동) 정했다 — 버림으로 남는다(설계 §5 2-7)
     bundle, ko, en = suggest_first_pair(client, fake_ai)
     assert get_adoption(client, bundle.id)["classify"]["pending"] == 1
 
@@ -788,8 +801,8 @@ def test_bulk_disposal_leaves_an_untaken_suggestion_undecided(client: TestClient
         decision = read_decision(unit_id)
         assert (decision.status, decision.disposition, decision.suggestion_id) == ("confirmed", action, None)
     (suggestion,) = read_suggestions()
-    assert (suggestion.adoption, suggestion.result) == (None, "stale")
-    assert "classify" not in get_adoption(client, bundle.id)
+    assert (suggestion.adoption, suggestion.adopted_by) == ("rejected", "qa.member")
+    assert get_adoption(client, bundle.id)["classify"]["rejected"] == 1
     assert read_rows(TargetSentence) == []
 
 
@@ -816,7 +829,7 @@ def test_bulk_over_one_side_of_a_pair_leaves_the_other_side(client: TestClient, 
     assert (other.status, other.disposition, other.suggestion_id, other.revision) == (
         "unassigned", "unassigned", None, en_before.revision,
     )
-    assert read_suggestions()[0].adoption is None
+    assert read_suggestions()[0].adoption == "rejected"  # 제안(배정)과 다르게 삭제했다 — 설계 §5 2-7
     # settle_pairs: 정한 운명은 삭제 하나뿐이고 다른 쪽은 미배정이라 짝을 풀지도 확정하지도 않는다
     assert read_pair_of(ko) == pair_before
 
@@ -845,7 +858,7 @@ def test_bulk_over_a_unit_with_a_match_suggestion_leaves_the_new_sentence(
         written.id, "unassigned", None, written.revision,
     )
     assert read_links() == set()
-    assert read_suggestions()[0].adoption is None
+    assert read_suggestions()[0].adoption == "rejected"  # 잇자는 제안과 다르게 삭제했다 — 설계 §5 2-7
 
 
 def test_bulk_still_refuses_units_with_confirmed_targets(client: TestClient, fake_ai: FakeAi) -> None:

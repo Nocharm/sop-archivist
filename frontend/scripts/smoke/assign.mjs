@@ -2555,9 +2555,16 @@ await runStep("assign: AI suggestions come first and confirm one by one", {}, as
   check("the AI suggestion is the first card", (await getText(page, "assign-rec-0")).includes("AI"));
   await takeShot("sop-assign-ai.png");
   const before = await progressDone(page);
+  // AI는 판단을 쓰지 않는다 - ↵만으로는 AI 추천이 확정되지 않고, A(Use)로 받아 초안을 채운 뒤 ↵로 확정한다(설계 2026-11-19-ai-suggest-only D2)
+  check("the row is not decided before Use", (await rowStatus(page)).includes("Unassigned"), await rowStatus(page));
+  await page.keyboard.press("a");
+  // Use는 고른 뒤 Confirm으로 포커스를 옮긴다 - 그 다음 ↵가 확정이다
+  await page.waitForFunction(() => document.activeElement?.getAttribute("data-testid") === "assign-primary", null, { timeout: T });
+  const saved = page.waitForRequest((request) => request.url().includes("/groups/save"), { timeout: T });
   await page.keyboard.press("Enter");
+  check("A then Enter saves the used suggestion", typeof JSON.parse((await saved).postData() ?? "{}").suggestion_id === "number");
   await page.waitForFunction((done) => Number(document.querySelector('[data-testid="assign-progress"]')?.textContent?.split("/")[0]) === done + 1, before, { timeout: T });
-  check("Enter confirms the AI suggestion", true);
+  check("A then Enter confirms the AI suggestion", true);
   await page.goto(`${BASE}/bundles/${halfBundleId}/assign?edit=first`);
   await page.locator('[data-testid^="figure-"]').first().waitFor({ timeout: T });
   check("figure image loads on the paper", true);
@@ -2778,13 +2785,27 @@ await runStep("assign: a status filter folds the Old paper", {}, async ({ page, 
   // New 출처 칩으로 필터 밖(접힌) Unit에 가면 저절로 엿보기로 펼쳐 보인다 - 고른 줄을 따라 New 문서가 바뀌므로 다 받은 뒤에 칩을 찾는다
   await page.waitForLoadState("networkidle");
   await page.waitForTimeout(500);
-  const chips = await page.locator('[data-testid^="assign-new-src-"]').evaluateAll((els) => els.map((el) => el.dataset.testid));
-  let target = null;
-  for (const chip of chips) {
-    const unitId = chip.split("-").pop();
-    if ((await countOf(`${old} [data-unit="${unitId}"]`)) === 0) {
-      target = { chip, unitId };
-      break;
+  const findFoldedChip = async () => {
+    const chips = await page.locator('[data-testid^="assign-new-src-"]').evaluateAll((els) => els.map((el) => el.dataset.testid));
+    for (const chip of chips) {
+      const unitId = chip.split("-").pop();
+      if ((await countOf(`${old} [data-unit="${unitId}"]`)) === 0) return { chip, unitId };
+    }
+    return null;
+  };
+  let target = await findFoldedChip();
+  // AI는 New 문장에 출처를 잇지 않는다(설계 2026-11-19) - 열린 New 문서에 그런 칩이 없으면 다른 New 문서를 차례로 연다
+  if (!target && (await countOf('[data-testid="assign-new-doc"]')) > 0) {
+    await page.locator('[data-testid="assign-new-doc"]').click();
+    const options = await page.locator('[data-testid^="assign-new-doc-option-"]').evaluateAll((els) => els.map((el) => el.dataset.testid));
+    await page.keyboard.press("Escape");
+    for (const option of options) {
+      await page.locator('[data-testid="assign-new-doc"]').click();
+      await page.locator(`[data-testid="${option}"]`).click();
+      await page.waitForLoadState("networkidle");
+      await page.waitForTimeout(300);
+      target = await findFoldedChip();
+      if (target) break;
     }
   }
   check("a New source chip points at a folded Old unit", target !== null);

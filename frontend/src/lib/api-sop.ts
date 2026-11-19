@@ -971,6 +971,8 @@ export interface GroupSaveInput {
   removed_target_ids: number[];
   /** 짝의 한쪽만 이을 때 남는 단위 - 서버가 같은 저장 안에서 그 짝을 풀어 따로 줄로 남긴다 */
   release_unit_ids?: number[];
+  /** Use로 받은 AI 제안 - 서버가 판단에 잇고 채택을 남긴다(이 묶음의 분류·묶기 제안이 아니면 404 suggestion_not_found) */
+  suggestion_id?: number;
 }
 
 export async function listAllUnits(bundleId: number): Promise<UnitRow[]> {
@@ -1591,10 +1593,10 @@ export interface AiSuggestion {
   created_at: string;
 }
 
-export async function listSuggestions(bundleId: number, kind: string): Promise<AiSuggestion[]> {
+export async function listSuggestions(bundleId: number, kind: string, result: "applied" | "invalid" = "applied"): Promise<AiSuggestion[]> {
   const items: AiSuggestion[] = [];
   for (let offset = 0; ; offset += 1000) {
-    const page = await apiFetch<{ total: number; items: AiSuggestion[] }>(`/bundles/${bundleId}/ai/suggestions?kind=${kind}&result=applied&limit=1000&offset=${offset}`);
+    const page = await apiFetch<{ total: number; items: AiSuggestion[] }>(`/bundles/${bundleId}/ai/suggestions?kind=${kind}&result=${result}&limit=1000&offset=${offset}`);
     items.push(...page.items);
     if (items.length >= page.total || page.items.length === 0) return items;
   }
