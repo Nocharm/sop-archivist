@@ -49,7 +49,7 @@ export function AssignSidePanel({ state }: { state: AssignPageState }) {
     setNewRemarks, cutUnitId, focusNew, groupData, draft, editing, savedDestination, destination, rowUnits, rowLangs, firstDecision,
     systemHold, reasonNow, moveCode, setDraft, rowLive, aiDest, aiWhy, recommendations, linkIds, pickedGroups, saveGroupData,
     viewOf, oldView, splitByUnit, shapeView, shapeModel, soloUnits, cutLine, writtenDocs, composedDoc, view, changeView, askAiScope,
-    setRemarkEdit, firstTextRef, busy, accOpen, toggleAcc, saveUnits, slots, aiUnfilled, draftPlace, draftSectionKey, draftPosition,
+    setRemarkEdit, firstTextRef, busy, isAnyPending, accOpen, toggleAcc, saveUnits, slots, aiUnfilled, draftPlace, draftSectionKey, draftPosition,
     placeResolved, setRefEntryId, moveRow, hasUnitDraft, isFixedCaption, rowViewUnits, rowSplitUnit, rowSplit, splitBlocked, rowRefUnit,
     refBlocked, isRefGate, isCaptionGateOn, confirmBlockKey, rowCaptionRefs, refCandidates, shapeLines, shapeFirstId, slotPlaces, slotBlockKinds,
     shapeMode, headingBack, rewrap, bandBack, stepBase, refPendingIds, refDetail, refInfo, runUnitEdit, clearToc, runCaptionRefChange,
@@ -831,7 +831,7 @@ export function AssignSidePanel({ state }: { state: AssignPageState }) {
                     editTestId="assign-new-remark-edit"
                   />
                 </div>
-                <button type="button" className="btn pri assign-confirm" data-testid="assign-mark-new" disabled={!canEdit || busy} onClick={markNew}>
+                <button type="button" className="btn pri assign-confirm" data-testid="assign-mark-new" disabled={!canEdit || isAnyPending} onClick={markNew}>
                   {t("assign.markNew")}
                 </button>
               </div>

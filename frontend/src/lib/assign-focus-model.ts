@@ -89,16 +89,15 @@ export function reduceFocus(state: FocusState, event: FocusEvent): FocusState {
       return { ...state, pending, follows: event.pending.isGlobal ? [] : state.follows };
     }
     case "succeed": {
+      // 일은 걷지 않는다 - 응답 뒤 다시 받기를 걸 때까지(표 벗기기는 새 보기를 놓을 때까지) 처리 중으로 남고, 부른 쪽이 fail로 걷는다
       const entry = state.pending.find((item) => item.id === event.pendingId);
-      if (!entry) return state;
-      const pending = state.pending.filter((item) => item !== entry);
       // 따라갈 박스가 없거나 그 사이 다른 것을 골랐으면 고름을 둔다(규칙 3)
-      if (event.pickUnitId === null || !isSameFocus(entry.from, state.focus)) return { ...state, pending };
+      if (!entry || event.pickUnitId === null || !isSameFocus(entry.from, state.focus)) return state;
       const follow: Follow = { pendingId: entry.id, kind: entry.kind, docId: event.docId, minRevision: event.revision, pickUnitId: event.pickUnitId, from: entry.from };
-      return { ...state, pending, follows: [...state.follows, follow] };
+      return { ...state, follows: [...state.follows, follow] };
     }
     case "fail": {
-      // 그 일만 걷는다 - 고름 · 따라가기는 그대로(규칙 4)
+      // 그 일만 걷는다(실패 · 되묻기 · 성공 뒤 끝 모두) - 고름 · 따라가기는 그대로(규칙 4)
       const pending = state.pending.filter((item) => item.id !== event.pendingId);
       return pending.length === state.pending.length ? state : { ...state, pending };
     }
@@ -157,19 +156,84 @@ function dropVanished(focus: Focus, docs: readonly LoadedDoc[]): Focus {
   return focus.unitId !== null && !doc.unitIds.has(focus.unitId) ? { ...focus, unitId: null } : focus;
 }
 
-/** 처리 중인 일이 잡은 Unit인가 */
-export function isUnitLocked(state: FocusState, unitId: number): boolean {
+/** 처리 중인 일 목록만 - 화면 훅이 같은 렌더 안의 잇단 누름을 막으려고 따로 쥔 목록도 같은 규칙으로 본다 */
+type PendingList = { pending: readonly Pending[] };
+
+/** 처리 중인 일이 잡은 Unit인가 - 잠긴 박스는 고르기 · 끌기 · 틈 단추 · 우클릭 메뉴를 받지 않는다(규칙 6) */
+export function isUnitLocked(state: PendingList, unitId: number): boolean {
   return state.pending.some((entry) => entry.unitIds.includes(unitId));
 }
 
+/** 묶음 전체 일(초기화 · 일괄 수락 · 같은 글자 일괄 확정 · Undo/Redo)이 처리 중인가 - 그동안은 모든 일이 꺼진다 */
+export function isGlobalPending(state: PendingList): boolean {
+  return state.pending.some((entry) => entry.isGlobal);
+}
+
 /** 이 일을 지금 시작할 수 있는가 - 잠긴 Unit과 겹치거나, 묶음 전체 일과 다른 일이 함께면 안 된다(규칙 6) */
-export function canStart(state: FocusState, pending: Pending): boolean {
+export function canStart(state: PendingList, pending: Pending): boolean {
   if (state.pending.length === 0) return true;
-  if (pending.isGlobal || state.pending.some((entry) => entry.isGlobal)) return false;
+  if (pending.isGlobal || isGlobalPending(state)) return false;
   return !pending.unitIds.some((unitId) => isUnitLocked(state, unitId));
 }
 
-/** 원문 편집의 처리 중 종류 - 알약 글(스텝 4)이 이것으로 갈린다 */
+/**
+ * 처리 중인 일이 이 Unit을 은퇴시켰을 수 있나 - 그 Unit을 잡은 일, 묶음 전체 일, 그 문서에서 Unit을 모르고 보낸 일(글자 범위 · 참조).
+ * 서버는 응답 전에 이미 바꿨을 수 있어, 이 동안 그 Unit으로 묶음 · 후보 · 참조를 물으면 404가 난다(규칙 5의 뜻). 판단 저장은 Unit을 바꾸지 않는다
+ */
+export function isUnitUnsettled(state: PendingList, docId: number, unitId: number): boolean {
+  return state.pending.some((entry) => entry.kind !== "save" && (entry.isGlobal || entry.unitIds.includes(unitId) || (entry.docId === docId && entry.unitIds.length === 0)));
+}
+
+/** 처리 중 알약의 글 키 - 판단 저장은 결정 칸 단추가 이미 보이고, 묶음 전체 일은 그릴 자리가 없어 null(설계 D4 표) */
+export function readPendingLabelKey(kind: PendingKind): string | null {
+  switch (kind) {
+    case "join":
+      return "assign.working.join";
+    case "split":
+    case "unmerge":
+      return "assign.working.split";
+    case "unwrap":
+      return "assign.working.unwrap";
+    case "rewrap":
+      return "assign.working.rewrap";
+    case "pair":
+      return "assign.working.pair";
+    case "unpair":
+      return "assign.working.unpair";
+    case "lang":
+      return "assign.working.lang";
+    case "heading":
+    case "ref":
+    case "caption":
+    case "toc":
+    case "figure":
+      return "assign.working.save";
+    case "save":
+    case "undo":
+    case "bulk":
+      return null;
+  }
+}
+
+/** 원문 편집의 알약 자리 - 표 바꾸기는 표 머리, 그 밖은 가리키는 첫 박스. 틈의 붙이기는 부르는 쪽이 틈을 준다(이웃끼리인지는 화면이 안다) */
+export function readEditPlace(op: EditOp): PendingPlace {
+  if (op.type === "set_layout_table") return { at: "table", tableId: op.table_id };
+  const [unitId] = listEditUnitIds(op);
+  return unitId === undefined ? NO_PLACE : { at: "box", unitId };
+}
+
+/** 표 벗기기 · 다시 표로가 바꾸는 Unit - 그 표와 함께 바뀌는 바로 안쪽 띠 표의 Unit(표 · 칸 문장 · 제목 줄)과 그 묶음에 든 것(캡션) */
+export function listTableUnitIds(
+  units: readonly { id: number; table_id: number | null; group_unit_id: number | null }[],
+  tables: readonly { id: number; parent_table_id: number | null; is_band: boolean }[],
+  tableId: number,
+): number[] {
+  const tableIds = new Set([tableId, ...tables.filter((table) => table.parent_table_id === tableId && table.is_band).map((table) => table.id)]);
+  const own = new Set(units.filter((unit) => unit.table_id !== null && tableIds.has(unit.table_id)).map((unit) => unit.id));
+  return units.filter((unit) => own.has(unit.id) || (unit.group_unit_id !== null && own.has(unit.group_unit_id))).map((unit) => unit.id);
+}
+
+/** 원문 편집의 처리 중 종류 - 알약 글이 이것으로 갈린다 */
 export function readEditKind(op: EditOp): PendingKind {
   switch (op.type) {
     case "merge":

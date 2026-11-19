@@ -71,7 +71,7 @@ export default function AssignPage() {
     canPairView, isPairView, pairColumns, pairLinks, partKeys, oldDocId, soloUnit, soloUnits, cutUnit, cutLine, linkedTargets,
     setManualPart, activePart, isFoldEmpty, foldElsewhere, writtenDocs, composedDocs, setManualNewDoc, toggleKey, liveDoc, isNewDocOpen,
     newDocId, newAiReturn, setNewAiReturn, isComposedDoc, newFileId, composedDoc, newRows, headingNotes, sectionMarks, joinableIds,
-    templateTitles, linkPairs, view, changeView, zoomPane, setPanes, remarkEdit, setRemarkEdit, focusAfterRef, busy, editConfirm,
+    templateTitles, linkPairs, view, changeView, zoomPane, setPanes, remarkEdit, setRemarkEdit, focusAfterRef, busy, isAnyPending, isGlobalPending, paperPending, editConfirm,
     setEditConfirm, oldPaneRef, buildUndo, markRecorded, bulk, setBulk, confirmingIdentical,
     setConfirmingIdentical, resetScope, setResetScope, slots, newDraft, draftSlotKey, placeResolved, canPlaceClick, pickedSpotKey,
     setCarvePick, carve, carveText, clearCarve, togglePairViewByButton, pairFrom, setPairFrom, pairSource, selectToc, openNewCtxMenu,
@@ -556,7 +556,8 @@ export default function AssignPage() {
                     ? undefined
                     : {
                         canClear: canEdit && !isNewEdit,
-                        busy,
+                        // 처리 중인 블록만 꺼진다(용지가 잠긴 Unit으로 본다) - 묶음 전체 일 동안은 모두
+                        busy: isGlobalPending,
                         onClear: clearToc,
                         open: tocOpen,
                         selected: tocPick !== null && tocPick.docId === oldView?.document.id ? tocPick : null,
@@ -567,9 +568,11 @@ export default function AssignPage() {
                       }
                 }
                 // 제목에서 바꾼 조항 묶음 머리(F8b) - 되돌리기는 다듬는 원문이 그 Old 문서일 때만
-                headingShift={isSolo ? undefined : { canRevert: canEdit && !isNewEdit, busy, onRevert: revertHeadings }}
+                headingShift={isSolo ? undefined : { canRevert: canEdit && !isNewEdit, busy: isGlobalPending, onRevert: revertHeadings }}
                 // 벗긴 표의 줄 묶음 머리 "↺ 다시 표로"(F1) - 다듬는 원문이 그 Old 문서일 때만
-                unwrap={isSolo ? undefined : { canRewrap: canEdit && !isNewEdit, busy, onRewrap: rewrapTable }}
+                unwrap={isSolo ? undefined : { canRewrap: canEdit && !isNewEdit, busy: isGlobalPending, onRewrap: rewrapTable }}
+                // 처리 중인 일 - 누르는 즉시 그 자리 알약과 박스 쉬머, 그 박스만 잠근다(설계 D4)
+                pending={mode === "old" ? paperPending : undefined}
                 paneRef={oldPaneRef}
                 renderPills={(unitId) => {
                   const targets = linkedTargets.get(unitId);
@@ -588,7 +591,8 @@ export default function AssignPage() {
                 numberCell={
                   canEdit && mode === "old" && !isNewEdit && !isSolo
                     ? {
-                        busy,
+                        // 그 줄이 처리 중이면 용지가 그 번호 칸만 끈다
+                        busy: isGlobalPending,
                         onSave: (unitId, number, follow) =>
                           void runUnitEdit({ type: "set_number", unit_id: unitId, number, follow }, number === null ? t("assign.number.didClear") : t("assign.number.didSet", { n: number }), unitId),
                       }
@@ -633,7 +637,7 @@ export default function AssignPage() {
                 onCutDrag={canEdit ? cutLine.drag : undefined}
                 onCutNudge={canEdit ? cutLine.nudge : undefined}
                 renderAtCut={() => <CutPop busy={busy} onRun={splitAtCut} onCancel={cutLine.clear} testIdPrefix="assign" />}
-                join={canEdit && mode === "old" ? { busy, plan: planOldJoin, onJoin: joinOld } : undefined}
+                join={canEdit && mode === "old" ? { busy: isGlobalPending, plan: planOldJoin, onJoin: joinOld } : undefined}
                 renderUnitActions={renderOldActions}
                 figureSource={oldView ? { bundleId, docId: oldView.document.id } : undefined}
                 zoom={view.zoomOld}
@@ -752,7 +756,8 @@ export default function AssignPage() {
           summary={t("assign.identicalBody", { n: identical.data?.length ?? 0 })}
           confirmLabel={t("assign.identicalConfirm")}
           confirmIcon={Link2}
-          busy={busy}
+          // 묶음 전체 일 - 다른 일이 처리 중이면 시작하지 않는다
+          busy={isAnyPending}
           testId="assign-identical-modal"
           onConfirm={() => void confirmIdenticalAll()}
           onClose={() => setConfirmingIdentical(false)}
@@ -763,7 +768,7 @@ export default function AssignPage() {
           bundleId={bundleId}
           kind={acceptKind}
           document={acceptDoc}
-          busy={busy}
+          busy={isAnyPending}
           onAccept={(ids, reason) => void acceptAll(acceptKind, ids, reason)}
           onClose={() => setAcceptKind(null)}
         />

@@ -15,7 +15,7 @@ import { type AssignPageState, FILTERS, FILTER_ICON } from "./use-assign-page";
 export function AssignBar({ state }: { state: AssignPageState }) {
   const {
     t, bundleId, bundle, canEdit, docs, oldDocIds, identical, aiOn, rows, rowMap, rowOfUnit, mode, filter, counts, applyFilter, checked,
-    viewOf, setManualOldDoc, oldView, view, changeView, aiMenuItems, busy, undoState, setBulk, setConfirmingIdentical, setResetScope,
+    viewOf, setManualOldDoc, oldView, view, changeView, aiMenuItems, isAnyPending, undoState, setBulk, setConfirmingIdentical, setResetScope,
     selectRow, goToUnit, refPendingIds, captionPendingKeys, splitPendingIds, readPendingItem, selectNextSplit, selectNextRef,
     selectNextCaption, runUndoStep, done,
   } = state;
@@ -62,12 +62,12 @@ export function AssignBar({ state }: { state: AssignPageState }) {
         {canEdit && (
           <span className="flex items-center gap-1">
             <Tooltip label={t("assign.undo")}>
-              <button type="button" className="btn icon h-7 w-7" aria-label={t("assign.undo")} data-testid="assign-undo" disabled={busy || !undoState.canUndo} onClick={() => void runUndoStep("undo")}>
+              <button type="button" className="btn icon h-7 w-7" aria-label={t("assign.undo")} data-testid="assign-undo" disabled={isAnyPending || !undoState.canUndo} onClick={() => void runUndoStep("undo")}>
                 <Undo2 size={14} strokeWidth={1.5} aria-hidden />
               </button>
             </Tooltip>
             <Tooltip label={t("assign.redo")}>
-              <button type="button" className="btn icon h-7 w-7" aria-label={t("assign.redo")} data-testid="assign-redo" disabled={busy || !undoState.canRedo} onClick={() => void runUndoStep("redo")}>
+              <button type="button" className="btn icon h-7 w-7" aria-label={t("assign.redo")} data-testid="assign-redo" disabled={isAnyPending || !undoState.canRedo} onClick={() => void runUndoStep("redo")}>
                 <Redo2 size={14} strokeWidth={1.5} aria-hidden />
               </button>
             </Tooltip>
@@ -132,7 +132,8 @@ export function AssignBar({ state }: { state: AssignPageState }) {
         />
         <AssignMoreMenu
           canEdit={canEdit}
-          disabled={busy}
+          // 묶음 전체 일(같은 글자 확정 · 초기화)은 다른 일이 처리 중이면 시작하지 않는다
+          disabled={isAnyPending}
           identicalCount={identicalCount}
           onIdentical={() => setConfirmingIdentical(true)}
           aiItems={aiOn ? aiMenuItems : []}

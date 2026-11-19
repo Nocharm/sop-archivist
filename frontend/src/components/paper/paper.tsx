@@ -17,6 +17,7 @@ import { UnitStatusChip } from "@/components/status";
 import { Collapse } from "@/components/ui/motion";
 import { useDelegatedTip } from "@/components/ui/delegated-tip";
 import type { ViewBlock, ViewUnit } from "@/lib/api-sop";
+import type { PendingPlace } from "@/lib/assign-focus-model";
 import { getBundleShape, getCaptionScope, isSentenceLike, type BundleShape } from "@/lib/caption-slot-model";
 import { readCaretPoint } from "@/lib/caret-point";
 import { isNoiseUnit } from "@/lib/classify-model";
@@ -58,6 +59,13 @@ const MARK_LABELS: Record<PaperMark, string> = {
 
 function readRowUnitId(row: PaperRow): number | null {
   return row.type === "table" ? row.item.unitId : row.unitId;
+}
+
+/** Assign의 처리 중인 일(설계 2026-11-20 D4) - shimmerIds는 빛이 지나가는 박스, lockedIds는 끌기 · 틈 단추 · 머리 단추를 받지 않는 박스, pills는 그 자리 알약 */
+export interface PaperPending {
+  shimmerIds: ReadonlySet<number>;
+  lockedIds: ReadonlySet<number>;
+  pills: readonly { id: string; kind: string; label: string; place: PendingPlace }[];
 }
 
 /** 목차 줄(잡음 표시가 붙은 글 조각)인가 - 목차 블록으로 접는 화면(strips.toc)에서만 묻는다 */
@@ -209,6 +217,8 @@ interface PaperProps {
     /** Assign - 삭제로 확정한 줄을 흐린 한 줄 "DELETED · 종류 · 앞부분 글"로 접는다(lib/deleted-fold-model, 설계 D6). 접을 단위와 내용은 화면이 정한다.
      *  누르면 onOpen(줄 키)으로 펼치고 그 카드의 첫 단위를 고른다. 접힌 줄은 끌기 · 틈 단추를 받지 않는다 */
     deleted?: { folds: ReadonlyMap<number, DeletedFold>; onOpen: (rowKey: string) => void };
+    /** Assign - 처리 중인 일. 잠긴 박스는 끌리지 않고 그 곁 틈 · 머리 단추가 꺼진다(고르기 · 우클릭은 화면이 막는다) */
+    pending?: PaperPending;
   };
   /** strips에서 고른 조각의 글 바로 아래 줄(확인·짝 풀기 등 단추) - 조각 상자가 펼쳐지며 밀려 내려오고, 고름이 옮겨 가면 접힌다 */
   renderUnitActions?: (unitId: number) => ReactNode;
@@ -650,6 +660,34 @@ export function Paper({
     return unitId !== selectedId && (highlightIds?.has(unitId) ?? false);
   }
 
+  /** 처리 중인 일이 잡은 박스 - 끌기 · 틈 단추 · 머리 단추를 받지 않는다 */
+  function isLocked(unitId: number | null | undefined): boolean {
+    return unitId !== null && unitId !== undefined && (strips?.pending?.lockedIds.has(unitId) ?? false);
+  }
+
+  /** 빛이 지나가는 박스(처리 중) - 움직임 줄이기면 CSS가 옅은 바탕만 */
+  function readPendingMark(unitId: number | null | undefined): "" | undefined {
+    return unitId !== null && unitId !== undefined && strips?.pending?.shimmerIds.has(unitId) ? "" : undefined;
+  }
+
+  /** 그 자리의 처리 중 알약 - 누르는 즉시 뜨고 일이 끝나면 사라진다 */
+  function renderPendingPills(isHere: (place: PendingPlace) => boolean): ReactNode {
+    const pills = strips?.pending?.pills.filter((pill) => isHere(pill.place)) ?? [];
+    if (pills.length === 0) return null;
+    return pills.map((pill) => (
+      <span key={pill.id} className="pending-pill" role="status" data-kind={pill.kind} data-testid={`${testId}-pending`}>
+        {pill.label}
+      </span>
+    ));
+  }
+
+  /** 두 박스 사이 틈의 알약(붙이기 · 틈에서 맺은 짝) */
+  function renderGapPills(prev: PaperRow, next: PaperRow): ReactNode {
+    const firstId = readRowUnitId(prev);
+    const secondId = readRowUnitId(next);
+    return renderPendingPills((place) => place.at === "gap" && place.firstId === firstId && place.secondId === secondId);
+  }
+
   /** 고른 박스 아래 흐린 한 줄 - 떨어진 짝이 위/아래 어디에 있는지. 누르면 짝으로 간다 */
   function renderPairHint(unitId: number): ReactNode {
     const onGo = strips?.pairHint?.onGo;
@@ -748,7 +786,7 @@ export function Paper({
     const plan = gap.blocker === "not_text" ? { kind: null, reasonKey: MERGE_BLOCKER_KEYS.not_text } : join.plan(gap.firstId, gap.secondId);
     const label = t("split.joinAdjacent");
     const reason = plan.kind === null && plan.reasonKey ? t(plan.reasonKey) : null;
-    const isOff = plan.kind === null || join.busy;
+    const isOff = plan.kind === null || join.busy || isLocked(gap.firstId) || isLocked(gap.secondId);
     const Icon = plan.kind === "pair" ? Link2 : FoldVertical;
     return (
       <button
@@ -791,7 +829,7 @@ export function Paper({
           number={unit.number}
           isUnread={unreadBlockIds.has(unit.block_id)}
           canEdit={numberCell !== undefined}
-          busy={numberCell?.busy ?? false}
+          busy={(numberCell?.busy ?? false) || isLocked(unit.id)}
           edit={numberEdit?.unitId === unit.id ? numberEdit : null}
           followed={numberEdit?.unitId === unit.id ? followed : []}
           preview={previewOf.get(unit.id) ?? null}
@@ -826,9 +864,10 @@ export function Paper({
     return rows.map((row, index) => {
       if (row.type !== "piece") return null;
       const unit = row.unitId === null ? undefined : model.units.get(row.unitId);
+      const gapPills = index > 0 ? renderGapPills(rows[index - 1], row) : null;
       return (
         <Fragment key={row.key}>
-          {index > 0 && <div className="cell-gap">{renderMerge(rows[index - 1], row)}</div>}
+          {index > 0 && <div className="cell-gap">{gapPills ?? renderMerge(rows[index - 1], row)}</div>}
           <div
             className="cell-piece"
             // 풀기 전환(useUnwrapMotion)이 칸 글을 벗긴 뒤의 문장 줄과 잇는 키 - 같은 블록 · 같은 시작 자리(readFlipKey)
@@ -837,11 +876,13 @@ export function Paper({
             data-sel={unit !== undefined && unit.id === selectedId ? "" : undefined}
             data-mate={unit !== undefined && isMate(unit.id) ? "" : undefined}
             data-partner={unit !== undefined && partnerIds?.has(unit.id) ? "" : undefined}
+            data-pending={readPendingMark(unit?.id)}
             data-testid={unit ? `${testId}-piece-${unit.id}` : undefined}
           >
             {renderMarks(unit, false, "cell-marks")}
             <p data-block={cell.id}>{row.parts[0].segments.map((segment, at) => renderSegment(cell, segment, at))}</p>
             {renderActions(unit?.id)}
+            {unit !== undefined && renderPendingPills((place) => place.at === "box" && place.unitId === unit.id)}
           </div>
         </Fragment>
       );
@@ -1049,7 +1090,9 @@ export function Paper({
           data-partner={unit !== undefined && partnerIds?.has(unit.id) ? "" : undefined}
           data-bracket={bracket}
           data-strip-unit={unitId ?? undefined}
-          data-drag-box={dragBoxes && unitId !== null ? "" : undefined}
+          // 처리 중인 박스는 끌리지 않는다(설계 D4 - 잠금은 그 박스만)
+          data-drag-box={dragBoxes && unitId !== null && !isLocked(unitId) ? "" : undefined}
+          data-pending={readPendingMark(unitId)}
           data-testid={`${testId}-piece-${unitId ?? row.key}`}
         >
           {/* 표·그림의 보류 칩 - 표 위 제 줄(data-start 밖)이라 표를 덮지 않고, 눌러도 조각 상자를 누른 것으로 그 단위를 고른다 */}
@@ -1081,6 +1124,7 @@ export function Paper({
           {renderActions(unit?.id)}
           {foot}
           {unit !== undefined && unit.id === selectedId && renderPairHint(unit.id)}
+          {renderPendingPills((place) => (place.at === "box" && place.unitId === unitId) || (place.at === "table" && row.type === "table" && place.tableId === row.item.table.id))}
           {pills}
           {renderMarks(unit, hasWarn, "strip-marks")}
           {row.type === "piece" && renderLang(unit)}
@@ -1105,8 +1149,8 @@ export function Paper({
         data-testid={`${testId}-gap-${row.key}`}
       >
         {hasRail && renderRail(Math.min(readTabWidth(prev), readTabWidth(row)))}
-        {/* 목차 블록 곁에는 합치기를 두지 않는다 - 목차 줄은 "목차 아님"으로 먼저 보통 줄로 돌린다. 접힌 삭제 줄 곁도 같다(펼쳐서 한다) */}
-        {!(hasToc && (isTocRow(prev, model.units) || isTocRow(row, model.units))) && !isDeletedRow(prev) && !isDeletedRow(row) && renderMerge(prev, row)}
+        {/* 처리 중인 틈은 알약이 합치기 자리를 대신한다. 목차 블록 곁에는 합치기를 두지 않는다 - 목차 줄은 "목차 아님"으로 먼저 보통 줄로 돌린다. 접힌 삭제 줄 곁도 같다(펼쳐서 한다) */}
+        {renderGapPills(prev, row) ?? (!(hasToc && (isTocRow(prev, model.units) || isTocRow(row, model.units))) && !isDeletedRow(prev) && !isDeletedRow(row) && renderMerge(prev, row))}
       </div>
     );
   }
@@ -1123,6 +1167,7 @@ export function Paper({
     if (!toc || !block) return null;
     const isOpen = toc.open.has(block.key);
     const picked = toc.selected?.key === block.key ? toc.selected : null;
+    const isBusy = toc.busy || block.unitIds.some(isLocked);
     const width = readTabWidth(rows[0]);
     const prefix = `${testId}-toc`;
     return (
@@ -1148,13 +1193,14 @@ export function Paper({
               <button
                 type="button"
                 className="btn toc-act"
-                disabled={toc.busy}
+                disabled={isBusy}
                 data-testid={`${prefix}-all-${block.key}`}
                 onClick={() => toc.onClear(block.unitIds)}
               >
                 {t("assign.toc.allNot")}
               </button>
             )}
+            {renderPendingPills((place) => place.at === "box" && block.unitIds.includes(place.unitId))}
           </div>
           {!isOpen && <p className="toc-note" data-testid={`${prefix}-note-${block.key}`}>{t("assign.toc.note")}</p>}
           <Collapse open={isOpen} className="toc-body">
@@ -1177,7 +1223,7 @@ export function Paper({
                         <button
                           type="button"
                           className="btn toc-act"
-                          disabled={toc.busy}
+                          disabled={isBusy}
                           data-testid={`${prefix}-not-${line.unitId}`}
                           onClick={() => toc.onClear([line.unitId])}
                         >
@@ -1252,9 +1298,16 @@ export function Paper({
       <div className="strip-row unwrap-head-row" data-unwrap-scope={`t${tableId}`} data-unwrap-enter="" data-testid={`${testId}-unwrap-head-${tableId}`}>
         <span className="strip-lead-gap" style={{ width: readTabWidth(row) + STRIP_LEAD_EXTRA }} />
         <div className="unwrap-head">
-          <button type="button" className="btn toc-act" disabled={unwrap.busy} data-testid={`${testId}-rewrap-${tableId}`} onClick={() => unwrap.onRewrap(tableId)}>
+          <button
+            type="button"
+            className="btn toc-act"
+            disabled={unwrap.busy || [...model.units.values()].some((unit) => unit.table_id === tableId && isLocked(unit.id))}
+            data-testid={`${testId}-rewrap-${tableId}`}
+            onClick={() => unwrap.onRewrap(tableId)}
+          >
             {t("assign.unwrap.rewrap")}
           </button>
+          {renderPendingPills((place) => place.at === "table" && place.tableId === tableId)}
         </div>
       </div>
     );
@@ -1276,7 +1329,7 @@ export function Paper({
             <button
               type="button"
               className="btn toc-act"
-              disabled={shift.busy}
+              disabled={shift.busy || group.unitIds.some(isLocked)}
               data-testid={`${testId}-shift-revert-${group.firstUnitId}`}
               onClick={() => shift.onRevert(group.unitIds)}
             >
@@ -1322,7 +1375,7 @@ export function Paper({
       <PaperChunk
         key={group.cards[0][0].key}
         live={nearChunks === null || (group.index >= nearChunks.from && group.index <= nearChunks.to) || liveChunkIds.has(group.index)}
-        deps={[cardGroups, t, testId, dragBoxes, pickWholeBundle, strips?.toc?.open, strips?.toc?.selected, strips?.toc?.busy, strips?.toc?.canClear, shiftGroups, strips?.headingShift?.busy, strips?.headingShift?.canRevert, unwrapHeads, strips?.unwrap?.busy, strips?.unwrap?.canRewrap, strips?.deleted?.folds]}
+        deps={[cardGroups, t, testId, dragBoxes, pickWholeBundle, strips?.toc?.open, strips?.toc?.selected, strips?.toc?.busy, strips?.toc?.canClear, shiftGroups, strips?.headingShift?.busy, strips?.headingShift?.canRevert, unwrapHeads, strips?.unwrap?.busy, strips?.unwrap?.canRewrap, strips?.deleted?.folds, strips?.pending]}
         render={() => renderCards(group)}
       />
     ));
