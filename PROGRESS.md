@@ -4,6 +4,8 @@
 
 ## 2026-11-19
 
+- **혼자 연달아 고쳐도 나던 "다른 사람이 먼저 바꿨습니다"(`fix/assign-self-conflict`)** — 사용자 보고: 혼자일 때도 Assign에서 동시 작업 토스트가 잦고 굼뜨다. 1인 편집 잠금을 검토했지만 원인이 아니었다 — 편집이 끝나면 `busy`가 바로 풀리는데 화면의 문서 revision은 다시 받기(요청 10여 개)가 끝나야 바뀌어, 그 사이 다음 편집이 낡은 revision으로 409 `revision_conflict` → 토스트 + 또 다시 받기였다. 문서 쓰기(편집·되돌리기·짝·캡션 참조)를 `lib/doc-revision.ts` `sendDocWrite`로 보내 이 탭이 응답으로 받은 revision과 화면 값 중 큰 것을 보낸다(대상은 Unit id라 낡은 보기로 보내도 없어진 Unit은 서버가 따로 거절, 남·AI의 쓰기는 그대로 409). 남은 것: 편집마다 다시 받는 양 줄이기(느림의 나머지)는 재어 본 뒤 따로. 확인: vitest 새 시험 5 · lint · tsc, `assign:` 스모크 839 통과.
+
 - **신뢰 기반 먼저(v1.1.54, `docs/trust-direction` — 스텝 브랜치 `chore/static-gate` · `test/invariants` · `docs/feature-map` · `test/smoke-split`)** — Lauren Tan 방식으로 dev를 점검했다: 검증 층은 두꺼운데 ESLint·ruff가 기본값이고 hook·경계 검사가 없어 같은 화면 fix가 되풀이되고 스모크 기대값을 낮춰 합치는 일이 있었다. 사용자 결정으로 교정 사다리(`/harden`, 루트 CLAUDE.md "신뢰 기반 먼저")를 두고 기반을 깔았다(계획 `docs/superpowers/plans/2026-11-19-trust-foundation-plan.md`).
   - 정적 관문: effect·타이머 기준선(`frontend/effect-baseline.json`, 새 파일은 ESLint가 막고 파일별 개수는 래칫 시험), lessons §9·§10 · 사유 없는 `eslint-disable` · 프런트 "한 길" 규칙 7개를 `src/source-rules.test.ts`로, ruff `B`·`BLE`·`UP`·`TID`(맨 `datetime.now()` 금지), 고친 파일 하나를 lint하는 PostToolUse hook.
   - 불변식: `backend/CLAUDE.md` 글 규칙 7개를 `tests/test_invariants.py`로, 프런트가 사본을 둔 서버 규칙은 `scripts/dump_rule_cases.py` → `rule-cases.json` ↔ vitest. 첫 실행에서 캡션 자리 빈 문단 판정 어긋남(`\x1c`–`\x1f`·`\x85`)을 찾아 프런트를 고쳤다(앱 동작 변경 → PATCH).

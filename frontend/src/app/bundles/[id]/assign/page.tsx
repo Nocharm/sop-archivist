@@ -206,6 +206,7 @@ import {
   type RowDraft,
 } from "@/lib/classify-model";
 import { buildDocDashboard } from "@/lib/doc-dashboard-model";
+import { pickDocRevision } from "@/lib/doc-revision";
 import { formatKst } from "@/lib/datetime";
 import { useI18n } from "@/lib/i18n";
 import { genId } from "@/lib/id";
@@ -1319,7 +1320,9 @@ export default function AssignPage() {
     try {
       // 자르기·합치기·언어 바꾸기 모두 Assign 기록에 넣는다(설계 §4.4) - 서버는 Split 편집 기록 번호만 가리킨다
       const undo = buildUndo({ focus_unit_id: op.type === "split" ? op.unit_id : (followId ?? undefined) });
-      const result = await editUnits(bundleId, shapeView.document.id, shapeView.document.revision, op, confirm, undo);
+      // 보낸 revision과 같으면 서버가 아무것도 쓰지 않은 편집이다 - 이 탭이 먼저 쓴 값이 화면 값보다 새로울 수 있다(doc-revision.ts)
+      const sentRevision = pickDocRevision(shapeView.document.id, shapeView.document.revision);
+      const result = await editUnits(bundleId, shapeView.document.id, sentRevision, op, confirm, undo);
       let revision = result.document_revision;
       // 참조를 풀면 서버가 그 전 언어로 돌린다 - 고른 언어와 다를 때만 한 번 더 바꾼다
       if (thenLang !== null && op.type === "clear_ref") {
@@ -1329,7 +1332,7 @@ export default function AssignPage() {
         }
       }
       // 문서가 바뀌지 않은 편집(참조 제안 물리기)은 서버도 단계를 남기지 않는다
-      if (revision !== shapeView.document.revision) markRecorded();
+      if (revision !== sentRevision) markRecorded();
       setRefEntryId(null);
       cutLine.clear();
       setCutUnitId(null);
