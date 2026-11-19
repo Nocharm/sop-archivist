@@ -677,9 +677,15 @@ export function Paper({
   }
 
   /** 두 줄 사이의 묶기 - 같은 언어면 합치기, 한글·영어면 짝(아이콘으로 구별). 못 묶는 자리는 꺼 두고 까닭을 툴팁으로 */
+  /** 틈의 위나 아래가 고른 박스(짝 카드면 카드 전체)인가 */
+  function isNearSelected(prev: PaperRow, next: PaperRow): boolean {
+    return selectedBlock.has(readRowUnitId(prev) ?? -1) || selectedBlock.has(readRowUnitId(next) ?? -1);
+  }
+
   function renderMerge(prev: PaperRow, next: PaperRow): ReactNode {
     const join = strips?.join;
-    const gap = join ? getGapMerge(prev, next, model.units) : null;
+    // 붙이기·묶기는 고른 박스의 위아래 틈에만 - 다른 틈에 올려도 단추가 뜨지 않는다(요청서 6번)
+    const gap = join && isNearSelected(prev, next) ? getGapMerge(prev, next, model.units) : null;
     if (!join || !gap) return null;
     // 한쪽이 표·그림인 틈은 두 id가 같다 - 묶을 짝이 없으니 plan에 묻지 않는다
     const plan = gap.blocker === "not_text" ? { kind: null, reasonKey: MERGE_BLOCKER_KEYS.not_text } : join.plan(gap.firstId, gap.secondId);
@@ -695,7 +701,6 @@ export function Paper({
         aria-disabled={isOff ? "true" : undefined}
         aria-label={reason ? `${label} - ${reason}` : label}
         data-tip={reason ?? undefined}
-        tabIndex={gap.firstId === selectedId || gap.secondId === selectedId ? 0 : -1}
         data-testid={`${testId}-join-${gap.firstId}-${gap.secondId}`}
         onClick={(event) => {
           event.stopPropagation();
@@ -1034,7 +1039,7 @@ export function Paper({
         data-unwrap-scope={hasRail ? `t${unwrapTable}` : undefined}
         // 카드 안 틈 - 둘째 줄부터의 바로 위는 늘 같은 카드다
         data-pair={cardTops.has(readRowUnitId(row) ?? -1) ? "" : undefined}
-        data-near-selected={selectedBlock.has(readRowUnitId(prev) ?? -1) || selectedBlock.has(readRowUnitId(row) ?? -1) ? "" : undefined}
+        data-near-selected={isNearSelected(prev, row) ? "" : undefined}
         // 합치기 단추를 글 시작 x에 - 위아래 앞머리 중 넓은 쪽 뒤라 어느 앞머리에도 걸치지 않는다
         style={{ "--gap-tab": `${Math.max(readTabWidth(prev), readTabWidth(row)) + STRIP_LEAD_EXTRA}px` }}
         data-testid={`${testId}-gap-${row.key}`}

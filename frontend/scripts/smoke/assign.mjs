@@ -3308,6 +3308,9 @@ await runStep("assign: join two pieces from the gap between them, then unmerge",
   const join = page.locator(`[data-testid="assign-paper-join-${halves[0].id}-${halves[1].id}"]`);
   await join.waitFor({ state: "attached", timeout: T });
   check("the gap between the two pieces offers Join", (await join.getAttribute("aria-disabled")) === null);
+  // 붙이기 단추는 고른 박스의 위아래 틈에만 있다 - 다른 틈에는 올려도 뜰 단추가 없다
+  const farJoins = await page.evaluate(() => [...document.querySelectorAll('.strip-gap [data-testid^="assign-paper-join-"]')].filter((el) => !el.closest(".strip-gap[data-near-selected]")).length);
+  check("only the gaps next to the selected box carry Join", farJoins === 0, `${farJoins} far gaps`);
   await page.waitForFunction(() => { const acts = document.querySelector(".strip-acts[data-open]"); return acts === null || acts.getAnimations().length === 0; }, null, { timeout: T });
   await page.locator(".strip-gap", { has: join }).hover({ position: { x: 200, y: 2 } });
   await page.waitForFunction(() => [...document.querySelectorAll(".strip-gap:hover .strip-merge")].some((el) => getComputedStyle(el).pointerEvents === "auto"), null, { timeout: T });
