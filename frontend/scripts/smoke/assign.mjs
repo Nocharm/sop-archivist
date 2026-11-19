@@ -3807,7 +3807,11 @@ await runStep("assign: heading to sentence - Turn into sentences from the right-
   // 바꾼 줄 위 묶음 머리 - 꼬리표와 수, 줄 끝 되돌리기
   const head = page.locator(`[data-testid="assign-paper-shift-${sentences[0].id}"]`);
   await head.waitFor({ timeout: T });
-  check("a group head sits above the shifted lines", (await head.innerText()).includes("Heading → sentence"), await head.innerText());
+  // 머리는 들어오는 움직임 동안 글자가 아직 보이지 않아 innerText가 꼬리표를 빼고 읽힌다(10번에 1번) - 보일 때까지 기다린 뒤 잰다
+  const hasTag = await page
+    .waitForFunction((id) => document.querySelector(`[data-testid="assign-paper-shift-${id}"]`)?.innerText.includes("Heading → sentence"), sentences[0].id, { timeout: T })
+    .then(() => true, () => false);
+  check("a group head sits above the shifted lines", hasTag, await head.innerText());
   await takeShot("sop-assign-heading-shift.png");
   // 바꾼 줄을 고르면 Shape 맨 아래에 Back to heading
   await page.locator(`[data-testid="assign-paper-piece-${sentences[0].id}"]`).click();
