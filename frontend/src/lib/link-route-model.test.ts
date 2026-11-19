@@ -38,10 +38,10 @@ describe("isFarLink", () => {
     expect(isFarLink({ x: 0, y: 100 }, { x: 30, y: 100 + FAR_LINK_DY })).toBe(false);
   });
 
-  it("draws a link a paragraph or two off as a full line", () => {
-    // 사용자 보고 2026-11-19 - 확정한 이음이 한두 문단(60~120px) 어긋나면 꼬리만 남아 안 보였다
-    expect(isFarLink({ x: 0, y: 570 }, { x: 30, y: 490 })).toBe(false);
-    expect(isFarLink({ x: 0, y: 300 }, { x: 30, y: 420 })).toBe(false);
+  it("joins a link about a paragraph off and leaves two paragraphs off as tails", () => {
+    // 사용자 의도 2026-11-19 - 가까우면 이어진 선, 조금 멀어지면 가지만. 데모의 한 문단 어긋남은 59px, 두 문단은 127px 남짓이다
+    expect(isFarLink({ x: 0, y: 549 }, { x: 30, y: 490 })).toBe(false);
+    expect(isFarLink({ x: 0, y: 300 }, { x: 30, y: 427 })).toBe(true);
   });
 
   it("treats a long vertical run as far, either direction", () => {
