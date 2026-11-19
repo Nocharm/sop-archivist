@@ -363,6 +363,8 @@ async function prepareClickPlace(page, needed) {
     confirmWithEnter: async (unit) => {
       const request = page.waitForRequest((item) => item.url().includes("/groups/save") && item.method() === "POST", { timeout: T });
       const response = page.waitForResponse((item) => item.url().includes("/groups/save"), { timeout: T });
+      // 자리를 누르면 다음 그림 틀에서 Confirm으로 포커스가 간다 - 그 전에 누른 ↵는 아직 포커스가 있는 자리 단추를 다시 누른다
+      await page.waitForFunction(() => document.activeElement?.getAttribute("data-testid") === "assign-primary", null, { timeout: T });
       await page.keyboard.press("Enter");
       const body = (await request).postDataJSON();
       await response;

@@ -11,7 +11,13 @@ Lauren Tan의 에이전트 개발 방식(코드 구조 → 정적 검사 → 검
 | 검증 | `pw-smoke-sop.mjs` 12,638줄 한 파일, 감사 4종, 합성 E2E | 흔들림 언급이 PROGRESS에 15번, 브랜치 e는 기대값을 낮춰 합쳤다. 에이전트용 기능 맵이 없다 |
 | 산문 | `backend/CLAUDE.md` "이중 사용 지점" 약 17개, `lessons/react-ts-patterns.md` §9·§10 | 대부분 시험·lint로 바꿀 수 있다. 프런트 사본 4개(`caption-slot-model`·`number-model`·`section-number`·`c-edit-model`)가 공용 사례 없이 백엔드 규칙을 따라간다 |
 
-들이지 않는 것: 자동 병합(사내 규제 문서 도구), TLA+, 주석 대부분 금지(`rules/common/comments.md`의 why 주석과 충돌), 클라우드 에이전트. 스텝 4(`assign/page.tsx` 쪼개기)는 이번에 채택하지 않았다 — 스텝 1·2 뒤 다시 묻는다.
+### 스텝 4 — Assign 화면 쪼개기 (사용자 요청 2026-11-19 "끝까지")
+
+- **4-1 됨** `refactor/assign-split-1-core`: 상태 · 데이터 · 동작을 `use-assign-page.tsx` `useAssignPage()`로(글자 그대로, TypeScript AST로 나눔). `page.tsx` 5,211 → 2,081줄.
+- **4-2 됨** `refactor/assign-split-2-side-panel`: 오른쪽 결정 칸 `assign-side-panel.tsx`(998줄)와 위쪽 줄 `assign-bar.tsx`(147줄)를 떼었다. `page.tsx` 974줄.
+- **4-3 — 설계부터(아직 안 함)**: 남은 `useAssignPage()`(약 3,100줄)를 기능 훅으로 기계적으로 나누면 훅마다 바깥 이름을 수십 개 받는다(템플릿 끌어 놓기 46 · Pair view 끌기 88 · Old 문장 고치기 136). 넓은 입력 자체가 구조 신호라 옮기기만으로는 나아지지 않는다. 먼저 정할 것: (1) 고름 · 따라가기 · 다시 받기를 한 곳(상태 기계)이 쥐어 "사라진 Unit을 고르지 못하게" 하기 — v1.1.51 · v1.1.53 · v1.2.2가 모두 이 자리였다, (2) 세 끌기(보내기 · 템플릿 · Pair view)가 같은 놓기 문맥 하나를 받게 하기. 이 둘이 서면 나머지 기능 훅의 입력이 좁아진다.
+
+들이지 않는 것: 자동 병합(사내 규제 문서 도구), TLA+, 주석 대부분 금지(`rules/common/comments.md`의 why 주석과 충돌), 클라우드 에이전트. 스텝 4는 사용자 요청으로 진행했다(아래).
 
 ## 스텝
 
