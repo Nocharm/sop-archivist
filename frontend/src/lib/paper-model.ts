@@ -278,21 +278,30 @@ export function getMarks(unit: ViewUnit): UnitMark[] {
 
 const TEXT_KINDS = new Set(["sentence", "heading", "cell_sentence"]);
 
-/** 틈의 합치기를 쓸 수 없는 까닭 - 글이 아닌 것(표·그림), 칸 문장 규칙. 언어는 보지 않는다(다른 언어끼리는 묶기가 짝을 고른다) */
-export type MergeBlocker = "not_text" | "cell";
+/** 틈의 합치기를 쓸 수 없는 까닭 - 글이 아닌 것(표·그림), 목차 줄, 칸 문장 규칙. 언어는 보지 않는다(다른 언어끼리는 묶기가 짝을 고른다) */
+export type MergeBlocker = "not_text" | "toc" | "cell";
 
 /** 합칠 수 없는 까닭 → 문구 키 - 틈의 합치기 단추와 우클릭 메뉴가 같이 쓴다 */
 export const MERGE_BLOCKER_KEYS: Record<MergeBlocker, string> = {
   not_text: "split.noMergeKind",
+  toc: "split.noMergeToc",
   cell: "split.noMergeCell",
 };
 
 /** 두 단위를 합칠 수 없는 까닭(서버 `_plan_merge`와 같은 기준) - 합칠 수 있으면 null */
 export function getMergeBlocker(a: ViewUnit, b: ViewUnit): MergeBlocker | null {
   if (!TEXT_KINDS.has(a.kind) || !TEXT_KINDS.has(b.kind)) return "not_text";
+  // 목차 줄은 먼저 목차 아님으로 돌린다(서버 422 toc_line_locked, 사용자 결정 2026-11-19)
+  if (a.noise_kind || b.noise_kind) return "toc";
   // 칸 문장은 같은 표·행 그룹(또는 모두 그룹 없음)끼리만
   if ((a.kind === "cell_sentence" || b.kind === "cell_sentence") && (a.kind !== b.kind || a.group_unit_id !== b.group_unit_id)) return "cell";
   return null;
+}
+
+/** 블록에 목차 줄이 걸쳐 있나 - 그 블록의 글자는 골라 만들기(carve)로 떼지 않는다(서버 422 toc_line_locked) */
+export function hasTocLineIn(units: Iterable<ViewUnit>, blockId: number): boolean {
+  for (const unit of units) if (unit.noise_kind && unit.spans.some(([spanBlockId]) => spanBlockId === blockId)) return true;
+  return false;
 }
 
 /** 누른 단위 → 고를 단위. 표·행에 묶인 칸 문장이면 그 묶음 단위, 아니면 자기(Assign은 표·그림을 묶음째 배정한다) */

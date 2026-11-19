@@ -49,6 +49,7 @@ from app.sop.models import (
     UnitPairMember,
     UnitRef,
 )
+from app.sop.noise import NOISE_TOC
 from app.sop.numbering import (
     MAX_NUMBER_CHARS,
     NO_NUMBER,
@@ -437,6 +438,13 @@ def _ensure_text_kinds(units: Iterable[Unit]) -> None:
         raise_rule(422, "invalid_unit_kind", unit_ids=wrong)
 
 
+def _ensure_not_toc(units: Iterable[Unit]) -> None:
+    """목차 줄은 나누기 · 합치기 · 골라 만들기 · 경계 옮기기를 받지 않는다(사용자 결정 2026-11-19) — 먼저 목차 아님(clear_noise)."""
+    locked = sorted(unit.id for unit in units if unit.noise_kind == NOISE_TOC)
+    if locked:
+        raise_rule(422, "toc_line_locked", unit_ids=locked)
+
+
 async def load_active_units(
     session: AsyncSession, extraction_id: ExtractionId, unit_ids: Collection[int]
 ) -> dict[int, Unit]:
@@ -530,6 +538,7 @@ def _decide_merged_kind(units: Iterable[Unit]) -> str:
 async def _plan_split(session: AsyncSession, extraction_id: ExtractionId, op: SplitOp) -> _Change:
     unit = (await load_active_units(session, extraction_id, [op.unit_id]))[op.unit_id]
     _ensure_text_kinds([unit])
+    _ensure_not_toc([unit])
     spans = to_spans(unit.spans)
     located = locate_text_offset(spans, op.at) if 0 < op.at < len(unit.text) else None
     if located is None:
@@ -564,6 +573,7 @@ async def _plan_merge(session: AsyncSession, extraction_id: ExtractionId, op: Me
     ensure_unique_units(op.unit_ids)
     units = sorted((await load_active_units(session, extraction_id, op.unit_ids)).values(), key=_get_position)
     _ensure_text_kinds(units)
+    _ensure_not_toc(units)
     _ensure_mergeable(units)
     langs = {unit.lang for unit in units}
     blocks = await _load_unit_blocks(session, extraction_id, units)
@@ -624,6 +634,7 @@ async def _plan_move_boundary(session: AsyncSession, extraction_id: ExtractionId
     units = await load_active_units(session, extraction_id, [op.left_unit_id, op.right_unit_id])
     left, right = units[op.left_unit_id], units[op.right_unit_id]
     _ensure_text_kinds([left, right])
+    _ensure_not_toc([left, right])
     left_spans, right_spans = to_spans(left.spans), to_spans(right.spans)
     block_id, left_start, left_end = left_spans[-1]
     right_block_id, right_start, right_end = right_spans[0]
@@ -664,6 +675,7 @@ async def _plan_carve(session: AsyncSession, extraction_id: ExtractionId, op: Ca
     )
     hit_ids = [unit_id for unit_id, spans in rows if overlaps(to_spans(spans), op.block_id, start, end)]
     units = sorted((await load_active_units(session, extraction_id, hit_ids)).values(), key=_get_position)
+    _ensure_not_toc(units)
     # 붙인 캡션은 문단 안 다른 문장과 한 블록에 있을 수 있다 — 골라 만든 조각이 묶음 둘에 걸치지 않게 합치기와 같이 막는다
     _ensure_mergeable(units)
     blocks = await _load_unit_blocks(session, extraction_id, units)
