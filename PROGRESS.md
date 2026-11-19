@@ -2,6 +2,10 @@
 
 프로젝트 진행 현황 로그. 커밋 직전 갱신한다 (`rules/common/git.md` 규칙). v1.1.0(2026-11-16 정식 업데이트)까지의 항목은 [`docs/history/PROGRESS-archive.md`](docs/history/PROGRESS-archive.md)에 있다 — 정식 업데이트마다 그 릴리스까지의 항목을 거기로 옮긴다(`rules/common/git.md` "정식 업데이트 때 문서 정리").
 
+## 2026-11-19
+
+- **개발 방향: 신뢰 기반 먼저(`docs/trust-direction`, 문서만)** — Lauren Tan 방식으로 dev v1.1.51을 점검했다. 검증 층은 두꺼운데 ESLint·ruff가 기본값이고 hook·import 경계·Python 타입 검사가 없어 `fix(assign)`이 되풀이되고 스모크 기대값을 낮춰 합치는 일이 생겼다. 사용자 결정: 스텝 1 정적 관문 → 2 불변식 시험 → 3 검증 정비, `/harden` 교정 사다리. 스텝 1·2가 오를 때까지 기능·병렬 에이전트 보류, assign 화면 쪼개기는 미채택(계획 `docs/superpowers/plans/2026-11-19-trust-foundation-plan.md`).
+
 ## 2026-11-18
 
 - **끌어 놓기 깊이를 줄의 최종 표시로(v1.1.50, `fix/order-bullet-drag-depth`)** — 칸을 넘는 끌기(`planCrossDrop`)가 깊이를 늘 번호 줄 규칙(상한 9)으로 재서, 글머리 기호 덩어리를 깊은 번호 줄 아래로 끌면 깊이 4를 저장하고 놓은 뒤 화면이 0–2로 눌러 튀었다. `calcDropDepths`가 줄마다 최종 표시(칸을 넘으면 도착 칸 `default_style`로 바뀐 뒤 — `previewCrossPlace`·서버 `restyle_moved`와 같은 규칙, WI 단계로 간 줄은 그대로)로 갈래를 나눠 글머리 기호 줄은 같은 칸 앞 글머리 기호 줄 + 1(상한 2, 번호 줄과 무관)·번호 줄은 기존 규칙으로 재고, 글머리 기호가 된 줄은 `getSectionDepths`처럼 한 줄씩 다시 눌러 저장 깊이와 화면 깊이가 같다. 같은 칸 안 끌기도 번호 첫 줄 아래 글머리 기호 줄들이 번호 깊이 차이를 받던 것을 갈래마다 따로 센다. `planCrossDrop`의 `dest`에 `defaultStyle`을 더했다(`output-c.tsx`가 넘김). 서버는 저장 때 글머리 기호 깊이를 누르지 않고 읽을 때만 누른다(`get_bullet_depths`) — 화면이 맞는 값을 보내므로 서버는 그대로 둔다. 확인: vitest 1,572 · lint · tsc, 새 시험 4개가 옛 코드에서는 실패.
