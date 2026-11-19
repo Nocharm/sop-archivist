@@ -48,13 +48,12 @@ describe("readSuggestedDestination", () => {
 });
 
 describe("buildUseDraft", () => {
-  it("fills each language's rewrite into its sentence slot with the change type", () => {
+  it("fills each language's rewrite into its sentence slot", () => {
     const draft = buildUseDraft(
-      suggestion(1, "classify", { change_type: "tone", rewrites: { ko: ["시료를 넣는다."], en: ["Put in the sample."] } }),
+      suggestion(1, "classify", { change_type: "rewritten", rewrites: { ko: ["시료를 넣는다."], en: ["Put in the sample."] } }),
       [slot("u10", "ko", "시료를 넣음."), slot("u11", "en", "Put in the sample.")],
     );
     expect(draft.texts).toEqual({ u10: "시료를 넣는다." });
-    expect(draft.changeTypes).toEqual({ u10: "tone" });
     expect(draft.unfilledLangs).toEqual([]);
   });
 
@@ -64,8 +63,8 @@ describe("buildUseDraft", () => {
     expect(draft.unfilledLangs).toEqual(["ko"]);
   });
 
-  it("carries a match's per-sentence change types a person can choose", () => {
-    const draft = buildUseDraft(suggestion(1, "match", { target_change_types: { "70": "tone", "71": "merged", "72": "as_is" } }), []);
-    expect(draft.linkChangeTypes).toEqual({ 70: "tone", 72: "as_is" });
+  it("fills nothing from a match - the server decides the change types from the text", () => {
+    const draft = buildUseDraft(suggestion(1, "match", { target_change_types: { "70": "rewritten", "71": "merged", "72": "as_is" } }), []);
+    expect(draft).toEqual({ texts: {}, unfilledLangs: [] });
   });
 });

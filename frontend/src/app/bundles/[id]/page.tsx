@@ -111,7 +111,7 @@ function buildGateLines(readiness: Readiness, semanticTotal: number, t: TFunc): 
   const unresolved = findIssue(blockers, "unresolved_documents");
   const units = sumCounts(blockers, "units_");
   const targets = sumCounts(blockers, "targets_");
-  const reasons = sumCounts(blockers, "duplicate_without_reason") + sumCounts(blockers, "missing_reason");
+  const reasons = sumCounts(blockers, "duplicate_without_reason");
   const warnings = findIssue(blockers, "unacked_missing_text");
   const versions = findIssue(blockers, "missing_doc_versions");
   const semantic = findIssue(blockers, "semantic_checks_incomplete");

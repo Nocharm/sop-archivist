@@ -312,7 +312,7 @@ async function prepareClickPlace(page, needed) {
         action: "confirm",
         hold_reason: "",
         units: [{ unit_id: unit.unit_id, revision: unit.decision.revision, disposition: "assigned", move_target_code: "", reason: "" }],
-        targets: [{ key: `u${unit.unit_id}`, target_doc_id: sop.id, slot_key: slotKey, kind: "sentence", lang: unit.lang, text: unit.text.trim(), change_type: "as_is", source_unit_ids: [unit.unit_id] }],
+        targets: [{ key: `u${unit.unit_id}`, target_doc_id: sop.id, slot_key: slotKey, kind: "sentence", lang: unit.lang, text: unit.text.trim(), source_unit_ids: [unit.unit_id] }],
         removed_target_ids: [],
       },
     });
@@ -434,7 +434,7 @@ await runStep("assign: legend first, place, delete without a reason, edit, clear
   await page.locator('[data-testid="assign-primary"]').click();
   await page.waitForFunction((done) => Number(document.querySelector('[data-testid="assign-progress"]')?.textContent?.split("/")[0]) === done + 2, before, { timeout: T });
   check("delete without a reason confirms without the Remark window", (await page.locator('[data-testid="assign-remark-modal"]').count()) === 0);
-  // 고쳐 확정 - E로 새 문장을 고치면 변경 종류를 고른다. 고쳐 쓰기는 문장 줄에서만 되니 그림·표 줄이면 다음 줄로 넘어간다(합성 문서의 줄 순서에 기대지 않게)
+  // 고쳐 쓰기 - 변경 종류는 고르지 않고 글 비교로 "=" / "Modified"가 보인다(설계 2026-11-20-change-type-two D7). 고쳐 쓰기는 문장 줄에서만 되니 그림·표 줄이면 다음 줄로 넘어간다(합성 문서의 줄 순서에 기대지 않게)
   const isSentenceRow = () => page.locator('[data-testid="assign-old"] [data-testid^="assign-paper-unit-"][data-sel]').evaluateAll((els) => els.length > 0 && els.every((el) => ["ko", "en"].includes(el.getAttribute("lang") ?? "")));
   for (let step = 0; step < 10 && !(await isSentenceRow()); step += 1) {
     await page.keyboard.press("j");
@@ -443,15 +443,19 @@ await runStep("assign: legend first, place, delete without a reason, edit, clear
   await pickFirstPlace(page);
   // 고쳐 쓰기는 고른 곳 상자 문장 줄의 연필(아직 안 쓴 문서의 칸일 때만) - E와 같다
   check("a slot shows the rewrite pencil on its sentence line", (await page.locator('[data-testid="assign-edit"]').count()) === 1);
+  const changeKind = page.locator('[data-testid^="assign-slot-change-"]').first();
+  const readKind = async () => [await changeKind.getAttribute("data-value"), ((await changeKind.textContent()) ?? "").trim()].join(" ");
+  await changeKind.waitFor({ timeout: T });
+  check("an untouched sentence shows = (as is), read-only", (await readKind()) === "as_is =" && (await changeKind.locator("button, [role=radio]").count()) === 0, await readKind());
   await page.keyboard.press("e");
   const textarea = page.locator('textarea[data-testid^="assign-text-"]').first();
+  const original = await textarea.inputValue();
   await textarea.fill("Smoke: rewritten sentence");
-  await page.locator('[data-testid^="assign-slot-change-"]').first().waitFor({ timeout: T });
-  check("an edited sentence asks for a change type", true);
-  const kindButton = (kind) => page.locator(`[data-testid^="assign-slot-change-"][data-testid$="-${kind}"]`).first();
-  check("a rewritten sentence cannot be As is", await kindButton("as_is").isDisabled());
-  await kindButton("tone").click();
-  check("Tone is picked by its icon", (await kindButton("tone").getAttribute("aria-checked")) === "true");
+  await page.waitForFunction(() => document.querySelector('[data-testid^="assign-slot-change-"]')?.getAttribute("data-value") === "rewritten", null, { timeout: T });
+  check("an edited sentence turns to Modified as you type", (await readKind()) === "rewritten Modified", await readKind());
+  await textarea.fill(original);
+  await page.waitForFunction(() => document.querySelector('[data-testid^="assign-slot-change-"]')?.getAttribute("data-value") === "as_is", null, { timeout: T });
+  check("typing the source text back shows = again", (await readKind()) === "as_is =", await readKind());
   await page.keyboard.press("Escape");
   // 비우기
   await selectRowById(page, firstIds.split(" · ")[0]);
@@ -4134,7 +4138,7 @@ await runStep("assign: drag an Old piece between two sentences of a New · from 
         action: "confirm",
         hold_reason: "",
         units: [{ unit_id: unit.unit_id, revision: unit.decision.revision, disposition: "assigned", move_target_code: "", reason: "" }],
-        targets: [{ key: `u${unit.unit_id}`, target_doc_id: sop.id, slot_key: slotKey, kind: "sentence", lang: unit.lang, text: unit.text.trim(), change_type: "as_is", source_unit_ids: [unit.unit_id] }],
+        targets: [{ key: `u${unit.unit_id}`, target_doc_id: sop.id, slot_key: slotKey, kind: "sentence", lang: unit.lang, text: unit.text.trim(), source_unit_ids: [unit.unit_id] }],
         removed_target_ids: [],
       },
     });
@@ -4808,7 +4812,7 @@ await runStep("assign: drag an Old piece into a WI step, on its row in the All l
       action: "confirm",
       hold_reason: "",
       units: [{ unit_id: unit.unit_id, revision: unit.decision.revision, disposition: "assigned", move_target_code: "", reason: "" }],
-      targets: [{ key: `u${unit.unit_id}`, target_doc_id: wi.id, slot_key: null, wi_step: step, wi_part: part, kind: "sentence", lang: unit.lang, text: unit.text.trim(), change_type: "as_is", source_unit_ids: [unit.unit_id] }],
+      targets: [{ key: `u${unit.unit_id}`, target_doc_id: wi.id, slot_key: null, wi_step: step, wi_part: part, kind: "sentence", lang: unit.lang, text: unit.text.trim(), source_unit_ids: [unit.unit_id] }],
       removed_target_ids: [],
     },
   })).ok();
@@ -5835,7 +5839,7 @@ await runStep("assign: Pair view - drag a piece onto its partner to pair or conf
       action: "confirm",
       hold_reason: "",
       units: [{ unit_id: c2.id, revision: c2Row.decision.revision, disposition: "assigned", move_target_code: "", reason: "" }],
-      targets: [{ key: `u${c2.id}`, target_doc_id: sop.id, slot_key: slot.location_key, kind: "sentence", lang: "en", text: c2Row.text.trim(), change_type: "as_is", source_unit_ids: [c2.id] }],
+      targets: [{ key: `u${c2.id}`, target_doc_id: sop.id, slot_key: slot.location_key, kind: "sentence", lang: "en", text: c2Row.text.trim(), source_unit_ids: [c2.id] }],
       removed_target_ids: [],
     },
   });

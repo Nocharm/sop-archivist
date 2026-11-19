@@ -31,7 +31,7 @@ function render(row: OutputARow) {
   const host = document.createElement("div");
   const root = createRoot(host);
   const line = { row, showShared: row.is_group_start, showDest: true };
-  const view = createElement(OutputARowView, { line, index: 0, destKindLabel: "New SOP", changeLabel: "As is", status: "confirmed" });
+  const view = createElement(OutputARowView, { line, index: 0, destKindLabel: "New SOP", changeLabel: "=", status: "confirmed" });
   act(() => root.render(createElement(LangProvider, null, createElement("table", null, createElement("tbody", null, view)))));
   return { host, unmount: () => act(() => root.unmount()) };
 }

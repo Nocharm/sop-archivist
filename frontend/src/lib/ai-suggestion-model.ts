@@ -1,7 +1,7 @@
 // Assign의 AI 추천 - 살아 있는 제안(적용됐고 사람이 아직 받거나 버리지 않은 것)에서 줄의 추천 자리와 Use 초안을 만든다.
 // AI는 판단·New 문장을 쓰지 않는다 - 사람이 Use로 받으면 이 초안이 채워지고 확정은 사람의 Confirm이다(설계 2026-11-19-ai-suggest-only D1·D2).
 
-import type { AiSuggestion, ChangeTypeInput } from "./api-sop";
+import type { AiSuggestion } from "./api-sop";
 import type { Destination, SentenceSlot } from "./classify-model";
 
 /** 사람이 아직 받거나 버리지 않은 적용된 제안 */
@@ -59,35 +59,19 @@ export function readRewrites(suggestion: AiSuggestion): Record<string, string[]>
   return Object.fromEntries(Object.entries(raw as Record<string, unknown>).map(([lang, list]) => [lang, Array.isArray(list) ? list.filter((text): text is string => typeof text === "string") : []]));
 }
 
-const TEXT_TYPES: readonly string[] = ["tone", "rewritten"];
-const LINK_TYPES: readonly string[] = ["as_is", "tone", "rewritten", "table_restructured"];
-
 export interface UseDraft {
   /** 문장 칸 키 → 고쳐 쓴 글 */
   texts: Record<string, string>;
-  changeTypes: Record<string, "tone" | "rewritten">;
-  /** 이은 문장 → 변경 종류(사람이 고를 수 있는 것만 - 합침·나눔·신규는 구조에서 서버가 정한다) */
-  linkChangeTypes: Record<number, ChangeTypeInput>;
   /** 고쳐 쓴 글을 칸에 채우지 못한 언어 - AI가 나누거나 합쳐 문장 수가 칸 수와 다르다. 카드에 글을 보여 사람이 옮긴다 */
   unfilledLangs: string[];
 }
 
 /**
  * Use로 채울 초안 - 분류는 언어마다 고쳐 쓴 문장이 그 언어 칸(원문 단위마다 하나) 수와 같을 때 차례로 채운다.
- * 원문과 같은 글은 채우지 않는다(비우면 원문 그대로). 묶기는 이은 문장마다 변경 종류를 싣는다.
+ * 원문과 같은 글은 채우지 않는다(비우면 원문 그대로). 변경 종류는 서버가 글로 정한다 - 묶기(match)는 고쳐 쓴 글이 없어 채울 것이 없다.
  */
 export function buildUseDraft(suggestion: AiSuggestion, slots: readonly SentenceSlot[]): UseDraft {
-  const draft: UseDraft = { texts: {}, changeTypes: {}, linkChangeTypes: {}, unfilledLangs: [] };
-  if (suggestion.kind === "match") {
-    const types = suggestion.content.target_change_types;
-    if (types && typeof types === "object") {
-      for (const [id, type] of Object.entries(types as Record<string, unknown>)) {
-        if (typeof type === "string" && LINK_TYPES.includes(type)) draft.linkChangeTypes[Number(id)] = type as ChangeTypeInput;
-      }
-    }
-    return draft;
-  }
-  const changeType = typeof suggestion.content.change_type === "string" && TEXT_TYPES.includes(suggestion.content.change_type) ? (suggestion.content.change_type as "tone" | "rewritten") : null;
+  const draft: UseDraft = { texts: {}, unfilledLangs: [] };
   for (const [lang, sentences] of Object.entries(readRewrites(suggestion))) {
     if (sentences.length === 0) continue;
     const langSlots = slots.filter((slot) => slot.lang === lang && slot.target === null && !slot.isTranslated);
@@ -99,7 +83,6 @@ export function buildUseDraft(suggestion: AiSuggestion, slots: readonly Sentence
       const text = sentences[index];
       if (text === slot.sourceText) return;
       draft.texts[slot.key] = text;
-      draft.changeTypes[slot.key] = changeType ?? "rewritten";
     });
   }
   return draft;

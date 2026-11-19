@@ -51,12 +51,10 @@ export interface CaptionSource {
   text: string;
 }
 
-/** 저장할 캡션 - 출처에 더해 지금 캡션 새 문장(있으면 id·revision을 되보낸다)과 견줄 원문 */
+/** 저장할 캡션 - 출처에 더해 지금 캡션 새 문장(있으면 id·revision을 되보낸다) */
 export interface CaptionPlan extends CaptionSource {
   target: GroupTarget | null;
-  /** 캡션 단위의 원문 - 써 넣은 캡션은 null(변경 종류를 서버가 new로 정한다) */
-  sourceText: string | null;
-  /** 사람이 이번에 글을 고쳤다 - 손대지 않은 AI 제안 캡션은 글·종류 없이 보내 제안 그대로 받는다 */
+  /** 사람이 이번에 글을 고쳤다 - 손대지 않은 AI 제안 캡션은 글 없이 보내 제안 그대로 받는다 */
   isEdited: boolean;
 }
 
@@ -95,7 +93,7 @@ export function planCaptions(bundleId: number, units: readonly CaptionUnit[], ch
       const target = children.find((child) => child.source_unit_ids.includes(unit.id)) ?? null;
       const current = target ? target.confirmed_text || target.ai_text || unit.text : unit.text;
       const edited = (captionTexts[key] ?? "").trim();
-      return { key, unitId: unit.id, lang: unit.lang, text: edited || current.trim(), target, sourceText: unit.text, isEdited: edited !== "" };
+      return { key, unitId: unit.id, lang: unit.lang, text: edited || current.trim(), target, isEdited: edited !== "" };
     });
   }
   const written = children.filter((child) => child.source_unit_ids.length === 0);
@@ -104,7 +102,7 @@ export function planCaptions(bundleId: number, units: readonly CaptionUnit[], ch
     .map((lang) => {
       const key = getCaptionTextKey(bundleId, null, lang);
       const target = written.find((child) => child.lang === lang) ?? null;
-      return { key, unitId: null, lang, text: (captionTexts[key] ?? target?.confirmed_text ?? "").trim(), target, sourceText: null, isEdited: captionTexts[key] !== undefined };
+      return { key, unitId: null, lang, text: (captionTexts[key] ?? target?.confirmed_text ?? "").trim(), target, isEdited: captionTexts[key] !== undefined };
     })
     .filter((plan) => plan.text !== "");
 }

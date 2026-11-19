@@ -93,7 +93,7 @@ export interface PageDraft extends Omit<RowDraft, "reason" | "moveCode"> {
   suggestionId?: number | null;
 }
 
-export const EMPTY_DRAFT: PageDraft = { destination: null, texts: {}, changeTypes: {}, linkChangeTypes: {}, reason: null, moveCode: null, editing: false, suggestionId: null };
+export const EMPTY_DRAFT: PageDraft = { destination: null, texts: {}, reason: null, moveCode: null, editing: false, suggestionId: null };
 export const NO_NUMBERS: ReadonlySet<number> = new Set();
 
 // 고름을 두는 편집·되돌리기의 판단은 decision-step-model(IN_PLACE_EDIT_OPS · shouldDropSelectionOnStep)
@@ -511,7 +511,6 @@ export function useAssignPage() {
   );
   const saveGroupData = groupData ? mergeGroups([groupData, ...(pickedGroups.data ?? [])]) : null;
   const candidateIds = new Set(destination ? [] : recommendations.flatMap((rec) => (rec.destination.kind === "link" ? rec.destination.targetIds : [])));
-  const aiPending = new Set(linkIds.filter((id) => writtenMap.get(id)?.status === "ai_suggested" && (writtenMap.get(id)?.source_unit_ids ?? []).some((unit) => row?.unitIds.includes(unit))));
 
   // --- 원문 두 칸 ---
   const viewOf = (docId: number | undefined) => (viewList ?? []).find((view) => view.document.id === docId) ?? null;
@@ -1940,7 +1939,7 @@ export function useAssignPage() {
         group: mergeGroups([rowGroup, ...extra]),
         tables: new Map(),
       };
-      const body = buildGroupSave({ destination: link, texts: {}, changeTypes: {}, linkChangeTypes: {}, reason: readHumanReason(sourceUnits[0]?.decision), moveCode: "" }, context, "confirm");
+      const body = buildGroupSave({ destination: link, texts: {}, reason: readHumanReason(sourceUnits[0]?.decision), moveCode: "" }, context, "confirm");
       // 이 문장에 없는 언어의 Old 문장은 서버가 짝을 풀어 제 줄로 남긴다 - 출처 없는 New를 계속 보게 고른 줄은 옮기지 않는다
       const saved = await saveGroup(bundleId, body, buildUndo({ op: "link_source", focus_unit_id: unitId, focus_target_id: target.target_id }));
       markRecorded();
@@ -1994,15 +1993,14 @@ export function useAssignPage() {
         }
       : undefined;
 
-  /** use - Use로 받은 AI 제안의 초안(고쳐 쓴 글·변경 종류)과 제안 id. 없으면 다른 곳을 고른 것이라 받은 제안을 비운다 */
-  function pickDestination(next: Destination, use: Pick<PageDraft, "texts" | "changeTypes" | "linkChangeTypes" | "suggestionId"> | null = null) {
+  /** use - Use로 받은 AI 제안의 초안(고쳐 쓴 글)과 제안 id. 없으면 다른 곳을 고른 것이라 받은 제안을 비운다 */
+  function pickDestination(next: Destination, use: Pick<PageDraft, "texts" | "suggestionId"> | null = null) {
     // 보낼 곳을 다시 고르면 끌어 놓은 자리는 버린다
     setDraft({
       destination: next.kind === "link" ? { kind: "link", targetIds: addPartnerTargets(next.targetIds, writtenMap) } : next,
-      linkChangeTypes: use?.linkChangeTypes ?? {},
       position: null,
       suggestionId: use?.suggestionId ?? null,
-      ...(use ? { texts: { ...draft.texts, ...use.texts }, changeTypes: { ...draft.changeTypes, ...use.changeTypes } } : {}),
+      ...(use ? { texts: { ...draft.texts, ...use.texts } } : {}),
     });
     setPickSeq((seq) => seq + 1);
     // 고른 곳의 New 문서로 칸을 옮긴다 - Old 줄을 바꾸는 것만으로는 옮기지 않으니 여기가 따라가는 길이다
@@ -2072,7 +2070,7 @@ export function useAssignPage() {
       const drop = readJoinAfter(target);
       const destination = drop.kind === "gap" ? readSectionDestination(composedDoc.target_doc_id, drop.sectionKey) : null;
       if (drop.kind !== "gap" || destination === null) return;
-      setDraft({ destination, position: { placeId: getDestinationId(destination), after: drop.after }, linkChangeTypes: {} });
+      setDraft({ destination, position: { placeId: getDestinationId(destination), after: drop.after } });
       setPickSeq((seq) => seq + 1);
     }
     requestAnimationFrame(() => document.querySelector<HTMLElement>('[data-testid="assign-primary"]')?.focus({ preventScroll: true }));
@@ -2094,7 +2092,7 @@ export function useAssignPage() {
     // 빈 칸은 자리 없이(position 키를 넣지 않는다), 칸 끝 · 틈은 그 자리 - 저장 꼴은 TargetPosition 약속 그대로
     if (placement.position === null) pickDestination(destination);
     else {
-      setDraft({ destination, position: { placeId, after: placement.position.after }, linkChangeTypes: {} });
+      setDraft({ destination, position: { placeId, after: placement.position.after } });
       setPickSeq((seq) => seq + 1);
     }
     setSpotPick({ rowKey: row.key, key, placeId, after: placement.position ? placement.position.after : "none" });
@@ -2268,7 +2266,7 @@ export function useAssignPage() {
     setDropPlace(null);
     if (dropPlace.position === null) pickDestination(dropPlace.destination);
     else {
-      setDraft({ destination: dropPlace.destination, position: dropPlace.position, linkChangeTypes: {} });
+      setDraft({ destination: dropPlace.destination, position: dropPlace.position });
       setPickSeq((seq) => seq + 1);
     }
     if (dropPlace.menu) setDraftMenu({ rowKey: dropPlace.rowKey, anchor: dropPlace.anchor });
@@ -3032,7 +3030,7 @@ export function useAssignPage() {
   function pickRecommendation(rec: Recommendation) {
     if (rec.source === "ai" && rowLive) {
       const use = buildUseDraft(rowLive, slots);
-      pickDestination(rec.destination, { texts: use.texts, changeTypes: use.changeTypes, linkChangeTypes: use.linkChangeTypes, suggestionId: rowLive.id });
+      pickDestination(rec.destination, { texts: use.texts, suggestionId: rowLive.id });
     } else pickDestination(rec.destination);
     markRecHover([]);
     setRevealPick({ destination: rec.destination, rowKey: activeKey });
@@ -3081,7 +3079,7 @@ export function useAssignPage() {
     setChecked, newRemarks, setNewRemarks, menu, setMenu, joinMenu, setJoinMenu, ctxMenu, setCtxMenu, cutUnitId, follow, focusNew,
     groupData, setDrafts, draft, editing, groupPending, savedDestination, destination, rowUnits, rowLangs, firstDecision, systemHold,
     reasonNow, moveCode, setDraft, unsavedCount, leaveTo, setLeaveTo, rowLive, aiDest, aiWhy, isAiRow, recommendations, linkIds,
-    pickedGroups, saveGroupData, candidateIds, aiPending, viewOf, setManualOldDoc, oldView, acceptKind, setAcceptKind, acceptDoc,
+    pickedGroups, saveGroupData, candidateIds, viewOf, setManualOldDoc, oldView, acceptKind, setAcceptKind, acceptDoc,
     paperModel, canPairView, isPairView, pairColumns, pairLinks, partKeys, oldDocId, splitByUnit, shapeView, shapeModel, soloUnit,
     soloUnits, cutUnit, cutLine, linkedTargets, setManualPart, activePart, isFoldEmpty, foldElsewhere, writtenDocs, composedDocs,
     setManualNewDoc, toggleKey, liveDoc, isNewDocOpen, newDocId, newAiReturn, setNewAiReturn, isComposedDoc, newFileId, composedDoc,
