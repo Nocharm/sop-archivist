@@ -28,8 +28,8 @@ expected.json 형식:
     후보로 한 번에 확정되는 답 — 관계 묶음 저장으로 보내지 않는다).
   - `targets`: 보낸 새 문장. `key`가 같은 새 문장은 한 새 문장(합침, 출처는 그 key를 가진 답들의 단위)이다. `code`는 새 문서 번호,
     위치는 `slot_key`(SOP) 또는 `wi_step`+`wi_part`(WI) 또는 `section_path`(입구 2 — 새 문서의 기존 새 문장을 text로 찾는다).
-    `kind`(sentence·table·figure), `lang`, `text`(확정 글자, 표·그림은 없음), `change_type`(결과물의 변경 종류 — 나눔·합침은 구조로
-    정해지므로 요청에는 싣지 않는다), 표는 `grid`. 칸 새 문장은 `parent_key`·`cell_row`·`cell_col`·`source_text`(출처 칸 문장 글자,
+    `kind`(sentence·table·figure), `lang`, `text`(확정 글자, 표·그림은 없음), `change_type`(결과물의 변경 종류 — 서버가 구조·글·표 모양으로
+    정하므로 요청에는 싣지 않고 저장 뒤 견준다), 표는 `grid`. 칸 새 문장은 `parent_key`·`cell_row`·`cell_col`·`source_text`(출처 칸 문장 글자,
     표 답과 같은 문서)를 갖는다. 캡션 새 문장은 `parent_key`가 있고 `cell_row`가 없으며 `source_text`(출처 캡션 단위 글자, 없으면
     출처 없는 캡션 — 써 넣은 캡션, 변경 종류 new)를 갖는다. 배정한 표·그림은 캡션이 있어야 확정되므로 표·그림 답마다 캡션 새 문장이 있다.
   - `demo_unassigned`(true면 데모 시드의 "분류 절반" 묶음에서 저장하지 않고 미배정으로 둔다 — 캡션 없는 표가 화면 스모크에 남게).
@@ -378,16 +378,16 @@ def _build_old_1(sheet: _AnswerSheet) -> tuple[bytes, list[dict]]:
     _add_paragraphs(
         document,
         add(doc, "QC 분석자는 사용 전에 원심분리기 상태를 점검한다.", "ko", _sop(
-            "responsibilities", "QC 분석자는 사용 전에 원심분리기 상태를 점검하여야 한다.", "tone", "ko",
+            "responsibilities", "QC 분석자는 사용 전에 원심분리기 상태를 점검하여야 한다.", "rewritten", "ko",
         )),
         add(doc, "The QC analyst checks the condition of the centrifuge before use.", "en", _sop(
-            "responsibilities", "The QC analyst shall check the condition of the centrifuge before use.", "tone", "en",
+            "responsibilities", "The QC analyst shall check the condition of the centrifuge before use.", "rewritten", "en",
         )),
         add(doc, "QC 팀장은 원심분리기 사용 기록을 매월 검토한다.", "ko", _sop(
-            "responsibilities", "QC 팀장은 원심분리기 사용 기록을 매월 검토하여야 한다.", "tone", "ko",
+            "responsibilities", "QC 팀장은 원심분리기 사용 기록을 매월 검토하여야 한다.", "rewritten", "ko",
         )),
         add(doc, "The QC team leader reviews the centrifuge use records every month.", "en", _sop(
-            "responsibilities", "The QC team leader shall review the centrifuge use records every month.", "tone", "en",
+            "responsibilities", "The QC team leader shall review the centrifuge use records every month.", "rewritten", "en",
         )),
     )
     sheet.headings(document, doc, "5. 절차", "5. Procedure")
@@ -397,7 +397,7 @@ def _build_old_1(sheet: _AnswerSheet) -> tuple[bytes, list[dict]]:
     _add_paragraphs(
         document,
         add(doc, gloves_ko, "ko", _sop(
-            "general_requirements.safety", "원심분리기를 다룰 때는 보호 장갑과 보안경을 착용하여야 한다.", "tone", "ko",
+            "general_requirements.safety", "원심분리기를 다룰 때는 보호 장갑과 보안경을 착용하여야 한다.", "rewritten", "ko",
         )),
         add(doc, gloves_en, "en", _sop(
             "general_requirements.safety",
@@ -410,7 +410,7 @@ def _build_old_1(sheet: _AnswerSheet) -> tuple[bytes, list[dict]]:
     )
     # 복합 문장 — 편집으로 둘로 나눈 뒤 3단계(장착·닫기)와 4단계(시작)로 보낸다
     mount_ko, start_ko = "로터를 장착하고 뚜껑을 닫은 후", "START 버튼을 누른다."
-    add(doc, mount_ko, "ko", _wi("WI-01", 3, "instruction", "로터를 장착하고 뚜껑을 닫는다.", "tone", "ko"))
+    add(doc, mount_ko, "ko", _wi("WI-01", 3, "instruction", "로터를 장착하고 뚜껑을 닫는다.", "rewritten", "ko"))
     add(doc, start_ko, "ko", _wi("WI-01", 4, "instruction", start_ko, "as_is", "ko"))
     compound_ko = f"{mount_ko} {start_ko}"
     _add_paragraphs(
@@ -504,14 +504,14 @@ def _build_old_2(sheet: _AnswerSheet) -> tuple[bytes, dict]:
         add(
             doc, alarm_ko, "ko",
             _sop("general_requirements.safety", alarm_ko, "as_is", "ko"),
-            _wi("WI-01", 4, "instruction", "불균형 경고가 울리면 STOP 버튼을 눌러 운전을 멈춘다.", "tone", "ko"),
+            _wi("WI-01", 4, "instruction", "불균형 경고가 울리면 STOP 버튼을 눌러 운전을 멈춘다.", "rewritten", "ko"),
             reason=DUPLICATE_REASON,
         ),
         add(
             doc, alarm_en, "en",
             _sop(
                 "general_requirements.safety", "The run shall be stopped immediately if the imbalance alarm sounds.",
-                "tone", "en",
+                "rewritten", "en",
             ),
             _wi(
                 "WI-01", 4, "instruction", "If the imbalance alarm sounds, press STOP to stop the run.", "rewritten",
@@ -583,13 +583,13 @@ def _build_old_4(sheet: _AnswerSheet) -> tuple[bytes, list[dict]]:
     sheet.delete(doc, "", "neutral", SHAPE_REASON, kind="figure")
     _add_textbox(document, [
         add(doc, "주의: 로터마다 최대 회전 속도가 다르므로 로터에 표시된 값을 넘기지 않는다.", "ko", _wi(
-            "WI-03", 2, "instruction", "로터마다 최대 회전 속도가 다르므로 로터에 표시된 값을 넘기지 않는다.", "tone", "ko",
+            "WI-03", 2, "instruction", "로터마다 최대 회전 속도가 다르므로 로터에 표시된 값을 넘기지 않는다.", "rewritten", "ko",
         )),
         add(
             doc, "Caution: each rotor has its own maximum speed, so do not exceed the value marked on the rotor.", "en",
             _wi(
                 "WI-03", 2, "instruction",
-                "Each rotor has its own maximum speed, so do not exceed the value marked on the rotor.", "tone", "en",
+                "Each rotor has its own maximum speed, so do not exceed the value marked on the rotor.", "rewritten", "en",
             ),
         ),
     ])
@@ -612,7 +612,7 @@ def _build_old_5(sheet: _AnswerSheet) -> bytes:
         add(doc, BALANCE, "en", _match(WI04_OPERATION, BALANCE, "as_is"), identical=True),
         add(
             doc, "The lid should be closed firmly before starting.", "en",
-            _match(WI04_OPERATION, CLOSE_LID_NEW, "tone"),
+            _match(WI04_OPERATION, CLOSE_LID_NEW, "rewritten"),
         ),
         add(
             doc, "Select the program and press RUN to start the centrifuge.", "en",

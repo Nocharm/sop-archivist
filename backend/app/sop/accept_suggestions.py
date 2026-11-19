@@ -36,7 +36,6 @@ from app.sop.groups import TABLE_UNIT_KINDS, select_in_chunks
 from app.sop.match import MAX_BULK_MATCH, NEW_SHAPE, BulkMatchIn, NewItemIn, confirm_in_bulk
 from app.sop.membership import ensure_editable, lock_bundle
 from app.sop.models import AiJob, AiSuggestion, Bundle, TargetSentence, TargetSource, Unit, UnitDecision, UnitPairMember
-from app.sop.numbering import strip_number
 from app.sop.schemas import NO_NUL
 from app.sop.units import UNIT_ACTIVE
 
@@ -45,10 +44,8 @@ MAX_ACCEPT = 2000  # 한 번에 받는 제안 수 상한 — 제안마다 관계
 DELETE_SHAPE = "delete"  # 분류의 삭제 처분 — 묶기의 삭제 후보(delete_candidate)와 함께 확인 창에서 따로 체크한다(§5 3-4)
 _DELETE_CANDIDATE = "delete_candidate"
 _ASSIGNED_SHAPE = "assigned"  # 분류가 고른 칸·WI 단계에 놓기
-_TEXT_TYPES = ("tone", "rewritten")
-_LINK_TYPES = ("as_is", "tone", "rewritten", "table_restructured")  # 사람이 보낼 수 있는 변경 종류 — 합침·나눔·신규·번역은 구조에서 서버가 정한다
 # 받지 않는 까닭 — 확인 창이 따로 센다(§5 3-3). changed는 AI가 본 뒤 단위·새 문장·짝이 바뀌어 사람이 다시 볼 몫이고,
-# manual은 받으려면 사람이 더 적어야 하는 제안이다(표 구성 변경·두 New 문서에 걸친 나눔의 사유, 캡션 없는 표·그림의 캡션)
+# manual은 받으려면 사람이 더 적어야 하는 제안이다(두 New 문서에 걸친 나눔의 사유, 캡션 없는 표·그림의 캡션)
 SKIP_WARNINGS, SKIP_PROVISIONAL, SKIP_CHANGED, SKIP_MANUAL = "warnings", "provisional", "changed", "manual"
 
 
@@ -187,7 +184,7 @@ def _list_left_mates(unit_ids: Collection[int], loaded: _Loaded) -> list[int]:
 
 
 def _needs_person(suggestion: AiSuggestion, loaded: _Loaded) -> bool:
-    """받으면 저장 검사가 늘 거절하는 제안 — 사유(표 구성 변경, 두 New 문서에 걸친 나눔)나 캡션을 사람이 적어야 한다.
+    """받으면 저장 검사가 늘 거절하는 제안 — 사유(두 New 문서에 걸친 나눔)나 캡션을 사람이 적어야 한다.
 
     캡션을 같이 쓰는 그림(F7 ⑥)도 여기서는 캡션 없음으로 본다 — 사람이 하나씩 받으면 된다.
     """
@@ -200,9 +197,7 @@ def _needs_person(suggestion: AiSuggestion, loaded: _Loaded) -> bool:
             and not any(child.kind == "caption" for child in loaded.children.get(unit_id, ()))
             for unit_id in content["unit_ids"]
         )
-    if "table_restructured" in content.get("target_change_types", {}).values():
-        return True
-    docs = {loaded.targets[target_id].target_doc_id for target_id in content.get("target_ids", ())}
+    docs ={loaded.targets[target_id].target_doc_id for target_id in content.get("target_ids", ())}
     return content.get("shape") == "split" and len(docs) >= 2
 
 
@@ -256,13 +251,6 @@ async def preview_accept(
 # --- 저장 요청 만들기 ---
 
 
-def _pick_text_type(text: str, sources: Sequence[Unit], suggested: object) -> str:
-    """새 문장의 글자 비교 종류 — 원문(번호를 뺀 내용 포함)과 같으면 그대로, 아니면 제안의 종류. 합침·나눔은 서버가 구조에서 정해 이 값을 보지 않는다."""
-    if len(sources) == 1 and text in (sources[0].text, strip_number(sources[0].text, sources[0])):
-        return "as_is"
-    return suggested if isinstance(suggested, str) and suggested in _TEXT_TYPES else "rewritten"
-
-
 async def _build_bundle_targets(
     session: AsyncSession, unit: Unit, children: Sequence[Unit], place: Mapping[str, Any]
 ) -> list[TargetIn]:
@@ -272,22 +260,21 @@ async def _build_bundle_targets(
     if unit.kind in TABLE_UNIT_KINDS:
         rows, cols = (await load_table_shapes(session, [unit])).get(unit.table_id, (1, 1)) if unit.table_id is not None else (1, 1)
         targets.append(TargetIn(
-            key=key, **place, kind="table", lang="neutral", change_type="as_is", source_unit_ids=[unit.id],
-            grid={"rows": rows, "cols": cols},
+            key=key, **place, kind="table", lang="neutral", source_unit_ids=[unit.id], grid={"rows": rows, "cols": cols},
         ))
         cells = [child for child in children if child.kind == "cell_sentence"]
         positions = await load_cell_positions(session, cells)
         for cell in cells:
             cell_row, cell_col = positions.get(cell.id, (0, 0))
             targets.append(TargetIn(
-                key=f"c{cell.id}", **place, kind="sentence", lang=cell.lang, text=cell.text, change_type="as_is",
+                key=f"c{cell.id}", **place, kind="sentence", lang=cell.lang, text=cell.text,
                 source_unit_ids=[cell.id], parent_key=key, cell_row=cell_row, cell_col=cell_col,
             ))
     else:
-        targets.append(TargetIn(key=key, **place, kind="figure", lang="neutral", change_type="as_is", source_unit_ids=[unit.id]))
+        targets.append(TargetIn(key=key, **place, kind="figure", lang="neutral", source_unit_ids=[unit.id]))
     for caption in (child for child in children if child.kind == "caption"):
         targets.append(TargetIn(
-            key=f"cap{caption.id}", **place, kind="sentence", lang=caption.lang, text=caption.text, change_type="as_is",
+            key=f"cap{caption.id}", **place, kind="sentence", lang=caption.lang, text=caption.text,
             source_unit_ids=[caption.id], parent_key=key,
         ))
     return targets
@@ -312,32 +299,26 @@ async def _build_classify_targets(session: AsyncSession, suggestion: AiSuggestio
         else:
             by_lang[unit.lang].append(unit)
     for lang, lang_units in by_lang.items():
-        by_id = {unit.id: unit for unit in lang_units}
         shapes = build_rewrite_shapes((None, None, None, None), lang_units, content["rewrites"].get(lang))
         for index, shape in enumerate(shapes):
-            sources = sorted(shape.sources)
             targets.append(TargetIn(
                 key=f"{lang}{index}", **place, kind="sentence", lang=lang, text=shape.text,
-                change_type=_pick_text_type(shape.text, [by_id[unit_id] for unit_id in sources], content.get("change_type")),
-                source_unit_ids=sources,
+                source_unit_ids=sorted(shape.sources),
             ))
     return targets
 
 
 def _build_match_targets(suggestion: AiSuggestion, loaded: _Loaded) -> list[TargetIn]:
-    """묶기 제안의 이미 쓴 새 문장 — 글·자리는 잠겨 있고 출처(links)와 변경 종류만 보낸다."""
+    """묶기 제안의 이미 쓴 새 문장 — 글·자리는 잠겨 있고 출처(links)만 보낸다. 변경 종류는 저장이 글·표 모양으로 정한다."""
     content = suggestion.content
     sources: dict[int, list[int]] = defaultdict(list)
     for target_id, unit_id in content.get("links", ()):
         sources[target_id].append(unit_id)
-    types = content.get("target_change_types", {})
     targets: list[TargetIn] = []
     for target_id in content["target_ids"]:
         row = loaded.targets[target_id]
-        change_type = types.get(str(target_id))
         targets.append(TargetIn(
             key=f"t{target_id}", id=target_id, revision=row.revision, kind=row.kind, source_unit_ids=sources[target_id],
-            change_type=change_type if change_type in _LINK_TYPES else None,
         ))
     return targets
 

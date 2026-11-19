@@ -1,7 +1,7 @@
 """사람의 판단 — 관계 묶음 저장(닫힘·위치·언어·글자·변경 종류·중복 배정 검사), 일괄 처분, 배정 지우기, 단위 목록 (스펙 §6.7–6.9, §7.7)."""
 
 from collections import Counter, defaultdict
-from collections.abc import Collection, Hashable, Iterable
+from collections.abc import Collection, Hashable, Iterable, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Annotated, Any, Literal, NamedTuple, NoReturn, Self
@@ -94,7 +94,6 @@ NEUTRAL = "neutral"
 SENTENCE_SOURCE_KINDS = ("sentence", "heading", "cell_sentence")
 # 칸 제목에 이을 수 있는 글 단위(제품 명세 §7.13 칸 제목) — 칸 문장은 표의 처분을 따른다
 SLOT_HEADING_SOURCE_KINDS = ("heading", "sentence")
-TEXT_CHANGE_TYPES = ("tone", "rewritten")  # 글자가 출처와 다를 때 사람이 고르는 종류
 
 
 # --- 요청·응답 ---
@@ -124,7 +123,8 @@ class TargetIn(BaseModel):
     """새 문장 하나의 저장 뒤 모습. 기존 새 문장에서 비운(None) 문서·글자·언어·격자·칸 자리는 지금 값을 둔다.
 
     자리(칸 키·WI 단계·부분)는 None도 뜻이 있는 값(WI의 칸 없음, 단계 없음)이라 보낸 그대로 쓴다.
-    칸 제목(slot_heading)은 글·언어·변경 종류를 비워 보낸다 — 서버가 칸 이름·출처 언어·heading으로 채운다(제품 명세 §7.13 칸 제목).
+    칸 제목(slot_heading)은 글·언어를 비워 보낸다 — 서버가 칸 이름·출처 언어로 채운다(제품 명세 §7.13 칸 제목).
+    변경 종류는 받지 않는다 — 서버가 구조·글·표 모양으로 정한다(_decide_change_type). 옛 화면이 보낸 change_type은 무시된다.
     """
 
     key: str = Field(min_length=1, max_length=40)  # 요청 안 식별자 — 칸 새 문장이 parent_key로 표 새 문장을 가리킨다
@@ -137,7 +137,6 @@ class TargetIn(BaseModel):
     kind: Literal["sentence", "table", "figure", "slot_heading"] = "sentence"
     lang: Literal["ko", "en", "ref", "neutral"] | None = None
     text: Annotated[str, StringConstraints(max_length=20000), NO_NUL] | None = None
-    change_type: Literal["as_is", "tone", "rewritten", "table_restructured"] | None = None
     # 사람이 적는 메모 — None이면 지금 값을 둔다(출처 없는 새 문장에도 적을 수 있다)
     remark: Annotated[str, StringConstraints(max_length=2000), NO_NUL] | None = None
     source_unit_ids: list[DbId] = Field(max_length=200)
@@ -888,33 +887,20 @@ def _link_cell_target(plan: _Plan, by_key: dict[str, _Plan], state: _State) -> N
     plan.parent, plan.is_cell = parent, True
 
 
-def _decide_change_type(
-    plan: _Plan, spread: Counter[tuple[int, int]], reasons: dict[int, str], state: _State
-) -> str:
-    """검사 9 — 구조에서 나오는 종류(번역 기원·칸 제목·신규·표·그림·합침·언어가 다름·나눔)가 먼저, 그다음 사람이 고른 글자 비교 종류.
+def _decide_change_type(plan: _Plan, spread: Counter[tuple[int, int]], state: _State) -> str:
+    """검사 9 — 구조에서 나오는 종류(번역 기원·칸 제목·신규·표·그림·합침·언어가 다름·나눔)가 먼저, 그다음 글자 비교(그대로·고침).
 
-    언어가 다르면 번역이다 — 사람이 고르지 않는다(제품 명세 §6.7). 나눔은 출처와 같은 언어의 새 문장만 센다(spread).
-    칸 제목은 출처가 둘 이상이어도(다른 문서의 같은 제목) 합침이 아니라 heading이다(제품 명세 §7.13 칸 제목).
+    종류는 사람이 고르지 않고 서버가 정한다(설계 2026-11-20-change-type-two D2). 언어가 다르면 번역이다(제품 명세 §6.7).
+    나눔은 출처와 같은 언어의 새 문장만 센다(spread). 칸 제목은 출처가 둘 이상이어도(다른 문서의 같은 제목) 합침이 아니라
+    heading이다(제품 명세 §7.13 칸 제목). 표는 여기서 그대로로 두고 칸 새 문장까지 본 뒤 _settle_table_types가 모양으로 정한다.
     """
-    keys = [plan.item.key]
-    requested = plan.item.change_type
     if plan.origin == ORIGIN_TRANSLATION:
         return "translated"
     if plan.item.kind == SLOT_HEADING:
         return "heading"
     if not plan.sources:
         return "new"
-    if plan.item.kind == "table":
-        if requested in (None, "as_is"):
-            return "as_is"
-        if requested != "table_restructured":
-            _reject("invalid_change_type", keys=keys)
-        if not reasons.get(plan.sources[0]):
-            _reject("reason_required", keys=keys, unit_ids=[plan.sources[0]])
-        return requested
-    if plan.item.kind == "figure":
-        if requested not in (None, "as_is"):
-            _reject("invalid_change_type", keys=keys)
+    if plan.item.kind in ("table", "figure"):
         return "as_is"
     if len(plan.sources) >= 2:
         return "merged"
@@ -926,20 +912,10 @@ def _decide_change_type(
     if not plan.is_cell and spread[(source_id, plan.doc.id)] >= 2:
         return "split"
     source = state.units[source_id]
+    # 번호를 뺀 내용과 같아도 그대로다 — 글자가 하나라도 다르면 결과물이 원문과 다른 글을 그대로라고 적지 않게 고침이다
     if plan.text in (source.text, strip_number(source.text, source)):
         return "as_is"
-    if requested is None and plan.item.text is None and plan.row is not None and (
-        plan.row.ai_text or (plan.row.suggestion_id is not None and set(plan.sources) == state.sources[plan.row.id])
-    ):
-        # 글을 비워 제안을 받으면 그 제안의 종류도 받는다 — 입구 2는 글이 잠겨 ai_text가 없어 제안의 출처 그대로일 때 받는다.
-        # 사람이 쓴 새 문장의 종류는 사람이 고르고(스펙 §6.7), 나눔·합침은 구조에서 나와 지금 구조와 어긋날 수 있어 받지 않는다
-        requested = plan.row.change_type if plan.row.change_type in TEXT_CHANGE_TYPES else None
-    if requested is None:
-        _reject("change_type_required", keys=keys)
-    # 글자가 다른데 "그대로"라고 하면 결과물이 원문과 다른 글을 그대로라고 적는다
-    if requested not in TEXT_CHANGE_TYPES:
-        _reject("invalid_change_type", keys=keys)
-    return requested
+    return "rewritten"
 
 
 def _find_parent_plan(plan: _Plan, by_row_id: dict[int, _Plan]) -> _Plan | None:
@@ -949,42 +925,40 @@ def _find_parent_plan(plan: _Plan, by_row_id: dict[int, _Plan]) -> _Plan | None:
     return plan.parent
 
 
-def _check_as_is_table(plan: _Plan, by_row_id: dict[int, _Plan], state: _State) -> None:
-    """그대로인 표는 원문 표 모양을 지키고, 그 칸 새 문장은 원래 칸 자리에 있다(R27)."""
-    keys = [plan.item.key]
-    if plan.item.kind == "table" and plan.change_type == "as_is":
-        unit = state.units[plan.sources[0]]
-        n_rows, n_cols = state.table_shapes[unit.table_id]
-        if plan.grid != {"rows": n_rows, "cols": n_cols}:
-            _reject("grid_mismatch", keys=keys)
-    parent = _find_parent_plan(plan, by_row_id)
-    # 캡션은 칸 자리가 없다 — 그대로인 표의 모양과 무관하다
-    if parent is None or plan.is_caption or parent.change_type != "as_is" or len(plan.sources) != 1:
-        return
-    table_unit = state.units[parent.sources[0]]
-    if state.group_of.get(plan.sources[0]) != table_unit.id:  # 입구 2 칸 새 문장이 칸 아닌 문장과 짝지어진 경우
-        return
-    row_index, col_index = state.cell_positions[plan.sources[0]]
-    if (plan.cell_row, plan.cell_col) != (row_index, col_index):
-        _reject("cell_position_mismatch", keys=keys)
+def _keeps_table_shape(table: _Plan, children: Sequence[_Plan], state: _State) -> bool:
+    """원문 표 모양을 지키는가(R27) — 격자가 원문과 같고, 칸 새 문장은 원래 칸 자리에 있고, 묶인 활성 칸 문장마다 칸 새 문장이 정확히 하나다.
 
-
-def _check_as_is_table_cells(plans: list[_Plan], by_row_id: dict[int, _Plan], state: _State) -> None:
-    """그대로인 표는 묶인 활성 칸 문장마다 칸 새 문장이 정확히 하나다 — 빠지면 그 칸 글이 결과물에 "그대로"로 적힌 채 사라진다(R27).
-
-    표 구성 변경(사유 필수)은 칸을 빼거나 바꿔 담을 수 있다.
+    캡션은 칸 자리가 없어 모양과 무관하다. 입구 2 칸 새 문장이 칸 아닌 문장과 짝지어졌으면 자리를 견줄 칸이 없다.
     """
-    cell_sources: dict[str, Counter[int]] = defaultdict(Counter)  # 표 새 문장 key → 칸 문장 → 그것을 출처로 둔 칸 새 문장 수
+    unit = state.units[table.sources[0]]
+    n_rows, n_cols = state.table_shapes[unit.table_id]
+    if table.grid != {"rows": n_rows, "cols": n_cols}:
+        return False
+    counts: Counter[int] = Counter()  # 칸 문장 → 그것을 출처로 둔 칸 새 문장 수
+    for child in children:
+        counts.update(child.sources)
+        if child.is_caption or len(child.sources) != 1 or state.group_of.get(child.sources[0]) != unit.id:
+            continue
+        if (child.cell_row, child.cell_col) != state.cell_positions[child.sources[0]]:
+            return False
+    return all(counts[cell_id] == 1 for cell_id in state.cells.get(unit.id, ()))
+
+
+def _settle_table_types(plans: list[_Plan], by_row_id: dict[int, _Plan], state: _State) -> None:
+    """표 새 문장의 종류 — 원문 표 모양을 지키면 그대로, 칸을 빼거나 옮기거나 격자를 바꿨으면 고침이다(설계 2026-11-20-change-type-two D2).
+
+    사유는 선택이다(판단 단위의 Remark). 칸 새 문장의 종류는 제 글로 정한다(_decide_change_type).
+    """
+    children: dict[str, list[_Plan]] = defaultdict(list)  # 표 새 문장 key → 그 칸·캡션 새 문장
     for plan in plans:
         parent = _find_parent_plan(plan, by_row_id)
         if parent is not None:
-            cell_sources[parent.item.key].update(plan.sources)
+            children[parent.item.key].append(plan)
     for plan in plans:
-        if plan.item.kind == "table" and plan.change_type == "as_is":
-            counts = cell_sources[plan.item.key]
-            missing = sorted(cell_id for cell_id in state.cells.get(plan.sources[0], ()) if counts[cell_id] != 1)
-            if missing:
-                _reject("table_cells_missing", unit_ids=missing)
+        if plan.item.kind == "table" and plan.change_type == "as_is" and not _keeps_table_shape(
+            plan, children[plan.item.key], state
+        ):
+            plan.change_type = "rewritten"
 
 
 def _check_duplicates(payload: GroupSaveIn, plans: list[_Plan], state: _State) -> None:
@@ -1556,7 +1530,6 @@ async def check_group(session: AsyncSession, bundle: Bundle, payload: GroupSaveI
     for plan in plans:
         _link_cell_target(plan, by_key, state)
     plans, releases = _resolve_slot_headings(plans, state)
-    reasons = {item.unit_id: item.reason.strip() for item in payload.units}
     # 나눔은 한 단위가 같은 새 문서에 자기와 같은 언어의 새 문장 둘 이상을 낼 때다 — 다른 언어 문장은 번역이다(제품 명세 §6.7)
     spread = Counter(
         (unit_id, plan.doc.id)
@@ -1564,10 +1537,8 @@ async def check_group(session: AsyncSession, bundle: Bundle, payload: GroupSaveI
         for unit_id in plan.sources if state.units[unit_id].lang == plan.lang
     )
     for plan in plans:
-        plan.change_type = _decide_change_type(plan, spread, reasons, state)
-    for plan in plans:
-        _check_as_is_table(plan, by_row_id, state)
-    _check_as_is_table_cells(plans, by_row_id, state)
+        plan.change_type = _decide_change_type(plan, spread, state)
+    _settle_table_types(plans, by_row_id, state)
     _check_duplicates(payload, plans, state)
     _check_captions(payload, plans, state)
     # 모은 칸 제목에 섞여 쓰기에서 빠지는 칸 제목 항목도 자리를 실었으면 거절한다 — 그래서 모으기 전 계획 전부를 본다

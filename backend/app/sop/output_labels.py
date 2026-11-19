@@ -39,8 +39,9 @@ class OutputLabels:
 LABELS = {
     "ko": OutputLabels(
         change_types={
-            "as_is": "그대로", "tone": "말투", "rewritten": "고쳐 씀", "split": "나눔", "merged": "합침",
-            "translated": "번역", "deleted": "삭제", "new": "신규", "table_restructured": "표 구성 변경",
+            # 그대로는 두 언어 모두 "=" — 읽는 사람에게 필요한 것은 원문 그대로인가 아닌가뿐이다(설계 2026-11-20-change-type-two D3)
+            "as_is": "=", "rewritten": "수정", "split": "나눔", "merged": "합침",
+            "translated": "번역", "deleted": "삭제", "new": "신규",
             "translated_added": "번역 · 추가", "heading": "칸 제목",
         },
         statuses={"unassigned": "미배정", "ai_suggested": "AI 제안", "confirmed": "확정", "on_hold": "보류", "deleted": "삭제"},
@@ -70,8 +71,8 @@ LABELS = {
     ),
     "en": OutputLabels(
         change_types={
-            "as_is": "As is", "tone": "Tone", "rewritten": "Rewritten", "split": "Split", "merged": "Merged",
-            "translated": "Translated", "deleted": "Deleted", "new": "New", "table_restructured": "Table restructured",
+            "as_is": "=", "rewritten": "Modified", "split": "Split", "merged": "Merged",
+            "translated": "Translated", "deleted": "Deleted", "new": "New",
             "translated_added": "Translated · Added", "heading": "Slot heading",
         },
         statuses={

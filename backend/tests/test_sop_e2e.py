@@ -17,7 +17,7 @@ from app.settings import settings
 from app.sop.constants import COVER_KINDS
 from app.sop.coverage import find_coverage_problems
 from app.sop.renumber import find_number_tokens, read_caption_number
-from scripts.sop_demo_driver import REQUESTABLE_CHANGE_TYPES, SyntheticDriver, find_unit_by_text, iter_c_items
+from scripts.sop_demo_driver import SyntheticDriver, find_unit_by_text, iter_c_items
 from scripts.synthetic_sop import (
     FIXED_ZIP_TIME,
     SyntheticBundle,
@@ -269,7 +269,6 @@ def _build_classify_use(run: SyntheticDriver, content: dict, answers: dict[int, 
     units = {unit["id"]: unit for view in run.views.values() for unit in view["units"]}
     location = {key: content[key] for key in ("slot_key", "wi_step", "wi_part")}
     place = {"target_doc_id": content["target_doc_id"], **location}
-    change_type = content["change_type"] if content["change_type"] in REQUESTABLE_CHANGE_TYPES else None
     targets = []
     for unit_id in content["unit_ids"] if content["disposition"] == "assigned" else ():
         unit = units[unit_id]
@@ -287,8 +286,7 @@ def _build_classify_use(run: SyntheticDriver, content: dict, answers: dict[int, 
             continue
         targets += [
             {
-                "key": f"{unit_id}-{index}", **place, "kind": "sentence", "text": text, "change_type": change_type,
-                "source_unit_ids": [unit_id],
+                "key": f"{unit_id}-{index}", **place, "kind": "sentence", "text": text, "source_unit_ids": [unit_id],
             }
             for index, text in enumerate(content["rewrites"][unit["lang"]])
         ]
@@ -296,17 +294,15 @@ def _build_classify_use(run: SyntheticDriver, content: dict, answers: dict[int, 
 
 
 def _build_match_use(run: SyntheticDriver, content: dict, answers: dict[int, dict]) -> tuple[str, list[dict]]:
-    """묶기 제안의 묶음 — 새 문서의 새 문장마다 제안의 출처 연결(links)과 변경 종류, 칸·캡션 새 문장은 부모 아래 그대로."""
+    """묶기 제안의 묶음 — 새 문서의 새 문장마다 제안의 출처 연결(links), 칸·캡션 새 문장은 부모 아래 그대로. 변경 종류는 서버가 정한다."""
     if content["shape"] == "delete_candidate":
         return "delete", []
     targets = []
     for target_id in content["target_ids"]:
         group = run.get(f"/groups/by-target/{target_id}")
         target = next(item for item in group["targets"] if item["id"] == target_id)
-        change_type = content["target_change_types"].get(str(target_id))
         item = {
             "key": str(target_id), "id": target_id, "revision": target["revision"], "kind": target["kind"],
-            "change_type": change_type if change_type in REQUESTABLE_CHANGE_TYPES else None,
             "source_unit_ids": [unit_id for linked_id, unit_id in content["links"] if linked_id == target_id],
         }
         if target["parent_target_id"] is not None:

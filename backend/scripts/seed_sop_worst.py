@@ -528,7 +528,7 @@ class WorstSeeder:
                 targets = [{"key": f"t{k}", "target_doc_id": p[0], **p[1], "source_unit_ids": [unit["id"]]} for k, p in enumerate(places)]
                 stats["multi_target"] += confirm_custom(unit, targets, "합성 사유: 같은 문장을 세 곳에 둔다. " + long_text(300, "ko"))
             elif n % 17 == 8 and unit["lang"] in ("ko", "en"):  # 3,000자 새 문장으로 고쳐 쓰기
-                target = {"key": "t", "target_doc_id": loc[0], **loc[1], "source_unit_ids": [unit["id"]], "text": long_text(3000, unit["lang"]), "change_type": "rewritten"}
+                target = {"key": "t", "target_doc_id": loc[0], **loc[1], "source_unit_ids": [unit["id"]], "text": long_text(3000, unit["lang"])}
                 stats["rewritten_long"] += confirm_custom(unit, [target], "합성 사유: 길게 고쳐 썼다. " + long_text(500, "ko"))
             else:
                 try_assign(unit, loc)

@@ -91,11 +91,11 @@ FIGURE_CAPTION = "그림 1 합성 장비 배치도"
 TABLE_CAPTION = "표 1 합성 운전 조건"
 MARKER = "RAW-REPLY-MARKER"
 MISSING_REWRITE_REPLY = json.dumps({
-    "candidate": FIRST_SLOT, "reason": MARKER, "rule_ids": [], "evidence": [], "change_type": "tone",
+    "candidate": FIRST_SLOT, "reason": MARKER, "rule_ids": [], "evidence": [],
     "rewrites": {"ko": ["   "], "en": [REWRITES["en"]]},
 })
 UNKNOWN_CANDIDATE_REPLY = json.dumps({
-    "candidate": "c99", "reason": MARKER, "rule_ids": [], "evidence": [], "change_type": "tone",
+    "candidate": "c99", "reason": MARKER, "rule_ids": [], "evidence": [],
     "rewrites": {"ko": [REWRITES["ko"]], "en": [REWRITES["en"]]},
 })
 
@@ -567,7 +567,7 @@ def test_applied_suggestion_records_the_place_and_leaves_the_decision_unassigned
     assert suggestion.content["reason"] == "합성 이유."
     assert suggestion.content["rule_ids"] == ["R01"]
     assert suggestion.content["evidence"] == [{"unit_id": ko, "quote": AI_KO_1}]
-    assert suggestion.content["change_type"] == "tone"
+    assert suggestion.content["change_type"] == "rewritten"  # 고쳐 쓴 글이 원문과 달라 고침이다
     assert suggestion.content["rewrites"] == {"ko": [REWRITES["ko"]], "en": [REWRITES["en"]]}
     assert suggestion.content["retrieval"] == "no_index"
     assert suggestion.warnings == []
@@ -588,7 +588,7 @@ def test_taking_pair_rewrites_lands_each_language_and_links_the_suggestion(clien
 
     for unit_id, lang in ((ko, "ko"), (en, "en")):
         target = get_target(client, bundle.id, unit_id)
-        assert (target["lang"], target["confirmed_text"], target["change_type"]) == (lang, REWRITES[lang], "tone")
+        assert (target["lang"], target["confirmed_text"], target["change_type"]) == (lang, REWRITES[lang], "rewritten")
         assert (target["status"], target["source_unit_ids"], target["slot_key"]) == ("confirmed", [unit_id], "purpose")
         assert read_decision(unit_id).suggestion_id == suggestion.id
     assert (suggestion.adoption, suggestion.adopted_by) == ("as_is", "qa.member")
@@ -608,8 +608,27 @@ def test_rewrite_with_two_sentences_is_split_when_taken(client: TestClient, fake
     assert [target["confirmed_text"] for target in targets] == ["합성 장비를 준비한다.", "합성 장비의 전원을 켠다."]
     assert {target["change_type"] for target in targets} == {"split"}
     assert all(target["source_unit_ids"] == [ko] for target in targets)
-    assert get_target(client, bundle.id, en)["change_type"] == "tone"
+    assert get_target(client, bundle.id, en)["change_type"] == "rewritten"
     assert suggestion.adoption == "as_is"
+
+
+@pytest.mark.parametrize(("rewrites", "expected"), [
+    ({"ko": [AI_KO_1], "en": [AI_EN_1]}, "as_is"),
+    ({"ko": [AI_KO_1], "en": [REWRITES["en"]]}, "rewritten"),
+])
+def test_suggestion_change_type_comes_from_the_rewrites(
+    client: TestClient, fake_ai: FakeAi, rewrites: dict[str, list[str]], expected: str
+) -> None:
+    # 종류는 응답이 아니라 고쳐 쓴 글로 정한다(설계 2026-11-20-change-type-two D5) — 옛 지침이 시킨 change_type 칸은 무시된다
+    bundle = make_ai_bundle(client)
+    ko, en = find_ids(client, bundle, AI_KO_1, AI_EN_1)
+    use_reply(fake_ai, rewrites=rewrites, change_type="rewritten" if expected == "as_is" else "as_is")
+    queue_units(client, bundle.id, [ko, en])
+
+    run_jobs()
+
+    suggestion = read_single_suggestion()
+    assert (suggestion.warnings, suggestion.content["change_type"]) == ([], expected)
 
 
 def test_rewrites_record_only_the_languages_of_the_units(client: TestClient, fake_ai: FakeAi) -> None:
@@ -626,10 +645,10 @@ def test_rewrites_record_only_the_languages_of_the_units(client: TestClient, fak
 
 
 def test_unchanged_rewrite_is_saved_as_is_whatever_the_model_says(client: TestClient, fake_ai: FakeAi) -> None:
-    # 제안 기록은 모델의 종류를 그대로 싣고, 받은 저장이 원문과 같은 글을 그대로로 정한다
+    # 옛 지침의 모델이 낸 종류는 무시된다 — 받은 저장이 원문과 같은 글을 그대로로 정한다
     bundle = make_ai_bundle(client)
     ko, en = find_ids(client, bundle, AI_KO_1, AI_EN_1)
-    use_reply(fake_ai, change_type="tone", rewrites={"ko": [AI_KO_1], "en": [AI_EN_1]})
+    use_reply(fake_ai, change_type="rewritten", rewrites={"ko": [AI_KO_1], "en": [AI_EN_1]})
     queue_units(client, bundle.id, [ko, en])
     run_jobs()
 
@@ -1544,23 +1563,26 @@ def test_reasoning_and_feature_are_recorded(client: TestClient, fake_ai: FakeAi,
 
 
 @pytest.mark.parametrize(
-    ("texts", "text", "requested", "sentence_count", "expected"),
+    ("texts", "text", "sentence_count", "expected"),
     [
-        (["원문"], "원문", "tone", 1, "as_is"),
-        (["원문"], "고친 글", "tone", 1, "tone"),
-        (["원문"], "고친 글", "rewritten", 1, "rewritten"),
-        (["원문"], "고친 글", "as_is", 1, "rewritten"),  # 원문과 다른 글을 그대로라고 적지 않는다
-        (["원문"], "원문", "as_is", 2, "split"),
-        (["원문 하나", "원문 둘"], "합친 글", "tone", 1, "merged"),
-        (["원문 하나", "원문 둘"], "합친 글", "tone", 2, "merged"),  # 합침이 나눔보다 먼저다(사람 저장과 같은 순서)
+        (["원문"], "원문", 1, "as_is"),
+        (["원문"], "고친 글", 1, "rewritten"),  # 글자 비교 종류는 둘 — 원문과 다른 글은 고침이다
+        (["원문"], "원문", 2, "split"),
+        (["원문 하나", "원문 둘"], "합친 글", 1, "merged"),
+        (["원문 하나", "원문 둘"], "합친 글", 2, "merged"),  # 합침이 나눔보다 먼저다(사람 저장과 같은 순서)
     ],
 )
-def test_decide_ai_change_type(
-    texts: list[str], text: str, requested: str, sentence_count: int, expected: str
-) -> None:
+def test_decide_ai_change_type(texts: list[str], text: str, sentence_count: int, expected: str) -> None:
     sources = [Unit(text=source) for source in texts]
 
-    assert decide_ai_change_type(sources, text, requested, sentence_count=sentence_count) == expected
+    assert decide_ai_change_type(sources, text, sentence_count=sentence_count) == expected
+
+
+def test_decide_ai_change_type_ignores_the_number_like_the_save() -> None:
+    # 번호를 뺀 내용과 같으면 그대로 — 사람 저장(decisions._decide_change_type)과 같은 규칙이라 채택 판정이 어긋나지 않는다
+    numbered = Unit(text="1. 원문", number_len=2)
+
+    assert decide_ai_change_type([numbered], "원문", sentence_count=1) == "as_is"
 
 
 def test_load_fresh_decisions_needs_active_unassigned_units_and_the_same_revision(client: TestClient, fake_ai: FakeAi) -> None:

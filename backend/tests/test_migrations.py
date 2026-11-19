@@ -1282,3 +1282,81 @@ def test_0031_takes_back_what_ai_wrote_into_decisions_and_targets(tmp_path: path
         row = decisions[unit_id]
         assert (row.status, row.disposition, row.hold_reason, row.revision) == ("unassigned", "unassigned", "", 3)
     assert decisions[ids["figure_id"]].status == "confirmed"  # 사람이 정한 판단은 그대로
+
+
+def test_0032_folds_tone_and_table_restructured_into_rewritten(tmp_path: pathlib.Path) -> None:
+    # 변경 종류는 그대로·고침 둘 — 새 문장과 JSON 속 옛 값(제안 내용, 되돌리기 기록)을 고침으로, 대기·실행 중 LLM match 작업은 취소
+    db_path = tmp_path / "change_type_two.db"
+    config = _downgrade_to(db_path, "0031")
+    engine = _create_fk_engine(db_path)
+    try:
+        with engine.begin() as conn:
+            ids = _insert_old_bundle(conn)
+            doc = ids["target_doc_id"]
+            tone = _insert_target(conn, doc, "sentence", "점검하여야 한다.", "confirmed", change_type="tone", order_index=2)
+            table = _insert_target(conn, doc, "table", "", "confirmed", change_type="table_restructured", order_index=3)
+            split = _insert_target(conn, doc, "sentence", "나눈 글.", "confirmed", change_type="split", order_index=4)
+            jobs = {
+                (kind, status): _insert_row(
+                    conn, "ai_jobs", bundle_id=1, kind=kind, status=status, unit_ids="[]", target_ids="[]", payload="{}",
+                    input_snapshot="{}", attempts=0, error="", requested_by="qa.member", request_id="r" * 32, priority=1,
+                    background=False, created_at=_NOW,
+                )
+                for kind, status in (("match", "queued"), ("match", "running"), ("match", "done"), ("classify", "queued"))
+            }
+            suggestion_row = {
+                "job_id": jobs[("match", "done")], "bundle_id": 1, "warnings": "[]", "result": "applied",
+                "input_refs": "{}", "guideline_versions": "{}", "model": "", "created_at": _NOW,
+            }
+            match_content = {
+                "shape": "table", "change_type": "table_restructured", "reason": "말투 tone",
+                "target_change_types": {str(table): "table_restructured", str(tone): "tone", str(split): "split"},
+            }
+            match = _insert_row(conn, "ai_suggestions", kind="match", content=json.dumps(match_content), **suggestion_row)
+            classify_content = {"disposition": "assigned", "change_type": "tone", "rewrites": {"ko": ["고친 글."]}}
+            classify = _insert_row(
+                conn, "ai_suggestions", kind="classify", content=json.dumps(classify_content), **suggestion_row
+            )
+            untouched_content = {"disposition": "assigned", "change_type": "rewritten"}
+            untouched = _insert_row(
+                conn, "ai_suggestions", kind="classify", content=json.dumps(untouched_content), **suggestion_row
+            )
+            before = {"target_sentences": {str(tone): {"id": tone, "change_type": "tone", "remark": "tone"}}}
+            after = {"target_sentences": {str(table): {"id": table, "change_type": "table_restructured"}}, "groups": [
+                {"targets": [{"change_type": "as_is"}, {"change_type": "tone"}]},
+            ]}
+            _insert_values(conn, "decision_steps", {
+                "id": 1, "bundle_id": 1, "actor": "qa.member", "session_key": "s", "seq": 1, "op": "save",
+                "kind": "snapshot", "state": "applied", "focus": "{}", "unit_ids": "[]", "before": json.dumps(before),
+                "after": json.dumps(after), "created_at": _NOW,
+            })
+
+        command.upgrade(config, "0032")
+
+        with engine.connect() as conn:
+            types = dict(conn.execute(text("SELECT id, change_type FROM target_sentences")).tuples().all())
+            contents = {row.id: json.loads(row.content) for row in conn.execute(text("SELECT id, content FROM ai_suggestions"))}
+            step = conn.execute(text("SELECT before, after FROM decision_steps")).one()
+            job_rows = {row.id: row for row in conn.execute(text("SELECT id, status, finished_at FROM ai_jobs"))}
+    finally:
+        engine.dispose()
+
+    assert (types[tone], types[table], types[split], types[ids["figure_target_id"]]) == (
+        "rewritten", "rewritten", "split", "as_is",
+    )
+    # 이유 같은 다른 글 칸은 그대로 — 바꾸는 것은 change_type 키와 target_change_types의 값뿐이다
+    assert contents[match] == {
+        **match_content, "change_type": "rewritten",
+        "target_change_types": {str(table): "rewritten", str(tone): "rewritten", str(split): "split"},
+    }
+    assert contents[classify] == {**classify_content, "change_type": "rewritten"}
+    assert contents[untouched] == untouched_content
+    assert json.loads(step.before) == {"target_sentences": {str(tone): {"id": tone, "change_type": "rewritten", "remark": "tone"}}}
+    assert json.loads(step.after) == {"target_sentences": {str(table): {"id": table, "change_type": "rewritten"}}, "groups": [
+        {"targets": [{"change_type": "as_is"}, {"change_type": "rewritten"}]},
+    ]}
+    for kind, status in (("match", "queued"), ("match", "running")):
+        row = job_rows[jobs[(kind, status)]]
+        assert row.status == "cancelled" and row.finished_at is not None
+    assert job_rows[jobs[("match", "done")]].status == "done"
+    assert job_rows[jobs[("classify", "queued")]].status == "queued"  # 분류 작업은 그대로 돈다

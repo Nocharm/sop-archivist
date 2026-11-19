@@ -26,8 +26,6 @@ from tests.sop_helpers import (
 
 REVIEWER_LOGIN = REVIEWER["X-Dev-User"]
 TEXT_KINDS = ("sentence", "heading", "cell_sentence")  # kind 없는 답이 가리키는 글 단위
-# 요청에 실을 수 있는 변경 종류 — 나눔·합침·신규는 서버가 구조로 정한다
-REQUESTABLE_CHANGE_TYPES = ("as_is", "tone", "rewritten", "table_restructured")
 
 
 class SyntheticDriver:
@@ -274,18 +272,15 @@ class SyntheticDriver:
         assert decisions == {(action, "confirmed")}
 
     def _build_target(self, spec: dict, answer: dict) -> dict:
-        change_type = spec["change_type"] if spec["change_type"] in REQUESTABLE_CHANGE_TYPES else None
+        """보낼 새 문장 — 변경 종류는 싣지 않는다(서버가 정하고, 저장 뒤 답의 change_type과 견준다)."""
         if "section_path" in spec:  # 입구 2 — 새 문서의 기존 새 문장에 출처만 붙인다(글자·자리는 새 문서 그대로)
             target = self.find_match_target(spec["code"], spec["text"])
             assert target["section_path"] == spec["section_path"]
-            return {
-                "key": spec["key"], "id": target["id"], "revision": target["revision"], "change_type": change_type,
-                "source_unit_ids": [],
-            }
+            return {"key": spec["key"], "id": target["id"], "revision": target["revision"], "source_unit_ids": []}
         item = {
             "key": spec["key"], "target_doc_id": self.tobe_ids[spec["code"]], "kind": spec["kind"],
             "slot_key": spec.get("slot_key"), "wi_step": spec.get("wi_step"), "wi_part": spec.get("wi_part"),
-            "change_type": change_type, "source_unit_ids": [],
+            "source_unit_ids": [],
         }
         if spec["kind"] == "sentence":
             item["text"] = spec["text"]

@@ -736,8 +736,7 @@ def test_output_a_table_lines_for_empty_tables_and_dropped_cells(client: TestCli
     # 한글 칸만 남긴 표 구성 변경 — 영어 칸 문장에는 칸 새 문장이 없다
     first, second = find_unit(view, "합성 값 하나."), find_unit(view, "합성 값 둘.")
     _save(client, bundle_id, [_unit_in(table, reason="Synthetic: drop the English cells")], [
-        _target("t", sop_id, [table], slot_key="procedures.p1", kind="table", grid={"rows": 2, "cols": 1},
-                change_type="table_restructured"),
+        _target("t", sop_id, [table], slot_key="procedures.p1", kind="table", grid={"rows": 2, "cols": 1}),
         _target("c1", sop_id, [first], slot_key="procedures.p1", parent_key="t", cell_row=0, cell_col=0),
         _target("c2", sop_id, [second], slot_key="procedures.p1", parent_key="t", cell_row=1, cell_col=0),
         _target("cap", sop_id, [], slot_key="procedures.p1", parent_key="t", text="합성 표", lang="ko"),
@@ -756,12 +755,12 @@ def test_output_a_table_lines_for_empty_tables_and_dropped_cells(client: TestCli
 
     assert _shape(rows) == [
         (1, "table", empty_table["display_id"], "[표 1, 1×2]", "표 1", "", "", ""),
-        (2, "table", table["display_id"], "[표 2, 2×2]", "표 2", "SOP-NEW", "table_restructured", ""),
-        # 칸 문장 줄의 변경 종류는 자기 칸 새 문장의 것, 칸 새 문장이 빠진 칸은 표의 것을 글 없이
+        (2, "table", table["display_id"], "[표 2, 2×2]", "표 2", "SOP-NEW", "rewritten", ""),
+        # 칸 문장 줄의 변경 종류는 자기 칸 새 문장의 것, 칸 새 문장이 빠진 칸은 표의 것(구성을 바꿔 고침)을 글 없이
         (2, "cell", d("합성 값 하나."), "합성 값 하나.", "표 2 · 1행 1열", "SOP-NEW", "as_is", "합성 값 하나."),
-        (2, "cell", d("Value one."), "Value one.", "표 2 · 1행 2열", "SOP-NEW", "table_restructured", ""),
+        (2, "cell", d("Value one."), "Value one.", "표 2 · 1행 2열", "SOP-NEW", "rewritten", ""),
         (2, "cell", d("합성 값 둘."), "합성 값 둘.", "표 2 · 2행 1열", "SOP-NEW", "as_is", "합성 값 둘."),
-        (2, "cell", d("Value two."), "Value two.", "표 2 · 2행 2열", "SOP-NEW", "table_restructured", ""),
+        (2, "cell", d("Value two."), "Value two.", "표 2 · 2행 2열", "SOP-NEW", "rewritten", ""),
     ]
     assert _pick_row(en, d("Value two."))["location"]["place"] == "Table 2 · R 2 C 2"
     assert _pick_row(en, table["display_id"])["source_text"] == "[Table 2, 2×2]"

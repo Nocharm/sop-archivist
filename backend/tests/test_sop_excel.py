@@ -254,7 +254,7 @@ def test_workbook_sheets_and_headers(client: TestClient) -> None:
     assert (by_header["Destination"], by_header["New doc"], by_header["Place"]) == (
         "New SOP", "SOP-NEW", "Responsibilities",
     )
-    assert (by_header["New text"], by_header["Change"], by_header["Status"]) == (KEEP, "As is", "Confirmed")
+    assert (by_header["New text"], by_header["Change"], by_header["Status"]) == (KEEP, "=", "Confirmed")
     dropped = {header: rows[drop["display_id"]][index].value for index, header in enumerate(A_HEADERS)}
     assert (dropped["Destination"], dropped["Change"], dropped["Remark"]) == ("Deleted", "Deleted", DROP_REASON)
     assert len(rows) == 4  # 결과물 A가 한 벌이라 영어 문장도 같은 시트에 있다

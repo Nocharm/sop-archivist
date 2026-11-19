@@ -51,6 +51,7 @@ from app.sop.models import (
     UnitDecision,
     UnitPairMember,
 )
+from app.sop.numbering import strip_number
 from app.sop.refs import REF_LANG
 from app.sop.segment import has_visible_char
 from app.sop.snapshot import TargetDocInfo, load_target_docs
@@ -80,7 +81,7 @@ class ClassifyReply(BaseModel):
     reason: AiStr
     rule_ids: list[AiStr]
     evidence: list[EvidenceQuote]
-    change_type: Literal["as_is", "tone", "rewritten"]
+    # 변경 종류는 받지 않는다 — 글로 정한다(_derive_change_type). 옛 지침이 시킨 change_type 칸은 무시된다(설계 2026-11-20-change-type-two D5)
     rewrites: dict[Literal["ko", "en"], list[AiStr]]
 
 
@@ -265,6 +266,21 @@ def _pick_rewrites(reply: ClassifyReply | None = None, units: Iterable[Unit] = (
     return {lang: list(reply.rewrites.get(lang, [])) if reply and lang in langs else [] for lang in _REWRITE_LANGS}
 
 
+def _derive_change_type(units: Iterable[Unit], rewrites: Mapping[str, Sequence[str]]) -> str:
+    """제안 기록의 변경 종류 — 언어마다 고쳐 쓴 글이 원문(번호를 뺀 내용 포함)과 한 줄씩 같으면 그대로, 아니면 고침.
+
+    저장은 이 값을 보지 않고 새 문장마다 글로 다시 정한다(decisions._decide_change_type). 표·그림만 고르면 글이 없어 그대로다.
+    """
+    ordered = sorted(units, key=lambda unit: (unit.pos_seq, unit.pos_start, unit.id))
+    for lang, texts in rewrites.items():
+        sources = [unit for unit in ordered if unit.lang == lang and unit.kind in SENTENCE_SOURCE_KINDS]
+        if len(texts) != len(sources) or any(
+            text not in (unit.text, strip_number(unit.text, unit)) for unit, text in zip(sources, texts, strict=True)
+        ):
+            return "rewritten"
+    return "as_is"
+
+
 @dataclass(frozen=True)
 class _Verdict:
     """응답을 검사한 결과. reply가 None이면 무효 — warnings가 이유를 코드로 담고 응답 글은 어디에도 남기지 않는다."""
@@ -277,6 +293,7 @@ class _Verdict:
     evidence: tuple[dict[str, object], ...] = ()
     warnings: tuple[AiWarning, ...] = ()
     rewrites: dict[str, list[str]] = field(default_factory=_pick_rewrites)
+    change_type: str | None = None  # 무효면 None, 삭제는 deleted, 놓기는 고쳐 쓴 글로 정한 그대로·고침
 
 
 def build_warning(kind: str, value: str = "") -> AiWarning:
@@ -384,8 +401,14 @@ def _judge_reply(
     rule_ids, unknown = check_rule_ids(reply.rule_ids, loaded.guidelines)
     texts = {unit.id: _read_unit_text(unit, loaded.contexts[unit.id]) for unit in loaded.units}
     evidence, not_found = _check_evidence(reply, texts)
-    rewrites = _pick_rewrites() if candidate == DELETE_CANDIDATE else _pick_rewrites(reply, loaded.units)
-    return _Verdict(model, retrieval, reply, candidate, rule_ids, tuple(evidence), (*unknown, *not_found), rewrites)
+    if candidate == DELETE_CANDIDATE:
+        rewrites, change_type = _pick_rewrites(), "deleted"
+    else:
+        rewrites = _pick_rewrites(reply, loaded.units)
+        change_type = _derive_change_type(loaded.units, rewrites)
+    return _Verdict(
+        model, retrieval, reply, candidate, rule_ids, tuple(evidence), (*unknown, *not_found), rewrites, change_type
+    )
 
 
 # --- apply ---
@@ -398,9 +421,6 @@ def _get_disposition(candidate: Candidate) -> str:
 def _build_content(job: AiJob, verdict: _Verdict) -> dict[str, object]:
     """제안 내용(API 계약 `classify`) — 사람이 받으면 초안이 되는 후보 자리·처분·언어별 고쳐 쓴 글·변경 종류. 무효면 자리·이유 칸이 비고 응답 글은 싣지 않는다."""
     reply, candidate = verdict.reply, verdict.candidate
-    change_type: str | None = None
-    if reply is not None and candidate is not None:
-        change_type = "deleted" if candidate == DELETE_CANDIDATE else reply.change_type
     return {
         "unit_ids": list(job.unit_ids),
         "disposition": _get_disposition(candidate) if candidate is not None else None,
@@ -411,7 +431,7 @@ def _build_content(job: AiJob, verdict: _Verdict) -> dict[str, object]:
         "reason": reply.reason if reply is not None else "",
         "rule_ids": list(verdict.rule_ids),
         "evidence": list(verdict.evidence),
-        "change_type": change_type,
+        "change_type": verdict.change_type,
         "rewrites": verdict.rewrites,
         "retrieval": verdict.retrieval,
     }

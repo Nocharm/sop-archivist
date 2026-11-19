@@ -47,7 +47,7 @@ EXPECTED_RULE_IDS = frozenset(
 VALID_RULES = "| ID | 기준 |\n|---|---|\n| R01 | synthetic rule |\n"
 # 프롬프트마다 응답 예시가 가리키는 필드 — Task 9·11·13·15의 응답 모델과 같아야 한다
 REPLY_FIELDS = {
-    "prompt.classify": {"candidate", "reason", "rule_ids", "evidence", "change_type", "rewrites"},
+    "prompt.classify": {"candidate", "reason", "rule_ids", "evidence", "rewrites"},
     "prompt.translate": {"text"},
     "prompt.match": {"change_type", "reason", "rule_ids"},
     "prompt.split": {"parts", "reason", "rule_ids"},

@@ -17,16 +17,15 @@ The data object has these fields:
 
 Output a single JSON object and nothing else: no text before or after it, no code fence, no tool or function call. Use exactly the fields of the reply example at the end of this prompt.
 
-- `change_type`: one of `as_is`, `tone`, `rewritten`.
+- `change_type`: one of `as_is`, `rewritten`.
 - `reason`: one or two short sentences in Korean that name what changed, or say that nothing did, so a reviewer can check it quickly.
 - `rule_ids`: the rule IDs your reason relies on, only IDs that exist in the rules document. Use `[]` when none applies.
 
 ## How to decide
 
 - `as_is`: the new text says the same thing in the same words.
-- `tone`: the content is the same and only the style changed, such as the sentence ending or register (R02, RW06), for example `~한다` to `~하여야 한다`, or only spacing, punctuation, or letter case. Every number, unit, condition, exception, role, and order is the same.
-- `rewritten`: anything else. The wording or structure changed beyond style, or a number, unit, tolerance, negation, condition, exception, role, or order differs (RW01), or content was added or dropped. When a value differs, say so in `reason`.
-- When unsure between two values, choose the one that shows more change. A reviewer can lower it but may not notice a hidden change.
+- `rewritten`: anything else, even when only the style changed, such as the sentence ending or register (R02, RW06), for example `~한다` to `~하여야 한다`, or only spacing, punctuation, or letter case. Say in `reason` whether only the style changed or the wording or structure changed, and say when a number, unit, tolerance, negation, condition, exception, role, or order differs (RW01) or content was added or dropped.
+- When unsure, choose `rewritten`. A reviewer may not notice a hidden change.
 - Whether the sentences are split or merged is decided elsewhere. Judge only the change in content and style.
 - Do not judge whether the new sentence is better, and do not repair it.
 
@@ -36,7 +35,7 @@ The values below are synthetic and only show the shape.
 
 ```json
 {
-  "change_type": "tone",
+  "change_type": "rewritten",
   "reason": "내용은 같고 문장 끝만 ~한다에서 ~하여야 한다로 바뀌었다.",
   "rule_ids": ["R02", "RW06"]
 }

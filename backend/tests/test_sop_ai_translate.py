@@ -203,7 +203,6 @@ def save_table_as_read(
             "slot_key": target["slot_key"], "wi_step": target["wi_step"], "wi_part": target["wi_part"],
             "kind": target["kind"], "source_unit_ids": target["source_unit_ids"],
             "parent_key": str(table["id"]) if is_linked else None,
-            **({"change_type": "table_restructured"} if reason and target["kind"] == "table" else {}),
         })
     decision = group["units"][0]["decision"]
     return save_group(client, bundle_id, {
@@ -1665,7 +1664,7 @@ def test_confirming_a_held_suggested_source_unchanged_keeps_its_translation(clie
     target = translate(client, fake_ai, bundle.id, unit["id"])
 
     # text를 비우면 받아 둔 글 그대로 확정이다 — 번역이 옮긴 글이 그대로라 바뀐 것이 아니다
-    response = save_source(client, bundle.id, unit["id"], change_type="tone")
+    response = save_source(client, bundle.id, unit["id"])
 
     assert response.status_code == 200, response.text
     kept = load_translation(unit["id"])
@@ -2191,7 +2190,7 @@ def swap_source_cell(source: dict, other: dict, *, translation_cell: tuple[int, 
 
     def tweak(row: dict, item: dict) -> dict:
         if row["kind"] == "table":
-            return {**item, "change_type": "table_restructured", "grid": row["grid"]}
+            return {**item, "grid": row["grid"]}
         if row["id"] == source["id"]:
             return {**item, "cell_row": other["cell_row"], "cell_col": other["cell_col"]}
         if row["id"] == other["id"]:
@@ -2241,16 +2240,12 @@ def test_restructured_cell_deletes_its_ai_translation(client: TestClient, fake_a
     assert_swept(client, bundle.id, cell["id"])
 
 
-def drop_cell(row: dict, item: dict) -> dict:
-    return {**item, "change_type": "table_restructured"} if row["kind"] == "table" else item
-
-
 def test_restructure_removing_a_cell_source_holds_its_echoed_translation(client: TestClient, fake_ai: FakeAi) -> None:
     bundle, table, cell, target = make_settled_cell(client, fake_ai)
     source = find_cell_source(client, bundle.id, table["id"], cell["id"])
 
     response = save_table(
-        client, bundle.id, table["id"], {"slot_key": SLOT}, tweak=drop_cell, reason="합성 사유", removed=[source["id"]],
+        client, bundle.id, table["id"], {"slot_key": SLOT}, reason="합성 사유", removed=[source["id"]],
     )
 
     assert response.status_code == 200, response.text
@@ -2266,7 +2261,7 @@ def test_restructure_removing_a_cell_source_deletes_its_ai_translation(client: T
     source = find_cell_source(client, bundle.id, table["id"], cell["id"])
 
     response = save_table(
-        client, bundle.id, table["id"], {"slot_key": SLOT}, tweak=drop_cell, reason="합성 사유", removed=[source["id"]],
+        client, bundle.id, table["id"], {"slot_key": SLOT}, reason="합성 사유", removed=[source["id"]],
     )
 
     assert response.status_code == 200, response.text
