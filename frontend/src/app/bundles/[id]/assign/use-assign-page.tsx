@@ -2690,7 +2690,7 @@ export function useAssignPage() {
         dragLineRef.current?.update(isStartShown ? start : null, readNewLineEnd(line, unitIds[0]));
         return { state: "ok", note: t("assign.drag.link"), dest: t("assign.drag.dest.link"), target: line };
       }
-      // 한/영 연달아 문서의 Old 조각 위면 짝 맺기(5걸음)
+      // 한/영 두 언어 문서의 Old 조각 위면 짝 맺기(5걸음, 따로 쓴 문서는 D8)
       const pair = readPairAt(point, unitIds);
       if (pair.drop.kind !== "none") return unlinked(readPairHover(pair.drop, pair.target, pair.el));
       // 템플릿 보기의 자리 - 줄 사이면 놓을 자리 선
@@ -2760,11 +2760,12 @@ export function useAssignPage() {
   }
   /**
    * 가까운 줄(5걸음) - 평소 Old 칸에서 포인터 밑의 가장 안쪽 조각과 거기 놓으면 할 일. 끄는 것은 줄 전부(짝 카드는 한 장)다.
-   * 한/영 연달아 문서에서만 - 그 밖의 배치에서 Old 조각 위는 지금처럼 놓을 자리 밖이다(한 언어 문서에서 "같은 언어" 거절이 번쩍이지 않게)
+   * 한/영 두 언어 문서(연달아·따로, 설계 2026-11-20 D8)에서만 - 한 언어 문서에서 Old 조각 위는 지금처럼 놓을 자리 밖이다("같은 언어" 거절이 번쩍이지 않게)
    */
   function readPairAt(point: DragPoint, unitIds: readonly number[]): { drop: PairDrop; el: HTMLElement | null; target: ViewUnit | undefined } {
     const nowhere = { drop: { kind: "none" } as const, el: null, target: undefined };
-    if (oldView?.document.language_layout !== "ko_en_interleaved" || !paperModel) return nowhere;
+    const layout = oldView?.document.language_layout;
+    if ((layout !== "ko_en_interleaved" && layout !== "ko_en_separate") || !paperModel) return nowhere;
     const sources = unitIds.flatMap((id) => paperModel.units.get(id) ?? []);
     // 줄의 Unit이 그 문서에 다 없으면 한 Unit만으로 맺게 되니 놓을 자리 밖
     if (sources.length !== unitIds.length) return nowhere;
