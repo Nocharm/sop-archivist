@@ -1931,6 +1931,8 @@ export default function AssignPage() {
         cutLine.clear();
         setCutUnitId(null);
         setSelectedKey(null);
+        // 편집 직후 곧바로 되돌리면 그 편집의 따라가기가 아직 남아, 다시 받은 뒤 은퇴한 Unit을 고른다
+        setFollow(null);
       }
       if (mode === "unsourced" && result.focus_target_id !== null) setSelNew(result.focus_target_id);
       else if (result.focus_unit_id !== null) followUnit(result.focus_unit_id);
