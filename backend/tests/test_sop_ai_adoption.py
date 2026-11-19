@@ -7,7 +7,7 @@ import httpx2
 import pytest
 from fastapi.testclient import TestClient
 
-from app.sop.ai.adoption import SavedShape, SuggestedShape, TargetShape, decide_adoption
+from app.sop.ai.adoption import SavedShape, SuggestedShape, TargetShape, _build_suggested_shape, decide_adoption
 from app.sop.models import (
     AiJob,
     AiSuggestion,
@@ -594,6 +594,19 @@ def test_later_edit_keeps_the_first_adoption(client: TestClient, fake_ai: FakeAi
     (suggestion,) = read_suggestions()
     assert (suggestion.adoption, suggestion.adopted_at) == ("as_is", first_at)
     assert read_decision(ko).suggestion_id == suggestion.id
+
+
+def test_suggested_shape_keeps_a_ref_line_as_is() -> None:
+    # 분류는 참조 줄(REF)을 고쳐 쓰지 않아 rewrites에 그 언어가 없다 - 받지 않고 확정할 때 판정이 KeyError(500)로 죽었다(스텝 2 검토)
+    suggestion = AiSuggestion(kind="classify", content={
+        "disposition": "assigned", "target_doc_id": 1, "slot_key": "references", "wi_step": None, "wi_part": None,
+        "rewrites": {"ko": [], "en": []},
+    })
+    ref = Unit(id=7, kind="sentence", lang="ref", text="SOP-ABC-1016", group_unit_id=None)
+
+    shape = _build_suggested_shape(suggestion, [ref])
+
+    assert shape.targets == (TargetShape((1, "references", None, None), "SOP-ABC-1016", frozenset({7})),)
 
 
 def test_save_without_suggestion_id_leaves_the_suggestion_undecided(client: TestClient, fake_ai: FakeAi) -> None:

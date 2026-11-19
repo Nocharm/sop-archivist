@@ -118,16 +118,21 @@ def _build_suggested_shape(suggestion: AiSuggestion, units: Iterable[Unit]) -> S
         return SuggestedShape(disposition, ())
     place = (content["target_doc_id"], content["slot_key"], content["wi_step"], content["wi_part"])
     targets: list[TargetShape] = []
-    sources_by_lang: dict[str, set[int]] = defaultdict(set)
+    units_by_lang: dict[str, list[Unit]] = defaultdict(list)
     for unit in units:
         if unit.group_unit_id is not None:
             targets.append(TargetShape(place, unit.text, frozenset((unit.id,))))
         elif unit.kind in _NO_TEXT_KINDS:
             targets.append(TargetShape(place, "", frozenset((unit.id,))))
         else:
-            sources_by_lang[unit.lang].add(unit.id)
-    for lang, sources in sources_by_lang.items():
-        targets += [TargetShape(place, text, frozenset(sources)) for text in content["rewrites"][lang]]
+            units_by_lang[unit.lang].append(unit)
+    for lang, lang_units in units_by_lang.items():
+        rewrites = content["rewrites"].get(lang)
+        if rewrites is None:  # 고쳐 쓰지 않는 언어(참조 줄 REF) - 원문 그대로 간다
+            targets += [TargetShape(place, unit.text, frozenset((unit.id,))) for unit in lang_units]
+        else:
+            sources = frozenset(unit.id for unit in lang_units)
+            targets += [TargetShape(place, text, sources) for text in rewrites]
     return SuggestedShape(disposition, tuple(targets))
 
 

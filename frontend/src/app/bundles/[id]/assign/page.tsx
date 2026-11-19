@@ -418,7 +418,14 @@ export default function AssignPage() {
   const matchSuggestions = useLoaded(() => listAppliedSuggestions(bundleId, "match"), dataKey);
   // 답이 무효였던 분류 - 그 줄은 미배정 그대로라 카드 자리에 "고르지 못했다" 한 줄만(설계 §5 2-6)
   const invalidSuggestions = useLoaded(() => listSuggestions(bundleId, "classify", "invalid"), dataKey);
-  const invalidUnitIds = useMemo(() => new Set((invalidSuggestions.data ?? []).flatMap((item) => item.content.unit_ids ?? [])), [invalidSuggestions.data]);
+  // 단위마다 가장 새 분류 답이 무효인 것만 - 그 뒤에 나온 답이 있으면 무효는 지난 일이다
+  const invalidUnitIds = useMemo(() => {
+    const newest = new Map<number, AiSuggestion>();
+    for (const item of [...(suggestions.data ?? []), ...(invalidSuggestions.data ?? [])]) {
+      for (const id of item.content.unit_ids ?? []) if ((newest.get(id)?.id ?? 0) < item.id) newest.set(id, item);
+    }
+    return new Set([...newest].filter(([, item]) => item.result === "invalid").map(([id]) => id));
+  }, [suggestions.data, invalidSuggestions.data]);
   // 단위마다 가장 최근의 적용된 제안(분류·짝) - 이유를 보이는 데만 쓴다. 보낼 곳 자체는 저장된 묶음에서 읽는다
   const suggestionOf = useMemo(() => {
     const map = new Map<number, AiSuggestion>();
@@ -615,7 +622,9 @@ export default function AssignPage() {
 
   function setDraft(patch: Partial<PageDraft>, nextEditing = editing) {
     if (!activeKey) return;
-    setDrafts((prev) => ({ ...prev, [activeKey]: { ...draft, ...patch, editing: nextEditing } }));
+    // 보낼 곳을 바꾸는 길은 모두 여기를 지난다 - Use로 받은 제안은 그 제안의 자리를 고른 채일 때만 산다(그 밖은 받은 것이 아니다)
+    const use = "destination" in patch && !("suggestionId" in patch) ? { suggestionId: null } : {};
+    setDrafts((prev) => ({ ...prev, [activeKey]: { ...draft, ...patch, ...use, editing: nextEditing } }));
   }
 
   function dropDraft(key: string) {
@@ -4280,7 +4289,7 @@ export default function AssignPage() {
   const newAiUnitIds = mode === "old" ? (row?.unitIds ?? null) : null;
   const newAiFilter = buildNewAiFilter(view.newAiOnly, newAiUnitIds, newRows, suggestedTargetUnits);
   // 그 줄의 확정 전 AI 제안이 다른 New 문서에 있으면 New 칸은 그대로 두고 칸 머리 아래 알약으로 연다 - 연 뒤에는 보던 문서로 돌아가기
-  const newAiDest = newAiUnitIds !== null && isAiRow ? savedDestination : null;
+  const newAiDest = newAiUnitIds !== null && isAiRow ? aiDest : null;
   const newAiDocId = findDestinationDoc(newAiDest, writtenMap);
   const newAiPill = readNewAiPill({ isOn: view.newAiOnly, suggestionDocId: isNewDocOpen(newAiDocId) ? newAiDocId : null, openDocId: newDocId, returnDocId: newAiReturn?.key === toggleKey ? newAiReturn.docId : null });
   const newAiLinked = newAiDest?.kind === "link" ? writtenMap.get(newAiDest.targetIds[0]) : undefined;
