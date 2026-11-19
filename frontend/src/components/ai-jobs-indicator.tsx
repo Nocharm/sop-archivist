@@ -17,7 +17,8 @@ import { useSession } from "@/lib/session";
 export function AiJobsIndicator() {
   const { t } = useI18n();
   const { me } = useSession();
-  const loginId = me?.login_id ?? null;
+  // 직원 행이 없는 첫 로그인(/api/me의 name이 빈 글)은 묶음이 없고 /ai/jobs/recent가 늘 403이다 - 폴러를 켜지 않고 표시도 두지 않는다
+  const loginId = me && me.name !== "" ? me.login_id : null;
   const snapshot = useAiJobsSnapshot();
   const seen = useSeenFailures();
   const [open, setOpen] = useState(false);

@@ -1000,6 +1000,8 @@ export default function AssignPage() {
   }
 
   function selectRow(key: string, scroll = true) {
+    // 편집 뒤 다시 받기를 기다리던 따라가기는 버린다 - 받는 동안 다른 줄을 고르면 늦게 온 보기가 고름을 편집한 줄로 되돌렸다
+    setFollow(null);
     setMode("old");
     setCarvePick(null);
     setTocSel(null);
@@ -1929,6 +1931,8 @@ export default function AssignPage() {
         cutLine.clear();
         setCutUnitId(null);
         setSelectedKey(null);
+        // 편집 직후 곧바로 되돌리면 그 편집의 따라가기가 아직 남아, 다시 받은 뒤 은퇴한 Unit을 고른다
+        setFollow(null);
       }
       if (mode === "unsourced" && result.focus_target_id !== null) setSelNew(result.focus_target_id);
       else if (result.focus_unit_id !== null) followUnit(result.focus_unit_id);
