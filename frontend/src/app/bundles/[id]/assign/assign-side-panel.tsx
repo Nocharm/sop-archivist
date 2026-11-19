@@ -11,7 +11,7 @@ import { CaptionSlot } from "@/components/assign/caption-slot";
 import { RefCard } from "@/components/assign/ref-card";
 import { ShapeTools } from "@/components/assign/shape-tools";
 import { SplitSuggestionCard } from "@/components/assign/split-suggestion";
-import { ChangeKindChip, ChangeKindToggle } from "@/components/assign/change-kind-toggle";
+import { ChangeKindChip } from "@/components/assign/change-kind-chip";
 import { LinkChoice } from "@/components/assign/link-choice";
 import { MoveTargetField } from "@/components/assign/move-target-field";
 import { RemarkLine } from "@/components/assign/remark-modal";
@@ -28,7 +28,7 @@ import { buildCaptionSlot, type CaptionCandidate } from "@/lib/caption-slot-mode
 import { countJoinedLines } from "@/lib/join-sentence-model";
 import { canMakeOtherLanguage, isRecommendationPicked, listCoConfirmed, listSiblingPlaces, pickNearby, type Recommendation } from "@/lib/assign-model";
 import { readRewrites } from "@/lib/ai-suggestion-model";
-import { hasRowLanguage, isHeadingSourceUnit, isPlaceOption, listTreeOptions, listTreeRows, isSentenceUnit, isTextChangeType, isTranslationOf, listJoinedTargetIds, listLinkLeftovers, pickLinkUnits, readCheckKey, readLinkDefault, readSlotKind, type DestinationOption } from "@/lib/classify-model";
+import { hasRowLanguage, isHeadingSourceUnit, isPlaceOption, listTreeOptions, listTreeRows, isSentenceUnit, isTranslationOf, listJoinedTargetIds, listLinkLeftovers, pickLinkUnits, previewLinkChange, previewSlotChange, readCheckKey, readSlotKind, type DestinationOption } from "@/lib/classify-model";
 import { formatKst } from "@/lib/datetime";
 import { findNearestCut } from "@/lib/paper-model";
 import { getNewDocumentsHref } from "@/lib/stages";
@@ -42,7 +42,7 @@ export function AssignSidePanel({ state }: { state: AssignPageState }) {
     t, bundleId, canEdit, unitsKey, setUnitsKey, units, tobeData, aiJobs, aiOn, aiBusy, suggestions, invalidUnitIds, unitMap, written,
     writtenMap, rowOfUnit, options, mode, activeKey, row, isNewEdit, hasSolo, tocOpen, setTocOpen, tocPick, tocBlocks, newRemarks,
     setNewRemarks, cutUnitId, focusNew, groupData, draft, editing, savedDestination, destination, rowUnits, rowLangs, firstDecision,
-    systemHold, reasonNow, moveCode, setDraft, rowLive, aiDest, aiWhy, recommendations, linkIds, pickedGroups, saveGroupData, aiPending,
+    systemHold, reasonNow, moveCode, setDraft, rowLive, aiDest, aiWhy, recommendations, linkIds, pickedGroups, saveGroupData,
     viewOf, oldView, splitByUnit, shapeView, shapeModel, soloUnits, cutLine, writtenDocs, composedDoc, view, changeView, askAiScope,
     setRemarkEdit, firstTextRef, busy, accOpen, toggleAcc, saveUnits, slots, aiUnfilled, draftPlace, draftSectionKey, draftPosition,
     placeResolved, setRefEntryId, moveRow, hasUnitDraft, isFixedCaption, rowViewUnits, rowSplitUnit, rowSplit, splitBlocked, rowRefUnit,
@@ -213,7 +213,7 @@ export function AssignSidePanel({ state }: { state: AssignPageState }) {
           <span className="block break-words text-ink-2">{advice.text}</span>
         </span>
         {canEdit && (
-          <button type="button" className="btn ghost h-6 flex-none px-1.5 text-xs" data-testid={`assign-ref-advice-use-${slotKey}`} onClick={() => setDraft({ texts: { ...draft.texts, [slotKey]: advice.text }, changeTypes: { ...draft.changeTypes, [slotKey]: "rewritten" } })}>
+          <button type="button" className="btn ghost h-6 flex-none px-1.5 text-xs" data-testid={`assign-ref-advice-use-${slotKey}`} onClick={() => setDraft({ texts: { ...draft.texts, [slotKey]: advice.text } })}>
             {t("assign.ref.useEquis")}
           </button>
         )}
@@ -307,21 +307,12 @@ export function AssignSidePanel({ state }: { state: AssignPageState }) {
       ) : (
         slots.map((slot, index) => {
           const text = draft.texts[slot.key] ?? slot.text;
-          // 나눔·합침·번역은 서버가 구조에서 정한다 - 글자 비교 종류는 출처 하나인 같은 언어 칸에서만 고른다
+          // 종류는 읽기만 - 나눔·합침·번역은 서버가 구조에서, "=" / "수정"은 글 비교로 정한다(화면은 같은 규칙의 미리 보기)
           const structural = readSlotKind(slot, slots);
-          const changed = slot.sourceText !== null && text.trim() !== "" && text.trim() !== slot.sourceText.trim();
-          const keptType = isTextChangeType(slot.target?.change_type) ? slot.target.change_type : null;
-          // 원문과 같은 글은 그대로만, 고친 글은 말투 · 고쳐 씀만 고를 수 있다(그대로는 서버가 글 비교로 정한다)
-          const changeToggle = (
-            <ChangeKindToggle
-              testId={`assign-slot-change-${slot.key}`}
-              value={changed ? (draft.changeTypes[slot.key] ?? keptType ?? "rewritten") : "as_is"}
-              disabledKinds={changed ? { as_is: t("assign.why.textChanged") } : { tone: t("assign.why.rewriteFirst"), rewritten: t("assign.why.rewriteFirst") }}
-              disabled={!canEdit}
-              onChange={(next) => {
-                if (next !== "as_is") setDraft({ changeTypes: { ...draft.changeTypes, [slot.key]: next } });
-              }}
-            />
+          const changeKind = structural ? (
+            <ChangeKindChip kind={structural} testId={`assign-slot-kind-${slot.key}`} />
+          ) : (
+            <ChangeKindChip kind={previewSlotChange(slot, draft.texts[slot.key])} testId={`assign-slot-change-${slot.key}`} />
           );
           const refAdvice = renderRefAdvice(slot.key, slot.lang, slot.sourceIds, text);
           // 읽기 보기는 문장마다 한 줄(언어 · 글 · 고쳐 쓰기 연필 · 끝에 변경 종류) - 결정 칸을 낮게 두어 위 목록이 늘 보이게. 전체 글은 올리면 툴팁
@@ -334,7 +325,7 @@ export function AssignSidePanel({ state }: { state: AssignPageState }) {
                     <Truncate text={text || "_"} lang={slot.lang === "neutral" ? undefined : slot.lang} testId={`assign-text-${slot.key}`} />
                   </span>
                   {renderEditPencil(index === 0 ? "assign-edit" : `assign-edit-${slot.key}`)}
-                  {structural ? <ChangeKindChip kind={structural} testId={`assign-slot-kind-${slot.key}`} /> : changeToggle}
+                  {changeKind}
                 </div>
                 {refAdvice}
               </Fragment>
@@ -353,10 +344,10 @@ export function AssignSidePanel({ state }: { state: AssignPageState }) {
                   onChange={(event) => setDraft({ texts: { ...draft.texts, [slot.key]: event.target.value } }, true)}
                 />
               </div>
-              {/* 고쳐 쓰는 동안도 변경 종류는 같은 세 칸 - 글이 원문과 달라지면 말투 · 고쳐 씀이 켜진다 */}
+              {/* 고쳐 쓰는 동안도 같은 표시 - 글이 원문과 달라지면 "="가 "수정"으로 바뀐다 */}
               <span className="flex h-7 items-center gap-2 text-xs text-ink-2">
                 {t("classify.changeType")}
-                {structural ? <ChangeKindChip kind={structural} testId={`assign-slot-kind-${slot.key}`} /> : changeToggle}
+                {changeKind}
               </span>
               {refAdvice}
             </div>
@@ -384,7 +375,7 @@ export function AssignSidePanel({ state }: { state: AssignPageState }) {
     const mergedLines = isPlace ? Math.max(0, ...slots.filter((slot) => slot.target !== null && slot.sourceIds.length > 1).map((slot) => countJoinedLines(slot.sourceIds, activeKey ?? "", (unitId) => rowOfUnit.get(unitId)))) : 0;
     const isConfirmedView = row?.status === "confirmed" && draft.destination === null;
     const pickedRows = linkIds.map((id) => writtenMap.get(id)).filter((item): item is WrittenSentence => item !== undefined);
-    // 줄에 없는 언어의 문장은 번역이다 - 종류를 고르지 않고, 나눔도 같은 언어 문장끼리만 센다(제품 명세 §6.7)
+    // 줄에 없는 언어의 문장은 번역이다 - 나눔도 같은 언어 문장끼리만 센다(제품 명세 §6.7)
     const translatedIds = new Set(pickedRows.filter((item) => isTranslationOf(item.lang, rowLangs)).map((item) => item.target_id));
     const byLang = new Map<string, number>();
     for (const item of pickedRows) if (!translatedIds.has(item.target_id)) byLang.set(item.lang, (byLang.get(item.lang) ?? 0) + 1);
@@ -414,13 +405,10 @@ export function AssignSidePanel({ state }: { state: AssignPageState }) {
         {destination.kind === "link" && (
           <LinkChoice
             rows={pickedRows}
-            changeTypes={draft.linkChangeTypes ?? {}}
-            aiPending={aiPending}
             translatedIds={translatedIds}
-            defaults={Object.fromEntries(pickedRows.map((item) => [item.target_id, readLinkDefault({ lang: item.lang, confirmed_text: item.text, change_type: item.change_type, status: item.status }, rowUnits)]))}
+            changes={Object.fromEntries(pickedRows.map((item) => [item.target_id, previewLinkChange({ kind: item.kind, lang: item.lang, confirmed_text: item.text, change_type: item.change_type, source_unit_ids: item.source_unit_ids }, rowUnits, row?.unitIds ?? [])]))}
             auto={auto}
             mergedWith={mergedWith}
-            onChange={(targetId, value) => setDraft({ linkChangeTypes: { ...(draft.linkChangeTypes ?? {}), [targetId]: value } })}
             renderNote={renderRefLinkAdvice}
           />
         )}

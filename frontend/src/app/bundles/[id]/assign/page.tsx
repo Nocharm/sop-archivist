@@ -44,7 +44,7 @@ import { isBundleCaptionNeeded } from "@/lib/caption-model";
 import { countJoinedLines } from "@/lib/join-sentence-model";
 import { listLinkMenuItems, listUnlinkRemainder, type LinkMenuItem } from "@/lib/assign-model";
 import { loadBundle } from "@/lib/bundle-store";
-import { getDestinationId, isTextChangeType, readSlotKind } from "@/lib/classify-model";
+import { getDestinationId, previewSlotChange, readSlotKind } from "@/lib/classify-model";
 import { useI18n } from "@/lib/i18n";
 import { navigate } from "@/lib/nav-buffer";
 import { buildNewAiFilter, listNewAiLinks, readNewAiPill } from "@/lib/new-ai-filter-model";
@@ -139,7 +139,7 @@ export default function AssignPage() {
       void runSave("confirm");
     } else if (item === "cancel") {
       // 고름을 되돌린다 - 저장된 곳(없으면 빈 고름)으로
-      setDraft({ destination: null, linkChangeTypes: {}, position: null });
+      setDraft({ destination: null, position: null });
       setMenu(null);
     } else if (item === "link" && targetId !== null) {
       // 고른 뒤 같은 메뉴가 확정·취소로 바뀐다
@@ -411,15 +411,8 @@ export default function AssignPage() {
   const pendingPlace = draft.destination?.kind === "slot" || draft.destination?.kind === "slot_heading" || draft.destination?.kind === "step" ? draft.destination : null;
   const pendingDoc = pendingPlace ? (tobeData?.docs ?? []).find((doc) => doc.id === pendingPlace.docId) : undefined;
   const pendingOption = pendingPlace ? options.find((option) => option.id === getDestinationId(pendingPlace)) : undefined;
-  // 문장마다의 변경 종류 - 결정 칸의 고르개와 같은 규칙(구조 종류가 먼저, 고친 글이면 고른 값, 아니면 그대로)
-  const readPendingChange = (slot: (typeof slots)[number]): ChangeType => {
-    const structural = readSlotKind(slot, slots);
-    if (structural !== null) return structural;
-    const text = draft.texts[slot.key] ?? slot.text;
-    const changed = slot.sourceText !== null && text.trim() !== "" && text.trim() !== slot.sourceText.trim();
-    const keptType = isTextChangeType(slot.target?.change_type) ? slot.target.change_type : null;
-    return changed ? (draft.changeTypes[slot.key] ?? keptType ?? "rewritten") : "as_is";
-  };
+  // 문장마다의 변경 종류 - 결정 칸의 표시와 같은 규칙(구조 종류가 먼저, 아니면 글 비교 "=" / "수정")
+  const readPendingChange = (slot: (typeof slots)[number]): ChangeType => readSlotKind(slot, slots) ?? previewSlotChange(slot, draft.texts[slot.key]);
   const isHeadingPick = pendingPlace?.kind === "slot_heading" || slots.length === 0;
   const spaceDraft =
     pendingDoc && pendingOption

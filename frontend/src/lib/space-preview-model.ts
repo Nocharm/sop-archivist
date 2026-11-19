@@ -79,7 +79,7 @@ export function findSheetUnit(sheet: Pick<PreviewSheet, "rows">, unitIds: readon
 
 // Excel A의 칸 글과 같은 영어 값(backend output_labels.py en) - 시트는 늘 영어다
 const DEST_LABELS: Record<TargetDocType, string> = { sop: "New SOP", wi: "WI" };
-const CHANGE_LABELS: Partial<Record<ChangeType, string>> = { as_is: "As is", tone: "Tone", rewritten: "Rewritten", split: "Split", merged: "Merged", translated: "Translated", heading: "Slot heading" };
+const CHANGE_LABELS: Partial<Record<ChangeType, string>> = { as_is: "=", rewritten: "Modified", split: "Split", merged: "Merged", translated: "Translated", heading: "Slot heading" };
 export const NO_NUMBER = "—"; // 아직 번호를 셀 수 없는 확정 전 자리
 
 export interface SheetDraftInput {
@@ -89,7 +89,7 @@ export interface SheetDraftInput {
   place: string;
   /** 새 문장마다 지금 글(사람이 고친 글, 없으면 칸의 지금 글) */
   texts: readonly string[];
-  /** 새 문장마다 고른 변경 종류 */
+  /** 새 문장마다 변경 종류(글자 비교 종류는 화면의 미리 보기) */
   changes: readonly ChangeType[];
 }
 

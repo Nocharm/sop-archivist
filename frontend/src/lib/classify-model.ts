@@ -2,7 +2,6 @@
 
 import type {
   ChangeType,
-  ChangeTypeInput,
   CoverStatus,
   Decision,
   DocumentView,
@@ -278,9 +277,6 @@ export interface RowDraft {
   destination: Destination | null;
   /** 새 문장 칸(SentenceSlot.key)별로 사람이 고친 글자 - 고치지 않은 칸은 없다. 비우면 원문 그대로 */
   texts: Record<string, string>;
-  changeTypes: Record<string, "tone" | "rewritten">;
-  /** 이은 문장(target id)별 변경 종류 - null은 AI 제안 그대로 받기, 없으면 지금 사람 값 또는 고쳐 씀 */
-  linkChangeTypes?: Record<number, ChangeTypeInput | null>;
   /** 사람이 직접 쓰는 다른 언어 문장 칸 - 한 언어만 있는 줄에서 연다(buildSentenceSlots의 extra) */
   otherLang?: OtherLangSlot | null;
   /** 표·그림 캡션의 글 - 키는 caption-model getCaptionTextKey(캡션 단위의 고친 글은 단위, 써 넣은 캡션은 묶음·언어) */
@@ -297,10 +293,10 @@ export interface OtherLangSlot {
   unitId: number;
 }
 
-/** 저장 전 변경이 있는 초안인가 - 고른 곳·고친 글·변경 종류·사유·이동 코드 중 하나라도 손댔으면 참(편집 칸만 열어 둔 것은 변경이 아니다) */
-export function hasDraftChange(draft: Pick<RowDraft, "destination" | "texts" | "changeTypes" | "linkChangeTypes" | "captionTexts"> & { reason: string | null; moveCode: string | null }): boolean {
+/** 저장 전 변경이 있는 초안인가 - 고른 곳·고친 글·사유·이동 코드 중 하나라도 손댔으면 참(편집 칸만 열어 둔 것은 변경이 아니다) */
+export function hasDraftChange(draft: Pick<RowDraft, "destination" | "texts" | "captionTexts"> & { reason: string | null; moveCode: string | null }): boolean {
   if (draft.destination !== null || draft.reason !== null || draft.moveCode !== null) return true;
-  return [draft.texts, draft.changeTypes, draft.linkChangeTypes ?? {}, draft.captionTexts ?? {}].some((map) => Object.keys(map).length > 0);
+  return [draft.texts, draft.captionTexts ?? {}].some((map) => Object.keys(map).length > 0);
 }
 
 interface SourceUnit {
@@ -360,9 +356,12 @@ export function listLinkLeftovers(destination: Destination | null, context: Pick
   return context.units.filter((unit) => !linked.has(unit.id) && undecided.has(unit.id)).map((unit) => unit.id);
 }
 
-/** 글자 비교로 사람이 고르는 변경 종류인가 - 나눔·합침·번역은 서버가 구조에서 정한다 */
-export function isTextChangeType(value: ChangeType | null | undefined): value is "tone" | "rewritten" {
-  return value === "tone" || value === "rewritten";
+/** 글자 비교로 정하는 변경 종류 - "=" 그대로 · "수정" 고침. 나눔·합침·번역은 서버가 구조에서 정한다 */
+export type TextChangeType = Extract<ChangeType, "as_is" | "rewritten">;
+
+/** 글자 비교 종류인가 */
+export function isTextChangeType(value: ChangeType | null | undefined): value is TextChangeType {
+  return value === "as_is" || value === "rewritten";
 }
 
 function findOwnTarget(group: Group | null, unitId: number, kind: GroupTarget["kind"]): GroupTarget | undefined {
@@ -380,9 +379,9 @@ export interface SentenceSlot {
   text: string;
   /** 출처가 하나면 그 원문 - 그대로인지 비교한다 */
   sourceText: string | null;
-  /** 사람이 아직 확정하지 않은 AI 제안 - 그대로 받으면 글·종류를 비워 보낸다 */
+  /** 사람이 아직 확정하지 않은 AI 제안 - 그대로 받으면 글을 비워 보낸다 */
   isAiPending: boolean;
-  /** 칸 언어가 출처 단위들의 언어와 모두 다르다 - 변경 종류는 서버가 번역으로 정한다(사람이 고르지 않는다) */
+  /** 칸 언어가 출처 단위들의 언어와 모두 다르다 - 변경 종류는 서버가 번역으로 정한다 */
   isTranslated: boolean;
 }
 
@@ -459,7 +458,7 @@ export function buildSentenceSlots(group: Group | null, units: SourceUnit[], ext
 }
 
 /**
- * 칸의 구조 종류 - 서버 순서(합침 → 언어가 다름(번역) → 나눔)와 같다. null이면 사람이 글자 비교 종류를 고른다.
+ * 칸의 구조 종류 - 서버 순서(합침 → 언어가 다름(번역) → 나눔)와 같다. null이면 글자 비교 종류다(previewSlotChange).
  * 나눔은 한 단위가 자기와 같은 언어의 칸을 둘 이상 낼 때만이다 - 다른 언어 칸은 번역이라 세지 않는다(제품 명세 §6.7).
  */
 export function readSlotKind(slot: SentenceSlot, slots: SentenceSlot[]): "merged" | "translated" | "split" | null {
@@ -467,6 +466,17 @@ export function readSlotKind(slot: SentenceSlot, slots: SentenceSlot[]): "merged
   if (slot.isTranslated) return "translated";
   const siblings = slots.filter((other) => other.lang === slot.lang && other.sourceIds.includes(slot.sourceIds[0]));
   return slot.target?.change_type === "split" || siblings.length > 1 ? "split" : null;
+}
+
+/**
+ * 칸의 "=" / "수정" 미리 보기 - 서버 규칙(_decide_change_type)과 같다: 글이 원문(번호를 뺀 내용)과 같으면 그대로, 다르면 고침.
+ * 손대지 않았거나 비운 기존 새 문장은 지금 글 그대로 저장되어 서버가 정해 둔 값이 이긴다(새 칸을 비우면 원문이라 그대로). 구조 종류(readSlotKind)를 먼저 본다.
+ */
+export function previewSlotChange(slot: SentenceSlot, edited: string | undefined): TextChangeType {
+  const typed = (edited ?? "").trim();
+  if (!typed && isTextChangeType(slot.target?.change_type)) return slot.target.change_type;
+  const text = typed || slot.text.trim();
+  return slot.sourceText !== null && text !== slot.sourceText.trim() ? "rewritten" : "as_is";
 }
 
 /** 칸의 저장할 글 - 고쳤으면 고친 글(비웠으면 원문), 아니면 null(지금 글 그대로) */
@@ -483,20 +493,13 @@ function buildSentenceTarget(slot: SentenceSlot, draft: RowDraft, place: ReturnT
   return { ...target, ...readPosition(draft, place, slot.target) };
 }
 
+/** 변경 종류는 싣지 않는다 - 서버가 글 · 구조로 정한다(설계 2026-11-20-change-type-two D2) */
 function buildSentenceBody(slot: SentenceSlot, draft: RowDraft, place: ReturnType<typeof placeTarget>): TargetInput {
-  // 기존 새 문장의 글자 비교 종류(AI 제안이면 제안의 종류) - 고쳐도 사람이 따로 고르지 않으면 이것을 둔다
-  const keptType = isTextChangeType(slot.target?.change_type) ? slot.target.change_type : null;
   const base = { key: slot.key, ...(slot.target ? { id: slot.target.id, revision: slot.target.revision } : {}), ...place, kind: "sentence" as const, source_unit_ids: slot.sourceIds };
   const edited = readEditedText(slot, draft);
-  if (slot.target && edited === null) {
-    // 손대지 않은 기존 새 문장: 글은 서버가 지금 글(AI 제안이면 제안 글)을 두고, 종류는 사람 것이면 그대로, AI 제안이면 제안 것을 받는다
-    return keptType && !slot.isAiPending ? { ...base, change_type: keptType } : base;
-  }
-  const text = edited ?? slot.text.trim();
-  // 언어가 다른 칸의 종류는 서버가 번역으로 정한다 - 보내지 않는다
-  if (slot.isTranslated) return { ...base, lang: slot.lang, text };
-  const isAsIs = slot.sourceText !== null && text === slot.sourceText.trim();
-  return { ...base, lang: slot.lang, text, change_type: isAsIs ? "as_is" : (draft.changeTypes[slot.key] ?? keptType ?? "rewritten") };
+  // 손대지 않은 기존 새 문장: 글은 서버가 지금 글(AI 제안이면 제안 글)을 둔다
+  if (slot.target && edited === null) return base;
+  return { ...base, lang: slot.lang, text: edited ?? slot.text.trim() };
 }
 
 /** 저장된 사유 중 사람이 쓴 것 - `system:` 코드는 사람 사유가 아니다 */
@@ -525,12 +528,21 @@ function readPosition(draft: RowDraft, place: ReturnType<typeof placeTarget>, ow
   return isHere ? {} : { position: { after_target_id: position.after } };
 }
 
-/** 사람이 고르지 않은 연결의 변경 종류 - 같은 언어 원문과 글이 같으면 그대로, 사람이 고른 적 있으면 그 값, 아니면 고쳐 씀 */
-export function readLinkDefault(target: Pick<GroupTarget, "lang" | "confirmed_text" | "change_type" | "status">, units: Array<Pick<SourceUnit, "lang" | "text" | "content_start">>): ChangeTypeInput {
+/**
+ * 이은 문장의 "=" / "수정" 미리 보기 - 같은 언어 원문과 글이 같으면 그대로, 아니면 고침(서버 _decide_change_type과 같다).
+ * 이 줄을 이미 출처로 저장한 문장은 서버가 정한 값이 이긴다. 표 · 그림은 화면에서 모양을 바꾸지 않아 그대로로 보인다 -
+ * 이은 표의 모양이 원문과 다르면 저장 뒤 서버가 고침으로 정한다.
+ */
+export function previewLinkChange(
+  target: Pick<GroupTarget, "kind" | "lang" | "confirmed_text" | "change_type" | "source_unit_ids">,
+  units: Array<Pick<SourceUnit, "lang" | "text" | "content_start">>,
+  rowUnitIds: readonly number[],
+): TextChangeType {
+  if (isTextChangeType(target.change_type) && target.source_unit_ids.some((id) => rowUnitIds.includes(id))) return target.change_type;
+  if (target.kind !== "sentence") return "as_is";
   const same = units.find((unit) => unit.lang === target.lang);
-  // 번호를 뺀 내용과 같아도 그대로다(서버 _decide_change_type과 같다)
-  if (same && [same.text.trim(), getContent(same).trim()].includes(target.confirmed_text.trim())) return "as_is";
-  return isTextChangeType(target.change_type) && target.status !== "ai_suggested" ? target.change_type : "rewritten";
+  // 번호를 뺀 내용과 같아도 그대로다
+  return same && [same.text.trim(), getContent(same).trim()].includes(target.confirmed_text.trim()) ? "as_is" : "rewritten";
 }
 
 /**
@@ -549,7 +561,7 @@ function echoTarget(target: GroupTarget, sources: number[] = target.source_unit_
  * 지금 값 그대로 싣는다(확정 한 번이 그것들도 확정한다 - 화면이 "함께 확정되는 것"으로 보인다).
  * 보낼 곳은 바꾸기다: 줄의 칸 새 문장(과 번역)은 새 자리로 바뀌거나 지우고, 이미 쓴 문서(입구 2) 문장에서는 줄 단위를 출처에서 뺀다
  * (줄만 출처였던 문장은 removed로 보내 서버가 미배정으로 돌린다). 보낼 곳이 link면 고른 문장에 같은 언어 줄 단위를, 없으면 줄 단위
- * 모두를 출처로 더한다(언어가 다른 연결은 서버가 번역으로 정해 종류를 보내지 않는다). 확정에서 남는 짝 단위는 release_unit_ids로 싣는다.
+ * 모두를 출처로 더한다. 변경 종류는 싣지 않는다(서버가 정한다). 확정에서 남는 짝 단위는 release_unit_ids로 싣는다.
  */
 export function buildGroupSave(draft: RowDraft, context: SaveContext, action: "confirm" | "hold", holdReason = ""): GroupSaveInput {
   const { destination } = draft;
@@ -580,14 +592,12 @@ export function buildGroupSave(draft: RowDraft, context: SaveContext, action: "c
     for (const plan of plans) {
       if (plan.target) kept.add(plan.target.id);
       const base = { key: `${parentKey}-cap-${plan.unitId ?? plan.lang}`, ...(plan.target ? { id: plan.target.id, revision: plan.target.revision } : {}), ...place, kind: "sentence" as const, parent_key: parentKey, source_unit_ids: plan.unitId !== null ? [plan.unitId] : [] };
-      // 손대지 않은 AI 제안 캡션은 문장 칸처럼 글·종류를 비워 보낸다 - 서버가 제안 그대로 받는다(채택 판정이 사람의 고쳐 씀으로 남기지 않게)
+      // 손대지 않은 AI 제안 캡션은 문장 칸처럼 글을 비워 보낸다 - 서버가 제안 그대로 받는다(채택 판정이 사람의 고쳐 씀으로 남기지 않게)
       if (plan.target?.status === "ai_suggested" && !plan.isEdited) {
         targets.push(base);
         continue;
       }
-      // 출처 없는 캡션은 종류를 보내지 않는다 - 서버가 new로 정한다
-      const changeType = plan.sourceText === null ? {} : { change_type: plan.text === plan.sourceText.trim() ? ("as_is" as const) : ("rewritten" as const) };
-      targets.push({ ...base, lang: plan.lang, text: plan.text, ...changeType });
+      targets.push({ ...base, lang: plan.lang, text: plan.text });
     }
     for (const child of children) if (!kept.has(child.id)) staleCaptions.add(child.id);
   }
@@ -610,7 +620,7 @@ export function buildGroupSave(draft: RowDraft, context: SaveContext, action: "c
         const ref = own ? { id: own.id, revision: own.revision } : {};
         if (own) kept.add(own.id);
         const table = context.tables.get(unit.id);
-        targets.push({ key, ...ref, ...place, ...readPosition(draft, place, own), kind: "table", lang: "neutral", change_type: "as_is", source_unit_ids: [unit.id], grid: table ? { rows: table.rows, cols: table.cols } : null });
+        targets.push({ key, ...ref, ...place, ...readPosition(draft, place, own), kind: "table", lang: "neutral", source_unit_ids: [unit.id], grid: table ? { rows: table.rows, cols: table.cols } : null });
         for (const cell of table?.cells ?? []) {
           const cellOwn = existing.find((target) => target.parent_target_id !== null && target.source_unit_ids.includes(cell.id));
           if (cellOwn) kept.add(cellOwn.id);
@@ -621,7 +631,6 @@ export function buildGroupSave(draft: RowDraft, context: SaveContext, action: "c
             kind: "sentence",
             lang: cell.lang,
             text: cell.text,
-            change_type: "as_is",
             source_unit_ids: [cell.id],
             parent_key: key,
             cell_row: cell.row,
@@ -634,7 +643,7 @@ export function buildGroupSave(draft: RowDraft, context: SaveContext, action: "c
       if (unit.kind === "figure") {
         const own = findOwnTarget(context.group, unit.id, "figure");
         if (own) kept.add(own.id);
-        targets.push({ key, ...(own ? { id: own.id, revision: own.revision } : {}), ...place, ...readPosition(draft, place, own), kind: "figure", lang: "neutral", change_type: "as_is", source_unit_ids: [unit.id] });
+        targets.push({ key, ...(own ? { id: own.id, revision: own.revision } : {}), ...place, ...readPosition(draft, place, own), kind: "figure", lang: "neutral", source_unit_ids: [unit.id] });
         pushCaptions(key, unit.id, place);
       }
     }
@@ -663,8 +672,7 @@ export function buildGroupSave(draft: RowDraft, context: SaveContext, action: "c
     if (target.origin === "new_doc") {
       const others = target.source_unit_ids.filter((id) => !rowIds.has(id));
       const sameLang = active.filter((unit) => unit.lang === target.lang);
-      // 같은 언어 단위가 없으면 줄 전체가 출처다. 종류를 서버가 번역으로 정하는 것은 중립 단위가 끼지 않을 때뿐이라 그때만 종류를 빼고 보낸다
-      const isTranslation = isTranslationOf(target.lang, active.map((unit) => unit.lang));
+      // 같은 언어 단위가 없으면 줄 전체가 출처다
       const added = picked.has(target.id) ? (sameLang.length === 0 ? active : sameLang).map((unit) => unit.id) : [];
       const sources = [...others, ...added];
       if (sources.length === 0) {
@@ -673,13 +681,7 @@ export function buildGroupSave(draft: RowDraft, context: SaveContext, action: "c
         else targets.push(echoTarget(target, []));
         continue;
       }
-      if (!picked.has(target.id)) {
-        targets.push(echoTarget(target, sources));
-        continue;
-      }
-      const chosen = draft.linkChangeTypes?.[target.id];
-      const base = echoTarget(target, sources);
-      targets.push(chosen === null || isTranslation ? base : { ...base, change_type: chosen ?? readLinkDefault(target, active) });
+      targets.push(echoTarget(target, sources));
       continue;
     }
     // 번역은 출처 새 문장을 따른다 - 칸이 그대로면 함께 되보내고, 줄이 다른 곳으로 가면 줄의 번역은 지운다

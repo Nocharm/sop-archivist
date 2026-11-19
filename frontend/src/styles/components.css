@@ -2109,16 +2109,7 @@
   .pending-count:hover::after, .pending-count:focus-visible::after { max-width: 14em; margin-left: 0; opacity: 1; }
   .pending-row { display: flex; align-items: baseline; gap: 10px; width: 100%; padding: 6px 8px; border-radius: var(--r-1); text-align: left; font-size: 13px; line-height: 19px; }
   .pending-row:hover, .pending-row:focus-visible { background: var(--menu-hover); box-shadow: inset 2px 0 0 var(--accent); border-radius: 0 var(--r-1) var(--r-1) 0; outline: none; }
-  /* 변경 종류 세 칸 토글(그대로 · 말투 · 고쳐 씀) - 눌린 칸은 강조 바탕, 고를 수 없는 칸은 흐리게. AI 제안 칸은 오른쪽 위 ✦ */
-  .kind-toggle { display: inline-flex; flex: none; padding: 1px; border: 1px solid var(--line-2); border-radius: var(--r-1); background: var(--surface); }
-  .kind-toggle-btn { position: relative; display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 22px; border-radius: calc(var(--r-1) - 1px); color: var(--ink-3); }
-  .kind-toggle-btn:not(:disabled):hover { background: var(--hover); color: var(--ink); }
-  .kind-toggle-btn[aria-checked="true"] { background: var(--accent); color: var(--on-accent); }
-  .kind-toggle-btn[aria-checked="true"]:not(:disabled):hover { background: var(--accent); color: var(--on-accent); }
-  .kind-toggle-btn:disabled { color: var(--ink-4); cursor: not-allowed; }
-  .kind-toggle-btn[aria-checked="true"]:disabled { background: var(--accent-tint); color: var(--accent); }
-  .kind-toggle-ai { position: absolute; top: 1px; right: 1px; color: var(--st-ai-ink); }
-  .kind-toggle-btn[aria-checked="true"] .kind-toggle-ai { color: currentColor; }
+  /* 변경 종류 표시("=" · 수정 · 나눔 · 합침 · 번역) - 읽기만, 종류는 서버가 정한다 */
   .kind-chip { display: inline-flex; flex: none; align-items: center; gap: 4px; height: 24px; padding: 0 6px; border: 1px solid var(--line-2); border-radius: var(--r-1); font-size: 12px; color: var(--ink-2); }
   /* Remark 한 줄 - 이름 · 글(두 줄까지) · 최근 Remark 단추. 첫 줄 높이를 28px 단추에 맞추고, 글 오른쪽 위 연필 자리는 늘 비워 둔다(글을 덮지 않게) */
   .assign-remark { display: flex; align-items: flex-start; gap: 8px; min-width: 0; min-height: 28px; }

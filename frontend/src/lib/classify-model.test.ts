@@ -8,7 +8,6 @@ import {
   buildGroupSave,
   buildRows,
   buildSentenceSlots,
-  readLinkDefault,
   buildViewsKey,
   findNextOpen,
   findSystemHold,
@@ -26,6 +25,8 @@ import {
   listUnpairedKeys,
   readCheckKey,
   pickRowStatus,
+  previewLinkChange,
+  previewSlotChange,
   readDestination,
   readHumanReason,
   readSlotKind,
@@ -261,7 +262,7 @@ describe("save request", () => {
 
   it("saves both units of a pair, updates the existing sentence and marks edits", () => {
     const body = buildGroupSave(
-      { destination: { kind: "slot", docId: 6, slotKey: "purpose" }, texts: { u11: "A changed" }, changeTypes: {}, reason: "", moveCode: "" },
+      { destination: { kind: "slot", docId: 6, slotKey: "purpose" }, texts: { u11: "A changed" }, reason: "", moveCode: "" },
       { units, group, tables: new Map() },
       "confirm",
     );
@@ -269,12 +270,14 @@ describe("save request", () => {
     expect(body.targets[0]).toMatchObject({ id: 90, revision: 4, slot_key: "purpose", source_unit_ids: [10] });
     // 손대지 않은 기존 새 문장은 글을 보내지 않는다 - 서버가 지금 글을 둔다
     expect(body.targets[0]).not.toHaveProperty("text");
-    expect(body.targets[1]).toMatchObject({ text: "A changed", change_type: "rewritten", lang: "en" });
+    expect(body.targets[1]).toMatchObject({ text: "A changed", lang: "en" });
+    // 변경 종류는 싣지 않는다 - 서버가 글로 정한다
+    expect(body.targets[1]).not.toHaveProperty("change_type");
     expect(body.removed_target_ids).toEqual([]);
   });
 
   it("deleting drops the new sentences and carries the reason", () => {
-    const body = buildGroupSave({ destination: { kind: "delete" }, texts: {}, changeTypes: {}, reason: " header ", moveCode: "" }, { units, group, tables: new Map() }, "confirm");
+    const body = buildGroupSave({ destination: { kind: "delete" }, texts: {}, reason: " header ", moveCode: "" }, { units, group, tables: new Map() }, "confirm");
     expect(body.targets).toEqual([]);
     expect(body.removed_target_ids).toEqual([90]);
     expect(body.units[0]).toMatchObject({ disposition: "delete", reason: "header" });
@@ -299,12 +302,12 @@ const SCOPE = { kind: "slot", docId: 6, slotKey: "scope" } as const;
 const ONE_UNIT = [{ id: 10, kind: "sentence", lang: "ko" as const, text: "원문", revision: 1 }];
 
 function makeDraft(extra: Partial<Parameters<typeof buildGroupSave>[0]> = {}): Parameters<typeof buildGroupSave>[0] {
-  return { destination: SCOPE, texts: {}, changeTypes: {}, reason: "", moveCode: "", ...extra };
+  return { destination: SCOPE, texts: {}, reason: "", moveCode: "", ...extra };
 }
 
 describe("save keeps AI suggestions as they are", () => {
   it("accepts an untouched AI rewrite by sending no text and no change type", () => {
-    const group: Group = { units: [], targets: [makeTarget({ id: 90, ai_text: "말투만 바꾼 원문", change_type: "tone" })] };
+    const group: Group = { units: [], targets: [makeTarget({ id: 90, ai_text: "말투만 바꾼 원문", change_type: "rewritten" })] };
     const body = buildGroupSave(makeDraft(), { units: ONE_UNIT, group, tables: new Map() }, "confirm");
     expect(body.targets).toHaveLength(1);
     expect(body.targets[0]).toMatchObject({ id: 90, source_unit_ids: [10] });
@@ -312,17 +315,19 @@ describe("save keeps AI suggestions as they are", () => {
     expect(body.targets[0]).not.toHaveProperty("change_type");
   });
 
-  it("keeps a human change type when the sentence is saved again untouched", () => {
-    const group: Group = { units: [], targets: [makeTarget({ id: 90, confirmed_text: "말투만", change_type: "tone", status: "confirmed" })] };
+  it("sends neither text nor change type when a confirmed sentence is saved again untouched", () => {
+    const group: Group = { units: [], targets: [makeTarget({ id: 90, confirmed_text: "말투만", change_type: "rewritten", status: "confirmed" })] };
     const body = buildGroupSave(makeDraft(), { units: ONE_UNIT, group, tables: new Map() }, "confirm");
-    expect(body.targets[0]).toMatchObject({ id: 90, change_type: "tone" });
+    expect(body.targets[0]).toMatchObject({ id: 90 });
     expect(body.targets[0]).not.toHaveProperty("text");
+    expect(body.targets[0]).not.toHaveProperty("change_type");
   });
 
-  it("keeps the existing change type when the text is edited and no type was picked", () => {
-    const group: Group = { units: [], targets: [makeTarget({ id: 90, confirmed_text: "말투만", change_type: "tone", status: "confirmed" })] };
+  it("sends the edited text without a change type - the server decides it", () => {
+    const group: Group = { units: [], targets: [makeTarget({ id: 90, confirmed_text: "말투만", change_type: "rewritten", status: "confirmed" })] };
     const body = buildGroupSave(makeDraft({ texts: { t90: "말투만 다시" } }), { units: ONE_UNIT, group, tables: new Map() }, "confirm");
-    expect(body.targets[0]).toMatchObject({ id: 90, text: "말투만 다시", change_type: "tone" });
+    expect(body.targets[0]).toMatchObject({ id: 90, text: "말투만 다시" });
+    expect(body.targets[0]).not.toHaveProperty("change_type");
   });
 
   it("keeps every sentence of an AI split", () => {
@@ -346,7 +351,7 @@ describe("save keeps AI suggestions as they are", () => {
     const body = buildGroupSave(makeDraft(), { units, group, tables: new Map() }, "confirm");
     expect(body.targets.filter((target) => target.id === 90)).toHaveLength(1);
     expect(body.targets.find((target) => target.id === 90)?.source_unit_ids).toEqual([10, 12]);
-    expect(body.targets.find((target) => target.id === undefined)).toMatchObject({ lang: "en", source_unit_ids: [11], text: "A", change_type: "as_is" });
+    expect(body.targets.find((target) => target.id === undefined)).toMatchObject({ lang: "en", source_unit_ids: [11], text: "A" });
   });
 
   it("keeps translations that ride along in the group", () => {
@@ -377,7 +382,7 @@ describe("save keeps AI suggestions as they are", () => {
 
   it("treats an emptied sentence as the source text", () => {
     const body = buildGroupSave(makeDraft({ texts: { u10: "  " } }), { units: ONE_UNIT, group: null, tables: new Map() }, "confirm");
-    expect(body.targets[0]).toMatchObject({ text: "원문", change_type: "as_is" });
+    expect(body.targets[0]).toMatchObject({ text: "원문" });
   });
 });
 
@@ -389,17 +394,17 @@ describe("caption targets under a table or figure", () => {
     const save = buildGroupSave(makeDraft(), ctxWithCaption(7, "ko", "그림 1 로터"), "confirm");
     expect(save.targets).toContainEqual(expect.objectContaining({ parent_key: "u40", source_unit_ids: [7], lang: "ko" }));
     // 캡션은 칸이 아니다 - 칸 좌표를 싣지 않는다
-    expect(save.targets[1]).toEqual({ key: "u40-cap-7", target_doc_id: 6, slot_key: "scope", wi_step: null, wi_part: null, kind: "sentence", lang: "ko", text: "그림 1 로터", parent_key: "u40", source_unit_ids: [7], change_type: "as_is" });
+    expect(save.targets[1]).toEqual({ key: "u40-cap-7", target_doc_id: 6, slot_key: "scope", wi_step: null, wi_part: null, kind: "sentence", lang: "ko", text: "그림 1 로터", parent_key: "u40", source_unit_ids: [7] });
   });
 
-  it("marks a rewritten caption and keeps the existing caption target's id and revision", () => {
+  it("sends a rewritten caption's text and keeps the existing caption target's id and revision", () => {
     const group: Group = { units: [], targets: [makeTarget({ id: 60, kind: "figure", lang: "neutral", source_unit_ids: [40] }), makeTarget({ id: 61, parent_target_id: 60, source_unit_ids: [7], revision: 3, confirmed_text: "그림 1 로터" })] };
     const save = buildGroupSave(makeDraft({ captionTexts: { u7: "그림 1. 로터 조립" } }), ctxWithCaption(7, "ko", "그림 1 로터", group), "confirm");
-    expect(save.targets.find((target) => target.parent_key === "u40")).toMatchObject({ id: 61, revision: 3, text: "그림 1. 로터 조립", change_type: "rewritten" });
+    expect(save.targets.find((target) => target.parent_key === "u40")).toMatchObject({ id: 61, revision: 3, text: "그림 1. 로터 조립" });
     expect(save.removed_target_ids).toEqual([]);
   });
 
-  it("sends a written caption without a source or change type, and drops an old written one that a caption unit replaced", () => {
+  it("sends a written caption without a source, and drops an old written one that a caption unit replaced", () => {
     const written = buildGroupSave(makeDraft({ captionTexts: { "w40:en": " Rotor " } }), { units: FIGURE, group: null, tables: new Map() }, "confirm");
     expect(written.targets[1]).toEqual(expect.objectContaining({ key: "u40-cap-en", lang: "en", text: "Rotor", source_unit_ids: [], parent_key: "u40" }));
     expect(written.targets[1]).not.toHaveProperty("change_type");
@@ -422,7 +427,8 @@ describe("caption targets under a table or figure", () => {
     expect(untouched.targets[1]).toEqual({ key: "u40-cap-7", id: 63, revision: 2, target_doc_id: 6, slot_key: "scope", wi_step: null, wi_part: null, kind: "sentence", parent_key: "u40", source_unit_ids: [7] });
 
     const edited = buildGroupSave(makeDraft({ captionTexts: { u7: "그림 1. 로터" } }), ctxWithCaption(7, "ko", "그림 1 로터", group), "confirm");
-    expect(edited.targets[1]).toMatchObject({ id: 63, text: "그림 1. 로터", change_type: "rewritten" });
+    expect(edited.targets[1]).toMatchObject({ id: 63, text: "그림 1. 로터" });
+    expect(edited.targets[1]).not.toHaveProperty("change_type");
   });
 
   it("keys each caption target by its caption unit, so two same-language captions do not collide", () => {
@@ -432,7 +438,7 @@ describe("caption targets under a table or figure", () => {
   });
 
   it("counts a typed caption as an unsaved change", () => {
-    expect(hasDraftChange({ destination: null, texts: {}, changeTypes: {}, captionTexts: { ko: "로터" }, reason: null, moveCode: null })).toBe(true);
+    expect(hasDraftChange({ destination: null, texts: {}, captionTexts: { ko: "로터" }, reason: null, moveCode: null })).toBe(true);
   });
 });
 
@@ -443,6 +449,8 @@ describe("tables and step-less WIs", () => {
     const body = buildGroupSave(makeDraft(), { units, group: null, tables }, "confirm");
     expect(body.targets[0]).toMatchObject({ key: "u30", kind: "table", lang: "neutral", grid: { rows: 1, cols: 2 }, source_unit_ids: [30] });
     expect(body.targets[1]).toMatchObject({ kind: "sentence", parent_key: "u30", cell_row: 0, cell_col: 1, source_unit_ids: [31] });
+    // 표 · 칸 종류도 서버가 표 모양으로 정한다
+    expect(body.targets.filter((target) => "change_type" in target)).toEqual([]);
   });
 
   it("offers Instruction and Why without a step for a WI with no steps, and reads it back", () => {
@@ -543,11 +551,10 @@ describe("getRowStep", () => {
 });
 
 describe("hasDraftChange", () => {
-  const untouched = { destination: null, texts: {}, changeTypes: {}, linkChangeTypes: {}, reason: null, moveCode: null };
+  const untouched = { destination: null, texts: {}, reason: null, moveCode: null };
 
   it("is false for a draft that only opened the editor", () => {
     expect(hasDraftChange(untouched)).toBe(false);
-    expect(hasDraftChange({ ...untouched, linkChangeTypes: undefined })).toBe(false);
   });
 
   it("is true once a destination, a reason or a move code was touched", () => {
@@ -557,10 +564,8 @@ describe("hasDraftChange", () => {
     expect(hasDraftChange({ ...untouched, moveCode: "QA-SOP-9" })).toBe(true);
   });
 
-  it("is true for edited text and change kinds", () => {
+  it("is true for edited text", () => {
     expect(hasDraftChange({ ...untouched, texts: { "1:ko": "새 글" } })).toBe(true);
-    expect(hasDraftChange({ ...untouched, changeTypes: { "1:ko": "tone" } })).toBe(true);
-    expect(hasDraftChange({ ...untouched, linkChangeTypes: { 7: null } })).toBe(true);
   });
 });
 
@@ -597,14 +602,13 @@ describe("link destination saves the whole closed group", () => {
     expect(body.removed_target_ids).toEqual([]);
   });
 
-  it("sends no change type to accept an AI link, and rewritten when nothing is known", () => {
-    const suggested = makeTarget({ id: 74, origin: "new_doc", target_doc_id: 9, slot_key: null, status: "ai_suggested", change_type: "tone", source_unit_ids: [10] });
-    const accept = buildGroupSave(makeDraft({ destination: { kind: "link", targetIds: [74] }, linkChangeTypes: { 74: null } }), contextOf([suggested]), "confirm");
-    expect(accept.targets[0]).not.toHaveProperty("change_type");
-    const fresh = buildGroupSave(makeDraft({ destination: { kind: "link", targetIds: [72] } }), contextOf([second]), "confirm");
-    expect(fresh.targets[0]).toMatchObject({ id: 72, change_type: "rewritten" });
-    const kept = buildGroupSave(makeDraft({ destination: { kind: "link", targetIds: [71] } }), contextOf([first]), "confirm");
-    expect(kept.targets[0]).toMatchObject({ id: 71, change_type: "rewritten" });
+  it("sends no change type on a link - an AI link, a fresh one or a confirmed one", () => {
+    const suggested = makeTarget({ id: 74, origin: "new_doc", target_doc_id: 9, slot_key: null, status: "ai_suggested", change_type: "rewritten", source_unit_ids: [10] });
+    for (const [id, target] of [[74, suggested], [72, second], [71, first]] as const) {
+      const body = buildGroupSave(makeDraft({ destination: { kind: "link", targetIds: [id] } }), contextOf([target]), "confirm");
+      expect(body.targets[0]).toMatchObject({ id, source_unit_ids: [10] });
+      expect(body.targets[0]).not.toHaveProperty("change_type");
+    }
   });
 
   it("lists the other source units of a merged sentence so the group is closed", () => {
@@ -629,10 +633,19 @@ describe("link destination saves the whole closed group", () => {
     expect(body.targets[0]).toMatchObject({ id: 75, source_unit_ids: [20] });
   });
 
-  it("defaults to as-is when the written sentence has the same text", () => {
-    const same = makeTarget({ id: 76, origin: "new_doc", target_doc_id: 9, slot_key: null, confirmed_text: "원문", status: "unassigned", change_type: null, source_unit_ids: [] });
-    const body = buildGroupSave(makeDraft({ destination: { kind: "link", targetIds: [76] } }), { units: ONE_UNIT, group: { units: [], targets: [same] }, tables: new Map() }, "confirm");
-    expect(body.targets[0]).toMatchObject({ id: 76, change_type: "as_is" });
+  it("previews as-is when the written sentence has the same text, otherwise rewritten", () => {
+    const written = { kind: "sentence" as const, lang: "ko" as const, change_type: null, source_unit_ids: [] };
+    expect(previewLinkChange({ ...written, confirmed_text: " 원문 " }, ONE_UNIT, [10])).toBe("as_is");
+    expect(previewLinkChange({ ...written, confirmed_text: "원문을 고침" }, ONE_UNIT, [10])).toBe("rewritten");
+    // 같은 언어 원문이 없으면 견줄 글이 없어 고침이다(번역은 화면이 따로 보인다)
+    expect(previewLinkChange({ ...written, lang: "en", confirmed_text: "원문" }, ONE_UNIT, [10])).toBe("rewritten");
+  });
+
+  it("keeps the server's type once the row is saved as a source, and shows a table as as-is before that", () => {
+    const saved = { kind: "sentence" as const, lang: "ko" as const, confirmed_text: "원문", change_type: "rewritten" as const, source_unit_ids: [10] };
+    expect(previewLinkChange(saved, ONE_UNIT, [10])).toBe("rewritten");
+    expect(previewLinkChange({ ...saved, source_unit_ids: [99] }, ONE_UNIT, [10])).toBe("as_is");
+    expect(previewLinkChange({ kind: "table", lang: "neutral", confirmed_text: "", change_type: null, source_unit_ids: [] }, ONE_UNIT, [10])).toBe("as_is");
   });
 
   it("reads a link before a slot", () => {
@@ -776,7 +789,8 @@ describe("links across languages are translations", () => {
     const korean = body.targets.find((target) => target.id === 71);
     expect(korean).toMatchObject({ source_unit_ids: [20] });
     expect(korean).not.toHaveProperty("change_type");
-    expect(body.targets.find((target) => target.id === 72)).toMatchObject({ source_unit_ids: [20], change_type: "rewritten" });
+    expect(body.targets.find((target) => target.id === 72)).toMatchObject({ source_unit_ids: [20] });
+    expect(body.targets.find((target) => target.id === 72)).not.toHaveProperty("change_type");
     expect(body.release_unit_ids).toEqual([]);
   });
 
@@ -867,7 +881,7 @@ describe("a neutral row linked to a sentence", () => {
     expect(isTranslationOf("ko", ["ko", "en"])).toBe(false);
   });
 
-  it("sends a change type for a neutral unit linked to a Korean sentence", () => {
+  it("links a neutral unit to a Korean sentence without a change type", () => {
     const digits = [{ id: 30, kind: "sentence", lang: "neutral" as const, text: "2.5", revision: 1 }];
     const korean = makeTarget({ id: 71, origin: "new_doc", target_doc_id: 9, slot_key: null, lang: "ko", confirmed_text: "2.5", status: "unassigned", change_type: null, source_unit_ids: [] });
     const body = buildGroupSave(
@@ -875,7 +889,8 @@ describe("a neutral row linked to a sentence", () => {
       { units: digits, group: { units: [], targets: [korean] }, tables: new Map() },
       "confirm",
     );
-    expect(body.targets.find((target) => target.id === 71)).toMatchObject({ source_unit_ids: [30], change_type: "rewritten" });
+    expect(body.targets.find((target) => target.id === 71)).toMatchObject({ source_unit_ids: [30] });
+    expect(body.targets.find((target) => target.id === 71)).not.toHaveProperty("change_type");
   });
 });
 
@@ -899,9 +914,9 @@ describe("slot heading destination", () => {
 
   it("saves each heading unit of a pair row as its own slot heading with no text", () => {
     const body = buildGroupSave(makeDraft({ destination: HEADING }), { units: HEADING_UNITS, group: null, tables: new Map() }, "confirm");
-    expect(body.targets.map((target) => [target.kind, target.target_doc_id, target.slot_key, target.source_unit_ids, target.text, target.lang, target.change_type])).toEqual([
-      ["slot_heading", 6, "procedures", [20], undefined, undefined, undefined],
-      ["slot_heading", 6, "procedures", [21], undefined, undefined, undefined],
+    expect(body.targets.map((target) => [target.kind, target.target_doc_id, target.slot_key, target.source_unit_ids, target.text, target.lang])).toEqual([
+      ["slot_heading", 6, "procedures", [20], undefined, undefined],
+      ["slot_heading", 6, "procedures", [21], undefined, undefined],
     ]);
     expect(body.units.map((unit) => unit.disposition)).toEqual(["assigned", "assigned"]);
   });
@@ -977,10 +992,11 @@ describe("paragraph number stays in the number cell", () => {
   // 번호 범위(content_start)가 있는 줄 - New 초안은 번호를 뺀 내용이다
   const numbered = { id: 10, kind: "sentence", lang: "ko" as const, text: "6.2 합성 필터를 확인한다.", content_start: 4, revision: 1 };
 
-  it("drafts the New sentence without the number and saves it as is", () => {
+  it("drafts the New sentence without the number and previews it as is", () => {
     expect(buildSentenceSlots(null, [numbered])).toMatchObject([{ key: "u10", text: "합성 필터를 확인한다.", sourceText: "합성 필터를 확인한다." }]);
     const body = buildGroupSave(makeDraft(), { units: [numbered], group: null, tables: new Map() }, "confirm");
-    expect(body.targets).toMatchObject([{ key: "u10", text: "합성 필터를 확인한다.", change_type: "as_is" }]);
+    expect(body.targets).toMatchObject([{ key: "u10", text: "합성 필터를 확인한다." }]);
+    expect(previewSlotChange(buildSentenceSlots(null, [numbered])[0], undefined)).toBe("as_is");
   });
 
   it("keeps the number in the draft while it is still text", () => {
@@ -989,9 +1005,29 @@ describe("paragraph number stays in the number cell", () => {
   });
 
   it("reads a confirmed sentence equal to the content as as-is", () => {
-    const target = { lang: "ko" as const, confirmed_text: "합성 필터를 확인한다.", change_type: null, status: "confirmed" as const };
-    expect(readLinkDefault(target, [numbered])).toBe("as_is");
-    expect(readLinkDefault({ ...target, confirmed_text: numbered.text }, [numbered])).toBe("as_is");
+    const target = { kind: "sentence" as const, lang: "ko" as const, confirmed_text: "합성 필터를 확인한다.", change_type: null, source_unit_ids: [] };
+    expect(previewLinkChange(target, [numbered], [10])).toBe("as_is");
+    expect(previewLinkChange({ ...target, confirmed_text: numbered.text }, [numbered], [10])).toBe("as_is");
+  });
+});
+
+describe("previewSlotChange", () => {
+  // 서버 _decide_change_type과 같은 규칙 - 결정 칸의 "=" / "수정" 표시
+  const [fresh] = buildSentenceSlots(null, ONE_UNIT);
+
+  it("reads a new slot as as-is until its text differs from the source, and an emptied one as the source", () => {
+    expect(previewSlotChange(fresh, undefined)).toBe("as_is");
+    expect(previewSlotChange(fresh, " 원문 ")).toBe("as_is");
+    expect(previewSlotChange(fresh, "  ")).toBe("as_is");
+    expect(previewSlotChange(fresh, "원문을 고침")).toBe("rewritten");
+  });
+
+  it("keeps the server's type for an untouched or emptied saved sentence, and previews an edit from its text", () => {
+    const group: Group = { units: [], targets: [makeTarget({ id: 90, confirmed_text: "고친 글", change_type: "rewritten", status: "confirmed" })] };
+    const [saved] = buildSentenceSlots(group, ONE_UNIT);
+    expect(previewSlotChange(saved, undefined)).toBe("rewritten");
+    expect(previewSlotChange(saved, "")).toBe("rewritten");
+    expect(previewSlotChange(saved, "원문")).toBe("as_is");
   });
 });
 

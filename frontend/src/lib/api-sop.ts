@@ -835,10 +835,8 @@ export function downloadToBeTemplate(bundleId: number): Promise<Blob> {
 // --- 배정·확정(입구 1) ---
 
 export type Disposition = "unassigned" | "assigned" | "delete" | "move_external";
-/** 새 문장의 변경 종류 - backend constants와 같은 값. 나눔·합침·번역·신규는 서버가 구조에서 정한다 */
-export type ChangeType = "as_is" | "tone" | "rewritten" | "table_restructured" | "split" | "merged" | "translated" | "new" | "heading";
-/** 저장 요청에 보낼 수 있는 종류 - backend TargetIn.change_type */
-export type ChangeTypeInput = "as_is" | "tone" | "rewritten" | "table_restructured";
+/** 새 문장의 변경 종류 - backend constants와 같은 값. 사람이 고르지 않고 서버가 구조 · 글 · 표 모양으로 정한다(저장 요청에 싣지 않는다) */
+export type ChangeType = "as_is" | "rewritten" | "split" | "merged" | "translated" | "new" | "heading";
 export type WiPart = "instruction" | "why";
 
 export interface Decision {
@@ -945,7 +943,6 @@ export interface TargetInput {
   kind?: "sentence" | "table" | "figure" | "slot_heading";
   lang?: UnitLang;
   text?: string;
-  change_type?: ChangeTypeInput | null;
   /** 비우면(undefined) 지금 값을 둔다 */
   remark?: string;
   source_unit_ids: number[];

@@ -123,7 +123,7 @@ describe("buildSheetDraft", () => {
       place: "Procedure",
       number: NO_NUMBER,
       new_text: "First.\nSecond.",
-      change: "As is · Rewritten",
+      change: "= · Modified",
     });
     expect(buildSheetDraft({ docType: "wi", docCode: "WI-1", docTitle: "", place: "1 Step · Instruction", texts: [], changes: ["heading"] })).toMatchObject({ destination: "WI", change: "Slot heading" });
   });
