@@ -6306,7 +6306,6 @@ await runStep("assign: drag an Old piece onto a nearby piece in the other langua
   const units = (await readView()).units.filter((unit) => unit.group_unit_id === null);
   const figure = units.find((unit) => unit.kind === "figure");
   const table = units.find((unit) => unit.kind === "table");
-  const separate = docs.find((item) => item.side === "old" && item.status === "ready" && item.language_layout === "ko_en_separate");
 
   // 화면이 보낸 짝 요청(page.request로 만든 자료는 세지 않는다)
   const pairRequests = [];
@@ -6499,21 +6498,6 @@ await runStep("assign: drag an Old piece onto a nearby piece in the other langua
   });
   check("drop outlines: Old strip inside (-5px), New line link -2px and refused -1px as before", JSON.stringify([stripOverOffset, lineOverOffset, lineRefusedOffset]) === JSON.stringify(["-5px", "-2px", "-1px"]), JSON.stringify([stripOverOffset, lineOverOffset, lineRefusedOffset]));
 
-  // 6. 다른 배치에서는 조용하다 - 한/영 따로 문서의 평소 보기에서 KO 문장을 EN 문장 위로
-  const separateView = await getJson(`/documents/${separate.id}/view`);
-  const sepUnits = separateView.units.filter((unit) => unit.group_unit_id === null && unit.kind === "sentence").sort(sourceOrder);
-  const sepKo = sepUnits.find((unit) => unit.lang === "ko" && pairOf(separateView, unit.id) === null);
-  const sepEn = sepUnits.find((unit) => unit.lang === "en" && pairOf(separateView, unit.id) === null);
-  await openDoc(separate.id, sepKo.id);
-  const requestsBeforeSeparate = pairRequests.length;
-  await startDrag(sepKo.id);
-  await moveOnto(sepEn.id);
-  const overSeparate = await readCard();
-  await page.mouse.up();
-  await page.waitForTimeout(400);
-  check("in a separate-layout document an Old piece over another marks nothing and says nothing", overSeparate.drops === 0 && overSeparate.note === "", JSON.stringify(overSeparate));
-  check("and the drop sends no pair request", pairRequests.length === requestsBeforeSeparate && pairOf(await getJson(`/documents/${separate.id}/view`), sepKo.id) === null);
-
   // 6b. New 문장을 그 자리에서 다듬는 중(고른 Old 줄 없음)에 짝을 맺어도 그 짝의 줄이 골라지고 다듬기는 닫힌다. 맺은 짝은 Undo로 푼다
   await page.reload();
   await wait(page, "assign-bar");
@@ -6537,6 +6521,84 @@ await runStep("assign: drag an Old piece onto a nearby piece in the other langua
   // 7. 뒷정리 - y·y′를 다시 맺는다(x·x′는 사람이 맺은 짝으로 남는다)
   const repaired = await page.request.post(`${api}${docPath}/pairs`, { headers, data: { revision: (await readView()).document.revision, unit_ids: [y.id, y2.id] } });
   check("the API pairs y and y′ again", repaired.status() === 201 && isPaired(await readView(), y, y2));
+});
+
+// 따로 쓴 문서에서도 끌어 짝 맺기(설계 2026-11-20 D8) - 시드 9번 묶음(한글 반쪽 뒤에 영어 반쪽)의 평소 Old 칸에서 한글 본문 문장을 영어 본문 문장에 놓는다.
+// 한 언어 문서의 조용함은 그대로다(readPairAt의 배치 조건). 맺은 짝은 알림의 Undo로 풀어 시드를 그대로 둔다
+await runStep("assign: drag a KO piece onto its EN counterpart in a KO/EN separate document to pair them, Undo separates", {}, async ({ page }) => {
+  const headers = { "X-Dev-User": "qa.member" };
+  const bundles = await (await page.request.get(`${BASE}/api/bundles`, { headers })).json();
+  const bundle = bundles.find((item) => item.title === PAIR_TABLES_TITLE);
+  check("the demo seed has the separate-tables bundle", bundle !== undefined);
+  if (!bundle) return;
+  const api = `${BASE}/api/bundles/${bundle.id}`;
+  const getJson = async (path) => (await page.request.get(`${api}${path}`, { headers })).json();
+  const doc = (await getJson("/documents")).find((item) => item.side === "old" && item.status === "ready");
+  check("its document is laid out KO/EN separate", doc?.language_layout === "ko_en_separate", doc?.language_layout);
+  if (!doc) return;
+  const readView = () => getJson(`/documents/${doc.id}/view`);
+  const pairOf = (view, unitId) => view.pairs.find((pair) => pair.unit_ids.includes(unitId)) ?? null;
+  const before = await readView();
+  // 두 절반의 본문 문장(시드 _build_pair_tables_bundle) - 앞의 대응 표 단계는 표만 다루고 시드 그대로 둔다
+  const findBody = (lang, text) => before.units.find((unit) => unit.group_unit_id === null && unit.kind === "sentence" && unit.lang === lang && unit.text.includes(text));
+  const ko = findBody("ko", "합성 세척기의 준비");
+  const en = findBody("en", "preparation of the synthetic washer");
+  check("the KO and EN body sentences are there and in no pair", Boolean(ko && en) && pairOf(before, ko.id) === null && pairOf(before, en.id) === null, JSON.stringify(before.pairs));
+  if (!ko || !en || pairOf(before, ko.id) !== null || pairOf(before, en.id) !== null) return;
+
+  const pieceOf = (id) => page.locator(`[data-testid="assign-paper-piece-${id}"]`);
+  // 조각 글의 첫 글줄 위 한 점 - Old 칸 가운데로 굴린 뒤에 잰다(가장자리 자동 스크롤에 걸리지 않게)
+  const pointOn = async (id) => {
+    await pieceOf(id).evaluate((el) => el.scrollIntoView({ block: "center" }));
+    await page.waitForTimeout(150);
+    return page.locator(`[data-testid="assign-paper-unit-${id}"]`).first().evaluate((el) => {
+      const rect = el.getClientRects()[0];
+      return { x: rect.left + Math.min(24, rect.width / 2), y: rect.top + rect.height / 2 };
+    });
+  };
+  const readCard = () => page.evaluate(() => ({
+    note: document.querySelector('[data-testid="drag-status"]')?.textContent ?? "",
+    dest: document.querySelector('[data-testid="drag-card"] .drag-card-dest')?.textContent ?? "",
+    refused: document.querySelector('[data-testid="drag-card"]')?.hasAttribute("data-refused") ?? false,
+  }));
+  const isPairCall = (method, pattern) => (response) => response.request().method() === method && pattern.test(new URL(response.url()).pathname);
+
+  await page.goto(`${BASE}/bundles/${bundle.id}/assign`);
+  await wait(page, "assign-bar");
+  await pieceOf(ko.id).waitFor({ timeout: T });
+  await page.waitForLoadState("networkidle");
+  check("the separate document opens in the plain view, not Pair view", (await page.locator('[data-testid="assign-pair-ko"]').count()) === 0);
+
+  // 1. 끄는 동안 - 한글 문장을 영어 문장 위로. 카드 끝은 → pair, 영어 조각이 놓을 자리
+  const from = await pointOn(ko.id);
+  await page.mouse.move(from.x, from.y);
+  await page.mouse.down();
+  await page.mouse.move(from.x + 10, from.y, { steps: 5 });
+  const to = await pointOn(en.id);
+  await page.mouse.move(to.x, to.y, { steps: 12 });
+  await page.waitForTimeout(100);
+  const over = await readCard();
+  check("dragging the KO sentence over the EN one says Pair with it and the card ends with → pair", over.note === `Pair with ${en.display_id}` && !over.refused && over.dest === "→ pair", JSON.stringify(over));
+  check("the EN piece is the drop target", (await pieceOf(en.id).getAttribute("data-drop")) === "over");
+
+  // 2. 놓으면 바로 저장 - API에서 두 문장이 한 짝, 알림에 Undo
+  const posted = page.waitForResponse(isPairCall("POST", /\/pairs$/), { timeout: T });
+  await page.mouse.up();
+  check("the drop posts the pair and gets 201", (await posted).status() === 201);
+  const toast = page.locator('[data-testid="toast-ok"]', { hasText: "Paired" });
+  await toast.waitFor({ timeout: T });
+  const paired = await readView();
+  check("the KO and EN sentences are one pair in the API", pairOf(paired, ko.id) !== null && pairOf(paired, ko.id) === pairOf(paired, en.id), JSON.stringify(paired.pairs));
+  await page.waitForLoadState("networkidle");
+
+  // 3. Undo가 짝을 풀어 시드가 처음 그대로다
+  const deleted = page.waitForResponse(isPairCall("DELETE", /\/pairs\/\d+$/), { timeout: T });
+  await toast.locator('[data-testid^="toast-action-"]').click();
+  check("Undo deletes the pair (200)", (await deleted).status() === 200);
+  await page.locator('[data-testid="toast-ok"]', { hasText: "Separated" }).waitFor({ timeout: T });
+  const after = await readView();
+  check("after Undo the two sentences are apart and the document has the pairs it had", pairOf(after, ko.id) === null && pairOf(after, en.id) === null && JSON.stringify(after.pairs) === JSON.stringify(before.pairs), JSON.stringify(after.pairs));
+  await page.waitForLoadState("networkidle");
 });
 
 // AI는 제안만 한다(설계 2026-11-19-ai-suggest-only) - 그림의 분류 추천은 카드로 오고, 사람이 Use(A)로 받으면 그림 아래 캡션이 초안에 함께 따라온다
