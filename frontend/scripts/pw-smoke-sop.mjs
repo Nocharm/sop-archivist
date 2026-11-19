@@ -3037,11 +3037,13 @@ await runStep("assign: caption slot - drag a sentence onto the table and drag th
   await page.mouse.up();
   await page.locator('[data-testid="toast-ok"]', { hasText: "Caption detached" }).first().waitFor({ timeout: T });
   check("the chip dragged out goes back to a sentence", (await captionsOf()).length === 0);
+  // 되돌리기 응답을 누르기 전에 기다려 둔다 - networkidle은 누른 뒤 요청이 나가기 전에도 이미 한가해 바로 끝나, 앞 되돌리기가 서버에 닿기 전에 캡션을 셌다
   for (const expected of [1, 0]) {
-    await page.waitForLoadState("networkidle");
+    await page.locator('[data-testid="assign-undo"]:not([disabled])').waitFor({ timeout: T });
+    const undone = page.waitForResponse((response) => response.request().method() === "POST" && /\/decisions\/undo$/.test(new URL(response.url()).pathname), { timeout: T });
     await page.locator('[data-testid="assign-undo"]').click();
-    await page.waitForLoadState("networkidle");
-    check(`Undo leaves ${expected} caption(s) on the table`, (await captionsOf()).length === expected);
+    const undoResponse = await undone;
+    check(`Undo leaves ${expected} caption(s) on the table`, undoResponse.ok() && (await captionsOf()).length === expected, `${undoResponse.status()} ${(await captionsOf()).length}`);
   }
 });
 
@@ -3468,10 +3470,18 @@ await runStep("assign: drag an Old piece onto a written New sentence, it links l
   check("the dragged piece stays dimmed in place", during.src);
   await takeShot("sop-assign-drag-link.png");
   // 3. 문장 위를 여러 걸음 지나도 React는 다시 그리지 않는다(G11)
-  const commitsBefore = await page.evaluate(() => window.__commits ?? -1);
-  for (let i = 0; i < 12; i += 1) await page.mouse.move(onto.x + (i % 4) * 6, onto.y + (i % 3) - 1);
-  const commitsAfter = await page.evaluate(() => window.__commits ?? -1);
-  check("no React commit while dragging over a sentence", commitsBefore > 0 && commitsBefore === commitsAfter, `${commitsBefore} -> ${commitsAfter}`);
+  // 끌기와 상관없는 그리기(알림이 사라짐 · 참조 번호를 채우는 다시 읽기 · AI 작업 폴러)가 창에 끼면 끌기 탓이 아닌 커밋이 섞인다 - 이런 일은 쓴 DB일수록 잦다.
+  // 끌기가 다시 그린다면 매번 커밋이 생기므로, 같은 움직임을 세 번까지 재어 한 번이라도 0이면 끌기는 다시 그리지 않는 것이다
+  const windows = [];
+  for (let round = 0; round < 3; round += 1) {
+    const commitsBefore = await page.evaluate(() => window.__commits ?? -1);
+    for (let i = 0; i < 12; i += 1) await page.mouse.move(onto.x + (i % 4) * 6, onto.y + (i % 3) - 1);
+    const commitsAfter = await page.evaluate(() => window.__commits ?? -1);
+    windows.push(`${commitsBefore} -> ${commitsAfter}`);
+    if (commitsBefore > 0 && commitsBefore === commitsAfter) break;
+  }
+  const lastWindow = windows.at(-1).split(" -> ").map(Number);
+  check("no React commit while dragging over a sentence", lastWindow[0] > 0 && lastWindow[0] === lastWindow[1], windows.join(", "));
 
   // 4. 놓으면 바로 확정(1.2.0 피드백 - 그 자리 메뉴 없이) - 끈 줄을 고르고 그 문장에 잇고 저장한다, 끌기 표시는 모두 치운다
   const savedByDrop = page.waitForResponse((response) => response.url().includes("/groups/save"), { timeout: T });
@@ -3590,6 +3600,8 @@ await runStep("assign: drag an Old piece onto a written New sentence, it links l
   const savedByEnter = page.waitForResponse((response) => response.url().includes("/groups/save"), { timeout: T });
   await page.mouse.up();
   const enterResponse = await savedByEnter;
+  // 이 화면의 되돌리기 세션 - 끝에서 이 저장을 API로 되돌린다
+  const cUndoSession = enterResponse.request().postDataJSON()?.undo?.session;
   await page.waitForLoadState("networkidle");
   const confirmedUnit = (await readUnits()).find((unit) => unit.unit_id === cId);
   check("a drop on another sentence saves that link", enterResponse.ok() && confirmedUnit?.status !== "unassigned" && (confirmedUnit?.target_ids ?? []).includes(confirmTarget), JSON.stringify({ status: confirmedUnit?.status, targets: confirmedUnit?.target_ids, confirmTarget }));
@@ -3669,6 +3681,10 @@ await runStep("assign: drag an Old piece onto a written New sentence, it links l
   await page.waitForTimeout(300);
   const peekShadow = await peek.evaluate((el) => getComputedStyle(el).boxShadow);
   check("a peek piece does not lift over its dashed border", peekShadow === "none", peekShadow);
+  // 뒷정리 - 셋째 줄(c)의 확정을 그 저장의 되돌리기로 거둔다(그 뒤로 기록된 저장이 없다). 배정 지우기는 그 New 문장의 다른 출처를 보류로 돌릴 수 있어 쓰지 않는다.
+  // 남겨 두면 뒤 단계(한/영 짝 추천 등)가 이 문장에 출처가 붙은 자료를 본다
+  const cUndo = await page.request.post(`${BASE}/api/bundles/${halfBundleId}/decisions/undo`, { headers, data: { session: cUndoSession } });
+  check("the step leaves the dropped line unassigned", cUndo.ok() && (await readUnits()).find((unit) => unit.unit_id === cId)?.status === "unassigned", String(cUndo.status()));
 });
 
 // 끌기 상자 위의 글자 고르기(끌어다 놓기 G3·G12) - 긁어 둔 글자가 남아도 Old 조각의 클릭·Shift+클릭은 그대로이고, Alt를 누르는 동안은 글자 커서다.
@@ -3894,13 +3910,12 @@ await runStep("assign: KO/EN pair - recommendation shows picked, in-place menu c
   await selectRowById(page, found.unit.display_id);
   const targetText = written.get(found.targetId).text;
   const cards = page.locator('[data-testid^="assign-rec-"]:not([data-testid$="-pending"])');
-  await cards.first().waitFor({ timeout: T });
-  let card = null;
-  for (let index = 0; index < (await cards.count()); index += 1) {
-    if ((await cards.nth(index).innerText()).includes(targetText)) card = cards.nth(index);
-  }
-  check("the candidate is one of the recommendations", card !== null);
-  if (!card) return;
+  // 카드는 차례로 온다 - 같은 글자 후보(묶음 전체 목록)가 먼저 그려지고 비슷한 문장 후보(줄마다 부름)는 뒤에 온다. 첫 카드만 기다리고 세면
+  // 비슷한 문장 카드가 오기 전이라 후보를 놓쳤다. 그 글이 든 카드를 기다린다
+  const card = cards.filter({ hasText: targetText }).first();
+  const isListed = await card.waitFor({ timeout: T }).then(() => true, () => false);
+  check("the candidate is one of the recommendations", isListed, isListed ? "" : (await cards.allInnerTexts()).join(" | ").slice(0, 300));
+  if (!isListed) return;
   await card.click();
   // 짝 문장이 더해져도 고른 표시가 켜진다(예전에는 ID 비교라 영영 꺼져 있었다)
   // 고른 표시는 다음 그리기에서 붙는다 - 바로 읽으면 가끔 놓친다
@@ -3976,6 +3991,10 @@ await runStep("assign: KO/EN pair - recommendation shows picked, in-place menu c
   check("the unlink menu sits at the New end of the drawn line", placed.drawn && Math.abs(placed.menuLeft - placed.lineLeft) <= 1, JSON.stringify(placed));
   await page.keyboard.press("Escape");
   await page.locator('[data-testid="assign-link-menu"]').waitFor({ state: "detached", timeout: T });
+  // 뒷정리 - 그 저장을 저장한 화면의 되돌리기 세션으로 거둔다(새로 고침 뒤라 화면의 Undo로는 닿지 않는다). 배정 지우기는 New 문장의 다른 출처를 보류로 돌릴 수 있어 쓰지 않는다
+  const undone = await page.request.post(`${BASE}/api/bundles/${halfBundleId}/decisions/undo`, { headers, data: { session: savedResponse.request().postDataJSON()?.undo?.session } });
+  const left = new Map((await getJson("/units?limit=1000")).items.map((item) => [item.unit_id, item.status]));
+  check("the KO/EN pair rows are unassigned again", undone.ok() && [found.unit, found.other].every((unit) => left.get(unit.id) === "unassigned"), `${undone.status()} ${JSON.stringify([found.unit, found.other].map((unit) => left.get(unit.id)))}`);
 });
 
 // 칸 제목(제품 명세 §7.13 칸 제목) -옛 제목 짝을 SOP 칸의 칸 제목 자리로 확정하면 결과물 C와 Assign의 엮은 문서 미리 보기에서 칸 머리 옆에 "← OLD-1 §1"로 보인다. 끝에 원래 처분(지우기)으로 되돌린다
@@ -6473,19 +6492,26 @@ await runStep("order: a move chosen from the narrow-frame menu keeps focus on th
   });
   check("a section with three lines exists", Boolean(hit));
   const id = hit[1][0];
-  const rowSel = `[data-testid="output-c-row-${id}"]`;
   const readOrder = () => page.evaluate((first) => [...(document.querySelector(`[data-testid="output-c-row-${first}"]`)?.closest("section")?.querySelectorAll('[data-testid^="output-c-row-"]') ?? [])].map((row) => row.getAttribute("data-testid").replace("output-c-row-", "")), id);
   const activeId = () => page.evaluate(() => document.activeElement?.getAttribute("data-testid") ?? "");
   const start = (await readOrder()).indexOf(id);
-  await page.locator(rowSel).hover();
-  await page.locator(`[data-testid="output-c-menu-${id}"]`).click();
+  // ⋯ 단추는 줄에 올린 동안이나 줄 안에 포커스가 있을 때만 눌린다(pointer-events) - 줄에 올린 뒤 누르면 단추를 화면에 들이는 스크롤이 올림을 풀어
+  // 누름이 틀(output-c)에 걸렸다. 키보드처럼 단추에 포커스를 두고 Enter로 연다(포커스가 줄 안이면 단추가 보이고 눌린다)
+  const openRowMenu = async () => {
+    await page.locator(`[data-testid="output-c-menu-${id}"]`).focus();
+    await page.keyboard.press("Enter");
+    await wait(page, `output-c-menu-list-${id}`);
+  };
+  const waitAt = (index) => page.waitForFunction(({ first, at }) => [...(document.querySelector(`[data-testid="output-c-row-${first}"]`)?.closest("section")?.querySelectorAll('[data-testid^="output-c-row-"]') ?? [])].findIndex((row) => row.getAttribute("data-testid") === `output-c-row-${first}`) === at, { first: id, at: index }, { timeout: T }).then(() => true, () => false);
+  await openRowMenu();
   const moved = waitOrderSave(page);
   await page.locator(`[data-testid="output-c-menu-down-${id}"]`).click();
   check("the menu move saves", (await moved).ok());
-  await page.waitForTimeout(400);
-  check("the line moved one place", (await readOrder()).indexOf(id) === start + 1);
+  check("the line moved one place", await waitAt(start + 1));
+  // 닫힌 메뉴가 포커스를 ⋯ 단추로 돌린다 - 줄이 다시 그려진 뒤까지 기다린다
+  await page.waitForFunction((button) => document.activeElement?.getAttribute("data-testid") === button, `output-c-menu-${id}`, { timeout: T }).catch(() => {});
   check("focus is on the moved line's ⋯ button", (await activeId()) === `output-c-menu-${id}`, await activeId());
-  await page.locator(`[data-testid="output-c-menu-${id}"]`).click();
+  await openRowMenu();
   const back = waitOrderSave(page);
   await page.locator(`[data-testid="output-c-menu-up-${id}"]`).click();
   check("and moves back", (await back).ok() && (await readOrder()).indexOf(id) === start);
@@ -6937,10 +6963,20 @@ await runStep("review: author withdraws the request and asks again", {}, async (
   await page.waitForFunction(() => document.body.textContent?.includes("Withdrew the review request"), null, { timeout: T });
   check("history records the withdrawal", true);
   await page.goto(`${BASE}/bundles/${reviewId}/outputs`);
-  for (const key of ["numbers", "conditions", "tables", "figures"]) {
+  // 의미 확인은 화면에 먼저 켜지고 저장은 줄을 서서 뒤에 간다(날아가는 저장 하나 + 모인 나머지 하나) - 넷이 모두 켜진 저장의 응답을 받은 뒤에 떠난다.
+  // 바로 page.goto로 떠나면 줄에 남은 저장이 버려져 개요의 Request review가 꺼진 채였다
+  const checkKeys = ["numbers", "conditions", "tables", "figures"];
+  const allSaved = page.waitForResponse((response) => {
+    const request = response.request();
+    if (request.method() !== "PUT" || !request.url().includes("/semantic-checks")) return false;
+    const checks = JSON.parse(request.postData() ?? "{}").checks ?? {};
+    return checkKeys.every((key) => checks[key] === true);
+  }, { timeout: T });
+  for (const key of checkKeys) {
     await page.locator(`[data-testid="outputs-check-${key}"]`).click();
     await page.waitForFunction((id) => document.querySelector(`[data-testid="${id}"]`)?.checked === true, `outputs-check-${key}`, { timeout: T });
   }
+  check("the meaning checks are saved before leaving", (await allSaved).ok());
   await page.goto(`${BASE}/bundles/${reviewId}`);
   await page.locator('[data-testid="overview-request-review"]').click();
   await wait(page, "request-review");
@@ -8522,7 +8558,11 @@ await runStep("assign: counterpart table - unwrapping asks once with the most si
   check("the most similar table is picked", await page.locator(`[data-testid="assign-counterpart-option-${enWork.id}"] input`).isChecked());
   check("This table only is offered", (await page.locator('[data-testid="assign-counterpart-only"]').count()) === 1);
   await takeShot("sop-assign-counterpart.png");
+  // 편집 뒤 화면은 단위 목록을 다시 받고, 받으면 편집한 줄을 고른다(따라가기) - 받기 전에 다른 줄을 누르면 늦게 온 목록이 고름을 되돌렸다.
+  // 화면이 다시 받은 단위 목록을 기다린 뒤에 짝 줄을 누른다
+  const unitsReloaded = page.waitForResponse((response) => response.request().method() === "GET" && new URL(response.url()).pathname === `/api/bundles/${bundle.id}/units`, { timeout: T });
   await page.locator('[data-testid="assign-counterpart-confirm"]').click();
+  await unitsReloaded;
   const both = await waitView((view) => view.tables[0].is_layout && view.tables[2].is_layout);
   check("both tables are unwrapped in one go", both !== null && !both.tables[1].is_layout && !both.tables[3].is_layout);
   if (!both) return;
@@ -9758,9 +9798,28 @@ await runStep("assign: click place - a gap between numbered lines, a category he
     await head.waitFor({ timeout: T });
     check("a group title is not placeable and says why", (await head.getAttribute("data-place")) === "refused" && ((await head.getAttribute("data-place-label")) ?? "").startsWith("Group title"), await head.getAttribute("data-place-label"));
     const count = ctx.saveCount();
-    await head.click({ force: true });
-    await page.waitForTimeout(400);
-    check("clicking a refused spot makes no save request and picks nothing", ctx.saveCount() === count && (await page.locator('[data-testid="assign-chosen-position"]').count()) === 0);
+    const pickedBefore = await page.locator('[data-testid="assign-chosen-position"]').count();
+    // 머리 가운데를 강제로 누르면 그 자리에 겹친 다른 자리(앞뒤 줄에 걸친 틈 띠)가 누름을 받을 수 있다 - 자료에 따라 칸 모양이 달라 그 틈을 골랐다.
+    // 맨 위가 정말 이 머리(또는 그 안)인 점을 찾아 누른다
+    await head.scrollIntoViewIfNeeded();
+    const headPoint = await head.evaluate((el) => {
+      const box = el.getBoundingClientRect();
+      for (const fy of [0.5, 0.3, 0.7, 0.15, 0.85]) {
+        for (const fx of [0.5, 0.25, 0.75, 0.1, 0.9]) {
+          const x = box.left + box.width * fx;
+          const y = box.top + box.height * fy;
+          const top = document.elementFromPoint(x, y);
+          // 머리 안의 다른 단추(칸 머리 표시 등)는 제 일을 한다 - 머리 자체의 빈 자리만
+          if (top && el.contains(top) && top.closest("[data-place]") === el && (top.closest("button, a") === null || !el.contains(top.closest("button, a")))) return { x, y };
+        }
+      }
+      return null;
+    });
+    check("the refused group title has a spot of its own to click", headPoint !== null);
+    if (headPoint) await page.mouse.click(headPoint.x, headPoint.y);
+    // 고르기는 화면 상태라 같은 작업에서 그려진다 - 두 프레임 뒤에 본다
+    await page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))));
+    check("clicking a refused spot makes no save request and picks nothing", ctx.saveCount() === count && (await page.locator('[data-testid="assign-chosen-position"]').count()) === 0, `${ctx.saveCount() - count} save(s), picked place(s) ${pickedBefore} before -> ${await page.locator('[data-testid="assign-chosen-position"]').count()} after`);
   }
 
   check("every line is unassigned again after the clean-up", await ctx.cleanUp());
@@ -9957,7 +10016,16 @@ await runStep("assign: Pair view opens a KO | EN document in two columns and giv
   await page.keyboard.press("k");
   await page.locator('[data-testid="assign-pair-ko"]').waitFor({ state: "detached", timeout: T });
   await wait(page, "assign-old");
-  check("picking a row of another document turns Pair view off there", (await page.locator('[data-testid="assign-old-doc"]').getAttribute("data-value")) !== String(doc.id) && (await count('[data-testid="assign-pair-view"]')) === 0);
+  // 문서 고르개와 단추는 그다음 그리기에서 바뀔 수 있다 - 둘 다 맞을 때까지 기다린다. 앞 문서도 한/영 따로 문서면(앞 단계가 올린 문서 등) 단추는 남고 눌리지 않은 채다
+  const readPairOff = () => page.evaluate((docId) => {
+    const toggleEl = document.querySelector('[data-testid="assign-pair-view"]');
+    return { doc: document.querySelector('[data-testid="assign-old-doc"]')?.getAttribute("data-value") ?? null, toggle: toggleEl === null ? null : toggleEl.getAttribute("aria-pressed"), want: docId };
+  }, String(doc.id));
+  const isPairOff = await page.waitForFunction((docId) => {
+    const toggleEl = document.querySelector('[data-testid="assign-pair-view"]');
+    return document.querySelector('[data-testid="assign-old-doc"]')?.getAttribute("data-value") !== docId && (toggleEl === null || toggleEl.getAttribute("aria-pressed") === "false");
+  }, String(doc.id), { timeout: T }).then(() => true, () => false);
+  check("picking a row of another document turns Pair view off there", isPairOff, JSON.stringify(await readPairOff()));
   await openDoc(doc.id, a.id);
   await page.locator(`[data-testid="assign-paper-piece-${a.id}"]`).click();
   await rowIdIs(a.display_id);
@@ -12403,7 +12471,8 @@ await runStep("map: a non-member gets counts, not sentences — on screen and in
   check("the panel still says this is not a member bundle", await page.locator('[data-testid="map-side-not-member"]').isVisible());
 
   // ⓑ 이 Bundle의 New 문서로 보낸(Moved to) 남의 Old 문서 - 나가는 줄은 수만
-  const moved = map.edges.find((edge) => edge.kind === "moved" && nodeById.get(edge.target)?.kind === "target" && nodeById.get(edge.target)?.bundle_id === docBundleId && nodeById.get(edge.source)?.bundle_id !== docBundleId);
+  // ⓐ에서 고른 문서는 빼고 고른다 - 같은 마디를 다시 누르면 고름이 풀려(누름이 토글) 줄 문장을 묻지 않는다(자료에 따라 그 OLD-1이 옮김의 출발일 수 있다)
+  const moved = map.edges.find((edge) => edge.kind === "moved" && edge.source !== toOld1.target && nodeById.get(edge.target)?.kind === "target" && nodeById.get(edge.target)?.bundle_id === docBundleId && nodeById.get(edge.source)?.bundle_id !== docBundleId);
   check("the seed gives a moved line from another bundle to this bundle's New document", moved !== undefined);
   const promiseB = page.waitForResponse((response) => isLinesResponse(response, moved.source, "linked"), { timeout: T });
   await mapNode(page, moved.source).click();
