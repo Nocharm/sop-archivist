@@ -75,7 +75,7 @@ describe("shouldDropSelectionOnStep", () => {
     for (const op of ["set_language", "set_ref", "clear_ref", "set_number"]) expect(shouldDropSelectionOnStep(step(op)), op).toBe(false);
   });
   it("keeps the selection for decision steps", () => {
-    for (const op of ["confirm", "hold", "link", "unlink", "mark_new", "link_source", "confirm_identical", "delete", "move_out", "clear", "reset"]) {
+    for (const op of ["confirm", "hold", "link", "unlink", "mark_new", "link_source", "confirm_identical", "accept_ai", "delete", "move_out", "clear", "reset"]) {
       expect(shouldDropSelectionOnStep(step(op)), op).toBe(false);
     }
   });

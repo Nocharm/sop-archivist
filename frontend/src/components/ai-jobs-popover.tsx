@@ -1,8 +1,9 @@
 // 상단 바 AI 작업 목록 - 내가 속한 Bundle의 대기·실행 중과 하루 안에 끝난 요청을 Bundle → 요청으로 묶어 보인다.
 // 요청 한 줄: 종류·문서·진행 n/N·경과·상태와 그 이유(실패 코드·반영 안 됨·취소), 오래 걸림, 취소·다시 시도(내 요청만), 결과를 보는 화면으로 가기.
+// Assign 화면을 연 동안은 맨 위에 AI 추천 받기(분류·묶기 일괄 수락)를 둔다 - 누르면 그 화면의 확인 창이 열린다(설계 2026-11-19-ai-suggest-only §5 3-1).
 "use client";
 
-import { ArrowUpRight, Ban, CircleAlert, CircleCheck, Clock3, Loader2, RotateCcw, Square } from "lucide-react";
+import { ArrowUpRight, Ban, CircleAlert, CircleCheck, Clock3, Loader2, RotateCcw, Sparkles, Square } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useEffectEvent, useRef, useState, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
@@ -30,6 +31,7 @@ import { markFailuresSeen, pokeAiJobs, type AiJobsSnapshot } from "@/lib/ai-jobs
 import { formatKstShort } from "@/lib/datetime";
 import { useI18n } from "@/lib/i18n";
 import { getStageHref } from "@/lib/stages";
+import { useAiAcceptOffer } from "@/lib/use-ai-accept-offer";
 
 // 경과 시간을 다시 그리는 간격(ms) - 목록이 열려 있을 때만 돈다
 const TICK_MS = 1000;
@@ -79,6 +81,7 @@ interface AiJobsPopoverProps {
 
 export function AiJobsPopover({ anchorRef, snapshot, onClose }: AiJobsPopoverProps) {
   const { t } = useI18n();
+  const acceptOffer = useAiAcceptOffer();
   const panelRef = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState<FloatingPos | null>(null);
   const [clock, setClock] = useState(() => Date.now());
@@ -291,6 +294,33 @@ export function AiJobsPopover({ anchorRef, snapshot, onClose }: AiJobsPopoverPro
         <span className="text-[12px] text-ink-3">{t("aiJobs.window")}</span>
       </div>
       <div className="ai-pop-body">
+        {acceptOffer !== null && (
+          <section className="ai-pop-group" data-testid="ai-accept-offer">
+            <p className="flex items-center gap-1.5 px-3 pb-1 pt-2 text-[12px] font-medium text-ink-2">
+              <Sparkles size={13} strokeWidth={1.5} aria-hidden />
+              {t("aiAccept.menuTitle")}
+            </p>
+            <div className="flex flex-wrap gap-2 px-3 pb-2">
+              {(["classify", "match"] as const).map((kind) => (
+                <button
+                  key={kind}
+                  type="button"
+                  className="btn h-7"
+                  data-testid={`ai-accept-${kind}`}
+                  onClick={() => {
+                    onClose();
+                    acceptOffer.open(kind);
+                  }}
+                >
+                  {t(`aiAccept.menu.${kind}`)}
+                  <span className="font-mono text-[12px] tabular-nums text-ink-3" data-testid={`ai-accept-${kind}-count`}>
+                    {acceptOffer.offer.counts[kind]}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </section>
+        )}
         {snapshot.error !== null && (
           <p className="px-3 pt-2 text-[12px] text-st-hold" role="status" data-testid="ai-jobs-stale">
             {t("ai.statusStale")}

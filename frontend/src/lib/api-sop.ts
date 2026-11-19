@@ -1206,6 +1206,41 @@ export function confirmMatchesInBulk(bundleId: number, body: BulkMatchInput, und
   return apiFetch<Group>(`/bundles/${bundleId}/match/bulk-confirm`, { method: "POST", body: JSON.stringify({ ...body, undo }) });
 }
 
+/** AI 제안 일괄 수락의 종류 - 분류(칸에 놓기)와 묶기(이미 쓴 New 문장에 잇기·신규)를 따로 받는다(설계 2026-11-19-ai-suggest-only D3) */
+export type AcceptKind = "classify" | "match";
+
+export interface AcceptItem {
+  suggestion_id: number;
+  /** 분류는 assigned·delete, 묶기는 제안 모양(one_to_one·merged·split·table·figure·new·delete_candidate) */
+  shape: string;
+  is_delete: boolean;
+}
+
+/** 지금 받을 수 있는 제안과 빼는 제안의 수 - 경고가 있는 것, 다듬기를 기다리는 묶기, AI가 본 뒤 바뀐 것은 사람이 본다 */
+export interface AcceptPreview {
+  kind: AcceptKind;
+  document_id: number | null;
+  items: AcceptItem[];
+  excluded_warnings: number;
+  excluded_provisional: number;
+  excluded_changed: number;
+}
+
+export interface AcceptResult {
+  accepted: number;
+  skipped: number;
+}
+
+/** documentId가 null이면 Bundle 전체 - 신규(입구 2)는 Old 문서가 없어 Bundle 범위에만 든다 */
+export function getAcceptPreview(bundleId: number, kind: AcceptKind, documentId: number | null): Promise<AcceptPreview> {
+  const params = new URLSearchParams({ kind, ...(documentId !== null ? { document_id: String(documentId) } : {}) });
+  return apiFetch<AcceptPreview>(`/bundles/${bundleId}/ai/accept-preview?${params}`);
+}
+
+export function acceptSuggestions(bundleId: number, body: { kind: AcceptKind; suggestion_ids: number[]; delete_reason?: string }, undo?: UndoMeta): Promise<AcceptResult> {
+  return apiFetch<AcceptResult>(`/bundles/${bundleId}/ai/accept`, { method: "POST", body: JSON.stringify({ ...body, undo }) });
+}
+
 export function getGroupByTarget(bundleId: number, targetId: number): Promise<Group> {
   return apiFetch<Group>(`/bundles/${bundleId}/groups/by-target/${targetId}`);
 }

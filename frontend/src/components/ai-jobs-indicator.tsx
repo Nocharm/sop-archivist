@@ -1,5 +1,6 @@
 // 상단 바 AI 작업 표시 - 공용 폴러를 로그인한 동안 켜 두고, 도는 요청 수(스피너)·보지 않은 실패(배지)·상태를 못 받음을 한 단추로 보인다.
 // 누르면 작업 목록이 열린다. 내가 한 요청이 끝나면 어느 화면에 있든 알림을 띄운다(실패는 오류, 반영 안 됨·취소는 설명).
+// Assign 화면에 받을 AI 추천이 있으면 작업이 없어도 보인다 - 목록 맨 위가 AI 추천 받기다(설계 2026-11-19-ai-suggest-only §5 3-1).
 "use client";
 
 import { Loader2, Sparkles } from "lucide-react";
@@ -13,6 +14,7 @@ import { findFinishedRequests, getRequestToast, mergeToastQueue, summarizeAiJobs
 import { startAiJobsPolling, useAiJobsSnapshot, useSeenFailures } from "@/lib/ai-jobs-store";
 import { useI18n } from "@/lib/i18n";
 import { useSession } from "@/lib/session";
+import { useAiAcceptOffer } from "@/lib/use-ai-accept-offer";
 
 export function AiJobsIndicator() {
   const { t } = useI18n();
@@ -21,6 +23,7 @@ export function AiJobsIndicator() {
   const loginId = me && me.name !== "" ? me.login_id : null;
   const snapshot = useAiJobsSnapshot();
   const seen = useSeenFailures();
+  const acceptOffer = useAiAcceptOffer();
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const previousRef = useRef<RecentAiJobs | null>(null);
@@ -70,12 +73,15 @@ export function AiJobsIndicator() {
   }, [snapshot]);
 
   const summary = summarizeAiJobs(snapshot.data, snapshot.error, seen);
-  if (loginId === null || (summary.state === "hidden" && !open)) return null;
+  const offered = acceptOffer === null ? 0 : acceptOffer.offer.counts.classify + acceptOffer.offer.counts.match;
+  if (loginId === null || (summary.state === "hidden" && !open && offered === 0)) return null;
+  const state = summary.state === "hidden" ? "idle" : summary.state;
 
   const parts: string[] = [];
   if (summary.active > 0) parts.push(t("aiJobs.tipActive", { n: summary.active }));
   if (summary.failedUnseen > 0) parts.push(t("aiJobs.tipFailed", { n: summary.failedUnseen }));
   if (snapshot.error !== null) parts.push(t("aiJobs.tipError"));
+  if (offered > 0) parts.push(t("aiAccept.tip", { n: offered }));
   const label = parts.length === 0 ? t("aiJobs.tipIdle") : `${t("aiJobs.title")}: ${parts.join(" · ")}`;
 
   return (
@@ -85,7 +91,7 @@ export function AiJobsIndicator() {
           ref={triggerRef}
           type="button"
           className="ai-ind"
-          data-state={summary.state}
+          data-state={state}
           data-testid="top-bar-ai"
           aria-label={label}
           aria-haspopup="dialog"
