@@ -1,6 +1,8 @@
-// 상자 전체를 끄는 공통 포인터 끌기 엔진 - 손잡이 없이 4px 넘게 움직이면 끌기, 표 한 장이 따라오고 놓을 자리 표시는 DOM 속성으로만 한다.
+// 상자 전체를 끄는 공통 포인터 끌기 엔진 - 손잡이 없이 4px 넘게 움직이면 끌기, 한 줄 표가 따라오고 놓을 자리 표시는 DOM 속성과 점 달린 선 하나로만 한다.
+// 놓을 자리의 글(이유 · 갈 곳)은 표에 적지 않고 화면 밖 상태 글(drag-status)에 둔다 - 읽기 프로그램과 스모크가 같은 글을 읽는다.
 // React를 모른다(React 상태를 프레임마다 바꾸지 않는다). 쓰는 쪽은 `attachBoxDrag`나 `useBoxDrag`로 붙인다.
-// 설계: docs/superpowers/specs/2026-11-16-drag-and-drop-design.md §4
+// 설계: docs/superpowers/specs/2026-11-16-drag-and-drop-design.md §4, 모양은 docs/superpowers/specs/2026-11-20-assign-mockup1-design.md D7
+import { createDropLine, type DropLine, type DropLineAt } from "@/lib/drop-line";
 
 export const DRAG_THRESHOLD_PX = 4;
 export const DRAG_GUARD_SELECTOR = "button, a, input, select, textarea, [role='slider'], [data-no-drag]";
@@ -14,8 +16,11 @@ const DRAG_BOX_SELECTOR = "[data-drag-box]";
 
 export interface DragPoint { x: number; y: number } // clientX·clientY
 export interface DragCard { id: string; text: string; count: string | null } // count는 이미 번역한 글("3 lines")
-/** state "ok" = 놓을 수 있음, "refused" = 못 놓음(note가 이유), "none" = 놓을 자리 밖. target은 테두리를 그릴 상자(없어도 된다) */
-export interface DragHover { state: "ok" | "refused" | "none"; note?: string; target?: HTMLElement | null }
+/**
+ * state "ok" = 놓을 수 있음, "refused" = 못 놓음(note가 이유), "none" = 놓을 자리 밖. note는 상태 글로만 간다.
+ * target은 테두리를 그릴 상자(없어도 된다), line은 두 줄 사이 놓을 자리 선(없으면 선을 감춘다)
+ */
+export interface DragHover { state: "ok" | "refused" | "none"; note?: string; target?: HTMLElement | null; line?: DropLineAt | null }
 export interface BoxDragConfig<S> {
   pick: (event: PointerEvent) => S | null; // 끌 것이 없거나 읽기 전용이면 null
   getCard: (source: S) => DragCard;
@@ -24,6 +29,7 @@ export interface BoxDragConfig<S> {
   onMove: (source: S, point: DragPoint, start: DragPoint) => DragHover; // pointermove마다, 자동 스크롤로 밀린 뒤에도
   onDrop: (source: S, point: DragPoint, start: DragPoint) => void; // 놓았을 때만(취소는 부르지 않는다)
   onEnd?: (source: S, cancelled: boolean) => void; // 놓기·취소 뒤 한 번 - 표시 치우기
+  onRefusedDrop?: (note: string) => void; // 못 놓는 자리(이유가 있는 refused)에 놓았을 때 한 번 - useBoxDrag가 알림을 붙인다
 }
 
 export function canStartDrag(press: Pick<PointerEvent, "button" | "altKey" | "ctrlKey" | "pointerType">, isGuarded: boolean): boolean {
@@ -41,7 +47,7 @@ export function hasPassedThreshold(dx: number, dy: number): boolean {
   return Math.hypot(dx, dy) >= DRAG_THRESHOLD_PX;
 }
 
-/** 표의 왼쪽 x - 포인터 오른쪽에 두되 창 오른쪽을 넘으면 포인터 왼쪽으로 넘긴다(좁은 창에서 긴 거절 이유가 창 밖으로 나가지 않게) */
+/** 표의 왼쪽 x - 포인터 오른쪽에 두되 창 오른쪽을 넘으면 포인터 왼쪽으로 넘긴다(창 오른쪽 끝 가까이에서 표가 창 밖으로 나가지 않게) */
 export function getCardLeft(pointerX: number, cardWidth: number, viewportWidth: number): number {
   const right = pointerX + CARD_OFFSET_X_PX;
   if (right + cardWidth <= viewportWidth) return right;
@@ -73,7 +79,7 @@ export function findUnderPoint(point: DragPoint, selector: string): HTMLElement 
   return pickUnderPoint(document.elementsFromPoint(point.x, point.y), selector);
 }
 
-// --- Alt 글자 긁기 모드: 붙은 root가 하나라도 있는 동안만 리스너를 건다 ---
+// --- Alt 글자 긁기 모드와 상태 글: 붙은 root가 하나라도 있는 동안만 리스너·상태 글을 둔다 ---
 
 let attachedCount = 0;
 let altDown = false;
@@ -108,6 +114,21 @@ function handleWindowBlur(): void {
   syncSelectMode();
 }
 
+// 화면 밖 상태 글 - 붙은 root가 있는 동안 하나만 둔다(끌기마다 새로 만들면 읽기 프로그램이 첫 글을 놓친다)
+let statusEl: HTMLElement | null = null;
+
+function addStatus(): void {
+  statusEl = document.createElement("div");
+  statusEl.className = "drag-status";
+  statusEl.dataset.testid = "drag-status";
+  statusEl.setAttribute("role", "status");
+  document.body.append(statusEl);
+}
+
+function setStatus(text: string): void {
+  if (statusEl && statusEl.textContent !== text) statusEl.textContent = text;
+}
+
 function addAltModeListeners(): void {
   window.addEventListener("keydown", handleAltKeyDown);
   window.addEventListener("keyup", handleAltKeyUp);
@@ -125,37 +146,37 @@ function removeAltModeListeners(): void {
   document.documentElement.removeAttribute("data-box-select");
 }
 
-// --- 끌려가는 표 ---
+// --- 끌려가는 표(한 줄: id · 글 말줄임 · 개수) ---
 
 interface CardView {
   el: HTMLElement;
-  note: HTMLElement;
+  width: number; // 글이 바뀌지 않으니 붙일 때 한 번 잰다
 }
 
-function buildCard(card: DragCard): CardView {
+function buildCard(card: DragCard): HTMLElement {
   const el = document.createElement("div");
   el.className = "drag-card";
   el.dataset.testid = "drag-card";
   // 글은 textContent로만 넣는다(원문이 HTML처럼 보여도 요소가 되지 않는다)
-  const add = (className: string, text: string): HTMLElement => {
+  const add = (className: string, text: string) => {
     const child = document.createElement("span");
     child.className = className;
     child.textContent = text;
     el.append(child);
-    return child;
   };
   add("drag-card-id", card.id);
   add("drag-card-text", card.text);
   if (card.count !== null) add("drag-card-count", card.count);
-  const note = add("drag-card-note", "");
-  note.hidden = true;
-  return { el, note };
+  return el;
 }
 
 function applyHover(view: CardView, hover: DragHover, previous: HTMLElement | null): HTMLElement | null {
-  view.el.toggleAttribute("data-refused", hover.state === "refused");
-  view.note.textContent = hover.note ?? "";
-  view.note.hidden = !hover.note;
+  const isRefused = hover.state === "refused";
+  view.el.toggleAttribute("data-refused", isRefused);
+  // 커서도 거절을 말한다(motion.css) - 값이 바뀔 때만 쓴다
+  const flag = isRefused ? "refused" : "";
+  if (document.documentElement.getAttribute("data-box-drag") !== flag) document.documentElement.setAttribute("data-box-drag", flag);
+  setStatus(hover.note ?? "");
   const target = hover.state === "none" ? null : (hover.target ?? null);
   if (previous && previous !== target) delete previous.dataset.drop;
   if (target) target.dataset.drop = hover.state === "ok" ? "over" : "refused";
@@ -191,6 +212,8 @@ export function attachBoxDrag<S>(root: HTMLElement, config: BoxDragConfig<S>): (
     let on = false;
     let view: CardView | null = null;
     let hoverTarget: HTMLElement | null = null;
+    let lastHover: DragHover | null = null;
+    let line: DropLine | null = null; // 처음 선을 그을 때 root에 붙인다
     let raf = 0;
 
     // pointerdown에서 preventDefault를 부르지 않는다(포커스 이동과 바깥 누름으로 닫히는 메뉴가 깨진다) - 글자 긁힘은 selectstart·dragstart로 막는다
@@ -198,9 +221,11 @@ export function attachBoxDrag<S>(root: HTMLElement, config: BoxDragConfig<S>): (
 
     function render(): void {
       if (!view) return;
-      hoverTarget = applyHover(view, config.onMove(source, last, start), hoverTarget);
-      // 메모가 바뀌면 폭이 바뀐다 - 메모를 넣은 뒤에 재고 둔다
-      view.el.style.transform = `translate(${getCardLeft(last.x, view.el.offsetWidth, window.innerWidth)}px, ${last.y + CARD_OFFSET_Y_PX}px)`;
+      lastHover = config.onMove(source, last, start);
+      hoverTarget = applyHover(view, lastHover, hoverTarget);
+      if (lastHover.line) (line ??= createDropLine(root)).show(lastHover.line);
+      else line?.hide();
+      view.el.style.transform = `translate(${getCardLeft(last.x, view.width, window.innerWidth)}px, ${last.y + CARD_OFFSET_Y_PX}px)`;
     }
 
     function tick(): void {
@@ -224,8 +249,9 @@ export function attachBoxDrag<S>(root: HTMLElement, config: BoxDragConfig<S>): (
         dragLive = true;
         window.getSelection()?.removeAllRanges();
         document.documentElement.setAttribute("data-box-drag", "");
-        view = buildCard(config.getCard(source));
-        document.body.append(view.el);
+        const el = buildCard(config.getCard(source));
+        document.body.append(el);
+        view = { el, width: el.offsetWidth };
         config.onStart?.(source, start);
         raf = window.requestAnimationFrame(tick);
       }
@@ -268,6 +294,9 @@ export function attachBoxDrag<S>(root: HTMLElement, config: BoxDragConfig<S>): (
       hoverTarget = null;
       view?.el.remove();
       view = null;
+      line?.remove();
+      line = null;
+      setStatus("");
       document.documentElement.removeAttribute("data-box-drag");
       // 놓은 자리에서 뒤따르는 click 한 번을 삼킨다 - 타이머로 거두어 아무것도 안 눌렀을 때 다음 클릭이 먹히지 않게
       const swallow = (event: Event) => {
@@ -276,9 +305,12 @@ export function attachBoxDrag<S>(root: HTMLElement, config: BoxDragConfig<S>): (
       };
       window.addEventListener("click", swallow, { capture: true, once: true });
       window.setTimeout(() => window.removeEventListener("click", swallow, true), 0);
+      // 못 놓는 자리에 놓으면 그 이유를 한 번 알린다(설계 D7 확인할 것 3) - 끄는 동안은 상태 글에만 있었다
+      const refusal = !cancelled && lastHover?.state === "refused" ? lastHover.note : undefined;
       // onDrop이 던져도 표시는 치운다 - 오류는 그대로 올라간다
       try {
         if (!cancelled) config.onDrop(source, last, start);
+        if (refusal) config.onRefusedDrop?.(refusal);
       } finally {
         config.onEnd?.(source, cancelled);
       }
@@ -296,11 +328,18 @@ export function attachBoxDrag<S>(root: HTMLElement, config: BoxDragConfig<S>): (
   }
 
   root.addEventListener("pointerdown", handlePointerDown);
-  if (attachedCount++ === 0) addAltModeListeners();
+  if (attachedCount++ === 0) {
+    addAltModeListeners();
+    addStatus();
+  }
 
   return () => {
     root.removeEventListener("pointerdown", handlePointerDown);
     session?.abort();
-    if (--attachedCount === 0) removeAltModeListeners();
+    if (--attachedCount === 0) {
+      removeAltModeListeners();
+      statusEl?.remove();
+      statusEl = null;
+    }
   };
 }

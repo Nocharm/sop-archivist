@@ -9,11 +9,9 @@ import { type ShapeLine } from "@/components/assign/shape-tools";
 import { SplitUnitActions } from "@/components/split/split-unit-actions";
 import { type PendingItem } from "@/components/assign/pending-count";
 import { createDragLinkLine, type DragLinkLine } from "@/components/assign/drag-link-line";
-import { createDropGapLine, type DropGapLine } from "@/components/assign/drop-gap-line";
 import { findNewLine, findOldStrip, readNewLineEnd, readOldLineStart } from "@/components/assign/link-lines";
 import { type JoinMenuItem } from "@/components/assign/join-menu";
 import { runPickFlight, type FlightSource } from "@/components/assign/pick-flight";
-import { readPairAnchor } from "@/components/assign/pair-lines";
 import { type ResetScope } from "@/components/assign/reset-modal";
 import { type AiAskItem } from "@/components/manage/ai-ask-menu";
 import { flashElement, useUnwrapMotion } from "@/components/ui/motion";
@@ -23,6 +21,7 @@ import { humanizeApiError } from "@/lib/api-errors";
 import { buildDropSections, buildOldDragCard, canDragOld, findAssignDrop, findDropBlock, getSectionKey, isPositionLive, listDraftLines, readSectionDestination, REFUSAL_KEYS, resolveDropLink, resolveGapDrop, resolveSlotDrop, resolveTreeDrop, type AssignDrop, type DraftLine, type DropSection, type SendDrop, type TreeDrop } from "@/lib/assign-drop-model";
 import { buildGapBlocks, buildPlaceSections, findPlaceBlock, formatPlacement, isSpotOpen, listGapSpots, PLACE_REFUSAL_KEYS, readFixedSpot, readObjectParticle, readPlacePosition, resolvePlaceSpot, type Placement, type PlaceSection, type PlaceSpot } from "@/lib/place-spot-model";
 import { findUnderPoint, type BoxDragConfig, type DragHover, type DragPoint } from "@/lib/box-drag";
+import { DROP_LINE_HALF_PX, type DropLineAt } from "@/lib/drop-line";
 import { useBoxDrag } from "@/lib/use-box-drag";
 import { findLastStep } from "@/lib/destination-manage-model";
 import { findSplitBlock, readSplitOffsets } from "@/lib/split-ai-tabs-model";
@@ -54,7 +53,7 @@ import { useLeaveGuard } from "@/lib/leave-guard";
 import { buildIdenticalBatches } from "@/lib/match-model";
 import { EMPTY_FOLD_OPEN, type FoldOpen } from "@/lib/paper-fold-model";
 import { buildPaperModel, buildPaperTabs, findNearestCut, isBandHeading, resolvePickUnit, shouldRecenter, type PaperTabKey } from "@/lib/paper-model";
-import { buildPairColumns, canUndoPair, listPairLinks, PAIR_REFUSAL_KEYS, resolvePairDrop, type PairDrop, type PairDropContext, type PairLang } from "@/lib/pair-drop-model";
+import { buildPairColumns, canUndoPair, listPairLinks, PAIR_REFUSAL_KEYS, resolvePairDrop, type PairDrop, type PairDropContext } from "@/lib/pair-drop-model";
 import { ASSIGN_DOC_PARAM, ASSIGN_UNIT_PARAM, EDIT_ORIGINAL_PARAM, getStageHref } from "@/lib/stages";
 import { buildTemplateTitles } from "@/lib/template-model";
 import { useRegisterAiAcceptOffer } from "@/lib/use-ai-accept-offer";
@@ -2385,10 +2384,9 @@ export function useAssignPage() {
   useEffect(() => {
     if (treeConfirm !== null) confirmTreeDrop();
   }, [treeConfirm]);
-  // 끄는 동안 따라오는 점선 - React 상태가 아니다
+  // 끄는 동안 New 문장에 잇는 자리에서만 따라오는 점선(설계 2026-11-20 D7) - React 상태가 아니다
   const dragLineRef = useRef<DragLinkLine | null>(null);
-  // 끄는 동안 엮은 문서의 놓을 자리 선과 칸 목록 - 끌기마다 한 번(그 사이 문서가 바뀌면 다시) 짓는다. React 상태가 아니다
-  const dropGapRef = useRef<DropGapLine | null>(null);
+  // 끄는 동안 엮은 문서의 칸 목록 - 끌기마다 한 번(그 사이 문서가 바뀌면 다시) 짓는다. React 상태가 아니다
   const dropSectionsRef = useRef<{ doc: ComposedDoc; sections: DropSection[] } | null>(null);
   function readDropSections(): DropSection[] {
     if (!isComposedDoc || !composedDoc) return [];
@@ -2416,25 +2414,18 @@ export function useAssignPage() {
     const middle = (first.getBoundingClientRect().top + last.getBoundingClientRect().bottom) / 2;
     return { drop: resolveGapDrop(section, hoverId, point.y < middle, dragUnitIds), item };
   }
-  /** 문장 사이의 놓을 자리 선 - 기준 줄 상자의 그 변, 왼쪽 끝·폭은 그 줄의 문장 상자. New 칸 화면 밖이면 감춘다. 그은 선의 왼쪽 끝(따라오는 점선이 닿는 곳)을 돌려준다 */
-  function showDropGap(drop: SendDrop, item: HTMLElement | null): DragPoint | null {
+  /** 문장 사이의 놓을 자리 선 - 기준 줄 상자의 그 변, 왼쪽 끝·폭은 그 줄의 문장 상자. New 칸 화면 밖이면 없다(선을 감춘다) */
+  function readDropGap(drop: SendDrop, item: HTMLElement | null): DropLineAt | null {
     const edgeItem = drop.kind === "gap" ? item?.parentElement?.querySelector(`.new-item[data-row="t:${drop.edge.targetId}"]:not([data-leave])`) : null;
     const box = edgeItem?.querySelector(".new-line, .new-block")?.getBoundingClientRect();
     const frame = edgeItem?.closest(".pane-body")?.getBoundingClientRect();
-    if (drop.kind !== "gap" || !edgeItem || !box || !frame) {
-      dropGapRef.current?.hide();
-      return null;
-    }
+    if (drop.kind !== "gap" || !edgeItem || !box || !frame) return null;
     const rect = edgeItem.getBoundingClientRect();
     const y = drop.edge.side === "top" ? rect.top : rect.bottom;
-    if (y < frame.top || y > frame.bottom) {
-      dropGapRef.current?.hide();
-      return null;
-    }
-    dropGapRef.current?.show({ left: box.left, top: y, width: box.width });
-    return { x: box.left, y };
+    if (y < frame.top || y > frame.bottom) return null;
+    return { left: box.left, top: y - DROP_LINE_HALF_PX, width: box.width };
   }
-  /** 보내기의 표 메모와 테두리 - 문장 사이·빈 칸은 "→ 칸 머리 글", 거절은 이유(N/A는 그 자리 표시, 같은 칸은 올린 줄의 문장 상자에 테두리) */
+  /** 보내기의 상태 글과 테두리 - 문장 사이·빈 칸은 "→ 칸 머리 글", 거절은 이유(N/A는 그 자리 표시, 같은 칸은 올린 줄의 문장 상자에 테두리) */
   function readSendHover(drop: SendDrop, item: HTMLElement | null): DragHover {
     if (drop.kind === "gap" || drop.kind === "slot") {
       const section = composedDoc?.sections.find((candidate) => candidate.location_key === drop.sectionKey);
@@ -2497,25 +2488,18 @@ export function useAssignPage() {
     const { spot, box } = readTemplateSpot(el, point, sections);
     return { placement: spot ? resolvePlaceSpot(sections, spot, dragUnitIds) : { kind: "none" }, el, box };
   }
-  /** 템플릿 줄 사이 선 - 올린 절반의 묶음 상자 그 변(위면 첫 줄 위, 아래면 끝 줄 아래). 칸 화면 밖이면 감춘다. 선의 왼쪽 끝을 돌려준다 */
-  function showTemplateGap(placement: Placement, box: TemplateBox | null): DragPoint | null {
+  /** 템플릿 줄 사이 선 - 올린 절반의 묶음 상자 그 변(위면 첫 줄 위, 아래면 끝 줄 아래). 칸 화면 밖이면 없다(선을 감춘다) */
+  function readTemplateGap(placement: Placement, box: TemplateBox | null): DropLineAt | null {
     const edge = placement.kind === "place" ? placement.edge : null;
     const edgeEl = edge && box ? (edge.side === "top" ? box.first : box.last) : null;
     const frame = edgeEl?.closest(".pane-body")?.getBoundingClientRect();
-    if (!edge || !edgeEl || !frame) {
-      dropGapRef.current?.hide();
-      return null;
-    }
+    if (!edge || !edgeEl || !frame) return null;
     const rect = edgeEl.getBoundingClientRect();
     const y = edge.side === "top" ? rect.top : rect.bottom;
-    if (y < frame.top || y > frame.bottom) {
-      dropGapRef.current?.hide();
-      return null;
-    }
-    dropGapRef.current?.show({ left: rect.left, top: y, width: rect.width });
-    return { x: rect.left, y };
+    if (y < frame.top || y > frame.bottom) return null;
+    return { left: rect.left, top: y - DROP_LINE_HALF_PX, width: rect.width };
   }
-  /** 템플릿 자리의 꼬리표와 테두리 - 칸 자리는 그 자리에, 줄 사이는 선만(테두리 없음) */
+  /** 템플릿 자리의 상태 글과 테두리 - 칸 자리는 그 자리에, 줄 사이는 선만(테두리 없음) */
   function readTemplateHover(placement: Placement, el: HTMLElement | null): DragHover {
     if (placement.kind === "place") return { state: "ok", note: formatPlacement(placement, t), target: placement.edge ? null : el };
     if (placement.kind === "refused") return { state: "refused", note: t(PLACE_REFUSAL_KEYS[placement.reason]), target: el };
@@ -2617,63 +2601,53 @@ export function useAssignPage() {
         delete el.dataset.linkHot;
       }
       dragLineRef.current = createDragLinkLine(root);
-      dropGapRef.current = createDropGapLine(root);
       dropSectionsRef.current = null;
       placeSectionsRef.current = null;
       if (lightTemplateSpots(root, unitIds)) setTemplateDrag(true);
     },
     onMove: ({ unitIds, captionId }, point) => {
+      // 출발 → 포인터 점선은 New 문장에 잇는 자리에서만 - 놓은 뒤 남는 이음 선과 같은 뜻이라서(설계 2026-11-20 D7). 그 밖의 자리에서는 감춘다
+      const unlinked = (hover: DragHover): DragHover => {
+        dragLineRef.current?.update(null, point);
+        return hover;
+      };
       // 캡션 칩 - 제 자리 밖 Old 용지 위면 "떼서 문장으로", 그 밖은 놓을 자리가 아니다
       if (captionId !== null) {
         const { detach } = readCaptionDetachAt(point, captionId);
-        if (detach.kind === "detach") return { state: "ok", note: t("assign.captionSlot.drag.detach") };
-        return detach.kind === "refused" ? { state: "refused", note: t(detach.reasonKey) } : { state: "none" };
+        if (detach.kind === "detach") return unlinked({ state: "ok", note: t("assign.captionSlot.drag.detach") });
+        return unlinked(detach.kind === "refused" ? { state: "refused", note: t(detach.reasonKey) } : { state: "none" });
       }
       // Old 캡션 자리 위면 캡션으로 붙이기(그 자리에 테두리) - 그 묶음 자신을 끌어 왔으면 다른 놓을 곳을 본다
       const slot = readCaptionDropAt(point, unitIds);
       if (slot !== null && slot.drop.kind !== "none") {
-        dropGapRef.current?.hide();
-        return slot.drop.kind === "attach" ? { state: "ok", note: t("assign.captionSlot.drag.attach"), target: slot.el } : { state: "refused", note: t(slot.drop.reasonKey), target: slot.el };
+        return unlinked(slot.drop.kind === "attach" ? { state: "ok", note: t("assign.captionSlot.drag.attach"), target: slot.el } : { state: "refused", note: t(slot.drop.reasonKey), target: slot.el });
       }
-      const root = panesBoxRef.current;
-      // 점선의 시작 - 이음 선과 같은 자리, 출발 조각이 Old 칸 화면 밖이면 감춘다
-      const strip = root ? findOldStrip(root, unitIds[0]) : null;
-      const frame = root?.querySelector<HTMLElement>('[data-pane="old"] .pane-body')?.getBoundingClientRect();
-      const start = strip ? readOldLineStart(strip) : null;
-      const isStartShown = start !== null && frame !== undefined && start.y >= frame.top && start.y <= frame.bottom;
       // 옆 패널 나무를 먼저 본다 - 칸·step 줄이면 "→ 문서 번호 · 칸 이름", N/A면 이유. 줄 상자에 테두리
       const tree = readTreeAt(point);
       if (tree.drop.kind !== "none") {
-        dropGapRef.current?.hide();
-        dragLineRef.current?.update(isStartShown ? start : null, point);
-        if (tree.drop.kind === "refused") return { state: "refused", note: t(REFUSAL_KEYS[tree.drop.reason]), target: tree.row };
-        return { state: "ok", note: tree.option ? `→ ${tree.option.docCode} · ${tree.option.label}` : undefined, target: tree.row };
+        if (tree.drop.kind === "refused") return unlinked({ state: "refused", note: t(REFUSAL_KEYS[tree.drop.reason]), target: tree.row });
+        return unlinked({ state: "ok", note: tree.option ? `→ ${tree.option.docCode} · ${tree.option.label}` : undefined, target: tree.row });
       }
       const { line, drop } = readDropAt(point);
       if (drop.kind === "link" && line !== null) {
-        dropGapRef.current?.hide();
+        // 점선의 시작 - 이음 선과 같은 자리, 출발 조각이 Old 칸 화면 밖이면 감춘다
+        const root = panesBoxRef.current;
+        const strip = root ? findOldStrip(root, unitIds[0]) : null;
+        const frame = root?.querySelector<HTMLElement>('[data-pane="old"] .pane-body')?.getBoundingClientRect();
+        const start = strip ? readOldLineStart(strip) : null;
+        const isStartShown = start !== null && frame !== undefined && start.y >= frame.top && start.y <= frame.bottom;
         dragLineRef.current?.update(isStartShown ? start : null, readNewLineEnd(line, unitIds[0]));
         return { state: "ok", note: t("assign.drag.link"), target: line };
       }
-      // 한/영 연달아 문서의 Old 조각 위면 짝 맺기(5걸음) - 점선은 포인터까지
+      // 한/영 연달아 문서의 Old 조각 위면 짝 맺기(5걸음)
       const pair = readPairAt(point, unitIds);
-      if (pair.drop.kind !== "none") {
-        dropGapRef.current?.hide();
-        dragLineRef.current?.update(isStartShown ? start : null, point);
-        return readPairHover(pair.drop, pair.target, pair.el);
-      }
-      // 템플릿 보기의 자리 - 줄 사이면 점선이 선의 왼쪽 끝에 닿는다
+      if (pair.drop.kind !== "none") return unlinked(readPairHover(pair.drop, pair.target, pair.el));
+      // 템플릿 보기의 자리 - 줄 사이면 놓을 자리 선
       const tpl = readTemplateAt(point, unitIds);
-      if (tpl.placement.kind !== "none") {
-        const tplEnd = showTemplateGap(tpl.placement, tpl.box);
-        dragLineRef.current?.update(isStartShown ? start : null, tplEnd ?? point);
-        return readTemplateHover(tpl.placement, tpl.el);
-      }
-      // 이음도 짝도 아니면 보내기 - 문장 사이면 점선이 놓을 자리 선의 왼쪽 끝에 닿는다
+      if (tpl.placement.kind !== "none") return unlinked({ ...readTemplateHover(tpl.placement, tpl.el), line: readTemplateGap(tpl.placement, tpl.box) });
+      // 이음도 짝도 아니면 보내기 - 문장 사이면 놓을 자리 선
       const send = readSendAt(point, unitIds);
-      const gapEnd = showDropGap(send.drop, send.item);
-      dragLineRef.current?.update(isStartShown ? start : null, gapEnd ?? point);
-      return readSendHover(send.drop, send.item);
+      return unlinked({ ...readSendHover(send.drop, send.item), line: readDropGap(send.drop, send.item) });
     },
     onDrop: ({ rowKey, unitIds, captionId }, point) => {
       if (captionId !== null) {
@@ -2716,8 +2690,6 @@ export function useAssignPage() {
       for (const el of panesBoxRef.current?.querySelectorAll("[data-drag-src]") ?? []) el.removeAttribute("data-drag-src");
       dragLineRef.current?.remove();
       dragLineRef.current = null;
-      dropGapRef.current?.remove();
-      dropGapRef.current = null;
       for (const el of panesBoxRef.current?.querySelectorAll<HTMLElement>("[data-tpl-open]") ?? []) delete el.dataset.tplOpen;
       setTemplateDrag(false);
     },
@@ -2749,7 +2721,7 @@ export function useAssignPage() {
     const target = el ? paperModel.units.get(Number(el.dataset.stripUnit)) : undefined;
     return { drop: resolvePairDrop(sources, target, pairDropCtx), el, target };
   }
-  /** 표의 메모와 테두리 - pair는 "Pair with <번호>", confirm은 "Confirm this suggested pair", refused는 이유, none은 놓을 자리 밖 */
+  /** 짝 놓기의 상태 글과 테두리 - pair는 "Pair with <번호>", confirm은 "Confirm this suggested pair", refused는 이유, none은 놓을 자리 밖 */
   function readPairHover(drop: PairDrop, target: ViewUnit | undefined, el: HTMLElement | null): DragHover {
     if (drop.kind === "pair") return { state: "ok", note: t("assign.pairDrag.pair", { id: target?.display_id ?? "" }), target: el };
     if (drop.kind === "confirm") return { state: "ok", note: t("assign.pairDrag.confirm"), target: el };
@@ -2767,17 +2739,10 @@ export function useAssignPage() {
     getScrollers: () => [...(panesBoxRef.current?.querySelectorAll<HTMLElement>(".pane-body") ?? [])],
     onStart: ({ unit }) => {
       const root = panesBoxRef.current;
-      if (!root) return;
-      findPairPiece(root, unit.id)?.setAttribute("data-drag-src", "");
-      dragLineRef.current = createDragLinkLine(root);
+      if (root) findPairPiece(root, unit.id)?.setAttribute("data-drag-src", "");
     },
+    // 점선은 따라오지 않는다 - New 문장에 잇는 끌기에서만 그린다(설계 2026-11-20 D7). 놓을 조각의 테두리가 자리를 말한다
     onMove: ({ unit }, point) => {
-      // 점선은 출발 조각의 짝 선 자리에서 포인터까지 - 출발 조각이 제 칸 화면 밖이면 감춘다(2걸음과 같다)
-      const piece = panesBoxRef.current ? findPairPiece(panesBoxRef.current, unit.id) : null;
-      const frame = piece?.closest(".pane-body")?.getBoundingClientRect();
-      const start = piece ? readPairAnchor(piece, unit.lang as PairLang) : null;
-      const isStartShown = start !== null && frame !== undefined && start.y >= frame.top && start.y <= frame.bottom;
-      dragLineRef.current?.update(isStartShown ? start : null, point);
       const { drop, target, el } = readPairViewAt(unit, point);
       return readPairHover(drop, target, el);
     },
@@ -2787,8 +2752,6 @@ export function useAssignPage() {
     },
     onEnd: () => {
       for (const el of panesBoxRef.current?.querySelectorAll("[data-drag-src]") ?? []) el.removeAttribute("data-drag-src");
-      dragLineRef.current?.remove();
-      dragLineRef.current = null;
     },
   };
   useBoxDrag(panesBoxRef, isPairView && isOldDrag && ready ? pairDragConfig : null);

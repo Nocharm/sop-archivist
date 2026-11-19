@@ -137,7 +137,7 @@ async function openTemplateDrag(page) {
     return { x: box.x + Math.min(40, box.width / 2), y };
   };
   const readCard = () => page.evaluate(() => ({
-    note: document.querySelector('[data-testid="drag-card"] .drag-card-note')?.textContent ?? "",
+    note: document.querySelector('[data-testid="drag-status"]')?.textContent ?? "",
     refused: document.querySelector('[data-testid="drag-card"]')?.hasAttribute("data-refused") ?? false,
   }));
   const composed = await getJson(`/outputs/c/docs/${sop.id}?lang=en`);
@@ -918,7 +918,7 @@ await runStep("assign: caption slot - drag a sentence onto the table and drag th
   const to = await head.boundingBox();
   // 글자 위를 피해 조각 오른쪽 끝 빈 자리에서 누른다
   await dragThrough(page, { x: from.x + from.width - 12, y: from.y + from.height / 2 }, [{ x: to.x + to.width / 2, y: to.y + to.height / 2 }]);
-  const note = await page.locator('[data-testid="drag-card"] .drag-card-note').evaluate((el) => (el.hidden ? null : (el.textContent ?? "").trim()));
+  const note = await page.locator('[data-testid="drag-status"]').evaluate((el) => (el.textContent ?? "").trim() || null);
   check("over the table head the drag card says Attach as caption", note === "Attach as caption", note);
   await page.mouse.up();
   await page.locator('[data-testid="toast-ok"]', { hasText: "Caption attached" }).first().waitFor({ timeout: T });
@@ -934,7 +934,7 @@ await runStep("assign: caption slot - drag a sentence onto the table and drag th
   const paneBox = await page.locator('[data-pane="old"] .pane-body').first().boundingBox();
   const outY = chipBox.y - paneBox.y > 140 ? chipBox.y - 90 : Math.min(paneBox.y + paneBox.height - 70, chipBox.y + 160);
   await dragThrough(page, { x: chipBox.x + 6, y: chipBox.y + chipBox.height / 2 }, [{ x: paneBox.x + paneBox.width / 2, y: outY }]);
-  const outNote = await page.locator('[data-testid="drag-card"] .drag-card-note').evaluate((el) => (el.hidden ? null : (el.textContent ?? "").trim()));
+  const outNote = await page.locator('[data-testid="drag-status"]').evaluate((el) => (el.textContent ?? "").trim() || null);
   check("dragging the chip off the slot says Detach as sentence", outNote === "Detach as sentence", outNote);
   await page.mouse.up();
   await page.locator('[data-testid="toast-ok"]', { hasText: "Caption detached" }).first().waitFor({ timeout: T });
@@ -1392,7 +1392,7 @@ await runStep("assign: drag an Old piece onto a written New sentence, it links l
   await page.waitForTimeout(100);
   const during = await page.evaluate(({ b, t }) => ({
     card: document.querySelector('[data-testid="drag-card"]')?.textContent ?? null,
-    note: document.querySelector('[data-testid="drag-card"] .drag-card-note')?.textContent ?? "",
+    note: document.querySelector('[data-testid="drag-status"]')?.textContent ?? "",
     drop: document.querySelector(`[data-testid="assign-new-${t}"]`)?.getAttribute("data-drop") ?? null,
     line: document.querySelector("svg[data-drag-line] path")?.getAttribute("d") ?? "",
     src: document.querySelector(`[data-testid="assign-paper-piece-${b}"]`)?.hasAttribute("data-drag-src") ?? false,
@@ -1481,7 +1481,7 @@ await runStep("assign: drag an Old piece onto a written New sentence, it links l
   await page.waitForTimeout(100);
   const overComposed = await readMarks();
   const composedNote = await page.evaluate(() => ({
-    note: document.querySelector('[data-testid="drag-card"] .drag-card-note')?.textContent ?? "",
+    note: document.querySelector('[data-testid="drag-status"]')?.textContent ?? "",
     lineDrops: document.querySelectorAll('[data-pane="new"] .new-line[data-drop]').length,
   }));
   // 끈 Unit은 미배정이라 어느 칸에도 문장이 없다 - "이미 이 칸에 있다" 거절이 될 수 없다
@@ -2255,7 +2255,7 @@ await runStep("assign: template view drag onto a category row or between numbere
   await dragThrough(page, await pointInUnit(), [await pointInSpot(`assign-new-tpl-en-${first.target_id}`, "bottom")]);
   await page.waitForTimeout(100);
   const card = await readCard();
-  const gapShown = await page.evaluate(() => [...document.querySelectorAll('[data-testid="assign-drop-gap"]')].some((el) => !el.hidden));
+  const gapShown = await page.evaluate(() => [...document.querySelectorAll('[data-testid="drop-line"]')].some((el) => !el.hidden));
   check("between numbered lines the card names the number the line will get", !card.refused && card.note.includes(`after ${first.number}`) && card.note.includes("becomes"), card.note);
   check("a drop line is drawn between the lines", gapShown);
   const gapSent = await dropAndSave("between numbered lines");
@@ -4304,10 +4304,10 @@ await runStep("assign: drag an Old piece between two sentences of a New · from 
     lines: document.querySelectorAll("svg[data-drag-line]").length,
     drops: document.querySelectorAll("[data-drop]").length,
     srcs: document.querySelectorAll("[data-drag-src]").length,
-    gap: [...document.querySelectorAll('[data-testid="assign-drop-gap"]')].filter((el) => !el.hidden).length,
+    gap: [...document.querySelectorAll('[data-testid="drop-line"]')].filter((el) => !el.hidden).length,
   }));
   const readCard = () => page.evaluate(() => ({
-    note: document.querySelector('[data-testid="drag-card"] .drag-card-note')?.textContent ?? "",
+    note: document.querySelector('[data-testid="drag-status"]')?.textContent ?? "",
     refused: document.querySelector('[data-testid="drag-card"]')?.hasAttribute("data-refused") ?? false,
   }));
   const menu = page.locator('[data-testid="assign-link-menu"]');
@@ -4355,10 +4355,10 @@ await runStep("assign: drag an Old piece between two sentences of a New · from 
   await dragThrough(page, await pointInUnit(unitX.unit_id), [belowA]);
   await page.waitForTimeout(100);
   const during = await page.evaluate((id) => {
-    const gap = document.querySelector('[data-testid="assign-drop-gap"]');
+    const gap = document.querySelector('[data-testid="drop-line"]');
     const item = document.querySelector(`[data-pane="new"] .new-item[data-row="t:${id}"]`).getBoundingClientRect();
     const box = gap && !gap.hidden ? gap.getBoundingClientRect() : null;
-    return { note: document.querySelector('[data-testid="drag-card"] .drag-card-note')?.textContent ?? "", lineY: box ? box.top + box.height / 2 : null, itemBottom: item.bottom, drops: document.querySelectorAll("[data-drop]").length };
+    return { note: document.querySelector('[data-testid="drag-status"]')?.textContent ?? "", lineY: box ? box.top + box.height / 2 : null, itemBottom: item.bottom, drops: document.querySelectorAll("[data-drop]").length };
   }, a);
   check("between two sentences the card says where it goes", during.note.startsWith("→ "), during.note);
   check("the drop line sits on the bottom edge of A", during.lineY !== null && Math.abs(during.lineY - during.itemBottom) <= 6, JSON.stringify(during));
@@ -4696,7 +4696,7 @@ await runStep("assign: drag an Old piece onto a slot in the All list, in both vi
   const rowDropOf = (testId) => page.locator(`[data-testid="${testId}"]`).first().evaluate((el) => el.closest(".tree-row")?.getAttribute("data-drop") ?? null);
   const readCard = () => page.evaluate(() => ({
     cards: document.querySelectorAll('[data-testid="drag-card"]').length,
-    note: document.querySelector('[data-testid="drag-card"] .drag-card-note')?.textContent ?? "",
+    note: document.querySelector('[data-testid="drag-status"]')?.textContent ?? "",
     refused: document.querySelector('[data-testid="drag-card"]')?.hasAttribute("data-refused") ?? false,
     drops: document.querySelectorAll("[data-drop]").length,
   }));
@@ -4982,7 +4982,7 @@ await runStep("assign: drag an Old piece into a WI step, on its row in the All l
     }, { id: targetId, at: where });
   };
   const readCard = () => page.evaluate(() => ({
-    note: document.querySelector('[data-testid="drag-card"] .drag-card-note')?.textContent ?? "",
+    note: document.querySelector('[data-testid="drag-status"]')?.textContent ?? "",
     refused: document.querySelector('[data-testid="drag-card"]')?.hasAttribute("data-refused") ?? false,
   }));
   const menu = page.locator('[data-testid="assign-link-menu"]');
@@ -5818,7 +5818,7 @@ await runStep("assign: Pair view - drag a piece onto its partner to pair or conf
     await page.waitForTimeout(100);
   };
   const readCard = () => page.evaluate(() => ({
-    note: document.querySelector('[data-testid="drag-card"] .drag-card-note')?.textContent ?? "",
+    note: document.querySelector('[data-testid="drag-status"]')?.textContent ?? "",
     refused: document.querySelector('[data-testid="drag-card"]')?.hasAttribute("data-refused") ?? false,
   }));
   const readMarks = () => page.evaluate(() => ({
@@ -5876,7 +5876,8 @@ await runStep("assign: Pair view - drag a piece onto its partner to pair or conf
   await moveOnto(a2.id);
   const overPartner = await readCard();
   check("dragging a over a′ says Pair with a′", overPartner.note === `Pair with ${a2.display_id}` && !overPartner.refused, overPartner.note);
-  check("a′ is the drop target, a is the drag source and one line follows", (await pairPiece(a2.id).getAttribute("data-drop")) === "over" && (await pairPiece(a.id).getAttribute("data-drag-src")) === "" && (await page.locator("svg[data-drag-line]").count()) === 1);
+  // 출발 → 포인터 점선은 New 문장에 잇는 끌기에서만 그린다(설계 2026-11-20 D7) - 짝 놓기는 놓을 조각의 테두리가 자리를 말한다
+  check("a′ is the drop target, a is the drag source and no pointer line follows", (await pairPiece(a2.id).getAttribute("data-drop")) === "over" && (await pairPiece(a.id).getAttribute("data-drag-src")) === "" && (await page.locator("svg[data-drag-line]").count()) === 0);
   const wanderPoints = await page.evaluate(() => {
     const points = [];
     for (const side of ["ko", "en"]) {
@@ -5897,9 +5898,9 @@ await runStep("assign: Pair view - drag a piece onto its partner to pair or conf
   }
   const commitsAfter = await page.evaluate(() => window.__commits ?? -1);
   check("no React commit while passing over pieces of both columns", wanderPoints.length >= 4 && commitsBefore > 0 && commitsBefore === commitsAfter, `${wanderPoints.length} points, ${commitsBefore} -> ${commitsAfter}`);
-  // 2~3걸음의 잇기·보내기 끌기는 Pair view에서 붙지 않는다(KO 칸도 data-pane="old"다) - 표는 한 장, 선은 하나, 잇기·보내기 메모와 놓을 자리 선은 없다
-  const wanderMarks = await page.evaluate(() => ({ cards: document.querySelectorAll('[data-testid="drag-card"]').length, lines: document.querySelectorAll("svg[data-drag-line]").length, gaps: document.querySelectorAll('[data-testid="assign-drop-gap"]').length }));
-  check("only the pair drag runs - no link or send notes, one card, one line, no drop gap", [...wanderNotes].every((note) => note !== "Link to this sentence" && !note.startsWith("→")) && JSON.stringify(wanderMarks) === JSON.stringify({ cards: 1, lines: 1, gaps: 0 }), `${JSON.stringify([...wanderNotes])} ${JSON.stringify(wanderMarks)}`);
+  // 2~3걸음의 잇기·보내기 끌기는 Pair view에서 붙지 않는다(KO 칸도 data-pane="old"다) - 표는 한 장, 점선 · 잇기·보내기 상태 글 · 놓을 자리 선은 없다
+  const wanderMarks = await page.evaluate(() => ({ cards: document.querySelectorAll('[data-testid="drag-card"]').length, lines: document.querySelectorAll("svg[data-drag-line]").length, gaps: document.querySelectorAll('[data-testid="drop-line"]').length }));
+  check("only the pair drag runs - no link or send notes, one card, no pointer line, no drop gap", [...wanderNotes].every((note) => note !== "Link to this sentence" && !note.startsWith("→")) && JSON.stringify(wanderMarks) === JSON.stringify({ cards: 1, lines: 0, gaps: 0 }), `${JSON.stringify([...wanderNotes])} ${JSON.stringify(wanderMarks)}`);
 
   // 2. 놓으면 바로 저장하고 Undo가 든 알림
   await moveOnto(a2.id);
@@ -6209,7 +6210,7 @@ await runStep("assign: drag an Old piece onto a nearby piece in the other langua
   };
   const moveOnto = async (toId) => moveTo(await pointOn(toId));
   const readCard = () => page.evaluate(() => ({
-    note: document.querySelector('[data-testid="drag-card"] .drag-card-note')?.textContent ?? "",
+    note: document.querySelector('[data-testid="drag-status"]')?.textContent ?? "",
     refused: document.querySelector('[data-testid="drag-card"]')?.hasAttribute("data-refused") ?? false,
     drops: document.querySelectorAll("[data-drop]").length,
   }));
