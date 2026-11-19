@@ -173,6 +173,96 @@ describe("custom CSS class names", () => {
   });
 });
 
+// frontend/CLAUDE.md "one path" rules: each concern has one shared part, so a new screen cannot quietly grow a second one.
+type PathRule = { name: string; pattern: RegExp; files: RegExp; allowed: Record<string, string>; fix: string };
+
+const PATH_RULES: PathRule[] = [
+  {
+    name: "raw hex colors",
+    pattern: /#[0-9a-fA-F]{3,8}\b/,
+    files: /\.css$/,
+    allowed: { "src/styles/tokens.css": "the only home of raw colors; dark mode swaps tokens" },
+    fix: "use a token from src/styles/tokens.css",
+  },
+  {
+    name: "raw hex colors in code",
+    pattern: /["'` ]#[0-9a-fA-F]{3}(?:[0-9a-fA-F]{3})?\b/,
+    files: /\.tsx?$/,
+    allowed: {},
+    fix: "use a CSS variable token (var(--…)) instead of a hex string",
+  },
+  {
+    name: "native <select>",
+    pattern: /<select[\s>]/,
+    files: /\.tsx$/,
+    allowed: {},
+    fix: "use components/ui/select.tsx Select (or Combobox)",
+  },
+  {
+    name: "router.push",
+    pattern: /\brouter\.push\(/,
+    files: /\.tsx?$/,
+    allowed: { "src/components/nav-host.tsx": "the shared navigation path (nav-buffer, leave guard)" },
+    fix: "navigate with lib/nav-buffer.ts navigate() so the buffer and the unsaved-changes guard apply",
+  },
+  {
+    name: "native checkbox",
+    pattern: /type="checkbox"/,
+    files: /\.tsx$/,
+    allowed: {
+      "src/components/ui/checkbox.tsx": "the shared Checkbox draws over a hidden native input",
+      "src/components/paper/number-cell.tsx": "existing at the 2026-11-19 baseline; move to Checkbox in its own branch",
+    },
+    fix: "use components/ui/checkbox.tsx Checkbox",
+  },
+  {
+    name: "dangerouslySetInnerHTML",
+    pattern: /dangerouslySetInnerHTML/,
+    files: /\.tsx$/,
+    allowed: {
+      "src/app/layout.tsx": "first-paint prefs boot script, a constant",
+      "src/components/ui/markdown-view.tsx": "escapes the source first, then turns only formatting into tags",
+    },
+    fix: "render text as children, or Markdown through components/ui/markdown-view.tsx",
+  },
+  {
+    name: "native title tooltip",
+    pattern: /<[a-z][\w-]*\s[^>]*\btitle=/,
+    files: /\.tsx$/,
+    allowed: {},
+    fix: "use components/ui/tooltip.tsx Tooltip (or useDelegatedTip for many marks)",
+  },
+];
+
+describe("one path per concern", () => {
+  const files = listFiles(SRC, /\.(tsx?|css)$/).filter((path) => !/\.test\.tsx?$/.test(path));
+
+  it.each(PATH_RULES)("$name stays in its shared part", ({ pattern, files: only, allowed, fix }) => {
+    const problems = files
+      .filter((path) => only.test(path) && !(toKey(path) in allowed))
+      .flatMap((path) =>
+        stripComments(readFileSync(path, "utf8"))
+          .split("\n")
+          .flatMap((line, i) => (pattern.test(line) ? [`${toKey(path)}:${i + 1}`] : [])),
+      );
+    expect(problems, `Fix: ${fix}`).toEqual([]);
+  });
+
+  it("matches the bad forms it names", () => {
+    const sample: Record<string, string> = {
+      "raw hex colors": ".x { color: #1a2b3c; }",
+      "raw hex colors in code": 'style={{ color: "#fff" }}',
+      "native <select>": "<select value={v}>",
+      "router.push": "router.push(`/bundles/${id}`)",
+      "native checkbox": '<input type="checkbox" />',
+      dangerouslySetInnerHTML: "<div dangerouslySetInnerHTML={{ __html: x }} />",
+      "native title tooltip": '<span title="Delete">',
+    };
+    for (const rule of PATH_RULES) expect(rule.pattern.test(sample[rule.name]), rule.name).toBe(true);
+    expect(PATH_RULES[6].pattern.test('<Tooltip title="Delete">')).toBe(false);
+  });
+});
+
 describe("eslint-disable comments", () => {
   it("always give a reason after `--`", () => {
     const problems = allSources.flatMap((path) =>

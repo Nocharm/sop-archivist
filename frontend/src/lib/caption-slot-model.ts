@@ -21,8 +21,8 @@ const CAPTION_HEADS = {
 const ANY_HEAD = /(?:표|그림|Table|Figure|Fig)\s*\.?\s*\d/g;
 const HANGUL = /[가-힣]/;
 const LATIN = /[A-Za-z]/;
-// segment.py INVISIBLE_CHARS와 같다 - 빈 문단 판정
-const VISIBLE = /[^\s​‌‍⁠﻿]/;
+// segment.is_blank_char와 같다(str.isspace() + INVISIBLE_CHARS) - 빈 문단 판정. JS \s에는 Python isspace의 \x1c-\x1f·\x85가 없어 더한다(rule-cases.json)
+const VISIBLE = /[^\s\x1c-\x1f\x85​‌‍⁠﻿]/;
 
 export type BundleShape = "table" | "figure";
 

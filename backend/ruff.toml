@@ -14,3 +14,13 @@ extend-immutable-calls = [
     "fastapi.Depends", "fastapi.Query", "fastapi.File", "fastapi.Form", "fastapi.Body",
     "fastapi.Header", "fastapi.Path", "fastapi.Security", "app.sop.ai.schemas.JobKindIn",
 ]
+
+[lint.flake8-tidy-imports.banned-api]
+# 시각은 전부 KST tz-aware(app.clock.now()) — 맨 datetime은 서버(UTC)와 로컬에서 다른 값을 낸다.
+"datetime.datetime.now".msg = "Use app.clock.now() (KST, tz-aware)."
+"datetime.datetime.utcnow".msg = "Use app.clock.now() (KST, tz-aware)."
+"datetime.datetime.today".msg = "Use app.clock.now() (KST, tz-aware)."
+"datetime.date.today".msg = "Use app.clock.now().date()."
+
+[lint.per-file-ignores]
+"app/clock.py" = ["TID251"]

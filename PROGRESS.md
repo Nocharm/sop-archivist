@@ -4,6 +4,9 @@
 
 ## 2026-11-19
 
+- **스텝 2 불변식 시험(`test/invariants`, 신뢰 기반 계획)** — `backend/CLAUDE.md`의 글 규칙 가운데 기계로 잴 수 있는 7개를 `tests/test_invariants.py`로(AST 술어마다 나쁜 꼴·좋은 꼴 시험), 맨 `datetime.now()`는 ruff `TID251`. 프런트가 사본을 둔 서버 규칙은 백엔드가 사례와 답을 `frontend/src/lib/rule-cases.json`으로 뽑고(`scripts/dump_rule_cases.py`, 낡으면 `test_rule_cases.py` 실패) vitest가 사본으로 대조한다. 첫 실행에서 캡션 자리의 빈 문단 판정 어긋남(`\x1c`–`\x1f`·`\x85`)을 찾아 프런트를 서버에 맞췄다. 프런트 "한 길" 규칙 7개도 소스 검사로(기본 체크박스 하나는 기준선).
+  - 확인: pytest `test_invariants` · `test_rule_cases` · 캡션 자리 30, ruff, lint · tsc · vitest 1,619.
+
 - **스텝 1 정적 관문(`chore/static-gate`, 신뢰 기반 계획)** — 새 코드가 effect·타이머를 늘리지 못하게 기준선(`frontend/effect-baseline.json`: effect 49파일 120곳, 타이머 32파일 86곳, 공용 훅 `src/lib/use-*.ts`는 제외)을 두고 ESLint가 다른 파일을 막는다. `src/source-rules.test.ts`가 파일별 개수를 래칫으로 보고, lessons §9(display 이중)·§10(유틸리티 이름 겹침 — Tailwind 컴파일러로 대조)과 사유 없는 `eslint-disable`을 시험으로 옮겼다. ruff에 `B`·`BLE`·`UP`·`TID`(FastAPI `Depends` 등은 허용 호출), 경계의 `except Exception` 4곳에 사유, `zip` strict 2곳. `.claude/settings.json` PostToolUse hook이 고친 파일 하나만 eslint·ruff를 돌려 실패를 돌려준다(워크트리에서는 원본의 node_modules·venv를 쓴다).
   - 확인: 일부러 만든 위반 파일로 ESLint 3건 · 시험 3건 · hook 종료 코드 2를 보고 지웠다. lint · tsc · vitest 1,585 · ruff 통과.
 
