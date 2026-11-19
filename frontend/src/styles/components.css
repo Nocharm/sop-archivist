@@ -1386,6 +1386,14 @@
   .toc-line[data-break] { margin-top: 4px; padding-top: 4px; border-top: 1px dashed var(--line-2); }
   .toc-line-text { flex: 1 1 0; min-width: 0; padding: 1px 4px; border: 0; border-radius: var(--r-1); background: none; color: var(--ink-3); font: inherit; font-size: 12.5px; text-align: left; white-space: pre-wrap; overflow-wrap: anywhere; cursor: pointer; }
   .toc-line-text:hover, .toc-line[data-picked] .toc-line-text { background: var(--hover); color: var(--ink-2); }
+
+  /* 접힌 삭제 줄(Assign Old, 설계 2026-11-20 D6) - 목차 블록처럼 흐린 한 줄. DELETED 꼬리표만 반투명 빨강, 나머지는 --ink-3로 물러나고 올리면 진해진다.
+     Shift로 고른 줄(data-pick)은 강조색 테두리 */
+  .deleted-line { display: flex; flex: 1 1 0; align-items: center; gap: 6px; min-width: 0; margin-block: 1px; padding: 2px 10px; border: 1px dashed var(--line-2); border-radius: var(--r-1); background: var(--sunken); color: var(--ink-3); font: inherit; font-size: 11.5px; line-height: 16px; text-align: left; cursor: pointer; }
+  .deleted-line:hover { background: var(--hover); color: var(--ink-2); }
+  .deleted-line[data-pick] { border-style: solid; border-color: var(--accent); }
+  .deleted-tag { flex: none; padding: 0 5px; border-radius: var(--r-1); background: color-mix(in oklab, var(--danger-fill) 16%, transparent); color: var(--danger-ink); font-size: var(--fs-micro); font-weight: 600; letter-spacing: .02em; }
+  .deleted-text { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .fold-go { font-family: var(--font-mono); font-size: 12px; }
 
   /* 조각 사이 틈 - 위아래 합치기가 늘 보인다(평소엔 낮고 넓은 알약, 올리면 라벨이 펼쳐진다) */

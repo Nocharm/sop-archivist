@@ -29,6 +29,7 @@ import { getHiddenEnds, listFollowPreview } from "@/lib/number-model";
 import { getCardTops, getHiddenPrefixLength, getPairBrackets, getPillWidth, getSectionHeads, getTabWidths, getSectionLevel, getSectionPill, getVisibleSkip, sliceVisible, type PairBracket } from "@/lib/strip-pill-model";
 import { buildHeadingShiftGroups, readHeadingShiftHead, type HeadingShiftGroup } from "@/lib/heading-shift-model";
 import { getPairHint, type PairHintUnit } from "@/lib/pair-hint-model";
+import { readDeletedLine, type DeletedFold, type DeletedLine } from "@/lib/deleted-fold-model";
 import { buildTocBlock, shouldJoinTocCard } from "@/lib/toc-block-model";
 import { findUnwrapHeads, getRowUnwrapTable } from "@/lib/unwrap-model";
 
@@ -205,6 +206,9 @@ interface PaperProps {
     unwrap?: { canRewrap: boolean; busy: boolean; onRewrap: (tableId: number) => void };
     /** Assign - 고른 박스 바로 아래 떨어진 짝 안내 줄 "↑ 짝 KO · 위 §1"(lib/pair-hint-model). onGo(짝)는 그 박스를 고르고 그 자리로 스크롤한다 */
     pairHint?: { onGo: (unitId: number) => void };
+    /** Assign - 삭제로 확정한 줄을 흐린 한 줄 "DELETED · 종류 · 앞부분 글"로 접는다(lib/deleted-fold-model, 설계 D6). 접을 단위와 내용은 화면이 정한다.
+     *  누르면 onOpen(줄 키)으로 펼치고 그 카드의 첫 단위를 고른다. 접힌 줄은 끌기 · 틈 단추를 받지 않는다 */
+    deleted?: { folds: ReadonlyMap<number, DeletedFold>; onOpen: (rowKey: string) => void };
   };
   /** strips에서 고른 조각의 글 바로 아래 줄(확인·짝 풀기 등 단추) - 조각 상자가 펼쳐지며 밀려 내려오고, 고름이 옮겨 가면 접힌다 */
   renderUnitActions?: (unitId: number) => ReactNode;
@@ -1101,8 +1105,8 @@ export function Paper({
         data-testid={`${testId}-gap-${row.key}`}
       >
         {hasRail && renderRail(Math.min(readTabWidth(prev), readTabWidth(row)))}
-        {/* 목차 블록 곁에는 합치기를 두지 않는다 - 목차 줄은 "목차 아님"으로 먼저 보통 줄로 돌린다 */}
-        {!(hasToc && (isTocRow(prev, model.units) || isTocRow(row, model.units))) && renderMerge(prev, row)}
+        {/* 목차 블록 곁에는 합치기를 두지 않는다 - 목차 줄은 "목차 아님"으로 먼저 보통 줄로 돌린다. 접힌 삭제 줄 곁도 같다(펼쳐서 한다) */}
+        {!(hasToc && (isTocRow(prev, model.units) || isTocRow(row, model.units))) && !isDeletedRow(prev) && !isDeletedRow(row) && renderMerge(prev, row)}
       </div>
     );
   }
@@ -1191,6 +1195,42 @@ export function Paper({
     );
   }
 
+  /** 삭제로 확정해 접은 줄인가 - 그 곁 틈에는 묶기를 두지 않는다 */
+  function isDeletedRow(row: PaperRow): boolean {
+    const folds = strips?.deleted?.folds;
+    const fold = folds?.get(readRowUnitId(row) ?? -1);
+    // 고른 박스가 든 줄은 펼쳐 그린다(readDeletedLine) - 그 곁 틈은 평소대로
+    return fold !== undefined && (selectedId === null || folds?.get(selectedId)?.rowKey !== fold.rowKey);
+  }
+
+  /** 접힌 삭제 줄(설계 D6) - 목차 블록처럼 흐린 한 줄, DELETED 꼬리표만 반투명 빨강, Remark는 툴팁. 누르면 그 줄을 펼치고 카드의 첫 단위를 고른다.
+   *  testid는 카드 첫 단위(외톨이 · 이웃한 짝 카드면 줄 키 u<id>와 같다, 떨어진 짝의 다른 카드는 그 카드의 첫 단위) */
+  function renderDeletedLine(rows: readonly PaperRow[], line: DeletedLine): ReactNode {
+    const deleted = strips?.deleted;
+    const unitId = readRowUnitId(rows[0]);
+    if (!deleted || unitId === null) return null;
+    const unitIds = rows.map((row) => readRowUnitId(row) ?? -1);
+    return (
+      <div key={`deleted-${unitId}`} className="strip-row">
+        <span className="strip-lead-gap" style={{ width: readTabWidth(rows[0]) + STRIP_LEAD_EXTRA }} />
+        <button
+          type="button"
+          className="deleted-line"
+          data-tip={line.remark || undefined}
+          data-pick={unitIds.some((id) => pickedIds?.has(id)) ? "" : undefined}
+          data-testid={`${testId}-deleted-u${unitId}`}
+          onClick={(event) => {
+            deleted.onOpen(line.rowKey);
+            onUnitClick(unitId, null, event);
+          }}
+        >
+          <span className="deleted-tag">{t("paper.deleted.tag")}</span>
+          <span className="deleted-text">{[line.kind, line.text].filter((part) => part !== null && part !== "").join(" · ")}</span>
+        </button>
+      </div>
+    );
+  }
+
   /** 풀기 전환의 키 - 줄에서 처음 보이는 조각의 블록과 시작 자리. 번호 칸으로 가 통째로 가려진 번호 칸 블록은 건너뛴다(표 안 칸 조각의 키와 같은 꼴) */
   function readFlipKey(row: Extract<PaperRow, { type: "piece" }>, unit: ViewUnit | undefined): string {
     const skip = readHiddenPrefix(row.parts[0].block, unit);
@@ -1251,6 +1291,8 @@ export function Paper({
   /** 한 칸(외톨이 줄 하나 또는 짝 카드 한 장) - 카드는 .strip-card로 감싸 강조 테두리가 줄 수와 상관없이 카드 전체에 둘린다(감싼 요소는 display: contents라 배치는 그대로) */
   function renderCard(rows: readonly PaperRow[], isPeek = false): ReactNode {
     if (hasToc && isTocRow(rows[0], model.units)) return renderTocBlock(rows);
+    const deletedLine = strips?.deleted ? readDeletedLine(strips.deleted.folds, rows.map((row) => readRowUnitId(row) ?? -1), selectedId) : null;
+    if (deletedLine !== null) return renderDeletedLine(rows, deletedLine);
     const content = rows.map((row, index) => (
       <Fragment key={row.key}>
         {index > 0 && renderGap(rows[index - 1], row)}
@@ -1279,7 +1321,7 @@ export function Paper({
       <PaperChunk
         key={group.cards[0][0].key}
         live={nearChunks === null || (group.index >= nearChunks.from && group.index <= nearChunks.to) || liveChunkIds.has(group.index)}
-        deps={[cardGroups, t, testId, dragBoxes, pickWholeBundle, strips?.toc?.open, strips?.toc?.selected, strips?.toc?.busy, strips?.toc?.canClear, shiftGroups, strips?.headingShift?.busy, strips?.headingShift?.canRevert, unwrapHeads, strips?.unwrap?.busy, strips?.unwrap?.canRewrap]}
+        deps={[cardGroups, t, testId, dragBoxes, pickWholeBundle, strips?.toc?.open, strips?.toc?.selected, strips?.toc?.busy, strips?.toc?.canClear, shiftGroups, strips?.headingShift?.busy, strips?.headingShift?.canRevert, unwrapHeads, strips?.unwrap?.busy, strips?.unwrap?.canRewrap, strips?.deleted?.folds]}
         render={() => renderCards(group)}
       />
     ));

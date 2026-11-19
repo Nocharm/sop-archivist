@@ -7,7 +7,7 @@
 
 import { ExternalLink, FileCheck2, FileUp, FolderOutput, Inbox, Link2, Sparkles, SquarePlus, Trash2, TriangleAlert, X } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useEffectEvent, useRef, useState, type ReactNode } from "react";
+import { useEffect, useEffectEvent, useMemo, useRef, useState, type ReactNode } from "react";
 import { AssignContextMenu } from "@/components/assign/assign-context-menu";
 import { AssignHelp } from "@/components/assign/assign-help";
 import { LinkLines } from "@/components/assign/link-lines";
@@ -49,6 +49,7 @@ import { useI18n } from "@/lib/i18n";
 import { navigate } from "@/lib/nav-buffer";
 import { buildNewAiFilter, listNewAiLinks, readNewAiPill } from "@/lib/new-ai-filter-model";
 import { buildSheetDraft } from "@/lib/space-preview-model";
+import { buildDeletedFolds } from "@/lib/deleted-fold-model";
 import { hasTocLineIn, listPartSheets } from "@/lib/paper-model";
 import { getNewDocumentsHref, getStageHref } from "@/lib/stages";
 import { toggleTocOpen } from "@/lib/toc-block-model";
@@ -185,6 +186,9 @@ export default function AssignPage() {
     for (const source of [docs, tobe, writtenList]) if (source.error !== null) source.reload();
     if (docViews.error !== null) docViews.retry();
   };
+  // 삭제로 확정한 줄은 흐린 한 줄로 접는다(설계 D6) - 누르면 펼친다. 펼침은 줄 키로 이 화면을 연 동안만(목차 블록 펼침과 같은 짜임), 고른 박스는 용지가 늘 펼친다
+  const [deletedOpen, setDeletedOpen] = useState<ReadonlySet<string>>(() => new Set());
+  const deletedFolds = useMemo(() => buildDeletedFolds(rows, unitMap, { filter: state.filter, open: deletedOpen }), [rows, unitMap, state.filter, deletedOpen]);
   if (!ready) {
     return error !== null ? (
       <BundleLoadError error={error} onRetry={reloadAll} testId="assign" />
@@ -538,6 +542,8 @@ export default function AssignPage() {
                 highlightIds={mode === "old" ? highlightIds : NO_NUMBERS}
                 // 떨어진 짝 안내 줄 - 누르면 짝의 원래 자리로 가 그 박스를 고른다(설계 D3)
                 pairHint={mode === "old" && !isNewEdit ? { onGo: goToUnit } : undefined}
+                // 삭제로 확정한 줄의 접힌 한 줄 - 한 단으로 연 New 문서에는 줄이 없다
+                deleted={isSolo ? undefined : { folds: deletedFolds, onOpen: (key) => setDeletedOpen((open) => new Set(open).add(key)) }}
                 pickedIds={pickedOld}
                 warnBlockIds={warnBlockIds}
                 statusOf={readMarkStatus}
