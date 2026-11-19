@@ -23,7 +23,6 @@ from app.sop.models import (
     SourceTable,
     Unit,
     UnitDecision,
-    UnitEdit,
     UnitPair,
     UnitPairMember,
 )
@@ -180,12 +179,11 @@ def _build_unit_rows(
 
 
 async def refresh_code_pairs(
-    session: AsyncSession, document: Document, actor: str, links: Sequence[tuple[int, int]] = ()
+    session: AsyncSession, document: Document, actor: str
 ) -> None:
     """제안 상태의 코드 짝을 지우고 다시 만든다 — 확정 짝(과 다른 출처의 짝)은 두고 그 단위는 다시 짝짓지 않는다.
 
-    연달아 배치는 이웃 짝, 따로 배치는 둘 다 벗긴 대응 표의 같은 행 · 같은 순서 짝(F8a, _find_table_pairs — links는 이번 편집이 함께
-    벗긴 표 짝)이다. 이미 판단한 단위가 있으니 서로 다른 곳으로 보낸 단위끼리는 짝짓지 않고, 만든 짝은 settle_pairs에 넘겨 모두 같은
+    연달아 배치는 이웃 짝, 따로 배치는 둘 다 벗긴 대응 표의 같은 행 · 같은 순서 짝(F8a, _find_table_pairs)이다. 이미 판단한 단위가 있으니 서로 다른 곳으로 보낸 단위끼리는 짝짓지 않고, 만든 짝은 settle_pairs에 넘겨 모두 같은
     곳으로 확정된 짝은 바로 확정한다(한 줄의 처분은 하나다, pair_settle). 행 수가 달라 짝을 세우지 않은 대응 표는 추출 경고
     (pair_rows_differ)로 남긴다.
     """
@@ -206,7 +204,7 @@ async def refresh_code_pairs(
     if document.language_layout == INTERLEAVED_LAYOUT:
         pairs = await _find_code_pairs(session, extraction_id)
     elif document.language_layout == SEPARATE_LAYOUT:
-        pairs, differ = await _find_table_pairs(session, document.id, extraction_id, links)
+        pairs, differ = await _find_table_pairs(session, extraction_id)
     else:
         pairs = []
     await _sync_rows_warnings(session, extraction_id, differ)
@@ -239,19 +237,18 @@ async def load_table_facts(session: AsyncSession, extraction_id: int) -> list[Ta
 
 
 async def _find_table_pairs(
-    session: AsyncSession, document_id: int, extraction_id: int, links: Sequence[tuple[int, int]]
+    session: AsyncSession, extraction_id: int
 ) -> tuple[list[tuple[list[int], list[int]]], list[tuple[int, int]]]:
     """한/영 따로 문서의 둘 다 벗긴 대응 표에서 같은 행 · 같은 순서의 칸 줄 짝과, 행 수가 달라 짝을 세우지 않은 대응 표.
 
-    사람이 함께 벗긴 표 짝은 이번 편집(links)과 지금 남은 편집 기록에서 읽는다(뒤의 편집이 먼저) — 다른 표는 같은 꼴인 가장 비슷한
-    벗긴 표와 맺는다(counterparts.match_unwrapped_tables). 칸 줄은 표의 언어인 묶이지 않은 칸 문장 가운데 이미 짝(확정 · 사람 · AI)에
+    벗긴 한글 표는 같은 꼴인 가장 비슷한 벗긴 영어 표와 맺는다(counterparts.match_unwrapped_tables). 칸 줄은 표의 언어인 묶이지 않은 칸 문장 가운데 이미 짝(확정 · 사람 · AI)에
     들지 않고 목차 표시가 없는 것이다 — 확정한 짝 하나가 그 행의 다른 줄 제안을 막지 않게 줄만 뺀다.
     """
     facts = await load_table_facts(session, extraction_id)
     layout = {table.id: table for table in facts if table.is_layout}
     if len(layout) < 2:
         return [], []
-    matches = match_unwrapped_tables(facts, [*links, *await _load_table_links(session, document_id)])
+    matches = match_unwrapped_tables(facts)
     if not matches:
         return [], []
     matched = {table_id for match in matches for table_id in match}
@@ -276,20 +273,6 @@ async def _find_table_pairs(
         else:
             pairs.extend(build_row_pairs(lines[korean], lines[english]))
     return pairs, differ
-
-
-async def _load_table_links(session: AsyncSession, document_id: int) -> list[tuple[int, int]]:
-    """남은(되돌리지 않은) 표 벗기기 편집이 함께 벗긴 표 짝 — 뒤의 편집이 먼저. 짝이 없던 편집과 옛 기록은 건너뛴다."""
-    payloads = await session.scalars(
-        select(UnitEdit.payload)
-        # "applied"는 editing.EDIT_APPLIED — editing → units 순환 import라 값으로 쓴다
-        .where(UnitEdit.document_id == document_id, UnitEdit.state == "applied", UnitEdit.op == "set_layout_table")
-        .order_by(UnitEdit.seq.desc())
-    )
-    return [
-        (payload["table_id"], payload["counterpart_table_id"])
-        for payload in payloads if payload.get("counterpart_table_id") is not None
-    ]
 
 
 async def _sync_rows_warnings(session: AsyncSession, extraction_id: int, differ: Sequence[tuple[int, int]]) -> None:

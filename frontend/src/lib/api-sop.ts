@@ -347,8 +347,6 @@ export interface ViewTable {
   anchor: { block_id: number; at: number } | null;
   /** 칸 줄 언어가 많은 쪽 - 두 언어 표 · 빈 표는 null. 서버는 늘 싣는다(시험 자료가 줄여 쓰게 선택 칸) */
   lang?: "ko" | "en" | null;
-  /** 한/영 따로 문서에서 아직 벗기지 않은 이 표와 함께 벗길 대응 표 후보(F8a) - 맨 앞이 같은 꼴인 가장 비슷한 표, 비면 묻지 않는다 */
-  counterparts?: number[];
 }
 
 export interface ViewBlock {
@@ -499,8 +497,7 @@ export type EditOp =
   | { type: "set_language"; unit_ids: number[]; lang: "ko" | "en" }
   | { type: "split_table_rows"; table_unit_id: number }
   | { type: "merge_table_rows"; table_id: number }
-  /** counterpart_table_id - 벗길 때만, 다른 언어 절반의 대응 표를 같은 편집으로 함께 벗기고 두 표의 칸 줄을 같은 행 · 같은 순서로 짝짓는다(F8a) */
-  | { type: "set_layout_table"; table_id: number; is_layout: boolean; counterpart_table_id?: number }
+  | { type: "set_layout_table"; table_id: number; is_layout: boolean }
   /** 블록 자리 2 안(caption-slot-model CAPTION_REACH)의 묶이지 않은 글 단위를 표·행·그림의 캡션으로 - 사이 문단은 그대로,
    *  묶음마다 언어당 하나(caption_exists), 먼 글은 caption_not_adjacent, 다른 그림의 캡션을 같이 쓰는 그림은 caption_shared. 판단이 있는 묶음이면 서버가 묻는다 */
   | { type: "attach_caption"; unit_id: number; bundle_unit_id: number }

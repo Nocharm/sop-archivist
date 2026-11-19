@@ -32,7 +32,6 @@ import { CutPop } from "@/components/paper/cut-pop";
 import { FilterChip } from "@/components/status";
 import { ConfirmModal } from "@/components/ui/confirm-modal";
 import { AcceptSuggestionsModal } from "@/components/assign/accept-suggestions-modal";
-import { CounterpartModal } from "@/components/assign/counterpart-modal";
 import { EmptyState } from "@/components/ui/empty-state";
 import { BundleLoadError } from "@/components/bundle-load-error";
 import { flashElement, Truncate } from "@/components/ui/motion";
@@ -44,7 +43,6 @@ import { bulkDecide, type ChangeType, type EditOp, type UnitRow } from "@/lib/ap
 import { isBundleCaptionNeeded } from "@/lib/caption-model";
 import { countJoinedLines } from "@/lib/join-sentence-model";
 import { listLinkMenuItems, listUnlinkRemainder, type LinkMenuItem } from "@/lib/assign-model";
-import { readOtherHalf } from "@/lib/counterpart-model";
 import { loadBundle } from "@/lib/bundle-store";
 import { getDestinationId, isTextChangeType, readSlotKind } from "@/lib/classify-model";
 import { useI18n } from "@/lib/i18n";
@@ -73,11 +71,11 @@ export default function AssignPage() {
     setManualPart, activePart, isFoldEmpty, foldElsewhere, writtenDocs, composedDocs, setManualNewDoc, toggleKey, liveDoc, isNewDocOpen,
     newDocId, newAiReturn, setNewAiReturn, isComposedDoc, newFileId, composedDoc, newRows, headingNotes, sectionMarks, joinableIds,
     templateTitles, linkPairs, view, changeView, zoomPane, setPanes, remarkEdit, setRemarkEdit, focusAfterRef, busy, editConfirm,
-    setEditConfirm, counterpartAsk, setCounterpartAsk, oldPaneRef, buildUndo, markRecorded, bulk, setBulk, confirmingIdentical,
+    setEditConfirm, oldPaneRef, buildUndo, markRecorded, bulk, setBulk, confirmingIdentical,
     setConfirmingIdentical, resetScope, setResetScope, slots, newDraft, draftSlotKey, placeResolved, canPlaceClick, pickedSpotKey,
     setCarvePick, carve, carveText, clearCarve, togglePairViewByButton, pairFrom, setPairFrom, pairSource, selectToc, openNewCtxMenu,
     openSolo, ctxGroups, confirmBlockKey, refPendingIds, isLinkedToWritten, captionPendingKeys, docDashboard, openCtxMenu, runUnitEdit,
-    confirmCounterpart, rewrapTable, describeEditConfirm, clearToc, switchToPair, applySplitSuggestion, splitAtCut, handleOldDoubleClick,
+    rewrapTable, describeEditConfirm, clearToc, switchToPair, applySplitSuggestion, splitAtCut, handleOldDoubleClick,
     runCtx, revertHeadings, planOldJoin, joinOld, renderOldActions, runSave, runClear, confirmIdenticalAll, acceptAll, pickDestination,
     pickNewSentence, handleNewPick, handleJoinPick, readJoinAfter, pickJoinMenu, pickPlaceSpot, pickOwnAiLine, jumpToNew, openNewDoc,
     showInNew, jumpToOld, pickTemplateLine, fillTemplateMissing, isOldDrag, finishPairPick, handleOldClick, markRecHover, revealPick,
@@ -766,15 +764,6 @@ export default function AssignPage() {
           busy={busy}
           onAccept={(ids, reason) => void acceptAll(acceptKind, ids, reason)}
           onClose={() => setAcceptKind(null)}
-        />
-      )}
-      {counterpartAsk && (
-        <CounterpartModal
-          half={readOtherHalf(counterpartAsk.table)}
-          choices={counterpartAsk.choices}
-          busy={busy}
-          onConfirm={(counterpartId) => confirmCounterpart(counterpartAsk.table, counterpartAsk.choices.find((choice) => choice.tableId === counterpartId) ?? null)}
-          onClose={() => setCounterpartAsk(null)}
         />
       )}
       {editConfirm && (

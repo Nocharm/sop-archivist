@@ -28,7 +28,7 @@ import { findLastStep } from "@/lib/destination-manage-model";
 import { findSplitBlock, readSplitOffsets } from "@/lib/split-ai-tabs-model";
 import { planPairLanguages, type JoinKind, type JoinPlan } from "@/lib/split-menu-model";
 import { listAppliedSuggestions, requestAi, setSuggestionAdoption, type AiKind, type AiScope } from "@/lib/api-manage";
-import { addToBeDoc, addWiStep, acceptSuggestions, MAX_ACCEPT, confirmPair, createPair, deletePair, editUnits, clearDecisions, confirmMatchesInBulk, getComposedDoc, getDocumentView, getGroupByTarget, getUnitRef, getGroupByUnit, getToBe, listAllUnits, listDocuments, listIdenticalCandidates, listNewCandidates, listSuggestions, listWrittenSentences, redoDecision, removeToBeDoc, removeWiStep, saveGroup, undoDecision, updateCaptionRef, type AcceptKind, type AiSuggestion, type ComposedDoc, type ComposedItem, type DecisionStepResult, type DocumentView, type EditOp, type Group, type GroupSaveInput, type NewCandidate, type ToBe, type UndoMeta, type UnitRefDetail, type UnitRow, type ViewTable, type ViewUnit, type WrittenSentence } from "@/lib/api-sop";
+import { addToBeDoc, addWiStep, acceptSuggestions, MAX_ACCEPT, confirmPair, createPair, deletePair, editUnits, clearDecisions, confirmMatchesInBulk, getComposedDoc, getDocumentView, getGroupByTarget, getUnitRef, getGroupByUnit, getToBe, listAllUnits, listDocuments, listIdenticalCandidates, listNewCandidates, listSuggestions, listWrittenSentences, redoDecision, removeToBeDoc, removeWiStep, saveGroup, undoDecision, updateCaptionRef, type AcceptKind, type AiSuggestion, type ComposedDoc, type ComposedItem, type DecisionStepResult, type DocumentView, type EditOp, type Group, type GroupSaveInput, type NewCandidate, type ToBe, type UndoMeta, type UnitRefDetail, type UnitRow, type ViewUnit, type WrittenSentence } from "@/lib/api-sop";
 import { listRefCandidates } from "@/lib/caption-ref-model";
 import { isBundleKind, isCaptionGate, listCaptionPendingRowKeys, makeIsLinkedToWritten, type CaptionUnit } from "@/lib/caption-model";
 import { buildBlockPlaces, getCaptionMotion, resolveCaptionDetach, resolveCaptionDrop, type CaptionDetach, type CaptionDrop } from "@/lib/caption-slot-model";
@@ -40,7 +40,6 @@ import { buildUseDraft, findRowSuggestion, indexLiveSuggestions, readSuggestedDe
 import { buildAssignMenu, getPairPickBlocker, getPairSetBlocker, planAssignJoin, planShapeMode, type AssignMenuAction, type AssignMenuGroups } from "@/lib/assign-context-menu-model";
 import { listHeadingBackUnits } from "@/lib/heading-shift-model";
 import { countDecidedLines, getTableNumber, getUnitUnwrapTable, listUnwrapScopes } from "@/lib/unwrap-model";
-import { buildUnwrapOp, listCounterpartChoices, type CounterpartChoice } from "@/lib/counterpart-model";
 import { resolveLineParam } from "@/lib/assign-line-param";
 import { readAssignView, writeAssignView } from "@/lib/assign-view-prefs";
 import { loadBundle, useBundle } from "@/lib/bundle-store";
@@ -702,8 +701,6 @@ export function useAssignPage() {
   // 배정이 걸린 문장을 자르거나 합치려 할 때 - 서버가 409 confirm_required로 물으면 확인을 받아 배정을 풀며 다시 보낸다(원문 고치기와 같은 규칙, 설계 2026-11-15 §3.5)
   // 다시 보낼 일은 함수가 아니라 값으로 둔다 - 확인을 누른 그때의 화면 값(원문 보기·문서 판)으로 보내야 고친 뒤 새 줄을 따라간다
   const [editConfirm, setEditConfirm] = useState<{ count: number; retry: ConfirmedEdit } | null>(null);
-  // 대응 표 함께 벗기기 창(F8a) - 벗기려는 표와 함께 벗길 후보(맨 앞이 가장 비슷한 표)
-  const [counterpartAsk, setCounterpartAsk] = useState<{ table: ViewTable; choices: CounterpartChoice[] } | null>(null);
   // 표 벗기기 · 다시 표로의 풀기 전환(걷기 · 펼치기 · 붙이기, F10) - Old 칸 안에서 바뀌는 표를 찾고 잰다
   const oldPaneRef = useRef<HTMLElement | null>(null);
   const unwrapMotion = useUnwrapMotion(oldPaneRef);
@@ -1240,9 +1237,9 @@ export function useAssignPage() {
       // (F10, 화면 안만 움직이고 움직임 줄이기면 번쩍임만). 캡션은 글이 캡션 자리로 미끄러져 들어간다. 알림은 전환 뒤
       const docId = shapeView.document.id;
       const current = views.data ?? [];
-      // 표는 바로 안쪽 띠 표도 함께 제목 줄 ↔ 표로 바뀌고(F2), 대응 표를 함께 벗기면(F8a) 두 표가 함께 풀린다
+      // 표는 바로 안쪽 띠 표도 함께 제목 줄 ↔ 표로 바뀐다(F2)
       const motion = op.type === "set_layout_table"
-        ? { scopes: [op.table_id, ...(op.is_layout && op.counterpart_table_id !== undefined ? [op.counterpart_table_id] : [])].flatMap((id) => listUnwrapScopes(new Map(shapeView.tables.map((table) => [table.id, table])), id)), reverse: !op.is_layout }
+        ? { scopes: listUnwrapScopes(new Map(shapeView.tables.map((table) => [table.id, table])), op.table_id), reverse: !op.is_layout }
         : getCaptionMotion(op, followId);
       if (motion !== null && current.some((view) => view.document.id === docId)) {
         const fresh = await getDocumentView(bundleId, docId);
@@ -1268,22 +1265,9 @@ export function useAssignPage() {
     }
   }
 
-  /** 표 벗기기(F1) - 한/영 따로 문서에서 다른 언어 절반에 같은 꼴 대응 표가 있으면 창이 한 번 묻는다(F8a). 없으면 이 표만 바로 벗긴다 */
+  /** 표 벗기기(F1) - 누른 표 하나만 벗긴다. 한/영 따로 문서에서 대응 표도 벗기면 서버가 같은 행끼리 짝을 제안한다(F8a) */
   function unwrapTable(tableId: number) {
-    const tables = shapeView?.tables ?? [];
-    const table = tables.find((item) => item.id === tableId);
-    const choices = table && shapeView ? listCounterpartChoices(table, tables, shapeView.blocks) : [];
-    if (table && choices.length > 0) setCounterpartAsk({ table, choices });
-    else void runUnitEdit(buildUnwrapOp(tableId, null), t("assign.unwrap.didUnwrap"), null);
-  }
-
-  /** 대응 표 창에서 고른 것으로 벗긴다 - 함께 벗기면 편집 한 번(되돌리기 한 번에 둘 다), 행 수가 다르면 짝이 서지 않는다고 알린다 */
-  function confirmCounterpart(table: ViewTable, choice: CounterpartChoice | null) {
-    setCounterpartAsk(null);
-    const okText = choice === null
-      ? t("assign.unwrap.didUnwrap")
-      : t(choice.rowsDiffer ? "assign.counterpart.didRowsDiffer" : "assign.counterpart.didBoth", { a: getTableNumber(table), b: choice.number });
-    void runUnitEdit(buildUnwrapOp(table.id, choice?.tableId ?? null), okText, null);
+    void runUnitEdit({ type: "set_layout_table", table_id: tableId, is_layout: true }, t("assign.unwrap.didUnwrap"), null);
   }
 
   /** 다시 표로(F1) - 벗긴 표 전체를 표 한 줄로 되돌린다. 그 표의 줄에 배정이 있으면 서버가 되묻고 확인창이 한 번 묻는다(표 밖 줄의 배정은 그대로) */
@@ -3115,15 +3099,15 @@ export function useAssignPage() {
     soloUnits, cutUnit, cutLine, linkedTargets, setManualPart, activePart, isFoldEmpty, foldElsewhere, writtenDocs, composedDocs,
     setManualNewDoc, toggleKey, liveDoc, isNewDocOpen, newDocId, newAiReturn, setNewAiReturn, isComposedDoc, newFileId, composedDoc,
     newRows, headingNotes, sectionMarks, joinableIds, templateTitles, linkPairs, view, changeView, zoomPane, setPanes, askAiScope,
-    aiMenuItems, remarkEdit, setRemarkEdit, focusAfterRef, firstTextRef, busy, editConfirm, setEditConfirm, counterpartAsk,
-    setCounterpartAsk, oldPaneRef, undoState, buildUndo, markRecorded, bulk, setBulk, confirmingIdentical, setConfirmingIdentical,
+    aiMenuItems, remarkEdit, setRemarkEdit, focusAfterRef, firstTextRef, busy, editConfirm, setEditConfirm,
+    oldPaneRef, undoState, buildUndo, markRecorded, bulk, setBulk, confirmingIdentical, setConfirmingIdentical,
     resetScope, setResetScope, accOpen, toggleAcc, saveUnits, slots, aiUnfilled, draftPlace, draftSectionKey, draftPosition, newDraft,
     draftSlotKey, placeResolved, canPlaceClick, pickedSpotKey, setCarvePick, carve, carveText, clearCarve, togglePairViewByButton,
     pairFrom, setPairFrom, setRefEntryId, pairSource, selectToc, selectRow, openNewCtxMenu, openSolo, goToUnit, moveRow, hasUnitDraft,
     isFixedCaption, ctxGroups, rowViewUnits, rowSplitUnit, rowSplit, splitBlocked, rowRefUnit, refBlocked, isRefGate, isCaptionGateOn,
     confirmBlockKey, rowCaptionRefs, refCandidates, shapeLines, slotPlaces, slotBlockKinds, shapeMode, headingBack, rewrap, bandBack,
     stepBase, refPendingIds, isLinkedToWritten, captionPendingKeys, docDashboard, refDetail, refInfo, openCtxMenu, runUnitEdit,
-    confirmCounterpart, rewrapTable, describeEditConfirm, clearToc, runCaptionRefChange, switchShapeMode, switchToPair,
+    rewrapTable, describeEditConfirm, clearToc, runCaptionRefChange, switchShapeMode, switchToPair,
     applySplitSuggestion, dismissSplitSuggestion, splitPendingIds, readPendingItem, selectNextSplit, selectNextRef, selectNextCaption,
     splitAtCut, handleOldDoubleClick, runCtx, runUnitAction, revertHeadings, planOldJoin, joinOld, renderOldActions, readReasonNeed,
     runSave, runClear, runUndoStep, confirmIdenticalAll, acceptAll, markNew, placeManage, pickDestination, pickNewSentence, handleNewPick,

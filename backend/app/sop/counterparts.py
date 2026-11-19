@@ -133,38 +133,15 @@ def _list_candidates(table: TableFacts, tables: Sequence[TableFacts], *, is_layo
     ]
 
 
-def list_counterpart_options(tables: Sequence[TableFacts]) -> dict[int, list[int]]:
-    """아직 벗기지 않은 표 → 함께 벗길 대응 표 후보(비슷한 차례). 가장 비슷한 후보가 같은 꼴일 때만 싣는다 — 빈 목록이면 묻지 않는다.
+def match_unwrapped_tables(tables: Sequence[TableFacts]) -> list[tuple[int, int]]:
+    """둘 다 벗긴 대응 표 (한글 표, 영어 표).
 
-    후보는 다른 언어 절반의 아직 벗기지 않은 표 전부다(사람이 가장 비슷한 것 대신 다른 표를 고를 수 있다). 이미 벗긴 표는 싣지 않는다.
-    """
-    orders = _list_half_orders(tables)
-    options: dict[int, list[int]] = {}
-    for table in tables:
-        if table.is_layout or not _is_candidate_kind(table):
-            continue
-        ranked = _rank(table, _list_candidates(table, tables, is_layout=False), orders)
-        if ranked and is_same_form(table, ranked[0]):
-            options[table.id] = [other.id for other in ranked]
-    return options
-
-
-def match_unwrapped_tables(tables: Sequence[TableFacts], links: Sequence[tuple[int, int]]) -> list[tuple[int, int]]:
-    """둘 다 벗긴 대응 표 (한글 표, 영어 표) — 사람이 함께 벗긴 짝(links, 앞의 것이 먼저)이 먼저다.
-
-    나머지 벗긴 한글 표는 문서 순서대로, 아직 대응 표가 없는 벗긴 영어 표 가운데 같은 꼴인 가장 비슷한 표와 맺는다(따로 벗긴 두 표도
+    벗긴 한글 표는 문서 순서대로, 아직 대응 표가 없는 벗긴 영어 표 가운데 같은 꼴인 가장 비슷한 표와 맺는다(따로 벗긴 두 표도
     둘 다 벗기면 맺어진다). 표 하나는 대응 표 하나만 갖는다.
     """
     by_id = {table.id: table for table in tables if table.is_layout and _is_candidate_kind(table)}
     used: set[int] = set()
     matches: list[tuple[int, int]] = []
-    for first, second in links:
-        pair = [by_id.get(first), by_id.get(second)]
-        if None in pair or {first, second} & used or {table.lang for table in pair} != set(PAIR_LANGS):
-            continue
-        korean, english = sorted(pair, key=lambda table: table.lang != "ko")
-        matches.append((korean.id, english.id))
-        used.update((first, second))
     orders = _list_half_orders(tables)
     for table in sorted(by_id.values(), key=lambda item: item.index):
         if table.lang != "ko" or table.id in used:

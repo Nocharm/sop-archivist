@@ -14,14 +14,13 @@ from collections.abc import Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, fields
 from typing import Annotated, Literal, TypeVar, assert_never
 
-from pydantic import BaseModel, Field, StringConstraints, model_validator
+from pydantic import BaseModel, Field, StringConstraints
 from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import clock
 from app.sop.caption_slot import CAPTION_REACH, PlaceBlock, build_block_places, get_place_distance
 from app.sop.captions import CAPTION_KIND
-from app.sop.counterparts import list_counterpart_options
 from app.sop.decision_steps import UndoMetaIn
 from app.sop.decisions import DbId
 from app.sop.detach import (
@@ -93,10 +92,8 @@ from app.sop.spans import (
 from app.sop.tobe import MAX_DB_INT
 from app.sop.units import (
     LINE_SPLIT_FORMAT,
-    SEPARATE_LAYOUT,
     UNIT_ACTIVE,
     get_latest_extraction_id,
-    load_table_facts,
     pair_new_units,
     refresh_code_pairs,
     verify_document_coverage,
@@ -177,19 +174,12 @@ class MergeTableRowsOp(BaseModel):
 
 
 class SetLayoutTableOp(BaseModel):
-    """표 벗기기(is_layout) · 다시 표로. counterpart_table_id는 벗길 때만 — 다른 언어 절반의 대응 표를 같은 편집으로 함께 벗기고
-    (되돌리기 한 번에 둘 다 돌아온다) 두 표의 칸 줄을 같은 행 · 같은 순서로 짝짓는다(F8a, units.refresh_code_pairs)."""
+    """표 벗기기(is_layout) · 다시 표로. 표는 하나씩 벗긴다 — 한/영 따로 문서에서 둘 다 벗긴 대응 표는 짝을 다시 세울 때 같은 행끼리
+    짝짓는다(F8a, units.refresh_code_pairs). 대응 표 함께 벗기기는 걷었다(사용자 결정 2026-11-19, 요청서 8번)."""
 
     type: Literal["set_layout_table"]
     table_id: DbId
     is_layout: bool
-    counterpart_table_id: DbId | None = None
-
-    @model_validator(mode="after")
-    def check_counterpart(self) -> "SetLayoutTableOp":
-        if self.counterpart_table_id is not None and (not self.is_layout or self.counterpart_table_id == self.table_id):
-            raise ValueError("counterpart_table_id is only for unwrapping, and must be another table")
-        return self
 
 
 class AttachCaptionOp(BaseModel):
@@ -391,8 +381,6 @@ class _Change:
     figures: dict[int, tuple[int | None, int | None]] = field(default_factory=dict)
     # 제목 ↔ 문장(set_heading)과 그 되돌리기·다시 하기 — 활성이 된 단위로 한/영 코드 짝을 다시 세운다(짝은 기록 밖이다)
     repair_pairs: bool = False
-    # 함께 벗긴 대응 표 (표, 대응 표)(F8a) — 이 변경 뒤 짝을 다시 세울 때 같은 꼴 판정보다 먼저 맺는다. 다시 하기는 기록에서 채운다
-    links: list[tuple[int, int]] = field(default_factory=list)
 
     def list_regrouped_cells(self) -> list[int]:
         return sorted({*self.regroup, *(cell_id for draft in self.drafts for cell_id in draft.cells)})
@@ -1222,35 +1210,8 @@ async def _plan_plain_layout(
     return change
 
 
-async def _plan_unwrap_pair(
-    session: AsyncSession, document_id: int, extraction_id: ExtractionId, op: SetLayoutTableOp
-) -> _Change:
-    """표와 다른 언어 절반의 대응 표를 한 편집으로 벗긴다(F8a) — 표마다 보통 벗기기를 세워 하나로 합친다(되돌리기 한 번).
-
-    대응 표는 문서 보기가 싣는 후보(counterparts.list_counterpart_options)만 받는다 — 같은 언어 표 · 이미 벗긴 표 · 누른 표의 안쪽
-    띠 표나 바깥 표를 받으면 같은 단위를 두 번 세운다(422 invalid_counterpart).
-    """
-    assert op.counterpart_table_id is not None
-    await _load_table(session, extraction_id, op.table_id)  # 다른 문서의 표면 404
-    document = await session.get_one(Document, document_id)
-    options = (
-        list_counterpart_options(await load_table_facts(session, extraction_id))
-        if document.language_layout == SEPARATE_LAYOUT else {}
-    )
-    if op.counterpart_table_id not in options.get(op.table_id, []):
-        raise_rule(422, "invalid_counterpart", table_id=op.table_id, counterpart_table_id=op.counterpart_table_id)
-    first = await _plan_set_layout_table(session, document_id, extraction_id, op)
-    second = await _plan_set_layout_table(
-        session, document_id, extraction_id,
-        SetLayoutTableOp(type="set_layout_table", table_id=op.counterpart_table_id, is_layout=True),
-    )
-    change = _merge_changes(first, second)
-    change.links = [(op.table_id, op.counterpart_table_id)]
-    return change
-
-
 def _merge_changes(first: _Change, second: _Change) -> _Change:
-    """두 변경을 한 편집으로 — 표 벗기기와 안쪽 띠 표 바꾸기, 표와 대응 표 벗기기. 둘은 다른 표의 단위만 건드린다.
+    """두 변경을 한 편집으로 — 표 벗기기와 안쪽 띠 표 바꾸기. 둘은 다른 표의 단위만 건드린다.
 
     _Change의 모든 칸을 칸 꼴대로 합친다(목록은 잇고 사전은 더하고 참거짓은 또는) — 칸을 더해도 여기서 조용히 빠지지 않는다.
     같은 변경 안 표 단위를 가리키는 칸(group_draft)은 앞 변경의 초안 수만큼 민다.
@@ -1571,10 +1532,8 @@ async def _plan(session: AsyncSession, document_id: int, extraction_id: Extracti
             return await _plan_split_table_rows(session, extraction_id, op)
         case MergeTableRowsOp():
             return await _plan_merge_table_rows(session, extraction_id, op)
-        case SetLayoutTableOp(counterpart_table_id=None):
-            return await _plan_set_layout_table(session, document_id, extraction_id, op)
         case SetLayoutTableOp():
-            return await _plan_unwrap_pair(session, document_id, extraction_id, op)
+            return await _plan_set_layout_table(session, document_id, extraction_id, op)
         case AttachCaptionOp():
             return await _plan_attach_caption(session, extraction_id, op)
         case DetachCaptionOp():
@@ -1913,7 +1872,7 @@ async def _write_change(
         # 레이아웃 표의 칸 문장은 묶이지 않아 한/영 두 열이 이웃 짝으로 제안되고(따로 배치면 둘 다 벗긴 대응 표의 같은 행끼리, F8a),
         # 다시 데이터 표가 되면 그 제안이 빠진다
         await session.flush()
-        await refresh_code_pairs(session, document, actor, change.links)
+        await refresh_code_pairs(session, document, actor)
     if change.repair_pairs:
         # 제목 ↔ 문장은 짝의 단위를 바꾼다 — 새로 활성이 된 단위만 다시 짝짓는다(F8b, 조항마다 문장 1:1)
         await session.flush()
@@ -2034,10 +1993,6 @@ def _replay(edit: UnitEdit, *, backwards: bool) -> _Change:
             int(unit_id): _orient(figures, backwards=backwards) for unit_id, figures in (edit.figure_changes or {}).items()
         },
         repair_pairs=edit.op == "set_heading",
-        # 함께 벗긴 대응 표는 다시 하기 때 같은 표끼리 다시 맺는다 — 그때 이 기록은 아직 되돌린 상태라 기록에서 읽히지 않는다
-        links=[(edit.payload["table_id"], edit.payload["counterpart_table_id"])]
-        if not backwards and edit.op == "set_layout_table" and edit.payload.get("counterpart_table_id") is not None
-        else [],
     )
 
 
@@ -2084,8 +2039,7 @@ async def undo_edit(session: AsyncSession, document: Document, *, confirm: bool,
     )
     if edit is None:
         raise_rule(409, "nothing_to_undo")
-    # 되돌리는 기록을 먼저 내린다 — 짝 다시 세우기(units.refresh_code_pairs)가 남은 기록에서 함께 벗긴 표 짝을 읽을 때 이 기록을
-    # 아직 적용된 것으로 읽지 않게. 실패하면 요청이 커밋하지 않아 상태도 그대로다
+    # 되돌리는 기록을 먼저 내린다 — 실패하면 요청이 커밋하지 않아 상태도 그대로다
     edit.state = EDIT_UNDONE
     await session.flush()
     return await _step_edit(session, document, edit, backwards=True, confirm=confirm, actor=actor)

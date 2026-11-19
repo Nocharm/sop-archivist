@@ -29,7 +29,7 @@ from app.sop.caption_refs import (
     update_caption_ref,
 )
 from app.sop.constants import LANGUAGE_LAYOUTS, MEMBER_ROLES
-from app.sop.counterparts import build_table_facts, count_table_langs, list_counterpart_options
+from app.sop.counterparts import build_table_facts, count_table_langs
 from app.sop.decision_steps import record_unit_edit_step
 from app.sop.detach import detach_units, find_units_needing_confirm
 from app.sop.editing import (
@@ -92,7 +92,6 @@ from app.sop.segment import find_anchor_offset, is_band_table, read_table_place
 from app.sop.status import get_cover_status
 from app.sop.tobe import MAX_DB_INT, release_match_doc, rename_match_doc, temp_match_code
 from app.sop.units import (
-    SEPARATE_LAYOUT,
     UNIT_ACTIVE,
     compute_display_id,
     get_latest_extraction_id,
@@ -224,8 +223,6 @@ class ViewTableOut(BaseModel):
     anchor: ViewTableAnchorOut | None
     # 칸 줄 언어가 많은 쪽 — "ko" | "en" | None(두 언어 표 · 빈 표). 한/영 따로 문서의 대응 표 판정에 쓴다(F8a)
     lang: str | None = None
-    # 한/영 따로 문서에서 아직 벗기지 않은 이 표와 함께 벗길 대응 표 후보(비슷한 차례, 맨 앞이 같은 꼴인 가장 비슷한 표) — 비면 묻지 않는다
-    counterparts: list[int] = []
 
 
 class ViewBlockOut(BaseModel):
@@ -417,11 +414,10 @@ async def _build_view_tables(
 ) -> list[ViewTableOut]:
     """표 목록 — 안쪽 표는 바깥 칸 블록의 문단 시작 자리(블록 신호 paras)로 놓인 글자 자리를 함께 싣는다(F2).
 
-    표마다 칸 줄 언어와, 한/영 따로 문서면 함께 벗길 대응 표 후보도 싣는다(F8a) — 단위는 이미 읽은 활성 단위다(쿼리를 더하지 않는다).
+    표마다 칸 줄 언어도 싣는다(F8a) — 단위는 이미 읽은 활성 단위다(쿼리를 더하지 않는다).
     """
     facts = build_table_facts(tables, count_table_langs((unit.table_id, unit.lang) for unit in units))
     lang_by_table = {table.id: table.lang for table in facts}
-    options = list_counterpart_options(facts) if document.language_layout == SEPARATE_LAYOUT else {}
     places = {table.id: place for table in tables if (place := read_table_place(table.signals)) is not None}
     parents = {table.parent_table_id for table in tables if table.id in places}
     cells: dict[tuple[int, int, int], tuple[int, dict | None]] = {}
@@ -448,7 +444,6 @@ async def _build_view_tables(
                 id=table.id, table_index=table.table_index, parent_table_id=table.parent_table_id, part=table.part,
                 n_rows=table.n_rows, n_cols=table.n_cols, is_layout=table.is_layout,
                 is_band=is_band_table(table.signals), anchor=anchor, lang=lang_by_table[table.id],
-                counterparts=options.get(table.id, []),
             )
         )
     return out

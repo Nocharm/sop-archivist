@@ -201,7 +201,7 @@ def test_nested_bundle_has_inner_tables_in_one_work_table(seed_runs: SeedRuns) -
 
 
 def test_pair_tables_bundle_has_a_separate_document_with_wrapped_tables(seed_runs: SeedRuns) -> None:
-    """한/영 따로 표 묶음 — 한/영 따로 문서 하나에 아직 벗기지 않은 표 넷(Assign 대응 표 함께 벗기기 스모크가 쓴다)."""
+    """한/영 따로 표 묶음 — 한/영 따로 문서 하나에 아직 벗기지 않은 표 넷(Assign 대응 표 짝 스모크가 쓴다)."""
     database_path, _, _, bundles = seed_runs
     (bundle_id,) = [bundle_id for bundle_id, title, _ in bundles if title == PAIR_TABLES_TITLE]
 

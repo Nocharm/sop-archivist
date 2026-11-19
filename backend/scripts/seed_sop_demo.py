@@ -10,7 +10,7 @@ Assign 목차 블록·띠 표 제목 줄 스모크용).
 표 안 표: 8 표 안 표(qa.member 작성자 — 첫 행 칸에 띠 표, 칸 안 두 문단 사이에 값 표, 다른 칸에 권한 표가 든 작업 표 하나, 배정 없음.
 Assign 표 안 표 스모크용, MD 1 F2).
 한/영 따로 표: 9 한/영 따로 표(qa.member 작성자 — 한글 절반 표 둘 다음 영어 절반 표 둘, 값 표는 행 수가 다름, 배정 없음.
-Assign 대응 표 함께 벗기기 스모크용).
+Assign 대응 표 짝 스모크용).
 이미 같은 제목 묶음이 있으면 그 묶음은 건너뛰어 여러 번 돌려도 같은 결과다. 끝에 묶음별 상태·진행 숫자만 찍고 원문 글자는 찍지 않는다.
 
 개발 전용이다 — 합성 생성기가 개발 의존성 python-docx와 테스트 팩토리(tests.pdf_factory)를 쓰고, 합성 파일은 임시 디렉터리에
@@ -271,7 +271,7 @@ def _build_nested_bundle(client: TestClient, bundle_id: int) -> None:
     assert response.json()["status"] == "ready", response.json()["status"]
 
 
-# --- 한/영 따로 표 Bundle(9번) — Assign 대응 표 함께 벗기기 스모크용(MD 1 F8a) ---
+# --- 한/영 따로 표 Bundle(9번) — Assign 대응 표 짝 스모크용(MD 1 F8a) ---
 
 PAIR_TABLES_TITLE = "SYNTHETIC 9 한/영 따로 표"
 # 작업 표(2열 2.8 / 14.2 cm, 3행)는 두 절반이 같은 꼴 · 같은 행 수, 값 표(3열)는 영어 쪽이 한 행 더 많다

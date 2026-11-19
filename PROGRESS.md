@@ -4,6 +4,7 @@
 
 ## 2026-11-19
 
+- **대응 표 함께 벗기기 걷기(v1.2.7, `fix/unwrap-together-remove`, 요청서 8번)** — "더 헷갈리기만 한다"는 요청. 창(`counterpart-modal`) · 모형 · 서버의 `counterpart_table_id` 편집 · 후보 목록(`list_counterpart_options`) · 편집 기록의 사람 짝(`_load_table_links`, `_Change.links`)을 걷고, 둘 다 벗긴 대응 표의 같은 행 자동 짝(`match_unwrapped_tables`)은 남겼다. 옛 기록의 `counterpart_table_id`는 읽지 않아 그런 문서는 다음 짝 다시 세우기 때 같은 꼴 판정으로 맺는다(기능이 하루 살아 거의 없음, Alembic 없음). 스모크 대응 표 단계는 새 동작(창 없이 하나씩 → 둘 다 벗기면 짝 → Undo 하나씩)으로 바꿨고, Undo · 편집 직후 결정 칸 단추가 잠긴 사이를 누르지 않게 단추가 풀린 뒤 누른다. 확인: pytest 3123 · ruff, vitest · lint · tsc, `assign:` 스모크 ALL PASS 841.
 - **번호 칸 폭은 그 깊이의 가장 긴 번호에 맞춰(v1.2.6, `fix/number-cell-width`, 요청서 3번)** — 깊이별 고정 폭(`PILL_WIDTH_BY_LEVEL`)이 10px 글꼴 기준이라 11px 번호가 4단계부터 잘렸다. 엮은 New 문서만 하던 "그 깊이 전체를 가장 긴 번호에 맞춰 넓힘"을 `getLevelWidths`로 `strip-pill-model`에 올려 Old · 이미 쓴 New도 쓴다(들여쓰기 폭 자체는 사용자가 지금이 좋다고 함). 확인: 임시 DB에서 번호를 5.2.1.10.으로 바꿔 잘림 없음(66px) 측정, vitest · lint · tsc, `assign:` 스모크 ALL PASS 845.
 - **삭제 · 이동 Remark는 선택(v1.2.5, `fix/remark-optional-delete-move`, 요청서 4번)** — 삭제 · 이동마다 사유를 강제해 손이 많이 갔다. 저장 검사 · 일괄 처리 · AI 일괄 수락 · 검토 조건에서 강제를 풀고, 비면 결과물 · Excel의 Remark가 처분 이름을 라벨 언어로 적는다(DB에는 빈 글 — 언어마다 다른 글을 저장하지 않으려고). 결정 칸의 빈 Remark 자리에 Deleted · Moved를 흐리게 보인다. 보류 · 두 문서 보내기 · 표 구성 변경의 사유는 그대로 필수. 스모크의 "삭제 때 Remark 창이 열린다" 두 단계는 새 동작(창 없이 확정)을 보는 검사로 바꿨다.
 - **붙이기 · 묶기 단추는 고른 박스 위아래 틈에만(v1.2.4, `fix/merge-gap-near-selected`, 요청서 6번)** — 문단 사이 어느 틈에 올려도 단추가 떠 산만했다. 용지가 고른 박스(짝 카드면 카드 전체)에 닿은 틈에만 단추를 그리고, 먼 틈은 올려도 벌어지지 않는다(벌어져도 할 일이 없어서). 고른 것이 없으면 단추도 없다. 스모크: 먼 틈에 단추가 없는지 검사를 더했다.
