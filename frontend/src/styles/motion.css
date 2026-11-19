@@ -90,6 +90,43 @@
   /* 용지 위의 줄은 바탕이 비어 지나가는 동안 두 줄 글이 겹쳐 보인다 - 용지 바탕과 얕은 그림자로 위에 얹는다 */
   .sheet .flip-lead { background: var(--paper); box-shadow: var(--shadow-1); border-radius: var(--r-1); }
 
+  /* 끌기 공통 표현(lib/box-drag.ts) - 손잡이 없이 상자 전체를 끈다. 표시는 <html data-box-drag>·[data-box-select] 둘뿐 */
+  /* 터치 기기에서는 걸지 않는다 - 끌지 못하는데 글자만 안 긁히면 안 된다. 커서는 화살표 그대로(끄는 동안만 grabbing) */
+  @media (hover: hover) {
+    [data-drag-box] { user-select: none; -webkit-user-select: none; cursor: default; }
+  }
+  html[data-box-select] [data-drag-box] { user-select: text; -webkit-user-select: text; cursor: text; }
+  html[data-box-drag] { user-select: none; -webkit-user-select: none; }
+  html[data-box-drag] * { user-select: none; -webkit-user-select: none; cursor: grabbing !important; }
+  [data-drag-src] { opacity: .45; }
+  [data-drop="over"] { outline: 2px solid var(--accent); outline-offset: -1px; }
+  [data-drop="refused"] { outline: 2px dashed var(--ink-4); outline-offset: -1px; }
+  .drag-card {
+    position: fixed;
+    left: 0;
+    top: 0;
+    z-index: 80; /* 지금 가장 높은 값 70 위 */
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    max-width: 300px;
+    padding: 6px 10px;
+    border: 1px solid var(--accent);
+    border-radius: var(--r-2);
+    background: var(--raised);
+    box-shadow: var(--shadow-2);
+    color: var(--ink);
+    font: 400 12px/18px var(--font-ui);
+    pointer-events: none;
+    will-change: transform;
+  }
+  .drag-card-id { color: var(--accent); font: 600 11px/16px var(--font-mono); white-space: nowrap; }
+  /* 글 칸은 남는 폭만 쓴다(기준 0) - 긴 메모(거절 이유)가 오면 글 칸이 먼저 줄고 메모는 표 안에서 줄을 바꾼다. 짧은 메모·메모 없음은 지금처럼 한 줄 */
+  .drag-card-text { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .drag-card-count { padding: 0 5px; border-radius: 8px; background: var(--accent); color: var(--on-accent); font: 600 10px/16px var(--font-mono); white-space: nowrap; }
+  .drag-card-note { min-width: 0; padding-left: 8px; border-left: 1px solid var(--line-2); color: var(--ink-2); }
+  .drag-card[data-refused] { border: 1px dashed var(--ink-4); color: var(--ink-3); }
+
   /* 탭 패널이 바뀔 때 - 내용이 살짝 나타난다 */
   .fade-in { animation: fade-in var(--dur-base) var(--ease-enter); }
   @keyframes fade-in { from { opacity: 0; } }
@@ -129,6 +166,9 @@
   /* 왼쪽 위험색 막대 쪽 모서리는 직각 - 둥근 막대는 손톱처럼 보인다 */
   .toast.error { box-shadow: inset 3px 0 0 var(--danger-fill), var(--shadow-2); border-top-left-radius: 0; border-bottom-left-radius: 0; }
   .toast.info { box-shadow: inset 3px 0 0 var(--ink-3), var(--shadow-2); border-top-left-radius: 0; border-bottom-left-radius: 0; }
+  /* 글은 강조색 - .btn.ghost(과 그 올림)의 글색보다 앞서야 해서 알림 안의 단추로 좁혀 쓴다 */
+  .toast .btn.toast-action { flex: none; white-space: nowrap; color: var(--accent); font-weight: 600; }
+  .toast .btn.toast-action:not(:disabled):hover { color: var(--accent); }
   .toast-slot[data-leaving] .toast { transform: translateX(110%); opacity: 0; }
   @keyframes toast-in { from { opacity: 0; transform: translateY(-12px); } }
 }

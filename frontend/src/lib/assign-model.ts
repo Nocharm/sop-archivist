@@ -55,6 +55,8 @@ export interface RecommendInput {
   aiPlaces: Array<{ destination: Destination; why: string }>;
   identical: number[];
   similar: NewCandidate[];
+  /** 칸 제목으로 갈 줄(띠 표 제목 줄, F12 G5) - AI가 고른 SOP 칸은 그 칸의 칸 제목 자리를 바로 앞에 함께 권한다 */
+  headingPlaces?: boolean;
 }
 
 const MAX_RECOMMENDATIONS = 5;
@@ -68,14 +70,19 @@ function keyOf(destination: Destination): string {
 }
 
 /**
- * ① 추천 - AI 연결 → AI 칸·삭제 → 같은 글자 → 비슷한 문장, 같은 곳은 한 번만, 최대 5.
+ * ① 추천 - AI 연결 → AI 칸·삭제 → 같은 글자 → 비슷한 문장, 같은 곳은 한 번만, 최대 5. 칸 제목으로 갈 줄은 AI 칸 앞에 그 칸 제목 자리.
  * expandLink는 고를 때 더해질 문장(New 짝, addPartnerTargets)을 미리 더한다 - 짝의 두 문장이 카드 둘로 갈리지 않게.
  */
 export function buildRecommendations(input: RecommendInput, expandLink: (targetIds: number[]) => number[] = (ids) => ids): Recommendation[] {
   const link = (targetIds: number[]): Destination => ({ kind: "link", targetIds: expandLink(targetIds) });
   const all: Recommendation[] = [
     ...input.aiLinks.map((item): Omit<Recommendation, "key"> => ({ destination: link(item.targetIds), why: item.why, source: "ai" })),
-    ...input.aiPlaces.map((item): Omit<Recommendation, "key"> => ({ destination: item.destination, why: item.why, source: "ai" })),
+    ...input.aiPlaces.flatMap((item): Array<Omit<Recommendation, "key">> => [
+      ...(input.headingPlaces && item.destination.kind === "slot"
+        ? [{ destination: { kind: "slot_heading", docId: item.destination.docId, slotKey: item.destination.slotKey } as const, why: item.why, source: "ai" as const }]
+        : []),
+      { destination: item.destination, why: item.why, source: "ai" },
+    ]),
     ...input.identical.map((id): Omit<Recommendation, "key"> => ({ destination: link([id]), why: "", source: "identical" })),
     ...input.similar.map((item): Omit<Recommendation, "key"> => ({ destination: link([item.target_id]), why: "", source: "similar" })),
   ].map((rec) => ({ ...rec, key: keyOf(rec.destination) }));
@@ -161,6 +168,15 @@ export function listLinkMenuItems(state: { picked: boolean; linked: boolean; con
   if (state.picked) return ["confirm", "cancel"];
   if (state.linked) return state.confirmed ? ["unlink", "close"] : ["confirm", "unlink", "close"];
   return state.hasTarget ? ["link", "close"] : [];
+}
+
+/**
+ * Confirm을 막는 까닭(메시지 키) - 결정 칸의 Confirm 단추·↵·그 자리 메뉴(끌어 놓은 초안 포함)가 같은 순서로 쓴다.
+ * 참조 번호 확인이 먼저, 그다음 캡션 없는 표·그림(서버 caption_required 전에 멈춘다). 막지 않으면 null.
+ */
+export function readConfirmBlockKey(gates: { isRefGate: boolean; isCaptionGate: boolean }): "assign.ref.checkFirst" | "assign.caption.needed" | null {
+  if (gates.isRefGate) return "assign.ref.checkFirst";
+  return gates.isCaptionGate ? "assign.caption.needed" : null;
 }
 
 /** 끊은 뒤 남는 고름 - 끊는 문장과 그 한/영 짝 문장을 함께 뺀다(짝 한쪽만 남기면 다음 고름이 짝을 다시 붙인다) */

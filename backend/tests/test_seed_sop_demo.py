@@ -13,8 +13,20 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.settings import settings
-from scripts.seed_sop_demo import DemoStage, drive_stage, find_seed_refusal, main
-from scripts.synthetic_sop import BALANCE, LEVEL_BENCH, build_synthetic_bundle
+from app.sop.refs import is_document_number
+from scripts.seed_sop_demo import (
+    NESTED_TITLE,
+    PAIR_TABLES_TITLE,
+    TOC_AFTER,
+    TOC_EN,
+    TOC_KO,
+    TOC_TITLE,
+    DemoStage,
+    drive_stage,
+    find_seed_refusal,
+    main,
+)
+from scripts.synthetic_sop import BALANCE, LEVEL_BENCH, MOVE_TARGET_CODE, build_synthetic_bundle
 from tests.fake_ai import fake_ai_session
 from tests.sop_helpers import AUTHOR
 
@@ -25,8 +37,13 @@ EXPECTED_BUNDLES = [
     ("SYNTHETIC 2 분류 절반", "in_progress"),
     ("SYNTHETIC 3 검토 대기", "in_review"),
     (AI_STAGE_TITLE, "in_progress"),
+    ("SYNTHETIC 5 UV 분광광도계", "in_progress"),
+    ("SYNTHETIC 6 문서 관리", "in_progress"),
+    (TOC_TITLE, "in_progress"),
+    (NESTED_TITLE, "in_progress"),
+    (PAIR_TABLES_TITLE, "in_progress"),
 ]
-DOCUMENTS_PER_BUNDLE = 8  # 옛 문서 6개 + 입구 2 새 문서 2개
+DOCUMENTS_PER_BUNDLE = 9  # 옛 문서 7개 + 입구 2 새 문서 2개
 
 
 class SeedRuns(NamedTuple):
@@ -101,7 +118,7 @@ def test_seed_creates_bundles_at_stages(seed_runs: SeedRuns) -> None:
     assert [(title, status) for _, title, status in bundles] == EXPECTED_BUNDLES
     ids = [bundle_id for bundle_id, _, _ in bundles]
     documents = _query(database_path, "SELECT bundle_id, count(*) FROM documents GROUP BY bundle_id ORDER BY bundle_id")
-    assert documents == [(bundle_id, DOCUMENTS_PER_BUNDLE) for bundle_id in ids]
+    assert documents == [(bundle_id, DOCUMENTS_PER_BUNDLE) for bundle_id in ids[:4]] + [(bundle_id, 1) for bundle_id in ids[4:]]
     confirmed = dict(_query(
         database_path,
         "SELECT bundle_id, count(*) FROM unit_decisions WHERE status = 'confirmed' GROUP BY bundle_id",
@@ -119,6 +136,101 @@ def test_seed_creates_bundles_at_stages(seed_runs: SeedRuns) -> None:
 
     assert _query_bundles(database_path) == bundles
     assert second.stdout.count("skipped") == len(EXPECTED_BUNDLES)
+
+
+def test_seed_links_bundles_for_the_map(seed_runs: SeedRuns) -> None:
+    database_path, first, _, bundles = seed_runs
+    ids = [bundle_id for bundle_id, _, _ in bundles]
+
+    members = {
+        bundle_id: _query(
+            database_path, f"SELECT login_id, role FROM bundle_members WHERE bundle_id = {bundle_id} ORDER BY login_id"
+        )
+        for bundle_id in ids[4:6]
+    }
+    assert members == {ids[4]: [("qa.lead", "reviewer"), ("qa.member", "author")], ids[5]: [("prod.member", "author")]}
+    documents = set(_query(database_path, "SELECT bundle_id, doc_code FROM documents"))
+    assert {(ids[4], "SOP-ABC-1016"), (ids[5], "SOP-ABC-1020")} <= documents
+    targets = set(_query(database_path, "SELECT bundle_id, code FROM target_docs"))
+    assert {(ids[4], "SOP-UV"), (ids[4], "WI-11"), (ids[5], MOVE_TARGET_CODE)} <= targets
+    refs = _query(
+        database_path,
+        "SELECT r.number FROM unit_refs r JOIN units u ON u.id = r.unit_id JOIN extractions e ON e.id = u.extraction_id"
+        f" JOIN documents d ON d.id = e.document_id WHERE r.state = 'confirmed' AND d.bundle_id IN ({ids[4]}, {ids[5]})",
+    )
+    assert len(refs) == 2
+    # 지도는 문서 번호 꼴만 Bundle을 건너 맞춘다 — 선을 그어야 할 번호가 모두 그 꼴이어야 지도에 나온다
+    edge_numbers = [number for (number,) in refs] + ["SOP-ABC-1016", "SOP-ABC-1020", MOVE_TARGET_CODE, "OLD-3"]
+    assert all(is_document_number(number) for number in edge_numbers), edge_numbers
+    # 출력은 제목과 결과뿐 — 문장 글은 싣지 않는다
+    assert "SYNTHETIC 5 UV 분광광도계" in first.stdout and "SYNTHETIC 6 문서 관리" in first.stdout
+    assert "Warm up the lamp" not in first.stdout
+
+
+def test_toc_bundle_marks_its_contents_lines(seed_runs: SeedRuns) -> None:
+    """목차 묶음 — 목차 스타일 줄과 그 뒤 점 끌기 줄이 목차 표시를 받고 판단은 없다(Assign 목차 블록 스모크가 쓴다)."""
+    database_path, first, _, bundles = seed_runs
+    (bundle_id,) = [bundle_id for bundle_id, title, _ in bundles if title == TOC_TITLE]
+
+    marked = _query(database_path, f"""
+        SELECT count(*) FROM units u JOIN extractions e ON e.id = u.extraction_id
+        JOIN documents d ON d.id = e.document_id
+        WHERE d.bundle_id = {bundle_id} AND u.status = 'active' AND u.noise_kind = 'toc'
+    """)
+
+    assert marked == [(len(TOC_KO) + len(TOC_EN) + 1,)]
+    decided = f"SELECT count(*) FROM unit_decisions WHERE bundle_id = {bundle_id} AND status != 'unassigned'"
+    assert _query(database_path, decided) == [(0,)]
+    assert TOC_AFTER not in first.stdout
+
+
+def test_nested_bundle_has_inner_tables_in_one_work_table(seed_runs: SeedRuns) -> None:
+    """표 안 표 묶음 — 작업 표 하나의 칸 안에 띠 표 · 값 표 · 권한 표가 들고(안쪽 표 자리 신호 포함) 판단은 없다(Assign 표 안 표 스모크가 쓴다)."""
+    database_path, _, _, bundles = seed_runs
+    (bundle_id,) = [bundle_id for bundle_id, title, _ in bundles if title == NESTED_TITLE]
+
+    tables = _query(database_path, f"""
+        SELECT t.table_index, t.parent_table_id IS NOT NULL, t.signals LIKE '%"place"%', t.is_layout FROM source_tables t
+        JOIN extractions e ON e.id = t.extraction_id JOIN documents d ON d.id = e.document_id
+        WHERE d.bundle_id = {bundle_id} ORDER BY t.table_index
+    """)
+
+    assert tables == [(0, 0, 0, 0), (1, 1, 1, 0), (2, 1, 1, 0), (3, 1, 1, 0)]
+    decided = f"SELECT count(*) FROM unit_decisions WHERE bundle_id = {bundle_id} AND status != 'unassigned'"
+    assert _query(database_path, decided) == [(0,)]
+
+
+def test_pair_tables_bundle_has_a_separate_document_with_wrapped_tables(seed_runs: SeedRuns) -> None:
+    """한/영 따로 표 묶음 — 한/영 따로 문서 하나에 아직 벗기지 않은 표 넷(Assign 대응 표 함께 벗기기 스모크가 쓴다)."""
+    database_path, _, _, bundles = seed_runs
+    (bundle_id,) = [bundle_id for bundle_id, title, _ in bundles if title == PAIR_TABLES_TITLE]
+
+    rows = _query(database_path, f"""
+        SELECT d.language_layout, count(t.id), sum(t.is_layout) FROM documents d
+        JOIN extractions e ON e.document_id = d.id JOIN source_tables t ON t.extraction_id = e.id
+        WHERE d.bundle_id = {bundle_id} GROUP BY d.id
+    """)
+
+    assert rows == [("ko_en_separate", 4, 0)]
+
+
+def test_half_stage_leaves_a_captionless_table_unassigned(seed_runs: SeedRuns) -> None:
+    """분류 절반 묶음에는 캡션 없는 OLD-7 표가 미배정으로 남는다 — 캡션 필수 확정을 화면 스모크가 시험한다."""
+    database_path, _, _, bundles = seed_runs
+    (bundle_id,) = [bundle_id for bundle_id, title, _ in bundles if title == "SYNTHETIC 2 분류 절반"]
+
+    rows = _query(database_path, f"""
+        SELECT ud.disposition, ud.status FROM units u
+        JOIN extractions e ON e.id = u.extraction_id
+        JOIN documents d ON d.id = e.document_id
+        JOIN unit_decisions ud ON ud.unit_id = u.id
+        WHERE d.bundle_id = {bundle_id} AND d.file_name LIKE '%OLD-7%' AND u.kind = 'table' AND u.status = 'active'
+          AND NOT EXISTS (
+            SELECT 1 FROM units c WHERE c.group_unit_id = u.id AND c.kind = 'caption' AND c.status = 'active'
+          )
+    """)
+
+    assert rows == [("unassigned", "unassigned")]
 
 
 def test_seed_creates_the_ai_stage(seed_runs: SeedRuns) -> None:
@@ -151,6 +263,7 @@ def test_seed_keeps_the_ai_worker_off(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, "embed_enabled", True)
     monkeypatch.setattr("app.main.run_ai_worker", record_worker)
     monkeypatch.setattr("scripts.seed_sop_demo.DEMO_STAGES", ())
+    monkeypatch.setattr("scripts.seed_sop_demo.MAP_BUNDLES", ())
 
     assert asyncio.run(main()) == 0
 

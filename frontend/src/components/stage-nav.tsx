@@ -1,8 +1,8 @@
 // 묶음 안 단계 이동 - 한 벌의 마크업을 <html data-shell>에 따라 CSS가 왼쪽 레일(72px) 또는 상단 2단(38px)으로 그린다. 그래서 저장된 배치가 첫 페인트부터 맞다.
-// 문서가 하나도 없으면 문서가 있어야 할 일이 생기는 단계(Assign~Outputs)는 잠기고, History는 레일 맨 아래에 붙는다.
+// 문서가 하나도 없으면 문서가 있어야 할 일이 생기는 단계(Assign~Outputs)는 잠기고, Map과 History는 레일 아래에 붙는다.
 "use client";
 
-import { Files, Gauge, History } from "lucide-react";
+import { Files, Gauge, History, Map as MapIcon } from "lucide-react";
 import Link from "next/link";
 import type { ReactNode } from "react";
 
@@ -15,6 +15,7 @@ import { getStageHref, isStageLocked, STAGES, type Stage, type StageKey } from "
 export const STAGE_ICONS: Partial<Record<StageKey, typeof Files>> = {
   overview: Gauge,
   documents: Files,
+  map: MapIcon,
   history: History,
 };
 

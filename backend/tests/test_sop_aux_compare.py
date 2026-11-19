@@ -20,7 +20,7 @@ from app.sop.extract.docx_reader import read_docx
 from app.sop.extract.pdf_reader import read_pdf
 from app.sop.extract.types import ExtractLimits
 from app.sop.segment import is_blank_char
-from tests.docx_factory import build_docx, make_list, numbered, p, tbl
+from tests.docx_factory import build_docx, make_grid_table, make_list, make_row, numbered, p, tbl
 from tests.pdf_factory import build_text_pdf
 
 LIMITS = ExtractLimits(
@@ -324,3 +324,21 @@ def test_real_conversion_of_a_text_pdf_reports_nothing_missing(no_network: None)
     blocks = read_pdf(data, LIMITS).blocks
 
     assert find_missing_text([block.text for block in blocks], convert_with_markitdown(data, "pdf")) == []
+
+
+def test_real_conversion_of_a_cell_with_several_bullets_reports_nothing_missing(no_network: None) -> None:
+    # P-AUX: 메인 추출은 글머리 기호를 줄마다 "•"로 써 넣고 MarkItDown은 칸 안 목록을 한 줄 "* … * …"로 쓴다
+    cell = numbered("합성 필터의 덮개를 연다", 1) + numbered("합성 필터의 차압을 적는다", 1)
+    data = build_docx(
+        make_grid_table(2, make_row(["준비 단계의 작업 내용", cell])), numbering=make_list(0, [("bullet", "\uf0b7")], [1])
+    )
+    blocks = [block.text for block in read_docx(data, LIMITS).blocks]
+
+    assert blocks[1] == "• 합성 필터의 덮개를 연다\n• 합성 필터의 차압을 적는다"
+    assert find_missing_text(blocks, convert_with_markitdown(data, "docx")) == []
+
+
+def test_normalize_strips_word_bullets_at_line_heads_only() -> None:
+    text = "• 첫째\n● 둘째\n■ 셋째\n– 넷째\n\uf09f 다섯째\no 여섯째\n글 가운데 • 점과 o 글자"
+
+    assert normalize_for_compare(text) == "첫째둘째셋째넷째다섯째여섯째글가운데•점과o글자"

@@ -1,6 +1,8 @@
 // 줄 전체가 누름 대상인 목록(표 줄·카드)을 키보드로도 열게 한다 - Tab으로 닿고 Enter·Space로 연다.
 import type { KeyboardEvent } from "react";
 
+import { DRAG_GUARD_SELECTOR } from "./box-drag";
+
 interface RowOpenProps {
   tabIndex: 0;
   onClick: () => void;
@@ -19,4 +21,10 @@ export function getRowOpenProps(onOpen: () => void): RowOpenProps {
       onOpen();
     },
   };
+}
+
+/** 줄 누름이 펼침인가 - 줄 안의 단추·링크·입력·[data-no-drag]에서 누른 것과 글자를 긁고 뗀 것은 아니다 */
+export function shouldRowToggle(target: EventTarget | null, hasSelection: boolean): boolean {
+  if (hasSelection || !(target instanceof Element)) return false;
+  return target.closest(DRAG_GUARD_SELECTOR) === null;
 }

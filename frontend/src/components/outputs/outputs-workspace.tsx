@@ -14,12 +14,13 @@ import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 import { ExportPreviewModal } from "@/components/outputs/export-preview";
 import { OutputARowView } from "@/components/outputs/output-a-row";
 import { OutputBCard } from "@/components/outputs/output-b-card";
-import { OutputCView } from "@/components/outputs/output-c";
+import { OutputCView, type OrderTemplate } from "@/components/outputs/output-c";
 import { ReadOnlyNote } from "@/components/read-only-note";
 import { ReviewBar } from "@/components/review/review-bar";
 import { ReviewReturnNote } from "@/components/review-return-note";
 import { ConfirmModal } from "@/components/ui/confirm-modal";
 import { EmptyState } from "@/components/ui/empty-state";
+import { InfoTip } from "@/components/ui/info-tip";
 import { BundleLoadError } from "@/components/bundle-load-error";
 import { LoadMoreRows } from "@/components/ui/load-more";
 import { showToast } from "@/components/ui/toast";
@@ -28,6 +29,7 @@ import { humanizeApiError } from "@/lib/api-errors";
 import {
   getOutputA,
   getOutputB,
+  getGroupByTarget,
   getOutputC,
   getSummary,
   getToBe,
@@ -38,6 +40,7 @@ import {
   type Bundle,
   type CoverStatus,
   type OutputC,
+  type OutputCItem,
   type OutputLang,
   type TargetOrderResult,
 } from "@/lib/api-sop";
@@ -68,13 +71,15 @@ import { buildAScreenLines } from "@/lib/output-groups";
 import { useDelayedFlag } from "@/lib/use-delayed-flag";
 import { useEquisPolling } from "@/lib/use-equis-polling";
 import { useLoaded } from "@/lib/use-loaded";
-import { readOutputsView, writeOutputsView, type OutputsTab } from "@/lib/outputs-view-prefs";
+import { readOrderTemplate, readOutputsView, writeOrderTemplate, writeOutputsView, type OutputsTab } from "@/lib/outputs-view-prefs";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useProgressiveList } from "@/lib/use-progressive-list";
-import { getNewDocumentsHref, getStageHref } from "@/lib/stages";
+import { getAssignSourceHref, getNewDocumentsHref, getStageHref } from "@/lib/stages";
+import { buildTemplateTitles } from "@/lib/template-model";
 
-/** 요약 숫자 순서 - 확정률은 따로 % 글로 */
-const SUMMARY_ITEMS = ["old_rows", "assigned", "no_destination", "duplicate", "deleted", "moved", "new", "translated", "single_language"] as const;
+/** 요약 숫자 순서 - 확정률은 따로 % 글로. 목차 · 저절로 삭제와 풀린 표에서 온 줄은 그런 줄이 있을 때만(Excel B 요약과 같다) */
+const SUMMARY_ITEMS = ["old_rows", "unwrapped_rows", "assigned", "no_destination", "duplicate", "deleted", "toc_deleted", "moved", "new", "translated", "single_language"] as const;
+const OPTIONAL_SUMMARY_ITEMS: ReadonlySet<string> = new Set(["toc_deleted", "unwrapped_rows"]);
 
 // 삭제·바깥 문서 이동처럼 자리가 없는 보낸 곳과 변경 종류는 코드값 대신 화면 문구로 보인다(모르는 값은 그대로)
 function labelCode(t: (key: string) => string, prefix: string, code: string): string {
@@ -170,6 +175,25 @@ export function OutputsWorkspace({ mode }: { mode: OutputsMode }) {
     () => (isOrder && shownC ? { docs: orderDoc ? [orderDoc] : [], deleted: [], moved: [] } : shownC),
     [isOrder, shownC, orderDoc],
   );
+  // 기본 | 템플릿 보기(순서·문단번호 화면만) - 템플릿은 보기만 한다. 이름 사전은 To-Be가 와야 지을 수 있어 그때까지 전환이 없다
+  const [orderTemplate, setOrderTemplate] = useState(readOrderTemplate);
+  function changeOrderTemplate(on: boolean) {
+    setOrderTemplate(on);
+    writeOrderTemplate(on);
+  }
+  const orderCode = orderDoc?.code ?? null;
+  const orderTobe = equisTobe.data;
+  const templateTitles = useMemo(() => (orderTobe && orderCode !== null ? buildTemplateTitles(orderTobe, orderCode) : null), [orderTobe, orderCode]);
+  // 짝 없는 줄의 "번역 없음" 자리 - 번역 만들기 · 직접 쓰기는 Assign에 있어, 그 줄의 Old 출처를 고른 채 Assign을 연다(출처를 못 읽으면 Assign 처음)
+  async function openMissingInAssign(source: OutputCItem) {
+    try {
+      const group = await getGroupByTarget(bundleId, source.target_id);
+      navigate(getAssignSourceHref(bundleId, group.units));
+    } catch (err) {
+      showToast(humanizeApiError(err, t), "error");
+    }
+  }
+  const orderTemplateProps: OrderTemplate | undefined = isOrder && templateTitles ? { on: orderTemplate, onChange: changeOrderTemplate, titles: templateTitles, onMissing: canEdit ? (source) => void openMissingInAssign(source) : undefined } : undefined;
   // C를 고치는 곳은 순서·문단번호 화면뿐이다 - 결과 화면의 C는 읽기 전용
   const canEditC = canEdit && isOrder;
   const current = tab === "a" ? outA : tab === "b" ? outB : outC;
@@ -468,6 +492,8 @@ export function OutputsWorkspace({ mode }: { mode: OutputsMode }) {
           <h1 className="page-title ul">{t(isOrder ? "order.title" : "stage.outputs")}</h1>
           <ReadOnlyNote bundle={bundle} testId={isOrder ? "order" : "outputs"} />
           {isOrder && <span className="min-w-0 text-xs text-ink-3">{t("order.lead")}</span>}
+          {/* 끌기·Alt 글자 긁기 도움말 - 끌 수 있을 때만(템플릿 보기는 끌 수 없다) */}
+          {canEditC && !orderTemplateProps?.on && <InfoTip text={t("order.dragHelp")} testId="order-drag-help" />}
           {!isOrder && (
           <div className="ml-2 flex gap-0.5 rounded-md bg-sunken p-0.5" role="tablist">
             {(["a", "b", "c"] as const).map((item) => (
@@ -572,8 +598,10 @@ export function OutputsWorkspace({ mode }: { mode: OutputsMode }) {
                 onMove={canEditC ? (docId, locationKey, targetId, dir) => editC(docId, { kind: "move", locationKey, targetId, dir }) : undefined}
                 onIndent={canEditC ? (docId, targetId, depth) => editC(docId, { kind: "indent", targetId, depth }) : undefined}
                 onMark={canEditC ? (docId, targetId, style) => editC(docId, { kind: "style", targetId, style }) : undefined}
+                onPlace={canEditC ? (docId, edit) => editC(docId, edit) : undefined}
                 tobeHref={canEdit ? getNewDocumentsHref(bundleId) : undefined}
-                equis={equisByNode} />
+                equis={equisByNode}
+                template={orderTemplateProps} />
             </>
           ) : null}
         </div>
@@ -587,7 +615,7 @@ export function OutputsWorkspace({ mode }: { mode: OutputsMode }) {
           <h2 className="side-box-title">{t("outputs.summary")}</h2>
           {sum ? (
             <dl className="grid grid-cols-[minmax(0,1fr)_auto] gap-x-3 gap-y-1 tabular-nums">
-              {SUMMARY_ITEMS.map((item) => (
+              {SUMMARY_ITEMS.filter((item) => !OPTIONAL_SUMMARY_ITEMS.has(item) || sum[item] > 0).map((item) => (
                 <div key={item} className="contents">
                   <dt className="text-ink-2">{t(`outputs.sum.${item}`)}</dt>
                   <dd className="text-right" data-testid={`outputs-sum-${item}`}>{sum[item]}</dd>

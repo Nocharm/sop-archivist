@@ -6,6 +6,7 @@ import { useEffect, useRef, useState, type FocusEvent, type PointerEvent, type R
 import { createPortal } from "react-dom";
 
 import { placeAbove, placeBeside, type FloatingPos } from "@/components/ui/floating";
+import { isBoxDragActive } from "@/lib/box-drag";
 
 const SHOW_DELAY_MS = 150;
 
@@ -64,6 +65,7 @@ export function useDelegatedTip(): DelegatedTip {
   }
 
   function show(host: HTMLElement | null) {
+    if (isBoxDragActive()) return;
     if (host === hostRef.current) return;
     hide();
     if (!host) return;

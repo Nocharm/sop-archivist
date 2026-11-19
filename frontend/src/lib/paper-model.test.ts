@@ -2,7 +2,8 @@
 import { describe, expect, it } from "vitest";
 
 import type { DocumentView, ViewBlock, ViewPartGroup, ViewUnit } from "./api-sop";
-import { buildContourPath, buildPaperModel, buildPaperTabs, buildRows, listPartSheets, canSplitAt, clampSplitAt, getGapMerge, getMergeBlocker, resolveCutDrag, getMarks, getTags, readWarningText, shouldRecenter, toBlockOffset, toUnitOffset } from "./paper-model";
+import type { PaperRow } from "./paper-model";
+import { buildPaperModel, buildPaperTabs, buildRows, foldCaptionRows, listPartSheets, canSplitAt, clampSplitAt, getBundleHeader, getGapMerge, getMergeBlocker, hasTocLineIn, resolveCutDrag, getMarks, getTags, isBandHeading, readWarningText, resolvePickUnit, shouldRecenter, toBlockOffset, toUnitOffset } from "./paper-model";
 
 function makeBlock(id: number, seq: number, text: string, extra: Partial<ViewBlock> = {}): ViewBlock {
   return {
@@ -13,14 +14,14 @@ function makeBlock(id: number, seq: number, text: string, extra: Partial<ViewBlo
 
 function makeUnit(id: number, spans: Array<[number, number, number]>, text: string, extra: Partial<ViewUnit> = {}): ViewUnit {
   return {
-    id, display_id: `D-${id}`, kind: "sentence", spans, text, lang: "en", table_id: null, row_index: null, group_unit_id: null,
-    status: "unassigned", pair_id: null, pos_seq: spans[0]?.[0] ?? 0, block_id: spans[0]?.[0] ?? 0, is_edited: false, can_unmerge: false, split_suggestion_id: null, ref: null, ...extra,
+    id, display_id: `D-${id}`, kind: "sentence", spans, text, lang: "en", number: null, table_id: null, row_index: null, group_unit_id: null,
+    status: "unassigned", pair_id: null, pos_seq: spans[0]?.[0] ?? 0, block_id: spans[0]?.[0] ?? 0, is_edited: false, can_unmerge: false, split_suggestion_id: null, ref: null, caption_refs: [], ...extra,
   };
 }
 
 function makeView(blocks: ViewBlock[], units: ViewUnit[], partGroups: ViewPartGroup[] = []): DocumentView {
   return {
-    document: {} as DocumentView["document"], extraction: null, tables: [], blocks, units, pairs: [], part_groups: partGroups,
+    document: {} as DocumentView["document"], extraction: null, has_number_ranges: false, tables: [], blocks, units, pairs: [], part_groups: partGroups,
     edits: { can_undo: false, can_redo: false },
   };
 }
@@ -45,7 +46,7 @@ describe("buildPaperModel", () => {
       makeBlock(4, 3, "FOOT", { part: "footer" }),
     ];
     const view = makeView(blocks, [makeUnit(20, [], "", { kind: "table", table_id: 7, pos_seq: 1 })]);
-    view.tables = [{ id: 7, table_index: 0, parent_table_id: null, part: "body", n_rows: 1, n_cols: 2, is_layout: false }];
+    view.tables = [{ id: 7, table_index: 0, parent_table_id: null, part: "body", n_rows: 1, n_cols: 2, is_layout: false, is_band: false, anchor: null }];
     const model = buildPaperModel(view);
     expect(model.header).toHaveLength(1);
     expect(model.footer).toHaveLength(1);
@@ -53,6 +54,33 @@ describe("buildPaperModel", () => {
     const table = model.body[0];
     expect(table.type === "table" && table.rows[0].map((cell) => cell.text)).toEqual(["b", "a"]);
     expect(table.type === "table" && table.unitId).toBe(20);
+  });
+
+  it("draws an unwrapped band table as one heading piece, not a table (F4)", () => {
+    // 번호 칸 | 빈 칸 | 제목 칸 - 제목 줄 하나가 번호 칸 블록 전체와 제목 칸을 덮는다
+    const cell = (id: number, col: number, text: string) => makeBlock(id, id, text, { kind: "table_cell", table_id: 7, row_index: 0, col_index: col });
+    const blocks = [cell(1, 0, "7.4"), cell(2, 1, ""), cell(3, 2, "Filter change")];
+    const band = makeUnit(30, [[1, 0, 3], [3, 0, 13]], "7.4\nFilter change", { kind: "heading", table_id: 7, row_index: 0 });
+    const view = makeView(blocks, [band]);
+    view.tables = [{ id: 7, table_index: 0, parent_table_id: null, part: "body", n_rows: 1, n_cols: 3, is_layout: true, is_band: false, anchor: null }];
+    const model = buildPaperModel(view);
+    expect(model.body.map((item) => (item.type === "block" ? item.block.id : "table"))).toEqual([1, 3]);
+    const rows = buildRows(model.body, model.segments);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].type === "piece" && rows[0].unitId).toBe(30);
+    expect(rows[0].type === "piece" && rows[0].parts.map((part) => part.block.id)).toEqual([1, 3]);
+    // 표로 되돌린(데이터 표) 띠 표는 다시 표로 그린다
+    view.tables = [{ ...view.tables[0], is_layout: false }];
+    view.units = [makeUnit(31, [], "", { kind: "table", table_id: 7, pos_seq: 1 })];
+    expect(buildPaperModel(view).body.map((item) => item.type)).toEqual(["table"]);
+  });
+});
+
+describe("isBandHeading", () => {
+  it("is a heading unit that points at a source table", () => {
+    expect(isBandHeading({ kind: "heading", table_id: 7 })).toBe(true);
+    expect(isBandHeading({ kind: "heading", table_id: null })).toBe(false);
+    expect(isBandHeading({ kind: "cell_sentence", table_id: 7 })).toBe(false);
   });
 });
 
@@ -94,6 +122,7 @@ describe("extraction warnings", () => {
 function makeSplitUnit(over: Partial<ViewUnit> = {}): ViewUnit {
   return {
     id: 1,
+    number: null,
     display_id: "OLD-1-001",
     kind: "sentence",
     spans: [[10, 0, 5]],
@@ -107,37 +136,10 @@ function makeSplitUnit(over: Partial<ViewUnit> = {}): ViewUnit {
     pos_seq: 1,
     block_id: 10,
     is_edited: false, can_unmerge: false,
-    split_suggestion_id: null, ref: null,
+    split_suggestion_id: null, ref: null, caption_refs: [],
     ...over,
   };
 }
-
-describe("buildContourPath", () => {
-  it("draws one padded box for a single line", () => {
-    expect(buildContourPath([{ left: 10, right: 110, top: 20, bottom: 40 }])).toBe("M6,18 H114 V42 H6 V18 Z");
-  });
-
-  it("walks down the right edges and back up the left edges across lines", () => {
-    const path = buildContourPath([
-      { left: 60, right: 300, top: 0, bottom: 20 },
-      { left: 0, right: 180, top: 24, bottom: 44 },
-    ]);
-    // 줄 사이 경계는 가운데(22)로 맞춘다
-    expect(path).toBe("M56,-2 H304 V22 H184 V46 H-4 V22 H56 V-2 Z");
-  });
-
-  it("merges rects that sit on the same line", () => {
-    const path = buildContourPath([
-      { left: 0, right: 50, top: 0, bottom: 20 },
-      { left: 50, right: 120, top: 1, bottom: 20 },
-    ]);
-    expect(path).toBe("M-4,-2 H124 V22 H-4 V-2 Z");
-  });
-
-  it("returns an empty path without rects", () => {
-    expect(buildContourPath([])).toBe("");
-  });
-});
 
 describe("shouldRecenter", () => {
   it("leaves a unit alone in the middle band", () => {
@@ -182,6 +184,32 @@ describe("getMergeBlocker", () => {
   it("lets cell sentences of the same table or row group merge", () => {
     expect(getMergeBlocker(makeSplitUnit({ kind: "cell_sentence", group_unit_id: 7 }), makeSplitUnit({ id: 2, kind: "cell_sentence", group_unit_id: 7 }))).toBeNull();
   });
+
+  it("will not merge a contents line with anything (server toc_line_locked)", () => {
+    expect(getMergeBlocker(makeSplitUnit({ noise_kind: "toc" }), makeSplitUnit({ id: 2 }))).toBe("toc");
+    expect(getMergeBlocker(makeSplitUnit(), makeSplitUnit({ id: 2, noise_kind: "toc" }))).toBe("toc");
+  });
+});
+
+describe("hasTocLineIn", () => {
+  it("finds a contents line over the block, so it is not carved", () => {
+    const units = [makeSplitUnit({ spans: [[10, 0, 5]] }), makeSplitUnit({ id: 2, noise_kind: "toc", spans: [[11, 0, 9]] })];
+
+    expect(hasTocLineIn(units, 11)).toBe(true);
+    expect(hasTocLineIn(units, 10)).toBe(false);
+  });
+});
+
+describe("resolvePickUnit", () => {
+  it("picks the table for a bound cell sentence and itself otherwise", () => {
+    const units = new Map([
+      [1, makeSplitUnit({ id: 1, kind: "table" })],
+      [2, makeSplitUnit({ id: 2, kind: "cell_sentence", group_unit_id: 1 })],
+      [3, makeSplitUnit({ id: 3, kind: "sentence" })],
+    ]);
+    expect(resolvePickUnit(2, units)).toBe(1);
+    expect(resolvePickUnit(3, units)).toBe(3);
+  });
 });
 
 describe("buildRows", () => {
@@ -216,6 +244,86 @@ describe("buildRows", () => {
     const rows = buildRows(model.body, model.segments);
     expect(rows.map((row) => row.type)).toEqual(["piece", "figure"]);
     expect(rows[0].type === "piece" && rows[0].unitId).toBeNull();
+  });
+});
+
+describe("getBundleHeader", () => {
+  const view = makeView(
+    [
+      makeBlock(1, 0, "열1", { kind: "table_cell", table_id: 7, row_index: 0, col_index: 0 }),
+      makeBlock(2, 1, "열2", { kind: "table_cell", table_id: 7, row_index: 0, col_index: 1 }),
+      makeBlock(3, 2, "a", { kind: "table_cell", table_id: 7, row_index: 1, col_index: 0 }),
+      makeBlock(4, 3, "b", { kind: "table_cell", table_id: 7, row_index: 1, col_index: 1 }),
+      makeBlock(5, 4, "그림 1 로터", { kind: "figure" }),
+    ],
+    [makeUnit(20, [], "", { kind: "table", table_id: 7, pos_seq: 0 }), makeUnit(21, [[5, 0, 7]], "그림 1 로터", { kind: "figure" })],
+  );
+  view.tables = [{ id: 7, table_index: 0, parent_table_id: null, part: "body", n_rows: 2, n_cols: 2, is_layout: false, is_band: false, anchor: null }];
+  const model = buildPaperModel(view);
+  const rows = buildRows(model.body, model.segments);
+  const tableRow = rows.find((row) => row.type === "table")!;
+  const figureRow = rows.find((row) => row.type === "figure")!;
+
+  it("previews the first row of a table and the block text of a figure", () => {
+    expect(getBundleHeader(tableRow, model)).toEqual({ kind: "table", unitId: 20, displayId: "D-20", preview: "열1 · 열2" });
+    expect(getBundleHeader(figureRow, model)).toMatchObject({ kind: "figure", unitId: 21, displayId: "D-21", preview: "그림 1 로터" });
+  });
+});
+
+describe("foldCaptionRows", () => {
+  function pieceRow(unitId: number): PaperRow {
+    return { type: "piece", key: `u${unitId}`, unitId, parts: [{ block: makeBlock(unitId, unitId, "캡션"), segments: [{ start: 0, end: 2, unitId }] }] };
+  }
+  function tableRow(unitId: number): PaperRow {
+    const table = { id: 70, table_index: 0, parent_table_id: null, part: "body", n_rows: 0, n_cols: 0, is_layout: false, is_band: false, anchor: null };
+    return { type: "table", key: "t70", item: { type: "table", table, rows: [], unitId } };
+  }
+  function units(spec: Record<number, Partial<ViewUnit>>): Map<number, ViewUnit> {
+    return new Map(Object.entries(spec).map(([id, extra]) => [Number(id), makeUnit(Number(id), [], "", extra)]));
+  }
+
+  it("folds a caption piece before the table into the table row", () => {
+    const rows = foldCaptionRows([pieceRow(5), tableRow(9)], units({ 5: { kind: "caption", group_unit_id: 9 }, 9: { kind: "table" } }));
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ type: "table", captions: [expect.objectContaining({ unitId: 5 })] });
+  });
+
+  it("ties a figure row to its figure unit and folds the caption paragraph under it", () => {
+    const view = makeView(
+      [makeBlock(1, 0, "", { kind: "figure" }), makeBlock(2, 1, "그림 1 로터")],
+      [makeUnit(20, [], "", { kind: "figure", block_id: 1, pos_seq: 0 }), makeUnit(21, [[2, 0, 7]], "그림 1 로터", { kind: "caption", group_unit_id: 20 })],
+    );
+    const model = buildPaperModel(view);
+    const rows = foldCaptionRows(buildRows(model.body, model.segments), model.units);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ type: "figure", unitId: 20, captions: [expect.objectContaining({ unitId: 21 })] });
+  });
+
+  it("reads an old-extraction caption anchored on the figure block as the figure's caption", () => {
+    const view = makeView(
+      [makeBlock(1, 0, "그림 1 로터", { kind: "figure" })],
+      [makeUnit(20, [], "", { kind: "figure", block_id: 1, pos_seq: 0 }), makeUnit(21, [[1, 0, 7]], "그림 1 로터", { kind: "caption", group_unit_id: 20 })],
+    );
+    const model = buildPaperModel(view);
+    const [row] = foldCaptionRows(buildRows(model.body, model.segments), model.units);
+    expect(row).toMatchObject({ type: "figure", unitId: 20 });
+    const caption = row.type === "figure" ? row.captions?.[0] : undefined;
+    expect(caption?.unitId).toBe(21);
+    expect(caption?.parts[0]).toMatchObject({ block: { id: 1 }, segments: [{ start: 0, end: 7, unitId: 21 }] });
+  });
+
+  it("reads a caption lifted from the table's first row (a span on a table cell) as the table's caption (F7 ③)", () => {
+    const table = { id: 70, table_index: 0, parent_table_id: null, part: "body", n_rows: 2, n_cols: 1, is_layout: false, is_band: false, anchor: null };
+    const cell = makeBlock(3, 0, "표 2. 경보 목록", { kind: "table_cell", table_id: 70, row_index: 0 });
+    const row: PaperRow = { type: "table", key: "t70", item: { type: "table", table, rows: [[cell]], unitId: 9 } };
+    const [folded] = foldCaptionRows([row], units({ 9: { kind: "table" }, 6: { kind: "caption", group_unit_id: 9, spans: [[3, 0, 9]] } }));
+    expect(folded).toMatchObject({ type: "table", captions: [{ unitId: 6, parts: [{ block: { id: 3 }, segments: [{ start: 0, end: 9, unitId: 6 }] }] }] });
+  });
+
+  it("leaves a caption whose bundle is not on the list as its own piece and gives a captionless bundle an empty list", () => {
+    const rows = foldCaptionRows([pieceRow(5), tableRow(9)], units({ 5: { kind: "caption", group_unit_id: 8 }, 9: { kind: "table" } }));
+    expect(rows.map((row) => row.type)).toEqual(["piece", "table"]);
+    expect(rows[1]).toMatchObject({ captions: [] });
   });
 });
 

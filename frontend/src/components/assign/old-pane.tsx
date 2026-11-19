@@ -3,7 +3,7 @@
 "use client";
 
 import { ListFilter } from "lucide-react";
-import type { ReactNode } from "react";
+import type { ComponentProps, ReactNode, RefObject } from "react";
 
 import { PaneZoom } from "@/components/assign/pane-zoom";
 import { Paper, type CutDragPos, type PaperCut } from "@/components/paper/paper";
@@ -41,16 +41,30 @@ interface OldPaneProps {
   renderNote: (unitIds: number[]) => ReactNode;
   /** 조각 오른쪽 칸 - 연결 배지 */
   renderPills: (unitId: number) => ReactNode;
+  /** 머리 줄에 "Caption needed"를 띄울 표·그림 단위(lib/caption-model isCaptionNeeded) */
+  isCaptionNeeded: (unitId: number, hasCaption: boolean) => boolean;
+  /** 목차 줄을 흐린 블록 하나로 접는다(Old 문서) - 없으면 보통 조각(한 단으로 연 New 문서) */
+  toc?: NonNullable<NonNullable<ComponentProps<typeof Paper>["strips"]>["toc"]>;
+  /** 제목에서 바꾼 조항 묶음의 머리 "[제목 → 문장] … · ↺ 제목으로"(F8b) - 없으면 머리를 달지 않는다 */
+  headingShift?: NonNullable<ComponentProps<typeof Paper>["strips"]>["headingShift"];
+  /** 벗긴 표의 줄 묶음 머리 "↺ 다시 표로"(F1) - 없으면 머리 없이 왼쪽 세로선만 */
+  unwrap?: NonNullable<ComponentProps<typeof Paper>["strips"]>["unwrap"];
+  /** 칸 전체 - 풀기 전환(useUnwrapMotion)이 이 안에서 바뀌는 곳을 찾고 잰다 */
+  paneRef?: RefObject<HTMLElement | null>;
   /** 내용이 있는 본문·머리말·꼬리말 탭 - 둘 이상일 때만 탭 줄을 그린다 */
   partKeys: readonly PaperTabKey[];
   activePart: PaperTabKey;
   /** 머리말·꼬리말 탭의 쪽들(설명 줄과 함께 따로 그린다) - 본문 탭이면 null */
   sheets: readonly PaperSheet[] | null;
   onPartChange: (key: PaperTabKey) => void;
+  /** 표·그림 어디를 눌러도 묶음 전체를 고른다 - 한/영 짝을 고르거나 쓴 New 문서를 혼자 다듬는 중에는 꺼서 칸 문장을 그대로 고른다 */
+  pickWholeBundle: boolean;
   /** Shift는 일괄 고르기 */
   onUnitClick: (unitId: number, keys: { shiftKey: boolean }) => void;
   /** 우클릭·메뉴 글쇠 - 누른 자리와 글자 자리 */
   onUnitContextMenu?: (unitId: number, at: { x: number; y: number }, caret: { blockId: number; offset: number } | null) => void;
+  /** 번호 칸 손잡이 - 주면 번호 칸을 눌러 문단 번호를 고친다(작성자만, 쪼개기 편집이라 Ctrl+Z로 되돌린다) */
+  numberCell?: { busy: boolean; onSave: (unitId: number, number: string | null, follow: boolean) => void };
   /** 두 번 누르기 - 나눌 선을 놓는다 */
   onUnitDoubleClick?: (unitId: number, caret: { blockId: number; offset: number } | null) => void;
   /** 한 문단 안에서 글자를 끌어 고름 - 고른 범위로 새 Unit을 만든다(작성자만) */
@@ -69,9 +83,15 @@ interface OldPaneProps {
   figureSource?: { bundleId: number; docId: number };
   zoom: number;
   onZoom: (dir: "+" | "-") => void;
+  /** 조각을 끌 수 있다(끌어서 잇기) - 끄면 글자가 지금처럼 그냥 긁힌다 */
+  dragBoxes?: boolean;
+  /** 머리의 확대 단추 바로 앞에 그린다 - 한/영 따로 문서의 Pair view 단추 */
+  headExtra?: ReactNode;
+  /** 문서 고르기 바로 옆 - 문서 대시보드 단추 */
+  docDash?: ReactNode;
 }
 
-export function OldPane(props: OldPaneProps) {
+export function OldPane({ paneRef, ...props }: OldPaneProps) {
   const { t } = useI18n();
   const { model } = props;
 
@@ -95,30 +115,34 @@ export function OldPane(props: OldPaneProps) {
         onUnitDoubleClick={props.onUnitDoubleClick}
         onRangeSelect={props.onRangeSelect}
         shiftClickPicks
+        pickWholeBundle={props.pickWholeBundle}
         cut={props.cut}
         onCutDrag={props.onCutDrag}
         onCutNudge={props.onCutNudge}
         renderAtCut={props.cut ? props.renderAtCut : undefined}
         figureSource={props.figureSource}
-        contour
-        strips={{ statusOf: props.statusOf, renderNote: props.renderNote, renderPills: props.renderPills, fold: props.fold, join: props.join }}
+        strips={{ statusOf: props.statusOf, renderNote: props.renderNote, renderPills: props.renderPills, fold: props.fold, join: props.join, isCaptionNeeded: props.isCaptionNeeded, toc: props.toc, headingShift: props.headingShift, unwrap: props.unwrap }}
         renderUnitActions={props.renderUnitActions}
+        dragBoxes={props.dragBoxes}
+        numberCell={props.numberCell}
         testId="assign-paper"
       />
     );
   }
 
   return (
-    <section className="assign-pane" style={{ "--z": props.zoom }} data-pane="old" data-testid="assign-old">
+    <section ref={paneRef} className="assign-pane" style={{ "--z": props.zoom }} data-pane="old" data-testid="assign-old">
       <div className="pane-head">
         {props.docOptions.length > 1 ? (
           <Select testId="assign-old-doc" ariaLabel={t("assign.oldDoc")} size="sm" mono value={props.docId} options={props.docOptions} onChange={props.onDocChange} />
         ) : (
           <span className="pane-title">{props.docOptions[0]?.label}</span>
         )}
+        {props.docDash}
         <span className="tag" data-testid="assign-old-tag">{props.docTag}</span>
         <span className="pane-sub">{props.docTitle}</span>
         <span className="flex-1" />
+        {props.headExtra}
         <PaneZoom value={props.zoom} onStep={props.onZoom} testId="assign-old-zoom" />
       </div>
       {props.partKeys.length > 1 && (

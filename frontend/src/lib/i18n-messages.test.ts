@@ -1,4 +1,4 @@
-// i18n 사전 단위 테스트 - en/ko 키 일치, 빈 문구 금지, 권한 라벨 7종 존재를 확인한다.
+// i18n 사전 단위 테스트 - en/ko 키 일치, 빈 문구 금지, 권한 라벨 8종 존재를 확인한다.
 import { describe, expect, it } from "vitest";
 
 import { MESSAGES } from "./i18n-messages";
@@ -26,6 +26,7 @@ describe("MESSAGES", () => {
       "permission.bundle.create": ["Create bundles", "Bundle 만들기"],
       "permission.bundle.admin": ["Manage all bundles", "전체 Bundle 관리"],
       "permission.guideline.manage": ["Manage AI guidelines", "AI 지침 관리"],
+      "permission.outline.manage": ["Manage SOP outline", "SOP 표준 골격 관리"],
     };
     for (const [key, [en, ko]] of Object.entries(labels)) {
       expect(MESSAGES.en[key], key).toBe(en);

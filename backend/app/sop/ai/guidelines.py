@@ -16,7 +16,8 @@ from app.clock import now
 from app.sop.constants import GUIDELINE_KEYS
 from app.sop.models import GuidelineVersion
 
-# 시드는 app/ 안에 둔다 — 도커 이미지가 app/만 복사한다. rules.md는 docs/domain/restructuring-rules.md의 바이트 복사본(테스트가 지킨다)
+# 시드는 app/ 안에 둔다 — 도커 이미지가 app/만 복사한다. rules.md는 docs/domain/restructuring-rules.md에서
+# 앱 쪽 메모("> 메모(…)" 인용 단락)만 뺀 바이트 복사본(테스트가 지킨다)
 SEEDS_DIR = Path(__file__).resolve().parent / "seeds"
 SEED_ACTOR = "system"
 RULES_KEY = "rules"

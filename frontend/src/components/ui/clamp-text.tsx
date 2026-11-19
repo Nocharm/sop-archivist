@@ -4,6 +4,7 @@
 import { useState, type ReactNode } from "react";
 
 import { Tooltip } from "@/components/ui/tooltip";
+import { isBoxDragActive } from "@/lib/box-drag";
 
 interface ClampTextProps {
   /** 툴팁에 띄울 전체 글 */
@@ -13,9 +14,11 @@ interface ClampTextProps {
   testId?: string;
   /** 안에 이미 포커스가 가는 링크가 있으면 false - Tab이 두 번 서지 않게 */
   tabbable?: boolean;
+  /** flex 줄 안에서 툴팁 자리까지 줄어들게 한다(Tooltip shrinks) - 아니면 긴 글이 제 폭을 지켜 옆으로 넘친다 */
+  shrinks?: boolean;
 }
 
-export function ClampText({ text, children, className = "", testId, tabbable = true }: ClampTextProps) {
+export function ClampText({ text, children, className = "", testId, tabbable = true, shrinks = false }: ClampTextProps) {
   const [isClamped, setIsClamped] = useState(false);
 
   // 툴팁은 150ms 뒤에 뜨므로 그 사이에 잘렸는지만 알면 된다
@@ -24,12 +27,15 @@ export function ClampText({ text, children, className = "", testId, tabbable = t
   }
 
   return (
-    <Tooltip label={text} suppressed={!isClamped} align="start">
+    <Tooltip label={text} suppressed={!isClamped} align="start" shrinks={shrinks}>
       <div
         tabIndex={tabbable ? 0 : undefined}
         className={`clamp-2 ${className}`}
         data-testid={testId}
-        onPointerEnter={(event) => checkClamped(event.currentTarget)}
+        // 상자를 끄는 동안 지나가는 글은 재지 않는다 - 포인터가 움직일 때마다 다시 그리지 않게(끌어다 놓기 G11). 툴팁도 그동안 뜨지 않는다
+        onPointerEnter={(event) => {
+          if (!isBoxDragActive()) checkClamped(event.currentTarget);
+        }}
         onFocus={(event) => checkClamped(event.currentTarget)}
       >
         {children ?? text}

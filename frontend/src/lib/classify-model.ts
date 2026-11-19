@@ -9,16 +9,18 @@ import type {
   Group,
   GroupSaveInput,
   GroupTarget,
-  NaSlot,
-  TargetDoc,
+  OutlineItem,
   TargetInput,
+  TargetPosition,
   ToBe,
   UnitRow,
   ViewUnit,
   WiPart,
   WiStep,
 } from "./api-sop";
-import { SLOT_KEYS } from "./api-sop";
+import { listCaptionChildren, planCaptions } from "./caption-model";
+import type { CaptionUnit } from "./caption-model";
+import { getContent } from "./number-model";
 
 export interface ClassifyRow {
   key: string;
@@ -43,12 +45,17 @@ export function isCoverUnit(unit: Pick<ViewUnit, "group_unit_id">): boolean {
   return unit.group_unit_id === null;
 }
 
-/** 문서 보기들(짝·원문 순서)과 단위 목록(상태)으로 줄을 만든다. 문서 순서 → 원문 순서 */
+/** 잡음 표시(목차 줄)가 붙은 단위 - 배정 줄이 아니다(남은 수·Next에서 빠지고 결과물에는 "삭제 · 목차"로 남는다) */
+export function isNoiseUnit(unit: Pick<ViewUnit, "noise_kind">): boolean {
+  return unit.noise_kind != null;
+}
+
+/** 문서 보기들(짝·원문 순서)과 단위 목록(상태)으로 줄을 만든다. 문서 순서 → 원문 순서. 목차 줄은 줄이 없다(서버 진행 숫자와 같은 규칙) */
 export function buildRows(views: DocumentView[], unitRows: Map<number, UnitRow>): ClassifyRow[] {
   const rows: ClassifyRow[] = [];
   for (const view of views) {
     const order = [...view.units]
-      .filter(isCoverUnit)
+      .filter((unit) => isCoverUnit(unit) && !isNoiseUnit(unit))
       .sort((a, b) => a.pos_seq - b.pos_seq || (a.spans[0]?.[1] ?? 0) - (b.spans[0]?.[1] ?? 0));
     const pairOf = new Map<number, (typeof view.pairs)[number]>();
     for (const pair of view.pairs) for (const id of pair.unit_ids) pairOf.set(id, pair);
@@ -94,6 +101,8 @@ export type Destination =
   | { kind: "step"; docId: number; step: number | null; part: WiPart }
   /** 이미 쓴 문서(입구 2)의 문장에 출처로 잇기 - 여럿이면 나눔 */
   | { kind: "link"; targetIds: number[] }
+  /** 아직 안 쓴 문서에 놓인 새 문장(docId의 target)에 이 줄을 출처로 더하기 - Old 여러 줄 → New 한 문장(합침). 글은 그대로 두고 그 뒤 고쳐 쓴다 */
+  | { kind: "join"; docId: number; targetId: number }
   | { kind: "delete" }
   | { kind: "move" };
 
@@ -104,7 +113,8 @@ export interface DestinationOption {
   label: string;
   /** N/A 칸 - 보이지만 고를 수 없다 */
   disabled: boolean;
-  depth: 0 | 1;
+  /** 나무의 들여쓰기 단 - SOP 칸은 골격 항목의 수준(최상위 0, 둘로 정해져 있지 않다), WI 자리는 0 */
+  depth: number;
 }
 
 export function getDestinationId(destination: Destination): string {
@@ -117,34 +127,48 @@ export function getDestinationId(destination: Destination): string {
       return `step:${destination.docId}:${destination.step ?? "none"}:${destination.part}`;
     case "link":
       return `link:${[...destination.targetIds].sort((a, b) => a - b).join(",")}`;
+    case "join":
+      return `join:${destination.targetId}`;
     default:
       return destination.kind;
   }
 }
 
-/** To-Be 목록 → 메뉴 항목. SOP는 칸, WI는 단계마다 Instruction·Why(단계가 없으면 단계 없는 Instruction·Why). 입구 2 문서는 이 화면의 보낼 곳이 아니다 */
-export function buildDestinationOptions(tobe: ToBe, slotLabels: Record<string, string>): DestinationOption[] {
+/** 나무·메뉴에 적는 칸 이름 - 그 항목의 이름만. 번호를 따로 적지 않는 항목(부록 - shows_number false)은 번호가 든 이름 "Appendix 2. 제목" */
+function readPlaceName(item: OutlineItem): string {
+  return item.shows_number ? item.title_en : item.label;
+}
+
+/**
+ * To-Be 목록 → 메뉴 항목. SOP는 그 문서 골격에서 문장을 직접 받는 칸(is_assignable, 뺀 항목 제외 - 묶음과 앱이 채우는 목록은 보낼 곳이 아니다)을 골격 순서대로,
+ * WI는 단계마다 Instruction·Why(단계가 없으면 단계 없는 Instruction·Why). 입구 2 문서는 이 화면의 보낼 곳이 아니다.
+ * 칸 이름은 그 항목의 이름만이다(조상 이름은 붙이지 않는다 - 나무가 depth로 위계를 보인다)
+ */
+export function buildDestinationOptions(tobe: ToBe): DestinationOption[] {
   const options: DestinationOption[] = [];
-  const isNa = (doc: TargetDoc, slotKey: string) =>
-    tobe.na_slots.some((slot: NaSlot) => slot.code === doc.code && (slot.slot_key === slotKey || slotKey.startsWith(`${slot.slot_key}.`)));
   for (const doc of [...tobe.docs].sort((a, b) => a.order_index - b.order_index || a.id - b.id)) {
     if (doc.entrance !== "assign") continue;
     if (doc.doc_type === "sop") {
-      for (const slotKey of SLOT_KEYS) {
+      const items = tobe.outline_items.filter((item) => item.code === doc.code && !item.is_removed);
+      const parents = new Map(items.map((item) => [item.key, item.parent_key]));
+      const naKeys = new Set(tobe.na_slots.filter((slot) => slot.code === doc.code).map((slot) => slot.slot_key));
+      // N/A는 그 칸과 그 아래 전부를 막는다 - 부모를 따라 끝까지 올라가며 본다(배정할 수 없는 상위 항목의 N/A도 같다)
+      const isNa = (slotKey: string): boolean => {
+        for (let key: string | null = slotKey; key !== null; key = parents.get(key) ?? null) if (naKeys.has(key)) return true;
+        return false;
+      };
+      for (const item of items) {
+        if (!item.is_assignable) continue;
+        const slotKey = item.key;
+        const disabled = isNa(slotKey);
+        const place = { docCode: doc.code, label: readPlaceName(item), depth: item.level };
         // N/A가 아닌 칸마다 칸 줄 바로 앞에 칸 제목 자리를 둔다
-        if (!isNa(doc, slotKey)) {
+        if (!disabled) {
           const heading: Destination = { kind: "slot_heading", docId: doc.id, slotKey };
-          options.push({ id: getDestinationId(heading), destination: heading, docCode: doc.code, label: slotLabels[slotKey] ?? slotKey, disabled: false, depth: slotKey.includes(".") ? 1 : 0 });
+          options.push({ ...place, id: getDestinationId(heading), destination: heading, disabled: false });
         }
         const destination: Destination = { kind: "slot", docId: doc.id, slotKey };
-        options.push({
-          id: getDestinationId(destination),
-          destination,
-          docCode: doc.code,
-          label: slotLabels[slotKey] ?? slotKey,
-          disabled: isNa(doc, slotKey),
-          depth: slotKey.includes(".") ? 1 : 0,
-        });
+        options.push({ ...place, id: getDestinationId(destination), destination, disabled });
       }
     } else {
       const steps = tobe.wi_steps.filter((step: WiStep) => step.code === doc.code).sort((a, b) => a.step_no - b.step_no);
@@ -178,6 +202,50 @@ export function listTreeOptions(options: DestinationOption[], canPickHeading: bo
   return canPickHeading ? options : options.filter(isPlaceOption);
 }
 
+/**
+ * 나무의 줄 - 보낼 곳(place)이거나, 문장을 받지 않는 상위 항목(묶음)의 이름 줄(heading).
+ * 이름 줄은 보낼 곳이 아니다: 고를 수 없고 끌어 놓을 수도 없다(보낼 곳 목록 DestinationOption에는 들어 있지 않다)
+ */
+export type TreeRow =
+  | { kind: "place"; option: DestinationOption }
+  | { kind: "heading"; id: string; docCode: string; label: string; depth: number; isNa: boolean };
+
+/**
+ * 나무에 그릴 줄 - 보낼 곳 사이에, 문장을 받지 않는 조상 항목(7 Document Relationships › 7.1 Associated Documents)의 이름 줄을 그 아래 첫 칸 앞에 끼운다.
+ * 하위 칸이 제 자리를 잃지 않게 하는 것이라, 아래에 보낼 곳이 하나도 없는 항목과 앱이 채우는 목록은 줄이 없다
+ */
+export function listTreeRows(tobe: ToBe, options: readonly DestinationOption[]): TreeRow[] {
+  const outlines = new Map<string, Map<string, OutlineItem>>();
+  for (const item of tobe.outline_items) {
+    if (item.is_removed) continue;
+    if (!outlines.has(item.code)) outlines.set(item.code, new Map());
+    outlines.get(item.code)?.set(item.key, item);
+  }
+  const naKeys = new Set(tobe.na_slots.map((slot) => `${slot.code}\n${slot.slot_key}`));
+  const shown = new Set<string>();
+  const rows: TreeRow[] = [];
+  for (const option of options) {
+    const { destination } = option;
+    if (destination.kind === "slot" || destination.kind === "slot_heading") {
+      const items = outlines.get(option.docCode);
+      const findParent = (key: string): OutlineItem | undefined => items?.get(items.get(key)?.parent_key ?? "");
+      // 조상 - 가까운 것부터 모아, 바깥 항목부터 그리려고 뒤집는다
+      const ancestors: OutlineItem[] = [];
+      for (let item = findParent(destination.slotKey); item !== undefined; item = findParent(item.key)) ancestors.push(item);
+      ancestors.reverse();
+      ancestors.forEach((item, index) => {
+        const id = `group:${destination.docId}:${item.key}`;
+        if (item.is_assignable || shown.has(id)) return;
+        shown.add(id);
+        const isNa = ancestors.slice(0, index + 1).some((above) => naKeys.has(`${option.docCode}\n${above.key}`));
+        rows.push({ kind: "heading", id, docCode: option.docCode, label: readPlaceName(item), depth: item.level, isNa });
+      });
+    }
+    rows.push({ kind: "place", option });
+  }
+  return rows;
+}
+
 /** 저장된 판단·새 문장에서 지금 보낼 곳을 읽는다. 여러 곳이면 첫 새 문장 기준 */
 export function readDestination(group: Group | null, unitIds: number[]): Destination | null {
   if (!group) return null;
@@ -202,6 +270,12 @@ export function readDestination(group: Group | null, unitIds: number[]): Destina
 const TABLE_KINDS: readonly string[] = ["table", "table_row"];
 const SYSTEM_PREFIX = "system:";
 
+/** 문장 사이에 놓은 자리 - placeId는 놓은 곳의 getDestinationId, after는 그 뒤에 끼울 새 문장(null이면 칸의 맨 앞) */
+export interface DropPosition {
+  placeId: string;
+  after: number | null;
+}
+
 export interface RowDraft {
   destination: Destination | null;
   /** 새 문장 칸(SentenceSlot.key)별로 사람이 고친 글자 - 고치지 않은 칸은 없다. 비우면 원문 그대로 */
@@ -211,8 +285,12 @@ export interface RowDraft {
   linkChangeTypes?: Record<number, ChangeTypeInput | null>;
   /** 사람이 직접 쓰는 다른 언어 문장 칸 - 한 언어만 있는 줄에서 연다(buildSentenceSlots의 extra) */
   otherLang?: OtherLangSlot | null;
+  /** 표·그림 캡션의 글 - 키는 caption-model getCaptionTextKey(캡션 단위의 고친 글은 단위, 써 넣은 캡션은 묶음·언어) */
+  captionTexts?: Record<string, string>;
   reason: string;
   moveCode: string;
+  /** 문장 사이에 놓아 만든 초안의 자리 - 보낼 곳이 놓은 곳일 때만 저장 요청에 싣는다 */
+  position?: DropPosition | null;
 }
 
 /** 손으로 쓰는 다른 언어 문장 - 그 언어와 출처로 삼을 줄 단위 */
@@ -222,9 +300,9 @@ export interface OtherLangSlot {
 }
 
 /** 저장 전 변경이 있는 초안인가 - 고른 곳·고친 글·변경 종류·사유·이동 코드 중 하나라도 손댔으면 참(편집 칸만 열어 둔 것은 변경이 아니다) */
-export function hasDraftChange(draft: Pick<RowDraft, "destination" | "texts" | "changeTypes" | "linkChangeTypes"> & { reason: string | null; moveCode: string | null }): boolean {
+export function hasDraftChange(draft: Pick<RowDraft, "destination" | "texts" | "changeTypes" | "linkChangeTypes" | "captionTexts"> & { reason: string | null; moveCode: string | null }): boolean {
   if (draft.destination !== null || draft.reason !== null || draft.moveCode !== null) return true;
-  return [draft.texts, draft.changeTypes, draft.linkChangeTypes ?? {}].some((map) => Object.keys(map).length > 0);
+  return [draft.texts, draft.changeTypes, draft.linkChangeTypes ?? {}, draft.captionTexts ?? {}].some((map) => Object.keys(map).length > 0);
 }
 
 interface SourceUnit {
@@ -232,6 +310,8 @@ interface SourceUnit {
   kind: string;
   lang: ViewUnit["lang"];
   text: string;
+  /** text에서 내용이 시작하는 자리(문단 번호 뒤) - 새 문장의 원문은 번호를 뺀 내용이다. 없으면 0 */
+  content_start?: number;
   revision: number;
 }
 
@@ -248,6 +328,8 @@ export interface SaveContext {
   group: Group | null;
   /** 표 단위 id → 칸 문장과 표 크기 */
   tables: Map<number, { rows: number; cols: number; cells: CellSource[] }>;
+  /** 표·행·그림 단위 id → 묶인 캡션 단위. 없으면 캡션 단위가 없는 것으로 본다(써 넣은 캡션만) */
+  captions?: Map<number, CaptionUnit[]>;
 }
 
 /**
@@ -259,13 +341,19 @@ export function pickLinkUnits<T extends { lang: ViewUnit["lang"] }>(units: T[], 
   return same.length > 0 ? same : units;
 }
 
+/** 이 보낼 곳이 출처로 이어 받는 기존 새 문장들 - 이미 쓴 문서의 문장(link)이거나 놓인 새 문장(join) */
+export function listJoinedTargetIds(destination: Destination | null): number[] {
+  if (destination?.kind === "link") return destination.targetIds;
+  return destination?.kind === "join" ? [destination.targetId] : [];
+}
+
 /**
  * 이미 쓴 문장을 한 언어만 이을 때 줄에 남는 단위 - 이은 문장이 없는 언어이고 아직 판단이 없는(처분 unassigned) 줄 단위.
  * 확정 저장은 판단 없는 단위를 받지 않아(서버 hold_required) 요청에서 빼고 release_unit_ids로 실어 서버가 같은 저장 안에서 짝을 푼다(제품 명세 §6.5).
  */
 export function listLinkLeftovers(destination: Destination | null, context: Pick<SaveContext, "units" | "group">): number[] {
-  if (destination?.kind !== "link") return [];
-  const picked = new Set(destination.targetIds);
+  if (destination?.kind !== "link" && destination?.kind !== "join") return [];
+  const picked = new Set(listJoinedTargetIds(destination));
   const pickedLangs = new Set((context.group?.targets ?? []).filter((target) => picked.has(target.id)).map((target) => target.lang));
   // 고른 문장의 묶음이 아직 오지 않았으면 어느 언어가 남는지 모른다
   if (pickedLangs.size === 0) return [];
@@ -347,7 +435,8 @@ export function buildSentenceSlots(group: Group | null, units: SourceUnit[], ext
   const owned = (group?.targets ?? [])
     .filter((target) => target.parent_target_id === null && target.kind === "sentence" && target.origin === "units" && target.source_unit_ids.some((id) => unitIds.has(id)))
     .sort((a, b) => firstPosition(a) - firstPosition(b) || a.order_index - b.order_index || a.id - b.id);
-  const textOf = new Map(sentenceUnits.map((unit) => [unit.id, unit.text]));
+  // 새 문장의 원문 = 번호를 뺀 내용 - 문단 번호는 번호 칸의 것이라 초안에 따라가지 않는다(F5)
+  const textOf = new Map(sentenceUnits.map((unit) => [unit.id, getContent(unit)]));
   const slots: SentenceSlot[] = [];
   for (const unit of sentenceUnits) {
     const mine = owned.filter((target) => firstPosition(target) === position.get(unit.id));
@@ -364,7 +453,7 @@ export function buildSentenceSlots(group: Group | null, units: SourceUnit[], ext
       });
     }
     if (!owned.some((target) => target.source_unit_ids.includes(unit.id))) {
-      slots.push({ key: `u${unit.id}`, target: null, lang: unit.lang, sourceIds: [unit.id], text: unit.text, sourceText: unit.text, isAiPending: false, isTranslated: false });
+      slots.push({ key: `u${unit.id}`, target: null, lang: unit.lang, sourceIds: [unit.id], text: getContent(unit), sourceText: getContent(unit), isAiPending: false, isTranslated: false });
     }
   }
   if (extra) slots.push({ key: `x${extra.unitId}`, target: null, lang: extra.lang, sourceIds: [extra.unitId], text: "", sourceText: null, isAiPending: false, isTranslated: true });
@@ -392,6 +481,11 @@ function readEditedText(slot: SentenceSlot, draft: RowDraft): string | null {
 }
 
 function buildSentenceTarget(slot: SentenceSlot, draft: RowDraft, place: ReturnType<typeof placeTarget>): TargetInput {
+  const target = buildSentenceBody(slot, draft, place);
+  return { ...target, ...readPosition(draft, place, slot.target) };
+}
+
+function buildSentenceBody(slot: SentenceSlot, draft: RowDraft, place: ReturnType<typeof placeTarget>): TargetInput {
   // 기존 새 문장의 글자 비교 종류(AI 제안이면 제안의 종류) - 고쳐도 사람이 따로 고르지 않으면 이것을 둔다
   const keptType = isTextChangeType(slot.target?.change_type) ? slot.target.change_type : null;
   const base = { key: slot.key, ...(slot.target ? { id: slot.target.id, revision: slot.target.revision } : {}), ...place, kind: "sentence" as const, source_unit_ids: slot.sourceIds };
@@ -425,10 +519,19 @@ function placeTarget(destination: Destination): Pick<TargetInput, "target_doc_id
   throw new Error("not a placement");
 }
 
+/** 놓은 자리를 싣는 항목 - 놓은 곳이 보낼 곳 그대로이고 새로 만들거나 (문서, 칸, step, part)가 바뀌는 최상위 문장만 */
+function readPosition(draft: RowDraft, place: ReturnType<typeof placeTarget>, own?: GroupTarget | null): { position?: TargetPosition } {
+  const { destination, position } = draft;
+  if (!position || !destination || position.placeId !== getDestinationId(destination)) return {};
+  const isHere = own && own.target_doc_id === place.target_doc_id && own.slot_key === place.slot_key && own.wi_step === place.wi_step && own.wi_part === place.wi_part;
+  return isHere ? {} : { position: { after_target_id: position.after } };
+}
+
 /** 사람이 고르지 않은 연결의 변경 종류 - 같은 언어 원문과 글이 같으면 그대로, 사람이 고른 적 있으면 그 값, 아니면 고쳐 씀 */
-export function readLinkDefault(target: Pick<GroupTarget, "lang" | "confirmed_text" | "change_type" | "status">, units: Array<Pick<SourceUnit, "lang" | "text">>): ChangeTypeInput {
+export function readLinkDefault(target: Pick<GroupTarget, "lang" | "confirmed_text" | "change_type" | "status">, units: Array<Pick<SourceUnit, "lang" | "text" | "content_start">>): ChangeTypeInput {
   const same = units.find((unit) => unit.lang === target.lang);
-  if (same && same.text.trim() === target.confirmed_text.trim()) return "as_is";
+  // 번호를 뺀 내용과 같아도 그대로다(서버 _decide_change_type과 같다)
+  if (same && [same.text.trim(), getContent(same).trim()].includes(target.confirmed_text.trim())) return "as_is";
   return isTextChangeType(target.change_type) && target.status !== "ai_suggested" ? target.change_type : "rewritten";
 }
 
@@ -454,10 +557,11 @@ export function buildGroupSave(draft: RowDraft, context: SaveContext, action: "c
   const { destination } = draft;
   if (!destination && action !== "hold") throw new Error("destination required");
   const existing = context.group?.targets ?? [];
-  const picked = new Set(destination?.kind === "link" ? destination.targetIds : []);
+  const picked = new Set(listJoinedTargetIds(destination));
+  const isJoining = destination?.kind === "link" || destination?.kind === "join";
   // 이은 문장이 없는 언어의 줄 단위는 이번 저장의 줄이 아니다(설계 §5) - 판단이 있으면 묶음의 다른 단위처럼 지금 그대로 싣고, 없으면 뺀다(아래)
   const pickedLangs = new Set(existing.filter((target) => picked.has(target.id)).map((target) => target.lang));
-  const active = destination?.kind === "link" ? pickLinkUnits(context.units, pickedLangs) : context.units;
+  const active = isJoining ? pickLinkUnits(context.units, pickedLangs) : context.units;
   const rowIds = new Set(active.map((unit) => unit.id));
   const units: GroupSaveInput["units"] = active.map((unit) => ({
     unit_id: unit.id,
@@ -469,6 +573,26 @@ export function buildGroupSave(draft: RowDraft, context: SaveContext, action: "c
   }));
   const targets: TargetInput[] = [];
   const kept = new Set<number>();
+  // 다시 보낸 표·그림 아래에서 이번 캡션에 들지 않은 옛 캡션(캡션 단위가 붙어 밀려난 써 넣은 캡션 등) - 지운다
+  const staleCaptions = new Set<number>();
+  /** 표·그림 새 문장 아래 캡션 새 문장 - 칸 새 문장처럼 같은 자리에, 기존 것이면 id·revision을 되보낸다(F3) */
+  function pushCaptions(parentKey: string, unitId: number, place: ReturnType<typeof placeTarget>) {
+    const children = listCaptionChildren(context.group, unitId);
+    const plans = planCaptions(unitId, context.captions?.get(unitId) ?? [], children, draft.captionTexts);
+    for (const plan of plans) {
+      if (plan.target) kept.add(plan.target.id);
+      const base = { key: `${parentKey}-cap-${plan.unitId ?? plan.lang}`, ...(plan.target ? { id: plan.target.id, revision: plan.target.revision } : {}), ...place, kind: "sentence" as const, parent_key: parentKey, source_unit_ids: plan.unitId !== null ? [plan.unitId] : [] };
+      // 손대지 않은 AI 제안 캡션은 문장 칸처럼 글·종류를 비워 보낸다 - 서버가 제안 그대로 받는다(채택 판정이 사람의 고쳐 씀으로 남기지 않게)
+      if (plan.target?.status === "ai_suggested" && !plan.isEdited) {
+        targets.push(base);
+        continue;
+      }
+      // 출처 없는 캡션은 종류를 보내지 않는다 - 서버가 new로 정한다
+      const changeType = plan.sourceText === null ? {} : { change_type: plan.text === plan.sourceText.trim() ? ("as_is" as const) : ("rewritten" as const) };
+      targets.push({ ...base, lang: plan.lang, text: plan.text, ...changeType });
+    }
+    for (const child of children) if (!kept.has(child.id)) staleCaptions.add(child.id);
+  }
   const isPlace = destination?.kind === "slot" || destination?.kind === "step";
   if (destination?.kind === "slot_heading") {
     // 줄의 제목·문장 단위마다 칸 제목 하나 - 글은 서버가 칸 이름으로 채운다. 출처는 이 줄의 단위만 싣는다(다른 문서의 출처는 서버가 지킨다)
@@ -488,7 +612,7 @@ export function buildGroupSave(draft: RowDraft, context: SaveContext, action: "c
         const ref = own ? { id: own.id, revision: own.revision } : {};
         if (own) kept.add(own.id);
         const table = context.tables.get(unit.id);
-        targets.push({ key, ...ref, ...place, kind: "table", lang: "neutral", change_type: "as_is", source_unit_ids: [unit.id], grid: table ? { rows: table.rows, cols: table.cols } : null });
+        targets.push({ key, ...ref, ...place, ...readPosition(draft, place, own), kind: "table", lang: "neutral", change_type: "as_is", source_unit_ids: [unit.id], grid: table ? { rows: table.rows, cols: table.cols } : null });
         for (const cell of table?.cells ?? []) {
           const cellOwn = existing.find((target) => target.parent_target_id !== null && target.source_unit_ids.includes(cell.id));
           if (cellOwn) kept.add(cellOwn.id);
@@ -506,12 +630,14 @@ export function buildGroupSave(draft: RowDraft, context: SaveContext, action: "c
             cell_col: cell.col,
           });
         }
+        pushCaptions(key, unit.id, place);
         continue;
       }
       if (unit.kind === "figure") {
         const own = findOwnTarget(context.group, unit.id, "figure");
         if (own) kept.add(own.id);
-        targets.push({ key, ...(own ? { id: own.id, revision: own.revision } : {}), ...place, kind: "figure", lang: "neutral", change_type: "as_is", source_unit_ids: [unit.id] });
+        targets.push({ key, ...(own ? { id: own.id, revision: own.revision } : {}), ...place, ...readPosition(draft, place, own), kind: "figure", lang: "neutral", change_type: "as_is", source_unit_ids: [unit.id] });
+        pushCaptions(key, unit.id, place);
       }
     }
     for (const slot of buildSentenceSlots(context.group, active, draft.otherLang ?? null)) {
@@ -526,7 +652,16 @@ export function buildGroupSave(draft: RowDraft, context: SaveContext, action: "c
   const removed: number[] = [];
   for (const target of existing) {
     if (kept.has(target.id)) continue;
+    if (staleCaptions.has(target.id)) {
+      removed.push(target.id);
+      continue;
+    }
     const touchesRow = target.source_unit_ids.some((id) => rowIds.has(id)) || (target.translation_source_unit_id !== null && rowIds.has(target.translation_source_unit_id));
+    // 놓인 새 문장에 잇기 - 그 문장은 글·자리 그대로 출처만 더한다(출처가 둘 이상이라 종류는 서버가 합침으로 정한다)
+    if (destination?.kind === "join" && target.id === destination.targetId) {
+      targets.push(echoTarget(target, [...new Set([...target.source_unit_ids, ...active.map((unit) => unit.id)])]));
+      continue;
+    }
     if (target.origin === "new_doc") {
       const others = target.source_unit_ids.filter((id) => !rowIds.has(id));
       const sameLang = active.filter((unit) => unit.lang === target.lang);

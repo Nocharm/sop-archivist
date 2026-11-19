@@ -320,7 +320,7 @@ export function deleteDocument(bundleId: number, docId: number, revision: number
 
 // --- 원문 보기와 쪼개기 편집 ---
 
-export type UnitKind = "sentence" | "heading" | "figure" | "table" | "table_row" | "cell_sentence";
+export type UnitKind = "sentence" | "heading" | "figure" | "table" | "table_row" | "cell_sentence" | "caption";
 /** ref는 참조 줄(다른 문서를 번호로 가리키는 글) - 한/영 짝이 없다 */
 export type UnitLang = "ko" | "en" | "ref" | "neutral";
 /** 참조 줄 상태 - proposed는 앱의 제안(사람이 번호를 확인하기 전), confirmed는 REF로 확정된 것 */
@@ -341,6 +341,14 @@ export interface ViewTable {
   n_rows: number;
   n_cols: number;
   is_layout: boolean;
+  /** 띠 표 신호가 있다 - 바로 바깥 표를 벗기거나 다시 묶으면 함께 제목 줄 ↔ 표로 바뀐다(F2 · F4) */
+  is_band: boolean;
+  /** 안쪽 표가 놓인 바깥 칸 블록과 그 글에서 표 앞 글자 수(F2) - 바깥 표·옛 추출은 null */
+  anchor: { block_id: number; at: number } | null;
+  /** 칸 줄 언어가 많은 쪽 - 두 언어 표 · 빈 표는 null. 서버는 늘 싣는다(시험 자료가 줄여 쓰게 선택 칸) */
+  lang?: "ko" | "en" | null;
+  /** 한/영 따로 문서에서 아직 벗기지 않은 이 표와 함께 벗길 대응 표 후보(F8a) - 맨 앞이 같은 꼴인 가장 비슷한 표, 비면 묻지 않는다 */
+  counterparts?: number[];
 }
 
 export interface ViewBlock {
@@ -380,6 +388,21 @@ export interface ViewPartGroup {
   same_as: string | null;
 }
 
+/** 문단 번호 칸(서버 numbering.py) - 값과 내용 경계는 서버가 정한다. 원문 글자(text)는 번호를 품은 그대로다 */
+export interface ViewNumber {
+  /** 번호 칸에 보일 값 - 사람이 고친 값, 없으면 읽은 값(자동 번호·번호만 든 칸). 없으면 null */
+  value: string | null;
+  /** 추출기가 읽은 값 - 타자로 친 번호는 번호로 삼기 전에도 여기 있다 */
+  read: string | null;
+  source: "auto" | "typed" | "cell" | null;
+  /** 사람이 고쳤다("번호 없음" 포함) */
+  is_set: boolean;
+  /** text에서 내용이 시작하는 자리 - 번호가 번호 칸으로 갔으면 그 뒤, 아니면 0 */
+  content_start: number;
+  /** 번호로 삼을 수 있는 글 앞 타자 번호의 글자 수 - 없거나 이미 번호면 0 */
+  typed_len: number;
+}
+
 export interface ViewUnit {
   id: number;
   display_id: string;
@@ -387,6 +410,8 @@ export interface ViewUnit {
   spans: UnitSpan[];
   text: string;
   lang: UnitLang;
+  /** 번호 칸이 없는 단위(그림·표·행·캡션)는 null */
+  number: ViewNumber | null;
   table_id: number | null;
   row_index: number | null;
   group_unit_id: number | null;
@@ -402,6 +427,36 @@ export interface ViewUnit {
   split_suggestion_id: number | null;
   /** 참조 줄 제안·확정 - 참조가 아니면 null */
   ref: UnitRefMark | null;
+  /** 이 단위의 글이 가리키는 표·그림("표 3"·"아래 표") - 캡션 자기 머리 번호는 빠진다 */
+  caption_refs: ViewCaptionRef[];
+  /** 잡음 표시 - "toc"면 목차 줄: 배정 줄이 없고(남은 수에서 빠짐) Assign 용지가 목차 블록으로 접는다. 편집 clear_noise가 비운다 */
+  noise_kind?: "toc" | null;
+  /** 제목 스타일 줄을 문장으로 바꾼 문장(F8b) - Assign의 "제목으로 되돌리기"와 묶음 머리 "[제목 → 문장]". 편집 set_heading이 오간다 */
+  from_heading?: boolean;
+  /** 캡션 하나를 같이 쓰는 그림 묶음(F7 ⑥)의 첫 그림 - 이 그림이 그 그림의 캡션을 같이 쓴다. 첫 그림 자신·묶이지 않은 단위는 null. 편집 group_figures·ungroup_figures가 오간다 */
+  caption_figure_id?: number | null;
+}
+
+/** 표·그림 참조 하나 - number가 null이면 위치 참조("아래 표"), target_unit_id는 이은 표·그림 묶음 단위(못 찾으면 null) */
+export interface ViewCaptionRef {
+  id: number;
+  kind: "table" | "figure";
+  number: number | null;
+  target_unit_id: number | null;
+  state: "linked" | "detached";
+  /** auto(올릴 때 잡음) | human(사람이 고침) */
+  origin: string;
+}
+
+export interface CaptionRefResult {
+  document_revision: number;
+  ref: ViewCaptionRef;
+}
+
+/** 표·그림 번호 바뀜 - 원문 번호가 없어 머리 번호를 붙였으면 from_label이 빈 글 */
+export interface RenumberChange {
+  from_label: string;
+  to_label: string;
 }
 
 /** 고른 단위의 참조 상태와 그 번호의 EQUIS 표시 - 참조가 아니면 state가 null */
@@ -424,6 +479,8 @@ export interface ViewPair {
 export interface DocumentView {
   document: Omit<SopDocument, "extraction">;
   extraction: SopDocument["extraction"];
+  /** 추출이 번호 범위 신호를 남겼다 - 거짓이면(옛 추출) 용지가 절 첫 줄의 번호만 가리는 옛 방식으로 그린다 */
+  has_number_ranges: boolean;
   tables: ViewTable[];
   blocks: ViewBlock[];
   /** 처음 나온 순서 */
@@ -442,11 +499,30 @@ export type EditOp =
   | { type: "set_language"; unit_ids: number[]; lang: "ko" | "en" }
   | { type: "split_table_rows"; table_unit_id: number }
   | { type: "merge_table_rows"; table_id: number }
-  | { type: "set_layout_table"; table_id: number; is_layout: boolean }
+  /** counterpart_table_id - 벗길 때만, 다른 언어 절반의 대응 표를 같은 편집으로 함께 벗기고 두 표의 칸 줄을 같은 행 · 같은 순서로 짝짓는다(F8a) */
+  | { type: "set_layout_table"; table_id: number; is_layout: boolean; counterpart_table_id?: number }
+  /** 블록 자리 2 안(caption-slot-model CAPTION_REACH)의 묶이지 않은 글 단위를 표·행·그림의 캡션으로 - 사이 문단은 그대로,
+   *  묶음마다 언어당 하나(caption_exists), 먼 글은 caption_not_adjacent, 다른 그림의 캡션을 같이 쓰는 그림은 caption_shared. 판단이 있는 묶음이면 서버가 묻는다 */
+  | { type: "attach_caption"; unit_id: number; bundle_unit_id: number }
+  /** 캡션을 같은 자리·언어의 묶이지 않은 문장으로 - 첫 행에서 올린 캡션은 그 표의 칸 문장으로 돌아간다 */
+  | { type: "detach_caption"; unit_id: number }
+  /** 표 첫 행 ↔ 캡션(F7 ③) - caption이면 첫 행 칸 문장이 그 표의 캡션이 되고, 아니면 칸 블록 위 캡션이 모두 첫 행으로 돌아간다(↩ 다시 첫 행으로) */
+  | { type: "set_first_row_caption"; table_unit_id: number; caption: boolean }
+  /** 그림 묶기(F7 ⑥) - 원문 순 첫 그림이 캡션을 갖고 나머지 그림이 그 캡션을 같이 쓴다 */
+  | { type: "group_figures"; unit_ids: number[] }
+  /** 그림 풀기 - 그 그림이 든 묶음의 그림이 모두 따로 선다(캡션은 첫 그림에 남는다) */
+  | { type: "ungroup_figures"; unit_id: number }
   /** 참조 줄로 - 번호는 그 단위의 글 안에 있어야 한다. 이미 참조 줄이면 번호만 고친다 */
   | { type: "set_ref"; unit_id: number; number: string }
   /** 참조 아님 - 참조 줄이면 그 전 언어로 돌리고, 제안뿐이었으면 다시 제안하지 않는다 */
-  | { type: "clear_ref"; unit_id: number };
+  | { type: "clear_ref"; unit_id: number }
+  /** 문단 번호 고치기 - number가 null이면 번호 없음(번호 범위가 글로 돌아간다). follow면 같은 목록의 뒤 번호도 한 편집으로 따라 고친다 */
+  | { type: "set_number"; unit_id: number; number: string | null; follow: boolean }
+  /** 목차 아님(줄 하나) · 모두 목차 아님(블록 전체) - 잡음 표시만 비운다(단위는 그대로, 되돌리기가 다시 붙인다) */
+  | { type: "clear_noise"; unit_ids: number[] }
+  /** 제목 ↔ 문장(F8b) - heading이 거짓이면 제목을 문장마다 나눠 바꾼 표시를 단다(번역 조항은 앞 조항의 번호를 물려받는다).
+   *  참이면 바꾼 문장은 그 조항 줄 전체가 제목 하나로 돌아가고, 보통 문장은 그 문장이 제목이 된다. 한/영 짝은 새 단위로 다시 선다 */
+  | { type: "set_heading"; unit_ids: number[]; heading: boolean };
 
 export interface EditResult {
   document_revision: number;
@@ -493,8 +569,23 @@ export function createPair(bundleId: number, docId: number, revision: number, un
   return apiFetch<PairResult>(`${buildDocPath(bundleId, docId)}/pairs`, { method: "POST", body: JSON.stringify({ revision, unit_ids: unitIds }) });
 }
 
+/** 제안 짝(코드·AI)을 그대로 확정한다 - 이미 확정이면 서버는 아무것도 쓰지 않는다 */
+export function confirmPair(bundleId: number, docId: number, pairId: number, revision: number): Promise<PairResult> {
+  return apiFetch<PairResult>(`${buildDocPath(bundleId, docId)}/pairs/${pairId}/confirm`, { method: "POST", body: JSON.stringify({ revision }) });
+}
+
 export function deletePair(bundleId: number, docId: number, pairId: number, revision: number): Promise<PairResult> {
   return apiFetch<PairResult>(`${buildDocPath(bundleId, docId)}/pairs/${pairId}?revision=${revision}`, { method: "DELETE" });
+}
+
+/** 표·그림 참조를 떼거나 다시 잇는다 - target_unit_id를 주면 그 묶음에 잇는다(state 생략 = linked) */
+export function updateCaptionRef(
+  bundleId: number,
+  docId: number,
+  refId: number,
+  body: { revision: number; state?: "linked" | "detached"; target_unit_id?: number },
+): Promise<CaptionRefResult> {
+  return apiFetch<CaptionRefResult>(`${buildDocPath(bundleId, docId)}/caption-refs/${refId}`, { method: "PATCH", body: JSON.stringify(body) });
 }
 
 export function ackWarning(bundleId: number, warningId: number, note = ""): Promise<ExtractionWarning> {
@@ -538,13 +629,66 @@ export interface PlaceCount {
   count: number;
 }
 
+/** 문장이나 칸 제목이 든 SOP 칸 - count는 그 칸의 최상위 항목 수(표 칸 문장·캡션 같은 딸린 줄은 뺀다. 결과물 C는 캡션 줄도 그리므로 C의 줄 수와 다를 수 있다), heading_count는 칸 제목에 이은 옛 제목 수 */
+export interface SlotCount {
+  target_doc_id: number;
+  slot_key: string;
+  count: number;
+  heading_count: number;
+}
+
+/** 골격 항목의 종류 - backend app/sop/models.py OUTLINE_KINDS와 같은 값. 직접 배정·줄 세기는 서버가 is_assignable·counts_lines로 풀어 준다 */
+export type OutlineKind = "general" | "category_table" | "named_children" | "auto_list" | "group";
+
+/**
+ * SOP 문서 하나의 골격 항목(칸) - 표준 골격을 문서마다 복사한 것이라 문서마다 다를 수 있다. 화면은 칸 목록을 따로 갖지 않고 이것만 읽는다.
+ * 한 문서의 항목은 위계 순서로 온다(부모 바로 뒤에 하위). 수준은 둘로 정해져 있지 않다(level 0부터)
+ */
+export interface OutlineItem {
+  /** 새 문서 코드 - NaSlot.code·WiStep.code와 같은 키 */
+  code: string;
+  /** 점으로 위계를 적은 키("procedures.maintenance") - 자리 키(slot_key·location_key)와 같은 값 */
+  key: string;
+  parent_key: string | null;
+  level: number;
+  /** "5"·"5.1" - 번호 없는 항목은 null */
+  number: string | null;
+  /** 번호를 이름 앞에 적는가 - 머리말을 쓰는 부모의 하위(부록)만 false: 이름(label "Appendix 2. …")에 번호가 이미 들어 있어 label만 적는다. number("2")는 줄 번호의 머리로 그대로 쓴다 */
+  shows_number: boolean;
+  title_en: string;
+  title_ko: string;
+  /** 조상까지 이은 이름 "General Requirements › Safety" - 부록은 "Appendix n. 제목" */
+  label: string;
+  kind: OutlineKind;
+  is_required: boolean;
+  default_style: NumberStyle;
+  /** 문장을 직접 받는 항목인가 - 아니면 보낼 곳 목록에 없다 */
+  is_assignable: boolean;
+  /** 직접 놓인 줄에 번호를 세는가 - false면 줄의 표시와 상관없이 번호가 없다(하위 항목 번호와 겹치므로) */
+  counts_lines: boolean;
+  /** standard 표준에서 복사 · declared 문서가 선언(6장 절차 · 9장 부록 · 5장 범주) · custom 표준에서 벗어나 더한 항목 */
+  origin: "standard" | "declared" | "custom";
+  /** 이 문서에서 뺀 표준 항목 - 되살릴 수 있게 제자리로 실린다(번호 없음, 문장을 받지 않음, 하위는 함께 빠져 실리지 않는다). 칸 목록 · 나무는 거른다 */
+  is_removed: boolean;
+  /** 표준과 다른 까닭 - 사용자 항목, 이름을 바꾸거나 필수인데 뺀 표준 항목. 그 밖은 null */
+  deviation_reason: string | null;
+  /** 표준과 다름 - 선택 항목을 뺀 것 · N/A · 선언은 아니다 */
+  is_deviation: boolean;
+}
+
 export interface ToBe {
   revision: number;
   docs: TargetDoc[];
   na_slots: NaSlot[];
   wi_steps: WiStep[];
+  /** SOP 문서마다의 골격 항목 - 문서(code)별로 위계 순서. WI는 항목이 없다 */
+  outline_items: OutlineItem[];
+  /** 문서가 하위 항목을 선언할 때 권하는 이름 - 선언을 받는 부모 항목의 키마다(표준 골격의 것이라 문서와 상관없다). 없으면 빈 객체 */
+  outline_suggestions: Record<string, string[]>;
   /** 문장이 든 자리만 실린다 - 배정 화면이 지울 수 없는 문서·단계의 지우기 단추를 잠근다 */
   sentence_counts?: PlaceCount[];
+  /** 문장이나 칸 제목이 든 SOP 칸만 실린다 - N/A 칸 상태 표가 N/A로 둘 수 없는 칸을 가린다 */
+  slot_counts?: SlotCount[];
 }
 
 export interface ToBeInput {
@@ -553,25 +697,6 @@ export interface ToBeInput {
   na_slots: NaSlot[];
   wi_steps: WiStep[];
 }
-
-/** SOP 칸 - backend constants.SLOT_KEYS와 같은 값·순서. 점이 있으면 하위 칸 */
-export const SLOT_KEYS = [
-  "purpose",
-  "scope",
-  "definitions",
-  "responsibilities",
-  "general_requirements",
-  "general_requirements.safety",
-  "general_requirements.operation",
-  "procedures",
-  "procedures.procedure",
-  "procedures.electronic_record_control",
-  "procedures.troubleshooting",
-  "procedures.maintenance",
-  "document_relationships",
-  "document_relationships.attachments",
-  "document_relationships.appendices",
-] as const;
 
 export function getToBe(bundleId: number): Promise<ToBe> {
   return apiFetch<ToBe>(`/bundles/${bundleId}/tobe`);
@@ -629,6 +754,35 @@ export function clearNaSlot(bundleId: number, targetDocId: number, slotKey: stri
 
 export function renameWiStep(bundleId: number, targetDocId: number, stepNo: number, title: string): Promise<ToBe> {
   return apiFetch<ToBe>(`/bundles/${bundleId}/tobe/docs/${targetDocId}/steps/${stepNo}`, { method: "PATCH", body: JSON.stringify({ title }) });
+}
+
+// SOP가 선언하는 골격 항목(6장 절차 · 9장 부록 · 5장 범주) - 한 번에 하나씩 쓰고 새 목록이 돌아온다(revision을 보내지 않는다)
+/**
+ * 골격 항목 고치기 - 보낸 칸만 바뀐다. position은 같은 부모의 항목들 안에서의 자리(0부터, 표준 항목은 422 outline_standard_item). 키는 그대로이고 번호만 따라간다.
+ * is_removed는 표준 항목을 빼거나(true) 되살린다(false). reason은 표준에서 벗어나는 쓰기(표준 항목 영어 이름 바꾸기 · 필수 항목 빼기)의 사유 - 없으면 422 deviation_reason_required
+ */
+export interface OutlineItemPatch {
+  title_en?: string;
+  title_ko?: string;
+  position?: number;
+  is_removed?: boolean;
+  reason?: string;
+}
+
+/**
+ * 부모 항목 아래에 항목 하나를 더한다 - 끝자리에 놓이고 키는 서버가 정한다. 하위를 선언하는 부모(6장 · 9장 · 5장) 아래는 선언이고,
+ * 묶음 제목 아래와 최상위(parentKey "")는 표준에서 벗어난 사용자 항목이라 reason이 있어야 한다
+ */
+export function addOutlineItem(bundleId: number, targetDocId: number, parentKey: string, titleEn: string, titleKo?: string, reason?: string): Promise<ToBe> {
+  return apiFetch<ToBe>(`/bundles/${bundleId}/tobe/docs/${targetDocId}/outline`, { method: "POST", body: JSON.stringify({ parent_key: parentKey, title_en: titleEn, title_ko: titleKo, reason }) });
+}
+
+export function patchOutlineItem(bundleId: number, targetDocId: number, key: string, patch: OutlineItemPatch): Promise<ToBe> {
+  return apiFetch<ToBe>(`/bundles/${bundleId}/tobe/docs/${targetDocId}/outline/${encodeURIComponent(key)}`, { method: "PATCH", body: JSON.stringify(patch) });
+}
+
+export function removeOutlineItem(bundleId: number, targetDocId: number, key: string): Promise<ToBe> {
+  return apiFetch<ToBe>(`/bundles/${bundleId}/tobe/docs/${targetDocId}/outline/${encodeURIComponent(key)}`, { method: "DELETE" });
 }
 
 // 새 문서 목록 AI 읽기 - 템플릿에 맞지 않는 계획 파일이나 붙여 넣은 글에서 AI가 목록을 읽어 제안한다. AI는 목록에 쓰지 않는다
@@ -709,14 +863,22 @@ export interface UnitRow {
   kind: UnitKind;
   lang: UnitLang;
   text: string;
+  /** text에서 내용이 시작하는 자리 - 문단 번호가 번호 칸으로 갔으면 그 뒤, 아니면 0(문서 보기의 number.content_start와 같다) */
+  content_start: number;
   table_id: number | null;
   row_index: number | null;
   group_unit_id: number | null;
   status: CoverStatus;
   decision: Decision;
   target_ids: number[];
+  /** 그 새 문장들이 있는 New 문서(target_docs) - Assign 문서 대시보드가 받는 New 문서를 센다 */
+  target_doc_ids: number[];
   /** 한/영 짝(제안·확정 모두) - 문서 보기의 units[].pair_id와 같은 뜻, 짝이 없으면 null */
   pair_id: number | null;
+  /** 표·그림 단위의 새 문장 아래 캡션 새 문장이 있다 - 써 넣은 캡션(캡션 단위 없음)도 센다 */
+  has_caption_target?: boolean;
+  /** 캡션 하나를 같이 쓰는 그림 묶음의 첫 그림(F7 ⑥) - 그 그림의 캡션이 이 그림의 캡션이다 */
+  caption_figure_id?: number | null;
 }
 
 export interface GroupUnit {
@@ -771,6 +933,11 @@ export interface Group {
   pairs_dissolved?: number[];
 }
 
+/** 문장 사이에 놓은 자리 - 이 새 문장 id 뒤에 끼운다. null이면 칸의 맨 앞(자리 없음은 키를 넣지 않는다) */
+export interface TargetPosition {
+  after_target_id: number | null;
+}
+
 export interface TargetInput {
   key: string;
   id?: number;
@@ -790,6 +957,8 @@ export interface TargetInput {
   cell_row?: number | null;
   cell_col?: number | null;
   grid?: { rows: number; cols: number } | null;
+  /** 놓은 자리 - 최상위 새 문장에만, 없으면 키를 넣지 않는다 */
+  position?: TargetPosition;
 }
 
 export interface GroupSaveInput {
@@ -952,6 +1121,36 @@ export interface WrittenSentence {
   ref?: { number: string; equis: EquisInfo | null } | null;
   /** 참조 줄인데 이 문장의 번호(number)나 이름(title)이 EQUIS와 다르다 - 작은 주의. 참조 줄이 아니거나 견줄 것이 없으면 null */
   ref_issue?: "number" | "title" | null;
+  /** 표 줄이면 칸 새 문장 격자 */
+  table?: BundleTable | null;
+  /** 그림 줄이고 출처 그림에 이미지가 있으면 그 블록 */
+  figure?: BundleFigure | null;
+  /** 표·그림 줄의 캡션 글(여러 언어는 한국어·영어 순 줄바꿈), 없으면 null */
+  caption?: string | null;
+}
+
+/** New 칸 표 줄의 칸 새 문장 - 글은 확정 글, 없으면 AI 글 */
+export interface BundleCell {
+  /** 칸 새 문장 id - 칸 번역은 같은 (row, col)에 하나 더 있다 */
+  target_id: number;
+  row: number;
+  col: number;
+  lang: UnitLang;
+  text: string;
+  status: CoverStatus;
+}
+
+/** New 칸이 그리는 표 - 격자 크기와 칸 새 문장(행·열 순) */
+export interface BundleTable {
+  rows: number;
+  cols: number;
+  cells: BundleCell[];
+}
+
+/** New 칸이 그리는 그림 - 이미지를 받을 문서와 블록(getFigureImage) */
+export interface BundleFigure {
+  document_id: number;
+  block_id: number;
 }
 
 /** Old 단위 하나에 가까운 이미 쓴 문서 문장 - 유사도는 확률로 보이지 않는다 */
@@ -1025,7 +1224,8 @@ export interface OutputARow {
   /** 묶음 번호(1부터) - 묶음의 모든 줄에 같은 값 */
   row_no: number;
   is_group_start: boolean;
-  row_kind: "unit" | "table" | "cell" | "translation" | "new";
+  /** caption - 표·그림 줄 바로 뒤의 캡션 단위 줄 */
+  row_kind: "unit" | "table" | "caption" | "cell" | "translation" | "new";
   old_doc_code: string;
   old_doc_version: string;
   location: OutputLocation;
@@ -1053,6 +1253,8 @@ export interface OutputARow {
   confirmed_at: string | null;
   group_id: string | null;
   warnings: Array<Record<string, string>>;
+  /** "toc"면 목차 줄 - 보낸 곳 Deleted, status "deleted"(판단 상태가 아니다), 저절로 */
+  noise_kind?: string | null;
 }
 
 export interface FlowGraph {
@@ -1061,7 +1263,31 @@ export interface FlowGraph {
 }
 
 /** 줄 번호 표시 - backend app/sop/constants.py NumberStyle과 같은 값 */
-export type NumberStyle = "numbered" | "omitted" | "note";
+export type NumberStyle = "numbered" | "bullet" | "omitted" | "note";
+
+/** 앱이 채우는 목록 절(auto_list)의 한 줄 - 그 SOP의 자식 WI. 사람이 고치지 않는다 */
+export interface AutoItem {
+  code: string;
+  title: string;
+}
+
+/** 결과물 C·Assign New 칸의 절이 골격에서 받아 오는 것 - 화면이 칸 키로 규칙을 다시 풀지 않는다 */
+export interface SectionOutline {
+  /** 골격 항목의 종류 - WI 단계·입구 2 문서의 절(path:)은 null. group·auto_list 절은 문장을 받지 않는다(items가 늘 비어 있다) */
+  kind: OutlineKind | null;
+  level: number;
+  /** 이 절에 직접 놓인 줄에 번호를 세는가(OutlineItem.counts_lines) */
+  counts_lines: boolean;
+  default_style: NumberStyle;
+  /** 절 머리에 번호를 적는가(OutlineItem.shows_number) - 부록만 false이고 머리는 label만 적는다. 그때도 절의 number는 줄 번호의 머리다. WI 단계·path: 절은 true */
+  shows_number: boolean;
+  /** 앱이 채우는 목록 절(auto_list)의 줄 - To-Be 순서. 그 밖의 절은 빈 배열 */
+  auto_items: AutoItem[];
+  /** 표준과 다른 SOP 절(사용자 항목 · 이름을 바꾼 표준 항목)의 사유 - 그 밖은 null */
+  deviation_reason: string | null;
+  /** 필수 절인데 비었다(자기와 하위에 줄이 없고 N/A도 아니다, 자동 목록은 자식 WI가 없다) - 알림일 뿐 검토 요청을 막지 않는다 */
+  is_empty_required: boolean;
+}
 
 export interface OutputCItem {
   target_id: number;
@@ -1073,11 +1299,13 @@ export interface OutputCItem {
   change_type: string | null;
   status: string;
   source_note: string;
+  /** 줄이 받은 옛 단위 수 - 2 이상(N:1)이면 C 화면이 줄에 올리거나 고를 때 source_note를 꼬리표로 보인다 */
+  source_count: number;
   /** units | translation | new_doc - AI 번역(translation)은 깊이가 출처를 따른다 */
   origin: string;
   /** 굵은 선 묶음 키(A와 같은 묶음) - "old:…" | "new:…", 출처가 은퇴한 번역은 null */
   meaning_key: string | null;
-  /** 섹션 번호(칸 번호 + 들여쓰기, 6.1.2) - 표 칸은 표의 번호, 입구 2 문서·단계 없는 WI는 null */
+  /** 섹션 번호(칸 번호 + 들여쓰기, 6.1.2) - 표 칸은 표의 번호, 입구 2 문서·단계 없는 WI·하위 칸이 있는 칸에 직접 놓인 줄은 null */
   number: string | null;
   /** 사람이 정한 깊이 그대로 - 번호는 서버가 앞 번호 줄 깊이 + 1까지로 눌러 읽어 센다 */
   indent_level: number;
@@ -1085,7 +1313,12 @@ export interface OutputCItem {
   number_style: NumberStyle;
   cell_row: number | null;
   cell_col: number | null;
+  /** 표·그림의 자식 - 캡션 새 문장(칸 좌표 없음, 한국어·영어 순)이 먼저, 그다음 칸 새 문장(행·열 순) */
   children: OutputCItem[];
+  /** 표·그림의 캡션 글(그림은 text도 이 글), 없으면 null */
+  caption?: string | null;
+  /** 새 문서에서 다시 매긴 표·그림 번호 - 같으면 null */
+  renumber?: RenumberChange | null;
 }
 
 export interface OutputC {
@@ -1100,7 +1333,7 @@ export interface OutputC {
      * number: SOP 칸 번호(5.1)·WI 단계 번호(3), 번호가 없는 칸은 null.
      * heading_note: 칸 제목에 이은 옛 제목 "← OLD-1 §5", 없으면 빈 글 - 칸 제목은 items에 넣지 않는다
      */
-    sections: Array<{ location_key: string; label: string; number: string | null; na_reason: string | null; heading_note: string; items: OutputCItem[] }>;
+    sections: Array<SectionOutline & { location_key: string; label: string; number: string | null; na_reason: string | null; heading_note: string; items: OutputCItem[] }>;
   }>;
   /** 삭제·이동은 옛 줄마다 한 번 - 짝이면 표시 ID·원문이 줄바꿈으로 이어진다 */
   deleted: Array<{ display_id: string; doc_code: string; section: string; source_text: string; reason: string }>;
@@ -1119,6 +1352,10 @@ export interface OutputSummary {
   translated: number;
   confirmed_rate: number;
   single_language: number;
+  /** 목차 · 저절로 삭제 - 목차 줄 수(old_rows·assigned에 들고 deleted에는 들지 않는다) */
+  toc_deleted: number;
+  /** 풀린 표에서 온 줄 - 벗긴 표(레이아웃 표)의 칸 줄이 든 줄(MD 1 F11) */
+  unwrapped_rows: number;
 }
 
 export function getOutputA(bundleId: number, labelLang: OutputLang): Promise<OutputARow[]> {
@@ -1143,11 +1380,21 @@ export interface ComposedItem {
   status: CoverStatus;
   change_type: ChangeType | null;
   number: string | null;
+  /** 아래 셋은 결과물 C 항목(OutputCItem)과 같은 값 - 템플릿 보기가 글머리 기호 깊이·주석 줄과 한/영 짝(같은 묶음 키)을 읽는다 */
+  number_style: NumberStyle;
+  indent_level: number;
+  meaning_key: string | null;
   /** 출처 Old 단위 - 번역은 번역 출처 단위 */
   source_unit_ids: number[];
+  table?: BundleTable | null;
+  figure?: BundleFigure | null;
+  /** 표·그림 줄의 캡션 글(결과물 C와 같은 규칙), 없으면 null */
+  caption?: string | null;
+  /** 새 문서에서 다시 매긴 표·그림 번호 - 같으면 null */
+  renumber?: RenumberChange | null;
 }
 
-export interface ComposedSection {
+export interface ComposedSection extends SectionOutline {
   location_key: string;
   label: string;
   number: string | null;
@@ -1183,7 +1430,13 @@ export interface PreviewCell {
   bold: boolean;
   head: boolean;
   numeric: boolean;
+  /** 칸 안 들여쓰기 단계 - C 시트 글머리 기호 줄의 Item 칸 */
+  indent: number;
+  /** 색 칩으로 그리는 칸(A의 Status)의 색 - 확정 · AI 제안 · 삭제(흐림) · 미배정. 칩이 아닌 칸은 null */
+  tone: PreviewTone | null;
 }
+
+export type PreviewTone = "ok" | "ai" | "del" | "un";
 
 export type PreviewRowKind = "status" | "header" | "group_start" | "in_group" | "doc" | "section" | "plain";
 
@@ -1191,6 +1444,18 @@ export interface PreviewRow {
   kind: PreviewRowKind;
   wrap: boolean;
   cells: PreviewCell[];
+  /** 이 줄의 옛 단위와 관계 묶음(A의 자료 줄에만) - 고른 줄 · 같은 무리를 칸 글이 아니라 이 값으로 맞춘다 */
+  unit_id: number | null;
+  group_id: string | null;
+  /** 목차 줄 - 연달아 오면 한 줄로 접어 그린다 */
+  toc: boolean;
+}
+
+/** 머리 위 열 무리 띠 한 칸 */
+export interface PreviewBand {
+  label: string;
+  span: number;
+  tone: "asis" | "tobe" | "decision" | "tracking";
 }
 
 export interface PreviewSheet {
@@ -1203,6 +1468,12 @@ export interface PreviewSheet {
   image_row: number | null;
   total_rows: number;
   truncated: boolean;
+  /** 실린 첫 자료 줄 앞에서 뺀 줄 수(머리 줄 다음부터) - Assign 미리보기의 가운데 창만 0보다 크다 */
+  offset: number;
+  /** 아래 셋은 미리보기에만 있다(A에만, 파일에는 쓰지 않는다) - 폭에 맞춘 열 비율(null이면 widths가 비율) · 열 무리 띠 · 열의 뜻 */
+  fit_widths: number[] | null;
+  bands: PreviewBand[];
+  column_keys: string[] | null;
 }
 
 export interface WorkbookPreview {
@@ -1214,14 +1485,29 @@ export function getExportPreview(bundleId: number): Promise<WorkbookPreview> {
   return apiFetch<WorkbookPreview>(`/bundles/${bundleId}/export/preview`);
 }
 
+/** Assign Space 미리보기 - Old 문서 하나의 A 시트를 고른 단위를 가운데로 500줄 창까지(파일과 같은 줄) */
+export function getAssignSheetPreview(bundleId: number, docId: number, aroundUnitId: number | null): Promise<PreviewSheet> {
+  const around = aroundUnitId !== null ? `&around_unit_id=${aroundUnitId}` : "";
+  return apiFetch<PreviewSheet>(`/bundles/${bundleId}/export/preview/a?doc_id=${docId}${around}`);
+}
+
 /** 묶음당 파일 하나 - 판(lang)이 없다. 저장 이름은 서버가 짓는다(Content-Disposition) */
 export function downloadExport(bundleId: number): Promise<{ blob: Blob; fileName: string | null }> {
   return apiFetchBlobWithName(`/bundles/${bundleId}/export.xlsx`);
 }
 
+/** 문단 Excel - 쪼갠 단위 한 줄씩 한 열(docId가 null이면 Old 문서 모두, 문서마다 시트). tables=false면 표를 뺀다 */
+export function downloadParagraphs(bundleId: number, docId: number | null, tables: boolean): Promise<{ blob: Blob; fileName: string | null }> {
+  const path = docId === null ? `/bundles/${bundleId}/old-paragraphs.xlsx` : `/bundles/${bundleId}/documents/${docId}/paragraphs.xlsx`;
+  return apiFetchBlobWithName(`${path}?tables=${tables}`);
+}
+
 /** 순서 바꾸기 요청 한 줄 - 뺀 값은 그대로 둔다. 깊이·번호 표시는 그 줄에만 붙는다(짝 상대·번역이 따라 바뀌지 않는다) */
 export interface TargetOrderItem {
   target_id: number;
+  /** 다른 칸으로 옮길 때만 - SOP 칸 키. null은 보내지 않는다(서버가 unknown_slot) */
+  slot_key?: string;
+  /** 다른 단계로 옮길 때만 - null은 "단계 없음"이라 키째 보낸다 */
   wi_step?: number | null;
   indent_level?: number;
   number_style?: NumberStyle;
@@ -1235,6 +1521,7 @@ export interface TargetOrderItemOut {
   target_id: number;
   order_index: number;
   wi_step: number | null;
+  slot_key: string | null;
   indent_level: number;
   number_style: NumberStyle;
 }
@@ -1318,4 +1605,94 @@ export function requestClassify(bundleId: number, unitIds: number[]): Promise<{ 
 
 export function getFigureImage(bundleId: number, docId: number, blockId: number): Promise<Blob> {
   return apiFetchBlob(`/bundles/${bundleId}/documents/${docId}/figures/${blockId}`);
+}
+
+// --- 참조 지도 (GET /bundles/{id}/map, 서버 app/sop/ref_map.py의 MapOut) ---
+
+export type MapScope = "linked" | "all";
+export type MapRelation = "self" | "member" | "summary";
+export interface MapBundle {
+  id: number;
+  code: string;
+  /** summary면 빈 글 - 구성원이 아닌 Bundle의 제목은 응답에 없다 */
+  title: string;
+  status: BundleStatus;
+  relation: MapRelation;
+  document_count: number;
+}
+export interface MapBecomes {
+  /** 임시 번호면 빈 글 */
+  code: string;
+  title: string;
+  doc_type: "sop" | "wi";
+}
+export interface MapNode {
+  id: string;
+  kind: "old" | "target" | "num";
+  bundle_id: number | null;
+  number: string;
+  title: string;
+  doc_type: "sop" | "wi" | null;
+  becomes: MapBecomes[];
+}
+export interface MapEdge {
+  source: string;
+  target: string;
+  kind: "ref" | "moved";
+  state: "confirmed" | "proposed";
+  lines: number;
+}
+export interface RefMap {
+  scope: MapScope;
+  truncated: boolean;
+  bundles: MapBundle[];
+  nodes: MapNode[];
+  edges: MapEdge[];
+}
+
+export function getRefMap(bundleId: number, scope: MapScope): Promise<RefMap> {
+  return apiFetch<RefMap>(`/bundles/${bundleId}/map?scope=${scope}`);
+}
+
+// --- 참조 지도의 줄 문장 (GET /bundles/{id}/map/lines, 서버 ref_map.py의 MapLinesOut) ---
+
+/** 보는 사람이 그 줄이 든 Bundle의 구성원일 때만 오는 줄 하나 */
+export interface MapLine {
+  bundle_id: number;
+  document_id: number;
+  unit_id: number;
+  display_id: string;
+  kind: "ref" | "moved";
+  state: "confirmed" | "proposed";
+  number: string;
+  /** 그 줄의 문서 마디(old:<document_id>) */
+  source: string;
+  /** 그 줄이 닿는 마디 */
+  target: string;
+  /** 300자까지 */
+  text: string;
+  text_truncated: boolean;
+}
+/** 구성원이 아닌 Bundle의 줄 - 선 하나에 든 줄 수만(글·표시 ID·Unit id 없음) */
+export interface MapWithheld {
+  source: string;
+  target: string;
+  kind: "ref" | "moved";
+  state: "confirmed" | "proposed";
+  lines: number;
+}
+export interface MapLines {
+  /** 요청한 마디 id 그대로 */
+  node: string;
+  out: MapLine[];
+  in: MapLine[];
+  withheld_out: MapWithheld[];
+  withheld_in: MapWithheld[];
+  /** 한쪽 200줄을 넘어 싣지 않은 문장 줄 수 */
+  more_out: number;
+  more_in: number;
+}
+
+export function getMapLines(bundleId: number, node: string, scope: MapScope): Promise<MapLines> {
+  return apiFetch<MapLines>(`/bundles/${bundleId}/map/lines?${new URLSearchParams({ node, scope })}`);
 }

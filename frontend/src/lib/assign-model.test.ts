@@ -14,6 +14,7 @@ import {
   isRecommendationPicked,
   listCoConfirmed,
   listLinkMenuItems,
+  readConfirmBlockKey,
   listSiblingPlaces,
   listUnlinkRemainder,
   listUnsourced,
@@ -106,6 +107,18 @@ describe("buildRecommendations", () => {
       ["identical", { kind: "link", targetIds: [75] }],
       ["similar", { kind: "link", targetIds: [76] }],
     ]);
+  });
+
+  it("puts the slot heading of an AI slot first on a band heading row (F12 G5)", () => {
+    const slot = { kind: "slot", docId: 6, slotKey: "procedures.p1" } as const;
+    const input = { aiLinks: [], aiPlaces: [{ destination: slot, why: "절 제목" }, { destination: { kind: "delete" } as const, why: "" }], identical: [], similar: [] };
+
+    expect(buildRecommendations({ ...input, headingPlaces: true }).map((rec) => rec.destination)).toEqual([
+      { kind: "slot_heading", docId: 6, slotKey: "procedures.p1" },
+      slot,
+      { kind: "delete" },
+    ]);
+    expect(buildRecommendations(input).map((rec) => rec.destination.kind)).toEqual(["slot", "delete"]);
   });
 
   it("keeps at most five", () => {
@@ -327,5 +340,13 @@ describe("listUnlinkRemainder", () => {
     ]);
     expect(listUnlinkRemainder([71, 72, 73], 71, written)).toEqual([73]);
     expect(listUnlinkRemainder([73], 73, written)).toEqual([]);
+  });
+});
+
+describe("readConfirmBlockKey", () => {
+  it("names the reference check first, then the missing caption, and nothing when confirm is free", () => {
+    expect(readConfirmBlockKey({ isRefGate: true, isCaptionGate: true })).toBe("assign.ref.checkFirst");
+    expect(readConfirmBlockKey({ isRefGate: false, isCaptionGate: true })).toBe("assign.caption.needed");
+    expect(readConfirmBlockKey({ isRefGate: false, isCaptionGate: false })).toBeNull();
   });
 });

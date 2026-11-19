@@ -2,7 +2,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { TargetDoc, ToBe } from "./api-sop";
-import { checkNewDoc, findLastStep, getDocRemoveBlock, getStepRemoveBlock, listParentCodes } from "./destination-manage-model";
+import { checkNewDoc, findLastStep, getDocRemoveBlock, getStepCount, getStepRemoveBlock, listParentCodes } from "./destination-manage-model";
 
 function makeDoc(id: number, code: string, patch: Partial<TargetDoc> = {}): TargetDoc {
   return { id, code, title: "", doc_type: "sop", parent_code: null, entrance: "assign", is_equipment_sop: false, order_index: id, document_id: null, ...patch };
@@ -21,6 +21,8 @@ const tobe: ToBe = {
     { code: "WI-A", step_no: 1, title: "Prepare" },
     { code: "WI-A", step_no: 3, title: "" },
   ],
+  outline_items: [],
+  outline_suggestions: {},
   sentence_counts: [{ target_doc_id: 2, wi_step: 1, count: 2 }],
 };
 
@@ -69,5 +71,16 @@ describe("listParentCodes and findLastStep", () => {
   it("reads the highest step number of a WI", () => {
     expect(findLastStep(tobe, "WI-A")).toBe(3);
     expect(findLastStep(tobe, "SOP-A")).toBeNull();
+  });
+});
+
+describe("getStepCount", () => {
+  it("counts the sentences in a step, zero when none", () => {
+    expect(getStepCount(tobe, 2, 1)).toBe(2);
+    expect(getStepCount(tobe, 2, 9)).toBe(0);
+  });
+
+  it("treats a list without counts as zero", () => {
+    expect(getStepCount({ ...tobe, sentence_counts: undefined }, 2, 1)).toBe(0);
   });
 });

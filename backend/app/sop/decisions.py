@@ -2,7 +2,7 @@
 
 from collections import Counter, defaultdict
 from collections.abc import Collection, Hashable, Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Annotated, Any, Literal, NamedTuple, NoReturn, Self
 
@@ -15,8 +15,9 @@ from sqlalchemy.orm.util import AliasedClass
 from app.clock import now
 from app.sop.ai.adoption import record_group_adoption, record_unit_adoption, reject_suggestions
 from app.sop.ai.apply import clear_previous_suggestion
+from app.sop.captions import CAPTION_KIND
 from app.sop.checks import check_sentence
-from app.sop.constants import SLOT_HEADING, SLOT_KEYS
+from app.sop.constants import SLOT_HEADING
 from app.sop.decision_steps import UndoMetaIn
 from app.sop.detach import (
     AI_SUGGESTED,
@@ -35,6 +36,7 @@ from app.sop.detach import (
 from app.sop.errors import check_revision, raise_rule
 from app.sop.events import record_event
 from app.sop.groups import (
+    BUNDLE_UNIT_KINDS,
     TABLE_UNIT_KINDS,
     DecisionOut,
     GroupOut,
@@ -43,7 +45,6 @@ from app.sop.groups import (
     select_in_chunks,
 )
 from app.sop.membership import ensure_editable, lock_bundle
-from app.sop.output_labels import SLOT_LABELS
 from app.sop.models import (
     AiJob,
     Bundle,
@@ -61,12 +62,24 @@ from app.sop.models import (
     UnitPairMember,
     WiStep,
 )
+from app.sop.numbering import get_content_start, get_hidden_len, strip_number
+from app.sop.outline import DocOutline, load_doc_outlines
 from app.sop.pair_settle import settle_pairs
 from app.sop.refs import REF_LANG
 from app.sop.schemas import NO_NUL, NoNulStr
 from app.sop.segment import detect_language, has_visible_char
 from app.sop.status import get_cover_status
-from app.sop.target_placement import Arranged, NewTarget, Spot, arrange_new_targets, insert_after
+from app.sop.target_placement import (
+    Arranged,
+    NewTarget,
+    Spot,
+    arrange_new_targets,
+    freeze_order,
+    get_default_style,
+    insert_after,
+    open_gap,
+    restyle_moved,
+)
 from app.sop.tobe import MAX_DB_INT, is_within_slot
 from app.sop.units import UNIT_ACTIVE, compute_display_id
 
@@ -101,6 +114,12 @@ class GridIn(BaseModel):
     cols: int = Field(ge=1, le=100)
 
 
+class PositionIn(BaseModel):
+    """새 문장이 칸 안에서 놓일 자리 — 그 새 문장 바로 뒤, None이면 칸의 맨 앞(끌어다 놓기 설계 §8)."""
+
+    after_target_id: DbId | None  # 기본값 없음 — 키를 빼면 형식 오류다
+
+
 class TargetIn(BaseModel):
     """새 문장 하나의 저장 뒤 모습. 기존 새 문장에서 비운(None) 문서·글자·언어·격자·칸 자리는 지금 값을 둔다.
 
@@ -126,6 +145,8 @@ class TargetIn(BaseModel):
     cell_row: CellIndex | None = None
     cell_col: CellIndex | None = None
     grid: GridIn | None = None
+    # 문장 사이에 놓은 자리 — 없으면 지금처럼(끝에 붙이거나 결과물 정렬 키). 칸이 바뀌는 최상위 문장만 받는다(_check_positions)
+    position: PositionIn | None = None
 
     @model_validator(mode="after")
     def check_id_with_revision(self) -> Self:
@@ -199,6 +220,8 @@ class UnitRowOut(BaseModel):
     kind: str
     lang: str
     text: str
+    # text에서 내용이 시작하는 자리 — 문단 번호가 번호 칸으로 갔으면 그 뒤, 아니면 0(문서 보기의 number.content_start와 같은 값)
+    content_start: int
     table_id: int | None
     row_index: int | None
     group_unit_id: int | None
@@ -209,6 +232,12 @@ class UnitRowOut(BaseModel):
     # 단위 자신의 판단 행 — 묶인 칸 문장의 판단 행은 늘 미배정이다(처분은 그룹 단위가 담는다)
     decision: DecisionOut
     target_ids: list[int]
+    # 그 새 문장들이 있는 New 문서(target_docs) — 겹치지 않게 id 순. Assign 문서 대시보드가 받는 New 문서를 센다
+    target_doc_ids: list[int] = []
+    # 표·그림 단위의 새 문장 아래 캡션 새 문장이 있다 — 써 넣은 캡션(출처 없음)도 센다. 화면의 "캡션 필요"·남은 수가 쓴다
+    has_caption_target: bool = False
+    # 캡션 하나를 같이 쓰는 그림 묶음의 첫 그림(F7 ⑥) — 그 그림의 캡션이 이 그림의 캡션이다. 화면의 "캡션 필요"·남은 수가 쓴다
+    caption_figure_id: int | None = None
 
 
 class UnitsPageOut(BaseModel):
@@ -227,17 +256,19 @@ class _State:
     units: dict[int, Unit]  # 보낸 단위와 그 칸 문장(U*)
     decisions: dict[int, UnitDecision]  # 보낸 단위의 판단
     cells: dict[int, list[int]]  # 표·행 단위 → 묶인 활성 칸 문장
-    group_of: dict[int, int]  # 칸 문장 → 표·행 단위
+    captions: dict[int, list[int]]  # 표·행·그림 단위 → 묶인 활성 캡션
+    group_of: dict[int, int]  # 묶인 칸 문장·캡션 → 표·행·그림 단위
     existing: dict[int, TargetSentence]  # 보낸 기존 새 문장과 지울 새 문장
     removed: set[int]  # 지울 새 문장
     sources: dict[int, set[int]]  # 기존 새 문장 → 지금 출처 단위
     translation_sources: dict[int, TargetSentence]  # 번역 → 그 출처 새 문장(지금 값). 출처가 이미 없어진 번역은 빠진다
     translation_texts: dict[int, str]  # 번역 출처 단위 → 글자 — 번역의 문장 검사가 읽는다. 은퇴한 단위도 든다
-    member_unit_ids: set[int]  # 보낸 단위와 묶인 칸 문장 전부(은퇴한 칸 포함) — 닫힘 검사의 경계
+    member_unit_ids: set[int]  # 보낸 단위와 묶인 칸 문장·캡션 전부(은퇴한 것 포함) — 닫힘 검사의 경계
     # U*와 기존 새 문장에서 출발한 지금의 연결 요소(collect_component — 묶음 읽기·떼어 내기와 같은 그래프)
     component_units: set[int]
     component_targets: set[int]
     docs: dict[int, TargetDoc]
+    outlines: dict[int, DocOutline]  # 새 문서 → 골격 사본(SOP가 아니면 빈 골격)
     na_slots: dict[int, list[str]]
     steps: dict[int, set[int]]
     table_shapes: dict[int, tuple[int, int]]  # 원문 표 id → (행 수, 열 수)
@@ -246,6 +277,9 @@ class _State:
     slot_headings: dict[_SlotKey, TargetSentence]  # 이 묶음의 칸 제목 전부 — (새 문서, 칸 키, 언어)마다 하나
     slot_heading_sources: dict[int, list[int]]  # 칸 제목 → 지금 출처 단위(seq 순)
     slot_heading_decisions: dict[int, UnitDecision]  # 칸 제목 출처 단위 → 판단 — 칸 제목 상태를 다시 정할 때 다른 문서 출처도 본다
+    anchors: dict[int, TargetSentence]  # 보낸 position.after_target_id가 가리키는 이 묶음의 새 문장 — 없는 id는 빠진다
+    # 보낸 그림 중 첫 그림의 캡션을 같이 쓰는 그림(F7 ⑥) — 첫 그림에 활성 캡션 단위가 있으면 제 캡션 새 문장 없이 확정된다
+    shared_captioned: set[int] = field(default_factory=set)
 
 
 class _Place(NamedTuple):
@@ -275,7 +309,8 @@ class _Plan:
     cell_row: int | None
     cell_col: int | None
     parent: "_Plan | None" = None
-    is_cell: bool = False
+    is_cell: bool = False  # 표·그림 새 문장 아래 자식(칸·캡션) — 순서·번호에 들지 않고 부모를 따른다
+    is_caption: bool = False  # 칸 좌표 없는 자식 문장(captions.is_caption_target과 같은 꼴)
     change_type: str | None = None
     # 칸 제목만 — 저장 뒤 출처 전부(다른 문서 출처 포함, seq 순). None이면 sources다(_resolve_slot_headings)
     link_sources: list[int] | None = None
@@ -311,7 +346,7 @@ async def _load_old_units(
 async def _load_decision_units(
     session: AsyncSession, bundle_id: int, unit_ids: Collection[int]
 ) -> dict[int, tuple[Unit, UnitDecision]]:
-    """일괄 처분·배정 지우기의 단위 — 없으면 404, 묶인 칸 문장이면 422(처분은 그룹 단위가 담는다)."""
+    """일괄 처분·배정 지우기의 단위 — 없으면 404, 묶인 칸 문장이면 422(처분은 그룹 단위가 담는다), 목차 줄이면 422 noise_unit."""
     loaded = await _load_old_units(session, bundle_id, unit_ids)
     missing = sorted(set(unit_ids) - set(loaded))
     if missing:
@@ -319,6 +354,9 @@ async def _load_decision_units(
     bound = sorted(unit_id for unit_id, (unit, _) in loaded.items() if unit.group_unit_id is not None)
     if bound:
         raise_rule(422, "bound_cell_sentence", unit_ids=bound)
+    noise = sorted(unit_id for unit_id, (unit, _) in loaded.items() if unit.noise_kind is not None)
+    if noise:
+        raise_rule(422, "noise_unit", unit_ids=noise)
     return loaded
 
 
@@ -332,6 +370,10 @@ async def _load_state(session: AsyncSession, bundle_id: int, payload: GroupSaveI
     bound = sorted(unit_id for unit_id, (unit, _) in loaded.items() if unit.group_unit_id is not None)
     if bound:
         _reject("bound_cell_sentence", unit_ids=bound)
+    # 잡음 표시 줄(목차)은 판단하지 않는다 — 먼저 목차 아님(편집 clear_noise)으로 보통 줄로 돌린다
+    noise = sorted(unit_id for unit_id, (unit, _) in loaded.items() if unit.noise_kind is not None)
+    if noise:
+        _reject("noise_unit", unit_ids=noise)
     unknown_released = sorted(
         set(payload.release_unit_ids) - set(await _load_old_units(session, bundle_id, payload.release_unit_ids))
     )
@@ -340,19 +382,20 @@ async def _load_state(session: AsyncSession, bundle_id: int, payload: GroupSaveI
     units = {unit_id: unit for unit_id, (unit, _) in loaded.items()}
     decisions = {unit_id: decision for unit_id, (_, decision) in loaded.items()}
 
-    table_unit_ids = [unit_id for unit_id, unit in units.items() if unit.kind in TABLE_UNIT_KINDS]
-    cell_rows = await select_in_chunks(
-        session, lambda chunk: select(Unit).where(Unit.group_unit_id.in_(chunk)), table_unit_ids
+    bundle_unit_ids = [unit_id for unit_id, unit in units.items() if unit.kind in BUNDLE_UNIT_KINDS]
+    member_rows = await select_in_chunks(
+        session, lambda chunk: select(Unit).where(Unit.group_unit_id.in_(chunk)), bundle_unit_ids
     )
-    member_unit_ids = set(units) | {cell.id for (cell,) in cell_rows}
+    member_unit_ids = set(units) | {member.id for (member,) in member_rows}
     cells: dict[int, list[int]] = defaultdict(list)
+    captions: dict[int, list[int]] = defaultdict(list)
     group_of: dict[int, int] = {}
-    for (cell,) in sorted(cell_rows, key=lambda row: (row[0].pos_seq, row[0].pos_start, row[0].id)):
-        if cell.status != UNIT_ACTIVE:  # 은퇴한 칸 문장은 출처가 될 수 없다(연결은 떼어 내기가 이미 뗐다)
+    for (member,) in sorted(member_rows, key=lambda row: (row[0].pos_seq, row[0].pos_start, row[0].id)):
+        if member.status != UNIT_ACTIVE:  # 은퇴한 묶인 단위는 출처가 될 수 없다(연결은 떼어 내기가 이미 뗐다)
             continue
-        cells[cell.group_unit_id].append(cell.id)
-        group_of[cell.id] = cell.group_unit_id
-        units[cell.id] = cell
+        (captions if member.kind == CAPTION_KIND else cells)[member.group_unit_id].append(member.id)
+        group_of[member.id] = member.group_unit_id
+        units[member.id] = member
 
     existing_ids = [item.id for item in payload.targets if item.id is not None] + payload.removed_target_ids
     existing = {
@@ -417,17 +460,30 @@ async def _load_state(session: AsyncSession, bundle_id: int, payload: GroupSaveI
         if unit_id is not None:
             slot_heading_sources[row.id].append(unit_id)
             slot_heading_decisions[unit_id] = decision
+    anchor_ids = {
+        item.position.after_target_id for item in payload.targets if item.position is not None
+    } - {None}
+    anchors = {
+        row[0].id: row[0]
+        for row in await select_in_chunks(
+            session,
+            lambda chunk: select(TargetSentence).where(
+                TargetSentence.id.in_(chunk), TargetSentence.bundle_id == bundle_id
+            ),
+            anchor_ids,
+        )
+    }
     return _State(
-        units=units, decisions=decisions, cells=cells, group_of=group_of, existing=existing,
+        units=units, decisions=decisions, cells=cells, captions=captions, group_of=group_of, existing=existing,
         removed=set(payload.removed_target_ids), sources=sources,
         translation_sources={
             target_id: source_by_id[source_id] for target_id, source_id in source_ids.items() if source_id in source_by_id
         },
         translation_texts={unit_id: text for unit_id, text in translation_rows},
         member_unit_ids=member_unit_ids, component_units=component_units, component_targets=component_targets,
-        docs=docs, na_slots=na_slots, steps=steps,
-        table_shapes=await load_table_shapes(session, [units[unit_id] for unit_id in table_unit_ids]),
-        cell_positions=await load_cell_positions(session, [units[cell_id] for cell_id in group_of]),
+        docs=docs, outlines=await load_doc_outlines(session, docs), na_slots=na_slots, steps=steps,
+        table_shapes=await load_table_shapes(session, [units[unit_id] for unit_id in bundle_unit_ids if units[unit_id].kind in TABLE_UNIT_KINDS]),
+        cell_positions=await load_cell_positions(session, [units[cell_id] for ids in cells.values() for cell_id in ids]),
         pair_of={
             unit_id: pair_id
             for unit_id, pair_id in await select_in_chunks(
@@ -439,8 +495,24 @@ async def _load_state(session: AsyncSession, bundle_id: int, payload: GroupSaveI
             )
         },
         slot_headings=slot_headings, slot_heading_sources=slot_heading_sources,
-        slot_heading_decisions=slot_heading_decisions,
+        slot_heading_decisions=slot_heading_decisions, anchors=anchors,
+        shared_captioned=await _find_shared_captioned(session, units.values()),
     )
+
+
+async def _find_shared_captioned(session: AsyncSession, units: Iterable[Unit]) -> set[int]:
+    """첫 그림의 캡션을 같이 쓰는 그림 가운데 그 첫 그림에 활성 캡션 단위가 있는 것(F7 ⑥) — 프런트 caption-model의 같은 판단과 같다."""
+    heads = {unit.id: unit.caption_figure_id for unit in units if unit.caption_figure_id is not None}
+    if not heads:
+        return set()
+    captioned = set(
+        await session.scalars(
+            select(Unit.group_unit_id).where(
+                Unit.group_unit_id.in_(set(heads.values())), Unit.status == UNIT_ACTIVE, Unit.kind == CAPTION_KIND
+            )
+        )
+    )
+    return {unit_id for unit_id, head in heads.items() if head in captioned}
 
 
 async def load_table_shapes(session: AsyncSession, table_units: list[Unit]) -> dict[int, tuple[int, int]]:
@@ -555,15 +627,20 @@ def _check_dispositions(payload: GroupSaveIn, state: _State) -> None:
 
 
 def _check_location(item: TargetIn, doc: TargetDoc, state: _State) -> None:
-    """SOP는 N/A가 아닌 칸(상위 칸 N/A는 하위 칸도 덮는다, R8), WI는 부분과 선언된 단계(또는 단계 없음). 칸 제목은 SOP에만 있다."""
+    """SOP는 줄을 받는 종류의 N/A가 아닌 칸(상위 칸 N/A는 하위 칸도 덮는다, R8), WI는 부분과 선언된 단계(또는 단계 없음). 칸 제목은 SOP에만 있다.
+
+    묶음 제목(group)과 자동 목록(auto_list) 항목에는 줄도 칸 제목도 놓지 못한다(slot_not_assignable).
+    """
     keys = [item.key]
     if item.kind == SLOT_HEADING and doc.doc_type != "sop":
         _reject("slot_heading_not_allowed", keys=keys)
     if doc.doc_type == "sop":
         if item.wi_step is not None or item.wi_part is not None:
             _reject("invalid_location", keys=keys)
-        if item.slot_key not in SLOT_KEYS:
+        if item.slot_key is None or state.outlines[doc.id].find(item.slot_key) is None:
             _reject("unknown_slot", keys=keys)
+        if not state.outlines[doc.id].is_assignable(item.slot_key):
+            _reject("slot_not_assignable", keys=keys)
         if any(is_within_slot(item.slot_key, na_slot) for na_slot in state.na_slots.get(doc.id, ())):
             _reject("na_slot", keys=keys)
         return
@@ -630,9 +707,18 @@ def _settle_translation_place(plan: _Plan, by_row_id: dict[int, _Plan], state: _
     plan.doc, plan.cell_row, plan.cell_col = state.docs[places[-1].doc_id], places[-1].cell_row, places[-1].cell_col
 
 
-def _check_source_kinds(item: TargetIn, state: _State) -> None:
-    """문장은 문장·제목·칸 문장에서, 칸 제목은 제목·문장에서, 표는 표·행 단위 하나에서, 그림은 그림 단위 하나에서 온다(R28)."""
+def _check_source_kinds(item: TargetIn, state: _State, *, is_caption: bool, origin: str) -> None:
+    """문장은 문장·제목·칸 문장에서, 칸 제목은 제목·문장에서, 표는 표·행 단위 하나에서, 그림은 그림 단위 하나에서 온다(R28).
+
+    캡션 새 문장은 캡션 단위 하나에서 오거나 출처 없이 써 넣는다. 캡션 단위는 캡션 새 문장의 출처로만 된다(표·그림 명세 §3.2).
+    입구 2 캡션은 새 문서가 캡션으로 읽은 글이라 옛 쪽에서 캡션으로 읽히지 않은 보통 문장 하나도 출처가 된다(§3.3).
+    """
     kinds = [state.units[unit_id].kind for unit_id in item.source_unit_ids]
+    if is_caption or CAPTION_KIND in kinds:
+        caption_sources = (CAPTION_KIND, "sentence") if origin == ORIGIN_NEW_DOC else (CAPTION_KIND,)
+        if not is_caption or len(kinds) > 1 or any(kind not in caption_sources for kind in kinds):
+            raise_rule(422, "invalid_caption_target", keys=[item.key])
+        return
     text_kinds = {"sentence": SENTENCE_SOURCE_KINDS, SLOT_HEADING: SLOT_HEADING_SOURCE_KINDS}.get(item.kind)
     if text_kinds is not None:
         if any(kind not in text_kinds for kind in kinds):
@@ -665,21 +751,23 @@ def _resolve_lang(item: TargetIn, row: TargetSentence | None, state: _State, tex
         return item.lang
     if row is not None and row.lang != NEUTRAL:
         return row.lang
+    if not item.source_unit_ids:  # 써 넣은 캡션 — 출처 언어가 없어 글자로 판정한다
+        return detect_language(text) or NEUTRAL
     langs = {state.units[unit_id].lang for unit_id in item.source_unit_ids}
     if len(langs) == 1:
         return langs.pop()
     return detect_language(text) or state.units[item.source_unit_ids[0]].lang
 
 
-def _resolve_text(item: TargetIn, row: TargetSentence | None, state: _State) -> str:
+def _resolve_text(item: TargetIn, row: TargetSentence | None, doc: TargetDoc, state: _State) -> str:
     """확정 글자 — 비운 새 새 문장에 출처가 하나면 원문 그대로(그대로 보내기, 스펙 §7.7). 표·그림은 글자가 없다.
 
     비운 기존 새 문장은 지금 글을 두고, 아직 확정 글이 없는 AI 새 문장이면 제안 글로 확정한다.
-    칸 제목은 칸 이름이고 사람이 고치지 않는다 — 비우거나 칸 이름 그대로 보내야 한다(칸 키는 _check_location이 먼저 봤다).
+    칸 제목은 그 문서 골격의 칸 이름이고 사람이 고치지 않는다 — 비우거나 칸 이름 그대로 보내야 한다(칸 키는 _check_location이 먼저 봤다).
     """
     keys = [item.key]
     if item.kind == SLOT_HEADING:
-        label = SLOT_LABELS[item.slot_key]
+        label = state.outlines[doc.id].get_label(item.slot_key)
         if item.text and item.text != label:
             _reject("slot_heading_text_locked", keys=keys)
         return label
@@ -692,7 +780,9 @@ def _resolve_text(item: TargetIn, row: TargetSentence | None, state: _State) -> 
     elif row is not None:
         text = row.confirmed_text or row.ai_text
     elif len(item.source_unit_ids) == 1:
-        text = state.units[item.source_unit_ids[0]].text
+        # 글 없이 보낸 새 문장은 원문의 내용이다 — 문단 번호는 번호 칸의 것이라 따라가지 않는다(F5)
+        unit = state.units[item.source_unit_ids[0]]
+        text = strip_number(unit.text, unit)
     else:
         _reject("empty_text", keys=keys)
     if not has_visible_char(text):
@@ -724,58 +814,75 @@ def _plan_target(item: TargetIn, state: _State) -> _Plan:
     doc = state.docs.get(doc_id)
     if doc is None:
         _reject("unknown_target_doc", keys=keys)
+    cell_row = item.cell_row if item.cell_row is not None else (row.cell_row if row is not None else None)
+    cell_col = item.cell_col if item.cell_col is not None else (row.cell_col if row is not None else None)
+    has_parent = item.parent_key is not None or (row is not None and row.parent_target_id is not None)
+    is_caption = item.kind == "sentence" and has_parent and cell_row is None and cell_col is None
     if row is not None and origin == ORIGIN_NEW_DOC:
         _check_locked(item, row)
     elif origin != ORIGIN_TRANSLATION:  # 번역의 자리는 출처를 봐야 해서 모든 계획이 선 뒤에 본다(_settle_translation_place)
         if doc.entrance == "match":
             _reject("match_doc_new_target", keys=keys)
-        if not item.source_unit_ids:
+        if not item.source_unit_ids and not is_caption:  # 캡션은 출처 없이 써 넣을 수 있다(표·그림 명세 §3.4)
             _reject("sources_required", keys=keys)
         _check_location(item, doc, state)
-    _check_source_kinds(item, state)
-    text = _resolve_text(item, row, state)
+    _check_source_kinds(item, state, is_caption=is_caption, origin=origin)
+    text = _resolve_text(item, row, doc, state)
     return _Plan(
         item=item, row=row, doc=doc, origin=origin, sources=list(item.source_unit_ids),
         lang=_resolve_lang(item, row, state, text), text=text, grid=_resolve_grid(item, row),
-        cell_row=item.cell_row if item.cell_row is not None else (row.cell_row if row is not None else None),
-        cell_col=item.cell_col if item.cell_col is not None else (row.cell_col if row is not None else None),
+        cell_row=cell_row, cell_col=cell_col, is_caption=is_caption,
     )
+
+
+def _reject_child(plan: _Plan) -> NoReturn:
+    """칸 새 문장은 관계 묶음 거절(invalid_cell_target), 캡션 새 문장은 따로 된 규칙 코드다 — 화면이 까닭 문구를 따로 보인다."""
+    if plan.is_caption:
+        raise_rule(422, "invalid_caption_target", keys=[plan.item.key])
+    _reject("invalid_cell_target", keys=[plan.item.key])
 
 
 def _link_cell_target(plan: _Plan, by_key: dict[str, _Plan], state: _State) -> None:
     """검사 7 — 칸 새 문장은 같은 요청의 표 새 문장 아래, 같은 새 문서·자리, 격자 안, 출처는 그 표 단위에 묶인 칸 문장 하나.
 
+    캡션 새 문장은 표·그림 새 문장 아래, 같은 새 문서·자리, 칸 좌표 없이, 출처는 그 묶음 단위에 묶인 캡션 단위 하나이거나
+    없다(써 넣은 캡션, 표·그림 명세 §3.4). 칸 새 문장처럼 순서·번호에 들지 않고 부모를 따른다.
     기존 칸 새 문장의 부모는 바뀌지 않는다. 입구 2 칸 새 문장은 구조가 새 문서 그대로라 parent_key를 비워도 된다.
     칸 번역도 자리가 정해져 있어 비워도 되지만, 함께 지워질 표 아래에는 남을 수 없다(부모를 지우면 DB CASCADE로 같이 사라진다).
     """
     item, row = plan.item, plan.row
-    keys = [item.key]
     current_parent = row.parent_target_id if row is not None else None
     if item.parent_key is None:
         is_kept = plan.origin == ORIGIN_NEW_DOC or (
             plan.origin == ORIGIN_TRANSLATION and current_parent not in state.removed
         )
         if current_parent is not None and not is_kept:
-            _reject("invalid_cell_target", keys=keys)
+            _reject_child(plan)
         plan.is_cell = current_parent is not None
         if not plan.is_cell and (plan.cell_row is not None or plan.cell_col is not None):
-            _reject("invalid_cell_target", keys=keys)
+            _reject_child(plan)
         return
     parent = by_key.get(item.parent_key)
-    if parent is None or parent.item.kind != "table" or item.kind != "sentence" or parent.doc.id != plan.doc.id:
-        _reject("invalid_cell_target", keys=keys)
+    parent_kinds = ("table", "figure") if plan.is_caption else ("table",)
+    if parent is None or parent.item.kind not in parent_kinds or item.kind != "sentence" or parent.doc.id != plan.doc.id:
+        _reject_child(plan)
     if row is not None and (parent.row is None or parent.row.id != current_parent):
-        _reject("invalid_cell_target", keys=keys)
-    if plan.cell_row is None or plan.cell_col is None or parent.grid is None:
-        _reject("invalid_cell_target", keys=keys)
-    if plan.cell_row >= parent.grid["rows"] or plan.cell_col >= parent.grid["cols"]:
-        _reject("invalid_cell_target", keys=keys)
+        _reject_child(plan)
+    if not plan.is_caption:
+        if plan.cell_row is None or plan.cell_col is None or parent.grid is None:
+            _reject_child(plan)
+        if plan.cell_row >= parent.grid["rows"] or plan.cell_col >= parent.grid["cols"]:
+            _reject_child(plan)
     if plan.origin not in (ORIGIN_NEW_DOC, ORIGIN_TRANSLATION):
         location = (item.slot_key, item.wi_step, item.wi_part)
         parent_location = (parent.item.slot_key, parent.item.wi_step, parent.item.wi_part)
-        table_unit_id = parent.sources[0] if parent.sources else None
-        if location != parent_location or len(plan.sources) != 1 or state.group_of.get(plan.sources[0]) != table_unit_id:
-            _reject("invalid_cell_target", keys=keys)
+        bundle_unit_id = parent.sources[0] if parent.sources else None
+        # 캡션은 출처가 없어도 된다(써 넣은 캡션) — 출처 수는 _check_source_kinds가 하나 이하로 봤다
+        is_sourced = len(plan.sources) == 1 or (plan.is_caption and not plan.sources)
+        if location != parent_location or not is_sourced or any(
+            state.group_of.get(unit_id) != bundle_unit_id for unit_id in plan.sources
+        ):
+            _reject_child(plan)
     plan.parent, plan.is_cell = parent, True
 
 
@@ -816,7 +923,8 @@ def _decide_change_type(
         return "translated"
     if not plan.is_cell and spread[(source_id, plan.doc.id)] >= 2:
         return "split"
-    if plan.text == state.units[source_id].text:
+    source = state.units[source_id]
+    if plan.text in (source.text, strip_number(source.text, source)):
         return "as_is"
     if requested is None and plan.item.text is None and plan.row is not None and (
         plan.row.ai_text or (plan.row.suggestion_id is not None and set(plan.sources) == state.sources[plan.row.id])
@@ -848,7 +956,8 @@ def _check_as_is_table(plan: _Plan, by_row_id: dict[int, _Plan], state: _State) 
         if plan.grid != {"rows": 1 if unit.kind == "table_row" else n_rows, "cols": n_cols}:
             _reject("grid_mismatch", keys=keys)
     parent = _find_parent_plan(plan, by_row_id)
-    if parent is None or parent.change_type != "as_is" or len(plan.sources) != 1:
+    # 캡션은 칸 자리가 없다 — 그대로인 표의 모양과 무관하다
+    if parent is None or plan.is_caption or parent.change_type != "as_is" or len(plan.sources) != 1:
         return
     table_unit = state.units[parent.sources[0]]
     if state.group_of.get(plan.sources[0]) != table_unit.id:  # 입구 2 칸 새 문장이 칸 아닌 문장과 짝지어진 경우
@@ -889,6 +998,63 @@ def _check_duplicates(payload: GroupSaveIn, plans: list[_Plan], state: _State) -
     )
     if offenders:
         _reject("duplicate_without_reason", unit_ids=offenders)
+
+
+def _check_captions(payload: GroupSaveIn, plans: list[_Plan], state: _State) -> None:
+    """확정은 배정한 단위를 출처로 둔 표·그림 새 문장마다 캡션 새 문장이 하나 이상 있어야 한다(표·그림 명세 §3.4).
+
+    캡션은 자동으로 묶인 것·붙인 것·써 넣은 것 모두 센다. 보류는 캡션 없이 둘 수 있고, 삭제·이동은 새 문장이 없어 걸리지 않는다.
+    입구 2 표·그림은 새 문서 원문 그대로라(캡션을 써 넣을 수 없다, match_doc_new_target) 보지 않는다.
+    캡션 있는 첫 그림의 캡션을 같이 쓰는 그림(F7 ⑥ — state.shared_captioned)은 제 캡션 새 문장 없이 확정된다.
+    """
+    if payload.action != "confirm":
+        return
+    assigned = {item.unit_id for item in payload.units if item.disposition == "assigned"}
+    by_row_id = {plan.row.id: plan for plan in plans if plan.row is not None}
+    captioned = {id(_find_parent_plan(plan, by_row_id)) for plan in plans if plan.is_caption}
+    missing = [
+        plan.item.key for plan in plans
+        if plan.item.kind in ("table", "figure") and plan.origin == ORIGIN_UNITS
+        and assigned & set(plan.sources) and id(plan) not in captioned
+        and not set(plan.sources) <= state.shared_captioned
+    ]
+    if missing:
+        raise_rule(422, "caption_required", keys=missing)
+
+
+def _check_positions(plans: Iterable[_Plan], by_row_id: dict[int, _Plan], state: _State) -> None:
+    """검사 12 — 문장 사이 자리(position)는 칸·문서가 바뀌는 최상위 문장(옛 단위에서 온 것)만 받고, 가리킨 새 문장은 저장 뒤에도
+    같은 문서·칸·step·part에 있어야 한다(끌어다 놓기 설계 §8).
+
+    가리킨 문장이 이 저장으로 지워지거나 그 문장도 자리를 받으면 기댈 자리가 없다 — 화면이 다시 놓게 한다.
+    """
+    for plan in plans:
+        position = plan.item.position
+        if position is None:
+            continue
+        keys = [plan.item.key]
+        if plan.is_cell or plan.item.kind == SLOT_HEADING or plan.origin != ORIGIN_UNITS:
+            _reject("position_not_allowed", keys=keys)
+        spot = _get_spot(plan)
+        row = plan.row
+        if row is not None and spot == (row.target_doc_id, row.slot_key, row.wi_step, row.wi_part):
+            _reject("position_same_place", keys=keys)
+        anchor_id = position.after_target_id
+        if anchor_id is None:  # 칸의 맨 앞
+            continue
+        anchor = state.anchors.get(anchor_id)
+        anchor_plan = by_row_id.get(anchor_id)
+        if (
+            anchor is None or anchor_id in state.removed or anchor.parent_target_id is not None
+            or anchor.kind == SLOT_HEADING or (anchor_plan is not None and anchor_plan.item.position is not None)
+        ):
+            _reject("unknown_position_target", keys=keys, target_ids=[anchor_id])
+        if anchor_plan is not None:
+            anchor_spot = _get_spot(anchor_plan)
+        else:
+            anchor_spot = (anchor.target_doc_id, anchor.slot_key, anchor.wi_step, anchor.wi_part)
+        if anchor_spot != spot:
+            _reject("position_target_elsewhere", keys=keys, target_ids=[anchor_id])
 
 
 SlotRelease = tuple[TargetSentence, list[int]]  # 이 저장의 출처를 떼어 낼 칸 제목과 남는 출처(seq 순, 비면 행을 지운다)
@@ -989,6 +1155,19 @@ def _is_echoed(plan: _Plan, changed: set[int], state: _State) -> bool:
     return source is not None and source.id in changed
 
 
+def _check_against_sources(plan: _Plan, state: _State, check_texts: list[str]) -> list[dict[str, str]]:
+    """문장 검사 — 새 문장은 원문에서 문단 번호를 뺀 내용이어도 되고 번호를 품어도 된다. 번호 칸으로 간 번호("6.2")가 새 문장에
+    없다고 숫자 불일치를 내지 않게, 번호를 뺀 내용과 견준 결과가 더 깨끗하면 그것을 쓴다."""
+    warnings = check_sentence(check_texts, plan.text)
+    if not warnings or plan.origin == ORIGIN_TRANSLATION:
+        return warnings
+    contents = [strip_number(state.units[unit_id].text, state.units[unit_id]) for unit_id in plan.sources]
+    if contents == check_texts:
+        return warnings
+    stripped = check_sentence(contents, plan.text)
+    return stripped if len(stripped) < len(warnings) else warnings
+
+
 def _list_check_texts(plan: _Plan, state: _State) -> list[str]:
     """문장 검사의 원문 — 번역은 출처 연결이 없어 번역 출처 단위의 글과 언어를 넘어 비교한다(스펙 §7.12)."""
     if plan.origin == ORIGIN_TRANSLATION:
@@ -1018,14 +1197,23 @@ def _apply_plan(
         target.confirmed_text = plan.text
     elif plan.origin != ORIGIN_NEW_DOC:
         if target.target_doc_id != plan.doc.id:
-            # 순서를 사람이 정한 문서면 끝에, 아니면 결과물이 출처 위치로 정렬하므로 0. 새로 만드는 새 문장은 _place_new_targets가 놓는다
-            is_appended = plan.doc.manual_order and not plan.is_cell and plan.row is not None
+            # 순서를 사람이 정한 문서면 끝에, 아니면 결과물이 출처 위치로 정렬하므로 0. 새로 만드는 새 문장은 _place_new_targets가,
+            # 문장 사이 자리를 받은 문장은 _insert_positioned가 놓는다
+            is_appended = (
+                plan.doc.manual_order and not plan.is_cell and plan.row is not None and plan.item.position is None
+            )
             target.order_index = next_orders[plan.doc.id] if is_appended else 0
             if is_appended:
                 next_orders[plan.doc.id] += 1
         place = (plan.doc.id, plan.item.slot_key, plan.item.wi_step, plan.item.wi_part)
         if place != (target.target_doc_id, target.slot_key, target.wi_step, target.wi_part):
             target.indent_level = 0  # 깊이는 그 칸 앞뒤 줄에 기댄 값이라 다른 칸으로 가면 맨 바깥에서 다시 시작한다
+            # 기존 줄을 다른 절로 옮기면 번호 ↔ 글머리 기호만 도착한 절의 기본으로 바꾼다. 새 줄은 _place_new_targets가 정하고,
+            # 표 칸·캡션은 표의 표시를 따르며 칸 제목은 표시가 없다
+            if plan.row is not None and not plan.is_cell and plan.item.kind != SLOT_HEADING:
+                target.number_style = restyle_moved(
+                    target.number_style, state.outlines[plan.doc.id], plan.item.slot_key
+                )
         target.target_doc_id = plan.doc.id
         target.slot_key, target.wi_step, target.wi_part = plan.item.slot_key, plan.item.wi_step, plan.item.wi_part
         target.kind, target.lang, target.confirmed_text, target.grid = plan.item.kind, plan.lang, plan.text, plan.grid
@@ -1037,7 +1225,7 @@ def _apply_plan(
     check_texts = _list_check_texts(plan, state)
     # 참조 줄(REF)은 번호를 지금 번호로 바꿔 쓰는 글이라 숫자 불일치 검사를 하지 않는다
     is_checked = plan.item.kind == "sentence" and plan.lang != REF_LANG and bool(check_texts)
-    target.warnings = check_sentence(check_texts, plan.text) if is_checked else []
+    target.warnings = _check_against_sources(plan, state, check_texts) if is_checked else []
     _set_human_status(target, action, hold_reason, actor, stamp)
     target.revision += 1
     plan.row = target
@@ -1073,6 +1261,7 @@ def _build_new_target(plan: _Plan, placed: dict[tuple[Spot, int], list[_Plan]], 
         key=plan.item.key, place=spot, meaning=state.pair_of.get(source_unit_id, -source_unit_id), lang=plan.lang,
         source_unit_id=source_unit_id, is_translation=plan.change_type == "translated",
         source_placed=(spot, source_unit_id) in placed,
+        default_style=get_default_style(state.outlines[plan.doc.id], spot[1]),
     )
 
 
@@ -1086,14 +1275,16 @@ async def _place_new_targets(
     """새로 만든 새 문장에 기본 표시를 쓰고, 순서를 사람이 정한 문서면 받은 순서대로 끝에 붙이거나 나중 번역을 기존 출처 바로 뒤에 끼운다.
 
     끼우면 출처 뒤 새 문장이 한 칸씩 밀려 그 문서의 최댓값도 하나 늘므로 다음 끝자리도 하나 민다. 한 출처 뒤에 번역이 둘 오면 앞
-    번역 뒤에 잇는다. 기존 새 문장을 다른 칸으로 옮기는 저장은 여기 오지 않는다 — 사람이 고른 표시를 덮지 않는다(제품 명세 §7.13 섹션 번호, O10).
+    번역 뒤에 잇는다. 기존 새 문장을 다른 칸으로 옮기는 저장은 여기 오지 않는다 — 그쪽은 _apply_plan이 번호 ↔ 글머리 기호만 도착한 절의
+    기본으로 바꾸고 생략·주석은 그대로 둔다(제품 명세 §7.13 섹션 번호, O10).
     """
     for item in arranged:
         new_plans[item.key].row.number_style = item.number_style
     anchors: dict[tuple[Spot, int], TargetSentence] = {}
     for item in arranged:
         plan = new_plans[item.key]
-        if not plan.doc.manual_order:  # 순서는 결과물의 정렬 키가 정한다
+        # 순서는 결과물의 정렬 키가 정한다. 문장 사이 자리를 받은 문장은 끝 붙이기가 끝난 뒤 _insert_positioned가 놓는다
+        if not plan.doc.manual_order or plan.item.position is not None:
             continue
         if item.after_existing_source:
             key = (_get_spot(plan), plan.sources[0])
@@ -1103,6 +1294,83 @@ async def _place_new_targets(
         else:
             plan.row.order_index = next_orders[plan.doc.id]
         next_orders[plan.doc.id] += 1
+
+
+def _list_positioned(plans: Iterable[_Plan]) -> list[_Plan]:
+    return [plan for plan in plans if plan.item.position is not None]
+
+
+async def _insert_positioned(
+    session: AsyncSession, plans: list[_Plan], placed: dict[tuple[Spot, int], list[_Plan]], state: _State
+) -> None:
+    """문장 사이 자리를 받은 문장을 그 자리에 끼운다 — 그 문서의 끝 붙이기가 모두 끝난 뒤라 받지 않은 문장은 끝에 남는다.
+
+    문서는 이미 굳었다(freeze_positioned_docs). 같은 자리·같은 앞 문장을 받은 문장들은 arrange_new_targets 순서(짝은 영어 먼저)로
+    잇는다 — 화면은 원문 순서로 보내지만 번호 표시 기본값은 영어를 첫 줄로 본다(끌어다 놓기 계획의 판단 3). 칸 안 순서만 뜻이
+    있으므로 앞 문장 뒤(맨 앞이면 그 칸의 첫 문장 자리)부터 민다.
+    """
+    if not plans:
+        return
+    await session.flush()  # 새로 만든 행의 id — 맨 앞 자리를 셀 때 아직 끼우지 않은 행을 뺀다
+    by_key = {plan.item.key: plan for plan in plans}
+    groups: dict[tuple[Spot, int | None], list[TargetSentence]] = defaultdict(list)
+    for item in arrange_new_targets([_build_new_target(plan, placed, state) for plan in plans]):
+        plan = by_key[item.key]
+        groups[(_get_spot(plan), plan.item.position.after_target_id)].append(plan.row)
+    pending = {plan.row.id for plan in plans}
+    for (spot, anchor_id), rows in groups.items():
+        doc_id, slot_key, wi_step, wi_part = spot
+        tops = (TargetSentence.target_doc_id == doc_id, TargetSentence.parent_target_id.is_(None))
+        if anchor_id is not None:
+            # 앞 묶음이 밀었을 수 있어 DB에서 다시 읽는다
+            at = await session.scalar(select(TargetSentence.order_index).where(TargetSentence.id == anchor_id)) + 1
+        else:
+            at = await session.scalar(
+                select(func.min(TargetSentence.order_index)).where(
+                    *tops, TargetSentence.kind != SLOT_HEADING, TargetSentence.slot_key == slot_key,
+                    TargetSentence.wi_step == wi_step, TargetSentence.wi_part == wi_part,
+                    TargetSentence.id.not_in(pending),
+                )
+            )
+            if at is None:  # 빈 칸
+                last = await session.scalar(select(func.max(TargetSentence.order_index)).where(*tops))
+                at = 0 if last is None else last + 1
+        await open_gap(session, doc_id, at, len(rows))
+        for index, row in enumerate(rows):
+            row.order_index = at + index
+        pending -= {row.id for row in rows}
+
+
+async def _follow_positioned_sources(session: AsyncSession, bundle_id: int, plans: list[_Plan]) -> None:
+    """자리를 받아 옮긴 문장의 남은 AI 번역을 그 문장 바로 뒤로 — 떼어 내기는 번역의 칸만 출처에 맞추고 순번은 그대로 둔다.
+
+    sweep_translations 뒤에 부른다(지운 번역은 이미 없다). 번역이 여럿이면 앞 번역 뒤에 잇는다.
+    """
+    if not plans:
+        return
+    rows = {plan.row.id: plan.row for plan in plans}
+    unit_ids = {unit_id for plan in plans for unit_id in plan.sources}
+    candidates = sorted(
+        (
+            row[0]
+            for row in await select_in_chunks(
+                session,
+                lambda chunk: select(TargetSentence).where(
+                    TargetSentence.bundle_id == bundle_id, TargetSentence.origin == ORIGIN_TRANSLATION,
+                    TargetSentence.translation_source_unit_id.in_(chunk),
+                ),
+                unit_ids,
+            )
+        ),
+        key=lambda row: (row.order_index, row.id),
+    )
+    source_of = await load_source_target_ids(session, [row.id for row in candidates])
+    anchors = dict(rows)
+    for translation in candidates:
+        source_id = source_of.get(translation.id)
+        if source_id in rows:
+            translation.order_index = await insert_after(session, anchors[source_id])
+            anchors[source_id] = translation
 
 
 async def _write_group(
@@ -1152,6 +1420,7 @@ async def _write_group(
 
     next_orders = await _load_next_orders(session, plans)
     placed = _find_placed_sources(plans)
+    positioned = _list_positioned(plans)
     # 칸 제목은 번호를 세지 않고 칸 항목도 아니라 기본 표시·순서(O10)를 받지 않는다
     new_plans = {
         plan.item.key: plan for plan in plans if plan.row is None and not plan.is_cell and plan.item.kind != SLOT_HEADING
@@ -1173,6 +1442,7 @@ async def _write_group(
             ))
         if not is_cell:
             await _place_new_targets(session, arranged, new_plans, placed, next_orders)
+            await _insert_positioned(session, positioned, placed, state)
         await session.flush()  # 칸 새 문장이 부모 id를, 출처 연결이 새 문장 id를 알아야 한다
 
     if rewritten:
@@ -1207,6 +1477,7 @@ async def _write_group(
         session, plans=plans, payload=payload, decisions=state.decisions, actor=actor, stamp=stamp
     )
     swept = await sweep_translations(session, bundle_id, changed, exempt=edited)
+    await _follow_positioned_sources(session, bundle_id, positioned)
     unit_ids = [item.unit_id for item in payload.units]
     record_event(
         session, bundle_id=bundle_id, actor=actor, action=f"group.{payload.action}",
@@ -1220,8 +1491,18 @@ async def _write_group(
 # --- 진입점 ---
 
 
-async def save_group(session: AsyncSession, bundle: Bundle, payload: GroupSaveIn, actor: str) -> GroupOut:
-    """관계 묶음(한 요청에 여럿 가능)을 검사 1–11 순서로 모두 확인한 뒤 한 트랜잭션으로 쓴다. 커밋은 호출부가 한다.
+@dataclass
+class CheckedGroup:
+    """검사를 모두 통과한 저장 — 쓰기가 그대로 옮긴다."""
+
+    payload: GroupSaveIn
+    plans: list[_Plan]
+    releases: list[SlotRelease]
+    state: _State
+
+
+async def check_group(session: AsyncSession, bundle: Bundle, payload: GroupSaveIn) -> CheckedGroup:
+    """관계 묶음(한 요청에 여럿 가능)을 잠그고 검사 1–12 순서로 모두 확인한다 — 쓰지 않는다. 쓰기는 save_group이 한다.
 
     검사가 쓰기 전에 모두 끝나므로 거절된 요청은 아무것도 바꾸지 않는다(낡은 revision 하나도 전체 409).
     """
@@ -1254,9 +1535,38 @@ async def save_group(session: AsyncSession, bundle: Bundle, payload: GroupSaveIn
         _check_as_is_table(plan, by_row_id, state)
     _check_as_is_table_cells(plans, by_row_id, state)
     _check_duplicates(payload, plans, state)
+    _check_captions(payload, plans, state)
+    # 모은 칸 제목에 섞여 쓰기에서 빠지는 칸 제목 항목도 자리를 실었으면 거절한다 — 그래서 모으기 전 계획 전부를 본다
+    _check_positions(by_key.values(), by_row_id, state)
     if payload.action == "hold" and not payload.hold_reason.strip():
         _reject("hold_reason_required")
-    target_ids = await _write_group(session, bundle.id, payload, plans, releases, state, actor)
+    return CheckedGroup(payload=payload, plans=plans, releases=releases, state=state)
+
+
+async def freeze_positioned_docs(session: AsyncSession, bundle: Bundle, checked: CheckedGroup, actor: str) -> None:
+    """문장 사이 자리를 받은 문서 가운데 순서를 사람이 정한 적 없는 문서의 지금 순서를 굳힌다 — 없으면 아무것도 하지 않는다.
+
+    라우터가 되돌리기 단계(record_snapshot_step) 밖에서 부른다: 단계 안에서 굳히면 되돌릴 때 순번만 굳히기 전으로 돌아가고
+    manual_order는 남아 문서가 만든 순서로 뒤섞인다(끌어다 놓기 계획 §12 열린 것 — 되돌리면 새 문장만 사라지고 굳힌 순서는 남는다).
+    """
+    docs = {plan.doc.id: plan.doc for plan in _list_positioned(checked.plans) if not plan.doc.manual_order}
+    for doc in docs.values():
+        await freeze_order(session, bundle.id, doc, actor)
+    # 되돌리기 단계의 앞 모습(dump_bundle_state)은 Core select라 자동 flush에 기대지 않고 굳힌 순번을 여기서 DB에 쓴다
+    await session.flush()
+
+
+async def save_group(session: AsyncSession, bundle: Bundle, checked: CheckedGroup, actor: str) -> GroupOut:
+    """check_group을 통과한 묶음을 한 트랜잭션으로 쓴다. 커밋은 호출부가 한다.
+
+    문장 사이 자리를 받은 저장은 순서를 바꾼 것이라 묶음 revision을 올린다 — 낡은 Order 화면의 순서 저장이 409가 되게.
+    """
+    payload = checked.payload
+    target_ids = await _write_group(
+        session, bundle.id, payload, checked.plans, checked.releases, checked.state, actor
+    )
+    if _list_positioned(checked.plans):
+        bundle.revision += 1
     unit_ids = [item.unit_id for item in payload.units]
     settled = await settle_pairs(session, bundle.id, unit_ids, actor, release=payload.release_unit_ids)
     out = await build_group_out(session, unit_ids=unit_ids, target_ids=target_ids)
@@ -1471,29 +1781,55 @@ async def list_units(
         )
     ).all()
     target_ids: dict[int, list[int]] = defaultdict(list)
+    target_doc_ids: dict[int, set[int]] = defaultdict(set)
     if rows:
         links = await session.execute(
-            select(TargetSource.unit_id, TargetSource.target_id)
+            select(TargetSource.unit_id, TargetSource.target_id, TargetSentence.target_doc_id)
+            .join(TargetSentence, TargetSentence.id == TargetSource.target_id)
             .where(TargetSource.unit_id.in_([unit.id for unit, *_ in rows]))
             .order_by(TargetSource.target_id)
         )
-        for unit_id, target_id in links:
+        for unit_id, target_id, target_doc_id in links:
             target_ids[unit_id].append(target_id)
+            target_doc_ids[unit_id].add(target_doc_id)
     pair_rows = await select_in_chunks(
         session,
         lambda chunk: select(UnitPairMember.unit_id, UnitPairMember.pair_id).where(UnitPairMember.unit_id.in_(chunk)),
         [unit.id for unit, *_ in rows],
     )
     pair_ids = {unit_id: pair_id for unit_id, pair_id in pair_rows}
+    captioned = await _find_captioned_units(session, [unit.id for unit, *_ in rows])
     items = []
     for unit, document, decision, group in rows:
         decisions = {unit.id: decision} if group is None else {unit.id: decision, group.unit_id: group}
         items.append(
             UnitRowOut(
                 unit_id=unit.id, document_id=document.id, display_id=compute_display_id(document, unit),
-                kind=unit.kind, lang=unit.lang, text=unit.text, table_id=unit.table_id, row_index=unit.row_index,
+                kind=unit.kind, lang=unit.lang, text=unit.text,
+                content_start=get_content_start(unit.text, get_hidden_len(unit)), table_id=unit.table_id,
+                row_index=unit.row_index,
                 group_unit_id=unit.group_unit_id, pair_id=pair_ids.get(unit.id), status=get_cover_status(unit, decisions),
                 decision=DecisionOut.model_validate(decision), target_ids=target_ids.get(unit.id, []),
+                target_doc_ids=sorted(target_doc_ids.get(unit.id, ())),
+                has_caption_target=unit.id in captioned,
+                caption_figure_id=unit.caption_figure_id,
             )
         )
     return UnitsPageOut(total=total or 0, items=items)
+
+
+async def _find_captioned_units(session: AsyncSession, unit_ids: list[int]) -> set[int]:
+    """출처 새 문장 아래 캡션 새 문장(captions.is_caption_target과 같은 꼴)이 있는 단위 — 써 넣은 캡션은 캡션 단위가 없어 화면이 이것으로 안다."""
+    caption = aliased(TargetSentence)
+    rows = await select_in_chunks(
+        session,
+        lambda chunk: select(TargetSource.unit_id)
+        .join(caption, caption.parent_target_id == TargetSource.target_id)
+        .where(
+            TargetSource.unit_id.in_(chunk), caption.kind == "sentence",
+            caption.cell_row.is_(None), caption.cell_col.is_(None),
+        )
+        .distinct(),
+        unit_ids,
+    )
+    return {unit_id for (unit_id,) in rows}

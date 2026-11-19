@@ -42,3 +42,8 @@ export function buildAScreenLines(rows: readonly OutputARow[]): AScreenLine[] {
 export function listMeaningStarts(items: readonly Pick<OutputCItem, "meaning_key">[]): boolean[] {
   return items.map((item, index) => index === 0 || item.meaning_key === null || item.meaning_key !== items[index - 1].meaning_key);
 }
+
+/** C 줄이 옛 두 줄 이상에서 왔나(N:1) - 그런 줄만 올리거나 고를 때 source_note를 꼬리표로 보인다. 출처 글이 비면(고아 번역 등) 보일 것이 없다 */
+export function hasMergedSource(item: Pick<OutputCItem, "source_count" | "source_note">): boolean {
+  return item.source_count >= 2 && item.source_note !== "";
+}

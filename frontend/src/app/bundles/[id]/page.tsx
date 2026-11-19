@@ -50,7 +50,7 @@ import { useI18n } from "@/lib/i18n";
 import { countPending, getConfirmedPercent } from "@/lib/progress-model";
 import { getNextActionHref, getStageHref, NEXT_ACTION_STAGE, STAGES } from "@/lib/stages";
 import { useDelayedFlag } from "@/lib/use-delayed-flag";
-import { GATE_STAGE, groupNotices, isNoticeGroup, splitGates, type GateKey } from "@/lib/review-gates";
+import { GATE_STAGE, splitGates, type GateKey } from "@/lib/review-gates";
 import { useLoaded, type Loaded } from "@/lib/use-loaded";
 
 type TFunc = (key: string, vars?: Record<string, string | number>) => string;
@@ -81,6 +81,15 @@ const NEXT_ICONS: Record<NextAction, LucideIcon> = {
 
 // 검토 요청 조건 카드를 Fail·Pass 묶음마다 몇 개까지 먼저 보일지
 const GATES_PREVIEW = 3;
+
+// 표·그림 참조 경고(막지 않음, backend review.py) - 코드마다 문구. 이 밖의 알림 코드는 문장 검사 경고 문구로 센다
+const CAPTION_REF_NOTICE_KEYS: Partial<Record<string, string>> = {
+  caption_ref_broken: "notice.captionRefBroken",
+  caption_ref_order: "notice.captionRefOrder",
+  caption_ref_unresolved: "notice.captionRefUnresolved",
+  caption_ref_ambiguous: "notice.captionRefAmbiguous",
+  caption_ref_text_changed: "notice.captionRefTextChanged",
+};
 
 function sumCounts(issues: ReadinessIssue[], prefix: string): number {
   return issues.filter((issue) => issue.code.startsWith(prefix)).reduce((total, issue) => total + (issue.count ?? 0), 0);
@@ -276,36 +285,6 @@ function NextActionCard({ bundle, onRequestReview, onAddReviewer }: { bundle: Bu
   );
 }
 
-/** 같은 안내가 여러 문서에 걸치면 한 줄로 접고, 누르면 문서 코드가 펼쳐진다 */
-function NoticeGroupLine({ docs }: { docs: string[] }) {
-  const { t } = useI18n();
-  const [isOpen, setIsOpen] = useState(false);
-  return (
-    <div className="grid gap-1.5" data-testid="overview-notice-group-box">
-      <button
-        type="button"
-        className="grid grid-cols-[16px_minmax(0,1fr)_14px] gap-2 text-left text-ink-2"
-        aria-expanded={isOpen}
-        data-testid="overview-notice-group"
-        onClick={() => setIsOpen((prev) => !prev)}
-      >
-        <Info size={16} strokeWidth={1.5} className="mt-[3px] text-ink-3" aria-hidden />
-        <span>{t("notice.equipmentSlotsGroup", { n: docs.length })}</span>
-        <ChevronRight size={14} strokeWidth={1.5} className={`mt-[3px] text-ink-3 transition-transform ${isOpen ? "rotate-90" : ""}`} aria-hidden />
-      </button>
-      {isOpen && (
-        <ul className="m-0 grid list-none gap-0.5 pl-6 font-mono text-[11px] text-ink-3" data-testid="overview-notice-group-docs">
-          {docs.map((doc, index) => (
-            <li key={`${doc}-${index}`} className="break-all">
-              {doc}
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
-  );
-}
-
 interface ReviewGateProps {
   bundle: Bundle;
   readiness: Loaded<Readiness>;
@@ -328,7 +307,6 @@ function ReviewGate({ bundle, readiness, onRequestReview, onAddReviewer }: Revie
   const split = splitGates(lines, showAll ? Infinity : GATES_PREVIEW);
   const hidden = split.failHidden + split.passHidden;
   const passed = lines.filter((line) => line.ok).length;
-  const groupedNotices = groupNotices(data?.notices ?? []);
 
   return (
     <section className="side-box grid gap-2.5" data-testid="overview-gate">
@@ -428,18 +406,12 @@ function ReviewGate({ bundle, readiness, onRequestReview, onAddReviewer }: Revie
       )}
       {/* 요청한 자리에서 물린다 - 검토자가 보기 전에 고칠 것이 생긴 작성자의 길 */}
       {bundle.status === "in_review" && isAuthor && <WithdrawReviewButton bundle={bundle} className="btn wide" testId="overview-withdraw-review" />}
-      {groupedNotices.map((notice) =>
-        isNoticeGroup(notice) ? (
-          <NoticeGroupLine key={notice.code} docs={notice.docs} />
-        ) : (
-          <p key={`${notice.code}-${notice.doc_code ?? ""}`} className="grid grid-cols-[16px_minmax(0,1fr)] gap-2 text-ink-2" data-testid={`overview-notice-${notice.code}`}>
-            <Info size={16} strokeWidth={1.5} className="mt-[3px] text-ink-3" aria-hidden />
-            {notice.code === "equipment_sop_empty_slots"
-              ? t("notice.equipmentSlots", { doc: String(notice.doc_code ?? "") })
-              : t("notice.sentenceWarnings", { n: notice.count ?? 0 })}
-          </p>
-        ),
-      )}
+      {(data?.notices ?? []).map((notice) => (
+        <p key={`${notice.code}-${notice.doc_code ?? ""}`} className="grid grid-cols-[16px_minmax(0,1fr)] gap-2 text-ink-2" data-testid={`overview-notice-${notice.code}`}>
+          <Info size={16} strokeWidth={1.5} className="mt-[3px] text-ink-3" aria-hidden />
+          {t(CAPTION_REF_NOTICE_KEYS[notice.code] ?? "notice.sentenceWarnings", { n: notice.count ?? 0 })}
+        </p>
+      ))}
     </section>
   );
 }

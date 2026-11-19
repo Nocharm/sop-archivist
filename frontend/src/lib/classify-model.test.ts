@@ -2,21 +2,26 @@
 import { describe, expect, it } from "vitest";
 
 import type { Decision, DocumentView, Group, GroupTarget, ToBe, UnitRow, ViewUnit } from "./api-sop";
+import { listSiblingPlaces } from "./assign-model";
 import {
   buildDestinationOptions,
   buildGroupSave,
   buildRows,
   buildSentenceSlots,
+  readLinkDefault,
   buildViewsKey,
   findNextOpen,
   findSystemHold,
+  getDestinationId,
   getRowStep,
   hasDraftChange,
   hasRowLanguage,
   isPlaceOption,
   listTreeOptions,
+  listTreeRows,
   isSentenceUnit,
   isTranslationOf,
+  listJoinedTargetIds,
   listLinkLeftovers,
   listUnpairedKeys,
   readCheckKey,
@@ -27,18 +32,19 @@ import {
   stepInList,
 } from "./classify-model";
 import type { Destination } from "./classify-model";
+import { makeDeepOutline, makeTemplateOutline, TEMPLATE_PLACE_KEYS } from "./outline-fixture";
 
 function makeViewUnit(id: number, lang: "ko" | "en", pos: number): ViewUnit {
   return {
-    id, display_id: `D-${id}`, kind: "sentence", spans: [[pos, 0, 3]], text: `t${id}`, lang, table_id: null, row_index: null,
-    group_unit_id: null, status: "unassigned", pair_id: null, pos_seq: pos, block_id: pos, is_edited: false, can_unmerge: false, split_suggestion_id: null, ref: null,
+    id, display_id: `D-${id}`, kind: "sentence", spans: [[pos, 0, 3]], text: `t${id}`, lang, number: null, table_id: null, row_index: null,
+    group_unit_id: null, status: "unassigned", pair_id: null, pos_seq: pos, block_id: pos, is_edited: false, can_unmerge: false, split_suggestion_id: null, ref: null, caption_refs: [],
   };
 }
 
 function makeUnitRow(id: number, status: UnitRow["status"]): UnitRow {
   return {
-    unit_id: id, document_id: 1, display_id: `D-${id}`, kind: "sentence", lang: "ko", text: `t${id}`, table_id: null, row_index: null,
-    group_unit_id: null, status, target_ids: [], pair_id: null,
+    unit_id: id, document_id: 1, display_id: `D-${id}`, kind: "sentence", lang: "ko", text: `t${id}`, content_start: 0, table_id: null, row_index: null,
+    group_unit_id: null, status, target_ids: [], target_doc_ids: [], pair_id: null,
     decision: { disposition: "unassigned", move_target_code: "", reason: "", status, hold_reason: "", confirmed_by: null, confirmed_at: null, revision: 1 },
   };
 }
@@ -94,15 +100,146 @@ const TOBE: ToBe = {
   ],
   na_slots: [{ code: "SOP-CF", slot_key: "procedures", reason: "x" }],
   wi_steps: [{ code: "WI-01", step_no: 1, title: "Load" }],
+  outline_items: makeTemplateOutline("SOP-CF"),
+  outline_suggestions: {},
 };
+
+const DOCS = "document_relationships";
+const ASSOCIATED = `${DOCS}.associated_documents`;
 
 describe("destinations", () => {
   it("lists SOP slots, WI step parts, and greys out N/A including children", () => {
-    const options = buildDestinationOptions(TOBE, {});
-    expect(options.find((option) => option.id === "slot:6:procedures.maintenance")?.disabled).toBe(true);
+    const options = buildDestinationOptions(TOBE);
+    expect(options.find((option) => option.id === "slot:6:procedures.p1")?.disabled).toBe(true);
     expect(options.find((option) => option.id === "slot:6:purpose")?.disabled).toBe(false);
     expect(options.filter((option) => option.docCode === "WI-01").map((option) => option.id)).toEqual(["step:7:1:instruction", "step:7:1:why"]);
     expect(options.some((option) => option.docCode === "WI-04")).toBe(false);
+  });
+
+  it("lists the SOP places in the outline's order with the item's own name and level", () => {
+    const places = buildDestinationOptions({ ...TOBE, na_slots: [] }).filter((option) => option.destination.kind === "slot");
+    expect(places.map((option) => option.id)).toEqual(TEMPLATE_PLACE_KEYS.map((key) => `slot:6:${key}`));
+    // 7.1의 항목은 두 단 아래다(7 › 7.1 › Form)
+    expect(places.map((option) => option.depth)).toEqual([0, 0, 0, 0, 0, 1, 1, 0, 1, 2, 2, 2, 2, 1, 0, 0, 1]);
+    // 이름은 그 항목의 것만 - 나무가 depth로 위계를 보이므로 "General Requirements › Safety"로 적지 않는다
+    expect(places.slice(4, 7).map((option) => option.label)).toEqual(["General Requirements", "Safety", "Work"]);
+  });
+
+  it("names an appendix place by its label, which carries its number", () => {
+    // 나무는 번호를 적지 않는다 - 부록(shows_number false)만 번호가 든 이름 "Appendix 1. …"으로 적어 어느 부록인지 보인다
+    const options = buildDestinationOptions({ ...TOBE, na_slots: [] }).filter((option) => option.id.endsWith(":appendices.a1"));
+    expect(options.map((option) => [option.destination.kind, option.label])).toEqual([["slot_heading", "Appendix 1. Alarm list"], ["slot", "Appendix 1. Alarm list"]]);
+  });
+
+  it("offers only the items that take sentences directly, and none that the document removed", () => {
+    const outline = makeTemplateOutline("SOP-CF", { scope: { is_removed: true } });
+    const options = buildDestinationOptions({ ...TOBE, na_slots: [], outline_items: outline });
+    const ids = options.map((option) => option.id);
+    // 묶음(7 · 7.1)과 앱이 채우는 목록(7.2)은 보낼 곳도 칸 제목 자리도 아니다
+    for (const key of [DOCS, ASSOCIATED, `${DOCS}.work_instructions`, "scope"]) {
+      expect(ids).not.toContain(`slot:6:${key}`);
+      expect(ids).not.toContain(`heading:6:${key}`);
+    }
+    expect(ids).toContain(`slot:6:${ASSOCIATED}.form`);
+    expect(ids).toContain(`heading:6:${ASSOCIATED}.form`);
+    // 가까운 곳(같은 문서의 다른 칸)도 보낼 곳 목록만 읽으므로 묶음이 끼지 않는다
+    const near = listSiblingPlaces(options, { kind: "slot", docId: 6, slotKey: "procedures.p1" }, 100);
+    expect(near.map((option) => (option.destination.kind === "slot" ? option.destination.slotKey : ""))).toEqual(TEMPLATE_PLACE_KEYS.filter((key) => key !== "scope" && key !== "procedures.p1"));
+  });
+
+  it("reads each SOP from its own outline", () => {
+    const second = { ...TOBE.docs[0], id: 9, code: "SOP-B", order_index: 5 };
+    const tobe: ToBe = { ...TOBE, docs: [...TOBE.docs, second], na_slots: [], outline_items: [...makeTemplateOutline("SOP-CF"), ...makeDeepOutline("SOP-B")] };
+    const places = buildDestinationOptions(tobe).filter((option) => option.destination.kind === "slot");
+    expect(places.filter((option) => option.docCode === "SOP-CF")).toHaveLength(17);
+    expect(places.filter((option) => option.docCode === "SOP-B").map((option) => option.id)).toEqual(["slot:9:a", "slot:9:a.b", "slot:9:a.b.c", "slot:9:z"]);
+    // 골격이 없는 SOP(응답에 항목이 없다)는 보낼 칸이 없다
+    expect(buildDestinationOptions({ ...tobe, outline_items: [] }).filter((option) => option.destination.kind === "slot")).toEqual([]);
+  });
+});
+
+describe("destinations in a three-level outline", () => {
+  const deep = (naKeys: string[], patches: Parameters<typeof makeDeepOutline>[1] = {}): ToBe => ({
+    ...TOBE,
+    na_slots: naKeys.map((slot_key) => ({ code: "SOP-CF", slot_key, reason: "x" })),
+    outline_items: makeDeepOutline("SOP-CF", patches),
+  });
+  const placesOf = (tobe: ToBe) => buildDestinationOptions(tobe).filter((option) => option.destination.kind === "slot");
+
+  it("indents by level, two deep", () => {
+    expect(placesOf(deep([])).map((option) => [option.id, option.depth, option.label])).toEqual([
+      ["slot:6:a", 0, "A"], ["slot:6:a.b", 1, "B"], ["slot:6:a.b.c", 2, "C"], ["slot:6:z", 0, "Z"],
+    ]);
+  });
+
+  it("greys out every level under an N/A section and offers no heading place there", () => {
+    const options = buildDestinationOptions(deep(["a"]));
+    expect(options.filter((option) => option.disabled).map((option) => option.id)).toEqual(["slot:6:a", "slot:6:a.b", "slot:6:a.b.c"]);
+    expect(options.filter((option) => option.destination.kind === "slot_heading").map((option) => option.id)).toEqual(["heading:6:z"]);
+    // 가운데 수준만 N/A면 그 아래만 막힌다
+    expect(placesOf(deep(["a.b"])).map((option) => option.disabled)).toEqual([false, true, true, false]);
+  });
+
+  it("follows parent_key through an ancestor that is not a place itself", () => {
+    // a.b는 하위만 묶는 항목(group)이라 목록에 없다 - 그래도 a의 N/A는 a.b를 거쳐 a.b.c까지 닿는다
+    const grouped = { "a.b": { kind: "group", is_assignable: false } } as const;
+    expect(placesOf(deep([], grouped)).map((option) => [option.id, option.depth])).toEqual([["slot:6:a", 0], ["slot:6:a.b.c", 2], ["slot:6:z", 0]]);
+    expect(placesOf(deep(["a"], grouped)).map((option) => option.disabled)).toEqual([true, true, false]);
+    expect(placesOf(deep(["a.b"], grouped)).map((option) => option.disabled)).toEqual([false, true, false]);
+  });
+});
+
+describe("tree rows", () => {
+  const open: ToBe = { ...TOBE, na_slots: [] };
+  /** 줄을 짧게 - 보낼 곳은 그 id, 묶음 이름 줄은 [id, 이름, 들여쓰기, N/A] */
+  const read = (tobe: ToBe, canPickHeading = false) =>
+    listTreeRows(tobe, listTreeOptions(buildDestinationOptions(tobe), canPickHeading)).map((row) => (row.kind === "place" ? row.option.id : [row.id, row.label, row.depth, row.isNa]));
+
+  it("puts a plain heading row for each group above its first place, so 7.1's items keep their context", () => {
+    const rows = read(open);
+    const from = rows.indexOf("slot:6:procedures.p1");
+    expect(rows.slice(from, from + 8)).toEqual([
+      "slot:6:procedures.p1",
+      [`group:6:${DOCS}`, "Document Relationships", 0, false],
+      [`group:6:${ASSOCIATED}`, "Associated Documents", 1, false],
+      `slot:6:${ASSOCIATED}.form`,
+      `slot:6:${ASSOCIATED}.visual_aid`,
+      `slot:6:${ASSOCIATED}.training_material`,
+      `slot:6:${ASSOCIATED}.quality_risk_assessment`,
+      // 앱이 채우는 목록(7.2 Work Instructions)은 줄이 없다 - 7.1 다음이 바로 7.3이다
+      `slot:6:${DOCS}.references`,
+    ]);
+    // 이름 줄은 묶음 둘뿐이고, 보낼 곳은 그대로 다 있다(WI 자리 포함)
+    expect(rows.filter((row) => typeof row !== "string")).toHaveLength(2);
+    expect(rows.filter((row) => typeof row === "string")).toEqual(buildDestinationOptions(open).filter(isPlaceOption).map((option) => option.id));
+  });
+
+  it("puts the heading rows above the section-title place too, once", () => {
+    const rows = read(open, true);
+    const at = rows.findIndex((row) => typeof row !== "string" && row[0] === `group:6:${ASSOCIATED}`);
+    expect(rows.slice(at - 1, at + 3)).toEqual([
+      [`group:6:${DOCS}`, "Document Relationships", 0, false],
+      [`group:6:${ASSOCIATED}`, "Associated Documents", 1, false],
+      `heading:6:${ASSOCIATED}.form`,
+      `slot:6:${ASSOCIATED}.form`,
+    ]);
+    expect(rows.filter((row) => typeof row !== "string")).toHaveLength(2);
+  });
+
+  it("marks a heading row N/A when it or a section above it is N/A", () => {
+    const headingsOf = (naKey: string) => read({ ...open, na_slots: [{ code: "SOP-CF", slot_key: naKey, reason: "x" }] }).filter((row) => typeof row !== "string").map((row) => row[3]);
+    expect(headingsOf(DOCS)).toEqual([true, true]);
+    expect(headingsOf(ASSOCIATED)).toEqual([false, true]);
+    expect(headingsOf("purpose")).toEqual([false, false]);
+  });
+
+  it("has no heading row for a group with no place under it, and keeps each document's rows apart", () => {
+    // 7.1의 항목을 모두 뺀 문서 - 7.1은 그릴 하위가 없어 이름 줄도 없다(7은 7.3이 남아 있다)
+    const removed = Object.fromEntries(["form", "visual_aid", "training_material", "quality_risk_assessment"].map((name) => [`${ASSOCIATED}.${name}`, { is_removed: true }]));
+    const second = { ...TOBE.docs[0], id: 9, code: "SOP-B", order_index: 5 };
+    const tobe: ToBe = { ...open, docs: [...TOBE.docs, second], outline_items: [...makeTemplateOutline("SOP-CF", removed), ...makeTemplateOutline("SOP-B")] };
+    const headings = read(tobe).filter((row) => typeof row !== "string").map((row) => row[0]);
+    expect(headings).toEqual([`group:6:${DOCS}`, `group:9:${DOCS}`, `group:9:${ASSOCIATED}`]);
   });
 });
 
@@ -244,6 +381,61 @@ describe("save keeps AI suggestions as they are", () => {
   });
 });
 
+describe("caption targets under a table or figure", () => {
+  const FIGURE = [{ id: 40, kind: "figure", lang: "neutral" as const, text: "", revision: 1 }];
+  const ctxWithCaption = (id: number, lang: "ko" | "en", text: string, group: Group | null = null) => ({ units: FIGURE, group, tables: new Map(), captions: new Map([[40, [{ id, lang, text }]]]) });
+
+  it("sends caption targets under the figure target", () => {
+    const save = buildGroupSave(makeDraft(), ctxWithCaption(7, "ko", "그림 1 로터"), "confirm");
+    expect(save.targets).toContainEqual(expect.objectContaining({ parent_key: "u40", source_unit_ids: [7], lang: "ko" }));
+    // 캡션은 칸이 아니다 - 칸 좌표를 싣지 않는다
+    expect(save.targets[1]).toEqual({ key: "u40-cap-7", target_doc_id: 6, slot_key: "scope", wi_step: null, wi_part: null, kind: "sentence", lang: "ko", text: "그림 1 로터", parent_key: "u40", source_unit_ids: [7], change_type: "as_is" });
+  });
+
+  it("marks a rewritten caption and keeps the existing caption target's id and revision", () => {
+    const group: Group = { units: [], targets: [makeTarget({ id: 60, kind: "figure", lang: "neutral", source_unit_ids: [40] }), makeTarget({ id: 61, parent_target_id: 60, source_unit_ids: [7], revision: 3, confirmed_text: "그림 1 로터" })] };
+    const save = buildGroupSave(makeDraft({ captionTexts: { u7: "그림 1. 로터 조립" } }), ctxWithCaption(7, "ko", "그림 1 로터", group), "confirm");
+    expect(save.targets.find((target) => target.parent_key === "u40")).toMatchObject({ id: 61, revision: 3, text: "그림 1. 로터 조립", change_type: "rewritten" });
+    expect(save.removed_target_ids).toEqual([]);
+  });
+
+  it("sends a written caption without a source or change type, and drops an old written one that a caption unit replaced", () => {
+    const written = buildGroupSave(makeDraft({ captionTexts: { "w40:en": " Rotor " } }), { units: FIGURE, group: null, tables: new Map() }, "confirm");
+    expect(written.targets[1]).toEqual(expect.objectContaining({ key: "u40-cap-en", lang: "en", text: "Rotor", source_unit_ids: [], parent_key: "u40" }));
+    expect(written.targets[1]).not.toHaveProperty("change_type");
+
+    const group: Group = { units: [], targets: [makeTarget({ id: 60, kind: "figure", lang: "neutral", source_unit_ids: [40] }), makeTarget({ id: 62, parent_target_id: 60, source_unit_ids: [], confirmed_text: "옛 캡션" })] };
+    const replaced = buildGroupSave(makeDraft(), ctxWithCaption(7, "ko", "그림 1", group), "confirm");
+    expect(replaced.removed_target_ids).toEqual([62]);
+    expect(replaced.targets.map((target) => target.id ?? target.key)).toEqual([60, "u40-cap-7"]);
+  });
+
+  it("accepts an untouched AI caption by sending no text and no change type, and sends text once it is edited", () => {
+    const group: Group = {
+      units: [],
+      targets: [
+        makeTarget({ id: 60, kind: "figure", lang: "neutral", source_unit_ids: [40] }),
+        makeTarget({ id: 63, parent_target_id: 60, source_unit_ids: [7], status: "ai_suggested", ai_text: "그림 1 로터", revision: 2 }),
+      ],
+    };
+    const untouched = buildGroupSave(makeDraft(), ctxWithCaption(7, "ko", "그림 1 로터", group), "confirm");
+    expect(untouched.targets[1]).toEqual({ key: "u40-cap-7", id: 63, revision: 2, target_doc_id: 6, slot_key: "scope", wi_step: null, wi_part: null, kind: "sentence", parent_key: "u40", source_unit_ids: [7] });
+
+    const edited = buildGroupSave(makeDraft({ captionTexts: { u7: "그림 1. 로터" } }), ctxWithCaption(7, "ko", "그림 1 로터", group), "confirm");
+    expect(edited.targets[1]).toMatchObject({ id: 63, text: "그림 1. 로터", change_type: "rewritten" });
+  });
+
+  it("keys each caption target by its caption unit, so two same-language captions do not collide", () => {
+    const ctx = { units: FIGURE, group: null, tables: new Map(), captions: new Map([[40, [{ id: 7, lang: "ko" as const, text: "그림 1." }, { id: 8, lang: "ko" as const, text: "로터" }]]]) };
+    const save = buildGroupSave(makeDraft({ captionTexts: { u8: "로터 조립" } }), ctx, "confirm");
+    expect(save.targets.slice(1).map((target) => [target.key, target.text])).toEqual([["u40-cap-7", "그림 1."], ["u40-cap-8", "로터 조립"]]);
+  });
+
+  it("counts a typed caption as an unsaved change", () => {
+    expect(hasDraftChange({ destination: null, texts: {}, changeTypes: {}, captionTexts: { ko: "로터" }, reason: null, moveCode: null })).toBe(true);
+  });
+});
+
 describe("table rows and step-less WIs", () => {
   it("saves a row unit from 'split into rows' as a one-row table with row-relative cells", () => {
     const units = [{ id: 30, kind: "table_row", lang: "neutral" as const, text: "", revision: 1 }];
@@ -255,7 +447,7 @@ describe("table rows and step-less WIs", () => {
 
   it("offers Instruction and Why without a step for a WI with no steps, and reads it back", () => {
     const tobe: ToBe = { ...TOBE, wi_steps: [] };
-    const ids = buildDestinationOptions(tobe, {}).filter((option) => option.docCode === "WI-01").map((option) => option.id);
+    const ids = buildDestinationOptions(tobe).filter((option) => option.docCode === "WI-01").map((option) => option.id);
     expect(ids).toEqual(["step:7:none:instruction", "step:7:none:why"]);
     const group: Group = { units: [], targets: [makeTarget({ id: 90, target_doc_id: 7, slot_key: null, wi_step: null, wi_part: "why" })] };
     const destination = readDestination(group, [10]);
@@ -698,9 +890,9 @@ describe("slot heading destination", () => {
 
   it("offers a slot heading place right before each SOP section that is not N/A, none for WI", () => {
     const tobe: ToBe = { ...TOBE, na_slots: [{ code: "SOP-CF", slot_key: "scope", reason: "x" }] };
-    const ids = buildDestinationOptions(tobe, {}).map((option) => option.id);
-    expect(ids).toContain("heading:6:procedures.procedure");
-    expect(ids.indexOf("heading:6:procedures.procedure")).toBe(ids.indexOf("slot:6:procedures.procedure") - 1);
+    const ids = buildDestinationOptions(tobe).map((option) => option.id);
+    expect(ids).toContain("heading:6:procedures.p1");
+    expect(ids.indexOf("heading:6:procedures.p1")).toBe(ids.indexOf("slot:6:procedures.p1") - 1);
     expect(ids.some((id) => id.startsWith("heading:6:scope"))).toBe(false);
     expect(ids.some((id) => id.startsWith("heading:7"))).toBe(false);
   });
@@ -743,7 +935,7 @@ describe("slot heading destination", () => {
   });
 
   it("counts the same places whether or not the row can pick a slot heading", () => {
-    const options = buildDestinationOptions(TOBE, {});
+    const options = buildDestinationOptions(TOBE);
     const withHeadings = listTreeOptions(options, true);
     const without = listTreeOptions(options, false);
     expect(withHeadings.length).toBeGreaterThan(without.length);
@@ -754,5 +946,97 @@ describe("slot heading destination", () => {
   it("reads a group with slot heading targets back as the slot heading destination", () => {
     const group: Group = { units: [], targets: [makeTarget({ id: 70, kind: "slot_heading", slot_key: "procedures", source_unit_ids: [20] })] };
     expect(readDestination(group, [20, 21])).toEqual(HEADING);
+  });
+});
+
+describe("buildGroupSave with a drop position", () => {
+  const position = { placeId: "slot:6:scope", after: 41 };
+  const context = (group: Group | null) => ({ units: ONE_UNIT, group, tables: new Map() });
+  it("sends the position on a new sentence, and null for the front of the slot", () => {
+    expect(buildGroupSave(makeDraft({ position }), context(null), "confirm").targets[0]).toMatchObject({ key: "u10", position: { after_target_id: 41 } });
+    expect(buildGroupSave(makeDraft({ position: { placeId: "slot:6:scope", after: null } }), context(null), "confirm").targets[0].position).toEqual({ after_target_id: null });
+  });
+  it("adds no position key without a drop, or once the destination is no longer the dropped place", () => {
+    expect(buildGroupSave(makeDraft(), context(null), "confirm").targets[0]).not.toHaveProperty("position");
+    expect(buildGroupSave(makeDraft({ position: { placeId: "slot:6:purpose", after: 41 } }), context(null), "confirm").targets[0]).not.toHaveProperty("position");
+  });
+  it("sends it on a sentence that moves from another slot, not on one already in the slot", () => {
+    const moved: Group = { units: [], targets: [makeTarget({ id: 90, slot_key: "purpose", confirmed_text: "원문", status: "confirmed" })] };
+    expect(buildGroupSave(makeDraft({ position }), context(moved), "confirm").targets[0]).toMatchObject({ id: 90, slot_key: "scope", position: { after_target_id: 41 } });
+    const here: Group = { units: [], targets: [makeTarget({ id: 90, confirmed_text: "원문", status: "confirmed" })] };
+    expect(buildGroupSave(makeDraft({ position }), context(here), "confirm").targets[0]).not.toHaveProperty("position");
+  });
+  it("sends it on a table sentence but not on its cells", () => {
+    const tables = new Map([[10, { rows: 1, cols: 1, cells: [{ id: 11, lang: "ko" as const, text: "칸", row: 0, col: 0 }] }]]);
+    const body = buildGroupSave(makeDraft({ position }), { units: [{ id: 10, kind: "table", lang: "neutral" as const, text: "", revision: 1 }], group: null, tables }, "confirm");
+    expect(body.targets.map((target) => [target.key, target.position ?? null])).toEqual([["u10", { after_target_id: 41 }], ["c11", null]]);
+  });
+});
+
+describe("paragraph number stays in the number cell", () => {
+  // 번호 범위(content_start)가 있는 줄 - New 초안은 번호를 뺀 내용이다
+  const numbered = { id: 10, kind: "sentence", lang: "ko" as const, text: "6.2 합성 필터를 확인한다.", content_start: 4, revision: 1 };
+
+  it("drafts the New sentence without the number and saves it as is", () => {
+    expect(buildSentenceSlots(null, [numbered])).toMatchObject([{ key: "u10", text: "합성 필터를 확인한다.", sourceText: "합성 필터를 확인한다." }]);
+    const body = buildGroupSave(makeDraft(), { units: [numbered], group: null, tables: new Map() }, "confirm");
+    expect(body.targets).toMatchObject([{ key: "u10", text: "합성 필터를 확인한다.", change_type: "as_is" }]);
+  });
+
+  it("keeps the number in the draft while it is still text", () => {
+    const typed = { ...numbered, content_start: 0 };
+    expect(buildSentenceSlots(null, [typed])[0].text).toBe("6.2 합성 필터를 확인한다.");
+  });
+
+  it("reads a confirmed sentence equal to the content as as-is", () => {
+    const target = { lang: "ko" as const, confirmed_text: "합성 필터를 확인한다.", change_type: null, status: "confirmed" as const };
+    expect(readLinkDefault(target, [numbered])).toBe("as_is");
+    expect(readLinkDefault({ ...target, confirmed_text: numbered.text }, [numbered])).toBe("as_is");
+  });
+});
+
+describe("join destination adds the row as a source of a placed sentence", () => {
+  // 안 쓴 문서에 놓인 새 문장(origin units)은 글·자리를 지금 그대로 되보내고 출처만 늘린다
+  const placed = makeTarget({ id: 60, target_doc_id: 6, slot_key: "scope", confirmed_text: "관리자는 설정 값을 바꾼다.", status: "confirmed", change_type: "as_is", source_unit_ids: [11], revision: 4 });
+  const first: Group["units"][number] = {
+    unit_id: 11, display_id: "OLD-5-001", document_id: 5, kind: "sentence", lang: "ko", text: "설정 값을 바꾼다.", group_id: null, cell_unit_ids: [],
+    decision: { disposition: "assigned", move_target_code: "", reason: "", status: "confirmed", hold_reason: "", confirmed_by: null, confirmed_at: null, revision: 3 },
+  };
+  const join: Destination = { kind: "join", docId: 6, targetId: 60 };
+  const context = (targets: GroupTarget[]) => ({ units: ONE_UNIT, group: { units: [first], targets }, tables: new Map() });
+
+  it("sends the placed sentence with both sources and no text or change type", () => {
+    const body = buildGroupSave(makeDraft({ destination: join }), context([placed]), "confirm");
+    expect(body.targets).toEqual([expect.objectContaining({ id: 60, revision: 4, source_unit_ids: [11, 10], target_doc_id: 6, slot_key: "scope" })]);
+    expect(body.targets[0]).not.toHaveProperty("text");
+    expect(body.targets[0]).not.toHaveProperty("change_type");
+    expect(body.units).toEqual([expect.objectContaining({ unit_id: 10, disposition: "assigned" }), { unit_id: 11, revision: 3, disposition: "assigned", move_target_code: "", reason: "" }]);
+  });
+
+  it("removes the row's own earlier sentence and keeps unrelated ones", () => {
+    const own = makeTarget({ id: 80, source_unit_ids: [10] });
+    const body = buildGroupSave(makeDraft({ destination: join }), context([placed, own]), "confirm");
+    expect(body.removed_target_ids).toEqual([80]);
+    expect(body.targets.map((target) => target.id)).toEqual([60]);
+  });
+
+  it("does not repeat a source that is already there", () => {
+    const already = makeTarget({ ...placed, source_unit_ids: [11, 10] });
+    const body = buildGroupSave(makeDraft({ destination: join }), context([already]), "confirm");
+    expect(body.targets[0].source_unit_ids).toEqual([11, 10]);
+  });
+
+  it("leaves the other language of a pair open like a link does", () => {
+    const pairUnits = [ONE_UNIT[0], { id: 20, kind: "sentence", lang: "en" as const, text: "Source", revision: 2 }];
+    const body = buildGroupSave(makeDraft({ destination: join }), { units: pairUnits, group: { units: [first, { ...first, unit_id: 20, lang: "en", decision: { ...first.decision, disposition: "unassigned", status: "unassigned" } }], targets: [placed] }, tables: new Map() }, "confirm");
+    expect(body.units.map((unit) => unit.unit_id)).toEqual([10, 11]);
+    expect(body.release_unit_ids).toEqual([20]);
+  });
+
+  it("has its own destination id and lists the joined target", () => {
+    expect(getDestinationId(join)).toBe("join:60");
+    expect(listJoinedTargetIds(join)).toEqual([60]);
+    expect(listJoinedTargetIds({ kind: "link", targetIds: [3, 4] })).toEqual([3, 4]);
+    expect(listJoinedTargetIds(SCOPE)).toEqual([]);
   });
 });

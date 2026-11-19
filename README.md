@@ -2,7 +2,7 @@
 
 SOP Restructuring T/F가 쓰는 사내 AI 에이전트 웹 서비스 (FastAPI + Next.js, 사내 서버에 docker compose로 배포). 사용자는 전 부서의 SOP 담당자다.
 
-현재 **v1.0.0**(2026-11-14 운영 배포, 버전별 변경은 [`CHANGELOG.md`](CHANGELOG.md)). 기반 세팅(**사내 로그인(Keycloak)·직원 디렉터리(HR 웹훅 동기화)·사내 AI 연결·표 기반 권한 체계·관리 화면·DB 자동 백업**) 위에 SOP 재구성의 결정적 코어와 AI 제안 층을 얹었다. 옛 SOP·WI를 묶음으로 올리면(DOCX 기본, 텍스트 PDF 보조) 원문을 빠짐없이 추출해 문장 단위로 쪼개고(Split), 작성자가 Unit마다 새 SOP·WI의 칸이나 이미 쓴 새 문서의 문장으로 보내 확정한다(Assign, 되돌리기·다시 하기 포함). 확정 결과로 결과물 A(문장 비교)·B(맵핑 흐름)·C(새 문서 기준 묶음)를 코드가 한 벌로 계산해 Excel(미리보기 포함)로 내보내고 검토를 요청한다. AI는 작성자가 요청할 때 제안만 하고(칸·고쳐 쓰기·번역·짝·나누기) 사람이 줄마다 확정하며, AI가 꺼지거나 실패해도 사람 경로는 그대로 돈다. AI 층은 합성 SOP와 가짜 AI로만 검증했고 실제 사내 모델·실제 SOP로는 아직 시험하지 않았다. 사용법은 앱 안의 사용 설명서(`/manual`, 글은 [`frontend/public/manual/user-manual.md`](frontend/public/manual/user-manual.md))에 있다. 설계: [`docs/superpowers/specs/2026-11-05-sop-restructuring-e2e-design.md`](docs/superpowers/specs/2026-11-05-sop-restructuring-e2e-design.md).
+현재 **v1.2.0**(2026-11-19 정식 업데이트, 버전별 변경은 [`CHANGELOG.md`](CHANGELOG.md)). 기반 세팅(**사내 로그인(Keycloak)·직원 디렉터리(HR 웹훅 동기화)·사내 AI 연결·표 기반 권한 체계·관리 화면·DB 자동 백업**) 위에 SOP 재구성의 결정적 코어와 AI 제안 층을 얹었다. 옛 SOP·WI를 묶음으로 올리면(DOCX 기본, 텍스트 PDF 보조) 원문을 빠짐없이 추출해 문장 단위로 쪼개고(Split), 작성자가 Unit마다 새 SOP·WI의 칸(회사 템플릿 1–9장)이나 이미 쓴 새 문서의 문장으로 보내 확정한다(Assign — 끌어다 놓기·표 풀기·되돌리기 포함, 순서와 깊이는 Order). 확정 결과로 결과물 A(문장 비교)·B(맵핑 흐름)·C(새 문서 기준 묶음)를 코드가 한 벌로 계산해 Excel(미리보기 포함)로 내보내고 검토를 요청한다. AI는 작성자가 요청할 때 제안만 하고(칸·고쳐 쓰기·번역·짝·나누기) 사람이 줄마다 확정하며, AI가 꺼지거나 실패해도 사람 경로는 그대로 돈다. AI 층은 합성 SOP와 가짜 AI로만 검증했고 실제 사내 모델·실제 SOP로는 아직 시험하지 않았다. 사용법은 앱 안의 사용 설명서(`/manual`, 글은 [`frontend/public/manual/user-manual.md`](frontend/public/manual/user-manual.md))에 있다. 설계: [`docs/superpowers/specs/2026-11-05-sop-restructuring-e2e-design.md`](docs/superpowers/specs/2026-11-05-sop-restructuring-e2e-design.md).
 
 ## 로컬 실행 (Docker 없이)
 
@@ -38,7 +38,7 @@ npm run dev
 
 ### SOP 데모 묶음 (로컬 전용, 운영 DB 금지)
 
-데모 데이터는 합성 SOP 묶음 4개(쪼개기 직후·분류 절반·검토 대기·AI 제안)를 앱 API 경로 그대로 만든다. AI 제안 묶음은 프로세스 안의 가짜 AI가 합성 정답으로 답한 제안이고 실제 모델을 부르지 않는다. 작성자는 `qa.member`, 검토자는 `qa.lead`(dev 사용자)다. 같은 제목의 묶음이 이미 있으면 건너뛰므로 다시 돌려도 된다. `AUTH_MODE=dev`가 아니거나 HR 직원이 든 postgres면 아무것도 만들지 않고 멈춘다. backend 의존성은 `requirements-dev.txt`(합성 DOCX 생성용 `python-docx` 포함)로 설치해야 한다.
+데모 데이터는 합성 SOP 묶음 4개(쪼개기 직후·분류 절반·검토 대기·AI 제안)와 그 뒤에 참조 지도용 묶음 2개(5번은 같은 구성원, 6번은 `prod.member` 혼자)를 앱 API 경로 그대로 만든다. AI 제안 묶음은 프로세스 안의 가짜 AI가 합성 정답으로 답한 제안이고 실제 모델을 부르지 않는다. 작성자는 `qa.member`, 검토자는 `qa.lead`(dev 사용자)다. 같은 제목의 묶음이 이미 있으면 건너뛰므로 다시 돌려도 된다. `AUTH_MODE=dev`가 아니거나 HR 직원이 든 postgres면 아무것도 만들지 않고 멈춘다. backend 의존성은 `requirements-dev.txt`(합성 DOCX 생성용 `python-docx` 포함)로 설치해야 한다.
 
 ```bash
 # === bash (macOS/Linux) === (backend/ 에서)
@@ -51,8 +51,6 @@ npm run dev
 .venv\Scripts\python -m scripts.seed_sop_demo
 # API 문서(OpenAPI): backend를 띄운 뒤 http://localhost:8777/docs. 호출은 dev 헤더로 — Invoke-RestMethod -Headers @{"X-Dev-User"="qa.member"} http://localhost:8777/api/bundles
 ```
-
-화면에서 직접 올려 볼 파일은 [`samples/`](samples/README.md)에 있다(시드가 쓰는 것과 같은 합성 파일).
 
 ### AI·임베딩 서버 (선택)
 
@@ -85,7 +83,6 @@ frontend/   # Next.js 앱(src/app 라우트, src/components, src/lib), scripts/ 
 nginx/      # 앱 리버스 프록시 설정
 scripts/    # db-backup.sh (백업 사이드카)
 ci/         # deploy.sh(GitLab 배포 Job 본체) · test-deploy.sh(가짜 docker로 배포 스크립트 검증)
-samples/    # 화면에 직접 올려 볼 합성 SOP 파일(생성기 출력 사본, 시험이 어긋남을 잡는다)
 docs/       # 문서 인덱스 docs/README.md — deploy/(배포 런북), qa/(검증 명령·감사), lessons/(시행착오), superpowers/(설계 명세·계획), history/(지난 PROGRESS·CHANGELOG)
 docker-compose.yml   # proxy · frontend · backend · db · db-backup
 .gitlab-ci.yml       # 사내 GitLab: test 3개 자동, deploy-dev 자동(dev, 테스트를 기다리지 않음), deploy-production 수동(main)

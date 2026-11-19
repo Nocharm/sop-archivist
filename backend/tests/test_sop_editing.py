@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.sop.constants import COVER_KINDS, SYSTEM_HOLD_RELATED_CHANGED
 from app.sop.coverage import find_coverage_problems
+from app.sop.refs import REF_LANG
 from app.sop.models import (
     Bundle,
     Extraction,
@@ -22,11 +23,13 @@ from app.sop.models import (
 )
 from app.sop.segment import build_unit_text
 from tests.access_helpers import run_in_session, update_row
-from tests.docx_factory import build_docx, p, tbl
+from tests.docx_factory import TINY_PNG, build_docx, make_drawing_run, p, tbl
 from tests.sop_helpers import (
     AUTHOR,
     REVIEWER,
+    WRITTEN_CAPTION,
     assign_as_is,
+    build_as_is_targets,
     create_bundle,
     find_unit,
     get_view,
@@ -534,6 +537,279 @@ def test_cell_pieces_take_row_from_their_block(client: TestClient) -> None:
     assert all(unit["row_index"] == blocks[unit["block_id"]]["row_index"] for unit in pieces)
 
 
+
+def test_unwrap_table_turns_its_caption_into_a_sentence(client: TestClient) -> None:
+    """레이아웃 표의 캡션은 보통 문장으로 돌아간다(명세 §3.1) — 쪼개지 않고 캡션 범위 그대로, 되돌리면 캡션이 살아난다."""
+    caption_text = "표 7. 기록 양식"
+    fx = _setup(client, p(HEADING) + p(caption_text, "Caption") + tbl([["합성 칸이다."]]))
+    table = next(unit for unit in fx.view["units"] if unit["kind"] == "table")
+    caption = find_unit(fx.view, caption_text)
+    assert (caption["kind"], caption["group_unit_id"]) == ("caption", table["id"])
+
+    to_layout = {"type": "set_layout_table", "table_id": table["table_id"], "is_layout": True}
+    _ok(_edit(client, fx.bundle_id, fx.doc["id"], to_layout))
+
+    view = get_view(client, fx.bundle_id, fx.doc["id"])
+    sentence = find_unit(view, caption_text)
+    assert (sentence["kind"], sentence["group_unit_id"], sentence["spans"]) == ("sentence", None, caption["spans"])
+    assert sentence["lang"] == caption["lang"]
+    assert _find_coverage_problems(view) == []
+
+    _ok(_step(client, fx.bundle_id, fx.doc["id"], "undo"))
+    revived = find_unit(get_view(client, fx.bundle_id, fx.doc["id"]), caption_text)
+    assert (revived["id"], revived["kind"], revived["group_unit_id"]) == (caption["id"], "caption", table["id"])
+
+
+# ── 캡션 ──────────────────────────────────────────────────────────────────────
+
+BEFORE_TABLE, AFTER_TABLE, FAR = "합성 표 앞 문장이다.", "합성 표 뒤 문장이다.", "합성 먼 문장이다."
+FIGURE_CAPTION = "그림 1. 로터 구조 (Figure 1. Rotor layout)"
+TABLE_CAPTION = "표 7. 기록 양식"
+
+
+def _setup_table_with_neighbors(client: TestClient) -> tuple[Fixture, dict]:
+    fx = _setup(client, p(HEADING) + p(BEFORE_TABLE) + tbl([["합성 칸이다."]]) + p(AFTER_TABLE) + p(FAR))
+    return fx, next(unit for unit in fx.view["units"] if unit["kind"] == "table")
+
+
+def _setup_figure(client: TestClient) -> tuple[Fixture, dict, dict]:
+    """그림 하나와 그 아래 한/영 한 줄 캡션, 그 뒤 문장 하나."""
+    body = p(HEADING) + f"<w:p>{make_drawing_run('image1.png')}</w:p>" + p(FIGURE_CAPTION, "Caption") + p(RECORD)
+    bundle = create_bundle(client, is_synthetic=True)
+    tobe = put_tobe(client, bundle["id"], TOBE_DOCS)
+    assert tobe.status_code == 200, tobe.text
+    doc = _upload_ready(client, bundle["id"], build_docx(body, media={"image1.png": TINY_PNG}), OLD_NAME)
+    view = get_view(client, bundle["id"], doc["id"])
+    figure = next(unit for unit in view["units"] if unit["kind"] == "figure")
+    caption = find_unit(view, FIGURE_CAPTION)
+    assert (caption["kind"], caption["group_unit_id"]) == ("caption", figure["id"])
+    return Fixture(bundle["id"], tobe.json()["docs"][0]["id"], doc, view), figure, caption
+
+
+def _attach(client: TestClient, fx: Fixture, unit: dict, bundle: dict) -> httpx2.Response:
+    op = {"type": "attach_caption", "unit_id": unit["id"], "bundle_unit_id": bundle["id"]}
+    return _edit(client, fx.bundle_id, fx.doc["id"], op)
+
+
+def _detach(client: TestClient, fx: Fixture, unit: dict, **kwargs: int | bool) -> httpx2.Response:
+    return _edit(client, fx.bundle_id, fx.doc["id"], {"type": "detach_caption", "unit_id": unit["id"]}, **kwargs)
+
+
+def _created_units(client: TestClient, fx: Fixture, result: dict) -> list[dict]:
+    units = {unit["id"]: unit for unit in get_view(client, fx.bundle_id, fx.doc["id"])["units"]}
+    return [units[unit_id] for unit_id in result["created_unit_ids"]]
+
+
+def test_attach_a_neighbor_sentence_as_caption_and_undo(client: TestClient) -> None:
+    fx, table = _setup_table_with_neighbors(client)
+    sentence = find_unit(fx.view, BEFORE_TABLE)
+
+    result = _ok(_attach(client, fx, sentence, table))
+
+    (caption,) = _created_units(client, fx, result)
+    assert (caption["kind"], caption["group_unit_id"], caption["spans"]) == ("caption", table["id"], sentence["spans"])
+    assert (caption["lang"], result["retired_unit_ids"]) == (sentence["lang"], [sentence["id"]])
+    assert _find_coverage_problems(get_view(client, fx.bundle_id, fx.doc["id"])) == []
+    _ok(_step(client, fx.bundle_id, fx.doc["id"], "undo"))
+    assert _load_statuses(sentence["id"], caption["id"]) == ["active", "retired"]
+
+
+@pytest.mark.parametrize("case", ["ref", "bound", "not_a_bundle"])
+def test_attach_refuses_wrong_units(client: TestClient, case: str) -> None:
+    fx, table = _setup_table_with_neighbors(client)
+    sentence, bundle = find_unit(fx.view, BEFORE_TABLE), table
+    if case == "ref":
+        update_row(Unit, sentence["id"], lang=REF_LANG)
+    elif case == "bound":
+        sentence = find_unit(fx.view, "합성 칸이다.")  # 표에 묶인 칸 문장
+    else:
+        bundle = find_unit(fx.view, AFTER_TABLE)
+
+    assert _code(_attach(client, fx, sentence, bundle)) == (422, "invalid_unit_kind")
+
+
+def test_attach_on_a_confirmed_bundle_needs_confirm_and_detaches_it(client: TestClient) -> None:
+    fx = _setup(client, p(HEADING) + p(TABLE_CAPTION, "Caption") + tbl([["합성 칸이다."]]) + p(ENGLISH))
+    table = next(unit for unit in fx.view["units"] if unit["kind"] == "table")
+    assign_as_is(client, fx.bundle_id, table, fx.sop_id, slot_key="purpose")
+    english = find_unit(fx.view, ENGLISH)
+
+    refused = _attach(client, fx, english, table)
+
+    assert _code(refused) == (409, "confirm_required")
+    assert table["id"] in refused.json()["detail"]["unit_ids"]
+    op = {"type": "attach_caption", "unit_id": english["id"], "bundle_unit_id": table["id"]}
+    result = _ok(_edit(client, fx.bundle_id, fx.doc["id"], op, confirm=True))
+    assert table["id"] in result["detach"]["reset_unit_ids"]
+    view = get_view(client, fx.bundle_id, fx.doc["id"])
+    assert find_unit(view, ENGLISH)["kind"] == "caption"
+    assert next(unit for unit in view["units"] if unit["id"] == table["id"])["status"] == "unassigned"
+    assert _find_coverage_problems(view) == []
+    _ok(_step(client, fx.bundle_id, fx.doc["id"], "undo"))
+
+
+def test_detach_from_a_bundle_confirmed_with_a_written_caption_needs_confirm(client: TestClient) -> None:
+    """캡션 단위를 쓰지 않고 써 넣은 캡션으로 확정한 묶음도 묶인 캡션이 바뀌면 떼어 낸다."""
+    fx = _setup(client, p(HEADING) + p(TABLE_CAPTION, "Caption") + tbl([["합성 칸이다."]]))
+    table = next(unit for unit in fx.view["units"] if unit["kind"] == "table")
+    caption = find_unit(fx.view, TABLE_CAPTION)
+    targets, caption_ids = build_as_is_targets(client, fx.bundle_id, table, fx.sop_id, slot_key="purpose")
+    assert caption_ids == [caption["id"]]
+    written = {
+        "key": "caption", "target_doc_id": fx.sop_id, "slot_key": "purpose", "parent_key": "t", "lang": "en",
+        "text": WRITTEN_CAPTION, "source_unit_ids": [],
+    }
+    body = {
+        "action": "confirm", "units": [{"unit_id": table["id"], "revision": 1, "disposition": "assigned"}],
+        "targets": [*targets, written],
+    }
+    assert save_group(client, fx.bundle_id, body).status_code == 200
+
+    assert _code(_detach(client, fx, caption)) == (409, "confirm_required")
+    result = _ok(_detach(client, fx, caption, confirm=True))
+    assert table["id"] in result["detach"]["reset_unit_ids"]
+    view = get_view(client, fx.bundle_id, fx.doc["id"])
+    assert next(unit for unit in view["units"] if unit["id"] == table["id"])["status"] == "unassigned"
+    assert _find_coverage_problems(view) == []
+
+
+def test_attach_after_the_last_row_goes_to_the_first_row(client: TestClient) -> None:
+    """행으로 나눈 표의 캡션은 가장 앞 행에 산다 — 마지막 행 뒤 문장을 어느 행에 붙여도 첫 행 캡션이 된다."""
+    fx = _setup(client, p(HEADING) + tbl([["합성 칸 하나."], ["합성 칸 둘."]]) + p(AFTER_TABLE))
+    table = next(unit for unit in fx.view["units"] if unit["kind"] == "table")
+    _ok(_edit(client, fx.bundle_id, fx.doc["id"], {"type": "split_table_rows", "table_unit_id": table["id"]}))
+    view = get_view(client, fx.bundle_id, fx.doc["id"])
+    rows = sorted((unit for unit in view["units"] if unit["kind"] == "table_row"), key=lambda unit: unit["row_index"])
+
+    _ok(_attach(client, fx, find_unit(view, AFTER_TABLE), rows[-1]))
+
+    caption = find_unit(get_view(client, fx.bundle_id, fx.doc["id"]), AFTER_TABLE)
+    assert (caption["kind"], caption["group_unit_id"]) == ("caption", rows[0]["id"])
+
+
+def test_attach_rejects_a_far_sentence(client: TestClient) -> None:
+    """캡션은 블록 자리 2 안까지(F7 ④) — 표 뒤 세 번째 문단은 멀다."""
+    fx = _setup(client, p(HEADING) + tbl([["합성 칸이다."]]) + p(AFTER_TABLE) + p(RECORD) + p(FAR))
+    table = next(unit for unit in fx.view["units"] if unit["kind"] == "table")
+
+    assert _code(_attach(client, fx, find_unit(fx.view, FAR), table)) == (422, "caption_not_adjacent")
+
+
+def test_attach_rejects_a_second_caption_in_the_same_language(client: TestClient) -> None:
+    fx, table = _setup_table_with_neighbors(client)
+    _ok(_attach(client, fx, find_unit(fx.view, BEFORE_TABLE), table))
+    view = get_view(client, fx.bundle_id, fx.doc["id"])
+
+    assert _code(_attach(client, fx, find_unit(view, AFTER_TABLE), table)) == (422, "caption_exists")
+
+
+def test_detach_turns_caption_back_into_a_sentence(client: TestClient) -> None:
+    fx, _, caption = _setup_figure(client)
+
+    result = _ok(_detach(client, fx, caption))
+
+    (sentence,) = _created_units(client, fx, result)
+    assert (sentence["kind"], sentence["group_unit_id"]) == ("sentence", None)
+    assert (sentence["spans"], sentence["lang"]) == (caption["spans"], caption["lang"])
+    _ok(_step(client, fx.bundle_id, fx.doc["id"], "undo"))
+    assert _load_statuses(caption["id"], sentence["id"]) == ["active", "retired"]
+
+
+def test_detach_legacy_figure_block_caption_is_rejected(client: TestClient) -> None:
+    """0020이 옮긴 캡션은 그림 블록 위에 있다 — 떼면 그림 블록 글이 문장이 되어 버리므로 막는다."""
+    fx, figure, caption = _setup_figure(client)
+    figure_block_id = figure["spans"][0][0] if figure["spans"] else figure["block_id"]
+    update_row(SourceBlock, figure_block_id, text=FIGURE_CAPTION)
+    update_row(Unit, caption["id"], spans=[[figure_block_id, 0, len(FIGURE_CAPTION)]])
+
+    response = _detach(client, fx, caption, revision=fx.view["document"]["revision"])
+
+    assert _code(response) == (422, "caption_in_figure_block")
+
+
+def test_split_caption_keeps_both_pieces_on_the_bundle(client: TestClient) -> None:
+    fx, figure, caption = _setup_figure(client)
+
+    result = _ok(_split(client, fx, caption, FIGURE_CAPTION.index("(Figure")))
+
+    created = _created_units(client, fx, result)
+    assert [(unit["kind"], unit["group_unit_id"]) for unit in created] == [
+        ("caption", figure["id"]), ("caption", figure["id"]),
+    ]
+    assert {unit["lang"] for unit in created} == {"ko", "en"}
+    assert _find_coverage_problems(get_view(client, fx.bundle_id, fx.doc["id"])) == []
+    _ok(_step(client, fx.bundle_id, fx.doc["id"], "undo"))
+    revived = find_unit(get_view(client, fx.bundle_id, fx.doc["id"]), FIGURE_CAPTION)
+    assert (revived["id"], revived["kind"], revived["group_unit_id"]) == (caption["id"], "caption", figure["id"])
+
+
+def test_set_language_refuses_a_second_caption_in_one_language(client: TestClient) -> None:
+    """한/영으로 나눈 캡션의 한글 조각을 영어로 바꾸면 묶음당 언어 하나를 깬다."""
+    fx, _, caption = _setup_figure(client)
+    result = _ok(_split(client, fx, caption, FIGURE_CAPTION.index("(Figure")))
+    korean = next(unit for unit in _created_units(client, fx, result) if unit["lang"] == "ko")
+
+    response = _set_language(client, fx.bundle_id, fx.doc["id"], [korean], "en")
+
+    assert _code(response) == (422, "caption_exists")
+
+
+def test_split_caption_into_one_language_is_rejected(client: TestClient) -> None:
+    """같은 언어 조각 둘은 둘 다 캡션이라 묶음 저장이 같은 언어 캡션 둘을 받게 된다 — 나누기에서 막는다(caption_exists, split)."""
+    fx, figure, caption = _setup_figure(client)
+
+    response = _split(client, fx, caption, FIGURE_CAPTION.index("로터"))
+
+    assert _code(response) == (422, "caption_exists")
+    assert response.json()["detail"]["reason"] == "split"
+    kept = find_unit(get_view(client, fx.bundle_id, fx.doc["id"]), FIGURE_CAPTION)
+    assert (kept["id"], kept["group_unit_id"]) == (caption["id"], figure["id"])
+
+
+def test_merge_caption_with_plain_sentence_is_rejected(client: TestClient) -> None:
+    fx, _, caption = _setup_figure(client)
+
+    assert _code(_merge(client, fx, caption, find_unit(fx.view, RECORD))) == (422, "cannot_merge")
+
+
+def test_split_table_rows_moves_caption_to_first_row(client: TestClient) -> None:
+    caption_text = "표 7. 기록 양식"
+    fx = _setup(client, p(HEADING) + p(caption_text, "Caption") + tbl([["합성 칸 하나."], ["합성 칸 둘."]]))
+    table = next(unit for unit in fx.view["units"] if unit["kind"] == "table")
+    caption = find_unit(fx.view, caption_text)
+
+    _ok(_edit(client, fx.bundle_id, fx.doc["id"], {"type": "split_table_rows", "table_unit_id": table["id"]}))
+
+    view = get_view(client, fx.bundle_id, fx.doc["id"])
+    rows = sorted((unit for unit in view["units"] if unit["kind"] == "table_row"), key=lambda unit: unit["row_index"])
+    assert find_unit(view, caption_text)["group_unit_id"] == rows[0]["id"]
+    _ok(_edit(client, fx.bundle_id, fx.doc["id"], {"type": "merge_table_rows", "table_id": table["table_id"]}))
+    view = get_view(client, fx.bundle_id, fx.doc["id"])
+    merged = next(unit for unit in view["units"] if unit["kind"] == "table")
+    assert (find_unit(view, caption_text)["id"], find_unit(view, caption_text)["group_unit_id"]) == (
+        caption["id"], merged["id"],
+    )
+    _ok(_step(client, fx.bundle_id, fx.doc["id"], "undo"))
+    _ok(_step(client, fx.bundle_id, fx.doc["id"], "undo"))
+    assert find_unit(get_view(client, fx.bundle_id, fx.doc["id"]), caption_text)["group_unit_id"] == table["id"]
+
+
+def test_rewrap_table_leaves_the_former_caption_a_sentence(client: TestClient) -> None:
+    """레이아웃 → 데이터로 다시 감싸도 캡션을 저절로 붙이지 않는다 — 사람이 붙이기로 고른다."""
+    caption_text = "표 7. 기록 양식"
+    fx = _setup(client, p(HEADING) + p(caption_text, "Caption") + tbl([["합성 칸이다."]]))
+    table = next(unit for unit in fx.view["units"] if unit["kind"] == "table")
+    for is_layout in (True, False):
+        op = {"type": "set_layout_table", "table_id": table["table_id"], "is_layout": is_layout}
+        _ok(_edit(client, fx.bundle_id, fx.doc["id"], op))
+
+    view = get_view(client, fx.bundle_id, fx.doc["id"])
+    rewrapped = next(unit for unit in view["units"] if unit["kind"] == "table")
+    sentence = find_unit(view, caption_text)
+    assert (sentence["kind"], sentence["group_unit_id"]) == ("sentence", None)
+    _ok(_attach(client, fx, sentence, rewrapped))
+
+
 # ── 되돌리기·다시 하기 ────────────────────────────────────────────────────────
 
 
@@ -935,3 +1211,41 @@ def test_view_marks_units_made_by_an_edit(client: TestClient) -> None:
 
     assert [member["is_edited"] for member in undone["units"] if member["id"] == unit["id"]] == [False]
     assert not any(member["is_edited"] for member in undone["units"])
+
+
+def test_merging_two_changes_keeps_every_field() -> None:
+    # 표 벗기기와 안쪽 띠 표 · 대응 표 벗기기를 한 편집으로 합칠 때 어느 칸도 조용히 빠지지 않는다(새 칸이 생겨도 이 시험이 잡는다)
+    from dataclasses import fields
+
+    from app.sop.editing import _Change, _Draft, _merge_changes
+
+    def make_draft(group_draft: int | None) -> _Draft:
+        return _Draft(
+            kind="cell_sentence", spans=[], text="", lang="ko", table_id=None, row_index=None, group_unit_id=None,
+            pos_seq=0, pos_start=0, group_draft=group_draft,
+        )
+
+    def fill(tag: int) -> _Change:
+        values: dict[str, object] = {}
+        for item in fields(_Change):
+            empty = getattr(_Change(), item.name)
+            if item.name == "drafts":
+                values[item.name] = [make_draft(None), make_draft(0)]
+            elif isinstance(empty, bool):
+                values[item.name] = tag == 2
+            elif isinstance(empty, list):
+                values[item.name] = [(tag, item.name)] if item.name not in ("retire", "revive") else [tag]
+            else:
+                values[item.name] = {tag: item.name}
+        return _Change(**values)
+
+    merged = _merge_changes(fill(1), fill(2))
+
+    for item in fields(_Change):
+        value = getattr(merged, item.name)
+        if isinstance(value, bool):
+            assert value is True, item.name
+        else:
+            assert len(value) == (4 if item.name == "drafts" else 2), item.name
+    # 뒤 변경의 표 단위 순번은 앞 변경의 초안 수만큼 민다
+    assert [draft.group_draft for draft in merged.drafts] == [None, 0, None, 2]

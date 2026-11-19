@@ -15,7 +15,7 @@ function renderModal(isBusy: boolean, onClose: () => void) {
   document.body.appendChild(host);
   const root = createRoot(host);
   // .ts 시험이라 JSX가 없다 - children이 필수 prop이어서 createElement의 셋째 인자로는 타입이 맞지 않는다
-  // eslint-disable-next-line react/no-children-prop
+  // eslint-disable-next-line react/no-children-prop -- .ts test without JSX; children is a required prop
   act(() => root.render(createElement(LangProvider, null, createElement(Modal, { title: "T", testId: "m", onClose, isBusy, children: "body" }))));
   return { host, root };
 }
@@ -55,7 +55,7 @@ function renderPanel(element: ReturnType<typeof createElement>) {
 
 describe("Modal width", () => {
   it("is the form width unless a size is given", () => {
-    // eslint-disable-next-line react/no-children-prop
+    // eslint-disable-next-line react/no-children-prop -- .ts test without JSX; children is a required prop
     expect(renderPanel(createElement(Modal, { title: "T", testId: "m", onClose: vi.fn(), children: "body" }))).toEqual(["max-w-md"]);
   });
 
@@ -64,9 +64,9 @@ describe("Modal width", () => {
     ["md", "max-w-md"],
     ["lg", "max-w-lg"],
     ["xl", "max-w-3xl"],
-    ["sheet", "max-w-[min(1280px,calc(100vw-32px))]"],
+    ["sheet", "max-w-none"], // 거의 전체 화면 - 폭은 바탕의 24px 여백이 정한다
   ])("draws size %s as %s", (size, expected) => {
-    // eslint-disable-next-line react/no-children-prop
+    // eslint-disable-next-line react/no-children-prop -- .ts test without JSX; children is a required prop
     expect(renderPanel(createElement(Modal, { title: "T", testId: "m", onClose: vi.fn(), size, children: "body" }))).toEqual([expected]);
   });
 

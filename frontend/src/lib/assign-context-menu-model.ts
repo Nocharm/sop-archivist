@@ -1,14 +1,18 @@
 // Assign Old 문장 우클릭 메뉴의 항목과 가능/불가 - 화면은 이 결과대로 항목을 켜고 끄며 까닭을 툴팁으로 보인다.
-// 두 묶음이다: 배정(지금 고른 곳으로 확정·배정 취소)과 문장 고치기(여기서 나누기·앞뒤 문장과 합치기 또는 한/영 짝 맺기·짝 풀기·언어).
+// 두 묶음이다: 배정(배정 취소 - 확정은 Enter·오른쪽 칸·그 자리 메뉴가 맡는다)과 문장 고치기(여기서 나누기·앞뒤 문장과 합치기 또는 한/영 짝 맺기·짝 풀기·언어).
+// 표·행·그림(묶음)은 묶음 도구(행으로 나누기·표 벗기기·캡션 붙이기)만, 캡션은 문장 도구 일부와 캡션 떼기를 받는다(명세 2026-11-16 §4.2).
 // 고치기는 Split의 편집을 그대로 부르므로 판단이 없는 단위만 받는다 - 배정된 문장은 먼저 배정을 취소한다(서버도 판단이 걸린 단위는 확인을 요구한다).
 import type { CoverStatus, ViewUnit } from "./api-sop";
+import { isBandHeading, MERGE_BLOCKER_KEYS } from "./paper-model";
 import { getPairMergeReason, hasBothScripts, planJoin, type JoinPlan } from "./split-menu-model";
 
 export type AssignMenuAction =
-  | "confirm" | "clear"
+  | "clear"
   | "split" | "merge_prev" | "merge_next" | "pair_prev" | "pair_next" | "pair_pick" | "unpair" | "lang"
   | "ref_mark" | "ref_clear"
-  | "table_rows" | "table_merge" | "table_layout";
+  | "table_rows" | "table_merge" | "table_layout"
+  | "caption_attach_prev" | "caption_attach_next" | "caption_detach"
+  | "to_sentence" | "to_heading";
 
 export interface AssignMenuItem {
   action: AssignMenuAction;
@@ -17,6 +21,10 @@ export interface AssignMenuItem {
   reasonKey?: string;
   /** 언어 줄의 지금 언어 */
   lang?: ViewUnit["lang"];
+  /** 대상에 따라 이름이 바뀌는 항목의 문구 키 - 없으면 그 일의 기본 이름 */
+  labelKey?: string;
+  /** 언어 줄에서 그 언어 칸만 꺼진 까닭 - 캡션은 묶음마다 언어당 하나라 다른 캡션이 가진 언어, 캡션은 참조 줄이 될 수 없다 */
+  langReasons?: Partial<Record<"ko" | "en" | "ref", string>>;
 }
 
 export interface AssignMenuGroups {
@@ -33,10 +41,6 @@ export interface AssignMenuContext {
   readOnly: boolean;
   /** 우클릭한 문장의 줄 상태 */
   rowStatus: CoverStatus;
-  /** 줄에 보낼 곳이 있다(저장 전 고름 또는 저장된 곳·AI 제안) */
-  hasDestination: boolean;
-  /** 저장 전 고름이 없고 줄이 이미 확정됐다 - 확정할 것이 없다 */
-  isConfirmedAsIs: boolean;
   /** 단위(칸 문장이면 묶인 표·행)에 판단이 있다 - 미배정이 아닌 상태나 처분 */
   isDecided: (unit: ViewUnit) => boolean;
   /** 단위의 줄에 저장 전 고름·고친 글이 있다 */
@@ -47,9 +51,21 @@ export interface AssignMenuContext {
   table: ViewUnit | null;
   /** 그 표의 행 단위 전부(행으로 나눈 표일 때) - 다시 합치려면 모든 행에 판단이 없어야 한다 */
   tableRows?: readonly ViewUnit[];
+  /** 글 대상의 바로 앞·뒤 묶음(표·행·그림) - 그 묶음의 캡션으로 붙일 수 있다. 묶음 대상이면 prev·next가 묶음 전체(칸 문장·캡션 포함) 앞·뒤 단위다 */
+  prevBundle?: ViewUnit | null;
+  nextBundle?: ViewUnit | null;
+  /** 묶음에 이미 있는 캡션의 언어 - 묶음마다 언어당 캡션 하나(서버 caption_exists) */
+  listCaptionLangs?: (bundle: ViewUnit) => readonly string[];
+  /** 옛 이행(0020)이 그림 블록 위에 둔 캡션 - 떼면 그림 글이 문장이 되어 서버가 막는다(caption_in_figure_block) */
+  isFixedCaption?: (unit: ViewUnit) => boolean;
+  /** 캡션 대상의 묶음 - 다른 언어 캡션이 있는지 본다 */
+  captionBundle?: ViewUnit | null;
 }
 
-const EDITABLE_KINDS = new Set(["sentence", "heading", "cell_sentence"]);
+const EDITABLE_KINDS = new Set(["sentence", "heading", "cell_sentence", "caption"]);
+const BUNDLE_KINDS = new Set(["table", "table_row", "figure"]);
+// 캡션으로 붙일 수 있는 글 - 묶이지 않은 문장·제목(서버 CAPTIONABLE_KINDS), 참조 줄은 아니다
+const CAPTIONABLE_KINDS = new Set(["sentence", "heading"]);
 
 function why(reason: string): string {
   return `assign.ctx.why.${reason}`;
@@ -66,6 +82,8 @@ function build(action: AssignMenuAction, reasonKey: string | null): AssignMenuIt
 function getRetireBlocker(ctx: AssignMenuContext, unit: ViewUnit): string | null {
   if (ctx.readOnly) return why("readOnly");
   if (!EDITABLE_KINDS.has(unit.kind)) return why("notText");
+  // 목차 줄은 나누거나 합치지 않는다 - 먼저 목차 아님(서버 422 toc_line_locked, 사용자 결정 2026-11-19)
+  if (unit.noise_kind) return why("tocLine");
   return ctx.hasDraft(unit) ? why("unsaved") : null;
 }
 
@@ -77,6 +95,11 @@ function getEditBlocker(ctx: AssignMenuContext, unit: ViewUnit): string | null {
   return ctx.hasDraft(unit) ? why("unsaved") : null;
 }
 
+/** 묶이지 않은 글(참조 줄 아님) - 묶음의 캡션이 될 수 있다 */
+function isCaptionable(unit: ViewUnit): boolean {
+  return CAPTIONABLE_KINDS.has(unit.kind) && unit.group_unit_id === null && unit.lang !== "ref";
+}
+
 /** 한글 문장과 영어 문장인가 - 이런 이웃은 합치지 않고 한/영 짝으로 맺는다 */
 function isOtherLanguage(a: ViewUnit, b: ViewUnit): boolean {
   return (a.lang === "ko" && b.lang === "en") || (a.lang === "en" && b.lang === "ko");
@@ -86,11 +109,14 @@ function isOtherLanguage(a: ViewUnit, b: ViewUnit): boolean {
 function buildJoin(ctx: AssignMenuContext, neighbor: ViewUnit | null, side: "prev" | "next"): AssignMenuItem {
   const isPair = neighbor !== null && isOtherLanguage(ctx.target, neighbor);
   const action: AssignMenuAction = isPair ? `pair_${side}` : `merge_${side}`;
+  // 어느 한쪽이 이미 짝이면 배정을 풀어도 맺을 수 없다 - 먼저 할 일(배정·저장)보다 이 까닭이 앞선다(자기 짝과의 단추가 "배정됨"으로 보이던 것)
+  if (isPair && (ctx.target.pair_id !== null || neighbor.pair_id !== null)) return build(action, "split.menu.why.alreadyPaired");
   // 합치기는 두 문장을 새 문장 하나로 바꾸니 배정이 있어도 묻고 한다. 짝은 제자리에서 맺어 배정이 있으면 막는다
   const own = isPair ? getEditBlocker(ctx, ctx.target) : getRetireBlocker(ctx, ctx.target);
   if (own !== null) return build(action, own);
   if (neighbor === null) return build(action, why("noNeighbor"));
-  if (!EDITABLE_KINDS.has(neighbor.kind)) return build(action, why("neighborNotText"));
+  // 캡션은 묶음에 딸린 글이라 이웃 문장과 합치거나 짝 맺지 않는다(떼고 나서)
+  if (!EDITABLE_KINDS.has(neighbor.kind) || neighbor.kind === "caption") return build(action, why("neighborNotText"));
   if (isPair && ctx.isDecided(neighbor)) return build(action, why("neighborAssigned"));
   if (ctx.hasDraft(neighbor)) return build(action, why("neighborUnsaved"));
   const plan = planJoin([ctx.target, neighbor], true);
@@ -116,16 +142,80 @@ function buildTableItems(ctx: AssignMenuContext): AssignMenuItem[] {
   return [build("table_merge", blocker ?? rowBlocker)];
 }
 
+/**
+ * 캡션 붙이기 하나 - 글 단위(text)를 묶음(bundle)의 캡션으로. 판단이 있어도 막지 않는다(서버가 묻고 묶음을 풀어 준다, 다른 고치기와 같다).
+ * 까닭은 읽기 전용 → 저장 전 고름(대상 줄, 그다음 이웃 줄) → 그 언어 캡션이 이미 있음 순.
+ */
+function buildCaptionAttach(ctx: AssignMenuContext, side: "prev" | "next", text: ViewUnit, bundle: ViewUnit, labelKey: string): AssignMenuItem {
+  const [own, other] = ctx.target.id === bundle.id ? [bundle, text] : [text, bundle];
+  const reason = ctx.readOnly ? why("readOnly")
+    : ctx.hasDraft(own) ? why("unsaved")
+    : ctx.hasDraft(other) ? why(other.id === bundle.id ? "bundleUnsaved" : "neighborUnsaved")
+    : (ctx.listCaptionLangs?.(bundle) ?? []).includes(text.lang) ? why("captionExists") : null;
+  return { ...build(`caption_attach_${side}`, reason), labelKey };
+}
+
+/** 글 대상의 캡션 항목 - 바로 앞(뒤)이 표·행·그림일 때만 "위(아래) 표의 캡션으로 쓰기" */
+function buildTextCaptionItems(ctx: AssignMenuContext): AssignMenuItem[] {
+  if (!isCaptionable(ctx.target)) return [];
+  return (["prev", "next"] as const).flatMap((side) => {
+    const bundle = side === "prev" ? ctx.prevBundle : ctx.nextBundle;
+    if (!bundle) return [];
+    const noun = bundle.kind === "figure" ? "Figure" : "Table";
+    return [buildCaptionAttach(ctx, side, ctx.target, bundle, `assign.ctx.captionOf${noun}${side === "prev" ? "Prev" : "Next"}`)];
+  });
+}
+
+/**
+ * 제목 ↔ 문장 항목(F8b) - 묶이지 않은 제목은 "문장으로 바꾸기", 문장은 "제목으로"(제목에서 바꾼 문장이면 "제목으로 되돌리기" - 그 조항 줄 전체).
+ * 단위를 새로 만드는 고치기라 배정이 있어도 막지 않는다(서버가 묻고 배정을 풀어 준다). 목차 줄·참조 줄·칸 문장·캡션에는 없다
+ */
+function buildHeadingItems(ctx: AssignMenuContext, retireReason: string | null): AssignMenuItem[] {
+  const { target } = ctx;
+  // 띠 표 제목 줄(F4)의 반대 길은 다듬기 칸의 "표로 되돌리기"다 - 문장으로 바꾸지 않는다
+  if (target.group_unit_id !== null || target.noise_kind || target.lang === "ref" || isBandHeading(target)) return [];
+  if (target.kind === "heading") return [build("to_sentence", retireReason)];
+  if (target.kind !== "sentence") return [];
+  return [{ ...build("to_heading", retireReason), labelKey: target.from_heading ? "assign.headingShift.back" : "assign.ctx.toHeading" }];
+}
+
+/** 묶음 대상의 캡션 항목 - 묶음 바로 앞(뒤)이 묶이지 않은 글일 때만 "위(아래) 문장을 캡션으로 붙이기" */
+function buildBundleCaptionItems(ctx: AssignMenuContext): AssignMenuItem[] {
+  return (["prev", "next"] as const).flatMap((side) => {
+    const text = side === "prev" ? ctx.prev : ctx.next;
+    if (text === null || !isCaptionable(text)) return [];
+    return [buildCaptionAttach(ctx, side, text, ctx.target, `assign.ctx.captionAttach${side === "prev" ? "Prev" : "Next"}`)];
+  });
+}
+
 export function buildAssignMenu(ctx: AssignMenuContext): AssignMenuGroups {
-  const confirmReason = ctx.readOnly ? why("readOnly") : !ctx.hasDestination ? why("noDestination") : ctx.isConfirmedAsIs ? why("alreadyConfirmed") : null;
   const clearReason = ctx.readOnly ? why("readOnly") : ctx.rowStatus === "unassigned" && !ctx.isDecided(ctx.target) ? why("notAssigned") : null;
   const editReason = getEditBlocker(ctx, ctx.target);
   const retireReason = getRetireBlocker(ctx, ctx.target);
+  const splitItem = build("split", retireReason ?? (ctx.canSplit ? null : why("nothingToSplit")));
+  const langItem = { ...build("lang", editReason ?? (ctx.target.lang === "ref" ? why("refLang") : null)), lang: ctx.target.lang };
+  // 묶음(표·행·그림)에는 문장 항목이 뜻이 없어 묶음 항목만 둔다
+  if (BUNDLE_KINDS.has(ctx.target.kind)) return { assign: [build("clear", clearReason)], edit: [...buildTableItems(ctx), ...buildBundleCaptionItems(ctx)] };
+  // 캡션은 나누기·언어(한/영 한 줄 캡션을 나눠 언어를 따로)와 떼기만 - 떼기는 묶음을 바꾸니 배정이 있으면 서버가 묻는다
+  if (ctx.target.kind === "caption") {
+    const detachReason = ctx.readOnly ? why("readOnly") : ctx.isFixedCaption?.(ctx.target) ? why("captionInFigure") : ctx.hasDraft(ctx.target) ? why("unsaved") : null;
+    // 같은 묶음의 다른 캡션이 가진 언어로는 바꿀 수 없다(서버 caption_exists), 캡션은 참조 줄이 되지 않는다
+    const taken = ctx.captionBundle ? (ctx.listCaptionLangs?.(ctx.captionBundle) ?? []) : [];
+    const langReasons: AssignMenuItem["langReasons"] = { ref: why("captionNoRef") };
+    for (const lang of ["ko", "en"] as const) if (lang !== ctx.target.lang && taken.includes(lang)) langReasons[lang] = why("captionExists");
+    // 나눈 두 조각도 캡션이다 - 한/영 한 줄 캡션을 한글·영어로 나누는 것만 된다(같은 언어 둘·다른 캡션과 겹침은 서버 caption_exists, split)
+    const others = [...taken];
+    const ownIndex = others.indexOf(ctx.target.lang);
+    // 목록에 이 캡션의 언어가 없으면 splice(-1)이 다른 캡션의 언어를 지운다
+    if (ownIndex >= 0) others.splice(ownIndex, 1);
+    const isPairSplit = hasBothScripts(ctx.target.text) && !others.some((lang) => lang === "ko" || lang === "en");
+    const captionSplit = isPairSplit ? splitItem : build("split", retireReason ?? why("captionSplitOneLang"));
+    return { assign: [build("clear", clearReason)], edit: [captionSplit, { ...langItem, langReasons }, build("caption_detach", detachReason)] };
+  }
   return {
-    assign: [build("confirm", confirmReason), build("clear", clearReason)],
-    // 표·행 단위에는 문장 항목이 뜻이 없어 표 항목만 둔다
-    edit: ctx.target.kind === "table" || ctx.target.kind === "table_row" ? buildTableItems(ctx) : [
-      build("split", retireReason ?? (ctx.canSplit ? null : why("nothingToSplit"))),
+    assign: [build("clear", clearReason)],
+    edit: [
+      splitItem,
       buildJoin(ctx, ctx.prev, "prev"),
       buildJoin(ctx, ctx.next, "next"),
       // 떨어져 있는 문장과 짝 맺기 - 짝이 없는 한글·영어 문장에서만. 누르면 다른 문장을 하나 고른다
@@ -133,9 +223,11 @@ export function buildAssignMenu(ctx: AssignMenuContext): AssignMenuGroups {
       // 짝 풀기는 짝인 문장에서만 보인다
       ...(ctx.target.pair_id !== null ? [build("unpair", editReason)] : []),
       // 참조 줄은 언어가 없다 - 언어를 주려면 먼저 "참조 아님"으로 돌린다
-      { ...build("lang", editReason ?? (ctx.target.lang === "ref" ? why("refLang") : null)), lang: ctx.target.lang },
+      langItem,
       buildRefItem(ctx, editReason),
+      ...buildHeadingItems(ctx, retireReason),
       ...buildTableItems(ctx),
+      ...buildTextCaptionItems(ctx),
     ],
   };
 }
@@ -154,7 +246,7 @@ export function planAssignJoin(first: ViewUnit | undefined, second: ViewUnit | u
 
 /** 떨어진 문장 짝 고르기에 그 문장을 넣을 수 없는 까닭의 문구 키 - 넣을 수 있으면 null. 언어 조합은 다 고른 뒤에 본다(getPairSetBlocker) */
 export function getPairPickBlocker(unit: ViewUnit, state: Pick<AssignMenuContext, "isDecided" | "hasDraft">): string | null {
-  if (!EDITABLE_KINDS.has(unit.kind)) return why("notText");
+  if (!EDITABLE_KINDS.has(unit.kind) || unit.kind === "caption") return why("notText");
   if (unit.lang !== "ko" && unit.lang !== "en") return "split.menu.why.noLanguage";
   if (unit.pair_id !== null) return "split.menu.why.alreadyPaired";
   if (state.isDecided(unit)) return why("neighborAssigned");
@@ -167,6 +259,35 @@ export function getPairSetBlocker(units: ViewUnit[]): string | null {
   if (plan.kind === "pair") return null;
   // 같은 언어뿐이면 합치기 규칙의 까닭("이웃한 문장만") 대신 짝에 맞는 까닭을 말한다
   return new Set(units.map((unit) => unit.lang)).size === 1 ? "assign.pairPickSameLang" : (plan.reasonKey ?? why("cannotMerge"));
+}
+
+// 다듬기 줄에 단추로 두는 일 - 언어는 세 칸이, 참조 줄 표시는 아래 카드가, 확정·지우기는 3번이 맡는다
+const SHAPE_LINE_ACTIONS: ReadonlySet<AssignMenuAction> = new Set([
+  "split", "merge_prev", "pair_prev", "merge_next", "pair_next", "pair_pick", "unpair", "table_rows", "table_layout", "table_merge",
+  "caption_attach_prev", "caption_attach_next", "caption_detach", "to_sentence",
+]);
+
+// 다듬기 줄에서 꺼 둔 채 보이지도 않는 까닭 - 그 자리에서는 풀 길이 없는 모양 탓이다(옆에 문장이 없다·이미 짝·글이 아니다).
+// 저장 전·배정처럼 먼저 할 일이 있는 까닭은 꺼 둔 채 보여 툴팁으로 알린다. 우클릭 메뉴는 그대로 다 보인다
+const SHAPE_HIDDEN_REASONS: ReadonlySet<string> = new Set([
+  why("captionInFigure"), why("nothingToSplit"), why("noNeighbor"), why("neighborNotText"), why("notText"), why("tocLine"),
+  "split.menu.why.alreadyPaired", "split.menu.why.noLanguage", "split.menu.why.notText",
+  ...Object.values(MERGE_BLOCKER_KEYS),
+]);
+
+/**
+ * 다듬기 한 줄에 보일 단추 - 그 문장의 고치기 항목 중 단추로 두는 일만, 풀 길이 없는 까닭으로 꺼진 것은 뺀다.
+ * 참조 줄은 나누거나 묶을 일이 없어 단추가 없다(언어 세 칸만). 한/영 짝 줄(isPairRow)의 짝 풀기는 줄마다 두지 않고 모양 전환 옆에 한 번 둔다.
+ * 표·행·그림의 캡션 붙이기는 그 아래 캡션 자리의 후보가 맡는다(F12 - [캡션 붙이기] 대신 캡션 자리 칸, 우클릭 메뉴에는 남는다).
+ */
+export function listShapeLineItems(unit: ViewUnit, items: readonly AssignMenuItem[], isPairRow: boolean): AssignMenuItem[] {
+  if (unit.lang === "ref") return [];
+  const isBundle = BUNDLE_KINDS.has(unit.kind);
+  return items.filter((item) =>
+    SHAPE_LINE_ACTIONS.has(item.action)
+    && !(item.reasonKey !== undefined && SHAPE_HIDDEN_REASONS.has(item.reasonKey))
+    && !(isPairRow && item.action === "unpair")
+    && !(isBundle && (item.action === "caption_attach_prev" || item.action === "caption_attach_next")));
 }
 
 export interface ShapeMode {

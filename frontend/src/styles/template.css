@@ -1,0 +1,99 @@
+/* 템플릿 보기(components/template/template-view.tsx) - 회사 템플릿 모양의 종이(설계 부록 F 수치를 화면 크기로 옮김). 원문 용지(.sheet · .pg)를 바탕으로 쓰고 확대(--z)를 따른다.
+   색은 종이 토큰과 그것에서 섞은 --tpl-* 토큰만 쓴다(다크는 토큰이 바꾼다). 글 크기는 em이라 칸 확대를 함께 따른다. */
+
+@layer components {
+  .tpl-paper { gap: 4px; }
+  .tpl-header { padding-bottom: 6px; border-bottom: 1px solid var(--tpl-rule); text-align: center; font-weight: 700; font-size: .8em; }
+  .tpl-title { margin: 10px 0 4px; text-align: center; font-weight: 700; font-size: 1.15em; }
+
+  /* 본문 표 공통 - 실선, 머리 행 음영 굵게 왼쪽(부록 F) */
+  .tpl-table { width: 100%; border-collapse: collapse; font-size: .86em; line-height: 1.55; }
+  .tpl-table :is(th, td) { padding: 3px 7px; border: 1px solid var(--tpl-rule); text-align: left; vertical-align: top; }
+  .tpl-table th { background: var(--tpl-head); font-weight: 600; }
+  .tpl-cover { margin-bottom: 6px; }
+  .tpl-cover tr:first-child th { text-align: center; }
+  .tpl-cover td { height: 1.7em; }
+
+  /* 앱이 만든 목차 - 읽기 전용, 2수준은 들여씀 */
+  .tpl-toc { display: grid; gap: 1px; padding: 8px 0; border-block: 1px solid var(--line); }
+  .tpl-toc-head { font-weight: 700; }
+  .tpl-toc-note { margin-left: 6px; font: 400 var(--fs-micro) / var(--lh-micro) var(--font-ui); color: var(--ink-3); }
+  .tpl-toc-line { font-weight: 600; font-size: .9em; }
+  .tpl-toc-line[data-level="1"] { padding-left: 18px; }
+
+  .tpl-half { display: grid; grid-template-columns: minmax(0, 1fr); gap: 4px; margin-top: 10px; }
+  /* 절반 띠 - 문서 글이 아니라 화면 표시라 UI 글꼴 */
+  .tpl-half-label { justify-self: start; margin: 6px 0 2px; padding: 1px 8px; border-radius: var(--r-1); background: var(--sunken); font: 600 var(--fs-micro) / var(--lh-micro) var(--font-ui); letter-spacing: .06em; text-transform: uppercase; color: var(--ink-3); }
+
+  /* 장 제목은 굵게 밑줄, 2·3수준은 굵게 들여씀 */
+  .tpl-h { display: flex; align-items: center; gap: 6px; margin-top: 8px; font-weight: 700; }
+  .tpl-h[data-level="0"] > span:first-child { text-decoration: underline; text-underline-offset: 3px; }
+  .tpl-h[data-level="1"] { padding-left: 18px; }
+  .tpl-h[data-level="2"] { padding-left: 36px; }
+
+  .tpl-lines { display: grid; grid-template-columns: minmax(0, 1fr); gap: 1px; }
+  .tpl-lines[data-nested] { padding-left: 22px; }
+  /* 줄 - 앞 표시(번호 · 기호 · Note.) 다음 글. 깊이는 --tpl-d(0부터)만큼 22px씩 들인다 */
+  .tpl-line { display: flex; align-items: baseline; gap: 8px; width: 100%; min-width: 0; padding: 1px 6px 1px calc(18px + var(--tpl-d, 0) * 22px); border-radius: var(--r-1); text-align: left; color: inherit; }
+  button.tpl-line { cursor: pointer; }
+  button.tpl-line:hover { background: var(--hover); }
+  /* 고른 줄 - 두 절반이 함께. 왼쪽 막대 쪽 모서리는 직각 */
+  .tpl-line[data-sel] { border-radius: 0 var(--r-1) var(--r-1) 0; background: var(--sel-bg); box-shadow: inset 2px 0 0 var(--accent); }
+  .tpl-mark { flex: none; min-width: 1.2em; font-variant-numeric: tabular-nums; }
+  .tpl-text { min-width: 0; overflow-wrap: anywhere; white-space: pre-wrap; }
+  .tpl-line[data-note] .tpl-mark { font-weight: 700; }
+  .tpl-line:is([data-note], [data-why]) .tpl-text { font-style: italic; }
+  .tpl-block { flex: 1 1 0; min-width: 0; }
+
+  /* 번역 없음 - 반대 절반의 빈 자리(주황 점선) */
+  .tpl-miss { padding: 0 8px; border: 1px dashed var(--warn-fill); border-radius: var(--r-1); background: var(--warn-tint); color: var(--warn-ink); font: var(--fs-cap) / var(--lh-cap) var(--font-ui); }
+  button.tpl-miss { cursor: pointer; }
+  button.tpl-miss:hover { border-style: solid; }
+
+  .tpl-empty, .tpl-cell-empty { color: var(--ink-3); font: var(--fs-cap) / var(--lh-cap) var(--font-ui); }
+  .tpl-empty { padding-left: 18px; }
+  .tpl-label { display: flex; gap: 8px; padding-left: 18px; }
+  .tpl-auto { margin: 0; padding-left: 38px; list-style: disc; }
+
+  /* 5장 범주 표 - 범주 칸은 좁게, 오른쪽 칸에 글머리 기호 줄 */
+  .tpl-cat th[scope="row"] { width: 22%; background: none; }
+  .tpl-cat th[scope="row"] > span { margin-left: 6px; vertical-align: middle; }
+  .tpl-cat td .tpl-line { padding-left: calc(var(--tpl-d, 0) * 22px); }
+
+  /* WI 장 표 - 음영 머리 행 "Chapter N. 제목", 라벨 칸 | 글 | 그림 칸 */
+  .tpl-wi thead th { background: var(--tpl-head-strong); text-align: center; }
+  .tpl-wi .tpl-wi-label { width: 3.6em; }
+  .tpl-wi .tpl-wi-fig { width: 32%; }
+  .tpl-wi .tpl-wi-num { white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .tpl-wi td .tpl-line { padding-left: 0; }
+  /* 표시는 라벨 칸에 있다 - 글 칸의 빈 표시 자리는 접는다 */
+  .tpl-wi td .tpl-mark:empty { display: none; }
+
+  .tpl-foot { margin-top: 14px; padding-top: 6px; border-top: 1px solid var(--tpl-rule); font-size: .8em; font-weight: 600; font-style: italic; color: var(--danger-ink); }
+
+  /* New 칸 머리의 기본 | 템플릿 전환 - 언어 스위치와 같은 모양, UI 글꼴 */
+  .view-switch { display: inline-grid; grid-auto-flow: column; gap: 2px; padding: 2px; border: 1px solid var(--line-2); border-radius: var(--r-1); font: 600 var(--fs-micro) / 1 var(--font-ui); }
+  .view-switch button { padding: 4px 7px; border-radius: 2px; color: var(--ink-3); cursor: pointer; transition: background var(--dur-fast), color var(--dur-fast); }
+  .view-switch button:hover { color: var(--ink); }
+  .view-switch button[aria-pressed="true"] { background: var(--ink); color: var(--surface); }
+  .view-switch button { display: inline-flex; align-items: center; gap: 4px; }
+  .view-switch-icon { display: none; }
+  /* 좁은 New 칸 머리(1280 반반 408px)에서는 전환을 아이콘 둘로, 확대의 % 글을 접는다 - 머리 항목 합이 83px 넘쳤다(잰 값) */
+  .assign-pane[data-pane="new"] > .pane-head { container-type: inline-size; }
+  @container (max-width: 520px) {
+    .view-switch-label { display: none; }
+    .view-switch-icon { display: block; }
+    .pane-zoom span { display: none; }
+  }
+  /* Order 문서 머리(.c-doc-head)도 같은 전환을 쓴다 - 머리 폭을 기준으로 아이콘만 남긴다(1120 · 1280 창에서 머리가 용지 밖으로 넘치지 않게). 템플릿 종이는 기본 보기 용지(760px)와 같은 폭 */
+  .c-doc-head { container-type: inline-size; }
+  .c-order .tpl-sheet { max-width: none; }
+  /* 1120 창 반반(342px)에서는 그래도 66px 넘쳤다 - 꼬리표("New · not written")를 접고 간격을 줄인다. 어느 문서인지는 문서 고르기가 보인다 */
+  /* 끄는 동안 놓을 수 있는 칸 자리(장·절 제목 · 범주 행 · 빈 칸) - Assign 끌기가 data-tpl-open을 달고 뗀다. 올린 자리 테두리는 공통 [data-drop] */
+  .tpl-paper [data-tpl-open], .tpl-paper tr[data-tpl-open] > * { background: var(--accent-tint); }
+  .tpl-paper [data-tpl-spot][data-drop] { outline-offset: -2px; }
+  @container (max-width: 400px) {
+    .assign-pane[data-pane="new"] > .pane-head { gap: 6px; }
+    .assign-pane[data-pane="new"] > .pane-head > .new-pane-tag { display: none; }
+  }
+}

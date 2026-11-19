@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **SOP Archivist — SOP Restructuring T/F가 쓰는 사내 AI 에이전트 웹 서비스** (FastAPI + Next.js, 사내 서버에 docker compose로 배포). 옛 SOP 묶음을 새 SOP·WI 구조로 다시 짜는 일(문서 쪼개기 → 배정·고쳐 쓰기 → 결과물 A·B·C·Excel → 검토)을 돕는다. **제품 명세: [`docs/superpowers/specs/2026-11-05-sop-restructuring-e2e-design.md`](docs/superpowers/specs/2026-11-05-sop-restructuring-e2e-design.md)**(판단 기준 `docs/domain/`), 기반 명세 `docs/superpowers/specs/2026-11-04-sop-archivist-baseline-design.md`, 프런트와 맞춘 API 계약은 `docs/superpowers/plans/2026-11-06-sop-restructuring-plan2-ai.md`의 "API 계약" 블록, 프런트 디자인 기초 `frontend/docs/design/2026-11-07-frontend-design-foundations.md`.
 
-> 상태: **v1.1.0 — 운영 배포 2026-11-16**(운영 :7777, 개발 스택 :4444). 기능 이력은 `CHANGELOG.md`, 지금 진행은 `PROGRESS.md`. **실제 SOP·실제 모델 미검증** — AI 층은 합성 SOP·가짜 AI로만 검증했고 유사도 임계값은 합성 자료로 잡은 값이다(실제 시험 뒤 다시 정한다).
+> 상태: **v1.2.0 — 정식 업데이트 2026-11-19**(운영 배포는 사용자가 GitLab 파이프라인으로 올린 뒤 `CHANGELOG.md`에 날짜를 적는다. 그전 운영은 v1.1.0, 2026-11-16. 운영 :7777, 개발 스택 :4444). 기능 이력은 `CHANGELOG.md`, 지금 진행은 `PROGRESS.md`. **실제 SOP·실제 모델 미검증** — AI 층은 합성 SOP·가짜 AI로만 검증했고 유사도 임계값은 합성 자료로 잡은 값이다(실제 시험 뒤 다시 정한다).
 > **서비스 버전**: 단일 소스 `frontend/package.json` `version`(상단 바에 표시). `dev`에 올릴 때마다 PATCH, `dev`→`main` 정식 업데이트마다 MINOR + `vX.Y.Z` 태그(`rules/common/git.md`). 커밋·푸시는 GitHub에만, 사내 GitLab push·배포는 사용자. 운영 배포일은 CHANGELOG에 적는다.
 > **DB**: 로컬은 sqlite 파일(연결마다 `PRAGMA foreign_keys=ON`), 서버는 postgres. 스키마는 **Alembic**(backend 기동 때 head까지 자동 적용).
 > **원칙**: AI는 제안만 하고 사람이 줄마다 확정한다 — AI가 꺼지거나 실패해도 사람 경로는 돈다. AI 페이로드에 직원 실명을 싣지 않는다(역할·부서만). 공개 저장소라 실서버 IP·사내 호스트명·시크릿은 추적 파일에 넣지 않는다(`<server-ip>` 등).
@@ -19,7 +19,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 # backend/ — 배포 런타임과 같은 Python 3.11 venv
 python3.11 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
 .venv/bin/python -m scripts.reset_db        # 로컬 데모 DB(backend/dev.db). 서버 실행 금지
-.venv/bin/python -m scripts.seed_sop_demo   # 합성 SOP 묶음 4개(로컬 전용, AUTH_MODE=dev). 극단 자료는 seed_sop_worst
+.venv/bin/python -m scripts.seed_sop_demo   # 합성 SOP 묶음 4개 + 지도용 2개 + 목차 1개(로컬 전용, AUTH_MODE=dev). 극단 자료는 seed_sop_worst
 AUTH_MODE=dev DEV_ENFORCE_PERMISSIONS=true APP_SYSADMINS=dev.admin .venv/bin/uvicorn app.main:app --reload --port 8777
 .venv/bin/python -m pytest tests/ -q -n auto   # 작업자마다 DB 파일이 따로. 한 파일만 볼 때는 -n 없이
 .venv/bin/ruff check app/ tests/
@@ -33,6 +33,26 @@ npm run lint && npx tsc --noEmit -p tsconfig.json && npx vitest run   # 커밋 �
 node frontend/scripts/fake-ai-server.mjs    # 가짜 AI :9999(저장소 루트에서, FAKE_AI_SPLIT=1이면 나눔). 배선 확인용, 정확도 근거 아님
 # dev 인증 = localStorage `sopa.devUser` / 헤더 `X-Dev-User`. 권한 차등은 DEV_ENFORCE_PERMISSIONS=true(dev.admin이 sysadmin)
 ```
+
+## 일 크기에 맞는 절차 (사용자 결정 2026-11-17)
+
+2026-11-10~16 세션 기록을 재 보니 하위 에이전트 463번(62%가 검토)이 모델 호출의 약 70%를 썼고, 서버가 뜨기를 기다린 시간만 약 16시간이었다. 플러그인 스킬(superpowers 등)이 시키는 기본 절차보다 아래가 먼저다.
+
+- **작은 수정은 메인 세션이 직접 고친다** — 한 화면·한 모듈 안의 수정(스타일·문구·작은 기능·뻔한 버그)은 `/agile` 기준으로, 브레인스토밍·계획 문서·하위 에이전트 없이 바로 한다. 설계 → 계획 → 하위 에이전트 순서는 자료 구조·API 계약·권한·Alembic을 건드리거나 여러 모듈에 걸친 일에만 쓴다.
+- **검토는 브랜치 끝에 한 번** — 하위 에이전트로 구현할 때도 작업(task)마다 명세 검토·품질 검토를 따로 띄우지 않는다. `dev`에 합치기 전에 브랜치 전체 diff를 한 번 검토한다.
+- **브랜치는 작업 단위 하나로 끊는다** — 검토가 끝에 한 번뿐이라 여러 일이 섞인 브랜치는 검토가 겉돈다. 브랜치 하나는 한 문장으로 말할 수 있고 혼자 `dev`에 올라가도 화면에서 확인할 수 있는 일 하나다(계획의 걸음 하나). 계획을 세울 때 걸음마다 브랜치 이름을 미리 적고, 하다가 다른 일(다른 화면의 개선, 따로 설명해야 하는 리팩터링, 옆에서 찾은 버그)이 끼면 그 일은 따로 브랜치로 뺀다. 길이는 참고만 한다 — 시험·문서를 뺀 diff가 약 1,000줄·파일 15개를 넘으면 일이 둘로 나뉘는지 한 번 보고, 한 단위면 넘어도 그대로 간다.
+  - **차례로(기본)**: 걸음 1 브랜치 → 검토 → `dev`에 합침 → 걸음 2는 새 `dev`에서 딴다(끌어다 놓기 4걸음이 이렇게 했다).
+  - **브랜치에서 다시 브랜치**: 걸음 하나만 `dev`에 올리면 화면이나 자료가 반쪽이 될 때만. 모음 브랜치 `feat/<기능>`에서 걸음 브랜치 `feat/<기능>-<n>-<이름>`을 따고, 걸음마다 그 걸음의 diff만 검토해 모음 브랜치에 합친다. 모음 브랜치를 `dev`에 합칠 때는 전체를 다시 검토하지 않고, `dev`를 합친 뒤의 시험과 고친 화면 스모크만 한다.
+- **하위 에이전트는 서버·브라우저를 띄우지 않는다** — 맡길 때 그렇게 적는다. 하위 에이전트는 고친 파일의 단위 시험(vitest·pytest 한 파일)과 lint·tsc까지만 한다. 스모크·감사·화면 확인은 메인 세션이 끝에 한 번, 고친 화면만 하고(위 Commands), 이미 떠 있는 서버가 있으면 그대로 쓴다.
+
+## 신뢰 기반 먼저 (사용자 결정 2026-11-19)
+
+검증 층(스모크·감사·합성 E2E)은 두껍지만 코드 구조·정적 검사 층이 기본값이라 같은 화면의 fix가 되풀이된다(점검 근거와 스텝: [`docs/superpowers/plans/2026-11-19-trust-foundation-plan.md`](docs/superpowers/plans/2026-11-19-trust-foundation-plan.md)).
+
+- **교정 사다리** — 사용자에게 같은 교정을 받거나 같은 종류의 fix가 두 번째면 `/harden`: 설계로 못 하게 → lint·타입·소스 검사 시험 → 실행 검증 → 그래도 안 될 때만 산문 한 줄(왜 검사로 못 하는지와 함께). 산문에만 규칙을 더하지 않는다.
+- **lint·시험 메시지는 고치는 방법까지** 적는다.
+- **스모크 기대값을 낮추거나 단계를 빼서 통과시키지 않는다** — 필요하면 사용자 승인을 받고 커밋 메시지에 사유를 적는다.
+- **기능 작업·병렬 에이전트 보류** — 계획의 스텝 1·2가 `dev`에 오를 때까지 새 기능을 시작하지 않는다. 그 뒤 병렬 에이전트는 동시에 2~3개까지.
 
 ## Architecture
 
@@ -48,7 +68,7 @@ node frontend/scripts/fake-ai-server.mjs    # 가짜 AI :9999(저장소 루트�
 
 **경계:** 브라우저 → `:7777` nginx → (Next.js | FastAPI) → PostgreSQL. 로컬은 Next rewrites가 `/api`를 `BACKEND_URL`로 넘긴다. 입력 검증은 backend API 경계(`rules/common/security.md`). 인증은 Keycloak realm `ai-portal`의 public 클라이언트 `sop-archivist-frontend`, 주소는 `.env`(`docs/deploy/setup-once.md` A5).
 
-**디렉터리:** `backend/`(앱·Alembic·시드 `scripts/`·tests) · `frontend/`(src/app·components·lib, `scripts/` 스모크·가짜 AI) · `nginx/` · `scripts/db-backup.sh` · `ci/`(`deploy.sh`·`test-deploy.sh`, `.gitlab-ci.yml`이 부름) · `samples/`(화면에 올려 볼 합성 SOP 파일 — 생성기 출력 사본) · `docs/`(인덱스 `docs/README.md`).
+**디렉터리:** `backend/`(앱·Alembic·시드 `scripts/`·tests) · `frontend/`(src/app·components·lib, `scripts/` 스모크·가짜 AI) · `nginx/` · `scripts/db-backup.sh` · `ci/`(`deploy.sh`·`test-deploy.sh`, `.gitlab-ci.yml`이 부름) · `docs/`(인덱스 `docs/README.md`).
 
 **세부 구조는 폴더별 CLAUDE.md에** — 그 폴더의 파일을 읽을 때 함께 실리고, 실리지 않은 채 그 폴더를 고치게 되면 먼저 직접 읽는다. [`backend/CLAUDE.md`](backend/CLAUDE.md)(핵심 모듈·AI 제안 층 불변식·SOP 규칙 이중 사용 지점, Python·설정 규칙을 불러옴) · [`frontend/CLAUDE.md`](frontend/CLAUDE.md)(핵심 구조·공통 부품·사용 설명서, TypeScript·식별자 규칙을 불러옴).
 

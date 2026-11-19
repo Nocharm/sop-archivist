@@ -5,7 +5,7 @@
 
 import asyncio
 from collections import Counter
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from typing import Literal
 
 from pydantic import BaseModel
@@ -14,18 +14,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Employee
 from app.sop.ai.jobs import cancel_active_jobs
-from app.sop.constants import EQUIPMENT_SLOT_KEYS, SEMANTIC_CHECK_KEYS, SLOT_HEADING
+from app.sop.constants import SEMANTIC_CHECK_KEYS
 from app.sop.errors import check_revision, raise_rule
 from app.sop.events import record_event
 from app.sop.membership import ensure_editable, lock_bundle
 from app.sop.models import Bundle, BundleMember
-from app.sop.outputs import build_review_facts
+from app.sop.outputs import CaptionRefWarning, build_review_facts
 from app.sop.snapshot import (
     BundleSnapshot,
     count_unacked_missing_text,
     load_bundle_snapshot,
 )
-from app.sop.tobe import is_within_slot
 
 NextAction = Literal[
     "upload_documents", "resolve_documents", "fill_doc_versions", "fill_tobe", "decide_units", "ack_warnings",
@@ -76,25 +75,12 @@ def _find_units_missing_reason(snap: BundleSnapshot) -> list[int]:
     return sorted(unit_ids)
 
 
-def _list_equipment_notices(snap: BundleSnapshot) -> list[Issue]:
-    """장비 SOP에서 새 문장도 N/A도 없는 Procedures 하위 칸 — 상위 칸 N/A는 하위 칸을 덮는다. 완료를 막지 않는다."""
-    filled: dict[int, set[str]] = {}
-    for target in snap.targets.values():
-        if target.slot_key is not None and target.kind != SLOT_HEADING:  # 칸 제목은 칸 항목이 아니라 칸을 채우지 않는다
-            filled.setdefault(target.target_doc_id, set()).add(target.slot_key)
-    notices: list[Issue] = []
-    for doc in sorted(snap.target_docs.values(), key=lambda doc: (doc.order_index, doc.id)):
-        if not doc.is_equipment_sop:
-            continue
-        empty = [
-            slot_key
-            for slot_key in EQUIPMENT_SLOT_KEYS
-            if slot_key not in filled.get(doc.id, set())
-            and not any(is_within_slot(slot_key, na_key) for na_key in doc.na_slots)
-        ]
-        if empty:
-            notices.append({"code": "equipment_sop_empty_slots", "doc_code": doc.code, "slot_keys": empty})
-    return notices
+def _list_caption_ref_notices(warnings: Iterable[CaptionRefWarning]) -> list[Issue]:
+    """표·그림 참조 경고를 코드마다 알림 하나로 — 참조 원문 단위 id(겹치지 않게, id 순). 막지 않는다(제품 명세 §5)."""
+    unit_ids: dict[str, set[int]] = {}
+    for warning in warnings:
+        unit_ids.setdefault(warning.code, set()).add(warning.unit_id)
+    return [{"code": code, "count": len(ids), "unit_ids": sorted(ids)} for code, ids in unit_ids.items()]
 
 
 def _pick_next_action(snap: BundleSnapshot, codes: set[str]) -> NextAction:
@@ -173,10 +159,11 @@ def evaluate_readiness(
     if unresolved:
         blockers.append({"code": "unresolved_documents", "document_ids": unresolved})
 
-    notices = _list_equipment_notices(snap)
+    notices: list[Issue] = []
     warned = sum(bool(target.warnings) for target in snap.targets.values())
     if warned:
         notices.append({"code": "sentence_warnings", "count": warned})
+    notices += _list_caption_ref_notices(facts.caption_ref_warnings)
     return Readiness(
         ready=not blockers,
         blockers=blockers,

@@ -47,6 +47,7 @@ from tests.sop_helpers import (
     AUTHOR,
     REVIEWER,
     assign_as_is,
+    build_missing_caption,
     find_unit,
     get_group_by_unit,
     get_view,
@@ -64,6 +65,7 @@ EDITED = "합성 세 번째 문장을 반드시 시험한다."
 TRANSLATED = "The third synthetic sentence shall be tested."
 SLOT = "purpose"
 OTHER_SLOT = "scope"
+NEW_SLOT = "definitions"
 CELL_TEXT = "합성 압력"
 CELL_TRANSLATED = "Synthetic pressure"
 CELLS = [["합성 항목", "합성 값"], [CELL_TEXT, "합성 결과"]]
@@ -205,7 +207,7 @@ def save_table_as_read(
     return save_group(client, bundle_id, {
         "action": "confirm",
         "units": [{"unit_id": unit_id, "revision": decision["revision"], "disposition": "assigned", "reason": reason}],
-        "targets": targets,
+        "targets": [*targets, *build_missing_caption(group["targets"], table)],
     })
 
 
@@ -1442,6 +1444,12 @@ def make_wi_translation(client: TestClient, ai: FakeAi) -> tuple[AiBundle, dict,
     return bundle, unit, get_target(client, bundle.id, unit["id"]), translate(client, ai, bundle.id, unit["id"])
 
 
+def make_sop_translation(client: TestClient, ai: FakeAi) -> tuple[AiBundle, dict, dict, TargetSentence]:
+    """SOP `SLOT` 칸의 문장과 그 AI 번역을 둔 묶음 — (묶음, 단위, 출처 새 문장, 번역)."""
+    bundle, unit = make_assigned_unit(client)
+    return bundle, unit, get_target(client, bundle.id, unit["id"]), translate(client, ai, bundle.id, unit["id"])
+
+
 def put_order(client: TestClient, bundle_id: int, target_doc_id: int, items: list[dict]) -> httpx2.Response:
     revision = client.get(f"/api/bundles/{bundle_id}", headers=AUTHOR).json()["revision"]
     return client.put(
@@ -2534,8 +2542,10 @@ def test_indenting_the_source_carries_a_confirmed_translation_without_a_hold(cli
     bundle, unit, translation = make_settled_translation(client, fake_ai)
     source = get_target(client, bundle.id, unit["id"])
 
+    # 1장의 줄은 글머리 기호가 기본이다 — 번호를 세는 모습을 보려고 출처를 번호 줄로 함께 바꾼다
     response = put_order(
-        client, bundle.id, bundle.sop_id, [{"target_id": source["id"], "indent_level": 2}, {"target_id": translation.id}]
+        client, bundle.id, bundle.sop_id,
+        [{"target_id": source["id"], "indent_level": 2, "number_style": "numbered"}, {"target_id": translation.id}],
     )
 
     assert response.status_code == 200, response.text
@@ -2668,7 +2678,7 @@ def test_translation_mark_can_differ_from_its_source(client: TestClient, fake_ai
 
     assert response.status_code == 200, response.text
     assert load_translation(unit["id"]).number_style == "numbered"
-    assert read_source_style(source["id"]) == "numbered"
+    assert read_source_style(source["id"]) == "bullet"  # 출처는 그 절(1장)의 기본 표시 그대로다
 
 
 def test_source_change_does_not_overwrite_translation_mark(client: TestClient, fake_ai: FakeAi) -> None:
@@ -2709,6 +2719,26 @@ def test_ai_translation_lands_right_after_its_source_in_a_manual_order_doc(clien
     assert sorted(placed, key=placed.__getitem__) == [before, source["id"], target.id, after]
 
 
+def test_a_positioned_source_takes_its_kept_translation_right_after_it(client: TestClient, fake_ai: FakeAi) -> None:
+    bundle, unit, translation = make_settled_translation(client, fake_ai)
+    ids = []
+    for text in (LONE_EN, "Synthetic trailing sentence."):
+        extra = upload(client, bundle.id, build_docx(p(text)), f"SYNTHETIC_OLD-{len(ids)}_Extra.docx")
+        assert extra.status_code == 201, extra.text
+        extra_unit = get_view(client, bundle.id, extra.json()["id"])["units"][0]
+        assign_as_is(client, bundle.id, extra_unit, bundle.sop_id, slot_key=OTHER_SLOT)
+        ids.append(get_target(client, bundle.id, extra_unit["id"])["id"])
+    source = get_target(client, bundle.id, unit["id"])
+    before, after = ids
+
+    response = save_source(client, bundle.id, unit["id"], slot_key=OTHER_SLOT, position={"after_target_id": before})
+
+    assert response.status_code == 200, response.text
+    items = read_slot_items(get_output_c(client, bundle.id, "en"), "SOP-AI", OTHER_SLOT)
+    assert [item["target_id"] for item in items] == [before, source["id"], translation.id, after]
+    assert_held(unit["id"])
+
+
 def test_moving_the_source_to_another_slot_keeps_both_marks(client: TestClient, fake_ai: FakeAi) -> None:
     bundle, unit, translation = make_settled_translation(client, fake_ai)
     source = get_target(client, bundle.id, unit["id"])
@@ -2735,7 +2765,7 @@ def test_new_ai_translation_is_omitted(client: TestClient, fake_ai: FakeAi) -> N
     translation = translate(client, fake_ai, bundle.id, unit["id"])
 
     assert translation.number_style == "omitted"
-    assert read_source_style(get_target(client, bundle.id, unit["id"])["id"]) == "numbered"
+    assert read_source_style(get_target(client, bundle.id, unit["id"])["id"]) == "bullet"  # 출처는 그 절(1장)의 기본 표시
 
 
 def test_a_new_translation_starts_at_its_source_depth(client: TestClient, fake_ai: FakeAi) -> None:
@@ -2784,3 +2814,73 @@ def test_excel_a_sheet_has_the_translation_row(client: TestClient, fake_ai: Fake
     assert source_display_id in row and "Translated" in row and "AI suggested" in row
     (summary,) = [cells for cells in workbook["B Flow"].iter_rows(values_only=True) if cells[0] == "Translated"]
     assert summary[1] == 1
+
+
+def test_order_moves_a_translation_with_its_source_to_another_slot(client: TestClient, fake_ai: FakeAi) -> None:
+    bundle, unit, source, target = make_sop_translation(client, fake_ai)
+
+    response = put_order(client, bundle.id, bundle.sop_id, [
+        {"target_id": source["id"], "slot_key": NEW_SLOT}, {"target_id": target.id, "slot_key": NEW_SLOT},
+    ])
+
+    assert response.status_code == 200, response.text
+    assert [(item["target_id"], item["slot_key"]) for item in response.json()["items"]] == [
+        (source["id"], NEW_SLOT), (target.id, NEW_SLOT),
+    ]
+    kept = load_translation(unit["id"])
+    assert (kept.id, kept.status, kept.slot_key) == (target.id, "ai_suggested", NEW_SLOT)
+    assert read_place(source["id"]) == read_place(target.id)
+
+
+def test_order_refuses_moving_a_translation_to_another_slot_alone(client: TestClient, fake_ai: FakeAi) -> None:
+    bundle, unit, source, target = make_sop_translation(client, fake_ai)
+
+    alone = put_order(client, bundle.id, bundle.sop_id, [
+        {"target_id": source["id"]}, {"target_id": target.id, "slot_key": NEW_SLOT},
+    ])
+    apart = put_order(client, bundle.id, bundle.sop_id, [
+        {"target_id": source["id"], "slot_key": NEW_SLOT}, {"target_id": target.id, "slot_key": OTHER_SLOT},
+    ])
+
+    for refused in (alone, apart):
+        assert (refused.status_code, refused.json()["detail"]) == (422, {"code": "translation_locked", "target_ids": [target.id]})
+    assert load_translation(unit["id"]).slot_key == SLOT
+    assert get_target(client, bundle.id, unit["id"])["slot_key"] == SLOT  # 출처도 아무것도 쓰지 않았다
+
+
+def test_moving_the_source_to_another_slot_removes_an_ai_translation(client: TestClient, fake_ai: FakeAi) -> None:
+    bundle, unit, source, target = make_sop_translation(client, fake_ai)
+
+    response = put_order(client, bundle.id, bundle.sop_id, [
+        {"target_id": source["id"], "slot_key": NEW_SLOT}, {"target_id": target.id},
+    ])
+
+    assert response.status_code == 200, response.text
+    assert [item["target_id"] for item in response.json()["items"]] == [source["id"]]
+    assert_swept(client, bundle.id, unit["id"])
+
+
+def test_moving_the_source_to_another_slot_holds_a_confirmed_translation(client: TestClient, fake_ai: FakeAi) -> None:
+    bundle, unit, source, target = make_sop_translation(client, fake_ai)
+    assert save_translation(client, bundle.id, target).status_code == 200
+
+    response = put_order(client, bundle.id, bundle.sop_id, [
+        {"target_id": source["id"], "slot_key": NEW_SLOT}, {"target_id": target.id},
+    ])
+
+    assert response.status_code == 200, response.text
+    assert_held(unit["id"])
+    assert load_translation(unit["id"]).slot_key == NEW_SLOT
+    confirm_held(client, bundle.id, unit["id"], source["id"])
+
+
+def test_reordering_without_a_slot_change_keeps_the_translation(client: TestClient, fake_ai: FakeAi) -> None:
+    bundle, unit, source, target = make_sop_translation(client, fake_ai)
+    assert save_translation(client, bundle.id, target).status_code == 200
+
+    response = put_order(client, bundle.id, bundle.sop_id, [
+        {"target_id": target.id, "slot_key": SLOT}, {"target_id": source["id"], "slot_key": SLOT},
+    ])
+
+    assert response.status_code == 200, response.text
+    assert load_translation(unit["id"]).status == "confirmed"

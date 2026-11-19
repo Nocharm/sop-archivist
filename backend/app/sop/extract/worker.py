@@ -136,7 +136,7 @@ def _serve_child(
     _limit_memory(memory_mb)
     try:
         result = target(*args)
-    except Exception as error:  # 예외 메시지는 원문 글자를 담을 수 있어 클래스 이름만 넘긴다
+    except Exception as error:  # noqa: BLE001 -- 자식의 어떤 실패든 parse_error다. 메시지는 원문을 담을 수 있어 클래스 이름만 넘긴다
         result = _build_failure("parse_error", type(error).__name__)
     sender.send(result)
     sender.close()

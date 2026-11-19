@@ -1,4 +1,5 @@
 // ③ 전체 - 이미 쓴 문서(문서 → 절 → 문장)와 아직 안 쓴 문서(문서 → 칸·단계)를 한 단계씩 펼친다. N/A 칸은 보이되 고를 수 없다.
+// 문장을 받지 않는 상위 항목(묶음)은 이름 줄로만 보인다 - 단추가 아니고 끌어 놓을 자리(data-place)도 아니다.
 // 작성자는 여기서 보낼 곳을 바로 더하고 지운다(manage) - 번호·종류·부모만 받고 나머지는 Documents 화면의 To-Be 목록에서 채운다.
 "use client";
 
@@ -10,7 +11,7 @@ import { Truncate } from "@/components/ui/motion";
 import { Select } from "@/components/ui/select";
 import { Tooltip } from "@/components/ui/tooltip";
 import type { TargetDoc, TargetDocType, ToBe, WrittenSentence } from "@/lib/api-sop";
-import { getDestinationId, isPlaceOption, type Destination, type DestinationOption } from "@/lib/classify-model";
+import { getDestinationId, isPlaceOption, type Destination, type TreeRow } from "@/lib/classify-model";
 import { checkNewDoc, getDocRemoveBlock, getStepRemoveBlock, listParentCodes, type NewDocDraft } from "@/lib/destination-manage-model";
 import { useI18n } from "@/lib/i18n";
 
@@ -35,7 +36,8 @@ export interface DestinationManage {
 
 interface DestinationTreeProps {
   written: WrittenSentence[];
-  options: DestinationOption[];
+  /** 보낼 곳과 그 사이의 묶음 이름 줄(listTreeRows) */
+  rows: TreeRow[];
   /** 보낼 곳이 하나도 없을 때 안내가 가리키는 To-Be 화면 */
   tobeHref: string;
   onPickLink: (targetId: number, additive: boolean) => void;
@@ -62,7 +64,7 @@ function handleFormKey(event: KeyboardEvent, onSubmit: () => void, onCancel: () 
   else onCancel();
 }
 
-export function DestinationTree({ written, options, tobeHref, onPickLink, onPickPlace, manage }: DestinationTreeProps) {
+export function DestinationTree({ written, rows: treeRows, tobeHref, onPickLink, onPickPlace, manage }: DestinationTreeProps) {
   const { t } = useI18n();
   const rootRef = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState<Set<string>>(new Set());
@@ -82,9 +84,11 @@ export function DestinationTree({ written, options, tobeHref, onPickLink, onPick
     return () => window.clearTimeout(timer);
   }, [armed]);
 
+  // 줄 목록의 모양 - 목록 배열은 그릴 때마다 새로 만들어져, 아래 이펙트가 줄이 실제로 바뀔 때만 다시 돌게 글자로 견준다
+  const rowsKey = treeRows.map((row) => (row.kind === "place" ? row.option.id : row.id)).join("|");
   useEffect(() => {
     if (flash === null) return;
-    // 새 목록이 그려진 뒤에야 줄이 생긴다 - options가 바뀔 때마다 다시 찾는다
+    // 새 목록이 그려진 뒤에야 줄이 생긴다 - 줄 목록이 바뀔 때마다 다시 찾는다
     const el = rootRef.current?.querySelector<HTMLElement>(`[data-testid="${flash}"]`);
     if (!el) return;
     el.scrollIntoView({ block: "nearest" });
@@ -94,7 +98,7 @@ export function DestinationTree({ written, options, tobeHref, onPickLink, onPick
       setFlash(null);
     }, FLASH_MS);
     return () => window.clearTimeout(timer);
-  }, [flash, options]);
+  }, [flash, rowsKey]);
 
   const tobe = manage?.tobe ?? null;
   const docByCode = new Map((tobe?.docs ?? []).map((doc) => [doc.code, doc]));
@@ -281,7 +285,7 @@ export function DestinationTree({ written, options, tobeHref, onPickLink, onPick
     written.filter((row) => row.kind === "sentence"),
     (row) => String(row.target_doc_id),
   );
-  const placeDocs = groupBy(options, (option) => option.docCode);
+  const placeDocs = groupBy(treeRows, (row) => (row.kind === "place" ? row.option.docCode : row.docCode));
   if (writtenDocs.length === 0 && placeDocs.length === 0) {
     return (
       <div ref={rootRef} className="grid gap-1.5 px-3 py-4 text-[13px] leading-5 text-ink-2" data-testid="assign-tree-empty">
@@ -321,17 +325,28 @@ export function DestinationTree({ written, options, tobeHref, onPickLink, onPick
         return (
           <div key={code}>
             <div className="tree-row">
-              {renderNode(`p${code}`, code, t("assign.tree.count", { n: items.filter(isPlaceOption).length }))}
+              {renderNode(`p${code}`, code, t("assign.tree.count", { n: items.filter((row) => row.kind === "place" && isPlaceOption(row.option)).length }))}
               {tobe && doc && renderRemove(`assign-tree-remove-doc-${doc.id}`, code, getDocRemoveBlock(tobe, doc), () => manage?.onRemoveDoc(doc) ?? Promise.resolve(false))}
             </div>
             {open.has(`p${code}`) && (
               <div className="tree-kids">
-                {items.map((option) => {
+                {items.map((row) => {
+                  if (row.kind === "heading") {
+                    // 묶음 이름 줄 - 보낼 곳이 아니라 단추도 data-place도 없다(끌어 놓기가 이 줄을 찾지 못한다)
+                    return (
+                      <p key={row.id} className="tree-heading" style={{ paddingLeft: 8 + row.depth * 14 }} data-testid={`assign-tree-heading-${row.id}`}>
+                        {row.label}
+                        {row.isNa && <span className="tree-sub"> · N/A</span>}
+                      </p>
+                    );
+                  }
+                  const { option } = row;
                   const { destination } = option;
                   // 단계 지우기는 그 단계의 첫 줄(Instruction) 끝에 한 번만 둔다
                   const stepNo = destination.kind === "step" && destination.part === "instruction" ? destination.step : null;
+                  // data-place는 Old 조각을 끌어 놓을 때 이 줄의 보낼 곳을 찾는 열쇠(무엇을 받는지는 놓기 모델이 정한다)
                   return (
-                    <div key={option.id} className="tree-row">
+                    <div key={option.id} className="tree-row" data-place={option.id} data-na={option.disabled ? "" : undefined}>
                       <button
                         type="button"
                         className="tree-leaf"

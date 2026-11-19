@@ -250,7 +250,7 @@ def test_rows_get_own_destinations(client: TestClient) -> None:
     _ok(_edit(client, fx.bundle_id, fx.doc["id"], _split_rows(table)))
     rows = _units_of_kind(get_view(client, fx.bundle_id, fx.doc["id"]), "table_row")
 
-    assign_as_is(client, fx.bundle_id, rows[0], fx.sop_id, slot_key="procedures.procedure")
+    assign_as_is(client, fx.bundle_id, rows[0], fx.sop_id, slot_key="procedures.p1")
     assign_as_is(client, fx.bundle_id, rows[1], fx.wi_id, wi_part="instruction")
     assign_as_is(
         client, fx.bundle_id, rows[2], fx.wi_id, wi_part="instruction", hold_reason="Synthetic: check the step"
@@ -263,7 +263,8 @@ def test_rows_get_own_destinations(client: TestClient) -> None:
     for row, doc_id in zip(rows, (fx.sop_id, fx.wi_id, fx.wi_id), strict=True):
         group = get_group_by_unit(client, fx.bundle_id, row["id"])
         assert {target["target_doc_id"] for target in group["targets"]} == {doc_id}
-        table_target, *cell_targets = sorted(group["targets"], key=lambda target: target["kind"] != "table")
+        table_target, *children = sorted(group["targets"], key=lambda target: target["kind"] != "table")
+        cell_targets = [target for target in children if target["cell_row"] is not None]  # 캡션은 칸 좌표가 없다
         assert table_target["grid"] == {"rows": 1, "cols": 2}
         assert [(target["cell_row"], target["cell_col"]) for target in cell_targets] == [(0, 0), (0, 1)]
 

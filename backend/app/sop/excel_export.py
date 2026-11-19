@@ -151,7 +151,7 @@ def _write_sheet(sheet: Worksheet, model: "Sheet") -> None:
             else:
                 write_text_cell(cell, cell_model.text)
             if row.wrap:
-                cell.alignment = _WRAP_TOP
+                cell.alignment = Alignment(wrap_text=True, vertical="top", indent=cell_model.indent) if cell_model.indent else _WRAP_TOP
             if cell_model.head:
                 cell.font, cell.fill, cell.border = _HEADER_FONT, _HEADER_FILL, _HEADER_BORDER
             elif (font := _get_font(cell_model)) is not None:

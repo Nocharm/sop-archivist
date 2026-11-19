@@ -2,6 +2,7 @@
 
 계산은 app/sop/outputs.py가 끝냈고 여기서는 그 결과를 칸 글로 옮긴다. 시스템 표시 값은 영어 한 벌이다(Excel·미리보기는 늘 en).
 32,767자 나누기도 여기서 해 미리보기와 파일이 같은 줄이 된다. xlsx 쓰기는 excel_export.build_workbook.
+미리보기 전용 값(A의 fit_widths·bands·column_keys, 줄의 unit_id·group_id·toc, 칸의 tone)은 화면만 읽고 xlsx에는 쓰지 않는다.
 """
 
 import base64
@@ -12,9 +13,11 @@ from typing import Literal
 from pydantic import BaseModel
 
 from app.equis.view import EquisOut
-from app.sop.constants import NUMBER_NOTE
+from app.sop.captions import join_caption_texts
+from app.sop.constants import BULLET_SYMBOLS, NUMBER_BULLET, NUMBER_NOTE
 from app.sop.excel_export import ExportMeta, build_export_file_name, clean_cell_text, format_kst, split_cell_text
 from app.sop.flow_image import draw_flow_png
+from app.sop.noise import NOISE_TOC
 from app.sop.output_labels import LABELS
 from app.sop.outputs import (
     ARow,
@@ -25,10 +28,13 @@ from app.sop.outputs import (
     build_output_b,
     build_output_c,
     build_summary,
+    get_bullet_depths,
 )
 from app.sop.snapshot import BundleSnapshot
 
 RowKind = Literal["status", "header", "group_start", "in_group", "doc", "section", "plain"]
+CellTone = Literal["ok", "ai", "del", "un"]  # 상태 칩 색 — 확정·AI 제안·삭제(흐림)·미배정
+BandTone = Literal["asis", "tobe", "decision", "tracking"]
 
 SHEET_NAMES = ("A Comparison", "B Flow", "C New documents", "Info", "Documents")
 A_HEADERS = (
@@ -37,19 +43,34 @@ A_HEADERS = (
     "Checks",
 )
 A_COLUMN_WIDTHS = (8, 12, 8, 26, 14, 50, 14, 14, 26, 28, 12, 50, 40, 18, 28, 12, 24, 18, 14, 40)
+# 미리보기 전용(A) — 아래 넷(A_PREVIEW_WIDTHS·A_BANDS·A_COLUMN_KEYS·A_STATUS_COLUMN)은 시트 보기 화면만 읽는다.
+# xlsx(excel_export)는 쓰지 않아 파일 모양은 그대로다(제품 명세 §7.14 시트 모델).
+# 폭에 맞춘 한 장의 열 비율(합 1,610). 1,568px 폭에서 Unit ID·Change·Status 값이 한 줄에 들고 머리 글이 낱말 가운데서 끊기지 않게 시안에서 잰 값
+A_PREVIEW_WIDTHS = (34, 46, 32, 108, 72, 186, 68, 60, 82, 116, 36, 186, 100, 66, 104, 92, 64, 62, 46, 50)
+# 머리 위 열 무리 띠 — (라벨, 열 수, 색 갈래). 열 수의 합은 A_HEADERS 길이와 같다
+A_BANDS = (("As-is", 6, "asis"), ("To-be", 6, "tobe"), ("Decision", 3, "decision"), ("Tracking", 5, "tracking"))
+# 열의 뜻(A_HEADERS 순서) — 화면이 머리 글을 읽지 않고 확정 전 값·목차 접힌 줄을 놓을 열을 찾는다
+A_COLUMN_KEYS = (
+    "row", "old_doc", "version", "location", "unit_id", "old_text", "destination", "new_doc", "new_doc_title", "place",
+    "number", "new_text", "ai_suggestion", "change", "remark", "status", "confirmed_by", "confirmed_at", "group_id",
+    "checks",
+)
+A_STATUS_COLUMN = 16  # Status(1부터) — 칩 색(tone)을 싣는 칸
 A_SHARED_COLUMNS = (1, 7, 8, 9, 15)  # Row·Destination·New doc·New doc title·Remark (1부터) — 묶음이 함께 쓰는 칸(제품 명세 §7.13 줄 규칙 (5))
 A_ROW_COLUMN = 1
 A_ID_COLUMN = 5  # Unit ID — 이어진 줄의 이어짐 표시가 들어가는 칸
 A_NOTE_COLUMNS = (12, 13)  # 보낸 새 문장이 주석 줄이면 기울여 쓰는 칸 — New text·AI suggestion
 C_HEADERS = (
     "Document", "Slot", "No.", "Item", "Table cell", "Cell position", "Unit ID", "AI-suggested sentence", "Change type",
-    "Status", "Old units", "Moved to", "Reason",
+    "Status", "Old units", "Differs from standard", "Moved to", "Reason",
 )
 # 결과물 C — 문서·칸·항목·표 칸이 들여쓰기 열이고 나머지는 항목의 세부다(0부터). 번호 열은 칸·항목의 섹션 번호(outputs가 센 값)
-(C_DOC, C_SECTION, C_NUMBER, C_ITEM, C_CELL, C_POSITION, C_ID, C_AI, C_CHANGE, C_STATUS, C_SOURCE, C_MOVE, C_REASON) = (
-    range(13)
-)
-C_COLUMN_WIDTHS = (34, 30, 12, 50, 40, 12, 14, 40, 14, 10, 30, 18, 30)
+# 표준과 다름(C_DEVIATION)은 칸 줄에만 — 표준과 다른 SOP 절(사용자 항목·이름을 바꾼 표준 항목)의 사유
+(
+    C_DOC, C_SECTION, C_NUMBER, C_ITEM, C_CELL, C_POSITION, C_ID, C_AI, C_CHANGE, C_STATUS, C_SOURCE, C_DEVIATION, C_MOVE,
+    C_REASON,
+) = range(14)
+C_COLUMN_WIDTHS = (34, 30, 12, 50, 40, 12, 14, 40, 14, 10, 30, 30, 18, 30)
 B_COLUMN_WIDTHS = (34, 12)  # 이름·건수, 그 뒤로 보낸 곳마다 B_DEST_WIDTH
 B_DEST_WIDTH = 18
 INFO_COLUMN_WIDTHS = (24, 60)
@@ -75,13 +96,18 @@ SUMMARY_NAMES = (
     "Old rows", "Assigned", "No destination", "Duplicate assignments", "Deleted", "Moved", "New", "Translated",
     "Confirmed rate", "Single language",
 )
+TOC_SUMMARY_NAME = "Contents · auto-deleted"  # 목차 줄 수(summary.toc_deleted) — 목차 줄이 있는 묶음에만 싣는다
+UNWRAPPED_SUMMARY_NAME = "Lines from unwrapped tables"  # 풀린 표에서 온 줄 수(summary.unwrapped_rows) — 그런 줄이 있을 때만 싣는다
 INFO_NAMES = (
     "Bundle title", "Status", "Created by", "Created at (KST)", "Exported by", "Exported at (KST)", "Guideline version",
     "Synthetic data",
 )
 _LABELS = LABELS["en"]
-_MARKERS = {"table": "[Table]", "figure": "[Figure]"}
+_MARKERS = {"table": "[Table]", "figure": "[Figure]"}  # 확정한 캡션 글이 없는 표·그림 줄에만
+_CAPTION_POSITION = "Caption"  # 캡션 줄의 Cell position 칸 — 칸 줄의 "R 1 C 1" 자리
 _NO_WRAP_KINDS = ("status", "plain")  # 상태 줄·제목·이름 칸은 옆 칸으로 넘쳐 보이게 접지 않는다
+# 상태 코드 → 칩 색. 보류(on_hold)는 명세가 색을 정하지 않아 칩 없이 글로 남고, "del"은 Status가 Deleted로 적히는 줄(목차 줄 — 저절로 지운 줄)
+_STATUS_TONES: dict[str, CellTone] = {"confirmed": "ok", "ai_suggested": "ai", "unassigned": "un", "deleted": "del"}
 
 
 class SheetCell(BaseModel):
@@ -93,6 +119,8 @@ class SheetCell(BaseModel):
     italic: bool = False  # 주석 줄의 글 칸
     bold: bool = False
     numeric: bool = False  # 글이 정수인 칸(Row·건수) — xlsx에는 숫자로 쓴다
+    indent: int = 0  # 칸 안 들여쓰기 단계(C 시트 글머리 기호 줄의 Item 칸) — xlsx 맞춤 indent, 미리보기는 단계만큼 안쪽 여백
+    tone: CellTone | None = None  # 미리보기 전용 — 색 칩으로 그리는 칸(A의 Status)의 색. 화면이 글자를 보고 색을 정하지 않는다
 
 
 class SheetRow(BaseModel):
@@ -101,6 +129,18 @@ class SheetRow(BaseModel):
     kind: RowKind
     wrap: bool  # 칸 글을 칸 폭 안에서 접는다(위 맞춤). False(상태 줄·plain 줄)면 접지 않아 옆 빈 칸으로 넘쳐 보인다
     cells: list[SheetCell]  # 늘 시트 열 수(widths)만큼 — 빈 칸도 싣는다
+    # 아래 셋은 미리보기 전용(A의 자료 줄에만) — 화면이 칸 글을 읽지 않고 고른 줄·같은 무리·목차 줄을 맞춘다
+    unit_id: int | None = None  # 이 줄의 옛 단위(이어진 줄도 같은 값), 번역·신규 줄은 None
+    group_id: str | None = None  # Group ID 칸과 같은 관계 묶음
+    toc: bool = False  # 목차 줄(ARow.noise_kind == "toc") — 화면이 연달아 오는 줄을 한 줄로 접는다
+
+
+class SheetBand(BaseModel):
+    """머리 위 열 무리 띠 한 칸 — 미리보기 전용."""
+
+    label: str
+    span: int  # 덮는 열 수
+    tone: BandTone
 
 
 class Sheet(BaseModel):
@@ -113,6 +153,13 @@ class Sheet(BaseModel):
     image_row: int | None  # 그림을 놓는 줄(1부터)
     total_rows: int  # 자르기 전 줄 수
     truncated: bool  # 미리보기가 줄을 잘랐다 — 파일에는 전체가 있다
+    # 실린 첫 자료 줄 앞에서 뺀 줄 수(머리 줄 다음부터 센다) — Assign 미리보기의 가운데 창만 0보다 크다.
+    # 아래로 더 있는 줄 수는 total_rows - offset - len(rows)
+    offset: int = 0
+    # 아래 셋은 미리보기 전용(A에만) — xlsx는 widths만 쓴다
+    fit_widths: list[int] | None = None  # 폭에 맞춘 한 장의 열 비율. None이면 화면이 widths를 비율로 쓴다
+    bands: list[SheetBand] = []
+    column_keys: list[str] | None = None  # 열의 뜻(A_COLUMN_KEYS)
 
 
 class WorkbookModel(BaseModel):
@@ -130,10 +177,12 @@ def _make_row(
     bold: Collection[int] = (),
     italic: Collection[int] = (),
     numeric: Collection[int] = (),
+    indents: Mapping[int, int] | None = None,
 ) -> SheetRow:
     """칸 글 목록으로 한 줄 — 글은 여기서 한 번 clean_cell_text를 거친다. 모양 집합은 1부터 센 열 번호다.
 
     머리 모양은 글이 있는 머리 줄 칸에만(B의 두 칸짜리 Item·Value 머리가 뒤 열까지 칠하지 않게), 상태·plain 줄은 접지 않는다.
+    indents는 열 번호(1부터) → 들여쓰기 단계다.
     """
     cells = []
     for column, raw in enumerate(texts, start=1):
@@ -141,7 +190,7 @@ def _make_row(
         cells.append(
             SheetCell(
                 text=text, head=kind == "header" and bool(text), bold=column in bold, italic=column in italic,
-                numeric=column in numeric and bool(text),
+                numeric=column in numeric and bool(text), indent=(indents or {}).get(column, 0) if text else 0,
             )
         )
     return SheetRow(kind=kind, wrap=kind not in _NO_WRAP_KINDS, cells=cells)
@@ -186,10 +235,15 @@ def _make_sheet(
     filter_columns: int = 0,
     image_png: str | None = None,
     image_row: int | None = None,
+    fit_widths: Sequence[int] | None = None,
+    bands: Sequence[SheetBand] = (),
+    column_keys: Sequence[str] | None = None,
 ) -> Sheet:
     return Sheet(
         name=name, widths=list(widths), rows=rows, freeze=freeze, filter_columns=filter_columns, image_png=image_png,
         image_row=image_row, total_rows=len(rows), truncated=False,
+        fit_widths=list(fit_widths) if fit_widths is not None else None, bands=list(bands),
+        column_keys=list(column_keys) if column_keys is not None else None,
     )
 
 
@@ -238,25 +292,52 @@ def _list_a_texts(row: ARow) -> list[str]:
     ]
 
 
-def _build_a_sheet(snap: BundleSnapshot, people: Mapping[str, str]) -> Sheet:
+def _keep_document_groups(snap: BundleSnapshot, a_rows: list[ARow], document_id: int) -> list[ARow]:
+    """그 옛 문서의 단위가 든 묶음만 — 묶음째 남겨 흐림·Row 번호가 파일과 같다. 고아 번역·입구 2 신규 묶음은 옛 문서가 없어 빠진다."""
+    kept: list[ARow] = []
+    group: list[ARow] = []
+    for a_row in [*a_rows, None]:
+        if a_row is None or a_row.is_group_start:
+            if any(row.unit_id is not None and snap.units[row.unit_id].document_id == document_id for row in group):
+                kept.extend(group)
+            group = []
+        if a_row is not None:
+            group.append(a_row)
+    return kept
+
+
+def _build_a_sheet(snap: BundleSnapshot, people: Mapping[str, str], document_id: int | None = None) -> Sheet:
     """ARow 하나가 한 줄(넘는 글은 이어진 줄) — 묶음 첫 줄 말고는 함께 쓰는 칸이 바로 윗줄과 같으면 흐리게(제품 명세 §7.14 되풀이 + 흐림, O6).
 
-    흐림은 보이는 글(clean_cell_text를 거친 칸 글)끼리 견준다.
+    흐림은 보이는 글(clean_cell_text를 거친 칸 글)끼리 견준다. 줄의 단위·관계 묶음과 Status 칸의 칩 색은 미리보기만 읽는다.
+    document_id를 주면 그 옛 문서의 묶음만 싣는다(Assign 미리보기).
     """
     rows = [_build_status_row(snap, len(A_HEADERS)), _make_row("header", A_HEADERS)]
     above: SheetRow | None = None
-    for a_row in build_output_a(snap, "en", people):
+    a_rows = build_output_a(snap, "en", people)
+    if document_id is not None:
+        a_rows = _keep_document_groups(snap, a_rows, document_id)
+    for a_row in a_rows:
         italic = A_NOTE_COLUMNS if a_row.dest_is_note else ()
         for offset, line in enumerate(_split_line(_list_a_texts(a_row), A_ID_COLUMN, A_SHARED_COLUMNS)):
             starts = a_row.is_group_start and offset == 0
             row = _make_row("group_start" if starts else "in_group", line, italic=italic, numeric=(A_ROW_COLUMN,))
+            row.unit_id, row.group_id = a_row.unit_id, a_row.group_id
+            row.toc = a_row.noise_kind == NOISE_TOC
+            status_cell = row.cells[A_STATUS_COLUMN - 1]
+            if status_cell.text:  # 이어진 줄의 빈 Status 칸에는 칩이 없다
+                status_cell.tone = _STATUS_TONES.get(a_row.status)
             if not starts and above is not None:
                 for column in A_SHARED_COLUMNS:
                     cell = row.cells[column - 1]
                     cell.faint = cell.text == above.cells[column - 1].text
             rows.append(row)
             above = row
-    return _make_sheet(SHEET_NAMES[0], A_COLUMN_WIDTHS, rows, freeze="A3", filter_columns=len(A_HEADERS))
+    bands = [SheetBand(label=label, span=span, tone=tone) for label, span, tone in A_BANDS]
+    return _make_sheet(
+        SHEET_NAMES[0], A_COLUMN_WIDTHS, rows, freeze="A3", filter_columns=len(A_HEADERS), fit_widths=A_PREVIEW_WIDTHS,
+        bands=bands, column_keys=A_COLUMN_KEYS,
+    )
 
 
 # --- B Flow ---
@@ -289,6 +370,11 @@ def _build_b_sheet(snap: BundleSnapshot) -> Sheet:
     )
     for name, value in zip(SUMMARY_NAMES, values, strict=True):
         rows.append(_make_row("plain", _pad([name, str(value)], width), numeric=() if isinstance(value, str) else (2,)))
+    # 목차 줄 · 풀린 표의 줄이 있을 때만 — 없는 묶음의 파일은 그대로다
+    if summary.toc_deleted:
+        rows.append(_make_row("plain", _pad([TOC_SUMMARY_NAME, str(summary.toc_deleted)], width), numeric=(2,)))
+    if summary.unwrapped_rows:
+        rows.append(_make_row("plain", _pad([UNWRAPPED_SUMMARY_NAME, str(summary.unwrapped_rows)], width), numeric=(2,)))
 
     rows.append(_make_row("plain", _pad([], width)))
     rows.append(_make_row("plain", _pad(["Old documents × destinations (count)"], width), bold=(1,)))
@@ -312,10 +398,21 @@ def _make_c_texts(values: Mapping[int, str]) -> list[str]:
     return [values.get(column, "") for column in range(len(C_HEADERS))]
 
 
-def _list_c_item_lines(item: CItem, depth: int) -> Iterator[tuple[list[str], tuple[int, ...]]]:
-    """새 문장 한 줄과, 표 새 문장이면 그 칸 새 문장들(한 단계 더 들여쓴 열) — (칸 글, 기울일 열(1부터)). 주석 줄은 항목·AI 글을 기울인다."""
+def _list_c_item_lines(
+    item: CItem, depth: int, bullet_depth: int | None = None,
+) -> Iterator[tuple[list[str], tuple[int, ...], dict[int, int]]]:
+    """새 문장 한 줄과, 표·그림 새 문장이면 그 자식들(한 단계 더 들여쓴 열) — (칸 글, 기울일 열(1부터), 칸 들여쓰기(열 → 단계)). 주석 줄은 항목·AI 글을 기울인다.
+
+    bullet_depth는 글머리 기호 줄(최상위)의 눌러 읽은 깊이(outputs.get_bullet_depths) — No. 칸에 그 단계의 기호를 적고 Item 칸을 그 단계만큼 들인다.
+
+    표·그림 줄의 항목 칸은 [Table]·[Figure] 대신 확정한 캡션 글(AI 글은 쓰지 않는다 — 캡션 줄의 AI 칸에 있다)이다. 자식은 캡션 줄이
+    칸 줄 앞에 오고(서버 순서), 칸 줄처럼 자기 확정 글·AI 글·변경 종류·상태·출처를 싣는다.
+    """
+    confirmed_caption = join_caption_texts(
+        (child.lang, child.text) for child in item.children if child.cell_row is None or child.cell_col is None
+    )
     values = {
-        C_ITEM + depth: item.text or _MARKERS.get(item.kind, ""),
+        C_ITEM + depth: item.text or confirmed_caption or _MARKERS.get(item.kind, ""),
         C_AI: item.ai_text,
         C_CHANGE: _LABELS.change_types.get(item.change_type or "", ""),
         C_STATUS: _LABELS.statuses.get(item.status, item.status),
@@ -323,18 +420,25 @@ def _list_c_item_lines(item: CItem, depth: int) -> Iterator[tuple[list[str], tup
     }
     if depth == 0 and item.number is not None:  # 표 칸은 표의 번호라 표 줄에만 적는다
         values[C_NUMBER] = item.number
+    elif depth == 0 and item.number_style == NUMBER_BULLET:
+        values[C_NUMBER] = BULLET_SYMBOLS[bullet_depth or 0]
     if item.cell_row is not None and item.cell_col is not None:
         values[C_POSITION] = f"R {item.cell_row + 1} C {item.cell_col + 1}"
+    elif depth > 0:  # 표·그림 아래 칸 좌표 없는 자식 = 캡션 줄
+        values[C_POSITION] = _CAPTION_POSITION
     italic = (C_ITEM + depth + 1, C_AI + 1) if item.number_style == NUMBER_NOTE else ()
-    yield _make_c_texts(values), italic
+    indents = {C_ITEM + depth + 1: bullet_depth} if bullet_depth else {}
+    yield _make_c_texts(values), italic, indents
     for child in item.children:
         yield from _list_c_item_lines(child, depth + 1)
 
 
-def _append_c_lines(rows: list[SheetRow], texts: list[str], starts: bool, italic: Collection[int] = ()) -> None:
+def _append_c_lines(
+    rows: list[SheetRow], texts: list[str], starts: bool, italic: Collection[int] = (), indents: Mapping[int, int] | None = None,
+) -> None:
     """C 한 줄과 그 이어진 줄들 — 이어진 줄은 같은 묶음(in_group)이다."""
     for offset, line in enumerate(_split_line(texts, C_ID + 1)):
-        rows.append(_make_row("group_start" if starts and offset == 0 else "in_group", line, italic=italic))
+        rows.append(_make_row("group_start" if starts and offset == 0 else "in_group", line, italic=italic, indents=indents))
 
 
 def _format_old_ref(doc_code: str, section: str) -> str:
@@ -352,18 +456,22 @@ def _build_c_sheet(snap: BundleSnapshot) -> Sheet:
         heading = f"{doc.doc_type.upper()} {doc.code}{title}{parent}"
         rows.append(_make_row("doc", _make_c_texts({C_DOC: heading}), bold=(C_DOC + 1,)))
         for section in doc.sections:
-            values = {C_SECTION: section.label, C_SOURCE: section.heading_note}
-            if section.number is not None:
+            values = {C_SECTION: section.label, C_SOURCE: section.heading_note, C_DEVIATION: section.deviation_reason or ""}
+            if section.number is not None and section.shows_number:  # 부록은 라벨("Appendix 1. 이름")에 번호가 들어 있다
                 values[C_NUMBER] = section.number
             if section.na_reason is not None:
                 values |= {C_STATUS: "N/A", C_REASON: section.na_reason}
             rows.append(_make_row("section", _make_c_texts(values), bold=(C_SECTION + 1,)))
+            for auto in section.auto_items:  # 자동 목록 절(7.2 Work Instructions) — 앱이 채운 자식 WI, 배정한 줄이 아니다
+                text = f"{auto.code} · {auto.title}" if auto.title else auto.code
+                _append_c_lines(rows, _make_c_texts({C_ITEM: text}), True)
             previous_key: str | None = None
+            bullet_depths = get_bullet_depths(section.items)
             for index, item in enumerate(section.items):
                 # 칸의 첫 항목·묶음 키가 없는 항목(고아 번역)·키가 바뀐 항목이 새 묶음을 연다 — 표 칸은 표 묶음 안이다
                 starts = index == 0 or item.meaning_key is None or item.meaning_key != previous_key
-                for depth_index, (texts, italic) in enumerate(_list_c_item_lines(item, 0)):
-                    _append_c_lines(rows, texts, starts and depth_index == 0, italic)
+                for depth_index, (texts, italic, indents) in enumerate(_list_c_item_lines(item, 0, bullet_depths[index])):
+                    _append_c_lines(rows, texts, starts and depth_index == 0, italic, indents)
                 previous_key = item.meaning_key
     tails = (
         (_LABELS.dest_kinds["delete"], [(entry, "") for entry in result.deleted]),
@@ -473,3 +581,25 @@ def limit_preview(model: WorkbookModel, max_rows: int = MAX_PREVIEW_ROWS) -> Wor
         for sheet in model.sheets
     ]
     return model.model_copy(update={"sheets": sheets})
+
+
+A_HEAD_ROWS = 2  # A의 상태 줄 + 머리 줄 — 창을 잘라도 늘 싣는다(freeze "A3")
+
+
+def build_a_preview(
+    snap: BundleSnapshot, people: Mapping[str, str], document_id: int, around_unit_id: int | None,
+    max_rows: int = MAX_PREVIEW_ROWS,
+) -> Sheet:
+    """Assign Space 미리보기 — 옛 문서 하나의 A 시트를 max_rows줄(머리 줄 포함)까지, 고른 단위의 첫 줄을 가운데로 한 창으로 싣는다.
+
+    긴 문서에서 고른 줄이 앞 max_rows줄 밖이어도 보이게 한다. 고른 단위가 없거나 시트에 없으면 처음부터다. 뺀 위쪽 줄 수는 offset.
+    """
+    sheet = _build_a_sheet(snap, people, document_id)
+    body = sheet.rows[A_HEAD_ROWS:]
+    room = max_rows - A_HEAD_ROWS
+    if len(body) <= room:
+        return sheet
+    centre = next((index for index, row in enumerate(body) if row.unit_id == around_unit_id), 0) if around_unit_id is not None else 0
+    start = min(max(centre - room // 2, 0), len(body) - room)
+    rows = [*sheet.rows[:A_HEAD_ROWS], *body[start:start + room]]
+    return sheet.model_copy(update={"rows": rows, "truncated": True, "offset": start})

@@ -20,12 +20,14 @@ interface MenuLangRowProps {
   disabledReason: string | null;
   /** 지금 언어 칸의 툴팁 */
   currentReason: string;
+  /** 그 칸만 꺼진 까닭(캡션: 같은 묶음의 다른 캡션이 가진 언어) */
+  optionReasons?: Partial<Record<PickLang, string>>;
   onPick: (lang: PickLang) => void;
   /** 줄 `{testId}`, 칸 `{testId}-ko`·`{testId}-en` */
   testId: string;
 }
 
-export function MenuLangRow({ label, current, disabledReason, currentReason, onPick, testId }: MenuLangRowProps) {
+export function MenuLangRow({ label, current, disabledReason, currentReason, optionReasons, onPick, testId }: MenuLangRowProps) {
   // 줄 안 ←→ - 두 칸 사이를 오간다(메뉴의 ↑↓·Home·End는 그대로)
   function handleKeyDown(event: KeyboardEvent<HTMLSpanElement>) {
     if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
@@ -43,7 +45,7 @@ export function MenuLangRow({ label, current, disabledReason, currentReason, onP
       <span className="menu-lang-seg" onKeyDown={handleKeyDown}>
         {OPTIONS.map((lang) => {
           const isCurrent = current === lang;
-          const reason = disabledReason ?? (isCurrent ? currentReason : null);
+          const reason = disabledReason ?? (isCurrent ? currentReason : (optionReasons?.[lang] ?? null));
           const text = lang.toUpperCase();
           return (
             <button

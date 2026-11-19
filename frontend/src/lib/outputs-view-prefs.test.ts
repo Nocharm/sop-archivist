@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { readOutputsView, writeOutputsView } from "./outputs-view-prefs";
+import { readOrderTemplate, readOutputsView, writeOrderTemplate, writeOutputsView } from "./outputs-view-prefs";
 
 describe("outputs view prefs", () => {
   beforeEach(() => window.localStorage.clear());
@@ -26,5 +26,19 @@ describe("outputs view prefs", () => {
     window.localStorage.removeItem("sopa.outputs.lang");
     writeOutputsView({ tab: "b" });
     expect(window.localStorage.getItem("sopa.outputs.lang")).toBeNull();
+  });
+
+  it("opens Order in the basic view and remembers the template choice", () => {
+    expect(readOrderTemplate()).toBe(false);
+    writeOrderTemplate(true);
+    expect(window.localStorage.getItem("sopa.order.template")).toBe("1");
+    expect(readOrderTemplate()).toBe(true);
+    writeOrderTemplate(false);
+    expect(readOrderTemplate()).toBe(false);
+  });
+
+  it("keeps the template choice apart from the Outputs tab", () => {
+    writeOrderTemplate(true);
+    expect(readOutputsView()).toEqual({ tab: "c" });
   });
 });

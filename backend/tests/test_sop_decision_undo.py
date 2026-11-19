@@ -14,7 +14,7 @@ from app.main import app
 from app.sop import decision_steps
 from app.sop.constants import SLOT_HEADING
 from app.sop.decision_steps import Snapshot, diff_states, dump_bundle_state, find_mismatches, write_state
-from app.sop.models import AiSuggestion, Bundle, BundleEvent, DecisionStep, TargetSentence, UnitEdit
+from app.sop.models import AiSuggestion, Bundle, BundleEvent, DecisionStep, TargetSentence, TargetSource, UnitEdit
 from tests.access_helpers import run_in_session, update_row
 from tests.ai_fixtures import (
     AI_EN_1,
@@ -43,6 +43,7 @@ from tests.sop_helpers import (
     put_tobe,
     save_group,
     set_members,
+    WRITTEN_CAPTION,
     upload,
 )
 from tests.test_sop_ai_translate import EDITED, load_translations, make_assigned_unit, translate
@@ -613,6 +614,40 @@ def test_undo_restores_and_redo_reapplies(client: TestClient, case: str) -> None
     assert_same_state(_dump(bundle_id), s0)
 
 
+def _read_written_captions(bundle_id: int) -> list[tuple[int, int | None, str, str]]:
+    """표 새 문장 아래 출처 없이 써 넣은 캡션 새 문장 — (id, 부모 id, 글, 상태)."""
+    rows = [row for row in read_rows(TargetSentence) if row.bundle_id == bundle_id]
+    sourced = {link.target_id for link in read_rows(TargetSource)}
+    parents = {row.id for row in rows if row.kind == "table"}
+    return [
+        (row.id, row.parent_target_id, row.confirmed_text, row.status) for row in rows
+        if row.parent_target_id in parents and row.cell_row is None and row.id not in sourced
+    ]
+
+
+def test_undo_and_redo_of_clear_bring_back_a_written_caption_under_its_table(client: TestClient) -> None:
+    """출처 없는 캡션 새 문장은 판단에 매이지 않고 확정한 표에만 매인다 — Clear를 되돌리면 같은 id로 그 표 아래에 돌아오고 다시 하면 사라진다."""
+    fx = _setup_decisions(client)
+    table = next(unit for unit in fx.view["units"] if unit["kind"] == "table")
+    assign_as_is(client, fx.bundle_id, table, fx.sop_id, slot_key="general_requirements", undo=UNDO)
+    ((caption_id, parent_id, text, status),) = _read_written_captions(fx.bundle_id)
+    assert (text, status) == (WRITTEN_CAPTION, "confirmed")
+
+    _clear(client, fx.bundle_id, table, 2, undo=UNDO)
+    assert _read_written_captions(fx.bundle_id) == []
+
+    _ok(_undo(client, fx.bundle_id))
+    assert _read_written_captions(fx.bundle_id) == [(caption_id, parent_id, WRITTEN_CAPTION, "confirmed")]
+    _ok(_redo(client, fx.bundle_id))
+    assert _read_written_captions(fx.bundle_id) == []
+    # 확정까지 되돌리면 캡션도 표와 함께 사라지고, 다시 하면 같은 id로 돌아온다
+    _ok(_undo(client, fx.bundle_id))
+    _ok(_undo(client, fx.bundle_id))
+    assert _read_written_captions(fx.bundle_id) == []
+    _ok(_redo(client, fx.bundle_id))
+    assert _read_written_captions(fx.bundle_id) == [(caption_id, parent_id, WRITTEN_CAPTION, "confirmed")]
+
+
 def test_undo_raises_revisions_and_logs_event(client: TestClient) -> None:
     fx = _setup_rich(client)
     _confirm_unit(client, fx, fx.a, undo={**UNDO, "op": "confirm", "focus_unit_id": fx.a["id"]})
@@ -935,6 +970,24 @@ def test_undo_refused_when_slot_became_na(client: TestClient) -> None:
     marked = put_tobe(client, fx.bundle_id, DECISIONS_TOBE_DOCS, na_slots=na, wi_steps=DECISIONS_WI_STEPS)
     assert marked.status_code == 200, marked.text
 
+    _assert_stuck_cleanly(client, fx.bundle_id, [unit["id"]])
+
+
+def test_undo_refused_when_outline_item_was_removed(client: TestClient) -> None:
+    fx = _setup_decisions(client)
+    unit = find_unit(fx.view, STORAGE)
+    base = f"/api/bundles/{fx.bundle_id}/tobe/docs/{fx.sop_id}/outline"
+    added = client.post(base, json={"parent_key": "appendices", "title_en": "Synthetic appendix"}, headers=AUTHOR)
+    assert added.status_code == 201, added.text
+    _confirm_clear_then(client, fx.bundle_id, unit, _target("t", fx.sop_id, [unit], slot_key="appendices.n1"))
+    removed = client.delete(f"{base}/appendices.n1", headers=AUTHOR)
+    assert removed.status_code == 200, removed.text
+
+    _assert_stuck_cleanly(client, fx.bundle_id, [unit["id"]])  # 뺀 부록에 줄을 되살리지 않는다
+
+    # 같은 부모에 다시 더한 항목은 새 키라, 옛 단계가 그 자리로 줄을 놓지도 않는다
+    again = client.post(base, json={"parent_key": "appendices", "title_en": "Synthetic appendix"}, headers=AUTHOR)
+    assert [item["key"] for item in again.json()["outline_items"] if item["parent_key"] == "appendices"] == ["appendices.n2"]
     _assert_stuck_cleanly(client, fx.bundle_id, [unit["id"]])
 
 

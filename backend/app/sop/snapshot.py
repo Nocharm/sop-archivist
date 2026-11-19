@@ -4,21 +4,24 @@
 
 from collections import defaultdict
 from collections.abc import Collection
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import Any
 
 from pydantic import BaseModel
 from sqlalchemy import ColumnElement, Select, and_, case, exists, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import defer
+from sqlalchemy.orm import aliased, defer
 
 from app.models import Employee
+from app.sop.caption_ref_rules import REF_LINKED, match_covering_units
+from app.sop.captions import CAPTION_KIND
 from app.sop.detach import UNASSIGNED
 from app.sop.errors import raise_rule
-from app.sop.groups import build_unit_order_key
+from app.sop.groups import build_unit_order_key, select_in_chunks
 from app.sop.models import (
     Bundle,
+    CaptionRef,
     Document,
     Extraction,
     ExtractionWarning,
@@ -33,7 +36,9 @@ from app.sop.models import (
     UnitPairMember,
     WiStep,
 )
+from app.sop.outline import DocOutline, load_doc_outlines
 from app.sop.refs import REF_LANG
+from app.sop.segment import read_table_place
 from app.sop.status import ROW_STATUS_ORDER
 from app.sop.units import UNIT_ACTIVE, compute_display_id
 
@@ -75,6 +80,8 @@ class TableInfo:
     table_index: int  # 추출 안 순번(0부터)
     n_rows: int
     n_cols: int
+    parent_id: int | None = None  # 칸 안의 표면 바깥 표
+    place: tuple[int, int] | None = None  # 안쪽 표가 놓인 바깥 칸 (행, 격자 열)(0부터, 신호 place — 옛 추출은 None)
 
 
 @dataclass(frozen=True)
@@ -86,8 +93,10 @@ class BlockInfo:
     page_basis: str
     section_label: str
     table_index: int | None  # 표 칸·칸 안 그림이면 그 표의 순번(0부터)
+    table_id: int | None  # 그 표(결과물 A 위치의 안쪽 표 앞붙이가 바깥 표를 따라간다)
     row_index: int | None
     col_index: int | None
+    has_image: bool  # 그림 이미지(figures/{block_id})를 받을 수 있는지 — New 칸이 그림을 그릴지 정한다
 
 
 @dataclass(frozen=True)
@@ -104,6 +113,29 @@ class UnitInfo:
     order_key: tuple[int, ...]
     # 자리 블록 — 첫 범위의 블록, 범위가 없는 표·행·캡션 없는 그림은 자리(pos_seq)의 블록(R18)
     block_id: int
+    spans: tuple[tuple[int, int, int], ...] = ()  # (블록 id, 시작, 끝) — 표·그림 참조 자리를 덮는 단위를 찾는다
+    # 문단 번호 열(units.number_*, numbering.py가 읽는다) — 결과물 A의 위치·원문 칸이 쓴다
+    number_read: str | None = None
+    number_source: str | None = None
+    number_len: int = 0
+    number_set: str | None = None
+    noise_kind: str | None = None  # 잡음 표시(noise.py) — 목차 줄은 판단 줄이 아니라 결과물 A의 "삭제 · 목차" 줄이다
+    from_heading: bool = False  # 제목에서 바꾼 조항 문장(F8b) — 타자 번호가 처음부터 번호다(numbering)
+
+
+@dataclass(frozen=True)
+class CaptionRefInfo:
+    """옛 문서 글 안의 표·그림 참조 하나(caption_refs 행) — 자리는 블록 좌표, 대상은 표 id 또는 그림 블록 id(둘 다 없으면 대상 없음)."""
+
+    id: int
+    block_id: int
+    start: int
+    end: int
+    kind: str  # table | figure
+    number: int | None  # 원문 번호 — 자리 참조("아래 표")는 None
+    target_table_id: int | None
+    target_block_id: int | None
+    state: str  # linked | detached
 
 
 @dataclass(frozen=True)
@@ -163,6 +195,7 @@ class TargetDocInfo:
     manual_order: bool
     na_slots: dict[str, str]  # 칸 키 → N/A 사유
     steps: tuple[tuple[int, str], ...]  # (단계 번호, 제목) 번호 순
+    outline: DocOutline  # 이 문서의 골격 사본 — SOP가 아니면 빈 골격
 
 
 @dataclass(frozen=True)
@@ -178,9 +211,10 @@ class BundleSnapshot:
     pair_of: dict[int, int]  # 활성 단위 id → 짝 id — 짝이 없는 단위는 키가 없다(한 짝 = 한 줄)
     targets: dict[int, TargetInfo]
     target_docs: dict[int, TargetDocInfo]
+    caption_refs: tuple[CaptionRefInfo, ...] = ()  # 옛·새 문서 최신 추출의 참조 전부(떼어 낸 것 포함), 블록·시작 순
 
 
-def _select_latest_extractions(*conditions: ColumnElement[bool]) -> Select[Any]:
+def select_latest_extractions(*conditions: ColumnElement[bool]) -> Select[Any]:
     """문서마다 가장 새 추출 id — 다시 추출하면 이전 추출은 읽기 전용으로 남으므로 결과물은 최신 추출만 본다(설계 §6.3).
 
     바깥 질의도 Document·Extraction을 조인하므로 자동 상관(correlate)을 끈다 — 켜 두면 문서 행마다의 하위 질의가 된다.
@@ -199,6 +233,8 @@ async def load_bundle_snapshot(session: AsyncSession, bundle_id: int, *, include
 
     include_text=False면 단위 글자와 새 문장의 확정·AI 글자를 DB에서 읽지 않고 빈 글로 채운다(원문 전체를 싣지 않고 구조·상태만
     필요한 검토 요청 조건용). 그 필드는 미적재 열이라 같은 세션에서 읽으면 안 되므로, 글자가 필요한 결과물은 기본값을 쓴다.
+    다만 이어진(linked) 참조가 있으면 참조 경고(outputs.build_renumbering)가 같은 판정을 내도록 캡션 단위 글과 참조 문장을
+    출처로 둔 새 문장 글만 질의 두 번으로 더 읽는다 — 참조 수만큼이고 원문 전체가 아니다.
 
     표마다 따로 읽으므로 먼저 묶음 행에 공유 잠금(FOR SHARE)을 건다 — 쓰기는 모두 같은 행을 FOR UPDATE로 먼저 잠그므로
     Postgres READ COMMITTED에서도 질의들이 한 시점을 본다(sqlite는 잠금 구문이 없다). 잠금은 트랜잭션 끝까지 가므로 읽기 전용
@@ -217,19 +253,28 @@ async def load_bundle_snapshot(session: AsyncSession, bundle_id: int, *, include
     extraction_ids = list(document_by_extraction)
 
     tables = {
-        table_id: TableInfo(table_id, table_index, n_rows, n_cols)
-        for table_id, table_index, n_rows, n_cols in await session.execute(
-            select(SourceTable.id, SourceTable.table_index, SourceTable.n_rows, SourceTable.n_cols).where(
-                SourceTable.extraction_id.in_(extraction_ids)
-            )
+        table_id: TableInfo(table_id, table_index, n_rows, n_cols, parent_id=parent_id)
+        for table_id, table_index, n_rows, n_cols, parent_id in await session.execute(
+            select(
+                SourceTable.id, SourceTable.table_index, SourceTable.n_rows, SourceTable.n_cols,
+                SourceTable.parent_table_id,
+            ).where(SourceTable.extraction_id.in_(extraction_ids))
         )
     }
+    # 안쪽 표가 놓인 바깥 칸(신호 place) — 안쪽 표가 있을 때만 신호를 읽는다(결과물 A 위치의 앞붙이, F2)
+    inner_ids = [table.id for table in tables.values() if table.parent_id is not None]
+    if inner_ids:
+        for table_id, signals in await select_in_chunks(
+            session, lambda chunk: select(SourceTable.id, SourceTable.signals).where(SourceTable.id.in_(chunk)), inner_ids
+        ):
+            if (place := read_table_place(signals)) is not None:
+                tables[table_id] = replace(tables[table_id], place=place[:2])
     block_rows = (
         await session.execute(
             select(
                 SourceBlock.id, SourceBlock.extraction_id, SourceBlock.seq, SourceBlock.part, SourceBlock.kind,
                 SourceBlock.page, SourceBlock.page_basis, SourceBlock.section_label, SourceBlock.table_id,
-                SourceBlock.row_index, SourceBlock.col_index,
+                SourceBlock.row_index, SourceBlock.col_index, SourceBlock.image_part.is_not(None).label("has_image"),
             ).where(SourceBlock.extraction_id.in_(extraction_ids))
         )
     ).all()
@@ -238,7 +283,7 @@ async def load_bundle_snapshot(session: AsyncSession, bundle_id: int, *, include
             id=row.id, part=row.part, kind=row.kind, page=row.page, page_basis=row.page_basis,
             section_label=row.section_label,
             table_index=tables[row.table_id].table_index if row.table_id is not None else None,
-            row_index=row.row_index, col_index=row.col_index,
+            table_id=row.table_id, row_index=row.row_index, col_index=row.col_index, has_image=bool(row.has_image),
         )
         for row in block_rows
     }
@@ -255,7 +300,26 @@ async def load_bundle_snapshot(session: AsyncSession, bundle_id: int, *, include
             lang=unit.lang, text=unit.text if include_text else "", group_unit_id=unit.group_unit_id, table_id=unit.table_id,
             row_index=unit.row_index, order_key=build_unit_order_key(document, unit),
             block_id=unit.spans[0][0] if unit.spans else block_by_seq[(unit.extraction_id, unit.pos_seq)],
+            spans=tuple((block_id, start, end) for block_id, start, end in unit.spans), noise_kind=unit.noise_kind,
+            number_read=unit.number_read, number_source=unit.number_source, number_len=unit.number_len,
+            number_set=unit.number_set, from_heading=unit.from_heading,
         )
+    caption_refs = tuple(
+        CaptionRefInfo(
+            id=ref.id, block_id=ref.block_id, start=ref.start, end=ref.end, kind=ref.kind, number=ref.number,
+            target_table_id=ref.target_table_id, target_block_id=ref.target_block_id, state=ref.state,
+        )
+        for ref in await session.scalars(
+            select(CaptionRef)
+            .where(CaptionRef.extraction_id.in_(extraction_ids))
+            .order_by(CaptionRef.block_id, CaptionRef.start)
+        )
+    )
+    referring_unit_ids: set[int] = set()
+    if not include_text and any(ref.state == REF_LINKED for ref in caption_refs):
+        units = await _fill_caption_texts(session, units)
+        linked = [ref for ref in caption_refs if ref.state == REF_LINKED]
+        referring_unit_ids = set(match_covering_units(linked, units.values()).values())
 
     decisions = {
         decision.unit_id: DecisionInfo(
@@ -297,9 +361,19 @@ async def load_bundle_snapshot(session: AsyncSession, bundle_id: int, *, include
         units=units,
         decisions=decisions,
         pair_of=pair_of,
-        targets=await _load_targets(session, bundle_id, units.keys(), include_text),
+        targets=await _load_targets(session, bundle_id, units.keys(), include_text, referring_unit_ids),
         target_docs=await load_target_docs(session, bundle_id),
+        caption_refs=caption_refs,
     )
+
+
+async def _fill_caption_texts(session: AsyncSession, units: dict[int, UnitInfo]) -> dict[int, UnitInfo]:
+    """글자 없이 읽은 단위 중 캡션 단위에만 글을 채운다 — 캡션 머리 번호로 참조를 판정한다(질의 한 번)."""
+    caption_ids = [unit.id for unit in units.values() if unit.kind == CAPTION_KIND]
+    if not caption_ids:
+        return units
+    texts = dict((await session.execute(select(Unit.id, Unit.text).where(Unit.id.in_(caption_ids)))).tuples().all())
+    return {unit_id: replace(unit, text=texts.get(unit_id, "")) for unit_id, unit in units.items()}
 
 
 def list_confirmer_ids(snap: BundleSnapshot) -> set[str]:
@@ -339,9 +413,12 @@ async def _load_documents(session: AsyncSession, bundle_id: int) -> tuple[list[D
 
 
 async def _load_targets(
-    session: AsyncSession, bundle_id: int, unit_ids: Collection[int], include_text: bool
+    session: AsyncSession, bundle_id: int, unit_ids: Collection[int], include_text: bool,
+    referring_unit_ids: Collection[int] = (),
 ) -> dict[int, TargetInfo]:
     """새 문장과 출처(출처 순서) — 출처는 스냅숏 단위만 남긴다.
+
+    include_text=False여도 referring_unit_ids(참조 문장 단위)를 출처나 번역 출처로 둔 새 문장의 확정·AI 글은 읽는다(질의 한 번).
 
     질의마다 따로 읽으므로 그 사이에 커밋된 쪼개기 편집이 새 단위를 출처로 이을 수 있다. 그런 연결은 다음 조회에 보이고,
     이번 결과물은 읽은 단위만으로 계산한다(없는 단위를 가리켜 결과물 전체가 실패하지 않게).
@@ -360,7 +437,20 @@ async def _load_targets(
         target_statement = target_statement.options(
             defer(TargetSentence.confirmed_text), defer(TargetSentence.ai_text), defer(TargetSentence.remark)
         )
-    return {
+    ref_texts: dict[int, tuple[str, str]] = {}
+    if not include_text and referring_unit_ids:
+        referring = sorted(referring_unit_ids)
+        sourced = select(TargetSource.target_id).where(TargetSource.unit_id.in_(referring))
+        ref_texts = {
+            target_id: (confirmed, ai)
+            for target_id, confirmed, ai in await session.execute(
+                select(TargetSentence.id, TargetSentence.confirmed_text, TargetSentence.ai_text).where(
+                    TargetSentence.bundle_id == bundle_id,
+                    or_(TargetSentence.id.in_(sourced), TargetSentence.translation_source_unit_id.in_(referring)),
+                )
+            )
+        }
+    targets = {
         target.id: TargetInfo(
             id=target.id, target_doc_id=target.target_doc_id, slot_key=target.slot_key, wi_step=target.wi_step,
             wi_part=target.wi_part, section_path=target.section_path, order_index=target.order_index,
@@ -374,10 +464,14 @@ async def _load_targets(
         )
         for target in await session.scalars(target_statement)
     }
+    for target_id, (confirmed, ai) in ref_texts.items():
+        if target_id in targets:
+            targets[target_id] = replace(targets[target_id], confirmed_text=confirmed, ai_text=ai)
+    return targets
 
 
 async def load_target_docs(session: AsyncSession, bundle_id: int) -> dict[int, TargetDocInfo]:
-    """묶음의 새 문서 전부와 칸 N/A·WI 단계 — 스냅숏이 쓰고 AI 후보 만들기도 직접 읽는다(질의 세 번)."""
+    """묶음의 새 문서 전부와 칸 N/A·WI 단계·골격 사본 — 스냅숏이 쓰고 AI 후보 만들기도 직접 읽는다(질의 네 번)."""
     na_slots: dict[int, dict[str, str]] = defaultdict(dict)
     for doc_id, slot_key, reason in await session.execute(
         select(TargetDocNaSlot.target_doc_id, TargetDocNaSlot.slot_key, TargetDocNaSlot.reason)
@@ -393,13 +487,16 @@ async def load_target_docs(session: AsyncSession, bundle_id: int) -> dict[int, T
         .order_by(WiStep.target_doc_id, WiStep.step_no)
     ):
         steps[doc_id].append((step_no, title))
+    docs = list(await session.scalars(select(TargetDoc).where(TargetDoc.bundle_id == bundle_id)))
+    outlines = await load_doc_outlines(session, [doc.id for doc in docs])
     return {
         doc.id: TargetDocInfo(
             id=doc.id, code=doc.code, title=doc.title, doc_type=doc.doc_type, parent_id=doc.parent_id,
             entrance=doc.entrance, is_equipment_sop=doc.is_equipment_sop, order_index=doc.order_index,
             manual_order=doc.manual_order, na_slots=dict(na_slots.get(doc.id, {})), steps=tuple(steps.get(doc.id, ())),
+            outline=outlines[doc.id],
         )
-        for doc in await session.scalars(select(TargetDoc).where(TargetDoc.bundle_id == bundle_id))
+        for doc in docs
     }
 
 
@@ -409,7 +506,7 @@ async def load_target_docs(session: AsyncSession, bundle_id: int) -> dict[int, T
 class RowProgress(BaseModel):
     """줄(짝 하나·짝 없는 판단 단위 하나) 상태별 수 — 배정 화면의 줄과 같은 규칙. 묶인 칸 문장은 표·행 줄에 들어 세지 않는다.
 
-    single_language는 줄이 아니라 단위 수다 — 두 언어 문서에서 짝도 다른 언어 새 문장도 없는 글(문장·제목).
+    single_language는 줄이 아니라 단위 수다 — 두 언어 문서에서 짝도 다른 언어 새 문장도 없는 글(문장·제목, 배정한 묶음의 캡션).
     """
 
     total: int = 0
@@ -420,20 +517,31 @@ class RowProgress(BaseModel):
     single_language: int = 0
 
 
-def _select_judged_units(bundle_ids: Collection[int], *columns: Any) -> Select[Any]:
-    """묶음들의 판단 단위(옛 문서·활성·최신 추출·묶이지 않은 단위, 판단 행 있음)에 짝 구성원을 바깥 조인한 질의."""
+def _select_old_units(bundle_ids: Collection[int], *columns: Any) -> Select[Any]:
+    """묶음들의 옛 문서·활성·최신 추출 단위에 짝 구성원을 바깥 조인한 질의."""
     in_bundles = Document.bundle_id.in_(list(bundle_ids))
     return (
         select(*columns)
         .select_from(Unit)
         .join(Extraction, Extraction.id == Unit.extraction_id)
         .join(Document, Document.id == Extraction.document_id)
-        .join(UnitDecision, UnitDecision.unit_id == Unit.id)
         .outerjoin(UnitPairMember, UnitPairMember.unit_id == Unit.id)
         .where(
-            in_bundles, Document.side == "old", Unit.status == UNIT_ACTIVE, Unit.group_unit_id.is_(None),
-            Unit.extraction_id.in_(_select_latest_extractions(in_bundles)),
+            in_bundles, Document.side == "old", Unit.status == UNIT_ACTIVE,
+            Unit.extraction_id.in_(select_latest_extractions(in_bundles)),
         )
+    )
+
+
+def _select_judged_units(bundle_ids: Collection[int], *columns: Any) -> Select[Any]:
+    """묶음들의 판단 단위(옛 문서·활성·최신 추출·묶이지 않은 단위, 판단 행 있음, 잡음 표시 없음)에 짝 구성원을 바깥 조인한 질의.
+
+    잡음 표시(목차 줄)는 판단 줄이 아니라 남은 수·진행 숫자에서 빠진다(output_rows._list_judged_units와 같은 규칙).
+    """
+    return (
+        _select_old_units(bundle_ids, *columns)
+        .join(UnitDecision, UnitDecision.unit_id == Unit.id)
+        .where(Unit.group_unit_id.is_(None), Unit.noise_kind.is_(None))
     )
 
 
@@ -470,11 +578,18 @@ async def load_bundle_progress(session: AsyncSession, bundle_ids: Collection[int
         .where(TargetSource.unit_id == Unit.id, TargetSentence.id == TargetSource.target_id)
         .where(_is_other_language(TargetSentence.lang)),
     )
+    # 묶이지 않은 글 단위와, 판단이 배정인 묶음에 딸린 캡션(output_rows.count_single_language와 같은 규칙)
+    group_decision = aliased(UnitDecision)
+    is_counted_kind = or_(
+        and_(Unit.group_unit_id.is_(None), Unit.kind.in_(SINGLE_LANGUAGE_KINDS)),
+        and_(Unit.kind == CAPTION_KIND, group_decision.disposition == "assigned"),
+    )
     for bundle_id, count in await session.execute(
-        _select_judged_units(bundle_ids, Document.bundle_id, func.count())
+        _select_old_units(bundle_ids, Document.bundle_id, func.count())
+        .outerjoin(group_decision, group_decision.unit_id == Unit.group_unit_id)
         .where(
             # 참조 줄(REF)은 한 줄뿐인 글이라 짝이 없어도 세지 않는다
-            UnitPairMember.pair_id.is_(None), Unit.kind.in_(SINGLE_LANGUAGE_KINDS), Unit.lang != REF_LANG,
+            UnitPairMember.pair_id.is_(None), is_counted_kind, Unit.lang != REF_LANG, Unit.noise_kind.is_(None),
             Document.language_layout.in_(TWO_LANGUAGE_LAYOUTS), ~has_other_language_target,
         )
         .group_by(Document.bundle_id)
@@ -489,7 +604,7 @@ async def count_unacked_missing_text(session: AsyncSession, bundle_id: int) -> i
         select(func.count())
         .select_from(ExtractionWarning)
         .where(
-            ExtractionWarning.extraction_id.in_(_select_latest_extractions(Document.bundle_id == bundle_id)),
+            ExtractionWarning.extraction_id.in_(select_latest_extractions(Document.bundle_id == bundle_id)),
             ExtractionWarning.needs_ack.is_(True),
             ExtractionWarning.acked_at.is_(None),
         )

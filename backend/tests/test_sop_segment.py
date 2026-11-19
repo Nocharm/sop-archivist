@@ -61,6 +61,45 @@ def test_split_sentences(text: str, sentences: list[str]) -> None:
     assert [text[start:end] for start, end in split_sentences(text)] == sentences
 
 
+@pytest.mark.parametrize(
+    ("text", "sentences"),
+    [
+        # 줄 맨 앞의 라벨 낱말 + 선택 번호 + 마침표는 문장 끝이 아니다
+        ("Chapter 1. Filter setup", ["Chapter 1. Filter setup"]),
+        ("Note. Plant X needs no air.", ["Note. Plant X needs no air."]),
+        ("Appendix 2. Alarm list", ["Appendix 2. Alarm list"]),
+        ("그림. 장비 사진", ["그림. 장비 사진"]),
+        ("Fig. 1. Pump layout. See below.", ["Fig. 1. Pump layout.", "See below."]),
+        ("주의. 뜨거운 면에 닿지 않는다. 장갑을 낀다.", ["주의. 뜨거운 면에 닿지 않는다.", "장갑을 낀다."]),
+        # 글머리 기호·자동 번호·여는 따옴표 바로 뒤도 줄 맨 앞이다
+        ("• Note. Plant X needs no air.", ["• Note. Plant X needs no air."]),
+        ("3. Step 2. Close the valve.", ["3. Step 2. Close the valve."]),
+        ('"Table 3. Limits" is attached.', ['"Table 3. Limits" is attached.']),
+        # e.g.·i.e.는 뒤에 대문자가 와도 끝이 아니고, No.는 괄호·따옴표 앞에서도 끝이 아니다
+        ("(e.g. ABC) and managed by Y.", ["(e.g. ABC) and managed by Y."]),
+        ("Use a clean tool, i.e. Tool Blue. Then stop.", ["Use a clean tool, i.e. Tool Blue.", "Then stop."]),
+        ('"Lot No. (a)" is used.', ['"Lot No. (a)" is used.']),
+        ("(예. 솔로) 닦는다.", ["(예. 솔로) 닦는다."]),
+        ("예. 솔로 닦는다. 말린다.", ["예. 솔로 닦는다.", "말린다."]),
+        # 줄 가운데의 라벨 낱말과 라벨로 시작하지 않는 낱말은 그대로 문장 끝이다
+        ("See the note. Note. Plant X.", ["See the note.", "Note.", "Plant X."]),
+        ("Tablet. Then swallow.", ["Tablet.", "Then swallow."]),
+        ("표준. 다음 문장.", ["표준.", "다음 문장."]),
+        ("Add salt etc. Then stir.", ["Add salt etc.", "Then stir."]),
+    ],
+)
+def test_split_sentences_keeps_line_labels_and_examples_whole(text: str, sentences: list[str]) -> None:
+    assert [text[start:end] for start, end in split_sentences(text)] == sentences
+
+
+def test_split_sentences_checks_the_label_on_each_line() -> None:
+    text = "Close the lid.\nNote. Plant X needs no air.\nStep 3. Open it. Wait."
+
+    assert [text[start:end] for start, end in split_sentences(text, split_lines=True)] == [
+        "Close the lid.", "Note. Plant X needs no air.", "Step 3. Open it.", "Wait.",
+    ]
+
+
 def test_split_sentences_can_split_at_line_breaks() -> None:
     # DOCX의 줄바꿈(Shift+Enter)·칸 안 문단 — 줄마다 단위가 되고, 줄 안에서는 문장 규칙이 그대로다
     text = "1. 장비를 켠다\n2. 문을 닫는다. 기록한다.\n\n Close the door "
@@ -166,6 +205,36 @@ def test_build_drafts_cell_figures_merged_cells_and_layout_tables() -> None:
     ]
     assert (drafts[4].spans, drafts[4].pos_seq, drafts[4].pos_start) == ([], 2, 0)
     assert CLAUSE_NUMBER_FLAG == docx_reader.FLAG_CLAUSE_NUMBER  # 추출기가 붙이는 표시와 같은 값을 본다
+
+
+
+def test_caption_block_becomes_a_caption_draft_bound_to_its_table() -> None:
+    drafts = build_unit_drafts(
+        [_para(1, 0, "표 3. 운전 조건", flags=("caption_of:1",)), _cell(2, 1, "a", 9, 0)], [TableView(9, False)], "ko_only"
+    )
+    caption = next(d for d in drafts if d.kind == "caption")
+    assert drafts[caption.group_index].kind == "table"
+    assert caption.spans == [(1, 0, len("표 3. 운전 조건"))]
+
+
+def test_caption_of_a_layout_table_is_a_sentence() -> None:
+    drafts = build_unit_drafts(
+        [_para(1, 0, "표 7. 양식", flags=("caption_of:1",)), _cell(2, 1, "a", 9, 0)], [TableView(9, True)], "ko_only"
+    )
+    assert [d.kind for d in drafts][:1] == ["sentence"]
+
+
+def test_caption_after_a_figure_is_one_unit_bound_to_the_figure() -> None:
+    # 문장 쪼개기를 하지 않는다 — "그림 5. 로터 (Figure 5. Rotor)"는 마침표가 있어도 단위 하나다
+    text = " 그림 5. 로터 장착 (Figure 5. Rotor mounting) "
+    blocks = [BlockView(1, 0, "figure", "body", "", None, (), None, None), _para(2, 1, text, flags=("caption_of:0",))]
+
+    drafts = build_unit_drafts(blocks, [], "ko_en_interleaved")
+
+    assert [(d.kind, d.spans, d.lang, d.group_index) for d in drafts] == [
+        ("figure", [], "neutral", None),
+        ("caption", [(2, 1, len(text) - 1)], "ko", 0),
+    ]
 
 
 def test_drafts_fill_unknown_language_from_neighbors() -> None:

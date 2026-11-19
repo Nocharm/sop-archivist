@@ -129,7 +129,7 @@ const SCENES = [
       // 고르면 누른 곳 옆에 확정 메뉴가 늦게 뜬다 - 다 뜬 뒤에 찍는다
       await page.locator(id("assign-link-menu-confirm")).waitFor({ state: "visible", timeout: T });
     },
-    marks: [id("assign-identical"), id("assign-new"), `${id("assign-new")} .new-line[data-state="picked"]`, id("assign-chosen"), id("assign-divider"), id("assign-new-zoom-value")],
+    marks: [id("assign-more"), id("assign-new"), `${id("assign-new")} .new-line[data-state="picked"]`, id("assign-chosen"), id("assign-divider"), id("assign-new-zoom-value")],
   },
   {
     name: "assign-unsourced", user: "qa.member", path: "/bundles/2/assign",
@@ -153,6 +153,7 @@ const SCENES = [
     name: "assign-ref", appOnly: true, app: {}, user: "qa.member", path: "/bundles/1/assign",
     prep: async (page) => {
       await click(page, id("assign-ref-pending"));
+      await click(page, id("assign-ref-pending-next"));
       await page.locator(id("assign-ref")).waitFor({ state: "visible", timeout: T });
       // 문서의 마지막 줄이라 낮은 창에서는 아래로 밀린다 - 고른 줄이 그림에 들어오게 한다
       await page.locator(".strip-lang[data-proposed]").scrollIntoViewIfNeeded();

@@ -4,10 +4,12 @@
 결과물 A 한 벌의 의미 묶음 모서리는 한/영 연달아 옛 문서 하나(`_setup_pair_edges`)에 경우마다 판단을 넣어 본다.
 """
 
+import pathlib
+import tempfile
 from collections import Counter
 from collections.abc import Iterator
 from contextlib import contextmanager
-from functools import partial
+from functools import cache, partial
 from typing import NamedTuple
 
 import httpx2
@@ -18,24 +20,41 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import engine
 from app.models import Employee
-from app.sop.constants import SLOT_KEYS
-from app.sop.models import TargetSentence, UnitDecision, UnitPair, UnitPairMember
+from app.sop.models import TargetSentence, TargetSource, UnitDecision, UnitPair, UnitPairMember
+from app.sop.output_labels import LABELS
+from app.sop.outputs import (
+    BundleCellOut,
+    CItem,
+    Lang,
+    Renumbering,
+    _build_index,
+    build_bundle_table,
+    build_renumbering,
+    get_bullet_depths,
+)
+from app.sop.snapshot import BundleSnapshot, load_bundle_snapshot
 from tests.access_helpers import run_in_session
 from tests.docx_factory import TINY_PNG, build_docx, make_drawing_run, p, tbl
 from tests.sop_helpers import (
     ADMIN,
     AUTHOR,
+    NEW_SOP_KEYS,
     REVIEWER,
+    WRITTEN_CAPTION,
     assign_as_is,
+    build_as_is_targets,
     create_bundle,
+    declare_outline_item,
     find_unit,
     get_bundle,
+    get_group_by_unit,
     get_view,
     put_tobe,
     save_group,
     set_members,
     upload,
 )
+from scripts.synthetic_sop import build_synthetic_bundle
 from tests.test_sop_pairs import EN_BOTH, EN_ON, KO_KEEP, KO_LOAD, KO_ON
 
 pytestmark = pytest.mark.usefixtures("clean_sop")
@@ -88,6 +107,13 @@ NA_SLOTS = [
     {"code": "SOP-NEW", "slot_key": "document_relationships", "reason": RELATIONS_REASON},
 ]
 WI_STEPS = [{"code": "WI-01", "step_no": 1, "title": "Prepare"}, {"code": "WI-01", "step_no": 2, "title": "Load"}]
+# 픽스처 SOP(SOP-NEW)가 내보내는 절 — 새 SOP의 골격에 범주 Work(_setup이 선언)를 더하고, 비어 있는 선택 항목(7.1.x)은 뺀다
+SOP_SECTION_KEYS = [
+    key
+    for base in NEW_SOP_KEYS
+    if not base.startswith("document_relationships.associated_documents.")
+    for key in ((base, "general_requirements.work") if base == "general_requirements" else (base,))
+]
 HEADING_REASON = "Synthetic: structure heading"
 DELETE_REASON = "Synthetic: obsolete note"
 MOVE_REASON = "Synthetic: owned by another SOP"
@@ -156,6 +182,7 @@ def _setup(client: TestClient) -> Fixture:
     assert response.status_code == 200, response.text
     codes = {doc["code"]: doc["id"] for doc in response.json()["docs"]}
     sop_id, wi_id = codes["SOP-NEW"], codes["WI-01"]
+    declare_outline_item(client, sop_id, "general_requirements.work", "Work")  # 5장 범주 하나
     old1_doc = _upload_ready(client, bundle_id, build_docx(OLD1_BODY, media={"image1.png": TINY_PNG}), OLD1_NAME)
     old2_doc = _upload_ready(client, bundle_id, build_docx(OLD2_BODY), OLD2_NAME)
     new_doc = _upload_ready(client, bundle_id, build_docx(NEW_BODY), NEW_NAME, side="new", doc_type="sop")
@@ -172,7 +199,7 @@ def _setup(client: TestClient) -> Fixture:
     ])
     first, second = find_unit(old1, MERGE_1), find_unit(old2, MERGE_2)
     _save(client, bundle_id, [_unit_in(first), _unit_in(second)], [
-        _target("m", sop_id, [first, second], slot_key="general_requirements.operation", text=MERGED),
+        _target("m", sop_id, [first, second], slot_key="general_requirements.work", text=MERGED),
     ])
     duplicate = find_unit(old1, DUPLICATE)
     _save(client, bundle_id, [_unit_in(duplicate, reason=DUPLICATE_REASON)], [
@@ -183,7 +210,7 @@ def _setup(client: TestClient) -> Fixture:
     assign_as_is(client, bundle_id, table, sop_id, slot_key="general_requirements")
     figure = next(unit for unit in old1["units"] if unit["kind"] == "figure")
     assign_as_is(client, bundle_id, figure, wi_id, wi_step=2, wi_part="instruction", hold_reason=FIGURE_HOLD)
-    assign_as_is(client, bundle_id, find_unit(old2, RECORDS_EN), sop_id, slot_key="general_requirements.operation")
+    assign_as_is(client, bundle_id, find_unit(old2, RECORDS_EN), sop_id, slot_key="general_requirements.work")
 
     # 입구 2 — 같은 글자 짝 하나와 출처 없는 신규 하나
     match_id = new_doc["target_doc_id"]
@@ -254,7 +281,9 @@ def test_output_a_rows_follow_line_rules(client: TestClient) -> None:
         (9, "cell", d1("Item"), "sop", "SOP-NEW", "as_is", None),
         (9, "cell", d1("합성 값"), "sop", "SOP-NEW", "as_is", None),
         (9, "cell", d1("Synthetic value"), "sop", "SOP-NEW", "as_is", None),
+        # 그림 줄 뒤에 딸린 캡션 단위 줄 — 같은 묶음
         (10, "unit", figure, "wi", "WI-01", "as_is", None),
+        (10, "caption", d1(CAPTION), "wi", "WI-01", "as_is", None),
         (11, "unit", d2(OLD2_HEADINGS[0]), "delete", "", "deleted", None),
         (12, "unit", d2(OLD2_HEADINGS[1]), "delete", "", "deleted", None),
         (13, "unit", d2(MERGE_2), "sop", "SOP-NEW", "merged", f"G-{d1(MERGE_1)}"),
@@ -274,7 +303,7 @@ def test_output_a_rows_follow_line_rules(client: TestClient) -> None:
     assert split["confirmed_at"].endswith("+09:00")
     merged = [row for row in rows if row["change_type"] == "merged"]
     assert [(row["confirmed_text"], row["dest_location"]) for row in merged] == [
-        (MERGED, "General Requirements › Operation"),
+        (MERGED, "General Requirements › Work"),
     ] * 2
     duplicate_rows = [row for row in rows if row["display_id"] == d1(DUPLICATE)]
     assert [(row["dest_location"], row["remark"]) for row in duplicate_rows] == [
@@ -450,7 +479,7 @@ def test_one_to_two_pair_is_three_lines_in_one_group(client: TestClient) -> None
     fx = _setup_pair_edges(client)
     units = _units(fx, KO_LOAD, KO_KEEP, EN_BOTH)
     _save(client, fx.bundle_id, [_unit_in(unit) for unit in units], [
-        _target(str(n), fx.sop_id, [unit], slot_key="procedures.procedure") for n, unit in enumerate(units)
+        _target(str(n), fx.sop_id, [unit], slot_key="procedures.p1") for n, unit in enumerate(units)
     ])
 
     lines = _group_lines(_get_output(client, fx.bundle_id, "outputs/a"), units[0]["display_id"])
@@ -514,8 +543,9 @@ def test_figure_and_data_table_once(client: TestClient) -> None:
     table_group = _group_lines(rows, table["display_id"])
     assert [line["row_kind"] for line in table_group] == ["table", "cell", "cell", "cell", "cell"]
     assert [line["source_text"] for line in table_group[1:]] == [text for row in PAIR_TABLE for text in row]
-    (figure_line,) = _group_lines(rows, figure["display_id"])
+    figure_line, caption_line = _group_lines(rows, figure["display_id"])
     assert (figure_line["row_kind"], figure_line["source_text"]) == ("unit", CAPTION)
+    assert (caption_line["row_kind"], caption_line["display_id"]) == ("caption", find_unit(fx.view, CAPTION)["display_id"])
     assert Counter(row["display_id"] for row in rows)[figure["display_id"]] == 1
 
 
@@ -712,13 +742,14 @@ def test_output_a_table_lines_for_rows_empty_tables_and_dropped_cells(client: Te
     assert split.status_code == 200, split.text
     view = get_view(client, bundle_id, doc["id"])
     first_row, second_row = [unit for unit in view["units"] if unit["kind"] == "table_row"]
-    assign_as_is(client, bundle_id, first_row, sop_id, slot_key="procedures.procedure")
+    assign_as_is(client, bundle_id, first_row, sop_id, slot_key="procedures.p1")
     # 둘째 행은 한글 칸만 남긴 표 구성 변경 — 영어 칸 문장에는 칸 새 문장이 없다
     kept = find_unit(view, "합성 값 둘.")
     _save(client, bundle_id, [_unit_in(second_row, reason="Synthetic: drop the English cell")], [
-        _target("t", sop_id, [second_row], slot_key="procedures.procedure", kind="table", grid={"rows": 1, "cols": 1},
+        _target("t", sop_id, [second_row], slot_key="procedures.p1", kind="table", grid={"rows": 1, "cols": 1},
                 change_type="table_restructured"),
-        _target("c", sop_id, [kept], slot_key="procedures.procedure", parent_key="t", cell_row=0, cell_col=0),
+        _target("c", sop_id, [kept], slot_key="procedures.p1", parent_key="t", cell_row=0, cell_col=0),
+        _target("cap", sop_id, [], slot_key="procedures.p1", parent_key="t", text="합성 표 둘째 행", lang="ko"),
     ])
     d = partial(_display, view)
 
@@ -876,20 +907,23 @@ def test_output_c_one_list_per_slot(client: TestClient) -> None:
     assert [(doc["code"], doc["doc_type"], doc["parent_code"], doc["entrance"]) for doc in output["docs"]] == [
         ("SOP-NEW", "sop", None, "assign"), ("WI-01", "wi", "SOP-NEW", "assign"), ("SOP-9", "sop", None, "match"),
     ]
-    # SOP 칸은 SLOT_KEYS 순서로 빈 칸까지, N/A 상위 칸의 하위 칸도 N/A(R8)
-    assert [section["location_key"] for section in sop["sections"]] == list(SLOT_KEYS)
+    # SOP 칸은 골격 순서로 빈 필수 항목까지(비어 있는 선택 항목 7.1.x는 빠진다), N/A 상위 칸의 하위 칸도 N/A(R8)
+    assert [section["location_key"] for section in sop["sections"]] == SOP_SECTION_KEYS
     sections = {section["location_key"]: section for section in sop["sections"]}
     assert {key: section["na_reason"] for key, section in sections.items() if section["na_reason"]} == {
         "scope": SCOPE_REASON,
         "document_relationships": RELATIONS_REASON,
-        "document_relationships.attachments": RELATIONS_REASON,
-        "document_relationships.appendices": RELATIONS_REASON,
+        "document_relationships.associated_documents": RELATIONS_REASON,
+        "document_relationships.work_instructions": RELATIONS_REASON,
+        "document_relationships.references": RELATIONS_REASON,
     }
-    assert sections["procedures.maintenance"]["label"] == "Procedures › Maintenance"
+    assert sections["procedures.p1"]["label"] == "Procedures › Procedure 1"
+    # 7장이 N/A라 덮인 자동 목록 절(7.2)도 자식 WI를 싣지 않는다 — 화면이 사유만 보이는 것과 같다(싣는 경우는 test_sop_outline)
+    assert {key: section["auto_items"] for key, section in sections.items() if section["auto_items"]} == {}
     assert _section_items(sections["responsibilities"]) == [(DUPLICATE, "as_is", "confirmed", "← OLD-1 §5.1")]
     # 한 칸은 언어를 가리지 않는 한 목록 — 한글 합침 문장 뒤에 영어 문장(원문에서 앞선 출처 순)
-    operation = sections["general_requirements.operation"]["items"]
-    assert _section_items(sections["general_requirements.operation"]) == [
+    operation = sections["general_requirements.work"]["items"]
+    assert _section_items(sections["general_requirements.work"]) == [
         (MERGED, "merged", "confirmed", "← OLD-1 §5.1, OLD-2 §5.1 (merged)"),
         (RECORDS_EN, "as_is", "confirmed", "← OLD-2 §5.1"),
     ]
@@ -901,11 +935,15 @@ def test_output_c_one_list_per_slot(client: TestClient) -> None:
     assert (table["kind"], table["lang"], table["change_type"], table["source_note"], table["origin"]) == (
         "table", "neutral", "as_is", "← OLD-1 §5.1", "units",
     )
-    assert [(cell["text"], cell["cell_row"], cell["cell_col"], cell["children"]) for cell in table["children"]] == [
+    cells = [child for child in table["children"] if child["cell_row"] is not None]
+    assert [(cell["text"], cell["cell_row"], cell["cell_col"], cell["children"]) for cell in cells] == [
         ("항목", 0, 0, []), ("Item", 0, 1, []), ("합성 값", 1, 0, []), ("Synthetic value", 1, 1, []),
     ]
+    # 캡션 없는 표라 확정하며 써 넣은 캡션 — 칸 좌표 없는 자식이고 칸보다 먼저 온다
+    assert [child["text"] for child in table["children"][:1] if child["cell_row"] is None] == [WRITTEN_CAPTION_OUT]
+    assert table["caption"] == WRITTEN_CAPTION_OUT
     table_unit = _unit_of_kind(fx.old1, "table")
-    assert {cell["meaning_key"] for cell in table["children"]} == {table["meaning_key"]} == {f"old:-{table_unit['id']}"}
+    assert {cell["meaning_key"] for cell in cells} == {table["meaning_key"]} == {f"old:-{table_unit['id']}"}
     assert sum(len(section["items"]) for section in sop["sections"]) == 4
 
     # WI는 선언 단계 순으로 단계마다 Instruction·Why, 단계 없는 칸은 없을 때 싣지 않는다
@@ -932,11 +970,12 @@ def test_output_c_one_list_per_slot(client: TestClient) -> None:
 
     # 삭제·이동은 줄마다 한 번 — 짝이 없어 단위 하나씩
     assert [(d["display_id"], d["doc_code"], d["section"], d["source_text"], d["reason"]) for d in output["deleted"]] == [
-        (d1(OLD1_HEADINGS[0]), "OLD-1", "5", OLD1_HEADINGS[0], HEADING_REASON),
-        (d1(OLD1_HEADINGS[1]), "OLD-1", "5.1", OLD1_HEADINGS[1], HEADING_REASON),
+        # 원문 글은 번호를 뺀 내용이다 — 번호는 절 칸에 있다(문단 번호 F5)
+        (d1(OLD1_HEADINGS[0]), "OLD-1", "5", "절차", HEADING_REASON),
+        (d1(OLD1_HEADINGS[1]), "OLD-1", "5.1", "준비", HEADING_REASON),
         (d1(DELETED), "OLD-1", "5.1", DELETED, DELETE_REASON),
-        (d2(OLD2_HEADINGS[0]), "OLD-2", "5", OLD2_HEADINGS[0], HEADING_REASON),
-        (d2(OLD2_HEADINGS[1]), "OLD-2", "5.1", OLD2_HEADINGS[1], HEADING_REASON),
+        (d2(OLD2_HEADINGS[0]), "OLD-2", "5", "기록", HEADING_REASON),
+        (d2(OLD2_HEADINGS[1]), "OLD-2", "5.1", "보관", HEADING_REASON),
     ]
     assert output["moved"] == [{
         "display_id": d1(MOVED), "doc_code": "OLD-1", "section": "5.1", "source_text": MOVED,
@@ -983,26 +1022,205 @@ def test_composed_doc_carries_both_languages_in_c_order(client: TestClient) -> N
     c_sop = next(doc for doc in _get_output(client, fx.bundle_id, "outputs/c", "en")["docs"] if doc["target_doc_id"] == fx.sop_id)
 
     assert (sop["code"], sop["entrance"]) == ("SOP-NEW", "assign")
-    # 칸은 결과물 C와 같다 - 빈 칸까지 SLOT_KEYS 순서, N/A 사유 그대로
-    assert [section["location_key"] for section in sop["sections"]] == list(SLOT_KEYS)
+    # 칸은 결과물 C와 같다 - 빈 필수 항목까지 골격 순서, N/A 사유 그대로
+    assert [section["location_key"] for section in sop["sections"]] == SOP_SECTION_KEYS
     sections = {section["location_key"]: section for section in sop["sections"]}
     assert sections["scope"]["na_reason"] == SCOPE_REASON
     assert sections["purpose"]["items"] == []
     # 한 칸에 두 언어가 함께, 출처 단위가 실린다 - 칸 안 순서·번호는 같은 lang의 결과물 C 그 문서 그대로, 칸 이름은 lang의 언어
-    operation = sections["general_requirements.operation"]["items"]
-    c_operation = next(s for s in c_sop["sections"] if s["location_key"] == "general_requirements.operation")["items"]
+    operation = sections["general_requirements.work"]["items"]
+    c_operation = next(s for s in c_sop["sections"] if s["location_key"] == "general_requirements.work")["items"]
     assert [(item["target_id"], item["number"]) for item in operation] == [
         (item["target_id"], item["number"]) for item in c_operation
     ]
     assert sorted((item["text"], item["lang"], item["source_unit_ids"]) for item in operation) == sorted([
         (MERGED, "ko", merged_sources), (RECORDS_EN, "en", [find_unit(fx.old2, RECORDS_EN)["id"]]),
     ])
-    assert sections["general_requirements.operation"]["label"] == "General Requirements › Operation"
-    # 보류한 그림은 고친 글이 없어 출처 원문(캡션)을 보인다
+    assert sections["general_requirements.work"]["label"] == "General Requirements › Work"
+    # 보류한 그림은 글이 없고(그림 단위 글자도 비었다) 딸린 캡션 새 문장의 글을 caption으로 싣는다
     (step2,) = [section for section in wi["sections"] if section["location_key"] == "step:2:instruction"]
-    assert [(item["text"], item["status"], item["source_unit_ids"]) for item in step2["items"]] == [
-        (SPLIT_B, "confirmed", [find_unit(fx.old1, SPLIT_SOURCE)["id"]]), (CAPTION, "on_hold", [figure_id]),
+    assert [(item["text"], item["status"], item["source_unit_ids"], item["caption"]) for item in step2["items"]] == [
+        (SPLIT_B, "confirmed", [find_unit(fx.old1, SPLIT_SOURCE)["id"]], None), ("", "on_hold", [figure_id], CAPTION),
     ]
+
+
+def test_composed_doc_carries_table_cells_and_figure_block(client: TestClient) -> None:
+    fx = _setup(client)
+    figure_unit = next(unit for unit in fx.old1["units"] if unit["kind"] == "figure")
+
+    sop = _get_output(client, fx.bundle_id, f"outputs/c/docs/{fx.sop_id}", "en")
+    wi = _get_output(client, fx.bundle_id, f"outputs/c/docs/{fx.wi_id}", "en")
+
+    # 표 줄은 칸 새 문장을 격자 그대로 싣는다(원문 그대로 보낸 표라 확정 글 = 원문 칸 글)
+    table = next(item for section in sop["sections"] for item in section["items"] if item["kind"] == "table")
+    assert (table["table"]["rows"], table["table"]["cols"]) == (2, 2)
+    assert [(cell["row"], cell["col"], cell["text"]) for cell in table["table"]["cells"]] == [
+        (0, 0, "항목"), (0, 1, "Item"), (1, 0, "합성 값"), (1, 1, "Synthetic value"),
+    ]
+    assert table["figure"] is None
+    # 그림 줄은 출처 단위의 그림 블록 - 보류여도 이미지는 보인다
+    figure = next(item for section in wi["sections"] for item in section["items"] if item["kind"] == "figure")
+    assert figure["figure"] == {"document_id": fx.old1["document"]["id"], "block_id": figure_unit["block_id"]}
+    assert figure["table"] is None
+    sentence = next(item for section in sop["sections"] for item in section["items"] if item["kind"] == "sentence")
+    assert (sentence["table"], sentence["figure"]) == (None, None)
+
+
+def test_composed_doc_keeps_a_translated_cell_on_the_same_position(client: TestClient) -> None:
+    fx = _setup(client)
+    sop = _get_output(client, fx.bundle_id, f"outputs/c/docs/{fx.sop_id}", "en")
+    table_id = next(item for s in sop["sections"] for item in s["items"] if item["kind"] == "table")["target_id"]
+    source_cell = find_unit(fx.old1, "항목")
+
+    async def _insert(session: AsyncSession) -> None:
+        # 칸 번역 - 같은 표 아래 같은 (행, 열)에 다른 언어 새 문장이 하나 더
+        session.add(TargetSentence(
+            bundle_id=fx.bundle_id, target_doc_id=fx.sop_id, slot_key="general_requirements", lang="en", kind="sentence",
+            ai_text="Item (EN)", origin="translation", translation_source_unit_id=source_cell["id"],
+            change_type="translated", status="ai_suggested", parent_target_id=table_id, cell_row=0, cell_col=0,
+        ))
+        await session.commit()
+
+    run_in_session(_insert)
+
+    sop = _get_output(client, fx.bundle_id, f"outputs/c/docs/{fx.sop_id}", "en")
+
+    table = next(item for s in sop["sections"] for item in s["items"] if item["kind"] == "table")["table"]
+    same_place = [cell for cell in table["cells"] if (cell["row"], cell["col"]) == (0, 0)]
+    assert [cell["text"] for cell in same_place] == ["항목", "Item (EN)"]
+    assert len({cell["target_id"] for cell in table["cells"]}) == len(table["cells"]) == 5
+    assert (table["rows"], table["cols"]) == (2, 2)
+
+
+def test_bundle_table_grows_past_a_stale_grid() -> None:
+    cells = [
+        BundleCellOut(target_id=2, row=1, col=2, lang="en", text="b", status="confirmed"),
+        BundleCellOut(target_id=1, row=0, col=0, lang="ko", text="a", status="confirmed"),
+    ]
+
+    table = build_bundle_table({"rows": 1, "cols": 1}, cells)
+
+    assert (table.rows, table.cols) == (2, 3)
+    assert [cell.target_id for cell in table.cells] == [1, 2]
+
+
+# ── 캡션 글 ───────────────────────────────────────────────────────────────────
+
+
+TABLE_CAPTION = "표 3. 운전 조건"
+TABLE_CAPTION_EN = "Table 3. Operating conditions"
+FIGURE_CAPTION = "그림 2. 로터 장착 위치"
+# 새 문서의 첫 표·첫 그림이라 결과물은 1로 다시 매긴다(옛 문서 칸은 원문 번호 그대로)
+TABLE_CAPTION_OUT = "표 1. 운전 조건"
+TABLE_CAPTION_EN_OUT = "Table 1. Operating conditions"
+FIGURE_CAPTION_OUT = "그림 1. 로터 장착 위치"
+WRITTEN_CAPTION_OUT = f"Table 1. {WRITTEN_CAPTION}"  # 번호 없이 써 넣은 캡션은 머리 번호를 붙인다
+CAPTION_TABLE = [["항목", "값", "단위"], ["온도", "25", "℃"], ["압력", "1", "bar"]]
+CAPTIONS_BODY = (
+    p("1. 절차", "Heading1") + p(TABLE_CAPTION, "Caption") + tbl(CAPTION_TABLE)
+    + f"<w:p>{make_drawing_run('image1.png')}</w:p>" + p(FIGURE_CAPTION, "Caption")
+)
+
+
+class CaptionFixture(NamedTuple):
+    bundle_id: int
+    sop_id: int
+    view: dict
+
+
+def _setup_captions(client: TestClient) -> CaptionFixture:
+    """캡션이 딸린 3×3 표와 그림을 원문 그대로 SOP 일반 요구 사항에 확정한 묶음."""
+    bundle_id = create_bundle(client, is_synthetic=True)["id"]
+    response = put_tobe(client, bundle_id, TOBE_DOCS)
+    assert response.status_code == 200, response.text
+    sop_id = next(doc["id"] for doc in response.json()["docs"] if doc["code"] == "SOP-NEW")
+    doc = _upload_ready(
+        client, bundle_id, build_docx(CAPTIONS_BODY, media={"image1.png": TINY_PNG}), "SYNTHETIC_OLD-1_Captions.docx",
+    )
+    view = get_view(client, bundle_id, doc["id"])
+    for kind in ("table", "figure"):
+        assign_as_is(client, bundle_id, _unit_of_kind(view, kind), sop_id, slot_key="general_requirements")
+    return CaptionFixture(bundle_id, sop_id, view)
+
+
+def _find_item(doc: dict, kind: str) -> dict:
+    return next(item for section in doc["sections"] for item in section["items"] if item["kind"] == kind)
+
+
+def _add_en_table_caption(fx: CaptionFixture, table_target_id: int) -> None:
+    """표 아래 영어 캡션 하나(AI 글만) — 여러 언어 캡션은 한국어·영어 순으로 잇는다."""
+
+    async def _insert(session: AsyncSession) -> None:
+        session.add(TargetSentence(
+            bundle_id=fx.bundle_id, target_doc_id=fx.sop_id, slot_key="general_requirements", lang="en", kind="sentence",
+            ai_text=TABLE_CAPTION_EN, origin="units", change_type="new", status="ai_suggested", parent_target_id=table_target_id,
+        ))
+        await session.commit()
+
+    run_in_session(_insert)
+
+
+def test_output_a_table_source_shows_original_caption(client: TestClient) -> None:
+    fx = _setup_captions(client)
+    table, figure = _unit_of_kind(fx.view, "table"), _unit_of_kind(fx.view, "figure")
+
+    rows = _get_output(client, fx.bundle_id, "outputs/a", "ko")
+
+    # 옛 문서 칸은 원문 캡션 글(표는 뒤에 크기), 캡션 단위는 표·그림 줄 바로 뒤에 캡션 줄로
+    table_group = _group_lines(rows, table["display_id"])
+    assert [line["row_kind"] for line in table_group] == ["table", "caption"] + ["cell"] * 9
+    assert table_group[0]["source_text"] == f"{TABLE_CAPTION} [3×3]"
+    caption = table_group[1]
+    assert (caption["source_text"], caption["confirmed_text"], caption["location"]["place"]) == (
+        TABLE_CAPTION, TABLE_CAPTION_OUT, "문단",
+    )
+    figure_group = _group_lines(rows, figure["display_id"])
+    assert [line["row_kind"] for line in figure_group] == ["unit", "caption"]
+    assert [line["source_text"] for line in figure_group] == [FIGURE_CAPTION, FIGURE_CAPTION]
+    assert figure_group[1]["confirmed_text"] == FIGURE_CAPTION_OUT
+
+
+def test_output_c_figure_text_is_its_caption(client: TestClient) -> None:
+    fx = _setup_captions(client)
+
+    sop = _get_output(client, fx.bundle_id, "outputs/c")["docs"][0]
+
+    # 그림의 글은 캡션 자식(줄마다 자기 확정 글·상태)과 caption 한 글 — 그림 새 문장 자기 글(text)은 비어 있다
+    figure = _find_item(sop, "figure")
+    assert (figure["text"], figure["caption"]) == ("", FIGURE_CAPTION_OUT)
+    assert [(child["text"], child["status"], child["cell_row"]) for child in figure["children"]] == [
+        (FIGURE_CAPTION_OUT, "confirmed", None),
+    ]
+
+
+def test_output_c_table_caption_comes_before_cells(client: TestClient) -> None:
+    fx = _setup_captions(client)
+    sop = _get_output(client, fx.bundle_id, "outputs/c")["docs"][0]
+    _add_en_table_caption(fx, _find_item(sop, "table")["target_id"])
+
+    sop = _get_output(client, fx.bundle_id, "outputs/c")["docs"][0]
+
+    table = _find_item(sop, "table")
+    assert table["caption"] == f"{TABLE_CAPTION_OUT}\n{TABLE_CAPTION_EN_OUT}"
+    children = [(child["text"] or child["ai_text"], child["cell_row"], child["cell_col"]) for child in table["children"]]
+    assert children == [
+        (TABLE_CAPTION_OUT, None, None), (TABLE_CAPTION_EN_OUT, None, None),
+        *[(text, row, col) for row, line in enumerate(CAPTION_TABLE) for col, text in enumerate(line)],
+    ]
+
+
+def test_composed_and_written_items_carry_caption(client: TestClient) -> None:
+    fx = _setup_captions(client)
+    sop = _get_output(client, fx.bundle_id, f"outputs/c/docs/{fx.sop_id}", "en")
+    _add_en_table_caption(fx, _find_item(sop, "table")["target_id"])
+
+    sop = _get_output(client, fx.bundle_id, f"outputs/c/docs/{fx.sop_id}", "en")
+
+    # 캡션은 표 격자에 끼지 않고 caption 한 글로(여러 언어는 한국어·영어 순, 확정 글이 없으면 AI 글)
+    table, figure = _find_item(sop, "table"), _find_item(sop, "figure")
+    assert table["caption"] == f"{TABLE_CAPTION_OUT}\n{TABLE_CAPTION_EN_OUT}"
+    assert [cell["text"] for cell in table["table"]["cells"]] == [text for line in CAPTION_TABLE for text in line]
+    assert figure["caption"] == FIGURE_CAPTION_OUT
 
 
 def test_composed_doc_rejects_other_bundles_and_outsiders(client: TestClient) -> None:
@@ -1021,11 +1239,11 @@ def test_composed_doc_rejects_other_bundles_and_outsiders(client: TestClient) ->
 
 SUMMARY_KEYS = (
     "old_rows", "assigned", "no_destination", "duplicate", "deleted", "moved", "new", "translated", "confirmed_rate",
-    "single_language",
+    "single_language", "toc_deleted", "unwrapped_rows",
 )
 # 줄 기준 — 짝이 없어 단위마다 한 줄이고 표는 칸 넷을 묶어 한 줄이다: OLD-1 10줄(그림 보류·영어 미배정) + OLD-2 5줄.
-# 한 언어 글은 두 언어 문서(ko_en_separate)의 짝 없는 문장·제목 13개다(번역 새 문장이 없다)
-PROGRESS = {"total": 15, "unassigned": 1, "ai_suggested": 0, "confirmed": 13, "on_hold": 1, "single_language": 13}
+# 한 언어 글은 두 언어 문서(ko_en_separate)의 짝 없는 문장·제목 13개와 보류(처분은 배정)한 그림의 한글 캡션 하나다(번역 새 문장이 없다)
+PROGRESS = {"total": 15, "unassigned": 1, "ai_suggested": 0, "confirmed": 13, "on_hold": 1, "single_language": 14}
 EMPTY_PROGRESS = dict.fromkeys(PROGRESS, 0)
 
 
@@ -1038,7 +1256,7 @@ def test_summary_numbers(client: TestClient) -> None:
     # 한 벌 — 판 키가 없다. 줄 15(진행 숫자와 같은 줄), 확정 13(그림 보류·영어 미배정), 배정은 삭제·이동을 포함한다
     assert summary == {
         "old_rows": 15, "assigned": 14, "no_destination": 1, "duplicate": 1, "deleted": 5, "moved": 1, "new": 1,
-        "translated": 0, "confirmed_rate": 0.8667, "single_language": 13,
+        "translated": 0, "confirmed_rate": 0.8667, "single_language": 14, "toc_deleted": 0, "unwrapped_rows": 0,
     }
     assert set(summary) == set(SUMMARY_KEYS)
     assert summary["old_rows"] == progress["total"]
@@ -1066,7 +1284,44 @@ def test_human_translation_counts_in_summary(client: TestClient) -> None:
     summary = _get_output(client, fx.bundle_id, "summary")
 
     assert (summary["translated"], summary["no_destination"], summary["duplicate"]) == (1, 0, 1)
-    assert summary["single_language"] == get_bundle(client, fx.bundle_id)["progress"]["single_language"] == 12
+    assert summary["single_language"] == get_bundle(client, fx.bundle_id)["progress"]["single_language"] == 13
+
+
+def test_single_language_counts_a_one_language_caption(client: TestClient) -> None:
+    """캡션은 묶여 있어도 한 언어뿐이면 한 언어 숫자에 든다(표·그림 명세 §3.2) — 묶음이 배정됐을 때만, 다른 언어 새 문장이 생기면 빠진다."""
+    caption_text = "그림 1 합성 장비 배치도"
+    bundle_id = create_bundle(client, is_synthetic=True)["id"]
+    response = put_tobe(client, bundle_id, TOBE_DOCS[:1])
+    assert response.status_code == 200, response.text
+    sop_id = response.json()["docs"][0]["id"]
+    body = p(KO_ON) + p(EN_ON) + f"<w:p>{make_drawing_run('image1.png')}</w:p>" + p(caption_text, "Caption")
+    doc = _upload_ready(client, bundle_id, build_docx(body, media={"image1.png": TINY_PNG}), OLD1_NAME)
+    view = get_view(client, bundle_id, doc["id"])
+    assert view["document"]["language_layout"] == "ko_en_interleaved"
+    figure = next(unit for unit in view["units"] if unit["kind"] == "figure")
+    caption = find_unit(view, caption_text)
+
+    def count() -> tuple[int, int]:
+        summary = _get_output(client, bundle_id, "summary")
+        return summary["single_language"], get_bundle(client, bundle_id)["progress"]["single_language"]
+
+    before = count()
+    assign_as_is(client, bundle_id, figure, sop_id, slot_key="purpose")
+    assigned = count()
+
+    async def _translate(session: AsyncSession) -> None:
+        session.add(TargetSentence(
+            bundle_id=bundle_id, target_doc_id=sop_id, slot_key="purpose", lang="en", kind="sentence",
+            confirmed_text="Figure 1 Synthetic layout", origin="translation", translation_source_unit_id=caption["id"],
+            status="confirmed",
+        ))
+        await session.commit()
+
+    run_in_session(_translate)
+
+    assert before == (0, 0)
+    assert assigned == (1, 1)
+    assert count() == (0, 0)
 
 
 def test_translated_added_counts_as_translated_and_new(client: TestClient) -> None:
@@ -1103,6 +1358,31 @@ def test_progress_in_list_and_overview(client: TestClient) -> None:
     assert get_bundle(client, fx.bundle_id)["progress"] == PROGRESS
     assert get_bundle(client, empty)["progress"] == EMPTY_PROGRESS
     assert PROGRESS["total"] == sum(PROGRESS[status] for status in ("unassigned", "ai_suggested", "confirmed", "on_hold"))
+
+
+def test_output_c_item_counts_the_old_units_it_came_from(client: TestClient) -> None:
+    fx = _setup(client)
+    sop = _get_output(client, fx.bundle_id, "outputs/c")["docs"][0]
+
+    merged, single = _items_in(sop, "general_requirements.work")
+    (duplicate,) = _items_in(sop, "responsibilities")
+
+    # 옛 두 줄이 합쳐진 줄만 2 — 화면이 이 줄에 올리거나 고를 때 source_note를 꼬리표로 보인다
+    assert (merged["source_count"], single["source_count"], duplicate["source_count"]) == (2, 1, 1)
+    assert merged["source_note"] == "← OLD-1 §5.1, OLD-2 §5.1 (merged)"
+
+
+def _bullet_items(*levels: tuple[str, int]) -> list[CItem]:
+    return [CItem.model_construct(number_style=style, indent_level=level) for style, level in levels]
+
+
+def test_get_bullet_depths_count_bullets_apart_from_numbered_lines() -> None:
+    items = _bullet_items(("bullet", 5), ("numbered", 3), ("bullet", 1), ("omitted", 2), ("bullet", 9), ("bullet", 0), ("bullet", 2))
+
+    # 첫 글머리 기호는 0, 이어서 앞 글머리 기호 + 1(번호·생략 줄은 건너뜀), 상한 2, 내려갔다 다시 앞 줄 + 1까지
+    assert get_bullet_depths(items) == [0, None, 1, None, 2, 0, 1]
+    assert get_bullet_depths(_bullet_items(("bullet", 2), ("bullet", 2), ("bullet", 2))) == [0, 1, 2]
+    assert get_bullet_depths([]) == []
 
 
 # ── C 순서 바꾸기 ─────────────────────────────────────────────────────────────
@@ -1154,6 +1434,31 @@ def _list_top_target_ids(client: TestClient, bundle_id: int, doc_index: int) -> 
     """결과물 C 한 문서의 칸 새 문장이 아닌 새 문장 id — 한 벌이라 두 언어가 한 목록에, 순서대로."""
     doc = _get_output(client, bundle_id, "outputs/c")["docs"][doc_index]
     return [item["target_id"] for section in doc["sections"] for item in section["items"]]
+
+
+def test_figure_target_reorders_between_sentences_like_a_sentence(client: TestClient) -> None:
+    """표·그림 새 문장은 문장과 같은 순서 목록으로 문장 사이에 놓이고, 캡션은 칸 새 문장처럼 부모를 따른다(표·그림 명세 §4.3)."""
+    fx = _setup(client)
+    wi = _get_output(client, fx.bundle_id, "outputs/c", "ko")["docs"][1]
+    (split_a,), (duplicate,), (split_b, figure), () = [section["items"] for section in wi["sections"]]
+    (caption,) = figure["children"]  # 보류한 그림에도 딸린 캡션 단위의 캡션 새 문장이 그림 아래 자식이다
+    revision = get_bundle(client, fx.bundle_id)["revision"]
+    items = [
+        {"target_id": duplicate["target_id"]},
+        {"target_id": split_b["target_id"]},
+        {"target_id": figure["target_id"]},
+        {"target_id": split_a["target_id"], "wi_step": 2},
+    ]
+    body = {"revision": revision, "target_doc_id": fx.wi_id, "items": items}
+
+    with_caption = _put_order(client, fx.bundle_id, {**body, "items": [*items, {"target_id": caption["target_id"]}]})
+    response = _put_order(client, fx.bundle_id, body)
+
+    assert with_caption.json()["detail"]["unknown_target_ids"] == [caption["target_id"]]  # 순서 목록에 들지 않는다
+    assert response.status_code == 200, response.text
+    step_2 = _get_output(client, fx.bundle_id, "outputs/c", "ko")["docs"][1]["sections"][2]["items"]
+    assert [item["target_id"] for item in step_2] == [split_b["target_id"], figure["target_id"], split_a["target_id"]]
+    assert [(child["target_id"], child["text"]) for child in step_2[1]["children"]] == [(caption["target_id"], CAPTION)]
 
 
 def test_reorder_returns_the_doc_as_c_shows_it(client: TestClient) -> None:
@@ -1221,6 +1526,136 @@ def test_reorder_targets_rejects(client: TestClient) -> None:
     )
 
 
+def _load_places(target_doc_id: int) -> dict[int, tuple[str | None, int, int]]:
+    """새 문서의 모든 새 문장(칸 새 문장 포함) — id → (칸, 깊이, revision)."""
+
+    async def _load(session: AsyncSession) -> dict[int, tuple[str | None, int, int]]:
+        rows = await session.scalars(select(TargetSentence).where(TargetSentence.target_doc_id == target_doc_id))
+        return {row.id: (row.slot_key, row.indent_level, row.revision) for row in rows}
+
+    return run_in_session(_load)
+
+
+def _items_in(doc: dict, key: str) -> list[dict]:
+    """C 문서의 그 location_key 칸 items."""
+    return next(section["items"] for section in doc["sections"] if section["location_key"] == key)
+
+
+def _order_body(client: TestClient, fx: Fixture, doc_index: int, doc_id: int, edits: dict[int, dict]) -> dict:
+    """그 문서의 지금 순서 그대로, edits의 줄에만 필드를 더한 순서 저장 본문."""
+    items = [{"target_id": t, **edits.get(t, {})} for t in _list_top_target_ids(client, fx.bundle_id, doc_index)]
+    return {"revision": get_bundle(client, fx.bundle_id)["revision"], "target_doc_id": doc_id, "items": items}
+
+
+def test_reorder_moves_a_line_to_another_slot(client: TestClient) -> None:
+    fx = _setup(client)
+    sop = _get_output(client, fx.bundle_id, "outputs/c")["docs"][0]
+    (duplicate,) = _items_in(sop, "responsibilities")
+    target_id = duplicate["target_id"]
+    body = _order_body(client, fx, 0, fx.sop_id, {target_id: {"slot_key": "procedures.p1", "indent_level": 0}})
+    before = _load_places(fx.sop_id)[target_id]
+
+    response = _put_order(client, fx.bundle_id, body)
+
+    assert response.status_code == 200, response.text
+    out = next(i for i in response.json()["items"] if i["target_id"] == target_id)
+    assert out["slot_key"] == "procedures.p1"
+    # 글머리 기호가 기본인 4장의 줄이 번호가 기본인 절차로 가면 번호 줄이 된다
+    assert (duplicate["number_style"], out["number_style"]) == ("bullet", "numbered")
+    sop = _get_output(client, fx.bundle_id, "outputs/c")["docs"][0]
+    assert _items_in(sop, "responsibilities") == []
+    # 절 번호는 골격의 순서 — procedures = 6, 첫 절차 = 6.1
+    assert [(i["target_id"], i["number"]) for i in _items_in(sop, "procedures.p1")] == [(target_id, "6.1.1")]
+    assert _load_places(fx.sop_id)[target_id] == ("procedures.p1", 0, before[2] + 1)
+    assert response.json()["doc"] == sop
+    events = client.get(f"/api/bundles/{fx.bundle_id}/events", headers=AUTHOR).json()
+    assert (events[0]["action"], events[0]["target_ids"]) == ("targets.reorder", [fx.sop_id])
+
+
+def test_reorder_slot_move_takes_the_table_cells_and_resets_an_unsent_depth(client: TestClient) -> None:
+    fx = _setup(client)
+    sop = _get_output(client, fx.bundle_id, "outputs/c")["docs"][0]
+    line_id = _items_in(sop, "general_requirements.work")[-1]["target_id"]
+    (table,) = _items_in(sop, "general_requirements")
+    table_id, cell_ids = table["target_id"], [cell["target_id"] for cell in table["children"]]
+    assert _put_order(client, fx.bundle_id, _order_body(client, fx, 0, fx.sop_id, {line_id: {"indent_level": 1}})).status_code == 200
+    before = _load_places(fx.sop_id)
+    assert before[line_id][:2] == ("general_requirements.work", 1)
+
+    edits = {line_id: {"slot_key": "purpose"}, table_id: {"slot_key": "definitions", "indent_level": 2}}
+    response = _put_order(client, fx.bundle_id, _order_body(client, fx, 0, fx.sop_id, edits))
+
+    assert response.status_code == 200, response.text
+    places = _load_places(fx.sop_id)
+    assert places[line_id][:2] == ("purpose", 0)  # 보내지 않은 깊이는 step 옮기기처럼 0
+    assert places[table_id][:2] == ("definitions", 2)  # 보낸 깊이는 그 값
+    assert {places[c][0] for c in cell_ids} == {"definitions"}  # 칸 새 문장이 표를 따른다
+    assert all(places[c][2] == before[c][2] + 1 for c in [table_id, line_id, *cell_ids])
+    sop = response.json()["doc"]
+    assert [i["target_id"] for i in _items_in(sop, "definitions")] == [table_id]
+    assert [i["target_id"] for i in _items_in(sop, "general_requirements")] == []
+    assert sop == _get_output(client, fx.bundle_id, "outputs/c")["docs"][0]
+
+
+def test_reorder_slot_move_rejects(client: TestClient) -> None:
+    fx = _setup(client)
+    cases = {
+        "unknown": (0, fx.sop_id, "nope", "unknown_slot"),
+        "null": (0, fx.sop_id, None, "unknown_slot"),
+        "na": (0, fx.sop_id, "scope", "na_slot"),
+        "na_parent": (0, fx.sop_id, "document_relationships.references", "na_slot"),
+        # 묶음 제목(7)과 자동 목록(7.2)은 줄을 받지 않는다 — N/A보다 먼저 걸린다
+        "group": (0, fx.sop_id, "document_relationships", "slot_not_assignable"),
+        "auto_list": (0, fx.sop_id, "document_relationships.work_instructions", "slot_not_assignable"),
+        "wi": (1, fx.wi_id, "purpose", "slot_not_allowed"),
+    }
+    revision = get_bundle(client, fx.bundle_id)["revision"]
+    places = {doc_id: _load_places(doc_id) for doc_id in (fx.sop_id, fx.wi_id, fx.match_id)}
+    for name, (doc_index, doc_id, slot_key, code) in cases.items():
+        first = _list_top_target_ids(client, fx.bundle_id, doc_index)[0]
+
+        response = _put_order(client, fx.bundle_id, _order_body(client, fx, doc_index, doc_id, {first: {"slot_key": slot_key}}))
+
+        assert (response.status_code, response.json()["detail"]) == (422, {"code": code, "target_ids": [first]}), name
+        assert get_bundle(client, fx.bundle_id)["revision"] == revision, name
+        assert {d: _load_places(d) for d in places} == places, name
+
+
+def test_reorder_slot_move_rejects_a_line_of_an_already_written_document(client: TestClient) -> None:
+    fx = _setup(client)
+    first = _list_top_target_ids(client, fx.bundle_id, 2)[0]
+
+    async def _make_own_origin(session: AsyncSession) -> None:
+        await session.execute(update(TargetSentence).where(TargetSentence.id == first).values(origin="units"))
+        await session.commit()
+
+    run_in_session(_make_own_origin)  # 입구 2 줄은 늘 new_doc이라 출처 규칙만으로도 거절된다 — 입구 규칙만 보려고 출처를 바꾼다
+    written = _get_output(client, fx.bundle_id, "outputs/c")["docs"][2]
+    assert written["entrance"] == "match"
+    assert next(i for s in written["sections"] for i in s["items"] if i["target_id"] == first)["origin"] == "units"
+    revision = get_bundle(client, fx.bundle_id)["revision"]
+
+    response = _put_order(client, fx.bundle_id, _order_body(client, fx, 2, fx.match_id, {first: {"slot_key": "purpose"}}))
+
+    assert (response.status_code, response.json()["detail"]) == (422, {"code": "slot_not_allowed", "target_ids": [first]})
+    assert get_bundle(client, fx.bundle_id)["revision"] == revision
+
+
+def test_reorder_same_slot_keeps_depth_and_revision(client: TestClient) -> None:
+    fx = _setup(client)
+    sop = _get_output(client, fx.bundle_id, "outputs/c")["docs"][0]
+    (line,) = _items_in(sop, "responsibilities")
+    line_id = line["target_id"]
+    assert _put_order(client, fx.bundle_id, _order_body(client, fx, 0, fx.sop_id, {line_id: {"indent_level": 1}})).status_code == 200
+    before = _load_places(fx.sop_id)[line_id]
+    assert before[:2] == ("responsibilities", 1)
+
+    response = _put_order(client, fx.bundle_id, _order_body(client, fx, 0, fx.sop_id, {line_id: {"slot_key": "responsibilities"}}))
+
+    assert response.status_code == 200, response.text
+    assert _load_places(fx.sop_id)[line_id] == before  # 지금 칸을 보내도 옮김이 아니다 — 깊이도 줄 revision도 그대로
+
+
 # ── 큰 묶음의 질의 수 ─────────────────────────────────────────────────────────
 
 
@@ -1260,3 +1695,615 @@ def test_outputs_use_bounded_queries(client: TestClient) -> None:
     assert 0 < len(output_statements) <= 30, len(output_statements)
     assert 0 < len(preview_statements) <= 30, len(preview_statements)
     assert 0 < len(list_statements) <= 30, len(list_statements)
+
+
+# --- 표·그림 번호 다시 매기기와 참조 ---
+
+TABLE_3 = "표 3. 운전 조건 (Table 3. Operating conditions)"
+TABLE_4 = "Table 4: Rotor limits"
+FIGURE_5 = "그림 5. 로터 장착 (Figure 5. Rotor mounting)"
+FIGURE_6 = "Fig.6 Lid lock"
+REF_TABLE_3 = "운전 조건은 표 3을 따른다."
+PLACE_REF = "회전 속도는 아래 표를 따른다."
+MISSING_REF = "표 9 참조."
+GENERAL = "general_requirements"
+
+
+@cache
+def _read_old_7() -> tuple[str, bytes]:
+    """합성 OLD-7(표 3·4, 캡션 없는 표, 그림 5·6, 참조 문장) — 생성이 느려 한 번만 만든다."""
+    with tempfile.TemporaryDirectory() as tmp:
+        doc = next(doc for doc in build_synthetic_bundle(pathlib.Path(tmp)).documents if "OLD-7" in doc.path.name)
+        return doc.path.name, doc.path.read_bytes()
+
+
+class RenumberFixture(NamedTuple):
+    bundle_id: int
+    sop_id: int
+    wi_id: int
+    view: dict
+
+
+def _setup_old_7(client: TestClient) -> RenumberFixture:
+    bundle_id = create_bundle(client, is_synthetic=True)["id"]
+    response = put_tobe(client, bundle_id, TOBE_DOCS)
+    assert response.status_code == 200, response.text
+    ids = {doc["code"]: doc["id"] for doc in response.json()["docs"]}
+    name, data = _read_old_7()
+    doc = _upload_ready(client, bundle_id, data, name)
+    return RenumberFixture(bundle_id, ids["SOP-NEW"], ids["WI-01"], get_view(client, bundle_id, doc["id"]))
+
+
+def _bundle_unit(fx: RenumberFixture, caption: str) -> dict:
+    group_unit_id = find_unit(fx.view, caption)["group_unit_id"]
+    return next(unit for unit in fx.view["units"] if unit["id"] == group_unit_id)
+
+
+def _captionless_table(fx: RenumberFixture) -> dict:
+    """캡션 없는 데이터 표 — "회전 속도는 아래 표를 따른다."가 올릴 때 이은 표."""
+    target_unit_id = find_unit(fx.view, PLACE_REF)["caption_refs"][0]["target_unit_id"]
+    return next(unit for unit in fx.view["units"] if unit["id"] == target_unit_id)
+
+
+def _assign_written(
+    client: TestClient, fx: RenumberFixture, unit: dict, text: str, lang: str, slot_key: str = GENERAL,
+    change_type: str | None = None,
+) -> None:
+    """unit을 원문 그대로 보내되 새 문장 글을 text로(문장) 또는 캡션을 text로 써 넣어(묶음) 확정한다."""
+    group = get_group_by_unit(client, fx.bundle_id, unit["id"])
+    entry = next(member for member in group["units"] if member["unit_id"] == unit["id"])
+    targets, caption_ids = build_as_is_targets(client, fx.bundle_id, unit, fx.sop_id, slot_key=slot_key)
+    assert not caption_ids
+    if unit["kind"] in ("table", "figure"):
+        targets.append({
+            "key": "caption", "target_doc_id": fx.sop_id, "slot_key": slot_key, "parent_key": "t", "lang": lang,
+            "text": text, "source_unit_ids": [],
+        })
+    else:
+        targets[0].update(text=text, lang=lang, change_type=change_type or "rewritten")
+    response = save_group(client, fx.bundle_id, {
+        "action": "confirm", "units": [{"unit_id": unit["id"], "revision": entry["decision"]["revision"], "disposition": "assigned"}],
+        "targets": targets,
+    })
+    assert response.status_code == 200, response.text
+
+
+def _renumber(bundle_id: int, lang: Lang = "ko") -> tuple[BundleSnapshot, Renumbering]:
+    snap = run_in_session(partial(load_bundle_snapshot, bundle_id=bundle_id))
+    return snap, build_renumbering(_build_index(snap), LABELS[lang])
+
+
+def _target_of(snap: BundleSnapshot, unit_id: int, kind: str | None = None) -> int:
+    return next(
+        target.id for target in snap.targets.values()
+        if unit_id in target.source_unit_ids and (kind is None or target.kind == kind)
+    )
+
+
+def _caption_target_of(snap: BundleSnapshot, parent_id: int) -> int:
+    return next(
+        target.id for target in snap.targets.values()
+        if target.parent_target_id == parent_id and target.cell_row is None
+    )
+
+
+def _codes(renum: Renumbering) -> list[tuple[str, int | None, int]]:
+    return [(warning.code, warning.target_id, warning.unit_id) for warning in renum.warnings]
+
+
+def _assign_main_four(client: TestClient, fx: RenumberFixture) -> dict[str, dict]:
+    units = {caption: _bundle_unit(fx, caption) for caption in (TABLE_3, TABLE_4, FIGURE_5, FIGURE_6)}
+    for unit in units.values():
+        assign_as_is(client, fx.bundle_id, unit, fx.sop_id, slot_key=GENERAL)
+    return units
+
+
+def test_tables_and_figures_renumber_per_document_in_output_order(client: TestClient) -> None:
+    fx = _setup_old_7(client)
+    units = _assign_main_four(client, fx)
+
+    snap, renum = _renumber(fx.bundle_id)
+
+    table3, table4, figure5, figure6 = (_target_of(snap, units[caption]["id"]) for caption in (TABLE_3, TABLE_4, FIGURE_5, FIGURE_6))
+    assert renum.numbers == {table3: 1, table4: 2, figure5: 1, figure6: 2}
+    assert renum.texts[_caption_target_of(snap, table3)].startswith("표 1. 운전 조건")
+    # 캡션 안의 같은 번호 영문 표기도 같은 번호다
+    assert renum.texts[_caption_target_of(snap, table3)] == "표 1. 운전 조건 (Table 1. Operating conditions)"
+    assert renum.texts[_caption_target_of(snap, table4)] == "Table 2: Rotor limits"
+    assert renum.texts[_caption_target_of(snap, figure6)] == "Fig.2 Lid lock"
+    assert renum.changes[table3] == ("표 3", "표 1")
+    assert renum.changes[figure6] == ("그림 6", "그림 2")
+    assert renum.warnings == ()
+
+
+def test_reference_sentence_follows_the_new_number(client: TestClient) -> None:
+    fx = _setup_old_7(client)
+    _assign_main_four(client, fx)
+    ref = find_unit(fx.view, REF_TABLE_3)
+    assign_as_is(client, fx.bundle_id, ref, fx.sop_id, slot_key=GENERAL)
+
+    snap, renum = _renumber(fx.bundle_id)
+
+    assert renum.texts[_target_of(snap, ref["id"])] == "운전 조건은 표 1을 따른다."
+    assert renum.warnings == ()
+
+
+def test_written_caption_without_number_gets_a_prefix(client: TestClient) -> None:
+    fx = _setup_old_7(client)
+    assign_as_is(client, fx.bundle_id, _bundle_unit(fx, TABLE_3), fx.sop_id, slot_key=GENERAL)
+    captionless = _captionless_table(fx)
+    _assign_written(client, fx, captionless, "운전 조건", "ko")
+
+    snap, renum = _renumber(fx.bundle_id)
+
+    table = _target_of(snap, captionless["id"], "table")
+    assert renum.numbers[table] == 2
+    assert renum.changes[table] == ("", "표 2")
+    assert renum.texts[_caption_target_of(snap, table)] == "표 2. 운전 조건"
+
+
+def test_reference_to_a_deleted_table_is_broken(client: TestClient) -> None:
+    fx = _setup_old_7(client)
+    table3 = _bundle_unit(fx, TABLE_3)
+    _bulk(client, fx.bundle_id, "delete", [table3], DELETE_REASON)
+    ref = find_unit(fx.view, REF_TABLE_3)
+    assign_as_is(client, fx.bundle_id, ref, fx.sop_id, slot_key=GENERAL)
+
+    snap, renum = _renumber(fx.bundle_id)
+
+    ref_target = _target_of(snap, ref["id"])
+    assert _codes(renum) == [("caption_ref_broken", ref_target, ref["id"])]
+    assert ref_target not in renum.texts
+
+
+def test_reference_to_a_table_in_another_document_is_broken(client: TestClient) -> None:
+    fx = _setup_old_7(client)
+    assign_as_is(client, fx.bundle_id, _bundle_unit(fx, TABLE_3), fx.wi_id, wi_step=None, wi_part="instruction")
+    ref = find_unit(fx.view, REF_TABLE_3)
+    assign_as_is(client, fx.bundle_id, ref, fx.sop_id, slot_key=GENERAL)
+
+    snap, renum = _renumber(fx.bundle_id)
+
+    assert _codes(renum) == [("caption_ref_broken", _target_of(snap, ref["id"]), ref["id"])]
+
+
+def test_reference_to_a_missing_number_is_unresolved_and_unassigned_refs_are_silent(client: TestClient) -> None:
+    fx = _setup_old_7(client)
+    missing = find_unit(fx.view, MISSING_REF)
+    assign_as_is(client, fx.bundle_id, missing, fx.sop_id, slot_key=GENERAL)
+
+    snap, renum = _renumber(fx.bundle_id)
+
+    # 표 3 참조 문장은 배정하지 않아(새 문장 없음) 대상 표가 없어도 경고하지 않는다
+    assert _codes(renum) == [("caption_ref_unresolved", _target_of(snap, missing["id"]), missing["id"])]
+    assert _target_of(snap, missing["id"]) not in renum.texts
+
+
+def test_ambiguous_reference_is_left_and_warned(client: TestClient) -> None:
+    """같은 번호 캡션이 둘이라 대상 없이 남은 참조 — 바꾸지 않고 경고한다."""
+    bundle_id = create_bundle(client, is_synthetic=True)["id"]
+    sop_id = put_tobe(client, bundle_id, TOBE_DOCS).json()["docs"][0]["id"]
+    body = (
+        p("표 1. 합성 첫 표", "Caption") + tbl([["가", "나"]]) + p("표 1. 합성 둘째 표", "Caption") + tbl([["다", "라"]])
+        + p("합성 값은 표 1을 따른다.")
+    )
+    doc = _upload_ready(client, bundle_id, build_docx(body), "SYNTHETIC_OLD-1_Ambiguous.docx")
+    view = get_view(client, bundle_id, doc["id"])
+    fx = RenumberFixture(bundle_id, sop_id, 0, view)
+    for caption in ("표 1. 합성 첫 표", "표 1. 합성 둘째 표"):
+        assign_as_is(client, bundle_id, _bundle_unit(fx, caption), sop_id, slot_key=GENERAL)
+    ref = find_unit(view, "합성 값은 표 1을 따른다.")
+    assign_as_is(client, bundle_id, ref, sop_id, slot_key=GENERAL)
+
+    snap, renum = _renumber(bundle_id)
+
+    ref_target = _target_of(snap, ref["id"])
+    assert _codes(renum) == [("caption_ref_ambiguous", ref_target, ref["id"])]
+    assert ref_target not in renum.texts
+
+
+def test_same_number_refs_to_different_tables_in_one_sentence_are_ambiguous(client: TestClient) -> None:
+    """합친 새 문장 하나에 같은 원문 번호 참조 둘이 서로 다른 표를 가리키면(사람이 하나를 다시 이음) 어느 쪽인지 정할 수 없다."""
+    bundle_id = create_bundle(client, is_synthetic=True)["id"]
+    sop_id = put_tobe(client, bundle_id, TOBE_DOCS).json()["docs"][0]["id"]
+    body = (
+        p("표 1. 합성 첫 표", "Caption") + tbl([["가", "나"]]) + p("표 2. 합성 둘째 표", "Caption") + tbl([["다", "라"]])
+        + p("합성 값은 표 1을 본다.") + p("합성 한계도 표 1을 본다.")
+    )
+    doc = _upload_ready(client, bundle_id, build_docx(body), "SYNTHETIC_OLD-1_Relinked.docx")
+    view = get_view(client, bundle_id, doc["id"])
+    fx = RenumberFixture(bundle_id, sop_id, 0, view)
+    second_table = _bundle_unit(fx, "표 2. 합성 둘째 표")
+    for caption in ("표 1. 합성 첫 표", "표 2. 합성 둘째 표"):
+        assign_as_is(client, bundle_id, _bundle_unit(fx, caption), sop_id, slot_key=GENERAL)
+    first, second = find_unit(view, "합성 값은 표 1을 본다."), find_unit(view, "합성 한계도 표 1을 본다.")
+    ref_id = second["caption_refs"][0]["id"]
+    revision = get_view(client, bundle_id, doc["id"])["document"]["revision"]
+    relinked = client.patch(
+        f"/api/bundles/{bundle_id}/documents/{doc['id']}/caption-refs/{ref_id}",
+        json={"revision": revision, "target_unit_id": second_table["id"]}, headers=AUTHOR,
+    )
+    assert relinked.status_code == 200, relinked.text
+    _save(client, bundle_id, [_unit_in(first), _unit_in(second)], [
+        _target("m", sop_id, [first, second], slot_key=GENERAL, lang="ko", text="합성 값과 한계는 표 1을 본다.",
+                change_type="rewritten"),
+    ])
+
+    snap, renum = _renumber(bundle_id)
+
+    merged = _target_of(snap, first["id"])
+    assert sorted(_codes(renum)) == [
+        ("caption_ref_ambiguous", merged, first["id"]), ("caption_ref_ambiguous", merged, second["id"]),
+    ]
+    assert merged not in renum.texts
+
+
+def test_edited_text_without_token_is_left_and_warned(client: TestClient) -> None:
+    fx = _setup_old_7(client)
+    _assign_main_four(client, fx)
+    ref = find_unit(fx.view, REF_TABLE_3)
+    _assign_written(client, fx, ref, "운전 조건은 위 표를 따른다.", "ko")
+
+    snap, renum = _renumber(fx.bundle_id)
+
+    ref_target = _target_of(snap, ref["id"])
+    assert _codes(renum) == [("caption_ref_text_changed", ref_target, ref["id"])]
+    assert ref_target not in renum.texts
+
+
+def test_place_reference_out_of_order_warns(client: TestClient) -> None:
+    fx = _setup_old_7(client)
+    captionless = _captionless_table(fx)
+    place = find_unit(fx.view, PLACE_REF)
+    # "아래 표"인데 표가 앞 칸(purpose)으로 갔다
+    _assign_written(client, fx, captionless, "회전 속도", "ko", slot_key="purpose")
+    assign_as_is(client, fx.bundle_id, place, fx.sop_id, slot_key=GENERAL)
+
+    snap, renum = _renumber(fx.bundle_id)
+
+    assert _codes(renum) == [("caption_ref_order", _target_of(snap, place["id"]), place["id"])]
+
+
+def test_place_reference_in_order_is_quiet(client: TestClient) -> None:
+    fx = _setup_old_7(client)
+    place = find_unit(fx.view, PLACE_REF)
+    assign_as_is(client, fx.bundle_id, place, fx.sop_id, slot_key=GENERAL)
+    _assign_written(client, fx, _captionless_table(fx), "회전 속도", "ko")
+
+    _, renum = _renumber(fx.bundle_id)
+
+    assert renum.warnings == ()
+
+
+def test_confirmed_text_is_never_rewritten(client: TestClient) -> None:
+    fx = _setup_old_7(client)
+    table4 = _bundle_unit(fx, TABLE_4)
+    assign_as_is(client, fx.bundle_id, table4, fx.sop_id, slot_key=GENERAL)
+    ref = find_unit(fx.view, "Table 4 lists the rotor limits.")
+    assign_as_is(client, fx.bundle_id, ref, fx.sop_id, slot_key=GENERAL)
+
+    output = _get_output(client, fx.bundle_id, "outputs/c", "ko")
+    rows = _get_output(client, fx.bundle_id, "outputs/a", "ko")
+
+    sop = output["docs"][0]
+    table = _find_item(sop, "table")
+    assert table["caption"] == "Table 1: Rotor limits"
+    assert [child["text"] for child in table["children"] if child["cell_row"] is None] == ["Table 1: Rotor limits"]
+    assert any(item["text"] == "Table 1 lists the rotor limits." for section in sop["sections"] for item in section["items"])
+    caption_line = next(row for row in rows if row["row_kind"] == "caption" and row["source_text"] == TABLE_4)
+    # 옛 문서 칸은 원문 번호 그대로, 새 문장 칸만 다시 매긴 번호
+    assert (caption_line["source_text"], caption_line["confirmed_text"]) == (TABLE_4, "Table 1: Rotor limits")
+    stored = {target["text"] for target in _load_targets(fx.sop_id)}
+    assert {TABLE_4, "Table 4 lists the rotor limits."} <= stored
+    assert not {"Table 1: Rotor limits", "Table 1 lists the rotor limits."} & stored
+
+
+def test_composed_doc_shows_renumbered_caption_and_change(client: TestClient) -> None:
+    fx = _setup_old_7(client)
+    assign_as_is(client, fx.bundle_id, _bundle_unit(fx, TABLE_4), fx.sop_id, slot_key=GENERAL)
+
+    response = client.get(f"/api/bundles/{fx.bundle_id}/outputs/c/docs/{fx.sop_id}", params={"lang": "ko"}, headers=AUTHOR)
+
+    assert response.status_code == 200, response.text
+    table = _find_item(response.json(), "table")
+    assert table["caption"] == "Table 1: Rotor limits"
+    assert table["renumber"] == {"from_label": "표 4", "to_label": "표 1"}
+
+
+def test_output_c_item_carries_the_same_renumber(client: TestClient) -> None:
+    fx = _setup_old_7(client)
+    assign_as_is(client, fx.bundle_id, _bundle_unit(fx, TABLE_4), fx.sop_id, slot_key=GENERAL)
+
+    response = client.get(f"/api/bundles/{fx.bundle_id}/outputs/c", params={"lang": "en"}, headers=AUTHOR)
+
+    assert response.status_code == 200, response.text
+    items = [item for doc in response.json()["docs"] for section in doc["sections"] for item in section["items"]]
+    table = next(item for item in items if item["kind"] == "table")
+    assert table["renumber"] == {"from_label": "Table 4", "to_label": "Table 1"}
+    assert all(item["renumber"] is None for item in items if item["kind"] == "sentence")
+
+
+def _upload_small(client: TestClient, body: str, name: str) -> RenumberFixture:
+    bundle_id = create_bundle(client, is_synthetic=True)["id"]
+    sop_id = put_tobe(client, bundle_id, TOBE_DOCS).json()["docs"][0]["id"]
+    doc = _upload_ready(client, bundle_id, build_docx(body), name)
+    return RenumberFixture(bundle_id, sop_id, 0, get_view(client, bundle_id, doc["id"]))
+
+
+def _add_empty_target(fx: RenumberFixture, unit_id: int) -> int:
+    """글이 아직 없는 AI 제안 새 문장 하나를 unit에서 — 글이 없으니 참조를 판정할 것이 없다."""
+
+    async def _insert(session: AsyncSession) -> int:
+        target = TargetSentence(
+            bundle_id=fx.bundle_id, target_doc_id=fx.sop_id, slot_key=GENERAL, lang="ko", kind="sentence",
+            ai_text="", origin="units", change_type="rewritten", status="ai_suggested",
+        )
+        session.add(target)
+        await session.flush()
+        session.add(TargetSource(target_id=target.id, unit_id=unit_id, seq=0))
+        await session.commit()
+        return target.id
+
+    return run_in_session(_insert)
+
+
+def test_split_reference_warns_only_when_no_piece_keeps_the_token(client: TestClient) -> None:
+    fx = _setup_old_7(client)
+    assign_as_is(client, fx.bundle_id, _bundle_unit(fx, TABLE_3), fx.sop_id, slot_key=GENERAL)
+    ref = find_unit(fx.view, REF_TABLE_3)
+    _save(client, fx.bundle_id, [_unit_in(ref)], [
+        _target("a", fx.sop_id, [ref], slot_key=GENERAL, lang="ko", text="운전 조건은 표 3을 따른다.", change_type="rewritten"),
+        _target("b", fx.sop_id, [ref], slot_key=GENERAL, lang="ko", text="조건을 지킨다.", change_type="rewritten"),
+    ])
+    empty = _add_empty_target(fx, ref["id"])
+
+    snap, renum = _renumber(fx.bundle_id)
+
+    pieces = {target.confirmed_text: target.id for target in snap.targets.values() if ref["id"] in target.source_unit_ids}
+    assert renum.texts[pieces["운전 조건은 표 3을 따른다."]] == "운전 조건은 표 1을 따른다."
+    assert pieces["조건을 지킨다."] not in renum.texts and empty not in renum.texts
+    assert renum.warnings == ()
+
+
+def test_reference_without_text_yet_does_not_warn(client: TestClient) -> None:
+    fx = _setup_old_7(client)
+    assign_as_is(client, fx.bundle_id, _bundle_unit(fx, TABLE_3), fx.sop_id, slot_key=GENERAL)
+    _add_empty_target(fx, find_unit(fx.view, REF_TABLE_3)["id"])
+
+    _, renum = _renumber(fx.bundle_id)
+
+    assert renum.warnings == ()
+
+
+def test_reference_inside_a_table_cell_follows_the_new_number(client: TestClient) -> None:
+    fx = _upload_small(client, (
+        p("표 3. 합성 첫 표", "Caption") + tbl([["가", "나"]])
+        + p("표 4. 합성 둘째 표", "Caption") + tbl([["표 3 참조", "라"]])
+    ), "SYNTHETIC_OLD-1_CellRef.docx")
+    for caption in ("표 3. 합성 첫 표", "표 4. 합성 둘째 표"):
+        assign_as_is(client, fx.bundle_id, _bundle_unit(fx, caption), fx.sop_id, slot_key=GENERAL)
+    cell = find_unit(fx.view, "표 3 참조")
+
+    snap, renum = _renumber(fx.bundle_id)
+
+    assert renum.texts[_target_of(snap, cell["id"])] == "표 1 참조"
+    assert renum.warnings == ()
+
+
+def test_english_labels_carry_the_same_numbers(client: TestClient) -> None:
+    fx = _setup_old_7(client)
+    units = _assign_main_four(client, fx)
+
+    _, ko = _renumber(fx.bundle_id, "ko")
+    snap, en = _renumber(fx.bundle_id, "en")
+
+    table3 = _target_of(snap, units[TABLE_3]["id"])
+    assert en.numbers == ko.numbers and en.texts == ko.texts
+    assert en.changes[table3] == ("Table 3", "Table 1")
+    assert en.changes[_target_of(snap, units[FIGURE_6]["id"])] == ("Figure 6", "Figure 2")
+
+
+def test_unlinked_number_in_the_same_sentence_stays(client: TestClient) -> None:
+    fx = _upload_small(client, (
+        p("표 3. 합성 표", "Caption") + tbl([["가", "나"]]) + p("합성 값은 표 3 및 표 9를 따른다.")
+    ), "SYNTHETIC_OLD-1_Unrelated.docx")
+    assign_as_is(client, fx.bundle_id, _bundle_unit(fx, "표 3. 합성 표"), fx.sop_id, slot_key=GENERAL)
+    ref = find_unit(fx.view, "합성 값은 표 3 및 표 9를 따른다.")
+    assign_as_is(client, fx.bundle_id, ref, fx.sop_id, slot_key=GENERAL)
+
+    snap, renum = _renumber(fx.bundle_id)
+
+    ref_target = _target_of(snap, ref["id"])
+    assert renum.texts[ref_target] == "합성 값은 표 1 및 표 9를 따른다."
+    assert _codes(renum) == [("caption_ref_unresolved", ref_target, ref["id"])]  # 표 9는 원문에 없다
+
+
+def _upload_with_figure(client: TestClient, body: str, name: str) -> RenumberFixture:
+    bundle_id = create_bundle(client, is_synthetic=True)["id"]
+    sop_id = put_tobe(client, bundle_id, TOBE_DOCS).json()["docs"][0]["id"]
+    doc = _upload_ready(client, bundle_id, build_docx(body, media={"image1.png": TINY_PNG}), name)
+    return RenumberFixture(bundle_id, sop_id, 0, get_view(client, bundle_id, doc["id"]))
+
+
+def _figure_unit(fx: RenumberFixture) -> dict:
+    return next(unit for unit in fx.view["units"] if unit["kind"] == "figure")
+
+
+def test_compound_caption_heads_are_left_alone(client: TestClient) -> None:
+    # "Table 3-1"·"표 3.2"·"Fig. 4.1"은 장·절 번호 — 머리 3으로 읽어 "Table 1-1"로 바꾸면 안 된다
+    fx = _upload_with_figure(client, (
+        p("Table 3-1. Flow rates", "Caption") + tbl([["가", "나"]]) + p("표 3.2 운전 조건", "Caption") + tbl([["다", "라"]])
+        + f"<w:p>{make_drawing_run('image1.png')}</w:p>" + p("Fig. 4.1 Pump", "Caption") + p("Flow follows Table 3.")
+    ), "SYNTHETIC_OLD-1_Compound.docx")
+    units = [_bundle_unit(fx, caption) for caption in ("Table 3-1. Flow rates", "표 3.2 운전 조건")] + [_figure_unit(fx)]
+    for unit in units:
+        assign_as_is(client, fx.bundle_id, unit, fx.sop_id, slot_key=GENERAL)
+    ref = find_unit(fx.view, "Flow follows Table 3.")
+    assign_as_is(client, fx.bundle_id, ref, fx.sop_id, slot_key=GENERAL)
+
+    snap, renum = _renumber(fx.bundle_id)
+
+    bundles = [_target_of(snap, unit["id"]) for unit in units]
+    assert all(bundle in renum.numbers for bundle in bundles)  # 세기는 한다
+    assert not {bundle for bundle in bundles} & renum.changes.keys()
+    assert not {_caption_target_of(snap, bundle) for bundle in bundles} & renum.texts.keys()
+    # 본문 "Table 3"은 "Table 3-1" 캡션에 이어지지 않는다
+    ref_target = _target_of(snap, ref["id"])
+    assert _codes(renum) == [("caption_ref_unresolved", ref_target, ref["id"])]
+    assert ref_target not in renum.texts
+
+
+def test_bracketed_caption_renumbers_its_own_number_without_a_prefix(client: TestClient) -> None:
+    fx = _upload_with_figure(client, (
+        p("표 1. 합성 첫 표", "Caption") + tbl([["가", "나"]]) + p("<표 3> 운전 조건", "Caption") + tbl([["다", "라"]])
+        + f"<w:p>{make_drawing_run('image1.png')}</w:p>" + p("[그림 2] 배관도", "Caption") + p("운전 조건은 표 3을 따른다.")
+    ), "SYNTHETIC_OLD-1_Bracketed.docx")
+    units = [_bundle_unit(fx, caption) for caption in ("표 1. 합성 첫 표", "<표 3> 운전 조건")] + [_figure_unit(fx)]
+    for unit in units:
+        assign_as_is(client, fx.bundle_id, unit, fx.sop_id, slot_key=GENERAL)
+    ref = find_unit(fx.view, "운전 조건은 표 3을 따른다.")
+    assign_as_is(client, fx.bundle_id, ref, fx.sop_id, slot_key=GENERAL)
+
+    snap, renum = _renumber(fx.bundle_id)
+
+    _, table, figure = (_target_of(snap, unit["id"]) for unit in units)
+    assert renum.texts[_caption_target_of(snap, table)] == "<표 2> 운전 조건"
+    assert renum.texts[_caption_target_of(snap, figure)] == "[그림 1] 배관도"
+    assert renum.changes[table] == ("표 3", "표 2") and renum.changes[figure] == ("그림 2", "그림 1")
+    # 본문 "표 3"은 올릴 때 "<표 3>" 캡션의 표에 이어져 같은 번호를 따라간다
+    assert renum.texts[_target_of(snap, ref["id"])] == "운전 조건은 표 2을 따른다."
+    assert renum.warnings == ()
+
+
+def test_reference_follows_a_caption_attached_after_upload(client: TestClient) -> None:
+    fx = _upload_small(client, (
+        p("Rotor values follow Table 3.") + p("표 6 기존", "Caption") + tbl([["합성 칸 하나."]]) + p("Table 3 Test results")
+    ), "SYNTHETIC_OLD-1_LateCaption.docx")
+    table = next(unit for unit in fx.view["units"] if unit["kind"] == "table")
+    doc_id = fx.view["document"]["id"]
+    result = client.post(
+        f"/api/bundles/{fx.bundle_id}/documents/{doc_id}/edits",
+        json={"revision": fx.view["document"]["revision"], "confirm": False,
+              "op": {"type": "attach_caption", "unit_id": find_unit(fx.view, "Table 3 Test results")["id"],
+                     "bundle_unit_id": table["id"]}},
+        headers=AUTHOR,
+    )
+    assert result.status_code == 200, result.text
+    view = get_view(client, fx.bundle_id, doc_id)
+    ref = find_unit(view, "Rotor values follow Table 3.")
+    assert ref["caption_refs"][0]["target_unit_id"] == table["id"]  # 문서 보기 카드도 같은 표를 보인다
+    assign_as_is(client, fx.bundle_id, next(u for u in view["units"] if u["id"] == table["id"]), fx.sop_id, slot_key=GENERAL)
+    assign_as_is(client, fx.bundle_id, ref, fx.sop_id, slot_key=GENERAL)
+
+    snap, renum = _renumber(fx.bundle_id)
+
+    assert renum.texts[_target_of(snap, ref["id"])] == "Rotor values follow Table 1."
+    assert renum.warnings == ()
+
+
+MERGE_BODY = (
+    p("표 3. 합성 첫 표", "Caption") + tbl([["가", "나"]]) + p("표 4. 합성 둘째 표", "Caption") + tbl([["다", "라"]])
+    + p("합성 값은 표 3을 본다.") + p("합성 한계도 표 3을 본다.")
+)
+
+
+def _merge_two_refs(client: TestClient, fx: RenumberFixture, first: dict, second: dict) -> None:
+    _save(client, fx.bundle_id, [_unit_in(first), _unit_in(second)], [
+        _target("m", fx.sop_id, [first, second], slot_key=GENERAL, lang="ko", text="합성 값과 한계는 표 3을 본다.",
+                change_type="rewritten"),
+    ])
+
+
+def test_merged_sentence_with_a_broken_same_number_reference_is_left(client: TestClient) -> None:
+    """합친 새 문장의 "표 3" 토큰은 두 출처의 것 — 하나가 지운 표를 가리키면 다른 하나의 번호를 그 토큰에 쓰지 않는다."""
+    fx = _upload_small(client, MERGE_BODY, "SYNTHETIC_OLD-1_MergedBroken.docx")
+    doc_id = fx.view["document"]["id"]
+    first, second = find_unit(fx.view, "합성 값은 표 3을 본다."), find_unit(fx.view, "합성 한계도 표 3을 본다.")
+    second_table = _bundle_unit(fx, "표 4. 합성 둘째 표")
+    revision = get_view(client, fx.bundle_id, doc_id)["document"]["revision"]
+    relinked = client.patch(
+        f"/api/bundles/{fx.bundle_id}/documents/{doc_id}/caption-refs/{second['caption_refs'][0]['id']}",
+        json={"revision": revision, "target_unit_id": second_table["id"]}, headers=AUTHOR,
+    )
+    assert relinked.status_code == 200, relinked.text
+    _bulk(client, fx.bundle_id, "delete", [second_table], DELETE_REASON)
+    assign_as_is(client, fx.bundle_id, _bundle_unit(fx, "표 3. 합성 첫 표"), fx.sop_id, slot_key=GENERAL)
+    _merge_two_refs(client, fx, first, second)
+
+    snap, renum = _renumber(fx.bundle_id)
+
+    merged = _target_of(snap, first["id"])
+    assert sorted(_codes(renum)) == [
+        ("caption_ref_ambiguous", merged, first["id"]), ("caption_ref_broken", merged, second["id"]),
+    ]
+    assert merged not in renum.texts
+
+
+def test_merged_sentence_with_a_detached_same_number_reference_is_left(client: TestClient) -> None:
+    """뗀 참조는 자기 경고는 없지만, 합친 문장에서 같은 토큰을 나눠 쓰면 다른 참조의 번호로 바꾸지 못하게 막는다."""
+    fx = _upload_small(client, MERGE_BODY, "SYNTHETIC_OLD-1_MergedDetached.docx")
+    doc_id = fx.view["document"]["id"]
+    first, second = find_unit(fx.view, "합성 값은 표 3을 본다."), find_unit(fx.view, "합성 한계도 표 3을 본다.")
+    revision = get_view(client, fx.bundle_id, doc_id)["document"]["revision"]
+    detached = client.patch(
+        f"/api/bundles/{fx.bundle_id}/documents/{doc_id}/caption-refs/{second['caption_refs'][0]['id']}",
+        json={"revision": revision, "state": "detached"}, headers=AUTHOR,
+    )
+    assert detached.status_code == 200, detached.text
+    assign_as_is(client, fx.bundle_id, _bundle_unit(fx, "표 3. 합성 첫 표"), fx.sop_id, slot_key=GENERAL)
+    _merge_two_refs(client, fx, first, second)
+
+    snap, renum = _renumber(fx.bundle_id)
+
+    merged = _target_of(snap, first["id"])
+    assert _codes(renum) == [("caption_ref_ambiguous", merged, first["id"])]
+    assert merged not in renum.texts
+
+
+def test_empty_required_flag(client: TestClient) -> None:
+    # Arrange — 목적에만 줄이 있고, 정의는 이름을 바꿨고(표준과 다름), 책임은 N/A인 SOP
+    bundle_id = create_bundle(client, is_synthetic=True)["id"]
+    sop = {"code": "SOP-E", "title": "Synthetic SOP", "doc_type": "sop", "parent_code": None}
+    saved = put_tobe(client, bundle_id, [sop], na_slots=[{"code": "SOP-E", "slot_key": "responsibilities", "reason": "Synthetic"}])
+    sop_id = saved.json()["docs"][0]["id"]
+    uploaded = upload(client, bundle_id, build_docx(p(KO_KEEP)), "SYNTHETIC_OLD-E_Empty.docx")
+    assign_as_is(client, bundle_id, find_unit(get_view(client, bundle_id, uploaded.json()["id"]), KO_KEEP), sop_id, slot_key="purpose")
+    renamed = client.patch(
+        f"/api/bundles/{bundle_id}/tobe/docs/{sop_id}/outline/definitions",
+        json={"title_en": "Terms", "reason": "Synthetic: house style"}, headers=AUTHOR,
+    )
+    assert renamed.status_code == 200, renamed.text
+
+    # Act
+    c_doc = next(doc for doc in _get_output(client, bundle_id, "outputs/c")["docs"] if doc["target_doc_id"] == sop_id)
+    composed = _get_output(client, bundle_id, f"outputs/c/docs/{sop_id}", "en")
+
+    # Assert — 빈 필수 절과 표준과 다름은 결과물 C와 New 칸(쓰는 중 문서)이 같은 값이다
+    flags = {section["location_key"]: (section["is_empty_required"], section["deviation_reason"]) for section in c_doc["sections"]}
+    assert flags["purpose"] == (False, None)
+    assert flags["scope"] == (True, None)
+    assert flags["definitions"] == (True, "Synthetic: house style")
+    assert flags["responsibilities"] == (False, None)  # N/A는 비어 있음이 아니다
+    assert (flags["procedures"], flags["procedures.p1"]) == ((True, None), (True, None))
+    assert flags["document_relationships.work_instructions"] == (True, None)  # 자식 WI가 없는 자동 목록
+    assert "document_relationships.associated_documents.form" not in flags  # 빈 선택 항목은 절 자체가 없다
+    assert {
+        section["location_key"]: (section["is_empty_required"], section["deviation_reason"]) for section in composed["sections"]
+    } == flags
+
+    # 하위가 모두 N/A인 묶음 제목은 비어 있음이 아니다(7.1 아래 선택 항목 Form만 N/A로 둔 경우)
+    na_slots = [
+        {"code": "SOP-E", "slot_key": "responsibilities", "reason": "Synthetic"},
+        {"code": "SOP-E", "slot_key": "document_relationships.associated_documents.form", "reason": "Synthetic"},
+    ]
+    assert put_tobe(client, bundle_id, [sop], na_slots=na_slots).status_code == 200
+    c_doc = next(doc for doc in _get_output(client, bundle_id, "outputs/c")["docs"] if doc["target_doc_id"] == sop_id)
+    covered = {section["location_key"]: section["is_empty_required"] for section in c_doc["sections"]}
+    assert (covered["document_relationships.associated_documents"], covered["document_relationships"]) == (False, True)
+
+    # 자식 WI가 생기면 자동 목록과 그 묶음 제목은 비어 있지 않다
+    wi = {"code": "WI-E", "title": "Synthetic WI", "doc_type": "wi", "parent_code": "SOP-E"}
+    assert put_tobe(client, bundle_id, [sop, wi], na_slots=[{"code": "SOP-E", "slot_key": "responsibilities", "reason": "Synthetic"}]).status_code == 200
+    c_doc = next(doc for doc in _get_output(client, bundle_id, "outputs/c")["docs"] if doc["target_doc_id"] == sop_id)
+    after = {section["location_key"]: section["is_empty_required"] for section in c_doc["sections"]}
+    assert (after["document_relationships.work_instructions"], after["document_relationships"]) == (False, False)

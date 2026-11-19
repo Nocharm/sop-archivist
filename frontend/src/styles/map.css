@@ -1,0 +1,149 @@
+/* 참조 지도(/bundles/[id]/map, components/map/) - 내 것은 강조 파랑, 남의 Bundle 것은 --peer-* 무채색. 색만으로 가르지 않고 소유 표시 글자를 함께 쓴다. 색은 토큰만 쓴다. */
+
+@layer components {
+  /* 틀: 도구 줄 | (본문 · 옆 칸). 쪽은 스크롤하지 않고 본문과 옆 칸이 따로 스크롤한다 */
+  .map-screen { display: grid; grid-template-rows: auto minmax(0, 1fr); height: 100%; min-height: 420px; background: var(--surface); }
+  .map-body { display: grid; grid-template-columns: minmax(0, 1fr) clamp(280px, 24vw, 420px); min-height: 0; }
+  .map-main { display: grid; grid-template-rows: auto minmax(0, 1fr); min-width: 0; min-height: 0; }
+  .map-scroll { min-height: 0; min-width: 0; overflow: auto; }
+  .map-side { min-width: 0; min-height: 0; overflow-y: auto; border-left: 1px solid var(--line); background: var(--surface); }
+
+  .map-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; min-height: 52px; padding: 8px var(--pad); border-bottom: 1px solid var(--line); }
+  .map-search { width: clamp(180px, 18vw, 280px); }
+  /* 범위 두 단추는 글자 단추 - 기본 view-toggle 단추는 아이콘 폭(26px)이다 */
+  .view-toggle.map-scope button,
+  .view-toggle.map-views button { width: auto; padding: 0 8px; font-size: var(--fs-cap); white-space: nowrap; }
+  .map-search-input:focus-visible { outline: none; }
+  .map-zoom { display: inline-flex; align-items: center; gap: 2px; }
+  .map-zoom-value { min-width: 40px; text-align: center; font-size: var(--fs-cap); color: var(--ink-2); font-variant-numeric: tabular-nums; }
+
+  .map-notice { padding: 6px var(--pad); border-bottom: 1px solid var(--line); background: var(--sunken); font-size: var(--fs-cap); line-height: var(--lh-cap); color: var(--ink-2); }
+
+  /* 표 - 열 폭을 정해 긴 번호·제목이 옆 열을 밀지 않는다(ui-review 10번) */
+  .map-table { table-layout: fixed; }
+  .map-table .map-no { font-family: var(--font-mono); font-size: var(--fs-cap); color: var(--ink); overflow-wrap: anywhere; }
+  .map-table .map-sub { color: var(--ink-3); font-size: var(--fs-cap); line-height: var(--lh-cap); }
+  .map-table tbody tr[aria-selected="true"] td { background: var(--sel-bg); }
+
+  /* 소유 표시 - 이 Bundle은 강조, 남의 것은 무채색, 어느 Bundle에도 없으면 점선 */
+  .map-owner { display: inline-flex; align-items: center; height: 20px; padding: 0 6px; border: 1px solid transparent; border-radius: var(--r-1); font-size: var(--fs-cap); line-height: 18px; white-space: nowrap; }
+  .map-owner[data-o="self"] { background: var(--accent-tint); color: var(--accent); border-color: var(--accent-line); }
+  .map-owner[data-o="member"],
+  .map-owner[data-o="summary"] { background: var(--peer-bg); color: var(--peer-ink); border-color: var(--peer-line); }
+  .map-owner[data-o="none"] { border: 1px dashed var(--ink-4); color: var(--ink-2); }
+
+  /* 옆 칸 */
+  .map-side-inner { display: grid; align-content: start; gap: 14px; padding: 14px 16px 20px; }
+  .map-side-h { font-size: var(--fs-cap); line-height: var(--lh-cap); font-weight: 600; color: var(--ink-3); }
+  .map-side-num { font-family: var(--font-mono); font-size: 15px; line-height: 20px; font-weight: 600; color: var(--ink); overflow-wrap: anywhere; }
+  .map-side-title { color: var(--ink-2); overflow-wrap: anywhere; }
+  .map-facts { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 6px 12px; margin: 0; font-size: var(--fs-ui); line-height: var(--lh-ui); }
+  .map-facts dt { color: var(--ink-3); font-size: var(--fs-cap); }
+  .map-facts dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+  .map-becomes { display: grid; gap: 4px; }
+  .map-becomes li { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
+  .map-becomes[data-tentative] { color: var(--ink-3); }
+  .map-links { display: grid; gap: 2px; }
+  .map-link { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 30px; padding: 4px 6px; border-radius: var(--r-1); text-align: left; cursor: pointer; transition: background var(--dur-fast); }
+  .map-link:hover { background: var(--hover); }
+  .map-link-no { flex: 1; min-width: 0; font-family: var(--font-mono); font-size: var(--fs-cap); color: var(--ink); overflow-wrap: anywhere; }
+  .map-link-n { flex: none; font-size: var(--fs-cap); color: var(--ink-3); font-variant-numeric: tabular-nums; }
+  /* 줄(선) 아래의 문장 - 그 줄에 딸린 것이 보이게 왼쪽 선 하나로 묶는다 */
+  .map-sentences { display: grid; gap: 1px; margin: 2px 0 4px 12px; padding-left: 6px; border-left: 1px solid var(--line); }
+  /* 읽기 전용 줄 - 누를 것처럼 보이지 않게 호버 바탕을 두지 않는다. 글(표시 ID · 문장)은 첫 열, 줄 끝 단추는 제 열 - 단추 자리를 늘 비워 글을 덮지 않는다 */
+  .map-sentence { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 1px 6px; min-width: 0; padding: 3px 6px; font-size: var(--fs-cap); line-height: var(--lh-cap); }
+  .map-sentence-id { grid-column: 1; font-family: var(--font-mono); color: var(--ink-3); overflow-wrap: anywhere; }
+  .map-sentence-text { grid-column: 1; color: var(--ink); overflow-wrap: anywhere; }
+  /* 줄 끝의 Open in Assign - 줄에 올리거나 Tab으로 닿으면 보인다(.doc-acts와 같은 짜임: 숨김은 opacity만이라 Tab 자리는 늘 있고, 올릴 수 없는 화면에서는 늘 보인다) */
+  .map-sentence-open { grid-column: 2; grid-row: 1 / span 2; align-self: start; display: inline-flex; }
+  @media (hover: hover) {
+    .map-sentence-open { opacity: 0; transition: opacity var(--dur-fast); }
+    .map-sentence:is(:hover, :focus-within) .map-sentence-open { opacity: 1; }
+  }
+  .map-withheld { margin: 0 0 4px 18px; font-size: var(--fs-cap); line-height: var(--lh-cap); color: var(--ink-3); }
+  .map-legend { display: grid; gap: 6px; }
+  .map-legend li { display: flex; align-items: center; gap: 8px; font-size: var(--fs-cap); line-height: var(--lh-cap); color: var(--ink-2); }
+  .map-legend svg { flex: none; color: var(--ink-2); }
+
+  /* 지도 - 스크롤 칸 › 크기 상자(확대한 세계의 크기) › 세계(확대 1의 좌표, scale로 키운다). 층: 줄기 바탕 < 선(SVG 한 장) < 마디·줄기 머리 */
+  .map-canvas { position: relative; min-width: 0; min-height: 0; overflow: auto; background: var(--surface); }
+  .map-canvas:focus-visible { outline-offset: -2px; }
+  /* 바탕을 끄는 동안(use-map-pan) - 잡은 손 커서, 글자는 긁히지 않는다(pointerdown에서 preventDefault를 부르지 않으므로 CSS로 막는다) */
+  .map-canvas[data-pan] { cursor: grabbing; user-select: none; }
+  .map-canvas[data-pan] .map-node { cursor: grabbing; }
+  .map-sizer { position: relative; }
+  .map-world { position: absolute; top: 0; left: 0; transform-origin: 0 0; }
+  .map-edges { position: absolute; top: 0; left: 0; z-index: 1; overflow: visible; pointer-events: none; }
+
+  /* 줄기 - 이 Bundle은 강조 바탕, 남은 가라앉은 바탕, 어느 Bundle에도 없음은 점선만 */
+  .map-lane { position: absolute; top: 0; box-sizing: border-box; border: 1px solid var(--line); border-radius: var(--r-3); background: var(--sunken); }
+  .map-lane[data-o="self"] { background: var(--accent-tint); border-color: var(--accent-line); }
+  .map-lane[data-o="none"] { background: none; border: 1px dashed var(--line-2); }
+  .map-lane-head { position: relative; z-index: 2; display: grid; align-content: center; gap: 2px; padding: 0 4px 0 10px; }
+  .map-lane-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
+  .map-lane-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-cap); line-height: var(--lh-cap); font-weight: 600; color: var(--ink); }
+  .map-lane-lock { flex: none; display: inline-flex; color: var(--ink-3); }
+  .map-lane-toggle { flex: none; display: inline-grid; place-items: center; width: 24px; height: 22px; border-radius: var(--r-1); color: var(--ink-2); cursor: pointer; transition: background var(--dur-fast); }
+  .map-lane-toggle:hover { background: var(--hover); }
+  .map-lane-meta { padding-right: 6px; font-size: var(--fs-micro); line-height: var(--lh-micro); }
+  .map-lane-meta .pill { flex: none; }
+  .map-lane-owner { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--peer-ink); }
+  .map-lane-owner[data-o="self"] { color: var(--accent); }
+  .map-lane-owner[data-o="none"] { color: var(--ink-3); }
+  .map-lane-docs { flex: none; color: var(--ink-3); white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .map-lane-more { position: absolute; z-index: 2; border: 1px dashed var(--line-2); border-radius: var(--r-1); font-size: var(--fs-cap); color: var(--ink-2); cursor: pointer; transition: background var(--dur-fast); }
+  .map-lane-more:hover { background: var(--hover); }
+
+  /* 마디 - 크기 고정(176×44, 값은 map-layout의 NODE_W·NODE_H를 인라인으로), 글은 한 줄 말줄임. 막대가 있는 마디는 막대 쪽 모서리가 직각이다 */
+  .map-node {
+    position: absolute; z-index: 2; box-sizing: border-box; display: grid; align-content: center; gap: 1px;
+    padding: 0 8px; min-width: 0;
+    border: 1px solid var(--line-2); border-radius: 0 var(--r-1) var(--r-1) 0;
+    background: var(--paper); color: var(--ink); text-align: left; cursor: pointer;
+    transition: opacity var(--dur-fast);
+  }
+  .map-node[data-o="self"] { border-left: 3px solid var(--accent); }
+  .map-node[data-o="member"],
+  .map-node[data-o="summary"] { background: var(--peer-bg); border-color: var(--peer-line); border-left: 3px solid var(--peer-fill); }
+  .map-node[data-o="none"] { background: none; border: 1px dashed var(--ink-4); border-radius: var(--r-1); }
+  .map-node[data-sel] { border-top: 2px solid var(--accent); border-right: 2px solid var(--accent); border-bottom: 2px solid var(--accent); }
+  .map-node[data-o="none"][data-sel] { border: 2px solid var(--accent); }
+  .map-node-row { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
+  .map-node-no { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono); font-size: var(--fs-cap); line-height: var(--lh-cap); }
+  .map-node-new { margin-right: 4px; font-family: var(--font-ui); font-size: var(--fs-micro); font-weight: 600; color: var(--ink-2); }
+  .map-node-becomes { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono); font-size: var(--fs-micro); line-height: var(--lh-micro); color: var(--ink-2); }
+  .map-node[data-o="member"] .map-node-no,
+  .map-node[data-o="summary"] .map-node-no,
+  .map-node[data-o="member"] .map-node-becomes,
+  .map-node[data-o="summary"] .map-node-becomes { color: var(--peer-ink); }
+  .map-node .map-node-becomes[data-tentative] { color: var(--ink-3); }
+  .map-node-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-micro); line-height: var(--lh-micro); color: var(--ink-3); }
+  .map-world[data-far] .map-node-title { display: none; }
+
+  /* 선 - 나가는 선은 강조, 들어오는 선·남끼리의 선은 흑연(남끼리는 더 가늘고 흐리게). 모양으로도 가른다: 실선 · 짧은 점선 REF? · 긴 점선 Moved to */
+  .map-edge { fill: none; stroke-linecap: round; stroke: var(--peer-fill); stroke-width: 1px; opacity: .5; transition: opacity var(--dur-fast); }
+  .map-edge[data-k="out"] { stroke: var(--accent); stroke-width: 1.5px; }
+  .map-edge[data-k="in"] { stroke-width: 1.25px; }
+  .map-edge[data-k="peer"] { opacity: .3; }
+  .map-edge[data-label="proposed"] { stroke-dasharray: 3 3; }
+  .map-edge[data-label="proposed"][data-k="out"] { stroke: var(--lang-ref-ink); }
+  .map-edge[data-label="moved"] { stroke-dasharray: 9 3 2 3; }
+  .map-edge-dot { fill: var(--peer-fill); opacity: .5; transition: opacity var(--dur-fast); }
+  .map-edge-dot[data-k="out"] { fill: var(--accent); }
+  .map-edge-dot[data-label="proposed"][data-k="out"] { fill: var(--lang-ref-ink); }
+  .map-edge-dot[data-k="peer"] { opacity: .3; }
+
+  /* 올리기(data-hot)·고르기(data-focus) - 이어진 것만 진하게, 나머지는 흐리게. 찾는 중(data-find)이면 맞지 않는 마디가 흐리다 */
+  .map-world:is([data-hot], [data-focus]) .map-edge,
+  .map-world:is([data-hot], [data-focus]) .map-edge-dot { opacity: .12; }
+  .map-world:is([data-hot], [data-focus]) :is(.map-edge, .map-edge-dot)[data-on] { opacity: 1; }
+  .map-world:is([data-hot], [data-focus]) .map-edge[data-on] { stroke-width: 1.5px; }
+  .map-world:is([data-hot], [data-focus]) .map-edge[data-on][data-k="out"] { stroke-width: 2px; }
+  .map-world:is([data-hot], [data-focus]) .map-edge[data-on][data-k="in"] { stroke-width: 1.75px; }
+  .map-world:is([data-hot], [data-focus]) .map-node:not([data-on]) { opacity: .4; }
+  .map-world[data-find] .map-node:not([data-match]) { opacity: .4; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .map-node, .map-edge, .map-edge-dot { transition: none; }
+  }
+}

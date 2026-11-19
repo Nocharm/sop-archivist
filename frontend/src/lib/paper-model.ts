@@ -10,7 +10,8 @@ export interface Segment {
 }
 
 export type PaperItem =
-  | { type: "block"; block: ViewBlock }
+  /** range가 있으면 블록의 그 글자 범위만 - 벗긴 바깥 칸이 안쪽 표 자리에서 둘로 나뉜 조각(F2, orderBlockPieces) */
+  | { type: "block"; block: ViewBlock; range?: readonly [number, number] }
   | { type: "table"; table: ViewTable; rows: ViewBlock[][]; unitId: number | null };
 
 /** 부분 묶음 하나의 용지 내용 - key는 블록의 part_group */
@@ -31,12 +32,23 @@ export interface PaperModel {
   units: Map<number, ViewUnit>;
   /** J/K가 따라가는 순서 - 원문 순 */
   order: number[];
+  /** 단위가 번호 범위를 갖는 추출이다 - 번호 칸이 그 줄의 번호를 보인다. 거짓이면(옛 추출) 절 첫 줄의 절 번호만 보인다 */
+  hasNumberRanges: boolean;
+  /** 벗긴 표(레이아웃 표) - 칸이 표가 아니라 보통 문장 줄로 놓인다(lib/unwrap-model, MD 1 F1) */
+  unwrapped: ReadonlyMap<number, ViewTable>;
+  /** 모든 원문 표 - 안쪽 표의 바깥 표(parent_table_id)를 따라 올라갈 때 쓴다(F2) */
+  tables: ReadonlyMap<number, ViewTable>;
 }
 
 const TOP_PARTS = new Set(["header"]);
 const BOTTOM_PARTS = new Set(["footer", "footnote", "endnote"]);
 // 범위가 없는 단위(표·행)는 칸 문장이 글자를 덮는다
 const SPANLESS_KINDS = new Set(["table", "table_row"]);
+
+/** 띠 표 제목 줄인가(F4) - 원문 표를 가리키는 제목 단위는 벗긴 띠 표에서 나온 것뿐이다(서버 segment.is_band_heading) */
+export function isBandHeading(unit: Pick<ViewUnit, "kind" | "table_id">): boolean {
+  return unit.kind === "heading" && unit.table_id !== null;
+}
 
 function buildSegments(block: ViewBlock, spans: Array<[number, number, number]>): Segment[] {
   const sorted = [...spans].sort((a, b) => a[0] - b[0]);
@@ -67,23 +79,36 @@ export function buildPaperModel(view: DocumentView): PaperModel {
 
   const tables = new Map(view.tables.map((table) => [table.id, table]));
   const tableUnit = new Map<number, number>();
+  // 벗긴 띠 표는 표가 아니라 제목 줄 하나로 그린다 - 칸 블록을 문단처럼 이어 두면 번호 칸 + 제목 칸이 한 조각이 된다(F4)
+  const bandTables = new Set<number>();
   for (const unit of view.units) {
     if (unit.kind === "table" && unit.table_id !== null) tableUnit.set(unit.table_id, unit.id);
+    if (isBandHeading(unit) && unit.table_id !== null) bandTables.add(unit.table_id);
   }
+  // 벗긴 보통 표 - 띠 표는 제목 줄이 되어 세로선 · "↺ 다시 표로"가 없다(되돌리기는 Back to band table)
+  const unwrapped = new Map(view.tables.filter((table) => table.is_layout && !bandTables.has(table.id)).map((table) => [table.id, table]));
   const header: PaperItem[] = [];
   const body: PaperItem[] = [];
   const footer: PaperItem[] = [];
   const groups = new Map<string, PaperGroup>();
   const seenTables = new Set<number>();
   const blocks = [...view.blocks].sort((a, b) => a.seq - b.seq);
-  for (const block of blocks) {
+  const pieces = orderBlockPieces(blocks, tables, unwrapped);
+  for (const piece of pieces) {
+    const { block } = piece;
     const edge = TOP_PARTS.has(block.part) ? header : BOTTOM_PARTS.has(block.part) ? footer : body;
     const groupKey = block.part_group || block.part;
     const group = groups.get(groupKey) ?? { key: groupKey, part: block.part, items: [] };
     groups.set(groupKey, group);
     const target = { push: (item: PaperItem) => void (edge.push(item), group.items.push(item)) };
-    if (block.kind === "table_cell" && block.table_id !== null) {
-      // 표는 첫 칸 자리에 통째로 - 안쪽 표는 바깥 칸 안에서 그리지 않고 바로 뒤에 둔다(1차)
+    if (block.kind === "table_cell" && block.table_id !== null && bandTables.has(block.table_id) && tables.get(block.table_id)?.is_layout) {
+      // 띠 표의 빈 가운데 칸은 그릴 글자가 없다
+      if (block.text.trim() !== "") target.push({ type: "block", block });
+      continue;
+    }
+    // 벗긴 표의 칸은 표로 묶지 않고 문단처럼 제자리(원문 순 = 행 → 왼쪽부터)에 놓는다 - 칸 줄이 보통 문장 카드가 된다(F1)
+    if (block.kind === "table_cell" && block.table_id !== null && !unwrapped.has(block.table_id)) {
+      // 표는 첫 칸 자리에 통째로 - 데이터 표 안의 표는 바깥 칸 안에 그리지 않고 바로 뒤에 둔다. 바깥 표를 벗기면 칸 글 사이 제 자리다(F2)
       if (seenTables.has(block.table_id)) continue;
       seenTables.add(block.table_id);
       const table = tables.get(block.table_id);
@@ -95,14 +120,85 @@ export function buildPaperModel(view: DocumentView): PaperModel {
       target.push({ type: "table", table, rows, unitId: tableUnit.get(table.id) ?? null });
       continue;
     }
-    target.push({ type: "block", block });
+    const isWhole = piece.start === 0 && piece.end === block.text.length;
+    target.push(isWhole ? { type: "block", block } : { type: "block", block, range: [piece.start, piece.end] });
   }
 
+  // J/K 순서도 용지 순서 - 안쪽 표를 칸 글 사이로 옮겼으면 그 표의 줄이 칸의 뒤 문단보다 먼저다
+  const rank = rankPieces(pieces);
+  const readRank = (unit: ViewUnit) => {
+    const [blockId, start] = unit.spans[0] ?? [unit.block_id, 0];
+    return rank.get(blockId)?.findLast((entry) => entry.start <= start)?.rank ?? 0;
+  };
+  const unitRank = new Map(view.units.map((unit) => [unit.id, readRank(unit)]));
   const order = [...view.units]
     .filter((unit) => unit.kind !== "table_row" || unit.spans.length > 0)
-    .sort((a, b) => a.pos_seq - b.pos_seq || (a.spans[0]?.[1] ?? 0) - (b.spans[0]?.[1] ?? 0) || a.id - b.id)
+    .sort((a, b) => (unitRank.get(a.id) ?? 0) - (unitRank.get(b.id) ?? 0) || a.pos_seq - b.pos_seq || (a.spans[0]?.[1] ?? 0) - (b.spans[0]?.[1] ?? 0) || a.id - b.id)
     .map((unit) => unit.id);
-  return { header, body, footer, groups: [...groups.values()], segments, units, order };
+  return { header, body, footer, groups: [...groups.values()], segments, units, order, hasNumberRanges: view.has_number_ranges, unwrapped, tables };
+}
+
+/** 용지에 놓을 블록 조각 하나 - 블록 글의 [start, end) */
+export interface BlockPiece {
+  block: ViewBlock;
+  start: number;
+  end: number;
+}
+
+/**
+ * 블록(원문 순) → 용지에 놓을 조각 순서. 보통은 블록 하나가 조각 하나다. 벗긴 바깥 표의 칸 안에 든 안쪽 표는(그 안의 표·그림까지)
+ * 바깥 칸 글을 그 표가 놓였던 자리(anchor.at, 서버가 신호 place로 정한다)에서 둘로 나눈 사이로 옮긴다 - 추출은 안쪽 표를 칸의 모든
+ * 문단 뒤에 내기 때문이다(F2). 칸 끝 뒤에 놓였던 표는 원문 순 그대로가 이미 그 자리라 옮기지 않는다. 바깥 표가 데이터 표면 표 통째로
+ * 그리니 옮기지 않는다. 몇 겹이든 바깥부터(표 순번) 같은 규칙이다.
+ */
+export function orderBlockPieces(blocks: readonly ViewBlock[], tables: ReadonlyMap<number, ViewTable>, unwrapped: ReadonlyMap<number, ViewTable>): BlockPiece[] {
+  let pieces: BlockPiece[] = blocks.map((block) => ({ block, start: 0, end: block.text.length }));
+  const anchored = [...tables.values()]
+    .filter((table) => table.anchor !== null && table.parent_table_id !== null && unwrapped.has(table.parent_table_id))
+    .sort((a, b) => a.table_index - b.table_index);
+  for (const table of anchored) {
+    const { block_id: hostId, at } = table.anchor!;
+    const inside = listTableSubtree(tables, table.id);
+    const moved = pieces.filter((piece) => piece.block.table_id !== null && inside.has(piece.block.table_id));
+    const rest = pieces.filter((piece) => !(piece.block.table_id !== null && inside.has(piece.block.table_id)));
+    const index = rest.findIndex((piece) => piece.block.id === hostId && piece.start <= at && at < piece.end);
+    if (moved.length === 0 || index < 0) continue;
+    const host = rest[index];
+    const before = at > host.start ? [{ ...host, end: at }] : [];
+    pieces = [...rest.slice(0, index), ...before, ...moved, { ...host, start: at }, ...rest.slice(index + 1)];
+  }
+  return pieces;
+}
+
+/** 표와 그 안의 표들(몇 겹이든) id */
+export function listTableSubtree(tables: ReadonlyMap<number, ViewTable>, tableId: number): Set<number> {
+  const inside = new Set([tableId]);
+  let grew = true;
+  while (grew) {
+    grew = false;
+    for (const table of tables.values()) {
+      if (table.parent_table_id !== null && inside.has(table.parent_table_id) && !inside.has(table.id)) {
+        inside.add(table.id);
+        grew = true;
+      }
+    }
+  }
+  return inside;
+}
+
+/** 블록 → 그 블록 조각들의 (시작 자리, 용지 차례) - 시작 자리 순 */
+function rankPieces(pieces: readonly BlockPiece[]): Map<number, Array<{ start: number; rank: number }>> {
+  const rank = new Map<number, Array<{ start: number; rank: number }>>();
+  pieces.forEach((piece, index) => rank.set(piece.block.id, [...(rank.get(piece.block.id) ?? []), { start: piece.start, rank: index }].sort((a, b) => a.start - b.start)));
+  return rank;
+}
+
+/** 용지 항목의 글자 조각 - 블록 일부(range)면 그 범위에서 시작하는 조각만 */
+export function getItemSegments(item: Extract<PaperItem, { type: "block" }>, segments: ReadonlyMap<number, Segment[]>): Segment[] {
+  const all = segments.get(item.block.id) ?? [];
+  if (!item.range) return all;
+  const [start, end] = item.range;
+  return all.filter((segment) => segment.start >= start && segment.start < end);
 }
 
 /**
@@ -153,50 +249,6 @@ export function readWarningText(detail: Record<string, unknown>): string {
 
 // ── Split 개편(2026-11-09): 선택 윤곽, 가운데 스크롤, 태그·표시, 이웃 합치기 ──
 
-export interface LineRect {
-  left: number;
-  right: number;
-  top: number;
-  bottom: number;
-}
-
-// 같은 줄로 보는 위쪽 차이(px) - 한 줄 안의 글자 조각들은 top이 거의 같다
-const SAME_LINE_PX = 4;
-
-/** 고른 단위의 가장 바깥 윤곽 하나 - 줄 상자를 합치고, 오른쪽 가장자리를 따라 내려갔다 왼쪽을 따라 올라오는 SVG path */
-export function buildContourPath(rects: readonly LineRect[], padX = 4, padY = 2): string {
-  const lines: LineRect[] = [];
-  for (const rect of [...rects].sort((a, b) => a.top - b.top || a.left - b.left)) {
-    const last = lines[lines.length - 1];
-    if (last && Math.abs(last.top - rect.top) < SAME_LINE_PX) {
-      last.left = Math.min(last.left, rect.left);
-      last.right = Math.max(last.right, rect.right);
-      last.bottom = Math.max(last.bottom, rect.bottom);
-    } else {
-      lines.push({ ...rect });
-    }
-  }
-  if (lines.length === 0) return "";
-  const padded = lines.map((line) => ({ left: line.left - padX, right: line.right + padX, top: line.top - padY, bottom: line.bottom + padY }));
-  // 줄 사이 경계를 가운데로 맞춰 윤곽에 틈이 생기지 않게
-  for (let i = 0; i < padded.length - 1; i += 1) {
-    const mid = (padded[i].bottom + padded[i + 1].top) / 2;
-    padded[i].bottom = mid;
-    padded[i + 1].top = mid;
-  }
-  const first = padded[0];
-  const last = padded[padded.length - 1];
-  const parts = [`M${first.left},${first.top}`, `H${first.right}`];
-  padded.forEach((line, i) => {
-    parts.push(`V${line.bottom}`);
-    if (i < padded.length - 1) parts.push(`H${padded[i + 1].right}`);
-  });
-  parts.push(`H${last.left}`);
-  for (let i = padded.length - 1; i > 0; i -= 1) parts.push(`V${padded[i].top}`, `H${padded[i - 1].left}`);
-  parts.push(`V${first.top}`, "Z");
-  return parts.join(" ");
-}
-
 /** 고른 단위가 화면 위 1/6 위로, 또는 아래 1/3 아래로 가면 가운데로 다시 맞춘다 */
 export function shouldRecenter(unitTop: number, unitBottom: number, viewTop: number, viewBottom: number): boolean {
   const height = viewBottom - viewTop;
@@ -226,21 +278,35 @@ export function getMarks(unit: ViewUnit): UnitMark[] {
 
 const TEXT_KINDS = new Set(["sentence", "heading", "cell_sentence"]);
 
-/** 틈의 합치기를 쓸 수 없는 까닭 - 글이 아닌 것(표·그림), 칸 문장 규칙. 언어는 보지 않는다(다른 언어끼리는 묶기가 짝을 고른다) */
-export type MergeBlocker = "not_text" | "cell";
+/** 틈의 합치기를 쓸 수 없는 까닭 - 글이 아닌 것(표·그림), 목차 줄, 칸 문장 규칙. 언어는 보지 않는다(다른 언어끼리는 묶기가 짝을 고른다) */
+export type MergeBlocker = "not_text" | "toc" | "cell";
 
 /** 합칠 수 없는 까닭 → 문구 키 - 틈의 합치기 단추와 우클릭 메뉴가 같이 쓴다 */
 export const MERGE_BLOCKER_KEYS: Record<MergeBlocker, string> = {
   not_text: "split.noMergeKind",
+  toc: "split.noMergeToc",
   cell: "split.noMergeCell",
 };
 
 /** 두 단위를 합칠 수 없는 까닭(서버 `_plan_merge`와 같은 기준) - 합칠 수 있으면 null */
 export function getMergeBlocker(a: ViewUnit, b: ViewUnit): MergeBlocker | null {
   if (!TEXT_KINDS.has(a.kind) || !TEXT_KINDS.has(b.kind)) return "not_text";
+  // 목차 줄은 먼저 목차 아님으로 돌린다(서버 422 toc_line_locked, 사용자 결정 2026-11-19)
+  if (a.noise_kind || b.noise_kind) return "toc";
   // 칸 문장은 같은 표·행 그룹(또는 모두 그룹 없음)끼리만
   if ((a.kind === "cell_sentence" || b.kind === "cell_sentence") && (a.kind !== b.kind || a.group_unit_id !== b.group_unit_id)) return "cell";
   return null;
+}
+
+/** 블록에 목차 줄이 걸쳐 있나 - 그 블록의 글자는 골라 만들기(carve)로 떼지 않는다(서버 422 toc_line_locked) */
+export function hasTocLineIn(units: Iterable<ViewUnit>, blockId: number): boolean {
+  for (const unit of units) if (unit.noise_kind && unit.spans.some(([spanBlockId]) => spanBlockId === blockId)) return true;
+  return false;
+}
+
+/** 누른 단위 → 고를 단위. 표·행에 묶인 칸 문장이면 그 묶음 단위, 아니면 자기(Assign은 표·그림을 묶음째 배정한다) */
+export function resolvePickUnit(unitId: number, units: ReadonlyMap<number, ViewUnit>): number {
+  return units.get(unitId)?.group_unit_id ?? unitId;
 }
 
 // ── Split 2차 개편(2026-11-10): 단위마다 종이 한 조각, 조각 사이 합치기, 본문·머리말·꼬리말 탭, 나눌 선 끌기 ──
@@ -253,8 +319,82 @@ export interface PiecePart {
 /** 용지에 위에서 아래로 놓이는 것 - 단위 하나가 조각 하나다(unitId가 null이면 어느 단위에도 없는 글자) */
 export type PaperRow =
   | { type: "piece"; key: string; unitId: number | null; parts: PiecePart[] }
-  | { type: "table"; key: string; item: Extract<PaperItem, { type: "table" }> }
-  | { type: "figure"; key: string; block: ViewBlock; unitId: number | null };
+  | { type: "table"; key: string; item: Extract<PaperItem, { type: "table" }>; captions?: CaptionPiece[] }
+  | { type: "figure"; key: string; block: ViewBlock; unitId: number | null; captions?: CaptionPiece[] };
+
+/** 표·그림 머리 줄에 접힌 캡션 단위의 조각 */
+export type CaptionPiece = Extract<PaperRow, { type: "piece" }>;
+
+export interface BundleHeader {
+  kind: "table" | "figure";
+  unitId: number | null;
+  displayId: string;
+  /** 캡션이 없을 때 머리 줄 한 줄 미리보기 - 표는 첫 행 칸 글, 그림은 그림 블록 글(새 추출은 비었다) */
+  preview: string;
+}
+
+/** 표·그림 줄 → 머리 줄(TABLE/FIGURE 표시·미리보기·표시 ID) */
+export function getBundleHeader(row: Extract<PaperRow, { type: "table" | "figure" }>, model: PaperModel): BundleHeader {
+  const unitId = row.type === "table" ? row.item.unitId : row.unitId;
+  const displayId = unitId === null ? "" : (model.units.get(unitId)?.display_id ?? "");
+  if (row.type === "figure") return { kind: "figure", unitId, displayId, preview: row.block.text };
+  const firstRow = row.item.rows[0] ?? [];
+  const preview = firstRow.map((cell) => cell.text.trim()).filter(Boolean).join(" · ");
+  return { kind: "table", unitId, displayId, preview };
+}
+
+/** 묶음 블록(그림 블록 · 표 칸) 안에 범위를 둔 캡션 - 블록 글자를 그대로 조각으로 편다(같은 블록의 범위는 한 부분) */
+function listInBlockCaptions(captions: readonly ViewUnit[], blocks: ReadonlyMap<number, ViewBlock>): CaptionPiece[] {
+  return captions.flatMap((caption): CaptionPiece[] => {
+    const parts: PiecePart[] = [];
+    for (const [blockId, start, end] of caption.spans) {
+      const block = blocks.get(blockId);
+      if (!block) continue;
+      const last = parts.at(-1);
+      if (last?.block.id === blockId) last.segments.push({ start, end, unitId: caption.id });
+      else parts.push({ block, segments: [{ start, end, unitId: caption.id }] });
+    }
+    return parts.length === 0 ? [] : [{ type: "piece", key: `c${caption.id}`, unitId: caption.id, parts }];
+  });
+}
+
+/**
+ * 캡션 단위의 조각 줄을 빼서 그 묶음(group_unit_id) 표·그림 줄의 captions에 담는다 - 캡션은 캡션 자리에서 한 번만 읽힌다.
+ * 그림 줄은 그림 단위(범위 없음 - block_id로 찾는다)에 잇고, 옛 추출처럼 그림 블록 글을 범위로 가진 캡션도 그 그림의 캡션으로 둔다.
+ * 표 첫 행에서 올린 캡션(F7 ③ - 표 칸 위 범위)도 그 표의 캡션으로 둔다.
+ * 묶음 줄이 이 목록에 없는 캡션(행으로 나눈 표 등)은 제 조각 줄로 남는다. 표·그림 줄의 captions는 늘 채운다(없으면 빈 목록).
+ */
+export function foldCaptionRows(rows: PaperRow[], units: ReadonlyMap<number, ViewUnit>): PaperRow[] {
+  const figureOfBlock = new Map<number, number>();
+  const anchored = new Map<number, ViewUnit[]>();
+  for (const unit of units.values()) {
+    if (unit.kind === "figure") figureOfBlock.set(unit.block_id, unit.id);
+    else if (unit.kind === "caption" && unit.group_unit_id !== null) anchored.set(unit.group_unit_id, [...(anchored.get(unit.group_unit_id) ?? []), unit]);
+  }
+  const bundles = new Map<number, Extract<PaperRow, { type: "table" | "figure" }>>();
+  const out = rows.map((row): PaperRow => {
+    if (row.type === "piece") return row;
+    if (row.type === "table") {
+      const cells = new Map(row.item.rows.flat().map((cell) => [cell.id, cell]));
+      const next = { ...row, captions: row.item.unitId === null ? [] : listInBlockCaptions(anchored.get(row.item.unitId) ?? [], cells) };
+      if (row.item.unitId !== null) bundles.set(row.item.unitId, next);
+      return next;
+    }
+    const unitId = figureOfBlock.get(row.block.id) ?? (row.unitId !== null && units.get(row.unitId)?.kind === "caption" ? null : row.unitId);
+    const inBlock = unitId === null ? [] : listInBlockCaptions(anchored.get(unitId) ?? [], new Map([[row.block.id, row.block]]));
+    const next = { ...row, unitId, captions: inBlock };
+    if (unitId !== null) bundles.set(unitId, next);
+    return next;
+  });
+  return out.filter((row) => {
+    if (row.type !== "piece" || row.unitId === null) return true;
+    const unit = units.get(row.unitId);
+    const bundle = unit?.kind === "caption" && unit.group_unit_id !== null ? bundles.get(unit.group_unit_id) : undefined;
+    if (!bundle) return true;
+    bundle.captions?.push(row);
+    return false;
+  });
+}
 
 /** 용지 내용 → 조각 줄. 한 문단의 문장들·Shift+Enter 줄도 단위마다 따로 놓고, 한 단위가 이어진 문단에 걸치면 한 조각으로 둔다 */
 export function buildRows(items: readonly PaperItem[], segments: ReadonlyMap<number, Segment[]>): PaperRow[] {
@@ -267,7 +407,7 @@ export function buildRows(items: readonly PaperItem[], segments: ReadonlyMap<num
       continue;
     }
     const { block } = item;
-    const blockSegments = segments.get(block.id) ?? [];
+    const blockSegments = getItemSegments(item, segments);
     if (block.kind === "figure") {
       rows.push({ type: "figure", key: `f${block.id}`, block, unitId: blockSegments.find((segment) => segment.unitId !== null)?.unitId ?? null });
       open = null;

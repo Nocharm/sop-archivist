@@ -1,0 +1,53 @@
+/* 시트 보기(components/outputs/sheet-view.tsx) - 폭에 맞춘 한 장, 스크롤바 없이 끌어 옮긴다(옮기기는 lib/sheet-pan.ts). 종이와 표시 색은 테마와 무관한 --sheet-* 토큰만 쓴다. */
+
+@layer components {
+  .sv { display: flex; flex-direction: column; gap: 8px; min-height: 0; flex: 1 1 auto; }
+  /* 틀 - 포인터·휠·글쇠를 받는다. 보통은 글자를 고르지 않고 Alt+끌기 뒤(data-select)에만 고른다 */
+  .sv-frame { position: relative; display: flex; flex-direction: column; flex: 1 1 auto; min-height: 160px; overflow: hidden; border: 1px solid var(--line); border-radius: var(--r-1); background: var(--sheet-paper); color: var(--sheet-ink); user-select: none; -webkit-user-select: none; touch-action: none; }
+  .sv-frame[data-movable] { cursor: grab; }
+  .sv-frame[data-grabbing], .sv-frame[data-grabbing] * { cursor: grabbing; }
+  .sv-frame[data-select] { user-select: text; -webkit-user-select: text; cursor: text; }
+  .sv-head { flex: none; position: relative; z-index: 1; background: var(--sheet-paper); }
+  .sv-clip { position: relative; flex: 1 1 auto; min-height: 0; overflow: hidden; }
+
+  /* 표 - 열 폭은 비율(%), 보이는 폭이 1,180px보다 좁으면 가로로도 끌어 본다 */
+  .sv-t { table-layout: fixed; width: 100%; min-width: 1180px; border-collapse: separate; border-spacing: 0; will-change: transform; }
+  .sv-t td { padding: 3px 5px; font-size: 11px; line-height: 15px; vertical-align: top; white-space: pre-wrap; overflow-wrap: break-word; }
+  /* 머리 글은 띄어쓰기에서만 감는다 - 낱말 가운데서 끊지 않는다 */
+  .sv-t td[data-head] { font-size: 10px; line-height: 12px; white-space: normal; word-break: keep-all; overflow-wrap: normal; }
+  .sv-t td[data-band="tobe"]:not([data-head]) { background: var(--sheet-tobe); }
+  .sv-t tr[data-mark="group"] > td:not([data-head]) { background: var(--sheet-group); }
+  .sv-t tr[data-mark="picked"] > td:not([data-head]) { background: var(--sheet-picked); }
+  .sv-t tr[data-mark="picked"] > td:first-child { box-shadow: inset 3px 0 0 var(--sheet-accent); }
+
+  /* 열 무리 띠 - 모델의 bands를 그릴 뿐(파일에는 없다) */
+  .sv-band { padding: 2px 5px; font-size: 10px; line-height: 14px; font-weight: 600; text-align: left; color: var(--sheet-band-ink); border-bottom: 1px solid var(--sheet-line-thin); }
+  .sv-band + .sv-band { border-left: 1px solid var(--sheet-paper); }
+  .sv-band[data-tone="asis"] { background: var(--sheet-band-asis); }
+  .sv-band[data-tone="tobe"] { background: var(--sheet-band-tobe); }
+  .sv-band[data-tone="decision"] { background: var(--sheet-band-decision); }
+  .sv-band[data-tone="tracking"] { background: var(--sheet-band-tracking); }
+
+  /* 상태 칩 - 색은 모델 칸의 tone */
+  .sv-chip { display: inline-block; padding: 0 5px; border: 1px solid currentColor; border-radius: var(--r-1); font-weight: 600; white-space: nowrap; }
+  .sv-chip[data-tone="ok"] { color: var(--sheet-accent); background: color-mix(in oklab, var(--sheet-accent) 10%, var(--sheet-paper)); }
+  .sv-chip[data-tone="ai"] { color: var(--sheet-ai); background: color-mix(in oklab, var(--sheet-ai) 10%, var(--sheet-paper)); }
+  .sv-chip[data-tone="del"] { color: var(--sheet-faint); }
+  .sv-chip[data-tone="un"] { color: var(--sheet-warn); background: color-mix(in oklab, var(--sheet-warn) 10%, var(--sheet-paper)); }
+  .sv-pending { display: block; margin-top: 2px; color: var(--sheet-accent); font-style: italic; }
+
+  /* 확정 전에 고른 곳 - 기울임 + accent + 점선 밑줄 */
+  .sv-draft { color: var(--sheet-accent); font-style: italic; text-decoration: underline dashed var(--sheet-accent); text-underline-offset: 2px; }
+
+  /* 목차 줄 - 접힌 한 줄 · 펼친 무리의 첫 줄은 눌러 접고 편다 */
+  .sv-t tr[data-toc] { cursor: pointer; }
+  .sv-t tr[data-toc]:hover > td:not([data-head]) { background: var(--sheet-group); }
+  .sv-toc-toggle { color: var(--sheet-accent); font-weight: 600; white-space: nowrap; }
+
+  .sv-image { display: block; max-width: 100%; height: auto; }
+
+  /* 위치 막대 - 보는 곳(손잡이)과 고른 줄(가로 표시). 누를 수 없다 */
+  .sv-rail { position: absolute; top: 0; right: 0; bottom: 0; width: 6px; background: var(--sheet-rail); pointer-events: none; }
+  .sv-rail-thumb { position: absolute; left: 0; right: 0; border-radius: 3px; background: var(--sheet-rail-thumb); }
+  .sv-rail-mark { position: absolute; left: -2px; right: -2px; height: 2px; margin-top: -1px; background: var(--sheet-accent); }
+}

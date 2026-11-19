@@ -10,3 +10,14 @@ export function canMoveTarget(items: readonly OutputCItem[], targetId: number, d
   const next = index + dir;
   return index >= 0 && next >= 0 && next < items.length;
 }
+
+/** 고른 줄에서 누른 글쇠가 한 자리 옮기기(Alt+↑·↓)인가 - 그 방향으로 옮길 수 있을 때만. null이면 기본 동작을 막지 않는다 */
+export function readMoveKey(
+  event: { key: string; shiftKey: boolean; altKey: boolean; ctrlKey: boolean; metaKey: boolean },
+  state: { canUp: boolean; canDown: boolean },
+): MoveDir | null {
+  if (!event.altKey || event.shiftKey || event.ctrlKey || event.metaKey) return null;
+  if (event.key === "ArrowUp") return state.canUp ? -1 : null;
+  if (event.key === "ArrowDown") return state.canDown ? 1 : null;
+  return null;
+}

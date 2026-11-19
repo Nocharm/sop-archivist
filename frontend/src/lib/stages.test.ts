@@ -1,7 +1,7 @@
 // 묶음 주소 읽기 - 단계 경로와 묶음 밖 주소를 가른다.
 import { describe, expect, it } from "vitest";
 
-import { getEditOriginalHref, getNewDocumentsHref, getNextActionHref, getStageHref, isStageLocked, NEXT_ACTION_STAGE, parseBundlePath, STAGES } from "./stages";
+import { getAssignLineHref, getAssignSourceHref, getEditOriginalHref, getNewDocumentsHref, getNextActionHref, getStageHref, isStageLocked, NEXT_ACTION_STAGE, parseBundlePath, STAGES } from "./stages";
 
 describe("parseBundlePath", () => {
   it("reads the overview and a stage", () => {
@@ -78,6 +78,10 @@ describe("isStageLocked", () => {
   it("reads the history page path", () => {
     expect(parseBundlePath("/bundles/3/history")).toEqual({ bundleId: 3, stage: "history" });
   });
+
+  it("keeps Map open without documents", () => {
+    expect(isStageLocked("map", 0)).toBe(false);
+  });
 });
 
 describe("STAGES", () => {
@@ -91,6 +95,22 @@ describe("STAGES", () => {
     expect(STAGES.some((stage) => stage.path === "/split")).toBe(false);
     expect(parseBundlePath("/bundles/3/split")).toEqual({ bundleId: 3, stage: null });
     expect(getEditOriginalHref(3, 12)).toBe("/bundles/3/assign?edit=12");
+  });
+
+  it("puts Map right before History, without a step number", () => {
+    expect(STAGES.map((s) => s.key)).toEqual(["overview", "documents", "assign", "order", "outputs", "map", "history"]);
+    expect(STAGES.find((s) => s.key === "map")).toEqual({ key: "map", path: "/map", ready: true });
+    expect(parseBundlePath("/bundles/3/map")).toEqual({ bundleId: 3, stage: "map" });
+    expect(getStageHref(4, "map")).toBe("/bundles/4/map");
+  });
+
+  it("builds the address that opens Assign on one line", () => {
+    expect(getAssignLineHref(4, 101, 5012)).toBe("/bundles/4/assign?doc=101&unit=5012");
+  });
+
+  it("opens Assign on the first source of a line, or on Assign itself when there is none", () => {
+    expect(getAssignSourceHref(4, [{ document_id: 101, unit_id: 5012 }, { document_id: 102, unit_id: 6001 }])).toBe("/bundles/4/assign?doc=101&unit=5012");
+    expect(getAssignSourceHref(4, [])).toBe("/bundles/4/assign");
   });
 
   it("reads the Order page path", () => {

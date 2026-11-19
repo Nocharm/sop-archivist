@@ -1,14 +1,20 @@
 """새 문장을 문서 안 순서에 끼워 넣는 자리 계산 — 새로 놓이는 짝·번역의 기본 번호 표시와 순서(제품 명세 §7.13 섹션 번호, O10), manual_order 문서에서 번역을 출처 바로 뒤에 둔다."""
 
+import asyncio
 from collections.abc import Sequence
 from dataclasses import dataclass
+from typing import cast
 
-from sqlalchemy import update
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.sop.constants import NUMBER_OMITTED, NUMBERED, NumberStyle
-from app.sop.models import TargetSentence
+from app.sop.constants import NUMBER_BULLET, NUMBER_OMITTED, NUMBERED, SLOT_HEADING, NumberStyle
+from app.sop.events import record_event
+from app.sop.models import TargetDoc, TargetSentence
+from app.sop.outline import DocOutline
+from app.sop.outputs import list_target_order
 from app.sop.segment import NEUTRAL
+from app.sop.snapshot import load_bundle_snapshot
 
 ENGLISH = "en"
 
@@ -26,6 +32,8 @@ class NewTarget:
     source_unit_id: int  # 첫 출처 단위
     is_translation: bool  # 결정된 변경 종류가 translated
     source_placed: bool  # 같은 자리에 같은 출처 단위의 번역 아닌 기존 새 문장이 있다
+    # 그 자리의 기본 번호 표시 — SOP는 골격 항목의 default_style(템플릿은 6장·부록만 번호, 나머지는 글머리 기호), WI는 번호
+    default_style: NumberStyle = NUMBERED
 
 
 @dataclass(frozen=True)
@@ -33,6 +41,24 @@ class Arranged:
     key: str
     number_style: NumberStyle
     after_existing_source: bool  # manual_order 문서에서 기존 출처 바로 뒤에 끼운다
+
+
+def get_default_style(outline: DocOutline, slot_key: str | None) -> NumberStyle:
+    """그 자리에 새로 놓이는 줄의 기본 번호 표시 — SOP는 골격 항목의 default_style, 골격 항목이 아닌 자리(WI 단계·절 경로)는 번호."""
+    item = outline.find(slot_key) if slot_key is not None else None
+    return cast(NumberStyle, item.default_style) if item is not None else NUMBERED
+
+
+def restyle_moved(style: str, outline: DocOutline, slot_key: str | None) -> str:
+    """다른 절로 옮긴 기존 줄의 번호 표시 — 번호·글머리 기호는 도착한 절의 기본 표시로 바꾸고, 생략·주석은 그 줄의 성격이라 그대로 둔다.
+
+    저장(decisions)과 순서 바꾸기(routers/sop_outputs)가 함께 쓴다(사용자 결정 2026-11-17 — 계획 "확인받을 것" 8).
+    """
+    # 확인 필요: SOP 절이 아닌 자리(WI 단계)로 옮긴 줄은 표시를 그대로 둔다 — 글머리 기호 줄이 WI로 가면 글머리 기호로 남는다.
+    # WI의 기본(번호)으로 바꿀지는 정해지지 않았다(계획은 "WI는 그대로"라고만 한다)
+    if slot_key is None or style not in (NUMBERED, NUMBER_BULLET):
+        return style
+    return get_default_style(outline, slot_key)
 
 
 def arrange_new_targets(items: Sequence[NewTarget]) -> list[Arranged]:
@@ -53,7 +79,7 @@ def arrange_new_targets(items: Sequence[NewTarget]) -> list[Arranged]:
 
 
 def _arrange_meaning(group: list[NewTarget]) -> list[Arranged]:
-    """한 자리·한 의미 — 한/영 짝이 함께 처음 놓이면 첫 영어만 번호, 나머지는 생략(1:N이면 영어들 다음 한글들)."""
+    """한 자리·한 의미 — 한/영 짝이 함께 처음 놓이면 첫 영어만 그 자리의 기본 표시(번호나 글머리 기호), 나머지는 생략(1:N이면 영어들 다음 한글들)."""
     ordered = sorted((item for item in group if not item.is_translation), key=lambda item: item.lang != ENGLISH)
     here = {item.source_unit_id for item in ordered}
     for item in group:
@@ -69,11 +95,11 @@ def _arrange_meaning(group: list[NewTarget]) -> list[Arranged]:
     arranged = []
     for index, item in enumerate(ordered):
         if is_pair_together:
-            style = NUMBERED if index == 0 else NUMBER_OMITTED  # 영어가 앞으로 와서 첫 줄이 첫 영어다
+            style = item.default_style if index == 0 else NUMBER_OMITTED  # 영어가 앞으로 와서 첫 줄이 첫 영어다
         elif item.is_translation and (item.source_unit_id in here or item.source_placed):
             style = NUMBER_OMITTED
         else:
-            style = NUMBERED
+            style = item.default_style
         is_inserted = item.is_translation and item.source_placed and item.source_unit_id not in here
         arranged.append(Arranged(item.key, style, is_inserted))
     return arranged
@@ -94,3 +120,40 @@ async def insert_after(session: AsyncSession, source: TargetSentence) -> int:
         .values(order_index=TargetSentence.order_index + 1)
     )
     return source.order_index + 1
+
+
+async def open_gap(session: AsyncSession, target_doc_id: int, at: int, count: int) -> None:
+    """order_index가 at 이상인 그 문서의 최상위 새 문장을 count칸 민다 — insert_after와 같은 조건, 묶음 잠금 안에서 부른다."""
+    await session.execute(
+        update(TargetSentence)
+        .where(
+            TargetSentence.target_doc_id == target_doc_id,
+            TargetSentence.parent_target_id.is_(None),
+            TargetSentence.order_index >= at,
+        )
+        .values(order_index=TargetSentence.order_index + count)
+    )
+
+
+async def freeze_order(session: AsyncSession, bundle_id: int, doc: TargetDoc, actor: str) -> None:
+    """지금 결과물 C가 보이는 순서를 order_index로 굳히고 manual_order를 켠다 — PUT /targets/order와 같은 일(끌어다 놓기 설계 §8).
+
+    문서마다 한 번만 도는 길이다(그 뒤로는 manual_order). 칸 제목과 칸 새 문장은 순서가 없어 건드리지 않는다.
+    """
+    # 글자를 빼고 읽으면(include_text=False) 같은 세션의 단위 글이 미적재 열이 되어 뒤의 저장이 읽지 못한다
+    snap = await load_bundle_snapshot(session, bundle_id)
+    order = await asyncio.to_thread(list_target_order, snap, doc.id)
+    rows = {
+        row.id: row
+        for row in await session.scalars(
+            select(TargetSentence).where(
+                TargetSentence.target_doc_id == doc.id,
+                TargetSentence.parent_target_id.is_(None),
+                TargetSentence.kind != SLOT_HEADING,
+            )
+        )
+    }
+    for order_index, target_id in enumerate(order):
+        rows[target_id].order_index = order_index
+    doc.manual_order = True
+    record_event(session, bundle_id=bundle_id, actor=actor, action="targets.reorder", target_type="target_doc", target_ids=[doc.id])

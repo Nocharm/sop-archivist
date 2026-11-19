@@ -1,4 +1,5 @@
-// Excel 미리보기 창 - 서버가 지은 시트 모델 네 장을 탭으로 보이고, 받기는 응답 Content-Disposition 이름으로 저장한다(제품 명세 §7.14 미리보기 창·시트 모델).
+// Excel 미리보기 창 - 서버가 지은 시트 모델 다섯 장을 탭으로 보이고, 받기는 응답 Content-Disposition 이름으로 저장한다(제품 명세 §7.14 미리보기 창·시트 모델).
+// 거의 전체 화면 창에 시트 보기(SheetView)가 남은 높이를 다 쓴다 - 범위는 묶음 전체, 고른 줄·확정 전 덮어 그리기는 없다(Assign Space 미리보기와 같은 부품).
 "use client";
 
 import { Download } from "lucide-react";
@@ -6,6 +7,7 @@ import { useState } from "react";
 
 import { Modal } from "@/components/modal";
 import { SheetView } from "@/components/outputs/sheet-view";
+import { Truncate } from "@/components/ui/motion";
 import { LoadError } from "@/components/ui/load-error";
 import { showToast } from "@/components/ui/toast";
 import { humanizeApiError } from "@/lib/api-errors";
@@ -44,11 +46,17 @@ export function ExportPreviewModal({ bundleId, onClose }: { bundleId: number; on
       testId="export-preview"
       size="sheet"
       isBusy={downloading}
+      subtitle={data ? <Truncate text={data.file_name} className="font-mono" testId="export-preview-file-name" /> : undefined}
       footer={
-        <button type="button" className="btn pri" data-testid="export-preview-download" disabled={!data || downloading} onClick={() => void handleDownload()}>
-          <Download size={14} strokeWidth={1.5} aria-hidden />
-          {downloading ? t("outputs.exporting") : t("outputs.preview.download")}
-        </button>
+        <>
+          <p className="mr-auto self-center text-[12px] text-ink-3" data-testid="export-preview-legend">
+            {t("outputs.sheet.legend")}
+          </p>
+          <button type="button" className="btn pri" data-testid="export-preview-download" disabled={!data || downloading} onClick={() => void handleDownload()}>
+            <Download size={14} strokeWidth={1.5} aria-hidden />
+            {downloading ? t("outputs.exporting") : t("outputs.preview.download")}
+          </button>
+        </>
       }
     >
       {preview.error != null && !data && <LoadError error={preview.error} onRetry={preview.reload} testId="export-preview" />}
@@ -60,10 +68,7 @@ export function ExportPreviewModal({ bundleId, onClose }: { bundleId: number; on
       )}
       {data && sheet && (
         <>
-          <p className="min-w-0 text-[13px] break-all text-ink-2" data-testid="export-preview-file-name">
-            {data.file_name}
-          </p>
-          <div className="view-toggle flex-wrap">
+          <div className="view-toggle flex-none flex-wrap self-start">
             {data.sheets.map((item, index) => (
               <button
                 key={item.name}

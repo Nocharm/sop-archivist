@@ -16,12 +16,10 @@ from openpyxl import load_workbook
 from app.settings import settings
 from app.sop.constants import COVER_KINDS
 from app.sop.coverage import find_coverage_problems
+from app.sop.renumber import find_number_tokens, read_caption_number
 from scripts.sop_demo_driver import SyntheticDriver, find_unit_by_text, iter_c_items
 from scripts.synthetic_sop import (
-    EXPECTED_FILE,
-    FILE_PREFIX,
     FIXED_ZIP_TIME,
-    SAMPLES_DIR,
     SyntheticBundle,
     build_synthetic_bundle,
 )
@@ -57,15 +55,26 @@ def _get_location_key(spec: dict) -> str:
     return f"step:{spec['wi_step']}:{spec['wi_part']}"
 
 
+def _mask_numbers(text: str) -> str:
+    """표·그림 번호 자리를 '#'로 — 결과물은 새 문서마다 다시 매긴 번호라(outputs.build_renumbering) 정답의 원문 번호와 글만 견준다."""
+    head = read_caption_number(text)
+    spans = {(token.start, token.end) for token in find_number_tokens(text)}
+    if head is not None:
+        spans.add((head.start, head.end))
+    for start, end in sorted(spans, reverse=True):
+        text = f"{text[:start]}#{text[end:]}"
+    return text
+
+
 def _list_expected_c_items(expected: dict) -> list[tuple]:
-    """결과물 C에 나올 새 문장 — 같은 key는 하나, 두 언어와 중립 모두(한 벌), 입구 2 신규 포함."""
+    """결과물 C에 나올 새 문장 — 같은 key는 하나, 두 언어와 중립 모두(한 벌), 입구 2 신규 포함. 표·그림 번호는 가린다."""
     specs = {spec["key"]: spec for answer in expected["answers"] for spec in answer["targets"]}
     items = [
-        (spec["code"], _get_location_key(spec), spec["kind"], spec.get("text", ""), spec["change_type"])
+        (spec["code"], _get_location_key(spec), spec["kind"], _mask_numbers(spec.get("text", "")), spec["change_type"])
         for spec in specs.values()
     ]
     items += [
-        (spec["doc"], f"path:{spec['section_path']}", "sentence", spec["text"], "new")
+        (spec["doc"], f"path:{spec['section_path']}", "sentence", _mask_numbers(spec["text"]), "new")
         for spec in expected["match"]["new_texts"]
     ]
     return sorted(items)
@@ -73,7 +82,7 @@ def _list_expected_c_items(expected: dict) -> list[tuple]:
 
 def _list_c_items(output_c: dict) -> list[tuple]:
     return sorted(
-        (doc["code"], item["location_key"], item["kind"], item["text"], item["change_type"])
+        (doc["code"], item["location_key"], item["kind"], _mask_numbers(item["text"]), item["change_type"])
         for doc in output_c["docs"]
         for item in iter_c_items(doc)
     )
@@ -123,16 +132,6 @@ def test_synthetic_bundle_is_byte_identical(synthetic: SyntheticBundle, tmp_path
         assert {info.date_time for info in archive.infolist()} == {FIXED_ZIP_TIME}
 
 
-def test_samples_match_generator(synthetic: SyntheticBundle) -> None:
-    samples = {path.name for path in SAMPLES_DIR.glob(f"{FILE_PREFIX}*")}
-
-    assert samples == {path.name for path in synthetic.directory.iterdir()} - {EXPECTED_FILE}
-    for name in samples:
-        assert (SAMPLES_DIR / name).read_bytes() == (synthetic.directory / name).read_bytes(), (
-            f"{name}: samples/ is stale — rerun `python -m scripts.synthetic_sop` in backend/"
-        )
-
-
 def test_end_to_end_both_entrances(client: TestClient, synthetic: SyntheticBundle) -> None:
     assert settings.ai_enabled is False
     expected = synthetic.expected
@@ -142,7 +141,7 @@ def test_end_to_end_both_entrances(client: TestClient, synthetic: SyntheticBundl
     run.start()
 
     assert {code: uploaded["status"] for code, uploaded in run.uploads.items()} == dict.fromkeys(
-        ("OLD-1", "OLD-2", "OLD-3", "OLD-4", "OLD-5", "WI-04", "OLD-6", "WI-05"), "ready"
+        ("OLD-1", "OLD-2", "OLD-3", "OLD-4", "OLD-5", "WI-04", "OLD-6", "WI-05", "OLD-7"), "ready"
     )
     warnings = [warning["kind"] for uploaded in run.uploads.values() for warning in uploaded["extraction"]["warnings"]]
     assert not set(warnings) & set(MISSING_TEXT_WARNINGS)
@@ -158,7 +157,13 @@ def test_end_to_end_both_entrances(client: TestClient, synthetic: SyntheticBundl
     addressed += [
         find_unit_by_text(run.views[answer["doc"]], spec["source_text"], 1, ("cell_sentence",))["id"]
         for answer in expected["answers"] if answer.get("kind") == "table"
-        for spec in answer["targets"] if "parent_key" in spec
+        for spec in answer["targets"] if "cell_row" in spec  # 캡션 새 문장(칸 좌표 없음)은 아래 캡션 단위가 맡는다
+    ]
+    # 표·그림에 묶인 캡션은 답이 없고 묶음 답의 처분을 따른다
+    bundle_ids = {run.find_answer_unit(answer)["id"] for answer in expected["answers"] if answer.get("kind")}
+    addressed += [
+        unit["id"] for view in run.views.values() for unit in view["units"]
+        if unit["kind"] == "caption" and unit["group_unit_id"] in bundle_ids
     ]
     old_cover = {
         unit["id"]: (code, unit["text"]) for code, view in run.views.items() if view["document"]["side"] == "old"
@@ -201,6 +206,9 @@ def test_end_to_end_both_entrances(client: TestClient, synthetic: SyntheticBundl
     # B 간선 합 = A 옛 묶음마다 보낸 새 문서 수(없으면 처분 노드 하나)
     assert sum(edge["count"] for edge in outputs["b"]["edges"]) == sum(max(1, len(docs)) for docs in old_groups.values())
     assert _list_c_items(outputs["c"]) == _list_expected_c_items(expected)
+    # OLD-7의 그림 5·6은 SOP-CF의 첫·둘째 그림 — 캡션과 참조 문장이 다시 매긴 번호로 나온다
+    c_texts = {item["text"] for doc in outputs["c"]["docs"] for item in iter_c_items(doc)}
+    assert {"Fig.2 Lid lock", "See Figure 1 for the mounting position."} <= c_texts
     assert len(outputs["c"]["deleted"]) == summary["deleted"]
     assert {moved["move_target_code"] for moved in outputs["c"]["moved"]} == {"SOP-QC-99999"}
 

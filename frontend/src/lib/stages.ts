@@ -2,7 +2,7 @@
 
 import type { NextAction } from "./api-sop";
 
-export type StageKey = "overview" | "documents" | "assign" | "order" | "outputs" | "history";
+export type StageKey = "overview" | "documents" | "assign" | "order" | "outputs" | "map" | "history";
 
 /** Documents 화면 안 New 문서 목록(옛 To-Be 화면)의 자리 - 옛 주소 /tobe도 여기로 넘긴다 */
 export const NEW_DOCUMENTS_ANCHOR = "new-documents";
@@ -28,6 +28,8 @@ export const STAGES: readonly Stage[] = [
   { key: "order", path: "/order", step: 3, ready: true },
   // 4단계 - 결과물과 검토. 검토 요청·완료·되돌림은 이 화면 위의 검토 띠에 있다(옛 /review는 여기로 넘긴다, B4)
   { key: "outputs", path: "/outputs", step: 4, ready: true },
+  // 번호 없는 보는 화면 - 문서 사이 참조와 후속 문서(참조 지도). 내 문서가 없어도 남의 문서를 찾아볼 수 있어 잠그지 않는다
+  { key: "map", path: "/map", ready: true },
   // 레일 맨 아래 - 작업 기록 전체(개요 Activity의 "모두 보기")
   { key: "history", path: "/history", ready: true },
 ];
@@ -56,6 +58,21 @@ export const EDIT_ORIGINAL_PARAM = "edit";
 /** 그 문서를 한 단으로 연 배정 화면 주소 - Old 문서면 넓게 보며 배정하고, 이미 쓴 New 문서면 그 원문을 다듬는다 */
 export function getEditOriginalHref(bundleId: number, docId: number): string {
   return `${getStageHref(bundleId, "assign")}?${EDIT_ORIGINAL_PARAM}=${docId}`;
+}
+
+/** 줄 하나를 고른 채 배정 화면을 여는 주소 값 둘 - 그 줄의 Old 문서 id와 Unit id(참조 지도의 줄 끝 단추). 배정 화면이 읽은 뒤 주소에서 뗀다 */
+export const ASSIGN_DOC_PARAM = "doc";
+export const ASSIGN_UNIT_PARAM = "unit";
+
+/** 그 Bundle의 배정 화면을 그 줄(Unit이 든 줄)을 고른 채 여는 주소 - 보기(한 단·양 단)는 바꾸지 않는다 */
+export function getAssignLineHref(bundleId: number, docId: number, unitId: number): string {
+  return `${getStageHref(bundleId, "assign")}?${ASSIGN_DOC_PARAM}=${docId}&${ASSIGN_UNIT_PARAM}=${unitId}`;
+}
+
+/** 줄의 출처 Unit 가운데 첫째를 고른 채 배정 화면을 여는 주소 - 출처가 없으면(새로 쓴 줄) 배정 화면 처음 */
+export function getAssignSourceHref(bundleId: number, units: ReadonlyArray<{ document_id: number; unit_id: number }>): string {
+  const first = units[0];
+  return first ? getAssignLineHref(bundleId, first.document_id, first.unit_id) : getStageHref(bundleId, "assign");
 }
 
 export function getStageHref(bundleId: number, key: StageKey): string {

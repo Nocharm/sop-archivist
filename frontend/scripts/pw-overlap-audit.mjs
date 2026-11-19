@@ -1,5 +1,5 @@
 // 겹침 감사(Playwright + 시스템 Chrome) - 호버로 펼치거나 떠서 보이는 UI가 옆 글자·입력을 덮는지 잰다.
-// 모핑 단추(.mbtn — 라벨 폭은 px로 손으로 맞춘 값이라 번역이 길어지면 조용히 겹친다)·C 줄 끝 단추·Assign 그 자리 메뉴·상단 바 AI 작업 목록과 알림(요청 줄의 Background 표시 포함).
+// 모핑 단추(.mbtn — 라벨 폭은 px로 손으로 맞춘 값이라 번역이 길어지면 조용히 겹친다)·C 줄 끝 단추·Assign 그 자리 메뉴·상단 바 AI 작업 목록과 알림(요청 줄의 Background 표시 포함)·Assign 표·그림 머리 줄의 TABLE/FIGURE 표시.
 // 전제: reset_db → seed_sop_demo 직후 backend 8777(DEV_ENFORCE_PERMISSIONS=true) + frontend 3777. DB를 바꾸지 않는다
 // (AI 목록과 알림은 /api/ai/jobs/recent 응답을 브라우저 안에서 바꿔 그린다).
 // 실행(frontend/ 에서): node scripts/pw-overlap-audit.mjs — 겹침이 하나라도 있으면 종료 코드 1, 그 화면은 ../.shots/overlap-*.png
@@ -93,10 +93,6 @@ async function auditHover(page, selector, report) {
 }
 
 const mbtnScenes = [
-  { name: "documents", user: "qa.member", url: `/bundles/${BUNDLE}/documents`, ready: '[data-testid$="-delete"]', buttons: '.row-actions-quiet button:not(:disabled)' },
-  { name: "tobe", user: "qa.member", url: `/bundles/${BUNDLE}/documents`, ready: '[data-testid="tobe-list"]', buttons: '[data-testid$="-remove"]:not(:disabled)', long: async (page) => {
-    for (const input of await page.locator('input[data-testid$="-title"]').all()) await input.fill("SYNTHETIC very long document title that keeps going and going across the whole column width");
-  } },
   { name: "tobe-steps", user: "qa.member", url: `/bundles/${BUNDLE}/documents`, ready: '[data-testid="tobe-list"]', prepare: async (page) => {
     for (const toggle of await page.locator('[data-testid^="tobe-"][data-testid$="-toggle"]').all()) await toggle.click();
     await page.locator('[data-testid*="-remove-step-"]').first().waitFor({ timeout: T });
@@ -157,7 +153,20 @@ const mbtnScenes = [
   },
 }));
 
-// C 줄 끝 단추(번호 표시·들여쓰기·옮기기) - 글 뒤 같은 줄(넘치면 글 바로 아래)에 늘 흐리게 있고 줄에 올리면 또렷해진다. 줄의 가로 범위를 벗어나지 않아야 하고, 어떤 글자도 덮지 않아야 한다
+// C 줄 끝 단추(번호 표시·들여쓰기·옮기기) - 쉴 때는 보이지 않고(불투명도 0), 줄에 올리면 용지 오른쪽 바깥, 줄 위 끝에 뜬다(넓으면 묶음, 좁으면 ⋯ 하나).
+// 올린 단추는 어떤 글자도 덮지 않고 용지 밖·스크롤 칸 안에 있어야 한다
+async function findActsPlacement(row) {
+  return row.evaluate((el) => {
+    const box = [...el.querySelectorAll(":scope > .c-acts, :scope > .c-more")].find((node) => getComputedStyle(node).display !== "none").getBoundingClientRect();
+    const sheet = el.closest("article.sheet").getBoundingClientRect();
+    const pane = el.closest(".overflow-auto, .overflow-y-auto");
+    const paneRight = pane.getBoundingClientRect().left + pane.clientWidth;
+    return { pastPane: box.right > paneRight + 1, inSheet: box.left < sheet.right };
+  });
+}
+// 보이는 쪽(넓으면 묶음, 좁으면 ⋯) - 다른 쪽은 display: none이다
+const findShownActs = (row) => row.locator(":scope > .c-acts:visible, :scope > .c-more:visible");
+const readOpacity = (locator) => locator.evaluate((el) => Number(getComputedStyle(el).opacity));
 const outputsScene = {
   name: "outputs-c-rows",
   user: "qa.member",
@@ -172,27 +181,62 @@ const outputsScene = {
     }
     let checked = 0;
     for (const row of (await rows.all()).slice(0, 8)) {
-      const actions = row.locator(".row-actions-quiet");
-      if ((await actions.count()) === 0) continue;
+      if ((await row.locator('[data-testid^="output-c-acts-"]').count()) === 0) continue;
+      const actions = findShownActs(row);
       await row.scrollIntoViewIfNeeded();
-      // 가만히 있을 때(흐린 상태)와 올렸을 때(또렷한 상태) 둘 다 잰다
+      // 가만히 있을 때(보이지 않음)와 올렸을 때(뜬 상태) 둘 다 잰다
       await page.mouse.move(0, 0);
       await page.waitForTimeout(400);
-      const rest = await findCovered(actions);
-      if (rest.hits.length > 0) report(`${await row.getAttribute("data-testid")} buttons at rest (${rest.width}px)`, rest.hits.join(", "));
+      const restOpacity = await readOpacity(actions);
+      if (restOpacity > 0) report(`${await row.getAttribute("data-testid")} buttons at rest`, `opacity ${restOpacity}`);
       await row.hover({ position: { x: 8, y: 8 } });
       await page.waitForTimeout(HOVER_SETTLE_MS);
       const { hits, width } = await findCovered(actions);
       if (hits.length > 0) report(`${await row.getAttribute("data-testid")} buttons (${width}px)`, hits.join(", "));
-      const isOutside = await row.evaluate((el) => {
-        const box = el.querySelector(".row-actions-quiet").getBoundingClientRect();
-        const line = el.getBoundingClientRect();
-        return box.left < line.left - 1 || box.right > line.right + 1;
-      });
-      if (isOutside) report(`${await row.getAttribute("data-testid")} buttons`, "outside the row's horizontal extent");
+      const placement = await findActsPlacement(row);
+      if (placement.pastPane) report(`${await row.getAttribute("data-testid")} buttons`, "past the right edge of the scroll pane");
+      if (placement.inSheet) report(`${await row.getAttribute("data-testid")} buttons`, "inside the sheet");
       checked += 1;
     }
     if (checked === 0) report("no C row with buttons", "");
+  },
+};
+
+// 문서 끝 줄들 - 문서마다 끝까지 그린 뒤 마지막 세 줄에 올려, 단추가 글을 덮지 않고 스크롤 높이를 늘리지 않는지 본다(DB는 그대로)
+const outputsEndRowsScene = {
+  name: "outputs-c-end-rows",
+  user: "qa.member",
+  run: async (page, report) => {
+    await page.goto(`${BASE}/bundles/${BUNDLE}/order`);
+    await page.locator('[data-testid^="order-doc-"]').first().waitFor({ timeout: T });
+    const docs = await page.locator('[data-testid^="order-doc-"]').evaluateAll((els) => els.map((el) => el.getAttribute("data-testid")));
+    const scrollHeight = () => page.locator('[data-testid="output-c"]').evaluate((el) => el.closest(".overflow-auto, .overflow-y-auto").scrollHeight);
+    let checked = 0;
+    for (const doc of docs.slice(0, 6)) {
+      await page.locator(`[data-testid="${doc}"]`).click();
+      await page.locator('[data-testid="output-c"]').waitFor({ timeout: T });
+      for (let step = 0; step < 20 && (await page.locator('[data-testid="output-c-more"]').count()) > 0; step += 1) {
+        await page.locator('[data-testid="output-c-more"]').scrollIntoViewIfNeeded();
+        await page.waitForTimeout(250);
+      }
+      const rows = await page.locator('[data-testid^="output-c-row-"]:has([data-testid^="output-c-acts-"])').all();
+      for (const row of rows.slice(-3)) {
+        const name = `${doc} ${await row.getAttribute("data-testid")}`;
+        await row.scrollIntoViewIfNeeded();
+        await page.mouse.move(0, 0);
+        await page.waitForTimeout(300);
+        const rest = await scrollHeight();
+        await row.hover({ position: { x: 8, y: 4 } });
+        await page.waitForTimeout(HOVER_SETTLE_MS);
+        const hovered = await scrollHeight();
+        if (hovered !== rest) report(`${name} buttons`, `scroll height ${rest} -> ${hovered}`);
+        const { hits, width } = await findCovered(findShownActs(row));
+        if (hits.length > 0) report(`${name} buttons (${width}px)`, hits.join(", "));
+        if ((await findActsPlacement(row)).pastPane) report(`${name} buttons`, "past the right edge of the scroll pane");
+        checked += 1;
+      }
+    }
+    if (checked === 0) report("no C end row with buttons", "");
   },
 };
 
@@ -328,18 +372,22 @@ const outputsReorderScene = {
     await page.goto(`${BASE}/bundles/${BUNDLE}/order`);
     await page.locator('[data-testid="output-c"]').waitFor({ timeout: T });
     const down = page.locator('[data-testid^="output-c-move-down-"]:not([disabled])').first();
-    await down.waitFor({ timeout: T });
+    // 좁은 틀(⋯)에서는 묶음이 display: none이라 붙어 있기만 기다린다 - 누르기는 dispatchEvent라 보이지 않아도 된다
+    await down.waitFor({ state: "attached", timeout: T });
     const id = (await down.getAttribute("data-testid")).replace("output-c-move-down-", "");
     await down.dispatchEvent("click");
     await page.waitForTimeout(HOVER_SETTLE_MS);
     const row = page.locator(`[data-testid="output-c-row-${id}"]`);
-    const actions = row.locator(".row-actions-quiet");
-    const rest = await findCovered(actions);
-    if (rest.hits.length > 0) report(`moved row ${id} buttons at rest (${rest.width}px)`, rest.hits.join(", "));
+    const actions = findShownActs(row);
+    await page.mouse.move(0, 0);
+    await page.waitForTimeout(400);
+    const restOpacity = await readOpacity(actions);
+    if (restOpacity > 0) report(`moved row ${id} buttons at rest`, `opacity ${restOpacity}`);
     await row.hover({ position: { x: 8, y: 8 } });
     await page.waitForTimeout(HOVER_SETTLE_MS);
     const hovered = await findCovered(actions);
     if (hovered.hits.length > 0) report(`moved row ${id} buttons (${hovered.width}px)`, hovered.hits.join(", "));
+    if ((await findActsPlacement(row)).pastPane) report(`moved row ${id} buttons`, "past the right edge of the scroll pane");
     release?.();
     await page.locator('[data-testid="toast-error"]').first().waitFor({ timeout: T });
     await page.unroute("**/targets/order**");
@@ -370,6 +418,56 @@ const exportPreviewScene = {
     if (outside) report("export-preview", "outside the viewport");
   },
 };
+
+// Documents 두 목록의 줄 끝 단추(Documents 화면 설계 §4) - 쉴 때는 보이지 않고 줄에 올리면 줄 안 오른쪽 끝에 뜬다(넓으면 묶음, 좁으면 ⋯).
+// 올린 줄의 단추 자리는 그 줄의 제목 · 딸린 정보 글을 덮지 않고, 오른쪽 끝이 줄마다 같다(±1px). LONG=1이면 제목 글을 길게 바꿔 본다.
+// 목록마다 제목 글의 testid가 다르다 - New 줄은 `-title-text`, Old 줄은 제목 링크 `-title`
+const makeRowActsScene = (name, listTestId, titleSuffix) => ({
+  name,
+  user: "qa.member",
+  run: async (page, report) => {
+    await page.goto(`${BASE}/bundles/${BUNDLE}/documents`);
+    const rows = page.locator(`[data-testid="${listTestId}"] .doc-row[data-testid]`);
+    await rows.first().waitFor({ timeout: T });
+    await page.waitForTimeout(400);
+    if (LONG) {
+      await page.locator(`[data-testid="${listTestId}"] .doc-row [data-testid$="${titleSuffix}"]`).evaluateAll((els) => els.slice(0, 6).forEach((el) => { el.textContent = "SYNTHETIC very long document title that keeps going and going across the whole column width and wraps onto a second line"; }));
+    }
+    const rights = new Set();
+    for (const row of (await rows.all()).slice(0, 6)) {
+      await row.scrollIntoViewIfNeeded();
+      // 제목 위에 올린다 - 앞 줄의 툴팁이 사라지는 중이면 그 자리를 가려 기다리게 되므로 행위 검사는 건너뛴다(:hover는 마우스 자리로 정해진다)
+      await row.locator(".doc-title").hover({ force: true });
+      await page.waitForTimeout(250);
+      const placed = await row.evaluate((el) => {
+        const acts = [...el.querySelectorAll(".doc-acts, .doc-more")].find((node) => getComputedStyle(node).display !== "none");
+        if (!acts) return null;
+        const box = acts.getBoundingClientRect();
+        const covered = [];
+        for (const selector of [".doc-title", ".doc-meta"]) {
+          const range = document.createRange();
+          range.selectNodeContents(el.querySelector(selector));
+          for (const rect of range.getClientRects()) {
+            if (Math.min(rect.right, box.right) - Math.max(rect.left, box.left) > 0 && Math.min(rect.bottom, box.bottom) - Math.max(rect.top, box.top) > 0) covered.push(selector);
+          }
+        }
+        return { right: Math.round(box.right), opacity: Number(getComputedStyle(acts).opacity), covered: [...new Set(covered)] };
+      });
+      const id = await row.getAttribute("data-testid");
+      if (placed === null) {
+        report(id, "no row-end buttons");
+        continue;
+      }
+      if (placed.opacity < 1) report(id, `row-end buttons not shown on hover (opacity ${placed.opacity})`);
+      if (placed.covered.length > 0) report(id, `row-end buttons cover ${placed.covered.join(", ")}`);
+      rights.add(placed.right);
+      await page.mouse.move(0, 0);
+    }
+    if (Math.max(...rights) - Math.min(...rights) > 1) report(name, `right edges differ: ${[...rights].join(", ")}`);
+  },
+});
+const tobeRowActsScene = makeRowActsScene("tobe-row-acts", "tobe-list", "-title-text");
+const oldRowActsScene = makeRowActsScene("documents-row-acts", "documents-list", "-title");
 
 // 엮은 문서 미리 보기(아직 안 쓴 SOP)의 칸 제목 출처 - 칸 이름 뒤에서 말줄임하고 칸 이름을 덮지 않는다. 출처 글은 응답에 넣어 길게 그린다(DB는 그대로)
 const composedHeadingScene = {
@@ -412,7 +510,51 @@ const composedHeadingScene = {
   },
 };
 
-const scenes = [...mbtnScenes, outputsScene, outputsReorderScene, exportPreviewScene, composedHeadingScene, linkMenuScene, aiJobsScene].filter((scene) => !only || only.includes(scene.name));
+// 표·그림 머리 줄 - 위 테두리의 TABLE/FIGURE 표시가 표시 ID·미리보기 글을 덮지 않는다(넓은 한 단·좁은 양 단), 머리 줄을 누르면 그 조각에 data-sel.
+// 머리 줄이 있는 Old 문서를 ?edit=로 연다(고르기만 하고 저장하지 않는다)
+const bundleHeadScene = {
+  name: "assign-bundle-head",
+  user: "qa.member",
+  run: async (page, report) => {
+    const documents = await (await page.request.get(`${BASE}/api/bundles/${BUNDLE}/documents`, { headers: { "X-Dev-User": "qa.member" } })).json();
+    let opened = false;
+    for (const doc of documents) {
+      await page.goto(`${BASE}/bundles/${BUNDLE}/assign?edit=${doc.id}`);
+      await page.locator('[data-testid="assign-bar"]').waitFor({ timeout: T });
+      await page.waitForTimeout(800);
+      if ((await page.locator(".bundle-head").count()) > 0) {
+        opened = true;
+        break;
+      }
+    }
+    if (!opened) {
+      report("assign-bundle-head", "no document with a table or figure head row");
+      return;
+    }
+    const measureTags = async (view) => {
+      const tags = await page.locator('.bundle-head .strip-lang[data-lang="bundle"]').all();
+      for (const tag of tags.slice(0, 6)) {
+        await tag.scrollIntoViewIfNeeded();
+        const { hits, width } = await findCovered(tag);
+        if (hits.length > 0) report(`${view} ${await tag.textContent()} tag (${width}px)`, hits.join(", "));
+      }
+      return tags.length;
+    };
+    const wide = await measureTags("one pane");
+    await page.getByTestId("assign-view-two").click();
+    await page.waitForTimeout(800);
+    const narrow = await measureTags("two panes");
+    if (wide === 0 || narrow === 0) report("assign-bundle-head", `tags measured: one pane ${wide}, two panes ${narrow}`);
+    const head = page.locator(".bundle-head").first();
+    await head.scrollIntoViewIfNeeded();
+    await head.click();
+    await page.waitForTimeout(400);
+    const picked = await head.evaluate((el) => el.closest(".strip")?.hasAttribute("data-sel") ?? false);
+    if (!picked) report("assign-bundle-head", "clicking the head row did not set data-sel on its strip");
+  },
+};
+
+const scenes = [...mbtnScenes, tobeRowActsScene, oldRowActsScene, outputsScene, outputsEndRowsScene, outputsReorderScene, exportPreviewScene, composedHeadingScene, linkMenuScene, aiJobsScene, bundleHeadScene].filter((scene) => !only || only.includes(scene.name));
 const browser = await chromium.launch({ executablePath: CHROME, headless: true });
 let problems = 0;
 let runs = 0;

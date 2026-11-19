@@ -1,12 +1,14 @@
 """로컬 극단 자료 시드 — 화면이 무너지는 자리를 찾는 배치 감사용 합성 자료를 앱 API로 만든다. 로컬 전용, 운영 실행 금지.
 
 reset_db → seed_sop_demo 위에 얹는다(데모 묶음 1~4는 "mid" 자료로 그대로 둔다). 만드는 것:
-W1 극단 묶음(제목 146자·설명 900자·멤버 5명·372 Unit 문서·넓은/긴 표·파일 이름 246/255자·6쪽 PDF·거절 파일 4개·To-Be 58개·긴 사유·검토 흐름 한 바퀴),
+W1 극단 묶음(제목 146자·설명 900자·멤버 5명·372 Unit 문서·넓은/긴 표·18열 표·표 16개·그림 16개 캡션 문서·파일 이름 246/255자·6쪽 PDF·거절 파일 4개·To-Be 58개·긴 사유·검토 흐름 한 바퀴),
 W2 검토 대기(제목 200자)·W3 되돌아옴·W4 완료·W5 다시 열림·W6 검토 직전, W7 문서 없는 묶음, 극단 제목의 가벼운 묶음 36개(11개는 이상한 제목, 25개는 `SYNTHETIC light NN`),
-관리 화면용 역할 10개·부여·지침 버전. 모든 글은 합성이다.
+참조 지도용으로 서로 가리키는 묶음 8개(`SYNTHETIC M1 map` … `M8`, Old 문서 104개 — M1은 qa.member·qa.lead, M2~M5는 qa.member,
+M6~M8은 prod.member 혼자), 관리 화면용 역할 10개·부여·지침 버전. 모든 글은 합성이다.
 
 같은 자료가 이미 있으면 건너뛴다(묶음은 제목 — 같은 제목이 기대 개수만큼 있으면, 역할은 이름, 지침은 메모). 끝 줄 `worst seed done: N bundles`의 N은
-이번 시드가 맡은 묶음 수(W1~W7 7개 + light 36개 = 43, 만든 것+건너뛴 것)이고 데모 4개를 더하면 화면에는 47개가 보인다. 실패가 하나라도 있으면 종료 코드 1.
+이번 시드가 맡은 묶음 수(W1~W7 7개 + light 36개 + 지도용 M1~M8 8개 = 51, 만든 것+건너뛴 것)이고, 데모 6개 가운데 qa.member에게 보이는 5개를
+더하면 qa.member의 목록에는 데모 5 + W·light 43 + M1~M5 5 = 53개가 보인다(M6~M8과 데모 6번은 구성원이 아니라 보이지 않는다). 실패가 하나라도 있으면 종료 코드 1.
 합성 답안은 큰 문서 업로드보다 먼저 넣는다 — 합성 드라이버는 Unit이 1,000개를 넘는 묶음에서 assert로 죽는다.
 DEV_ENFORCE_PERMISSIONS는 켜지 않는다(bundle.create가 없어 403). AUTH_MODE=dev가 아니거나 HR 직원이 든 postgres면 멈춘다.
 
@@ -23,6 +25,7 @@ import sys
 import tempfile
 from collections import Counter
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -32,7 +35,15 @@ from app.main import app
 from app.settings import settings
 from app.sop.ai.runner import run_jobs_until_idle
 from scripts.reset_db import count_hr_rows
-from scripts.seed_sop_demo import find_seed_refusal
+from scripts.seed_sop_demo import (
+    build_tobe_doc,
+    confirm_ref,
+    delete_bundle,
+    find_line,
+    find_seed_refusal,
+    put_tobe_codes,
+    upload_old_doc,
+)
 from scripts.sop_demo_driver import SyntheticDriver
 from scripts.synthetic_sop import SyntheticBundle, build_synthetic_bundle
 from tests.fake_ai import SyntheticAnswers, fake_ai_session
@@ -40,12 +51,16 @@ from tests.pdf_factory import build_text_pdf
 from tests.sop_helpers import (
     ADMIN,
     AUTHOR,
+    OUTSIDER,
     REVIEWER,
     assign_as_is,
+    create_bundle,
     get_bundle,
+    get_group_by_unit,
     get_view,
     save_group,
     set_doc_version,
+    set_members,
     upload,
 )
 
@@ -155,12 +170,183 @@ def build_tables(code: str) -> bytes:
     return _save_docx(doc)
 
 
+def build_captions_extreme(code: str) -> bytes:
+    """18열 넓은 표(앞 캡션 문단 420자)·번갈아 놓인 표 16개·그림 16개와 참조 문단·칸마다 600자 표·캡션 없는 2x2 레이아웃 표."""
+    from io import BytesIO
+
+    from docx.shared import Inches
+
+    from scripts.synthetic_sop import _draw_figure
+
+    doc = _new_docx(code)
+    doc.add_heading("1. 캡션 극단 Caption extremes", level=1)
+    doc.add_paragraph("표 1. " + long_text(420, "ko"))
+    wide = doc.add_table(rows=5, cols=18)
+    for r in range(5):
+        for c in range(18):
+            wide.cell(r, c).text = f"열{c + 1} Col {c + 1}" if r == 0 else f"값 {r}-{c} value {r * 18 + c}"
+    for n in range(2, 18):  # 표와 그림을 번갈아, 번호는 종류마다 2부터
+        doc.add_paragraph(f"표 {n}. 합성 표 {n}")
+        table = doc.add_table(rows=3, cols=3)
+        for r in range(3):
+            for c in range(3):
+                table.cell(r, c).text = f"표{n} 칸 {r}-{c} cell {n * 9 + r * 3 + c}"
+        doc.add_paragraph(f"표 {n}을 참조한다. See Figure {n}.")
+        doc.add_picture(BytesIO(_draw_figure()), width=Inches(1.6))
+        doc.add_paragraph(f"그림 {n}. 합성 그림 {n}")
+        doc.add_paragraph(f"그림 {n}을 참조한다. See Table {n}.")
+    folded = doc.add_table(rows=2, cols=3)  # 접힘 폭 시험 — 칸마다 600자
+    for r in range(2):
+        for c in range(3):
+            folded.cell(r, c).text = long_text(600, "ko" if (r + c) % 2 == 0 else "en")
+    layout = doc.add_table(rows=2, cols=2)  # 캡션 없는 레이아웃 표
+    texts = ["운영자는 합성 점검표를 확인한다.", "The operator reviews the synthetic checklist."]
+    for r in range(2):
+        for c in range(2):
+            layout.cell(r, c).text = texts[c]
+    return _save_docx(doc)
+
+
 def build_small(code: str, n: int = 8, lang: str = "both") -> bytes:
     doc = _new_docx(code)
     doc.add_heading(f"1. 합성 소형 문서 {code}", level=1)
     for i in range(n):
         doc.add_paragraph((ko_sentence(i + len(code)) if lang != "en" else "") + (" " + en_sentence(i + len(code)) if lang != "ko" else ""))
     return _save_docx(doc)
+
+
+# ---------- 참조 지도용 묶음(M1~M8) — 앱 API를 부르지 않는 계획 ----------
+
+MAP_BUNDLE_COUNT = 8
+MAP_DOCS_PER_BUNDLE = 13
+MAP_HUB = "MAP-101"  # 다른 묶음의 문서 MAP_HUB_SOURCES개가 확인한 참조로 가리키는 번호 — M2에도 같은 번호의 문서가 있다
+MAP_HUB_SOURCES = 30
+MAP_FAN_OUT = 40  # M1의 MAP-102가 서로 다른 번호를 가리키는 줄 수
+MAP_LONG_CODE = "MAP" + "-ABCDEFGH" * 10 + "-123456"  # 100자 — 문서 번호 칸의 상한
+MAP_MISSING = tuple(f"MAP-{900 + i}" for i in range(1, 6))  # 어느 묶음에도 없는 번호
+MAP_TEMP_CODE = "NEW-900001"  # 임시 번호 New 문서 — 번호로 찾아지지 않는다
+MAP_FREE_MOVE = "see the other team"  # 번호 꼴이 아닌 이동 코드 — 지도에 선이 서지 않는다
+MAP_NOSPACE_TITLE = ("SYNTHETIC" + "NoSpaceMapTitle" * 14)[:200]
+MAP_VIEWED_MEMBERS = (("qa.member", "author"), ("qa.lead", "reviewer"))
+MAP_SUMMARY_MEMBERS = (("prod.member", "author"),)
+
+
+@dataclass(frozen=True)
+class MapLineSpec:
+    text: str
+    ref: str = ""  # set_ref로 확인할 번호 — 빈 칸이면 그대로 둔다(번호로 시작하면 REF?)
+    move_to: str = ""  # 다른 문서로 보내기(확정)의 대상 코드
+    assign_to: str = ""  # 원문 그대로 보낼 New 문서 코드
+
+
+@dataclass(frozen=True)
+class MapDocSpec:
+    file_name: str
+    lines: tuple[MapLineSpec, ...]
+    doc_code: str = ""  # 올린 뒤 PATCH로 바꿀 번호(빈 칸이면 파일 이름의 번호 그대로)
+    title: str | None = None  # 올린 뒤 PATCH로 바꿀 제목
+
+
+@dataclass(frozen=True)
+class MapBundleSpec:
+    n: int
+    title: str
+    tobe: tuple[tuple[str, str], ...]  # (코드, 제목) — 모두 SOP
+    docs: tuple[MapDocSpec, ...]
+    members: tuple[tuple[str, str], ...]  # 끝에 갈아 끼울 구성원 — 빈 것이면 만든 qa.member 혼자로 둔다
+
+
+def build_map_prefix(n: int) -> str:
+    return f"SYNTHETIC M{n} map"
+
+
+def build_map_doc_codes() -> dict[tuple[int, int], str]:
+    """(묶음 n, 문서 j) → 지도에 서는 문서 번호. M1의 10번은 번호 없는 문서, 13번은 100자 번호, M2의 13번은 M1과 같은 MAP-101."""
+    codes = {(n, j): f"MAP-{n}{j:02d}" for n in range(1, MAP_BUNDLE_COUNT + 1) for j in range(1, MAP_DOCS_PER_BUNDLE + 1)}
+    codes[(1, 10)] = ""
+    codes[(1, 13)] = MAP_LONG_CODE
+    codes[(2, 13)] = MAP_HUB
+    return codes
+
+
+def _pick_code(codes: dict[tuple[int, int], str], n: int, j: int) -> str:
+    """묶음 n의 j번부터 처음 만나는 번호 있는 문서의 번호."""
+    for step in range(MAP_DOCS_PER_BUNDLE):
+        code = codes[(n, (j - 1 + step) % MAP_DOCS_PER_BUNDLE + 1)]
+        if code:
+            return code
+    raise ValueError(f"bundle M{n} has no numbered document")
+
+
+def _build_map_doc(codes: dict[tuple[int, int], str], hub_sources: set[tuple[int, int]], n: int, j: int) -> MapDocSpec:
+    """문서 하나 — 다른 묶음의 번호로 시작하는 줄 둘(앞 줄은 확인, 뒷 줄은 그대로), 보낼 줄 하나, 네 문서에 하나는 다른 묶음 New 문서로 이동.
+
+    지도는 구성원이 아닌 묶음의 REF?를 보이지 않는다 — 그래서 남에게 보여야 할 선(MAP-101로 모이는 30개·100자 번호·이동)은 늘 확인한
+    줄이고, 그대로 둔 줄은 앞 묶음(prev)을 가리켜 구성원이 같은 묶음끼리(M2→M1 … M5→M4, M7→M6, M8→M7) REF?로 보인다.
+    """
+    tag = f"M{n}-{j:02d}"
+    next_n, prev_n = n % MAP_BUNDLE_COUNT + 1, (n - 2) % MAP_BUNDLE_COUNT + 1
+    confirmed = MAP_HUB if (n, j) in hub_sources else _pick_code(codes, next_n, j)
+    proposed = _pick_code(codes, prev_n, j % MAP_DOCS_PER_BUNDLE + 1)
+    lines = [
+        MapLineSpec(f"{confirmed} Synthetic reference {tag}", ref=confirmed),
+        MapLineSpec(f"{proposed} Synthetic citation {tag}"),
+    ]
+    filler = f"Synthetic map step {tag} records the reading in the log."
+    lines.append(MapLineSpec(filler, assign_to=f"SOP-M{n}-01" if n == 1 or j == 1 else ""))
+    if ((n - 1) * MAP_DOCS_PER_BUNDLE + j - 1) % 4 == 0:
+        lines.append(MapLineSpec(f"Synthetic map line {tag} belongs to another team.", move_to=f"SOP-M{next_n}-01"))
+    upload_code, doc_code, title = codes[(n, j)], "", None
+    if n == 1:
+        upload_code, doc_code, title, lines = _apply_m1_extremes(codes, j, lines)
+    name = f"SYNTHETIC_{upload_code}_map_document_{tag}.docx" if upload_code else "SYNTHETIC_map_document_without_a_number.docx"
+    return MapDocSpec(name, tuple(lines), doc_code, title)
+
+
+def _apply_m1_extremes(
+    codes: dict[tuple[int, int], str], j: int, lines: list[MapLineSpec]
+) -> tuple[str, str, str | None, list[MapLineSpec]]:
+    """M1에 모은 극단 값 — (파일 이름의 번호, PATCH할 번호, PATCH할 제목, 줄)."""
+    upload_code, doc_code, title = codes[(1, j)], "", None
+    if j == 2:  # 줄 40개가 서로 다른 번호 40개를 — 다른 묶음 문서 35개와 어느 묶음에도 없는 번호 다섯
+        others = [codes[(n, k)] for n in (2, 3, 4) for k in range(1, MAP_DOCS_PER_BUNDLE + 1) if codes[(n, k)] != MAP_HUB]
+        numbers = others[: MAP_FAN_OUT - len(MAP_MISSING)] + list(MAP_MISSING)
+        fan = [MapLineSpec(f"{number} Synthetic fan-out line {i:02d}", ref=number if i == 0 else "") for i, number in enumerate(numbers)]
+        lines = fan + lines[2:]
+    elif j == 3:  # 1,800자 참조 줄(확인)
+        lines = [*lines, MapLineSpec("MAP-201 " + long_text(1790, "en"), ref="MAP-201")]
+    elif j == 4:  # 후속 문서가 임시 번호 New 문서뿐
+        lines = [*lines[:2], MapLineSpec(lines[2].text, assign_to=MAP_TEMP_CODE), *lines[3:]]
+    elif j == 5:  # 후속 문서 여섯
+        parts = [MapLineSpec(f"Synthetic map step M1-05 part {i} records the reading.", assign_to=f"SOP-M1-{i:02d}") for i in range(1, 7)]
+        lines = [*lines[:2], *parts, *lines[3:]]
+    elif j == 6:  # 번호 꼴이 아닌 이동 코드
+        lines = [*lines, MapLineSpec("Synthetic map line M1-06 goes to a team without a number.", move_to=MAP_FREE_MOVE)]
+    elif j == 11:
+        title = ""
+    elif j == 12:
+        title = MAP_NOSPACE_TITLE
+    elif j == 13:  # 파일 이름으로는 100자 번호를 받지 않으니 올린 뒤 바꾼다
+        upload_code, doc_code = "MAP-113", MAP_LONG_CODE
+    return upload_code, doc_code, title, lines
+
+
+def build_map_plan() -> list[MapBundleSpec]:
+    """M1~M8 — 묶음마다 Old 문서 13개, 모두 104개. 선은 Bundle을 건너는 확인한 참조·확인한 이동이 대부분이다."""
+    codes = build_map_doc_codes()
+    hub_order = [
+        (n, j) for j in range(1, MAP_DOCS_PER_BUNDLE + 1) for n in range(2, MAP_BUNDLE_COUNT + 1) if codes[(n, j)] != MAP_HUB
+    ]
+    hub_sources = set(hub_order[:MAP_HUB_SOURCES])
+    plan = []
+    for n in range(1, MAP_BUNDLE_COUNT + 1):
+        role, members = ("viewed", MAP_VIEWED_MEMBERS) if n == 1 else ("member", ()) if n <= 5 else ("summary", MAP_SUMMARY_MEMBERS)
+        tobe = [(f"SOP-M{n}-01", f"SYNTHETIC M{n} map SOP")]
+        if n == 1:
+            tobe += [(f"SOP-M1-{i:02d}", f"SYNTHETIC M1 map SOP {i}") for i in range(2, 7)] + [(MAP_TEMP_CODE, "SYNTHETIC temp successor")]
+        docs = tuple(_build_map_doc(codes, hub_sources, n, j) for j in range(1, MAP_DOCS_PER_BUNDLE + 1))
+        plan.append(MapBundleSpec(n, f"{build_map_prefix(n)} {role} 참조 지도", tuple(tobe), docs, members))
+    return plan
 
 
 class WorstSeeder:
@@ -225,7 +411,7 @@ class WorstSeeder:
             sop_codes.append(code)
             if i % 6 == 1:
                 nas.append({"code": code, "slot_key": "definitions", "reason": self.long_reason})
-                nas.append({"code": code, "slot_key": "document_relationships.appendices", "reason": "합성 사유: 해당 없음"})
+                nas.append({"code": code, "slot_key": "appendices", "reason": "합성 사유: 해당 없음"})
         for i in range(22):
             code = f"SYN-WI-{i + 1:04d}" if i % 4 else ("SYN-WI-" + "VERYLONGWORKINSTRUCTIONCODE-" * 3 + f"{i:04d}")[:100]
             title = [f"합성 WI 제목 {i}", long_text(450, "en"), "합성공백없는WI제목" * 40, ""][i % 4][:500]
@@ -246,7 +432,8 @@ class WorstSeeder:
         na_set = {(n["code"], n["slot_key"]) for n in tobe["na_slots"]}
         locations: list[tuple[int, dict]] = []
         for code in sop_codes:
-            for slot in ("purpose", "scope", "definitions", "responsibilities", "general_requirements.safety", "procedures.procedure"):
+            # 새 SOP가 받는 골격(템플릿 + 첫 절차)에 있는 자리만 — 5장은 범주 없는 항목으로, 6장은 첫 절차로
+            for slot in ("purpose", "scope", "definitions", "responsibilities", "general_requirements", "procedures.p1"):
                 if (code, slot) not in na_set:
                     locations.append((driver.tobe_ids[code], {"slot_key": slot}))
         for step in tobe["wi_steps"]:
@@ -277,6 +464,7 @@ class WorstSeeder:
         add("big1", "SYNTHETIC_OLD-90_BIG_합성_대형_문서_Big_Document v12.3.docx", build_big("OLD-90", 330, True))
         add("big2", "SYNTHETIC_OLD-91_BIG_second_big_document_for_unassigned_units.docx", build_big("OLD-91", 260, False))
         add("tables", "SYNTHETIC_OLD-92_wide_and_long_tables_넓은표_긴표.docx", build_tables("OLD-92"))
+        add("captions", "SYNTHETIC_OLD-89_captions_extreme_캡션_극단.docx", build_captions_extreme("OLD-89"))
         ko_name = "SYNTHETIC_OLD-93_" + "공백없는아주긴한국어파일이름" * 16
         add("koname", ko_name[:250] + ".docx", build_small("OLD-93"))
         en_name = "SYNTHETIC_OLD-94_" + "VeryLongEnglishFileNameWithoutAnySpaces_" * 6
@@ -347,6 +535,8 @@ class WorstSeeder:
         for unit in text_units[-8:]:  # 끝의 극단 문단
             try_assign(unit, locations[3])
         for unit in [u for u in get_view(self.client, bundle_id, extras["tables"]["id"], AUTHOR)["units"] if u["kind"] == "table"]:
+            try_assign(unit, locations[5])
+        for unit in [u for u in get_view(self.client, bundle_id, extras["captions"]["id"], AUTHOR)["units"] if u["kind"] == "table"][:3]:  # 18열 표 포함 — 뒤의 배치 감사가 결과물 C에서 연다
             try_assign(unit, locations[5])
         for key in ("pdf", "small0", "small1", "koname", "enname"):
             sentences = [u for u in get_view(self.client, bundle_id, extras[key]["id"], AUTHOR)["units"] if u["kind"] in ("sentence", "heading")]
@@ -511,7 +701,69 @@ class WorstSeeder:
         ensure(EMPTY_TITLE, lambda: self.client.post("/api/bundles", json={"title": EMPTY_TITLE, "is_synthetic": True}, headers=AUTHOR))
         for index, title in enumerate(LIGHT_TITLES):
             ensure(title, lambda i=index, t=title: self.create_light_bundle(i, t))
+        self.create_map_bundles()
         self.check_validation_limits()
+
+    # ---------- 참조 지도용 묶음 ----------
+
+    def create_map_bundles(self) -> None:
+        """M1~M8 — 있는지는 제목 접두로 본다. M6~M8은 끝에 작성자가 빠지므로 prod.member의 목록까지 본다."""
+        response = self.client.get("/api/bundles", headers=OUTSIDER)
+        assert response.status_code == 200, response.text
+        titles = list(self.list_bundle_titles()) + [bundle["title"] for bundle in response.json()]
+        for spec in build_map_plan():
+            prefix = build_map_prefix(spec.n)
+            if any(title.startswith(prefix) for title in titles):
+                self.skipped += 1
+                print(f"skipped  {prefix}", flush=True)
+                continue
+            print(f"seeding  {prefix}", flush=True)
+            self.create_map_bundle(spec)
+            self.created += 1
+
+    def create_map_bundle(self, spec: MapBundleSpec) -> None:
+        bundle_id = create_bundle(self.client, title=spec.title, is_synthetic=True)["id"]
+        try:
+            tobe = put_tobe_codes(self.client, bundle_id, [build_tobe_doc(code, title) for code, title in spec.tobe])
+            for doc in spec.docs:
+                self.fill_map_doc(bundle_id, doc, tobe)
+            if spec.members:  # 구성원은 끝에 — M6~M8은 작성자가 빠져 더 고칠 수 없다
+                response = set_members(self.client, bundle_id, list(spec.members))
+                assert response.status_code == 200, response.text
+        except Exception:
+            # 반쪽 묶음은 다음 실행이 "이미 있다"며 건너뛴다 — 지우고 다시 던진다
+            delete_bundle(self.client, bundle_id)
+            raise
+
+    def fill_map_doc(self, bundle_id: int, spec: MapDocSpec, tobe: dict[str, int]) -> None:
+        """올리고, 번호·제목을 바꾸고, 참조 줄 확인 → 이동 → 보내기 순으로 줄을 다룬다(편집은 판단보다 먼저)."""
+        doc = upload_old_doc(self.client, bundle_id, spec.file_name, [line.text for line in spec.lines])
+        changes = {key: value for key, value in (("doc_code", spec.doc_code or None), ("title", spec.title)) if value is not None}
+        if changes:
+            response = self.client.patch(
+                f"/api/bundles/{bundle_id}/documents/{doc['id']}", json={"revision": doc["revision"], **changes}, headers=AUTHOR
+            )
+            assert response.status_code == 200, response.text
+        for line in spec.lines:
+            if line.ref:
+                confirm_ref(self.client, bundle_id, doc["id"], line.text, line.ref)
+        for line in spec.lines:
+            if line.move_to:
+                self.move_line(bundle_id, find_line(self.client, bundle_id, doc["id"], line.text), line.move_to)
+        for line in spec.lines:
+            if line.assign_to:
+                unit = find_line(self.client, bundle_id, doc["id"], line.text)
+                assign_as_is(self.client, bundle_id, unit, tobe[line.assign_to], slot_key="purpose")
+
+    def move_line(self, bundle_id: int, unit: dict, code: str) -> None:
+        group = get_group_by_unit(self.client, bundle_id, unit["id"])
+        revision = next(member for member in group["units"] if member["unit_id"] == unit["id"])["decision"]["revision"]
+        body = {
+            "action": "move_external", "reason": "Synthetic map move", "move_target_code": code,
+            "units": [{"unit_id": unit["id"], "revision": revision}],
+        }
+        response = self.client.post(f"/api/bundles/{bundle_id}/decisions/bulk", json=body, headers=AUTHOR)
+        assert response.status_code == 200, response.text
 
     def check_validation_limits(self) -> None:
         """입력 상한 밖(제목 201자·설명 2,001자)은 422로 거절돼야 한다 — 어긋나면 실패로 센다."""
