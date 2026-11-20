@@ -13,3 +13,4 @@ SOP Archivist 서비스 버전 기록. 단일 소스는 `frontend/package.json` 
   - **삭제 · 이동 바로 하기**(v1.3.3): 우클릭 메뉴 **Assignment** 가 **Unassign** · **Move to another document…** · **Delete**(빨간 글자) 차례, <kbd>Del</kbd> · <kbd>⌫</kbd>는 삭제 확정, <kbd>M</kbd>은 이동 창을 연다.
 - **배포 메모**: 스키마(Alembic) · env · 권한 · 의존성 · 베이스 이미지 · AI 프롬프트 변경 없음 — 프런트만 바뀌었다.
 - **검증과 한계**: backend 3,124 · vitest 1,822 · lint · tsc · ruff, 사용 설명서 그림 다시 뽑기. 전체 스모크 · 감사 넷은 이 릴리스 커밋에서 다시 돌리지 않았다 — v1.3.1에서 배치 196 · 겹침 72 · 대비 전 장면 · Assign 스모크 997, v1.3.2 · v1.3.3은 각 브랜치에서 Assign 스모크 통과. 실제 SOP · 실제 모델로는 검증하지 못했다(합성 SOP와 가짜 AI).
+  - **운영 배포 2026-11-20.** 사용자가 사내 GitLab 파이프라인으로 올렸다. 그전 운영 배포 기록은 v1.1.0(2026-11-16)뿐이라 v1.2.0 · v1.3.0의 배포 메모(Alembic `0020`~`0034`, 새 권한 `outline.manage`를 관리자 역할에 주기, **관리 → AI guidelines** 에서 `prompt.classify` 새 버전 저장)가 이 배포에 함께 적용된다. 같은 날 실사용자에게 접속 안내 메일을 보내 **이 배포부터 운영 DB에 실제 데이터가 쌓인다.**

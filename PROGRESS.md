@@ -1,3 +1,7 @@
 # Progress
 
 프로젝트 진행 현황 로그. 커밋 직전 갱신한다 (`rules/common/git.md` 규칙). v1.4.0(2026-11-20 정식 업데이트)까지의 항목은 [`docs/history/PROGRESS-archive.md`](docs/history/PROGRESS-archive.md)에 있다 — 정식 업데이트마다 그 릴리스까지의 항목을 거기로 옮긴다(`rules/common/git.md` "정식 업데이트 때 문서 정리").
+
+## 2026-11-20 — v1.4.0 운영 배포 · 실사용 시작
+
+- 사용자가 v1.4.0을 운영에 올리고 실사용자에게 접속 안내 메일을 보냈다 — 이제 운영 DB에 실제 데이터가 쌓인다. 운영 배포 기록이 v1.1.0 뒤 처음이라 v1.2.0 · v1.3.0 배포 메모(`outline.manage` 부여, `prompt.classify` 새 버전 저장)도 이번 배포의 일이다. CLAUDE.md 상태 줄에 운영 자료를 지우는 리비전은 승인 · 배포 전 백업 확인을 적었다.
