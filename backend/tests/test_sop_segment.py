@@ -264,18 +264,19 @@ def test_drafts_split_docx_blocks_at_line_breaks() -> None:
         ("cell_sentence", [(3, 0, 3)], "ko"),
         ("cell_sentence", [(3, 4, 15)], "en"),
     ]
-    # 블록은 하나라 줄 단위들을 합치면 줄바꿈을 품은 한 범위로 돌아간다
+    # 블록은 하나라 줄 단위들을 합치면 줄바꿈을 품은 한 범위로 돌아가고, 단위 글자에서는 줄바꿈이 띄어쓰기다(6-a, 길이 그대로)
     texts = {block.id: block.text for block in blocks}
     assert join_close_spans([*drafts[2].spans, *drafts[3].spans], texts) == [(2, 0, 25)]
-    assert build_unit_text([(2, 0, 25)], texts) == "장비를 켠다.\nTurn on the unit."
+    assert build_unit_text([(2, 0, 25)], texts) == "장비를 켠다. Turn on the unit."
     # 기본값(PDF)은 줄바꿈에서 나누지 않는다
     assert [draft.spans for draft in build_unit_drafts(blocks[:1], [], "ko_en_interleaved")] == [[(1, 0, 13)]]
 
 
-def test_build_unit_text_joins_spans_by_block() -> None:
-    texts = {1: "가나. 다라.", 2: "Synthetic"}
+def test_build_unit_text_joins_spans_with_a_space_and_keeps_the_length() -> None:
+    texts = {1: "가나. 다라.", 2: "Synthetic", 3: "첫 줄\r\n둘째 줄"}
+    assert build_unit_text([(3, 0, 9)], texts) == "첫 줄  둘째 줄"
 
-    assert build_unit_text([(1, 0, 3), (1, 4, 7), (2, 0, 9)], texts) == "가나. 다라.\nSynthetic"
+    assert build_unit_text([(1, 0, 3), (1, 4, 7), (2, 0, 9)], texts) == "가나. 다라. Synthetic"
 
 
 def _langs(*langs: str) -> list[tuple[int, str, str]]:

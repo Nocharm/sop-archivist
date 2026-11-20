@@ -1497,6 +1497,11 @@
   button.num-cell:disabled { cursor: default; }
   button.num-cell:is(:hover, :focus-visible):not(:disabled) { color: var(--accent); }
   button.num-cell[data-fixed] { color: var(--ink-2); font-weight: 600; }
+  /* 편집 뒤 새로 생긴 번호 - 글 앞에서 왼쪽 번호 칸으로 빠지며 옅은 강조가 사라진다(약 0.3초 + 강조 여운, 항목 6-b). 움직임 줄이기면 바로 */
+  .strip-lead-num[data-arrived] { animation: num-arrive 300ms var(--ease-enter), num-arrive-tint 1200ms ease-out; border-radius: var(--r-1); }
+  @keyframes num-arrive { from { transform: translateX(14px); opacity: 0; } to { transform: none; opacity: 1; } }
+  @keyframes num-arrive-tint { from { background: var(--accent-tint); color: var(--accent); } to { background: transparent; } }
+  @media (prefers-reduced-motion: reduce) { .strip-lead-num[data-arrived] { animation: none; } }
   /* 따라 바뀔 번호 - 점선으로 미리 보인다(저장 전) */
   button.num-cell[data-preview] { color: var(--accent); text-decoration: underline dashed; text-underline-offset: 3px; }
   /* 고른 줄의 옅은 바탕에서도 4.5:1 - ink-4는 4.2로 대비 감사에 걸렸다(assign-selected) */

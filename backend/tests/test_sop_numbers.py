@@ -1,12 +1,16 @@
 """문단 번호(F5) — 추출 신호에서 읽은 번호 범위, 번호 고치기 편집(set_number)과 따라 고치기·되돌리기, 번호를 뺀 내용(새 문장·결과물 A)."""
 
 from dataclasses import dataclass
+from io import BytesIO
+from types import SimpleNamespace
 
 import httpx2
 import pytest
 from fastapi.testclient import TestClient
+from openpyxl import load_workbook
 
 from app.sop.extract import docx_reader
+from app.sop.paragraph_excel import READ_FROM_TEXT_NOTE
 from app.sop.numbering import (
     NUMBER_AUTO,
     NUMBER_TYPED,
@@ -14,6 +18,8 @@ from app.sop.numbering import (
     get_content_start,
     get_number_note,
     is_number_fixed,
+    is_read_from_text,
+    is_source_text,
     plan_follow,
     read_number_range,
 )
@@ -30,7 +36,7 @@ LEVELS = [("decimal", "%1"), ("decimal", "%1.%2"), ("decimal", "%1.%2.%3")]
 TOP, CHECK, MISREAD, CHANGE = "1 합성 절차", "1.1 합성 필터 점검", "1.2 합성 필터 확인", "1.3 합성 필터 교체"
 STEP, TYPED, UNREAD, PLAIN = "1.3.1 합성 필터를 교체한다.", "2.1 합성 타자 번호 줄이다.", "합성 못 읽은 줄이다.", "합성 보통 문장이다."
 TYPED_HEADING = "3. 합성 타자 제목"
-BAND = "7\n합성 띠 제목"  # 띠 표 제목 줄 — 번호 칸 블록과 제목 칸 블록을 줄바꿈으로 잇는다
+BAND = "7 합성 띠 제목"  # 띠 표 제목 줄 — 번호 칸 블록과 제목 칸 블록을 띄어쓰기로 잇는다
 BODY = (
     numbered("합성 절차", 1, 0, "Heading1") + numbered("합성 필터 점검", 1, 1, "Heading2")
     + numbered("합성 필터 확인", 1, 1, "Heading2") + p("합성 확인 내용이다.") + numbered("합성 필터 교체", 1, 1, "Heading2")
@@ -164,6 +170,21 @@ def test_number_range_reads_the_leading_signal() -> None:
     assert get_content_start("6.1 6.1 합성 목적", 7) == 8 and get_content_start("7", 1) == 0
 
 
+def test_number_range_takes_a_whole_first_span_and_typed_numbers_after_a_line_break() -> None:
+    # 항목 6-b — "6.1."만 든 박스를 다음 줄과 합치면 그 번호, Shift+Enter 뒤 줄머리의 타자 번호도 번호(DOCX만)
+    texts = {1: "6.1.", 2: "합성 다음 줄", 3: "세척 준비\n7.1 세척 노즐을 점검한다.", 4: "가\n3개월마다 본다.", 5: "합성\n7.2"}
+    signals = {1: {NUMBERS_SIGNAL: [[0, 4, "typed"]]}}
+    after_break = [(3, 6, len(texts[3]))]
+
+    assert read_number_range([(1, 0, 4), (2, 0, 7)], signals, texts) == NumberRange("6.1.", "typed", 4)
+    assert read_number_range([(1, 0, 4)], signals, texts) is None  # 번호뿐인 박스는 그대로 글
+    assert read_number_range(after_break, signals, texts, reads_line_starts=True) == NumberRange("7.1", "typed", 3)
+    assert read_number_range(after_break, signals, texts) is None  # PDF의 줄바꿈은 접힌 줄이다
+    assert read_number_range([(3, 0, 5)], signals, texts, reads_line_starts=True) is None  # 문단 머리는 추출기 신호만
+    assert read_number_range([(4, 2, 11)], signals, texts, reads_line_starts=True) is None  # 점 없는 숫자는 글
+    assert read_number_range([(5, 3, 6)], signals, texts, reads_line_starts=True) is None  # 번호뿐
+
+
 def test_number_cell_joins_the_first_line_of_its_row_in_a_layout_table() -> None:
     def cell(block_id: int, row: int, text: str, *, number: bool = False) -> BlockView:
         signals = {NUMBERS_SIGNAL: [[0, len(text), NUMBER_CELL]]} if number else None
@@ -191,7 +212,7 @@ def test_number_cell_joins_the_first_line_of_its_row_in_a_layout_table() -> None
 # --- 추출 → 단위 ---
 
 
-def test_auto_numbers_go_to_the_number_cell_and_typed_numbers_stay_text(client: TestClient) -> None:
+def test_auto_and_typed_numbers_go_to_the_number_cell(client: TestClient) -> None:
     bundle_id, _, doc_id = _setup(client)
 
     view = get_view(client, bundle_id, doc_id)
@@ -199,17 +220,18 @@ def test_auto_numbers_go_to_the_number_cell_and_typed_numbers_stay_text(client: 
     assert view["has_number_ranges"] is True
     misread, typed = find_unit(view, MISREAD), find_unit(view, TYPED)
     assert misread["number"] == {
-        "value": "1.2", "read": "1.2", "source": "auto", "is_set": False, "content_start": 4, "typed_len": 0, "note": None,
+        "value": "1.2", "read": "1.2", "source": "auto", "is_set": False, "content_start": 4, "from_text": False, "note": None,
     }
     assert _content(misread) == "합성 필터 확인"
+    # 본문 줄의 타자 번호도 처음부터 번호 칸이다(사용자 결정 2026-11-20) — 저절로 읽은 번호라고 알린다
     assert typed["number"] == {
-        "value": None, "read": "2.1", "source": "typed", "is_set": False, "content_start": 0, "typed_len": 3, "note": None,
+        "value": "2.1", "read": "2.1", "source": "typed", "is_set": False, "content_start": 4, "from_text": True, "note": None,
     }
     assert find_unit(view, UNREAD)["number"]["value"] is None
-    # 절을 여는 줄(제목)의 타자 번호는 처음부터 번호 칸에 있다 — 본문 줄의 타자 번호만 글로 남는다
+    # 절을 여는 줄(제목)의 타자 번호는 전부터 번호 칸이라 알리지 않는다
     heading = find_unit(view, TYPED_HEADING)
     assert heading["number"] == {
-        "value": "3.", "read": "3.", "source": "typed", "is_set": False, "content_start": 3, "typed_len": 0, "note": None,
+        "value": "3.", "read": "3.", "source": "typed", "is_set": False, "content_start": 3, "from_text": False, "note": None,
     }
     assert _content(heading) == "합성 타자 제목"
     # 띠 표는 올리자마자 제목 줄이다 — 번호 칸 블록 전체가 번호 범위라 글에는 제목만 남는다(F4)
@@ -218,7 +240,7 @@ def test_auto_numbers_go_to_the_number_cell_and_typed_numbers_stay_text(client: 
     # 단위 목록의 줄도 같은 내용 경계를 싣는다 — 배정 화면의 새 문장 초안이 쓴다
     listed = client.get(f"/api/bundles/{bundle_id}/units", params={"document_id": doc_id}, headers=AUTHOR).json()["items"]
     starts = {row["unit_id"]: row["content_start"] for row in listed}
-    assert (starts[misread["id"]], starts[typed["id"]]) == (4, 0)
+    assert (starts[misread["id"]], starts[typed["id"]]) == (4, 4)
 
 
 # --- 번호 고치기 ---
@@ -277,23 +299,25 @@ def test_adding_a_number_to_an_unread_line(client: TestClient) -> None:
 
     added = find_unit(get_view(client, bundle_id, doc_id), UNREAD)
     assert added["number"] == {
-        "value": "2.2", "read": None, "source": None, "is_set": True, "content_start": 0, "typed_len": 0, "note": None,
+        "value": "2.2", "read": None, "source": None, "is_set": True, "content_start": 0, "from_text": False, "note": None,
     }
 
 
-def test_typed_number_becomes_the_number_and_no_number_turns_it_back(client: TestClient) -> None:
+def test_no_number_on_a_typed_number_is_remembered_and_undo_brings_the_number_back(client: TestClient) -> None:
+    # 저절로 잡힌 타자 번호를 "없음"으로 되돌리면 number_set=""로 남아 다시 보아도(화면을 나갔다 들어와도) 잡히지 않는다
     bundle_id, _, doc_id = _setup(client)
-    view = get_view(client, bundle_id, doc_id)
-    typed = find_unit(view, TYPED)
+    typed = find_unit(get_view(client, bundle_id, doc_id), TYPED)
 
-    _set_number(client, bundle_id, doc_id, typed, typed["number"]["read"], follow=False)
-    as_number = find_unit(get_view(client, bundle_id, doc_id), TYPED)
     _set_number(client, bundle_id, doc_id, typed, None)
     as_text = find_unit(get_view(client, bundle_id, doc_id), TYPED)
+    again = find_unit(get_view(client, bundle_id, doc_id), TYPED)
+    _step(client, bundle_id, doc_id, "undo")
+    undone = find_unit(get_view(client, bundle_id, doc_id), TYPED)
 
-    assert (as_number["number"]["value"], _content(as_number)) == ("2.1", "합성 타자 번호 줄이다.")
-    assert as_number["number"]["typed_len"] == 0
+    assert (typed["number"]["value"], _content(typed), typed["number"]["from_text"]) == ("2.1", "합성 타자 번호 줄이다.", True)
     assert (as_text["number"]["value"], _content(as_text), as_text["number"]["is_set"]) == (None, TYPED, True)
+    assert as_text["number"]["from_text"] is False and again["number"] == as_text["number"]
+    assert (undone["number"]["value"], undone["number"]["is_set"]) == ("2.1", False)
 
 
 def test_no_number_turns_an_auto_number_back_into_text(client: TestClient) -> None:
@@ -417,5 +441,64 @@ def test_new_sentence_and_output_a_use_the_content_and_the_fixed_number(client: 
     assert (step["location"]["section"], step["source_text"]) == ("1.2 · 1.2.1 (읽은 값 1.3.1)", "합성 필터를 교체한다.")
     assert en[step["unit_id"]]["location"]["section"] == "1.2 · 1.2.1 (read as 1.3.1)"
     assert (heading["location"]["section"], heading["source_text"]) == ("3", "합성 타자 제목")
-    # 타자로 친 번호는 번호로 삼기 전에는 글이다
-    assert (typed["source_text"], typed["confirmed_text"]) == (TYPED, TYPED)
+    # 본문 줄의 타자 번호도 번호 칸으로 가서 새 문장 · 원문 칸은 내용이다
+    assert (typed["source_text"], typed["confirmed_text"]) == ("합성 타자 번호 줄이다.", "합성 타자 번호 줄이다.")
+
+
+# --- 첫머리 번호 저절로 · 줄바꿈 없는 박스 (항목 6) ---
+
+
+def test_read_from_text_marks_only_untouched_typed_numbers_on_body_lines() -> None:
+    typed = {"number_read": "2.1", "number_source": NUMBER_TYPED}
+
+    assert is_read_from_text(_Numbered(number_set=None, **typed)) is True
+    assert is_read_from_text(_Numbered(number_set="2.1", **typed)) is False  # 사람이 정한 번호
+    assert is_read_from_text(_Numbered(number_set="", **typed)) is False  # 없음으로 되돌림
+    assert is_read_from_text(_Numbered(number_set=None, kind="heading", **typed)) is False  # 제목 줄은 전부터 번호
+    assert is_read_from_text(_Numbered(number_read="2.1", number_set=None)) is False  # 자동 번호
+
+
+def test_source_text_treats_a_line_break_as_the_space_it_became() -> None:
+    # 줄바꿈을 띄어쓰기로 바꾸기(0035) 전에 원문 그대로 확정한 새 문장은 다시 저장해도 그대로다
+    unit = SimpleNamespace(
+        text="7 세척 노즐을 점검한다.", kind="sentence", number_read="7", number_source=NUMBER_CELL, number_len=1,
+        number_set=None, from_heading=False,
+    )
+
+    assert is_source_text("7\n세척 노즐을 점검한다.", unit) and is_source_text("세척 노즐을 점검한다.", unit)
+    assert not is_source_text("7 세척 노즐을 점검했다.", unit)
+
+
+def test_paragraph_excel_notes_a_number_read_from_text(client: TestClient) -> None:
+    bundle_id, _, doc_id = _setup(client)
+
+    response = client.get(f"/api/bundles/{bundle_id}/documents/{doc_id}/paragraphs.xlsx", headers=AUTHOR)
+
+    assert response.status_code == 200, response.text
+    rows = [list(row) for row in load_workbook(BytesIO(response.content)).worksheets[0].iter_rows(values_only=True)]
+    notes = {row[1]: row[3] for row in rows[1:]}
+    assert notes["합성 타자 번호 줄이다."] == READ_FROM_TEXT_NOTE
+    assert notes["합성 타자 제목"] in (None, "")  # 제목 줄의 타자 번호는 전부터 번호다
+
+
+def test_a_line_after_shift_enter_and_a_joined_number_only_paragraph_get_their_numbers(client: TestClient) -> None:
+    # 칸 · 문단 안 Shift+Enter 뒤 줄머리의 타자 번호, "6.1."만 든 문단 + 다음 문단을 합친 박스 — 둘 다 번호 칸이다
+    soft = '<w:p><w:r><w:t>합성 세척 준비</w:t><w:br/><w:t>7.1 합성 세척 노즐을 점검한다.</w:t></w:r></w:p>'
+    bundle = create_bundle(client, is_synthetic=True)
+    response = upload(client, bundle["id"], build_docx(soft + p("6.1.") + p("합성 다음 줄이다.")), OLD_NAME)
+    assert response.status_code == 201, response.text
+    doc_id = response.json()["id"]
+    view = get_view(client, bundle["id"], doc_id)
+    line = find_unit(view, "7.1 합성 세척 노즐을 점검한다.")
+    number_only, after = find_unit(view, "6.1."), find_unit(view, "합성 다음 줄이다.")
+
+    joined = _edit(client, bundle["id"], doc_id, {"type": "merge", "unit_ids": [number_only["id"], after["id"]]})
+    assert joined.status_code == 200, joined.text
+    merged = find_unit(get_view(client, bundle["id"], doc_id), "6.1. 합성 다음 줄이다.")
+    _step(client, bundle["id"], doc_id, "undo")
+    undone = get_view(client, bundle["id"], doc_id)
+
+    assert (line["number"]["value"], line["number"]["from_text"], _content(line)) == ("7.1", True, "합성 세척 노즐을 점검한다.")
+    assert number_only["number"]["value"] is None  # 번호뿐인 박스는 글
+    assert (merged["number"]["value"], _content(merged)) == ("6.1.", "합성 다음 줄이다.")
+    assert {unit["text"] for unit in undone["units"]} >= {"6.1.", "합성 다음 줄이다."}  # 합치기와 번호는 한 되돌리기

@@ -396,15 +396,15 @@ export interface ViewPartGroup {
 export interface ViewNumber {
   /** 번호 칸에 보일 값 - 사람이 고친 값, 없으면 읽은 값(자동 번호·번호만 든 칸). 없으면 null */
   value: string | null;
-  /** 추출기가 읽은 값 - 타자로 친 번호는 번호로 삼기 전에도 여기 있다 */
+  /** 추출기가 읽은 값 */
   read: string | null;
   source: "auto" | "typed" | "cell" | null;
   /** 사람이 고쳤다("번호 없음" 포함) */
   is_set: boolean;
   /** text에서 내용이 시작하는 자리 - 번호가 번호 칸으로 갔으면 그 뒤, 아니면 0 */
   content_start: number;
-  /** 번호로 삼을 수 있는 글 앞 타자 번호의 글자 수 - 없거나 이미 번호면 0 */
-  typed_len: number;
+  /** 본문 줄의 번호를 글 앞 타자 번호에서 저절로 읽었다(사람이 고치지 않음, 서버 numbering.is_read_from_text) - 툴팁이 알린다 */
+  from_text: boolean;
   /** 번호 노트 - 사람이 원문과 다르게 고쳤으면 원문(읽은) 번호(서버 numbering.get_number_note), 아니면 null */
   note: string | null;
 }

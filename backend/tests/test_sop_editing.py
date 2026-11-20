@@ -288,7 +288,7 @@ def test_merge_far_apart_sentences(client: TestClient) -> None:
     assert far["created_unit_ids"] == [merged["id"]] and far["retired_unit_ids"] == [record["id"], off["id"]]
     assert merged["spans"] == [record["spans"][0], off["spans"][0]]  # 같은 블록의 떨어진 두 범위는 그대로 둘
     assert (merged["kind"], merged["lang"]) == ("sentence", "ko")
-    joined = find_unit(view, f"{HEADING}\n{TWO_IN_ONE}")  # 다른 블록끼리는 줄바꿈으로 잇는다
+    joined = find_unit(view, f"{HEADING} {TWO_IN_ONE}")  # 다른 블록끼리도 띄어쓰기로 잇는다(박스 하나는 한 줄)
     assert across["created_unit_ids"] == [joined["id"]]
     assert joined["spans"] == [heading["spans"][0], two["spans"][0]]
     assert joined["kind"] == "sentence"  # 하나라도 문장이면 문장
@@ -523,10 +523,10 @@ def test_cell_pieces_take_row_from_their_block(client: TestClient) -> None:
     _ok(_edit(client, fx.bundle_id, fx.doc["id"], to_layout))
     view = get_view(client, fx.bundle_id, fx.doc["id"])
     _ok(_merge(client, fx, find_unit(view, "합성 값 하나."), find_unit(view, "합성 값 둘.")))
-    merged = find_unit(get_view(client, fx.bundle_id, fx.doc["id"]), "합성 값 하나.\n합성 값 둘.")
+    merged = find_unit(get_view(client, fx.bundle_id, fx.doc["id"]), "합성 값 하나. 합성 값 둘.")
     assert (merged["kind"], merged["row_index"]) == ("cell_sentence", 0)
 
-    _ok(_split(client, fx, merged, len("합성 값 하나.\n")))
+    _ok(_split(client, fx, merged, len("합성 값 하나. ")))
 
     view = get_view(client, fx.bundle_id, fx.doc["id"])
     blocks = {block["id"]: block for block in view["blocks"]}

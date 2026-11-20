@@ -115,7 +115,7 @@
 | B2 | `fix/space-preview-follow` | 10 | 작음 · FE + BE 한 곳 | — | 됨 v1.4.2 |
 | B3 | `fix/unwrap-scroll` | 11 스크롤 | 작음 · FE | — | 됨 v1.4.3 |
 | B4 | `feat/deleted-fold-restore` | 2 · 5 | 작음 · FE | B1 | 됨 v1.4.4 |
-| B5 | `fix/unit-text-linebreaks` | 6 | 중간 · BE(+ 데이터 고침) + FE 전환 | — | |
+| B5 | `fix/unit-text-linebreaks` | 6 | 중간 · BE(+ 데이터 고침) + FE 전환 | — | 됨 v1.4.5 |
 | B6 | `feat/assign-drop-join` | 3 | 중간 · FE + BE 편집(모양 전환 한 편집) | B5 | |
 | B7 | `feat/pair-peek` | 4 | 중간 · FE | — | |
 | B8 | `feat/number-levels` | 7 | 큼 · BE(열 · Alembic · 편집 op) + FE | B5 | |

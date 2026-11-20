@@ -25,7 +25,7 @@ import { isNoiseUnit } from "@/lib/classify-model";
 import { useI18n } from "@/lib/i18n";
 import { pickNearChunks, sliceCards } from "@/lib/paper-chunk-model";
 import { buildFoldPlan, type FoldEntry, type FoldItem, type FoldOpen } from "@/lib/paper-fold-model";
-import { buildRows, getBundleHeader, getGapMerge, getItemSegments, getMarks, getTags, isBandHeading, MERGE_BLOCKER_KEYS, resolvePickUnit, type CaptionPiece, type FigureRowMode, type PaperItem, type PaperModel, type PaperRow, type Segment, type UnitMark } from "@/lib/paper-model";
+import { buildRows, flattenLineBreaks, getBundleHeader, getGapMerge, getItemSegments, getMarks, getTags, isBandHeading, MERGE_BLOCKER_KEYS, resolvePickUnit, type CaptionPiece, type FigureRowMode, type PaperItem, type PaperModel, type PaperRow, type Segment, type UnitMark } from "@/lib/paper-model";
 import type { JoinKind, JoinPlan } from "@/lib/split-menu-model";
 import { getHiddenEnds, listFollowPreview } from "@/lib/number-model";
 import { suggestUnitContinuous } from "@/lib/number-kind-model";
@@ -36,6 +36,7 @@ import { isDeletedLineOpen, readDeletedLine, type DeletedFold, type DeletedLine 
 import { buildTocBlock, shouldJoinTocCard } from "@/lib/toc-block-model";
 import { findUnwrapHeads, getRowUnwrapTable } from "@/lib/unwrap-model";
 import { buildStripRows } from "@/lib/figure-spot-model";
+import { useNumberArrival } from "@/lib/use-number-arrival";
 
 /** 조각 끝 표시 - 단위의 것(UnitMark)에 그 조각이 놓인 블록의 경고를 더한다 */
 type PaperMark = UnitMark | "warn";
@@ -319,6 +320,8 @@ export function Paper({
     return listFollowPreview(numberOrder, numberEdit.unitId, numberEdit.text);
   }, [numberEdit, numberOrder]);
   const previewOf = useMemo(() => new Map(followed.map((item) => [item.unitId, item])), [followed]);
+  // 편집 응답 뒤 번호 칸이 새로 생긴 박스 - 번호 칸이 옅은 강조로 들어오는 전환(항목 6-b)
+  const arrivedNumbers = useNumberArrival(model.units);
   const unreadBlockIds = useMemo(() => {
     const ids = new Set<number>();
     for (const item of [...model.header, ...model.body, ...model.footer]) {
@@ -643,7 +646,7 @@ export function Paper({
             <>
               {cut.offset > segment.start && (
                 <span className="cut-a" data-start={segment.start}>
-                  {block.text.slice(segment.start, cut.offset)}
+                  {flattenLineBreaks(block.text.slice(segment.start, cut.offset))}
                 </span>
               )}
               <span className="cut-anchor">
@@ -663,11 +666,11 @@ export function Paper({
                 {renderAtCut && !isDragging && <Fragment key={cut.offset}>{renderAtCut()}</Fragment>}
               </span>
               <span className="cut-b" data-start={Math.max(cut.offset, segment.start)}>
-                {block.text.slice(Math.max(cut.offset, segment.start), segment.end)}
+                {flattenLineBreaks(block.text.slice(Math.max(cut.offset, segment.start), segment.end))}
               </span>
             </>
           ) : (
-            <span data-start={segment.start}>{text}</span>
+            <span data-start={segment.start}>{flattenLineBreaks(text)}</span>
           )}
         </span>
       </span>
@@ -882,6 +885,7 @@ export function Paper({
           followed={numberEdit?.unitId === unit.id ? followed : []}
           continuous={numberEdit?.unitId === unit.id ? continuous : null}
           preview={previewOf.get(unit.id) ?? null}
+          isArrived={arrivedNumbers.has(unit.id)}
           onEditChange={setNumberEdit}
           onSave={(number, follow) => {
             setNumberEdit(null);
@@ -1466,7 +1470,7 @@ export function Paper({
     return row.parts
       .map((part, partIndex) => {
         const skip = partIndex === 0 ? readHiddenPrefix(part.block, unit) : 0;
-        return part.segments.map((segment) => part.block.text.slice(Math.max(segment.start, skip), segment.end)).join("");
+        return flattenLineBreaks(part.segments.map((segment) => part.block.text.slice(Math.max(segment.start, skip), segment.end)).join(""));
       })
       .join(" ");
   }

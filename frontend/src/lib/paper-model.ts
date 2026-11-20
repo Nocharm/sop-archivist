@@ -62,6 +62,11 @@ const BOTTOM_PARTS = new Set(["footer", "footnote", "endnote"]);
 const SPANLESS_KINDS = new Set(["table"]);
 
 /** 띠 표 제목 줄인가(F4) - 원문 표를 가리키는 제목 단위는 벗긴 띠 표에서 나온 것뿐이다(서버 segment.is_band_heading) */
+/** 박스(단위) 글 안 줄바꿈을 띄어쓰기로 - 서버 단위 글(segment.build_unit_text)과 같다(항목 6-a). 한 글자를 한 글자로 바꿔 글 안 자리가 그대로다 */
+export function flattenLineBreaks(text: string): string {
+  return text.replace(/[\r\n]/g, " ");
+}
+
 export function isBandHeading(unit: Pick<ViewUnit, "kind" | "table_id">): boolean {
   return unit.kind === "heading" && unit.table_id !== null;
 }

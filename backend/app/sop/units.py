@@ -188,14 +188,17 @@ def _build_unit_rows(
             "pos_seq": draft.pos_seq, "pos_start": draft.pos_start, "noise_kind": draft.noise_kind,
             "from_heading": draft.from_heading,
             # 목차 줄은 번호 칸이 없다 — 줄 앞 번호도 목차 글이다
-            **build_number_columns(draft.kind if draft.noise_kind is None else "", draft.spans, signals, block_texts),
+            **build_number_columns(
+                draft.kind if draft.noise_kind is None else "", draft.spans, signals, block_texts,
+                reads_line_starts=split_lines,
+            ),
         }
         for local_no, draft in enumerate(drafts, start=1)
     ]
     lines = [
         ClauseLine(
             draft.pos_seq, draft.lang, draft.kind, draft.from_heading,
-            read_draft_number(draft.kind, draft.from_heading, row) if draft.noise_kind is None else None,
+            read_draft_number(row) if draft.noise_kind is None else None,
         )
         for draft, row in zip(drafts, rows, strict=True)
     ]

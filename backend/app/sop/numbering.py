@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from app.sop.constants import BULLET_SYMBOLS
-from app.sop.segment import NUMBER_CELL, NUMBERS_SIGNAL, is_blank_char
+from app.sop.segment import NUMBER_CELL, NUMBERS_SIGNAL, TYPED_NUMBER_RE, flatten_line_breaks, is_blank_char
 
 NUMBER_AUTO, NUMBER_TYPED = "auto", "typed"  # docx_reader의 번호 출처와 같은 값(테스트가 같음을 지킨다)
 # 번호 없는 바꾼 조항(F8b)이 앞 다른 언어 조항에서 물려받은 번호 — 범위가 없다(number_len 0, 글자는 그대로 내용)
@@ -35,7 +35,7 @@ class NumberedUnit(Protocol):
     number_source: str | None
     number_len: int
     number_set: str | None
-    from_heading: bool  # 제목 줄을 문장으로 바꾼 단위(F8b) — 그 타자 번호는 제목 줄처럼 처음부터 번호다
+    from_heading: bool  # 제목 줄을 문장으로 바꾼 단위(F8b)
 
 
 @dataclass(frozen=True)
@@ -48,23 +48,34 @@ class NumberRange:
 
 
 def read_number_range(
-    spans: Sequence[Sequence[int]], signals: Mapping[int, Mapping[str, object] | None], texts: Mapping[int, str]
+    spans: Sequence[Sequence[int]],
+    signals: Mapping[int, Mapping[str, object] | None],
+    texts: Mapping[int, str],
+    *,
+    reads_line_starts: bool = False,
 ) -> NumberRange | None:
     """단위 범위의 첫 조각에 걸린 번호 신호 → 번호 범위. 번호 뒤에 내용이 남을 때만 번호다(번호뿐인 단위는 글로 둔다).
 
     - 같은 블록 안: 번호 신호가 첫 조각의 머리에서 시작하고 조각이 그 뒤로 이어진다.
-    - 다른 블록의 번호 칸(cell): 첫 조각이 번호만 든 칸 전체이고 뒤에 다른 조각이 있다 — 그 칸 블록 전체가 번호 범위다.
+    - 첫 조각 전체가 번호이고 뒤에 다른 조각이 있다 — 그 조각 전체가 번호 범위다(번호 칸 + 내용 칸, "6.1."만 든 문단 + 다음 문단).
+    - reads_line_starts(DOCX)면 신호가 없는 줄바꿈 뒤 줄머리의 타자 번호도 읽는다 — 추출기는 문단 머리만 보아
+      Shift+Enter 뒤 줄("세척 준비↵7.1 세척 노즐을 점검한다.")에는 신호가 없다. PDF의 줄바꿈은 접힌 줄이라 읽지 않는다.
     """
     if not spans:
         return None
     block_id, start, end = spans[0]
     text = texts[block_id]
-    for number_start, number_end, source in (signals.get(block_id) or {}).get(NUMBERS_SIGNAL) or ():
+    numbers = list((signals.get(block_id) or {}).get(NUMBERS_SIGNAL) or ())
+    if reads_line_starts and start > 0 and text[start - 1] == "\n":
+        typed = TYPED_NUMBER_RE.match(text, start)
+        if typed is not None:
+            numbers.append((start, typed.end(), NUMBER_TYPED))
+    for number_start, number_end, source in numbers:
         if not number_start <= start < number_end or any(not is_blank_char(ch) for ch in text[number_start:start]):
             continue
         if number_end < end:
             label = text[start:number_end]
-        elif source == NUMBER_CELL and len(spans) > 1:
+        elif len(spans) > 1 and (number_end == end or source == NUMBER_CELL):
             label = text[start:end]
         else:
             return None
@@ -76,10 +87,21 @@ def read_number_range(
 
 
 def build_number_columns(
-    kind: str, spans: Sequence[Sequence[int]], signals: Mapping[int, Mapping[str, object] | None], texts: Mapping[int, str]
+    kind: str,
+    spans: Sequence[Sequence[int]],
+    signals: Mapping[int, Mapping[str, object] | None],
+    texts: Mapping[int, str],
+    *,
+    reads_line_starts: bool,
 ) -> dict[str, object]:
-    """새 단위의 번호 열(읽은 값·출처·길이) — 처음 쪼개기와 쪼개기 편집이 같은 계산을 쓴다. 문장·제목·칸 문장만 번호를 갖는다."""
-    found = read_number_range(spans, signals, texts) if kind in NUMBERED_KINDS else None
+    """새 단위의 번호 열(읽은 값·출처·길이) — 처음 쪼개기와 쪼개기 편집이 같은 계산을 쓴다. 문장·제목·칸 문장만 번호를 갖는다.
+
+    reads_line_starts는 줄바꿈에서 단위를 나누는 문서(DOCX)인가다(read_number_range).
+    """
+    found = (
+        read_number_range(spans, signals, texts, reads_line_starts=reads_line_starts)
+        if kind in NUMBERED_KINDS else None
+    )
     if found is None:
         return {"number_read": None, "number_source": None, "number_len": 0}
     return {"number_read": found.read, "number_source": found.source, "number_len": found.length}
@@ -116,13 +138,10 @@ def find_inherited_numbers(lines: Sequence[ClauseLine]) -> dict[int, str]:
     return inherited
 
 
-def read_draft_number(kind: str, from_heading: bool, columns: Mapping[str, object]) -> str | None:
+def read_draft_number(columns: Mapping[str, object]) -> str | None:
     """막 만든 단위(사람이 고치기 전)의 번호 칸 값 — get_number와 같은 규칙을 번호 열 값으로."""
     read = columns.get("number_read")
-    if not isinstance(read, str):
-        return None
-    is_typed_text = columns.get("number_source") == NUMBER_TYPED and kind != SECTION_KIND and not from_heading
-    return None if is_typed_text else read
+    return read if isinstance(read, str) else None
 
 
 def _read_label(label: str) -> str:
@@ -134,26 +153,25 @@ def _read_label(label: str) -> str:
 
 
 def get_number(unit: NumberedUnit) -> str | None:
-    """번호 칸의 값 — 사람이 고친 값이 먼저이고, 없으면 읽은 값(본문 줄의 타자 번호는 사람이 번호로 삼기 전에는 글이다)."""
+    """번호 칸의 값 — 사람이 고친 값이 먼저이고, 없으면 읽은 값이다. 본문 줄의 타자 번호도 처음부터 번호다(사용자 결정 2026-11-20,
+    11-18의 "↤ 번호로를 누르기 전에는 글"을 거둠 — 이미 올린 묶음도 저장된 열로 읽을 때 셈해 곧바로 번호 칸이 된다)."""
     if unit.number_set is not None:
         return unit.number_set or None
-    return None if _is_typed_text(unit) else unit.number_read
+    return unit.number_read
 
 
-def _is_typed_text(unit: NumberedUnit) -> bool:
-    """타자로 친 번호가 아직 글인가 — 절을 여는 줄(제목)의 타자 번호는 처음부터 번호 칸으로 가고(전에도 화면이 가리던 번호다),
-    본문 줄의 타자 번호는 사람이 "번호로"를 누르기 전에는 글이다(사용자 결정 2026-11-18). 제목에서 바꾼 조항 문장(F8b)은 제목 줄과 같다."""
+def is_read_from_text(unit: NumberedUnit) -> bool:
+    """본문 줄의 번호를 글 앞 타자 번호에서 저절로 읽었는가(사람이 고치지 않음) — 번호 칸 툴팁·문단 Excel 번호 노트가 알린다.
+    제목 줄(과 제목에서 바꾼 조항)의 타자 번호는 전부터 번호였으니 알리지 않는다."""
     return (
-        unit.number_source == NUMBER_TYPED and unit.number_set is None and unit.kind != SECTION_KIND
-        and not unit.from_heading
+        unit.number_source == NUMBER_TYPED and unit.number_set is None and bool(unit.number_read)
+        and unit.kind != SECTION_KIND and not unit.from_heading
     )
 
 
 def get_hidden_len(unit: NumberedUnit) -> int:
-    """단위 글 앞에서 번호 칸으로 간 글자 수 — "번호 없음"이거나 아직 글인 타자 번호면 0."""
+    """단위 글 앞에서 번호 칸으로 간 글자 수 — "번호 없음"이면 0."""
     if unit.number_set == NO_NUMBER or not unit.number_len:
-        return 0
-    if _is_typed_text(unit):
         return 0
     return unit.number_len
 
@@ -169,6 +187,15 @@ def get_content_start(text: str, hidden_len: int) -> int:
 def strip_number(text: str, unit: NumberedUnit) -> str:
     """번호 범위를 뺀 글("내용") — New 초안·결과물 A 원문 칸이 쓴다. AI 입력 글은 번호를 품은 text 그대로다."""
     return text[get_content_start(text, get_hidden_len(unit)):]
+
+
+def is_source_text(text: str, unit: NumberedUnit) -> bool:
+    """새 문장 글이 원문 단위 글(번호를 뺀 내용 포함)과 같은가 — 변경 종류 "그대로"의 글자 비교(사람 저장·AI 제안이 함께 쓴다).
+
+    줄바꿈과 띄어쓰기는 같은 글로 본다 — 단위 글의 줄바꿈을 띄어쓰기로 바꾸기(Alembic 0035) 전에 원문을 그대로 옮겨 확정한 글이
+    다시 저장될 때 고침이 되지 않게.
+    """
+    return flatten_line_breaks(text) in (unit.text, strip_number(unit.text, unit))
 
 
 def normalize_number(number: str) -> str:

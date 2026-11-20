@@ -144,7 +144,7 @@ def test_unwrapping_the_outer_table_makes_inner_bands_headings_and_leaves_inner_
 
     view = get_view(client, bundle_id, doc_id)
     assert [table["is_layout"] for table in view["tables"]] == [True, True, False, False, False, False]
-    heading = find_unit(view, f"7.1\n{DAILY}")
+    heading = find_unit(view, f"7.1 {DAILY}")
     assert (heading["kind"], heading["number"]["value"]) == ("heading", "7.1")
     assert _table_unit(view, 1) is None
     assert _table_unit(view, 2) is not None  # 값 표는 다시 보통 표 한 줄
@@ -193,7 +193,7 @@ def test_an_inner_table_unwraps_again_and_back_to_table_wraps_only_the_pressed_l
 def test_back_to_table_asks_first_when_an_inner_band_heading_is_assigned(client: TestClient) -> None:
     bundle_id, sop_id, doc_id = _setup(client)
     _unwrap(client, bundle_id, doc_id, 3)
-    heading = find_unit(get_view(client, bundle_id, doc_id), f"7.2\n{ACCESS}")
+    heading = find_unit(get_view(client, bundle_id, doc_id), f"7.2 {ACCESS}")
     target = {
         "key": "h", "kind": "slot_heading", "target_doc_id": sop_id, "slot_key": "procedures.p1",
         "source_unit_ids": [heading["id"]],
@@ -226,7 +226,7 @@ def test_output_a_locates_inner_table_lines_from_the_outside_in(client: TestClie
     assert ko[admin] == "표 4 · 3행 2열 › 표 6 · 2행 1열"
     assert en[admin] == "Table 4 · R 3 C 2 › Table 6 · R 2 C 1"
     assert ko[_table_unit(view, 2)["id"]] == "표 1 · 3행 2열 › 표 3"  # 벗기지 않은 안쪽 값 표 한 줄
-    assert ko[find_unit(view, f"7.2\n{ACCESS}")["id"]] == "표 4 · 1행 1열 › 띠 표"
+    assert ko[find_unit(view, f"7.2 {ACCESS}")["id"]] == "표 4 · 1행 1열 › 띠 표"
     assert ko[find_unit(view, CHECK[0])["id"]] == "표 1 · 2행 2열"  # 바깥 표의 줄은 지금 꼴 그대로
 
 
@@ -252,9 +252,9 @@ def test_an_unwrapped_block_holds_its_band_heading_and_inner_tables_but_not_an_u
     _unwrap(client, bundle_id, doc_id, 3)
     _unwrap(client, bundle_id, doc_id, 5)
     view = get_view(client, bundle_id, doc_id)
-    first = [find_unit(view, f"7.1\n{DAILY}")["id"], *(find_unit(view, text)["id"] for text in ["점검 항목", *CHECK, "기준", LIMIT_BEFORE]),
+    first = [find_unit(view, f"7.1 {DAILY}")["id"], *(find_unit(view, text)["id"] for text in ["점검 항목", *CHECK, "기준", LIMIT_BEFORE]),
              _table_unit(view, 2)["id"], find_unit(view, LIMIT_AFTER)["id"]]
-    second = [find_unit(view, text)["id"] for text in [f"7.2\n{ACCESS}", "권한 부여", GRANT, "권한 표"]]
+    second = [find_unit(view, text)["id"] for text in [f"7.2 {ACCESS}", "권한 부여", GRANT, "권한 표"]]
 
     refused = [_reorder(client, bundle_id, doc_id, index, [lines[0]]) for index, lines in ((0, first), (3, second))]
 

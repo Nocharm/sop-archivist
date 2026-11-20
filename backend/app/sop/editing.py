@@ -41,6 +41,7 @@ from app.sop.groups import BUNDLE_UNIT_KINDS, TABLE_UNIT_KINDS, iter_chunks, sel
 from app.sop.match import sync_new_doc_targets
 from app.sop.models import (
     Document,
+    Extraction,
     SourceBlock,
     SourceTable,
     TargetSentence,
@@ -130,7 +131,7 @@ ExtractionId = int | None  # 받지 않았거나 추출에 실패한 문서는 �
 class SplitOp(BaseModel):
     type: Literal["split"]
     unit_id: DbId
-    # 단위 text 안 위치 — 오른쪽 조각의 첫 글자. 범위 사이 이음 글자(" "·"\n") 위는 안 된다
+    # 단위 text 안 위치 — 오른쪽 조각의 첫 글자. 범위 사이 이음 글자(" ") 위는 안 된다
     at: Offset
 
 
@@ -339,6 +340,7 @@ class _Block:
     table_id: int | None
     row_index: int | None
     signals: dict | None = None
+    splits_lines: bool = False  # 줄바꿈에서 단위를 나누는 문서(DOCX)의 블록 — 줄머리 타자 번호도 읽는다(numbering.read_number_range)
 
 
 @dataclass
@@ -478,11 +480,14 @@ async def _load_blocks(
         session,
         lambda chunk: select(
             SourceBlock.id, SourceBlock.seq, SourceBlock.text, SourceBlock.kind, SourceBlock.table_id,
-            SourceBlock.row_index, SourceBlock.signals,
-        ).where(SourceBlock.id.in_(chunk), SourceBlock.extraction_id == extraction_id),
+            SourceBlock.row_index, SourceBlock.signals, Document.file_format,
+        )
+        .join(Extraction, Extraction.id == SourceBlock.extraction_id)
+        .join(Document, Document.id == Extraction.document_id)
+        .where(SourceBlock.id.in_(chunk), SourceBlock.extraction_id == extraction_id),
         block_ids,
     )
-    return {block_id: _Block(*fields) for block_id, *fields in rows}
+    return {block_id: _Block(*fields, splits_lines=file_format == LINE_SPLIT_FORMAT) for block_id, *fields, file_format in rows}
 
 
 async def _load_unit_blocks(
@@ -509,7 +514,7 @@ def _build_draft(
     texts = _get_texts(blocks)
     text = build_unit_text(spans, texts)
     signals = {block_id: block.signals for block_id, block in blocks.items()}
-    number = build_number_columns(kind, spans, signals, texts)
+    number = build_number_columns(kind, spans, signals, texts, reads_line_starts=first.splits_lines)
     if like.spans and tuple(like.spans[0][:2]) == tuple(spans[0][:2]) and kind in NUMBERED_KINDS:
         number["number_set"] = like.number_set
         if like.number_source == NUMBER_PAIR and number["number_read"] is None and kind == "sentence":
@@ -863,7 +868,7 @@ async def _inherit_numbers(
         for unit in existing
     ]
     for draft in drafts:
-        number = read_draft_number(draft.kind, draft.from_heading, draft.number)
+        number = read_draft_number(draft.number)
         if draft.number.get("number_set") is not None:
             number = draft.number["number_set"] or None
         entries.append(((draft.pos_seq, draft.pos_start), ClauseLine(draft.pos_seq, draft.lang, draft.kind, True, number), draft))
@@ -1309,7 +1314,10 @@ async def _build_band_drafts(
         _Draft(
             kind=draft.kind, spans=list(draft.spans), text=build_unit_text(draft.spans, texts), lang=draft.lang,
             table_id=draft.table_id, row_index=draft.row_index, group_unit_id=None, pos_seq=draft.pos_seq,
-            pos_start=draft.pos_start, number=build_number_columns(draft.kind, draft.spans, signals, texts),
+            pos_start=draft.pos_start,
+            number=build_number_columns(
+                draft.kind, draft.spans, signals, texts, reads_line_starts=document.file_format == LINE_SPLIT_FORMAT
+            ),
             group_draft=draft.group_index,
         )
         for draft in drafts

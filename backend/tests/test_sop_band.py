@@ -20,7 +20,7 @@ BODY = (
     p("이 절차는 정제수 시스템의 필터 관리를 정한다.") + make_band_table("7", CHAPTER)
     + make_band_table("7.4", SECTION) + p(SENTENCE)
 )
-BAND = f"7.4\n{SECTION}"  # 제목 줄의 글 — 번호 칸 블록과 제목 칸 블록을 줄바꿈으로 잇는다(번호는 범위로 가릴 뿐 글에 남는다)
+BAND = f"7.4 {SECTION}"  # 제목 줄의 글 — 번호 칸 블록과 제목 칸 블록을 띄어쓰기로 잇는다(번호는 범위로 가릴 뿐 글에 남는다)
 
 
 def _setup(client: TestClient, body: str = BODY) -> tuple[int, int, int]:
@@ -77,7 +77,7 @@ def test_certain_band_table_is_a_heading_line_from_upload(client: TestClient) ->
     assert band["kind"] == "heading"
     # 번호는 번호 칸에만 — 번호 칸 블록 전체가 번호 범위이고 글(내용)은 제목만이다
     assert (band["number"]["value"], band["number"]["source"], _content(band)) == ("7.4", "cell", SECTION)
-    chapter = find_unit(view, f"7\n{CHAPTER}")
+    chapter = find_unit(view, f"7 {CHAPTER}")
     assert (chapter["kind"], chapter["number"]["value"], _content(chapter)) == ("heading", "7", CHAPTER)
     # 표 단위·칸 문장은 없고 벗긴 표로 남는다 — 가운데 빈 칸에는 덮을 글자가 없다
     assert [unit for unit in view["units"] if unit["kind"] in ("table", "cell_sentence")] == []
@@ -216,7 +216,7 @@ def test_follow_renumbering_reaches_the_next_band_chapter_and_the_lines_under_it
         + make_band_table("8", scope) + p("8.1 The synthetic scope line.", "Heading2")
     )
     bundle_id, _, doc_id = _setup(client, body)
-    chapter = find_unit(get_view(client, bundle_id, doc_id), f"7\n{purpose}")
+    chapter = find_unit(get_view(client, bundle_id, doc_id), f"7 {purpose}")
 
     response = _edit(client, bundle_id, doc_id, {"type": "set_number", "unit_id": chapter["id"], "number": "6", "follow": True})
     assert response.status_code == 200, response.text

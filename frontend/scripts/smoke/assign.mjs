@@ -4113,8 +4113,8 @@ await runStep("assign: number cell - a heading number sits in the cell, a fix re
       break;
     }
     if (first !== null) {
-      for (const item of view.units.filter((unit) => unit.number && unit.number.typed_len > 0)) {
-        if ((await page.locator(`[data-testid="assign-paper-num-typed-${item.id}"]`).count()) > 0) {
+      for (const item of view.units.filter((unit) => unit.number && unit.number.from_text && unit.id !== first.id && unit.id !== second.id)) {
+        if ((await page.locator(`[data-testid="assign-paper-num-${item.id}"]`).count()) > 0) {
           typed = item;
           break;
         }
@@ -4177,14 +4177,17 @@ await runStep("assign: number cell - a heading number sits in the cell, a fix re
   await page.mouse.click(4, (viewport?.height ?? 800) - 4);
   await page.locator('[data-testid="assign-paper-num-input"]').waitFor({ state: "detached", timeout: T });
   check("a press outside closes the number box without saving", (await readNumber(first.id)).value === first.number.value);
-  // 본문 줄의 타자 번호 - "↤"로 번호가 되고 Undo로 글로 돌아온다(그런 줄이 화면에 있을 때만)
+  // 본문 줄의 타자 번호 - 처음부터 번호 칸에 있고(툴팁이 글에서 읽었다고 알린다) None이면 글로, Undo로 다시 번호로(그런 줄이 화면에 있을 때만)
   if (typed !== null) {
-    const handle = page.locator(`[data-testid="assign-paper-num-typed-${typed.id}"]`);
-    await handle.scrollIntoViewIfNeeded();
-    await handle.click();
-    check("a typed number on a body line becomes the number", await waitNumber(typed.id, (number) => number.value === typed.number.read && number.content_start > 0));
+    const cell = page.locator(`[data-testid="assign-paper-num-${typed.id}"]`);
+    await cell.scrollIntoViewIfNeeded();
+    check("a typed number on a body line is the number from the start", typed.number.value === typed.number.read && typed.number.content_start > 0 && (await cell.innerText()).trim() === typed.number.value);
+    check("its tip says it was read from text", ((await cell.getAttribute("data-tip")) ?? "").includes("Read from text"), await cell.getAttribute("data-tip"));
+    await cell.click();
+    await page.locator('[data-testid="assign-paper-num-kind-none"]').click();
+    check("No number turns it back into text and is remembered", await waitNumber(typed.id, (number) => number.value === null && number.is_set && !number.from_text));
     await page.locator('[data-testid="assign-undo"]').click();
-    check("Undo turns it back into text", await waitNumber(typed.id, (number) => number.value === null && number.typed_len > 0));
+    check("Undo brings the number back", await waitNumber(typed.id, (number) => number.value === typed.number.read && !number.is_set && number.from_text));
   }
 });
 
@@ -4200,7 +4203,7 @@ await runStep("assign: number cell - Add number on a line without one, No number
   for (const candidate of docs.filter((item) => item.side === "old" && item.status === "ready")) {
     const view = await readView(candidate.id);
     if (!view.has_number_ranges) continue;
-    const plain = view.units.filter((item) => item.kind === "sentence" && item.number && item.number.value === null && item.number.typed_len === 0 && item.table_id === null);
+    const plain = view.units.filter((item) => item.kind === "sentence" && item.number && item.number.value === null && item.table_id === null);
     await page.locator('[data-testid="assign-old-doc"]').click();
     await page.locator(`[data-testid="assign-old-doc-option-${candidate.id}"]`).click();
     await page.locator(`[data-testid="assign-old"]`).waitFor({ timeout: T });

@@ -2,6 +2,13 @@
 
 프로젝트 진행 현황 로그. 커밋 직전 갱신한다 (`rules/common/git.md` 규칙). v1.4.0(2026-11-20 정식 업데이트)까지의 항목은 [`docs/history/PROGRESS-archive.md`](docs/history/PROGRESS-archive.md)에 있다 — 정식 업데이트마다 그 릴리스까지의 항목을 거기로 옮긴다(`rules/common/git.md` "정식 업데이트 때 문서 정리").
 
+## 2026-11-21 — B5 박스 안 줄바꿈 없애기 · 첫머리 번호 저절로 (`fix/unit-text-linebreaks`)
+
+- 6-a: 단위 글을 늘 띄어쓰기로 잇고 범위 안 줄바꿈도 띄어쓰기(`segment.build_unit_text`, 한 글자 ↔ 한 글자라 범위 · 번호 · 그림 좌표 그대로). 옛 글은 데이터 리비전 `0035`(사용자 승인 — 운영 기존 행 변경, CHANGELOG 굵게). 확정한 New 문장 글은 사람 글이라 두고, 변경 종류 "그대로"는 `numbering.is_source_text`가 줄바꿈 = 띄어쓰기로 견줘 다시 저장해도 고침이 되지 않게 했다(사람 저장 · AI 제안 사본 둘 다). 용지는 블록 글을 그리므로 단위 조각만 `flattenLineBreaks`. 남는 부작용: 줄바꿈이 있던 줄의 옛 AI 분류 제안은 해시가 달라 일괄 수락에서 건너뛴다.
+- 6-b: "본문 타자 번호는 ↤ 전에는 글"을 세 곳에서 거뒀다(`get_number` · `read_draft_number` · 문서 보기 `typed_len` → `from_text`). Shift+Enter 뒤 줄은 추출기를 바꾸지 않고 `read_number_range`가 DOCX일 때 줄바꿈 뒤 줄머리를 같은 정규식(`segment.TYPED_NUMBER_RE`로 옮김)으로 읽는 대체를 골랐다 — 다시 올리지 않아도 그 줄을 편집할 때부터 적용되고(편집하지 않은 옛 줄은 번호 열이 저장값이라 그대로) `EXTRACTOR_VERSION`을 B10 · B12에 남긴다. PDF는 줄바꿈이 접힌 줄이라 읽지 않는다(편집 길 `_load_blocks`가 문서 형식을 함께 읽는다). 첫 범위 전체가 번호이고 뒤 범위가 있으면 번호 칸 칸만이 아니라 어느 출처든 번호.
+- 확인한 것: 이미 확정한 New 문장(옛 규칙에서 번호를 품고 복사된 글)은 저장값이라 그대로이고, 다시 저장해도 Old 글 전체와 같아 "그대로"다. 결과물 A 원문 칸은 이제 번호를 뺀 내용이다. Number note는 본문 줄에서 저절로 읽은 번호만 "Read from text"(제목 줄은 전부터 번호라 빼고, 결과물 A 위치 칸은 바꾸지 않음). 전환은 effect 없이 렌더 중 상태 맞추기 훅(`use-number-arrival`) + CSS 키프레임(`data-arrived`).
+- 검증: backend 3,130 · ruff, vitest · lint · tsc, Assign 스모크(아래).
+
 ## 2026-11-20 — 워크트리 준비 · 시드 DB 검사 (`chore/worktree-setup`)
 
 - 까닭: 워크트리마다 venv · node_modules · 시드 DB · 서버를 손으로 갖추다 거짓 스모크 실패가 되풀이됐다 — B4에서 전체 Assign 스모크 한 번(7분)이 `BACKEND_PYTHON` 누락 실패 5개 · 바뀐 DB 실패 2개로 버려졌고, B1도 바뀐 DB로 거짓 실패했다. 교정 사다리대로 산문 대신: 스모크가 원본 체크아웃 venv를 저절로 찾고(`findBackendPython`, 단계마다 찾지 못하게 `source-rules.test.ts`가 막음), `scripts/dev-worktree.sh`(new · up · reset · seed · down)가 준비와 DB 되돌리기를 하며, 스모크는 시드 지문과 다르면 첫 초에 멈춘다(`DIRTY_DB_OK=1`로 넘김).

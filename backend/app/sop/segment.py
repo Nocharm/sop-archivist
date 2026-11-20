@@ -56,6 +56,9 @@ CAPTION_OF_FLAG = "caption_of"
 # docx_reader.SIGNAL_NUMBERS·NUMBER_CELL과 같은 값 — 블록 신호의 번호 범위 [[시작, 끝, 출처], …]와 글 전체가 번호 꼴인 칸
 NUMBERS_SIGNAL = "numbers"
 NUMBER_CELL = "cell"
+# 글 앞에 타자로 친 번호 — 점이 있어야 번호로 본다("1." "6.1" "1.10."). "3 times"처럼 숫자로 시작하는 문장을 집지 않게.
+# 추출기(docx_reader._find_number)가 문단 머리에서, numbering.read_number_range가 줄바꿈 뒤 줄머리에서 같은 꼴을 읽는다
+TYPED_NUMBER_RE = re.compile(r"(?:\d+(?:\.\d+)+\.?|\d+\.)(?=\s|$)")
 # docx_reader.SIGNAL_BAND와 같은 값 — 띠 표(1행 3칸: 번호 칸 | 빈 칸 | 제목 칸)의 표 신호 {"number", "level"}
 BAND_SIGNAL = "band"
 # docx_reader.SIGNAL_PLACE·SIGNAL_PARAS와 같은 값 — 안쪽 표의 바깥 칸 자리 {"row", "col", "para"}와 칸 안 문단 시작 자리
@@ -522,16 +525,20 @@ def _fill_languages(drafts: list[UnitDraft], layout: str) -> list[UnitDraft]:
     return filled
 
 
+_LINE_BREAKS_TO_SPACE = str.maketrans("\r\n", "  ")
+
+
+def flatten_line_breaks(text: str) -> str:
+    """줄바꿈("\\n" "\\r")을 띄어쓰기로 — 한 글자를 한 글자로 바꿔 길이가 그대로다."""
+    return text.translate(_LINE_BREAKS_TO_SPACE)
+
+
 def build_unit_text(spans: Sequence[Sequence[int]], block_texts: Mapping[int, str]) -> str:
-    """단위 글자 = 범위 글자를 이은 것 — 같은 블록끼리는 " ", 다른 블록끼리는 "\\n"으로 잇는다."""
-    pieces: list[str] = []
-    previous_block: int | None = None
-    for block_id, start, end in spans:
-        if pieces:
-            pieces.append(" " if block_id == previous_block else "\n")
-        pieces.append(block_texts[block_id][start:end])
-        previous_block = block_id
-    return "".join(pieces)
+    """단위 글자 = 범위 글자를 띄어쓰기 하나로 이은 것 — 범위 안 줄바꿈("\\n" "\\r")도 띄어쓰기다(박스 하나는 한 줄, 항목 6-a).
+
+    한 글자를 한 글자로 바꾸므로 글 안 좌표(나눌 자리·번호 범위·그림 자리)는 범위 글자 길이 그대로다.
+    """
+    return " ".join(flatten_line_breaks(block_texts[block_id][start:end]) for block_id, start, end in spans)
 
 
 PairDirection = Literal["ko_en", "en_ko"]

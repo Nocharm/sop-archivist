@@ -1400,3 +1400,36 @@ def test_0034_adds_unwrap_order_with_empty_history_and_drops_it_back(tmp_path: p
         assert "unwrap_seq" not in unit_columns and "unwrap_seq_changes" not in edit_columns
     finally:
         engine.dispose()
+
+
+def test_0035_turns_line_breaks_in_unit_text_into_spaces_and_keeps_length(tmp_path: pathlib.Path) -> None:
+    # 박스 하나는 한 줄(항목 6-a) — 저장된 단위 글의 줄바꿈만 띄어쓰기로, 길이는 그대로, 새 문장 글은 사람 글이라 그대로
+    db_path = tmp_path / "unit_text_spaces.db"
+    config = _downgrade_to(db_path, "0034")
+    engine = _create_fk_engine(db_path)
+    try:
+        with engine.begin() as conn:
+            ids = _insert_old_bundle(conn)
+            sentence_id = conn.execute(text("SELECT id FROM units WHERE id != :f"), {"f": ids["figure_id"]}).scalar_one()
+            target_id = conn.execute(text("SELECT id FROM target_sentences WHERE id != :f"),
+                                     {"f": ids["figure_target_id"]}).scalar_one()
+            joined, plain = "7\n세척 노즐을\r\n점검한다.", "줄바꿈 없는 글."
+            conn.execute(text("UPDATE units SET text = :t WHERE id = :u"), {"t": joined, "u": sentence_id})
+            conn.execute(text("UPDATE units SET text = :t WHERE id = :u"), {"t": plain, "u": ids["figure_id"]})
+            conn.execute(text("UPDATE target_sentences SET confirmed_text = :t WHERE id = :s"),
+                         {"t": joined, "s": target_id})
+
+        command.upgrade(config, "0035")
+
+        with engine.connect() as conn:
+            texts = dict(conn.execute(text("SELECT id, text FROM units")).tuples().all())
+            target = conn.execute(
+                text("SELECT confirmed_text FROM target_sentences WHERE id = :s"), {"s": target_id}
+            ).scalar_one()
+    finally:
+        engine.dispose()
+
+    assert texts[sentence_id] == "7 세척 노즐을  점검한다."
+    assert len(texts[sentence_id]) == len(joined)
+    assert texts[ids["figure_id"]] == plain
+    assert target == joined

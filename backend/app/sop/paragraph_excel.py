@@ -19,7 +19,7 @@ from app.sop.captions import CAPTION_KIND, join_caption_texts
 from app.sop.constants import BULLET_SYMBOLS
 from app.sop.excel_export import build_workbook, clean_cell_text, split_cell_text
 from app.sop.models import Document, SourceBlock, SourceTable, Unit, UnitDecision, UnitPairMember
-from app.sop.numbering import build_section_numbers, get_number, get_number_note, strip_number
+from app.sop.numbering import build_section_numbers, get_number, get_number_note, is_read_from_text, strip_number
 from app.sop.pair_order import order_pair_card
 from app.sop.sheet_model import MAX_PREVIEW_ROWS, Sheet, SheetCell, SheetRow, WorkbookModel, limit_window
 from app.sop.units import UNIT_ACTIVE, get_latest_extraction_id
@@ -31,6 +31,7 @@ PARAGRAPH_WIDTHS = (12, 90, 6, 18, 40)  # 글자 수 — 긴 글은 칸 안에�
 PARAGRAPH_HEAD_ROWS = 1  # 머리 줄 — 미리 보기 창을 잘라도 늘 싣는다(freeze "A2")
 NUMBER_NOTE = "Source {read} → {now}"  # 사람이 고친 번호의 원문 번호 — 번호 없음으로 바꿨으면 now가 NO_NUMBER_NOTE
 NO_NUMBER_NOTE = "none"
+READ_FROM_TEXT_NOTE = "Read from text"  # 본문 줄 글 앞 타자 번호를 저절로 번호로 읽음(사람이 고치지 않음) — 틀렸으면 번호 칸에서 고친다
 CELL_JOINER = " | "  # 아직 표인 데이터 표 한 행의 칸 글 사이
 _LANG_LABELS = {"ko": "KO", "en": "EN", "ref": "REF"}  # 중립은 빈 칸
 _SKIPPED_KINDS = ("table",)  # 칸 문장을 묶는 단위 — 자기 글이 없다(행 줄의 Remark만 준다)
@@ -225,7 +226,8 @@ async def load_unit_lines(session: AsyncSession, document: Document) -> list[Uni
         lines.append(UnitLine(
             unit_id=unit.id, kind=unit.kind, text=strip_number(unit.text, unit), part=block.part, block_id=block.id,
             table_id=unit.table_id, row_index=unit.row_index, col_index=block.col_index, group_unit_id=unit.group_unit_id,
-            lang=unit.lang, number=number, number_note=format_number_note(get_number_note(unit), number),
+            lang=unit.lang, number=number,
+            number_note=READ_FROM_TEXT_NOTE if is_read_from_text(unit) else format_number_note(get_number_note(unit), number),
             remark=reasons.get(unit.id, ""),
         ))
     return lines

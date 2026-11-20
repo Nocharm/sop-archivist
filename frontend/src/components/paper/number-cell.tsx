@@ -51,6 +51,8 @@ interface NumberCellProps {
   continuous: string | null;
   /** 다른 줄을 고치는 중이고 이 줄의 번호가 따라 바뀐다 */
   preview: NumberPreview | null;
+  /** 편집 응답 뒤 번호가 새로 생겼다 - 번호가 글에서 왼쪽으로 빠지며 옅은 강조로 들어오는 전환(lib/use-number-arrival) */
+  isArrived?: boolean;
   onEditChange: (edit: NumberEdit | null) => void;
   /** number가 null이면 번호 없음 */
   onSave: (number: string | null, follow: boolean) => void;
@@ -157,7 +159,7 @@ export function ComposedNumberCell({ width, bracket, testId, targetId, mark, sty
   );
 }
 
-export function NumberCell({ width, bracket, tip, testId, unitId, number, isUnread, canEdit, busy, edit, followed, continuous, preview, onEditChange, onSave }: NumberCellProps) {
+export function NumberCell({ width, bracket, tip, testId, unitId, number, isUnread, canEdit, busy, edit, followed, continuous, preview, isArrived = false, onEditChange, onSave }: NumberCellProps) {
   const { t } = useI18n();
   const inputRef = useRef<HTMLInputElement>(null);
   const cellRef = useRef<HTMLSpanElement>(null);
@@ -180,8 +182,8 @@ export function NumberCell({ width, bracket, tip, testId, unitId, number, isUnre
   const shown = preview ? preview.to : number.value;
   const base = { width: width + STRIP_LEAD_EXTRA };
   const numTestId = `${testId}-num-${unitId}`;
-  // 원문과 다르게 고친 번호 - 툴팁에 원문 번호를 함께 적는다(따라 바뀔 미리 보기 중에는 미리 보기 설명만)
-  const sourceTip = number.note !== null && !preview ? t("assign.numberKind.source", { n: number.note }) : null;
+  // 원문과 다르게 고친 번호 - 툴팁에 원문 번호를 함께 적는다(따라 바뀔 미리 보기 중에는 미리 보기 설명만). 글 앞 번호를 저절로 읽었으면 그것을 알린다
+  const sourceTip = preview ? null : number.note !== null ? t("assign.numberKind.source", { n: number.note }) : number.from_text ? t("assign.number.fromText") : null;
 
   function open() {
     const kind = readNumberKind(number.value);
@@ -251,7 +253,7 @@ export function NumberCell({ width, bracket, tip, testId, unitId, number, isUnre
   function renderBody() {
     if (!canEdit) {
       return (
-        <span className="strip-lead-num" data-tip={[shown ? `§ ${shown}` : null, sourceTip, tipAttr].filter(Boolean).join(" · ") || undefined} data-testid={shown !== null ? numTestId : undefined}>
+        <span className="strip-lead-num" data-arrived={isArrived ? "" : undefined} data-tip={[shown ? `§ ${shown}` : null, sourceTip, tipAttr].filter(Boolean).join(" · ") || undefined} data-testid={shown !== null ? numTestId : undefined}>
           {shown}
         </span>
       );
@@ -259,16 +261,8 @@ export function NumberCell({ width, bracket, tip, testId, unitId, number, isUnre
     if (shown !== null) {
       const label = [preview ? t("assign.number.willChange", { from: preview.from, to: preview.to }) : t("assign.number.edit", { n: shown }), sourceTip].filter(Boolean).join(" · ");
       return (
-        <button type="button" className="strip-lead-num num-cell" data-preview={preview ? "" : undefined} data-fixed={number.is_set ? "" : undefined} data-tip={label} aria-label={label} data-testid={numTestId} disabled={busy} onClick={open}>
+        <button type="button" className="strip-lead-num num-cell" data-preview={preview ? "" : undefined} data-fixed={number.is_set ? "" : undefined} data-arrived={isArrived ? "" : undefined} data-tip={label} aria-label={label} data-testid={numTestId} disabled={busy} onClick={open}>
           {shown}
-        </button>
-      );
-    }
-    if (number.typed_len > 0 && number.read !== null) {
-      const read = number.read;
-      return (
-        <button type="button" className="strip-lead-num num-cell num-add" data-tip={t("assign.number.fromTyped")} aria-label={t("assign.number.fromTyped")} data-testid={`${testId}-num-typed-${unitId}`} disabled={busy} onClick={() => onSave(read, false)}>
-          ↤
         </button>
       );
     }

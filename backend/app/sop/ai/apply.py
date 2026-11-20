@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.sop.detach import UNASSIGNED
 from app.sop.groups import select_in_chunks
 from app.sop.models import AiJob, AiSuggestion, Unit, UnitDecision
-from app.sop.numbering import strip_number
+from app.sop.numbering import is_source_text
 from app.sop.units import UNIT_ACTIVE
 
 SUGGESTION_APPLIED = "applied"
@@ -146,6 +146,6 @@ def decide_ai_change_type(sources: Sequence[Unit], text: str, *, sentence_count:
         return "merged"
     if sentence_count >= 2:
         return "split"
-    if text in (sources[0].text, strip_number(sources[0].text, sources[0])):
+    if is_source_text(text, sources[0]):
         return "as_is"
     return "rewritten"

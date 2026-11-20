@@ -9,7 +9,7 @@ function unit(id: number, value: string | null, extra: Partial<ViewUnit> = {}): 
     lang: "ko",
     table_id: null,
     kind: "sentence",
-    number: { value, read: value, source: value === null ? null : "auto", is_set: false, content_start: 0, typed_len: 0, note: null },
+    number: { value, read: value, source: value === null ? null : "auto", is_set: false, content_start: 0, from_text: false, note: null },
     ...extra,
   } as ViewUnit;
 }

@@ -28,7 +28,7 @@ from app.sop.extract.types import (
 )
 from app.sop.renumber import FIGURE_CAPTION_RE, TABLE_CAPTION_RE  # 캡션 머리 정규식은 renumber 한 벌
 # 빈 글자 판정은 쪼개기·커버리지와 하나를 쓰고, 제목다움(F8b)은 쪼개기와 같은 규칙이다
-from app.sop.segment import detect_language, has_visible_char, is_heading_like, trim_blank_range
+from app.sop.segment import TYPED_NUMBER_RE, detect_language, has_visible_char, is_heading_like, trim_blank_range
 
 W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 MC = "http://schemas.openxmlformats.org/markup-compatibility/2006"
@@ -92,8 +92,6 @@ _ROMAN_PARTS = (
 )
 MAX_ROMAN = 3999
 _DRIVE_RE = re.compile(r"^[A-Za-z]:")
-# 글 앞에 타자로 친 번호 — 점이 있어야 번호로 본다("1." "6.1" "1.10."). "3 times"처럼 숫자로 시작하는 문장을 집지 않게
-_TYPED_NUMBER_RE = re.compile(r"(?:\d+(?:\.\d+)+\.?|\d+\.)(?=\s|$)")
 # 글 전체가 번호 꼴인 칸 — 단계 라벨 "A" "A-1", 조항 번호 "7" "7.4"
 _NUMBER_CELL_RE = re.compile(r"[A-Z](?:-\d+)*|\d+(?:\.\d+)*\.?")
 _BAND_NUMBER_RE = re.compile(r"\d+(?:\.\d+)*\.?")  # 띠 표 번호 칸 — 수준을 점 개수로 세므로 숫자 꼴만
@@ -1191,7 +1189,7 @@ def _find_number(text: str, label: str) -> tuple[int, str] | None:
     자동 번호가 없으면 글 앞에 타자로 친 번호를 찾는다.
     """
     first = len(text) - len(text.lstrip())
-    typed = _TYPED_NUMBER_RE.match(text, first)
+    typed = TYPED_NUMBER_RE.match(text, first)
     if has_visible_char(label):
         if typed is not None and typed.group().rstrip(".") == label.strip().rstrip("."):
             return len(label) + typed.end(), NUMBER_AUTO
