@@ -993,7 +993,23 @@ def _format_target_location(index: _Index, doc: TargetDocInfo, target: TargetInf
         if target.wi_step is None:
             return labels.wi_unstepped_template.format(part=part)
         return labels.wi_step_template.format(step=target.wi_step, part=part)
-    return target.section_path
+    cell = _format_new_cell(index, target, labels)
+    return " · ".join(piece for piece in (target.section_path, cell) if piece)
+
+
+def _format_new_cell(index: _Index, target: TargetInfo, labels: OutputLabels) -> str:
+    """입구 2 표의 칸 새 문장이면 그 칸 자리 "표 n · r행 c열" — n은 새 문서 안 표 순번(표 새 문장이 온 새 문서 단위의 표).
+
+    칸 번역도 칸 자리라 같다. 새 문서 단위를 모르는 표(입구 1 배정 표)·캡션·칸이 아닌 문장은 빈 글이다(시안 2 D5).
+    """
+    if target.parent_target_id is None or target.cell_row is None or target.cell_col is None:
+        return ""
+    parent = index.snap.targets.get(target.parent_target_id)
+    unit = index.snap.units.get(parent.new_unit_id) if parent is not None and parent.new_unit_id is not None else None
+    table = index.snap.tables.get(unit.table_id) if unit is not None and unit.table_id is not None else None
+    if table is None:
+        return ""
+    return labels.cell_template.format(table=table.table_index + 1, row=target.cell_row + 1, col=target.cell_col + 1)
 
 
 def _format_outer_cells(index: _Index, table_id: int | None, labels: OutputLabels) -> str:
@@ -1658,6 +1674,9 @@ class BundleCellOut(BaseModel):
     lang: str
     text: str
     status: str
+    source_unit_ids: list[int]  # 칸에 이은 Old 단위(출처 순서) — Assign New 칸이 칸 위에 출처 칩을 보인다
+    # 이미 쓴 문서(written)의 칸만 싣는다 — 엮은 문서(composed)의 칸은 잇지 않아 스냅숏에 revision이 없다
+    revision: int | None = None
 
 
 class BundleTableOut(BaseModel):
@@ -1769,7 +1788,7 @@ def build_composed_doc(snap: BundleSnapshot, target_doc_id: int, lang: Lang) -> 
             cells = [
                 BundleCellOut(
                     target_id=cell.id, row=cell.cell_row or 0, col=cell.cell_col or 0, lang=cell.lang,
-                    text=cell.confirmed_text or cell.ai_text, status=cell.status,
+                    text=cell.confirmed_text or cell.ai_text, status=cell.status, source_unit_ids=list(cell.source_unit_ids),
                 )
                 for cell in index.children.get(target.id, [])
                 if not is_caption_target(cell)  # 캡션은 칸이 아니다 — 격자 (0, 0)에 겹쳐 그리지 않는다

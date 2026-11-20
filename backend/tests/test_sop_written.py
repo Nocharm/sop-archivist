@@ -88,6 +88,8 @@ def test_written_sentences_carry_table_cells_and_figure_block(client: TestClient
     assert [(cell["row"], cell["col"], cell["text"]) for cell in rows["table"]["table"]["cells"]] == [
         (0, 0, "합성 항목"), (0, 1, "합성 값"),
     ]
+    # 칸마다 출처(아직 잇지 않아 비었다)와 revision - Assign New 칸이 칸 위 칩과 칸 잇기 저장에 쓴다(시안 2 D5)
+    assert all(cell["source_unit_ids"] == [] and cell["revision"] == 1 for cell in rows["table"]["table"]["cells"])
     # 그림 줄은 이 문장이 온 새 문서 단위의 그림 블록
     assert rows["figure"]["figure"] == {"document_id": new_doc["id"], "block_id": figure_unit["block_id"]}
     assert (rows["table"]["figure"], rows["figure"]["table"]) == (None, None)

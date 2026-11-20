@@ -42,7 +42,7 @@ import { resolveLineParam } from "@/lib/assign-line-param";
 import { readAssignView, writeAssignView } from "@/lib/assign-view-prefs";
 import { loadBundle, useBundle } from "@/lib/bundle-store";
 import { describeDecisionStep, getAssignUndoKey, IN_PLACE_EDIT_OPS, isUnitEditStep, pickSaveOp, shouldDropSelectionOnStep } from "@/lib/decision-step-model";
-import { buildDestinationOptions, buildGroupSave, buildRows, buildSentenceSlots, findNextOpen, findSystemHold, getDestinationId, getRowStep, hasDraftChange, isSentenceUnit, listJoinedTargetIds, listUnpairedKeys, readDestination, readHumanReason, stepInList, type CellSource, type ClassifyFilter, type ClassifyRow, type Destination, type DestinationOption, type DropPosition, type RowDraft } from "@/lib/classify-model";
+import { buildCellOwners, buildDestinationOptions, buildGroupSave, buildRows, buildSentenceSlots, findNextOpen, findSystemHold, getDestinationId, getRowStep, hasDraftChange, isSentenceUnit, listJoinedTargetIds, listUnpairedKeys, readDestination, readHumanReason, stepInList, type CellSource, type ClassifyFilter, type ClassifyRow, type Destination, type DestinationOption, type DropPosition, type RowDraft } from "@/lib/classify-model";
 import { buildDocDashboard } from "@/lib/doc-dashboard-model";
 import { listEditUnitIds, listTableUnitIds, NO_FOCUS, NO_PLACE, planReload, readEditKind, readEditPlace, readPendingLabelKey, type Pending, type PendingPlace, type ReloadPlan } from "@/lib/assign-focus-model";
 import { pickDocRevision } from "@/lib/doc-revision";
@@ -173,8 +173,8 @@ export function readMenuOffset(anchor: HTMLElement, event: MouseEvent | null): {
 
 /** 그 자리 메뉴가 덮지 않을 상자 - New 문장이면 함께 골라지는 짝 문장 전부, Old 조각이면 그 줄의 조각 전부 */
 export function readMenuCover(anchor: HTMLElement, rowUnitIds: number[]): HTMLElement[] {
-  // 놓은 자리의 점선 초안·빈 칸 자리 표시 - 그 상자 옆에 띄운다(Old 조각까지 덮지 않으려 하면 메뉴가 초안에서 멀어진다)
-  if (anchor.matches(".new-draft, .new-slot-empty")) return [anchor];
+  // 놓은 자리의 점선 초안·빈 칸 자리 표시·이미 쓴 표의 칸 - 그 상자 옆에 띄운다(Old 조각까지 덮지 않으려 하면 메뉴가 초안에서 멀어진다)
+  if (anchor.matches(".new-draft, .new-slot-empty, .new-cell")) return [anchor];
   if (anchor.matches(".new-line")) {
     const group = anchor.getAttribute("data-pair-group");
     return group ? [...document.querySelectorAll<HTMLElement>(`.new-line[data-pair-group="${CSS.escape(group)}"]`)] : [anchor];
@@ -339,6 +339,9 @@ export function useAssignPage() {
   const refLookups = countRefLookups(written);
   useEquisPolling(refLookups > 0, writtenList.reload, refLookups);
   const writtenMap = useMemo(() => new Map(written.map((row) => [row.target_id, row])), [written]);
+  // 칸 새 문장은 목록에 줄이 없다 - 그 칸이 든 표 줄로 문서를 읽는다(시안 2 D5 칸 잇기)
+  const cellOwners = useMemo(() => buildCellOwners(written), [written]);
+  const findWrittenRow = (targetId: number) => writtenMap.get(targetId) ?? cellOwners.get(targetId);
   const viewList = docViews.views;
   const rows = useMemo(() => (viewList ? buildRows(viewList, unitMap) : []), [viewList, unitMap]);
   const rowMap = new Map(rows.map((row) => [row.key, row]));
@@ -1747,7 +1750,7 @@ export function useAssignPage() {
   /** 이 저장에 사유가 꼭 있어야 하는 까닭 - 없으면 null. 삭제·이동은 선택이다(비면 결과물이 "삭제"·"이동"으로 적는다, 요청서 4번) */
   function readReasonNeed(action: "confirm" | "hold"): "hold" | "duplicate" | null {
     if (action === "hold") return "hold";
-    return new Set(linkIds.map((id) => writtenMap.get(id)?.target_doc_id)).size > 1 ? "duplicate" : null;
+    return new Set(linkIds.map((id) => findWrittenRow(id)?.target_doc_id)).size > 1 ? "duplicate" : null;
   }
 
   /** reasonOverride는 Remark 창에서 방금 확인한 사유 - 초안 상태가 아직 반영되기 전이라 직접 넘긴다 */
@@ -1844,7 +1847,7 @@ export function useAssignPage() {
    * 그 문장이 그려지면 NewPane이 화면에 들이고, 잇는 선은 진하게 그린다. at은 저장이 실은 놓은 자리(칸 끝 대신 그 자리에 넣는다)
    */
   function showSent(savedRow: ClassifyRow, saved: Group, nextKey: string, at: { sectionKey: string; after: number | null } | null) {
-    const docId = destination?.kind === "slot" || destination?.kind === "step" || destination?.kind === "join" ? destination.docId : destination?.kind === "link" ? (writtenMap.get(destination.targetIds[0])?.target_doc_id ?? null) : null;
+    const docId = destination?.kind === "slot" || destination?.kind === "step" || destination?.kind === "join" ? destination.docId : destination?.kind === "link" ? (findWrittenRow(destination.targetIds[0])?.target_doc_id ?? null) : null;
     if (docId === null || !destination) return;
     const isMine = (target: Group["targets"][number]) => target.source_unit_ids.some((id) => savedRow.unitIds.includes(id)) || (target.translation_source_unit_id !== null && savedRow.unitIds.includes(target.translation_source_unit_id));
     const targetIds = destination.kind === "link" ? destination.targetIds : destination.kind === "join" ? [destination.targetId] : saved.targets.filter((target) => target.target_doc_id === docId && target.parent_target_id === null && isMine(target)).map((target) => target.id);
@@ -2086,6 +2089,36 @@ export function useAssignPage() {
     }, t("match.linked"));
   }
 
+  /**
+   * 칸 칩의 × - 그 Old 줄을 그 칸에서 뗀다(시안 2 D5). 그 자리 메뉴의 Unlink와 같은 저장이다: 줄의 다른 이음이 남으면 그곳만 남겨
+   * 확정하고, 없으면 배정을 지운다. 표의 다른 칸은 서버가 손대지 않는다(구경꾼)
+   */
+  async function unlinkCell(cellId: number, unitId: number) {
+    const key = rowOfUnit.get(unitId);
+    const sourceRow = key ? rowMap.get(key) : undefined;
+    if (!sourceRow || isAnyPending || !canEdit) return;
+    const sourceUnits = sourceRow.unitIds.map((id) => unitMap.get(id)).filter((unit): unit is UnitRow => unit !== undefined);
+    await run(async () => {
+      const group = mergeGroups([await loadRowGroup(bundleId, sourceRow.unitIds), await getGroupByTarget(bundleId, cellId)]);
+      const saved = readDestination(group, sourceRow.unitIds);
+      const remainder = saved?.kind === "link" ? saved.targetIds.filter((id) => id !== cellId) : [];
+      if (remainder.length === 0) {
+        const decided = group.units.filter((unit) => sourceRow.unitIds.includes(unit.unit_id) && unit.decision.disposition !== "unassigned");
+        await clearDecisions(bundleId, decided.map((unit) => ({ unit_id: unit.unit_id, revision: unit.decision.revision })), buildUndo({ step_key: genId(), focus_unit_id: unitId }));
+      } else {
+        const context = {
+          units: sourceUnits.map((unit) => ({ id: unit.unit_id, kind: unit.kind, lang: unit.lang, text: unit.text, content_start: unit.content_start, revision: unit.decision.revision })),
+          group,
+          tables: new Map(),
+        };
+        const body = buildGroupSave({ destination: { kind: "link", targetIds: remainder }, texts: {}, reason: readHumanReason(sourceUnits[0]?.decision), moveCode: "" }, context, "confirm");
+        applyPairSettle(sourceRow, await saveGroup(bundleId, body, buildUndo({ op: "unlink", focus_unit_id: unitId, focus_target_id: cellId })), body.release_unit_ids ?? []);
+      }
+      markRecorded();
+      if (sourceRow.key === activeKey) dropDraft(sourceRow.key);
+    }, t("assign.cellLink.unlinked"));
+  }
+
   /** 보낼 곳 한 줄을 더하거나 지운다 - 응답의 새 목록을 바로 쓰고, 묶음 revision이 올랐으니 묶음도 다시 읽는다 */
   async function writePlace(write: () => Promise<ToBe>, okText: string): Promise<ToBe | null> {
     if (isPlaceBusy) return null;
@@ -2251,7 +2284,7 @@ export function useAssignPage() {
   /** Old 조각 아래 "→ 간 곳"을 누름 - 그 줄을 고르고 New 문서(닫혀 있거나 다른 문서면 열어서)의 그 문장으로 간다 */
   function jumpToNew(unitId: number, targetId: number) {
     const key = rowOfUnit.get(unitId);
-    const docId = writtenMap.get(targetId)?.target_doc_id;
+    const docId = findWrittenRow(targetId)?.target_doc_id;
     if (!key || docId === undefined) return;
     setMode("old");
     pickRowKey(key);
@@ -2273,7 +2306,7 @@ export function useAssignPage() {
   /** Old 조각의 연결 배지를 누름 - 고름·메뉴는 그대로 두고 오른쪽 칸을 그 문장으로 보내 번쩍이게만 한다 */
   function showInNew(targetId: number) {
     if (isPairView) closePairView();
-    const docId = writtenMap.get(targetId)?.target_doc_id;
+    const docId = findWrittenRow(targetId)?.target_doc_id;
     if (docId !== undefined) setManualNewDoc({ key: toggleKey, docId });
     if (view.single) changeView({ single: false });
     setJump({ side: "new", id: targetId, targetId, rowKey: "", quiet: true });
@@ -2286,7 +2319,7 @@ export function useAssignPage() {
   function jumpToOld(unitId: number, targetId: number, keep: { docId?: number; quiet?: boolean } = {}) {
     setPairViewDoc(null);
     const key = rowOfUnit.get(unitId);
-    const docId = keep.docId ?? writtenMap.get(targetId)?.target_doc_id;
+    const docId = keep.docId ?? findWrittenRow(targetId)?.target_doc_id;
     if (!key) return;
     setMode("old");
     pickRowKey(key);
@@ -2596,6 +2629,9 @@ export function useAssignPage() {
   const isOldDrag = canDragOld({ canEdit, mode, isPairPicking: pairSource !== null && pairFrom !== null, isSolo });
   /** 포인터 밑의 New 줄과 거기 놓으면 할 일 - 이번 걸음에는 이미 쓴 문서의 고를 수 있는 문장만 받는다 */
   function readDropAt(point: DragPoint): { line: HTMLElement | null; drop: AssignDrop } {
+    // 이미 쓴 문서 표의 칸 상자(data-drop="cell")도 문장처럼 받는다(시안 2 D5)
+    const cell = findUnderPoint(point, '[data-pane="new"] [data-drop="cell"][data-cell-target]');
+    if (cell) return { line: cell, drop: findAssignDrop({ targetId: Number(cell.dataset.cellTarget), isReadOnly: false, hasPickButton: false, isCell: true }) };
     const line = findUnderPoint(point, '[data-pane="new"] .new-line[data-target]');
     const hit = line ? { targetId: Number(line.dataset.target), isReadOnly: line.closest(".pg[data-read-only]") !== null, hasPickButton: line.querySelector("button.new-hit") !== null } : null;
     return { line, drop: findAssignDrop(hit) };
@@ -2735,7 +2771,7 @@ export function useAssignPage() {
       setCtxMenu(null);
       selectRow(rowKey, false);
       // 다른 줄을 골라도 New 칸은 놓은 문서에 둔다 - "→ 간 곳"과 같이(그 줄의 추천 문서로 넘어갔다 돌아오지 않게)
-      const docId = writtenMap.get(drop.targetId)?.target_doc_id;
+      const docId = findWrittenRow(drop.targetId)?.target_doc_id;
       if (docId !== undefined) setManualNewDoc({ key: rowKey, docId });
       setDropLink({ rowKey, targetId: drop.targetId, at: { x: point.x - lineRect.left, y: point.y - lineRect.top } });
     },
@@ -3232,7 +3268,7 @@ export function useAssignPage() {
     rewrapTable, describeEditConfirm, pairGrip, clearToc, runCaptionRefChange, switchShapeMode, switchToPair,
     applySplitSuggestion, dismissSplitSuggestion, splitPendingIds, readPendingItem, selectNextSplit, selectNextRef, selectNextCaption,
     splitAtCut, handleOldDoubleClick, runCtx, runUnitAction, revertHeadings, planOldJoin, joinOld, renderOldActions, readReasonNeed,
-    runSave, runClear, runUndoStep, confirmIdenticalAll, acceptAll, markNew, placeManage, pickDestination, pickNewSentence, handleNewPick,
+    runSave, runClear, runUndoStep, confirmIdenticalAll, acceptAll, markNew, placeManage, pickDestination, pickNewSentence, handleNewPick, unlinkCell,
     handleJoinPick, readJoinAfter, pickJoinMenu, pickPlaceSpot, pickOwnAiLine, jumpToNew, openNewDoc, showInNew, jumpToOld,
     pickTemplateLine, fillTemplateMissing, isTemplateDrag, isOldDrag, finishPairPick, handleOldClick, handlePrimary, startEdit,
     pickRecommendation, markRecHover, revealPick, setRevealPick, done, renderPlaceLabel, listDestinationEls,

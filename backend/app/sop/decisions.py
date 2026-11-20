@@ -27,7 +27,9 @@ from app.sop.detach import (
     DetachReport,
     apply_slot_heading_status,
     detach_units,
+    find_cell_bystanders,
     is_unassigned,
+    list_bystander_units,
     load_source_target_ids,
     reset_target,
     sweep_translations,
@@ -1347,6 +1349,28 @@ async def _follow_positioned_sources(session: AsyncSession, bundle_id: int, plan
             anchors[source_id] = translation
 
 
+def _find_bystanders(payload: GroupSaveIn, plans: list[_Plan], changed: set[int], state: _State) -> tuple[set[int], set[int]]:
+    """칸 하나를 잇거나 끊는 저장의 구경꾼 — (쓰지 않을 새 문장 id, 판단을 쓰지 않을 단위 id), detach.find_cell_bystanders.
+
+    입구 2 표는 표 전체가 한 관계 묶음이라 칸 하나의 저장에도 표·형제 칸·그 출처가 닫힘 때문에 실린다. 그것들을 쓰면 출처 없는 칸이
+    신규로, AI 번역·AI 판단이 사람 확정으로 바뀐다. 판단은 처분·사유·이동 코드가 그대로이고 출처로 둔 새 문장이 모두 구경꾼일 때만 뺀다.
+    changed는 글·자리·출처가 바뀐 새 문장과 글을 고친 번역이다.
+    """
+    targets = find_cell_bystanders(
+        (plan.row for plan in plans if plan.row is not None), changed,
+        {target_id: source.id for target_id, source in state.translation_sources.items()},
+    )
+    idle = list_bystander_units(state.sources, targets)
+    units = {
+        item.unit_id for item in payload.units
+        if item.unit_id in idle
+        and (item.disposition, item.move_target_code.strip(), item.reason.strip()) == (
+            (decision := state.decisions[item.unit_id]).disposition, decision.move_target_code, decision.reason,
+        )
+    }
+    return targets, units
+
+
 async def _write_group(
     session: AsyncSession,
     bundle_id: int,
@@ -1365,8 +1389,11 @@ async def _write_group(
     changed = state.removed | {plan.row.id for plan in plans if _is_source_changed(plan, state)}
     echoed = {plan.row.id for plan in plans if _is_echoed(plan, changed, state)}
     edited = {plan.row.id for plan in plans if plan.origin == ORIGIN_TRANSLATION and _is_text_changed(plan)}
-    # 되보낸 번역은 쓰지 않는다 — 쓰면 AI 번역이 확정이 되고 채택이 남는다. 정리는 아래 sweep_translations가 한다
-    plans = [plan for plan in plans if plan.row is None or plan.row.id not in echoed]
+    idle_targets, idle_units = _find_bystanders(payload, plans, changed | edited, state)
+    # 되보낸 번역은 쓰지 않는다 — 쓰면 AI 번역이 확정이 되고 채택이 남는다. 정리는 아래 sweep_translations가 한다.
+    # 칸 하나의 저장에 닫힘으로 실린 표·형제 칸(구경꾼)도 쓰지 않는다
+    plans = [plan for plan in plans if plan.row is None or plan.row.id not in echoed | idle_targets]
+    decided_units = [item for item in payload.units if item.unit_id not in idle_units]
     removed = [state.existing[target_id] for target_id in payload.removed_target_ids]
     # 지운 번역과 판단 없는 입구 2 제안(신규)은 사람이 버린 제안이다 — 지우면 제안을 가리키는 칸이 사라지므로 먼저 남긴다.
     # 판단이 가리키는 짝 제안은 지운 새 문장이 있어도 뒤의 채택 기록이 정한다
@@ -1432,7 +1459,7 @@ async def _write_group(
     if links:
         await session.execute(insert(TargetSource), links)
 
-    for item in payload.units:
+    for item in decided_units:
         decision = state.decisions[item.unit_id]
         decision.disposition = item.disposition
         decision.move_target_code = item.move_target_code.strip() if item.disposition == "move_external" else ""
@@ -1450,11 +1477,12 @@ async def _write_group(
     if payload.suggestion_id is not None:
         _link_suggestion(await _load_used_suggestion(session, bundle_id, payload.suggestion_id), payload, plans, state)
     await record_group_adoption(
-        session, plans=plans, payload=payload, decisions=state.decisions, actor=actor, stamp=stamp
+        session, plans=plans, payload=payload.model_copy(update={"units": decided_units}), decisions=state.decisions,
+        actor=actor, stamp=stamp,
     )
     if payload.action == "confirm":
         await judge_unused_suggestions(
-            session, bundle_id, plans=plans, dispositions={item.unit_id: item.disposition for item in payload.units},
+            session, bundle_id, plans=plans, dispositions={item.unit_id: item.disposition for item in decided_units},
             target_ids=[plan.row.id for plan in plans if plan.row is not None and plan.origin == ORIGIN_NEW_DOC],
             actor=actor, stamp=stamp,
         )
@@ -1467,7 +1495,7 @@ async def _write_group(
         target_ids=unit_ids or [*(target.id for target in written), *payload.removed_target_ids], reason=hold_reason,
     )
     await session.flush()
-    return [*(target.id for target in written), *(echoed - swept)]
+    return [*(target.id for target in written), *(echoed - swept), *idle_targets]
 
 
 async def _load_used_suggestion(session: AsyncSession, bundle_id: int, suggestion_id: int) -> AiSuggestion:

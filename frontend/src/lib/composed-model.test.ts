@@ -42,7 +42,7 @@ function makeItem(targetId: number, number: string | null, kind: ComposedItem["k
 }
 
 function makeCell(targetId: number, row: number, col: number, text: string, lang: BundleCell["lang"] = "ko"): BundleCell {
-  return { target_id: targetId, row, col, lang, text, status: "confirmed" };
+  return { target_id: targetId, row, col, lang, text, status: "confirmed", source_unit_ids: [] };
 }
 
 function makeSlot(locationKey: string, number: string | null, label: string, items: ComposedItem[]): ComposedSection {

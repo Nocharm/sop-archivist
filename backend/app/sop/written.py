@@ -198,7 +198,7 @@ async def list_written_sentences(session: AsyncSession, bundle_id: int) -> list[
 async def _load_bundle_children(
     session: AsyncSession, bundle_targets: Sequence[TargetSentence]
 ) -> tuple[dict[int, BundleTableOut], dict[int, str]]:
-    """표·그림 새 문장의 자식 — (표 새 문장 id → 칸 새 문장 격자, 표·그림 새 문장 id → 캡션 글). 질의는 표·그림이 있을 때만 한 번이다.
+    """표·그림 새 문장의 자식 — (표 새 문장 id → 칸 새 문장 격자, 표·그림 새 문장 id → 캡션 글). 질의는 표·그림이 있을 때만 칸 한 번 · 칸 출처 한 번이다.
 
     캡션 새 문장은 칸이 아니라 격자에 넣지 않고 캡션 글로 잇는다(outputs._pick_caption_text와 같은 규칙).
     """
@@ -211,10 +211,20 @@ async def _load_bundle_children(
         lambda chunk: select(
             TargetSentence.id, TargetSentence.parent_target_id, TargetSentence.cell_row, TargetSentence.cell_col, TargetSentence.lang,
             TargetSentence.confirmed_text, TargetSentence.ai_text, TargetSentence.status, TargetSentence.kind,
+            TargetSentence.revision,
         # id 순은 덩이 안에서만이지만 덩이는 부모 id로 나누므로 한 부모의 자식은 한 덩이에 다 있다 — 같은 언어 캡션은 id 순으로 잇는다
         ).where(TargetSentence.parent_target_id.in_(chunk)).order_by(TargetSentence.id),
         [target.id for target in bundle_targets],
     )
+    cell_sources: dict[int, list[int]] = defaultdict(list)
+    for target_id, unit_id in await select_in_chunks(
+        session,
+        lambda chunk: select(TargetSource.target_id, TargetSource.unit_id)
+        .where(TargetSource.target_id.in_(chunk))
+        .order_by(TargetSource.target_id, TargetSource.seq),
+        [row.id for row in cell_rows if not is_caption_target(row)],
+    ):
+        cell_sources[target_id].append(unit_id)
     for row in cell_rows:
         text = row.confirmed_text or row.ai_text
         if is_caption_target(row):
@@ -222,6 +232,7 @@ async def _load_bundle_children(
             continue
         cells[row.parent_target_id].append(BundleCellOut(
             target_id=row.id, row=row.cell_row or 0, col=row.cell_col or 0, lang=row.lang, text=text, status=row.status,
+            source_unit_ids=cell_sources.get(row.id, []), revision=row.revision,
         ))
     tables = {target.id: build_bundle_table(target.grid, cells[target.id]) for target in bundle_targets if target.kind == "table"}
     joined = {target_id: join_caption_texts(texts) for target_id, texts in captions.items()}

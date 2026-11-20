@@ -2079,6 +2079,73 @@ await runStep("assign: the New pane shows a real table and figure", {}, async ({
   await takeShot("sop-assign-new-table-figure.png");
 });
 
+// New 표 칸 잇기(시안 2 D5) - Old 줄을 고른 채 이미 쓴 New 표의 칸을 누르면 문장처럼 그 칸에 잇고(그 자리 메뉴의 Confirm), 칩이 칸 위에 붙고, 칩 ×가 끊는다.
+// 시드에는 표가 든 이미 쓴 New 문서가 없어 합성 docx 둘(tests.docx_factory)을 새 묶음에 올려 보고 끝에 묶음을 지운다
+await runStep("assign: New table - picking an Old line then a New cell links it, the chip sits on the cell, × unlinks", { devUser: "dev.admin" }, async ({ page }) => {
+  const headers = { "X-Dev-User": "dev.admin" };
+  const backend = resolve(SCRIPT_DIR, "../../../backend");
+  const python = process.env.BACKEND_PYTHON || [".venv/bin/python", ".venv/Scripts/python.exe"].map((path) => resolve(backend, path)).find(existsSync);
+  const oldFile = resolve(SHOT_DIR, "SYNTHETIC_OLD-88_cell_link.docx");
+  const newFile = resolve(SHOT_DIR, "SYNTHETIC_SOP-88_cell_link.docx");
+  const build = [
+    "import sys",
+    "from tests.docx_factory import build_docx, p, tbl",
+    "open(sys.argv[1], 'wb').write(build_docx(p('합성 압력') + p('합성 결과를 적는다.')))",
+    "open(sys.argv[2], 'wb').write(build_docx(p('1. 합성 절', 'Heading1') + tbl([['합성 항목', '합성 값'], ['합성 압력', '합성 결과']]), headers=[p('합성 새 문서')]))",
+  ].join("\n");
+  execFileSync(python, ["-c", build, oldFile, newFile], { cwd: backend, stdio: "inherit" });
+  const created = await (await page.request.post(`${BASE}/api/bundles`, { headers, data: { title: "SYNTHETIC New table cell link", is_synthetic: true } })).json();
+  const api = `${BASE}/api/bundles/${created.id}`;
+  const getJson = async (path) => (await page.request.get(`${api}${path}`, { headers })).json();
+  const mime = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+  const oldUp = await page.request.post(`${api}/documents`, { headers, multipart: { side: "old", file: { name: "SYNTHETIC_OLD-88_cell_link.docx", mimeType: mime, buffer: readFileSync(oldFile) } } });
+  const newUp = await page.request.post(`${api}/documents`, { headers, multipart: { side: "new", doc_type: "sop", file: { name: "SYNTHETIC_SOP-88_cell_link.docx", mimeType: mime, buffer: readFileSync(newFile) } } });
+  const oldDoc = await oldUp.json();
+  check("an Old document and a written New document with a table are uploaded", oldUp.status() === 201 && newUp.status() === 201 && oldDoc.status === "ready" && (await newUp.json()).status === "ready", `${oldUp.status()} ${newUp.status()}`);
+  const unit = (await getJson(`/documents/${oldDoc.id}/view`)).units.find((item) => item.text === "합성 압력");
+  const readCells = async () => (await getJson("/written-sentences")).find((row) => row.kind === "table")?.table?.cells ?? [];
+  const cellsBefore = await readCells();
+  const cell = cellsBefore.find((item) => item.row === 1 && item.col === 0);
+  check("the written table lists its cells with sources and revision", Boolean(unit && cell) && cellsBefore.every((item) => Array.isArray(item.source_unit_ids) && typeof item.revision === "number"), `${cellsBefore.length} cells`);
+  if (!unit || !cell) return;
+  await page.goto(`${BASE}/bundles/${created.id}/assign`);
+  await wait(page, "assign-bar");
+  if ((await page.locator('[data-testid="assign-new"]').count()) === 0) await page.locator('[data-testid="assign-view-two"]').click();
+  const cellBox = page.locator(`[data-testid="assign-new-cell-${cell.target_id}"]`);
+  await cellBox.scrollIntoViewIfNeeded({ timeout: T });
+  check("a cell is not pickable before an Old line is picked", (await cellBox.getAttribute("data-pickable")) === null && (await page.locator(`[data-testid="assign-new-cell-pick-${cell.target_id}"]`).count()) === 0);
+  const piece = page.locator(`[data-testid="assign-paper-piece-${unit.id}"]`);
+  await piece.click();
+  await page.waitForFunction((want) => document.querySelector('[data-testid="assign-row-id"]')?.textContent?.includes(want), unit.display_id, { timeout: T });
+  await page.locator(`[data-testid="assign-new-cell-${cell.target_id}"][data-pickable]`).waitFor({ timeout: T });
+  check("with an Old line picked the cell becomes a pickable box", true);
+  await page.locator(`[data-testid="assign-new-cell-pick-${cell.target_id}"]`).click();
+  const confirm = page.locator('[data-testid="assign-link-menu-confirm"]');
+  await confirm.waitFor({ timeout: T });
+  check("clicking the cell picks it like a sentence and opens the link menu", (await cellBox.getAttribute("data-state")) === "picked");
+  const saved = page.waitForResponse((response) => response.request().method() === "POST" && response.url().includes("/groups/save"), { timeout: T });
+  await confirm.click();
+  check("Confirm saves the link", (await saved).ok());
+  const chip = page.locator(`[data-testid="assign-new-src-${cell.target_id}-${unit.id}"]`);
+  await chip.waitFor({ timeout: T });
+  check("the source chip sits on the cell", (await chip.evaluate((el, id) => el.closest(`[data-cell-target="${id}"]`) !== null, cell.target_id)));
+  const linked = await readCells();
+  const linkedCell = linked.find((item) => item.target_id === cell.target_id);
+  check("the cell's new sentence takes the Old line as its source", JSON.stringify(linkedCell?.source_unit_ids) === JSON.stringify([unit.id]) && linkedCell?.status === "confirmed", JSON.stringify(linkedCell));
+  const others = (cells) => JSON.stringify(cells.filter((item) => item.target_id !== cell.target_id).map((item) => [item.target_id, item.status, item.text, item.source_unit_ids, item.revision]));
+  check("the other cells of the table stay as they were", others(linked) === others(cellsBefore));
+  await cellBox.hover();
+  const cleared = page.waitForResponse((response) => response.request().method() === "POST" && response.url().includes("/decisions/clear"), { timeout: T });
+  await page.locator(`[data-testid="assign-new-src-x-${cell.target_id}-${unit.id}"]`).click();
+  check("× on the chip unlinks the Old line", (await cleared).ok());
+  await chip.waitFor({ state: "detached", timeout: T });
+  const after = await readCells();
+  const unlinked = after.find((item) => item.target_id === cell.target_id);
+  check("the cell is back to unassigned with no source, the others untouched", JSON.stringify(unlinked?.source_unit_ids) === "[]" && unlinked?.status === "unassigned" && others(after) === others(cellsBefore), JSON.stringify(unlinked));
+  const bundle = await (await page.request.get(api, { headers })).json();
+  check("the cell-link bundle is removed", (await page.request.delete(`${api}?revision=${bundle.revision}`, { headers })).ok());
+});
+
 // New 칸 템플릿 보기(MD 1 F9 · F8c) - 같은 줄을 회사 템플릿 모양으로: 결과물 C와 같은 줄 · 같은 번호, SOP는 영어 → 한글 절반, 짝은 두 절반에 같은 번호
 /** 한/영 짝이 든 아직 쓰지 않은 문서(doc_type) - 같은 묶음 키에 영어·한글 문장이 다 있는 줄이 있는 첫 문서 */
 

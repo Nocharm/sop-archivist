@@ -700,6 +700,7 @@ export default function AssignPage() {
                     }
                     aiFilter={newAiFilter}
                     place={newPlace}
+                    cellLink={isComposedDoc ? null : { pickable: canEdit && mode === "old" && row !== null, droppable: isOldDrag, onUnlink: canEdit && mode === "old" ? (cellId, unitId) => void state.unlinkCell(cellId, unitId) : undefined }}
                     viewSwitch={
                       isComposedDoc && composedDoc && templateTitles
                         ? {

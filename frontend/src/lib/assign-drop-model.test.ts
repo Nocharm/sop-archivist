@@ -52,6 +52,10 @@ describe("findAssignDrop", () => {
     expect(findAssignDrop({ targetId: 7, isReadOnly: false, hasPickButton: false })).toEqual({ kind: "none" });
     expect(findAssignDrop(null)).toEqual({ kind: "none" });
   });
+  it("links onto a cell box of a written table even before a row is picked (no pick button yet)", () => {
+    expect(findAssignDrop({ targetId: 41, isReadOnly: false, hasPickButton: false, isCell: true })).toEqual({ kind: "link", targetId: 41 });
+    expect(findAssignDrop({ targetId: 41, isReadOnly: true, hasPickButton: false, isCell: true })).toEqual({ kind: "none" });
+  });
 });
 
 describe("resolveDropLink", () => {

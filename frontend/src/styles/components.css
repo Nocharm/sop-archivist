@@ -2337,3 +2337,21 @@
   .out-a td.text-xs { padding-top: calc(var(--row-y) + 2px); }
   .out-a td > .text-xs:first-child { margin-top: 2px; }
 }
+
+/* New 표 칸 잇기(시안 2 D5) - 이미 쓴 문서 표의 칸마다 상자. 칸 위 출처 칩(문장 상자와 같은 .new-srcs), 칩 끊기 ×는 칸에 올리거나 포커스가 갈 때만.
+   Old 줄을 고른 채면(data-pickable) 눌러 잇고 그때만 호버 강조, 고른 칸은 문장 상자의 고름과 같은 채움 */
+@layer components {
+  .new-cell { position: relative; margin: -2px -4px; padding: 2px 4px; border-radius: var(--r-1); }
+  .new-cell + .new-cell { margin-top: 2px; }
+  .new-cell .new-srcs { margin-bottom: 2px; }
+  .new-cell[data-pickable] { cursor: pointer; }
+  .new-cell-hit { display: block; width: 100%; padding: 0; text-align: left; color: inherit; font: inherit; cursor: pointer; }
+  .new-cell-hit:focus-visible { outline: none; }
+  .new-cell:has(> .new-cell-hit:focus-visible) { outline: 2px solid var(--focus); outline-offset: 1px; }
+  :where(html:not([data-box-drag])) .new-cell[data-pickable]:hover { background: color-mix(in oklab, var(--accent) 8%, var(--paper)); box-shadow: inset 0 0 0 1px var(--accent); }
+  .new-cell[data-state="picked"] { background: var(--accent-tint); box-shadow: inset 0 0 0 1.5px var(--accent); }
+  .new-src-x { opacity: 0; margin-left: -8px; padding: 0 2px; background: var(--sunken); color: var(--ink-2); transition: opacity var(--dur-fast); }
+  .new-src-x > svg { vertical-align: -2px; }
+  .new-cell:is(:hover, :focus-within) .new-src-x { opacity: 1; }
+  button.new-src-x:hover { box-shadow: inset 0 0 0 1px var(--danger-ink); color: var(--danger-ink); }
+}

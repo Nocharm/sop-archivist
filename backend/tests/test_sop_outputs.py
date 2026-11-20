@@ -1096,8 +1096,8 @@ def test_composed_doc_keeps_a_translated_cell_on_the_same_position(client: TestC
 
 def test_bundle_table_grows_past_a_stale_grid() -> None:
     cells = [
-        BundleCellOut(target_id=2, row=1, col=2, lang="en", text="b", status="confirmed"),
-        BundleCellOut(target_id=1, row=0, col=0, lang="ko", text="a", status="confirmed"),
+        BundleCellOut(target_id=2, row=1, col=2, lang="en", text="b", status="confirmed", source_unit_ids=[]),
+        BundleCellOut(target_id=1, row=0, col=0, lang="ko", text="a", status="confirmed", source_unit_ids=[]),
     ]
 
     table = build_bundle_table({"rows": 1, "cols": 1}, cells)
