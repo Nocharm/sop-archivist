@@ -4486,6 +4486,59 @@ await runStep("assign: unwrap table - Unwrap table turns the table into sentence
   await page.locator(`[data-testid="assign-paper-unwrap-head-${unit.table_id}"]`).waitFor({ state: "detached", timeout: T });
 });
 
+// 벗긴 칸 줄은 처음 불러온 줄 목록에 없었다 - 지우면 목록 처음(다른 문서 · 그림 탭)으로 튀었다(Assign 피드백 2026-11-20 항목 1)
+await runStep("assign: unwrap table - deleting an unwrapped line picks the box right below and keeps the scroll", {}, async ({ page }) => {
+  const headers = { "X-Dev-User": "qa.member" };
+  const docs = await (await page.request.get(`${BASE}/api/bundles/${halfBundleId}/documents`, { headers })).json();
+  const readView = async (docId) => (await page.request.get(`${BASE}/api/bundles/${halfBundleId}/documents/${docId}/view`, { headers })).json();
+  await page.goto(`${BASE}/bundles/${halfBundleId}/assign`);
+  await wait(page, "assign-bar");
+  const { doc, unit } = await findTableOnScreen(page, readView, docs);
+  check("the bundle has an unassigned table on screen", unit !== null);
+  if (unit === null) return;
+  const waitView = async (isDone) => {
+    for (let tries = 0; tries < 60; tries += 1) {
+      const view = await readView(doc.id);
+      if (isDone(view)) return view;
+      await page.waitForTimeout(250);
+    }
+    return null;
+  };
+  const piece = page.locator(`[data-testid="assign-paper-piece-${unit.id}"]`);
+  await piece.scrollIntoViewIfNeeded();
+  await piece.click();
+  await wait(page, `assign-shape-table_layout-${unit.id}`);
+  await page.locator(`[data-testid="assign-shape-table_layout-${unit.id}"]`).click();
+  const unwrapped = await waitView((view) => view.tables.find((table) => table.id === unit.table_id)?.is_layout === true);
+  check("the table is unwrapped first", unwrapped !== null);
+  if (unwrapped === null) return;
+  await piece.waitFor({ state: "detached", timeout: T });
+  await waitForOldMotion(page);
+  // 문서 차례(줄 이동과 같은 차례)로 벗긴 첫 줄과 그 바로 아래 박스
+  const order = unwrapped.units.filter((item) => item.group_unit_id === null && item.kind !== "figure").sort((a, b) => a.pos_seq - b.pos_seq || (a.spans[0]?.[1] ?? 0) - (b.spans[0]?.[1] ?? 0));
+  const line = order.find((item) => item.kind === "cell_sentence" && item.table_id === unit.table_id);
+  const below = order[order.indexOf(line) + 1];
+  check("the unwrapped table has a line with a box below it", line !== undefined && below !== undefined);
+  if (line === undefined || below === undefined) return;
+  await page.locator(`[data-testid="assign-paper-piece-${line.id}"]`).click();
+  await page.locator(`[data-testid="assign-paper-piece-${line.id}"][data-sel]`).waitFor({ timeout: T });
+  const readScroll = () => page.evaluate(() => document.querySelector('[data-testid="assign-old"] .pane-body')?.scrollTop ?? Number.NaN);
+  const before = await readScroll();
+  await page.keyboard.press("Delete");
+  check("Del deletes the unwrapped line", (await waitView((view) => view.units.some((item) => item.id === line.id && item.status === "confirmed"))) !== null);
+  const isPicked = await page.locator(`[data-testid="assign-paper-piece-${below.id}"][data-sel]`).waitFor({ timeout: T }).then(() => true, () => false);
+  const pickedNow = await page.locator('[data-testid^="assign-paper-piece-"][data-sel]').first().getAttribute("data-testid").catch(() => null);
+  check("the box right below is picked", isPicked, `expected assign-paper-piece-${below.id}, picked ${pickedNow}`);
+  await page.waitForTimeout(400);
+  const after = await readScroll();
+  check("the paper keeps its scroll (no jump to the top)", Math.abs(after - before) < 300, `scrollTop ${before} → ${after}`);
+  // 되돌린다 - 삭제, 그다음 표 벗기기
+  await page.locator('[data-testid="assign-undo"]').click();
+  check("Undo brings the deleted line back", (await waitView((view) => view.units.some((item) => item.id === line.id && item.status !== "confirmed"))) !== null);
+  await page.locator('[data-testid="assign-undo"]').click();
+  check("Undo wraps the table back", (await waitView((view) => view.tables.find((table) => table.id === unit.table_id)?.is_layout !== true && view.units.some((item) => item.id === unit.id))) !== null);
+});
+
 await runStep("assign: unwrap table - ↺ Back to table asks once when a line is assigned and wraps the table back", {}, async ({ page }) => {
   const headers = { "X-Dev-User": "qa.member" };
   const docs = await (await page.request.get(`${BASE}/api/bundles/${halfBundleId}/documents`, { headers })).json();

@@ -38,7 +38,8 @@ const TEXT_LIMIT = 160;
 
 type FoldUnit = Pick<UnitRow, "kind" | "lang" | "text" | "content_start" | "status" | "decision">;
 
-function isDeletedUnit(unit: FoldUnit | undefined): boolean {
+/** 삭제로 확정한 단위 - 접힌 줄이 되고, 삭제 뒤 고름(다음 박스)은 이것을 건너뛴다 */
+export function isDeletedUnit(unit: Pick<UnitRow, "status" | "decision"> | undefined): boolean {
   return unit !== undefined && unit.status === "confirmed" && unit.decision.disposition === "delete";
 }
 

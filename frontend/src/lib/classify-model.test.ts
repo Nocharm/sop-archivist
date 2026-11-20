@@ -8,7 +8,7 @@ import {
   buildGroupSave,
   buildRows,
   buildSentenceSlots,
-  findNextOpen,
+  findNextAfterSave,
   findSystemHold,
   getDestinationId,
   getRowStep,
@@ -83,13 +83,34 @@ describe("rows", () => {
     expect(pickRowStatus(["confirmed", "confirmed"])).toBe("confirmed");
   });
 
-  it("moves on to the next open row, wrapping around", () => {
-    const rows = new Map([
-      ["a", { key: "a", documentId: 1, unitIds: [1], status: "unassigned" as const, pairStatus: null, pairId: null }],
-      ["b", { key: "b", documentId: 1, unitIds: [2], status: "confirmed" as const, pairStatus: null, pairId: null }],
-      ["c", { key: "c", documentId: 1, unitIds: [3], status: "confirmed" as const, pairStatus: null, pairId: null }],
-    ]);
-    expect(findNextOpen(["a", "b", "c"], rows, "b")).toBe("a");
+  describe("next box after a save", () => {
+    // 줄 이동 차례 - 문서 1의 a·b·(그림 f)·c, 문서 2의 d
+    const order = ["a", "b", "f", "c", "d"];
+    const doc = new Map([["a", 1], ["b", 1], ["f", 1], ["c", 1], ["d", 2]]);
+    const confirmed = new Set(["a", "c"]);
+    const scope = (from: string) => (key: string) => key !== from && doc.get(key) === doc.get(from) && key !== "f";
+    const isOpen = (key: string) => !confirmed.has(key);
+
+    it("picks the box right below after a delete, even a confirmed one", () => {
+      expect(findNextAfterSave(order, "b", "below", scope("b"), isOpen)).toBe("c");
+    });
+
+    it("skips figure boxes and stops at the document's end, falling back to the box above", () => {
+      expect(findNextAfterSave(order, "c", "below", scope("c"), isOpen)).toBe("b");
+    });
+
+    it("stays put when the document has no other box", () => {
+      expect(findNextAfterSave(order, "d", "below", scope("d"), isOpen)).toBeNull();
+    });
+
+    it("moves to the next open box below without wrapping to the top", () => {
+      expect(findNextAfterSave(order, "a", "open", scope("a"), isOpen)).toBe("b");
+      expect(findNextAfterSave(order, "b", "open", scope("b"), isOpen)).toBeNull();
+    });
+
+    it("keeps the pick when the saved box is not in the order", () => {
+      expect(findNextAfterSave(order, "u99", "below", scope("u99"), isOpen)).toBeNull();
+    });
   });
 });
 

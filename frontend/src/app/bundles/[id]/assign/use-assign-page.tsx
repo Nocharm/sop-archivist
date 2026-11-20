@@ -43,7 +43,7 @@ import { resolveLineParam } from "@/lib/assign-line-param";
 import { readAssignView, writeAssignView } from "@/lib/assign-view-prefs";
 import { loadBundle, useBundle } from "@/lib/bundle-store";
 import { describeDecisionStep, getAssignUndoKey, IN_PLACE_EDIT_OPS, isUnitEditStep, pickSaveOp, shouldDropSelectionOnStep } from "@/lib/decision-step-model";
-import { buildCellOwners, buildDestinationOptions, buildGroupSave, buildRows, buildSentenceSlots, findNextOpen, findSystemHold, getDestinationId, getRowStep, hasDraftChange, isSentenceUnit, listJoinedTargetIds, listUnpairedKeys, readDestination, readHumanReason, stepInList, type CellSource, type ClassifyFilter, type ClassifyRow, type Destination, type DestinationOption, type DropPosition, type RowDraft } from "@/lib/classify-model";
+import { buildCellOwners, buildDestinationOptions, buildGroupSave, buildRows, buildSentenceSlots, findNextAfterSave, findSystemHold, getDestinationId, getRowStep, hasDraftChange, isSentenceUnit, listJoinedTargetIds, listUnpairedKeys, readDestination, readHumanReason, stepInList, type CellSource, type ClassifyFilter, type ClassifyRow, type Destination, type DestinationOption, type DropPosition, type RowDraft } from "@/lib/classify-model";
 import { buildDocDashboard } from "@/lib/doc-dashboard-model";
 import { listEditUnitIds, listTableUnitIds, NO_FOCUS, NO_PLACE, planReload, readEditKind, readEditPlace, readPendingLabelKey, type Pending, type PendingPlace, type ReloadPlan } from "@/lib/assign-focus-model";
 import { pickDocRevision } from "@/lib/doc-revision";
@@ -67,6 +67,7 @@ import { useAssignFocus } from "@/lib/use-assign-focus";
 import { useDelayedFlag } from "@/lib/use-delayed-flag";
 import { useCutLine } from "@/lib/use-cut-line";
 import { countRefLookups, isRefPending, pickRefUnit } from "@/lib/ref-model";
+import { isDeletedUnit } from "@/lib/deleted-fold-model";
 import { buildNavKeys, listTocBlocks, readTocNavKey, readUnitNavKey, toTocNavKey, toUnitNavKey } from "@/lib/toc-block-model";
 import { useEquisPolling } from "@/lib/use-equis-polling";
 import { useDocViews, type DocBatch } from "@/lib/use-doc-views";
@@ -377,6 +378,8 @@ export function useAssignPage() {
     if (matchesFilter(row, "ai_suggested", liveIndex)) counts.ai_suggested += 1;
   }
   const listKeys = useMemo(() => {
+    // All은 모든 줄이 맞아 붙잡을 것이 없다 - 편집으로 새로 생긴 줄(표 벗기기의 칸 줄)도 바로 목록에 든다(빠지면 J/K · 삭제 뒤 고름이 그 줄을 놓쳤다, Assign 피드백 2026-11-20 항목 1)
+    if (filter === "all") return rows.map((row) => row.key);
     const keys = new Set(rows.map((row) => row.key));
     return snapshot && snapshot.filter === filter ? snapshot.keys.filter((key) => keys.has(key)) : rows.filter((row) => matchesFilter(row, filter, liveIndex)).map((row) => row.key);
   }, [snapshot, filter, rows, liveIndex]);
@@ -1848,19 +1851,50 @@ export function useAssignPage() {
       const isSplit = applyPairSettle(row, saved, leftovers) && leftovers.length > 0;
       // 다음 미확정 줄로 - 지금 줄은 거르기 자리에 남는다. 남는 쪽을 풀었으면 남은 문장의 줄이 다음이다
       // 놓인 문장에 잇기는 그 줄에 머문다 - 곧바로 그 문장의 연필(Rewrite)로 포커스를 옮겨 고쳐 쓰게(MD 1 F12 E4)
-      const next = shouldAdvanceAfterSave({ action, destinationKind: destination?.kind ?? null, isSplit }) ? findNextOpen(listKeys, rowMap, row.key) : null;
+      const next = shouldAdvanceAfterSave({ action, destinationKind: destination?.kind ?? null, isSplit }) ? pickNextAfterSave(row, destination?.kind === "delete" ? "below" : "open") : null;
       if (action === "confirm" && destination?.kind === "join" && !isSplit) setEditFocus({ key: row.key });
-      if (action === "confirm" && !pick) showSent(row, saved, next ?? row.key, at);
+      if (action === "confirm" && !pick) showSent(row, saved, next?.key ?? row.key, at);
       dropDraft(row.key);
       // 한 언어만 이어 짝을 풀었으면 남은 문장의 줄로 옮긴다 - 다시 받아 그 줄이 생긴 뒤, 그 사이 다른 줄을 고르지 않았을 때
       if (isSplit) focusCtl.succeed(job, { docId: row.documentId, revision: null, pickUnitId: leftovers[0] });
-      if (next) selectRow(next);
+      // 다음 박스도 다시 받은 뒤, 그 사이 다른 박스를 고르지 않았을 때만 옮긴다(삭제 줄이 접히는 것과 한 번에 그려진다)
+      if (next) focusCtl.succeed(job, { docId: row.documentId, revision: null, pickUnitId: next.unitId });
       reloadData();
       void loadBundle(bundleId);
     } catch (err) {
       showToast(humanizeApiError(err, t), "error");
       reloadData();
     }
+  }
+
+  /**
+   * 확정 뒤 고를 박스 - 고른 박스 둘레에서 같은 문서 · 같은 탭 · 거르기 목록 안, 되감기 없이(Assign 피드백 2026-11-20 항목 1).
+   * 삭제는 바로 아래 박스(이미 삭제한 접힌 줄은 건너뜀), 다른 확정은 아래로 첫 미확정 박스
+   */
+  function pickNextAfterSave(saved: ClassifyRow, mode: "below" | "open"): { key: string; unitId: number } | null {
+    const listed = new Set(listKeys);
+    const readRowKey = (navKey: string) => {
+      if (readTocNavKey(navKey) !== null) return null;
+      const unitId = readUnitNavKey(navKey);
+      return unitId === null ? navKey : (rowOfUnit.get(unitId) ?? null);
+    };
+    const readBoxId = (navKey: string, key: string) => readUnitNavKey(navKey) ?? rowMap.get(key)?.unitIds[0] ?? null;
+    const readTab = (unitId: number) => partOf?.get(unitId) ?? "body";
+    const fromId = pickedId !== null && saved.unitIds.includes(pickedId) ? pickedId : saved.unitIds[0];
+    const from = isPairView ? saved.key : toUnitNavKey(fromId);
+    const isCandidate = (navKey: string) => {
+      const key = readRowKey(navKey);
+      const item = key === null ? undefined : rowMap.get(key);
+      if (key === null || !item || key === saved.key || !listed.has(key) || item.documentId !== saved.documentId) return false;
+      const boxId = readBoxId(navKey, key);
+      if (boxId === null || readTab(boxId) !== readTab(fromId)) return false;
+      return mode === "open" || !item.unitIds.every((id) => isDeletedUnit(unitMap.get(id)));
+    };
+    const isOpen = (navKey: string) => rowMap.get(readRowKey(navKey) ?? "")?.status !== "confirmed";
+    const next = findNextAfterSave(navKeys, from, mode, isCandidate, isOpen);
+    const key = next === null ? null : readRowKey(next);
+    const unitId = next === null || key === null ? null : readBoxId(next, key);
+    return key === null || unitId === null ? null : { key, unitId };
   }
 
   // 줄의 정보를 받는 사이에 누른 확정·보류 - 다 받은 뒤 그 줄을 그대로 고르고 있을 때만 한다(그 사이 다른 줄로 갔으면 버린다)
