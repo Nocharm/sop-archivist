@@ -65,6 +65,16 @@ async function selectRowById(page, id) {
   }
   throw new Error(`row ${id} not reached`);
 }
+// 그림 탭(시안 2 D3) - 본문의 그림은 그림 탭의 카드로만 보인다. 그 문서를 Old 칸에 띄운 뒤 탭을 연다(J/K는 그 탭 안 카드 차례로 돈다)
+async function openFigures(page, docId) {
+  const docSelect = page.locator('[data-testid="assign-old-doc"]');
+  if (docId !== undefined && (await docSelect.count()) > 0) {
+    await docSelect.click();
+    await page.locator(`[data-testid="assign-old-doc-option-${docId}"]`).click();
+  }
+  await page.locator('[data-testid="assign-tab-figures"]').click();
+  await page.locator('[data-testid="assign-tab-figures"][aria-selected="true"]').waitFor({ timeout: T });
+}
 // 칸 줄을 고른다 - 나무는 칸마다 칸 제목 자리(assign-tree-place-heading:…)를 칸 줄 바로 앞에 두므로 그것은 건너뛴다(칸 제목은 고쳐 쓰기가 없다)
 async function pickFirstPlace(page) {
   await page.locator('[data-testid="assign-acc-all"]').click();
@@ -853,6 +863,8 @@ await runStep("assign: attach and detach a caption from Shape", {}, async ({ pag
   check("right-click on the sentence offers Use as caption of the table below", (await page.locator('[data-testid="assign-ctx-caption_attach_next"]').innerText()).includes("Use as caption of the table below"));
   await page.keyboard.press("Escape");
   if (figure) {
+    // 그림은 그림 탭의 카드다(시안 2 D3) - 같은 문서의 그림 탭에서 우클릭하고 본문 탭으로 돌아온다
+    await openFigures(page);
     // 삭제로 확정한 그림(합성 묶음의 모양 그림)은 흐린 한 줄로 접혀 있다(설계 2026-11-20 D6) - 그 줄을 눌러 펼친 뒤 그림 조각을 우클릭한다
     const figureFold = page.locator(`[data-testid="assign-paper-deleted-u${figure.id}"]`);
     if ((await figureFold.count()) > 0) await figureFold.click();
@@ -863,6 +875,7 @@ await runStep("assign: attach and detach a caption from Shape", {}, async ({ pag
     await wait(page, "assign-ctx-menu");
     check("right-click on a figure opens the bundle menu, not the sentence menu", (await page.locator('[data-testid="assign-ctx-lang"], [data-testid="assign-ctx-split"]').count()) === 0);
     await page.keyboard.press("Escape");
+    await page.locator('[data-testid="assign-tab-body"]').click();
   }
   await selectRowById(page, table.display_id);
   // 표의 캡션 붙이기는 다듬기 줄 단추 대신 아래 캡션 자리의 후보다(F7 · F12)
@@ -1025,6 +1038,8 @@ await runStep("assign: caption slot - group a figure with its captioned neighbou
   const figures = units.filter((unit) => unit.kind === "figure" && unit.status === "unassigned" && !captioned.has(unit.unit_id) && !unit.caption_figure_id).slice(0, 3);
   await page.goto(`${BASE}/bundles/${halfBundleId}/assign`);
   await wait(page, "assign-bar");
+  // 그림은 그림 탭에서 찾는다(시안 2 D3) - J/K가 그 탭 안 카드 차례로 돈다
+  if (figures.length > 0) await openFigures(page, figures[0].document_id);
   let figure = null;
   for (const candidate of figures) {
     await selectRowById(page, candidate.display_id);
@@ -1051,6 +1066,72 @@ await runStep("assign: caption slot - group a figure with its captioned neighbou
     await page.waitForLoadState("networkidle");
   }
   check("two Undos leave the figure as it was", (await shareOf()) === null);
+});
+
+// 그림 탭(시안 2 D3) - 본문의 그림은 본문 탭에서 빠져(자리 표시 없음) 그림 탭의 카드가 되고, 위치 보기가 왼쪽 판에 그 자리 앞뒤 본문과 점 선을 띄우고,
+// 판 안 줄을 누르면 본문 탭의 그 줄로 가고, 지우기(Remark 없이)가 카드를 흐린 한 줄로 접는다. 되돌리기로 처음대로 둔다
+await runStep("assign: figures - the Figures tab holds the figure cards, Show position opens the side panel at the spot, Delete folds the card", {}, async ({ page, takeShot }) => {
+  const headers = { "X-Dev-User": "qa.member" };
+  const getJson = async (path) => (await page.request.get(`${BASE}/api/bundles/${halfBundleId}${path}`, { headers })).json();
+  const readFigure = async () => (await getJson("/units?limit=1000")).items.find((unit) => unit.unit_id === figure.unit_id);
+  const figure = (await getJson("/units?limit=1000")).items.find((unit) => unit.kind === "figure" && unit.status === "unassigned");
+  check("the half bundle has an unassigned figure", Boolean(figure), figure?.display_id);
+  if (!figure) return;
+  await page.goto(`${BASE}/bundles/${halfBundleId}/assign`);
+  await wait(page, "assign-bar");
+  await openFigures(page, figure.document_id);
+  const card = page.locator(`[data-testid="assign-paper-piece-${figure.unit_id}"]`);
+  await card.waitFor({ timeout: T });
+  const tabText = (await page.locator('[data-testid="assign-tab-figures"]').innerText()).replace(/\s+/g, " ").trim();
+  check("the tab row ends with Figures and the number of cards", /^Figures \d+$/.test(tabText) && (await page.locator('[data-testid="assign-tabs"] [role="tab"]').last().getAttribute("data-testid")) === "assign-tab-figures", tabText);
+  await takeShot("sop-assign-figures-tab.png");
+  // 본문 탭 - 그림 줄도 그 자리 표시도 없다
+  await page.locator('[data-testid="assign-tab-body"]').click();
+  await page.locator('[data-testid="assign-tab-body"][aria-selected="true"]').waitFor({ timeout: T });
+  check("the body tab has no figure row and no placeholder", (await page.locator('[data-testid="assign-paper"] .strip[data-kind="figure"]').count()) === 0 && (await card.count()) === 0);
+  await page.locator('[data-testid="assign-tab-figures"]').click();
+  // 위치 보기 - 왼쪽 판에 앞뒤 본문 줄(한쪽 3줄까지)과 그림 이름이 붙은 자리 선
+  const panel = page.locator('[data-testid="assign-figure-spot"]');
+  const openSpot = async () => {
+    await card.hover();
+    await page.locator(`[data-testid="assign-figure-show-${figure.unit_id}"]`).click();
+    await panel.waitFor({ timeout: T });
+  };
+  await openSpot();
+  const spotLine = panel.locator('[data-testid="assign-spot-spot-line"]');
+  check("Show position opens the side panel with the dotted spot line", (await spotLine.count()) === 1 && (await spotLine.innerText()).includes(`FIGURE ${figure.display_id}`), await panel.innerText());
+  const spotRows = await panel.locator(".strip[data-strip-unit]").count();
+  check("the panel shows only the body rows around the spot - three at most on each side", spotRows >= 1 && spotRows <= 6, String(spotRows));
+  check("the panel is read-only - no join, grip or number buttons", (await panel.locator(".strip-merge, [data-drag-handle], [data-testid^='assign-spot-num']").count()) === 0);
+  await takeShot("sop-assign-figure-spot.png");
+  await page.keyboard.press("Escape");
+  await panel.waitFor({ state: "detached", timeout: T });
+  check("Esc closes the panel", true);
+  // 판 안 줄을 누르면 본문 탭으로 가 그 줄을 고른다
+  await openSpot();
+  const spotRow = panel.locator(".strip[data-strip-unit]").first();
+  const rowUnit = await spotRow.getAttribute("data-strip-unit");
+  await spotRow.click();
+  await panel.waitFor({ state: "detached", timeout: T });
+  await page.locator('[data-testid="assign-tab-body"][aria-selected="true"]').waitFor({ timeout: T });
+  await page.locator(`[data-testid="assign-paper-piece-${rowUnit}"][data-sel]`).waitFor({ timeout: T });
+  check("a row in the panel goes to the body tab and picks that row", true);
+  // 지우기 - Remark 없이 확정하면 카드가 흐린 한 줄로 접힌다
+  await page.locator('[data-testid="assign-tab-figures"]').click();
+  await card.hover();
+  await page.locator(`[data-testid="assign-figure-delete-${figure.unit_id}"]`).click();
+  await wait(page, "assign-figure-delete-modal");
+  await page.locator('[data-testid="assign-figure-delete-confirm"]').click();
+  await page.locator('[data-testid="toast-ok"]', { hasText: "Figure deleted" }).first().waitFor({ timeout: T });
+  const fold = page.locator(`[data-testid="assign-paper-deleted-u${figure.unit_id}"]`);
+  await fold.waitFor({ timeout: T });
+  const deleted = await readFigure();
+  check("Delete confirms the figure as deleted and folds the card to one faint line", deleted?.status === "confirmed" && deleted?.decision.disposition === "delete" && (await fold.innerText()).includes("FIGURE"), `${deleted?.status} ${deleted?.decision.disposition}`);
+  await page.waitForLoadState("networkidle");
+  await page.locator('[data-testid="assign-undo"]').click();
+  await page.waitForLoadState("networkidle");
+  const restored = await readFigure();
+  check("Undo leaves the figure unassigned, as it was", restored?.status === "unassigned", restored?.status);
 });
 
 await runStep("assign: a bundle without a caption cannot be confirmed until one is written", {}, async ({ page, takeShot }) => {
@@ -2066,16 +2147,20 @@ await runStep("assign: the New pane shows a real table and figure", {}, async ({
     const ok = (await line.count()) === 1 && (await line.evaluate((el) => el.nextElementSibling !== null)) && (item.caption ? (await line.innerText()).trim() === item.caption.trim() : (await line.getAttribute("data-missing")) !== null);
     return { ok, detail: item.caption ?? "missing" };
   };
-  for (const [label, box, item] of [["table", tableBox, found.table], ["figure", page.locator(`[data-testid="assign-new-${found.figure.target_id}"]`), found.figure]]) {
-    const { ok, detail } = await readCaptionLine(box, item);
-    check(`the ${label} row shows its caption line above it`, ok, detail);
-  }
+  const tableCaption = await readCaptionLine(tableBox, found.table);
+  check("the table row shows its caption line above it", tableCaption.ok, tableCaption.detail);
+  const bodyBlocks = await page.locator('[data-pane="new"] .new-block').count();
+  // 그림은 New 칸의 그림 탭에 있다(시안 2 D3) - 본문 탭에는 자리 표시도 없다
+  check("the figure is not on the New body tab", (await page.locator(`[data-testid="assign-new-${found.figure.target_id}"]`).count()) === 0);
+  await page.locator('[data-testid="assign-new-tab-figures"]').click();
+  const figureCaption = await readCaptionLine(page.locator(`[data-testid="assign-new-${found.figure.target_id}"]`), found.figure);
+  check("the figure row shows its caption line above it", figureCaption.ok, figureCaption.detail);
   const figureBox = page.locator(`[data-testid="assign-new-${found.figure.target_id}"]`);
   await figureBox.scrollIntoViewIfNeeded({ timeout: T });
   const image = figureBox.locator("img");
   await image.waitFor({ timeout: T });
   check("the figure row shows the image", await image.evaluate((el) => el.complete && el.naturalWidth > 0));
-  check("no text placeholder is left for them", (await page.locator('[data-pane="new"] .new-block').count()) === 0);
+  check("no text placeholder is left for them", bodyBlocks + (await page.locator('[data-pane="new"] .new-block').count()) === 0);
   await takeShot("sop-assign-new-table-figure.png");
 });
 
@@ -2665,6 +2750,8 @@ await runStep("assign: AI suggestions come first and confirm one by one", {}, as
   await page.waitForFunction((done) => Number(document.querySelector('[data-testid="assign-progress"]')?.textContent?.split("/")[0]) === done + 1, before, { timeout: T });
   check("A then Enter confirms the AI suggestion", true);
   await page.goto(`${BASE}/bundles/${halfBundleId}/assign?edit=first`);
+  // 그림은 그림 탭의 카드다(시안 2 D3)
+  await openFigures(page);
   await page.locator('[data-testid^="figure-"]').first().waitFor({ timeout: T });
   check("figure image loads on the paper", true);
 });
@@ -6872,9 +6959,8 @@ await runStep("assign: drag an Old piece onto a nearby piece in the other langua
   // 5걸음의 안쪽 테두리(-5px)는 Old 칸만 - New 문장의 잇기 테두리는 2걸음 값(-2px), 거절 테두리는 공통 값(-1px) 그대로다(New 칸도 .pg[data-strips]다)
   const offsetOf = (locator) => locator.evaluate((el) => getComputedStyle(el).outlineOffset);
   const lineOverOffset = await offsetOf(line);
-  await moveTo(await centreOf(pieceOf(figure.id)));
-  const overFigure = await readCard();
-  check("over a figure piece nothing is marked and the card says nothing", overFigure.drops === 0 && overFigure.note === "", JSON.stringify(overFigure));
+  // 그림은 본문 탭에 없다(시안 2 D3 - 그림 탭의 카드) - 끄는 문장이 그림 위로 갈 수 없다
+  check("the figure is not on the body tab, so a dragged sentence can never mark it", (await pieceOf(figure.id).count()) === 0);
   // 표 묶음에는 표 자체의 assign-paper-unit 손잡이가 없다(머리 줄) - 조각 상자 가운데(칸 문장 위)
   await moveTo(await centreOf(pieceOf(table.id)));
   const overTable = await readCard();
@@ -7124,6 +7210,8 @@ await runStep("assign: an AI-suggested figure takes its caption along when used"
   if (!suggestion) return;
   await page.goto(`${BASE}/bundles/${freshBundleId}/assign`);
   await wait(page, "assign-bar");
+  // 그림은 그림 탭에서 고른다(시안 2 D3)
+  await openFigures(page, figure.document_id);
   await selectRowById(page, figure.display_id);
   await page.locator('[data-testid^="assign-rec-"] .dest-chip[data-source="ai"]').first().waitFor({ timeout: T });
   await page.keyboard.press("a");

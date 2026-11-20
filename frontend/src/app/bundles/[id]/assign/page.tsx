@@ -667,6 +667,7 @@ export default function AssignPage() {
                 onZoom={(dir) => zoomPane("old", dir)}
                 dragBoxes={isOldDrag}
                 headExtra={canPairView ? <PairViewToggle on={false} onToggle={togglePairViewByButton} /> : undefined}
+                figures={state.figureTab}
               />
               {!view.single && (
               <>

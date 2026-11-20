@@ -52,6 +52,9 @@ await runStep("outputs: renumbered table and figure captions with a reference", 
   const tableMark = await readText(`assign-new-${table.target_id}-renumber`);
   check("the New pane shows 표 3 → 표 1 before the caption", tableMark === "표 3 → 표 1", tableMark);
   check("the New pane caption has the new number", (await readText(`assign-new-${table.target_id}-caption`)).includes("표 1. 운전 조건"));
+  // 그림은 New 칸의 그림 탭에 있다(시안 2 D3)
+  await page.locator('[data-testid="assign-new-tab-figures"]').click();
+  await page.locator(`[data-testid="assign-new-${figure.target_id}-renumber"]`).waitFor({ state: "attached", timeout: T });
   const figureMark = await readText(`assign-new-${figure.target_id}-renumber`);
   check("the New pane marks the renumbered figure too", figureMark === `${figure.renumber.from_label} → ${figure.renumber.to_label}`, figureMark);
   await takeShot("sop-assign-new-renumber.png");

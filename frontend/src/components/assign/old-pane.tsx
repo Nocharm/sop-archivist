@@ -3,9 +3,11 @@
 "use client";
 
 import { ListFilter } from "lucide-react";
-import type { ComponentProps, ReactNode, RefObject } from "react";
+import { useState, type ComponentProps, type ReactNode, type RefObject } from "react";
 
+import { FigureSpotPanel } from "@/components/assign/figure-spot-panel";
 import { PaneZoom } from "@/components/assign/pane-zoom";
+import { FigureTab } from "@/components/paper/figure-tab";
 import { Paper, type CutDragPos, type PaperCut } from "@/components/paper/paper";
 import { PartTabs } from "@/components/paper/part-tabs";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -98,11 +100,16 @@ interface OldPaneProps {
   headExtra?: ReactNode;
   /** 문서 고르기 바로 옆 - 문서 대시보드 단추 */
   docDash?: ReactNode;
+  /** 그림 탭 카드의 삭제 확정(시안 2 D3) - 없으면 지우기 단추가 없다(한 단으로 연 New 문서 · 고칠 수 없는 사람) */
+  figures?: { onDelete?: (unitId: number, reason: string) => Promise<void> };
 }
 
 export function OldPane({ paneRef, ...props }: OldPaneProps) {
   const { t } = useI18n();
   const { model } = props;
+  // 위치 판을 연 그림 - 그 문서 보기에서만(문서를 바꾸면 닫힌다)
+  const [spot, setSpot] = useState<{ docId: string; unitId: number } | null>(null);
+  const spotUnitId = spot !== null && spot.docId === props.docId && model?.units.has(spot.unitId) ? spot.unitId : null;
 
   /** 쪽의 설명 줄 - 쓰이는 구역(1구역 · 첫 쪽…), 구역 정보가 없는 옛 추출이나 각주는 "머리말 2"처럼 차례로 */
   function describeSheet(sheet: PaperSheet, index: number): string {
@@ -110,9 +117,30 @@ export function OldPane({ paneRef, ...props }: OldPaneProps) {
     return sheet.refs.map((ref) => t("split.sheetRef", { n: ref.section, type: t(`split.refType.${ref.type}`) })).join(", ");
   }
 
+  /** 그림 탭 용지의 속성 - 본문 용지와 같은 고르기 · 표시(틈 단추 · 번호 칸 · 나눌 선 · 필터 접기는 없다) */
+  function buildPaperProps(paperModel: PaperModel, items: PaperItem[] | undefined): ComponentProps<typeof Paper> {
+    return {
+      model: paperModel,
+      items,
+      selectedId: props.selectedId,
+      highlightIds: props.highlightIds,
+      pickedIds: props.pickedIds,
+      warnBlockIds: props.warnBlockIds,
+      onUnitClick: (unitId, _at, event) => props.onUnitClick(unitId, { shiftKey: event.shiftKey }, !(event.target as HTMLElement).closest(".su[data-unit]")),
+      onUnitContextMenu: props.onUnitContextMenu,
+      shiftClickPicks: true,
+      pickWholeBundle: props.pickWholeBundle,
+      figureSource: props.figureSource,
+      strips: { statusOf: props.statusOf, renderNote: props.renderNote, renderPills: props.renderPills, isCaptionNeeded: props.isCaptionNeeded, deleted: props.deleted, pending: props.pending },
+      dragBoxes: props.dragBoxes,
+      testId: "assign-paper",
+    };
+  }
+
   function renderPaper(paperModel: PaperModel, items: PaperItem[] | undefined) {
     return (
       <Paper
+        figureRows="hide"
         model={paperModel}
         items={items}
         selectedId={props.selectedId}
@@ -156,7 +184,7 @@ export function OldPane({ paneRef, ...props }: OldPaneProps) {
       </div>
       {props.partKeys.length > 1 && (
         <div className="flex items-center">
-          <PartTabs keys={props.partKeys} active={props.activePart} onChange={props.onPartChange} testIdPrefix="assign-tab" />
+          <PartTabs keys={props.partKeys} active={props.activePart} onChange={props.onPartChange} counts={{ figures: model?.figures.length }} testIdPrefix="assign-tab" />
         </div>
       )}
       {props.banner}
@@ -179,6 +207,9 @@ export function OldPane({ paneRef, ...props }: OldPaneProps) {
               )
             }
           />
+        ) : model && props.activePart === "figures" ? (
+          // 그림 탭 - 본문에서 뺀 그림 카드(시안 2 D3). 필터 접기는 걸지 않는다(카드가 그 탭의 목록 전부)
+          <FigureTab paper={buildPaperProps(model, undefined)} onShowPosition={(unitId) => setSpot({ docId: props.docId, unitId })} onDelete={props.figures?.onDelete} />
         ) : model ? (
           props.sheets !== null ? (
             // 머리말·꼬리말 탭 - 묶음(구역마다 다른 머리말…)마다 한 쪽이고 어디에 쓰이는지 설명 줄이 붙는다
@@ -193,12 +224,26 @@ export function OldPane({ paneRef, ...props }: OldPaneProps) {
               ))}
             </div>
           ) : (
-            renderPaper(model, props.partKeys.length > 1 ? model[props.activePart] : undefined)
+            renderPaper(model, props.partKeys.length > 1 && props.activePart !== "figures" ? model[props.activePart] : undefined)
           )
         ) : (
           props.placeholder
         )}
       </div>
+      {model && spotUnitId !== null && (
+        <FigureSpotPanel
+          key={spotUnitId}
+          model={model}
+          figureUnitId={spotUnitId}
+          statusOf={props.statusOf}
+          onPick={(unitId) => {
+            setSpot(null);
+            props.onPartChange("body");
+            props.onUnitClick(unitId, { shiftKey: false }, false);
+          }}
+          onClose={() => setSpot(null)}
+        />
+      )}
     </section>
   );
 }

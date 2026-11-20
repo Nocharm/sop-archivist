@@ -41,6 +41,19 @@ export interface PaperModel {
   tables: ReadonlyMap<number, ViewTable>;
   /** 벗긴 표 덩이의 줄 - 묶이지 않은 단위 → 그 덩이(벗긴 표 id). 띠 표 제목 줄 · 아직 표인 안쪽 표도 든다(손잡이 끌기 · 순서, 시안 2 D2) */
   unwrapLines: ReadonlyMap<number, number>;
+  /** 그림 탭의 카드(문서 순) - 본문의 그림은 본문 탭에서 빠져 여기로 간다(시안 2 D3) */
+  figures: FigureGroup[];
+  /** 그림 탭으로 간 단위(그림 · 그 캡션) → 카드 key */
+  figureGroupOf: ReadonlyMap<number, string>;
+  /** 그림 탭 용지에 그릴 것 - 카드 차례로 그림 블록과 캡션 블록(같은 블록은 한 번) */
+  figureItems: PaperItem[];
+}
+
+/** 그림 탭의 카드 하나 - 그림 단위(캡션 하나를 같이 쓰는 그림 묶음이면 여럿, 캡션을 가진 첫 그림 먼저)와 거기 붙은 캡션 단위 */
+export interface FigureGroup {
+  key: string;
+  figureIds: number[];
+  captionIds: number[];
 }
 
 const TOP_PARTS = new Set(["header"]);
@@ -148,7 +161,66 @@ export function buildPaperModel(view: DocumentView): PaperModel {
     (line) => unwrapLines.get(line) ?? null,
     (line) => units.get(line)?.unwrap_seq,
   );
-  return { header, body, footer, groups: [...groups.values()], segments, units, order, hasNumberRanges: view.has_number_ranges, unwrapped, tables, unwrapLines };
+  const { figures, figureGroupOf, figureItems } = buildFigureGroups(view, units);
+  return { header, body, footer, groups: [...groups.values()], segments, units, order, hasNumberRanges: view.has_number_ranges, unwrapped, tables, unwrapLines, figures, figureGroupOf, figureItems };
+}
+
+/** 그림 탭으로 가는 단위 - 본문(머리말 · 꼬리말 밖)의 그림 단위(아직 표인 데이터 표 칸 안 그림도)와 거기 붙은 캡션 단위(시안 2 D3) */
+export function listFigureTabUnitIds(view: Pick<DocumentView, "blocks" | "units">): Set<number> {
+  const partOf = new Map(view.blocks.map((block) => [block.id, block.part]));
+  const ids = new Set<number>();
+  for (const unit of view.units) {
+    const part = partOf.get(unit.block_id) ?? "body";
+    if (unit.kind === "figure" && !TOP_PARTS.has(part) && !BOTTOM_PARTS.has(part)) ids.add(unit.id);
+  }
+  for (const unit of view.units) if (unit.kind === "caption" && unit.group_unit_id !== null && ids.has(unit.group_unit_id)) ids.add(unit.id);
+  return ids;
+}
+
+/** 그림 카드 - 캡션 하나를 같이 쓰는 그림(caption_figure_id)은 그 캡션을 가진 그림의 카드에 든다. 카드는 처음 나온 그림의 문서 순 */
+function buildFigureGroups(view: DocumentView, units: ReadonlyMap<number, ViewUnit>): Pick<PaperModel, "figures" | "figureGroupOf" | "figureItems"> {
+  const tabIds = listFigureTabUnitIds(view);
+  const blockOf = new Map(view.blocks.map((block) => [block.id, block]));
+  const seqOf = (unit: ViewUnit) => blockOf.get(unit.block_id)?.seq ?? 0;
+  const figureUnits = [...units.values()].filter((unit) => unit.kind === "figure" && tabIds.has(unit.id)).sort((a, b) => seqOf(a) - seqOf(b) || a.id - b.id);
+  const byHead = new Map<number, FigureGroup>();
+  for (const unit of figureUnits) {
+    const headId = unit.caption_figure_id && tabIds.has(unit.caption_figure_id) ? unit.caption_figure_id : unit.id;
+    const group = byHead.get(headId) ?? { key: `g${headId}`, figureIds: [], captionIds: [] };
+    byHead.set(headId, group);
+    // 캡션을 가진 첫 그림이 카드 맨 앞
+    if (unit.id === headId) group.figureIds.unshift(unit.id);
+    else group.figureIds.push(unit.id);
+  }
+  const groupOfFigure = new Map([...byHead.values()].flatMap((group) => group.figureIds.map((id) => [id, group] as const)));
+  for (const unit of [...units.values()].sort((a, b) => a.pos_seq - b.pos_seq || a.id - b.id)) {
+    if (unit.kind === "caption" && unit.group_unit_id !== null) groupOfFigure.get(unit.group_unit_id)?.captionIds.push(unit.id);
+  }
+  const figures = [...byHead.values()];
+  const figureGroupOf = new Map(figures.flatMap((group) => [...group.figureIds, ...group.captionIds].map((id) => [id, group.key] as const)));
+  const seen = new Set<number>();
+  const figureItems: PaperItem[] = [];
+  for (const group of figures) {
+    const blockIds = [...group.figureIds.map((id) => units.get(id)?.block_id), ...group.captionIds.flatMap((id) => (units.get(id)?.spans ?? []).map(([blockId]) => blockId))];
+    for (const blockId of blockIds) {
+      const block = blockId === undefined ? undefined : blockOf.get(blockId);
+      if (!block || seen.has(block.id)) continue;
+      seen.add(block.id);
+      figureItems.push({ type: "block", block });
+    }
+  }
+  return { figures, figureGroupOf, figureItems };
+}
+
+/** 그림 줄 고르기 - all은 그대로, hide는 본문 탭(그림 줄과 그림 탭으로 간 캡션 조각을 뺀다, 자리 표시 없음), only는 그림 탭(그림 카드 줄만) */
+export type FigureRowMode = "all" | "hide" | "only";
+
+/** 용지 줄에서 그림 탭 줄을 빼거나 그것만 남긴다 - foldCaptionRows 뒤에 쓴다(캡션은 그림 줄에 접혀 함께 간다) */
+export function pickFigureRows(rows: PaperRow[], figureGroupOf: ReadonlyMap<number, string>, mode: FigureRowMode): PaperRow[] {
+  if (mode === "all") return rows;
+  const isTabUnit = (unitId: number | null) => unitId !== null && figureGroupOf.has(unitId);
+  if (mode === "only") return rows.filter((row) => row.type === "figure" && isTabUnit(row.unitId));
+  return rows.filter((row) => !(row.type === "figure" && (row.unitId === null || isTabUnit(row.unitId))) && !(row.type === "piece" && isTabUnit(row.unitId)));
 }
 
 /** 묶이지 않은 단위 → 그 단위가 줄로 드는 벗긴 표 덩이(lib/unwrap-order-model findLineTable - 서버 unwrap_order.find_line_table과 같다) */
@@ -500,7 +572,7 @@ export function getGapMerge(prev: PaperRow, next: PaperRow, units: ReadonlyMap<n
   return { firstId: first.id, secondId: second.id, blocker: getMergeBlocker(first, second) };
 }
 
-export type PaperTabKey = "body" | "header" | "footer";
+export type PaperTabKey = "body" | "header" | "footer" | "figures";
 
 /** 탭 안의 쪽 하나 - 머리말·꼬리말은 부분 묶음마다 한 쪽, 본문은 한 쪽 */
 export interface PaperSheet {
@@ -519,7 +591,7 @@ export interface PaperTab {
 }
 
 export interface PaperTabs {
-  /** 내용이 있는 탭만 - 본문, 머리말, 꼬리말(각주·미주 포함) 순 */
+  /** 내용이 있는 탭만 - 본문, 머리말, 꼬리말(각주·미주 포함), 그림 순 */
   tabs: PaperTab[];
   tabOf: Map<number, PaperTabKey>;
   /** 보이는 단위 → 숨긴 같은 내용 묶음의 같은 자리 단위. 경계 확인을 함께 보낸다 */
@@ -598,7 +670,8 @@ export function buildPaperTabs(view: DocumentView, model: PaperModel): PaperTabs
   for (const group of model.groups) {
     const key = getTabKey(group.part);
     for (const unit of unitsByGroup.get(group.key) ?? []) {
-      tabOf.set(unit.id, key);
+      // 본문의 그림 · 그 캡션은 그림 탭(시안 2 D3)
+      tabOf.set(unit.id, model.figureGroupOf.has(unit.id) ? "figures" : key);
       if (!hidden.has(group.key)) shown.add(unit.id);
     }
     if (hidden.has(group.key)) continue;
@@ -614,6 +687,14 @@ export function buildPaperTabs(view: DocumentView, model: PaperModel): PaperTabs
   }
   const tabs = (["body", "header", "footer"] as const).flatMap((key) => byTab.get(key) ?? []);
   for (const tab of tabs) tab.unitIds = model.order.filter((id) => shown.has(id) && tabOf.get(id) === tab.key);
+  // 그림 탭 - 카드 차례(그림들 뒤에 그 캡션)로 J/K가 돈다. 그림이 없으면 탭이 없다
+  if (model.figures.length > 0) {
+    tabs.push({
+      key: "figures",
+      sheets: [{ key: "figures", part: "figures", refs: [], items: model.figureItems }],
+      unitIds: model.figures.flatMap((group) => [...group.figureIds, ...group.captionIds]).filter((id) => shown.has(id)),
+    });
+  }
   return { tabs, tabOf, mirrors, order: tabs.flatMap((tab) => tab.unitIds) };
 }
 

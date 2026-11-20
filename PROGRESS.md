@@ -4,6 +4,8 @@
 
 ## 2026-11-20
 
+- **시안 2 스텝 5 — 그림 탭과 위치 판(`feat/mockup2-5-figure-tab`, 요청서 10번, 설계 D3)** — 문장 한가운데 아이콘 · 연달은 그림이 본문 흐름을 끊었다. 본문의 그림 · 그 캡션(칸 안 그림 포함)을 본문 탭에서 빼(자리 표시 없음, 묶기 틈 · J/K도 건너뜀) 탭 줄 끝 **Figures n** 카드로 옮기고(Old · 한 단 New `Paper`의 `figureRows`, 양 단 New 칸 탭), 카드는 같은 용지 줄이라 고르기 · 보내기 · 캡션 자리가 그대로다. 위치 판은 순수 `figure-spot-model`(앞뒤 3줄, 스텝 2의 anchor로 문장 줄 강조 + 나눌 선 자리 세로 표시)로 같은 `Paper`를 읽기 전용으로 그린다. 지우기는 결정 칸 저장 대신 일괄 삭제(`bulkDecide`, Remark 선택 · Undo)를 쓰고(카드에서 줄 상태 없이 한 번에 확정하려고), `page.tsx`는 `OldPane`에 속성 한 줄(`figures`)만 더했다.
+
 - **시안 2 스텝 4 — 벗긴 표 줄 순서를 손잡이로(`feat/mockup2-4-unwrap-order`, 요청서 7번, 설계 D2)** — 벗긴 표의 줄이 행 → 열 차례로 고정이라 열 단위로 읽히는 표를 고칠 길이 없었다. 편집 `reorder_unwrapped`(Alembic `0034` `units.unwrap_seq` · `unit_edits.unwrap_seq_changes`)와 순수 규칙 `unwrap_order.py`(값 없는 줄은 원문 앞 줄 값을 빌림, 프런트 사본 `unwrap-order-model.ts`, 사례 `rule-cases.json`)를 두고 용지 · J/K · 문단 Excel이 따른다(결과물 A는 원문 자리 그대로, 판단은 막지 않음, 다시 표로가 같은 편집에서 비움). 덩이에는 띠 표 제목 줄 · 아직 표인 안쪽 표가 들고(서버 · 프런트 같은 `find_line_table`), 덩이 안에서는 짝 카드 손잡이 대신 이 손잡이가 카드째 옮긴다. 손잡이를 그릴지는 기존 속성(`unwrap.canRewrap` + 손잡이 화면 표시 `pairGrip`)으로 정해 병렬 스텝이 고치는 `page.tsx` · `old-pane.tsx`를 건드리지 않았다.
 
 - **시안 2 스텝 1 — 번호 칸 종류 · 번호 노트(`feat/mockup2-1-number-kind`, 요청서 2번, 설계 `docs/superpowers/specs/2026-11-20-assign-mockup2-design.md` D1)** — 번호 칸이 아무 글이나 받는 상자라 점 기호를 손으로 치고 원문과 다르게 고친 흔적이 안 보였다. 창 맨 위에 종류 단추 줄(연속 번호 · • ○ ▪ · 직접 · 없음)을 두고, 종류는 새 열 없이 값에서 읽는다(`lib/number-kind-model.ts`). 연속 값 세기는 프런트 전용(저장되는 것은 사람이 확인한 글), 점 기호 줄은 앞 숫자 번호보다 한 단계 들여 쓴다. 서버는 `numbering.get_number_note` 하나로 노트를 정하고(`is_number_fixed`도 그 위로) 점 기호는 절 이름을 바꾸지 않는다. 시험은 설계가 적은 `test_sop_numbering.py`(결과물 C 번호) 대신 문단 번호 시험이 사는 `test_sop_numbers.py`에 더했다.
