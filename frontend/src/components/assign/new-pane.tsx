@@ -24,6 +24,7 @@ import { PaneZoom } from "@/components/assign/pane-zoom";
 import { RefMark } from "@/components/assign/ref-mark";
 import { LangToken } from "@/components/paper/lang-token";
 import { DeviationMark, EmptyRequiredMark } from "@/components/tobe/deviation-mark";
+import { StripBox } from "@/components/paper/strip-box";
 import { StripLead, STRIP_LEAD_EXTRA } from "@/components/paper/strip-lead";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Collapse, Truncate } from "@/components/ui/motion";
@@ -413,26 +414,26 @@ export function NewPane(props: NewPaneProps) {
     return (
       <>
         {!isSectionStart && previous?.kind === "sentence" && <div className="new-gap" data-pair={cardTops.has(row.target_id) ? "" : undefined} />}
-        <div className="strip-row">
-          <StripLead width={widths.get(String(row.target_id)) ?? getPillWidth(1)} number={number} bracket={bracket} dim={isOwnNumber ? number === null : !isSectionStart} tip="" testId="assign-new" id={row.target_id} />
-          <div
-            className="strip new-line"
-            data-bracket={bracket}
-            data-lang={row.lang}
-            data-state={readState(row, props)}
-            data-target={row.target_id}
-            data-pair-group={readPairGroup(row) ?? undefined}
-            data-testid={`assign-new-${row.target_id}`}
-            onContextMenu={
+        <StripBox
+          lead={<StripLead width={widths.get(String(row.target_id)) ?? getPillWidth(1)} number={number} bracket={bracket} dim={isOwnNumber ? number === null : !isSectionStart} tip="" testId="assign-new" id={row.target_id} />}
+          boxClassName="strip new-line"
+          bracket={bracket}
+          boxAttrs={{
+            "data-lang": row.lang,
+            "data-state": readState(row, props),
+            "data-target": row.target_id,
+            "data-pair-group": readPairGroup(row) ?? undefined,
+            "data-testid": `assign-new-${row.target_id}`,
+            onContextMenu:
               props.onShape && isWrittenRow(row)
                 ? (event) => {
                     event.preventDefault();
                     props.onShape?.(row.target_id, { x: event.clientX, y: event.clientY });
                   }
-                : undefined
-            }
-          >
-            {(row.source_unit_ids.length > 0 || row.change_type === "new" || readWrittenRefMark(row) !== null) && renderSources(row)}
+                : undefined,
+          }}
+          chips={(row.source_unit_ids.length > 0 || row.change_type === "new" || readWrittenRefMark(row) !== null) && renderSources(row)}
+        >
             {props.readOnly ? (
               props.joinableIds?.has(row.target_id) && props.onJoinPick ? (
                 <button
@@ -478,8 +479,7 @@ export function NewPane(props: NewPaneProps) {
                 {props.lineActions.node}
               </Collapse>
             )}
-          </div>
-        </div>
+        </StripBox>
       </>
     );
   }
