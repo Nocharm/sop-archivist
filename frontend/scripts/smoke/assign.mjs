@@ -2181,6 +2181,8 @@ await runStep("assign: the New pane shows a real table and figure", {}, async ({
   // 그림은 New 칸의 그림 탭에 있다(시안 2 D3) - 본문 탭에는 자리 표시도 없다
   check("the figure is not on the New body tab", (await page.locator(`[data-testid="assign-new-${found.figure.target_id}"]`).count()) === 0);
   await page.locator('[data-testid="assign-new-tab-figures"]').click();
+  // 탭을 바꾼 뒤 그림 줄이 그려질 때까지 - 바로 세면 탭 전환 중이라 줄이 없을 때가 있다(기대값은 그대로)
+  await page.locator(`[data-testid="assign-new-${found.figure.target_id}"] > .new-bundle-cap + *`).waitFor({ timeout: T });
   const figureCaption = await readCaptionLine(page.locator(`[data-testid="assign-new-${found.figure.target_id}"]`), found.figure);
   check("the figure row shows its caption line above it", figureCaption.ok, figureCaption.detail);
   const figureBox = page.locator(`[data-testid="assign-new-${found.figure.target_id}"]`);
