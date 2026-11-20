@@ -1324,7 +1324,8 @@ const AUDIT_ENTRIES = [
       let spillOut = 0;
       let multiLine = 0;
       for (const note of notes) {
-        const head = note.closest(".new-sec");
+        // 엮은 문서의 칸 머리는 제목 박스(시안 2 D6) - 박스 글 줄의 첫 요소가 칸 이름
+        const head = note.closest(".new-head-text");
         const label = head.firstElementChild.getBoundingClientRect();
         const box = note.getBoundingClientRect();
         if (box.left < label.right - 0.5) covers += 1;

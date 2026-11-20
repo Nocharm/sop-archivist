@@ -5636,6 +5636,102 @@ await runStep("assign: click place - the template view picks the same gap from e
   check("every line is unassigned again after the clean-up", await ctx.cleanUp());
 });
 
+// 빈 템플릿 기본 보기(시안 2 D6) - 칸 머리는 번호 칸에 칸 번호가 든 제목 박스, 고른 Old 줄에서 온 박스 왼쪽 손잡이로 줄을 다른 칸에 옮기면
+// Order 화면과 같은 PUT …/targets/order로 저장되고, 알림의 Undo가 원래 칸 · 자리로 돌린다. 준비 · 뒷정리는 클릭 배치와 같다(A · B를 번호 세는 칸에 놓고 끝에 지운다).
+// 순서 저장은 그 문서를 manual_order로 굳히는데, 이 SOP는 앞 클릭 배치 단계(자리를 받은 저장)가 이미 굳혀 뒤 단계에 새로 바뀌는 것은 없다 - 그래서 그 단계들 뒤에 둔다
+await runStep("assign: blank template basic view - a slot head is a heading box with its number, the grip moves a line to another slot, Undo", {}, async ({ page }) => {
+  const ctx = await prepareClickPlace(page, 1);
+  check("the bundle is ready with two lines in a numbered section", !ctx.error && ctx.itemA && ctx.itemB, ctx.error ?? "");
+  if (ctx.error || !ctx.itemA || !ctx.itemB) return;
+  const headers = { "X-Dev-User": "qa.member" };
+  const api = `${BASE}/api/bundles/${halfBundleId}`;
+  const getJson = async (path) => (await page.request.get(`${api}${path}`, { headers })).json();
+  const readSections = async () => (await getJson(`/outputs/c/docs/${ctx.sop.id}?lang=en`)).sections;
+  const idsIn = (sections, key) => sections.find((section) => section.location_key === key)?.items.map((item) => item.target_id) ?? [];
+  const a = ctx.itemA.target_id;
+  const b = ctx.itemB.target_id;
+  const isOrderSave = (response) => response.request().method() === "PUT" && /\/targets\/order$/.test(new URL(response.url()).pathname);
+  // 옮겨 갈 칸 - 번호 세는 칸 바로 뒤(없으면 앞)에서 가장 가까운, 줄을 받는 열린 칸(N/A · 묶음 · 앱이 채우는 목록이 아닌 끝 칸). 가까워야 한 화면에 함께 보인다
+  const isLeaf = (key) => !ctx.sections.some((section) => section.location_key.startsWith(`${key}.`));
+  const at = ctx.sections.findIndex((section) => section.location_key === ctx.counted.location_key);
+  const open = ctx.sections.map((section, index) => ({ section, index })).filter(({ section }) => takesLines(section) && section.na_reason === null && isLeaf(section.location_key) && section.location_key !== ctx.counted.location_key);
+  const dest = (open.find(({ index }) => index > at) ?? open.at(-1))?.section;
+  check("the SOP has another open section to move a line into", Boolean(dest));
+  if (!dest) {
+    await ctx.cleanUp();
+    return;
+  }
+  const unitA = (await getJson("/units?limit=1000")).items.find((unit) => unit.unit_id === ctx.itemA.source_unit_ids[0]);
+  await ctx.pickOld(unitA);
+
+  // 칸 머리 - 번호 칸에 칸 번호, 박스에 칸 이름(머리 글에 번호를 따로 적지 않는 칸은 빈 번호 칸)
+  const head = page.locator(`[data-testid="assign-new-head-${ctx.counted.location_key}"]`);
+  await head.waitFor({ timeout: T });
+  const headNumber = page.locator(`[data-testid="assign-new-head-num-${ctx.counted.location_key}"]`);
+  const shownNumber = ctx.counted.shows_number ? ctx.counted.number : null;
+  check(
+    "the slot head is a heading box with the slot number in its number cell and the name in the box",
+    (await head.locator(".strip .h").count()) === 1 &&
+      ((await head.locator(".strip .h").textContent()) ?? "").includes(ctx.counted.label) &&
+      (shownNumber === null ? (await headNumber.count()) === 0 : ((await headNumber.textContent()) ?? "").trim() === shownNumber),
+    `${await headNumber.count()} ${await head.textContent()}`,
+  );
+
+  // 고른 Old 줄(A)에서 온 박스 - 고름 테두리와 왼쪽 손잡이, 다른 박스(B)는 손잡이가 없다
+  const boxA = page.locator(`[data-testid="assign-new-${a}"]`);
+  const grip = page.locator(`[data-testid="assign-new-grip-${a}"]`);
+  await grip.waitFor({ timeout: T });
+  check("the box from the picked Old line is picked and has a grip, the other box has none", (await boxA.getAttribute("data-sel")) === "" && (await page.locator(`[data-testid="assign-new-grip-${b}"]`).count()) === 0);
+
+  // 손잡이를 옮겨 갈 칸으로 끈다 - 빈 칸은 그 자리 박스, 줄이 있는 칸은 첫 줄 위쪽. 칸 머리를 위에 두어 아래 칸까지 한 화면에
+  await head.evaluate((el) => el.scrollIntoView({ block: "start" }));
+  const destEmpty = page.locator(`[data-testid="assign-new-slot-${dest.location_key}"]`);
+  const destFirst = dest.items[0] ? page.locator(`[data-pane="new"] .new-item[data-row="t:${dest.items[0].target_id}"]`) : null;
+  const destBox = await (destFirst ?? destEmpty).boundingBox();
+  const paneBox = await page.locator('[data-pane="new"] .pane-body').boundingBox();
+  check("the section to move into shows in the New pane with the grip", destBox !== null && paneBox !== null && destBox.y > paneBox.y && destBox.y + 4 < paneBox.y + paneBox.height, JSON.stringify({ destBox, paneBox }));
+  if (!destBox) {
+    await ctx.cleanUp();
+    return;
+  }
+  const from = await grip.boundingBox();
+  const target = destFirst ? { x: destBox.x + destBox.width / 2, y: destBox.y + Math.min(6, destBox.height / 4) } : { x: destBox.x + destBox.width / 2, y: destBox.y + destBox.height / 2 };
+  await dragThrough(page, { x: from.x + from.width / 2, y: from.y + from.height / 2 }, [target]);
+  await page.waitForTimeout(100);
+  const during = await page.evaluate((slotKey) => ({
+    note: (document.querySelector('[data-testid="drag-status"]')?.textContent ?? "").trim(),
+    dest: document.querySelector('[data-testid="drag-card"] .drag-card-dest')?.textContent ?? "",
+    line: !(document.querySelector('[data-testid="drop-line"]')?.hidden ?? true),
+    slot: document.querySelector(`[data-testid="assign-new-slot-${slotKey}"]`)?.getAttribute("data-drop") ?? null,
+    faded: document.querySelector('[data-pane="new"] [data-drag-src]') !== null,
+  }), dest.location_key);
+  check(
+    "dragging the grip over the other section says where it goes, fades the box and marks the drop place",
+    during.note.startsWith("→ ") && during.dest === during.note && during.faded && (destFirst ? during.line : during.slot === "over"),
+    JSON.stringify(during),
+  );
+  const saved = page.waitForResponse(isOrderSave, { timeout: T });
+  await page.mouse.up();
+  const response = await saved;
+  const sent = JSON.parse(response.request().postData()).items.find((item) => item.target_id === a);
+  check("the drop saves the order like the Order screen (PUT targets/order 200) with A in the new section", response.status() === 200 && sent?.slot_key === dest.location_key, `${response.status()} ${JSON.stringify(sent)}`);
+  const moved = await page.waitForFunction(([id, key]) => document.querySelector(`[data-pane="new"] .new-item[data-row="t:${id}"]`)?.getAttribute("data-csec") === key, [a, dest.location_key], { timeout: T }).then(() => true, () => false);
+  const afterMove = await readSections();
+  check("the New pane and C both show A in the new section", moved && idsIn(afterMove, dest.location_key).includes(a) && !idsIn(afterMove, ctx.counted.location_key).includes(a), JSON.stringify(idsIn(afterMove, dest.location_key)));
+
+  // 알림의 Undo - 같은 저장 길로 원래 칸의 원래 자리(B 앞)에 돌린다
+  const toast = page.locator('[data-testid="toast-ok"]', { hasText: "Moved → " }).last();
+  await toast.waitFor({ timeout: T });
+  const undone = page.waitForResponse(isOrderSave, { timeout: T });
+  await toast.locator('[data-testid^="toast-action-"]').click();
+  check("Undo saves the way back (200)", (await undone).status() === 200);
+  const back = await page.waitForFunction(([id, key]) => document.querySelector(`[data-pane="new"] .new-item[data-row="t:${id}"]`)?.getAttribute("data-csec") === key, [a, ctx.counted.location_key], { timeout: T }).then(() => true, () => false);
+  const restored = idsIn(await readSections(), ctx.counted.location_key);
+  check("after Undo A is back in its section, before B, on screen and in C", back && restored.includes(a) && restored.indexOf(a) < restored.indexOf(b), JSON.stringify(restored));
+
+  check("every line is unassigned again after the clean-up", await ctx.cleanUp());
+});
+
 // Pair view(끌어다 놓기 4걸음) - 한/영 따로 문서(합성 OLD-3)를 KO | EN 두 칸으로 펴고 끄면 보던 화면으로 돌아온다.
 // 검증 스택에는 임베딩이 없어 이 문서에 진짜 제안 짝을 만들 길이 없고, 합성 OLD-3에는 언어 없는 Unit이 없다 - 그 둘은 원문 보기 응답을 브라우저에서 바꿔(page.route) 그린다.
 // 자료는 API로 만들고 끝에 푼다. 이 뒤 단계는 이 묶음의 배정·짝을 읽지 않는다

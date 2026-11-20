@@ -29,6 +29,7 @@ import { ResetModal } from "@/components/assign/reset-modal";
 import { Modal } from "@/components/modal";
 import { TemplateView, type TemplateSpot } from "@/components/template/template-view";
 import { CutPop } from "@/components/paper/cut-pop";
+import type { ComposedStyleChoice } from "@/components/paper/number-cell";
 import { FilterChip } from "@/components/status";
 import { ConfirmModal } from "@/components/ui/confirm-modal";
 import { AcceptSuggestionsModal } from "@/components/assign/accept-suggestions-modal";
@@ -44,8 +45,11 @@ import { isBundleCaptionNeeded } from "@/lib/caption-model";
 import { countJoinedLines } from "@/lib/join-sentence-model";
 import { listLinkMenuItems, listUnlinkRemainder, type LinkMenuItem } from "@/lib/assign-model";
 import { loadBundle } from "@/lib/bundle-store";
+import type { CEdit } from "@/lib/c-edit-model";
 import { getDestinationId, previewSlotChange, readSlotKind } from "@/lib/classify-model";
+import { buildComposedRows, buildComposedStrips } from "@/lib/composed-model";
 import { useI18n } from "@/lib/i18n";
+import { useComposedOrder } from "@/lib/use-composed-order";
 import { navigate } from "@/lib/nav-buffer";
 import { buildNewAiFilter, listNewAiLinks, readNewAiPill } from "@/lib/new-ai-filter-model";
 import { buildSheetDraft } from "@/lib/space-preview-model";
@@ -61,6 +65,8 @@ import { useAssignPage, NO_NUMBERS, findDestinationDoc, readMenuCover, revealEle
 
 export default function AssignPage() {
   const state = useAssignPage();
+  // 엮은 문서 순서 저장 응답의 라벨 언어 - 엮은 문서를 받는 언어와 같게(화면 언어)
+  const { lang: uiLang } = useI18n();
   const {
     t, bundleId, bundle, canEdit, docs, oldDocs, docViews, unitsKey, reloadData, tobe, tobeData, writtenList, identical,
     readMarkStatus, suggestedTargetUnits, unitMap, written, writtenMap, rows, rowMap, rowOfUnit, options, ready, showSkeleton, unsourced,
@@ -189,6 +195,10 @@ export default function AssignPage() {
   // 삭제로 확정한 줄은 흐린 한 줄로 접는다(설계 D6) - 누르면 펼친다. 펼침은 줄 키로 이 화면을 연 동안만(목차 블록 펼침과 같은 짜임), 고른 박스는 용지가 늘 펼친다
   const [deletedOpen, setDeletedOpen] = useState<ReadonlySet<string>>(() => new Set());
   const deletedFolds = useMemo(() => buildDeletedFolds(rows, unitMap, { filter: state.filter, open: deletedOpen }), [rows, unitMap, state.filter, deletedOpen]);
+  // 빈 템플릿(엮은 문서) 기본 보기의 순서 · 칸 옮기기 · 번호 표시(시안 2 D6) - Order 화면과 같은 저장 길, 화면 문서에 먼저 얹고 두 보기가 같은 문서를 그린다
+  const composedOrder = useComposedOrder({ bundleId, doc: isComposedDoc ? composedDoc : null, labelLang: uiLang });
+  const shownComposed = composedOrder.doc;
+  const composedStrips = useMemo(() => (shownComposed ? buildComposedStrips(shownComposed) : null), [shownComposed]);
   if (!ready) {
     return error !== null ? (
       <BundleLoadError error={error} onRetry={reloadAll} testId="assign" />
@@ -298,6 +308,17 @@ export default function AssignPage() {
   const highlightIds = new Set(isSolo ? soloUnits.map((unit) => unit.id) : (row?.unitIds ?? []));
   // 템플릿 보기에서 칠할 줄 - 고른 Old 줄에서 온 새 문장(짝이면 두 절반 모두)
   const templateSelected = new Set((composedDoc?.sections ?? []).flatMap((section) => section.items.filter((item) => item.source_unit_ids.some((id) => highlightIds.has(id))).map((item) => item.target_id)));
+  const shownNewRows = isComposedDoc && shownComposed && shownComposed !== composedDoc ? buildComposedRows(shownComposed) : newRows;
+  /** 엮은 문서 번호 칸의 C 번호 표시 - 글머리 기호는 깊이도(• 0 · ○ 1 · ▪ 2) */
+  function pickComposedStyle(targetId: number, choice: ComposedStyleChoice) {
+    const edits: CEdit[] = [...(choice.depth === null ? [] : [{ kind: "indent" as const, targetId, depth: choice.depth }]), { kind: "style", targetId, style: choice.style }];
+    composedOrder.apply(edits);
+  }
+  /** 엮은 문서 기본 보기의 박스 누르기 - 템플릿 보기의 줄 누르기와 같은 길(그 줄을 낸 Old 줄을 고른다) */
+  function pickComposedLine(targetId: number) {
+    const item = shownComposed?.sections.flatMap((section) => section.items).find((candidate) => candidate.target_id === targetId);
+    if (item) pickTemplateLine(item);
+  }
   // 클릭 배치의 자리 보기(MD 2 S3) - 기본 보기와 템플릿 보기가 같은 보기를 쓴다(두 절반의 같은 자리는 같은 보기라 함께 골라진 모양이 된다)
   let newPlace: NewPlaceSpots | null = null;
   const placeBySection = new Map<string, PlaceSpotView>();
@@ -660,7 +681,7 @@ export default function AssignPage() {
                     docOptions={newDocOptions}
                     docId={String(newDocId)}
                     onDocChange={(value) => setManualNewDoc({ key: toggleKey, docId: Number(value) })}
-                    rows={newRows}
+                    rows={shownNewRows}
                     headingNotes={headingNotes}
                     sectionMarks={sectionMarks}
                     rowsKey={isComposedDoc && !composedDoc ? `${newDocId}:loading` : String(newDocId)}
@@ -701,6 +722,25 @@ export default function AssignPage() {
                     aiFilter={newAiFilter}
                     place={newPlace}
                     cellLink={isComposedDoc ? null : { pickable: canEdit && mode === "old" && row !== null, droppable: isOldDrag, onUnlink: canEdit && mode === "old" ? (cellId, unitId) => void state.unlinkCell(cellId, unitId) : undefined }}
+                    composed={
+                      isComposedDoc && composedStrips
+                        ? {
+                            strips: composedStrips,
+                            selectedIds: templateSelected,
+                            onPickLine: pickComposedLine,
+                            order:
+                              canEdit && shownComposed
+                                ? {
+                                    doc: shownComposed,
+                                    busy: composedOrder.busy,
+                                    pendingIds: composedOrder.pendingIds,
+                                    onPlace: (edit, note) => void composedOrder.place(edit, t("assign.composedOrder.moved", { place: note })),
+                                    onStyle: pickComposedStyle,
+                                  }
+                                : null,
+                          }
+                        : null
+                    }
                     viewSwitch={
                       isComposedDoc && composedDoc && templateTitles
                         ? {
@@ -708,7 +748,7 @@ export default function AssignPage() {
                             onChange: (template) => changeView({ newTemplate: template }),
                             body: (
                               <TemplateView
-                                doc={composedDoc}
+                                doc={shownComposed ?? composedDoc}
                                 titles={templateTitles}
                                 selectedIds={templateSelected}
                                 onPickLine={pickTemplateLine}
