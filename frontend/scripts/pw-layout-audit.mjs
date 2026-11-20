@@ -1395,9 +1395,9 @@ const AUDIT_ENTRIES = [
     open: async (page) => {
       await page.locator(".ptbl").first().waitFor({ timeout: T });
     },
-    measure: async (page) => {
+    measure: async (page, url) => {
       const scroller = ".assign-panes [data-pane='old'] .pane-body";
-      const groupId = await findDeletedLongCellGroup(page);
+      const groupId = await findDeletedLongCellGroup(page, url);
       await scrollUntilWideTable(page, scroller);
       const single = await measureWithLongCell(page, scroller, groupId);
       await page.getByTestId("assign-view-two").click();
@@ -1478,35 +1478,37 @@ async function scrollUntilWideTable(page, scroller) {
   await page.waitForTimeout(300);
 }
 
-// 600자 칸 표의 묶음 Unit id - 이 표는 worst 시드에서 삭제 확정이라 문서 보기가 아닌 Unit 목록에서 찾는다(삭제 줄 testid가 이 id를 쓴다)
-async function findDeletedLongCellGroup(page) {
-  const [, , bundleId] = new URL(page.url()).pathname.split("/");
-  const docId = Number(new URL(page.url()).searchParams.get("edit"));
-  const body = await (await page.request.get(`${BASE}/api/bundles/${bundleId}/units?limit=1000&offset=0`, { headers: { "X-Dev-User": MEMBER } })).json();
-  const totals = new Map();
-  for (const unit of body.items) {
-    if (unit.document_id !== docId || unit.group_unit_id === null || unit.decision.disposition !== "delete") continue;
-    totals.set(unit.group_unit_id, (totals.get(unit.group_unit_id) ?? 0) + unit.text.length);
-  }
-  const [groupId, total] = [...totals.entries()].sort((a, b) => b[1] - a[1])[0] ?? [null, 0];
-  if (groupId === null || total < 590) throw new Error("no deleted table group holding the 600-char cell");
-  return groupId;
+// 600자 칸 표의 묶음 Unit id - 칸 문장 하나가 590자 넘는 표(삭제 줄 testid가 이 id를 쓴다). 묶음은 Unit이 1,000개를 넘으니 그 문서의 줄만 받는다
+async function findDeletedLongCellGroup(page, url) {
+  const opened = new URL(url, BASE);
+  const [, , bundleId] = opened.pathname.split("/");
+  const docId = Number(opened.searchParams.get("edit"));
+  const res = await page.request.get(`${BASE}/api/bundles/${bundleId}/units?limit=1000&offset=0&document_id=${docId}`, { headers: { "X-Dev-User": MEMBER } });
+  if (!res.ok()) throw new Error(`units list ${res.status()} for ${url}`);
+  const body = await res.json();
+  const cell = body.items.find((unit) => unit.group_unit_id !== null && unit.text.length >= 590);
+  if (!cell) throw new Error(`no table cell of 590+ chars in document ${docId} (units ${body.items.length}/${body.total})`);
+  return cell.group_unit_id;
 }
 
 // 삭제된 표는 시안 1부터 흐린 한 줄로 접혀 칸이 그려지지 않는다 - 사람처럼 그 줄을 눌러 펼친 뒤 600자 칸을 잰다. 18열 표는 펼치기 전에 먼저 재고, 같은 값 모양에 600자 칸만 합친다
 async function measureWithLongCell(page, scroller, groupId) {
   const base = await measureWideTables(page);
   const line = page.locator(`.assign-panes [data-pane='old'] [data-testid$="-deleted-u${groupId}"]`);
-  for (let step = 0; step < 120 && (await line.count()) === 0; step += 1) {
+  // 고른 삭제 박스는 접히지 않는다 - 그 표가 이미 골라져 펼쳐져 있으면 누르지 않고 잰다
+  const isOpen = () => page.evaluate(() => [...document.querySelectorAll(".ptbl td")].some((td) => td.textContent.trim().length >= 590));
+  for (let step = 0; step < 120 && (await line.count()) === 0 && !(await isOpen()); step += 1) {
     await page.evaluate((selector) => {
       const el = document.querySelector(selector);
       el.scrollTop += el.clientHeight * 0.8;
     }, scroller);
     await page.waitForTimeout(150);
   }
-  if ((await line.count()) === 0) throw new Error(`deleted line for table group ${groupId} never rendered`);
-  await line.first().scrollIntoViewIfNeeded();
-  await line.first().click();
+  if (!(await isOpen())) {
+    if ((await line.count()) === 0) throw new Error(`deleted line for table group ${groupId} never rendered`);
+    await line.first().scrollIntoViewIfNeeded();
+    await line.first().click();
+  }
   await page.waitForFunction(() => [...document.querySelectorAll(".ptbl td")].some((td) => td.textContent.trim().length >= 590), null, { timeout: T });
   await page.evaluate(() => [...document.querySelectorAll(".ptbl td")].find((td) => td.textContent.trim().length >= 590)?.scrollIntoView({ block: "center" }));
   await page.waitForTimeout(300);
@@ -1646,7 +1648,8 @@ async function main() {
               await page.waitForLoadState("networkidle", { timeout: T }).catch(() => {});
               await page.waitForTimeout(SETTLE_MS);
               if (entry.open) await entry.open(page);
-              const value = await entry.measure(page);
+              // 연 주소도 넘긴다 - 화면이 ?edit= 같은 쿼리를 지운 뒤에도 항목이 처음 연 문서를 알게(TW1)
+              const value = await entry.measure(page, item.url);
               if (value !== null && typeof value === "object" && typeof value.skip === "string") skipped = value.skip;
               else if (!entry.expect(value)) failure = `measured ${JSON.stringify(value)} (${entry.note})`;
             } catch (err) {
