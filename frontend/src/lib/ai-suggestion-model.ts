@@ -2,7 +2,7 @@
 // AI는 판단·New 문장을 쓰지 않는다 - 사람이 Use로 받으면 이 초안이 채워지고 확정은 사람의 Confirm이다(설계 2026-11-19-ai-suggest-only D1·D2).
 
 import type { AiSuggestion } from "./api-sop";
-import type { Destination, SentenceSlot } from "./classify-model";
+import { getDestinationId, type Destination, type DestinationOption, type SentenceSlot } from "./classify-model";
 
 /** 사람이 아직 받거나 버리지 않은 적용된 제안 */
 export function isLiveSuggestion(suggestion: AiSuggestion): boolean {
@@ -50,6 +50,18 @@ export function readSuggestedDestination(suggestion: AiSuggestion): Destination 
   if (content.disposition !== "assigned" || typeof content.target_doc_id !== "number") return null;
   if (typeof content.wi_part === "string") return { kind: "step", docId: content.target_doc_id, step: content.wi_step ?? null, part: content.wi_part as Extract<Destination, { kind: "step" }>["part"] };
   return typeof content.slot_key === "string" ? { kind: "slot", docId: content.target_doc_id, slotKey: content.slot_key } : null;
+}
+
+/**
+ * Old 줄 아래 AI 간 곳 글의 자리 이름 - 보낼 곳 메뉴의 "문서 칸", 삭제는 "delete".
+ * 잇기 제안은 null - 줄 끝 연결 배지가 AI 점선으로 이미 말한다. 이름을 못 읽어도(지운 To-Be 칸 등) null - 그 줄은 간 곳 글 없이 그린다
+ */
+export function readSuggestionPlace(suggestion: AiSuggestion, options: readonly Pick<DestinationOption, "id" | "docCode" | "label">[]): string | "delete" | null {
+  const destination = readSuggestedDestination(suggestion);
+  if (destination === null || destination.kind === "link") return null;
+  if (destination.kind === "delete") return "delete";
+  const option = options.find((item) => item.id === getDestinationId(destination));
+  return option ? `${option.docCode} ${option.label}` : null;
 }
 
 /** 분류가 고쳐 쓴 글 - 언어마다 문장 목록 */

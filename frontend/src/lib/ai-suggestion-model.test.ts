@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { AiSuggestion } from "./api-sop";
-import { buildUseDraft, findRowSuggestion, indexLiveSuggestions, readSuggestedDestination } from "./ai-suggestion-model";
+import { buildUseDraft, findRowSuggestion, indexLiveSuggestions, readSuggestedDestination, readSuggestionPlace } from "./ai-suggestion-model";
 import type { SentenceSlot } from "./classify-model";
 
 function suggestion(id: number, kind: string, content: AiSuggestion["content"], extra: Partial<AiSuggestion> = {}): AiSuggestion {
@@ -28,6 +28,24 @@ describe("indexLiveSuggestions and findRowSuggestion", () => {
     expect(findRowSuggestion([10, 11], "unassigned", index)?.id).toBe(1);
     expect(findRowSuggestion([10], "on_hold", index)).toBeNull();
     expect(findRowSuggestion([99], "unassigned", index)).toBeNull();
+  });
+});
+
+describe("readSuggestionPlace", () => {
+  const options = [
+    { id: "slot:5:purpose", docCode: "SOP-CF", label: "Purpose" },
+    { id: "step:6:2:instruction", docCode: "WI-01", label: "2 Balance · Instruction" },
+  ];
+
+  it("names the place the way the destination menu does, and marks a delete", () => {
+    expect(readSuggestionPlace(suggestion(1, "classify", { disposition: "assigned", target_doc_id: 5, slot_key: "purpose" }), options)).toBe("SOP-CF Purpose");
+    expect(readSuggestionPlace(suggestion(1, "classify", { disposition: "assigned", target_doc_id: 6, wi_step: 2, wi_part: "instruction" }), options)).toBe("WI-01 2 Balance · Instruction");
+    expect(readSuggestionPlace(suggestion(1, "classify", { disposition: "delete" }), options)).toBe("delete");
+  });
+
+  it("leaves a link to the AI link badge, and a place the menu no longer has to nothing", () => {
+    expect(readSuggestionPlace(suggestion(1, "match", { unit_ids: [10], target_ids: [70] }), options)).toBeNull();
+    expect(readSuggestionPlace(suggestion(1, "classify", { disposition: "assigned", target_doc_id: 9, slot_key: "gone" }), options)).toBeNull();
   });
 });
 

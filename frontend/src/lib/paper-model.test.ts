@@ -159,9 +159,15 @@ describe("getTags and getMarks", () => {
   });
 
   it("lists icon marks in a stable order", () => {
-    const unit = makeSplitUnit({ pair_id: 4, is_edited: true, status: "confirmed" });
-    expect(getMarks(unit)).toEqual(["edited", "pair", "classified"]);
-    expect(getMarks(makeSplitUnit({ status: "ai_suggested" }))).toEqual(["ai"]);
+    const unit = makeSplitUnit({ pair_id: 4, is_edited: true, split_suggestion_id: 2 });
+    expect(getMarks(unit)).toEqual(["edited", "pair", "suggest"]);
+  });
+
+  it("leaves out what the box already says - confirmed and AI by the note line, a joined pair by the card", () => {
+    expect(getMarks(makeSplitUnit({ status: "confirmed" }))).toEqual([]);
+    expect(getMarks(makeSplitUnit({ status: "ai_suggested" }))).toEqual([]);
+    expect(getMarks(makeSplitUnit({ pair_id: 4 }), true)).toEqual([]);
+    expect(getMarks(makeSplitUnit({ pair_id: 4 }), false)).toEqual(["pair"]);
   });
 });
 

@@ -1597,8 +1597,6 @@
   .insp-h::after { content: ""; flex: 1; height: 1px; background: var(--line); }
   .pmark { flex: none; color: var(--ink-3); }
   .pmark.pair { color: var(--st-ai-ink); }
-  .pmark.classified { color: var(--accent); }
-  .pmark.ai { color: var(--st-ai-ink); }
   .pmark.suggest { color: var(--st-ai-ink); }
   .pmark.warn { color: var(--st-hold-ink); }
   .pmark.ref { color: var(--lang-ref-ink); }
@@ -1841,6 +1839,9 @@
   /* 확정한 조각의 간 곳 - 이어진 문장이면 단추(누르면 New 문서의 그 문장으로) */
   .strip-note { display: flex; align-items: center; gap: 4px; margin-top: 2px; font: 600 var(--fs-micro) / 16px var(--font-mono); color: var(--st-ok-ink); text-align: left; }
   .strip-note.is-delete { color: var(--danger-ink); }
+  /* AI 추천 간 곳 - 사람이 정한 간 곳과 같은 자리, 보라 점선으로 아직 제안임을 */
+  .strip-note.is-ai { color: var(--st-ai-ink); }
+  .strip-note.is-ai > .strip-note-text { border-bottom: 1px dashed currentColor; }
   .strip-note > svg { flex: none; }
   .strip-note > .strip-note-text { min-width: 0; overflow-wrap: anywhere; }
   button.strip-note { padding: 0 4px; margin-inline: -4px; border-radius: var(--r-1); cursor: pointer; }
