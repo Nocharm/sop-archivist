@@ -92,6 +92,18 @@ describe("getTabWidths", () => {
     ]);
     expect([widths.get("a"), widths.get("c")]).toEqual([w(1), w(1)]);
   });
+  it("indents a bullet row one step past the number before, a step more per symbol", () => {
+    const widths = getTabWidths([
+      { key: "a", part: "body", sectionLabel: "•" },
+      { key: "b", part: "body", sectionLabel: "1.2" },
+      { key: "c", part: "body", sectionLabel: "" },
+      { key: "d", part: "body", sectionLabel: "•" },
+      { key: "e", part: "body", sectionLabel: "○" },
+      { key: "f", part: "body", sectionLabel: "▪" },
+      { key: "g", part: "footer", sectionLabel: "•" },
+    ]);
+    expect(["a", "d", "e", "f", "g"].map((key) => widths.get(key))).toEqual([w(1), w(3), w(4), w(5), w(1)]);
+  });
   it("makes a pair share its top row's width and passes it on", () => {
     const widths = getTabWidths([
       { key: "top", part: "body", sectionLabel: "1.2" },

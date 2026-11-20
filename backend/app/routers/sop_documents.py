@@ -57,6 +57,7 @@ from app.sop.numbering import (
     get_content_start,
     get_hidden_len,
     get_number,
+    get_number_note,
     has_number_ranges,
 )
 from app.sop.membership import BundleContext, ensure_editable, lock_bundle, require_bundle_role
@@ -276,6 +277,7 @@ class ViewNumberOut(BaseModel):
     is_set: bool  # 사람이 고쳤다(번호 없음 포함)
     content_start: int  # text에서 내용이 시작하는 자리 — 번호가 번호 칸으로 갔으면 그 뒤, 아니면 0
     typed_len: int  # 번호로 삼을 수 있는 글 앞 타자 번호의 글자 수 — 없거나 이미 번호면 0
+    note: str | None  # 번호 노트 — 사람이 원문과 다르게 고쳤으면 원문(읽은) 번호(numbering.get_number_note), 아니면 null
 
 
 class ViewUnitOut(BaseModel):
@@ -807,6 +809,7 @@ def _to_number_out(unit: Unit) -> ViewNumberOut | None:
     return ViewNumberOut(
         value=get_number(unit), read=unit.number_read, source=unit.number_source, is_set=unit.number_set is not None,
         content_start=get_content_start(unit.text, hidden), typed_len=unit.number_len if is_typed_text else 0,
+        note=get_number_note(unit),
     )
 
 

@@ -27,6 +27,7 @@ import { buildFoldPlan, type FoldEntry, type FoldItem, type FoldOpen } from "@/l
 import { buildRows, foldCaptionRows, getBundleHeader, getGapMerge, getItemSegments, getMarks, getTags, isBandHeading, MERGE_BLOCKER_KEYS, resolvePickUnit, type CaptionPiece, type PaperItem, type PaperModel, type PaperRow, type Segment, type UnitMark } from "@/lib/paper-model";
 import type { JoinKind, JoinPlan } from "@/lib/split-menu-model";
 import { getHiddenEnds, listFollowPreview } from "@/lib/number-model";
+import { suggestUnitContinuous } from "@/lib/number-kind-model";
 import { getCardTops, getHiddenPrefixLength, getPairBrackets, getPillWidth, getSectionHeads, getTabWidths, getSectionLevel, getSectionPill, getVisibleSkip, sliceVisible, type PairBracket } from "@/lib/strip-pill-model";
 import { buildHeadingShiftGroups, readHeadingShiftHead, type HeadingShiftGroup } from "@/lib/heading-shift-model";
 import { getPairHint, type PairHintUnit } from "@/lib/pair-hint-model";
@@ -304,12 +305,14 @@ export function Paper({
   const { t } = useI18n();
   // 고치는 중인 번호 칸 - 한 번에 한 줄. 따라 바뀔 번호는 다른 줄의 번호 칸에 점선으로 미리 보인다
   const [numberEdit, setNumberEdit] = useState<NumberEdit | null>(null);
+  const numberOrder = useMemo(() => {
+    const startOf = (unit: ViewUnit) => unit.spans[0]?.[1] ?? -1;
+    return [...model.units.values()].sort((a, b) => a.pos_seq - b.pos_seq || startOf(a) - startOf(b) || a.id - b.id);
+  }, [model]);
   const followed = useMemo(() => {
     if (!numberEdit || !numberEdit.follow) return [];
-    const startOf = (unit: ViewUnit) => unit.spans[0]?.[1] ?? -1;
-    const ordered = [...model.units.values()].sort((a, b) => a.pos_seq - b.pos_seq || startOf(a) - startOf(b) || a.id - b.id);
-    return listFollowPreview(ordered, numberEdit.unitId, numberEdit.text);
-  }, [numberEdit, model]);
+    return listFollowPreview(numberOrder, numberEdit.unitId, numberEdit.text);
+  }, [numberEdit, numberOrder]);
   const previewOf = useMemo(() => new Map(followed.map((item) => [item.unitId, item])), [followed]);
   const unreadBlockIds = useMemo(() => {
     const ids = new Set<number>();
@@ -440,6 +443,8 @@ export function Paper({
   // 고른 줄과 방금 고른 줄(단추 줄이 접히는 동안)이 든 덩어리 - 그 앞뒤 덩어리도 함께 그린다(덩어리 첫 틈이 앞 덩어리 끝 줄의 고름을 따른다).
   // 번호를 치는 줄도 같다 - 입력이 먼(얼린) 덩어리로 스크롤되어 들어가도 글자·점선 미리 보기가 계속 다시 그려진다
   const numberEditUnitId = numberEdit?.unitId ?? null;
+  // 고치는 줄의 연속 번호 값 - 번호 칸 창의 "연속 번호"가 채운다(같은 목록 후보에서 센다, number-kind-model)
+  const continuous = useMemo(() => (numberEditUnitId === null ? null : suggestUnitContinuous(numberOrder, numberEditUnitId)), [numberEditUnitId, numberOrder]);
   const liveChunkIds = useMemo(() => {
     const ids = new Set<number>();
     for (const section of cardGroups) {
@@ -854,6 +859,7 @@ export function Paper({
           busy={(numberCell?.busy ?? false) || isLocked(unit.id)}
           edit={numberEdit?.unitId === unit.id ? numberEdit : null}
           followed={numberEdit?.unitId === unit.id ? followed : []}
+          continuous={numberEdit?.unitId === unit.id ? continuous : null}
           preview={previewOf.get(unit.id) ?? null}
           onEditChange={setNumberEdit}
           onSave={(number, follow) => {
