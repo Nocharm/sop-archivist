@@ -1547,6 +1547,12 @@ export function getAssignSheetPreview(bundleId: number, docId: number, aroundUni
   return apiFetch<PreviewSheet>(`/bundles/${bundleId}/export/preview/a?doc_id=${docId}${around}`);
 }
 
+/** Assign Space 미리보기(한 단 보기) - 문서 하나(Old · 이미 쓴 New)의 문단 Excel 시트를 고른 단위를 가운데로 500줄 창까지(받을 파일과 같은 줄, 표 포함) */
+export function getParagraphSheetPreview(bundleId: number, docId: number, aroundUnitId: number | null): Promise<PreviewSheet> {
+  const around = aroundUnitId !== null ? `&around=${aroundUnitId}` : "";
+  return apiFetch<PreviewSheet>(`/bundles/${bundleId}/documents/${docId}/paragraphs/preview?tables=true${around}`);
+}
+
 /** 묶음당 파일 하나 - 판(lang)이 없다. 저장 이름은 서버가 짓는다(Content-Disposition) */
 export function downloadExport(bundleId: number): Promise<{ blob: Blob; fileName: string | null }> {
   return apiFetchBlobWithName(`/bundles/${bundleId}/export.xlsx`);

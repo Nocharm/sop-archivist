@@ -594,12 +594,19 @@ def build_a_preview(
 
     긴 문서에서 고른 줄이 앞 max_rows줄 밖이어도 보이게 한다. 고른 단위가 없거나 시트에 없으면 처음부터다. 뺀 위쪽 줄 수는 offset.
     """
-    sheet = _build_a_sheet(snap, people, document_id)
-    body = sheet.rows[A_HEAD_ROWS:]
-    room = max_rows - A_HEAD_ROWS
+    return limit_window(_build_a_sheet(snap, people, document_id), A_HEAD_ROWS, around_unit_id, max_rows)
+
+
+def limit_window(sheet: Sheet, head_rows: int, around_unit_id: int | None, max_rows: int = MAX_PREVIEW_ROWS) -> Sheet:
+    """Assign Space 미리보기의 창 — 머리 줄 head_rows개는 늘 싣고, 자료 줄은 around_unit_id의 첫 줄을 가운데로 max_rows줄까지.
+
+    Excel A 미리보기와 문단 Excel 미리보기가 같은 계약(truncated · offset)을 쓴다 — 화면의 다시 받기 규칙이 하나다.
+    """
+    body = sheet.rows[head_rows:]
+    room = max_rows - head_rows
     if len(body) <= room:
         return sheet
     centre = next((index for index, row in enumerate(body) if row.unit_id == around_unit_id), 0) if around_unit_id is not None else 0
     start = min(max(centre - room // 2, 0), len(body) - room)
-    rows = [*sheet.rows[:A_HEAD_ROWS], *body[start:start + room]]
+    rows = [*sheet.rows[:head_rows], *body[start:start + room]]
     return sheet.model_copy(update={"rows": rows, "truncated": True, "offset": start})

@@ -52,7 +52,7 @@ import { useI18n } from "@/lib/i18n";
 import { useComposedOrder } from "@/lib/use-composed-order";
 import { navigate } from "@/lib/nav-buffer";
 import { buildNewAiFilter, listNewAiLinks, readNewAiPill } from "@/lib/new-ai-filter-model";
-import { buildSheetDraft } from "@/lib/space-preview-model";
+import { buildSheetDraft, isSpaceEnabled, pickSpaceSheet } from "@/lib/space-preview-model";
 import { buildDeletedFolds } from "@/lib/deleted-fold-model";
 import { hasTocLineIn, listPartSheets } from "@/lib/paper-model";
 import { getNewDocumentsHref, getStageHref } from "@/lib/stages";
@@ -456,11 +456,12 @@ export default function AssignPage() {
         {/* 절대 위치라 격자 칸을 차지하지 않는다 - 작업 화면 바닥에서 올라온다 */}
         <SpacePreview
           bundleId={bundleId}
-          enabled={!isNewEdit && oldView !== null && rows.length > 0}
+          sheet={pickSpaceSheet(view.single)}
+          enabled={isSpaceEnabled(pickSpaceSheet(view.single), { hasDoc: oldView !== null, unitCount: oldView?.units.length ?? 0, isNewEdit, rowCount: rows.length })}
           docId={oldDocId}
-          docCode={oldView?.document.doc_code ?? ""}
+          docCode={oldView?.document.doc_code || oldView?.document.file_name || ""}
           reloadKey={`${unitsKey}:${oldView?.document.revision ?? ""}`}
-          unitIds={row?.unitIds ?? []}
+          unitIds={isSolo ? soloUnits.map((unit) => unit.id) : (row?.unitIds ?? [])}
           picked={row && rowUnits.length > 0 ? { id: rowUnits[0].display_id, text: rowUnits.map((unit) => unit.text).join(" ") } : null}
           draft={spaceDraft}
         />

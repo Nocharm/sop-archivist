@@ -76,7 +76,13 @@ from app.sop.models import (
     UnitPairMember,
     UnitRef,
 )
-from app.sop.paragraph_excel import build_paragraph_rows, build_paragraph_workbook, load_unit_lines, make_sheet_name
+from app.sop.paragraph_excel import (
+    build_paragraph_file,
+    build_paragraph_preview,
+    build_paragraph_sheet,
+    load_unit_lines,
+    make_sheet_name,
+)
 from app.sop.part_groups import build_part_groups, get_part_group_key
 from app.sop.pairs import (
     PairIn,
@@ -90,6 +96,7 @@ from app.sop.pairs import (
 from app.sop.refs import RefState, build_ref_text, is_proposing_version, load_proposing_extractions, read_ref_state
 from app.sop.schemas import NO_NUL, NoNulStr
 from app.sop.segment import find_anchor_offset, is_band_table, read_figure_inline, read_table_place
+from app.sop.sheet_model import Sheet
 from app.sop.status import get_cover_status
 from app.sop.tobe import MAX_DB_INT, release_match_doc, rename_match_doc, temp_match_code
 from app.sop.units import (
@@ -983,13 +990,29 @@ async def _respond_paragraphs(
     """문서마다 시트 하나인 문단 Excel 응답 — 시트 이름은 문서 번호(없으면 제목)."""
     taken: set[str] = set()
     sheets = [
-        (make_sheet_name(document.doc_code or document.title, taken),
-         build_paragraph_rows(await load_unit_lines(session, document), include_tables))
+        build_paragraph_sheet(
+            await load_unit_lines(session, document), include_tables, make_sheet_name(document.doc_code or document.title, taken)
+        )
         for document in documents
     ]
-    content = await asyncio.to_thread(build_paragraph_workbook, sheets)
+    content = await asyncio.to_thread(build_paragraph_file, sheets)
     headers = {"Content-Disposition": build_content_disposition(build_export_file_name(bundle_id, file_title, now()))}
     return Response(content=content, media_type=_XLSX_MEDIA_TYPE, headers=headers)
+
+
+@router.get("/{bundle_id}/documents/{doc_id}/paragraphs/preview", response_model=Sheet)
+async def get_paragraphs_preview(
+    doc_id: IdPath,
+    tables: bool = Query(True),
+    around: Annotated[int | None, Query(ge=1, le=MAX_DB_INT)] = None,
+    ctx: BundleContext = Depends(_require_member),
+    session: AsyncSession = Depends(get_session),
+) -> Sheet:
+    """Assign Space 미리 보기(한 단 보기) — 문서 하나의 문단 Excel 시트(받을 파일과 같은 줄)를 around 단위를 가운데로
+    MAX_PREVIEW_ROWS줄까지(Excel A 미리 보기와 같은 창 계약). Old · New 어느 쪽 문서든."""
+    document = await _get_document(session, ctx.bundle.id, doc_id)
+    lines = await load_unit_lines(session, document)
+    return build_paragraph_preview(lines, tables, make_sheet_name(document.doc_code or document.title, set()), around)
 
 
 @router.get("/{bundle_id}/documents/{doc_id}/paragraphs.xlsx")
@@ -999,7 +1022,7 @@ async def download_document_paragraphs(
     ctx: BundleContext = Depends(_require_member),
     session: AsyncSession = Depends(get_session),
 ) -> Response:
-    """문서 하나의 문단 Excel — 쪼갠 단위 한 줄씩 한 열(Assign 문서 대시보드). tables=false면 표 칸 문장을 뺀다."""
+    """문서 하나의 문단 Excel — 쪼갠 단위 한 줄씩 다섯 열(Assign 문서 대시보드). tables=false면 아직 표인 표를 뺀다."""
     document = await _get_document(session, ctx.bundle.id, doc_id)
     title = f"{document.doc_code or document.title}_paragraphs"
     return await _respond_paragraphs(session, ctx.bundle.id, [document], tables, title)

@@ -9,6 +9,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Protocol
 
+from app.sop.constants import BULLET_SYMBOLS
 from app.sop.segment import NUMBER_CELL, NUMBERS_SIGNAL, is_blank_char
 
 NUMBER_AUTO, NUMBER_TYPED = "auto", "typed"  # docx_reader의 번호 출처와 같은 값(테스트가 같음을 지킨다)
@@ -185,6 +186,36 @@ def get_number_note(unit: NumberedUnit) -> str | None:
     if normalize_number(unit.number_set) == normalize_number(unit.number_read):
         return None
     return unit.number_read
+
+
+class SectionLine(Protocol):
+    """섹션 번호를 세는 줄 하나 — number는 번호 칸 값(get_number), 없으면 None."""
+
+    @property
+    def lang(self) -> str: ...
+    @property
+    def number(self) -> str | None: ...
+
+
+_LIST_LANGS = ("ko", "en")  # 제 언어 목록이 있는 언어 — 중립 · REF 줄은 언어와 상관없이 앞 번호를 받는다
+
+
+def build_section_numbers(lines: Sequence[SectionLine]) -> list[str | None]:
+    """줄(문서 순서)마다 섹션 번호 — 문단 Excel의 Section No. 열(시안 2 D4).
+
+    숫자 · 직접 번호가 있는 줄은 그 값, 점 기호 · 번호 없는 줄은 앞의 가장 가까운 숫자 · 직접 번호다. 한 · 영 줄은 같은 언어 목록의
+    앞 번호가 먼저이고, 그 언어 번호가 아직 없으면(한 언어에만 번호가 있는 문서) 어느 언어든 앞 번호. 앞에 번호가 없으면 None.
+    """
+    last_of: dict[str, str] = {}
+    last: str | None = None
+    numbers: list[str | None] = []
+    for line in lines:
+        if line.number and line.number not in BULLET_SYMBOLS:
+            last_of[line.lang] = last = line.number
+            numbers.append(line.number)
+            continue
+        numbers.append(last_of.get(line.lang, last) if line.lang in _LIST_LANGS else last)
+    return numbers
 
 
 def is_number_fixed(unit: NumberedUnit) -> bool:

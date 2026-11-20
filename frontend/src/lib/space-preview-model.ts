@@ -1,7 +1,7 @@
 // Assign Space 미리보기의 순수 셈 - 누르고 있기 · 짧게 탁 · 끌기 상태 기계, Space를 화면이 받을 포커스인가, 창 밖 줄 수, 확정 전 덮어 그리기 값.
 // 화면은 components/assign/space-preview.tsx. 설계: MD 2 §3 S2(docs/superpowers/handoff/2026-11-18-2-followups.md)
 import type { ChangeType, PreviewSheet, TargetDocType } from "@/lib/api-sop";
-import type { SheetDraft } from "@/lib/sheet-view-model";
+import { getFrozenCount, type SheetDraft } from "@/lib/sheet-view-model";
 
 export const TAP_MS = 250; // 이보다 짧게 누르고 그사이 끌지 않았으면 "짧게 탁" - 열어 두거나(닫힌 데서) 닫는다(열어 둔 데서)
 export const HINT_OPENS = 3; // 닫혀 있을 때의 작은 안내는 이만큼 열어 볼 때까지만 보인다
@@ -67,9 +67,34 @@ export function getWindowRest(sheet: Pick<PreviewSheet, "truncated" | "offset" |
   return { above: sheet.offset, below: Math.max(sheet.total_rows - sheet.offset - sheet.rows.length, 0) };
 }
 
-/** 머리 줄(상태 + 열 머리)을 뺀 자료 줄 수 - 이 문서가 Excel A에서 차지하는 줄 */
+/** 머리 줄(고정한 줄 - A는 상태 + 열 머리, 문단 Excel은 열 머리)을 뺀 자료 줄 수 - 이 문서가 시트에서 차지하는 줄 */
 export function countDataRows(sheet: Pick<PreviewSheet, "total_rows" | "freeze">): number {
-  return Math.max(sheet.total_rows - (sheet.freeze === "A3" ? 2 : 0), 0);
+  return Math.max(sheet.total_rows - getFrozenCount(sheet.freeze), 0);
+}
+
+/** paragraphs = 그 문서의 문단 Excel, comparison = Old 문서의 Excel A(시안 2 D4) */
+export type SpaceSheet = "paragraphs" | "comparison";
+
+/** 한 단 보기(쪼개기를 보는 자리)는 문단 Excel, 양 단 보기는 지금처럼 비교 Excel A */
+export function pickSpaceSheet(single: boolean): SpaceSheet {
+  return single ? "paragraphs" : "comparison";
+}
+
+export interface SpaceEnableInput {
+  /** 보는 문서(한 단이면 Old 또는 이미 쓴 New, 양 단이면 Old)가 있다 */
+  hasDoc: boolean;
+  /** 그 문서 보기의 단위 수 - 빈 템플릿처럼 단위가 없으면 문단 Excel이 없다 */
+  unitCount: number;
+  /** New 문서를 양 단에서 그 자리에서 고치는 중 */
+  isNewEdit: boolean;
+  /** Assign 줄 수 */
+  rowCount: number;
+}
+
+/** Space가 켜지는가 - 문단 Excel은 단위가 있는 문서면, 비교 Excel A는 지금처럼 New를 그 자리에서 고치는 중이 아니고 Old 줄이 있을 때 */
+export function isSpaceEnabled(sheet: SpaceSheet, input: SpaceEnableInput): boolean {
+  if (!input.hasDoc) return false;
+  return sheet === "paragraphs" ? input.unitCount > 0 : !input.isNewEdit && input.rowCount > 0;
 }
 
 /** 고른 줄의 단위 가운데 시트에 줄이 있는 첫 단위 - 짝 줄은 A에서 한 단위로 적힌다 */
