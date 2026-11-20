@@ -39,6 +39,7 @@ import { buildUseDraft, findRowSuggestion, indexLiveSuggestions, readSuggestedDe
 import { buildAssignMenu, getPairPickBlocker, getPairSetBlocker, planAssignJoin, planShapeMode, type AssignMenuAction, type AssignMenuGroups } from "@/lib/assign-context-menu-model";
 import { listHeadingBackUnits } from "@/lib/heading-shift-model";
 import { countDecidedLines, getTableNumber, getUnitUnwrapTable, listUnwrapScopes } from "@/lib/unwrap-model";
+import { isOnScreen } from "@/lib/unwrap-motion";
 import { resolveLineParam } from "@/lib/assign-line-param";
 import { readAssignView, writeAssignView } from "@/lib/assign-view-prefs";
 import { loadBundle, useBundle } from "@/lib/bundle-store";
@@ -223,6 +224,15 @@ export function revealFarElement(el: HTMLElement) {
     if (held < 2 && ++frames < 10) requestAnimationFrame(check);
   };
   requestAnimationFrame(check);
+}
+
+/** 요소가 칸(.pane-body)의 보이는 범위에 걸치는가 */
+function isElementInPane(el: HTMLElement): boolean {
+  const pane = el.closest(".pane-body");
+  if (!pane) return false;
+  const { left, top, bottom } = el.getBoundingClientRect();
+  const frame = pane.getBoundingClientRect();
+  return isOnScreen({ left, top, bottom }, { top: frame.top, bottom: frame.bottom });
 }
 
 /** 편집 뒤 뒤에서 다시 받는 목록의 키 - planReload가 고른 것만 하나씩 오른다(설계 D2) */
@@ -457,6 +467,10 @@ export function useAssignPage() {
   // 받은 보기를 고름에 알린다 - 편집 응답에서 건 따라가기가 그 박스를 고르고(고름이 누른 때 그대로일 때만), 사라진 Unit의 고름은 놓는다
   // (렌더 중 상태 맞추기, D1 규칙 3 · 5). Old 문서는 보기와 그 문서 줄을 한 번에 놓은 뒤에(useDocViews) - 줄은 둘 다에서 나와, 새 보기에 옛 줄이 섞인 렌더가 없다.
   // 알리는 문서는 이번에 보기를 놓은 문서만(줄만 다시 받았으면 모든 문서) - 다른 문서의 고름은 그 문서 보기가 오지 않았으니 그대로다
+  // 표 벗기기 · 다시 표로의 풀기 전환(걷기 · 펼치기 · 붙이기, F10) - Old 칸 안에서 바뀌는 표를 찾고 잰다.
+  // 받은 보기를 고름에 알릴 때 따라가기 스크롤을 전환 뒤로 미루므로(B3) 그보다 먼저 둔다
+  const oldPaneRef = useRef<HTMLElement | null>(null);
+  const unwrapMotion = useUnwrapMotion(oldPaneRef);
   const [seenLoad, setSeenLoad] = useState<{ placed: number; solo: DocumentView | null }>({ placed: 0, solo: null });
   if (viewList !== null && unitList !== null && docViews.placed !== seenLoad.placed) {
     const placed = docViews.placed;
@@ -479,7 +493,13 @@ export function useAssignPage() {
       const key = loaded.picked !== null && loaded.focus.kind === "unit" ? rowOfUnit.get(loaded.focus.unitId) : undefined;
       setSnapshot((prev) => prev && { filter: prev.filter, keys: rows.filter((item) => prev.filter === "all" || item.status === prev.filter || item.key === key).map((item) => item.key) });
     }
-    if (loaded.picked !== null) scrollToUnit(loaded.picked.pickUnitId);
+    if (loaded.picked !== null) {
+      const unitId = loaded.picked.pickUnitId;
+      // 표 벗기기 · 다시 표로는 보던 자리를 지킨다(풀기 전환이 되맞춤) - 따라갈 박스가 화면 밖일 때만, 전환이 끝난 뒤 한 번(B3)
+      const isLayout = loaded.consumed.some((follow) => follow.kind === "unwrap" || follow.kind === "rewrap");
+      if (!isLayout) scrollToUnit(unitId);
+      else if (!unwrapMotion.afterMotion(() => scrollToUnit(unitId, true))) scrollToUnit(unitId, true);
+    }
   }
   if (soloLoad.data !== null && !soloLoad.isLoading && soloLoad.data !== seenLoad.solo) {
     const soloData = soloLoad.data;
@@ -807,9 +827,6 @@ export function useAssignPage() {
   // 배정이 걸린 문장을 자르거나 합치려 할 때 - 서버가 409 confirm_required로 물으면 확인을 받아 배정을 풀며 다시 보낸다(원문 고치기와 같은 규칙, 설계 2026-11-15 §3.5)
   // 다시 보낼 일은 함수가 아니라 값으로 둔다 - 확인을 누른 그때의 화면 값(원문 보기·문서 판)으로 보내야 고친 뒤 새 줄을 따라간다
   const [editConfirm, setEditConfirm] = useState<{ count: number; retry: ConfirmedEdit } | null>(null);
-  // 표 벗기기 · 다시 표로의 풀기 전환(걷기 · 펼치기 · 붙이기, F10) - Old 칸 안에서 바뀌는 표를 찾고 잰다
-  const oldPaneRef = useRef<HTMLElement | null>(null);
-  const unwrapMotion = useUnwrapMotion(oldPaneRef);
   // 되돌리기 기록은 이 화면을 연 동안만 - 세션 키가 서버 기록을 가른다(설계 docs/superpowers/specs/2026-11-13-assign-undo-design.md)
   const undoSession = useRef(genId());
   const [undoState, setUndoState] = useState({ canUndo: false, canRedo: false });
@@ -884,10 +901,11 @@ export function useAssignPage() {
   const [spotPick, setSpotPick] = useState<{ rowKey: string; key: string; placeId: string; after: number | null | "none" } | null>(null);
   const pickedSpotKey = spotPick !== null && spotPick.rowKey === activeKey && draftPlace !== null && getDestinationId(draftPlace) === spotPick.placeId && (draftPosition ? draftPosition.after : "none") === spotPick.after ? spotPick.key : null;
 
-  function scrollToUnit(unitId: number) {
+  /** onlyHidden - 칸에 조금이라도 보이면 그대로 둔다(보던 자리를 지키는 편집 뒤) */
+  function scrollToUnit(unitId: number, onlyHidden = false) {
     requestAnimationFrame(() => {
       const target = document.querySelector<HTMLElement>(`[data-testid="assign-paper-unit-${unitId}"]`);
-      if (target) revealFarElement(target);
+      if (target && !(onlyHidden && isElementInPane(target))) revealFarElement(target);
     });
   }
 

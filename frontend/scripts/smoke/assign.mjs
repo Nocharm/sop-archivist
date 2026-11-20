@@ -4577,6 +4577,83 @@ await runStep("assign: unwrap table - deleting an unwrapped line picks the box r
   check("Undo wraps the table back", (await waitView((view) => view.tables.find((table) => table.id === unit.table_id)?.is_layout !== true && view.units.some((item) => item.id === unit.id))) !== null);
 });
 
+// 벗기고 다시 표로 묶어도 표 머리가 칸의 같은 높이에 남는다 - 브라우저 스크롤 고정은 바뀌는 표 안을 놓쳤고, 따라가기가 첫 줄로 굴렸다(Assign 피드백 2026-11-20 항목 11)
+await runStep("assign: unwrap table - unwrapping and wrapping back keep the table head at the same height in the pane", {}, async ({ page }) => {
+  const headers = { "X-Dev-User": "qa.member" };
+  const docs = await (await page.request.get(`${BASE}/api/bundles/${halfBundleId}/documents`, { headers })).json();
+  const readView = async (docId) => (await page.request.get(`${BASE}/api/bundles/${halfBundleId}/documents/${docId}/view`, { headers })).json();
+  await page.goto(`${BASE}/bundles/${halfBundleId}/assign`);
+  await wait(page, "assign-bar");
+  const { doc, unit: first } = await findTableOnScreen(page, readView, docs);
+  check("the bundle has an unassigned table on screen", first !== null);
+  if (first === null) return;
+  // 그 문서에서 가장 아래 표 - 위에 글이 있어야 한다
+  const tables = (await readView(doc.id)).units.filter((item) => item.kind === "table" && item.status === "unassigned").sort((a, b) => b.pos_seq - a.pos_seq);
+  let unit = first;
+  for (const item of tables) {
+    if ((await page.locator(`[data-testid="assign-paper-piece-${item.id}"]`).count()) === 0) continue;
+    unit = item;
+    break;
+  }
+  const isLayout = (view) => view.tables.find((table) => table.id === unit.table_id)?.is_layout === true;
+  const waitView = async (isDone) => {
+    for (let tries = 0; tries < 60; tries += 1) {
+      const view = await readView(doc.id);
+      if (isDone(view)) return view;
+      await page.waitForTimeout(250);
+    }
+    return null;
+  };
+  // 표 머리(바뀌는 곳의 첫 요소)의 칸 안 높이 - 표 줄이든 벗긴 머리 줄이든 같은 data-unwrap-scope다
+  const readHeadTop = () => page.evaluate((scope) => {
+    const pane = document.querySelector('[data-testid="assign-old"] .pane-body');
+    const head = pane?.querySelector(`[data-unwrap-scope="${scope}"]`);
+    return pane && head ? head.getBoundingClientRect().top - pane.getBoundingClientRect().top : Number.NaN;
+  }, `t${unit.table_id}`);
+  const piece = page.locator(`[data-testid="assign-paper-piece-${unit.id}"]`);
+  // 칸 가운데쯤에 둔다 - 위로 굴릴 여유가 있어야 자리를 지키는지 보인다(문서 맨 위 표는 scrollTop 0이라 더 올릴 수 없다)
+  const scrollTop = await piece.evaluate((element) => {
+    element.scrollIntoView({ block: "center" });
+    return element.closest(".pane-body")?.scrollTop ?? 0;
+  });
+  check("the table has room above it to scroll", scrollTop >= 40, `scrollTop ${scrollTop}`);
+  await page.waitForTimeout(300);
+  await piece.click();
+  await wait(page, `assign-shape-table_layout-${unit.id}`);
+  // 편집 응답을 잠깐 붙든다 - 처리 중 표시가 표를 조금 미는 것까지 그려진 뒤의 자리가 지킬 자리다
+  const holdEdit = async (press) => {
+    let release = () => {};
+    const gate = new Promise((resolve) => { release = resolve; });
+    const handler = async (route) => { await gate; await route.continue(); };
+    await page.route((url) => url.pathname.endsWith(`/documents/${doc.id}/edits`), handler);
+    await press();
+    await page.waitForTimeout(400);
+    const top = await readHeadTop();
+    release();
+    await page.unroute((url) => url.pathname.endsWith(`/documents/${doc.id}/edits`), handler);
+    return top;
+  };
+  const beforeUnwrap = await holdEdit(() => page.locator(`[data-testid="assign-shape-table_layout-${unit.id}"]`).click());
+  check("the table is unwrapped", (await waitView(isLayout)) !== null);
+  await piece.waitFor({ state: "detached", timeout: T });
+  await waitForOldMotion(page);
+  await page.waitForTimeout(400);
+  const afterUnwrap = await readHeadTop();
+  check("unwrapping keeps the table head where it was", Math.abs(afterUnwrap - beforeUnwrap) <= 1.5, `head top ${beforeUnwrap} → ${afterUnwrap}`);
+  const beforeWrap = new Set((await readView(doc.id)).units.map((item) => item.id));
+  const waitGroupLoad = watchGroupLoads(page);
+  const beforeWrap2 = await holdEdit(() => page.locator(`[data-testid="assign-paper-rewrap-${unit.table_id}"]`).click());
+  const wrapped = await waitView((view) => !isLayout(view));
+  check("Back to table wraps it", wrapped !== null);
+  await page.locator(`[data-testid="assign-paper-unwrap-head-${unit.table_id}"]`).waitFor({ state: "detached", timeout: T });
+  await waitForOldMotion(page);
+  // 새 표 줄을 따라가 그 관계 묶음을 받는 것까지 기다린다 - 그 뒤에 스크롤이 굴렀는지 본다
+  await waitGroupLoad((wrapped?.units ?? []).filter((item) => !beforeWrap.has(item.id)).map((item) => item.id));
+  await page.waitForTimeout(400);
+  const afterWrap = await readHeadTop();
+  check("wrapping back keeps the table head where it was", Math.abs(afterWrap - beforeWrap2) <= 1.5, `head top ${beforeWrap2} → ${afterWrap}`);
+});
+
 await runStep("assign: unwrap table - ↺ Back to table asks once when a line is assigned and wraps the table back", {}, async ({ page }) => {
   const headers = { "X-Dev-User": "qa.member" };
   const docs = await (await page.request.get(`${BASE}/api/bundles/${halfBundleId}/documents`, { headers })).json();

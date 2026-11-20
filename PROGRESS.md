@@ -2,6 +2,12 @@
 
 프로젝트 진행 현황 로그. 커밋 직전 갱신한다 (`rules/common/git.md` 규칙). v1.4.0(2026-11-20 정식 업데이트)까지의 항목은 [`docs/history/PROGRESS-archive.md`](docs/history/PROGRESS-archive.md)에 있다 — 정식 업데이트마다 그 릴리스까지의 항목을 거기로 옮긴다(`rules/common/git.md` "정식 업데이트 때 문서 정리").
 
+## 2026-11-20 — B3 표 벗긴 뒤 보던 자리 지키기 (`fix/unwrap-scroll`)
+
+- 까닭: 풀기 전환은 스크롤을 브라우저 스크롤 고정에 맡겨, 고정한 요소가 바뀌는 표 안이면 놓쳤고, 바꿈을 그리는 렌더에서 따라가기가 새 줄(캡션 · 번호 붙인 줄)로 다시 굴렸다. 공용 `useUnwrapMotion`이 바꾸기 전 기준(표 머리 `data-unwrap-scope`가 칸에 보이면 그것, 아니면 칸 윗변에 걸친 `data-flip-key` 줄)을 재 두고, 바꾼 직후 · 끝 자리 재기 전에 `scrollTop`을 되맞춘다(순수 계산 `pickScrollAnchor` · `computeAnchoredScrollTop`). 표 벗기기 · 다시 표로의 따라가기 스크롤은 `afterMotion`으로 전환 뒤에, 박스가 칸 밖일 때만 — effect · 타이머 수는 그대로.
+- 기준은 걷기 전에 잰다: 다시 표로의 걷기는 머리 줄을 작게 줄여(enter 표시 scale) 바꾸기 직전에 재면 3px 밀렸다. 스모크 새 단계는 편집 응답을 붙든 동안(처리 중 표시가 그려진 뒤)의 표 머리 높이와 비교해 ±1.5px — 옛 코드는 6~8px 어긋나 실패, 문서 맨 위 표는 scrollTop 0이라 못 올리니 문서에서 가장 아래 표를 쓴다.
+- 검증: vitest 1,835 · lint · tsc, 전체 스모크 1,994, 대비 · 겹침 감사 통과. 배치 감사(극단 자료)는 CSS · DOM 구조를 바꾸지 않아 돌리지 않았다.
+
 ## 2026-11-20 — B2 Space 미리보기가 누른 박스의 행으로 늘 (`fix/space-preview-follow`)
 
 - 되다 안 되다의 까닭: 같은 박스를 다시 누르면 고른 행이 같아 가운데 맞추기가 돌지 않았고(끌어 둔 시트 그대로), 줄의 첫 단위를 찾아 한/영 따로 문서의 EN 박스가 KO 행으로 갔고, 본문 밖(머리말 · 꼬리말) 단위는 시트에 없어 맨 위 창으로 갔다. 누른 박스를 맨 앞에(`pickSheetAnchor`, 시트에 없으면 문서 차례로 가까운 위 본문 단위), 박스를 누를 때마다 오르는 `spacePickSeq`를 `SheetView`의 가운데 맞추기 effect deps(`centreKey`)에 더했다 — effect 수는 그대로.

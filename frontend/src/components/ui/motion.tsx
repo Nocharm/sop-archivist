@@ -12,16 +12,19 @@ import { isBoxDragActive } from "@/lib/box-drag";
 import { computeFlipOffsets } from "@/lib/flip";
 import {
   buildMarkerKeyframes,
+  computeAnchoredScrollTop,
   computeStaggerDelays,
   computeUnwrapShifts,
   getSpreadEnd,
   isOnScreen,
   parseDurationMs,
   pickOnScreenKeys,
+  pickScrollAnchor,
   planUnwrapPhases,
   type MarkerPhase,
   type MotionBox,
   type MotionSnapshot,
+  type ScrollAnchor,
   type UnwrapMarker,
   type UnwrapTimings,
 } from "@/lib/unwrap-motion";
@@ -176,6 +179,46 @@ interface UnwrapRun {
   animations: Animation[];
   /** 걷는 동안 미뤄 둔 바꿈 - 적용하면 null */
   change: (() => void) | null;
+  /** 전환이 끝나면 부를 일(afterMotion) */
+  settled: (() => void)[];
+}
+
+/** 바꾸기 직전 보던 자리(B3) - 칸(.pane-body)과 그 안 기준 요소. 브라우저 스크롤 고정은 고정한 요소가 바뀌는 표 안이면 놓친다 */
+function readScrollAnchor(container: HTMLElement, scopes: readonly string[]): { pane: HTMLElement; anchor: ScrollAnchor } | null {
+  const pane = container.querySelector<HTMLElement>(".pane-body");
+  if (!pane) return null;
+  const frame = pane.getBoundingClientRect();
+  const measure = (element: HTMLElement | null): MotionBox | null => {
+    if (!element || !isRendered(element)) return null;
+    const { left, top, bottom } = element.getBoundingClientRect();
+    return { left, top, bottom };
+  };
+  const scopeBoxes = new Map<string, MotionBox>();
+  for (const scope of scopes) {
+    const box = measure(pane.querySelector<HTMLElement>(`[data-unwrap-scope=${JSON.stringify(scope)}]`));
+    if (box) scopeBoxes.set(scope, box);
+  }
+  const view = { top: frame.top, bottom: frame.bottom };
+  // 표 머리가 보이면 글 줄은 재지 않는다 - 긴 문서는 줄이 수천이다
+  const head = pickScrollAnchor(scopeBoxes, new Map(), view);
+  if (head) return { pane, anchor: head };
+  const lineBoxes = new Map<string, MotionBox>();
+  for (const element of pane.querySelectorAll<HTMLElement>("[data-flip-key]")) {
+    const key = element.dataset.flipKey;
+    const box = key === undefined || lineBoxes.has(key) ? null : measure(element);
+    if (key !== undefined && box && isOnScreen(box, view)) lineBoxes.set(key, box);
+  }
+  const anchor = pickScrollAnchor(new Map(), lineBoxes, view);
+  return anchor ? { pane, anchor } : null;
+}
+
+/** 바꾼 뒤 같은 기준 요소가 칸의 같은 높이에 오도록 scrollTop을 되맞춘다 - 요소가 사라졌으면 그대로 둔다 */
+function restoreScrollAnchor(kept: { pane: HTMLElement; anchor: ScrollAnchor } | null): void {
+  if (!kept || !kept.pane.isConnected) return;
+  const { pane, anchor } = kept;
+  const element = pane.querySelector<HTMLElement>(`[${anchor.attribute}=${JSON.stringify(anchor.value)}]`);
+  if (!element) return;
+  pane.scrollTop = computeAnchoredScrollTop(pane.scrollTop, anchor.top, element.getBoundingClientRect().top);
 }
 
 /** 돌던 전환을 멈춰 모두 제자리에 둔다 - 아직 걷는 중이라 적용하지 못한 바꿈이 있으면 돌려준다(부른 쪽이 적용해 잃지 않게) */
@@ -210,7 +253,7 @@ export interface UnwrapRunOptions {
  * 긴 문서에서는 창에 보이는 것만 움직이고 나머지는 재지도 않고 바로 제자리다. 움직임 줄이기 설정이면 바로 바꾸고 바뀐 곳(scope)만 한 번 번쩍인다.
  * 전환이 끝나면(다음 run이 앞지르면 그때) 풀리는 Promise를 돌려준다 - 되돌리기 알림은 부른 쪽이 띄운다. 이벤트 핸들러에서 부른다(이펙트 안에서는 flushSync를 쓸 수 없다)
  */
-export function useUnwrapMotion(containerRef: RefObject<HTMLElement | null>): { run: (change: () => void, options: UnwrapRunOptions) => Promise<void> } {
+export function useUnwrapMotion(containerRef: RefObject<HTMLElement | null>): { run: (change: () => void, options: UnwrapRunOptions) => Promise<void>; afterMotion: (callback: () => void) => boolean } {
   const activeRef = useRef<UnwrapRun | null>(null);
 
   // 걷는 중에 화면을 떠나면 미뤄 둔 바꿈을 그대로 적용한다 - 사람이 한 편집이다
@@ -221,16 +264,30 @@ export function useUnwrapMotion(containerRef: RefObject<HTMLElement | null>): { 
     const earlier = stopUnwrapRun(activeRef);
     if (earlier) flushSync(earlier);
     const container = containerRef.current;
+    const active: UnwrapRun = { animations: [], change, settled: [] };
+    activeRef.current = active;
+    try {
+      await playUnwrapRun(container, active, change, scopes, reverse);
+    } finally {
+      if (activeRef.current === active) activeRef.current = null;
+      for (const callback of active.settled.splice(0)) callback();
+    }
+  }
+
+  async function playUnwrapRun(container: HTMLElement | null, active: UnwrapRun, change: () => void, scopes: readonly string[], reverse: boolean): Promise<void> {
     if (!container || typeof container.animate !== "function" || window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) {
+      active.change = null;
+      const kept = container ? readScrollAnchor(container, scopes) : null;
       flushSync(change);
+      restoreScrollAnchor(kept);
       for (const place of container ? findUnwrapScopes(container, scopes) : []) flashElement(place);
       return;
     }
     const { timings, easing } = readUnwrapTokens();
     const { before, after, direction } = planUnwrapPhases(timings, reverse);
     const readKind = (mark: HTMLElement, marker: UnwrapMarker) => mark.getAttribute(`data-unwrap-${marker}`) ?? "";
-    const active: UnwrapRun = { animations: [], change };
-    activeRef.current = active;
+    // 걷기 전에 잰다 - 되돌리기의 걷기는 enter 표시(다시 표로 머리 줄)를 작게 줄여 윗변이 밀린다
+    const kept = readScrollAnchor(container, scopes);
 
     // 끝난 모양으로 붙들어 둔다(fill) - 바꿈이 그려지기 전에 다시 나타나지 않게
     active.animations = findUnwrapMarks(container, scopes, before.marker).map((mark) =>
@@ -243,6 +300,8 @@ export function useUnwrapMotion(containerRef: RefObject<HTMLElement | null>): { 
     const first = takeUnwrapSnapshot(container);
     active.change = null;
     flushSync(change);
+    // 보던 자리부터 되맞춘 뒤 끝 자리를 잰다 - 글은 옛 화면 자리에서 새 화면 자리로 미끄러진다
+    restoreScrollAnchor(kept);
     // 바뀐 뒤에도 남은 표시가 숨은 채 굳지 않게 푼다
     for (const animation of active.animations) animation.cancel();
     const last = takeUnwrapSnapshot(container);
@@ -263,10 +322,18 @@ export function useUnwrapMotion(containerRef: RefObject<HTMLElement | null>): { 
     }
     active.animations = animations;
     await Promise.allSettled(animations.map((animation) => animation.finished));
-    if (activeRef.current === active) activeRef.current = null;
   }
 
-  return { run };
+  /** 도는 전환이 있으면 끝난 뒤(다음 run이 앞질러도 그때) callback을 부르고 true - 없으면 부르지 않고 false(부른 쪽이 바로 한다).
+   *  바꿈을 그리는 렌더에서 불러도 된다 - 따라가기 스크롤을 전환 뒤로 미룬다 */
+  function afterMotion(callback: () => void): boolean {
+    const active = activeRef.current;
+    if (!active) return false;
+    active.settled.push(callback);
+    return true;
+  }
+
+  return { run, afterMotion };
 }
 
 // 접힘 전환(--dur-slow 240ms)보다 조금 길게 기다린 뒤 내용을 뗀다

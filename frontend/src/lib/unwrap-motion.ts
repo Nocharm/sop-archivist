@@ -138,3 +138,31 @@ export function computeStaggerDelays(tops: ReadonlyMap<string, number>, timings:
 export function getSpreadEnd(delays: ReadonlyMap<string, number>, spread: number): number {
   return delays.size === 0 ? 0 : Math.max(...delays.values()) + spread;
 }
+
+/** 보던 자리의 기준 - 바꾸기 전과 뒤에 같은 요소를 찾는 표시(어느 data 속성의 어느 값)와 바꾸기 전 윗변(px) */
+export interface ScrollAnchor {
+  attribute: "data-unwrap-scope" | "data-flip-key";
+  value: string;
+  top: number;
+}
+
+/**
+ * 바꾸는 동안 지킬 자리(B3) - 바꾸는 곳(scope, 차례대로 - 표 다음 안쪽 띠 표)의 윗변이 칸에 보이면 그것(표 머리),
+ * 아니면 칸 윗변에 걸친 글 줄, 그것도 없으면 칸 안 맨 위 글 줄. 칸에 아무것도 없으면 null(스크롤을 건드리지 않는다)
+ */
+export function pickScrollAnchor(scopes: ReadonlyMap<string, MotionBox>, lines: ReadonlyMap<string, MotionBox>, view: MotionView): ScrollAnchor | null {
+  for (const [value, box] of scopes) {
+    if (box.top >= view.top && box.top <= view.bottom) return { attribute: "data-unwrap-scope", value, top: box.top };
+  }
+  let best: ScrollAnchor | null = null;
+  for (const [value, box] of lines) {
+    if (box.top <= view.top && box.bottom > view.top) return { attribute: "data-flip-key", value, top: box.top };
+    if (box.top > view.top && box.top <= view.bottom && (best === null || box.top < best.top)) best = { attribute: "data-flip-key", value, top: box.top };
+  }
+  return best;
+}
+
+/** 기준 요소가 바꾸기 전 윗변(before)에 돌아오는 scrollTop - 바꾼 뒤 after로 밀렸으면 그만큼 더 내린다 */
+export function computeAnchoredScrollTop(scrollTop: number, before: number, after: number): number {
+  return scrollTop + (after - before);
+}
