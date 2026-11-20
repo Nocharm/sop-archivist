@@ -362,6 +362,8 @@ class _Draft:
     from_heading: bool = False
     # 같은 변경에서 만드는 표 단위(_Change.drafts의 순번)에 묶을 새 칸 문장 — 띠 표를 표로 되돌릴 때(_plan_band_layout)
     group_draft: int | None = None
+    # 벗긴 표 덩이 안 줄 순서(units.unwrap_seq) — 나누기 · 합치기의 조각은 옛 줄(합치기는 첫 줄)의 값을 물려받아 옛 자리에 원문 순서로 남는다
+    unwrap_seq: int | None = None
 
 
 Move = tuple[int | None, int | None]  # 칸 문장의 (지금 묶음, 바꿀 묶음)
@@ -498,6 +500,7 @@ def _build_draft(
     문장·제목은 like를 따른다(표 밖이라 없음).
     문단 번호는 앞 조각에 남는다(§11-10) — 번호 범위는 새 범위와 블록 신호로 다시 읽고, 사람이 고친 값은 like와 같은 자리에서
     시작하는 조각만 물려받는다(자른 뒤 조각은 번호 없음, 합친 단위는 앞 단위의 번호).
+    벗긴 표 덩이 안 순서(unwrap_seq)는 조각 모두가 like의 값을 물려받는다 — 같은 값끼리는 원문 자리 순이라 옛 줄 자리에 남는다(unwrap_order.py).
     """
     kind = kind or like.kind
     first = blocks[spans[0][0]]
@@ -515,7 +518,7 @@ def _build_draft(
     return _Draft(
         kind=kind, spans=spans, text=text, lang=lang or detect_language(text) or "", table_id=table_id,
         row_index=row_index, group_unit_id=like.group_unit_id, pos_seq=first.seq, pos_start=spans[0][1],
-        number=number, from_heading=like.from_heading and kind == "sentence",
+        number=number, from_heading=like.from_heading and kind == "sentence", unwrap_seq=like.unwrap_seq,
     )
 
 
@@ -1731,7 +1734,7 @@ async def _insert_units(
             extraction_id=extraction_id, local_no=last_no + offset, kind=draft.kind,
             spans=[list(span) for span in draft.spans], text=draft.text, lang=draft.lang, table_id=draft.table_id,
             row_index=draft.row_index, group_unit_id=draft.group_unit_id, pos_seq=draft.pos_seq,
-            pos_start=draft.pos_start, from_heading=draft.from_heading, **draft.number,
+            pos_start=draft.pos_start, from_heading=draft.from_heading, unwrap_seq=draft.unwrap_seq, **draft.number,
         )
         for offset, draft in enumerate(ordered, start=1)
     ]

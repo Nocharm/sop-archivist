@@ -11,8 +11,12 @@ describe("orderUnwrapped", () => {
     expect(order([line(1, 1, 0), line(2, 0, 1)])).toEqual([2, 1]);
   });
   it("lets a line without a seq borrow the line before it in source order", () => {
-    // 3을 맨 위로 옮긴 뒤 1을 나눈 조각 4 · 5 - 1 자리(2 앞)에 남는다
+    // 값이 아직 없는 줄 4 · 5 - 원문 앞 줄 1의 뒤(2 앞)에 놓인다
     expect(order([line(3, 0, 3), line(4, null, 1), line(5, null, 2), line(2, 2, 4), line(1, 1, 0)])).toEqual([3, 1, 4, 5, 2]);
+  });
+  it("keeps split pieces that inherited the moved line's seq together in source order", () => {
+    // 3을 맨 위로 옮긴 뒤 나눈 조각 6 · 7은 3의 값(0)을 물려받아(서버 editing._build_draft) 맨 위에 남는다
+    expect(order([line(1, 1, 0), line(2, 2, 1), line(6, 0, 2), line(7, 0, 3)])).toEqual([6, 7, 1, 2]);
   });
 });
 
