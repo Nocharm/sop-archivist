@@ -14,7 +14,7 @@ import { useI18n } from "@/lib/i18n";
 import { placeLinkMenu } from "@/lib/link-menu-place";
 
 // 오른쪽 칸의 다듬기 줄(shape-tools)도 같은 아이콘·이름을 쓴다 - 같은 일은 어디서나 같은 모양으로
-export const ASSIGN_ACTION_ICONS: Record<Exclude<AssignMenuAction, "lang">, LucideIcon> = {
+export const ASSIGN_ACTION_ICONS: Record<Exclude<AssignMenuAction, "lang" | "piece_lang">, LucideIcon> = {
   // 여러 줄 삭제·이동 창의 단추와 같은 아이콘
   delete: Trash2,
   move: ExternalLink,
@@ -39,7 +39,7 @@ export const ASSIGN_ACTION_ICONS: Record<Exclude<AssignMenuAction, "lang">, Luci
   to_heading: Heading,
 };
 
-export const ASSIGN_ACTION_LABELS: Record<Exclude<AssignMenuAction, "lang">, string> = {
+export const ASSIGN_ACTION_LABELS: Record<Exclude<AssignMenuAction, "lang" | "piece_lang">, string> = {
   delete: "assign.ctx.delete",
   move: "assign.ctx.move",
   clear: "classify.clear",
@@ -73,9 +73,13 @@ interface AssignContextMenuProps {
   /** 누른 자리(화면 좌표) - 키보드로 열었으면 null(줄 왼쪽 아래) */
   click: { x: number; y: number } | null;
   groups: AssignMenuGroups;
-  onPick: (action: AssignMenuAction, lang?: "ko" | "en") => void;
+  /** piece - 조각 언어 줄(piece_lang)의 조각 순번 */
+  onPick: (action: AssignMenuAction, lang?: "ko" | "en", piece?: number) => void;
   onClose: () => void;
 }
+
+/** 조각 언어 줄에 보이는 조각 글 앞부분 글자 수 - 메뉴 폭을 넘지 않게 */
+const PIECE_HEAD_CHARS = 18;
 
 export function AssignContextMenu({ anchor, readCover, click, groups, onPick, onClose }: AssignContextMenuProps) {
   const { t } = useI18n();
@@ -102,6 +106,23 @@ export function AssignContextMenu({ anchor, readCover, click, groups, onPick, on
           testId="assign-ctx-lang"
         />
       );
+    }
+    if (item.action === "piece_lang") {
+      if (!item.piece) return null;
+      const { index, text } = item.piece;
+      const row = (
+        <MenuLangRow
+          key={`piece-${index}`}
+          label={text.length > PIECE_HEAD_CHARS ? `${text.slice(0, PIECE_HEAD_CHARS)}…` : text}
+          current={item.lang}
+          disabledReason={item.reasonKey ? t(item.reasonKey) : null}
+          currentReason={t("split.menu.why.alreadyLang")}
+          onPick={(lang) => onPick("piece_lang", lang, index)}
+          testId={`assign-ctx-piece-${index}`}
+        />
+      );
+      // 첫 조각 줄 위에 "조각마다" 머리 - 합친 박스를 조각으로 떼어 짝으로 만드는 줄들이다
+      return index === 0 ? [<p key="piece-head" className="menu-label">{t("assign.ctx.pieces")}</p>, row] : row;
     }
     const Icon = ASSIGN_ACTION_ICONS[item.action];
     const label = t(item.labelKey ?? ASSIGN_ACTION_LABELS[item.action]);

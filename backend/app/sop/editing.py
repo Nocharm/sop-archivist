@@ -16,14 +16,14 @@ from collections.abc import Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, fields
 from typing import Annotated, Literal, TypeVar, assert_never
 
-from pydantic import BaseModel, Field, StringConstraints
+from pydantic import BaseModel, Field, SerializerFunctionWrapHandler, model_serializer, StringConstraints
 from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import clock
 from app.sop.caption_slot import CAPTION_REACH, PlaceBlock, build_block_places, get_place_distance
 from app.sop.captions import CAPTION_KIND
-from app.sop.constants import BULLET_SYMBOLS, MAX_PAIR_SIDE
+from app.sop.constants import BULLET_SYMBOLS, MAX_PAIR_SIDE, PAIR_CONFIRMED, PAIR_SOURCE_HUMAN
 from app.sop.decision_steps import UndoMetaIn
 from app.sop.decisions import DbId
 from app.sop.detach import (
@@ -287,8 +287,23 @@ class ReorderUnwrappedOp(BaseModel):
     unit_ids: list[DbId] = Field(min_length=1, max_length=MAX_EDIT_UNITS)
 
 
+class SwitchLanguageOp(BaseModel):
+    """언어를 바꿔 모양이 바뀌는 편집(B6, 사용자 결정 2026-11-20 3-a · 3-c) — 옛 문서만.
+
+    짝 구성원의 언어를 바꿔 짝이 한 언어가 되면 구성원을 합치거나(merge_pair — 이웃인지는 화면이 용지 순서로 본다, 합치기 이웃 검사와 같다)
+    짝만 푼다. piece를 주면 합친 단위의 그 조각(합치기 전 단위, 원문 순 0부터 — 맨 앞 · 맨 뒤만)의 언어를 바꿔 떼고, 남은 조각(둘 이상이면 합친 채)과 짝을 맺는다.
+    모양이 바뀌는 단위의 배정은 묻지 않고 푼다(3-c — 화면은 알림의 되돌리기를 준다).
+    """
+
+    type: Literal["switch_language"]
+    unit_id: DbId
+    lang: Literal["ko", "en"]
+    piece: int | None = Field(default=None, ge=0, le=MAX_EDIT_UNITS)
+    merge_pair: bool = False
+
+
 EditOp = Annotated[
-    SplitOp | MergeOp | UnmergeOp | MoveBoundaryOp | CarveOp | SetLanguageOp
+    SplitOp | MergeOp | UnmergeOp | MoveBoundaryOp | CarveOp | SetLanguageOp | SwitchLanguageOp
     | SetLayoutTableOp | AttachCaptionOp | DetachCaptionOp | SetFirstRowCaptionOp | GroupFiguresOp
     | UngroupFiguresOp | SetRefOp | ClearRefOp | ClearNoiseOp | SetNumberOp | SetHeadingOp | ReorderPairOp
     | ReorderUnwrappedOp,
@@ -318,6 +333,16 @@ class EditResult(BaseModel):
     retired_unit_ids: list[int]
     # 옛 문서는 은퇴하거나 다시 묶인 단위의 떼어 내기, 새 문서는 새 문장 다시 맞추기 결과 — 둘 다 없는 옛 문서 편집은 None
     detach: DetachReport | None
+    # switch_language가 바꾼 모양 — 짝을 합침 | 짝만 풂(떨어져 있어 합치지 않음) | 조각을 떼어 짝으로. 다른 편집은 None
+    shape: Literal["merged", "unpaired", "split_pair"] | None = None
+
+    @model_serializer(mode="wrap")
+    def _drop_empty_shape(self, handler: SerializerFunctionWrapHandler) -> dict:
+        """모양 전환이 아닌 편집의 응답은 전과 같은 꼴 — shape는 값이 있을 때만 싣는다."""
+        data = handler(self)
+        if data.get("shape") is None:
+            data.pop("shape", None)
+        return data
 
 
 class EditStepResult(EditResult):
@@ -405,6 +430,11 @@ class _Change:
     repair_pairs: bool = False
     # 짝을 다시 세우지 않는다(표 표시가 바뀌어도 코드 짝 제안을 새로 하지 않는다) — Assign 되돌리기 단계가 짝을 스냅숏으로 되쓸 때
     keeps_pairs: bool = False
+    # 모양 전환(switch_language)이 묻지 않고 판단을 떼는 단위 — 은퇴하지 않는 단위는 미배정으로 뗀다(3-c)
+    release: list[int] = field(default_factory=list)
+    # 쓴 뒤 사람이 맺은 짝으로 묶을 단위 — 되살리는 단위 id와 이 변경이 만드는 단위(drafts 순번). 앞으로 가는 편집만(되돌리기의 짝은 Assign 단계가 되쓴다)
+    pair_units: list[int] = field(default_factory=list)
+    pair_drafts: list[int] = field(default_factory=list)
 
     def list_regrouped_cells(self) -> list[int]:
         return sorted({*self.regroup, *(cell_id for draft in self.drafts for cell_id in draft.cells)})
@@ -603,14 +633,22 @@ async def _plan_merge(session: AsyncSession, extraction_id: ExtractionId, op: Me
     return _build_replacement(units, [draft])
 
 
+def is_merge_edit(op: str, created: Sequence[int], retired: Sequence[int]) -> bool:
+    """단위 하나를 여러 단위로 만든 합치기 기록인가 — 합치기와, 짝을 한 언어로 바꿔 합친 모양 전환(switch_language)."""
+    return op in ("merge", "switch_language") and len(created) == 1 and len(retired) > 1
+
+
 async def find_merge_edit(session: AsyncSession, document_id: int, unit_id: int) -> UnitEdit | None:
     """unit_id를 만든 적용 중인 합치기 기록 — 없으면 이 단위는 합쳐 생긴 단위가 아니거나 그 뒤로 다시 만들어졌다."""
     edits = await session.scalars(
         select(UnitEdit)
-        .where(UnitEdit.document_id == document_id, UnitEdit.op == "merge", UnitEdit.state == EDIT_APPLIED)
+        .where(UnitEdit.document_id == document_id, UnitEdit.op.in_(("merge", "switch_language")), UnitEdit.state == EDIT_APPLIED)
         .order_by(UnitEdit.seq.desc())
     )
-    return next((edit for edit in edits if list(edit.created_unit_ids) == [unit_id]), None)
+    return next(
+        (edit for edit in edits if list(edit.created_unit_ids) == [unit_id] and is_merge_edit(edit.op, edit.created_unit_ids, edit.retired_unit_ids)),
+        None,
+    )
 
 
 async def _plan_unmerge(session: AsyncSession, document_id: int, extraction_id: ExtractionId, op: UnmergeOp) -> _Change:
@@ -711,6 +749,84 @@ async def _plan_set_language(session: AsyncSession, extraction_id: ExtractionId,
     changes = {unit_id: (unit.lang, op.lang) for unit_id, unit in sorted(units.items()) if unit.lang != op.lang}
     await _ensure_one_caption_per_language(session, [units[unit_id] for unit_id in changes], op.lang)
     return _Change(langs=changes)
+
+
+async def _plan_switch_language(
+    session: AsyncSession, document_id: int, extraction_id: ExtractionId, op: SwitchLanguageOp
+) -> _Change:
+    """언어를 바꿔 모양이 바뀌는 편집 — 모양이 바뀌지 않으면(짝이 아니거나 짝에 두 언어가 남는다) 422 no_shape_change, 보통 언어 바꾸기를 쓴다."""
+    unit = (await load_active_units(session, extraction_id, [op.unit_id]))[op.unit_id]
+    _ensure_text_kinds([unit])
+    _ensure_not_toc([unit])
+    if op.piece is not None:
+        return await _plan_piece_language(session, document_id, extraction_id, unit, op)
+    member_ids = list(
+        await session.scalars(
+            select(UnitPairMember.unit_id).where(
+                UnitPairMember.pair_id
+                == select(UnitPairMember.pair_id).where(UnitPairMember.unit_id == unit.id).scalar_subquery()
+            )
+        )
+    )
+    members = await load_active_units(session, extraction_id, member_ids) if member_ids else {}
+    langs_after = {op.lang if member.id == unit.id else member.lang for member in members.values()}
+    if unit.lang == op.lang or not members or len(langs_after) > 1:
+        raise_rule(422, "no_shape_change", unit_id=unit.id)
+    if not op.merge_pair:
+        # 멀리 맺은 짝 - 짝만 푼다(사용자 덧붙임 2026-11-20). 언어가 바뀌면 _leave_pairs가 짝을 지운다
+        return _Change(langs={unit.id: (unit.lang, op.lang)}, release=[unit.id])
+    change = await _plan_merge(session, extraction_id, MergeOp(type="merge", unit_ids=sorted(members)))
+    change.drafts[0].lang = op.lang
+    change.release = sorted(members)
+    return change
+
+
+async def _plan_piece_language(
+    session: AsyncSession, document_id: int, extraction_id: ExtractionId, unit: Unit, op: SwitchLanguageOp
+) -> _Change:
+    """합친 단위의 맨 앞 · 맨 뒤 조각을 다른 언어로 떼어 남은 조각과 짝으로 — 조각은 그 합치기가 은퇴시킨 단위(옛 ID로 되살린다).
+
+    남은 조각이 하나면 그것도 되살리고, 둘 이상이면 합친 채 새 단위 하나로 만든다(짝 한쪽). 남은 쪽의 언어는 합친 단위의 언어다.
+    """
+    edit = await find_merge_edit(session, document_id, unit.id)
+    originals = (
+        list(await session.scalars(select(Unit).where(Unit.id.in_(edit.retired_unit_ids), Unit.extraction_id == extraction_id)))
+        if edit is not None else []
+    )
+    if edit is None or len(originals) != len(edit.retired_unit_ids) or any(item.status != UNIT_RETIRED for item in originals):
+        raise_rule(422, "cannot_unmerge", unit_id=unit.id)
+    if unit.lang not in PAIR_LANGS:
+        raise_rule(422, "missing_language", langs=[unit.lang])
+    blocks = await _load_unit_blocks(session, extraction_id, originals)
+    pieces = sorted(originals, key=lambda item: (blocks[to_spans(item.spans)[0][0]].seq, to_spans(item.spans)[0][1]))
+    if op.piece is None or op.piece >= len(pieces):
+        raise_rule(422, "invalid_piece", unit_id=unit.id, piece=op.piece)
+    if 0 < op.piece < len(pieces) - 1:
+        # 가운데 조각을 떼면 남은 쪽이 앞뒤로 떨어져 한 단위가 되지 않는다(내 판단 - 화면은 꺼진 항목과 까닭)
+        raise_rule(422, "middle_piece", unit_id=unit.id, piece=op.piece)
+    if op.lang == unit.lang:
+        raise_rule(422, "no_shape_change", unit_id=unit.id)
+    piece = pieces[op.piece]
+    rest = [item for item in pieces if item.id != piece.id]
+    change = _Change(retire=[unit.id], revive=[piece.id], release=[unit.id], pair_units=[piece.id])
+    revived = [piece] if len(rest) > 1 else [piece, *rest]
+    target_lang = {piece.id: op.lang, **{item.id: unit.lang for item in rest}}
+    for item in revived:
+        if item.lang != target_lang[item.id]:
+            change.langs[item.id] = (item.lang, target_lang[item.id])
+        # 합친 칸 문장이 그 뒤 다른 묶음으로 옮겨졌으면 되살린 조각도 지금 묶음으로(_plan_unmerge와 같다)
+        if item.group_unit_id != unit.group_unit_id:
+            change.regroup[item.id] = (item.group_unit_id, unit.group_unit_id)
+    if len(rest) == 1:
+        change.revive.append(rest[0].id)
+        change.pair_units.append(rest[0].id)
+        return change
+    spans = sorted((span for item in rest for span in to_spans(item.spans)), key=lambda span: (blocks[span[0]].seq, span[1]))
+    draft = _build_draft(rest[0], join_close_spans(spans, _get_texts(blocks)), blocks, kind=_decide_merged_kind(rest), lang=unit.lang)
+    draft.group_unit_id = unit.group_unit_id
+    change.drafts = [draft]
+    change.pair_drafts = [0]
+    return change
 
 
 async def _ensure_one_caption_per_language(session: AsyncSession, changing: Sequence[Unit], lang: str) -> None:
@@ -1628,6 +1744,8 @@ async def _plan(session: AsyncSession, document_id: int, extraction_id: Extracti
             return await _plan_carve(session, extraction_id, op)
         case SetLanguageOp():
             return await _plan_set_language(session, extraction_id, op)
+        case SwitchLanguageOp():
+            return await _plan_switch_language(session, document_id, extraction_id, op)
         case SetLayoutTableOp():
             return await _plan_set_layout_table(session, document_id, extraction_id, op)
         case AttachCaptionOp():
@@ -1940,11 +2058,13 @@ async def _write_change(
     # 언어를 제자리에서 바꾸는 단위만 사람 결정과 어긋난다(R31) - 같은 변경에서 은퇴하거나 되살아나는 단위(합치기 풀기와
     # 그 되돌리기)는 글 그대로의 언어를 따라가는 것이라 묻지 않는다(은퇴는 아래 확인 플래그가 묻는다)
     moving = {*change.retire, *change.revive}
+    # 되돌리기 단계가 확인한 단위와 모양 전환이 푸는 단위는 묻지 않는다(3-c)
+    settled = {*settled, *change.release}
     # 잡음 표시를 다시 붙이는 단위(목차 아님 되돌리기)도 사람 결정과 어긋난다 — 그 사이 배정했으면 표시로 덮지 않는다
     marking = [unit_id for unit_id, (_, noise) in change.noises.items() if noise is not None]
     in_place = [unit_id for unit_id in [*change.langs, *marking] if unit_id not in moving]
     if in_place:
-        decided = await _find_decided_units(session, document, in_place)
+        decided = [unit_id for unit_id in await _find_decided_units(session, document, in_place) if unit_id not in settled]
         if decided:
             raise_rule(409, "unit_has_decision", unit_ids=decided)
     if change.pair_seqs:
@@ -1956,7 +2076,7 @@ async def _write_change(
     decided_bundles: list[int] = []
     if change.retire or regrouped or change.bundles:
         needing = await find_units_needing_confirm(session, [*change.retire, *regrouped, *change.bundles])
-        if needing and not confirm and not set(needing) <= set(settled):
+        if needing and not confirm and not set(needing) <= settled:
             raise_rule(409, "confirm_required", unit_ids=needing)
         # 캡션이 바뀐 묶음은 판단이 있을 때만 떼어 낸다 — 확정 새 문장에 바뀐 캡션이 빠지거나 남지 않게
         decided_bundles = sorted(set(needing) & set(change.bundles))
@@ -2007,8 +2127,18 @@ async def _write_change(
                 session, bundle_id=document.bundle_id, unit_ids=decided_bundles, cause="regrouped", actor=actor
             )
             detach = regrouped_report if detach is None else _merge_reports(detach, regrouped_report)
+        released = sorted(set(change.release) - set(change.retire))
+        if released:
+            # 모양 전환이 제자리에서 언어를 바꾼 단위 - 묻지 않고 미배정으로 뗀다(3-c, 같은 관계 묶음의 나머지는 보류)
+            cleared = await detach_units(session, bundle_id=document.bundle_id, unit_ids=released, cause="cleared", actor=actor)
+            detach = cleared if detach is None else _merge_reports(detach, cleared)
         await _apply_regroup(session, change.regroup)
         await _apply_layouts(session, change.layouts)
+    if change.pair_units or change.pair_drafts:
+        made = {id(draft): unit_id for draft, unit_id in inserted}
+        await _create_human_pair(
+            session, document, [*change.pair_units, *(made[id(change.drafts[index])] for index in change.pair_drafts)], actor
+        )
     if change.layouts and not change.keeps_pairs:
         # 레이아웃 표의 칸 문장은 묶이지 않아 한/영 두 열이 이웃 짝으로 제안되고(따로 배치면 둘 다 벗긴 대응 표의 같은 행끼리, F8a),
         # 다시 데이터 표가 되면 그 제안이 빠진다
@@ -2025,6 +2155,19 @@ async def _write_change(
         document_revision=document.revision, created_unit_ids=activated, retired_unit_ids=sorted(change.retire),
         detach=detach,
     )
+
+
+async def _create_human_pair(session: AsyncSession, document: Document, unit_ids: Sequence[int], actor: str) -> None:
+    """모양 전환이 떼어 낸 조각과 남은 쪽을 사람이 맺은 짝으로 — 방금 되살리거나 만든 판단 없는 단위라 pairs.create_pair의 운명 · 번역 검사가 필요 없다.
+
+    pairs가 editing을 들여와 그 함수를 부를 수 없다. 짝 행 · 작업 기록은 create_pair와 같다(revision은 편집이 올린다).
+    """
+    pair = UnitPair(document_id=document.id, status=PAIR_CONFIRMED, source=PAIR_SOURCE_HUMAN)
+    session.add(pair)
+    await session.flush()
+    session.add_all(UnitPairMember(pair_id=pair.id, unit_id=unit_id) for unit_id in sorted(unit_ids))
+    record_event(session, bundle_id=document.bundle_id, actor=actor, action="pair.create", target_type="pair", target_ids=[pair.id])
+    await session.flush()
 
 
 def _record(
@@ -2058,6 +2201,8 @@ async def apply_edit(
     바뀌는 게 없는 편집(같은 언어로 바꾸기, 범위가 그대로인 경계 옮기기·골라 만들기)은 아무것도 쓰지 않는다 — 확인도
     묻지 않고 revision·기록·다시 하기 기록도 그대로다.
     """
+    if isinstance(op, SwitchLanguageOp) and document.side != "old":
+        raise_rule(422, "invalid_side", document_id=document.id)
     extraction_id = await get_latest_extraction_id(session, document.id)
     change = await _plan(session, document.id, extraction_id, op)
     if isinstance(op, SetRefOp | ClearRefOp):
@@ -2087,6 +2232,8 @@ async def apply_edit(
     )
     _record(session, document, "unit.edit", op.type, result, change, actor)
     await session.flush()
+    if isinstance(op, SwitchLanguageOp):
+        result.shape = "split_pair" if op.piece is not None else "merged" if op.merge_pair else "unpaired"
     return result
 
 

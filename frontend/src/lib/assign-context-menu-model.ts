@@ -8,7 +8,7 @@ import { getPairMergeReason, hasBothScripts, planJoin, type JoinPlan } from "./s
 
 export type AssignMenuAction =
   | "delete" | "move" | "clear"
-  | "split" | "merge_prev" | "merge_next" | "pair_prev" | "pair_next" | "pair_pick" | "unpair" | "lang"
+  | "split" | "merge_prev" | "merge_next" | "pair_prev" | "pair_next" | "pair_pick" | "unpair" | "lang" | "piece_lang"
   | "ref_mark" | "ref_clear"
   | "table_layout"
   | "caption_attach_prev" | "caption_attach_next" | "caption_detach"
@@ -25,6 +25,8 @@ export interface AssignMenuItem {
   labelKey?: string;
   /** 언어 줄에서 그 언어 칸만 꺼진 까닭 - 캡션은 묶음마다 언어당 하나라 다른 캡션이 가진 언어, 캡션은 참조 줄이 될 수 없다 */
   langReasons?: Partial<Record<"ko" | "en" | "ref", string>>;
+  /** 조각 언어 줄(piece_lang) - 합친 박스의 조각 순번(원문 순, 서버 switch_language piece)과 그 글 */
+  piece?: { index: number; text: string };
 }
 
 export interface AssignMenuGroups {
@@ -60,6 +62,20 @@ export interface AssignMenuContext {
   isFixedCaption?: (unit: ViewUnit) => boolean;
   /** 캡션 대상의 묶음 - 다른 언어 캡션이 있는지 본다 */
   captionBundle?: ViewUnit | null;
+  /** 대상이 든 짝의 구성원(대상 포함) - 짝이 아니면 빈 목록. 언어를 바꿔 짝이 한 언어가 되는지 본다(B6) */
+  pairMembers?: readonly ViewUnit[];
+}
+
+/**
+ * 언어 바꾸기가 모양을 바꾸는가(B6, 사용자 결정 2026-11-20 3-a · 3-c) - 짝 구성원의 언어를 바꿔 짝이 한 언어가 되면 서버 편집 switch_language로:
+ * 구성원이 용지에서 끊김 없이 이웃이고 합칠 수 있으면 합치기(mergePair), 아니면 짝만 푼다. 그 밖은 보통 언어 바꾸기(set_language).
+ * order는 용지의 단위 순서(paper-model buildPaperTabs order).
+ */
+export type LanguageChange = { kind: "plain" } | { kind: "switch"; mergePair: boolean };
+export function planLanguageChange(target: ViewUnit, lang: "ko" | "en", members: readonly ViewUnit[], order: readonly number[]): LanguageChange {
+  const others = members.filter((unit) => unit.id !== target.id);
+  if (target.lang === lang || others.length === 0 || others.some((unit) => unit.lang !== lang)) return { kind: "plain" };
+  return { kind: "switch", mergePair: getPairMergeReason([...members], order) === null };
 }
 
 const EDITABLE_KINDS = new Set(["sentence", "heading", "cell_sentence", "caption"]);
@@ -184,6 +200,34 @@ function buildBundleCaptionItems(ctx: AssignMenuContext): AssignMenuItem[] {
   });
 }
 
+/**
+ * 배정된 짝 구성원의 언어 줄 - 짝을 한 언어로 만드는 칸은 배정을 풀며 바로 바꾼다(3-c, 모양 전환), 다른 칸은 지금처럼 배정 때문에 꺼진다.
+ * 그 칸이 없으면(짝이 아니거나 두 언어가 남는다) 줄째 꺼진 그대로다.
+ */
+function buildShapeLangReasons(ctx: AssignMenuContext, editReason: string | null): Partial<AssignMenuItem> {
+  if (editReason !== why("assigned")) return {};
+  const shaping = (["ko", "en"] as const).filter((lang) => planLanguageChange(ctx.target, lang, ctx.pairMembers ?? [], []).kind === "switch");
+  if (shaping.length === 0) return {};
+  const langReasons: AssignMenuItem["langReasons"] = {};
+  for (const lang of ["ko", "en"] as const) if (!shaping.includes(lang)) langReasons[lang] = editReason;
+  return { enabled: true, reasonKey: undefined, langReasons };
+}
+
+/**
+ * 합친 박스의 조각마다 언어(B6) - 맨 앞 · 맨 뒤 조각만 다른 언어로 떼어 남은 쪽과 짝을 맺는다(가운데 조각은 앞뒤가 떨어져 꺼진다, 내 판단).
+ * 배정이 있어도 막지 않는다(3-c - 모양 전환은 배정을 풀며 바로 한다). 합쳐 생긴 박스(can_unmerge)에서만 조각이 둘 이상이면 뜬다.
+ */
+function buildPieceItems(ctx: AssignMenuContext, retireReason: string | null): AssignMenuItem[] {
+  const pieces = ctx.target.can_unmerge ? (ctx.target.merge_pieces ?? []) : [];
+  if (pieces.length < 2 || (ctx.target.lang !== "ko" && ctx.target.lang !== "en")) return [];
+  const last = pieces.length - 1;
+  return pieces.map((text, index) => ({
+    ...build("piece_lang", retireReason ?? (index > 0 && index < last ? why("middlePiece") : null)),
+    lang: ctx.target.lang,
+    piece: { index, text },
+  }));
+}
+
 export function buildAssignMenu(ctx: AssignMenuContext): AssignMenuGroups {
   const clearReason = ctx.readOnly ? why("readOnly") : ctx.rowStatus === "unassigned" && !ctx.isDecided(ctx.target) ? why("notAssigned") : null;
   // 이동·삭제는 줄 전체의 판단이라 문장 모양과 상관없이 늘 뜬다(배정 취소 뒤, 삭제가 맨 끝) - 저장을 막는 까닭(캡션·참조 확인 등)은 확정 길이 알린다
@@ -193,7 +237,7 @@ export function buildAssignMenu(ctx: AssignMenuContext): AssignMenuGroups {
   const editReason = getEditBlocker(ctx, ctx.target);
   const retireReason = getRetireBlocker(ctx, ctx.target);
   const splitItem = build("split", retireReason ?? (ctx.canSplit ? null : why("nothingToSplit")));
-  const langItem = { ...build("lang", editReason ?? (ctx.target.lang === "ref" ? why("refLang") : null)), lang: ctx.target.lang };
+  const langItem = { ...build("lang", editReason ?? (ctx.target.lang === "ref" ? why("refLang") : null)), lang: ctx.target.lang, ...buildShapeLangReasons(ctx, editReason) };
   // 묶음(표·그림)에는 문장 항목이 뜻이 없어 묶음 항목만 둔다
   if (BUNDLE_KINDS.has(ctx.target.kind)) return { assign, edit: [...buildTableItems(ctx), ...buildBundleCaptionItems(ctx)] };
   // 캡션은 나누기·언어(한/영 한 줄 캡션을 나눠 언어를 따로)와 떼기만 - 떼기는 묶음을 바꾸니 배정이 있으면 서버가 묻는다
@@ -224,6 +268,7 @@ export function buildAssignMenu(ctx: AssignMenuContext): AssignMenuGroups {
       ...(ctx.target.pair_id !== null ? [build("unpair", editReason)] : []),
       // 참조 줄은 언어가 없다 - 언어를 주려면 먼저 "참조 아님"으로 돌린다
       langItem,
+      ...buildPieceItems(ctx, retireReason),
       buildRefItem(ctx, editReason),
       ...buildHeadingItems(ctx, retireReason),
       ...buildTableItems(ctx),

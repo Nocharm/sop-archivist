@@ -31,6 +31,8 @@ OUTLINE_ORIGINS: tuple[OutlineOrigin, ...] = get_args(OutlineOrigin)
 SEMANTIC_CHECK_KEYS = ("numbers", "conditions", "tables", "figures")
 SYSTEM_HOLD_RELATED_CHANGED = "system:related_unit_changed"  # 화면은 "관련 단위가 바뀜"으로 보인다
 MAX_PAIR_SIDE = 3  # 한/영 짝 한쪽 최대 단위 수(작은 다대다)
+PAIR_CONFIRMED = "confirmed"  # unit_pairs.status — 사람이 맺거나 확인한 짝(제안은 units.PAIR_SUGGESTED)
+PAIR_SOURCE_HUMAN = "human"  # unit_pairs.source — 사람이 맺은 짝
 # 새 문장 들여쓰기 최대 깊이 — 9면 칸 번호 아래로 열 단계(6.1.1 … 6.1.1.1.1.1.1.1.1.1)까지. 순서 바꾸기 입력의 상한이다
 MAX_INDENT_LEVEL = 9
 # 글머리 기호 줄의 깊이는 0~2 세 단계(• ○ ▪)다. 저장 상한(MAX_INDENT_LEVEL)과 따로 읽을 때 눌러 읽는다 — 번호 줄과 따로 세어

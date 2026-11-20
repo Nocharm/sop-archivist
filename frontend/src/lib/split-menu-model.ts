@@ -101,3 +101,14 @@ export function planPairLanguages(units: ViewUnit[]): LanguageChange[] | null {
   ];
   return changes.filter((change) => change.unitIds.length > 0);
 }
+
+/**
+ * 합친 한 문장 → 한/영 짝을 서버 편집 하나(switch_language piece, B6)로 할 수 있으면 그 조각 - Undo 한 번에 돌아간다.
+ * planPairLanguages와 같은 기준(라틴 글자 비율이 가장 높은 조각이 EN, 나머지 KO)에서 EN 조각이 맨 앞이나 맨 뒤이고 합친 문장이 KO일 때만(남은 쪽은 합친 문장의 언어를 따른다).
+ * 아니면 null - 풀기 · 언어 · 짝 맺기를 따로 한다.
+ */
+export function pickPairPiece(pieces: readonly string[], mergedLang: ViewUnit["lang"]): { piece: number; lang: "en" } | null {
+  if (pieces.length < 2 || mergedLang !== "ko") return null;
+  const enId = pickEnglishSide(pieces.map((text, id) => ({ id, text })));
+  return enId === 0 || enId === pieces.length - 1 ? { piece: enId, lang: "en" } : null;
+}

@@ -429,6 +429,8 @@ export interface ViewUnit {
   is_edited: boolean;
   /** 합치기로 생겨 그 뒤 바뀌지 않은 단위 - 합치기 전 단위들로 되돌릴 수 있다(편집 unmerge) */
   can_unmerge: boolean;
+  /** can_unmerge인 단위의 조각(합치기 전 단위) 글 - 원문 순(switch_language piece 순번), 아니면 빈 목록 */
+  merge_pieces?: string[];
   /** 사람이 아직 정하지 않은 AI 나누기 제안 */
   split_suggestion_id: number | null;
   /** 참조 줄 제안·확정 - 참조가 아니면 null */
@@ -507,6 +509,8 @@ export type EditOp =
   | { type: "move_boundary"; left_unit_id: number; right_unit_id: number; at: number }
   | { type: "carve"; block_id: number; start: number; end: number }
   | { type: "set_language"; unit_ids: number[]; lang: "ko" | "en" }
+  /** 언어를 바꿔 모양이 바뀌는 편집(B6) - 짝이 한 언어가 되면 합치거나(merge_pair) 짝만 풀고, piece면 합친 박스의 그 조각을 떼어 짝으로. 배정은 묻지 않고 푼다 */
+  | { type: "switch_language"; unit_id: number; lang: "ko" | "en"; piece?: number; merge_pair?: boolean }
   | { type: "set_layout_table"; table_id: number; is_layout: boolean }
   /** 블록 자리 2 안(caption-slot-model CAPTION_REACH)의 묶이지 않은 글 단위를 표·그림의 캡션으로 - 사이 문단은 그대로,
    *  묶음마다 언어당 하나(caption_exists), 먼 글은 caption_not_adjacent, 다른 그림의 캡션을 같이 쓰는 그림은 caption_shared. 판단이 있는 묶음이면 서버가 묻는다 */
@@ -539,6 +543,10 @@ export interface EditResult {
   document_revision: number;
   created_unit_ids: number[];
   retired_unit_ids: number[];
+  /** 떼어 낸 배정 - 판단을 미배정으로 되돌린 단위(옛 문서). 없으면 null */
+  detach?: { reset_unit_ids: number[] } | null;
+  /** switch_language가 바꾼 모양 - 다른 편집은 null */
+  shape?: "merged" | "unpaired" | "split_pair" | null;
 }
 
 /** 되돌리기·다시 하기 응답 - 무엇을 거꾸로(다시) 했는지. 경계 확인 기록이면 바뀐 단위와 바뀐 뒤 값 */

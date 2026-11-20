@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { ViewUnit } from "./api-sop";
-import { getPairMergeReason, hasBothScripts, pickEnglishSide, planJoin, planPairLanguages } from "./split-menu-model";
+import { getPairMergeReason, hasBothScripts, pickEnglishSide, planJoin, planPairLanguages, pickPairPiece } from "./split-menu-model";
 
 function makeUnit(id: number, over: Partial<ViewUnit> = {}): ViewUnit {
   return {
@@ -81,4 +81,17 @@ describe("planPairLanguages (languages to fix before pairing what an unmerge res
 it("hasBothScripts", () => {
   expect(hasBothScripts("로터 rotor")).toBe(true);
   expect(hasBothScripts("rotor 70%")).toBe(false);
+});
+
+
+describe("pickPairPiece - one sentence back to a KO/EN pair in one edit (B6)", () => {
+  it("takes the English end piece of a Korean merged sentence", () => {
+    expect(pickPairPiece(["합성 장비를 켠다.", "Turn on the unit."], "ko")).toEqual({ piece: 1, lang: "en" });
+    expect(pickPairPiece(["Turn on the unit.", "합성 장비를 켠다.", "합성 시료를 넣는다."], "ko")).toEqual({ piece: 0, lang: "en" });
+  });
+  it("is null for an English middle piece, an English merged sentence, or a single piece", () => {
+    expect(pickPairPiece(["합성 장비를 켠다.", "Turn on the unit.", "합성 시료를 넣는다."], "ko")).toBeNull();
+    expect(pickPairPiece(["합성 장비를 켠다.", "Turn on the unit."], "en")).toBeNull();
+    expect(pickPairPiece(["Turn on the unit."], "ko")).toBeNull();
+  });
 });

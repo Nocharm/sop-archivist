@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.clock import now
 from app.sop.ai.adoption import adopt_suggestions, reject_suggestions
-from app.sop.constants import MAX_PAIR_SIDE
+from app.sop.constants import MAX_PAIR_SIDE, PAIR_CONFIRMED, PAIR_SOURCE_HUMAN
 from app.sop.decision_steps import UndoMetaIn
 from app.sop.decisions import DbId
 from app.sop.detach import sweep_translations
@@ -20,8 +20,6 @@ from app.sop.models import Document, TargetSource, Unit, UnitPair, UnitPairMembe
 from app.sop.pair_settle import has_diverging_fates, load_decided_fates, settle_pairs
 from app.sop.units import PAIR_SUGGESTED, get_latest_extraction_id
 
-PAIR_CONFIRMED = "confirmed"
-PAIR_SOURCE_HUMAN = "human"
 PAIR_SOURCE_AI = "ai"
 
 

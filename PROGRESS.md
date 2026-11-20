@@ -2,6 +2,13 @@
 
 프로젝트 진행 현황 로그. 커밋 직전 갱신한다 (`rules/common/git.md` 규칙). v1.4.0(2026-11-20 정식 업데이트)까지의 항목은 [`docs/history/PROGRESS-archive.md`](docs/history/PROGRESS-archive.md)에 있다 — 정식 업데이트마다 그 릴리스까지의 항목을 거기로 옮긴다(`rules/common/git.md` "정식 업데이트 때 문서 정리").
 
+## 2026-11-21 — B6-3 언어 바꾸기 → 모양 전환 (`feat/lang-shape-switch`)
+
+- 새 편집 `switch_language {unit_id, lang, piece?, merge_pair?}`(옛 문서만): 짝을 한 언어로 → `merge_pair`면 `_plan_merge`로 합치고 아니면 언어만(짝은 `_leave_pairs`가 지움), `piece`면 그 합치기가 은퇴시킨 조각을 되살려 언어를 바꾸고 남은 조각은 하나면 되살리고 둘 이상이면 새로 합쳐 짝(`_Change.pair_units` · `pair_drafts` → `_create_human_pair`). 이웃 판단은 합치기 이웃 검사처럼 화면이 용지 순서로(`planLanguageChange`). 3-c는 `_Change.release`(확인 없이 settled, 제자리 단위는 `detach_units(cleared)`) — 보통 언어 바꾸기의 409는 그대로.
+- 짝을 합친 박스도 조각이 남게 `is_merge_edit`가 `switch_language`의 합침(만든 1 · 은퇴 2+)을 합치기로 본다 — 끝 조각을 되돌리면 다시 짝(사용자 원문 "반대의 경우에도 짝으로"). 문서 보기 `merge_pieces`(조각 글, 원문 순 = piece 순번). 되돌리기는 B6-2 스냅숏이 짝 · 배정을 되쓴다.
+- 내 판단: 남은 조각은 합친 박스의 언어를 따른다(조각마다 따로 정하지 않음). "One sentence → KO/EN pair"는 `pickPairPiece`(planPairLanguages 기준의 EN 조각이 끝이고 합친 문장이 KO)일 때만 이 편집 하나, 아니면 옛 세 걸음. 풀린 배정 수는 `detach.reset_unit_ids`.
+- 응답 `shape`는 값이 있을 때만 싣는다(`model_serializer`) — 다른 편집 응답은 전과 같은 꼴. 스모크: 보통 언어 바꾸기 · 배정 문장 언어 잠김을 보던 두 단계는 대상을 짝 없는 문장으로(짝 구성원은 이제 모양 전환), "One sentence → KO/EN pair" 단계는 확인 창 없이(3-c), 새 단계(이웃 짝 합침 → 끝 조각 → 짝, 떨어진 짝 풂, Ctrl+Z). 떨어진 짝은 시드에 없어 짝 없는 문장끼리 API로 맺고 끝에 푼다. 검증: backend 3,150 · vitest 1,853, Assign 스모크 1,045, 대비 · 겹침 감사(극단 자료 배치 감사는 폴리싱 때 — 메모리 결정).
+
 ## 2026-11-21 — B6-2 짝 맺기 · 풀기와 편집이 푼 판단을 되돌리기 줄에 (`feat/pair-undo`)
 
 - 짝 라우트(만들기 · 확정 · 풀기)에 `undo` 메타 → 판단 단계와 같은 스냅숏 단계(`record_snapshot_step`, op `pair` · `confirm_pair` · `unpair`). 스냅숏 엔진이 이미 짝 · 멤버 · 번역 쓸기 · AI 채택을 찍어 새 되쓰기 코드는 없다. DELETE는 JSON 본문(`PairUndoIn`)을 받는다.

@@ -24,9 +24,9 @@ import { DROP_LINE_HALF_PX, type DropLineAt } from "@/lib/drop-line";
 import { useBoxDrag } from "@/lib/use-box-drag";
 import { findLastStep } from "@/lib/destination-manage-model";
 import { findSplitBlock, readSplitOffsets } from "@/lib/split-ai-tabs-model";
-import { planPairLanguages, type JoinKind, type JoinPlan } from "@/lib/split-menu-model";
+import { pickPairPiece, planPairLanguages, type JoinKind, type JoinPlan } from "@/lib/split-menu-model";
 import { listAppliedSuggestions, requestAi, setSuggestionAdoption, type AiKind, type AiScope } from "@/lib/api-manage";
-import { addToBeDoc, addWiStep, acceptSuggestions, MAX_ACCEPT, bulkDecide, confirmPair, createPair, deletePair, editUnits, clearDecisions, confirmMatchesInBulk, getComposedDoc, getDocumentView, getGroupByTarget, getUnitRef, getGroupByUnit, getToBe, listDocuments, listIdenticalCandidates, listNewCandidates, listSuggestions, listWrittenSentences, redoDecision, removeToBeDoc, removeWiStep, saveGroup, undoDecision, updateCaptionRef, type AcceptKind, type AiSuggestion, type ComposedDoc, type ComposedItem, type DecisionStepResult, type DocumentView, type EditOp, type Group, type GroupSaveInput, type NewCandidate, type ToBe, type UndoMeta, type UnitRefDetail, type UnitRow, type ViewUnit, type WrittenSentence } from "@/lib/api-sop";
+import { addToBeDoc, addWiStep, acceptSuggestions, MAX_ACCEPT, bulkDecide, confirmPair, createPair, deletePair, editUnits, clearDecisions, confirmMatchesInBulk, getComposedDoc, getDocumentView, getGroupByTarget, getUnitRef, getGroupByUnit, getToBe, listDocuments, listIdenticalCandidates, listNewCandidates, listSuggestions, listWrittenSentences, redoDecision, removeToBeDoc, removeWiStep, saveGroup, undoDecision, updateCaptionRef, type AcceptKind, type AiSuggestion, type ComposedDoc, type ComposedItem, type DecisionStepResult, type DocumentView, type EditOp, type EditResult, type Group, type GroupSaveInput, type NewCandidate, type ToBe, type UndoMeta, type UnitRefDetail, type UnitRow, type ViewUnit, type WrittenSentence } from "@/lib/api-sop";
 import { listRefCandidates } from "@/lib/caption-ref-model";
 import { isBundleKind, isCaptionGate, listCaptionPendingRowKeys, makeIsLinkedToWritten, type CaptionUnit } from "@/lib/caption-model";
 import { buildBlockPlaces, getCaptionMotion, resolveCaptionDetach, resolveCaptionDrop, type CaptionDetach, type CaptionDrop } from "@/lib/caption-slot-model";
@@ -36,7 +36,7 @@ import { applySavedTargets, buildComposedRows, isWrittenRow, listHeadingNotes, l
 import { addPartnerTargets, buildLinkPairs, buildRecommendations, listUnsourced, mergeGroups, readConfirmBlockKey, stepZoom, type Recommendation } from "@/lib/assign-model";
 import { countLiveOffer, splitAcceptIds } from "@/lib/ai-accept-model";
 import { buildUseDraft, findRowSuggestion, indexLiveSuggestions, readSuggestedDestination, readSuggestionPlace } from "@/lib/ai-suggestion-model";
-import { buildAssignMenu, getPairPickBlocker, getPairSetBlocker, planAssignJoin, planShapeMode, type AssignMenuAction, type AssignMenuGroups } from "@/lib/assign-context-menu-model";
+import { buildAssignMenu, getPairPickBlocker, getPairSetBlocker, planAssignJoin, planLanguageChange, planShapeMode, type AssignMenuAction, type AssignMenuGroups } from "@/lib/assign-context-menu-model";
 import { listHeadingBackUnits } from "@/lib/heading-shift-model";
 import { countDecidedLines, getTableNumber, getUnitUnwrapTable, listUnwrapScopes } from "@/lib/unwrap-model";
 import { isOnScreen } from "@/lib/unwrap-motion";
@@ -121,7 +121,7 @@ export const PAIR_RESTORE_STOPS = ["wheel", "pointerdown", "keydown", "touchstar
 
 /** 배정이 걸려 서버가 되물은 편집 - 확인하면 같은 일을 confirm을 켜고 다시 보낸다 */
 export type ConfirmedEdit =
-  | { kind: "edit"; op: EditOp; okText: string; followId: number | null }
+  | { kind: "edit"; op: EditOp; okText: EditToast; followId: number | null }
   | { kind: "to_pair"; unit: ViewUnit }
   | { kind: "ai_split"; unit: ViewUnit; suggestion: AiSuggestion };
 
@@ -263,6 +263,9 @@ interface DecidePick {
   destination: Extract<Destination, { kind: "delete" | "move" }>;
   moveCode: string;
 }
+
+/** 편집 알림 - 글 그대로, 또는 응답으로 짓는 글(모양 전환 - 그때는 알림에 되돌리기가 붙는다) */
+type EditToast = string | ((result: EditResult) => string);
 
 export function useAssignPage() {
 
@@ -1237,7 +1240,13 @@ export function useAssignPage() {
       hasDraft: hasUnitDraft,
       canSplit: findNearestCut(target, Math.floor(target.text.length / 2)) !== null,
       table: findTableOf(target),
+      pairMembers: listPairMembers(target),
     });
+  }
+  /** 그 단위가 든 짝의 구성원(그 단위 포함) - 짝이 아니면 빈 목록 */
+  function listPairMembers(target: ViewUnit): ViewUnit[] {
+    if (target.pair_id === null || !shapeModel) return [];
+    return [...shapeModel.units.values()].filter((unit) => unit.pair_id === target.pair_id);
   }
   const ctxMenuGroups = ctxTarget ? buildUnitMenu(ctxTarget) : null;
   // New 문서의 문장에는 보낼 곳이 없다 - 고치기 묶음만
@@ -1364,7 +1373,7 @@ export function useAssignPage() {
 
   /** 편집 한 번 - 끝나면 원문 보기·단위를 다시 받고 followId(없으면 새로 생긴 첫 단위)의 줄을 고른다. confirm은 확인 창에서 다시 보낼 때만 켠다 */
   /** thenLang - 참조 줄을 푼 뒤 그 문장을 이 언어로(Shape 언어 세 칸에서 참조 줄의 KO·EN). place - 알약 자리(없으면 편집이 가리키는 곳, 틈의 붙이기는 그 틈) */
-  async function runUnitEdit(op: EditOp, okText: string, followId: number | null, confirm = false, thenLang: "ko" | "en" | null = null, place: PendingPlace | null = null) {
+  async function runUnitEdit(op: EditOp, okText: EditToast, followId: number | null, confirm = false, thenLang: "ko" | "en" | null = null, place: PendingPlace | null = null) {
     if (!shapeView) return;
     const view = shapeView;
     const docId = view.document.id;
@@ -1377,7 +1386,7 @@ export function useAssignPage() {
   }
 
   /** runUnitEdit의 보내기 - 같은 문서의 앞 쓰기 응답 뒤에 불린다(보낼 revision은 그때 고른다) */
-  async function sendUnitEdit(job: string, view: DocumentView, op: EditOp, okText: string, followId: number | null, confirm: boolean, thenLang: "ko" | "en" | null, plan: ReloadPlan) {
+  async function sendUnitEdit(job: string, view: DocumentView, op: EditOp, okText: EditToast, followId: number | null, confirm: boolean, thenLang: "ko" | "en" | null, plan: ReloadPlan) {
     const docId = view.document.id;
     const isOld = oldDocIds.includes(docId);
     let isAsking = false;
@@ -1428,7 +1437,13 @@ export function useAssignPage() {
         isReloaded = true;
         reloadAfterEdit(plan, ready);
       }
-      showToast(okText);
+      if (typeof okText === "string") showToast(okText);
+      else {
+        // 모양 전환(3-c)은 묻지 않고 했으니 알림이 되돌리기를 준다 - Ctrl+Z와 같은 길, 그 뒤 다른 단계가 없을 때만
+        const tick = stepTick.current;
+        const action = { label: t("common.undo"), run: () => (stepTick.current === tick ? void undoStepRef.current("undo") : showToast(t("assign.pairDrag.undoStale"), "info")) };
+        showToast(okText(result), "ok", revision !== sentRevision ? { action } : undefined);
+      }
     } catch (err) {
       // 판단이 걸린 단위를 바꾸는 편집은 한 번 묻는다 - 확인하면 배정을 풀며 다시 보낸다
       const count = readConfirmCount(err);
@@ -1543,6 +1558,12 @@ export function useAssignPage() {
   async function switchToPair(unit: ViewUnit, confirm = false) {
     if (!shapeView) return;
     const view = shapeView;
+    // 끝 조각 하나가 영어인 한국어 문장이면 서버 편집 하나(B6) - Undo 한 번에 합친 문장, 배정은 묻지 않고 푼다(3-c)
+    const piece = oldDocIds.includes(view.document.id) ? pickPairPiece(unit.merge_pieces ?? [], unit.lang) : null;
+    if (piece !== null) {
+      runShapeSwitch({ type: "switch_language", unit_id: unit.id, lang: piece.lang, piece: piece.piece }, unit.id);
+      return;
+    }
     await focusCtl.runPending({ kind: "pair", docId: view.document.id, unitIds: [unit.id], place: { at: "box", unitId: unit.id }, isGlobal: false }, (job) => sendSwitchToPair(job, view, unit, confirm));
   }
 
@@ -1676,15 +1697,36 @@ export function useAssignPage() {
     if (cutLine.placeAtCaret(unit, caret)) setCutUnitId(unit.id);
   }
 
-  function runCtx(action: AssignMenuAction, lang?: "ko" | "en") {
+  function runCtx(action: AssignMenuAction, lang?: "ko" | "en", piece?: number) {
     const target = ctxTarget;
     const caret = ctxMenu?.caret ?? null;
     setCtxMenu(null);
-    if (target) runUnitAction(target, action, lang, caret);
+    if (target) runUnitAction(target, action, lang, caret, piece);
+  }
+
+  /**
+   * 언어 바꾸기(B6) - 짝을 한 언어로 만들면 모양 전환(switch_language: 이웃이면 합침, 떨어졌으면 짝만 풂), 아니면 보통 언어 바꾸기.
+   * 모양 전환은 Old 문서에서만 - New 문서를 다듬는 중이면 보통 언어 바꾸기(서버가 짝에서 빼 준다)
+   */
+  function changeLanguage(target: ViewUnit, lang: "ko" | "en") {
+    const isOld = shapeView !== null && oldDocIds.includes(shapeView.document.id);
+    const plan = isOld && shapeTabs ? planLanguageChange(target, lang, listPairMembers(target), shapeTabs.order) : { kind: "plain" as const };
+    if (plan.kind === "plain") void runUnitEdit({ type: "set_language", unit_ids: [target.id], lang }, t("common.saved"), target.id);
+    else runShapeSwitch({ type: "switch_language", unit_id: target.id, lang, merge_pair: plan.mergePair }, target.id);
+  }
+
+  /** 모양 전환 편집 - 묻지 않고 바로(confirm, 3-c) 하고, 무엇이 됐는지와 풀린 배정 수를 알림에 */
+  function runShapeSwitch(op: Extract<EditOp, { type: "switch_language" }>, followId: number) {
+    const describe = (result: EditResult) => {
+      const key = result.shape === "merged" ? "assign.shape.merged" : result.shape === "unpaired" ? "assign.shape.unpaired" : "assign.shape.splitPair";
+      const released = result.detach?.reset_unit_ids.length ?? 0;
+      return `${t(key)}${released > 0 ? t("assign.shape.released", { n: released }) : ""}`;
+    };
+    void runUnitEdit(op, describe, op.merge_pair ? null : followId, true);
   }
 
   /** 문장 하나에 대한 동작 - 우클릭 메뉴와 오른쪽 칸의 다듬기 줄이 함께 쓴다. caret은 누른 글자 자리(자를 선을 그 가까이에 놓는다) */
-  function runUnitAction(target: ViewUnit, action: AssignMenuAction, lang?: "ko" | "en", caret: { blockId: number; offset: number } | null = null) {
+  function runUnitAction(target: ViewUnit, action: AssignMenuAction, lang?: "ko" | "en", caret: { blockId: number; offset: number } | null = null, piece?: number) {
     const table = findTableOf(target);
     if (action === "clear") void runClear();
     else if (action === "delete") decideNow({ kind: "delete" });
@@ -1735,7 +1777,8 @@ export function useAssignPage() {
       if (text && holder) void runUnitEdit({ type: "attach_caption", unit_id: text.id, bundle_unit_id: holder.id }, t("assign.ctx.didAttachCaption"), holder.id);
     } else if (action === "caption_detach" && target.group_unit_id !== null) void runUnitEdit({ type: "detach_caption", unit_id: target.id }, t("assign.ctx.didDetachCaption"), target.group_unit_id);
     else if (action === "lang" && lang && target.lang === "ref") void runUnitEdit({ type: "clear_ref", unit_id: target.id }, t("common.saved"), target.id, false, lang);
-    else if (action === "lang" && lang) void runUnitEdit({ type: "set_language", unit_ids: [target.id], lang }, t("common.saved"), target.id);
+    else if (action === "lang" && lang) changeLanguage(target, lang);
+    else if (action === "piece_lang" && lang && piece !== undefined) runShapeSwitch({ type: "switch_language", unit_id: target.id, lang, piece }, target.id);
     else if (action === "to_sentence") void runUnitEdit({ type: "set_heading", unit_ids: [target.id], heading: false }, t("assign.headingShift.didSentence"), null);
     else if (action === "to_heading") revertHeadings([target.id]);
   }

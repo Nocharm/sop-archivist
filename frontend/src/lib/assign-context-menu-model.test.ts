@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { ViewUnit } from "./api-sop";
-import { buildAssignMenu, getPairPickBlocker, getPairSetBlocker, listShapeLineItems, planAssignJoin, planShapeMode, type AssignMenuAction, type AssignMenuContext } from "./assign-context-menu-model";
+import { buildAssignMenu, getPairPickBlocker, getPairSetBlocker, listShapeLineItems, planAssignJoin, planLanguageChange, planShapeMode, type AssignMenuAction, type AssignMenuContext } from "./assign-context-menu-model";
 import { findNearestCut } from "./paper-model";
 
 function makeUnit(id: number, over: Partial<ViewUnit> = {}): ViewUnit {
@@ -474,5 +474,53 @@ describe("contents (TOC) lines", () => {
     const actions = listShapeLineItems(toc, buildAssignMenu(ctx({ target: toc })).edit, false).map((item) => item.action);
 
     expect(actions.some((action) => action === "split" || action.startsWith("merge_"))).toBe(false);
+  });
+});
+
+
+describe("planLanguageChange - a language change that changes the shape (B6)", () => {
+  const ko = makeUnit(1, { lang: "ko", pair_id: 9 });
+  const en = makeUnit(2, { lang: "en", pair_id: 9 });
+  const en2 = makeUnit(3, { lang: "en", pair_id: 9 });
+
+  it("merges a neighbour pair made one language, and only separates a far one", () => {
+    expect(planLanguageChange(en, "ko", [ko, en], [1, 2])).toEqual({ kind: "switch", mergePair: true });
+    expect(planLanguageChange(en, "ko", [ko, en], [1, 5, 2])).toEqual({ kind: "switch", mergePair: false });
+  });
+  it("does not merge a neighbour pair the merge rule blocks (a contents line)", () => {
+    expect(planLanguageChange(en, "ko", [ko, { ...en, noise_kind: "toc" }], [1, 2])).toEqual({ kind: "switch", mergePair: false });
+  });
+  it("is a plain change when the pair keeps both languages, the unit has no pair, or the language is the same", () => {
+    expect(planLanguageChange(en, "ko", [ko, en, en2], [1, 2, 3])).toEqual({ kind: "plain" });
+    expect(planLanguageChange(makeUnit(4, { lang: "en" }), "ko", [], [4])).toEqual({ kind: "plain" });
+    expect(planLanguageChange(ko, "ko", [ko, en], [1, 2])).toEqual({ kind: "plain" });
+  });
+});
+
+describe("buildAssignMenu - language of an assigned pair member and each piece of a merged box (B6)", () => {
+  const ko = makeUnit(1, { lang: "ko", pair_id: 9 });
+  const en = makeUnit(2, { lang: "en", pair_id: 9 });
+  const langOf = (menu: ReturnType<typeof buildAssignMenu>) => menu.edit.find((item) => item.action === "lang");
+  const piecesOf = (menu: ReturnType<typeof buildAssignMenu>) => menu.edit.filter((item) => item.action === "piece_lang");
+
+  it("keeps the shaping language open on an assigned pair member and the other one off", () => {
+    const item = langOf(buildAssignMenu(ctx({ target: en, pairMembers: [ko, en], isDecided: () => true })));
+    expect(item?.enabled).toBe(true);
+    expect(item?.langReasons).toEqual({ en: "assign.ctx.why.assigned" });
+  });
+  it("keeps the whole row off on an assigned unit with no pair", () => {
+    const item = langOf(buildAssignMenu(ctx({ target: makeUnit(2, { lang: "en" }), isDecided: () => true })));
+    expect([item?.enabled, item?.reasonKey]).toEqual([false, "assign.ctx.why.assigned"]);
+  });
+  it("lists every piece of a merged box, the middle one off", () => {
+    const merged = makeUnit(2, { lang: "ko", can_unmerge: true, merge_pieces: ["first", "middle", "last"] });
+    const items = piecesOf(buildAssignMenu(ctx({ target: merged, isDecided: () => true })));
+    expect(items.map((item) => [item.piece?.index, item.piece?.text, item.enabled, item.reasonKey ?? null, item.lang])).toEqual([
+      [0, "first", true, null, "ko"], [1, "middle", false, "assign.ctx.why.middlePiece", "ko"], [2, "last", true, null, "ko"],
+    ]);
+  });
+  it("has no piece rows for a box that was not merged, or whose pieces are gone", () => {
+    expect(piecesOf(buildAssignMenu(ctx({ target: makeUnit(2, { merge_pieces: ["a", "b"] }) })))).toEqual([]);
+    expect(piecesOf(buildAssignMenu(ctx({ target: makeUnit(2, { can_unmerge: true, merge_pieces: [] }) })))).toEqual([]);
   });
 });

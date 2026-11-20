@@ -694,7 +694,8 @@ await runStep("assign: right-click an Old sentence to split it or change its lan
   const rows = (await getJson("/units?limit=1000")).items;
   const docId = rows[0].document_id;
   const viewUnits = async () => (await getJson(`/documents/${docId}/view`)).units;
-  const target = (await viewUnits()).find((unit) => unit.kind === "sentence" && unit.text.length > 20 && rows.find((row) => row.unit_id === unit.id)?.status === "unassigned");
+  // 짝 없는 문장 - 짝을 한 언어로 만드는 언어 바꾸기는 모양 전환이다(B6-3, 아래 단계는 보통 언어 바꾸기를 본다)
+  const target = (await viewUnits()).find((unit) => unit.kind === "sentence" && unit.pair_id === null && unit.text.length > 20 && rows.find((row) => row.unit_id === unit.id)?.status === "unassigned");
   const openMenu = async (unitId) => {
     const el = page.locator(`[data-testid="assign-paper-unit-${unitId}"]`).first();
     await el.evaluate((node) => node.scrollIntoView({ block: "center" }));
@@ -3492,11 +3493,11 @@ await runStep("assign: switch a KO/EN pair to one sentence and back", { allowCon
   await pieceOf(assigned.find((unit) => unit.can_unmerge && unit.status === "confirmed" && members.every((item) => unit.text.includes(item.text.trim()))).id).click();
   await page.waitForFunction(() => document.querySelector('[data-testid="assign-shape-mode-one"]')?.getAttribute("aria-pressed") === "true", null, { timeout: T });
   check("KO/EN pair stays offered on an assigned sentence", (await toPair.getAttribute("aria-disabled")) === null);
+  // 끝 조각이 영어인 한국어 문장은 편집 하나(switch_language)로 바로 짝이 되고 배정을 푼다 - 묻지 않는다(B6-3, 3-c)
   await toPair.click();
-  await wait(page, "assign-edit-confirm");
-  await page.locator('[data-testid="assign-edit-confirm-confirm"]').click();
   const cleared = await waitUnits((units) => units.length === before.length && units.filter((unit) => members.some((item) => item.text === unit.text)).every((unit) => unit.pair_id !== null && unit.status === "unassigned"));
-  check("after asking once it is a pair again, with the assignment cleared", cleared !== null);
+  check("without asking it is a pair again, with the assignment cleared", cleared !== null && (await page.locator('[data-testid="assign-edit-confirm"]').count()) === 0);
+  await page.locator('[data-testid="toast-ok"]', { hasText: "Split into a KO/EN pair · Assignments cleared: 1" }).waitFor({ timeout: T });
   // 확인 창을 거친 뒤에도 화면이 새 줄을 따라가 고른다(묻는 사이에 다시 받은 값으로 고르면 놓친다)
   // 되돌리면 풀기 앞으로 - 합친 한 문장이 돌아온다(짝은 사라진 조각과 함께 없어진다). 다시 눌러 처음 모양으로 둔다
   await page.waitForFunction(() => document.querySelector('[data-testid="assign-shape-mode-pair"]')?.getAttribute("aria-pressed") === "true", null, { timeout: T });
@@ -3508,8 +3509,6 @@ await runStep("assign: switch a KO/EN pair to one sentence and back", { allowCon
   await page.waitForFunction(() => document.querySelector('[data-testid="assign-shape-mode-one"]')?.getAttribute("aria-pressed") === "true", null, { timeout: T });
   await page.waitForLoadState("networkidle");
   await toPair.click();
-  await wait(page, "assign-edit-confirm");
-  await page.locator('[data-testid="assign-edit-confirm-confirm"]').click();
   const restored = await waitUnits((units) => units.length === before.length && units.filter((unit) => members.some((item) => item.text === unit.text)).every((unit) => unit.pair_id !== null));
   check("the pair is back as the step found it", restored !== null);
 });
@@ -4011,7 +4010,8 @@ await runStep("assign: cutting an assigned sentence asks once, then clears its a
   let piece = null;
   for (const candidate of docs.filter((item) => item.side === "old" && item.status === "ready")) {
     const view = await readView(candidate.id);
-    const found = view.units.filter((item) => item.kind === "sentence" && item.status === "unassigned" && item.lang === "en" && item.text.trim().split(" ").length >= 4);
+    // 짝 없는 문장 - 배정된 짝 구성원은 짝을 한 언어로 만드는 언어 칸이 열린다(B6-3 모양 전환)
+    const found = view.units.filter((item) => item.kind === "sentence" && item.pair_id === null && item.status === "unassigned" && item.lang === "en" && item.text.trim().split(" ").length >= 4);
     if (found.length === 0) continue;
     await page.locator('[data-testid="assign-old-doc"]').click();
     await page.locator(`[data-testid="assign-old-doc-option-${candidate.id}"]`).click();
@@ -7585,6 +7585,128 @@ await runStep("assign: drag a box onto its same-language neighbour to merge, eve
   const afterUndo = await readView();
   check("a and b are back with their own ids", isActive(afterUndo, a.id) && isActive(afterUndo, b.id));
   await page.waitForLoadState("networkidle");
+});
+
+// 언어를 바꾸면 모양도(B6-3, 사용자 결정 2026-11-20 3-a · 3-c) - 이웃 짝의 한쪽을 같은 언어로 바꾸면 합치고, 합친 박스의 끝 조각을 다른 언어로 바꾸면 다시 짝,
+// 떨어진 짝은 짝만 푼다. 알림은 무엇이 됐는지 말하고, Ctrl+Z가 한 단계씩 처음 모양(옛 ID · 짝)으로 돌린다 - 끝나면 시드 그대로다
+await runStep("assign: a language change merges a neighbour pair, a merged box's end piece splits back into the pair, a far pair only separates; Ctrl+Z steps back", {}, async ({ page }) => {
+  const headers = { "X-Dev-User": "qa.member" };
+  const api = `${BASE}/api/bundles/${halfBundleId}`;
+  const getJson = async (path) => (await page.request.get(`${api}${path}`, { headers })).json();
+  const sourceOrder = (one, two) => one.pos_seq - two.pos_seq || (one.spans[0]?.[1] ?? 0) - (two.spans[0]?.[1] ?? 0) || one.id - two.id;
+  const isFree = (unit) => unit.kind === "sentence" && !unit.noise_kind && (unit.status === null || unit.status === "unassigned");
+  // 이웃 짝(연달아 배치)과 떨어진 짝(따로 배치 - 한글 반쪽과 영어 반쪽의 짝) - 두 구성원 모두 미배정 문장
+  const findPair = async (layout, isNear) => {
+    for (const item of (await getJson("/documents")).filter((doc) => doc.side === "old" && doc.status === "ready" && doc.language_layout === layout)) {
+      const view = await getJson(`/documents/${item.id}/view`);
+      const order = view.units.filter((unit) => unit.group_unit_id === null).sort(sourceOrder);
+      const hit = view.pairs.find((pair) => {
+        const at = pair.unit_ids.map((id) => order.findIndex((unit) => unit.id === id)).sort((a, b) => a - b);
+        return at.length === 2 && at.every((index) => index >= 0 && isFree(order[index])) && (at[1] - at[0] === 1) === isNear && new Set(at.map((index) => order[index].lang)).size === 2;
+      });
+      if (hit) {
+        const [ko, en] = hit.unit_ids.map((id) => order.find((unit) => unit.id === id)).sort((a) => (a.lang === "ko" ? -1 : 1));
+        return { doc: item, pair: hit, ko, en };
+      }
+    }
+    return null;
+  };
+  // 떨어진 짝은 시드에 없다 - 짝 없는 문장끼리 API로 맺고(끝에 풀어 시드 그대로) 연다
+  const makeFarPair = async () => {
+    for (const item of (await getJson("/documents")).filter((doc) => doc.side === "old" && doc.status === "ready" && doc.language_layout === "ko_en_interleaved")) {
+      const view = await getJson(`/documents/${item.id}/view`);
+      const order = view.units.filter((unit) => unit.group_unit_id === null).sort(sourceOrder);
+      const loose = order.filter((unit) => isFree(unit) && unit.pair_id === null);
+      const ko = loose.find((unit) => unit.lang === "ko");
+      const en = ko ? loose.find((unit) => unit.lang === "en" && Math.abs(order.indexOf(unit) - order.indexOf(ko)) > 1) : undefined;
+      if (!ko || !en) continue;
+      const made = await page.request.post(`${api}/documents/${item.id}/pairs`, { headers, data: { revision: view.document.revision, unit_ids: [ko.id, en.id] } });
+      if (made.status() === 201) return { doc: item, pair: (await made.json()).pair, ko, en };
+    }
+    return null;
+  };
+  const found = await findPair("ko_en_interleaved", true);
+  const far = await makeFarPair();
+  check("the seed has a free neighbour KO/EN pair, and two loose far sentences pair by the API", found !== null && far !== null);
+  if (!found || !far) return;
+  const { doc, pair, ko, en } = found;
+  const readView = () => getJson(`/documents/${doc.id}/view`);
+  const pieceOf = (id) => page.locator(`[data-testid="assign-paper-piece-${id}"]`);
+  const edits = [];
+  page.on("request", (request) => {
+    if (/\/documents\/\d+\/edits$/.test(new URL(request.url()).pathname)) edits.push(JSON.parse(request.postData()));
+  });
+  const editDone = () => page.waitForResponse((response) => /\/edits$/.test(new URL(response.url()).pathname), { timeout: T });
+  const undoDone = () => page.waitForResponse((response) => response.url().includes("/decisions/undo"), { timeout: T });
+  const openMenu = async (unitId) => {
+    await pieceOf(unitId).scrollIntoViewIfNeeded();
+    await pieceOf(unitId).click({ button: "right" });
+    await wait(page, "assign-ctx-menu");
+  };
+  const toastOk = (text) => page.locator('[data-testid="toast-ok"]', { hasText: text });
+
+  await page.goto(`${BASE}/bundles/${halfBundleId}/assign`);
+  await wait(page, "assign-bar");
+  await page.locator('[data-testid="assign-old-doc"]').click();
+  await page.locator(`[data-testid="assign-old-doc-option-${doc.id}"]`).click();
+  await pieceOf(ko.id).waitFor({ timeout: T });
+  await page.waitForLoadState("networkidle");
+
+  // 1. EN 쪽을 KO로 - 이웃이라 합친다
+  await openMenu(en.id);
+  let done = editDone();
+  await page.locator('[data-testid="assign-ctx-lang-ko"]').click();
+  check("KO on the English member merges the neighbour pair in one edit (200)", (await done).status() === 200 && JSON.stringify(edits.at(-1).op) === JSON.stringify({ type: "switch_language", unit_id: en.id, lang: "ko", merge_pair: true }) && edits.at(-1).confirm === true, JSON.stringify(edits.at(-1)));
+  await toastOk("Merged the pair").waitFor({ timeout: T });
+  let view = await readView();
+  const merged = view.units.find((unit) => unit.can_unmerge && unit.text.startsWith(ko.text.slice(0, 8)));
+  check("the pair is one Korean box now, its pieces listed", merged !== undefined && merged.lang === "ko" && !view.units.some((unit) => unit.id === ko.id || unit.id === en.id) && JSON.stringify(merged.merge_pieces) === JSON.stringify([ko.text, en.text]), JSON.stringify(merged?.merge_pieces));
+  await page.waitForLoadState("networkidle");
+
+  // 2. 합친 박스의 끝 조각을 EN으로 - 다시 짝(옛 ID)
+  await openMenu(merged.id);
+  check("the merged box lists each piece", (await page.locator('[data-testid^="assign-ctx-piece-"][role="group"]').count()) === 2);
+  done = editDone();
+  await page.locator('[data-testid="assign-ctx-piece-1-en"]').click();
+  check("EN on the last piece splits it off (200)", (await done).status() === 200 && JSON.stringify(edits.at(-1).op) === JSON.stringify({ type: "switch_language", unit_id: merged.id, lang: "en", piece: 1 }), JSON.stringify(edits.at(-1)));
+  await toastOk("Split into a KO/EN pair").waitFor({ timeout: T });
+  view = await readView();
+  const again = view.pairs.find((item) => item.unit_ids.includes(ko.id));
+  check("the two boxes are back with their own ids as one KO/EN pair", again !== undefined && JSON.stringify([...again.unit_ids].sort()) === JSON.stringify([ko.id, en.id].sort()) && view.units.find((unit) => unit.id === en.id)?.lang === "en");
+  await page.waitForLoadState("networkidle");
+
+  // 3. Ctrl+Z 두 번 - 합친 박스로, 다시 처음 짝으로(같은 짝 id · 상태)
+  let undone = undoDone();
+  await page.keyboard.press("ControlOrMeta+z");
+  check("Ctrl+Z brings the merged box back (200)", (await undone).status() === 200 && (await readView()).units.some((unit) => unit.id === merged.id));
+  await page.waitForLoadState("networkidle");
+  undone = undoDone();
+  await page.keyboard.press("ControlOrMeta+z");
+  check("Ctrl+Z again brings the first pair back as it was", (await undone).status() === 200 && JSON.stringify((await readView()).pairs.find((item) => item.id === pair.id)) === JSON.stringify(pair), JSON.stringify((await readView()).pairs.find((item) => item.id === pair.id)));
+  await page.waitForLoadState("networkidle");
+
+  // 4. 떨어진 짝(따로 배치 문서) - EN 쪽을 KO로: 짝만 푼다
+  const readFar = () => getJson(`/documents/${far.doc.id}/view`);
+  await page.locator('[data-testid="assign-old-doc"]').click();
+  await page.locator(`[data-testid="assign-old-doc-option-${far.doc.id}"]`).click();
+  await pieceOf(far.en.id).waitFor({ timeout: T });
+  await page.waitForLoadState("networkidle");
+  await openMenu(far.en.id);
+  done = editDone();
+  await page.locator('[data-testid="assign-ctx-lang-ko"]').click();
+  check("KO on a far pair member only separates (200)", (await done).status() === 200 && edits.at(-1).op.merge_pair === false, JSON.stringify(edits.at(-1)));
+  await toastOk("Separated the pair — they are apart, so not merged").waitFor({ timeout: T });
+  view = await readFar();
+  check("the far member is Korean and the pair is gone", view.units.find((unit) => unit.id === far.en.id)?.lang === "ko" && !view.pairs.some((item) => item.id === far.pair.id));
+  await page.waitForLoadState("networkidle");
+  undone = undoDone();
+  await page.keyboard.press("ControlOrMeta+z");
+  const farUndo = await undone;
+  view = await readFar();
+  check("Ctrl+Z brings the far pair and the language back", farUndo.status() === 200 && view.units.find((unit) => unit.id === far.en.id)?.lang === "en" && JSON.stringify(view.pairs.find((item) => item.id === far.pair.id)?.unit_ids) === JSON.stringify(far.pair.unit_ids), JSON.stringify({ status: farUndo.status(), body: await farUndo.text(), lang: view.units.find((unit) => unit.id === far.en.id)?.lang, pair: view.pairs.find((item) => item.unit_ids.includes(far.ko.id)), want: far.pair }));
+  await page.waitForLoadState("networkidle");
+  // 뒷정리 - API로 맺은 떨어진 짝을 푼다
+  await page.request.delete(`${api}/documents/${far.doc.id}/pairs/${far.pair.id}?revision=${view.document.revision}`, { headers });
 });
 
 // 짝 카드 안 순서(설계 2026-11-20-assign-mockup1 D8) - 고른 박스 왼쪽 손잡이를 끌어 짝 위로 놓으면 순서가 바뀌고(편집 reorder_pair) Undo가 되돌린다.
