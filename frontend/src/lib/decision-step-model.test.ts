@@ -4,7 +4,7 @@ import type { DecisionStepResult } from "@/lib/api-sop";
 
 import { describeDecisionStep, getAssignUndoKey, isUnitEditStep, pickSaveOp, shouldDropSelectionOnStep } from "./decision-step-model";
 
-const base: DecisionStepResult = { op: "confirm", unit_ids: [], focus_unit_id: null, focus_target_id: null, scope_label: null, can_undo: false, can_redo: true };
+const base: DecisionStepResult = { op: "confirm", unit_ids: [], focus_unit_id: null, focus_target_id: null, scope_label: null, can_undo: false, can_redo: true, restored_decisions: true };
 const key = (over: Partial<{ key: string; ctrlKey: boolean; metaKey: boolean; shiftKey: boolean }>) => ({ key: "z", ctrlKey: false, metaKey: false, altKey: false, shiftKey: false, ...over });
 const ok = { typing: false, layerOpen: false, canEdit: true };
 

@@ -577,17 +577,18 @@ export function redoEdit(bundleId: number, docId: number, revision: number, conf
   return sendDocWrite(docId, revision, (rev) => apiFetch<EditStepResult>(`${buildDocPath(bundleId, docId)}/edits/redo`, { method: "POST", body: JSON.stringify({ revision: rev, confirm }) }));
 }
 
-export function createPair(bundleId: number, docId: number, revision: number, unitIds: number[]): Promise<PairResult> {
-  return sendDocWrite(docId, revision, (rev) => apiFetch<PairResult>(`${buildDocPath(bundleId, docId)}/pairs`, { method: "POST", body: JSON.stringify({ revision: rev, unit_ids: unitIds }) }));
+/** undo - Assign에서 맺으면 그 화면의 되돌리기 기록에 한 단계로 남는다(B6) */
+export function createPair(bundleId: number, docId: number, revision: number, unitIds: number[], undo?: UndoMeta): Promise<PairResult> {
+  return sendDocWrite(docId, revision, (rev) => apiFetch<PairResult>(`${buildDocPath(bundleId, docId)}/pairs`, { method: "POST", body: JSON.stringify({ revision: rev, unit_ids: unitIds, undo }) }));
 }
 
 /** 제안 짝(코드·AI)을 그대로 확정한다 - 이미 확정이면 서버는 아무것도 쓰지 않는다 */
-export function confirmPair(bundleId: number, docId: number, pairId: number, revision: number): Promise<PairResult> {
-  return sendDocWrite(docId, revision, (rev) => apiFetch<PairResult>(`${buildDocPath(bundleId, docId)}/pairs/${pairId}/confirm`, { method: "POST", body: JSON.stringify({ revision: rev }) }));
+export function confirmPair(bundleId: number, docId: number, pairId: number, revision: number, undo?: UndoMeta): Promise<PairResult> {
+  return sendDocWrite(docId, revision, (rev) => apiFetch<PairResult>(`${buildDocPath(bundleId, docId)}/pairs/${pairId}/confirm`, { method: "POST", body: JSON.stringify({ revision: rev, undo }) }));
 }
 
-export function deletePair(bundleId: number, docId: number, pairId: number, revision: number): Promise<PairResult> {
-  return sendDocWrite(docId, revision, (rev) => apiFetch<PairResult>(`${buildDocPath(bundleId, docId)}/pairs/${pairId}?revision=${rev}`, { method: "DELETE" }));
+export function deletePair(bundleId: number, docId: number, pairId: number, revision: number, undo?: UndoMeta): Promise<PairResult> {
+  return sendDocWrite(docId, revision, (rev) => apiFetch<PairResult>(`${buildDocPath(bundleId, docId)}/pairs/${pairId}?revision=${rev}`, { method: "DELETE", body: JSON.stringify({ undo }) }));
 }
 
 /** 표·그림 참조를 떼거나 다시 잇는다 - target_unit_id를 주면 그 묶음에 잇는다(state 생략 = linked) */
@@ -1020,6 +1021,8 @@ export interface DecisionStepResult {
   scope_label: string | null;
   can_undo: boolean;
   can_redo: boolean;
+  /** 판단 상태(배정 · 새 문장 · 짝)도 되썼나 - 편집 단계는 그 편집이 판단을 바꿨을 때만(B6) */
+  restored_decisions: boolean;
 }
 
 export function undoDecision(bundleId: number, session: string): Promise<DecisionStepResult> {

@@ -48,7 +48,6 @@ import { buildCellOwners, buildDestinationOptions, buildGroupSave, buildRows, bu
 import { buildDocDashboard } from "@/lib/doc-dashboard-model";
 import { listEditUnitIds, listTableUnitIds, NO_FOCUS, NO_PLACE, planReload, readEditKind, readEditPlace, readPendingLabelKey, type Pending, type PendingPlace, type ReloadPlan } from "@/lib/assign-focus-model";
 import { pickDocRevision } from "@/lib/doc-revision";
-import { enqueueDocWrite } from "@/lib/doc-write-queue";
 import type { PaperPending } from "@/components/paper/paper";
 import { useI18n } from "@/lib/i18n";
 import { genId } from "@/lib/id";
@@ -58,7 +57,7 @@ import { EMPTY_FOLD_OPEN, type FoldOpen } from "@/lib/paper-fold-model";
 import { buildPaperModel, buildPaperTabs, findNearestCut, isBandHeading, listFigureTabUnitIds, resolvePickUnit, shouldRecenter, type PaperTabKey } from "@/lib/paper-model";
 import { isSameOrder, movePairMember, orderPairCard, readPairSlot } from "@/lib/pair-order-model";
 import { moveUnwrapLines, readUnwrapSlot } from "@/lib/unwrap-order-model";
-import { buildPairColumns, canUndoPair, listPairLinks, PAIR_REFUSAL_KEYS, resolveBoxDrop, resolvePairDrop, type BoxDrop, type PairDrop, type PairDropContext } from "@/lib/pair-drop-model";
+import { buildPairColumns, listPairLinks, PAIR_REFUSAL_KEYS, resolveBoxDrop, resolvePairDrop, type BoxDrop, type PairDrop, type PairDropContext } from "@/lib/pair-drop-model";
 import { ASSIGN_DOC_PARAM, ASSIGN_UNIT_PARAM, EDIT_ORIGINAL_PARAM, getStageHref } from "@/lib/stages";
 import { buildTemplateTitles } from "@/lib/template-model";
 import { useRegisterAiAcceptOffer } from "@/lib/use-ai-accept-offer";
@@ -837,8 +836,11 @@ export function useAssignPage() {
   }
   /** 기록된 저장이 끝남 - 새 단계가 생겼으니 다시 하기 줄은 버려진다 */
   function markRecorded() {
+    stepTick.current += 1;
     setUndoState({ canUndo: true, canRedo: false });
   }
+  /** 되돌리기 줄이 움직인 횟수(새 단계 · 되돌리기 · 다시 하기) - 알림의 Undo는 제 단계가 아직 맨 끝일 때만 그 단계를 되돌린다 */
+  const stepTick = useRef(0);
   const [bulk, setBulk] = useState<"delete" | "move" | null>(null);
   const [confirmingIdentical, setConfirmingIdentical] = useState(false);
   const [resetScope, setResetScope] = useState<ResetScope | null>(null);
@@ -1480,17 +1482,19 @@ export function useAssignPage() {
   }
 
   /**
-   * 한/영 짝을 맺거나(kind pair) 푼다(unpair) - 편집 기록(되돌리기)에는 들어가지 않는다. 반대 동작이 같은 메뉴에 있다.
+   * 한/영 짝을 맺거나(kind pair) 푼다(unpair) - Assign 되돌리기 기록에 한 단계로 남는다(B6, Ctrl+Z가 푼 짝 · 맺은 짝을 되돌린다).
    * unitIds - 맺거나 풀 박스(잠긴다), place - 알약 자리(틈에서 맺었으면 그 틈, 아니면 앞 박스)
    */
-  async function runPairChange(write: (docId: number, revision: number) => Promise<unknown>, okText: string, followId: number, kind: "pair" | "unpair", unitIds: readonly number[], place: PendingPlace = { at: "box", unitId: unitIds[0] ?? followId }) {
+  async function runPairChange(write: (docId: number, revision: number, undo: UndoMeta) => Promise<{ document_revision: number }>, okText: string, followId: number, kind: "pair" | "unpair", unitIds: readonly number[], place: PendingPlace = { at: "box", unitId: unitIds[0] ?? followId }) {
     if (!shapeView) return;
     const view = shapeView;
     const docId = view.document.id;
     await focusCtl.runPending({ kind, docId, unitIds, place, isGlobal: false }, async (job) => {
       try {
-        // 보낼 revision은 sendDocWrite가 앞 쓰기의 응답으로 이어 준다
-        await write(docId, view.document.revision);
+        // 보낼 revision은 sendDocWrite가 앞 쓰기의 응답으로 이어 준다. revision이 그대로면 서버가 아무것도 쓰지 않아 단계도 없다
+        const sentRevision = pickDocRevision(docId, view.document.revision);
+        const { document_revision } = await write(docId, view.document.revision, buildUndo({ focus_unit_id: followId }));
+        if (document_revision !== sentRevision) markRecorded();
         // 짝이 바뀌면 줄이 다시 묶인다 - 고름은 두고(다시 받는 동안 옛 줄은 묶음을 부르지 않는다), 받은 뒤 그 문장의 줄을 고른다
         showToast(okText);
         focusCtl.succeed(job, { docId, revision: null, pickUnitId: followId });
@@ -1534,7 +1538,7 @@ export function useAssignPage() {
 
   /**
    * 합친 한 문장 → 한/영 짝: 합치기를 풀고(배정이 걸렸으면 한 번 묻는다) 되살아난 문장의 언어를 맞춘 뒤 짝으로 맺는다.
-   * 풀기와 언어 바꾸기는 되돌리기 기록에 남고 짝 맺기는 남지 않는다. 푼 뒤에 실패하면 어디까지 됐는지 알린다.
+   * 풀기와 언어 바꾸기는 되돌리기 기록에 남고 짝 맺기는 남지 않는다(Undo 한 번에 합친 문장으로). 푼 뒤에 실패하면 어디까지 됐는지 알린다.
    */
   async function switchToPair(unit: ViewUnit, confirm = false) {
     if (!shapeView) return;
@@ -1558,6 +1562,7 @@ export function useAssignPage() {
       for (const change of changes) {
         revision = (await editUnits(bundleId, docId, revision, { type: "set_language", unit_ids: change.unitIds, lang: change.lang }, false, buildUndo({ focus_unit_id: change.unitIds[0] }))).document_revision;
       }
+      // 짝 맺기는 기록하지 않는다 - Undo 한 번에 합친 한 문장으로 돌아가게(풀기를 되돌리면 짝은 사라진 조각과 함께 없어진다)
       await createPair(bundleId, docId, revision, restored.map((item) => item.id));
       showToast(t("split.didJoin"));
     } catch (err) {
@@ -1710,7 +1715,7 @@ export function useAssignPage() {
     } else if ((action === "pair_prev" || action === "pair_next") && shapeTabs) {
       const order = shapeTabs.order;
       const other = order[order.indexOf(target.id) + (action === "pair_prev" ? -1 : 1)];
-      void runPairChange((docId, revision) => createPair(bundleId, docId, revision, [target.id, other]), t("split.didJoin"), target.id, "pair", [target.id, other]);
+      void runPairChange((docId, revision, undo) => createPair(bundleId, docId, revision, [target.id, other], undo), t("split.didJoin"), target.id, "pair", [target.id, other]);
     } else if (action === "pair_pick") {
       if (!shapeView) return;
       clearCarve();
@@ -1719,7 +1724,7 @@ export function useAssignPage() {
       const pairId = target.pair_id;
       // 짝의 구성원 모두가 잠긴다 - 알약은 누른 박스에
       const members = [...(shapeModel?.units.values() ?? [])].filter((unit) => unit.pair_id === pairId).map((unit) => unit.id);
-      if (pairId !== null) void runPairChange((docId, revision) => deletePair(bundleId, docId, pairId, revision), t("split.pairRemoved"), target.id, "unpair", members.length > 0 ? members : [target.id], { at: "box", unitId: target.id });
+      if (pairId !== null) void runPairChange((docId, revision, undo) => deletePair(bundleId, docId, pairId, revision, undo), t("split.pairRemoved"), target.id, "unpair", members.length > 0 ? members : [target.id], { at: "box", unitId: target.id });
     } else if (action === "table_layout" && table && table.table_id !== null) unwrapTable(table.table_id);
     else if (action === "caption_attach_prev" || action === "caption_attach_next") {
       // 같은 일, 대상에 따라 짝이 바뀐다 - 묶음 대상이면 이웃 글을, 글 대상이면 이웃 묶음에 붙인다. 붙인 뒤 묶음 줄을 고른다
@@ -1750,7 +1755,7 @@ export function useAssignPage() {
     // 처리 중 알약은 누른 틈에(설계 D4)
     const gap: PendingPlace = { at: "gap", firstId, secondId };
     if (kind === "merge") void runUnitEdit({ type: "merge", unit_ids: [firstId, secondId] }, t("split.didMerge"), null, false, null, gap);
-    else void runPairChange((docId, revision) => createPair(bundleId, docId, revision, [firstId, secondId]), t("split.didJoin"), firstId, "pair", [firstId, secondId], gap);
+    else void runPairChange((docId, revision, undo) => createPair(bundleId, docId, revision, [firstId, secondId], undo), t("split.didJoin"), firstId, "pair", [firstId, secondId], gap);
   }
 
   /** 고른 조각의 글 아래 단추 - 합친 문장 풀기(풀 것이 있을 때만 줄이 생긴다). 짝 풀기는 우클릭 메뉴에 있어 여기 두지 않는다(줄마다 단추 줄이 붙지 않게) */
@@ -2031,7 +2036,7 @@ export function useAssignPage() {
     return place.position.kind === "number" ? t("assign.place.toastNumber", { ...vars, n: place.position.numbers.becomes }) : t("assign.place.toast", vars);
   }
 
-  // 알림의 되돌리기는 화면을 넘어 남는다 - 그 렌더의 함수를 붙들지 않게 가장 최근의 것을 미러한다(pairUndoRef와 같은 짜임)
+  // 알림의 되돌리기는 화면을 넘어 남는다 - 그 렌더의 함수를 붙들지 않게 가장 최근의 것을 미러한다(use-box-drag의 최신 config와 같은 짜임)
   const undoStepRef = useRef(runUndoStep);
   useEffect(() => {
     undoStepRef.current = runUndoStep;
@@ -2046,9 +2051,12 @@ export function useAssignPage() {
 
   async function sendUndoStep(job: string, kind: "undo" | "redo") {
     let stepOp: string | null = null;
+    let restoredDecisions = true;
     try {
       const result = await (kind === "undo" ? undoDecision : redoDecision)(bundleId, undoSession.current);
+      stepTick.current += 1;
       stepOp = result.op;
+      restoredDecisions = result.restored_decisions;
       setUndoState({ canUndo: result.can_undo, canRedo: result.can_redo });
       setMenu(null);
       setCtxMenu(null);
@@ -2077,7 +2085,8 @@ export function useAssignPage() {
     } finally {
       // Old 원문 편집의 되돌리기는 판단이 그대로라 Old 문서 보기 · 줄과 같은 글자 후보만(응답이 문서를 알려 주지 않아 모든 Old 문서, 설계 D2).
       // 판단 저장 단계 · New 문서를 고른 채 · 거절은 지금처럼 모두 - 거절도 그 사이 바뀐 것이 있다는 뜻이고, 짝 모양이 바뀌었을 수 있어 원문 보기도
-      if (stepOp !== null && solo === null && isUnitEditStep(stepOp)) reloadAfterEdit(planReload({ kind: "edit_undo", docId: null }, { aiOn }));
+      // 편집 단계도 그 편집이 판단(배정 · 짝)을 바꿨으면 되살렸다 - 그때는 판단 단계처럼 모두(B6)
+      if (stepOp !== null && solo === null && isUnitEditStep(stepOp) && !restoredDecisions) reloadAfterEdit(planReload({ kind: "edit_undo", docId: null }, { aiOn }));
       else {
         if (solo !== null) setSoloKey((key) => key + 1);
         reloadData(true);
@@ -2393,7 +2402,7 @@ export function useAssignPage() {
     if (!upper || !lower || !canEdit || isAnyPending) return;
     if (kind === "pair") {
       const ids = [upper.source_unit_ids[0], lower.source_unit_ids[0]];
-      void runPairChange((docId, revision) => createPair(bundleId, docId, revision, ids), t("split.didJoin"), ids[0], "pair", ids);
+      void runPairChange((docId, revision, undo) => createPair(bundleId, docId, revision, ids, undo), t("split.didJoin"), ids[0], "pair", ids);
       return;
     }
     void run(async () => {
@@ -3154,13 +3163,18 @@ export function useAssignPage() {
     setSolo(null);
     await focusCtl.runPending({ kind: "pair", docId: doc.id, unitIds, place: unitIds.length > 0 ? { at: "box", unitId: unitIds[0] } : NO_PLACE, isGlobal: false }, async (job) => {
       try {
-        const { pair } = drop.kind === "pair" ? await createPair(bundleId, doc.id, doc.revision, drop.unitIds) : await confirmPair(bundleId, doc.id, drop.pairId, doc.revision);
+        const undo = buildUndo({ focus_unit_id: unitIds[0] });
+        const sentRevision = pickDocRevision(doc.id, doc.revision);
+        const { pair, document_revision } = drop.kind === "pair" ? await createPair(bundleId, doc.id, doc.revision, drop.unitIds, undo) : await confirmPair(bundleId, doc.id, drop.pairId, doc.revision, undo);
         if (pair === null) return;
-        // 알림은 같은 글이면 앞의 것을 지운다 - 번호를 적어 잇달아 맺어도 알림마다 제 Undo가 남게
+        // 이미 확정이던 짝의 확정은 서버가 아무것도 쓰지 않아 되돌릴 단계가 없다 - Undo를 주지 않는다(주면 앞 단계를 되돌린다)
+        const isRecorded = document_revision !== sentRevision;
+        if (isRecorded) markRecorded();
+        // 알림은 같은 글이면 앞의 것을 지운다 - 번호를 적어 잇달아 맺어도 알림마다 제 Undo가 남게. Undo는 Ctrl+Z와 같은 길이다(그 뒤 다른 단계가 없을 때만)
         const ids = pair.unit_ids.flatMap((unitId) => unitMap.get(unitId)?.display_id ?? []).join(" + ");
-        showToast(t(drop.kind === "pair" ? "assign.pairDrag.done" : "assign.pairDrag.confirmed", { ids }), "ok", {
-          action: { label: t("common.undo"), run: () => void pairUndoRef.current(doc.id, pair.id, pair.unit_ids) },
-        });
+        const tick = stepTick.current;
+        const action = { label: t("common.undo"), run: () => (stepTick.current === tick ? void undoStepRef.current("undo") : showToast(t("assign.pairDrag.undoStale"), "info")) };
+        showToast(t(drop.kind === "pair" ? "assign.pairDrag.done" : "assign.pairDrag.confirmed", { ids }), "ok", isRecorded ? { action } : undefined);
         focusCtl.succeed(job, { docId: doc.id, revision: null, pickUnitId: pair.unit_ids[0] });
       } catch (err) {
         showToast(humanizeApiError(err, t), "error");
@@ -3169,39 +3183,6 @@ export function useAssignPage() {
       }
     });
   }
-
-  /**
-   * 알림의 Undo - 다시 읽어 그 짝이 같은 Unit들로 확정된 채이고 판단이 없을 때만 푼다. 아니면 아무것도 쓰지 않고 알린다.
-   * 알림의 단추는 한 번뿐이라 처리 중 잠금으로 막지 않는다(start · end를 바로) - 같은 문서의 쓰기 줄에는 선다
-   */
-  async function undoPairDrop(docId: number, pairId: number, unitIds: readonly number[]) {
-    const job = focusCtl.start({ kind: "unpair", docId, unitIds, place: unitIds.length > 0 ? { at: "box", unitId: unitIds[0] } : NO_PLACE, isGlobal: false });
-    try {
-      await enqueueDocWrite(docId, async () => {
-        try {
-          const fresh = await getDocumentView(bundleId, docId);
-          if (!canUndoPair(fresh, pairId, unitIds)) {
-            showToast(t("assign.pairDrag.undoStale"), "info");
-            return;
-          }
-          await deletePair(bundleId, docId, pairId, fresh.document.revision);
-          showToast(t("split.pairRemoved"));
-          focusCtl.succeed(job, { docId, revision: null, pickUnitId: unitIds[0] });
-        } catch (err) {
-          showToast(humanizeApiError(err, t), "error");
-        } finally {
-          reloadAfterEdit(planReload({ kind: "pair", docId }, { aiOn }));
-        }
-      });
-    } finally {
-      focusCtl.end(job);
-    }
-  }
-  // 알림은 화면을 넘어 남는다 - 콜백이 그 렌더의 함수를 붙들지 않게 가장 최근의 것을 미러한다(use-box-drag의 최신 config와 같은 짜임)
-  const pairUndoRef = useRef(undoPairDrop);
-  useEffect(() => {
-    pairUndoRef.current = undoPairDrop;
-  });
 
   /** 짝 고르기를 맺는다 - 처음 문장과 고른 문장들이 한 짝이 된다. 맺을 수 없으면 까닭을 알리고 고르던 것을 그대로 둔다 */
   function finishPairPick(pickedIds: number[]) {
@@ -3214,7 +3195,7 @@ export function useAssignPage() {
     }
     const unitIds = [pairSource.id, ...others.map((unit) => unit.id)];
     setPairFrom(null);
-    void runPairChange((docId, revision) => createPair(bundleId, docId, revision, unitIds), t("split.didJoin"), unitIds[0], "pair", unitIds);
+    void runPairChange((docId, revision, undo) => createPair(bundleId, docId, revision, unitIds, undo), t("split.didJoin"), unitIds[0], "pair", unitIds);
   }
 
   /** 짝 고르는 중에 문장을 눌렀다 - 그냥 누르면 그 문장까지 넣어 맺고, Shift+클릭은 모은다(Old 용지와 양 단의 New 칸이 같이 쓴다) */

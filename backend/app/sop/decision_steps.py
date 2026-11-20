@@ -411,9 +411,10 @@ async def record_snapshot_step(
 
 
 async def record_unit_edit_step(
-    session: AsyncSession, bundle: Bundle, actor: str, meta: UndoMetaIn, document_id: int
+    session: AsyncSession, bundle: Bundle, actor: str, meta: UndoMetaIn, document_id: int, before_state: Snapshot
 ) -> None:
-    """Assign 안의 단위 편집(자르기·합치기·언어 바꾸기)을 한 단계로 — 내용은 찍지 않고 그 문서의 방금 만든 Split 편집 기록을 가리킨다(설계 §4.4).
+    """Assign 안의 단위 편집(자르기·합치기·언어 바꾸기)을 한 단계로 — 그 문서의 방금 만든 Split 편집 기록을 가리키고(설계 §4.4),
+    편집이 함께 바꾼 판단 상태(떼어 낸 배정 · 풀린 짝 · 지운 새 문장)를 before_state(편집 전 덤프)와 견준 diff로 찍는다 — 되돌리면 그것도 되살린다(B6).
 
     단계 이름은 편집 종류를 따르되 split은 Assign에서 부르는 이름 cut이다.
     """
@@ -425,12 +426,19 @@ async def record_unit_edit_step(
     )
     if edit is None:
         return
+    await session.flush()
+    before, after = diff_states(before_state, await dump_bundle_state(session, bundle.id))
+    # 편집이 만든 단위의 빈 판단 행은 편집 기록의 몫이다(되돌리면 단위와 함께 은퇴해 남고 다시 하면 그대로 돌아온다) - 찍으면 그 뒤 그 조각을
+    # 판단했을 때 confirm_required 대신 undo_conflict가 된다
+    for unit_id in edit.created_unit_ids:
+        if str(unit_id) not in before.get("unit_decisions", {}):
+            after.get("unit_decisions", {}).pop(str(unit_id), None)
     await _prune_steps(session, bundle.id, actor, meta.session)
     session.add(
         DecisionStep(
             bundle_id=bundle.id, actor=actor, session_key=meta.session,
             seq=await _get_next_seq(session, bundle.id, actor, meta.session),
-            op="cut" if edit.op == "split" else edit.op, kind="unit_edit",
+            op="cut" if edit.op == "split" else edit.op, kind="unit_edit", before=before, after=after,
             state=STEP_APPLIED, step_key=meta.step_key,
             focus={"unit_id": meta.focus_unit_id, "target_id": meta.focus_target_id},
             unit_ids=[meta.focus_unit_id] if meta.focus_unit_id else list(edit.retired_unit_ids) or [int(unit_id) for unit_id in edit.lang_changes],
@@ -456,6 +464,8 @@ class DecisionStepResult(BaseModel):
     scope_label: str | None
     can_undo: bool
     can_redo: bool
+    # 판단 상태(배정 · 새 문장 · 짝)도 되썼나 - 판단 단계는 늘, 편집 단계는 그 편집이 판단을 바꿨을 때만(화면이 다시 받을 범위를 고른다)
+    restored_decisions: bool
 
 
 async def undo_step(session: AsyncSession, bundle: Bundle, actor: str, session_key: str) -> DecisionStepResult:
@@ -497,6 +507,7 @@ async def _move_step(
         op=step.op, unit_ids=list(step.unit_ids), focus_unit_id=(step.focus or {}).get("unit_id"),
         focus_target_id=(step.focus or {}).get("target_id"), scope_label=step.scope_label,
         can_undo=STEP_APPLIED in states, can_redo=STEP_UNDONE in states,
+        restored_decisions=step.kind != "unit_edit" or any(step.before.values()) or any(step.after.values()),
     )
 
 
@@ -506,11 +517,28 @@ async def _move_snapshot(
     """단계의 한쪽(expected)이 지금과 같을 때만 반대쪽(restore)으로 되쓴다 — 하나라도 어긋나면 아무것도 바꾸지 않고 409."""
     expected, restore = (step.after, step.before) if backwards else (step.before, step.after)
     current = await dump_bundle_state(session, bundle_id)
+    _ensure_unchanged(expected, restore, current)
+    await _restore_state(session, bundle_id, step, expected, restore, current, seen=current, actor=actor, backwards=backwards)
+
+
+def _ensure_unchanged(expected: Snapshot, restore: Snapshot, current: Snapshot) -> None:
+    """단계의 한쪽(expected)이 지금과 같은지 — 그 뒤 누가 그 줄을 바꿨으면 409 undo_conflict."""
     mismatched = find_mismatches(expected, current, other=restore)
     if mismatched:
         raise_rule(409, "undo_conflict", unit_ids=[unit_id for unit_id in mismatched if unit_id != UNKNOWN_UNIT_ID])
+
+
+async def _restore_state(
+    session: AsyncSession, bundle_id: int, step: DecisionStep, expected: Snapshot, restore: Snapshot, current: Snapshot,
+    *, seen: Snapshot, actor: str, backwards: bool, retired: Collection[int] = (),
+) -> None:
+    """지금(current) 상태를 restore로 되쓴다 — 되쓸 수 없는 경우(아래 검사)는 아무것도 바꾸지 않고 409.
+
+    seen은 움직이기 전에 expected와 견준 덤프다 — 단계의 expected 쪽을 실제 모습으로 다시 찍는 데 쓴다(편집 단계는 그 사이 편집이 끼어 current와 다르다).
+    retired는 같은 단계의 편집이 방금 은퇴시킨 단위 — 그 단위의 (미배정으로 뗀) 판단 행은 편집 기록의 일부라 되써도 된다.
+    """
     # 은퇴한 Unit을 가리키는 행을 되살리면 판단이 없는 Unit에 걸린다(사라진 Unit이면 FK 위반)
-    inactive = await _find_inactive_units(session, restore)
+    inactive = sorted(set(await _find_inactive_units(session, restore)) - set(retired))
     if inactive:
         raise_rule(409, "undo_conflict", unit_ids=inactive)
     # 지울 새 문장·짝에 그 뒤 남이 붙인 행(출처·칸 문장·짝 멤버)이 있으면 같이 사라지므로 거절한다
@@ -554,7 +582,7 @@ async def _move_snapshot(
 
     # 단계의 두 쪽을 실제 모습(지금 revision)으로 바꿔 둔다 — 다음에 같은 행을 다시 넣을 때 revision이 뒤로 가지 않게
     fresh = await dump_bundle_state(session, bundle_id)
-    new_expected, new_restore = _pick_rows(current, expected), _pick_rows(fresh, restore)
+    new_expected, new_restore = _pick_rows(seen, expected), _pick_rows(fresh, restore)
     if backwards:
         step.after, step.before = new_expected, new_restore
     else:
@@ -562,12 +590,14 @@ async def _move_snapshot(
 
 
 async def _move_unit_edit(session: AsyncSession, step: DecisionStep, actor: str, *, backwards: bool) -> None:
-    """자르기 단계 — 가리키는 Split 편집이 그 문서의 마지막 applied(undo)·첫 undone(redo)일 때만 Split 되돌리기를 부른다.
+    """편집 단계 — 가리키는 Split 편집이 그 문서의 마지막 applied(undo)·첫 undone(redo)일 때만 Split 되돌리기를 부르고,
+    단계가 찍은 판단 상태(배정 · 짝 · 새 문장)도 스냅숏처럼 되쓴다(B6).
 
-    조각에 판단이 걸렸으면 confirm 없이 불러 Split의 409 confirm_required가 그대로 올라간다(설계 §4.4).
+    찍은 상태가 지금과 다르면(그 뒤 누가 바꿨다) 편집도 움직이지 않고 409 undo_conflict. 찍은 판단의 단위는 확인 없이 떼고 되쓰며,
+    그 밖에 판단이 걸린 단위(그 뒤 판단한 조각)가 있으면 confirm 없이 불러 Split의 409 confirm_required가 그대로 올라간다(설계 §4.4).
     """
     # editing이 이 모듈(UndoMetaIn)을 들여와 위에서 들이면 순환한다
-    from app.sop.editing import EDIT_APPLIED, EDIT_UNDONE, redo_edit, undo_edit
+    from app.sop.editing import EDIT_APPLIED, EDIT_UNDONE, leave_pairs, redo_edit, undo_edit
 
     document = await session.get(Document, step.document_id) if step.document_id is not None else None
     if document is None or step.unit_edit_id is None:
@@ -580,10 +610,25 @@ async def _move_unit_edit(session: AsyncSession, step: DecisionStep, actor: str,
         query = query.order_by(UnitEdit.seq)
     if await session.scalar(query.limit(1)) != step.unit_edit_id:
         raise_rule(409, "undo_conflict", unit_ids=list(step.unit_ids))
-    if backwards:
-        await undo_edit(session, document, confirm=False, actor=actor)
-    else:
-        await redo_edit(session, document, confirm=False, actor=actor)
+    expected, restore = (step.after, step.before) if backwards else (step.before, step.after)
+    # B6 전 단계와 판단을 건드리지 않은 편집은 찍은 것이 없다 - 편집만 움직인다
+    has_state = any(expected.values()) or any(restore.values())
+    seen = await dump_bundle_state(session, document.bundle_id) if has_state else {}
+    if has_state:
+        _ensure_unchanged(expected, restore, seen)
+    settled = {int(key) for key in expected.get("unit_decisions", {})}
+    move = undo_edit if backwards else redo_edit
+    # 찍은 상태가 있으면 짝은 스냅숏이 되쓴다 - 기록 재생이 짝을 다시 세우면(제목 ↔ 문장 · 표 표시) 새 짝 id가 되쓸 짝과 부딪친다
+    result = await move(session, document, confirm=False, actor=actor, settled=settled, keeps_pairs=has_state)
+    if has_state:
+        await session.flush()
+        current = await dump_bundle_state(session, document.bundle_id)
+        await _restore_state(
+            session, document.bundle_id, step, expected, restore, current, seen=seen, actor=actor, backwards=backwards,
+            retired=result.retired_unit_ids,
+        )
+        # 단계 밖에서 은퇴한 단위로 맺은 짝(그 뒤 남이 맺은 짝)은 되쓰기가 모른다 - 기록 재생이 하던 대로 뺀다
+        await leave_pairs(session, result.retired_unit_ids)
 
 
 async def _find_inactive_units(session: AsyncSession, restore: Snapshot) -> list[int]:

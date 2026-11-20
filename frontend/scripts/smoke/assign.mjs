@@ -3502,10 +3502,14 @@ await runStep("assign: switch a KO/EN pair to one sentence and back", { allowCon
   await page.waitForFunction(() => document.querySelector('[data-testid="assign-shape-mode-pair"]')?.getAttribute("aria-pressed") === "true", null, { timeout: T });
   await page.waitForLoadState("networkidle");
   await page.locator('[data-testid="assign-undo"]:not([disabled])').click();
-  check("Undo brings the merged sentence back", (await waitUnits((units) => units.length === before.length - 1)) !== null);
+  // 풀며 지운 배정도 함께 돌아온다(B6-2 - 편집 단계가 판단을 찍는다)
+  const undoneMerge = await waitUnits((units) => units.length === before.length - 1);
+  check("Undo brings the merged sentence back, assigned as it was", undoneMerge !== null && undoneMerge.some((unit) => unit.can_unmerge && unit.status === "confirmed" && members.every((item) => unit.text.includes(item.text.trim()))));
   await page.waitForFunction(() => document.querySelector('[data-testid="assign-shape-mode-one"]')?.getAttribute("aria-pressed") === "true", null, { timeout: T });
   await page.waitForLoadState("networkidle");
   await toPair.click();
+  await wait(page, "assign-edit-confirm");
+  await page.locator('[data-testid="assign-edit-confirm-confirm"]').click();
   const restored = await waitUnits((units) => units.length === before.length && units.filter((unit) => members.some((item) => item.text === unit.text)).every((unit) => unit.pair_id !== null));
   check("the pair is back as the step found it", restored !== null);
 });
@@ -6806,7 +6810,6 @@ await runStep("assign: Pair view - drag a piece onto its partner to pair or conf
   const isPairCall = (method, pattern) => (response) => response.request().method() === method && pattern.test(new URL(response.url()).pathname);
   const POST_PAIR = isPairCall("POST", /\/pairs$/);
   const POST_CONFIRM = isPairCall("POST", /\/pairs\/\d+\/confirm$/);
-  const DELETE_PAIR = isPairCall("DELETE", /\/pairs\/\d+$/);
 
   const pairPiece = (id) => page.locator(`[data-testid="assign-pair-piece-${id}"]`);
   const openDoc = async (unitId) => {
@@ -6956,13 +6959,13 @@ await runStep("assign: Pair view - drag a piece onto its partner to pair or conf
   });
   check("the Undo label is the accent colour", undoColour.undo === undoColour.accent, JSON.stringify(undoColour));
 
-  // 3. 글쇠로 Undo - 포커스를 주고 ↵. 짝만 풀고 Assign 되돌리기는 부르지 않는다
+  // 3. 글쇠로 Undo - 포커스를 주고 ↵. 알림의 Undo는 Ctrl+Z와 같은 Assign 되돌리기다(B6 - 짝 맺기가 되돌리기 줄의 한 단계)
   await undoIn(paired.toast).focus();
-  const undone = page.waitForResponse(DELETE_PAIR, { timeout: T });
+  const undone = page.waitForResponse((response) => response.url().includes("/decisions/undo"), { timeout: T });
   await page.keyboard.press("Enter");
-  check("Enter on Undo deletes the pair (200)", (await undone).status() === 200);
-  await toastWith("ok", "Separated").waitFor({ timeout: T });
-  check("a and a′ are apart again, and Assign undo was not called", pairOf(await readView(), a.id) === null && assignUndoRequests === 0, String(assignUndoRequests));
+  check("Enter on Undo undoes the pair step (200)", (await undone).status() === 200);
+  await toastWith("ok", "Undone: Pair").waitFor({ timeout: T });
+  check("a and a′ are apart again, by one Assign undo", pairOf(await readView(), a.id) === null && assignUndoRequests === 1, String(assignUndoRequests));
   await page.waitForLoadState("networkidle");
 
   // 4. 반대 방향 - EN 조각을 KO 조각에. 이 짝(P1)은 남긴다
@@ -7014,20 +7017,23 @@ await runStep("assign: Pair view - drag a piece onto its partner to pair or conf
   await expectRefused("onto a piece of a suggestion for another sentence (d → b′)", d.id, b2.id, "One of them is already in a pair. Separate it first.");
   await expectRefused("dragging a piece of a suggestion elsewhere (b → h′)", b.id, h2.id, "One of them is already in a pair. Separate it first.");
 
-  // 6. 제안의 조각을 제 짝에 놓으면 그 제안을 확정한다 - 확정 호출은 진짜 서버로. Undo는 풀기까지다(제안으로 돌아가지 않는다)
+  // 6. 제안의 조각을 제 짝에 놓으면 그 제안을 확정한다 - 확정 호출은 진짜 서버로. 이 짝은 화면만 제안으로 바꿔 그렸고 서버에는 이미 확정이라
+  // 확정이 아무것도 쓰지 않는다(revision 그대로) - 되돌릴 단계가 없으니 알림에 Undo가 없다(있으면 앞 단계를 되돌린다). 확정 되돌리기 자체는 backend 시험이 본다
   await startDrag(b.id);
   await moveOnto(b2.id);
   const overSuggestion = await readCard();
   check("dragging b over its suggested partner says Confirm this suggested pair", overSuggestion.note === "Confirm this suggested pair" && !overSuggestion.refused && overSuggestion.dest === "→ pair", JSON.stringify(overSuggestion));
+  const undosBeforeConfirm = assignUndoRequests;
   const confirmed = await dropAndSave(POST_CONFIRM, `Confirmed the pair ${idsOf(b, b2)}`);
   const confirmBody = JSON.parse(pairRequests.at(-1).body);
-  check("the drop confirms the suggestion (200) with only the revision", confirmed.response.status() === 200 && JSON.stringify(Object.keys(confirmBody)) === JSON.stringify(["revision"]), pairRequests.at(-1).body);
-  check("the toast says Confirmed the pair and carries Undo", (await confirmed.toast.innerText()).trim().startsWith("Confirmed the pair ") && (await undoIn(confirmed.toast).count()) === 1);
+  check("the drop confirms the suggestion (200) with the revision and the undo record", confirmed.response.status() === 200 && JSON.stringify(Object.keys(confirmBody)) === JSON.stringify(["revision", "undo"]), pairRequests.at(-1).body);
+  check("the toast says Confirmed the pair and, as nothing was written, carries no Undo", (await confirmed.toast.innerText()).trim().startsWith("Confirmed the pair ") && (await undoIn(confirmed.toast).count()) === 0 && assignUndoRequests === undosBeforeConfirm);
   patchView = (body) => body;
-  const confirmUndone = page.waitForResponse(DELETE_PAIR, { timeout: T });
-  await undoIn(confirmed.toast).click();
-  check("Undo after confirming deletes the pair (200) and b, b′ have no pair at all", (await confirmUndone).status() === 200 && pairOf(await readView(), b.id) === null && pairOf(await readView(), b2.id) === null);
-  await page.waitForLoadState("networkidle");
+  // 뒤 단계는 b, b′가 짝이 없어야 한다
+  const confirmedPair = pairOf(await readView(), b.id);
+  check("the API separates b, b′", confirmedPair !== null && (await unpair(confirmedPair.id)).ok());
+  // 화면 밖에서 풀었다 - 다시 받아야 화면이 b, b′를 짝 없이 본다
+  await reopen();
 
   // 7. Esc는 끌기만 거둔다
   const escBefore = pairRequests.length;
@@ -7039,19 +7045,22 @@ await runStep("assign: Pair view - drag a piece onto its partner to pair or conf
   await page.waitForTimeout(300);
   check("Esc clears the card, the line and the drop marks and sends nothing", JSON.stringify(escMarks) === NO_MARKS && pairRequests.length === escBefore, JSON.stringify(escMarks));
 
-  // 8. 그사이 짝이 바뀐 뒤의 Undo - 아무것도 쓰지 않고 이유를 알린다
+  // 8. 그사이 짝이 바뀐 뒤의 Undo - 서버가 되돌리기를 거절하고(undo_conflict) 아무것도 쓰지 않는다
   await startDrag(b.id);
   await moveOnto(b2.id);
   const stale = await dropAndSave(POST_PAIR, `Paired ${idsOf(b, b2)}`);
   const stalePair = pairOf(await readView(), b.id);
   check("the API separates b and b′ behind the screen", stalePair !== null && (await unpair(stalePair.id)).ok());
   const deletesBefore = pairRequests.filter((request) => request.method === "DELETE").length;
+  const staleUndo = page.waitForResponse((response) => response.url().includes("/decisions/undo"), { timeout: T });
   await undoIn(stale.toast).click();
-  await toastWith("info", "The pair changed after that. Nothing was undone.").waitFor({ timeout: T });
+
+  check("Undo after the pair changed is refused (409)", (await staleUndo).status() === 409);
+  await toastWith("error", "Can't undo").waitFor({ timeout: T });
   check("Undo after the pair changed sends no delete and says so", pairRequests.filter((request) => request.method === "DELETE").length === deletesBefore);
   await page.waitForLoadState("networkidle");
 
-  // 9. 잇달아 두 번 - 알림마다 제 Undo
+  // 9. 잇달아 두 번 - 알림의 Undo는 제 단계가 맨 끝일 때만(Ctrl+Z와 같은 줄이라 앞 알림은 되돌리지 않고 Ctrl+Z를 알린다)
   await clearToasts();
   await startDrag(b.id);
   await moveOnto(b2.id);
@@ -7060,11 +7069,19 @@ await runStep("assign: Pair view - drag a piece onto its partner to pair or conf
   await moveOnto(h2.id);
   await dropAndSave(POST_PAIR, `Paired ${idsOf(h, h2)}`);
   check("two pairings in a row leave two toasts with their own Undo", (await actionCount()) === 2, String(await actionCount()));
-  const firstUndone = page.waitForResponse(DELETE_PAIR, { timeout: T });
+  const undosBeforeFirst = assignUndoRequests;
   await undoIn(first.toast).click();
-  await firstUndone;
+  await toastWith("info", "Other changes came after this").waitFor({ timeout: T });
+  const afterFirst = await readView();
+  check("the lower (first) toast's Undo undoes nothing once another step came after it", assignUndoRequests === undosBeforeFirst && isPaired(afterFirst, b, b2) && isPaired(afterFirst, h, h2), String(assignUndoRequests - undosBeforeFirst));
+  const secondUndone = page.waitForResponse((response) => response.url().includes("/decisions/undo"), { timeout: T });
+  await page.keyboard.press("ControlOrMeta+z");
+  check("Ctrl+Z undoes the latest pair h, h′ (200)", (await secondUndone).status() === 200);
+  const thirdUndone = page.waitForResponse((response) => response.url().includes("/decisions/undo"), { timeout: T });
+  await page.keyboard.press("ControlOrMeta+z");
+  check("Ctrl+Z again undoes b, b′ (200)", (await thirdUndone).status() === 200);
   const afterTwo = await readView();
-  check("the lower (first) toast's Undo separates b, b′ only", pairOf(afterTwo, b.id) === null && isPaired(afterTwo, h, h2));
+  check("both pairs are apart after two Ctrl+Z", pairOf(afterTwo, b.id) === null && pairOf(afterTwo, h.id) === null);
   await page.waitForLoadState("networkidle");
 
   // 10. 낡은 revision - 끄는 사이 다른 곳에서 문서가 바뀌면 서버가 409로 거절하고 짝은 생기지 않는다. 다시 놓으면 된다
@@ -7089,10 +7106,10 @@ await runStep("assign: Pair view - drag a piece onto its partner to pair or conf
   // 11. 다른 화면에서의 Undo - 알림은 화면을 넘어 남는다(page.goto는 화면을 새로 받아 알림을 지우니 레일로 간다)
   await page.locator('[data-testid="stage-nav-outputs"]').click();
   await page.waitForURL(/\/outputs/, { timeout: T });
-  const awayUndone = page.waitForResponse(DELETE_PAIR, { timeout: T });
+  const awayUndone = page.waitForResponse((response) => response.url().includes("/decisions/undo"), { timeout: T });
   await undoIn(retried.toast).click();
-  check("Undo from the Outputs screen deletes the pair (200)", (await awayUndone).status() === 200);
-  await toastWith("ok", "Separated").waitFor({ timeout: T });
+  check("Undo from the Outputs screen undoes the pair step (200)", (await awayUndone).status() === 200);
+  await toastWith("ok", "Undone: Pair").waitFor({ timeout: T });
   check("d and d′ are apart and nothing threw", pairOf(await readView(), d.id) === null && pageErrors.length === 0, pageErrors.join(" | "));
 
   // 12. 메뉴 길은 그대로 - Pair view를 켜지 않고 우클릭
@@ -7199,7 +7216,6 @@ await runStep("assign: drag an Old piece onto a nearby piece in the other langua
   });
   const isPairCall = (method, pattern) => (response) => response.request().method() === method && pattern.test(new URL(response.url()).pathname);
   const POST_PAIR = isPairCall("POST", /\/pairs$/);
-  const DELETE_PAIR = isPairCall("DELETE", /\/pairs\/\d+$/);
 
   const pieceOf = (id) => page.locator(`[data-testid="assign-paper-piece-${id}"]`);
   const openDoc = async (docId, unitId) => {
@@ -7315,10 +7331,10 @@ await runStep("assign: drag an Old piece onto a nearby piece in the other langua
   check("x and x′ are one pair in the API", isPaired(await readView(), x, x2));
   await page.waitForFunction((ids) => ids.every((id) => document.querySelector(`[data-testid="assign-paper-piece-${id}"]`)?.hasAttribute("data-bracket")), [x.id, x2.id], { timeout: T });
   check("on the Old paper x and x′ are one card", (await pieceOf(x.id).getAttribute("data-bracket")) !== null && (await pieceOf(x2.id).getAttribute("data-bracket")) !== null);
-  const undone = page.waitForResponse(DELETE_PAIR, { timeout: T });
+  const undone = page.waitForResponse((response) => response.url().includes("/decisions/undo"), { timeout: T });
   await undoIn(paired.toast).click();
-  check("Undo deletes the pair (200)", (await undone).status() === 200);
-  await toastWith("ok", "Separated").waitFor({ timeout: T });
+  check("Undo undoes the pair step (200)", (await undone).status() === 200);
+  await toastWith("ok", "Undone: Pair").waitFor({ timeout: T });
   check("x and x′ are apart again", pairOf(await readView(), x.id) === null);
   await page.waitForLoadState("networkidle");
   await page.waitForFunction((id) => !document.querySelector(`[data-testid="assign-paper-piece-${id}"]`)?.hasAttribute("data-bracket"), x.id, { timeout: T });
@@ -7477,10 +7493,10 @@ await runStep("assign: drag a KO piece onto its EN counterpart in a KO/EN separa
   await page.waitForLoadState("networkidle");
 
   // 3. Undo가 짝을 풀어 시드가 처음 그대로다
-  const deleted = page.waitForResponse(isPairCall("DELETE", /\/pairs\/\d+$/), { timeout: T });
+  const deleted = page.waitForResponse((response) => response.url().includes("/decisions/undo"), { timeout: T });
   await toast.locator('[data-testid^="toast-action-"]').click();
-  check("Undo deletes the pair (200)", (await deleted).status() === 200);
-  await page.locator('[data-testid="toast-ok"]', { hasText: "Separated" }).waitFor({ timeout: T });
+  check("Undo undoes the pair step (200)", (await deleted).status() === 200);
+  await page.locator('[data-testid="toast-ok"]', { hasText: "Undone: Pair" }).waitFor({ timeout: T });
   const after = await readView();
   check("after Undo the two sentences are apart and the document has the pairs it had", pairOf(after, ko.id) === null && pairOf(after, en.id) === null && JSON.stringify(after.pairs) === JSON.stringify(before.pairs), JSON.stringify(after.pairs));
   await page.waitForLoadState("networkidle");

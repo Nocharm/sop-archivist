@@ -5,7 +5,6 @@ import { MESSAGES } from "./i18n-messages";
 import {
   PAIR_REFUSAL_KEYS,
   buildPairColumns,
-  canUndoPair,
   listPairLinks,
   resolveBoxDrop,
   resolvePairDrop,
@@ -194,25 +193,6 @@ describe("listPairLinks", () => {
     const columns = buildPairColumns({ units: [makeUnit(1, "ko"), makeUnit(4, "en"), makeUnit(8, "en")], pairs: [{ id: 5, status: "confirmed", unit_ids: [1, 4, 8] }] });
     expect(listPairLinks(columns)).toEqual([{ pairId: 5, koId: 1, enId: 4, status: "confirmed" }, { pairId: 5, koId: 1, enId: 8, status: "confirmed" }]);
     expect(listPairLinks(buildPairColumns({ units: [makeUnit(1, "ko")], pairs: [] }))).toEqual([]);
-  });
-});
-
-describe("canUndoPair", () => {
-  const paired = (status: PairUnit["status"] = "unassigned", pair: PairInfo = { id: 9, status: "confirmed", unit_ids: [1, 4] }) => ({ units: [makeUnit(1, "ko", { status }), makeUnit(4, "en")], pairs: [pair] });
-  it("undoes a pair that is still the same confirmed pair of undecided units", () => {
-    expect(canUndoPair(paired(), 9, [1, 4])).toBe(true);
-    expect(canUndoPair(paired(), 9, [4, 1])).toBe(true);
-    expect(canUndoPair(paired(null), 9, [1, 4])).toBe(true);
-  });
-  it("does not when the pair is gone, changed or one of its units was decided meanwhile", () => {
-    expect(canUndoPair(paired(), 10, [1, 4])).toBe(false);
-    expect(canUndoPair(paired("unassigned", { id: 9, status: "confirmed", unit_ids: [1, 4, 8] }), 9, [1, 4])).toBe(false);
-    expect(canUndoPair(paired("unassigned", { id: 9, status: "suggested", unit_ids: [1, 4] }), 9, [1, 4])).toBe(false);
-    expect(canUndoPair(paired("confirmed"), 9, [1, 4])).toBe(false);
-    expect(canUndoPair(paired("ai_suggested"), 9, [1, 4])).toBe(false);
-  });
-  it("does not when a member is missing from the view it reads", () => {
-    expect(canUndoPair({ units: [makeUnit(1, "ko")], pairs: [{ id: 9, status: "confirmed", unit_ids: [1, 4] }] }, 9, [1, 4])).toBe(false);
   });
 });
 

@@ -185,15 +185,3 @@ export function listPairLinks(columns: PairColumns): PairLink[] {
   }
   return links.sort((a, b) => a.koId - b.koId || a.enId - b.enId);
 }
-
-/** 알림의 Undo가 그 짝을 풀어도 되나 - 같은 Unit들로 확정된 채 남아 있고 구성 Unit에 판단이 없을 때만 */
-export function canUndoPair(view: { units: readonly Pick<PairUnit, "id" | "status">[]; pairs: readonly PairInfo[] }, pairId: number, unitIds: readonly number[]): boolean {
-  const pair = view.pairs.find((candidate) => candidate.id === pairId);
-  if (!pair || pair.status !== "confirmed") return false;
-  if (pair.unit_ids.length !== unitIds.length || !unitIds.every((id) => pair.unit_ids.includes(id))) return false;
-  // 다시 읽은 보기에 없는 구성원은 그사이 바뀐 것이다 - 풀지 않는다
-  return pair.unit_ids.every((id) => {
-    const unit = view.units.find((candidate) => candidate.id === id);
-    return unit !== undefined && (unit.status === null || unit.status === "unassigned");
-  });
-}

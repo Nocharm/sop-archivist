@@ -30,7 +30,7 @@ from app.sop.caption_refs import (
 )
 from app.sop.constants import LANGUAGE_LAYOUTS, MEMBER_ROLES
 from app.sop.counterparts import build_table_facts, count_table_langs
-from app.sop.decision_steps import record_unit_edit_step
+from app.sop.decision_steps import dump_bundle_state, record_snapshot_step, record_unit_edit_step
 from app.sop.detach import detach_units, find_units_needing_confirm
 from app.sop.editing import (
     EditIn,
@@ -88,6 +88,7 @@ from app.sop.pairs import (
     PairIn,
     PairResult,
     PairRevisionIn,
+    PairUndoIn,
     build_pair_out,
     confirm_pair,
     create_pair,
@@ -871,10 +872,12 @@ async def edit_units(
 ) -> EditResult:
     document = await _lock_editable_document(session, ctx, doc_id, body.revision)
     revision = document.revision
+    # Assign 단계는 편집이 함께 바꾼 판단 · 짝도 찍는다(되돌리면 되살린다) - 편집 전 상태를 먼저 읽는다
+    before_state = await dump_bundle_state(session, ctx.bundle.id) if body.undo is not None else None
     result = await apply_edit(session, document, body.op, confirm=body.confirm, actor=ctx.login_id)
     # 바뀐 것이 없는 편집은 Split 기록도 revision도 그대로라 Assign 단계도 남기지 않는다(언어 바꾸기는 단위를 만들지 않는다)
-    if body.undo is not None and result.document_revision != revision:
-        await record_unit_edit_step(session, ctx.bundle, ctx.login_id, body.undo, document.id)
+    if body.undo is not None and before_state is not None and result.document_revision != revision:
+        await record_unit_edit_step(session, ctx.bundle, ctx.login_id, body.undo, document.id, before_state)
     await session.commit()
     return result
 
@@ -913,7 +916,9 @@ async def create_unit_pair(
     session: AsyncSession = Depends(get_session),
 ) -> PairResult:
     document = await _lock_editable_document(session, ctx, doc_id, body.revision)
-    pair = await create_pair(session, document, body.unit_ids, ctx.login_id)
+    pair = await record_snapshot_step(
+        session, ctx.bundle, ctx.login_id, body.undo, "pair", lambda: create_pair(session, document, body.unit_ids, ctx.login_id)
+    )
     result = PairResult(document_revision=document.revision, pair=await build_pair_out(session, pair))
     await session.commit()
     return result
@@ -928,7 +933,9 @@ async def confirm_unit_pair(
     session: AsyncSession = Depends(get_session),
 ) -> PairResult:
     document = await _lock_editable_document(session, ctx, doc_id, body.revision)
-    pair = await confirm_pair(session, document, pair_id, ctx.login_id)
+    pair = await record_snapshot_step(
+        session, ctx.bundle, ctx.login_id, body.undo, "confirm_pair", lambda: confirm_pair(session, document, pair_id, ctx.login_id)
+    )
     result = PairResult(document_revision=document.revision, pair=await build_pair_out(session, pair))
     await session.commit()
     return result
@@ -939,12 +946,16 @@ async def delete_unit_pair(
     doc_id: IdPath,
     pair_id: IdPath,
     revision: int = Query(ge=1),
+    body: PairUndoIn | None = None,
     ctx: BundleContext = Depends(_require_author),
     session: AsyncSession = Depends(get_session),
 ) -> PairResult:
     # 짝을 풀어도 문서 revision이 오르므로 204 대신 새 revision을 돌려준다
     document = await _lock_editable_document(session, ctx, doc_id, revision)
-    await delete_pair(session, document, pair_id, ctx.login_id)
+    await record_snapshot_step(
+        session, ctx.bundle, ctx.login_id, body.undo if body else None, "unpair",
+        lambda: delete_pair(session, document, pair_id, ctx.login_id),
+    )
     result = PairResult(document_revision=document.revision, pair=None)
     await session.commit()
     return result

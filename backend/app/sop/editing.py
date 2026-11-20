@@ -403,6 +403,8 @@ class _Change:
     unwrap_seqs: dict[int, tuple[int | None, int | None]] = field(default_factory=dict)
     # 제목 ↔ 문장(set_heading)과 그 되돌리기·다시 하기 — 활성이 된 단위로 한/영 코드 짝을 다시 세운다(짝은 기록 밖이다)
     repair_pairs: bool = False
+    # 짝을 다시 세우지 않는다(표 표시가 바뀌어도 코드 짝 제안을 새로 하지 않는다) — Assign 되돌리기 단계가 짝을 스냅숏으로 되쓸 때
+    keeps_pairs: bool = False
 
     def list_regrouped_cells(self) -> list[int]:
         return sorted({*self.regroup, *(cell_id for draft in self.drafts for cell_id in draft.cells)})
@@ -1865,6 +1867,11 @@ async def _leave_pairs(session: AsyncSession, unit_ids: Collection[int]) -> None
         await session.execute(delete(UnitPair).where(UnitPair.id.in_(chunk)))
 
 
+async def leave_pairs(session: AsyncSession, unit_ids: Collection[int]) -> None:
+    """은퇴한 단위를 짝에서 뺀다(_leave_pairs) — Assign 되돌리기가 짝을 되쓴 뒤 단계 밖 짝(그 뒤 남이 맺은 짝)에 남은 은퇴 단위를 정리한다."""
+    await _leave_pairs(session, unit_ids)
+
+
 async def _apply_regroup(session: AsyncSession, regroup: Mapping[int, Move]) -> None:
     """칸 문장 묶음을 옮긴다 — 지금 묶음이 기록과 다른 칸이 있으면 편집 기록과 어긋난 것이라 RuntimeError(버그 가드)."""
     by_move: dict[Move, list[int]] = defaultdict(list)
@@ -1920,6 +1927,7 @@ async def _write_change(
     *,
     confirm: bool,
     actor: str,
+    settled: Collection[int] = (),
 ) -> EditResult:
     """검사(판단 있는 단위의 언어·확인 플래그) → 단위 은퇴·되살리기·만들기·언어 → 짝 정리 → 떼어 내기(옛)·새 문장 맞추기(새)
     와 칸 묶음·레이아웃 표 바꾸기 → 짝 다시 제안(표 표시가 바뀌면) → 커버리지 가드 → 문서 revision +1.
@@ -1927,6 +1935,7 @@ async def _write_change(
 
     다시 묶이는 칸 문장도 확인 대상이다 — 옛 문서는 레이아웃 칸이 가진 자기 판단이 표에 묶이며 떼어지고, 새 문서는 미배정이
     아닌 칸·표 새 문장이 새 부모 아래로 옮겨지지 않게 먼저 미배정으로 돌린다(R32).
+    settled는 확인 없이 떼어도 되는 단위 — Assign 되돌리기 단계가 그 판단을 스냅숏으로 확인했고 곧 되쓴다(decision_steps._move_unit_edit).
     """
     # 언어를 제자리에서 바꾸는 단위만 사람 결정과 어긋난다(R31) - 같은 변경에서 은퇴하거나 되살아나는 단위(합치기 풀기와
     # 그 되돌리기)는 글 그대로의 언어를 따라가는 것이라 묻지 않는다(은퇴는 아래 확인 플래그가 묻는다)
@@ -1947,7 +1956,7 @@ async def _write_change(
     decided_bundles: list[int] = []
     if change.retire or regrouped or change.bundles:
         needing = await find_units_needing_confirm(session, [*change.retire, *regrouped, *change.bundles])
-        if needing and not confirm:
+        if needing and not confirm and not set(needing) <= set(settled):
             raise_rule(409, "confirm_required", unit_ids=needing)
         # 캡션이 바뀐 묶음은 판단이 있을 때만 떼어 낸다 — 확정 새 문장에 바뀐 캡션이 빠지거나 남지 않게
         decided_bundles = sorted(set(needing) & set(change.bundles))
@@ -1965,8 +1974,10 @@ async def _write_change(
     await _set_pair_seqs(session, change.pair_seqs)
     # 덩이 줄 순서는 판단을 묻지 않는다 — 글 · 출처가 그대로라 결과물 A가 따르지 않는다(_plan_reorder_unwrapped)
     await _set_unwrap_seqs(session, change.unwrap_seqs)
-    # 다시 목차가 된 단위는 짝을 맺지 않는다(units._find_code_pairs와 같은 규칙)
-    await _leave_pairs(session, [*change.retire, *change.langs, *marking])
+    # 다시 목차가 된 단위는 짝을 맺지 않는다(units._find_code_pairs와 같은 규칙). 짝을 되쓸 되돌리기는 건드리지 않는다 - 단계 diff에 없는 짝 행
+    # (지운 뒤 같은 id로 다시 생긴 짝의 그대로인 멤버)을 지우면 되쓰기가 되살리지 못한다
+    if not change.keeps_pairs:
+        await _leave_pairs(session, [*change.retire, *change.langs, *marking])
     await session.flush()
     activated = [*change.revive, *(unit_id for _, unit_id in inserted)]
     detach = None
@@ -1998,12 +2009,12 @@ async def _write_change(
             detach = regrouped_report if detach is None else _merge_reports(detach, regrouped_report)
         await _apply_regroup(session, change.regroup)
         await _apply_layouts(session, change.layouts)
-    if change.layouts:
+    if change.layouts and not change.keeps_pairs:
         # 레이아웃 표의 칸 문장은 묶이지 않아 한/영 두 열이 이웃 짝으로 제안되고(따로 배치면 둘 다 벗긴 대응 표의 같은 행끼리, F8a),
         # 다시 데이터 표가 되면 그 제안이 빠진다
         await session.flush()
         await refresh_code_pairs(session, document, actor)
-    if change.repair_pairs:
+    if change.repair_pairs and not change.keeps_pairs:
         # 제목 ↔ 문장은 짝의 단위를 바꾼다 — 새로 활성이 된 단위만 다시 짝짓는다(F8b, 조항마다 문장 1:1)
         await session.flush()
         await pair_new_units(session, document, activated, actor)
@@ -2137,9 +2148,11 @@ def _replay(edit: UnitEdit, *, backwards: bool) -> _Change:
 
 
 async def _step_edit(
-    session: AsyncSession, document: Document, edit: UnitEdit, *, backwards: bool, confirm: bool, actor: str
+    session: AsyncSession, document: Document, edit: UnitEdit, *, backwards: bool, confirm: bool, actor: str,
+    settled: Collection[int] = (),
+    keeps_pairs: bool = False,
 ) -> EditStepResult:
-    """기록 하나를 거꾸로(되돌리기) 또는 다시 적용하고 작업 기록을 남긴다."""
+    """기록 하나를 거꾸로(되돌리기) 또는 다시 적용하고 작업 기록을 남긴다 — keeps_pairs면 짝을 다시 세우지 않는다(부르는 쪽이 되쓴다)."""
     action = "unit.undo" if backwards else "unit.redo"
     if edit.op in BOUNDARY_OPS:
         confirmed = edit.payload["confirmed"] != backwards
@@ -2156,19 +2169,24 @@ async def _step_edit(
             boundary_unit_ids=unit_ids, confirmed=confirmed,
         )
     change = _replay(edit, backwards=backwards)
+    change.keeps_pairs = keeps_pairs
     if edit.op in CAPTION_OPS:
         change.bundles = await _find_caption_bundles(session, [*change.retire, *change.revive])
     elif edit.op in FIGURE_OPS:
         # 묶음 머리와 든 그림 모두 — 기록의 전·후 값이 머리를 가리킨다
         change.bundles = sorted({*change.figures, *(head for move in change.figures.values() for head in move if head is not None)})
     result = await _write_change(
-        session, document, await get_latest_extraction_id(session, document.id), change, confirm=confirm, actor=actor
+        session, document, await get_latest_extraction_id(session, document.id), change, confirm=confirm, actor=actor,
+        settled=settled,
     )
     _record(session, document, action, edit.op, result, change, actor)
     return EditStepResult(**result.model_dump(), op=edit.op, boundary_unit_ids=[], confirmed=None)
 
 
-async def undo_edit(session: AsyncSession, document: Document, *, confirm: bool, actor: str) -> EditStepResult:
+async def undo_edit(
+    session: AsyncSession, document: Document, *, confirm: bool, actor: str, settled: Collection[int] = (),
+    keeps_pairs: bool = False,
+) -> EditStepResult:
     """마지막 적용 편집을 거꾸로 — 만든 단위를 은퇴시키고 은퇴시킨 단위를 원래 ID로 되살린다(되살린 단위의 판단은 미배정).
     칸 묶음과 레이아웃 표 표시도 편집 전으로 돌린다."""
     edit = await session.scalar(
@@ -2182,10 +2200,15 @@ async def undo_edit(session: AsyncSession, document: Document, *, confirm: bool,
     # 되돌리는 기록을 먼저 내린다 — 실패하면 요청이 커밋하지 않아 상태도 그대로다
     edit.state = EDIT_UNDONE
     await session.flush()
-    return await _step_edit(session, document, edit, backwards=True, confirm=confirm, actor=actor)
+    return await _step_edit(
+        session, document, edit, backwards=True, confirm=confirm, actor=actor, settled=settled, keeps_pairs=keeps_pairs
+    )
 
 
-async def redo_edit(session: AsyncSession, document: Document, *, confirm: bool, actor: str) -> EditStepResult:
+async def redo_edit(
+    session: AsyncSession, document: Document, *, confirm: bool, actor: str, settled: Collection[int] = (),
+    keeps_pairs: bool = False,
+) -> EditStepResult:
     """가장 최근에 되돌린 편집을 같은 단위 ID로 다시 적용한다."""
     edit = await session.scalar(
         select(UnitEdit)
@@ -2195,7 +2218,9 @@ async def redo_edit(session: AsyncSession, document: Document, *, confirm: bool,
     )
     if edit is None:
         raise_rule(409, "nothing_to_redo")
-    result = await _step_edit(session, document, edit, backwards=False, confirm=confirm, actor=actor)
+    result = await _step_edit(
+        session, document, edit, backwards=False, confirm=confirm, actor=actor, settled=settled, keeps_pairs=keeps_pairs
+    )
     edit.state = EDIT_APPLIED
     await session.flush()
     return result
