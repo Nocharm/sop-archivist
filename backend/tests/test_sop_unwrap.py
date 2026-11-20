@@ -353,7 +353,7 @@ def test_back_to_table_clears_the_order_and_undo_brings_it_back(client: TestClie
 
 
 def test_pieces_of_a_split_line_stay_where_the_line_was(client: TestClient) -> None:
-    # 나눈 조각은 값을 물려받지 않고 원문 바로 앞 줄의 값을 빌린다 — 앞 줄(준비) 뒤 그 자리에 원문 순서로 남는다
+    # 나눈 조각은 옛 줄의 값을 물려받는다 — 앞 줄(준비) 뒤 그 자리에 원문 순서로 남는다
     bundle_id, _, doc_id = _setup(client)
     _unwrap(client, bundle_id, doc_id, 0)
     view = get_view(client, bundle_id, doc_id)
@@ -367,3 +367,47 @@ def test_pieces_of_a_split_line_stay_where_the_line_was(client: TestClient) -> N
     left, right = PREP[0][:at].rstrip(), PREP[0][at:]
     shown = _shown(get_view(client, bundle_id, doc_id), 0)
     assert shown == [SWAP[2], *HEADS, "준비", left, right, PREP[1], "교체", SWAP[0], SWAP[1]]
+
+
+def test_splitting_a_line_moved_to_the_top_keeps_both_pieces_on_top_through_undo_and_redo(client: TestClient) -> None:
+    # 원문 앞 줄 값을 빌리면 조각이 원문 자리(SWAP[1] 뒤)로 돌아간다 — 그래서 조각은 옛 줄의 값을 물려받는다(되돌리기 · 다시 하기는 같은 단위)
+    bundle_id, _, doc_id = _setup(client)
+    _unwrap(client, bundle_id, doc_id, 0)
+    view = get_view(client, bundle_id, doc_id)
+    moved = [SWAP[2], *WORK_LINES[:-1]]
+    assert _reorder(client, bundle_id, doc_id, 0, _ids(view, moved)).status_code == 200
+    at = SWAP[2].index("기록지")
+    left, right = SWAP[2][:at].rstrip(), SWAP[2][at:]
+
+    split = _edit(client, bundle_id, doc_id, {"type": "split", "unit_id": find_unit(view, SWAP[2])["id"], "at": at})
+
+    assert split.status_code == 200, split.text
+    pieces = [left, right, *WORK_LINES[:-1]]
+    view = get_view(client, bundle_id, doc_id)
+    assert _shown(view, 0) == pieces
+    assert {find_unit(view, text)["unwrap_seq"] for text in (left, right)} == {0}
+
+    _step(client, bundle_id, doc_id, "undo")
+
+    assert _shown(get_view(client, bundle_id, doc_id), 0) == moved
+
+    _step(client, bundle_id, doc_id, "redo")
+
+    assert _shown(get_view(client, bundle_id, doc_id), 0) == pieces
+
+
+def test_a_join_keeps_the_first_joined_line_value(client: TestClient) -> None:
+    # 맨 위로 옮긴 줄에 그 아래 원문 줄을 붙여도(원문 순서로 잇는다) 합친 줄은 첫 줄의 자리에 있다
+    bundle_id, _, doc_id = _setup(client)
+    _unwrap(client, bundle_id, doc_id, 0)
+    view = get_view(client, bundle_id, doc_id)
+    moved = [PREP[0], *[text for text in WORK_LINES if text != PREP[0]]]
+    assert _reorder(client, bundle_id, doc_id, 0, _ids(view, moved)).status_code == 200
+
+    joined = _edit(client, bundle_id, doc_id, {"type": "merge", "unit_ids": _ids(view, PREP)})
+
+    assert joined.status_code == 200, joined.text
+    view = get_view(client, bundle_id, doc_id)
+    first = next(unit for unit in _table_lines(view, 0) if unit["text"].startswith(PREP[0]))
+    assert first["unwrap_seq"] == 0
+    assert _shown(view, 0)[0] == first["text"] and len(_shown(view, 0)) == len(WORK_LINES) - 1

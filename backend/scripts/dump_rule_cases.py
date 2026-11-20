@@ -56,10 +56,11 @@ BULLET_INPUTS: list[list[tuple[str, int]]] = [
 UNWRAP_ORDER_INPUTS: list[list[tuple[int, int | None, int]]] = [
     [(1, None, 0), (2, None, 1), (3, None, 2)],  # never reordered: source order
     [(1, 2, 0), (2, 0, 1), (3, 1, 2)],  # reordered
-    [(1, 1, 0), (4, None, 1), (5, None, 2), (3, 0, 3)],  # pieces of a split line borrow the line before them
+    [(1, 1, 0), (4, None, 1), (5, None, 2), (3, 0, 3)],  # lines still without a value borrow the line before them
     [(4, None, 0), (2, 0, 1), (3, 1, 2)],  # nothing to borrow at the top: before every set line
     [(3, 0, 2), (1, None, 0), (2, 1, 1)],  # positions decide the borrowing, not list order
-    [(1, 2, 0), (7, None, 1), (4, 0, 2), (5, 1, 3)],  # a merged line borrows too
+    [(1, 1, 0), (2, 2, 1), (6, 0, 2), (7, 0, 3)],  # split pieces inherit the moved line's value: they stay on top in source order
+    [(1, 2, 0), (7, 0, 1), (5, 1, 3)],  # a join keeps the first joined line's value
     [(1, 0, 0), (2, 0, 1), (3, None, 2)],  # stale equal values keep source order
 ]
 

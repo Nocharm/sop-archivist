@@ -381,7 +381,7 @@ class Unit(Base):
     # NULL이면 원문 순서. 구성원 모두가 값을 갖고 겹치지 않을 때만 따른다(짝이 바뀌어 남은 값은 무시된다). 원문 글자 자리는 그대로다
     pair_seq: Mapped[int | None] = mapped_column(Integer, default=None)
     # 벗긴 표 덩이 안 줄 순서(unwrap_order.py) — 편집 reorder_unwrapped가 덩이의 줄마다 0부터 매기고 unit_edits.unwrap_seq_changes에 적어 되돌린다.
-    # NULL이면 원문 순서에서 바로 앞 줄의 값을 빌린다(나누기 · 붙이기로 새로 생긴 조각이 옛 자리에 남는다). 다시 표로 묶으면 비운다
+    # 나누기 · 합치기의 조각은 옛 줄(합치기는 첫 줄)의 값을 물려받는다. NULL이면 원문 순서에서 바로 앞 줄의 값을 빌린다. 다시 표로 묶으면 비운다
     unwrap_seq: Mapped[int | None] = mapped_column(Integer, default=None)
 
 
