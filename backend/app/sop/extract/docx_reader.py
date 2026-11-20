@@ -48,7 +48,7 @@ FLAG_IMAGE_PART_TOO_LONG = "image_part_too_long"
 FLAG_CAPTION_OF = "caption_of"
 WARNING_MERGED_CELL_CONTENT = "merged_cell_content"
 # 구조 신호의 열쇠와 값 — 뜻은 extract.types의 ExtractedBlock·ExtractedTable docstring
-SIGNAL_NUMBERS, SIGNAL_PARAS, SIGNAL_TOC = "numbers", "paras", "toc"
+SIGNAL_NUMBERS, SIGNAL_PARAS, SIGNAL_TOC, SIGNAL_INLINE = "numbers", "paras", "toc", "inline"
 SIGNAL_WIDTHS, SIGNAL_FIRST_ROW, SIGNAL_BAND, SIGNAL_PLACE = "widths", "first_row", "band", "place"
 NUMBER_AUTO, NUMBER_TYPED, NUMBER_CELL = "auto", "typed", "cell"
 TOC_STYLE, TOC_FIELD, TOC_SDT, TOC_LEADER = "style", "field", "sdt", "leader"
@@ -363,6 +363,7 @@ class _FigureRef:
 
     blip_rel_id: str | None = None
     vml_rel_id: str | None = None  # a:blip이 없는 옛 VML 그림·OLE 미리보기
+    at: int = 0  # 그림 요소를 만났을 때까지 모은 문단 글자 수 — 써 넣을 자동 번호 앞머리는 아직 없다
 
 
 @dataclass
@@ -374,12 +375,18 @@ class _InlineRead:
     first_marks: tuple[int, int] | None = None  # 첫 글자를 만났을 때의 쪽 나눔 수 — 블록의 시작 쪽
     figures: list[_FigureRef] = field(default_factory=list)
     textboxes: list[Element] = field(default_factory=list)
+    length: int = 0  # pieces 글자 수의 합
+
+    def pick_image_figure(self) -> _FigureRef | None:
+        """문단 그림 블록이 보이는 그림 요소 — 문단 안 첫 a:blip, 없으면 첫 VML 그림, 둘 다 없으면 첫 그림 요소."""
+        blips = (figure for figure in self.figures if figure.blip_rel_id)
+        vmls = (figure for figure in self.figures if figure.vml_rel_id)
+        return next(blips, None) or next(vmls, None) or next(iter(self.figures), None)
 
     def get_first_image_rel_id(self) -> str | None:
         """문단 그림 블록의 그림 — 문단 안 첫 a:blip, 없으면 첫 VML 그림."""
-        blips = (figure.blip_rel_id for figure in self.figures if figure.blip_rel_id)
-        vmls = (figure.vml_rel_id for figure in self.figures if figure.vml_rel_id)
-        return next(blips, None) or next(vmls, None)
+        figure = self.pick_image_figure()
+        return (figure.blip_rel_id or figure.vml_rel_id or None) if figure is not None else None
 
     def add(self, text: str) -> None:
         if not text:
@@ -387,6 +394,7 @@ class _InlineRead:
         if self.first_marks is None and self.marks is not None:
             self.first_marks = self.marks.snapshot()
         self.pieces.append(text)
+        self.length += len(text)
 
     def count_break(self, *, rendered: bool) -> None:
         if self.marks is None:
@@ -413,6 +421,8 @@ class _ParaRecord:
     toc: tuple[str, ...] = ()  # 목차로 보이는 까닭들
     # 이 문단이 캡션인 묶음 — ("figure", 그림 레코드의 목록 위치) | ("table", table_index)
     caption_for: tuple[Literal["figure", "table"], int] | None = None
+    # 그림 블록의 그림이 놓인 text 안 자리 — 글이 없어 문단 블록을 내지 않는 그림만 든 문단은 None(자리 신호 없음)
+    figure_at: int | None = None
 
 
 @dataclass
@@ -447,6 +457,7 @@ class _CellFigureRecord:
     table_index: int
     row_index: int
     col_index: int
+    at: int  # 그림이 놓인 칸 글(문단을 "\n"으로 이은 것) 안 자리
 
 
 _Record = _ParaRecord | _CellRecord | _CellFigureRecord
@@ -793,7 +804,7 @@ def _walk_inline(parent: Element, read: _InlineRead) -> None:
         else:
             # 그림 요소는 서로 겹쳐 놓이지 않으므로(상자 글은 따로 모은다) 안쪽 그림 관계는 마지막 그림 요소의 것이다
             if tag in _FIGURE_TAGS:
-                read.figures.append(_FigureRef())
+                read.figures.append(_FigureRef(at=read.length))
             elif tag == A_BLIP and read.figures and read.figures[-1].blip_rel_id is None:
                 read.figures[-1].blip_rel_id = child.get(R_EMBED)
             elif tag == V_IMAGEDATA and read.figures and read.figures[-1].vml_rel_id is None:
@@ -952,7 +963,9 @@ class _Collector:
     ) -> None:
         read, para_marks = self._read_runs(paragraph, marks, host_marks)
         style = _read_para_style(paragraph, self.styles)
-        text, is_number_unresolved, number = self._add_number("".join(read.pieces), style)
+        raw = "".join(read.pieces)
+        text, is_number_unresolved, number = self._add_number(raw, style)
+        figure = read.pick_image_figure()
         out.append(
             _ParaRecord(
                 part=context.part,
@@ -967,6 +980,8 @@ class _Collector:
                 slot=slot,
                 number=number,
                 toc=self._read_toc(paragraph, style, text) if context.part == PART_BODY else (),
+                # 써 넣은 자동 번호는 글 앞머리라 그 길이(len(text) - len(raw))만큼 뒤로 민다
+                figure_at=figure.at + len(text) - len(raw) if figure is not None and text else None,
             )
         )
         self._read_textboxes(read.textboxes, path, context, para_marks, out)
@@ -1117,10 +1132,13 @@ class _Collector:
         for item, item_path in _iter_tagged(cell, path, _BLOCK_TAGS):
             if item.tag == W_P:
                 read, para_marks = self._read_runs(item, marks, host_marks)
-                text, is_unresolved, number = self._add_number("".join(read.pieces), _read_para_style(item, self.styles))
+                raw = "".join(read.pieces)
+                text, is_unresolved, number = self._add_number(raw, _read_para_style(item, self.styles))
                 if number is not None:
                     numbers.append((offset, offset + number[0], number[1]))
                 para_starts.append(offset)
+                # 그림 자리 = 문단 시작 + 써 넣은 자동 번호 길이 + 그림 앞 글자 수
+                figure_shift = offset + len(text) - len(raw)
                 offset += len(text) + 1  # 문단은 "\n" 하나로 잇는다
                 texts.append(text)
                 first_marks = first_marks or read.first_marks
@@ -1135,6 +1153,7 @@ class _Collector:
                         table_index=table_index,
                         row_index=row_index,
                         col_index=col_index,
+                        at=figure_shift + figure.at,
                     )
                     for figure in read.figures
                 )
@@ -1338,7 +1357,11 @@ class _BlockWriter:
             # 번호는 그 문단의 첫 블록에만 붙여 경고 개수가 번호 문단 수와 같게 한다
             flags = _pick_flags((FLAG_AUTO_NUMBERING, record.is_number_unresolved and not record.text))
             self._figure_seqs[index] = len(self.blocks)
-            self._append(record, KIND_FIGURE, "", image_part=record.image_part, flags=flags)
+            # 문장 속 그림 — 자리는 바로 앞에 낸 이 문단의 글 블록 안이다
+            figure_signals = {SIGNAL_INLINE: {"at": record.figure_at}} if record.figure_at is not None else {}
+            self._append(
+                record, KIND_FIGURE, "", image_part=record.image_part, flags=flags, signals=figure_signals,
+            )
 
     def add_cell(self, record: _CellRecord) -> None:
         is_merged = record.grid_span > 1 or record.row_span > 1 or record.is_merge_continuation
@@ -1381,6 +1404,7 @@ class _BlockWriter:
             row_index=record.row_index,
             col_index=record.col_index,
             image_part=record.image_part,
+            signals={SIGNAL_INLINE: {"at": record.at}},  # 자리는 앞선 이 칸 블록의 글 안이다
         )
 
     def link_captions(self) -> None:

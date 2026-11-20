@@ -368,6 +368,12 @@ export interface ViewBlock {
   has_image: boolean;
   /** 이 블록이 속한 부분 묶음(DocumentView.part_groups의 key) - 머리말·꼬리말은 부분 파일마다, 나머지는 part와 같다 */
   part_group: string;
+  /**
+   * 그림 블록만 - 문장 속 그림이 놓인 앞 글 블록(같은 문단 · 칸)과 그 text 안 글자 자리(시안 2 D3).
+   * at은 block text(써 넣은 자동 번호 포함, 단위 spans와 같은 좌표) 안 자리. 그림만 든 문단 · 추출기 7 전의 추출은 null.
+   * 서버는 늘 싣는다(시험 자료가 줄여 쓰게 선택 칸)
+   */
+  anchor?: { block_id: number; at: number } | null;
 }
 
 /** 머리말·꼬리말을 쓰는 구역(1부터)과 종류 */
