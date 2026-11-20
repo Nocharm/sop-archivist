@@ -1,5 +1,5 @@
 // Assign Space 미리보기의 순수 셈 - 누르고 있기 · 짧게 탁 · 끌기 상태 기계, Space를 화면이 받을 포커스인가, 창 밖 줄 수, 확정 전 덮어 그리기 값.
-// 화면은 components/assign/space-preview.tsx. 설계: MD 2 §3 S2(docs/superpowers/handoff/2026-11-18-2-followups.md)
+// 화면은 components/assign/space-preview.tsx. 설계: MD 2 §3 S2(2026-11-18-2-followups.md)
 import type { ChangeType, PreviewSheet, TargetDocType } from "@/lib/api-sop";
 import { getFrozenCount, type SheetDraft } from "@/lib/sheet-view-model";
 

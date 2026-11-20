@@ -60,7 +60,7 @@
 - **배포 메모**: 스키마 변경 Alembic `0013`(새 문장 `remark`)·`0014`(`target_sentences.kind` 길이)·`0015`(`decision_steps` 표) — backend 기동 때 자동 적용. 새 env·새 의존성 없음. 이미 있는 Bundle은 섹션 번호가 문장마다 한 줄로 다시 세어진다(짝의 두 문장이 둘 다 "번호"면 5.1·5.2) — 자료를 옮기지 않으니 결과물 C에서 사람이 번호 표시를 고친다.
   - **운영 배포 2026-11-14.** 사내 GitLab 파이프라인(`deploy-production` ▶)으로 올렸다(그전 운영은 v0.10.1). v0.11.0~v0.16.0이 함께 나가 그 버전들의 배포 메모(Alembic `0010`~`0015` 포함)가 이 배포에 함께 적용됐다.
 
-이전 릴리스(0.x — v0.1.0~v0.16.0)는 [`docs/history/CHANGELOG-archive.md`](docs/history/CHANGELOG-archive.md).
+이전 릴리스(0.x — v0.1.0~v0.16.0)는 [`docs/history/CHANGELOG-archive.md`](CHANGELOG-archive.md).
 
 ## v0.16.0 — 2026-11-12
 

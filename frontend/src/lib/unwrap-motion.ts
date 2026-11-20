@@ -1,5 +1,5 @@
 // 풀기 전환(걷기 → 펼치기 → 붙이기)의 순수 계산 - 단계 차례, 줄마다 늦춤, 화면 안 키, 옮길 거리, 표시의 움직임.
-// DOM 재기와 animate는 components/ui/motion.tsx useUnwrapMotion. 명세: docs/superpowers/handoff/2026-11-18-1-unwrap-standardize.md F10
+// DOM 재기와 animate는 components/ui/motion.tsx useUnwrapMotion. 명세: 2026-11-18-1-unwrap-standardize.md F10
 
 import { computeFlipOffsets } from "@/lib/flip";
 
