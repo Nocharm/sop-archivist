@@ -1396,12 +1396,14 @@ const AUDIT_ENTRIES = [
       await page.locator(".ptbl").first().waitFor({ timeout: T });
     },
     measure: async (page) => {
-      await scrollUntilWideTable(page, ".assign-panes [data-pane='old'] .pane-body");
-      const single = await measureWideTables(page);
+      const scroller = ".assign-panes [data-pane='old'] .pane-body";
+      const groupId = await findDeletedLongCellGroup(page);
+      await scrollUntilWideTable(page, scroller);
+      const single = await measureWithLongCell(page, scroller, groupId);
       await page.getByTestId("assign-view-two").click();
       await page.waitForTimeout(SETTLE_MS);
-      await scrollUntilWideTable(page, ".assign-panes [data-pane='old'] .pane-body");
-      const two = await measureWideTables(page);
+      await scrollUntilWideTable(page, scroller);
+      const two = await measureWithLongCell(page, scroller, groupId);
       return { single, two };
     },
     expect: (value) => [value.single, value.two].every(isWideTableOk),
@@ -1474,6 +1476,42 @@ async function scrollUntilWideTable(page, scroller) {
   }
   await page.evaluate(() => [...document.querySelectorAll(".ptbl")].find((table) => table.rows[0]?.cells.length === 18)?.scrollIntoView({ block: "center" }));
   await page.waitForTimeout(300);
+}
+
+// 600자 칸 표의 묶음 Unit id - 이 표는 worst 시드에서 삭제 확정이라 문서 보기가 아닌 Unit 목록에서 찾는다(삭제 줄 testid가 이 id를 쓴다)
+async function findDeletedLongCellGroup(page) {
+  const [, , bundleId] = new URL(page.url()).pathname.split("/");
+  const docId = Number(new URL(page.url()).searchParams.get("edit"));
+  const body = await (await page.request.get(`${BASE}/api/bundles/${bundleId}/units?limit=1000&offset=0`, { headers: { "X-Dev-User": MEMBER } })).json();
+  const totals = new Map();
+  for (const unit of body.items) {
+    if (unit.document_id !== docId || unit.group_unit_id === null || unit.decision.disposition !== "delete") continue;
+    totals.set(unit.group_unit_id, (totals.get(unit.group_unit_id) ?? 0) + unit.text.length);
+  }
+  const [groupId, total] = [...totals.entries()].sort((a, b) => b[1] - a[1])[0] ?? [null, 0];
+  if (groupId === null || total < 590) throw new Error("no deleted table group holding the 600-char cell");
+  return groupId;
+}
+
+// 삭제된 표는 시안 1부터 흐린 한 줄로 접혀 칸이 그려지지 않는다 - 사람처럼 그 줄을 눌러 펼친 뒤 600자 칸을 잰다. 18열 표는 펼치기 전에 먼저 재고, 같은 값 모양에 600자 칸만 합친다
+async function measureWithLongCell(page, scroller, groupId) {
+  const base = await measureWideTables(page);
+  const line = page.locator(`.assign-panes [data-pane='old'] [data-testid$="-deleted-u${groupId}"]`);
+  for (let step = 0; step < 120 && (await line.count()) === 0; step += 1) {
+    await page.evaluate((selector) => {
+      const el = document.querySelector(selector);
+      el.scrollTop += el.clientHeight * 0.8;
+    }, scroller);
+    await page.waitForTimeout(150);
+  }
+  if ((await line.count()) === 0) throw new Error(`deleted line for table group ${groupId} never rendered`);
+  await line.first().scrollIntoViewIfNeeded();
+  await line.first().click();
+  await page.waitForFunction(() => [...document.querySelectorAll(".ptbl td")].some((td) => td.textContent.trim().length >= 590), null, { timeout: T });
+  await page.evaluate(() => [...document.querySelectorAll(".ptbl td")].find((td) => td.textContent.trim().length >= 590)?.scrollIntoView({ block: "center" }));
+  await page.waitForTimeout(300);
+  const opened = await measureWideTables(page);
+  return { ...base, cell600: opened.cell600 };
 }
 
 // 18열 표의 가장 높은 행, 600자 칸의 글 폭과 36ch, 표가 제 스크롤 상자 밖으로 나가는지
