@@ -1,7 +1,7 @@
 ---
 title: SOP Archivist 사용 설명서
-version: 1.2
-updated: 2026-11-19
+version: 1.3
+updated: 2026-11-20
 ---
 
 # SOP Archivist 사용 설명서
