@@ -9,9 +9,11 @@ import {
   findSheetUnit,
   getWindowRest,
   isOwnSpaceTarget,
+  isSpaceEnabled,
   isSpaceKept,
   isSpaceOpen,
   NO_NUMBER,
+  pickSpaceSheet,
   SPACE_CLOSED,
   stepSpace,
   TAP_MS,
@@ -103,6 +105,8 @@ describe("sheet window", () => {
   it("counts data rows without the status and header rows", () => {
     expect(countDataRows({ total_rows: 24, freeze: "A3" })).toBe(22);
     expect(countDataRows({ total_rows: 2, freeze: "A3" })).toBe(0);
+    // 문단 Excel은 열 머리 한 줄만 고정한다
+    expect(countDataRows({ total_rows: 24, freeze: "A2" })).toBe(23);
   });
 
   it("finds the picked line's unit that has a row in the sheet", () => {
@@ -110,6 +114,29 @@ describe("sheet window", () => {
     expect(findSheetUnit(sheet, [8, 9])).toBe(9);
     expect(findSheetUnit(sheet, [3])).toBe(3);
     expect(findSheetUnit(sheet, [])).toBeNull();
+  });
+});
+
+describe("pickSpaceSheet · isSpaceEnabled", () => {
+  const base = { hasDoc: true, unitCount: 5, isNewEdit: false, rowCount: 3 };
+
+  it("shows the paragraph sheet in one pane and Excel A in two panes", () => {
+    expect(pickSpaceSheet(true)).toBe("paragraphs");
+    expect(pickSpaceSheet(false)).toBe("comparison");
+  });
+
+  it("turns the paragraph sheet on for any document with units - an Old one or a written New one", () => {
+    expect(isSpaceEnabled("paragraphs", base)).toBe(true);
+    expect(isSpaceEnabled("paragraphs", { ...base, rowCount: 0 })).toBe(true);
+    // 빈 템플릿(엮은 New)은 단위가 없다
+    expect(isSpaceEnabled("paragraphs", { ...base, unitCount: 0 })).toBe(false);
+    expect(isSpaceEnabled("paragraphs", { ...base, hasDoc: false })).toBe(false);
+  });
+
+  it("keeps Excel A off while a New document is edited in place, as before", () => {
+    expect(isSpaceEnabled("comparison", base)).toBe(true);
+    expect(isSpaceEnabled("comparison", { ...base, isNewEdit: true })).toBe(false);
+    expect(isSpaceEnabled("comparison", { ...base, rowCount: 0 })).toBe(false);
   });
 });
 

@@ -225,17 +225,38 @@ function watchGroupLoads(page) {
   };
 }
 
-// Space 미리보기(1.2.0 피드백 7번, MD 2 S2) - 누르는 동안 아래 시트에 지금 Old 문서의 Excel A, 짧게 탁이면 열어 둠, Esc · 탁으로 닫힘, 끌고 떼면 닫힘
-async function openFirstAssign(page) {
+// Space 미리보기(1.2.0 피드백 7번, MD 2 S2) - 누르는 동안 아래 시트에 양 단이면 지금 Old 문서의 Excel A, 한 단이면 그 문서의 문단 Excel(시안 2 D4),
+// 짧게 탁이면 열어 둠, Esc · 탁으로 닫힘, 끌고 떼면 닫힘. view("one" | "two")를 주면 그 보기로 놓고 시작한다(보기는 다음 단계까지 기억된다)
+async function openFirstAssign(page, view = null) {
   await page.goto(`${BASE}/`);
   await page.locator('[data-testid^="bundles-row-"]').first().waitFor({ timeout: T });
   const firstId = Number((await page.locator('[data-testid^="bundles-row-"]').first().getAttribute("data-testid")).replace("bundles-row-", ""));
   await page.goto(`${BASE}/bundles/${firstId}/assign`);
   await wait(page, "assign-bar");
+  if (view !== null) await setPaneView(page, view);
   // 단축키가 듣도록 포커스를 화면 바탕에 두고 줄 하나를 고른다
   await page.evaluate(() => (document.activeElement instanceof HTMLElement ? document.activeElement.blur() : undefined));
   await page.keyboard.press("j");
 }
+
+// 한 단("one") · 양 단("two") 보기로 놓는다 - 이미 그 보기면 그대로. 칸 사이 가름대가 사라지거나 생길 때까지 기다린다
+async function setPaneView(page, view) {
+  const button = page.locator(`[data-testid="assign-view-${view}"]`);
+  await button.waitFor({ timeout: T });
+  if ((await button.getAttribute("aria-pressed")) !== "true") await button.click();
+  await page.locator('[data-testid="assign-divider"]').waitFor({ state: view === "one" ? "detached" : "attached", timeout: T });
+  await page.locator(".assign-panes:not([data-motion])").waitFor({ timeout: T });
+}
+
+// 받은 xlsx 첫 시트의 줄마다 칸 글(빈 칸은 "") - backend의 openpyxl로 읽는다
+function readXlsxRows(buffer) {
+  const backend = resolve(SCRIPT_DIR, "../../../backend");
+  const python = process.env.BACKEND_PYTHON || [".venv/bin/python", ".venv/Scripts/python.exe"].map((path) => resolve(backend, path)).find(existsSync);
+  const code = "import io, json, sys; from openpyxl import load_workbook; ws = load_workbook(io.BytesIO(sys.stdin.buffer.read())).worksheets[0]; print(json.dumps([['' if v is None else str(v) for v in row] for row in ws.iter_rows(values_only=True)], ensure_ascii=False))";
+  return JSON.parse(String(execFileSync(python, ["-I", "-c", code], { cwd: backend, input: buffer })));
+}
+
+const PARAGRAPH_HEADERS = ["Section No.", "Text", "Lang", "Number note", "Remark"]; // 문단 Excel 머리 줄(backend paragraph_excel.PARAGRAPH_HEADERS)
 
 // 제목 → 문장(F8b) - 시드 문서에는 조항형 옛 SOP가 없어 진짜 제목 하나를 사람이 문장으로 바꿔 본다(우클릭 Turn into sentences).
 // 바꾼 줄 위에 묶음 머리 "[Heading → sentence] …"가 붙고, 고르면 Shape 맨 아래에 Back to heading이 있다. 편집 한 번이라 Undo 한 번씩 돌아온다.
@@ -624,6 +645,8 @@ await runStep("assign: the document dashboard counts the Old document and downlo
   await takeShot("sop-assign-dashboard.png");
   const [download] = await Promise.all([page.waitForEvent("download", { timeout: T }), page.locator('[data-testid="assign-dash-no-tables-doc"]').click()]);
   check("paragraph Excel is named after the document", /_paragraphs_\d{8}-\d{4}\.xlsx$/.test(download.suggestedFilename()), download.suggestedFilename());
+  const paragraphRows = readXlsxRows(readFileSync(await download.path()));
+  check("the paragraph Excel's header row is Section No. | Text | Lang | Number note | Remark", JSON.stringify(paragraphRows[0]) === JSON.stringify(PARAGRAPH_HEADERS), JSON.stringify(paragraphRows[0]));
   await page.keyboard.press("Escape");
   await page.locator('[data-testid="assign-dash-panel"]').waitFor({ state: "detached", timeout: T });
   check("Esc closes the dashboard", (await page.locator('[data-testid="assign-dash-panel"]').count()) === 0);
@@ -2729,7 +2752,8 @@ await runStep("assign: New-side AI filter keeps only the picked line's suggestio
 });
 
 await runStep("assign: Space preview - hold shows the sheet, drag moves it, release closes", {}, async ({ page, takeShot }) => {
-  await openFirstAssign(page);
+  // 양 단 보기 - 비교 Excel A
+  await openFirstAssign(page, "two");
   const sheet = page.locator('[data-testid="assign-space-preview"]');
   console.log(`  (small hint shown: ${(await page.locator('[data-testid="assign-space-hint"]').count()) > 0})`);
 
@@ -2747,6 +2771,7 @@ await runStep("assign: Space preview - hold shows the sheet, drag moves it, rele
   await wait(page, "assign-space-preview");
   check("holding Space shows the sheet", (await sheet.getAttribute("data-state")) === "held");
   await wait(page, "assign-space-preview-body");
+  check("in two panes the sheet is Excel A", (await sheet.getAttribute("data-sheet")) === "comparison" && (await sheet.locator(".space-sheet-tab").innerText()) === "A Comparison");
   check("the picked line is painted", (await page.locator('[data-testid="assign-space-preview-body"] tr[data-mark="picked"]').count()) > 0);
   check("the sheet stays inside the window", await sheet.evaluate((el) => el.getBoundingClientRect().right <= window.innerWidth + 1 && el.scrollWidth <= el.clientWidth + 1));
   await takeShot("sop-assign-space-preview.png");
@@ -2771,11 +2796,13 @@ await runStep("assign: Space preview - hold shows the sheet, drag moves it, rele
 });
 
 await runStep("assign: Space preview - a short tap keeps it open, Esc and another tap close it", {}, async ({ page }) => {
-  await openFirstAssign(page);
+  // 한 단 보기 - 그 문서의 문단 Excel
+  await openFirstAssign(page, "one");
   const sheet = page.locator('[data-testid="assign-space-preview"]');
   await page.keyboard.press(" ");
   await wait(page, "assign-space-preview");
   check("a short tap keeps the sheet open", (await sheet.getAttribute("data-state")) === "kept");
+  check("in one pane the sheet is the paragraph Excel", (await sheet.getAttribute("data-sheet")) === "paragraphs");
   check("the head says how to close it", (await page.locator('[data-testid="assign-space-preview-state"]').innerText()).includes("Esc"));
   // 열어 둔 동안에도 줄 옮기기는 그대로 - 시트는 남는다
   await page.keyboard.press("j");
@@ -2787,6 +2814,34 @@ await runStep("assign: Space preview - a short tap keeps it open, Esc and anothe
   await wait(page, "assign-space-preview");
   await page.keyboard.press(" ");
   check("another short tap closes it", (await sheet.count()) === 0);
+  await setPaneView(page, "two"); // 다음 단계들은 양 단에서 시작한다
+});
+
+await runStep("assign: Space preview in one pane shows the paragraph sheet with Section No.", {}, async ({ page }) => {
+  await openFirstAssign(page, "one");
+  const sheet = page.locator('[data-testid="assign-space-preview"]');
+  await page.keyboard.press(" ");
+  await wait(page, "assign-space-preview");
+  await wait(page, "assign-space-preview-body");
+  // 머리 줄은 고정한 머리 표(-head)에 있다(freeze A2)
+  const header = await page.locator('[data-testid="assign-space-preview-head"] tr[data-row-kind="header"]').first().locator("td").allInnerTexts();
+  check("the one-pane sheet has the five paragraph columns, Section No. first", JSON.stringify(header.map((text) => text.trim()).slice(0, 5)) === JSON.stringify(PARAGRAPH_HEADERS), JSON.stringify(header));
+  check("its title and download button are the paragraph Excel's", (await sheet.getAttribute("aria-label")) === "Paragraph Excel preview" && (await getText(page, "assign-space-preview-download")).includes("Download paragraphs"));
+  check("the picked line is painted in the paragraph sheet", (await page.locator('[data-testid="assign-space-preview-body"] tr[data-mark="picked"]').count()) > 0);
+  check("the foot says the paragraph sheet has the downloaded file's rows", (await getText(page, "assign-space-preview-legend")).includes("Paragraph Excel, 5 columns"));
+  const [download] = await Promise.all([page.waitForEvent("download", { timeout: T }), page.locator('[data-testid="assign-space-preview-download"]').click()]);
+  check("the download is the paragraph Excel of the document", /_paragraphs_\d{8}-\d{4}\.xlsx$/.test(download.suggestedFilename()), download.suggestedFilename());
+  const rows = readXlsxRows(readFileSync(await download.path()));
+  check("the downloaded file has the same header row", JSON.stringify(rows[0]) === JSON.stringify(PARAGRAPH_HEADERS), JSON.stringify(rows[0]));
+  await page.keyboard.press("Escape");
+  check("Esc closes it", (await sheet.count()) === 0);
+  // 양 단으로 돌아오면 같은 Space가 Excel A
+  await setPaneView(page, "two");
+  await page.evaluate(() => (document.activeElement instanceof HTMLElement ? document.activeElement.blur() : undefined));
+  await page.keyboard.press(" ");
+  await wait(page, "assign-space-preview");
+  check("back in two panes the sheet is Excel A again", (await sheet.getAttribute("data-sheet")) === "comparison");
+  await page.keyboard.press("Escape");
 });
 
 // 필터 접기(2026-11-12) - 필터를 걸면 맞는 문장만 제 모양, 앞뒤 한 줄, 나머지는 묶음 한 줄. 목록은 걸 때의 스냅숏이라 확정해도 접히지 않는다
@@ -4427,13 +4482,10 @@ await runStep("assign: unwrap table - the grip moves a line to the top, Undo put
     return a !== null && b !== null && (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
   }, [one, two], { timeout: T }).then(() => true, () => false);
   const isEditCall = (pattern) => (response) => response.request().method() === "POST" && pattern.test(new URL(response.url()).pathname);
-  // 문단 Excel의 줄마다 칸 글을 이은 글 - 받은 파일을 backend의 openpyxl로 읽는다(열 꼴은 다음 스텝이 바꾼다)
-  const backend = resolve(SCRIPT_DIR, "../../../backend");
-  const python = process.env.BACKEND_PYTHON || [".venv/bin/python", ".venv/Scripts/python.exe"].map((path) => resolve(backend, path)).find(existsSync);
+  // 문단 Excel의 줄마다 Text 칸(B열) 글 - 받은 파일을 backend의 openpyxl로 읽는다(섹션 번호 · 언어 · 노트 · Remark 칸은 보지 않는다)
   const readParagraphRows = async () => {
     const response = await page.request.get(`${api}/documents/${doc.id}/paragraphs.xlsx`, { headers });
-    const code = "import io, json, sys; from openpyxl import load_workbook; ws = load_workbook(io.BytesIO(sys.stdin.buffer.read())).worksheets[0]; print(json.dumps(['\\t'.join(str(v) for v in row if v is not None) for row in ws.iter_rows(values_only=True)], ensure_ascii=False))";
-    return response.ok() ? JSON.parse(String(execFileSync(python, ["-I", "-c", code], { cwd: backend, input: await response.body() }))) : [];
+    return response.ok() ? readXlsxRows(await response.body()).map((row) => row[1] ?? "") : [];
   };
   // 그 줄 글이 칸 문단 하나와 꼭 같은 줄을 먼저 찾고(짧은 칸 글이 앞 본문에 섞여 있어도), 없으면 글이 든 줄(한 문단을 나눈 문장)
   const firstRowWith = (rows, text) => {
@@ -4453,7 +4505,7 @@ await runStep("assign: unwrap table - the grip moves a line to the top, Undo put
   await piece.waitFor({ state: "detached", timeout: T });
   await waitForOldMotion(page);
   await page.waitForLoadState("networkidle");
-  // 덩이 첫 칸 줄과, 다른 행의 짝 없는 줄 가운데 가장 가까운 것 - 둘은 문단 Excel에서도 다른 줄(표 행)이다
+  // 덩이 첫 칸 줄과, 다른 행의 짝 없는 줄 가운데 가장 가까운 것 - 둘은 문단 Excel에서도 다른 줄이다(벗긴 칸 줄은 줄마다 한 줄)
   const lines = unwrapped.units.filter((item) => item.kind === "cell_sentence" && item.table_id === unit.table_id && item.group_unit_id === null).sort(sourceOrder);
   const top = lines[0];
   const moved = lines.find((item) => item.pair_id === null && item.row_index !== top?.row_index);

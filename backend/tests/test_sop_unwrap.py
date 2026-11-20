@@ -270,7 +270,7 @@ def test_reordering_unwrapped_lines_moves_them_on_the_paper_and_in_the_paragraph
     view = get_view(client, bundle_id, doc_id)
     assert _shown(view, 0) == moved
     assert find_unit(view, SWAP[2])["unwrap_seq"] == 0
-    # 문단 Excel의 지금 꼴(칸 줄을 표 행으로 묶음)에서는 옮긴 줄이 든 행이 그 표 행들의 맨 앞이다
+    # 문단 Excel에서도 벗긴 칸 줄은 보통 줄이라 옮긴 줄이 그 덩이 줄들의 맨 앞이다
     rows = _paragraph_rows(client, bundle_id, doc_id)
     assert _first_row_with(rows, SWAP[2]) < _first_row_with(rows, HEADS[0]) < _first_row_with(rows, PREP[0])
     # 같은 순서는 쓰지 않는다

@@ -69,7 +69,8 @@ def _paragraph_lines(client: TestClient, fx: Fixture) -> list[str]:
     response = client.get(f"/api/bundles/{fx.bundle_id}/documents/{fx.doc_id}/paragraphs.xlsx", headers=AUTHOR)
     assert response.status_code == 200, response.text
     sheet = load_workbook(BytesIO(response.content)).worksheets[0]
-    return [row[0] for row in sheet.iter_rows(values_only=True)]
+    # 머리 줄 다음부터 Text 열(B) — 섹션 번호 · 언어 · 노트 · Remark 열은 보지 않는다
+    return [row[1] for row in sheet.iter_rows(min_row=2, values_only=True)]
 
 
 def test_order_pair_card_follows_seq_only_when_every_member_has_a_distinct_one() -> None:
