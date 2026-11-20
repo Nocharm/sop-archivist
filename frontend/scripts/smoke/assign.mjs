@@ -2,9 +2,10 @@
 // Step bodies sit at column 0 inside run() on purpose: they moved verbatim, and re-indenting would change multi-line strings.
 
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import {
+  findBackendPython,
   SCRIPT_DIR,
   BASE,
   SHOT_DIR,
@@ -261,9 +262,8 @@ async function setPaneView(page, view) {
 // 받은 xlsx 첫 시트의 줄마다 칸 글(빈 칸은 "") - backend의 openpyxl로 읽는다
 function readXlsxRows(buffer) {
   const backend = resolve(SCRIPT_DIR, "../../../backend");
-  const python = process.env.BACKEND_PYTHON || [".venv/bin/python", ".venv/Scripts/python.exe"].map((path) => resolve(backend, path)).find(existsSync);
   const code = "import io, json, sys; from openpyxl import load_workbook; ws = load_workbook(io.BytesIO(sys.stdin.buffer.read())).worksheets[0]; print(json.dumps([['' if v is None else str(v) for v in row] for row in ws.iter_rows(values_only=True)], ensure_ascii=False))";
-  return JSON.parse(String(execFileSync(python, ["-I", "-c", code], { cwd: backend, input: buffer })));
+  return JSON.parse(String(execFileSync(findBackendPython(), ["-I", "-c", code], { cwd: backend, input: buffer })));
 }
 
 const PARAGRAPH_HEADERS = ["Section No.", "Text", "Lang", "Number note", "Remark"]; // 문단 Excel 머리 줄(backend paragraph_excel.PARAGRAPH_HEADERS)
@@ -2199,7 +2199,6 @@ await runStep("assign: the New pane shows a real table and figure", {}, async ({
 await runStep("assign: New table - picking an Old line then a New cell links it, the chip sits on the cell, × unlinks", { devUser: "dev.admin" }, async ({ page }) => {
   const headers = { "X-Dev-User": "dev.admin" };
   const backend = resolve(SCRIPT_DIR, "../../../backend");
-  const python = process.env.BACKEND_PYTHON || [".venv/bin/python", ".venv/Scripts/python.exe"].map((path) => resolve(backend, path)).find(existsSync);
   const oldFile = resolve(SHOT_DIR, "SYNTHETIC_OLD-88_cell_link.docx");
   const newFile = resolve(SHOT_DIR, "SYNTHETIC_SOP-88_cell_link.docx");
   const build = [
@@ -2208,7 +2207,7 @@ await runStep("assign: New table - picking an Old line then a New cell links it,
     "open(sys.argv[1], 'wb').write(build_docx(p('합성 압력') + p('합성 결과를 적는다.')))",
     "open(sys.argv[2], 'wb').write(build_docx(p('1. 합성 절', 'Heading1') + tbl([['합성 항목', '합성 값'], ['합성 압력', '합성 결과']]), headers=[p('합성 새 문서')]))",
   ].join("\n");
-  execFileSync(python, ["-c", build, oldFile, newFile], { cwd: backend, stdio: "inherit" });
+  execFileSync(findBackendPython(), ["-c", build, oldFile, newFile], { cwd: backend, stdio: "inherit" });
   const created = await (await page.request.post(`${BASE}/api/bundles`, { headers, data: { title: "SYNTHETIC New table cell link", is_synthetic: true } })).json();
   const api = `${BASE}/api/bundles/${created.id}`;
   const getJson = async (path) => (await page.request.get(`${api}${path}`, { headers })).json();
@@ -6706,9 +6705,8 @@ await runStep("assign: every way out of Pair view shows the picked piece or the 
 await runStep("assign: leaving Pair view on a long document shows a piece picked far down", { devUser: "dev.admin" }, async ({ page }) => {
   const headers = { "X-Dev-User": "dev.admin" };
   const backend = resolve(SCRIPT_DIR, "../../../backend");
-  const python = process.env.BACKEND_PYTHON || [".venv/bin/python", ".venv/Scripts/python.exe"].map((path) => resolve(backend, path)).find(existsSync);
   const file = resolve(SHOT_DIR, "SYNTHETIC_OLD-87_long_separate.docx");
-  execFileSync(python, ["-c", "import sys; from scripts.seed_sop_worst import build_big; open(sys.argv[1], 'wb').write(build_big('OLD-87', 400, False))", file], { cwd: backend, stdio: "inherit" });
+  execFileSync(findBackendPython(), ["-c", "import sys; from scripts.seed_sop_worst import build_big; open(sys.argv[1], 'wb').write(build_big('OLD-87', 400, False))", file], { cwd: backend, stdio: "inherit" });
   const created = await (await page.request.post(`${BASE}/api/bundles`, { headers, data: { title: "SYNTHETIC long Pair view", is_synthetic: true } })).json();
   const api = `${BASE}/api/bundles/${created.id}`;
   const uploaded = await page.request.post(`${api}/documents`, { headers, multipart: { side: "old", file: { name: "SYNTHETIC_OLD-87_long_separate.docx", mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", buffer: readFileSync(file) } } });

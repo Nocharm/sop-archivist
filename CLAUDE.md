@@ -30,6 +30,7 @@ npm run build                               # 경고 0이어야 한다. next dev
 npm run lint && npx tsc --noEmit -p tsconfig.json && npx vitest run   # 커밋 전 필수
 # 브라우저 검증(npm i --no-save playwright-core, 시스템 Chrome): scripts/pw-smoke-sop.mjs · pw-layout-audit.mjs(DS=worst) · pw-overlap-audit.mjs · pw-contrast-audit.mjs · pw-manual-shots.mjs
 # 평소(변경마다)는 고친 화면의 스모크만: QUIET=1 ONLY="assign:" node scripts/pw-smoke-sop.mjs  (전체 스모크·감사 넷은 dev→main 전, 또는 공용 부품·API 층을 고쳤을 때만 — 사용자 결정 2026-11-16)
+scripts/dev-worktree.sh new <branch>        # 맥: 워크트리 + node_modules + 시드 스냅숏. 워크트리 안에서 up [포트] · reset(스모크 전 DB를 시드로) · down
 node frontend/scripts/fake-ai-server.mjs    # 가짜 AI :9999(저장소 루트에서, FAKE_AI_SPLIT=1이면 나눔). 배선 확인용, 정확도 근거 아님
 # dev 인증 = localStorage `sopa.devUser` / 헤더 `X-Dev-User`. 권한 차등은 DEV_ENFORCE_PERMISSIONS=true(dev.admin이 sysadmin)
 ```

@@ -2,6 +2,12 @@
 
 프로젝트 진행 현황 로그. 커밋 직전 갱신한다 (`rules/common/git.md` 규칙). v1.4.0(2026-11-20 정식 업데이트)까지의 항목은 [`docs/history/PROGRESS-archive.md`](docs/history/PROGRESS-archive.md)에 있다 — 정식 업데이트마다 그 릴리스까지의 항목을 거기로 옮긴다(`rules/common/git.md` "정식 업데이트 때 문서 정리").
 
+## 2026-11-20 — 워크트리 준비 · 시드 DB 검사 (`chore/worktree-setup`)
+
+- 까닭: 워크트리마다 venv · node_modules · 시드 DB · 서버를 손으로 갖추다 거짓 스모크 실패가 되풀이됐다 — B4에서 전체 Assign 스모크 한 번(7분)이 `BACKEND_PYTHON` 누락 실패 5개 · 바뀐 DB 실패 2개로 버려졌고, B1도 바뀐 DB로 거짓 실패했다. 교정 사다리대로 산문 대신: 스모크가 원본 체크아웃 venv를 저절로 찾고(`findBackendPython`, 단계마다 찾지 못하게 `source-rules.test.ts`가 막음), `scripts/dev-worktree.sh`(new · up · reset · seed · down)가 준비와 DB 되돌리기를 하며, 스모크는 시드 지문과 다르면 첫 초에 멈춘다(`DIRTY_DB_OK=1`로 넘김).
+- 지문은 묶음 `updated_at`만으로는 안 됐다 — 판단 · 편집은 그것도 `revision`도 바꾸지 않아 마지막 History 사건 id(`/events?limit=1`)를 더했다. `next dev`가 업그레이드 안내를 찍고 한 번 멈출 때가 있어 `up`은 응답 뒤에도 듣고 있는지 보고 한 번 다시 띄운다(Next 업그레이드 자체는 보류 중인 그대로).
+- 검증: `new`(버릴 브랜치로 1분 24초, upstream 없음) · `up`(약 10초) · 포트 충돌 메시지, `BACKEND_PYTHON` 없이 xlsx 단계 통과, 두 번째 실행이 종료 코드 2로 멈춤 → `DIRTY_DB_OK=1` 통과 → `reset` 뒤 통과. shellcheck 깨끗.
+
 ## 2026-11-20 — B4 삭제 줄 다시 접기 · 우클릭 "삭제 취소" (`feat/deleted-fold-restore`)
 
 - 펼침을 화면 상태(`deletedOpen`, 빼는 곳이 없었다) 대신 고름 하나로(`isDeletedLineOpen`) — 다른 박스를 고르면 저절로 접히고, 접을 단위가 고름으로 바뀌지 않아 먼 덩어리는 다시 그리지 않는다. 줄 ↔ 박스는 `Collapse` 둘로 전환하고, 펼친 뒤에는 `.fold-inner` 잘림을 CSS 키프레임(`fold-release`, `--dur-slow` 뒤 `overflow: visible`)으로 풀어 고른 테두리 · 번호 창이 잘리지 않게 — effect · 타이머 수는 그대로.

@@ -263,6 +263,15 @@ describe("one path per concern", () => {
   });
 });
 
+describe("smoke scripts", () => {
+  // 워크트리에는 backend/.venv가 없다 - 단계마다 venv를 찾으면 원본 체크아웃을 못 찾아 거짓 실패했다(2026-11-20)
+  it("find the backend python only through findBackendPython", () => {
+    const scripts = listFiles(join(FRONTEND, "scripts"), /\.mjs$/).filter((path) => !path.endsWith(join("smoke", "common.mjs")));
+    const problems = scripts.filter((path) => /\.venv[/\\]|BACKEND_PYTHON \|\|/.test(stripComments(readFileSync(path, "utf8")))).map((path) => relative(FRONTEND, path));
+    expect(problems, "Fix: import { findBackendPython } from ./smoke/common.mjs and call it - it falls back to the main checkout's backend/.venv").toEqual([]);
+  });
+});
+
 describe("eslint-disable comments", () => {
   it("always give a reason after `--`", () => {
     const problems = allSources.flatMap((path) =>

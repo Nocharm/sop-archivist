@@ -2,7 +2,7 @@
 
 루트 `CLAUDE.md`에서 옮긴 명령 전체(2026-11-14, 1.0.0 문서 정리). 세션마다 실리는 `CLAUDE.md`에는 자주 쓰는 bash 명령만 남겼고, PowerShell 병기·스크립트마다의 전제(DB·포트·env)·감사 옵션은 여기를 본다.
 
-> 워크트리에서 돌릴 때: 워크트리에는 `backend/.venv`가 없으니 원본 체크아웃의 venv(`<원본>/backend/.venv/bin/python`)로 `backend/`에서 돌리고, `frontend/`는 `npm ci`를 한 번 한다. Next 16은 폴더마다 `next dev` 하나만 뜨고, 브라우저 감사는 서로 다른 sqlite 파일(`DATABASE_URL`)에서 돌린다(`docs/lessons/browser-verification.md`).
+> 워크트리에서 돌릴 때(맥): `scripts/dev-worktree.sh`가 준비 · 서버 · DB 되돌리기를 한다 — `new <브랜치>`(origin/dev에서 워크트리 + node_modules APFS 복제 + 시드 스냅숏 `.dev/seed.db`, 약 1분 반), 워크트리 안에서 `up [frontend 포트]`(시드 사본으로 backend 포트+5000 · frontend를 뒤에서, 약 10초), 스모크를 다시 돌리기 전 `reset`(backend만 다시, DB를 시드로), `seed`(Alembic · 시드를 바꾼 브랜치), `down`. backend는 원본 체크아웃의 `backend/.venv`로 돈다(워크트리에는 venv가 없다 — 스모크도 `findBackendPython`이 저절로 찾아 `BACKEND_PYTHON`이 필요 없다). `up` · `reset`이 적는 시드 지문(`.dev/seed-fingerprint.json`)과 지금 묶음(updated_at · 마지막 History 사건)이 다르면 스모크가 첫 초에 종료 코드 2로 멈춘다 — 쓰는 중인 단계 하나를 거듭 돌릴 때만 `DIRTY_DB_OK=1`. Next 16은 폴더마다 `next dev` 하나만 뜨고, 여러 워크트리를 함께 띄우면 포트를 달리한다(`up 3787`).
 
 실행 명령은 **bash(macOS/Linux)와 PowerShell(Windows)을 병기**한다 — 로컬 검증이 Windows PC에서 이뤄지기 때문 (`rules/common/documentation.md`). 서버(리눅스) 명령은 bash만.
 

@@ -2,9 +2,10 @@
 // Step bodies sit at column 0 inside run() on purpose: they moved verbatim, and re-indenting would change multi-line strings.
 
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import {
+  findBackendPython,
   SCRIPT_DIR,
   BASE,
   SHOT_DIR,
@@ -64,13 +65,10 @@ const waitOpacityOf = (page, testId, value) =>
 const blurAll = (page) => page.evaluate(() => (document.activeElement instanceof HTMLElement ? document.activeElement.blur() : undefined));
 
 // 합성 SOP 파일을 .shots/synthetic에 만든다 - 저장소에 사본을 두면 OS마다 PNG 압축 바이트가 달라 어긋난다.
-// BACKEND_PYTHON - venv가 없는 워크트리에서 다른 체크아웃의 venv python을 절대 경로로 쓴다(링크를 만들지 않게)
 function buildSyntheticFiles() {
   const backend = resolve(SCRIPT_DIR, "../../../backend");
   const out = resolve(SHOT_DIR, "synthetic");
-  const python = process.env.BACKEND_PYTHON || [".venv/bin/python", ".venv/Scripts/python.exe"].map((path) => resolve(backend, path)).find(existsSync);
-  if (!python) throw new Error(`backend venv python not found under ${backend}/.venv (or set BACKEND_PYTHON)`);
-  execFileSync(python, ["-c", "import sys; from pathlib import Path; from scripts.synthetic_sop import build_synthetic_bundle; build_synthetic_bundle(Path(sys.argv[1]))", out], { cwd: backend, stdio: "inherit" });
+  execFileSync(findBackendPython(), ["-c", "import sys; from pathlib import Path; from scripts.synthetic_sop import build_synthetic_bundle; build_synthetic_bundle(Path(sys.argv[1]))", out], { cwd: backend, stdio: "inherit" });
   return out;
 }
 
