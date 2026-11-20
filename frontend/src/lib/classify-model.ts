@@ -552,7 +552,7 @@ export function previewLinkChange(
  * 손대지 않는 새 문장을 되보낸다. 줄 단위로 만든 문장(origin units)은 서버가 보낸 자리를 그대로 읽으므로 지금 자리를 같이 싣고,
  * 입구 2·번역 문장은 자리가 잠겨 있어 id·출처만 보낸다.
  */
-function echoTarget(target: GroupTarget, sources: number[] = target.source_unit_ids): TargetInput {
+export function echoTarget(target: GroupTarget, sources: number[] = target.source_unit_ids): TargetInput {
   const base: TargetInput = { key: `t${target.id}`, id: target.id, revision: target.revision, kind: target.kind, source_unit_ids: sources };
   if (target.origin !== "units") return base;
   const cell = target.parent_target_id !== null ? { parent_key: `t${target.parent_target_id}`, cell_row: target.cell_row, cell_col: target.cell_col } : {};

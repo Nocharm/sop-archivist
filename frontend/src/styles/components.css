@@ -1495,7 +1495,8 @@
   button.num-cell[data-fixed] { color: var(--ink-2); font-weight: 600; }
   /* 따라 바뀔 번호 - 점선으로 미리 보인다(저장 전) */
   button.num-cell[data-preview] { color: var(--accent); text-decoration: underline dashed; text-underline-offset: 3px; }
-  button.num-add { color: var(--ink-4); }
+  /* 고른 줄의 옅은 바탕에서도 4.5:1 - ink-4는 4.2로 대비 감사에 걸렸다(assign-selected) */
+  button.num-add { color: var(--ink-3); }
   button.num-add[data-quiet] { opacity: 0; }
   .strip-row:hover > .strip-lead > button.num-add[data-quiet], button.num-add[data-quiet]:focus-visible { opacity: 1; }
   .num-edit { position: absolute; left: 0; top: 2px; display: flex; flex-direction: column; gap: 6px; width: max-content; max-width: min(320px, 80vw); padding: 6px; border: 1px solid var(--line-2); border-radius: var(--r-3); background: var(--raised); box-shadow: var(--shadow-2); font: 400 12px / 1.4 var(--font-ui); color: var(--ink-2); cursor: default; }
@@ -1597,8 +1598,6 @@
   .insp-h::after { content: ""; flex: 1; height: 1px; background: var(--line); }
   .pmark { flex: none; color: var(--ink-3); }
   .pmark.pair { color: var(--st-ai-ink); }
-  .pmark.classified { color: var(--accent); }
-  .pmark.ai { color: var(--st-ai-ink); }
   .pmark.suggest { color: var(--st-ai-ink); }
   .pmark.warn { color: var(--st-hold-ink); }
   .pmark.ref { color: var(--lang-ref-ink); }
@@ -1841,6 +1840,9 @@
   /* 확정한 조각의 간 곳 - 이어진 문장이면 단추(누르면 New 문서의 그 문장으로) */
   .strip-note { display: flex; align-items: center; gap: 4px; margin-top: 2px; font: 600 var(--fs-micro) / 16px var(--font-mono); color: var(--st-ok-ink); text-align: left; }
   .strip-note.is-delete { color: var(--danger-ink); }
+  /* AI 추천 간 곳 - 사람이 정한 간 곳과 같은 자리, 보라 점선으로 아직 제안임을 */
+  .strip-note.is-ai { color: var(--st-ai-ink); }
+  .strip-note.is-ai > .strip-note-text { border-bottom: 1px dashed currentColor; }
   .strip-note > svg { flex: none; }
   .strip-note > .strip-note-text { min-width: 0; overflow-wrap: anywhere; }
   button.strip-note { padding: 0 4px; margin-inline: -4px; border-radius: var(--r-1); cursor: pointer; }
@@ -1898,6 +1900,8 @@
   .pg .new-sec { margin: 10px 0 4px; font: 600 var(--fs-cap) / var(--lh-cap) var(--font-ui); color: var(--ink-3); }
   .new-gap { height: 4px; }
   .new-gap[data-pair] { height: 0; }
+  /* 빈 템플릿 박스 사이 Join 틈(스텝 8) - New 칸 용지는 data-strips가 아니라 안쪽 여백 변수가 없다. 단추는 글 시작 x(--gap-tab)에 */
+  .assign-pane[data-pane="new"] .strip-gap { --pg-pad-l: 0px; }
   .pg.new-sheet[data-strips] .strip { padding-right: var(--pg-pad-l); }
   /* 줄 = 고르는 단추(줄 전체를 덮는다) + 출처 칩 단추 - 단추 안에 단추를 넣지 않는다 */
   .new-hit { display: block; width: 100%; padding: 0; text-align: left; color: inherit; font: inherit; cursor: pointer; }

@@ -1000,7 +1000,7 @@ export function getGroupByUnit(bundleId: number, unitId: number): Promise<Group>
 }
 
 /** Assign 되돌리기 기록 메타 - 저장 본문의 undo. 한 사용자 동작의 요청들은 같은 step_key를 쓴다(서버가 한 단계로 합친다) */
-export type SaveOp = "confirm" | "hold" | "link" | "unlink" | "mark_new" | "link_source";
+export type SaveOp = "confirm" | "hold" | "link" | "unlink" | "mark_new" | "link_source" | "split_new" | "merge_new";
 
 export interface UndoMeta {
   session: string;

@@ -43,7 +43,7 @@ export function describeDecisionStep(
 export const IN_PLACE_EDIT_OPS: ReadonlySet<string> = new Set(["set_language", "set_ref", "clear_ref", "set_number", "reorder_pair", "reorder_unwrapped"]);
 
 /** 판단 저장 단계(되돌리기 기록의 op) - 판단만 바꾸고 Unit은 은퇴시키지 않는다. 되돌려도 고른 줄을 둔다 */
-const DECISION_STEP_OPS: ReadonlySet<string> = new Set(["confirm", "hold", "link", "unlink", "mark_new", "link_source", "confirm_identical", "accept_ai", "delete", "move_out", "clear", "reset"]);
+const DECISION_STEP_OPS: ReadonlySet<string> = new Set(["confirm", "hold", "link", "unlink", "mark_new", "link_source", "split_new", "merge_new", "confirm_identical", "accept_ai", "delete", "move_out", "clear", "reset"]);
 
 /** 원문 편집 단계(되돌리기 기록의 op, 자르기는 cut) - 서버는 판단이 걸린 편집을 되돌리지 않는다(confirm 없이) */
 const UNIT_EDIT_STEP_OPS: ReadonlySet<string> = new Set([

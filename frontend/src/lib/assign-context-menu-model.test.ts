@@ -52,7 +52,7 @@ function find(context: AssignMenuContext, action: AssignMenuAction) {
 describe("buildAssignMenu", () => {
   it("groups assign actions before edit actions", () => {
     const groups = buildAssignMenu(ctx());
-    expect(groups.assign.map((item) => item.action)).toEqual(["clear"]);
+    expect(groups.assign.map((item) => item.action)).toEqual(["clear", "move", "delete"]);
     expect(groups.edit.map((item) => item.action)).toEqual(["split", "merge_prev", "merge_next", "pair_pick", "lang", "ref_mark", "to_heading"]);
   });
 

@@ -361,15 +361,17 @@ export function getTags(unit: ViewUnit): { lang: "KO" | "EN" | null; hold: boole
   return { lang, hold: unit.status === "on_hold" };
 }
 
-export type UnitMark = "edited" | "pair" | "classified" | "ai" | "suggest" | "ref";
+export type UnitMark = "edited" | "pair" | "suggest" | "ref";
 
-/** 종이 오른쪽 끝 아이콘 표시 - 순서가 늘 같아야 줄마다 같은 자리에 온다. suggest는 아직 정하지 않은 AI 나누기 제안 */
-export function getMarks(unit: ViewUnit): UnitMark[] {
+/**
+ * 종이 오른쪽 끝 아이콘 표시 - 예외(나눔·합침, 떨어진 짝)와 할 일(나누기 제안·참조 줄)만. 순서가 늘 같아야 줄마다 같은 자리에 온다.
+ * 확정·AI 제안은 글 아래 간 곳 줄이, 붙은 짝은 짝 카드가 말한다 - 거의 모든 줄에 붙어 드문 표시를 묻었다(사용자 결정 2026-11-20).
+ * inPairCard면 짝 표시를 뺀다
+ */
+export function getMarks(unit: ViewUnit, inPairCard = false): UnitMark[] {
   const marks: UnitMark[] = [];
   if (unit.is_edited) marks.push("edited");
-  if (unit.pair_id !== null) marks.push("pair");
-  if (unit.status === "confirmed") marks.push("classified");
-  if (unit.status === "ai_suggested") marks.push("ai");
+  if (unit.pair_id !== null && !inPairCard) marks.push("pair");
   if (unit.split_suggestion_id !== null) marks.push("suggest");
   // 참조 줄 제안 - 사람이 번호를 확인하기 전까지 줄 끝에 남는다
   if (unit.ref?.state === "proposed") marks.push("ref");

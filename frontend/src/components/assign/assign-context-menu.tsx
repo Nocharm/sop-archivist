@@ -1,9 +1,9 @@
-// Assign Old 문장 우클릭 메뉴 - 위는 배정(배정 취소), 아래는 문장 고치기(여기서 나누기·앞뒤와 합치기·언어).
+// Assign Old 문장 우클릭 메뉴 - 위는 배정(배정 취소·이동·삭제 - 삭제는 구분선으로 떼어 경고색), 아래는 문장 고치기(여기서 나누기·앞뒤와 합치기·언어).
 // 항목의 가능/불가는 순수 모델(assign-context-menu-model)이 정한다. 꺼진 항목은 숨기지 않고 흐리게, 까닭은 data-tip 툴팁이다.
 // 자리는 그 자리 메뉴와 같은 규칙(placeLinkMenu) - 그 줄의 조각들(한/영 짝이면 둘 다) 아래(모자라면 위)에 놓아 다룰 문장을 가리지 않는다.
 "use client";
 
-import { ArrowDownToLine, ArrowUpToLine, BookMarked, BookX, CaptionsOff, Eraser, Heading, LayoutList, Link2, MousePointerClick, PanelBottom, PanelTop, Pilcrow, Scissors, Unlink, type LucideIcon } from "lucide-react";
+import { ArrowDownToLine, ArrowUpToLine, BookMarked, BookX, CaptionsOff, Eraser, ExternalLink, Heading, LayoutList, Link2, MousePointerClick, PanelBottom, PanelTop, Pilcrow, Scissors, Trash2, Unlink, type LucideIcon } from "lucide-react";
 import { useRef } from "react";
 
 import { Menu } from "@/components/ui/menu";
@@ -15,6 +15,9 @@ import { placeLinkMenu } from "@/lib/link-menu-place";
 
 // 오른쪽 칸의 다듬기 줄(shape-tools)도 같은 아이콘·이름을 쓴다 - 같은 일은 어디서나 같은 모양으로
 export const ASSIGN_ACTION_ICONS: Record<Exclude<AssignMenuAction, "lang">, LucideIcon> = {
+  // 여러 줄 삭제·이동 창의 단추와 같은 아이콘
+  delete: Trash2,
+  move: ExternalLink,
   clear: Eraser,
   split: Scissors,
   merge_prev: ArrowUpToLine,
@@ -37,6 +40,8 @@ export const ASSIGN_ACTION_ICONS: Record<Exclude<AssignMenuAction, "lang">, Luci
 };
 
 export const ASSIGN_ACTION_LABELS: Record<Exclude<AssignMenuAction, "lang">, string> = {
+  delete: "assign.ctx.delete",
+  move: "assign.ctx.move",
   clear: "classify.clear",
   split: "split.cutHere",
   merge_prev: "assign.ctx.mergePrev",
@@ -58,7 +63,7 @@ export const ASSIGN_ACTION_LABELS: Record<Exclude<AssignMenuAction, "lang">, str
   to_heading: "assign.ctx.toHeading",
 };
 
-const KEYS: Partial<Record<AssignMenuAction, string>> = { clear: "U" };
+const KEYS: Partial<Record<AssignMenuAction, string>> = { delete: "Del", move: "M", clear: "U" };
 
 interface AssignContextMenuProps {
   /** 누른 문장의 조각 - 닫으면 포커스가 돌아갈 곳 */
@@ -106,7 +111,7 @@ export function AssignContextMenu({ anchor, cover, click, groups, onPick, onClos
         key={item.action}
         type="button"
         role="menuitem"
-        className="menu-item"
+        className={item.action === "delete" ? "menu-item danger" : "menu-item"}
         aria-disabled={item.enabled ? undefined : "true"}
         aria-label={reason ? `${label} - ${reason}` : undefined}
         data-tip={reason ?? undefined}
@@ -128,7 +133,8 @@ export function AssignContextMenu({ anchor, cover, click, groups, onPick, onClos
       {/* display: contents - 툴팁 핸들러만 얹고 항목 배치는 Menu 그대로 */}
       <div style={{ display: "contents" }} {...tip.handlers}>
         <p className="menu-label">{t("assign.ctx.assignGroup")}</p>
-        {groups.assign.map(renderItem)}
+        {/* 되돌리기 어려운 삭제는 위아래 구분선으로 떼어 둔다 - 아래 구분선은 고치기 묶음 앞의 것 */}
+        {groups.assign.flatMap((item) => (item.action === "delete" ? [<div key="sep-delete" className="menu-sep" role="separator" />, renderItem(item)] : [renderItem(item)]))}
         <div className="menu-sep" role="separator" />
         <p className="menu-label">{t("assign.ctx.editGroup")}</p>
         {groups.edit.map(renderItem)}

@@ -31,10 +31,11 @@ import { listRefCandidates } from "@/lib/caption-ref-model";
 import { isBundleKind, isCaptionGate, listCaptionPendingRowKeys, makeIsLinkedToWritten, type CaptionUnit } from "@/lib/caption-model";
 import { buildBlockPlaces, getCaptionMotion, resolveCaptionDetach, resolveCaptionDrop, type CaptionDetach, type CaptionDrop } from "@/lib/caption-slot-model";
 import { applyJoinedSources, listJoinableIds, shouldAdvanceAfterSave } from "@/lib/join-sentence-model";
+import { buildComposedMerge, buildComposedSplit, canEditComposed, findComposedCut, planComposedJoin, stepComposedCut } from "@/lib/composed-ops-model";
 import { applySavedTargets, buildComposedRows, isWrittenRow, listHeadingNotes, listSectionMarks, readSectionHead, removeClearedUnits, type NewPaneRow } from "@/lib/composed-model";
 import { addPartnerTargets, buildLinkPairs, buildRecommendations, listUnsourced, mergeGroups, readConfirmBlockKey, stepZoom, type Recommendation } from "@/lib/assign-model";
 import { countLiveOffer, splitAcceptIds } from "@/lib/ai-accept-model";
-import { buildUseDraft, findRowSuggestion, indexLiveSuggestions, readSuggestedDestination } from "@/lib/ai-suggestion-model";
+import { buildUseDraft, findRowSuggestion, indexLiveSuggestions, readSuggestedDestination, readSuggestionPlace } from "@/lib/ai-suggestion-model";
 import { buildAssignMenu, getPairPickBlocker, getPairSetBlocker, planAssignJoin, planShapeMode, type AssignMenuAction, type AssignMenuGroups } from "@/lib/assign-context-menu-model";
 import { listHeadingBackUnits } from "@/lib/heading-shift-model";
 import { countDecidedLines, getTableNumber, getUnitUnwrapTable, listUnwrapScopes } from "@/lib/unwrap-model";
@@ -246,6 +247,12 @@ function buildPaperPending(pending: readonly Pending[], t: (key: string) => stri
 }
 
 /** Assign 화면 한 벌의 상태와 동작 - page.tsx가 그리는 데 쓰는 이름을 모두 돌려준다 */
+/** 우클릭 메뉴·Del·M 창에서 고른 삭제·이동 - 그린 초안 대신 이 값으로 저장한다 */
+interface DecidePick {
+  destination: Extract<Destination, { kind: "delete" | "move" }>;
+  moveCode: string;
+}
+
 export function useAssignPage() {
 
   const { t, lang: uiLang } = useI18n();
@@ -315,7 +322,7 @@ export function useAssignPage() {
     for (const item of [...(suggestions.data ?? []), ...(matchSuggestions.data ?? [])]) for (const id of item.content.unit_ids ?? []) if ((map.get(id)?.id ?? 0) < item.id) map.set(id, item);
     return map;
   }, [suggestions.data, matchSuggestions.data]);
-  /** 용지 줄 끝 표시의 상태 - 살아 있는 제안이 있는 미배정 단위는 AI 표시(✦, 호버 설명)를 단다(설계 §5 2-4). 판단 상태는 바꾸지 않는다 */
+  /** 용지 줄의 상태 - 살아 있는 제안이 있는 미배정 단위는 ai_suggested(글 아래 AI 간 곳 줄, readAiPlace). 판단 상태는 바꾸지 않는다 */
   function readMarkStatus(unitId: number): UnitRow["status"] | undefined {
     const status = unitMap.get(unitId)?.status;
     return status === "unassigned" && liveIndex.has(unitId) ? "ai_suggested" : status;
@@ -348,6 +355,13 @@ export function useAssignPage() {
   const rowMap = new Map(rows.map((row) => [row.key, row]));
   const rowOfUnit = new Map(rows.flatMap((row) => row.unitIds.map((id) => [id, row.key] as const)));
   const options = useMemo(() => (tobeData ? buildDestinationOptions(tobeData) : []), [tobeData]);
+  /** Old 줄 아래 AI 간 곳 글 - 살아 있는 제안이 덮는 미배정 줄만. 확정 줄의 간 곳 줄과 같은 자리에 쓴다(줄 끝 ✦ 대신, 사용자 결정 2026-11-20) */
+  function readAiPlace(unitIds: number[]): string | null {
+    if (!unitIds.some((id) => readMarkStatus(id) === "ai_suggested")) return null;
+    const live = findRowSuggestion(unitIds, "unassigned", liveIndex);
+    const place = live ? readSuggestionPlace(live, options) : null;
+    return place === "delete" ? t("classify.deleted") : place;
+  }
   const ready = viewList !== null && unitList !== null && tobeData !== null && writtenList.data !== null;
   const showSkeleton = useDelayedFlag(!ready && docs.error === null);
   const unsourced = listUnsourced(written);
@@ -486,6 +500,8 @@ export function useAssignPage() {
   // 고른 줄이 어떤 길로든 바뀌면(↑↓·저장 뒤 다음 줄·짝 풀림·문서 바꾸기) 메뉴를 닫는다 - 다른 줄에서 낡은 메뉴가 되살아나지 않게(렌더 중 상태 맞추기)
   if (menu !== null && menu.rowKey !== activeKey) setMenu(null);
   // 놓인 New 문장을 눌러 연 작은 메뉴(이 문장에 잇기 · 이 줄 다음에 놓기) - 그 문장 줄 상자, 누른 자리. 고른 줄이 바뀌면 닫는다
+  // 빈 템플릿 박스 안 나눌 선(스텝 8) - 그 박스가 고른 줄에서 왔을 때만 보인다(Old 선처럼 다른 줄을 고르면 사라진다)
+  const [composedCutAt, setComposedCutAt] = useState<{ targetId: number; at: number } | null>(null);
   const [joinMenu, setJoinMenu] = useState<{ seq: number; rowKey: string; targetId: number; anchor: HTMLElement; offset: { x: number; y: number } | null } | null>(null);
   if (joinMenu !== null && joinMenu.rowKey !== activeKey) setJoinMenu(null);
   // Old 문장 우클릭 메뉴 - 누른 Unit, 그 줄 상자, 연 때 고른 박스(boxId, New 문서면 null), 누른 자리와 글자 자리(키보드로 열었으면 없음).
@@ -527,6 +543,9 @@ export function useAssignPage() {
   const systemHold = rowUnits.map((unit) => findSystemHold(unit.decision)).find((code) => code !== null) ?? null;
   const reasonNow = draft.reason ?? savedReason;
   const moveCode = draft.moveCode ?? firstDecision?.move_target_code ?? "";
+  // runSave·sendSave가 방금 고른 삭제·이동(pick)으로 가릴 때 읽는 그린 초안의 값
+  const currentDestination = destination;
+  const currentMoveCode = moveCode;
 
   function setDraft(patch: Partial<PageDraft>, nextEditing = editing) {
     if (!activeKey) return;
@@ -1622,6 +1641,8 @@ export function useAssignPage() {
   function runUnitAction(target: ViewUnit, action: AssignMenuAction, lang?: "ko" | "en", caret: { blockId: number; offset: number } | null = null) {
     const table = findTableOf(target);
     if (action === "clear") void runClear();
+    else if (action === "delete") decideNow({ kind: "delete" });
+    else if (action === "move") setMoveAsk(true);
     // 앱이 제안한 참조 줄(옛 추출의 REF?)은 언어 칸의 REF를 누르면 그 번호로 바로 확정한다(요청서 14) - 확인 단추와 같은 편집
     else if (action === "ref_mark" && target.ref?.state === "proposed") void runUnitEdit({ type: "set_ref", unit_id: target.id, number: target.ref.number }, t("assign.ref.didConfirm"), target.id);
     else if (action === "ref_mark") setRefEntryId(target.id);
@@ -1761,8 +1782,10 @@ export function useAssignPage() {
     return new Set(linkIds.map((id) => findWrittenRow(id)?.target_doc_id)).size > 1 ? "duplicate" : null;
   }
 
-  /** reasonOverride는 Remark 창에서 방금 확인한 사유 - 초안 상태가 아직 반영되기 전이라 직접 넘긴다 */
-  async function runSave(action: "confirm" | "hold", reasonOverride?: string) {
+  /** reasonOverride는 Remark 창에서 방금 확인한 사유, pick은 방금 고른 삭제·이동 - 초안 상태가 아직 반영되기 전이라 직접 넘긴다 */
+  async function runSave(action: "confirm" | "hold", reasonOverride?: string, pick?: DecidePick) {
+    const destination = pick?.destination ?? currentDestination;
+    const moveCode = pick?.moveCode ?? currentMoveCode;
     // 보낼 곳 없이는 보류만 된다(처분 unassigned + hold, 사유는 hold_reason)
     if (!row || busy || (!destination && action !== "hold")) return;
     if (isRowLoading) {
@@ -1775,7 +1798,8 @@ export function useAssignPage() {
       showToast(t("assign.ref.checkFirst"), "error");
       return;
     }
-    if (action === "confirm" && isCaptionGateOn) {
+    // 삭제·이동은 캡션 없이도 된다 - 지금 초안(새 문서 자리)의 캡션 조건을 따르지 않는다
+    if (action === "confirm" && isCaptionGateOn && !pick) {
       // 캡션 없는 표·그림 - 단추는 꺼져 있고, ↵·메뉴 확정도 같은 까닭으로 멈춘다
       showToast(t("assign.caption.needed"), "error");
       return;
@@ -1787,22 +1811,24 @@ export function useAssignPage() {
       document.querySelector<HTMLElement>('[data-testid="assign-move-code"]')?.focus();
       return;
     }
-    const need = readReasonNeed(action);
+    const need = pick ? null : readReasonNeed(action);
     if (need !== null && !reason.trim()) {
       // 알림만 띄우지 않고 사유 창을 연다 - 확인하면 이 저장을 잇는다
       setRemarkEdit({ kind: "row", need, then: action });
       return;
     }
     const saveRow = row;
-    await focusCtl.runPending({ kind: "save", docId: row.documentId, unitIds: row.unitIds, place: NO_PLACE, isGlobal: false }, (job) => sendSave(job, saveRow, action, reason));
+    await focusCtl.runPending({ kind: "save", docId: row.documentId, unitIds: row.unitIds, place: NO_PLACE, isGlobal: false }, (job) => sendSave(job, saveRow, action, reason, pick));
   }
 
   /** runSave의 보내기 - 그 줄의 Unit은 응답까지 잠긴다(알약은 그리지 않는다, 설계 D4) */
-  async function sendSave(job: string, row: ClassifyRow, action: "confirm" | "hold", reason: string) {
+  async function sendSave(job: string, row: ClassifyRow, action: "confirm" | "hold", reason: string, pick?: DecidePick) {
+    const destination = pick?.destination ?? currentDestination;
+    const moveCode = pick?.moveCode ?? currentMoveCode;
     try {
       // 고친 칸만 글을 보낸다 - 손대지 않은 AI 제안은 글·종류를 비워 보내 제안 그대로 받는다
       const context = { units: saveUnits, group: saveGroupData, tables: buildTables(), captions: buildCaptions() };
-      const body = buildGroupSave({ ...draft, destination, reason, moveCode }, context, action, action === "hold" ? reason.trim() : "");
+      const body = buildGroupSave({ ...draft, ...(pick ? { position: null } : {}), destination, reason, moveCode }, context, action, action === "hold" ? reason.trim() : "");
       // Use로 받은 제안을 싣는다 - 서버가 판단에 잇고 채택(그대로·고침·버림)을 남긴다
       if (draft.suggestionId) body.suggestion_id = draft.suggestionId;
       const leftovers = body.release_unit_ids ?? [];
@@ -1810,7 +1836,7 @@ export function useAssignPage() {
       const sectionKey = getSectionKey(destination);
       const at = draft.position && sectionKey !== null && body.targets.some((target) => target.position !== undefined) ? { sectionKey, after: draft.position.after } : null;
       // 놓인 문장에 잇기도 출처를 잇는 일이라 알림의 되돌리기 이름이 잇기다
-      const op = destination?.kind === "join" && action === "confirm" ? "link" : pickSaveOp({ action, destinationKind: destination?.kind ?? null, savedLinkIds: savedDestination?.kind === "link" ? savedDestination.targetIds : [], nextLinkIds: linkIds });
+      const op = destination?.kind === "join" && action === "confirm" ? "link" : pickSaveOp({ action, destinationKind: destination?.kind ?? null, savedLinkIds: savedDestination?.kind === "link" ? savedDestination.targetIds : [], nextLinkIds: pick ? [] : linkIds });
       // 엮은 문서의 칸에 놓는 확정은 어디 몇 번이 되는지 알리고 되돌리기를 단다(MD 2 S3) - 저장 전 자리로 센다
       const placedNote = action === "confirm" ? formatPlacedToast() : null;
       const saved = await saveGroup(bundleId, body, buildUndo({ op, focus_unit_id: row.unitIds[0] }));
@@ -1824,7 +1850,7 @@ export function useAssignPage() {
       // 놓인 문장에 잇기는 그 줄에 머문다 - 곧바로 그 문장의 연필(Rewrite)로 포커스를 옮겨 고쳐 쓰게(MD 1 F12 E4)
       const next = shouldAdvanceAfterSave({ action, destinationKind: destination?.kind ?? null, isSplit }) ? findNextOpen(listKeys, rowMap, row.key) : null;
       if (action === "confirm" && destination?.kind === "join" && !isSplit) setEditFocus({ key: row.key });
-      if (action === "confirm") showSent(row, saved, next ?? row.key, at);
+      if (action === "confirm" && !pick) showSent(row, saved, next ?? row.key, at);
       dropDraft(row.key);
       // 한 언어만 이어 짝을 풀었으면 남은 문장의 줄로 옮긴다 - 다시 받아 그 줄이 생긴 뒤, 그 사이 다른 줄을 고르지 않았을 때
       if (isSplit) focusCtl.succeed(job, { docId: row.documentId, revision: null, pickUnitId: leftovers[0] });
@@ -1849,6 +1875,15 @@ export function useAssignPage() {
   useEffect(() => {
     if (!isRowLoading) runQueuedSave();
   }, [isRowLoading, queuedRowKey]);
+
+  // 삭제·이동 바로 확정(우클릭 메뉴·Del·M 창) - 초안에도 넣어 오른쪽 칸이 따라오고, 저장은 그 초안이 그려지기 전이라 보낼 곳을 직접 넘긴다
+  const [isMoveAsk, setMoveAsk] = useState(false);
+  function decideNow(next: DecidePick["destination"], code?: string, reason?: string) {
+    if (!row || !canEdit || busy) return;
+    const pick = { destination: next, moveCode: code ?? moveCode };
+    setDraft({ destination: next, position: null, moveCode: pick.moveCode });
+    void runSave("confirm", reason, pick);
+  }
 
   /**
    * 확정한 곳을 오른쪽 칸에 바로 보인다 - 그 문서로 옮기고(다음 줄에서도, 손으로 고른 문서가 없을 때), 엮은 문서면 저장 응답으로 칸에 미리 넣는다.
@@ -2229,6 +2264,72 @@ export function useAssignPage() {
   function handleJoinPick(targetId: number, anchor: HTMLElement, event: MouseEvent) {
     if (activeKey === null) return;
     setJoinMenu((prev) => ({ seq: (prev?.seq ?? 0) + 1, rowKey: activeKey, targetId, anchor, offset: readMenuOffset(anchor, event) }));
+  }
+
+  /** 엮은 문서의 박스 - 화면 문서(기다리는 편집을 얹은 것)에서 찾는다 */
+  function findComposedItem(targetId: number): ComposedItem | undefined {
+    for (const section of composedDoc?.sections ?? []) for (const item of section.items) if (item.target_id === targetId) return item;
+    return undefined;
+  }
+  const composedCutItem = composedCutAt ? findComposedItem(composedCutAt.targetId) : undefined;
+  const composedCut = composedCutAt && composedCutItem && row && composedCutItem.source_unit_ids.some((id) => row.unitIds.includes(id)) ? composedCutAt : null;
+
+  /** 빈 템플릿 박스를 두 번 누름 - 그 박스의 Old 줄을 고르고 누른 자리 가까이에 나눌 선(Old 두 번 누르기와 같다). 첫 누름이 연 잇기 메뉴는 닫는다 */
+  function handleComposedDoubleClick(targetId: number, at: number | null) {
+    const item = findComposedItem(targetId);
+    if (!item || !canEdit || mode !== "old" || isAnyPending || !canEditComposed(item)) return;
+    const cut = findComposedCut(item.text, at ?? Math.floor(item.text.length / 2));
+    if (cut === null) return;
+    setJoinMenu(null);
+    window.getSelection()?.removeAllRanges();
+    const key = rowOfUnit.get(item.source_unit_ids[0]);
+    if (key !== undefined && key !== activeKey) selectRow(key);
+    setComposedCutAt({ targetId, at: cut });
+  }
+
+  function dragComposedCut(pos: number | "start" | "end") {
+    if (!composedCut || !composedCutItem) return;
+    const text = composedCutItem.text;
+    const next = findComposedCut(text, pos === "start" ? 0 : pos === "end" ? text.length : pos);
+    if (next !== null && next !== composedCut.at) setComposedCutAt({ targetId: composedCut.targetId, at: next });
+  }
+
+  /** 나눌 선에서 둘로 - 그 박스의 관계 묶음을 받아 앞 글 · 뒤 글 두 새 문장으로 확정한다(종류 나눔은 서버가) */
+  function splitComposedAtCut() {
+    if (!composedCut || !composedCutItem || !canEdit) return;
+    const { targetId, at } = composedCut;
+    const item = composedCutItem;
+    void run(async () => {
+      const body = buildComposedSplit(await getGroupByTarget(bundleId, targetId), targetId, item.text, at);
+      await saveGroup(bundleId, body, buildUndo({ op: "split_new", focus_unit_id: item.source_unit_ids[0], focus_target_id: targetId }));
+      markRecorded();
+      setComposedCutAt(null);
+    }, t("assign.composedOps.didSplit"));
+  }
+
+  /** 이웃한 두 박스의 틈 - 같은 언어면 합치기, 한/영이면 두 Old 줄을 짝으로(planComposedJoin) */
+  function planComposedGap(upperId: number, lowerId: number): JoinPlan | null {
+    const upper = findComposedItem(upperId);
+    const lower = findComposedItem(lowerId);
+    if (!upper || !lower || !canEdit || mode !== "old") return null;
+    return planComposedJoin(upper, lower, (unitId) => paperModel?.units.get(unitId));
+  }
+
+  function joinComposed(upperId: number, lowerId: number, kind: JoinKind) {
+    const upper = findComposedItem(upperId);
+    const lower = findComposedItem(lowerId);
+    if (!upper || !lower || !canEdit || isAnyPending) return;
+    if (kind === "pair") {
+      const ids = [upper.source_unit_ids[0], lower.source_unit_ids[0]];
+      void runPairChange((docId, revision) => createPair(bundleId, docId, revision, ids), t("split.didJoin"), ids[0], "pair", ids);
+      return;
+    }
+    void run(async () => {
+      const group = mergeGroups(await Promise.all([getGroupByTarget(bundleId, upperId), getGroupByTarget(bundleId, lowerId)]));
+      const body = buildComposedMerge(group, { id: upperId, text: upper.text }, { id: lowerId, text: lower.text });
+      await saveGroup(bundleId, body, buildUndo({ op: "merge_new", focus_unit_id: upper.source_unit_ids[0], focus_target_id: upperId }));
+      markRecorded();
+    }, t("assign.composedOps.didMerge"));
   }
 
   /** 놓인 문장 뒤에 놓으면 - 끌어 놓기와 같은 규칙(그 문장이 든 의미 묶음 뒤, 고른 줄이 이미 그 칸에 있으면 자리를 못 바꾼다) */
@@ -3185,7 +3286,8 @@ export function useAssignPage() {
     if (step !== null) moveRow(step);
     else if (key === "escape") {
       // 나눌 선이 있으면 선부터 거둔다(Split과 같다)
-      if (cutLine.at !== null) cutLine.clear();
+      if (composedCut) setComposedCutAt(null);
+      else if (cutLine.at !== null) cutLine.clear();
       else if (isNewEdit) setSolo(null);
       else setChecked(new Set());
     } else if (key === "v") {
@@ -3193,6 +3295,8 @@ export function useAssignPage() {
       if (isPairView) closePairView();
       else changeView({ single: !view.single });
     }
+    else if (key === "s" && canEdit && composedCut) splitComposedAtCut();
+    else if ((key === "arrowleft" || key === "arrowright") && canEdit && composedCut && composedCutItem) setComposedCutAt({ ...composedCut, at: stepComposedCut(composedCutItem.text, composedCut.at, key === "arrowleft" ? -1 : 1) });
     else if (key === "s" && canEdit && hasSolo && cutLine.at !== null) splitAtCut();
     else if ((key === "arrowleft" || key === "arrowright") && canEdit && isNewEdit && cutLine.at !== null) cutLine.nudge(key === "arrowleft" ? -1 : 1);
     else if (!canEdit || !row) return;
@@ -3202,6 +3306,8 @@ export function useAssignPage() {
     else if (key === "e") startEdit();
     else if (key === "h") void runSave("hold");
     else if (key === "u") void runClear();
+    else if (key === "delete" || key === "backspace") decideNow({ kind: "delete" });
+    else if (key === "m") setMoveAsk(true);
     else return;
     event.preventDefault();
   });
@@ -3332,7 +3438,7 @@ export function useAssignPage() {
 
   return {
     t, bundleId, bundle, canEdit, docs, oldDocs, oldDocIds, docViews, unitsKey, reloadData, tobe, tobeData, writtenList, identical,
-    aiJobs, aiOn, aiBusy, suggestions, invalidUnitIds, readMarkStatus, suggestedTargetUnits, unitMap, written, writtenMap, rows, rowMap,
+    aiJobs, aiOn, aiBusy, suggestions, invalidUnitIds, readMarkStatus, readAiPlace, suggestedTargetUnits, unitMap, written, writtenMap, rows, rowMap,
     rowOfUnit, options, ready, showSkeleton, unsourced, mode, setMode, filter, counts, foldOpen, setFoldOpen, applyFilter, foldMatch,
     clearRowPick, activeKey, row, pickedId, solo, setSolo, isSolo, isNewEdit, hasSolo, tocOpen, setTocOpen, tocPick, tocBlocks, checked,
     setChecked, newRemarks, setNewRemarks, menu, setMenu, joinMenu, setJoinMenu, ctxMenu, setCtxMenu, cutUnitId, focusNew,
@@ -3354,11 +3460,11 @@ export function useAssignPage() {
     rewrapTable, describeEditConfirm, pairGrip, clearToc, runCaptionRefChange, switchShapeMode, switchToPair,
     applySplitSuggestion, dismissSplitSuggestion, splitPendingIds, readPendingItem, selectNextSplit, selectNextRef, selectNextCaption,
     splitAtCut, handleOldDoubleClick, runCtx, runUnitAction, revertHeadings, planOldJoin, joinOld, renderOldActions, readReasonNeed,
-    runSave, runClear, runUndoStep, confirmIdenticalAll, acceptAll, markNew, placeManage, pickDestination, pickNewSentence, handleNewPick, unlinkCell,
+    runSave, runClear, runUndoStep, decideNow, isMoveAsk, setMoveAsk, confirmIdenticalAll, acceptAll, markNew, placeManage, pickDestination, pickNewSentence, handleNewPick, unlinkCell,
     handleJoinPick, readJoinAfter, pickJoinMenu, pickPlaceSpot, pickOwnAiLine, jumpToNew, openNewDoc, showInNew, jumpToOld,
     pickTemplateLine, fillTemplateMissing, isTemplateDrag, isOldDrag, finishPairPick, handleOldClick, handlePrimary, startEdit,
     pickRecommendation, markRecHover, revealPick, setRevealPick, done, renderPlaceLabel, listDestinationEls,
-    canClear, error, figureTab,
+    canClear, error, figureTab, composedCut, setComposedCutAt, handleComposedDoubleClick, dragComposedCut, splitComposedAtCut, planComposedGap, joinComposed,
   };
 }
 

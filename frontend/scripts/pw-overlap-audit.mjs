@@ -247,9 +247,23 @@ async function findCoveringLinkedLines(page, menu) {
   return page.evaluate((m) => {
     const hit = (r) => r.width > 0 && r.height > 0 && Math.min(r.right, m.x + m.width) - Math.max(r.left, m.x) > 1 && Math.min(r.bottom, m.y + m.height) - Math.max(r.top, m.y) > 1;
     const hits = [];
+    const menuEl = document.querySelector('[data-testid="assign-link-menu"]');
+    // 누른 New 문단 상자 안에 단추 줄로 든 메뉴(inline, 사용자 결정 2026-11-19)는 그 상자를 늘려 글 아래에 앉는다 - 그 줄은 상자 대신 메뉴 밖 글자 자리와 견준다
+    const readTextRects = (line) => {
+      const rects = [];
+      const walker = document.createTreeWalker(line, NodeFilter.SHOW_TEXT);
+      for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+        if (menuEl?.contains(node) || node.textContent.trim() === "") continue;
+        const range = document.createRange();
+        range.selectNodeContents(node);
+        rects.push(...range.getClientRects());
+      }
+      return rects;
+    };
     // New 줄은 줄 상자 전체(마지막 글줄이 짧아도 그 줄의 자리), Old 줄은 글줄마다
     for (const line of document.querySelectorAll('[data-testid="assign-new"] .new-line[data-state="focus"], [data-testid="assign-new"] .new-line[data-state="picked"]')) {
-      if (hit(line.getBoundingClientRect())) hits.push(`New line "${line.textContent.trim().slice(0, 30)}"`);
+      const isHost = menuEl !== null && line.contains(menuEl);
+      if (isHost ? readTextRects(line).some(hit) : hit(line.getBoundingClientRect())) hits.push(`New line "${line.textContent.trim().slice(0, 30)}"`);
     }
     for (const line of document.querySelectorAll('[data-testid="assign-old"] .su[data-sel]')) {
       if ([...line.getClientRects()].some(hit)) hits.push(`Old line "${line.textContent.trim().slice(0, 30)}"`);

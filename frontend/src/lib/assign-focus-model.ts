@@ -350,7 +350,8 @@ export function planReload(cause: ReloadCause, ctx: { aiOn: boolean }): ReloadPl
     case "new_edit":
       return { ...NO_RELOAD, newDoc: cause.docId, written: true, tobe: true };
     case "pair":
-      return { ...NO_RELOAD, docs: [cause.docId], units: true, bundle: true };
+      // 짝은 엮은 New 문서의 짝 카드(같은 의미 키)도 바꾼다 - New 문장 목록과 함께 그 문서를 다시 받는다(스텝 8)
+      return { ...NO_RELOAD, docs: [cause.docId], units: true, written: true, bundle: true };
     case "caption_ref":
       return { ...NO_RELOAD, docs: [cause.docId] };
     case "split_suggestion":
