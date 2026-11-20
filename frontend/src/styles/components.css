@@ -2392,3 +2392,25 @@
     .pg[data-strips] .strip-row > .strip.new-line[data-pending] { background-image: linear-gradient(color-mix(in oklab, var(--accent) 8%, transparent) 0 0); background-size: 100% 100%; animation: none; }
   }
 }
+
+/* 그림 탭과 위치 판(시안 2 D3) - 카드 줄 끝 단추는 호버 · 포커스 · 고른 카드에서 드러나고, 위치 판은 Old 칸 왼쪽에서 미끄러져 나온다(움직임 줄이기면 시간 토큰이 0이라 바로) */
+@layer components {
+  .figure-card-acts { position: absolute; right: 9px; bottom: 8px; display: flex; gap: 4px; z-index: 2; }
+  .pg[data-strips] .strip:is(:hover, [data-sel]) > .figure-card-acts { opacity: 1; }
+  .figure-card-act { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; border: 1px solid var(--line-2); border-radius: var(--r-1); background: var(--surface); color: var(--ink-2); }
+  .figure-card-act:hover { border-color: var(--ink-3); background: var(--hover); color: var(--ink); }
+  .figure-card-act[data-tone="danger"]:hover { border-color: var(--danger-ink); background: var(--danger-tint); color: var(--danger-ink); }
+  .assign-pane:has(> .figure-spot) { position: relative; }
+  .figure-spot { position: absolute; inset-block: 0; left: 0; z-index: 20; display: flex; flex-direction: column; width: min(460px, 92%); direction: ltr; border-right: 1px solid var(--line-2); background: var(--raised); box-shadow: var(--shadow-2); animation: figure-spot-in var(--dur-slow) cubic-bezier(.16, 1, .3, 1) both; }
+  @keyframes figure-spot-in { from { transform: translateX(-100%); opacity: 0; } }
+  .figure-spot-head { display: flex; align-items: center; gap: 8px; padding: 6px 8px 6px 12px; border-bottom: 1px solid var(--line); }
+  .figure-spot-title { flex: 1 1 0; min-width: 0; font-size: 12px; font-weight: 600; color: var(--ink); }
+  .figure-spot-body { flex: 1 1 0; min-height: 0; overflow-y: auto; padding: 10px 6px 16px; }
+  .figure-spot-empty { padding: 12px; font-size: 12px; color: var(--ink-3); }
+  /* 자리 선 - 줄 사이 점 달린 선과 그림 이름. 판 안의 세로 표시는 나눌 선과 같은 자리지만 앞뒤 바탕 없이 선만 */
+  .figure-spot-line { position: relative; display: flex; align-items: center; gap: 6px; margin: 4px 0 4px var(--pg-pad-l, 24px); border-top: 2px dotted var(--accent); }
+  .figure-spot-line::before { content: ""; position: absolute; left: -5px; top: -6px; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); }
+  .figure-spot-label { position: relative; top: -0.75em; margin-left: 10px; padding: 0 6px; background: var(--raised); font-family: var(--font-mono); font-size: 11px; color: var(--accent); }
+  .figure-spot .su .cut-a, .figure-spot .su .cut-b { background: none; }
+  .figure-spot .su .cut-b { box-shadow: inset 2px 0 0 var(--accent); }
+}

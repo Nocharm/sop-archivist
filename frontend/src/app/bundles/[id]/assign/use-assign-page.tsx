@@ -26,7 +26,7 @@ import { findLastStep } from "@/lib/destination-manage-model";
 import { findSplitBlock, readSplitOffsets } from "@/lib/split-ai-tabs-model";
 import { planPairLanguages, type JoinKind, type JoinPlan } from "@/lib/split-menu-model";
 import { listAppliedSuggestions, requestAi, setSuggestionAdoption, type AiKind, type AiScope } from "@/lib/api-manage";
-import { addToBeDoc, addWiStep, acceptSuggestions, MAX_ACCEPT, confirmPair, createPair, deletePair, editUnits, clearDecisions, confirmMatchesInBulk, getComposedDoc, getDocumentView, getGroupByTarget, getUnitRef, getGroupByUnit, getToBe, listDocuments, listIdenticalCandidates, listNewCandidates, listSuggestions, listWrittenSentences, redoDecision, removeToBeDoc, removeWiStep, saveGroup, undoDecision, updateCaptionRef, type AcceptKind, type AiSuggestion, type ComposedDoc, type ComposedItem, type DecisionStepResult, type DocumentView, type EditOp, type Group, type GroupSaveInput, type NewCandidate, type ToBe, type UndoMeta, type UnitRefDetail, type UnitRow, type ViewUnit, type WrittenSentence } from "@/lib/api-sop";
+import { addToBeDoc, addWiStep, acceptSuggestions, MAX_ACCEPT, bulkDecide, confirmPair, createPair, deletePair, editUnits, clearDecisions, confirmMatchesInBulk, getComposedDoc, getDocumentView, getGroupByTarget, getUnitRef, getGroupByUnit, getToBe, listDocuments, listIdenticalCandidates, listNewCandidates, listSuggestions, listWrittenSentences, redoDecision, removeToBeDoc, removeWiStep, saveGroup, undoDecision, updateCaptionRef, type AcceptKind, type AiSuggestion, type ComposedDoc, type ComposedItem, type DecisionStepResult, type DocumentView, type EditOp, type Group, type GroupSaveInput, type NewCandidate, type ToBe, type UndoMeta, type UnitRefDetail, type UnitRow, type ViewUnit, type WrittenSentence } from "@/lib/api-sop";
 import { listRefCandidates } from "@/lib/caption-ref-model";
 import { isBundleKind, isCaptionGate, listCaptionPendingRowKeys, makeIsLinkedToWritten, type CaptionUnit } from "@/lib/caption-model";
 import { buildBlockPlaces, getCaptionMotion, resolveCaptionDetach, resolveCaptionDrop, type CaptionDetach, type CaptionDrop } from "@/lib/caption-slot-model";
@@ -53,7 +53,7 @@ import { genId } from "@/lib/id";
 import { useLeaveGuard } from "@/lib/leave-guard";
 import { buildIdenticalBatches } from "@/lib/match-model";
 import { EMPTY_FOLD_OPEN, type FoldOpen } from "@/lib/paper-fold-model";
-import { buildPaperModel, buildPaperTabs, findNearestCut, isBandHeading, resolvePickUnit, shouldRecenter, type PaperTabKey } from "@/lib/paper-model";
+import { buildPaperModel, buildPaperTabs, findNearestCut, isBandHeading, listFigureTabUnitIds, resolvePickUnit, shouldRecenter, type PaperTabKey } from "@/lib/paper-model";
 import { isSameOrder, movePairMember, orderPairCard, readPairSlot } from "@/lib/pair-order-model";
 import { moveUnwrapLines, readUnwrapSlot } from "@/lib/unwrap-order-model";
 import { buildPairColumns, canUndoPair, listPairLinks, PAIR_REFUSAL_KEYS, resolvePairDrop, type PairDrop, type PairDropContext } from "@/lib/pair-drop-model";
@@ -609,7 +609,9 @@ export function useAssignPage() {
   // 고른 줄 없이 끈 뒤 그 자리로 되풀이해 맞추는 중이면 그 멈춤 함수
   const pairRestoreRef = useRef<(() => void) | null>(null);
   // 본문·머리말·꼬리말 탭 - 고른 조각이 다른 탭에 있으면 그 탭으로 가고, 사람이 고른 탭은 그 줄에서 그대로 둔다
-  const partKeys = useMemo(() => (paperModel ? (["body", "header", "footer"] as const).filter((key) => paperModel[key].length > 0) : []), [paperModel]);
+  const partKeys = useMemo(() => (paperModel ? (["body", "header", "footer", "figures"] as const).filter((key) => paperModel[key].length > 0) : []), [paperModel]);
+  // 그림 탭으로 간 단위(모든 Old 문서) - J/K가 그림 탭에서는 이것만, 다른 탭에서는 이것을 건너뛴다(시안 2 D3)
+  const figureTabIds = useMemo(() => new Set((viewList ?? []).flatMap((view) => [...listFigureTabUnitIds(view)])), [viewList]);
   const paperTabs = useMemo(() => (oldView && paperModel ? buildPaperTabs(oldView, paperModel) : null), [oldView, paperModel]);
   // AI 나누기 제안 - 보는 Old 문서의 아직 정하지 않은 것. 문장마다 가장 새 제안 하나(전에는 쪼개기 화면에서만 적용·거절했다)
   const oldDocId = oldView?.document.id ?? null;
@@ -1069,7 +1071,12 @@ export function useAssignPage() {
       const unitId = readUnitNavKey(key);
       return listed.has(unitId === null ? key : (rowOfUnit.get(unitId) ?? ""));
     };
-    const walk = navKeys.filter(isListed);
+    // 그림 탭에서는 그림 카드 차례만, 다른 탭에서는 그림 카드를 건너뛴다(시안 2 D3)
+    const isFigureWalk = (key: string) => {
+      const unitId = readUnitNavKey(key) ?? rowMap.get(key)?.unitIds[0] ?? null;
+      return (unitId !== null && figureTabIds.has(unitId)) === (activePart === "figures");
+    };
+    const walk = navKeys.filter((key) => isListed(key) && isFigureWalk(key));
     const current = tocPick !== null ? toTocNavKey(tocPick.key) : isPairView ? activeKey : pickedId !== null ? toUnitNavKey(pickedId) : null;
     const next = stepInList(navKeys, walk, current, step);
     const tocKey = next === null ? null : readTocNavKey(next);
@@ -3089,6 +3096,26 @@ export function useAssignPage() {
     selectRow(key, false, findBoxId(key, unitId));
   }
 
+  /** 그림 탭 카드의 삭제 확정 - 그 그림 줄(캡션 포함)을 삭제로(Remark 선택, 한 번에 삭제와 같은 저장 - 되돌리기로 돌린다, 시안 2 D3) */
+  async function deleteFigure(unitId: number, reason: string) {
+    const key = rowOfUnit.get(unitId);
+    const ids = (key === undefined ? undefined : rowMap.get(key)?.unitIds) ?? [unitId];
+    const units = ids.map((id) => unitMap.get(id)).filter((unit): unit is UnitRow => unit !== undefined);
+    try {
+      await bulkDecide(bundleId, { action: "delete", reason, move_target_code: "", units: units.map((unit) => ({ unit_id: unit.unit_id, revision: unit.decision.revision })) }, buildUndo({ focus_unit_id: unitId }));
+      markRecorded();
+      showToast(t("figures.deleted"), "ok", { action: { label: t("common.undo"), run: () => void undoStepRef.current("undo") } });
+      reloadData(true);
+      void loadBundle(bundleId);
+    } catch (err) {
+      showToast(humanizeApiError(err, t), "error");
+      // revision이 낡아 거절됐을 수 있다 - 다시 불러와야 다음 시도가 같은 이유로 실패하지 않는다
+      reloadData();
+    }
+  }
+  // 그림 탭 카드 - 지우기는 Old 문서의 줄에만(한 단으로 연 New 문서는 줄이 없다)
+  const figureTab = canEdit && !isSolo ? { onDelete: deleteFigure } : undefined;
+
   function handlePrimary() {
     if (!destination) {
       // 고른 곳이 없으면 ↵는 바로 위 목록의 첫 후보(추천이 없으면 첫 묶음 제목)로 간다
@@ -3331,7 +3358,7 @@ export function useAssignPage() {
     handleJoinPick, readJoinAfter, pickJoinMenu, pickPlaceSpot, pickOwnAiLine, jumpToNew, openNewDoc, showInNew, jumpToOld,
     pickTemplateLine, fillTemplateMissing, isTemplateDrag, isOldDrag, finishPairPick, handleOldClick, handlePrimary, startEdit,
     pickRecommendation, markRecHover, revealPick, setRevealPick, done, renderPlaceLabel, listDestinationEls,
-    canClear, error,
+    canClear, error, figureTab,
   };
 }
 

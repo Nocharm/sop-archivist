@@ -25,17 +25,17 @@ import { isNoiseUnit } from "@/lib/classify-model";
 import { useI18n } from "@/lib/i18n";
 import { pickNearChunks, sliceCards } from "@/lib/paper-chunk-model";
 import { buildFoldPlan, type FoldEntry, type FoldItem, type FoldOpen } from "@/lib/paper-fold-model";
-import { buildRows, foldCaptionRows, getBundleHeader, getGapMerge, getItemSegments, getMarks, getTags, isBandHeading, MERGE_BLOCKER_KEYS, resolvePickUnit, type CaptionPiece, type PaperItem, type PaperModel, type PaperRow, type Segment, type UnitMark } from "@/lib/paper-model";
+import { buildRows, getBundleHeader, getGapMerge, getItemSegments, getMarks, getTags, isBandHeading, MERGE_BLOCKER_KEYS, resolvePickUnit, type CaptionPiece, type FigureRowMode, type PaperItem, type PaperModel, type PaperRow, type Segment, type UnitMark } from "@/lib/paper-model";
 import type { JoinKind, JoinPlan } from "@/lib/split-menu-model";
 import { getHiddenEnds, listFollowPreview } from "@/lib/number-model";
 import { suggestUnitContinuous } from "@/lib/number-kind-model";
 import { getCardTops, getHiddenPrefixLength, getPairBrackets, getPillWidth, getSectionHeads, getTabWidths, getSectionLevel, getSectionPill, getVisibleSkip, sliceVisible, type PairBracket } from "@/lib/strip-pill-model";
 import { buildHeadingShiftGroups, readHeadingShiftHead, type HeadingShiftGroup } from "@/lib/heading-shift-model";
 import { getPairHint, type PairHintUnit } from "@/lib/pair-hint-model";
-import { orderPairRuns } from "@/lib/pair-order-model";
 import { readDeletedLine, type DeletedFold, type DeletedLine } from "@/lib/deleted-fold-model";
 import { buildTocBlock, shouldJoinTocCard } from "@/lib/toc-block-model";
-import { findUnwrapHeads, getRowUnwrapTable, orderUnwrappedRows } from "@/lib/unwrap-model";
+import { findUnwrapHeads, getRowUnwrapTable } from "@/lib/unwrap-model";
+import { buildStripRows } from "@/lib/figure-spot-model";
 
 /** 조각 끝 표시 - 단위의 것(UnitMark)에 그 조각이 놓인 블록의 경고를 더한다 */
 type PaperMark = UnitMark | "warn";
@@ -225,6 +225,8 @@ interface PaperProps {
     /** Assign - 고른 박스가 짝 전부가 이어 붙은 카드 안에 있으면 그 박스 왼쪽 가장자리에 점 여섯 손잡이(data-drag-handle, 설계 D8).
      *  손잡이 끌기(카드 안 순서)는 화면이 붙인다. isAllowed가 거짓인 박스(배정이 걸림 등)에는 그리지 않는다 */
     pairGrip?: { isAllowed: (unitId: number) => boolean };
+    /** Assign 그림 탭 - 그림 카드 줄 끝 단추(위치 보기 · 지우기, 호버 · 포커스 때 보인다) */
+    figureCard?: { renderActions: (unitId: number) => ReactNode };
   };
   /** strips에서 고른 조각의 글 바로 아래 줄(확인·짝 풀기 등 단추) - 조각 상자가 펼쳐지며 밀려 내려오고, 고름이 옮겨 가면 접힌다 */
   renderUnitActions?: (unitId: number) => ReactNode;
@@ -241,6 +243,10 @@ interface PaperProps {
   dragBoxes?: boolean;
   /** 번호 칸 손잡이(Assign) - 주면 번호 범위가 있는 문서의 번호 칸을 눌러 고친다. number가 null이면 번호 없음 */
   numberCell?: { busy: boolean; onSave: (unitId: number, number: string | null, follow: boolean) => void };
+  /** 그림 줄(strips) - hide는 본문 탭(그림 · 그 캡션이 빠지고 자리 표시도 없다), only는 그림 탭(그림 카드만), 없으면 모두(시안 2 D3) */
+  figureRows?: FigureRowMode;
+  /** 위치 판(strips) - 이 줄들만 그리고 afterKey 줄 뒤(null이면 맨 위)에 점 달린 자리 선과 label을 긋는다 */
+  spot?: { keys: ReadonlySet<string>; afterKey: string | null; label: string };
 }
 
 /** 화면 좌표 → 블록 위치. 글자 조각 요소의 data-start에 글자 노드 안 위치를 더한다 */
@@ -302,6 +308,8 @@ export function Paper({
   onUnitContextMenu,
   dragBoxes = false,
   numberCell,
+  figureRows,
+  spot,
 }: PaperProps) {
   const { t } = useI18n();
   // 고치는 중인 번호 칸 - 한 번에 한 줄. 따라 바뀔 번호는 다른 줄의 번호 칸에 점선으로 미리 보인다
@@ -355,9 +363,10 @@ export function Paper({
     // 벗긴 표 덩이 안은 사람이 바꾼 순서(unwrap_seq, lib/unwrap-model) 뒤에, 이어 붙은 짝 카드 안은 사람이 바꾼 순서(pair_seq)로 - 떨어진 구성원은 제자리(lib/pair-order-model)
     return lists.filter((list) => list.items.length > 0).map((list) => ({
       edge: list.edge,
-      rows: orderPairRuns(orderUnwrappedRows(foldCaptionRows(buildRows(list.items, model.segments), model.units), model), (row) => model.units.get(readRowUnitId(row) ?? -1)),
+      // 그림 줄 - 본문 탭은 빼고 그림 탭은 그것만(시안 2 D3). 위치 판은 그 그림 앞뒤 줄만
+      rows: buildStripRows(list.items, model, figureRows).filter((row) => !spot || spot.keys.has(row.key)),
     }));
-  }, [hasStrips, items, model]);
+  }, [hasStrips, items, model, figureRows, spot]);
   // 짝 - 단위 → 같은 짝의 다른 구성원(원문 순서, 떨어진 구성원 포함). 한 카드는 아래 brackets가 정한다(같은 쪽·같은 부분의 끊김 없는 줄만)
   const matesOf = useMemo(() => {
     const byPair = new Map<number, ViewUnit[]>();
@@ -1166,6 +1175,7 @@ export function Paper({
                     </p>
                   );
                 })}
+          {row.type === "figure" && unit !== undefined && strips?.figureCard?.renderActions(unit.id)}
           {renderActions(unit?.id)}
           {foot}
           {unit !== undefined && unit.id === selectedId && renderPairHint(unit.id)}
@@ -1177,6 +1187,13 @@ export function Paper({
     );
   }
 
+  /** 그림 탭에서 캡션 하나를 같이 쓰는 그림끼리 - 한 카드처럼 붙인다(짝 카드 안 틈과 같은 모양) */
+  function isFigureMate(prev: PaperRow, row: PaperRow): boolean {
+    if (figureRows !== "only" || prev.type !== "figure" || row.type !== "figure" || prev.unitId === null || row.unitId === null) return false;
+    const group = model.figureGroupOf.get(prev.unitId);
+    return group !== undefined && group === model.figureGroupOf.get(row.unitId);
+  }
+
   /** 두 조각 사이 틈 */
   function renderGap(prev: PaperRow, row: PaperRow): ReactNode {
     const unwrapTable = getRowUnwrapTable(row, model.unwrapped, model.tables);
@@ -1186,7 +1203,7 @@ export function Paper({
         className="strip-gap"
         data-unwrap-scope={hasRail ? `t${unwrapTable}` : undefined}
         // 카드 안 틈 - 둘째 줄부터의 바로 위는 늘 같은 카드다
-        data-pair={cardTops.has(readRowUnitId(row) ?? -1) ? "" : undefined}
+        data-pair={cardTops.has(readRowUnitId(row) ?? -1) || isFigureMate(prev, row) ? "" : undefined}
         data-near-selected={isNearSelected(prev, row) ? "" : undefined}
         // 합치기 단추를 글 시작 x에 - 위아래 앞머리 중 넓은 쪽 뒤라 어느 앞머리에도 걸치지 않는다
         style={{ "--gap-tab": `${Math.max(readTabWidth(prev), readTabWidth(row)) + STRIP_LEAD_EXTRA}px` }}
@@ -1401,6 +1418,15 @@ export function Paper({
     return rows.length > 1 ? <div className="strip-card">{content}</div> : content;
   }
 
+  /** 위치 판의 그림 자리 - 줄 사이 점 달린 선과 그림 이름(시안 2 D3) */
+  function renderSpotLine(label: string): ReactNode {
+    return (
+      <div className="figure-spot-line" data-testid={`${testId}-spot-line`}>
+        <span className="figure-spot-label">{label}</span>
+      </div>
+    );
+  }
+
   function renderRows(sectionIndex: number): ReactNode {
     const { cards, groups, isChunked } = cardGroups[sectionIndex];
     const renderCards = (group: CardGroup) =>
@@ -1408,9 +1434,11 @@ export function Paper({
         const index = group.start + offset;
         return (
           <Fragment key={card[0].key}>
+            {spot && spot.afterKey === null && index === 0 && renderSpotLine(spot.label)}
             {index > 0 && renderGap(cards[index - 1][cards[index - 1].length - 1], card[0])}
             {hasHeadingShift && renderShiftHead(card)}
             {renderCard(card)}
+            {spot && spot.afterKey !== null && card.some((row) => row.key === spot.afterKey) && renderSpotLine(spot.label)}
           </Fragment>
         );
       });

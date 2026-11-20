@@ -24,6 +24,7 @@ import { getSpotAttrs, PlaceGap, type PlaceSpotView } from "@/components/assign/
 import { PaneZoom } from "@/components/assign/pane-zoom";
 import { RefMark } from "@/components/assign/ref-mark";
 import { LangToken } from "@/components/paper/lang-token";
+import { PartTabs } from "@/components/paper/part-tabs";
 import { ComposedNumberCell, type ComposedStyleChoice } from "@/components/paper/number-cell";
 import { DeviationMark, EmptyRequiredMark } from "@/components/tobe/deviation-mark";
 import { StripBox } from "@/components/paper/strip-box";
@@ -248,7 +249,13 @@ export function NewPane(props: NewPaneProps) {
   const paneRef = useRef<HTMLElement>(null);
   // 엮은 문서만 - 이미 쓴 문서의 문장은 원래 있던 줄이라 들어오는 움직임을 쓰지 않는다
   const enterKeys = props.readOnly && props.live ? props.live.targetIds.map((id) => `t:${id}`) : [];
-  const presence = useRowPresence(props.rows, props.rowsKey, enterKeys);
+  // 본문 | 그림 탭(시안 2 D3) - 그림 줄은 그림 탭에만, 본문에는 자리 표시 없이 빠진다. 문서를 바꾸면 본문으로(렌더 중 상태 맞추기)
+  const [figureTab, setFigureTab] = useState<{ docId: string; on: boolean }>({ docId: props.docId, on: false });
+  const figureCount = props.rows.filter((row) => row.kind === "figure").length;
+  const isFigureTab = figureCount > 0 && figureTab.docId === props.docId && figureTab.on;
+  const tabRows = figureCount === 0 ? props.rows : props.rows.filter((row) => (row.kind === "figure") === isFigureTab);
+  // 탭을 바꾸면 줄 들고 남을 새로 시작한다(빠지는 줄 움직임 없이)
+  const presence = useRowPresence(tabRows, `${props.rowsKey}:${isFigureTab ? "figures" : "body"}`, enterKeys);
   // 문서를 바꾸면 새 문서가 옆에서 들어온다 - 문서 목록에서 뒤 문서면 오른쪽에서, 앞 문서면 왼쪽에서(렌더 중 상태 맞추기)
   const [slide, setSlide] = useState<{ docId: string; dir: "next" | "prev" | null }>({ docId: props.docId, dir: null });
   if (slide.docId !== props.docId) {
@@ -262,7 +269,7 @@ export function NewPane(props: NewPaneProps) {
   if (aiOpen.key !== aiFoldKey) setAiOpen({ key: aiFoldKey, sections: new Set() });
   // 그릴 줄 - 지금 줄 사이사이에 빠지는 줄을 제자리(바로 뒤에 남은 줄 앞)에 끼운다
   const shown: Array<{ row: NewPaneRow; leaving: boolean }> = [];
-  for (const row of props.rows) {
+  for (const row of tabRows) {
     for (const gone of presence.leaving.get(getNewRowKey(row)) ?? []) shown.push({ row: gone, leaving: true });
     shown.push({ row, leaving: false });
   }
@@ -765,6 +772,11 @@ export function NewPane(props: NewPaneProps) {
         </Tooltip>
         <PaneZoom value={props.zoom} onStep={props.onZoom} testId="assign-new-zoom" />
       </div>
+      {figureCount > 0 && !props.viewSwitch?.template && (
+        <div className="flex items-center">
+          <PartTabs keys={["body", "figures"]} active={isFigureTab ? "figures" : "body"} onChange={(key) => setFigureTab({ docId: props.docId, on: key === "figures" })} counts={{ figures: figureCount }} testIdPrefix="assign-new-tab" />
+        </div>
+      )}
       {props.banner}
       {props.viewSwitch?.template ? (
         <div className="pane-body" key={props.docId}>

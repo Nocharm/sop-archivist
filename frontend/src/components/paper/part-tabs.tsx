@@ -1,4 +1,4 @@
-// 본문·머리말·꼬리말 탭 줄 - Split과 Assign Old 칸이 같은 모양을 쓴다(둘 이상일 때만 그린다)
+// 본문·머리말·꼬리말·그림 탭 줄 - Assign Old 칸과 New 칸이 같은 모양을 쓴다(둘 이상일 때만 그린다)
 "use client";
 
 import type { ReactNode } from "react";
@@ -12,11 +12,13 @@ interface PartTabsProps {
   onChange: (key: PaperTabKey) => void;
   /** 탭 오른쪽 표시(남은 확인 수 등) */
   renderBadge?: (key: PaperTabKey) => ReactNode;
+  /** 탭 이름 뒤 수 - 그림 탭의 "Figures n"(시안 2 D3) */
+  counts?: Partial<Record<PaperTabKey, number | undefined>>;
   /** `<prefix>s`는 줄, `<prefix>-<key>`는 탭의 testid */
   testIdPrefix: string;
 }
 
-export function PartTabs({ keys, active, onChange, renderBadge, testIdPrefix }: PartTabsProps) {
+export function PartTabs({ keys, active, onChange, renderBadge, counts, testIdPrefix }: PartTabsProps) {
   const { t } = useI18n();
   return (
     <div className="flex gap-0.5 rounded-md bg-sunken p-0.5" role="tablist" aria-label={t("split.tabs")} data-testid={`${testIdPrefix}s`}>
@@ -33,6 +35,7 @@ export function PartTabs({ keys, active, onChange, renderBadge, testIdPrefix }: 
             onClick={() => onChange(key)}
           >
             {t(`split.tab.${key}`)}
+            {counts?.[key] !== undefined && <span className="tabular-nums text-ink-3">{counts[key]}</span>}
             {renderBadge?.(key)}
           </button>
         );
