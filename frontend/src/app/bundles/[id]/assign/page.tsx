@@ -743,6 +743,18 @@ export default function AssignPage() {
                                     onStyle: pickComposedStyle,
                                   }
                                 : null,
+                            ops:
+                              canEdit && mode === "old"
+                                ? {
+                                    cut: state.composedCut,
+                                    cutPop: <CutPop busy={busy} onRun={state.splitComposedAtCut} onCancel={() => state.setComposedCutAt(null)} testIdPrefix="assign" />,
+                                    onDoubleClick: state.handleComposedDoubleClick,
+                                    onCutDrag: state.dragComposedCut,
+                                    plan: state.planComposedGap,
+                                    onJoin: state.joinComposed,
+                                    busy: isAnyPending,
+                                  }
+                                : null,
                           }
                         : null
                     }

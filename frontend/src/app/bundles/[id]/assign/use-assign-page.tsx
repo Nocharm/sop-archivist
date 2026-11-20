@@ -31,6 +31,7 @@ import { listRefCandidates } from "@/lib/caption-ref-model";
 import { isBundleKind, isCaptionGate, listCaptionPendingRowKeys, makeIsLinkedToWritten, type CaptionUnit } from "@/lib/caption-model";
 import { buildBlockPlaces, getCaptionMotion, resolveCaptionDetach, resolveCaptionDrop, type CaptionDetach, type CaptionDrop } from "@/lib/caption-slot-model";
 import { applyJoinedSources, listJoinableIds, shouldAdvanceAfterSave } from "@/lib/join-sentence-model";
+import { buildComposedMerge, buildComposedSplit, canEditComposed, findComposedCut, planComposedJoin, stepComposedCut } from "@/lib/composed-ops-model";
 import { applySavedTargets, buildComposedRows, isWrittenRow, listHeadingNotes, listSectionMarks, readSectionHead, removeClearedUnits, type NewPaneRow } from "@/lib/composed-model";
 import { addPartnerTargets, buildLinkPairs, buildRecommendations, listUnsourced, mergeGroups, readConfirmBlockKey, stepZoom, type Recommendation } from "@/lib/assign-model";
 import { countLiveOffer, splitAcceptIds } from "@/lib/ai-accept-model";
@@ -493,6 +494,8 @@ export function useAssignPage() {
   // 고른 줄이 어떤 길로든 바뀌면(↑↓·저장 뒤 다음 줄·짝 풀림·문서 바꾸기) 메뉴를 닫는다 - 다른 줄에서 낡은 메뉴가 되살아나지 않게(렌더 중 상태 맞추기)
   if (menu !== null && menu.rowKey !== activeKey) setMenu(null);
   // 놓인 New 문장을 눌러 연 작은 메뉴(이 문장에 잇기 · 이 줄 다음에 놓기) - 그 문장 줄 상자, 누른 자리. 고른 줄이 바뀌면 닫는다
+  // 빈 템플릿 박스 안 나눌 선(스텝 8) - 그 박스가 고른 줄에서 왔을 때만 보인다(Old 선처럼 다른 줄을 고르면 사라진다)
+  const [composedCutAt, setComposedCutAt] = useState<{ targetId: number; at: number } | null>(null);
   const [joinMenu, setJoinMenu] = useState<{ seq: number; rowKey: string; targetId: number; anchor: HTMLElement; offset: { x: number; y: number } | null } | null>(null);
   if (joinMenu !== null && joinMenu.rowKey !== activeKey) setJoinMenu(null);
   // Old 문장 우클릭 메뉴 - 누른 Unit, 그 줄 상자, 연 때 고른 박스(boxId, New 문서면 null), 누른 자리와 글자 자리(키보드로 열었으면 없음).
@@ -2238,6 +2241,72 @@ export function useAssignPage() {
     setJoinMenu((prev) => ({ seq: (prev?.seq ?? 0) + 1, rowKey: activeKey, targetId, anchor, offset: readMenuOffset(anchor, event) }));
   }
 
+  /** 엮은 문서의 박스 - 화면 문서(기다리는 편집을 얹은 것)에서 찾는다 */
+  function findComposedItem(targetId: number): ComposedItem | undefined {
+    for (const section of composedDoc?.sections ?? []) for (const item of section.items) if (item.target_id === targetId) return item;
+    return undefined;
+  }
+  const composedCutItem = composedCutAt ? findComposedItem(composedCutAt.targetId) : undefined;
+  const composedCut = composedCutAt && composedCutItem && row && composedCutItem.source_unit_ids.some((id) => row.unitIds.includes(id)) ? composedCutAt : null;
+
+  /** 빈 템플릿 박스를 두 번 누름 - 그 박스의 Old 줄을 고르고 누른 자리 가까이에 나눌 선(Old 두 번 누르기와 같다). 첫 누름이 연 잇기 메뉴는 닫는다 */
+  function handleComposedDoubleClick(targetId: number, at: number | null) {
+    const item = findComposedItem(targetId);
+    if (!item || !canEdit || mode !== "old" || isAnyPending || !canEditComposed(item)) return;
+    const cut = findComposedCut(item.text, at ?? Math.floor(item.text.length / 2));
+    if (cut === null) return;
+    setJoinMenu(null);
+    window.getSelection()?.removeAllRanges();
+    const key = rowOfUnit.get(item.source_unit_ids[0]);
+    if (key !== undefined && key !== activeKey) selectRow(key);
+    setComposedCutAt({ targetId, at: cut });
+  }
+
+  function dragComposedCut(pos: number | "start" | "end") {
+    if (!composedCut || !composedCutItem) return;
+    const text = composedCutItem.text;
+    const next = findComposedCut(text, pos === "start" ? 0 : pos === "end" ? text.length : pos);
+    if (next !== null && next !== composedCut.at) setComposedCutAt({ targetId: composedCut.targetId, at: next });
+  }
+
+  /** 나눌 선에서 둘로 - 그 박스의 관계 묶음을 받아 앞 글 · 뒤 글 두 새 문장으로 확정한다(종류 나눔은 서버가) */
+  function splitComposedAtCut() {
+    if (!composedCut || !composedCutItem || !canEdit) return;
+    const { targetId, at } = composedCut;
+    const item = composedCutItem;
+    void run(async () => {
+      const body = buildComposedSplit(await getGroupByTarget(bundleId, targetId), targetId, item.text, at);
+      await saveGroup(bundleId, body, buildUndo({ op: "split_new", focus_unit_id: item.source_unit_ids[0], focus_target_id: targetId }));
+      markRecorded();
+      setComposedCutAt(null);
+    }, t("assign.composedOps.didSplit"));
+  }
+
+  /** 이웃한 두 박스의 틈 - 같은 언어면 합치기, 한/영이면 두 Old 줄을 짝으로(planComposedJoin) */
+  function planComposedGap(upperId: number, lowerId: number): JoinPlan | null {
+    const upper = findComposedItem(upperId);
+    const lower = findComposedItem(lowerId);
+    if (!upper || !lower || !canEdit || mode !== "old") return null;
+    return planComposedJoin(upper, lower, (unitId) => paperModel?.units.get(unitId));
+  }
+
+  function joinComposed(upperId: number, lowerId: number, kind: JoinKind) {
+    const upper = findComposedItem(upperId);
+    const lower = findComposedItem(lowerId);
+    if (!upper || !lower || !canEdit || isAnyPending) return;
+    if (kind === "pair") {
+      const ids = [upper.source_unit_ids[0], lower.source_unit_ids[0]];
+      void runPairChange((docId, revision) => createPair(bundleId, docId, revision, ids), t("split.didJoin"), ids[0], "pair", ids);
+      return;
+    }
+    void run(async () => {
+      const group = mergeGroups(await Promise.all([getGroupByTarget(bundleId, upperId), getGroupByTarget(bundleId, lowerId)]));
+      const body = buildComposedMerge(group, { id: upperId, text: upper.text }, { id: lowerId, text: lower.text });
+      await saveGroup(bundleId, body, buildUndo({ op: "merge_new", focus_unit_id: upper.source_unit_ids[0], focus_target_id: upperId }));
+      markRecorded();
+    }, t("assign.composedOps.didMerge"));
+  }
+
   /** 놓인 문장 뒤에 놓으면 - 끌어 놓기와 같은 규칙(그 문장이 든 의미 묶음 뒤, 고른 줄이 이미 그 칸에 있으면 자리를 못 바꾼다) */
   function readJoinAfter(targetId: number): SendDrop {
     const section = composedDoc ? buildDropSections(composedDoc.sections, (unitId) => rowOfUnit.get(unitId)).find((candidate) => candidate.items.some((item) => item.targetId === targetId)) : undefined;
@@ -3192,7 +3261,8 @@ export function useAssignPage() {
     if (step !== null) moveRow(step);
     else if (key === "escape") {
       // 나눌 선이 있으면 선부터 거둔다(Split과 같다)
-      if (cutLine.at !== null) cutLine.clear();
+      if (composedCut) setComposedCutAt(null);
+      else if (cutLine.at !== null) cutLine.clear();
       else if (isNewEdit) setSolo(null);
       else setChecked(new Set());
     } else if (key === "v") {
@@ -3200,6 +3270,8 @@ export function useAssignPage() {
       if (isPairView) closePairView();
       else changeView({ single: !view.single });
     }
+    else if (key === "s" && canEdit && composedCut) splitComposedAtCut();
+    else if ((key === "arrowleft" || key === "arrowright") && canEdit && composedCut && composedCutItem) setComposedCutAt({ ...composedCut, at: stepComposedCut(composedCutItem.text, composedCut.at, key === "arrowleft" ? -1 : 1) });
     else if (key === "s" && canEdit && hasSolo && cutLine.at !== null) splitAtCut();
     else if ((key === "arrowleft" || key === "arrowright") && canEdit && isNewEdit && cutLine.at !== null) cutLine.nudge(key === "arrowleft" ? -1 : 1);
     else if (!canEdit || !row) return;
@@ -3365,7 +3437,7 @@ export function useAssignPage() {
     handleJoinPick, readJoinAfter, pickJoinMenu, pickPlaceSpot, pickOwnAiLine, jumpToNew, openNewDoc, showInNew, jumpToOld,
     pickTemplateLine, fillTemplateMissing, isTemplateDrag, isOldDrag, finishPairPick, handleOldClick, handlePrimary, startEdit,
     pickRecommendation, markRecHover, revealPick, setRevealPick, done, renderPlaceLabel, listDestinationEls,
-    canClear, error, figureTab,
+    canClear, error, figureTab, composedCut, setComposedCutAt, handleComposedDoubleClick, dragComposedCut, splitComposedAtCut, planComposedGap, joinComposed,
   };
 }
 

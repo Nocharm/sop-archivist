@@ -5997,6 +5997,94 @@ await runStep("assign: blank template basic view - a slot head is a heading box 
   check("every line is unassigned again after the clean-up", await ctx.cleanUp());
 });
 
+// 빈 템플릿 용지 위 나누기 · 합치기(시안 2 확인할 것 5, 스텝 8) - Old 용지와 같은 손짓: 박스를 두 번 눌러 나눌 선 → S, 고른 박스 아래 틈의 Join.
+// 저장은 묶음 저장(나눔 · 합침은 서버가 정한다), 되돌리기 두 번이면 처음으로. 한/영 짝은 Old 짝(createPair)이라 여기서는 다루지 않는다
+await runStep("assign: blank template paper - a double press splits a sentence, Join merges it back, Undo twice", {}, async ({ page }) => {
+  const ctx = await prepareClickPlace(page, 1);
+  check("the bundle is ready with two lines in a numbered section", !ctx.error && ctx.itemA && ctx.itemB, ctx.error ?? "");
+  if (ctx.error || !ctx.itemA || !ctx.itemB) return;
+  const headers = { "X-Dev-User": "qa.member" };
+  const getJson = async (path) => (await page.request.get(`${BASE}/api/bundles/${halfBundleId}${path}`, { headers })).json();
+  const readItems = async () => (await getJson(`/outputs/c/docs/${ctx.sop.id}?lang=en`)).sections.find((section) => section.location_key === ctx.counted.location_key).items;
+  const a = ctx.itemA.target_id;
+  const original = ctx.itemA.text;
+  const isSave = (response) => response.request().method() === "POST" && response.url().includes("/groups/save");
+  const unitA = (await getJson("/units?limit=1000")).items.find((unit) => unit.unit_id === ctx.itemA.source_unit_ids[0]);
+  await ctx.pickOld(unitA);
+  const text = page.locator(`[data-testid="assign-new-${a}"] .new-text`);
+  await text.waitFor({ timeout: T });
+
+  // 두 번 누르기 - 글 가운데에 가까운 빈칸 뒤에 나눌 선, 박스 안에 Split here
+  const point = await text.evaluate((el) => {
+    el.scrollIntoView({ block: "center" });
+    const node = el.firstChild;
+    const value = node.textContent;
+    const space = value.indexOf(" ", Math.floor(value.length / 2));
+    const at = space > 0 ? space : value.lastIndexOf(" ");
+    const range = document.createRange();
+    range.setStart(node, at + 1);
+    range.setEnd(node, at + 2);
+    const rect = range.getBoundingClientRect();
+    return { x: rect.left + 1, y: rect.top + rect.height / 2 };
+  });
+  await page.mouse.dblclick(point.x, point.y);
+  const cutShown = await page.locator(`[data-testid="assign-new-${a}"] .new-cut`).waitFor({ state: "attached", timeout: T }).then(() => true, () => false);
+  check("a double press on a blank-template box puts a cut line and Split here inside the box", cutShown && (await page.locator(`[data-testid="assign-new-${a}"] [data-testid="assign-cut-run"]`).count()) === 1);
+
+  // S - 묶음 저장 한 번, 같은 출처의 새 문장이 A 바로 뒤에, 둘 다 나눔
+  const splitSaved = page.waitForResponse(isSave, { timeout: T });
+  await page.keyboard.press("s");
+  check("S saves the split (groups/save 200)", (await splitSaved).status() === 200);
+  await page.waitForFunction((id) => document.querySelector(`[data-testid="assign-new-${id}"] .new-cut`) === null, a, { timeout: T }).catch(() => {});
+  const splitItems = await readItems();
+  const at = splitItems.findIndex((item) => item.target_id === a);
+  const piece = splitItems[at + 1];
+  check(
+    "the sentence is now two with the same source, right after each other, both Split",
+    piece !== undefined && piece.source_unit_ids.join() === ctx.itemA.source_unit_ids.join() && splitItems[at].change_type === "split" && piece.change_type === "split" && `${splitItems[at].text} ${piece.text}` === original,
+    JSON.stringify(splitItems.map((item) => [item.target_id, item.change_type, item.text.slice(0, 20)])),
+  );
+  if (!piece) {
+    await ctx.cleanUp();
+    return;
+  }
+  await page.locator(`[data-testid="assign-new-${piece.target_id}"]`).waitFor({ timeout: T });
+
+  // 고른 박스 아래 틈에 올리면 Join - 누르면 한 문장으로 돌아간다
+  const gap = page.locator(`[data-testid="assign-new-gap-${a}-${piece.target_id}"]`);
+  await gap.evaluate((el) => el.scrollIntoView({ block: "center" }));
+  await page.waitForTimeout(300);
+  const gapBox = await gap.boundingBox();
+  await page.mouse.move(gapBox.x + gapBox.width / 2, gapBox.y + gapBox.height / 2);
+  const join = page.locator(`[data-testid="assign-new-merge-${a}-${piece.target_id}"]`);
+  const joinShown = await join.evaluate((el) => new Promise((resolve) => {
+    const started = performance.now();
+    const tick = () => (getComputedStyle(el).opacity === "1" ? resolve(true) : performance.now() - started > 3000 ? resolve(false) : requestAnimationFrame(tick));
+    tick();
+  }));
+  check("hovering the gap under the picked box shows Join, on", joinShown && (await join.getAttribute("aria-disabled")) === null);
+  const joinBox = await join.boundingBox();
+  const mergeSaved = page.waitForResponse(isSave, { timeout: T });
+  await page.mouse.click(joinBox.x + joinBox.width / 2, joinBox.y + joinBox.height / 2);
+  check("Join saves (groups/save 200)", (await mergeSaved).status() === 200);
+  await page.locator(`[data-testid="assign-new-${piece.target_id}"]`).waitFor({ state: "detached", timeout: T }).catch(() => {});
+  const joined = await readItems();
+  check("after Join it is one sentence again with the original text", !joined.some((item) => item.target_id === piece.target_id) && joined.find((item) => item.target_id === a)?.text === original, JSON.stringify(joined.map((item) => [item.target_id, item.text.slice(0, 20)])));
+
+  // 되돌리기 두 번 - 합치기 → 나누기 순으로, 화면도 따라 다시 받는다
+  await page.keyboard.press("Control+z");
+  const undoJoin = await page.locator('[data-testid="toast-ok"]', { hasText: "Undone: Join sentences" }).last().waitFor({ timeout: T }).then(() => true, () => false);
+  const backSplit = await page.locator(`[data-testid="assign-new-${piece.target_id}"]`).waitFor({ timeout: T }).then(() => true, () => false);
+  check("the first Undo brings the two sentences back on screen", undoJoin && backSplit);
+  await page.keyboard.press("Control+z");
+  const undoSplit = await page.locator('[data-testid="toast-ok"]', { hasText: "Undone: Split sentence" }).last().waitFor({ timeout: T }).then(() => true, () => false);
+  const goneAgain = await page.locator(`[data-testid="assign-new-${piece.target_id}"]`).waitFor({ state: "detached", timeout: T }).then(() => true, () => false);
+  const restored = (await readItems()).find((item) => item.target_id === a);
+  check("the second Undo leaves one sentence with the original text", undoSplit && goneAgain && restored?.text === original, JSON.stringify(restored));
+
+  check("every line is unassigned again after the clean-up", await ctx.cleanUp());
+});
+
 // Pair view(끌어다 놓기 4걸음) - 한/영 따로 문서(합성 OLD-3)를 KO | EN 두 칸으로 펴고 끄면 보던 화면으로 돌아온다.
 // 검증 스택에는 임베딩이 없어 이 문서에 진짜 제안 짝을 만들 길이 없고, 합성 OLD-3에는 언어 없는 Unit이 없다 - 그 둘은 원문 보기 응답을 브라우저에서 바꿔(page.route) 그린다.
 // 자료는 API로 만들고 끝에 푼다. 이 뒤 단계는 이 묶음의 배정·짝을 읽지 않는다

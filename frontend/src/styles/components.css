@@ -1900,6 +1900,8 @@
   .pg .new-sec { margin: 10px 0 4px; font: 600 var(--fs-cap) / var(--lh-cap) var(--font-ui); color: var(--ink-3); }
   .new-gap { height: 4px; }
   .new-gap[data-pair] { height: 0; }
+  /* 빈 템플릿 박스 사이 Join 틈(스텝 8) - New 칸 용지는 data-strips가 아니라 안쪽 여백 변수가 없다. 단추는 글 시작 x(--gap-tab)에 */
+  .assign-pane[data-pane="new"] .strip-gap { --pg-pad-l: 0px; }
   .pg.new-sheet[data-strips] .strip { padding-right: var(--pg-pad-l); }
   /* 줄 = 고르는 단추(줄 전체를 덮는다) + 출처 칩 단추 - 단추 안에 단추를 넣지 않는다 */
   .new-hit { display: block; width: 100%; padding: 0; text-align: left; color: inherit; font: inherit; cursor: pointer; }

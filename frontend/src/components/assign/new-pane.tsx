@@ -16,7 +16,7 @@
 // 엮은 문서는 머리의 "기본 | 템플릿" 전환(viewSwitch)으로 같은 줄을 회사 템플릿 모양(components/template/template-view)으로도 본다 - 템플릿이면 몸에 그 보기를 그린다.
 "use client";
 
-import { ChevronDown, ChevronUp, FilePlus2, GripVertical, Scissors, Sparkles, Spline, X } from "lucide-react";
+import { ChevronDown, ChevronUp, FilePlus2, FoldVertical, GripVertical, Link2, Scissors, Sparkles, Spline, X } from "lucide-react";
 import { Fragment, useEffect, useEffectEvent, useRef, useState, type MouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 
 import { NewBundle } from "@/components/assign/new-bundle";
@@ -44,6 +44,7 @@ import { useComposedGrip } from "@/lib/use-composed-grip";
 import { useI18n } from "@/lib/i18n";
 import { readNewAiSectionKey, type NewAiFilter } from "@/lib/new-ai-filter-model";
 import { readWrittenRefMark } from "@/lib/ref-model";
+import type { JoinKind, JoinPlan } from "@/lib/split-menu-model";
 import { getCardTops, getHiddenPrefixLength, getPairBrackets, getPillWidth, getSectionPill, getTabWidths, type PairBracket } from "@/lib/strip-pill-model";
 
 /** 클릭 배치의 자리(MD 2 S3) - heads는 칸 첫 줄의 키(getNewRowKey)로 그 칸 머리(빈 칸이면 자리 표시도 같은 자리), gaps는 "before:<id>" · "after:<id>" */
@@ -138,6 +139,20 @@ export interface NewComposedView {
   selectedIds: ReadonlySet<number>;
   /** 순서 · 칸 옮기기 · 번호 표시 - 고칠 수 없으면 null(번호 칸은 읽기만, 손잡이 없음) */
   order: NewComposedOrder | null;
+  /** 용지 위 나누기 · 합치기 · 짝(스텝 8) - Old 용지와 같은 두 번 누르기 · 틈 단추. 고칠 수 없으면 null */
+  ops?: NewComposedOps | null;
+}
+
+export interface NewComposedOps {
+  /** 박스 안 나눌 선 - 그 박스가 고른 줄에서 왔을 때만 */
+  cut: { targetId: number; at: number } | null;
+  cutPop: ReactNode;
+  onDoubleClick: (targetId: number, at: number | null) => void;
+  onCutDrag: (at: number | "start" | "end") => void;
+  /** 이웃한 두 박스의 틈 - null이면 단추 없음 */
+  plan: (upperId: number, lowerId: number) => JoinPlan | null;
+  onJoin: (upperId: number, lowerId: number, kind: JoinKind) => void;
+  busy: boolean;
 }
 
 export interface NewComposedOrder {
@@ -168,6 +183,9 @@ function readState(row: WrittenSentence, props: NewPaneProps): string | undefine
 
 /** 끄는 자리 → 그 줄의 글 안 글자 위치. 글자 위가 아니면 글의 위·아래 어느 쪽인지로 답하고, 옆으로만 벗어났으면 선을 그대로 둔다(null) */
 function readCutDragAt(text: HTMLElement, x: number, y: number): number | "start" | "end" | null {
+  // 선 앞뒤 조각은 글자 노드만 들어 글자 수가 곧 data-start 자리다
+  const scanned = readTextOffset(text, x, y);
+  if (scanned !== null) return scanned;
   const caret = readCaretPoint(x, y);
   const holder = caret ? (caret.node instanceof Element ? caret.node : caret.node.parentElement) : null;
   const piece = holder?.closest<HTMLElement>("[data-start]") ?? null;
@@ -175,6 +193,26 @@ function readCutDragAt(text: HTMLElement, x: number, y: number): number | "start
   const rect = text.getBoundingClientRect();
   if (y < rect.top) return "start";
   if (y > rect.bottom) return "end";
+  return null;
+}
+
+/** 누른 자리 → 그 글 안 글자 위치(글 밖이면 null) - 빈 템플릿 박스를 두 번 누른 자리에 나눌 선을 놓는다 */
+function readTextOffset(text: HTMLElement, x: number, y: number): number | null {
+  // 글자 자리 API(caretPositionFromPoint)는 고를 수 없는 박스 글(user-select: none)에서 글 끝을 답한다 - 글자 상자를 하나씩 재어
+  // 누른 글자를 찾는다(문장 하나라 짧다)
+  const range = document.createRange();
+  let seen = 0;
+  const walker = document.createTreeWalker(text, NodeFilter.SHOW_TEXT);
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    const length = node.textContent?.length ?? 0;
+    for (let index = 0; index < length; index += 1) {
+      range.setStart(node, index);
+      range.setEnd(node, index + 1);
+      const rect = range.getBoundingClientRect();
+      if (y >= rect.top && y <= rect.bottom && x >= rect.left && x <= rect.right) return seen + index + (x > rect.left + rect.width / 2 ? 1 : 0);
+    }
+    seen += length;
+  }
   return null;
 }
 
@@ -306,14 +344,18 @@ export function NewPane(props: NewPaneProps) {
     onReveal(el, !el.closest("[data-enter]"));
   });
 
+  // 나눌 선 - 이미 쓴 New 한 단 편집의 선, 아니면 빈 템플릿 박스의 선(스텝 8). 그리기 · 끌기는 같다
+  const ops = composed?.ops ?? null;
+  const activeCut = props.cut ?? ops?.cut ?? null;
+  const onCutDrag = props.onCutDrag ?? ops?.onCutDrag;
   // 나눌 선 끌기 - 선이 옮겨 가며 다시 그려져도 끊기지 않게 창에서 듣는다(Old 용지와 같은 방식)
   const [isCutDragging, setIsCutDragging] = useState(false);
   const handleCutMove = useEffectEvent((event: PointerEvent) => {
-    const targetId = props.cut?.targetId;
+    const targetId = activeCut?.targetId;
     const text = targetId === undefined ? null : paneRef.current?.querySelector<HTMLElement>(`.new-line[data-target="${targetId}"] .new-text`);
-    if (!text || !props.onCutDrag) return;
+    if (!text || !onCutDrag) return;
     const at = readCutDragAt(text, event.clientX, event.clientY);
-    if (at !== null) props.onCutDrag(at);
+    if (at !== null) onCutDrag(at);
   });
   useEffect(() => {
     if (!isCutDragging) return;
@@ -453,13 +495,48 @@ export function NewPane(props: NewPaneProps) {
     );
   }
 
+  /**
+   * 문장 사이 틈 - 빈 템플릿에서 고른 줄의 박스 위아래 틈에는 Old 용지와 같은 Join(같은 언어 = 합치기, 한/영 = 짝). 못 묶으면 꺼진 단추와 까닭.
+   * 다른 틈 · 이미 쓴 문서는 지금 틈 그대로
+   */
+  function renderGap(previous: NewPaneRow, row: WrittenSentence): ReactNode {
+    const isPair = cardTops.has(row.target_id);
+    const isNear = ops !== null && composed !== null && isComposedRow(previous) && isComposedRow(row) && (composed.selectedIds.has(previous.target_id) || composed.selectedIds.has(row.target_id));
+    const plan = isNear && isComposedRow(previous) ? ops.plan(previous.target_id, row.target_id) : null;
+    if (!ops || !plan || !isComposedRow(previous)) return <div className="new-gap" data-pair={isPair ? "" : undefined} />;
+    const label = t("split.joinAdjacent");
+    const reason = plan.kind === null && plan.reasonKey ? t(plan.reasonKey) : null;
+    const isOff = plan.kind === null || ops.busy;
+    const Icon = plan.kind === "pair" ? Link2 : FoldVertical;
+    const tab = Math.max(widths.get(String(previous.target_id)) ?? 0, widths.get(String(row.target_id)) ?? 0) + STRIP_LEAD_EXTRA;
+    return (
+      <div className="strip-gap" data-pair={isPair ? "" : undefined} data-near-selected="" style={{ "--gap-tab": `${tab}px` }} data-testid={`assign-new-gap-${previous.target_id}-${row.target_id}`}>
+        <button
+          type="button"
+          className="strip-merge"
+          aria-disabled={isOff ? "true" : undefined}
+          aria-label={reason ? `${label} - ${reason}` : label}
+          data-tip={reason ?? undefined}
+          data-testid={`assign-new-merge-${previous.target_id}-${row.target_id}`}
+          onClick={(event) => {
+            event.stopPropagation();
+            if (!isOff && plan.kind !== null) ops.onJoin(previous.target_id, row.target_id, plan.kind);
+          }}
+        >
+          <Icon size={12} strokeWidth={1.8} aria-hidden />
+          <span className="strip-merge-label">{label}</span>
+        </button>
+      </div>
+    );
+  }
+
   /** 문장 한 줄(앞 틈 포함) */
   function renderSentence(row: WrittenSentence, isSectionStart: boolean, previous: NewPaneRow | undefined): ReactNode {
     const bracket = brackets.get(row.target_id);
     // 엮은 문서는 줄마다 결과물 C의 자기 번호(생략·주석은 없음). 이미 쓴 문서는 절을 여는 줄에만 절 번호 - 짝 카드의 둘째 줄부터가 절을 열면 앞머리에 번호가 없다
     const isOwnNumber = isComposedRow(row);
     const number = isOwnNumber ? row.number : isSectionStart && !cardTops.has(row.target_id) ? getSectionPill(readSectionNumber(row.section_path)) : null;
-    const cutAt = props.cut && props.cut.targetId === row.target_id ? props.cut.at : null;
+    const cutAt = activeCut && activeCut.targetId === row.target_id ? activeCut.at : null;
     const text = (
       <span lang={row.lang === "neutral" ? undefined : row.lang} className="new-text">
         {cutAt === null ? (
@@ -468,7 +545,7 @@ export function NewPane(props: NewPaneProps) {
           <>
             <span data-start={0}>{row.text.slice(0, cutAt)}</span>
             <span className="new-cut" aria-hidden data-testid={`assign-new-cut-${row.target_id}`}>
-              {props.onCutDrag && <span className="cut-handle" data-tip={isCutDragging ? undefined : t("split.cutMove")} data-testid={`assign-new-cut-handle-${row.target_id}`} onPointerDown={handleCutDown} />}
+              {onCutDrag && <span className="cut-handle" data-tip={isCutDragging ? undefined : t("split.cutMove")} data-testid={`assign-new-cut-handle-${row.target_id}`} onPointerDown={handleCutDown} />}
             </span>
             <span data-start={cutAt}>{row.text.slice(cutAt)}</span>
           </>
@@ -480,7 +557,7 @@ export function NewPane(props: NewPaneProps) {
     const isPending = isOwnNumber && (order?.pendingIds.has(row.target_id) ?? false);
     return (
       <>
-        {!isSectionStart && previous?.kind === "sentence" && <div className="new-gap" data-pair={cardTops.has(row.target_id) ? "" : undefined} />}
+        {!isSectionStart && previous?.kind === "sentence" && renderGap(previous, row)}
         <StripBox
           lead={
             isOwnNumber && strips ? (
@@ -499,6 +576,14 @@ export function NewPane(props: NewPaneProps) {
             "data-sel": isSelected ? "" : undefined,
             "data-pending": isPending ? "" : undefined,
             "data-testid": `assign-new-${row.target_id}`,
+            // 빈 템플릿 박스 두 번 누르기 - 그 박스의 Old 줄을 고르고 누른 자리에 나눌 선(Old 용지와 같은 손짓, 스텝 8)
+            onDoubleClick:
+              isOwnNumber && ops
+                ? (event) => {
+                    const textEl = event.currentTarget.querySelector<HTMLElement>(".new-text");
+                    ops.onDoubleClick(row.target_id, textEl ? readTextOffset(textEl, event.clientX, event.clientY) : null);
+                  }
+                : undefined,
             onContextMenu:
               props.onShape && isWrittenRow(row)
                 ? (event) => {
@@ -553,7 +638,7 @@ export function NewPane(props: NewPaneProps) {
               </button>
             )}
             <LangToken lang={row.lang} className="strip-lang" testId={`assign-new-lang-${row.target_id}`} />
-            {cutAt !== null && <div className="new-cut-pop">{props.cutPop}</div>}
+            {cutAt !== null && <div className="new-cut-pop">{props.cut ? props.cutPop : ops?.cutPop}</div>}
             {props.lineActions?.targetId === row.target_id && (
               <Collapse open appear className="strip-acts new-line-acts">
                 {props.lineActions.node}

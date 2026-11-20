@@ -271,7 +271,7 @@ STEP_UNDONE = "undone"
 T = TypeVar("T")
 
 # 화면이 이름을 주는 관계 묶음 저장의 동작 — save_group 하나가 모두 맡아 서버만으로는 가를 수 없다
-SaveOp = Literal["confirm", "hold", "link", "unlink", "mark_new", "link_source"]
+SaveOp = Literal["confirm", "hold", "link", "unlink", "mark_new", "link_source", "split_new", "merge_new"]  # 빈 템플릿 용지의 나누기 · 합치기(스텝 8) - Old 원문 편집의 cut · merge와 다른 판단 저장 단계
 _StepToken = Annotated[str, StringConstraints(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")]
 _StepId = Annotated[int, Field(ge=1, le=MAX_DB_INT)]
 
