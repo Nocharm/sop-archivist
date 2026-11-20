@@ -3881,8 +3881,9 @@ await runStep("assign: number cell - a heading number sits in the cell, a fix re
   const pieceText = async (unitId) => (await page.locator(`[data-testid="assign-paper-piece-${unitId}"] [data-testid="assign-paper-unit-${unitId}"]`).first().innerText()).trim();
   check("the number cell shows the line's number", (await getText(page, `assign-paper-num-${first.id}`)).trim() === first.number.value);
   check("the number is out of the content", first.number.content_start > 0 && !(await pieceText(first.id)).startsWith(first.number.value), await pieceText(first.id));
-  // 번호 칸을 누르면 그 자리가 입력이 된다 - 뒤 번호 따라 고치기는 기본 켬이고 바뀔 번호가 점선으로 보인다
+  // 번호 칸을 누르면 그 자리에 창이 열린다 - 종류 단추 줄의 연속 번호를 누르면 입력 상자, 뒤 번호 따라 고치기는 기본 켬이고 바뀔 번호가 점선으로 보인다
   await page.locator(`[data-testid="assign-paper-num-${first.id}"]`).click();
+  await page.locator('[data-testid="assign-paper-num-kind-continuous"]').click();
   await wait(page, "assign-paper-num-input");
   check("renumbering the rest of the list is on by default", await page.locator('[data-testid="assign-paper-num-follow"]').isChecked());
   await page.locator('[data-testid="assign-paper-num-input"]').fill("8.");
@@ -3899,6 +3900,7 @@ await runStep("assign: number cell - a heading number sits in the cell, a fix re
   check("one Undo brings both numbers back", (await waitNumber(first.id, (number) => number.value === first.number.value && !number.is_set)) && (await waitNumber(second.id, (number) => number.value === second.number.value)));
   // Esc는 저장하지 않고 닫는다
   await page.locator(`[data-testid="assign-paper-num-${first.id}"]`).click();
+  await page.locator('[data-testid="assign-paper-num-kind-continuous"]').click();
   await wait(page, "assign-paper-num-input");
   await page.locator('[data-testid="assign-paper-num-input"]').fill("5.");
   await page.locator('[data-testid="assign-paper-num-input"]').press("Escape");
@@ -3906,12 +3908,14 @@ await runStep("assign: number cell - a heading number sits in the cell, a fix re
   check("Escape closes the input without saving", (await readNumber(first.id)).value === first.number.value);
   // 포커스가 입력 밖(따라 고치기 체크)에 있어도 Esc로 닫히고, 바깥을 눌러도 저장 없이 닫힌다
   await page.locator(`[data-testid="assign-paper-num-${first.id}"]`).click();
+  await page.locator('[data-testid="assign-paper-num-kind-continuous"]').click();
   await wait(page, "assign-paper-num-input");
   await page.locator('[data-testid="assign-paper-num-follow"]').click();
   await page.keyboard.press("Escape");
   await page.locator('[data-testid="assign-paper-num-input"]').waitFor({ state: "detached", timeout: T });
   check("Escape closes the number box with focus off the input", true);
   await page.locator(`[data-testid="assign-paper-num-${first.id}"]`).click();
+  await page.locator('[data-testid="assign-paper-num-kind-continuous"]').click();
   await wait(page, "assign-paper-num-input");
   await page.locator('[data-testid="assign-paper-num-input"]').fill("6.");
   const viewport = page.viewportSize();
@@ -3929,7 +3933,7 @@ await runStep("assign: number cell - a heading number sits in the cell, a fix re
   }
 });
 
-// 번호 칸 - 번호가 없는 줄은 빈 번호 칸의 "+"로 써 넣고(줄에 올리면 보인다), "No number"는 번호를 글로 되돌린다. 끝에 모두 되돌린다
+// 번호 칸 - 번호가 없는 줄은 빈 번호 칸의 "+"로 창을 열어 연속 번호 종류로 써 넣고(줄에 올리면 보인다), 종류 "None"은 번호를 글로 되돌린다. 끝에 모두 되돌린다
 await runStep("assign: number cell - Add number on a line without one, No number turns it back into text", {}, async ({ page }) => {
   const headers = { "X-Dev-User": "qa.member" };
   const docs = await (await page.request.get(`${BASE}/api/bundles/${halfBundleId}/documents`, { headers })).json();
@@ -3969,8 +3973,11 @@ await runStep("assign: number cell - Add number on a line without one, No number
   await add.scrollIntoViewIfNeeded();
   await page.locator(`[data-testid="assign-paper-piece-${unit.id}"]`).hover();
   await add.click();
+  await wait(page, "assign-paper-num-kind-none");
+  // 번호가 없는 줄의 "None"은 할 일이 없다 - 눌린 채 꺼져 있다
+  check("a line without a number offers no No number button", await page.locator('[data-testid="assign-paper-num-kind-none"]').isDisabled());
+  await page.locator('[data-testid="assign-paper-num-kind-continuous"]').click();
   await wait(page, "assign-paper-num-input");
-  check("a line without a number offers no No number button", (await page.locator('[data-testid="assign-paper-num-none"]').count()) === 0);
   await page.locator('[data-testid="assign-paper-num-follow"]').uncheck();
   await page.locator('[data-testid="assign-paper-num-input"]').fill("7.7");
   await page.locator('[data-testid="assign-paper-num-input"]').press("Enter");
@@ -3980,8 +3987,8 @@ await runStep("assign: number cell - Add number on a line without one, No number
   check("the line keeps its status", (await readView(doc.id)).units.find((item) => item.id === unit.id).status === statusBefore);
   // 번호 없음 - 번호가 사라지고 줄은 번호 없는 줄로 돌아간다
   await page.locator(`[data-testid="assign-paper-num-${unit.id}"]`).click();
-  await wait(page, "assign-paper-num-none");
-  await page.locator('[data-testid="assign-paper-num-none"]').click();
+  await wait(page, "assign-paper-num-kind-none");
+  await page.locator('[data-testid="assign-paper-num-kind-none"]').click();
   check("No number clears it", await waitNumber((number) => number.value === null));
   await page.locator(`[data-testid="assign-paper-num-add-${unit.id}"]`).waitFor({ state: "attached", timeout: T });
   // 두 편집을 되돌려 처음 그대로 둔다
@@ -3989,6 +3996,113 @@ await runStep("assign: number cell - Add number on a line without one, No number
   check("Undo brings the number back", await waitNumber((number) => number.value === "7.7"));
   await page.locator('[data-testid="assign-undo"]').click();
   check("a second Undo removes it again", await waitNumber((number) => number.value === null && !number.is_set));
+});
+
+// 번호 칸 종류(시안 2 D1) - 같은 목록에 잇단 세 줄 "N-1." "N." "N+1."을 찾아 가운데 줄을 점 기호 •로 바꾸면 누르는 즉시 저장되고(뒤 번호는 따라오지 않는다)
+// 앞 숫자 번호보다 한 단계 들여 쓰인다. 그다음 줄에서 연속 번호를 누르면 점 기호 줄을 건너뛰어 앞 숫자 번호의 다음 "N."을 채운다(이름의 4. · 3.은 시안의 보기 값).
+// 원문과 다르게 고친 번호는 번호 칸 툴팁에 "Source <원문>"이 붙고 창 아래에 노트 줄이 보인다. 끝에 두 편집을 되돌려 시드 묶음을 처음 그대로 둔다
+await runStep("assign: number cell - bullet • saves at once and indents, Continuous fills 4., a changed number shows Source 3. in the tip", {}, async ({ page }) => {
+  const headers = { "X-Dev-User": "qa.member" };
+  const docs = await (await page.request.get(`${BASE}/api/bundles/${halfBundleId}/documents`, { headers })).json();
+  const readView = async (docId) => (await page.request.get(`${BASE}/api/bundles/${halfBundleId}/documents/${docId}/view`, { headers })).json();
+  await page.goto(`${BASE}/bundles/${halfBundleId}/assign`);
+  await wait(page, "assign-bar");
+  const isContinuous = (value) => /^\d+(\.\d+)*\.?$/.test(value ?? "");
+  const startOf = (unit) => unit.spans[0]?.[1] ?? -1;
+  let doc = null;
+  let prev = null;
+  let line = null;
+  let next = null;
+  for (const candidate of docs.filter((item) => item.side === "old" && item.status === "ready")) {
+    const view = await readView(candidate.id);
+    if (!view.has_number_ranges) continue;
+    await page.locator('[data-testid="assign-old-doc"]').click();
+    await page.locator(`[data-testid="assign-old-doc-option-${candidate.id}"]`).click();
+    await page.locator(`[data-testid="assign-old"]`).waitFor({ timeout: T });
+    await page.waitForTimeout(600);
+    // 같은 목록 후보 - 화면(number-model listNumberSiblings)과 같이 번호 칸 있는 단위 가운데 같은 언어 · 표 밖(띠 표 제목 줄은 표 밖), 원문 순
+    const listed = view.units
+      .filter((unit) => unit.number && (unit.table_id === null || unit.kind === "heading"))
+      .sort((a, b) => a.pos_seq - b.pos_seq || startOf(a) - startOf(b) || a.id - b.id);
+    for (const lang of new Set(listed.map((unit) => unit.lang))) {
+      // 연속 번호 줄만 - 사이에 낀 번호 없는 줄은 연속 번호 세기가 건너뛰므로 세 줄이 이 목록에서 잇달아 있으면 된다
+      const numbered = listed.filter((unit) => unit.lang === lang && isContinuous(unit.number.value));
+      for (let index = 0; index + 2 < numbered.length; index += 1) {
+        const [a, b, c] = numbered.slice(index, index + 3);
+        if (![a, b, c].every((unit) => /^\d+\.$/.test(unit.number.value) && !unit.number.is_set && unit.number.read === unit.number.value)) continue;
+        const n = Number.parseInt(b.number.value, 10);
+        if (Number.parseInt(a.number.value, 10) !== n - 1 || Number.parseInt(c.number.value, 10) !== n + 1) continue;
+        if ((await page.locator(`[data-testid="assign-paper-num-${b.id}"]`).count()) === 0 || (await page.locator(`[data-testid="assign-paper-num-${c.id}"]`).count()) === 0) continue;
+        // 짝 카드의 둘째 줄부터는 첫 줄의 번호 칸 폭을 따르므로 들여쓰기를 볼 수 없다
+        const bracket = await page.locator(`[data-testid="assign-paper-lead-${b.id}"]`).getAttribute("data-bracket");
+        if (bracket !== null && bracket !== "top") continue;
+        doc = candidate;
+        prev = a;
+        line = b;
+        next = c;
+        break;
+      }
+      if (line !== null) break;
+    }
+    if (line !== null) break;
+  }
+  check("the bundle has three numbered lines in a row of one list on screen", line !== null);
+  if (line === null) return;
+  const readNumber = async (unitId) => (await readView(doc.id)).units.find((item) => item.id === unitId)?.number ?? null;
+  const waitNumber = async (unitId, isDone) => {
+    for (let tries = 0; tries < 60; tries += 1) {
+      const number = await readNumber(unitId);
+      if (number && isDone(number)) return true;
+      await page.waitForTimeout(250);
+    }
+    return false;
+  };
+  const waitFor = async (isDone) => {
+    for (let tries = 0; tries < 40; tries += 1) {
+      if (await isDone()) return true;
+      await page.waitForTimeout(250);
+    }
+    return false;
+  };
+  const leadWidth = async (unitId) => (await page.locator(`[data-testid="assign-paper-lead-${unitId}"]`).boundingBox())?.width ?? Number.NaN;
+  const readTip = async (unitId) => (await page.locator(`[data-testid="assign-paper-num-${unitId}"]`).getAttribute("data-tip")) ?? "";
+  const n = Number.parseInt(line.number.value, 10);
+  // 점 기호 • - 창은 지금 종류(연속 번호)를 눌린 채로 열리고, •를 누르면 입력 없이 바로 저장된다
+  const widthBefore = await leadWidth(line.id);
+  const cell = page.locator(`[data-testid="assign-paper-num-${line.id}"]`);
+  await cell.scrollIntoViewIfNeeded();
+  await cell.click();
+  await wait(page, "assign-paper-num-kind-bullet-0");
+  check("the number box opens with the line's kind pressed", (await page.locator('[data-testid="assign-paper-num-kind-continuous"]').getAttribute("aria-pressed")) === "true");
+  await page.locator('[data-testid="assign-paper-num-kind-bullet-0"]').click();
+  check("• saves at once", await waitNumber(line.id, (number) => number.value === "•" && number.is_set && number.note === line.number.read));
+  await page.locator(`[data-testid="assign-paper-num-edit-${line.id}"]`).waitFor({ state: "detached", timeout: T });
+  check("a bullet does not renumber the rest of the list", (await readNumber(next.id)).value === next.number.value);
+  check("the bullet line indents one step past the number before", await waitFor(async () => (await leadWidth(line.id)) > widthBefore), `${widthBefore} -> ${await leadWidth(line.id)}`);
+  check("the changed number shows its source number in the tip", await waitFor(async () => (await readTip(line.id)).includes(`Source ${line.number.read}`)), await readTip(line.id));
+  // 연속 번호 - 다음 줄에서 누르면 점 기호 줄을 건너뛰어 앞 숫자 번호(N-1.)의 다음 순번을 채운다
+  const nextCell = page.locator(`[data-testid="assign-paper-num-${next.id}"]`);
+  await nextCell.scrollIntoViewIfNeeded();
+  await nextCell.click();
+  await page.locator('[data-testid="assign-paper-num-kind-continuous"]').click();
+  await wait(page, "assign-paper-num-input");
+  check("Continuous fills the next number after the bullet line", (await page.locator('[data-testid="assign-paper-num-input"]').inputValue()) === `${n}.`, `${prev.number.value} -> ${await page.locator('[data-testid="assign-paper-num-input"]').inputValue()}`);
+  check("the counted value shows beside the input", (await getText(page, "assign-paper-num-continuous")).includes(`${n}.`), await getText(page, "assign-paper-num-continuous"));
+  await page.locator('[data-testid="assign-paper-num-follow"]').uncheck();
+  await page.locator('[data-testid="assign-paper-num-input"]').press("Enter");
+  check("Enter saves the counted number", await waitNumber(next.id, (number) => number.value === `${n}.` && number.is_set && number.note === next.number.read));
+  check("the saved line's tip shows its source number", await waitFor(async () => (await readTip(next.id)).includes(`Source ${next.number.read}`)), await readTip(next.id));
+  // 노트 줄 - 다시 열면 창 아래에 원문 번호와 다르다는 줄이 보이고, Esc로 저장 없이 닫는다
+  await nextCell.click();
+  await wait(page, "assign-paper-num-note");
+  check("the number box notes the source number", (await getText(page, "assign-paper-num-note")).includes(`"${next.number.read}"`), await getText(page, "assign-paper-num-note"));
+  await page.keyboard.press("Escape");
+  await page.locator(`[data-testid="assign-paper-num-edit-${next.id}"]`).waitFor({ state: "detached", timeout: T });
+  // 두 편집을 되돌려 처음 그대로 둔다
+  await page.locator('[data-testid="assign-undo"]').click();
+  check("Undo brings the next number back", await waitNumber(next.id, (number) => number.value === next.number.value && !number.is_set && number.note === null));
+  await page.locator('[data-testid="assign-undo"]').click();
+  check("a second Undo turns the bullet back into the number", await waitNumber(line.id, (number) => number.value === line.number.value && !number.is_set && number.note === null));
 });
 
 await runStep("assign: heading to sentence - Turn into sentences from the right-click menu, the group head and Back to heading, Undo steps back", {}, async ({ page, takeShot }) => {

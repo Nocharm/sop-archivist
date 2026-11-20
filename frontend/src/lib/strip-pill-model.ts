@@ -1,5 +1,7 @@
 // 쪼개기·배정 용지 조각 앞 칸의 순수 모델 - 절 번호 표시 줄, 절 번호 글자, 이웃한 짝의 한 카드.
 
+import { getBulletIndex, getBulletLevel } from "./number-kind-model";
+
 export type PairBracket = "top" | "middle" | "bottom";
 
 const NUMERIC_LABEL = /^\d+(\.\d+)*\.?$/;
@@ -38,19 +40,23 @@ export function getLevelWidths(labels: Iterable<string>): (level: number) => num
   return (level) => byLevel.get(level) ?? getPillWidth(level);
 }
 
-/** 줄마다 탭 폭 - 숫자 번호가 있으면 깊이별 폭(getLevelWidths, 받은 줄 전체에서 그 깊이의 가장 긴 번호가 들어가게), 없는 줄(깊이 0)은 같은 부분 안의 직전 줄 폭을 따르고(부분의 첫 줄이면 1단 폭), 짝 카드의 둘째 줄부터(pairTopOf = 첫 줄의 key)는 첫 줄과 같은 폭이다. 첫 줄을 따르는 까닭: 한 카드의 탭은 첫 줄이 대표라 절 번호 글자도 첫 줄만 보이기 때문이다 */
+/** 줄마다 탭 폭 - 숫자 번호가 있으면 깊이별 폭(getLevelWidths, 받은 줄 전체에서 그 깊이의 가장 긴 번호가 들어가게), 점 기호 줄은 같은 부분 안 앞의 가장 가까운 숫자 번호 줄 깊이에서 한 단계 더(getBulletLevel - 기호마다 한 단계씩 더 깊다), 없는 줄(깊이 0)은 같은 부분 안의 직전 줄 폭을 따르고(부분의 첫 줄이면 1단 폭), 짝 카드의 둘째 줄부터(pairTopOf = 첫 줄의 key)는 첫 줄과 같은 폭이다. 첫 줄을 따르는 까닭: 한 카드의 탭은 첫 줄이 대표라 절 번호 글자도 첫 줄만 보이기 때문이다 */
 export function getTabWidths(rows: readonly { key: string; part: string; sectionLabel: string; pairTopOf?: string | null }[]): Map<string, number> {
   const getLevelWidth = getLevelWidths(rows.map((row) => row.sectionLabel));
   const widths = new Map<string, number>();
   let part: string | null = null;
   let previous: number | null = null;
+  let previousLevel = 0;
   for (const row of rows) {
     if (row.part !== part) {
       part = row.part;
       previous = null;
+      previousLevel = 0;
     }
     const level = getSectionLevel(row.sectionLabel);
-    const own: number = level > 0 ? getLevelWidth(level) : (previous ?? getPillWidth(1));
+    if (level > 0) previousLevel = level;
+    const bulletLevel = getBulletIndex(row.sectionLabel) >= 0 ? getBulletLevel(previousLevel, row.sectionLabel) : 0;
+    const own: number = level > 0 ? getLevelWidth(level) : bulletLevel > 0 ? getLevelWidth(bulletLevel) : (previous ?? getPillWidth(1));
     const width: number = (row.pairTopOf != null ? widths.get(row.pairTopOf) : undefined) ?? own;
     widths.set(row.key, width);
     previous = width;

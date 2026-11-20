@@ -175,11 +175,21 @@ def normalize_number(number: str) -> str:
     return number.strip().rstrip(".")
 
 
+def get_number_note(unit: NumberedUnit) -> str | None:
+    """번호 노트 — 사람이 읽은 값과 다르게 고친 번호면 원문(읽은) 번호. 번호 없음 · 점 기호로 바꾼 것도 다르게 고친 것이다.
+
+    번호 칸 툴팁 · 노트 줄과 결과물(A 위치 칸 · 문단 Excel 번호 노트 열)이 이 함수 하나를 본다.
+    """
+    if unit.number_set is None or not unit.number_read:
+        return None
+    if normalize_number(unit.number_set) == normalize_number(unit.number_read):
+        return None
+    return unit.number_read
+
+
 def is_number_fixed(unit: NumberedUnit) -> bool:
     """사람이 읽은 값과 다르게 고친 번호인가 — 결과물 A 위치 칸이 읽은 값을 함께 적는다."""
-    if not unit.number_set or not unit.number_read:
-        return False
-    return normalize_number(unit.number_set) != normalize_number(unit.number_read)
+    return get_number_note(unit) is not None
 
 
 def has_number_ranges(extractor_version: str) -> bool:

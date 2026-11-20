@@ -22,7 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app import clock
 from app.sop.caption_slot import CAPTION_REACH, PlaceBlock, build_block_places, get_place_distance
 from app.sop.captions import CAPTION_KIND
-from app.sop.constants import MAX_PAIR_SIDE
+from app.sop.constants import BULLET_SYMBOLS, MAX_PAIR_SIDE
 from app.sop.decision_steps import UndoMetaIn
 from app.sop.decisions import DbId
 from app.sop.detach import (
@@ -917,7 +917,7 @@ async def _plan_set_number(session: AsyncSession, extraction_id: ExtractionId, o
             continue  # 번호가 없던 줄의 "번호 없음"
         if after_set != target.number_set:
             change.numbers[target.id] = (target.number_set, after_set)
-            if number:
+            if number and number not in BULLET_SYMBOLS:  # 점 기호는 절을 열지 않는다 — 절 이름이 "•"이 되지 않게
                 renamed.append((target, before[0], number))
     change.sections = await _find_section_moves(session, extraction_id, renamed)
     return change

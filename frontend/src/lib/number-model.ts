@@ -136,15 +136,22 @@ function getListTable(unit: ViewUnit): number | null {
 }
 
 /**
- * 고칠 줄 뒤로 따라 바뀔 번호들(문서 순서) - 번호 칸이 점선으로 미리 보인다. 후보는 서버와 같이 같은 언어 · 같은 표(표 밖이면 표 밖)의
- * 번호 칸 있는 단위다(띠 표 제목 줄은 표 밖으로 친다). units는 용지 순서(원문 순)로 넘긴다.
+ * 한 줄과 같은 번호 목록의 후보(문서 순서)와 그 안의 자리 - 서버 _plan_set_number와 같이 같은 언어 · 같은 표(표 밖이면 표 밖)의
+ * 번호 칸 있는 단위다(띠 표 제목 줄은 표 밖으로 친다). 따라 고치기 미리 보기와 연속 번호 세기가 함께 쓴다. units는 용지 순서(원문 순)로 넘긴다.
  */
-export function listFollowPreview(units: readonly ViewUnit[], unitId: number, next: string): NumberPreview[] {
+export function listNumberSiblings(units: readonly ViewUnit[], unitId: number): { siblings: ViewUnit[]; index: number } | null {
   const edited = units.find((unit) => unit.id === unitId);
-  if (!edited || next.trim() === "") return [];
+  if (!edited) return null;
   const scope = getListTable(edited);
-  const candidates = units.filter((unit) => unit.number !== null && unit.lang === edited.lang && getListTable(unit) === scope);
-  const index = candidates.findIndex((unit) => unit.id === unitId);
+  const siblings = units.filter((unit) => unit.number !== null && unit.lang === edited.lang && getListTable(unit) === scope);
+  return { siblings, index: siblings.findIndex((unit) => unit.id === unitId) };
+}
+
+/** 고칠 줄 뒤로 따라 바뀔 번호들(문서 순서) - 번호 칸이 점선으로 미리 보인다. 후보는 listNumberSiblings */
+export function listFollowPreview(units: readonly ViewUnit[], unitId: number, next: string): NumberPreview[] {
+  const found = listNumberSiblings(units, unitId);
+  if (!found || next.trim() === "") return [];
+  const { siblings: candidates, index } = found;
   const changes = planFollow(
     candidates.map((unit) => unit.number?.value ?? null),
     index,

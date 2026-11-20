@@ -399,6 +399,8 @@ export interface ViewNumber {
   content_start: number;
   /** 번호로 삼을 수 있는 글 앞 타자 번호의 글자 수 - 없거나 이미 번호면 0 */
   typed_len: number;
+  /** 번호 노트 - 사람이 원문과 다르게 고쳤으면 원문(읽은) 번호(서버 numbering.get_number_note), 아니면 null */
+  note: string | null;
 }
 
 export interface ViewUnit {

@@ -1500,8 +1500,15 @@
   .num-edit-row { display: flex; align-items: center; gap: 6px; }
   .num-edit-input { width: 9ch; min-width: 0; height: 24px; padding: 0 6px; border: 1px solid var(--accent-line); border-radius: var(--r-2); background: var(--surface); color: var(--ink); font: 500 12px / 22px var(--font-mono); }
   .num-edit-input:focus-visible { outline: 2px solid var(--accent); outline-offset: -1px; }
-  .num-edit-none { height: 24px; padding: 0 8px; border: 1px solid var(--line-2); border-radius: var(--r-2); background: var(--surface); color: var(--ink-2); font: inherit; white-space: nowrap; cursor: pointer; }
-  .num-edit-none:is(:hover, :focus-visible):not(:disabled) { border-color: var(--accent-line); color: var(--accent); }
+  /* 번호 종류 단추 줄(시안 2 D1) - 눌린 종류는 accent 바탕, 점 기호 단추는 기호 한 글자 폭 */
+  .num-kind-row { display: flex; flex-wrap: wrap; gap: 4px; }
+  .num-kind { height: 24px; padding: 0 8px; border: 1px solid var(--line-2); border-radius: var(--r-2); background: var(--surface); color: var(--ink-2); font: inherit; white-space: nowrap; cursor: pointer; }
+  .num-kind:is(:hover, :focus-visible):not(:disabled) { border-color: var(--accent-line); color: var(--accent); }
+  .num-kind[aria-pressed="true"] { border-color: var(--accent-line); background: var(--accent-tint); color: var(--accent); }
+  .num-kind:disabled { cursor: default; }
+  .num-kind-bullet { min-width: 24px; padding: 0 6px; }
+  .num-continuous { color: var(--ink-3); font-family: var(--font-mono); font-size: 11px; white-space: nowrap; }
+  .num-note { color: var(--ink-3); font-size: 11px; }
   .num-follow { display: flex; align-items: center; gap: 6px; cursor: pointer; }
   .num-follow-preview { display: flex; flex-wrap: wrap; gap: 4px 8px; font-family: var(--font-mono); font-size: 11px; color: var(--accent); }
   .num-follow-item { padding: 0 4px; border: 1px dashed var(--accent-line); border-radius: var(--r-1); white-space: nowrap; }
