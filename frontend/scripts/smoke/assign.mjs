@@ -1125,7 +1125,7 @@ await runStep("assign: figures - the Figures tab holds the figure cards, Show po
   check("Show position opens the side panel with the dotted spot line", (await spotLine.count()) === 1 && (await spotLine.innerText()).includes(`FIGURE ${figure.display_id}`), await panel.innerText());
   const spotRows = await panel.locator(".strip[data-strip-unit]").count();
   check("the panel shows only the body rows around the spot - three at most on each side", spotRows >= 1 && spotRows <= 6, String(spotRows));
-  check("the panel is read-only - no join, grip or number buttons", (await panel.locator(".strip-merge, [data-drag-handle], [data-testid^='assign-spot-num']").count()) === 0);
+  check("the panel is read-only - no join, grip or number buttons", (await panel.locator(".strip-merge, [data-drag-handle], button[data-testid^='assign-spot-num']").count()) === 0, await panel.locator(".strip-merge, [data-drag-handle], [data-testid^='assign-spot-num']").evaluateAll((els) => els.map((el) => `${el.tagName}.${el.className}:${el.dataset.testid ?? ""}`).join(" ")));
   await takeShot("sop-assign-figure-spot.png");
   await page.keyboard.press("Escape");
   await panel.waitFor({ state: "detached", timeout: T });
@@ -1152,8 +1152,13 @@ await runStep("assign: figures - the Figures tab holds the figure cards, Show po
   check("Delete confirms the figure as deleted and folds the card to one faint line", deleted?.status === "confirmed" && deleted?.decision.disposition === "delete" && (await fold.innerText()).includes("FIGURE"), `${deleted?.status} ${deleted?.decision.disposition}`);
   await page.waitForLoadState("networkidle");
   await page.locator('[data-testid="assign-undo"]').click();
-  await page.waitForLoadState("networkidle");
-  const restored = await readFigure();
+  // 되돌리기가 닿을 때까지 - 접힌 줄이 풀리고 상태가 돌아온다(networkidle만으로는 되돌리기 요청 전에 읽을 수 있다)
+  await fold.waitFor({ state: "detached", timeout: T });
+  let restored = await readFigure();
+  for (let tries = 0; tries < 40 && restored?.status !== "unassigned"; tries += 1) {
+    await page.waitForTimeout(250);
+    restored = await readFigure();
+  }
   check("Undo leaves the figure unassigned, as it was", restored?.status === "unassigned", restored?.status);
 });
 
@@ -2985,6 +2990,8 @@ await runStep("assign: a status filter folds the Old paper", {}, async ({ page, 
     await docTrigger.click();
     await page.locator(`[data-testid="${docValues[0]}"]`).click();
   }
+  // 위 돌기가 마지막 탭(Figures - 그림 카드뿐, 접힘 없음)에 서 있을 수 있다 - 접힘은 본문 탭에서 본다
+  if ((await countOf('[data-testid="assign-tab-body"]')) > 0) await page.locator('[data-testid="assign-tab-body"]').click();
   await page.locator(fullCards).first().waitFor({ timeout: T });
   check("the filter folds the rest into runs", (await countOf('[data-testid^="assign-paper-fold-run-"]')) >= 1 || (await countOf('[data-testid^="assign-paper-fold-line-"]')) >= 1);
   await takeShot("sop-assign-fold.png");
@@ -4575,6 +4582,8 @@ await runStep("assign: unwrap table - the grip moves a line to the top, Undo put
     return response.ok() ? readXlsxRows(await response.body()).map((row) => row[1] ?? "") : [];
   };
   // 그 줄 글이 칸 문단 하나와 꼭 같은 줄을 먼저 찾고(짧은 칸 글이 앞 본문에 섞여 있어도), 없으면 글이 든 줄(한 문단을 나눈 문장)
+  // Text 칸은 번호 칸의 번호를 뺀 글이다(번호는 Section No. 칸) - 줄 글에서 그 번호를 떼고 찾는다
+  const contentOf = (item) => (item.number?.value && item.text.startsWith(item.number.value) ? item.text.slice(item.number.value.length).trim() : item.text);
   const firstRowWith = (rows, text) => {
     const exact = rows.findIndex((row) => row.split(/[\t\n]/).includes(text));
     return exact >= 0 ? exact : rows.findIndex((row) => row.includes(text));
@@ -4599,7 +4608,7 @@ await runStep("assign: unwrap table - the grip moves a line to the top, Undo put
   check("the unwrapped table has a line in another row to move", top !== undefined && moved !== undefined, String(lines.length));
   if (top === undefined || moved === undefined) return;
   const excelBefore = await readParagraphRows();
-  check("the paragraph Excel lists the first line's row before the moved line's row", firstRowWith(excelBefore, top.text) >= 0 && firstRowWith(excelBefore, top.text) < firstRowWith(excelBefore, moved.text), JSON.stringify(excelBefore.slice(0, 8)));
+  check("the paragraph Excel lists the first line's row before the moved line's row", firstRowWith(excelBefore, contentOf(top)) >= 0 && firstRowWith(excelBefore, contentOf(top)) < firstRowWith(excelBefore, contentOf(moved)), JSON.stringify(excelBefore.slice(0, 8)));
 
   // 줄을 고르면 그 박스 왼쪽에 손잡이 - 짝 카드 손잡이와 같은 모양(.strip-grip)
   await pieceOf(moved.id).evaluate((el) => el.scrollIntoView({ block: "center" }));
@@ -4634,7 +4643,7 @@ await runStep("assign: unwrap table - the grip moves a line to the top, Undo put
   const seqOf = (view, item) => view.units.find((entry) => entry.id === item.id)?.unwrap_seq ?? null;
   check("the view API keeps the new order", seqOf(after, moved) === ids.indexOf(moved.id) && seqOf(after, top) === ids.indexOf(top.id), JSON.stringify([seqOf(after, moved), seqOf(after, top)]));
   const excelAfter = await readParagraphRows();
-  check("the paragraph Excel follows - the moved line's row comes first", firstRowWith(excelAfter, moved.text) >= 0 && firstRowWith(excelAfter, moved.text) < firstRowWith(excelAfter, top.text), JSON.stringify(excelAfter.slice(0, 8)));
+  check("the paragraph Excel follows - the moved line's row comes first", firstRowWith(excelAfter, contentOf(moved)) >= 0 && firstRowWith(excelAfter, contentOf(moved)) < firstRowWith(excelAfter, contentOf(top)), JSON.stringify(excelAfter.slice(0, 8)));
 
   // Undo가 원문 순서로 되돌린다 - unwrap_seq가 비고 문단 Excel도 처음 차례
   const undone = page.waitForResponse(isEditCall(/\/decisions\/undo$/), { timeout: T });
@@ -4645,7 +4654,7 @@ await runStep("assign: unwrap table - the grip moves a line to the top, Undo put
   const back = await readView(doc.id);
   check("after Undo the view API has no line order", lines.every((item) => seqOf(back, item) === null));
   const excelBack = await readParagraphRows();
-  check("after Undo the paragraph Excel has the first line's row first again", firstRowWith(excelBack, top.text) >= 0 && firstRowWith(excelBack, top.text) < firstRowWith(excelBack, moved.text));
+  check("after Undo the paragraph Excel has the first line's row first again", firstRowWith(excelBack, contentOf(top)) >= 0 && firstRowWith(excelBack, contentOf(top)) < firstRowWith(excelBack, contentOf(moved)));
 
   // 한 번 더 Undo면 벗기기도 돌아가 처음 표 한 줄이다(시드 묶음을 처음 그대로 둔다)
   await page.locator('[data-testid="assign-undo"]:not([disabled])').click();
