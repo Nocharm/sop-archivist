@@ -247,6 +247,12 @@ function buildPaperPending(pending: readonly Pending[], t: (key: string) => stri
 }
 
 /** Assign 화면 한 벌의 상태와 동작 - page.tsx가 그리는 데 쓰는 이름을 모두 돌려준다 */
+/** 우클릭 메뉴·Del·M 창에서 고른 삭제·이동 - 그린 초안 대신 이 값으로 저장한다 */
+interface DecidePick {
+  destination: Extract<Destination, { kind: "delete" | "move" }>;
+  moveCode: string;
+}
+
 export function useAssignPage() {
 
   const { t, lang: uiLang } = useI18n();
@@ -537,6 +543,9 @@ export function useAssignPage() {
   const systemHold = rowUnits.map((unit) => findSystemHold(unit.decision)).find((code) => code !== null) ?? null;
   const reasonNow = draft.reason ?? savedReason;
   const moveCode = draft.moveCode ?? firstDecision?.move_target_code ?? "";
+  // runSave·sendSave가 방금 고른 삭제·이동(pick)으로 가릴 때 읽는 그린 초안의 값
+  const currentDestination = destination;
+  const currentMoveCode = moveCode;
 
   function setDraft(patch: Partial<PageDraft>, nextEditing = editing) {
     if (!activeKey) return;
@@ -1632,6 +1641,8 @@ export function useAssignPage() {
   function runUnitAction(target: ViewUnit, action: AssignMenuAction, lang?: "ko" | "en", caret: { blockId: number; offset: number } | null = null) {
     const table = findTableOf(target);
     if (action === "clear") void runClear();
+    else if (action === "delete") decideNow({ kind: "delete" });
+    else if (action === "move") setMoveAsk(true);
     // 앱이 제안한 참조 줄(옛 추출의 REF?)은 언어 칸의 REF를 누르면 그 번호로 바로 확정한다(요청서 14) - 확인 단추와 같은 편집
     else if (action === "ref_mark" && target.ref?.state === "proposed") void runUnitEdit({ type: "set_ref", unit_id: target.id, number: target.ref.number }, t("assign.ref.didConfirm"), target.id);
     else if (action === "ref_mark") setRefEntryId(target.id);
@@ -1771,8 +1782,10 @@ export function useAssignPage() {
     return new Set(linkIds.map((id) => findWrittenRow(id)?.target_doc_id)).size > 1 ? "duplicate" : null;
   }
 
-  /** reasonOverride는 Remark 창에서 방금 확인한 사유 - 초안 상태가 아직 반영되기 전이라 직접 넘긴다 */
-  async function runSave(action: "confirm" | "hold", reasonOverride?: string) {
+  /** reasonOverride는 Remark 창에서 방금 확인한 사유, pick은 방금 고른 삭제·이동 - 초안 상태가 아직 반영되기 전이라 직접 넘긴다 */
+  async function runSave(action: "confirm" | "hold", reasonOverride?: string, pick?: DecidePick) {
+    const destination = pick?.destination ?? currentDestination;
+    const moveCode = pick?.moveCode ?? currentMoveCode;
     // 보낼 곳 없이는 보류만 된다(처분 unassigned + hold, 사유는 hold_reason)
     if (!row || busy || (!destination && action !== "hold")) return;
     if (isRowLoading) {
@@ -1785,7 +1798,8 @@ export function useAssignPage() {
       showToast(t("assign.ref.checkFirst"), "error");
       return;
     }
-    if (action === "confirm" && isCaptionGateOn) {
+    // 삭제·이동은 캡션 없이도 된다 - 지금 초안(새 문서 자리)의 캡션 조건을 따르지 않는다
+    if (action === "confirm" && isCaptionGateOn && !pick) {
       // 캡션 없는 표·그림 - 단추는 꺼져 있고, ↵·메뉴 확정도 같은 까닭으로 멈춘다
       showToast(t("assign.caption.needed"), "error");
       return;
@@ -1797,22 +1811,24 @@ export function useAssignPage() {
       document.querySelector<HTMLElement>('[data-testid="assign-move-code"]')?.focus();
       return;
     }
-    const need = readReasonNeed(action);
+    const need = pick ? null : readReasonNeed(action);
     if (need !== null && !reason.trim()) {
       // 알림만 띄우지 않고 사유 창을 연다 - 확인하면 이 저장을 잇는다
       setRemarkEdit({ kind: "row", need, then: action });
       return;
     }
     const saveRow = row;
-    await focusCtl.runPending({ kind: "save", docId: row.documentId, unitIds: row.unitIds, place: NO_PLACE, isGlobal: false }, (job) => sendSave(job, saveRow, action, reason));
+    await focusCtl.runPending({ kind: "save", docId: row.documentId, unitIds: row.unitIds, place: NO_PLACE, isGlobal: false }, (job) => sendSave(job, saveRow, action, reason, pick));
   }
 
   /** runSave의 보내기 - 그 줄의 Unit은 응답까지 잠긴다(알약은 그리지 않는다, 설계 D4) */
-  async function sendSave(job: string, row: ClassifyRow, action: "confirm" | "hold", reason: string) {
+  async function sendSave(job: string, row: ClassifyRow, action: "confirm" | "hold", reason: string, pick?: DecidePick) {
+    const destination = pick?.destination ?? currentDestination;
+    const moveCode = pick?.moveCode ?? currentMoveCode;
     try {
       // 고친 칸만 글을 보낸다 - 손대지 않은 AI 제안은 글·종류를 비워 보내 제안 그대로 받는다
       const context = { units: saveUnits, group: saveGroupData, tables: buildTables(), captions: buildCaptions() };
-      const body = buildGroupSave({ ...draft, destination, reason, moveCode }, context, action, action === "hold" ? reason.trim() : "");
+      const body = buildGroupSave({ ...draft, ...(pick ? { position: null } : {}), destination, reason, moveCode }, context, action, action === "hold" ? reason.trim() : "");
       // Use로 받은 제안을 싣는다 - 서버가 판단에 잇고 채택(그대로·고침·버림)을 남긴다
       if (draft.suggestionId) body.suggestion_id = draft.suggestionId;
       const leftovers = body.release_unit_ids ?? [];
@@ -1820,7 +1836,7 @@ export function useAssignPage() {
       const sectionKey = getSectionKey(destination);
       const at = draft.position && sectionKey !== null && body.targets.some((target) => target.position !== undefined) ? { sectionKey, after: draft.position.after } : null;
       // 놓인 문장에 잇기도 출처를 잇는 일이라 알림의 되돌리기 이름이 잇기다
-      const op = destination?.kind === "join" && action === "confirm" ? "link" : pickSaveOp({ action, destinationKind: destination?.kind ?? null, savedLinkIds: savedDestination?.kind === "link" ? savedDestination.targetIds : [], nextLinkIds: linkIds });
+      const op = destination?.kind === "join" && action === "confirm" ? "link" : pickSaveOp({ action, destinationKind: destination?.kind ?? null, savedLinkIds: savedDestination?.kind === "link" ? savedDestination.targetIds : [], nextLinkIds: pick ? [] : linkIds });
       // 엮은 문서의 칸에 놓는 확정은 어디 몇 번이 되는지 알리고 되돌리기를 단다(MD 2 S3) - 저장 전 자리로 센다
       const placedNote = action === "confirm" ? formatPlacedToast() : null;
       const saved = await saveGroup(bundleId, body, buildUndo({ op, focus_unit_id: row.unitIds[0] }));
@@ -1834,7 +1850,7 @@ export function useAssignPage() {
       // 놓인 문장에 잇기는 그 줄에 머문다 - 곧바로 그 문장의 연필(Rewrite)로 포커스를 옮겨 고쳐 쓰게(MD 1 F12 E4)
       const next = shouldAdvanceAfterSave({ action, destinationKind: destination?.kind ?? null, isSplit }) ? findNextOpen(listKeys, rowMap, row.key) : null;
       if (action === "confirm" && destination?.kind === "join" && !isSplit) setEditFocus({ key: row.key });
-      if (action === "confirm") showSent(row, saved, next ?? row.key, at);
+      if (action === "confirm" && !pick) showSent(row, saved, next ?? row.key, at);
       dropDraft(row.key);
       // 한 언어만 이어 짝을 풀었으면 남은 문장의 줄로 옮긴다 - 다시 받아 그 줄이 생긴 뒤, 그 사이 다른 줄을 고르지 않았을 때
       if (isSplit) focusCtl.succeed(job, { docId: row.documentId, revision: null, pickUnitId: leftovers[0] });
@@ -1859,6 +1875,15 @@ export function useAssignPage() {
   useEffect(() => {
     if (!isRowLoading) runQueuedSave();
   }, [isRowLoading, queuedRowKey]);
+
+  // 삭제·이동 바로 확정(우클릭 메뉴·Del·M 창) - 초안에도 넣어 오른쪽 칸이 따라오고, 저장은 그 초안이 그려지기 전이라 보낼 곳을 직접 넘긴다
+  const [isMoveAsk, setMoveAsk] = useState(false);
+  function decideNow(next: DecidePick["destination"], code?: string, reason?: string) {
+    if (!row || !canEdit || busy) return;
+    const pick = { destination: next, moveCode: code ?? moveCode };
+    setDraft({ destination: next, position: null, moveCode: pick.moveCode });
+    void runSave("confirm", reason, pick);
+  }
 
   /**
    * 확정한 곳을 오른쪽 칸에 바로 보인다 - 그 문서로 옮기고(다음 줄에서도, 손으로 고른 문서가 없을 때), 엮은 문서면 저장 응답으로 칸에 미리 넣는다.
@@ -3281,6 +3306,8 @@ export function useAssignPage() {
     else if (key === "e") startEdit();
     else if (key === "h") void runSave("hold");
     else if (key === "u") void runClear();
+    else if (key === "delete" || key === "backspace") decideNow({ kind: "delete" });
+    else if (key === "m") setMoveAsk(true);
     else return;
     event.preventDefault();
   });
@@ -3433,7 +3460,7 @@ export function useAssignPage() {
     rewrapTable, describeEditConfirm, pairGrip, clearToc, runCaptionRefChange, switchShapeMode, switchToPair,
     applySplitSuggestion, dismissSplitSuggestion, splitPendingIds, readPendingItem, selectNextSplit, selectNextRef, selectNextCaption,
     splitAtCut, handleOldDoubleClick, runCtx, runUnitAction, revertHeadings, planOldJoin, joinOld, renderOldActions, readReasonNeed,
-    runSave, runClear, runUndoStep, confirmIdenticalAll, acceptAll, markNew, placeManage, pickDestination, pickNewSentence, handleNewPick, unlinkCell,
+    runSave, runClear, runUndoStep, decideNow, isMoveAsk, setMoveAsk, confirmIdenticalAll, acceptAll, markNew, placeManage, pickDestination, pickNewSentence, handleNewPick, unlinkCell,
     handleJoinPick, readJoinAfter, pickJoinMenu, pickPlaceSpot, pickOwnAiLine, jumpToNew, openNewDoc, showInNew, jumpToOld,
     pickTemplateLine, fillTemplateMissing, isTemplateDrag, isOldDrag, finishPairPick, handleOldClick, handlePrimary, startEdit,
     pickRecommendation, markRecHover, revealPick, setRevealPick, done, renderPlaceLabel, listDestinationEls,

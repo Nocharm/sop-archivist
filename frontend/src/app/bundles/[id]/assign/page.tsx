@@ -78,7 +78,7 @@ export default function AssignPage() {
     setManualPart, activePart, isFoldEmpty, foldElsewhere, writtenDocs, composedDocs, setManualNewDoc, toggleKey, liveDoc, isNewDocOpen,
     newDocId, newAiReturn, setNewAiReturn, isComposedDoc, newFileId, composedDoc, newRows, headingNotes, sectionMarks, joinableIds,
     templateTitles, linkPairs, view, changeView, zoomPane, setPanes, remarkEdit, setRemarkEdit, focusAfterRef, busy, isAnyPending, isGlobalPending, paperPending, editConfirm,
-    setEditConfirm, oldPaneRef, buildUndo, markRecorded, bulk, setBulk, confirmingIdentical,
+    setEditConfirm, oldPaneRef, buildUndo, markRecorded, bulk, setBulk, confirmingIdentical, moveCode, isMoveAsk, setMoveAsk, decideNow,
     setConfirmingIdentical, resetScope, setResetScope, slots, newDraft, draftSlotKey, placeResolved, canPlaceClick, pickedSpotKey,
     setCarvePick, carve, carveText, clearCarve, togglePairViewByButton, pairFrom, setPairFrom, pairSource, selectToc, openNewCtxMenu,
     openSolo, goToUnit, ctxGroups, confirmBlockKey, refPendingIds, isLinkedToWritten, captionPendingKeys, docDashboard, openCtxMenu, runUnitEdit,
@@ -924,6 +924,18 @@ export default function AssignPage() {
           onClose={() => setLeaveTo(null)}
         />
       )}
+      {isMoveAsk && row && (
+        <MoveModal
+          bundleId={bundleId}
+          initialCode={moveCode}
+          onClose={() => setMoveAsk(false)}
+          onConfirm={(code, moveReason) => {
+            setMoveAsk(false);
+            // 비운 사유는 저장된 사유를 그대로 둔다 - 그것도 없으면 결과물이 "이동"으로 적는다
+            decideNow({ kind: "move" }, code, moveReason || undefined);
+          }}
+        />
+      )}
       {bulk && (
         <BulkModal
           bundleId={bundleId}
@@ -960,6 +972,51 @@ export default function AssignPage() {
 
 
 
+
+/** 한 줄 다른 문서로 이동(우클릭 메뉴·M) - 대상 문서를 고르면 바로 확정한다. 사유는 선택 */
+function MoveModal({ bundleId, initialCode, onClose, onConfirm }: { bundleId: number; initialCode: string; onClose: () => void; onConfirm: (code: string, reason: string) => void }) {
+  const { t } = useI18n();
+  const [code, setCode] = useState(initialCode);
+  const [reason, setReason] = useState("");
+  const ready = code.trim() !== "";
+  return (
+    <Modal
+      title={t("assign.moveModal.title")}
+      onClose={onClose}
+      testId="assign-move-modal"
+      footer={
+        <>
+          <button type="button" className="btn" data-testid="assign-move-cancel" onClick={onClose}>
+            <X size={16} strokeWidth={1.5} aria-hidden />
+            {t("common.cancel")}
+          </button>
+          <button type="button" className="btn pri" data-testid="assign-move-confirm" disabled={!ready} onClick={() => onConfirm(code.trim(), reason.trim())}>
+            <ExternalLink size={16} strokeWidth={1.5} aria-hidden />
+            {t("assign.moveModal.run")}
+          </button>
+        </>
+      }
+    >
+      <div className="grid gap-1">
+        <span className="text-xs text-ink-2">{t("classify.moveTo")}</span>
+        <MoveTargetField bundleId={bundleId} value={code} testId="assign-move-modal-code" autoFocus onChange={setCode} />
+      </div>
+      <label className="grid gap-1">
+        <span className="text-xs text-ink-2">{t("classify.reason")}</span>
+        <textarea
+          rows={2}
+          className="block w-full resize-y rounded-md border border-line-2 bg-surface px-2 py-[5px] text-[13px] leading-[19px] text-ink focus:border-accent focus:outline-none"
+          data-testid="assign-move-modal-reason"
+          placeholder={t("remark.blankMove")}
+          value={reason}
+          maxLength={REMARK_MAX_LENGTH}
+          onChange={(event) => setReason(event.target.value)}
+        />
+      </label>
+      <RecentRemarks testId="assign-move-modal-recent" onPick={setReason} />
+    </Modal>
+  );
+}
 
 interface BulkModalProps {
   bundleId: number;

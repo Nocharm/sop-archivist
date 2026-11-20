@@ -536,6 +536,8 @@ Old Unit마다 새 문서의 어디로 갈지 정하고 확정하는 단계입�
 | **Rewrite**(고른 곳 상자 문장 줄의 연필) | <kbd>E</kbd> | 아직 안 쓴 문서의 칸으로 보낼 때만. 새 문장을 고쳐 쓴 뒤 확정. <kbd>Ctrl</kbd>+<kbd>↵</kbd>로 저장, <kbd>Esc</kbd>로 닫기 |
 | **Hold** | <kbd>H</kbd> | 사유를 적고 미루기 |
 | **Unassign** | <kbd>U</kbd> | 배정(확정·보류)을 없애 **Unassigned** 로 되돌린다. 문장을 지우는 **Deleted** 와 다르다. 배정이 있을 때만 보인다 |
+| (우클릭 메뉴 **Delete**) | <kbd>Del</kbd> · <kbd>⌫</kbd> | 고른 줄을 삭제로 바로 확정 |
+| (우클릭 메뉴 **Move to another document…**) | <kbd>M</kbd> | 대상 문서를 고르는 창을 열고, **Move** 로 이동 확정 |
 
 - **Remark** 는 지우기·다른 문서로 옮기기·보류·두 문서로 보내기에 꼭 적어야 합니다. 그 밖에는 메모로 적어 두어도 되고 비워 두어도 됩니다. **Decide** 칸의 **Remark** 줄에는 지금 사유가 두 줄까지 보이고(넘치면 올렸을 때 전체), 글 오른쪽 위의 연필(**Write remark**, 이미 있으면 **Edit remark**. 글이 있으면 마우스를 올리거나 Tab으로 갔을 때 보입니다)을 누르면 창에서 씁니다. 줄 끝의 최근 Remark 단추에는 내가 가장 최근에 쓴 사유가 적혀 있어, 누르면 창 없이 바로 채워집니다. 옆 화살표(**Earlier remarks**)를 누르면 그 전 사유 10개까지가 목록으로 나오고, 고르면 바로 채워집니다. 창 칸 아래 **My recent remarks** 에 내가 최근에 쓴 사유가 5개(모든 Bundle, 같은 글은 한 번) 보이고 더 보기로 10개까지 펼치며, 누르면 칸에 채워집니다. <kbd>Ctrl</kbd>+<kbd>↵</kbd>로 확인합니다. 창을 닫으면 포커스가 **Confirm** 으로 가서 <kbd>↵</kbd>로 바로 확정합니다.
 - 지금 고른 곳에 사유가 꼭 필요한데(두 문서로 보내기) 비어 있으면 **Remark** 줄의 글 자리가 주황 경고("**Required when sending to more than one document**")로 바뀌고 연필(**Write remark**)이 강조된 채 늘 보입니다. 지우기·옮기기의 Remark는 선택입니다 — 비워 두면 빈 자리에 **Deleted**·**Moved** 가 흐리게 보이고, 결과물과 Excel의 **Remark** 에도 그 말(화면이 한국어면 "삭제"·"이동")로 적힙니다. 적으면 그 글로 바뀝니다.
@@ -554,7 +556,9 @@ Old 문장을 오른쪽 단추로 누르면(키보드는 줄을 고른 채 <kbd>
 
 | 묶음 | 항목 | 하는 일 |
 |---|---|---|
-| **Assignment** | **Unassign** | 배정을 없애고 **Unassigned** 로. 확정은 메뉴에 없다 — <kbd>↵</kbd>, 오른쪽 칸 **Decide** 의 **Confirm**, 보낼 곳을 고른 뒤 뜨는 그 자리 메뉴로 한다 |
+| **Assignment** | **Unassign** | 배정을 없애고 **Unassigned** 로. 그 밖의 확정은 메뉴에 없다 — <kbd>↵</kbd>, 오른쪽 칸 **Decide** 의 **Confirm**, 보낼 곳을 고른 뒤 뜨는 그 자리 메뉴로 한다 |
+| | **Move to another document…** | 대상 문서 번호를 고르는 창이 뜬다(<kbd>M</kbd>과 같다). 번호를 고르고 사유(선택)를 적어 **Move** 를 누르면 그 줄을 이동으로 바로 확정한다 |
+| | **Delete** | 맨 아래에 구분선으로 떨어져 빨간 글자로 보인다. 그 줄을 삭제로 바로 확정한다(<kbd>Del</kbd> · <kbd>⌫</kbd>와 같다). 사유는 저장된 것이 있으면 그대로, 없으면 결과물에 "삭제"로 적힌다. 알림의 되돌리기나 <kbd>Ctrl</kbd>+<kbd>Z</kbd>로 되돌린다 |
 | **Edit sentence** | **Split here** | 누른 자리 가까이에 나눌 선을 놓는다. 선을 끌거나 <kbd>←</kbd> <kbd>→</kbd>로 옮긴 뒤 선 옆 **Split here**(<kbd>S</kbd>)로 나누고, **Cancel**(<kbd>Esc</kbd>)로 거둔다. 문장을 두 번 눌러도 선이 놓인다 |
 | | **Merge with previous** · **Merge with next** | 바로 앞·뒤 문장과 한 문장으로 합친다(같은 언어끼리) |
 | | **Pair with previous (KO/EN)** · **Pair with next (KO/EN)** | 앞·뒤 문장이 다른 언어(한글 ↔ 영어)면 합치기 대신 이 항목이 나온다. 두 문장을 한/영 짝으로 맺어 한 줄로 다룬다. 이미 짝이 있는 문장과는 맺을 수 없다 |
@@ -764,6 +768,8 @@ AI가 꺼져 있어도 빠진 언어를 직접 채울 수 있습니다. 칸에 �
 | <kbd>E</kbd> | 고쳐 쓰기. <kbd>Ctrl</kbd>+<kbd>↵</kbd> 저장, <kbd>Esc</kbd> 닫기 |
 | <kbd>H</kbd> | 보류 |
 | <kbd>U</kbd> | 배정 취소 |
+| <kbd>Del</kbd> · <kbd>⌫</kbd> | 삭제로 바로 확정 |
+| <kbd>M</kbd> | 다른 문서로 이동 — 대상 문서를 고르는 창 |
 | <kbd>Ctrl</kbd>+<kbd>Z</kbd> | 판단 되돌리기. <kbd>Shift</kbd>를 더하면 다시 하기 |
 | <kbd>Space</kbd>(누르고 있기) | Excel 미리보기 시트 — 떼면 닫힘. 짧게 탁 누르면 열어 두고, 다시 탁 또는 <kbd>Esc</kbd>로 닫기 |
 | 끌기 · 휠(Excel 미리보기 시트에서) | 시트 옮기기(끌기는 두 방향, 휠은 위아래). <kbd>Alt</kbd>+끌기는 글자 고르기 |
@@ -1184,7 +1190,7 @@ AI는 제안만 합니다. 사람이 줄마다 확인해 확정하기 전에는 
 | **New documents** | 글 칸에서 <kbd>Enter</kbd> 저장, <kbd>Esc</kbd> 적던 것 버리기 |
 | **Order** | 줄을 눌러 고른 뒤 <kbd>Alt</kbd>+<kbd>↑</kbd> <kbd>↓</kbd> 한 자리 옮기기(칸 끝에서 멈춤 — 다른 칸으로는 끌어서 옮기고, 키보드로 줄의 칸을 바꾸는 일은 **Assign** 화면에서 합니다), <kbd>Tab</kbd> <kbd>Shift</kbd>+<kbd>Tab</kbd> 들여쓰기·내어쓰기, <kbd>Esc</kbd> 고름 놓기(끄는 동안이면 끌기 취소), <kbd>Alt</kbd>를 누른 채 끌어 글자 고르기 |
 | **Map** | 지도 안에서 <kbd>↑</kbd> <kbd>↓</kbd> 같은 줄기, <kbd>←</kbd> <kbd>→</kbd> 옆 줄기, <kbd>Home</kbd> <kbd>End</kbd> 줄기의 처음 · 끝, <kbd>Enter</kbd> 고르기(줄기 머리에서는 접기), <kbd>Esc</kbd> 고름 풀기, <kbd>+</kbd> <kbd>-</kbd> <kbd>0</kbd> 확대 · **Fit all**, <kbd>/</kbd> 찾기, 지도 위에서 <kbd>Ctrl</kbd>+휠 확대 |
-| **Assign** | <kbd>↵</kbd> 확정, <kbd>J</kbd> <kbd>K</kbd> 이동, <kbd>E</kbd> 고쳐 쓰기, <kbd>H</kbd> 보류, <kbd>U</kbd> 배정 지우기, <kbd>V</kbd> 문서 하나 · 둘 보기, <kbd>Space</kbd> 누르고 있기 Excel 미리보기 |
+| **Assign** | <kbd>↵</kbd> 확정, <kbd>J</kbd> <kbd>K</kbd> 이동, <kbd>E</kbd> 고쳐 쓰기, <kbd>H</kbd> 보류, <kbd>U</kbd> 배정 지우기, <kbd>Del</kbd> 삭제, <kbd>M</kbd> 이동, <kbd>V</kbd> 문서 하나 · 둘 보기, <kbd>Space</kbd> 누르고 있기 Excel 미리보기 |
 | 어디서나 | <kbd>Esc</kbd> 맨 위 창 닫기, 이동 취소 |
 
 Mac에서는 <kbd>Ctrl</kbd> 대신 <kbd>⌘</kbd>를 씁니다.
