@@ -1,16 +1,20 @@
-"""DOCX 구조 신호 — 번호 범위·목차·띠 표·표 꼴·안쪽 표 자리를 블록·표의 signals에 남기고, 띠 표 번호로 절 경로를 잡는다."""
+"""DOCX 구조 신호 — 번호 범위·목차·띠 표·표 꼴·안쪽 표 자리·문장 속 그림 자리를 블록·표의 signals에 남기고, 띠 표 번호로 절 경로를 잡는다."""
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.sop.extract import docx_reader
 from app.sop.extract.docx_reader import read_docx
 from app.sop.extract.types import EXTRACTOR_VERSION, ExtractResult
 from app.sop.models import Extraction, SourceBlock, SourceTable
+from app.sop.segment import INLINE_SIGNAL, read_figure_inline
 from tests.access_helpers import run_in_session
-from tests.docx_factory import build_docx, make_grid_table, make_list, make_row, make_style, numbered, p
-from tests.sop_helpers import create_bundle, upload
+from tests.docx_factory import (
+    TINY_PNG, build_docx, make_drawing_run, make_grid_table, make_list, make_row, make_style, numbered, p,
+)
+from tests.sop_helpers import create_bundle, get_view, upload
 from tests.test_sop_docx_reader import LIMITS, TEMPLATE_HEADING_LIST, TEMPLATE_HEADING_STYLES
 
 # 띠 표 열 폭 0.9 / 0.4 / 8.0 cm, 작업 표 2.8 / 14.2 cm (twip, 1 cm = 567)
@@ -235,7 +239,7 @@ def test_upload_stores_signals_and_leaves_plain_blocks_null(client: TestClient) 
         return extraction.extractor_version, [tuple(row) for row in blocks], list(tables)
 
     version, blocks, tables = run_in_session(_load)
-    assert version == EXTRACTOR_VERSION == "6"
+    assert version == EXTRACTOR_VERSION == "7"
     assert blocks == [
         ("7.4", "7.4", {"numbers": [[0, 3, "cell"]]}),
         ("", "7.4", None),
@@ -244,3 +248,123 @@ def test_upload_stores_signals_and_leaves_plain_blocks_null(client: TestClient) 
         ("1.1. 덮개를 연다.", "7.4", {"numbers": [[0, 4, "typed"]]}),
     ]
     assert tables == [{"widths": BAND_WIDTHS, "band": {"number": "7.4", "level": 2}}]
+
+
+ICON = {"icon.png": TINY_PNG}
+NUMBER_DECIMAL = make_list(0, [("decimal", "%1.")], [1])
+NUM_PR = '<w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr></w:pPr>'
+
+
+def _icon() -> str:
+    return make_drawing_run("icon.png")
+
+
+def _figure_spots(result: ExtractResult) -> list[tuple[str, int | None]]:
+    """그림 블록마다 (앞선 가장 가까운 그림 아닌 블록 글의 자리 앞뒤 두 글자, 자리) — 자리 신호가 없으면 ("", None)."""
+    spots: list[tuple[str, int | None]] = []
+    host = ""
+    for block in result.blocks:
+        if block.kind != "figure":
+            host = block.text
+            continue
+        inline = block.signals.get("inline")
+        at = inline["at"] if isinstance(inline, dict) else None
+        spots.append((host[max(at - 2, 0):at + 2], at) if at is not None else ("", None))
+    return spots
+
+
+def test_inline_signal_reader_matches_the_extractor_key() -> None:
+    # segment는 추출기를 import하지 않는 쪽이라 열쇠를 따로 둔다 — 어긋나면 문서 보기 anchor가 늘 None이 된다
+    assert INLINE_SIGNAL == docx_reader.SIGNAL_INLINE
+    assert read_figure_inline({INLINE_SIGNAL: {"at": 5}}) == 5
+    assert [read_figure_inline(signals) for signals in (None, {}, {"numbers": [[0, 2, "auto"]]})] == [None, None, None]
+
+
+def test_icon_in_the_middle_of_a_sentence_keeps_its_place_in_the_paragraph_text() -> None:
+    body = p("앞 문단이다.") + f"<w:p>{_run('저장 단추')}{_icon()}{_run('를 누른다.')}</w:p>"
+
+    result = _read(body, media=ICON)
+
+    assert [(block.kind, block.text) for block in result.blocks] == [
+        ("paragraph", "앞 문단이다."), ("paragraph", "저장 단추를 누른다."), ("figure", ""),
+    ]
+    assert _figure_spots(result) == [("단추를 ", 5)]
+
+
+def test_figure_only_paragraph_has_no_place_because_it_has_no_text_block() -> None:
+    # 앞 글 블록은 다른 문단이다 — 그 글 끝을 자리로 적으면 화면이 앞 문장 속 그림으로 잘못 그린다
+    body = p("앞 문단이다.") + f"<w:p>{_icon()}</w:p>" + p("뒤 문단이다.")
+
+    result = _read(body, media=ICON)
+
+    assert [(block.kind, block.signals) for block in result.blocks] == [
+        ("paragraph", {}), ("figure", {}), ("paragraph", {}),
+    ]
+
+
+def test_figure_in_a_numbered_paragraph_counts_the_written_in_number() -> None:
+    body = (
+        f"<w:p>{NUM_PR}{_run('덮개를 ')}{_icon()}{_run('연다')}</w:p>"
+        + f"<w:p>{NUM_PR}{_icon()}{_run('필터를 꺼낸다')}</w:p>"
+    )
+
+    result = _read(body, media=ICON, numbering=NUMBER_DECIMAL)
+
+    assert [block.text for block in result.blocks if block.kind == "paragraph"] == ["1. 덮개를 연다", "2. 필터를 꺼낸다"]
+    # 둘째는 그림이 글 맨 앞 — 자리는 써 넣은 번호 바로 뒤
+    assert _figure_spots(result) == [("를 연다", 7), (". 필터", 3)]
+
+
+def test_figures_in_a_table_cell_keep_their_place_in_the_cell_text() -> None:
+    cell = (
+        p("값을 적는다.")
+        + f"<w:p>{_run('기록지 ')}{_icon()}{_run(' 참조')}</w:p>"
+        + f"<w:p>{_icon()}</w:p>"
+        + f"<w:p>{NUM_PR}{_run('서명')}{_icon()}</w:p>"
+    )
+
+    result = _read(make_grid_table(2, make_row(["A-1", cell])), media=ICON, numbering=NUMBER_DECIMAL)
+
+    cell_block = result.blocks[1]
+    assert cell_block.text == "값을 적는다.\n기록지  참조\n\n1. 서명"
+    assert cell_block.signals["paras"] == [0, 8, 16, 17]
+    # 셋째 문단(그림만)은 그 문단 시작, 넷째는 번호 · 글 뒤(칸 글 끝)
+    assert _figure_spots(result) == [("지  참", 12), ("조\n\n1", 16), ("서명", 22)]
+
+
+def test_view_anchors_figure_blocks_to_their_host_text_block_and_old_extractions_give_none(client: TestClient) -> None:
+    bundle = create_bundle(client)
+    body = (
+        f"<w:p>{_run('저장 단추')}{_icon()}{_run('를 누른다.')}</w:p>"
+        + f"<w:p>{_icon()}</w:p>"
+        + make_grid_table(1, make_row([f"<w:p>{_run('기록지 ')}{_icon()}{_icon()}{_run(' 참조')}</w:p>"]))
+    )
+    response = upload(client, bundle["id"], build_docx(body, media=ICON), "SYNTHETIC_Figure_Anchor.docx")
+    assert response.status_code == 201, response.text
+    document_id = response.json()["id"]
+
+    blocks = get_view(client, bundle["id"], document_id)["blocks"]
+
+    texts = {block["id"]: block["text"] for block in blocks}
+    spots = [
+        (texts[anchor["block_id"]], texts[anchor["block_id"]][anchor["at"] - 2:anchor["at"] + 2])
+        if (anchor := block["anchor"]) is not None else None
+        for block in blocks if block["kind"] == "figure"
+    ]
+    # 칸 안 두 그림은 모두 칸 블록을 가리킨다(둘째 그림의 바로 앞 블록은 첫 그림이다)
+    assert spots == [("저장 단추를 누른다.", "단추를 "), None, ("기록지  참조", "지  참"), ("기록지  참조", "지  참")]
+    assert {block["kind"] for block in blocks if block["anchor"] is not None} == {"figure"}
+
+    async def _drop_signals(session: AsyncSession) -> None:
+        # 추출기 6까지의 추출 — 그림 블록에 자리 신호가 없다
+        extraction_ids = select(Extraction.id).where(Extraction.document_id == document_id)
+        await session.execute(
+            update(SourceBlock)
+            .where(SourceBlock.extraction_id.in_(extraction_ids), SourceBlock.kind == "figure")
+            .values(signals=None)
+        )
+        await session.commit()
+
+    run_in_session(_drop_signals)
+    old_blocks = get_view(client, bundle["id"], document_id)["blocks"]
+    assert [block["anchor"] for block in old_blocks] == [None] * len(old_blocks)

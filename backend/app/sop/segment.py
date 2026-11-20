@@ -61,6 +61,8 @@ BAND_SIGNAL = "band"
 # docx_reader.SIGNAL_PLACE·SIGNAL_PARAS와 같은 값 — 안쪽 표의 바깥 칸 자리 {"row", "col", "para"}와 칸 안 문단 시작 자리
 PLACE_SIGNAL = "place"
 PARAS_SIGNAL = "paras"
+# docx_reader.SIGNAL_INLINE과 같은 값 — 문단·칸 안 그림 블록이 놓인 글자 자리 {"at"}(추출기 7부터)
+INLINE_SIGNAL = "inline"
 NEUTRAL = "neutral"
 # 제목다움(F8b · 설계 2d) — 라벨 뒤 글이 이보다 길고 마침표로 끝나는 "제목"은 문장이다. 합성 자료로 잡은 값이다(실제 SOP 시험 뒤 다시 정한다)
 HEADING_SENTENCE_MIN_CHARS = 60
@@ -274,6 +276,14 @@ def read_table_place(signals: Mapping[str, object] | None) -> tuple[int, int, in
     if not isinstance(place, Mapping):
         return None
     return int(place["row"]), int(place["col"]), int(place["para"])
+
+
+def read_figure_inline(signals: Mapping[str, object] | None) -> int | None:
+    """그림 블록이 놓인 글자 자리 — 앞선 가장 가까운 그림 아닌 블록(같은 문단 · 칸) 글 안. 그림만 든 문단 · 추출기 7 전의 추출은 None."""
+    inline = (signals or {}).get(INLINE_SIGNAL)
+    if not isinstance(inline, Mapping):
+        return None
+    return int(inline["at"])
 
 
 def find_anchor_offset(cell_text: str, cell_signals: Mapping[str, object] | None, para: int) -> int:

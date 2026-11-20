@@ -3,14 +3,14 @@
 
 import asyncio
 import zipfile
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from io import BytesIO
 from typing import Annotated, Literal, Self
 from urllib.parse import quote
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, Path, Query, Response, UploadFile
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StringConstraints, model_validator
-from sqlalchemy import select
+from sqlalchemy import Row, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.clock import now
@@ -89,7 +89,7 @@ from app.sop.pairs import (
 )
 from app.sop.refs import RefState, build_ref_text, is_proposing_version, load_proposing_extractions, read_ref_state
 from app.sop.schemas import NO_NUL, NoNulStr
-from app.sop.segment import find_anchor_offset, is_band_table, read_table_place
+from app.sop.segment import find_anchor_offset, is_band_table, read_figure_inline, read_table_place
 from app.sop.status import get_cover_status
 from app.sop.tobe import MAX_DB_INT, release_match_doc, rename_match_doc, temp_match_code
 from app.sop.units import (
@@ -226,6 +226,16 @@ class ViewTableOut(BaseModel):
     lang: str | None = None
 
 
+class ViewFigureAnchorOut(BaseModel):
+    """문장 속 그림이 놓인 자리 — 앞 글 블록(같은 문단의 문단 블록 · 칸 안 그림은 그 칸 블록)과 그 text 안 글자 자리(시안 2 D3, 신호 inline).
+
+    at은 그 블록의 text(써 넣은 자동 번호 포함, 단위 spans와 같은 좌표) 안 자리다 — 단위 글 안 자리는 at - span 시작.
+    """
+
+    block_id: int
+    at: int
+
+
 class ViewBlockOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -249,6 +259,8 @@ class ViewBlockOut(BaseModel):
     has_image: bool
     # 이 블록이 속한 부분 묶음(DocumentViewOut.part_groups의 key) — 머리말·꼬리말은 부분 파일마다("header2"), 나머지는 part와 같다
     part_group: str
+    # 그림 블록만 — 문단 · 칸 글 안에 놓인 자리. 그림만 든 문단 · 추출기 7 전의 추출은 None
+    anchor: ViewFigureAnchorOut | None = None
 
 
 class ViewUnitRefOut(BaseModel):
@@ -453,6 +465,24 @@ async def _build_view_tables(
     return out
 
 
+def _build_view_blocks(rows: Iterable[Row]) -> list[ViewBlockOut]:
+    """seq 순 블록 행 → 응답 블록. 그림 블록의 자리 신호(inline)는 앞선 가장 가까운 그림 아닌 블록의 글자 자리로 싣는다."""
+    out: list[ViewBlockOut] = []
+    host_id: int | None = None
+    for row in rows:
+        fields = dict(row._mapping)
+        signals = fields.pop("signals")
+        anchor = None
+        if row.kind == "figure":
+            at = read_figure_inline(signals)
+            if at is not None and host_id is not None:
+                anchor = ViewFigureAnchorOut(block_id=host_id, at=at)
+        else:
+            host_id = row.id
+        out.append(ViewBlockOut(**fields, part_group=get_part_group_key(row.part, row.xml_path), anchor=anchor))
+    return out
+
+
 async def build_document_view(session: AsyncSession, document: Document) -> DocumentViewOut:
     """최신 추출의 표·블록과 활성 단위·짝 — DB 표마다 한 번씩만 읽어 단위 수와 무관하게 쿼리 수가 같다."""
     document_out = DocumentBase.model_validate(document)
@@ -474,13 +504,12 @@ async def build_document_view(session: AsyncSession, document: Document) -> Docu
             SourceBlock.page, SourceBlock.page_basis, SourceBlock.section_label, SourceBlock.heading_level,
             SourceBlock.table_id, SourceBlock.row_index, SourceBlock.col_index, SourceBlock.grid_span,
             SourceBlock.row_span, SourceBlock.flags, SourceBlock.image_part.is_not(None).label("has_image"),
+            SourceBlock.signals,
         )
         .where(SourceBlock.extraction_id == extraction.id)
         .order_by(SourceBlock.seq)
     )
-    blocks = [
-        ViewBlockOut(**row._mapping, part_group=get_part_group_key(row.part, row.xml_path)) for row in block_rows
-    ]
+    blocks = _build_view_blocks(block_rows)
     block_id_by_seq = {block.seq: block.id for block in blocks}
     units = (await session.scalars(
         select(Unit)
