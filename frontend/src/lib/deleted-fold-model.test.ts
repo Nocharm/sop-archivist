@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { CoverStatus, Disposition, UnitRow } from "./api-sop";
-import { buildDeletedFolds, readDeletedLine, type DeletedFoldOptions } from "./deleted-fold-model";
+import { buildDeletedFolds, isDeletedLineOpen, readDeletedLine, type DeletedFoldOptions } from "./deleted-fold-model";
 
 type FoldUnit = Pick<UnitRow, "kind" | "lang" | "text" | "content_start" | "status" | "decision">;
 
@@ -17,12 +17,12 @@ const unit = (over: Partial<Omit<FoldUnit, "decision">> & { disposition?: Dispos
   };
 };
 
-const OPTIONS: DeletedFoldOptions = { filter: "all", open: new Set() };
+const OPTIONS: DeletedFoldOptions = { filter: "all" };
 
 describe("buildDeletedFolds", () => {
   it("folds a confirmed delete row and reads its line", () => {
     const folds = buildDeletedFolds([{ key: "u1", unitIds: [1] }], new Map([[1, unit({ text: "5.1  장갑을   낀다", content_start: 5, reason: "반복" })]]), OPTIONS);
-    expect(readDeletedLine(folds, [1], null)).toEqual({ rowKey: "u1", kind: "KO", text: "장갑을 낀다", remark: "반복" });
+    expect(readDeletedLine(folds, [1])).toEqual({ rowKey: "u1", kind: "KO", text: "장갑을 낀다", remark: "반복" });
   });
 
   it("folds a KO/EN pair as one line when every member is deleted", () => {
@@ -31,7 +31,7 @@ describe("buildDeletedFolds", () => {
       [2, unit({ lang: "en", text: "Gloves", reason: "Repeated" })],
     ]);
     const folds = buildDeletedFolds([{ key: "u1", unitIds: [1, 2] }], units, OPTIONS);
-    expect(readDeletedLine(folds, [1, 2], null)).toEqual({ rowKey: "u1", kind: "KO/EN", text: "장갑 / Gloves", remark: "Repeated" });
+    expect(readDeletedLine(folds, [1, 2])).toEqual({ rowKey: "u1", kind: "KO/EN", text: "장갑 / Gloves", remark: "Repeated" });
   });
 
   it("leaves a pair open while one member is not a confirmed delete", () => {
@@ -41,7 +41,7 @@ describe("buildDeletedFolds", () => {
     ]);
     const folds = buildDeletedFolds([{ key: "u1", unitIds: [1, 2] }], units, OPTIONS);
     expect(folds.size).toBe(0);
-    expect(readDeletedLine(folds, [1, 2], null)).toBeNull();
+    expect(readDeletedLine(folds, [1, 2])).toBeNull();
   });
 
   it("folds tables and figures with their kind", () => {
@@ -57,8 +57,8 @@ describe("buildDeletedFolds", () => {
       units,
       OPTIONS,
     );
-    expect(readDeletedLine(folds, [1], null)?.kind).toBe("TABLE");
-    expect(readDeletedLine(folds, [2], null)).toEqual({ rowKey: "u2", kind: "FIGURE", text: "", remark: "" });
+    expect(readDeletedLine(folds, [1])?.kind).toBe("TABLE");
+    expect(readDeletedLine(folds, [2])).toEqual({ rowKey: "u2", kind: "FIGURE", text: "", remark: "" });
   });
 
   it("does not fold other confirmed rows (assigned, moved) or a deleted row not yet confirmed", () => {
@@ -69,11 +69,6 @@ describe("buildDeletedFolds", () => {
     ]);
     const rows = [1, 2, 3].map((id) => ({ key: `u${id}`, unitIds: [id] }));
     expect(buildDeletedFolds(rows, units, OPTIONS).size).toBe(0);
-  });
-
-  it("keeps a row a person opened", () => {
-    const folds = buildDeletedFolds([{ key: "u1", unitIds: [1] }], new Map([[1, unit()]]), { ...OPTIONS, open: new Set(["u1"]) });
-    expect(folds.size).toBe(0);
   });
 
   it("shows deleted rows open under the Confirmed filter and folds them under the others", () => {
@@ -91,10 +86,10 @@ describe("readDeletedLine", () => {
       [4, unit({ lang: "en", text: "Gloves" })],
     ]);
     const folds = buildDeletedFolds([{ key: "u1", unitIds: [1, 4] }], units, OPTIONS);
-    expect(readDeletedLine(folds, [4], null)).toEqual({ rowKey: "u1", kind: "EN", text: "Gloves", remark: "" });
+    expect(readDeletedLine(folds, [4])).toEqual({ rowKey: "u1", kind: "EN", text: "Gloves", remark: "" });
   });
 
-  it("keeps the row of the picked box open - any member, and the other card of a distant pair too", () => {
+  it("opens a row only while a box of it is picked - any member, and the other card of a distant pair too", () => {
     const units = new Map([
       [1, unit({ lang: "ko" })],
       [4, unit({ lang: "en" })],
@@ -108,20 +103,24 @@ describe("readDeletedLine", () => {
       units,
       OPTIONS,
     );
-    expect(readDeletedLine(folds, [1], 4)).toBeNull();
-    expect(readDeletedLine(folds, [4], 4)).toBeNull();
-    expect(readDeletedLine(folds, [7], 4)?.rowKey).toBe("u7");
-    expect(readDeletedLine(folds, [1], 99)?.rowKey).toBe("u1");
+    // 접힌 줄은 고름과 상관없이 읽힌다 - 펼침 · 접힘 전환에 둘 다 그린다
+    expect(readDeletedLine(folds, [1])?.rowKey).toBe("u1");
+    expect(isDeletedLineOpen(folds, "u1", 4)).toBe(true);
+    expect(isDeletedLineOpen(folds, "u1", 1)).toBe(true);
+    expect(isDeletedLineOpen(folds, "u7", 4)).toBe(false);
+    // 다른 박스로 떠나거나 고름이 없으면 다시 접힌다
+    expect(isDeletedLineOpen(folds, "u1", 99)).toBe(false);
+    expect(isDeletedLineOpen(folds, "u1", null)).toBe(false);
   });
 
   it("has no kind for a line without a language and nothing for an empty card", () => {
     const folds = buildDeletedFolds([{ key: "u1", unitIds: [1] }], new Map([[1, unit({ lang: "ref", text: "표 9 참조." })]]), OPTIONS);
-    expect(readDeletedLine(folds, [1], null)?.kind).toBeNull();
-    expect(readDeletedLine(folds, [], null)).toBeNull();
+    expect(readDeletedLine(folds, [1])?.kind).toBeNull();
+    expect(readDeletedLine(folds, [])).toBeNull();
   });
 
   it("caps a long text", () => {
     const folds = buildDeletedFolds([{ key: "u1", unitIds: [1] }], new Map([[1, unit({ text: "가".repeat(500) })]]), OPTIONS);
-    expect(readDeletedLine(folds, [1], null)?.text.length).toBe(160);
+    expect(readDeletedLine(folds, [1])?.text.length).toBe(160);
   });
 });

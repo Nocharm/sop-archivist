@@ -425,6 +425,8 @@ export function useAssignPage() {
   // 줄은 고른 Unit에서 파생한다 - 짝이 맺히거나 풀려 줄이 다시 묶여도 그 Unit의 줄을 그대로 고른다
   const activeKey = (focus.kind === "unit" ? rowOfUnit.get(focus.unitId) : undefined) ?? null;
   const row: ClassifyRow | null = activeKey ? (rowMap.get(activeKey) ?? null) : null;
+  // 고른 줄이 삭제로 확정됨 - 우클릭 메뉴 · 결정 칸이 배정 취소를 "삭제 취소"로 부른다(같은 일)
+  const isRowDeleted = row !== null && row.unitIds.length > 0 && row.unitIds.every((id) => isDeletedUnit(unitMap.get(id)));
   // 한 단 보기에서 연 이미 쓴 New 문서(그 파일의 문서 id)와 거기서 고른 문장 - Old 원문 자리에 그 원문을 놓고 같은 도구로 다듬는다.
   // 이 문서의 문장은 배정하지 않으므로 줄(row)이 없다. 줄을 고르면(Old 문서로 돌아가는 것이다) 닫힌다
   // inPlace는 양 단에서 New 칸의 문장을 그 자리에서 고른 것이다 - 왼쪽은 Old 문서 그대로이고, 다듬는 대상만 그 New 문서가 된다
@@ -1228,6 +1230,7 @@ export function useAssignPage() {
       captionBundle: target.kind === "caption" ? findBundleOf(target) : null,
       readOnly: !canEdit,
       rowStatus: row?.status ?? "unassigned",
+      isDeleted: isRowDeleted,
       isDecided: isUnitDecided,
       hasDraft: hasUnitDraft,
       canSplit: findNearestCut(target, Math.floor(target.text.length / 2)) !== null,
@@ -1315,7 +1318,11 @@ export function useAssignPage() {
   function openCtxMenu(unitId: number, click: { x: number; y: number } | null, caret: { blockId: number; offset: number } | null) {
     if (mode !== "old" || isBoxLocked(unitId)) return;
     const key = isSolo ? SOLO_ROW_KEY : findRowKey(unitId);
-    const anchor = document.querySelector<HTMLElement>(`[data-testid="assign-paper-piece-${unitId}"]`) ?? document.querySelector<HTMLElement>(`[data-testid="assign-paper-unit-${unitId}"]`);
+    // 접힌 삭제 줄은 조각이 없다 - 그 줄을 닻으로 열고, 고르면 펼쳐지니 메뉴는 잴 때 펼친 박스(readCover)를 피해 선다
+    const anchor =
+      document.querySelector<HTMLElement>(`[data-testid="assign-paper-piece-${unitId}"]`) ??
+      document.querySelector<HTMLElement>(`[data-testid="assign-paper-unit-${unitId}"]`) ??
+      document.querySelector<HTMLElement>(`[data-testid="assign-paper-deleted-u${unitId}"]`);
     if (!key || !anchor) return;
     // 누른 것이 든 박스(칸 문장 · 캡션이면 그 묶음) - 짝의 다른 구성원을 눌렀으면 그 박스로 옮겨 고른다
     const boxId = isSolo ? null : (findBoxId(key, unitId) ?? null);
@@ -3530,7 +3537,7 @@ export function useAssignPage() {
     handleJoinPick, readJoinAfter, pickJoinMenu, pickPlaceSpot, pickOwnAiLine, jumpToNew, openNewDoc, showInNew, jumpToOld,
     pickTemplateLine, fillTemplateMissing, isTemplateDrag, isOldDrag, finishPairPick, handleOldClick, handlePrimary, startEdit,
     pickRecommendation, markRecHover, revealPick, setRevealPick, done, renderPlaceLabel, listDestinationEls,
-    canClear, error, figureTab, composedCut, setComposedCutAt, handleComposedDoubleClick, dragComposedCut, splitComposedAtCut, planComposedGap, joinComposed,
+    canClear, isRowDeleted, error, figureTab, composedCut, setComposedCutAt, handleComposedDoubleClick, dragComposedCut, splitComposedAtCut, planComposedGap, joinComposed,
   };
 }
 

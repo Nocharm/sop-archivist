@@ -2,6 +2,12 @@
 
 프로젝트 진행 현황 로그. 커밋 직전 갱신한다 (`rules/common/git.md` 규칙). v1.4.0(2026-11-20 정식 업데이트)까지의 항목은 [`docs/history/PROGRESS-archive.md`](docs/history/PROGRESS-archive.md)에 있다 — 정식 업데이트마다 그 릴리스까지의 항목을 거기로 옮긴다(`rules/common/git.md` "정식 업데이트 때 문서 정리").
 
+## 2026-11-20 — B4 삭제 줄 다시 접기 · 우클릭 "삭제 취소" (`feat/deleted-fold-restore`)
+
+- 펼침을 화면 상태(`deletedOpen`, 빼는 곳이 없었다) 대신 고름 하나로(`isDeletedLineOpen`) — 다른 박스를 고르면 저절로 접히고, 접을 단위가 고름으로 바뀌지 않아 먼 덩어리는 다시 그리지 않는다. 줄 ↔ 박스는 `Collapse` 둘로 전환하고, 펼친 뒤에는 `.fold-inner` 잘림을 CSS 키프레임(`fold-release`, `--dur-slow` 뒤 `overflow: visible`)으로 풀어 고른 테두리 · 번호 창이 잘리지 않게 — effect · 타이머 수는 그대로.
+- 우클릭: 접힌 줄에 `data-strip-unit`, 닻은 `assign-paper-deleted-u<id>`로 대체, 메뉴가 피할 박스는 렌더 때가 아니라 잴 때 찾는다(`readCover`) — 우클릭이 그 줄을 펼치니 렌더 때는 박스가 아직 없다. 내 판단을 하나 바꿨다: 위 테두리 DELETED 꼬리표는 박스 안 상태 칩 "Deleted"와 겹치고 첫 줄 글을 덮어 빼고 옅은 빨강 바탕만 남겼다.
+- 검증: vitest 1,835 · lint · tsc, Assign 스모크 1,019(새 DB, 새 단계 20 — 펼침 · 다시 접힘 · Undo delete 메뉴 · 메뉴가 박스를 덮지 않음).
+
 ## 2026-11-20 — B3 표 벗긴 뒤 보던 자리 지키기 (`fix/unwrap-scroll`)
 
 - 까닭: 풀기 전환은 스크롤을 브라우저 스크롤 고정에 맡겨, 고정한 요소가 바뀌는 표 안이면 놓쳤고, 바꿈을 그리는 렌더에서 따라가기가 새 줄(캡션 · 번호 붙인 줄)로 다시 굴렸다. 공용 `useUnwrapMotion`이 바꾸기 전 기준(표 머리 `data-unwrap-scope`가 칸에 보이면 그것, 아니면 칸 윗변에 걸친 `data-flip-key` 줄)을 재 두고, 바꾼 직후 · 끝 자리 재기 전에 `scrollTop`을 되맞춘다(순수 계산 `pickScrollAnchor` · `computeAnchoredScrollTop`). 표 벗기기 · 다시 표로의 따라가기 스크롤은 `afterMotion`으로 전환 뒤에, 박스가 칸 밖일 때만 — effect · 타이머 수는 그대로.

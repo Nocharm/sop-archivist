@@ -4577,6 +4577,83 @@ await runStep("assign: unwrap table - deleting an unwrapped line picks the box r
   check("Undo wraps the table back", (await waitView((view) => view.tables.find((table) => table.id === unit.table_id)?.is_layout !== true && view.units.some((item) => item.id === unit.id))) !== null);
 });
 
+// 삭제 줄은 고른 동안만 펼치고 떠나면 다시 접는다, 우클릭은 "삭제 취소"(Assign 피드백 2026-11-20 항목 2 · 5)
+await runStep("assign: a deleted line opens only while picked, folds again on leaving, and right-click offers Undo delete", {}, async ({ page }) => {
+  const headers = { "X-Dev-User": "qa.member" };
+  const docs = await (await page.request.get(`${BASE}/api/bundles/${halfBundleId}/documents`, { headers })).json();
+  const readView = async (docId) => (await page.request.get(`${BASE}/api/bundles/${halfBundleId}/documents/${docId}/view`, { headers })).json();
+  await page.goto(`${BASE}/bundles/${halfBundleId}/assign`);
+  await wait(page, "assign-bar");
+  const { doc } = await findTableOnScreen(page, readView, docs);
+  if (!doc) return check("the bundle has a document on screen", false);
+  // 화면에 있는 미배정 짝 없는 문장 둘 - 하나는 지우고, 하나는 떠날 곳
+  const sentences = [];
+  for (const item of (await readView(doc.id)).units.filter((one) => one.kind === "sentence" && one.status === "unassigned" && one.pair_id === null)) {
+    if ((await page.locator(`[data-testid="assign-paper-piece-${item.id}"]`).count()) > 0) sentences.push(item);
+    if (sentences.length === 2) break;
+  }
+  check("the document has two unassigned sentences on screen", sentences.length === 2);
+  if (sentences.length < 2) return;
+  const [target, other] = sentences;
+  const waitView = async (isDone) => {
+    for (let tries = 0; tries < 60; tries += 1) {
+      const view = await readView(doc.id);
+      if (isDone(view)) return view;
+      await page.waitForTimeout(250);
+    }
+    return null;
+  };
+  const piece = page.locator(`[data-testid="assign-paper-piece-${target.id}"]`);
+  const otherPiece = page.locator(`[data-testid="assign-paper-piece-${other.id}"]`);
+  const fold = page.locator(`[data-testid="assign-paper-deleted-u${target.id}"]`);
+  await piece.scrollIntoViewIfNeeded();
+  await piece.click();
+  await page.locator(`[data-testid="assign-paper-piece-${target.id}"][data-sel]`).waitFor({ timeout: T });
+  await page.keyboard.press("Delete");
+  check("Del confirms the sentence as deleted", (await waitView((view) => view.units.some((item) => item.id === target.id && item.status === "confirmed"))) !== null);
+  // 고름이 아래로 옮겨 가면 접힌다 - 줄과 박스가 260ms 함께 있다가 박스가 떨어진다
+  await fold.waitFor({ timeout: T });
+  await piece.waitFor({ state: "detached", timeout: T });
+  check("leaving the deleted box folds it to one faint line", true);
+
+  await fold.click();
+  await page.locator(`[data-testid="assign-paper-piece-${target.id}"][data-sel]`).waitFor({ timeout: T });
+  await fold.waitFor({ state: "detached", timeout: T });
+  const opened = await page.evaluate((id) => {
+    const holder = document.querySelector(`[data-testid="assign-paper-piece-${id}"]`)?.closest(".deleted-open");
+    const inner = holder?.querySelector(":scope > .fold-inner");
+    return { tint: holder ? getComputedStyle(holder.querySelector(".strip[data-strip-unit]")).backgroundColor : "", paper: getComputedStyle(document.querySelector('[data-testid="assign-old"] .strip[data-strip-unit]')).backgroundColor, overflow: inner ? getComputedStyle(inner).overflow : "" };
+  }, target.id);
+  check("clicking the line opens the box on a faint danger tint", opened.tint !== "" && opened.tint !== opened.paper, JSON.stringify(opened));
+  check("once open the fold stops clipping (the picked ring and number editor show)", opened.overflow === "visible", opened.overflow);
+
+  await otherPiece.click();
+  await page.locator(`[data-testid="assign-paper-piece-${other.id}"][data-sel]`).waitFor({ timeout: T });
+  await fold.waitFor({ timeout: T });
+  await piece.waitFor({ state: "detached", timeout: T });
+  check("picking another box folds the deleted line again", true);
+
+  // 판 위쪽으로 - 메뉴가 펼친 박스 아래에 설 자리가 있게(위아래 다 모자라면 메뉴는 누른 자리 곁에 겹쳐 선다)
+  await fold.evaluate((el) => el.scrollIntoView({ block: "start" }));
+  await page.waitForTimeout(150);
+  await fold.click({ button: "right" });
+  await wait(page, "assign-ctx-menu");
+  await page.locator(`[data-testid="assign-paper-piece-${target.id}"][data-sel]`).waitFor({ timeout: T });
+  const undoItem = page.locator('[data-testid="assign-ctx-clear"]');
+  check("right-click on the folded line opens the menu with Undo delete", (await undoItem.innerText()).includes("Undo delete"), await undoItem.innerText());
+  check("the menu of a deleted line has no Delete", (await page.locator('[data-testid="assign-ctx-delete"]').count()) === 0);
+  await fold.waitFor({ state: "detached", timeout: T });
+  const menuBox = await page.locator('[data-testid="assign-ctx-menu"]').boundingBox();
+  const boxRect = await piece.boundingBox();
+  const isCovering = menuBox && boxRect && menuBox.y < boxRect.y + boxRect.height && menuBox.y + menuBox.height > boxRect.y && menuBox.x < boxRect.x + boxRect.width && menuBox.x + menuBox.width > boxRect.x;
+  check("the menu does not cover the box it opened", !isCovering, JSON.stringify({ menuBox, boxRect }));
+  check("the side panel calls Unassign Undo delete too", (await page.locator('[data-testid="assign-clear"]').innerText()).includes("Undo delete"));
+  await undoItem.click();
+  check("Undo delete brings the sentence back unassigned", (await waitView((view) => view.units.some((item) => item.id === target.id && item.status === "unassigned"))) !== null);
+  await page.locator(`[data-testid="assign-paper-piece-${target.id}"]`).waitFor({ timeout: T });
+  check("no folded line is left", (await fold.count()) === 0);
+});
+
 // 벗기고 다시 표로 묶어도 표 머리가 칸의 같은 높이에 남는다 - 브라우저 스크롤 고정은 바뀌는 표 안을 놓쳤고, 따라가기가 첫 줄로 굴렸다(Assign 피드백 2026-11-20 항목 11)
 await runStep("assign: unwrap table - unwrapping and wrapping back keep the table head at the same height in the pane", {}, async ({ page }) => {
   const headers = { "X-Dev-User": "qa.member" };

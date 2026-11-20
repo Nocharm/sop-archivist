@@ -41,6 +41,8 @@ export interface AssignMenuContext {
   readOnly: boolean;
   /** 우클릭한 문장의 줄 상태 */
   rowStatus: CoverStatus;
+  /** 우클릭한 줄이 삭제로 확정되어 있다(lib/deleted-fold-model isDeletedUnit) - 배정 취소를 "삭제 취소"로 부르고 삭제 항목을 숨긴다 */
+  isDeleted?: boolean;
   /** 단위(칸 문장이면 묶인 표)에 판단이 있다 - 미배정이 아닌 상태나 처분 */
   isDecided: (unit: ViewUnit) => boolean;
   /** 단위의 줄에 저장 전 고름·고친 글이 있다 */
@@ -186,12 +188,14 @@ export function buildAssignMenu(ctx: AssignMenuContext): AssignMenuGroups {
   const clearReason = ctx.readOnly ? why("readOnly") : ctx.rowStatus === "unassigned" && !ctx.isDecided(ctx.target) ? why("notAssigned") : null;
   // 이동·삭제는 줄 전체의 판단이라 문장 모양과 상관없이 늘 뜬다(배정 취소 뒤, 삭제가 맨 끝) - 저장을 막는 까닭(캡션·참조 확인 등)은 확정 길이 알린다
   const decide = [build("move", ctx.readOnly ? why("readOnly") : null), build("delete", ctx.readOnly ? why("readOnly") : null)];
+  // 삭제된 줄 - 삭제를 푸는 것은 배정 취소와 같은 일이라 이름만 "삭제 취소"(단축키 U 그대로), 이미 삭제라 삭제 항목은 숨긴다
+  const assign = ctx.isDeleted ? [{ ...build("clear", clearReason), labelKey: "assign.ctx.undoDelete" }, decide[0]] : [build("clear", clearReason), ...decide];
   const editReason = getEditBlocker(ctx, ctx.target);
   const retireReason = getRetireBlocker(ctx, ctx.target);
   const splitItem = build("split", retireReason ?? (ctx.canSplit ? null : why("nothingToSplit")));
   const langItem = { ...build("lang", editReason ?? (ctx.target.lang === "ref" ? why("refLang") : null)), lang: ctx.target.lang };
   // 묶음(표·그림)에는 문장 항목이 뜻이 없어 묶음 항목만 둔다
-  if (BUNDLE_KINDS.has(ctx.target.kind)) return { assign: [build("clear", clearReason), ...decide], edit: [...buildTableItems(ctx), ...buildBundleCaptionItems(ctx)] };
+  if (BUNDLE_KINDS.has(ctx.target.kind)) return { assign, edit: [...buildTableItems(ctx), ...buildBundleCaptionItems(ctx)] };
   // 캡션은 나누기·언어(한/영 한 줄 캡션을 나눠 언어를 따로)와 떼기만 - 떼기는 묶음을 바꾸니 배정이 있으면 서버가 묻는다
   if (ctx.target.kind === "caption") {
     const detachReason = ctx.readOnly ? why("readOnly") : ctx.isFixedCaption?.(ctx.target) ? why("captionInFigure") : ctx.hasDraft(ctx.target) ? why("unsaved") : null;
@@ -206,10 +210,10 @@ export function buildAssignMenu(ctx: AssignMenuContext): AssignMenuGroups {
     if (ownIndex >= 0) others.splice(ownIndex, 1);
     const isPairSplit = hasBothScripts(ctx.target.text) && !others.some((lang) => lang === "ko" || lang === "en");
     const captionSplit = isPairSplit ? splitItem : build("split", retireReason ?? why("captionSplitOneLang"));
-    return { assign: [build("clear", clearReason), ...decide], edit: [captionSplit, { ...langItem, langReasons }, build("caption_detach", detachReason)] };
+    return { assign, edit: [captionSplit, { ...langItem, langReasons }, build("caption_detach", detachReason)] };
   }
   return {
-    assign: [build("clear", clearReason), ...decide],
+    assign,
     edit: [
       splitItem,
       buildJoin(ctx, ctx.prev, "prev"),

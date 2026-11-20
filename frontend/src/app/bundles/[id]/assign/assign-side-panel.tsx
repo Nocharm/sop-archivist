@@ -55,7 +55,7 @@ export function AssignSidePanel({ state }: { state: AssignPageState }) {
     shapeMode, headingBack, rewrap, bandBack, stepBase, refPendingIds, refDetail, refInfo, runUnitEdit, clearToc, runCaptionRefChange,
     switchShapeMode, applySplitSuggestion, dismissSplitSuggestion, selectNextSplit, selectNextRef, runUnitAction, readReasonNeed, runSave,
     runClear, markNew, placeManage, pickDestination, pickNewSentence, isTemplateDrag, handlePrimary, startEdit,
-    pickRecommendation, markRecHover, renderPlaceLabel, listDestinationEls, canClear,
+    pickRecommendation, markRecHover, renderPlaceLabel, listDestinationEls, canClear, isRowDeleted,
   } = state;
 
 
@@ -513,7 +513,7 @@ export function AssignSidePanel({ state }: { state: AssignPageState }) {
       {canClear && (
         <button type="button" className="btn assign-alt flex-1" data-testid="assign-clear" disabled={busy} onClick={() => void runClear()}>
           <Undo2 size={13} strokeWidth={1.5} aria-hidden />
-          {t("classify.clear")} <kbd className="@max-[200px]:hidden">U</kbd>
+          {t(isRowDeleted ? "assign.ctx.undoDelete" : "classify.clear")} <kbd className="@max-[200px]:hidden">U</kbd>
         </button>
       )}
     </div>

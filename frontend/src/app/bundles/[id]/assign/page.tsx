@@ -192,9 +192,8 @@ export default function AssignPage() {
     for (const source of [docs, tobe, writtenList]) if (source.error !== null) source.reload();
     if (docViews.error !== null) docViews.retry();
   };
-  // 삭제로 확정한 줄은 흐린 한 줄로 접는다(설계 D6) - 누르면 펼친다. 펼침은 줄 키로 이 화면을 연 동안만(목차 블록 펼침과 같은 짜임), 고른 박스는 용지가 늘 펼친다
-  const [deletedOpen, setDeletedOpen] = useState<ReadonlySet<string>>(() => new Set());
-  const deletedFolds = useMemo(() => buildDeletedFolds(rows, unitMap, { filter: state.filter, open: deletedOpen }), [rows, unitMap, state.filter, deletedOpen]);
+  // 삭제로 확정한 줄은 흐린 한 줄로 접는다(설계 D6) - 펼침은 용지가 고름으로 정한다(고른 동안만, 떠나면 다시 접힘)
+  const deletedFolds = useMemo(() => buildDeletedFolds(rows, unitMap, { filter: state.filter }), [rows, unitMap, state.filter]);
   // 빈 템플릿(엮은 문서) 기본 보기의 순서 · 칸 옮기기 · 번호 표시(시안 2 D6) - Order 화면과 같은 저장 길, 화면 문서에 먼저 얹고 두 보기가 같은 문서를 그린다
   const composedOrder = useComposedOrder({ bundleId, doc: isComposedDoc ? composedDoc : null, labelLang: uiLang });
   const shownComposed = composedOrder.doc;
@@ -572,7 +571,7 @@ export default function AssignPage() {
                 // 짝 카드 안 순서 손잡이 - 고른 박스가 짝 전부가 이어 붙은 카드 안이면(설계 D8)
                 pairGrip={pairGrip}
                 // 삭제로 확정한 줄의 접힌 한 줄 - 한 단으로 연 New 문서에는 줄이 없다
-                deleted={isSolo ? undefined : { folds: deletedFolds, onOpen: (key) => setDeletedOpen((open) => new Set(open).add(key)) }}
+                deleted={isSolo ? undefined : { folds: deletedFolds }}
                 pickedIds={pickedOld}
                 warnBlockIds={warnBlockIds}
                 statusOf={readMarkStatus}
@@ -804,7 +803,7 @@ export default function AssignPage() {
         <AssignContextMenu
           key={ctxMenu.seq}
           anchor={ctxMenu.anchor}
-          cover={(rowMap.get(ctxMenu.rowKey)?.unitIds ?? []).flatMap((id) => [...document.querySelectorAll<HTMLElement>(`[data-testid="assign-paper-piece-${id}"]`)])}
+          readCover={() => (rowMap.get(ctxMenu.rowKey)?.unitIds ?? []).flatMap((id) => [...document.querySelectorAll<HTMLElement>(`[data-testid="assign-paper-piece-${id}"]`)])}
           click={ctxMenu.click}
           groups={ctxGroups}
           onPick={runCtx}

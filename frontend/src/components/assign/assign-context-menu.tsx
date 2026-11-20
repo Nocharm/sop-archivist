@@ -68,8 +68,8 @@ const KEYS: Partial<Record<AssignMenuAction, string>> = { delete: "Del", move: "
 interface AssignContextMenuProps {
   /** 누른 문장의 조각 - 닫으면 포커스가 돌아갈 곳 */
   anchor: HTMLElement;
-  /** 가리지 않을 조각들(누른 줄의 Unit 전부) - 비면 anchor */
-  cover: HTMLElement[];
+  /** 가리지 않을 조각들(누른 줄의 Unit 전부)을 자리 잡을 때 찾는다 - 비면 anchor. 접힌 삭제 줄을 눌렀으면 그 순간 펼쳐 붙은 박스를 찾아야 해서 렌더 때가 아니라 잴 때 읽는다 */
+  readCover: () => HTMLElement[];
   /** 누른 자리(화면 좌표) - 키보드로 열었으면 null(줄 왼쪽 아래) */
   click: { x: number; y: number } | null;
   groups: AssignMenuGroups;
@@ -77,13 +77,13 @@ interface AssignContextMenuProps {
   onClose: () => void;
 }
 
-export function AssignContextMenu({ anchor, cover, click, groups, onPick, onClose }: AssignContextMenuProps) {
+export function AssignContextMenu({ anchor, readCover, click, groups, onPick, onClose }: AssignContextMenuProps) {
   const { t } = useI18n();
   const anchorRef = useRef<HTMLElement>(anchor);
   const tip = useDelegatedTip();
 
   function place(rect: DOMRect, size: { width: number; height: number }) {
-    const boxes = cover.filter((el) => el.isConnected).map((el) => el.getBoundingClientRect());
+    const boxes = readCover().filter((el) => el.isConnected).map((el) => el.getBoundingClientRect());
     const row = boxes.length === 0 ? rect : { top: Math.min(...boxes.map((box) => box.top)), bottom: Math.max(...boxes.map((box) => box.bottom)), left: Math.min(...boxes.map((box) => box.left)) };
     return placeLinkMenu(row, click?.x ?? null, size, { width: window.innerWidth, height: window.innerHeight }, click?.y ?? null);
   }

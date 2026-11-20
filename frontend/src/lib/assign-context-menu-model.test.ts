@@ -67,6 +67,16 @@ describe("buildAssignMenu", () => {
     expect(find(ctx({ isDecided: () => true }), "clear").enabled).toBe(true);
   });
 
+  it("calls Unassign 'Undo delete' on a deleted row and hides Delete - sentence, table and caption alike", () => {
+    for (const target of [makeUnit(2), makeUnit(2, { kind: "table" }), makeUnit(2, { kind: "caption" })]) {
+      const { assign } = buildAssignMenu(ctx({ target, rowStatus: "confirmed", isDeleted: true, isDecided: () => true }));
+      expect(assign.map((item) => item.action)).toEqual(["clear", "move"]);
+      expect(assign[0]).toMatchObject({ labelKey: "assign.ctx.undoDelete", enabled: true });
+    }
+    // 삭제가 아닌 줄은 그대로
+    expect(buildAssignMenu(ctx({ rowStatus: "confirmed", isDeleted: false })).assign[0].labelKey).toBeUndefined();
+  });
+
   it("lets an assigned sentence be cut or merged (the screen asks before clearing the assignment) but not change language", () => {
     const context = ctx({ rowStatus: "confirmed", isDecided: (unit) => unit.id === 2 });
     // 자르기·합치기는 그 문장을 새 문장으로 바꾼다 - 서버가 한 번 묻고 배정을 풀어 준다

@@ -32,7 +32,7 @@ import { suggestUnitContinuous } from "@/lib/number-kind-model";
 import { getCardTops, getHiddenPrefixLength, getPairBrackets, getPillWidth, getSectionHeads, getTabWidths, getSectionLevel, getSectionPill, getVisibleSkip, sliceVisible, type PairBracket } from "@/lib/strip-pill-model";
 import { buildHeadingShiftGroups, readHeadingShiftHead, type HeadingShiftGroup } from "@/lib/heading-shift-model";
 import { getPairHint, type PairHintUnit } from "@/lib/pair-hint-model";
-import { readDeletedLine, type DeletedFold, type DeletedLine } from "@/lib/deleted-fold-model";
+import { isDeletedLineOpen, readDeletedLine, type DeletedFold, type DeletedLine } from "@/lib/deleted-fold-model";
 import { buildTocBlock, shouldJoinTocCard } from "@/lib/toc-block-model";
 import { findUnwrapHeads, getRowUnwrapTable } from "@/lib/unwrap-model";
 import { buildStripRows } from "@/lib/figure-spot-model";
@@ -214,8 +214,8 @@ interface PaperProps {
     /** Assign - 고른 박스 바로 아래 떨어진 짝 안내 줄 "↑ 짝 KO · 위 §1"(lib/pair-hint-model). onGo(짝)는 그 박스를 고르고 그 자리로 스크롤한다 */
     pairHint?: { onGo: (unitId: number) => void };
     /** Assign - 삭제로 확정한 줄을 흐린 한 줄 "DELETED · 종류 · 앞부분 글"로 접는다(lib/deleted-fold-model, 설계 D6). 접을 단위와 내용은 화면이 정한다.
-     *  누르면 onOpen(줄 키)으로 펼치고 그 카드의 첫 단위를 고른다. 접힌 줄은 끌기 · 틈 단추를 받지 않는다 */
-    deleted?: { folds: ReadonlyMap<number, DeletedFold>; onOpen: (rowKey: string) => void };
+     *  누르면 그 카드의 첫 단위를 고르고, 고른 동안만 펼친다(다른 박스를 고르면 다시 접힘, 둘 다 Collapse 전환). 접힌 줄은 끌기 · 틈 단추를 받지 않고 우클릭은 받는다 */
+    deleted?: { folds: ReadonlyMap<number, DeletedFold> };
     /** Assign - 처리 중인 일. 잠긴 박스는 끌리지 않고 그 곁 틈 · 머리 단추가 꺼진다(고르기 · 우클릭은 화면이 막는다) */
     pending?: PaperPending;
     /** Assign - 고른 박스가 짝 전부가 이어 붙은 카드 안에 있으면 그 박스 왼쪽 가장자리에 점 여섯 손잡이(data-drag-handle, 설계 D8).
@@ -1302,12 +1302,12 @@ export function Paper({
   function isDeletedRow(row: PaperRow): boolean {
     const folds = strips?.deleted?.folds;
     const fold = folds?.get(readRowUnitId(row) ?? -1);
-    // 고른 박스가 든 줄은 펼쳐 그린다(readDeletedLine) - 그 곁 틈은 평소대로
-    return fold !== undefined && (selectedId === null || folds?.get(selectedId)?.rowKey !== fold.rowKey);
+    // 고른 박스가 든 줄은 펼쳐 그린다(isDeletedLineOpen) - 그 곁 틈은 평소대로
+    return fold !== undefined && folds !== undefined && !isDeletedLineOpen(folds, fold.rowKey, selectedId);
   }
 
-  /** 접힌 삭제 줄(설계 D6) - 목차 블록처럼 흐린 한 줄, DELETED 꼬리표만 반투명 빨강, Remark는 툴팁. 누르면 그 줄을 펼치고 카드의 첫 단위를 고른다.
-   *  testid는 카드 첫 단위(외톨이 · 이웃한 짝 카드면 줄 키 u<id>와 같다, 떨어진 짝의 다른 카드는 그 카드의 첫 단위) */
+  /** 접힌 삭제 줄(설계 D6) - 목차 블록처럼 흐린 한 줄, DELETED 꼬리표만 반투명 빨강, Remark는 툴팁. 누르면 카드의 첫 단위를 골라 펼친다.
+   *  data-strip-unit은 우클릭 메뉴(handleContextMenu)가 단위를 찾는 표시. testid는 카드 첫 단위(외톨이 · 이웃한 짝 카드면 줄 키 u<id>와 같다, 떨어진 짝의 다른 카드는 그 카드의 첫 단위) */
   function renderDeletedLine(rows: readonly PaperRow[], line: DeletedLine): ReactNode {
     const deleted = strips?.deleted;
     const unitId = readRowUnitId(rows[0]);
@@ -1321,11 +1321,9 @@ export function Paper({
           className="deleted-line"
           data-tip={line.remark || undefined}
           data-pick={unitIds.some((id) => pickedIds?.has(id)) ? "" : undefined}
+          data-strip-unit={unitId}
           data-testid={`${testId}-deleted-u${unitId}`}
-          onClick={(event) => {
-            deleted.onOpen(line.rowKey);
-            onUnitClick(unitId, null, event);
-          }}
+          onClick={(event) => onUnitClick(unitId, null, event)}
         >
           <span className="deleted-tag">{t("paper.deleted.tag")}</span>
           <span className="deleted-text">{[line.kind, line.text].filter((part) => part !== null && part !== "").join(" · ")}</span>
@@ -1402,16 +1400,29 @@ export function Paper({
   function renderCard(rows: readonly PaperRow[], isPeek = false): ReactNode {
     if (hasToc && isTocRow(rows[0], model.units)) return renderTocBlock(rows);
     // 거르기로 접힌 줄을 엿보기로 연 것은 살펴보려는 것이라 삭제 줄도 펼친다
-    const deletedLine = strips?.deleted && !isPeek ? readDeletedLine(strips.deleted.folds, rows.map((row) => readRowUnitId(row) ?? -1), selectedId) : null;
-    if (deletedLine !== null) return renderDeletedLine(rows, deletedLine);
-    const content = rows.map((row, index) => (
-      <Fragment key={row.key}>
-        {index > 0 && renderGap(rows[index - 1], row)}
-        {!isPeek && renderUnwrapHead(row)}
-        {renderRow(row, isPeek, rows.length > 1)}
-      </Fragment>
-    ));
-    return rows.length > 1 ? <div className="strip-card">{content}</div> : content;
+    const folds = strips?.deleted && !isPeek ? strips.deleted.folds : null;
+    const deletedLine = folds ? readDeletedLine(folds, rows.map((row) => readRowUnitId(row) ?? -1)) : null;
+    const renderContent = () => {
+      const content = rows.map((row, index) => (
+        <Fragment key={row.key}>
+          {index > 0 && renderGap(rows[index - 1], row)}
+          {!isPeek && renderUnwrapHead(row)}
+          {renderRow(row, isPeek, rows.length > 1)}
+        </Fragment>
+      ));
+      return rows.length > 1 ? <div className="strip-card">{content}</div> : content;
+    };
+    if (folds === null || deletedLine === null) return renderContent();
+    // 고른 동안만 펼친다 - 줄과 박스를 같은 자리에서 Collapse로 바꿔 펼칠 때 · 접힐 때 전환(움직임 줄이기면 바로). 펼친 박스는 옅은 위험 바탕(삭제 표시는 박스 안 상태 칩)
+    const isOpen = isDeletedLineOpen(folds, deletedLine.rowKey, selectedId);
+    return (
+      <>
+        <Collapse open={!isOpen}>{renderDeletedLine(rows, deletedLine)}</Collapse>
+        <Collapse open={isOpen} className="deleted-open">
+          {renderContent}
+        </Collapse>
+      </>
+    );
   }
 
   /** 위치 판의 그림 자리 - 줄 사이 점 달린 선과 그림 이름(시안 2 D3) */
