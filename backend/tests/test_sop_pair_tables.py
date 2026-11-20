@@ -1,5 +1,5 @@
-"""한/영 따로 — 대응 표의 문장 짝(MD 1 F8a, 사용자 결정 2026-11-19). 표는 하나씩 벗기고, 다른 언어 절반의 같은 꼴 표를 함께 벗기면
-(또는 나중에 따로 벗겨도) 두 표의 칸 줄이 같은 행 · 같은 순서로 한/영 짝 제안이 된다. 행 수가 다르면 짝 대신 경고가 남는다.
+"""한/영 따로 — 대응 표의 문장 짝(MD 1 F8a, 사용자 결정 2026-11-19). 표는 하나씩 벗기고(함께 벗기기는 걷었다 — 요청서 8번),
+다른 언어 절반의 같은 꼴 표도 벗기면 두 표의 칸 줄이 같은 행 · 같은 순서로 한/영 짝 제안이 된다. 행 수가 다르면 짝 대신 경고가 남는다.
 자료는 표형 옛 SOP의 한글 절반 → 영어 절반(명세 §7 사례 1 · 부록 C 장면)을 본뜬 합성 문서다."""
 
 import httpx2
@@ -63,11 +63,9 @@ def _table_id(view: dict, index: int) -> int:
     return view["tables"][index]["id"]
 
 
-def _unwrap(client: TestClient, bundle_id: int, doc_id: int, index: int, counterpart: int | None = None) -> httpx2.Response:
+def _unwrap(client: TestClient, bundle_id: int, doc_id: int, index: int) -> httpx2.Response:
     view = get_view(client, bundle_id, doc_id)
-    op: dict[str, object] = {"type": "set_layout_table", "table_id": _table_id(view, index), "is_layout": True}
-    if counterpart is not None:
-        op["counterpart_table_id"] = _table_id(view, counterpart)
+    op = {"type": "set_layout_table", "table_id": _table_id(view, index), "is_layout": True}
     body = {"revision": view["document"]["revision"], "confirm": False, "op": op}
     response = client.post(f"/api/bundles/{bundle_id}/documents/{doc_id}/edits", json=body, headers=AUTHOR)
     assert response.status_code == 200, response.text
@@ -104,65 +102,16 @@ def _coverage_problems(view: dict) -> list[str]:
     )
 
 
-def test_view_offers_the_most_similar_table_of_the_other_half_first(client: TestClient) -> None:
+def test_view_carries_each_table_language_and_no_counterpart_offer(client: TestClient) -> None:
     bundle_id, doc_id = _setup(client)
 
     view = get_view(client, bundle_id, doc_id)
 
-    ids = [table["id"] for table in view["tables"]]
     assert [table["lang"] for table in view["tables"]] == ["ko", "ko", "en", "en", "en"]
-    # 같은 꼴 · 같은 행 수 · 절반 안 같은 자리가 맨 앞, 같은 꼴이지만 더 뒤의 표, 다른 꼴 표 — 다른 표도 고를 수 있게 모두 싣는다
-    assert view["tables"][KO_TABLE]["counterparts"] == [ids[EN_TABLE], ids[EN_LATER_TABLE], ids[EN_VALUE_TABLE]]
-    assert view["tables"][KO_VALUE_TABLE]["counterparts"][0] == ids[EN_VALUE_TABLE]
-    assert view["tables"][EN_TABLE]["counterparts"] == [ids[KO_TABLE], ids[KO_VALUE_TABLE]]
+    assert all("counterparts" not in table for table in view["tables"])
 
 
-def test_unwrapping_with_the_counterpart_is_one_edit_and_pairs_rows_in_order(client: TestClient) -> None:
-    bundle_id, doc_id = _setup(client)
-    before = get_view(client, bundle_id, doc_id)
-
-    _unwrap(client, bundle_id, doc_id, KO_TABLE, EN_TABLE)
-
-    view = get_view(client, bundle_id, doc_id)
-    assert _layouts(view) == [True, False, True, False, False]
-    assert _pairs(view) == WORK_PAIRS
-    assert {(pair["status"], pair["source"]) for pair in view["pairs"]} == {("suggested", "code")}
-    # 둘 다 벗겼으니 대응 표 후보에서 빠진다 — 남은 표는 같은 꼴 대응 표가 없어 묻지 않는다
-    assert view["tables"][EN_LATER_TABLE]["counterparts"] == []
-    assert _coverage_problems(view) == []
-
-    # 되돌리기 한 번에 두 표가 함께 표로 돌아오고 짝도 빠진다
-    _step(client, bundle_id, doc_id, "undo")
-    undone = get_view(client, bundle_id, doc_id)
-    assert _layouts(undone) == _layouts(before) == [False] * 5
-    assert sorted(unit["id"] for unit in undone["units"]) == sorted(unit["id"] for unit in before["units"])
-    assert undone["pairs"] == []
-
-    _step(client, bundle_id, doc_id, "redo")
-    assert _pairs(get_view(client, bundle_id, doc_id)) == WORK_PAIRS
-
-
-def test_another_chosen_table_is_honoured_even_on_redo(client: TestClient) -> None:
-    bundle_id, doc_id = _setup(client)
-    # 영어 작업 표를 먼저 따로 벗겨 둔다 — 같은 꼴 판정만이면 한글 작업 표는 이 표와 맺어질 것이다
-    _unwrap(client, bundle_id, doc_id, EN_TABLE)
-
-    _unwrap(client, bundle_id, doc_id, KO_TABLE, EN_LATER_TABLE)
-
-    expected = {
-        frozenset(("단계", "Step")), frozenset(("작업 내용", "Task")),
-        # 줄 수가 다른 행(한글 셋 · 영어 둘)은 한 덩어리 짝이다
-        frozenset(("준비", "세척액 농도를 확인한다.", "배수 밸브를 닫는다.", "Drain", "Open the drain valve slowly.")),
-        frozenset(("점검", "Flush")), frozenset(("펌프 압력을 기록한다.", "Flush the line with purified water.")),
-    }
-    assert _pairs(get_view(client, bundle_id, doc_id)) == expected
-    _step(client, bundle_id, doc_id, "undo")
-    assert get_view(client, bundle_id, doc_id)["pairs"] == []
-    _step(client, bundle_id, doc_id, "redo")
-    assert _pairs(get_view(client, bundle_id, doc_id)) == expected
-
-
-def test_this_table_only_unwraps_one_and_the_pairs_come_when_the_counterpart_is_unwrapped_later(client: TestClient) -> None:
+def test_unwrapping_both_tables_pairs_rows_in_order_and_undo_drops_the_pairs(client: TestClient) -> None:
     bundle_id, doc_id = _setup(client)
 
     _unwrap(client, bundle_id, doc_id, KO_TABLE)
@@ -170,18 +119,46 @@ def test_this_table_only_unwraps_one_and_the_pairs_come_when_the_counterpart_is_
     view = get_view(client, bundle_id, doc_id)
     assert _layouts(view) == [True, False, False, False, False]
     assert view["pairs"] == []
-    # 대응 표가 이미 벗겨졌으니 영어 작업 표를 벗길 때는 묻지 않는다(남은 한글 후보는 다른 꼴뿐이다)
-    assert view["tables"][EN_TABLE]["counterparts"] == []
 
     _unwrap(client, bundle_id, doc_id, EN_TABLE)
 
+    view = get_view(client, bundle_id, doc_id)
+    assert _layouts(view) == [True, False, True, False, False]
+    # 같은 꼴 영어 표가 둘(EN_TABLE · EN_LATER_TABLE)이어도 벗긴 것과만 맺는다
+    assert _pairs(view) == WORK_PAIRS
+    assert {(pair["status"], pair["source"]) for pair in view["pairs"]} == {("suggested", "code")}
+    assert _coverage_problems(view) == []
+
+    # 되돌리면 영어 표만 표로 돌아오고 짝도 빠진다, 다시 하면 짝이 돌아온다
+    _step(client, bundle_id, doc_id, "undo")
+    undone = get_view(client, bundle_id, doc_id)
+    assert _layouts(undone) == [True, False, False, False, False]
+    assert undone["pairs"] == []
+
+    _step(client, bundle_id, doc_id, "redo")
     assert _pairs(get_view(client, bundle_id, doc_id)) == WORK_PAIRS
+
+
+def test_a_counterpart_field_does_not_unwrap_the_other_table(client: TestClient) -> None:
+    # 함께 벗기기를 걷었다 — 옛 화면이 대응 표를 실어 보내도 누른 표 하나만 벗긴다
+    bundle_id, doc_id = _setup(client)
+    view = get_view(client, bundle_id, doc_id)
+    op = {"type": "set_layout_table", "table_id": _table_id(view, KO_TABLE), "is_layout": True, "counterpart_table_id": _table_id(view, EN_TABLE)}
+
+    response = client.post(
+        f"/api/bundles/{bundle_id}/documents/{doc_id}/edits",
+        json={"revision": view["document"]["revision"], "confirm": False, "op": op}, headers=AUTHOR,
+    )
+
+    assert response.status_code == 200, response.text
+    assert _layouts(get_view(client, bundle_id, doc_id)) == [True, False, False, False, False]
 
 
 def test_tables_with_different_row_counts_get_a_warning_instead_of_pairs(client: TestClient) -> None:
     bundle_id, doc_id = _setup(client)
 
-    _unwrap(client, bundle_id, doc_id, KO_VALUE_TABLE, EN_VALUE_TABLE)
+    _unwrap(client, bundle_id, doc_id, KO_VALUE_TABLE)
+    _unwrap(client, bundle_id, doc_id, EN_VALUE_TABLE)
 
     view = get_view(client, bundle_id, doc_id)
     assert view["pairs"] == []
@@ -193,16 +170,18 @@ def test_tables_with_different_row_counts_get_a_warning_instead_of_pairs(client:
     assert warnings[0]["block_id"] == first_cell["id"]
 
     # 다른 표를 벗겨도 남은 경고는 그대로(같은 행), 되돌리면 지워진다
-    _unwrap(client, bundle_id, doc_id, KO_TABLE, EN_TABLE)
+    _unwrap(client, bundle_id, doc_id, KO_TABLE)
+    _unwrap(client, bundle_id, doc_id, EN_TABLE)
     assert [warning["id"] for warning in _warnings(client, bundle_id)] == [warnings[0]["id"]]
-    _step(client, bundle_id, doc_id, "undo")
-    _step(client, bundle_id, doc_id, "undo")
+    for _ in range(3):
+        _step(client, bundle_id, doc_id, "undo")
     assert _warnings(client, bundle_id) == []
 
 
 def test_a_confirmed_pair_row_is_kept_and_the_other_rows_are_proposed_again(client: TestClient) -> None:
     bundle_id, doc_id = _setup(client)
-    _unwrap(client, bundle_id, doc_id, KO_TABLE, EN_TABLE)
+    _unwrap(client, bundle_id, doc_id, KO_TABLE)
+    _unwrap(client, bundle_id, doc_id, EN_TABLE)
     view = get_view(client, bundle_id, doc_id)
     texts = {unit["id"]: unit["text"] for unit in view["units"]}
     first = next(pair for pair in view["pairs"] if {texts[unit_id] for unit_id in pair["unit_ids"]} == {"점검", "Check"})
@@ -218,49 +197,3 @@ def test_a_confirmed_pair_row_is_kept_and_the_other_rows_are_proposed_again(clie
     after = get_view(client, bundle_id, doc_id)
     assert _pairs(after) == WORK_PAIRS
     assert {pair["status"] for pair in after["pairs"] if pair["id"] == first["id"]} == {"confirmed"}
-
-
-def test_counterpart_is_only_for_unwrapping_another_table(client: TestClient) -> None:
-    bundle_id, doc_id = _setup(client)
-    view = get_view(client, bundle_id, doc_id)
-    table_id = _table_id(view, KO_TABLE)
-
-    for op in (
-        {"type": "set_layout_table", "table_id": table_id, "is_layout": False, "counterpart_table_id": _table_id(view, EN_TABLE)},
-        {"type": "set_layout_table", "table_id": table_id, "is_layout": True, "counterpart_table_id": table_id},
-    ):
-        body = {"revision": view["document"]["revision"], "confirm": False, "op": op}
-        response = client.post(f"/api/bundles/{bundle_id}/documents/{doc_id}/edits", json=body, headers=AUTHOR)
-        assert response.status_code == 422, response.text
-
-
-def test_counterpart_must_be_one_of_the_offered_tables(client: TestClient) -> None:
-    # 대응 표는 보기가 싣는 후보만 — 같은 언어 표 · 이미 벗긴 표 · 다른 문서의 표는 422(같은 단위를 두 번 세워 500이 되지 않게)
-    bundle_id, doc_id = _setup(client)
-    _unwrap(client, bundle_id, doc_id, EN_LATER_TABLE)
-    view = get_view(client, bundle_id, doc_id)
-    table_id = _table_id(view, KO_TABLE)
-
-    for counterpart in (_table_id(view, KO_VALUE_TABLE), _table_id(view, EN_LATER_TABLE), 999_999):
-        op = {"type": "set_layout_table", "table_id": table_id, "is_layout": True, "counterpart_table_id": counterpart}
-        body = {"revision": view["document"]["revision"], "confirm": False, "op": op}
-        response = client.post(f"/api/bundles/{bundle_id}/documents/{doc_id}/edits", json=body, headers=AUTHOR)
-        assert (response.status_code, response.json()["detail"]["code"]) == (422, "invalid_counterpart"), response.text
-    assert _layouts(get_view(client, bundle_id, doc_id)) == [False, False, False, False, True]
-
-
-def test_undoing_a_combined_unwrap_leaves_no_stale_pairs(client: TestClient) -> None:
-    # 다른 표를 골라 함께 벗긴 편집(링크)을 되돌리면 그 링크는 짝 다시 세우기에 읽히지 않는다 — 남은 벗긴 표에 짝이 남지 않는다
-    bundle_id, doc_id = _setup(client)
-    _unwrap(client, bundle_id, doc_id, EN_TABLE)
-    _unwrap(client, bundle_id, doc_id, KO_TABLE, EN_LATER_TABLE)
-    assert _pairs(get_view(client, bundle_id, doc_id))
-
-    _step(client, bundle_id, doc_id, "undo")
-
-    undone = get_view(client, bundle_id, doc_id)
-    assert _layouts(undone) == [False, False, True, False, False]
-    assert undone["pairs"] == []
-    # 되돌린 링크가 없으니 한글 표만 벗기면 가장 비슷한 벗긴 영어 표와 맺는다
-    _unwrap(client, bundle_id, doc_id, KO_TABLE)
-    assert _pairs(get_view(client, bundle_id, doc_id)) == WORK_PAIRS

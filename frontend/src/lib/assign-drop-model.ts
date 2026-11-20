@@ -31,18 +31,22 @@ export function buildOldDragCard(units: readonly DragUnit[], countLabel: (count:
   };
 }
 
-/** 포인터 밑에서 읽은 것 - isReadOnly는 New 칸의 data-read-only, hasPickButton은 줄 안에 button.new-hit이 있나 */
+/**
+ * 포인터 밑에서 읽은 것 - isReadOnly는 New 칸의 data-read-only, hasPickButton은 줄 안에 button.new-hit이 있나.
+ * isCell은 이미 쓴 문서 표의 칸 상자(data-drop="cell") - 칸은 Old 줄을 고르기 전에는 누르기 단추가 없어 상자 표시로 받는다(시안 2 D5)
+ */
 export interface NewHit {
   targetId: number;
   isReadOnly: boolean;
   hasPickButton: boolean;
+  isCell?: boolean;
 }
 
 export type AssignDrop = { kind: "link"; targetId: number } | { kind: "none" };
 
-/** 이번 걸음에서 놓이는 곳은 이미 쓴 문서의 고를 수 있는 문장 줄뿐 */
+/** 놓이는 곳은 이미 쓴 문서의 고를 수 있는 문장 줄과 표 칸 - 칸에 놓기도 문장에 놓기와 같은 잇기다 */
 export function findAssignDrop(hit: NewHit | null): AssignDrop {
-  if (hit === null || hit.isReadOnly || !hit.hasPickButton) return { kind: "none" };
+  if (hit === null || hit.isReadOnly || (!hit.hasPickButton && hit.isCell !== true)) return { kind: "none" };
   return { kind: "link", targetId: hit.targetId };
 }
 

@@ -24,7 +24,7 @@ class MeaningRow:
 
 
 def _list_old_free_units(snap: BundleSnapshot) -> list[UnitInfo]:
-    """옛 문서의 활성·묶이지 않은 단위(표·행 단위 포함), order_key 순."""
+    """옛 문서의 활성·묶이지 않은 단위(표 단위 포함), order_key 순."""
     old_document_ids = {document.id for document in snap.documents.values() if document.side == "old"}
     return sorted(
         (unit for unit in snap.units.values() if unit.document_id in old_document_ids and unit.group_unit_id is None),
@@ -66,7 +66,7 @@ def _has_other_language_target(unit: UnitInfo, targets: list[TargetInfo]) -> boo
 
 
 def _list_assigned_captions(snap: BundleSnapshot) -> list[UnitInfo]:
-    """판단이 배정인 묶음(표·행·그림)에 딸린 옛 문서의 활성 캡션 단위 — 묶음이 지워지거나 미배정이면 캡션은 나가지 않는다."""
+    """판단이 배정인 묶음(표·그림)에 딸린 옛 문서의 활성 캡션 단위 — 묶음이 지워지거나 미배정이면 캡션은 나가지 않는다."""
     old_document_ids = {document.id for document in snap.documents.values() if document.side == "old"}
     return [
         unit for unit in snap.units.values()

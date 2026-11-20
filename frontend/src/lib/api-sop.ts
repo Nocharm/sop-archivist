@@ -1,6 +1,7 @@
 // SOP 재구성 API 호출과 응답 타입 - 백엔드 routers/sop_*.py의 응답 모델을 옮긴 것. 공용 래퍼는 api.ts의 apiFetch.
 
 import { apiFetch, apiFetchBlob, apiFetchBlobWithName } from "./api";
+import { sendDocWrite } from "./doc-revision";
 import { genId } from "./id";
 
 /** 의미 검토 항목 - 백엔드 constants.SEMANTIC_CHECK_KEYS와 같은 값 */
@@ -13,7 +14,6 @@ export type MemberRole = "author" | "reviewer";
 export interface RowProgress {
   total: number;
   unassigned: number;
-  ai_suggested: number;
   confirmed: number;
   on_hold: number;
   /** 한 언어만 있는 줄 - 보조 표시, 검토 요청 조건이 아니다 */
@@ -320,7 +320,7 @@ export function deleteDocument(bundleId: number, docId: number, revision: number
 
 // --- 원문 보기와 쪼개기 편집 ---
 
-export type UnitKind = "sentence" | "heading" | "figure" | "table" | "table_row" | "cell_sentence" | "caption";
+export type UnitKind = "sentence" | "heading" | "figure" | "table" | "cell_sentence" | "caption";
 /** ref는 참조 줄(다른 문서를 번호로 가리키는 글) - 한/영 짝이 없다 */
 export type UnitLang = "ko" | "en" | "ref" | "neutral";
 /** 참조 줄 상태 - proposed는 앱의 제안(사람이 번호를 확인하기 전), confirmed는 REF로 확정된 것 */
@@ -347,8 +347,6 @@ export interface ViewTable {
   anchor: { block_id: number; at: number } | null;
   /** 칸 줄 언어가 많은 쪽 - 두 언어 표 · 빈 표는 null. 서버는 늘 싣는다(시험 자료가 줄여 쓰게 선택 칸) */
   lang?: "ko" | "en" | null;
-  /** 한/영 따로 문서에서 아직 벗기지 않은 이 표와 함께 벗길 대응 표 후보(F8a) - 맨 앞이 같은 꼴인 가장 비슷한 표, 비면 묻지 않는다 */
-  counterparts?: number[];
 }
 
 export interface ViewBlock {
@@ -370,6 +368,12 @@ export interface ViewBlock {
   has_image: boolean;
   /** 이 블록이 속한 부분 묶음(DocumentView.part_groups의 key) - 머리말·꼬리말은 부분 파일마다, 나머지는 part와 같다 */
   part_group: string;
+  /**
+   * 그림 블록만 - 문장 속 그림이 놓인 앞 글 블록(같은 문단 · 칸)과 그 text 안 글자 자리(시안 2 D3).
+   * at은 block text(써 넣은 자동 번호 포함, 단위 spans와 같은 좌표) 안 자리. 그림만 든 문단 · 추출기 7 전의 추출은 null.
+   * 서버는 늘 싣는다(시험 자료가 줄여 쓰게 선택 칸)
+   */
+  anchor?: { block_id: number; at: number } | null;
 }
 
 /** 머리말·꼬리말을 쓰는 구역(1부터)과 종류 */
@@ -401,6 +405,8 @@ export interface ViewNumber {
   content_start: number;
   /** 번호로 삼을 수 있는 글 앞 타자 번호의 글자 수 - 없거나 이미 번호면 0 */
   typed_len: number;
+  /** 번호 노트 - 사람이 원문과 다르게 고쳤으면 원문(읽은) 번호(서버 numbering.get_number_note), 아니면 null */
+  note: string | null;
 }
 
 export interface ViewUnit {
@@ -410,7 +416,7 @@ export interface ViewUnit {
   spans: UnitSpan[];
   text: string;
   lang: UnitLang;
-  /** 번호 칸이 없는 단위(그림·표·행·캡션)는 null */
+  /** 번호 칸이 없는 단위(그림·표·캡션)는 null */
   number: ViewNumber | null;
   table_id: number | null;
   row_index: number | null;
@@ -435,6 +441,10 @@ export interface ViewUnit {
   from_heading?: boolean;
   /** 캡션 하나를 같이 쓰는 그림 묶음(F7 ⑥)의 첫 그림 - 이 그림이 그 그림의 캡션을 같이 쓴다. 첫 그림 자신·묶이지 않은 단위는 null. 편집 group_figures·ungroup_figures가 오간다 */
   caption_figure_id?: number | null;
+  /** 짝 카드 안 순서(lib/pair-order-model orderPairCard) - 편집 reorder_pair가 매긴다. 바꾼 적 없으면 null(원문 순서) */
+  pair_seq?: number | null;
+  /** 벗긴 표 덩이 안 줄 순서(lib/unwrap-order-model orderUnwrapped) - 편집 reorder_unwrapped가 매기고 다시 표로가 비운다. 없으면 원문 앞 줄의 값을 빌린다 */
+  unwrap_seq?: number | null;
 }
 
 /** 표·그림 참조 하나 - number가 null이면 위치 참조("아래 표"), target_unit_id는 이은 표·그림 묶음 단위(못 찾으면 null) */
@@ -497,11 +507,8 @@ export type EditOp =
   | { type: "move_boundary"; left_unit_id: number; right_unit_id: number; at: number }
   | { type: "carve"; block_id: number; start: number; end: number }
   | { type: "set_language"; unit_ids: number[]; lang: "ko" | "en" }
-  | { type: "split_table_rows"; table_unit_id: number }
-  | { type: "merge_table_rows"; table_id: number }
-  /** counterpart_table_id - 벗길 때만, 다른 언어 절반의 대응 표를 같은 편집으로 함께 벗기고 두 표의 칸 줄을 같은 행 · 같은 순서로 짝짓는다(F8a) */
-  | { type: "set_layout_table"; table_id: number; is_layout: boolean; counterpart_table_id?: number }
-  /** 블록 자리 2 안(caption-slot-model CAPTION_REACH)의 묶이지 않은 글 단위를 표·행·그림의 캡션으로 - 사이 문단은 그대로,
+  | { type: "set_layout_table"; table_id: number; is_layout: boolean }
+  /** 블록 자리 2 안(caption-slot-model CAPTION_REACH)의 묶이지 않은 글 단위를 표·그림의 캡션으로 - 사이 문단은 그대로,
    *  묶음마다 언어당 하나(caption_exists), 먼 글은 caption_not_adjacent, 다른 그림의 캡션을 같이 쓰는 그림은 caption_shared. 판단이 있는 묶음이면 서버가 묻는다 */
   | { type: "attach_caption"; unit_id: number; bundle_unit_id: number }
   /** 캡션을 같은 자리·언어의 묶이지 않은 문장으로 - 첫 행에서 올린 캡션은 그 표의 칸 문장으로 돌아간다 */
@@ -522,7 +529,11 @@ export type EditOp =
   | { type: "clear_noise"; unit_ids: number[] }
   /** 제목 ↔ 문장(F8b) - heading이 거짓이면 제목을 문장마다 나눠 바꾼 표시를 단다(번역 조항은 앞 조항의 번호를 물려받는다).
    *  참이면 바꾼 문장은 그 조항 줄 전체가 제목 하나로 돌아가고, 보통 문장은 그 문장이 제목이 된다. 한/영 짝은 새 단위로 다시 선다 */
-  | { type: "set_heading"; unit_ids: number[]; heading: boolean };
+  | { type: "set_heading"; unit_ids: number[]; heading: boolean }
+  /** 짝 카드 안 순서(설계 2026-11-20-assign-mockup1 D8) - 그 짝의 구성원 전부를 새 순서로. 끊김 없이 이어진 카드만(pair_not_adjacent), 배정이 걸리면 409 */
+  | { type: "reorder_pair"; pair_id: number; unit_ids: number[] }
+  /** 벗긴 표 덩이 안 줄 순서(설계 2026-11-20-assign-mockup2 D2) - 그 덩이의 줄 전부를 새 순서로(짝 카드 구성원은 붙여서). 판단이 걸린 줄도 받는다 */
+  | { type: "reorder_unwrapped"; table_id: number; unit_ids: number[] };
 
 export interface EditResult {
   document_revision: number;
@@ -553,29 +564,30 @@ export function getUnitRef(bundleId: number, docId: number, unitId: number): Pro
   return apiFetch<UnitRefDetail>(`${buildDocPath(bundleId, docId)}/units/${unitId}/ref`);
 }
 
+// 아래 문서 쓰기는 sendDocWrite로 보낸다 - 다시 받기 전에 한 연달은 편집이 낡은 revision으로 409가 나지 않게(doc-revision.ts)
 export function editUnits(bundleId: number, docId: number, revision: number, op: EditOp, confirm = false, undo?: UndoMeta): Promise<EditResult> {
-  return apiFetch<EditResult>(`${buildDocPath(bundleId, docId)}/edits`, { method: "POST", body: JSON.stringify({ revision, confirm, op, undo }) });
+  return sendDocWrite(docId, revision, (rev) => apiFetch<EditResult>(`${buildDocPath(bundleId, docId)}/edits`, { method: "POST", body: JSON.stringify({ revision: rev, confirm, op, undo }) }));
 }
 
 export function undoEdit(bundleId: number, docId: number, revision: number, confirm = false): Promise<EditStepResult> {
-  return apiFetch<EditStepResult>(`${buildDocPath(bundleId, docId)}/edits/undo`, { method: "POST", body: JSON.stringify({ revision, confirm }) });
+  return sendDocWrite(docId, revision, (rev) => apiFetch<EditStepResult>(`${buildDocPath(bundleId, docId)}/edits/undo`, { method: "POST", body: JSON.stringify({ revision: rev, confirm }) }));
 }
 
 export function redoEdit(bundleId: number, docId: number, revision: number, confirm = false): Promise<EditStepResult> {
-  return apiFetch<EditStepResult>(`${buildDocPath(bundleId, docId)}/edits/redo`, { method: "POST", body: JSON.stringify({ revision, confirm }) });
+  return sendDocWrite(docId, revision, (rev) => apiFetch<EditStepResult>(`${buildDocPath(bundleId, docId)}/edits/redo`, { method: "POST", body: JSON.stringify({ revision: rev, confirm }) }));
 }
 
 export function createPair(bundleId: number, docId: number, revision: number, unitIds: number[]): Promise<PairResult> {
-  return apiFetch<PairResult>(`${buildDocPath(bundleId, docId)}/pairs`, { method: "POST", body: JSON.stringify({ revision, unit_ids: unitIds }) });
+  return sendDocWrite(docId, revision, (rev) => apiFetch<PairResult>(`${buildDocPath(bundleId, docId)}/pairs`, { method: "POST", body: JSON.stringify({ revision: rev, unit_ids: unitIds }) }));
 }
 
 /** 제안 짝(코드·AI)을 그대로 확정한다 - 이미 확정이면 서버는 아무것도 쓰지 않는다 */
 export function confirmPair(bundleId: number, docId: number, pairId: number, revision: number): Promise<PairResult> {
-  return apiFetch<PairResult>(`${buildDocPath(bundleId, docId)}/pairs/${pairId}/confirm`, { method: "POST", body: JSON.stringify({ revision }) });
+  return sendDocWrite(docId, revision, (rev) => apiFetch<PairResult>(`${buildDocPath(bundleId, docId)}/pairs/${pairId}/confirm`, { method: "POST", body: JSON.stringify({ revision: rev }) }));
 }
 
 export function deletePair(bundleId: number, docId: number, pairId: number, revision: number): Promise<PairResult> {
-  return apiFetch<PairResult>(`${buildDocPath(bundleId, docId)}/pairs/${pairId}?revision=${revision}`, { method: "DELETE" });
+  return sendDocWrite(docId, revision, (rev) => apiFetch<PairResult>(`${buildDocPath(bundleId, docId)}/pairs/${pairId}?revision=${rev}`, { method: "DELETE" }));
 }
 
 /** 표·그림 참조를 떼거나 다시 잇는다 - target_unit_id를 주면 그 묶음에 잇는다(state 생략 = linked) */
@@ -585,7 +597,7 @@ export function updateCaptionRef(
   refId: number,
   body: { revision: number; state?: "linked" | "detached"; target_unit_id?: number },
 ): Promise<CaptionRefResult> {
-  return apiFetch<CaptionRefResult>(`${buildDocPath(bundleId, docId)}/caption-refs/${refId}`, { method: "PATCH", body: JSON.stringify(body) });
+  return sendDocWrite(docId, body.revision, (rev) => apiFetch<CaptionRefResult>(`${buildDocPath(bundleId, docId)}/caption-refs/${refId}`, { method: "PATCH", body: JSON.stringify({ ...body, revision: rev }) }));
 }
 
 export function ackWarning(bundleId: number, warningId: number, note = ""): Promise<ExtractionWarning> {
@@ -839,10 +851,8 @@ export function downloadToBeTemplate(bundleId: number): Promise<Blob> {
 // --- 배정·확정(입구 1) ---
 
 export type Disposition = "unassigned" | "assigned" | "delete" | "move_external";
-/** 새 문장의 변경 종류 - backend constants와 같은 값. 나눔·합침·번역·신규는 서버가 구조에서 정한다 */
-export type ChangeType = "as_is" | "tone" | "rewritten" | "table_restructured" | "split" | "merged" | "translated" | "new" | "heading";
-/** 저장 요청에 보낼 수 있는 종류 - backend TargetIn.change_type */
-export type ChangeTypeInput = "as_is" | "tone" | "rewritten" | "table_restructured";
+/** 새 문장의 변경 종류 - backend constants와 같은 값. 사람이 고르지 않고 서버가 구조 · 글 · 표 모양으로 정한다(저장 요청에 싣지 않는다) */
+export type ChangeType = "as_is" | "rewritten" | "split" | "merged" | "translated" | "new" | "heading";
 export type WiPart = "instruction" | "why";
 
 export interface Decision {
@@ -949,7 +959,6 @@ export interface TargetInput {
   kind?: "sentence" | "table" | "figure" | "slot_heading";
   lang?: UnitLang;
   text?: string;
-  change_type?: ChangeTypeInput | null;
   /** 비우면(undefined) 지금 값을 둔다 */
   remark?: string;
   source_unit_ids: number[];
@@ -970,13 +979,17 @@ export interface GroupSaveInput {
   removed_target_ids: number[];
   /** 짝의 한쪽만 이을 때 남는 단위 - 서버가 같은 저장 안에서 그 짝을 풀어 따로 줄로 남긴다 */
   release_unit_ids?: number[];
+  /** Use로 받은 AI 제안 - 서버가 판단에 잇고 채택을 남긴다(이 묶음의 분류·묶기 제안이 아니면 404 suggestion_not_found) */
+  suggestion_id?: number;
 }
 
-export async function listAllUnits(bundleId: number): Promise<UnitRow[]> {
+/** documentId - 그 Old 문서의 줄만(편집 뒤 그 문서만 다시 받는다) */
+export async function listAllUnits(bundleId: number, documentId?: number): Promise<UnitRow[]> {
   const items: UnitRow[] = [];
+  const scope = documentId === undefined ? "" : `&document_id=${documentId}`;
   // 한 번에 1000개까지 - 묶음이 크면 이어서 받는다
   for (let offset = 0; ; offset += 1000) {
-    const page = await apiFetch<{ total: number; items: UnitRow[] }>(`/bundles/${bundleId}/units?limit=1000&offset=${offset}`);
+    const page = await apiFetch<{ total: number; items: UnitRow[] }>(`/bundles/${bundleId}/units?limit=1000&offset=${offset}${scope}`);
     items.push(...page.items);
     if (items.length >= page.total || page.items.length === 0) return items;
   }
@@ -1138,6 +1151,10 @@ export interface BundleCell {
   lang: UnitLang;
   text: string;
   status: CoverStatus;
+  /** 칸에 이은 Old 단위(출처 순서) - 칸 위 출처 칩 */
+  source_unit_ids: number[];
+  /** 이미 쓴 문서의 칸만 - 엮은 문서의 칸은 잇지 않아 null */
+  revision?: number | null;
 }
 
 /** New 칸이 그리는 표 - 격자 크기와 칸 새 문장(행·열 순) */
@@ -1201,6 +1218,45 @@ export function listIdenticalCandidates(bundleId: number): Promise<IdenticalCand
 
 export function confirmMatchesInBulk(bundleId: number, body: BulkMatchInput, undo?: UndoMeta): Promise<Group> {
   return apiFetch<Group>(`/bundles/${bundleId}/match/bulk-confirm`, { method: "POST", body: JSON.stringify({ ...body, undo }) });
+}
+
+/** AI 제안 일괄 수락의 종류 - 분류(칸에 놓기)와 묶기(이미 쓴 New 문장에 잇기·신규)를 따로 받는다(설계 2026-11-19-ai-suggest-only D3) */
+export type AcceptKind = "classify" | "match";
+
+export interface AcceptItem {
+  suggestion_id: number;
+  /** 분류는 assigned·delete, 묶기는 제안 모양(one_to_one·merged·split·table·figure·new·delete_candidate) */
+  shape: string;
+  is_delete: boolean;
+}
+
+/** 지금 받을 수 있는 제안과 빼는 제안의 수 - 경고가 있는 것, 다듬기를 기다리는 묶기, AI가 본 뒤 바뀐 것은 사람이 본다 */
+export interface AcceptPreview {
+  kind: AcceptKind;
+  document_id: number | null;
+  items: AcceptItem[];
+  excluded_warnings: number;
+  excluded_changed: number;
+  /** 받으면 저장 검사가 늘 거절하는 것 - 사유(두 New 문서에 걸친 나눔)나 캡션을 사람이 적어야 한다 */
+  excluded_manual: number;
+}
+
+export interface AcceptResult {
+  accepted: number;
+  skipped: number;
+}
+
+/** 일괄 수락 요청 하나에 담는 제안 수 상한 - backend accept_suggestions.MAX_ACCEPT와 같은 값(넘으면 422) */
+export const MAX_ACCEPT = 2000;
+
+/** documentId가 null이면 Bundle 전체 - 신규(입구 2)는 Old 문서가 없어 Bundle 범위에만 든다 */
+export function getAcceptPreview(bundleId: number, kind: AcceptKind, documentId: number | null): Promise<AcceptPreview> {
+  const params = new URLSearchParams({ kind, ...(documentId !== null ? { document_id: String(documentId) } : {}) });
+  return apiFetch<AcceptPreview>(`/bundles/${bundleId}/ai/accept-preview?${params}`);
+}
+
+export function acceptSuggestions(bundleId: number, body: { kind: AcceptKind; suggestion_ids: number[]; delete_reason?: string }, undo?: UndoMeta): Promise<AcceptResult> {
+  return apiFetch<AcceptResult>(`/bundles/${bundleId}/ai/accept`, { method: "POST", body: JSON.stringify({ ...body, undo }) });
 }
 
 export function getGroupByTarget(bundleId: number, targetId: number): Promise<Group> {
@@ -1491,6 +1547,12 @@ export function getAssignSheetPreview(bundleId: number, docId: number, aroundUni
   return apiFetch<PreviewSheet>(`/bundles/${bundleId}/export/preview/a?doc_id=${docId}${around}`);
 }
 
+/** Assign Space 미리보기(한 단 보기) - 문서 하나(Old · 이미 쓴 New)의 문단 Excel 시트를 고른 단위를 가운데로 500줄 창까지(받을 파일과 같은 줄, 표 포함) */
+export function getParagraphSheetPreview(bundleId: number, docId: number, aroundUnitId: number | null): Promise<PreviewSheet> {
+  const around = aroundUnitId !== null ? `&around=${aroundUnitId}` : "";
+  return apiFetch<PreviewSheet>(`/bundles/${bundleId}/documents/${docId}/paragraphs/preview?tables=true${around}`);
+}
+
 /** 묶음당 파일 하나 - 판(lang)이 없다. 저장 이름은 서버가 짓는다(Content-Disposition) */
 export function downloadExport(bundleId: number): Promise<{ blob: Blob; fileName: string | null }> {
   return apiFetchBlobWithName(`/bundles/${bundleId}/export.xlsx`);
@@ -1590,10 +1652,10 @@ export interface AiSuggestion {
   created_at: string;
 }
 
-export async function listSuggestions(bundleId: number, kind: string): Promise<AiSuggestion[]> {
+export async function listSuggestions(bundleId: number, kind: string, result: "applied" | "invalid" = "applied"): Promise<AiSuggestion[]> {
   const items: AiSuggestion[] = [];
   for (let offset = 0; ; offset += 1000) {
-    const page = await apiFetch<{ total: number; items: AiSuggestion[] }>(`/bundles/${bundleId}/ai/suggestions?kind=${kind}&result=applied&limit=1000&offset=${offset}`);
+    const page = await apiFetch<{ total: number; items: AiSuggestion[] }>(`/bundles/${bundleId}/ai/suggestions?kind=${kind}&result=${result}&limit=1000&offset=${offset}`);
     items.push(...page.items);
     if (items.length >= page.total || page.items.length === 0) return items;
   }

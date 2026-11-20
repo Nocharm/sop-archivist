@@ -52,6 +52,9 @@ await runStep("outputs: renumbered table and figure captions with a reference", 
   const tableMark = await readText(`assign-new-${table.target_id}-renumber`);
   check("the New pane shows 표 3 → 표 1 before the caption", tableMark === "표 3 → 표 1", tableMark);
   check("the New pane caption has the new number", (await readText(`assign-new-${table.target_id}-caption`)).includes("표 1. 운전 조건"));
+  // 그림은 New 칸의 그림 탭에 있다(시안 2 D3)
+  await page.locator('[data-testid="assign-new-tab-figures"]').click();
+  await page.locator(`[data-testid="assign-new-${figure.target_id}-renumber"]`).waitFor({ state: "attached", timeout: T });
   const figureMark = await readText(`assign-new-${figure.target_id}-renumber`);
   check("the New pane marks the renumbered figure too", figureMark === `${figure.renumber.from_label} → ${figure.renumber.to_label}`, figureMark);
   await takeShot("sop-assign-new-renumber.png");
@@ -64,15 +67,29 @@ await runStep("outputs: renumbered table and figure captions with a reference", 
   check("C shows the renumbered caption", cText.includes("표 1. 운전 조건"));
   check("C shows the reference following the new number", cText.includes("운전 조건은 표 1을 따른다."));
   await takeShot("sop-outputs-c-renumber.png");
-  // 참조 경고는 막지 않고 개요의 알림으로 - 데모의 AI 제안 묶음에 하나 이상 있다
+  // 참조 경고는 막지 않고 개요의 알림으로 - 데모의 AI 제안 묶음을 받으면 하나 이상 생긴다. AI는 제안만 하므로(설계 2026-11-19-ai-suggest-only)
+  // 분류 추천을 일괄 수락 API로 받아 보고, 같은 되돌리기 세션으로 거둬 Assign 단계가 쓰는 살아 있는 추천을 그대로 둔다
   const ai = bundles.find((bundle) => bundle.title.includes("AI 제안"));
-  const notices = (await getJson(`/bundles/${ai.id}/review/readiness`)).notices.filter((notice) => notice.code.startsWith("caption_ref_"));
-  check("the AI bundle has a reference warning", notices.length > 0, JSON.stringify(notices.map((notice) => notice.code)));
-  await page.goto(`${BASE}/bundles/${ai.id}`);
-  for (const notice of notices) {
-    await wait(page, `overview-notice-${notice.code}`);
-    const text = await getText(page, `overview-notice-${notice.code}`);
-    check(`the overview words ${notice.code} as a reference warning`, text.includes("참조") && text.includes(String(notice.count)) && !text.includes("검사 경고"), text);
+  const preview = await getJson(`/bundles/${ai.id}/ai/accept-preview?kind=classify`);
+  const undo = { session: "smoke-outputs-refs" };
+  const accepted = await page.request.post(`${BASE}/api/bundles/${ai.id}/ai/accept`, {
+    headers,
+    data: { kind: "classify", suggestion_ids: preview.items.map((item) => item.suggestion_id), delete_reason: "smoke", undo },
+  });
+  check("the AI bundle's classify suggestions are taken in one request", accepted.ok() && (await accepted.json()).accepted === preview.items.length, await accepted.text());
+  try {
+    const notices = (await getJson(`/bundles/${ai.id}/review/readiness`)).notices.filter((notice) => notice.code.startsWith("caption_ref_"));
+    check("the AI bundle has a reference warning", notices.length > 0, JSON.stringify(notices.map((notice) => notice.code)));
+    await page.goto(`${BASE}/bundles/${ai.id}`);
+    for (const notice of notices) {
+      await wait(page, `overview-notice-${notice.code}`);
+      const text = await getText(page, `overview-notice-${notice.code}`);
+      check(`the overview words ${notice.code} as a reference warning`, text.includes("참조") && text.includes(String(notice.count)) && !text.includes("검사 경고"), text);
+    }
+  } finally {
+    const undone = await page.request.post(`${BASE}/api/bundles/${ai.id}/decisions/undo`, { headers, data: undo });
+    const after = await getJson(`/bundles/${ai.id}/ai/accept-preview?kind=classify`);
+    check("one undo puts every taken suggestion back", undone.ok() && after.items.length === preview.items.length, `${undone.status()} ${after.items.length}/${preview.items.length}`);
   }
 });
 
@@ -223,7 +240,7 @@ await runStep("outputs: read-only C rows do not start a drag", {}, async ({ page
   await page.locator('[data-testid="outputs-tab-c"]').click();
   const row = page.locator('[data-testid="output-c"] [data-testid^="output-c-row-"]').nth(1);
   await row.waitFor({ timeout: T });
-  check("read-only C rows are not drag boxes and have no drop line", (await page.locator("[data-drag-box]").count()) === 0 && (await page.locator('[data-testid="output-c-dropline"]').count()) === 0);
+  check("read-only C rows are not drag boxes and have no drop line", (await page.locator("[data-drag-box]").count()) === 0 && (await page.locator('[data-testid="drop-line"]').count()) === 0);
   await row.scrollIntoViewIfNeeded();
   const box = await row.boundingBox();
   await page.mouse.move(box.x + 20, box.y + 6);

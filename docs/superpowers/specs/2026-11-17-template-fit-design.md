@@ -356,7 +356,7 @@
   - 템플릿 SOP의 제목 수준은 바뀌지 않는다.
 
 **2e. 편집 편의**
-- 이미 있는 편집: `split`, `merge`, `unmerge`, `move_boundary`, `carve`, `set_language`, `split_table_rows`, `merge_table_rows`, `set_layout_table`, `attach_caption`, `detach_caption`, `set_ref`, `clear_ref`.
+- 이미 있는 편집: `split`, `merge`, `unmerge`, `move_boundary`, `carve`, `set_language`, `set_layout_table`, `attach_caption`, `detach_caption`, `set_ref`, `clear_ref`.
 - 이번에 더하는 것:
   - 제목 ↔ 문장(2d)
   - 같은 꼴 표 모두 해제(2b)

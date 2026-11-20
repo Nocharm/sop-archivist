@@ -37,7 +37,6 @@ from app.sop.constants import (
     AI_JOB_STATUSES,
     AI_PRIORITY_PLAN,
     AI_PRIORITY_PRE_CLASSIFY,
-    AI_PRIORITY_PRE_REFINE,
     AI_PRIORITY_USER,
     SEMANTIC_CHECK_KEYS,
 )
@@ -384,15 +383,14 @@ def test_claim_takes_the_lower_priority_number_first(client: TestClient) -> None
 
 
 def test_claim_takes_a_user_job_before_earlier_background_jobs(client: TestClient) -> None:
-    # 설계 §2 목표 3 — 먼저 줄 선 미리 돌리기(분류·다듬기)가 있어도 나중에 누른 사람 요청이 먼저 꺼내진다
+    # 설계 §2 목표 3 — 먼저 줄 선 미리 돌리기(분류)가 있어도 나중에 누른 사람 요청이 먼저 꺼내진다
     bundle_id = _new_bundle(client)
-    refine = _enqueue(bundle_id, "match", priority=AI_PRIORITY_PRE_REFINE, background=True)
     classify = _enqueue(bundle_id, "classify", priority=AI_PRIORITY_PRE_CLASSIFY, background=True)
     user_job = _enqueue(bundle_id, "translate", priority=AI_PRIORITY_USER)
 
-    claimed = [asyncio.run(claim_next_job()) for _ in range(3)]
+    claimed = [asyncio.run(claim_next_job()) for _ in range(2)]
 
-    assert claimed == [user_job, classify, refine]
+    assert claimed == [user_job, classify]
 
 
 def test_claim_keeps_id_order_within_a_priority(client: TestClient) -> None:
@@ -715,6 +713,18 @@ def test_cancel_and_retry_can_narrow_to_one_kind(client: TestClient) -> None:
 
     assert _get_job(classify).status == "queued" and _get_job(translate).status == "cancelled"
     assert _get_job(failed_classify).status == "failed" and _get_job(failed_translate).status == "queued"
+
+
+def test_retry_leaves_failed_jobs_of_a_retired_kind(client: TestClient) -> None:
+    # 말투·고침을 묻던 LLM match 작업은 걷어 핸들러가 없다 — 다시 쌓으면 internal로 또 실패할 뿐이다(설계 2026-11-20-change-type-two D6)
+    bundle_id = _new_bundle(client)
+    retired = _enqueue(bundle_id, "match", status="failed", error="timeout")
+    failed = _enqueue(bundle_id, "translate", status="failed", error="timeout")
+
+    assert _post_ai(client, bundle_id, "retry").json() == {"queued": 1}
+    assert _post_ai(client, bundle_id, "retry", {"kind": "match"}).json() == {"queued": 0}
+
+    assert (_get_job(retired).status, _get_job(failed).status) == ("failed", "queued")
 
 
 def test_cancel_and_retry_refuse_an_unknown_kind(client: TestClient) -> None:

@@ -3,7 +3,7 @@
 // 자리는 그 자리 메뉴와 같은 규칙(placeLinkMenu) - 그 줄의 조각들(한/영 짝이면 둘 다) 아래(모자라면 위)에 놓아 다룰 문장을 가리지 않는다.
 "use client";
 
-import { ArrowDownToLine, ArrowUpToLine, BookMarked, BookX, CaptionsOff, Eraser, Heading, LayoutList, Link2, MousePointerClick, PanelBottom, PanelTop, Pilcrow, Rows3, Scissors, Table2, Unlink, type LucideIcon } from "lucide-react";
+import { ArrowDownToLine, ArrowUpToLine, BookMarked, BookX, CaptionsOff, Eraser, Heading, LayoutList, Link2, MousePointerClick, PanelBottom, PanelTop, Pilcrow, Scissors, Unlink, type LucideIcon } from "lucide-react";
 import { useRef } from "react";
 
 import { Menu } from "@/components/ui/menu";
@@ -26,8 +26,6 @@ export const ASSIGN_ACTION_ICONS: Record<Exclude<AssignMenuAction, "lang">, Luci
   unpair: Unlink,
   ref_mark: BookMarked,
   ref_clear: BookX,
-  table_rows: Rows3,
-  table_merge: Table2,
   table_layout: LayoutList,
   // 캡션 자리(위·아래)를 그린 아이콘 - 글을 묶음 위(아래) 캡션 줄로
   caption_attach_prev: PanelTop,
@@ -50,8 +48,6 @@ export const ASSIGN_ACTION_LABELS: Record<Exclude<AssignMenuAction, "lang">, str
   ref_mark: "assign.ctx.refMark",
   ref_clear: "assign.ref.reject",
   // 표 항목은 쪼개기 화면의 단추와 같은 이름을 쓴다
-  table_rows: "split.splitRows",
-  table_merge: "split.mergeRows",
   table_layout: "split.layoutTable",
   // 묶음 대상의 이름 - 글 대상이면 항목의 labelKey("위 표의 캡션으로 쓰기")가 대신한다
   caption_attach_prev: "assign.ctx.captionAttachPrev",

@@ -121,7 +121,7 @@ describe("listCaptionPendingRowKeys", () => {
       [3, unitRow(3, { kind: "caption", group_unit_id: 2 })],
       [4, unitRow(4, { kind: "figure", decision: deleted })],
       [5, unitRow(5, { kind: "table", has_caption_target: true })],
-      [6, unitRow(6, { kind: "table_row" })],
+      [6, unitRow(6, { kind: "table" })],
       [7, unitRow(7, { kind: "sentence" })],
       [8, unitRow(8, { kind: "figure" })],
     ]);

@@ -1,5 +1,7 @@
 """문단 번호(F5) — 추출 신호에서 읽은 번호 범위, 번호 고치기 편집(set_number)과 따라 고치기·되돌리기, 번호를 뺀 내용(새 문장·결과물 A)."""
 
+from dataclasses import dataclass
+
 import httpx2
 import pytest
 from fastapi.testclient import TestClient
@@ -10,6 +12,8 @@ from app.sop.numbering import (
     NUMBER_TYPED,
     NumberRange,
     get_content_start,
+    get_number_note,
+    is_number_fixed,
     plan_follow,
     read_number_range,
 )
@@ -111,6 +115,38 @@ def test_plan_follow(numbers: list[str | None], index: int, new: str, expected: 
     assert plan_follow(numbers, index, new) == expected
 
 
+@dataclass(frozen=True)
+class _Numbered:
+    """get_number_note가 보는 번호 열만 든 단위."""
+
+    number_read: str | None
+    number_set: str | None
+    kind: str = "sentence"
+    number_source: str | None = NUMBER_AUTO
+    number_len: int = 0
+    from_heading: bool = False
+
+
+@pytest.mark.parametrize(
+    ("read", "number_set", "note"),
+    [
+        ("3.", None, None),  # 고치지 않았다
+        ("3.", "3", None),  # 끝 점만 다르면 같은 번호다
+        ("3.", "4.", "3."),
+        ("3.", "", "3."),  # 번호 없음으로 바꾼 것도 다르게 고친 것이다
+        ("3.", "•", "3."),  # 점 기호로 바꾼 것도
+        (None, "4.", None),  # 읽은 번호가 없던 줄에 써 넣은 번호는 노트가 없다
+    ],
+)
+def test_number_note_keeps_the_source_number_of_a_changed_number(
+    read: str | None, number_set: str | None, note: str | None
+) -> None:
+    unit = _Numbered(number_read=read, number_set=number_set)
+
+    assert get_number_note(unit) == note
+    assert is_number_fixed(unit) is (note is not None)
+
+
 def test_number_range_reads_the_leading_signal() -> None:
     texts = {1: "6.1 6.1 합성 목적", 2: "7", 3: "합성 제목", 4: "3.", 5: "가\n2.1 합성 줄"}
     signals = {
@@ -163,17 +199,17 @@ def test_auto_numbers_go_to_the_number_cell_and_typed_numbers_stay_text(client: 
     assert view["has_number_ranges"] is True
     misread, typed = find_unit(view, MISREAD), find_unit(view, TYPED)
     assert misread["number"] == {
-        "value": "1.2", "read": "1.2", "source": "auto", "is_set": False, "content_start": 4, "typed_len": 0,
+        "value": "1.2", "read": "1.2", "source": "auto", "is_set": False, "content_start": 4, "typed_len": 0, "note": None,
     }
     assert _content(misread) == "합성 필터 확인"
     assert typed["number"] == {
-        "value": None, "read": "2.1", "source": "typed", "is_set": False, "content_start": 0, "typed_len": 3,
+        "value": None, "read": "2.1", "source": "typed", "is_set": False, "content_start": 0, "typed_len": 3, "note": None,
     }
     assert find_unit(view, UNREAD)["number"]["value"] is None
     # 절을 여는 줄(제목)의 타자 번호는 처음부터 번호 칸에 있다 — 본문 줄의 타자 번호만 글로 남는다
     heading = find_unit(view, TYPED_HEADING)
     assert heading["number"] == {
-        "value": "3.", "read": "3.", "source": "typed", "is_set": False, "content_start": 3, "typed_len": 0,
+        "value": "3.", "read": "3.", "source": "typed", "is_set": False, "content_start": 3, "typed_len": 0, "note": None,
     }
     assert _content(heading) == "합성 타자 제목"
     # 띠 표는 올리자마자 제목 줄이다 — 번호 칸 블록 전체가 번호 범위라 글에는 제목만 남는다(F4)
@@ -241,7 +277,7 @@ def test_adding_a_number_to_an_unread_line(client: TestClient) -> None:
 
     added = find_unit(get_view(client, bundle_id, doc_id), UNREAD)
     assert added["number"] == {
-        "value": "2.2", "read": None, "source": None, "is_set": True, "content_start": 0, "typed_len": 0,
+        "value": "2.2", "read": None, "source": None, "is_set": True, "content_start": 0, "typed_len": 0, "note": None,
     }
 
 
@@ -268,6 +304,20 @@ def test_no_number_turns_an_auto_number_back_into_text(client: TestClient) -> No
 
     cleared = find_unit(get_view(client, bundle_id, doc_id), CHECK)
     assert (cleared["number"]["value"], _content(cleared)) == (None, CHECK)
+
+
+def test_a_bullet_number_keeps_the_section_and_shows_the_source_number_as_a_note(client: TestClient) -> None:
+    bundle_id, _, doc_id = _setup(client)
+    before = get_view(client, bundle_id, doc_id)
+
+    _set_number(client, bundle_id, doc_id, find_unit(before, MISREAD), "•")
+
+    view = get_view(client, bundle_id, doc_id)
+    bullet = find_unit(view, MISREAD)
+    assert (bullet["number"]["value"], bullet["number"]["note"], _content(bullet)) == ("•", "1.2", "합성 필터 확인")
+    # 점 기호는 절을 열지 않고(절 이름이 "•"이 되지 않는다) 셀 수 없어 뒤 번호도 따라오지 않는다
+    assert _sections(view) == _sections(before)
+    assert (_numbers(view)[CHANGE], _numbers(view)[STEP]) == ("1.3", "1.3.1")
 
 
 def test_set_number_that_changes_nothing_writes_nothing(client: TestClient) -> None:

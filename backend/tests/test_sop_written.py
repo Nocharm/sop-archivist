@@ -88,6 +88,8 @@ def test_written_sentences_carry_table_cells_and_figure_block(client: TestClient
     assert [(cell["row"], cell["col"], cell["text"]) for cell in rows["table"]["table"]["cells"]] == [
         (0, 0, "합성 항목"), (0, 1, "합성 값"),
     ]
+    # 칸마다 출처(아직 잇지 않아 비었다)와 revision - Assign New 칸이 칸 위 칩과 칸 잇기 저장에 쓴다(시안 2 D5)
+    assert all(cell["source_unit_ids"] == [] and cell["revision"] == 1 for cell in rows["table"]["table"]["cells"])
     # 그림 줄은 이 문장이 온 새 문서 단위의 그림 블록
     assert rows["figure"]["figure"] == {"document_id": new_doc["id"], "block_id": figure_unit["block_id"]}
     assert (rows["table"]["figure"], rows["figure"]["table"]) == (None, None)
@@ -218,3 +220,31 @@ def test_rank_new_candidates_falls_back_to_text_without_vectors() -> None:
     ranked = rank_new_candidates("합성 장비를 켠다.", None, rows, {})
 
     assert [(target_id, basis) for target_id, _, basis in ranked] == [(1, "text")]
+
+
+def test_unassigned_merge_leaves_tobe_and_written_sentences_alone(client: TestClient) -> None:
+    # Assign은 판단 안 걸린 원문 편집 뒤 To-Be · New 문장 목록을 다시 받지 않는다(설계 2026-11-20 D2) — 그 가정을 못 박는다
+    bundle_id, old_view, _ = _setup(
+        client, p("합성 장비를 켠다.") + p("합성 문을 연다.") + p("합성 덮개를 닫는다."), p("합성 장비를 켠다."),
+    )
+    linked = find_unit(old_view, "합성 장비를 켠다.")
+    (row,) = _list_written(client, bundle_id)
+    saved = save_group(client, bundle_id, {
+        "action": "confirm",
+        "units": [{"unit_id": linked["id"], "revision": 1, "disposition": "assigned"}],
+        "targets": [{"key": "t", "id": row["target_id"], "revision": row["revision"], "source_unit_ids": [linked["id"]]}],
+    })
+    assert saved.status_code == 200, saved.text
+    tobe_before = client.get(f"/api/bundles/{bundle_id}/tobe", headers=AUTHOR).json()
+    written_before = _list_written(client, bundle_id)
+
+    merge_ids = [find_unit(old_view, "합성 문을 연다.")["id"], find_unit(old_view, "합성 덮개를 닫는다.")["id"]]
+    merged = client.post(
+        f"/api/bundles/{bundle_id}/documents/{old_view['document']['id']}/edits",
+        json={"revision": old_view["document"]["revision"], "confirm": False, "op": {"type": "merge", "unit_ids": merge_ids}},
+        headers=AUTHOR,
+    )
+
+    assert merged.status_code == 200, merged.text
+    assert client.get(f"/api/bundles/{bundle_id}/tobe", headers=AUTHOR).json() == tobe_before
+    assert _list_written(client, bundle_id) == written_before

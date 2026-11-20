@@ -21,7 +21,7 @@ pytestmark = pytest.mark.usefixtures("clean_sop")
 
 OLD_NAME = "SYNTHETIC_OLD-1_Progress.docx"
 TOBE_DOCS = [{"code": "SOP-NEW", "title": "Synthetic SOP", "doc_type": "sop", "parent_code": None}]
-PROGRESS_KEYS = {"total", "unassigned", "ai_suggested", "confirmed", "on_hold", "single_language"}
+PROGRESS_KEYS = {"total", "unassigned", "confirmed", "on_hold", "single_language"}
 
 
 class Fixture(NamedTuple):
@@ -59,7 +59,7 @@ def test_progress_counts_a_pair_as_one_row(client: TestClient) -> None:
     fx = _setup(client, p(KO_ON) + p(EN_ON) + p(f"{KO_LOAD} {KO_KEEP}") + p(EN_BOTH))
     assert len(fx.view["pairs"]) == 2  # 짝 [ko_on,en_on]·[ko_load,ko_keep,en_both]가 생기는 픽스처여야 한다
     assert get_bundle(client, fx.bundle_id)["progress"] == {
-        "total": 2, "unassigned": 2, "ai_suggested": 0, "confirmed": 0, "on_hold": 0, "single_language": 0,
+        "total": 2, "unassigned": 2, "confirmed": 0, "on_hold": 0, "single_language": 0,
     }
 
 
@@ -167,7 +167,7 @@ def test_meaning_rows_match_progress(client: TestClient) -> None:
     rows = build_meaning_rows(snap)
     assert len(rows) == progress["total"]
     assert Counter(row.status for row in rows) == Counter(
-        {key: progress[key] for key in ("unassigned", "ai_suggested", "confirmed", "on_hold") if progress[key]}
+        {key: progress[key] for key in ("unassigned", "confirmed", "on_hold") if progress[key]}
     )
     assert count_single_language(snap) == progress["single_language"]
     assert all(

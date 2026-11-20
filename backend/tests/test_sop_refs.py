@@ -25,7 +25,8 @@ from tests.sop_helpers import (
 )
 from tests.test_equis_api import FakeEquis, equis, make_row  # noqa: F401 -- equis는 픽스처
 
-pytestmark = pytest.mark.usefixtures("clean_sop")
+# 지도 · REF 제안의 길은 글에서 제안하던 옛 추출에서 본다 — 새 추출의 Reference 절 확정은 test_sop_ref_section.py
+pytestmark = pytest.mark.usefixtures("clean_sop", "legacy_ref_proposals")
 
 OLD_NUMBER, NUMBER = "SOP-ABC-1016", "SOP-ABC-00001"
 NAME = "Operation and Maintenance of UV spectrophotometer"

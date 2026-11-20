@@ -98,7 +98,7 @@ def build_ref_drafts(blocks: Mapping[int, tuple[int, str]], units: Iterable[Unit
     block_id_by_seq = {seq: block_id for block_id, (seq, _) in blocks.items()}
     heads = read_caption_numbers(active)
     caption_groups = index_caption_groups(active)
-    # 자리 참조의 대상 — 종류마다 (pos_seq, pos_start) 순으로 늘어놓은 묶음. 행으로 나눈 표는 가장 앞 행이 그 표 하나의 자리다
+    # 자리 참조의 대상 — 종류마다 (pos_seq, pos_start) 순으로 늘어놓은 묶음
     groups: dict[str, list[Unit]] = {_TABLE_KIND: [], _FIGURE_KIND: []}
     seen_tables: set[int] = set()
     for unit in sorted(active, key=lambda unit: (unit.pos_seq, unit.pos_start, unit.id)):

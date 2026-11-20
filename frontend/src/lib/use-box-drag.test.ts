@@ -1,8 +1,9 @@
-// useBoxDrag - config가 끄는 도중 null이 되거나 화면이 사라져도 끌기가 던지지 않고 한 번 깨끗이 끝난다.
+// useBoxDrag - config가 끄는 도중 null이 되거나 화면이 사라져도 끌기가 던지지 않고 한 번 깨끗이 끝난다. 못 놓는 자리에 놓으면 이유를 알림으로 한 번.
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { dismissToast, listToasts } from "@/components/ui/toast";
 import type { BoxDragConfig } from "@/lib/box-drag";
 import { useBoxDrag } from "@/lib/use-box-drag";
 
@@ -78,5 +79,14 @@ describe("useBoxDrag", () => {
     expect(() => act(() => root!.unmount())).not.toThrow();
     root = null;
     expectCleanEnd(config);
+  });
+
+  it("a drop on a refused place shows its reason as one info toast", () => {
+    const config = { ...makeConfig(), onMove: vi.fn(() => ({ state: "refused" as const, note: "Already under this SOP" })) };
+    mountAndStartDrag(config);
+    window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, cancelable: true, button: 0, clientX: 30, clientY: 10, pointerType: "mouse" }));
+    const shown = listToasts().filter((toast) => toast.text === "Already under this SOP");
+    expect(shown.map((toast) => toast.tone)).toEqual(["info"]);
+    for (const toast of shown) dismissToast(toast.id);
   });
 });

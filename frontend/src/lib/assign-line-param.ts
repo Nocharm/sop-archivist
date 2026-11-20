@@ -13,7 +13,7 @@ export interface LineParamInput {
   oldDocIds: readonly number[];
   /** Unit id → 그 Unit이 든 문서 id(원문 보기에 있는 활성 Unit만) */
   docOfUnit: (unitId: number) => number | undefined;
-  /** Unit(칸 문장이면 묶인 표·행)의 줄 열쇠 */
+  /** Unit(칸 문장이면 묶인 표)의 줄 열쇠 */
   findRowKey: (unitId: number) => string | undefined;
 }
 

@@ -137,7 +137,8 @@ def _count_rows(model: type, **filters: int) -> int:
 def test_assign_as_is_confirms_and_fixes_change_type(client: TestClient) -> None:
     fx = _setup(client)
     unit = find_unit(fx.view, STORAGE)
-    target = _target("t", fx.sop_id, [unit], slot_key="responsibilities", text=STORAGE, change_type="tone")
+    # 옛 화면이 싣던 change_type은 무시된다 — 서버가 글자로 정한다
+    target = _target("t", fx.sop_id, [unit], slot_key="responsibilities", text=STORAGE, change_type="rewritten")
 
     response = save_group(client, fx.bundle_id, _body([_unit_in(unit)], [target]))
 
@@ -150,7 +151,7 @@ def test_assign_as_is_confirms_and_fixes_change_type(client: TestClient) -> None
     )
     assert decision["confirmed_at"].endswith("+09:00")
     assert (entry["display_id"], entry["document_id"], entry["group_id"]) == (unit["display_id"], fx.doc["id"], None)
-    # 글자가 원문과 같으면 요청이 말투(tone)여도 그대로(as_is)다
+    # 글자가 원문과 같으면 요청이 고침이라고 해도 그대로(as_is)다
     assert saved["change_type"] == "as_is"
     assert (saved["status"], saved["origin"], saved["lang"], saved["kind"]) == ("confirmed", "units", "ko", "sentence")
     assert (saved["target_doc_id"], saved["slot_key"], saved["confirmed_text"]) == (fx.sop_id, "responsibilities", STORAGE)
@@ -697,15 +698,10 @@ def test_group_rules_reject_without_writing(client: TestClient) -> None:
         (_body([_unit_in(unit)], [target, {**target}]), "duplicate_key"),
         (_body([_unit_in(unit)], []), "assigned_without_targets"),
         (_body([_unit_in(unit, disposition="delete")], [target]), "disposed_with_targets"),
-        (_body([_unit_in(unit, disposition="delete")], []), "reason_required"),
         (_body([_unit_in(unit, disposition="move_external", reason="Synthetic")], []), "move_target_code_required"),
         (_body([_unit_in(unit)], [{**target, "text": " ​ "}]), "empty_text"),
         (_body([_unit_in(unit), _unit_in(other)], [{**target, "source_unit_ids": [unit["id"], other["id"]]}]),
          "empty_text"),  # 여러 출처를 합칠 때는 글자를 직접 쓴다
-        (_body([_unit_in(unit)], [{**target, "text": "합성 시료는 냉장 보관한다."}]), "change_type_required"),
-        # 글자가 원문과 다른데 "그대로"라고 할 수 없다
-        (_body([_unit_in(unit)], [{**target, "text": "합성 시료는 냉장 보관한다.", "change_type": "as_is"}]),
-         "invalid_change_type"),
         (_body([_unit_in(unit)], [{**target, "cell_row": 0, "cell_col": 0}]), "invalid_cell_target"),
         (_body([_unit_in(unit)], [{**target, "parent_key": "nope", "cell_row": 0, "cell_col": 0}]), "invalid_cell_target"),
         (_body([_unit_in(unit)], [{**target, "target_doc_id": None}]), "target_doc_required"),
@@ -749,34 +745,38 @@ def test_table_destination_creates_table_and_cell_targets(client: TestClient) ->
     assert {rows[cell["id"]]["status"] for cell in cells} == {"confirmed"}
 
 
-def test_table_restructure_needs_reason(client: TestClient) -> None:
+@pytest.mark.parametrize(("grid", "cell_col"), [
+    ({"rows": 3, "cols": 2}, 0),  # 격자를 바꿨다
+    ({"rows": 2, "cols": 2}, 1),  # 격자는 같고 칸을 옮겼다
+])
+def test_restructured_table_is_rewritten_without_a_reason(client: TestClient, grid: dict, cell_col: int) -> None:
+    """원문 표 모양(격자·칸 자리)을 바꾼 표는 고침이고 사유는 선택이다(설계 2026-11-20-change-type-two D2)."""
     fx = _setup(client)
     table = next(unit for unit in fx.view["units"] if unit["kind"] == "table")
     first_cell = next(unit for unit in fx.view["units"] if unit["group_unit_id"] == table["id"])
-    reshaped = _target("t", fx.sop_id, [table], slot_key="purpose", kind="table", grid={"rows": 3, "cols": 2})
-    cell = _target("c", fx.sop_id, [first_cell], slot_key="purpose", parent_key="t", cell_row=0, cell_col=1)
+    reshaped = _target("t", fx.sop_id, [table], slot_key="purpose", kind="table", grid=grid)
+    cell = _target("c", fx.sop_id, [first_cell], slot_key="purpose", parent_key="t", cell_row=0, cell_col=cell_col)
     caption = _caption("cap", fx.sop_id, "t", [], text="합성 표", lang="ko")
 
-    # 그대로인 표는 원래 격자·칸 자리를 지킨다
-    assert _reason(save_group(client, fx.bundle_id, _body([_unit_in(table)], [reshaped]))) == "grid_mismatch"
-    as_is = {**reshaped, "grid": {"rows": 2, "cols": 2}}
-    assert _reason(save_group(client, fx.bundle_id, _body([_unit_in(table)], [as_is, cell]))) == "cell_position_mismatch"
-    restructured = {**reshaped, "change_type": "table_restructured"}
-    assert _reason(save_group(client, fx.bundle_id, _body([_unit_in(table)], [restructured, cell]))) == "reason_required"
-    response = save_group(
-        client, fx.bundle_id, _body([_unit_in(table, reason="Synthetic: added a row")], [restructured, cell, caption])
-    )
+    response = save_group(client, fx.bundle_id, _body([_unit_in(table)], [reshaped, cell, caption]))
 
     assert response.status_code == 200, response.text
     table_target, cell_target, _ = response.json()["targets"]
-    assert (table_target["change_type"], table_target["grid"]) == ("table_restructured", {"rows": 3, "cols": 2})
-    assert (cell_target["parent_target_id"], cell_target["cell_col"]) == (table_target["id"], 1)
+    assert (table_target["change_type"], table_target["grid"]) == ("rewritten", grid)
+    assert (cell_target["parent_target_id"], cell_target["cell_col"], cell_target["change_type"]) == (
+        table_target["id"], cell_col, "as_is",
+    )
 
 
-def test_as_is_table_needs_one_cell_target_per_cell_sentence(client: TestClient) -> None:
-    """그대로인 표는 묶인 칸 문장마다 칸 새 문장이 정확히 하나다 — 빠진 칸 글이 결과물에 "그대로"로 적힌 채 사라지지 않게(R27).
-
-    표 구성 변경(사유)은 칸을 빼고 담을 수 있다 — test_table_restructure_needs_reason이 칸 하나만 담아 저장한다.
+@pytest.mark.parametrize(("pick", "expected"), [
+    ("whole", "as_is"),
+    ("bare", "rewritten"),
+    ("partial", "rewritten"),
+    ("doubled", "rewritten"),
+])
+def test_table_is_as_is_only_with_one_cell_target_per_cell_sentence(client: TestClient, pick: str, expected: str) -> None:
+    """묶인 칸 문장마다 칸 새 문장이 정확히 하나일 때만 표가 그대로다 — 칸을 빼거나 겹쳐 담으면 고침이라
+    빠진 칸 글이 결과물에 "그대로"로 적힌 채 사라지지 않는다(R27).
     """
     fx = _setup(client)
     table = next(unit for unit in fx.view["units"] if unit["kind"] == "table")
@@ -786,21 +786,17 @@ def test_as_is_table_needs_one_cell_target_per_cell_sentence(client: TestClient)
         _target(f"c{index}", fx.sop_id, [cell], slot_key="purpose", parent_key="t", cell_row=index // 2, cell_col=index % 2)
         for index, cell in enumerate(cells)
     ]
+    picked = {
+        "whole": cell_targets, "bare": [], "partial": cell_targets[:3],
+        "doubled": [*cell_targets, {**cell_targets[0], "key": "again"}],
+    }[pick]
+    caption = _caption("cap", fx.sop_id, "t", [], text="합성 표", lang="ko")
 
-    def _save(targets: list[dict]) -> httpx2.Response:
-        return save_group(client, fx.bundle_id, _body([_unit_in(table)], [table_target, *targets]))
+    response = save_group(client, fx.bundle_id, _body([_unit_in(table)], [table_target, *picked, caption]))
 
-    bare, partial = _save([]), _save(cell_targets[:3])
-    doubled = _save([*cell_targets, {**cell_targets[0], "key": "again"}])
-
-    for response, unit_ids in ((bare, [cell["id"] for cell in cells]), (partial, [cells[3]["id"]]), (doubled, [cells[0]["id"]])):
-        assert (response.status_code, response.json()["detail"]) == (
-            422, {"code": "invalid_group", "reason": "table_cells_missing", "unit_ids": unit_ids},
-        )
-    assert _count_rows(TargetSentence, bundle_id=fx.bundle_id) == 0
-    whole = _save([*cell_targets, _caption("cap", fx.sop_id, "t", [], text="합성 표", lang="ko")])
-    assert whole.status_code == 200, whole.text
-    assert sorted(t["change_type"] for t in whole.json()["targets"]) == ["as_is"] * 5 + ["new"]
+    assert response.status_code == 200, response.text
+    table_row = next(t for t in response.json()["targets"] if t["kind"] == "table")
+    assert table_row["change_type"] == expected
 
 
 def test_hold_requires_reason_and_sets_on_hold(client: TestClient) -> None:
@@ -942,16 +938,28 @@ def test_held_unit_can_be_cleared(client: TestClient) -> None:
     )
 
 
-def test_human_target_does_not_inherit_its_change_type(client: TestClient) -> None:
-    # 글자 비교 종류는 사람이 고른다(§6.7) — 출처가 바뀌면 지난 종류는 근거가 없으니 다시 고르게 한다
+def test_edited_text_is_rewritten_whatever_the_request_says(client: TestClient) -> None:
+    # 종류는 서버가 글자로 정한다(설계 2026-11-20-change-type-two D2) — 옛 화면이 "그대로"를 실어도 글이 다르면 고침이다
+    fx = _setup(client)
+    unit = find_unit(fx.view, STORAGE)
+    target = _target("t", fx.sop_id, [unit], slot_key="purpose", text="합성 시료는 냉장 보관한다.", change_type="as_is")
+
+    response = save_group(client, fx.bundle_id, _body([_unit_in(unit)], [target]))
+
+    assert response.status_code == 200, response.text
+    assert response.json()["targets"][0]["change_type"] == "rewritten"
+
+
+def test_human_target_change_type_follows_its_new_source(client: TestClient) -> None:
+    # 출처가 바뀌면 지난 종류는 근거가 없다 — 새 출처의 글과 다시 견준다(글을 원문과 같게 두면 그대로)
     fx = _setup(client)
     first, second = find_unit(fx.view, STORAGE), find_unit(fx.view, RECORDS)
     saved = save_group(client, fx.bundle_id, _body(
-        [_unit_in(first)],
-        [_target("t", fx.sop_id, [first], slot_key="purpose", text="합성 시료는 냉장 보관한다.", change_type="tone")],
+        [_unit_in(first)], [_target("t", fx.sop_id, [first], slot_key="purpose", text=RECORDS)],
     ))
     assert saved.status_code == 200, saved.text
     target = saved.json()["targets"][0]
+    assert target["change_type"] == "rewritten"
 
     response = save_group(client, fx.bundle_id, _body(
         [_unit_in(first, 2, "delete", reason="합성 사유"), _unit_in(second)],
@@ -961,7 +969,8 @@ def test_human_target_does_not_inherit_its_change_type(client: TestClient) -> No
         }],
     ))
 
-    assert _reason(response) == "change_type_required"
+    assert response.status_code == 200, response.text
+    assert next(t for t in response.json()["targets"] if t["id"] == target["id"])["change_type"] == "as_is"
 
 
 def test_held_unit_can_be_bulk_disposed_by_a_person(client: TestClient) -> None:
@@ -1251,11 +1260,8 @@ def test_closure_follows_table_cell_target_links(client: TestClient) -> None:
         return table.id, cell.id
 
     table_id, cell_id = run_in_session(_seed)
-    # 옛 표의 칸 문장은 칸 새 문장으로 가지 않으므로 그대로가 아니다(R27) — 표 구성 변경과 사유로 확정한다
-    table_in = {
-        "key": "p", "id": table_id, "revision": 1, "kind": "table", "change_type": "table_restructured",
-        "source_unit_ids": [old_table["id"]],
-    }
+    # 옛 표의 칸 문장은 칸 새 문장으로 가지 않으므로 그대로가 아니다(R27) — 서버가 표를 고침으로 정한다
+    table_in = {"key": "p", "id": table_id, "revision": 1, "kind": "table", "source_unit_ids": [old_table["id"]]}
     cell_in = {"key": "c1", "id": cell_id, "revision": 1, "parent_key": "p", "source_unit_ids": [paragraph["id"]]}
     restructured = _unit_in(old_table, reason="Synthetic: cells rebuilt in the new document")
 
@@ -1267,7 +1273,7 @@ def test_closure_follows_table_cell_target_links(client: TestClient) -> None:
     assert half.json()["detail"]["unit_ids"] == [paragraph["id"]]
     assert whole.status_code == 200, whole.text
     assert [(t["id"], t["status"], t["change_type"]) for t in whole.json()["targets"]] == [
-        (table_id, "confirmed", "table_restructured"), (cell_id, "confirmed", "as_is"),
+        (table_id, "confirmed", "rewritten"), (cell_id, "confirmed", "as_is"),
     ]
     group = get_group_by_unit(client, fx.bundle_id, old_table["id"])
     expected_group = f"G-{paragraph['display_id']}"

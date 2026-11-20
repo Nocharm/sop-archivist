@@ -29,8 +29,11 @@ export function readNewAiSectionKey(sectionPath: string): string {
   return readSectionNumber(sectionPath) || sectionPath || "top";
 }
 
-/** New 칸 줄마다의 표시와 칸마다의 접힌 띠 - 칩이 꺼져 있거나 고른 줄이 없으면 null(거르지 않는다) */
-export function buildNewAiFilter(isOn: boolean, pickedUnitIds: readonly number[] | null, rows: readonly NewPaneRow[]): NewAiFilter | null {
+/**
+ * New 칸 줄마다의 표시와 칸마다의 접힌 띠 - 칩이 꺼져 있거나 고른 줄이 없으면 null(거르지 않는다).
+ * suggested는 살아 있는 묶기 제안이 잇자고 한 새 문장 → 그 제안의 Old 단위 - AI는 새 문장을 쓰지 않으니 제안에서 읽는다(설계 2026-11-19-ai-suggest-only)
+ */
+export function buildNewAiFilter(isOn: boolean, pickedUnitIds: readonly number[] | null, rows: readonly NewPaneRow[], suggested: ReadonlyMap<number, readonly number[]> = new Map()): NewAiFilter | null {
   if (!isOn || pickedUnitIds === null || pickedUnitIds.length === 0) return null;
   const picked = new Set(pickedUnitIds);
   const marks = new Map<string, NewAiMark>();
@@ -39,8 +42,9 @@ export function buildNewAiFilter(isOn: boolean, pickedUnitIds: readonly number[]
   for (const row of rows) {
     if (row.kind === "empty") continue;
     const key = getNewRowKey(row);
-    const isAi = row.status === "ai_suggested";
-    if (row.source_unit_ids.some((id) => picked.has(id))) {
+    const suggestedUnits = "target_id" in row ? (suggested.get(row.target_id) ?? []) : [];
+    const isAi = row.status === "ai_suggested" || suggestedUnits.length > 0;
+    if ([...row.source_unit_ids, ...suggestedUnits].some((id) => picked.has(id))) {
       marks.set(key, isAi ? "mine_ai" : "mine_went");
       continue;
     }

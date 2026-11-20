@@ -26,8 +26,6 @@ from tests.sop_helpers import (
 
 REVIEWER_LOGIN = REVIEWER["X-Dev-User"]
 TEXT_KINDS = ("sentence", "heading", "cell_sentence")  # kind 없는 답이 가리키는 글 단위
-# 요청에 실을 수 있는 변경 종류 — 나눔·합침·신규는 서버가 구조로 정한다
-REQUESTABLE_CHANGE_TYPES = ("as_is", "tone", "rewritten", "table_restructured")
 
 
 class SyntheticDriver:
@@ -274,18 +272,15 @@ class SyntheticDriver:
         assert decisions == {(action, "confirmed")}
 
     def _build_target(self, spec: dict, answer: dict) -> dict:
-        change_type = spec["change_type"] if spec["change_type"] in REQUESTABLE_CHANGE_TYPES else None
+        """보낼 새 문장 — 변경 종류는 싣지 않는다(서버가 정하고, 저장 뒤 답의 change_type과 견준다)."""
         if "section_path" in spec:  # 입구 2 — 새 문서의 기존 새 문장에 출처만 붙인다(글자·자리는 새 문서 그대로)
             target = self.find_match_target(spec["code"], spec["text"])
             assert target["section_path"] == spec["section_path"]
-            return {
-                "key": spec["key"], "id": target["id"], "revision": target["revision"], "change_type": change_type,
-                "source_unit_ids": [],
-            }
+            return {"key": spec["key"], "id": target["id"], "revision": target["revision"], "source_unit_ids": []}
         item = {
             "key": spec["key"], "target_doc_id": self.tobe_ids[spec["code"]], "kind": spec["kind"],
             "slot_key": spec.get("slot_key"), "wi_step": spec.get("wi_step"), "wi_part": spec.get("wi_part"),
-            "change_type": change_type, "source_unit_ids": [],
+            "source_unit_ids": [],
         }
         if spec["kind"] == "sentence":
             item["text"] = spec["text"]
@@ -353,70 +348,6 @@ class SyntheticDriver:
         for code, view in self.views.items():
             if view["document"]["side"] == "old" and code not in match_docs:
                 self.post("/ai/classify", {"document_id": view["document"]["id"]})
-
-    def confirm_suggestions(self) -> int:
-        """적용된 AI 제안을 사람이 그대로 받는다 — 제안마다 관계 묶음 저장 한 번이고, 받은 제안 수를 돌려준다.
-
-        다듬기를 기다리는 잠정 문장 묶음(다듬기 답이 무효였거나 실패했다)은 받지 않고 사람 저장 길(settle_remaining)로 보낸다 — 변경 종류가 코드가 정한 잠정값이다.
-        """
-        answers = {self.find_answer_unit(answer)["id"]: answer for answer in self.expected["answers"]}
-        page = self.get("/ai/suggestions", result="applied", limit="1000")
-        assert page["total"] == len(page["items"])
-        accepted = [suggestion for suggestion in page["items"] if not suggestion["content"].get("provisional")]
-        for suggestion in accepted:
-            self._accept_suggestion(suggestion["content"], answers)
-        return len(accepted)
-
-    def _accept_suggestion(self, content: dict, answers: dict[int, dict]) -> None:
-        """제안의 묶음을 그대로 확정한다 — 글·변경 종류를 비워 보내면 서버가 제안대로 정하고, 구조 종류는 보내지 않는다. 사유만 사람이 적는다.
-
-        신규 제안은 단위가 없어 새 문장으로 묶음을 읽는다. 짝은 언어마다 묶음이 따로라 한 저장에 모은다. 표·그림의 칸·캡션 새 문장은 부모 아래로 되보낸다.
-        캡션 없이 제안된 그림은 사람이 정답의 캡션 새 문장을 더해 확정한다(캡션 없는 묶음은 확정할 수 없다).
-        """
-        paths = [f"/groups/by-unit/{unit_id}" for unit_id in content["unit_ids"]] or [
-            f"/groups/by-target/{target_id}" for target_id in content["target_ids"]
-        ]
-        groups = [self.get(path) for path in paths]
-        units = {unit["unit_id"]: unit for group in groups for unit in group["units"]}
-        targets = {target["id"]: target for group in groups for target in group["targets"]}
-        body = {
-            "action": "confirm",
-            "units": [
-                {
-                    "unit_id": unit_id, "revision": unit["decision"]["revision"], "disposition": unit["decision"]["disposition"],
-                    "reason": answers[unit_id]["reason"],
-                }
-                for unit_id, unit in units.items()
-            ],
-            "targets": [
-                {
-                    "key": str(target_id), "id": target_id, "revision": target["revision"], "kind": target["kind"],
-                    "slot_key": target["slot_key"], "wi_step": target["wi_step"], "wi_part": target["wi_part"],
-                    "source_unit_ids": target["source_unit_ids"],
-                    # 표 칸·캡션 새 문장은 부모 아래 그대로 - 부모 없이 보내면 캡션 단위를 출처로 한 최상위 문장이 된다
-                    **({"parent_key": str(target["parent_target_id"])} if target["parent_target_id"] is not None else {}),
-                }
-                for target_id, target in targets.items()
-            ],
-        }
-        body["targets"] += self._build_missing_captions(targets, answers)
-        response = save_group(self.client, self.bundle_id, body, self.headers)
-        assert response.status_code == 200, response.text
-
-    def _build_missing_captions(self, targets: dict[int, dict], answers: dict[int, dict]) -> list[dict]:
-        """캡션 새 문장이 아래에 없는 표·그림 새 문장마다 그 단위 정답의 캡션 새 문장 — parent_key는 그 새 문장의 key(id)다."""
-        captioned = {target["parent_target_id"] for target in targets.values() if target["cell_row"] is None}
-        missing = []
-        for target_id, target in targets.items():
-            if target["kind"] not in ("table", "figure") or target_id in captioned:
-                continue
-            (unit_id,) = target["source_unit_ids"]
-            answer = answers[unit_id]
-            missing += [
-                {**self._build_target(spec, answer), "parent_key": str(target_id)}
-                for spec in answer["targets"] if "parent_key" in spec and "cell_row" not in spec
-            ]
-        return missing
 
     def settle_remaining(self) -> None:
         """AI가 끝내지 못한 답을 정답대로 저장한다 — 보류는 확정이 지우고, 입구 2 같은 글자 후보와 남은 신규도 여기서 확정한다."""

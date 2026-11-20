@@ -364,6 +364,10 @@ _UNIT_NUMBER_COLUMNS = {
     "from_heading": "BOOLEAN NOT NULL DEFAULT 0",
     # 그림 캡션 묶음(0030)도 그 앞 리비전에서는 잠시 더했다 뺀다
     "caption_figure_id": "INTEGER",
+    # 짝 카드 안 순서(0033)도 그 앞 리비전에서는 잠시 더했다 뺀다
+    "pair_seq": "INTEGER",
+    # 벗긴 표 줄 순서(0034)도 그 앞 리비전에서는 잠시 더했다 뺀다
+    "unwrap_seq": "INTEGER",
 }
 
 
@@ -1184,3 +1188,215 @@ def test_0024_downgrade_restores_legacy_slots(tmp_path: pathlib.Path) -> None:
         (*row[0:5], bool(row.is_required), *row[6:9], bool(row.is_removed), row.deviation_reason) for row in rows
     ] == _LEGACY_ROWS
     assert standard_count == 0  # 0023 상태의 앱이 기동 때 옛 15칸을 시드한다
+
+
+def _insert_decision(conn: Any, unit_id: int, status: str, disposition: str, hold_reason: str = "") -> None:
+    conn.execute(text(
+        "INSERT INTO unit_decisions (unit_id, bundle_id, disposition, move_target_code, reason, status, hold_reason,"
+        " revision, updated_at) VALUES (:u, 1, :d, '', '', :s, :h, 2, '2026-11-10 09:00:00')"
+    ), {"u": unit_id, "d": disposition, "s": status, "h": hold_reason})
+
+
+def test_0031_takes_back_what_ai_wrote_into_decisions_and_targets(tmp_path: pathlib.Path) -> None:
+    # AI 분류·묶기가 쓴 판단·새 문장을 걷는다 — 입구 1 AI 새 문장과 그 AI 번역은 지우고, 입구 2 새 문장은 미배정으로, 판단은 미배정으로
+    db_path = tmp_path / "ai_suggest_only.db"
+    config = _downgrade_to(db_path, "0030")
+    engine = _create_fk_engine(db_path)
+    try:
+        with engine.begin() as conn:
+            ids = _insert_old_bundle(conn)
+            doc = ids["target_doc_id"]
+            suggested = _insert_unit(conn, ids["extraction_id"], 3, "sentence", "AI가 고른 문장.", "ko", 0)
+            held = _insert_unit(conn, ids["extraction_id"], 4, "sentence", "AI 답이 무효였다.", "ko", 0)
+            _insert_decision(conn, suggested, "ai_suggested", "assigned")
+            _insert_decision(conn, held, "on_hold", "unassigned", "system:ai_invalid_response")
+            ai_target = _insert_target(conn, doc, "sentence", "", "ai_suggested", ai_text="AI가 고친 문장.")
+            conn.execute(text("INSERT INTO target_sources (target_id, unit_id, seq) VALUES (:t, :u, 0)"),
+                         {"t": ai_target, "u": suggested})
+            ai_translation = _insert_target(
+                conn, doc, "sentence", "", "ai_suggested", origin="translation", lang="en",
+                translation_source_unit_id=suggested, change_type="translated",
+            )
+            human_translation = _insert_target(
+                conn, doc, "sentence", "Checked.", "confirmed", origin="translation", lang="en",
+                translation_source_unit_id=suggested, change_type="translated",
+            )
+            _, (new_extraction,) = _insert_document(conn, "new", ("2",))
+            new_unit = _insert_unit(conn, new_extraction, 1, "sentence", "운전 전 점검한다.", "ko", 0)
+            new_doc_target = _insert_target(
+                conn, doc, "sentence", "", "ai_suggested", origin="new_doc", new_unit_id=new_unit,
+                confirmed_text="운전 전 점검한다.", change_type="tone", warnings='[{"kind": "x"}]',
+            )
+            conn.execute(text("INSERT INTO target_sources (target_id, unit_id, seq) VALUES (:t, :u, 0)"),
+                         {"t": new_doc_target, "u": suggested})
+            heading = _insert_target(conn, doc, "slot_heading", "", "ai_suggested", order_index=2)
+            # AI가 쓴 표와 그 칸, 그 칸을 사람이 번역해 확정한 줄 — 칸 번역은 칸 단위를 가리켜 판단 조건으로는 잡히지 않는다
+            table_target = _insert_target(conn, doc, "table", "", "ai_suggested", order_index=3)
+            cell_target = _insert_target(conn, doc, "sentence", "", "ai_suggested", parent_target_id=table_target)
+            cell_translation = _insert_target(
+                conn, doc, "sentence", "Cell.", "confirmed", origin="translation", lang="en",
+                parent_target_id=table_target, change_type="translated",
+            )
+            job = _insert_row(
+                conn, "ai_jobs", bundle_id=1, kind="match", status="done", unit_ids="[]", target_ids="[]", payload="{}",
+                input_snapshot="{}", attempts=1, error="", requested_by="qa.member", request_id="r" * 32, priority=1,
+                background=False, created_at="2026-11-10 09:00:00",
+            )
+            suggestion_row = {
+                "job_id": job, "bundle_id": 1, "warnings": "[]", "result": "applied", "input_refs": "{}",
+                "guideline_versions": "{}", "model": "", "created_at": "2026-11-10 09:00:00",
+            }
+            classify = _insert_row(
+                conn, "ai_suggestions", kind="classify", **suggestion_row,
+                content=f'{{"unit_ids": [{suggested}], "target_ids": [{ai_target}], "disposition": "assigned"}}',
+            )
+            match = _insert_row(
+                conn, "ai_suggestions", kind="match", **suggestion_row,
+                content=f'{{"unit_ids": [{suggested}], "target_ids": [{new_doc_target}], "shape": "one_to_one"}}',
+            )
+
+        command.upgrade(config, "0031")
+
+        with engine.connect() as conn:
+            targets = {row.id: row for row in conn.execute(text(
+                "SELECT id, status, change_type, warnings, confirmed_text, revision FROM target_sentences"
+            ))}
+            sources = {tuple(row) for row in conn.execute(text("SELECT target_id, unit_id FROM target_sources"))}
+            decisions = {row.unit_id: row for row in conn.execute(text(
+                "SELECT unit_id, status, disposition, hold_reason, revision FROM unit_decisions"
+            ))}
+            contents = {row.id: json.loads(row.content) for row in conn.execute(text("SELECT id, content FROM ai_suggestions"))}
+    finally:
+        engine.dispose()
+
+    assert ai_target not in targets and ai_translation not in targets
+    # 따를 출처 새 문장이 사라지는 번역은 확정했어도 지운다(실제 사용 전) — 걷는 판단의 번역, 지우는 AI 표 아래 칸 번역
+    assert human_translation not in targets and cell_translation not in targets
+    assert table_target not in targets and cell_target not in targets
+    # 살아 있는 제안은 새 모양으로 남는다 — 분류는 지운 새 문장 id를 빼고, 묶기는 지운 출처 연결·변경 종류를 옮겨 싣는다
+    assert contents[classify] == {"unit_ids": [suggested], "disposition": "assigned"}
+    assert contents[match]["links"] == [[new_doc_target, suggested]]
+    assert contents[match]["target_change_types"] == {str(new_doc_target): "tone"}
+    new_doc_row = targets[new_doc_target]
+    assert (new_doc_row.status, new_doc_row.change_type, new_doc_row.warnings) == ("unassigned", None, "[]")
+    assert (new_doc_row.confirmed_text, new_doc_row.revision) == ("운전 전 점검한다.", 2)  # 원문은 남는다
+    assert targets[heading].status == "unassigned"  # 칸 제목은 지우지 않고 상태만 다시 정한다
+    assert all(target_id != new_doc_target and target_id != ai_target for target_id, _ in sources)
+    for unit_id in (suggested, held):
+        row = decisions[unit_id]
+        assert (row.status, row.disposition, row.hold_reason, row.revision) == ("unassigned", "unassigned", "", 3)
+    assert decisions[ids["figure_id"]].status == "confirmed"  # 사람이 정한 판단은 그대로
+
+
+def test_0032_folds_tone_and_table_restructured_into_rewritten(tmp_path: pathlib.Path) -> None:
+    # 변경 종류는 그대로·고침 둘 — 새 문장과 JSON 속 옛 값(제안 내용, 되돌리기 기록)을 고침으로, 대기·실행 중 LLM match 작업은 취소
+    db_path = tmp_path / "change_type_two.db"
+    config = _downgrade_to(db_path, "0031")
+    engine = _create_fk_engine(db_path)
+    try:
+        with engine.begin() as conn:
+            ids = _insert_old_bundle(conn)
+            doc = ids["target_doc_id"]
+            tone = _insert_target(conn, doc, "sentence", "점검하여야 한다.", "confirmed", change_type="tone", order_index=2)
+            table = _insert_target(conn, doc, "table", "", "confirmed", change_type="table_restructured", order_index=3)
+            split = _insert_target(conn, doc, "sentence", "나눈 글.", "confirmed", change_type="split", order_index=4)
+            jobs = {
+                (kind, status): _insert_row(
+                    conn, "ai_jobs", bundle_id=1, kind=kind, status=status, unit_ids="[]", target_ids="[]", payload="{}",
+                    input_snapshot="{}", attempts=0, error="", requested_by="qa.member", request_id="r" * 32, priority=1,
+                    background=False, created_at=_NOW,
+                )
+                for kind, status in (("match", "queued"), ("match", "running"), ("match", "done"), ("classify", "queued"))
+            }
+            suggestion_row = {
+                "job_id": jobs[("match", "done")], "bundle_id": 1, "warnings": "[]", "result": "applied",
+                "input_refs": "{}", "guideline_versions": "{}", "model": "", "created_at": _NOW,
+            }
+            match_content = {
+                "shape": "table", "change_type": "table_restructured", "reason": "말투 tone",
+                "target_change_types": {str(table): "table_restructured", str(tone): "tone", str(split): "split"},
+            }
+            match = _insert_row(conn, "ai_suggestions", kind="match", content=json.dumps(match_content), **suggestion_row)
+            classify_content = {"disposition": "assigned", "change_type": "tone", "rewrites": {"ko": ["고친 글."]}}
+            classify = _insert_row(
+                conn, "ai_suggestions", kind="classify", content=json.dumps(classify_content), **suggestion_row
+            )
+            untouched_content = {"disposition": "assigned", "change_type": "rewritten"}
+            untouched = _insert_row(
+                conn, "ai_suggestions", kind="classify", content=json.dumps(untouched_content), **suggestion_row
+            )
+            before = {"target_sentences": {str(tone): {"id": tone, "change_type": "tone", "remark": "tone"}}}
+            after = {"target_sentences": {str(table): {"id": table, "change_type": "table_restructured"}}, "groups": [
+                {"targets": [{"change_type": "as_is"}, {"change_type": "tone"}]},
+            ]}
+            _insert_values(conn, "decision_steps", {
+                "id": 1, "bundle_id": 1, "actor": "qa.member", "session_key": "s", "seq": 1, "op": "save",
+                "kind": "snapshot", "state": "applied", "focus": "{}", "unit_ids": "[]", "before": json.dumps(before),
+                "after": json.dumps(after), "created_at": _NOW,
+            })
+
+        command.upgrade(config, "0032")
+
+        with engine.connect() as conn:
+            types = dict(conn.execute(text("SELECT id, change_type FROM target_sentences")).tuples().all())
+            contents = {row.id: json.loads(row.content) for row in conn.execute(text("SELECT id, content FROM ai_suggestions"))}
+            step = conn.execute(text("SELECT before, after FROM decision_steps")).one()
+            job_rows = {row.id: row for row in conn.execute(text("SELECT id, status, finished_at FROM ai_jobs"))}
+    finally:
+        engine.dispose()
+
+    assert (types[tone], types[table], types[split], types[ids["figure_target_id"]]) == (
+        "rewritten", "rewritten", "split", "as_is",
+    )
+    # 이유 같은 다른 글 칸은 그대로 — 바꾸는 것은 change_type 키와 target_change_types의 값뿐이다
+    assert contents[match] == {
+        **match_content, "change_type": "rewritten",
+        "target_change_types": {str(table): "rewritten", str(tone): "rewritten", str(split): "split"},
+    }
+    assert contents[classify] == {**classify_content, "change_type": "rewritten"}
+    assert contents[untouched] == untouched_content
+    assert json.loads(step.before) == {"target_sentences": {str(tone): {"id": tone, "change_type": "rewritten", "remark": "tone"}}}
+    assert json.loads(step.after) == {"target_sentences": {str(table): {"id": table, "change_type": "rewritten"}}, "groups": [
+        {"targets": [{"change_type": "as_is"}, {"change_type": "rewritten"}]},
+    ]}
+    for kind, status in (("match", "queued"), ("match", "running")):
+        row = job_rows[jobs[(kind, status)]]
+        assert row.status == "cancelled" and row.finished_at is not None
+    assert job_rows[jobs[("match", "done")]].status == "done"
+    assert job_rows[jobs[("classify", "queued")]].status == "queued"  # 분류 작업은 그대로 돈다
+
+
+def test_0034_adds_unwrap_order_with_empty_history_and_drops_it_back(tmp_path: pathlib.Path) -> None:
+    # 벗긴 표 줄 순서 — 지난 단위는 원문 순서(NULL), 지난 편집 기록은 순서를 바꾸지 않았다(빈 객체). 내리면 두 열이 빠진다
+    db_path = tmp_path / "unwrap_seq.db"
+    config = _downgrade_to(db_path, "0033")
+    engine = _create_fk_engine(db_path)
+    try:
+        with engine.begin() as conn:
+            ids = _insert_old_bundle(conn)
+            document_id = conn.execute(
+                text("SELECT document_id FROM extractions WHERE id = :e"), {"e": ids["extraction_id"]}
+            ).scalar_one()
+            _insert_values(conn, "unit_edits", {
+                "document_id": document_id, "seq": 1, "op": "split", "payload": "{}", "created_unit_ids": "[]",
+                "retired_unit_ids": "[]", "regrouped": "{}", "lang_changes": "{}", "layout_changes": "{}",
+                "noise_changes": "{}", "figure_changes": "{}", "pair_seq_changes": "{}", "state": "applied",
+                "actor": "qa.member", "created_at": _NOW,
+            })
+
+        command.upgrade(config, "0034")
+
+        with engine.connect() as conn:
+            seqs = conn.execute(text("SELECT unwrap_seq FROM units")).scalars().all()
+            history = conn.execute(text("SELECT unwrap_seq_changes FROM unit_edits")).scalars().all()
+        assert seqs and set(seqs) == {None}
+        assert [json.loads(value) for value in history] == [{}]
+
+        command.downgrade(config, "0033")
+
+        with engine.connect() as conn:
+            unit_columns = {column["name"] for column in inspect(conn).get_columns("units")}
+            edit_columns = {column["name"] for column in inspect(conn).get_columns("unit_edits")}
+        assert "unwrap_seq" not in unit_columns and "unwrap_seq_changes" not in edit_columns
+    finally:
+        engine.dispose()

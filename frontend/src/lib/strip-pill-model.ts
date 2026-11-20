@@ -1,5 +1,7 @@
 // 쪼개기·배정 용지 조각 앞 칸의 순수 모델 - 절 번호 표시 줄, 절 번호 글자, 이웃한 짝의 한 카드.
 
+import { getBulletIndex, getBulletLevel } from "./number-kind-model";
+
 export type PairBracket = "top" | "middle" | "bottom";
 
 const NUMERIC_LABEL = /^\d+(\.\d+)*\.?$/;
@@ -22,18 +24,39 @@ export function getPillWidth(level: number): number {
   return PILL_WIDTH_BY_LEVEL[Math.min(Math.max(level, 1), PILL_WIDTH_BY_LEVEL.length) - 1];
 }
 
-/** 줄마다 탭 폭 - 숫자 번호가 있으면 깊이별 폭, 없는 줄(깊이 0)은 같은 부분 안의 직전 줄 폭을 따르고(부분의 첫 줄이면 1단 폭), 짝 카드의 둘째 줄부터(pairTopOf = 첫 줄의 key)는 첫 줄과 같은 폭이다. 첫 줄을 따르는 까닭: 한 카드의 탭은 첫 줄이 대표라 절 번호 글자도 첫 줄만 보이기 때문이다 */
+// 앞머리 번호 한 글자 폭(px) - .strip-lead-num(500 11px JetBrains Mono) 실측 6.6px. 글꼴·크기를 바꾸면 함께 고친다
+const LEAD_CHAR_PX = 6.6;
+// 번호 칸 안 여백(px) - .strip-lead-num 오른쪽 padding 5px에 왼쪽 숨 1px
+const LEAD_PAD_PX = 6;
+
+/** 깊이별 번호 칸 폭 - 기본은 PILL_WIDTH_BY_LEVEL이되, 받은 번호 중 그 깊이의 가장 긴 번호가 잘리지 않게 그 깊이 전체를 넓힌다(같은 깊이는 같은 폭이라 들여쓰기로 읽힌다). 숫자 번호가 아닌 글자는 세지 않는다 */
+export function getLevelWidths(labels: Iterable<string>): (level: number) => number {
+  const byLevel = new Map<number, number>();
+  for (const label of labels) {
+    const level = getSectionLevel(label);
+    if (level === 0) continue;
+    byLevel.set(level, Math.max(byLevel.get(level) ?? getPillWidth(level), Math.ceil(label.length * LEAD_CHAR_PX) + LEAD_PAD_PX));
+  }
+  return (level) => byLevel.get(level) ?? getPillWidth(level);
+}
+
+/** 줄마다 탭 폭 - 숫자 번호가 있으면 깊이별 폭(getLevelWidths, 받은 줄 전체에서 그 깊이의 가장 긴 번호가 들어가게), 점 기호 줄은 같은 부분 안 앞의 가장 가까운 숫자 번호 줄 깊이에서 한 단계 더(getBulletLevel - 기호마다 한 단계씩 더 깊다), 없는 줄(깊이 0)은 같은 부분 안의 직전 줄 폭을 따르고(부분의 첫 줄이면 1단 폭), 짝 카드의 둘째 줄부터(pairTopOf = 첫 줄의 key)는 첫 줄과 같은 폭이다. 첫 줄을 따르는 까닭: 한 카드의 탭은 첫 줄이 대표라 절 번호 글자도 첫 줄만 보이기 때문이다 */
 export function getTabWidths(rows: readonly { key: string; part: string; sectionLabel: string; pairTopOf?: string | null }[]): Map<string, number> {
+  const getLevelWidth = getLevelWidths(rows.map((row) => row.sectionLabel));
   const widths = new Map<string, number>();
   let part: string | null = null;
   let previous: number | null = null;
+  let previousLevel = 0;
   for (const row of rows) {
     if (row.part !== part) {
       part = row.part;
       previous = null;
+      previousLevel = 0;
     }
     const level = getSectionLevel(row.sectionLabel);
-    const own: number = level > 0 ? getPillWidth(level) : (previous ?? getPillWidth(1));
+    if (level > 0) previousLevel = level;
+    const bulletLevel = getBulletIndex(row.sectionLabel) >= 0 ? getBulletLevel(previousLevel, row.sectionLabel) : 0;
+    const own: number = level > 0 ? getLevelWidth(level) : bulletLevel > 0 ? getLevelWidth(bulletLevel) : (previous ?? getPillWidth(1));
     const width: number = (row.pairTopOf != null ? widths.get(row.pairTopOf) : undefined) ?? own;
     widths.set(row.key, width);
     previous = width;

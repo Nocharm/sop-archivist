@@ -1,7 +1,7 @@
 """떼어 내기 — 판단을 미배정으로, 출처 연결을 떼고, 같은 관계 묶음의 나머지와 그 단위의 번역을 정리한다(배정 지우기·쪼개기 편집·문서 삭제 공용, 새 문장 쪽은 칸 다시 묶기, 스펙 §7.5)."""
 
 from collections import defaultdict
-from collections.abc import Collection, Iterable, Sequence
+from collections.abc import Collection, Iterable, Mapping, Sequence
 from typing import Literal
 
 from pydantic import BaseModel
@@ -105,6 +105,43 @@ async def _settle_slot_headings(session: AsyncSession, targets: Iterable[TargetS
     for target_id, target in headings.items():
         if decisions[target_id]:  # 출처가 다 떠난 칸 제목은 떼어 내기가 이미 지웠다
             apply_slot_heading_status(target, decisions[target_id])
+
+
+def find_cell_bystanders(
+    targets: Iterable[TargetSentence], changed: Collection[int], translation_sources: Mapping[int, int]
+) -> set[int]:
+    """입구 2 칸 하나를 잇거나 떼는 일의 구경꾼 새 문장 — 바뀐 칸의 표 새 문장이 바뀌지 않았으면 그 표, 바뀌지 않은 자식(형제 칸·캡션),
+    그것들의 번역(translation_sources — 번역 id → 출처 새 문장 id).
+
+    입구 2 표는 표 ↔ 칸 연결로 표 전체가 한 관계 묶음이라(groups.collect_component) 칸 하나의 저장·떼어 내기에도 표 전체가 실린다.
+    구경꾼은 쓰지도 보류하지도 않는다 — 출처 없는 형제 칸이 신규로 확정되거나 다른 칸의 확정·AI 번역이 바뀌지 않게(시안 2 D5).
+    표 자체를 저장하는 일(표 잇기·AI 표 제안 확정)은 바뀐 칸이 없거나 표가 바뀌어 빈 집합이다.
+    """
+    rows = {target.id: target for target in targets}
+    tables = {
+        target.parent_target_id for target in rows.values()
+        if target.id in changed and target.origin == ORIGIN_NEW_DOC and target.parent_target_id is not None
+        and target.cell_row is not None and target.cell_col is not None
+    } - set(changed)
+    if not tables or not tables <= rows.keys():
+        return set()
+    found = tables | {
+        target.id for target in rows.values()
+        if target.origin == ORIGIN_NEW_DOC and target.parent_target_id in tables and target.id not in changed
+    }
+    return found | {
+        target_id for target_id, source_id in translation_sources.items()
+        if source_id in found and target_id in rows and target_id not in changed
+    }
+
+
+def list_bystander_units(sources: Mapping[int, Collection[int]], bystanders: Collection[int]) -> set[int]:
+    """출처로 둔 새 문장(sources — 새 문장 → 출처 단위)이 모두 구경꾼인 단위 — 그 판단은 쓰지도 보류하지도 않는다."""
+    sourced: dict[int, set[int]] = defaultdict(set)
+    for target_id, unit_ids in sources.items():
+        for unit_id in unit_ids:
+            sourced[unit_id].add(target_id)
+    return {unit_id for unit_id, target_ids in sourced.items() if target_ids <= set(bystanders)}
 
 
 def _should_hold(target: TargetSentence) -> bool:
@@ -248,7 +285,7 @@ async def detach_units(
     1) 연결 요소를 먼저 구하고 2) 판단이 있던 단위는 스냅숏을 남겨 미배정으로, 3) 출처 연결을 떼고(은퇴하는 새 문서 단위면 그
     입구 2 새 문장도 지운다), 4) 출처가 다 빠진 새 문장은 옛 단위에서 온 것이면 지우고 입구 2 것이면 미배정으로, 5) 나머지는 보류.
     다른 작성자가 확정한 것을 조용히 날리지 않고 사람이 다시 보게 하려는 규칙이다. cause는 이력에 남는 이유다(regrouped는 칸
-    문장이 다른 표·행으로 다시 묶인 것).
+    문장이 다른 표로 다시 묶인 것).
 
     번역은 출처 연결이 없어 따로 찾는다 — 건드린 단위를 옮긴 번역과, 지워지거나 출처를 잃은 새 문장의 번역이다. ai_suggested는
     제안째 지우고 나머지는 4)가 아닌 5)를 탄다. 출처가 그대로인 ai_suggested 번역은 표에 딸려 와도 그대로 둔다(_should_hold).
@@ -340,13 +377,20 @@ async def detach_units(
     for target_id in emptied:
         reset_target(targets[target_id])
 
+    # 칸 하나를 뗀 것이면 표·형제 칸과 그 출처는 보류하지 않는다(find_cell_bystanders)
+    bystanders = find_cell_bystanders(
+        (target for target_id, target in targets.items() if target_id not in deleted), changed,
+        {target.id: source_id for target, source_id in translations.items()},
+    )
+    idle_units = list_bystander_units({target_id: sources[target_id] - touched for target_id in sources}, bystanders)
     held_unit_ids = [
-        unit_id for unit_id in sorted(component_units - touched)
+        unit_id for unit_id in sorted(component_units - touched - idle_units)
         if unit_id in decisions and decisions[unit_id].status != UNASSIGNED
     ]
     held_target_ids = [
         target_id for target_id in sorted(targets)
-        if target_id not in deleted and target_id not in emptied and _should_hold(targets[target_id])
+        if target_id not in deleted and target_id not in emptied and target_id not in bystanders
+        and _should_hold(targets[target_id])
     ]
     for unit_id in held_unit_ids:
         _hold(decisions[unit_id])
@@ -366,7 +410,7 @@ async def detach_units(
 async def detach_targets(session: AsyncSession, *, bundle_id: int, target_ids: Collection[int]) -> DetachReport:
     """새 문장 쪽 떼어 내기(R32) — 출처 연결을 떼고 미배정이 아닌 것은 미배정으로, 같은 관계 묶음의 나머지는 보류. 커밋은 호출부가 한다.
 
-    새 문서 칸 문장이 다른 표·행으로 다시 묶이면 그 칸 새 문장은 새 부모 아래로 옮겨진다. 확정된 채 옮기면 표를 반만 확정한
+    새 문서 칸 문장이 다른 표로 다시 묶이면 그 칸 새 문장은 새 부모 아래로 옮겨진다. 확정된 채 옮기면 표를 반만 확정한
     꼴이 되므로 미배정으로 돌리고, 이어져 있던 옛 단위·새 문장은 지우지 않고 사람이 다시 보게 보류로 둔다.
     그 새 문장들의 번역은 출처가 바뀌었으니 먼저 쓸어 낸다. 다른 칸의 AI 번역은 출처가 그대로라 그대로 둔다(_should_hold).
     """

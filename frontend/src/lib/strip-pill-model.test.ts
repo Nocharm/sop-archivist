@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { getCardTops, getPairBrackets, getPillWidth, getHiddenPrefixLength, getSectionHeads, getSectionLevel, getSectionPill, getTabWidths, getVisibleSkip, PILL_WIDTH_BY_LEVEL, sliceVisible } from "@/lib/strip-pill-model";
+import { getCardTops, getLevelWidths, getPairBrackets, getPillWidth, getHiddenPrefixLength, getSectionHeads, getSectionLevel, getSectionPill, getTabWidths, getVisibleSkip, PILL_WIDTH_BY_LEVEL, sliceVisible } from "@/lib/strip-pill-model";
 
 describe("getSectionPill", () => {
   it("returns numeric section numbers only", () => {
@@ -92,6 +92,18 @@ describe("getTabWidths", () => {
     ]);
     expect([widths.get("a"), widths.get("c")]).toEqual([w(1), w(1)]);
   });
+  it("indents a bullet row one step past the number before, a step more per symbol", () => {
+    const widths = getTabWidths([
+      { key: "a", part: "body", sectionLabel: "•" },
+      { key: "b", part: "body", sectionLabel: "1.2" },
+      { key: "c", part: "body", sectionLabel: "" },
+      { key: "d", part: "body", sectionLabel: "•" },
+      { key: "e", part: "body", sectionLabel: "○" },
+      { key: "f", part: "body", sectionLabel: "▪" },
+      { key: "g", part: "footer", sectionLabel: "•" },
+    ]);
+    expect(["a", "d", "e", "f", "g"].map((key) => widths.get(key))).toEqual([w(1), w(3), w(4), w(5), w(1)]);
+  });
   it("makes a pair share its top row's width and passes it on", () => {
     const widths = getTabWidths([
       { key: "top", part: "body", sectionLabel: "1.2" },
@@ -99,6 +111,25 @@ describe("getTabWidths", () => {
       { key: "next", part: "body", sectionLabel: "" },
     ]);
     expect([widths.get("top"), widths.get("bottom"), widths.get("next")]).toEqual([w(2), w(2), w(2)]);
+  });
+  it("widens a whole level so its longest number fits, leaving other levels alone", () => {
+    const widths = getTabWidths([
+      { key: "a", part: "body", sectionLabel: "5.2.1" },
+      { key: "b", part: "body", sectionLabel: "5.2.1.1" },
+      { key: "c", part: "body", sectionLabel: "5.2.1.10." },
+      { key: "d", part: "footer", sectionLabel: "1.1.1.1" },
+    ]);
+    // "5.2.1.10." = 9 chars × 6.6px + 6px padding → 66px, more than the level-4 default
+    expect(widths.get("c")).toBe(66);
+    expect([widths.get("b"), widths.get("d")]).toEqual([66, 66]);
+    expect(widths.get("a")).toBe(w(3));
+  });
+});
+
+describe("getLevelWidths", () => {
+  it("falls back to the level default and ignores non-numeric labels", () => {
+    const getWidth = getLevelWidths(["Scope", "1", "1.1"]);
+    expect([getWidth(1), getWidth(2), getWidth(5)]).toEqual([PILL_WIDTH_BY_LEVEL[0], PILL_WIDTH_BY_LEVEL[1], PILL_WIDTH_BY_LEVEL[4]]);
   });
 });
 

@@ -3,14 +3,14 @@
 
 import asyncio
 import zipfile
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from io import BytesIO
 from typing import Annotated, Literal, Self
 from urllib.parse import quote
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, Path, Query, Response, UploadFile
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StringConstraints, model_validator
-from sqlalchemy import select
+from sqlalchemy import Row, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.clock import now
@@ -29,7 +29,7 @@ from app.sop.caption_refs import (
     update_caption_ref,
 )
 from app.sop.constants import LANGUAGE_LAYOUTS, MEMBER_ROLES
-from app.sop.counterparts import build_table_facts, count_table_langs, list_counterpart_options
+from app.sop.counterparts import build_table_facts, count_table_langs
 from app.sop.decision_steps import record_unit_edit_step
 from app.sop.detach import detach_units, find_units_needing_confirm
 from app.sop.editing import (
@@ -57,6 +57,7 @@ from app.sop.numbering import (
     get_content_start,
     get_hidden_len,
     get_number,
+    get_number_note,
     has_number_ranges,
 )
 from app.sop.membership import BundleContext, ensure_editable, lock_bundle, require_bundle_role
@@ -75,7 +76,13 @@ from app.sop.models import (
     UnitPairMember,
     UnitRef,
 )
-from app.sop.paragraph_excel import build_paragraph_rows, build_paragraph_workbook, load_unit_lines, make_sheet_name
+from app.sop.paragraph_excel import (
+    build_paragraph_file,
+    build_paragraph_preview,
+    build_paragraph_sheet,
+    load_unit_lines,
+    make_sheet_name,
+)
 from app.sop.part_groups import build_part_groups, get_part_group_key
 from app.sop.pairs import (
     PairIn,
@@ -86,13 +93,13 @@ from app.sop.pairs import (
     create_pair,
     delete_pair,
 )
-from app.sop.refs import RefState, build_ref_text, read_ref_state
+from app.sop.refs import RefState, build_ref_text, is_proposing_version, load_proposing_extractions, read_ref_state
 from app.sop.schemas import NO_NUL, NoNulStr
-from app.sop.segment import find_anchor_offset, is_band_table, read_table_place
+from app.sop.segment import find_anchor_offset, is_band_table, read_figure_inline, read_table_place
+from app.sop.sheet_model import Sheet
 from app.sop.status import get_cover_status
 from app.sop.tobe import MAX_DB_INT, release_match_doc, rename_match_doc, temp_match_code
 from app.sop.units import (
-    SEPARATE_LAYOUT,
     UNIT_ACTIVE,
     compute_display_id,
     get_latest_extraction_id,
@@ -224,8 +231,16 @@ class ViewTableOut(BaseModel):
     anchor: ViewTableAnchorOut | None
     # 칸 줄 언어가 많은 쪽 — "ko" | "en" | None(두 언어 표 · 빈 표). 한/영 따로 문서의 대응 표 판정에 쓴다(F8a)
     lang: str | None = None
-    # 한/영 따로 문서에서 아직 벗기지 않은 이 표와 함께 벗길 대응 표 후보(비슷한 차례, 맨 앞이 같은 꼴인 가장 비슷한 표) — 비면 묻지 않는다
-    counterparts: list[int] = []
+
+
+class ViewFigureAnchorOut(BaseModel):
+    """문장 속 그림이 놓인 자리 — 앞 글 블록(같은 문단의 문단 블록 · 칸 안 그림은 그 칸 블록)과 그 text 안 글자 자리(시안 2 D3, 신호 inline).
+
+    at은 그 블록의 text(써 넣은 자동 번호 포함, 단위 spans와 같은 좌표) 안 자리다 — 단위 글 안 자리는 at - span 시작.
+    """
+
+    block_id: int
+    at: int
 
 
 class ViewBlockOut(BaseModel):
@@ -251,6 +266,8 @@ class ViewBlockOut(BaseModel):
     has_image: bool
     # 이 블록이 속한 부분 묶음(DocumentViewOut.part_groups의 key) — 머리말·꼬리말은 부분 파일마다("header2"), 나머지는 part와 같다
     part_group: str
+    # 그림 블록만 — 문단 · 칸 글 안에 놓인 자리. 그림만 든 문단 · 추출기 7 전의 추출은 None
+    anchor: ViewFigureAnchorOut | None = None
 
 
 class ViewUnitRefOut(BaseModel):
@@ -279,6 +296,7 @@ class ViewNumberOut(BaseModel):
     is_set: bool  # 사람이 고쳤다(번호 없음 포함)
     content_start: int  # text에서 내용이 시작하는 자리 — 번호가 번호 칸으로 갔으면 그 뒤, 아니면 0
     typed_len: int  # 번호로 삼을 수 있는 글 앞 타자 번호의 글자 수 — 없거나 이미 번호면 0
+    note: str | None  # 번호 노트 — 사람이 원문과 다르게 고쳤으면 원문(읽은) 번호(numbering.get_number_note), 아니면 null
 
 
 class ViewUnitOut(BaseModel):
@@ -288,7 +306,7 @@ class ViewUnitOut(BaseModel):
     spans: list[tuple[int, int, int]]
     text: str
     lang: str
-    # 번호 칸이 없는 단위(그림·표·행·캡션·목차 줄)는 null
+    # 번호 칸이 없는 단위(그림·표·캡션·목차 줄)는 null
     number: ViewNumberOut | None
     table_id: int | None
     row_index: int | None
@@ -300,7 +318,7 @@ class ViewUnitOut(BaseModel):
     is_edited: bool
     # 합치기로 생겨 그 뒤 바뀌지 않은 단위 — 합치기 전 단위들로 되돌릴 수 있다(편집 unmerge)
     can_unmerge: bool
-    # 단위 자리의 블록 — 범위가 없는 표·행·캡션 없는 그림도 어느 블록(그림 이미지)인지 알 수 있게
+    # 단위 자리의 블록 — 범위가 없는 표·캡션 없는 그림도 어느 블록(그림 이미지)인지 알 수 있게
     pos_seq: int
     block_id: int
     # 이 단위에 걸린 열린 AI 나누기 제안(적용됐고 사람이 아직 채택·거절하지 않은 것) — 없으면 null
@@ -315,6 +333,10 @@ class ViewUnitOut(BaseModel):
     from_heading: bool = False
     # 캡션 하나를 같이 쓰는 그림 묶음(F7 ⑥)의 첫 그림 — 이 그림이 그 그림의 캡션을 같이 쓴다. 첫 그림 자신·묶이지 않은 단위는 null
     caption_figure_id: int | None = None
+    # 짝 카드 안 순서(pair_order.py, 편집 reorder_pair) — 바꾼 적 없으면 null(원문 순서)
+    pair_seq: int | None = None
+    # 벗긴 표 덩이 안 줄 순서(unwrap_order.py, 편집 reorder_unwrapped) — 바꾼 적 없으면 null(원문 앞 줄의 값을 빌린다)
+    unwrap_seq: int | None = None
 
 
 def _to_ref_out(state: RefState | None) -> ViewUnitRefOut | None:
@@ -417,11 +439,10 @@ async def _build_view_tables(
 ) -> list[ViewTableOut]:
     """표 목록 — 안쪽 표는 바깥 칸 블록의 문단 시작 자리(블록 신호 paras)로 놓인 글자 자리를 함께 싣는다(F2).
 
-    표마다 칸 줄 언어와, 한/영 따로 문서면 함께 벗길 대응 표 후보도 싣는다(F8a) — 단위는 이미 읽은 활성 단위다(쿼리를 더하지 않는다).
+    표마다 칸 줄 언어도 싣는다(F8a) — 단위는 이미 읽은 활성 단위다(쿼리를 더하지 않는다).
     """
     facts = build_table_facts(tables, count_table_langs((unit.table_id, unit.lang) for unit in units))
     lang_by_table = {table.id: table.lang for table in facts}
-    options = list_counterpart_options(facts) if document.language_layout == SEPARATE_LAYOUT else {}
     places = {table.id: place for table in tables if (place := read_table_place(table.signals)) is not None}
     parents = {table.parent_table_id for table in tables if table.id in places}
     cells: dict[tuple[int, int, int], tuple[int, dict | None]] = {}
@@ -448,9 +469,26 @@ async def _build_view_tables(
                 id=table.id, table_index=table.table_index, parent_table_id=table.parent_table_id, part=table.part,
                 n_rows=table.n_rows, n_cols=table.n_cols, is_layout=table.is_layout,
                 is_band=is_band_table(table.signals), anchor=anchor, lang=lang_by_table[table.id],
-                counterparts=options.get(table.id, []),
             )
         )
+    return out
+
+
+def _build_view_blocks(rows: Iterable[Row]) -> list[ViewBlockOut]:
+    """seq 순 블록 행 → 응답 블록. 그림 블록의 자리 신호(inline)는 앞선 가장 가까운 그림 아닌 블록의 글자 자리로 싣는다."""
+    out: list[ViewBlockOut] = []
+    host_id: int | None = None
+    for row in rows:
+        fields = dict(row._mapping)
+        signals = fields.pop("signals")
+        anchor = None
+        if row.kind == "figure":
+            at = read_figure_inline(signals)
+            if at is not None and host_id is not None:
+                anchor = ViewFigureAnchorOut(block_id=host_id, at=at)
+        else:
+            host_id = row.id
+        out.append(ViewBlockOut(**fields, part_group=get_part_group_key(row.part, row.xml_path), anchor=anchor))
     return out
 
 
@@ -475,13 +513,12 @@ async def build_document_view(session: AsyncSession, document: Document) -> Docu
             SourceBlock.page, SourceBlock.page_basis, SourceBlock.section_label, SourceBlock.heading_level,
             SourceBlock.table_id, SourceBlock.row_index, SourceBlock.col_index, SourceBlock.grid_span,
             SourceBlock.row_span, SourceBlock.flags, SourceBlock.image_part.is_not(None).label("has_image"),
+            SourceBlock.signals,
         )
         .where(SourceBlock.extraction_id == extraction.id)
         .order_by(SourceBlock.seq)
     )
-    blocks = [
-        ViewBlockOut(**row._mapping, part_group=get_part_group_key(row.part, row.xml_path)) for row in block_rows
-    ]
+    blocks = _build_view_blocks(block_rows)
     block_id_by_seq = {block.seq: block.id for block in blocks}
     units = (await session.scalars(
         select(Unit)
@@ -522,12 +559,11 @@ async def build_document_view(session: AsyncSession, document: Document) -> Docu
     refs_by_unit: dict[int, list[CaptionRefOut]] = {}
     for ref_id, unit_id in find_covering_unit_ids(ref_rows, units).items():
         refs_by_unit.setdefault(unit_id, []).append(ref_outs[ref_id])
+    extractor_version = await session.scalar(select(Extraction.extractor_version).where(Extraction.id == extraction.id)) or ""
     return DocumentViewOut(
         document=document_out,
         extraction=extraction,
-        has_number_ranges=has_number_ranges(
-            await session.scalar(select(Extraction.extractor_version).where(Extraction.id == extraction.id)) or ""
-        ),
+        has_number_ranges=has_number_ranges(extractor_version),
         tables=await _build_view_tables(session, document, extraction.id, list(tables), blocks, units),
         blocks=blocks,
         part_groups=[
@@ -559,11 +595,13 @@ async def build_document_view(session: AsyncSession, document: Document) -> Docu
                 pos_seq=unit.pos_seq,
                 block_id=unit.spans[0][0] if unit.spans else block_id_by_seq[unit.pos_seq],
                 split_suggestion_id=split_suggestions.get(unit.id),
-                ref=_to_ref_out(read_ref_state(unit, ref_marks.get(unit.id))),
+                ref=_to_ref_out(read_ref_state(unit, ref_marks.get(unit.id), propose=is_proposing_version(extractor_version))),
                 caption_refs=refs_by_unit.get(unit.id, []),
                 noise_kind=unit.noise_kind,
                 from_heading=unit.from_heading,
                 caption_figure_id=unit.caption_figure_id,
+                pair_seq=unit.pair_seq,
+                unwrap_seq=unit.unwrap_seq,
             )
             for unit in units
         ],
@@ -786,7 +824,8 @@ async def get_unit_ref(
     document = await _get_document(session, ctx.bundle.id, doc_id)
     extraction_id = await get_latest_extraction_id(session, document.id)
     unit = (await load_active_units(session, extraction_id, [unit_id]))[unit_id]
-    state = read_ref_state(unit, await session.get(UnitRef, unit.id))
+    proposing = await load_proposing_extractions(session, [extraction_id])
+    state = read_ref_state(unit, await session.get(UnitRef, unit.id), propose=extraction_id in proposing)
     if state is None or not state.number:
         return UnitRefDetailOut(state=state.state if state else None)
     lookups = await equis_service.load_lookups(session, [state.number])
@@ -809,6 +848,7 @@ def _to_number_out(unit: Unit) -> ViewNumberOut | None:
     return ViewNumberOut(
         value=get_number(unit), read=unit.number_read, source=unit.number_source, is_set=unit.number_set is not None,
         content_start=get_content_start(unit.text, hidden), typed_len=unit.number_len if is_typed_text else 0,
+        note=get_number_note(unit),
     )
 
 
@@ -950,13 +990,29 @@ async def _respond_paragraphs(
     """문서마다 시트 하나인 문단 Excel 응답 — 시트 이름은 문서 번호(없으면 제목)."""
     taken: set[str] = set()
     sheets = [
-        (make_sheet_name(document.doc_code or document.title, taken),
-         build_paragraph_rows(await load_unit_lines(session, document), include_tables))
+        build_paragraph_sheet(
+            await load_unit_lines(session, document), include_tables, make_sheet_name(document.doc_code or document.title, taken)
+        )
         for document in documents
     ]
-    content = await asyncio.to_thread(build_paragraph_workbook, sheets)
+    content = await asyncio.to_thread(build_paragraph_file, sheets)
     headers = {"Content-Disposition": build_content_disposition(build_export_file_name(bundle_id, file_title, now()))}
     return Response(content=content, media_type=_XLSX_MEDIA_TYPE, headers=headers)
+
+
+@router.get("/{bundle_id}/documents/{doc_id}/paragraphs/preview", response_model=Sheet)
+async def get_paragraphs_preview(
+    doc_id: IdPath,
+    tables: bool = Query(True),
+    around: Annotated[int | None, Query(ge=1, le=MAX_DB_INT)] = None,
+    ctx: BundleContext = Depends(_require_member),
+    session: AsyncSession = Depends(get_session),
+) -> Sheet:
+    """Assign Space 미리 보기(한 단 보기) — 문서 하나의 문단 Excel 시트(받을 파일과 같은 줄)를 around 단위를 가운데로
+    MAX_PREVIEW_ROWS줄까지(Excel A 미리 보기와 같은 창 계약). Old · New 어느 쪽 문서든."""
+    document = await _get_document(session, ctx.bundle.id, doc_id)
+    lines = await load_unit_lines(session, document)
+    return build_paragraph_preview(lines, tables, make_sheet_name(document.doc_code or document.title, set()), around)
 
 
 @router.get("/{bundle_id}/documents/{doc_id}/paragraphs.xlsx")
@@ -966,7 +1022,7 @@ async def download_document_paragraphs(
     ctx: BundleContext = Depends(_require_member),
     session: AsyncSession = Depends(get_session),
 ) -> Response:
-    """문서 하나의 문단 Excel — 쪼갠 단위 한 줄씩 한 열(Assign 문서 대시보드). tables=false면 표 칸 문장을 뺀다."""
+    """문서 하나의 문단 Excel — 쪼갠 단위 한 줄씩 다섯 열(Assign 문서 대시보드). tables=false면 아직 표인 표를 뺀다."""
     document = await _get_document(session, ctx.bundle.id, doc_id)
     title = f"{document.doc_code or document.title}_paragraphs"
     return await _respond_paragraphs(session, ctx.bundle.id, [document], tables, title)

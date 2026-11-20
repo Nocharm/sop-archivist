@@ -111,7 +111,7 @@ class UnitInfo:
     table_id: int | None
     row_index: int | None
     order_key: tuple[int, ...]
-    # 자리 블록 — 첫 범위의 블록, 범위가 없는 표·행·캡션 없는 그림은 자리(pos_seq)의 블록(R18)
+    # 자리 블록 — 첫 범위의 블록, 범위가 없는 표·캡션 없는 그림은 자리(pos_seq)의 블록(R18)
     block_id: int
     spans: tuple[tuple[int, int, int], ...] = ()  # (블록 id, 시작, 끝) — 표·그림 참조 자리를 덮는 단위를 찾는다
     # 문단 번호 열(units.number_*, numbering.py가 읽는다) — 결과물 A의 위치·원문 칸이 쓴다
@@ -504,14 +504,13 @@ async def load_target_docs(session: AsyncSession, bundle_id: int) -> dict[int, T
 
 
 class RowProgress(BaseModel):
-    """줄(짝 하나·짝 없는 판단 단위 하나) 상태별 수 — 배정 화면의 줄과 같은 규칙. 묶인 칸 문장은 표·행 줄에 들어 세지 않는다.
+    """줄(짝 하나·짝 없는 판단 단위 하나) 상태별 수 — 배정 화면의 줄과 같은 규칙. 묶인 칸 문장은 표 줄에 들어 세지 않는다.
 
     single_language는 줄이 아니라 단위 수다 — 두 언어 문서에서 짝도 다른 언어 새 문장도 없는 글(문장·제목, 배정한 묶음의 캡션).
     """
 
     total: int = 0
     unassigned: int = 0
-    ai_suggested: int = 0
     confirmed: int = 0
     on_hold: int = 0
     single_language: int = 0

@@ -1,13 +1,16 @@
-// 공통 끌기 엔진 시험 - 판단 함수(문턱·가장자리·시작 조건)와 DOM 동작(표·표시·클릭 삼키기·Esc·Alt 모드).
+// 공통 끌기 엔진 시험 - 판단 함수(문턱·가장자리·시작 조건)와 DOM 동작(표·표시·상태 글·놓을 자리 선·클릭 삼키기·Esc·Alt 모드).
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+  applyCardDest,
   attachBoxDrag,
+  buildCard,
   canStartDrag,
   getCardLeft,
   getEdgeScrollDir,
   hasPassedThreshold,
   isBoxDragActive,
+  isPressForConfig,
   pickUnderPoint,
   type BoxDragConfig,
   type DragHover,
@@ -30,6 +33,29 @@ describe("drag decisions", () => {
   it("getCardLeft: right of the pointer, flipped to its left when the card would leave the window, never past the left edge", () => {
     const left = (x: number, width: number) => getCardLeft(x, width, 1120);
     expect([left(500, 300), left(806, 300), left(807, 300), left(1100, 300), left(200, 1200)]).toEqual([514, 820, 493, 786, 0]);
+  });
+});
+
+describe("buildCard", () => {
+  it("builds one line - id, text, count, then a hidden destination slot - with text as text only", () => {
+    const view = buildCard({ id: "A1", text: "<b>x</b>", count: "3 lines" });
+    expect([...view.el.children].map((el) => el.className)).toEqual(["drag-card-id", "drag-card-text", "drag-card-count", "drag-card-dest"]);
+    expect(view.el.querySelector("b")).toBeNull();
+    expect(view.dest.hidden).toBe(true);
+    expect([...buildCard({ id: "A1", text: "t", count: null }).el.children].map((el) => el.className)).toEqual(["drag-card-id", "drag-card-text", "drag-card-dest"]);
+  });
+  it("applyCardDest shows the short destination only where it can land; refusals and nowhere hide it", () => {
+    const view = buildCard({ id: "A1", text: "t", count: null });
+    applyCardDest(view, { state: "ok", note: "Parent SOP: SOP-PH", dest: "→ SOP-PH" });
+    expect([view.dest.hidden, view.dest.textContent]).toEqual([false, "→ SOP-PH"]);
+    applyCardDest(view, { state: "refused", note: "why", dest: "→ SOP-PH" });
+    expect([view.dest.hidden, view.dest.textContent]).toEqual([true, ""]);
+    applyCardDest(view, { state: "ok", dest: "→ 5.2 · indent" });
+    expect(view.dest.textContent).toBe("→ 5.2 · indent");
+    applyCardDest(view, { state: "ok", note: "go" });
+    expect(view.dest.hidden).toBe(true);
+    applyCardDest(view, { state: "none", dest: "→ x" });
+    expect(view.dest.hidden).toBe(true);
   });
 });
 
@@ -69,6 +95,7 @@ describe("attachBoxDrag", () => {
     return config;
   }
   const card = () => document.querySelector<HTMLElement>('[data-testid="drag-card"]');
+  const status = () => document.querySelector<HTMLElement>('[data-testid="drag-status"]');
 
   beforeEach(() => {
     root = document.createElement("div");
@@ -84,6 +111,22 @@ describe("attachBoxDrag", () => {
     window.getSelection()?.removeAllRanges();
     html.removeAttribute("data-box-drag");
     html.removeAttribute("data-box-select");
+  });
+
+  it("a handle press goes only to the handle drag, a press elsewhere only to the whole-box drag", () => {
+    expect([isPressForConfig(true, true), isPressForConfig(false, false), isPressForConfig(true, false), isPressForConfig(false, true)]).toEqual([true, true, false, false]);
+    const handle = document.createElement("span");
+    handle.dataset.dragHandle = "";
+    box.append(handle);
+    const wholePicks: EventTarget[] = [];
+    const gripPicks: EventTarget[] = [];
+    attach({ pick: (event) => (wholePicks.push(event.target!), null) });
+    const detachGrip = attachBoxDrag(root, { handleOnly: true, pick: (event) => (gripPicks.push(event.target!), null), getCard: () => ({ id: "", text: "", count: null }), getScrollers: () => [], onMove: () => ({ state: "none" }), onDrop: () => {} });
+    press(handle);
+    press(box.querySelector("p")!);
+    detachGrip();
+    expect(wholePicks).toEqual([box.querySelector("p")]);
+    expect(gripPicks).toEqual([handle]);
   });
 
   it("a press released within 4px stays a click", () => {
@@ -298,22 +341,87 @@ describe("attachBoxDrag", () => {
     expect(clicks).toHaveBeenCalledTimes(1);
   });
 
-  it("shows a refusal on the card and the target", () => {
+  it("shows a refusal on the card, the cursor flag and the target; the reason goes to the status text, not the card", () => {
     const target = document.createElement("div");
     document.body.append(target);
-    const answers: DragHover[] = [{ state: "refused", note: "why", target }, { state: "ok", target }];
+    const answers: DragHover[] = [{ state: "refused", note: "why", target }, { state: "ok", note: "go", dest: "→ go", target }];
     attach({ onMove: () => answers.shift() ?? { state: "ok", target } });
     press(box);
     move(30, 10);
     expect(card()!.hasAttribute("data-refused")).toBe(true);
-    expect(card()!.textContent).toContain("why");
+    expect(html.getAttribute("data-box-drag")).toBe("refused");
+    expect(card()!.textContent).not.toContain("why");
+    expect(status()!.textContent).toBe("why");
+    expect(status()!.getAttribute("role")).toBe("status");
     expect(target.dataset.drop).toBe("refused");
+    expect(card()!.querySelector<HTMLElement>(".drag-card-dest")!.hidden).toBe(true);
     move(31, 10);
     expect(target.dataset.drop).toBe("over");
     expect(card()!.hasAttribute("data-refused")).toBe(false);
-    release(31, 10);
+    expect(html.getAttribute("data-box-drag")).toBe("");
+    expect(status()!.textContent).toBe("go");
+    expect(card()!.querySelector(".drag-card-dest")!.textContent).toBe("→ go");
+    move(32, 10);
+    expect(status()!.textContent).toBe("");
+    release(32, 10);
     expect(target.hasAttribute("data-drop")).toBe(false);
+    expect(status()!.textContent).toBe("");
     target.remove();
+  });
+
+  it("keeps one status text while attached and removes it with the last detach", () => {
+    attach();
+    const second = attachBoxDrag(document.createElement("div"), { pick: () => null, getCard: () => ({ id: "", text: "", count: null }), getScrollers: () => [], onMove: () => ({ state: "none" }), onDrop: () => {} });
+    expect(document.querySelectorAll('[data-testid="drag-status"]').length).toBe(1);
+    second();
+    expect(status()).not.toBeNull();
+    detach!();
+    detach = null;
+    expect(status()).toBeNull();
+  });
+
+  it("dropping on a refused place reports the reason once; an ok place, a silent refusal or Esc do not", () => {
+    const onRefusedDrop = vi.fn();
+    let hover: DragHover = { state: "refused", note: "why" };
+    const config = attach({ onMove: () => hover, onRefusedDrop });
+    press(box);
+    move(30, 10);
+    move(31, 10);
+    release(31, 10);
+    expect(config.onDrop).toHaveBeenCalledTimes(1);
+    expect(onRefusedDrop).toHaveBeenCalledTimes(1);
+    expect(onRefusedDrop).toHaveBeenCalledWith("why");
+    for (const next of [{ state: "ok", note: "go" }, { state: "refused" }] as DragHover[]) {
+      hover = next;
+      press(box);
+      move(30, 10);
+      release(30, 10);
+    }
+    hover = { state: "refused", note: "why" };
+    press(box);
+    move(30, 10);
+    key("keydown", "Escape");
+    expect(onRefusedDrop).toHaveBeenCalledTimes(1);
+  });
+
+  it("draws one drop line in the root from the hover, hides it without one and removes it at the end", () => {
+    root.getBoundingClientRect = () => ({ left: 100, top: 50, right: 900, bottom: 650, width: 800, height: 600, x: 100, y: 50, toJSON: () => ({}) });
+    const answers: DragHover[] = [{ state: "none" }, { state: "ok", line: { left: 120, top: 80, width: 300 } }, { state: "ok", line: { left: 130, top: 90, width: 200 } }, { state: "none" }];
+    attach({ onMove: () => answers.shift() ?? { state: "none" } });
+    const line = () => root.querySelector<HTMLElement>('[data-testid="drop-line"]');
+    press(box);
+    move(30, 10);
+    expect(line()).toBeNull();
+    move(31, 10);
+    expect(line()!.hidden).toBe(false);
+    expect([line()!.style.left, line()!.style.top, line()!.style.width]).toEqual(["20px", "30px", "300px"]);
+    move(32, 10);
+    expect(root.querySelectorAll('[data-testid="drop-line"]').length).toBe(1);
+    expect([line()!.style.left, line()!.style.top, line()!.style.width]).toEqual(["30px", "40px", "200px"]);
+    move(33, 10);
+    expect(line()!.hidden).toBe(true);
+    release(33, 10);
+    expect(line()).toBeNull();
   });
 
   it("blur mid-drag cancels it and swallows the following click", async () => {

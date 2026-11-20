@@ -16,6 +16,7 @@ from app.sop import constants
 from app.sop.caption_slot import CAPTION_REACH, PlaceBlock, build_block_places
 from app.sop.numbering import MAX_NUMBER_CHARS, plan_follow
 from app.sop.outputs import get_bullet_depths, number_lines
+from app.sop.unwrap_order import order_unwrapped, order_unwrapped_lines
 
 OUT = Path(__file__).resolve().parents[2] / "frontend" / "src" / "lib" / "rule-cases.json"
 
@@ -49,6 +50,31 @@ BULLET_INPUTS: list[list[tuple[str, int]]] = [
     [("bullet", 2), ("bullet", 2)],  # first bullet line reads as 0
     [("bullet", 0), ("numbered", 3), ("bullet", 1), ("omitted", 0), ("bullet", 2)],
     [("numbered", 0), ("note", 1), ("bullet", 1)],
+]
+
+# (unit id, unwrap_seq, source position) per line of one unwrapped table block, given out of source order on purpose.
+UNWRAP_ORDER_INPUTS: list[list[tuple[int, int | None, int]]] = [
+    [(1, None, 0), (2, None, 1), (3, None, 2)],  # never reordered: source order
+    [(1, 2, 0), (2, 0, 1), (3, 1, 2)],  # reordered
+    [(1, 1, 0), (4, None, 1), (5, None, 2), (3, 0, 3)],  # lines still without a value borrow the line before them
+    [(4, None, 0), (2, 0, 1), (3, 1, 2)],  # nothing to borrow at the top: before every set line
+    [(3, 0, 2), (1, None, 0), (2, 1, 1)],  # positions decide the borrowing, not list order
+    [(1, 1, 0), (2, 2, 1), (6, 0, 2), (7, 0, 3)],  # split pieces inherit the moved line's value: they stay on top in source order
+    [(1, 2, 0), (7, 0, 1), (5, 1, 3)],  # a join keeps the first joined line's value
+    [(1, 0, 0), (2, 0, 1), (3, None, 2)],  # stale equal values keep source order
+]
+
+# Items in the order on screen: (id, line unit or None, block of that line or None); lines' seqs. Items of one line move together.
+UNWRAP_LINES_INPUTS: list[tuple[list[tuple[int, int | None, int | None]], dict[int, int]]] = [
+    (
+        [(10, None, None), (20, 20, 7), (21, 21, 7), (30, 30, 7), (31, 30, 7), (32, 30, 7), (22, 22, 7), (50, 50, 7),
+         (40, 40, 7), (41, 41, 7)],
+        {40: 0, 20: 1, 21: 2, 30: 3, 22: 4, 50: 5, 41: 6},
+    ),
+    (
+        [(20, 20, 7), (21, 21, 7), (31, 31, 8), (32, 32, 8), (22, 22, 7)],  # an inner unwrapped table keeps its slots
+        {22: 0, 20: 1, 21: 2, 32: 0},
+    ),
 ]
 
 # Blank-text judgment must match segment.is_blank_char: Python str.isspace() plus INVISIBLE_CHARS.
@@ -114,6 +140,26 @@ def build_rule_cases() -> dict[str, Any]:
                 "depths": get_bullet_depths([SimpleNamespace(number_style=style, indent_level=level) for style, level in items]),
             }
             for items in BULLET_INPUTS
+        ],
+        "unwrap_order": [
+            {
+                "lines": [{"id": unit_id, "seq": seq, "pos": pos} for unit_id, seq, pos in lines],
+                "order": [line[0] for line in order_unwrapped(lines, lambda line: line[1], lambda line: (line[2],))],
+            }
+            for lines in UNWRAP_ORDER_INPUTS
+        ],
+        "unwrap_lines": [
+            {
+                "items": [{"id": item_id, "line": line, "block": block} for item_id, line, block in items],
+                "seqs": {str(line): seq for line, seq in sorted(seqs.items())},
+                "order": [
+                    item[0]
+                    for item in order_unwrapped_lines(
+                        items, lambda item: item[1], {item[1]: item[2] for item in items}.get, seqs.get
+                    )
+                ],
+            }
+            for items, seqs in UNWRAP_LINES_INPUTS
         ],
     }
 

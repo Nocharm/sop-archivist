@@ -29,8 +29,8 @@ _NEWLINE_RE = re.compile(r"\r\n|\r|\n")
 
 @dataclass(frozen=True)
 class UnitContext:
-    """단위 하나의 맥락 — 앞뒤 단위 글(원문 순서), 소속 절 이름, 표·표 행 단위면 칸 격자 Markdown(아니면 빈 글),
-    표·행·그림 단위면 묶인 캡션 글(문서 순서로 줄을 바꿔 잇는다, 없으면 빈 글)."""
+    """단위 하나의 맥락 — 앞뒤 단위 글(원문 순서), 소속 절 이름, 표 단위면 칸 격자 Markdown(아니면 빈 글),
+    표·그림 단위면 묶인 캡션 글(문서 순서로 줄을 바꿔 잇는다, 없으면 빈 글)."""
 
     section: str
     before: tuple[str, ...]
@@ -153,7 +153,6 @@ async def load_unit_context(session: AsyncSession, unit_ids: Sequence[int]) -> d
     for row in cell_rows:
         cells_by_table[row.table_id].append(row)
 
-    # 표 하나를 쓰는 단위가 여럿(표 행 단위 여럿)이어도 표마다 한 번만 그린다
     markdown_by_table = {table_id: _render_table_context(cells) for table_id, cells in cells_by_table.items()}
 
     # 새 추출의 그림 단위는 글이 비어 캡션이 그 그림을 말해 주는 유일한 글이다 — 캡션은 묶여 있어 이웃으로도 실리지 않는다

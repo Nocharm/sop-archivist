@@ -58,7 +58,6 @@ type TFunc = (key: string, vars?: Record<string, string | number>) => string;
 // 배정 현황 막대·표의 상태 순서와 채움 색 - 확정이 먼저, 미배정이 마지막
 const COVER_STATES = [
   { key: "confirmed", fill: "var(--st-ok-fill)" },
-  { key: "ai_suggested", fill: "var(--st-ai-fill)" },
   { key: "on_hold", fill: "var(--st-hold-fill)" },
   { key: "unassigned", fill: "var(--st-none-fill)" },
 ] as const;
@@ -112,7 +111,7 @@ function buildGateLines(readiness: Readiness, semanticTotal: number, t: TFunc): 
   const unresolved = findIssue(blockers, "unresolved_documents");
   const units = sumCounts(blockers, "units_");
   const targets = sumCounts(blockers, "targets_");
-  const reasons = sumCounts(blockers, "duplicate_without_reason") + sumCounts(blockers, "missing_reason");
+  const reasons = sumCounts(blockers, "duplicate_without_reason");
   const warnings = findIssue(blockers, "unacked_missing_text");
   const versions = findIssue(blockers, "missing_doc_versions");
   const semantic = findIssue(blockers, "semantic_checks_incomplete");

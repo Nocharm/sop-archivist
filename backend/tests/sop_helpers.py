@@ -166,7 +166,7 @@ def get_group_by_unit(client: TestClient, bundle_id: int, unit_id: int, headers:
     return response.json()
 
 
-BUNDLE_KINDS = ("table", "table_row", "figure")
+BUNDLE_KINDS = ("table", "figure")
 WRITTEN_CAPTION = "Synthetic caption"  # assign_as_is가 캡션 없는 묶음을 확정할 때 써 넣는 캡션
 
 
@@ -189,7 +189,7 @@ def build_as_is_targets(
 ) -> tuple[list[dict], list[int]]:
     """view 단위 하나를 원문 그대로 보내는 새 문장(key "t")과 그 묶음에 딸린 캡션 단위 id — 캡션 새 문장은 넣지 않는다.
 
-    표·행 단위면 원래 격자의 표 새 문장과 칸 문장마다 같은 자리의 칸 새 문장을, 그림이면 그림 새 문장을 만든다.
+    표 단위면 원래 격자의 표 새 문장과 칸 문장마다 같은 자리의 칸 새 문장을, 그림이면 그림 새 문장을 만든다.
     location은 칸 키·WI 단계·부분(slot_key·wi_step·wi_part)이고 칸 새 문장도 표와 같은 자리에 둔다.
     """
     group = get_group_by_unit(client, bundle_id, unit["id"])
@@ -213,9 +213,7 @@ def _build_as_is_targets(
         return targets, caption_ids
     table = next(table for table in view["tables"] if table["id"] == unit["table_id"])
     blocks = {block["id"]: block for block in view["blocks"]}
-    # 행 단위의 표는 그 행 하나짜리 격자이고 칸 좌표도 그 행 기준이다
-    is_row = unit["kind"] == "table_row"
-    target.update(kind="table", grid={"rows": 1 if is_row else table["n_rows"], "cols": table["n_cols"]})
+    target.update(kind="table", grid={"rows": table["n_rows"], "cols": table["n_cols"]})
     for cell_id in entry["cell_unit_ids"]:
         if cell_id in caption_ids:
             continue
@@ -223,7 +221,7 @@ def _build_as_is_targets(
         targets.append({
             "key": f"cell-{cell_id}", "target_doc_id": target_doc_id, **location, "parent_key": "t",
             "source_unit_ids": [cell_id],
-            "cell_row": block["row_index"] - (unit["row_index"] if is_row else 0), "cell_col": block["col_index"],
+            "cell_row": block["row_index"], "cell_col": block["col_index"],
         })
     return targets, caption_ids
 

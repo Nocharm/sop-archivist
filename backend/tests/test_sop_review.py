@@ -232,20 +232,18 @@ def test_blockers_cover_each_condition(client: TestClient, spoil: Callable[[Test
 
 
 def test_blockers_come_from_stored_state(client: TestClient) -> None:
-    """AI 제안 단위와 새 문장의 상태는 계획 1 API로 만들 수 없어 DB에 직접 써서 확인한다 — 새 문장마다 한 번 센다."""
+    """새 문장의 상태는 DB에 직접 써서 확인한다 — 새 문장마다 한 번 센다. 확정 안 한 AI 번역 줄(ai_suggested)은 새 문장 쪽에서 막는다."""
     fx = _make_ready(client)
     target_id = {
         text: get_group_by_unit(client, fx.bundle_id, _unit_id(fx, text))["targets"][0]["id"] for text in (KO_1, EN_1)
     }
-    update_row(UnitDecision, _unit_id(fx, KO_1), status="ai_suggested")
     update_row(TargetSentence, target_id[EN_1], status="on_hold", hold_reason=HOLD_REASON)
-    update_row(TargetSentence, target_id[KO_1], status="unassigned")
+    update_row(TargetSentence, target_id[KO_1], status="ai_suggested")
 
     blockers = _get_readiness(client, fx.bundle_id)["blockers"]
 
     assert blockers == [
-        {"code": "units_ai_suggested", "count": 1},
-        {"code": "targets_unassigned", "count": 1},
+        {"code": "targets_ai_suggested", "count": 1},
         {"code": "targets_on_hold", "count": 1},
     ]
 
@@ -286,18 +284,18 @@ def test_progress_and_readiness_count_the_same_rows(client: TestClient) -> None:
     assert (blockers["units_unassigned"], blockers["units_on_hold"]) == (progress["unassigned"], progress["on_hold"])
 
 
-def test_a_pair_of_held_and_ai_suggested_members_is_one_ai_suggested_row(client: TestClient) -> None:
-    """줄 상태 순서(미배정 < AI 제안 < 보류 < 확정)를 두 집계가 같이 쓴다 — 보류와 AI 제안이 섞인 짝은 AI 제안 한 줄이다."""
+def test_a_pair_of_held_and_unassigned_members_is_one_unassigned_row(client: TestClient) -> None:
+    """줄 상태 순서(미배정 < 보류 < 확정)를 두 집계가 같이 쓴다 — 보류와 미배정이 섞인 짝은 미배정 한 줄이다. 판단에는 AI 제안 상태가 없다."""
     fx = _setup(client)
     _pair_ko_1_with_en_1(client, fx)
     update_row(UnitDecision, _unit_id(fx, KO_1), status="on_hold", hold_reason=HOLD_REASON)
-    update_row(UnitDecision, _unit_id(fx, EN_1), status="ai_suggested")
 
     progress = get_bundle(client, fx.bundle_id)["progress"]
     blockers = {item["code"]: item.get("count") for item in _get_readiness(client, fx.bundle_id)["blockers"]}
 
-    assert (progress["ai_suggested"], progress["on_hold"], progress["unassigned"], progress["total"]) == (1, 0, 1, 2)
-    assert (blockers["units_ai_suggested"], blockers.get("units_on_hold")) == (1, None)
+    assert "ai_suggested" not in progress
+    assert (progress["on_hold"], progress["unassigned"], progress["total"]) == (0, 2, 2)
+    assert (blockers["units_unassigned"], blockers.get("units_on_hold")) == (2, None)
 
 
 def test_reason_blockers(client: TestClient) -> None:
@@ -332,28 +330,25 @@ def test_reason_blockers(client: TestClient) -> None:
     update_row(UnitDecision, ko_2["id"], reason="")
     update_row(UnitDecision, en_1["id"], reason="")
 
+    # 삭제·이동의 사유는 선택이라(요청서 4번) 막지 않고, 중복 배정의 사유만 막는다
     assert _get_readiness(client, fx.bundle_id)["blockers"] == [
         {"code": "duplicate_without_reason", "count": 1, "unit_ids": [en_1["id"]]},
-        {"code": "missing_reason", "count": 1, "unit_ids": [ko_2["id"]]},
     ]
 
 
-def test_table_restructured_needs_a_reason(client: TestClient) -> None:
-    """표 구성 변경은 표 단위 판단에 사유가 있어야 한다 — 저장 경로가 강제하는 사유를 DB에서 비워 확인한다."""
+def test_restructured_table_needs_no_reason(client: TestClient) -> None:
+    """표 구성을 바꾼 표(고침)도 사유는 선택이다 — 사유 없는 고침 표가 검토 요청을 막지 않는다(설계 2026-11-20-change-type-two D2)."""
     fx = _setup(client)
     table_doc = upload(client, fx.bundle_id, build_docx(tbl([["항목", "Item"], ["합성 값", "Synthetic value"]])), "SYNTHETIC_TABLE.docx")
     assert table_doc.status_code == 201, table_doc.text
     table = next(u for u in get_view(client, fx.bundle_id, table_doc.json()["id"])["units"] if u["kind"] == "table")
     assign_as_is(client, fx.bundle_id, table, fx.sop_id, slot_key="purpose")
     table_target = next(t for t in get_group_by_unit(client, fx.bundle_id, table["id"])["targets"] if t["kind"] == "table")
+    as_is_blockers = _get_readiness(client, fx.bundle_id)["blockers"]
 
-    update_row(TargetSentence, table_target["id"], change_type="table_restructured")
+    update_row(TargetSentence, table_target["id"], change_type="rewritten")
 
-    assert {"code": "missing_reason", "count": 1, "unit_ids": [table["id"]]} in _get_readiness(client, fx.bundle_id)[
-        "blockers"
-    ]
-    update_row(UnitDecision, table["id"], reason="Synthetic: columns merged")
-    assert "missing_reason" not in {b["code"] for b in _get_readiness(client, fx.bundle_id)["blockers"]}
+    assert _get_readiness(client, fx.bundle_id)["blockers"] == as_is_blockers
 
 
 def test_acking_the_warning_clears_the_blocker(client: TestClient) -> None:
@@ -772,8 +767,9 @@ def test_next_action_follows_the_first_unmet_condition(client: TestClient) -> No
     assert get_bundle(client, fx.bundle_id)["next_action"] == "add_reviewer"
     assert _put_checks(client, fx.bundle_id, numbers=False).status_code == 200
     assert get_bundle(client, fx.bundle_id)["next_action"] == "semantic_checks"
+    # 삭제의 사유는 선택이라(요청서 4번) 비워도 다음 할 일이 사유 채우기로 바뀌지 않는다
     update_row(UnitDecision, _unit_id(fx, KO_2), disposition="delete", reason="")
-    assert get_bundle(client, fx.bundle_id)["next_action"] == "fill_reasons"
+    assert get_bundle(client, fx.bundle_id)["next_action"] == "semantic_checks"
     _add_warning(fx)
     assert get_bundle(client, fx.bundle_id)["next_action"] == "ack_warnings"
     update_row(UnitDecision, _unit_id(fx, EN_1), status="on_hold", hold_reason=HOLD_REASON)

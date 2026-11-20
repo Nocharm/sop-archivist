@@ -5,18 +5,36 @@ REF는 KO·EN과 같은 자리(`Unit.lang`)에 둔다. 번호 영역은 사람�
 """
 
 import re
+from collections.abc import Collection, Sequence
 from dataclasses import dataclass
 from typing import Literal
 
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.equis.client import is_sendable_number
 from app.equis.rules import normalize_number
-from app.sop.models import Unit, UnitRef
+from app.sop.models import Extraction, Unit, UnitRef
 
 REF_LANG = "ref"
 REF_CONFIRMED = "confirmed"
 REF_REJECTED = "rejected"
-# 참조 줄이 될 수 있는 단위 — 그림·표·행은 번호 영역을 갖지 않는다
+# 참조 줄이 될 수 있는 단위 — 그림·표는 번호 영역을 갖지 않는다
 REF_KINDS = ("sentence", "heading", "cell_sentence")
+# 쪼개기가 Reference 절 아래 줄을 REF로 확정한 사람 표시(unit_refs.decided_by)
+REF_SPLIT_ACTOR = "system"
+# 이 추출기(extract.types.EXTRACTOR_VERSION)부터 쪼개기가 Reference 절 아래 줄을 REF로 확정하고, 글을 보고 제안하지 않는다
+# (요청서 12 · 14, 2026-11-19). 그 전에 올린 문서는 다시 올릴 때까지 전처럼 제안한다
+FIRST_SECTION_REF_VERSION = 6
+
+# Reference 절 제목 이름 — 번호를 뺀 제목 글(괄호 · 빗금으로 나뉜 조각 하나)이 이것과 같으면 그 절이다. 대소문자 · 빈칸은 무시(사용자 확인 2026-11-19)
+_REF_SECTION_NAME = re.compile(
+    r"references?|reference documents?|related documents?|associated documents?|work instructions?"
+    r"|참고 ?문헌|참고 ?문서|참조(?: ?문서)?|관련 ?문서|참고 ?자료",
+    re.IGNORECASE,
+)
+# 제목 앞 절 번호("7." · "7.1" · "(7)" · "VII.")
+_HEADING_NUMBER = re.compile(r"\s*(?:\(?\d+(?:\.\d+)*\.?\)?|[IVX]+\.)\s*")
 
 # 문서 번호 꼴(파일 이름에서 번호를 읽는 규칙과 같다, `filename.py`) — 영문 대문자 머리 + 하이픈 마디 + 숫자 끝
 _NUMBER_BODY = r"[A-Z]{2,}(?:-[A-Z0-9]{1,8})*-\d{1,6}"
@@ -41,6 +59,12 @@ def find_leading_number(text: str) -> str | None:
     """줄이 문서 번호로 시작하면 그 번호 — 참조 줄 제안의 근거."""
     found = _LEADING_NUMBER.match(text)
     return found.group(1) if found else None
+
+
+def read_leading_ref_number(text: str) -> str:
+    """줄 맨 앞 문서 번호를 조회할 수 있는 꼴로 — 없거나 조회할 수 없는 꼴이면 빈 글(번호 없는 참조 줄)."""
+    number = find_leading_number(text)
+    return (read_number_in_text(text, number) or "") if number else ""
 
 
 def read_number_in_text(text: str, number: str) -> str | None:
@@ -101,18 +125,106 @@ def check_ref_text(
     return "title" if current_number.upper() in _fold(text) else "number"
 
 
-def read_ref_state(unit: Unit, mark: UnitRef | None) -> RefState | None:
+def read_ref_state(unit: Unit, mark: UnitRef | None, *, propose: bool) -> RefState | None:
     """단위의 참조 상태 — REF로 확정됐는지, 앱이 제안하는지, 아무것도 아닌지.
 
     되돌리기는 언어만 되돌리고 표시(`unit_refs`)는 그대로 둔다. 그래서 언어가 먼저다: 언어가 REF면 확정, 아니면 사람이
-    "참조 아님"이라 한 것만 제안에서 빼고 나머지는 글을 다시 본다.
+    "참조 아님"이라 한 것만 제안에서 빼고 나머지는 글을 다시 본다. propose가 거짓이면(새 추출기, is_proposing_version) 글을 보고
+    제안하지 않는다 — Reference 절 아래 줄은 쪼갤 때 이미 확정됐다.
     """
     if unit.kind not in REF_KINDS:
         return None
     if unit.lang == REF_LANG:
         number = mark.number if mark is not None else normalize_number(find_leading_number(unit.text) or "")
         return RefState(REF_CONFIRMED, number)
-    if mark is not None and mark.state == REF_REJECTED:
+    if not propose or (mark is not None and mark.state == REF_REJECTED):
         return None
     number = find_leading_number(unit.text)
     return RefState("proposed", normalize_number(number)) if number else None
+
+
+def is_proposing_version(extractor_version: str) -> bool:
+    """그 추출의 REF를 글에서 제안하는가 — FIRST_SECTION_REF_VERSION 전 추출만(옛 추출은 Reference 절 확정이 없었다)."""
+    return not (extractor_version.isdigit() and int(extractor_version) >= FIRST_SECTION_REF_VERSION)
+
+
+async def load_proposing_extractions(session: AsyncSession, extraction_ids: Collection[int]) -> set[int]:
+    """REF를 글에서 제안하는 추출 id(is_proposing_version)."""
+    if not extraction_ids:
+        return set()
+    rows = await session.execute(
+        select(Extraction.id, Extraction.extractor_version).where(Extraction.id.in_(set(extraction_ids)))
+    )
+    return {extraction_id for extraction_id, version in rows if is_proposing_version(version)}
+
+
+def is_ref_section_heading(text: str) -> bool:
+    """제목이 Reference 절을 여는가 — 절 번호를 떼고, 괄호 · 빗금으로 나뉜 조각("참고 문헌 (References)") 하나라도 이름과 같으면."""
+    body = _HEADING_NUMBER.sub("", text, count=1)
+    parts = (" ".join(part.split()).strip(" :.-–") for part in re.split(r"[()/|]", body))
+    return any(part and _REF_SECTION_NAME.fullmatch(part) for part in parts)
+
+
+@dataclass(frozen=True)
+class SectionLine:
+    """Reference 절 찾기가 읽는 단위 하나(문서 순서) — level은 제목의 단계(모르면 None)."""
+
+    kind: str
+    text: str
+    lang: str
+    level: int | None
+    is_body: bool
+    is_noise: bool
+
+
+def find_ref_section_lines(lines: Sequence[SectionLine], *, interleaved: bool, separate: bool) -> list[int]:
+    """Reference 절 아래에서 REF로 확정할 글 줄(문장 · 칸 문장)의 자리 — 쪼갤 때 쓴다(요청서 12, 사용자 확인 2026-11-19).
+
+    절은 이름이 맞는 본문 제목에서 시작해 같거나 높은 단계의 다음 제목 전까지다(단계를 모르는 제목은 1단계로 본다). 한/영 따로
+    문서는 절반마다 절이 있어 이름이 맞는 제목을 모두 쓴다. 머리말 · 꼬리말과 목차 줄은 보지 않는다.
+    문서 번호로 시작하는 줄은 늘 REF다. 번호가 없는 줄은 한/영 짝이 없을 때만 REF다(EQUIS에 없는 참고 문서 "ISO 9001:2015") —
+    짝이 있는 문장("제조사 설명서를 참고한다." / "Refer to the manual.")은 보통 문장으로 둔다. 짝은 연달아 배치면 바로 다음 줄이
+    다른 언어인 것, 따로 배치면 절들의 한글 줄과 영어 줄을 차례로 맞춘 것이다. 한 언어 문서는 짝이 없다.
+    """
+    numbered: list[int] = []
+    prose: list[int] = []
+    level: int | None = None
+    for index, line in enumerate(lines):
+        if not line.is_body or line.is_noise:
+            continue
+        if line.kind == "heading":
+            own = line.level or 1
+            if is_ref_section_heading(line.text):
+                level = own
+            elif level is not None and own <= level:
+                level = None
+        elif level is not None and line.kind in ("sentence", "cell_sentence"):
+            (numbered if find_leading_number(line.text) else prose).append(index)
+    paired = _find_prose_partners(lines, prose, interleaved=interleaved, separate=separate)
+    return sorted([*numbered, *(index for index in prose if index not in paired)])
+
+
+def _find_prose_partners(
+    lines: Sequence[SectionLine], prose: Sequence[int], *, interleaved: bool, separate: bool
+) -> set[int]:
+    """번호 없는 줄 가운데 한/영 짝이 있는 줄의 자리."""
+    paired: set[int] = set()
+    if interleaved:
+        # 한글 줄마다 바로 다음 줄, 없으면 바로 앞 줄이 짝 없는 영어 줄이면 짝 — 앞의 번호 없는 영어 줄("ISO 9001")을 먼저 데려가지 않게
+        prose_set = set(prose)
+        for index in prose:
+            if lines[index].lang != "ko":
+                continue
+            partner = next(
+                (other for other in (index + 1, index - 1)
+                 if other in prose_set and other not in paired and lines[other].lang == "en"),
+                None,
+            )
+            if partner is not None:
+                paired.update((index, partner))
+    elif separate:
+        korean = [index for index in prose if lines[index].lang == "ko"]
+        english = [index for index in prose if lines[index].lang == "en"]
+        for left, right in zip(korean, english, strict=False):
+            paired.update((left, right))
+    return paired

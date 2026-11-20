@@ -32,10 +32,10 @@ NextAction = Literal[
 ]
 Issue = dict[str, object]
 
-PENDING_STATUSES = ("unassigned", "ai_suggested", "on_hold")  # 확정 전 상태 — 막는 이유 코드의 꼬리
-REASON_DISPOSITIONS = ("delete", "move_external")  # 사유가 필수인 처분
+# 확정 전 상태 — 막는 이유 코드의 꼬리. 판단은 사람만 써서 AI 제안 상태가 없고, 새 문장은 확정 안 한 AI 번역 줄이 AI 제안이다
+UNIT_PENDING_STATUSES = ("unassigned", "on_hold")
+TARGET_PENDING_STATUSES = ("unassigned", "ai_suggested", "on_hold")
 UNRESOLVED_DOC_STATUSES = ("rejected", "failed")
-TABLE_RESTRUCTURED = "table_restructured"
 
 
 class Readiness(BaseModel):
@@ -50,29 +50,14 @@ class Readiness(BaseModel):
 # --- 막는 이유와 알림 ---
 
 
-def _list_pending_blockers(subject: str, counts: Mapping[str, int]) -> list[Issue]:
-    """확정 전 상태(미배정·AI 제안·보류)별 건수 — 코드는 {subject}_{상태}."""
-    return [{"code": f"{subject}_{status}", "count": counts[status]} for status in PENDING_STATUSES if counts[status]]
+def _list_pending_blockers(subject: str, counts: Mapping[str, int], statuses: Iterable[str]) -> list[Issue]:
+    """확정 전 상태별 건수 — 코드는 {subject}_{상태}."""
+    return [{"code": f"{subject}_{status}", "count": counts[status]} for status in statuses if counts[status]]
 
 
 def _count_target_statuses(snap: BundleSnapshot) -> Counter[str]:
     """새 문장 상태 수 — 새 문장마다 한 번(언어를 가르지 않는다)."""
     return Counter(target.status for target in snap.targets.values())
-
-
-def _find_units_missing_reason(snap: BundleSnapshot) -> list[int]:
-    """사유가 비어 있는 삭제·이동 판단과 표 구성 변경 표 단위 — 사유는 모두 판단 단위에 적힌다."""
-    unit_ids = {
-        decision.unit_id
-        for decision in snap.decisions.values()
-        if decision.disposition in REASON_DISPOSITIONS and not decision.reason.strip()
-    }
-    for target in snap.targets.values():
-        if target.change_type == TABLE_RESTRUCTURED and target.source_unit_ids:
-            decision = snap.decisions.get(target.source_unit_ids[0])
-            if decision is None or not decision.reason.strip():
-                unit_ids.add(target.source_unit_ids[0])
-    return sorted(unit_ids)
 
 
 def _list_caption_ref_notices(warnings: Iterable[CaptionRefWarning]) -> list[Issue]:
@@ -102,7 +87,7 @@ def _pick_next_action(snap: BundleSnapshot, codes: set[str]) -> NextAction:
         return "decide_units"
     if "unacked_missing_text" in codes:
         return "ack_warnings"
-    if codes & {"duplicate_without_reason", "missing_reason"}:
+    if "duplicate_without_reason" in codes:
         return "fill_reasons"
     if "semantic_checks_incomplete" in codes:
         return "semantic_checks"
@@ -121,8 +106,8 @@ def evaluate_readiness(
     """스냅숏과 질의 몇 개로 읽은 숫자만으로 조건을 가린다 — 순수 함수라 큰 묶음도 스레드에서 돈다."""
     facts = build_review_facts(snap)
     documents = snap.documents.values()
-    blockers = _list_pending_blockers("units", facts.row_status_counts)
-    blockers += _list_pending_blockers("targets", _count_target_statuses(snap))
+    blockers = _list_pending_blockers("units", facts.row_status_counts, UNIT_PENDING_STATUSES)
+    blockers += _list_pending_blockers("targets", _count_target_statuses(snap), TARGET_PENDING_STATUSES)
 
     # 중복 배정의 사유도 판단 단위에 적힌다 — 판단 행이 없으면 사유도 없는 것이다(조회 경로가 KeyError로 죽지 않게)
     unreasoned = [
@@ -132,9 +117,6 @@ def evaluate_readiness(
     ]
     if unreasoned:
         blockers.append({"code": "duplicate_without_reason", "count": len(unreasoned), "unit_ids": unreasoned})
-    missing_reason = _find_units_missing_reason(snap)
-    if missing_reason:
-        blockers.append({"code": "missing_reason", "count": len(missing_reason), "unit_ids": missing_reason})
     if unacked_missing_text:
         blockers.append({"code": "unacked_missing_text", "count": unacked_missing_text})
     # 옛 문서 버전은 Excel에 그대로 나간다 — 빈 채로 두면 검토에서 어느 판인지 알 수 없다

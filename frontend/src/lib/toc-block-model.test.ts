@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { buildRows } from "./classify-model";
 import type { DocumentView, UnitRow, ViewUnit } from "./api-sop";
-import { buildNavKeys, buildTocBlock, describeTocParts, listTocBlocks, readTocNavKey, shouldJoinTocCard, toTocNavKey, toggleTocOpen } from "./toc-block-model";
+import { buildNavKeys, buildTocBlock, describeTocParts, listTocBlocks, readTocNavKey, readUnitNavKey, shouldJoinTocCard, toTocNavKey, toggleTocOpen, toUnitNavKey } from "./toc-block-model";
 
 const line = (id: number, lang: ViewUnit["lang"], text = `line ${id}`) => ({ id, lang, text });
 
@@ -75,11 +75,25 @@ describe("listTocBlocks / buildNavKeys", () => {
       [9, [1, 0, 0]],
     ]);
 
-    const keys = buildNavKeys([{ key: "u1", unitIds: [1] }, { key: "u6", unitIds: [6] }, { key: "u9", unitIds: [9] }], [{ key: 4 }], position);
+    const keys = buildNavKeys([{ key: "u1", unitIds: [1] }, { key: "u6", unitIds: [6] }, { key: "u9", unitIds: [9] }], [{ key: 4 }], position, { byUnit: false });
 
     expect(keys).toEqual(["u1", toTocNavKey(4), "u6", "u9"]);
     expect(readTocNavKey(keys[1])).toBe(4);
     expect(readTocNavKey("u1")).toBeNull();
+  });
+
+  it("walks box by box - a far pair keeps each box in its own place (J/K one box at a time)", () => {
+    // 1 ↔ 4, 2 ↔ 5가 떨어진 짝, 3은 외톨이 - 줄은 셋이지만 박스는 다섯 자리
+    const position = new Map<number, readonly [number, number, number]>([1, 2, 3, 4, 5].map((id) => [id, [0, id, 0]] as const));
+    const rows = [{ key: "p1", unitIds: [1, 4] }, { key: "p2", unitIds: [2, 5] }, { key: "u3", unitIds: [3] }];
+
+    const keys = buildNavKeys(rows, [], position, { byUnit: true });
+
+    expect(keys.map(readUnitNavKey)).toEqual([1, 2, 3, 4, 5]);
+    expect(keys[0]).toBe(toUnitNavKey(1));
+    expect(readUnitNavKey(toTocNavKey(1))).toBeNull();
+    // Pair view(줄 단위)는 줄 키 하나씩, 줄의 첫 박스 자리에
+    expect(buildNavKeys(rows, [], position, { byUnit: false })).toEqual(["p1", "p2", "u3"]);
   });
 });
 

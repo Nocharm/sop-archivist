@@ -1386,6 +1386,14 @@
   .toc-line[data-break] { margin-top: 4px; padding-top: 4px; border-top: 1px dashed var(--line-2); }
   .toc-line-text { flex: 1 1 0; min-width: 0; padding: 1px 4px; border: 0; border-radius: var(--r-1); background: none; color: var(--ink-3); font: inherit; font-size: 12.5px; text-align: left; white-space: pre-wrap; overflow-wrap: anywhere; cursor: pointer; }
   .toc-line-text:hover, .toc-line[data-picked] .toc-line-text { background: var(--hover); color: var(--ink-2); }
+
+  /* 접힌 삭제 줄(Assign Old, 설계 2026-11-20 D6) - 목차 블록처럼 흐린 한 줄. DELETED 꼬리표만 반투명 빨강, 나머지는 --ink-3로 물러나고 올리면 진해진다.
+     Shift로 고른 줄(data-pick)은 강조색 테두리 */
+  .deleted-line { display: flex; flex: 1 1 0; align-items: center; gap: 6px; min-width: 0; margin-block: 1px; padding: 2px 10px; border: 1px dashed var(--line-2); border-radius: var(--r-1); background: var(--sunken); color: var(--ink-3); font: inherit; font-size: 11.5px; line-height: 16px; text-align: left; cursor: pointer; }
+  .deleted-line:hover { background: var(--hover); color: var(--ink-2); }
+  .deleted-line[data-pick] { border-style: solid; border-color: var(--accent); }
+  .deleted-tag { flex: none; padding: 0 5px; border-radius: var(--r-1); background: color-mix(in oklab, var(--danger-fill) 16%, transparent); color: var(--danger-ink); font-size: var(--fs-micro); font-weight: 600; letter-spacing: .02em; }
+  .deleted-text { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .fold-go { font-family: var(--font-mono); font-size: 12px; }
 
   /* 조각 사이 틈 - 위아래 합치기가 늘 보인다(평소엔 낮고 넓은 알약, 올리면 라벨이 펼쳐진다) */
@@ -1395,7 +1403,7 @@
   .strip-gap { --gap-open-delay: 300ms; position: relative; height: 4px; transition: height var(--dur-base) var(--ease-enter); }
   /* 고르면 바로 벌어진다 - 두 번 누르기(나눌 자리)의 둘째 클릭이 밀린 만큼은 Paper가 첫 누름 자리로 되돌려 읽는다 */
   .strip-gap[data-near-selected] { height: 12px; }
-  .strip-gap:not([data-pair]):hover { height: 12px; transition-delay: var(--gap-open-delay); }
+  /* 고른 박스에서 먼 틈은 올려도 벌어지지 않는다 - 단추가 없는 틈이 벌어지면 반응만 있고 할 일이 없다(요청서 6번) */
   /* 이웃한 짝 - 틈 0, 두 조각이 한 카드(안쪽 테두리·모서리를 없애고 가는 구분선만). 합치기 단추는 올릴 때만 보인다 */
   .strip-gap[data-pair] { height: 0; }
   /* 합치기 단추는 쉬는 동안 보이지 않는다(점선 알약이 줄마다 깔리면 산만) - 틈을 올리거나 키보드 포커스가 오면 나타난다 */
@@ -1479,6 +1487,8 @@
   .strip-lead-gap { flex: none; }
   /* 번호 칸 손잡이(문단 번호, number-cell.tsx) - 번호는 단추이고 누르면 그 자리에 입력 상자가 뜬다. 번호 없는 줄의 "+"는 못 읽은 줄에서만 늘 보이고 나머지는 줄에 올리거나 포커스가 갔을 때만 보인다 */
   .strip-lead[data-num-open] { position: relative; z-index: 5; }
+  /* 줄(.strip-row)은 content-visibility: auto라 칠하기 가둠 · 제 쌓임 맥락이 생겨 창이 다음 줄 밑에 깔린다 - 연 줄만 가둠을 풀고 형제 줄 위로 */
+  .pg[data-strips] .strip-row:has(> .strip-lead[data-num-open]) { content-visibility: visible; position: relative; z-index: 6; }
   button.num-cell { border: 0; background: none; cursor: pointer; }
   button.num-cell:disabled { cursor: default; }
   button.num-cell:is(:hover, :focus-visible):not(:disabled) { color: var(--accent); }
@@ -1492,8 +1502,15 @@
   .num-edit-row { display: flex; align-items: center; gap: 6px; }
   .num-edit-input { width: 9ch; min-width: 0; height: 24px; padding: 0 6px; border: 1px solid var(--accent-line); border-radius: var(--r-2); background: var(--surface); color: var(--ink); font: 500 12px / 22px var(--font-mono); }
   .num-edit-input:focus-visible { outline: 2px solid var(--accent); outline-offset: -1px; }
-  .num-edit-none { height: 24px; padding: 0 8px; border: 1px solid var(--line-2); border-radius: var(--r-2); background: var(--surface); color: var(--ink-2); font: inherit; white-space: nowrap; cursor: pointer; }
-  .num-edit-none:is(:hover, :focus-visible):not(:disabled) { border-color: var(--accent-line); color: var(--accent); }
+  /* 번호 종류 단추 줄(시안 2 D1) - 눌린 종류는 accent 바탕, 점 기호 단추는 기호 한 글자 폭 */
+  .num-kind-row { display: flex; flex-wrap: wrap; gap: 4px; }
+  .num-kind { height: 24px; padding: 0 8px; border: 1px solid var(--line-2); border-radius: var(--r-2); background: var(--surface); color: var(--ink-2); font: inherit; white-space: nowrap; cursor: pointer; }
+  .num-kind:is(:hover, :focus-visible):not(:disabled) { border-color: var(--accent-line); color: var(--accent); }
+  .num-kind[aria-pressed="true"] { border-color: var(--accent-line); background: var(--accent-tint); color: var(--accent); }
+  .num-kind:disabled { cursor: default; }
+  .num-kind-bullet { min-width: 24px; padding: 0 6px; }
+  .num-continuous { color: var(--ink-3); font-family: var(--font-mono); font-size: 11px; white-space: nowrap; }
+  .num-note { color: var(--ink-3); font-size: 11px; }
   .num-follow { display: flex; align-items: center; gap: 6px; cursor: pointer; }
   .num-follow-preview { display: flex; flex-wrap: wrap; gap: 4px 8px; font-family: var(--font-mono); font-size: 11px; color: var(--accent); }
   .num-follow-item { padding: 0 4px; border: 1px dashed var(--accent-line); border-radius: var(--r-1); white-space: nowrap; }
@@ -1503,6 +1520,30 @@
   /* 고른 조각(문단)과 그 짝에 두른다. 맞은편 강조(data-link-hover)는 바탕만 - 마우스를 올린 곳이 고른 것처럼 보이지 않게 */
   .pg[data-strips] .strip-lead + .strip:is([data-sel], [data-partner])::after,
   .strip-card:has(> .strip-row > .strip:is([data-sel], [data-partner])) > .strip-row > .strip-lead + .strip::after { content: ""; position: absolute; inset: var(--ring-inset, -2px); border: solid var(--accent); border-width: var(--ring-bw, 2px); border-radius: var(--ring-r, calc(var(--r-1) + 2px)); pointer-events: none; }
+  /* 고른 박스의 짝(data-mate) - 고른 것이 아니라 곁에 딸린 것이라 흐린 점선 테두리만(설계 2026-11-20 D3). 고른 박스와 한 카드면 위 카드 테두리가 이긴다 */
+  .pg[data-strips] .strip-lead + .strip[data-mate]::after { content: ""; position: absolute; inset: -2px; border: 1px dashed var(--accent-line); border-radius: calc(var(--r-1) + 2px); pointer-events: none; }
+  .cell-piece[data-mate] { outline: 1px dashed var(--accent-line); outline-offset: -1px; }
+  /* 떨어진 짝 안내 줄 - 고른 박스 글 아래 흐린 한 줄, 누르면 짝으로 간다(Paper renderPairHint) */
+  .pair-hint { display: flex; align-items: center; gap: 6px; margin-top: 2px; margin-inline: -4px; padding: 0 4px; border-radius: var(--r-1); font: 500 var(--fs-micro) / 16px var(--font-mono); color: var(--ink-3); text-align: left; cursor: pointer; }
+  .pair-hint:hover { color: var(--accent); background: var(--hover); }
+  .pair-hint:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  /* 짝 카드 안 순서 손잡이(설계 D8) - 고른 박스 왼쪽 가장자리의 안쪽 여백(--pg-pad-l)에 세로 가운데로. 번호 칸(.strip-lead)도 글도 덮지 않는다.
+     박스 전체 끌기와 나뉘는 자리라 커서도 다르다(grab) */
+  .pg[data-strips] .strip-grip { position: absolute; left: 0; top: 0; bottom: 0; z-index: 1; display: flex; align-items: center; justify-content: center; width: var(--pg-pad-l); color: var(--ink-4); cursor: grab; }
+  .pg[data-strips] .strip-grip:hover { color: var(--accent); }
+  .pg[data-strips] .strip-grip > svg { width: 12px; height: 12px; }
+  html[data-box-drag] .pg[data-strips] .strip-grip { cursor: grabbing; }
+  /* 처리 중 알약 - 누르는 즉시 그 자리에(설계 2026-11-20 D4). 박스는 위 테두리 왼쪽에 걸쳐(글 첫 줄 위 여백과 틈에 앉아 글을 덮지 않는다), 틈은 합치기 단추 자리,
+     표 머리는 "다시 표로" 옆. 줄의 content-visibility 자르는 선(32px · 틈 12px) 안이다. 눌러지지 않는다(밑의 박스를 누른 것으로) */
+  .pending-pill { position: absolute; z-index: 3; display: inline-flex; align-items: center; height: 18px; padding: 0 8px; border: 1px solid var(--accent); border-radius: 9px; background: var(--surface); color: var(--accent); font: 600 var(--fs-cap) / 1 var(--font-ui); white-space: nowrap; box-shadow: var(--shadow-1); pointer-events: none; }
+  :is(.strip, .cell-piece) > .pending-pill { top: -9px; left: var(--pg-pad-l, 12px); }
+  .cell-piece > .pending-pill { left: 4px; }
+  :is(.strip-gap, .cell-gap) > .pending-pill { top: 50%; left: calc(min(var(--gap-tab, 0px), var(--gap-tab-cap, 9999px)) + var(--pg-pad-l, 0px)); translate: 0 -50%; }
+  .strip-gap:has(> .pending-pill) { z-index: 2; }
+  :is(.unwrap-head, .toc-head-row) > .pending-pill { position: static; margin-left: 8px; }
+  /* 안내 줄이 선 박스의 줄 끝 고리 표시 - 짝이 멀리 있다는 것을 같이 알린다 */
+  .pmark-host[data-on] { background: var(--accent-tint); }
+  .pmark-host[data-on] .pmark.pair { color: var(--accent); }
   /* 보류 칩 - 글 첫머리, 글자와 같은 줄에 앉는다 */
   .pg[data-strips] p > .schip:first-child { margin-right: 6px; vertical-align: 1px; }
   .pg[data-strips] .strip-hold { display: flex; margin-bottom: 4px; }
@@ -1544,7 +1585,7 @@
   .assign-pane .strip-lang { right: 30px; }
   .strip-lang:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
   /* 고른 조각·그 짝·New의 고른 줄에만 - 마우스를 올린 곳에도 뜨면 그 문장이 고른 것처럼 보였다 */
-  .strip:is([data-sel], [data-partner]) > .strip-lang,
+  .strip:is([data-sel], [data-partner], [data-mate]) > .strip-lang,
   .strip-card:has(> .strip-row > .strip[data-sel]) > .strip-row > .strip > .strip-lang,
   .new-line:is([data-state="picked"], [data-state="focus"], :focus-within) > .strip-lang,
   /* 참조 줄(제안은 점선 REF?)은 고르지 않아도 늘 - 나누고 묶는 글이 아니라는 것을 훑어보며 알게. 바탕색은 짝 카드·이음 호버·고른 줄이 쓰고 있어 태그로 */
@@ -1590,9 +1631,12 @@
 
   /* 나눌 선 - 손잡이를 끌어 같은 Unit 안에서 옮긴다. 팝업은 잠깐 뒤에 부드럽게 뜨고 끄는 동안에는 숨는다 */
   .cut-anchor { position: relative; display: inline-block; width: 0; }
-  .cut-handle { position: absolute; left: -7px; top: -0.15em; width: 14px; height: 1.5em; cursor: ew-resize; touch-action: none; z-index: 3; border-radius: 3px; }
-  .cut-handle::before { content: ""; position: absolute; left: 3px; top: -5px; width: 8px; height: 8px; border-radius: 50%; background: var(--ink); }
+  /* 손잡이 잡는 자리는 선 양옆 14px · 위아래로 넉넉히 - 14px 폭에서는 잡기가 어려웠다(사용자 보고 2026-11-19). 올리거나 끄는 동안 잡는 자리를 옅은 강조색 띠로 보인다 */
+  .cut-handle { position: absolute; left: -14px; top: -0.5em; width: 28px; height: 2.2em; cursor: ew-resize; touch-action: none; z-index: 3; border-radius: 6px; }
+  .cut-handle::before { content: ""; position: absolute; left: 10px; top: calc(0.35em - 5px); width: 8px; height: 8px; border-radius: 50%; background: var(--ink); }
+  .cut-handle::after { content: ""; position: absolute; inset: 0; border-radius: inherit; background: color-mix(in oklab, var(--accent) 18%, transparent); opacity: 0; transition: opacity var(--dur-fast, 120ms) ease; pointer-events: none; }
   .cut-handle:hover::before, .cut-handle:focus-visible::before { background: var(--accent); scale: 1.25; }
+  .cut-handle:hover::after, .pg[data-dragging] .cut-handle::after { opacity: 1; }
   .cut-handle:focus-visible { outline: 2px solid var(--accent); outline-offset: 0; }
   .pg[data-dragging] { cursor: ew-resize; user-select: none; }
   .pg[data-dragging] .su, .pg[data-dragging] .strip-merge { cursor: ew-resize; }
@@ -1815,7 +1859,7 @@
   /* 두 문서 사이 이음 선 - 연결 배지·출처 칩·맞은편 강조와 같은 강조 파랑(시안 B, 2026-11-12). 쉴 때 옅게, 고른 것·마우스를 올린 것만 진하고 굵게. 아직 저장 안 한 고름은 점선.
      끝 점 없이 두 상자 테두리에 맞닿는다(끝 모양 butt - round는 상자 안으로 반 굵기만큼 비어져 들어간다) */
   .link-lines { position: absolute; inset: 0; z-index: 3; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
-  .link-lines g { color: var(--accent); opacity: 0.38; }
+  .link-lines g { color: var(--accent); opacity: 0.5; }
   .link-lines g[data-strong] { opacity: 1; }
   /* AI가 이어 두고 아직 확정하지 않은 이음 - 배지·추천의 AI 색(보라)과 같게 */
   .link-lines g[data-ai] { color: var(--st-ai-ink); }
@@ -1831,6 +1875,17 @@
   .link-menu-note { display: inline-flex; align-items: center; gap: 5px; padding: 0 2px; font-size: var(--fs-micro); font-weight: 600; color: var(--st-hold-ink); }
   .link-menu-note::before, .dest-card-pending::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
   .link-menu .link-menu-unlink { color: var(--danger-ink); }
+  /* 그 자리 메뉴를 누른 New 문단 안에 펼친 것 - 문단 상자가 아래로 늘며(.fold) 글 아래에 단추 줄이 드러난다. 따로 뜨는 상자 대신 눈이 누른 문단에 머문다(사용자 결정 2026-11-19).
+     줄 전체를 덮은 누름 자리(.new-hit::after) 위에 둔다 - 아래에 깔리면 단추가 눌리지 않는다 */
+  .new-line-acts { position: relative; z-index: 2; }
+  .new-line-acts > .fold-inner { margin: 0 -2px; }
+  .line-acts { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin-top: 8px; padding: 8px 2px 2px; border-top: 1px dashed var(--line-2); font-family: var(--font-ui); cursor: default; }
+  .line-acts-row { display: inline-flex; flex-wrap: wrap; gap: 6px; }
+  .line-acts .strip-act[data-tone="unlink"] { color: var(--danger-ink); }
+  .line-acts .strip-act[data-tone="unlink"]:not(:disabled):hover { border-color: var(--danger-ink); background: var(--danger-tint); }
+  /* 잇기 · 다음에 놓기 - 이름 아래 한 줄 설명이 붙어 두 줄 단추다 */
+  .line-acts .join-act { height: auto; padding: 5px 9px; display: inline-grid; gap: 2px; justify-items: start; text-align: left; line-height: 1.2; }
+  .line-acts .join-act em { font-style: normal; font-weight: 400; font-size: var(--fs-micro); opacity: .8; }
   /* 놓인 New 문장 메뉴 - 항목마다 이름 한 줄 + 작은 설명. 바로 눌러야 하는 메뉴라 .link-menu처럼 늦게 보이지 않는다 */
   .join-menu { position: fixed; z-index: 40; display: grid; gap: 2px; min-width: 232px; padding: 4px; border: 1px solid var(--line-2); border-radius: var(--r-3); background: var(--raised); box-shadow: var(--shadow-2); font-family: var(--font-ui); animation: cut-pop-in-fixed 160ms cubic-bezier(.16, 1, .3, 1) both; }
   .join-menu-item { display: grid; gap: 1px; padding: 6px 8px; border-radius: var(--r-2); text-align: left; font-size: var(--fs-body); font-weight: 600; color: var(--ink); cursor: pointer; }
@@ -1924,7 +1979,7 @@
   .new-cut::before { content: ""; position: absolute; left: -5px; top: -5px; width: 8px; height: 8px; border-radius: 50%; background: var(--ink); }
   /* 끌 수 있는 선 - 손잡이가 제 점을 그린다(올리면 강조색). 선의 가운데에 맞춘다 */
   .new-cut:has(> .cut-handle)::before { display: none; }
-  .new-cut > .cut-handle { left: -8px; }
+  .new-cut > .cut-handle { left: -15px; }
   /* 끄는 동안에는 줄을 덮은 누름 자리(::after)를 비켜 둔다 - 덮여 있으면 끄는 자리의 글자를 읽지 못해 선이 끝으로만 간다 */
   .pg[data-dragging] .new-hit::after { pointer-events: none; }
   .new-cut-pop { display: flex; padding-top: 6px; }
@@ -2095,16 +2150,7 @@
   .pending-count:hover::after, .pending-count:focus-visible::after { max-width: 14em; margin-left: 0; opacity: 1; }
   .pending-row { display: flex; align-items: baseline; gap: 10px; width: 100%; padding: 6px 8px; border-radius: var(--r-1); text-align: left; font-size: 13px; line-height: 19px; }
   .pending-row:hover, .pending-row:focus-visible { background: var(--menu-hover); box-shadow: inset 2px 0 0 var(--accent); border-radius: 0 var(--r-1) var(--r-1) 0; outline: none; }
-  /* 변경 종류 세 칸 토글(그대로 · 말투 · 고쳐 씀) - 눌린 칸은 강조 바탕, 고를 수 없는 칸은 흐리게. AI 제안 칸은 오른쪽 위 ✦ */
-  .kind-toggle { display: inline-flex; flex: none; padding: 1px; border: 1px solid var(--line-2); border-radius: var(--r-1); background: var(--surface); }
-  .kind-toggle-btn { position: relative; display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 22px; border-radius: calc(var(--r-1) - 1px); color: var(--ink-3); }
-  .kind-toggle-btn:not(:disabled):hover { background: var(--hover); color: var(--ink); }
-  .kind-toggle-btn[aria-checked="true"] { background: var(--accent); color: var(--on-accent); }
-  .kind-toggle-btn[aria-checked="true"]:not(:disabled):hover { background: var(--accent); color: var(--on-accent); }
-  .kind-toggle-btn:disabled { color: var(--ink-4); cursor: not-allowed; }
-  .kind-toggle-btn[aria-checked="true"]:disabled { background: var(--accent-tint); color: var(--accent); }
-  .kind-toggle-ai { position: absolute; top: 1px; right: 1px; color: var(--st-ai-ink); }
-  .kind-toggle-btn[aria-checked="true"] .kind-toggle-ai { color: currentColor; }
+  /* 변경 종류 표시("=" · 수정 · 나눔 · 합침 · 번역) - 읽기만, 종류는 서버가 정한다 */
   .kind-chip { display: inline-flex; flex: none; align-items: center; gap: 4px; height: 24px; padding: 0 6px; border: 1px solid var(--line-2); border-radius: var(--r-1); font-size: 12px; color: var(--ink-2); }
   /* Remark 한 줄 - 이름 · 글(두 줄까지) · 최근 Remark 단추. 첫 줄 높이를 28px 단추에 맞추고, 글 오른쪽 위 연필 자리는 늘 비워 둔다(글을 덮지 않게) */
   .assign-remark { display: flex; align-items: flex-start; gap: 8px; min-width: 0; min-height: 28px; }
@@ -2117,12 +2163,7 @@
   .btn.is-warn:not(:disabled):hover { border-color: var(--st-hold-ink); }
   .chosen-box { display: grid; gap: 6px; padding: 8px 10px; border: 1.5px solid var(--accent); border-radius: var(--r-3); background: var(--accent-tint); }
   .chosen-box.is-empty { border-style: dashed; border-color: var(--line-2); background: transparent; color: var(--ink-3); font-size: 13px; line-height: 19px; }
-  /* 고른 때 - 위 목록에서 누른 항목의 그림자(.pick-ghost, components/assign/pick-flight.ts)가 상자로 날아오고, 닿을 때 상자가 한 번 번쩍인다.
-     움직임 줄이기 설정이면 그림자 없이 번쩍임(색만 바뀐다)만 */
-  .chosen-box[data-landing] { animation: chosen-flash 700ms var(--ease-exit) both; }
-  .pick-ghost { position: fixed; z-index: 60; display: block; padding: 0 10px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; border: 1.5px solid var(--accent); border-radius: var(--r-3); background: var(--accent-tint); color: var(--ink); font: 600 var(--fs-cap) / 1 var(--font-ui); box-shadow: var(--shadow-1); pointer-events: none; will-change: transform, opacity; }
   .tree-leaf[aria-pressed="true"] { background: var(--accent-tint); color: var(--ink); font-weight: 600; box-shadow: inset 0 0 0 1px var(--accent); }
-  @keyframes chosen-flash { from { box-shadow: 0 0 0 4px color-mix(in oklab, var(--accent) 40%, transparent); background: color-mix(in oklab, var(--accent) 22%, var(--surface)); } }
   .chosen-label { display: flex; align-items: center; gap: 4px; min-width: 0; font-size: var(--fs-micro); font-weight: 700; letter-spacing: 0.04em; color: var(--ink-3); }
   .chosen-line { display: flex; align-items: center; gap: 6px; min-width: 0; min-height: 26px; }
   /* 줄 끝 변경 종류 - 글이 한 줄에 더 들어가게 좁은 고르기 */
@@ -2272,10 +2313,6 @@
   html[data-box-drag] .c-order section[data-drag-closed] > :not([data-na-reason]),
   html[data-box-drag] .c-order article:not([data-drag-sheet]),
   html[data-box-drag] .c-order [data-drag-locked] section:not([data-drag-home]) > :not([data-na-reason]) { opacity: .35; }
-  /* 놓을 자리 선 - 왼쪽 끝 동그라미. 자리·폭은 output-c.tsx가 인라인으로 쓴다(왼쪽 끝 = 그 깊이의 줄이 시작하는 곳).
-     놓았을 때의 번호는 선에 두지 않고 끌리는 표에 적는다 - 줄 위의 알약은 아래 줄 글을 덮고, 용지 왼쪽 여백(30px)에는 긴 번호가 들어가지 않는다 */
-  .c-dropline { position: absolute; z-index: 3; height: 2px; border-radius: 1px; background: var(--accent); pointer-events: none; }
-  .c-dropline::before { content: ""; position: absolute; top: -3px; left: -4px; box-sizing: border-box; width: 8px; height: 8px; border: 2px solid var(--accent); border-radius: 50%; background: var(--surface); }
   /* 끄는 동안은 줄 끝 단추·줄 호버·다리를 모두 끈다(lib/box-drag.ts) - 위 보이기 규칙보다 특이도가 높아야 한다 */
   html[data-box-drag] .c-order .c-row > :is(.c-acts, .c-more) { opacity: 0; pointer-events: none; }
   html[data-box-drag] .c-order .c-row:not(:focus) { background: none; }
@@ -2308,4 +2345,72 @@
   /* 12px 글(줄 높이 16px)로 시작하는 칸은 13px 글(줄 높이 20px) 칸보다 첫 줄이 2px 높이 앉는다 - 첫 조각만 2px 내려 줄의 글이 한 줄에 선다 */
   .out-a td.text-xs { padding-top: calc(var(--row-y) + 2px); }
   .out-a td > .text-xs:first-child { margin-top: 2px; }
+}
+
+/* New 표 칸 잇기(시안 2 D5) - 이미 쓴 문서 표의 칸마다 상자. 칸 위 출처 칩(문장 상자와 같은 .new-srcs), 칩 끊기 ×는 칸에 올리거나 포커스가 갈 때만.
+   Old 줄을 고른 채면(data-pickable) 눌러 잇고 그때만 호버 강조, 고른 칸은 문장 상자의 고름과 같은 채움 */
+@layer components {
+  .new-cell { position: relative; margin: -2px -4px; padding: 2px 4px; border-radius: var(--r-1); }
+  .new-cell + .new-cell { margin-top: 2px; }
+  .new-cell .new-srcs { margin-bottom: 2px; }
+  .new-cell[data-pickable] { cursor: pointer; }
+  .new-cell-hit { display: block; width: 100%; padding: 0; text-align: left; color: inherit; font: inherit; cursor: pointer; }
+  .new-cell-hit:focus-visible { outline: none; }
+  .new-cell:has(> .new-cell-hit:focus-visible) { outline: 2px solid var(--focus); outline-offset: 1px; }
+  :where(html:not([data-box-drag])) .new-cell[data-pickable]:hover { background: color-mix(in oklab, var(--accent) 8%, var(--paper)); box-shadow: inset 0 0 0 1px var(--accent); }
+  .new-cell[data-state="picked"] { background: var(--accent-tint); box-shadow: inset 0 0 0 1.5px var(--accent); }
+  .new-src-x { opacity: 0; margin-left: -8px; padding: 0 2px; background: var(--sunken); color: var(--ink-2); transition: opacity var(--dur-fast); }
+  .new-src-x > svg { vertical-align: -2px; }
+  .new-cell:is(:hover, :focus-within) .new-src-x { opacity: 1; }
+  button.new-src-x:hover { box-shadow: inset 0 0 0 1px var(--danger-ink); color: var(--danger-ink); }
+}
+
+/* 빈 템플릿(엮은 New) 기본 보기를 같은 용지로(시안 2 D6) - 칸 머리는 번호 칸에 칸 번호가 든 제목 박스(Old · New의 제목 박스와 같은 .strip + p.h), 앱이 채우는 목록은 읽기 전용 박스.
+   번호 칸 창의 꺼진 단추(직접 번호 · 줄을 세지 않는 칸의 연속 번호)는 까닭 툴팁을 받으려 aria-disabled. 손잡이 끌기의 놓을 자리 선(.c-dropline)은 New 칸 기준으로 놓인다.
+   저장이 날아가는 박스는 Old 용지와 같은 처리 중 쉬머(motion.css pending-sweep) */
+@layer components {
+  /* 아래 8px - 첫 줄의 언어 탭(위 테두리에서 8px 위로 나온다)이 제목 박스의 칸 제목 출처 글에 닿지 않게 */
+  .pg.new-sheet .new-head-row { margin: 10px 0 8px; }
+  .pg.new-sheet > .new-head-row:first-child { margin-top: 0; }
+  .pg p.new-head-text { display: flex; gap: 6px; margin: 0; }
+  .new-head-label { min-width: 0; overflow-wrap: anywhere; }
+  .new-head-note { flex: 1 1 0; min-width: 8ch; font: 400 var(--fs-cap) / var(--lh-cap) var(--font-ui); color: var(--ink-3); align-self: center; }
+  .pg .new-auto { border: 1px solid var(--line-2); border-radius: var(--r-1); background: var(--sunken); padding: 4px var(--pg-pad-l); }
+  /* 번호 칸 창이 열린 줄은 가두지 않는다 - content-visibility가 창을 잘라 아래 줄 밑에 깔리지 않게 */
+  .pg[data-strips] .strip-row:has(> .strip-lead[data-num-open]) { content-visibility: visible; }
+  .num-kind[aria-disabled="true"] { opacity: .5; cursor: not-allowed; }
+  .num-kind[aria-disabled="true"]:is(:hover, :focus-visible) { border-color: var(--line-2); color: var(--ink-2); }
+  .assign-pane[data-composed-order] { position: relative; }
+  .pg[data-strips] .strip-row > .strip.new-line[data-pending] {
+    background-image: linear-gradient(100deg, transparent 30%, color-mix(in oklab, var(--accent) 16%, transparent) 50%, transparent 70%);
+    background-size: 250% 100%;
+    background-repeat: no-repeat;
+    animation: pending-sweep 1200ms linear infinite;
+    cursor: progress;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .pg[data-strips] .strip-row > .strip.new-line[data-pending] { background-image: linear-gradient(color-mix(in oklab, var(--accent) 8%, transparent) 0 0); background-size: 100% 100%; animation: none; }
+  }
+}
+
+/* 그림 탭과 위치 판(시안 2 D3) - 카드 줄 끝 단추는 호버 · 포커스 · 고른 카드에서 드러나고, 위치 판은 Old 칸 왼쪽에서 미끄러져 나온다(움직임 줄이기면 시간 토큰이 0이라 바로) */
+@layer components {
+  .figure-card-acts { position: absolute; right: 9px; bottom: 8px; display: flex; gap: 4px; z-index: 2; }
+  .pg[data-strips] .strip:is(:hover, [data-sel]) > .figure-card-acts { opacity: 1; }
+  .figure-card-act { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; border: 1px solid var(--line-2); border-radius: var(--r-1); background: var(--surface); color: var(--ink-2); }
+  .figure-card-act:hover { border-color: var(--ink-3); background: var(--hover); color: var(--ink); }
+  .figure-card-act[data-tone="danger"]:hover { border-color: var(--danger-ink); background: var(--danger-tint); color: var(--danger-ink); }
+  .assign-pane:has(> .figure-spot) { position: relative; }
+  .figure-spot { position: absolute; inset-block: 0; left: 0; z-index: 20; display: flex; flex-direction: column; width: min(460px, 92%); direction: ltr; border-right: 1px solid var(--line-2); background: var(--raised); box-shadow: var(--shadow-2); animation: figure-spot-in var(--dur-slow) cubic-bezier(.16, 1, .3, 1) both; }
+  @keyframes figure-spot-in { from { transform: translateX(-100%); opacity: 0; } }
+  .figure-spot-head { display: flex; align-items: center; gap: 8px; padding: 6px 8px 6px 12px; border-bottom: 1px solid var(--line); }
+  .figure-spot-title { flex: 1 1 0; min-width: 0; font-size: 12px; font-weight: 600; color: var(--ink); }
+  .figure-spot-body { flex: 1 1 0; min-height: 0; overflow-y: auto; padding: 10px 6px 16px; }
+  .figure-spot-empty { padding: 12px; font-size: 12px; color: var(--ink-3); }
+  /* 자리 선 - 줄 사이 점 달린 선과 그림 이름. 판 안의 세로 표시는 나눌 선과 같은 자리지만 앞뒤 바탕 없이 선만 */
+  .figure-spot-line { position: relative; display: flex; align-items: center; gap: 6px; margin: 4px 0 4px var(--pg-pad-l, 24px); border-top: 2px dotted var(--accent); }
+  .figure-spot-line::before { content: ""; position: absolute; left: -5px; top: -6px; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); }
+  .figure-spot-label { position: relative; top: -0.75em; margin-left: 10px; padding: 0 6px; background: var(--raised); font-family: var(--font-mono); font-size: 11px; color: var(--accent); }
+  .figure-spot .su .cut-a, .figure-spot .su .cut-b { background: none; }
+  .figure-spot .su .cut-b { box-shadow: inset 2px 0 0 var(--accent); }
 }

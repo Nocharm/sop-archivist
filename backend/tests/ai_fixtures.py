@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import SessionLocal
 from app.sop.ai.runner import claim_next_job, process_job, run_jobs_until_idle
-from app.sop.models import AiJob, AiSuggestion, EmbeddingCache, TargetSentence, TargetSource, UnitDecision
+from app.sop.models import AiJob, AiSuggestion, EmbeddingCache, Extraction, TargetSentence, TargetSource, Unit, UnitDecision
 from tests.access_helpers import run_in_session
 from tests.ai_helpers import enable_embed
 from tests.docx_factory import build_docx, p
@@ -105,7 +105,6 @@ def build_reply(data: dict, **changes: object) -> str:
         "reason": "합성 이유.",
         "rule_ids": ["R01"],
         "evidence": [{"unit_id": unit["id"], "quote": unit["text"]}] if unit["text"] else [],
-        "change_type": "tone" if langs else "as_is",
         "rewrites": {lang: [REWRITES[lang]] for lang in langs},
     }
     return json.dumps({**reply, **changes}, ensure_ascii=False)
@@ -138,7 +137,7 @@ def request_pair(
 
 
 def run_plan() -> None:
-    """맨 앞 작업 하나만 돌린다 — 계획이 쌓은 변경 종류 작업은 큐에 남겨 그대로 본다."""
+    """맨 앞 작업 하나만 돌린다 — 계획 뒤에 줄 선 작업(분류 등)은 큐에 남겨 그대로 본다."""
 
     async def _run() -> None:
         job_id = await claim_next_job()
@@ -219,24 +218,31 @@ def edit_document(client: TestClient, bundle_id: int, document_id: int, op: dict
     assert response.status_code == 200, response.text
 
 
-async def _add_suggestion(session: AsyncSession, bundle_id: int, kind: str = "match") -> AiSuggestion:
+async def _add_suggestion(
+    session: AsyncSession, bundle_id: int, kind: str = "match", content: dict | None = None, document_id: int | None = None
+) -> AiSuggestion:
     job = AiJob(bundle_id=bundle_id, kind=kind, status="done", requested_by="qa.member")
     session.add(job)
     await session.flush()
-    suggestion = AiSuggestion(job_id=job.id, bundle_id=bundle_id, kind=kind, content={}, result="applied")
+    suggestion = AiSuggestion(
+        job_id=job.id, bundle_id=bundle_id, kind=kind, document_id=document_id, content=content or {}, result="applied"
+    )
     session.add(suggestion)
     await session.flush()
     return suggestion
 
 
 def attach_suggestion(bundle_id: int, unit_id: int, kind: str) -> int:
-    """그 종류의 제안이 단위를 채운 모습을 DB에 직접 둔다."""
+    """그 종류의 살아 있는 제안이 단위를 덮은 모습을 DB에 직접 둔다 — AI는 판단을 쓰지 않으니 판단은 미배정 그대로다."""
 
     async def _attach(session: AsyncSession) -> int:
-        suggestion = await _add_suggestion(session, bundle_id, kind)
-        decision = await session.get(UnitDecision, unit_id)
-        decision.status, decision.disposition, decision.suggestion_id = "ai_suggested", "assigned", suggestion.id
-        decision.revision += 1
+        # 실제 제안처럼 단위의 문서를 단다 — 분류는 살아 있는 제안을 문서로 좁혀 찾는다
+        document_id = await session.scalar(
+            select(Extraction.document_id).join(Unit, Unit.extraction_id == Extraction.id).where(Unit.id == unit_id)
+        )
+        suggestion = await _add_suggestion(
+            session, bundle_id, kind, {"unit_ids": [unit_id], "target_ids": []}, document_id
+        )
         await session.commit()
         return suggestion.id
 
@@ -244,18 +250,23 @@ def attach_suggestion(bundle_id: int, unit_id: int, kind: str) -> int:
 
 
 def attach_match_suggestion(bundle_id: int, unit_id: int) -> int:
-    """입구 2 제안이 그 단위를 채운 모습 — 다른 종류 제안 위에 분류가 쓰면 안 되는지를 본다."""
+    """입구 2 제안이 그 단위를 덮은 모습 — 다른 종류 제안과 겹쳐 분류하면 안 되는지를 본다."""
     return attach_suggestion(bundle_id, unit_id, "match")
 
 
 def attach_new_target_suggestion(bundle_id: int, target_doc_id: int) -> int:
-    """입구 2 새 문장 하나를 신규 제안 상태로 두고 그 id를 돌려준다 — 그 제안을 만드는 작업은 아직 없어 DB에 직접 둔다."""
+    """입구 2 새 문장 하나를 덮는 신규 제안을 두고 그 새 문장 id를 돌려준다 — 새 문장은 미배정 그대로다."""
 
     async def _attach(session: AsyncSession) -> int:
-        suggestion = await _add_suggestion(session, bundle_id)
         target = await session.scalar(select(TargetSentence).where(TargetSentence.target_doc_id == target_doc_id))
-        target.status, target.suggestion_id, target.change_type = "ai_suggested", suggestion.id, "new"
-        target.revision += 1
+        content = {
+            "unit_ids": [], "target_ids": [target.id], "shape": "new", "change_type": "new", "links": [],
+            "target_change_types": {str(target.id): "new"}, "reason": "", "rule_ids": [], "retrieval": "embedding",
+        }
+        document_id = await session.scalar(
+            select(Extraction.document_id).join(Unit, Unit.extraction_id == Extraction.id).where(Unit.id == target.new_unit_id)
+        )
+        await _add_suggestion(session, bundle_id, "match", content, document_id)
         await session.commit()
         return target.id
 

@@ -20,7 +20,6 @@ class OutputLabels:
     cell_template: str  # {table} {row} {col}
     nested_separator: str  # 안쪽 표 위치의 앞붙이 — 바깥 칸과 안쪽 자리 사이(F2 · F11, "표 3 · 1행 1열 › 표 4 · 2행 1열")
     table_template: str  # {table}
-    table_row_template: str  # {table} {row}
     table_source_template: str  # 결과물 A 표 줄의 원문 칸 — {table} {rows} {cols}
     read_number_template: str  # 번호를 고친 줄의 절 — {number}는 고친 번호, {read}는 추출기가 읽은 값
     wi_step_template: str  # {step} {part}
@@ -34,13 +33,15 @@ class OutputLabels:
     toc_place_template: str  # 목차 줄의 위치(자리) — {lang} {n}(그 문서·언어 안 차례)
     toc_langs: dict[str, str]  # 목차 줄 위치의 언어 이름
     toc_remark: str  # 목차 줄의 Remark(저절로)
+    disposed_remarks: dict[str, str]  # Remark를 비운 삭제·이동 줄의 Remark — 처분 → 글
 
 
 LABELS = {
     "ko": OutputLabels(
         change_types={
-            "as_is": "그대로", "tone": "말투", "rewritten": "고쳐 씀", "split": "나눔", "merged": "합침",
-            "translated": "번역", "deleted": "삭제", "new": "신규", "table_restructured": "표 구성 변경",
+            # 그대로는 두 언어 모두 "=" — 읽는 사람에게 필요한 것은 원문 그대로인가 아닌가뿐이다(설계 2026-11-20-change-type-two D3)
+            "as_is": "=", "rewritten": "수정", "split": "나눔", "merged": "합침",
+            "translated": "번역", "deleted": "삭제", "new": "신규",
             "translated_added": "번역 · 추가", "heading": "칸 제목",
         },
         statuses={"unassigned": "미배정", "ai_suggested": "AI 제안", "confirmed": "확정", "on_hold": "보류", "deleted": "삭제"},
@@ -53,7 +54,6 @@ LABELS = {
         cell_template="표 {table} · {row}행 {col}열",
         nested_separator=" › ",
         table_template="표 {table}",
-        table_row_template="표 {table} · {row}행",
         table_source_template="[표 {table}, {rows}×{cols}]",
         read_number_template="{number} (읽은 값 {read})",
         wi_step_template="{step}단계 · {part}",
@@ -67,11 +67,12 @@ LABELS = {
         toc_place_template="목차 · {lang} · {n}행",
         toc_langs={"ko": "한글", "en": "영어"},
         toc_remark="목차 · 새 문서 목차는 앱이 만든다 (저절로)",
+        disposed_remarks={"delete": "삭제", "move_external": "이동"},
     ),
     "en": OutputLabels(
         change_types={
-            "as_is": "As is", "tone": "Tone", "rewritten": "Rewritten", "split": "Split", "merged": "Merged",
-            "translated": "Translated", "deleted": "Deleted", "new": "New", "table_restructured": "Table restructured",
+            "as_is": "=", "rewritten": "Modified", "split": "Split", "merged": "Merged",
+            "translated": "Translated", "deleted": "Deleted", "new": "New",
             "translated_added": "Translated · Added", "heading": "Slot heading",
         },
         statuses={
@@ -87,7 +88,6 @@ LABELS = {
         cell_template="Table {table} · R {row} C {col}",
         nested_separator=" › ",
         table_template="Table {table}",
-        table_row_template="Table {table} · R {row}",
         table_source_template="[Table {table}, {rows}×{cols}]",
         read_number_template="{number} (read as {read})",
         wi_step_template="Step {step} · {part}",
@@ -101,5 +101,6 @@ LABELS = {
         toc_place_template="Contents · {lang} · line {n}",
         toc_langs={"ko": "Korean", "en": "English"},
         toc_remark="Contents · the app builds the new contents (automatic)",
+        disposed_remarks={"delete": "Deleted", "move_external": "Moved"},
     ),
 }

@@ -1,4 +1,5 @@
-// Assign Space 미리보기 - Space를 누르고 있는 동안 아래에서 올라오는 시트에 지금 Old 문서의 Excel A를 보인다(1.2.0 피드백 7번, MD 2 §3 S2).
+// Assign Space 미리보기 - Space를 누르고 있는 동안 아래에서 올라오는 시트에 양 단 보기면 지금 Old 문서의 Excel A, 한 단 보기면 그 문서의 문단 Excel을 보인다
+// (1.2.0 피드백 7번, MD 2 §3 S2, 시안 2 D4).
 // 짧게 탁 누르면 열어 두고(Space 탁 · Esc로 닫음), 끌었으면 떼는 순간 닫는다. 읽기만 하고, 시트 보기는 결과물 Export 미리보기와 같은 SheetView다.
 // 상태 기계 · 셈은 lib/space-preview-model.ts. role="dialog"를 쓰지 않는다 - 열어 둔 동안에도 Assign 단축키(↵ 확정 등)가 그대로 돈다.
 "use client";
@@ -10,7 +11,7 @@ import { SheetView } from "@/components/outputs/sheet-view";
 import { LoadError } from "@/components/ui/load-error";
 import { showToast } from "@/components/ui/toast";
 import { humanizeApiError } from "@/lib/api-errors";
-import { downloadExport, getAssignSheetPreview } from "@/lib/api-sop";
+import { downloadExport, downloadParagraphs, getAssignSheetPreview, getParagraphSheetPreview } from "@/lib/api-sop";
 import { readSpacePreviewOpens, writeSpacePreviewOpens } from "@/lib/assign-view-prefs";
 import { useI18n } from "@/lib/i18n";
 import { saveBlob } from "@/lib/save-file";
@@ -26,6 +27,7 @@ import {
   SPACE_CLOSED,
   stepSpace,
   type SpaceEvent,
+  type SpaceSheet,
   type SpaceState,
 } from "@/lib/space-preview-model";
 import { useLoaded } from "@/lib/use-loaded";
@@ -42,19 +44,22 @@ function isTyping(target: EventTarget | null): boolean {
 }
 
 interface SheetRequest {
+  sheet: SpaceSheet;
   docId: number;
   around: number | null;
-  unitsKey: number;
+  reloadKey: string;
 }
 
 export interface SpacePreviewProps {
   bundleId: number;
-  /** Old 문서를 보고 있을 때만(New 문서를 한 단으로 고치는 중이 아님) */
+  /** paragraphs = 한 단 보기의 그 문서 문단 Excel, comparison = 양 단 보기의 Old 문서 Excel A(시안 2 D4) */
+  sheet: SpaceSheet;
+  /** 보낼 시트가 있을 때만(lib/space-preview-model.ts isSpaceEnabled) */
   enabled: boolean;
   docId: number | null;
   docCode: string;
-  /** 저장이 일어나면 바뀐다 - 연 동안이면 다시 불러온다 */
-  unitsKey: number;
+  /** 판단 저장이나 그 문서 편집(보기 revision)이 일어나면 바뀐다 - 연 동안이면 다시 불러온다 */
+  reloadKey: string;
   /** 고른 줄의 단위들 */
   unitIds: readonly number[];
   /** 시트에 가려지는 고른 줄을 머리에 글로 */
@@ -63,7 +68,7 @@ export interface SpacePreviewProps {
   draft?: SheetDraft;
 }
 
-export function SpacePreview({ bundleId, enabled, docId, docCode, unitsKey, unitIds, picked, draft }: SpacePreviewProps) {
+export function SpacePreview({ bundleId, sheet: sheetKind, enabled, docId, docCode, reloadKey, unitIds, picked, draft }: SpacePreviewProps) {
   const { t } = useI18n();
   const [space, setSpace] = useState<SpaceState>(SPACE_CLOSED);
   const [opens, setOpens] = useState(readSpacePreviewOpens);
@@ -77,17 +82,23 @@ export function SpacePreview({ bundleId, enabled, docId, docCode, unitsKey, unit
   const isKept = isSpaceKept(space);
 
   const preview = useLoaded(
-    () => (request ? getAssignSheetPreview(bundleId, request.docId, request.around) : Promise.resolve(null)),
-    request ? `${bundleId}:${request.docId}:${request.around ?? ""}:${request.unitsKey}` : "",
+    async () => {
+      if (request === null) return null;
+      const loaded = request.sheet === "paragraphs" ? getParagraphSheetPreview(bundleId, request.docId, request.around) : getAssignSheetPreview(bundleId, request.docId, request.around);
+      return { kind: request.sheet, sheet: await loaded };
+    },
+    request ? `${bundleId}:${request.sheet}:${request.docId}:${request.around ?? ""}:${request.reloadKey}` : "",
   );
-  const data = preview.data;
+  // 다시 받는 동안 남은 시트는 같은 종류일 때만 - 한 단 ↔ 양 단을 바꾸면 새 시트가 올 때까지 다른 시트를 보이지 않는다
+  const data = preview.data?.kind === sheetKind ? preview.data.sheet : null;
+  const isParagraphs = sheetKind === "paragraphs";
   const pickedInSheet = data !== null && unitIds.some((id) => data.rows.some((row) => row.unit_id === id));
   // 연 동안만 부른다 - 문서 · 저장이 바뀌었거나, 긴 문서의 창 밖 줄을 골랐으면 그 줄을 가운데로 다시. 닫혀 있는 동안의 저장은 다음에 열 때 부른다
   if (isOpen && docId !== null) {
     const around = unitIds[0] ?? null;
-    const isStale = request === null || request.docId !== docId || request.unitsKey !== unitsKey;
+    const isStale = request === null || request.sheet !== sheetKind || request.docId !== docId || request.reloadKey !== reloadKey;
     const isOutside = !isStale && !preview.isLoading && data !== null && data.truncated && around !== null && around !== request.around && !pickedInSheet;
-    if (isStale || isOutside) setRequest({ docId, around, unitsKey });
+    if (isStale || isOutside) setRequest({ sheet: sheetKind, docId, around, reloadKey });
   }
 
   // 시트 보기에는 잘림 안내를 끄고 넘긴다 - 이 창은 위 · 아래로 잘린 수를 바닥에 따로 적는다(같은 객체를 넘겨 고른 줄 가운데 맞추기가 렌더마다 돌지 않게)
@@ -146,8 +157,13 @@ export function SpacePreview({ bundleId, enabled, docId, docCode, unitsKey, unit
   async function handleDownload() {
     setDownloading(true);
     try {
-      const { blob, fileName } = await downloadExport(bundleId);
-      saveBlob(blob, fileName ?? `BND-${String(bundleId).padStart(4, "0")}.xlsx`);
+      if (isParagraphs && docId !== null) {
+        const { blob, fileName } = await downloadParagraphs(bundleId, docId, true);
+        saveBlob(blob, fileName ?? `${docCode || "Document"}_paragraphs.xlsx`);
+      } else {
+        const { blob, fileName } = await downloadExport(bundleId);
+        saveBlob(blob, fileName ?? `BND-${String(bundleId).padStart(4, "0")}.xlsx`);
+      }
       showToast(t("outputs.fileCreated"));
     } catch (err) {
       showToast(`${t("outputs.exportFailed")} ${humanizeApiError(err, t)}`, "error");
@@ -170,7 +186,8 @@ export function SpacePreview({ bundleId, enabled, docId, docCode, unitsKey, unit
       className="space-sheet"
       data-testid="assign-space-preview"
       data-state={isKept ? "kept" : "held"}
-      aria-label={t("outputs.preview.title")}
+      data-sheet={sheetKind}
+      aria-label={isParagraphs ? t("assign.spacePreview.paragraphsTitle") : t("outputs.preview.title")}
       // 시트 안 글쇠(↑ ↓ · PageUp …)는 시트를 옮긴다 - 같은 키가 화면에서 줄을 옮기지 않게 여기서 멈춘다
       onKeyDown={(event) => {
         if (event.defaultPrevented) event.stopPropagation();
@@ -178,10 +195,10 @@ export function SpacePreview({ bundleId, enabled, docId, docCode, unitsKey, unit
     >
       <span className="space-sheet-grip" aria-hidden />
       <header className="space-sheet-head">
-        <b className="text-[14px] text-ink">{t("outputs.preview.title")}</b>
-        <span className="space-sheet-tab">{data?.name ?? "A Comparison"}</span>
+        <b className="text-[14px] text-ink">{isParagraphs ? t("assign.spacePreview.paragraphsTitle") : t("outputs.preview.title")}</b>
+        <span className="space-sheet-tab">{sheet?.name ?? (isParagraphs ? docCode : "A Comparison")}</span>
         <span className="flex-none" data-testid="assign-space-preview-scope">
-          {t("assign.spacePreview.scope", { doc: docCode, n: data ? countDataRows(data) : "…" })}
+          {t("assign.spacePreview.scope", { doc: docCode, n: sheet ? countDataRows(sheet) : "…" })}
         </span>
         {picked && (
           <span className="min-w-0 truncate text-ink" data-testid="assign-space-preview-picked">
@@ -201,7 +218,7 @@ export function SpacePreview({ bundleId, enabled, docId, docCode, unitsKey, unit
           onClick={() => void handleDownload()}
         >
           <Download size={14} strokeWidth={1.5} aria-hidden />
-          {downloading ? t("outputs.exporting") : t("outputs.preview.download")}
+          {downloading ? t("outputs.exporting") : isParagraphs ? t("assign.spacePreview.downloadParagraphs") : t("outputs.preview.download")}
         </button>
       </header>
       <div
@@ -217,7 +234,7 @@ export function SpacePreview({ bundleId, enabled, docId, docCode, unitsKey, unit
         onPointerUp={() => setPress(null)}
       >
         {sheet ? (
-          <SheetView sheet={sheet} selectedUnitId={selectedUnitId} draft={draft} testId="assign-space-preview" />
+          <SheetView sheet={sheet} selectedUnitId={selectedUnitId} draft={isParagraphs ? undefined : draft} testId="assign-space-preview" />
         ) : preview.error != null ? (
           <LoadError error={preview.error} onRetry={preview.reload} testId="assign-space-preview" />
         ) : (
@@ -232,18 +249,24 @@ export function SpacePreview({ bundleId, enabled, docId, docCode, unitsKey, unit
           <i className="space-key" data-mark="picked" aria-hidden />
           {t("assign.spacePreview.legendPicked")}
         </span>
-        <span>
-          <i className="space-key" data-mark="group" aria-hidden />
-          {t("assign.spacePreview.legendGroup")}
-        </span>
-        <span>
-          <span className="sv-draft">{t("assign.spacePreview.legendDraftSample")}</span> {t("assign.spacePreview.legendDraft")}
-        </span>
-        <span>{t("outputs.sheet.legend")}</span>
-        {rest && (
-          <span data-testid="assign-space-preview-rest">{t("assign.spacePreview.rest", { above: rest.above, below: rest.below })}</span>
+        {!isParagraphs && (
+          <>
+            <span>
+              <i className="space-key" data-mark="group" aria-hidden />
+              {t("assign.spacePreview.legendGroup")}
+            </span>
+            <span>
+              <span className="sv-draft">{t("assign.spacePreview.legendDraftSample")}</span> {t("assign.spacePreview.legendDraft")}
+            </span>
+            <span>{t("outputs.sheet.legend")}</span>
+          </>
         )}
-        <span className="ml-auto">{t("assign.spacePreview.sameFile")}</span>
+        {rest && (
+          <span data-testid="assign-space-preview-rest">
+            {t(isParagraphs ? "assign.spacePreview.restParagraphs" : "assign.spacePreview.rest", { above: rest.above, below: rest.below })}
+          </span>
+        )}
+        <span className="ml-auto">{isParagraphs ? t("assign.spacePreview.sameFileParagraphs") : t("assign.spacePreview.sameFile")}</span>
       </footer>
     </section>
   );

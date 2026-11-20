@@ -47,9 +47,8 @@ EXPECTED_RULE_IDS = frozenset(
 VALID_RULES = "| ID | 기준 |\n|---|---|\n| R01 | synthetic rule |\n"
 # 프롬프트마다 응답 예시가 가리키는 필드 — Task 9·11·13·15의 응답 모델과 같아야 한다
 REPLY_FIELDS = {
-    "prompt.classify": {"candidate", "reason", "rule_ids", "evidence", "change_type", "rewrites"},
+    "prompt.classify": {"candidate", "reason", "rule_ids", "evidence", "rewrites"},
     "prompt.translate": {"text"},
-    "prompt.match": {"change_type", "reason", "rule_ids"},
     "prompt.split": {"parts", "reason", "rule_ids"},
     "prompt.doc_meta": {"doc_code", "version"},
     "prompt.tobe_list": {"docs"},
@@ -165,10 +164,10 @@ def test_seed_creates_active_v1_once(client: TestClient) -> None:
 @pytest.mark.usefixtures("restore_guidelines")
 def test_seed_fills_only_the_keys_that_have_no_versions(client: TestClient) -> None:
     async def _prepare(session: AsyncSession) -> None:
-        await session.execute(delete(GuidelineVersion).where(GuidelineVersion.key.in_(("prompt.split", "prompt.match"))))
+        await session.execute(delete(GuidelineVersion).where(GuidelineVersion.key.in_(("prompt.split", "prompt.doc_meta"))))
         # 이력만 남고 활성이 없는 키도 "버전이 있는 키"라 시드가 손대지 않는다
         await session.execute(update(GuidelineVersion).where(GuidelineVersion.key == "prompt.translate").values(is_active=False))
-        session.add(GuidelineVersion(key="prompt.match", version=7, content="old", created_by="someone"))
+        session.add(GuidelineVersion(key="prompt.doc_meta", version=7, content="old", created_by="someone"))
         await session.commit()
 
     run_in_session(_prepare)
@@ -176,7 +175,7 @@ def test_seed_fills_only_the_keys_that_have_no_versions(client: TestClient) -> N
 
     versions = _read_versions()
     assert ("prompt.split", 1, True) in versions
-    assert [row for row in versions if row[0] == "prompt.match"] == [("prompt.match", 7, False)]
+    assert [row for row in versions if row[0] == "prompt.doc_meta"] == [("prompt.doc_meta", 7, False)]
     assert [row for row in versions if row[0] == "prompt.translate"] == [("prompt.translate", 1, False)]
 
 
@@ -262,7 +261,7 @@ def test_new_version_is_inactive_until_activated(client: TestClient) -> None:
 def test_versions_count_up_per_key_and_activation_can_go_back(client: TestClient) -> None:
     assert _post_version(client, "prompt.split", "v2").json()["version"] == 2
     assert _post_version(client, "prompt.split", "v3").json()["version"] == 3
-    assert _post_version(client, "prompt.match", "v2").json()["version"] == 2  # 번호는 키마다 센다
+    assert _post_version(client, "prompt.doc_meta", "v2").json()["version"] == 2  # 번호는 키마다 센다
     assert _activate(client, "prompt.split", 3).status_code == 200
 
     assert _activate(client, "prompt.split", 1).status_code == 200  # 이전 버전으로 되돌릴 수도 있다
@@ -294,6 +293,21 @@ def test_list_and_detail_split_metadata_from_content(client: TestClient) -> None
 
 
 @pytest.mark.usefixtures("restore_guidelines")
+def test_rows_of_a_retired_key_are_left_out_of_the_list(client: TestClient) -> None:
+    # 말투·고침을 묻던 prompt.match는 걷었다(설계 2026-11-20-change-type-two D6) — 운영 DB의 옛 행은 지우지 않고 보이지도 않는다
+    async def _add_retired(session: AsyncSession) -> None:
+        session.add(GuidelineVersion(key="prompt.match", version=1, content="old", created_by="system", is_active=True))
+        await session.commit()
+
+    run_in_session(_add_retired)
+    run_in_session(seed_guidelines)
+
+    listing = client.get(GUIDELINES, headers=ADMIN)
+    assert [item["key"] for item in listing.json()] == list(GUIDELINE_KEYS)
+    assert client.get(f"{GUIDELINES}/prompt.match/versions/1", headers=ADMIN).status_code == 404
+
+
+@pytest.mark.usefixtures("restore_guidelines")
 def test_a_rules_version_with_rule_ids_is_accepted_and_a_prompt_needs_none(client: TestClient) -> None:
     assert _post_version(client, "rules", VALID_RULES).status_code == 201
     assert _post_version(client, "prompt.translate", "No table here, only a prompt.").status_code == 201
@@ -301,10 +315,10 @@ def test_a_rules_version_with_rule_ids_is_accepted_and_a_prompt_needs_none(clien
 
 @pytest.mark.usefixtures("restore_guidelines")
 def test_content_is_stored_without_surrounding_whitespace(client: TestClient) -> None:
-    response = _post_version(client, "prompt.match", "\n  # match v2\n\n", note="  why  ")
+    response = _post_version(client, "prompt.doc_meta", "\n  # doc_meta v2\n\n", note="  why  ")
 
     assert response.status_code == 201
-    assert (response.json()["content"], response.json()["note"]) == ("# match v2", "why")
+    assert (response.json()["content"], response.json()["note"]) == ("# doc_meta v2", "why")
 
 
 @pytest.mark.usefixtures("restore_guidelines")
@@ -333,14 +347,14 @@ INVALID_BODIES = {
 @pytest.mark.usefixtures("restore_guidelines")
 @pytest.mark.parametrize("body", INVALID_BODIES.values(), ids=INVALID_BODIES.keys())
 def test_invalid_body_is_422_and_adds_nothing(client: TestClient, body: bytes) -> None:
-    before = _count_versions("prompt.match")
+    before = _count_versions("prompt.doc_meta")
 
     response = client.post(
-        f"{GUIDELINES}/prompt.match/versions", content=body, headers={**ADMIN, "content-type": "application/json"}
+        f"{GUIDELINES}/prompt.doc_meta/versions", content=body, headers={**ADMIN, "content-type": "application/json"}
     )
 
     assert response.status_code == 422
-    assert _count_versions("prompt.match") == before
+    assert _count_versions("prompt.doc_meta") == before
 
 
 def test_unknown_key_is_404(client: TestClient) -> None:

@@ -723,8 +723,8 @@ def test_confirmed_by_shows_name_and_id(client: TestClient) -> None:
     assert en_line["confirmed_by"] is None  # 아직 확정하지 않은 줄
 
 
-def test_output_a_table_lines_for_rows_empty_tables_and_dropped_cells(client: TestClient) -> None:
-    """행으로 나눈 표는 행마다 표 줄, 칸 문장이 없는 표는 한 줄, 칸 새 문장이 빠진 칸 문장은 표의 보낸 곳을 글 없이 따른다."""
+def test_output_a_table_lines_for_empty_tables_and_dropped_cells(client: TestClient) -> None:
+    """칸 문장이 없는 표는 한 줄, 칸 새 문장이 빠진 칸 문장은 표의 보낸 곳을 글 없이 따른다."""
     bundle_id = create_bundle(client, is_synthetic=True)["id"]
     response = put_tobe(client, bundle_id, TOBE_DOCS)
     assert response.status_code == 200, response.text
@@ -733,23 +733,13 @@ def test_output_a_table_lines_for_rows_empty_tables_and_dropped_cells(client: Te
     doc = _upload_ready(client, bundle_id, build_docx(body), OLD1_NAME)
     view = get_view(client, bundle_id, doc["id"])
     empty_table, table = [unit for unit in view["units"] if unit["kind"] == "table"]
-    split = client.post(
-        f"/api/bundles/{bundle_id}/documents/{doc['id']}/edits",
-        json={"revision": view["document"]["revision"], "confirm": False,
-              "op": {"type": "split_table_rows", "table_unit_id": table["id"]}},
-        headers=AUTHOR,
-    )
-    assert split.status_code == 200, split.text
-    view = get_view(client, bundle_id, doc["id"])
-    first_row, second_row = [unit for unit in view["units"] if unit["kind"] == "table_row"]
-    assign_as_is(client, bundle_id, first_row, sop_id, slot_key="procedures.p1")
-    # 둘째 행은 한글 칸만 남긴 표 구성 변경 — 영어 칸 문장에는 칸 새 문장이 없다
-    kept = find_unit(view, "합성 값 둘.")
-    _save(client, bundle_id, [_unit_in(second_row, reason="Synthetic: drop the English cell")], [
-        _target("t", sop_id, [second_row], slot_key="procedures.p1", kind="table", grid={"rows": 1, "cols": 1},
-                change_type="table_restructured"),
-        _target("c", sop_id, [kept], slot_key="procedures.p1", parent_key="t", cell_row=0, cell_col=0),
-        _target("cap", sop_id, [], slot_key="procedures.p1", parent_key="t", text="합성 표 둘째 행", lang="ko"),
+    # 한글 칸만 남긴 표 구성 변경 — 영어 칸 문장에는 칸 새 문장이 없다
+    first, second = find_unit(view, "합성 값 하나."), find_unit(view, "합성 값 둘.")
+    _save(client, bundle_id, [_unit_in(table, reason="Synthetic: drop the English cells")], [
+        _target("t", sop_id, [table], slot_key="procedures.p1", kind="table", grid={"rows": 2, "cols": 1}),
+        _target("c1", sop_id, [first], slot_key="procedures.p1", parent_key="t", cell_row=0, cell_col=0),
+        _target("c2", sop_id, [second], slot_key="procedures.p1", parent_key="t", cell_row=1, cell_col=0),
+        _target("cap", sop_id, [], slot_key="procedures.p1", parent_key="t", text="합성 표", lang="ko"),
     ])
     d = partial(_display, view)
 
@@ -765,20 +755,19 @@ def test_output_a_table_lines_for_rows_empty_tables_and_dropped_cells(client: Te
 
     assert _shape(rows) == [
         (1, "table", empty_table["display_id"], "[표 1, 1×2]", "표 1", "", "", ""),
-        (2, "table", first_row["display_id"], "[표 2, 1×2]", "표 2 · 1행", "SOP-NEW", "as_is", ""),
+        (2, "table", table["display_id"], "[표 2, 2×2]", "표 2", "SOP-NEW", "rewritten", ""),
+        # 칸 문장 줄의 변경 종류는 자기 칸 새 문장의 것, 칸 새 문장이 빠진 칸은 표의 것(구성을 바꿔 고침)을 글 없이
         (2, "cell", d("합성 값 하나."), "합성 값 하나.", "표 2 · 1행 1열", "SOP-NEW", "as_is", "합성 값 하나."),
-        (2, "cell", d("Value one."), "Value one.", "표 2 · 1행 2열", "SOP-NEW", "as_is", "Value one."),
-        (3, "table", second_row["display_id"], "[표 2, 1×2]", "표 2 · 2행", "SOP-NEW", "table_restructured", ""),
-        # 칸 문장 줄의 변경 종류는 자기 칸 새 문장의 것, 칸 새 문장이 빠진 칸은 표의 것을 글 없이
-        (3, "cell", d("합성 값 둘."), "합성 값 둘.", "표 2 · 2행 1열", "SOP-NEW", "as_is", "합성 값 둘."),
-        (3, "cell", d("Value two."), "Value two.", "표 2 · 2행 2열", "SOP-NEW", "table_restructured", ""),
+        (2, "cell", d("Value one."), "Value one.", "표 2 · 1행 2열", "SOP-NEW", "rewritten", ""),
+        (2, "cell", d("합성 값 둘."), "합성 값 둘.", "표 2 · 2행 1열", "SOP-NEW", "as_is", "합성 값 둘."),
+        (2, "cell", d("Value two."), "Value two.", "표 2 · 2행 2열", "SOP-NEW", "rewritten", ""),
     ]
     assert _pick_row(en, d("Value two."))["location"]["place"] == "Table 2 · R 2 C 2"
-    assert _pick_row(en, second_row["display_id"])["source_text"] == "[Table 2, 1×2]"
-    assert {r["remark"] for r in rows if r["row_no"] == 3} == {"Synthetic: drop the English cell"}
-    # 요약은 줄로 센다 — 빈 표 하나와 행 둘이 세 줄이고 칸 문장은 따로 세지 않는다
+    assert _pick_row(en, table["display_id"])["source_text"] == "[Table 2, 2×2]"
+    assert {r["remark"] for r in rows if r["row_no"] == 2} == {"Synthetic: drop the English cells"}
+    # 요약은 줄로 센다 — 표 둘이 두 줄이고 칸 문장은 따로 세지 않는다
     summary = _get_output(client, bundle_id, "summary")
-    assert summary["old_rows"] == get_bundle(client, bundle_id)["progress"]["total"] == 3
+    assert summary["old_rows"] == get_bundle(client, bundle_id)["progress"]["total"] == 2
 
 
 def test_output_a_defaults_to_english_labels_and_needs_membership(client: TestClient) -> None:
@@ -1012,6 +1001,19 @@ def test_output_c_pair_lines_share_a_meaning_and_one_disposal_line(client: TestC
     }]
 
 
+def test_output_blank_disposal_remark_reads_as_the_disposition(client: TestClient) -> None:
+    """삭제·이동의 Remark는 선택이다(요청서 4번) — 비워 두면 결과물이 처분 이름을 라벨 언어로 적는다."""
+    fx = _setup_pair_edges(client)
+    trio = _units(fx, KO_LOAD, KO_KEEP, EN_BOTH)
+    _bulk(client, fx.bundle_id, "delete", trio, "")
+
+    en = _get_output(client, fx.bundle_id, "outputs/c")
+    ko = _get_output(client, fx.bundle_id, "outputs/c", "ko")
+
+    assert [row["reason"] for row in en["deleted"]] == ["Deleted"]
+    assert [row["reason"] for row in ko["deleted"]] == ["삭제"]
+
+
 def test_composed_doc_carries_both_languages_in_c_order(client: TestClient) -> None:
     fx = _setup(client)
     merged_sources = [find_unit(fx.old1, MERGE_1)["id"], find_unit(fx.old2, MERGE_2)["id"]]
@@ -1094,8 +1096,8 @@ def test_composed_doc_keeps_a_translated_cell_on_the_same_position(client: TestC
 
 def test_bundle_table_grows_past_a_stale_grid() -> None:
     cells = [
-        BundleCellOut(target_id=2, row=1, col=2, lang="en", text="b", status="confirmed"),
-        BundleCellOut(target_id=1, row=0, col=0, lang="ko", text="a", status="confirmed"),
+        BundleCellOut(target_id=2, row=1, col=2, lang="en", text="b", status="confirmed", source_unit_ids=[]),
+        BundleCellOut(target_id=1, row=0, col=0, lang="ko", text="a", status="confirmed", source_unit_ids=[]),
     ]
 
     table = build_bundle_table({"rows": 1, "cols": 1}, cells)
@@ -1243,7 +1245,7 @@ SUMMARY_KEYS = (
 )
 # 줄 기준 — 짝이 없어 단위마다 한 줄이고 표는 칸 넷을 묶어 한 줄이다: OLD-1 10줄(그림 보류·영어 미배정) + OLD-2 5줄.
 # 한 언어 글은 두 언어 문서(ko_en_separate)의 짝 없는 문장·제목 13개와 보류(처분은 배정)한 그림의 한글 캡션 하나다(번역 새 문장이 없다)
-PROGRESS = {"total": 15, "unassigned": 1, "ai_suggested": 0, "confirmed": 13, "on_hold": 1, "single_language": 14}
+PROGRESS = {"total": 15, "unassigned": 1, "confirmed": 13, "on_hold": 1, "single_language": 14}
 EMPTY_PROGRESS = dict.fromkeys(PROGRESS, 0)
 
 
@@ -1357,7 +1359,7 @@ def test_progress_in_list_and_overview(client: TestClient) -> None:
     assert (admin_rows[fx.bundle_id]["progress"], admin_rows[empty]["progress"]) == (PROGRESS, EMPTY_PROGRESS)
     assert get_bundle(client, fx.bundle_id)["progress"] == PROGRESS
     assert get_bundle(client, empty)["progress"] == EMPTY_PROGRESS
-    assert PROGRESS["total"] == sum(PROGRESS[status] for status in ("unassigned", "ai_suggested", "confirmed", "on_hold"))
+    assert PROGRESS["total"] == sum(PROGRESS[status] for status in ("unassigned", "confirmed", "on_hold"))
 
 
 def test_output_c_item_counts_the_old_units_it_came_from(client: TestClient) -> None:

@@ -8,7 +8,10 @@ from dataclasses import dataclass, field
 # 4: 스타일이 물려받은 목록의 수준과 숨긴 윗수준 문단 뒤의 번호를 Word처럼 센다 — 3으로 뽑은 추출은 그런 문단의 번호가 다르다
 # 5: 블록·표에 구조 신호(signals — 번호 범위, 목차, 띠 표, 표 꼴, 안쪽 표 자리)를 남기고 띠 표 번호로 절 경로를 잡는다 —
 #    4까지의 추출은 signals가 비어 있다(다시 올려야 생긴다)
-EXTRACTOR_VERSION = "5"
+# 6: 블록은 5와 같다. 쪼개기가 Reference 절 아래 줄을 REF로 확정하고 글을 보고 제안하지 않는다(refs.FIRST_SECTION_REF_VERSION) —
+#    5까지의 추출은 전처럼 제안한다
+# 7: 문단·칸 안 그림 블록에 글자 자리 신호(inline)를 남긴다(시안 2 D3 위치 판) — 6까지의 추출은 자리가 없다(문서 보기 anchor = None)
+EXTRACTOR_VERSION = "7"
 
 
 @dataclass(frozen=True)
@@ -52,6 +55,8 @@ class ExtractedBlock:
       타자로 또 쳤으면 거기까지), typed는 글 앞에 타자로 친 번호, cell은 글 전체가 번호 꼴인 칸("7", "A-1"). 칸 블록은 문단마다 하나
     - "paras": 칸 안 문단들의 시작 자리(문단이 둘 이상일 때)
     - "toc": 목차로 보이는 까닭들 — "style"(toc N 스타일) · "field"(TOC 필드 결과) · "sdt"(목차 구성 요소) · "leader"(점 끌기)
+    - "inline": 그림 블록만, 그림이 놓인 글자 자리 {"at": n} — n은 앞선 가장 가까운 그림 아닌 블록(같은 문단의 문단 블록, 칸 안
+      그림은 그 칸 블록)의 text 안 자리(써 넣은 자동 번호 포함). 그림만 든 문단은 제 글 블록이 없어(앞 블록은 다른 문단) 남기지 않는다
     """
 
     seq: int

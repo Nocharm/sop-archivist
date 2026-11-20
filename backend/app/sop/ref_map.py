@@ -35,7 +35,7 @@ from app.sop.models import (
     UnitPairMember,
     UnitRef,
 )
-from app.sop.refs import REF_KINDS, REF_LANG, is_document_number, read_ref_state
+from app.sop.refs import REF_KINDS, REF_LANG, is_document_number, load_proposing_extractions, read_ref_state
 from app.sop.snapshot import select_latest_extractions
 from app.sop.tobe import is_temp_match_code
 from app.sop.units import UNIT_ACTIVE, format_display_id
@@ -136,7 +136,7 @@ def _select_ref_units(in_bundle: ColumnElement[bool]) -> Select[Any]:
         _select_old_units(Unit, UnitRef, Document.bundle_id, Document.id, in_bundle=in_bundle)
         .outerjoin(UnitRef, UnitRef.unit_id == Unit.id)
         .where(Unit.kind.in_(REF_KINDS))
-        .options(load_only(Unit.kind, Unit.lang, Unit.text), load_only(UnitRef.state, UnitRef.number))
+        .options(load_only(Unit.kind, Unit.lang, Unit.text, Unit.extraction_id), load_only(UnitRef.state, UnitRef.number))
     )
 
 
@@ -156,10 +156,12 @@ def _select_moved_units(in_bundle: ColumnElement[bool]) -> Select[Any]:
     )
 
 
-def _read_ref_lines(rows: Iterable[Row[Any]]) -> list[MapLine]:
+async def _read_ref_lines(session: AsyncSession, rows: Collection[Row[Any]]) -> list[MapLine]:
+    """참조 줄 — 제안은 REF를 글에서 제안하는 추출(refs.load_proposing_extractions)의 줄만."""
+    proposing = await load_proposing_extractions(session, {row[0].extraction_id for row in rows})
     lines = []
     for unit, mark, bundle_id, document_id in rows:
-        ref = read_ref_state(unit, mark)
+        ref = read_ref_state(unit, mark, propose=unit.extraction_id in proposing)
         number = normalize_number(ref.number) if ref is not None else ""
         if ref is not None and number:
             lines.append(MapLine(bundle_id, document_id, unit.id, "ref", ref.state, number))
@@ -244,7 +246,7 @@ async def _collect_incoming(
         ),
         numbers,
     )
-    lines = _read_ref_lines(found.values()) + _read_moved_lines(moved)
+    lines = await _read_ref_lines(session, list(found.values())) + _read_moved_lines(moved)
     return [line for line in lines if line.number in numbers]
 
 
@@ -254,7 +256,7 @@ async def _collect_others_confirmed(session: AsyncSession, bundle: Bundle) -> li
     # 언어가 REF인 줄만 읽는다 — 남의 Bundle의 다른 줄 글은 읽지 않는다
     refs = (await session.execute(_select_ref_units(others).where(Unit.lang == REF_LANG))).all()
     moved = (await session.execute(_select_moved_units(others))).all()
-    lines = _read_ref_lines(refs) + _read_moved_lines(moved)
+    lines = await _read_ref_lines(session, refs) + _read_moved_lines(moved)
     return [line for line in lines if line.state == _CONFIRMED and _is_matchable(line.number)]
 
 
@@ -268,7 +270,7 @@ async def _collect_candidate_lines(
     member_of(보는 사람이 구성원인 Bundle)는 들어오는 줄을 읽는 범위를 정한다(`_collect_incoming`).
     """
     own = Document.bundle_id == bundle.id
-    lines = _read_ref_lines((await session.execute(_select_ref_units(own))).all())
+    lines = await _read_ref_lines(session, (await session.execute(_select_ref_units(own))).all())
     lines += _read_moved_lines((await session.execute(_select_moved_units(own))).all())
     numbers = await _load_own_numbers(session, bundle.id)
     if numbers:

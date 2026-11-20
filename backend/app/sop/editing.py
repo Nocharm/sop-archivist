@@ -1,11 +1,13 @@
-"""쪼개기 편집 — 나누기·합치기·경계 옮기기·골라 만들기·언어 바꾸기·표 행 나누기·다시 합치기·레이아웃 표 바꾸기·캡션 붙이기·떼기·첫 행 ↔ 캡션·
-그림 묶기·풀기·잡음 표시 풀기·번호 고치기·제목 ↔ 문장과 서버 쪽
+"""쪼개기 편집 — 나누기·합치기·경계 옮기기·골라 만들기·언어 바꾸기·레이아웃 표 바꾸기·캡션 붙이기·떼기·첫 행 ↔ 캡션·
+그림 묶기·풀기·잡음 표시 풀기·번호 고치기·제목 ↔ 문장·짝 카드 안 순서·벗긴 표 줄 순서와 서버 쪽
 선형 되돌리기·다시 하기, 경계 확인 표시 (스펙 §6.4, §7.5).
 
 단위는 제자리에서 바뀌지 않는다: 편집은 옛 단위를 은퇴시키고 새 단위를 만들며, 되돌리기는 은퇴한 단위를 원래 ID로 되살린다.
 칸 문장은 제자리에 두고 묶음(group_unit_id)만 바꾸며, 그 바뀜과 레이아웃 표 표시도 기록해 되돌린다.
 번호 고치기도 제자리다 — 단위의 number_set과 그 번호가 여는 절 이름(블록 section_label)만 바꾸고 기록해 되돌린다(범위·글자는 그대로).
 그림 묶기·풀기도 제자리다 — 그림 단위의 caption_figure_id만 바꾸고(옮기는 캡션은 칸 묶음처럼 regroup) 기록해 되돌린다.
+짝 카드 안 순서도 제자리다 — 구성원의 pair_seq만 바꾸고(pair_order.py) 기록해 되돌린다.
+벗긴 표 덩이 안 줄 순서도 제자리다 — 줄의 unwrap_seq만 바꾸고(unwrap_order.py) 기록해 되돌린다. 다시 표로 묶으면 같은 편집에서 비운다.
 묶음 잠금·문서 revision·작업 중 검사와 커밋은 부르는 쪽(라우터)이 한다.
 """
 
@@ -14,14 +16,14 @@ from collections.abc import Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, fields
 from typing import Annotated, Literal, TypeVar, assert_never
 
-from pydantic import BaseModel, Field, StringConstraints, model_validator
+from pydantic import BaseModel, Field, StringConstraints
 from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import clock
 from app.sop.caption_slot import CAPTION_REACH, PlaceBlock, build_block_places, get_place_distance
 from app.sop.captions import CAPTION_KIND
-from app.sop.counterparts import list_counterpart_options
+from app.sop.constants import BULLET_SYMBOLS, MAX_PAIR_SIDE
 from app.sop.decision_steps import UndoMetaIn
 from app.sop.decisions import DbId
 from app.sop.detach import (
@@ -64,6 +66,7 @@ from app.sop.numbering import (
     plan_follow,
     read_draft_number,
 )
+from app.sop.pair_order import order_pair_card
 from app.sop.refs import REF_CONFIRMED, REF_LANG, REF_REJECTED, read_number_in_text
 from app.sop.schemas import NO_NUL
 from app.sop.segment import (
@@ -91,12 +94,11 @@ from app.sop.spans import (
     trim_span,
 )
 from app.sop.tobe import MAX_DB_INT
+from app.sop.unwrap_order import UnwrapTable, find_line_table, order_unwrapped, read_unwrap_tables
 from app.sop.units import (
     LINE_SPLIT_FORMAT,
-    SEPARATE_LAYOUT,
     UNIT_ACTIVE,
     get_latest_extraction_id,
-    load_table_facts,
     pair_new_units,
     refresh_code_pairs,
     verify_document_coverage,
@@ -111,7 +113,7 @@ BOUNDARY_OPS = ("boundary", "check_all")
 # 묶음의 묶인 단위를 바꾸는 편집 — 판단이 있는 묶음을 떼어 낸다
 CAPTION_OPS = ("attach_caption", "detach_caption", "set_first_row_caption")
 FIGURE_OPS = ("group_figures", "ungroup_figures")  # 그림 묶음(caption_figure_id)을 바꾸는 편집 — 든 그림 모두가 바뀐 묶음이다
-# 글자 범위를 고칠 수 있는 단위 — 그림·표·행은 범위를 나누거나 잇지 않는다
+# 글자 범위를 고칠 수 있는 단위 — 그림·표는 범위를 나누거나 잇지 않는다
 TEXT_KINDS = ("sentence", "heading", "cell_sentence", CAPTION_KIND)
 CAPTIONABLE_KINDS = ("sentence", "heading")  # 캡션으로 붙일 수 있는 글 단위
 PAIR_LANGS = {"ko", "en"}  # 짝의 두 쪽 — 한쪽이 비면 짝을 지운다
@@ -166,34 +168,17 @@ class SetLanguageOp(BaseModel):
     lang: Literal["ko", "en"]
 
 
-class SplitTableRowsOp(BaseModel):
-    type: Literal["split_table_rows"]
-    table_unit_id: DbId
-
-
-class MergeTableRowsOp(BaseModel):
-    type: Literal["merge_table_rows"]
-    table_id: DbId  # 원문 표(source_tables) — 그 표의 활성 행 단위를 모두 합친다
-
-
 class SetLayoutTableOp(BaseModel):
-    """표 벗기기(is_layout) · 다시 표로. counterpart_table_id는 벗길 때만 — 다른 언어 절반의 대응 표를 같은 편집으로 함께 벗기고
-    (되돌리기 한 번에 둘 다 돌아온다) 두 표의 칸 줄을 같은 행 · 같은 순서로 짝짓는다(F8a, units.refresh_code_pairs)."""
+    """표 벗기기(is_layout) · 다시 표로. 표는 하나씩 벗긴다 — 한/영 따로 문서에서 둘 다 벗긴 대응 표는 짝을 다시 세울 때 같은 행끼리
+    짝짓는다(F8a, units.refresh_code_pairs). 대응 표 함께 벗기기는 걷었다(사용자 결정 2026-11-19, 요청서 8번)."""
 
     type: Literal["set_layout_table"]
     table_id: DbId
     is_layout: bool
-    counterpart_table_id: DbId | None = None
-
-    @model_validator(mode="after")
-    def check_counterpart(self) -> "SetLayoutTableOp":
-        if self.counterpart_table_id is not None and (not self.is_layout or self.counterpart_table_id == self.table_id):
-            raise ValueError("counterpart_table_id is only for unwrapping, and must be another table")
-        return self
 
 
 class AttachCaptionOp(BaseModel):
-    """묶이지 않은 글 단위(문장·제목, REF 아님)를 표·행·그림 단위의 캡션으로 — 같은 범위·언어의 캡션 단위가 된다.
+    """묶이지 않은 글 단위(문장·제목, REF 아님)를 표·그림 단위의 캡션으로 — 같은 범위·언어의 캡션 단위가 된다.
 
     글은 묶음에서 블록 자리 CAPTION_REACH 안에 있어야 한다(caption_slot — 사이의 문단은 그대로 남는다, F7 ④).
     """
@@ -283,10 +268,29 @@ class SetHeadingOp(BaseModel):
     heading: bool
 
 
+class ReorderPairOp(BaseModel):
+    """짝 카드 안 순서 바꾸기(설계 2026-11-20-assign-mockup1 D8) — unit_ids는 그 짝의 구성원 전부를 새 순서로. 원문에서 끊김 없이
+    이어진 카드만 받는다(떨어진 짝은 제자리에 안내 줄로 보이고 카드 안 순서가 없다). 단위 · 범위 · 글은 그대로이고 pair_seq만 바뀐다."""
+
+    type: Literal["reorder_pair"]
+    pair_id: DbId
+    unit_ids: list[DbId] = Field(min_length=2, max_length=2 * MAX_PAIR_SIDE)
+
+
+class ReorderUnwrappedOp(BaseModel):
+    """벗긴 표 덩이 안 줄 순서 바꾸기(설계 2026-11-20-assign-mockup2 D2) — unit_ids는 그 덩이의 줄 전부(묶이지 않은 활성 단위,
+    unwrap_order.py)를 새 순서로(짝 카드 구성원은 붙여서). 단위 · 범위 · 글 · 판단은 그대로이고 unwrap_seq만 바뀐다."""
+
+    type: Literal["reorder_unwrapped"]
+    table_id: DbId
+    unit_ids: list[DbId] = Field(min_length=1, max_length=MAX_EDIT_UNITS)
+
+
 EditOp = Annotated[
-    SplitOp | MergeOp | UnmergeOp | MoveBoundaryOp | CarveOp | SetLanguageOp | SplitTableRowsOp
-    | MergeTableRowsOp | SetLayoutTableOp | AttachCaptionOp | DetachCaptionOp | SetFirstRowCaptionOp | GroupFiguresOp
-    | UngroupFiguresOp | SetRefOp | ClearRefOp | ClearNoiseOp | SetNumberOp | SetHeadingOp,
+    SplitOp | MergeOp | UnmergeOp | MoveBoundaryOp | CarveOp | SetLanguageOp
+    | SetLayoutTableOp | AttachCaptionOp | DetachCaptionOp | SetFirstRowCaptionOp | GroupFiguresOp
+    | UngroupFiguresOp | SetRefOp | ClearRefOp | ClearNoiseOp | SetNumberOp | SetHeadingOp | ReorderPairOp
+    | ReorderUnwrappedOp,
     Field(discriminator="type"),
 ]
 
@@ -350,7 +354,7 @@ class _Draft:
     group_unit_id: int | None
     pos_seq: int
     pos_start: int
-    # 표·행 단위만 — 이 단위에 묶을 칸 문장 → 지금 묶음(만든 뒤 _Change.regroup으로 옮긴다)
+    # 표 단위만 — 이 단위에 묶을 칸 문장 → 지금 묶음(만든 뒤 _Change.regroup으로 옮긴다)
     cells: dict[int, int | None] = field(default_factory=dict)
     # 번호 열(units.number_*) — 읽은 값·출처·길이는 범위와 신호에서, number_set은 같은 자리에서 시작하던 옛 단위에서 물려받는다
     number: dict[str, object] = field(default_factory=dict)
@@ -358,6 +362,8 @@ class _Draft:
     from_heading: bool = False
     # 같은 변경에서 만드는 표 단위(_Change.drafts의 순번)에 묶을 새 칸 문장 — 띠 표를 표로 되돌릴 때(_plan_band_layout)
     group_draft: int | None = None
+    # 벗긴 표 덩이 안 줄 순서(units.unwrap_seq) — 나누기 · 합치기의 조각은 옛 줄(합치기는 첫 줄)의 값을 물려받아 옛 자리에 원문 순서로 남는다
+    unwrap_seq: int | None = None
 
 
 Move = tuple[int | None, int | None]  # 칸 문장의 (지금 묶음, 바꿀 묶음)
@@ -374,7 +380,7 @@ class _Change:
     revive: list[int] = field(default_factory=list)
     drafts: list[_Draft] = field(default_factory=list)
     langs: dict[int, tuple[str, str]] = field(default_factory=dict)
-    # 칸 문장 → 묶음 옮김. 만들 표·행 단위에 묶는 칸은 draft.cells에 있다가 그 단위를 쓴 뒤 여기 채워진다(기록용)
+    # 칸 문장 → 묶음 옮김. 만들 표 단위에 묶는 칸은 draft.cells에 있다가 그 단위를 쓴 뒤 여기 채워진다(기록용)
     regroup: dict[int, Move] = field(default_factory=dict)
     # 원문 표 → (지금 is_layout, 바꿀 is_layout)
     layouts: dict[int, tuple[bool, bool]] = field(default_factory=dict)
@@ -389,10 +395,12 @@ class _Change:
     noises: dict[int, tuple[str | None, str | None]] = field(default_factory=dict)
     # 그림 → (지금 caption_figure_id, 바꿀 caption_figure_id) — 제자리에서 바뀐다(그림 묶기·풀기와 그 되돌리기)
     figures: dict[int, tuple[int | None, int | None]] = field(default_factory=dict)
+    # 짝 구성원 → (지금 pair_seq, 바꿀 pair_seq) — 제자리에서 바뀐다(짝 카드 안 순서와 그 되돌리기)
+    pair_seqs: dict[int, tuple[int | None, int | None]] = field(default_factory=dict)
+    # 덩이의 줄 → (지금 unwrap_seq, 바꿀 unwrap_seq) — 제자리에서 바뀐다(벗긴 표 줄 순서 · 다시 표로의 비우기와 그 되돌리기)
+    unwrap_seqs: dict[int, tuple[int | None, int | None]] = field(default_factory=dict)
     # 제목 ↔ 문장(set_heading)과 그 되돌리기·다시 하기 — 활성이 된 단위로 한/영 코드 짝을 다시 세운다(짝은 기록 밖이다)
     repair_pairs: bool = False
-    # 함께 벗긴 대응 표 (표, 대응 표)(F8a) — 이 변경 뒤 짝을 다시 세울 때 같은 꼴 판정보다 먼저 맺는다. 다시 하기는 기록에서 채운다
-    links: list[tuple[int, int]] = field(default_factory=list)
 
     def list_regrouped_cells(self) -> list[int]:
         return sorted({*self.regroup, *(cell_id for draft in self.drafts for cell_id in draft.cells)})
@@ -402,11 +410,11 @@ class _Change:
 
         경계를 처음 자리나 사이 빈 글자에 다시 놓거나 단위 하나의 범위를 그대로 골라 만든 경우다 — 단위는 범위 그 자체라
         (스펙 §6.4) 같은 범위를 새 ID로 다시 만들면 표시 ID가 바뀌고 확정 판단이 이유 없이 떼어진다. 캡션 붙이기·떼기는
-        범위가 그대로여도 종류·묶음이 바뀐다. 표·행 단위는 범위가 없어 범위로는 견줄 수 없으므로 묶음·표 표시가 바뀌면 바뀐 것이다.
+        범위가 그대로여도 종류·묶음이 바뀐다. 표 단위는 범위가 없어 범위로는 견줄 수 없으므로 묶음·표 표시가 바뀌면 바뀐 것이다.
         """
         if (
-            self.revive or self.langs or self.layouts or self.noises or self.numbers or self.figures
-            or self.list_regrouped_cells()
+            self.revive or self.langs or self.layouts or self.noises or self.numbers or self.figures or self.pair_seqs
+            or self.unwrap_seqs or self.list_regrouped_cells()
         ):
             return False
         drafts = Counter((tuple(draft.spans), draft.kind, draft.group_unit_id) for draft in self.drafts)
@@ -488,10 +496,11 @@ def _build_draft(
 ) -> _Draft:
     """like의 묶음(그룹 단위)을 물려받는 새 단위 — 자리는 첫 범위의 블록·시작, 언어는 주지 않으면 글자로 판정한다.
 
-    칸 문장의 표·행 번호는 첫 범위 칸 블록의 것이다(R33) — 행을 넘어 합친 칸을 다시 나누면 조각마다 자기 행을 가져야
-    표를 행 단위로 나눌 때(Task 14) 칸이 제 행에 묶인다. 문장·제목은 like를 따른다(표 밖이라 없음).
+    칸 문장의 표·행 번호는 첫 범위 칸 블록의 것이다(R33) — 행을 넘어 합친 칸을 다시 나누면 조각마다 자기 행을 가진다.
+    문장·제목은 like를 따른다(표 밖이라 없음).
     문단 번호는 앞 조각에 남는다(§11-10) — 번호 범위는 새 범위와 블록 신호로 다시 읽고, 사람이 고친 값은 like와 같은 자리에서
     시작하는 조각만 물려받는다(자른 뒤 조각은 번호 없음, 합친 단위는 앞 단위의 번호).
+    벗긴 표 덩이 안 순서(unwrap_seq)는 조각 모두가 like의 값을 물려받는다 — 같은 값끼리는 원문 자리 순이라 옛 줄 자리에 남는다(unwrap_order.py).
     """
     kind = kind or like.kind
     first = blocks[spans[0][0]]
@@ -509,7 +518,7 @@ def _build_draft(
     return _Draft(
         kind=kind, spans=spans, text=text, lang=lang or detect_language(text) or "", table_id=table_id,
         row_index=row_index, group_unit_id=like.group_unit_id, pos_seq=first.seq, pos_start=spans[0][1],
-        number=number, from_heading=like.from_heading and kind == "sentence",
+        number=number, from_heading=like.from_heading and kind == "sentence", unwrap_seq=like.unwrap_seq,
     )
 
 
@@ -621,7 +630,7 @@ async def _plan_unmerge(session: AsyncSession, document_id: int, extraction_id: 
         langs={}
         if is_mixed
         else {original.id: (original.lang, unit.lang) for original in originals if original.lang != unit.lang},
-        # 합친 칸 문장이 그 뒤 다른 묶음(행 나누기 등)으로 옮겨졌으면 되살린 칸도 지금 묶음으로
+        # 합친 칸 문장이 그 뒤 다른 묶음(레이아웃 표 바꾸기 등)으로 옮겨졌으면 되살린 칸도 지금 묶음으로
         regroup={
             original.id: (original.group_unit_id, unit.group_unit_id)
             for original in originals if original.group_unit_id != unit.group_unit_id
@@ -925,7 +934,7 @@ async def _plan_set_number(session: AsyncSession, extraction_id: ExtractionId, o
             continue  # 번호가 없던 줄의 "번호 없음"
         if after_set != target.number_set:
             change.numbers[target.id] = (target.number_set, after_set)
-            if number:
+            if number and number not in BULLET_SYMBOLS:  # 점 기호는 절을 열지 않는다 — 절 이름이 "•"이 되지 않게
                 renamed.append((target, before[0], number))
     change.sections = await _find_section_moves(session, extraction_id, renamed)
     return change
@@ -975,7 +984,7 @@ async def _load_table(session: AsyncSession, extraction_id: ExtractionId, table_
 async def _load_table_units(
     session: AsyncSession, extraction_id: ExtractionId, table_id: int, kinds: Collection[str]
 ) -> list[Unit]:
-    """원문 표 하나의 활성 표·행 단위(원문 순) — 칸 안의 표는 table_id가 달라 섞이지 않는다."""
+    """원문 표 하나의 활성 표 단위(원문 순) — 칸 안의 표는 table_id가 달라 섞이지 않는다."""
     rows = await session.scalars(
         select(Unit)
         .where(
@@ -988,7 +997,7 @@ async def _load_table_units(
 
 
 async def _load_grouped_cells(session: AsyncSession, group_unit_ids: Collection[int]) -> list[Unit]:
-    """표·행 단위들에 묶인 활성 칸 문장(원문 순)."""
+    """표 단위들에 묶인 활성 칸 문장(원문 순)."""
     rows = await select_in_chunks(
         session,
         lambda chunk: select(Unit).where(Unit.group_unit_id.in_(chunk), Unit.status == UNIT_ACTIVE),
@@ -998,7 +1007,7 @@ async def _load_grouped_cells(session: AsyncSession, group_unit_ids: Collection[
 
 
 async def _load_first_cell_seqs(session: AsyncSession, extraction_id: ExtractionId, table_id: int) -> dict[int, int]:
-    """원문 표의 행 → 그 행 첫 칸 블록 seq — 표·행 단위의 자리(처음 쪼개기처럼 빈 칸 블록도 센다)."""
+    """원문 표의 행 → 그 행 첫 칸 블록 seq — 표 단위의 자리(처음 쪼개기처럼 빈 칸 블록도 센다)."""
     rows = await session.execute(
         select(SourceBlock.row_index, func.min(SourceBlock.seq))
         .where(
@@ -1013,55 +1022,11 @@ async def _load_first_cell_seqs(session: AsyncSession, extraction_id: Extraction
 def _build_group_draft(
     kind: str, table_id: int, row_index: int | None, pos_seq: int, cells: Mapping[int, int | None]
 ) -> _Draft:
-    """표·행 단위 — 범위·글자 없음, 중립, 자리는 첫 칸 블록의 칸 문장보다 앞(pos_start=-1). cells는 칸 문장 → 지금 묶음."""
+    """표 단위 — 범위·글자 없음, 중립, 자리는 첫 칸 블록의 칸 문장보다 앞(pos_start=-1). cells는 칸 문장 → 지금 묶음."""
     return _Draft(
         kind=kind, spans=[], text="", lang=NEUTRAL, table_id=table_id, row_index=row_index, group_unit_id=None,
         pos_seq=pos_seq, pos_start=-1, cells=dict(cells),
     )
-
-
-async def _plan_split_table_rows(session: AsyncSession, extraction_id: ExtractionId, op: SplitTableRowsOp) -> _Change:
-    """표 단위를 은퇴시키고 칸 문장이 있는 행마다 행 단위를 만들어 칸 문장을 자기 행(칸 블록의 행, R33)에 묶는다.
-
-    캡션은 행이 없어 가장 앞 행 단위로 옮긴다.
-    """
-    table_unit = (await load_active_units(session, extraction_id, [op.table_unit_id]))[op.table_unit_id]
-    if table_unit.kind != "table":
-        raise_rule(422, "invalid_unit_kind", unit_ids=[table_unit.id])
-    members = await _load_grouped_cells(session, [table_unit.id])
-    cells = [member for member in members if member.kind != CAPTION_KIND]
-    if not cells:  # 행 단위가 하나도 없으면 표가 처분할 곳 없이 사라진다
-        raise_rule(422, "empty_table", unit_id=table_unit.id)
-    blocks = await _load_unit_blocks(session, extraction_id, cells)
-    # 표 안에서 행을 넘어 합친 칸 문장은 자기 행이 없다 — 먼저 나눠야 한다
-    crossing = [cell.id for cell in cells if any(blocks[span[0]].row_index != cell.row_index for span in cell.spans)]
-    if crossing:
-        raise_rule(422, "cell_spans_rows", unit_ids=sorted(crossing))
-    by_row: dict[int, dict[int, int | None]] = defaultdict(dict)
-    for cell in cells:
-        by_row[cell.row_index][cell.id] = cell.group_unit_id
-    first_row = by_row[min(by_row)]
-    first_row.update((member.id, member.group_unit_id) for member in members if member.kind == CAPTION_KIND)
-    first_seqs = await _load_first_cell_seqs(session, extraction_id, table_unit.table_id)
-    drafts = [
-        _build_group_draft("table_row", table_unit.table_id, row, first_seqs[row], row_cells)
-        for row, row_cells in sorted(by_row.items())
-    ]
-    return _build_replacement([table_unit], drafts)
-
-
-async def _plan_merge_table_rows(session: AsyncSession, extraction_id: ExtractionId, op: MergeTableRowsOp) -> _Change:
-    """그 표의 활성 행 단위를 모두 은퇴시키고 새 표 단위 하나에 칸 문장을 다시 묶는다."""
-    table = await _load_table(session, extraction_id, op.table_id)
-    rows = await _load_table_units(session, extraction_id, table.id, ["table_row"])
-    if not rows:
-        raise_rule(422, "table_not_split", table_id=table.id)
-    cells = await _load_grouped_cells(session, [row.id for row in rows])
-    first_seqs = await _load_first_cell_seqs(session, extraction_id, table.id)
-    draft = _build_group_draft(
-        "table", table.id, None, min(first_seqs.values()), {cell.id: cell.group_unit_id for cell in cells}
-    )
-    return _build_replacement(rows, [draft])
 
 
 async def _find_crossing_cells(
@@ -1153,7 +1118,7 @@ async def _find_number_joins(
 async def _plan_set_layout_table(
     session: AsyncSession, document_id: int, extraction_id: ExtractionId, op: SetLayoutTableOp
 ) -> _Change:
-    """데이터 → 레이아웃: 표·행 단위를 은퇴시키고 칸 문장의 묶음을 푼다. 번호만 든 칸은 같은 행 다음 칸의 첫 줄과 한 줄이 되어
+    """데이터 → 레이아웃: 표 단위를 은퇴시키고 칸 문장의 묶음을 푼다. 번호만 든 칸은 같은 행 다음 칸의 첫 줄과 한 줄이 되어
     그 줄의 번호가 된다(_find_number_joins). 레이아웃 → 데이터: 새 표 단위에 칸 문장을 묶는다 — 번호를 받은 줄은 그대로 한 줄로
     묶인다(표 안에서는 보이는 모양이 같다, 되돌리기는 Ctrl+Z가 처음 모양으로 돌린다).
 
@@ -1180,6 +1145,13 @@ async def _plan_set_layout_table(
     for band in inner_tables:
         if is_band_table(band.signals):
             change = _merge_changes(change, await _plan_band_layout(session, document_id, extraction_id, band, op.is_layout))
+    if not op.is_layout:
+        # 다시 표로 묶으면 덩이 줄 순서를 비운다 — 다시 벗겼을 때 낡은 순서가 살아나지 않게(되돌리면 돌아온다). 은퇴하는 줄은 값째 은퇴한다
+        retiring = set(change.retire)
+        lines = await _load_unwrap_lines(session, extraction_id, table.id, await _load_unwrap_tables(session, extraction_id))
+        change.unwrap_seqs = {
+            unit.id: (unit.unwrap_seq, None) for unit in lines if unit.unwrap_seq is not None and unit.id not in retiring
+        }
     return change
 
 
@@ -1222,35 +1194,8 @@ async def _plan_plain_layout(
     return change
 
 
-async def _plan_unwrap_pair(
-    session: AsyncSession, document_id: int, extraction_id: ExtractionId, op: SetLayoutTableOp
-) -> _Change:
-    """표와 다른 언어 절반의 대응 표를 한 편집으로 벗긴다(F8a) — 표마다 보통 벗기기를 세워 하나로 합친다(되돌리기 한 번).
-
-    대응 표는 문서 보기가 싣는 후보(counterparts.list_counterpart_options)만 받는다 — 같은 언어 표 · 이미 벗긴 표 · 누른 표의 안쪽
-    띠 표나 바깥 표를 받으면 같은 단위를 두 번 세운다(422 invalid_counterpart).
-    """
-    assert op.counterpart_table_id is not None
-    await _load_table(session, extraction_id, op.table_id)  # 다른 문서의 표면 404
-    document = await session.get_one(Document, document_id)
-    options = (
-        list_counterpart_options(await load_table_facts(session, extraction_id))
-        if document.language_layout == SEPARATE_LAYOUT else {}
-    )
-    if op.counterpart_table_id not in options.get(op.table_id, []):
-        raise_rule(422, "invalid_counterpart", table_id=op.table_id, counterpart_table_id=op.counterpart_table_id)
-    first = await _plan_set_layout_table(session, document_id, extraction_id, op)
-    second = await _plan_set_layout_table(
-        session, document_id, extraction_id,
-        SetLayoutTableOp(type="set_layout_table", table_id=op.counterpart_table_id, is_layout=True),
-    )
-    change = _merge_changes(first, second)
-    change.links = [(op.table_id, op.counterpart_table_id)]
-    return change
-
-
 def _merge_changes(first: _Change, second: _Change) -> _Change:
-    """두 변경을 한 편집으로 — 표 벗기기와 안쪽 띠 표 바꾸기, 표와 대응 표 벗기기. 둘은 다른 표의 단위만 건드린다.
+    """두 변경을 한 편집으로 — 표 벗기기와 안쪽 띠 표 바꾸기. 둘은 다른 표의 단위만 건드린다.
 
     _Change의 모든 칸을 칸 꼴대로 합친다(목록은 잇고 사전은 더하고 참거짓은 또는) — 칸을 더해도 여기서 조용히 빠지지 않는다.
     같은 변경 안 표 단위를 가리키는 칸(group_draft)은 앞 변경의 초안 수만큼 민다.
@@ -1277,7 +1222,7 @@ def _merge_changes(first: _Change, second: _Change) -> _Change:
 async def _plan_band_layout(
     session: AsyncSession, document_id: int, extraction_id: ExtractionId, table: SourceTable, to_layout: bool
 ) -> _Change:
-    """띠 표 ↔ 제목 줄(F4) — 벗기면 표·행·칸 단위를 거두고 번호 칸을 품은 제목 줄을, "표로 되돌리기"는 제목 줄을 거두고 데이터 표
+    """띠 표 ↔ 제목 줄(F4) — 벗기면 표·칸 단위를 거두고 번호 칸을 품은 제목 줄을, "표로 되돌리기"는 제목 줄을 거두고 데이터 표
     (표 단위 + 묶인 칸 문장)를 만든다. 두 쪽 모두 처음 쪼개기(segment.build_unit_drafts)가 만드는 단위 그대로다. 편집 하나라
     되돌리기·다시 하기는 같은 단위 ID로 오간다. 칸 밖까지 이은 줄이 있으면 표로 되돌리지 않는다(422 cell_crosses_table).
     """
@@ -1395,8 +1340,8 @@ async def _measure_caption_distance(session: AsyncSession, extraction_id: Extrac
 async def _plan_attach_caption(session: AsyncSession, extraction_id: ExtractionId, op: AttachCaptionOp) -> _Change:
     """글 단위를 은퇴시키고 같은 범위·언어의 캡션 단위를 그 묶음에 묶어 만든다 — 묶음마다 언어당 캡션 하나.
 
-    글은 묶음에서 블록 자리 CAPTION_REACH 안이어야 하고 사이의 문단은 그대로 남는다(F7 ④). 행으로 나눈 표는 행 단위 모두가
-    한 묶음 자리라 캡션은 가장 앞 행에 둔다(행 나누기와 같다). 다른 그림의 캡션을 같이 쓰는 그림은 제 캡션을 받지 않는다(먼저 푼다).
+    글은 묶음에서 블록 자리 CAPTION_REACH 안이어야 하고 사이의 문단은 그대로 남는다(F7 ④). 다른 그림의 캡션을 같이 쓰는 그림은
+    제 캡션을 받지 않는다(먼저 푼다).
     """
     units = await load_active_units(session, extraction_id, [op.unit_id, op.bundle_unit_id])
     unit, bundle = units[op.unit_id], units[op.bundle_unit_id]
@@ -1409,8 +1354,6 @@ async def _plan_attach_caption(session: AsyncSession, extraction_id: ExtractionI
     distance = await _measure_caption_distance(session, extraction_id, unit, bundle)
     if distance is None or distance > CAPTION_REACH:
         raise_rule(422, "caption_not_adjacent", unit_ids=[unit.id, op.bundle_unit_id])
-    if bundle.kind == "table_row":
-        bundle = (await _load_table_units(session, extraction_id, bundle.table_id, ["table_row"]))[0]
     taken = await session.scalar(
         select(Unit.id).where(
             Unit.group_unit_id == bundle.id, Unit.status == UNIT_ACTIVE, Unit.kind == CAPTION_KIND,
@@ -1553,6 +1496,114 @@ async def _plan_ungroup_figures(session: AsyncSession, extraction_id: Extraction
     return _Change(figures=figures, bundles=[member.id for member in members] if figures else [])
 
 
+async def _plan_reorder_pair(
+    session: AsyncSession, document_id: int, extraction_id: ExtractionId, op: ReorderPairOp
+) -> _Change:
+    """짝 카드 안 순서 — 그 문서의 짝이 아니면 404 pair_not_found, unit_ids가 구성원 전부가 아니면 422 pair_members_mismatch,
+    구성원 사이에 다른 활성 단위가 있으면(카드가 아니다) 422 pair_not_adjacent. 지금 순서와 같으면 바뀌는 게 없다.
+    판단이 걸린 구성원은 쓰기 길(_write_change)이 409 unit_has_decision(reason pair_order)으로 막는다 — 되돌리기도 같다."""
+    ensure_unique_units(op.unit_ids)
+    pair = await session.scalar(select(UnitPair).where(UnitPair.id == op.pair_id, UnitPair.document_id == document_id))
+    if pair is None:
+        raise_rule(404, "pair_not_found", pair_id=op.pair_id)
+    member_ids = set(await session.scalars(select(UnitPairMember.unit_id).where(UnitPairMember.pair_id == pair.id)))
+    if member_ids != set(op.unit_ids):
+        raise_rule(422, "pair_members_mismatch", pair_id=pair.id, unit_ids=sorted(member_ids))
+    members = sorted((await load_active_units(session, extraction_id, op.unit_ids)).values(), key=_get_position)
+    first, last = _get_position(members[0]), _get_position(members[-1])
+    rows = await session.execute(
+        select(Unit.id, Unit.pos_seq, Unit.pos_start).where(
+            Unit.extraction_id == extraction_id, Unit.status == UNIT_ACTIVE,
+            Unit.pos_seq >= first[0], Unit.pos_seq <= last[0],
+        )
+    )
+    apart = sorted(
+        unit_id for unit_id, pos_seq, pos_start in rows
+        if unit_id not in member_ids and first < (pos_seq, pos_start, unit_id) < last
+    )
+    if apart:
+        raise_rule(422, "pair_not_adjacent", pair_id=pair.id, unit_ids=apart)
+    if [unit.id for unit in order_pair_card(members, lambda unit: unit.pair_seq)] == op.unit_ids:
+        return _Change()
+    current = {unit.id: unit.pair_seq for unit in members}
+    return _Change(pair_seqs={
+        unit_id: (current[unit_id], index) for index, unit_id in enumerate(op.unit_ids) if current[unit_id] != index
+    })
+
+
+async def _load_unwrap_tables(session: AsyncSession, extraction_id: ExtractionId) -> dict[int, UnwrapTable]:
+    """추출의 원문 표 — 벗긴 표 덩이를 잰다(unwrap_order.py)."""
+    rows = await session.execute(
+        select(SourceTable.id, SourceTable.parent_table_id, SourceTable.is_layout, SourceTable.signals).where(
+            SourceTable.extraction_id == extraction_id
+        )
+    )
+    return read_unwrap_tables(rows.tuples().all())
+
+
+async def _load_unwrap_lines(
+    session: AsyncSession, extraction_id: ExtractionId, table_id: int, tables: Mapping[int, UnwrapTable]
+) -> list[Unit]:
+    """벗긴 표 하나의 덩이 줄(묶이지 않은 활성 단위, unwrap_order.find_line_table) — 원문 순. 줄의 첫 블록은 그 표나 안쪽 표의 칸이다."""
+    inside = {table_id}
+    grew = True
+    while grew:
+        grew = False
+        for other_id, other in tables.items():
+            if other.parent_id in inside and other_id not in inside:
+                inside.add(other_id)
+                grew = True
+    blocks = (
+        await session.execute(
+            select(SourceBlock.id, SourceBlock.seq, SourceBlock.table_id).where(
+                SourceBlock.extraction_id == extraction_id, SourceBlock.table_id.in_(inside)
+            )
+        )
+    ).tuples().all()
+    if not blocks:
+        return []
+    table_of_block = {block_id: block_table for block_id, _, block_table in blocks}
+    # 범위가 없는 단위(표 · 그림)는 정렬 키 pos_seq가 제 블록의 seq다
+    table_at_seq = {seq: block_table for _, seq, block_table in blocks}
+    seqs = [seq for _, seq, _ in blocks]
+    units = await session.scalars(
+        select(Unit).where(
+            Unit.extraction_id == extraction_id, Unit.status == UNIT_ACTIVE, Unit.group_unit_id.is_(None),
+            Unit.pos_seq >= min(seqs), Unit.pos_seq <= max(seqs),
+        )
+    )
+    lines = [
+        unit for unit in units
+        if find_line_table(
+            unit.kind, unit.table_id,
+            table_of_block.get(unit.spans[0][0]) if unit.spans else table_at_seq.get(unit.pos_seq), tables,
+        ) == table_id
+    ]
+    return sorted(lines, key=_get_position)
+
+
+async def _plan_reorder_unwrapped(session: AsyncSession, extraction_id: ExtractionId, op: ReorderUnwrappedOp) -> _Change:
+    """벗긴 표 덩이 안 줄 순서 — 그 추출의 표가 아니면 404 table_not_found, 벗긴 보통 표가 아니면 422 table_not_unwrapped,
+    unit_ids가 덩이 줄 전부가 아니면 422 unwrap_lines_mismatch(unit_ids = 지금 덩이 줄의 순서). 지금 순서와 같으면 바뀌는 게 없다.
+    판단은 막지 않는다 — 글 · 출처가 그대로이고 순서는 용지 · 문단 Excel만 따른다(reorder_pair와 다른 까닭: 짝 순서는 짝을 한 문장으로
+    합치는 순서를 바꾼다). 덩이의 줄마다 새 순서의 자리(0부터)를 매긴다."""
+    ensure_unique_units(op.unit_ids)
+    table = await _load_table(session, extraction_id, op.table_id)
+    tables = await _load_unwrap_tables(session, extraction_id)
+    if not tables[table.id].is_unwrapped:
+        raise_rule(422, "table_not_unwrapped", table_id=table.id)
+    lines = await _load_unwrap_lines(session, extraction_id, table.id, tables)
+    current_order = [unit.id for unit in order_unwrapped(lines, lambda unit: unit.unwrap_seq, _get_position)]
+    if set(current_order) != set(op.unit_ids):
+        raise_rule(422, "unwrap_lines_mismatch", table_id=table.id, unit_ids=current_order)
+    if current_order == op.unit_ids:
+        return _Change()
+    current = {unit.id: unit.unwrap_seq for unit in lines}
+    return _Change(unwrap_seqs={
+        unit_id: (current[unit_id], index) for index, unit_id in enumerate(op.unit_ids) if current[unit_id] != index
+    })
+
+
 async def _plan(session: AsyncSession, document_id: int, extraction_id: ExtractionId, op: EditOp) -> _Change:
     match op:
         case SplitOp():
@@ -1567,14 +1618,8 @@ async def _plan(session: AsyncSession, document_id: int, extraction_id: Extracti
             return await _plan_carve(session, extraction_id, op)
         case SetLanguageOp():
             return await _plan_set_language(session, extraction_id, op)
-        case SplitTableRowsOp():
-            return await _plan_split_table_rows(session, extraction_id, op)
-        case MergeTableRowsOp():
-            return await _plan_merge_table_rows(session, extraction_id, op)
-        case SetLayoutTableOp(counterpart_table_id=None):
-            return await _plan_set_layout_table(session, document_id, extraction_id, op)
         case SetLayoutTableOp():
-            return await _plan_unwrap_pair(session, document_id, extraction_id, op)
+            return await _plan_set_layout_table(session, document_id, extraction_id, op)
         case AttachCaptionOp():
             return await _plan_attach_caption(session, extraction_id, op)
         case DetachCaptionOp():
@@ -1595,6 +1640,10 @@ async def _plan(session: AsyncSession, document_id: int, extraction_id: Extracti
             return await _plan_clear_noise(session, extraction_id, op)
         case SetHeadingOp():
             return await _plan_set_heading(session, document_id, extraction_id, op)
+        case ReorderPairOp():
+            return await _plan_reorder_pair(session, document_id, extraction_id, op)
+        case ReorderUnwrappedOp():
+            return await _plan_reorder_unwrapped(session, extraction_id, op)
         case _:
             assert_never(op)
 
@@ -1685,7 +1734,7 @@ async def _insert_units(
             extraction_id=extraction_id, local_no=last_no + offset, kind=draft.kind,
             spans=[list(span) for span in draft.spans], text=draft.text, lang=draft.lang, table_id=draft.table_id,
             row_index=draft.row_index, group_unit_id=draft.group_unit_id, pos_seq=draft.pos_seq,
-            pos_start=draft.pos_start, from_heading=draft.from_heading, **draft.number,
+            pos_start=draft.pos_start, from_heading=draft.from_heading, unwrap_seq=draft.unwrap_seq, **draft.number,
         )
         for offset, draft in enumerate(ordered, start=1)
     ]
@@ -1754,6 +1803,30 @@ async def _set_figures(session: AsyncSession, figures: Mapping[int, tuple[int | 
         changed += result.rowcount
     if changed != len(figures):
         raise RuntimeError(f"unit edit history out of sync: {changed} of {len(figures)} figures had the recorded group")
+
+
+async def _set_pair_seqs(session: AsyncSession, pair_seqs: Mapping[int, tuple[int | None, int | None]]) -> None:
+    """짝 카드 안 순서(pair_seq)를 바꾼다 — 지금 값이 기록과 다른 단위가 있으면 편집 기록과 어긋난 것이라 RuntimeError(버그 가드)."""
+    changed = 0
+    for unit_id, (old, new) in pair_seqs.items():
+        current = Unit.pair_seq.is_(None) if old is None else Unit.pair_seq == old
+        result = await session.execute(update(Unit).where(Unit.id == unit_id, current).values(pair_seq=new))
+        changed += result.rowcount
+    if changed != len(pair_seqs):
+        raise RuntimeError(f"unit edit history out of sync: {changed} of {len(pair_seqs)} units had the recorded pair order")
+
+
+async def _set_unwrap_seqs(session: AsyncSession, unwrap_seqs: Mapping[int, tuple[int | None, int | None]]) -> None:
+    """벗긴 표 덩이 줄 순서(unwrap_seq)를 바꾼다 — 지금 값이 기록과 다른 단위가 있으면 편집 기록과 어긋난 것이라 RuntimeError(버그 가드)."""
+    changed = 0
+    for unit_id, (old, new) in unwrap_seqs.items():
+        current = Unit.unwrap_seq.is_(None) if old is None else Unit.unwrap_seq == old
+        result = await session.execute(update(Unit).where(Unit.id == unit_id, current).values(unwrap_seq=new))
+        changed += result.rowcount
+    if changed != len(unwrap_seqs):
+        raise RuntimeError(
+            f"unit edit history out of sync: {changed} of {len(unwrap_seqs)} units had the recorded unwrap order"
+        )
 
 
 async def _leave_pairs(session: AsyncSession, unit_ids: Collection[int]) -> None:
@@ -1857,6 +1930,11 @@ async def _write_change(
         decided = await _find_decided_units(session, document, in_place)
         if decided:
             raise_rule(409, "unit_has_decision", unit_ids=decided)
+    if change.pair_seqs:
+        # 카드 안 순서는 묶을 때의 글 순서라(결과물이 따른다) 배정이 걸린 짝은 먼저 배정을 푼다
+        decided = await _find_decided_units(session, document, list(change.pair_seqs))
+        if decided:
+            raise_rule(409, "unit_has_decision", unit_ids=decided, reason="pair_order")
     regrouped = change.list_regrouped_cells()
     decided_bundles: list[int] = []
     if change.retire or regrouped or change.bundles:
@@ -1876,6 +1954,9 @@ async def _write_change(
     await _apply_sections(session, extraction_id, change.sections)
     await _set_noises(session, change.noises)
     await _set_figures(session, change.figures)
+    await _set_pair_seqs(session, change.pair_seqs)
+    # 덩이 줄 순서는 판단을 묻지 않는다 — 글 · 출처가 그대로라 결과물 A가 따르지 않는다(_plan_reorder_unwrapped)
+    await _set_unwrap_seqs(session, change.unwrap_seqs)
     # 다시 목차가 된 단위는 짝을 맺지 않는다(units._find_code_pairs와 같은 규칙)
     await _leave_pairs(session, [*change.retire, *change.langs, *marking])
     await session.flush()
@@ -1913,7 +1994,7 @@ async def _write_change(
         # 레이아웃 표의 칸 문장은 묶이지 않아 한/영 두 열이 이웃 짝으로 제안되고(따로 배치면 둘 다 벗긴 대응 표의 같은 행끼리, F8a),
         # 다시 데이터 표가 되면 그 제안이 빠진다
         await session.flush()
-        await refresh_code_pairs(session, document, actor, change.links)
+        await refresh_code_pairs(session, document, actor)
     if change.repair_pairs:
         # 제목 ↔ 문장은 짝의 단위를 바꾼다 — 새로 활성이 된 단위만 다시 짝짓는다(F8b, 조항마다 문장 1:1)
         await session.flush()
@@ -1933,7 +2014,7 @@ def _record(
     """작업 기록 — 대상은 은퇴한·활성이 된·언어가 바뀐·다시 묶인 단위, 사유 칸에 편집 종류(split 등)."""
     unit_ids = sorted(
         {*result.created_unit_ids, *result.retired_unit_ids, *change.langs, *change.regroup, *change.bundles,
-         *change.noises, *change.numbers, *change.figures}
+         *change.noises, *change.numbers, *change.figures, *change.pair_seqs, *change.unwrap_seqs}
     )
     record_event(
         session, bundle_id=document.bundle_id, actor=actor, action=action, target_type="unit", target_ids=unit_ids,
@@ -1980,6 +2061,8 @@ async def apply_edit(
             layout_changes={str(table_id): list(flags) for table_id, flags in change.layouts.items()},
             noise_changes={str(unit_id): list(noises) for unit_id, noises in change.noises.items()},
             figure_changes={str(unit_id): list(figures) for unit_id, figures in change.figures.items()},
+            pair_seq_changes={str(unit_id): list(seqs) for unit_id, seqs in change.pair_seqs.items()},
+            unwrap_seq_changes={str(unit_id): list(seqs) for unit_id, seqs in change.unwrap_seqs.items()},
             number_changes=_dump_numbers(change), actor=actor,
         )
     )
@@ -2033,11 +2116,15 @@ def _replay(edit: UnitEdit, *, backwards: bool) -> _Change:
         figures={
             int(unit_id): _orient(figures, backwards=backwards) for unit_id, figures in (edit.figure_changes or {}).items()
         },
+        # 0033 전 기록은 빈 객체다(카드 안 순서를 바꾼 편집이 없었다)
+        pair_seqs={
+            int(unit_id): _orient(seqs, backwards=backwards) for unit_id, seqs in (edit.pair_seq_changes or {}).items()
+        },
+        # 0034 전 기록은 빈 객체다(벗긴 표 줄 순서를 바꾼 편집이 없었다)
+        unwrap_seqs={
+            int(unit_id): _orient(seqs, backwards=backwards) for unit_id, seqs in (edit.unwrap_seq_changes or {}).items()
+        },
         repair_pairs=edit.op == "set_heading",
-        # 함께 벗긴 대응 표는 다시 하기 때 같은 표끼리 다시 맺는다 — 그때 이 기록은 아직 되돌린 상태라 기록에서 읽히지 않는다
-        links=[(edit.payload["table_id"], edit.payload["counterpart_table_id"])]
-        if not backwards and edit.op == "set_layout_table" and edit.payload.get("counterpart_table_id") is not None
-        else [],
     )
 
 
@@ -2084,8 +2171,7 @@ async def undo_edit(session: AsyncSession, document: Document, *, confirm: bool,
     )
     if edit is None:
         raise_rule(409, "nothing_to_undo")
-    # 되돌리는 기록을 먼저 내린다 — 짝 다시 세우기(units.refresh_code_pairs)가 남은 기록에서 함께 벗긴 표 짝을 읽을 때 이 기록을
-    # 아직 적용된 것으로 읽지 않게. 실패하면 요청이 커밋하지 않아 상태도 그대로다
+    # 되돌리는 기록을 먼저 내린다 — 실패하면 요청이 커밋하지 않아 상태도 그대로다
     edit.state = EDIT_UNDONE
     await session.flush()
     return await _step_edit(session, document, edit, backwards=True, confirm=confirm, actor=actor)

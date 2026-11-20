@@ -73,7 +73,8 @@ from tests.sop_map_helpers import (
     move_out,
 )
 
-pytestmark = pytest.mark.usefixtures("clean_sop")
+# 지도 · REF 제안의 길은 글에서 제안하던 옛 추출에서 본다 — 새 추출의 Reference 절 확정은 test_sop_ref_section.py
+pytestmark = pytest.mark.usefixtures("clean_sop", "legacy_ref_proposals")
 
 SCOPES = ("linked", "all")
 # 지도 하나를 만드는 질의 수의 상한 — Bundle 수와 무관해야 한다(설계 §7.1)

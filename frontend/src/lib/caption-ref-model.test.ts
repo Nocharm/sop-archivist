@@ -47,10 +47,9 @@ describe("describeCaptionRef", () => {
 });
 
 describe("listRefCandidates", () => {
-  it("lists one unit per table (a row-split table by its first row) or every figure, in paper order", () => {
+  it("lists every table or every figure, in paper order", () => {
     const all = units({
-      3: { kind: "table_row", table_id: 2, row_index: 1, pos_seq: 3 },
-      4: { kind: "table_row", table_id: 2, row_index: 0, pos_seq: 3 },
+      4: { kind: "table", table_id: 2, pos_seq: 3 },
       7: { kind: "table", table_id: 1, pos_seq: 1 },
       8: { kind: "figure", pos_seq: 8 },
       10: { kind: "sentence" },

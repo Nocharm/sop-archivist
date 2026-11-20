@@ -1,4 +1,4 @@
-"""표 행 나누기·다시 합치기·레이아웃 표 바꾸기 — 칸 문장 다시 묶기, 확인 플래그, 되돌리기·다시 하기, 새 문서 칸 새 문장(R32)."""
+"""레이아웃 표 바꾸기 — 칸 문장 다시 묶기, 확인 플래그, 되돌리기·다시 하기, 새 문서 칸 새 문장(R32)."""
 
 import random
 from typing import NamedTuple
@@ -79,14 +79,6 @@ def _step(client: TestClient, bundle_id: int, doc_id: int, action: str, *, confi
     )
 
 
-def _split_rows(table_unit: dict) -> dict:
-    return {"type": "split_table_rows", "table_unit_id": table_unit["id"]}
-
-
-def _merge_rows(table_id: int) -> dict:
-    return {"type": "merge_table_rows", "table_id": table_id}
-
-
 def _set_layout(table_id: int, is_layout: bool) -> dict:
     return {"type": "set_layout_table", "table_id": table_id, "is_layout": is_layout}
 
@@ -123,15 +115,6 @@ def _load_last_edit(doc_id: int) -> dict:
         return {"op": edit.op, "regrouped": edit.regrouped, "layout_changes": edit.layout_changes}
 
     return run_in_session(_run)
-
-
-def _load_first_cell_seqs(view: dict, table_id: int) -> dict[int, int]:
-    """표의 행 → 그 행 첫 칸 블록 seq (행 단위의 자리)."""
-    seqs: dict[int, int] = {}
-    for block in view["blocks"]:
-        if block["table_id"] == table_id and block["kind"] == "table_cell":
-            seqs.setdefault(block["row_index"], block["seq"])
-    return seqs
 
 
 def _load_targets(target_doc_id: int) -> list[dict]:
@@ -181,167 +164,30 @@ def _find_coverage_problems(view: dict) -> list[str]:
     )
 
 
-# ── 행 나누기 ────────────────────────────────────────────────────────────────
+# ── 레이아웃 표 ───────────────────────────────────────────────────────────────
 
 
-def test_split_table_rows_regroups_cells(client: TestClient) -> None:
-    """칸이 있는 행마다 행 단위(범위 없음·중립·미배정, 자리는 그 행 첫 칸 블록 앞)를 만들고 칸 문장을 자기 행에 묶는다."""
-    fx = _setup(client, p("합성 표 앞 문장.") + tbl([ROWS[0], ROWS[1], ["", ""], ROWS[2]]))
-    (table,) = _units_of_kind(fx.view, "table")
-    cells = [find_unit(fx.view, text) for text in CELL_TEXTS]
-
-    result = _ok(_edit(client, fx.bundle_id, fx.doc["id"], _split_rows(table)))
-
-    view = get_view(client, fx.bundle_id, fx.doc["id"])
-    rows = _units_of_kind(view, "table_row")
-    first_seqs = _load_first_cell_seqs(view, table["table_id"])
-    assert result == {
-        "document_revision": 2, "created_unit_ids": [row["id"] for row in rows], "retired_unit_ids": [table["id"]],
-        "detach": EMPTY_DETACH,
-    }
-    # 빈 행(2)은 칸 문장이 없어 행 단위가 없다
-    assert [
-        (row["row_index"], row["table_id"], row["spans"], row["text"], row["lang"], row["status"], row["pos_seq"])
-        for row in rows
-    ] == [(index, table["table_id"], [], "", "neutral", "unassigned", first_seqs[index]) for index in (0, 1, 3)]
-    assert _units_of_kind(view, "table") == []
-    row_ids = {row["row_index"]: row["id"] for row in rows}
-    assert _groups_of(view, CELL_TEXTS) == [row_ids[index] for index in (0, 0, 1, 1, 3, 3)]
-    assert [find_unit(view, text)["status"] for text in CELL_TEXTS] == ["unassigned"] * 6
-    assert _load_statuses(table["id"]) == ["retired"]
-    assert _load_last_edit(fx.doc["id"]) == {
-        "op": "split_table_rows",
-        "regrouped": {
-            str(cell["id"]): [table["id"], row_ids[index]]
-            for cell, index in zip(cells, (0, 0, 1, 1, 3, 3), strict=True)
-        },
-        "layout_changes": {},
-    }
-    assert _find_coverage_problems(view) == []
-
-
-def test_split_table_rows_rejects(client: TestClient) -> None:
-    """표 단위만 나눈다 — 행 단위·문장은 422, 칸 문장이 없는 표는 422, 행을 넘어 합친 칸은 먼저 나눠야 한다."""
-    fx = _setup(client, p("합성 문장.") + tbl([["", ""]]) + tbl(ROWS[:2]))
-    empty_table, table = _units_of_kind(fx.view, "table")
-    sentence = find_unit(fx.view, "합성 문장.")
-
-    assert _code(_edit(client, fx.bundle_id, fx.doc["id"], _split_rows(sentence))) == (422, "invalid_unit_kind")
-    assert _code(_edit(client, fx.bundle_id, fx.doc["id"], _split_rows(empty_table))) == (422, "empty_table")
-    merge = {"type": "merge", "unit_ids": [find_unit(fx.view, "합성 값 하나.")["id"], find_unit(fx.view, "합성 값 둘.")["id"]]}
-    _ok(_edit(client, fx.bundle_id, fx.doc["id"], merge))
-    merged = find_unit(get_view(client, fx.bundle_id, fx.doc["id"]), "합성 값 하나.\n합성 값 둘.")
-
-    refused = _edit(client, fx.bundle_id, fx.doc["id"], _split_rows(table))
-
-    assert refused.status_code == 422
-    assert refused.json()["detail"] == {"code": "cell_spans_rows", "unit_ids": [merged["id"]]}
-    # 합친 칸을 되돌려 행마다 나뉘면 행으로 나눌 수 있다
-    _ok(_step(client, fx.bundle_id, fx.doc["id"], "undo"))
-    _ok(_edit(client, fx.bundle_id, fx.doc["id"], _split_rows(table)))
-    (row, _) = _units_of_kind(get_view(client, fx.bundle_id, fx.doc["id"]), "table_row")
-    assert _code(_edit(client, fx.bundle_id, fx.doc["id"], _split_rows(row))) == (422, "invalid_unit_kind")
-
-
-def test_rows_get_own_destinations(client: TestClient) -> None:
-    """행마다 다른 곳으로 보낸다 — 칸 문장 상태는 자기 행의 판단을, 행의 표 새 문장은 그 행 하나짜리 격자다."""
-    fx = _setup(client, tbl(ROWS))
-    (table,) = _units_of_kind(fx.view, "table")
-    _ok(_edit(client, fx.bundle_id, fx.doc["id"], _split_rows(table)))
-    rows = _units_of_kind(get_view(client, fx.bundle_id, fx.doc["id"]), "table_row")
-
-    assign_as_is(client, fx.bundle_id, rows[0], fx.sop_id, slot_key="procedures.p1")
-    assign_as_is(client, fx.bundle_id, rows[1], fx.wi_id, wi_part="instruction")
-    assign_as_is(
-        client, fx.bundle_id, rows[2], fx.wi_id, wi_part="instruction", hold_reason="Synthetic: check the step"
-    )
-
-    view = get_view(client, fx.bundle_id, fx.doc["id"])
-    assert [find_unit(view, text)["status"] for text in CELL_TEXTS] == [
-        "confirmed", "confirmed", "confirmed", "confirmed", "on_hold", "on_hold",
-    ]
-    for row, doc_id in zip(rows, (fx.sop_id, fx.wi_id, fx.wi_id), strict=True):
-        group = get_group_by_unit(client, fx.bundle_id, row["id"])
-        assert {target["target_doc_id"] for target in group["targets"]} == {doc_id}
-        table_target, *children = sorted(group["targets"], key=lambda target: target["kind"] != "table")
-        cell_targets = [target for target in children if target["cell_row"] is not None]  # 캡션은 칸 좌표가 없다
-        assert table_target["grid"] == {"rows": 1, "cols": 2}
-        assert [(target["cell_row"], target["cell_col"]) for target in cell_targets] == [(0, 0), (0, 1)]
-
-
-# ── 다시 합치기·되돌리기 ──────────────────────────────────────────────────────
-
-
-def test_merge_rows_back_and_undo(client: TestClient) -> None:
-    """다시 합치면 새 표 단위, 되돌리면 행 단위가 원래 ID로 돌아오고 칸도 원래 행에 묶인다."""
-    fx = _setup(client, tbl(ROWS))
-    (table,) = _units_of_kind(fx.view, "table")
-    _ok(_edit(client, fx.bundle_id, fx.doc["id"], _split_rows(table)))
-    row_ids = [row["id"] for row in _units_of_kind(get_view(client, fx.bundle_id, fx.doc["id"]), "table_row")]
-
-    merged = _ok(_edit(client, fx.bundle_id, fx.doc["id"], _merge_rows(table["table_id"])))
-
-    view = get_view(client, fx.bundle_id, fx.doc["id"])
-    (new_table,) = _units_of_kind(view, "table")
-    assert merged == {
-        "document_revision": 3, "created_unit_ids": [new_table["id"]], "retired_unit_ids": row_ids,
-        "detach": EMPTY_DETACH,
-    }
-    assert new_table["id"] not in (table["id"], *row_ids)
-    assert (new_table["table_id"], new_table["row_index"], new_table["pos_seq"]) == (
-        table["table_id"], None, table["pos_seq"],
-    )
-    assert _groups_of(view, CELL_TEXTS) == [new_table["id"]] * 6
-    assert _units_of_kind(view, "table_row") == []
-    assert _code(_edit(client, fx.bundle_id, fx.doc["id"], _merge_rows(table["table_id"]))) == (422, "table_not_split")
-
-    _ok(_step(client, fx.bundle_id, fx.doc["id"], "undo"))
-
-    view = get_view(client, fx.bundle_id, fx.doc["id"])
-    assert [row["id"] for row in _units_of_kind(view, "table_row")] == row_ids
-    assert _groups_of(view, CELL_TEXTS) == [row_ids[0], row_ids[0], row_ids[1], row_ids[1], row_ids[2], row_ids[2]]
-    assert _load_statuses(new_table["id"]) == ["retired"]
-
-    _ok(_step(client, fx.bundle_id, fx.doc["id"], "undo"))
-
-    view = get_view(client, fx.bundle_id, fx.doc["id"])
-    assert [unit["id"] for unit in _units_of_kind(view, "table")] == [table["id"]]
-    assert _groups_of(view, CELL_TEXTS) == [table["id"]] * 6
-    assert _load_statuses(*row_ids) == ["retired"] * 3
-
-    _ok(_step(client, fx.bundle_id, fx.doc["id"], "redo"))
-    _ok(_step(client, fx.bundle_id, fx.doc["id"], "redo"))
-
-    view = get_view(client, fx.bundle_id, fx.doc["id"])
-    assert [unit["id"] for unit in _units_of_kind(view, "table")] == [new_table["id"]]
-    assert _groups_of(view, CELL_TEXTS) == [new_table["id"]] * 6
-    assert _find_coverage_problems(view) == []
-
-
-def test_split_decided_table_needs_confirm_and_detaches(client: TestClient) -> None:
-    """판단이 있는 표를 행으로 나누면 확인 플래그가 필요하고, 적용하면 표 판단은 이력으로 가고 표·칸 새 문장이 지워진다."""
+def test_unwrap_decided_table_needs_confirm_and_detaches(client: TestClient) -> None:
+    """판단이 있는 표를 벗기면 확인 플래그가 필요하고, 적용하면 표 판단은 이력으로 가고 표·칸 새 문장이 지워진다."""
     fx = _setup(client, tbl(ROWS[:2]))
     (table,) = _units_of_kind(fx.view, "table")
     group = assign_as_is(client, fx.bundle_id, table, fx.sop_id, slot_key="purpose")
     target_ids = sorted(target["id"] for target in group["targets"])
     cells = [find_unit(fx.view, text) for text in CELL_TEXTS[:4]]
 
-    refused = _edit(client, fx.bundle_id, fx.doc["id"], _split_rows(table))
+    refused = _edit(client, fx.bundle_id, fx.doc["id"], _set_layout(table["table_id"], True))
 
     assert refused.status_code == 409
     assert refused.json()["detail"] == {
         "code": "confirm_required", "unit_ids": sorted([table["id"], *(cell["id"] for cell in cells)]),
     }
-    result = _ok(_edit(client, fx.bundle_id, fx.doc["id"], _split_rows(table), confirm=True))
+    result = _ok(_edit(client, fx.bundle_id, fx.doc["id"], _set_layout(table["table_id"], True), confirm=True))
     assert result["detach"] == {
         "reset_unit_ids": [table["id"]], "deleted_target_ids": target_ids, "held_unit_ids": [], "held_target_ids": [],
     }
     assert _load_history_causes(table["id"]) == ["retired"]
     view = get_view(client, fx.bundle_id, fx.doc["id"])
     assert [find_unit(view, text)["status"] for text in CELL_TEXTS[:4]] == ["unassigned"] * 4
-
-
-# ── 레이아웃 표 ───────────────────────────────────────────────────────────────
 
 
 def test_layout_toggle_makes_cells_independent(client: TestClient) -> None:
@@ -476,7 +322,7 @@ def test_layout_to_data_rejects_cells_across_tables(client: TestClient) -> None:
 
 
 def test_nested_table_changes_alone(client: TestClient) -> None:
-    """칸 안의 표는 따로 바뀐다 — 바깥 표를 행으로 나누거나 레이아웃으로 바꿔도 안쪽 표 단위와 그 칸 묶음은 그대로다."""
+    """칸 안의 표는 따로 바뀐다 — 바깥 표를 레이아웃으로 바꿔도 안쪽 표 단위와 그 칸 묶음은 그대로다."""
     inner = tbl([["합성 안쪽 값.", "Inner value."]])
     body = (
         '<w:tbl><w:tblGrid><w:gridCol w:w="1000"/><w:gridCol w:w="1000"/></w:tblGrid>'
@@ -490,19 +336,10 @@ def test_nested_table_changes_alone(client: TestClient) -> None:
     outer_texts = ["합성 바깥 하나.", "Outer one.", "합성 바깥 둘.", "Outer two."]
     inner_texts = ["합성 안쪽 값.", "Inner value."]
 
-    _ok(_edit(client, fx.bundle_id, fx.doc["id"], _split_rows(outer)))
-
-    view = get_view(client, fx.bundle_id, fx.doc["id"])
-    rows = _units_of_kind(view, "table_row")
-    assert [(row["table_id"], row["row_index"]) for row in rows] == [(outer_table["id"], 0), (outer_table["id"], 1)]
-    assert _groups_of(view, outer_texts) == [rows[0]["id"], rows[0]["id"], rows[1]["id"], rows[1]["id"]]
-    assert [unit["id"] for unit in _units_of_kind(view, "table")] == [inner_unit["id"]]
-    assert _groups_of(view, inner_texts) == [inner_unit["id"]] * 2
-
     _ok(_edit(client, fx.bundle_id, fx.doc["id"], _set_layout(outer_table["id"], True)))
 
     view = get_view(client, fx.bundle_id, fx.doc["id"])
-    assert _units_of_kind(view, "table_row") == []
+    assert [unit["id"] for unit in _units_of_kind(view, "table")] == [inner_unit["id"]]
     assert _groups_of(view, outer_texts) == [None] * 4
     assert _groups_of(view, inner_texts) == [inner_unit["id"]] * 2
     assert [table_out["is_layout"] for table_out in view["tables"]] == [True, False]
@@ -524,26 +361,6 @@ def _setup_new_doc(client: TestClient, body: str) -> tuple[int, dict, dict]:
     bundle = create_bundle(client, is_synthetic=True)
     new_doc = _upload_ready(client, bundle["id"], build_docx(body), NEW_NAME, side="new", doc_type="sop")
     return bundle["id"], new_doc, get_view(client, bundle["id"], new_doc["id"])
-
-
-def test_split_rows_on_new_doc_rebuilds_row_targets(client: TestClient) -> None:
-    """새 문서 표를 행으로 나누면 표 새 문장 대신 행마다 한 행짜리 표 새 문장과 그 행 기준 칸 새 문장이 생긴다."""
-    bundle_id, new_doc, view = _setup_new_doc(client, tbl(ROWS[:2]))
-    (table,) = _units_of_kind(view, "table")
-
-    _ok(_edit(client, bundle_id, new_doc["id"], _split_rows(table)))
-
-    rows = _units_of_kind(get_view(client, bundle_id, new_doc["id"]), "table_row")
-    targets = _load_targets(new_doc["target_doc_id"])
-    tables = [target for target in targets if target["kind"] == "table"]
-    assert [(target["new_unit_id"], target["grid"]) for target in tables] == [
-        (row["id"], {"rows": 1, "cols": 2}) for row in rows
-    ]
-    cells = [target for target in targets if target["kind"] == "sentence"]
-    assert [(target["text"], target["parent_target_id"], target["cell_row"], target["cell_col"]) for target in cells] == [
-        (CELL_TEXTS[0], tables[0]["id"], 0, 0), (CELL_TEXTS[1], tables[0]["id"], 0, 1),
-        (CELL_TEXTS[2], tables[1]["id"], 0, 0), (CELL_TEXTS[3], tables[1]["id"], 0, 1),
-    ]
 
 
 def test_new_doc_regroup_resets_decided_cell_targets(client: TestClient) -> None:
@@ -595,22 +412,16 @@ RANDOM_BODY = (
 )
 # 난수 편집이 받을 수 있는 거절 — 그 밖의 응답(특히 500)은 실패다
 EXPECTED_REFUSALS = {
-    (422, "cannot_merge"), (422, "cell_spans_rows"), (422, "table_not_split"),
-    (422, "invalid_offset"), (409, "nothing_to_undo"), (409, "nothing_to_redo"),
+    (422, "cannot_merge"), (422, "invalid_offset"), (409, "nothing_to_undo"), (409, "nothing_to_redo"),
 }
 
 
 def _pick_random_op(rng: random.Random, view: dict) -> dict:
     """표 편집·칸 문장 합치기·나누기·되돌리기·다시 하기 중 하나 — 일부는 일부러 거절될 수 있다."""
     (table,) = view["tables"]
-    kind = rng.choice(("split_rows", "merge_rows", "layout", "layout", "merge", "split", "undo", "undo", "redo"))
+    kind = rng.choice(("layout", "layout", "merge", "split", "undo", "undo", "redo"))
     if kind in ("undo", "redo"):
         return {"type": kind}
-    if kind == "split_rows":
-        tables = _units_of_kind(view, "table")
-        return _split_rows(tables[0]) if tables else _merge_rows(table["id"])
-    if kind == "merge_rows":
-        return _merge_rows(table["id"])
     if kind == "layout":
         return _set_layout(table["id"], not table["is_layout"])
     cells = _units_of_kind(view, "cell_sentence")
@@ -621,24 +432,19 @@ def _pick_random_op(rng: random.Random, view: dict) -> dict:
 
 
 def _check_table_invariants(view: dict) -> None:
-    """데이터 표는 표 단위 하나 또는 행 단위들로만, 칸 문장은 같은 표(행이면 같은 행)의 활성 단위에 묶이고, 레이아웃 표는 묶지 않는다."""
+    """데이터 표는 표 단위 하나로만, 칸 문장은 같은 표의 활성 표 단위에 묶이고, 레이아웃 표는 묶지 않는다."""
     (table,) = view["tables"]
     units = {unit["id"]: unit for unit in view["units"]}
-    groups = [unit for unit in view["units"] if unit["kind"] in ("table", "table_row")]
+    groups = _units_of_kind(view, "table")
     cells = _units_of_kind(view, "cell_sentence")
     if table["is_layout"]:
         assert groups == []
         assert {cell["group_unit_id"] for cell in cells} <= {None}
         return
-    kinds = {group["kind"] for group in groups}
-    assert kinds in ({"table"}, {"table_row"}), kinds
-    if kinds == {"table"}:
-        assert len(groups) == 1
+    assert len(groups) == 1
     for cell in cells:
         group = units[cell["group_unit_id"]]
         assert group["table_id"] == cell["table_id"] == table["id"]
-        if group["kind"] == "table_row":
-            assert group["row_index"] == cell["row_index"]
 
 
 def test_random_table_edit_sequences_keep_groups(client: TestClient) -> None:
@@ -661,5 +467,5 @@ def test_random_table_edit_sequences_keep_groups(client: TestClient) -> None:
         assert _find_coverage_problems(after) == [], op
         _check_table_invariants(after)
 
-    # 시드가 고정이라 매번 같은 열이다 — 표 편집 세 종류와 되돌리기·다시 하기가 모두 실제로 적용됐는지 본다
-    assert {"split_table_rows", "merge_table_rows", "set_layout_table", "undo", "redo"} <= set(applied), applied
+    # 시드가 고정이라 매번 같은 열이다 — 표 바꾸기·칸 합치기·나누기와 되돌리기·다시 하기가 모두 실제로 적용됐는지 본다
+    assert {"set_layout_table", "merge", "split", "undo", "redo"} <= set(applied), applied

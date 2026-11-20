@@ -4,9 +4,22 @@
 // 명세: docs/superpowers/handoff/2026-11-18-1-unwrap-standardize.md F1 · F2 · F12
 
 import type { ViewTable, ViewUnit } from "./api-sop";
-import { isBandHeading, type PaperRow } from "./paper-model";
+import { isBandHeading, type PaperModel, type PaperRow } from "./paper-model";
+import { orderUnwrappedLines } from "./unwrap-order-model";
 
 const NO_TABLES: ReadonlyMap<number, ViewTable> = new Map();
+
+/** 용지 줄(buildRows 뒤) → 벗긴 표 덩이 안만 사람이 바꾼 순서로(unwrap_seq, 시안 2 D2). 덩이 밖 줄 · 다른 덩이의 줄은 제자리 -
+ *  J/K 순서(model.order)와 같은 규칙이다. 줄의 덩이는 model.unwrapLines(띠 표 제목 줄 · 아직 표인 안쪽 표 포함) */
+export function orderUnwrappedRows(rows: readonly PaperRow[], model: Pick<PaperModel, "units" | "unwrapLines">): PaperRow[] {
+  if (model.unwrapLines.size === 0) return [...rows];
+  return orderUnwrappedLines(
+    rows,
+    (row) => (row.type === "table" ? row.item.unitId : row.unitId),
+    (line) => model.unwrapLines.get(line) ?? null,
+    (line) => model.units.get(line)?.unwrap_seq,
+  );
+}
 
 /** 줄이 든 벗긴 표 - 줄의 첫 블록이 벗긴 표의 칸이면 그 표 id(번호 칸을 앞 조각으로 받은 줄도 첫 블록이 같은 표의 칸이다).
  *  아직 표인 줄(안쪽 표)은 바깥으로 올라가 처음 만나는 벗긴 표 - 그 칸 사이에 놓인 줄이다(F2). 아니면 null */

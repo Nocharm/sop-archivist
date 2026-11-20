@@ -3,7 +3,7 @@
 from collections.abc import Iterable
 from typing import Protocol
 
-CAPTION_KIND = "caption"  # 묶음(표·행·그림 단위)에 딸린 캡션 단위의 kind
+CAPTION_KIND = "caption"  # 묶음(표·그림 단위)에 딸린 캡션 단위의 kind
 _CAPTION_LANG_RANKS = {"ko": 0, "en": 1}  # 여러 언어 캡션은 한국어 → 영어 → 그 밖 순으로 잇는다
 
 

@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import type { DocumentView, ViewBlock, ViewTable, ViewUnit } from "./api-sop";
 import { buildPaperModel, buildRows } from "./paper-model";
-import { countDecidedLines, findUnwrapHeads, getRowUnwrapTable, getTableNumber, getUnitUnwrapTable, listUnwrapScopes } from "./unwrap-model";
+import { countDecidedLines, findUnwrapHeads, getRowUnwrapTable, getTableNumber, getUnitUnwrapTable, listUnwrapScopes, orderUnwrappedRows } from "./unwrap-model";
 
 function makeBlock(id: number, seq: number, text: string, extra: Partial<ViewBlock> = {}): ViewBlock {
   return {
@@ -158,5 +158,33 @@ describe("tables inside tables", () => {
     expect(countDecidedLines(nested.units.values(), 8, (id) => statuses.get(id), nested.tables)).toBe(0);
     expect(listUnwrapScopes(nested.tables, 7)).toEqual(["t7", "t9"]); // 누르지 않은 안쪽 값 표는 그대로 표
     expect(listUnwrapScopes(nested.tables, 8)).toEqual(["t8"]);
+  });
+});
+
+// 덩이 안 줄 순서(시안 2 D2) - 덩이 = 칸 줄 + 아직 표인 안쪽 표 + 안쪽 띠 표 제목 줄. 용지 줄 · J/K가 같은 차례를 따른다
+describe("line order inside an unwrapped block", () => {
+  const withSeqs = (view: DocumentView, seqs: ReadonlyMap<number, number>): DocumentView => ({
+    ...view, units: view.units.map((unit) => ({ ...unit, unwrap_seq: seqs.get(unit.id) ?? null })),
+  });
+
+  it("holds the band heading and the inner table in the outer block, not the outside lines", () => {
+    const nested = buildPaperModel(makeNested(true, false, true));
+    expect([...nested.unwrapLines]).toEqual([[20, 7], [21, 7], [22, 7], [30, 7], [50, 7], [40, 7], [41, 7]]);
+  });
+
+  it("keeps source order until reordered, then the paper rows and J/K follow the seqs", () => {
+    const plain = buildPaperModel(makeNested(true, false, true));
+    expect(describeRows(orderUnwrappedRows(buildRows(plain.body, plain.segments), plain))).toEqual([10, 20, 21, "t8", 22, 50, 40, 41]);
+
+    const moved = buildPaperModel(withSeqs(makeNested(true, false, true), new Map([[40, 0], [20, 1], [21, 2], [30, 3], [22, 4], [50, 5], [41, 6]])));
+    expect(describeRows(orderUnwrappedRows(buildRows(moved.body, moved.segments), moved))).toEqual([10, 40, 20, 21, "t8", 22, 50, 41]);
+    // 안쪽 표의 칸 문장은 제 표 줄을 따라간다
+    expect(moved.order).toEqual([10, 40, 20, 21, 30, 31, 32, 22, 50, 41]);
+  });
+
+  it("leaves the lines of an unwrapped inner table in their own block", () => {
+    const both = buildPaperModel(withSeqs(makeNested(true, true, true), new Map([[22, 0], [20, 1], [21, 2], [50, 3], [40, 4], [41, 5], [32, 0]])));
+    // 7의 덩이 줄만 7이 쓰던 자리에서 차례를 바꾼다 - 8의 줄(31 · 32)은 제자리
+    expect(describeRows(orderUnwrappedRows(buildRows(both.body, both.segments), both))).toEqual([10, 22, 20, 31, 32, 21, 50, 40, 41]);
   });
 });

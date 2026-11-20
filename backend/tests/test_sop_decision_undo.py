@@ -46,6 +46,7 @@ from tests.sop_helpers import (
     WRITTEN_CAPTION,
     upload,
 )
+from tests.test_sop_ai_adoption import build_use_body
 from tests.test_sop_ai_translate import EDITED, load_translations, make_assigned_unit, translate
 from tests.test_sop_decisions import _body, _target, _unit_in
 from tests.test_sop_decisions import NA_SLOTS as DECISIONS_NA_SLOTS
@@ -674,60 +675,55 @@ def _load_events(bundle_id: int) -> list[BundleEvent]:
 
 
 @pytest.mark.usefixtures("clean_ai_jobs")
-def test_undo_brings_back_ai_suggested_and_adoption(client: TestClient, fake_ai: FakeAi) -> None:
+def test_undo_of_a_save_that_used_a_suggestion_brings_back_unassigned_and_adoption(
+    client: TestClient, fake_ai: FakeAi
+) -> None:
+    # 받은 제안(Use)으로 확정한 저장을 되돌리면 판단은 미배정·제안 연결 없음으로, 채택은 빈 칸으로 돌아간다
     bundle = make_ai_bundle(client)
     ko, en = find_ids(client, bundle, AI_KO_1, AI_EN_1)
     use_reply(fake_ai)
     queue_units(client, bundle.id, [ko, en])
     run_jobs()
-    assert read_decision(ko).status == "ai_suggested"
-    group = get_group_by_unit(client, bundle.id, ko)
-    body = {
-        "action": "confirm",
-        "units": [{"unit_id": u["unit_id"], "revision": u["decision"]["revision"], "disposition": "assigned"}
-                  for u in group["units"]],
-        "targets": [
-            {"key": str(t["id"]), "id": t["id"], "revision": t["revision"], "slot_key": t["slot_key"],
-             "wi_step": t["wi_step"], "wi_part": t["wi_part"], "source_unit_ids": t["source_unit_ids"]}
-            for t in group["targets"]
-        ],
-        "undo": UNDO,
-    }
+    assert read_decision(ko).status == "unassigned"
     s0 = _dump(bundle.id)
-    _ok(save_group(client, bundle.id, body))
-    assert {row.adoption for row in read_rows(AiSuggestion)} - {None}
+    _ok(save_group(client, bundle.id, {**build_use_body([ko]), "undo": UNDO}))
+    assert {row.adoption for row in read_rows(AiSuggestion)} == {"as_is"}
+    assert read_decision(ko).suggestion_id is not None
 
     _ok(_undo(client, bundle.id))
 
-    assert read_decision(ko).status == "ai_suggested"
+    decision = read_decision(ko)
+    assert (decision.status, decision.suggestion_id) == ("unassigned", None)
+    assert read_rows(TargetSentence) == []
     assert {row.adoption for row in read_rows(AiSuggestion)} == {None}
     assert_same_state(_dump(bundle.id), s0)
 
 
 @pytest.mark.usefixtures("clean_ai_jobs")
-def test_bulk_over_ai_suggested_units_can_be_undone(client: TestClient, fake_ai: FakeAi) -> None:
-    # 일괄 처분이 걷은 제안도 스냅숏 되돌리기로 AI 제안 상태·AI가 쓴 새 문장·빈 채택이 돌아온다
+def test_bulk_over_a_held_suggestion_can_be_undone(client: TestClient, fake_ai: FakeAi) -> None:
+    # 받아 보류한 단위를 일괄 처분하면 채택이 남고, 스냅숏 되돌리기로 보류·제안 연결·빈 채택이 돌아온다
     bundle = make_ai_bundle(client)
     ko, en = find_ids(client, bundle, AI_KO_1, AI_EN_1)
     use_reply(fake_ai)
     queue_units(client, bundle.id, [ko, en])
     run_jobs()
-    assert read_decision(ko).status == "ai_suggested"
-    written = {row.id for row in read_rows(TargetSentence) if row.status == "ai_suggested"}
-    assert written
+    held = build_use_body([ko], action="hold")
+    held["units"][0]["disposition"], held["targets"] = "unassigned", []
+    _ok(save_group(client, bundle.id, held))
+    (suggestion,) = read_rows(AiSuggestion)
     s0 = _dump(bundle.id)
     body = {
         "action": "delete", "reason": "합성 사유", "undo": UNDO,
         "units": [{"unit_id": unit_id, "revision": read_decision(unit_id).revision} for unit_id in (ko, en)],
     }
     _ok(client.post(f"/api/bundles/{bundle.id}/decisions/bulk", json=body, headers=AUTHOR))
-    assert read_rows(TargetSentence) == []
     assert {row.adoption for row in read_rows(AiSuggestion)} == {"rejected"}
 
     _ok(_undo(client, bundle.id))
 
-    assert read_decision(ko).status == "ai_suggested"
-    assert {row.id for row in read_rows(TargetSentence) if row.status == "ai_suggested"} == written
+    decision = read_decision(ko)
+    assert (decision.status, decision.suggestion_id) == ("on_hold", suggestion.id)
+    assert read_decision(en).status == "unassigned"
     assert {row.adoption for row in read_rows(AiSuggestion)} == {None}
     assert_same_state(_dump(bundle.id), s0)
 

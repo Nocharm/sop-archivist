@@ -53,9 +53,9 @@ export function PairColumn({ side, items, docLabel, toggle, banner, selectedIds,
   // 참조 줄의 REF 표시가 data-tip을 단다 - 조각마다 Tooltip을 두지 않고 목록 하나가 띄운다
   const tip = useDelegatedTip();
 
-  /** 조각의 글 - 표·행은 "표", 글이 없는 그림은 "그림" */
+  /** 조각의 글 - 표는 "표", 글이 없는 그림은 "그림" */
   function readPieceText(unit: PairUnit): string {
-    if (unit.kind === "table" || unit.kind === "table_row") return t("split.table");
+    if (unit.kind === "table") return t("split.table");
     if (unit.kind === "figure") return unit.text.trim() || t("assign.newFigure");
     return unit.text;
   }

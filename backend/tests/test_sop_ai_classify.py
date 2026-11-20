@@ -1,4 +1,7 @@
-"""AI 분류·고쳐 쓰기 — 요청 대상 고르기, 제안 적용, 무효 응답·호출 실패, 낡음·덮어쓰기, 페이로드 (설계 §6.8, §7.8, §8.3, §8.5)."""
+"""AI 분류·고쳐 쓰기 — 요청 대상 고르기, 제안 기록, 사람이 받기, 무효 응답·호출 실패, 낡음·밀어내기, 페이로드 (설계 §6.8, §7.8, §8.3, §8.5).
+
+AI는 제안 기록에만 쓰고 판단·새 문장은 사람이 제안을 받아 저장할 때 쓰인다(설계 2026-11-19-ai-suggest-only D1).
+"""
 
 import json
 import re
@@ -20,7 +23,7 @@ from app.sop.ai.classify import ClassifyReply
 from app.sop.ai.constants import CANDIDATE_TOP_K, MAX_REWRITE_SENTENCES
 from app.sop.ai.guidelines import SEEDS_DIR
 from app.sop.checks import check_sentence
-from app.sop.constants import AI_PRIORITY_PRE_CLASSIFY, AI_PRIORITY_USER, SYSTEM_HOLD_AI_INVALID
+from app.sop.constants import AI_PRIORITY_PRE_CLASSIFY, AI_PRIORITY_USER
 from app.sop.models import (
     AiJob,
     AiSuggestion,
@@ -29,7 +32,9 @@ from app.sop.models import (
     GuidelineVersion,
     TargetDoc,
     TargetSentence,
+    TargetSource,
     Unit,
+    UnitDecision,
     UnitPair,
     UnitPairMember,
 )
@@ -43,6 +48,7 @@ from tests.ai_fixtures import (
     AI_WI_DOC,
     REWRITE,
     REWRITES,
+    TEXT_KINDS,
     attach_match_suggestion,
     build_reply,
     clean_ai_jobs,  # noqa: F401 -- 픽스처는 usefixtures가 이름으로 찾는다
@@ -64,10 +70,12 @@ from tests.docx_factory import TINY_PNG, make_drawing_run, p, tbl
 from tests.fake_ai import FakeAi, extract_data, hash_vector, install_fake_ai
 from tests.sop_helpers import (
     AUTHOR,
+    BUNDLE_KINDS,
     NEW_SOP_KEYS,
     REVIEWER,
+    WRITTEN_CAPTION,
     assign_as_is,
-    build_missing_caption,
+    build_as_is_targets,
     find_unit,
     get_group_by_unit,
     get_view,
@@ -83,11 +91,11 @@ FIGURE_CAPTION = "그림 1 합성 장비 배치도"
 TABLE_CAPTION = "표 1 합성 운전 조건"
 MARKER = "RAW-REPLY-MARKER"
 MISSING_REWRITE_REPLY = json.dumps({
-    "candidate": FIRST_SLOT, "reason": MARKER, "rule_ids": [], "evidence": [], "change_type": "tone",
+    "candidate": FIRST_SLOT, "reason": MARKER, "rule_ids": [], "evidence": [],
     "rewrites": {"ko": ["   "], "en": [REWRITES["en"]]},
 })
 UNKNOWN_CANDIDATE_REPLY = json.dumps({
-    "candidate": "c99", "reason": MARKER, "rule_ids": [], "evidence": [], "change_type": "tone",
+    "candidate": "c99", "reason": MARKER, "rule_ids": [], "evidence": [],
     "rewrites": {"ko": [REWRITES["ko"]], "en": [REWRITES["en"]]},
 })
 
@@ -102,22 +110,93 @@ def read_single_job() -> AiJob:
     return job
 
 
-def save_ai_target(client: TestClient, bundle_id: int, unit_id: int, action: str) -> httpx2.Response:
-    """AI 새 문장을 사람이 글자 그대로 확정하거나 보류한다."""
-    group = get_group_by_unit(client, bundle_id, unit_id)
+def attach_old_match_suggestion(bundle_id: int, document_id: int | None, unit_id: int) -> int:
+    """옛 단위를 덮는 묶기 제안 — 실제 묶기는 단위가 있는 제안을 옛 문서에 붙이므로(match_jobs의 항목 문서) 문서를 채운다."""
+    suggestion_id = attach_match_suggestion(bundle_id, unit_id)
+
+    async def _set_document(session: AsyncSession) -> None:
+        await session.execute(update(AiSuggestion).where(AiSuggestion.id == suggestion_id).values(document_id=document_id))
+        await session.commit()
+
+    run_in_session(_set_document)
+    return suggestion_id
+
+
+def read_classify_suggestions() -> list[AiSuggestion]:
+    return [row for row in read_rows(AiSuggestion) if row.kind == "classify"]
+
+
+def assert_left_to_people(*unit_ids: int) -> None:
+    """AI는 판단·새 문장을 쓰지 않는다 — 단위는 미배정·첫 revision·제안 연결 없음 그대로이고 새 문장도 출처도 없다."""
+    for unit_id in unit_ids:
+        decision = read_decision(unit_id)
+        assert (decision.status, decision.disposition, decision.revision, decision.suggestion_id) == (
+            "unassigned", "unassigned", 1, None,
+        )
+    assert read_rows(TargetSentence) == [] and read_rows(TargetSource) == []
+
+
+def take_suggestion(
+    client: TestClient,
+    bundle_id: int,
+    suggestion: AiSuggestion,
+    *,
+    action: str = "confirm",
+    unit_ids: Sequence[int] | None = None,
+    caption_text: str | None = None,
+) -> httpx2.Response:
+    """사람이 제안을 받아(Use) 저장한다 — 제안 내용의 자리·처분·고쳐 쓴 글로 채운 초안을 suggestion_id와 함께 보낸다.
+
+    unit_ids로 짝의 한쪽만 받는다. 표·그림은 원문 그대로의 새 문장과 캡션 새 문장이고(caption_text를 주면 캡션을 고쳐 쓴다),
+    캡션 없는 묶음을 확정할 때는 써 넣은 캡션을 더한다.
+    """
+    content = suggestion.content
+    chosen = list(unit_ids or content["unit_ids"])
+    units = {unit["id"]: unit for unit in get_view(client, bundle_id, suggestion.document_id)["units"]}
+    place = {key: content[key] for key in ("slot_key", "wi_step", "wi_part")}
+    base = {"target_doc_id": content["target_doc_id"], **place}
+    targets: list[dict] = []
+    if content["disposition"] == "assigned":
+        for lang, texts in content["rewrites"].items():
+            sources = [unit_id for unit_id in chosen if units[unit_id]["kind"] in TEXT_KINDS and units[unit_id]["lang"] == lang]
+            if sources:
+                targets += [
+                    {
+                        **base, "key": f"{lang}-{index}", "lang": lang, "text": text, "source_unit_ids": sources,
+                        "change_type": content["change_type"],
+                    }
+                    for index, text in enumerate(texts)
+                ]
+        for unit_id in chosen:
+            if units[unit_id]["kind"] not in BUNDLE_KINDS:
+                continue
+            bundle_targets, caption_ids = build_as_is_targets(client, bundle_id, units[unit_id], content["target_doc_id"], **place)
+            edited = {} if caption_text is None else {"text": caption_text, "change_type": "rewritten"}
+            targets += bundle_targets + [
+                {**base, "key": f"caption-{caption_id}", "parent_key": "t", "source_unit_ids": [caption_id], **edited}
+                for caption_id in caption_ids
+            ]
+            if not caption_ids and action == "confirm":  # 캡션 없는 묶음은 써 넣은 캡션이 있어야 확정된다
+                targets.append(
+                    {**base, "key": "caption", "parent_key": "t", "lang": "en", "text": WRITTEN_CAPTION, "source_unit_ids": []}
+                )
     return save_group(client, bundle_id, {
         "action": action,
         "hold_reason": "합성 보류" if action == "hold" else "",
-        "units": [{"unit_id": unit_id, "revision": group["units"][0]["decision"]["revision"], "disposition": "assigned"}],
-        "targets": [
-            {
-                "key": str(target["id"]), "id": target["id"], "revision": target["revision"],
-                "slot_key": target["slot_key"], "source_unit_ids": target["source_unit_ids"],
-                "text": target["ai_text"], "change_type": target["change_type"],
-            }
-            for target in group["targets"]
+        "units": [
+            {"unit_id": unit_id, "revision": read_decision(unit_id).revision, "disposition": content["disposition"]}
+            for unit_id in chosen
         ],
+        "targets": targets,
+        "suggestion_id": suggestion.id,
     })
+
+
+def take_single_suggestion(client: TestClient, bundle_id: int, **options: object) -> AiSuggestion:
+    """하나뿐인 제안을 받아 확정하고, 채택이 기록된 그 제안을 다시 읽어 돌려준다."""
+    response = take_suggestion(client, bundle_id, read_single_suggestion(), **options)  # type: ignore[arg-type]
+    assert response.status_code == 200, response.text
+    return read_single_suggestion()
 
 
 @pytest.fixture
@@ -238,9 +317,11 @@ def test_request_brings_a_mate_with_a_same_kind_suggestion(client: TestClient, f
     queue_units(client, bundle.id, [ko])
     run_jobs()
 
-    assert get_target(client, bundle.id, en)["ai_text"] == "The instrument shall be on."
-    assert read_decision(en).suggestion_id == read_decision(ko).suggestion_id
-    assert [suggestion.result for suggestion in read_rows(AiSuggestion)] == ["stale", "applied"]
+    first, second = read_rows(AiSuggestion)
+    assert (first.result, second.result) == ("stale", "applied")
+    assert second.content["unit_ids"] == [ko, en]
+    assert second.content["rewrites"]["en"] == ["The instrument shall be on."]
+    assert_left_to_people(ko, en)
 
 
 @pytest.mark.parametrize("hold_reason", ["", "합성 보류"])
@@ -274,7 +355,7 @@ def test_request_does_not_bring_the_mate_of_a_skipped_unit(client: TestClient, f
 
 
 def test_document_scope_skips_units_with_a_suggestion(client: TestClient, fake_ai: FakeAi) -> None:
-    # 다시 받기는 단위를 골라서만 한다(§7.8 "문서 전체의 미배정 단위, 또는 고른 단위")
+    # 다시 받기는 단위를 골라서만 한다(§7.8 "문서 전체의 미배정 단위, 또는 고른 단위") — 제안이 있는 단위도 판단은 미배정이다
     bundle = make_ai_bundle(client)
     use_reply(fake_ai)
     request_classify(client, bundle.id, document_id=bundle.document_id)
@@ -284,8 +365,9 @@ def test_document_scope_skips_units_with_a_suggestion(client: TestClient, fake_a
     body = request_classify(client, bundle.id, document_id=bundle.document_id).json()
 
     assert (body["queued"], body["skipped_total"]) == (0, 4)
-    assert body["skipped"] == [{"unit_id": unit_id, "reason": "not_unassigned"} for unit_id in unit_ids]
+    assert body["skipped"] == [{"unit_id": unit_id, "reason": "already_suggested"} for unit_id in unit_ids]
     assert len(read_rows(AiSuggestion)) == 2
+    assert_left_to_people(*unit_ids)
 
 
 def test_chosen_units_can_ask_again_even_with_a_document_in_the_request(client: TestClient, fake_ai: FakeAi) -> None:
@@ -319,10 +401,10 @@ def test_repeated_document_requests_reach_the_tail_past_the_limit(
     assert capped["queued"] == 1
     assert capped["skipped"] == [{"unit_id": unit_id, "reason": "limit_reached"} for unit_id in second]
     assert tail["queued"] == 1
-    assert tail["skipped"] == [{"unit_id": unit_id, "reason": "not_unassigned"} for unit_id in first]
+    assert tail["skipped"] == [{"unit_id": unit_id, "reason": "already_suggested"} for unit_id in first]
     assert (done["queued"], done["skipped_total"]) == (0, 4)
     assert [request["units"][0]["id"] for request in fake_ai.requests] == [first[0], second[0]]
-    assert read_decision(second[0]).status == "ai_suggested"
+    assert [suggestion.content["unit_ids"] for suggestion in read_rows(AiSuggestion)] == [first, second]
 
 
 def test_request_records_an_event_with_the_job_ids(client: TestClient, fake_ai: FakeAi) -> None:
@@ -456,7 +538,8 @@ def test_request_needs_an_author_and_an_editable_bundle(client: TestClient, fake
 # --- 적용 ---
 
 
-def test_applied_suggestion_fills_status_and_keeps_confirmed_text_empty(client: TestClient, fake_ai: FakeAi) -> None:
+def test_applied_suggestion_records_the_place_and_leaves_the_decision_unassigned(client: TestClient, fake_ai: FakeAi) -> None:
+    # AI는 제안 기록에만 쓴다(설계 2026-11-19-ai-suggest-only D1) — 사람이 받기 전에는 판단·새 문장·revision이 그대로다
     bundle = make_ai_bundle(client)
     ko, en = find_ids(client, bundle, AI_KO_1, AI_EN_1)
     use_reply(fake_ai)
@@ -464,21 +547,17 @@ def test_applied_suggestion_fills_status_and_keeps_confirmed_text_empty(client: 
 
     run_jobs()
 
+    assert_left_to_people(ko, en)
     group = get_group_by_unit(client, bundle.id, ko)
-    assert group["units"][0]["decision"]["status"] == "ai_suggested"
-    assert group["units"][0]["decision"]["disposition"] == "assigned"
-    assert group["units"][0]["decision"]["revision"] == 2
-    target = group["targets"][0]
-    assert (target["status"], target["confirmed_text"]) == ("ai_suggested", "")
-    assert target["ai_text"] == REWRITE and target["slot_key"] == "purpose"
-    assert target["suggestion_id"] is not None
-    assert (target["target_doc_id"], target["origin"], target["revision"]) == (bundle.sop_id, "units", 1)
-    assert read_decision(ko).suggestion_id == target["suggestion_id"]
-
+    assert group["units"][0]["decision"]["status"] == "unassigned" and group["targets"] == []
     suggestion = read_single_suggestion()
-    assert (suggestion.id, suggestion.kind, suggestion.result) == (target["suggestion_id"], "classify", "applied")
+    assert (suggestion.kind, suggestion.result, suggestion.adoption) == ("classify", "applied", None)
     assert (suggestion.job_id, suggestion.document_id) == (read_single_job().id, bundle.document_id)
     assert read_single_job().status == "done"
+    assert set(suggestion.content) == {
+        "unit_ids", "disposition", "target_doc_id", "slot_key", "wi_step", "wi_part", "reason", "rule_ids", "evidence",
+        "change_type", "rewrites", "retrieval",
+    }
     assert suggestion.content["unit_ids"] == [ko, en]
     assert suggestion.content["disposition"] == "assigned"
     assert suggestion.content["target_doc_id"] == bundle.sop_id
@@ -488,45 +567,71 @@ def test_applied_suggestion_fills_status_and_keeps_confirmed_text_empty(client: 
     assert suggestion.content["reason"] == "합성 이유."
     assert suggestion.content["rule_ids"] == ["R01"]
     assert suggestion.content["evidence"] == [{"unit_id": ko, "quote": AI_KO_1}]
-    assert suggestion.content["change_type"] == "tone"
+    assert suggestion.content["change_type"] == "rewritten"  # 고쳐 쓴 글이 원문과 달라 고침이다
     assert suggestion.content["rewrites"] == {"ko": [REWRITES["ko"]], "en": [REWRITES["en"]]}
     assert suggestion.content["retrieval"] == "no_index"
-    assert len(suggestion.content["target_ids"]) == 2 and target["id"] in suggestion.content["target_ids"]
+    assert suggestion.warnings == []
     assert set(suggestion.guideline_versions) == {"rules", "prompt.classify"}
     assert suggestion.model == "glm-test"
     assert set(suggestion.input_refs) == {"sha256", "extraction_id"}
 
 
-def test_pair_rewrites_land_in_each_language(client: TestClient, fake_ai: FakeAi) -> None:
+def test_taking_pair_rewrites_lands_each_language_and_links_the_suggestion(client: TestClient, fake_ai: FakeAi) -> None:
+    # 사람이 받으면(Use) 제안의 자리·언어별 글이 초안이 되고, 그 저장이 판단에 제안을 잇고 채택을 남긴다(설계 D2)
     bundle = make_ai_bundle(client)
     ko, en = find_ids(client, bundle, AI_KO_1, AI_EN_1)
     use_reply(fake_ai)
     queue_units(client, bundle.id, [ko, en])
-
     run_jobs()
+
+    suggestion = take_single_suggestion(client, bundle.id)
 
     for unit_id, lang in ((ko, "ko"), (en, "en")):
         target = get_target(client, bundle.id, unit_id)
-        assert (target["lang"], target["ai_text"], target["change_type"]) == (lang, REWRITES[lang], "tone")
-        assert target["source_unit_ids"] == [unit_id]
+        assert (target["lang"], target["confirmed_text"], target["change_type"]) == (lang, REWRITES[lang], "rewritten")
+        assert (target["status"], target["source_unit_ids"], target["slot_key"]) == ("confirmed", [unit_id], "purpose")
+        assert read_decision(unit_id).suggestion_id == suggestion.id
+    assert (suggestion.adoption, suggestion.adopted_by) == ("as_is", "qa.member")
 
 
-def test_rewrite_with_two_sentences_is_split(client: TestClient, fake_ai: FakeAi) -> None:
+def test_rewrite_with_two_sentences_is_split_when_taken(client: TestClient, fake_ai: FakeAi) -> None:
     bundle = make_ai_bundle(client)
     ko, en = find_ids(client, bundle, AI_KO_1, AI_EN_1)
     use_reply(fake_ai, rewrites={"ko": ["합성 장비를 준비한다.", "합성 장비의 전원을 켠다."], "en": [REWRITES["en"]]})
     queue_units(client, bundle.id, [ko, en])
+    run_jobs()
+    assert read_single_suggestion().content["rewrites"]["ko"] == ["합성 장비를 준비한다.", "합성 장비의 전원을 켠다."]
+
+    suggestion = take_single_suggestion(client, bundle.id)
+
+    targets = get_group_by_unit(client, bundle.id, ko)["targets"]
+    assert [target["confirmed_text"] for target in targets] == ["합성 장비를 준비한다.", "합성 장비의 전원을 켠다."]
+    assert {target["change_type"] for target in targets} == {"split"}
+    assert all(target["source_unit_ids"] == [ko] for target in targets)
+    assert get_target(client, bundle.id, en)["change_type"] == "rewritten"
+    assert suggestion.adoption == "as_is"
+
+
+@pytest.mark.parametrize(("rewrites", "expected"), [
+    ({"ko": [AI_KO_1], "en": [AI_EN_1]}, "as_is"),
+    ({"ko": [AI_KO_1], "en": [REWRITES["en"]]}, "rewritten"),
+])
+def test_suggestion_change_type_comes_from_the_rewrites(
+    client: TestClient, fake_ai: FakeAi, rewrites: dict[str, list[str]], expected: str
+) -> None:
+    # 종류는 응답이 아니라 고쳐 쓴 글로 정한다(설계 2026-11-20-change-type-two D5) — 옛 지침이 시킨 change_type 칸은 무시된다
+    bundle = make_ai_bundle(client)
+    ko, en = find_ids(client, bundle, AI_KO_1, AI_EN_1)
+    use_reply(fake_ai, rewrites=rewrites, change_type="rewritten" if expected == "as_is" else "as_is")
+    queue_units(client, bundle.id, [ko, en])
 
     run_jobs()
 
-    targets = get_group_by_unit(client, bundle.id, ko)["targets"]
-    assert [target["ai_text"] for target in targets] == ["합성 장비를 준비한다.", "합성 장비의 전원을 켠다."]
-    assert {target["change_type"] for target in targets} == {"split"}
-    assert all(target["source_unit_ids"] == [ko] for target in targets)
-    assert get_target(client, bundle.id, en)["change_type"] == "tone"
+    suggestion = read_single_suggestion()
+    assert (suggestion.warnings, suggestion.content["change_type"]) == ([], expected)
 
 
-def test_rewrites_record_only_what_became_targets(client: TestClient, fake_ai: FakeAi) -> None:
+def test_rewrites_record_only_the_languages_of_the_units(client: TestClient, fake_ai: FakeAi) -> None:
     bundle = make_ai_bundle(client)
     view = upload_second_document(client, bundle.id, p("합성 단독 문장."))
     unit = find_unit(view, "합성 단독 문장.")
@@ -536,22 +641,24 @@ def test_rewrites_record_only_what_became_targets(client: TestClient, fake_ai: F
     run_jobs()
 
     assert read_single_suggestion().content["rewrites"] == {"ko": [REWRITE], "en": []}
-    assert len(get_group_by_unit(client, bundle.id, unit["id"])["targets"]) == 1
+    assert_left_to_people(unit["id"])
 
 
-def test_unchanged_rewrite_is_as_is_whatever_the_model_says(client: TestClient, fake_ai: FakeAi) -> None:
+def test_unchanged_rewrite_is_saved_as_is_whatever_the_model_says(client: TestClient, fake_ai: FakeAi) -> None:
+    # 옛 지침의 모델이 낸 종류는 무시된다 — 받은 저장이 원문과 같은 글을 그대로로 정한다
     bundle = make_ai_bundle(client)
     ko, en = find_ids(client, bundle, AI_KO_1, AI_EN_1)
-    use_reply(fake_ai, change_type="tone", rewrites={"ko": [AI_KO_1], "en": [AI_EN_1]})
+    use_reply(fake_ai, change_type="rewritten", rewrites={"ko": [AI_KO_1], "en": [AI_EN_1]})
     queue_units(client, bundle.id, [ko, en])
-
     run_jobs()
 
+    take_single_suggestion(client, bundle.id)
+
     target = get_target(client, bundle.id, ko)
-    assert (target["ai_text"], target["change_type"], target["warnings"]) == (AI_KO_1, "as_is", [])
+    assert (target["confirmed_text"], target["change_type"], target["warnings"]) == (AI_KO_1, "as_is", [])
 
 
-def test_several_units_of_one_language_merge_into_one_target(client: TestClient, fake_ai: FakeAi) -> None:
+def test_several_units_of_one_language_merge_into_one_target_when_taken(client: TestClient, fake_ai: FakeAi) -> None:
     bundle = make_ai_bundle(client)
     first, second = find_ids(client, bundle, AI_KO_1, AI_KO_2)
 
@@ -566,14 +673,17 @@ def test_several_units_of_one_language_merge_into_one_target(client: TestClient,
     run_in_session(_pair_two_koreans)
     use_reply(fake_ai)
     queue_units(client, bundle.id, [first, second])
-
     run_jobs()
+    assert read_single_suggestion().content["rewrites"] == {"ko": [REWRITE], "en": []}
+
+    suggestion = take_single_suggestion(client, bundle.id)
 
     target = get_target(client, bundle.id, first)
     assert (target["source_unit_ids"], target["change_type"]) == ([first, second], "merged")
+    assert suggestion.adoption == "as_is"
 
 
-def test_delete_candidate_sets_disposition_without_targets(client: TestClient, fake_ai: FakeAi) -> None:
+def test_delete_candidate_records_the_delete_disposition_without_rewrites(client: TestClient, fake_ai: FakeAi) -> None:
     bundle = make_ai_bundle(client)
     ko, en = find_ids(client, bundle, AI_KO_1, AI_EN_1)
     use_reply(fake_ai, candidate="delete", change_type="as_is", rewrites={"ko": [], "en": []})
@@ -581,13 +691,10 @@ def test_delete_candidate_sets_disposition_without_targets(client: TestClient, f
 
     run_jobs()
 
-    group = get_group_by_unit(client, bundle.id, ko)
-    decision = group["units"][0]["decision"]
-    assert (decision["disposition"], decision["status"]) == ("delete", "ai_suggested")
-    assert group["targets"] == []
+    assert_left_to_people(ko, en)
     content = read_single_suggestion().content
     assert (content["disposition"], content["target_doc_id"], content["slot_key"]) == ("delete", None, None)
-    assert (content["change_type"], content["target_ids"]) == ("deleted", [])
+    assert content["change_type"] == "deleted"
     assert content["rewrites"] == {"ko": [], "en": []}
 
 
@@ -603,45 +710,35 @@ def test_delete_candidate_ignores_rewrites_in_the_reply(client: TestClient, fake
     assert read_single_suggestion().content["rewrites"] == {"ko": [], "en": []}
 
 
-def test_table_unit_copies_cells_as_is(client: TestClient, fake_ai: FakeAi) -> None:
+def test_table_suggestion_records_the_place_without_rewrites(client: TestClient, fake_ai: FakeAi) -> None:
+    # 표·칸은 원문 그대로 옮기므로 제안 기록에 글이 없다 — 표 새 문장과 칸 새 문장은 사람이 받을 때 만들어진다
     bundle = make_ai_bundle(client)
     view = upload_second_document(client, bundle.id, tbl(CELLS))
     table = find_kind(view, "table")
-    cells = [unit for unit in view["units"] if unit["kind"] == "cell_sentence"]
+    cells = [unit["id"] for unit in view["units"] if unit["kind"] == "cell_sentence"]
     use_reply(fake_ai)
     queue_units(client, bundle.id, [table["id"]])
 
     run_jobs()
 
-    targets = get_group_by_unit(client, bundle.id, table["id"])["targets"]
-    (table_target,) = [target for target in targets if target["kind"] == "table"]
-    assert (table_target["grid"], table_target["change_type"], table_target["lang"]) == (
-        {"rows": 2, "cols": 2}, "as_is", "neutral",
-    )
-    assert (table_target["status"], table_target["source_unit_ids"]) == ("ai_suggested", [table["id"]])
-    cell_targets = {target["source_unit_ids"][0]: target for target in targets if target["kind"] == "sentence"}
-    assert set(cell_targets) == {cell["id"] for cell in cells}
-    coordinates = {}
-    for cell in cells:
-        target = cell_targets[cell["id"]]
-        assert (target["ai_text"], target["change_type"], target["confirmed_text"]) == (cell["text"], "as_is", "")
-        assert (target["parent_target_id"], target["lang"]) == (table_target["id"], cell["lang"])
-        coordinates[cell["text"]] = (target["cell_row"], target["cell_col"])
-    assert coordinates == {"합성 항목": (0, 0), "합성 값": (0, 1), "합성 압력": (1, 0), "10 bar": (1, 1)}
-    assert read_decision(table["id"]).status == "ai_suggested"
-    assert read_single_suggestion().content["rewrites"] == {"ko": [], "en": []}
+    content = read_single_suggestion().content
+    assert (content["unit_ids"], content["disposition"], content["slot_key"]) == ([table["id"]], "assigned", "purpose")
+    assert (content["change_type"], content["rewrites"]) == ("as_is", {"ko": [], "en": []})
+    assert_left_to_people(table["id"], *cells)
     assert "| 합성 항목 | 합성 값 |" in fake_ai.requests[0]["context"][0]["table"]
 
 
-def test_classify_table_suggests_its_caption_beside_the_cells(client: TestClient, fake_ai: FakeAi) -> None:
-    """표 제안에서 칸 새 문장은 칸 좌표를 지키고, 캡션 새 문장은 칸 좌표 없이 같은 표 아래에 제안된다."""
+def test_classify_table_sends_its_caption_and_taking_it_as_is_is_as_is(client: TestClient, fake_ai: FakeAi) -> None:
+    """AI는 표 Markdown과 캡션을 맥락으로 받는다 — 칸 좌표를 지킨 칸과 캡션을 원문 그대로 받으면 제안 그대로 채택이다."""
     bundle = make_ai_bundle(client)
     view = upload_second_document(client, bundle.id, p(TABLE_CAPTION, "Caption") + tbl(CELLS))
     table, caption = find_kind(view, "table"), find_unit(view, TABLE_CAPTION)
     use_reply(fake_ai)
     queue_units(client, bundle.id, [table["id"]])
-
     run_jobs()
+    assert read_rows(TargetSentence) == []
+
+    suggestion = take_single_suggestion(client, bundle.id)
 
     targets = get_group_by_unit(client, bundle.id, table["id"])["targets"]
     (table_target,) = [target for target in targets if target["kind"] == "table"]
@@ -649,55 +746,30 @@ def test_classify_table_suggests_its_caption_beside_the_cells(client: TestClient
     cells = [target for target in children if target["cell_row"] is not None]
     (caption_target,) = [target for target in children if target["cell_row"] is None]
     assert {(target["cell_row"], target["cell_col"]) for target in cells} == {(0, 0), (0, 1), (1, 0), (1, 1)}
-    assert (caption_target["cell_col"], caption_target["ai_text"], caption_target["source_unit_ids"]) == (
-        None, TABLE_CAPTION, [caption["id"]],
-    )
-    assert {target["status"] for target in children} == {"ai_suggested"}
+    assert (caption_target["confirmed_text"], caption_target["source_unit_ids"]) == (TABLE_CAPTION, [caption["id"]])
+    assert suggestion.adoption == "as_is"
     assert "| 합성 항목 | 합성 값 |" in fake_ai.requests[0]["context"][0]["table"]
     assert fake_ai.requests[0]["context"][0]["caption"] == TABLE_CAPTION
 
 
-@pytest.mark.parametrize("kind", ["table", "table_row"])
-def test_table_suggestion_passes_the_checks_of_a_human_save(client: TestClient, fake_ai: FakeAi, kind: str) -> None:
-    # 격자·칸 좌표가 사람 저장의 그대로 검사(R27)와 맞아야 사람이 확정할 수 있다
+def test_taken_table_suggestion_passes_the_checks_of_a_human_save(client: TestClient, fake_ai: FakeAi) -> None:
+    # 받은 표가 원래 격자·칸 좌표로 사람 저장의 그대로 검사(R27)를 지나야 하고, 제안 모습(표·칸)과 견줘 그대로 채택이다
     bundle = make_ai_bundle(client)
     view = upload_second_document(client, bundle.id, tbl(CELLS))
-    document_id = view["document"]["id"]
-    if kind == "table_row":
-        edit_document(client, bundle.id, document_id, {"type": "split_table_rows", "table_unit_id": find_kind(view, "table")["id"]})
-        view = get_view(client, bundle.id, document_id)
-    unit = next(member for member in reversed(view["units"]) if member["kind"] == kind)  # 행 단위는 둘째 행을 본다
+    unit = find_kind(view, "table")
     use_reply(fake_ai)
     queue_units(client, bundle.id, [unit["id"]])
     run_jobs()
 
+    suggestion = take_single_suggestion(client, bundle.id)
+
     group = get_group_by_unit(client, bundle.id, unit["id"])
     (table_target,) = [target for target in group["targets"] if target["kind"] == "table"]
-    body = {
-        "action": "confirm",
-        "units": [{"unit_id": unit["id"], "revision": group["units"][0]["decision"]["revision"], "disposition": "assigned"}],
-        "targets": [
-            {
-                "key": str(target["id"]), "id": target["id"], "revision": target["revision"], "kind": target["kind"],
-                "slot_key": target["slot_key"], "source_unit_ids": target["source_unit_ids"],
-                **({} if target["kind"] == "table" else {
-                    "text": target["ai_text"], "parent_key": str(table_target["id"]),
-                }),
-            }
-            for target in group["targets"]
-        ],
-    }
-    body["targets"] += build_missing_caption(group["targets"], table_target)  # 캡션 없는 표는 사람이 캡션을 써 넣어야 확정된다
-
-    response = save_group(client, bundle.id, body)
-
-    assert response.status_code == 200, response.text
-    if kind == "table_row":
-        assert table_target["grid"] == {"rows": 1, "cols": 2}
-        assert {target["cell_row"] for target in group["targets"] if target["kind"] == "sentence"} == {0}
+    assert (table_target["status"], table_target["change_type"]) == ("confirmed", "as_is")
+    assert suggestion.adoption == "as_is"
 
 
-def test_figure_unit_becomes_figure_target(client: TestClient, fake_ai: FakeAi) -> None:
+def test_figure_suggestion_records_the_place_without_rewrites(client: TestClient, fake_ai: FakeAi) -> None:
     bundle = make_ai_bundle(client)
     view = upload_second_document(
         client, bundle.id, f"<w:p>{make_drawing_run('image1.png')}</w:p>", media={"image1.png": TINY_PNG}
@@ -708,13 +780,14 @@ def test_figure_unit_becomes_figure_target(client: TestClient, fake_ai: FakeAi) 
 
     run_jobs()
 
-    target = get_target(client, bundle.id, figure["id"])
-    assert (target["kind"], target["lang"], target["change_type"]) == ("figure", "neutral", "as_is")
-    assert (target["ai_text"], target["status"], target["source_unit_ids"]) == ("", "ai_suggested", [figure["id"]])
+    content = read_single_suggestion().content
+    assert (content["unit_ids"], content["disposition"], content["target_doc_id"]) == ([figure["id"]], "assigned", bundle.sop_id)
+    assert (content["change_type"], content["rewrites"]) == ("as_is", {"ko": [], "en": []})
+    assert_left_to_people(figure["id"])
 
 
-def test_classify_figure_suggests_its_caption_under_the_figure(client: TestClient, fake_ai: FakeAi) -> None:
-    """캡션은 그림 새 문장 아래 칸 좌표 없는 캡션 새 문장이 되고, AI는 비어 있는 그림 글 대신 캡션을 맥락으로 받는다."""
+def test_classify_figure_sends_its_caption_as_context(client: TestClient, fake_ai: FakeAi) -> None:
+    """AI는 비어 있는 그림 글 대신 캡션을 맥락으로 받는다 — 그림·캡션 새 문장은 사람이 받을 때 만들어진다."""
     bundle = make_ai_bundle(client)
     view = upload_second_document(
         client, bundle.id, f"<w:p>{make_drawing_run('image1.png')}</w:p>" + p(FIGURE_CAPTION, "Caption"),
@@ -726,23 +799,17 @@ def test_classify_figure_suggests_its_caption_under_the_figure(client: TestClien
 
     run_jobs()
 
-    targets = get_group_by_unit(client, bundle.id, figure["id"])["targets"]
-    (figure_target,) = [target for target in targets if target["kind"] == "figure"]
-    (caption_target,) = [target for target in targets if target["parent_target_id"] == figure_target["id"]]
-    assert (caption_target["kind"], caption_target["lang"], caption_target["ai_text"]) == ("sentence", caption["lang"], FIGURE_CAPTION)
-    assert (caption_target["cell_row"], caption_target["cell_col"]) == (None, None)
-    assert (caption_target["change_type"], caption_target["status"], caption_target["confirmed_text"]) == ("as_is", "ai_suggested", "")
-    assert caption_target["source_unit_ids"] == [caption["id"]]
-    assert read_single_suggestion().content["target_ids"] == [figure_target["id"], caption_target["id"]]
+    assert read_single_suggestion().content["unit_ids"] == [figure["id"]]
+    assert_left_to_people(figure["id"], caption["id"])
     (context,) = fake_ai.requests[0]["context"]
     assert (context["caption"], context["table"]) == (FIGURE_CAPTION, "")
 
 
-@pytest.mark.parametrize(("caption_text", "expected"), [(FIGURE_CAPTION, "as_is"), ("그림 1 고친 배치도", "edited")])
-def test_ai_suggested_figure_caption_is_compared_for_adoption(
-    client: TestClient, fake_ai: FakeAi, caption_text: str, expected: str
+@pytest.mark.parametrize(("caption_text", "expected"), [(None, "as_is"), ("그림 1 고친 배치도", "edited")])
+def test_taken_figure_caption_is_compared_for_adoption(
+    client: TestClient, fake_ai: FakeAi, caption_text: str | None, expected: str
 ) -> None:
-    """캡션 새 문장도 제안 모습과 견준다 — 캡션까지 그대로 확정하면 그대로, 캡션 글을 고치면 고침이다."""
+    """캡션 새 문장도 제안 모습(원문 그대로)과 견준다 — 캡션까지 그대로 받으면 그대로, 캡션 글을 고치면 고침이다."""
     bundle = make_ai_bundle(client)
     view = upload_second_document(
         client, bundle.id, f"<w:p>{make_drawing_run('image1.png')}</w:p>" + p(FIGURE_CAPTION, "Caption"),
@@ -752,31 +819,17 @@ def test_ai_suggested_figure_caption_is_compared_for_adoption(
     use_reply(fake_ai)
     queue_units(client, bundle.id, [figure["id"]])
     run_jobs()
-    group = get_group_by_unit(client, bundle.id, figure["id"])
-    (figure_target,) = [target for target in group["targets"] if target["kind"] == "figure"]
-    body = {
-        "action": "confirm",
-        "units": [{"unit_id": figure["id"], "revision": group["units"][0]["decision"]["revision"], "disposition": "assigned"}],
-        "targets": [
-            {
-                "key": str(target["id"]), "id": target["id"], "revision": target["revision"], "kind": target["kind"],
-                "slot_key": target["slot_key"], "source_unit_ids": target["source_unit_ids"],
-                **({} if target["kind"] == "figure" else {
-                    "text": caption_text, "parent_key": str(figure_target["id"]),
-                    "change_type": "as_is" if caption_text == FIGURE_CAPTION else "rewritten",
-                }),
-            }
-            for target in group["targets"]
-        ],
-    }
 
-    response = save_group(client, bundle.id, body)
+    suggestion = take_single_suggestion(client, bundle.id, caption_text=caption_text)
 
-    assert response.status_code == 200, response.text
-    assert read_single_suggestion().adoption == expected
+    targets = get_group_by_unit(client, bundle.id, figure["id"])["targets"]
+    (figure_target,) = [target for target in targets if target["kind"] == "figure"]
+    (caption_target,) = [target for target in targets if target["parent_target_id"] == figure_target["id"]]
+    assert caption_target["confirmed_text"] == (caption_text or FIGURE_CAPTION)
+    assert suggestion.adoption == expected
 
 
-def test_wi_candidate_lands_in_the_step_and_part(client: TestClient, fake_ai: FakeAi) -> None:
+def test_wi_candidate_records_the_step_and_part(client: TestClient, fake_ai: FakeAi) -> None:
     bundle = make_ai_bundle(client)
     response = put_tobe(
         client, bundle.id, [AI_SOP_DOC, AI_WI_DOC], wi_steps=[{"code": AI_WI_DOC["code"], "step_no": 1, "title": "합성 단계"}]
@@ -790,13 +843,14 @@ def test_wi_candidate_lands_in_the_step_and_part(client: TestClient, fake_ai: Fa
 
     run_jobs()
 
-    target = get_target(client, bundle.id, ko)
-    assert (target["target_doc_id"], target["slot_key"], target["wi_step"], target["wi_part"]) == (
+    content = read_single_suggestion().content
+    assert (content["target_doc_id"], content["slot_key"], content["wi_step"], content["wi_part"]) == (
         bundle.wi_id, None, 1, "why",
     )
+    assert_left_to_people(ko, en)
 
 
-def test_manual_order_document_appends_at_the_end(client: TestClient, fake_ai: FakeAi) -> None:
+def test_taken_suggestion_appends_at_the_end_of_a_manual_order_document(client: TestClient, fake_ai: FakeAi) -> None:
     bundle = make_ai_bundle(client)
 
     async def _set_manual_order(session: AsyncSession) -> None:
@@ -809,18 +863,19 @@ def test_manual_order_document_appends_at_the_end(client: TestClient, fake_ai: F
     ko, en = find_ids(client, bundle, AI_KO_1, AI_EN_1)
     use_reply(fake_ai)
     queue_units(client, bundle.id, [ko, en])
-
     run_jobs()
+
+    take_single_suggestion(client, bundle.id)
 
     orders = [get_target(client, bundle.id, unit_id)["order_index"] for unit_id in (ko, en)]
     assert sorted(orders) == [1, 2]  # 사람이 먼저 놓은 문장이 0이다
 
 
 @pytest.mark.parametrize("is_manual_order", [False, True])
-def test_pair_proposed_into_one_slot_numbers_english_and_omits_korean(
+def test_taken_pair_in_one_slot_numbers_english_and_omits_korean(
     client: TestClient, fake_ai: FakeAi, is_manual_order: bool
 ) -> None:
-    # 짝 하나는 작업 하나라 두 언어 새 문장이 한 번에 같은 칸에 놓인다 — 제품 명세 §7.13 섹션 번호 기본값(O10)이 사람 저장과 같다
+    # 짝 하나는 제안 하나라 받으면 두 언어 새 문장이 한 저장에서 같은 칸에 놓인다 — 제품 명세 §7.13 섹션 번호 기본값(O10)
     bundle = make_ai_bundle(client)
     if is_manual_order:
         async def _set_manual_order(session: AsyncSession) -> None:
@@ -831,8 +886,9 @@ def test_pair_proposed_into_one_slot_numbers_english_and_omits_korean(
     ko, en = find_ids(client, bundle, AI_KO_1, AI_EN_1)  # 원문은 한글이 먼저다
     use_reply(fake_ai)
     queue_units(client, bundle.id, [ko, en])
-
     run_jobs()
+
+    take_single_suggestion(client, bundle.id)
 
     rows = {row.lang: row for row in read_rows(TargetSentence)}
     # 놓인 절(1장 Purpose)의 기본 표시가 글머리 기호다 — 첫 영어가 그 표시를 받고 한글은 생략
@@ -844,13 +900,14 @@ def test_pair_proposed_into_one_slot_numbers_english_and_omits_korean(
         assert (rows["en"].order_index, rows["ko"].order_index) == (0, 0)  # 순서는 결과물의 정렬 키가 정한다
 
 
-def test_number_difference_adds_warning(client: TestClient, fake_ai: FakeAi) -> None:
+def test_number_difference_adds_warning_when_taken(client: TestClient, fake_ai: FakeAi) -> None:
     bundle = make_ai_bundle(client)
     ko, en = find_ids(client, bundle, AI_KO_1, AI_EN_1)
     use_reply(fake_ai, rewrites={"ko": ["합성 장비의 전원을 5분 안에 켠다."], "en": [REWRITES["en"]]})
     queue_units(client, bundle.id, [ko, en])
-
     run_jobs()
+
+    take_single_suggestion(client, bundle.id)
 
     kinds = {warning["kind"] for warning in get_target(client, bundle.id, ko)["warnings"]}
     assert "number_mismatch" in kinds
@@ -869,7 +926,8 @@ def test_unknown_rule_id_is_dropped_with_warning(client: TestClient, fake_ai: Fa
     warning = {"kind": "unknown_rule_id", "source": "R99", "target": ""}
     assert suggestion.content["rule_ids"] == ["R01"]
     assert suggestion.warnings == [warning]
-    assert get_target(client, bundle.id, ko)["warnings"] == [warning]
+    assert suggestion.result == "applied"
+    assert_left_to_people(ko, en)
     assert set(warning) == set(check_sentence(["1"], "2")[0])  # Excel이 이 칸들을 읽어 경고를 적는다
 
 
@@ -892,7 +950,7 @@ def test_quote_outside_the_unit_warns_evidence_not_found(client: TestClient, fak
         {"kind": "evidence_not_found", "source": AI_KO_2, "target": ""},
     ]
     assert [item["unit_id"] for item in suggestion.content["evidence"]] == [ko]
-    assert get_target(client, bundle.id, ko)["warnings"] == suggestion.warnings
+    assert_left_to_people(ko, en)
 
 
 def test_long_warning_value_is_clipped(client: TestClient, fake_ai: FakeAi) -> None:
@@ -917,7 +975,7 @@ def test_seed_example_parses_as_classify_reply() -> None:
 def test_classify_seed_covers_tables_and_as_is_rewrites() -> None:
     seed = (SEEDS_DIR / "prompt.classify.md").read_text(encoding="utf-8")
 
-    assert "`table_row`" in seed and "cells stay exactly as they are" in seed
+    assert "`table`" in seed and "cells stay exactly as they are" in seed
     assert "repeat the original sentence" in seed
 
 
@@ -927,21 +985,19 @@ def test_classify_seed_covers_tables_and_as_is_rewrites() -> None:
 @pytest.mark.parametrize(
     "reply", ["not json", '{"candidate": "c99", "reason": "x"}', MISSING_REWRITE_REPLY, UNKNOWN_CANDIDATE_REPLY]
 )
-def test_invalid_reply_holds_only_that_unit(client: TestClient, fake_ai: FakeAi, reply: str) -> None:
+def test_invalid_reply_is_recorded_without_holding_the_unit(client: TestClient, fake_ai: FakeAi, reply: str) -> None:
+    # 무효 답도 판단을 건드리지 않는다 — 기록만 남고 그 단위는 미배정 그대로라 사람이 고르거나 다시 물을 수 있다
     bundle = make_ai_bundle(client)
-    ko, en, other = find_ids(client, bundle, AI_KO_1, AI_EN_1, AI_KO_2)
+    ko, en, other, other_en = find_ids(client, bundle, AI_KO_1, AI_EN_1, AI_KO_2, AI_EN_2)
     fake_ai.chat = lambda data: reply if data["units"][0]["text"] == AI_KO_1 else build_reply(data)
     request_classify(client, bundle.id, document_id=bundle.document_id)
 
     run_jobs()
 
-    held = read_decision(ko)
-    assert (held.status, held.hold_reason, held.revision) == ("on_hold", SYSTEM_HOLD_AI_INVALID, 2)
-    assert (held.disposition, held.suggestion_id) == ("unassigned", None)
-    assert read_decision(en).status == "on_hold"
-    assert get_group_by_unit(client, bundle.id, ko)["targets"] == []
-    assert read_decision(other).status == "ai_suggested"
-    assert sorted(suggestion.result for suggestion in read_rows(AiSuggestion)) == ["applied", "invalid"]
+    assert_left_to_people(ko, en, other, other_en)
+    invalid, applied = sorted(read_rows(AiSuggestion), key=lambda suggestion: suggestion.result != "invalid")
+    assert (invalid.result, invalid.content["unit_ids"], invalid.content["disposition"]) == ("invalid", [ko, en], None)
+    assert (applied.result, applied.content["unit_ids"]) == ("applied", [other, other_en])
     assert [job.status for job in read_rows(AiJob)] == ["done", "done"]
 
 
@@ -957,7 +1013,11 @@ def test_invalid_suggestion_never_stores_the_raw_reply(client: TestClient, fake_
     suggestion = read_single_suggestion()
     assert suggestion.result == "invalid"
     assert MARKER not in json.dumps([suggestion.content, suggestion.warnings], ensure_ascii=False)
-    assert suggestion.content["unit_ids"] == [ko, en] and suggestion.content["target_ids"] == []
+    assert suggestion.content["unit_ids"] == [ko, en]
+    assert (suggestion.content["disposition"], suggestion.content["target_doc_id"], suggestion.content["slot_key"]) == (
+        None, None, None,
+    )
+    assert (suggestion.content["reason"], suggestion.content["change_type"]) == ("", None)
     assert suggestion.content["rewrites"] == {"ko": [], "en": []}
     assert all(set(warning) == {"kind", "source", "target"} for warning in suggestion.warnings)
 
@@ -975,7 +1035,8 @@ def test_too_many_sentences_is_invalid(client: TestClient, fake_ai: FakeAi) -> N
     assert suggestion.warnings == [{"kind": "too_many_sentences", "source": "ko", "target": ""}]
 
 
-def test_invalid_reply_clears_the_previous_suggestion(client: TestClient, fake_ai: FakeAi) -> None:
+def test_invalid_reply_stales_the_previous_suggestion(client: TestClient, fake_ai: FakeAi) -> None:
+    # 다시 물은 답이 무효여도 앞 제안은 밀린다 — 사람이 다시 물었다는 것은 앞 제안을 쓰지 않겠다는 뜻이다
     bundle = make_ai_bundle(client)
     ko, en = find_ids(client, bundle, AI_KO_1, AI_EN_1)
     use_reply(fake_ai)
@@ -986,9 +1047,7 @@ def test_invalid_reply_clears_the_previous_suggestion(client: TestClient, fake_a
     queue_units(client, bundle.id, [ko, en])
     run_jobs()
 
-    decision = read_decision(ko)
-    assert (decision.status, decision.disposition, decision.suggestion_id) == ("on_hold", "unassigned", None)
-    assert get_group_by_unit(client, bundle.id, ko)["targets"] == []
+    assert_left_to_people(ko, en)
     assert [suggestion.result for suggestion in read_rows(AiSuggestion)] == ["stale", "invalid"]
 
 
@@ -1035,7 +1094,8 @@ def test_retry_uses_the_state_at_its_own_start(client: TestClient, fake_ai: Fake
     run_jobs()
 
     assert read_single_job().status == "done"
-    assert get_target(client, bundle.id, unit["id"])["ai_text"] == REWRITE
+    suggestion = read_single_suggestion()
+    assert (suggestion.result, suggestion.content["rewrites"]["ko"]) == ("applied", [REWRITE])
 
 
 def test_no_candidates_fails_the_job_before_any_call(client: TestClient, fake_ai: FakeAi) -> None:
@@ -1084,8 +1144,9 @@ def test_nul_in_rewrite_is_stored_as_replacement(client: TestClient, fake_ai: Fa
 
     run_jobs()
 
-    assert get_target(client, bundle.id, ko)["ai_text"] == "합성� 문장"
-    assert read_single_suggestion().content["reason"] == "합성�이유"
+    content = read_single_suggestion().content
+    assert content["rewrites"]["ko"] == ["합성� 문장"]
+    assert content["reason"] == "합성�이유"
 
 
 # --- 페이로드 ---
@@ -1230,9 +1291,8 @@ def test_edit_during_call_makes_the_result_stale(client: TestClient, fake_ai: Fa
     run_jobs()
 
     assert read_single_job().status == "stale"
-    suggestion = read_single_suggestion()
-    assert (suggestion.result, suggestion.content["target_ids"]) == ("stale", [])
-    new_units = [unit["id"] for unit in get_view(client, bundle.id, bundle.document_id)["units"] if unit["id"] not in before]
+    assert read_single_suggestion().result == "stale"
+    new_units =[unit["id"] for unit in get_view(client, bundle.id, bundle.document_id)["units"] if unit["id"] not in before]
     assert len(new_units) == 2
     for unit_id in [*new_units, en]:
         assert get_group_by_unit(client, bundle.id, unit_id)["targets"] == []
@@ -1330,17 +1390,14 @@ def test_new_suggestion_replaces_same_kind_without_duplicates(client: TestClient
     queue_units(client, bundle.id, [ko, en])
     run_jobs()
 
-    group = get_group_by_unit(client, bundle.id, ko)
-    assert len(group["targets"]) == 1
-    assert group["targets"][0]["ai_text"] == "합성 장비를 켜야 한다."
     first, second = read_rows(AiSuggestion)
     assert (first.result, second.result) == ("stale", "applied")
-    assert group["targets"][0]["suggestion_id"] == second.id == read_decision(ko).suggestion_id
-    assert read_decision(ko).revision == 3
-    assert first.content["rewrites"]["ko"] == [REWRITE]  # 지워진 ai_text의 유일한 사본이다(§6.11)
+    assert second.content["rewrites"]["ko"] == ["합성 장비를 켜야 한다."]
+    assert first.content["rewrites"]["ko"] == [REWRITE]  # 밀린 제안의 글도 기록에 남는다(§6.11)
+    assert_left_to_people(ko, en)  # 다시 받아도 판단 revision이 그대로라 사람이 보던 줄의 저장이 막히지 않는다
 
 
-def test_replacing_a_delete_suggestion_with_a_place_leaves_no_trace(client: TestClient, fake_ai: FakeAi) -> None:
+def test_replacing_a_delete_suggestion_with_a_place_stales_it(client: TestClient, fake_ai: FakeAi) -> None:
     bundle = make_ai_bundle(client)
     ko, en = find_ids(client, bundle, AI_KO_1, AI_EN_1)
     use_reply(fake_ai, candidate="delete", change_type="as_is", rewrites={})
@@ -1351,16 +1408,14 @@ def test_replacing_a_delete_suggestion_with_a_place_leaves_no_trace(client: Test
     queue_units(client, bundle.id, [ko, en])
     run_jobs()
 
-    decision = read_decision(ko)
     first, second = read_rows(AiSuggestion)
-    assert (decision.disposition, decision.status, decision.suggestion_id) == ("assigned", "ai_suggested", second.id)
-    assert (first.result, second.result) == ("stale", "applied")
-    target = get_target(client, bundle.id, ko)
-    assert (target["ai_text"], target["status"], target["suggestion_id"]) == (REWRITE, "ai_suggested", second.id)
+    assert (first.result, first.content["disposition"]) == ("stale", "delete")
+    assert (second.result, second.content["disposition"], second.content["rewrites"]["ko"]) == ("applied", "assigned", [REWRITE])
+    assert_left_to_people(ko, en)
 
 
-def test_replacing_one_unit_of_a_dissolved_pair_clears_the_whole_suggestion(client: TestClient, fake_ai: FakeAi) -> None:
-    # 제안 하나가 옛 짝을 덮는다 — 짝을 풀어 한쪽만 다시 받을 때 다른 쪽을 남기면 새 문장 없는 ai_suggested 판단이 된다
+def test_replacing_one_unit_of_a_dissolved_pair_stales_the_whole_suggestion(client: TestClient, fake_ai: FakeAi) -> None:
+    # 제안 하나가 옛 짝을 덮는다 — 짝을 풀어 한쪽만 다시 받으면 옛 제안은 통째로 밀리고, 다른 쪽은 살아 있는 제안 없이 미배정이다
     bundle = make_ai_bundle(client)
     ko, en = find_ids(client, bundle, AI_KO_1, AI_EN_1)
     use_reply(fake_ai)
@@ -1378,26 +1433,28 @@ def test_replacing_one_unit_of_a_dissolved_pair_clears_the_whole_suggestion(clie
     run_jobs()
 
     assert fake_ai.requests[-1]["units"][0]["id"] == ko and len(fake_ai.requests[-1]["units"]) == 1
-    other = read_decision(en)
-    assert (other.status, other.disposition, other.suggestion_id, other.revision) == ("unassigned", "unassigned", None, 3)
-    assert get_group_by_unit(client, bundle.id, en)["targets"] == []
-    assert get_target(client, bundle.id, ko)["ai_text"] == REWRITE
-    assert [suggestion.result for suggestion in read_rows(AiSuggestion)] == ["stale", "applied"]
+    first, second = read_rows(AiSuggestion)
+    assert (first.result, first.content["unit_ids"]) == ("stale", [ko, en])
+    assert (second.result, second.content["unit_ids"]) == ("applied", [ko])
+    assert_left_to_people(ko, en)
+    body = request_classify(client, bundle.id, document_id=bundle.document_id).json()
+    assert {item["unit_id"] for item in body["skipped"]} == {ko}  # 밀린 제안만 남은 다른 쪽은 문서 요청이 다시 받는다
 
 
 @pytest.mark.parametrize(("action", "first_result"), [("confirm", "applied"), ("hold", "stale")])
 def test_person_owned_mate_survives_reclassify_of_other_side(
     client: TestClient, fake_ai: FakeAi, action: str, first_result: str
 ) -> None:
-    # 밀린 제안이 짝을 함께 덮어도 사람이 정한 판단과 새 문장은 그대로다 — 상태 조건이 빠지면 확정 글이 지워진다
-    # 확정은 채택을 남겨 그 제안이 applied로 남고(채택률), 보류는 아직 결정이 아니라 제안이 밀린다
+    # 사람이 짝의 한쪽만 제안을 받아 저장한 뒤 다른 쪽을 다시 물어도 사람이 정한 판단과 새 문장은 그대로다
+    # 확정은 채택을 남겨 그 제안이 applied로 남고(채택률), 보류는 아직 결정이 아니라 살아 있는 제안이 밀린다
     bundle = make_ai_bundle(client)
     ko, en = find_ids(client, bundle, AI_KO_1, AI_EN_1)
     use_reply(fake_ai)
     queue_units(client, bundle.id, [ko, en])
     run_jobs()
-    saved = save_ai_target(client, bundle.id, en, action)
+    saved = take_suggestion(client, bundle.id, read_single_suggestion(), action=action, unit_ids=[en])
     assert saved.status_code == 200, saved.text
+    assert read_decision(en).suggestion_id == read_single_suggestion().id
     mate_before = get_target(client, bundle.id, en)
     decision_before = read_decision(en)
 
@@ -1410,8 +1467,9 @@ def test_person_owned_mate_survives_reclassify_of_other_side(
     assert (decision.status, decision.revision, decision.suggestion_id) == (
         decision_before.status, decision_before.revision, decision_before.suggestion_id,
     )
-    assert get_target(client, bundle.id, ko)["status"] == "ai_suggested"
-    assert [suggestion.result for suggestion in read_rows(AiSuggestion)] == [first_result, "applied"]
+    assert get_group_by_unit(client, bundle.id, ko)["targets"] == []
+    first, second = read_rows(AiSuggestion)
+    assert (first.result, second.result, second.content["unit_ids"]) == (first_result, "applied", [ko])
 
 
 def test_mate_confirmed_during_pair_call_stales_the_job(client: TestClient, fake_ai: FakeAi) -> None:
@@ -1434,18 +1492,33 @@ def test_mate_confirmed_during_pair_call_stales_the_job(client: TestClient, fake
     assert (target["status"], target["confirmed_text"], target["ai_text"]) == ("confirmed", AI_EN_1, "")
 
 
-def test_match_suggestion_is_not_overwritten_by_classify(client: TestClient, fake_ai: FakeAi) -> None:
+def test_unit_with_a_live_match_suggestion_is_not_classified(client: TestClient, fake_ai: FakeAi) -> None:
+    # 입구 2 제안과 겹쳐 내지 않는다(설계 §6.8) — 단위를 고른 요청도 묶기 제안이 살아 있는 단위는 건너뛴다
     bundle = make_ai_bundle(client)
     ko, = find_ids(client, bundle, AI_KO_1)
-    match_id = attach_match_suggestion(bundle.id, ko)
+    match_id = attach_old_match_suggestion(bundle.id, bundle.document_id, ko)
 
     body = request_classify(client, bundle.id, unit_ids=[ko]).json()
 
     assert body == {
-        "queued": 0, "request_id": None, "skipped_total": 1, "skipped": [{"unit_id": ko, "reason": "not_unassigned"}],
-        "skipped_by_reason": {"not_unassigned": 1},
+        "queued": 0, "request_id": None, "skipped_total": 1, "skipped": [{"unit_id": ko, "reason": "already_suggested"}],
+        "skipped_by_reason": {"already_suggested": 1},
     }
-    assert read_decision(ko).suggestion_id == match_id
+    assert read_rows(AiJob)[-1].kind == "match"  # 분류 작업은 쌓이지 않았다
+    (match,) = read_rows(AiSuggestion)
+    assert (match.id, match.result) == (match_id, "applied")
+
+
+def test_match_suggestion_filed_under_another_document_still_blocks_classify(client: TestClient, fake_ai: FakeAi) -> None:
+    # 묶기 묶음은 옛 문서를 가로지를 수 있고 제안의 문서는 첫 옛 단위의 것이다 — 문서로 좁히지 않고 단위로 본다
+    bundle = make_ai_bundle(client)
+    ko, = find_ids(client, bundle, AI_KO_1)
+    attach_old_match_suggestion(bundle.id, None, ko)  # 이 단위의 문서가 아닌 제안
+
+    body = request_classify(client, bundle.id, document_id=bundle.document_id).json()
+
+    assert {"unit_id": ko, "reason": "already_suggested"} in body["skipped"]
+    assert ko not in {unit_id for job in read_rows(AiJob) if job.kind == "classify" for unit_id in job.unit_ids}
 
 
 def test_match_suggestion_arriving_during_call_makes_the_result_stale(client: TestClient, fake_ai: FakeAi) -> None:
@@ -1457,7 +1530,7 @@ def test_match_suggestion_arriving_during_call_makes_the_result_stale(client: Te
     def attach_beside_the_call(data: dict) -> None:
         # 이 훅은 실행기의 이벤트 루프 안에서 돌아 asyncio.run을 못 쓴다 — 다른 스레드에서 끝날 때까지 기다린다
         with ThreadPoolExecutor(max_workers=1) as pool:
-            held.append(pool.submit(attach_match_suggestion, bundle.id, ko).result())
+            held.append(pool.submit(attach_old_match_suggestion, bundle.id, bundle.document_id, ko).result())
 
     fake_ai.on_chat = attach_beside_the_call
     queue_units(client, bundle.id, [ko])
@@ -1466,7 +1539,11 @@ def test_match_suggestion_arriving_during_call_makes_the_result_stale(client: Te
 
     (job,) = [row for row in read_rows(AiJob) if row.kind == "classify"]
     assert job.status == "stale"
-    assert read_decision(ko).suggestion_id == held[0]
+    (classify,) = read_classify_suggestions()
+    assert classify.result == "stale"
+    match = next(row for row in read_rows(AiSuggestion) if row.id == held[0])
+    assert match.result == "applied"  # 먼저 온 묶기 제안이 살아 있다
+    assert_left_to_people(ko)
 
 
 def test_reasoning_and_feature_are_recorded(client: TestClient, fake_ai: FakeAi, clean_ai_usage: None) -> None:
@@ -1486,36 +1563,44 @@ def test_reasoning_and_feature_are_recorded(client: TestClient, fake_ai: FakeAi,
 
 
 @pytest.mark.parametrize(
-    ("texts", "text", "requested", "sentence_count", "expected"),
+    ("texts", "text", "sentence_count", "expected"),
     [
-        (["원문"], "원문", "tone", 1, "as_is"),
-        (["원문"], "고친 글", "tone", 1, "tone"),
-        (["원문"], "고친 글", "rewritten", 1, "rewritten"),
-        (["원문"], "고친 글", "as_is", 1, "rewritten"),  # 원문과 다른 글을 그대로라고 적지 않는다
-        (["원문"], "원문", "as_is", 2, "split"),
-        (["원문 하나", "원문 둘"], "합친 글", "tone", 1, "merged"),
-        (["원문 하나", "원문 둘"], "합친 글", "tone", 2, "merged"),  # 합침이 나눔보다 먼저다(사람 저장과 같은 순서)
+        (["원문"], "원문", 1, "as_is"),
+        (["원문"], "고친 글", 1, "rewritten"),  # 글자 비교 종류는 둘 — 원문과 다른 글은 고침이다
+        (["원문"], "원문", 2, "split"),
+        (["원문 하나", "원문 둘"], "합친 글", 1, "merged"),
+        (["원문 하나", "원문 둘"], "합친 글", 2, "merged"),  # 합침이 나눔보다 먼저다(사람 저장과 같은 순서)
     ],
 )
-def test_decide_ai_change_type(
-    texts: list[str], text: str, requested: str, sentence_count: int, expected: str
-) -> None:
+def test_decide_ai_change_type(texts: list[str], text: str, sentence_count: int, expected: str) -> None:
     sources = [Unit(text=source) for source in texts]
 
-    assert decide_ai_change_type(sources, text, requested, sentence_count=sentence_count) == expected
+    assert decide_ai_change_type(sources, text, sentence_count=sentence_count) == expected
 
 
-def test_load_fresh_decisions_needs_active_units_and_the_same_revision(client: TestClient, fake_ai: FakeAi) -> None:
+def test_decide_ai_change_type_ignores_the_number_like_the_save() -> None:
+    # 번호를 뺀 내용과 같으면 그대로 — 사람 저장(decisions._decide_change_type)과 같은 규칙이라 채택 판정이 어긋나지 않는다
+    numbered = Unit(text="1. 원문", number_len=2)
+
+    assert decide_ai_change_type([numbered], "원문", sentence_count=1) == "as_is"
+
+
+def test_load_fresh_decisions_needs_active_unassigned_units_and_the_same_revision(client: TestClient, fake_ai: FakeAi) -> None:
     bundle = make_ai_bundle(client)
     ko, en = find_ids(client, bundle, AI_KO_1, AI_EN_1)
 
     def load(snapshot: dict[str, int], unit_ids: Sequence[int] = (ko, en)) -> dict | None:
-        return run_in_session(
-            lambda session: load_fresh_decisions(session, unit_ids=unit_ids, snapshot=snapshot, kinds=("classify",))
-        )
+        return run_in_session(lambda session: load_fresh_decisions(session, unit_ids=unit_ids, snapshot=snapshot))
 
     fresh = load({str(ko): 1, str(en): 1})
     assert fresh is not None and set(fresh) == {ko, en}
     assert load({str(ko): 2, str(en): 1}) is None
     assert load({str(ko): 1}) is None  # 스냅숏에 없는 단위는 같은 revision이 아니다
     assert load({str(ko): 1, "999999": 1}, (ko, 999999)) is None  # 없는 단위
+
+    async def _hold_without_revision(session: AsyncSession) -> None:
+        await session.execute(update(UnitDecision).where(UnitDecision.unit_id == ko).values(status="on_hold", hold_reason="합성 보류"))
+        await session.commit()
+
+    run_in_session(_hold_without_revision)
+    assert load({str(ko): 1, str(en): 1}) is None  # 미배정이 아닌 판단은 revision이 같아도 사람의 것이다

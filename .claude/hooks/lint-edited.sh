@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # PostToolUse hook: lint the one file Claude just edited and hand failures back (exit 2 sends stderr to Claude).
-# Works from any worktree: tools come from that worktree, else from the main checkout.
+# Works from any worktree. ruff may come from the main checkout's venv (a standalone binary reading ruff.toml);
+# eslint must come from the same worktree, because its config imports packages from that worktree's node_modules.
 # Plan: docs/superpowers/plans/2026-11-19-trust-foundation-plan.md (step 1).
 set -u
 
@@ -12,8 +13,8 @@ main=$(dirname "$(git -C "$root" rev-parse --path-format=absolute --git-common-d
 
 case "$file" in
   "$root"/frontend/*.ts | "$root"/frontend/*.tsx | "$root"/frontend/*.mjs)
+    # No node_modules in this worktree: skip (npm ci there to get edit-time lint). Another checkout's eslint cannot load this config.
     eslint="$root/frontend/node_modules/.bin/eslint"
-    [ -x "$eslint" ] || eslint="$main/frontend/node_modules/.bin/eslint"
     [ -x "$eslint" ] || exit 0
     if ! out=$(cd "$root/frontend" && "$eslint" --no-warn-ignored "$file" 2>&1); then
       printf 'eslint failed on %s — fix the cause the message names, do not disable the rule:\n%s\n' "$file" "$out" >&2

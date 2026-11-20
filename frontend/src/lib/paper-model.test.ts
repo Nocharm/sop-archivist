@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import type { DocumentView, ViewBlock, ViewPartGroup, ViewUnit } from "./api-sop";
 import type { PaperRow } from "./paper-model";
-import { buildPaperModel, buildPaperTabs, buildRows, foldCaptionRows, listPartSheets, canSplitAt, clampSplitAt, getBundleHeader, getGapMerge, getMergeBlocker, hasTocLineIn, resolveCutDrag, getMarks, getTags, isBandHeading, readWarningText, resolvePickUnit, shouldRecenter, toBlockOffset, toUnitOffset } from "./paper-model";
+import { buildPaperModel, buildPaperTabs, buildRows, foldCaptionRows, listFigureTabUnitIds, listPartSheets, pickFigureRows, canSplitAt, clampSplitAt, getBundleHeader, getGapMerge, getMergeBlocker, hasTocLineIn, resolveCutDrag, getMarks, getTags, isBandHeading, readWarningText, resolvePickUnit, shouldRecenter, toBlockOffset, toUnitOffset } from "./paper-model";
 
 function makeBlock(id: number, seq: number, text: string, extra: Partial<ViewBlock> = {}): ViewBlock {
   return {
@@ -497,5 +497,72 @@ describe("suggest mark", () => {
   it("marks a unit with an open AI split suggestion", () => {
     expect(getMarks(makeSplitUnit({ split_suggestion_id: 4 }))).toContain("suggest");
     expect(getMarks(makeSplitUnit())).not.toContain("suggest");
+  });
+});
+
+describe("figures tab (mockup 2 D3)", () => {
+  // 문단 · 그림(캡션 문단 딸림) · 문단 · 캡션을 같이 쓰는 그림 둘 · 데이터 표 칸 안 그림 · 머리말 그림
+  const blocks = [
+    makeBlock(1, 0, "Before."),
+    makeBlock(2, 1, "", { kind: "figure" }),
+    makeBlock(3, 2, "Figure 1 Rotor"),
+    makeBlock(4, 3, "Middle."),
+    makeBlock(5, 4, "", { kind: "figure" }),
+    makeBlock(6, 5, "", { kind: "figure" }),
+    makeBlock(7, 6, "cell", { kind: "table_cell", table_id: 9, row_index: 0, col_index: 0 }),
+    makeBlock(8, 7, "", { kind: "figure", table_id: 9, row_index: 0, col_index: 0 }),
+    makeBlock(10, 9, "", { kind: "figure", part: "header" }),
+  ];
+  const units = [
+    makeUnit(10, [[1, 0, 7]], "Before."),
+    makeUnit(20, [], "", { kind: "figure", block_id: 2, pos_seq: 1 }),
+    makeUnit(21, [[3, 0, 14]], "Figure 1 Rotor", { kind: "caption", group_unit_id: 20 }),
+    makeUnit(11, [[4, 0, 7]], "Middle."),
+    makeUnit(30, [], "", { kind: "figure", block_id: 5, pos_seq: 4 }),
+    makeUnit(31, [], "", { kind: "figure", block_id: 6, pos_seq: 5, caption_figure_id: 30 }),
+    makeUnit(40, [], "", { kind: "table", table_id: 9, block_id: 7, pos_seq: 6 }),
+    makeUnit(41, [[7, 0, 4]], "cell", { kind: "cell_sentence", table_id: 9, group_unit_id: 40 }),
+    makeUnit(50, [], "", { kind: "figure", block_id: 8, pos_seq: 7 }),
+    makeUnit(60, [], "", { kind: "figure", block_id: 10, pos_seq: 9 }),
+  ];
+  const view = makeView(blocks, units);
+  view.tables = [{ id: 9, table_index: 0, parent_table_id: null, part: "body", n_rows: 1, n_cols: 1, is_layout: false, is_band: false, anchor: null }];
+  const model = buildPaperModel(view);
+
+  it("makes one card per figure group - captions ride along, a shared caption joins its figures, an in-cell figure is its own card", () => {
+    expect(model.figures.map((group) => [group.figureIds, group.captionIds])).toEqual([
+      [[20], [21]],
+      [[30, 31], []],
+      [[50], []],
+    ]);
+    expect(listFigureTabUnitIds(view)).toEqual(new Set([20, 21, 30, 31, 50]));
+    // 머리말 그림은 머리말에 남는다
+    expect(model.figureGroupOf.has(60)).toBe(false);
+  });
+
+  it("drops figure rows and their caption pieces from the body with no placeholder, and keeps only figure cards on the tab", () => {
+    const rows = foldCaptionRows(buildRows(model.body, model.segments), model.units);
+    const body = pickFigureRows(rows, model.figureGroupOf, "hide");
+    expect(body.map((row) => (row.type === "table" ? `t${row.item.unitId}` : `${row.type}${row.unitId}`))).toEqual(["piece10", "piece11", "t40"]);
+    const tab = pickFigureRows(foldCaptionRows(buildRows(model.figureItems, model.segments), model.units), model.figureGroupOf, "only");
+    expect(tab.map((row) => (row.type === "figure" ? row.unitId : null))).toEqual([20, 30, 31, 50]);
+    const first = tab[0];
+    expect(first.type === "figure" && first.captions?.map((piece) => piece.unitId)).toEqual([21]);
+  });
+
+  it("adds a Figures tab after the others whose J/K order is card order, and the body tab skips figures", () => {
+    const tabs = buildPaperTabs(view, model);
+    expect(tabs.tabs.map((tab) => tab.key)).toEqual(["body", "header", "figures"]);
+    expect(tabs.tabs[0].unitIds).toEqual([10, 11, 40, 41]);
+    expect(tabs.tabs[2].unitIds).toEqual([20, 21, 30, 31, 50]);
+    expect(tabs.tabOf.get(50)).toBe("figures");
+    expect(tabs.tabOf.get(60)).toBe("header");
+  });
+
+  it("has no Figures tab when the document has no body figure", () => {
+    const plain = makeView([makeBlock(1, 0, "Only text.")], [makeUnit(10, [[1, 0, 10]], "Only text.")]);
+    const plainModel = buildPaperModel(plain);
+    expect(plainModel.figures).toEqual([]);
+    expect(buildPaperTabs(plain, plainModel).tabs.map((tab) => tab.key)).toEqual(["body"]);
   });
 });

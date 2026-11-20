@@ -1,16 +1,16 @@
 """로컬 데모 시드 — 합성 SOP 묶음 네 개를 서로 다른 단계로, 그 뒤에 참조 지도용 묶음 둘과 목차 묶음 · 표 안 표 묶음 · 한/영 따로 표 묶음 하나씩을 앱 API에 만든다. 로컬 개발 전용, 운영 실행 금지.
 
-단계: 1 쪼개기 직후(업로드·언어 배치·편집까지), 2 분류 절반(입구 1 답의 절반 저장), 3 검토 대기(전부 저장 후 검토 요청),
+단계: 1 쪼개기 직후(업로드·언어 배치·편집까지 — 이 묶음만 Reference 절 확정 전의 추출기 5로 올려 REF? 제안이 남는다, 요청서 14), 2 분류 절반(입구 1 답의 절반 저장), 3 검토 대기(전부 저장 후 검토 요청),
 4 AI 제안(가짜 AI의 분류·입구 2 짝 제안까지, 확정하지 않는다 — 합성 응답이고 실제 모델이 아니다).
 작성자 qa.member, 검토자 qa.lead. 앱 API를 TestClient로 그대로 불러(X-Dev-User) 화면이 쓰는 경로와 로직을 두 벌 두지 않는다.
 지도용: 5 UV 분광광도계(qa.member 작성자·qa.lead 검토자 — 작성자에게 구성원 Bundle), 6 문서 관리(끝에 prod.member 혼자 —
-작성자에게 남의 Bundle). 단계 Bundle 넷의 OLD-1이 5번 문서 번호를, 단계 2·3의 이동 줄이 6번 New 문서를 가리키고 5·6번이 OLD-1~3을 가리킨다.
+작성자에게 남의 Bundle). 지도의 REF? 선을 남기려고 둘 다 옛 추출기 5로 올린다. 단계 Bundle 넷의 OLD-1이 5번 문서 번호를, 단계 2·3의 이동 줄이 6번 New 문서를 가리키고 5·6번이 OLD-1~3을 가리킨다.
 목차: 7 목차(qa.member 작성자 — 목차 스타일 줄 7과 점 끌기 보통 줄 1, 본문에 띠 표 하나가 든 Old 문서 하나, 배정 없음.
 Assign 목차 블록·띠 표 제목 줄 스모크용).
 표 안 표: 8 표 안 표(qa.member 작성자 — 첫 행 칸에 띠 표, 칸 안 두 문단 사이에 값 표, 다른 칸에 권한 표가 든 작업 표 하나, 배정 없음.
 Assign 표 안 표 스모크용, MD 1 F2).
 한/영 따로 표: 9 한/영 따로 표(qa.member 작성자 — 한글 절반 표 둘 다음 영어 절반 표 둘, 값 표는 행 수가 다름, 배정 없음.
-Assign 대응 표 함께 벗기기 스모크용).
+Assign 대응 표 짝 스모크용).
 이미 같은 제목 묶음이 있으면 그 묶음은 건너뛰어 여러 번 돌려도 같은 결과다. 끝에 묶음별 상태·진행 숫자만 찍고 원문 글자는 찍지 않는다.
 
 개발 전용이다 — 합성 생성기가 개발 의존성 python-docx와 테스트 팩토리(tests.pdf_factory)를 쓰고, 합성 파일은 임시 디렉터리에
@@ -26,7 +26,8 @@ Assign 대응 표 함께 벗기기 스모크용).
 import asyncio
 import sys
 import tempfile
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Iterator
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -35,6 +36,7 @@ from fastapi.testclient import TestClient
 from app.db import engine
 from app.main import app
 from app.settings import settings
+from app.sop import ingest
 from app.sop.ai.runner import run_jobs_until_idle
 from scripts.reset_db import count_hr_rows, should_refuse_reset
 from scripts.sop_demo_driver import SyntheticDriver
@@ -54,13 +56,26 @@ from tests.sop_helpers import (
     upload,
 )
 
-PROGRESS_KEYS = ("total", "confirmed", "ai_suggested", "on_hold", "unassigned", "single_language")  # 출력하는 진행 숫자
+PROGRESS_KEYS = ("total", "confirmed", "on_hold", "unassigned", "single_language")  # 출력하는 진행 숫자
 
 
 @dataclass(frozen=True)
 class DemoStage:
     title: str
     drive: Callable[[SyntheticDriver], None]  # 업로드·편집(start)이 끝난 묶음을 이 단계까지 더 모는 일
+    # 이 묶음의 문서를 적을 추출기 판 — 옛 판이면 그 판의 쪼개기 규칙을 따른다(None은 지금 판)
+    extractor_version: str | None = None
+
+
+@contextmanager
+def _use_extractor_version(version: str) -> Iterator[None]:
+    """올리는 문서를 옛 추출기 판으로 적는다 — 운영에 남은 옛 문서(REF? 제안)를 화면 스모크가 보게."""
+    saved = ingest.EXTRACTOR_VERSION
+    ingest.EXTRACTOR_VERSION = version
+    try:
+        yield
+    finally:
+        ingest.EXTRACTOR_VERSION = saved
 
 
 def _stop_after_split(driver: SyntheticDriver) -> None:
@@ -79,7 +94,7 @@ def _await_review(driver: SyntheticDriver) -> None:
 
 
 def _suggest_with_ai(driver: SyntheticDriver) -> None:
-    """가짜 AI의 제안까지만 — 프런트 분류 화면용이라 확정하지 않는다. 작업은 요청과 같은 앱 루프에서 돌린다(DB 연결이 그 루프에 묶여 있다)."""
+    """가짜 AI의 제안까지만 — 프런트 분류 화면용이라 받지 않는다(판단은 미배정, 제안 행만 쌓인다). 작업은 요청과 같은 앱 루프에서 돌린다(DB 연결이 그 루프에 묶여 있다)."""
     answers = SyntheticAnswers(driver.expected)
     with fake_ai_session() as fake:
         fake.chat, fake.embed = answers.chat, answers.embed
@@ -90,7 +105,8 @@ def _suggest_with_ai(driver: SyntheticDriver) -> None:
 
 
 DEMO_STAGES = (
-    DemoStage("SYNTHETIC 1 쪼개기 직후", _stop_after_split),
+    # Reference 절 확정 전(추출기 5)에 올린 문서 — OLD-1의 참조 줄이 REF?로 제안되어 Assign의 확인 · REF 필 확정 스모크가 쓴다
+    DemoStage("SYNTHETIC 1 쪼개기 직후", _stop_after_split, extractor_version="5"),
     DemoStage("SYNTHETIC 2 분류 절반", _classify_half),
     DemoStage("SYNTHETIC 3 검토 대기", _await_review),
     DemoStage("SYNTHETIC 4 AI 제안", _suggest_with_ai),
@@ -110,7 +126,8 @@ def drive_stage(client: TestClient, synthetic: SyntheticBundle, stage: DemoStage
     """묶음 하나를 만들어 그 단계까지 모는다. 중간에 실패하면 그 묶음을 지우고 다시 던진다."""
     driver = SyntheticDriver(client, synthetic, AUTHOR, title=stage.title)
     try:
-        driver.start()
+        with _use_extractor_version(stage.extractor_version) if stage.extractor_version else nullcontext():
+            driver.start()
         stage.drive(driver)
     except Exception:
         # 제목만 남은 반쪽 묶음은 다음 실행이 "이미 있다"며 건너뛰어 데모가 영영 덜 만들어진 채 남는다
@@ -192,7 +209,9 @@ def _build_uv_bundle(client: TestClient, bundle_id: int) -> None:
         wi_steps=[{"code": "WI-11", "step_no": 1, "title": "Check the lamp"}],
     )
     lines = (UV_REF_PROPOSED, UV_REF_CONFIRMED, UV_TO_SOP, UV_TO_WI)
-    doc_id = upload_old_doc(client, bundle_id, "SYNTHETIC_SOP-ABC-1016_UV_spectrophotometer.docx", lines)["id"]
+    # 지도에 REF? 선을 남기려고 옛 추출기로 올린다 — 지금 추출기는 Reference 절 밖의 줄을 제안하지 않는다(요청서 12)
+    with _use_extractor_version("5"):
+        doc_id = upload_old_doc(client, bundle_id, "SYNTHETIC_SOP-ABC-1016_UV_spectrophotometer.docx", lines)["id"]
     confirm_ref(client, bundle_id, doc_id, UV_REF_CONFIRMED, "OLD-2")
     to_sop = find_line(client, bundle_id, doc_id, UV_TO_SOP)
     assign_as_is(client, bundle_id, to_sop, tobe["SOP-UV"], slot_key="procedures.p1")
@@ -203,7 +222,8 @@ def _build_uv_bundle(client: TestClient, bundle_id: int) -> None:
 def _build_doc_bundle(client: TestClient, bundle_id: int) -> None:
     tobe = put_tobe_codes(client, bundle_id, [build_tobe_doc(MOVE_TARGET_CODE, "SYNTHETIC equipment calibration")])
     lines = (DOC_REF_CONFIRMED, DOC_REF_PROPOSED, DOC_TO_SOP)
-    doc_id = upload_old_doc(client, bundle_id, "SYNTHETIC_SOP-ABC-1020_Document_control.docx", lines)["id"]
+    with _use_extractor_version("5"):  # REF? 선 — _build_uv_bundle과 같다
+        doc_id = upload_old_doc(client, bundle_id, "SYNTHETIC_SOP-ABC-1020_Document_control.docx", lines)["id"]
     confirm_ref(client, bundle_id, doc_id, DOC_REF_CONFIRMED, "OLD-1")
     to_sop = find_line(client, bundle_id, doc_id, DOC_TO_SOP)
     assign_as_is(client, bundle_id, to_sop, tobe[MOVE_TARGET_CODE], slot_key="purpose")
@@ -271,7 +291,7 @@ def _build_nested_bundle(client: TestClient, bundle_id: int) -> None:
     assert response.json()["status"] == "ready", response.json()["status"]
 
 
-# --- 한/영 따로 표 Bundle(9번) — Assign 대응 표 함께 벗기기 스모크용(MD 1 F8a) ---
+# --- 한/영 따로 표 Bundle(9번) — Assign 대응 표 짝 스모크용(MD 1 F8a) ---
 
 PAIR_TABLES_TITLE = "SYNTHETIC 9 한/영 따로 표"
 # 작업 표(2열 2.8 / 14.2 cm, 3행)는 두 절반이 같은 꼴 · 같은 행 수, 값 표(3열)는 영어 쪽이 한 행 더 많다

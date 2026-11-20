@@ -352,7 +352,7 @@ class Unit(Base):
         ForeignKey("source_tables.id", ondelete="CASCADE"), index=True, default=None
     )
     row_index: Mapped[int | None] = mapped_column(Integer, default=None)
-    # 칸 문장이 따르는 표·행 단위 — 그 단위가 지워지면 그룹만 풀린다
+    # 칸 문장이 따르는 표 단위 — 그 단위가 지워지면 그룹만 풀린다
     group_unit_id: Mapped[int | None] = mapped_column(
         ForeignKey("units.id", ondelete="SET NULL"), index=True, default=None
     )
@@ -377,6 +377,12 @@ class Unit(Base):
     # 캡션 하나를 같이 쓰는 그림 묶음(F7 ⑥) — 그림 단위가 그 묶음의 첫 그림(캡션을 가진 그림)을 가리킨다. 첫 그림 자신과 묶이지 않은 그림은 NULL.
     # 편집 group_figures·ungroup_figures가 이 열만 바꾸고 unit_edits.figure_changes에 적어 되돌린다
     caption_figure_id: Mapped[int | None] = mapped_column(ForeignKey("units.id", ondelete="SET NULL"), default=None)
+    # 짝 카드 안 순서(pair_order.py) — 편집 reorder_pair가 구성원마다 0부터 매기고 unit_edits.pair_seq_changes에 적어 되돌린다.
+    # NULL이면 원문 순서. 구성원 모두가 값을 갖고 겹치지 않을 때만 따른다(짝이 바뀌어 남은 값은 무시된다). 원문 글자 자리는 그대로다
+    pair_seq: Mapped[int | None] = mapped_column(Integer, default=None)
+    # 벗긴 표 덩이 안 줄 순서(unwrap_order.py) — 편집 reorder_unwrapped가 덩이의 줄마다 0부터 매기고 unit_edits.unwrap_seq_changes에 적어 되돌린다.
+    # 나누기 · 합치기의 조각은 옛 줄(합치기는 첫 줄)의 값을 물려받는다. NULL이면 원문 순서에서 바로 앞 줄의 값을 빌린다. 다시 표로 묶으면 비운다
+    unwrap_seq: Mapped[int | None] = mapped_column(Integer, default=None)
 
 
 class UnitEdit(Base):
@@ -400,6 +406,10 @@ class UnitEdit(Base):
     noise_changes: Mapped[dict] = mapped_column(JSON, default=dict)
     # 그림 단위 → [지금 caption_figure_id, 바꿀 caption_figure_id] — 그림 묶기·풀기(group_figures·ungroup_figures)와 그 되돌리기
     figure_changes: Mapped[dict] = mapped_column(JSON, default=dict)
+    # 단위 → [지금 pair_seq, 바꿀 pair_seq] — 짝 카드 안 순서 바꾸기(reorder_pair)와 그 되돌리기
+    pair_seq_changes: Mapped[dict] = mapped_column(JSON, default=dict)
+    # 단위 → [지금 unwrap_seq, 바꿀 unwrap_seq] — 벗긴 표 줄 순서 바꾸기(reorder_unwrapped) · 다시 표로의 비우기와 그 되돌리기
+    unwrap_seq_changes: Mapped[dict] = mapped_column(JSON, default=dict)
     state: Mapped[str] = mapped_column(String(8), default="applied")
     actor: Mapped[str] = mapped_column(String(100))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)

@@ -13,11 +13,13 @@ from sqlalchemy import case, exists, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.clock import now
+from app.sop.ai.apply import OFFERED_KINDS, find_covering, load_live_suggestions
 from app.sop.ai.schemas import AdoptionStats, SuggestionOut, SuggestionsPageOut
-from app.sop.detach import ORIGIN_NEW_DOC, ORIGIN_TRANSLATION
+from app.sop.detach import ORIGIN_NEW_DOC, ORIGIN_TRANSLATION, UNASSIGNED
 from app.sop.errors import raise_rule
 from app.sop.groups import TABLE_UNIT_KINDS, iter_chunks, select_in_chunks
 from app.sop.models import AiSuggestion, TargetSentence, Unit, UnitDecision, UnitPair
+from app.sop.numbering import strip_number
 from app.sop.units import UNIT_ACTIVE
 
 if TYPE_CHECKING:  # decisions가 이 모듈을 불러 쓰므로 타입만 가져온다
@@ -43,7 +45,7 @@ class TargetShape:
     place: Place
     text: str
     sources: frozenset[int]
-    # 사람이 표 구성을 바꿨다 — 칸 글이 같아도 그대로가 아니다(설계 §6.7). AI 표는 늘 그대로라 제안 쪽은 False다
+    # 사람이 표 구성을 바꿨다(표가 고침) — 칸 글이 같아도 그대로가 아니다(설계 §6.7). AI 표는 늘 그대로라 제안 쪽은 False다
     restructured: bool = False
     # 입구 2 짝 하나와 표의 변경 종류 — 나머지 모습과 입구 1은 비워 견주지 않는다
     change_type: str | None = None
@@ -85,7 +87,7 @@ def decide_adoption(suggested: SuggestedShape, saved: SavedShape) -> str:
 def _list_matched_targets(content: Mapping[str, Any]) -> Sequence[int]:
     """출처를 견줄 새 문장 — 제안 기록에 칸·캡션 연결이 없어 표·그림은 묶음 새 문장만 본다.
 
-    칸 자리를 지키는 저장 검사는 그대로인 표에만 걸린다. 표 구성 변경 제안에서 사람이 칸 연결만 고친 저장은 일부러 그대로 채택으로 둔다.
+    칸 연결은 표의 종류(원문 모양을 지키면 그대로, 아니면 고침)로만 견준다. 고침인 표 제안에서 사람이 칸 연결만 고친 저장은 일부러 그대로 채택으로 둔다.
     """
     target_ids = content["target_ids"]
     return target_ids[:1] if content["shape"] in _BUNDLE_SHAPES else target_ids
@@ -117,17 +119,32 @@ def _build_suggested_shape(suggestion: AiSuggestion, units: Iterable[Unit]) -> S
         return SuggestedShape(disposition, ())
     place = (content["target_doc_id"], content["slot_key"], content["wi_step"], content["wi_part"])
     targets: list[TargetShape] = []
-    sources_by_lang: dict[str, set[int]] = defaultdict(set)
+    units_by_lang: dict[str, list[Unit]] = defaultdict(list)
     for unit in units:
         if unit.group_unit_id is not None:
             targets.append(TargetShape(place, unit.text, frozenset((unit.id,))))
         elif unit.kind in _NO_TEXT_KINDS:
             targets.append(TargetShape(place, "", frozenset((unit.id,))))
         else:
-            sources_by_lang[unit.lang].add(unit.id)
-    for lang, sources in sources_by_lang.items():
-        targets += [TargetShape(place, text, frozenset(sources)) for text in content["rewrites"][lang]]
+            units_by_lang[unit.lang].append(unit)
+    for lang, lang_units in units_by_lang.items():
+        targets += build_rewrite_shapes(place, lang_units, content["rewrites"].get(lang))
     return SuggestedShape(disposition, tuple(targets))
+
+
+def build_rewrite_shapes(place: Place, lang_units: Iterable[Unit], rewrites: Sequence[str] | None) -> list[TargetShape]:
+    """한 언어 단위들의 제안 새 문장 — 일괄 수락의 저장과 채택 판정이 같은 모양을 쓴다.
+
+    고쳐 쓰지 않는 언어(참조 줄 REF)는 단위마다 원문 그대로다 — 문단 번호는 번호 칸의 것이라 뺀 내용이다(화면 Use의 getContent와 같다). 고쳐 쓴 글 수가 단위 수와 같으면 문서 순서로 하나씩 짝짓고
+    (화면 Use가 단위마다 칸 하나로 채우는 것과 같다 — 사용자 결정 2026-11-19), 다르면 AI가 나누거나 합친 것이라 글마다 그 언어 단위 전부가 출처다.
+    """
+    ordered = sorted(lang_units, key=lambda unit: (unit.pos_seq, unit.pos_start, unit.id))
+    if rewrites is None:
+        return [TargetShape(place, strip_number(unit.text, unit), frozenset((unit.id,))) for unit in ordered]
+    if len(rewrites) == len(ordered):
+        return [TargetShape(place, text, frozenset((unit.id,))) for unit, text in zip(ordered, rewrites, strict=True)]
+    sources = frozenset(unit.id for unit in ordered)
+    return [TargetShape(place, text, sources) for text in rewrites]
 
 
 def _build_saved_shape(
@@ -153,7 +170,7 @@ def _build_saved_shape(
     targets = tuple(
         TargetShape(
             (plan.doc.id, plan.item.slot_key, plan.item.wi_step, plan.item.wi_part), plan.text, frozenset(plan.sources),
-            restructured=plan.change_type == "table_restructured",
+            restructured=plan.item.kind == "table" and plan.change_type == "rewritten",
         )
         for plan in plans
         # 써 넣은 캡션(출처 없음)은 AI가 낼 수 없는 몫이다 — 캡션 없는 표·그림 확정에 꼭 붙어 늘 edited가 되지 않게 뺀다
@@ -236,6 +253,44 @@ async def record_unit_adoption(
         suggested = _build_suggested_shape(suggestion, (unit for unit_id in unit_ids for unit in units[unit_id]))
         saved = _build_saved_shape(plans, suggestion, unit_ids, (dispositions[unit_id] for unit_id in unit_ids))
         _set_adoption(suggestion, decide_adoption(suggested, saved), actor, stamp)
+
+
+async def judge_unused_suggestions(
+    session: AsyncSession,
+    bundle_id: int,
+    *,
+    plans: Sequence["_Plan"],
+    dispositions: Mapping[int, str],
+    target_ids: Collection[int] = (),
+    actor: str,
+    stamp: datetime,
+) -> None:
+    """사람이 제안을 받지 않고(Use 없이) 확정한 줄의 살아 있는 분류·묶기 제안 — 저장이 제안과 다르면 버림, 같으면 채택 없이 밀어낸다.
+
+    추천 카드를 보고도 다르게 정한 것은 버린 것이라 채택률에 든다(사용자 결정 2026-11-19, 설계 §5 2-7). 같게 정한 것은 받은 것이
+    아니라(Use를 누르지 않았다) 채택으로 세지 않고 stale로만 둔다. 받은 제안은 저장이 이미 채택을 남겨 살아 있지 않다 — 채택 기록 뒤에 부른다.
+    """
+    if not dispositions and not target_ids:
+        return
+    await session.flush()  # 같은 저장이 방금 남긴 채택이 살아 있는 제안 질의에 보이게
+    covering = find_covering(
+        await load_live_suggestions(session, bundle_id, OFFERED_KINDS), unit_ids=dispositions.keys(), target_ids=target_ids
+    )
+    if not covering:
+        return
+    unit_ids_of = {
+        suggestion.id: [unit_id for unit_id in suggestion.content.get("unit_ids", ()) if unit_id in dispositions]
+        for suggestion in covering
+    }
+    units = await _load_units_with_cells(session, {unit_id for ids in unit_ids_of.values() for unit_id in ids})
+    for suggestion in covering:
+        unit_ids = unit_ids_of[suggestion.id]
+        suggested = _build_suggested_shape(suggestion, (unit for unit_id in unit_ids for unit in units[unit_id]))
+        saved = _build_saved_shape(plans, suggestion, unit_ids, (dispositions[unit_id] for unit_id in unit_ids))
+        if decide_adoption(suggested, saved) == "rejected":
+            _set_adoption(suggestion, "rejected", actor, stamp)
+        else:
+            suggestion.result = "stale"
 
 
 async def record_group_adoption(
@@ -330,15 +385,16 @@ async def load_adoption_stats(session: AsyncSession, bundle_id: int) -> dict[str
     """종류별 채택 집계 — 제안이 적용된 적 없는 종류는 빠진다.
 
     applied는 지금 살아 있는 제안이고, 채택은 밀린 제안(보류한 짝)에 기록돼도 사람의 결정이라 함께 센다. pending은 사람이 아직
-    정할 수 있는 제안뿐이다 — 단위가 편집으로 은퇴해 아무 판단·새 문장·짝도 가리키지 않는 제안은 영영 줄지 않는 대기가 된다.
+    정할 수 있는 제안뿐이다 — 판단·새 문장·짝이 가리키는 제안과, 분류·묶기는 받기 전이라 아무것도 가리키지 않아 단위·새 문장이
+    모두 아직 미배정인 제안이다. 단위가 편집으로 은퇴하거나 사람이 제안을 받지 않고 정한 제안은 영영 줄지 않는 대기가 되니 세지 않는다.
     나누기 제안은 처음부터 이어진 행이 없어(나누면 단위가 은퇴하는 게 정상이다) 채택이 비어 있는 동안 늘 사람이 정할 몫이다.
     """
-    can_decide = or_(
-        AiSuggestion.kind == _SPLIT_KIND,
+    is_linked = or_(
         exists().where(UnitDecision.suggestion_id == AiSuggestion.id),
         exists().where(TargetSentence.suggestion_id == AiSuggestion.id),
         exists().where(UnitPair.suggestion_id == AiSuggestion.id),
     )
+    can_decide = or_(AiSuggestion.kind == _SPLIT_KIND, is_linked)
     rows = await session.execute(
         select(
             AiSuggestion.kind, AiSuggestion.result, AiSuggestion.adoption, func.count(),
@@ -355,7 +411,48 @@ async def load_adoption_stats(session: AsyncSession, bundle_id: int) -> dict[str
             counts[kind][adoption] += total
         elif result == "applied":
             counts[kind]["pending"] += decidable
+    for kind, offered in (await _count_offered(session, bundle_id, ~is_linked)).items():
+        counts[kind]["pending"] += offered
     return {kind: _build_stats(count) for kind, count in counts.items()}
+
+
+async def _count_offered(session: AsyncSession, bundle_id: int, unlinked: Any) -> Counter[str]:
+    """아무것도 가리키지 않는 살아 있는 분류·묶기 제안 중 단위·새 문장이 모두 아직 미배정인 것 — content가 JSON이라 읽은 뒤 센다."""
+    offered = list(await session.execute(
+        select(AiSuggestion.kind, AiSuggestion.content).where(
+            AiSuggestion.bundle_id == bundle_id, AiSuggestion.kind.in_(OFFERED_KINDS), AiSuggestion.result == "applied",
+            AiSuggestion.adoption.is_(None), unlinked,
+        )
+    ))
+    if not offered:
+        return Counter()
+    unit_ids = {unit_id for _, content in offered for unit_id in content.get("unit_ids", ())}
+    target_ids = {target_id for _, content in offered for target_id in content.get("target_ids", ())}
+    open_units = {
+        unit_id for (unit_id,) in await select_in_chunks(
+            session,
+            lambda chunk: select(UnitDecision.unit_id)
+            .join(Unit, Unit.id == UnitDecision.unit_id)
+            .where(
+                UnitDecision.unit_id.in_(chunk), Unit.status == UNIT_ACTIVE,
+                UnitDecision.status == UNASSIGNED, UnitDecision.disposition == UNASSIGNED,
+            ),
+            unit_ids,
+        )
+    }
+    open_targets = {
+        target_id for (target_id,) in await select_in_chunks(
+            session,
+            lambda chunk: select(TargetSentence.id).where(
+                TargetSentence.id.in_(chunk), TargetSentence.origin == ORIGIN_NEW_DOC, TargetSentence.status == UNASSIGNED
+            ),
+            target_ids,
+        )
+    }
+    return Counter(
+        kind for kind, content in offered
+        if open_units.issuperset(content.get("unit_ids", ())) and open_targets.issuperset(content.get("target_ids", ()))
+    )
 
 
 def _build_stats(count: Counter[str]) -> AdoptionStats:

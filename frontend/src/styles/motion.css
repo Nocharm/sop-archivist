@@ -64,9 +64,29 @@
     border-radius: inherit;
     background: linear-gradient(100deg, transparent 20%, color-mix(in oklab, var(--accent) 12%, transparent) 50%, transparent 80%);
     background-size: 220% 100%;
-    animation: refresh-sweep 700ms var(--ease-move) both;
+    animation: refresh-sweep var(--dur-refresh) var(--ease-move) both;
   }
   @keyframes refresh-sweep { from { background-position: 120% 0; opacity: 1; } to { background-position: -120% 0; opacity: 0; } }
+
+  /* 처리 중인 박스(Assign 용지 data-pending, 설계 2026-11-20 D4) - 응답까지 빛이 되풀이해 지나간다. CSS만(타이머 없음).
+     바탕 그림(background-image)만 얹어 짝 · 강조 바탕색은 그대로 - 선택자를 짝 바탕(.strip[data-partner]:not(...))보다 세게 둔다.
+     벗기는 표 안의 칸은 표 박스가 이미 빛나 따로 빛나지 않는다. 움직임 줄이기면 쓸지 않고 옅은 바탕만(알약은 그대로) */
+  .pg[data-strips] .strip-row > .strip[data-pending][data-strip-unit], .pg[data-strips] .cell-piece[data-pending][data-strip-unit] {
+    background-image: linear-gradient(100deg, transparent 30%, color-mix(in oklab, var(--accent) 16%, transparent) 50%, transparent 70%);
+    background-size: 250% 100%;
+    background-repeat: no-repeat;
+    animation: pending-sweep 1200ms linear infinite;
+    cursor: progress;
+  }
+  .pg[data-strips] .strip[data-pending] .cell-piece[data-pending] { background-image: none; animation: none; }
+  @keyframes pending-sweep { from { background-position: 130% 0; } to { background-position: -30% 0; } }
+  @media (prefers-reduced-motion: reduce) {
+    .pg[data-strips] .strip-row > .strip[data-pending][data-strip-unit], .pg[data-strips] .cell-piece[data-pending][data-strip-unit] {
+      background-image: linear-gradient(color-mix(in oklab, var(--accent) 8%, transparent) 0 0);
+      background-size: 100% 100%;
+      animation: none;
+    }
+  }
 
   /* 폭 모핑 - 바깥 폭이 안쪽 내용 폭을 따라 전환한다 */
   .morph { display: inline-flex; justify-content: center; overflow: hidden; white-space: nowrap; }
@@ -98,6 +118,8 @@
   html[data-box-select] [data-drag-box] { user-select: text; -webkit-user-select: text; cursor: text; }
   html[data-box-drag] { user-select: none; -webkit-user-select: none; }
   html[data-box-drag] * { user-select: none; -webkit-user-select: none; cursor: grabbing !important; }
+  /* 못 놓는 자리 위 - 표의 점선 테두리와 함께 커서도 거절을 말한다 */
+  html[data-box-drag="refused"] * { cursor: not-allowed !important; }
   [data-drag-src] { opacity: .45; }
   [data-drop="over"] { outline: 2px solid var(--accent); outline-offset: -1px; }
   [data-drop="refused"] { outline: 2px dashed var(--ink-4); outline-offset: -1px; }
@@ -121,11 +143,17 @@
     will-change: transform;
   }
   .drag-card-id { color: var(--accent); font: 600 11px/16px var(--font-mono); white-space: nowrap; }
-  /* 글 칸은 남는 폭만 쓴다(기준 0) - 긴 메모(거절 이유)가 오면 글 칸이 먼저 줄고 메모는 표 안에서 줄을 바꾼다. 짧은 메모·메모 없음은 지금처럼 한 줄 */
-  .drag-card-text { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* 표는 한 줄 - 넘치면 끝의 갈 곳이 먼저 줄고(높은 shrink, 앞머리는 남긴다) 그다음 글 칸이 말줄임. id · 개수는 줄지 않는다 */
+  .drag-card-text { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .drag-card-count { padding: 0 5px; border-radius: 8px; background: var(--accent); color: var(--on-accent); font: 600 10px/16px var(--font-mono); white-space: nowrap; }
-  .drag-card-note { min-width: 0; padding-left: 8px; border-left: 1px solid var(--line-2); color: var(--ink-2); }
+  .drag-card-dest { flex: 0 1000 auto; min-width: 3.5em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-2); font-weight: 500; }
   .drag-card[data-refused] { border: 1px dashed var(--ink-4); color: var(--ink-3); }
+  /* 놓을 자리의 글(갈 곳 · 못 놓는 이유) - 화면에는 그리지 않고 읽기 프로그램이 읽는다(lib/box-drag.ts) */
+  .drag-status { position: fixed; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
+  /* 놓을 자리 선(lib/drop-line.ts) - 왼쪽 끝 점 달린 얇은 선 하나. 자리 · 폭은 끌기 엔진이 끌기 root 기준으로 쓴다(root에 position이 있어야 한다).
+     놓았을 때의 번호 · 갈 곳은 선에 적지 않는다 - 줄 위의 알약은 아래 줄 글을 덮는다 */
+  .c-dropline { position: absolute; z-index: 3; height: 2px; border-radius: 1px; background: var(--accent); pointer-events: none; }
+  .c-dropline::before { content: ""; position: absolute; top: -3px; left: -4px; box-sizing: border-box; width: 8px; height: 8px; border: 2px solid var(--accent); border-radius: 50%; background: var(--surface); }
 
   /* 탭 패널이 바뀔 때 - 내용이 살짝 나타난다 */
   .fade-in { animation: fade-in var(--dur-base) var(--ease-enter); }

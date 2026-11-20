@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.sop.constants import COVER_KINDS
 from app.sop.counterparts import (
+    BODY_PART,
     TableFacts,
     build_row_pairs,
     build_table_facts,
@@ -23,9 +24,9 @@ from app.sop.models import (
     SourceTable,
     Unit,
     UnitDecision,
-    UnitEdit,
     UnitPair,
     UnitPairMember,
+    UnitRef,
 )
 from app.sop.numbering import (
     NUMBER_PAIR,
@@ -33,6 +34,15 @@ from app.sop.numbering import (
     build_number_columns,
     find_inherited_numbers,
     read_draft_number,
+)
+from app.sop.refs import (
+    REF_CONFIRMED,
+    REF_LANG,
+    REF_SPLIT_ACTOR,
+    SectionLine,
+    find_ref_section_lines,
+    is_proposing_version,
+    read_leading_ref_number,
 )
 from app.sop.segment import (
     NEUTRAL,
@@ -107,6 +117,8 @@ async def create_initial_units(session: AsyncSession, document: Document, extrac
     drafts, unit_rows = await asyncio.to_thread(
         _build_unit_rows, extraction.id, block_rows.all(), table_rows, document.language_layout,
         document.file_format == LINE_SPLIT_FORMAT, document.side == "old",
+        # 옛 추출기의 추출은 Reference 절을 확정하지 않고 글에서 제안한다(다시 쪼개도 같은 추출의 규칙을 따른다)
+        not is_proposing_version(extraction.extractor_version),
     )
     if not drafts:
         return
@@ -119,6 +131,17 @@ async def create_initial_units(session: AsyncSession, document: Document, extrac
     ]
     if groups:
         await session.execute(update(Unit), groups)
+    # Reference 절 아래라 쪼개기가 REF로 확정한 줄 — 사람이 확정한 것과 같은 표시를 남겨 "참조 아님"이 원래 언어로 돌린다
+    refs = [
+        {
+            "unit_id": unit_id, "state": REF_CONFIRMED, "prev_lang": draft.lang, "decided_by": REF_SPLIT_ACTOR,
+            "number": read_leading_ref_number(str(row["text"])),
+        }
+        for unit_id, draft, row in zip(unit_ids, drafts, unit_rows, strict=True)
+        if row["lang"] == REF_LANG
+    ]
+    if refs:
+        await session.execute(insert(UnitRef), refs)
     if document.side == "old":
         await session.execute(
             insert(UnitDecision), [{"unit_id": unit_id, "bundle_id": document.bundle_id} for unit_id in unit_ids]
@@ -144,10 +167,12 @@ def _build_unit_rows(
     layout: str,
     split_lines: bool,
     shift_headings: bool = False,
+    confirm_ref_sections: bool = False,
 ) -> tuple[list[UnitDraft], list[dict[str, object]]]:
     """블록·표 행 → 단위 초안과 INSERT 행(local_no는 1부터) — DB를 쓰지 않는 순수 계산이라 스레드에서 돌린다.
 
     shift_headings(옛 문서)면 제목답지 않은 제목 줄을 문장으로 바꾸고(F8b), 번호 없는 번역 조항의 첫 문장이 앞 조항의 번호를 물려받는다.
+    confirm_ref_sections면 Reference 절 아래 줄을 REF로 둔다(refs.find_ref_section_lines).
     """
     blocks = [BlockView(*row) for row in block_rows]
     drafts = build_unit_drafts(
@@ -176,16 +201,30 @@ def _build_unit_rows(
     ]
     for index, number in find_inherited_numbers(lines).items():
         rows[index].update(number_read=number, number_source=NUMBER_PAIR, number_len=0)
+    if not confirm_ref_sections:
+        return drafts, rows
+    by_block = {block.id: block for block in blocks}
+    section_lines = [
+        SectionLine(
+            draft.kind, str(row["text"]), draft.lang,
+            by_block[draft.spans[0][0]].heading_level if draft.spans else None,
+            not draft.spans or by_block[draft.spans[0][0]].part == BODY_PART, draft.noise_kind is not None,
+        )
+        for draft, row in zip(drafts, rows, strict=True)
+    ]
+    for index in find_ref_section_lines(
+        section_lines, interleaved=layout == INTERLEAVED_LAYOUT, separate=layout == SEPARATE_LAYOUT
+    ):
+        rows[index]["lang"] = REF_LANG
     return drafts, rows
 
 
 async def refresh_code_pairs(
-    session: AsyncSession, document: Document, actor: str, links: Sequence[tuple[int, int]] = ()
+    session: AsyncSession, document: Document, actor: str
 ) -> None:
     """제안 상태의 코드 짝을 지우고 다시 만든다 — 확정 짝(과 다른 출처의 짝)은 두고 그 단위는 다시 짝짓지 않는다.
 
-    연달아 배치는 이웃 짝, 따로 배치는 둘 다 벗긴 대응 표의 같은 행 · 같은 순서 짝(F8a, _find_table_pairs — links는 이번 편집이 함께
-    벗긴 표 짝)이다. 이미 판단한 단위가 있으니 서로 다른 곳으로 보낸 단위끼리는 짝짓지 않고, 만든 짝은 settle_pairs에 넘겨 모두 같은
+    연달아 배치는 이웃 짝, 따로 배치는 둘 다 벗긴 대응 표의 같은 행 · 같은 순서 짝(F8a, _find_table_pairs)이다. 이미 판단한 단위가 있으니 서로 다른 곳으로 보낸 단위끼리는 짝짓지 않고, 만든 짝은 settle_pairs에 넘겨 모두 같은
     곳으로 확정된 짝은 바로 확정한다(한 줄의 처분은 하나다, pair_settle). 행 수가 달라 짝을 세우지 않은 대응 표는 추출 경고
     (pair_rows_differ)로 남긴다.
     """
@@ -206,7 +245,7 @@ async def refresh_code_pairs(
     if document.language_layout == INTERLEAVED_LAYOUT:
         pairs = await _find_code_pairs(session, extraction_id)
     elif document.language_layout == SEPARATE_LAYOUT:
-        pairs, differ = await _find_table_pairs(session, document.id, extraction_id, links)
+        pairs, differ = await _find_table_pairs(session, extraction_id)
     else:
         pairs = []
     await _sync_rows_warnings(session, extraction_id, differ)
@@ -239,19 +278,18 @@ async def load_table_facts(session: AsyncSession, extraction_id: int) -> list[Ta
 
 
 async def _find_table_pairs(
-    session: AsyncSession, document_id: int, extraction_id: int, links: Sequence[tuple[int, int]]
+    session: AsyncSession, extraction_id: int
 ) -> tuple[list[tuple[list[int], list[int]]], list[tuple[int, int]]]:
     """한/영 따로 문서의 둘 다 벗긴 대응 표에서 같은 행 · 같은 순서의 칸 줄 짝과, 행 수가 달라 짝을 세우지 않은 대응 표.
 
-    사람이 함께 벗긴 표 짝은 이번 편집(links)과 지금 남은 편집 기록에서 읽는다(뒤의 편집이 먼저) — 다른 표는 같은 꼴인 가장 비슷한
-    벗긴 표와 맺는다(counterparts.match_unwrapped_tables). 칸 줄은 표의 언어인 묶이지 않은 칸 문장 가운데 이미 짝(확정 · 사람 · AI)에
+    벗긴 한글 표는 같은 꼴인 가장 비슷한 벗긴 영어 표와 맺는다(counterparts.match_unwrapped_tables). 칸 줄은 표의 언어인 묶이지 않은 칸 문장 가운데 이미 짝(확정 · 사람 · AI)에
     들지 않고 목차 표시가 없는 것이다 — 확정한 짝 하나가 그 행의 다른 줄 제안을 막지 않게 줄만 뺀다.
     """
     facts = await load_table_facts(session, extraction_id)
     layout = {table.id: table for table in facts if table.is_layout}
     if len(layout) < 2:
         return [], []
-    matches = match_unwrapped_tables(facts, [*links, *await _load_table_links(session, document_id)])
+    matches = match_unwrapped_tables(facts)
     if not matches:
         return [], []
     matched = {table_id for match in matches for table_id in match}
@@ -276,20 +314,6 @@ async def _find_table_pairs(
         else:
             pairs.extend(build_row_pairs(lines[korean], lines[english]))
     return pairs, differ
-
-
-async def _load_table_links(session: AsyncSession, document_id: int) -> list[tuple[int, int]]:
-    """남은(되돌리지 않은) 표 벗기기 편집이 함께 벗긴 표 짝 — 뒤의 편집이 먼저. 짝이 없던 편집과 옛 기록은 건너뛴다."""
-    payloads = await session.scalars(
-        select(UnitEdit.payload)
-        # "applied"는 editing.EDIT_APPLIED — editing → units 순환 import라 값으로 쓴다
-        .where(UnitEdit.document_id == document_id, UnitEdit.state == "applied", UnitEdit.op == "set_layout_table")
-        .order_by(UnitEdit.seq.desc())
-    )
-    return [
-        (payload["table_id"], payload["counterpart_table_id"])
-        for payload in payloads if payload.get("counterpart_table_id") is not None
-    ]
 
 
 async def _sync_rows_warnings(session: AsyncSession, extraction_id: int, differ: Sequence[tuple[int, int]]) -> None:
@@ -340,7 +364,7 @@ async def _sync_rows_warnings(session: AsyncSession, extraction_id: int, differ:
 
 
 async def _find_code_pairs(session: AsyncSession, extraction_id: int) -> list[tuple[list[int], list[int]]]:
-    """활성 단위 중 표·행에 묶이지 않은 것을 순서대로 이웃 짝지을 쌍을 고른다 — 쓰기는 부르는 쪽이 한다.
+    """활성 단위 중 표에 묶이지 않은 것을 순서대로 이웃 짝지을 쌍을 고른다 — 쓰기는 부르는 쪽이 한다.
 
     묶인 칸 문장은 표의 판단을 따르고, 넣으면 표 앞뒤 문단과 칸이 엇갈려 짝지어지므로 뺀다. 이미 짝이 있는 단위와 부분(본문·머리말·
     각주…)이 바뀌는 자리에서 순서를 끊는다 — 건너뛰면 그 너머의 단위끼리, 본문 끝 문장과 머리말이 짝지어진다.

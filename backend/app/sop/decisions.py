@@ -1,7 +1,7 @@
 """사람의 판단 — 관계 묶음 저장(닫힘·위치·언어·글자·변경 종류·중복 배정 검사), 일괄 처분, 배정 지우기, 단위 목록 (스펙 §6.7–6.9, §7.7)."""
 
 from collections import Counter, defaultdict
-from collections.abc import Collection, Hashable, Iterable
+from collections.abc import Collection, Hashable, Iterable, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Annotated, Any, Literal, NamedTuple, NoReturn, Self
@@ -13,14 +13,13 @@ from sqlalchemy.orm import aliased
 from sqlalchemy.orm.util import AliasedClass
 
 from app.clock import now
-from app.sop.ai.adoption import record_group_adoption, record_unit_adoption, reject_suggestions
-from app.sop.ai.apply import clear_previous_suggestion
+from app.sop.ai.adoption import judge_unused_suggestions, record_group_adoption, record_unit_adoption, reject_suggestions
+from app.sop.ai.apply import OFFERED_KINDS
 from app.sop.captions import CAPTION_KIND
 from app.sop.checks import check_sentence
 from app.sop.constants import SLOT_HEADING
 from app.sop.decision_steps import UndoMetaIn
 from app.sop.detach import (
-    AI_SUGGESTED,
     CONFIRMED,
     ON_HOLD,
     ORIGIN_NEW_DOC,
@@ -28,7 +27,9 @@ from app.sop.detach import (
     DetachReport,
     apply_slot_heading_status,
     detach_units,
+    find_cell_bystanders,
     is_unassigned,
+    list_bystander_units,
     load_source_target_ids,
     reset_target,
     sweep_translations,
@@ -47,6 +48,7 @@ from app.sop.groups import (
 from app.sop.membership import ensure_editable, lock_bundle
 from app.sop.models import (
     AiJob,
+    AiSuggestion,
     Bundle,
     Document,
     Extraction,
@@ -90,11 +92,10 @@ MAX_UNITS_PAGE = 1000
 MAX_BULK_UNITS = 2000  # 머리말·구조 제목 정리를 한 번에(R4)
 ORIGIN_UNITS = "units"
 NEUTRAL = "neutral"
-# 문장 새 문장의 출처가 될 수 있는 단위 — 그림은 그림 새 문장, 표·행은 표 새 문장으로만 간다(R28)
+# 문장 새 문장의 출처가 될 수 있는 단위 — 그림은 그림 새 문장, 표는 표 새 문장으로만 간다(R28)
 SENTENCE_SOURCE_KINDS = ("sentence", "heading", "cell_sentence")
-# 칸 제목에 이을 수 있는 글 단위(제품 명세 §7.13 칸 제목) — 칸 문장은 표·행의 처분을 따른다
+# 칸 제목에 이을 수 있는 글 단위(제품 명세 §7.13 칸 제목) — 칸 문장은 표의 처분을 따른다
 SLOT_HEADING_SOURCE_KINDS = ("heading", "sentence")
-TEXT_CHANGE_TYPES = ("tone", "rewritten")  # 글자가 출처와 다를 때 사람이 고르는 종류
 
 
 # --- 요청·응답 ---
@@ -124,7 +125,8 @@ class TargetIn(BaseModel):
     """새 문장 하나의 저장 뒤 모습. 기존 새 문장에서 비운(None) 문서·글자·언어·격자·칸 자리는 지금 값을 둔다.
 
     자리(칸 키·WI 단계·부분)는 None도 뜻이 있는 값(WI의 칸 없음, 단계 없음)이라 보낸 그대로 쓴다.
-    칸 제목(slot_heading)은 글·언어·변경 종류를 비워 보낸다 — 서버가 칸 이름·출처 언어·heading으로 채운다(제품 명세 §7.13 칸 제목).
+    칸 제목(slot_heading)은 글·언어를 비워 보낸다 — 서버가 칸 이름·출처 언어로 채운다(제품 명세 §7.13 칸 제목).
+    변경 종류는 받지 않는다 — 서버가 구조·글·표 모양으로 정한다(_decide_change_type). 옛 화면이 보낸 change_type은 무시된다.
     """
 
     key: str = Field(min_length=1, max_length=40)  # 요청 안 식별자 — 칸 새 문장이 parent_key로 표 새 문장을 가리킨다
@@ -137,7 +139,6 @@ class TargetIn(BaseModel):
     kind: Literal["sentence", "table", "figure", "slot_heading"] = "sentence"
     lang: Literal["ko", "en", "ref", "neutral"] | None = None
     text: Annotated[str, StringConstraints(max_length=20000), NO_NUL] | None = None
-    change_type: Literal["as_is", "tone", "rewritten", "table_restructured"] | None = None
     # 사람이 적는 메모 — None이면 지금 값을 둔다(출처 없는 새 문장에도 적을 수 있다)
     remark: Annotated[str, StringConstraints(max_length=2000), NO_NUL] | None = None
     source_unit_ids: list[DbId] = Field(max_length=200)
@@ -163,6 +164,9 @@ class GroupSaveIn(BaseModel):
     removed_target_ids: list[DbId] = Field(default_factory=list, max_length=2000)
     # 짝의 한쪽만 이을 때 남는 쪽을 따로 줄로 — 그 단위가 든 짝을 이 저장 안에서 푼다(pair_settle). 판단은 바꾸지 않는다
     release_unit_ids: list[DbId] = Field(default_factory=list, max_length=500)
+    # 사람이 받은 AI 제안(Assign의 Use) — 그 제안이 덮는 판단·입구 2 새 문장에 이어 두면 채택 기록이 그대로·고침·버림을 정한다
+    # (설계 2026-11-19-ai-suggest-only D2). AI는 판단을 쓰지 않으니 제안과 판단을 잇는 것은 이 저장뿐이다
+    suggestion_id: DbId | None = None
     undo: UndoMetaIn | None = None
 
 
@@ -173,7 +177,7 @@ class BulkUnitIn(BaseModel):
 
 class BulkDecisionIn(BaseModel):
     action: Literal["delete", "move_external"]
-    reason: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=2000), NO_NUL]
+    reason: Annotated[str, StringConstraints(strip_whitespace=True, max_length=2000), NO_NUL] = ""  # 선택 — 비면 결과물이 처분 이름으로 적는다
     move_target_code: Annotated[str, StringConstraints(strip_whitespace=True, max_length=100), NO_NUL] = ""
     units: list[BulkUnitIn] = Field(min_length=1, max_length=MAX_BULK_UNITS)
     undo: UndoMetaIn | None = None
@@ -255,9 +259,9 @@ _SlotKey = tuple[int, str, str]  # (새 문서, 칸 키, 언어) — 칸 제목�
 class _State:
     units: dict[int, Unit]  # 보낸 단위와 그 칸 문장(U*)
     decisions: dict[int, UnitDecision]  # 보낸 단위의 판단
-    cells: dict[int, list[int]]  # 표·행 단위 → 묶인 활성 칸 문장
-    captions: dict[int, list[int]]  # 표·행·그림 단위 → 묶인 활성 캡션
-    group_of: dict[int, int]  # 묶인 칸 문장·캡션 → 표·행·그림 단위
+    cells: dict[int, list[int]]  # 표 단위 → 묶인 활성 칸 문장
+    captions: dict[int, list[int]]  # 표·그림 단위 → 묶인 활성 캡션
+    group_of: dict[int, int]  # 묶인 칸 문장·캡션 → 표·그림 단위
     existing: dict[int, TargetSentence]  # 보낸 기존 새 문장과 지울 새 문장
     removed: set[int]  # 지울 새 문장
     sources: dict[int, set[int]]  # 기존 새 문장 → 지금 출처 단위
@@ -620,8 +624,7 @@ def _check_dispositions(payload: GroupSaveIn, state: _State) -> None:
             continue
         if has_targets:
             _reject("disposed_with_targets", unit_ids=unit_ids)
-        if not item.reason.strip():
-            _reject("reason_required", unit_ids=unit_ids)
+        # 삭제·이동의 Remark는 선택이다 — 비면 결과물이 "삭제"·"이동"으로 적는다(요청서 4번, 사용자 결정 2026-11-19)
         if item.disposition == "move_external" and not item.move_target_code.strip():
             _reject("move_target_code_required", unit_ids=unit_ids)
 
@@ -708,7 +711,7 @@ def _settle_translation_place(plan: _Plan, by_row_id: dict[int, _Plan], state: _
 
 
 def _check_source_kinds(item: TargetIn, state: _State, *, is_caption: bool, origin: str) -> None:
-    """문장은 문장·제목·칸 문장에서, 칸 제목은 제목·문장에서, 표는 표·행 단위 하나에서, 그림은 그림 단위 하나에서 온다(R28).
+    """문장은 문장·제목·칸 문장에서, 칸 제목은 제목·문장에서, 표는 표 단위 하나에서, 그림은 그림 단위 하나에서 온다(R28).
 
     캡션 새 문장은 캡션 단위 하나에서 오거나 출처 없이 써 넣는다. 캡션 단위는 캡션 새 문장의 출처로만 된다(표·그림 명세 §3.2).
     입구 2 캡션은 새 문서가 캡션으로 읽은 글이라 옛 쪽에서 캡션으로 읽히지 않은 보통 문장 하나도 출처가 된다(§3.3).
@@ -886,33 +889,20 @@ def _link_cell_target(plan: _Plan, by_key: dict[str, _Plan], state: _State) -> N
     plan.parent, plan.is_cell = parent, True
 
 
-def _decide_change_type(
-    plan: _Plan, spread: Counter[tuple[int, int]], reasons: dict[int, str], state: _State
-) -> str:
-    """검사 9 — 구조에서 나오는 종류(번역 기원·칸 제목·신규·표·그림·합침·언어가 다름·나눔)가 먼저, 그다음 사람이 고른 글자 비교 종류.
+def _decide_change_type(plan: _Plan, spread: Counter[tuple[int, int]], state: _State) -> str:
+    """검사 9 — 구조에서 나오는 종류(번역 기원·칸 제목·신규·표·그림·합침·언어가 다름·나눔)가 먼저, 그다음 글자 비교(그대로·고침).
 
-    언어가 다르면 번역이다 — 사람이 고르지 않는다(제품 명세 §6.7). 나눔은 출처와 같은 언어의 새 문장만 센다(spread).
-    칸 제목은 출처가 둘 이상이어도(다른 문서의 같은 제목) 합침이 아니라 heading이다(제품 명세 §7.13 칸 제목).
+    종류는 사람이 고르지 않고 서버가 정한다(설계 2026-11-20-change-type-two D2). 언어가 다르면 번역이다(제품 명세 §6.7).
+    나눔은 출처와 같은 언어의 새 문장만 센다(spread). 칸 제목은 출처가 둘 이상이어도(다른 문서의 같은 제목) 합침이 아니라
+    heading이다(제품 명세 §7.13 칸 제목). 표는 여기서 그대로로 두고 칸 새 문장까지 본 뒤 _settle_table_types가 모양으로 정한다.
     """
-    keys = [plan.item.key]
-    requested = plan.item.change_type
     if plan.origin == ORIGIN_TRANSLATION:
         return "translated"
     if plan.item.kind == SLOT_HEADING:
         return "heading"
     if not plan.sources:
         return "new"
-    if plan.item.kind == "table":
-        if requested in (None, "as_is"):
-            return "as_is"
-        if requested != "table_restructured":
-            _reject("invalid_change_type", keys=keys)
-        if not reasons.get(plan.sources[0]):
-            _reject("reason_required", keys=keys, unit_ids=[plan.sources[0]])
-        return requested
-    if plan.item.kind == "figure":
-        if requested not in (None, "as_is"):
-            _reject("invalid_change_type", keys=keys)
+    if plan.item.kind in ("table", "figure"):
         return "as_is"
     if len(plan.sources) >= 2:
         return "merged"
@@ -924,20 +914,10 @@ def _decide_change_type(
     if not plan.is_cell and spread[(source_id, plan.doc.id)] >= 2:
         return "split"
     source = state.units[source_id]
+    # 번호를 뺀 내용과 같아도 그대로다 — 글자가 하나라도 다르면 결과물이 원문과 다른 글을 그대로라고 적지 않게 고침이다
     if plan.text in (source.text, strip_number(source.text, source)):
         return "as_is"
-    if requested is None and plan.item.text is None and plan.row is not None and (
-        plan.row.ai_text or (plan.row.suggestion_id is not None and set(plan.sources) == state.sources[plan.row.id])
-    ):
-        # 글을 비워 제안을 받으면 그 제안의 종류도 받는다 — 입구 2는 글이 잠겨 ai_text가 없어 제안의 출처 그대로일 때 받는다.
-        # 사람이 쓴 새 문장의 종류는 사람이 고르고(스펙 §6.7), 나눔·합침은 구조에서 나와 지금 구조와 어긋날 수 있어 받지 않는다
-        requested = plan.row.change_type if plan.row.change_type in TEXT_CHANGE_TYPES else None
-    if requested is None:
-        _reject("change_type_required", keys=keys)
-    # 글자가 다른데 "그대로"라고 하면 결과물이 원문과 다른 글을 그대로라고 적는다
-    if requested not in TEXT_CHANGE_TYPES:
-        _reject("invalid_change_type", keys=keys)
-    return requested
+    return "rewritten"
 
 
 def _find_parent_plan(plan: _Plan, by_row_id: dict[int, _Plan]) -> _Plan | None:
@@ -947,44 +927,40 @@ def _find_parent_plan(plan: _Plan, by_row_id: dict[int, _Plan]) -> _Plan | None:
     return plan.parent
 
 
-def _check_as_is_table(plan: _Plan, by_row_id: dict[int, _Plan], state: _State) -> None:
-    """그대로인 표는 원문 표 모양(행 단위면 한 행)을 지키고, 그 칸 새 문장은 원래 칸 자리에 있다(R27)."""
-    keys = [plan.item.key]
-    if plan.item.kind == "table" and plan.change_type == "as_is":
-        unit = state.units[plan.sources[0]]
-        n_rows, n_cols = state.table_shapes[unit.table_id]
-        if plan.grid != {"rows": 1 if unit.kind == "table_row" else n_rows, "cols": n_cols}:
-            _reject("grid_mismatch", keys=keys)
-    parent = _find_parent_plan(plan, by_row_id)
-    # 캡션은 칸 자리가 없다 — 그대로인 표의 모양과 무관하다
-    if parent is None or plan.is_caption or parent.change_type != "as_is" or len(plan.sources) != 1:
-        return
-    table_unit = state.units[parent.sources[0]]
-    if state.group_of.get(plan.sources[0]) != table_unit.id:  # 입구 2 칸 새 문장이 칸 아닌 문장과 짝지어진 경우
-        return
-    row_index, col_index = state.cell_positions[plan.sources[0]]
-    if table_unit.kind == "table_row":
-        row_index -= table_unit.row_index or 0
-    if (plan.cell_row, plan.cell_col) != (row_index, col_index):
-        _reject("cell_position_mismatch", keys=keys)
+def _keeps_table_shape(table: _Plan, children: Sequence[_Plan], state: _State) -> bool:
+    """원문 표 모양을 지키는가(R27) — 격자가 원문과 같고, 칸 새 문장은 원래 칸 자리에 있고, 묶인 활성 칸 문장마다 칸 새 문장이 정확히 하나다.
 
-
-def _check_as_is_table_cells(plans: list[_Plan], by_row_id: dict[int, _Plan], state: _State) -> None:
-    """그대로인 표는 묶인 활성 칸 문장마다 칸 새 문장이 정확히 하나다 — 빠지면 그 칸 글이 결과물에 "그대로"로 적힌 채 사라진다(R27).
-
-    표 구성 변경(사유 필수)은 칸을 빼거나 바꿔 담을 수 있다.
+    캡션은 칸 자리가 없어 모양과 무관하다. 입구 2 칸 새 문장이 칸 아닌 문장과 짝지어졌으면 자리를 견줄 칸이 없다.
     """
-    cell_sources: dict[str, Counter[int]] = defaultdict(Counter)  # 표 새 문장 key → 칸 문장 → 그것을 출처로 둔 칸 새 문장 수
+    unit = state.units[table.sources[0]]
+    n_rows, n_cols = state.table_shapes[unit.table_id]
+    if table.grid != {"rows": n_rows, "cols": n_cols}:
+        return False
+    counts: Counter[int] = Counter()  # 칸 문장 → 그것을 출처로 둔 칸 새 문장 수
+    for child in children:
+        counts.update(child.sources)
+        if child.is_caption or len(child.sources) != 1 or state.group_of.get(child.sources[0]) != unit.id:
+            continue
+        if (child.cell_row, child.cell_col) != state.cell_positions[child.sources[0]]:
+            return False
+    return all(counts[cell_id] == 1 for cell_id in state.cells.get(unit.id, ()))
+
+
+def _settle_table_types(plans: list[_Plan], by_row_id: dict[int, _Plan], state: _State) -> None:
+    """표 새 문장의 종류 — 원문 표 모양을 지키면 그대로, 칸을 빼거나 옮기거나 격자를 바꿨으면 고침이다(설계 2026-11-20-change-type-two D2).
+
+    사유는 선택이다(판단 단위의 Remark). 칸 새 문장의 종류는 제 글로 정한다(_decide_change_type).
+    """
+    children: dict[str, list[_Plan]] = defaultdict(list)  # 표 새 문장 key → 그 칸·캡션 새 문장
     for plan in plans:
         parent = _find_parent_plan(plan, by_row_id)
         if parent is not None:
-            cell_sources[parent.item.key].update(plan.sources)
+            children[parent.item.key].append(plan)
     for plan in plans:
-        if plan.item.kind == "table" and plan.change_type == "as_is":
-            counts = cell_sources[plan.item.key]
-            missing = sorted(cell_id for cell_id in state.cells.get(plan.sources[0], ()) if counts[cell_id] != 1)
-            if missing:
-                _reject("table_cells_missing", unit_ids=missing)
+        if plan.item.kind == "table" and plan.change_type == "as_is" and not _keeps_table_shape(
+            plan, children[plan.item.key], state
+        ):
+            plan.change_type = "rewritten"
 
 
 def _check_duplicates(payload: GroupSaveIn, plans: list[_Plan], state: _State) -> None:
@@ -1373,6 +1349,28 @@ async def _follow_positioned_sources(session: AsyncSession, bundle_id: int, plan
             anchors[source_id] = translation
 
 
+def _find_bystanders(payload: GroupSaveIn, plans: list[_Plan], changed: set[int], state: _State) -> tuple[set[int], set[int]]:
+    """칸 하나를 잇거나 끊는 저장의 구경꾼 — (쓰지 않을 새 문장 id, 판단을 쓰지 않을 단위 id), detach.find_cell_bystanders.
+
+    입구 2 표는 표 전체가 한 관계 묶음이라 칸 하나의 저장에도 표·형제 칸·그 출처가 닫힘 때문에 실린다. 그것들을 쓰면 출처 없는 칸이
+    신규로, AI 번역·AI 판단이 사람 확정으로 바뀐다. 판단은 처분·사유·이동 코드가 그대로이고 출처로 둔 새 문장이 모두 구경꾼일 때만 뺀다.
+    changed는 글·자리·출처가 바뀐 새 문장과 글을 고친 번역이다.
+    """
+    targets = find_cell_bystanders(
+        (plan.row for plan in plans if plan.row is not None), changed,
+        {target_id: source.id for target_id, source in state.translation_sources.items()},
+    )
+    idle = list_bystander_units(state.sources, targets)
+    units = {
+        item.unit_id for item in payload.units
+        if item.unit_id in idle
+        and (item.disposition, item.move_target_code.strip(), item.reason.strip()) == (
+            (decision := state.decisions[item.unit_id]).disposition, decision.move_target_code, decision.reason,
+        )
+    }
+    return targets, units
+
+
 async def _write_group(
     session: AsyncSession,
     bundle_id: int,
@@ -1391,8 +1389,11 @@ async def _write_group(
     changed = state.removed | {plan.row.id for plan in plans if _is_source_changed(plan, state)}
     echoed = {plan.row.id for plan in plans if _is_echoed(plan, changed, state)}
     edited = {plan.row.id for plan in plans if plan.origin == ORIGIN_TRANSLATION and _is_text_changed(plan)}
-    # 되보낸 번역은 쓰지 않는다 — 쓰면 AI 번역이 확정이 되고 채택이 남는다. 정리는 아래 sweep_translations가 한다
-    plans = [plan for plan in plans if plan.row is None or plan.row.id not in echoed]
+    idle_targets, idle_units = _find_bystanders(payload, plans, changed | edited, state)
+    # 되보낸 번역은 쓰지 않는다 — 쓰면 AI 번역이 확정이 되고 채택이 남는다. 정리는 아래 sweep_translations가 한다.
+    # 칸 하나의 저장에 닫힘으로 실린 표·형제 칸(구경꾼)도 쓰지 않는다
+    plans = [plan for plan in plans if plan.row is None or plan.row.id not in echoed | idle_targets]
+    decided_units = [item for item in payload.units if item.unit_id not in idle_units]
     removed = [state.existing[target_id] for target_id in payload.removed_target_ids]
     # 지운 번역과 판단 없는 입구 2 제안(신규)은 사람이 버린 제안이다 — 지우면 제안을 가리키는 칸이 사라지므로 먼저 남긴다.
     # 판단이 가리키는 짝 제안은 지운 새 문장이 있어도 뒤의 채택 기록이 정한다
@@ -1458,7 +1459,7 @@ async def _write_group(
     if links:
         await session.execute(insert(TargetSource), links)
 
-    for item in payload.units:
+    for item in decided_units:
         decision = state.decisions[item.unit_id]
         decision.disposition = item.disposition
         decision.move_target_code = item.move_target_code.strip() if item.disposition == "move_external" else ""
@@ -1473,9 +1474,18 @@ async def _write_group(
     ] + [(row, kept) for row, kept in releases if kept]
     for row, unit_ids in touched_headings:
         apply_slot_heading_status(row, [decided[unit_id] for unit_id in unit_ids], preferred=state.member_unit_ids)
+    if payload.suggestion_id is not None:
+        _link_suggestion(await _load_used_suggestion(session, bundle_id, payload.suggestion_id), payload, plans, state)
     await record_group_adoption(
-        session, plans=plans, payload=payload, decisions=state.decisions, actor=actor, stamp=stamp
+        session, plans=plans, payload=payload.model_copy(update={"units": decided_units}), decisions=state.decisions,
+        actor=actor, stamp=stamp,
     )
+    if payload.action == "confirm":
+        await judge_unused_suggestions(
+            session, bundle_id, plans=plans, dispositions={item.unit_id: item.disposition for item in decided_units},
+            target_ids=[plan.row.id for plan in plans if plan.row is not None and plan.origin == ORIGIN_NEW_DOC],
+            actor=actor, stamp=stamp,
+        )
     swept = await sweep_translations(session, bundle_id, changed, exempt=edited)
     await _follow_positioned_sources(session, bundle_id, positioned)
     unit_ids = [item.unit_id for item in payload.units]
@@ -1485,7 +1495,33 @@ async def _write_group(
         target_ids=unit_ids or [*(target.id for target in written), *payload.removed_target_ids], reason=hold_reason,
     )
     await session.flush()
-    return [*(target.id for target in written), *(echoed - swept)]
+    return [*(target.id for target in written), *(echoed - swept), *idle_targets]
+
+
+async def _load_used_suggestion(session: AsyncSession, bundle_id: int, suggestion_id: int) -> AiSuggestion:
+    """저장이 받은 제안 — 이 묶음의 적용된 분류·묶기 제안이어야 한다. 밀린(stale) 제안도 사람이 보고 받은 것이라 받고, 무효 제안은 받을 내용이 없다."""
+    suggestion = await session.get(AiSuggestion, suggestion_id)
+    if (
+        suggestion is None or suggestion.bundle_id != bundle_id or suggestion.kind not in OFFERED_KINDS
+        or suggestion.result not in ("applied", "stale")
+    ):
+        raise_rule(404, "suggestion_not_found", suggestion_id=suggestion_id)
+    return suggestion
+
+
+def _link_suggestion(suggestion: AiSuggestion, payload: GroupSaveIn, plans: list[_Plan], state: _State) -> None:
+    """받은 제안이 덮는 판단과 입구 2 새 문장에 제안 id를 잇는다 — 채택 기록(record_group_adoption)과 뒤의 지우기가 이것을 읽는다.
+
+    보류 저장도 잇는다 — 나중의 확정이 채택을 정하고, 보류한 채 지우면 버림이다. 제안 밖의 단위·새 문장은 잇지 않는다.
+    """
+    unit_ids = set(suggestion.content.get("unit_ids", ()))
+    target_ids = set(suggestion.content.get("target_ids", ()))
+    for item in payload.units:
+        if item.unit_id in unit_ids:
+            state.decisions[item.unit_id].suggestion_id = suggestion.id
+    for plan in plans:
+        if plan.row is not None and plan.origin == ORIGIN_NEW_DOC and plan.row.id in target_ids:
+            plan.row.suggestion_id = suggestion.id
 
 
 # --- 진입점 ---
@@ -1522,7 +1558,6 @@ async def check_group(session: AsyncSession, bundle: Bundle, payload: GroupSaveI
     for plan in plans:
         _link_cell_target(plan, by_key, state)
     plans, releases = _resolve_slot_headings(plans, state)
-    reasons = {item.unit_id: item.reason.strip() for item in payload.units}
     # 나눔은 한 단위가 같은 새 문서에 자기와 같은 언어의 새 문장 둘 이상을 낼 때다 — 다른 언어 문장은 번역이다(제품 명세 §6.7)
     spread = Counter(
         (unit_id, plan.doc.id)
@@ -1530,10 +1565,8 @@ async def check_group(session: AsyncSession, bundle: Bundle, payload: GroupSaveI
         for unit_id in plan.sources if state.units[unit_id].lang == plan.lang
     )
     for plan in plans:
-        plan.change_type = _decide_change_type(plan, spread, reasons, state)
-    for plan in plans:
-        _check_as_is_table(plan, by_row_id, state)
-    _check_as_is_table_cells(plans, by_row_id, state)
+        plan.change_type = _decide_change_type(plan, spread, state)
+    _settle_table_types(plans, by_row_id, state)
     _check_duplicates(payload, plans, state)
     _check_captions(payload, plans, state)
     # 모은 칸 제목에 섞여 쓰기에서 빠지는 칸 제목 항목도 자리를 실었으면 거절한다 — 그래서 모으기 전 계획 전부를 본다
@@ -1574,29 +1607,14 @@ async def save_group(session: AsyncSession, bundle: Bundle, checked: CheckedGrou
     return out
 
 
-async def _find_units_with_targets(
-    session: AsyncSession, unit_ids: Collection[int], cleared_suggestion_ids: Collection[int]
-) -> list[int]:
-    """새 문장의 출처인 단위 — 표·행 단위는 칸 문장이 출처여도 센다.
-
-    cleared_suggestion_ids는 일괄 처분이 곧 걷을 제안이다 — 그 제안의 AI 새 문장만 빼고, 사람의 새 문장과 걷지 않을 AI 새 문장은
-    센다(걷지 않은 채 처분하면 처분한 단위에 매달린 AI 새 문장이 남는다).
-    """
+async def _find_units_with_targets(session: AsyncSession, unit_ids: Collection[int]) -> list[int]:
+    """새 문장의 출처인 단위 — 표 단위는 칸 문장이 출처여도 센다."""
     wanted = set(unit_ids)
-    cleared = set(cleared_suggestion_ids)
     rows = await select_in_chunks(
         session,
         lambda chunk: select(TargetSource.unit_id, Unit.group_unit_id)
         .join(Unit, Unit.id == TargetSource.unit_id)
-        .join(TargetSentence, TargetSentence.id == TargetSource.target_id)
-        .where(
-            or_(TargetSource.unit_id.in_(chunk), Unit.group_unit_id.in_(chunk)),
-            or_(
-                TargetSentence.status != AI_SUGGESTED,
-                TargetSentence.suggestion_id.is_(None),
-                TargetSentence.suggestion_id.not_in(cleared),
-            ),
-        ),
+        .where(or_(TargetSource.unit_id.in_(chunk), Unit.group_unit_id.in_(chunk))),
         unit_ids,
     )
     return sorted({unit_id if unit_id in wanted else group_unit_id for unit_id, group_unit_id in rows})
@@ -1607,9 +1625,7 @@ async def dispose_units(
 ) -> list[UnitDecisionRowOut]:
     """여러 단위를 같은 삭제·이동 사유로 확정한다 — 단위마다 따로 저장한 것과 같고, 사람의 새 문장이 달린 단위가 섞이면 409.
 
-    AI 제안 단위는 받는다(스펙 §7.7, 사용자 결정 2026-11-15) — 채택(같은 처분이면 그대로, 아니면 버림)을 먼저 남긴 뒤 제안을 걷고
-    사람의 처분으로 덮는다. 채택이 남은 제안은 걷혀도 applied다. 제안이 짝·묶음을 덮으면 고르지 않은 단위는 걷기 규칙대로 미배정이 된다.
-    사람이 보류해 둔 제안 단위도 지나며 채택을 남긴다.
+    사람이 제안을 받아(Use) 보류해 둔 단위는 지나며 채택을 남긴다(같은 처분이면 그대로, 아니면 버림).
     """
     await lock_bundle(session, bundle)
     ensure_editable(bundle)
@@ -1626,18 +1642,17 @@ async def dispose_units(
     if conflicts:
         raise_rule(409, "revision_conflict", conflicts=conflicts)
     decisions = {unit_id: loaded[unit_id][1] for unit_id in unit_ids}
-    suggested = [decision for decision in decisions.values() if decision.status == AI_SUGGESTED]
-    cleared = {decision.suggestion_id for decision in suggested if decision.suggestion_id is not None}
-    with_targets = await _find_units_with_targets(session, unit_ids, cleared)
+    with_targets = await _find_units_with_targets(session, unit_ids)
     if with_targets:
         raise_rule(409, "unit_has_targets", unit_ids=with_targets)
     stamp = now()
-    # 걷기가 판단의 제안 칸을 비우므로 채택을 먼저 남긴다
     await record_unit_adoption(
         session, plans=(), dispositions=dict.fromkeys(unit_ids, payload.action), decisions=decisions,
         actor=actor, stamp=stamp,
     )
-    await clear_previous_suggestion(session, suggested)
+    await judge_unused_suggestions(
+        session, bundle.id, plans=(), dispositions=dict.fromkeys(unit_ids, payload.action), actor=actor, stamp=stamp
+    )
     for decision in decisions.values():
         decision.disposition, decision.reason = payload.action, payload.reason
         decision.move_target_code = payload.move_target_code if payload.action == "move_external" else ""

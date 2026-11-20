@@ -1,8 +1,9 @@
 // Assign 오른쪽 - New 문서. 이미 쓴 문서는 그 원문, 아직 쓰지 않은 문서는 지금까지의 배정으로 엮은 문서(서버 결과물 C 규칙, 읽기 전용 미리 보기).
 // Old와 같은 종이 조각: 왼쪽 밖 앞머리(절 번호 칸, 폭 = 절 깊이라 들여쓴 것처럼 읽힌다), 본문 위 줄에 출처 칩, 위 테두리 오른쪽에 올리거나 고를 때만 KO/EN 탭(짝은 모두).
-// 엮은 문서의 앞머리는 결과물 C와 같은 줄마다 자기 번호(생략·주석은 없음)이고 칸 번호는 칸 머리 줄에 남는다.
-// 점선 = 후보, 채움 = 고른 문장, 칩 = 붙은 Old 출처(누르면 Old의 그 조각으로), 왼쪽 끝 위험색 막대 = 출처 없음. 엮은 문서의 빈 칸은 옅은 자리 표시.
-// 엮은 문서의 문장을 받지 않는 절은 자리 표시가 없다 - 묶음은 칸 머리만, 앱이 채우는 목록(자식 WI)은 읽기만 하는 줄.
+// 엮은 문서(빈 템플릿)도 같은 줄 틀(StripBox, 시안 2 D6): 칸 머리는 번호 칸에 칸 번호가 든 제목 박스, 줄 앞머리는 결과물 C와 같은 줄마다 자기 번호 · 글머리 기호(composed.strips),
+// 이웃한 한/영 같은 의미 줄은 짝 카드. 번호 칸은 C 번호 표시를 고르고(ComposedNumberCell), 고른 Old 줄에서 온 박스는 고름 테두리와 왼쪽 손잡이(순서 · 칸 옮기기, lib/use-composed-grip).
+// 점선 = 후보, 채움 = 고른 문장, 칩 = 붙은 Old 출처(누르면 Old의 그 조각으로), 왼쪽 끝 위험색 막대 = 출처 없음. 엮은 문서의 빈 칸은 옅은 자리 박스.
+// 엮은 문서의 문장을 받지 않는 절은 자리 표시가 없다 - 묶음은 칸 머리만, 앱이 채우는 목록(자식 WI)은 읽기만 하는 박스.
 // 엮은 문서의 두 문장 사이에 Old 조각을 놓았으면 그 자리에 저장 전 문장(점선 초안), 빈 칸에 놓았으면 그 자리 표시에 강조 테두리(끌어서 보내기).
 // 엮은 문서도 고른 Old 줄을 더 이을 수 있는 확정 문장(joinableIds)은 눌러 작은 메뉴를 연다(onJoinPick) - 그 밖의 문장은 읽기만 한다.
 // 줄 상자(.new-item)마다 data-row(t:<id> | slot:<칸>) - 끄는 동안 놓을 자리를 이것으로 읽는다.
@@ -11,10 +12,11 @@
 // AI 제안 거르기(aiFilter, lib/new-ai-filter-model)가 걸리면 고른 줄의 제안·간 곳은 강조 테두리와 꼬리표, 다른 줄의 AI 제안은 칸마다 띠 하나로 접히고(누르면 흐리게 펼침), 나머지 줄은 흐리다.
 // 줄이 새로 들어오면 펼치며 나타나고 빠지면 접히며 사라진다(확정이 곧 보이는 실시간 넣기). 표·그림은 실제 표(좌우 스크롤)·그림 이미지로 보인다(new-bundle.tsx).
 // 클릭 배치(place, MD 2 S3) - 엮은 문서에서 Old 줄을 고른 채면 칸 머리 · 빈 칸 · 번호 줄 사이 틈을 눌러 보낼 곳을 고른다(칠하기 · 꼬리표는 CSS :hover).
+// 이미 쓴 문서의 표는 칸마다 상자(cellLink, 시안 2 D5) - 칸 위 출처 칩과 끊기 ×, Old 줄을 고른 채 칸을 누르거나 끈 조각을 칸에 놓으면 문장처럼 잇는다(new-bundle.tsx).
 // 엮은 문서는 머리의 "기본 | 템플릿" 전환(viewSwitch)으로 같은 줄을 회사 템플릿 모양(components/template/template-view)으로도 본다 - 템플릿이면 몸에 그 보기를 그린다.
 "use client";
 
-import { ChevronDown, ChevronUp, FilePlus2, Scissors, Sparkles, Spline } from "lucide-react";
+import { ChevronDown, ChevronUp, FilePlus2, GripVertical, Scissors, Sparkles, Spline, X } from "lucide-react";
 import { Fragment, useEffect, useEffectEvent, useRef, useState, type MouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 
 import { NewBundle } from "@/components/assign/new-bundle";
@@ -22,21 +24,27 @@ import { getSpotAttrs, PlaceGap, type PlaceSpotView } from "@/components/assign/
 import { PaneZoom } from "@/components/assign/pane-zoom";
 import { RefMark } from "@/components/assign/ref-mark";
 import { LangToken } from "@/components/paper/lang-token";
+import { PartTabs } from "@/components/paper/part-tabs";
+import { ComposedNumberCell, type ComposedStyleChoice } from "@/components/paper/number-cell";
 import { DeviationMark, EmptyRequiredMark } from "@/components/tobe/deviation-mark";
+import { StripBox } from "@/components/paper/strip-box";
 import { StripLead, STRIP_LEAD_EXTRA } from "@/components/paper/strip-lead";
+import { useDelegatedTip } from "@/components/ui/delegated-tip";
 import { EmptyState } from "@/components/ui/empty-state";
-import { Truncate } from "@/components/ui/motion";
+import { Collapse, Truncate } from "@/components/ui/motion";
 import { Select, type SelectOption } from "@/components/ui/select";
 import { Tooltip } from "@/components/ui/tooltip";
 import { ViewSwitch } from "@/components/ui/view-switch";
-import type { WrittenSentence } from "@/lib/api-sop";
+import type { BundleCell, ComposedDoc, WrittenSentence } from "@/lib/api-sop";
 import type { DraftLine } from "@/lib/assign-drop-model";
+import type { PlaceEdit } from "@/lib/c-edit-model";
 import { readCaretPoint } from "@/lib/caret-point";
-import { diffRows, getComposedLeadWidths, getNewRowKey, isComposedRow, isWrittenRow, readSectionNumber, type NewPaneRow, type SectionMark } from "@/lib/composed-model";
+import { diffRows, getNewRowKey, isComposedRow, isWrittenRow, readSectionNumber, type ComposedHead, type ComposedStrips, type NewPaneRow, type SectionMark } from "@/lib/composed-model";
+import { useComposedGrip } from "@/lib/use-composed-grip";
 import { useI18n } from "@/lib/i18n";
 import { readNewAiSectionKey, type NewAiFilter } from "@/lib/new-ai-filter-model";
 import { readWrittenRefMark } from "@/lib/ref-model";
-import { getCardTops, getHiddenPrefixLength, getPairBrackets, getPillWidth, getSectionPill, getTabWidths } from "@/lib/strip-pill-model";
+import { getCardTops, getHiddenPrefixLength, getPairBrackets, getPillWidth, getSectionPill, getTabWidths, type PairBracket } from "@/lib/strip-pill-model";
 
 /** 클릭 배치의 자리(MD 2 S3) - heads는 칸 첫 줄의 키(getNewRowKey)로 그 칸 머리(빈 칸이면 자리 표시도 같은 자리), gaps는 "before:<id>" · "after:<id>" */
 export interface NewPlaceSpots {
@@ -49,6 +57,8 @@ export interface NewPlaceSpots {
 }
 
 interface NewPaneProps {
+  /** 누른 문단 안에 펼쳐 넣을 단추 줄(그 자리 메뉴) - targetId 줄의 글 아래에 미끄러지듯 열린다 */
+  lineActions?: { targetId: number; node: ReactNode } | null;
   /** 그림 이미지를 받을 묶음 */
   bundleId: number;
   docOptions: SelectOption<string>[];
@@ -115,6 +125,36 @@ interface NewPaneProps {
   viewSwitch?: { template: boolean; onChange: (template: boolean) => void; body: ReactNode } | null;
   /** 클릭 배치 - 엮은 문서에서 Old 줄을 고른 채 고칠 수 있을 때만. 없으면 자리가 없다 */
   place?: NewPlaceSpots | null;
+  /** 이미 쓴 문서 표의 칸 잇기(시안 2 D5) - 칸 위 출처 칩은 늘, 누르기는 pickable(Old 줄을 고른 채)일 때, 놓기는 droppable일 때 */
+  cellLink?: NewCellLink | null;
+  /** 엮은 문서(빈 템플릿)의 용지 모양(시안 2 D6) - 칸 머리 제목 박스 · 결과물 C 번호 칸 · 짝 카드 · 고른 박스의 손잡이. 이미 쓴 문서면 없다 */
+  composed?: NewComposedView | null;
+}
+
+/** 엮은 문서 기본 보기 - 줄은 rows(buildComposedRows(order.doc)), 모양은 strips(buildComposedStrips) */
+export interface NewComposedView {
+  strips: ComposedStrips;
+  /** 고른 Old 줄에서 온 박스 - 고름 테두리, 손잡이는 이 박스에만 */
+  selectedIds: ReadonlySet<number>;
+  /** 순서 · 칸 옮기기 · 번호 표시 - 고칠 수 없으면 null(번호 칸은 읽기만, 손잡이 없음) */
+  order: NewComposedOrder | null;
+}
+
+export interface NewComposedOrder {
+  /** 화면 문서(기다리는 편집을 얹은 것) - 손잡이 끌기가 이 문서로 자리를 센다 */
+  doc: ComposedDoc;
+  busy: boolean;
+  /** 저장이 날아가는 줄 - 박스에 처리 중 쉬머 */
+  pendingIds: ReadonlySet<number>;
+  onPlace: (edit: PlaceEdit, note: string) => void;
+  onStyle: (targetId: number, choice: ComposedStyleChoice) => void;
+}
+
+/** 이미 쓴 문서 표의 칸 잇기 - onPick은 문장 줄 누르기(onPick)와 같은 길, onUnlink는 칸 칩의 × */
+export interface NewCellLink {
+  pickable: boolean;
+  droppable: boolean;
+  onUnlink?: (targetId: number, unitId: number) => void;
 }
 
 function readState(row: WrittenSentence, props: NewPaneProps): string | undefined {
@@ -209,7 +249,13 @@ export function NewPane(props: NewPaneProps) {
   const paneRef = useRef<HTMLElement>(null);
   // 엮은 문서만 - 이미 쓴 문서의 문장은 원래 있던 줄이라 들어오는 움직임을 쓰지 않는다
   const enterKeys = props.readOnly && props.live ? props.live.targetIds.map((id) => `t:${id}`) : [];
-  const presence = useRowPresence(props.rows, props.rowsKey, enterKeys);
+  // 본문 | 그림 탭(시안 2 D3) - 그림 줄은 그림 탭에만, 본문에는 자리 표시 없이 빠진다. 문서를 바꾸면 본문으로(렌더 중 상태 맞추기)
+  const [figureTab, setFigureTab] = useState<{ docId: string; on: boolean }>({ docId: props.docId, on: false });
+  const figureCount = props.rows.filter((row) => row.kind === "figure").length;
+  const isFigureTab = figureCount > 0 && figureTab.docId === props.docId && figureTab.on;
+  const tabRows = figureCount === 0 ? props.rows : props.rows.filter((row) => (row.kind === "figure") === isFigureTab);
+  // 탭을 바꾸면 줄 들고 남을 새로 시작한다(빠지는 줄 움직임 없이)
+  const presence = useRowPresence(tabRows, `${props.rowsKey}:${isFigureTab ? "figures" : "body"}`, enterKeys);
   // 문서를 바꾸면 새 문서가 옆에서 들어온다 - 문서 목록에서 뒤 문서면 오른쪽에서, 앞 문서면 왼쪽에서(렌더 중 상태 맞추기)
   const [slide, setSlide] = useState<{ docId: string; dir: "next" | "prev" | null }>({ docId: props.docId, dir: null });
   if (slide.docId !== props.docId) {
@@ -223,19 +269,23 @@ export function NewPane(props: NewPaneProps) {
   if (aiOpen.key !== aiFoldKey) setAiOpen({ key: aiFoldKey, sections: new Set() });
   // 그릴 줄 - 지금 줄 사이사이에 빠지는 줄을 제자리(바로 뒤에 남은 줄 앞)에 끼운다
   const shown: Array<{ row: NewPaneRow; leaving: boolean }> = [];
-  for (const row of props.rows) {
+  for (const row of tabRows) {
     for (const gone of presence.leaving.get(getNewRowKey(row)) ?? []) shown.push({ row: gone, leaving: true });
     shown.push({ row, leaving: false });
   }
   for (const gone of presence.leaving.get("") ?? []) shown.push({ row: gone, leaving: true });
 
   const sentences = shown.map((item) => item.row).filter(isWrittenRow);
+  const composed = props.composed ?? null;
+  const strips = composed?.strips ?? null;
+  // 짝 묶음 번호 - 엮은 문서는 이웃한 같은 의미 묶음 문장(buildComposedStrips), 이미 쓴 문서는 짝의 작은 문장 id
+  const readGroup = (row: WrittenSentence): number | null => (isComposedRow(row) ? (strips?.lines.get(row.target_id)?.pairGroup ?? null) : readPairGroup(row));
   // 짝 구성원이 바로 이웃하면 구성원 수와 상관없이 한 카드, 앞머리 번호 칸 폭은 절 깊이 - Old와 같은 규칙. 짝 묶음 번호는 짝의 작은 문장 id(서버는 둘짜리 짝만 서로를 가리킨다). 표·그림 줄은 카드를 끊는다
-  const brackets = getPairBrackets(sentences.map((row) => ({ unitId: row.target_id, groupId: readPairGroup(row) })));
+  const brackets = getPairBrackets(sentences.map((row) => ({ unitId: row.target_id, groupId: readGroup(row) })));
   const cardTops = getCardTops(sentences.map((row) => row.target_id), brackets);
-  // 엮은 문서는 줄마다 자기 번호라 번호 칸 폭도 그 번호의 깊이로(표·그림 포함), 이미 쓴 문서는 절 번호의 깊이로
+  // 엮은 문서는 줄마다 자기 번호라 번호 칸 폭도 그 번호의 깊이로(표·그림 포함, buildComposedStrips), 이미 쓴 문서는 절 번호의 깊이로
   const widths = sentences.some(isComposedRow)
-    ? getComposedLeadWidths(sentences)
+    ? new Map(sentences.filter(isComposedRow).map((row) => [String(row.target_id), strips?.lines.get(row.target_id)?.width ?? getPillWidth(1)]))
     : getTabWidths(
         sentences
           .filter((row) => row.kind === "sentence")
@@ -288,6 +338,33 @@ export function NewPane(props: NewPaneProps) {
     };
   }, [isCutDragging]);
 
+  // 엮은 문서 - 번호 칸 창이 열린 줄(한 번에 하나), 고른 박스의 손잡이 끌기(순서 · 칸 옮기기, lib/use-composed-grip), 아이콘 표시의 툴팁
+  const [styleOpen, setStyleOpen] = useState<number | null>(null);
+  const order = composed?.order ?? null;
+  useComposedGrip(paneRef, order && !props.viewSwitch?.template ? { doc: order.doc, t, onPlace: order.onPlace } : null);
+  const tip = useDelegatedTip();
+
+  /** 엮은 문서 줄의 앞머리 - 결과물 C 번호 표시를 고르는 번호 칸(번호 · 글머리 기호, 고칠 수 없으면 읽기만) */
+  function renderComposedLead(row: WrittenSentence, bracket: PairBracket | undefined): ReactNode {
+    const line = strips?.lines.get(row.target_id);
+    return (
+      <ComposedNumberCell
+        width={widths.get(String(row.target_id)) ?? getPillWidth(1)}
+        bracket={bracket}
+        testId="assign-new"
+        targetId={row.target_id}
+        mark={line?.mark ?? null}
+        style={line?.style ?? "omitted"}
+        canNumber={line?.canNumber ?? false}
+        canEdit={order !== null && line !== undefined}
+        busy={order === null || order.busy}
+        open={styleOpen === row.target_id}
+        onOpenChange={(open) => setStyleOpen(open ? row.target_id : null)}
+        onPick={(choice) => order?.onStyle(row.target_id, line?.canDepth === false ? { ...choice, depth: null } : choice)}
+      />
+    );
+  }
+
   function handleCutDown(event: ReactPointerEvent<HTMLElement>) {
     if (event.button !== 0) return;
     event.preventDefault(); // 글자가 끌려 골라지지 않게
@@ -306,28 +383,41 @@ export function NewPane(props: NewPaneProps) {
     );
   }
 
-  function renderSources(row: WrittenSentence) {
-    const isOpen = openSources.has(row.target_id);
-    const ids = row.source_unit_ids;
+  /** 출처 칩들 - 문장 상자와 표 칸이 같은 칩을 쓴다. onUnlink가 있으면(칸) 칩마다 끊기 × */
+  function renderChips(targetId: number, ids: number[], isAi: boolean, onUnlink?: (unitId: number) => void): ReactNode {
+    const isOpen = openSources.has(targetId);
     const visible = isOpen || ids.length <= VISIBLE_SOURCES + 1 ? ids : ids.slice(0, VISIBLE_SOURCES);
     const hidden = ids.slice(visible.length);
     return (
-      <span className="new-srcs">
+      <>
         {visible.map((unitId) => (
-          <button
-            key={unitId}
-            type="button"
-            className="new-src"
-            aria-label={t("assign.jumpOld", { id: props.sourceLabel(unitId) })}
-            data-src-unit={unitId}
-            data-ai={row.status === "ai_suggested" ? "" : undefined}
-            data-testid={`assign-new-src-${row.target_id}-${unitId}`}
-            onClick={() => props.onJumpSource(unitId, row.target_id)}
-          >
-            {props.sourceLabel(unitId)}
-            <ChevronUp size={11} strokeWidth={2.5} className="new-src-dir" data-d="above" aria-hidden />
-            <ChevronDown size={11} strokeWidth={2.5} className="new-src-dir" data-d="below" aria-hidden />
-          </button>
+          <Fragment key={unitId}>
+            <button
+              type="button"
+              className="new-src"
+              aria-label={t("assign.jumpOld", { id: props.sourceLabel(unitId) })}
+              data-src-unit={unitId}
+              data-ai={isAi ? "" : undefined}
+              data-testid={`assign-new-src-${targetId}-${unitId}`}
+              onClick={() => props.onJumpSource(unitId, targetId)}
+            >
+              {props.sourceLabel(unitId)}
+              <ChevronUp size={11} strokeWidth={2.5} className="new-src-dir" data-d="above" aria-hidden />
+              <ChevronDown size={11} strokeWidth={2.5} className="new-src-dir" data-d="below" aria-hidden />
+            </button>
+            {onUnlink && (
+              <button
+                type="button"
+                className="new-src new-src-x"
+                aria-label={t("assign.cellLink.unlink", { id: props.sourceLabel(unitId) })}
+                data-tip={t("assign.cellLink.unlink", { id: props.sourceLabel(unitId) })}
+                data-testid={`assign-new-src-x-${targetId}-${unitId}`}
+                onClick={() => onUnlink(unitId)}
+              >
+                <X size={11} strokeWidth={2.5} aria-hidden />
+              </button>
+            )}
+          </Fragment>
         ))}
         {hidden.length > 0 && (
           <button
@@ -335,12 +425,26 @@ export function NewPane(props: NewPaneProps) {
             className="new-src is-more"
             aria-label={t("assign.moreSources", { n: hidden.length })}
             data-src-more={hidden.join(",")}
-            data-testid={`assign-new-src-more-${row.target_id}`}
-            onClick={() => setOpenSources((prev) => new Set(prev).add(row.target_id))}
+            data-testid={`assign-new-src-more-${targetId}`}
+            onClick={() => setOpenSources((prev) => new Set(prev).add(targetId))}
           >
             +{hidden.length}
           </button>
         )}
+      </>
+    );
+  }
+
+  /** 칸 위 출처 칩 - 문장 상자와 같은 칩 줄, 고칠 수 있으면 칩마다 × */
+  function renderCellSources(cell: BundleCell): ReactNode {
+    const unlink = props.cellLink?.onUnlink;
+    return <span className="new-srcs">{renderChips(cell.target_id, cell.source_unit_ids, cell.status === "ai_suggested", unlink ? (unitId) => unlink(cell.target_id, unitId) : undefined)}</span>;
+  }
+
+  function renderSources(row: WrittenSentence) {
+    return (
+      <span className="new-srcs">
+        {renderChips(row.target_id, row.source_unit_ids, row.status === "ai_suggested")}
         {row.change_type === "new" && <span className="new-src is-new">{t("assign.markedNew")}</span>}
         {/* 참조 줄이 EQUIS와 어긋난다(번호·이름·EQUIS에 없음·폐기) - 출처가 없는 줄에도 뜬다. 이 문서의 글은 여기서 고치지 않아 알리기만 한다 */}
         <RefMark row={row} />
@@ -371,29 +475,45 @@ export function NewPane(props: NewPaneProps) {
         )}
       </span>
     );
+    // 엮은 문서 - 고른 Old 줄에서 온 박스는 고름 테두리(시안 1), 그 박스 왼쪽에 손잡이(저장이 날아가는 박스는 잠금)
+    const isSelected = isOwnNumber && (composed?.selectedIds.has(row.target_id) ?? false);
+    const isPending = isOwnNumber && (order?.pendingIds.has(row.target_id) ?? false);
     return (
       <>
         {!isSectionStart && previous?.kind === "sentence" && <div className="new-gap" data-pair={cardTops.has(row.target_id) ? "" : undefined} />}
-        <div className="strip-row">
-          <StripLead width={widths.get(String(row.target_id)) ?? getPillWidth(1)} number={number} bracket={bracket} dim={isOwnNumber ? number === null : !isSectionStart} tip="" testId="assign-new" id={row.target_id} />
-          <div
-            className="strip new-line"
-            data-bracket={bracket}
-            data-lang={row.lang}
-            data-state={readState(row, props)}
-            data-target={row.target_id}
-            data-pair-group={readPairGroup(row) ?? undefined}
-            data-testid={`assign-new-${row.target_id}`}
-            onContextMenu={
+        <StripBox
+          lead={
+            isOwnNumber && strips ? (
+              renderComposedLead(row, bracket)
+            ) : (
+              <StripLead width={widths.get(String(row.target_id)) ?? getPillWidth(1)} number={number} bracket={bracket} dim={isOwnNumber ? number === null : !isSectionStart} tip="" testId="assign-new" id={row.target_id} />
+            )
+          }
+          boxClassName="strip new-line"
+          bracket={bracket}
+          boxAttrs={{
+            "data-lang": row.lang,
+            "data-state": readState(row, props),
+            "data-target": row.target_id,
+            "data-pair-group": readGroup(row) ?? undefined,
+            "data-sel": isSelected ? "" : undefined,
+            "data-pending": isPending ? "" : undefined,
+            "data-testid": `assign-new-${row.target_id}`,
+            onContextMenu:
               props.onShape && isWrittenRow(row)
                 ? (event) => {
                     event.preventDefault();
                     props.onShape?.(row.target_id, { x: event.clientX, y: event.clientY });
                   }
-                : undefined
-            }
-          >
-            {(row.source_unit_ids.length > 0 || row.change_type === "new" || readWrittenRefMark(row) !== null) && renderSources(row)}
+                : undefined,
+          }}
+          chips={(row.source_unit_ids.length > 0 || row.change_type === "new" || readWrittenRefMark(row) !== null) && renderSources(row)}
+        >
+            {isSelected && order && !isPending && (
+              <span className="strip-grip" data-drag-handle="" data-composed-grip={row.target_id} data-tip={t("assign.composedOrder.grip")} data-testid={`assign-new-grip-${row.target_id}`}>
+                <GripVertical aria-hidden="true" />
+              </span>
+            )}
             {props.readOnly ? (
               props.joinableIds?.has(row.target_id) && props.onJoinPick ? (
                 <button
@@ -434,8 +554,12 @@ export function NewPane(props: NewPaneProps) {
             )}
             <LangToken lang={row.lang} className="strip-lang" testId={`assign-new-lang-${row.target_id}`} />
             {cutAt !== null && <div className="new-cut-pop">{props.cutPop}</div>}
-          </div>
-        </div>
+            {props.lineActions?.targetId === row.target_id && (
+              <Collapse open appear className="strip-acts new-line-acts">
+                {props.lineActions.node}
+              </Collapse>
+            )}
+        </StripBox>
       </>
     );
   }
@@ -477,14 +601,52 @@ export function NewPane(props: NewPaneProps) {
     );
   }
 
+  /**
+   * 엮은 문서의 칸 머리 - 번호 칸에 칸 번호가 든 제목 박스(Old · 이미 쓴 New의 제목 박스 모양, 시안 2 D6). 칸 제목 출처는 이름 뒤에 흐리게, 넘치면 말줄임.
+   * 클릭 배치의 칸 자리는 박스에 단다(빈 칸 자리 표시도 같은 자리). 줄 상자의 data-csec는 손잡이 끌기가 칸 띠를 재는 열쇠
+   */
+  function renderComposedHead(row: NewPaneRow, head: ComposedHead): ReactNode {
+    const note = props.headingNotes?.get(row.section_path);
+    const mark = props.sectionMarks?.get(row.section_path);
+    // 번호 없는 절(5장의 범주)은 머리 글을 키로 - 범주끼리 같은 식별자가 되지 않게
+    const idKey = readSectionNumber(row.section_path) || row.section_path;
+    const spot = props.place?.heads.get(getNewRowKey(row));
+    return (
+      <StripBox
+        rowAttrs={{ className: "new-head-row", "data-csec": head.sectionKey, "data-chead": "", "data-testid": `assign-new-head-${head.sectionKey}` }}
+        lead={<StripLead width={head.width} number={head.number} dim={head.number === null} tip="" testId="assign-new-head" id={head.sectionKey} />}
+        boxClassName="strip new-head"
+        boxAttrs={spot ? { ...getSpotAttrs(spot), "data-testid": `assign-place-${spot.key}` } : undefined}
+      >
+        <p className="h new-head-text">
+          <span className="new-head-label">
+            {head.label}
+            {mark?.deviationReason != null && <DeviationMark reason={mark.deviationReason} testId={`assign-new-differs-${idKey}`} />}
+            {mark?.isEmptyRequired && <EmptyRequiredMark testId={`assign-new-empty-required-${idKey}`} />}
+          </span>
+          {note && (
+            <span className="new-head-note">
+              <Truncate text={note} testId={`assign-new-heading-note-${idKey}`} />
+            </span>
+          )}
+        </p>
+      </StripBox>
+    );
+  }
+
+  /** 엮은 문서의 빈 칸 · 앱이 채우는 목록 줄의 앞머리 폭 - 그 칸 첫 깊이(문장 상자와 같은 x) */
+  function readOpenWidth(row: NewPaneRow): number {
+    return strips?.heads.get(row.section_path)?.openWidth ?? getPillWidth(1);
+  }
+
   function renderRow(row: NewPaneRow, isSectionStart: boolean, previous: NewPaneRow | undefined): ReactNode {
     if (row.kind === "empty") {
-      // 문장을 받지 않는 절(N/A가 아닐 때) - 묶음은 칸 머리만 있고, 앱이 채우는 목록은 읽기만 하는 줄이다(고르기·놓을 자리 없음)
+      // 문장을 받지 않는 절(N/A가 아닐 때) - 묶음은 칸 머리만 있고, 앱이 채우는 목록은 읽기만 하는 박스다(고르기·놓을 자리 없음)
       if (row.fixed === "group" && !row.na) return null;
       if (row.fixed === "auto" && !row.na) {
         return (
           <div className="strip-row">
-            <span className="strip-lead-gap" style={{ width: getPillWidth(1) + STRIP_LEAD_EXTRA }} />
+            <span className="strip-lead-gap" style={{ width: readOpenWidth(row) + STRIP_LEAD_EXTRA }} />
             <ul className="new-auto" data-testid={`assign-new-auto-${row.key}`}>
               {row.autoItems.length === 0 && <li className="text-ink-3">{t("outputs.autoEmpty")}</li>}
               {row.autoItems.map((item) => (
@@ -501,7 +663,7 @@ export function NewPane(props: NewPaneProps) {
       const slotSpot = props.place?.heads.get(getNewRowKey(row));
       return (
         <div className="strip-row">
-          <span className="strip-lead-gap" style={{ width: getPillWidth(1) + STRIP_LEAD_EXTRA }} />
+          <span className="strip-lead-gap" style={{ width: readOpenWidth(row) + STRIP_LEAD_EXTRA }} />
           <p
             {...(slotSpot ? getSpotAttrs(slotSpot) : undefined)}
             className="new-slot-empty"
@@ -532,13 +694,24 @@ export function NewPane(props: NewPaneProps) {
             captionRequired={isComposedRow(row)}
             bundleId={props.bundleId}
             testId={`assign-new-${row.target_id}`}
+            cellLink={
+              props.cellLink && !isComposedRow(row)
+                ? {
+                    pickable: props.cellLink.pickable,
+                    droppable: props.cellLink.droppable,
+                    pickedIds: props.pickedIds,
+                    onPick: (cell, anchor, event) => props.onPick(cell.target_id, event.ctrlKey || event.metaKey, anchor, event),
+                    renderSources: renderCellSources,
+                  }
+                : null
+            }
           />
         );
       if (!isComposedRow(row)) return block;
       // 엮은 문서의 표·그림도 결과물 C처럼 번호를 센다 - 앞머리에 자기 번호를 두어 문장 번호가 건너뛴 까닭이 보이게
       return (
         <div className="strip-row">
-          <StripLead width={widths.get(String(row.target_id)) ?? getPillWidth(1)} number={row.number} dim={row.number === null} tip="" testId="assign-new" id={row.target_id} />
+          {strips ? renderComposedLead(row, undefined) : <StripLead width={widths.get(String(row.target_id)) ?? getPillWidth(1)} number={row.number} dim={row.number === null} tip="" testId="assign-new" id={row.target_id} />}
           {block}
         </div>
       );
@@ -571,7 +744,8 @@ export function NewPane(props: NewPaneProps) {
   }
 
   return (
-    <section ref={paneRef} className="assign-pane" style={{ "--z": props.zoom }} data-pane="new" data-doc={props.docId} data-testid="assign-new">
+    // data-composed-order - 손잡이 끌기의 놓을 자리 선이 이 칸 기준으로 놓인다(styles/components.css)
+    <section ref={paneRef} className="assign-pane" style={{ "--z": props.zoom }} data-pane="new" data-doc={props.docId} data-composed-order={order ? "" : undefined} data-testid="assign-new">
       <div className="pane-head">
         {props.docOptions.length > 1 ? (
           <Select testId="assign-new-doc" ariaLabel={t("assign.newDoc")} size="sm" mono value={props.docId} options={props.docOptions} onChange={props.onDocChange} />
@@ -598,6 +772,11 @@ export function NewPane(props: NewPaneProps) {
         </Tooltip>
         <PaneZoom value={props.zoom} onStep={props.onZoom} testId="assign-new-zoom" />
       </div>
+      {figureCount > 0 && !props.viewSwitch?.template && (
+        <div className="flex items-center">
+          <PartTabs keys={["body", "figures"]} active={isFigureTab ? "figures" : "body"} onChange={(key) => setFigureTab({ docId: props.docId, on: key === "figures" })} counts={{ figures: figureCount }} testIdPrefix="assign-new-tab" />
+        </div>
+      )}
       {props.banner}
       {props.viewSwitch?.template ? (
         <div className="pane-body" key={props.docId}>
@@ -611,7 +790,9 @@ export function NewPane(props: NewPaneProps) {
               data-strips=""
               data-dragging={isCutDragging ? "" : undefined}
               data-read-only={props.readOnly ? "" : undefined}
+              {...tip.handlers}
             >
+              {tip.node}
               {shown.map(({ row, leaving }, index) => {
                 const previous = shown[index - 1]?.row;
                 const key = getNewRowKey(row);
@@ -629,9 +810,11 @@ export function NewPane(props: NewPaneProps) {
                 // 클릭 배치의 번호 줄 사이 틈 - 그 줄 바로 앞 · 뒤(빠지는 줄에는 없다)
                 const gapBefore = leaving || row.kind === "empty" ? undefined : props.place?.gaps.get(`before:${row.target_id}`);
                 const gapAfter = leaving || row.kind === "empty" ? undefined : props.place?.gaps.get(`after:${row.target_id}`);
+                // 엮은 문서의 칸 머리는 제목 박스, 이미 쓴 문서는 칸 이름 줄
+                const head = isSectionStart ? strips?.heads.get(row.section_path) : undefined;
                 return (
                   <Fragment key={key}>
-                    {isSectionStart && renderSectionHead(row, isNumberInLead && !isAiFolded)}
+                    {isSectionStart && (head ? renderComposedHead(row, head) : renderSectionHead(row, isNumberInLead && !isAiFolded))}
                     {gapBefore && <PlaceGap view={gapBefore} testId={`assign-place-${gapBefore.key}`} />}
                     {draftSide === "before" && props.draft && renderDraft(row, props.draft.lines)}
                     {aiBand && (
@@ -650,6 +833,7 @@ export function NewPane(props: NewPaneProps) {
                       <div
                         className="new-item"
                         data-row={key}
+                        data-csec={strips ? (row.kind === "empty" ? row.key : strips.lines.get(row.target_id)?.sectionKey) : undefined}
                         data-enter={presence.added.has(key) ? "" : undefined}
                         data-leave={leaving ? "" : undefined}
                         data-ai-view={aiMark === undefined ? undefined : aiMark === "mine_ai" || aiMark === "mine_went" ? "mine" : "dim"}

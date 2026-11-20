@@ -152,36 +152,25 @@ describe("KO/EN pairing from the Assign menu", () => {
   });
 });
 
-describe("table rows from the Assign menu", () => {
+describe("table items from the Assign menu", () => {
   const table = makeUnit(10, { kind: "table", table_id: 4, lang: "none" as ViewUnit["lang"] });
-  const row = makeUnit(11, { kind: "table_row", table_id: 4, row_index: 0, lang: "none" as ViewUnit["lang"] });
 
-  it("shows only table items on a table or a row", () => {
+  it("shows only table items on a table", () => {
     // 이웃한 글이 없는 표 - 캡션 붙이기 없이 표 항목만
-    expect(buildAssignMenu(ctx({ target: table, table, prev: null, next: null })).edit.map((item) => item.action)).toEqual(["table_rows", "table_layout"]);
-    expect(buildAssignMenu(ctx({ target: row, table: row, prev: null, next: null })).edit.map((item) => item.action)).toEqual(["table_merge"]);
-    expect(find(ctx({ target: table, table }), "table_rows").enabled).toBe(true);
+    expect(buildAssignMenu(ctx({ target: table, table, prev: null, next: null })).edit.map((item) => item.action)).toEqual(["table_layout"]);
+    expect(find(ctx({ target: table, table }), "table_layout").enabled).toBe(true);
   });
 
   it("adds them after the sentence items on a cell sentence", () => {
     const cell = makeUnit(12, { kind: "cell_sentence", group_unit_id: 10 });
 
-    expect(buildAssignMenu(ctx({ target: cell, table })).edit.map((item) => item.action)).toEqual(["split", "merge_prev", "merge_next", "pair_pick", "lang", "ref_mark", "table_rows", "table_layout"]);
+    expect(buildAssignMenu(ctx({ target: cell, table })).edit.map((item) => item.action)).toEqual(["split", "merge_prev", "merge_next", "pair_pick", "lang", "ref_mark", "table_layout"]);
   });
 
   it("locks them while the table has an unsaved pick or the bundle is read-only, not because it is assigned", () => {
-    expect(find(ctx({ target: table, table, isDecided: (unit) => unit.id === 10 }), "table_rows").enabled).toBe(true);
-    expect(find(ctx({ target: row, table: row, hasDraft: (unit) => unit.id === 11 }), "table_merge").reasonKey).toBe("assign.ctx.why.unsaved");
+    expect(find(ctx({ target: table, table, isDecided: (unit) => unit.id === 10 }), "table_layout").enabled).toBe(true);
+    expect(find(ctx({ target: table, table, hasDraft: (unit) => unit.id === 10 }), "table_layout").reasonKey).toBe("assign.ctx.why.unsaved");
     expect(find(ctx({ target: table, table, readOnly: true }), "table_layout").reasonKey).toBe("assign.ctx.why.readOnly");
-  });
-
-  it("will not merge rows back while another row of the table is assigned or has an unsaved pick", () => {
-    const other = makeUnit(13, { kind: "table_row", table_id: 4, row_index: 1, lang: "none" as ViewUnit["lang"] });
-    const base = { target: row, table: row, tableRows: [row, other] };
-
-    expect(find(ctx(base), "table_merge").enabled).toBe(true);
-    expect(find(ctx({ ...base, isDecided: (unit) => unit.id === 13 }), "table_merge").reasonKey).toBe("assign.ctx.why.rowAssigned");
-    expect(find(ctx({ ...base, hasDraft: (unit) => unit.id === 13 }), "table_merge").reasonKey).toBe("assign.ctx.why.rowUnsaved");
   });
 });
 
@@ -193,7 +182,7 @@ describe("captions from the Assign menu", () => {
 
   it("offers to attach the sentence above as caption of a table", () => {
     const menu = buildAssignMenu(ctx({ target: table, table, prev: sentence, next: null }));
-    expect(menu.edit.map((item) => item.action)).toEqual(["table_rows", "table_layout", "caption_attach_prev"]);
+    expect(menu.edit.map((item) => item.action)).toEqual(["table_layout", "caption_attach_prev"]);
   });
 
   it("gives a figure the bundle menu, not the sentence menu", () => {
@@ -272,7 +261,7 @@ describe("captions from the Assign menu", () => {
 
   it("shows the caption tools as Shape buttons - a table's caption attach moves to its caption slot (F12)", () => {
     expect(listShapeLineItems(caption, buildAssignMenu(ctx({ target: caption })).edit, false).map((item) => item.action)).toEqual(["split", "caption_detach"]);
-    expect(listShapeLineItems(table, buildAssignMenu(ctx({ target: table, table, prev: sentence, next: null })).edit, false).map((item) => item.action)).toEqual(["table_rows", "table_layout"]);
+    expect(listShapeLineItems(table, buildAssignMenu(ctx({ target: table, table, prev: sentence, next: null })).edit, false).map((item) => item.action)).toEqual(["table_layout"]);
   });
 });
 
