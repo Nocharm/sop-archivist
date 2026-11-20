@@ -135,8 +135,6 @@ export interface NewComposedView {
   strips: ComposedStrips;
   /** 고른 Old 줄에서 온 박스 - 고름 테두리, 손잡이는 이 박스에만 */
   selectedIds: ReadonlySet<number>;
-  /** 박스를 누름 - 그 줄을 낸 Old 줄을 고른다(글은 결정 칸의 New 글 칸에서 고친다, 템플릿 보기와 같은 길) */
-  onPickLine?: (targetId: number) => void;
   /** 순서 · 칸 옮기기 · 번호 표시 - 고칠 수 없으면 null(번호 칸은 읽기만, 손잡이 없음) */
   order: NewComposedOrder | null;
 }
@@ -473,7 +471,6 @@ export function NewPane(props: NewPaneProps) {
     // 엮은 문서 - 고른 Old 줄에서 온 박스는 고름 테두리(시안 1), 그 박스 왼쪽에 손잡이(저장이 날아가는 박스는 잠금)
     const isSelected = isOwnNumber && (composed?.selectedIds.has(row.target_id) ?? false);
     const isPending = isOwnNumber && (order?.pendingIds.has(row.target_id) ?? false);
-    const pickLine = isOwnNumber ? composed?.onPickLine : undefined;
     return (
       <>
         {!isSectionStart && previous?.kind === "sentence" && <div className="new-gap" data-pair={cardTops.has(row.target_id) ? "" : undefined} />}
@@ -527,11 +524,6 @@ export function NewPane(props: NewPaneProps) {
                 </button>
               ) : props.place?.aiLines.get(row.target_id) === "mine" ? (
                 <button type="button" className="new-hit" data-testid={`assign-new-ai-pick-${row.target_id}`} onClick={() => props.place?.onPickAi(row.target_id)}>
-                  {text}
-                </button>
-              ) : pickLine && props.place?.aiLines.get(row.target_id) !== "other" ? (
-                // 엮은 문서의 박스 고르기 - 그 줄을 낸 Old 줄을 고른다(템플릿 보기의 줄 누르기와 같은 길)
-                <button type="button" className="new-hit" aria-pressed={isSelected} data-testid={`assign-new-line-${row.target_id}`} onClick={() => pickLine(row.target_id)}>
                   {text}
                 </button>
               ) : (

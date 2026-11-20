@@ -314,11 +314,6 @@ export default function AssignPage() {
     const edits: CEdit[] = [...(choice.depth === null ? [] : [{ kind: "indent" as const, targetId, depth: choice.depth }]), { kind: "style", targetId, style: choice.style }];
     composedOrder.apply(edits);
   }
-  /** 엮은 문서 기본 보기의 박스 누르기 - 템플릿 보기의 줄 누르기와 같은 길(그 줄을 낸 Old 줄을 고른다) */
-  function pickComposedLine(targetId: number) {
-    const item = shownComposed?.sections.flatMap((section) => section.items).find((candidate) => candidate.target_id === targetId);
-    if (item) pickTemplateLine(item);
-  }
   // 클릭 배치의 자리 보기(MD 2 S3) - 기본 보기와 템플릿 보기가 같은 보기를 쓴다(두 절반의 같은 자리는 같은 보기라 함께 골라진 모양이 된다)
   let newPlace: NewPlaceSpots | null = null;
   const placeBySection = new Map<string, PlaceSpotView>();
@@ -727,7 +722,6 @@ export default function AssignPage() {
                         ? {
                             strips: composedStrips,
                             selectedIds: templateSelected,
-                            onPickLine: pickComposedLine,
                             order:
                               canEdit && shownComposed
                                 ? {
