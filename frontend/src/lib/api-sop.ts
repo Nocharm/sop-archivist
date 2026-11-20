@@ -437,6 +437,8 @@ export interface ViewUnit {
   caption_figure_id?: number | null;
   /** 짝 카드 안 순서(lib/pair-order-model orderPairCard) - 편집 reorder_pair가 매긴다. 바꾼 적 없으면 null(원문 순서) */
   pair_seq?: number | null;
+  /** 벗긴 표 덩이 안 줄 순서(lib/unwrap-order-model orderUnwrapped) - 편집 reorder_unwrapped가 매기고 다시 표로가 비운다. 없으면 원문 앞 줄의 값을 빌린다 */
+  unwrap_seq?: number | null;
 }
 
 /** 표·그림 참조 하나 - number가 null이면 위치 참조("아래 표"), target_unit_id는 이은 표·그림 묶음 단위(못 찾으면 null) */
@@ -523,7 +525,9 @@ export type EditOp =
    *  참이면 바꾼 문장은 그 조항 줄 전체가 제목 하나로 돌아가고, 보통 문장은 그 문장이 제목이 된다. 한/영 짝은 새 단위로 다시 선다 */
   | { type: "set_heading"; unit_ids: number[]; heading: boolean }
   /** 짝 카드 안 순서(설계 2026-11-20-assign-mockup1 D8) - 그 짝의 구성원 전부를 새 순서로. 끊김 없이 이어진 카드만(pair_not_adjacent), 배정이 걸리면 409 */
-  | { type: "reorder_pair"; pair_id: number; unit_ids: number[] };
+  | { type: "reorder_pair"; pair_id: number; unit_ids: number[] }
+  /** 벗긴 표 덩이 안 줄 순서(설계 2026-11-20-assign-mockup2 D2) - 그 덩이의 줄 전부를 새 순서로(짝 카드 구성원은 붙여서). 판단이 걸린 줄도 받는다 */
+  | { type: "reorder_unwrapped"; table_id: number; unit_ids: number[] };
 
 export interface EditResult {
   document_revision: number;

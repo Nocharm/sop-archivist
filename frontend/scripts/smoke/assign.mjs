@@ -4330,6 +4330,123 @@ await runStep("assign: unwrap table - ↺ Back to table asks once when a line is
   check("the original table line is back", (await waitView((view) => !isLayout(view) && view.units.some((item) => item.id === unit.id && item.status === "unassigned"))) !== null);
 });
 
+// 벗긴 표 줄 순서(설계 2026-11-20-assign-mockup2 D2) - 벗긴 표의 줄을 고르면 왼쪽에 점 여섯 손잡이, 끌어 덩이 첫 줄 위에 놓으면 편집 reorder_unwrapped로
+// 순서가 바뀌고 용지 · 문단 Excel이 따른다(지금 문단 Excel은 칸 줄을 표 행으로 묶어 그 행의 차례만 바뀐다 - 열 꼴은 보지 않고 글로 줄 차례만 본다).
+// Undo가 순서를 되돌리고, 한 번 더 Undo가 벗기기를 되돌려 시드 묶음을 처음 그대로 둔다
+await runStep("assign: unwrap table - the grip moves a line to the top, Undo puts it back, the paragraph Excel follows", {}, async ({ page }) => {
+  const headers = { "X-Dev-User": "qa.member" };
+  const api = `${BASE}/api/bundles/${halfBundleId}`;
+  const docs = await (await page.request.get(`${api}/documents`, { headers })).json();
+  const readView = async (docId) => (await page.request.get(`${api}/documents/${docId}/view`, { headers })).json();
+  await page.goto(`${BASE}/bundles/${halfBundleId}/assign`);
+  await wait(page, "assign-bar");
+  const { doc, unit } = await findTableOnScreen(page, readView, docs);
+  check("the bundle has an unassigned table on screen", unit !== null);
+  if (unit === null) return;
+  const isLayout = (view) => view.tables.find((table) => table.id === unit.table_id)?.is_layout === true;
+  const waitView = async (isDone) => {
+    for (let tries = 0; tries < 60; tries += 1) {
+      const view = await readView(doc.id);
+      if (isDone(view)) return view;
+      await page.waitForTimeout(250);
+    }
+    return null;
+  };
+  const sourceOrder = (one, two) => one.pos_seq - two.pos_seq || (one.spans[0]?.[1] ?? 0) - (two.spans[0]?.[1] ?? 0) || one.id - two.id;
+  const pieceOf = (id) => page.locator(`[data-testid="assign-paper-piece-${id}"]`);
+  const isBefore = (one, two) => page.waitForFunction(([first, second]) => {
+    const a = document.querySelector(`[data-testid="assign-paper-piece-${first}"]`);
+    const b = document.querySelector(`[data-testid="assign-paper-piece-${second}"]`);
+    return a !== null && b !== null && (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
+  }, [one, two], { timeout: T }).then(() => true, () => false);
+  const isEditCall = (pattern) => (response) => response.request().method() === "POST" && pattern.test(new URL(response.url()).pathname);
+  // 문단 Excel의 줄마다 칸 글을 이은 글 - 받은 파일을 backend의 openpyxl로 읽는다(열 꼴은 다음 스텝이 바꾼다)
+  const backend = resolve(SCRIPT_DIR, "../../../backend");
+  const python = process.env.BACKEND_PYTHON || [".venv/bin/python", ".venv/Scripts/python.exe"].map((path) => resolve(backend, path)).find(existsSync);
+  const readParagraphRows = async () => {
+    const response = await page.request.get(`${api}/documents/${doc.id}/paragraphs.xlsx`, { headers });
+    const code = "import io, json, sys; from openpyxl import load_workbook; ws = load_workbook(io.BytesIO(sys.stdin.buffer.read())).worksheets[0]; print(json.dumps(['\\t'.join(str(v) for v in row if v is not None) for row in ws.iter_rows(values_only=True)], ensure_ascii=False))";
+    return response.ok() ? JSON.parse(String(execFileSync(python, ["-I", "-c", code], { cwd: backend, input: await response.body() }))) : [];
+  };
+  // 그 줄 글이 칸 문단 하나와 꼭 같은 줄을 먼저 찾고(짧은 칸 글이 앞 본문에 섞여 있어도), 없으면 글이 든 줄(한 문단을 나눈 문장)
+  const firstRowWith = (rows, text) => {
+    const exact = rows.findIndex((row) => row.split(/[\t\n]/).includes(text));
+    return exact >= 0 ? exact : rows.findIndex((row) => row.includes(text));
+  };
+
+  // 벗기기는 화면에서(Shape의 Unwrap table) - 앞 단계가 본 길
+  const piece = pieceOf(unit.id);
+  await piece.scrollIntoViewIfNeeded();
+  await piece.click();
+  await wait(page, `assign-shape-table_layout-${unit.id}`);
+  await page.locator(`[data-testid="assign-shape-table_layout-${unit.id}"]`).click();
+  const unwrapped = await waitView(isLayout);
+  check("the table is unwrapped first", unwrapped !== null);
+  if (unwrapped === null) return;
+  await piece.waitFor({ state: "detached", timeout: T });
+  await waitForOldMotion(page);
+  await page.waitForLoadState("networkidle");
+  // 덩이 첫 칸 줄과, 다른 행의 짝 없는 줄 가운데 가장 가까운 것 - 둘은 문단 Excel에서도 다른 줄(표 행)이다
+  const lines = unwrapped.units.filter((item) => item.kind === "cell_sentence" && item.table_id === unit.table_id && item.group_unit_id === null).sort(sourceOrder);
+  const top = lines[0];
+  const moved = lines.find((item) => item.pair_id === null && item.row_index !== top?.row_index);
+  check("the unwrapped table has a line in another row to move", top !== undefined && moved !== undefined, String(lines.length));
+  if (top === undefined || moved === undefined) return;
+  const excelBefore = await readParagraphRows();
+  check("the paragraph Excel lists the first line's row before the moved line's row", firstRowWith(excelBefore, top.text) >= 0 && firstRowWith(excelBefore, top.text) < firstRowWith(excelBefore, moved.text), JSON.stringify(excelBefore.slice(0, 8)));
+
+  // 줄을 고르면 그 박스 왼쪽에 손잡이 - 짝 카드 손잡이와 같은 모양(.strip-grip)
+  await pieceOf(moved.id).evaluate((el) => el.scrollIntoView({ block: "center" }));
+  await pieceOf(moved.id).click();
+  const grip = page.locator(`[data-testid="assign-paper-unwrap-grip-${moved.id}"]`);
+  await grip.waitFor({ timeout: T });
+  check("the picked line has the six-dot grip, the first line has none", (await grip.getAttribute("class")) === "strip-grip" && (await page.locator(`[data-testid="assign-paper-unwrap-grip-${top.id}"]`).count()) === 0);
+
+  // 손잡이를 첫 줄 위쪽으로 끈다 - 상태 글은 벗긴 표 안 옮기기, 끝은 "→ order", 놓일 자리 선
+  const from = await grip.boundingBox();
+  const to = await pieceOf(top.id).boundingBox();
+  await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2 - 10, { steps: 5 });
+  await page.mouse.move(from.x + from.width / 2, to.y + 3, { steps: 12 });
+  await page.waitForTimeout(100);
+  const during = await page.evaluate(() => ({
+    note: document.querySelector('[data-testid="drag-status"]')?.textContent ?? "",
+    dest: document.querySelector('[data-testid="drag-card"] .drag-card-dest')?.textContent ?? "",
+    line: !(document.querySelector('[data-testid="drop-line"]')?.hidden ?? true),
+  }));
+  check("dragging the grip says Move inside the unwrapped table, → order, with a drop line", during.note === "Move inside the unwrapped table" && during.dest === "→ order" && during.line, JSON.stringify(during));
+  const edited = page.waitForResponse(isEditCall(/\/documents\/\d+\/edits$/), { timeout: T });
+  await page.mouse.up();
+  const response = await edited;
+  const op = JSON.parse(response.request().postData()).op;
+  const ids = op.unit_ids ?? [];
+  check("the drop sends reorder_unwrapped with every line once and the moved line before the first (200)", response.status() === 200 && op.type === "reorder_unwrapped" && op.table_id === unit.table_id && new Set(ids).size === ids.length && lines.every((item) => ids.includes(item.id)) && ids.indexOf(moved.id) < ids.indexOf(top.id), `${response.status()} ${JSON.stringify(op)}`);
+  await page.waitForLoadState("networkidle");
+  check("the paper shows the moved line above the first line", await isBefore(moved.id, top.id));
+  const after = await readView(doc.id);
+  const seqOf = (view, item) => view.units.find((entry) => entry.id === item.id)?.unwrap_seq ?? null;
+  check("the view API keeps the new order", seqOf(after, moved) === ids.indexOf(moved.id) && seqOf(after, top) === ids.indexOf(top.id), JSON.stringify([seqOf(after, moved), seqOf(after, top)]));
+  const excelAfter = await readParagraphRows();
+  check("the paragraph Excel follows - the moved line's row comes first", firstRowWith(excelAfter, moved.text) >= 0 && firstRowWith(excelAfter, moved.text) < firstRowWith(excelAfter, top.text), JSON.stringify(excelAfter.slice(0, 8)));
+
+  // Undo가 원문 순서로 되돌린다 - unwrap_seq가 비고 문단 Excel도 처음 차례
+  const undone = page.waitForResponse(isEditCall(/\/decisions\/undo$/), { timeout: T });
+  await page.locator('[data-testid="assign-undo"]:not([disabled])').click();
+  check("Undo answers 200", (await undone).status() === 200);
+  await page.waitForLoadState("networkidle");
+  check("after Undo the first line is on top again", await isBefore(top.id, moved.id));
+  const back = await readView(doc.id);
+  check("after Undo the view API has no line order", lines.every((item) => seqOf(back, item) === null));
+  const excelBack = await readParagraphRows();
+  check("after Undo the paragraph Excel has the first line's row first again", firstRowWith(excelBack, top.text) >= 0 && firstRowWith(excelBack, top.text) < firstRowWith(excelBack, moved.text));
+
+  // 한 번 더 Undo면 벗기기도 돌아가 처음 표 한 줄이다(시드 묶음을 처음 그대로 둔다)
+  await page.locator('[data-testid="assign-undo"]:not([disabled])').click();
+  check("a second Undo wraps the table back into one line", (await waitView((view) => !isLayout(view) && view.units.some((item) => item.id === unit.id))) !== null);
+  await page.locator(`[data-testid="assign-paper-unwrap-head-${unit.table_id}"]`).waitFor({ state: "detached", timeout: T });
+});
+
 await runStep("assign: counterpart table - each table unwraps on its own with no dialog, unwrapping both pairs rows, Undo drops the pairs", {}, async ({ page, takeShot }) => {
   const headers = { "X-Dev-User": "qa.member" };
   const bundles = await (await page.request.get(`${BASE}/api/bundles`, { headers })).json();

@@ -34,7 +34,7 @@ import { getPairHint, type PairHintUnit } from "@/lib/pair-hint-model";
 import { orderPairRuns } from "@/lib/pair-order-model";
 import { readDeletedLine, type DeletedFold, type DeletedLine } from "@/lib/deleted-fold-model";
 import { buildTocBlock, shouldJoinTocCard } from "@/lib/toc-block-model";
-import { findUnwrapHeads, getRowUnwrapTable } from "@/lib/unwrap-model";
+import { findUnwrapHeads, getRowUnwrapTable, orderUnwrappedRows } from "@/lib/unwrap-model";
 
 /** 조각 끝 표시 - 단위의 것(UnitMark)에 그 조각이 놓인 블록의 경고를 더한다 */
 type PaperMark = UnitMark | "warn";
@@ -351,10 +351,10 @@ export function Paper({
           { edge: null, items: model.body },
           { edge: "bottom", items: model.footer },
         ];
-    // 이어 붙은 짝 카드 안은 사람이 바꾼 순서(pair_seq)로 - 떨어진 구성원은 제자리(lib/pair-order-model)
+    // 벗긴 표 덩이 안은 사람이 바꾼 순서(unwrap_seq, lib/unwrap-model) 뒤에, 이어 붙은 짝 카드 안은 사람이 바꾼 순서(pair_seq)로 - 떨어진 구성원은 제자리(lib/pair-order-model)
     return lists.filter((list) => list.items.length > 0).map((list) => ({
       edge: list.edge,
-      rows: orderPairRuns(foldCaptionRows(buildRows(list.items, model.segments), model.units), (row) => model.units.get(readRowUnitId(row) ?? -1)),
+      rows: orderPairRuns(orderUnwrappedRows(foldCaptionRows(buildRows(list.items, model.segments), model.units), model), (row) => model.units.get(readRowUnitId(row) ?? -1)),
     }));
   }, [hasStrips, items, model]);
   // 짝 - 단위 → 같은 짝의 다른 구성원(원문 순서, 떨어진 구성원 포함). 한 카드는 아래 brackets가 정한다(같은 쪽·같은 부분의 끊김 없는 줄만)
@@ -687,6 +687,21 @@ export function Paper({
     if (cardSize !== (matesOf.get(unit.id)?.length ?? 0) + 1) return null;
     return (
       <span className="strip-grip" data-drag-handle="" data-grip-unit={unit.id} data-tip={t("paper.pairGrip.tip")} data-testid={`${testId}-grip-${unit.id}`}>
+        <GripVertical aria-hidden="true" />
+      </span>
+    );
+  }
+
+  /** 고른 박스의 벗긴 표 덩이 안 순서 손잡이(시안 2 D2) - 짝 카드 손잡이와 같은 모양 · 자리. 덩이 안에서는 이것이 먼저다(카드는 구성원이 함께
+   *  움직인다). 손잡이 끌기는 화면이 붙인다 - 손잡이를 받는 화면(pairGrip이 있다)에서 벗긴 표를 고칠 수 있을 때(다시 표로와 같은 조건)만,
+   *  덩이에 줄이 둘 이상일 때만. 배정이 걸린 줄도 그린다(순서는 판단을 바꾸지 않는다) */
+  function renderUnwrapGrip(unit: ViewUnit): ReactNode {
+    const tableId = model.unwrapLines.get(unit.id);
+    const unwrap = strips?.unwrap;
+    if (tableId === undefined || !strips?.pairGrip || !unwrap?.canRewrap || unwrap.busy || unit.id !== selectedId || isLocked(unit.id)) return null;
+    if ([...model.unwrapLines.values()].filter((id) => id === tableId).length < 2) return null;
+    return (
+      <span className="strip-grip" data-drag-handle="" data-unwrap-grip-unit={unit.id} data-tip={t("paper.unwrapGrip.tip")} data-testid={`${testId}-unwrap-grip-${unit.id}`}>
         <GripVertical aria-hidden="true" />
       </span>
     );
@@ -1123,7 +1138,7 @@ export function Paper({
           data-pending={readPendingMark(unitId)}
           data-testid={`${testId}-piece-${unitId ?? row.key}`}
         >
-          {unit !== undefined && renderPairGrip(unit)}
+          {unit !== undefined && (renderUnwrapGrip(unit) ?? renderPairGrip(unit))}
           {/* 표·그림의 보류 칩 - 표 위 제 줄(data-start 밖)이라 표를 덮지 않고, 눌러도 조각 상자를 누른 것으로 그 단위를 고른다 */}
           {row.type !== "piece" && isHold && (
             <div className="strip-hold">

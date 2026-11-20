@@ -10,6 +10,7 @@ import { buildBlockPlaces, CAPTION_REACH } from "./caption-slot-model";
 import { MAX_NUMBER_CHARS, planFollow } from "./number-model";
 import cases from "./rule-cases.json";
 import { BULLET_SYMBOLS, getSectionDepths, MAX_BULLET_LEVEL, MAX_INDENT_LEVEL, NUMBER_STYLES, numberLines } from "./section-number";
+import { orderUnwrapped, orderUnwrappedLines } from "./unwrap-order-model";
 
 const toRecord = (map: ReadonlyMap<number, unknown>) => Object.fromEntries([...map].sort(([a], [b]) => a - b).map(([k, v]) => [String(k), v]));
 
@@ -43,5 +44,15 @@ describe("rule cases shared with the backend", () => {
   it.each(cases.block_places.map((c, i) => ({ ...c, i })))("buildBlockPlaces case $i matches caption_slot.build_block_places", ({ blocks, tables, places }) => {
     // JSON widens `kind` to string; the backend wrote only real block kinds.
     expect(toRecord(buildBlockPlaces(blocks as Parameters<typeof buildBlockPlaces>[0], tables))).toEqual(places);
+  });
+
+  it.each(cases.unwrap_order.map((c, i) => ({ ...c, i })))("orderUnwrapped case $i matches unwrap_order.order_unwrapped", ({ lines, order }) => {
+    expect(orderUnwrapped(lines, (line) => line.seq, (line) => line.pos).map((line) => line.id)).toEqual(order);
+  });
+
+  it.each(cases.unwrap_lines.map((c, i) => ({ ...c, i })))("orderUnwrappedLines case $i matches unwrap_order.order_unwrapped_lines", ({ items, seqs, order }) => {
+    const blocks = new Map(items.map((item) => [item.line, item.block]));
+    const seqOf = (line: number) => (seqs as Record<string, number | undefined>)[String(line)];
+    expect(orderUnwrappedLines(items, (item) => item.line, (line) => blocks.get(line) ?? null, seqOf).map((item) => item.id)).toEqual(order);
   });
 });

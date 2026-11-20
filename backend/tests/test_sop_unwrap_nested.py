@@ -234,3 +234,37 @@ def _get_output_a(client: TestClient, bundle_id: int, lang: str) -> list[dict]:
     response = client.get(f"/api/bundles/{bundle_id}/outputs/a", params={"lang": lang}, headers=AUTHOR)
     assert response.status_code == 200, response.text
     return response.json()
+
+
+def _reorder(client: TestClient, bundle_id: int, doc_id: int, table_index: int, unit_ids: list[int]) -> httpx2.Response:
+    view = get_view(client, bundle_id, doc_id)
+    body = {
+        "revision": view["document"]["revision"],
+        "op": {"type": "reorder_unwrapped", "table_id": view["tables"][table_index]["id"], "unit_ids": unit_ids},
+    }
+    return client.post(f"/api/bundles/{bundle_id}/documents/{doc_id}/edits", json=body, headers=AUTHOR)
+
+
+def test_an_unwrapped_block_holds_its_band_heading_and_inner_tables_but_not_an_unwrapped_inner_table(client: TestClient) -> None:
+    # 덩이(설계 2026-11-20-assign-mockup2 D2) = 칸 줄 + 아직 표인 안쪽 표(표 단위) + 안쪽 띠 표의 제목 줄. 벗긴 안쪽 표의 줄은 제 덩이다
+    bundle_id, _, doc_id = _setup(client)
+    _unwrap(client, bundle_id, doc_id, 0)
+    _unwrap(client, bundle_id, doc_id, 3)
+    _unwrap(client, bundle_id, doc_id, 5)
+    view = get_view(client, bundle_id, doc_id)
+    first = [find_unit(view, f"7.1\n{DAILY}")["id"], *(find_unit(view, text)["id"] for text in ["점검 항목", *CHECK, "기준", LIMIT_BEFORE]),
+             _table_unit(view, 2)["id"], find_unit(view, LIMIT_AFTER)["id"]]
+    second = [find_unit(view, text)["id"] for text in [f"7.2\n{ACCESS}", "권한 부여", GRANT, "권한 표"]]
+
+    refused = [_reorder(client, bundle_id, doc_id, index, [lines[0]]) for index, lines in ((0, first), (3, second))]
+
+    assert [response.json()["detail"]["code"] for response in refused] == ["unwrap_lines_mismatch"] * 2
+    assert [sorted(response.json()["detail"]["unit_ids"]) for response in refused] == [sorted(first), sorted(second)]
+
+    # 안쪽 값 표를 맨 위로 — 표 단위 하나가 한 줄로 움직인다
+    value_table = _table_unit(view, 2)["id"]
+    moved = [value_table, *(unit_id for unit_id in refused[0].json()["detail"]["unit_ids"] if unit_id != value_table)]
+    response = _reorder(client, bundle_id, doc_id, 0, moved)
+
+    assert response.status_code == 200, response.text
+    assert next(unit for unit in get_view(client, bundle_id, doc_id)["units"] if unit["id"] == value_table)["unwrap_seq"] == 0

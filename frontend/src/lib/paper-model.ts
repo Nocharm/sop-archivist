@@ -1,6 +1,7 @@
 // 원문 용지 모델 - 문서 보기(blocks·units)를 용지에 그릴 순서와 블록 안 조각으로 편다. 순수 함수라 쪼개기·분류 화면이 같이 쓰고 단위 테스트한다.
 
 import type { DocumentView, PartRef, UnitSpan, ViewBlock, ViewTable, ViewUnit } from "./api-sop";
+import { findLineTable, orderUnwrappedLines } from "./unwrap-order-model";
 
 /** 블록 안 글자 조각 - 단위에 속하면 unitId, 단위 사이 빈 글자면 null */
 export interface Segment {
@@ -30,7 +31,7 @@ export interface PaperModel {
   groups: PaperGroup[];
   segments: Map<number, Segment[]>;
   units: Map<number, ViewUnit>;
-  /** J/K가 따라가는 순서 - 원문 순 */
+  /** J/K가 따라가는 순서 - 원문 순(벗긴 표 덩이 안은 사람이 바꾼 순서, lib/unwrap-order-model) */
   order: number[];
   /** 단위가 번호 범위를 갖는 추출이다 - 번호 칸이 그 줄의 번호를 보인다. 거짓이면(옛 추출) 절 첫 줄의 절 번호만 보인다 */
   hasNumberRanges: boolean;
@@ -38,6 +39,8 @@ export interface PaperModel {
   unwrapped: ReadonlyMap<number, ViewTable>;
   /** 모든 원문 표 - 안쪽 표의 바깥 표(parent_table_id)를 따라 올라갈 때 쓴다(F2) */
   tables: ReadonlyMap<number, ViewTable>;
+  /** 벗긴 표 덩이의 줄 - 묶이지 않은 단위 → 그 덩이(벗긴 표 id). 띠 표 제목 줄 · 아직 표인 안쪽 표도 든다(손잡이 끌기 · 순서, 시안 2 D2) */
+  unwrapLines: ReadonlyMap<number, number>;
 }
 
 const TOP_PARTS = new Set(["header"]);
@@ -131,10 +134,36 @@ export function buildPaperModel(view: DocumentView): PaperModel {
     return rank.get(blockId)?.findLast((entry) => entry.start <= start)?.rank ?? 0;
   };
   const unitRank = new Map(view.units.map((unit) => [unit.id, readRank(unit)]));
-  const order = [...view.units]
+  const sourceOrder = [...view.units]
     .sort((a, b) => (unitRank.get(a.id) ?? 0) - (unitRank.get(b.id) ?? 0) || a.pos_seq - b.pos_seq || (a.spans[0]?.[1] ?? 0) - (b.spans[0]?.[1] ?? 0) || a.id - b.id)
     .map((unit) => unit.id);
-  return { header, body, footer, groups: [...groups.values()], segments, units, order, hasNumberRanges: view.has_number_ranges, unwrapped, tables };
+  // 벗긴 표 덩이 안은 사람이 바꾼 순서 - 묶인 단위(표의 칸 문장 · 캡션)는 제 묶음 줄을 따라간다(용지 줄 차례와 같다, unwrap-model orderUnwrappedRows)
+  const unwrapLines = buildUnwrapLines(view, tables, unwrapped);
+  const order = orderUnwrappedLines(
+    sourceOrder,
+    (id) => {
+      const unit = units.get(id);
+      return unit ? (unit.group_unit_id ?? unit.id) : null;
+    },
+    (line) => unwrapLines.get(line) ?? null,
+    (line) => units.get(line)?.unwrap_seq,
+  );
+  return { header, body, footer, groups: [...groups.values()], segments, units, order, hasNumberRanges: view.has_number_ranges, unwrapped, tables, unwrapLines };
+}
+
+/** 묶이지 않은 단위 → 그 단위가 줄로 드는 벗긴 표 덩이(lib/unwrap-order-model findLineTable - 서버 unwrap_order.find_line_table과 같다) */
+function buildUnwrapLines(view: DocumentView, tables: ReadonlyMap<number, ViewTable>, unwrapped: ReadonlyMap<number, ViewTable>): Map<number, number> {
+  const lines = new Map<number, number>();
+  if (unwrapped.size === 0) return lines;
+  const shapes = new Map([...tables.values()].map((table) => [table.id, { parentId: table.parent_table_id, isUnwrapped: unwrapped.has(table.id) }]));
+  const tableOfBlock = new Map(view.blocks.map((block) => [block.id, block.table_id]));
+  for (const unit of view.units) {
+    if (unit.group_unit_id !== null) continue;
+    // 범위가 없는 단위(표 · 그림)는 제 블록(block_id)이 자리다
+    const tableId = findLineTable(unit.kind, unit.table_id, tableOfBlock.get(unit.spans[0]?.[0] ?? unit.block_id) ?? null, shapes);
+    if (tableId !== null) lines.set(unit.id, tableId);
+  }
+  return lines;
 }
 
 /** 용지에 놓을 블록 조각 하나 - 블록 글의 [start, end) */

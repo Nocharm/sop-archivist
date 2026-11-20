@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import type { EditOp } from "./api-sop";
 import {
   applyLoaded,
   canStart,
@@ -227,6 +228,11 @@ describe("pending pill (D4)", () => {
     expect(readEditPlace({ type: "split", unit_id: 7, at: 3 })).toEqual({ at: "box", unitId: 7 });
     expect(readEditPlace({ type: "merge", unit_ids: [5, 6] })).toEqual({ at: "box", unitId: 5 });
     expect(readEditPlace({ type: "carve", block_id: 1, start: 0, end: 3 })).toEqual(NO_PLACE);
+  });
+  it("shows Reordering… at the table head for an unwrapped table order (mockup 2 D2)", () => {
+    const op: EditOp = { type: "reorder_unwrapped", table_id: 4, unit_ids: [9, 8] };
+    expect([readEditKind(op), readPendingLabelKey(readEditKind(op))]).toEqual(["reorder", "assign.working.reorder"]);
+    expect(readEditPlace(op)).toEqual({ at: "table", tableId: 4 });
   });
   it("locks a table's units, its inner band table's and the captions grouped under them", () => {
     const units = [
