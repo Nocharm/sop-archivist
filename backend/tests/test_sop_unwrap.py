@@ -1,12 +1,17 @@
 """표 벗기기(MD 1 F1 · F3 · F11의 표 부분) — 풀린 표의 칸 줄, 번호만 든 칸은 같은 행 첫 줄의 번호, 다시 표로(배정 확인), 되돌리기,
-커버리지, 결과물 A 위치와 요약의 "풀린 표에서 온 줄". 자료는 표형 옛 SOP(명세 §7 사례 1)를 본뜬 합성 문서다."""
+커버리지, 결과물 A 위치와 요약의 "풀린 표에서 온 줄", 덩이 안 줄 순서(편집 reorder_unwrapped · units.unwrap_seq).
+자료는 표형 옛 SOP(명세 §7 사례 1)를 본뜬 합성 문서다."""
+
+from io import BytesIO
 
 import httpx2
 import pytest
 from fastapi.testclient import TestClient
+from openpyxl import load_workbook
 
 from app.sop.constants import COVER_KINDS
 from app.sop.coverage import find_coverage_problems
+from app.sop.unwrap_order import order_unwrapped
 from tests.docx_factory import build_docx, make_grid_table, make_row, p
 from tests.sop_helpers import AUTHOR, assign_as_is, create_bundle, find_unit, get_view, put_tobe, upload
 
@@ -214,3 +219,151 @@ def test_a_number_fixed_in_the_table_survives_unwrapping_and_wrapping_again(clie
     assert rewrapped.status_code == 200, rewrapped.text
     _unwrap(client, bundle_id, doc_id, 2)
     assert _table_lines(get_view(client, bundle_id, doc_id), 2)[0]["number"]["value"] == "B"
+
+
+# --- 덩이 안 줄 순서(설계 2026-11-20-assign-mockup2 D2) ---
+
+
+def _reorder(client: TestClient, bundle_id: int, doc_id: int, table_index: int, unit_ids: list[int]) -> httpx2.Response:
+    table_id = get_view(client, bundle_id, doc_id)["tables"][table_index]["id"]
+    return _edit(client, bundle_id, doc_id, {"type": "reorder_unwrapped", "table_id": table_id, "unit_ids": unit_ids})
+
+
+def _shown(view: dict, table_index: int) -> list[str]:
+    """화면이 그리는 작업 표 덩이 줄 차례 — 원문 순서의 칸 줄을 unwrap_seq 규칙으로(안쪽 표가 없는 표)."""
+    lines = _table_lines(view, table_index)
+    ordered = order_unwrapped(
+        lines, lambda unit: unit["unwrap_seq"], lambda unit: (unit["pos_seq"], unit["spans"][0][1], unit["id"])
+    )
+    return [unit["text"] for unit in ordered]
+
+
+def _ids(view: dict, texts: list[str]) -> list[int]:
+    return [find_unit(view, text)["id"] for text in texts]
+
+
+def _paragraph_rows(client: TestClient, bundle_id: int, doc_id: int) -> list[str]:
+    """문단 Excel의 줄마다 칸 글을 이은 글 — 열 꼴과 상관없이 줄 차례만 본다."""
+    response = client.get(f"/api/bundles/{bundle_id}/documents/{doc_id}/paragraphs.xlsx", headers=AUTHOR)
+    assert response.status_code == 200, response.text
+    sheet = load_workbook(BytesIO(response.content)).worksheets[0]
+    return ["\n".join(str(value) for value in row if value is not None) for row in sheet.iter_rows(values_only=True)]
+
+
+def _first_row_with(rows: list[str], text: str) -> int:
+    return next(index for index, row in enumerate(rows) if text in row)
+
+
+WORK_LINES = [*HEADS, "준비", *PREP, "교체", *SWAP]
+
+
+def test_reordering_unwrapped_lines_moves_them_on_the_paper_and_in_the_paragraph_excel(client: TestClient) -> None:
+    bundle_id, _, doc_id = _setup(client)
+    _unwrap(client, bundle_id, doc_id, 0)
+    view = get_view(client, bundle_id, doc_id)
+    assert _shown(view, 0) == WORK_LINES  # 바꾼 적 없으면 원문 순서
+    moved = [SWAP[2], *WORK_LINES[:-1]]
+
+    response = _reorder(client, bundle_id, doc_id, 0, _ids(view, moved))
+
+    assert response.status_code == 200, response.text
+    view = get_view(client, bundle_id, doc_id)
+    assert _shown(view, 0) == moved
+    assert find_unit(view, SWAP[2])["unwrap_seq"] == 0
+    # 문단 Excel의 지금 꼴(칸 줄을 표 행으로 묶음)에서는 옮긴 줄이 든 행이 그 표 행들의 맨 앞이다
+    rows = _paragraph_rows(client, bundle_id, doc_id)
+    assert _first_row_with(rows, SWAP[2]) < _first_row_with(rows, HEADS[0]) < _first_row_with(rows, PREP[0])
+    # 같은 순서는 쓰지 않는다
+    revision = view["document"]["revision"]
+    assert _reorder(client, bundle_id, doc_id, 0, _ids(view, moved)).status_code == 200
+    assert get_view(client, bundle_id, doc_id)["document"]["revision"] == revision
+
+    _step(client, bundle_id, doc_id, "undo")
+
+    view = get_view(client, bundle_id, doc_id)
+    assert _shown(view, 0) == WORK_LINES and {unit["unwrap_seq"] for unit in _table_lines(view, 0)} == {None}
+    rows = _paragraph_rows(client, bundle_id, doc_id)
+    assert _first_row_with(rows, HEADS[0]) < _first_row_with(rows, SWAP[2])
+
+    _step(client, bundle_id, doc_id, "redo")
+
+    assert _shown(get_view(client, bundle_id, doc_id), 0) == moved
+
+
+def test_reorder_rules(client: TestClient) -> None:
+    """그 추출의 표 · 벗긴 보통 표 · 덩이 줄 전부 · 겹침 없음."""
+    bundle_id, _, doc_id = _setup(client)
+    _unwrap(client, bundle_id, doc_id, 0)
+    view = get_view(client, bundle_id, doc_id)
+    ids = _ids(view, WORK_LINES)
+
+    refused = _edit(client, bundle_id, doc_id, {"type": "reorder_unwrapped", "table_id": 999_999, "unit_ids": ids})
+    assert (refused.status_code, refused.json()["detail"]["code"]) == (404, "table_not_found")
+    refused = _reorder(client, bundle_id, doc_id, 1, ids)  # 값 표는 아직 표다
+    assert (refused.status_code, refused.json()["detail"]["code"]) == (422, "table_not_unwrapped")
+    refused = _reorder(client, bundle_id, doc_id, 0, ids[1:])
+    assert (refused.status_code, refused.json()["detail"]["code"]) == (422, "unwrap_lines_mismatch")
+    assert refused.json()["detail"]["unit_ids"] == ids  # 지금 덩이 줄 차례
+    outside = find_unit(view, INTRO)["id"]
+    refused = _reorder(client, bundle_id, doc_id, 0, [*ids[1:], outside])
+    assert (refused.status_code, refused.json()["detail"]["code"]) == (422, "unwrap_lines_mismatch")
+    refused = _reorder(client, bundle_id, doc_id, 0, [*ids, ids[0]])
+    assert (refused.status_code, refused.json()["detail"]["code"]) == (422, "duplicate_units")
+
+
+def test_a_line_with_a_decision_still_reorders_and_keeps_it(client: TestClient) -> None:
+    # 판단은 막지 않는다 — 글 · 출처가 그대로이고 결과물 A는 원문 자리 순이다(설계 확인할 것 4)
+    bundle_id, sop_id, doc_id = _setup(client)
+    _unwrap(client, bundle_id, doc_id, 0)
+    view = get_view(client, bundle_id, doc_id)
+    assign_as_is(client, bundle_id, find_unit(view, PREP[1]), sop_id, slot_key="purpose")
+    before = [row["unit_id"] for row in _get(client, bundle_id, "outputs/a")]
+
+    response = _reorder(client, bundle_id, doc_id, 0, _ids(view, [PREP[1], *[text for text in WORK_LINES if text != PREP[1]]]))
+
+    assert response.status_code == 200, response.text
+    view = get_view(client, bundle_id, doc_id)
+    assert _shown(view, 0)[0] == PREP[1]
+    assert find_unit(view, PREP[1])["status"] == "confirmed"
+    assert [row["unit_id"] for row in _get(client, bundle_id, "outputs/a")] == before
+
+
+def test_back_to_table_clears_the_order_and_undo_brings_it_back(client: TestClient) -> None:
+    bundle_id, _, doc_id = _setup(client)
+    _unwrap(client, bundle_id, doc_id, 0)
+    view = get_view(client, bundle_id, doc_id)
+    moved = [SWAP[2], *WORK_LINES[:-1]]
+    assert _reorder(client, bundle_id, doc_id, 0, _ids(view, moved)).status_code == 200
+
+    assert _set_layout(client, bundle_id, doc_id, 0, False).status_code == 200
+
+    wrapped = get_view(client, bundle_id, doc_id)
+    table_id = wrapped["tables"][0]["id"]
+    cells = [unit for unit in wrapped["units"] if unit["kind"] == "cell_sentence" and unit["table_id"] == table_id]
+    assert cells and {unit["unwrap_seq"] for unit in cells} == {None}
+
+    _step(client, bundle_id, doc_id, "undo")
+
+    assert _shown(get_view(client, bundle_id, doc_id), 0) == moved
+
+    # 다시 표로 묶었다가 다시 벗기면 낡은 순서 없이 원문 순서다
+    _step(client, bundle_id, doc_id, "redo")
+    _unwrap(client, bundle_id, doc_id, 0)
+    assert _shown(get_view(client, bundle_id, doc_id), 0) == WORK_LINES
+
+
+def test_pieces_of_a_split_line_stay_where_the_line_was(client: TestClient) -> None:
+    # 나눈 조각은 값을 물려받지 않고 원문 바로 앞 줄의 값을 빌린다 — 앞 줄(준비) 뒤 그 자리에 원문 순서로 남는다
+    bundle_id, _, doc_id = _setup(client)
+    _unwrap(client, bundle_id, doc_id, 0)
+    view = get_view(client, bundle_id, doc_id)
+    moved = [SWAP[2], *WORK_LINES[:-1]]
+    assert _reorder(client, bundle_id, doc_id, 0, _ids(view, moved)).status_code == 200
+    at = PREP[0].index("보안경")
+
+    split = _edit(client, bundle_id, doc_id, {"type": "split", "unit_id": find_unit(view, PREP[0])["id"], "at": at})
+
+    assert split.status_code == 200, split.text
+    left, right = PREP[0][:at].rstrip(), PREP[0][at:]
+    shown = _shown(get_view(client, bundle_id, doc_id), 0)
+    assert shown == [SWAP[2], *HEADS, "준비", left, right, PREP[1], "교체", SWAP[0], SWAP[1]]

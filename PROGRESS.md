@@ -4,6 +4,8 @@
 
 ## 2026-11-20
 
+- **시안 2 스텝 4 — 벗긴 표 줄 순서를 손잡이로(`feat/mockup2-4-unwrap-order`, 요청서 7번, 설계 D2)** — 벗긴 표의 줄이 행 → 열 차례로 고정이라 열 단위로 읽히는 표를 고칠 길이 없었다. 편집 `reorder_unwrapped`(Alembic `0034` `units.unwrap_seq` · `unit_edits.unwrap_seq_changes`)와 순수 규칙 `unwrap_order.py`(값 없는 줄은 원문 앞 줄 값을 빌림, 프런트 사본 `unwrap-order-model.ts`, 사례 `rule-cases.json`)를 두고 용지 · J/K · 문단 Excel이 따른다(결과물 A는 원문 자리 그대로, 판단은 막지 않음, 다시 표로가 같은 편집에서 비움). 덩이에는 띠 표 제목 줄 · 아직 표인 안쪽 표가 들고(서버 · 프런트 같은 `find_line_table`), 덩이 안에서는 짝 카드 손잡이 대신 이 손잡이가 카드째 옮긴다. 손잡이를 그릴지는 기존 속성(`unwrap.canRewrap` + 손잡이 화면 표시 `pairGrip`)으로 정해 병렬 스텝이 고치는 `page.tsx` · `old-pane.tsx`를 건드리지 않았다.
+
 - **시안 2 스텝 1 — 번호 칸 종류 · 번호 노트(`feat/mockup2-1-number-kind`, 요청서 2번, 설계 `docs/superpowers/specs/2026-11-20-assign-mockup2-design.md` D1)** — 번호 칸이 아무 글이나 받는 상자라 점 기호를 손으로 치고 원문과 다르게 고친 흔적이 안 보였다. 창 맨 위에 종류 단추 줄(연속 번호 · • ○ ▪ · 직접 · 없음)을 두고, 종류는 새 열 없이 값에서 읽는다(`lib/number-kind-model.ts`). 연속 값 세기는 프런트 전용(저장되는 것은 사람이 확인한 글), 점 기호 줄은 앞 숫자 번호보다 한 단계 들여 쓴다. 서버는 `numbering.get_number_note` 하나로 노트를 정하고(`is_number_fixed`도 그 위로) 점 기호는 절 이름을 바꾸지 않는다. 시험은 설계가 적은 `test_sop_numbering.py`(결과물 C 번호) 대신 문단 번호 시험이 사는 `test_sop_numbers.py`에 더했다.
 
 - **시안 2 스텝 2 — 문장 속 그림 자리(`feat/mockup2-2-figure-anchor`, 화면 변화 없음)** — 위치 판(D3)이 그림이 문장 어디에 있었는지 알도록 추출기 7이 문단 · 칸 안 그림 블록에 신호 `inline {"at"}`을 남기고 문서 보기가 `ViewBlockOut.anchor {block_id, at}`로 싣는다. `at`은 앞선 가장 가까운 그림 아닌 블록(같은 문단 블록 · 칸 블록)의 **블록 text**(써 넣은 자동 번호 포함) 안 자리 — 단위 spans · 표 anchor와 같은 좌표라 프런트가 span으로 단위와 caret 자리를 찾는다. 그림만 든 본문 문단은 제 글 블록이 없어 자리를 남기지 않는다(앞 문단 끝으로 적으면 문장 속 그림으로 잘못 그림) — 옛 추출(6까지)과 같이 `anchor = null`, 판은 앞 줄 뒤 선. Alembic 없음(signals JSON).

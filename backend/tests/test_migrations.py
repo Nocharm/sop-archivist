@@ -366,6 +366,8 @@ _UNIT_NUMBER_COLUMNS = {
     "caption_figure_id": "INTEGER",
     # 짝 카드 안 순서(0033)도 그 앞 리비전에서는 잠시 더했다 뺀다
     "pair_seq": "INTEGER",
+    # 벗긴 표 줄 순서(0034)도 그 앞 리비전에서는 잠시 더했다 뺀다
+    "unwrap_seq": "INTEGER",
 }
 
 
@@ -1362,3 +1364,39 @@ def test_0032_folds_tone_and_table_restructured_into_rewritten(tmp_path: pathlib
         assert row.status == "cancelled" and row.finished_at is not None
     assert job_rows[jobs[("match", "done")]].status == "done"
     assert job_rows[jobs[("classify", "queued")]].status == "queued"  # 분류 작업은 그대로 돈다
+
+
+def test_0034_adds_unwrap_order_with_empty_history_and_drops_it_back(tmp_path: pathlib.Path) -> None:
+    # 벗긴 표 줄 순서 — 지난 단위는 원문 순서(NULL), 지난 편집 기록은 순서를 바꾸지 않았다(빈 객체). 내리면 두 열이 빠진다
+    db_path = tmp_path / "unwrap_seq.db"
+    config = _downgrade_to(db_path, "0033")
+    engine = _create_fk_engine(db_path)
+    try:
+        with engine.begin() as conn:
+            ids = _insert_old_bundle(conn)
+            document_id = conn.execute(
+                text("SELECT document_id FROM extractions WHERE id = :e"), {"e": ids["extraction_id"]}
+            ).scalar_one()
+            _insert_values(conn, "unit_edits", {
+                "document_id": document_id, "seq": 1, "op": "split", "payload": "{}", "created_unit_ids": "[]",
+                "retired_unit_ids": "[]", "regrouped": "{}", "lang_changes": "{}", "layout_changes": "{}",
+                "noise_changes": "{}", "figure_changes": "{}", "pair_seq_changes": "{}", "state": "applied",
+                "actor": "qa.member", "created_at": _NOW,
+            })
+
+        command.upgrade(config, "0034")
+
+        with engine.connect() as conn:
+            seqs = conn.execute(text("SELECT unwrap_seq FROM units")).scalars().all()
+            history = conn.execute(text("SELECT unwrap_seq_changes FROM unit_edits")).scalars().all()
+        assert seqs and set(seqs) == {None}
+        assert [json.loads(value) for value in history] == [{}]
+
+        command.downgrade(config, "0033")
+
+        with engine.connect() as conn:
+            unit_columns = {column["name"] for column in inspect(conn).get_columns("units")}
+            edit_columns = {column["name"] for column in inspect(conn).get_columns("unit_edits")}
+        assert "unwrap_seq" not in unit_columns and "unwrap_seq_changes" not in edit_columns
+    finally:
+        engine.dispose()

@@ -14,7 +14,7 @@ export type Focus =
 export const NO_FOCUS: Focus = { kind: "none" };
 
 export type PendingKind =
-  | "join" | "split" | "unmerge" | "unwrap" | "rewrap" | "pair" | "unpair" | "lang" | "heading" | "ref" | "caption" | "toc" | "figure" | "order" | "save" | "undo" | "bulk";
+  | "join" | "split" | "unmerge" | "unwrap" | "rewrap" | "pair" | "unpair" | "lang" | "heading" | "ref" | "caption" | "toc" | "figure" | "order" | "reorder" | "save" | "undo" | "bulk";
 export type PendingPlace = { at: "gap"; firstId: number; secondId: number } | { at: "box"; unitId: number } | { at: "table"; tableId: number } | { at: "none" };
 export const NO_PLACE: PendingPlace = { at: "none" };
 
@@ -202,6 +202,8 @@ export function readPendingLabelKey(kind: PendingKind): string | null {
       return "assign.working.unpair";
     case "lang":
       return "assign.working.lang";
+    case "reorder":
+      return "assign.working.reorder";
     case "heading":
     case "ref":
     case "caption":
@@ -216,9 +218,9 @@ export function readPendingLabelKey(kind: PendingKind): string | null {
   }
 }
 
-/** 원문 편집의 알약 자리 - 표 바꾸기는 표 머리, 그 밖은 가리키는 첫 박스. 틈의 붙이기는 부르는 쪽이 틈을 준다(이웃끼리인지는 화면이 안다) */
+/** 원문 편집의 알약 자리 - 표 바꾸기 · 벗긴 표 줄 순서는 표 머리, 그 밖은 가리키는 첫 박스. 틈의 붙이기는 부르는 쪽이 틈을 준다(이웃끼리인지는 화면이 안다) */
 export function readEditPlace(op: EditOp): PendingPlace {
-  if (op.type === "set_layout_table") return { at: "table", tableId: op.table_id };
+  if (op.type === "set_layout_table" || op.type === "reorder_unwrapped") return { at: "table", tableId: op.table_id };
   const [unitId] = listEditUnitIds(op);
   return unitId === undefined ? NO_PLACE : { at: "box", unitId };
 }
@@ -266,6 +268,8 @@ export function readEditKind(op: EditOp): PendingKind {
       return "toc";
     case "reorder_pair":
       return "order";
+    case "reorder_unwrapped":
+      return "reorder";
   }
 }
 
@@ -278,6 +282,7 @@ export function listEditUnitIds(op: EditOp): number[] {
     case "set_heading":
     case "group_figures":
     case "reorder_pair":
+    case "reorder_unwrapped":
       return [...op.unit_ids];
     case "split":
     case "unmerge":

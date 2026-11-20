@@ -1,5 +1,5 @@
 """쪼개기 편집 — 나누기·합치기·경계 옮기기·골라 만들기·언어 바꾸기·레이아웃 표 바꾸기·캡션 붙이기·떼기·첫 행 ↔ 캡션·
-그림 묶기·풀기·잡음 표시 풀기·번호 고치기·제목 ↔ 문장·짝 카드 안 순서와 서버 쪽
+그림 묶기·풀기·잡음 표시 풀기·번호 고치기·제목 ↔ 문장·짝 카드 안 순서·벗긴 표 줄 순서와 서버 쪽
 선형 되돌리기·다시 하기, 경계 확인 표시 (스펙 §6.4, §7.5).
 
 단위는 제자리에서 바뀌지 않는다: 편집은 옛 단위를 은퇴시키고 새 단위를 만들며, 되돌리기는 은퇴한 단위를 원래 ID로 되살린다.
@@ -7,6 +7,7 @@
 번호 고치기도 제자리다 — 단위의 number_set과 그 번호가 여는 절 이름(블록 section_label)만 바꾸고 기록해 되돌린다(범위·글자는 그대로).
 그림 묶기·풀기도 제자리다 — 그림 단위의 caption_figure_id만 바꾸고(옮기는 캡션은 칸 묶음처럼 regroup) 기록해 되돌린다.
 짝 카드 안 순서도 제자리다 — 구성원의 pair_seq만 바꾸고(pair_order.py) 기록해 되돌린다.
+벗긴 표 덩이 안 줄 순서도 제자리다 — 줄의 unwrap_seq만 바꾸고(unwrap_order.py) 기록해 되돌린다. 다시 표로 묶으면 같은 편집에서 비운다.
 묶음 잠금·문서 revision·작업 중 검사와 커밋은 부르는 쪽(라우터)이 한다.
 """
 
@@ -93,6 +94,7 @@ from app.sop.spans import (
     trim_span,
 )
 from app.sop.tobe import MAX_DB_INT
+from app.sop.unwrap_order import UnwrapTable, find_line_table, order_unwrapped, read_unwrap_tables
 from app.sop.units import (
     LINE_SPLIT_FORMAT,
     UNIT_ACTIVE,
@@ -275,10 +277,20 @@ class ReorderPairOp(BaseModel):
     unit_ids: list[DbId] = Field(min_length=2, max_length=2 * MAX_PAIR_SIDE)
 
 
+class ReorderUnwrappedOp(BaseModel):
+    """벗긴 표 덩이 안 줄 순서 바꾸기(설계 2026-11-20-assign-mockup2 D2) — unit_ids는 그 덩이의 줄 전부(묶이지 않은 활성 단위,
+    unwrap_order.py)를 새 순서로(짝 카드 구성원은 붙여서). 단위 · 범위 · 글 · 판단은 그대로이고 unwrap_seq만 바뀐다."""
+
+    type: Literal["reorder_unwrapped"]
+    table_id: DbId
+    unit_ids: list[DbId] = Field(min_length=1, max_length=MAX_EDIT_UNITS)
+
+
 EditOp = Annotated[
     SplitOp | MergeOp | UnmergeOp | MoveBoundaryOp | CarveOp | SetLanguageOp
     | SetLayoutTableOp | AttachCaptionOp | DetachCaptionOp | SetFirstRowCaptionOp | GroupFiguresOp
-    | UngroupFiguresOp | SetRefOp | ClearRefOp | ClearNoiseOp | SetNumberOp | SetHeadingOp | ReorderPairOp,
+    | UngroupFiguresOp | SetRefOp | ClearRefOp | ClearNoiseOp | SetNumberOp | SetHeadingOp | ReorderPairOp
+    | ReorderUnwrappedOp,
     Field(discriminator="type"),
 ]
 
@@ -383,6 +395,8 @@ class _Change:
     figures: dict[int, tuple[int | None, int | None]] = field(default_factory=dict)
     # 짝 구성원 → (지금 pair_seq, 바꿀 pair_seq) — 제자리에서 바뀐다(짝 카드 안 순서와 그 되돌리기)
     pair_seqs: dict[int, tuple[int | None, int | None]] = field(default_factory=dict)
+    # 덩이의 줄 → (지금 unwrap_seq, 바꿀 unwrap_seq) — 제자리에서 바뀐다(벗긴 표 줄 순서 · 다시 표로의 비우기와 그 되돌리기)
+    unwrap_seqs: dict[int, tuple[int | None, int | None]] = field(default_factory=dict)
     # 제목 ↔ 문장(set_heading)과 그 되돌리기·다시 하기 — 활성이 된 단위로 한/영 코드 짝을 다시 세운다(짝은 기록 밖이다)
     repair_pairs: bool = False
 
@@ -398,7 +412,7 @@ class _Change:
         """
         if (
             self.revive or self.langs or self.layouts or self.noises or self.numbers or self.figures or self.pair_seqs
-            or self.list_regrouped_cells()
+            or self.unwrap_seqs or self.list_regrouped_cells()
         ):
             return False
         drafts = Counter((tuple(draft.spans), draft.kind, draft.group_unit_id) for draft in self.drafts)
@@ -1128,6 +1142,13 @@ async def _plan_set_layout_table(
     for band in inner_tables:
         if is_band_table(band.signals):
             change = _merge_changes(change, await _plan_band_layout(session, document_id, extraction_id, band, op.is_layout))
+    if not op.is_layout:
+        # 다시 표로 묶으면 덩이 줄 순서를 비운다 — 다시 벗겼을 때 낡은 순서가 살아나지 않게(되돌리면 돌아온다). 은퇴하는 줄은 값째 은퇴한다
+        retiring = set(change.retire)
+        lines = await _load_unwrap_lines(session, extraction_id, table.id, await _load_unwrap_tables(session, extraction_id))
+        change.unwrap_seqs = {
+            unit.id: (unit.unwrap_seq, None) for unit in lines if unit.unwrap_seq is not None and unit.id not in retiring
+        }
     return change
 
 
@@ -1507,6 +1528,79 @@ async def _plan_reorder_pair(
     })
 
 
+async def _load_unwrap_tables(session: AsyncSession, extraction_id: ExtractionId) -> dict[int, UnwrapTable]:
+    """추출의 원문 표 — 벗긴 표 덩이를 잰다(unwrap_order.py)."""
+    rows = await session.execute(
+        select(SourceTable.id, SourceTable.parent_table_id, SourceTable.is_layout, SourceTable.signals).where(
+            SourceTable.extraction_id == extraction_id
+        )
+    )
+    return read_unwrap_tables(rows.tuples().all())
+
+
+async def _load_unwrap_lines(
+    session: AsyncSession, extraction_id: ExtractionId, table_id: int, tables: Mapping[int, UnwrapTable]
+) -> list[Unit]:
+    """벗긴 표 하나의 덩이 줄(묶이지 않은 활성 단위, unwrap_order.find_line_table) — 원문 순. 줄의 첫 블록은 그 표나 안쪽 표의 칸이다."""
+    inside = {table_id}
+    grew = True
+    while grew:
+        grew = False
+        for other_id, other in tables.items():
+            if other.parent_id in inside and other_id not in inside:
+                inside.add(other_id)
+                grew = True
+    blocks = (
+        await session.execute(
+            select(SourceBlock.id, SourceBlock.seq, SourceBlock.table_id).where(
+                SourceBlock.extraction_id == extraction_id, SourceBlock.table_id.in_(inside)
+            )
+        )
+    ).tuples().all()
+    if not blocks:
+        return []
+    table_of_block = {block_id: block_table for block_id, _, block_table in blocks}
+    # 범위가 없는 단위(표 · 그림)는 정렬 키 pos_seq가 제 블록의 seq다
+    table_at_seq = {seq: block_table for _, seq, block_table in blocks}
+    seqs = [seq for _, seq, _ in blocks]
+    units = await session.scalars(
+        select(Unit).where(
+            Unit.extraction_id == extraction_id, Unit.status == UNIT_ACTIVE, Unit.group_unit_id.is_(None),
+            Unit.pos_seq >= min(seqs), Unit.pos_seq <= max(seqs),
+        )
+    )
+    lines = [
+        unit for unit in units
+        if find_line_table(
+            unit.kind, unit.table_id,
+            table_of_block.get(unit.spans[0][0]) if unit.spans else table_at_seq.get(unit.pos_seq), tables,
+        ) == table_id
+    ]
+    return sorted(lines, key=_get_position)
+
+
+async def _plan_reorder_unwrapped(session: AsyncSession, extraction_id: ExtractionId, op: ReorderUnwrappedOp) -> _Change:
+    """벗긴 표 덩이 안 줄 순서 — 그 추출의 표가 아니면 404 table_not_found, 벗긴 보통 표가 아니면 422 table_not_unwrapped,
+    unit_ids가 덩이 줄 전부가 아니면 422 unwrap_lines_mismatch(unit_ids = 지금 덩이 줄의 순서). 지금 순서와 같으면 바뀌는 게 없다.
+    판단은 막지 않는다 — 글 · 출처가 그대로이고 순서는 용지 · 문단 Excel만 따른다(reorder_pair와 다른 까닭: 짝 순서는 짝을 한 문장으로
+    합치는 순서를 바꾼다). 덩이의 줄마다 새 순서의 자리(0부터)를 매긴다."""
+    ensure_unique_units(op.unit_ids)
+    table = await _load_table(session, extraction_id, op.table_id)
+    tables = await _load_unwrap_tables(session, extraction_id)
+    if not tables[table.id].is_unwrapped:
+        raise_rule(422, "table_not_unwrapped", table_id=table.id)
+    lines = await _load_unwrap_lines(session, extraction_id, table.id, tables)
+    current_order = [unit.id for unit in order_unwrapped(lines, lambda unit: unit.unwrap_seq, _get_position)]
+    if set(current_order) != set(op.unit_ids):
+        raise_rule(422, "unwrap_lines_mismatch", table_id=table.id, unit_ids=current_order)
+    if current_order == op.unit_ids:
+        return _Change()
+    current = {unit.id: unit.unwrap_seq for unit in lines}
+    return _Change(unwrap_seqs={
+        unit_id: (current[unit_id], index) for index, unit_id in enumerate(op.unit_ids) if current[unit_id] != index
+    })
+
+
 async def _plan(session: AsyncSession, document_id: int, extraction_id: ExtractionId, op: EditOp) -> _Change:
     match op:
         case SplitOp():
@@ -1545,6 +1639,8 @@ async def _plan(session: AsyncSession, document_id: int, extraction_id: Extracti
             return await _plan_set_heading(session, document_id, extraction_id, op)
         case ReorderPairOp():
             return await _plan_reorder_pair(session, document_id, extraction_id, op)
+        case ReorderUnwrappedOp():
+            return await _plan_reorder_unwrapped(session, extraction_id, op)
         case _:
             assert_never(op)
 
@@ -1717,6 +1813,19 @@ async def _set_pair_seqs(session: AsyncSession, pair_seqs: Mapping[int, tuple[in
         raise RuntimeError(f"unit edit history out of sync: {changed} of {len(pair_seqs)} units had the recorded pair order")
 
 
+async def _set_unwrap_seqs(session: AsyncSession, unwrap_seqs: Mapping[int, tuple[int | None, int | None]]) -> None:
+    """벗긴 표 덩이 줄 순서(unwrap_seq)를 바꾼다 — 지금 값이 기록과 다른 단위가 있으면 편집 기록과 어긋난 것이라 RuntimeError(버그 가드)."""
+    changed = 0
+    for unit_id, (old, new) in unwrap_seqs.items():
+        current = Unit.unwrap_seq.is_(None) if old is None else Unit.unwrap_seq == old
+        result = await session.execute(update(Unit).where(Unit.id == unit_id, current).values(unwrap_seq=new))
+        changed += result.rowcount
+    if changed != len(unwrap_seqs):
+        raise RuntimeError(
+            f"unit edit history out of sync: {changed} of {len(unwrap_seqs)} units had the recorded unwrap order"
+        )
+
+
 async def _leave_pairs(session: AsyncSession, unit_ids: Collection[int]) -> None:
     """은퇴하거나 언어가 바뀐 단위는 한/영 짝에서 빠지고, 남은 짝에 한쪽 언어가 없으면 짝을 지운다.
 
@@ -1843,6 +1952,8 @@ async def _write_change(
     await _set_noises(session, change.noises)
     await _set_figures(session, change.figures)
     await _set_pair_seqs(session, change.pair_seqs)
+    # 덩이 줄 순서는 판단을 묻지 않는다 — 글 · 출처가 그대로라 결과물 A가 따르지 않는다(_plan_reorder_unwrapped)
+    await _set_unwrap_seqs(session, change.unwrap_seqs)
     # 다시 목차가 된 단위는 짝을 맺지 않는다(units._find_code_pairs와 같은 규칙)
     await _leave_pairs(session, [*change.retire, *change.langs, *marking])
     await session.flush()
@@ -1900,7 +2011,7 @@ def _record(
     """작업 기록 — 대상은 은퇴한·활성이 된·언어가 바뀐·다시 묶인 단위, 사유 칸에 편집 종류(split 등)."""
     unit_ids = sorted(
         {*result.created_unit_ids, *result.retired_unit_ids, *change.langs, *change.regroup, *change.bundles,
-         *change.noises, *change.numbers, *change.figures, *change.pair_seqs}
+         *change.noises, *change.numbers, *change.figures, *change.pair_seqs, *change.unwrap_seqs}
     )
     record_event(
         session, bundle_id=document.bundle_id, actor=actor, action=action, target_type="unit", target_ids=unit_ids,
@@ -1948,6 +2059,7 @@ async def apply_edit(
             noise_changes={str(unit_id): list(noises) for unit_id, noises in change.noises.items()},
             figure_changes={str(unit_id): list(figures) for unit_id, figures in change.figures.items()},
             pair_seq_changes={str(unit_id): list(seqs) for unit_id, seqs in change.pair_seqs.items()},
+            unwrap_seq_changes={str(unit_id): list(seqs) for unit_id, seqs in change.unwrap_seqs.items()},
             number_changes=_dump_numbers(change), actor=actor,
         )
     )
@@ -2004,6 +2116,10 @@ def _replay(edit: UnitEdit, *, backwards: bool) -> _Change:
         # 0033 전 기록은 빈 객체다(카드 안 순서를 바꾼 편집이 없었다)
         pair_seqs={
             int(unit_id): _orient(seqs, backwards=backwards) for unit_id, seqs in (edit.pair_seq_changes or {}).items()
+        },
+        # 0034 전 기록은 빈 객체다(벗긴 표 줄 순서를 바꾼 편집이 없었다)
+        unwrap_seqs={
+            int(unit_id): _orient(seqs, backwards=backwards) for unit_id, seqs in (edit.unwrap_seq_changes or {}).items()
         },
         repair_pairs=edit.op == "set_heading",
     )

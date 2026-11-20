@@ -4,20 +4,23 @@ Word에서 복사해 Excel에 붙인 것처럼 머리 줄·모양 없이 글만 
 _add_number) 단위 글 그대로다. 본문(body)만 쓴다 — 머리말·꼬리말·각주·글상자는 Old 칸의 다른 탭이다.
 표는 고를 수 있다 — 넣으면 표 한 행이 한 줄, 칸은 옆 열(같은 칸의 문장은 한 칸에)이다.
 이어 붙은 한/영 짝 카드 안은 사람이 바꾼 순서(pair_order.py)를 따른다 — Assign 용지의 카드와 같은 줄 순서다.
+벗긴 표 덩이 안도 사람이 바꾼 순서(unwrap_order.py)를 따른다 — 칸 줄을 표 행으로 묶는 지금 꼴에서는 그 행이 처음 나온 자리가 바뀐다.
 """
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from io import BytesIO
+from typing import Any
 
 from openpyxl import Workbook
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.sop.excel_export import split_cell_text, write_text_cell
-from app.sop.models import Document, SourceBlock, Unit, UnitPairMember
+from app.sop.models import Document, SourceBlock, SourceTable, Unit, UnitPairMember
 from app.sop.pair_order import order_pair_card
 from app.sop.units import UNIT_ACTIVE, get_latest_extraction_id
+from app.sop.unwrap_order import UnwrapTable, find_line_table, order_unwrapped_lines, read_unwrap_tables
 
 FIGURE_MARKER = "[Figure]"  # 결과물 Excel(sheet_model)의 그림 표시와 같은 글
 _SKIPPED_KINDS = ("table",)  # 칸 문장을 묶는 단위 — 자기 글이 없다
@@ -111,17 +114,25 @@ async def load_unit_lines(session: AsyncSession, document: Document) -> list[Uni
     blocks = {
         row.id: row
         for row in await session.execute(
-            select(SourceBlock.id, SourceBlock.seq, SourceBlock.part, SourceBlock.col_index).where(
+            select(SourceBlock.id, SourceBlock.seq, SourceBlock.part, SourceBlock.col_index, SourceBlock.table_id).where(
                 SourceBlock.extraction_id == extraction_id
             )
         )
     }
+    tables = read_unwrap_tables((await session.execute(
+        select(SourceTable.id, SourceTable.parent_table_id, SourceTable.is_layout, SourceTable.signals)
+        .where(SourceTable.extraction_id == extraction_id)
+    )).tuples().all())
+    # 벗긴 표 덩이 순서 뒤에 짝 카드 안 순서 — 용지(paper.tsx)와 같은 차례로 편다
     units = _order_pair_cards(
-        list(await session.scalars(
-            select(Unit)
-            .where(Unit.extraction_id == extraction_id, Unit.status == UNIT_ACTIVE)
-            .order_by(Unit.pos_seq, Unit.pos_start, Unit.id)
-        )),
+        _order_unwrapped(
+            list(await session.scalars(
+                select(Unit)
+                .where(Unit.extraction_id == extraction_id, Unit.status == UNIT_ACTIVE)
+                .order_by(Unit.pos_seq, Unit.pos_start, Unit.id)
+            )),
+            blocks, tables,
+        ),
         dict((await session.execute(
             select(UnitPairMember.unit_id, UnitPairMember.pair_id)
             .join(Unit, Unit.id == UnitPairMember.unit_id)
@@ -140,6 +151,26 @@ async def load_unit_lines(session: AsyncSession, document: Document) -> list[Uni
             table_id=unit.table_id, row_index=unit.row_index, col_index=block.col_index,
         ))
     return lines
+
+
+def _order_unwrapped(units: Sequence[Unit], blocks: Mapping[int, Any], tables: Mapping[int, UnwrapTable]) -> list[Unit]:
+    """벗긴 표 덩이 안만 사람이 바꾼 순서로(unwrap_order.py) — 묶인 단위(표의 칸 문장 · 캡션)는 제 묶음 줄을 따라간다."""
+    by_id = {unit.id: unit for unit in units}
+    block_at = {block.seq: block for block in blocks.values()}
+
+    def find_block(line_id: int) -> int | None:
+        unit = by_id.get(line_id)
+        if unit is None or unit.group_unit_id is not None:
+            return None
+        block = blocks.get(unit.spans[0][0]) if unit.spans else block_at.get(unit.pos_seq)
+        return find_line_table(unit.kind, unit.table_id, None if block is None else block.table_id, tables)
+
+    return order_unwrapped_lines(
+        units,
+        lambda unit: unit.id if unit.group_unit_id is None else unit.group_unit_id,
+        find_block,
+        lambda line_id: by_id[line_id].unwrap_seq,
+    )
 
 
 def _order_pair_cards(units: Sequence[Unit], pair_of: dict[int, int]) -> list[Unit]:

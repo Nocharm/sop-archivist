@@ -328,6 +328,8 @@ class ViewUnitOut(BaseModel):
     caption_figure_id: int | None = None
     # 짝 카드 안 순서(pair_order.py, 편집 reorder_pair) — 바꾼 적 없으면 null(원문 순서)
     pair_seq: int | None = None
+    # 벗긴 표 덩이 안 줄 순서(unwrap_order.py, 편집 reorder_unwrapped) — 바꾼 적 없으면 null(원문 앞 줄의 값을 빌린다)
+    unwrap_seq: int | None = None
 
 
 def _to_ref_out(state: RefState | None) -> ViewUnitRefOut | None:
@@ -592,6 +594,7 @@ async def build_document_view(session: AsyncSession, document: Document) -> Docu
                 from_heading=unit.from_heading,
                 caption_figure_id=unit.caption_figure_id,
                 pair_seq=unit.pair_seq,
+                unwrap_seq=unit.unwrap_seq,
             )
             for unit in units
         ],
