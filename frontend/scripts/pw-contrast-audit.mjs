@@ -168,6 +168,45 @@ for (const theme of ["light", "dark"]) {
     await page.locator('[data-testid^="toast-action-"]').waitFor({ timeout: T });
     await page.unroute(`**/api/bundles/${id}/documents/${doc.id}/pairs`);
   }
+  // 시드에 보류가 없고 OLD-1 확정 구간에 묶음(2줄 이상 이어진 곁 아닌 줄)이 없어서, 단위 목록 응답의 상태만 바꿔 그린다(DB는 그대로).
+  // 첫 Old 문서의 줄(짝은 한 줄)을 원문 순서로 모아, 맞음(status) 둘 사이에 맞지 않는 여섯 줄(곁 둘 + 묶음 둘 이상)을 만든다
+  async function routeFoldStatuses(page, bundleId, status) {
+    const headers = { "X-Dev-User": "qa.member" };
+    const docs = await (await page.request.get(`${BASE}/api/bundles/${bundleId}/documents`, { headers })).json();
+    const doc = docs.find((item) => item.side === "old" && item.status === "ready");
+    const view = await (await page.request.get(`${BASE}/api/bundles/${bundleId}/documents/${doc.id}/view`, { headers })).json();
+    const pairOf = new Map();
+    for (const pair of view.pairs) for (const unitId of pair.unit_ids) pairOf.set(unitId, pair.unit_ids);
+    const seen = new Set();
+    const rows = [];
+    const ordered = view.units.filter((unit) => unit.group_unit_id === null && unit.noise_kind == null).sort((a, b) => a.pos_seq - b.pos_seq || (a.spans[0]?.[1] ?? 0) - (b.spans[0]?.[1] ?? 0));
+    for (const unit of ordered) {
+      if (seen.has(unit.id)) continue;
+      const ids = pairOf.get(unit.id) ?? [unit.id];
+      for (const unitId of ids) seen.add(unitId);
+      rows.push(ids);
+    }
+    if (rows.length < 9) throw new Error(`bundle ${bundleId} doc ${doc.id}: ${rows.length} rows, need 9+ to build a fold run`);
+    // 줄 1·8은 맞음, 2~7은 맞지 않음(미배정) - 나머지는 받은 그대로
+    const forced = new Map();
+    rows.forEach((ids, index) => {
+      if (index === 1 || index === 8) for (const unitId of ids) forced.set(unitId, status);
+      else if (index >= 2 && index <= 7) for (const unitId of ids) forced.set(unitId, "unassigned");
+    });
+    const pattern = new RegExp(`/api/bundles/${bundleId}/units\\?`);
+    await page.route(pattern, async (route) => {
+      const response = await route.fetch();
+      const body = await response.json();
+      const items = body.items.map((item) => {
+        const next = forced.get(item.unit_id);
+        if (next === undefined) return item;
+        const decision = { ...item.decision, status: next, hold_reason: next === "on_hold" ? "SYNTHETIC hold" : "" };
+        return { ...item, status: next, decision };
+      });
+      await route.fulfill({ response, json: { ...body, items } });
+    });
+    return () => page.unroute(pattern);
+  }
   async function markManualPieces(page) {
     const firstId = (await page.locator('[data-testid^="manual-toc-"]').first().getAttribute("data-testid")).replace("manual-toc-", "");
     await page.evaluate((id) => window.localStorage.setItem("sopa.manual.read", JSON.stringify({ [id]: "stale" })), firstId);
@@ -206,12 +245,12 @@ for (const theme of ["light", "dark"]) {
       await page.locator('[data-testid="assign-filter-confirmed"]').click();
       await page.locator('[data-testid^="assign-paper-fold-line-"]').first().waitFor({ timeout: T });
       await page.locator('[data-testid^="assign-paper-fold-run-"]').first().waitFor({ timeout: T });
-    }],
+    }, { before: (page) => routeFoldStatuses(page, id, "confirmed") }],
     ["assign-fold-hold", `/bundles/${aiId}/assign`, '[data-testid="assign-filter-on_hold"]', async (page) => {
       await page.locator('[data-testid="assign-filter-on_hold"]').click();
       await page.locator('[data-testid^="assign-paper-fold-run-"]').first().click();
       await page.locator('[data-testid^="assign-paper-fold-head-"]').first().waitFor({ timeout: T });
-    }],
+    }, { before: (page) => routeFoldStatuses(page, aiId, "on_hold") }],
     ["outputs", `/bundles/${id}/outputs`, '[data-testid="output-c"]'],
     ["outputs-a", `/bundles/${id}/outputs`, '[data-testid="outputs-tab-a"]', async (page) => { await page.locator('[data-testid="outputs-tab-a"]').click(); await page.locator('tr[data-testid^="output-a-row-"]').first().waitFor({ timeout: T }); }],
     // 순서를 바꾼 직후(저장 전) - 저장은 붙잡았다가 실패로 돌려 DB를 바꾸지 않는다
@@ -287,6 +326,8 @@ for (const theme of ["light", "dark"]) {
     total += 1;
   }
   for (const [name, path, ready, prep, options] of screens) {
+    // before - 이동 전에 응답을 가로채는 장면(처음 받는 응답을 바꿔야 한다). 정리 함수를 돌려주면 감사 뒤에 부른다
+    const undo = options?.before ? await options.before(page) : null;
     await page.goto(`${BASE}${path}`);
     await page.locator(ready).first().waitFor({ timeout: T });
     if (prep) {
@@ -295,6 +336,7 @@ for (const theme of ["light", "dark"]) {
     }
     await page.waitForTimeout(300);
     const failures = await auditPage(page, options);
+    if (undo) await undo();
     total += failures.length;
     console.log(`${failures.length === 0 ? "PASS" : "FAIL"} ${theme} ${name}${failures.length ? `\n    ${failures.slice(0, 8).join("\n    ")}` : ""}`);
   }
