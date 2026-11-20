@@ -1395,13 +1395,15 @@ const AUDIT_ENTRIES = [
     open: async (page) => {
       await page.locator(".ptbl").first().waitFor({ timeout: T });
     },
-    measure: async (page) => {
-      await scrollUntilWideTable(page, ".assign-panes [data-pane='old'] .pane-body");
-      const single = await measureWideTables(page);
+    measure: async (page, url) => {
+      const scroller = ".assign-panes [data-pane='old'] .pane-body";
+      const groupId = await findDeletedLongCellGroup(page, url);
+      await scrollUntilWideTable(page, scroller);
+      const single = await measureWithLongCell(page, scroller, groupId);
       await page.getByTestId("assign-view-two").click();
       await page.waitForTimeout(SETTLE_MS);
-      await scrollUntilWideTable(page, ".assign-panes [data-pane='old'] .pane-body");
-      const two = await measureWideTables(page);
+      await scrollUntilWideTable(page, scroller);
+      const two = await measureWithLongCell(page, scroller, groupId);
       return { single, two };
     },
     expect: (value) => [value.single, value.two].every(isWideTableOk),
@@ -1474,6 +1476,44 @@ async function scrollUntilWideTable(page, scroller) {
   }
   await page.evaluate(() => [...document.querySelectorAll(".ptbl")].find((table) => table.rows[0]?.cells.length === 18)?.scrollIntoView({ block: "center" }));
   await page.waitForTimeout(300);
+}
+
+// 600자 칸 표의 묶음 Unit id - 칸 문장 하나가 590자 넘는 표(삭제 줄 testid가 이 id를 쓴다). 묶음은 Unit이 1,000개를 넘으니 그 문서의 줄만 받는다
+async function findDeletedLongCellGroup(page, url) {
+  const opened = new URL(url, BASE);
+  const [, , bundleId] = opened.pathname.split("/");
+  const docId = Number(opened.searchParams.get("edit"));
+  const res = await page.request.get(`${BASE}/api/bundles/${bundleId}/units?limit=1000&offset=0&document_id=${docId}`, { headers: { "X-Dev-User": MEMBER } });
+  if (!res.ok()) throw new Error(`units list ${res.status()} for ${url}`);
+  const body = await res.json();
+  const cell = body.items.find((unit) => unit.group_unit_id !== null && unit.text.length >= 590);
+  if (!cell) throw new Error(`no table cell of 590+ chars in document ${docId} (units ${body.items.length}/${body.total})`);
+  return cell.group_unit_id;
+}
+
+// 삭제된 표는 시안 1부터 흐린 한 줄로 접혀 칸이 그려지지 않는다 - 사람처럼 그 줄을 눌러 펼친 뒤 600자 칸을 잰다. 18열 표는 펼치기 전에 먼저 재고, 같은 값 모양에 600자 칸만 합친다
+async function measureWithLongCell(page, scroller, groupId) {
+  const base = await measureWideTables(page);
+  const line = page.locator(`.assign-panes [data-pane='old'] [data-testid$="-deleted-u${groupId}"]`);
+  // 고른 삭제 박스는 접히지 않는다 - 그 표가 이미 골라져 펼쳐져 있으면 누르지 않고 잰다
+  const isOpen = () => page.evaluate(() => [...document.querySelectorAll(".ptbl td")].some((td) => td.textContent.trim().length >= 590));
+  for (let step = 0; step < 120 && (await line.count()) === 0 && !(await isOpen()); step += 1) {
+    await page.evaluate((selector) => {
+      const el = document.querySelector(selector);
+      el.scrollTop += el.clientHeight * 0.8;
+    }, scroller);
+    await page.waitForTimeout(150);
+  }
+  if (!(await isOpen())) {
+    if ((await line.count()) === 0) throw new Error(`deleted line for table group ${groupId} never rendered`);
+    await line.first().scrollIntoViewIfNeeded();
+    await line.first().click();
+  }
+  await page.waitForFunction(() => [...document.querySelectorAll(".ptbl td")].some((td) => td.textContent.trim().length >= 590), null, { timeout: T });
+  await page.evaluate(() => [...document.querySelectorAll(".ptbl td")].find((td) => td.textContent.trim().length >= 590)?.scrollIntoView({ block: "center" }));
+  await page.waitForTimeout(300);
+  const opened = await measureWideTables(page);
+  return { ...base, cell600: opened.cell600 };
 }
 
 // 18열 표의 가장 높은 행, 600자 칸의 글 폭과 36ch, 표가 제 스크롤 상자 밖으로 나가는지
@@ -1608,7 +1648,8 @@ async function main() {
               await page.waitForLoadState("networkidle", { timeout: T }).catch(() => {});
               await page.waitForTimeout(SETTLE_MS);
               if (entry.open) await entry.open(page);
-              const value = await entry.measure(page);
+              // 연 주소도 넘긴다 - 화면이 ?edit= 같은 쿼리를 지운 뒤에도 항목이 처음 연 문서를 알게(TW1)
+              const value = await entry.measure(page, item.url);
               if (value !== null && typeof value === "object" && typeof value.skip === "string") skipped = value.skip;
               else if (!entry.expect(value)) failure = `measured ${JSON.stringify(value)} (${entry.note})`;
             } catch (err) {
