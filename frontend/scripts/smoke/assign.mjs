@@ -5685,14 +5685,20 @@ await runStep("assign: drag an Old piece onto a slot in the All list, in both vi
   await page.locator('[data-testid="assign-new"]').waitFor({ state: "detached", timeout: T });
   check("the one-document view has no New pane", (await page.locator('[data-testid="assign-new"]').count()) === 0);
   await openTree();
-  // Old 용지 위에 놓으면 아무 일도 없다
+  // Old 용지 위(제 박스)에 놓으면 아무 일도 없다 - 이웃한 같은 언어 박스 위는 합치기라(B6) 제 박스 안에서 움직인다
   const savesBeforeOne = saveRequests;
+  let editsInOne = 0;
+  const countEdits = (request) => {
+    if (/\/edits$/.test(new URL(request.url()).pathname)) editsInOne += 1;
+  };
+  page.on("request", countEdits);
   const wOnePoint = await pointInUnit(unitW.unit_id);
-  await dragThrough(page, wOnePoint, [{ x: wOnePoint.x + 40, y: wOnePoint.y + 60 }]);
+  await dragThrough(page, wOnePoint, [{ x: wOnePoint.x + 40, y: wOnePoint.y }]);
   await page.waitForTimeout(100);
   await page.mouse.up();
   await page.waitForTimeout(600);
-  check("dropping on the Old paper in one view does nothing", (await getText(page, "assign-chosen")) === chosenZ && (await pieceOf(unitZ.unit_id).getAttribute("data-sel")) === "" && saveRequests === savesBeforeOne);
+  page.off("request", countEdits);
+  check("dropping on the Old paper in one view does nothing", (await getText(page, "assign-chosen")) === chosenZ && (await pieceOf(unitZ.unit_id).getAttribute("data-sel")) === "" && saveRequests === savesBeforeOne && editsInOne === 0);
   await dragThrough(page, await pointInUnit(unitW.unit_id), [await pointInTree(kTestId)]);
   await page.waitForTimeout(100);
   check("in one view the tree row takes the drop", (await rowDropOf(kTestId)) === "over");
@@ -7324,8 +7330,10 @@ await runStep("assign: drag an Old piece onto a nearby piece in the other langua
   const back = await dropAndSave(`Paired ${idsOf(x, x2)}`);
   check("the drop posts [x′, x] and they are a pair again", back.response.status() === 201 && JSON.stringify(JSON.parse(pairRequests.at(-1).body).unit_ids) === JSON.stringify([x2.id, x.id]) && isPaired(await readView(), x, x2), pairRequests.at(-1).body);
 
-  // 4. 못 놓는 곳은 이유를 보이고 아무것도 쓰지 않는다
-  await expectRefused("same language (y′ → x′)", y2.id, x2.id, "A pair needs one Korean and one English sentence. Pick one in the other language.");
+  // 4. 못 놓는 곳은 이유를 보이고 아무것도 쓰지 않는다 - 같은 언어는 합치기 규칙(B6): 떨어져 있으면 이웃만 합친다는 까닭
+  const flowIds = units.slice().sort(sourceOrder).map((unit) => unit.id);
+  check("y′ and x′ are not next to each other", Math.abs(flowIds.indexOf(y2.id) - flowIds.indexOf(x2.id)) > 1);
+  await expectRefused("same language, not neighbours (y′ → x′)", y2.id, x2.id, "Only sentences next to each other can be merged.");
   await expectRefused("onto a confirmed pair (y → x′)", y.id, x2.id, "One of these sentences is already in a confirmed pair.");
   const qPair = pairOf(await readView(), q.id);
   await expectRefused(`dragging a ${qPair.status} pair card (q → y′)`, q.id, y2.id, qPair.status === "confirmed" ? "One of these sentences is already in a confirmed pair." : "One of them is already in a pair. Separate it first.");
@@ -7475,6 +7483,91 @@ await runStep("assign: drag a KO piece onto its EN counterpart in a KO/EN separa
   await page.locator('[data-testid="toast-ok"]', { hasText: "Separated" }).waitFor({ timeout: T });
   const after = await readView();
   check("after Undo the two sentences are apart and the document has the pairs it had", pairOf(after, ko.id) === null && pairOf(after, en.id) === null && JSON.stringify(after.pairs) === JSON.stringify(before.pairs), JSON.stringify(after.pairs));
+  await page.waitForLoadState("networkidle");
+});
+
+// 끌어서 합치기(B6, 사용자 결정 2026-11-20 3-a · 3-b) - 같은 언어 이웃 박스에 놓으면 틈의 Join처럼 합치고, 떨어진 같은 언어 박스는 까닭과 함께 거절한다.
+// 한 언어 문서(en_only)에서 본다 - 짝이 없는 문서에서도 합치기는 된다. 합친 것은 Ctrl+Z로 되돌려 시드가 처음 그대로다(되살린 Unit은 옛 ID)
+await runStep("assign: drag a box onto its same-language neighbour to merge, even in a one-language document; Ctrl+Z splits it back", {}, async ({ page }) => {
+  const headers = { "X-Dev-User": "qa.member" };
+  const api = `${BASE}/api/bundles/${halfBundleId}`;
+  const getJson = async (path) => (await page.request.get(`${api}${path}`, { headers })).json();
+  const sourceOrder = (one, two) => one.pos_seq - two.pos_seq || (one.spans[0]?.[1] ?? 0) - (two.spans[0]?.[1] ?? 0) || one.id - two.id;
+  const isFree = (unit) => unit.kind === "sentence" && !unit.noise_kind && (unit.status === null || unit.status === "unassigned");
+  let found = null;
+  for (const item of (await getJson("/documents")).filter((doc) => doc.side === "old" && doc.status === "ready" && doc.language_layout === "en_only")) {
+    const order = (await getJson(`/documents/${item.id}/view`)).units.filter((unit) => unit.group_unit_id === null).sort(sourceOrder);
+    const at = order.findIndex((_, i) => i + 2 < order.length && order.slice(i, i + 3).every((unit) => isFree(unit) && unit.lang === order[i].lang));
+    if (at >= 0) {
+      found = { doc: item, a: order[at], b: order[at + 1], c: order[at + 2] };
+      break;
+    }
+  }
+  check("a one-language document has three free sentences in a row", found !== null);
+  if (!found) return;
+  const { doc, a, b, c } = found;
+  const readView = () => getJson(`/documents/${doc.id}/view`);
+  const isActive = (view, id) => view.units.some((unit) => unit.id === id);
+  const pieceOf = (id) => page.locator(`[data-testid="assign-paper-piece-${id}"]`);
+  const pointOn = async (id) => {
+    await pieceOf(id).evaluate((el) => el.scrollIntoView({ block: "center" }));
+    await page.waitForTimeout(150);
+    return page.locator(`[data-testid="assign-paper-unit-${id}"]`).first().evaluate((el) => {
+      const rect = el.getClientRects()[0];
+      return { x: rect.left + Math.min(24, rect.width / 2), y: rect.top + rect.height / 2 };
+    });
+  };
+  const dragOnto = async (fromId, toId) => {
+    const from = await pointOn(fromId);
+    await page.mouse.move(from.x, from.y);
+    await page.mouse.down();
+    await page.mouse.move(from.x + 10, from.y, { steps: 5 });
+    const to = await pointOn(toId);
+    await page.mouse.move(to.x, to.y, { steps: 12 });
+    await page.waitForTimeout(100);
+    return page.evaluate(() => ({
+      note: document.querySelector('[data-testid="drag-status"]')?.textContent ?? "",
+      dest: document.querySelector('[data-testid="drag-card"] .drag-card-dest')?.textContent ?? "",
+      refused: document.querySelector('[data-testid="drag-card"]')?.hasAttribute("data-refused") ?? false,
+    }));
+  };
+  const edits = [];
+  page.on("request", (request) => {
+    if (/\/documents\/\d+\/edits$/.test(new URL(request.url()).pathname)) edits.push(request.postData());
+  });
+
+  await page.goto(`${BASE}/bundles/${halfBundleId}/assign`);
+  await wait(page, "assign-bar");
+  await page.locator('[data-testid="assign-old-doc"]').click();
+  await page.locator(`[data-testid="assign-old-doc-option-${doc.id}"]`).click();
+  await pieceOf(a.id).waitFor({ timeout: T });
+  await page.waitForLoadState("networkidle");
+
+  // 1. 떨어진 같은 언어(a → c) - 까닭, 놓아도 쓰지 않는다
+  const overFar = await dragOnto(a.id, c.id);
+  const farDrop = await pieceOf(c.id).getAttribute("data-drop");
+  await page.mouse.up();
+  await page.waitForTimeout(400);
+  check("a over c (two boxes down) is refused: only neighbours merge", overFar.refused && overFar.note === "Only sentences next to each other can be merged." && farDrop === "refused", JSON.stringify({ overFar, farDrop }));
+  check("the refused drop writes nothing", edits.length === 0 && isActive(await readView(), a.id) && isActive(await readView(), c.id), String(edits.length));
+
+  // 2. 이웃(b → a) - Merge with a, → merge. 놓으면 용지 순서대로 [a, b]를 합친다
+  const overNear = await dragOnto(b.id, a.id);
+  check("b over its neighbour a says Merge with a and ends with → merge", !overNear.refused && overNear.note === `Merge with ${a.display_id}` && overNear.dest === "→ merge" && (await pieceOf(a.id).getAttribute("data-drop")) === "over", JSON.stringify(overNear));
+  const merged = page.waitForResponse((response) => /\/edits$/.test(new URL(response.url()).pathname), { timeout: T });
+  await page.mouse.up();
+  check("the drop merges [a, b] (200)", (await merged).status() === 200 && JSON.stringify(JSON.parse(edits.at(-1)).op) === JSON.stringify({ type: "merge", unit_ids: [a.id, b.id] }), edits.at(-1));
+  await page.locator('[data-testid="toast-ok"]', { hasText: "Merged" }).waitFor({ timeout: T });
+  const afterMerge = await readView();
+  check("a and b are one box now", !isActive(afterMerge, a.id) && !isActive(afterMerge, b.id) && afterMerge.units.some((unit) => unit.text.startsWith(a.text.slice(0, 10)) && unit.text.endsWith(b.text.slice(-10))));
+  await page.waitForLoadState("networkidle");
+
+  // 3. Ctrl+Z가 합치기를 되돌린다 - 옛 ID 그대로
+  const undone = page.waitForResponse((response) => response.url().includes("/decisions/undo"), { timeout: T });
+  await page.keyboard.press("ControlOrMeta+z");
+  check("Ctrl+Z undoes the merge (200)", (await undone).status() === 200);
+  const afterUndo = await readView();
+  check("a and b are back with their own ids", isActive(afterUndo, a.id) && isActive(afterUndo, b.id));
   await page.waitForLoadState("networkidle");
 });
 

@@ -2,6 +2,12 @@
 
 프로젝트 진행 현황 로그. 커밋 직전 갱신한다 (`rules/common/git.md` 규칙). v1.4.0(2026-11-20 정식 업데이트)까지의 항목은 [`docs/history/PROGRESS-archive.md`](docs/history/PROGRESS-archive.md)에 있다 — 정식 업데이트마다 그 릴리스까지의 항목을 거기로 옮긴다(`rules/common/git.md` "정식 업데이트 때 문서 정리").
 
+## 2026-11-21 — B6-1 끌어 놓기로 합치기 (`feat/assign-drop-join`)
+
+- B6을 차례로 세 브랜치로 나눴다(diff가 크고 셋 다 혼자 화면에서 확인된다): B6-1 끌어 놓기 합치기(FE) → B6-2 짝 맺기 · 풀기를 Ctrl+Z 줄에 + 편집 단계가 배정 · 짝도 되살림(BE 되돌리기 엔진) → B6-3 언어 바꾸기 → 모양 전환 · 조각 언어 메뉴.
+- 놓기 판단은 `resolveBoxDrop`(pair-drop-model) 하나 — 같은 언어는 용지 순서(`paperTabs.order`)에서 바로 옆일 때만 합치기(틈 Join · `merge_prev`와 같은 이웃 기준 · `getMergeBlocker`), 다른 언어는 지금 `resolvePairDrop` 그대로(문서 꼴 제한은 짝에만). 배정된 박스 합치기는 막지 않고 서버 409 → 확인 창(틈 Join과 같다). Pair view 끌기는 짝만 그대로.
+- 스모크: 옛 "같은 언어 → 짝 거절" 기대를 새 규칙의 "이웃만 합친다" 까닭으로 바꿨다(결정된 동작 변경, y′ · x′가 이웃이 아님을 먼저 확인), en_only 문서에서 거절 · 합치기 · Ctrl+Z 단계를 더했다.
+
 ## 2026-11-21 — B5 박스 안 줄바꿈 없애기 · 첫머리 번호 저절로 (`fix/unit-text-linebreaks`)
 
 - 6-a: 단위 글을 늘 띄어쓰기로 잇고 범위 안 줄바꿈도 띄어쓰기(`segment.build_unit_text`, 한 글자 ↔ 한 글자라 범위 · 번호 · 그림 좌표 그대로). 옛 글은 데이터 리비전 `0035`(사용자 승인 — 운영 기존 행 변경, CHANGELOG 굵게). 확정한 New 문장 글은 사람 글이라 두고, 변경 종류 "그대로"는 `numbering.is_source_text`가 줄바꿈 = 띄어쓰기로 견줘 다시 저장해도 고침이 되지 않게 했다(사람 저장 · AI 제안 사본 둘 다). 용지는 블록 글을 그리므로 단위 조각만 `flattenLineBreaks`. 남는 부작용: 줄바꿈이 있던 줄의 옛 AI 분류 제안은 해시가 달라 일괄 수락에서 건너뛴다.

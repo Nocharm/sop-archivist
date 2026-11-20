@@ -58,7 +58,7 @@ import { EMPTY_FOLD_OPEN, type FoldOpen } from "@/lib/paper-fold-model";
 import { buildPaperModel, buildPaperTabs, findNearestCut, isBandHeading, listFigureTabUnitIds, resolvePickUnit, shouldRecenter, type PaperTabKey } from "@/lib/paper-model";
 import { isSameOrder, movePairMember, orderPairCard, readPairSlot } from "@/lib/pair-order-model";
 import { moveUnwrapLines, readUnwrapSlot } from "@/lib/unwrap-order-model";
-import { buildPairColumns, canUndoPair, listPairLinks, PAIR_REFUSAL_KEYS, resolvePairDrop, type PairDrop, type PairDropContext } from "@/lib/pair-drop-model";
+import { buildPairColumns, canUndoPair, listPairLinks, PAIR_REFUSAL_KEYS, resolveBoxDrop, resolvePairDrop, type BoxDrop, type PairDrop, type PairDropContext } from "@/lib/pair-drop-model";
 import { ASSIGN_DOC_PARAM, ASSIGN_UNIT_PARAM, EDIT_ORIGINAL_PARAM, getStageHref } from "@/lib/stages";
 import { buildTemplateTitles } from "@/lib/template-model";
 import { useRegisterAiAcceptOffer } from "@/lib/use-ai-accept-offer";
@@ -2909,9 +2909,9 @@ export function useAssignPage() {
         dragLineRef.current?.update(isStartShown ? start : null, readNewLineEnd(line, unitIds[0]));
         return { state: "ok", note: t("assign.drag.link"), dest: t("assign.drag.dest.link"), target: line };
       }
-      // 한/영 두 언어 문서의 Old 조각 위면 짝 맺기(5걸음, 따로 쓴 문서는 D8)
-      const pair = readPairAt(point, unitIds);
-      if (pair.drop.kind !== "none") return unlinked(readPairHover(pair.drop, pair.target, pair.el));
+      // Old 박스 위면 같은 언어 이웃은 합치기, 한/영 두 언어 문서의 다른 언어는 짝 맺기(B6, 틈의 Join과 같은 규칙)
+      const box = readBoxAt(point, unitIds);
+      if (box.drop.kind !== "none") return unlinked(readBoxHover(box.drop, box.target, box.el));
       // 템플릿 보기의 자리 - 줄 사이면 놓을 자리 선
       const tpl = readTemplateAt(point, unitIds);
       if (tpl.placement.kind !== "none") return unlinked({ ...readTemplateHover(tpl.placement, tpl.el), line: readTemplateGap(tpl.placement, tpl.box) });
@@ -2935,10 +2935,11 @@ export function useAssignPage() {
       if (tree.kind !== "none") return;
       const { line, drop } = readDropAt(point);
       if (drop.kind !== "link" || line === null) {
-        // 짝 맺기는 줄을 고르지 않는다 - 저장 뒤 따라가기가 새 짝 줄을 고른다. 거절이면 아무 일도 없다
-        const pair = readPairAt(point, unitIds).drop;
-        if (pair.kind === "pair" || pair.kind === "confirm") void runPairDrop(pair);
-        if (pair.kind !== "none") return;
+        // 합치기 · 짝 맺기는 줄을 고르지 않는다 - 저장 뒤 따라가기가 합친 박스 · 새 짝 줄을 고른다. 거절이면 아무 일도 없다
+        const box = readBoxAt(point, unitIds).drop;
+        if (box.kind === "merge") void runUnitEdit({ type: "merge", unit_ids: box.unitIds }, t("split.didMerge"), null, false, null, { at: "box", unitId: box.unitIds[0] });
+        if (box.kind === "pair" || box.kind === "confirm") void runPairDrop(box);
+        if (box.kind !== "none") return;
         const tpl = readTemplateAt(point, unitIds);
         if (tpl.placement.kind !== "none") {
           applyTemplateDrop(rowKey, tpl.placement, tpl.el);
@@ -2978,19 +2979,26 @@ export function useAssignPage() {
     return { drop: resolvePairDrop([source], target, pairDropCtx), target, el };
   }
   /**
-   * 가까운 줄(5걸음) - 평소 Old 칸에서 포인터 밑의 가장 안쪽 조각과 거기 놓으면 할 일. 끄는 것은 줄 전부(짝 카드는 한 장)다.
-   * 한/영 두 언어 문서(연달아·따로, 설계 2026-11-20 D8)에서만 - 한 언어 문서에서 Old 조각 위는 지금처럼 놓을 자리 밖이다("같은 언어" 거절이 번쩍이지 않게)
+   * 가까운 줄(5걸음 · B6) - 평소 Old 칸에서 포인터 밑의 가장 안쪽 조각과 거기 놓으면 할 일. 끄는 것은 줄 전부(짝 카드는 한 장)다.
+   * 같은 언어 이웃은 어느 문서에서나 합치기, 짝은 한/영 두 언어 문서(연달아·따로, 설계 2026-11-20 D8)에서만 - 한 언어 문서에서 다른 언어 박스 위는 놓을 자리 밖
    */
-  function readPairAt(point: DragPoint, unitIds: readonly number[]): { drop: PairDrop; el: HTMLElement | null; target: ViewUnit | undefined } {
+  function readBoxAt(point: DragPoint, unitIds: readonly number[]): { drop: BoxDrop; el: HTMLElement | null; target: ViewUnit | undefined } {
     const nowhere = { drop: { kind: "none" } as const, el: null, target: undefined };
-    const layout = oldView?.document.language_layout;
-    if ((layout !== "ko_en_interleaved" && layout !== "ko_en_separate") || !paperModel) return nowhere;
+    if (!paperModel || !paperTabs) return nowhere;
     const sources = unitIds.flatMap((id) => paperModel.units.get(id) ?? []);
     // 줄의 Unit이 그 문서에 다 없으면 한 Unit만으로 맺게 되니 놓을 자리 밖
     if (sources.length !== unitIds.length) return nowhere;
     const el = findUnderPoint(point, '[data-pane="old"] :is(.cell-piece, .strip)[data-strip-unit]');
     const target = el ? paperModel.units.get(Number(el.dataset.stripUnit)) : undefined;
-    return { drop: resolvePairDrop(sources, target, pairDropCtx), el, target };
+    const layout = oldView?.document.language_layout;
+    const canPair = layout === "ko_en_interleaved" || layout === "ko_en_separate";
+    return { drop: resolveBoxDrop(sources, target, { ...pairDropCtx, order: paperTabs.order, canPair }), el, target };
+  }
+  /** 용지 박스 놓기의 상태 글과 테두리 - merge는 "Merge with <번호>", 짝은 Pair view와 같은 글, refused는 이유 */
+  function readBoxHover(drop: BoxDrop, target: ViewUnit | undefined, el: HTMLElement | null): DragHover {
+    if (drop.kind === "merge") return { state: "ok", note: t("assign.boxDrag.merge", { id: target?.display_id ?? "" }), dest: t("assign.drag.dest.merge"), target: el };
+    if (drop.kind === "refused") return { state: "refused", note: t(drop.reasonKey), target: el };
+    return readPairHover(drop, target, el);
   }
   /** 짝 놓기의 상태 글과 테두리 - pair는 "Pair with <번호>", confirm은 "Confirm this suggested pair", refused는 이유, none은 놓을 자리 밖 */
   function readPairHover(drop: PairDrop, target: ViewUnit | undefined, el: HTMLElement | null): DragHover {

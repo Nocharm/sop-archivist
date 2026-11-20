@@ -395,8 +395,10 @@ export const MERGE_BLOCKER_KEYS: Record<MergeBlocker, string> = {
   cell: "split.noMergeCell",
 };
 
+type MergeSide = Pick<ViewUnit, "kind" | "noise_kind" | "group_unit_id">;
+
 /** 두 단위를 합칠 수 없는 까닭(서버 `_plan_merge`와 같은 기준) - 합칠 수 있으면 null */
-export function getMergeBlocker(a: ViewUnit, b: ViewUnit): MergeBlocker | null {
+export function getMergeBlocker(a: MergeSide, b: MergeSide): MergeBlocker | null {
   if (!TEXT_KINDS.has(a.kind) || !TEXT_KINDS.has(b.kind)) return "not_text";
   // 목차 줄은 먼저 목차 아님으로 돌린다(서버 422 toc_line_locked, 사용자 결정 2026-11-19)
   if (a.noise_kind || b.noise_kind) return "toc";
