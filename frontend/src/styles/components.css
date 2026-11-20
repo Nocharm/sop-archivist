@@ -1495,7 +1495,8 @@
   button.num-cell[data-fixed] { color: var(--ink-2); font-weight: 600; }
   /* 따라 바뀔 번호 - 점선으로 미리 보인다(저장 전) */
   button.num-cell[data-preview] { color: var(--accent); text-decoration: underline dashed; text-underline-offset: 3px; }
-  button.num-add { color: var(--ink-4); }
+  /* 고른 줄의 옅은 바탕에서도 4.5:1 - ink-4는 4.2로 대비 감사에 걸렸다(assign-selected) */
+  button.num-add { color: var(--ink-3); }
   button.num-add[data-quiet] { opacity: 0; }
   .strip-row:hover > .strip-lead > button.num-add[data-quiet], button.num-add[data-quiet]:focus-visible { opacity: 1; }
   .num-edit { position: absolute; left: 0; top: 2px; display: flex; flex-direction: column; gap: 6px; width: max-content; max-width: min(320px, 80vw); padding: 6px; border: 1px solid var(--line-2); border-radius: var(--r-3); background: var(--raised); box-shadow: var(--shadow-2); font: 400 12px / 1.4 var(--font-ui); color: var(--ink-2); cursor: default; }
