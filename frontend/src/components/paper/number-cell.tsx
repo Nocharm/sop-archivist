@@ -1,11 +1,12 @@
 // 용지 줄 앞머리의 번호 칸(문단 번호, F5) - 그 줄의 번호를 보이고, 고칠 수 있는 화면(Assign)에서는 누르면 그 자리에 창이 열린다.
 // 번호는 늘 여기에 산다: 고치기·번호 없음·써 넣기(+)·타자 번호를 번호로(↤)가 모두 이 칸의 손잡이다. 원문 글자는 그대로이고 번호 범위만 바뀐다.
 // 창 맨 위는 종류 단추 줄(시안 2 D1 - 연속 번호 · • ○ ▪ · 직접 · 없음). 종류는 저장하지 않고 값에서 읽는다(number-kind-model).
+// 엮은 New 문서(빈 템플릿)의 번호 칸은 같은 단추 줄로 결과물 C 번호 표시를 고른다(ComposedNumberCell, 시안 2 D6).
 "use client";
 
 import { useEffect, useRef, type KeyboardEvent } from "react";
 
-import type { ViewNumber } from "@/lib/api-sop";
+import type { NumberStyle, ViewNumber } from "@/lib/api-sop";
 import { useI18n } from "@/lib/i18n";
 import { useDismiss } from "@/lib/use-dismiss";
 import { MAX_NUMBER_CHARS, type NumberPreview } from "@/lib/number-model";
@@ -53,6 +54,107 @@ interface NumberCellProps {
   onEditChange: (edit: NumberEdit | null) => void;
   /** number가 null이면 번호 없음 */
   onSave: (number: string | null, follow: boolean) => void;
+}
+
+/** 엮은 문서 번호 칸이 고르는 결과물 C 번호 표시 - depth는 글머리 기호의 깊이(• 0 · ○ 1 · ▪ 2), 그 밖은 null(깊이 그대로) */
+export interface ComposedStyleChoice {
+  style: NumberStyle;
+  depth: number | null;
+}
+
+interface ComposedNumberCellProps {
+  width: number;
+  bracket?: PairBracket;
+  testId: string;
+  targetId: number;
+  /** 번호 칸 글 - 번호 · 글머리 기호, 없으면 null */
+  mark: string | null;
+  style: NumberStyle;
+  /** 그 칸이 줄을 세지 않으면 연속 번호를 고를 수 없다 */
+  canNumber: boolean;
+  /** 고칠 수 있는 화면인가 - 아니면 번호만 보인다 */
+  canEdit: boolean;
+  busy: boolean;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onPick: (choice: ComposedStyleChoice) => void;
+}
+
+/**
+ * 엮은 New 문서(빈 템플릿)의 번호 칸(시안 2 D6) - 번호는 결과물 C 번호 표시라 종류 단추가 C 표시를 고른다: 연속 번호 = numbered, • ○ ▪ = bullet + 깊이 0 · 1 · 2,
+ * 없음 = omitted. C에는 직접 번호 꼴이 없어 A-1 직접은 꺼 두고 까닭을 툴팁으로. 누르면 바로 저장하고 닫는다(번호 노트는 없다 - 원문 번호가 없다)
+ */
+export function ComposedNumberCell({ width, bracket, testId, targetId, mark, style, canNumber, canEdit, busy, open, onOpenChange, onPick }: ComposedNumberCellProps) {
+  const { t } = useI18n();
+  const cellRef = useRef<HTMLSpanElement>(null);
+  useDismiss(cellRef, open, () => onOpenChange(false));
+  const numTestId = `${testId}-num-${targetId}`;
+  const label = mark === null ? t("assign.composedOrder.styleAdd") : t("assign.composedOrder.style", { n: mark });
+
+  function pick(choice: ComposedStyleChoice) {
+    if (busy) return;
+    onOpenChange(false);
+    onPick(choice);
+  }
+
+  return (
+    <span ref={cellRef} className="strip-lead" style={{ width: width + STRIP_LEAD_EXTRA }} data-bracket={bracket} data-dim={mark === null ? "" : undefined} data-num-open={open ? "" : undefined} data-testid={`${testId}-lead-${targetId}`}>
+      {canEdit ? (
+        <button
+          type="button"
+          className={`strip-lead-num num-cell${mark === null ? " num-add" : ""}`}
+          data-quiet={mark === null ? "" : undefined}
+          data-tip={label}
+          aria-label={label}
+          aria-expanded={open}
+          data-testid={mark === null ? `${testId}-num-add-${targetId}` : numTestId}
+          disabled={busy}
+          onClick={() => onOpenChange(!open)}
+        >
+          {mark ?? "+"}
+        </button>
+      ) : (
+        <span className="strip-lead-num" data-tip={mark === null ? undefined : `§ ${mark}`} data-testid={mark === null ? undefined : numTestId}>
+          {mark}
+        </span>
+      )}
+      {open && canEdit && (
+        <span className="num-edit" data-testid={`${testId}-num-edit-${targetId}`}>
+          <span className="num-kind-row" role="group" aria-label={t("assign.numberKind.group")}>
+            <button
+              type="button"
+              className="num-kind"
+              aria-pressed={style === "numbered"}
+              aria-disabled={canNumber ? undefined : "true"}
+              data-tip={canNumber ? undefined : t("assign.composedOrder.noCount")}
+              data-testid={`${testId}-num-kind-continuous`}
+              disabled={busy}
+              onClick={() => {
+                if (canNumber) pick({ style: "numbered", depth: null });
+              }}
+            >
+              {t("assign.numberKind.continuous")}
+            </button>
+            {BULLET_SYMBOLS.map((symbol, index) => {
+              const bulletLabel = t("assign.numberKind.bullet", { symbol });
+              return (
+                <button key={symbol} type="button" className="num-kind num-kind-bullet" aria-pressed={style === "bullet" && mark === symbol} aria-label={bulletLabel} data-tip={bulletLabel} data-testid={`${testId}-num-kind-bullet-${index}`} disabled={busy} onClick={() => pick({ style: "bullet", depth: index })}>
+                  {symbol}
+                </button>
+              );
+            })}
+            {/* aria-disabled - 포커스와 포인터를 받아야 까닭(툴팁)을 보일 수 있다 */}
+            <button type="button" className="num-kind" aria-pressed={false} aria-disabled="true" data-tip={t("assign.composedOrder.custom")} data-testid={`${testId}-num-kind-custom`}>
+              {t("assign.numberKind.custom")}
+            </button>
+            <button type="button" className="num-kind" aria-pressed={style === "omitted"} data-testid={`${testId}-num-kind-none`} disabled={busy} onClick={() => pick({ style: "omitted", depth: null })}>
+              {t("assign.numberKind.none")}
+            </button>
+          </span>
+        </span>
+      )}
+    </span>
+  );
 }
 
 export function NumberCell({ width, bracket, tip, testId, unitId, number, isUnread, canEdit, busy, edit, followed, continuous, preview, onEditChange, onSave }: NumberCellProps) {

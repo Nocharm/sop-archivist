@@ -5,7 +5,11 @@ import {
   applySavedTargets,
   buildComposedRows,
   diffRows,
-  getComposedLeadWidths,
+  applyCOrder,
+  buildComposedStrips,
+  buildPlaceUndo,
+  isSameCOrder,
+  toOutputCDoc,
   getNewRowKey,
   groupTableCells,
   isComposedRow,
@@ -15,6 +19,7 @@ import {
   removeClearedUnits,
   splitCTable,
 } from "@/lib/composed-model";
+import { previewEdit, type PlaceEdit } from "@/lib/c-edit-model";
 import { makeSectionOutline } from "@/lib/outline-fixture";
 import { getPillWidth } from "@/lib/strip-pill-model";
 
@@ -47,6 +52,11 @@ function makeCell(targetId: number, row: number, col: number, text: string, lang
 
 function makeSlot(locationKey: string, number: string | null, label: string, items: ComposedItem[]): ComposedSection {
   return { ...makeSectionOutline(), location_key: locationKey, label, number, na_reason: null, heading_note: "", items };
+}
+
+/** 줄마다 번호 칸 폭(키 = target id 글자) - 지난 getComposedLeadWidths 시험의 모양 그대로 */
+function readWidths(doc: ComposedDoc): Map<string, number> {
+  return new Map([...buildComposedStrips(doc).lines].map(([id, line]) => [String(id), line.width]));
 }
 
 function makeTarget(fields: Partial<GroupTarget>): GroupTarget {
@@ -162,11 +172,11 @@ describe("readSectionNumber", () => {
   });
 });
 
-describe("getComposedLeadWidths", () => {
+describe("buildComposedStrips", () => {
   it("sizes each row by the depth of its own number", () => {
     const doc = makeDoc([makeSlot("5", "5", "Responsibilities", [makeItem(1, "5.1")]), makeSlot("5.1", "5.1", "Procedure", [makeItem(2, "5.1.1"), makeItem(3, "5.1.1.1")])]);
 
-    const widths = getComposedLeadWidths(buildComposedRows(doc));
+    const widths = readWidths(doc);
 
     expect([...widths.entries()]).toEqual([["1", getPillWidth(2)], ["2", getPillWidth(3)], ["3", getPillWidth(4)]]);
   });
@@ -174,7 +184,7 @@ describe("getComposedLeadWidths", () => {
   it("widens a depth so its longest number is not clipped, for every row of that depth", () => {
     const doc = makeDoc([makeSlot("step:12:instruction", "12", "Step 12 · Instruction", [makeItem(1, "12.1"), makeItem(2, "12.13")])]);
 
-    const widths = getComposedLeadWidths(buildComposedRows(doc));
+    const widths = readWidths(doc);
 
     // "12.13" 다섯 자 = 33px + 칸 안 여백 6 - 깊이 2 기본 폭 36보다 넓다
     expect(widths.get("1")).toBe(39);
@@ -188,7 +198,7 @@ describe("getComposedLeadWidths", () => {
       makeSlot("path:Misc", null, "Misc", [makeItem(7, null)]),
     ]);
 
-    const widths = getComposedLeadWidths(buildComposedRows(doc));
+    const widths = readWidths(doc);
 
     expect(widths.get("3")).toBe(getPillWidth(3));
     expect(widths.get("6")).toBe(getPillWidth(4));
@@ -205,8 +215,109 @@ describe("getComposedLeadWidths", () => {
     expect(rows.map((row) => row.section_path)).toEqual(["2. Scope", "Appendix 2. Alarm list", "Appendix 2. Alarm list"]);
     expect(listHeadingNotes(doc).get("Appendix 2. Alarm list")).toBe("← OLD-1 §9");
     // 칸을 여는 번호 없는 줄은 그 칸 첫 깊이(2.1의 깊이)의 폭 - 머리 글에서 번호를 읽었다면 1단 폭이 된다
-    expect(getComposedLeadWidths(rows).get("1")).toBe(getPillWidth(2));
-    expect(getComposedLeadWidths(rows).get("2")).toBe(getPillWidth(2));
+    expect(readWidths(doc).get("1")).toBe(getPillWidth(2));
+    expect(readWidths(doc).get("2")).toBe(getPillWidth(2));
+  });
+
+  it("makes each slot head a heading box: the slot number in the number cell at that depth's width, the label in the box", () => {
+    const appendix: ComposedSection = { ...makeSlot("appendices.a2", "2", "Appendix 2. Alarm list", []), shows_number: false };
+    const doc = makeDoc([makeSlot("5.1", "5.1", "Procedure", [makeItem(1, "5.1.1")]), makeSlot("general_requirements.safety", null, "General Requirements › Safety", []), appendix]);
+
+    const { heads } = buildComposedStrips(doc);
+
+    expect(heads.get("5.1. Procedure")).toEqual({ sectionKey: "5.1", number: "5.1", label: "Procedure", width: getPillWidth(2), openWidth: getPillWidth(3) });
+    // 번호 없는 범주는 빈 번호 칸, 부록은 이름에 번호가 있어 번호 칸을 비운다
+    expect(heads.get("General Requirements › Safety")).toMatchObject({ number: null, width: getPillWidth(1), openWidth: getPillWidth(1) });
+    expect(heads.get("Appendix 2. Alarm list")).toMatchObject({ number: null, label: "Appendix 2. Alarm list", width: getPillWidth(1), openWidth: getPillWidth(2) });
+  });
+
+  it("joins neighbouring sentences of one meaning into one pair card, but not across a table or another meaning", () => {
+    const pair = (targetId: number, key: string | null, kind: ComposedItem["kind"] = "sentence"): ComposedItem => ({ ...makeItem(targetId, null, kind), meaning_key: key });
+    const doc = makeDoc([makeSlot("5.1", "5.1", "Procedure", [pair(1, "m1"), pair(2, "m1"), pair(3, "m2"), pair(4, "m2", "table"), pair(5, "m2"), pair(6, null), pair(7, null)])]);
+
+    const { lines } = buildComposedStrips(doc);
+
+    expect([1, 2, 3, 4, 5, 6, 7].map((id) => lines.get(id)?.pairGroup)).toEqual([1, 1, null, null, null, null, null]);
+  });
+
+  it("shows a bullet line's symbol by its pressed depth and indents it one step past the nearest numbered line", () => {
+    const bullet = (targetId: number, indent: number): ComposedItem => ({ ...makeItem(targetId, null), number_style: "bullet", indent_level: indent });
+    const doc = makeDoc([makeSlot("5.1", "5.1", "Procedure", [makeItem(1, "5.1.1"), bullet(2, 0), bullet(3, 1), bullet(4, 2)])]);
+
+    const { lines } = buildComposedStrips(doc);
+
+    expect([2, 3, 4].map((id) => lines.get(id)?.mark)).toEqual(["•", "○", "▪"]);
+    // 5.1.1은 깊이 3 - • 4, ○ 5, ▪ 6
+    expect([2, 3, 4].map((id) => lines.get(id)?.width)).toEqual([getPillWidth(4), getPillWidth(5), getPillWidth(6)]);
+    expect(lines.get(1)).toMatchObject({ mark: "5.1.1", style: "numbered", depth: 0, canNumber: true, canDepth: true });
+  });
+
+  it("locks the depth of an AI translation and the numbered style of a slot that does not count lines", () => {
+    const doc = makeDoc([makeSlot("5.1", "5.1", "Procedure", [{ ...makeItem(1, null), change_type: "translated" }]), { ...makeSlot("7", "7", "Relationships", [makeItem(2, null)]), counts_lines: false }]);
+
+    const { lines } = buildComposedStrips(doc);
+
+    expect(lines.get(1)).toMatchObject({ canDepth: false, canNumber: true });
+    expect(lines.get(2)).toMatchObject({ canDepth: true, canNumber: false });
+  });
+});
+
+describe("toOutputCDoc · applyCOrder · isSameCOrder", () => {
+  it("lays a C-shaped order, depth and style over the composed doc, keeping lines the shape does not know at the end of their slot", () => {
+    const doc = makeDoc([makeSlot("5.1", "5.1", "Procedure", [makeItem(1, "5.1.1"), makeItem(2, "5.1.2"), makeItem(9, null)]), makeSlot("5.2", "5.2", "Records", [])]);
+    const shape = toOutputCDoc(doc);
+    // 2를 5.2로 옮기고 1을 글머리 기호로 - 9는 shape에 없는(그새 들어온) 줄
+    shape.sections[0].items = [{ ...shape.sections[0].items[0], number: null, number_style: "bullet" }];
+    shape.sections[1].items = [{ ...toOutputCDoc(doc).sections[0].items[1], number: "5.2.1" }];
+
+    const next = applyCOrder(doc, shape);
+
+    expect(next.sections.map((section) => section.items.map((item) => [item.target_id, item.number, item.number_style]))).toEqual([
+      [[1, null, "bullet"], [9, null, "omitted"]],
+      [[2, "5.2.1", "numbered"]],
+    ]);
+    expect(next.sections[1].items[0].source_unit_ids).toEqual([2]);
+  });
+
+  it("reads a translation as a translation origin and compares only the lines both docs share", () => {
+    const doc = makeDoc([makeSlot("5.1", "5.1", "Procedure", [makeItem(1, "5.1.1"), { ...makeItem(2, "5.1.2"), change_type: "translated" }])]);
+    const withNew = makeDoc([makeSlot("5.1", "5.1", "Procedure", [makeItem(1, "5.1.1"), makeItem(3, null), { ...makeItem(2, "5.1.2"), change_type: "translated" }])]);
+    const swapped = makeDoc([makeSlot("5.1", "5.1", "Procedure", [{ ...makeItem(2, "5.1.2"), change_type: "translated" }, makeItem(1, "5.1.1")])]);
+
+    expect(toOutputCDoc(doc).sections[0].items.map((item) => item.origin)).toEqual(["units", "translation"]);
+    expect(isSameCOrder(toOutputCDoc(doc), toOutputCDoc(withNew))).toBe(true);
+    expect(isSameCOrder(toOutputCDoc(doc), toOutputCDoc(swapped))).toBe(false);
+  });
+});
+
+describe("buildPlaceUndo", () => {
+  it("puts a line moved inside its slot back before its old next line at its old depth", () => {
+    const before = toOutputCDoc(makeDoc([makeSlot("5.1", "5.1", "Procedure", [makeItem(1, "5.1.1"), makeItem(2, "5.1.2"), makeItem(3, "5.1.3")])]));
+    const edit: PlaceEdit = { kind: "place", locationKey: "5.1", targetIds: [1], beforeId: null, depths: [1] };
+    const after = previewEdit(before, edit)!;
+
+    const undo = buildPlaceUndo(before, after, edit);
+
+    expect(undo).toEqual([{ kind: "place", locationKey: "5.1", targetIds: [1], beforeId: 2, depths: [0] }]);
+    expect(previewEdit(after, undo[0])!.sections[0].items.map((item) => [item.target_id, item.indent_level])).toEqual([[1, 0], [2, 0], [3, 0]]);
+  });
+
+  it("brings a line moved to another slot back to its slot, last when it was last, and restores the style the move changed", () => {
+    const procedure = makeSlot("5.1", "5.1", "Procedure", [makeItem(1, "5.1.1"), { ...makeItem(2, null), number_style: "bullet" }]);
+    const records = { ...makeSlot("5.2", "5.2", "Records", [makeItem(3, "5.2.1")]), default_style: "numbered" as const };
+    const before = toOutputCDoc(makeDoc([procedure, records]));
+    const edit: PlaceEdit = { kind: "place", locationKey: "5.1", toLocationKey: "5.2", targetIds: [2], beforeId: 3, depths: [0] };
+    const after = previewEdit(before, edit)!;
+
+    const undo = buildPlaceUndo(before, after, edit);
+
+    expect(after.sections[1].items[0].number_style).toBe("numbered");
+    expect(undo).toEqual([
+      { kind: "place", locationKey: "5.2", toLocationKey: "5.1", targetIds: [2], beforeId: null, depths: [0] },
+      { kind: "style", targetId: 2, style: "bullet" },
+    ]);
+    const restored = undo.reduce((doc, step) => previewEdit(doc, step)!, after);
+    expect(restored.sections.map((section) => section.items.map((item) => [item.target_id, item.number_style]))).toEqual([[[1, "numbered"], [2, "bullet"]], [[3, "numbered"]]]);
   });
 });
 

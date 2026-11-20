@@ -12,6 +12,7 @@ import { BundleHead } from "@/components/paper/bundle-head";
 import { FigureImage } from "@/components/paper/figure-image";
 import { LangToken } from "@/components/paper/lang-token";
 import { NumberCell, type NumberEdit } from "@/components/paper/number-cell";
+import { StripBox } from "@/components/paper/strip-box";
 import { StripLead, STRIP_LEAD_EXTRA } from "@/components/paper/strip-lead";
 import { UnitStatusChip } from "@/components/status";
 import { Collapse } from "@/components/ui/motion";
@@ -1114,30 +1115,30 @@ export function Paper({
     const unwrapTable = getRowUnwrapTable(row, model.unwrapped, model.tables);
     const scopeTable = row.type === "table" ? row.item.table.id : unwrapTable;
     return (
-      <div
+      <StripBox
         key={row.key}
-        className="strip-row"
-        data-peek={isPeek ? "" : undefined}
-        data-unwrap-scope={scopeTable === null ? undefined : `t${scopeTable}`}
-        // 표 줄은 키를 달지 않는다 - 안의 칸 조각이 저마다 키를 단다(키 안에 키를 두지 않는다)
-        data-flip-key={row.type === "piece" ? readFlipKey(row, unit) : row.type === "figure" ? `f${row.block.id}` : undefined}
-      >
-        {unwrapTable !== null && renderRail(width)}
-        {unit && renderLead(unit, section, width, bracket)}
-        {!unit && <span className="strip-lead-gap" style={{ width: width + STRIP_LEAD_EXTRA }} />}
-        <div
-          className="strip"
-          data-kind={row.type}
-          data-sel={unit !== undefined && unit.id === selectedId ? "" : undefined}
-          data-mate={unit !== undefined && isMate(unit.id) ? "" : undefined}
-          data-partner={unit !== undefined && partnerIds?.has(unit.id) ? "" : undefined}
-          data-bracket={bracket}
-          data-strip-unit={unitId ?? undefined}
+        rowAttrs={{
+          "data-peek": isPeek ? "" : undefined,
+          "data-unwrap-scope": scopeTable === null ? undefined : `t${scopeTable}`,
+          // 표 줄은 키를 달지 않는다 - 안의 칸 조각이 저마다 키를 단다(키 안에 키를 두지 않는다)
+          "data-flip-key": row.type === "piece" ? readFlipKey(row, unit) : row.type === "figure" ? `f${row.block.id}` : undefined,
+        }}
+        before={unwrapTable !== null && renderRail(width)}
+        lead={unit ? renderLead(unit, section, width, bracket) : null}
+        leadWidth={width}
+        bracket={bracket}
+        boxAttrs={{
+          "data-kind": row.type,
+          "data-sel": unit !== undefined && unit.id === selectedId ? "" : undefined,
+          "data-mate": unit !== undefined && isMate(unit.id) ? "" : undefined,
+          "data-partner": unit !== undefined && partnerIds?.has(unit.id) ? "" : undefined,
+          "data-strip-unit": unitId ?? undefined,
           // 처리 중인 박스는 끌리지 않는다(설계 D4 - 잠금은 그 박스만)
-          data-drag-box={dragBoxes && unitId !== null && !isLocked(unitId) ? "" : undefined}
-          data-pending={readPendingMark(unitId)}
-          data-testid={`${testId}-piece-${unitId ?? row.key}`}
-        >
+          "data-drag-box": dragBoxes && unitId !== null && !isLocked(unitId) ? "" : undefined,
+          "data-pending": readPendingMark(unitId),
+          "data-testid": `${testId}-piece-${unitId ?? row.key}`,
+        }}
+      >
           {unit !== undefined && (renderUnwrapGrip(unit) ?? renderPairGrip(unit))}
           {/* 표·그림의 보류 칩 - 표 위 제 줄(data-start 밖)이라 표를 덮지 않고, 눌러도 조각 상자를 누른 것으로 그 단위를 고른다 */}
           {row.type !== "piece" && isHold && (
@@ -1172,8 +1173,7 @@ export function Paper({
           {pills}
           {renderMarks(unit, hasWarn, "strip-marks")}
           {row.type === "piece" && renderLang(unit)}
-        </div>
-      </div>
+      </StripBox>
     );
   }
 

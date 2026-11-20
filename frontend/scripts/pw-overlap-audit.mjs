@@ -492,7 +492,8 @@ const composedHeadingScene = {
     for (const item of (await notes.all()).slice(0, 6)) {
       await item.scrollIntoViewIfNeeded();
       // 칸 첫 문장에 올려 언어 탭(위 테두리 위로 나온다)을 띄운 채 잰다 - 빈 칸이면 문장이 없다
-      const firstLine = item.locator("xpath=ancestor::p[contains(@class,'new-sec')]/following-sibling::div[contains(@class,'new-item')][1]//div[contains(@class,'new-line')]");
+      // 엮은 문서의 칸 머리는 제목 박스 줄(.new-head-row, 시안 2 D6)
+      const firstLine = item.locator("xpath=ancestor::div[contains(@class,'new-head-row')]/following-sibling::div[contains(@class,'new-item')][1]//div[contains(@class,'new-line')]");
       if ((await firstLine.count()) > 0) {
         await firstLine.first().hover();
         await page.waitForTimeout(250);

@@ -2364,3 +2364,31 @@
   .new-cell:is(:hover, :focus-within) .new-src-x { opacity: 1; }
   button.new-src-x:hover { box-shadow: inset 0 0 0 1px var(--danger-ink); color: var(--danger-ink); }
 }
+
+/* 빈 템플릿(엮은 New) 기본 보기를 같은 용지로(시안 2 D6) - 칸 머리는 번호 칸에 칸 번호가 든 제목 박스(Old · New의 제목 박스와 같은 .strip + p.h), 앱이 채우는 목록은 읽기 전용 박스.
+   번호 칸 창의 꺼진 단추(직접 번호 · 줄을 세지 않는 칸의 연속 번호)는 까닭 툴팁을 받으려 aria-disabled. 손잡이 끌기의 놓을 자리 선(.c-dropline)은 New 칸 기준으로 놓인다.
+   저장이 날아가는 박스는 Old 용지와 같은 처리 중 쉬머(motion.css pending-sweep) */
+@layer components {
+  /* 아래 8px - 첫 줄의 언어 탭(위 테두리에서 8px 위로 나온다)이 제목 박스의 칸 제목 출처 글에 닿지 않게 */
+  .pg.new-sheet .new-head-row { margin: 10px 0 8px; }
+  .pg.new-sheet > .new-head-row:first-child { margin-top: 0; }
+  .pg p.new-head-text { display: flex; gap: 6px; margin: 0; }
+  .new-head-label { min-width: 0; overflow-wrap: anywhere; }
+  .new-head-note { flex: 1 1 0; min-width: 8ch; font: 400 var(--fs-cap) / var(--lh-cap) var(--font-ui); color: var(--ink-3); align-self: center; }
+  .pg .new-auto { border: 1px solid var(--line-2); border-radius: var(--r-1); background: var(--sunken); padding: 4px var(--pg-pad-l); }
+  /* 번호 칸 창이 열린 줄은 가두지 않는다 - content-visibility가 창을 잘라 아래 줄 밑에 깔리지 않게 */
+  .pg[data-strips] .strip-row:has(> .strip-lead[data-num-open]) { content-visibility: visible; }
+  .num-kind[aria-disabled="true"] { opacity: .5; cursor: not-allowed; }
+  .num-kind[aria-disabled="true"]:is(:hover, :focus-visible) { border-color: var(--line-2); color: var(--ink-2); }
+  .assign-pane[data-composed-order] { position: relative; }
+  .pg[data-strips] .strip-row > .strip.new-line[data-pending] {
+    background-image: linear-gradient(100deg, transparent 30%, color-mix(in oklab, var(--accent) 16%, transparent) 50%, transparent 70%);
+    background-size: 250% 100%;
+    background-repeat: no-repeat;
+    animation: pending-sweep 1200ms linear infinite;
+    cursor: progress;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .pg[data-strips] .strip-row > .strip.new-line[data-pending] { background-image: linear-gradient(color-mix(in oklab, var(--accent) 8%, transparent) 0 0); background-size: 100% 100%; animation: none; }
+  }
+}
