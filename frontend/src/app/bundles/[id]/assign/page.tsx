@@ -69,7 +69,7 @@ export default function AssignPage() {
   const { lang: uiLang } = useI18n();
   const {
     t, bundleId, bundle, canEdit, docs, oldDocs, docViews, unitsKey, reloadData, tobe, tobeData, writtenList, identical,
-    readMarkStatus, suggestedTargetUnits, unitMap, written, writtenMap, rows, rowMap, rowOfUnit, options, ready, showSkeleton, unsourced,
+    readMarkStatus, readAiPlace, suggestedTargetUnits, unitMap, written, writtenMap, rows, rowMap, rowOfUnit, options, ready, showSkeleton, unsourced,
     mode, setMode, foldOpen, setFoldOpen, foldMatch, clearRowPick, activeKey, row, pickedId, solo, setSolo, isSolo, isNewEdit, tocOpen, setTocOpen,
     tocPick, checked, setChecked, newRemarks, setNewRemarks, menu, setMenu, joinMenu, setJoinMenu, ctxMenu, setCtxMenu, focusNew,
     setDrafts, draft, groupPending, savedDestination, destination, rowUnits, reasonNow, setDraft, unsavedCount, leaveTo, setLeaveTo,
@@ -388,7 +388,16 @@ export default function AssignPage() {
   ) : null;
   const placeOf = (unitIds: number[]) => {
     const decided = unitIds.map((id) => unitMap.get(id)).find((unit) => unit?.status === "confirmed");
-    if (!decided) return null;
+    if (!decided) {
+      // 아직 정하지 않은 줄의 AI 추천 - 확정 줄과 같은 자리, 보라 점선으로 갈린다
+      const aiPlace = readAiPlace(unitIds);
+      return aiPlace === null ? null : (
+        <span className="strip-note is-ai" data-testid={`assign-ai-note-${unitIds[0]}`}>
+          <Sparkles size={11} strokeWidth={1.75} aria-hidden />
+          <span className="strip-note-text">{t("assign.aiNote", { place: aiPlace })}</span>
+        </span>
+      );
+    }
     // 글 앞 아이콘이 간 곳의 종류를 말한다 - 글이 함께 있어 아이콘은 장식이다
     if (decided.decision.disposition === "delete") {
       return (

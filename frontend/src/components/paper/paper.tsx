@@ -5,7 +5,7 @@
 // strips.fold(Assign 필터)가 있으면 맞는 조각만 제 모양, 곁은 한 줄 판, 먼 구간은 묶음 한 줄로 접는다(paper-fold-model.ts) - 한 줄 판·묶음은 단추라 눌러도 조각을 고르지 않는다.
 "use client";
 
-import { BookMarked, ChevronRight, ChevronsDownUp, Ellipsis, FoldVertical, FolderCheck, GripVertical, ImageIcon, Link2, Scissors, Sparkles, TriangleAlert, WandSparkles, type LucideIcon } from "lucide-react";
+import { BookMarked, ChevronRight, ChevronsDownUp, Ellipsis, FoldVertical, GripVertical, ImageIcon, Link2, Scissors, TriangleAlert, WandSparkles, type LucideIcon } from "lucide-react";
 import { Fragment, memo, useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 
 import { BundleHead } from "@/components/paper/bundle-head";
@@ -43,18 +43,14 @@ type PaperMark = UnitMark | "warn";
 const MARK_ICONS: Record<PaperMark, LucideIcon> = {
   edited: Scissors,
   pair: Link2,
-  classified: FolderCheck,
-  ai: Sparkles,
   suggest: WandSparkles,
   ref: BookMarked,
   warn: TriangleAlert,
 };
-const MARK_ORDER: readonly PaperMark[] = ["edited", "pair", "classified", "ai", "suggest", "ref", "warn"];
+const MARK_ORDER: readonly PaperMark[] = ["edited", "pair", "suggest", "ref", "warn"];
 const MARK_LABELS: Record<PaperMark, string> = {
   edited: "split.legendEdited",
   pair: "split.legendPair",
-  classified: "split.legendClassified",
-  ai: "split.legendAi",
   suggest: "split.markSuggest",
   ref: "split.markRef",
   warn: "split.markWarn",
@@ -781,12 +777,12 @@ export function Paper({
     );
   }
 
-  /** 조각 끝 아이콘 표시 - 고른 조각의 것만 Tab으로 닿는다(수천 개가 Tab 순서에 들지 않게) */
-  function renderMarks(unit: ViewUnit | undefined, hasWarn: boolean, className: string): ReactNode {
+  /** 조각 끝 아이콘 표시 - 고른 조각의 것만 Tab으로 닿는다(수천 개가 Tab 순서에 들지 않게). 짝 카드 안이면 짝 표시는 카드가 대신한다 */
+  function renderMarks(unit: ViewUnit | undefined, hasWarn: boolean, className: string, inPairCard = false): ReactNode {
     if (!strips) return null;
     const marks = new Set<PaperMark>();
     if (unit) {
-      for (const mark of getMarks({ ...unit, status: strips.statusOf?.(unit.id) ?? unit.status })) marks.add(mark);
+      for (const mark of getMarks(unit, inPairCard)) marks.add(mark);
     }
     if (hasWarn) marks.add("warn");
     if (marks.size === 0) return null;
@@ -1107,8 +1103,8 @@ export function Paper({
     return getVisibleSkip(getHiddenPrefixLength(block.text, block.section_label), first.end, cut?.blockId === block.id ? cut.offset : null);
   }
 
-  /** 조각 한 줄 - 글 조각, 표, 그림 모두 같은 틀(앞 태그·끝 표시)에 담는다 */
-  function renderRow(row: PaperRow, isPeek = false): ReactNode {
+  /** 조각 한 줄 - 글 조각, 표, 그림 모두 같은 틀(앞 태그·끝 표시)에 담는다. inPairCard는 이웃한 짝 카드 안의 줄 */
+  function renderRow(row: PaperRow, isPeek = false, inPairCard = false): ReactNode {
     const unitId = row.type === "table" ? row.item.unitId : row.unitId;
     const unit = unitId === null ? undefined : model.units.get(unitId);
     const hasWarn = row.type === "piece" ? row.parts.some((part) => warnBlockIds?.has(part.block.id)) : row.type === "figure" && (warnBlockIds?.has(row.block.id) ?? false);
@@ -1181,7 +1177,7 @@ export function Paper({
           {unit !== undefined && unit.id === selectedId && renderPairHint(unit.id)}
           {renderPendingPills((place) => (place.at === "box" && place.unitId === unitId) || (place.at === "table" && row.type === "table" && place.tableId === row.item.table.id))}
           {pills}
-          {renderMarks(unit, hasWarn, "strip-marks")}
+          {renderMarks(unit, hasWarn, "strip-marks", inPairCard)}
           {row.type === "piece" && renderLang(unit)}
       </StripBox>
     );
@@ -1412,7 +1408,7 @@ export function Paper({
       <Fragment key={row.key}>
         {index > 0 && renderGap(rows[index - 1], row)}
         {!isPeek && renderUnwrapHead(row)}
-        {renderRow(row, isPeek)}
+        {renderRow(row, isPeek, rows.length > 1)}
       </Fragment>
     ));
     return rows.length > 1 ? <div className="strip-card">{content}</div> : content;

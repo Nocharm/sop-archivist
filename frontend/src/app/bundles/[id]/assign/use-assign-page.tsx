@@ -34,7 +34,7 @@ import { applyJoinedSources, listJoinableIds, shouldAdvanceAfterSave } from "@/l
 import { applySavedTargets, buildComposedRows, isWrittenRow, listHeadingNotes, listSectionMarks, readSectionHead, removeClearedUnits, type NewPaneRow } from "@/lib/composed-model";
 import { addPartnerTargets, buildLinkPairs, buildRecommendations, listUnsourced, mergeGroups, readConfirmBlockKey, stepZoom, type Recommendation } from "@/lib/assign-model";
 import { countLiveOffer, splitAcceptIds } from "@/lib/ai-accept-model";
-import { buildUseDraft, findRowSuggestion, indexLiveSuggestions, readSuggestedDestination } from "@/lib/ai-suggestion-model";
+import { buildUseDraft, findRowSuggestion, indexLiveSuggestions, readSuggestedDestination, readSuggestionPlace } from "@/lib/ai-suggestion-model";
 import { buildAssignMenu, getPairPickBlocker, getPairSetBlocker, planAssignJoin, planShapeMode, type AssignMenuAction, type AssignMenuGroups } from "@/lib/assign-context-menu-model";
 import { listHeadingBackUnits } from "@/lib/heading-shift-model";
 import { countDecidedLines, getTableNumber, getUnitUnwrapTable, listUnwrapScopes } from "@/lib/unwrap-model";
@@ -315,7 +315,7 @@ export function useAssignPage() {
     for (const item of [...(suggestions.data ?? []), ...(matchSuggestions.data ?? [])]) for (const id of item.content.unit_ids ?? []) if ((map.get(id)?.id ?? 0) < item.id) map.set(id, item);
     return map;
   }, [suggestions.data, matchSuggestions.data]);
-  /** 용지 줄 끝 표시의 상태 - 살아 있는 제안이 있는 미배정 단위는 AI 표시(✦, 호버 설명)를 단다(설계 §5 2-4). 판단 상태는 바꾸지 않는다 */
+  /** 용지 줄의 상태 - 살아 있는 제안이 있는 미배정 단위는 ai_suggested(글 아래 AI 간 곳 줄, readAiPlace). 판단 상태는 바꾸지 않는다 */
   function readMarkStatus(unitId: number): UnitRow["status"] | undefined {
     const status = unitMap.get(unitId)?.status;
     return status === "unassigned" && liveIndex.has(unitId) ? "ai_suggested" : status;
@@ -348,6 +348,13 @@ export function useAssignPage() {
   const rowMap = new Map(rows.map((row) => [row.key, row]));
   const rowOfUnit = new Map(rows.flatMap((row) => row.unitIds.map((id) => [id, row.key] as const)));
   const options = useMemo(() => (tobeData ? buildDestinationOptions(tobeData) : []), [tobeData]);
+  /** Old 줄 아래 AI 간 곳 글 - 살아 있는 제안이 덮는 미배정 줄만. 확정 줄의 간 곳 줄과 같은 자리에 쓴다(줄 끝 ✦ 대신, 사용자 결정 2026-11-20) */
+  function readAiPlace(unitIds: number[]): string | null {
+    if (!unitIds.some((id) => readMarkStatus(id) === "ai_suggested")) return null;
+    const live = findRowSuggestion(unitIds, "unassigned", liveIndex);
+    const place = live ? readSuggestionPlace(live, options) : null;
+    return place === "delete" ? t("classify.deleted") : place;
+  }
   const ready = viewList !== null && unitList !== null && tobeData !== null && writtenList.data !== null;
   const showSkeleton = useDelayedFlag(!ready && docs.error === null);
   const unsourced = listUnsourced(written);
@@ -3332,7 +3339,7 @@ export function useAssignPage() {
 
   return {
     t, bundleId, bundle, canEdit, docs, oldDocs, oldDocIds, docViews, unitsKey, reloadData, tobe, tobeData, writtenList, identical,
-    aiJobs, aiOn, aiBusy, suggestions, invalidUnitIds, readMarkStatus, suggestedTargetUnits, unitMap, written, writtenMap, rows, rowMap,
+    aiJobs, aiOn, aiBusy, suggestions, invalidUnitIds, readMarkStatus, readAiPlace, suggestedTargetUnits, unitMap, written, writtenMap, rows, rowMap,
     rowOfUnit, options, ready, showSkeleton, unsourced, mode, setMode, filter, counts, foldOpen, setFoldOpen, applyFilter, foldMatch,
     clearRowPick, activeKey, row, pickedId, solo, setSolo, isSolo, isNewEdit, hasSolo, tocOpen, setTocOpen, tocPick, tocBlocks, checked,
     setChecked, newRemarks, setNewRemarks, menu, setMenu, joinMenu, setJoinMenu, ctxMenu, setCtxMenu, cutUnitId, focusNew,
