@@ -71,9 +71,9 @@ function buildOldStripIndex(root: ParentNode): (unitId: number) => HTMLElement |
   };
 }
 
-/** root가 New 칸이면 그 칸 안만 뒤진다 - 문서 전체(Old 용지 수만 노드)를 훑지 않게 재기에서는 New 칸을 넘긴다 */
+/** root가 New 칸이면 그 칸 안만 뒤진다 - 문서 전체(Old 용지 수만 노드)를 훑지 않게 재기에서는 New 칸을 넘긴다. 문장 줄이 아니면 이미 쓴 표의 칸 상자(시안 2 D5) */
 export function findNewLine(root: ParentNode, targetId: number): HTMLElement | null {
-  return root.querySelector<HTMLElement>(`[data-pane="new"] .new-line[data-target="${targetId}"]`);
+  return root.querySelector<HTMLElement>(`[data-pane="new"] .new-line[data-target="${targetId}"]`) ?? root.querySelector<HTMLElement>(`[data-pane="new"] .new-cell[data-cell-target="${targetId}"]`);
 }
 
 function readHover(target: EventTarget | null): Hover | null {

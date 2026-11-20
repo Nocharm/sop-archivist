@@ -16,6 +16,7 @@ import type {
   ViewUnit,
   WiPart,
   WiStep,
+  WrittenSentence,
 } from "./api-sop";
 import { listCaptionChildren, planCaptions } from "./caption-model";
 import type { CaptionUnit } from "./caption-model";
@@ -237,14 +238,24 @@ export function listTreeRows(tobe: ToBe, options: readonly DestinationOption[]):
   return rows;
 }
 
+/** 이미 쓴 문서 표의 칸 새 문장인가 - 칸 좌표가 있는 입구 2 자식(캡션은 좌표가 없다). 문장처럼 잇는 대상이다(시안 2 D5) */
+export function isWrittenCell(target: Pick<GroupTarget, "origin" | "parent_target_id" | "cell_row" | "cell_col">): boolean {
+  return target.origin === "new_doc" && target.parent_target_id !== null && target.cell_row !== null && target.cell_col !== null;
+}
+
+/** 이미 쓴 문서의 칸 새 문장 id → 그 칸이 든 표 줄 - 칸은 문장 목록(writtenMap)에 따로 줄이 없어 문서·자리를 표 줄에서 읽는다 */
+export function buildCellOwners(written: readonly WrittenSentence[]): Map<number, WrittenSentence> {
+  return new Map(written.flatMap((row) => (row.table?.cells ?? []).map((cell) => [cell.target_id, row] as const)));
+}
+
 /** 저장된 판단·새 문장에서 지금 보낼 곳을 읽는다. 여러 곳이면 첫 새 문장 기준 */
 export function readDestination(group: Group | null, unitIds: number[]): Destination | null {
   if (!group) return null;
   const units = group.units.filter((unit) => unitIds.includes(unit.unit_id));
   if (units.some((unit) => unit.decision.disposition === "delete")) return { kind: "delete" };
   if (units.some((unit) => unit.decision.disposition === "move_external")) return { kind: "move" };
-  // 이미 쓴 문서의 문장에 이어져 있으면 그것이 보낼 곳이다(칸 새 문장이 함께 남아 있어도)
-  const linked = group.targets.filter((item) => item.origin === "new_doc" && item.parent_target_id === null && item.source_unit_ids.some((id) => unitIds.includes(id)));
+  // 이미 쓴 문서의 문장·칸에 이어져 있으면 그것이 보낼 곳이다(줄로 만든 칸 새 문장이 함께 남아 있어도)
+  const linked = group.targets.filter((item) => item.origin === "new_doc" && (item.parent_target_id === null || isWrittenCell(item)) && item.source_unit_ids.some((id) => unitIds.includes(id)));
   if (linked.length > 0) return { kind: "link", targetIds: linked.map((item) => item.id) };
   const heading = group.targets.find((item) => item.kind === "slot_heading" && item.slot_key !== null && item.source_unit_ids.some((id) => unitIds.includes(id)));
   if (heading && heading.slot_key !== null) return { kind: "slot_heading", docId: heading.target_doc_id, slotKey: heading.slot_key };

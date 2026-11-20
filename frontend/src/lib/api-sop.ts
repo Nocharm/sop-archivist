@@ -1147,6 +1147,10 @@ export interface BundleCell {
   lang: UnitLang;
   text: string;
   status: CoverStatus;
+  /** 칸에 이은 Old 단위(출처 순서) - 칸 위 출처 칩 */
+  source_unit_ids: number[];
+  /** 이미 쓴 문서의 칸만 - 엮은 문서의 칸은 잇지 않아 null */
+  revision?: number | null;
 }
 
 /** New 칸이 그리는 표 - 격자 크기와 칸 새 문장(행·열 순) */

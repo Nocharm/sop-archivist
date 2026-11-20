@@ -11,10 +11,11 @@
 // AI 제안 거르기(aiFilter, lib/new-ai-filter-model)가 걸리면 고른 줄의 제안·간 곳은 강조 테두리와 꼬리표, 다른 줄의 AI 제안은 칸마다 띠 하나로 접히고(누르면 흐리게 펼침), 나머지 줄은 흐리다.
 // 줄이 새로 들어오면 펼치며 나타나고 빠지면 접히며 사라진다(확정이 곧 보이는 실시간 넣기). 표·그림은 실제 표(좌우 스크롤)·그림 이미지로 보인다(new-bundle.tsx).
 // 클릭 배치(place, MD 2 S3) - 엮은 문서에서 Old 줄을 고른 채면 칸 머리 · 빈 칸 · 번호 줄 사이 틈을 눌러 보낼 곳을 고른다(칠하기 · 꼬리표는 CSS :hover).
+// 이미 쓴 문서의 표는 칸마다 상자(cellLink, 시안 2 D5) - 칸 위 출처 칩과 끊기 ×, Old 줄을 고른 채 칸을 누르거나 끈 조각을 칸에 놓으면 문장처럼 잇는다(new-bundle.tsx).
 // 엮은 문서는 머리의 "기본 | 템플릿" 전환(viewSwitch)으로 같은 줄을 회사 템플릿 모양(components/template/template-view)으로도 본다 - 템플릿이면 몸에 그 보기를 그린다.
 "use client";
 
-import { ChevronDown, ChevronUp, FilePlus2, Scissors, Sparkles, Spline } from "lucide-react";
+import { ChevronDown, ChevronUp, FilePlus2, Scissors, Sparkles, Spline, X } from "lucide-react";
 import { Fragment, useEffect, useEffectEvent, useRef, useState, type MouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 
 import { NewBundle } from "@/components/assign/new-bundle";
@@ -29,7 +30,7 @@ import { Collapse, Truncate } from "@/components/ui/motion";
 import { Select, type SelectOption } from "@/components/ui/select";
 import { Tooltip } from "@/components/ui/tooltip";
 import { ViewSwitch } from "@/components/ui/view-switch";
-import type { WrittenSentence } from "@/lib/api-sop";
+import type { BundleCell, WrittenSentence } from "@/lib/api-sop";
 import type { DraftLine } from "@/lib/assign-drop-model";
 import { readCaretPoint } from "@/lib/caret-point";
 import { diffRows, getComposedLeadWidths, getNewRowKey, isComposedRow, isWrittenRow, readSectionNumber, type NewPaneRow, type SectionMark } from "@/lib/composed-model";
@@ -117,6 +118,15 @@ interface NewPaneProps {
   viewSwitch?: { template: boolean; onChange: (template: boolean) => void; body: ReactNode } | null;
   /** 클릭 배치 - 엮은 문서에서 Old 줄을 고른 채 고칠 수 있을 때만. 없으면 자리가 없다 */
   place?: NewPlaceSpots | null;
+  /** 이미 쓴 문서 표의 칸 잇기(시안 2 D5) - 칸 위 출처 칩은 늘, 누르기는 pickable(Old 줄을 고른 채)일 때, 놓기는 droppable일 때 */
+  cellLink?: NewCellLink | null;
+}
+
+/** 이미 쓴 문서 표의 칸 잇기 - onPick은 문장 줄 누르기(onPick)와 같은 길, onUnlink는 칸 칩의 × */
+export interface NewCellLink {
+  pickable: boolean;
+  droppable: boolean;
+  onUnlink?: (targetId: number, unitId: number) => void;
 }
 
 function readState(row: WrittenSentence, props: NewPaneProps): string | undefined {
@@ -308,28 +318,41 @@ export function NewPane(props: NewPaneProps) {
     );
   }
 
-  function renderSources(row: WrittenSentence) {
-    const isOpen = openSources.has(row.target_id);
-    const ids = row.source_unit_ids;
+  /** 출처 칩들 - 문장 상자와 표 칸이 같은 칩을 쓴다. onUnlink가 있으면(칸) 칩마다 끊기 × */
+  function renderChips(targetId: number, ids: number[], isAi: boolean, onUnlink?: (unitId: number) => void): ReactNode {
+    const isOpen = openSources.has(targetId);
     const visible = isOpen || ids.length <= VISIBLE_SOURCES + 1 ? ids : ids.slice(0, VISIBLE_SOURCES);
     const hidden = ids.slice(visible.length);
     return (
-      <span className="new-srcs">
+      <>
         {visible.map((unitId) => (
-          <button
-            key={unitId}
-            type="button"
-            className="new-src"
-            aria-label={t("assign.jumpOld", { id: props.sourceLabel(unitId) })}
-            data-src-unit={unitId}
-            data-ai={row.status === "ai_suggested" ? "" : undefined}
-            data-testid={`assign-new-src-${row.target_id}-${unitId}`}
-            onClick={() => props.onJumpSource(unitId, row.target_id)}
-          >
-            {props.sourceLabel(unitId)}
-            <ChevronUp size={11} strokeWidth={2.5} className="new-src-dir" data-d="above" aria-hidden />
-            <ChevronDown size={11} strokeWidth={2.5} className="new-src-dir" data-d="below" aria-hidden />
-          </button>
+          <Fragment key={unitId}>
+            <button
+              type="button"
+              className="new-src"
+              aria-label={t("assign.jumpOld", { id: props.sourceLabel(unitId) })}
+              data-src-unit={unitId}
+              data-ai={isAi ? "" : undefined}
+              data-testid={`assign-new-src-${targetId}-${unitId}`}
+              onClick={() => props.onJumpSource(unitId, targetId)}
+            >
+              {props.sourceLabel(unitId)}
+              <ChevronUp size={11} strokeWidth={2.5} className="new-src-dir" data-d="above" aria-hidden />
+              <ChevronDown size={11} strokeWidth={2.5} className="new-src-dir" data-d="below" aria-hidden />
+            </button>
+            {onUnlink && (
+              <button
+                type="button"
+                className="new-src new-src-x"
+                aria-label={t("assign.cellLink.unlink", { id: props.sourceLabel(unitId) })}
+                data-tip={t("assign.cellLink.unlink", { id: props.sourceLabel(unitId) })}
+                data-testid={`assign-new-src-x-${targetId}-${unitId}`}
+                onClick={() => onUnlink(unitId)}
+              >
+                <X size={11} strokeWidth={2.5} aria-hidden />
+              </button>
+            )}
+          </Fragment>
         ))}
         {hidden.length > 0 && (
           <button
@@ -337,12 +360,26 @@ export function NewPane(props: NewPaneProps) {
             className="new-src is-more"
             aria-label={t("assign.moreSources", { n: hidden.length })}
             data-src-more={hidden.join(",")}
-            data-testid={`assign-new-src-more-${row.target_id}`}
-            onClick={() => setOpenSources((prev) => new Set(prev).add(row.target_id))}
+            data-testid={`assign-new-src-more-${targetId}`}
+            onClick={() => setOpenSources((prev) => new Set(prev).add(targetId))}
           >
             +{hidden.length}
           </button>
         )}
+      </>
+    );
+  }
+
+  /** 칸 위 출처 칩 - 문장 상자와 같은 칩 줄, 고칠 수 있으면 칩마다 × */
+  function renderCellSources(cell: BundleCell): ReactNode {
+    const unlink = props.cellLink?.onUnlink;
+    return <span className="new-srcs">{renderChips(cell.target_id, cell.source_unit_ids, cell.status === "ai_suggested", unlink ? (unitId) => unlink(cell.target_id, unitId) : undefined)}</span>;
+  }
+
+  function renderSources(row: WrittenSentence) {
+    return (
+      <span className="new-srcs">
+        {renderChips(row.target_id, row.source_unit_ids, row.status === "ai_suggested")}
         {row.change_type === "new" && <span className="new-src is-new">{t("assign.markedNew")}</span>}
         {/* 참조 줄이 EQUIS와 어긋난다(번호·이름·EQUIS에 없음·폐기) - 출처가 없는 줄에도 뜬다. 이 문서의 글은 여기서 고치지 않아 알리기만 한다 */}
         <RefMark row={row} />
@@ -539,6 +576,17 @@ export function NewPane(props: NewPaneProps) {
             captionRequired={isComposedRow(row)}
             bundleId={props.bundleId}
             testId={`assign-new-${row.target_id}`}
+            cellLink={
+              props.cellLink && !isComposedRow(row)
+                ? {
+                    pickable: props.cellLink.pickable,
+                    droppable: props.cellLink.droppable,
+                    pickedIds: props.pickedIds,
+                    onPick: (cell, anchor, event) => props.onPick(cell.target_id, event.ctrlKey || event.metaKey, anchor, event),
+                    renderSources: renderCellSources,
+                  }
+                : null
+            }
           />
         );
       if (!isComposedRow(row)) return block;

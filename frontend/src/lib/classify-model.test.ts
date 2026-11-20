@@ -1,7 +1,7 @@
 // 분류 모델 - 줄=짝, 줄 상태는 덜 끝난 쪽, 저장 요청은 두 단위를 함께 담고 기존 새 문장을 고치며 N/A 칸은 고를 수 없다.
 import { describe, expect, it } from "vitest";
 
-import type { Decision, DocumentView, Group, GroupTarget, ToBe, UnitRow, ViewUnit } from "./api-sop";
+import type { Decision, DocumentView, Group, GroupTarget, ToBe, UnitRow, ViewUnit, WrittenSentence } from "./api-sop";
 import { listSiblingPlaces } from "./assign-model";
 import {
   buildDestinationOptions,
@@ -14,7 +14,9 @@ import {
   getRowStep,
   hasDraftChange,
   hasRowLanguage,
+  buildCellOwners,
   isPlaceOption,
+  isWrittenCell,
   listTreeOptions,
   listTreeRows,
   isSentenceUnit,
@@ -1065,5 +1067,51 @@ describe("join destination adds the row as a source of a placed sentence", () =>
     expect(listJoinedTargetIds(join)).toEqual([60]);
     expect(listJoinedTargetIds({ kind: "link", targetIds: [3, 4] })).toEqual([3, 4]);
     expect(listJoinedTargetIds(SCOPE)).toEqual([]);
+  });
+});
+
+describe("linking a cell of a written table (mockup 2 D5)", () => {
+  const table = makeTarget({ id: 40, origin: "new_doc", target_doc_id: 9, slot_key: null, kind: "table", lang: "neutral", status: "unassigned", change_type: null, source_unit_ids: [], revision: 7, grid: { rows: 1, cols: 2 } });
+  const cell = makeTarget({ id: 41, origin: "new_doc", target_doc_id: 9, slot_key: null, parent_target_id: 40, cell_row: 0, cell_col: 0, confirmed_text: "원문", status: "unassigned", change_type: null, source_unit_ids: [], revision: 2 });
+  const sibling = makeTarget({ id: 42, origin: "new_doc", target_doc_id: 9, slot_key: null, parent_target_id: 40, cell_row: 0, cell_col: 1, confirmed_text: "옆 칸", status: "confirmed", change_type: "as_is", source_unit_ids: [11], revision: 3 });
+  const other: Group["units"][number] = {
+    unit_id: 11, display_id: "OLD-5-002", document_id: 5, kind: "sentence", lang: "ko", text: "옆 칸", group_id: null, cell_unit_ids: [],
+    decision: { disposition: "assigned", move_target_code: "", reason: "", status: "confirmed", hold_reason: "", confirmed_by: null, confirmed_at: null, revision: 2 },
+  };
+  const context = { units: ONE_UNIT, group: { units: [other], targets: [table, cell, sibling] }, tables: new Map() };
+
+  it("adds the row to that cell only and echoes the table and sibling cells without a parent key", () => {
+    const body = buildGroupSave(makeDraft({ destination: { kind: "link", targetIds: [41] } }), context, "confirm");
+    expect(body.units).toEqual([
+      expect.objectContaining({ unit_id: 10, revision: 1, disposition: "assigned" }),
+      { unit_id: 11, revision: 2, disposition: "assigned", move_target_code: "", reason: "" },
+    ]);
+    expect(body.targets).toEqual([
+      { key: "t40", id: 40, revision: 7, kind: "table", source_unit_ids: [] },
+      { key: "t41", id: 41, revision: 2, kind: "sentence", source_unit_ids: [10] },
+      { key: "t42", id: 42, revision: 3, kind: "sentence", source_unit_ids: [11] },
+    ]);
+    expect(body.removed_target_ids).toEqual([]);
+  });
+
+  it("merges a second row into a linked cell", () => {
+    const linked = { ...cell, source_unit_ids: [12], status: "confirmed" as const };
+    const body = buildGroupSave(makeDraft({ destination: { kind: "link", targetIds: [41] } }), { ...context, group: { units: [other], targets: [table, linked, sibling] } }, "confirm");
+    expect(body.targets.find((target) => target.id === 41)?.source_unit_ids).toEqual([12, 10]);
+  });
+
+  it("reads a cell link back as the row's destination", () => {
+    const linked = { ...cell, source_unit_ids: [10] };
+    expect(readDestination({ units: [], targets: [table, linked, sibling] }, [10])).toEqual({ kind: "link", targetIds: [41] });
+    expect(isWrittenCell(linked)).toBe(true);
+    // 표 새 문장 · 줄로 만든 칸 새 문장은 이미 쓴 문서의 칸이 아니다
+    expect(isWrittenCell(table)).toBe(false);
+    expect(isWrittenCell({ ...linked, origin: "units" })).toBe(false);
+  });
+
+  it("maps each written cell to its table row", () => {
+    const row = { target_id: 40, table: { rows: 1, cols: 2, cells: [{ target_id: 41 }, { target_id: 42 }] } } as unknown as WrittenSentence;
+    const owners = buildCellOwners([row]);
+    expect([owners.get(41)?.target_id, owners.get(42)?.target_id, owners.has(40)]).toEqual([40, 40, false]);
   });
 });
