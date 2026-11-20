@@ -2911,6 +2911,44 @@ await runStep("assign: Space preview - a short tap keeps it open, Esc and anothe
   await setPaneView(page, "two"); // 다음 단계들은 양 단에서 시작한다
 });
 
+// 같은 박스를 다시 누르면 고른 행이 같아 가운데 맞추기가 돌지 않았다 - 끌어 둔 시트가 그대로였다(Assign 피드백 2026-11-20 항목 10)
+await runStep("assign: Space preview - pressing the same box again brings its row back to the middle", {}, async ({ page }) => {
+  // 낮은 창 - 시드 문서의 시트가 다 들어가면 옮길 자리가 없다
+  await page.setViewportSize({ width: 1280, height: 640 });
+  await openFirstAssign(page, "one");
+  const body = page.locator('[data-testid="assign-space-preview-body"]');
+  await page.keyboard.press(" ");
+  await wait(page, "assign-space-preview-body");
+  // J로 고른 박스 - 시트가 용지 아래쪽을 덮으니 칸 맨 위로 올리고, locator.click은 누르기 전에 다시 굴려 시트 밑에 넣으니 좌표로 누른다
+  const box = page.locator('[data-testid="assign-old"] [data-testid^="assign-paper-piece-"][data-sel]').first();
+  await box.evaluate((el) => el.scrollIntoView({ block: "start" }));
+  await page.waitForTimeout(200);
+  const pressBox = async () => {
+    const at = await box.boundingBox();
+    await page.mouse.click(at.x + 24, at.y + Math.min(12, at.height / 2));
+  };
+  await pressBox();
+  await page.locator('[data-testid="assign-space-preview-body"] tr[data-mark="picked"]').waitFor({ timeout: T });
+  await page.waitForTimeout(200);
+  const centred = await body.evaluate((el) => el.style.transform);
+  const frame = page.locator('[data-testid="assign-space-preview-sheet"]');
+  if (await frame.locator(".sv-rail").evaluate((el) => el.hidden)) {
+    console.log("  (the sheet fits - nothing to drag back)");
+    await page.keyboard.press("Escape");
+    return;
+  }
+  const area = await frame.boundingBox();
+  await page.mouse.move(area.x + area.width / 2, area.y + area.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(area.x + area.width / 2, area.y + area.height / 2 - 120, { steps: 6 });
+  await page.mouse.up();
+  check("dragging moves the sheet away from the picked row", (await body.evaluate((el) => el.style.transform)) !== centred, `${centred} → ${await body.evaluate((el) => el.style.transform)}`);
+  await pressBox();
+  await page.waitForTimeout(300);
+  check("pressing the same box again centres its row again", (await body.evaluate((el) => el.style.transform)) === centred, `${centred} → ${await body.evaluate((el) => el.style.transform)}`);
+  await page.keyboard.press("Escape");
+});
+
 await runStep("assign: Space preview in one pane shows the paragraph sheet with Section No.", {}, async ({ page }) => {
   await openFirstAssign(page, "one");
   const sheet = page.locator('[data-testid="assign-space-preview"]');

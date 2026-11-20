@@ -97,6 +97,18 @@ export function isSpaceEnabled(sheet: SpaceSheet, input: SpaceEnableInput): bool
   return sheet === "paragraphs" ? input.unitCount > 0 : !input.isNewEdit && input.rowCount > 0;
 }
 
+/**
+ * Space 미리보기가 가운데 맞출 단위 - 누른 박스(한/영 따로 문서에서 EN 박스를 누르면 EN 행)가 먼저이고, 시트에 없는 단위(문단 Excel은 본문만 -
+ * 머리말 · 꼬리말)면 문서 차례(docOrder)로 가장 가까운 위의 시트 단위, 그것도 없으면 null(시트 맨 위). Assign 피드백 2026-11-20 항목 10
+ */
+export function pickSheetAnchor(unitIds: readonly number[], pickedId: number | null, docOrder: readonly number[], isInSheet: (unitId: number) => boolean): number | null {
+  const first = pickedId !== null && unitIds.includes(pickedId) ? pickedId : unitIds[0];
+  if (first === undefined) return null;
+  if (isInSheet(first)) return first;
+  for (let at = docOrder.indexOf(first) - 1; at >= 0; at -= 1) if (isInSheet(docOrder[at])) return docOrder[at];
+  return null;
+}
+
 /** 고른 줄의 단위 가운데 시트에 줄이 있는 첫 단위 - 짝 줄은 A에서 한 단위로 적힌다 */
 export function findSheetUnit(sheet: Pick<PreviewSheet, "rows">, unitIds: readonly number[]): number | null {
   return unitIds.find((id) => sheet.rows.some((row) => row.unit_id === id)) ?? unitIds[0] ?? null;

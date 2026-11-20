@@ -7,6 +7,7 @@ import {
   buildSheetDraft,
   countDataRows,
   findSheetUnit,
+  pickSheetAnchor,
   getWindowRest,
   isOwnSpaceTarget,
   isSpaceEnabled,
@@ -114,6 +115,26 @@ describe("sheet window", () => {
     expect(findSheetUnit(sheet, [8, 9])).toBe(9);
     expect(findSheetUnit(sheet, [3])).toBe(3);
     expect(findSheetUnit(sheet, [])).toBeNull();
+  });
+
+  describe("sheet anchor", () => {
+    // 문서 차례 - 머리말 1, 본문 2 · 3(KO) · 4(EN), 꼬리말 5
+    const order = [1, 2, 3, 4, 5];
+    const isBody = (id: number) => id >= 2 && id <= 4;
+
+    it("puts the pressed box first - the EN box of a KO/EN pair finds the EN row", () => {
+      expect(pickSheetAnchor([3, 4], 4, order, isBody)).toBe(4);
+      expect(pickSheetAnchor([3, 4], null, order, isBody)).toBe(3);
+    });
+
+    it("falls back to the nearest body unit above when the box has no row", () => {
+      expect(pickSheetAnchor([5], 5, order, isBody)).toBe(4);
+    });
+
+    it("has no anchor above the first body unit or without a pick", () => {
+      expect(pickSheetAnchor([1], 1, order, isBody)).toBeNull();
+      expect(pickSheetAnchor([], null, order, isBody)).toBeNull();
+    });
   });
 });
 

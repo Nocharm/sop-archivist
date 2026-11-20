@@ -112,7 +112,7 @@
 | 차례 | 브랜치 | 항목 | 크기 · 닿는 곳 | 앞선 것 | 상태 |
 |---|---|---|---|---|---|
 | B1 | `fix/assign-delete-focus` | 1 | 작음 · FE | — | 됨 v1.4.1 |
-| B2 | `fix/space-preview-follow` | 10 | 작음 · FE + BE 한 곳 | — | |
+| B2 | `fix/space-preview-follow` | 10 | 작음 · FE + BE 한 곳 | — | 됨 v1.4.2 |
 | B3 | `fix/unwrap-scroll` | 11 스크롤 | 작음 · FE | — | |
 | B4 | `feat/deleted-fold-restore` | 2 · 5 | 작음 · FE | B1 | |
 | B5 | `fix/unit-text-linebreaks` | 6 | 중간 · BE(+ 데이터 고침) + FE 전환 | — | |

@@ -66,6 +66,7 @@ import { useAiPrepare } from "@/lib/use-ai-prepare";
 import { useAssignFocus } from "@/lib/use-assign-focus";
 import { useDelayedFlag } from "@/lib/use-delayed-flag";
 import { useCutLine } from "@/lib/use-cut-line";
+import { pickSheetAnchor, pickSpaceSheet } from "@/lib/space-preview-model";
 import { countRefLookups, isRefPending, pickRefUnit } from "@/lib/ref-model";
 import { isDeletedUnit } from "@/lib/deleted-fold-model";
 import { buildNavKeys, listTocBlocks, readTocNavKey, readUnitNavKey, toTocNavKey, toUnitNavKey } from "@/lib/toc-block-model";
@@ -426,6 +427,8 @@ export function useAssignPage() {
   }
   // 고른 박스 - 짝 줄이어도 누른 박스 하나다(설계 D3). 짝의 다른 구성원은 용지가 곁에 딸린 표시(data-mate)로만 보인다
   const pickedId = focus.kind === "unit" && row !== null ? focus.unitId : null;
+  // 박스를 누른 차례 - Space 미리보기가 같은 박스를 다시 눌러도 그 행으로 다시 가운데 맞춘다(Assign 피드백 2026-11-20 항목 10)
+  const [spacePickSeq, setSpacePickSeq] = useState(0);
   /** 줄 키로 고른다 - unitId가 그 줄의 박스면 그 박스, 아니면 이미 고른 그 줄의 박스를 두고, 처음 고르는 줄이면 첫 박스. 고른 박스 id를 돌려준다 */
   function pickRowKey(key: string, unitId?: number): number | null {
     const target = rowMap.get(key);
@@ -738,6 +741,16 @@ export function useAssignPage() {
   const linkPairs = buildLinkPairs(newRows.filter(isWrittenRow), oldUnitIds, draft.destination?.kind === "link" ? { units: rowUnits.map((unit) => ({ id: unit.unit_id, lang: unit.lang })), targetIds: draft.destination.targetIds } : null);
 
   const [view, setView] = useState(readAssignView);
+  // Space 미리보기의 단위 - 가운데 맞출 단위(누른 박스, 문단 Excel에 없는 머리말 · 꼬리말이면 문서 차례로 가까운 위 본문 단위)가 맨 앞
+  const spaceOrder = useMemo(() => {
+    if (!oldView) return null;
+    const partOfBlock = new Map(oldView.blocks.map((block) => [block.id, block.part]));
+    const docOrder = [...oldView.units].sort((a, b) => a.pos_seq - b.pos_seq || (a.spans[0]?.[1] ?? 0) - (b.spans[0]?.[1] ?? 0)).map((unit) => unit.id);
+    return { docOrder, bodyIds: new Set(oldView.units.filter((unit) => partOfBlock.get(unit.block_id) === "body").map((unit) => unit.id)) };
+  }, [oldView]);
+  const spaceRowIds = isSolo ? soloUnits.map((unit) => unit.id) : (row?.unitIds ?? []);
+  const spaceAnchor = spaceOrder === null ? null : pickSheetAnchor(spaceRowIds, isSolo ? (solo?.unitId ?? null) : pickedId, spaceOrder.docOrder, (unitId) => pickSpaceSheet(view.single) !== "paragraphs" || spaceOrder.bodyIds.has(unitId));
+  const spaceUnitIds = spaceAnchor === null ? spaceRowIds : [spaceAnchor, ...spaceRowIds.filter((id) => id !== spaceAnchor)];
   const paneSlide = usePaneSlide(view.single);
   function changeView(patch: Partial<typeof view>) {
     // 보기 단추(한 단·양 단)·세로선 끝까지 접기는 Pair view를 끄고 눌린 보기로 간다 - 다시 그려진 Old 용지는 고른 조각(없으면 켜기 전 자리)을 보인다
@@ -3227,6 +3240,7 @@ export function useAssignPage() {
     }
     setChecked(new Set());
     setCtxMenu(null);
+    setSpacePickSeq((seq) => seq + 1);
     // 누른 박스를 고른다 - 짝의 아래 박스를 눌러도 위 박스가 잡히지 않는다(설계 D3)
     selectRow(key, false, findBoxId(key, unitId));
   }
@@ -3474,7 +3488,7 @@ export function useAssignPage() {
     t, bundleId, bundle, canEdit, docs, oldDocs, oldDocIds, docViews, unitsKey, reloadData, tobe, tobeData, writtenList, identical,
     aiJobs, aiOn, aiBusy, suggestions, invalidUnitIds, readMarkStatus, readAiPlace, suggestedTargetUnits, unitMap, written, writtenMap, rows, rowMap,
     rowOfUnit, options, ready, showSkeleton, unsourced, mode, setMode, filter, counts, foldOpen, setFoldOpen, applyFilter, foldMatch,
-    clearRowPick, activeKey, row, pickedId, solo, setSolo, isSolo, isNewEdit, hasSolo, tocOpen, setTocOpen, tocPick, tocBlocks, checked,
+    clearRowPick, activeKey, row, pickedId, spaceUnitIds, spacePickSeq, solo, setSolo, isSolo, isNewEdit, hasSolo, tocOpen, setTocOpen, tocPick, tocBlocks, checked,
     setChecked, newRemarks, setNewRemarks, menu, setMenu, joinMenu, setJoinMenu, ctxMenu, setCtxMenu, cutUnitId, focusNew,
     groupData, setDrafts, draft, editing, groupPending, savedDestination, destination, rowUnits, rowLangs, firstDecision, systemHold,
     reasonNow, moveCode, setDraft, unsavedCount, leaveTo, setLeaveTo, rowLive, aiDest, aiWhy, isAiRow, recommendations, linkIds,
