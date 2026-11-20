@@ -1487,6 +1487,8 @@
   .strip-lead-gap { flex: none; }
   /* 번호 칸 손잡이(문단 번호, number-cell.tsx) - 번호는 단추이고 누르면 그 자리에 입력 상자가 뜬다. 번호 없는 줄의 "+"는 못 읽은 줄에서만 늘 보이고 나머지는 줄에 올리거나 포커스가 갔을 때만 보인다 */
   .strip-lead[data-num-open] { position: relative; z-index: 5; }
+  /* 줄(.strip-row)은 content-visibility: auto라 칠하기 가둠 · 제 쌓임 맥락이 생겨 창이 다음 줄 밑에 깔린다 - 연 줄만 가둠을 풀고 형제 줄 위로 */
+  .pg[data-strips] .strip-row:has(> .strip-lead[data-num-open]) { content-visibility: visible; position: relative; z-index: 6; }
   button.num-cell { border: 0; background: none; cursor: pointer; }
   button.num-cell:disabled { cursor: default; }
   button.num-cell:is(:hover, :focus-visible):not(:disabled) { color: var(--accent); }
