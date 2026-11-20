@@ -1114,16 +1114,23 @@ await runStep("assign: figures - the Figures tab holds the figure cards, Show po
   await page.locator('[data-testid="assign-tab-body"][aria-selected="true"]').waitFor({ timeout: T });
   check("the body tab has no figure row and no placeholder", (await page.locator('[data-testid="assign-paper"] .strip[data-kind="figure"]').count()) === 0 && (await card.count()) === 0);
   await page.locator('[data-testid="assign-tab-figures"]').click();
-  // 위치 보기 - 왼쪽 판에 앞뒤 본문 줄(한쪽 3줄까지)과 그림 이름이 붙은 자리 선
+  // 위치 보기 - 왼쪽 판에 앞뒤 본문 줄(한쪽 3줄까지)과 그림 자리 표지(문단 사이면 점선 네모, 문장 속이면 글 사이 "▣ 그림")
   const panel = page.locator('[data-testid="assign-figure-spot"]');
   const openSpot = async () => {
     await card.hover();
     await page.locator(`[data-testid="assign-figure-show-${figure.unit_id}"]`).click();
     await panel.waitFor({ timeout: T });
+    await panel.evaluate((el) => Promise.all(el.getAnimations().map((animation) => animation.finished)));
   };
   await openSpot();
-  const spotLine = panel.locator('[data-testid="assign-spot-spot-line"]');
-  check("Show position opens the side panel with the dotted spot line", (await spotLine.count()) === 1 && (await spotLine.innerText()).includes(`FIGURE ${figure.display_id}`), await panel.innerText());
+  const spotBox = panel.locator('[data-testid="assign-spot-figure"]');
+  const spotChip = panel.locator('[data-testid="assign-spot-chip"]');
+  const markerText = (await spotBox.count()) === 1 ? await spotBox.innerText() : (await spotChip.count()) === 1 ? await spotChip.innerText() : "";
+  check(
+    "Show position opens the left panel with one figure marker - a dashed box between rows or a chip inside the sentence",
+    (await panel.getAttribute("data-side")) === "left" && (await spotBox.count()) + (await spotChip.count()) === 1 && markerText.includes(figure.display_id),
+    await panel.innerText(),
+  );
   const spotRows = await panel.locator(".strip[data-strip-unit]").count();
   check("the panel shows only the body rows around the spot - three at most on each side", spotRows >= 1 && spotRows <= 6, String(spotRows));
   check("the panel is read-only - no join, grip or number buttons", (await panel.locator(".strip-merge, [data-drag-handle], button[data-testid^='assign-spot-num']").count()) === 0, await panel.locator(".strip-merge, [data-drag-handle], [data-testid^='assign-spot-num']").evaluateAll((els) => els.map((el) => `${el.tagName}.${el.className}:${el.dataset.testid ?? ""}`).join(" ")));
@@ -1140,6 +1147,16 @@ await runStep("assign: figures - the Figures tab holds the figure cards, Show po
   await page.locator('[data-testid="assign-tab-body"][aria-selected="true"]').waitFor({ timeout: T });
   await page.locator(`[data-testid="assign-paper-piece-${rowUnit}"][data-sel]`).waitFor({ timeout: T });
   check("a row in the panel goes to the body tab and picks that row", true);
+  // 1단 보기 - 같은 판이 오른쪽에서 나온다(B7 4-a)
+  await page.locator('[data-testid="assign-view-one"]').click();
+  await page.locator('[data-testid="assign-new"]').waitFor({ state: "detached", timeout: T });
+  await page.locator('[data-testid="assign-tab-figures"]').click();
+  await openSpot();
+  check("in the single view Show position opens the panel on the right", (await panel.getAttribute("data-side")) === "right");
+  await page.keyboard.press("Escape");
+  await panel.waitFor({ state: "detached", timeout: T });
+  await page.locator('[data-testid="assign-view-two"]').click();
+  await page.locator('[data-testid="assign-new"]').waitFor({ timeout: T });
   // 지우기 - Remark 없이 확정하면 카드가 흐린 한 줄로 접힌다
   await page.locator('[data-testid="assign-tab-figures"]').click();
   await card.hover();
@@ -5002,6 +5019,63 @@ await runStep("assign: counterpart table - each table unwraps on its own with no
   }, korean.id, { timeout: T }).then(() => true, () => false);
   check("the hint goes to the pair - it is picked and in view there and points back down", isPairInView && (await piece(english.id).getAttribute("data-mate")) === "" && (await hintOf(korean.id).getAttribute("data-dir")) === "down");
   await takeShot("sop-assign-counterpart.png");
+
+  // 1단 보기 - 안내 줄 한 번 누름은 오른쪽 짝 판(짝 박스와 앞뒤 3줄까지, 짝 박스를 칠함), 두 번 누름은 짝으로 간다(B7).
+  // 자리가 넉넉하면 가운데 용지가 판 옆으로 비켜서고, 모자라면 판이 용지를 덮는다(용지 제자리) - 좁은 창과 넓은 창 둘 다 본다
+  await page.locator('[data-testid="assign-view-one"]').click();
+  await page.locator('[data-testid="assign-new"]').waitFor({ state: "detached", timeout: T });
+  const pairSpot = page.locator('[data-testid="assign-pair-spot"]');
+  const readSheetLeft = () => page.locator('[data-testid="assign-old"] .pane-body > *').first().evaluate((el) => el.getBoundingClientRect().left);
+  const openPairSpot = async () => {
+    await hintOf(korean.id).click();
+    await pairSpot.waitFor({ timeout: T });
+    // 판이 들어오고 용지가 비켜서는 움직임이 끝날 때까지
+    await pairSpot.evaluate((el) => Promise.all(el.getAnimations().map((animation) => animation.finished)));
+    await page.waitForFunction(() => !document.querySelector(".assign-panes[data-motion]"), null, { timeout: T });
+  };
+  const readLayout = () =>
+    page.evaluate(() => {
+      const pane = document.querySelector('[data-testid="assign-old"]').getBoundingClientRect();
+      const sheet = document.querySelector('[data-testid="assign-old"] .pane-body > *').getBoundingClientRect();
+      const panel = document.querySelector('[data-testid="assign-pair-spot"]').getBoundingClientRect();
+      return { pane: pane.width, paneRight: pane.right, sheetLeft: sheet.left, sheetRight: sheet.right, panelLeft: panel.left, panelWidth: panel.width };
+    });
+  for (const width of [VIEWPORT.width, 1680]) {
+    await page.setViewportSize({ width, height: VIEWPORT.height });
+    const centred = await readSheetLeft();
+    await openPairSpot();
+    const layout = await readLayout();
+    const isAside = layout.pane >= 1000;
+    check(
+      `at ${width}px one press opens the pair panel on the right with the pair box picked, the paper ${isAside ? "steps aside" : "stays and is covered"}`,
+      (await pairSpot.getAttribute("data-side")) === "right" &&
+        (await pairSpot.locator(`[data-testid="assign-spot-piece-${english.id}"][data-sel]`).count()) === 1 &&
+        (await pairSpot.locator(".strip[data-strip-unit]").count()) <= 7 &&
+        (await piece(korean.id).getAttribute("data-sel")) === "" &&
+        Math.round(layout.panelWidth) <= 600 && layout.panelLeft + layout.panelWidth <= layout.paneRight + 1 &&
+        (isAside ? layout.sheetRight <= layout.panelLeft + 1 && layout.sheetLeft < centred - 1 : Math.abs(layout.sheetLeft - centred) <= 1),
+      JSON.stringify({ ...layout, centred }),
+    );
+    if (width !== VIEWPORT.width) await takeShot("sop-assign-pair-spot.png");
+    await page.keyboard.press("Escape");
+    await pairSpot.waitFor({ state: "detached", timeout: T });
+    await page.waitForFunction(() => !document.querySelector(".assign-panes[data-motion]"), null, { timeout: T });
+    check(`at ${width}px Esc closes the pair panel and the paper is back in the middle`, Math.abs((await readSheetLeft()) - centred) <= 1);
+  }
+  await page.setViewportSize(VIEWPORT);
+  // 판 안 짝 줄을 누르면 그 짝으로 간다
+  await openPairSpot();
+  await pairSpot.locator(`[data-testid="assign-spot-piece-${english.id}"]`).click();
+  await pairSpot.waitFor({ state: "detached", timeout: T });
+  await piece(english.id).and(page.locator("[data-sel]")).waitFor({ timeout: T });
+  check("a row in the pair panel closes it and picks that row", true);
+  // 두 번 누름 - 판 없이 짝으로 간다
+  await hintOf(english.id).dblclick();
+  await piece(korean.id).and(page.locator("[data-sel]")).waitFor({ timeout: T });
+  await page.waitForTimeout(400);
+  check("a double press on the hint goes to the pair without a panel", (await pairSpot.count()) === 0);
+  await page.locator('[data-testid="assign-view-two"]').click();
+  await page.locator('[data-testid="assign-new"]').waitFor({ timeout: T });
 
   // Undo 한 번은 영어 표만 표로 돌리고 짝도 빠진다, 한 번 더 하면 한글 표도 돌아온다
   await page.locator('[data-testid="assign-undo"]').click();

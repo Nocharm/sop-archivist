@@ -2,6 +2,12 @@
 
 프로젝트 진행 현황 로그. 커밋 직전 갱신한다 (`rules/common/git.md` 규칙). v1.4.0(2026-11-20 정식 업데이트)까지의 항목은 [`docs/history/PROGRESS-archive.md`](docs/history/PROGRESS-archive.md)에 있다 — 정식 업데이트마다 그 릴리스까지의 항목을 거기로 옮긴다(`rules/common/git.md` "정식 업데이트 때 문서 정리").
 
+## 2026-11-21 — B7 1단 보기 짝 엿보기 · 그림 위치 판 넓히기 (`feat/pair-peek`)
+
+- 위치 판을 `SpotPanel`(전 `FigureSpotPanel`) 하나로 — 대상이 그림이면 그림 자리, 짝이면 짝 박스(`findUnitSpot`, 앞뒤 3줄은 `findFigureSpot`과 같은 `listAround`). 판 상태는 OldPane에 두고, 짝 판은 연 때 고른 박스를 쥐어 고름이 바뀌거나 2단 보기로 가면 렌더 중에 지운다(다시 그 박스로 와도 열리지 않게). 한 번/두 번 누름은 새 공용 훅 `use-click-or-double`(250ms, effect 예산 밖).
+- 1단 보기 배치(내 판단 그대로): 판이 열리면 CSS 컨테이너 쿼리로 Old 칸이 1000px 이상이면 두 열(판 `min(600px, 45%)`, 용지는 판 옆으로) — 명세의 1180 대신 1000으로 정했다(오른쪽 결정 칸 때문에 1680px 창에서도 Old 칸이 1144px). 좁으면 판 `min(600px, 92%)`이 덮는다. 비켜서는 움직임은 `use-pane-slide`의 FLIP을 `startSlide`로 떼어 낸 `useSheetSlide`(`data-motion="aside"`).
+- 그림 자리 표지: 줄 사이는 점선 네모(그림 미리 보기 48px · "그림 · here" · 캡션 한 줄 — `FigureImage thumb`), 문장 속은 나눌 선 자리(`renderAtCut`)에 "▣ 그림" 칩. 스모크: 그림 단계는 표지 둘 중 하나 + 1단 보기 오른쪽 판, 짝 단계에 1단 엿보기(1248 · 1680px 덮음 / 비켜섬, Esc 복귀, 판 줄 누름, 두 번 누름). 판 들어오는 움직임이 끝난 뒤 재고 찍게 했다(전에는 움직이는 도중 스크린숏).
+
 ## 2026-11-21 — B6-3 언어 바꾸기 → 모양 전환 (`feat/lang-shape-switch`)
 
 - 새 편집 `switch_language {unit_id, lang, piece?, merge_pair?}`(옛 문서만): 짝을 한 언어로 → `merge_pair`면 `_plan_merge`로 합치고 아니면 언어만(짝은 `_leave_pairs`가 지움), `piece`면 그 합치기가 은퇴시킨 조각을 되살려 언어를 바꾸고 남은 조각은 하나면 되살리고 둘 이상이면 새로 합쳐 짝(`_Change.pair_units` · `pair_drafts` → `_create_human_pair`). 이웃 판단은 합치기 이웃 검사처럼 화면이 용지 순서로(`planLanguageChange`). 3-c는 `_Change.release`(확인 없이 settled, 제자리 단위는 `detach_units(cleared)`) — 보통 언어 바꾸기의 409는 그대로.

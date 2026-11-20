@@ -5,8 +5,8 @@
 import { ListFilter } from "lucide-react";
 import { useState, type ComponentProps, type ReactNode, type RefObject } from "react";
 
-import { FigureSpotPanel } from "@/components/assign/figure-spot-panel";
 import { PaneZoom } from "@/components/assign/pane-zoom";
+import { SpotPanel, type SpotTarget } from "@/components/assign/spot-panel";
 import { FigureTab } from "@/components/paper/figure-tab";
 import { Paper, type CutDragPos, type PaperCut } from "@/components/paper/paper";
 import { PartTabs } from "@/components/paper/part-tabs";
@@ -15,8 +15,10 @@ import { Select, type SelectOption } from "@/components/ui/select";
 import type { ViewUnit } from "@/lib/api-sop";
 import { useI18n } from "@/lib/i18n";
 import type { FoldOpen } from "@/lib/paper-fold-model";
+import type { PairHint } from "@/lib/pair-hint-model";
 import type { PaperItem, PaperModel, PaperSheet, PaperTabKey } from "@/lib/paper-model";
 import type { JoinKind, JoinPlan } from "@/lib/split-menu-model";
+import { useSheetSlide } from "@/lib/use-pane-slide";
 
 interface OldPaneProps {
   docOptions: SelectOption<string>[];
@@ -51,8 +53,10 @@ interface OldPaneProps {
   headingShift?: NonNullable<ComponentProps<typeof Paper>["strips"]>["headingShift"];
   /** 벗긴 표의 줄 묶음 머리 "↺ 다시 표로"(F1) - 없으면 머리 없이 왼쪽 세로선만 */
   unwrap?: NonNullable<ComponentProps<typeof Paper>["strips"]>["unwrap"];
-  /** 고른 박스 아래 떨어진 짝 안내 줄 - 누르면 짝으로 간다. 없으면 그리지 않는다 */
-  pairHint?: NonNullable<ComponentProps<typeof Paper>["strips"]>["pairHint"];
+  /** 고른 박스 아래 떨어진 짝 안내 줄 - 누르면 짝으로 간다(1단 보기는 한 번 = 짝 엿보기 판, 두 번 = 가기). 없으면 그리지 않는다 */
+  pairHint?: { onGo: (unitId: number) => void };
+  /** 1단 보기 - 위치 판이 오른쪽에서 나오고(용지는 비켜서거나 자리가 모자라면 덮인다) 짝 안내 줄이 엿보기를 연다(B7). 아니면 판은 왼쪽 */
+  single: boolean;
   /** 삭제로 확정한 줄을 흐린 한 줄로 접는다(설계 D6) - 없으면 평소 박스 */
   deleted?: NonNullable<ComponentProps<typeof Paper>["strips"]>["deleted"];
   /** 고른 박스가 이어 붙은 짝 카드 안이면 왼쪽 손잡이(카드 안 순서, 설계 D8) - 없으면 그리지 않는다 */
@@ -107,9 +111,26 @@ interface OldPaneProps {
 export function OldPane({ paneRef, ...props }: OldPaneProps) {
   const { t } = useI18n();
   const { model } = props;
-  // 위치 판을 연 그림 - 그 문서 보기에서만(문서를 바꾸면 닫힌다)
-  const [spot, setSpot] = useState<{ docId: string; unitId: number } | null>(null);
-  const spotUnitId = spot !== null && spot.docId === props.docId && model?.units.has(spot.unitId) ? spot.unitId : null;
+  // 위치 판 - 그 문서 보기에서만(문서를 바꾸면 닫힌다). 짝 판은 연 때 고른 박스를 쥔다
+  const [spot, setSpot] = useState<{ docId: string; target: SpotTarget; from: number | null } | null>(null);
+  // 짝 판은 다른 박스를 고르거나(두 번 눌러 짝으로 감 · 글쇠 이동 포함) 2단 보기로 바꾸면 닫힌다 - 다시 그 박스로 와도 열리지 않게 지운다
+  if (spot?.target.kind === "pair" && (spot.from !== props.selectedId || !props.single)) setSpot(null);
+  const spotTarget = spot !== null && spot.docId === props.docId && model?.units.has(spot.target.unitId) ? spot.target : null;
+  const sheetSlide = useSheetSlide(spotTarget !== null && props.single);
+
+  /** 판을 열고 닫는다 - 1단 보기면 그 직전 용지 자리를 잡아 비켜서는 움직임을 준다 */
+  function changeSpot(next: { target: SpotTarget; from: number | null } | null) {
+    if (props.single) sheetSlide.capture();
+    setSpot(next === null ? null : { ...next, docId: props.docId });
+  }
+
+  const pairHint = props.pairHint && props.single
+    ? {
+        ...props.pairHint,
+        onPeek: (hint: PairHint) =>
+          changeSpot({ target: { kind: "pair", unitId: hint.targetUnitId, title: t(hint.dir === "up" ? "paper.pairSpot.above" : "paper.pairSpot.below", { lang: hint.lang, where: hint.where }) }, from: props.selectedId }),
+      }
+    : props.pairHint;
 
   /** 쪽의 설명 줄 - 쓰이는 구역(1구역 · 첫 쪽…), 구역 정보가 없는 옛 추출이나 각주는 "머리말 2"처럼 차례로 */
   function describeSheet(sheet: PaperSheet, index: number): string {
@@ -158,7 +179,7 @@ export function OldPane({ paneRef, ...props }: OldPaneProps) {
         onCutNudge={props.onCutNudge}
         renderAtCut={props.cut ? props.renderAtCut : undefined}
         figureSource={props.figureSource}
-        strips={{ statusOf: props.statusOf, renderNote: props.renderNote, renderPills: props.renderPills, fold: props.fold, join: props.join, isCaptionNeeded: props.isCaptionNeeded, toc: props.toc, headingShift: props.headingShift, unwrap: props.unwrap, pairHint: props.pairHint, deleted: props.deleted, pending: props.pending, pairGrip: props.pairGrip }}
+        strips={{ statusOf: props.statusOf, renderNote: props.renderNote, renderPills: props.renderPills, fold: props.fold, join: props.join, isCaptionNeeded: props.isCaptionNeeded, toc: props.toc, headingShift: props.headingShift, unwrap: props.unwrap, pairHint, deleted: props.deleted, pending: props.pending, pairGrip: props.pairGrip }}
         renderUnitActions={props.renderUnitActions}
         dragBoxes={props.dragBoxes}
         numberCell={props.numberCell}
@@ -209,7 +230,7 @@ export function OldPane({ paneRef, ...props }: OldPaneProps) {
           />
         ) : model && props.activePart === "figures" ? (
           // 그림 탭 - 본문에서 뺀 그림 카드(시안 2 D3). 필터 접기는 걸지 않는다(카드가 그 탭의 목록 전부)
-          <FigureTab paper={buildPaperProps(model, undefined)} onShowPosition={(unitId) => setSpot({ docId: props.docId, unitId })} onDelete={props.figures?.onDelete} />
+          <FigureTab paper={buildPaperProps(model, undefined)} onShowPosition={(unitId) => changeSpot({ target: { kind: "figure", unitId }, from: null })} onDelete={props.figures?.onDelete} />
         ) : model ? (
           props.sheets !== null ? (
             // 머리말·꼬리말 탭 - 묶음(구역마다 다른 머리말…)마다 한 쪽이고 어디에 쓰이는지 설명 줄이 붙는다
@@ -230,18 +251,20 @@ export function OldPane({ paneRef, ...props }: OldPaneProps) {
           props.placeholder
         )}
       </div>
-      {model && spotUnitId !== null && (
-        <FigureSpotPanel
-          key={spotUnitId}
+      {model && spotTarget !== null && (
+        <SpotPanel
+          key={`${spotTarget.kind}-${spotTarget.unitId}`}
           model={model}
-          figureUnitId={spotUnitId}
+          target={spotTarget}
+          side={props.single ? "right" : "left"}
           statusOf={props.statusOf}
+          figureSource={props.figureSource}
           onPick={(unitId) => {
-            setSpot(null);
+            changeSpot(null);
             props.onPartChange("body");
             props.onUnitClick(unitId, { shiftKey: false }, false);
           }}
-          onClose={() => setSpot(null)}
+          onClose={() => changeSpot(null)}
         />
       )}
     </section>

@@ -2413,17 +2413,31 @@
   .figure-card-act { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; border: 1px solid var(--line-2); border-radius: var(--r-1); background: var(--surface); color: var(--ink-2); }
   .figure-card-act:hover { border-color: var(--ink-3); background: var(--hover); color: var(--ink); }
   .figure-card-act[data-tone="danger"]:hover { border-color: var(--danger-ink); background: var(--danger-tint); color: var(--danger-ink); }
-  .assign-pane:has(> .figure-spot) { position: relative; }
-  .figure-spot { position: absolute; inset-block: 0; left: 0; z-index: 20; display: flex; flex-direction: column; width: min(460px, 92%); direction: ltr; border-right: 1px solid var(--line-2); background: var(--raised); box-shadow: var(--shadow-2); animation: figure-spot-in var(--dur-slow) cubic-bezier(.16, 1, .3, 1) both; }
-  @keyframes figure-spot-in { from { transform: translateX(-100%); opacity: 0; } }
-  .figure-spot-head { display: flex; align-items: center; gap: 8px; padding: 6px 8px 6px 12px; border-bottom: 1px solid var(--line); }
-  .figure-spot-title { flex: 1 1 0; min-width: 0; font-size: 12px; font-weight: 600; color: var(--ink); }
-  .figure-spot-body { flex: 1 1 0; min-height: 0; overflow-y: auto; padding: 10px 6px 16px; }
-  .figure-spot-empty { padding: 12px; font-size: 12px; color: var(--ink-3); }
-  /* 자리 선 - 줄 사이 점 달린 선과 그림 이름. 판 안의 세로 표시는 나눌 선과 같은 자리지만 앞뒤 바탕 없이 선만 */
-  .figure-spot-line { position: relative; display: flex; align-items: center; gap: 6px; margin: 4px 0 4px var(--pg-pad-l, 24px); border-top: 2px dotted var(--accent); }
-  .figure-spot-line::before { content: ""; position: absolute; left: -5px; top: -6px; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); }
-  .figure-spot-label { position: relative; top: -0.75em; margin-left: 10px; padding: 0 6px; background: var(--raised); font-family: var(--font-mono); font-size: 11px; color: var(--accent); }
-  .figure-spot .su .cut-a, .figure-spot .su .cut-b { background: none; }
-  .figure-spot .su .cut-b { box-shadow: inset 2px 0 0 var(--accent); }
+  /* 위치 판(spot-panel) - 2단 보기는 Old 칸 왼쪽에서, 1단 보기는 오른쪽에서 나온다(B7). 폭 600px(전 460의 약 1.3배) */
+  .assign-pane:has(> .spot-panel) { position: relative; }
+  .spot-panel { position: absolute; inset-block: 0; left: 0; z-index: 20; display: flex; flex-direction: column; width: min(600px, 92%); direction: ltr; border-right: 1px solid var(--line-2); background: var(--raised); box-shadow: var(--shadow-2); animation: spot-panel-in var(--dur-slow) cubic-bezier(.16, 1, .3, 1) both; }
+  .spot-panel[data-side="right"] { left: auto; right: 0; border-right: 0; border-left: 1px solid var(--line-2); animation-name: spot-panel-in-right; }
+  @keyframes spot-panel-in { from { transform: translateX(-100%); opacity: 0; } }
+  @keyframes spot-panel-in-right { from { transform: translateX(100%); opacity: 0; } }
+  /* 1단 보기에서 판이 열리면 칸을 두 열(용지 | 판 min(600px, 45%))로 보고 가운데 용지가 판 옆으로 비켜선다(움직임은 lib/use-pane-slide useSheetSlide).
+     칸이 1000px보다 좁으면(용지가 약 540px 아래로 줄면) 비키지 않고 판(min(600px, 92%))이 용지를 덮는다 */
+  .assign-panes[data-single] [data-pane="old"] { container: old-pane / inline-size; }
+  @container old-pane (min-width: 1000px) {
+    .assign-panes[data-single] [data-pane="old"] > .spot-panel[data-side="right"] { width: min(600px, 45%); }
+    .assign-panes[data-single] [data-pane="old"]:has(> .spot-panel[data-side="right"]) > .pane-body { padding-right: calc(min(600px, 45cqi) + 12px); }
+  }
+  .spot-panel-head { display: flex; align-items: center; gap: 8px; padding: 6px 8px 6px 12px; border-bottom: 1px solid var(--line); }
+  .spot-panel-title { flex: 1 1 0; min-width: 0; font-size: 12px; font-weight: 600; color: var(--ink); }
+  .spot-panel-body { flex: 1 1 0; min-height: 0; overflow-y: auto; padding: 10px 6px 16px; }
+  .spot-panel-empty { padding: 12px; font-size: 12px; color: var(--ink-3); }
+  /* 그림 자리 - 줄 사이 점선 네모(작은 미리 보기 + 이름 + 캡션 한 줄) */
+  .spot-figure { display: flex; align-items: center; gap: 10px; min-width: 0; margin: 4px 0 4px var(--pg-pad-l, 24px); padding: 6px 10px; border: 1.5px dashed var(--accent); border-radius: var(--r-1); background: var(--accent-tint); }
+  .spot-figure-thumb { display: grid; place-items: center; flex: none; min-width: 48px; height: 48px; color: var(--accent); }
+  .spot-figure-text { display: grid; gap: 2px; min-width: 0; }
+  .spot-figure-label { font-family: var(--font-mono); font-size: 11px; font-weight: 600; line-height: 16px; color: var(--accent); }
+  .spot-figure-caption { overflow: hidden; font-size: 12px; line-height: 16px; color: var(--ink-2); white-space: nowrap; text-overflow: ellipsis; }
+  /* 문장 속 그림 - 나눌 선 자리(바탕 없이)에 글 사이로 끼운 작은 네모 표지 */
+  .spot-panel .su .cut-a, .spot-panel .su .cut-b { background: none; box-shadow: none; }
+  .spot-panel .cut-anchor { width: auto; }
+  .spot-chip { display: inline-flex; align-items: center; margin-inline: 3px; padding: 0 5px; border: 1px dashed var(--accent); border-radius: var(--r-1); background: var(--accent-tint); font-family: var(--font-mono); font-size: 11px; font-weight: 600; line-height: 16px; color: var(--accent); white-space: nowrap; vertical-align: 1px; }
 }

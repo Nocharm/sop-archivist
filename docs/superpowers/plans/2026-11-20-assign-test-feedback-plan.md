@@ -117,7 +117,7 @@
 | B4 | `feat/deleted-fold-restore` | 2 · 5 | 작음 · FE | B1 | 됨 v1.4.4 |
 | B5 | `fix/unit-text-linebreaks` | 6 | 중간 · BE(+ 데이터 고침) + FE 전환 | — | 됨 v1.4.5 |
 | B6 | `feat/assign-drop-join` → `feat/pair-undo` → `feat/lang-shape-switch`(차례로 셋) | 3 | 중간 · FE + BE 편집(모양 전환 한 편집) | B5 | B6-1 끌어 합치기 됨 v1.4.6 · B6-2 짝 되돌리기 됨 v1.4.7 · B6-3 언어 → 모양 전환 됨 v1.4.8 |
-| B7 | `feat/pair-peek` | 4 | 중간 · FE | — | |
+| B7 | `feat/pair-peek` | 4 | 중간 · FE | — | 됨 v1.4.9 |
 | B8 | `feat/number-levels` | 7 | 큼 · BE(열 · Alembic · 편집 op) + FE | B5 | |
 | B9 | `feat/paragraph-sheet-edits` | 9 | 중간 · BE 시트 + FE 시트 보기 | B5 · B8 | |
 | B10 | `feat/caption-anywhere` | 8 | 큼 · BE(추출기 · 편집 규칙) + FE | — | |

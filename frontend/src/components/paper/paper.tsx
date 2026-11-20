@@ -31,11 +31,12 @@ import { getHiddenEnds, listFollowPreview } from "@/lib/number-model";
 import { suggestUnitContinuous } from "@/lib/number-kind-model";
 import { getCardTops, getHiddenPrefixLength, getPairBrackets, getPillWidth, getSectionHeads, getTabWidths, getSectionLevel, getSectionPill, getVisibleSkip, sliceVisible, type PairBracket } from "@/lib/strip-pill-model";
 import { buildHeadingShiftGroups, readHeadingShiftHead, type HeadingShiftGroup } from "@/lib/heading-shift-model";
-import { getPairHint, type PairHintUnit } from "@/lib/pair-hint-model";
+import { getPairHint, type PairHint, type PairHintUnit } from "@/lib/pair-hint-model";
 import { isDeletedLineOpen, readDeletedLine, type DeletedFold, type DeletedLine } from "@/lib/deleted-fold-model";
 import { buildTocBlock, shouldJoinTocCard } from "@/lib/toc-block-model";
 import { findUnwrapHeads, getRowUnwrapTable } from "@/lib/unwrap-model";
 import { buildStripRows } from "@/lib/figure-spot-model";
+import { useClickOrDouble } from "@/lib/use-click-or-double";
 import { useNumberArrival } from "@/lib/use-number-arrival";
 
 /** 조각 끝 표시 - 단위의 것(UnitMark)에 그 조각이 놓인 블록의 경고를 더한다 */
@@ -212,8 +213,9 @@ interface PaperProps {
     headingShift?: { canRevert: boolean; busy: boolean; onRevert: (unitIds: number[]) => void };
     /** Assign - 벗긴 표의 줄 묶음 머리에 "↺ 다시 표로"(F1). canRewrap이 거짓이면 머리 없이 왼쪽 세로선만. onRewrap(표 id)은 편집 set_layout_table(표로) */
     unwrap?: { canRewrap: boolean; busy: boolean; onRewrap: (tableId: number) => void };
-    /** Assign - 고른 박스 바로 아래 떨어진 짝 안내 줄 "↑ 짝 KO · 위 §1"(lib/pair-hint-model). onGo(짝)는 그 박스를 고르고 그 자리로 스크롤한다 */
-    pairHint?: { onGo: (unitId: number) => void };
+    /** Assign - 고른 박스 바로 아래 떨어진 짝 안내 줄 "↑ 짝 KO · 위 §1"(lib/pair-hint-model). onGo(짝)는 그 박스를 고르고 그 자리로 스크롤한다.
+     *  onPeek이 있으면(1단 보기) 한 번 누름은 짝 엿보기 판(onPeek), 두 번 누름이 onGo다(B7) */
+    pairHint?: { onGo: (unitId: number) => void; onPeek?: (hint: PairHint) => void };
     /** Assign - 삭제로 확정한 줄을 흐린 한 줄 "DELETED · 종류 · 앞부분 글"로 접는다(lib/deleted-fold-model, 설계 D6). 접을 단위와 내용은 화면이 정한다.
      *  누르면 그 카드의 첫 단위를 고르고, 고른 동안만 펼친다(다른 박스를 고르면 다시 접힘, 둘 다 Collapse 전환). 접힌 줄은 끌기 · 틈 단추를 받지 않고 우클릭은 받는다 */
     deleted?: { folds: ReadonlyMap<number, DeletedFold> };
@@ -242,8 +244,8 @@ interface PaperProps {
   numberCell?: { busy: boolean; onSave: (unitId: number, number: string | null, follow: boolean) => void };
   /** 그림 줄(strips) - hide는 본문 탭(그림 · 그 캡션이 빠지고 자리 표시도 없다), only는 그림 탭(그림 카드만), 없으면 모두(시안 2 D3) */
   figureRows?: FigureRowMode;
-  /** 위치 판(strips) - 이 줄들만 그리고 afterKey 줄 뒤(null이면 맨 위)에 점 달린 자리 선과 label을 긋는다 */
-  spot?: { keys: ReadonlySet<string>; afterKey: string | null; label: string };
+  /** 위치 판(strips) - 이 줄들만 그린다. marker가 있으면 afterKey 줄 뒤(null이면 맨 위)에 그 표지(그림 자리 네모)를 끼운다 */
+  spot?: { keys: ReadonlySet<string>; marker?: { afterKey: string | null; node: ReactNode } };
 }
 
 /** 화면 좌표 → 블록 위치. 글자 조각 요소의 data-start에 글자 노드 안 위치를 더한다 */
@@ -506,6 +508,7 @@ export function Paper({
   }, [selectedId, matesOf]);
   // 고른 박스의 떨어진 짝 - 이어 붙은 카드 안의 구성원은 바로 곁이라 안내하지 않는다. 자리 이름은 번호 칸 값(옛 추출은 절 번호), 없으면 표시 ID
   const hasPairHint = strips?.pairHint !== undefined;
+  const handlePairHintPress = useClickOrDouble();
   const pairHint = useMemo(() => {
     const mates = selectedId === null ? undefined : matesOf.get(selectedId);
     const selected = selectedId === null ? undefined : model.units.get(selectedId);
@@ -739,9 +742,10 @@ export function Paper({
     return renderPendingPills((place) => place.at === "gap" && place.firstId === firstId && place.secondId === secondId);
   }
 
-  /** 고른 박스 아래 흐린 한 줄 - 떨어진 짝이 위/아래 어디에 있는지. 누르면 짝으로 간다 */
+  /** 고른 박스 아래 흐린 한 줄 - 떨어진 짝이 위/아래 어디에 있는지. 누르면 짝으로 간다(1단 보기는 한 번 = 엿보기, 두 번 = 가기) */
   function renderPairHint(unitId: number): ReactNode {
     const onGo = strips?.pairHint?.onGo;
+    const onPeek = strips?.pairHint?.onPeek;
     if (!onGo || pairHint === null) return null;
     const label = t(pairHint.dir === "up" ? "paper.pairHint.above" : "paper.pairHint.below", { lang: pairHint.lang, where: pairHint.where });
     return (
@@ -754,7 +758,8 @@ export function Paper({
         data-target={pairHint.targetUnitId}
         onClick={(event) => {
           event.stopPropagation();
-          onGo(pairHint.targetUnitId);
+          if (onPeek) handlePairHintPress(() => onPeek(pairHint), () => onGo(pairHint.targetUnitId));
+          else onGo(pairHint.targetUnitId);
         }}
       >
         {label}
@@ -1429,14 +1434,6 @@ export function Paper({
     );
   }
 
-  /** 위치 판의 그림 자리 - 줄 사이 점 달린 선과 그림 이름(시안 2 D3) */
-  function renderSpotLine(label: string): ReactNode {
-    return (
-      <div className="figure-spot-line" data-testid={`${testId}-spot-line`}>
-        <span className="figure-spot-label">{label}</span>
-      </div>
-    );
-  }
 
   function renderRows(sectionIndex: number): ReactNode {
     const { cards, groups, isChunked } = cardGroups[sectionIndex];
@@ -1445,11 +1442,11 @@ export function Paper({
         const index = group.start + offset;
         return (
           <Fragment key={card[0].key}>
-            {spot && spot.afterKey === null && index === 0 && renderSpotLine(spot.label)}
+            {spot?.marker && spot.marker.afterKey === null && index === 0 && spot.marker.node}
             {index > 0 && renderGap(cards[index - 1][cards[index - 1].length - 1], card[0])}
             {hasHeadingShift && renderShiftHead(card)}
             {renderCard(card)}
-            {spot && spot.afterKey !== null && card.some((row) => row.key === spot.afterKey) && renderSpotLine(spot.label)}
+            {spot?.marker && spot.marker.afterKey !== null && card.some((row) => row.key === spot.marker?.afterKey) && spot.marker.node}
           </Fragment>
         );
       });

@@ -2,7 +2,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { DocumentView, ViewBlock, ViewUnit } from "./api-sop";
-import { findFigureSpot } from "./figure-spot-model";
+import { findFigureSpot, findUnitSpot } from "./figure-spot-model";
 import { buildPaperModel } from "./paper-model";
 
 function makeBlock(id: number, seq: number, text: string, extra: Partial<ViewBlock> = {}): ViewBlock {
@@ -88,5 +88,27 @@ describe("findFigureSpot", () => {
 
   it("is null for a unit that is not a body figure", () => {
     expect(findFigureSpot(buildPaperModel(makeDoc(2, [1])), 101)).toBeNull();
+  });
+});
+
+describe("findUnitSpot", () => {
+  it("takes the pair row and three body rows on each side, skipping figure rows", () => {
+    const model = buildPaperModel(makeDoc(9, [4]));
+    expect(findUnitSpot(model, 105)).toEqual({
+      before: [keyOf(102, 2), keyOf(103, 3), keyOf(104, 4)],
+      row: keyOf(105, 5),
+      after: [keyOf(106, 6), keyOf(107, 7), keyOf(108, 8)],
+    });
+  });
+
+  it("stops at the ends of the document", () => {
+    const model = buildPaperModel(makeDoc(3, []));
+    expect(findUnitSpot(model, 101)).toEqual({ before: [], row: keyOf(101, 1), after: [keyOf(102, 2), keyOf(103, 3)] });
+  });
+
+  it("is null for a figure or a unit that is not in the body", () => {
+    const model = buildPaperModel(makeDoc(2, [1]));
+    expect(findUnitSpot(model, 90)).toBeNull();
+    expect(findUnitSpot(model, 999)).toBeNull();
   });
 });

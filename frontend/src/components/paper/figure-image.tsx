@@ -6,7 +6,8 @@ import { useEffect, useState } from "react";
 
 import { getFigureImage } from "@/lib/api-sop";
 
-export function FigureImage({ bundleId, docId, blockId }: { bundleId: number; docId: number; blockId: number }) {
+/** thumb - 위치 판 그림 자리 네모의 작은 미리 보기(높이 48px, 못 받으면 작은 아이콘) */
+export function FigureImage({ bundleId, docId, blockId, thumb = false }: { bundleId: number; docId: number; blockId: number; thumb?: boolean }) {
   const [url, setUrl] = useState<string | null>(null);
   useEffect(() => {
     let alive = true;
@@ -28,7 +29,9 @@ export function FigureImage({ bundleId, docId, blockId }: { bundleId: number; do
 
   return url ? (
     // eslint-disable-next-line @next/next/no-img-element -- 인증이 필요한 blob 주소라 next/image 최적화를 쓸 수 없다
-    <img src={url} alt="" className="max-h-[320px] max-w-full rounded-sm border border-line" data-testid={`figure-${blockId}`} />
+    <img src={url} alt="" className={thumb ? "h-12 w-auto max-w-24 rounded-sm object-contain" : "max-h-[320px] max-w-full rounded-sm border border-line"} data-testid={`figure-${blockId}`} />
+  ) : thumb ? (
+    <ImageIcon size={18} strokeWidth={1.5} aria-hidden />
   ) : (
     <span className="pfig-box" aria-hidden>
       <ImageIcon size={28} strokeWidth={1.5} />
