@@ -374,6 +374,8 @@ export interface ViewBlock {
    * 서버는 늘 싣는다(시험 자료가 줄여 쓰게 선택 칸)
    */
   anchor?: { block_id: number; at: number } | null;
+  /** 도형 그림(업무흐름도) 블록만 - 도형 안 글(위에서 아래). 단위가 아니라 배정 대상이 아니고 보기 · 찾기용(추출기 9부터). 서버는 늘 싣는다 */
+  figure_texts?: string[];
 }
 
 /** 머리말·꼬리말을 쓰는 구역(1부터)과 종류 */

@@ -239,7 +239,7 @@ def test_upload_stores_signals_and_leaves_plain_blocks_null(client: TestClient) 
         return extraction.extractor_version, [tuple(row) for row in blocks], list(tables)
 
     version, blocks, tables = run_in_session(_load)
-    assert version == EXTRACTOR_VERSION == "8"
+    assert version == EXTRACTOR_VERSION == "9"
     assert blocks == [
         ("7.4", "7.4", {"numbers": [[0, 3, "cell"]]}),
         ("", "7.4", None),

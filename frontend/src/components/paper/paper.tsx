@@ -1135,6 +1135,19 @@ export function Paper({
             </span>
           )}
           {!hideText && <p data-block={block.id}>{renderBlockText(block)}</p>}
+          {/* 도형 그림의 글은 단위가 아니다 - 접어 두고, 펼치거나 브라우저 찾기(Ctrl+F가 닫힌 details를 연다)로 읽는다 */}
+          {block.figure_texts?.length ? (
+            <details className="pfig-texts" data-testid={`figure-texts-${block.id}`}>
+              <summary>
+                {t("paper.figureTexts")} <span className="tabular-nums text-ink-4">{block.figure_texts.length}</span>
+              </summary>
+              <ol>
+                {block.figure_texts.map((text, index) => (
+                  <li key={index}>{text}</li>
+                ))}
+              </ol>
+            </details>
+          ) : null}
         </figure>
         {slot}
       </>

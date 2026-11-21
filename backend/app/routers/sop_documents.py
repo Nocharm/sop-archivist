@@ -2,6 +2,7 @@
 되돌리기·경계 확인·한/영 짝. 쓰기는 작성자가 작업 중일 때만 한다(편집 규칙은 app/sop/editing.py, 짝 규칙은 app/sop/pairs.py)."""
 
 import asyncio
+import logging
 import zipfile
 from collections.abc import Iterable, Sequence
 from io import BytesIO
@@ -32,6 +33,7 @@ from app.sop.constants import LANGUAGE_LAYOUTS, MEMBER_ROLES
 from app.sop.counterparts import build_table_facts, count_table_langs
 from app.sop.decision_steps import dump_bundle_state, record_snapshot_step, record_unit_edit_step
 from app.sop.detach import detach_units, find_units_needing_confirm
+from app.sop.drawing_image import render_drawing_png
 from app.sop.editing import (
     EditIn,
     EditResult,
@@ -50,6 +52,8 @@ from app.sop.ai.split import load_open_split_suggestion_ids
 from app.sop.filename import parse_file_name
 from app.sop.errors import check_revision, raise_rule
 from app.sop.excel_export import build_export_file_name
+from app.sop.extract.drawing import SIGNAL_DRAWING, list_drawing_texts
+from app.sop.extract.types import DRAWING_IMAGE_PART
 from app.sop.events import record_event
 from app.sop.ingest import get_max_file_bytes, ingest_upload
 from app.sop.numbering import (
@@ -121,6 +125,7 @@ _FILE_MEDIA_TYPES = {
     "pdf": "application/pdf",
 }
 _XLSX_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+logger = logging.getLogger(__name__)
 # 브라우저가 그대로 그리는 래스터 그림만 그 형식으로 낸다 — SVG 등은 스크립트를 담을 수 있어 내려받기 형식으로 낸다
 _IMAGE_MEDIA_TYPES = {
     "png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg", "gif": "image/gif",
@@ -270,6 +275,8 @@ class ViewBlockOut(BaseModel):
     part_group: str
     # 그림 블록만 — 문단 · 칸 글 안에 놓인 자리. 그림만 든 문단 · 추출기 7 전의 추출은 None
     anchor: ViewFigureAnchorOut | None = None
+    # 도형 그림(업무흐름도) 블록만 — 도형 안 글(위에서 아래). 배정 대상이 아니라 보기 · 찾기용이다(추출기 9부터)
+    figure_texts: list[str] = []
 
 
 class ViewUnitRefOut(BaseModel):
@@ -488,13 +495,17 @@ def _build_view_blocks(rows: Iterable[Row]) -> list[ViewBlockOut]:
         fields = dict(row._mapping)
         signals = fields.pop("signals")
         anchor = None
+        figure_texts: list[str] = []
         if row.kind == "figure":
             at = read_figure_inline(signals)
             if at is not None and host_id is not None:
                 anchor = ViewFigureAnchorOut(block_id=host_id, at=at)
+            figure_texts = list_drawing_texts((signals or {}).get(SIGNAL_DRAWING))
         else:
             host_id = row.id
-        out.append(ViewBlockOut(**fields, part_group=get_part_group_key(row.part, row.xml_path), anchor=anchor))
+        out.append(ViewBlockOut(
+            **fields, part_group=get_part_group_key(row.part, row.xml_path), anchor=anchor, figure_texts=figure_texts,
+        ))
     return out
 
 
@@ -1079,13 +1090,16 @@ async def get_figure_image(
     session: AsyncSession = Depends(get_session),
 ) -> Response:
     document = await _get_document(session, ctx.bundle.id, doc_id)
-    image_part = await session.scalar(
-        select(SourceBlock.image_part)
+    row = (await session.execute(
+        select(SourceBlock.image_part, SourceBlock.signals)
         .join(Extraction, Extraction.id == SourceBlock.extraction_id)
         .where(SourceBlock.id == block_id, SourceBlock.kind == "figure", Extraction.document_id == document.id)
-    )
+    )).one_or_none()
+    image_part = row.image_part if row is not None else None
     if image_part is None:
         raise_rule(404, "figure_not_found")
+    if image_part == DRAWING_IMAGE_PART:
+        return await _respond_drawing(block_id, (row.signals or {}).get(SIGNAL_DRAWING))
     stored = await session.get_one(DocumentFile, document.id)  # 그림 블록은 ready 문서에만 있고 ready는 바이트를 남긴다
     content = await asyncio.to_thread(_read_zip_entry, stored.content, image_part)
     if content is None:  # 외부 링크 그림처럼 파일 안에 없는 대상
@@ -1096,6 +1110,18 @@ async def get_figure_image(
         media_type=_IMAGE_MEDIA_TYPES.get(extension, "application/octet-stream"),
         headers={"X-Content-Type-Options": "nosniff"},
     )
+
+
+async def _respond_drawing(block_id: int, drawing: object) -> Response:
+    """도형 그림을 그려 보낸다 — 못 그리면 그림 없음(404)이고 화면은 자리 상자와 그림 안 글로 남는다."""
+    if not isinstance(drawing, dict):
+        raise_rule(404, "figure_not_found")
+    try:
+        content = await asyncio.to_thread(render_drawing_png, drawing)
+    except (ValueError, KeyError, TypeError, OSError) as exc:
+        logger.warning("drawing render failed", extra={"block_id": block_id, "error": type(exc).__name__})
+        raise_rule(404, "figure_not_found")
+    return Response(content=content, media_type="image/png", headers={"X-Content-Type-Options": "nosniff"})
 
 
 @router.post("/{bundle_id}/warnings/{warning_id}/ack", response_model=WarningOut)

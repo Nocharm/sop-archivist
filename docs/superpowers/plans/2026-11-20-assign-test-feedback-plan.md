@@ -122,7 +122,7 @@
 | B9 | `feat/paragraph-sheet-edits` | 9 | 중간 · BE 시트 + FE 시트 보기 | B5 · B8 | 됨 v1.4.11 |
 | B10 | `feat/caption-extract` → `feat/caption-any-line` → `feat/caption-pick-paths`(차례로 셋) | 8 | 큼 · BE(추출기 · 편집 규칙) + FE | — | B10-1 칸 안 캡션 · 읽기 넓히기 됨 v1.4.13(추출기 8) · B10-2 규칙 넓히기 됨 v1.4.14 · B10-3 지정 길 넷 됨 v1.4.15 |
 | B11 | `feat/ai-unwrap-order` | 11 AI | 큼 · BE AI 작업(Alembic) + FE | B3 | 됨 v1.4.16 |
-| B12 | `feat/flowchart-figure` | 12 | 큼 · BE 추출기 · 그림 그리기(+ 저장) | — | |
+| B12 | `feat/flowchart-figure` | 12 | 큼 · BE 추출기 · 그림 그리기(+ 저장) | — | 됨 v1.4.17(추출기 9) |
 | B13 | `feat/wi-parent-optional` | 13 | 중간 · BE To-Be · 결과물 + FE 올리기 창 · Documents | — | |
 
 추출기를 바꾸는 브랜치(B10 · B12, B5에서 추출기 쪽을 고르면 B5도)는 같은 `EXTRACTOR_VERSION`(BE `sop/extract/types.py:14`, 지금 `"7"`)을 올린다 — 먼저 `dev`에 합친 쪽이 다음 번호를 가진다. 이미 올린 문서는 다시 올려야 새 추출이 적용된다(설명서에 적는다).

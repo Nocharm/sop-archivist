@@ -1,6 +1,7 @@
 """테스트용 최소 DOCX — python-docx 없이 WordprocessingML을 zip에 직접 써서 Word가 여는 파일을 만든다."""
 
 import itertools
+import re
 import zipfile
 from collections.abc import Mapping, Sequence
 from io import BytesIO
@@ -14,6 +15,8 @@ NAMESPACES = (
     'xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture" '
     'xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" '
     'xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape" '
+    'xmlns:wpc="http://schemas.microsoft.com/office/word/2010/wordprocessingCanvas" '
+    'xmlns:wpg="http://schemas.microsoft.com/office/word/2010/wordprocessingGroup" '
     'xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math" '
     'xmlns:v="urn:schemas-microsoft-com:vml" '
     'xmlns:o="urn:schemas-microsoft-com:office:office"'
@@ -192,6 +195,77 @@ def make_textbox_run(content_xml: str) -> str:
         f"<v:textbox><w:txbxContent>{content_xml}</w:txbxContent></v:textbox></v:shape></w:pict></mc:Fallback>"
         "</mc:AlternateContent></w:r>"
     )
+
+
+# 합성 업무흐름도 도형(EMU) — (모양, x, y, 폭, 높이, 글). 위에서 아래로 시작 → 확인 → 판단 → 알림 → 결과
+FLOW_SHAPES = (
+    ("roundRect", 1143000, 0, 1828800, 457200, "공정 시작"),
+    ("flowChartProcess", 1143000, 685800, 1828800, 457200, "7.1.1 장비 상태 확인"),
+    ("flowChartDecision", 1143000, 1371600, 1828800, 685800, "이상 있음?"),
+    ("rect", 1143000, 2286000, 1828800, 457200, "담당 부서에 알림"),
+    ("roundRect", 1143000, 2971800, 1828800, 457200, "공정 결과"),
+)
+# 연결선 — (x, y, 폭, 높이): 도형 사이 세로선 넷, 끝에 화살촉
+FLOW_CONNECTORS = (
+    (2057400, 457200, 0, 228600), (2057400, 1143000, 0, 228600),
+    (2057400, 2057400, 0, 228600), (2057400, 2743200, 0, 228600),
+)
+FLOW_SIZE = (4114800, 3429000)  # 캔버스 크기(EMU) — 4.5 × 3.75 인치
+
+
+def make_flow_shape_xml(geom: str, box: tuple[int, int, int, int], text: str = "", *, connector: bool = False) -> str:
+    """wps:wsp 도형 하나 — 연결선이면 wps:cNvCnPr와 끝 화살촉, 글이 있으면 글상자."""
+    x, y, cx, cy = box
+    head = "<wps:cNvCnPr/>" if connector else "<wps:cNvSpPr/>"
+    line = '<a:ln w="12700"><a:tailEnd type="triangle"/></a:ln>' if connector else '<a:ln w="9525"/>'
+    body = f"<wps:txbx><w:txbxContent>{p(text)}</w:txbxContent></wps:txbx>" if text else ""
+    return (
+        f'<wps:wsp>{head}<wps:spPr><a:xfrm><a:off x="{x}" y="{y}"/><a:ext cx="{cx}" cy="{cy}"/></a:xfrm>'
+        f'<a:prstGeom prst="{geom}"><a:avLst/></a:prstGeom>{line}</wps:spPr>{body}<wps:bodyPr/></wps:wsp>'
+    )
+
+
+def make_flow_shapes_xml() -> str:
+    """합성 흐름도의 도형 다섯과 연결선 넷."""
+    shapes = "".join(make_flow_shape_xml(geom, (x, y, cx, cy), text) for geom, x, y, cx, cy, text in FLOW_SHAPES)
+    lines = "".join(make_flow_shape_xml("straightConnector1", box, connector=True) for box in FLOW_CONNECTORS)
+    return shapes + lines
+
+
+def make_canvas_run(shapes_xml: str | None = None, *, wrapped: bool = False, grouped: bool = False) -> str:
+    """도형 캔버스(wpc) 흐름도 run. wrapped는 Word처럼 mc:AlternateContent(Choice = 도형, Fallback = VML)로 감싸고,
+    grouped는 캔버스 대신 도형 묶음(wpg:wgp, 자식 좌표가 절반 크기라 chExt로 두 배로 맞춘다)으로 낸다."""
+    n = next(_drawing_ids)
+    width, height = FLOW_SIZE
+    shapes = make_flow_shapes_xml() if shapes_xml is None else shapes_xml
+    if grouped:
+        uri = "http://schemas.microsoft.com/office/word/2010/wordprocessingGroup"
+        root = (
+            f'<wpg:wgp><wpg:cNvGrpSpPr/><wpg:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="{width}" cy="{height}"/>'
+            f'<a:chOff x="0" y="0"/><a:chExt cx="{width * 2}" cy="{height * 2}"/></a:xfrm></wpg:grpSpPr>'
+            f"{_double_boxes(shapes)}</wpg:wgp>"
+        )
+    else:
+        uri = "http://schemas.microsoft.com/office/word/2010/wordprocessingCanvas"
+        root = f"<wpc:wpc><wpc:bg/><wpc:whole/>{shapes}</wpc:wpc>"
+    drawing = (
+        f'<w:drawing><wp:inline distT="0" distB="0" distL="0" distR="0"><wp:extent cx="{width}" cy="{height}"/>'
+        f'<wp:docPr id="{n}" name="Canvas {n}"/><a:graphic><a:graphicData uri="{uri}">{root}'
+        "</a:graphicData></a:graphic></wp:inline></w:drawing>"
+    )
+    if not wrapped:
+        return f"<w:r>{drawing}</w:r>"
+    return (
+        f'<w:r><mc:AlternateContent><mc:Choice Requires="wpc">{drawing}</mc:Choice>'
+        '<mc:Fallback><w:pict><v:group style="width:324pt;height:270pt">'
+        f"<v:shape><v:textbox><w:txbxContent>{p('공정 시작')}</w:txbxContent></v:textbox></v:shape>"
+        "</v:group></w:pict></mc:Fallback></mc:AlternateContent></w:r>"
+    )
+
+
+def _double_boxes(shapes_xml: str) -> str:
+    """묶음 변형 — 자식 좌표계가 두 배라 도형 좌표·크기도 두 배로 적는다(읽으면 원래 자리로 돌아와야 한다)."""
+    return re.sub(r'(x|y|cx|cy)="(\d+)"', lambda m: f'{m.group(1)}="{int(m.group(2)) * 2}"', shapes_xml)
 
 
 def build_docx(

@@ -18,7 +18,9 @@ from defusedxml import DefusedXmlException
 from defusedxml.ElementTree import fromstring
 
 from app.sop.constants import BLOCK_KINDS, BLOCK_PARTS
+from app.sop.extract.drawing import SIGNAL_DRAWING, read_drawing
 from app.sop.extract.types import (
+    DRAWING_IMAGE_PART,
     ExtractedBlock,
     ExtractedTable,
     ExtractedWarning,
@@ -362,6 +364,7 @@ class _FigureRef:
 
     blip_rel_id: str | None = None
     vml_rel_id: str | None = None  # a:blip이 없는 옛 VML 그림·OLE 미리보기
+    drawing: dict[str, object] | None = None  # 도형 캔버스·묶음이면 그 도형 그림 재료(extract.drawing.read_drawing)
     at: int = 0  # 그림 요소를 만났을 때까지 모은 문단 글자 수 — 써 넣을 자동 번호 앞머리는 아직 없다
 
 
@@ -377,15 +380,11 @@ class _InlineRead:
     length: int = 0  # pieces 글자 수의 합
 
     def pick_image_figure(self) -> _FigureRef | None:
-        """문단 그림 블록이 보이는 그림 요소 — 문단 안 첫 a:blip, 없으면 첫 VML 그림, 둘 다 없으면 첫 그림 요소."""
+        """문단 그림 블록이 보이는 그림 요소 — 문단 안 첫 a:blip, 없으면 첫 도형 그림, 그다음 첫 VML 그림, 다 없으면 첫 그림 요소."""
         blips = (figure for figure in self.figures if figure.blip_rel_id)
+        drawings = (figure for figure in self.figures if figure.drawing)
         vmls = (figure for figure in self.figures if figure.vml_rel_id)
-        return next(blips, None) or next(vmls, None) or next(iter(self.figures), None)
-
-    def get_first_image_rel_id(self) -> str | None:
-        """문단 그림 블록의 그림 — 문단 안 첫 a:blip, 없으면 첫 VML 그림."""
-        figure = self.pick_image_figure()
-        return (figure.blip_rel_id or figure.vml_rel_id or None) if figure is not None else None
+        return next(blips, None) or next(drawings, None) or next(vmls, None) or next(iter(self.figures), None)
 
     def add(self, text: str) -> None:
         if not text:
@@ -422,6 +421,7 @@ class _ParaRecord:
     caption_for: tuple[Literal["figure", "table"], int] | None = None
     # 그림 블록의 그림이 놓인 text 안 자리 — 글이 없어 문단 블록을 내지 않는 그림만 든 문단은 None(자리 신호 없음)
     figure_at: int | None = None
+    drawing: dict[str, object] | None = None  # 그림 블록이 도형 그림이면 그 재료
 
 
 @dataclass
@@ -458,6 +458,7 @@ class _CellFigureRecord:
     row_index: int
     col_index: int
     at: int  # 그림이 놓인 칸 글(문단을 "\n"으로 이은 것) 안 자리
+    drawing: dict[str, object] | None = None  # 도형 그림이면 그 재료
 
 
 _Record = _ParaRecord | _CellRecord | _CellFigureRecord
@@ -802,6 +803,11 @@ def _walk_inline(parent: Element, read: _InlineRead) -> None:
         elif tag == W_SYM:
             read.add(_read_sym(child))
         else:
+            drawing = read_drawing(child) if tag == W_DRAWING else None
+            if drawing is not None:
+                # 도형 그림은 통째로 그림 하나다 — 안의 글상자를 상자 글 문단으로 모으지 않게 내려가지 않는다
+                read.figures.append(_FigureRef(drawing=drawing, at=read.length))
+                continue
             # 그림 요소는 서로 겹쳐 놓이지 않으므로(상자 글은 따로 모은다) 안쪽 그림 관계는 마지막 그림 요소의 것이다
             if tag in _FIGURE_TAGS:
                 read.figures.append(_FigureRef(at=read.length))
@@ -976,7 +982,8 @@ class _Collector:
                 style=style,
                 is_number_unresolved=is_number_unresolved,
                 has_figure=bool(read.figures),
-                image_part=_get_image_part(context, read.get_first_image_rel_id()),
+                image_part=_get_image_part(context, figure),
+                drawing=figure.drawing if figure is not None else None,
                 slot=slot,
                 number=number,
                 toc=self._read_toc(paragraph, style, text) if context.part == PART_BODY else (),
@@ -1153,7 +1160,8 @@ class _Collector:
                         in_body=context.in_body,
                         xml_path=item_path,
                         marks=para_marks,
-                        image_part=_get_image_part(context, figure.blip_rel_id or figure.vml_rel_id),
+                        image_part=_get_image_part(context, figure),
+                        drawing=figure.drawing,
                         table_index=table_index,
                         row_index=row_index,
                         col_index=col_index,
@@ -1253,8 +1261,14 @@ def _find_toc_paragraphs(body: Element) -> dict[int, set[str]]:
     return found
 
 
-def _get_image_part(context: _PartContext, rel_id: str | None) -> str | None:
-    return context.rel_targets.get(rel_id) if rel_id else None
+def _get_image_part(context: _PartContext, figure: _FigureRef | None) -> str | None:
+    """그림 블록이 보일 그림 — 그림 파일 부분 이름, 도형 그림은 DRAWING_IMAGE_PART(보낼 때 그린다), 없으면 None."""
+    if figure is None:
+        return None
+    rel_id = figure.blip_rel_id or figure.vml_rel_id
+    if rel_id:
+        return context.rel_targets.get(rel_id)
+    return DRAWING_IMAGE_PART if figure.drawing else None
 
 
 def _fit_xml_path(path: str) -> str:
@@ -1427,7 +1441,9 @@ class _BlockWriter:
             flags = _pick_flags((FLAG_AUTO_NUMBERING, record.is_number_unresolved and not record.text))
             self._figure_seqs[index] = len(self.blocks)
             # 문장 속 그림 — 자리는 바로 앞에 낸 이 문단의 글 블록 안이다
-            figure_signals = {SIGNAL_INLINE: {"at": record.figure_at}} if record.figure_at is not None else {}
+            figure_signals: dict[str, object] = {SIGNAL_INLINE: {"at": record.figure_at}} if record.figure_at is not None else {}
+            if record.drawing is not None:
+                figure_signals[SIGNAL_DRAWING] = record.drawing
             self._append(
                 record, KIND_FIGURE, "", image_part=record.image_part, flags=flags, signals=figure_signals,
             )
@@ -1475,7 +1491,8 @@ class _BlockWriter:
             row_index=record.row_index,
             col_index=record.col_index,
             image_part=record.image_part,
-            signals={SIGNAL_INLINE: {"at": record.at}},  # 자리는 앞선 이 칸 블록의 글 안이다
+            # 자리는 앞선 이 칸 블록의 글 안이다
+            signals={SIGNAL_INLINE: {"at": record.at}, **({SIGNAL_DRAWING: record.drawing} if record.drawing else {})},
         )
 
     def link_captions(self) -> None:

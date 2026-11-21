@@ -2,6 +2,11 @@
 
 프로젝트 진행 현황 로그. 커밋 직전 갱신한다 (`rules/common/git.md` 규칙). v1.4.0(2026-11-20 정식 업데이트)까지의 항목은 [`docs/history/PROGRESS-archive.md`](docs/history/PROGRESS-archive.md)에 있다 — 정식 업데이트마다 그 릴리스까지의 항목을 거기로 옮긴다(`rules/common/git.md` "정식 업데이트 때 문서 정리").
 
+## 2026-11-21 — B12 업무흐름도를 간이 그림으로 (`feat/flowchart-figure`)
+
+- 그린 그림을 어디 둘지(계획 §5 B12-2)는 **저장하지 않고 보낼 때 그리기**로 골랐다 — 추출기가 도형 재료(EMU 자리 · 모양 · 선 끝 · 글)를 기존 `source_blocks.signals`에 `drawing`으로 남기고, 그림 블록 `image_part`를 `#drawing`(ZIP 부분 이름은 `#`로 시작하지 않음)으로 둬 `has_image` · 결과물 그림 찾기(`image_part IS NOT NULL`)가 그대로 돈다. 새 표 · Alembic · 백업 규칙 변화가 없고, 그리기를 고치면 다시 올리지 않아도 바뀐다(PNG는 약 50ms).
+- 도형 그림이면 `_walk_inline`이 그 안으로 내려가지 않아 글상자가 텍스트 상자 문단이 되지 않는다. `mc:AlternateContent`는 이미 Choice만 읽어 VML 대체 갈래 글도 안 나온다. 그림 안 글은 보기 응답 `figure_texts`(위에서 아래 · 왼쪽부터)로만 — 용지 그림 줄의 `<details>`(그림 탭 카드도 같은 그리기). 상한: 도형 500 · 그림 1000×3000px. 실사례 30개 흐름도 대조는 사용자 PC에서.
+
 ## 2026-11-21 — B11 벗긴 표 AI 순서 제안 (`feat/ai-unwrap-order`)
 
 - 새 AI 작업 `unwrap_order`(`ai/unwrap_order_job.py`, 경로 `POST /ai/unwrap_order {document_id, table_id}`): 표 하나 = 작업 하나, 표 id는 작업 `payload`. 보내는 것은 원문 표 Markdown과 덩이 줄(id · 글 · 원래 행 · 열)뿐. 답이 덩이 줄의 순열이 아니면 `invalid`(경고 `order_mismatch`). 제안 `content = {table_id, unit_ids, reason}`은 그대로 `reorder_unwrapped`로 보낼 수 있다. 채택 기록은 split 전용이던 것을 `record_manual_adoption`(split · unwrap_order)으로 넓힘.

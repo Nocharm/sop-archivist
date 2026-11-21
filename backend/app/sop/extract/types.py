@@ -13,7 +13,11 @@ from dataclasses import dataclass, field
 # 7: 문단·칸 안 그림 블록에 글자 자리 신호(inline)를 남긴다(시안 2 D3 위치 판) — 6까지의 추출은 자리가 없다(문서 보기 anchor = None)
 # 8: 칸 안 안쪽 표의 캡션 줄을 칸 블록 신호(captions)로 잇고, 캡션을 찾을 때 빈 문단을 건너뛰며, 괄호·줄표 꼴 캡션 머리
 #    (<표 1> · [Table 3] · 표-1)도 읽는다 — 7까지의 추출은 칸 안 캡션이 보통 칸 줄이다(다시 올려야 잇는다)
-EXTRACTOR_VERSION = "8"
+# 9: 도형 캔버스·묶음(업무흐름도)을 그림 블록 하나로 읽어 도형 재료를 신호(drawing)에 남기고, 그 안 글상자를 문단으로 내지
+#    않는다 — 8까지의 추출은 흐름도 글이 텍스트 상자 문단이고 그림은 자리 상자다(다시 올려야 그린다)
+EXTRACTOR_VERSION = "9"
+# 도형 그림 블록의 image_part — 문서 안 그림 파일이 아니라 신호 drawing으로 보낼 때 그린다(ZIP 부분 이름은 "#"로 시작하지 않는다)
+DRAWING_IMAGE_PART = "#drawing"
 
 
 @dataclass(frozen=True)
@@ -60,6 +64,7 @@ class ExtractedBlock:
     - "inline": 그림 블록만, 그림이 놓인 글자 자리 {"at": n} — n은 앞선 가장 가까운 그림 아닌 블록(같은 문단의 문단 블록, 칸 안
       그림은 그 칸 블록)의 text 안 자리(써 넣은 자동 번호 포함). 그림만 든 문단은 제 글 블록이 없어(앞 블록은 다른 문단) 남기지 않는다
     - "captions": 칸 블록만, 칸 안 안쪽 표의 캡션 줄 [[시작, 끝, 안쪽 표 첫 칸 블록 seq], …] — 추출기 8부터
+    - "drawing": 그림 블록만, 도형 그림 재료 {"w", "h", "items"} — 모양은 extract.drawing.read_drawing. 추출기 9부터
     """
 
     seq: int
