@@ -57,8 +57,8 @@ def _setup(client: TestClient) -> tuple[int, int]:
 
 
 class _Numbered:
-    def __init__(self, lang: str, number: str | None, block: int | None = None, is_cell_number: bool = False) -> None:
-        self.lang, self.number, self.block, self.is_cell_number = lang, number, block, is_cell_number
+    def __init__(self, lang: str, number: str | None, blocks: tuple[int, ...] = (), is_cell_number: bool = False) -> None:
+        self.lang, self.number, self.blocks, self.is_cell_number = lang, number, blocks, is_cell_number
 
 
 def test_section_numbers_carry_the_nearest_number_of_the_same_language() -> None:
@@ -74,11 +74,23 @@ def test_cell_numbers_of_an_unwrapped_table_stay_inside_it() -> None:
     """§6-3 — 절 "5" 아래 벗긴 표의 숫자 칸 "1" "2" "3"은 덩이 안에서만 Section No.이고, 표 뒤 문단은 "5"로 돌아간다.
     덩이 안에서 사람이 정한 번호는 보통 번호처럼 표 뒤로 이어진다."""
     lines = [
-        _Numbered("ko", "5"), _Numbered("neutral", "1", 9, True), _Numbered("neutral", "•", 9), _Numbered("neutral", "2", 9, True),
-        _Numbered("ko", None), _Numbered("neutral", "3", 7, True), _Numbered("ko", "5.1", 7), _Numbered("ko", None),
+        _Numbered("ko", "5"), _Numbered("neutral", "1", (9,), True), _Numbered("neutral", "•", (9,)), _Numbered("neutral", "2", (9,), True),
+        _Numbered("ko", None), _Numbered("neutral", "3", (7,), True), _Numbered("ko", "5.1", (7,)), _Numbered("ko", None),
     ]
 
     assert build_section_numbers(lines) == ["5", "1", "1", "2", "5", "3", "5.1", "5.1"]
+
+
+def test_a_nested_unwrapped_table_carries_the_outer_cell_number_and_drops_its_own() -> None:
+    """바깥 덩이 9의 칸 "1" 안에 안쪽 덩이 4 — 안쪽 줄은 "1"을 이어받고, 안쪽 칸 "A"는 안쪽 덩이를 나오면 버려 바깥 줄은 다시 "1",
+    바깥 덩이를 나오면 "5"."""
+    lines = [
+        _Numbered("ko", "5"), _Numbered("ko", "1", (9,), True), _Numbered("ko", None, (9, 4)), _Numbered("ko", "A", (9, 4), True),
+        _Numbered("ko", None, (9, 4)), _Numbered("ko", None, (9,)), _Numbered("ko", "2", (9,), True), _Numbered("ko", None, (9, 6)),
+        _Numbered("ko", None),
+    ]
+
+    assert build_section_numbers(lines) == ["5", "1", "1", "A", "A", "1", "2", "2", "5"]
 
 
 def test_row_levels_follow_the_paper_tabs() -> None:
@@ -340,4 +352,32 @@ def test_unwrapped_number_cells_do_not_leak_past_the_table(client: TestClient) -
     assert [row[:2] for row in rows[1:]] == [
         ["5.", "조제 탱크 운전"], ["1", "탱크 밸브를 연다."], ["1 •", "밸브를 확인한다."], ["2", "펌프를 켠다."], ["3", "유량을 기록한다."],
         ["5.", "조제가 끝나면 기록을 남긴다."],
+    ]
+
+
+def test_an_unwrapped_table_inside_an_unwrapped_cell_keeps_the_outer_cell_number(client: TestClient) -> None:
+    """바깥 숫자 칸 "1" 안의 안쪽 표까지 벗기면 안쪽 줄도 "1"(바깥 칸 번호를 이어받는다), 바깥 표 뒤는 "5."."""
+    from tests.docx_factory import make_grid_table, make_row
+    from tests.test_sop_unwrap import _unwrap
+
+    inner = make_grid_table(1, make_row(["압력을 본다."]) + make_row(["온도를 본다."]))
+    outer = make_grid_table(2, (
+        make_row(["1", p("밸브를 연다.") + inner + p("밸브를 닫는다.")])
+        + make_row(["2", "펌프를 켠다."])
+    ))
+    body = p("5. 조제 탱크 운전", "Heading1") + outer + p("조제가 끝나면 기록을 남긴다.")
+    bundle_id = create_bundle(client, title="Nested", is_synthetic=True)["id"]
+    uploaded = upload(client, bundle_id, build_docx(body), "SYNTHETIC_OLD-6_Nested.docx")
+    assert uploaded.status_code == 201 and uploaded.json()["status"] == "ready", uploaded.text
+    doc_id = uploaded.json()["id"]
+    tables = get_view(client, bundle_id, doc_id)["tables"]
+    outer_index = next(index for index, table in enumerate(tables) if table["parent_table_id"] is None)
+    _unwrap(client, bundle_id, doc_id, outer_index)
+    _unwrap(client, bundle_id, doc_id, 1 - outer_index)
+
+    rows = _values(_read(client.get(f"/api/bundles/{bundle_id}/documents/{doc_id}/paragraphs.xlsx", headers=MEMBER))[0])
+
+    assert [row[:2] for row in rows[1:]] == [
+        ["5.", "조제 탱크 운전"], ["1", "밸브를 연다."], ["1", "밸브를 닫는다."], ["1", "압력을 본다."], ["1", "온도를 본다."],
+        ["2", "펌프를 켠다."], ["5.", "조제가 끝나면 기록을 남긴다."],
     ]

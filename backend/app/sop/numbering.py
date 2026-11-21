@@ -216,15 +216,16 @@ def get_number_note(unit: NumberedUnit) -> str | None:
 
 
 class SectionLine(Protocol):
-    """섹션 번호를 세는 줄 하나 — number는 번호 칸 값(get_number), 없으면 None. block은 줄이 든 벗긴 표 덩이(unwrap_order.find_line_table),
-    is_cell_number는 그 덩이의 숫자만 든 칸에서 읽은 번호(사람이 고치지 않음) — 덩이 안에서만 섹션 번호다."""
+    """섹션 번호를 세는 줄 하나 — number는 번호 칸 값(get_number), 없으면 None. blocks는 줄이 든 벗긴 표 덩이의 사슬(바깥 → 안쪽,
+    맨 끝이 unwrap_order.find_line_table), is_cell_number는 그 덩이의 숫자만 든 칸에서 읽은 번호(사람이 고치지 않음) — 그 덩이 안에서만
+    (안쪽 덩이 포함) 섹션 번호다."""
 
     @property
     def lang(self) -> str: ...
     @property
     def number(self) -> str | None: ...
     @property
-    def block(self) -> int | None: ...
+    def blocks(self) -> tuple[int, ...]: ...
     @property
     def is_cell_number(self) -> bool: ...
 
@@ -238,27 +239,48 @@ def build_section_numbers(lines: Sequence[SectionLine]) -> list[str | None]:
     숫자 · 직접 번호가 있는 줄은 그 값, 점 기호 · 번호 없는 줄은 앞의 가장 가까운 숫자 · 직접 번호다. 한 · 영 줄은 같은 언어 목록의
     앞 번호가 먼저이고, 그 언어 번호가 아직 없으면(한 언어에만 번호가 있는 문서) 어느 언어든 앞 번호. 앞에 번호가 없으면 None.
     벗긴 표의 번호 칸 번호("1" "2" 칸)는 그 덩이 안에서만 쓴다 — 덩이를 나오면 덩이 앞(과 덩이 안 보통 번호)의 번호로 돌아간다(B9,
-    표 뒤 문단이 칸 번호 "3"을 물려받지 않게). 사람이 고친 번호 · 글 앞 타자 번호는 보통 번호처럼 이어진다.
+    표 뒤 문단이 칸 번호 "3"을 물려받지 않게). 바깥 칸 안에서 벗긴 안쪽 표의 줄은 바깥 칸 번호를 이어받는다. 사람이 고친 번호 · 글 앞
+    타자 번호는 보통 번호처럼 이어진다.
     """
-    last_of: dict[str, str] = {}
-    last: str | None = None
-    kept_of: dict[str, str] = {}  # 칸 번호를 뺀 번호 — 덩이를 나올 때 돌아갈 값
-    kept: str | None = None
-    block: int | None = None
+    current = _SectionState()
+    kept: list[_SectionState] = []  # 열린 덩이마다 그 덩이를 나올 때 돌아갈 번호(그 덩이와 안쪽 덩이의 칸 번호를 뺌)
+    chain: tuple[int, ...] = ()
     numbers: list[str | None] = []
     for line in lines:
-        if line.block != block:
-            if block is not None:
-                last_of, last = dict(kept_of), kept
-            block = line.block
+        shared = 0
+        while shared < min(len(chain), len(line.blocks)) and chain[shared] == line.blocks[shared]:
+            shared += 1
+        while len(kept) > shared:
+            current = kept.pop()
+        kept += [current.copy() for _ in line.blocks[shared:]]
+        chain = line.blocks
         if line.number and line.number not in BULLET_SYMBOLS:
-            last_of[line.lang] = last = line.number
+            current.set(line.lang, line.number)
+            # 칸 번호는 열린 덩이(제 덩이와 그 바깥) 어디를 나와도 버린다 — 나중에 여는 안쪽 덩이만 지금 값을 복사해 이어받는다
             if not line.is_cell_number:
-                kept_of[line.lang] = kept = line.number
+                for state in kept:
+                    state.set(line.lang, line.number)
             numbers.append(line.number)
             continue
-        numbers.append(last_of.get(line.lang, last) if line.lang in _LIST_LANGS else last)
+        numbers.append(current.get(line.lang))
     return numbers
+
+
+class _SectionState:
+    """섹션 번호 세기의 지금 값 — 언어마다 앞 번호와 어느 언어든 앞 번호."""
+
+    def __init__(self, last_of: dict[str, str] | None = None, last: str | None = None) -> None:
+        self.last_of = last_of or {}
+        self.last = last
+
+    def copy(self) -> "_SectionState":
+        return _SectionState(dict(self.last_of), self.last)
+
+    def set(self, lang: str, number: str) -> None:
+        self.last_of[lang] = self.last = number
+
+    def get(self, lang: str) -> str | None:
+        return self.last_of.get(lang, self.last) if lang in _LIST_LANGS else self.last
 
 
 _NUMERIC_LABEL_RE = re.compile(r"^\d+(\.\d+)*\.?$")

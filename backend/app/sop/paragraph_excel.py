@@ -73,7 +73,7 @@ class UnitLine:
     remark: str = ""
     deleted: bool = False  # 확정 삭제한 줄
     target_id: int | None = None  # 확정 배정으로 간 새 문장이 하나뿐이면 그 문장 — 이어진 줄이 같은 문장이면 한 행
-    block: int | None = None  # 줄이 든 벗긴 표 덩이(unwrap_order.find_line_table)
+    blocks: tuple[int, ...] = ()  # 줄이 든 벗긴 표 덩이의 사슬(바깥 → 안쪽, 맨 끝이 unwrap_order.find_line_table)
     is_cell_number: bool = False  # 덩이의 숫자만 든 칸에서 읽은 번호(사람이 고치지 않음) — 덩이 안에서만 Section No.
     pair_id: int | None = None
     indent_shift: int = 0
@@ -82,7 +82,7 @@ class UnitLine:
 
 @dataclass(frozen=True)
 class _Entry:
-    """시트 한 줄이 될 것 — lang · number · block · is_cell_number는 섹션 번호 세기(numbering.SectionLine)용."""
+    """시트 한 줄이 될 것 — lang · number · blocks · is_cell_number는 섹션 번호 세기(numbering.SectionLine)용."""
 
     unit_id: int
     lang: str
@@ -90,7 +90,7 @@ class _Entry:
     text: str
     note: str = ""
     remark: str = ""
-    block: int | None = None
+    blocks: tuple[int, ...] = ()
     is_cell_number: bool = False
     deleted: bool = False
     target_id: int | None = None
@@ -142,16 +142,16 @@ def _list_entries(lines: Sequence[UnitLine], include_tables: bool) -> list[_Entr
             text = CELL_JOINER.join(_join_cell(columns.get(index, [])) for index in range(max(columns) + 1))
             entries.append(_Entry(
                 line.group_unit_id, "neutral", None, text, remark=table.remark if table and first_row else "",
-                block=table.block if table else None, deleted=bool(table and table.deleted),
+                blocks=table.blocks if table else (), deleted=bool(table and table.deleted),
             ))
             continue
         if line.kind == "figure":
             caption = join_caption_texts(captions.get(line.unit_id, ()))
             text = " ".join(part for part in (FIGURE_MARKER, line.text, caption) if part)
-            entries.append(_Entry(line.unit_id, line.lang, None, text, remark=line.remark, block=line.block, deleted=line.deleted))
+            entries.append(_Entry(line.unit_id, line.lang, None, text, remark=line.remark, blocks=line.blocks, deleted=line.deleted))
             continue
         entries.append(_Entry(
-            line.unit_id, line.lang, line.number, line.text, line.number_note, line.remark, line.block, line.is_cell_number,
+            line.unit_id, line.lang, line.number, line.text, line.number_note, line.remark, line.blocks, line.is_cell_number,
             line.deleted, line.target_id,
         ))
     return entries
@@ -338,7 +338,7 @@ async def load_unit_lines(session: AsyncSession, document: Document) -> list[Uni
             remark=reason,
             deleted=confirmed and disposition == "delete",
             target_id=next(iter(unit_targets)) if confirmed and disposition == "assigned" and len(unit_targets) == 1 else None,
-            block=None if unit.group_unit_id is not None else find_line_table(unit.kind, unit.table_id, block.table_id, tables),
+            blocks=() if unit.group_unit_id is not None else _list_blocks(find_line_table(unit.kind, unit.table_id, block.table_id, tables), tables),
             # 띠 표 제목 줄(번호 칸 + 제목 칸)의 칸 번호는 절 번호라 덩이 밖으로 이어진다
             is_cell_number=unit.number_source == NUMBER_CELL and unit.number_set is None and unit.kind != SECTION_KIND,
             pair_id=pair_of.get(unit.id),
@@ -346,6 +346,17 @@ async def load_unit_lines(session: AsyncSession, document: Document) -> list[Uni
             noise=unit.noise_kind is not None,
         ))
     return lines
+
+
+def _list_blocks(innermost: int | None, tables: Mapping[int, UnwrapTable]) -> tuple[int, ...]:
+    """줄이 든 벗긴 표 덩이의 사슬(바깥 → 안쪽) — 안쪽 덩이에서 바깥으로 올라가며 벗긴 표만 모은다."""
+    chain: list[int] = []
+    table_id = innermost
+    while table_id is not None and table_id in tables:
+        if tables[table_id].is_unwrapped:
+            chain.append(table_id)
+        table_id = tables[table_id].parent_id
+    return tuple(reversed(chain))
 
 
 def _order_unwrapped(units: Sequence[Unit], blocks: Mapping[int, Any], tables: Mapping[int, UnwrapTable]) -> list[Unit]:
