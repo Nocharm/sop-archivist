@@ -4,7 +4,7 @@
 
 - 화면 미리보기(사용자 확인본): https://claude.ai/artifact/3LWhWcwAaMnX9hQAfFenG2 (비공개 Artifact)
 - 전체 순서: https://claude.ai/artifact/5Hfq4742D97TuzEBQB5abj (비공개 Artifact)
-- 함께 가는 명세: `2026-11-14-four-step-workflow-design.md`. 이 명세는 EQUIS 연동의 1단계다. 2단계(REF 문단)와 3단계(결과물·Excel)는 워크플로우 개편 뒤에 따로 쓴다(§13).
+- 함께 가는 명세: 네 단계 워크플로우 설계(구현 끝나 지웠다, git 이력). 이 명세는 EQUIS 연동의 1단계다. 2단계(REF 문단)와 3단계(결과물·Excel)는 워크플로우 개편 뒤에 따로 쓴다(§13).
 - 판단 기준: 제품 명세 `2026-11-05-sop-restructuring-e2e-design.md` §3(비목표)·§6.2(문서 필드).
 
 ## 1. 왜

@@ -16,3 +16,7 @@
 ## 2026-11-21 — 폴더 CLAUDE.md 줄이기 (`docs/slim-folder-claude-md`)
 
 - **폴더 CLAUDE.md 줄이기(브랜치 `docs/slim-folder-claude-md`, 문서만)** — `backend/CLAUDE.md`(42KB)·`frontend/CLAUDE.md`(16KB)는 그 폴더를 다루는 세션마다 실리는데 "핵심 구조"가 한 줄 수천 자의 글 벽이었다. 흐름·파일 목록·이력은 새 살아 있는 문서 `docs/architecture/backend.md`·`frontend.md`로 원문 그대로 옮기고, 폴더 CLAUDE.md에는 자리·불변식·금지 규칙과 절 번호 링크만 남겼다(약 15KB·8KB). 구조를 바꾸면 두 파일을 같은 커밋에서 고친다.
+
+## 2026-11-22 — 끝난 설계 하나 정리 · "스텝" 표기 (`docs/spec-trim`)
+
+- 기능별 설계 가운데 코드·살아 있는 문서가 전혀 가리키지 않는 `four-step-workflow`만 지움(보수적으로, 사용자 결정) — 나머지는 코드 주석·제품 명세·`docs/architecture`가 절을 가리켜 남김. 루트 CLAUDE.md의 "걸음"을 사용자가 쓰는 "스텝"으로.

@@ -9,7 +9,7 @@
 | 3 | AI가 도는 동안 배정 화면 방해 없애기 · 이유 보이기 | 배정 화면 | 병렬 세션의 배정 화면 재편(`2026-11-15-assign-merge-documents-design.md`)이 dev에 들어온 뒤 |
 | 4 | 매칭 필터(Old를 누르면 New 쪽이 걸러진다) | 배정 화면 | 3과 같이 |
 
-앞선 설계: 제품 명세 `2026-11-05-sop-restructuring-e2e-design.md` §6.11 · §7.8 · §7.10 · §8.2, 네 단계 워크플로우 `2026-11-14-four-step-workflow-design.md`.
+앞선 설계: 제품 명세 `2026-11-05-sop-restructuring-e2e-design.md` §6.11 · §7.8 · §7.10 · §8.2, 네 단계 워크플로우 설계(구현 끝나 지웠다, git 이력).
 
 ## 1. 왜
 
