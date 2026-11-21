@@ -19,6 +19,9 @@
   .sv-t tr[data-mark="group"] > td:not([data-head]) { background: var(--sheet-group); }
   .sv-t tr[data-mark="picked"] > td:not([data-head]) { background: var(--sheet-picked); }
   .sv-t tr[data-mark="picked"] > td:first-child { box-shadow: inset 3px 0 0 var(--sheet-accent); }
+  /* 고른 지운 줄(문단 Excel) - 숨겨 둔 줄을 고른 동안만 빨간 음영으로 */
+  .sv-t tr[data-mark="deleted"] > td:not([data-head]) { background: var(--sheet-deleted); }
+  .sv-t tr[data-mark="deleted"] > td:first-child { box-shadow: inset 3px 0 0 var(--sheet-danger); }
 
   /* 열 무리 띠 - 모델의 bands를 그릴 뿐(파일에는 없다) */
   .sv-band { padding: 2px 5px; font-size: 10px; line-height: 14px; font-weight: 600; text-align: left; color: var(--sheet-band-ink); border-bottom: 1px solid var(--sheet-line-thin); }

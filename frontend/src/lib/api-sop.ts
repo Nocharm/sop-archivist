@@ -1502,8 +1502,10 @@ export interface PreviewCell {
   bold: boolean;
   head: boolean;
   numeric: boolean;
-  /** 칸 안 들여쓰기 단계 - C 시트 글머리 기호 줄의 Item 칸 */
+  /** 칸 안 들여쓰기 단계 - C 시트 글머리 기호 줄의 Item 칸 · 문단 Excel Text 칸 */
   indent: number;
+  /** 취소선 - 문단 Excel의 지운 줄 Text 칸(흐림과 함께) */
+  strike: boolean;
   /** 색 칩으로 그리는 칸(A의 Status)의 색 - 확정 · AI 제안 · 삭제(흐림) · 미배정. 칩이 아닌 칸은 null */
   tone: PreviewTone | null;
 }
@@ -1521,6 +1523,10 @@ export interface PreviewRow {
   group_id: string | null;
   /** 목차 줄 - 연달아 오면 한 줄로 접어 그린다 */
   toc: boolean;
+  /** 지운 줄(문단 Excel) - 화면은 숨기고, 그 줄을 고른 동안만 빨간 음영으로 보인다 */
+  deleted: boolean;
+  /** 한 줄로 묶은 옛 단위 전부(문단 Excel - 이어진 줄이 같은 새 문장 하나로 감). unit_id는 그 첫 단위, 한 단위 줄은 빈 목록 */
+  unit_ids: number[];
 }
 
 /** 머리 위 열 무리 띠 한 칸 */

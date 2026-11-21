@@ -25,7 +25,8 @@ export interface SheetPan {
   detach: () => void;
 }
 
-const PICKED_SELECTOR = 'tr[data-mark="picked"]';
+// 고른 줄 - 지운 줄(문단 Excel)을 고르면 deleted로 칠해진다
+const PICKED_SELECTOR = 'tr[data-mark="picked"], tr[data-mark="deleted"]';
 
 interface Press {
   pointerId: number;

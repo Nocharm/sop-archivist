@@ -14,7 +14,7 @@ from typing import Any
 
 from app.sop import constants
 from app.sop.caption_slot import CAPTION_REACH, PlaceBlock, build_block_places
-from app.sop.numbering import MAX_NUMBER_CHARS, plan_follow
+from app.sop.numbering import MAX_NUMBER_CHARS, MAX_ROW_LEVEL, LevelRow, build_row_levels, plan_follow
 from app.sop.outputs import get_bullet_depths, number_lines
 from app.sop.unwrap_order import order_unwrapped, order_unwrapped_lines
 
@@ -77,6 +77,14 @@ UNWRAP_LINES_INPUTS: list[tuple[list[tuple[int, int | None, int | None]], dict[i
     ),
 ]
 
+# Paper rows in order: (number label, indent_shift, has a number cell, index of the pair card's first row or None).
+ROW_LEVEL_INPUTS: list[list[tuple[str, int, bool, int | None]]] = [
+    [("5", 0, True, None), ("5.1", 0, True, None), ("•", 0, True, None), ("", 0, True, None), ("", -1, True, None)],
+    [("", 0, True, None), ("○", 0, True, None), ("▪", 2, True, None), ("", 1, True, None), ("", 0, False, None)],
+    [("3", 0, True, None), ("가.", 0, True, None), ("", 2, True, None), ("4", 0, True, None), ("", 0, True, 3), ("•", 9, True, None)],
+    [("1.2.3.4.5.6.7.8.9", 0, True, None), ("•", 0, True, None), ("", -9, True, None), ("2", 5, True, None)],
+]
+
 # Blank-text judgment must match segment.is_blank_char: Python str.isspace() plus INVISIBLE_CHARS.
 BLANK_SAMPLES = ["", " ", "\t\n", "　", " ", "​", "﻿", "⁠", "\x1c", "\x85", "᠎", "a", " ​가"]
 
@@ -120,6 +128,7 @@ def build_rule_cases() -> dict[str, Any]:
             "NUMBER_STYLES": list(constants.NUMBER_STYLES),
             "MAX_NUMBER_CHARS": MAX_NUMBER_CHARS,
             "CAPTION_REACH": CAPTION_REACH,
+            "MAX_ROW_LEVEL": MAX_ROW_LEVEL,
         },
         "number_lines": [
             {"base": base, "depths": depths, "numbers": number_lines(base, depths)} for base, depths in NUMBER_LINES_INPUTS
@@ -140,6 +149,13 @@ def build_rule_cases() -> dict[str, Any]:
                 "depths": get_bullet_depths([SimpleNamespace(number_style=style, indent_level=level) for style, level in items]),
             }
             for items in BULLET_INPUTS
+        ],
+        "row_levels": [
+            {
+                "rows": [{"label": label, "shift": shift, "has_cell": has_cell, "pair_top": top} for label, shift, has_cell, top in rows],
+                "levels": build_row_levels([LevelRow(*row) for row in rows]),
+            }
+            for rows in ROW_LEVEL_INPUTS
         ],
         "unwrap_order": [
             {

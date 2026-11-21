@@ -94,7 +94,7 @@ export function SpacePreview({ bundleId, sheet: sheetKind, enabled, docId, docCo
   // 다시 받는 동안 남은 시트는 같은 종류일 때만 - 한 단 ↔ 양 단을 바꾸면 새 시트가 올 때까지 다른 시트를 보이지 않는다
   const data = preview.data?.kind === sheetKind ? preview.data.sheet : null;
   const isParagraphs = sheetKind === "paragraphs";
-  const pickedInSheet = data !== null && unitIds.some((id) => data.rows.some((row) => row.unit_id === id));
+  const pickedInSheet = data !== null && unitIds.some((id) => data.rows.some((row) => row.unit_id === id || row.unit_ids.includes(id)));
   // 연 동안만 부른다 - 문서 · 저장이 바뀌었거나, 긴 문서의 창 밖 줄을 골랐으면 그 줄을 가운데로 다시. 닫혀 있는 동안의 저장은 다음에 열 때 부른다
   if (isOpen && docId !== null) {
     const around = unitIds[0] ?? null;
@@ -251,6 +251,12 @@ export function SpacePreview({ bundleId, sheet: sheetKind, enabled, docId, docCo
           <i className="space-key" data-mark="picked" aria-hidden />
           {t("assign.spacePreview.legendPicked")}
         </span>
+        {isParagraphs && (
+          <span>
+            <i className="space-key" data-mark="deleted" aria-hidden />
+            {t("assign.spacePreview.legendDeleted")}
+          </span>
+        )}
         {!isParagraphs && (
           <>
             <span>

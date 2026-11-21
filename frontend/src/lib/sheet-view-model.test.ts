@@ -20,6 +20,7 @@ import {
   isDragMove,
   listBandTones,
   listSheetItems,
+  listShownItems,
   readDraftText,
   readWheelMove,
   spanCells,
@@ -28,8 +29,8 @@ import {
 } from "./sheet-view-model";
 
 const EXTENT: SheetExtent = { viewWidth: 1000, viewHeight: 400, contentWidth: 1180, contentHeight: 2000 };
-const cell = (text: string, extra: Partial<PreviewCell> = {}): PreviewCell => ({ text, faint: false, italic: false, bold: false, head: false, numeric: false, indent: 0, tone: null, ...extra });
-const row = (texts: string[], extra: Partial<PreviewRow> = {}): PreviewRow => ({ kind: "group_start", wrap: true, cells: texts.map((text) => cell(text)), unit_id: null, group_id: null, toc: false, ...extra });
+const cell = (text: string, extra: Partial<PreviewCell> = {}): PreviewCell => ({ text, faint: false, italic: false, bold: false, head: false, numeric: false, indent: 0, strike: false, tone: null, ...extra });
+const row = (texts: string[], extra: Partial<PreviewRow> = {}): PreviewRow => ({ kind: "group_start", wrap: true, cells: texts.map((text) => cell(text)), unit_id: null, group_id: null, toc: false, deleted: false, unit_ids: [], ...extra });
 
 describe("move range", () => {
   it("runs from 0 to content minus view, and is 0 when everything shows", () => {
@@ -180,6 +181,16 @@ describe("picked row, group and draft", () => {
     expect(ROWS.map((item) => getRowMark(item, 2, group))).toEqual(["group", "picked", "picked", null]);
     expect(findPickedGroup(ROWS, null)).toBeNull();
     expect(getRowMark(ROWS[0], null, null)).toBeNull();
+  });
+
+  it("hides deleted rows unless picked, and marks a picked deleted row as deleted", () => {
+    const rows = [row(["1"], { unit_id: 1 }), row(["2"], { unit_id: 2, deleted: true }), row([""], { unit_id: 2, deleted: true }), row(["3"], { unit_id: 3 })];
+    const items = listSheetItems(rows, 0, new Set(), false);
+    const shownIndexes = (unitId: number | null) => listShownItems(items, unitId).map((item) => (item.type === "row" ? item.index : -1));
+    expect(shownIndexes(null)).toEqual([0, 3]);
+    expect(shownIndexes(1)).toEqual([0, 3]);
+    expect(shownIndexes(2)).toEqual([0, 1, 2, 3]);
+    expect(rows.map((item) => getRowMark(item, 2, null))).toEqual([null, "deleted", "deleted", null]);
   });
 
   it("marks a folded run picked when any of its rows is picked", () => {

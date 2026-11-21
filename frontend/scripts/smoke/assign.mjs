@@ -2928,6 +2928,9 @@ await runStep("assign: Space preview - a short tap keeps it open, Esc and anothe
   await setPaneView(page, "two"); // 다음 단계들은 양 단에서 시작한다
 });
 
+// 문단 시트의 고른 행 - 고른 줄이 확정 삭제한 줄이면 picked 대신 deleted(빨간 음영)로 칠한다(B9). Excel A에는 deleted가 없다
+const PARAGRAPH_PICKED_ROW = '[data-testid="assign-space-preview-body"] tr[data-mark="picked"], [data-testid="assign-space-preview-body"] tr[data-mark="deleted"]';
+
 // 같은 박스를 다시 누르면 고른 행이 같아 가운데 맞추기가 돌지 않았다 - 끌어 둔 시트가 그대로였다(Assign 피드백 2026-11-20 항목 10)
 await runStep("assign: Space preview - pressing the same box again brings its row back to the middle", {}, async ({ page }) => {
   // 낮은 창 - 시드 문서의 시트가 다 들어가면 옮길 자리가 없다
@@ -2945,7 +2948,8 @@ await runStep("assign: Space preview - pressing the same box again brings its ro
     await page.mouse.click(at.x + 24, at.y + Math.min(12, at.height / 2));
   };
   await pressBox();
-  await page.locator('[data-testid="assign-space-preview-body"] tr[data-mark="picked"]').waitFor({ timeout: T });
+  // 고른 줄이 지운 줄(시드의 구조 제목)이면 문단 시트는 그 행을 빨간 deleted로 칠한다(B9)
+  await page.locator(PARAGRAPH_PICKED_ROW).first().waitFor({ timeout: T });
   await page.waitForTimeout(200);
   const centred = await body.evaluate((el) => el.style.transform);
   const frame = page.locator('[data-testid="assign-space-preview-sheet"]');
@@ -2976,7 +2980,7 @@ await runStep("assign: Space preview in one pane shows the paragraph sheet with 
   const header = await page.locator('[data-testid="assign-space-preview-head"] tr[data-row-kind="header"]').first().locator("td").allInnerTexts();
   check("the one-pane sheet has the five paragraph columns, Section No. first", JSON.stringify(header.map((text) => text.trim()).slice(0, 5)) === JSON.stringify(PARAGRAPH_HEADERS), JSON.stringify(header));
   check("its title and download button are the paragraph Excel's", (await sheet.getAttribute("aria-label")) === "Paragraph Excel preview" && (await getText(page, "assign-space-preview-download")).includes("Download paragraphs"));
-  check("the picked line is painted in the paragraph sheet", (await page.locator('[data-testid="assign-space-preview-body"] tr[data-mark="picked"]').count()) > 0);
+  check("the picked line is painted in the paragraph sheet", (await page.locator(PARAGRAPH_PICKED_ROW).count()) > 0);
   check("the foot says the paragraph sheet has the downloaded file's rows", (await getText(page, "assign-space-preview-legend")).includes("Paragraph Excel, 5 columns"));
   const [download] = await Promise.all([page.waitForEvent("download", { timeout: T }), page.locator('[data-testid="assign-space-preview-download"]').click()]);
   check("the download is the paragraph Excel of the document", /_paragraphs_\d{8}-\d{4}\.xlsx$/.test(download.suggestedFilename()), download.suggestedFilename());
@@ -4760,6 +4764,27 @@ await runStep("assign: a deleted line opens only while picked, folds again on le
   await fold.waitFor({ timeout: T });
   await piece.waitFor({ state: "detached", timeout: T });
   check("picking another box folds the deleted line again", true);
+
+  // Space 문단 Excel 미리보기(한 단) - 지운 줄은 숨기고, 지운 박스를 고른 동안만 그 행이 빨간 음영 · 취소선(Assign 피드백 항목 9, B9)
+  await setPaneView(page, "one");
+  await fold.evaluate((el) => el.scrollIntoView({ block: "start" }));
+  await page.evaluate(() => (document.activeElement instanceof HTMLElement ? document.activeElement.blur() : undefined));
+  await page.keyboard.press(" ");
+  await wait(page, "assign-space-preview-body");
+  const deletedRow = page.locator('[data-testid="assign-space-preview-body"] tr[data-mark="deleted"]');
+  check("the paragraph sheet hides the deleted line while another box is picked", (await deletedRow.count()) === 0);
+  await fold.click();
+  const isShown = await deletedRow.first().waitFor({ timeout: T }).then(() => true, () => false);
+  check("picking the deleted box shows its row on a red tint", isShown);
+  if (isShown) {
+    const cells = await deletedRow.first().locator("td").evaluateAll((tds) => tds.map((td) => ({ text: td.textContent, line: getComputedStyle(td).textDecorationLine })));
+    check("the deleted row strikes its text, leaves Lang empty and says Deleted in Remark", cells[1]?.line === "line-through" && cells[2]?.text === "" && (cells[4]?.text ?? "").startsWith("Deleted"), JSON.stringify(cells));
+  }
+  await otherPiece.click();
+  check("picking another box hides the deleted row again", await deletedRow.first().waitFor({ state: "detached", timeout: T }).then(() => true, () => false));
+  await page.keyboard.press("Escape");
+  await setPaneView(page, "two");
+  await fold.waitFor({ timeout: T });
 
   // 판 위쪽으로 - 메뉴가 펼친 박스 아래에 설 자리가 있게(위아래 다 모자라면 메뉴는 누른 자리 곁에 겹쳐 선다)
   await fold.evaluate((el) => el.scrollIntoView({ block: "start" }));

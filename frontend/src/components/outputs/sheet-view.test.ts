@@ -16,8 +16,8 @@ globalThis.ResizeObserver ??= class {
   disconnect() {}
 } as unknown as typeof ResizeObserver;
 
-const cell = (text: string, extra: Partial<PreviewCell> = {}): PreviewCell => ({ text, faint: false, italic: false, bold: false, head: false, numeric: false, indent: 0, tone: null, ...extra });
-const row = (kind: PreviewRow["kind"], wrap: boolean, cells: PreviewCell[], extra: Partial<PreviewRow> = {}): PreviewRow => ({ kind, wrap, cells, unit_id: null, group_id: null, toc: false, ...extra });
+const cell = (text: string, extra: Partial<PreviewCell> = {}): PreviewCell => ({ text, faint: false, italic: false, bold: false, head: false, numeric: false, indent: 0, strike: false, tone: null, ...extra });
+const row = (kind: PreviewRow["kind"], wrap: boolean, cells: PreviewCell[], extra: Partial<PreviewRow> = {}): PreviewRow => ({ kind, wrap, cells, unit_id: null, group_id: null, toc: false, deleted: false, unit_ids: [], ...extra });
 
 function render(props: SheetViewProps): HTMLElement {
   const host = document.createElement("div");

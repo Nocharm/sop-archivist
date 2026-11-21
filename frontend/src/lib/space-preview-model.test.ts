@@ -95,7 +95,8 @@ describe("isOwnSpaceTarget", () => {
 });
 
 describe("sheet window", () => {
-  const row = (unitId: number | null): PreviewRow => ({ kind: "group_start", wrap: true, cells: [], unit_id: unitId, group_id: null, toc: false });
+  const mergedRow = (unitId: number | null, unitIds: number[]): PreviewRow => ({ kind: "group_start", wrap: true, cells: [], unit_id: unitId, group_id: null, toc: false, deleted: false, unit_ids: unitIds });
+  const row = (unitId: number | null): PreviewRow => mergedRow(unitId, []);
 
   it("counts the rows left out above and below a centred window", () => {
     const rows = [row(null), row(null), ...[1, 2, 3, 4].map(row)];
@@ -115,6 +116,12 @@ describe("sheet window", () => {
     expect(findSheetUnit(sheet, [8, 9])).toBe(9);
     expect(findSheetUnit(sheet, [3])).toBe(3);
     expect(findSheetUnit(sheet, [])).toBeNull();
+  });
+
+  it("finds the row a merged paragraph line shares - any of its units picks the row's first unit", () => {
+    const sheet = { rows: [row(null), mergedRow(7, [7, 8, 9]), row(10)] };
+    expect(findSheetUnit(sheet, [9])).toBe(7);
+    expect(findSheetUnit(sheet, [4, 8])).toBe(7);
   });
 
   describe("sheet anchor", () => {

@@ -182,6 +182,8 @@
   --sheet-accent: oklch(.45 .125 250);
   --sheet-ai: oklch(.47 .165 305);
   --sheet-warn: oklch(.50 .145 48);
+  --sheet-danger: oklch(.49 .175 27);
+  --sheet-deleted: color-mix(in oklab, var(--sheet-danger) 14%, var(--sheet-paper));
   --sheet-picked: color-mix(in oklab, var(--sheet-accent) 14%, var(--sheet-paper));
   --sheet-group: color-mix(in oklab, var(--sheet-accent) 7%, var(--sheet-paper));
   --sheet-tobe: color-mix(in oklab, var(--sheet-accent) 4%, var(--sheet-paper));

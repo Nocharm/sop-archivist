@@ -216,12 +216,17 @@ def get_number_note(unit: NumberedUnit) -> str | None:
 
 
 class SectionLine(Protocol):
-    """섹션 번호를 세는 줄 하나 — number는 번호 칸 값(get_number), 없으면 None."""
+    """섹션 번호를 세는 줄 하나 — number는 번호 칸 값(get_number), 없으면 None. block은 줄이 든 벗긴 표 덩이(unwrap_order.find_line_table),
+    is_cell_number는 그 덩이의 숫자만 든 칸에서 읽은 번호(사람이 고치지 않음) — 덩이 안에서만 섹션 번호다."""
 
     @property
     def lang(self) -> str: ...
     @property
     def number(self) -> str | None: ...
+    @property
+    def block(self) -> int | None: ...
+    @property
+    def is_cell_number(self) -> bool: ...
 
 
 _LIST_LANGS = ("ko", "en")  # 제 언어 목록이 있는 언어 — 중립 · REF 줄은 언어와 상관없이 앞 번호를 받는다
@@ -232,17 +237,85 @@ def build_section_numbers(lines: Sequence[SectionLine]) -> list[str | None]:
 
     숫자 · 직접 번호가 있는 줄은 그 값, 점 기호 · 번호 없는 줄은 앞의 가장 가까운 숫자 · 직접 번호다. 한 · 영 줄은 같은 언어 목록의
     앞 번호가 먼저이고, 그 언어 번호가 아직 없으면(한 언어에만 번호가 있는 문서) 어느 언어든 앞 번호. 앞에 번호가 없으면 None.
+    벗긴 표의 번호 칸 번호("1" "2" 칸)는 그 덩이 안에서만 쓴다 — 덩이를 나오면 덩이 앞(과 덩이 안 보통 번호)의 번호로 돌아간다(B9,
+    표 뒤 문단이 칸 번호 "3"을 물려받지 않게). 사람이 고친 번호 · 글 앞 타자 번호는 보통 번호처럼 이어진다.
     """
     last_of: dict[str, str] = {}
     last: str | None = None
+    kept_of: dict[str, str] = {}  # 칸 번호를 뺀 번호 — 덩이를 나올 때 돌아갈 값
+    kept: str | None = None
+    block: int | None = None
     numbers: list[str | None] = []
     for line in lines:
+        if line.block != block:
+            if block is not None:
+                last_of, last = dict(kept_of), kept
+            block = line.block
         if line.number and line.number not in BULLET_SYMBOLS:
             last_of[line.lang] = last = line.number
+            if not line.is_cell_number:
+                kept_of[line.lang] = kept = line.number
             numbers.append(line.number)
             continue
         numbers.append(last_of.get(line.lang, last) if line.lang in _LIST_LANGS else last)
     return numbers
+
+
+_NUMERIC_LABEL_RE = re.compile(r"^\d+(\.\d+)*\.?$")
+MAX_ROW_LEVEL = 8  # 화면 단계의 끝 — 프런트 strip-pill-model MAX_LEVEL(깊이별 번호 칸 폭 표의 길이)과 같다
+
+
+@dataclass(frozen=True)
+class LevelRow:
+    """들여쓰기 단계를 세는 용지 줄 하나 — label은 번호 칸 값(없으면 ""), shift는 units.indent_shift, has_cell은 번호 칸이 있는 줄
+    (표 · 그림 · 목차 줄은 없다), pair_top은 짝 카드 둘째 줄부터 그 카드 첫 줄의 index."""
+
+    label: str
+    shift: int = 0
+    has_cell: bool = True
+    pair_top: int | None = None
+
+
+def get_section_level(label: str) -> int:
+    """숫자 번호의 마디 수("5" → 1, "5.2." → 2) — 숫자 번호가 아니면 0. 프런트 strip-pill-model getSectionLevel."""
+    return len(label.rstrip(".").split(".")) if _NUMERIC_LABEL_RE.match(label) else 0
+
+
+def build_row_levels(rows: Sequence[LevelRow]) -> list[int]:
+    """줄마다 화면 단계(1–MAX_ROW_LEVEL) — 용지 번호 칸 폭의 셈(프런트 strip-pill-model getRowLevels의 사본, rule-cases가 대조).
+
+    숫자 번호는 마디 수(차이를 더하지 않는다), 점 기호는 앞의 가장 가까운 숫자 번호 깊이 + 1 + 기호 순번에 차이를 더하고, 직접 번호 ·
+    번호 없는 줄은 앞의 가장 가까운 숫자 번호 · 점 기호 줄의 화면 단계에 차이를 더한다. 번호 칸이 없는 줄은 직전 줄 단계, 짝 카드의
+    둘째 줄부터는 첫 줄 단계다. 문단 Excel Text 칸의 들여쓰기(B9, 7-d)가 이 값을 쓴다.
+    """
+    levels: list[int] = []
+    numeric = 0
+    anchor: int | None = None
+    previous: int | None = None
+    for row in rows:
+        depth = get_section_level(row.label)
+        is_bullet = depth == 0 and row.label in BULLET_SYMBOLS
+        if depth > 0:
+            numeric = depth
+        if row.pair_top is not None:
+            level = levels[row.pair_top]
+        elif depth > 0:
+            level = _clamp_level(depth)
+        elif is_bullet:
+            level = _clamp_level(numeric + 1 + BULLET_SYMBOLS.index(row.label) + row.shift)
+        elif not row.has_cell:
+            level = previous or 1
+        else:
+            level = _clamp_level((anchor or 1) + row.shift)
+        levels.append(level)
+        if row.pair_top is None and (depth > 0 or is_bullet):
+            anchor = level
+        previous = level
+    return levels
+
+
+def _clamp_level(level: int) -> int:
+    return min(max(level, 1), MAX_ROW_LEVEL)
 
 
 def is_number_fixed(unit: NumberedUnit) -> bool:

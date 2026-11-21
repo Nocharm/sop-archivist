@@ -1732,6 +1732,7 @@
   .space-key { display: inline-block; width: 12px; height: 10px; margin-right: 4px; border-radius: 2px; vertical-align: -1px; }
   .space-key[data-mark="picked"] { background: var(--sheet-picked); box-shadow: inset 3px 0 0 var(--sheet-accent); }
   .space-key[data-mark="group"] { background: var(--sheet-group); }
+  .space-key[data-mark="deleted"] { background: var(--sheet-deleted); box-shadow: inset 3px 0 0 var(--sheet-danger); }
   /* 닫혀 있을 때의 작은 안내 - 처음 몇 번만, 누를 수 없다 */
   /* 안내가 있는 동안 작업 화면 바닥에 제 줄을 비워 두고 거기 놓는다 - 위에 띄우면 Old 칸 맨 아래 카드 글을 덮었다(1120에서 잰 것) */
   [data-testid="assign"]:has(> .space-hint) > .assign-desk { padding-bottom: 36px; }

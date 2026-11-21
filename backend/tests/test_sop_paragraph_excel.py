@@ -7,11 +7,12 @@ from fastapi.testclient import TestClient
 from openpyxl import load_workbook
 from openpyxl.worksheet.worksheet import Worksheet
 
-from app.sop.numbering import build_section_numbers
+from app.sop.numbering import LevelRow, build_row_levels, build_section_numbers
 from app.sop.paragraph_excel import (
     FIGURE_MARKER,
     PARAGRAPH_HEADERS,
     UnitLine,
+    build_paragraph_file,
     build_paragraph_preview,
     build_paragraph_sheet,
     format_number_note,
@@ -56,8 +57,8 @@ def _setup(client: TestClient) -> tuple[int, int]:
 
 
 class _Numbered:
-    def __init__(self, lang: str, number: str | None) -> None:
-        self.lang, self.number = lang, number
+    def __init__(self, lang: str, number: str | None, block: int | None = None, is_cell_number: bool = False) -> None:
+        self.lang, self.number, self.block, self.is_cell_number = lang, number, block, is_cell_number
 
 
 def test_section_numbers_carry_the_nearest_number_of_the_same_language() -> None:
@@ -67,6 +68,28 @@ def test_section_numbers_carry_the_nearest_number_of_the_same_language() -> None
     ]
 
     assert build_section_numbers(lines) == [None, "3.", "3.", "3.", "3.", "가.", "3.", "가.", "가."]
+
+
+def test_cell_numbers_of_an_unwrapped_table_stay_inside_it() -> None:
+    """§6-3 — 절 "5" 아래 벗긴 표의 숫자 칸 "1" "2" "3"은 덩이 안에서만 Section No.이고, 표 뒤 문단은 "5"로 돌아간다.
+    덩이 안에서 사람이 정한 번호는 보통 번호처럼 표 뒤로 이어진다."""
+    lines = [
+        _Numbered("ko", "5"), _Numbered("neutral", "1", 9, True), _Numbered("neutral", "•", 9), _Numbered("neutral", "2", 9, True),
+        _Numbered("ko", None), _Numbered("neutral", "3", 7, True), _Numbered("ko", "5.1", 7), _Numbered("ko", None),
+    ]
+
+    assert build_section_numbers(lines) == ["5", "1", "1", "2", "5", "3", "5.1", "5.1"]
+
+
+def test_row_levels_follow_the_paper_tabs() -> None:
+    """용지 번호 칸 단계의 사본 — 숫자 번호는 마디 수, 기호는 숫자 깊이 + 1 + 순번 + 차이, 번호 없는 줄은 기댄 줄 + 차이,
+    번호 칸 없는 줄은 직전 줄, 짝 카드 둘째 줄은 첫 줄."""
+    rows = [
+        LevelRow("5"), LevelRow("5.1"), LevelRow("•"), LevelRow("", shift=-1), LevelRow("○"), LevelRow("", has_cell=False),
+        LevelRow("6", shift=3), LevelRow("", pair_top=6), LevelRow("가."), LevelRow("•", shift=9),
+    ]
+
+    assert build_row_levels(rows) == [1, 2, 3, 2, 4, 4, 1, 1, 1, 8]
 
 
 def test_number_note_names_the_source_number() -> None:
@@ -89,7 +112,7 @@ def test_sheet_has_five_columns_section_numbers_bullets_notes_and_remarks() -> N
     assert _texts(sheet) == [
         list(PARAGRAPH_HEADERS),
         ["1.", "목적", "KO", "", ""],
-        ["1.", "• 점 기호 줄.", "KO", "", ""],
+        ["1. •", "점 기호 줄.", "KO", "", ""],
         ["4.", "고친 번호 줄.", "EN", "Source 3. → 4.", "moved here"],
         ["4.", "REF-1 참조", "REF", "", ""],
     ]
@@ -122,6 +145,64 @@ def test_data_table_rows_join_cells_and_unwrapped_lines_are_paragraphs() -> None
         ["1.1", "벗긴 칸 둘.", "", "", ""],
     ]
     assert [row[1] for row in without_tables] == ["범위", "벗긴 칸 하나.", "벗긴 칸 둘."]
+
+
+def test_deleted_line_stays_as_a_struck_row_without_a_language() -> None:
+    lines = [
+        _line(1, "sentence", "남는 줄.", lang="ko", number="3."),
+        _line(2, "sentence", "지운 줄.", lang="ko", number="4.", number_note="Source 3. → 4.", deleted=True),
+        _line(3, "sentence", "사유 있는 지운 줄.", lang="en", deleted=True, remark="중복"),
+    ]
+
+    sheet = build_paragraph_sheet(lines, include_tables=True)
+
+    assert _texts(sheet)[1:] == [
+        ["3.", "남는 줄.", "KO", "", ""],
+        ["4.", "지운 줄.", "", "Source 3. → 4.", "Deleted"],
+        ["4.", "사유 있는 지운 줄.", "", "", "Deleted — 중복"],
+    ]
+    assert [row.deleted for row in sheet.rows] == [False, False, True, True]
+    text_cells = [row.cells[1] for row in sheet.rows[1:]]
+    assert [(cell.strike, cell.faint) for cell in text_cells] == [(False, False), (True, True), (True, True)]
+    font = load_workbook(BytesIO(build_paragraph_file([sheet]))).worksheets[0]["B3"].font
+    assert font.strike and font.color.rgb == "FF9AA0A6"
+
+
+def test_adjacent_lines_sent_to_one_new_sentence_are_one_row() -> None:
+    """9-c — 이어진 줄이 같은 새 문장 하나로 가면 한 행(첫 줄의 번호 · 노트, 사유는 " / "), 사이에 다른 줄이 끼면 각자 행."""
+    lines = [
+        _line(1, "sentence", "첫 줄.", lang="ko", number="2.", number_note="Read from text", target_id=40, remark="합침"),
+        _line(2, "sentence", "둘째 줄.", lang="ko", target_id=40),
+        _line(3, "sentence", "영어 줄.", lang="en", target_id=40, remark="번역"),
+        _line(4, "sentence", "끼인 줄.", lang="ko", target_id=41),
+        _line(5, "sentence", "떨어진 줄.", lang="ko", target_id=40),
+    ]
+
+    sheet = build_paragraph_sheet(lines, include_tables=True)
+
+    assert _texts(sheet)[1:] == [
+        ["2.", "첫 줄. 둘째 줄. 영어 줄.", "", "Read from text", "합침 / 번역"],
+        ["2.", "끼인 줄.", "KO", "", ""],
+        ["2.", "떨어진 줄.", "KO", "", ""],
+    ]
+    assert [(row.unit_id, row.unit_ids) for row in sheet.rows[1:]] == [(1, [1, 2, 3]), (4, []), (5, [])]
+    preview = build_paragraph_preview(lines * 1, True, "OLD-1", around_unit_id=3, max_rows=2)
+    assert [row.unit_id for row in preview.rows[1:]] == [1]
+
+
+def test_text_indent_is_the_paper_level() -> None:
+    lines = [
+        _line(1, "heading", "절.", number="5"),
+        _line(2, "sentence", "하위.", number="5.1"),
+        _line(3, "sentence", "기호.", number="•"),
+        _line(4, "sentence", "내어 쓴 줄.", indent_shift=-1),
+        _line(5, "sentence", "짝 첫째.", pair_id=8),
+        _line(6, "sentence", "짝 둘째 — 번호가 있어도 첫 줄 단계.", number="6", pair_id=8),
+    ]
+
+    sheet = build_paragraph_sheet(lines, include_tables=True)
+
+    assert [row.cells[1].indent for row in sheet.rows[1:]] == [0, 1, 2, 1, 2, 2]
 
 
 def test_figure_keeps_its_place_with_its_caption() -> None:
@@ -187,12 +268,28 @@ def test_remark_column_shows_the_decision_reason_and_the_preview_matches_the_fil
     rows = _values(_read(client.get(f"/api/bundles/{bundle_id}/documents/{doc_id}/paragraphs.xlsx", headers=MEMBER))[0])
     preview = client.get(f"/api/bundles/{bundle_id}/documents/{doc_id}/paragraphs/preview?around={unit['id']}", headers=MEMBER)
 
-    assert next(row for row in rows if row[1] == "표 아래 문장이다.")[4] == "합성 사유"
+    assert next(row for row in rows if row[1] == "표 아래 문장이다.")[2:] == ["", "", "Deleted — 합성 사유"]
     assert preview.status_code == 200, preview.text
     body = preview.json()
     assert body["truncated"] is False and body["freeze"] == "A2"
     assert [[cell["text"] for cell in row["cells"]] for row in body["rows"]] == rows
-    assert unit["id"] in [row["unit_id"] for row in body["rows"]]
+    assert [row["unit_id"] for row in body["rows"] if row["deleted"]] == [unit["id"]]
+
+
+def test_lines_merged_into_one_new_sentence_download_as_one_row(client: TestClient) -> None:
+    from tests.test_sop_decisions import RECORDS, WARM_UP, _merge
+    from tests.test_sop_decisions import _setup as setup_tobe
+
+    fx = setup_tobe(client)
+    first, second = find_unit(fx.view, WARM_UP), find_unit(fx.view, RECORDS)
+    _merge(client, fx, first, second)
+
+    rows = _values(_read(client.get(f"/api/bundles/{fx.bundle_id}/documents/{fx.doc['id']}/paragraphs.xlsx", headers=MEMBER))[0])
+    preview = client.get(f"/api/bundles/{fx.bundle_id}/documents/{fx.doc['id']}/paragraphs/preview", headers=MEMBER).json()
+
+    assert f"{WARM_UP} {RECORDS}" in [row[1] for row in rows]
+    assert WARM_UP not in [row[1] for row in rows]
+    assert [row["unit_ids"] for row in preview["rows"] if row["unit_ids"]] == [[first["id"], second["id"]]]
 
 
 def test_old_download_has_a_sheet_per_old_document(client: TestClient) -> None:
@@ -218,3 +315,29 @@ def test_outsider_cannot_download_or_preview(client: TestClient) -> None:
     preview = client.get(f"/api/bundles/{bundle_id}/documents/{doc_id}/paragraphs/preview", headers=OUTSIDER)
 
     assert {single.status_code, every.status_code, preview.status_code} <= {403, 404}
+
+
+def test_unwrapped_number_cells_do_not_leak_past_the_table(client: TestClient) -> None:
+    """§6-3 합성 표 — 절 "5" 아래 숫자 칸 표를 벗기면 칸 줄은 "1" "2" "3"(기호 줄은 "1 •"), 표 뒤 문단은 "5"로 돌아간다."""
+    from tests.docx_factory import make_grid_table, make_row
+    from tests.test_sop_unwrap import _unwrap
+
+    table = make_grid_table(2, (
+        make_row(["1", p("탱크 밸브를 연다.") + numbered("밸브를 확인한다.", 1)])
+        + make_row(["2", "펌프를 켠다."])
+        + make_row(["3", "유량을 기록한다."])
+    ))
+    body = p("5. 조제 탱크 운전", "Heading1") + table + p("조제가 끝나면 기록을 남긴다.")
+    bullets = make_list(0, [("bullet", "•")], [1])
+    bundle_id = create_bundle(client, title="Cells", is_synthetic=True)["id"]
+    uploaded = upload(client, bundle_id, build_docx(body, numbering=bullets), "SYNTHETIC_OLD-5_Cells.docx")
+    assert uploaded.status_code == 201 and uploaded.json()["status"] == "ready", uploaded.text
+    doc_id = uploaded.json()["id"]
+    _unwrap(client, bundle_id, doc_id, 0)
+
+    rows = _values(_read(client.get(f"/api/bundles/{bundle_id}/documents/{doc_id}/paragraphs.xlsx", headers=MEMBER))[0])
+
+    assert [row[:2] for row in rows[1:]] == [
+        ["5.", "조제 탱크 운전"], ["1", "탱크 밸브를 연다."], ["1 •", "밸브를 확인한다."], ["2", "펌프를 켠다."], ["3", "유량을 기록한다."],
+        ["5.", "조제가 끝나면 기록을 남긴다."],
+    ]

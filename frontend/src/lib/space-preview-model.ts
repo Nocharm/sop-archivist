@@ -109,9 +109,13 @@ export function pickSheetAnchor(unitIds: readonly number[], pickedId: number | n
   return null;
 }
 
-/** 고른 줄의 단위 가운데 시트에 줄이 있는 첫 단위 - 짝 줄은 A에서 한 단위로 적힌다 */
+/** 고른 줄의 단위 가운데 시트에 줄이 있는 첫 단위의 줄 대표(unit_id) - 짝 줄은 A에서 한 단위로, 한 줄로 묶은 문단 Excel 줄은 첫 단위로 적힌다 */
 export function findSheetUnit(sheet: Pick<PreviewSheet, "rows">, unitIds: readonly number[]): number | null {
-  return unitIds.find((id) => sheet.rows.some((row) => row.unit_id === id)) ?? unitIds[0] ?? null;
+  for (const id of unitIds) {
+    const row = sheet.rows.find((candidate) => candidate.unit_id === id || candidate.unit_ids.includes(id));
+    if (row) return row.unit_id;
+  }
+  return unitIds[0] ?? null;
 }
 
 // Excel A의 칸 글과 같은 영어 값(backend output_labels.py en) - 시트는 늘 영어다

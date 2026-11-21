@@ -119,7 +119,8 @@ class SheetCell(BaseModel):
     italic: bool = False  # 주석 줄의 글 칸
     bold: bool = False
     numeric: bool = False  # 글이 정수인 칸(Row·건수) — xlsx에는 숫자로 쓴다
-    indent: int = 0  # 칸 안 들여쓰기 단계(C 시트 글머리 기호 줄의 Item 칸) — xlsx 맞춤 indent, 미리보기는 단계만큼 안쪽 여백
+    indent: int = 0  # 칸 안 들여쓰기 단계(C 시트 글머리 기호 줄의 Item 칸 · 문단 Excel Text 칸) — xlsx 맞춤 indent, 미리보기는 단계만큼 안쪽 여백
+    strike: bool = False  # 취소선(문단 Excel의 지운 줄 Text 칸, 흐림과 함께)
     tone: CellTone | None = None  # 미리보기 전용 — 색 칩으로 그리는 칸(A의 Status)의 색. 화면이 글자를 보고 색을 정하지 않는다
 
 
@@ -133,6 +134,9 @@ class SheetRow(BaseModel):
     unit_id: int | None = None  # 이 줄의 옛 단위(이어진 줄도 같은 값), 번역·신규 줄은 None
     group_id: str | None = None  # Group ID 칸과 같은 관계 묶음
     toc: bool = False  # 목차 줄(ARow.noise_kind == "toc") — 화면이 연달아 오는 줄을 한 줄로 접는다
+    # 문단 Excel 미리보기 전용 — 지운 줄(화면은 숨기고 고른 동안만 보인다), 한 줄로 묶은 옛 단위 전부(unit_id는 그 첫 단위, 한 단위 줄은 빈 목록)
+    deleted: bool = False
+    unit_ids: list[int] = []
 
 
 class SheetBand(BaseModel):
@@ -606,7 +610,9 @@ def limit_window(sheet: Sheet, head_rows: int, around_unit_id: int | None, max_r
     room = max_rows - head_rows
     if len(body) <= room:
         return sheet
-    centre = next((index for index, row in enumerate(body) if row.unit_id == around_unit_id), 0) if around_unit_id is not None else 0
+    centre = next(
+        (index for index, row in enumerate(body) if around_unit_id in (row.unit_id, *row.unit_ids)), 0
+    ) if around_unit_id is not None else 0
     start = min(max(centre - room // 2, 0), len(body) - room)
     rows = [*sheet.rows[:head_rows], *body[start:start + room]]
     return sheet.model_copy(update={"rows": rows, "truncated": True, "offset": start})

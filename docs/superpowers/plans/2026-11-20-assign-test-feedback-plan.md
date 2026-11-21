@@ -119,7 +119,7 @@
 | B6 | `feat/assign-drop-join` → `feat/pair-undo` → `feat/lang-shape-switch`(차례로 셋) | 3 | 중간 · FE + BE 편집(모양 전환 한 편집) | B5 | B6-1 끌어 합치기 됨 v1.4.6 · B6-2 짝 되돌리기 됨 v1.4.7 · B6-3 언어 → 모양 전환 됨 v1.4.8 |
 | B7 | `feat/pair-peek` | 4 | 중간 · FE | — | 됨 v1.4.9 |
 | B8 | `feat/number-levels` | 7 | 큼 · BE(열 · Alembic · 편집 op) + FE | B5 | 됨 v1.4.10 |
-| B9 | `feat/paragraph-sheet-edits` | 9 | 중간 · BE 시트 + FE 시트 보기 | B5 · B8 | |
+| B9 | `feat/paragraph-sheet-edits` | 9 | 중간 · BE 시트 + FE 시트 보기 | B5 · B8 | 됨 v1.4.11 |
 | B10 | `feat/caption-anywhere` | 8 | 큼 · BE(추출기 · 편집 규칙) + FE | — | |
 | B11 | `feat/ai-unwrap-order` | 11 AI | 큼 · BE AI 작업(Alembic) + FE | B3 | |
 | B12 | `feat/flowchart-figure` | 12 | 큼 · BE 추출기 · 그림 그리기(+ 저장) | — | |

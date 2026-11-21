@@ -17,6 +17,7 @@ import {
   getRowMark,
   listBandTones,
   listSheetItems,
+  listShownItems,
   readDraftText,
   spanCells,
   toColumnPercents,
@@ -42,6 +43,7 @@ function getCellStyle(cell: PreviewCell, row: PreviewRow): CSSProperties {
   }
   if (cell.bold || cell.head) style.fontWeight = 700;
   if (cell.italic) style.fontStyle = "italic";
+  if (cell.strike) style.textDecoration = "line-through";
   if (cell.numeric) style.textAlign = "right";
   // 칸 안 들여쓰기(C 글머리 기호 줄의 Item 칸) - 기본 안쪽 여백 5px(.sv-t td)에 단계마다 9px
   if (cell.indent > 0) style.paddingLeft = `${5 + cell.indent * 9}px`;
@@ -158,7 +160,7 @@ export function SheetView({ sheet, selectedUnitId = null, centreKey = 0, draft, 
   const pickedGroup = findPickedGroup(sheet.rows, selectedUnitId);
   const draftRow = findDraftRow(sheet.rows, selectedUnitId, draft);
   // 목차 접기는 열의 뜻(column_keys)을 아는 시트(A)에서만 - 접힌 줄의 글을 놓을 열을 찾아야 한다
-  const items = listSheetItems(sheet.rows, frozenCount, openTocs, sheet.column_keys !== null);
+  const items = listShownItems(listSheetItems(sheet.rows, frozenCount, openTocs, sheet.column_keys !== null), selectedUnitId);
   const hasHead = frozenCount > 0 || sheet.bands.length > 0;
 
   useEffect(() => {
