@@ -38,6 +38,7 @@ from app.sop.outline import (
     retire_doc_outline,
 )
 from app.sop.schemas import NO_NUL
+from app.sop.snapshot import load_ref_parent_ids
 
 if TYPE_CHECKING:
     from app.sop.tobe_excel import ParsedWorkbook
@@ -96,6 +97,8 @@ class TargetDocOut(BaseModel):
     order_index: int
     # 입구 2(match) 문서가 이어진 올린 파일 — assign 문서는 None
     document_id: int | None
+    # 참조로 찾은 상위 SOP 번호(번호 순) — 직접 상위가 없는 WI만, 저장하지 않고 읽을 때 센다(snapshot.load_ref_parent_ids)
+    ref_parent_codes: list[str] = []
 
 
 class OutlineItemOut(BaseModel):
@@ -192,12 +195,13 @@ async def build_tobe_out(session: AsyncSession, bundle: Bundle) -> ToBeOut:
     ).all()
     code_by_id = {doc.id: doc.code for doc, _ in doc_rows}
     doc_position = {doc.id: position for position, (doc, _) in enumerate(doc_rows)}
+    ref_parents = await load_ref_parent_ids(session, bundle.id, [doc for doc, _ in doc_rows])
     docs = [
         TargetDocOut(
             id=doc.id, code=doc.code, title=doc.title, doc_type=doc.doc_type,
             parent_code=code_by_id.get(doc.parent_id) if doc.parent_id is not None else None,
             entrance=doc.entrance, is_equipment_sop=doc.is_equipment_sop, order_index=doc.order_index,
-            document_id=document_id,
+            document_id=document_id, ref_parent_codes=[code_by_id[sop_id] for sop_id in ref_parents.get(doc.id, ())],
         )
         for doc, document_id in doc_rows
     ]
@@ -364,11 +368,11 @@ def _check_list_rules(
     kept_match = [doc for doc in existing if doc.entrance == "match" and doc.code not in final_types]
     final_types.update({doc.code: doc.doc_type for doc in kept_match})
 
+    # WI의 상위는 고르지 않아도 된다 — 비면 올린 SOP의 참조 줄이 상위를 찾는다(B13). 고른 상위는 목록의 SOP여야 한다
     for item in payload.docs:
-        if item.doc_type == "sop":
-            if item.parent_code is not None:
-                raise_rule(422, "invalid_parent", doc_code=item.code, parent_code=item.parent_code)
-        elif item.parent_code is None or final_types.get(item.parent_code) != "sop":
+        if item.parent_code is None:
+            continue
+        if item.doc_type == "sop" or final_types.get(item.parent_code) != "sop":
             raise_rule(422, "invalid_parent", doc_code=item.code, parent_code=item.parent_code)
     for doc in kept_match:
         parent_code = code_by_id.get(doc.parent_id) if doc.parent_id is not None else None
@@ -844,21 +848,20 @@ async def check_match_doc(
 ) -> int | None:
     """올린 새 문서를 목록에 넣을 수 있는지 검사하고 부모 SOP의 id를 돌려준다 — 목록 쓰기와 같은 거절 코드를 쓴다.
 
-    종류가 sop|wi가 아니면 422 invalid_doc_type, SOP에 부모가 있거나 WI의 부모가 이 묶음의 SOP가 아니면 422 invalid_parent,
+    종류가 sop|wi가 아니면 422 invalid_doc_type, SOP에 부모가 있거나 WI에 고른 부모가 이 묶음의 SOP가 아니면 422 invalid_parent
+    (WI의 부모는 비어도 된다 — 참조로 찾는다),
     번호가 이미 목록에 있으면 409 duplicate_code. 번호가 비면 임시 번호를 문서 id가 정해진 뒤에 붙이므로 번호 검사를 건너뛴다.
     """
     if doc_type not in TARGET_DOC_TYPES:
         raise_rule(422, "invalid_doc_type", doc_code=code)
     parent_id = None
-    if doc_type == "sop":
-        if parent_code is not None:
-            raise_rule(422, "invalid_parent", doc_code=code, parent_code=parent_code)
-    else:
-        parent = None
-        if parent_code is not None:
-            parent = await session.scalar(
+    if parent_code is not None:
+        parent = (
+            await session.scalar(
                 select(TargetDoc).where(TargetDoc.bundle_id == bundle_id, TargetDoc.code == parent_code)
             )
+            if doc_type == "wi" else None
+        )
         if parent is None or parent.doc_type != "sop":
             raise_rule(422, "invalid_parent", doc_code=code, parent_code=parent_code)
         parent_id = parent.id

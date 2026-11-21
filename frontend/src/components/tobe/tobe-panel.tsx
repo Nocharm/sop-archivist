@@ -66,7 +66,9 @@ export function ToBePanel({ doc, tobe, saved, sops, steps, written, hints, isTit
   const isMatch = doc.entrance === "match";
   const typeHint = hints.find((hint) => hint.kind === "type");
   const equipmentHint = hints.find((hint) => hint.kind === "equipment");
-  const parentCode = sops.find((sop) => sop.key === doc.parent_key)?.code.trim() || t("tobe.noCode");
+  // 직접 부모가 없으면 "없음 - 참조로 찾기"(올린 SOP의 참조 줄이 찾은 상위는 줄의 칩이 보인다)
+  const parent = sops.find((sop) => sop.key === doc.parent_key);
+  const parentCode = parent === undefined ? t("tobe.parentNone") : parent.code.trim() || t("tobe.noCode");
   const readStepCount = (stepNo: number) => (saved ? getStepCount(tobe, saved.id, stepNo) : 0);
 
   return (
@@ -150,11 +152,11 @@ export function ToBePanel({ doc, tobe, saved, sops, steps, written, hints, isTit
                   mono
                   width={180}
                   value={doc.parent_key ?? ""}
-                  options={sops.map((sop) => ({ value: sop.key, label: sop.code.trim() || t("tobe.noCode"), tip: sop.code.trim() || t("tobe.noCode") }))}
-                  onChange={(next) => {
-                    const parent = sops.find((sop) => sop.key === next);
-                    if (parent) void saveDoc({ parent_code: parent.code });
-                  }}
+                  options={[
+                    { value: "", label: t("tobe.parentNone") },
+                    ...sops.map((sop) => ({ value: sop.key, label: sop.code.trim() || t("tobe.noCode"), tip: sop.code.trim() || t("tobe.noCode") })),
+                  ]}
+                  onChange={(next) => void saveDoc({ parent_code: sops.find((sop) => sop.key === next)?.code ?? null })}
                 />
               ) : (
                 <span className="doc-field-text font-mono" data-testid={`${prefix}-parent`}>

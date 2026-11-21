@@ -283,7 +283,6 @@ def test_changing_a_doc_type_drops_rows_that_no_longer_apply(client: TestClient)
     [
         pytest.param("duplicate_code", [_doc("A"), _doc("A")], [], [], id="duplicate_code"),
         pytest.param("invalid_doc_type", [_doc("A", "policy")], [], [], id="invalid_doc_type"),
-        pytest.param("invalid_parent", [_doc("W", "wi")], [], [], id="wi_without_parent"),
         pytest.param("invalid_parent", [_doc("W", "wi", parent="NOPE")], [], [], id="wi_parent_not_in_list"),
         pytest.param(
             "invalid_parent", [_doc("W1", "wi", parent="W2"), _doc("W2", "wi", parent="W1")], [], [],
@@ -1041,7 +1040,7 @@ def test_import_applies_the_same_list_rules(client: TestClient) -> None:
     bundle = create_bundle(client)
     cases = {
         "duplicate_code": [["A", "", "SOP", None, None], ["A", "", "SOP", None, None]],
-        "invalid_parent": [["W", "", "WI", None, None]],
+        "invalid_parent": [["W", "", "WI", "NOPE", None]],
         "equipment_flag_on_wi": [["A", "", "SOP", None, None], ["W", "", "WI", "A", "Y"]],
     }
 
@@ -1052,6 +1051,18 @@ def test_import_applies_the_same_list_rules(client: TestClient) -> None:
 
     steps_on_sop = _post_import(client, bundle["id"], _build_xlsx([["A", "", "SOP", None, None]], [["A", 1, ""]]))
     assert steps_on_sop.json()["detail"]["code"] == "steps_on_sop"
+
+
+def test_a_wi_may_leave_its_parent_empty_in_the_list_and_the_import(client: TestClient) -> None:
+    # 상위가 비면 올린 SOP의 참조 줄이 찾는다(B13) — 목록 쓰기와 가져오기 모두 받는다
+    bundle = create_bundle(client)
+
+    saved = put_tobe(client, bundle["id"], [_doc("SOP-1"), _doc("WI-1", "wi")])
+    imported = _post_import(client, bundle["id"], _build_xlsx([["SOP-1", "", "SOP", None, None], ["WI-2", "", "WI", "", None]]))
+
+    assert saved.status_code == 200, saved.text
+    assert imported.status_code == 200, imported.text
+    assert {doc["code"]: doc["parent_code"] for doc in imported.json()["docs"]} == {"SOP-1": None, "WI-2": None}
 
 
 def test_import_rejects_files_that_are_not_the_template(client: TestClient) -> None:
@@ -1243,7 +1254,7 @@ def test_adding_one_doc_follows_the_list_rules(client: TestClient) -> None:
 
     cases = [
         (_add_doc(client, bundle["id"], "SOP-A"), "duplicate_code"),
-        (_add_doc(client, bundle["id"], "WI-X", "wi"), "invalid_parent"),
+        (_add_doc(client, bundle["id"], "WI-X", "wi", "NOPE"), "invalid_parent"),
         (_add_doc(client, bundle["id"], "WI-X", "wi", "WI-A"), "invalid_parent"),
         (_add_doc(client, bundle["id"], "SOP-X", "sop", "SOP-A"), "invalid_parent"),
         (_add_doc(client, bundle["id"], "X-1", "memo"), "invalid_doc_type"),
@@ -1412,14 +1423,15 @@ def test_changing_a_row_type_clears_its_steps_and_follows_the_list_rules(client:
     bundle_id, ids, base = _row_setup(client)
 
     to_sop = client.patch(f"{base}/{ids['WI-A']}", json={"doc_type": "sop"}, headers=AUTHOR)
-    # 아래에 WI가 없는 SOP만 WI가 될 수 있고, WI는 상위 SOP가 있어야 한다
-    orphan = client.patch(f"{base}/{ids['SOP-B']}", json={"doc_type": "wi"}, headers=AUTHOR)
+    # 아래에 WI가 없는 SOP만 WI가 될 수 있고, WI의 상위 SOP는 비어도 된다(참조로 찾는다)
+    parentless = client.patch(f"{base}/{ids['SOP-B']}", json={"doc_type": "wi"}, headers=AUTHOR)
     to_wi = client.patch(f"{base}/{ids['SOP-B']}", json={"doc_type": "wi", "parent_code": "SOP-A"}, headers=AUTHOR)
 
     assert to_sop.status_code == 200, to_sop.text
     assert {doc["code"]: (doc["doc_type"], doc["parent_code"]) for doc in to_sop.json()["docs"]}["WI-A"] == ("sop", None)
     assert to_sop.json()["wi_steps"] == []
-    assert (orphan.status_code, orphan.json()["detail"]["code"]) == (422, "invalid_parent")
+    assert parentless.status_code == 200, parentless.text
+    assert {doc["code"]: doc["parent_code"] for doc in parentless.json()["docs"]}["SOP-B"] is None
     assert to_wi.status_code == 200, to_wi.text
 
 

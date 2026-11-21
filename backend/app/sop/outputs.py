@@ -326,8 +326,9 @@ def _order_target_docs(snap: BundleSnapshot) -> list[TargetDocInfo]:
     docs = sorted(snap.target_docs.values(), key=_key)
     children: dict[int, list[TargetDocInfo]] = defaultdict(list)
     for doc in docs:
-        if doc.doc_type == "wi" and doc.parent_id is not None:
-            children[doc.parent_id].append(doc)
+        # 참조로 찾은 상위가 여럿이면 번호 순 첫 SOP 아래 한 번만(목록에 같은 문서를 두 번 두지 않는다)
+        if doc.doc_type == "wi" and doc.effective_parent_id is not None:
+            children[doc.effective_parent_id].append(doc)
     ordered: list[TargetDocInfo] = []
     for doc in docs:
         if doc.doc_type == "sop":
@@ -489,7 +490,7 @@ def _get_line_base(outline: DocOutline, key: str, numbers: Mapping[str, str | No
 def _list_filled_keys(index: _Index, doc: TargetDocInfo, by_slot: Mapping[str | None, list[TargetInfo]]) -> set[str]:
     """SOP 절 가운데 채워진 것 — 줄(칸 제목 제외)이 놓인 절과, 자식 WI가 있는 자동 목록 절. 비어 있는 필수 절 판정의 재료다."""
     filled = {key for key, targets in by_slot.items() if key is not None and targets}
-    if any(child.doc_type == "wi" and child.parent_id == doc.id for child in index.snap.target_docs.values()):
+    if any(child.doc_type == "wi" and doc.id in child.effective_parent_ids for child in index.snap.target_docs.values()):
         filled |= {item.key for item in doc.outline.items if item.kind == KIND_AUTO_LIST}
     return filled
 
@@ -1606,11 +1607,14 @@ def _build_c_context(snap: BundleSnapshot, labels: OutputLabels) -> _CContext:
 
 
 def _list_auto_items(snap: BundleSnapshot, doc: TargetDocInfo, plan: _SectionPlan) -> list[AutoItem]:
-    """자동 목록 절(7.2 Work Instructions)의 줄 — 그 SOP의 자식 WI를 To-Be 순서로. 다른 칸과 N/A인 절(상위 칸의 N/A가 덮은 것 포함)은 빈 목록."""
+    """자동 목록 절(7.2 Work Instructions)의 줄 — 그 SOP의 자식 WI(직접 · 참조로 찾은 것)를 To-Be 순서로. 다른 칸과 N/A인 절(상위 칸의 N/A가 덮은 것 포함)은 빈 목록.
+
+    여러 SOP가 같은 WI를 참조하면 SOP마다 그 WI가 들어간다(B13).
+    """
     if plan.kind != KIND_AUTO_LIST or plan.na_reason is not None:
         return []
     children = sorted(
-        (child for child in snap.target_docs.values() if child.doc_type == "wi" and child.parent_id == doc.id),
+        (child for child in snap.target_docs.values() if child.doc_type == "wi" and doc.id in child.effective_parent_ids),
         key=lambda child: (child.order_index, child.id),
     )
     return [AutoItem(code=child.code, title=child.title) for child in children]
@@ -1632,7 +1636,7 @@ def _build_c_doc(ctx: _CContext, doc: TargetDocInfo) -> CDoc:
                     deviation_reason=plan.deviation_reason, is_empty_required=plan.is_empty_required,
                 )
             )
-    parent = snap.target_docs.get(doc.parent_id) if doc.parent_id is not None else None
+    parent = snap.target_docs.get(doc.effective_parent_id) if doc.effective_parent_id is not None else None
     return CDoc(
         target_doc_id=doc.id, code=doc.code, title=doc.title, doc_type=doc.doc_type,
         parent_code=parent.code if parent is not None else None, entrance=doc.entrance, sections=sections,

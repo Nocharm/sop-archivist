@@ -85,8 +85,8 @@ describe("buildProposalInput", () => {
   const LIST: ToBe = {
     revision: 12,
     docs: [
-      { id: 1, code: "SOP-CF", title: "Listed", doc_type: "sop", parent_code: null, entrance: "assign", is_equipment_sop: true, order_index: 0, document_id: null },
-      { id: 2, code: "WI-04", title: "Written", doc_type: "wi", parent_code: "SOP-CF", entrance: "match", is_equipment_sop: false, order_index: 3, document_id: 9 },
+      { id: 1, code: "SOP-CF", title: "Listed", doc_type: "sop", parent_code: null, entrance: "assign", is_equipment_sop: true, order_index: 0, document_id: null, ref_parent_codes: [] },
+      { id: 2, code: "WI-04", title: "Written", doc_type: "wi", parent_code: "SOP-CF", entrance: "match", is_equipment_sop: false, order_index: 3, document_id: 9, ref_parent_codes: [] },
     ],
     na_slots: [{ code: "SOP-CF", slot_key: "definitions", reason: "none" }],
     wi_steps: [{ code: "WI-04", step_no: 1, title: "Start" }],

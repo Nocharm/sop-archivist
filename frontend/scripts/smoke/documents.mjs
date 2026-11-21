@@ -2069,11 +2069,15 @@ await runStep("documents: one upload window takes Old and New files", { devUser:
   const pressed = async (index) => ((await page.locator(`[data-testid="upload-side-${index}-new"]`).getAttribute("aria-pressed")) === "true" ? "new" : "old");
   check("the app picks New for a number on the New list and Old for the rest", (await pressed(0)) === "old" && (await pressed(1)) === "new" && (await pressed(2)) === "old");
   check("it says which row the New file attaches to", (await getText(page, "upload-note-1")).includes("WI-05"));
-  // 사람이 뒤집는다 - 목록에 없는 번호라 줄이 새로 생기고, WI는 상위 SOP를 골라야 올릴 수 있다
+  // 사람이 뒤집는다 - 목록에 없는 번호라 줄이 새로 생긴다. WI의 상위 SOP는 비워도 올릴 수 있다(B13 - 올린 SOP의 참조 줄이 찾는다)
   await page.locator('[data-testid="upload-side-2-new"]').click();
   await page.locator('[data-testid="upload-kind-2"]').click();
   await page.locator('[data-testid="upload-kind-2-option-wi"]').click();
-  check("a WI that makes a new row needs its parent SOP first", await page.locator('[data-testid="upload-submit"]').isDisabled());
+  check(
+    "a WI that makes a new row may leave its parent to be found by reference",
+    !(await page.locator('[data-testid="upload-submit"]').isDisabled()) && (await getText(page, "upload-parent-2")).includes("None — find by reference"),
+    await getText(page, "upload-parent-2"),
+  );
   await page.locator('[data-testid="upload-parent-2"]').click();
   await page.locator('[data-testid="upload-parent-2-option-SOP-01"]').click();
   await takeShot("sop-upload-one-window.png");
@@ -2233,13 +2237,13 @@ await runStep("documents: the upload window sorts files into Old and New groups,
     const focused = await page.evaluate(() => document.activeElement?.getAttribute("data-testid") ?? null);
     check("pressing New from the keyboard keeps focus on that button in the moved row", focused === "upload-side-2-new", String(focused));
 
-    // 6. 올리기 단추가 꺼지는 때 - 새 줄이 생기는 WI는 상위 SOP를 골라야 한다(지금 규칙)
+    // 6. 새 줄이 생기는 WI는 상위 SOP를 비워도 올린다(B13 - 올린 SOP의 참조 줄이 찾는다). 골라도 그대로 켜져 있다
     await page.locator('[data-testid="upload-kind-2"]').click();
     await page.locator('[data-testid="upload-kind-2-option-wi"]').click();
-    check("a WI that makes a new row turns Upload off until its parent SOP is picked", await waitSubmit("off"));
+    check("a WI that makes a new row keeps Upload on with its parent left to references", await waitSubmit("on"));
     await page.locator('[data-testid="upload-parent-2"]').click();
     await page.locator('[data-testid="upload-parent-2-option-SOP-01"]').click();
-    check("picking the parent SOP turns Upload on", await waitSubmit("on"));
+    check("picking the parent SOP keeps Upload on", await waitSubmit("on"));
     await dragTo(2, "old");
     check("dragging that row to the Old group keeps Upload on", (await submit.isEnabled()) && (await note(2)) === "Adds WI-04 to Old documents", await note(2));
 

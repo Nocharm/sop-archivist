@@ -2,6 +2,12 @@
 
 프로젝트 진행 현황 로그. 커밋 직전 갱신한다 (`rules/common/git.md` 규칙). v1.4.0(2026-11-20 정식 업데이트)까지의 항목은 [`docs/history/PROGRESS-archive.md`](docs/history/PROGRESS-archive.md)에 있다 — 정식 업데이트마다 그 릴리스까지의 항목을 거기로 옮긴다(`rules/common/git.md` "정식 업데이트 때 문서 정리").
 
+## 2026-11-21 — B13 WI 상위 선택 · 참조로 찾은 상위 (`feat/wi-parent-optional`)
+
+- 실효 상위는 `snapshot.TargetDocInfo.effective_parent_ids`(직접 → 참조) 하나로, 결과물 C 순서 · 머리 · 7.2 자동 목록 · 채움 검사 · AI 분류 라벨 · 후보 라벨이 모두 이것을 읽는다. 참조 상위는 `load_ref_parent_ids`가 읽을 때 센다(New SOP 문서의 최신 추출 · 활성 REF 단위 · `unit_refs` confirmed 번호, `refs.normalize_ref_code`로 견줌) — 저장 없음, To-Be 응답 `ref_parent_codes`로 화면에.
+- 계획과 달라진 것: 참조는 올린 SOP(입구 2)에만 있는데 입구 2 SOP의 결과물 C는 골격이 아니라 파일의 절을 따라 7.2 자동 목록 · 채움 검사가 없다 — 그래서 참조 상위가 실제로 보이는 곳은 Documents · C 머리 · 순서 · AI 라벨이다(참조 줄은 그 SOP의 References 절에 이미 있다). 7.2 · 채움도 같은 함수를 읽게 두었다.
+- Documents: 여러 SOP가 참조한 WI는 번호 순 첫 SOP 아래만 온전한 줄(펼침 · 끌기 · testid 중복 없이), 나머지 SOP 아래는 읽기 줄(`ToBeRefEchoRow`). 상위도 참조도 없는 WI의 **No parent SOP** 알약은 경고색에서 옅은 색으로(이제 받는 자료). Assign 새 문서 더하기 · AI 목록 읽기는 파일이 없어 참조가 없으니 상위 필수를 그대로 둠. 스모크 "WI는 상위를 골라야 올린다" 검사는 B13 결정대로 "비워도 올린다"로 바꿈(기대를 낮춘 것 아님).
+
 ## 2026-11-21 — B12 업무흐름도를 간이 그림으로 (`feat/flowchart-figure`)
 
 - 뒤따른 보안 검토(v1.4.18): 그리기 값(선 굵기 · 글자 크기)은 문서가 적은 것이라 그리기 쪽에서 묶었다 — 이미 저장된 신호도 거치므로 추출기가 아니라 렌더러에서.

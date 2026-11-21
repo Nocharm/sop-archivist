@@ -6,7 +6,7 @@ import { makeDeepOutline, makeOutline, makeTemplateOutline, TEMPLATE_KEYS } from
 import { buildSlotRows, canSubmitSlotEdit, canUndoRestore, countDeviations, formatSlotName, isNaEditDirty, listUsedReasons, openNaEdit, splitSlotColumns, summarizeSlots, type NaEdit } from "./slot-status-model";
 
 function makeDoc(patch: Partial<TargetDoc> = {}): TargetDoc {
-  return { id: 12, code: "SOP-CF", title: "", doc_type: "sop", parent_code: null, entrance: "assign", is_equipment_sop: true, order_index: 1, document_id: null, ...patch };
+  return { id: 12, code: "SOP-CF", title: "", doc_type: "sop", parent_code: null, entrance: "assign", is_equipment_sop: true, order_index: 1, document_id: null, ref_parent_codes: [], ...patch };
 }
 
 function makeCount(slot_key: string, count: number, heading_count: number, target_doc_id = 12): SlotCount {

@@ -634,6 +634,8 @@ export interface TargetDoc {
   is_equipment_sop: boolean;
   order_index: number;
   document_id: number | null;
+  /** 참조로 찾은 상위 SOP 번호(번호 순) - 상위를 고르지 않은 WI만, 올린 SOP의 확정 참조 줄로 서버가 읽을 때 센다. 직접 상위가 이긴다 */
+  ref_parent_codes: string[];
   /** 줄 번호의 EQUIS 표시 - 기능이 꺼졌거나 묻지 않는 번호(임시 번호)면 null */
   equis?: EquisInfo | null;
 }

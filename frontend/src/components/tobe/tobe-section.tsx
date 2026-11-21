@@ -11,7 +11,7 @@ import { BundleLoadError } from "@/components/bundle-load-error";
 import { ListReader } from "@/components/tobe/list-reader";
 import { SlotTable } from "@/components/tobe/slot-table";
 import { ToBePanel } from "@/components/tobe/tobe-panel";
-import { ToBeRow } from "@/components/tobe/tobe-row";
+import { ToBeRefEchoRow, ToBeRow } from "@/components/tobe/tobe-row";
 import { ConfirmModal } from "@/components/ui/confirm-modal";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Menu } from "@/components/ui/menu";
@@ -356,11 +356,11 @@ export function ToBeSection({ bundleId, documents, file }: ToBeSectionProps) {
   async function moveParent(doc: DraftDoc, parent: DraftDoc) {
     if (writesRef.current > 0) return;
     const docId = readDocId(doc.key);
-    // 되돌릴 앞의 부모 - 부모를 못 찾은 WI는 없어 Undo를 주지 않는다(서버가 부모 없는 WI를 받지 않는다)
+    // 되돌릴 앞의 부모 - 직접 부모가 없던 WI(참조로 찾은 것 · 없음)는 되돌릴 부모 번호가 없어 Undo를 주지 않는다
     const previous = doc.parent_key === null ? null : (docsByKey.get(doc.parent_key)?.code ?? null);
     const result = await runWriteResult(() => updateToBeDoc(bundleId, docId, { parent_code: parent.code }), {
       // 옮긴 줄이 첫째라 미끄러지는 동안 이웃 위로 지나간다
-      beforeApply: () => flip.capture([doc.key, ...rows.map((row) => row.doc.key).filter((key) => key !== doc.key)]),
+      beforeApply: () => flip.capture([doc.key, ...rows.flatMap((row) => (row.ref === "echo" ? [] : [row.doc.key])).filter((key) => key !== doc.key)]),
     });
     if (!result.ok) return;
     setMoved((prev) => ({ key: doc.key, seq: (prev?.seq ?? 0) + 1 }));
@@ -577,7 +577,7 @@ export function ToBeSection({ bundleId, documents, file }: ToBeSectionProps) {
         </h2>
         {list !== null && (
           <span className="count" data-testid="tobe-count">
-            {rows.length}
+            {list?.docs.length ?? 0}
           </span>
         )}
         <span className="text-xs text-ink-3">{t("documents.tobeLead")}</span>
@@ -714,7 +714,11 @@ export function ToBeSection({ bundleId, documents, file }: ToBeSectionProps) {
                     <span />
                   </div>
                 ))
-              : rows.map(({ doc, depth }, index) => {
+              : rows.map(({ doc, depth, ref, under }, index) => {
+                  // 참조로 찾은 상위 SOP 번호 - 줄의 칩 툴팁이 어느 SOP가 가리키는지 적는다
+                  const refParents = ref === null ? [] : doc.ref_parent_keys.flatMap((key) => docsByKey.get(key)?.code ?? []);
+                  // 여러 SOP가 참조한 WI의 둘째 이후 자리 - 읽기 줄만(온전한 줄은 번호 순 첫 SOP 아래)
+                  if (ref === "echo" && under !== null) return <ToBeRefEchoRow key={`${doc.key}~${under}`} doc={doc} underKey={under} refParents={refParents} />;
                   const written = findFile(doc.code);
                   const saved = savedByCode.get(doc.code);
                   const steps = list.wi_steps.filter((step) => step.doc_key === doc.key).sort((a, b) => a.step_no - b.step_no);
@@ -739,6 +743,7 @@ export function ToBeSection({ bundleId, documents, file }: ToBeSectionProps) {
                       slots={slots}
                       hintCount={hints.length}
                       noParent={isLoose}
+                      refParents={refParents}
                       canEdit={canEdit}
                       draggable={canDragParent(doc, dragState)}
                       open={open.has(doc.key)}

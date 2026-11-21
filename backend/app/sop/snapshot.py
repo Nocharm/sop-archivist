@@ -34,10 +34,11 @@ from app.sop.models import (
     Unit,
     UnitDecision,
     UnitPairMember,
+    UnitRef,
     WiStep,
 )
 from app.sop.outline import DocOutline, load_doc_outlines
-from app.sop.refs import REF_LANG
+from app.sop.refs import REF_CONFIRMED, REF_LANG, normalize_ref_code
 from app.sop.segment import read_table_place
 from app.sop.status import ROW_STATUS_ORDER
 from app.sop.units import UNIT_ACTIVE, compute_display_id
@@ -196,6 +197,18 @@ class TargetDocInfo:
     na_slots: dict[str, str]  # 칸 키 → N/A 사유
     steps: tuple[tuple[int, str], ...]  # (단계 번호, 제목) 번호 순
     outline: DocOutline  # 이 문서의 골격 사본 — SOP가 아니면 빈 골격
+    # 참조로 찾은 상위 SOP id(SOP 번호 순) — 직접 상위가 없는 WI만 채운다(load_ref_parent_ids)
+    ref_parent_ids: tuple[int, ...] = ()
+
+    @property
+    def effective_parent_ids(self) -> tuple[int, ...]:
+        """실효 상위 — 직접 정한 상위가 이기고, 없으면 참조로 찾은 SOP 전부. 상위를 읽는 곳은 모두 이것(또는 첫째)을 본다."""
+        return (self.parent_id,) if self.parent_id is not None else self.ref_parent_ids
+
+    @property
+    def effective_parent_id(self) -> int | None:
+        """상위 하나만 받는 곳(결과물 C 머리 · AI 라벨 · 목록 순서)의 상위 — 직접 상위, 없으면 번호 순 첫 참조 SOP."""
+        return next(iter(self.effective_parent_ids), None)
 
 
 @dataclass(frozen=True)
@@ -489,15 +502,49 @@ async def load_target_docs(session: AsyncSession, bundle_id: int) -> dict[int, T
         steps[doc_id].append((step_no, title))
     docs = list(await session.scalars(select(TargetDoc).where(TargetDoc.bundle_id == bundle_id)))
     outlines = await load_doc_outlines(session, [doc.id for doc in docs])
+    ref_parents = await load_ref_parent_ids(session, bundle_id, docs)
     return {
         doc.id: TargetDocInfo(
             id=doc.id, code=doc.code, title=doc.title, doc_type=doc.doc_type, parent_id=doc.parent_id,
             entrance=doc.entrance, is_equipment_sop=doc.is_equipment_sop, order_index=doc.order_index,
             manual_order=doc.manual_order, na_slots=dict(na_slots.get(doc.id, {})), steps=tuple(steps.get(doc.id, ())),
-            outline=outlines[doc.id],
+            outline=outlines[doc.id], ref_parent_ids=ref_parents.get(doc.id, ()),
         )
         for doc in docs
     }
+
+
+async def load_ref_parent_ids(session: AsyncSession, bundle_id: int, docs: Collection[TargetDoc]) -> dict[int, tuple[int, ...]]:
+    """참조로 찾은 상위 — 직접 상위가 없는 WI마다, 그 WI 번호를 확정 참조 줄로 든 New SOP 문서의 id(SOP 번호 순).
+
+    저장하지 않고 읽을 때 센다(B13): 올린 SOP 파일의 활성 REF 단위 가운데 사람 · 쪼개기가 확정한 번호만 본다.
+    번호는 normalize_ref_code로 견준다. docs는 그 묶음의 새 문서 전부다(질의 한 번 더).
+    """
+    wi_ids: dict[str, list[int]] = defaultdict(list)
+    for doc in docs:
+        if doc.doc_type == "wi" and doc.parent_id is None:
+            wi_ids[normalize_ref_code(doc.code)].append(doc.id)
+    sop_codes = {doc.id: doc.code for doc in docs if doc.doc_type == "sop"}
+    if not wi_ids or not sop_codes:
+        return {}
+    in_bundle = Document.bundle_id == bundle_id
+    rows = await session.execute(
+        select(Document.target_doc_id, UnitRef.number)
+        .select_from(Unit)
+        .join(UnitRef, UnitRef.unit_id == Unit.id)
+        .join(Extraction, Extraction.id == Unit.extraction_id)
+        .join(Document, Document.id == Extraction.document_id)
+        .where(
+            in_bundle, Document.side == "new", Document.status == "ready", Document.target_doc_id.in_(sop_codes),
+            Unit.status == UNIT_ACTIVE, Unit.lang == REF_LANG, UnitRef.state == REF_CONFIRMED, UnitRef.number != "",
+            Unit.extraction_id.in_(select_latest_extractions(in_bundle)),
+        )
+    )
+    parents: dict[int, set[int]] = defaultdict(set)
+    for sop_id, number in rows:
+        for wi_id in wi_ids.get(normalize_ref_code(number), ()):
+            parents[wi_id].add(sop_id)
+    return {wi_id: tuple(sorted(ids, key=lambda sop_id: (sop_codes[sop_id], sop_id))) for wi_id, ids in parents.items()}
 
 
 # --- 진행 숫자 ---

@@ -117,9 +117,9 @@ describe("rows", () => {
 const TOBE: ToBe = {
   revision: 1,
   docs: [
-    { id: 6, code: "SOP-CF", title: "", doc_type: "sop", parent_code: null, entrance: "assign", is_equipment_sop: false, order_index: 0, document_id: null },
-    { id: 7, code: "WI-01", title: "", doc_type: "wi", parent_code: "SOP-CF", entrance: "assign", is_equipment_sop: false, order_index: 1, document_id: null },
-    { id: 8, code: "WI-04", title: "", doc_type: "wi", parent_code: "SOP-CF", entrance: "match", is_equipment_sop: false, order_index: 2, document_id: 3 },
+    { id: 6, code: "SOP-CF", title: "", doc_type: "sop", parent_code: null, entrance: "assign", is_equipment_sop: false, order_index: 0, document_id: null, ref_parent_codes: [] },
+    { id: 7, code: "WI-01", title: "", doc_type: "wi", parent_code: "SOP-CF", entrance: "assign", is_equipment_sop: false, order_index: 1, document_id: null, ref_parent_codes: [] },
+    { id: 8, code: "WI-04", title: "", doc_type: "wi", parent_code: "SOP-CF", entrance: "match", is_equipment_sop: false, order_index: 2, document_id: 3, ref_parent_codes: [] },
   ],
   na_slots: [{ code: "SOP-CF", slot_key: "procedures", reason: "x" }],
   wi_steps: [{ code: "WI-01", step_no: 1, title: "Load" }],

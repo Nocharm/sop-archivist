@@ -335,6 +335,9 @@
   .doc-item:has(> .doc-row[data-child]):not(:has(+ .doc-item > .doc-row[data-child])) > .doc-row::before { bottom: auto; height: 22px; }
   .doc-item:has(> .doc-row[data-child]):not(:has(+ .doc-item > .doc-row[data-child])) > .doc-panel::before { content: none; }
   .doc-row[data-child] + .doc-panel { position: relative; }
+  /* 참조로 찾은 상위 아래의 WI(B13) - 나무 선을 점선으로(직접 정한 부모와 가른다). 선 색은 같고 배경 대신 테두리로 긋는다 */
+  .doc-row[data-child][data-ref]::before, .doc-row[data-child][data-ref] + .doc-panel::before { width: 0; background: none; border-left: 1px dashed var(--line-2); }
+  .doc-row[data-child][data-ref]::after { height: 0; background: none; border-top: 1px dashed var(--line-2); }
   /* 올림 바탕 - 끄는 동안은 끈다(다음 계획의 끌기) */
   :where(html:not([data-box-drag])) .doc-row:not([data-fixed]):hover { background: var(--hover); }
   /* WI 줄을 SOP 줄에 끌기(Documents 화면 설계 §7, tobe-section.tsx). 끌 수 있는 줄만 올리면 살짝 들린다(끌어다 놓기 G9 - Order 줄과 같은 고리라 줄 높이가 변하지 않는다) */
