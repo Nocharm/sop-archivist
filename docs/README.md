@@ -41,6 +41,6 @@
 | [qa/verification-commands.md](qa/verification-commands.md) | 로컬 실행·검증 명령 전체(bash·PowerShell) — 시드·서버·테스트·브라우저 스모크·배치/겹침/대비 감사·설명서 그림·가짜 AI·배포 스크립트 검증의 전제와 옵션 |
 | [qa/2026-11-10-design-workflow-convenience-review.md](qa/2026-11-10-design-workflow-convenience-review.md) | 디자인·워크플로우·편의성 전체 검토(v0.10.1) — 코드 감사 3건 + 극단 자료·5개 화면 조합 확인, 발견 표(근거 `파일:줄`·심각도·처리), 이번에 반영한 것과 보류한 것 |
 | [lessons/README.md](lessons/README.md) | 시행착오 방지 — React/TS 패턴, 브라우저 검증 |
-| [history/PROGRESS-archive.md](history/PROGRESS-archive.md) | `PROGRESS.md`에서 옮긴 지난 기록(v0.1.0–v1.0.0) — 정식 업데이트마다 그 릴리스까지의 항목이 맨 위로 온다 |
+| [history/PROGRESS-archive.md](history/PROGRESS-archive.md) | `PROGRESS.md`에서 옮긴 지난 기록(v0.1.0–v1.0.0) — `PROGRESS.md`가 크기 상한을 넘으면 최근 릴리스까지의 항목이 맨 위로 온다 |
 | [history/CHANGELOG-archive.md](history/CHANGELOG-archive.md) | `CHANGELOG.md`에서 옮긴 지난 릴리스 항목(0.x — v0.1.0–v0.16.0) |
 

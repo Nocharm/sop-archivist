@@ -1,6 +1,6 @@
 # Changelog
 
-SOP Archivist 서비스 버전 기록. 단일 소스는 `frontend/package.json` `version`(SemVer)이다. `dev`에 올릴 때마다 PATCH를 올려 아래 `Unreleased (dev)`에 적고, `dev`→`main` 정식 업데이트 때 MINOR를 올려 그 줄들을 릴리스 항목 하나로 모으고 `vX.Y.Z` 태그를 단다(`rules/common/git.md` "서비스 버전"). 운영 서버 배포 여부와 날짜도 해당 항목에 적는다.
+SOP Archivist 서비스 버전 기록. 단일 소스는 `frontend/package.json` `version`(SemVer)이다. `dev`에 올릴 때마다 번호 하나를 올려(운영에 올린 뒤 첫 푸시는 MINOR, 그다음은 PATCH) 아래 `Unreleased (dev)`에 적고, `dev`→`main` 정식 업데이트 때는 번호를 올리지 않고 그 줄들 위에 `## vX.Y.Z — 날짜` 제목과 배포 메모를 달아 `vX.Y.Z` 태그를 단다 — 개발에서 본 번호가 운영 번호다(`rules/common/git.md` "서비스 버전", v1.5.0까지는 정식 업데이트마다 MINOR를 올리고 줄들을 요약 하나로 모았다). 운영 서버 배포 여부와 날짜도 해당 항목에 적는다.
 
 ## Unreleased (dev)
 
