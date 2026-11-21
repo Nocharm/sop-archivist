@@ -2,7 +2,7 @@
 # PostToolUse hook: lint the one file Claude just edited and hand failures back (exit 2 sends stderr to Claude).
 # Works from any worktree. ruff may come from the main checkout's venv (a standalone binary reading ruff.toml);
 # eslint must come from the same worktree, because its config imports packages from that worktree's node_modules.
-# Plan: docs/superpowers/plans/2026-11-19-trust-foundation-plan.md (step 1).
+# Plan: 2026-11-19-trust-foundation-plan.md (step 1).
 set -u
 
 file=$(python3 -c 'import json, sys; print(json.load(sys.stdin).get("tool_input", {}).get("file_path", ""))')

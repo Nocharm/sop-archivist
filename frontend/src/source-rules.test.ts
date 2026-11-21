@@ -2,7 +2,7 @@
 /**
  * Source rules lint cannot express: the effect/timer budget, Tailwind display utilities doubled
  * on one element, custom CSS class names that Tailwind also generates, and eslint-disable reasons.
- * Plan: docs/superpowers/plans/2026-11-19-trust-foundation-plan.md (step 1).
+ * Plan: 2026-11-19-trust-foundation-plan.md (step 1).
  */
 
 import { readdirSync, readFileSync, writeFileSync } from "node:fs";

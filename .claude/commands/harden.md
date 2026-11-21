@@ -3,7 +3,7 @@ description: 방금 받은 교정(또는 두 번째로 같은 종류의 fix)을 
 ---
 교정 내용: $ARGUMENTS
 
-이 교정이 다시 필요 없게 만든다. 아래 사다리를 위에서부터 보고, 할 수 있는 가장 높은 칸에서 해결한다(계획: `docs/superpowers/plans/2026-11-19-trust-foundation-plan.md`).
+이 교정이 다시 필요 없게 만든다. 아래 사다리를 위에서부터 보고, 할 수 있는 가장 높은 칸에서 해결한다(신뢰 기반 계획 스텝 5 — 계획은 끝나 지웠다, git 이력).
 
 1. **설계** — API·자료 구조·디렉터리 경계를 바꿔 이 실수를 아예 못 하게 할 수 있는가? (예: 규칙을 한 함수로 모으고 다른 길을 없앤다)
 2. **정적 검사** — lint 규칙(`frontend/eslint.config.mjs`, `backend/ruff.toml`), 타입, 소스 검사 시험(backend `tests/test_invariants.py`, frontend 소스 검사 vitest)으로 잡을 수 있는가?

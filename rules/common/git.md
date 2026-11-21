@@ -33,7 +33,7 @@ type(scope): English summary — 한국어 요약
 - **단일 소스**: `frontend/package.json` `version`(SemVer). `frontend/`에서 `npm version <minor|patch> --no-git-tag-version`으로 올린다(`package-lock.json`이 같이 바뀐다). 빌드 때 `next.config.ts` `env.APP_VERSION`으로 번들에 들어간다.
 - **`dev`에 올릴 때마다 하나씩**: 앱 동작이 바뀌는 커밋을 GitHub `dev`에 푸시할 때 푸시 한 번에 번호 하나를 올린다. 문서·시험만의 푸시는 그대로 둔다. `CHANGELOG.md` 맨 위 `## Unreleased (dev)` 아래에 `vX.Y.Z — 날짜` 한 줄과 바뀐 것을 적는다.
   - **운영에 올린 뒤 첫 푸시는 MINOR**(`npm version minor` → 1.6.0), 그다음부터는 PATCH(1.6.1, 1.6.2 …). 지금 올릴 번호의 MINOR가 `CHANGELOG.md`의 가장 최근 릴리스 제목(`## vX.Y.Z`)과 같으면 이미 운영에 나간 줄이니 MINOR를 올린다.
-- **정식 업데이트 `dev`→`main` — 버전을 올리지 않는다**: `dev`에서 릴리스 준비 커밋 하나(문서만이라 번호는 그대로)를 만든다 — `## Unreleased (dev)` 아래 줄들 위에 `## vX.Y.Z — 날짜` 제목(지금 `package.json`의 번호)을 달고 배포 메모 · 검증 결과를 덧붙이고(줄마다의 기록은 다시 쓰지 않고 그대로 둔다, `Unreleased (dev)`는 비워서 맨 위에 남긴다), 사용 설명서 머리 `version`·`updated`, 루트 `CLAUDE.md` 상태 줄 · `README.md` 현재 버전을 같이 고친다. 그 커밋에 annotated 태그 `vX.Y.Z`를 달고 `main`에 합친 뒤 브랜치와 태그를 푸시한다(`git push origin vX.Y.Z`). 태그는 옮기거나 다시 달지 않는다. 고칠 것이 생기면 `dev`에서 고쳐 다음 업데이트로.
+- **정식 업데이트 `dev`→`main` — 버전을 올리지 않는다**: `dev`에서 릴리스 준비 커밋 하나(문서만이라 번호는 그대로)를 만든다 — `## Unreleased (dev)` 아래 줄들 위에 `## vX.Y.Z — 날짜` 제목(지금 `package.json`의 번호)을 달고 배포 메모 · 검증 결과를 덧붙이고(줄마다의 기록은 다시 쓰지 않고 그대로 둔다, `Unreleased (dev)`는 비워서 맨 위에 남긴다), 사용 설명서 머리 `version`·`updated`, 루트 `CLAUDE.md` 상태 줄 · `README.md` 현재 버전을 같이 고치고, 이 묶음으로 끝난 설계 스냅숏·구현 계획을 지운다(`documentation.md` "설계 스냅샷 폐기 정책", `docs/README.md` 인덱스도). 그 커밋에 annotated 태그 `vX.Y.Z`를 달고 `main`에 합친 뒤 브랜치와 태그를 푸시한다(`git push origin vX.Y.Z`). 태그는 옮기거나 다시 달지 않는다. 고칠 것이 생기면 `dev`에서 고쳐 다음 업데이트로.
 - **운영 급한 수정**: `main`에서 바로 고쳐야 하면 운영 줄에서 PATCH를 올린다(1.6.12 → 1.6.13). `CHANGELOG.md`에 `## v1.6.13 — 날짜` 항목을 맨 위 릴리스로 더하고 태그를 단 뒤 `main`을 `dev`에 합친다 — `dev`는 이미 다음 줄(1.7.x)이라 번호가 겹치지 않고, `package.json` 충돌은 `dev`의 번호를 남긴다.
 - **MAJOR**: 1.0.0은 T/F가 실제 SOP로 정식 사용을 시작할 때 올렸다(0.x는 "실제 SOP·모델 검증 전"). 그 뒤로는 화면 흐름이나 자료 구조가 크게 바뀌어 사용자가 다시 익혀야 할 때만, 사용자와 정한다. 올린 뒤 첫 번호는 X.0.0.
 - **사용 설명서 그림**: 설명서의 글은 화면을 바꾸는 커밋에서 함께 고치고, 화면 그림은 정식 업데이트 준비 때만 다시 뽑는다(사용자 결정 2026-11-15) — 그림 뽑기는 오래 걸리고, 글은 나중에 몰아서 검사하기 어렵다. 그 묶음에서 바뀐 화면의 장면만 뽑는다(`ONLY=<장면,…>`, 사용자 결정 2026-11-21). 전부 다시 뽑는 것은 공용 부품 · 테마처럼 모든 화면이 바뀌었을 때만.
@@ -47,7 +47,6 @@ type(scope): English summary — 한국어 요약
 
 1. **CHANGELOG**: `CHANGELOG.md`에는 `Unreleased (dev)`와 가장 최근 정식 릴리스(그 줄의 운영 급한 수정 포함)만 남기고, 그 전 항목은 `docs/history/CHANGELOG-archive.md` 맨 위로 옮긴다. 운영 배포일 기록은 옮긴 항목에도 그대로 적는다.
 2. **PROGRESS**: 가장 최근 정식 릴리스까지 쌓인 항목을 `docs/history/PROGRESS-archive.md` 맨 위로 옮기고, `PROGRESS.md`에는 머리말과 릴리스 뒤 항목만 둔다. 그래도 넘으면 같은 작업의 항목을 요약으로 합친다.
-3. **끝난 설계 스냅숏·구현 계획 삭제**와 `docs/README.md` 인덱스 정리(`documentation.md` "설계 스냅샷 폐기 정책") — 이미 `main`에 들어간 기능의 것.
 
 늘 지키는 것:
 

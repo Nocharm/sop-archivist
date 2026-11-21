@@ -1,6 +1,6 @@
 # Assign 시안 1 설계 — 고름 · 처리 중 · 따라가기 한 곳, 다시 받기 범위, 박스 모양
 
-2026-11-20. 사용자가 확정한 시안 1(2026-11-19, 아티팩트 v4 `https://claude.ai/artifact/EjnLRVJFB7RajXZ5TiwyH2`)을 구현 단위로 적는다. 요청서는 `docs/superpowers/handoff/2026-11-19-paragraph-split-requests.md`의 1 · 5 · 9 · 13 · 15번과 "시안 1 피드백" · "시안 1 확정", 바탕은 신뢰 기반 계획 스텝 4-3(`docs/superpowers/plans/2026-11-19-trust-foundation-plan.md`). 3번(번호 칸 폭)은 v1.2.6에 끝났다 — 여기서는 다루지 않는다. 시안이 정한 것은 다시 정하지 않고, 시안이 답하지 않은 것만 끝의 "확인할 것"에 둔다.
+2026-11-20. 사용자가 확정한 시안 1(2026-11-19, 아티팩트 v4 `https://claude.ai/artifact/EjnLRVJFB7RajXZ5TiwyH2`)을 구현 단위로 적는다. 요청서는 `docs/superpowers/handoff/2026-11-19-paragraph-split-requests.md`의 1 · 5 · 9 · 13 · 15번과 "시안 1 피드백" · "시안 1 확정", 바탕은 신뢰 기반 계획 스텝 4-3(지운 계획 문서의 내용은 요청서 `docs/superpowers/handoff/2026-11-19-paragraph-split-requests.md` "분류 메모"로 옮겼다). 3번(번호 칸 폭)은 v1.2.6에 끝났다 — 여기서는 다루지 않는다. 시안이 정한 것은 다시 정하지 않고, 시안이 답하지 않은 것만 끝의 "확인할 것"에 둔다.
 
 ## 왜
 

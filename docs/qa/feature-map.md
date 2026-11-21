@@ -1,6 +1,6 @@
 # 기능 맵 (에이전트용)
 
-에이전트가 앱을 직접 열어 확인할 때 쓰는 색인이다. **앱이 원본이고 이 맵은 싼 색인이다** — 맵과 화면이 다르면 화면을 믿고 맵을 고친다. 화면을 바꾸는 브랜치는 해당 줄도 같은 커밋에서 고친다(신뢰 기반 계획 스텝 3, `docs/superpowers/plans/2026-11-19-trust-foundation-plan.md`). 사람용 설명은 `frontend/public/manual/user-manual.md`, 띄우는 법·함정 전부는 `docs/lessons/browser-verification.md`.
+에이전트가 앱을 직접 열어 확인할 때 쓰는 색인이다. **앱이 원본이고 이 맵은 싼 색인이다** — 맵과 화면이 다르면 화면을 믿고 맵을 고친다. 화면을 바꾸는 브랜치는 해당 줄도 같은 커밋에서 고친다(신뢰 기반 계획 스텝 3 — 계획은 끝나 지웠다). 사람용 설명은 `frontend/public/manual/user-manual.md`, 띄우는 법·함정 전부는 `docs/lessons/browser-verification.md`.
 
 ## 띄우기
 

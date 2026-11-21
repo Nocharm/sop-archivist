@@ -37,7 +37,7 @@ node frontend/scripts/fake-ai-server.mjs    # 가짜 AI :9999(저장소 루트�
 
 ## 일 크기에 맞는 절차 (사용자 결정 2026-11-17)
 
-2026-11-10~16 세션 기록을 재 보니 하위 에이전트 463번(62%가 검토)이 모델 호출의 약 70%를 썼고, 서버가 뜨기를 기다린 시간만 약 16시간이었다. 플러그인 스킬(superpowers 등)이 시키는 기본 절차보다 아래가 먼저다.
+하위 에이전트(대부분 검토)와 서버 기다리기가 호출·시간의 대부분을 썼다(2026-11-10~16 세션 기록). 플러그인 스킬(superpowers 등)이 시키는 기본 절차보다 아래가 먼저다.
 
 - **작은 수정은 메인 세션이 직접 고친다** — 한 화면·한 모듈 안의 수정(스타일·문구·작은 기능·뻔한 버그)은 `/agile` 기준으로, 브레인스토밍·계획 문서·하위 에이전트 없이 바로 한다. 설계 → 계획 → 하위 에이전트 순서는 자료 구조·API 계약·권한·Alembic을 건드리거나 여러 모듈에 걸친 일에만 쓴다.
 - **검토는 브랜치 끝에 한 번** — 하위 에이전트로 구현할 때도 작업(task)마다 명세 검토·품질 검토를 따로 띄우지 않는다. `dev`에 합치기 전에 브랜치 전체 diff를 한 번 검토한다.
@@ -48,12 +48,12 @@ node frontend/scripts/fake-ai-server.mjs    # 가짜 AI :9999(저장소 루트�
 
 ## 신뢰 기반 먼저 (사용자 결정 2026-11-19)
 
-검증 층(스모크·감사·합성 E2E)은 두껍지만 코드 구조·정적 검사 층이 기본값이라 같은 화면의 fix가 되풀이된다(점검 근거와 스텝: [`docs/superpowers/plans/2026-11-19-trust-foundation-plan.md`](docs/superpowers/plans/2026-11-19-trust-foundation-plan.md)).
+검증 층(스모크·감사·합성 E2E)은 두껍지만 코드 구조·정적 검사 층이 기본값이라 같은 화면의 fix가 되풀이된다(점검 근거와 스텝은 신뢰 기반 계획 — 다 끝나 지웠다, git 이력). 그때 세운 검사: `frontend/src/source-rules.test.ts`·`effect-baseline.json`, `backend/tests/test_invariants.py`, `rule-cases.json` 대조, 편집 hook `.claude/hooks/lint-edited.sh`, 기능 맵 `docs/qa/feature-map.md`.
 
 - **교정 사다리** — 사용자에게 같은 교정을 받거나 같은 종류의 fix가 두 번째면 `/harden`: 설계로 못 하게 → lint·타입·소스 검사 시험 → 실행 검증 → 그래도 안 될 때만 산문 한 줄(왜 검사로 못 하는지와 함께). 산문에만 규칙을 더하지 않는다.
 - **lint·시험 메시지는 고치는 방법까지** 적는다.
 - **스모크 기대값을 낮추거나 단계를 빼서 통과시키지 않는다** — 필요하면 사용자 승인을 받고 커밋 메시지에 사유를 적는다.
-- **병렬 에이전트는 동시에 2~3개까지**(계획의 스텝 1·2는 v1.1.54에 `dev`에 올라 기능 작업 보류는 풀렸다).
+- **병렬 에이전트는 동시에 2~3개까지**.
 
 ## Architecture
 
@@ -80,7 +80,7 @@ node frontend/scripts/fake-ai-server.mjs    # 가짜 AI :9999(저장소 루트�
 - **새 권한(permission) — 3곳을 한 커밋에서:** backend `app/access/catalog.py` `PERMISSIONS` ↔ frontend `src/lib/access.ts` `PERMISSIONS`(같은 값·순서) ↔ i18n `permission.<key>`(en·ko). 키가 `permission.`으로 시작하면 메시지 키는 `permission.permission.manage`. 라우트는 `Depends(require_permission("<key>"))`(모르는 키는 import 때 `ValueError`). 카탈로그에서 뺀 키는 저장된 역할·부여에서 조용히 버려진다.
 - **새 env — 3곳:** `app/settings.py` · `.env.example` · `docker-compose.yml` backend `environment:`(`VAR: ${VAR:-}`). backend에 `env_file`이 없어 compose에 빠지면 서버에서만 조용히 기본값이다. 빈 문자열이 기동을 죽이는 int/bool은 Settings 기본값과 같은 폴백. 시크릿 값은 어디에도 쓰지 않는다.
 - **새 업무 규칙 거절 코드(`raise_rule`) = 프런트 문구:** 화면에서 닿는 코드면 `rule.<code>` en·ko(세부 사유는 `rule.<code>.<reason>`). 없으면 상태 코드 문구로 떨어진다.
-- **화면·동작·라벨을 바꾸면 사용 설명서의 글도 같은 커밋에서, 그림은 정식 업데이트 때(사용자 결정 2026-11-15):** `frontend/public/manual/user-manual.md` 해당 조각의 글은 바꿀 때마다 고친다(나중에 몰아서 검사하기 어렵다). backend만 고쳐 동작이 달라질 때도 같다. 화면 그림(`frontend/public/manual/img`)은 오래 걸리니 `dev`에 올릴 때는 다시 뽑지 않고, `dev`→`main` 정식 업데이트 준비 때 그 묶음에서 바뀐 화면만 뽑는다(세부는 `frontend/CLAUDE.md`).
+- **화면·동작·라벨을 바꾸면 사용 설명서(`frontend/public/manual/user-manual.md`)의 글도 같은 커밋에서** — backend만 고쳐 동작이 달라질 때도. 그림은 정식 업데이트 준비 때 바뀐 장면만(세부 `frontend/CLAUDE.md`, 버전 표시 `rules/common/git.md`).
 
 ## Operations / Deployment
 

@@ -1,6 +1,6 @@
 """Source invariants that backend/CLAUDE.md used to state only in prose — one place per rule, AI suggests only, recorded AI calls.
 
-Each failure message says how to fix the cause. Plan: docs/superpowers/plans/2026-11-19-trust-foundation-plan.md (step 2).
+Each failure message says how to fix the cause. Plan: 2026-11-19-trust-foundation-plan.md (step 2).
 """
 
 import ast
