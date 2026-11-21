@@ -4384,6 +4384,111 @@ await runStep("assign: number cell - bullet • saves at once and indents, Conti
   check("a second Undo turns the bullet back into the number", await waitNumber(line.id, (number) => number.value === line.number.value && !number.is_set && number.note === null));
 });
 
+// 번호 ◀ ▶(B8 항목 7) - 같은 목록에서 "N." 아래 번호 없는 줄 셋이 이어진 곳을 찾는다(짝 카드가 아닌 한 언어 목록). 번호: 첫 줄 창에서 연속 번호를 누르면 "N+1."이 차고,
+// ◀ ▶는 입력한 번호의 단계만 바꾼다("N+1." ▶ "N.1." → ▶ 꺼짐 → ◀ "N+1." → ◀ 꺼짐, Esc는 저장하지 않음). 기호 · 없음 줄: 첫 줄을 •로 바꾸면 뒤 두 줄이 • 단계를 따르고,
+// 둘째 줄 ◀는 누른 줄과 이어진 줄을 두 편집으로 내어 쓴다 - Undo 한 번은 이어진 줄만, 두 번은 누른 줄까지. 끝에 •도 되돌려 시드 묶음을 처음 그대로 둔다
+await runStep("assign: number levels - ◀ ▶ step a number one level, outdent a plain line with the lines that follow, Undo in two steps", {}, async ({ page }) => {
+  const headers = { "X-Dev-User": "qa.member" };
+  const docs = await (await page.request.get(`${BASE}/api/bundles/${halfBundleId}/documents`, { headers })).json();
+  const readView = async (docId) => (await page.request.get(`${BASE}/api/bundles/${halfBundleId}/documents/${docId}/view`, { headers })).json();
+  await page.goto(`${BASE}/bundles/${halfBundleId}/assign`);
+  await wait(page, "assign-bar");
+  const startOf = (unit) => unit.spans[0]?.[1] ?? -1;
+  let doc = null;
+  let found = null;
+  for (const candidate of docs.filter((item) => item.side === "old" && item.status === "ready")) {
+    const view = await readView(candidate.id);
+    if (!view.has_number_ranges) continue;
+    await page.locator('[data-testid="assign-old-doc"]').click();
+    await page.locator(`[data-testid="assign-old-doc-option-${candidate.id}"]`).click();
+    await page.locator(`[data-testid="assign-old"]`).waitFor({ timeout: T });
+    await page.waitForTimeout(600);
+    const ordered = view.units.filter((unit) => unit.number && unit.table_id === null).sort((a, b) => a.pos_seq - b.pos_seq || startOf(a) - startOf(b) || a.id - b.id);
+    for (let index = 0; index + 3 < ordered.length && found === null; index += 1) {
+      const [top, first, second, third] = ordered.slice(index, index + 4);
+      if (!/^\d+\.$/.test(top.number.value ?? "") || top.number.is_set) continue;
+      if (![first, second, third].every((unit) => unit.number.value === null && unit.number.read === null)) continue;
+      if (new Set([top, first, second, third].map((unit) => unit.lang)).size !== 1) continue;
+      let visible = true;
+      for (const unit of [first, second, third]) {
+        if ((await page.locator(`[data-testid="assign-paper-lead-${unit.id}"]`).count()) === 0 || (await page.locator(`[data-testid="assign-paper-lead-${unit.id}"]`).getAttribute("data-bracket")) !== null) visible = false;
+      }
+      if (visible) found = { top, first, second, third };
+    }
+    if (found !== null) {
+      doc = candidate;
+      break;
+    }
+  }
+  check("the bundle has a number and three plain lines in one list on screen", found !== null);
+  if (found === null) return;
+  const { top, first, second, third } = found;
+  const nextNumber = `${Number.parseInt(top.number.value, 10) + 1}.`;
+  const readUnit = async (unitId) => (await readView(doc.id)).units.find((item) => item.id === unitId) ?? null;
+  const waitUnit = async (unitId, isDone) => {
+    for (let tries = 0; tries < 60; tries += 1) {
+      const unit = await readUnit(unitId);
+      if (unit && isDone(unit)) return true;
+      await page.waitForTimeout(250);
+    }
+    return false;
+  };
+  const input = page.locator('[data-testid="assign-paper-num-input"]');
+  const outdent = page.locator('[data-testid="assign-paper-num-outdent"]');
+  const indent = page.locator('[data-testid="assign-paper-num-indent"]');
+  // 번호 - 연속 번호를 누르면 위 번호 다음이 차고, ◀ ▶가 입력 칸 양옆에서 입력한 번호의 단계만 바꾼다(저장은 Enter)
+  const firstCell = page.locator(`[data-testid="assign-paper-num-add-${first.id}"]`);
+  await firstCell.scrollIntoViewIfNeeded();
+  await firstCell.click();
+  await page.locator('[data-testid="assign-paper-num-kind-continuous"]').click();
+  await wait(page, "assign-paper-num-input");
+  check("Continuous fills the number after the one above", (await input.inputValue()) === nextNumber, await input.inputValue());
+  check("◀ is off on a top-level number", await outdent.isDisabled());
+  const indentBox = await indent.boundingBox();
+  await indent.click();
+  check("▶ steps the number one level under the number before", (await input.inputValue()) === `${top.number.value}1.`, await input.inputValue());
+  check("▶ stops one level past the number before", await indent.isDisabled());
+  check("the buttons stay put while the number grows", JSON.stringify(await indent.boundingBox()) === JSON.stringify(indentBox), `${JSON.stringify(indentBox)} -> ${JSON.stringify(await indent.boundingBox())}`);
+  await outdent.click();
+  check("◀ steps back to the next number at the top level", (await input.inputValue()) === nextNumber, await input.inputValue());
+  await input.press("Escape");
+  await page.locator(`[data-testid="assign-paper-num-edit-${first.id}"]`).waitFor({ state: "detached", timeout: T });
+  check("stepping without Enter saves nothing", (await readUnit(first.id)).number.value === null);
+  // 기호 · 없음 줄 - 첫 번호 없는 줄을 •로, 뒤 두 줄은 그 단계를 따른다
+  const leadWidth = async (unitId) => (await page.locator(`[data-testid="assign-paper-lead-${unitId}"]`).boundingBox())?.width ?? Number.NaN;
+  const plainWidth = await leadWidth(second.id);
+  await firstCell.click();
+  await page.locator('[data-testid="assign-paper-num-kind-bullet-0"]').click();
+  check("• saves", await waitUnit(first.id, (unit) => unit.number.value === "•"));
+  const bulletWidth = await leadWidth(first.id);
+  const waitWidths = async (isDone) => {
+    for (let tries = 0; tries < 40; tries += 1) {
+      if (isDone(await leadWidth(second.id), await leadWidth(third.id))) return true;
+      await page.waitForTimeout(250);
+    }
+    return false;
+  };
+  check("plain lines under a bullet take the bullet's level", bulletWidth > plainWidth && (await waitWidths((a, b) => a === bulletWidth && b === bulletWidth)), `${plainWidth} -> ${bulletWidth} / ${await leadWidth(second.id)} / ${await leadWidth(third.id)}`);
+  const secondCell = page.locator(`[data-testid="assign-paper-num-add-${second.id}"]`);
+  await secondCell.scrollIntoViewIfNeeded();
+  await secondCell.click();
+  await wait(page, "assign-paper-num-outdent");
+  check("a plain line can step out, and in by one past the line above", !(await outdent.isDisabled()) && !(await indent.isDisabled()));
+  await outdent.click();
+  check("◀ outdents the clicked line", await waitUnit(second.id, (unit) => unit.indent_shift === -1));
+  check("…and the plain line that follows in a second edit", await waitUnit(third.id, (unit) => unit.indent_shift === -1));
+  check("the box stays open on the clicked line", (await page.locator(`[data-testid="assign-paper-num-edit-${second.id}"]`).count()) === 1);
+  check("both lines now sit one level out", await waitWidths((a, b) => a === plainWidth && b === plainWidth), `${await leadWidth(second.id)} / ${await leadWidth(third.id)}`);
+  await page.keyboard.press("Escape");
+  await page.locator('[data-testid="assign-undo"]').click();
+  check("Undo puts back only the lines that followed", await waitUnit(third.id, (unit) => unit.indent_shift === 0));
+  check("…and leaves the clicked line out", (await readUnit(second.id)).indent_shift === -1);
+  await page.locator('[data-testid="assign-undo"]').click();
+  check("a second Undo puts back the clicked line", await waitUnit(second.id, (unit) => unit.indent_shift === 0));
+  await page.locator('[data-testid="assign-undo"]').click();
+  check("a third Undo turns the bullet back into a plain line", await waitUnit(first.id, (unit) => unit.number.value === null && !unit.number.is_set));
+});
+
 await runStep("assign: heading to sentence - Turn into sentences from the right-click menu, the group head and Back to heading, Undo steps back", {}, async ({ page, takeShot }) => {
   const headers = { "X-Dev-User": "qa.member" };
   const docs = await (await page.request.get(`${BASE}/api/bundles/${halfBundleId}/documents`, { headers })).json();

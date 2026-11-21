@@ -368,6 +368,8 @@ _UNIT_NUMBER_COLUMNS = {
     "pair_seq": "INTEGER",
     # 벗긴 표 줄 순서(0034)도 그 앞 리비전에서는 잠시 더했다 뺀다
     "unwrap_seq": "INTEGER",
+    # 들여쓰기 차이(0036)도 그 앞 리비전에서는 잠시 더했다 뺀다
+    "indent_shift": "INTEGER NOT NULL DEFAULT 0",
 }
 
 
@@ -1433,3 +1435,39 @@ def test_0035_turns_line_breaks_in_unit_text_into_spaces_and_keeps_length(tmp_pa
     assert len(texts[sentence_id]) == len(joined)
     assert texts[ids["figure_id"]] == plain
     assert target == joined
+
+
+def test_0036_adds_indent_shift_with_zero_and_empty_history_and_drops_it_back(tmp_path: pathlib.Path) -> None:
+    # 들여쓰기 차이 — 지난 단위는 셈한 단계 그대로(0), 지난 편집 기록은 들여쓰기를 바꾸지 않았다(빈 객체). 내리면 두 열이 빠진다
+    db_path = tmp_path / "indent_shift.db"
+    config = _downgrade_to(db_path, "0035")
+    engine = _create_fk_engine(db_path)
+    try:
+        with engine.begin() as conn:
+            ids = _insert_old_bundle(conn)
+            document_id = conn.execute(
+                text("SELECT document_id FROM extractions WHERE id = :e"), {"e": ids["extraction_id"]}
+            ).scalar_one()
+            _insert_values(conn, "unit_edits", {
+                "document_id": document_id, "seq": 1, "op": "split", "payload": "{}", "created_unit_ids": "[]",
+                "retired_unit_ids": "[]", "regrouped": "{}", "lang_changes": "{}", "layout_changes": "{}",
+                "noise_changes": "{}", "figure_changes": "{}", "pair_seq_changes": "{}", "unwrap_seq_changes": "{}",
+                "state": "applied", "actor": "qa.member", "created_at": _NOW,
+            })
+
+        command.upgrade(config, "0036")
+
+        with engine.connect() as conn:
+            shifts = conn.execute(text("SELECT indent_shift FROM units")).scalars().all()
+            history = conn.execute(text("SELECT indent_changes FROM unit_edits")).scalars().all()
+        assert shifts and set(shifts) == {0}
+        assert [json.loads(value) for value in history] == [{}]
+
+        command.downgrade(config, "0035")
+
+        with engine.connect() as conn:
+            unit_columns = {column["name"] for column in inspect(conn).get_columns("units")}
+            edit_columns = {column["name"] for column in inspect(conn).get_columns("unit_edits")}
+        assert "indent_shift" not in unit_columns and "indent_changes" not in edit_columns
+    finally:
+        engine.dispose()

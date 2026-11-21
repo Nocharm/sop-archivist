@@ -447,6 +447,8 @@ export interface ViewUnit {
   pair_seq?: number | null;
   /** 벗긴 표 덩이 안 줄 순서(lib/unwrap-order-model orderUnwrapped) - 편집 reorder_unwrapped가 매기고 다시 표로가 비운다. 없으면 원문 앞 줄의 값을 빌린다 */
   unwrap_seq?: number | null;
+  /** 들여쓰기 차이(B8) - 셈한 단계(lib/strip-pill-model getRowLevels)에 더한다. 편집 set_indents · set_number의 indent_shift가 바꾼다. 없으면 0 */
+  indent_shift?: number;
 }
 
 /** 표·그림 참조 하나 - number가 null이면 위치 참조("아래 표"), target_unit_id는 이은 표·그림 묶음 단위(못 찾으면 null) */
@@ -527,8 +529,11 @@ export type EditOp =
   | { type: "set_ref"; unit_id: number; number: string }
   /** 참조 아님 - 참조 줄이면 그 전 언어로 돌리고, 제안뿐이었으면 다시 제안하지 않는다 */
   | { type: "clear_ref"; unit_id: number }
-  /** 문단 번호 고치기 - number가 null이면 번호 없음(번호 범위가 글로 돌아간다). follow면 같은 목록의 뒤 번호도 한 편집으로 따라 고친다 */
-  | { type: "set_number"; unit_id: number; number: string | null; follow: boolean }
+  /** 문단 번호 고치기 - number가 null이면 번호 없음(번호 범위가 글로 돌아간다). follow면 같은 목록의 뒤 번호도 한 편집으로 따라 고친다.
+   *  indent_shift를 주면 들여쓰기 차이도 같은 편집에서(기호를 고를 때 위 기호 줄 단계를 따름, B8 7-5) */
+  | { type: "set_number"; unit_id: number; number: string | null; follow: boolean; indent_shift?: number }
+  /** 들여쓰기 차이(B8) - 여러 줄을 한 편집으로(되돌리기 한 칸). 번호 칸이 있는 줄만, 값은 -9…9 */
+  | { type: "set_indents"; units: { unit_id: number; indent_shift: number }[] }
   /** 목차 아님(줄 하나) · 모두 목차 아님(블록 전체) - 잡음 표시만 비운다(단위는 그대로, 되돌리기가 다시 붙인다) */
   | { type: "clear_noise"; unit_ids: number[] }
   /** 제목 ↔ 문장(F8b) - heading이 거짓이면 제목을 문장마다 나눠 바꾼 표시를 단다(번역 조항은 앞 조항의 번호를 물려받는다).

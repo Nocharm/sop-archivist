@@ -2,7 +2,7 @@
 // 연속 값은 프런트 전용이다 - 저장되는 것은 사람이 확인한 글이라 서버 사본이 필요 없다.
 
 import type { ViewUnit } from "./api-sop";
-import { listNumberSiblings } from "./number-model";
+import { listSuggestSiblings } from "./number-model";
 import { BULLET_SYMBOLS } from "./section-number";
 
 export type NumberKind = "continuous" | "bullet" | "custom" | "none";
@@ -26,38 +26,68 @@ function splitCounts(number: string): number[] {
   return number.replace(/\.$/, "").split(".").map(Number);
 }
 
-/**
- * 연속 번호로 채울 값 - numbers는 같은 목록 후보의 지금 번호(문서 순서), read는 그 줄이 읽은 원문 번호.
- * 그 줄 앞의 가장 가까운 연속 번호를 본다(점 기호 · 직접 번호 · 번호 없는 줄은 건너뛴다). 깊이는 그 줄이 읽은 번호의 깊이, 없으면 앞 번호의 깊이 -
- * 같은 깊이면 다음 순번(3. → 4.), 더 깊으면 앞 번호 아래 첫째(3 → 3.1), 더 얕으면 앞 번호의 그 깊이 마디 다음(3.2 → 4). 끝 점은 앞 번호를 따른다.
- * 앞에 연속 번호가 없으면 1(끝 점은 읽은 번호를 따른다).
- */
-export function suggestContinuous(numbers: readonly (string | null)[], index: number, read: string | null = null): string {
-  let previous: string | null = null;
+/** 그 줄 앞의 가장 가까운 연속 번호(점 기호 · 직접 번호 · 번호 없는 줄은 건너뛴다) - 없으면 null */
+function findPreviousContinuous(numbers: readonly (string | null)[], index: number): string | null {
   for (let at = index - 1; at >= 0; at -= 1) {
     const number = numbers[at];
-    if (number && readNumberKind(number) === "continuous") {
-      previous = number;
-      break;
-    }
+    if (number && readNumberKind(number) === "continuous") return number;
   }
-  const own = read !== null && readNumberKind(read) === "continuous" ? splitCounts(read) : null;
-  if (previous === null) return read?.endsWith(".") ? "1." : "1";
+  return null;
+}
+
+/** 앞 번호 다음으로 depth 깊이의 번호 - 같은 깊이면 다음 순번(3. → 4.), 더 깊으면 앞 번호 아래 첫째(3 → 3.1), 더 얕으면 앞 번호의 그 깊이 마디 다음(3.2 → 4). 끝 점은 앞 번호를 따른다 */
+function buildNextAt(previous: string, depth: number): string {
   const counts = splitCounts(previous);
-  const depth = own?.length ?? counts.length;
   const next = depth > counts.length ? [...counts, ...Array<number>(depth - counts.length).fill(1)] : [...counts.slice(0, depth - 1), counts[depth - 1] + 1];
   return next.join(".") + (previous.endsWith(".") ? "." : "");
 }
 
-/** 한 줄의 연속 번호 값 - 같은 목록 후보(listNumberSiblings - 같은 언어 · 같은 표)에서 센다. units는 용지 순서로 넘긴다 */
+/**
+ * 연속 번호로 채울 값 - numbers는 같은 목록 후보의 지금 번호(문서 순서), read는 그 줄이 읽은 원문 번호.
+ * 그 줄 앞의 가장 가까운 연속 번호 다음(buildNextAt). 깊이는 그 줄이 읽은 번호의 깊이, 없으면 앞 번호의 깊이.
+ * 앞에 연속 번호가 없으면 1(끝 점은 읽은 번호를 따른다).
+ */
+export function suggestContinuous(numbers: readonly (string | null)[], index: number, read: string | null = null): string {
+  const previous = findPreviousContinuous(numbers, index);
+  if (previous === null) return read?.endsWith(".") ? "1." : "1";
+  const own = read !== null && readNumberKind(read) === "continuous" ? splitCounts(read) : null;
+  return buildNextAt(previous, own?.length ?? splitCounts(previous).length);
+}
+
+/**
+ * 번호 칸 창의 ◀ ▶(B8 7-c) - 지금 입력한 번호(current)를 한 단계 얕게(-1) · 깊게(+1) 바꾼 값. 앞의 가장 가까운 연속 번호 다음으로 센다
+ * (위가 "5"면 ▶ "5.1", 위가 "5.1"이면 "5.2", ◀ "5.1" → 위 "5" 다음 "6"). 맨 위 단계의 ◀, 위 번호 깊이 + 1을 넘는 ▶(두 단계 이상 뛰기),
+ * 앞 번호가 없거나 current가 연속 번호가 아니면 null(단추를 끈다)
+ */
+export function stepContinuous(numbers: readonly (string | null)[], index: number, current: string, delta: -1 | 1): string | null {
+  if (readNumberKind(current) !== "continuous") return null;
+  const previous = findPreviousContinuous(numbers, index);
+  const depth = splitCounts(current).length + delta;
+  if (previous === null || depth < 1 || depth > splitCounts(previous).length + 1) return null;
+  return buildNextAt(previous, depth);
+}
+
+/** 한 줄의 연속 번호 값 - 문서 차례로 위의 번호에서 센다(listSuggestSiblings - 같은 언어, 표 경계 무시: 제목 "5" 아래 벗긴 표의 줄은 "6"). units는 용지 순서로 넘긴다 */
 export function suggestUnitContinuous(units: readonly ViewUnit[], unitId: number): string | null {
-  const found = listNumberSiblings(units, unitId);
+  const found = listSuggestSiblings(units, unitId);
   if (!found || found.index < 0) return null;
   const { siblings, index } = found;
   return suggestContinuous(
     siblings.map((unit) => unit.number?.value ?? null),
     index,
     siblings[index].number?.read ?? null,
+  );
+}
+
+/** 한 줄의 번호를 한 단계 얕게 · 깊게(stepContinuous) - 후보는 suggestUnitContinuous와 같다 */
+export function stepUnitContinuous(units: readonly ViewUnit[], unitId: number, current: string, delta: -1 | 1): string | null {
+  const found = listSuggestSiblings(units, unitId);
+  if (!found || found.index < 0) return null;
+  return stepContinuous(
+    found.siblings.map((unit) => unit.number?.value ?? null),
+    found.index,
+    current.trim(),
+    delta,
   );
 }
 

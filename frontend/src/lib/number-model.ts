@@ -147,6 +147,15 @@ export function listNumberSiblings(units: readonly ViewUnit[], unitId: number): 
   return { siblings, index: siblings.findIndex((unit) => unit.id === unitId) };
 }
 
+/** 연속 번호 제안의 후보(문서 순서)와 그 안의 자리 - 같은 언어의 번호 칸 있는 단위, 표 경계는 보지 않는다(B8 항목 7-4: 표 밖 제목 "5" 아래 벗긴 줄이 "6"을 받게).
+ *  따라 고치기는 서버와 같은 listNumberSiblings 범위 그대로다 */
+export function listSuggestSiblings(units: readonly ViewUnit[], unitId: number): { siblings: ViewUnit[]; index: number } | null {
+  const edited = units.find((unit) => unit.id === unitId);
+  if (!edited) return null;
+  const siblings = units.filter((unit) => unit.number !== null && unit.lang === edited.lang);
+  return { siblings, index: siblings.findIndex((unit) => unit.id === unitId) };
+}
+
 /** 고칠 줄 뒤로 따라 바뀔 번호들(문서 순서) - 번호 칸이 점선으로 미리 보인다. 후보는 listNumberSiblings */
 export function listFollowPreview(units: readonly ViewUnit[], unitId: number, next: string): NumberPreview[] {
   const found = listNumberSiblings(units, unitId);

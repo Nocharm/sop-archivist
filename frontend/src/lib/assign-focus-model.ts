@@ -255,6 +255,7 @@ export function readEditKind(op: EditOp): PendingKind {
     case "set_ref":
     case "clear_ref":
     case "set_number":
+    case "set_indents":
       return "ref";
     case "set_heading":
       return "heading";
@@ -294,6 +295,8 @@ export function listEditUnitIds(op: EditOp): number[] {
     case "clear_ref":
     case "set_number":
       return [op.unit_id];
+    case "set_indents":
+      return op.units.map((item) => item.unit_id);
     case "move_boundary":
       return [op.left_unit_id, op.right_unit_id];
     case "attach_caption":

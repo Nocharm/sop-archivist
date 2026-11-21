@@ -54,6 +54,7 @@ import { navigate } from "@/lib/nav-buffer";
 import { buildNewAiFilter, listNewAiLinks, readNewAiPill } from "@/lib/new-ai-filter-model";
 import { buildSheetDraft, isSpaceEnabled, pickSpaceSheet } from "@/lib/space-preview-model";
 import { buildDeletedFolds } from "@/lib/deleted-fold-model";
+import type { IndentChange } from "@/lib/indent-model";
 import { hasTocLineIn, listPartSheets } from "@/lib/paper-model";
 import { getNewDocumentsHref, getStageHref } from "@/lib/stages";
 import { toggleTocOpen } from "@/lib/toc-block-model";
@@ -622,8 +623,18 @@ export default function AssignPage() {
                     ? {
                         // 그 줄이 처리 중이면 용지가 그 번호 칸만 끈다
                         busy: isGlobalPending,
-                        onSave: (unitId, number, follow) =>
-                          void runUnitEdit({ type: "set_number", unit_id: unitId, number, follow }, number === null ? t("assign.number.didClear") : t("assign.number.didSet", { n: number }), unitId),
+                        onSave: (unitId, number, follow, indentShift) =>
+                          void runUnitEdit({ type: "set_number", unit_id: unitId, number, follow, ...(indentShift === undefined ? {} : { indent_shift: indentShift }) }, number === null ? t("assign.number.didClear") : t("assign.number.didSet", { n: number }), unitId),
+                        // 들여쓰기는 두 번 저장한다(B8 7-a) - 누른 줄, 이어져 함께 바뀐 줄. Ctrl+Z 한 번이 함께 바뀐 줄만 되돌린다(같은 문서 쓰기는 차례로 간다)
+                        onIndent: (plan, delta, label) => {
+                          const toItem = (change: IndentChange) => ({ unit_id: change.unitId, indent_shift: change.indentShift });
+                          const unitId = plan.clicked.unitId;
+                          void runUnitEdit({ type: "set_indents", units: [toItem(plan.clicked)] }, t(delta < 0 ? "assign.number.didOutdent" : "assign.number.didIndent", { id: label }), unitId);
+                          if (plan.batch.length > 0) {
+                            const done = t(delta < 0 ? "assign.number.didOutdentMore" : "assign.number.didIndentMore", { id: label, n: plan.batch.length });
+                            void runUnitEdit({ type: "set_indents", units: plan.batch.map(toItem) }, done, unitId);
+                          }
+                        },
                       }
                     : undefined
                 }

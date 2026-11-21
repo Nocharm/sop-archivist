@@ -8,7 +8,7 @@ import { useState, type ComponentProps, type ReactNode, type RefObject } from "r
 import { PaneZoom } from "@/components/assign/pane-zoom";
 import { SpotPanel, type SpotTarget } from "@/components/assign/spot-panel";
 import { FigureTab } from "@/components/paper/figure-tab";
-import { Paper, type CutDragPos, type PaperCut } from "@/components/paper/paper";
+import { Paper, type CutDragPos, type PaperCut, type PaperNumberCell } from "@/components/paper/paper";
 import { PartTabs } from "@/components/paper/part-tabs";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Select, type SelectOption } from "@/components/ui/select";
@@ -79,7 +79,7 @@ interface OldPaneProps {
   /** 우클릭·메뉴 글쇠 - 누른 자리와 글자 자리 */
   onUnitContextMenu?: (unitId: number, at: { x: number; y: number }, caret: { blockId: number; offset: number } | null) => void;
   /** 번호 칸 손잡이 - 주면 번호 칸을 눌러 문단 번호를 고친다(작성자만, 쪼개기 편집이라 Ctrl+Z로 되돌린다) */
-  numberCell?: { busy: boolean; onSave: (unitId: number, number: string | null, follow: boolean) => void };
+  numberCell?: PaperNumberCell;
   /** 두 번 누르기 - 나눌 선을 놓는다 */
   onUnitDoubleClick?: (unitId: number, caret: { blockId: number; offset: number } | null) => void;
   /** 한 문단 안에서 글자를 끌어 고름 - 고른 범위로 새 Unit을 만든다(작성자만) */

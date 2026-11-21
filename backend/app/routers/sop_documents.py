@@ -341,6 +341,8 @@ class ViewUnitOut(BaseModel):
     pair_seq: int | None = None
     # 벗긴 표 덩이 안 줄 순서(unwrap_order.py, 편집 reorder_unwrapped) — 바꾼 적 없으면 null(원문 앞 줄의 값을 빌린다)
     unwrap_seq: int | None = None
+    # 들여쓰기 차이(B8, 편집 set_indents) — 화면이 셈한 단계에 더한다. 바꾼 적 없으면 0
+    indent_shift: int = 0
 
 
 def _to_ref_out(state: RefState | None) -> ViewUnitRefOut | None:
@@ -611,6 +613,7 @@ async def build_document_view(session: AsyncSession, document: Document) -> Docu
                 caption_figure_id=unit.caption_figure_id,
                 pair_seq=unit.pair_seq,
                 unwrap_seq=unit.unwrap_seq,
+                indent_shift=unit.indent_shift,
             )
             for unit in units
         ],

@@ -8,6 +8,7 @@
 그림 묶기·풀기도 제자리다 — 그림 단위의 caption_figure_id만 바꾸고(옮기는 캡션은 칸 묶음처럼 regroup) 기록해 되돌린다.
 짝 카드 안 순서도 제자리다 — 구성원의 pair_seq만 바꾸고(pair_order.py) 기록해 되돌린다.
 벗긴 표 덩이 안 줄 순서도 제자리다 — 줄의 unwrap_seq만 바꾸고(unwrap_order.py) 기록해 되돌린다. 다시 표로 묶으면 같은 편집에서 비운다.
+들여쓰기도 제자리다 — 줄의 indent_shift만 바꾸고 기록해 되돌린다(set_indents, set_number의 기호 위로 맞춤).
 묶음 잠금·문서 revision·작업 중 검사와 커밋은 부르는 쪽(라우터)이 한다.
 """
 
@@ -119,8 +120,10 @@ TEXT_KINDS = ("sentence", "heading", "cell_sentence", CAPTION_KIND)
 CAPTIONABLE_KINDS = ("sentence", "heading")  # 캡션으로 붙일 수 있는 글 단위
 PAIR_LANGS = {"ko", "en"}  # 짝의 두 쪽 — 한쪽이 비면 짝을 지운다
 MAX_EDIT_UNITS = 2000  # 합치기·언어 바꾸기가 한 번에 고르는 단위 수 상한
+MAX_INDENT_SHIFT = 9  # units.indent_shift의 절댓값 상한 — 화면 단계는 셈한 단계 + 차이를 1–9로 자른다(프런트 indent-model)
 
 Offset = Annotated[int, Field(ge=0, le=MAX_DB_INT)]
+IndentShift = Annotated[int, Field(ge=-MAX_INDENT_SHIFT, le=MAX_INDENT_SHIFT)]
 T = TypeVar("T")
 ExtractionId = int | None  # 받지 않았거나 추출에 실패한 문서는 추출이 없다 — 단위·블록 조회가 비어 404가 된다
 
@@ -240,6 +243,7 @@ class SetNumberOp(BaseModel):
 
     number가 null이면 "번호 없음"(번호 범위가 글로 돌아간다). 글 앞에 타자로 친 번호를 번호로 삼을 때는 그 읽은 값을 보낸다.
     follow면 같은 목록의 뒤 번호도 같은 편집으로 따라 고친다(numbering.plan_follow) — 되돌리기도 한 번이다.
+    indent_shift를 주면 그 줄의 들여쓰기 차이도 같은 편집에서 바꾼다 — 기호를 고를 때 위 기호 줄의 단계를 따르는 데 쓴다(B8 7-5).
     """
 
     type: Literal["set_number"]
@@ -249,6 +253,22 @@ class SetNumberOp(BaseModel):
         NO_NUL,
     ] | None
     follow: bool = True
+    indent_shift: IndentShift | None = None
+
+
+class IndentIn(BaseModel):
+    unit_id: DbId
+    indent_shift: IndentShift
+
+
+class SetIndentsOp(BaseModel):
+    """들여쓰기 차이 바꾸기(B8 항목 7) — 여러 줄을 한 편집으로(되돌리기 한 칸). 글 · 범위 · 판단은 그대로이고 indent_shift만 바뀐다.
+
+    값은 셈한 단계에 더하는 차이라 단계 끝(위 줄 + 1 등)은 화면이 잰다 — 서버는 값의 범위와 번호 칸이 있는 줄인지만 본다.
+    """
+
+    type: Literal["set_indents"]
+    units: list[IndentIn] = Field(min_length=1, max_length=MAX_EDIT_UNITS)
 class ClearNoiseOp(BaseModel):
     """잡음 표시 풀기 — 목차 아님(줄 하나) · 모두 목차 아님(블록 전체). 단위는 그대로이고 표시만 비운다(되돌리기가 다시 붙인다)."""
 
@@ -306,7 +326,7 @@ EditOp = Annotated[
     SplitOp | MergeOp | UnmergeOp | MoveBoundaryOp | CarveOp | SetLanguageOp | SwitchLanguageOp
     | SetLayoutTableOp | AttachCaptionOp | DetachCaptionOp | SetFirstRowCaptionOp | GroupFiguresOp
     | UngroupFiguresOp | SetRefOp | ClearRefOp | ClearNoiseOp | SetNumberOp | SetHeadingOp | ReorderPairOp
-    | ReorderUnwrappedOp,
+    | ReorderUnwrappedOp | SetIndentsOp,
     Field(discriminator="type"),
 ]
 
@@ -391,6 +411,8 @@ class _Draft:
     group_draft: int | None = None
     # 벗긴 표 덩이 안 줄 순서(units.unwrap_seq) — 나누기 · 합치기의 조각은 옛 줄(합치기는 첫 줄)의 값을 물려받아 옛 자리에 원문 순서로 남는다
     unwrap_seq: int | None = None
+    # 들여쓰기 차이(units.indent_shift) — 나누기 · 합치기의 조각은 옛 줄(합치기는 첫 줄)의 값을 물려받는다
+    indent_shift: int = 0
 
 
 Move = tuple[int | None, int | None]  # 칸 문장의 (지금 묶음, 바꿀 묶음)
@@ -426,6 +448,8 @@ class _Change:
     pair_seqs: dict[int, tuple[int | None, int | None]] = field(default_factory=dict)
     # 덩이의 줄 → (지금 unwrap_seq, 바꿀 unwrap_seq) — 제자리에서 바뀐다(벗긴 표 줄 순서 · 다시 표로의 비우기와 그 되돌리기)
     unwrap_seqs: dict[int, tuple[int | None, int | None]] = field(default_factory=dict)
+    # 줄 → (지금 indent_shift, 바꿀 indent_shift) — 제자리에서 바뀐다(들여쓰기와 그 되돌리기)
+    indents: dict[int, tuple[int, int]] = field(default_factory=dict)
     # 제목 ↔ 문장(set_heading)과 그 되돌리기·다시 하기 — 활성이 된 단위로 한/영 코드 짝을 다시 세운다(짝은 기록 밖이다)
     repair_pairs: bool = False
     # 짝을 다시 세우지 않는다(표 표시가 바뀌어도 코드 짝 제안을 새로 하지 않는다) — Assign 되돌리기 단계가 짝을 스냅숏으로 되쓸 때
@@ -448,7 +472,7 @@ class _Change:
         """
         if (
             self.revive or self.langs or self.layouts or self.noises or self.numbers or self.figures or self.pair_seqs
-            or self.unwrap_seqs or self.list_regrouped_cells()
+            or self.unwrap_seqs or self.indents or self.list_regrouped_cells()
         ):
             return False
         drafts = Counter((tuple(draft.spans), draft.kind, draft.group_unit_id) for draft in self.drafts)
@@ -538,6 +562,7 @@ def _build_draft(
     문단 번호는 앞 조각에 남는다(§11-10) — 번호 범위는 새 범위와 블록 신호로 다시 읽고, 사람이 고친 값은 like와 같은 자리에서
     시작하는 조각만 물려받는다(자른 뒤 조각은 번호 없음, 합친 단위는 앞 단위의 번호).
     벗긴 표 덩이 안 순서(unwrap_seq)는 조각 모두가 like의 값을 물려받는다 — 같은 값끼리는 원문 자리 순이라 옛 줄 자리에 남는다(unwrap_order.py).
+    들여쓰기 차이(indent_shift)도 조각 모두가 물려받는다 — 나눈 줄이 제자리 단계에 남는다.
     """
     kind = kind or like.kind
     first = blocks[spans[0][0]]
@@ -556,6 +581,7 @@ def _build_draft(
         kind=kind, spans=spans, text=text, lang=lang or detect_language(text) or "", table_id=table_id,
         row_index=row_index, group_unit_id=like.group_unit_id, pos_seq=first.seq, pos_start=spans[0][1],
         number=number, from_heading=like.from_heading and kind == "sentence", unwrap_seq=like.unwrap_seq,
+        indent_shift=like.indent_shift,
     )
 
 
@@ -1060,7 +1086,22 @@ async def _plan_set_number(session: AsyncSession, extraction_id: ExtractionId, o
             if number and number not in BULLET_SYMBOLS:  # 점 기호는 절을 열지 않는다 — 절 이름이 "•"이 되지 않게
                 renamed.append((target, before[0], number))
     change.sections = await _find_section_moves(session, extraction_id, renamed)
+    if op.indent_shift is not None and op.indent_shift != unit.indent_shift:
+        change.indents[unit.id] = (unit.indent_shift, op.indent_shift)
     return change
+
+
+async def _plan_set_indents(session: AsyncSession, extraction_id: ExtractionId, op: SetIndentsOp) -> _Change:
+    """들여쓰기 차이 — 번호 칸이 있는 글 단위만(목차 줄 · 표 · 그림은 422 invalid_unit_kind). 지금 값과 같은 줄은 건너뛴다."""
+    ensure_unique_units([item.unit_id for item in op.units])
+    units = await load_active_units(session, extraction_id, [item.unit_id for item in op.units])
+    invalid = sorted(unit.id for unit in units.values() if unit.kind not in NUMBERED_KINDS or unit.noise_kind is not None)
+    if invalid:
+        raise_rule(422, "invalid_unit_kind", unit_ids=invalid)
+    return _Change(indents={
+        item.unit_id: (units[item.unit_id].indent_shift, item.indent_shift)
+        for item in op.units if units[item.unit_id].indent_shift != item.indent_shift
+    })
 
 
 async def _find_section_moves(
@@ -1772,6 +1813,8 @@ async def _plan(session: AsyncSession, document_id: int, extraction_id: Extracti
             return await _plan_reorder_pair(session, document_id, extraction_id, op)
         case ReorderUnwrappedOp():
             return await _plan_reorder_unwrapped(session, extraction_id, op)
+        case SetIndentsOp():
+            return await _plan_set_indents(session, extraction_id, op)
         case _:
             assert_never(op)
 
@@ -1862,7 +1905,8 @@ async def _insert_units(
             extraction_id=extraction_id, local_no=last_no + offset, kind=draft.kind,
             spans=[list(span) for span in draft.spans], text=draft.text, lang=draft.lang, table_id=draft.table_id,
             row_index=draft.row_index, group_unit_id=draft.group_unit_id, pos_seq=draft.pos_seq,
-            pos_start=draft.pos_start, from_heading=draft.from_heading, unwrap_seq=draft.unwrap_seq, **draft.number,
+            pos_start=draft.pos_start, from_heading=draft.from_heading, unwrap_seq=draft.unwrap_seq,
+            indent_shift=draft.indent_shift, **draft.number,
         )
         for offset, draft in enumerate(ordered, start=1)
     ]
@@ -1955,6 +1999,16 @@ async def _set_unwrap_seqs(session: AsyncSession, unwrap_seqs: Mapping[int, tupl
         raise RuntimeError(
             f"unit edit history out of sync: {changed} of {len(unwrap_seqs)} units had the recorded unwrap order"
         )
+
+
+async def _set_indents(session: AsyncSession, indents: Mapping[int, tuple[int, int]]) -> None:
+    """들여쓰기 차이(indent_shift)를 바꾼다 — 지금 값이 기록과 다른 단위가 있으면 편집 기록과 어긋난 것이라 RuntimeError(버그 가드)."""
+    changed = 0
+    for unit_id, (old, new) in indents.items():
+        result = await session.execute(update(Unit).where(Unit.id == unit_id, Unit.indent_shift == old).values(indent_shift=new))
+        changed += result.rowcount
+    if changed != len(indents):
+        raise RuntimeError(f"unit edit history out of sync: {changed} of {len(indents)} units had the recorded indent")
 
 
 async def _leave_pairs(session: AsyncSession, unit_ids: Collection[int]) -> None:
@@ -2094,6 +2148,8 @@ async def _write_change(
     await _set_pair_seqs(session, change.pair_seqs)
     # 덩이 줄 순서는 판단을 묻지 않는다 — 글 · 출처가 그대로라 결과물 A가 따르지 않는다(_plan_reorder_unwrapped)
     await _set_unwrap_seqs(session, change.unwrap_seqs)
+    # 들여쓰기도 판단을 묻지 않는다 — 글 · 출처가 그대로다
+    await _set_indents(session, change.indents)
     # 다시 목차가 된 단위는 짝을 맺지 않는다(units._find_code_pairs와 같은 규칙). 짝을 되쓸 되돌리기는 건드리지 않는다 - 단계 diff에 없는 짝 행
     # (지운 뒤 같은 id로 다시 생긴 짝의 그대로인 멤버)을 지우면 되쓰기가 되살리지 못한다
     if not change.keeps_pairs:
@@ -2176,7 +2232,7 @@ def _record(
     """작업 기록 — 대상은 은퇴한·활성이 된·언어가 바뀐·다시 묶인 단위, 사유 칸에 편집 종류(split 등)."""
     unit_ids = sorted(
         {*result.created_unit_ids, *result.retired_unit_ids, *change.langs, *change.regroup, *change.bundles,
-         *change.noises, *change.numbers, *change.figures, *change.pair_seqs, *change.unwrap_seqs}
+         *change.noises, *change.numbers, *change.figures, *change.pair_seqs, *change.unwrap_seqs, *change.indents}
     )
     record_event(
         session, bundle_id=document.bundle_id, actor=actor, action=action, target_type="unit", target_ids=unit_ids,
@@ -2227,6 +2283,7 @@ async def apply_edit(
             figure_changes={str(unit_id): list(figures) for unit_id, figures in change.figures.items()},
             pair_seq_changes={str(unit_id): list(seqs) for unit_id, seqs in change.pair_seqs.items()},
             unwrap_seq_changes={str(unit_id): list(seqs) for unit_id, seqs in change.unwrap_seqs.items()},
+            indent_changes={str(unit_id): list(shifts) for unit_id, shifts in change.indents.items()},
             number_changes=_dump_numbers(change), actor=actor,
         )
     )
@@ -2289,6 +2346,10 @@ def _replay(edit: UnitEdit, *, backwards: bool) -> _Change:
         # 0034 전 기록은 빈 객체다(벗긴 표 줄 순서를 바꾼 편집이 없었다)
         unwrap_seqs={
             int(unit_id): _orient(seqs, backwards=backwards) for unit_id, seqs in (edit.unwrap_seq_changes or {}).items()
+        },
+        # 0036 전 기록은 빈 객체다(들여쓰기를 바꾼 편집이 없었다)
+        indents={
+            int(unit_id): _orient(shifts, backwards=backwards) for unit_id, shifts in (edit.indent_changes or {}).items()
         },
         repair_pairs=edit.op == "set_heading",
     )

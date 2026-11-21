@@ -28,8 +28,9 @@ import { buildFoldPlan, type FoldEntry, type FoldItem, type FoldOpen } from "@/l
 import { buildRows, flattenLineBreaks, getBundleHeader, getGapMerge, getItemSegments, getMarks, getTags, isBandHeading, MERGE_BLOCKER_KEYS, resolvePickUnit, type CaptionPiece, type FigureRowMode, type PaperItem, type PaperModel, type PaperRow, type Segment, type UnitMark } from "@/lib/paper-model";
 import type { JoinKind, JoinPlan } from "@/lib/split-menu-model";
 import { getHiddenEnds, listFollowPreview } from "@/lib/number-model";
-import { suggestUnitContinuous } from "@/lib/number-kind-model";
-import { getCardTops, getHiddenPrefixLength, getPairBrackets, getPillWidth, getSectionHeads, getTabWidths, getSectionLevel, getSectionPill, getVisibleSkip, sliceVisible, type PairBracket } from "@/lib/strip-pill-model";
+import { stepUnitContinuous, suggestUnitContinuous } from "@/lib/number-kind-model";
+import { findBulletShift, getIndentBounds, planIndent, type IndentPlan, type IndentRow } from "@/lib/indent-model";
+import { getCardTops, getHiddenPrefixLength, getPairBrackets, getPillWidth, getRowLevels, getSectionHeads, getTabWidths, getSectionLevel, getSectionPill, getVisibleSkip, sliceVisible, type PairBracket } from "@/lib/strip-pill-model";
 import { buildHeadingShiftGroups, readHeadingShiftHead, type HeadingShiftGroup } from "@/lib/heading-shift-model";
 import { getPairHint, type PairHint, type PairHintUnit } from "@/lib/pair-hint-model";
 import { isDeletedLineOpen, readDeletedLine, type DeletedFold, type DeletedLine } from "@/lib/deleted-fold-model";
@@ -241,11 +242,20 @@ interface PaperProps {
   /** Unit이 있는 조각을 끌 수 있는 상자로(data-drag-box, lib/box-drag.ts) - 끌기는 화면이 붙인다. 표 칸 조각은 표 조각이 감싸 따로 달지 않는다 */
   dragBoxes?: boolean;
   /** 번호 칸 손잡이(Assign) - 주면 번호 범위가 있는 문서의 번호 칸을 눌러 고친다. number가 null이면 번호 없음 */
-  numberCell?: { busy: boolean; onSave: (unitId: number, number: string | null, follow: boolean) => void };
+  numberCell?: PaperNumberCell;
   /** 그림 줄(strips) - hide는 본문 탭(그림 · 그 캡션이 빠지고 자리 표시도 없다), only는 그림 탭(그림 카드만), 없으면 모두(시안 2 D3) */
   figureRows?: FigureRowMode;
   /** 위치 판(strips) - 이 줄들만 그린다. marker가 있으면 afterKey 줄 뒤(null이면 맨 위)에 그 표지(그림 자리 네모)를 끼운다 */
   spot?: { keys: ReadonlySet<string>; marker?: { afterKey: string | null; node: ReactNode } };
+}
+
+/** 고칠 수 있는 화면의 번호 칸 손잡이 */
+export interface PaperNumberCell {
+  busy: boolean;
+  /** indentShift를 주면 들여쓰기 차이도 같은 편집에서(기호를 고를 때 위 기호 줄 단계를 따름) */
+  onSave: (unitId: number, number: string | null, follow: boolean, indentShift?: number) => void;
+  /** 번호 칸 창의 ◀ ▶ 들여쓰기(B8) - 누른 줄과 이어져 함께 바뀌는 줄(lib/indent-model planIndent). label은 누른 줄의 표시 ID */
+  onIndent: (plan: IndentPlan, delta: -1 | 1, label: string) => void;
 }
 
 /** 화면 좌표 → 블록 위치. 글자 조각 요소의 data-start에 글자 노드 안 위치를 더한다 */
@@ -538,18 +548,26 @@ export function Paper({
     }
     return heads;
   }, [sections, cardTops]);
-  // 줄마다 번호 칸 폭 - 번호 없는 줄은 직전 줄 폭, 짝 카드는 첫 줄 폭(부분마다 문서 순서로)
-  const tabWidths = useMemo(() => {
-    const rows = sections.flatMap((section) =>
-      section.rows.map((row) => {
-        const unitId = readRowUnitId(row);
-        const topId = unitId === null ? undefined : cardTops.get(unitId);
-        const topRow = topId === undefined ? undefined : section.rows.find((candidate) => readRowUnitId(candidate) === topId);
-        return { key: row.key, part: section.edge ?? "body", sectionLabel: readRowLabel(row, model), pairTopOf: topRow?.key ?? null };
-      }),
-    );
-    return getTabWidths(rows);
-  }, [sections, cardTops, model]);
+  // 줄마다 단계와 번호 칸 폭 - 셈한 단계(번호 깊이 · 기호 단계 · 기댄 줄 단계)에 저장된 들여쓰기 차이를 더한다(B8), 짝 카드는 첫 줄(부분마다 문서 순서로)
+  const indentRows = useMemo<IndentRow[]>(
+    () =>
+      sections.flatMap((section) =>
+        section.rows.map((row) => {
+          const unitId = readRowUnitId(row);
+          const unit = unitId === null ? undefined : model.units.get(unitId);
+          const topId = unitId === null ? undefined : cardTops.get(unitId);
+          const topRow = topId === undefined ? undefined : section.rows.find((candidate) => readRowUnitId(candidate) === topId);
+          return { key: row.key, unitId, part: section.edge ?? "body", sectionLabel: readRowLabel(row, model), pairTopOf: topRow?.key ?? null, shift: unit?.indent_shift ?? 0, hasCell: (unit?.number ?? null) !== null };
+        }),
+      ),
+    [sections, cardTops, model],
+  );
+  const rowLevels = useMemo(() => getRowLevels(indentRows), [indentRows]);
+  const tabWidths = useMemo(() => getTabWidths(indentRows, rowLevels), [indentRows, rowLevels]);
+  // 고치는 중인 번호 칸 줄의 용지 줄 key - ◀ ▶ 끝과 일괄 범위를 그 줄에서 잰다
+  const numberEditKey = useMemo(() => (numberEditUnitId === null ? null : (indentRows.find((row) => row.unitId === numberEditUnitId)?.key ?? null)), [indentRows, numberEditUnitId]);
+  const numberEditIndent = useMemo(() => (numberEditKey === null ? undefined : getIndentBounds(indentRows, rowLevels, numberEditKey)), [indentRows, rowLevels, numberEditKey]);
+  const numberEditBulletShift = useMemo(() => (numberEditKey === null ? null : findBulletShift(indentRows, numberEditKey)), [indentRows, numberEditKey]);
   // 벗긴 표의 줄 덩이마다 첫 줄 - 그 줄 위에 묶음 머리("↺ 다시 표로")를 단다(F1). 부분마다 문서 순서로
   const unwrapHeads = useMemo(() => new Map(sections.flatMap((section) => [...findUnwrapHeads(section.rows, model.unwrapped, model.tables)])), [sections, model]);
   // 표 칸 안의 조각 줄 - 칸이 많은 표에서 고를 때마다 다시 펴지 않게
@@ -892,9 +910,16 @@ export function Paper({
           preview={previewOf.get(unit.id) ?? null}
           isArrived={arrivedNumbers.has(unit.id)}
           onEditChange={setNumberEdit}
-          onSave={(number, follow) => {
+          onSave={(number, follow, indentShift) => {
             setNumberEdit(null);
-            numberCell?.onSave(unit.id, number, follow);
+            numberCell?.onSave(unit.id, number, follow, indentShift);
+          }}
+          indent={numberEdit?.unitId === unit.id ? numberEditIndent : undefined}
+          stepNumber={numberEdit?.unitId === unit.id ? (text, delta) => stepUnitContinuous(numberOrder, unit.id, text, delta) : undefined}
+          bulletShift={numberEdit?.unitId === unit.id ? numberEditBulletShift : null}
+          onIndent={(delta) => {
+            const plan = numberEditKey === null ? null : planIndent(indentRows, rowLevels, numberEditKey, delta);
+            if (plan) numberCell?.onIndent(plan, delta, unit.display_id);
           }}
         />
       );
