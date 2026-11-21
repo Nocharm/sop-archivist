@@ -39,6 +39,8 @@
 | [qa/2026-11-sop-parse-dependencies.md](qa/2026-11-sop-parse-dependencies.md) | 파싱 의존성·메모리 실측 — MarkItDown 새 패키지 목록, 메인이 될 수 없는 이유, 자식 프로세스 RSS, backend 메모리 상한 결정, Task 8에 넘기는 주의 |
 | [qa/verification-commands.md](qa/verification-commands.md) | 로컬 실행·검증 명령 전체(bash·PowerShell) — 시드·서버·테스트·브라우저 스모크·배치/겹침/대비 감사·설명서 그림·가짜 AI·배포 스크립트 검증의 전제와 옵션 |
 | [qa/2026-11-10-design-workflow-convenience-review.md](qa/2026-11-10-design-workflow-convenience-review.md) | 디자인·워크플로우·편의성 전체 검토(v0.10.1) — 코드 감사 3건 + 극단 자료·5개 화면 조합 확인, 발견 표(근거 `파일:줄`·심각도·처리), 이번에 반영한 것과 보류한 것 |
+| [architecture/backend.md](architecture/backend.md) | backend 코드 구조 상세 — `backend/CLAUDE.md`가 줄여 싣는 내용의 원문(기동·권한·SOP 코어 흐름·AI 제안 층·불변식과 이중 사용 지점의 자세한 설명). 구조를 바꾸면 `backend/CLAUDE.md`와 같은 커밋에서 고친다 |
+| [architecture/frontend.md](architecture/frontend.md) | frontend 코드 구조 상세 — `frontend/CLAUDE.md`가 줄여 싣는 내용의 원문(공통 lib·순수 모델·Assign·공통 부품·설명서·Map). 구조를 바꾸면 `frontend/CLAUDE.md`와 같은 커밋에서 고친다 |
 | [lessons/README.md](lessons/README.md) | 시행착오 방지 — React/TS 패턴, 브라우저 검증 |
 | [history/PROGRESS-archive.md](history/PROGRESS-archive.md) | `PROGRESS.md`에서 옮긴 지난 기록(v0.1.0–v1.0.0) — `PROGRESS.md`가 크기 상한을 넘으면 최근 릴리스까지의 항목이 맨 위로 온다 |
 | [history/CHANGELOG-archive.md](history/CHANGELOG-archive.md) | `CHANGELOG.md`에서 옮긴 지난 릴리스 항목(0.x — v0.1.0–v0.16.0) |

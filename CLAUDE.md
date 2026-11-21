@@ -71,7 +71,7 @@ node frontend/scripts/fake-ai-server.mjs    # 가짜 AI :9999(저장소 루트�
 
 **디렉터리:** `backend/`(앱·Alembic·시드 `scripts/`·tests) · `frontend/`(src/app·components·lib, `scripts/` 스모크·가짜 AI) · `nginx/` · `scripts/db-backup.sh` · `ci/`(`deploy.sh`·`test-deploy.sh`, `.gitlab-ci.yml`이 부름) · `docs/`(인덱스 `docs/README.md`).
 
-**세부 구조는 폴더별 CLAUDE.md에** — 그 폴더의 파일을 읽을 때 함께 실리고, 실리지 않은 채 그 폴더를 고치게 되면 먼저 직접 읽는다. [`backend/CLAUDE.md`](backend/CLAUDE.md)(핵심 모듈·AI 제안 층 불변식·SOP 규칙 이중 사용 지점, Python·설정 규칙을 불러옴) · [`frontend/CLAUDE.md`](frontend/CLAUDE.md)(핵심 구조·공통 부품·사용 설명서, TypeScript·식별자 규칙을 불러옴).
+**세부 구조는 폴더별 CLAUDE.md에** — 그 폴더의 파일을 읽을 때 함께 실리고, 실리지 않은 채 그 폴더를 고치게 되면 먼저 직접 읽는다. 폴더 CLAUDE.md는 모듈마다 한두 줄과 불변식만 싣고, 줄 끝 `→ N`이 가리키는 긴 설명은 `docs/architecture/backend.md`·`frontend.md`의 N절에 있다(구조를 바꾸면 둘 다 같은 커밋에서). [`backend/CLAUDE.md`](backend/CLAUDE.md)(핵심 모듈·AI 제안 층 불변식·SOP 규칙 이중 사용 지점, Python·설정 규칙을 불러옴) · [`frontend/CLAUDE.md`](frontend/CLAUDE.md)(핵심 구조·공통 부품·사용 설명서, TypeScript·식별자 규칙을 불러옴).
 
 ## 체크리스트 — 같이 움직여야 하는 곳
 
