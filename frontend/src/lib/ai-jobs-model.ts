@@ -41,6 +41,7 @@ const KIND_STAGE: Record<AiJobKind, StageKey> = {
   // 나누기·짝 제안은 배정 화면에서 받고 적용한다(옛 쪼개기 화면)
   pair: "assign",
   split: "assign",
+  unwrap_order: "assign",
   doc_meta: "documents",
   tobe_list: "documents",
 };

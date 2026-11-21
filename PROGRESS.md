@@ -2,6 +2,13 @@
 
 프로젝트 진행 현황 로그. 커밋 직전 갱신한다 (`rules/common/git.md` 규칙). v1.4.0(2026-11-20 정식 업데이트)까지의 항목은 [`docs/history/PROGRESS-archive.md`](docs/history/PROGRESS-archive.md)에 있다 — 정식 업데이트마다 그 릴리스까지의 항목을 거기로 옮긴다(`rules/common/git.md` "정식 업데이트 때 문서 정리").
 
+## 2026-11-21 — B11 벗긴 표 AI 순서 제안 (`feat/ai-unwrap-order`)
+
+- 새 AI 작업 `unwrap_order`(`ai/unwrap_order_job.py`, 경로 `POST /ai/unwrap_order {document_id, table_id}`): 표 하나 = 작업 하나, 표 id는 작업 `payload`. 보내는 것은 원문 표 Markdown과 덩이 줄(id · 글 · 원래 행 · 열)뿐. 답이 덩이 줄의 순열이 아니면 `invalid`(경고 `order_mismatch`). 제안 `content = {table_id, unit_ids, reason}`은 그대로 `reorder_unwrapped`로 보낼 수 있다. 채택 기록은 split 전용이던 것을 `record_manual_adoption`(split · unwrap_order)으로 넓힘.
+- 명세와 다르게 정한 것: 낡음 기준을 문서 revision이 아니라 **덩이 자체**(최신 추출 · 줄 id와 글의 해시)로 — 문서 어디든 편집하면 revision이 올라 사람이 일하는 동안 거의 모든 제안이 낡는다. 사람이 그 사이 순서만 바꾼 것은 낡음이 아니다(여전히 같은 줄의 순열).
+- 화면: 상태는 새 훅 `use-unwrap-ai.ts`(effect · 타이머 없음 — `useLoaded` · `useAiJobs` 재사용), 미리 보기 판정은 `unwrap-ai-model.ts`. 작업 중 칩은 `/ai/status`의 종류별 끝난 수가 요청 때 기준에 닿으면 걷힌다(표별 상태가 없어 두 표를 연달아 물으면 걷히는 차례가 실제와 다를 수 있음). 놓기는 `runUnitEdit`에 더한 `afterOk`로 편집이 받아들여진 뒤에만 채택을 남긴다.
+- 스모크: 벗긴 표 머리 글 전체를 "↺ Back to table"과 견주던 두 검사를 머리 단추 둘(✦ AI order · ↺ Back to table)로 고침(머리에 단추가 늘었기 때문 — 기대를 낮춘 것 아님). 새 단계(AI가 켜진 backend에서만): 미리 보기 → 놓기 → 되돌리기, 다시 물어 그대로 두기. 가짜 AI는 받은 줄 차례를 거꾸로 답한다. 긴 줄에서 "n → m" 칩이 글을 덮지 않는 것을 화면에 주입해 쟀다(겹침 0).
+
 ## 2026-11-21 — B10-3 캡션 지정 길 넷 (`feat/caption-pick-paths`)
 
 - 우클릭: 글 대상의 위/아래 캡션 항목(`caption_attach_prev/next` + `prevBundle/nextBundle`)을 `caption_of` 줄들로 바꿈 — `listCaptionHolders`가 가까운 표·그림 5개(자리 거리 → 원문 자리 차이)를 고르고 줄마다 `holder`(번호 · 거리 · 쪽)를 싣는다. 묶음 대상의 "위/아래 문장을 캡션으로"는 그대로. 다듬기 줄의 글 대상 캡션 단추는 없어졌다(캡션은 우클릭 · 캡션 자리가 맡음).

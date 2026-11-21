@@ -1,4 +1,4 @@
-"""AI API — 내가 멤버인 묶음 전체의 최근 작업 목록(멤버), 분류·번역·짝 맞추기·복합 문장 나누기 요청과 배정 화면 첫 진입 미리 분류 prepare(작성자, AI가 켜져 있을 때), 한/영 따로 짝 제안 요청(작성자, 임베딩이 켜져 있을 때)과 작업 현황·제안 읽기(멤버)·나누기 제안 채택 기록·취소·실패분 다시 시도(작성자, 작업 중 묶음만). 요청 말고는 AI가 꺼져 있어도 동작한다."""
+"""AI API — 내가 멤버인 묶음 전체의 최근 작업 목록(멤버), 분류·번역·짝 맞추기·복합 문장 나누기·벗긴 표 순서 제안 요청과 배정 화면 첫 진입 미리 분류 prepare(작성자, AI가 켜져 있을 때), 한/영 따로 짝 제안 요청(작성자, 임베딩이 켜져 있을 때)과 작업 현황·제안 읽기(멤버)·나누기·순서 제안 채택 기록·취소·실패분 다시 시도(작성자, 작업 중 묶음만). 요청 말고는 AI가 꺼져 있어도 동작한다."""
 
 from collections.abc import Sequence
 from typing import Annotated, Literal
@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth import get_current_user
 from app.db import get_session
 from app.settings import settings
-from app.sop.ai.adoption import list_suggestions, load_adoption_stats, load_suggestion, record_split_adoption
+from app.sop.ai.adoption import list_suggestions, load_adoption_stats, load_suggestion, record_manual_adoption
 from app.sop.ai.classify import CLASSIFY_KIND, select_classify_items
 from app.sop.ai.constants import DEFAULT_SUGGESTIONS_PAGE, MAX_SUGGESTIONS_PAGE
 from app.sop.ai.jobs import (
@@ -41,9 +41,11 @@ from app.sop.ai.schemas import (
     SuggestionOut,
     SuggestionsPageOut,
     TranslateIn,
+    UnwrapOrderIn,
 )
 from app.sop.ai.split import SPLIT_KIND, select_split_items
 from app.sop.ai.translate import TRANSLATE_KIND, select_translate_items
+from app.sop.ai.unwrap_order_job import UNWRAP_ORDER_KIND, select_unwrap_order_items
 from app.sop.constants import AI_PRIORITY_PLAN, AI_PRIORITY_USER, MEMBER_ROLES
 from app.sop.errors import raise_rule
 from app.sop.events import record_event
@@ -62,7 +64,7 @@ SuggestionIdPath = Annotated[int, Path(ge=1, le=MAX_DB_INT)]
 
 
 def require_ai_enabled() -> None:
-    """LLM을 쓰는 요청(분류·번역·짝 맞추기·나누기)의 의존성 — 사람 경로는 AI가 꺼져 있어도 그대로라 여기에만 건다."""
+    """LLM을 쓰는 요청(분류·번역·짝 맞추기·나누기·순서 제안)의 의존성 — 사람 경로는 AI가 꺼져 있어도 그대로라 여기에만 건다."""
     if not settings.ai_enabled:
         raise_rule(503, "ai_disabled")
 
@@ -177,6 +179,18 @@ async def request_split(
     return await _queue_request(session, ctx, SPLIT_KIND, items, skipped)
 
 
+@router.post("/unwrap_order", response_model=AiRequestOut, dependencies=[Depends(require_ai_enabled)])
+async def request_unwrap_order(
+    body: UnwrapOrderIn,
+    ctx: BundleContext = Depends(_require_author),
+    session: AsyncSession = Depends(get_session),
+) -> AiRequestOut:
+    await lock_bundle(session, ctx.bundle)
+    ensure_editable(ctx.bundle)
+    items = await select_unwrap_order_items(session, ctx.bundle.id, document_id=body.document_id, table_id=body.table_id)
+    return await _queue_request(session, ctx, UNWRAP_ORDER_KIND, items, [])
+
+
 @router.get("/status", response_model=AiStatusOut)
 async def get_ai_status(
     ctx: BundleContext = Depends(_require_member), session: AsyncSession = Depends(get_session)
@@ -224,11 +238,11 @@ async def record_adoption(
     ctx: BundleContext = Depends(_require_author),
     session: AsyncSession = Depends(get_session),
 ) -> SuggestionOut:
-    """나누기 제안의 채택 결과를 사람이 남긴다 — 나누기 편집은 따로 하고, 이 기록이 채택률의 재료다."""
+    """나누기·순서 제안의 채택 결과를 사람이 남긴다 — 편집은 따로 하고, 이 기록이 채택률의 재료다."""
     await lock_bundle(session, ctx.bundle)
     ensure_editable(ctx.bundle)
     suggestion = await load_suggestion(session, ctx.bundle.id, suggestion_id)
-    record_split_adoption(suggestion, body.adoption, ctx.login_id)  # 누가·언제는 제안 행이 담아 작업 기록은 따로 남기지 않는다
+    record_manual_adoption(suggestion, body.adoption, ctx.login_id)  # 누가·언제는 제안 행이 담아 작업 기록은 따로 남기지 않는다
     await session.commit()
     return SuggestionOut.model_validate(suggestion)
 

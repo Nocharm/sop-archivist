@@ -113,7 +113,7 @@ export interface AiStatus {
   ai_enabled: boolean;
   embed_enabled: boolean;
   jobs: AiJobCounts;
-  /** 종류별 같은 모양(classify·translate·match·pair·split) */
+  /** 종류별 같은 모양(classify·translate·match·pair·split·unwrap_order) */
   by_kind: Record<string, AiJobCounts>;
   /** 실패 코드별 건수(timeout·server_error·connection·client_error·config·interrupted·no_candidates·internal) */
   failed_errors: Record<string, number>;
@@ -148,7 +148,7 @@ export function getAiStatus(bundleId: number): Promise<AiStatus> {
   return apiFetch<AiStatus>(`/bundles/${bundleId}/ai/status`);
 }
 
-export type AiJobKind = "classify" | "translate" | "match_plan" | "match" | "pair" | "split" | "doc_meta" | "tobe_list";
+export type AiJobKind = "classify" | "translate" | "match_plan" | "match" | "pair" | "split" | "unwrap_order" | "doc_meta" | "tobe_list";
 export type AiJobStatus = keyof AiJobCounts;
 
 /** 요청 한 번(같은 request_id)의 집계 - total은 24시간 범위와 상관없이 센다. 짝 맞추기는 도중에 total이 는다 */

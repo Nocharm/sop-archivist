@@ -36,6 +36,7 @@ import { getPairHint, type PairHint, type PairHintUnit } from "@/lib/pair-hint-m
 import { isDeletedLineOpen, readDeletedLine, type DeletedFold, type DeletedLine } from "@/lib/deleted-fold-model";
 import { buildTocBlock, shouldJoinTocCard } from "@/lib/toc-block-model";
 import { findUnwrapHeads, getRowUnwrapTable } from "@/lib/unwrap-model";
+import { isUnwrapSuggestionUnchanged, readUnwrapMoves, type UnwrapLineMove } from "@/lib/unwrap-ai-model";
 import { buildStripRows } from "@/lib/figure-spot-model";
 import { useClickOrDouble } from "@/lib/use-click-or-double";
 import { useNumberArrival } from "@/lib/use-number-arrival";
@@ -213,7 +214,14 @@ interface PaperProps {
      *  canRevert면 "↺ 제목으로"가 onRevert(묶음의 바꾼 문장들)로 편집 set_heading(제목으로)을 부른다 */
     headingShift?: { canRevert: boolean; busy: boolean; onRevert: (unitIds: number[]) => void };
     /** Assign - 벗긴 표의 줄 묶음 머리에 "↺ 다시 표로"(F1). canRewrap이 거짓이면 머리 없이 왼쪽 세로선만. onRewrap(표 id)은 편집 set_layout_table(표로) */
-    unwrap?: { canRewrap: boolean; busy: boolean; onRewrap: (tableId: number) => void };
+    unwrap?: {
+      canRewrap: boolean;
+      busy: boolean;
+      onRewrap: (tableId: number) => void;
+      /** AI 순서 제안(B11) - 머리에 "✦ AI 순서 제안". enabled가 거짓이면 꺼진 단추 + 까닭. busy는 작업 중인 표, previews는 표마다 살아 있는 제안 차례(줄 id) -
+       *  지금 덩이와 같은 줄 집합일 때만 그 자리에 "4 → 1" 칩과 [제안대로 놓기] [그대로 두기]를 보인다. onKeep(표 id, 같은 차례였나)은 채택 기록만 남긴다 */
+      ai?: { enabled: boolean; busy: ReadonlySet<number>; previews: ReadonlyMap<number, readonly number[]>; onAsk: (tableId: number) => void; onApply: (tableId: number, order: readonly number[]) => void; onKeep: (tableId: number, isSame: boolean) => void };
+    };
     /** Assign - 고른 박스 바로 아래 떨어진 짝 안내 줄 "↑ 짝 KO · 위 §1"(lib/pair-hint-model). onGo(짝)는 그 박스를 고르고 그 자리로 스크롤한다.
      *  onPeek이 있으면(1단 보기) 한 번 누름은 짝 엿보기 판(onPeek), 두 번 누름이 onGo다(B7) */
     pairHint?: { onGo: (unitId: number) => void; onPeek?: (hint: PairHint) => void };
@@ -570,6 +578,22 @@ export function Paper({
   const numberEditBulletShift = useMemo(() => (numberEditKey === null ? null : findBulletShift(indentRows, numberEditKey)), [indentRows, numberEditKey]);
   // 벗긴 표의 줄 덩이마다 첫 줄 - 그 줄 위에 묶음 머리("↺ 다시 표로")를 단다(F1). 부분마다 문서 순서로
   const unwrapHeads = useMemo(() => new Map(sections.flatMap((section) => [...findUnwrapHeads(section.rows, model.unwrapped, model.tables)])), [sections, model]);
+  // 벗긴 표 덩이의 지금 줄 차례(표 id → 줄 id) - model.order가 사람이 바꾼 순서(unwrap_seq)를 이미 따른다
+  const unwrapOrders = useMemo(() => {
+    const map = new Map<number, number[]>();
+    for (const id of model.order) {
+      const tableId = model.unwrapLines.get(id);
+      if (tableId !== undefined) map.set(tableId, [...(map.get(tableId) ?? []), id]);
+    }
+    return map;
+  }, [model]);
+  // AI 순서 제안 미리 보기 - 줄마다 "지금 → 제안" 자리. 지금 덩이와 줄 집합이 다른(낡은) 제안은 빈 표라 칩이 서지 않는다
+  const unwrapAiPreviews = strips?.unwrap?.ai?.previews;
+  const unwrapAiMoves = useMemo(() => {
+    const all = new Map<number, UnwrapLineMove>();
+    for (const [tableId, suggested] of unwrapAiPreviews ?? []) for (const [id, move] of readUnwrapMoves(unwrapOrders.get(tableId) ?? [], suggested)) all.set(id, move);
+    return all;
+  }, [unwrapAiPreviews, unwrapOrders]);
   // 표 칸 안의 조각 줄 - 칸이 많은 표에서 고를 때마다 다시 펴지 않게
   const cellRows = useMemo(() => {
     const map = new Map<number, PaperRow[]>();
@@ -735,6 +759,17 @@ export function Paper({
     return (
       <span className="strip-grip" data-drag-handle="" data-unwrap-grip-unit={unit.id} data-tip={t("paper.unwrapGrip.tip")} data-testid={`${testId}-unwrap-grip-${unit.id}`}>
         <GripVertical aria-hidden="true" />
+      </span>
+    );
+  }
+
+  /** AI 순서 제안 미리 보기 칩 "4 → 1"(B11) - 옮겨 갈 줄 오른쪽 위. 눌러도 줄을 고르는 것으로 지나간다 */
+  function renderUnwrapAiMove(unit: ViewUnit): ReactNode {
+    const move = unwrapAiMoves.get(unit.id);
+    if (!move?.moved) return null;
+    return (
+      <span className="unwrap-ai-move" data-testid={`${testId}-unwrap-ai-move-${unit.id}`}>
+        {t("assign.unwrapAi.move", { from: move.from, to: move.to })}
       </span>
     );
   }
@@ -1177,10 +1212,12 @@ export function Paper({
           // 처리 중인 박스는 끌리지 않는다(설계 D4 - 잠금은 그 박스만)
           "data-drag-box": dragBoxes && unitId !== null && !isLocked(unitId) ? "" : undefined,
           "data-pending": readPendingMark(unitId),
+          "data-unwrap-ai-moved": unitId !== null && unwrapAiMoves.get(unitId)?.moved ? "" : undefined,
           "data-testid": `${testId}-piece-${unitId ?? row.key}`,
         }}
       >
           {unit !== undefined && (renderUnwrapGrip(unit) ?? renderPairGrip(unit))}
+          {unit !== undefined && renderUnwrapAiMove(unit)}
           {/* 표·그림의 보류 칩 - 표 위 제 줄(data-start 밖)이라 표를 덮지 않고, 눌러도 조각 상자를 누른 것으로 그 단위를 고른다 */}
           {row.type !== "piece" && isHold && (
             <div className="strip-hold">
@@ -1380,19 +1417,61 @@ export function Paper({
     return <span className="unwrap-rail" style={{ left: leadWidth + STRIP_LEAD_EXTRA - 4 }} data-unwrap-enter="frame" aria-hidden />;
   }
 
-  /** 벗긴 표의 줄 덩이 머리 - "↺ 다시 표로" 단추 하나만(F1). 고칠 수 없으면 머리를 두지 않는다 */
+  /** 벗긴 표의 줄 덩이 머리 - "↺ 다시 표로"와 "✦ AI 순서 제안"(B11). 고칠 수 없으면 머리를 두지 않는다. 제안이 오면 [제안대로 놓기] [그대로 두기]가
+   *  "✦ AI 순서 제안"을 대신하고, 제안이 지금 차례와 같으면 그렇다는 말과 닫기만 둔다 */
   function renderUnwrapHead(row: PaperRow): ReactNode {
     const unwrap = strips?.unwrap;
     const tableId = unwrapHeads.get(row.key);
     if (!unwrap?.canRewrap || tableId === undefined) return null;
+    const ai = unwrap.ai;
+    const isLockedTable = [...model.units.values()].some((unit) => unit.table_id === tableId && isLocked(unit.id));
+    const isOff = unwrap.busy || isLockedTable;
+    const current = unwrapOrders.get(tableId) ?? [];
+    const suggested = ai?.previews.get(tableId);
+    const isPreview = ai !== undefined && suggested !== undefined && readUnwrapMoves(current, suggested).size > 0;
+    const isSame = isPreview && isUnwrapSuggestionUnchanged(current, suggested);
+    const isBusy = ai?.busy.has(tableId) ?? false;
     return (
       <div className="strip-row unwrap-head-row" data-unwrap-scope={`t${tableId}`} data-unwrap-enter="" data-testid={`${testId}-unwrap-head-${tableId}`}>
         <span className="strip-lead-gap" style={{ width: readTabWidth(row) + STRIP_LEAD_EXTRA }} />
         <div className="unwrap-head">
+          {isBusy && (
+            <span className="unwrap-ai-busy" data-testid={`${testId}-unwrap-ai-busy-${tableId}`}>
+              {t("assign.unwrapAi.busy")}
+            </span>
+          )}
+          {isSame && (
+            <>
+              <span className="unwrap-ai-note" data-testid={`${testId}-unwrap-ai-same-${tableId}`}>
+                {t("assign.unwrapAi.same")}
+              </span>
+              <button type="button" className="btn toc-act" disabled={isOff} data-testid={`${testId}-unwrap-ai-dismiss-${tableId}`} onClick={() => ai?.onKeep(tableId, true)}>
+                {t("assign.unwrapAi.close")}
+              </button>
+            </>
+          )}
+          {isPreview && !isSame && suggested && (
+            <>
+              <button type="button" className="btn pri toc-act" disabled={isOff} data-testid={`${testId}-unwrap-ai-apply-${tableId}`} onClick={() => ai?.onApply(tableId, suggested)}>
+                {t("assign.unwrapAi.apply")}
+              </button>
+              <button type="button" className="btn toc-act" disabled={isOff} data-testid={`${testId}-unwrap-ai-dismiss-${tableId}`} onClick={() => ai?.onKeep(tableId, false)}>
+                {t("assign.unwrapAi.keep")}
+              </button>
+            </>
+          )}
+          {ai && !isPreview && (
+            // 꺼진 단추는 포인터를 받지 않아 감싼 span이 까닭 툴팁을 단다
+            <span className="unwrap-ai-ask" data-tip={ai.enabled ? undefined : t("assign.unwrapAi.offTip")}>
+              <button type="button" className="btn toc-act" disabled={!ai.enabled || isOff || isBusy || current.length < 2} data-testid={`${testId}-unwrap-ai-${tableId}`} onClick={() => ai.onAsk(tableId)}>
+                {t("assign.unwrapAi.ask")}
+              </button>
+            </span>
+          )}
           <button
             type="button"
             className="btn toc-act"
-            disabled={unwrap.busy || [...model.units.values()].some((unit) => unit.table_id === tableId && isLocked(unit.id))}
+            disabled={isOff}
             data-testid={`${testId}-rewrap-${tableId}`}
             onClick={() => unwrap.onRewrap(tableId)}
           >
@@ -1482,7 +1561,7 @@ export function Paper({
       <PaperChunk
         key={group.cards[0][0].key}
         live={nearChunks === null || (group.index >= nearChunks.from && group.index <= nearChunks.to) || liveChunkIds.has(group.index)}
-        deps={[cardGroups, t, testId, dragBoxes, pickWholeBundle, strips?.toc?.open, strips?.toc?.selected, strips?.toc?.busy, strips?.toc?.canClear, shiftGroups, strips?.headingShift?.busy, strips?.headingShift?.canRevert, unwrapHeads, strips?.unwrap?.busy, strips?.unwrap?.canRewrap, strips?.deleted?.folds, strips?.pending]}
+        deps={[cardGroups, t, testId, dragBoxes, pickWholeBundle, strips?.toc?.open, strips?.toc?.selected, strips?.toc?.busy, strips?.toc?.canClear, shiftGroups, strips?.headingShift?.busy, strips?.headingShift?.canRevert, unwrapHeads, strips?.unwrap?.busy, strips?.unwrap?.canRewrap, strips?.unwrap?.ai?.enabled, strips?.unwrap?.ai?.busy, unwrapAiPreviews, unwrapOrders, unwrapAiMoves, strips?.deleted?.folds, strips?.pending]}
         render={() => renderCards(group)}
       />
     ));

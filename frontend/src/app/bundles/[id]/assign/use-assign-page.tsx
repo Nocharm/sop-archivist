@@ -57,6 +57,7 @@ import { EMPTY_FOLD_OPEN, type FoldOpen } from "@/lib/paper-fold-model";
 import { buildPaperModel, buildPaperTabs, findNearestCut, isBandHeading, listFigureTabUnitIds, resolvePickUnit, shouldRecenter, type PaperTabKey } from "@/lib/paper-model";
 import { isSameOrder, movePairMember, orderPairCard, readPairSlot } from "@/lib/pair-order-model";
 import { moveUnwrapLines, readUnwrapSlot } from "@/lib/unwrap-order-model";
+import { useUnwrapAi } from "@/lib/use-unwrap-ai";
 import { buildPairColumns, listPairLinks, PAIR_REFUSAL_KEYS, resolveBoxDrop, resolvePairDrop, type BoxDrop, type PairDrop, type PairDropContext } from "@/lib/pair-drop-model";
 import { ASSIGN_DOC_PARAM, ASSIGN_UNIT_PARAM, EDIT_ORIGINAL_PARAM, getStageHref } from "@/lib/stages";
 import { buildTemplateTitles } from "@/lib/template-model";
@@ -666,6 +667,17 @@ export function useAssignPage() {
   const oldDocId = oldView?.document.id ?? null;
   useAiPrepare(bundleId, { enabled: canEdit && aiOn, documentId: oldDocId, onQueued: (n) => { showToast(t("ai.prepareQueued", { n })); aiJobs.watch(); } });
   const splitSuggestions = useLoaded(() => (aiOn && oldDocId !== null ? listAppliedSuggestions(bundleId, "split", oldDocId) : Promise.resolve([])), `${aiOn}:${oldDocId}:${dataKey}:${reloadKeys.split}`);
+  // 벗긴 표 AI 순서 제안(B11) - 놓기는 끌기와 같은 편집 한 번(reorder_unwrapped)이라 되돌리기도 한 칸
+  const unwrapAi = useUnwrapAi({
+    bundleId,
+    docId: oldDocId,
+    isOn: aiOn,
+    status: aiJobs.status,
+    dataKey,
+    watch: aiJobs.watch,
+    reorder: (tableId, order, afterOk) => void runUnitEdit({ type: "reorder_unwrapped", table_id: tableId, unit_ids: order }, t("assign.unwrapAi.applied"), null, false, null, { at: "table", tableId }, afterOk),
+    t,
+  });
   const splitByUnit = useMemo(() => {
     const map = new Map<number, AiSuggestion>();
     for (const item of splitSuggestions.data ?? []) {
@@ -1376,7 +1388,7 @@ export function useAssignPage() {
 
   /** 편집 한 번 - 끝나면 원문 보기·단위를 다시 받고 followId(없으면 새로 생긴 첫 단위)의 줄을 고른다. confirm은 확인 창에서 다시 보낼 때만 켠다 */
   /** thenLang - 참조 줄을 푼 뒤 그 문장을 이 언어로(Shape 언어 세 칸에서 참조 줄의 KO·EN). place - 알약 자리(없으면 편집이 가리키는 곳, 틈의 붙이기는 그 틈) */
-  async function runUnitEdit(op: EditOp, okText: EditToast, followId: number | null, confirm = false, thenLang: "ko" | "en" | null = null, place: PendingPlace | null = null) {
+  async function runUnitEdit(op: EditOp, okText: EditToast, followId: number | null, confirm = false, thenLang: "ko" | "en" | null = null, place: PendingPlace | null = null, afterOk?: () => Promise<void>) {
     if (!shapeView) return;
     const view = shapeView;
     const docId = view.document.id;
@@ -1385,11 +1397,11 @@ export function useAssignPage() {
     const plan = planReload(isOld ? { kind: "old_edit", docId, isInPlace: IN_PLACE_EDIT_OPS.has(op.type), isReleased: confirm } : { kind: "new_edit", docId }, { aiOn });
     // 표 바꾸기는 그 표의 Unit 전부를 잡는다(벗기면 표 단위가 은퇴하고 칸 문장이 풀린다)
     const unitIds = op.type === "set_layout_table" ? listTableUnitIds(view.units, view.tables, op.table_id) : listEditUnitIds(op);
-    await focusCtl.runPending({ kind: readEditKind(op), docId, unitIds, place: place ?? readEditPlace(op), isGlobal: false }, (job) => sendUnitEdit(job, view, op, okText, followId, confirm, thenLang, plan));
+    await focusCtl.runPending({ kind: readEditKind(op), docId, unitIds, place: place ?? readEditPlace(op), isGlobal: false }, (job) => sendUnitEdit(job, view, op, okText, followId, confirm, thenLang, plan, afterOk));
   }
 
   /** runUnitEdit의 보내기 - 같은 문서의 앞 쓰기 응답 뒤에 불린다(보낼 revision은 그때 고른다) */
-  async function sendUnitEdit(job: string, view: DocumentView, op: EditOp, okText: EditToast, followId: number | null, confirm: boolean, thenLang: "ko" | "en" | null, plan: ReloadPlan) {
+  async function sendUnitEdit(job: string, view: DocumentView, op: EditOp, okText: EditToast, followId: number | null, confirm: boolean, thenLang: "ko" | "en" | null, plan: ReloadPlan, afterOk?: () => Promise<void>) {
     const docId = view.document.id;
     const isOld = oldDocIds.includes(docId);
     let isAsking = false;
@@ -1416,6 +1428,8 @@ export function useAssignPage() {
       }
       // 문서가 바뀌지 않은 편집(참조 제안 물리기)은 서버도 단계를 남기지 않는다
       if (revision !== sentRevision) markRecorded();
+      // 편집이 받아들여진 뒤에만 하는 일(AI 제안 채택 기록) - 실패하면 afterOk가 스스로 알린다
+      await afterOk?.();
       setRefEntryId(null);
       cutLine.clear();
       setCutUnitId(null);
@@ -3593,7 +3607,7 @@ export function useAssignPage() {
     isFixedCaption, ctxGroups, rowViewUnits, rowSplitUnit, rowSplit, splitBlocked, rowRefUnit, refBlocked, isRefGate, isCaptionGateOn,
     confirmBlockKey, rowCaptionRefs, refCandidates, shapeLines, shapeFirstId, slotPlaces, slotCellTables, shapeMode, headingBack, rewrap, bandBack,
     stepBase, refPendingIds, isLinkedToWritten, captionPendingKeys, docDashboard, refDetail, refInfo, openCtxMenu, runUnitEdit,
-    rewrapTable, describeEditConfirm, pairGrip, clearToc, runCaptionRefChange, switchShapeMode, switchToPair,
+    rewrapTable, unwrapAi, describeEditConfirm, pairGrip, clearToc, runCaptionRefChange, switchShapeMode, switchToPair,
     applySplitSuggestion, dismissSplitSuggestion, splitPendingIds, readPendingItem, selectNextSplit, selectNextRef, selectNextCaption,
     splitAtCut, handleOldDoubleClick, runCtx, runUnitAction, revertHeadings, planOldJoin, joinOld, renderOldActions, readReasonNeed,
     runSave, runClear, runUndoStep, decideNow, isMoveAsk, setMoveAsk, confirmIdenticalAll, acceptAll, markNew, placeManage, pickDestination, pickNewSentence, handleNewPick, unlinkCell,

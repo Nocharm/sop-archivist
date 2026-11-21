@@ -2757,7 +2757,7 @@ await runStep("assign: nested table - an inner table unwraps again and ↺ Back 
   const inner = await nested.waitView((item) => item.tables[3].is_layout);
   check("the inner access table unwraps into sentence lines", inner !== null && inner.units.some((unit) => unit.text === "관리자" && unit.table_id === access.id && unit.group_unit_id === null));
   await wait(page, `assign-paper-unwrap-head-${access.id}`);
-  check("the inner table has its own ↺ Back to table head", (await getText(page, `assign-paper-unwrap-head-${access.id}`)).trim() === "↺ Back to table");
+  check("the inner table has its own ↺ Back to table head", (await getText(page, `assign-paper-rewrap-${access.id}`)).trim() === "↺ Back to table");
   // 바깥만 다시 표로 - 안쪽 권한 표는 벗긴 그대로, 바깥과 함께 제목 줄이 된 띠 표는 함께 표로
   const waitGroupLoad = watchGroupLoads(page);
   await page.locator(`[data-testid="assign-paper-rewrap-${outer.id}"]`).click();
@@ -4664,7 +4664,9 @@ await runStep("assign: unwrap table - Unwrap table turns the table into sentence
   await waitForOldMotion(page);
   check("a cell line is a sentence card, not a table cell", (await page.locator(`[data-testid="assign-paper-piece-${lines[0].id}"]`).getAttribute("data-kind")) === "piece");
   await wait(page, `assign-paper-unwrap-head-${unit.table_id}`);
-  check("the group head holds only ↺ Back to table", (await getText(page, `assign-paper-unwrap-head-${unit.table_id}`)).trim() === "↺ Back to table", await getText(page, `assign-paper-unwrap-head-${unit.table_id}`));
+  // 머리는 단추 둘 - ✦ AI order(B11, AI가 꺼져 있으면 흐린 단추)와 ↺ Back to table
+  const headButtons = await page.locator(`[data-testid="assign-paper-unwrap-head-${unit.table_id}"] button`).allTextContents();
+  check("the group head holds ✦ AI order and ↺ Back to table", headButtons.map((text) => text.trim()).join(" | ") === "✦ AI order | ↺ Back to table", headButtons.join(" | "));
   check("the lines carry the left rail", (await page.locator(`[data-unwrap-scope="t${unit.table_id}"] .unwrap-rail`).count()) >= lines.length);
   await takeShot("sop-assign-unwrap.png");
   // 벗긴 줄을 고르면 Shape 맨 아래에도 ↺ Back to table(F12 A3)
@@ -4674,6 +4676,102 @@ await runStep("assign: unwrap table - Unwrap table turns the table into sentence
   await page.locator('[data-testid="assign-undo"]').click();
   check("Undo wraps the table back into one line", (await waitView((view) => !isLayout(view) && view.units.some((item) => item.id === unit.id))) !== null);
   await page.locator(`[data-testid="assign-paper-unwrap-head-${unit.table_id}"]`).waitFor({ state: "detached", timeout: T });
+});
+
+// 벗긴 표 AI 순서 제안(B11) - 가짜 AI는 받은 줄 차례를 거꾸로 답한다. 미리 보기 → 제안대로 놓기 → 되돌리기, 다시 물어 그대로 두기
+await runStep("assign: unwrap table - ✦ AI order previews the suggested order in place, Apply suggestion reorders in one undo step, Keep as is closes it", { allowConsoleErrors: true }, async ({ page, takeShot }) => {
+  const headers = { "X-Dev-User": "qa.member" };
+  const status = await page.request.get(`${BASE}/api/bundles/${halfBundleId}/ai/status`, { headers });
+  if (!status.ok() || !(await status.json()).ai_enabled) {
+    console.log("  (AI is off in this backend - skipped)");
+    return;
+  }
+  const docs = await (await page.request.get(`${BASE}/api/bundles/${halfBundleId}/documents`, { headers })).json();
+  const readView = async (docId) => (await page.request.get(`${BASE}/api/bundles/${halfBundleId}/documents/${docId}/view`, { headers })).json();
+  const readAdoption = async (suggestionId) => (await (await page.request.get(`${BASE}/api/bundles/${halfBundleId}/ai/suggestions/${suggestionId}`, { headers })).json()).adoption;
+  const readLive = async () => {
+    const page1 = await (await page.request.get(`${BASE}/api/bundles/${halfBundleId}/ai/suggestions?kind=unwrap_order&result=applied&limit=100`, { headers })).json();
+    return page1.items.filter((item) => item.adoption === null);
+  };
+  await page.goto(`${BASE}/bundles/${halfBundleId}/assign`);
+  await wait(page, "assign-bar");
+  const { doc, unit } = await findTableOnScreen(page, readView, docs);
+  check("the bundle has an unassigned table on screen", unit !== null);
+  if (unit === null) return;
+  const tableId = unit.table_id;
+  const piece = page.locator(`[data-testid="assign-paper-piece-${unit.id}"]`);
+  await piece.scrollIntoViewIfNeeded();
+  await piece.click();
+  await wait(page, `assign-shape-table_layout-${unit.id}`);
+  await page.locator(`[data-testid="assign-shape-table_layout-${unit.id}"]`).click();
+  await wait(page, `assign-paper-unwrap-head-${tableId}`);
+  await waitForOldMotion(page);
+  // 용지에 보이는 덩이 줄 차례(줄 id) - 머리 줄 아래 같은 표의 벗긴 줄들
+  const view = await readView(doc.id);
+  const lineIds = new Set(view.units.filter((item) => item.kind === "cell_sentence" && item.table_id === tableId && item.group_unit_id === null && item.status !== "retired").map((item) => item.id));
+  const readPaperOrder = () => page.evaluate((ids) => [...document.querySelectorAll('[data-testid^="assign-paper-piece-"]')]
+    .map((el) => Number(el.getAttribute("data-testid").replace("assign-paper-piece-", "")))
+    .filter((id, index, all) => ids.includes(id) && all.indexOf(id) === index), [...lineIds]);
+  const before = await readPaperOrder();
+  check("the unwrapped table has two or more lines on the paper", before.length >= 2, String(before.length));
+
+  await page.locator(`[data-testid="assign-paper-unwrap-ai-${tableId}"]`).click();
+  const apply = page.locator(`[data-testid="assign-paper-unwrap-ai-apply-${tableId}"]`);
+  const hasPreview = await apply.waitFor({ timeout: 30000 }).then(() => true, () => false);
+  check("✦ AI order brings a preview with Apply suggestion", hasPreview);
+  if (!hasPreview) return;
+  check("the busy chip is gone once the suggestion is in", (await page.locator(`[data-testid="assign-paper-unwrap-ai-busy-${tableId}"]`).count()) === 0);
+  check("the ask button gives way to the preview buttons", (await page.locator(`[data-testid="assign-paper-unwrap-ai-${tableId}"]`).count()) === 0);
+  const first = before[0];
+  const firstChip = await getText(page, `assign-paper-unwrap-ai-move-${first}`);
+  check("the first line carries its move chip (1 → last)", firstChip.trim() === `1 → ${before.length}`, firstChip);
+  check("a moved line is tinted", (await page.locator(`[data-testid="assign-paper-piece-${first}"]`).getAttribute("data-unwrap-ai-moved")) === "");
+  check("the preview does not move the lines yet", JSON.stringify(await readPaperOrder()) === JSON.stringify(before));
+  await page.locator(`[data-testid="assign-paper-unwrap-head-${tableId}"]`).scrollIntoViewIfNeeded();
+  await takeShot("sop-assign-unwrap-ai.png");
+  const [suggestion] = await readLive();
+  check("the server holds one live suggestion for the table", suggestion?.content.table_id === tableId);
+
+  await apply.click();
+  await page.locator(`[data-testid="assign-paper-unwrap-ai-apply-${tableId}"]`).waitFor({ state: "detached", timeout: T });
+  await waitForOldMotion(page);
+  let after = [];
+  for (let tries = 0; tries < 40; tries += 1) {
+    after = await readPaperOrder();
+    if (JSON.stringify(after) === JSON.stringify([...before].reverse())) break;
+    await page.waitForTimeout(250);
+  }
+  check("Apply suggestion puts the lines in the suggested order", JSON.stringify(after) === JSON.stringify([...before].reverse()), JSON.stringify(after));
+  check("the suggestion is recorded as taken as is", (await readAdoption(suggestion.id)) === "as_is");
+  check("the ask button is back", (await page.locator(`[data-testid="assign-paper-unwrap-ai-${tableId}"]`).count()) === 1);
+
+  // 되돌리기 한 번이면 처음 차례
+  await page.locator('[data-testid="assign-undo"]').click();
+  let undone = [];
+  for (let tries = 0; tries < 40; tries += 1) {
+    undone = await readPaperOrder();
+    if (JSON.stringify(undone) === JSON.stringify(before)) break;
+    await page.waitForTimeout(250);
+  }
+  check("one Undo puts the original order back", JSON.stringify(undone) === JSON.stringify(before), JSON.stringify(undone));
+
+  // 다시 물어 그대로 두기 - 순서는 그대로, 제안은 버림으로
+  await page.locator(`[data-testid="assign-paper-unwrap-ai-${tableId}"]`).click();
+  const keep = page.locator(`[data-testid="assign-paper-unwrap-ai-dismiss-${tableId}"]`);
+  const hasSecond = await keep.waitFor({ timeout: 30000 }).then(() => true, () => false);
+  check("asking again brings a fresh preview", hasSecond);
+  if (hasSecond) {
+    const [second] = await readLive();
+    await keep.click();
+    await keep.waitFor({ state: "detached", timeout: T });
+    check("Keep as is leaves the order alone", JSON.stringify(await readPaperOrder()) === JSON.stringify(before));
+    check("the suggestion is recorded as rejected", second !== undefined && (await readAdoption(second.id)) === "rejected");
+    check("no move chip is left", (await page.locator(`[data-testid^="assign-paper-unwrap-ai-move-"]`).count()) === 0);
+  }
+
+  // 다시 표로 - 벗기기를 되돌린다(위 되돌리기 한 칸 다음은 벗기기다)
+  await page.locator('[data-testid="assign-undo"]').click();
+  await page.locator(`[data-testid="assign-paper-unwrap-head-${tableId}"]`).waitFor({ state: "detached", timeout: T });
 });
 
 // 벗긴 칸 줄은 처음 불러온 줄 목록에 없었다 - 지우면 목록 처음(다른 문서 · 그림 탭)으로 튀었다(Assign 피드백 2026-11-20 항목 1)

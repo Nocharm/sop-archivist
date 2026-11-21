@@ -35,7 +35,7 @@ def _check_adoption(value: str) -> str:
 
 
 class AdoptionIn(BaseModel):
-    """사람이 직접 남기는 채택 결과 — 나누기 제안만 받는다(다른 종류는 사람의 저장이 채택을 정한다)."""
+    """사람이 직접 남기는 채택 결과 — 나누기·순서 제안만 받는다(다른 종류는 사람의 저장이 채택을 정한다)."""
 
     adoption: Annotated[str, AfterValidator(_check_adoption)]
 
@@ -70,6 +70,13 @@ class TranslateIn(ScopeIn):
     """번역 요청 — 범위에 오너가 고른 방향을 더한다(설계 §7.9)."""
 
     direction: Literal["ko_to_en", "en_to_ko"]
+
+
+class UnwrapOrderIn(BaseModel):
+    """벗긴 표 순서 제안 요청 — 옛 문서와 그 안의 벗긴 표 하나."""
+
+    document_id: RequestId
+    table_id: RequestId
 
 
 class JobKindIn(BaseModel):
