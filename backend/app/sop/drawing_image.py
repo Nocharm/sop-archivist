@@ -5,7 +5,7 @@
 """
 
 import math
-from functools import cache
+from functools import lru_cache
 from io import BytesIO
 from pathlib import Path
 
@@ -20,6 +20,11 @@ MAX_WIDTH, MAX_HEIGHT = 1000, 3000  # 최종 그림 크기 상한(px) — 큰 �
 MARGIN = 8  # 바깥 여백(px)
 DEFAULT_TEXT_SIZE = 20  # 글자 크기를 모를 때(반 포인트 = 10pt)
 DEFAULT_LINE_EMU = 9525  # 선 굵기를 모를 때(0.75pt)
+# 문서가 적은 값은 믿지 않는다 — 조작한 선 굵기 · 글자 크기가 거대한 글꼴 · 긴 맞추기 반복으로 서버를 붙들지 못하게 묶는다
+MAX_LINE_PX = 12  # 선 굵기 상한(최종 px)
+MIN_TEXT_PX, MAX_TEXT_PX = 8, 40  # 도형 글자 크기 범위(최종 px)
+MAX_FIT_TRIES = 8  # 넘치는 글을 줄여 맞추는 횟수 상한
+FONT_CACHE_SIZE = 32  # 크기별 글꼴 캐시 수
 TEXT_PAD = 3  # 도형 안 글 여백(px)
 ARROW_LEN = 7.0  # 화살촉 길이(px, 확대 전) — 선이 굵으면 함께 커진다
 INK = (30, 34, 44)
@@ -67,7 +72,7 @@ def render_drawing_png(drawing: dict) -> bytes:
 def _draw_item(draw: ImageDraw.ImageDraw, item: dict, unit: float, origin: float, zoom: float) -> None:
     x, y = origin + item["x"] * unit, origin + item["y"] * unit
     width, height = item["w"] * unit, item["h"] * unit
-    line_w = max(1, round((item.get("lw") or DEFAULT_LINE_EMU) * unit))
+    line_w = min(max(1, round((item.get("lw") or DEFAULT_LINE_EMU) * unit)), MAX_LINE_PX * SCALE)
     geom = str(item.get("geom", "rect"))
     place = _make_placer(x, y, width, height, float(item.get("rot", 0)), bool(item.get("fh")), bool(item.get("fv")))
     if geom == "pic":
@@ -183,7 +188,7 @@ def _draw_end(draw: ImageDraw.ImageDraw, kind: str, tip: Point, before: Point, l
     draw.polygon([tip, (base_x - uy * half, base_y + ux * half), (base_x + uy * half, base_y - ux * half)], fill=INK)
 
 
-@cache
+@lru_cache(maxsize=FONT_CACHE_SIZE)
 def _load_font(pixels: int) -> ImageFont.FreeTypeFont:
     return ImageFont.truetype(str(FONT_PATH), pixels)
 
@@ -193,14 +198,16 @@ def _draw_text(draw: ImageDraw.ImageDraw, text: str, box: tuple[float, float, fl
     x, y, width, height = box
     pad = TEXT_PAD * zoom * SCALE
     inner_w, inner_h = max(width - 2 * pad, 1.0), max(height - 2 * pad, 1.0)
-    pixels = max(round(font_px), 8)
-    while True:
+    low, high = MIN_TEXT_PX * SCALE, MAX_TEXT_PX * SCALE
+    pixels = min(max(round(font_px), low), high)
+    # 넘치면 줄 수에 맞춰 크기를 비율로 줄인다 — 한 글자씩 줄이지 않아 몇 번 안에 끝난다
+    for _ in range(MAX_FIT_TRIES):
         font = _load_font(pixels)
         lines = _wrap(text, font, inner_w)
         line_h = pixels * 1.2
-        if len(lines) * line_h <= inner_h or pixels <= 8 * SCALE:
+        if len(lines) * line_h <= inner_h or pixels <= low:
             break
-        pixels = max(pixels - SCALE, 8 * SCALE)
+        pixels = max(min(pixels - SCALE, round(pixels * (inner_h / (len(lines) * line_h)) ** 0.5)), low)
     top = y + (height - len(lines) * line_h) / 2
     for index, line in enumerate(lines):
         line_w = font.getlength(line)

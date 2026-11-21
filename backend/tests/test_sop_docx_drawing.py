@@ -135,3 +135,18 @@ def test_figure_endpoint_draws_the_flowchart_and_view_lists_its_texts(client: Te
     assert image.status_code == 200
     assert image.headers["content-type"] == "image/png"
     assert Image.open(BytesIO(image.content)).format == "PNG"
+
+
+def test_render_ignores_huge_line_widths_and_text_sizes() -> None:
+    """문서가 적은 선 굵기 · 글자 크기는 믿지 않는다 — 조작한 큰 값도 상한 안에서 금방 그린다."""
+    item = {
+        "geom": "rect", "x": 0, "y": 0, "w": 914400, "h": 457200, "rot": 0, "fh": False, "fv": False, "line": True,
+        "lw": 10**12, "head": "", "tail": "triangle", "conn": False, "text": "가" * 300, "sz": 10**9,
+    }
+    drawing = {"w": 914400, "h": 457200, "items": [item, {**item, "geom": "line", "conn": True, "text": ""}]}
+
+    started = perf_counter()
+    image = Image.open(BytesIO(render_drawing_png(drawing)))
+
+    assert image.format == "PNG"
+    assert perf_counter() - started < 5
