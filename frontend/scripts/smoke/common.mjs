@@ -2,7 +2,7 @@
 // Split from pw-smoke-sop.mjs (2026-11-19). Screen steps live in ./<screen>.mjs; the runner is ../pw-smoke-sop.mjs.
 
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
@@ -14,9 +14,37 @@ export const CHROME = process.env.CHROME_PATH ?? "/Applications/Google Chrome.ap
 export const BASE = process.env.BASE_URL ?? "http://localhost:3777";
 export const SHOT_DIR = resolve(SCRIPT_DIR, "../../../.shots");
 export const T = 15000;
-export const ONLY = (process.env.ONLY ?? "").split(",").map((part) => part.trim()).filter(Boolean);
 export const PREPARE = process.env.PREPARE === "1";
 export const PREPARE_STEP = "assign: first entry classifies the remaining rows in the background";
+// 지난 실행에서 실패한 단계 이름(.dev/는 git 밖) - ONLY_FAILED=1이면 그 단계만 다시 돈다.
+// 하나 고치고 화면 전체(Assign은 수 분)를 다시 돌지 않게(2026-11-20~22 세션 기록: 스모크가 도구 시간의 38%, 실패 뒤 다시 돌기가 잦았다)
+export const FAILED_FILE = resolve(SCRIPT_DIR, "../../../.dev/smoke-failed.txt");
+const ONLY_FAILED = process.env.ONLY_FAILED === "1";
+
+function readFailedSteps() {
+  return existsSync(FAILED_FILE) ? readFileSync(FAILED_FILE, "utf8").split("\n").map((line) => line.trim()).filter(Boolean) : [];
+}
+
+function readOnly() {
+  if (!ONLY_FAILED) return (process.env.ONLY ?? "").split(",").map((part) => part.trim()).filter(Boolean);
+  const steps = readFailedSteps();
+  if (steps.length === 0) {
+    console.error(`ONLY_FAILED=1 but ${FAILED_FILE} lists no failed step (the last runs passed). Run the screen you changed instead: QUIET=1 ONLY="<screen>:" node scripts/pw-smoke-sop.mjs`);
+    process.exit(2);
+  }
+  return steps;
+}
+
+export const ONLY = readOnly();
+
+// 전부 돌리는 것은 정식 업데이트 전 · 공용 부품을 고쳤을 때만(사용자 결정 2026-11-16) - 규칙만으로는 ONLY 없는 실행이 이어져(11-20~22 세션 217번 중 71번) 실행기가 막는다
+if (ONLY.length === 0 && !PREPARE && process.env.FULL !== "1") {
+  console.error(
+    'Pick what to run. One screen changed: QUIET=1 ONLY="<screen>:" (assign: · documents: · new documents: · order · outputs · map). ' +
+      "Before dev→main, or after changing parts several screens share (common components, API layer, this runner): FULL=1.",
+  );
+  process.exit(2);
+}
 // 시안의 모든 수치는 1248 × 720 프레임 기준이다(디자인 문서 15절)
 export const VIEWPORT = { width: 1248, height: 720 };
 
@@ -73,9 +101,15 @@ export const QUIET = process.env.QUIET === "1";
 export const SETUP_STEP = "bundle list";
 export let failures = 0;
 export let passes = 0;
+let currentStep = null;
+const ranSteps = new Set();
+const failedSteps = new Set();
 export const check = (name, ok, detail = "") => {
   if (ok) passes += 1;
-  else failures += 1;
+  else {
+    failures += 1;
+    if (currentStep) failedSteps.add(currentStep);
+  }
   if (ok && QUIET) return;
   console.log(`${ok ? "PASS" : "FAIL"} ${name}${detail ? ` - ${String(detail).replace(/\s+/g, " ").trim()}` : ""}`);
 };
@@ -85,7 +119,9 @@ export const check = (name, ok, detail = "") => {
 export const browser = await chromium.launch({ executablePath: CHROME, headless: true });
 
 export async function runStep(name, { devUser = "qa.member", storage = {}, allowConsoleErrors = false } = {}, run) {
-  if (ONLY.length > 0 && name !== SETUP_STEP && !ONLY.some((part) => name.includes(part))) return;
+  // ONLY_FAILED는 적어 둔 이름 그대로만 - 조각 맞추기면 이름이 겹치는 다른 단계까지 돈다
+  const picked = ONLY_FAILED ? ONLY.includes(name) : ONLY.some((part) => name.includes(part));
+  if (ONLY.length > 0 && name !== SETUP_STEP && !picked) return;
   // 미리 분류 시나리오는 PREPARE=1일 때만, 그때는 그것만(머리말)
   if (PREPARE !== (name === PREPARE_STEP)) return;
   if (!QUIET) console.log(`\n# ${name}`);
@@ -111,14 +147,32 @@ export async function runStep(name, { devUser = "qa.member", storage = {}, allow
   page.on("pageerror", (err) => {
     if (!isDevTimingNoise(String(err))) consoleErrors.push(String(err));
   });
+  currentStep = name;
+  ranSteps.add(name);
   try {
     await run({ page, takeShot: (file) => page.screenshot({ path: resolve(SHOT_DIR, file) }) });
     if (!allowConsoleErrors) check(`${name}: no console errors`, consoleErrors.length === 0, consoleErrors.join(" | "));
   } catch (err) {
     check(`${name}: completed`, false, err instanceof Error ? err.message : String(err));
   } finally {
+    currentStep = null;
     await ctx.close();
   }
+}
+
+/** 실패한 단계 이름을 적는다 - 이번에 돈 단계는 결과로 바꾸고, 돌지 않은 단계의 지난 실패는 남긴다(다른 화면을 ONLY로 돌려도 지워지지 않게).
+ *  ONLY_FAILED 실행은 적힌 이름을 모두 찾아봤으니 맞는 단계가 없던 이름(이름을 바꾼 단계)도 지운다 */
+export function saveFailedSteps() {
+  const earlier = ONLY_FAILED ? [] : readFailedSteps().filter((step) => !ranSteps.has(step));
+  const steps = [...earlier, ...failedSteps];
+  if (steps.length === 0) {
+    rmSync(FAILED_FILE, { force: true });
+    return;
+  }
+  mkdirSync(dirname(FAILED_FILE), { recursive: true });
+  writeFileSync(FAILED_FILE, `${steps.join("\n")}\n`);
+  const what = failedSteps.size > 0 ? `${failedSteps.size} failed step(s) saved` : `${earlier.length} step(s) that failed in an earlier run (not run this time) are still listed`;
+  console.log(`\n${what} in ${FAILED_FILE}. After fixing: scripts/dev-worktree.sh reset (from the repo root), then QUIET=1 ONLY_FAILED=1 node scripts/pw-smoke-sop.mjs`);
 }
 
 export const wait = (page, testId) => page.locator(`[data-testid="${testId}"]`).first().waitFor({ timeout: T });

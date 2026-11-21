@@ -8,12 +8,13 @@
 // 워크트리는 scripts/dev-worktree.sh(저장소 루트)로 띄우면 시드 지문이 적혀, DB가 시드 뒤 바뀌었으면 처음에 멈춘다(DIRTY_DB_OK=1이면 그대로 돈다)
 // ONLY="이름 조각,…"이면 이름에 그 조각이 든 단계만 돈다. 묶음 id를 잡는 첫 단계("bundle list")는 늘 함께 돈다. 화면 하나만 보려면 이름 머리로 고른다: ONLY="assign:" · "documents:" · "new documents:" · "outputs"
 // QUIET=1이면 통과한 줄을 찍지 않는다 - 실패한 줄과 마지막 한 줄(통과 수·실패 수)만 나온다.
-// 평소(변경마다)는 고친 화면만: QUIET=1 ONLY="<화면>" node scripts/pw-smoke-sop.mjs  — 전부 돌리는 것은 dev→main 정식 업데이트 전, 또는 여러 화면이 같이 쓰는 것(공용 부품·API 층·이 스크립트의 틀)을 고쳤을 때만이다(사용자 결정 2026-11-16).
+// 평소(변경마다)는 고친 화면만: QUIET=1 ONLY="<화면>" node scripts/pw-smoke-sop.mjs  — 전부 돌리는 것은 dev→main 정식 업데이트 전, 또는 여러 화면이 같이 쓰는 것(공용 부품·API 층·이 스크립트의 틀)을 고쳤을 때만이고 FULL=1을 붙여야 돈다(사용자 결정 2026-11-16, ONLY도 FULL도 없으면 멈춘다).
+// 실패한 단계 이름은 .dev/smoke-failed.txt에 남는다. 고친 뒤에는 scripts/dev-worktree.sh reset → QUIET=1 ONLY_FAILED=1 node scripts/pw-smoke-sop.mjs 로 그 단계만 다시 돈다.
 // playwright-core는 저장소 의존성이 아니다: `npm i --no-save playwright-core` (package.json 불변)
 // Steps live in ./smoke/<screen>.mjs (shell · outputs · documents · order · assign · map) and shared parts in ./smoke/common.mjs.
 // 새 단계는 그 화면 파일의 run() 안에 넣는다. 한 화면만 쓰는 도우미는 그 파일에, 두 화면 이상이 쓰는 것만 common.mjs에 둔다. 화면 순서는 아래 차례로 돈다.
 
-import { browser, checkSeedFingerprint, failures, passes, runSetup } from "./smoke/common.mjs";
+import { browser, checkSeedFingerprint, failures, passes, runSetup, saveFailedSteps } from "./smoke/common.mjs";
 import { run as runShell } from "./smoke/shell.mjs";
 import { run as runOutputs } from "./smoke/outputs.mjs";
 import { run as runDocuments } from "./smoke/documents.mjs";
@@ -31,5 +32,6 @@ await runAssign();
 await runMap();
 
 await browser.close();
+saveFailedSteps();
 console.log(failures === 0 ? `\nALL PASS (${passes})` : `\n${failures} check(s) FAILED, ${passes} passed`);
 process.exit(failures === 0 ? 0 : 1);

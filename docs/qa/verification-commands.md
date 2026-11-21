@@ -30,7 +30,8 @@ npx vitest run                            # 단위 테스트 — 커밋 전 필�
 npm i --no-save playwright-core           # package.json 불변
 BASE_URL=http://localhost:3777 node scripts/pw-smoke-baseline.mjs   # 산출물은 저장소 루트 .shots/(gitignore). Chrome 경로는 CHROME_PATH
 #   SOP 화면 스모크·글자 대비 감사는 reset_db → seed_sop_demo 직후 DB에서(dev.db 대신 DATABASE_URL로 별도 sqlite 파일을 쓰면 다시 돌리기 쉽다)
-BASE_URL=http://localhost:3777 node scripts/pw-smoke-sop.mjs        # AI 나눔 확정 단계는 backend가 가짜 AI(FAKE_AI_SPLIT=1)를 볼 때만 돈다
+QUIET=1 ONLY="assign:" BASE_URL=http://localhost:3777 node scripts/pw-smoke-sop.mjs   # 고친 화면만(assign: · documents: · new documents: · order · outputs · map). 전부는 FULL=1(정식 업데이트 전 · 공용 부품을 고쳤을 때) — ONLY도 FULL도 없으면 멈춘다. AI 나눔 확정 단계는 backend가 가짜 AI(FAKE_AI_SPLIT=1)를 볼 때만 돈다
+QUIET=1 ONLY_FAILED=1 BASE_URL=http://localhost:3777 node scripts/pw-smoke-sop.mjs   # 지난 실행에서 실패한 단계만(이름은 저장소 루트 .dev/smoke-failed.txt). DB를 시드로 되돌린 뒤(scripts/dev-worktree.sh reset)
 PREPARE=1 BASE_URL=http://localhost:3777 node scripts/pw-smoke-sop.mjs   # 배정 화면 첫 진입 미리 분류(알림 → AI jobs의 Background 줄 → AI suggested 수) 하나만 돈다. 전제: reset_db → seed_sop_demo(AI_AUTO_PREPARE=false) 직후,
 #   backend를 아래 가짜 AI로 AI_ENABLED=true AI_AUTO_PREPARE=true로 띄운다(다른 단계는 이 backend에서 전제가 깨져 건너뛴다). 끝에 DB가 바뀐다 — 다시 돌리려면 reset_db부터
 BASE_URL=http://localhost:3777 node scripts/pw-contrast-audit.mjs   # 14화면 × 라이트·다크, 4.5:1
@@ -71,7 +72,7 @@ npx tsc --noEmit -p tsconfig.json
 npx vitest run
 npm i --no-save playwright-core
 $env:BASE_URL="http://localhost:3777"; $env:CHROME_PATH="C:\Program Files\Google\Chrome\Application\chrome.exe"; node scripts\pw-smoke-baseline.mjs
-node scripts\pw-smoke-sop.mjs        # seed_sop_demo 직후. 설명은 bash 쪽과 같다
+$env:QUIET="1"; $env:ONLY="assign:"; node scripts\pw-smoke-sop.mjs   # seed_sop_demo 직후. 전부는 $env:FULL="1", 실패한 단계만은 $env:ONLY_FAILED="1" — 설명은 bash 쪽과 같다
 $env:PREPARE="1"; node scripts\pw-smoke-sop.mjs; Remove-Item Env:PREPARE   # 배정 화면 첫 진입 미리 분류만. 전제(가짜 AI + $env:AI_AUTO_PREPARE="true" backend, 끝에 DB가 바뀜)는 bash 쪽과 같다
 node scripts\pw-contrast-audit.mjs
 node scripts\pw-overlap-audit.mjs   # 겹침 감사. 설명은 bash 쪽과 같다

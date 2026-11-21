@@ -21,7 +21,7 @@ python3.11 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
 .venv/bin/python -m scripts.reset_db        # 로컬 데모 DB(backend/dev.db). 서버 실행 금지
 .venv/bin/python -m scripts.seed_sop_demo   # 합성 SOP 묶음 4개 + 지도용 2개 + 목차 1개(로컬 전용, AUTH_MODE=dev). 극단 자료는 seed_sop_worst
 AUTH_MODE=dev DEV_ENFORCE_PERMISSIONS=true APP_SYSADMINS=dev.admin .venv/bin/uvicorn app.main:app --reload --port 8777
-.venv/bin/python -m pytest tests/ -q -n auto   # 작업자마다 DB 파일이 따로. 한 파일만 볼 때는 -n 없이
+.venv/bin/python -m pytest tests/ -q -n auto   # 작업자마다 DB 파일이 따로. 한 파일만 볼 때는 -n 없이, 고친 뒤 다시 볼 때는 --lf(지난번 실패만) — 전체는 커밋 전에 한 번
 .venv/bin/ruff check app/ tests/
 .venv/bin/alembic revision --autogenerate --rev-id "<다음 번호>" -m "<설명>"   # 생성물을 직접 검토
 # frontend/
@@ -29,7 +29,8 @@ npm install && npm run dev                  # :3777, /api는 BACKEND_URL(기본 
 npm run build                               # 경고 0이어야 한다. next dev를 먼저 내린다
 npm run lint && npx tsc --noEmit -p tsconfig.json && npx vitest run   # 커밋 전 필수
 # 브라우저 검증(npm i --no-save playwright-core, 시스템 Chrome): scripts/pw-smoke-sop.mjs · pw-layout-audit.mjs(DS=worst) · pw-overlap-audit.mjs · pw-contrast-audit.mjs · pw-manual-shots.mjs
-# 평소(변경마다)는 고친 화면의 스모크만: QUIET=1 ONLY="assign:" node scripts/pw-smoke-sop.mjs  (전체 스모크·감사 넷은 dev→main 전, 또는 공용 부품·API 층을 고쳤을 때만 — 사용자 결정 2026-11-16)
+# 평소(변경마다)는 고친 화면의 스모크만: QUIET=1 ONLY="assign:" node scripts/pw-smoke-sop.mjs  (전체 스모크는 FULL=1 — 감사 넷과 함께 dev→main 전, 또는 공용 부품·API 층을 고쳤을 때만, 사용자 결정 2026-11-16. ONLY도 FULL도 없으면 실행기가 멈춘다)
+# 스모크가 실패하면 고친 뒤 화면 전체가 아니라 실패한 단계만: scripts/dev-worktree.sh reset → QUIET=1 ONLY_FAILED=1 node scripts/pw-smoke-sop.mjs  (실패 단계 이름은 .dev/smoke-failed.txt)
 scripts/dev-worktree.sh new <branch>        # 맥: 워크트리 + node_modules + 시드 스냅숏. 워크트리 안에서 up [포트] · reset(스모크 전 DB를 시드로) · down
 node frontend/scripts/fake-ai-server.mjs    # 가짜 AI :9999(저장소 루트에서, FAKE_AI_SPLIT=1이면 나눔). 배선 확인용, 정확도 근거 아님
 # dev 인증 = localStorage `sopa.devUser` / 헤더 `X-Dev-User`. 권한 차등은 DEV_ENFORCE_PERMISSIONS=true(dev.admin이 sysadmin)
@@ -45,6 +46,7 @@ node frontend/scripts/fake-ai-server.mjs    # 가짜 AI :9999(저장소 루트�
   - **차례로(기본)**: 스텝 1 브랜치 → 검토 → `dev`에 합침 → 스텝 2는 새 `dev`에서 딴다(끌어다 놓기 4스텝이 이렇게 했다).
   - **브랜치에서 다시 브랜치**: 스텝 하나만 `dev`에 올리면 화면이나 자료가 반쪽이 될 때만. 모음 브랜치 `feat/<기능>`에서 스텝 브랜치 `feat/<기능>-<n>-<이름>`을 따고, 스텝마다 그 스텝의 diff만 검토해 모음 브랜치에 합친다. 모음 브랜치를 `dev`에 합칠 때는 전체를 다시 검토하지 않고, `dev`를 합친 뒤의 시험과 고친 화면 스모크만 한다.
 - **하위 에이전트는 서버·브라우저를 띄우지 않는다** — 맡길 때 그렇게 적는다. 하위 에이전트는 고친 파일의 단위 시험(vitest·pytest 한 파일)과 lint·tsc까지만 한다. 스모크·감사·화면 확인은 메인 세션이 끝에 한 번, 고친 화면만 하고(위 Commands), 이미 떠 있는 서버가 있으면 그대로 쓴다.
+- **하위 에이전트의 model은 일에 맞춰 적는다** — 글자 그대로 옮기기·찾기·기계적 고치기·시험 돌리기는 `sonnet`, 설계 판단이나 여러 파일의 뜻을 맞춰야 하는 일만 `opus`(11-20~22 세션: 31번 중 27번이 opus).
 
 ## 신뢰 기반 먼저 (사용자 결정 2026-11-19)
 
