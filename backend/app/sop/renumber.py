@@ -9,9 +9,10 @@ CaptionKind = Literal["table", "figure"]
 Direction = Literal["next", "previous"]
 
 # 캡션 머리: 숫자 바로 뒤에 조사가 오면("표 1에") 캡션이 아니다. 알려진 틈 "표 1 에 따라"는 그대로 둔다.
-_CAPTION_TAIL = r"(?=$|[\s.:)\-–—])"
-FIGURE_CAPTION_RE = re.compile(r"^(?:그림|Figure|Fig)\s*\.?\s*(\d+)" + _CAPTION_TAIL)
-TABLE_CAPTION_RE = re.compile(r"^(?:표|Table)\s*\.?\s*(\d+)" + _CAPTION_TAIL)
+# 괄호로 감싼 꼴(<표 1> · [Table 3] · (표 2))과 줄표 꼴(표-1 · Table-1)도 머리다 — 닫는 괄호는 머리에 든다.
+_CAPTION_TAIL = r"(?:\s*[>\]])?(?=$|[\s.:)\-–—])"
+FIGURE_CAPTION_RE = re.compile(r"^[<\[(]?\s*(?:그림|Figure|Fig)\s*[.\-]?\s*(\d+)" + _CAPTION_TAIL)
+TABLE_CAPTION_RE = re.compile(r"^[<\[(]?\s*(?:표|Table)\s*[.\-]?\s*(\d+)" + _CAPTION_TAIL)
 
 # 본문 참조: 영문 단어 안("Portable 3")·한글 합성어("도표 3")는 거르고, 조사가 붙어도("표 3을") 참조로 잡는다.
 # 숫자 뒤 꼬리(범위·복합 번호)는 코드가 따로 판정한다.

@@ -1231,13 +1231,46 @@ def _build_sentence_from(caption: Unit) -> _Draft:
     )
 
 
-def _build_freed_caption(caption: Unit, blocks: Mapping[int, _Block], group_unit_id: int | None) -> _Draft:
-    """캡션을 뗀 글 단위 — 표 첫 행에서 올린 캡션(칸 블록 위)은 그 칸의 칸 문장(group_unit_id에 묶임), 아니면 묶이지 않은 문장."""
-    if blocks[caption.spans[0][0]].kind != "table_cell":
+def _build_freed_caption(
+    caption: Unit, blocks: Mapping[int, _Block], own: tuple[int | None, int | None], cell_groups: Mapping[int, int]
+) -> _Draft:
+    """캡션을 뗀 글 단위 — 칸 블록 위 캡션은 칸 문장, 아니면 묶이지 않은 문장.
+
+    own은 캡션 대상 표의 (원문 표 id, 묶을 단위 id) — 그 표의 칸에서 올린 첫 행 캡션은 그 단위에 묶인다. 다른 표의 칸 줄(바깥 칸 안
+    캡션, 추출기 8)은 그 바깥 표의 칸 줄로 돌아간다 — 바깥 표가 데이터 표면 그 표 단위(cell_groups)에 묶이고, 벗긴 표면 묶이지 않는다.
+    """
+    block = blocks[caption.spans[0][0]]
+    if block.kind != "table_cell":
         return _build_sentence_from(caption)
     draft = _build_draft(caption, to_spans(caption.spans), blocks, kind="cell_sentence", lang=caption.lang)
-    draft.group_unit_id = group_unit_id
+    own_table_id, own_group = own
+    draft.group_unit_id = own_group if block.table_id == own_table_id else cell_groups.get(block.table_id or -1)
     return draft
+
+
+def _is_first_row_caption(caption: Unit, blocks: Mapping[int, _Block], table_id: int | None) -> bool:
+    """표 첫 행에서 올린 캡션인가 — 그 표의 칸 블록 위. 바깥 칸 안 캡션(다른 표의 칸)은 첫 행이 아니다."""
+    block = blocks[caption.spans[0][0]]
+    return block.kind == "table_cell" and block.table_id == table_id
+
+
+async def _load_cell_groups(
+    session: AsyncSession, extraction_id: ExtractionId, captions: Sequence[Unit], blocks: Mapping[int, _Block]
+) -> dict[int, int]:
+    """캡션이 놓인 칸의 표 → 그 표의 활성 표 단위 id. 벗긴(레이아웃) 표는 표 단위가 없어 빠진다."""
+    table_ids = {
+        block.table_id for caption in captions
+        if (block := blocks[caption.spans[0][0]]).kind == "table_cell" and block.table_id is not None
+    }
+    if not table_ids:
+        return {}
+    rows = await session.execute(
+        select(Unit.table_id, Unit.id).where(
+            Unit.extraction_id == extraction_id, Unit.status == UNIT_ACTIVE, Unit.table_id.in_(table_ids),
+            Unit.kind.in_(TABLE_UNIT_KINDS),
+        )
+    )
+    return {table_id: unit_id for table_id, unit_id in rows.tuples() if table_id is not None}
 
 
 async def _find_number_joins(
@@ -1332,8 +1365,9 @@ async def _plan_plain_layout(
         joins = await _find_number_joins(session, extraction_id, table.id, cells)
         joined = [unit for pair in joins for unit in pair]
         blocks = await _load_unit_blocks(session, extraction_id, [*joined, *captions])
-        # 첫 행에서 올린 캡션은 풀린 표의 칸 줄로 돌아간다(묶이지 않은 칸 문장 — 다른 칸 줄과 같다)
-        drafts = [_build_freed_caption(caption, blocks, None) for caption in captions]
+        # 첫 행에서 올린 캡션은 풀린 표의 칸 줄로 돌아간다(묶이지 않은 칸 문장 — 다른 칸 줄과 같다), 바깥 칸 안 캡션은 바깥 칸 줄로
+        cell_groups = await _load_cell_groups(session, extraction_id, captions, blocks)
+        drafts = [_build_freed_caption(caption, blocks, (table.id, None), cell_groups) for caption in captions]
         for number, content in joins:
             # 번호 칸 블록 전체가 그 줄 범위의 첫 조각 — 처음 쪼개기의 레이아웃 표와 같은 단위(§11-7), 묶음은 풀린다.
             # 같은 자리에서 시작하는 번호 칸 줄을 like로 — 사람이 고친 번호(number_set)를 이은 줄이 물려받는다
@@ -1549,7 +1583,10 @@ async def _plan_detach_caption(session: AsyncSession, extraction_id: ExtractionI
     blocks = await _load_unit_blocks(session, extraction_id, [unit])
     if any(blocks[span[0]].kind == "figure" for span in to_spans(unit.spans)):
         raise_rule(422, "caption_in_figure_block", unit_ids=[unit.id])
-    change = _build_replacement([unit], [_build_freed_caption(unit, blocks, unit.group_unit_id)])
+    bundle_table_id = await session.scalar(select(Unit.table_id).where(Unit.id == unit.group_unit_id))
+    cell_groups = await _load_cell_groups(session, extraction_id, [unit], blocks)
+    freed = _build_freed_caption(unit, blocks, (bundle_table_id, unit.group_unit_id), cell_groups)
+    change = _build_replacement([unit], [freed])
     change.bundles = [unit.group_unit_id]
     return change
 
@@ -1569,8 +1606,9 @@ async def _plan_first_row_caption(
     blocks = await _load_unit_blocks(session, extraction_id, members)
     captions = [member for member in members if member.kind == CAPTION_KIND]
     if not op.caption:
-        lifted = [caption for caption in captions if blocks[caption.spans[0][0]].kind == "table_cell"]
-        change = _build_replacement(lifted, [_build_freed_caption(caption, blocks, table.id) for caption in lifted])
+        lifted = [caption for caption in captions if _is_first_row_caption(caption, blocks, table.table_id)]
+        own = (table.table_id, table.id)
+        change = _build_replacement(lifted, [_build_freed_caption(caption, blocks, own, {}) for caption in lifted])
         change.bundles = [table.id] if lifted else []
         return change
     cells = [member for member in members if member.kind == "cell_sentence"]

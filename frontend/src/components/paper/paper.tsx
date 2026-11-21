@@ -25,7 +25,7 @@ import { isNoiseUnit } from "@/lib/classify-model";
 import { useI18n } from "@/lib/i18n";
 import { pickNearChunks, sliceCards } from "@/lib/paper-chunk-model";
 import { buildFoldPlan, type FoldEntry, type FoldItem, type FoldOpen } from "@/lib/paper-fold-model";
-import { buildRows, flattenLineBreaks, getBundleHeader, getGapMerge, getItemSegments, getMarks, getTags, isBandHeading, MERGE_BLOCKER_KEYS, resolvePickUnit, type CaptionPiece, type FigureRowMode, type PaperItem, type PaperModel, type PaperRow, type Segment, type UnitMark } from "@/lib/paper-model";
+import { buildRows, flattenLineBreaks, getBundleHeader, getGapMerge, getItemSegments, getMarks, getTags, isBandHeading, isOtherTableCaption, MERGE_BLOCKER_KEYS, resolvePickUnit, type CaptionPiece, type FigureRowMode, type PaperItem, type PaperModel, type PaperRow, type Segment, type UnitMark } from "@/lib/paper-model";
 import type { JoinKind, JoinPlan } from "@/lib/split-menu-model";
 import { getHiddenEnds, listFollowPreview } from "@/lib/number-model";
 import { stepUnitContinuous, suggestUnitContinuous } from "@/lib/number-kind-model";
@@ -576,7 +576,9 @@ export function Paper({
     if (!hasStrips) return map;
     for (const item of items ?? [...model.header, ...model.body, ...model.footer]) {
       if (item.type !== "table") continue;
-      for (const row of item.rows) for (const cell of row) map.set(cell.id, buildRows([{ type: "block", block: cell }], model.segments));
+      for (const row of item.rows) {
+        for (const cell of row) map.set(cell.id, buildRows([{ type: "block", block: cell }], model.segments).filter((piece) => !isOtherTableCaption(piece, cell, model.units)));
+      }
     }
     return map;
   }, [hasStrips, items, model]);

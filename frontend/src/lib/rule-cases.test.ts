@@ -6,7 +6,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { NumberStyle } from "./api-sop";
-import { buildBlockPlaces, CAPTION_REACH } from "./caption-slot-model";
+import { buildBlockPlaces, CAPTION_REACH, readCaptionHead } from "./caption-slot-model";
 import { MAX_NUMBER_CHARS, planFollow } from "./number-model";
 import cases from "./rule-cases.json";
 import { getRowLevels, MAX_LEVEL } from "./strip-pill-model";
@@ -46,6 +46,10 @@ describe("rule cases shared with the backend", () => {
   it.each(cases.block_places.map((c, i) => ({ ...c, i })))("buildBlockPlaces case $i matches caption_slot.build_block_places", ({ blocks, tables, places }) => {
     // JSON widens `kind` to string; the backend wrote only real block kinds.
     expect(toRecord(buildBlockPlaces(blocks as Parameters<typeof buildBlockPlaces>[0], tables))).toEqual(places);
+  });
+
+  it.each(cases.caption_heads)("readCaptionHead($text) matches renumber caption heads", ({ text, table, figure }) => {
+    expect([readCaptionHead(text, "table")?.number ?? null, readCaptionHead(text, "figure")?.number ?? null]).toEqual([table, figure]);
   });
 
   it.each(cases.row_levels.map((c, i) => ({ ...c, i })))("getRowLevels case $i matches numbering.build_row_levels", ({ rows, levels }) => {

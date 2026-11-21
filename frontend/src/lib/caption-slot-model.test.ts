@@ -47,7 +47,7 @@ function makeInput(extra: ViewUnit[] = [], overrides: Partial<CaptionSlotInput> 
   ];
   return {
     bundle: TABLE, units: new Map(all.map((unit) => [unit.id, unit])), places: buildBlockPlaces(BLOCKS, [{ id: 10, parent_table_id: null }]),
-    blockKinds: new Map(BLOCKS.map((item) => [item.id, item.kind])), written: [], ...overrides,
+    cellTables: new Map(BLOCKS.filter((item) => item.kind === "table_cell").map((item) => [item.id, item.table_id])), written: [], ...overrides,
   };
 }
 
@@ -127,6 +127,14 @@ describe("buildCaptionSlot", () => {
     expect(slot.chips).toMatchObject([{ unitId: 21, origin: "first_row", isOdd: true }]);
   });
 
+  it("does not take a caption line in an outer table's cell for a lifted first row", () => {
+    // 바깥 칸 안 "표 1." 줄(블록 7, 표 30의 칸)이 안쪽 표 20의 캡션 - 첫 행이 아니라 보통 캡션이다(떼면 바깥 칸 줄로 돌아간다)
+    const input = makeInput([textUnit(23, 7, "표 1. 조제 탱크", { kind: "caption", group_unit_id: 20 })]);
+    const slot = buildCaptionSlot({ ...input, cellTables: new Map([...input.cellTables, [7, 30]]) });
+    expect(slot.hasFirstRow).toBe(false);
+    expect(slot.chips).toMatchObject([{ unitId: 23, origin: "unit" }]);
+  });
+
   it("shows written-in captions as their own chips", () => {
     const slot = buildCaptionSlot(makeInput([], { written: [{ lang: "en", text: "Table 4. Check interval" }, { lang: "ko", text: " " }] }));
     expect(slot.state).toBe("written");
@@ -140,15 +148,15 @@ describe("buildCaptionSlot", () => {
     const second = makeUnit(41, { kind: "figure", block_id: 2, pos_seq: 1, lang: "neutral" });
     const caption = textUnit(42, 3, "그림 1. 펌프 구조", { kind: "caption", group_unit_id: 41 });
     const units = new Map([first, second, caption].map((unit) => [unit.id, unit]));
-    const slot = buildCaptionSlot({ bundle: first, units, places, blockKinds: new Map(), written: [] });
+    const slot = buildCaptionSlot({ bundle: first, units, places, cellTables: new Map(), written: [] });
     expect(slot.candidates).toContainEqual({ kind: "figure", figureId: 41, side: "below", text: "그림 1. 펌프 구조", isBest: true });
 
     const grouped = new Map(units);
     grouped.set(41, { ...second, caption_figure_id: 40 });
     grouped.set(42, { ...caption, group_unit_id: 40 });
-    const shared = buildCaptionSlot({ bundle: grouped.get(41) as ViewUnit, units: grouped, places, blockKinds: new Map(), written: [] });
+    const shared = buildCaptionSlot({ bundle: grouped.get(41) as ViewUnit, units: grouped, places, cellTables: new Map(), written: [] });
     expect(shared).toMatchObject({ state: "shared", groupHeadId: 40, chips: [{ unitId: 42, origin: "shared" }] });
-    expect(buildCaptionSlot({ bundle: first, units: grouped, places, blockKinds: new Map(), written: [] }).groupHeadId).toBe(40);
+    expect(buildCaptionSlot({ bundle: first, units: grouped, places, cellTables: new Map(), written: [] }).groupHeadId).toBe(40);
   });
 });
 

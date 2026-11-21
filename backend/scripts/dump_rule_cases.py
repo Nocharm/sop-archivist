@@ -16,9 +16,16 @@ from app.sop import constants
 from app.sop.caption_slot import CAPTION_REACH, PlaceBlock, build_block_places
 from app.sop.numbering import MAX_NUMBER_CHARS, MAX_ROW_LEVEL, LevelRow, build_row_levels, plan_follow
 from app.sop.outputs import get_bullet_depths, number_lines
+from app.sop.renumber import FIGURE_CAPTION_RE, TABLE_CAPTION_RE
 from app.sop.unwrap_order import order_unwrapped, order_unwrapped_lines
 
 OUT = Path(__file__).resolve().parents[2] / "frontend" / "src" / "lib" / "rule-cases.json"
+
+# Caption heads (renumber.TABLE_CAPTION_RE · FIGURE_CAPTION_RE) — the frontend reads the same head to judge a caption's shape.
+CAPTION_HEAD_SAMPLES = [
+    "표 1. 조제 탱크", "Table 3: Limits", "표 1에 따라", "<표 1> 운전 조건", "[Table 3] Limits", "(표 2) 조건", "표-1 조건",
+    "Table-1 Limits", "[표 4]", "<그림 2> 펌프", "Fig.6 Lid", "Figure-7", "그림 3 펌프", "표 3-1 목록", "도표 3", "(표 2 참조",
+]
 
 NUMBER_LINES_INPUTS: list[tuple[str, list[int | None]]] = [
     ("5", [0, 0, 1, 1, 2, 0]),
@@ -143,6 +150,14 @@ def build_rule_cases() -> dict[str, Any]:
             for numbers, index, new in PLAN_FOLLOW_INPUTS
         ],
         "block_places": _build_place_cases(),
+        "caption_heads": [
+            {
+                "text": text,
+                "table": (match.group(1) if (match := TABLE_CAPTION_RE.match(text)) else None),
+                "figure": (match.group(1) if (match := FIGURE_CAPTION_RE.match(text)) else None),
+            }
+            for text in CAPTION_HEAD_SAMPLES
+        ],
         "bullet_depths": [
             {
                 "items": [{"number_style": style, "indent_level": level} for style, level in items],

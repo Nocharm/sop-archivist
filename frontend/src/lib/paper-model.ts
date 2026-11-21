@@ -467,10 +467,18 @@ function listInBlockCaptions(captions: readonly ViewUnit[], blocks: ReadonlyMap<
   });
 }
 
+/** 칸 조각 줄이 다른 표의 캡션인가 - 바깥 칸 안 "표 1." 줄(추출기 8)은 안쪽 표 머리에서 읽히니 바깥 칸에는 다시 두지 않는다.
+ *  그 표 첫 행에서 올린 캡션은 제 표의 캡션이라 남긴다(행째 숨기는 것은 표 그리기가 한다) */
+export function isOtherTableCaption(row: PaperRow, cell: Pick<ViewBlock, "table_id">, units: ReadonlyMap<number, ViewUnit>): boolean {
+  const unit = row.type === "piece" && row.unitId !== null ? units.get(row.unitId) : undefined;
+  if (unit?.kind !== "caption" || unit.group_unit_id === null) return false;
+  return units.get(unit.group_unit_id)?.table_id !== cell.table_id;
+}
+
 /**
  * 캡션 단위의 조각 줄을 빼서 그 묶음(group_unit_id) 표·그림 줄의 captions에 담는다 - 캡션은 캡션 자리에서 한 번만 읽힌다.
  * 그림 줄은 그림 단위(범위 없음 - block_id로 찾는다)에 잇고, 옛 추출처럼 그림 블록 글을 범위로 가진 캡션도 그 그림의 캡션으로 둔다.
- * 표 첫 행에서 올린 캡션(F7 ③ - 표 칸 위 범위)도 그 표의 캡션으로 둔다.
+ * 표 첫 행에서 올린 캡션(F7 ③ - 표 칸 위 범위)과 바깥 표 칸 안의 캡션 줄(추출기 8)도 그 표의 캡션으로 둔다.
  * 묶음 줄이 이 목록에 없는 캡션은 제 조각 줄로 남는다. 표·그림 줄의 captions는 늘 채운다(없으면 빈 목록).
  */
 export function foldCaptionRows(rows: PaperRow[], units: ReadonlyMap<number, ViewUnit>): PaperRow[] {
@@ -481,10 +489,11 @@ export function foldCaptionRows(rows: PaperRow[], units: ReadonlyMap<number, Vie
     else if (unit.kind === "caption" && unit.group_unit_id !== null) anchored.set(unit.group_unit_id, [...(anchored.get(unit.group_unit_id) ?? []), unit]);
   }
   const bundles = new Map<number, Extract<PaperRow, { type: "table" | "figure" }>>();
+  // 칸 안 캡션(추출기 8)은 바깥 표 칸 위에 있다 - 아직 표인 바깥 칸도 캡션 범위의 블록으로 찾는다(벗긴 바깥 칸은 조각 줄이라 아래에서 접힌다)
+  const cells = new Map(rows.flatMap((row) => (row.type === "table" ? row.item.rows.flat().map((cell) => [cell.id, cell] as const) : [])));
   const out = rows.map((row): PaperRow => {
     if (row.type === "piece") return row;
     if (row.type === "table") {
-      const cells = new Map(row.item.rows.flat().map((cell) => [cell.id, cell]));
       const next = { ...row, captions: row.item.unitId === null ? [] : listInBlockCaptions(anchored.get(row.item.unitId) ?? [], cells) };
       if (row.item.unitId !== null) bundles.set(row.item.unitId, next);
       return next;

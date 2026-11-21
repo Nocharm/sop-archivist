@@ -213,6 +213,60 @@ def test_a_lifted_first_row_caption_detaches_into_its_cell_and_unwraps_as_a_cell
     _assert_covered(_view(client, fx))
 
 
+CELL_CAPTION = "표 1. 조제 탱크별 대상 장치"
+
+
+def _setup_cell_caption(client: TestClient) -> tuple[Fixture, dict, dict]:
+    """실사례 꼴(§6-1) — 바깥 표 1×2(왼쪽 "1", 오른쪽 작업 칸) 안에 "표 1." 줄 → 안쪽 표 → 빈 줄 → 본문. (바깥 표, 안쪽 표) 단위."""
+    work = p("필요한 가스켓을 설치한다.") + p(CELL_CAPTION) + tbl([["탱크", "대상 장치"], ["A", "교반기"]]) + p("") + p("이 절차는 탱크 A–C에 적용한다.")
+    outer_xml = (
+        '<w:tbl><w:tblGrid><w:gridCol w:w="800"/><w:gridCol w:w="8000"/></w:tblGrid>'
+        f"<w:tr><w:tc>{p('1')}</w:tc><w:tc>{work}</w:tc></w:tr></w:tbl>"
+    )
+    fx = _setup(client, p(HEADING) + outer_xml)
+    outer, inner = sorted(_units(fx.view, "table"), key=lambda unit: unit["pos_seq"])
+    return fx, outer, inner
+
+
+def test_a_caption_line_inside_a_cell_becomes_the_inner_tables_caption(client: TestClient) -> None:
+    fx, _, inner = _setup_cell_caption(client)
+
+    caption = find_unit(fx.view, CELL_CAPTION)
+
+    assert (caption["kind"], caption["group_unit_id"], caption["table_id"]) == ("caption", inner["id"], None)
+    assert find_unit(fx.view, "필요한 가스켓을 설치한다.")["kind"] == "cell_sentence"
+    _assert_covered(fx.view)
+
+
+def test_a_cell_caption_goes_back_to_the_outer_cell_when_detached_or_its_table_unwraps(client: TestClient) -> None:
+    fx, outer, inner = _setup_cell_caption(client)
+    caption = find_unit(fx.view, CELL_CAPTION)
+    outer_line = ("cell_sentence", outer["id"], outer["table_id"])
+
+    _ok(_edit(client, fx, {"type": "detach_caption", "unit_id": caption["id"]}))
+    freed = find_unit(_view(client, fx), CELL_CAPTION)
+    assert (freed["kind"], freed["group_unit_id"], freed["table_id"]) == outer_line  # 안쪽 표의 칸이 아니라 바깥 칸 줄
+    _step(client, fx, "undo")
+
+    _ok(_edit(client, fx, {"type": "set_layout_table", "table_id": inner["table_id"], "is_layout": True}))
+    freed = find_unit(_view(client, fx), CELL_CAPTION)
+    assert (freed["kind"], freed["group_unit_id"], freed["table_id"]) == outer_line
+    _step(client, fx, "undo")
+
+    # 안쪽 표의 "첫 행 내림"은 바깥 칸 캡션을 첫 행으로 보지 않는다
+    lowered = _ok(_edit(client, fx, {"type": "set_first_row_caption", "table_unit_id": inner["id"], "caption": False}))
+    assert lowered["retired_unit_ids"] == []
+
+    # 바깥 표를 벗겨도 안쪽 표의 캡션이고, 떼면 묶이지 않은 바깥 칸 줄이다
+    _ok(_edit(client, fx, {"type": "set_layout_table", "table_id": outer["table_id"], "is_layout": True}))
+    caption = find_unit(_view(client, fx), CELL_CAPTION)
+    assert (caption["kind"], caption["group_unit_id"]) == ("caption", inner["id"])
+    _ok(_edit(client, fx, {"type": "detach_caption", "unit_id": caption["id"]}))
+    freed = find_unit(_view(client, fx), CELL_CAPTION)
+    assert (freed["kind"], freed["group_unit_id"], freed["table_id"]) == ("cell_sentence", None, outer["table_id"])
+    _assert_covered(_view(client, fx))
+
+
 def test_a_table_confirms_with_its_lifted_first_row_caption(client: TestClient) -> None:
     fx = _setup(client, p(HEADING) + tbl([[FIRST_ROW], [CELL]]))
     (table,) = _units(fx.view, "table")

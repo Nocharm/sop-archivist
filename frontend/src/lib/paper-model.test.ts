@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import type { DocumentView, ViewBlock, ViewPartGroup, ViewUnit } from "./api-sop";
 import type { PaperRow } from "./paper-model";
-import { buildPaperModel, buildPaperTabs, buildRows, foldCaptionRows, listFigureTabUnitIds, listPartSheets, pickFigureRows, canSplitAt, clampSplitAt, getBundleHeader, getGapMerge, getMergeBlocker, hasTocLineIn, resolveCutDrag, getMarks, getTags, isBandHeading, readWarningText, resolvePickUnit, shouldRecenter, toBlockOffset, toUnitOffset } from "./paper-model";
+import { buildPaperModel, buildPaperTabs, buildRows, foldCaptionRows, listFigureTabUnitIds, listPartSheets, pickFigureRows, canSplitAt, clampSplitAt, getBundleHeader, getGapMerge, getMergeBlocker, hasTocLineIn, resolveCutDrag, getMarks, getTags, isBandHeading, isOtherTableCaption, readWarningText, resolvePickUnit, shouldRecenter, toBlockOffset, toUnitOffset } from "./paper-model";
 
 function makeBlock(id: number, seq: number, text: string, extra: Partial<ViewBlock> = {}): ViewBlock {
   return {
@@ -324,6 +324,27 @@ describe("foldCaptionRows", () => {
     const row: PaperRow = { type: "table", key: "t70", item: { type: "table", table, rows: [[cell]], unitId: 9 } };
     const [folded] = foldCaptionRows([row], units({ 9: { kind: "table" }, 6: { kind: "caption", group_unit_id: 9, spans: [[3, 0, 9]] } }));
     expect(folded).toMatchObject({ type: "table", captions: [{ unitId: 6, parts: [{ block: { id: 3 }, segments: [{ start: 0, end: 9, unitId: 6 }] }] }] });
+  });
+
+  it("reads a caption line in an outer table's cell as the inner table's caption, and the outer cell drops that line", () => {
+    // 바깥 표 70의 칸(블록 3) 안 "표 1." 줄이 안쪽 표 71(단위 9)의 캡션이다(추출기 8)
+    const outerTable = { id: 70, table_index: 0, parent_table_id: null, part: "body", n_rows: 1, n_cols: 1, is_layout: false, is_band: false, anchor: null };
+    const innerTable = { ...outerTable, id: 71, table_index: 1, parent_table_id: 70 };
+    const text = "본문이다.\n표 1. 조제 탱크";
+    const outerCell = makeBlock(3, 0, text, { kind: "table_cell", table_id: 70, row_index: 0 });
+    const innerCell = makeBlock(4, 1, "탱크", { kind: "table_cell", table_id: 71, row_index: 0 });
+    const rows: PaperRow[] = [
+      { type: "table", key: "t70", item: { type: "table", table: outerTable, rows: [[outerCell]], unitId: 8 } },
+      { type: "table", key: "t71", item: { type: "table", table: innerTable, rows: [[innerCell]], unitId: 9 } },
+    ];
+    const all = units({ 8: { kind: "table", table_id: 70 }, 9: { kind: "table", table_id: 71 }, 6: { kind: "caption", group_unit_id: 9, spans: [[3, 6, text.length]] } });
+    const folded = foldCaptionRows(rows, all);
+    expect(folded[1]).toMatchObject({ captions: [{ unitId: 6, parts: [{ block: { id: 3 }, segments: [{ start: 6, end: text.length, unitId: 6 }] }] }] });
+    expect(folded[0]).toMatchObject({ captions: [] });
+    const piece = (unitId: number): PaperRow => ({ type: "piece", key: `u${unitId}`, unitId, parts: [] });
+    expect(isOtherTableCaption(piece(6), outerCell, all)).toBe(true);
+    expect(isOtherTableCaption(piece(6), innerCell, all)).toBe(false); // 그 표 첫 행에서 올린 캡션 꼴이면 남는다
+    expect(isOtherTableCaption(piece(8), outerCell, all)).toBe(false);
   });
 
   it("leaves a caption whose bundle is not on the list as its own piece and gives a captionless bundle an empty list", () => {

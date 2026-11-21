@@ -11,14 +11,15 @@ export const CAPTION_REACH = 2;
 /** 캡션 번호 뒤 글이 이보다 길고 마침표로 끝나면 문장 같은 캡션이다(동사 판정은 하지 않는다, §11-5) */
 const SENTENCE_LIKE_CHARS = 40;
 
-// backend renumber.py TABLE_CAPTION_RE · FIGURE_CAPTION_RE와 같다 - 숫자 바로 뒤에 조사가 오면("표 1에") 캡션 머리가 아니다
-const CAPTION_TAIL = "(?=$|[\\s.:)\\-–—])";
+// backend renumber.py TABLE_CAPTION_RE · FIGURE_CAPTION_RE와 같다(rule-cases.json caption_heads) - 숫자 바로 뒤에 조사가 오면("표 1에")
+// 캡션 머리가 아니다. 괄호 꼴(<표 1> · [Table 3] · (표 2))과 줄표 꼴(표-1)도 머리다
+const CAPTION_TAIL = "(?:\\s*[>\\]])?(?=$|[\\s.:)\\-–—])";
 const CAPTION_HEADS = {
-  table: new RegExp(`^(?:표|Table)\\s*\\.?\\s*(\\d+)${CAPTION_TAIL}`),
-  figure: new RegExp(`^(?:그림|Figure|Fig)\\s*\\.?\\s*(\\d+)${CAPTION_TAIL}`),
+  table: new RegExp(`^[<\\[(]?\\s*(?:표|Table)\\s*[.\\-]?\\s*(\\d+)${CAPTION_TAIL}`),
+  figure: new RegExp(`^[<\\[(]?\\s*(?:그림|Figure|Fig)\\s*[.\\-]?\\s*(\\d+)${CAPTION_TAIL}`),
 } as const;
-// 한 줄 한/영 캡션의 둘째 머리 - "표 2. 경보 목록 Table 2. Alarm list"의 "Table 2"
-const ANY_HEAD = /(?:표|그림|Table|Figure|Fig)\s*\.?\s*\d/g;
+// 한 줄 한/영 캡션의 둘째 머리 - "표 2. 경보 목록 Table 2. Alarm list"의 "Table 2"(괄호 꼴 "<Table 2>"도)
+const ANY_HEAD = /[<[(]?(?:표|그림|Table|Figure|Fig)\s*[.\-]?\s*\d/g;
 const HANGUL = /[가-힣]/;
 const LATIN = /[A-Za-z]/;
 // segment.is_blank_char와 같다(str.isspace() + INVISIBLE_CHARS) - 빈 문단 판정. JS \s에는 Python isspace의 \x1c-\x1f·\x85가 없어 더한다(rule-cases.json)
@@ -200,8 +201,8 @@ export interface CaptionSlotInput {
   bundle: ViewUnit;
   units: ReadonlyMap<number, ViewUnit>;
   places: ReadonlyMap<number, number>;
-  /** 블록 종류 - 캡션이 표 칸 위에 있으면 첫 행에서 올린 것이다 */
-  blockKinds: ReadonlyMap<number, string>;
+  /** 표 칸 블록 → 그 표 - 캡션이 이 표의 칸 위에 있으면 첫 행에서 올린 것이다(바깥 칸 안 캡션은 다른 표의 칸이라 아니다) */
+  cellTables: ReadonlyMap<number, number | null>;
   /** 써 넣은 캡션(출처 없음) - 저장된 것과 이번에 쓴 것 */
   written: readonly { lang: string; text: string }[];
 }
@@ -273,7 +274,7 @@ function markBest(candidates: CaptionCandidate[], shape: BundleShape): CaptionCa
 }
 
 /** 캡션 자리 하나 - 채운 캡션 칩(첫 행에서 올림 · 써 넣음 · 같이 씀)과, 비었으면 후보 */
-export function buildCaptionSlot({ bundle, units, places, blockKinds, written }: CaptionSlotInput): CaptionSlotView {
+export function buildCaptionSlot({ bundle, units, places, cellTables, written }: CaptionSlotInput): CaptionSlotView {
   const shape = getBundleShape(bundle.kind);
   const isGroupHead = bundle.kind === "figure" && [...units.values()].some((unit) => unit.kind === "figure" && unit.caption_figure_id === bundle.id);
   const groupHeadId = bundle.kind !== "figure" ? null : (bundle.caption_figure_id ?? (isGroupHead ? bundle.id : null));
@@ -291,7 +292,7 @@ export function buildCaptionSlot({ bundle, units, places, blockKinds, written }:
       const canSplit = !others.includes("ko") && !others.includes("en");
       return {
         key: `u${caption.id}`, unitId: caption.id, lang: caption.lang, text: caption.text.trim(),
-        origin: blockKinds.get(caption.spans[0]?.[0] ?? -1) === "table_cell" ? "first_row" : "unit",
+        origin: bundle.table_id !== null && cellTables.get(caption.spans[0]?.[0] ?? -1) === bundle.table_id ? "first_row" : "unit",
         isOdd: isSentenceLike(caption.text, shape), splitAt: canSplit ? findLangCut(caption.text) : null,
       };
     });

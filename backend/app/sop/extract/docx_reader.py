@@ -49,6 +49,7 @@ FLAG_CAPTION_OF = "caption_of"
 WARNING_MERGED_CELL_CONTENT = "merged_cell_content"
 # 구조 신호의 열쇠와 값 — 뜻은 extract.types의 ExtractedBlock·ExtractedTable docstring
 SIGNAL_NUMBERS, SIGNAL_PARAS, SIGNAL_TOC, SIGNAL_INLINE = "numbers", "paras", "toc", "inline"
+SIGNAL_CAPTIONS = "captions"
 SIGNAL_WIDTHS, SIGNAL_FIRST_ROW, SIGNAL_BAND, SIGNAL_PLACE = "widths", "first_row", "band", "place"
 NUMBER_AUTO, NUMBER_TYPED, NUMBER_CELL = "auto", "typed", "cell"
 TOC_STYLE, TOC_FIELD, TOC_SDT, TOC_LEADER = "style", "field", "sdt", "leader"
@@ -441,6 +442,7 @@ class _CellRecord:
     is_full_row: bool = False  # 여러 열 표에서 한 칸이 행 전체를 차지한다(장 제목·단계 제목 같은 구조 행)
     numbers: tuple[tuple[int, int, str], ...] = ()  # 칸 글 안 번호 라벨들의 (시작, 끝, 출처)
     para_starts: tuple[int, ...] = ()  # 칸 안 문단들의 시작 자리
+    captions: tuple[tuple[int, int, int], ...] = ()  # 칸 안 안쪽 표의 캡션 줄 (시작, 끝, 안쪽 표 번호)
 
 
 @dataclass
@@ -1127,11 +1129,15 @@ class _Collector:
         is_number_unresolved = False
         figures: list[_Record] = []
         after: list[_Record] = []
+        para_shapes: list[_CellPara] = []
+        inner_tables: list[tuple[int, int]] = []  # (그 칸에서 표 앞에 있던 문단 수, 안쪽 표 번호)
         for item, item_path in _iter_tagged(cell, path, _BLOCK_TAGS):
             if item.tag == W_P:
                 read, para_marks = self._read_runs(item, marks, host_marks)
                 raw = "".join(read.pieces)
-                text, is_unresolved, number = self._add_number(raw, _read_para_style(item, self.styles))
+                style = _read_para_style(item, self.styles)
+                text, is_unresolved, number = self._add_number(raw, style)
+                para_shapes.append(_read_cell_para(text, style, bool(read.figures)))
                 if number is not None:
                     numbers.append((offset, offset + number[0], number[1]))
                 para_starts.append(offset)
@@ -1157,6 +1163,7 @@ class _Collector:
                 )
                 self._read_textboxes(read.textboxes, item_path, context, para_marks, after)
             else:
+                inner_tables.append((len(texts), self._table_count))
                 self._read_table(
                     item, item_path, context, marks, host_marks, table_index, after,
                     place=(row_index, col_index, len(texts)),
@@ -1178,6 +1185,7 @@ class _Collector:
             grid_span=grid_span,
             numbers=tuple(numbers),
             para_starts=tuple(para_starts),
+            captions=_find_cell_captions(cell_text, para_starts, para_shapes, inner_tables),
         )
         return record, figures + after
 
@@ -1258,13 +1266,73 @@ def _fit_xml_path(path: str) -> str:
 
 
 def _is_caption(record: _ParaRecord, kind: Literal["figure", "table"]) -> bool:
+    return record.caption_for is None and _is_caption_shape(record.text, record.style, record.has_figure, kind)
+
+
+def _is_caption_shape(text: str, style: _ParaStyle, has_figure: bool, kind: Literal["figure", "table"]) -> bool:
     """그 종류의 캡션 꼴인지 — 캡션 스타일이거나 그 종류의 머리면 캡션, 다른 종류의 머리면 아니다."""
     own, other = (FIGURE_CAPTION_RE, TABLE_CAPTION_RE) if kind == "figure" else (TABLE_CAPTION_RE, FIGURE_CAPTION_RE)
-    if record.caption_for is not None or record.has_figure or not has_visible_char(record.text):
+    if has_figure or not has_visible_char(text):
         return False
-    if own.match(record.text) is not None:
+    if own.match(text) is not None:
         return True
-    return record.style.is_caption and other.match(record.text) is None
+    return style.is_caption and other.match(text) is None
+
+
+@dataclass(frozen=True)
+class _CellPara:
+    """칸 안 문단 하나의 캡션 판정 재료 — 칸 글은 블록 하나라 문단 레코드가 없다."""
+
+    is_blank: bool  # 글자도 그림도 없다(캡션을 찾을 때 건너뛴다)
+    is_table_caption: bool
+
+
+def _read_cell_para(text: str, style: _ParaStyle, has_figure: bool) -> _CellPara:
+    return _CellPara(
+        is_blank=not has_figure and not has_visible_char(text),
+        is_table_caption=_is_caption_shape(text, style, has_figure, "table"),
+    )
+
+
+def _find_cell_captions(
+    cell_text: str, para_starts: list[int], paras: list[_CellPara], inner_tables: list[tuple[int, int]]
+) -> tuple[tuple[int, int, int], ...]:
+    """칸 안 안쪽 표의 캡션 줄 — (칸 글 안 시작, 끝, 안쪽 표 번호). 칸 블록은 쪼개지 않고 줄 범위로만 가리킨다.
+
+    그릇에 바로 놓인 표와 같은 규칙이다(_attach_captions): 모든 표가 바로 앞 문단(빈 문단은 건너뛰고, 다른 안쪽 표를 넘지
+    않는다)을 먼저 보고, 캡션이 없는 표만 바로 뒤 문단을 본다. 문단 안 줄바꿈 뒤는 다른 단위 줄이라 첫 줄만 캡션이다.
+    """
+    sides: list[tuple[int | None, int | None]] = []  # 표마다 (바로 앞, 바로 뒤) 글 있는 문단
+    for order, (at, _) in enumerate(inner_tables):
+        lower = inner_tables[order - 1][0] if order else 0  # 앞 표 뒤 문단부터
+        upper = inner_tables[order + 1][0] if order + 1 < len(inner_tables) else len(paras)  # 다음 표 앞 문단까지
+        before = next((i for i in range(at - 1, lower - 1, -1) if not paras[i].is_blank), None)
+        after = next((i for i in range(at, upper) if not paras[i].is_blank), None)
+        sides.append((before, after))
+    found: dict[int, int] = {}  # 표 순번 → 캡션 문단
+    for turn in (0, 1):
+        for order, side in enumerate(sides):
+            index = side[turn]
+            if order not in found and index is not None and index not in found.values() and paras[index].is_table_caption:
+                found[order] = index
+    captions: list[tuple[int, int, int]] = []
+    for order, index in sorted(found.items()):
+        start = para_starts[index]
+        end = cell_text.find("\n", start)
+        line = trim_blank_range(cell_text, start, len(cell_text) if end < 0 else end)
+        if line is not None:
+            captions.append((*line, inner_tables[order][1]))
+    return tuple(captions)
+
+
+def _find_neighbor(
+    by_slot: dict[tuple[int, int], _ParaRecord], container: int, position: int, step: int
+) -> _ParaRecord | None:
+    """step 쪽 첫 이웃 문단 — 빈 문단은 건너뛰고, 표(문단 레코드가 없는 자리)를 만나면 없다."""
+    while (neighbor := by_slot.get((container, position := position + step))) is not None:
+        if neighbor.has_figure or has_visible_char(neighbor.text):
+            return neighbor
+    return None
 
 
 def _pick_flags(*candidates: tuple[str, bool]) -> tuple[str, ...]:
@@ -1273,32 +1341,34 @@ def _pick_flags(*candidates: tuple[str, bool]) -> tuple[str, ...]:
 
 def _attach_captions(records: list[_Record], table_slots: dict[int, tuple[int, int]]) -> None:
     """캡션 문단 찾기 — 같은 컨테이너의 이웃 문단 중 그림은 바로 뒤 → 바로 앞, 표는 바로 앞 → 바로 뒤가 캡션 꼴이면 잇는다.
+    빈 문단은 건너뛴다.
 
-    문서 순서로 보므로 두 묶음 사이의 문단은 먼저 만난 묶음이 갖는다. 칸 안 그림·칸 안 표에는 잇지 않는다.
-    칸 블록이 하나도 없는 표는 가리킬 블록이 없어 건너뛴다.
+    템플릿 자리(표는 위, 그림은 아래)가 먼저다 — 모든 묶음이 제 자리 쪽을 먼저 보고, 그래도 캡션이 없는 묶음만 반대쪽을 본다.
+    그래서 두 표 사이 "표 2"는 아래 표가 갖는다(위 표가 캡션이 없어도). 칸 안 그림에는 잇지 않고, 칸 안 표는 칸 블록의
+    captions 신호로 잇는다(_find_cell_captions). 칸 블록이 하나도 없는 표는 가리킬 블록이 없어 건너뛴다.
     """
     by_slot = {record.slot: record for record in records if isinstance(record, _ParaRecord)}
+    bundles: list[tuple[tuple[Literal["figure", "table"], int], tuple[int, int], tuple[int, int]]] = []
     seen_tables: set[int] = set()
     for index, record in enumerate(records):
-        target: tuple[Literal["figure", "table"], int]
         if isinstance(record, _ParaRecord) and record.has_figure:
-            target, (container, position) = ("figure", index), record.slot
-            offsets = (1, -1)
+            bundles.append((("figure", index), record.slot, (1, -1)))
         elif (
             isinstance(record, _CellRecord)
             and record.table_index in table_slots
             and record.table_index not in seen_tables
         ):
             seen_tables.add(record.table_index)
-            target, (container, position) = ("table", record.table_index), table_slots[record.table_index]
-            offsets = (-1, 1)
-        else:
-            continue
-        for offset in offsets:
-            neighbor = by_slot.get((container, position + offset))
+            bundles.append((("table", record.table_index), table_slots[record.table_index], (-1, 1)))
+    captioned: set[int] = set()
+    for turn in (0, 1):
+        for number, (target, (container, position), offsets) in enumerate(bundles):
+            if number in captioned:
+                continue
+            neighbor = _find_neighbor(by_slot, container, position, offsets[turn])
             if neighbor is not None and _is_caption(neighbor, target[0]):
                 neighbor.caption_for = target
-                break
+                captioned.add(number)
 
 
 class _BlockWriter:
@@ -1319,6 +1389,7 @@ class _BlockWriter:
         self._figure_seqs: dict[int, int] = {}  # 그림 문단 레코드의 목록 위치 → 그림 블록 seq
         self._first_cell_seqs: dict[int, int] = {}  # table_index → 첫 칸 블록 seq
         self._caption_seqs: list[tuple[int, tuple[Literal["figure", "table"], int]]] = []  # (캡션 블록 seq, 묶음)
+        self._cell_captions: list[tuple[int, tuple[tuple[int, int, int], ...]]] = []  # (칸 블록 seq, 칸 안 캡션 줄들)
 
     def add_paragraph(self, record: _ParaRecord, index: int) -> None:
         """글자가 있으면 문단 블록, 그림이 있으면 그 뒤에 그림 블록(글 없음). 빈 문단은 블록을 만들지 않는다.
@@ -1380,6 +1451,8 @@ class _BlockWriter:
             signals[SIGNAL_NUMBERS] = [list(number) for number in record.numbers]
         if len(record.para_starts) > 1:
             signals[SIGNAL_PARAS] = list(record.para_starts)
+        if record.captions:
+            self._cell_captions.append((len(self.blocks), record.captions))
         self._append(
             record,
             KIND_TABLE_CELL,
@@ -1411,6 +1484,12 @@ class _BlockWriter:
             target_seq = self._figure_seqs[key] if kind == "figure" else self._first_cell_seqs[key]
             block = self.blocks[caption_seq]
             self.blocks[caption_seq] = replace(block, flags=(*block.flags, f"{FLAG_CAPTION_OF}:{target_seq}"))
+        for cell_seq, captions in self._cell_captions:
+            # 칸 블록이 하나도 없는 안쪽 표는 가리킬 블록이 없어 건너뛴다
+            lines = [[start, end, self._first_cell_seqs[key]] for start, end, key in captions if key in self._first_cell_seqs]
+            if lines:
+                block = self.blocks[cell_seq]
+                self.blocks[cell_seq] = replace(block, signals={**block.signals, SIGNAL_CAPTIONS: lines})
 
     def build_warnings(self) -> tuple[ExtractedWarning, ...]:
         """병합 칸 경고는 표마다 하나(구조 행이 아닌 첫 병합 칸을 가리킨다), 글이 남은 이어지는 칸 경고도 표마다 하나(개수),
