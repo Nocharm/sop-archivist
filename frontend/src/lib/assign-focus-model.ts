@@ -250,10 +250,12 @@ export function readEditKind(op: EditOp): PendingKind {
     case "set_layout_table":
       return op.is_layout ? "unwrap" : "rewrap";
     case "set_language":
+    case "switch_language":
       return "lang";
     case "set_ref":
     case "clear_ref":
     case "set_number":
+    case "set_indents":
       return "ref";
     case "set_heading":
       return "heading";
@@ -286,12 +288,15 @@ export function listEditUnitIds(op: EditOp): number[] {
       return [...op.unit_ids];
     case "split":
     case "unmerge":
+    case "switch_language":
     case "detach_caption":
     case "ungroup_figures":
     case "set_ref":
     case "clear_ref":
     case "set_number":
       return [op.unit_id];
+    case "set_indents":
+      return op.units.map((item) => item.unit_id);
     case "move_boundary":
       return [op.left_unit_id, op.right_unit_id];
     case "attach_caption":

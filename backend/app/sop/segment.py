@@ -53,9 +53,14 @@ PAIR_DIGIT_OVERLAP_MIN = 0.5
 CLAUSE_NUMBER_FLAG = "clause_number"
 # docx_reader.FLAG_CAPTION_OF와 같은 값 — 캡션 문단 블록이 "caption_of:<그림 블록 seq | 표 첫 칸 블록 seq>"로 제 묶음을 가리킨다
 CAPTION_OF_FLAG = "caption_of"
+# docx_reader.SIGNAL_CAPTIONS와 같은 값 — 칸 블록 안 안쪽 표 캡션 줄 [[시작, 끝, 안쪽 표 첫 칸 seq], …](추출기 8부터)
+CAPTIONS_SIGNAL = "captions"
 # docx_reader.SIGNAL_NUMBERS·NUMBER_CELL과 같은 값 — 블록 신호의 번호 범위 [[시작, 끝, 출처], …]와 글 전체가 번호 꼴인 칸
 NUMBERS_SIGNAL = "numbers"
 NUMBER_CELL = "cell"
+# 글 앞에 타자로 친 번호 — 점이 있어야 번호로 본다("1." "6.1" "1.10."). "3 times"처럼 숫자로 시작하는 문장을 집지 않게.
+# 추출기(docx_reader._find_number)가 문단 머리에서, numbering.read_number_range가 줄바꿈 뒤 줄머리에서 같은 꼴을 읽는다
+TYPED_NUMBER_RE = re.compile(r"(?:\d+(?:\.\d+)+\.?|\d+\.)(?=\s|$)")
 # docx_reader.SIGNAL_BAND와 같은 값 — 띠 표(1행 3칸: 번호 칸 | 빈 칸 | 제목 칸)의 표 신호 {"number", "level"}
 BAND_SIGNAL = "band"
 # docx_reader.SIGNAL_PLACE·SIGNAL_PARAS와 같은 값 — 안쪽 표의 바깥 칸 자리 {"row", "col", "para"}와 칸 안 문단 시작 자리
@@ -419,11 +424,17 @@ def build_unit_drafts(
                     _build_text_draft("cell_sentence", block, start, end, block.table_id, block.row_index, group_index)
                     for start, end in split_sentences(block.text, split_lines=split_lines)
                 ]
+            cell_captions = _read_cell_captions(block, bundle_seqs) if block.table_id not in band_heading_ids else {}
+            if cell_captions:
+                cells = _swap_caption_lines(block, cells, cell_captions)
             if group_index is None and len(cells) == 1 and _is_number_cell(block, cells[0]):
                 if number_cell is not None:  # 번호 칸이 잇달아 오면 앞의 것은 제 줄이다
                     drafts.append(number_cell)
                 number_cell = cells[0]
                 continue
+            if number_cell is not None and cells and cells[0].kind == "caption":
+                drafts.append(number_cell)  # 캡션 줄은 번호를 받지 않는다 — 번호 칸은 제 줄이다
+                number_cell = None
             if number_cell is not None and cells:
                 # 번호 칸 블록 전체가 그 줄 범위의 첫 조각이 된다 — 자리도 번호 칸의 것이다
                 cells[0] = replace(
@@ -431,7 +442,10 @@ def build_unit_drafts(
                     pos_start=number_cell.pos_start,
                 )
                 number_cell = None
-            drafts.extend(cells)
+            for cell in cells:
+                if cell.kind == "caption":
+                    caption_targets[len(drafts)] = cell_captions[cell.pos_start][1]
+                drafts.append(cell)
         elif block.heading_level is not None or CLAUSE_NUMBER_FLAG in block.flags:
             follows_shift = (
                 previous_shifted is not None and not _has_leading_number(block)
@@ -473,6 +487,25 @@ def _is_same_row_cell(block: BlockView, number_cell: UnitDraft) -> bool:
         block.kind == "table_cell" and block.table_id == number_cell.table_id
         and block.row_index == number_cell.row_index
     )
+
+
+def _read_cell_captions(block: BlockView, bundle_seqs: set[int]) -> dict[int, tuple[int, int]]:
+    """칸 안 캡션 줄 — 시작 자리 → (끝, 안쪽 표 첫 칸 seq). 이을 표 초안이 없는(레이아웃) 안쪽 표의 줄은 보통 칸 줄이다."""
+    lines = (block.signals or {}).get(CAPTIONS_SIGNAL) or ()
+    return {start: (end, seq) for start, end, seq in lines if seq in bundle_seqs}
+
+
+def _swap_caption_lines(
+    block: BlockView, cells: list[UnitDraft], captions: Mapping[int, tuple[int, int]]
+) -> list[UnitDraft]:
+    """캡션 줄 범위 안의 칸 문장들을 캡션 초안 하나로 바꾼다(문장으로 쪼개지 않는다 — "표 1. 조제…"의 마침표). 묶음은 뒤에서 잇는다."""
+    def is_inside(draft: UnitDraft) -> bool:
+        _, start, end = draft.spans[0]
+        return any(head <= start and end <= tail for head, (tail, _) in captions.items())
+
+    kept = [cell for cell in cells if not is_inside(cell)]
+    lines = [_build_text_draft("caption", block, start, end) for start, (end, _) in captions.items()]
+    return sorted([*kept, *lines], key=lambda draft: draft.spans[0][1])
 
 
 def _read_caption_of(flags: Sequence[str]) -> int | None:
@@ -522,16 +555,20 @@ def _fill_languages(drafts: list[UnitDraft], layout: str) -> list[UnitDraft]:
     return filled
 
 
+_LINE_BREAKS_TO_SPACE = str.maketrans("\r\n", "  ")
+
+
+def flatten_line_breaks(text: str) -> str:
+    """줄바꿈("\\n" "\\r")을 띄어쓰기로 — 한 글자를 한 글자로 바꿔 길이가 그대로다."""
+    return text.translate(_LINE_BREAKS_TO_SPACE)
+
+
 def build_unit_text(spans: Sequence[Sequence[int]], block_texts: Mapping[int, str]) -> str:
-    """단위 글자 = 범위 글자를 이은 것 — 같은 블록끼리는 " ", 다른 블록끼리는 "\\n"으로 잇는다."""
-    pieces: list[str] = []
-    previous_block: int | None = None
-    for block_id, start, end in spans:
-        if pieces:
-            pieces.append(" " if block_id == previous_block else "\n")
-        pieces.append(block_texts[block_id][start:end])
-        previous_block = block_id
-    return "".join(pieces)
+    """단위 글자 = 범위 글자를 띄어쓰기 하나로 이은 것 — 범위 안 줄바꿈("\\n" "\\r")도 띄어쓰기다(박스 하나는 한 줄, 항목 6-a).
+
+    한 글자를 한 글자로 바꾸므로 글 안 좌표(나눌 자리·번호 범위·그림 자리)는 범위 글자 길이 그대로다.
+    """
+    return " ".join(flatten_line_breaks(block_texts[block_id][start:end]) for block_id, start, end in spans)
 
 
 PairDirection = Literal["ko_en", "en_ko"]

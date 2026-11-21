@@ -60,7 +60,7 @@ export function ShapeTools({ lines, cutUnitId, busy, onAction, mode, onMode, hea
   /** 아이콘 단추 하나 - 꺼진 단추는 aria-disabled로 포커스를 받아 까닭을 툴팁으로 보인다 */
   function renderAction(unit: ViewUnit, item: AssignMenuItem): ReactNode {
     // 언어는 세 칸이 맡아 단추가 없다(listShapeLineItems가 이미 뺀다 - 타입을 좁히려고)
-    if (item.action === "lang") return null;
+    if (item.action === "lang" || item.action === "piece_lang" || item.action === "caption_of") return null;
     const Icon = ASSIGN_ACTION_ICONS[item.action];
     const isCutting = item.action === "split" && cutUnitId === unit.id;
     const label = t(item.labelKey ?? ASSIGN_ACTION_LABELS[item.action]);

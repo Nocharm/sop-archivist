@@ -6,9 +6,10 @@
 import { describe, expect, it } from "vitest";
 
 import type { NumberStyle } from "./api-sop";
-import { buildBlockPlaces, CAPTION_REACH } from "./caption-slot-model";
+import { buildBlockPlaces, readCaptionHead } from "./caption-slot-model";
 import { MAX_NUMBER_CHARS, planFollow } from "./number-model";
 import cases from "./rule-cases.json";
+import { getRowLevels, MAX_LEVEL } from "./strip-pill-model";
 import { BULLET_SYMBOLS, getSectionDepths, MAX_BULLET_LEVEL, MAX_INDENT_LEVEL, NUMBER_STYLES, numberLines } from "./section-number";
 import { orderUnwrapped, orderUnwrappedLines } from "./unwrap-order-model";
 
@@ -21,7 +22,7 @@ describe("rule cases shared with the backend", () => {
       MAX_BULLET_LEVEL,
       BULLET_SYMBOLS: [...BULLET_SYMBOLS],
       MAX_NUMBER_CHARS,
-      CAPTION_REACH,
+      MAX_ROW_LEVEL: MAX_LEVEL,
     }).toEqual({ ...cases.constants, NUMBER_STYLES: undefined });
     // The frontend orders styles for its buttons; the set of values must match.
     expect([...NUMBER_STYLES].sort()).toEqual([...cases.constants.NUMBER_STYLES].sort());
@@ -44,6 +45,16 @@ describe("rule cases shared with the backend", () => {
   it.each(cases.block_places.map((c, i) => ({ ...c, i })))("buildBlockPlaces case $i matches caption_slot.build_block_places", ({ blocks, tables, places }) => {
     // JSON widens `kind` to string; the backend wrote only real block kinds.
     expect(toRecord(buildBlockPlaces(blocks as Parameters<typeof buildBlockPlaces>[0], tables))).toEqual(places);
+  });
+
+  it.each(cases.caption_heads)("readCaptionHead($text) matches renumber caption heads", ({ text, table, figure }) => {
+    expect([readCaptionHead(text, "table")?.number ?? null, readCaptionHead(text, "figure")?.number ?? null]).toEqual([table, figure]);
+  });
+
+  it.each(cases.row_levels.map((c, i) => ({ ...c, i })))("getRowLevels case $i matches numbering.build_row_levels", ({ rows, levels }) => {
+    const levelRows = rows.map((row, index) => ({ key: String(index), part: "body", sectionLabel: row.label, shift: row.shift, hasCell: row.has_cell, pairTopOf: row.pair_top === null ? null : String(row.pair_top) }));
+    const shown = getRowLevels(levelRows);
+    expect(levelRows.map((row) => shown.get(row.key)?.level)).toEqual(levels);
   });
 
   it.each(cases.unwrap_order.map((c, i) => ({ ...c, i })))("orderUnwrapped case $i matches unwrap_order.order_unwrapped", ({ lines, order }) => {

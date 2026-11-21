@@ -48,7 +48,7 @@ from tests.sop_helpers import (
 )
 from tests.test_sop_ai_adoption import build_use_body
 from tests.test_sop_ai_translate import EDITED, load_translations, make_assigned_unit, translate
-from tests.test_sop_decisions import _body, _target, _unit_in
+from tests.test_sop_decisions import RECORDS, WARM_UP, _body, _target, _unit_in
 from tests.test_sop_decisions import NA_SLOTS as DECISIONS_NA_SLOTS
 from tests.test_sop_decisions import TOBE_DOCS as DECISIONS_TOBE_DOCS
 from tests.test_sop_decisions import WI_STEPS as DECISIONS_WI_STEPS
@@ -436,7 +436,8 @@ def test_assign_merge_records_merge_step_and_undo_reverts_it(client: TestClient)
     (step,) = _load_steps(fx.bundle_id)
     assert (step.kind, step.op) == ("unit_edit", "merge")
 
-    assert _ok(_undo(client, fx.bundle_id))["op"] == "merge"
+    undone = _ok(_undo(client, fx.bundle_id))
+    assert (undone["op"], undone["restored_decisions"]) == ("merge", False)  # 판단이 없는 합치기는 편집만 움직인다
 
     view = get_view(client, fx.bundle_id, fx.old_doc_id)
     assert find_unit(view, TEXT_A)["id"] == fx.a["id"]
@@ -657,7 +658,7 @@ def test_undo_raises_revisions_and_logs_event(client: TestClient) -> None:
 
     assert result == {
         "op": "confirm", "unit_ids": [fx.a["id"]], "focus_unit_id": fx.a["id"], "focus_target_id": None,
-        "scope_label": None, "can_undo": False, "can_redo": True,
+        "scope_label": None, "can_undo": False, "can_redo": True, "restored_decisions": True,
     }
     assert _dump(fx.bundle_id)["unit_decisions"][str(fx.a["id"])]["revision"] == 3  # 확정 2 → 되돌림 3
     stale = {"action": "confirm", "units": [{"unit_id": fx.a["id"], "revision": 2, "disposition": "assigned"}],
@@ -1267,3 +1268,186 @@ def test_undo_after_redo_not_refused_when_c_reordered_before_the_redo(client: Te
     _ok(_undo(client, fx.bundle_id))
 
     assert _dump(fx.bundle_id)["unit_decisions"][str(fx.a["id"])]["status"] == "confirmed"
+
+
+# ── 짝 맺기 · 풀기와 편집이 함께 바꾼 판단도 되돌리기 줄에 (B6) ─────────────────
+
+
+def _pair_url(fx, pair_id: int | None = None, suffix: str = "") -> str:
+    base = f"/api/bundles/{fx.bundle_id}/documents/{fx.doc['id']}/pairs"
+    return f"{base}/{pair_id}{suffix}" if pair_id is not None else base
+
+
+def _created(response: httpx2.Response) -> dict:
+    assert response.status_code == 201, response.text
+    return response.json()
+
+
+def _doc_revision(client: TestClient, fx) -> int:
+    return get_view(client, fx.bundle_id, fx.doc["id"])["document"]["revision"]
+
+
+def _pairs(client: TestClient, fx, unit_id: int) -> list[dict]:
+    """unit_id가 든 짝 - 합성 문서에는 다른 문단의 코드 제안 짝도 있다."""
+    return [pair for pair in get_view(client, fx.bundle_id, fx.doc["id"])["pairs"] if unit_id in pair["unit_ids"]]
+
+
+def test_pair_confirm_unpair_and_create_are_steps_undo_and_redo_bring_them_back(client: TestClient) -> None:
+    fx = _setup_decisions(client)
+    ko, en = find_unit(fx.view, KO_HEAD), find_unit(fx.view, EN_HEAD)
+    (suggested,) = [pair for pair in fx.view["pairs"] if ko["id"] in pair["unit_ids"]]
+    assert suggested["status"] == "suggested"
+
+    confirmed = client.post(
+        _pair_url(fx, suggested["id"], "/confirm"), json={"revision": _doc_revision(client, fx), "undo": UNDO}, headers=AUTHOR
+    )
+    assert confirmed.status_code == 200, confirmed.text
+    assert _ok(_undo(client, fx.bundle_id))["op"] == "confirm_pair"
+    assert [pair["status"] for pair in _pairs(client, fx, ko["id"])] == ["suggested"]
+    assert _ok(_redo(client, fx.bundle_id))["op"] == "confirm_pair"
+    assert [pair["status"] for pair in _pairs(client, fx, ko["id"])] == ["confirmed"]
+
+    separated = client.request(
+        "DELETE", _pair_url(fx, suggested["id"]), params={"revision": _doc_revision(client, fx)}, json={"undo": UNDO},
+        headers=AUTHOR,
+    )
+    assert separated.status_code == 200, separated.text
+    assert _pairs(client, fx, ko["id"]) == []
+    assert _ok(_undo(client, fx.bundle_id))["op"] == "unpair"
+    assert [(pair["id"], pair["status"]) for pair in _pairs(client, fx, ko["id"])] == [(suggested["id"], "confirmed")]
+    assert _ok(_redo(client, fx.bundle_id))["op"] == "unpair"
+
+    created = client.post(
+        _pair_url(fx), json={"revision": _doc_revision(client, fx), "unit_ids": [ko["id"], en["id"]], "undo": UNDO},
+        headers=AUTHOR,
+    )
+    assert created.status_code == 201, created.text
+    assert _ok(_undo(client, fx.bundle_id))["op"] == "pair"
+    assert _pairs(client, fx, ko["id"]) == []
+    assert _ok(_redo(client, fx.bundle_id))["op"] == "pair"
+    assert [pair["unit_ids"] for pair in _pairs(client, fx, ko["id"])] == [sorted([ko["id"], en["id"]])]
+    assert [step.op for step in _load_steps(fx.bundle_id)] == ["confirm_pair", "unpair", "pair"]
+
+
+def test_pair_route_without_undo_meta_records_nothing(client: TestClient) -> None:
+    fx = _setup_decisions(client)
+    (suggested,) = fx.view["pairs"][:1]
+
+    response = client.post(_pair_url(fx, suggested["id"], "/confirm"), json={"revision": _doc_revision(client, fx)}, headers=AUTHOR)
+
+    assert response.status_code == 200, response.text
+    assert _load_steps(fx.bundle_id) == []
+
+
+def test_undo_of_a_merge_that_released_an_assignment_and_a_pair_brings_both_back(client: TestClient) -> None:
+    """배정된 문장과 짝에 든 문장을 합친 편집 — 되돌리면 단위만이 아니라 배정 · 새 문장 · 짝이 그대로, 다시 하면 합친 모습 그대로."""
+    fx = _setup_decisions(client)
+    warm, records = find_unit(fx.view, WARM_UP), find_unit(fx.view, RECORDS)
+    warm_en = find_unit(fx.view, "Warm up the synthetic unit for 5 minutes.")
+    _created(client.post(_pair_url(fx), json={"revision": _doc_revision(client, fx), "unit_ids": [warm["id"], warm_en["id"]]}, headers=AUTHOR))
+    _ok(save_group(client, fx.bundle_id, _body([_unit_in(warm)], [_target("w", fx.sop_id, [warm], slot_key="purpose")])))
+    before = _dump(fx.bundle_id)
+    assert any(row["unit_id"] == warm["id"] for row in before["unit_pair_members"].values())
+    assert before["unit_decisions"][str(warm["id"])]["status"] == "confirmed"
+
+    merged = _ok(client.post(
+        f"/api/bundles/{fx.bundle_id}/documents/{fx.doc['id']}/edits",
+        json={"revision": _doc_revision(client, fx), "confirm": True, "op": {"type": "merge", "unit_ids": [warm["id"], records["id"]]}, "undo": UNDO},
+        headers=AUTHOR,
+    ))
+    after = _dump(fx.bundle_id)
+    assert after["unit_decisions"][str(warm["id"])]["status"] == "unassigned"
+    assert not any(row["unit_id"] == warm["id"] for row in after["unit_pair_members"].values())
+    (step,) = _load_steps(fx.bundle_id)
+    assert (step.kind, step.op) == ("unit_edit", "merge") and step.before and step.after
+
+    undone = _ok(_undo(client, fx.bundle_id))
+    assert (undone["op"], undone["restored_decisions"]) == ("merge", True)
+    restored = _dump(fx.bundle_id)
+    # 합친 단위는 은퇴해도 제 판단 행(미배정)을 지닌다 - 다시 하면 그대로 돌아온다
+    assert restored["unit_decisions"].pop(str(merged["created_unit_ids"][0]))["status"] == "unassigned"
+    assert_same_state(restored, before)
+    view = get_view(client, fx.bundle_id, fx.doc["id"])
+    assert find_unit(view, WARM_UP)["id"] == warm["id"] and find_unit(view, RECORDS)["id"] == records["id"]
+
+    assert _ok(_redo(client, fx.bundle_id))["op"] == "merge"
+    assert_same_state(_dump(fx.bundle_id), after)
+    assert merged["created_unit_ids"][0] in {unit["id"] for unit in get_view(client, fx.bundle_id, fx.doc["id"])["units"]}
+
+
+def test_undo_of_a_language_change_brings_back_the_pair_it_dropped(client: TestClient) -> None:
+    fx = _setup_decisions(client)
+    ko, en = find_unit(fx.view, KO_HEAD), find_unit(fx.view, EN_HEAD)
+    _created(client.post(_pair_url(fx), json={"revision": _doc_revision(client, fx), "unit_ids": [ko["id"], en["id"]]}, headers=AUTHOR))
+    pairs = _pairs(client, fx, ko["id"])
+
+    _ok(client.post(
+        f"/api/bundles/{fx.bundle_id}/documents/{fx.doc['id']}/edits",
+        json={"revision": _doc_revision(client, fx), "op": {"type": "set_language", "unit_ids": [en["id"]], "lang": "ko"}, "undo": UNDO},
+        headers=AUTHOR,
+    ))
+    assert _pairs(client, fx, ko["id"]) == []
+
+    assert _ok(_undo(client, fx.bundle_id))["op"] == "set_language"
+    assert _pairs(client, fx, ko["id"]) == pairs
+    assert _ok(_redo(client, fx.bundle_id))["op"] == "set_language"
+    assert _pairs(client, fx, ko["id"]) == []
+
+
+def test_undo_of_an_edit_is_refused_when_someone_changed_what_it_recorded(client: TestClient) -> None:
+    fx = _setup_decisions(client)
+    ko, en = find_unit(fx.view, KO_HEAD), find_unit(fx.view, EN_HEAD)
+    _created(client.post(_pair_url(fx), json={"revision": _doc_revision(client, fx), "unit_ids": [ko["id"], en["id"]]}, headers=AUTHOR))
+    _ok(client.post(
+        f"/api/bundles/{fx.bundle_id}/documents/{fx.doc['id']}/edits",
+        json={"revision": _doc_revision(client, fx), "op": {"type": "set_language", "unit_ids": [en["id"]], "lang": "ko"}, "undo": UNDO},
+        headers=AUTHOR,
+    ))
+    # 다른 탭(세션)이 같은 Unit으로 짝을 다시 맺었다 - 되살릴 짝 멤버 자리가 찼다
+    _created(client.post(_pair_url(fx), json={"revision": _doc_revision(client, fx), "unit_ids": [ko["id"], find_unit(fx.view, "Warm up the synthetic unit for 5 minutes.")["id"]]}, headers=AUTHOR))
+    before = _dump(fx.bundle_id)
+
+    response = _undo(client, fx.bundle_id)
+
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"]["code"] == "undo_conflict"
+    assert _dump(fx.bundle_id) == before
+
+
+def test_undo_and_redo_of_heading_to_sentence_keep_the_pairs_without_a_conflict(client: TestClient) -> None:
+    """제목 ↔ 문장은 짝을 다시 세운다 - 판단 상태를 찍은 단계를 되돌릴 때 재생이 또 세우면 되쓸 짝과 부딪쳐 409였다(B6-2 스모크)."""
+    fx = _setup_decisions(client)
+    ko, en = find_unit(fx.view, KO_HEAD), find_unit(fx.view, EN_HEAD)
+    before = _dump(fx.bundle_id)
+    _ok(client.post(
+        f"/api/bundles/{fx.bundle_id}/documents/{fx.doc['id']}/edits",
+        json={"revision": _doc_revision(client, fx), "op": {"type": "set_heading", "unit_ids": [ko["id"], en["id"]], "heading": False}, "undo": UNDO},
+        headers=AUTHOR,
+    ))
+    after = _dump(fx.bundle_id)
+
+    assert _ok(_undo(client, fx.bundle_id))["op"] == "set_heading"
+    restored = _dump(fx.bundle_id)
+    # 편집이 만든 단위는 은퇴해도 제 (빈) 판단 행을 지닌다 - 그 행만 빼고 같다
+    restored["unit_decisions"] = {key: row for key, row in restored["unit_decisions"].items() if key in before["unit_decisions"]}
+    assert_same_state(restored, before)
+    assert _ok(_redo(client, fx.bundle_id))["op"] == "set_heading"
+    assert_same_state(_dump(fx.bundle_id), after)
+
+
+def test_two_heading_edits_undo_one_by_one(client: TestClient) -> None:
+    """제목 → 문장 → 제목으로 되돌리기, Undo 두 번 - 두 번째 Undo가 첫 단계가 찍은 짝과 어긋나 409였다(B6-2 스모크)."""
+    fx = _setup_decisions(client)
+    ko = find_unit(fx.view, KO_HEAD)
+    before = _dump(fx.bundle_id)
+    edits = f"/api/bundles/{fx.bundle_id}/documents/{fx.doc['id']}/edits"
+    shifted = _ok(client.post(edits, json={"revision": _doc_revision(client, fx), "op": {"type": "set_heading", "unit_ids": [ko["id"]], "heading": False}, "undo": UNDO}, headers=AUTHOR))
+    _ok(client.post(edits, json={"revision": _doc_revision(client, fx), "op": {"type": "set_heading", "unit_ids": shifted["created_unit_ids"], "heading": True}, "undo": UNDO}, headers=AUTHOR))
+
+    assert _ok(_undo(client, fx.bundle_id))["op"] == "set_heading"
+    second = _undo(client, fx.bundle_id)
+
+    assert second.status_code == 200, second.text
+    restored = _dump(fx.bundle_id)
+    restored["unit_decisions"] = {key: row for key, row in restored["unit_decisions"].items() if key in before["unit_decisions"]}
+    assert_same_state(restored, before)

@@ -887,15 +887,16 @@ def test_extract_result_survives_pickle() -> None:
 
 
 def test_docx_caption_paragraph_links_to_one_bundle_only() -> None:
-    # 두 표 사이 캡션은 먼저 만난 표(바로 앞 → 바로 뒤 순으로 보는 첫 표의 뒤)가 갖고, 둘째 표는 캡션 없이 시작한다
+    # 두 표 사이 캡션은 아래 표가 갖는다(표 캡션 자리는 위) — 위 표가 캡션이 없어도 아래 표의 것을 가져가지 않는다
     blocks = _read(tbl([["a"]]) + p("Table 1 Limits") + tbl([["b"]]))
 
     caption = next(b for b in blocks if b.kind == "paragraph")
     first_cells = [b.seq for b in blocks if b.kind == "table_cell"]
-    assert caption.flags == (f"caption_of:{first_cells[0]}",)
+    assert caption.flags == (f"caption_of:{first_cells[1]}",)
 
 
-def test_docx_cell_table_and_cell_figure_take_no_caption() -> None:
+def test_docx_cell_figure_takes_no_caption() -> None:
+    # 칸 안 표의 캡션은 칸 블록의 captions 신호로 잇고(아래 시험들), 칸 안 그림에는 잇지 않는다 — caption_of 표시는 어디에도 없다
     inner = tbl([["안"]])
     body = (
         f"<w:tbl><w:tblGrid><w:gridCol/></w:tblGrid><w:tr><w:tc>{p('표 1 안쪽')}{inner}"
@@ -905,6 +906,93 @@ def test_docx_cell_table_and_cell_figure_take_no_caption() -> None:
     blocks = _read(body, media={"image1.png": TINY_PNG})
 
     assert not any(f.startswith("caption_of:") for b in blocks for f in b.flags)
+    outer = blocks[0]
+    inner_cell = next(b for b in blocks if b.kind == "table_cell" and b.text == "안")
+    assert outer.signals["captions"] == [[0, len("표 1 안쪽"), inner_cell.seq]]
+
+
+def _work_cell(*items: str) -> str:
+    """바깥 배치 표 1×2 — 왼쪽 칸 "1", 오른쪽 칸 = items(문단·안쪽 표 XML)."""
+    return (
+        '<w:tbl><w:tblGrid><w:gridCol w:w="800"/><w:gridCol w:w="8000"/></w:tblGrid>'
+        f"<w:tr><w:tc>{p('1')}</w:tc><w:tc>{''.join(items)}</w:tc></w:tr></w:tbl>"
+    )
+
+
+def test_docx_caption_inside_a_cell_links_to_the_inner_table() -> None:
+    # 실사례 꼴 — 작업 칸 안 "표 1." 문단 바로 뒤에 안쪽 표, 그 뒤 빈 문단과 본문
+    body = _work_cell(
+        p("필요한 가스켓을 설치한다."),
+        p("표 1. 조제 탱크별 대상 장치"),
+        tbl([["탱크", "대상 장치"], ["A", "교반기"], ["B", "펌프"]]),
+        p(""),
+        p("이 절차는 탱크 A–C에 적용한다."),
+    )
+
+    blocks = _read(body)
+
+    work = next(b for b in blocks if b.kind == "table_cell" and b.col_index == 1 and b.text.startswith("필요"))
+    inner_first = next(b for b in blocks if b.text == "탱크")
+    start = work.text.index("표 1.")
+    assert work.signals["captions"] == [[start, start + len("표 1. 조제 탱크별 대상 장치"), inner_first.seq]]
+
+
+@pytest.mark.parametrize(
+    "items",
+    [
+        # 캡션과 표 사이 빈 문단은 건너뛴다
+        (p("표 1. 조제 탱크"), p(""), tbl([["a"]])),
+        # 앞에 캡션이 없으면 표 바로 뒤(빈 문단 건너뜀)
+        (p("본문"), tbl([["a"]]), p(""), p("Table 1. Target units per tank")),
+    ],
+)
+def test_docx_cell_caption_skips_blank_paragraphs(items: tuple[str, ...]) -> None:
+    blocks = _read(_work_cell(*items))
+
+    work = next(b for b in blocks if b.kind == "table_cell" and b.col_index == 1 and b.table_index == 0)
+    caption = work.signals["captions"][0]
+    assert work.text[caption[0] : caption[1]] in ("표 1. 조제 탱크", "Table 1. Target units per tank")
+    assert caption[2] == next(b for b in blocks if b.text == "a").seq
+
+
+def test_docx_cell_caption_is_taken_once_and_needs_a_caption_shape() -> None:
+    # 두 안쪽 표 사이 캡션은 아래 표가 갖는다(위가 먼저), 캡션 꼴이 아닌 줄은 잇지 않는다, 맨 끝 캡션은 앞 표가 뒤로 받는다
+    blocks = _read(_work_cell(tbl([["a"]]), p("표 2 사이"), tbl([["b"]]), p("설명 문장이다."), tbl([["c"]]), p("표 4 끝")))
+
+    work = blocks[1]
+    seqs = {b.text: b.seq for b in blocks if b.kind == "table_cell"}
+    assert [(work.text[start:end], seq) for start, end, seq in work.signals["captions"]] == [
+        ("표 2 사이", seqs["b"]), ("표 4 끝", seqs["c"])
+    ]
+
+
+def test_docx_caption_between_a_table_and_the_next_goes_to_the_one_below() -> None:
+    # 바깥 표 바로 뒤 "<표 2>" + 빈 줄 + 표 — 위 표(캡션 없음)가 아니라 아래 표의 캡션이다
+    blocks = _read(tbl([["위"]]) + p("<표 2> 운전 조건") + p("") + tbl([["아래"]]))
+    below = next(b for b in blocks if b.text == "아래")
+    assert next(b for b in blocks if b.kind == "paragraph").flags == (f"caption_of:{below.seq}",)
+
+
+def test_docx_table_caption_skips_a_blank_paragraph() -> None:
+    blocks = _read(p("표 3. 운전 조건") + p("") + tbl([["a", "b"]]) + p("뒤"))
+    first_cell = next(b for b in blocks if b.kind == "table_cell")
+    assert f"caption_of:{first_cell.seq}" in blocks[0].flags
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["<표 1> 운전 조건", "[Table 3] Limits", "(표 2) 조건", "표-1 조건", "Table-1 Limits", "[표 4]"],
+)
+def test_docx_bracketed_table_captions_are_linked(text: str) -> None:
+    blocks = _read(p(text) + tbl([["a"]]))
+    first_cell = next(b for b in blocks if b.kind == "table_cell")
+    assert f"caption_of:{first_cell.seq}" in blocks[0].flags
+
+
+def test_docx_bracketed_figure_caption_is_linked() -> None:
+    blocks = _read(f"<w:p>{make_drawing_run('image1.png')}</w:p>" + p("<그림 2> 펌프"), media={"image1.png": TINY_PNG})
+    figure = next(b for b in blocks if b.kind == "figure")
+    assert f"caption_of:{figure.seq}" in blocks[-1].flags
 
 
 TEMPLATE_HEADING_STYLES = (

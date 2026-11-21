@@ -64,7 +64,7 @@ from app.sop.models import (
     UnitPairMember,
     WiStep,
 )
-from app.sop.numbering import get_content_start, get_hidden_len, strip_number
+from app.sop.numbering import get_content_start, get_hidden_len, is_source_text, strip_number
 from app.sop.outline import DocOutline, load_doc_outlines
 from app.sop.pair_settle import settle_pairs
 from app.sop.refs import REF_LANG
@@ -915,7 +915,7 @@ def _decide_change_type(plan: _Plan, spread: Counter[tuple[int, int]], state: _S
         return "split"
     source = state.units[source_id]
     # 번호를 뺀 내용과 같아도 그대로다 — 글자가 하나라도 다르면 결과물이 원문과 다른 글을 그대로라고 적지 않게 고침이다
-    if plan.text in (source.text, strip_number(source.text, source)):
+    if is_source_text(plan.text, source):
         return "as_is"
     return "rewritten"
 

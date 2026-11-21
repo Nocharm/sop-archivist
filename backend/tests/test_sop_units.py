@@ -314,7 +314,7 @@ def test_docx_line_breaks_become_units_that_merge_back(client: TestClient) -> No
     first, second, third = view["units"]
     _edit(client, bundle["id"], doc["id"], {"type": "merge", "unit_ids": [first["id"], second["id"]]})
     merged = get_view(client, bundle["id"], doc["id"])["units"][0]
-    assert (merged["text"], len(merged["spans"])) == ("합성 장비를 켠다\n합성 문을 닫는다", 1)
+    assert (merged["text"], len(merged["spans"])) == ("합성 장비를 켠다 합성 문을 닫는다", 1)  # 줄바꿈은 띄어쓰기로(6-a)
     # 언어 바꾸기는 단위를 새로 만들지 않는다 — id가 그대로라 화면이 고른 자리를 지킬 수 있다
     result = _edit(client, bundle["id"], doc["id"], {"type": "set_language", "unit_ids": [third["id"]], "lang": "en"})
     assert (result["created_unit_ids"], result["retired_unit_ids"]) == ([], [])

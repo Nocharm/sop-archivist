@@ -383,6 +383,9 @@ class Unit(Base):
     # 벗긴 표 덩이 안 줄 순서(unwrap_order.py) — 편집 reorder_unwrapped가 덩이의 줄마다 0부터 매기고 unit_edits.unwrap_seq_changes에 적어 되돌린다.
     # 나누기 · 합치기의 조각은 옛 줄(합치기는 첫 줄)의 값을 물려받는다. NULL이면 원문 순서에서 바로 앞 줄의 값을 빌린다. 다시 표로 묶으면 비운다
     unwrap_seq: Mapped[int | None] = mapped_column(Integer, default=None)
+    # 들여쓰기 차이(B8 항목 7) — 화면이 셈한 단계(번호 깊이 · 기호 단계 · 앞 줄 단계)에 더하는 값이다(상대 값이라 위 번호 줄이 옮기면 따라간다).
+    # 편집 set_indents와 set_number(기호 고를 때 위로 맞춤)가 바꾸고 unit_edits.indent_changes에 적어 되돌린다. 나누기 · 합치기의 조각은 옛 줄의 값을 물려받는다
+    indent_shift: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
 
 
 class UnitEdit(Base):
@@ -410,6 +413,8 @@ class UnitEdit(Base):
     pair_seq_changes: Mapped[dict] = mapped_column(JSON, default=dict)
     # 단위 → [지금 unwrap_seq, 바꿀 unwrap_seq] — 벗긴 표 줄 순서 바꾸기(reorder_unwrapped) · 다시 표로의 비우기와 그 되돌리기
     unwrap_seq_changes: Mapped[dict] = mapped_column(JSON, default=dict)
+    # 단위 → [지금 indent_shift, 바꿀 indent_shift] — 들여쓰기(set_indents · set_number의 위로 맞춤)와 그 되돌리기
+    indent_changes: Mapped[dict] = mapped_column(JSON, default=dict)
     state: Mapped[str] = mapped_column(String(8), default="applied")
     actor: Mapped[str] = mapped_column(String(100))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)

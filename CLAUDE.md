@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **SOP Archivist — SOP Restructuring T/F가 쓰는 사내 AI 에이전트 웹 서비스** (FastAPI + Next.js, 사내 서버에 docker compose로 배포). 옛 SOP 묶음을 새 SOP·WI 구조로 다시 짜는 일(문서 쪼개기 → 배정·고쳐 쓰기 → 결과물 A·B·C·Excel → 검토)을 돕는다. **제품 명세: [`docs/superpowers/specs/2026-11-05-sop-restructuring-e2e-design.md`](docs/superpowers/specs/2026-11-05-sop-restructuring-e2e-design.md)**(판단 기준 `docs/domain/`), 기반 명세 `docs/superpowers/specs/2026-11-04-sop-archivist-baseline-design.md`, 프런트와 맞춘 API 계약은 `docs/superpowers/plans/2026-11-06-sop-restructuring-plan2-ai.md`의 "API 계약" 블록, 프런트 디자인 기초 `frontend/docs/design/2026-11-07-frontend-design-foundations.md`.
 
-> 상태: **v1.4.0 — 정식 업데이트 2026-11-20**(운영 배포는 사용자가 GitLab 파이프라인으로 올린 뒤 `CHANGELOG.md`에 날짜를 적는다. 그전 정식 업데이트는 v1.3.0, 2026-11-20. 운영 :7777, 개발 스택 :4444). 기능 이력은 `CHANGELOG.md`, 지금 진행은 `PROGRESS.md`. **실제 SOP·실제 모델 미검증** — AI 층은 합성 SOP·가짜 AI로만 검증했고 유사도 임계값은 합성 자료로 잡은 값이다(실제 시험 뒤 다시 정한다).
+> 상태: **v1.5.0 — 정식 업데이트 2026-11-21**(운영 배포는 사용자가 GitLab 파이프라인으로 올린 뒤 `CHANGELOG.md`에 날짜를 적는다. 직전 운영 배포는 v1.4.0, 2026-11-20. 운영 :7777, 개발 스택 :4444). 기능 이력은 `CHANGELOG.md`, 지금 진행은 `PROGRESS.md`. **2026-11-20부터 실사용자가 운영에 접속해 실제 데이터가 쌓인다** — 운영 DB는 지울 수 없는 자료다: Alembic 리비전이 기존 행을 지우거나 바꾸면 사용자 승인을 받고 CHANGELOG 배포 메모에 굵게 적으며, 배포 전 백업(`docs/deploy/backup.md`)을 확인한다. AI 층은 합성 SOP·가짜 AI로만 검증했고 유사도 임계값은 합성 자료로 잡은 값이다(실제 자료로 다시 정한다).
 > **서비스 버전**: 단일 소스 `frontend/package.json` `version`(상단 바에 표시). `dev`에 올릴 때마다 PATCH, `dev`→`main` 정식 업데이트마다 MINOR + `vX.Y.Z` 태그(`rules/common/git.md`). 커밋·푸시는 GitHub에만, 사내 GitLab push·배포는 사용자. 운영 배포일은 CHANGELOG에 적는다.
 > **DB**: 로컬은 sqlite 파일(연결마다 `PRAGMA foreign_keys=ON`), 서버는 postgres. 스키마는 **Alembic**(backend 기동 때 head까지 자동 적용).
 > **원칙**: AI는 제안만 하고 사람이 줄마다 확정한다 — AI가 꺼지거나 실패해도 사람 경로는 돈다. AI 페이로드에 직원 실명을 싣지 않는다(역할·부서만). 공개 저장소라 실서버 IP·사내 호스트명·시크릿은 추적 파일에 넣지 않는다(`<server-ip>` 등).
@@ -30,6 +30,7 @@ npm run build                               # 경고 0이어야 한다. next dev
 npm run lint && npx tsc --noEmit -p tsconfig.json && npx vitest run   # 커밋 전 필수
 # 브라우저 검증(npm i --no-save playwright-core, 시스템 Chrome): scripts/pw-smoke-sop.mjs · pw-layout-audit.mjs(DS=worst) · pw-overlap-audit.mjs · pw-contrast-audit.mjs · pw-manual-shots.mjs
 # 평소(변경마다)는 고친 화면의 스모크만: QUIET=1 ONLY="assign:" node scripts/pw-smoke-sop.mjs  (전체 스모크·감사 넷은 dev→main 전, 또는 공용 부품·API 층을 고쳤을 때만 — 사용자 결정 2026-11-16)
+scripts/dev-worktree.sh new <branch>        # 맥: 워크트리 + node_modules + 시드 스냅숏. 워크트리 안에서 up [포트] · reset(스모크 전 DB를 시드로) · down
 node frontend/scripts/fake-ai-server.mjs    # 가짜 AI :9999(저장소 루트에서, FAKE_AI_SPLIT=1이면 나눔). 배선 확인용, 정확도 근거 아님
 # dev 인증 = localStorage `sopa.devUser` / 헤더 `X-Dev-User`. 권한 차등은 DEV_ENFORCE_PERMISSIONS=true(dev.admin이 sysadmin)
 ```
@@ -52,7 +53,7 @@ node frontend/scripts/fake-ai-server.mjs    # 가짜 AI :9999(저장소 루트�
 - **교정 사다리** — 사용자에게 같은 교정을 받거나 같은 종류의 fix가 두 번째면 `/harden`: 설계로 못 하게 → lint·타입·소스 검사 시험 → 실행 검증 → 그래도 안 될 때만 산문 한 줄(왜 검사로 못 하는지와 함께). 산문에만 규칙을 더하지 않는다.
 - **lint·시험 메시지는 고치는 방법까지** 적는다.
 - **스모크 기대값을 낮추거나 단계를 빼서 통과시키지 않는다** — 필요하면 사용자 승인을 받고 커밋 메시지에 사유를 적는다.
-- **기능 작업·병렬 에이전트 보류** — 계획의 스텝 1·2가 `dev`에 오를 때까지 새 기능을 시작하지 않는다. 그 뒤 병렬 에이전트는 동시에 2~3개까지.
+- **병렬 에이전트는 동시에 2~3개까지**(계획의 스텝 1·2는 v1.1.54에 `dev`에 올라 기능 작업 보류는 풀렸다).
 
 ## Architecture
 

@@ -312,7 +312,7 @@ def test_layout_to_data_rejects_cells_across_tables(client: TestClient) -> None:
     view = get_view(client, fx.bundle_id, fx.doc["id"])
     cells = [find_unit(view, text)["id"] for text in ("합성 첫 표.", "합성 둘째 표.")]
     _ok(_edit(client, fx.bundle_id, fx.doc["id"], {"type": "merge", "unit_ids": cells}))
-    merged = find_unit(get_view(client, fx.bundle_id, fx.doc["id"]), "합성 첫 표.\n합성 둘째 표.")
+    merged = find_unit(get_view(client, fx.bundle_id, fx.doc["id"]), "합성 첫 표. 합성 둘째 표.")
 
     for table in (first, second):
         refused = _edit(client, fx.bundle_id, fx.doc["id"], _set_layout(table["table_id"], False))

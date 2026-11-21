@@ -133,7 +133,7 @@ def test_compound_caption_heads_have_no_number():
 
 
 def test_bracketed_caption_number_is_the_first_own_kind_token():
-    assert not has_caption_head("<표 3> 운전 조건")
+    assert has_caption_head("<표 3> 운전 조건")  # 괄호 꼴도 캡션 머리다(B10 — <표 1> · [Table 3] · (표 2) · 표-1)
     assert find_caption_number("<표 3> 운전 조건", "table") == NumberToken("table", 3, 3, 4)
     assert find_caption_number("[그림 2] 배관도 (표 5 참조)", "figure") == NumberToken("figure", 2, 4, 5)
     assert find_caption_number("[그림 2] 배관도", "table") is None
@@ -143,5 +143,6 @@ def test_bracketed_caption_number_is_the_first_own_kind_token():
 def test_caption_number_takes_the_head_of_its_own_kind_only():
     assert find_caption_number("표 3. 운전 (Table 3)", "table") == NumberToken("table", 3, 2, 3)
     assert find_caption_number("Figure 2 shows Table 4", "table") is None  # 다른 종류 머리 — 본문 토큰으로 넘어가지 않는다
-    assert find_caption_number("<표 3> 운전", None) is None  # 묶음 종류를 모르면 머리만 본다
+    assert find_caption_number("운전 조건 표 3", None) is None  # 묶음 종류를 모르면 머리만 본다
+    assert find_caption_number("<표 3> 운전", None) == NumberToken("table", 3, 3, 4)  # 괄호 꼴도 머리
     assert find_caption_number("표 3. 운전", None) == NumberToken("table", 3, 2, 3)

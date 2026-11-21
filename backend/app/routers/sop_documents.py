@@ -2,6 +2,7 @@
 되돌리기·경계 확인·한/영 짝. 쓰기는 작성자가 작업 중일 때만 한다(편집 규칙은 app/sop/editing.py, 짝 규칙은 app/sop/pairs.py)."""
 
 import asyncio
+import logging
 import zipfile
 from collections.abc import Iterable, Sequence
 from io import BytesIO
@@ -30,14 +31,16 @@ from app.sop.caption_refs import (
 )
 from app.sop.constants import LANGUAGE_LAYOUTS, MEMBER_ROLES
 from app.sop.counterparts import build_table_facts, count_table_langs
-from app.sop.decision_steps import record_unit_edit_step
+from app.sop.decision_steps import dump_bundle_state, record_snapshot_step, record_unit_edit_step
 from app.sop.detach import detach_units, find_units_needing_confirm
+from app.sop.drawing_image import render_drawing_png
 from app.sop.editing import (
     EditIn,
     EditResult,
     EditStepResult,
     EditStepIn,
     apply_edit,
+    is_merge_edit,
     load_active_units,
     redo_edit,
     undo_edit,
@@ -49,16 +52,18 @@ from app.sop.ai.split import load_open_split_suggestion_ids
 from app.sop.filename import parse_file_name
 from app.sop.errors import check_revision, raise_rule
 from app.sop.excel_export import build_export_file_name
+from app.sop.extract.drawing import SIGNAL_DRAWING, list_drawing_texts
+from app.sop.extract.types import DRAWING_IMAGE_PART
 from app.sop.events import record_event
 from app.sop.ingest import get_max_file_bytes, ingest_upload
 from app.sop.numbering import (
-    NUMBER_TYPED,
     NUMBERED_KINDS,
     get_content_start,
     get_hidden_len,
     get_number,
     get_number_note,
     has_number_ranges,
+    is_read_from_text,
 )
 from app.sop.membership import BundleContext, ensure_editable, lock_bundle, require_bundle_role
 from app.sop.models import (
@@ -88,6 +93,7 @@ from app.sop.pairs import (
     PairIn,
     PairResult,
     PairRevisionIn,
+    PairUndoIn,
     build_pair_out,
     confirm_pair,
     create_pair,
@@ -119,6 +125,7 @@ _FILE_MEDIA_TYPES = {
     "pdf": "application/pdf",
 }
 _XLSX_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+logger = logging.getLogger(__name__)
 # 브라우저가 그대로 그리는 래스터 그림만 그 형식으로 낸다 — SVG 등은 스크립트를 담을 수 있어 내려받기 형식으로 낸다
 _IMAGE_MEDIA_TYPES = {
     "png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg", "gif": "image/gif",
@@ -268,6 +275,8 @@ class ViewBlockOut(BaseModel):
     part_group: str
     # 그림 블록만 — 문단 · 칸 글 안에 놓인 자리. 그림만 든 문단 · 추출기 7 전의 추출은 None
     anchor: ViewFigureAnchorOut | None = None
+    # 도형 그림(업무흐름도) 블록만 — 도형 안 글(위에서 아래). 배정 대상이 아니라 보기 · 찾기용이다(추출기 9부터)
+    figure_texts: list[str] = []
 
 
 class ViewUnitRefOut(BaseModel):
@@ -295,7 +304,7 @@ class ViewNumberOut(BaseModel):
     source: str | None  # auto | typed | cell
     is_set: bool  # 사람이 고쳤다(번호 없음 포함)
     content_start: int  # text에서 내용이 시작하는 자리 — 번호가 번호 칸으로 갔으면 그 뒤, 아니면 0
-    typed_len: int  # 번호로 삼을 수 있는 글 앞 타자 번호의 글자 수 — 없거나 이미 번호면 0
+    from_text: bool  # 본문 줄의 번호를 글 앞 타자 번호에서 저절로 읽었는가(numbering.is_read_from_text) — 번호 칸 툴팁이 알린다
     note: str | None  # 번호 노트 — 사람이 원문과 다르게 고쳤으면 원문(읽은) 번호(numbering.get_number_note), 아니면 null
 
 
@@ -318,6 +327,8 @@ class ViewUnitOut(BaseModel):
     is_edited: bool
     # 합치기로 생겨 그 뒤 바뀌지 않은 단위 — 합치기 전 단위들로 되돌릴 수 있다(편집 unmerge)
     can_unmerge: bool
+    # can_unmerge인 단위의 조각(합치기 전 단위) 글 — 원문 순, 조각 언어 바꾸기(switch_language piece)의 순번이다. 아니면 빈 목록
+    merge_pieces: list[str] = []
     # 단위 자리의 블록 — 범위가 없는 표·캡션 없는 그림도 어느 블록(그림 이미지)인지 알 수 있게
     pos_seq: int
     block_id: int
@@ -337,6 +348,8 @@ class ViewUnitOut(BaseModel):
     pair_seq: int | None = None
     # 벗긴 표 덩이 안 줄 순서(unwrap_order.py, 편집 reorder_unwrapped) — 바꾼 적 없으면 null(원문 앞 줄의 값을 빌린다)
     unwrap_seq: int | None = None
+    # 들여쓰기 차이(B8, 편집 set_indents) — 화면이 셈한 단계에 더한다. 바꾼 적 없으면 0
+    indent_shift: int = 0
 
 
 def _to_ref_out(state: RefState | None) -> ViewUnitRefOut | None:
@@ -482,13 +495,17 @@ def _build_view_blocks(rows: Iterable[Row]) -> list[ViewBlockOut]:
         fields = dict(row._mapping)
         signals = fields.pop("signals")
         anchor = None
+        figure_texts: list[str] = []
         if row.kind == "figure":
             at = read_figure_inline(signals)
             if at is not None and host_id is not None:
                 anchor = ViewFigureAnchorOut(block_id=host_id, at=at)
+            figure_texts = list_drawing_texts((signals or {}).get(SIGNAL_DRAWING))
         else:
             host_id = row.id
-        out.append(ViewBlockOut(**fields, part_group=get_part_group_key(row.part, row.xml_path), anchor=anchor))
+        out.append(ViewBlockOut(
+            **fields, part_group=get_part_group_key(row.part, row.xml_path), anchor=anchor, figure_texts=figure_texts,
+        ))
     return out
 
 
@@ -534,14 +551,18 @@ async def build_document_view(session: AsyncSession, document: Document) -> Docu
     pairs = await _load_view_pairs(session, document.id)
     created_lists = (
         await session.execute(
-            select(UnitEdit.op, UnitEdit.created_unit_ids).where(
+            select(UnitEdit.op, UnitEdit.created_unit_ids, UnitEdit.retired_unit_ids).where(
                 UnitEdit.document_id == document.id, UnitEdit.state == "applied"
             )
         )
     ).all()
     # 합치기 해제가 되살린 단위는 원래 모습이라 "나눔·합침" 표시를 하지 않는다(그 전 편집이 만든 단위면 그 기록이 표시한다)
-    edited_ids = {unit_id for op, created in created_lists if op != "unmerge" for unit_id in created}
-    merged_ids = {created[0] for op, created in created_lists if op == "merge" and len(created) == 1}
+    edited_ids = {unit_id for op, created, _ in created_lists if op != "unmerge" for unit_id in created}
+    # 합친 단위 → 합치기 전 단위(조각). 짝을 한 언어로 바꿔 합친 것도 같다(editing.is_merge_edit)
+    pieces_of = {created[0]: retired for op, created, retired in created_lists if is_merge_edit(op, created, retired)}
+    merged_ids = set(pieces_of)
+    active_ids = {unit.id for unit in units}
+    piece_texts = await _load_piece_texts(session, [piece for unit_id, ids in pieces_of.items() if unit_id in active_ids for piece in ids])
     pair_by_unit = {unit_id: pair.id for pair in pairs for unit_id in pair.unit_ids}
     split_suggestions = await load_open_split_suggestion_ids(session, document)
     ref_marks = {
@@ -592,6 +613,7 @@ async def build_document_view(session: AsyncSession, document: Document) -> Docu
                 pair_id=pair_by_unit.get(unit.id),
                 is_edited=unit.id in edited_ids,
                 can_unmerge=unit.id in merged_ids,
+                merge_pieces=[piece_texts[piece_id] for piece_id in piece_texts if piece_id in pieces_of.get(unit.id, ())],
                 pos_seq=unit.pos_seq,
                 block_id=unit.spans[0][0] if unit.spans else block_id_by_seq[unit.pos_seq],
                 split_suggestion_id=split_suggestions.get(unit.id),
@@ -602,12 +624,23 @@ async def build_document_view(session: AsyncSession, document: Document) -> Docu
                 caption_figure_id=unit.caption_figure_id,
                 pair_seq=unit.pair_seq,
                 unwrap_seq=unit.unwrap_seq,
+                indent_shift=unit.indent_shift,
             )
             for unit in units
         ],
         pairs=pairs,
         edits=edits,
     )
+
+
+async def _load_piece_texts(session: AsyncSession, unit_ids: Sequence[int]) -> dict[int, str]:
+    """조각(은퇴한 합치기 전 단위) → 글, 원문 순(dict 차례) — switch_language piece 순번과 같은 차례다."""
+    if not unit_ids:
+        return {}
+    rows = await session.execute(
+        select(Unit.id, Unit.text).where(Unit.id.in_(unit_ids)).order_by(Unit.pos_seq, Unit.pos_start, Unit.id)
+    )
+    return {unit_id: text for unit_id, text in rows}
 
 
 async def _load_view_pairs(session: AsyncSession, document_id: int) -> list[ViewPairOut]:
@@ -843,11 +876,9 @@ async def get_unit_ref(
 def _to_number_out(unit: Unit) -> ViewNumberOut | None:
     if unit.kind not in NUMBERED_KINDS or unit.noise_kind is not None:  # 목차 줄은 번호 칸이 없다
         return None
-    hidden = get_hidden_len(unit)
-    is_typed_text = unit.number_source == NUMBER_TYPED and not hidden and unit.number_set is None
     return ViewNumberOut(
         value=get_number(unit), read=unit.number_read, source=unit.number_source, is_set=unit.number_set is not None,
-        content_start=get_content_start(unit.text, hidden), typed_len=unit.number_len if is_typed_text else 0,
+        content_start=get_content_start(unit.text, get_hidden_len(unit)), from_text=is_read_from_text(unit),
         note=get_number_note(unit),
     )
 
@@ -873,10 +904,12 @@ async def edit_units(
 ) -> EditResult:
     document = await _lock_editable_document(session, ctx, doc_id, body.revision)
     revision = document.revision
+    # Assign 단계는 편집이 함께 바꾼 판단 · 짝도 찍는다(되돌리면 되살린다) - 편집 전 상태를 먼저 읽는다
+    before_state = await dump_bundle_state(session, ctx.bundle.id) if body.undo is not None else None
     result = await apply_edit(session, document, body.op, confirm=body.confirm, actor=ctx.login_id)
     # 바뀐 것이 없는 편집은 Split 기록도 revision도 그대로라 Assign 단계도 남기지 않는다(언어 바꾸기는 단위를 만들지 않는다)
-    if body.undo is not None and result.document_revision != revision:
-        await record_unit_edit_step(session, ctx.bundle, ctx.login_id, body.undo, document.id)
+    if body.undo is not None and before_state is not None and result.document_revision != revision:
+        await record_unit_edit_step(session, ctx.bundle, ctx.login_id, body.undo, document.id, before_state)
     await session.commit()
     return result
 
@@ -915,7 +948,9 @@ async def create_unit_pair(
     session: AsyncSession = Depends(get_session),
 ) -> PairResult:
     document = await _lock_editable_document(session, ctx, doc_id, body.revision)
-    pair = await create_pair(session, document, body.unit_ids, ctx.login_id)
+    pair = await record_snapshot_step(
+        session, ctx.bundle, ctx.login_id, body.undo, "pair", lambda: create_pair(session, document, body.unit_ids, ctx.login_id)
+    )
     result = PairResult(document_revision=document.revision, pair=await build_pair_out(session, pair))
     await session.commit()
     return result
@@ -930,7 +965,9 @@ async def confirm_unit_pair(
     session: AsyncSession = Depends(get_session),
 ) -> PairResult:
     document = await _lock_editable_document(session, ctx, doc_id, body.revision)
-    pair = await confirm_pair(session, document, pair_id, ctx.login_id)
+    pair = await record_snapshot_step(
+        session, ctx.bundle, ctx.login_id, body.undo, "confirm_pair", lambda: confirm_pair(session, document, pair_id, ctx.login_id)
+    )
     result = PairResult(document_revision=document.revision, pair=await build_pair_out(session, pair))
     await session.commit()
     return result
@@ -941,12 +978,16 @@ async def delete_unit_pair(
     doc_id: IdPath,
     pair_id: IdPath,
     revision: int = Query(ge=1),
+    body: PairUndoIn | None = None,
     ctx: BundleContext = Depends(_require_author),
     session: AsyncSession = Depends(get_session),
 ) -> PairResult:
     # 짝을 풀어도 문서 revision이 오르므로 204 대신 새 revision을 돌려준다
     document = await _lock_editable_document(session, ctx, doc_id, revision)
-    await delete_pair(session, document, pair_id, ctx.login_id)
+    await record_snapshot_step(
+        session, ctx.bundle, ctx.login_id, body.undo if body else None, "unpair",
+        lambda: delete_pair(session, document, pair_id, ctx.login_id),
+    )
     result = PairResult(document_revision=document.revision, pair=None)
     await session.commit()
     return result
@@ -1049,13 +1090,16 @@ async def get_figure_image(
     session: AsyncSession = Depends(get_session),
 ) -> Response:
     document = await _get_document(session, ctx.bundle.id, doc_id)
-    image_part = await session.scalar(
-        select(SourceBlock.image_part)
+    row = (await session.execute(
+        select(SourceBlock.image_part, SourceBlock.signals)
         .join(Extraction, Extraction.id == SourceBlock.extraction_id)
         .where(SourceBlock.id == block_id, SourceBlock.kind == "figure", Extraction.document_id == document.id)
-    )
+    )).one_or_none()
+    image_part = row.image_part if row is not None else None
     if image_part is None:
         raise_rule(404, "figure_not_found")
+    if image_part == DRAWING_IMAGE_PART:
+        return await _respond_drawing(block_id, (row.signals or {}).get(SIGNAL_DRAWING))
     stored = await session.get_one(DocumentFile, document.id)  # 그림 블록은 ready 문서에만 있고 ready는 바이트를 남긴다
     content = await asyncio.to_thread(_read_zip_entry, stored.content, image_part)
     if content is None:  # 외부 링크 그림처럼 파일 안에 없는 대상
@@ -1066,6 +1110,18 @@ async def get_figure_image(
         media_type=_IMAGE_MEDIA_TYPES.get(extension, "application/octet-stream"),
         headers={"X-Content-Type-Options": "nosniff"},
     )
+
+
+async def _respond_drawing(block_id: int, drawing: object) -> Response:
+    """도형 그림을 그려 보낸다 — 못 그리면 그림 없음(404)이고 화면은 자리 상자와 그림 안 글로 남는다."""
+    if not isinstance(drawing, dict):
+        raise_rule(404, "figure_not_found")
+    try:
+        content = await asyncio.to_thread(render_drawing_png, drawing)
+    except (ValueError, KeyError, TypeError, OSError) as exc:
+        logger.warning("drawing render failed", extra={"block_id": block_id, "error": type(exc).__name__})
+        raise_rule(404, "figure_not_found")
+    return Response(content=content, media_type="image/png", headers={"X-Content-Type-Options": "nosniff"})
 
 
 @router.post("/{bundle_id}/warnings/{warning_id}/ack", response_model=WarningOut)

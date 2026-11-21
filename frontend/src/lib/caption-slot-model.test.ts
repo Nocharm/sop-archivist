@@ -7,6 +7,7 @@ import {
   buildCaptionSlot,
   findLangCut,
   getCaptionMotion,
+  listCaptionHolders,
   isCaptionShaped,
   isSentenceLike,
   resolveCaptionDetach,
@@ -47,7 +48,7 @@ function makeInput(extra: ViewUnit[] = [], overrides: Partial<CaptionSlotInput> 
   ];
   return {
     bundle: TABLE, units: new Map(all.map((unit) => [unit.id, unit])), places: buildBlockPlaces(BLOCKS, [{ id: 10, parent_table_id: null }]),
-    blockKinds: new Map(BLOCKS.map((item) => [item.id, item.kind])), written: [], ...overrides,
+    cellTables: new Map(BLOCKS.filter((item) => item.kind === "table_cell").map((item) => [item.id, item.table_id])), written: [], ...overrides,
   };
 }
 
@@ -90,11 +91,13 @@ describe("findLangCut", () => {
 });
 
 describe("buildCaptionSlot", () => {
-  it("offers paragraphs within two blocks, the first row and writing in when the slot is empty - the caption-shaped one above is best", () => {
-    const slot = buildCaptionSlot(makeInput());
+  it("offers the nearest line each way and caption-shaped lines at any distance, nearest first, then the first row and writing in", () => {
+    // B10 8-b - 거리 제한이 없다: 9칸 아래 캡션 꼴 줄(17)도 후보, 캡션 꼴이 아닌 먼 줄(18)은 아니다
+    const input = makeInput([textUnit(17, 9, "표 7. 먼 캡션"), textUnit(18, 10, "먼 문장이다.")]);
+    const slot = buildCaptionSlot({ ...input, places: new Map(input.places).set(9, 12).set(10, 13) });
     expect(slot.state).toBe("empty");
     expect(slot.candidates.map((candidate) => (candidate.kind === "near" ? `${candidate.side}${candidate.distance}:${candidate.unitId}` : candidate.kind))).toEqual([
-      "above2:11", "above1:13", "below1:16", "first_row", "write",
+      "above1:13", "below1:16", "above2:11", "below10:17", "first_row", "write",
     ]);
     const best = slot.candidates.filter((candidate) => candidate.kind !== "write" && candidate.isBest);
     expect(best).toMatchObject([{ kind: "near", unitId: 11, isShaped: true, number: "3" }]);
@@ -127,6 +130,26 @@ describe("buildCaptionSlot", () => {
     expect(slot.chips).toMatchObject([{ unitId: 21, origin: "first_row", isOdd: true }]);
   });
 
+  it("offers a free line inside the same outer table first (distance 0) and refuses lines still in a table", () => {
+    // 벗긴 바깥 표(표 30)의 줄(블록 7)은 안쪽 표와 같은 자리 - 가장 가깝다. 아직 표인 칸 줄(묶음 있음)은 후보가 아니다
+    const input = makeInput([
+      textUnit(23, 7, "필요한 가스켓을 설치한다.", { kind: "cell_sentence", table_id: 30, pos_seq: 3 }),
+      textUnit(24, 8, "다른 표 칸이다.", { kind: "cell_sentence", table_id: 31, group_unit_id: 99 }),
+    ]);
+    const slot = buildCaptionSlot({ ...input, places: new Map(input.places).set(7, 2).set(8, 2) });
+    const near = slot.candidates.filter((candidate) => candidate.kind === "near").map((candidate) => (candidate.kind === "near" ? `${candidate.side}${candidate.distance}:${candidate.unitId}` : ""));
+    expect(near[0]).toBe("above0:23");
+    expect(near).not.toContain("below0:24");
+  });
+
+  it("does not take a caption line in an outer table's cell for a lifted first row", () => {
+    // 바깥 칸 안 "표 1." 줄(블록 7, 표 30의 칸)이 안쪽 표 20의 캡션 - 첫 행이 아니라 보통 캡션이다(떼면 바깥 칸 줄로 돌아간다)
+    const input = makeInput([textUnit(23, 7, "표 1. 조제 탱크", { kind: "caption", group_unit_id: 20 })]);
+    const slot = buildCaptionSlot({ ...input, cellTables: new Map([...input.cellTables, [7, 30]]) });
+    expect(slot.hasFirstRow).toBe(false);
+    expect(slot.chips).toMatchObject([{ unitId: 23, origin: "unit" }]);
+  });
+
   it("shows written-in captions as their own chips", () => {
     const slot = buildCaptionSlot(makeInput([], { written: [{ lang: "en", text: "Table 4. Check interval" }, { lang: "ko", text: " " }] }));
     expect(slot.state).toBe("written");
@@ -140,38 +163,52 @@ describe("buildCaptionSlot", () => {
     const second = makeUnit(41, { kind: "figure", block_id: 2, pos_seq: 1, lang: "neutral" });
     const caption = textUnit(42, 3, "그림 1. 펌프 구조", { kind: "caption", group_unit_id: 41 });
     const units = new Map([first, second, caption].map((unit) => [unit.id, unit]));
-    const slot = buildCaptionSlot({ bundle: first, units, places, blockKinds: new Map(), written: [] });
+    const slot = buildCaptionSlot({ bundle: first, units, places, cellTables: new Map(), written: [] });
     expect(slot.candidates).toContainEqual({ kind: "figure", figureId: 41, side: "below", text: "그림 1. 펌프 구조", isBest: true });
 
     const grouped = new Map(units);
     grouped.set(41, { ...second, caption_figure_id: 40 });
     grouped.set(42, { ...caption, group_unit_id: 40 });
-    const shared = buildCaptionSlot({ bundle: grouped.get(41) as ViewUnit, units: grouped, places, blockKinds: new Map(), written: [] });
+    const shared = buildCaptionSlot({ bundle: grouped.get(41) as ViewUnit, units: grouped, places, cellTables: new Map(), written: [] });
     expect(shared).toMatchObject({ state: "shared", groupHeadId: 40, chips: [{ unitId: 42, origin: "shared" }] });
-    expect(buildCaptionSlot({ bundle: first, units: grouped, places, blockKinds: new Map(), written: [] }).groupHeadId).toBe(40);
+    expect(buildCaptionSlot({ bundle: first, units: grouped, places, cellTables: new Map(), written: [] }).groupHeadId).toBe(40);
   });
 });
 
 describe("resolveCaptionDrop", () => {
-  const { units, places } = makeInput([textUnit(17, 7, "먼 문장이다.")]);
-  const far = new Map(places).set(7, 9);
+  const { units } = makeInput([
+    textUnit(17, 7, "먼 문장이다."),
+    textUnit(18, 8, "벗긴 표 줄이다.", { kind: "cell_sentence", table_id: 30 }),
+    textUnit(19, 9, "아직 표인 칸이다.", { kind: "cell_sentence", table_id: 31, group_unit_id: 99 }),
+    textUnit(25, 10, "1. 목적 ........ 3", { noise_kind: "toc" }),
+    textUnit(26, 11, "SOP-001", { lang: "ref" }),
+  ]);
   const get = (id: number) => units.get(id) as ViewUnit;
 
-  it("attaches one free sentence within two blocks", () => {
-    expect(resolveCaptionDrop([get(11)], TABLE, units, places)).toEqual({ kind: "attach", unitId: 11, bundleId: 20 });
+  it("attaches one free sentence at any distance, and a free line of an unwrapped table", () => {
+    expect(resolveCaptionDrop([get(11)], TABLE, units)).toEqual({ kind: "attach", unitId: 11, bundleId: 20 });
+    expect(resolveCaptionDrop([get(17)], TABLE, units)).toEqual({ kind: "attach", unitId: 17, bundleId: 20 });
+    expect(resolveCaptionDrop([get(18)], TABLE, units)).toEqual({ kind: "attach", unitId: 18, bundleId: 20 });
   });
 
-  it("refuses a far sentence, a pair, a shared figure and a language that already has a caption", () => {
-    expect(resolveCaptionDrop([get(17)], TABLE, units, far)).toEqual({ kind: "refused", reasonKey: "assign.captionSlot.why.tooFar" });
-    expect(resolveCaptionDrop([get(11), get(13)], TABLE, units, places)).toEqual({ kind: "refused", reasonKey: "assign.captionSlot.why.oneLine" });
-    expect(resolveCaptionDrop([get(11)], { ...TABLE, caption_figure_id: 5 }, units, places)).toEqual({ kind: "refused", reasonKey: "assign.captionSlot.why.shared" });
+  it("refuses with a caption reason per kind, a pair, a shared figure and a language that already has a caption", () => {
+    expect(resolveCaptionDrop([get(19)], TABLE, units)).toEqual({ kind: "refused", reasonKey: "assign.captionSlot.why.inTable" });
+    expect(resolveCaptionDrop([get(25)], TABLE, units)).toEqual({ kind: "refused", reasonKey: "assign.captionSlot.why.tocLine" });
+    expect(resolveCaptionDrop([get(26)], TABLE, units)).toEqual({ kind: "refused", reasonKey: "assign.captionSlot.why.refLine" });
+    expect(resolveCaptionDrop([get(11), get(13)], TABLE, units)).toEqual({ kind: "refused", reasonKey: "assign.captionSlot.why.oneLine" });
+    expect(resolveCaptionDrop([get(11)], { ...TABLE, caption_figure_id: 5 }, units)).toEqual({ kind: "refused", reasonKey: "assign.captionSlot.why.shared" });
     const withCaption = new Map(units).set(30, textUnit(30, 3, "표 9", { kind: "caption", group_unit_id: 20 }));
-    expect(resolveCaptionDrop([get(11)], TABLE, withCaption, places)).toEqual({ kind: "refused", reasonKey: "assign.ctx.why.captionExists" });
+    expect(resolveCaptionDrop([get(11)], TABLE, withCaption)).toEqual({ kind: "refused", reasonKey: "assign.ctx.why.captionExists" });
+    expect(resolveCaptionDrop([withCaption.get(30) as ViewUnit], { ...TABLE, id: 50 }, withCaption)).toEqual({ kind: "refused", reasonKey: "assign.captionSlot.why.alreadyCaption" });
+  });
+
+  it("tells a dragged whole table apart from a line", () => {
+    expect(resolveCaptionDrop([makeUnit(60, { kind: "table", table_id: 40 })], TABLE, units)).toEqual({ kind: "refused", reasonKey: "assign.captionSlot.why.wholeTable" });
   });
 
   it("is not a drop when the table itself or its own cell is dragged", () => {
-    expect(resolveCaptionDrop([get(21)], TABLE, units, places)).toEqual({ kind: "none" });
-    expect(resolveCaptionDrop([TABLE], TABLE, units, places)).toEqual({ kind: "none" });
+    expect(resolveCaptionDrop([get(21)], TABLE, units)).toEqual({ kind: "none" });
+    expect(resolveCaptionDrop([TABLE], TABLE, units)).toEqual({ kind: "none" });
   });
 });
 
@@ -191,5 +228,19 @@ describe("getCaptionMotion", () => {
     expect(getCaptionMotion({ type: "detach_caption", unit_id: 30 }, 20)).toEqual({ scopes: ["c20"], reverse: true });
     expect(getCaptionMotion({ type: "group_figures", unit_ids: [40, 41] }, 40)).toEqual({ scopes: ["c40", "c41"], reverse: false });
     expect(getCaptionMotion({ type: "split", unit_id: 1, at: 2 }, 20)).toBeNull();
+  });
+});
+
+describe("listCaptionHolders", () => {
+  it("lists tables and figures nearest first from the line's side, at most five", () => {
+    // 줄 13(자리 1) - 표 20(자리 2)이 바로 아래, 그림 41(자리 0)이 바로 위 · 같은 거리면 원문 자리가 가까운 표가 먼저, 먼 표들은 뒤
+    const input = makeInput([
+      makeUnit(41, { kind: "figure", block_id: 1, pos_seq: 0, lang: "neutral" }),
+      ...[50, 51, 52, 53, 54].map((id, index) => makeUnit(id, { kind: "table", table_id: 70 + index, block_id: 90 + index, pos_seq: 90 + index, lang: "neutral" })),
+    ]);
+    const places = new Map(input.places);
+    [90, 91, 92, 93, 94].forEach((blockId, index) => places.set(blockId, 10 + index));
+    const holders = listCaptionHolders(input.units.get(13) as ViewUnit, input.units, places);
+    expect(holders.map((holder) => `${holder.side}${holder.distance}:${holder.bundle.id}`)).toEqual(["below1:20", "above1:41", "below9:50", "below10:51", "below11:52"]);
   });
 });

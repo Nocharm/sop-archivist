@@ -20,6 +20,8 @@ class OutputLabels:
     cell_template: str  # {table} {row} {col}
     nested_separator: str  # 안쪽 표 위치의 앞붙이 — 바깥 칸과 안쪽 자리 사이(F2 · F11, "표 3 · 1행 1열 › 표 4 · 2행 1열")
     table_template: str  # {table}
+    table_caption_template: str  # 다른 표의 칸 줄이 된 캡션의 위치 — 칸 좌표가 아니라 캡션 자리(B10), {table}
+    figure_caption: str  # 같은 경우의 그림 캡션 위치
     table_source_template: str  # 결과물 A 표 줄의 원문 칸 — {table} {rows} {cols}
     read_number_template: str  # 번호를 고친 줄의 절 — {number}는 고친 번호, {read}는 추출기가 읽은 값
     wi_step_template: str  # {step} {part}
@@ -54,6 +56,8 @@ LABELS = {
         cell_template="표 {table} · {row}행 {col}열",
         nested_separator=" › ",
         table_template="표 {table}",
+        table_caption_template="표 {table} 캡션",
+        figure_caption="그림 캡션",
         table_source_template="[표 {table}, {rows}×{cols}]",
         read_number_template="{number} (읽은 값 {read})",
         wi_step_template="{step}단계 · {part}",
@@ -88,6 +92,8 @@ LABELS = {
         cell_template="Table {table} · R {row} C {col}",
         nested_separator=" › ",
         table_template="Table {table}",
+        table_caption_template="Table {table} caption",
+        figure_caption="Figure caption",
         table_source_template="[Table {table}, {rows}×{cols}]",
         read_number_template="{number} (read as {read})",
         wi_step_template="Step {step} · {part}",

@@ -31,6 +31,8 @@ OUTLINE_ORIGINS: tuple[OutlineOrigin, ...] = get_args(OutlineOrigin)
 SEMANTIC_CHECK_KEYS = ("numbers", "conditions", "tables", "figures")
 SYSTEM_HOLD_RELATED_CHANGED = "system:related_unit_changed"  # 화면은 "관련 단위가 바뀜"으로 보인다
 MAX_PAIR_SIDE = 3  # 한/영 짝 한쪽 최대 단위 수(작은 다대다)
+PAIR_CONFIRMED = "confirmed"  # unit_pairs.status — 사람이 맺거나 확인한 짝(제안은 units.PAIR_SUGGESTED)
+PAIR_SOURCE_HUMAN = "human"  # unit_pairs.source — 사람이 맺은 짝
 # 새 문장 들여쓰기 최대 깊이 — 9면 칸 번호 아래로 열 단계(6.1.1 … 6.1.1.1.1.1.1.1.1.1)까지. 순서 바꾸기 입력의 상한이다
 MAX_INDENT_LEVEL = 9
 # 글머리 기호 줄의 깊이는 0~2 세 단계(• ○ ▪)다. 저장 상한(MAX_INDENT_LEVEL)과 따로 읽을 때 눌러 읽는다 — 번호 줄과 따로 세어
@@ -46,7 +48,7 @@ NUMBERED, NUMBER_OMITTED, NUMBER_NOTE, NUMBER_BULLET = NUMBER_STYLES
 
 # --- AI 층(계획 2) ---
 # "match"는 계획이 쓰는 제안의 종류다. 같은 이름의 LLM 작업은 걷었고(설계 2026-11-20-change-type-two D6) 옛 작업 행 때문에 작업 쪽 CHECK에도 남는다
-AI_JOB_KINDS = ("classify", "translate", "match_plan", "match", "pair", "split", "doc_meta", "tobe_list")
+AI_JOB_KINDS = ("classify", "translate", "match_plan", "match", "pair", "split", "doc_meta", "tobe_list", "unwrap_order")
 AI_RETIRED_JOB_KINDS = ("match",)  # 핸들러가 없는 옛 작업 종류 — 다시 시도로 줄 세우지 않는다(돌면 internal 실패다)
 AI_JOB_STATUSES = ("queued", "running", "done", "failed", "stale", "cancelled")
 AI_SUGGESTION_RESULTS = ("applied", "stale", "invalid")  # 적용됨 | 낡아서 안 씀 | 응답이 규칙 위반
@@ -57,5 +59,6 @@ AI_PRIORITY_PRE_CLASSIFY = 2  # 미리 돌리기: 분류
 AI_ADOPTIONS = ("as_is", "edited", "rejected")  # 사람의 결과: 그대로 채택 | 고쳐서 채택 | 버림
 GUIDELINE_KEYS = (
     "rules", "prompt.classify", "prompt.translate", "prompt.split", "prompt.doc_meta", "prompt.tobe_list",
+    "prompt.unwrap_order",
 )
 SYSTEM_HOLD_AI_INVALID = "system:ai_invalid_response"  # AI 응답이 규칙을 어겨 보류된 행 — 화면은 "AI 응답 무효"로 보인다

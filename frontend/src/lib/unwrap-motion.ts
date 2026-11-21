@@ -1,5 +1,5 @@
 // 풀기 전환(걷기 → 펼치기 → 붙이기)의 순수 계산 - 단계 차례, 줄마다 늦춤, 화면 안 키, 옮길 거리, 표시의 움직임.
-// DOM 재기와 animate는 components/ui/motion.tsx useUnwrapMotion. 명세: docs/superpowers/handoff/2026-11-18-1-unwrap-standardize.md F10
+// DOM 재기와 animate는 components/ui/motion.tsx useUnwrapMotion. 명세: 2026-11-18-1-unwrap-standardize.md F10
 
 import { computeFlipOffsets } from "@/lib/flip";
 
@@ -137,4 +137,32 @@ export function computeStaggerDelays(tops: ReadonlyMap<string, number>, timings:
 /** 펼치기가 끝나는 때(ms, 펼치기를 시작한 때부터) - 가장 늦게 떠난 줄이 닿을 때. 움직이는 것이 없으면 0이라 붙이기가 바로 시작한다 */
 export function getSpreadEnd(delays: ReadonlyMap<string, number>, spread: number): number {
   return delays.size === 0 ? 0 : Math.max(...delays.values()) + spread;
+}
+
+/** 보던 자리의 기준 - 바꾸기 전과 뒤에 같은 요소를 찾는 표시(어느 data 속성의 어느 값)와 바꾸기 전 윗변(px) */
+export interface ScrollAnchor {
+  attribute: "data-unwrap-scope" | "data-flip-key";
+  value: string;
+  top: number;
+}
+
+/**
+ * 바꾸는 동안 지킬 자리(B3) - 바꾸는 곳(scope, 차례대로 - 표 다음 안쪽 띠 표)의 윗변이 칸에 보이면 그것(표 머리),
+ * 아니면 칸 윗변에 걸친 글 줄, 그것도 없으면 칸 안 맨 위 글 줄. 칸에 아무것도 없으면 null(스크롤을 건드리지 않는다)
+ */
+export function pickScrollAnchor(scopes: ReadonlyMap<string, MotionBox>, lines: ReadonlyMap<string, MotionBox>, view: MotionView): ScrollAnchor | null {
+  for (const [value, box] of scopes) {
+    if (box.top >= view.top && box.top <= view.bottom) return { attribute: "data-unwrap-scope", value, top: box.top };
+  }
+  let best: ScrollAnchor | null = null;
+  for (const [value, box] of lines) {
+    if (box.top <= view.top && box.bottom > view.top) return { attribute: "data-flip-key", value, top: box.top };
+    if (box.top > view.top && box.top <= view.bottom && (best === null || box.top < best.top)) best = { attribute: "data-flip-key", value, top: box.top };
+  }
+  return best;
+}
+
+/** 기준 요소가 바꾸기 전 윗변(before)에 돌아오는 scrollTop - 바꾼 뒤 after로 밀렸으면 그만큼 더 내린다 */
+export function computeAnchoredScrollTop(scrollTop: number, before: number, after: number): number {
+  return scrollTop + (after - before);
 }

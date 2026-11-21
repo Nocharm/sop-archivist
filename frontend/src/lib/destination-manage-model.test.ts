@@ -5,7 +5,7 @@ import type { TargetDoc, ToBe } from "./api-sop";
 import { checkNewDoc, findLastStep, getDocRemoveBlock, getStepCount, getStepRemoveBlock, listParentCodes } from "./destination-manage-model";
 
 function makeDoc(id: number, code: string, patch: Partial<TargetDoc> = {}): TargetDoc {
-  return { id, code, title: "", doc_type: "sop", parent_code: null, entrance: "assign", is_equipment_sop: false, order_index: id, document_id: null, ...patch };
+  return { id, code, title: "", doc_type: "sop", parent_code: null, entrance: "assign", is_equipment_sop: false, order_index: id, document_id: null, ref_parent_codes: [], ...patch };
 }
 
 const sop = makeDoc(1, "SOP-A");

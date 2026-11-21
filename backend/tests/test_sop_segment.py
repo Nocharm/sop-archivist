@@ -6,6 +6,7 @@ from app.sop.coverage import find_coverage_problems
 from app.sop.extract import docx_reader
 from app.sop.spans import join_close_spans
 from app.sop.segment import (
+    CAPTIONS_SIGNAL,
     CLAUSE_NUMBER_FLAG,
     BlockView,
     TableView,
@@ -224,6 +225,59 @@ def test_caption_of_a_layout_table_is_a_sentence() -> None:
     assert [d.kind for d in drafts][:1] == ["sentence"]
 
 
+CELL_TEXT = "필요한 가스켓을 설치한다.\n표 1. 조제 탱크별 대상 장치\n\n이 절차는 탱크 A–C에 적용한다."
+
+
+def _cell_with_caption(outer_layout: bool, inner_layout: bool = False) -> list:
+    start = CELL_TEXT.index("표 1.")
+    work = BlockView(
+        2, 1, "table_cell", "body", CELL_TEXT, None, (), 8, 0,
+        {"captions": [[start, start + len("표 1. 조제 탱크별 대상 장치"), 2]]},
+    )
+    blocks = [_cell(1, 0, "1", 8, 0), work, _cell(3, 2, "탱크", 9, 0), _cell(4, 3, "대상 장치", 9, 0)]
+    return build_unit_drafts(blocks, [TableView(8, outer_layout), TableView(9, inner_layout)], "ko_only", split_lines=True)
+
+
+@pytest.mark.parametrize("outer_layout", [True, False])
+def test_caption_line_in_a_cell_is_one_caption_bound_to_the_inner_table(outer_layout: bool) -> None:
+    # 칸 블록은 쪼개지 않는다 — 그 줄만 캡션 단위가 되어 안쪽 표 묶음에 든다(바깥 표가 데이터 표여도 바깥 묶음이 아니다)
+    drafts = _cell_with_caption(outer_layout)
+
+    caption = next(d for d in drafts if d.kind == "caption")
+    start = CELL_TEXT.index("표 1.")
+    assert caption.spans == [(2, start, start + len("표 1. 조제 탱크별 대상 장치"))]
+    assert (drafts[caption.group_index].kind, drafts[caption.group_index].table_id) == ("table", 9)
+    assert caption.table_id is None
+    lines = [CELL_TEXT[d.spans[0][1] : d.spans[0][2]] for d in drafts if d.spans and d.spans[0][0] == 2 and d.kind != "caption"]
+    assert lines == ["필요한 가스켓을 설치한다.", "이 절차는 탱크 A–C에 적용한다."]
+    assert CAPTIONS_SIGNAL == docx_reader.SIGNAL_CAPTIONS  # 추출기가 남기는 신호와 같은 키를 읽는다
+
+
+def test_caption_line_of_a_layout_inner_table_stays_a_cell_line() -> None:
+    drafts = _cell_with_caption(outer_layout=True, inner_layout=True)
+    assert not any(d.kind == "caption" for d in drafts)
+
+
+def test_number_cell_does_not_join_a_caption_line() -> None:
+    # 번호 칸 "1" 바로 다음 칸 첫 줄이 캡션이면 번호는 캡션에 붙지 않고 제 줄로 남는다
+    text = "표 2. 목록\n본문이다."
+    head = len("표 2. 목록")
+    work = BlockView(2, 1, "table_cell", "body", text, None, (), 8, 0, {"captions": [[0, head, 2]]})
+    blocks = [
+        BlockView(1, 0, "table_cell", "body", "1", None, (), 8, 0, {"numbers": [[0, 1, "cell"]]}),
+        work,
+        _cell(3, 2, "a", 9, 0),
+    ]
+
+    drafts = build_unit_drafts(blocks, [TableView(8, True), TableView(9, False)], "ko_only", split_lines=True)
+
+    caption = next(d for d in drafts if d.kind == "caption")
+    assert caption.spans == [(2, 0, head)]
+    assert [d.spans for d in drafts if d.kind == "cell_sentence" and d.table_id == 8] == [
+        [(1, 0, 1)], [(2, head + 1, len(text))]
+    ]
+
+
 def test_caption_after_a_figure_is_one_unit_bound_to_the_figure() -> None:
     # 문장 쪼개기를 하지 않는다 — "그림 5. 로터 (Figure 5. Rotor)"는 마침표가 있어도 단위 하나다
     text = " 그림 5. 로터 장착 (Figure 5. Rotor mounting) "
@@ -264,18 +318,19 @@ def test_drafts_split_docx_blocks_at_line_breaks() -> None:
         ("cell_sentence", [(3, 0, 3)], "ko"),
         ("cell_sentence", [(3, 4, 15)], "en"),
     ]
-    # 블록은 하나라 줄 단위들을 합치면 줄바꿈을 품은 한 범위로 돌아간다
+    # 블록은 하나라 줄 단위들을 합치면 줄바꿈을 품은 한 범위로 돌아가고, 단위 글자에서는 줄바꿈이 띄어쓰기다(6-a, 길이 그대로)
     texts = {block.id: block.text for block in blocks}
     assert join_close_spans([*drafts[2].spans, *drafts[3].spans], texts) == [(2, 0, 25)]
-    assert build_unit_text([(2, 0, 25)], texts) == "장비를 켠다.\nTurn on the unit."
+    assert build_unit_text([(2, 0, 25)], texts) == "장비를 켠다. Turn on the unit."
     # 기본값(PDF)은 줄바꿈에서 나누지 않는다
     assert [draft.spans for draft in build_unit_drafts(blocks[:1], [], "ko_en_interleaved")] == [[(1, 0, 13)]]
 
 
-def test_build_unit_text_joins_spans_by_block() -> None:
-    texts = {1: "가나. 다라.", 2: "Synthetic"}
+def test_build_unit_text_joins_spans_with_a_space_and_keeps_the_length() -> None:
+    texts = {1: "가나. 다라.", 2: "Synthetic", 3: "첫 줄\r\n둘째 줄"}
+    assert build_unit_text([(3, 0, 9)], texts) == "첫 줄  둘째 줄"
 
-    assert build_unit_text([(1, 0, 3), (1, 4, 7), (2, 0, 9)], texts) == "가나. 다라.\nSynthetic"
+    assert build_unit_text([(1, 0, 3), (1, 4, 7), (2, 0, 9)], texts) == "가나. 다라. Synthetic"
 
 
 def _langs(*langs: str) -> list[tuple[int, str, str]]:

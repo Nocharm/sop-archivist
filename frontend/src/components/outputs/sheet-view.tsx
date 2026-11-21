@@ -17,6 +17,7 @@ import {
   getRowMark,
   listBandTones,
   listSheetItems,
+  listShownItems,
   readDraftText,
   spanCells,
   toColumnPercents,
@@ -42,6 +43,7 @@ function getCellStyle(cell: PreviewCell, row: PreviewRow): CSSProperties {
   }
   if (cell.bold || cell.head) style.fontWeight = 700;
   if (cell.italic) style.fontStyle = "italic";
+  if (cell.strike) style.textDecoration = "line-through";
   if (cell.numeric) style.textAlign = "right";
   // 칸 안 들여쓰기(C 글머리 기호 줄의 Item 칸) - 기본 안쪽 여백 5px(.sv-t td)에 단계마다 9px
   if (cell.indent > 0) style.paddingLeft = `${5 + cell.indent * 9}px`;
@@ -129,13 +131,15 @@ export interface SheetViewProps {
   sheet: PreviewSheet;
   /** 고른 단위 - 그 줄을 칠하고 같은 Group ID 줄을 옅게 칠하며, 열 때와 바뀔 때 세로 가운데에 둔다(Assign 미리보기) */
   selectedUnitId?: number | null;
+  /** 바뀌면 고른 줄을 다시 가운데로 - 같은 박스를 다시 눌러도(끌어 둔 시트를 되돌린다) */
+  centreKey?: number;
   /** 확정 전에 고른 곳 - 고른 단위의 첫 줄에 덮어 그린다(Assign 미리보기) */
   draft?: SheetDraft;
   /** data-testid 머리 - `<testId>-sheet` · `-head` · `-body` · `-image` · `-truncated` · `-toc-<줄 index>` */
   testId?: string;
 }
 
-export function SheetView({ sheet, selectedUnitId = null, draft, testId = "export-preview" }: SheetViewProps) {
+export function SheetView({ sheet, selectedUnitId = null, centreKey = 0, draft, testId = "export-preview" }: SheetViewProps) {
   const { t } = useI18n();
   const frameRef = useRef<HTMLDivElement>(null);
   const headRef = useRef<HTMLTableElement>(null);
@@ -156,7 +160,7 @@ export function SheetView({ sheet, selectedUnitId = null, draft, testId = "expor
   const pickedGroup = findPickedGroup(sheet.rows, selectedUnitId);
   const draftRow = findDraftRow(sheet.rows, selectedUnitId, draft);
   // 목차 접기는 열의 뜻(column_keys)을 아는 시트(A)에서만 - 접힌 줄의 글을 놓을 열을 찾아야 한다
-  const items = listSheetItems(sheet.rows, frozenCount, openTocs, sheet.column_keys !== null);
+  const items = listShownItems(listSheetItems(sheet.rows, frozenCount, openTocs, sheet.column_keys !== null), selectedUnitId);
   const hasHead = frozenCount > 0 || sheet.bands.length > 0;
 
   useEffect(() => {
@@ -175,10 +179,10 @@ export function SheetView({ sheet, selectedUnitId = null, draft, testId = "expor
     };
   }, []);
 
-  // 열 때와 고른 줄이 바뀔 때 고른 줄을 세로 가운데에(고른 줄이 없으면 위치 막대만 다시 그린다)
+  // 열 때와 고른 줄이 바뀔 때(같은 줄을 다시 눌러 centreKey가 오를 때도) 고른 줄을 세로 가운데에(고른 줄이 없으면 위치 막대만 다시 그린다)
   useEffect(() => {
     panRef.current?.centrePicked();
-  }, [selectedUnitId, sheet]);
+  }, [selectedUnitId, sheet, centreKey]);
 
   function toggleToc(start: number) {
     setOpenTocs((previous) => {

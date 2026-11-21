@@ -711,10 +711,17 @@ export function buildGroupSave(draft: RowDraft, context: SaveContext, action: "c
 }
 
 /** 확정하면 다음 미확정 줄로 - 지금 줄 뒤에서 먼저 찾고 없으면 앞에서 */
-export function findNextOpen(keys: string[], rows: Map<string, ClassifyRow>, current: string): string | null {
-  const index = keys.indexOf(current);
-  const ordered = [...keys.slice(index + 1), ...keys.slice(0, Math.max(index, 0))];
-  return ordered.find((key) => rows.get(key)?.status !== "confirmed") ?? null;
+/**
+ * 확정 뒤 고를 다음 박스 - 줄 이동 차례(order, 문서 차례)에서 저장한 박스(from) 둘레만 본다. 되감기 없음(Assign 피드백 2026-11-20 항목 1:
+ * 목록 처음으로 돌아가 다른 문서 · 그림 탭으로 튀었다). isCandidate - 같은 문서 · 같은 탭 · 거르기 목록이고 저장한 줄이 아닌 박스(부른 쪽이 정한다).
+ * below - 삭제: 바로 아래 박스, 없으면 바로 위. open - 아래로 첫 미확정 박스, 없으면 null. from이 차례에 없으면 null(고름을 둔다)
+ */
+export function findNextAfterSave(order: readonly string[], from: string, mode: "below" | "open", isCandidate: (key: string) => boolean, isOpen: (key: string) => boolean): string | null {
+  const at = order.indexOf(from);
+  if (at < 0) return null;
+  const below = order.slice(at + 1).filter(isCandidate);
+  if (mode === "open") return below.find(isOpen) ?? null;
+  return below[0] ?? order.slice(0, at).filter(isCandidate).at(-1) ?? null;
 }
 
 // --- 목록 필터와 검사 문구 ---

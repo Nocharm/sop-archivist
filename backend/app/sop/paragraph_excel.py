@@ -5,6 +5,9 @@ Assign Space 미리 보기가 같은 모델을 쓴다. 숨은 값(Unit ID · 그
 - 줄 차례: 원문 순서 + 짝 카드 안 사람이 바꾼 순서(pair_order.py) + 벗긴 표 덩이 안 순서(unwrap_order.py) — Assign 용지와 같다.
 - 벗긴 표의 칸 줄은 보통 줄이다(벗긴 것은 문단). 아직 표인 데이터 표는 고를 수 있고, 넣으면 표 한 행이 한 줄(칸 글을 ` | `로 이음).
 - 그림은 제자리에 `[Figure] 캡션` 한 줄(그 그림에 묶인 캡션은 따로 줄을 두지 않는다).
+- 편집 반영(B9): 확정 삭제한 줄은 지우지 않고 Remark "Deleted"(사유가 있으면 "Deleted — 사유") · Text 취소선 · 회색 · Lang 빈 칸(미리 보기는
+  `deleted`로 숨긴다). 원문에서 이어진 줄이 확정 배정으로 같은 새 문장 하나에 가면 한 행. 점 기호 줄의 Section No.는 "5.1 •"이고 Text에
+  기호가 없다. Text 칸 들여쓰기 = 용지의 번호 칸 단계(numbering.build_row_levels) − 1.
 설계: docs/superpowers/specs/2026-11-20-assign-mockup2-design.md D4
 """
 
@@ -18,8 +21,19 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.sop.captions import CAPTION_KIND, join_caption_texts
 from app.sop.constants import BULLET_SYMBOLS
 from app.sop.excel_export import build_workbook, clean_cell_text, split_cell_text
-from app.sop.models import Document, SourceBlock, SourceTable, Unit, UnitDecision, UnitPairMember
-from app.sop.numbering import build_section_numbers, get_number, get_number_note, strip_number
+from app.sop.models import Document, SourceBlock, SourceTable, TargetSource, Unit, UnitDecision, UnitPairMember
+from app.sop.numbering import (
+    NUMBER_CELL,
+    NUMBERED_KINDS,
+    SECTION_KIND,
+    LevelRow,
+    build_row_levels,
+    build_section_numbers,
+    get_number,
+    get_number_note,
+    is_read_from_text,
+    strip_number,
+)
 from app.sop.pair_order import order_pair_card
 from app.sop.sheet_model import MAX_PREVIEW_ROWS, Sheet, SheetCell, SheetRow, WorkbookModel, limit_window
 from app.sop.units import UNIT_ACTIVE, get_latest_extraction_id
@@ -31,6 +45,8 @@ PARAGRAPH_WIDTHS = (12, 90, 6, 18, 40)  # 글자 수 — 긴 글은 칸 안에�
 PARAGRAPH_HEAD_ROWS = 1  # 머리 줄 — 미리 보기 창을 잘라도 늘 싣는다(freeze "A2")
 NUMBER_NOTE = "Source {read} → {now}"  # 사람이 고친 번호의 원문 번호 — 번호 없음으로 바꿨으면 now가 NO_NUMBER_NOTE
 NO_NUMBER_NOTE = "none"
+DELETED_REMARK = "Deleted"  # 확정 삭제한 줄의 Remark — 사유가 있으면 "Deleted — 사유"
+READ_FROM_TEXT_NOTE = "Read from text"  # 본문 줄 글 앞 타자 번호를 저절로 번호로 읽음(사람이 고치지 않음) — 틀렸으면 번호 칸에서 고친다
 CELL_JOINER = " | "  # 아직 표인 데이터 표 한 행의 칸 글 사이
 _LANG_LABELS = {"ko": "KO", "en": "EN", "ref": "REF"}  # 중립은 빈 칸
 _SKIPPED_KINDS = ("table",)  # 칸 문장을 묶는 단위 — 자기 글이 없다(행 줄의 Remark만 준다)
@@ -55,11 +71,18 @@ class UnitLine:
     number: str | None = None
     number_note: str = ""
     remark: str = ""
+    deleted: bool = False  # 확정 삭제한 줄
+    target_id: int | None = None  # 확정 배정으로 간 새 문장이 하나뿐이면 그 문장 — 이어진 줄이 같은 문장이면 한 행
+    blocks: tuple[int, ...] = ()  # 줄이 든 벗긴 표 덩이의 사슬(바깥 → 안쪽, 맨 끝이 unwrap_order.find_line_table)
+    is_cell_number: bool = False  # 덩이의 숫자만 든 칸에서 읽은 번호(사람이 고치지 않음) — 덩이 안에서만 Section No.
+    pair_id: int | None = None
+    indent_shift: int = 0
+    noise: bool = False  # 목차 줄 — 번호 칸이 없다
 
 
 @dataclass(frozen=True)
 class _Entry:
-    """시트 한 줄이 될 것 — lang · number는 섹션 번호 세기(numbering.SectionLine)용."""
+    """시트 한 줄이 될 것 — lang · number · blocks · is_cell_number는 섹션 번호 세기(numbering.SectionLine)용."""
 
     unit_id: int
     lang: str
@@ -67,6 +90,10 @@ class _Entry:
     text: str
     note: str = ""
     remark: str = ""
+    blocks: tuple[int, ...] = ()
+    is_cell_number: bool = False
+    deleted: bool = False
+    target_id: int | None = None
 
 
 def format_number_note(read: str | None, now: str | None) -> str:
@@ -74,9 +101,11 @@ def format_number_note(read: str | None, now: str | None) -> str:
     return NUMBER_NOTE.format(read=read, now=now or NO_NUMBER_NOTE) if read else ""
 
 
-def _format_text(line: UnitLine) -> str:
-    """Text 칸 — 점 기호 줄은 기호 + 공백을 앞에 둔다."""
-    return f"{line.number} {line.text}" if line.number in BULLET_SYMBOLS else line.text
+def _format_section(section: str | None, number: str | None) -> str:
+    """Section No. 칸 — 점 기호 줄은 물려받은 번호 뒤에 그 기호("5.1 •"), 번호가 없으면 기호만."""
+    if number in BULLET_SYMBOLS:
+        return f"{section} {number}" if section else number
+    return section or ""
 
 
 def _is_table_cell(line: UnitLine) -> bool:
@@ -91,7 +120,7 @@ def _list_entries(lines: Sequence[UnitLine], include_tables: bool) -> list[_Entr
     for line in body:
         if line.kind == CAPTION_KIND and line.group_unit_id in figures:
             captions.setdefault(line.group_unit_id, []).append((line.lang, line.text))
-    remarks = {line.unit_id: line.remark for line in body if line.kind in _SKIPPED_KINDS}
+    table_lines = {line.unit_id: line for line in body if line.kind in _SKIPPED_KINDS}
     cells: dict[tuple[int, int | None], dict[int, list[UnitLine]]] = {}
     for line in body:
         if _is_table_cell(line):
@@ -106,19 +135,53 @@ def _list_entries(lines: Sequence[UnitLine], include_tables: bool) -> list[_Entr
             if not include_tables or key in written:
                 continue
             # 표 단위의 Remark는 그 표의 첫 행에만
-            remark = "" if any(table == line.group_unit_id for table, _ in written) else remarks.get(line.group_unit_id, "")
+            table = table_lines.get(line.group_unit_id)
+            first_row = not any(table_id == line.group_unit_id for table_id, _ in written)
             written.add(key)
             columns = cells[key]
             text = CELL_JOINER.join(_join_cell(columns.get(index, [])) for index in range(max(columns) + 1))
-            entries.append(_Entry(line.group_unit_id, "neutral", None, text, remark=remark))
+            entries.append(_Entry(
+                line.group_unit_id, "neutral", None, text, remark=table.remark if table and first_row else "",
+                blocks=table.blocks if table else (), deleted=bool(table and table.deleted),
+            ))
             continue
         if line.kind == "figure":
             caption = join_caption_texts(captions.get(line.unit_id, ()))
             text = " ".join(part for part in (FIGURE_MARKER, line.text, caption) if part)
-            entries.append(_Entry(line.unit_id, line.lang, None, text, remark=line.remark))
+            entries.append(_Entry(line.unit_id, line.lang, None, text, remark=line.remark, blocks=line.blocks, deleted=line.deleted))
             continue
-        entries.append(_Entry(line.unit_id, line.lang, line.number, _format_text(line), line.number_note, line.remark))
+        entries.append(_Entry(
+            line.unit_id, line.lang, line.number, line.text, line.number_note, line.remark, line.blocks, line.is_cell_number,
+            line.deleted, line.target_id,
+        ))
     return entries
+
+
+def _group_entries(entries: Sequence[_Entry]) -> list[list[int]]:
+    """한 행이 될 줄 무리(index) — 원문에서 이어진 줄이 확정 배정으로 같은 새 문장 하나에 가면 한 무리(9-c), 나머지는 한 줄씩."""
+    groups: list[list[int]] = []
+    for index, entry in enumerate(entries):
+        if groups and entry.target_id is not None and entries[groups[-1][-1]].target_id == entry.target_id:
+            groups[-1].append(index)
+        else:
+            groups.append([index])
+    return groups
+
+
+def _get_levels(lines: Sequence[UnitLine]) -> dict[int, int]:
+    """단위마다 용지의 번호 칸 단계 — 용지 줄(묶이지 않은 본문 단위)을 문서 순서로, 짝 카드는 첫 줄 단계(numbering.build_row_levels)."""
+    rows = [line for line in lines if line.part == "body" and line.group_unit_id is None]
+    level_rows: list[LevelRow] = []
+    card_start = 0
+    for index, line in enumerate(rows):
+        same_card = index > 0 and line.pair_id is not None and rows[index - 1].pair_id == line.pair_id
+        if not same_card:
+            card_start = index
+        level_rows.append(LevelRow(
+            label=line.number or "", shift=line.indent_shift, has_cell=line.kind in NUMBERED_KINDS and not line.noise,
+            pair_top=card_start if same_card else None,
+        ))
+    return {line.unit_id: level for line, level in zip(rows, build_row_levels(level_rows), strict=True)}
 
 
 def _join_cell(units: Sequence[UnitLine]) -> str:
@@ -131,21 +194,52 @@ def _join_cell(units: Sequence[UnitLine]) -> str:
     return text
 
 
-def _make_row(texts: Sequence[str], *, head: bool = False, unit_id: int | None = None) -> SheetRow:
+_TEXT_COLUMN = PARAGRAPH_HEADERS.index("Text")
+
+
+def _make_row(
+    texts: Sequence[str], *, head: bool = False, unit_id: int | None = None, unit_ids: Sequence[int] = (), indent: int = 0,
+    deleted: bool = False,
+) -> SheetRow:
     cells = [SheetCell(text=clean_cell_text(text), head=head and bool(text)) for text in texts]
-    return SheetRow(kind="header" if head else "in_group", wrap=True, cells=cells, unit_id=unit_id)
+    if not head:
+        cells[_TEXT_COLUMN] = cells[_TEXT_COLUMN].model_copy(update={"indent": indent, "faint": deleted, "strike": deleted})
+    return SheetRow(
+        kind="header" if head else "in_group", wrap=True, cells=cells, unit_id=unit_id, deleted=deleted, unit_ids=list(unit_ids)
+    )
+
+
+def _format_remark(remarks: Sequence[str], deleted: bool) -> str:
+    remark = " / ".join(remark for remark in remarks if remark)
+    if not deleted:
+        return remark
+    return f"{DELETED_REMARK} — {remark}" if remark else DELETED_REMARK
 
 
 def build_paragraph_sheet(lines: Sequence[UnitLine], include_tables: bool, name: str = "Sheet") -> Sheet:
     """용지 순서의 단위 → 문단 Excel 시트 모델. 한 칸에 넘치는 글은 다음 줄 같은 열로 이어 쓴다(이어진 줄도 같은 unit_id)."""
     entries = _list_entries(lines, include_tables)
     sections = build_section_numbers(entries)
+    levels = _get_levels(lines)
     rows = [_make_row(PARAGRAPH_HEADERS, head=True)]
-    for entry, section in zip(entries, sections, strict=True):
-        texts = [section or "", entry.text, _LANG_LABELS.get(entry.lang, ""), entry.note, entry.remark]
+    for group in _group_entries(entries):
+        members = [entries[index] for index in group]
+        first = members[0]
+        langs = {member.lang for member in members}
+        texts = [
+            _format_section(sections[group[0]], first.number),
+            " ".join(member.text for member in members),
+            "" if first.deleted or len(langs) > 1 else _LANG_LABELS.get(first.lang, ""),
+            first.note,
+            _format_remark([member.remark for member in members], first.deleted),
+        ]
+        unit_ids = [member.unit_id for member in members] if len(members) > 1 else []
         chunks = [split_cell_text(text) for text in texts]
         for part in range(max(len(chunk) for chunk in chunks)):
-            rows.append(_make_row([chunk[part] if part < len(chunk) else "" for chunk in chunks], unit_id=entry.unit_id))
+            rows.append(_make_row(
+                [chunk[part] if part < len(chunk) else "" for chunk in chunks], unit_id=first.unit_id, unit_ids=unit_ids,
+                indent=levels.get(first.unit_id, 1) - 1, deleted=first.deleted,
+            ))
     return Sheet(
         name=name, widths=list(PARAGRAPH_WIDTHS), rows=rows, freeze="A2", filter_columns=0, image_png=None, image_row=None,
         total_rows=len(rows), truncated=False,
@@ -193,6 +287,11 @@ async def load_unit_lines(session: AsyncSession, document: Document) -> list[Uni
         select(SourceTable.id, SourceTable.parent_table_id, SourceTable.is_layout, SourceTable.signals)
         .where(SourceTable.extraction_id == extraction_id)
     )).tuples().all())
+    pair_of: dict[int, int] = dict((await session.execute(
+        select(UnitPairMember.unit_id, UnitPairMember.pair_id)
+        .join(Unit, Unit.id == UnitPairMember.unit_id)
+        .where(Unit.extraction_id == extraction_id, Unit.status == UNIT_ACTIVE)
+    )).tuples().all())
     # 벗긴 표 덩이 순서 뒤에 짝 카드 안 순서 — 용지(paper.tsx)와 같은 차례로 편다
     units = _order_pair_cards(
         _order_unwrapped(
@@ -203,17 +302,23 @@ async def load_unit_lines(session: AsyncSession, document: Document) -> list[Uni
             )),
             blocks, tables,
         ),
-        dict((await session.execute(
-            select(UnitPairMember.unit_id, UnitPairMember.pair_id)
-            .join(Unit, Unit.id == UnitPairMember.unit_id)
-            .where(Unit.extraction_id == extraction_id, Unit.status == UNIT_ACTIVE)
-        )).tuples().all()),
+        pair_of,
     )
-    reasons: dict[int, str] = dict((await session.execute(
-        select(UnitDecision.unit_id, UnitDecision.reason)
-        .join(Unit, Unit.id == UnitDecision.unit_id)
-        .where(Unit.extraction_id == extraction_id, Unit.status == UNIT_ACTIVE, UnitDecision.reason != "")
-    )).tuples().all())
+    decisions = {
+        unit_id: (disposition, status, reason)
+        for unit_id, disposition, status, reason in (await session.execute(
+            select(UnitDecision.unit_id, UnitDecision.disposition, UnitDecision.status, UnitDecision.reason)
+            .join(Unit, Unit.id == UnitDecision.unit_id)
+            .where(Unit.extraction_id == extraction_id, Unit.status == UNIT_ACTIVE)
+        )).tuples().all()
+    }
+    targets: dict[int, set[int]] = {}
+    for unit_id, target_id in (await session.execute(
+        select(TargetSource.unit_id, TargetSource.target_id)
+        .join(Unit, Unit.id == TargetSource.unit_id)
+        .where(Unit.extraction_id == extraction_id, Unit.status == UNIT_ACTIVE)
+    )).tuples().all():
+        targets.setdefault(unit_id, set()).add(target_id)
     block_at = {block.seq: block for block in blocks.values()}
     lines: list[UnitLine] = []
     for unit in units:
@@ -222,13 +327,36 @@ async def load_unit_lines(session: AsyncSession, document: Document) -> list[Uni
         if block is None:
             continue
         number = get_number(unit)
+        disposition, status, reason = decisions.get(unit.id, ("", "", ""))
+        confirmed = status == "confirmed"
+        unit_targets = targets.get(unit.id, set())
         lines.append(UnitLine(
             unit_id=unit.id, kind=unit.kind, text=strip_number(unit.text, unit), part=block.part, block_id=block.id,
             table_id=unit.table_id, row_index=unit.row_index, col_index=block.col_index, group_unit_id=unit.group_unit_id,
-            lang=unit.lang, number=number, number_note=format_number_note(get_number_note(unit), number),
-            remark=reasons.get(unit.id, ""),
+            lang=unit.lang, number=number,
+            number_note=READ_FROM_TEXT_NOTE if is_read_from_text(unit) else format_number_note(get_number_note(unit), number),
+            remark=reason,
+            deleted=confirmed and disposition == "delete",
+            target_id=next(iter(unit_targets)) if confirmed and disposition == "assigned" and len(unit_targets) == 1 else None,
+            blocks=() if unit.group_unit_id is not None else _list_blocks(find_line_table(unit.kind, unit.table_id, block.table_id, tables), tables),
+            # 띠 표 제목 줄(번호 칸 + 제목 칸)의 칸 번호는 절 번호라 덩이 밖으로 이어진다
+            is_cell_number=unit.number_source == NUMBER_CELL and unit.number_set is None and unit.kind != SECTION_KIND,
+            pair_id=pair_of.get(unit.id),
+            indent_shift=unit.indent_shift,
+            noise=unit.noise_kind is not None,
         ))
     return lines
+
+
+def _list_blocks(innermost: int | None, tables: Mapping[int, UnwrapTable]) -> tuple[int, ...]:
+    """줄이 든 벗긴 표 덩이의 사슬(바깥 → 안쪽) — 안쪽 덩이에서 바깥으로 올라가며 벗긴 표만 모은다."""
+    chain: list[int] = []
+    table_id = innermost
+    while table_id is not None and table_id in tables:
+        if tables[table_id].is_unwrapped:
+            chain.append(table_id)
+        table_id = tables[table_id].parent_id
+    return tuple(reversed(chain))
 
 
 def _order_unwrapped(units: Sequence[Unit], blocks: Mapping[int, Any], tables: Mapping[int, UnwrapTable]) -> list[Unit]:

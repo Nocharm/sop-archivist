@@ -1,6 +1,6 @@
 // Assign의 한 단 ↔ 양 단 전환 움직임 - 폭은 바로 바뀌고, Old 용지가 앞 자리에서 새 자리로 미끄러진다(FLIP).
 // 폭을 프레임마다 바꾸면 긴 문서의 글이 매번 다시 흘러 끊기므로 옮기기만 한다(transform). 시간은 CSS 토큰이라 움직임 줄이기에서 0이 된다.
-// 움직이는 동안 .assign-panes에 data-motion("one" | "two")이 붙는다 - CSS가 그 동안 연결선을 숨기고, 끝나면 연결선이 다시 잰다(link-lines가 animationend를 듣는다).
+// 움직이는 동안 .assign-panes에 data-motion("one" | "two" | 판 옆으로 비킬 때 "aside")이 붙는다 - CSS가 그 동안 연결선을 숨기고, 끝나면 연결선이 다시 잰다(link-lines가 animationend를 듣는다).
 // 한 단으로 접을 때는 사라지는 New 칸의 모습(복제본)을 그 자리에 잠깐 남겨 옅어지게 한다 - 화면이 두 상태를 함께 들지 않아도 되게 그림만 남긴다.
 "use client";
 
@@ -40,6 +40,35 @@ function makeGhost(): PaneGhost | null {
   return { el, scrollTop: pane.querySelector(".pane-body")?.scrollTop ?? 0 };
 }
 
+/** 앞 자리(first)에서 지금 자리로 용지를 미끄러뜨린다 - 끝나면(또는 MOTION_MAX_MS 뒤) 표시와 복제본을 지운다. 돌려준 함수로 미리 멈춘다 */
+function startSlide(first: number | null, motion: string, ghost: PaneGhost | null): (() => void) | undefined {
+  const panes = document.querySelector<HTMLElement>(PANES);
+  const last = readSheetLeft();
+  if (first === null || last === null || !panes) return undefined;
+  panes.style.setProperty("--pane-dx", `${first - last}px`);
+  panes.dataset.motion = motion;
+  if (ghost) {
+    panes.appendChild(ghost.el);
+    // 복제본은 스크롤 자리를 잃는다 - 보던 자리 그대로 옅어지게 되돌린다
+    const body = ghost.el.querySelector(".pane-body");
+    if (body) body.scrollTop = ghost.scrollTop;
+  }
+  const clear = () => {
+    delete panes.dataset.motion;
+    ghost?.el.remove();
+  };
+  const handleEnd = (event: AnimationEvent) => {
+    if (event.animationName === "pane-slide") clear();
+  };
+  const timer = window.setTimeout(clear, MOTION_MAX_MS);
+  panes.addEventListener("animationend", handleEnd);
+  return () => {
+    window.clearTimeout(timer);
+    panes.removeEventListener("animationend", handleEnd);
+    clear();
+  };
+}
+
 /** capture()는 보기를 바꾸기 직전에 부른다 - 그때 용지가 보이던 자리를 잰다(앞선 움직임 도중이면 그 자리에서 이어진다) */
 export function usePaneSlide(isSingle: boolean): { capture: () => void } {
   const firstRef = useRef<number | null>(null);
@@ -50,31 +79,7 @@ export function usePaneSlide(isSingle: boolean): { capture: () => void } {
     const ghost = ghostRef.current;
     firstRef.current = null;
     ghostRef.current = null;
-    const panes = document.querySelector<HTMLElement>(PANES);
-    const last = readSheetLeft();
-    if (first === null || last === null || !panes) return;
-    panes.style.setProperty("--pane-dx", `${first - last}px`);
-    panes.dataset.motion = isSingle ? "one" : "two";
-    if (isSingle && ghost) {
-      panes.appendChild(ghost.el);
-      // 복제본은 스크롤 자리를 잃는다 - 보던 자리 그대로 옅어지게 되돌린다
-      const body = ghost.el.querySelector(".pane-body");
-      if (body) body.scrollTop = ghost.scrollTop;
-    }
-    const clear = () => {
-      delete panes.dataset.motion;
-      ghost?.el.remove();
-    };
-    const handleEnd = (event: AnimationEvent) => {
-      if (event.animationName === "pane-slide") clear();
-    };
-    const timer = window.setTimeout(clear, MOTION_MAX_MS);
-    panes.addEventListener("animationend", handleEnd);
-    return () => {
-      window.clearTimeout(timer);
-      panes.removeEventListener("animationend", handleEnd);
-      clear();
-    };
+    return startSlide(first, isSingle ? "one" : "two", isSingle ? ghost : null);
   }, [isSingle]);
 
   return {
@@ -82,6 +87,28 @@ export function usePaneSlide(isSingle: boolean): { capture: () => void } {
       firstRef.current = readSheetLeft();
       // New 칸이 지금 보인다 = 곧 접힌다
       ghostRef.current = makeGhost();
+    },
+  };
+}
+
+/**
+ * 1단 보기에서 오른쪽 판(짝 엿보기 · 그림 위치)이 열리고 닫힐 때 - 가운데 용지가 판 옆으로 비켜서고 다시 가운데로 온다(B7). 판 자리를 비우는 것은 CSS(자리가 모자라면 판이 용지를 덮고 용지는 그대로다).
+ * capture()는 판을 열거나 닫기 직전에 부른다. 잡지 않고 닫히면(다른 박스를 고름 등) 움직임 없이 바로 돌아온다.
+ */
+export function useSheetSlide(isAside: boolean): { capture: () => void } {
+  const firstRef = useRef<number | null>(null);
+
+  useLayoutEffect(() => {
+    const first = firstRef.current;
+    firstRef.current = null;
+    // 자리가 모자라 판이 덮으면 용지는 제자리다 - 움직임 표시를 달지 않는다
+    if (first === readSheetLeft()) return undefined;
+    return startSlide(first, "aside", null);
+  }, [isAside]);
+
+  return {
+    capture: () => {
+      firstRef.current = readSheetLeft();
     },
   };
 }

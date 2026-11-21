@@ -148,7 +148,7 @@ def list_candidates(docs: Iterable[TargetDocInfo]) -> list[Candidate]:
         places = (
             _list_sop_places(doc)
             if doc.doc_type == "sop"
-            else _list_wi_places(doc, by_id.get(doc.parent_id) if doc.parent_id is not None else None)
+            else _list_wi_places(doc, by_id.get(doc.effective_parent_id) if doc.effective_parent_id is not None else None)
         )
         for slot_key, wi_step, wi_part, label in places:
             candidates.append(

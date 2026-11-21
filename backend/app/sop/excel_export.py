@@ -119,18 +119,19 @@ def build_export_file_name(bundle_id: int, title: str, at: datetime) -> str:
 # --- 시트 모델 → xlsx ---
 
 
-# 굵게·기울임·흐림 조합마다 글꼴 하나 — 칸마다 새로 만들지 않는다
+# 굵게·기울임·흐림·취소선 조합마다 글꼴 하나 — 칸마다 새로 만들지 않는다
 _FONTS = {
-    (bold, italic, faint): Font(bold=bold, italic=italic, color=FAINT_COLOR if faint else None)
+    (bold, italic, faint, strike): Font(bold=bold, italic=italic, strike=strike, color=FAINT_COLOR if faint else None)
     for bold in (False, True)
     for italic in (False, True)
     for faint in (False, True)
+    for strike in (False, True)
 }
 
 
 def _get_font(cell: "SheetCell") -> Font | None:
     """칸 모양의 글꼴 — 모양이 없으면 None(기본 글꼴)."""
-    key = (cell.bold, cell.italic, cell.faint)
+    key = (cell.bold, cell.italic, cell.faint, cell.strike)
     return _FONTS[key] if any(key) else None
 
 

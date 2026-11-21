@@ -2,8 +2,10 @@
 // 번호는 늘 여기에 산다: 고치기·번호 없음·써 넣기(+)·타자 번호를 번호로(↤)가 모두 이 칸의 손잡이다. 원문 글자는 그대로이고 번호 범위만 바뀐다.
 // 창 맨 위는 종류 단추 줄(시안 2 D1 - 연속 번호 · • ○ ▪ · 직접 · 없음). 종류는 저장하지 않고 값에서 읽는다(number-kind-model).
 // 엮은 New 문서(빈 템플릿)의 번호 칸은 같은 단추 줄로 결과물 C 번호 표시를 고른다(ComposedNumberCell, 시안 2 D6).
+// 종류 단추 아래 ◀ ▶(B8 항목 7): 연속 번호면 입력한 번호를 한 단계 얕게 · 깊게 바꾸고(저장은 Enter), 그 밖은 줄의 들여쓰기를 바로 저장한다. 가운데 칸은 폭이 고정이라 단추가 움직이지 않는다.
 "use client";
 
+import { ChevronLeft, ChevronRight } from "lucide-react";
 import { useEffect, useRef, type KeyboardEvent } from "react";
 
 import type { NumberStyle, ViewNumber } from "@/lib/api-sop";
@@ -24,6 +26,8 @@ export interface NumberEdit {
   /** 뒤 번호도 따라 고치기 - 연속 번호에서만 켤 수 있다 */
   follow: boolean;
 }
+
+const NO_INDENT = { canOutdent: false, canIndent: false };
 
 /** 입력 상자로 고치는 종류 - 점 기호 · 없음은 누르면 바로 저장한다 */
 function isTextKind(kind: NumberKind): boolean {
@@ -51,9 +55,19 @@ interface NumberCellProps {
   continuous: string | null;
   /** 다른 줄을 고치는 중이고 이 줄의 번호가 따라 바뀐다 */
   preview: NumberPreview | null;
+  /** 편집 응답 뒤 번호가 새로 생겼다 - 번호가 글에서 왼쪽으로 빠지며 옅은 강조로 들어오는 전환(lib/use-number-arrival) */
+  isArrived?: boolean;
   onEditChange: (edit: NumberEdit | null) => void;
-  /** number가 null이면 번호 없음 */
-  onSave: (number: string | null, follow: boolean) => void;
+  /** number가 null이면 번호 없음. indentShift를 주면 들여쓰기 차이도 함께(기호를 고를 때 위 기호 줄 단계를 따름) */
+  onSave: (number: string | null, follow: boolean, indentShift?: number) => void;
+  /** 고치는 중인 줄의 ◀ ▶ 끝(lib/indent-model getIndentBounds) - 연속 번호가 아닌 종류에서 쓴다 */
+  indent?: { canOutdent: boolean; canIndent: boolean };
+  /** 고치는 중인 줄의 번호를 한 단계 얕게(-1) · 깊게(+1) - 끝이면 null(lib/number-kind-model stepUnitContinuous) */
+  stepNumber?: (text: string, delta: -1 | 1) => string | null;
+  /** 기호를 고를 때 따를 들여쓰기 차이(lib/indent-model findBulletShift) - 없으면 null */
+  bulletShift?: number | null;
+  /** 들여쓰기 ◀(-1) ▶(+1) - 바로 저장한다 */
+  onIndent?: (delta: -1 | 1) => void;
 }
 
 /** 엮은 문서 번호 칸이 고르는 결과물 C 번호 표시 - depth는 글머리 기호의 깊이(• 0 · ○ 1 · ▪ 2), 그 밖은 null(깊이 그대로) */
@@ -157,7 +171,28 @@ export function ComposedNumberCell({ width, bracket, testId, targetId, mark, sty
   );
 }
 
-export function NumberCell({ width, bracket, tip, testId, unitId, number, isUnread, canEdit, busy, edit, followed, continuous, preview, onEditChange, onSave }: NumberCellProps) {
+export function NumberCell({
+  width,
+  bracket,
+  tip,
+  testId,
+  unitId,
+  number,
+  isUnread,
+  canEdit,
+  busy,
+  edit,
+  followed,
+  continuous,
+  preview,
+  isArrived = false,
+  onEditChange,
+  onSave,
+  indent = NO_INDENT,
+  stepNumber,
+  bulletShift = null,
+  onIndent,
+}: NumberCellProps) {
   const { t } = useI18n();
   const inputRef = useRef<HTMLInputElement>(null);
   const cellRef = useRef<HTMLSpanElement>(null);
@@ -180,8 +215,8 @@ export function NumberCell({ width, bracket, tip, testId, unitId, number, isUnre
   const shown = preview ? preview.to : number.value;
   const base = { width: width + STRIP_LEAD_EXTRA };
   const numTestId = `${testId}-num-${unitId}`;
-  // 원문과 다르게 고친 번호 - 툴팁에 원문 번호를 함께 적는다(따라 바뀔 미리 보기 중에는 미리 보기 설명만)
-  const sourceTip = number.note !== null && !preview ? t("assign.numberKind.source", { n: number.note }) : null;
+  // 원문과 다르게 고친 번호 - 툴팁에 원문 번호를 함께 적는다(따라 바뀔 미리 보기 중에는 미리 보기 설명만). 글 앞 번호를 저절로 읽었으면 그것을 알린다
+  const sourceTip = preview ? null : number.note !== null ? t("assign.numberKind.source", { n: number.note }) : number.from_text ? t("assign.number.fromText") : null;
 
   function open() {
     const kind = readNumberKind(number.value);
@@ -204,7 +239,7 @@ export function NumberCell({ width, bracket, tip, testId, unitId, number, isUnre
       // 이미 입력 상자가 있으면(종류가 그대로이거나 연속 ↔ 직접) 포커스를 돌려준다 - 새로 생기는 상자는 위 effect가 맡는다
       inputRef.current?.focus();
     } else if (kind === "bullet" && symbol !== undefined) {
-      onSave(symbol, false);
+      onSave(symbol, false, bulletShift ?? undefined);
     } else if (kind === "none") {
       onSave(null, false);
     }
@@ -236,6 +271,62 @@ export function NumberCell({ width, bracket, tip, testId, unitId, number, isUnre
     );
   }
 
+  /** ◀ ▶ 한 줄 - 연속 번호는 입력한 번호의 단계를 바꾸고(입력 상자로 포커스를 돌려 Enter가 저장하게), 그 밖은 들여쓰기를 바로 저장한다 */
+  function renderStepRow(current: NumberEdit) {
+    const isNumberStep = current.kind === "continuous";
+    const targets = isNumberStep ? ([-1, 1] as const).map((delta) => stepNumber?.(current.text, delta) ?? null) : [null, null];
+    const steps = ([-1, 1] as const).map((delta, index) => {
+      const target = targets[index];
+      const enabled = isNumberStep ? target !== null : delta < 0 ? indent.canOutdent : indent.canIndent;
+      const label = target !== null ? t(delta < 0 ? "assign.number.outdentTo" : "assign.number.indentTo", { n: target }) : t(delta < 0 ? "assign.number.outdent" : "assign.number.indent");
+      const Icon = delta < 0 ? ChevronLeft : ChevronRight;
+      return (
+        <button
+          key={delta}
+          type="button"
+          className="num-step"
+          aria-label={label}
+          data-tip={label}
+          data-testid={`${testId}-num-${delta < 0 ? "outdent" : "indent"}`}
+          disabled={busy || !enabled}
+          onClick={() => {
+            if (target !== null) {
+              onEditChange({ ...current, text: target });
+              inputRef.current?.focus();
+            } else if (!isNumberStep) onIndent?.(delta);
+          }}
+        >
+          <Icon size={14} strokeWidth={1.8} aria-hidden />
+        </button>
+      );
+    });
+    return (
+      <span className="num-edit-row">
+        {steps[0]}
+        {isTextKind(current.kind) ? (
+          <input
+            ref={inputRef}
+            className="num-edit-input"
+            value={current.text}
+            maxLength={MAX_NUMBER_CHARS}
+            aria-label={t("assign.number.input")}
+            data-testid={`${testId}-num-input`}
+            onChange={(event) => onEditChange({ ...current, text: event.target.value })}
+            onKeyDown={handleKey}
+          />
+        ) : (
+          <span className="num-edit-slot" aria-hidden />
+        )}
+        {steps[1]}
+        {isNumberStep && continuous !== null && (
+          <span className="num-continuous" data-testid={`${testId}-num-continuous`}>
+            {t("assign.numberKind.continuousValue", { n: continuous })}
+          </span>
+        )}
+      </span>
+    );
+  }
+
   function handleKey(event: KeyboardEvent<HTMLInputElement>) {
     // 용지·화면의 단축키(J/K, Ctrl+Z)가 입력 글자를 가로채지 않게 한다
     event.stopPropagation();
@@ -251,7 +342,7 @@ export function NumberCell({ width, bracket, tip, testId, unitId, number, isUnre
   function renderBody() {
     if (!canEdit) {
       return (
-        <span className="strip-lead-num" data-tip={[shown ? `§ ${shown}` : null, sourceTip, tipAttr].filter(Boolean).join(" · ") || undefined} data-testid={shown !== null ? numTestId : undefined}>
+        <span className="strip-lead-num" data-arrived={isArrived ? "" : undefined} data-tip={[shown ? `§ ${shown}` : null, sourceTip, tipAttr].filter(Boolean).join(" · ") || undefined} data-testid={shown !== null ? numTestId : undefined}>
           {shown}
         </span>
       );
@@ -259,16 +350,8 @@ export function NumberCell({ width, bracket, tip, testId, unitId, number, isUnre
     if (shown !== null) {
       const label = [preview ? t("assign.number.willChange", { from: preview.from, to: preview.to }) : t("assign.number.edit", { n: shown }), sourceTip].filter(Boolean).join(" · ");
       return (
-        <button type="button" className="strip-lead-num num-cell" data-preview={preview ? "" : undefined} data-fixed={number.is_set ? "" : undefined} data-tip={label} aria-label={label} data-testid={numTestId} disabled={busy} onClick={open}>
+        <button type="button" className="strip-lead-num num-cell" data-preview={preview ? "" : undefined} data-fixed={number.is_set ? "" : undefined} data-arrived={isArrived ? "" : undefined} data-tip={label} aria-label={label} data-testid={numTestId} disabled={busy} onClick={open}>
           {shown}
-        </button>
-      );
-    }
-    if (number.typed_len > 0 && number.read !== null) {
-      const read = number.read;
-      return (
-        <button type="button" className="strip-lead-num num-cell num-add" data-tip={t("assign.number.fromTyped")} aria-label={t("assign.number.fromTyped")} data-testid={`${testId}-num-typed-${unitId}`} disabled={busy} onClick={() => onSave(read, false)}>
-          ↤
         </button>
       );
     }
@@ -286,25 +369,7 @@ export function NumberCell({ width, bracket, tip, testId, unitId, number, isUnre
       {edit && (
         <span className="num-edit" data-testid={`${testId}-num-edit-${unitId}`}>
           {renderKinds(edit)}
-          {isTextKind(edit.kind) && (
-            <span className="num-edit-row">
-              <input
-                ref={inputRef}
-                className="num-edit-input"
-                value={edit.text}
-                maxLength={MAX_NUMBER_CHARS}
-                aria-label={t("assign.number.input")}
-                data-testid={`${testId}-num-input`}
-                onChange={(event) => onEditChange({ ...edit, text: event.target.value })}
-                onKeyDown={handleKey}
-              />
-              {edit.kind === "continuous" && continuous !== null && (
-                <span className="num-continuous" data-testid={`${testId}-num-continuous`}>
-                  {t("assign.numberKind.continuousValue", { n: continuous })}
-                </span>
-              )}
-            </span>
-          )}
+          {renderStepRow(edit)}
           {edit.kind === "continuous" && (
             <label className="num-follow">
               <input type="checkbox" checked={edit.follow} data-testid={`${testId}-num-follow`} onChange={(event) => onEditChange({ ...edit, follow: event.target.checked })} />

@@ -52,9 +52,9 @@ BELOW_FLOOR = EXACT_FLOOR[:-1]
 # 규칙 쪼개기가 문장 끝 뒤 빈 글자 없이 붙은 두 문장을 한 단위로 두는 모양 — 나눌 자리 사이에 빈 글자가 없다
 TIGHT_FIRST, TIGHT_SECOND = "합성 장비를 켠다.", "합성 시료를 넣는다."
 TIGHT = TIGHT_FIRST + TIGHT_SECOND
-# 한 문단의 두 문장과 다음 문단의 한 문장 — 셋을 합치면 범위가 두 블록에 걸쳐 단위 글자에 줄바꿈 이음이 생긴다
+# 한 문단의 두 문장과 다음 문단의 한 문장 — 셋을 합치면 범위가 두 블록에 걸치고 단위 글자는 띄어쓰기로 이어진다(항목 6-a)
 CROSS_1, CROSS_2, CROSS_3 = "합성 첫째 문장이다.", "합성 둘째 문장이다.", "합성 셋째 문장이다."
-CROSS_TEXT = f"{CROSS_1} {CROSS_2}\n{CROSS_3}"
+CROSS_TEXT = f"{CROSS_1} {CROSS_2} {CROSS_3}"
 HEADING = "1. 목적"
 HEADING_BLOCK = p(HEADING, "Heading1")
 DATA_TABLE = tbl([["합성 항목", "합성 값"], ["합성 압력", "10 bar"]])
@@ -472,7 +472,7 @@ def test_offset_is_usable_by_the_split_edit(client: TestClient, fake_ai: FakeAi)
 
 def test_offsets_work_for_a_unit_whose_spans_cross_blocks(client: TestClient, fake_ai: FakeAi) -> None:
     bundle, document_id, merged = make_merged_cross_block_unit(client)
-    use_parts(fake_ai, CROSS_1, f"{CROSS_2}\n{CROSS_3}")  # 둘째 조각 안에 줄바꿈 이음이 들어간다
+    use_parts(fake_ai, CROSS_1, f"{CROSS_2} {CROSS_3}")  # 둘째 조각 안에 블록 이음(띄어쓰기)이 들어간다
     queue_one(client, bundle.id, merged["id"])
 
     run_jobs()
@@ -480,7 +480,7 @@ def test_offsets_work_for_a_unit_whose_spans_cross_blocks(client: TestClient, fa
     suggestion = read_single_suggestion()
     assert suggestion.result == "applied" and suggestion.content["offsets"] == [len(CROSS_1) + 1]
     apply_offsets(client, bundle, document_id, merged["id"], suggestion.content["offsets"])
-    assert {CROSS_1, f"{CROSS_2}\n{CROSS_3}"} <= read_texts(client, bundle.id, document_id)
+    assert {CROSS_1, f"{CROSS_2} {CROSS_3}"} <= read_texts(client, bundle.id, document_id)
 
 
 def test_a_cut_at_the_block_boundary_is_usable(client: TestClient, fake_ai: FakeAi) -> None:
@@ -496,9 +496,9 @@ def test_a_cut_at_the_block_boundary_is_usable(client: TestClient, fake_ai: Fake
     assert {CROSS_1, CROSS_2, CROSS_3} <= read_texts(client, bundle.id, document_id)
 
 
-def test_a_part_that_turns_the_line_break_into_a_space_is_invalid(client: TestClient, fake_ai: FakeAi) -> None:
+def test_a_part_that_puts_a_line_break_into_the_joining_space_is_invalid(client: TestClient, fake_ai: FakeAi) -> None:
     bundle, document_id, merged = make_merged_cross_block_unit(client)
-    use_parts(fake_ai, CROSS_1, f"{CROSS_2} {CROSS_3}")
+    use_parts(fake_ai, CROSS_1, f"{CROSS_2}\n{CROSS_3}")
     queue_one(client, bundle.id, merged["id"])
 
     run_jobs()

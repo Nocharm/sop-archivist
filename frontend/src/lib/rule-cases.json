@@ -15,7 +15,7 @@
       "bullet"
     ],
     "MAX_NUMBER_CHARS": 40,
-    "CAPTION_REACH": 2
+    "MAX_ROW_LEVEL": 8
   },
   "number_lines": [
     {
@@ -526,6 +526,88 @@
       }
     }
   ],
+  "caption_heads": [
+    {
+      "text": "표 1. 조제 탱크",
+      "table": "1",
+      "figure": null
+    },
+    {
+      "text": "Table 3: Limits",
+      "table": "3",
+      "figure": null
+    },
+    {
+      "text": "표 1에 따라",
+      "table": null,
+      "figure": null
+    },
+    {
+      "text": "<표 1> 운전 조건",
+      "table": "1",
+      "figure": null
+    },
+    {
+      "text": "[Table 3] Limits",
+      "table": "3",
+      "figure": null
+    },
+    {
+      "text": "(표 2) 조건",
+      "table": "2",
+      "figure": null
+    },
+    {
+      "text": "표-1 조건",
+      "table": "1",
+      "figure": null
+    },
+    {
+      "text": "Table-1 Limits",
+      "table": "1",
+      "figure": null
+    },
+    {
+      "text": "[표 4]",
+      "table": "4",
+      "figure": null
+    },
+    {
+      "text": "<그림 2> 펌프",
+      "table": null,
+      "figure": "2"
+    },
+    {
+      "text": "Fig.6 Lid",
+      "table": null,
+      "figure": "6"
+    },
+    {
+      "text": "Figure-7",
+      "table": null,
+      "figure": "7"
+    },
+    {
+      "text": "그림 3 펌프",
+      "table": null,
+      "figure": "3"
+    },
+    {
+      "text": "표 3-1 목록",
+      "table": "3",
+      "figure": null
+    },
+    {
+      "text": "도표 3",
+      "table": null,
+      "figure": null
+    },
+    {
+      "text": "(표 2 참조",
+      "table": "2",
+      "figure": null
+    }
+  ],
   "bullet_depths": [
     {
       "items": [
@@ -619,6 +701,172 @@
         null,
         null,
         0
+      ]
+    }
+  ],
+  "row_levels": [
+    {
+      "rows": [
+        {
+          "label": "5",
+          "shift": 0,
+          "has_cell": true,
+          "pair_top": null
+        },
+        {
+          "label": "5.1",
+          "shift": 0,
+          "has_cell": true,
+          "pair_top": null
+        },
+        {
+          "label": "•",
+          "shift": 0,
+          "has_cell": true,
+          "pair_top": null
+        },
+        {
+          "label": "",
+          "shift": 0,
+          "has_cell": true,
+          "pair_top": null
+        },
+        {
+          "label": "",
+          "shift": -1,
+          "has_cell": true,
+          "pair_top": null
+        }
+      ],
+      "levels": [
+        1,
+        2,
+        3,
+        3,
+        2
+      ]
+    },
+    {
+      "rows": [
+        {
+          "label": "",
+          "shift": 0,
+          "has_cell": true,
+          "pair_top": null
+        },
+        {
+          "label": "○",
+          "shift": 0,
+          "has_cell": true,
+          "pair_top": null
+        },
+        {
+          "label": "▪",
+          "shift": 2,
+          "has_cell": true,
+          "pair_top": null
+        },
+        {
+          "label": "",
+          "shift": 1,
+          "has_cell": true,
+          "pair_top": null
+        },
+        {
+          "label": "",
+          "shift": 0,
+          "has_cell": false,
+          "pair_top": null
+        }
+      ],
+      "levels": [
+        1,
+        2,
+        5,
+        6,
+        6
+      ]
+    },
+    {
+      "rows": [
+        {
+          "label": "3",
+          "shift": 0,
+          "has_cell": true,
+          "pair_top": null
+        },
+        {
+          "label": "가.",
+          "shift": 0,
+          "has_cell": true,
+          "pair_top": null
+        },
+        {
+          "label": "",
+          "shift": 2,
+          "has_cell": true,
+          "pair_top": null
+        },
+        {
+          "label": "4",
+          "shift": 0,
+          "has_cell": true,
+          "pair_top": null
+        },
+        {
+          "label": "",
+          "shift": 0,
+          "has_cell": true,
+          "pair_top": 3
+        },
+        {
+          "label": "•",
+          "shift": 9,
+          "has_cell": true,
+          "pair_top": null
+        }
+      ],
+      "levels": [
+        1,
+        1,
+        3,
+        1,
+        1,
+        8
+      ]
+    },
+    {
+      "rows": [
+        {
+          "label": "1.2.3.4.5.6.7.8.9",
+          "shift": 0,
+          "has_cell": true,
+          "pair_top": null
+        },
+        {
+          "label": "•",
+          "shift": 0,
+          "has_cell": true,
+          "pair_top": null
+        },
+        {
+          "label": "",
+          "shift": -9,
+          "has_cell": true,
+          "pair_top": null
+        },
+        {
+          "label": "2",
+          "shift": 5,
+          "has_cell": true,
+          "pair_top": null
+        }
+      ],
+      "levels": [
+        8,
+        8,
+        1,
+        1
       ]
     }
   ],

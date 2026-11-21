@@ -116,7 +116,7 @@ def test_number_only_cells_become_the_number_of_the_first_line_in_their_row(clie
     view = get_view(client, bundle_id, doc_id)
     lines = _table_lines(view, 2)
     assert [(unit["text"], (unit["number"] or {}).get("value")) for unit in lines] == [
-        (f"A\n{STEP_A}", "A"), (f"A-1\n{STEP_A1}", "A-1"), ("7", None),  # 붙을 줄이 없는 번호 칸은 제 줄(§11-7)
+        (f"A {STEP_A}", "A"), (f"A-1 {STEP_A1}", "A-1"), ("7", None),  # 붙을 줄이 없는 번호 칸은 제 줄(§11-7)
     ]
     joined = lines[0]
     assert (joined["number"]["source"], joined["text"][joined["number"]["content_start"]:]) == ("cell", STEP_A)
@@ -160,7 +160,7 @@ def test_back_to_table_asks_once_clears_only_the_table_lines_and_keeps_the_numbe
     assert _set_layout(client, bundle_id, doc_id, 2, False).status_code == 200
     view = get_view(client, bundle_id, doc_id)
     table_unit = next(unit for unit in _table_units(view) if unit["table_id"] == view["tables"][2]["id"])
-    assert find_unit(view, f"A\n{STEP_A}")["group_unit_id"] == table_unit["id"]
+    assert find_unit(view, f"A {STEP_A}")["group_unit_id"] == table_unit["id"]
     assert _coverage_problems(view) == []
 
 
@@ -179,7 +179,7 @@ def test_output_a_places_unwrapped_lines_by_cell_and_the_summary_counts_them(cli
     assert ko[second["id"]]["location"]["place"] == "표 1 · 2행 2열"  # 지금 dev 꼴 그대로(§11-6)
     assert en[second["id"]]["location"]["place"] == "Table 1 · R 2 C 2"
     # 번호 칸을 받은 줄은 내용 칸을 가리키고, 원문 칸은 번호를 뺀 내용이다
-    joined = ko[find_unit(view, f"A\n{STEP_A}")["id"]]
+    joined = ko[find_unit(view, f"A {STEP_A}")["id"]]
     assert (joined["location"]["place"], joined["source_text"]) == ("표 3 · 1행 2열", STEP_A)
     assert ko[find_unit(view, "7")["id"]]["location"]["place"] == "표 3 · 3행 1열"
     unwrapped = len(_table_lines(view, 0)) + len(_table_lines(view, 2))
@@ -193,7 +193,7 @@ def test_two_document_undos_after_a_confirmed_back_to_table_restore_the_first_ta
     before = get_view(client, bundle_id, doc_id)
     _unwrap(client, bundle_id, doc_id, 2)
     view = get_view(client, bundle_id, doc_id)
-    assign_as_is(client, bundle_id, find_unit(view, f"A\n{STEP_A}"), sop_id, slot_key="purpose")
+    assign_as_is(client, bundle_id, find_unit(view, f"A {STEP_A}"), sop_id, slot_key="purpose")
     assert _set_layout(client, bundle_id, doc_id, 2, False, confirm=True).status_code == 200
 
     _step(client, bundle_id, doc_id, "undo")
@@ -213,7 +213,7 @@ def test_a_number_fixed_in_the_table_survives_unwrapping_and_wrapping_again(clie
 
     _unwrap(client, bundle_id, doc_id, 2)
     joined = _table_lines(get_view(client, bundle_id, doc_id), 2)[0]
-    assert (joined["text"], joined["number"]["value"], joined["number"]["is_set"]) == (f"A\n{STEP_A}", "B", True)
+    assert (joined["text"], joined["number"]["value"], joined["number"]["is_set"]) == (f"A {STEP_A}", "B", True)
 
     rewrapped = _set_layout(client, bundle_id, doc_id, 2, False, confirm=True)
     assert rewrapped.status_code == 200, rewrapped.text

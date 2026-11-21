@@ -102,9 +102,8 @@ export function UploadModal({ bundleId, initialFiles = [], onClose, onUploaded, 
     const code = readFileCode(item.file.name);
     const side = item.side ?? guessUploadSide(code, newCodes, oldCodes);
     const plan: NewUploadPlan | null = side === "new" ? planNewUpload(code, listed, usedDocIds) : null;
-    // 새 줄이 생기는 WI는 상위 SOP를 골라야 한다
-    const isMissingParent = plan?.kind === "create" && item.docType === "wi" && item.parentCode === "";
-    return { code, side, plan, isReady: plan?.kind !== "blocked" && !isMissingParent };
+    // 새 줄이 생기는 WI의 상위 SOP는 골라도 비워도 된다 - 비우면 올린 SOP의 참조 줄이 찾는다
+    return { code, side, plan, isReady: plan?.kind !== "blocked" };
   });
   const canSubmit = picked.length > 0 && plans.every((plan) => plan.isReady);
   // 줄이 든 묶음 - 올린 뒤에는 보낸 쪽 그대로다(올라간 Old 문서의 번호가 앱이 고르는 쪽을 뒤집지 않게)
@@ -337,23 +336,20 @@ export function UploadModal({ bundleId, initialFiles = [], onClose, onUploaded, 
           onChange={(docType) => patchPicked(item.id, { docType, parentCode: docType === "wi" ? item.parentCode : "" })}
         />
         {code !== "" && <span className="font-mono text-xs text-ink">{code}</span>}
-        {item.docType === "wi" &&
-          (sopCodes.length > 0 ? (
-            <>
-              <span className="text-xs text-ink-3">· {t("upload.under")}</span>
-              <Select
-                testId={`upload-parent-${index}`}
-                ariaLabel={t("documents.parentCode")}
-                size="sm"
-                mono
-                value={item.parentCode}
-                options={[{ value: "", label: t("upload.pickParent") }, ...sopCodes.map((sop) => ({ value: sop, label: sop }))]}
-                onChange={(parentCode) => patchPicked(item.id, { parentCode })}
-              />
-            </>
-          ) : (
-            <span className="text-xs text-danger">{t("upload.why.noSop")}</span>
-          ))}
+        {item.docType === "wi" && (
+          <>
+            <span className="text-xs text-ink-3">· {t("upload.under")}</span>
+            <Select
+              testId={`upload-parent-${index}`}
+              ariaLabel={t("documents.parentCode")}
+              size="sm"
+              mono={item.parentCode !== ""}
+              value={item.parentCode}
+              options={[{ value: "", label: t("tobe.parentNone") }, ...sopCodes.map((sop) => ({ value: sop, label: sop }))]}
+              onChange={(parentCode) => patchPicked(item.id, { parentCode })}
+            />
+          </>
+        )}
       </span>
     );
   }

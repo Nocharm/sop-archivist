@@ -8,6 +8,7 @@ from app.sop.ai.runner import JobHandler
 from app.sop.ai.split import SPLIT_HANDLER, SPLIT_KIND
 from app.sop.ai.tobe_list_job import TOBE_LIST_HANDLER, TOBE_LIST_KIND
 from app.sop.ai.translate import TRANSLATE_HANDLER, TRANSLATE_KIND
+from app.sop.ai.unwrap_order_job import UNWRAP_ORDER_HANDLER, UNWRAP_ORDER_KIND
 
 HANDLERS: dict[str, JobHandler] = {
     CLASSIFY_KIND: CLASSIFY_HANDLER,
@@ -17,4 +18,5 @@ HANDLERS: dict[str, JobHandler] = {
     SPLIT_KIND: SPLIT_HANDLER,
     DOC_META_KIND: DOC_META_HANDLER,
     TOBE_LIST_KIND: TOBE_LIST_HANDLER,
+    UNWRAP_ORDER_KIND: UNWRAP_ORDER_HANDLER,
 }

@@ -3,7 +3,7 @@
 // 자리는 그 자리 메뉴와 같은 규칙(placeLinkMenu) - 그 줄의 조각들(한/영 짝이면 둘 다) 아래(모자라면 위)에 놓아 다룰 문장을 가리지 않는다.
 "use client";
 
-import { ArrowDownToLine, ArrowUpToLine, BookMarked, BookX, CaptionsOff, Eraser, ExternalLink, Heading, LayoutList, Link2, MousePointerClick, PanelBottom, PanelTop, Pilcrow, Scissors, Trash2, Unlink, type LucideIcon } from "lucide-react";
+import { ArrowDownToLine, ArrowUpToLine, BookMarked, BookX, CaptionsOff, Eraser, ExternalLink, Heading, Image as ImageIcon, LayoutList, Link2, MousePointerClick, PanelBottom, PanelTop, Pilcrow, Scissors, Table2, Trash2, Unlink, type LucideIcon } from "lucide-react";
 import { useRef } from "react";
 
 import { Menu } from "@/components/ui/menu";
@@ -14,7 +14,7 @@ import { useI18n } from "@/lib/i18n";
 import { placeLinkMenu } from "@/lib/link-menu-place";
 
 // 오른쪽 칸의 다듬기 줄(shape-tools)도 같은 아이콘·이름을 쓴다 - 같은 일은 어디서나 같은 모양으로
-export const ASSIGN_ACTION_ICONS: Record<Exclude<AssignMenuAction, "lang">, LucideIcon> = {
+export const ASSIGN_ACTION_ICONS: Record<Exclude<AssignMenuAction, "lang" | "piece_lang" | "caption_of">, LucideIcon> = {
   // 여러 줄 삭제·이동 창의 단추와 같은 아이콘
   delete: Trash2,
   move: ExternalLink,
@@ -39,7 +39,7 @@ export const ASSIGN_ACTION_ICONS: Record<Exclude<AssignMenuAction, "lang">, Luci
   to_heading: Heading,
 };
 
-export const ASSIGN_ACTION_LABELS: Record<Exclude<AssignMenuAction, "lang">, string> = {
+export const ASSIGN_ACTION_LABELS: Record<Exclude<AssignMenuAction, "lang" | "piece_lang" | "caption_of">, string> = {
   delete: "assign.ctx.delete",
   move: "assign.ctx.move",
   clear: "classify.clear",
@@ -68,24 +68,33 @@ const KEYS: Partial<Record<AssignMenuAction, string>> = { delete: "Del", move: "
 interface AssignContextMenuProps {
   /** 누른 문장의 조각 - 닫으면 포커스가 돌아갈 곳 */
   anchor: HTMLElement;
-  /** 가리지 않을 조각들(누른 줄의 Unit 전부) - 비면 anchor */
-  cover: HTMLElement[];
+  /** 가리지 않을 조각들(누른 줄의 Unit 전부)을 자리 잡을 때 찾는다 - 비면 anchor. 접힌 삭제 줄을 눌렀으면 그 순간 펼쳐 붙은 박스를 찾아야 해서 렌더 때가 아니라 잴 때 읽는다 */
+  readCover: () => HTMLElement[];
   /** 누른 자리(화면 좌표) - 키보드로 열었으면 null(줄 왼쪽 아래) */
   click: { x: number; y: number } | null;
   groups: AssignMenuGroups;
-  onPick: (action: AssignMenuAction, lang?: "ko" | "en") => void;
+  /** piece - 조각 언어 줄(piece_lang)의 조각 순번, holderId - 캡션으로 쓰기 줄(caption_of)의 표·그림 단위 */
+  onPick: (action: AssignMenuAction, lang?: "ko" | "en", piece?: number, holderId?: number) => void;
   onClose: () => void;
 }
 
-export function AssignContextMenu({ anchor, cover, click, groups, onPick, onClose }: AssignContextMenuProps) {
+/** 조각 언어 줄에 보이는 조각 글 앞부분 글자 수 - 메뉴 폭을 넘지 않게 */
+const PIECE_HEAD_CHARS = 18;
+
+export function AssignContextMenu({ anchor, readCover, click, groups, onPick, onClose }: AssignContextMenuProps) {
   const { t } = useI18n();
   const anchorRef = useRef<HTMLElement>(anchor);
   const tip = useDelegatedTip();
 
   function place(rect: DOMRect, size: { width: number; height: number }) {
-    const boxes = cover.filter((el) => el.isConnected).map((el) => el.getBoundingClientRect());
+    const boxes = readCover().filter((el) => el.isConnected).map((el) => el.getBoundingClientRect());
     const row = boxes.length === 0 ? rect : { top: Math.min(...boxes.map((box) => box.top)), bottom: Math.max(...boxes.map((box) => box.bottom)), left: Math.min(...boxes.map((box) => box.left)) };
     return placeLinkMenu(row, click?.x ?? null, size, { width: window.innerWidth, height: window.innerHeight }, click?.y ?? null);
+  }
+
+  const firstHolder = groups.edit.find((item) => item.action === "caption_of");
+  function isFirstHolder(item: AssignMenuItem): boolean {
+    return item === firstHolder;
   }
 
   function renderItem(item: AssignMenuItem) {
@@ -102,6 +111,52 @@ export function AssignContextMenu({ anchor, cover, click, groups, onPick, onClos
           testId="assign-ctx-lang"
         />
       );
+    }
+    if (item.action === "piece_lang") {
+      if (!item.piece) return null;
+      const { index, text } = item.piece;
+      const row = (
+        <MenuLangRow
+          key={`piece-${index}`}
+          label={text.length > PIECE_HEAD_CHARS ? `${text.slice(0, PIECE_HEAD_CHARS)}…` : text}
+          current={item.lang}
+          disabledReason={item.reasonKey ? t(item.reasonKey) : null}
+          currentReason={t("split.menu.why.alreadyLang")}
+          onPick={(lang) => onPick("piece_lang", lang, index)}
+          testId={`assign-ctx-piece-${index}`}
+        />
+      );
+      // 첫 조각 줄 위에 "조각마다" 머리 - 합친 박스를 조각으로 떼어 짝으로 만드는 줄들이다
+      return index === 0 ? [<p key="piece-head" className="menu-label">{t("assign.ctx.pieces")}</p>, row] : row;
+    }
+    if (item.action === "caption_of") {
+      if (!item.holder) return null;
+      const { holder } = item;
+      const where = holder.distance === 0 ? t("assign.ctx.captionOf.inside")
+        : t(`assign.ctx.captionOf.${holder.side}${holder.distance === 1 ? "1" : ""}`, { k: holder.distance });
+      const label = t(holder.kind === "figure" ? "assign.ctx.captionOf.figure" : "assign.ctx.captionOf.table", { id: holder.displayId, where });
+      const reason = item.reasonKey ? t(item.reasonKey) : null;
+      const row = (
+        <button
+          key={`caption-of-${holder.unitId}`}
+          type="button"
+          role="menuitem"
+          className="menu-item"
+          aria-disabled={item.enabled ? undefined : "true"}
+          aria-label={reason ? `${label} - ${reason}` : undefined}
+          data-tip={reason ?? undefined}
+          data-tip-side="right"
+          data-testid={`assign-ctx-caption-of-${holder.unitId}`}
+          onClick={() => {
+            if (item.enabled) onPick("caption_of", undefined, undefined, holder.unitId);
+          }}
+        >
+          {holder.kind === "figure" ? <ImageIcon size={14} strokeWidth={1.5} aria-hidden /> : <Table2 size={14} strokeWidth={1.5} aria-hidden />}
+          <span className="min-w-0 flex-1 truncate">{label}</span>
+        </button>
+      );
+      // 첫 줄 위에 "캡션으로 쓰기" 머리 - 가까운 표·그림이 한 줄씩(B10 8-a)
+      return [...(isFirstHolder(item) ? [<p key="caption-of-head" className="menu-label">{t("assign.ctx.captionOfHead")}</p>] : []), row];
     }
     const Icon = ASSIGN_ACTION_ICONS[item.action];
     const label = t(item.labelKey ?? ASSIGN_ACTION_LABELS[item.action]);

@@ -40,26 +40,78 @@ export function getLevelWidths(labels: Iterable<string>): (level: number) => num
   return (level) => byLevel.get(level) ?? getPillWidth(level);
 }
 
-/** 줄마다 탭 폭 - 숫자 번호가 있으면 깊이별 폭(getLevelWidths, 받은 줄 전체에서 그 깊이의 가장 긴 번호가 들어가게), 점 기호 줄은 같은 부분 안 앞의 가장 가까운 숫자 번호 줄 깊이에서 한 단계 더(getBulletLevel - 기호마다 한 단계씩 더 깊다), 없는 줄(깊이 0)은 같은 부분 안의 직전 줄 폭을 따르고(부분의 첫 줄이면 1단 폭), 짝 카드의 둘째 줄부터(pairTopOf = 첫 줄의 key)는 첫 줄과 같은 폭이다. 첫 줄을 따르는 까닭: 한 카드의 탭은 첫 줄이 대표라 절 번호 글자도 첫 줄만 보이기 때문이다 */
-export function getTabWidths(rows: readonly { key: string; part: string; sectionLabel: string; pairTopOf?: string | null }[]): Map<string, number> {
-  const getLevelWidth = getLevelWidths(rows.map((row) => row.sectionLabel));
-  const widths = new Map<string, number>();
+/** 화면 단계의 끝 - 깊이별 폭 표에 있는 단계까지 차이 나게 그린다 */
+export const MAX_LEVEL = PILL_WIDTH_BY_LEVEL.length;
+
+/** 단계 계산에 넣는 줄 - shift는 저장된 들여쓰기 차이(units.indent_shift), hasCell은 번호 칸이 있는 줄(표 · 그림 줄은 없다, 주지 않으면 있음) */
+export interface LevelRow {
+  key: string;
+  part: string;
+  sectionLabel: string;
+  pairTopOf?: string | null;
+  shift?: number;
+  hasCell?: boolean;
+}
+
+/** 한 줄의 단계 - base는 셈한 단계, level은 화면 단계(base + 차이, 1–MAX_LEVEL), anchor는 번호 · 없는 줄이 단계를 빌린 줄(숫자 번호 · 점 기호 줄) */
+export interface RowLevel {
+  base: number;
+  level: number;
+  anchor: string | null;
+}
+
+function clampLevel(level: number): number {
+  return Math.min(Math.max(level, 1), MAX_LEVEL);
+}
+
+/**
+ * 줄마다 단계(B8 항목 7, 부분마다 문서 순서로) - 숫자 번호는 마디 수(차이를 더하지 않는다 - 단계는 번호가 정한다), 점 기호는 같은 부분 안 앞의 가장 가까운
+ * 숫자 번호 깊이 + 1 + 기호 순번(getBulletLevel), 직접 번호 · 번호 없는 줄은 앞의 가장 가까운 숫자 번호 · 점 기호 줄(anchor)의 화면 단계에 차이를 더한다 -
+ * 기호 줄을 옮기면 그 아래 이어 쓴 줄이 따라가고, 이어진 번호 없는 줄끼리는 서로 기대지 않는다(한 줄씩 되돌릴 수 있게). 번호 칸이 없는 줄(표 · 그림)은 직전 줄 단계,
+ * 짝 카드의 둘째 줄부터(pairTopOf = 첫 줄의 key)는 첫 줄 단계다(한 카드의 탭은 첫 줄이 대표). 차이가 모두 0이면 지금까지의 "앞 줄 폭을 따름"과 같다
+ */
+export function getRowLevels(rows: readonly LevelRow[]): Map<string, RowLevel> {
+  const levels = new Map<string, RowLevel>();
   let part: string | null = null;
+  let numeric = 0;
+  let anchor: { key: string; level: number } | null = null;
   let previous: number | null = null;
-  let previousLevel = 0;
   for (const row of rows) {
     if (row.part !== part) {
       part = row.part;
+      numeric = 0;
+      anchor = null;
       previous = null;
-      previousLevel = 0;
     }
-    const level = getSectionLevel(row.sectionLabel);
-    if (level > 0) previousLevel = level;
-    const bulletLevel = getBulletIndex(row.sectionLabel) >= 0 ? getBulletLevel(previousLevel, row.sectionLabel) : 0;
-    const own: number = level > 0 ? getLevelWidth(level) : bulletLevel > 0 ? getLevelWidth(bulletLevel) : (previous ?? getPillWidth(1));
-    const width: number = (row.pairTopOf != null ? widths.get(row.pairTopOf) : undefined) ?? own;
+    const depth = getSectionLevel(row.sectionLabel);
+    const isBullet = depth === 0 && getBulletIndex(row.sectionLabel) >= 0;
+    if (depth > 0) numeric = depth;
+    const top = row.pairTopOf != null ? levels.get(row.pairTopOf) : undefined;
+    let own: RowLevel;
+    if (top !== undefined) own = { ...top };
+    else if (depth > 0) own = { base: depth, level: clampLevel(depth), anchor: null };
+    else if (isBullet) {
+      const base = getBulletLevel(numeric, row.sectionLabel);
+      own = { base, level: clampLevel(base + (row.shift ?? 0)), anchor: null };
+    } else if (row.hasCell === false) own = { base: previous ?? 1, level: previous ?? 1, anchor: null };
+    else {
+      const base = anchor?.level ?? 1;
+      own = { base, level: clampLevel(base + (row.shift ?? 0)), anchor: anchor?.key ?? null };
+    }
+    levels.set(row.key, own);
+    if (top === undefined && (depth > 0 || isBullet)) anchor = { key: row.key, level: own.level };
+    previous = own.level;
+  }
+  return levels;
+}
+
+/** 줄마다 탭 폭 - 화면 단계(getRowLevels)의 깊이별 폭(getLevelWidths, 받은 줄 전체에서 그 깊이의 가장 긴 번호가 들어가게), 짝 카드의 둘째 줄부터는 첫 줄과 같은 폭 */
+export function getTabWidths(rows: readonly LevelRow[], levels: ReadonlyMap<string, RowLevel> = getRowLevels(rows)): Map<string, number> {
+  const getLevelWidth = getLevelWidths(rows.map((row) => row.sectionLabel));
+  const widths = new Map<string, number>();
+  for (const row of rows) {
+    const width = (row.pairTopOf != null ? widths.get(row.pairTopOf) : undefined) ?? getLevelWidth(levels.get(row.key)?.level ?? 1);
     widths.set(row.key, width);
-    previous = width;
   }
   return widths;
 }

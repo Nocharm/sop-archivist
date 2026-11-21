@@ -61,6 +61,15 @@ def find_leading_number(text: str) -> str | None:
     return found.group(1) if found else None
 
 
+# 번호를 견줄 때 지우는 글자 — 빈칸과 하이픈 변형(‐ ‑ ‒ – — ― −). "WI SYN 0101" · "wi–syn–0101"이 "WI-SYN-0101"과 같다
+_CODE_SEPARATORS = re.compile(r"[\s\-\u2010-\u2015\u2212]+")
+
+
+def normalize_ref_code(code: str) -> str:
+    """참조 번호와 문서 번호를 견줄 때의 꼴 — 대문자로, 빈칸 · 하이픈 변형을 지운다(참조로 찾은 상위, B13)."""
+    return _CODE_SEPARATORS.sub("", code).upper()
+
+
 def read_leading_ref_number(text: str) -> str:
     """줄 맨 앞 문서 번호를 조회할 수 있는 꼴로 — 없거나 조회할 수 없는 꼴이면 빈 글(번호 없는 참조 줄)."""
     number = find_leading_number(text)

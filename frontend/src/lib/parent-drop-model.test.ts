@@ -50,7 +50,7 @@ describe("buildParentCard", () => {
 });
 
 function makeDoc(patch: Partial<TargetDoc>): TargetDoc {
-  return { id: 1, code: "SOP-CF", title: "", doc_type: "sop", parent_code: null, entrance: "assign", is_equipment_sop: false, order_index: 1, document_id: null, ...patch };
+  return { id: 1, code: "SOP-CF", title: "", doc_type: "sop", parent_code: null, entrance: "assign", is_equipment_sop: false, order_index: 1, document_id: null, ref_parent_codes: [], ...patch };
 }
 
 function makeToBe(docs: TargetDoc[]): ToBe {

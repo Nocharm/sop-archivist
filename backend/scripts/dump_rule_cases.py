@@ -1,6 +1,6 @@
 """Write frontend/src/lib/rule-cases.json — inputs and backend answers for the rules the frontend copies.
 
-The frontend keeps copies of a few backend rules to preview before the save answer arrives (caption places, line numbers,
+The frontend keeps copies of a few backend rules to preview before the save answer arrives (caption candidate order, line numbers,
 number follow, constants). `tests/test_rule_cases.py` fails when this file is stale and `rule-cases.test.ts` fails when a
 frontend copy answers differently, so a rule change on either side breaks CI until both agree.
 
@@ -13,12 +13,19 @@ from types import SimpleNamespace
 from typing import Any
 
 from app.sop import constants
-from app.sop.caption_slot import CAPTION_REACH, PlaceBlock, build_block_places
-from app.sop.numbering import MAX_NUMBER_CHARS, plan_follow
+from app.sop.caption_slot import PlaceBlock, build_block_places
+from app.sop.numbering import MAX_NUMBER_CHARS, MAX_ROW_LEVEL, LevelRow, build_row_levels, plan_follow
 from app.sop.outputs import get_bullet_depths, number_lines
+from app.sop.renumber import FIGURE_CAPTION_RE, TABLE_CAPTION_RE
 from app.sop.unwrap_order import order_unwrapped, order_unwrapped_lines
 
 OUT = Path(__file__).resolve().parents[2] / "frontend" / "src" / "lib" / "rule-cases.json"
+
+# Caption heads (renumber.TABLE_CAPTION_RE · FIGURE_CAPTION_RE) — the frontend reads the same head to judge a caption's shape.
+CAPTION_HEAD_SAMPLES = [
+    "표 1. 조제 탱크", "Table 3: Limits", "표 1에 따라", "<표 1> 운전 조건", "[Table 3] Limits", "(표 2) 조건", "표-1 조건",
+    "Table-1 Limits", "[표 4]", "<그림 2> 펌프", "Fig.6 Lid", "Figure-7", "그림 3 펌프", "표 3-1 목록", "도표 3", "(표 2 참조",
+]
 
 NUMBER_LINES_INPUTS: list[tuple[str, list[int | None]]] = [
     ("5", [0, 0, 1, 1, 2, 0]),
@@ -77,6 +84,14 @@ UNWRAP_LINES_INPUTS: list[tuple[list[tuple[int, int | None, int | None]], dict[i
     ),
 ]
 
+# Paper rows in order: (number label, indent_shift, has a number cell, index of the pair card's first row or None).
+ROW_LEVEL_INPUTS: list[list[tuple[str, int, bool, int | None]]] = [
+    [("5", 0, True, None), ("5.1", 0, True, None), ("•", 0, True, None), ("", 0, True, None), ("", -1, True, None)],
+    [("", 0, True, None), ("○", 0, True, None), ("▪", 2, True, None), ("", 1, True, None), ("", 0, False, None)],
+    [("3", 0, True, None), ("가.", 0, True, None), ("", 2, True, None), ("4", 0, True, None), ("", 0, True, 3), ("•", 9, True, None)],
+    [("1.2.3.4.5.6.7.8.9", 0, True, None), ("•", 0, True, None), ("", -9, True, None), ("2", 5, True, None)],
+]
+
 # Blank-text judgment must match segment.is_blank_char: Python str.isspace() plus INVISIBLE_CHARS.
 BLANK_SAMPLES = ["", " ", "\t\n", "　", " ", "​", "﻿", "⁠", "\x1c", "\x85", "᠎", "a", " ​가"]
 
@@ -119,7 +134,7 @@ def build_rule_cases() -> dict[str, Any]:
             "BULLET_SYMBOLS": list(constants.BULLET_SYMBOLS),
             "NUMBER_STYLES": list(constants.NUMBER_STYLES),
             "MAX_NUMBER_CHARS": MAX_NUMBER_CHARS,
-            "CAPTION_REACH": CAPTION_REACH,
+            "MAX_ROW_LEVEL": MAX_ROW_LEVEL,
         },
         "number_lines": [
             {"base": base, "depths": depths, "numbers": number_lines(base, depths)} for base, depths in NUMBER_LINES_INPUTS
@@ -134,12 +149,27 @@ def build_rule_cases() -> dict[str, Any]:
             for numbers, index, new in PLAN_FOLLOW_INPUTS
         ],
         "block_places": _build_place_cases(),
+        "caption_heads": [
+            {
+                "text": text,
+                "table": (match.group(1) if (match := TABLE_CAPTION_RE.match(text)) else None),
+                "figure": (match.group(1) if (match := FIGURE_CAPTION_RE.match(text)) else None),
+            }
+            for text in CAPTION_HEAD_SAMPLES
+        ],
         "bullet_depths": [
             {
                 "items": [{"number_style": style, "indent_level": level} for style, level in items],
                 "depths": get_bullet_depths([SimpleNamespace(number_style=style, indent_level=level) for style, level in items]),
             }
             for items in BULLET_INPUTS
+        ],
+        "row_levels": [
+            {
+                "rows": [{"label": label, "shift": shift, "has_cell": has_cell, "pair_top": top} for label, shift, has_cell, top in rows],
+                "levels": build_row_levels([LevelRow(*row) for row in rows]),
+            }
+            for rows in ROW_LEVEL_INPUTS
         ],
         "unwrap_order": [
             {

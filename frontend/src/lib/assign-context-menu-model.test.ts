@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { ViewUnit } from "./api-sop";
-import { buildAssignMenu, getPairPickBlocker, getPairSetBlocker, listShapeLineItems, planAssignJoin, planShapeMode, type AssignMenuAction, type AssignMenuContext } from "./assign-context-menu-model";
+import { buildAssignMenu, getPairPickBlocker, getPairSetBlocker, listShapeLineItems, planAssignJoin, planLanguageChange, planShapeMode, type AssignMenuAction, type AssignMenuContext } from "./assign-context-menu-model";
 import { findNearestCut } from "./paper-model";
 
 function makeUnit(id: number, over: Partial<ViewUnit> = {}): ViewUnit {
@@ -65,6 +65,16 @@ describe("buildAssignMenu", () => {
     expect(find(ctx(), "clear").reasonKey).toBe("assign.ctx.why.notAssigned");
     expect(find(ctx({ rowStatus: "ai_suggested" }), "clear").enabled).toBe(true);
     expect(find(ctx({ isDecided: () => true }), "clear").enabled).toBe(true);
+  });
+
+  it("calls Unassign 'Undo delete' on a deleted row and hides Delete - sentence, table and caption alike", () => {
+    for (const target of [makeUnit(2), makeUnit(2, { kind: "table" }), makeUnit(2, { kind: "caption" })]) {
+      const { assign } = buildAssignMenu(ctx({ target, rowStatus: "confirmed", isDeleted: true, isDecided: () => true }));
+      expect(assign.map((item) => item.action)).toEqual(["clear", "move"]);
+      expect(assign[0]).toMatchObject({ labelKey: "assign.ctx.undoDelete", enabled: true });
+    }
+    // 삭제가 아닌 줄은 그대로
+    expect(buildAssignMenu(ctx({ rowStatus: "confirmed", isDeleted: false })).assign[0].labelKey).toBeUndefined();
   });
 
   it("lets an assigned sentence be cut or merged (the screen asks before clearing the assignment) but not change language", () => {
@@ -196,22 +206,33 @@ describe("captions from the Assign menu", () => {
     expect(buildAssignMenu(ctx({ target: figure, prev: cell, next: ref })).edit).toEqual([]);
   });
 
-  it("offers a sentence as caption of the table or figure next to it, with the right name", () => {
-    const below = find(ctx({ prev: null, nextBundle: table }), "caption_attach_next");
-    const above = find(ctx({ prevBundle: figure }), "caption_attach_prev");
-    expect(below).toMatchObject({ enabled: true, labelKey: "assign.ctx.captionOfTableNext" });
-    expect(above.labelKey).toBe("assign.ctx.captionOfFigurePrev");
+  it("lists the nearest tables and figures to use a sentence as their caption, nearest first, each with its distance", () => {
+    // B10 8-a - 우클릭 "캡션으로 쓰기": 가까운 표·그림마다 한 줄(거리 제한 없음), 위·아래 · 칸 수
+    const holders = [{ bundle: table, distance: 1, side: "below" as const }, { bundle: figure, distance: 3, side: "above" as const }];
+    const items = buildAssignMenu(ctx({ captionHolders: holders })).edit.filter((item) => item.action === "caption_of");
+    expect(items.map((item) => item.holder)).toEqual([
+      { unitId: table.id, kind: "table", displayId: table.display_id, distance: 1, side: "below" },
+      { unitId: figure.id, kind: "figure", displayId: figure.display_id, distance: 3, side: "above" },
+    ]);
+    expect(items.every((item) => item.enabled)).toBe(true);
     expect(buildAssignMenu(ctx()).edit.some((item) => item.action.startsWith("caption_"))).toBe(false);
+    // 아직 표인 칸 줄은 캡션이 될 수 없어 줄이 없다
+    const cell = makeUnit(12, { kind: "cell_sentence", group_unit_id: 30 });
+    expect(buildAssignMenu(ctx({ target: cell, captionHolders: holders })).edit.some((item) => item.action === "caption_of")).toBe(false);
   });
 
   it("will not take a second caption in the same language, and waits for unsaved picks", () => {
     const taken = { listCaptionLangs: () => ["ko"] as const };
-    expect(find(ctx({ nextBundle: table, ...taken }), "caption_attach_next").reasonKey).toBe("assign.ctx.why.captionExists");
+    const below = [{ bundle: table, distance: 1, side: "below" as const }];
+    const holder = (extra: Partial<AssignMenuContext>) => buildAssignMenu(ctx({ captionHolders: below, ...extra })).edit.find((item) => item.action === "caption_of");
+    expect(holder(taken)?.reasonKey).toBe("assign.ctx.why.captionExists");
     expect(find(ctx({ target: table, table, prev: sentence, next: null, ...taken }), "caption_attach_prev").reasonKey).toBe("assign.ctx.why.captionExists");
-    expect(find(ctx({ nextBundle: table, listCaptionLangs: () => ["en"] }), "caption_attach_next").enabled).toBe(true);
+    expect(holder({ listCaptionLangs: () => ["en"] })?.enabled).toBe(true);
     expect(find(ctx({ target: table, table, prev: sentence, next: null, hasDraft: (unit) => unit.id === 1 }), "caption_attach_prev").reasonKey).toBe("assign.ctx.why.neighborUnsaved");
-    expect(find(ctx({ nextBundle: table, hasDraft: (unit) => unit.id === 2 }), "caption_attach_next").reasonKey).toBe("assign.ctx.why.unsaved");
-    expect(find(ctx({ nextBundle: table, hasDraft: (unit) => unit.id === 10 }), "caption_attach_next").reasonKey).toBe("assign.ctx.why.bundleUnsaved");
+    expect(holder({ hasDraft: (unit) => unit.id === 2 })?.reasonKey).toBe("assign.ctx.why.unsaved");
+    expect(holder({ hasDraft: (unit) => unit.id === 10 })?.reasonKey).toBe("assign.ctx.why.bundleUnsaved");
+    const shared = [{ bundle: { ...figure, caption_figure_id: 40 }, distance: 1, side: "above" as const }];
+    expect(buildAssignMenu(ctx({ captionHolders: shared })).edit.find((item) => item.action === "caption_of")?.reasonKey).toBe("assign.captionSlot.why.shared");
   });
 
   it("asks before attaching to an assigned bundle instead of refusing (the server asks once)", () => {
@@ -464,5 +485,53 @@ describe("contents (TOC) lines", () => {
     const actions = listShapeLineItems(toc, buildAssignMenu(ctx({ target: toc })).edit, false).map((item) => item.action);
 
     expect(actions.some((action) => action === "split" || action.startsWith("merge_"))).toBe(false);
+  });
+});
+
+
+describe("planLanguageChange - a language change that changes the shape (B6)", () => {
+  const ko = makeUnit(1, { lang: "ko", pair_id: 9 });
+  const en = makeUnit(2, { lang: "en", pair_id: 9 });
+  const en2 = makeUnit(3, { lang: "en", pair_id: 9 });
+
+  it("merges a neighbour pair made one language, and only separates a far one", () => {
+    expect(planLanguageChange(en, "ko", [ko, en], [1, 2])).toEqual({ kind: "switch", mergePair: true });
+    expect(planLanguageChange(en, "ko", [ko, en], [1, 5, 2])).toEqual({ kind: "switch", mergePair: false });
+  });
+  it("does not merge a neighbour pair the merge rule blocks (a contents line)", () => {
+    expect(planLanguageChange(en, "ko", [ko, { ...en, noise_kind: "toc" }], [1, 2])).toEqual({ kind: "switch", mergePair: false });
+  });
+  it("is a plain change when the pair keeps both languages, the unit has no pair, or the language is the same", () => {
+    expect(planLanguageChange(en, "ko", [ko, en, en2], [1, 2, 3])).toEqual({ kind: "plain" });
+    expect(planLanguageChange(makeUnit(4, { lang: "en" }), "ko", [], [4])).toEqual({ kind: "plain" });
+    expect(planLanguageChange(ko, "ko", [ko, en], [1, 2])).toEqual({ kind: "plain" });
+  });
+});
+
+describe("buildAssignMenu - language of an assigned pair member and each piece of a merged box (B6)", () => {
+  const ko = makeUnit(1, { lang: "ko", pair_id: 9 });
+  const en = makeUnit(2, { lang: "en", pair_id: 9 });
+  const langOf = (menu: ReturnType<typeof buildAssignMenu>) => menu.edit.find((item) => item.action === "lang");
+  const piecesOf = (menu: ReturnType<typeof buildAssignMenu>) => menu.edit.filter((item) => item.action === "piece_lang");
+
+  it("keeps the shaping language open on an assigned pair member and the other one off", () => {
+    const item = langOf(buildAssignMenu(ctx({ target: en, pairMembers: [ko, en], isDecided: () => true })));
+    expect(item?.enabled).toBe(true);
+    expect(item?.langReasons).toEqual({ en: "assign.ctx.why.assigned" });
+  });
+  it("keeps the whole row off on an assigned unit with no pair", () => {
+    const item = langOf(buildAssignMenu(ctx({ target: makeUnit(2, { lang: "en" }), isDecided: () => true })));
+    expect([item?.enabled, item?.reasonKey]).toEqual([false, "assign.ctx.why.assigned"]);
+  });
+  it("lists every piece of a merged box, the middle one off", () => {
+    const merged = makeUnit(2, { lang: "ko", can_unmerge: true, merge_pieces: ["first", "middle", "last"] });
+    const items = piecesOf(buildAssignMenu(ctx({ target: merged, isDecided: () => true })));
+    expect(items.map((item) => [item.piece?.index, item.piece?.text, item.enabled, item.reasonKey ?? null, item.lang])).toEqual([
+      [0, "first", true, null, "ko"], [1, "middle", false, "assign.ctx.why.middlePiece", "ko"], [2, "last", true, null, "ko"],
+    ]);
+  });
+  it("has no piece rows for a box that was not merged, or whose pieces are gone", () => {
+    expect(piecesOf(buildAssignMenu(ctx({ target: makeUnit(2, { merge_pieces: ["a", "b"] }) })))).toEqual([]);
+    expect(piecesOf(buildAssignMenu(ctx({ target: makeUnit(2, { can_unmerge: true, merge_pieces: [] }) })))).toEqual([]);
   });
 });

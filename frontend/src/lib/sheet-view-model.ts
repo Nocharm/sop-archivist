@@ -170,7 +170,7 @@ export function buildFoldedCells(rows: readonly PreviewRow[], columnKeys: readon
 
 // --- 고른 줄 · 확정 전 값 ---
 
-export type SheetRowMark = "picked" | "group" | null;
+export type SheetRowMark = "picked" | "group" | "deleted" | null;
 
 /** 고른 단위의 관계 묶음 - 고른 줄이 없거나 그 줄에 묶음이 없으면 null */
 export function findPickedGroup(rows: readonly PreviewRow[], unitId: number | null): string | null {
@@ -178,11 +178,16 @@ export function findPickedGroup(rows: readonly PreviewRow[], unitId: number | nu
   return rows.find((row) => row.unit_id === unitId)?.group_id ?? null;
 }
 
-/** 줄의 칠 - 고른 단위의 줄은 picked, 같은 관계 묶음의 다른 줄은 group. 줄의 unit_id · group_id로만 맞춘다 */
+/** 줄의 칠 - 고른 단위의 줄은 picked(지운 줄이면 deleted), 같은 관계 묶음의 다른 줄은 group. 줄의 unit_id · group_id로만 맞춘다 */
 export function getRowMark(row: PreviewRow, unitId: number | null, groupId: string | null): SheetRowMark {
-  if (unitId !== null && row.unit_id === unitId) return "picked";
+  if (unitId !== null && row.unit_id === unitId) return row.deleted ? "deleted" : "picked";
   if (groupId !== null && row.group_id === groupId) return "group";
   return null;
+}
+
+/** 그릴 줄만 - 지운 줄(문단 Excel)은 그 줄을 고른 동안만 남긴다(파일에는 늘 있다) */
+export function listShownItems(items: readonly SheetItem[], unitId: number | null): SheetItem[] {
+  return items.filter((item) => item.type !== "row" || !item.row.deleted || (unitId !== null && item.row.unit_id === unitId));
 }
 
 /** 여러 줄을 한 줄로 그릴 때(접힌 목차)의 칠 - 고른 줄이 하나라도 들었으면 picked */

@@ -2,7 +2,7 @@
   "effects": {
     "src/app/admin/page.tsx": 1,
     "src/app/bundles/[id]/assign/page.tsx": 2,
-    "src/app/bundles/[id]/assign/use-assign-page.tsx": 16,
+    "src/app/bundles/[id]/assign/use-assign-page.tsx": 15,
     "src/app/bundles/[id]/history/page.tsx": 2,
     "src/app/bundles/[id]/map/page.tsx": 3,
     "src/app/login/page.tsx": 2,

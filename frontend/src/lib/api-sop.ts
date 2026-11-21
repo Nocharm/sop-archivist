@@ -113,7 +113,7 @@ export interface AiStatus {
   ai_enabled: boolean;
   embed_enabled: boolean;
   jobs: AiJobCounts;
-  /** 종류별 같은 모양(classify·translate·match·pair·split) */
+  /** 종류별 같은 모양(classify·translate·match·pair·split·unwrap_order) */
   by_kind: Record<string, AiJobCounts>;
   /** 실패 코드별 건수(timeout·server_error·connection·client_error·config·interrupted·no_candidates·internal) */
   failed_errors: Record<string, number>;
@@ -148,7 +148,7 @@ export function getAiStatus(bundleId: number): Promise<AiStatus> {
   return apiFetch<AiStatus>(`/bundles/${bundleId}/ai/status`);
 }
 
-export type AiJobKind = "classify" | "translate" | "match_plan" | "match" | "pair" | "split" | "doc_meta" | "tobe_list";
+export type AiJobKind = "classify" | "translate" | "match_plan" | "match" | "pair" | "split" | "unwrap_order" | "doc_meta" | "tobe_list";
 export type AiJobStatus = keyof AiJobCounts;
 
 /** 요청 한 번(같은 request_id)의 집계 - total은 24시간 범위와 상관없이 센다. 짝 맞추기는 도중에 total이 는다 */
@@ -374,6 +374,8 @@ export interface ViewBlock {
    * 서버는 늘 싣는다(시험 자료가 줄여 쓰게 선택 칸)
    */
   anchor?: { block_id: number; at: number } | null;
+  /** 도형 그림(업무흐름도) 블록만 - 도형 안 글(위에서 아래). 단위가 아니라 배정 대상이 아니고 보기 · 찾기용(추출기 9부터). 서버는 늘 싣는다 */
+  figure_texts?: string[];
 }
 
 /** 머리말·꼬리말을 쓰는 구역(1부터)과 종류 */
@@ -396,15 +398,15 @@ export interface ViewPartGroup {
 export interface ViewNumber {
   /** 번호 칸에 보일 값 - 사람이 고친 값, 없으면 읽은 값(자동 번호·번호만 든 칸). 없으면 null */
   value: string | null;
-  /** 추출기가 읽은 값 - 타자로 친 번호는 번호로 삼기 전에도 여기 있다 */
+  /** 추출기가 읽은 값 */
   read: string | null;
   source: "auto" | "typed" | "cell" | null;
   /** 사람이 고쳤다("번호 없음" 포함) */
   is_set: boolean;
   /** text에서 내용이 시작하는 자리 - 번호가 번호 칸으로 갔으면 그 뒤, 아니면 0 */
   content_start: number;
-  /** 번호로 삼을 수 있는 글 앞 타자 번호의 글자 수 - 없거나 이미 번호면 0 */
-  typed_len: number;
+  /** 본문 줄의 번호를 글 앞 타자 번호에서 저절로 읽었다(사람이 고치지 않음, 서버 numbering.is_read_from_text) - 툴팁이 알린다 */
+  from_text: boolean;
   /** 번호 노트 - 사람이 원문과 다르게 고쳤으면 원문(읽은) 번호(서버 numbering.get_number_note), 아니면 null */
   note: string | null;
 }
@@ -429,6 +431,8 @@ export interface ViewUnit {
   is_edited: boolean;
   /** 합치기로 생겨 그 뒤 바뀌지 않은 단위 - 합치기 전 단위들로 되돌릴 수 있다(편집 unmerge) */
   can_unmerge: boolean;
+  /** can_unmerge인 단위의 조각(합치기 전 단위) 글 - 원문 순(switch_language piece 순번), 아니면 빈 목록 */
+  merge_pieces?: string[];
   /** 사람이 아직 정하지 않은 AI 나누기 제안 */
   split_suggestion_id: number | null;
   /** 참조 줄 제안·확정 - 참조가 아니면 null */
@@ -445,6 +449,8 @@ export interface ViewUnit {
   pair_seq?: number | null;
   /** 벗긴 표 덩이 안 줄 순서(lib/unwrap-order-model orderUnwrapped) - 편집 reorder_unwrapped가 매기고 다시 표로가 비운다. 없으면 원문 앞 줄의 값을 빌린다 */
   unwrap_seq?: number | null;
+  /** 들여쓰기 차이(B8) - 셈한 단계(lib/strip-pill-model getRowLevels)에 더한다. 편집 set_indents · set_number의 indent_shift가 바꾼다. 없으면 0 */
+  indent_shift?: number;
 }
 
 /** 표·그림 참조 하나 - number가 null이면 위치 참조("아래 표"), target_unit_id는 이은 표·그림 묶음 단위(못 찾으면 null) */
@@ -507,6 +513,8 @@ export type EditOp =
   | { type: "move_boundary"; left_unit_id: number; right_unit_id: number; at: number }
   | { type: "carve"; block_id: number; start: number; end: number }
   | { type: "set_language"; unit_ids: number[]; lang: "ko" | "en" }
+  /** 언어를 바꿔 모양이 바뀌는 편집(B6) - 짝이 한 언어가 되면 합치거나(merge_pair) 짝만 풀고, piece면 합친 박스의 그 조각을 떼어 짝으로. 배정은 묻지 않고 푼다 */
+  | { type: "switch_language"; unit_id: number; lang: "ko" | "en"; piece?: number; merge_pair?: boolean }
   | { type: "set_layout_table"; table_id: number; is_layout: boolean }
   /** 블록 자리 2 안(caption-slot-model CAPTION_REACH)의 묶이지 않은 글 단위를 표·그림의 캡션으로 - 사이 문단은 그대로,
    *  묶음마다 언어당 하나(caption_exists), 먼 글은 caption_not_adjacent, 다른 그림의 캡션을 같이 쓰는 그림은 caption_shared. 판단이 있는 묶음이면 서버가 묻는다 */
@@ -523,8 +531,11 @@ export type EditOp =
   | { type: "set_ref"; unit_id: number; number: string }
   /** 참조 아님 - 참조 줄이면 그 전 언어로 돌리고, 제안뿐이었으면 다시 제안하지 않는다 */
   | { type: "clear_ref"; unit_id: number }
-  /** 문단 번호 고치기 - number가 null이면 번호 없음(번호 범위가 글로 돌아간다). follow면 같은 목록의 뒤 번호도 한 편집으로 따라 고친다 */
-  | { type: "set_number"; unit_id: number; number: string | null; follow: boolean }
+  /** 문단 번호 고치기 - number가 null이면 번호 없음(번호 범위가 글로 돌아간다). follow면 같은 목록의 뒤 번호도 한 편집으로 따라 고친다.
+   *  indent_shift를 주면 들여쓰기 차이도 같은 편집에서(기호를 고를 때 위 기호 줄 단계를 따름, B8 7-5) */
+  | { type: "set_number"; unit_id: number; number: string | null; follow: boolean; indent_shift?: number }
+  /** 들여쓰기 차이(B8) - 여러 줄을 한 편집으로(되돌리기 한 칸). 번호 칸이 있는 줄만, 값은 -9…9 */
+  | { type: "set_indents"; units: { unit_id: number; indent_shift: number }[] }
   /** 목차 아님(줄 하나) · 모두 목차 아님(블록 전체) - 잡음 표시만 비운다(단위는 그대로, 되돌리기가 다시 붙인다) */
   | { type: "clear_noise"; unit_ids: number[] }
   /** 제목 ↔ 문장(F8b) - heading이 거짓이면 제목을 문장마다 나눠 바꾼 표시를 단다(번역 조항은 앞 조항의 번호를 물려받는다).
@@ -539,6 +550,10 @@ export interface EditResult {
   document_revision: number;
   created_unit_ids: number[];
   retired_unit_ids: number[];
+  /** 떼어 낸 배정 - 판단을 미배정으로 되돌린 단위(옛 문서). 없으면 null */
+  detach?: { reset_unit_ids: number[] } | null;
+  /** switch_language가 바꾼 모양 - 다른 편집은 null */
+  shape?: "merged" | "unpaired" | "split_pair" | null;
 }
 
 /** 되돌리기·다시 하기 응답 - 무엇을 거꾸로(다시) 했는지. 경계 확인 기록이면 바뀐 단위와 바뀐 뒤 값 */
@@ -577,17 +592,18 @@ export function redoEdit(bundleId: number, docId: number, revision: number, conf
   return sendDocWrite(docId, revision, (rev) => apiFetch<EditStepResult>(`${buildDocPath(bundleId, docId)}/edits/redo`, { method: "POST", body: JSON.stringify({ revision: rev, confirm }) }));
 }
 
-export function createPair(bundleId: number, docId: number, revision: number, unitIds: number[]): Promise<PairResult> {
-  return sendDocWrite(docId, revision, (rev) => apiFetch<PairResult>(`${buildDocPath(bundleId, docId)}/pairs`, { method: "POST", body: JSON.stringify({ revision: rev, unit_ids: unitIds }) }));
+/** undo - Assign에서 맺으면 그 화면의 되돌리기 기록에 한 단계로 남는다(B6) */
+export function createPair(bundleId: number, docId: number, revision: number, unitIds: number[], undo?: UndoMeta): Promise<PairResult> {
+  return sendDocWrite(docId, revision, (rev) => apiFetch<PairResult>(`${buildDocPath(bundleId, docId)}/pairs`, { method: "POST", body: JSON.stringify({ revision: rev, unit_ids: unitIds, undo }) }));
 }
 
 /** 제안 짝(코드·AI)을 그대로 확정한다 - 이미 확정이면 서버는 아무것도 쓰지 않는다 */
-export function confirmPair(bundleId: number, docId: number, pairId: number, revision: number): Promise<PairResult> {
-  return sendDocWrite(docId, revision, (rev) => apiFetch<PairResult>(`${buildDocPath(bundleId, docId)}/pairs/${pairId}/confirm`, { method: "POST", body: JSON.stringify({ revision: rev }) }));
+export function confirmPair(bundleId: number, docId: number, pairId: number, revision: number, undo?: UndoMeta): Promise<PairResult> {
+  return sendDocWrite(docId, revision, (rev) => apiFetch<PairResult>(`${buildDocPath(bundleId, docId)}/pairs/${pairId}/confirm`, { method: "POST", body: JSON.stringify({ revision: rev, undo }) }));
 }
 
-export function deletePair(bundleId: number, docId: number, pairId: number, revision: number): Promise<PairResult> {
-  return sendDocWrite(docId, revision, (rev) => apiFetch<PairResult>(`${buildDocPath(bundleId, docId)}/pairs/${pairId}?revision=${rev}`, { method: "DELETE" }));
+export function deletePair(bundleId: number, docId: number, pairId: number, revision: number, undo?: UndoMeta): Promise<PairResult> {
+  return sendDocWrite(docId, revision, (rev) => apiFetch<PairResult>(`${buildDocPath(bundleId, docId)}/pairs/${pairId}?revision=${rev}`, { method: "DELETE", body: JSON.stringify({ undo }) }));
 }
 
 /** 표·그림 참조를 떼거나 다시 잇는다 - target_unit_id를 주면 그 묶음에 잇는다(state 생략 = linked) */
@@ -618,6 +634,8 @@ export interface TargetDoc {
   is_equipment_sop: boolean;
   order_index: number;
   document_id: number | null;
+  /** 참조로 찾은 상위 SOP 번호(번호 순) - 상위를 고르지 않은 WI만, 올린 SOP의 확정 참조 줄로 서버가 읽을 때 센다. 직접 상위가 이긴다 */
+  ref_parent_codes: string[];
   /** 줄 번호의 EQUIS 표시 - 기능이 꺼졌거나 묻지 않는 번호(임시 번호)면 null */
   equis?: EquisInfo | null;
 }
@@ -1020,6 +1038,8 @@ export interface DecisionStepResult {
   scope_label: string | null;
   can_undo: boolean;
   can_redo: boolean;
+  /** 판단 상태(배정 · 새 문장 · 짝)도 되썼나 - 편집 단계는 그 편집이 판단을 바꿨을 때만(B6) */
+  restored_decisions: boolean;
 }
 
 export function undoDecision(bundleId: number, session: string): Promise<DecisionStepResult> {
@@ -1486,8 +1506,10 @@ export interface PreviewCell {
   bold: boolean;
   head: boolean;
   numeric: boolean;
-  /** 칸 안 들여쓰기 단계 - C 시트 글머리 기호 줄의 Item 칸 */
+  /** 칸 안 들여쓰기 단계 - C 시트 글머리 기호 줄의 Item 칸 · 문단 Excel Text 칸 */
   indent: number;
+  /** 취소선 - 문단 Excel의 지운 줄 Text 칸(흐림과 함께) */
+  strike: boolean;
   /** 색 칩으로 그리는 칸(A의 Status)의 색 - 확정 · AI 제안 · 삭제(흐림) · 미배정. 칩이 아닌 칸은 null */
   tone: PreviewTone | null;
 }
@@ -1505,6 +1527,10 @@ export interface PreviewRow {
   group_id: string | null;
   /** 목차 줄 - 연달아 오면 한 줄로 접어 그린다 */
   toc: boolean;
+  /** 지운 줄(문단 Excel) - 화면은 숨기고, 그 줄을 고른 동안만 빨간 음영으로 보인다 */
+  deleted: boolean;
+  /** 한 줄로 묶은 옛 단위 전부(문단 Excel - 이어진 줄이 같은 새 문장 하나로 감). unit_id는 그 첫 단위, 한 단위 줄은 빈 목록 */
+  unit_ids: number[];
 }
 
 /** 머리 위 열 무리 띠 한 칸 */

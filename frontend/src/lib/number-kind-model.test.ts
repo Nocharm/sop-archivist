@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { ViewUnit } from "./api-sop";
-import { getBulletLevel, readNumberKind, suggestContinuous, suggestUnitContinuous } from "./number-kind-model";
+import { getBulletLevel, readNumberKind, stepContinuous, stepUnitContinuous, suggestContinuous, suggestUnitContinuous } from "./number-kind-model";
 
 function unit(id: number, value: string | null, extra: Partial<ViewUnit> = {}): ViewUnit {
   return {
@@ -9,7 +9,7 @@ function unit(id: number, value: string | null, extra: Partial<ViewUnit> = {}): 
     lang: "ko",
     table_id: null,
     kind: "sentence",
-    number: { value, read: value, source: value === null ? null : "auto", is_set: false, content_start: 0, typed_len: 0, note: null },
+    number: { value, read: value, source: value === null ? null : "auto", is_set: false, content_start: 0, from_text: false, note: null },
     ...extra,
   } as ViewUnit;
 }
@@ -58,7 +58,7 @@ describe("suggestContinuous", () => {
 });
 
 describe("suggestUnitContinuous", () => {
-  it("counts only lines of the same language and the same table", () => {
+  it("counts lines of the same language across table borders", () => {
     const units = [
       unit(1, "2."),
       unit(2, "7.", { lang: "en" }),
@@ -66,9 +66,44 @@ describe("suggestUnitContinuous", () => {
       unit(4, "•"),
       unit(5, "5."),
     ];
-    expect(suggestUnitContinuous(units, 5)).toBe("3.");
+    expect(suggestUnitContinuous(units, 5)).toBe("10.");
     expect(suggestUnitContinuous(units, 2)).toBe("1.");
     expect(suggestUnitContinuous(units, 99)).toBeNull();
+  });
+  it("gives an unwrapped table line under heading 5 the number 6 (B8 7-4)", () => {
+    const units = [unit(1, "5"), unit(2, "1", { table_id: 40 }), unit(3, "2", { table_id: 40 })];
+    expect(suggestUnitContinuous(units, 2)).toBe("6");
+  });
+});
+
+describe("stepContinuous", () => {
+  it("goes one level deeper under the nearest number before", () => {
+    expect(stepContinuous(["5", "6"], 1, "6", 1)).toBe("5.1");
+    expect(stepContinuous(["5.1", "6"], 1, "6", 1)).toBe("5.2"); // 같은 부모 아래 하위가 있으면 그 다음
+    expect(stepContinuous(["5.1.1", "6"], 1, "6", 1)).toBe("5.2");
+  });
+  it("goes one level up to the next number at that level", () => {
+    expect(stepContinuous(["5", "5.1"], 1, "5.1", -1)).toBe("6");
+    expect(stepContinuous(["5.1.3", "5.1.4"], 1, "5.1.4", -1)).toBe("5.2");
+  });
+  it("stops at the top level and one level past the number before", () => {
+    expect(stepContinuous(["5", "6"], 1, "6", -1)).toBeNull();
+    expect(stepContinuous(["5", "5.1"], 1, "5.1", 1)).toBeNull(); // 두 단계 이상 못 뜀
+    expect(stepContinuous([null, "1"], 1, "1", 1)).toBeNull(); // 앞 번호가 없다
+    expect(stepContinuous(["5", "A-1"], 1, "A-1", 1)).toBeNull(); // 연속 번호가 아니다
+  });
+  it("keeps the trailing dot of the number before", () => {
+    expect(stepContinuous(["5.", "6."], 1, "6.", 1)).toBe("5.1.");
+  });
+});
+
+describe("stepUnitContinuous", () => {
+  it("walks the user's example: heading 5, unwrapped line 6 → 5.1 → back to 6", () => {
+    const units = [unit(1, "5"), unit(2, "1", { table_id: 40 })];
+    expect(stepUnitContinuous(units, 2, "6", 1)).toBe("5.1");
+    expect(stepUnitContinuous(units, 2, "5.1", 1)).toBeNull();
+    expect(stepUnitContinuous(units, 2, "5.1", -1)).toBe("6");
+    expect(stepUnitContinuous(units, 2, "6", -1)).toBeNull();
   });
 });
 

@@ -8,7 +8,7 @@ function unit(id: number, value: string | null, extra: Partial<ViewUnit> = {}): 
     id,
     lang: "ko",
     table_id: null,
-    number: { value, read: value, source: value === null ? null : "auto", is_set: false, content_start: 0, typed_len: 0 },
+    number: { value, read: value, source: value === null ? null : "auto", is_set: false, content_start: 0, from_text: false },
     ...extra,
   } as ViewUnit;
 }

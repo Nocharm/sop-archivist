@@ -73,7 +73,7 @@ export function downloadDocumentFile(bundleId: number, docId: number): Promise<B
 
 // ---- AI 요청 ---------------------------------------------------------------
 
-export type AiKind = "classify" | "translate" | "match" | "pair" | "split";
+export type AiKind = "classify" | "translate" | "match" | "pair" | "split" | "unwrap_order";
 
 export interface AiRequestOut {
   queued: number;
@@ -92,6 +92,11 @@ export interface AiScope {
 
 export function requestAi(bundleId: number, kind: AiKind, body: AiScope & { direction?: "ko_to_en" | "en_to_ko" } = {}): Promise<AiRequestOut> {
   return apiFetch<AiRequestOut>(`/bundles/${bundleId}/ai/${kind}`, { method: "POST", body: JSON.stringify(body) });
+}
+
+/** 벗긴 표 하나의 AI 읽는 순서 제안(B11) - 작업은 표 하나에 하나, 이미 도는 작업이 있으면 queued 0 */
+export function requestUnwrapOrder(bundleId: number, body: { document_id: number; table_id: number }): Promise<AiRequestOut> {
+  return apiFetch<AiRequestOut>(`/bundles/${bundleId}/ai/unwrap_order`, { method: "POST", body: JSON.stringify(body) });
 }
 
 /** 배정 화면 첫 진입 - 남은 줄을 미리 분류하는 작업을 쌓는다(서버가 되풀이를 막는다). queued는 쌓은 분류 작업 수 */

@@ -9,7 +9,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.clock import now
 from app.sop.ai.adoption import adopt_suggestions, reject_suggestions
-from app.sop.constants import MAX_PAIR_SIDE
+from app.sop.constants import MAX_PAIR_SIDE, PAIR_CONFIRMED, PAIR_SOURCE_HUMAN
+from app.sop.decision_steps import UndoMetaIn
 from app.sop.decisions import DbId
 from app.sop.detach import sweep_translations
 from app.sop.editing import PAIR_LANGS, TEXT_KINDS, ensure_unique_units, load_active_units
@@ -19,18 +20,21 @@ from app.sop.models import Document, TargetSource, Unit, UnitPair, UnitPairMembe
 from app.sop.pair_settle import has_diverging_fates, load_decided_fates, settle_pairs
 from app.sop.units import PAIR_SUGGESTED, get_latest_extraction_id
 
-PAIR_CONFIRMED = "confirmed"
-PAIR_SOURCE_HUMAN = "human"
 PAIR_SOURCE_AI = "ai"
 
 
-class PairIn(BaseModel):
+class PairUndoIn(BaseModel):
+    # Assign에서 맺고 · 확정하고 · 푼 짝만 실어 보낸다 — 그 화면의 되돌리기 기록에 한 단계(스냅숏)로 남는다(B6)
+    undo: UndoMetaIn | None = None
+
+
+class PairIn(PairUndoIn):
     revision: int = Field(ge=1)
     # 한쪽 MAX_PAIR_SIDE 이하는 업무 규칙(422 pair_side_too_large)이 본다 — 여기는 입력 크기 상한
     unit_ids: list[DbId] = Field(min_length=2, max_length=2 * MAX_PAIR_SIDE)
 
 
-class PairRevisionIn(BaseModel):
+class PairRevisionIn(PairUndoIn):
     revision: int = Field(ge=1)
 
 

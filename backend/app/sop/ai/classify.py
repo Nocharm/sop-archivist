@@ -327,7 +327,7 @@ def _build_tobe(docs: Mapping[int, TargetDocInfo]) -> list[dict[str, object]]:
     return [
         {
             "code": doc.code, "title": doc.title, "doc_type": doc.doc_type,
-            "parent_code": docs[doc.parent_id].code if doc.parent_id in docs else None,
+            "parent_code": docs[doc.effective_parent_id].code if doc.effective_parent_id in docs else None,
         }
         for doc in ordered
     ]

@@ -37,3 +37,6 @@ dist/
 .vscode/
 .idea/
 *.swp
+
+# dev-worktree.sh state (seed snapshot, working DB, logs)
+.dev/

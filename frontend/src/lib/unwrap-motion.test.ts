@@ -3,11 +3,13 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildMarkerKeyframes,
+  computeAnchoredScrollTop,
   computeStaggerDelays,
   computeUnwrapShifts,
   getSpreadEnd,
   parseDurationMs,
   pickOnScreenKeys,
+  pickScrollAnchor,
   planUnwrapPhases,
   type MotionBox,
   type UnwrapTimings,
@@ -148,5 +150,41 @@ describe("getSpreadEnd", () => {
 
   it("is 0 when nothing moves so the marks attach at once", () => {
     expect(getSpreadEnd(new Map(), 520)).toBe(0);
+  });
+});
+
+describe("pickScrollAnchor - 바꾸는 동안 지킬 자리(B3)", () => {
+  const view = { top: 100, bottom: 700 };
+
+  it("표 윗변이 칸에 보이면 표 머리를 기준으로", () => {
+    const anchor = pickScrollAnchor(new Map([["t1", box(0, 300, 200)]]), new Map([["a", box(0, 120)]]), view);
+    expect(anchor).toEqual({ attribute: "data-unwrap-scope", value: "t1", top: 300 });
+  });
+
+  it("표 머리가 칸 위로 지나갔으면 칸 윗변에 걸친 글 줄", () => {
+    const lines = new Map([["above", box(0, 60)], ["cross", box(0, 90, 30)], ["below", box(0, 140)]]);
+    expect(pickScrollAnchor(new Map([["t1", box(0, -400, 900)]]), lines, view)).toEqual({ attribute: "data-flip-key", value: "cross", top: 90 });
+  });
+
+  it("걸친 줄이 없으면 칸 안 맨 위 글 줄, 칸 밖 줄은 고르지 않는다", () => {
+    const lines = new Map([["low", box(0, 400)], ["high", box(0, 150)], ["out", box(0, 800)]]);
+    expect(pickScrollAnchor(new Map(), lines, view)).toEqual({ attribute: "data-flip-key", value: "high", top: 150 });
+  });
+
+  it("안쪽 띠 표는 바깥 표 머리가 안 보일 때 다음 차례", () => {
+    const scopes = new Map([["t1", box(0, 50, 600)], ["t2", box(0, 200, 40)]]);
+    expect(pickScrollAnchor(scopes, new Map(), view)?.value).toBe("t2");
+  });
+
+  it("칸에 아무것도 없으면 null - 스크롤을 건드리지 않는다", () => {
+    expect(pickScrollAnchor(new Map(), new Map([["far", box(0, 2000)]]), view)).toBeNull();
+  });
+});
+
+describe("computeAnchoredScrollTop - 기준 요소를 같은 높이로", () => {
+  it("기준이 아래로 밀렸으면 그만큼 더 내리고, 올라왔으면 덜 내린다", () => {
+    expect(computeAnchoredScrollTop(1000, 300, 420)).toBe(1120);
+    expect(computeAnchoredScrollTop(1000, 300, 250)).toBe(950);
+    expect(computeAnchoredScrollTop(1000, 300, 300)).toBe(1000);
   });
 });

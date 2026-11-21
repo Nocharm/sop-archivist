@@ -60,15 +60,17 @@ export interface SpacePreviewProps {
   docCode: string;
   /** 판단 저장이나 그 문서 편집(보기 revision)이 일어나면 바뀐다 - 연 동안이면 다시 불러온다 */
   reloadKey: string;
-  /** 고른 줄의 단위들 */
+  /** 고른 줄의 단위들 - 가운데 맞출 단위가 맨 앞(누른 박스, 시트에 없으면 가까운 위 단위) */
   unitIds: readonly number[];
+  /** 박스를 누를 때마다 오른다 - 같은 박스를 다시 눌러도 그 행으로 다시 가운데 맞춘다 */
+  pickSeq: number;
   /** 시트에 가려지는 고른 줄을 머리에 글로 */
   picked: { id: string; text: string } | null;
   /** 확정 전에 고른 곳 - 고른 줄에 점선 글로 덮어 그린다 */
   draft?: SheetDraft;
 }
 
-export function SpacePreview({ bundleId, sheet: sheetKind, enabled, docId, docCode, reloadKey, unitIds, picked, draft }: SpacePreviewProps) {
+export function SpacePreview({ bundleId, sheet: sheetKind, enabled, docId, docCode, reloadKey, unitIds, pickSeq, picked, draft }: SpacePreviewProps) {
   const { t } = useI18n();
   const [space, setSpace] = useState<SpaceState>(SPACE_CLOSED);
   const [opens, setOpens] = useState(readSpacePreviewOpens);
@@ -92,7 +94,7 @@ export function SpacePreview({ bundleId, sheet: sheetKind, enabled, docId, docCo
   // 다시 받는 동안 남은 시트는 같은 종류일 때만 - 한 단 ↔ 양 단을 바꾸면 새 시트가 올 때까지 다른 시트를 보이지 않는다
   const data = preview.data?.kind === sheetKind ? preview.data.sheet : null;
   const isParagraphs = sheetKind === "paragraphs";
-  const pickedInSheet = data !== null && unitIds.some((id) => data.rows.some((row) => row.unit_id === id));
+  const pickedInSheet = data !== null && unitIds.some((id) => data.rows.some((row) => row.unit_id === id || row.unit_ids.includes(id)));
   // 연 동안만 부른다 - 문서 · 저장이 바뀌었거나, 긴 문서의 창 밖 줄을 골랐으면 그 줄을 가운데로 다시. 닫혀 있는 동안의 저장은 다음에 열 때 부른다
   if (isOpen && docId !== null) {
     const around = unitIds[0] ?? null;
@@ -234,7 +236,7 @@ export function SpacePreview({ bundleId, sheet: sheetKind, enabled, docId, docCo
         onPointerUp={() => setPress(null)}
       >
         {sheet ? (
-          <SheetView sheet={sheet} selectedUnitId={selectedUnitId} draft={isParagraphs ? undefined : draft} testId="assign-space-preview" />
+          <SheetView sheet={sheet} selectedUnitId={selectedUnitId} centreKey={pickSeq} draft={isParagraphs ? undefined : draft} testId="assign-space-preview" />
         ) : preview.error != null ? (
           <LoadError error={preview.error} onRetry={preview.reload} testId="assign-space-preview" />
         ) : (
@@ -249,6 +251,12 @@ export function SpacePreview({ bundleId, sheet: sheetKind, enabled, docId, docCo
           <i className="space-key" data-mark="picked" aria-hidden />
           {t("assign.spacePreview.legendPicked")}
         </span>
+        {isParagraphs && (
+          <span>
+            <i className="space-key" data-mark="deleted" aria-hidden />
+            {t("assign.spacePreview.legendDeleted")}
+          </span>
+        )}
         {!isParagraphs && (
           <>
             <span>

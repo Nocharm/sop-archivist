@@ -1,7 +1,7 @@
 // New 목록의 줄 하나(Documents 화면 설계 §6) - 식별(종류 · 번호 · EQUIS), 제목 줄, 딸린 정보 줄을 글자로 읽는다. 고치는 칸은 펼친 곳(ToBePanel)에 있다.
 "use client";
 
-import { GitFork, Pencil, Trash2, Wrench } from "lucide-react";
+import { GitFork, Link2, Pencil, Trash2, Wrench } from "lucide-react";
 import { useState, type ReactNode } from "react";
 
 import { DocRow, type RowAction } from "@/components/documents/doc-row";
@@ -39,8 +39,10 @@ interface ToBeRowProps {
   slots: { rows: readonly SlotRow[]; summary: SlotSummary } | null;
   /** EQUIS가 아는 값의 제안 수 - 고칠 수 있을 때만 센다 */
   hintCount: number;
-  /** 상위 SOP를 못 찾은 WI(있어서는 안 되는 자료) */
+  /** 직접 부모도 참조로 찾은 상위도 없는 WI - 받는 자료지만 7.2 · 결과물 C 머리에 상위가 없다 */
   noParent: boolean;
+  /** 참조로 찾은 상위 SOP 번호(번호 순) - 이 줄이 그 아래 놓였으면 점선 나무 선과 "참조로 연결" 칩. 아니면 빈 목록 */
+  refParents: readonly string[];
   canEdit: boolean;
   /** 끌어 상위 SOP를 바꿀 수 있는 WI 줄 - 줄 상자 전체가 끌 상자가 된다(canDragParent) */
   draggable: boolean;
@@ -53,7 +55,7 @@ interface ToBeRowProps {
   panel: () => ReactNode;
 }
 
-export function ToBeRow({ doc, isChild, tobe, saved, written, equis, stepCount, slots, hintCount, noParent, canEdit, draggable, open, onToggle, unsavedEdit, onRemove, onEquisRefresh, panel }: ToBeRowProps) {
+export function ToBeRow({ doc, isChild, tobe, saved, written, equis, stepCount, slots, hintCount, noParent, refParents, canEdit, draggable, open, onToggle, unsavedEdit, onRemove, onEquisRefresh, panel }: ToBeRowProps) {
   const { t } = useI18n();
   const prefix = `tobe-${doc.key}`;
   const block = saved ? getDocRemoveBlock(tobe, saved) : null;
@@ -189,8 +191,9 @@ export function ToBeRow({ doc, isChild, tobe, saved, written, equis, stepCount, 
               {t("tobe.row.equisHints", { n: hintCount })}
             </button>
           )}
+          {refParents.length > 0 && <RefLinkedChip refParents={refParents} testId={`${prefix}-ref-linked`} />}
           {noParent && (
-            <span className="pill warn" data-testid={`${prefix}-no-parent`}>
+            <span className="pill quiet" data-testid={`${prefix}-no-parent`}>
               {t("tobe.row.noParent")}
             </span>
           )}
@@ -204,8 +207,51 @@ export function ToBeRow({ doc, isChild, tobe, saved, written, equis, stepCount, 
       actions={actions}
       panel={panel}
       // data-doc은 끌기가 놓을 자리(줄 상자)를 찾는 키, flipKey는 상위 SOP가 바뀐 뒤 줄과 펼친 곳이 함께 미끄러지는 키
-      rowData={{ "data-doc": doc.key, "data-drag-box": draggable ? "" : undefined }}
+      rowData={{ "data-doc": doc.key, "data-drag-box": draggable ? "" : undefined, "data-ref": refParents.length > 0 ? "" : undefined }}
       flipKey={doc.key}
+    />
+  );
+}
+
+/** "참조로 연결" 칩 - 어느 SOP의 참조 항목이 가리키는지는 툴팁으로 */
+function RefLinkedChip({ refParents, testId }: { refParents: readonly string[]; testId: string }) {
+  const { t } = useI18n();
+  return (
+    <span className="pill quiet" data-tip={t("tobe.row.refLinkedTip", { sops: refParents.join(", ") })} data-testid={testId}>
+      <Link2 size={12} strokeWidth={1.5} aria-hidden />
+      {t("tobe.row.refLinked")}
+    </span>
+  );
+}
+
+/** 여러 SOP가 참조한 WI가 번호 순 첫 SOP가 아닌 SOP 아래 다시 보이는 읽기 줄 - 펼치기 · 끌기 · 단추가 없다(온전한 줄은 첫 SOP 아래) */
+export function ToBeRefEchoRow({ doc, underKey, refParents }: { doc: DraftDoc; underKey: string; refParents: readonly string[] }) {
+  const { t } = useI18n();
+  const prefix = `tobe-${doc.key}-under-${underKey}`;
+  const code = doc.code.trim() || t("tobe.noCode");
+  return (
+    <DocRow
+      prefix={prefix}
+      kind="wi"
+      isChild
+      open={false}
+      onToggle={() => {}}
+      toggleLabel={t("tobe.details")}
+      expandable={false}
+      identity={
+        <>
+          <span className="doc-kind">WI</span>
+          <ClampText text={code} className="doc-code" testId={`${prefix}-code-text`}>
+            {code}
+          </ClampText>
+        </>
+      }
+      title={doc.title.trim() === "" ? <span className="doc-title-empty">{t("tobe.row.noTitle")}</span> : <ClampText text={doc.title} />}
+      meta={<RefLinkedChip refParents={refParents} testId={`${prefix}-ref-linked`} />}
+      actions={[]}
+      reserveActions
+      panel={() => null}
+      rowData={{ "data-ref": "" }}
     />
   );
 }

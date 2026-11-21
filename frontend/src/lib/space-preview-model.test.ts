@@ -7,6 +7,7 @@ import {
   buildSheetDraft,
   countDataRows,
   findSheetUnit,
+  pickSheetAnchor,
   getWindowRest,
   isOwnSpaceTarget,
   isSpaceEnabled,
@@ -94,7 +95,8 @@ describe("isOwnSpaceTarget", () => {
 });
 
 describe("sheet window", () => {
-  const row = (unitId: number | null): PreviewRow => ({ kind: "group_start", wrap: true, cells: [], unit_id: unitId, group_id: null, toc: false });
+  const mergedRow = (unitId: number | null, unitIds: number[]): PreviewRow => ({ kind: "group_start", wrap: true, cells: [], unit_id: unitId, group_id: null, toc: false, deleted: false, unit_ids: unitIds });
+  const row = (unitId: number | null): PreviewRow => mergedRow(unitId, []);
 
   it("counts the rows left out above and below a centred window", () => {
     const rows = [row(null), row(null), ...[1, 2, 3, 4].map(row)];
@@ -114,6 +116,32 @@ describe("sheet window", () => {
     expect(findSheetUnit(sheet, [8, 9])).toBe(9);
     expect(findSheetUnit(sheet, [3])).toBe(3);
     expect(findSheetUnit(sheet, [])).toBeNull();
+  });
+
+  it("finds the row a merged paragraph line shares - any of its units picks the row's first unit", () => {
+    const sheet = { rows: [row(null), mergedRow(7, [7, 8, 9]), row(10)] };
+    expect(findSheetUnit(sheet, [9])).toBe(7);
+    expect(findSheetUnit(sheet, [4, 8])).toBe(7);
+  });
+
+  describe("sheet anchor", () => {
+    // 문서 차례 - 머리말 1, 본문 2 · 3(KO) · 4(EN), 꼬리말 5
+    const order = [1, 2, 3, 4, 5];
+    const isBody = (id: number) => id >= 2 && id <= 4;
+
+    it("puts the pressed box first - the EN box of a KO/EN pair finds the EN row", () => {
+      expect(pickSheetAnchor([3, 4], 4, order, isBody)).toBe(4);
+      expect(pickSheetAnchor([3, 4], null, order, isBody)).toBe(3);
+    });
+
+    it("falls back to the nearest body unit above when the box has no row", () => {
+      expect(pickSheetAnchor([5], 5, order, isBody)).toBe(4);
+    });
+
+    it("has no anchor above the first body unit or without a pick", () => {
+      expect(pickSheetAnchor([1], 1, order, isBody)).toBeNull();
+      expect(pickSheetAnchor([], null, order, isBody)).toBeNull();
+    });
   });
 });
 

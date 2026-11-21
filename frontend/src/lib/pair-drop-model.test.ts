@@ -5,9 +5,11 @@ import { MESSAGES } from "./i18n-messages";
 import {
   PAIR_REFUSAL_KEYS,
   buildPairColumns,
-  canUndoPair,
   listPairLinks,
+  resolveBoxDrop,
   resolvePairDrop,
+  type BoxDropContext,
+  type BoxPiece,
   type PairColumnItem,
   type PairDrop,
   type PairDropContext,
@@ -103,6 +105,51 @@ describe("resolvePairDrop", () => {
   });
 });
 
+describe("resolveBoxDrop - a box dropped on a box in the Old paper (B6)", () => {
+  // 용지 순서: KO1 KO2 EN1 EN2 - KO1·KO2 이웃, KO2·EN1 이웃(다른 언어), KO1·EN2 떨어짐
+  const box = (base: PairPiece, over: Partial<BoxPiece> = {}): BoxPiece => ({ ...base, noise_kind: null, ...over });
+  const [K1, K2, E1, E2] = [box(KO1), box(KO2), box(EN1), box(EN2)];
+  const boxCtx = (over: Partial<BoxDropContext> = {}, pair?: PairInfo): BoxDropContext => ({ ...ctx(pair), order: [1, 2, 11, 12], canPair: true, ...over });
+  const why = (reasonKey: string) => ({ kind: "refused", reasonKey });
+
+  it("merges a same-language neighbour, in paper order whichever way it was dragged", () => {
+    expect(resolveBoxDrop([K1], K2, boxCtx())).toEqual({ kind: "merge", unitIds: [1, 2] });
+    expect(resolveBoxDrop([K2], K1, boxCtx())).toEqual({ kind: "merge", unitIds: [1, 2] });
+  });
+  it("refuses a same-language box that is not next to it, with the same reason as the merge menu", () => {
+    expect(resolveBoxDrop([K1], box(piece(3, "ko")), boxCtx({ order: [1, 2, 3] }))).toEqual(why("split.menu.why.notAdjacent"));
+  });
+  it("pairs the other language from afar, like a pair drop", () => {
+    expect(resolveBoxDrop([K1], E2, boxCtx())).toEqual({ kind: "pair", unitIds: [1, 12] });
+    expect(resolveBoxDrop([K2], E2, boxCtx({}, SUGGESTED))).toEqual({ kind: "confirm", pairId: 7 });
+    expect(resolveBoxDrop([K1], E2, boxCtx({}, CONFIRMED))).toEqual(why("rule.unit_already_paired"));
+  });
+  it("merges in a one-language document too, where the other language is nowhere", () => {
+    expect(resolveBoxDrop([K1], K2, boxCtx({ canPair: false }))).toEqual({ kind: "merge", unitIds: [1, 2] });
+    expect(resolveBoxDrop([K2], E1, boxCtx({ canPair: false }))).toEqual({ kind: "none" });
+  });
+  it("lets the server ask about an assigned box (as the gap Join), but refuses an unsaved pick", () => {
+    expect(resolveBoxDrop([K1], K2, boxCtx({ isDecided: () => true }))).toEqual({ kind: "merge", unitIds: [1, 2] });
+    expect(resolveBoxDrop([K1], K2, boxCtx({ hasDraft: (unit) => unit.id === 1 }))).toEqual(why("assign.ctx.why.unsaved"));
+    expect(resolveBoxDrop([K1], K2, boxCtx({ hasDraft: (unit) => unit.id === 2 }))).toEqual(why("assign.ctx.why.neighborUnsaved"));
+  });
+  it("refuses what the gap Join blocks - a contents line, a cell sentence beside a sentence", () => {
+    expect(resolveBoxDrop([K1], box(KO2, { noise_kind: "toc" }), boxCtx())).toEqual(why("split.noMergeToc"));
+    expect(resolveBoxDrop([K1], box(piece(2, "ko", "cell_sentence")), boxCtx())).toEqual(why("split.noMergeCell"));
+  });
+  it("is nowhere over itself, a table, a bound cell, or when dragging a whole pair row onto its own language", () => {
+    expect(resolveBoxDrop([K1], K1, boxCtx())).toEqual({ kind: "none" });
+    expect(resolveBoxDrop([K1], box(TABLE), boxCtx({ order: [1, 30] }))).toEqual({ kind: "none" });
+    expect(resolveBoxDrop([box(EN1)], box(CELL), boxCtx({ order: [11, 31] }))).toEqual({ kind: "none" });
+    expect(resolveBoxDrop([K2, E2], E1, boxCtx({}, CONFIRMED))).toEqual(why("rule.unit_already_paired"));
+  });
+  it("names messages that exist in both languages", () => {
+    for (const key of ["assign.boxDrag.merge", "assign.drag.dest.merge", "split.menu.why.notAdjacent"]) {
+      expect([typeof MESSAGES.en[key], typeof MESSAGES.ko[key]]).toEqual(["string", "string"]);
+    }
+  });
+});
+
 const makeUnit = (id: number, lang: PairUnit["lang"], over: Partial<PairUnit> = {}): PairUnit => ({
   id, display_id: `OLD-3-${String(id).padStart(3, "0")}`, kind: "sentence", lang, text: `t${id}`, group_unit_id: null, pos_seq: id, spans: [[id, 0, 5]], status: "unassigned", ref: null, ...over,
 });
@@ -146,25 +193,6 @@ describe("listPairLinks", () => {
     const columns = buildPairColumns({ units: [makeUnit(1, "ko"), makeUnit(4, "en"), makeUnit(8, "en")], pairs: [{ id: 5, status: "confirmed", unit_ids: [1, 4, 8] }] });
     expect(listPairLinks(columns)).toEqual([{ pairId: 5, koId: 1, enId: 4, status: "confirmed" }, { pairId: 5, koId: 1, enId: 8, status: "confirmed" }]);
     expect(listPairLinks(buildPairColumns({ units: [makeUnit(1, "ko")], pairs: [] }))).toEqual([]);
-  });
-});
-
-describe("canUndoPair", () => {
-  const paired = (status: PairUnit["status"] = "unassigned", pair: PairInfo = { id: 9, status: "confirmed", unit_ids: [1, 4] }) => ({ units: [makeUnit(1, "ko", { status }), makeUnit(4, "en")], pairs: [pair] });
-  it("undoes a pair that is still the same confirmed pair of undecided units", () => {
-    expect(canUndoPair(paired(), 9, [1, 4])).toBe(true);
-    expect(canUndoPair(paired(), 9, [4, 1])).toBe(true);
-    expect(canUndoPair(paired(null), 9, [1, 4])).toBe(true);
-  });
-  it("does not when the pair is gone, changed or one of its units was decided meanwhile", () => {
-    expect(canUndoPair(paired(), 10, [1, 4])).toBe(false);
-    expect(canUndoPair(paired("unassigned", { id: 9, status: "confirmed", unit_ids: [1, 4, 8] }), 9, [1, 4])).toBe(false);
-    expect(canUndoPair(paired("unassigned", { id: 9, status: "suggested", unit_ids: [1, 4] }), 9, [1, 4])).toBe(false);
-    expect(canUndoPair(paired("confirmed"), 9, [1, 4])).toBe(false);
-    expect(canUndoPair(paired("ai_suggested"), 9, [1, 4])).toBe(false);
-  });
-  it("does not when a member is missing from the view it reads", () => {
-    expect(canUndoPair({ units: [makeUnit(1, "ko")], pairs: [{ id: 9, status: "confirmed", unit_ids: [1, 4] }] }, 9, [1, 4])).toBe(false);
   });
 });
 

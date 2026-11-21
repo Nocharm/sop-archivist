@@ -1,13 +1,15 @@
 // Shared parts of the SOP smoke: settings, check/runStep, browser, helpers used by more than one screen, and the setup step.
 // Split from pw-smoke-sop.mjs (2026-11-19). Screen steps live in ./<screen>.mjs; the runner is ../pw-smoke-sop.mjs.
 
-import { mkdirSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
 
 
 export const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
+export const BACKEND_DIR = resolve(SCRIPT_DIR, "../../../backend");
 export const CHROME = process.env.CHROME_PATH ?? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
 export const BASE = process.env.BASE_URL ?? "http://localhost:3777";
 export const SHOT_DIR = resolve(SCRIPT_DIR, "../../../.shots");
@@ -19,6 +21,52 @@ export const PREPARE_STEP = "assign: first entry classifies the remaining rows i
 export const VIEWPORT = { width: 1248, height: 720 };
 
 mkdirSync(SHOT_DIR, { recursive: true });
+
+/** backend 파이썬(xlsx 읽기 · 합성 SOP 만들기) - BACKEND_PYTHON → 이 체크아웃의 backend/.venv → 원본 체크아웃(git common dir의 부모)의 backend/.venv.
+ *  워크트리에는 venv가 없어, BACKEND_PYTHON을 빠뜨리면 xlsx 단계가 "file argument … undefined"로 거짓 실패했다(2026-11-20) */
+export function findBackendPython() {
+  if (process.env.BACKEND_PYTHON) return process.env.BACKEND_PYTHON;
+  const findVenv = (root) => [".venv/bin/python", ".venv/Scripts/python.exe"].map((path) => resolve(root, "backend", path)).find(existsSync);
+  const own = findVenv(resolve(BACKEND_DIR, ".."));
+  if (own) return own;
+  const common = String(execFileSync("git", ["rev-parse", "--path-format=absolute", "--git-common-dir"], { cwd: SCRIPT_DIR })).trim();
+  const main = findVenv(dirname(common));
+  if (main) return main;
+  throw new Error(`backend venv python not found in ${resolve(BACKEND_DIR, ".venv")} or ${resolve(dirname(common), "backend/.venv")}. Fix: in backend/ run python3.11 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt, or set BACKEND_PYTHON=<absolute path>`);
+}
+
+// 시드 지문 - scripts/dev-worktree.sh가 DB를 시드 스냅숏으로 되돌릴 때마다 묶음별 "updated_at#마지막 History 사건 id"를 여기에 적는다(.dev/는 git 밖).
+// 판단 · 편집은 묶음 updated_at을 바꾸지 않아 사건 id가 필요하다
+const SEED_FINGERPRINT = resolve(SCRIPT_DIR, "../../../.dev/seed-fingerprint.json");
+
+/** 스모크는 시드 직후 DB를 전제한다 - 되돌린 뒤 무엇이든(앞선 스모크 · 화면 확인) 묶음을 바꿨으면 몇 분 뒤 거짓 실패 대신 처음에 멈춘다(B1 · B4에서 두 번, 2026-11-20).
+ *  지문이 없거나(스크립트 없이 손으로 띄운 DB) 다른 BASE_URL의 지문이면 검사하지 않는다 */
+export async function checkSeedFingerprint() {
+  if (!existsSync(SEED_FINGERPRINT)) return;
+  const saved = JSON.parse(readFileSync(SEED_FINGERPRINT, "utf8"));
+  if (saved.base !== BASE) return;
+  if (process.env.DIRTY_DB_OK === "1") {
+    console.log("note: DIRTY_DB_OK=1 - running on a DB changed since the last seed reset");
+    return;
+  }
+  const getJson = async (path) => {
+    const response = await fetch(`${BASE}/api${path}`, { headers: { "X-Dev-User": "qa.member" } });
+    if (!response.ok) throw new Error(`seed check: GET ${BASE}/api${path} → ${response.status}`);
+    return response.json();
+  };
+  const now = {};
+  for (const bundle of await getJson("/bundles")) {
+    const events = await getJson(`/bundles/${bundle.id}/events?limit=1`);
+    now[bundle.code] = `${bundle.updated_at}#${events[0]?.id ?? 0}`;
+  }
+  const changed = [...new Set([...Object.keys(saved.bundles), ...Object.keys(now)])].filter((code) => saved.bundles[code] !== now[code]);
+  if (changed.length === 0) return;
+  console.error(
+    `The DB is no longer the fresh seed - changed since the last reset: ${changed.join(", ")}.\n` +
+      "Fix: run scripts/dev-worktree.sh reset at the worktree root, then run the smoke again. To run on this DB anyway (e.g. re-running one step you are writing): DIRTY_DB_OK=1",
+  );
+  process.exit(2);
+}
 
 export const QUIET = process.env.QUIET === "1";
 // 묶음 id를 잡아 두는 단계 - 뒤 단계가 모두 여기에 기댄다

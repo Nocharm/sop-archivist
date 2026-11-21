@@ -8,6 +8,7 @@
 그림 묶기·풀기도 제자리다 — 그림 단위의 caption_figure_id만 바꾸고(옮기는 캡션은 칸 묶음처럼 regroup) 기록해 되돌린다.
 짝 카드 안 순서도 제자리다 — 구성원의 pair_seq만 바꾸고(pair_order.py) 기록해 되돌린다.
 벗긴 표 덩이 안 줄 순서도 제자리다 — 줄의 unwrap_seq만 바꾸고(unwrap_order.py) 기록해 되돌린다. 다시 표로 묶으면 같은 편집에서 비운다.
+들여쓰기도 제자리다 — 줄의 indent_shift만 바꾸고 기록해 되돌린다(set_indents, set_number의 기호 위로 맞춤).
 묶음 잠금·문서 revision·작업 중 검사와 커밋은 부르는 쪽(라우터)이 한다.
 """
 
@@ -16,14 +17,13 @@ from collections.abc import Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, fields
 from typing import Annotated, Literal, TypeVar, assert_never
 
-from pydantic import BaseModel, Field, StringConstraints
+from pydantic import BaseModel, Field, SerializerFunctionWrapHandler, model_serializer, StringConstraints
 from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import clock
-from app.sop.caption_slot import CAPTION_REACH, PlaceBlock, build_block_places, get_place_distance
 from app.sop.captions import CAPTION_KIND
-from app.sop.constants import BULLET_SYMBOLS, MAX_PAIR_SIDE
+from app.sop.constants import BULLET_SYMBOLS, MAX_PAIR_SIDE, PAIR_CONFIRMED, PAIR_SOURCE_HUMAN
 from app.sop.decision_steps import UndoMetaIn
 from app.sop.decisions import DbId
 from app.sop.detach import (
@@ -41,6 +41,7 @@ from app.sop.groups import BUNDLE_UNIT_KINDS, TABLE_UNIT_KINDS, iter_chunks, sel
 from app.sop.match import sync_new_doc_targets
 from app.sop.models import (
     Document,
+    Extraction,
     SourceBlock,
     SourceTable,
     TargetSentence,
@@ -115,11 +116,14 @@ CAPTION_OPS = ("attach_caption", "detach_caption", "set_first_row_caption")
 FIGURE_OPS = ("group_figures", "ungroup_figures")  # 그림 묶음(caption_figure_id)을 바꾸는 편집 — 든 그림 모두가 바뀐 묶음이다
 # 글자 범위를 고칠 수 있는 단위 — 그림·표는 범위를 나누거나 잇지 않는다
 TEXT_KINDS = ("sentence", "heading", "cell_sentence", CAPTION_KIND)
-CAPTIONABLE_KINDS = ("sentence", "heading")  # 캡션으로 붙일 수 있는 글 단위
+# 캡션으로 붙일 수 있는 글 단위 — 칸 문장은 묶음이 풀린 것(벗긴 표의 줄)만(B10, group_unit_id 검사가 가린다)
+CAPTIONABLE_KINDS = ("sentence", "heading", "cell_sentence")
 PAIR_LANGS = {"ko", "en"}  # 짝의 두 쪽 — 한쪽이 비면 짝을 지운다
 MAX_EDIT_UNITS = 2000  # 합치기·언어 바꾸기가 한 번에 고르는 단위 수 상한
+MAX_INDENT_SHIFT = 9  # units.indent_shift의 절댓값 상한 — 화면 단계는 셈한 단계 + 차이를 1–9로 자른다(프런트 indent-model)
 
 Offset = Annotated[int, Field(ge=0, le=MAX_DB_INT)]
+IndentShift = Annotated[int, Field(ge=-MAX_INDENT_SHIFT, le=MAX_INDENT_SHIFT)]
 T = TypeVar("T")
 ExtractionId = int | None  # 받지 않았거나 추출에 실패한 문서는 추출이 없다 — 단위·블록 조회가 비어 404가 된다
 
@@ -130,7 +134,7 @@ ExtractionId = int | None  # 받지 않았거나 추출에 실패한 문서는 �
 class SplitOp(BaseModel):
     type: Literal["split"]
     unit_id: DbId
-    # 단위 text 안 위치 — 오른쪽 조각의 첫 글자. 범위 사이 이음 글자(" "·"\n") 위는 안 된다
+    # 단위 text 안 위치 — 오른쪽 조각의 첫 글자. 범위 사이 이음 글자(" ") 위는 안 된다
     at: Offset
 
 
@@ -178,9 +182,9 @@ class SetLayoutTableOp(BaseModel):
 
 
 class AttachCaptionOp(BaseModel):
-    """묶이지 않은 글 단위(문장·제목, REF 아님)를 표·그림 단위의 캡션으로 — 같은 범위·언어의 캡션 단위가 된다.
+    """묶이지 않은 글 단위(문장·제목·벗긴 표의 칸 줄, REF 아님)를 표·그림 단위의 캡션으로 — 같은 범위·언어의 캡션 단위가 된다.
 
-    글은 묶음에서 블록 자리 CAPTION_REACH 안에 있어야 한다(caption_slot — 사이의 문단은 그대로 남는다, F7 ④).
+    거리는 묻지 않는다(B10 8-b — 사이의 글은 그대로 남는다). 후보를 가까운 순으로 고르는 것은 화면의 몫이다(caption_slot).
     """
 
     type: Literal["attach_caption"]
@@ -239,6 +243,7 @@ class SetNumberOp(BaseModel):
 
     number가 null이면 "번호 없음"(번호 범위가 글로 돌아간다). 글 앞에 타자로 친 번호를 번호로 삼을 때는 그 읽은 값을 보낸다.
     follow면 같은 목록의 뒤 번호도 같은 편집으로 따라 고친다(numbering.plan_follow) — 되돌리기도 한 번이다.
+    indent_shift를 주면 그 줄의 들여쓰기 차이도 같은 편집에서 바꾼다 — 기호를 고를 때 위 기호 줄의 단계를 따르는 데 쓴다(B8 7-5).
     """
 
     type: Literal["set_number"]
@@ -248,6 +253,22 @@ class SetNumberOp(BaseModel):
         NO_NUL,
     ] | None
     follow: bool = True
+    indent_shift: IndentShift | None = None
+
+
+class IndentIn(BaseModel):
+    unit_id: DbId
+    indent_shift: IndentShift
+
+
+class SetIndentsOp(BaseModel):
+    """들여쓰기 차이 바꾸기(B8 항목 7) — 여러 줄을 한 편집으로(되돌리기 한 칸). 글 · 범위 · 판단은 그대로이고 indent_shift만 바뀐다.
+
+    값은 셈한 단계에 더하는 차이라 단계 끝(위 줄 + 1 등)은 화면이 잰다 — 서버는 값의 범위와 번호 칸이 있는 줄인지만 본다.
+    """
+
+    type: Literal["set_indents"]
+    units: list[IndentIn] = Field(min_length=1, max_length=MAX_EDIT_UNITS)
 class ClearNoiseOp(BaseModel):
     """잡음 표시 풀기 — 목차 아님(줄 하나) · 모두 목차 아님(블록 전체). 단위는 그대로이고 표시만 비운다(되돌리기가 다시 붙인다)."""
 
@@ -286,11 +307,26 @@ class ReorderUnwrappedOp(BaseModel):
     unit_ids: list[DbId] = Field(min_length=1, max_length=MAX_EDIT_UNITS)
 
 
+class SwitchLanguageOp(BaseModel):
+    """언어를 바꿔 모양이 바뀌는 편집(B6, 사용자 결정 2026-11-20 3-a · 3-c) — 옛 문서만.
+
+    짝 구성원의 언어를 바꿔 짝이 한 언어가 되면 구성원을 합치거나(merge_pair — 이웃인지는 화면이 용지 순서로 본다, 합치기 이웃 검사와 같다)
+    짝만 푼다. piece를 주면 합친 단위의 그 조각(합치기 전 단위, 원문 순 0부터 — 맨 앞 · 맨 뒤만)의 언어를 바꿔 떼고, 남은 조각(둘 이상이면 합친 채)과 짝을 맺는다.
+    모양이 바뀌는 단위의 배정은 묻지 않고 푼다(3-c — 화면은 알림의 되돌리기를 준다).
+    """
+
+    type: Literal["switch_language"]
+    unit_id: DbId
+    lang: Literal["ko", "en"]
+    piece: int | None = Field(default=None, ge=0, le=MAX_EDIT_UNITS)
+    merge_pair: bool = False
+
+
 EditOp = Annotated[
-    SplitOp | MergeOp | UnmergeOp | MoveBoundaryOp | CarveOp | SetLanguageOp
+    SplitOp | MergeOp | UnmergeOp | MoveBoundaryOp | CarveOp | SetLanguageOp | SwitchLanguageOp
     | SetLayoutTableOp | AttachCaptionOp | DetachCaptionOp | SetFirstRowCaptionOp | GroupFiguresOp
     | UngroupFiguresOp | SetRefOp | ClearRefOp | ClearNoiseOp | SetNumberOp | SetHeadingOp | ReorderPairOp
-    | ReorderUnwrappedOp,
+    | ReorderUnwrappedOp | SetIndentsOp,
     Field(discriminator="type"),
 ]
 
@@ -317,6 +353,16 @@ class EditResult(BaseModel):
     retired_unit_ids: list[int]
     # 옛 문서는 은퇴하거나 다시 묶인 단위의 떼어 내기, 새 문서는 새 문장 다시 맞추기 결과 — 둘 다 없는 옛 문서 편집은 None
     detach: DetachReport | None
+    # switch_language가 바꾼 모양 — 짝을 합침 | 짝만 풂(떨어져 있어 합치지 않음) | 조각을 떼어 짝으로. 다른 편집은 None
+    shape: Literal["merged", "unpaired", "split_pair"] | None = None
+
+    @model_serializer(mode="wrap")
+    def _drop_empty_shape(self, handler: SerializerFunctionWrapHandler) -> dict:
+        """모양 전환이 아닌 편집의 응답은 전과 같은 꼴 — shape는 값이 있을 때만 싣는다."""
+        data = handler(self)
+        if data.get("shape") is None:
+            data.pop("shape", None)
+        return data
 
 
 class EditStepResult(EditResult):
@@ -339,6 +385,7 @@ class _Block:
     table_id: int | None
     row_index: int | None
     signals: dict | None = None
+    splits_lines: bool = False  # 줄바꿈에서 단위를 나누는 문서(DOCX)의 블록 — 줄머리 타자 번호도 읽는다(numbering.read_number_range)
 
 
 @dataclass
@@ -364,6 +411,8 @@ class _Draft:
     group_draft: int | None = None
     # 벗긴 표 덩이 안 줄 순서(units.unwrap_seq) — 나누기 · 합치기의 조각은 옛 줄(합치기는 첫 줄)의 값을 물려받아 옛 자리에 원문 순서로 남는다
     unwrap_seq: int | None = None
+    # 들여쓰기 차이(units.indent_shift) — 나누기 · 합치기의 조각은 옛 줄(합치기는 첫 줄)의 값을 물려받는다
+    indent_shift: int = 0
 
 
 Move = tuple[int | None, int | None]  # 칸 문장의 (지금 묶음, 바꿀 묶음)
@@ -399,8 +448,17 @@ class _Change:
     pair_seqs: dict[int, tuple[int | None, int | None]] = field(default_factory=dict)
     # 덩이의 줄 → (지금 unwrap_seq, 바꿀 unwrap_seq) — 제자리에서 바뀐다(벗긴 표 줄 순서 · 다시 표로의 비우기와 그 되돌리기)
     unwrap_seqs: dict[int, tuple[int | None, int | None]] = field(default_factory=dict)
+    # 줄 → (지금 indent_shift, 바꿀 indent_shift) — 제자리에서 바뀐다(들여쓰기와 그 되돌리기)
+    indents: dict[int, tuple[int, int]] = field(default_factory=dict)
     # 제목 ↔ 문장(set_heading)과 그 되돌리기·다시 하기 — 활성이 된 단위로 한/영 코드 짝을 다시 세운다(짝은 기록 밖이다)
     repair_pairs: bool = False
+    # 짝을 다시 세우지 않는다(표 표시가 바뀌어도 코드 짝 제안을 새로 하지 않는다) — Assign 되돌리기 단계가 짝을 스냅숏으로 되쓸 때
+    keeps_pairs: bool = False
+    # 모양 전환(switch_language)이 묻지 않고 판단을 떼는 단위 — 은퇴하지 않는 단위는 미배정으로 뗀다(3-c)
+    release: list[int] = field(default_factory=list)
+    # 쓴 뒤 사람이 맺은 짝으로 묶을 단위 — 되살리는 단위 id와 이 변경이 만드는 단위(drafts 순번). 앞으로 가는 편집만(되돌리기의 짝은 Assign 단계가 되쓴다)
+    pair_units: list[int] = field(default_factory=list)
+    pair_drafts: list[int] = field(default_factory=list)
 
     def list_regrouped_cells(self) -> list[int]:
         return sorted({*self.regroup, *(cell_id for draft in self.drafts for cell_id in draft.cells)})
@@ -414,7 +472,7 @@ class _Change:
         """
         if (
             self.revive or self.langs or self.layouts or self.noises or self.numbers or self.figures or self.pair_seqs
-            or self.unwrap_seqs or self.list_regrouped_cells()
+            or self.unwrap_seqs or self.indents or self.list_regrouped_cells()
         ):
             return False
         drafts = Counter((tuple(draft.spans), draft.kind, draft.group_unit_id) for draft in self.drafts)
@@ -478,11 +536,14 @@ async def _load_blocks(
         session,
         lambda chunk: select(
             SourceBlock.id, SourceBlock.seq, SourceBlock.text, SourceBlock.kind, SourceBlock.table_id,
-            SourceBlock.row_index, SourceBlock.signals,
-        ).where(SourceBlock.id.in_(chunk), SourceBlock.extraction_id == extraction_id),
+            SourceBlock.row_index, SourceBlock.signals, Document.file_format,
+        )
+        .join(Extraction, Extraction.id == SourceBlock.extraction_id)
+        .join(Document, Document.id == Extraction.document_id)
+        .where(SourceBlock.id.in_(chunk), SourceBlock.extraction_id == extraction_id),
         block_ids,
     )
-    return {block_id: _Block(*fields) for block_id, *fields in rows}
+    return {block_id: _Block(*fields, splits_lines=file_format == LINE_SPLIT_FORMAT) for block_id, *fields, file_format in rows}
 
 
 async def _load_unit_blocks(
@@ -501,6 +562,7 @@ def _build_draft(
     문단 번호는 앞 조각에 남는다(§11-10) — 번호 범위는 새 범위와 블록 신호로 다시 읽고, 사람이 고친 값은 like와 같은 자리에서
     시작하는 조각만 물려받는다(자른 뒤 조각은 번호 없음, 합친 단위는 앞 단위의 번호).
     벗긴 표 덩이 안 순서(unwrap_seq)는 조각 모두가 like의 값을 물려받는다 — 같은 값끼리는 원문 자리 순이라 옛 줄 자리에 남는다(unwrap_order.py).
+    들여쓰기 차이(indent_shift)도 조각 모두가 물려받는다 — 나눈 줄이 제자리 단계에 남는다.
     """
     kind = kind or like.kind
     first = blocks[spans[0][0]]
@@ -509,7 +571,7 @@ def _build_draft(
     texts = _get_texts(blocks)
     text = build_unit_text(spans, texts)
     signals = {block_id: block.signals for block_id, block in blocks.items()}
-    number = build_number_columns(kind, spans, signals, texts)
+    number = build_number_columns(kind, spans, signals, texts, reads_line_starts=first.splits_lines)
     if like.spans and tuple(like.spans[0][:2]) == tuple(spans[0][:2]) and kind in NUMBERED_KINDS:
         number["number_set"] = like.number_set
         if like.number_source == NUMBER_PAIR and number["number_read"] is None and kind == "sentence":
@@ -519,6 +581,7 @@ def _build_draft(
         kind=kind, spans=spans, text=text, lang=lang or detect_language(text) or "", table_id=table_id,
         row_index=row_index, group_unit_id=like.group_unit_id, pos_seq=first.seq, pos_start=spans[0][1],
         number=number, from_heading=like.from_heading and kind == "sentence", unwrap_seq=like.unwrap_seq,
+        indent_shift=like.indent_shift,
     )
 
 
@@ -596,14 +659,22 @@ async def _plan_merge(session: AsyncSession, extraction_id: ExtractionId, op: Me
     return _build_replacement(units, [draft])
 
 
+def is_merge_edit(op: str, created: Sequence[int], retired: Sequence[int]) -> bool:
+    """단위 하나를 여러 단위로 만든 합치기 기록인가 — 합치기와, 짝을 한 언어로 바꿔 합친 모양 전환(switch_language)."""
+    return op in ("merge", "switch_language") and len(created) == 1 and len(retired) > 1
+
+
 async def find_merge_edit(session: AsyncSession, document_id: int, unit_id: int) -> UnitEdit | None:
     """unit_id를 만든 적용 중인 합치기 기록 — 없으면 이 단위는 합쳐 생긴 단위가 아니거나 그 뒤로 다시 만들어졌다."""
     edits = await session.scalars(
         select(UnitEdit)
-        .where(UnitEdit.document_id == document_id, UnitEdit.op == "merge", UnitEdit.state == EDIT_APPLIED)
+        .where(UnitEdit.document_id == document_id, UnitEdit.op.in_(("merge", "switch_language")), UnitEdit.state == EDIT_APPLIED)
         .order_by(UnitEdit.seq.desc())
     )
-    return next((edit for edit in edits if list(edit.created_unit_ids) == [unit_id]), None)
+    return next(
+        (edit for edit in edits if list(edit.created_unit_ids) == [unit_id] and is_merge_edit(edit.op, edit.created_unit_ids, edit.retired_unit_ids)),
+        None,
+    )
 
 
 async def _plan_unmerge(session: AsyncSession, document_id: int, extraction_id: ExtractionId, op: UnmergeOp) -> _Change:
@@ -704,6 +775,84 @@ async def _plan_set_language(session: AsyncSession, extraction_id: ExtractionId,
     changes = {unit_id: (unit.lang, op.lang) for unit_id, unit in sorted(units.items()) if unit.lang != op.lang}
     await _ensure_one_caption_per_language(session, [units[unit_id] for unit_id in changes], op.lang)
     return _Change(langs=changes)
+
+
+async def _plan_switch_language(
+    session: AsyncSession, document_id: int, extraction_id: ExtractionId, op: SwitchLanguageOp
+) -> _Change:
+    """언어를 바꿔 모양이 바뀌는 편집 — 모양이 바뀌지 않으면(짝이 아니거나 짝에 두 언어가 남는다) 422 no_shape_change, 보통 언어 바꾸기를 쓴다."""
+    unit = (await load_active_units(session, extraction_id, [op.unit_id]))[op.unit_id]
+    _ensure_text_kinds([unit])
+    _ensure_not_toc([unit])
+    if op.piece is not None:
+        return await _plan_piece_language(session, document_id, extraction_id, unit, op)
+    member_ids = list(
+        await session.scalars(
+            select(UnitPairMember.unit_id).where(
+                UnitPairMember.pair_id
+                == select(UnitPairMember.pair_id).where(UnitPairMember.unit_id == unit.id).scalar_subquery()
+            )
+        )
+    )
+    members = await load_active_units(session, extraction_id, member_ids) if member_ids else {}
+    langs_after = {op.lang if member.id == unit.id else member.lang for member in members.values()}
+    if unit.lang == op.lang or not members or len(langs_after) > 1:
+        raise_rule(422, "no_shape_change", unit_id=unit.id)
+    if not op.merge_pair:
+        # 멀리 맺은 짝 - 짝만 푼다(사용자 덧붙임 2026-11-20). 언어가 바뀌면 _leave_pairs가 짝을 지운다
+        return _Change(langs={unit.id: (unit.lang, op.lang)}, release=[unit.id])
+    change = await _plan_merge(session, extraction_id, MergeOp(type="merge", unit_ids=sorted(members)))
+    change.drafts[0].lang = op.lang
+    change.release = sorted(members)
+    return change
+
+
+async def _plan_piece_language(
+    session: AsyncSession, document_id: int, extraction_id: ExtractionId, unit: Unit, op: SwitchLanguageOp
+) -> _Change:
+    """합친 단위의 맨 앞 · 맨 뒤 조각을 다른 언어로 떼어 남은 조각과 짝으로 — 조각은 그 합치기가 은퇴시킨 단위(옛 ID로 되살린다).
+
+    남은 조각이 하나면 그것도 되살리고, 둘 이상이면 합친 채 새 단위 하나로 만든다(짝 한쪽). 남은 쪽의 언어는 합친 단위의 언어다.
+    """
+    edit = await find_merge_edit(session, document_id, unit.id)
+    originals = (
+        list(await session.scalars(select(Unit).where(Unit.id.in_(edit.retired_unit_ids), Unit.extraction_id == extraction_id)))
+        if edit is not None else []
+    )
+    if edit is None or len(originals) != len(edit.retired_unit_ids) or any(item.status != UNIT_RETIRED for item in originals):
+        raise_rule(422, "cannot_unmerge", unit_id=unit.id)
+    if unit.lang not in PAIR_LANGS:
+        raise_rule(422, "missing_language", langs=[unit.lang])
+    blocks = await _load_unit_blocks(session, extraction_id, originals)
+    pieces = sorted(originals, key=lambda item: (blocks[to_spans(item.spans)[0][0]].seq, to_spans(item.spans)[0][1]))
+    if op.piece is None or op.piece >= len(pieces):
+        raise_rule(422, "invalid_piece", unit_id=unit.id, piece=op.piece)
+    if 0 < op.piece < len(pieces) - 1:
+        # 가운데 조각을 떼면 남은 쪽이 앞뒤로 떨어져 한 단위가 되지 않는다(내 판단 - 화면은 꺼진 항목과 까닭)
+        raise_rule(422, "middle_piece", unit_id=unit.id, piece=op.piece)
+    if op.lang == unit.lang:
+        raise_rule(422, "no_shape_change", unit_id=unit.id)
+    piece = pieces[op.piece]
+    rest = [item for item in pieces if item.id != piece.id]
+    change = _Change(retire=[unit.id], revive=[piece.id], release=[unit.id], pair_units=[piece.id])
+    revived = [piece] if len(rest) > 1 else [piece, *rest]
+    target_lang = {piece.id: op.lang, **{item.id: unit.lang for item in rest}}
+    for item in revived:
+        if item.lang != target_lang[item.id]:
+            change.langs[item.id] = (item.lang, target_lang[item.id])
+        # 합친 칸 문장이 그 뒤 다른 묶음으로 옮겨졌으면 되살린 조각도 지금 묶음으로(_plan_unmerge와 같다)
+        if item.group_unit_id != unit.group_unit_id:
+            change.regroup[item.id] = (item.group_unit_id, unit.group_unit_id)
+    if len(rest) == 1:
+        change.revive.append(rest[0].id)
+        change.pair_units.append(rest[0].id)
+        return change
+    spans = sorted((span for item in rest for span in to_spans(item.spans)), key=lambda span: (blocks[span[0]].seq, span[1]))
+    draft = _build_draft(rest[0], join_close_spans(spans, _get_texts(blocks)), blocks, kind=_decide_merged_kind(rest), lang=unit.lang)
+    draft.group_unit_id = unit.group_unit_id
+    change.drafts = [draft]
+    change.pair_drafts = [0]
+    return change
 
 
 async def _ensure_one_caption_per_language(session: AsyncSession, changing: Sequence[Unit], lang: str) -> None:
@@ -863,7 +1012,7 @@ async def _inherit_numbers(
         for unit in existing
     ]
     for draft in drafts:
-        number = read_draft_number(draft.kind, draft.from_heading, draft.number)
+        number = read_draft_number(draft.number)
         if draft.number.get("number_set") is not None:
             number = draft.number["number_set"] or None
         entries.append(((draft.pos_seq, draft.pos_start), ClauseLine(draft.pos_seq, draft.lang, draft.kind, True, number), draft))
@@ -937,7 +1086,22 @@ async def _plan_set_number(session: AsyncSession, extraction_id: ExtractionId, o
             if number and number not in BULLET_SYMBOLS:  # 점 기호는 절을 열지 않는다 — 절 이름이 "•"이 되지 않게
                 renamed.append((target, before[0], number))
     change.sections = await _find_section_moves(session, extraction_id, renamed)
+    if op.indent_shift is not None and op.indent_shift != unit.indent_shift:
+        change.indents[unit.id] = (unit.indent_shift, op.indent_shift)
     return change
+
+
+async def _plan_set_indents(session: AsyncSession, extraction_id: ExtractionId, op: SetIndentsOp) -> _Change:
+    """들여쓰기 차이 — 번호 칸이 있는 글 단위만(목차 줄 · 표 · 그림은 422 invalid_unit_kind). 지금 값과 같은 줄은 건너뛴다."""
+    ensure_unique_units([item.unit_id for item in op.units])
+    units = await load_active_units(session, extraction_id, [item.unit_id for item in op.units])
+    invalid = sorted(unit.id for unit in units.values() if unit.kind not in NUMBERED_KINDS or unit.noise_kind is not None)
+    if invalid:
+        raise_rule(422, "invalid_unit_kind", unit_ids=invalid)
+    return _Change(indents={
+        item.unit_id: (units[item.unit_id].indent_shift, item.indent_shift)
+        for item in op.units if units[item.unit_id].indent_shift != item.indent_shift
+    })
 
 
 async def _find_section_moves(
@@ -1067,13 +1231,46 @@ def _build_sentence_from(caption: Unit) -> _Draft:
     )
 
 
-def _build_freed_caption(caption: Unit, blocks: Mapping[int, _Block], group_unit_id: int | None) -> _Draft:
-    """캡션을 뗀 글 단위 — 표 첫 행에서 올린 캡션(칸 블록 위)은 그 칸의 칸 문장(group_unit_id에 묶임), 아니면 묶이지 않은 문장."""
-    if blocks[caption.spans[0][0]].kind != "table_cell":
+def _build_freed_caption(
+    caption: Unit, blocks: Mapping[int, _Block], own: tuple[int | None, int | None], cell_groups: Mapping[int, int]
+) -> _Draft:
+    """캡션을 뗀 글 단위 — 칸 블록 위 캡션은 칸 문장, 아니면 묶이지 않은 문장.
+
+    own은 캡션 대상 표의 (원문 표 id, 묶을 단위 id) — 그 표의 칸에서 올린 첫 행 캡션은 그 단위에 묶인다. 다른 표의 칸 줄(바깥 칸 안
+    캡션, 추출기 8)은 그 바깥 표의 칸 줄로 돌아간다 — 바깥 표가 데이터 표면 그 표 단위(cell_groups)에 묶이고, 벗긴 표면 묶이지 않는다.
+    """
+    block = blocks[caption.spans[0][0]]
+    if block.kind != "table_cell":
         return _build_sentence_from(caption)
     draft = _build_draft(caption, to_spans(caption.spans), blocks, kind="cell_sentence", lang=caption.lang)
-    draft.group_unit_id = group_unit_id
+    own_table_id, own_group = own
+    draft.group_unit_id = own_group if block.table_id == own_table_id else cell_groups.get(block.table_id or -1)
     return draft
+
+
+def _is_first_row_caption(caption: Unit, blocks: Mapping[int, _Block], table_id: int | None) -> bool:
+    """표 첫 행에서 올린 캡션인가 — 그 표의 칸 블록 위. 바깥 칸 안 캡션(다른 표의 칸)은 첫 행이 아니다."""
+    block = blocks[caption.spans[0][0]]
+    return block.kind == "table_cell" and block.table_id == table_id
+
+
+async def _load_cell_groups(
+    session: AsyncSession, extraction_id: ExtractionId, captions: Sequence[Unit], blocks: Mapping[int, _Block]
+) -> dict[int, int]:
+    """캡션이 놓인 칸의 표 → 그 표의 활성 표 단위 id. 벗긴(레이아웃) 표는 표 단위가 없어 빠진다."""
+    table_ids = {
+        block.table_id for caption in captions
+        if (block := blocks[caption.spans[0][0]]).kind == "table_cell" and block.table_id is not None
+    }
+    if not table_ids:
+        return {}
+    rows = await session.execute(
+        select(Unit.table_id, Unit.id).where(
+            Unit.extraction_id == extraction_id, Unit.status == UNIT_ACTIVE, Unit.table_id.in_(table_ids),
+            Unit.kind.in_(TABLE_UNIT_KINDS),
+        )
+    )
+    return {table_id: unit_id for table_id, unit_id in rows.tuples() if table_id is not None}
 
 
 async def _find_number_joins(
@@ -1168,8 +1365,9 @@ async def _plan_plain_layout(
         joins = await _find_number_joins(session, extraction_id, table.id, cells)
         joined = [unit for pair in joins for unit in pair]
         blocks = await _load_unit_blocks(session, extraction_id, [*joined, *captions])
-        # 첫 행에서 올린 캡션은 풀린 표의 칸 줄로 돌아간다(묶이지 않은 칸 문장 — 다른 칸 줄과 같다)
-        drafts = [_build_freed_caption(caption, blocks, None) for caption in captions]
+        # 첫 행에서 올린 캡션은 풀린 표의 칸 줄로 돌아간다(묶이지 않은 칸 문장 — 다른 칸 줄과 같다), 바깥 칸 안 캡션은 바깥 칸 줄로
+        cell_groups = await _load_cell_groups(session, extraction_id, captions, blocks)
+        drafts = [_build_freed_caption(caption, blocks, (table.id, None), cell_groups) for caption in captions]
         for number, content in joins:
             # 번호 칸 블록 전체가 그 줄 범위의 첫 조각 — 처음 쪼개기의 레이아웃 표와 같은 단위(§11-7), 묶음은 풀린다.
             # 같은 자리에서 시작하는 번호 칸 줄을 like로 — 사람이 고친 번호(number_set)를 이은 줄이 물려받는다
@@ -1309,39 +1507,20 @@ async def _build_band_drafts(
         _Draft(
             kind=draft.kind, spans=list(draft.spans), text=build_unit_text(draft.spans, texts), lang=draft.lang,
             table_id=draft.table_id, row_index=draft.row_index, group_unit_id=None, pos_seq=draft.pos_seq,
-            pos_start=draft.pos_start, number=build_number_columns(draft.kind, draft.spans, signals, texts),
+            pos_start=draft.pos_start,
+            number=build_number_columns(
+                draft.kind, draft.spans, signals, texts, reads_line_starts=document.file_format == LINE_SPLIT_FORMAT
+            ),
             group_draft=draft.group_index,
         )
         for draft in drafts
     ]
 
 
-async def _measure_caption_distance(session: AsyncSession, extraction_id: ExtractionId, unit: Unit, bundle: Unit) -> int | None:
-    """글 단위와 묶음(표는 바깥 표, 그림은 그 블록) 사이의 블록 자리 거리(caption_slot) — 어느 쪽이든 자리가 없으면 None."""
-    rows = await session.execute(
-        select(SourceBlock.id, SourceBlock.seq, SourceBlock.kind, SourceBlock.text, SourceBlock.table_id).where(
-            SourceBlock.extraction_id == extraction_id
-        )
-    )
-    blocks = [PlaceBlock(*row) for row in rows.tuples()]
-    parents = dict(
-        (await session.execute(
-            select(SourceTable.id, SourceTable.parent_table_id).where(SourceTable.extraction_id == extraction_id)
-        )).tuples().all()
-    )
-    places = build_block_places(blocks, parents)
-    if bundle.kind in TABLE_UNIT_KINDS:
-        bundle_blocks = [block.id for block in blocks if block.table_id == bundle.table_id]
-    else:
-        bundle_blocks = [block.id for block in blocks if block.seq == bundle.pos_seq]
-    return get_place_distance(places, [span[0] for span in unit.spans], bundle_blocks)
-
-
 async def _plan_attach_caption(session: AsyncSession, extraction_id: ExtractionId, op: AttachCaptionOp) -> _Change:
     """글 단위를 은퇴시키고 같은 범위·언어의 캡션 단위를 그 묶음에 묶어 만든다 — 묶음마다 언어당 캡션 하나.
 
-    글은 묶음에서 블록 자리 CAPTION_REACH 안이어야 하고 사이의 문단은 그대로 남는다(F7 ④). 다른 그림의 캡션을 같이 쓰는 그림은
-    제 캡션을 받지 않는다(먼저 푼다).
+    글은 묶음에서 멀어도 되고 사이의 글은 그대로 남는다(B10 8-b). 다른 그림의 캡션을 같이 쓰는 그림은 제 캡션을 받지 않는다(먼저 푼다).
     """
     units = await load_active_units(session, extraction_id, [op.unit_id, op.bundle_unit_id])
     unit, bundle = units[op.unit_id], units[op.bundle_unit_id]
@@ -1351,9 +1530,6 @@ async def _plan_attach_caption(session: AsyncSession, extraction_id: ExtractionI
         raise_rule(422, "invalid_unit_kind", unit_ids=[bundle.id])
     if bundle.caption_figure_id is not None:
         raise_rule(422, "caption_shared", unit_ids=[bundle.id], figure_id=bundle.caption_figure_id)
-    distance = await _measure_caption_distance(session, extraction_id, unit, bundle)
-    if distance is None or distance > CAPTION_REACH:
-        raise_rule(422, "caption_not_adjacent", unit_ids=[unit.id, op.bundle_unit_id])
     taken = await session.scalar(
         select(Unit.id).where(
             Unit.group_unit_id == bundle.id, Unit.status == UNIT_ACTIVE, Unit.kind == CAPTION_KIND,
@@ -1382,7 +1558,10 @@ async def _plan_detach_caption(session: AsyncSession, extraction_id: ExtractionI
     blocks = await _load_unit_blocks(session, extraction_id, [unit])
     if any(blocks[span[0]].kind == "figure" for span in to_spans(unit.spans)):
         raise_rule(422, "caption_in_figure_block", unit_ids=[unit.id])
-    change = _build_replacement([unit], [_build_freed_caption(unit, blocks, unit.group_unit_id)])
+    bundle_table_id = await session.scalar(select(Unit.table_id).where(Unit.id == unit.group_unit_id))
+    cell_groups = await _load_cell_groups(session, extraction_id, [unit], blocks)
+    freed = _build_freed_caption(unit, blocks, (bundle_table_id, unit.group_unit_id), cell_groups)
+    change = _build_replacement([unit], [freed])
     change.bundles = [unit.group_unit_id]
     return change
 
@@ -1402,8 +1581,9 @@ async def _plan_first_row_caption(
     blocks = await _load_unit_blocks(session, extraction_id, members)
     captions = [member for member in members if member.kind == CAPTION_KIND]
     if not op.caption:
-        lifted = [caption for caption in captions if blocks[caption.spans[0][0]].kind == "table_cell"]
-        change = _build_replacement(lifted, [_build_freed_caption(caption, blocks, table.id) for caption in lifted])
+        lifted = [caption for caption in captions if _is_first_row_caption(caption, blocks, table.table_id)]
+        own = (table.table_id, table.id)
+        change = _build_replacement(lifted, [_build_freed_caption(caption, blocks, own, {}) for caption in lifted])
         change.bundles = [table.id] if lifted else []
         return change
     cells = [member for member in members if member.kind == "cell_sentence"]
@@ -1618,6 +1798,8 @@ async def _plan(session: AsyncSession, document_id: int, extraction_id: Extracti
             return await _plan_carve(session, extraction_id, op)
         case SetLanguageOp():
             return await _plan_set_language(session, extraction_id, op)
+        case SwitchLanguageOp():
+            return await _plan_switch_language(session, document_id, extraction_id, op)
         case SetLayoutTableOp():
             return await _plan_set_layout_table(session, document_id, extraction_id, op)
         case AttachCaptionOp():
@@ -1644,6 +1826,8 @@ async def _plan(session: AsyncSession, document_id: int, extraction_id: Extracti
             return await _plan_reorder_pair(session, document_id, extraction_id, op)
         case ReorderUnwrappedOp():
             return await _plan_reorder_unwrapped(session, extraction_id, op)
+        case SetIndentsOp():
+            return await _plan_set_indents(session, extraction_id, op)
         case _:
             assert_never(op)
 
@@ -1734,7 +1918,8 @@ async def _insert_units(
             extraction_id=extraction_id, local_no=last_no + offset, kind=draft.kind,
             spans=[list(span) for span in draft.spans], text=draft.text, lang=draft.lang, table_id=draft.table_id,
             row_index=draft.row_index, group_unit_id=draft.group_unit_id, pos_seq=draft.pos_seq,
-            pos_start=draft.pos_start, from_heading=draft.from_heading, unwrap_seq=draft.unwrap_seq, **draft.number,
+            pos_start=draft.pos_start, from_heading=draft.from_heading, unwrap_seq=draft.unwrap_seq,
+            indent_shift=draft.indent_shift, **draft.number,
         )
         for offset, draft in enumerate(ordered, start=1)
     ]
@@ -1829,6 +2014,16 @@ async def _set_unwrap_seqs(session: AsyncSession, unwrap_seqs: Mapping[int, tupl
         )
 
 
+async def _set_indents(session: AsyncSession, indents: Mapping[int, tuple[int, int]]) -> None:
+    """들여쓰기 차이(indent_shift)를 바꾼다 — 지금 값이 기록과 다른 단위가 있으면 편집 기록과 어긋난 것이라 RuntimeError(버그 가드)."""
+    changed = 0
+    for unit_id, (old, new) in indents.items():
+        result = await session.execute(update(Unit).where(Unit.id == unit_id, Unit.indent_shift == old).values(indent_shift=new))
+        changed += result.rowcount
+    if changed != len(indents):
+        raise RuntimeError(f"unit edit history out of sync: {changed} of {len(indents)} units had the recorded indent")
+
+
 async def _leave_pairs(session: AsyncSession, unit_ids: Collection[int]) -> None:
     """은퇴하거나 언어가 바뀐 단위는 한/영 짝에서 빠지고, 남은 짝에 한쪽 언어가 없으면 짝을 지운다.
 
@@ -1855,6 +2050,11 @@ async def _leave_pairs(session: AsyncSession, unit_ids: Collection[int]) -> None
         langs[pair_id].add(lang)
     for chunk in iter_chunks([pair_id for pair_id in pair_ids if not PAIR_LANGS <= langs[pair_id]]):
         await session.execute(delete(UnitPair).where(UnitPair.id.in_(chunk)))
+
+
+async def leave_pairs(session: AsyncSession, unit_ids: Collection[int]) -> None:
+    """은퇴한 단위를 짝에서 뺀다(_leave_pairs) — Assign 되돌리기가 짝을 되쓴 뒤 단계 밖 짝(그 뒤 남이 맺은 짝)에 남은 은퇴 단위를 정리한다."""
+    await _leave_pairs(session, unit_ids)
 
 
 async def _apply_regroup(session: AsyncSession, regroup: Mapping[int, Move]) -> None:
@@ -1912,6 +2112,7 @@ async def _write_change(
     *,
     confirm: bool,
     actor: str,
+    settled: Collection[int] = (),
 ) -> EditResult:
     """검사(판단 있는 단위의 언어·확인 플래그) → 단위 은퇴·되살리기·만들기·언어 → 짝 정리 → 떼어 내기(옛)·새 문장 맞추기(새)
     와 칸 묶음·레이아웃 표 바꾸기 → 짝 다시 제안(표 표시가 바뀌면) → 커버리지 가드 → 문서 revision +1.
@@ -1919,15 +2120,18 @@ async def _write_change(
 
     다시 묶이는 칸 문장도 확인 대상이다 — 옛 문서는 레이아웃 칸이 가진 자기 판단이 표에 묶이며 떼어지고, 새 문서는 미배정이
     아닌 칸·표 새 문장이 새 부모 아래로 옮겨지지 않게 먼저 미배정으로 돌린다(R32).
+    settled는 확인 없이 떼어도 되는 단위 — Assign 되돌리기 단계가 그 판단을 스냅숏으로 확인했고 곧 되쓴다(decision_steps._move_unit_edit).
     """
     # 언어를 제자리에서 바꾸는 단위만 사람 결정과 어긋난다(R31) - 같은 변경에서 은퇴하거나 되살아나는 단위(합치기 풀기와
     # 그 되돌리기)는 글 그대로의 언어를 따라가는 것이라 묻지 않는다(은퇴는 아래 확인 플래그가 묻는다)
     moving = {*change.retire, *change.revive}
+    # 되돌리기 단계가 확인한 단위와 모양 전환이 푸는 단위는 묻지 않는다(3-c)
+    settled = {*settled, *change.release}
     # 잡음 표시를 다시 붙이는 단위(목차 아님 되돌리기)도 사람 결정과 어긋난다 — 그 사이 배정했으면 표시로 덮지 않는다
     marking = [unit_id for unit_id, (_, noise) in change.noises.items() if noise is not None]
     in_place = [unit_id for unit_id in [*change.langs, *marking] if unit_id not in moving]
     if in_place:
-        decided = await _find_decided_units(session, document, in_place)
+        decided = [unit_id for unit_id in await _find_decided_units(session, document, in_place) if unit_id not in settled]
         if decided:
             raise_rule(409, "unit_has_decision", unit_ids=decided)
     if change.pair_seqs:
@@ -1939,7 +2143,7 @@ async def _write_change(
     decided_bundles: list[int] = []
     if change.retire or regrouped or change.bundles:
         needing = await find_units_needing_confirm(session, [*change.retire, *regrouped, *change.bundles])
-        if needing and not confirm:
+        if needing and not confirm and not set(needing) <= settled:
             raise_rule(409, "confirm_required", unit_ids=needing)
         # 캡션이 바뀐 묶음은 판단이 있을 때만 떼어 낸다 — 확정 새 문장에 바뀐 캡션이 빠지거나 남지 않게
         decided_bundles = sorted(set(needing) & set(change.bundles))
@@ -1957,8 +2161,12 @@ async def _write_change(
     await _set_pair_seqs(session, change.pair_seqs)
     # 덩이 줄 순서는 판단을 묻지 않는다 — 글 · 출처가 그대로라 결과물 A가 따르지 않는다(_plan_reorder_unwrapped)
     await _set_unwrap_seqs(session, change.unwrap_seqs)
-    # 다시 목차가 된 단위는 짝을 맺지 않는다(units._find_code_pairs와 같은 규칙)
-    await _leave_pairs(session, [*change.retire, *change.langs, *marking])
+    # 들여쓰기도 판단을 묻지 않는다 — 글 · 출처가 그대로다
+    await _set_indents(session, change.indents)
+    # 다시 목차가 된 단위는 짝을 맺지 않는다(units._find_code_pairs와 같은 규칙). 짝을 되쓸 되돌리기는 건드리지 않는다 - 단계 diff에 없는 짝 행
+    # (지운 뒤 같은 id로 다시 생긴 짝의 그대로인 멤버)을 지우면 되쓰기가 되살리지 못한다
+    if not change.keeps_pairs:
+        await _leave_pairs(session, [*change.retire, *change.langs, *marking])
     await session.flush()
     activated = [*change.revive, *(unit_id for _, unit_id in inserted)]
     detach = None
@@ -1988,14 +2196,24 @@ async def _write_change(
                 session, bundle_id=document.bundle_id, unit_ids=decided_bundles, cause="regrouped", actor=actor
             )
             detach = regrouped_report if detach is None else _merge_reports(detach, regrouped_report)
+        released = sorted(set(change.release) - set(change.retire))
+        if released:
+            # 모양 전환이 제자리에서 언어를 바꾼 단위 - 묻지 않고 미배정으로 뗀다(3-c, 같은 관계 묶음의 나머지는 보류)
+            cleared = await detach_units(session, bundle_id=document.bundle_id, unit_ids=released, cause="cleared", actor=actor)
+            detach = cleared if detach is None else _merge_reports(detach, cleared)
         await _apply_regroup(session, change.regroup)
         await _apply_layouts(session, change.layouts)
-    if change.layouts:
+    if change.pair_units or change.pair_drafts:
+        made = {id(draft): unit_id for draft, unit_id in inserted}
+        await _create_human_pair(
+            session, document, [*change.pair_units, *(made[id(change.drafts[index])] for index in change.pair_drafts)], actor
+        )
+    if change.layouts and not change.keeps_pairs:
         # 레이아웃 표의 칸 문장은 묶이지 않아 한/영 두 열이 이웃 짝으로 제안되고(따로 배치면 둘 다 벗긴 대응 표의 같은 행끼리, F8a),
         # 다시 데이터 표가 되면 그 제안이 빠진다
         await session.flush()
         await refresh_code_pairs(session, document, actor)
-    if change.repair_pairs:
+    if change.repair_pairs and not change.keeps_pairs:
         # 제목 ↔ 문장은 짝의 단위를 바꾼다 — 새로 활성이 된 단위만 다시 짝짓는다(F8b, 조항마다 문장 1:1)
         await session.flush()
         await pair_new_units(session, document, activated, actor)
@@ -2008,13 +2226,26 @@ async def _write_change(
     )
 
 
+async def _create_human_pair(session: AsyncSession, document: Document, unit_ids: Sequence[int], actor: str) -> None:
+    """모양 전환이 떼어 낸 조각과 남은 쪽을 사람이 맺은 짝으로 — 방금 되살리거나 만든 판단 없는 단위라 pairs.create_pair의 운명 · 번역 검사가 필요 없다.
+
+    pairs가 editing을 들여와 그 함수를 부를 수 없다. 짝 행 · 작업 기록은 create_pair와 같다(revision은 편집이 올린다).
+    """
+    pair = UnitPair(document_id=document.id, status=PAIR_CONFIRMED, source=PAIR_SOURCE_HUMAN)
+    session.add(pair)
+    await session.flush()
+    session.add_all(UnitPairMember(pair_id=pair.id, unit_id=unit_id) for unit_id in sorted(unit_ids))
+    record_event(session, bundle_id=document.bundle_id, actor=actor, action="pair.create", target_type="pair", target_ids=[pair.id])
+    await session.flush()
+
+
 def _record(
     session: AsyncSession, document: Document, action: str, op: str, result: EditResult, change: _Change, actor: str
 ) -> None:
     """작업 기록 — 대상은 은퇴한·활성이 된·언어가 바뀐·다시 묶인 단위, 사유 칸에 편집 종류(split 등)."""
     unit_ids = sorted(
         {*result.created_unit_ids, *result.retired_unit_ids, *change.langs, *change.regroup, *change.bundles,
-         *change.noises, *change.numbers, *change.figures, *change.pair_seqs, *change.unwrap_seqs}
+         *change.noises, *change.numbers, *change.figures, *change.pair_seqs, *change.unwrap_seqs, *change.indents}
     )
     record_event(
         session, bundle_id=document.bundle_id, actor=actor, action=action, target_type="unit", target_ids=unit_ids,
@@ -2039,6 +2270,8 @@ async def apply_edit(
     바뀌는 게 없는 편집(같은 언어로 바꾸기, 범위가 그대로인 경계 옮기기·골라 만들기)은 아무것도 쓰지 않는다 — 확인도
     묻지 않고 revision·기록·다시 하기 기록도 그대로다.
     """
+    if isinstance(op, SwitchLanguageOp) and document.side != "old":
+        raise_rule(422, "invalid_side", document_id=document.id)
     extraction_id = await get_latest_extraction_id(session, document.id)
     change = await _plan(session, document.id, extraction_id, op)
     if isinstance(op, SetRefOp | ClearRefOp):
@@ -2063,11 +2296,14 @@ async def apply_edit(
             figure_changes={str(unit_id): list(figures) for unit_id, figures in change.figures.items()},
             pair_seq_changes={str(unit_id): list(seqs) for unit_id, seqs in change.pair_seqs.items()},
             unwrap_seq_changes={str(unit_id): list(seqs) for unit_id, seqs in change.unwrap_seqs.items()},
+            indent_changes={str(unit_id): list(shifts) for unit_id, shifts in change.indents.items()},
             number_changes=_dump_numbers(change), actor=actor,
         )
     )
     _record(session, document, "unit.edit", op.type, result, change, actor)
     await session.flush()
+    if isinstance(op, SwitchLanguageOp):
+        result.shape = "split_pair" if op.piece is not None else "merged" if op.merge_pair else "unpaired"
     return result
 
 
@@ -2124,14 +2360,20 @@ def _replay(edit: UnitEdit, *, backwards: bool) -> _Change:
         unwrap_seqs={
             int(unit_id): _orient(seqs, backwards=backwards) for unit_id, seqs in (edit.unwrap_seq_changes or {}).items()
         },
+        # 0036 전 기록은 빈 객체다(들여쓰기를 바꾼 편집이 없었다)
+        indents={
+            int(unit_id): _orient(shifts, backwards=backwards) for unit_id, shifts in (edit.indent_changes or {}).items()
+        },
         repair_pairs=edit.op == "set_heading",
     )
 
 
 async def _step_edit(
-    session: AsyncSession, document: Document, edit: UnitEdit, *, backwards: bool, confirm: bool, actor: str
+    session: AsyncSession, document: Document, edit: UnitEdit, *, backwards: bool, confirm: bool, actor: str,
+    settled: Collection[int] = (),
+    keeps_pairs: bool = False,
 ) -> EditStepResult:
-    """기록 하나를 거꾸로(되돌리기) 또는 다시 적용하고 작업 기록을 남긴다."""
+    """기록 하나를 거꾸로(되돌리기) 또는 다시 적용하고 작업 기록을 남긴다 — keeps_pairs면 짝을 다시 세우지 않는다(부르는 쪽이 되쓴다)."""
     action = "unit.undo" if backwards else "unit.redo"
     if edit.op in BOUNDARY_OPS:
         confirmed = edit.payload["confirmed"] != backwards
@@ -2148,19 +2390,24 @@ async def _step_edit(
             boundary_unit_ids=unit_ids, confirmed=confirmed,
         )
     change = _replay(edit, backwards=backwards)
+    change.keeps_pairs = keeps_pairs
     if edit.op in CAPTION_OPS:
         change.bundles = await _find_caption_bundles(session, [*change.retire, *change.revive])
     elif edit.op in FIGURE_OPS:
         # 묶음 머리와 든 그림 모두 — 기록의 전·후 값이 머리를 가리킨다
         change.bundles = sorted({*change.figures, *(head for move in change.figures.values() for head in move if head is not None)})
     result = await _write_change(
-        session, document, await get_latest_extraction_id(session, document.id), change, confirm=confirm, actor=actor
+        session, document, await get_latest_extraction_id(session, document.id), change, confirm=confirm, actor=actor,
+        settled=settled,
     )
     _record(session, document, action, edit.op, result, change, actor)
     return EditStepResult(**result.model_dump(), op=edit.op, boundary_unit_ids=[], confirmed=None)
 
 
-async def undo_edit(session: AsyncSession, document: Document, *, confirm: bool, actor: str) -> EditStepResult:
+async def undo_edit(
+    session: AsyncSession, document: Document, *, confirm: bool, actor: str, settled: Collection[int] = (),
+    keeps_pairs: bool = False,
+) -> EditStepResult:
     """마지막 적용 편집을 거꾸로 — 만든 단위를 은퇴시키고 은퇴시킨 단위를 원래 ID로 되살린다(되살린 단위의 판단은 미배정).
     칸 묶음과 레이아웃 표 표시도 편집 전으로 돌린다."""
     edit = await session.scalar(
@@ -2174,10 +2421,15 @@ async def undo_edit(session: AsyncSession, document: Document, *, confirm: bool,
     # 되돌리는 기록을 먼저 내린다 — 실패하면 요청이 커밋하지 않아 상태도 그대로다
     edit.state = EDIT_UNDONE
     await session.flush()
-    return await _step_edit(session, document, edit, backwards=True, confirm=confirm, actor=actor)
+    return await _step_edit(
+        session, document, edit, backwards=True, confirm=confirm, actor=actor, settled=settled, keeps_pairs=keeps_pairs
+    )
 
 
-async def redo_edit(session: AsyncSession, document: Document, *, confirm: bool, actor: str) -> EditStepResult:
+async def redo_edit(
+    session: AsyncSession, document: Document, *, confirm: bool, actor: str, settled: Collection[int] = (),
+    keeps_pairs: bool = False,
+) -> EditStepResult:
     """가장 최근에 되돌린 편집을 같은 단위 ID로 다시 적용한다."""
     edit = await session.scalar(
         select(UnitEdit)
@@ -2187,7 +2439,9 @@ async def redo_edit(session: AsyncSession, document: Document, *, confirm: bool,
     )
     if edit is None:
         raise_rule(409, "nothing_to_redo")
-    result = await _step_edit(session, document, edit, backwards=False, confirm=confirm, actor=actor)
+    result = await _step_edit(
+        session, document, edit, backwards=False, confirm=confirm, actor=actor, settled=settled, keeps_pairs=keeps_pairs
+    )
     edit.state = EDIT_APPLIED
     await session.flush()
     return result

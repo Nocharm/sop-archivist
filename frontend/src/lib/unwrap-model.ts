@@ -1,7 +1,7 @@
 // 벗긴 표(MD 1 F1) - 레이아웃 표의 칸 줄은 보통 문장 카드로 놓이고, 같은 표의 줄 묶음 왼쪽에 세로선 하나, 묶음 머리에 "↺ 다시 표로" 하나만 둔다.
 // 칸 줄은 용지 모델(paper-model buildPaperModel)이 이미 문단처럼 펴 둔다 - 여기는 줄이 어느 벗긴 표에 드는지와 묶음 머리 자리, 다시 표로 단추를 둘 줄만 정한다.
 // 표 안 표(F2): 벗긴 바깥 표의 칸 사이에 놓인 안쪽 표 줄(아직 표인 것)은 바깥 묶음에 든다. 안쪽 표도 벗기면 제 묶음 · 제 "다시 표로"다(겹마다 따로).
-// 명세: docs/superpowers/handoff/2026-11-18-1-unwrap-standardize.md F1 · F2 · F12
+// 명세: 2026-11-18-1-unwrap-standardize.md F1 · F2 · F12
 
 import type { ViewTable, ViewUnit } from "./api-sop";
 import { isBandHeading, type PaperModel, type PaperRow } from "./paper-model";

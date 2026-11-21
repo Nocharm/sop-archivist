@@ -1,5 +1,6 @@
-/** 놓아서 짝 맺기의 판단과 Pair view의 두 칸(KO | EN) 나누기 - 화면 없는 순수 모델 */
+/** 놓아서 합치기 · 짝 맺기의 판단과 Pair view의 두 칸(KO | EN) 나누기 - 화면 없는 순수 모델 */
 import type { ViewPair, ViewUnit } from "./api-sop";
+import { getMergeBlocker, MERGE_BLOCKER_KEYS } from "./paper-model";
 
 export type PairLang = "ko" | "en";
 export type PairUnit = Pick<ViewUnit, "id" | "display_id" | "kind" | "lang" | "text" | "group_unit_id" | "pos_seq" | "spans" | "status" | "ref">;
@@ -84,6 +85,46 @@ export function resolvePairDrop(sources: readonly PairPiece[], target: PairPiece
   return { kind: "pair", unitIds: [dragged.id, target.id] };
 }
 
+export type BoxPiece = PairPiece & Pick<ViewUnit, "noise_kind">;
+
+export interface BoxDropContext extends PairDropContext {
+  /** 용지의 박스 순서(paper-model buildPaperTabs order) - 합치기는 여기서 바로 옆인 박스끼리만 */
+  order: readonly number[];
+  /** 짝을 맺는 문서인가(한/영 두 언어 문서) - 아니면 다른 언어 박스 위는 놓을 자리 밖 */
+  canPair: boolean;
+}
+
+export type BoxDrop =
+  | { kind: "merge"; unitIds: [number, number] } // 용지 순서대로 - edits merge
+  | Exclude<PairDrop, { kind: "refused" }>
+  | { kind: "refused"; reasonKey: string };
+
+/**
+ * Old 용지에서 박스를 다른 박스 위에 놓을 때 할 일 - 틈의 Join(planAssignJoin)과 같은 규칙(사용자 결정 2026-11-20 3-a · 3-b):
+ * 같은 언어 → 이웃이면 합치기(아니면 거절), 한/영 → 짝(멀리서도, resolvePairDrop). 배정된 박스의 합치기는 서버가 되묻는다(틈 Join과 같다).
+ */
+export function resolveBoxDrop(sources: readonly BoxPiece[], target: BoxPiece | undefined, ctx: BoxDropContext): BoxDrop {
+  if (!target || sources.length === 0 || sources.some((unit) => unit.id === target.id)) return { kind: "none" };
+  if (sources.length === 1 && sources[0].lang === target.lang) return resolveMergeDrop(sources[0], target, ctx);
+  if (!ctx.canPair) return { kind: "none" };
+  const drop = resolvePairDrop(sources, target, ctx);
+  return drop.kind === "refused" ? { kind: "refused", reasonKey: PAIR_REFUSAL_KEYS[drop.reason] } : drop;
+}
+
+function resolveMergeDrop(dragged: BoxPiece, target: BoxPiece, ctx: BoxDropContext): BoxDrop {
+  if (!TEXT_KINDS.has(dragged.kind) || !TEXT_KINDS.has(target.kind) || target.group_unit_id !== null) return { kind: "none" };
+  const at = ctx.order.indexOf(dragged.id);
+  const targetAt = ctx.order.indexOf(target.id);
+  if (at < 0 || targetAt < 0) return { kind: "none" };
+  if (Math.abs(at - targetAt) !== 1) return { kind: "refused", reasonKey: "split.menu.why.notAdjacent" };
+  if (ctx.hasDraft(dragged)) return { kind: "refused", reasonKey: PAIR_REFUSAL_KEYS.unsaved };
+  if (ctx.hasDraft(target)) return { kind: "refused", reasonKey: PAIR_REFUSAL_KEYS.other_unsaved };
+  const [first, second] = at < targetAt ? [dragged, target] : [target, dragged];
+  const blocker = getMergeBlocker(first, second);
+  if (blocker) return { kind: "refused", reasonKey: MERGE_BLOCKER_KEYS[blocker] };
+  return { kind: "merge", unitIds: [first.id, second.id] };
+}
+
 export interface PairColumnItem {
   unit: PairUnit;
   /** 끌고 놓을 수 있는 조각(언어가 ko·en인 글 Unit) - 아니면 흐리게 남는 줄 */
@@ -143,16 +184,4 @@ export function listPairLinks(columns: PairColumns): PairLink[] {
     for (const enId of enByPair.get(item.pair.id) ?? []) links.push({ pairId: item.pair.id, koId: item.unit.id, enId, status: item.pair.status });
   }
   return links.sort((a, b) => a.koId - b.koId || a.enId - b.enId);
-}
-
-/** 알림의 Undo가 그 짝을 풀어도 되나 - 같은 Unit들로 확정된 채 남아 있고 구성 Unit에 판단이 없을 때만 */
-export function canUndoPair(view: { units: readonly Pick<PairUnit, "id" | "status">[]; pairs: readonly PairInfo[] }, pairId: number, unitIds: readonly number[]): boolean {
-  const pair = view.pairs.find((candidate) => candidate.id === pairId);
-  if (!pair || pair.status !== "confirmed") return false;
-  if (pair.unit_ids.length !== unitIds.length || !unitIds.every((id) => pair.unit_ids.includes(id))) return false;
-  // 다시 읽은 보기에 없는 구성원은 그사이 바뀐 것이다 - 풀지 않는다
-  return pair.unit_ids.every((id) => {
-    const unit = view.units.find((candidate) => candidate.id === id);
-    return unit !== undefined && (unit.status === null || unit.status === "unassigned");
-  });
 }

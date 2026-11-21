@@ -5,7 +5,7 @@
 // 상태 · 데이터 · 동작은 use-assign-page.tsx의 useAssignPage()에 있고, 이 파일은 그리기만 한다(쪼개기 1단계).
 "use client";
 
-import { ExternalLink, FileCheck2, FileUp, FolderOutput, Inbox, Link2, Sparkles, SquarePlus, Trash2, TriangleAlert, X } from "lucide-react";
+import { ExternalLink, FileCheck2, FileUp, FolderOutput, Inbox, Link2, MousePointerClick, Sparkles, SquarePlus, Trash2, TriangleAlert, X } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useEffectEvent, useMemo, useRef, useState, type ReactNode } from "react";
 import { AssignContextMenu } from "@/components/assign/assign-context-menu";
@@ -54,6 +54,7 @@ import { navigate } from "@/lib/nav-buffer";
 import { buildNewAiFilter, listNewAiLinks, readNewAiPill } from "@/lib/new-ai-filter-model";
 import { buildSheetDraft, isSpaceEnabled, pickSpaceSheet } from "@/lib/space-preview-model";
 import { buildDeletedFolds } from "@/lib/deleted-fold-model";
+import type { IndentChange } from "@/lib/indent-model";
 import { hasTocLineIn, listPartSheets } from "@/lib/paper-model";
 import { getNewDocumentsHref, getStageHref } from "@/lib/stages";
 import { toggleTocOpen } from "@/lib/toc-block-model";
@@ -70,7 +71,7 @@ export default function AssignPage() {
   const {
     t, bundleId, bundle, canEdit, docs, oldDocs, docViews, unitsKey, reloadData, tobe, tobeData, writtenList, identical,
     readMarkStatus, readAiPlace, suggestedTargetUnits, unitMap, written, writtenMap, rows, rowMap, rowOfUnit, options, ready, showSkeleton, unsourced,
-    mode, setMode, foldOpen, setFoldOpen, foldMatch, clearRowPick, activeKey, row, pickedId, solo, setSolo, isSolo, isNewEdit, tocOpen, setTocOpen,
+    mode, setMode, foldOpen, setFoldOpen, foldMatch, clearRowPick, activeKey, row, pickedId, spaceUnitIds, spacePickSeq, solo, setSolo, isSolo, isNewEdit, tocOpen, setTocOpen,
     tocPick, checked, setChecked, newRemarks, setNewRemarks, menu, setMenu, joinMenu, setJoinMenu, ctxMenu, setCtxMenu, focusNew,
     setDrafts, draft, groupPending, savedDestination, destination, rowUnits, reasonNow, setDraft, unsavedCount, leaveTo, setLeaveTo,
     aiDest, isAiRow, recommendations, linkIds, candidateIds, setManualOldDoc, oldView, acceptKind, setAcceptKind, acceptDoc, paperModel,
@@ -80,9 +81,9 @@ export default function AssignPage() {
     templateTitles, linkPairs, view, changeView, zoomPane, setPanes, remarkEdit, setRemarkEdit, focusAfterRef, busy, isAnyPending, isGlobalPending, paperPending, editConfirm,
     setEditConfirm, oldPaneRef, buildUndo, markRecorded, bulk, setBulk, confirmingIdentical, moveCode, isMoveAsk, setMoveAsk, decideNow,
     setConfirmingIdentical, resetScope, setResetScope, slots, newDraft, draftSlotKey, placeResolved, canPlaceClick, pickedSpotKey,
-    setCarvePick, carve, carveText, clearCarve, togglePairViewByButton, pairFrom, setPairFrom, pairSource, selectToc, openNewCtxMenu,
+    setCarvePick, carve, carveText, clearCarve, togglePairViewByButton, pairFrom, setPairFrom, pairSource, captionPickBundle, setCaptionPick, selectToc, openNewCtxMenu,
     openSolo, goToUnit, ctxGroups, confirmBlockKey, refPendingIds, isLinkedToWritten, captionPendingKeys, docDashboard, openCtxMenu, runUnitEdit,
-    rewrapTable, describeEditConfirm, pairGrip, clearToc, switchToPair, applySplitSuggestion, splitAtCut, handleOldDoubleClick,
+    rewrapTable, unwrapAi, describeEditConfirm, pairGrip, clearToc, switchToPair, applySplitSuggestion, splitAtCut, handleOldDoubleClick,
     runCtx, revertHeadings, planOldJoin, joinOld, renderOldActions, runSave, runClear, confirmIdenticalAll, acceptAll, pickDestination,
     pickNewSentence, handleNewPick, handleJoinPick, readJoinAfter, pickJoinMenu, pickPlaceSpot, pickOwnAiLine, jumpToNew, openNewDoc,
     showInNew, jumpToOld, pickTemplateLine, fillTemplateMissing, isOldDrag, finishPairPick, handleOldClick, markRecHover, revealPick,
@@ -192,9 +193,8 @@ export default function AssignPage() {
     for (const source of [docs, tobe, writtenList]) if (source.error !== null) source.reload();
     if (docViews.error !== null) docViews.retry();
   };
-  // 삭제로 확정한 줄은 흐린 한 줄로 접는다(설계 D6) - 누르면 펼친다. 펼침은 줄 키로 이 화면을 연 동안만(목차 블록 펼침과 같은 짜임), 고른 박스는 용지가 늘 펼친다
-  const [deletedOpen, setDeletedOpen] = useState<ReadonlySet<string>>(() => new Set());
-  const deletedFolds = useMemo(() => buildDeletedFolds(rows, unitMap, { filter: state.filter, open: deletedOpen }), [rows, unitMap, state.filter, deletedOpen]);
+  // 삭제로 확정한 줄은 흐린 한 줄로 접는다(설계 D6) - 펼침은 용지가 고름으로 정한다(고른 동안만, 떠나면 다시 접힘)
+  const deletedFolds = useMemo(() => buildDeletedFolds(rows, unitMap, { filter: state.filter }), [rows, unitMap, state.filter]);
   // 빈 템플릿(엮은 문서) 기본 보기의 순서 · 칸 옮기기 · 번호 표시(시안 2 D6) - Order 화면과 같은 저장 길, 화면 문서에 먼저 얹고 두 보기가 같은 문서를 그린다
   const composedOrder = useComposedOrder({ bundleId, doc: isComposedDoc ? composedDoc : null, labelLang: uiLang });
   const shownComposed = composedOrder.doc;
@@ -386,6 +386,17 @@ export default function AssignPage() {
       </button>
     </div>
   ) : null;
+  // 캡션 줄 고르는 중의 안내 한 줄 - Old 용지 머리 아래(짝 고르기 안내와 같은 자리, 함께 열리지 않는다)
+  const captionBanner = captionPickBundle ? (
+    <div className="flex items-center gap-2 border-b border-line bg-accent-tint px-3 py-1.5 text-xs" role="status" data-testid="assign-caption-pick">
+      <MousePointerClick size={14} strokeWidth={1.5} className="flex-none text-ink-2" aria-hidden />
+      <span className="min-w-0 flex-1 text-ink" data-testid="assign-caption-pick-text">{t("assign.captionPick", { id: captionPickBundle.display_id })}</span>
+      <button type="button" className="btn ghost h-7 flex-none" data-testid="assign-caption-pick-cancel" onClick={() => setCaptionPick(null)}>
+        {t("common.cancel")} <kbd>Esc</kbd>
+      </button>
+    </div>
+  ) : null;
+  const oldBanner = pairBanner ?? captionBanner;
   const placeOf = (unitIds: number[]) => {
     const decided = unitIds.map((id) => unitMap.get(id)).find((unit) => unit?.status === "confirmed");
     if (!decided) {
@@ -470,7 +481,8 @@ export default function AssignPage() {
           docId={oldDocId}
           docCode={oldView?.document.doc_code || oldView?.document.file_name || ""}
           reloadKey={`${unitsKey}:${oldView?.document.revision ?? ""}`}
-          unitIds={isSolo ? soloUnits.map((unit) => unit.id) : (row?.unitIds ?? [])}
+          unitIds={spaceUnitIds}
+          pickSeq={spacePickSeq}
           picked={row && rowUnits.length > 0 ? { id: rowUnits[0].display_id, text: rowUnits.map((unit) => unit.text).join(" ") } : null}
           draft={spaceDraft}
         />
@@ -499,7 +511,7 @@ export default function AssignPage() {
                 items={pairColumns.ko}
                 docLabel={oldDocOptions.find((option) => option.value === String(oldView?.document.id))?.label}
                 toggle={<PairViewToggle on onToggle={togglePairViewByButton} />}
-                banner={pairBanner !== null && !isNewEdit ? pairBanner : null}
+                banner={oldBanner !== null && !isNewEdit ? oldBanner : null}
                 selectedIds={highlightIds}
                 pickedIds={pickedOld}
                 statusOf={readMarkStatus}
@@ -568,10 +580,11 @@ export default function AssignPage() {
                 highlightIds={mode === "old" ? highlightIds : NO_NUMBERS}
                 // 떨어진 짝 안내 줄 - 누르면 짝의 원래 자리로 가 그 박스를 고른다(설계 D3)
                 pairHint={mode === "old" && !isNewEdit ? { onGo: goToUnit } : undefined}
+                single={view.single}
                 // 짝 카드 안 순서 손잡이 - 고른 박스가 짝 전부가 이어 붙은 카드 안이면(설계 D8)
                 pairGrip={pairGrip}
                 // 삭제로 확정한 줄의 접힌 한 줄 - 한 단으로 연 New 문서에는 줄이 없다
-                deleted={isSolo ? undefined : { folds: deletedFolds, onOpen: (key) => setDeletedOpen((open) => new Set(open).add(key)) }}
+                deleted={isSolo ? undefined : { folds: deletedFolds }}
                 pickedIds={pickedOld}
                 warnBlockIds={warnBlockIds}
                 statusOf={readMarkStatus}
@@ -598,7 +611,7 @@ export default function AssignPage() {
                 // 제목에서 바꾼 조항 묶음 머리(F8b) - 되돌리기는 다듬는 원문이 그 Old 문서일 때만
                 headingShift={isSolo ? undefined : { canRevert: canEdit && !isNewEdit, busy: isGlobalPending, onRevert: revertHeadings }}
                 // 벗긴 표의 줄 묶음 머리 "↺ 다시 표로"(F1) - 다듬는 원문이 그 Old 문서일 때만
-                unwrap={isSolo ? undefined : { canRewrap: canEdit && !isNewEdit, busy: isGlobalPending, onRewrap: rewrapTable }}
+                unwrap={isSolo ? undefined : { canRewrap: canEdit && !isNewEdit, busy: isGlobalPending, onRewrap: rewrapTable, ai: canEdit && !isNewEdit ? unwrapAi : undefined }}
                 // 처리 중인 일 - 누르는 즉시 그 자리 알약과 박스 쉬머, 그 박스만 잠근다(설계 D4)
                 pending={mode === "old" ? paperPending : undefined}
                 paneRef={oldPaneRef}
@@ -621,8 +634,18 @@ export default function AssignPage() {
                     ? {
                         // 그 줄이 처리 중이면 용지가 그 번호 칸만 끈다
                         busy: isGlobalPending,
-                        onSave: (unitId, number, follow) =>
-                          void runUnitEdit({ type: "set_number", unit_id: unitId, number, follow }, number === null ? t("assign.number.didClear") : t("assign.number.didSet", { n: number }), unitId),
+                        onSave: (unitId, number, follow, indentShift) =>
+                          void runUnitEdit({ type: "set_number", unit_id: unitId, number, follow, ...(indentShift === undefined ? {} : { indent_shift: indentShift }) }, number === null ? t("assign.number.didClear") : t("assign.number.didSet", { n: number }), unitId),
+                        // 들여쓰기는 두 번 저장한다(B8 7-a) - 누른 줄, 이어져 함께 바뀐 줄. Ctrl+Z 한 번이 함께 바뀐 줄만 되돌린다(같은 문서 쓰기는 차례로 간다)
+                        onIndent: (plan, delta, label) => {
+                          const toItem = (change: IndentChange) => ({ unit_id: change.unitId, indent_shift: change.indentShift });
+                          const unitId = plan.clicked.unitId;
+                          void runUnitEdit({ type: "set_indents", units: [toItem(plan.clicked)] }, t(delta < 0 ? "assign.number.didOutdent" : "assign.number.didIndent", { id: label }), unitId);
+                          if (plan.batch.length > 0) {
+                            const done = t(delta < 0 ? "assign.number.didOutdentMore" : "assign.number.didIndentMore", { id: label, n: plan.batch.length });
+                            void runUnitEdit({ type: "set_indents", units: plan.batch.map(toItem) }, done, unitId);
+                          }
+                        },
                       }
                     : undefined
                 }
@@ -635,8 +658,8 @@ export default function AssignPage() {
                     : undefined
                 }
                 banner={
-                  pairBanner !== null && !isNewEdit ? (
-                    pairBanner
+                  oldBanner !== null && !isNewEdit ? (
+                    oldBanner
                   ) : carve && (
                     <div className="flex items-center gap-2 border-b border-line bg-accent-tint px-3 py-1.5 text-xs" role="status" data-testid="assign-carve">
                       <span className="flex-none font-semibold text-ink">{t("split.carve")}</span>
@@ -803,7 +826,7 @@ export default function AssignPage() {
         <AssignContextMenu
           key={ctxMenu.seq}
           anchor={ctxMenu.anchor}
-          cover={(rowMap.get(ctxMenu.rowKey)?.unitIds ?? []).flatMap((id) => [...document.querySelectorAll<HTMLElement>(`[data-testid="assign-paper-piece-${id}"]`)])}
+          readCover={() => (rowMap.get(ctxMenu.rowKey)?.unitIds ?? []).flatMap((id) => [...document.querySelectorAll<HTMLElement>(`[data-testid="assign-paper-piece-${id}"]`)])}
           click={ctxMenu.click}
           groups={ctxGroups}
           onPick={runCtx}
