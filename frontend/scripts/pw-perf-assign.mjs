@@ -1,4 +1,4 @@
-// Assign 긴 문서의 프레임 비용을 잰다 - 로딩 뒤 가만히·호버·스크롤·고르기. 설계: docs/superpowers/specs/2026-11-17-assign-long-doc-design.md
+// Assign 긴 문서의 프레임 비용을 잰다 - 로딩 뒤 가만히·호버·스크롤·고르기. 설계: 2026-11-17-assign-long-doc(구현 끝나 지웠다, git 이력)
 // 운영 빌드(next build → next start)에 대고 잰다 - 개발 빌드는 React 검사 때문에 몇 배 느려 숫자가 처방을 가린다.
 // 실행(frontend/ 에서): BASE_URL=http://localhost:3806 BUNDLE=5 DOCS=41,111 node scripts/pw-perf-assign.mjs
 //   CPU=4      CPU를 몇 배 느리게(기본 4 - 사내 PC 어림)

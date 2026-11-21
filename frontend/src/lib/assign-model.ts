@@ -1,4 +1,4 @@
-// Assign 화면 모델 - Old 조각 한 줄씩 보낼 곳을 정한다(설계 docs/superpowers/specs/2026-11-09-assign-unified-design.md).
+// Assign 화면 모델 - Old 조각 한 줄씩 보낼 곳을 정한다(설계 2026-11-09-assign-unified, docs/architecture/decisions.md).
 // 저장 요청은 classify-model의 buildGroupSave(보낼 곳 link 포함)가 만들고, 여기는 묶음 합치기·함께 확정·짝 자동·추천 섞기·범위 규칙이다.
 
 import { getDestinationId, type Destination, type DestinationOption } from "./classify-model";

@@ -1,5 +1,5 @@
 // Assign 화면에서 Old 조각을 New 문장으로 끄는 순수 모델 - 끌 수 있는 때, 표 한 장, 놓을 수 있는 곳, 놓았을 때 클릭과 같은 판단을 정한다.
-// 설계: docs/superpowers/specs/2026-11-16-drag-and-drop-design.md §6
+// 설계: 2026-11-16-drag-and-drop §6 (docs/architecture/decisions.md)
 import type { DragCard } from "./box-drag";
 import type { ComposedSection, WiPart } from "./api-sop";
 import type { Destination, DestinationOption, SentenceSlot } from "./classify-model";

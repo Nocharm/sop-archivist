@@ -1,4 +1,4 @@
-"""AI API의 입력·응답 모양 — 프런트와 약속한 계약이다(계획 2 "API 계약"). 유사도 점수는 어디에도 싣지 않는다."""
+"""AI API의 입력·응답 모양 — 프런트와 약속한 계약이다(계획 2 "API 계약", docs/architecture/api-contract.md). 유사도 점수는 어디에도 싣지 않는다."""
 
 from typing import Annotated, Literal, Self
 

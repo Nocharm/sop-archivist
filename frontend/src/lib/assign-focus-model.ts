@@ -1,5 +1,5 @@
 // Assign 고름 · 처리 중 · 따라가기를 한 상태로 - 화면 훅(use-assign-focus)이 useReducer로 쥔다. 규칙은 설계
-// docs/superpowers/specs/2026-11-20-assign-mockup1-design.md D1(규칙 1-6). 화면 · 요청 · 시간은 모른다.
+// 2026-11-20-assign-mockup1 D1(규칙 1-6, docs/architecture/decisions.md). 화면 · 요청 · 시간은 모른다.
 
 import type { EditOp } from "./api-sop";
 

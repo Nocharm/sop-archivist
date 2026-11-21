@@ -93,5 +93,5 @@ docker-compose.yml   # proxy · frontend · backend · db · db-backup
 - 문서 인덱스: [`docs/README.md`](docs/README.md)
 - 설계 명세: [`SOP 재구성 End-to-End 설계`](docs/superpowers/specs/2026-11-05-sop-restructuring-e2e-design.md)(제품), [`기반 세팅 설계`](docs/superpowers/specs/2026-11-04-sop-archivist-baseline-design.md)
 - 파싱 의존성·메모리 실측: [`docs/qa/2026-11-sop-parse-dependencies.md`](docs/qa/2026-11-sop-parse-dependencies.md), 프런트 디자인 기초: [`frontend/docs/design/2026-11-07-frontend-design-foundations.md`](frontend/docs/design/2026-11-07-frontend-design-foundations.md)
-- 구현 계획 2(AI 제안 층, 프런트 병행용 API 계약 포함): [`docs/superpowers/plans/2026-11-06-sop-restructuring-plan2-ai.md`](docs/superpowers/plans/2026-11-06-sop-restructuring-plan2-ai.md)
+- 프런트와 맞춘 AI API 계약: [`docs/architecture/api-contract.md`](docs/architecture/api-contract.md), 끝난 기능 설계에서 아직 인용되는 부분: [`docs/architecture/decisions.md`](docs/architecture/decisions.md)
 - 작업 가이드(명령·구조·체크리스트): [`CLAUDE.md`](CLAUDE.md)(backend·frontend 세부는 [`backend/CLAUDE.md`](backend/CLAUDE.md)·[`frontend/CLAUDE.md`](frontend/CLAUDE.md)), 변경 기록: [`CHANGELOG.md`](CHANGELOG.md), 진행 현황: [`PROGRESS.md`](PROGRESS.md)

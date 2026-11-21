@@ -1,5 +1,5 @@
 // 묶음 관리·AI 요청·관리자 묶음·AI 지침·SOP 표준 골격 API - 백엔드에는 있었지만 화면이 없던 엔드포인트의 프런트 계약.
-// 모양은 backend routers/sop_bundles.py·sop_ai.py·sop_admin.py·sop_guidelines.py·sop_outline.py와 계획 2 문서 "API 계약"을 따른다.
+// 모양은 backend routers/sop_bundles.py·sop_ai.py·sop_admin.py·sop_guidelines.py·sop_outline.py와 API 계약(docs/architecture/api-contract.md)을 따른다.
 import { apiFetch, apiFetchBlob } from "./api";
 import type { AiJobKind, AiSuggestion, Bundle, BundleMember, BundleStatus, MemberRole, NumberStyle, OutlineKind, RowProgress } from "./api-sop";
 

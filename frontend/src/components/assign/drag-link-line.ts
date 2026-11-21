@@ -1,5 +1,5 @@
 // Assign에서 Old 조각을 끄는 동안 따라오는 초안 이음 선 - React 없이 두 문서 틀(.assign-panes)에 SVG 하나를 붙이고 끌 때마다 길만 고친다(끄는 동안 React 상태를 바꾸지 않는다).
-// 모양은 지금 이음 선(.link-lines)의 고른 줄 초안(진한 점선)을 그대로 받는다. 설계: docs/superpowers/specs/2026-11-16-drag-and-drop-design.md §6
+// 모양은 지금 이음 선(.link-lines)의 고른 줄 초안(진한 점선)을 그대로 받는다. 설계: 2026-11-16-drag-and-drop §6 (docs/architecture/decisions.md)
 import { buildLinkPath } from "@/lib/link-route-model";
 
 const SVG_NS = "http://www.w3.org/2000/svg";

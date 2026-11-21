@@ -1,4 +1,4 @@
-// 참조 줄(REF) 화면 규칙 - 다른 문서를 번호로 가리키는 줄의 번호 짐작과 확인이 남은 줄 세기(설계 2026-11-15-ref-paragraph-design).
+// 참조 줄(REF) 화면 규칙 - 다른 문서를 번호로 가리키는 줄의 번호 짐작과 확인이 남은 줄 세기(설계 2026-11-15-ref-paragraph — 구현 끝나 지웠다, git 이력).
 import type { UnitRefDetail, ViewUnit, WrittenSentence } from "./api-sop";
 
 // 문서 번호 꼴 - 서버의 제안 규칙(backend app/sop/refs.py)과 같다: 영문 대문자 머리 + 하이픈 마디 + 숫자 끝

@@ -1,4 +1,4 @@
-"""Assign 되돌리기 스냅숏 엔진 — 묶음의 판단 상태 표를 덤프·비교·되쓴다 (설계: docs/superpowers/specs/2026-11-13-assign-undo-design.md §5.2·§5.3)."""
+"""Assign 되돌리기 스냅숏 엔진 — 묶음의 판단 상태 표를 덤프·비교·되쓴다 (설계: 2026-11-13-assign-undo §5.2·§5.3, docs/architecture/decisions.md)."""
 
 from collections import defaultdict
 from collections.abc import Awaitable, Callable, Collection

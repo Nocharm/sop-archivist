@@ -8,7 +8,7 @@ Assign Space 미리 보기가 같은 모델을 쓴다. 숨은 값(Unit ID · 그
 - 편집 반영(B9): 확정 삭제한 줄은 지우지 않고 Remark "Deleted"(사유가 있으면 "Deleted — 사유") · Text 취소선 · 회색 · Lang 빈 칸(미리 보기는
   `deleted`로 숨긴다). 원문에서 이어진 줄이 확정 배정으로 같은 새 문장 하나에 가면 한 행. 점 기호 줄의 Section No.는 "5.1 •"이고 Text에
   기호가 없다. Text 칸 들여쓰기 = 용지의 번호 칸 단계(numbering.build_row_levels) − 1.
-설계: docs/superpowers/specs/2026-11-20-assign-mockup2-design.md D4
+설계: 2026-11-20-assign-mockup2 D4 (docs/architecture/decisions.md)
 """
 
 from collections.abc import Mapping, Sequence

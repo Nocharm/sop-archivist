@@ -1709,7 +1709,7 @@
   .picker-more { padding: 8px 10px; }
 }
 
-/* ---- Assign: Old 조각 ‖ New 원문 나란히(설계 docs/superpowers/specs/2026-11-09-assign-unified-design.md §3) ---- */
+/* ---- Assign: Old 조각 ‖ New 원문 나란히(설계 2026-11-09-assign-unified §3, docs/architecture/decisions.md) ---- */
 @layer components {
   .assign-desk { display: grid; grid-template-rows: auto minmax(0, 1fr); gap: 10px; min-width: 0; min-height: 0; padding: 10px 14px 14px; background: var(--bg); }
     /* 상태 칩 한 벌 - Unit 상태·Assign 필터·용지 보류. 각진 mono 대문자, 톤마다 --sc-ink/--sc-tint, 고른 필터는 --sc-ink 채움 */

@@ -56,7 +56,7 @@ AI 없이 사람이 끝까지 가는 결정적 경로(계획 1). AI 층은 아�
 ### 5.4 참조 지도 — `ref_map.py`(`routers/sop_map.py`)
 
 - 읽기 전용. 줄 모으기 `collect_map_lines`(줄과 그 끝 마디, 거르기를 모두 지난 것 — 줄 문장 API도 이것만 부른다) → 선 묶기 `build_reference_map`.
-- 구성원 아닌 Bundle은 번호·제목·상태·후속 문서·줄 수만, Bundle 제목과 문장은 싣지 않고, 그 Bundle의 제안 줄(확인 안 된 줄)은 쓰지 않는다 — 응답 필드는 설계 `2026-11-17-reference-map-design.md`의 "1걸음에서 정한 것"과 `tests/test_sop_map.py`의 `MAP_KEYS`가 박아 둔 것만.
+- 구성원 아닌 Bundle은 번호·제목·상태·후속 문서·줄 수만, Bundle 제목과 문장은 싣지 않고, 그 Bundle의 제안 줄(확인 안 된 줄)은 쓰지 않는다 — 응답 필드는 설계 `docs/architecture/decisions.md` "2026-11-17-reference-map"의 "1걸음에서 정한 것"과 `tests/test_sop_map.py`의 `MAP_KEYS`가 박아 둔 것만.
 - 줄 문장은 `GET …/map/lines?node=&scope=`(`build_node_lines` — `collect_map_lines`를 그 마디로 좁힌다, 지도에 없는 마디는 빈 200).
   - 글을 싣는 질의는 `load_line_texts` 하나이고 `bundle_members`를 SQL에서 조인한다.
   - 그 줄이 든 Bundle의 구성원이 아니거나 글 질의가 돌려주지 않은 줄은 선마다 줄 수만(`withheld_*` — 글·표시 ID·Unit id 없이), 문장 줄 + 가려진 줄 수는 늘 지도의 선 `lines`와 같다(키는 `LINES_KEYS`·`LINE_KEYS`·`WITHHELD_KEYS`).
@@ -72,7 +72,7 @@ AI 없이 사람이 끝까지 가는 결정적 경로(계획 1). AI 층은 아�
 - 최근 AI 요청 목록(상단 바, 멤버인 묶음만·요청 단위 집계·이름 없음)은 `recent.py`, 수치는 `constants.py`, 지침·프롬프트 버전은 `guidelines.py`와 `seeds/`, 요청·응답 모양은 `schemas.py`다.
 - 문서 정보 제안(`doc_meta_job.py`, v0.9.0)은 사람이 요청하지 않고 업로드 때 규칙이 비운 번호·버전만 묻는다(AI가 켜져 있을 때) — 값은 제안 행으로만 남고 문서 목록에서 사람이 눌러야 저장된다(시험의 공용 가짜 AI는 이 자동 작업을 끄고, `test_sop_ai_doc_meta`만 켠다).
 - 지침 관리는 `routers/sop_guidelines.py`(`guideline.manage`).
-- 프런트와 맞춘 API 계약은 계획 2 문서의 "API 계약" 블록이다.
+- 프런트와 맞춘 API 계약은 `docs/architecture/api-contract.md`다(계획 2의 "API 계약" 블록을 옮겼다).
 
 ## 7. 떼어 내기는 한 함수군
 
@@ -125,7 +125,7 @@ AI 없이 사람이 끝까지 가는 결정적 경로(계획 1). AI 층은 아�
 
 ### 11.2 AI는 제안 기록에만 쓴다
 
-사용자 결정 2026-11-19, 설계 `docs/superpowers/specs/2026-11-19-ai-suggest-only-design.md`. 검사: `test_invariants.py` — `app/sop/ai`가 `confirmed_text`에 빈 글자 밖의 값을 쓰지 않고, 번역 `translate.py`(D5)·짝 `pairing.py`(D6) 밖의 AI 핸들러가 `UnitDecision`·`TargetSentence`·`TargetSource`를 쓰거나 그것을 쓰는 길을 부르지 않는다.
+사용자 결정 2026-11-19, 설계 `docs/architecture/decisions.md` "2026-11-19-ai-suggest-only". 검사: `test_invariants.py` — `app/sop/ai`가 `confirmed_text`에 빈 글자 밖의 값을 쓰지 않고, 번역 `translate.py`(D5)·짝 `pairing.py`(D6) 밖의 AI 핸들러가 `UnitDecision`·`TargetSentence`·`TargetSource`를 쓰거나 그것을 쓰는 길을 부르지 않는다.
 
 - 분류·묶기의 `apply`는 `ai_suggestions` 행만 쓴다 — 판단·새 문장·출처 연결·`revision`을 건드리지 않아 배경 작업이 사람의 저장을 409로 막지 않는다.
 - 사람이 받으려면 화면이 제안 내용으로 초안을 채워 관계 묶음 저장에 `suggestion_id`를 싣고, 그 저장(`decisions._link_suggestion`)이 판단·입구 2 새 문장에 제안 id를 이어 채택을 남긴다.
@@ -168,7 +168,7 @@ AI 없이 사람이 끝까지 가는 결정적 경로(계획 1). AI 층은 아�
 ### 11.7 계획이 쓴다(입구 2, 제품 명세 §7.10)
 
 - `match_plan`이 LLM 없이 문장 묶음까지 제안을 바로 쓰고 변경 종류는 구조·글이 정한 값이 마지막이다(12.1절 "변경 종류", 내용에 `links`·`target_change_types`, 이유·규칙 ID는 빈다).
-- 말투·고침을 LLM에 다시 묻던 `match` 작업·`prompt.match`·제안의 `provisional`(다듬기 대기)은 걷었다(설계 `docs/superpowers/specs/2026-11-20-change-type-two-design.md` D6) — 작업 종류 값 `match`는 옛 행 때문에 `AI_JOB_KINDS`(CHECK)에 남고 다시 시도로 줄 세우지 않으며(`AI_RETIRED_JOB_KINDS`), 옛 제안의 `provisional`은 읽지 않고(일괄 수락도 받는다), 옛 `prompt.match` 지침 행은 지침 목록이 아는 키만 실어 보이지 않는다.
+- 말투·고침을 LLM에 다시 묻던 `match` 작업·`prompt.match`·제안의 `provisional`(다듬기 대기)은 걷었다(설계 `docs/architecture/decisions.md` "2026-11-20-change-type-two" D6) — 작업 종류 값 `match`는 옛 행 때문에 `AI_JOB_KINDS`(CHECK)에 남고 다시 시도로 줄 세우지 않으며(`AI_RETIRED_JOB_KINDS`), 옛 제안의 `provisional`은 읽지 않고(일괄 수락도 받는다), 옛 `prompt.match` 지침 행은 지침 목록이 아는 키만 실어 보이지 않는다.
 - 다시 세운 계획은 `(모양, 단위, 새 문장)`이 살아 있는 제안과 같은 것을 밀어내지도 쓰지도 않고, 달라진 것에 닿는 살아 있는 제안만 `mark_stale`로 밀어내고 다시 쓴다.
 - 계획 `payload["origin"]`이 나머지를 정한다:
 
@@ -211,7 +211,7 @@ AI 없이 사람이 끝까지 가는 결정적 경로(계획 1). AI 층은 아�
 
 ### 12.1 변경 종류 `decisions._decide_change_type`·`_settle_table_types`
 
-설계 `docs/superpowers/specs/2026-11-20-change-type-two-design.md`, Alembic `0032`.
+설계 `docs/architecture/decisions.md` "2026-11-20-change-type-two", Alembic `0032`.
 
 - 사람이 고르지 않고 저장 입력도 받지 않는다(`TargetIn`에 `change_type` 없음 — 옛 화면이 보내면 무시).
 - 구조 종류(번역·칸 제목·신규·합침·나눔)가 먼저, 글자 비교는 둘뿐이다 — 문장은 출처 글(번호를 뺀 내용 포함)과 같으면 `as_is`, 다르면 `rewritten`.
