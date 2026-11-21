@@ -120,7 +120,7 @@
 | B7 | `feat/pair-peek` | 4 | 중간 · FE | — | 됨 v1.4.9 |
 | B8 | `feat/number-levels` | 7 | 큼 · BE(열 · Alembic · 편집 op) + FE | B5 | 됨 v1.4.10 |
 | B9 | `feat/paragraph-sheet-edits` | 9 | 중간 · BE 시트 + FE 시트 보기 | B5 · B8 | 됨 v1.4.11 |
-| B10 | `feat/caption-extract` → `feat/caption-any-line` → `feat/caption-pick-paths`(차례로 셋) | 8 | 큼 · BE(추출기 · 편집 규칙) + FE | — | B10-1 칸 안 캡션 · 읽기 넓히기 됨 v1.4.13(추출기 8) · B10-2 규칙 넓히기 됨 v1.4.14 |
+| B10 | `feat/caption-extract` → `feat/caption-any-line` → `feat/caption-pick-paths`(차례로 셋) | 8 | 큼 · BE(추출기 · 편집 규칙) + FE | — | B10-1 칸 안 캡션 · 읽기 넓히기 됨 v1.4.13(추출기 8) · B10-2 규칙 넓히기 됨 v1.4.14 · B10-3 지정 길 넷 됨 v1.4.15 |
 | B11 | `feat/ai-unwrap-order` | 11 AI | 큼 · BE AI 작업(Alembic) + FE | B3 | |
 | B12 | `feat/flowchart-figure` | 12 | 큼 · BE 추출기 · 그림 그리기(+ 저장) | — | |
 | B13 | `feat/wi-parent-optional` | 13 | 중간 · BE To-Be · 결과물 + FE 올리기 창 · Documents | — | |

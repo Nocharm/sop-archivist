@@ -2093,6 +2093,8 @@
   .cap-cand:hover:not([aria-disabled="true"]) { background: var(--menu-hover); }
   .cap-cand[data-best] { border-color: var(--accent-line); background: var(--accent-tint); }
   .cap-more { border-style: dashed; color: var(--ink-3); }
+  /* 캡션 줄 고르는 중(B10) - Old 용지의 줄이 누를 곳이라는 표시 */
+  body:has([data-testid="assign-caption-pick"]) [data-pane="old"] [data-strip-unit] { cursor: crosshair; }
   .cap-cand[aria-disabled="true"] { color: var(--ink-4); cursor: not-allowed; }
   .cap-cand-label { flex: 1 1 auto; min-width: 0; }
   .cap-cand-note { flex: none; color: var(--ink-3); font-size: var(--fs-micro); }

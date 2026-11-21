@@ -3,7 +3,7 @@
 // 표·그림(묶음)은 묶음 도구(표 벗기기·캡션 붙이기)만, 캡션은 문장 도구 일부와 캡션 떼기를 받는다(명세 2026-11-16 §4.2).
 // 고치기는 Split의 편집을 그대로 부르므로 판단이 없는 단위만 받는다 - 배정된 문장은 먼저 배정을 취소한다(서버도 판단이 걸린 단위는 확인을 요구한다).
 import type { CoverStatus, ViewUnit } from "./api-sop";
-import { isCaptionableText } from "./caption-slot-model";
+import { isCaptionableText, type CaptionHolder } from "./caption-slot-model";
 import { isBandHeading, MERGE_BLOCKER_KEYS } from "./paper-model";
 import { getPairMergeReason, hasBothScripts, planJoin, type JoinPlan } from "./split-menu-model";
 
@@ -12,7 +12,7 @@ export type AssignMenuAction =
   | "split" | "merge_prev" | "merge_next" | "pair_prev" | "pair_next" | "pair_pick" | "unpair" | "lang" | "piece_lang"
   | "ref_mark" | "ref_clear"
   | "table_layout"
-  | "caption_attach_prev" | "caption_attach_next" | "caption_detach"
+  | "caption_attach_prev" | "caption_attach_next" | "caption_of" | "caption_detach"
   | "to_sentence" | "to_heading";
 
 export interface AssignMenuItem {
@@ -28,6 +28,8 @@ export interface AssignMenuItem {
   langReasons?: Partial<Record<"ko" | "en" | "ref", string>>;
   /** 조각 언어 줄(piece_lang) - 합친 박스의 조각 순번(원문 순, 서버 switch_language piece)과 그 글 */
   piece?: { index: number; text: string };
+  /** 캡션으로 쓰기 줄(caption_of) - 받을 표·그림과 글에서 본 거리 · 쪽 */
+  holder?: { unitId: number; kind: "table" | "figure"; displayId: string; distance: number; side: "above" | "below" };
 }
 
 export interface AssignMenuGroups {
@@ -54,9 +56,8 @@ export interface AssignMenuContext {
   canSplit: boolean;
   /** 우클릭한 것이 든 표 단위 - 표를 직접 눌렀으면 그 단위, 표 밖이면 null */
   table: ViewUnit | null;
-  /** 글 대상의 바로 앞·뒤 묶음(표·그림) - 그 묶음의 캡션으로 붙일 수 있다. 묶음 대상이면 prev·next가 묶음 전체(칸 문장·캡션 포함) 앞·뒤 단위다 */
-  prevBundle?: ViewUnit | null;
-  nextBundle?: ViewUnit | null;
+  /** 글 대상을 캡션으로 받을 표·그림(가까운 순, caption-slot-model listCaptionHolders) - 우클릭 "캡션으로 쓰기" 줄들 */
+  captionHolders?: readonly CaptionHolder[];
   /** 묶음에 이미 있는 캡션의 언어 - 묶음마다 언어당 캡션 하나(서버 caption_exists) */
   listCaptionLangs?: (bundle: ViewUnit) => readonly string[];
   /** 옛 이행(0020)이 그림 블록 위에 둔 캡션 - 떼면 그림 글이 문장이 되어 서버가 막는다(caption_in_figure_block) */
@@ -161,14 +162,20 @@ function buildCaptionAttach(ctx: AssignMenuContext, side: "prev" | "next", text:
   return { ...build(`caption_attach_${side}`, reason), labelKey };
 }
 
-/** 글 대상의 캡션 항목 - 바로 앞(뒤)이 표·그림일 때만 "위(아래) 표의 캡션으로 쓰기" */
+/**
+ * 글 대상의 "캡션으로 쓰기" 줄들(B10 8-a) - 가까운 표·그림마다 한 줄(거리 제한 없음, 가까운 순 몇 개). 그 언어 캡션이 이미 있거나
+ * 캡션을 같이 쓰는 그림이면 꺼 둔다. 서버 attach_caption이 같은 판단을 한다
+ */
 function buildTextCaptionItems(ctx: AssignMenuContext): AssignMenuItem[] {
   if (!isCaptionableText(ctx.target)) return [];
-  return (["prev", "next"] as const).flatMap((side) => {
-    const bundle = side === "prev" ? ctx.prevBundle : ctx.nextBundle;
-    if (!bundle) return [];
-    const noun = bundle.kind === "figure" ? "Figure" : "Table";
-    return [buildCaptionAttach(ctx, side, ctx.target, bundle, `assign.ctx.captionOf${noun}${side === "prev" ? "Prev" : "Next"}`)];
+  return (ctx.captionHolders ?? []).map(({ bundle, distance, side }) => {
+    const reason = ctx.readOnly ? why("readOnly")
+      : ctx.hasDraft(ctx.target) ? why("unsaved")
+      : ctx.hasDraft(bundle) ? why("bundleUnsaved")
+      : bundle.caption_figure_id ? "assign.captionSlot.why.shared"
+      : (ctx.listCaptionLangs?.(bundle) ?? []).includes(ctx.target.lang) ? why("captionExists") : null;
+    const kind = bundle.kind === "figure" ? "figure" : "table";
+    return { ...build("caption_of", reason), holder: { unitId: bundle.id, kind, displayId: bundle.display_id, distance, side } };
   });
 }
 
@@ -303,7 +310,7 @@ export function getPairSetBlocker(units: ViewUnit[]): string | null {
 // 다듬기 줄에 단추로 두는 일 - 언어는 세 칸이, 참조 줄 표시는 아래 카드가, 확정·지우기는 3번이 맡는다
 const SHAPE_LINE_ACTIONS: ReadonlySet<AssignMenuAction> = new Set([
   "split", "merge_prev", "pair_prev", "merge_next", "pair_next", "pair_pick", "unpair", "table_layout",
-  "caption_attach_prev", "caption_attach_next", "caption_detach", "to_sentence",
+  "caption_detach", "to_sentence",
 ]);
 
 // 다듬기 줄에서 꺼 둔 채 보이지도 않는 까닭 - 그 자리에서는 풀 길이 없는 모양 탓이다(옆에 문장이 없다·이미 짝·글이 아니다).
@@ -317,16 +324,14 @@ const SHAPE_HIDDEN_REASONS: ReadonlySet<string> = new Set([
 /**
  * 다듬기 한 줄에 보일 단추 - 그 문장의 고치기 항목 중 단추로 두는 일만, 풀 길이 없는 까닭으로 꺼진 것은 뺀다.
  * 참조 줄은 나누거나 묶을 일이 없어 단추가 없다(언어 세 칸만). 한/영 짝 줄(isPairRow)의 짝 풀기는 줄마다 두지 않고 모양 전환 옆에 한 번 둔다.
- * 표·그림의 캡션 붙이기는 그 아래 캡션 자리의 후보가 맡는다(F12 - [캡션 붙이기] 대신 캡션 자리 칸, 우클릭 메뉴에는 남는다).
+ * 캡션 붙이기는 다듬기 줄 단추가 아니다 - 표·그림은 그 아래 캡션 자리의 후보(F12), 글은 우클릭 "캡션으로 쓰기"가 맡는다(B10).
  */
 export function listShapeLineItems(unit: ViewUnit, items: readonly AssignMenuItem[], isPairRow: boolean): AssignMenuItem[] {
   if (unit.lang === "ref") return [];
-  const isBundle = BUNDLE_KINDS.has(unit.kind);
   return items.filter((item) =>
     SHAPE_LINE_ACTIONS.has(item.action)
     && !(item.reasonKey !== undefined && SHAPE_HIDDEN_REASONS.has(item.reasonKey))
-    && !(isPairRow && item.action === "unpair")
-    && !(isBundle && (item.action === "caption_attach_prev" || item.action === "caption_attach_next")));
+    && !(isPairRow && item.action === "unpair"));
 }
 
 export interface ShapeMode {

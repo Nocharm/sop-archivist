@@ -7,6 +7,7 @@ import {
   buildCaptionSlot,
   findLangCut,
   getCaptionMotion,
+  listCaptionHolders,
   isCaptionShaped,
   isSentenceLike,
   resolveCaptionDetach,
@@ -201,6 +202,10 @@ describe("resolveCaptionDrop", () => {
     expect(resolveCaptionDrop([withCaption.get(30) as ViewUnit], { ...TABLE, id: 50 }, withCaption)).toEqual({ kind: "refused", reasonKey: "assign.captionSlot.why.alreadyCaption" });
   });
 
+  it("tells a dragged whole table apart from a line", () => {
+    expect(resolveCaptionDrop([makeUnit(60, { kind: "table", table_id: 40 })], TABLE, units)).toEqual({ kind: "refused", reasonKey: "assign.captionSlot.why.wholeTable" });
+  });
+
   it("is not a drop when the table itself or its own cell is dragged", () => {
     expect(resolveCaptionDrop([get(21)], TABLE, units)).toEqual({ kind: "none" });
     expect(resolveCaptionDrop([TABLE], TABLE, units)).toEqual({ kind: "none" });
@@ -223,5 +228,19 @@ describe("getCaptionMotion", () => {
     expect(getCaptionMotion({ type: "detach_caption", unit_id: 30 }, 20)).toEqual({ scopes: ["c20"], reverse: true });
     expect(getCaptionMotion({ type: "group_figures", unit_ids: [40, 41] }, 40)).toEqual({ scopes: ["c40", "c41"], reverse: false });
     expect(getCaptionMotion({ type: "split", unit_id: 1, at: 2 }, 20)).toBeNull();
+  });
+});
+
+describe("listCaptionHolders", () => {
+  it("lists tables and figures nearest first from the line's side, at most five", () => {
+    // 줄 13(자리 1) - 표 20(자리 2)이 바로 아래, 그림 41(자리 0)이 바로 위 · 같은 거리면 원문 자리가 가까운 표가 먼저, 먼 표들은 뒤
+    const input = makeInput([
+      makeUnit(41, { kind: "figure", block_id: 1, pos_seq: 0, lang: "neutral" }),
+      ...[50, 51, 52, 53, 54].map((id, index) => makeUnit(id, { kind: "table", table_id: 70 + index, block_id: 90 + index, pos_seq: 90 + index, lang: "neutral" })),
+    ]);
+    const places = new Map(input.places);
+    [90, 91, 92, 93, 94].forEach((blockId, index) => places.set(blockId, 10 + index));
+    const holders = listCaptionHolders(input.units.get(13) as ViewUnit, input.units, places);
+    expect(holders.map((holder) => `${holder.side}${holder.distance}:${holder.bundle.id}`)).toEqual(["below1:20", "above1:41", "below9:50", "below10:51", "below11:52"]);
   });
 });

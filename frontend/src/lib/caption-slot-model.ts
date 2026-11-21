@@ -142,6 +142,8 @@ export function getPlaceOffset(unit: Pick<ViewUnit, "spans" | "block_id">, bundl
 export function getCaptionRefusal(unit: ViewUnit): string | null {
   if (unit.kind === "caption") return "assign.captionSlot.why.alreadyCaption";
   if (unit.kind === "cell_sentence" && unit.group_unit_id !== null) return "assign.captionSlot.why.inTable";
+  // 아직 표인 표의 행을 누르거나 끌면 표 전체가 잡힌다(용지가 표 단위로 올린다) - 줄 하나를 쓰려면 먼저 벗긴다
+  if (unit.kind === "table") return "assign.captionSlot.why.wholeTable";
   if (unit.kind !== "sentence" && unit.kind !== "heading" && unit.kind !== "cell_sentence") return "assign.captionSlot.why.notLine";
   if (unit.noise_kind) return "assign.captionSlot.why.tocLine";
   if (unit.lang === "ref") return "assign.captionSlot.why.refLine";
@@ -246,6 +248,31 @@ function listNearCandidates(bundle: ViewUnit, shape: BundleShape, units: Readonl
       kind: "near", unitId: unit.id, side: isAbove ? "above" : "below", distance: Math.abs(offset), text: unit.text.trim(), lang: unit.lang,
       isShaped: isCaptionShaped(unit.text, shape), number: readCaptionHead(unit.text, shape)?.number ?? null, isBest: false,
     }));
+}
+
+/** 우클릭 "캡션으로 쓰기"에 띄울 표·그림 수 - 가까운 순(내 판단, 명세 B10 8-a) */
+export const CAPTION_HOLDERS_SHOWN = 5;
+
+export interface CaptionHolder {
+  bundle: ViewUnit;
+  /** 블록 자리 거리 - 0은 같은 바깥 표 안 */
+  distance: number;
+  /** 그 글에서 본 묶음 쪽 - 묶음이 글 위에 있으면 above */
+  side: "above" | "below";
+}
+
+/** 글 한 줄을 캡션으로 받을 수 있는 표·그림 - 가까운 순(자리 거리 → 원문 자리 차이), 처음 limit개. 글 쪽에서 본 위·아래다 */
+export function listCaptionHolders(unit: ViewUnit, units: ReadonlyMap<number, ViewUnit>, places: ReadonlyMap<number, number>, limit = CAPTION_HOLDERS_SHOWN): CaptionHolder[] {
+  const found: (CaptionHolder & { gap: number })[] = [];
+  for (const bundle of units.values()) {
+    if (bundle.kind !== "table" && bundle.kind !== "figure") continue;
+    const offset = getPlaceOffset(unit, bundle, places);
+    if (offset === null) continue;
+    const isAbove = offset > 0 || (offset === 0 && comparePosition(bundle, unit) < 0);
+    found.push({ bundle, distance: Math.abs(offset), side: isAbove ? "above" : "below", gap: Math.abs(unit.pos_seq - bundle.pos_seq) });
+  }
+  found.sort((a, b) => a.distance - b.distance || a.gap - b.gap || comparePosition(a.bundle, b.bundle));
+  return found.slice(0, limit).map(({ bundle, distance, side }) => ({ bundle, distance, side }));
 }
 
 /** 표 첫 행 후보 - 서버 set_first_row_caption이 받는 때만 켠다(행 둘 이상, 참조 줄 없음, 언어마다 하나) */

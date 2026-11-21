@@ -24,6 +24,8 @@ interface CaptionSlotProps {
   readDetachBlock: (unitId: number) => string | null;
   onCandidate: (candidate: Exclude<CaptionCandidate, { kind: "write" }>) => void;
   onWrite: () => void;
+  /** 용지에서 줄 고르기(B10 8-a) - 다음에 누르는 Old 줄이 캡션이 된다 */
+  onPickLine: () => void;
   onDetach: (unitId: number) => void;
   onSplit: (unitId: number, at: number) => void;
   onBackFirstRow: () => void;
@@ -37,7 +39,7 @@ const CHIP_NOTES: Record<CaptionChip["origin"], string | null> = {
   shared: "assign.captionSlot.note.shared",
 };
 
-export function CaptionSlot({ slot, busy, blockedKey, writeBlockedKey, readDetachBlock, onCandidate, onWrite, onDetach, onSplit, onBackFirstRow, onUngroup }: CaptionSlotProps) {
+export function CaptionSlot({ slot, busy, blockedKey, writeBlockedKey, readDetachBlock, onCandidate, onWrite, onPickLine, onDetach, onSplit, onBackFirstRow, onUngroup }: CaptionSlotProps) {
   const { t } = useI18n();
   // "더 보기"를 연 캡션 자리(묶음) - 다른 표·그림을 고르면 저절로 접힌다
   const [openFor, setOpenFor] = useState<number | null>(null);
@@ -125,7 +127,9 @@ export function CaptionSlot({ slot, busy, blockedKey, writeBlockedKey, readDetac
       {slot.chips.map(renderChip)}
       {shownNear.map(renderCandidate)}
       {moreToggle}
-      {slot.candidates.filter((candidate) => candidate.kind !== "near").map(renderCandidate)}
+      {slot.candidates.filter((candidate) => candidate.kind !== "near" && candidate.kind !== "write").map(renderCandidate)}
+      {slot.state === "empty" && renderButton(t("assign.captionSlot.cand.pick"), blockedKey, onPickLine, "assign-caption-pick-start")}
+      {slot.candidates.filter((candidate) => candidate.kind === "write").map(renderCandidate)}
       {(slot.hasFirstRow || splitChip || slot.groupHeadId !== null) && (
         <div className="cap-slot-acts">
           {slot.hasFirstRow && renderButton(t("assign.captionSlot.backFirstRow"), blockedKey, onBackFirstRow, "assign-caption-back-first-row")}

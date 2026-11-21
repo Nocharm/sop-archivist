@@ -879,12 +879,14 @@ await runStep("assign: attach and detach a caption from Shape", {}, async ({ pag
   await page.goto(`${BASE}/bundles/${halfBundleId}/assign`);
   await wait(page, "assign-bar");
   await selectRowById(page, table.display_id);
-  // 우클릭도 같은 항목 - 글에서는 "아래 표의 캡션으로 쓰기", 그림에서는 문장 메뉴가 아닌 묶음 메뉴(언어 줄 없음)
+  // 우클릭 - 글에서는 "캡션으로 쓰기" 아래 가까운 표·그림 줄들(B10 - 바로 아래 표가 맨 앞), 그림에서는 문장 메뉴가 아닌 묶음 메뉴(언어 줄 없음)
   const sentencePiece = page.locator(`[data-testid="assign-paper-unit-${sentence.id}"]`).first();
   await sentencePiece.scrollIntoViewIfNeeded();
   await sentencePiece.click({ button: "right" });
-  await wait(page, "assign-ctx-caption_attach_next");
-  check("right-click on the sentence offers Use as caption of the table below", (await page.locator('[data-testid="assign-ctx-caption_attach_next"]').innerText()).includes("Use as caption of the table below"));
+  await wait(page, `assign-ctx-caption-of-${table.unit_id}`);
+  const holders = page.locator('[data-testid^="assign-ctx-caption-of-"]');
+  check("right-click on the sentence lists the table right below first under Use as caption of", (await holders.first().getAttribute("data-testid")) === `assign-ctx-caption-of-${table.unit_id}` && (await holders.first().innerText()).includes("right below"), await holders.first().innerText());
+  check("it lists at most five tables and figures", (await holders.count()) >= 1 && (await holders.count()) <= 5, await holders.count());
   await page.keyboard.press("Escape");
   if (figure) {
     // 그림은 그림 탭의 카드다(시안 2 D3) - 같은 문서의 그림 탭에서 우클릭하고 본문 탭으로 돌아온다
@@ -937,6 +939,24 @@ await runStep("assign: attach and detach a caption from Shape", {}, async ({ pag
   await page.locator('[data-testid="assign-undo"]').click();
   await page.locator(`[data-testid="assign-paper-caption-missing-${table.unit_id}"]`).waitFor({ timeout: T });
   check("Undo again leaves the table without a caption, as it was", (await captionsOf()).length === 0);
+  // 용지에서 줄 고르기(B10 8-a) - 캡션 자리의 단추 → 안내 띠 → 문장을 누르면 캡션, 되돌리기로 처음대로
+  await selectRowById(page, table.display_id);
+  await page.locator('[data-testid="assign-caption-pick-start"]').click();
+  await wait(page, "assign-caption-pick");
+  check("Pick a line shows the banner naming the table", (await page.locator('[data-testid="assign-caption-pick-text"]').innerText()).includes(table.display_id));
+  await page.keyboard.press("Escape");
+  check("Esc closes picking", (await page.locator('[data-testid="assign-caption-pick"]').count()) === 0);
+  await selectRowById(page, table.display_id);
+  await page.locator('[data-testid="assign-caption-pick-start"]').click();
+  await wait(page, "assign-caption-pick");
+  await sentencePiece.scrollIntoViewIfNeeded();
+  await sentencePiece.click();
+  await page.locator('[data-testid="toast-ok"]', { hasText: "Caption attached" }).first().waitFor({ timeout: T });
+  check("clicking the sentence while picking makes it the table's caption and ends picking", (await captionsOf()).length === 1 && (await page.locator('[data-testid="assign-caption-pick"]').count()) === 0);
+  await page.waitForLoadState("networkidle");
+  await page.locator('[data-testid="assign-undo"]').click();
+  await page.locator(`[data-testid="assign-paper-caption-missing-${table.unit_id}"]`).waitFor({ timeout: T });
+  check("Undo after picking leaves the table without a caption", (await captionsOf()).length === 0);
 });
 
 // 캡션 자리(F7) - Old 용지에서 문장 카드를 표 머리 줄(표의 캡션 자리)로 끌어 붙이고, 붙은 칩을 밖으로 끌어 뗀다. 되돌리기 두 번으로 처음대로 둔다

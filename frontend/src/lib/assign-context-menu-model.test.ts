@@ -206,22 +206,33 @@ describe("captions from the Assign menu", () => {
     expect(buildAssignMenu(ctx({ target: figure, prev: cell, next: ref })).edit).toEqual([]);
   });
 
-  it("offers a sentence as caption of the table or figure next to it, with the right name", () => {
-    const below = find(ctx({ prev: null, nextBundle: table }), "caption_attach_next");
-    const above = find(ctx({ prevBundle: figure }), "caption_attach_prev");
-    expect(below).toMatchObject({ enabled: true, labelKey: "assign.ctx.captionOfTableNext" });
-    expect(above.labelKey).toBe("assign.ctx.captionOfFigurePrev");
+  it("lists the nearest tables and figures to use a sentence as their caption, nearest first, each with its distance", () => {
+    // B10 8-a - 우클릭 "캡션으로 쓰기": 가까운 표·그림마다 한 줄(거리 제한 없음), 위·아래 · 칸 수
+    const holders = [{ bundle: table, distance: 1, side: "below" as const }, { bundle: figure, distance: 3, side: "above" as const }];
+    const items = buildAssignMenu(ctx({ captionHolders: holders })).edit.filter((item) => item.action === "caption_of");
+    expect(items.map((item) => item.holder)).toEqual([
+      { unitId: table.id, kind: "table", displayId: table.display_id, distance: 1, side: "below" },
+      { unitId: figure.id, kind: "figure", displayId: figure.display_id, distance: 3, side: "above" },
+    ]);
+    expect(items.every((item) => item.enabled)).toBe(true);
     expect(buildAssignMenu(ctx()).edit.some((item) => item.action.startsWith("caption_"))).toBe(false);
+    // 아직 표인 칸 줄은 캡션이 될 수 없어 줄이 없다
+    const cell = makeUnit(12, { kind: "cell_sentence", group_unit_id: 30 });
+    expect(buildAssignMenu(ctx({ target: cell, captionHolders: holders })).edit.some((item) => item.action === "caption_of")).toBe(false);
   });
 
   it("will not take a second caption in the same language, and waits for unsaved picks", () => {
     const taken = { listCaptionLangs: () => ["ko"] as const };
-    expect(find(ctx({ nextBundle: table, ...taken }), "caption_attach_next").reasonKey).toBe("assign.ctx.why.captionExists");
+    const below = [{ bundle: table, distance: 1, side: "below" as const }];
+    const holder = (extra: Partial<AssignMenuContext>) => buildAssignMenu(ctx({ captionHolders: below, ...extra })).edit.find((item) => item.action === "caption_of");
+    expect(holder(taken)?.reasonKey).toBe("assign.ctx.why.captionExists");
     expect(find(ctx({ target: table, table, prev: sentence, next: null, ...taken }), "caption_attach_prev").reasonKey).toBe("assign.ctx.why.captionExists");
-    expect(find(ctx({ nextBundle: table, listCaptionLangs: () => ["en"] }), "caption_attach_next").enabled).toBe(true);
+    expect(holder({ listCaptionLangs: () => ["en"] })?.enabled).toBe(true);
     expect(find(ctx({ target: table, table, prev: sentence, next: null, hasDraft: (unit) => unit.id === 1 }), "caption_attach_prev").reasonKey).toBe("assign.ctx.why.neighborUnsaved");
-    expect(find(ctx({ nextBundle: table, hasDraft: (unit) => unit.id === 2 }), "caption_attach_next").reasonKey).toBe("assign.ctx.why.unsaved");
-    expect(find(ctx({ nextBundle: table, hasDraft: (unit) => unit.id === 10 }), "caption_attach_next").reasonKey).toBe("assign.ctx.why.bundleUnsaved");
+    expect(holder({ hasDraft: (unit) => unit.id === 2 })?.reasonKey).toBe("assign.ctx.why.unsaved");
+    expect(holder({ hasDraft: (unit) => unit.id === 10 })?.reasonKey).toBe("assign.ctx.why.bundleUnsaved");
+    const shared = [{ bundle: { ...figure, caption_figure_id: 40 }, distance: 1, side: "above" as const }];
+    expect(buildAssignMenu(ctx({ captionHolders: shared })).edit.find((item) => item.action === "caption_of")?.reasonKey).toBe("assign.captionSlot.why.shared");
   });
 
   it("asks before attaching to an assigned bundle instead of refusing (the server asks once)", () => {

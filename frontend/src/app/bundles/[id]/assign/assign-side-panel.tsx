@@ -51,7 +51,7 @@ export function AssignSidePanel({ state }: { state: AssignPageState }) {
     viewOf, oldView, splitByUnit, shapeView, shapeModel, soloUnits, cutLine, writtenDocs, composedDoc, view, changeView, askAiScope,
     setRemarkEdit, firstTextRef, busy, isAnyPending, accOpen, toggleAcc, saveUnits, slots, aiUnfilled, draftPlace, draftSectionKey, draftPosition,
     placeResolved, setRefEntryId, moveRow, hasUnitDraft, isFixedCaption, rowViewUnits, rowSplitUnit, rowSplit, splitBlocked, rowRefUnit,
-    refBlocked, isRefGate, isCaptionGateOn, confirmBlockKey, rowCaptionRefs, refCandidates, shapeLines, shapeFirstId, slotPlaces, slotCellTables,
+    refBlocked, isRefGate, isCaptionGateOn, confirmBlockKey, rowCaptionRefs, refCandidates, shapeLines, shapeFirstId, slotPlaces, slotCellTables, startCaptionPick,
     shapeMode, headingBack, rewrap, bandBack, stepBase, refPendingIds, refDetail, refInfo, runUnitEdit, clearToc, runCaptionRefChange,
     switchShapeMode, applySplitSuggestion, dismissSplitSuggestion, selectNextSplit, selectNextRef, runUnitAction, readReasonNeed, runSave,
     runClear, markNew, placeManage, pickDestination, pickNewSentence, isTemplateDrag, handlePrimary, startEdit,
@@ -646,6 +646,7 @@ export function AssignSidePanel({ state }: { state: AssignPageState }) {
         }}
         onCandidate={runCaptionCandidate}
         onWrite={startEdit}
+        onPickLine={() => startCaptionPick(bundleId)}
         onDetach={(unitId) => void runUnitEdit({ type: "detach_caption", unit_id: unitId }, t("assign.ctx.didDetachCaption"), bundleId)}
         onSplit={splitCaption}
         onBackFirstRow={() => void runUnitEdit({ type: "set_first_row_caption", table_unit_id: bundleId, caption: false }, t("assign.captionSlot.didBackFirstRow"), bundleId)}

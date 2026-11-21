@@ -5,7 +5,7 @@
 // 상태 · 데이터 · 동작은 use-assign-page.tsx의 useAssignPage()에 있고, 이 파일은 그리기만 한다(쪼개기 1단계).
 "use client";
 
-import { ExternalLink, FileCheck2, FileUp, FolderOutput, Inbox, Link2, Sparkles, SquarePlus, Trash2, TriangleAlert, X } from "lucide-react";
+import { ExternalLink, FileCheck2, FileUp, FolderOutput, Inbox, Link2, MousePointerClick, Sparkles, SquarePlus, Trash2, TriangleAlert, X } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useEffectEvent, useMemo, useRef, useState, type ReactNode } from "react";
 import { AssignContextMenu } from "@/components/assign/assign-context-menu";
@@ -81,7 +81,7 @@ export default function AssignPage() {
     templateTitles, linkPairs, view, changeView, zoomPane, setPanes, remarkEdit, setRemarkEdit, focusAfterRef, busy, isAnyPending, isGlobalPending, paperPending, editConfirm,
     setEditConfirm, oldPaneRef, buildUndo, markRecorded, bulk, setBulk, confirmingIdentical, moveCode, isMoveAsk, setMoveAsk, decideNow,
     setConfirmingIdentical, resetScope, setResetScope, slots, newDraft, draftSlotKey, placeResolved, canPlaceClick, pickedSpotKey,
-    setCarvePick, carve, carveText, clearCarve, togglePairViewByButton, pairFrom, setPairFrom, pairSource, selectToc, openNewCtxMenu,
+    setCarvePick, carve, carveText, clearCarve, togglePairViewByButton, pairFrom, setPairFrom, pairSource, captionPickBundle, setCaptionPick, selectToc, openNewCtxMenu,
     openSolo, goToUnit, ctxGroups, confirmBlockKey, refPendingIds, isLinkedToWritten, captionPendingKeys, docDashboard, openCtxMenu, runUnitEdit,
     rewrapTable, describeEditConfirm, pairGrip, clearToc, switchToPair, applySplitSuggestion, splitAtCut, handleOldDoubleClick,
     runCtx, revertHeadings, planOldJoin, joinOld, renderOldActions, runSave, runClear, confirmIdenticalAll, acceptAll, pickDestination,
@@ -386,6 +386,17 @@ export default function AssignPage() {
       </button>
     </div>
   ) : null;
+  // 캡션 줄 고르는 중의 안내 한 줄 - Old 용지 머리 아래(짝 고르기 안내와 같은 자리, 함께 열리지 않는다)
+  const captionBanner = captionPickBundle ? (
+    <div className="flex items-center gap-2 border-b border-line bg-accent-tint px-3 py-1.5 text-xs" role="status" data-testid="assign-caption-pick">
+      <MousePointerClick size={14} strokeWidth={1.5} className="flex-none text-ink-2" aria-hidden />
+      <span className="min-w-0 flex-1 text-ink" data-testid="assign-caption-pick-text">{t("assign.captionPick", { id: captionPickBundle.display_id })}</span>
+      <button type="button" className="btn ghost h-7 flex-none" data-testid="assign-caption-pick-cancel" onClick={() => setCaptionPick(null)}>
+        {t("common.cancel")} <kbd>Esc</kbd>
+      </button>
+    </div>
+  ) : null;
+  const oldBanner = pairBanner ?? captionBanner;
   const placeOf = (unitIds: number[]) => {
     const decided = unitIds.map((id) => unitMap.get(id)).find((unit) => unit?.status === "confirmed");
     if (!decided) {
@@ -500,7 +511,7 @@ export default function AssignPage() {
                 items={pairColumns.ko}
                 docLabel={oldDocOptions.find((option) => option.value === String(oldView?.document.id))?.label}
                 toggle={<PairViewToggle on onToggle={togglePairViewByButton} />}
-                banner={pairBanner !== null && !isNewEdit ? pairBanner : null}
+                banner={oldBanner !== null && !isNewEdit ? oldBanner : null}
                 selectedIds={highlightIds}
                 pickedIds={pickedOld}
                 statusOf={readMarkStatus}
@@ -647,8 +658,8 @@ export default function AssignPage() {
                     : undefined
                 }
                 banner={
-                  pairBanner !== null && !isNewEdit ? (
-                    pairBanner
+                  oldBanner !== null && !isNewEdit ? (
+                    oldBanner
                   ) : carve && (
                     <div className="flex items-center gap-2 border-b border-line bg-accent-tint px-3 py-1.5 text-xs" role="status" data-testid="assign-carve">
                       <span className="flex-none font-semibold text-ink">{t("split.carve")}</span>

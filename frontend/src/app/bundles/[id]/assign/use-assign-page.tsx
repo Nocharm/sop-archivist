@@ -29,7 +29,7 @@ import { listAppliedSuggestions, requestAi, setSuggestionAdoption, type AiKind, 
 import { addToBeDoc, addWiStep, acceptSuggestions, MAX_ACCEPT, bulkDecide, confirmPair, createPair, deletePair, editUnits, clearDecisions, confirmMatchesInBulk, getComposedDoc, getDocumentView, getGroupByTarget, getUnitRef, getGroupByUnit, getToBe, listDocuments, listIdenticalCandidates, listNewCandidates, listSuggestions, listWrittenSentences, redoDecision, removeToBeDoc, removeWiStep, saveGroup, undoDecision, updateCaptionRef, type AcceptKind, type AiSuggestion, type ComposedDoc, type ComposedItem, type DecisionStepResult, type DocumentView, type EditOp, type EditResult, type Group, type GroupSaveInput, type NewCandidate, type ToBe, type UndoMeta, type UnitRefDetail, type UnitRow, type ViewUnit, type WrittenSentence } from "@/lib/api-sop";
 import { listRefCandidates } from "@/lib/caption-ref-model";
 import { isBundleKind, isCaptionGate, listCaptionPendingRowKeys, makeIsLinkedToWritten, type CaptionUnit } from "@/lib/caption-model";
-import { buildBlockPlaces, getCaptionMotion, resolveCaptionDetach, resolveCaptionDrop, type CaptionDetach, type CaptionDrop } from "@/lib/caption-slot-model";
+import { buildBlockPlaces, getCaptionMotion, isCaptionableText, listCaptionHolders, resolveCaptionDetach, resolveCaptionDrop, type CaptionDetach, type CaptionDrop } from "@/lib/caption-slot-model";
 import { applyJoinedSources, listJoinableIds, shouldAdvanceAfterSave } from "@/lib/join-sentence-model";
 import { buildComposedMerge, buildComposedSplit, canEditComposed, findComposedCut, planComposedJoin, stepComposedCut } from "@/lib/composed-ops-model";
 import { applySavedTargets, buildComposedRows, isWrittenRow, listHeadingNotes, listSectionMarks, readSectionHead, removeClearedUnits, type NewPaneRow } from "@/lib/composed-model";
@@ -1008,6 +1008,9 @@ export function useAssignPage() {
   const [refEntryId, setRefEntryId] = useState<number | null>(null);
   // 양 단에서 New 문장을 다듬는 중이면 그 New 문서의 문장이다(shapeView)
   const pairSource = pairFrom !== null && pairFrom.docId === shapeView?.document.id ? (shapeModel?.units.get(pairFrom.unitId) ?? null) : null;
+  // 캡션 자리의 "용지에서 줄 고르기"(B10 8-a) - 다음에 누르는 Old 줄이 그 표·그림의 캡션이 된다(Esc로 거둔다). 문서를 바꾸면 버려진다
+  const [captionPick, setCaptionPick] = useState<{ docId: number; bundleId: number } | null>(null);
+  const captionPickBundle = captionPick !== null && captionPick.docId === shapeView?.document.id ? (shapeModel?.units.get(captionPick.bundleId) ?? null) : null;
 
   /** 목차 블록(unitId null) 또는 그 줄 하나를 고른다 - 배정 줄 고름을 놓고 그 Old 문서를 연다. 결정 칸이 목차 칸(F12 G2 · G3)을 보인다 */
   function selectToc(docId: number, key: number, unitId: number | null, scroll = true) {
@@ -1220,6 +1223,9 @@ export function useAssignPage() {
     return { prev: shapeModel.units.get(order[Math.min(...inside) - 1]) ?? null, next: shapeModel.units.get(order[Math.max(...inside) + 1]) ?? null };
   }
 
+  // 캡션 자리의 블록 자리(문단 · 표 · 그림 하나가 한 자리) - 캡션 후보와 우클릭 "캡션으로 쓰기"를 가까운 순으로 늘어놓는다(서버 caption_slot.py와 같다).
+  // 우클릭 메뉴 · 다듬기 줄(buildUnitMenu)이 그리는 중에 읽어 그보다 먼저 둔다
+  const slotPlaces = useMemo(() => (shapeView ? buildBlockPlaces(shapeView.blocks, shapeView.tables) : null), [shapeView]);
   /** 그 단위에 할 수 있는 일과 못 하는 까닭 - 우클릭 메뉴와 오른쪽 칸의 다듬기 줄이 같은 답을 쓴다 */
   function buildUnitMenu(target: ViewUnit): AssignMenuGroups | null {
     if (!shapeTabs || !shapeModel) return null;
@@ -1228,8 +1234,7 @@ export function useAssignPage() {
       target,
       prev,
       next,
-      prevBundle: findBundleOf(prev),
-      nextBundle: findBundleOf(next),
+      captionHolders: slotPlaces && isCaptionableText(target) ? listCaptionHolders(target, shapeModel.units, slotPlaces) : [],
       listCaptionLangs,
       isFixedCaption,
       captionBundle: target.kind === "caption" ? findBundleOf(target) : null,
@@ -1280,8 +1285,6 @@ export function useAssignPage() {
   const shapeCardUnits = orderPairCard(rowViewUnits);
   const shapeLineUnits = shapeFirstId === null ? shapeCardUnits : [...shapeCardUnits].sort((a, b) => Number(b.id === shapeFirstId) - Number(a.id === shapeFirstId));
   const shapeLines: ShapeLine[] = canEdit && mode === "old" ? shapeLineUnits.flatMap((unit) => { const menu = buildUnitMenu(unit); return menu ? [{ unit, items: menu.edit }] : []; }) : [];
-  // 캡션 자리의 블록 자리(문단 · 표 · 그림 하나가 한 자리) - 후보와 끌어 놓기가 같은 거리를 잰다(서버 caption_slot.py와 같다)
-  const slotPlaces = useMemo(() => (shapeView ? buildBlockPlaces(shapeView.blocks, shapeView.tables) : null), [shapeView]);
   const slotCellTables = useMemo(() => new Map((shapeView?.blocks ?? []).filter((block) => block.kind === "table_cell").map((block) => [block.id, block.table_id])), [shapeView]);
   // 고른 줄이 한/영 짝이거나 합친 한 문장이면 둘 사이를 바꾸는 전환을 다듬기에 둔다
   const shapeMode = shapeLines.length > 0 ? planShapeMode(rowViewUnits, shapeTabs?.order ?? [], hasUnitDraft) : null;
@@ -1697,11 +1700,35 @@ export function useAssignPage() {
     if (cutLine.placeAtCaret(unit, caret)) setCutUnitId(unit.id);
   }
 
-  function runCtx(action: AssignMenuAction, lang?: "ko" | "en", piece?: number) {
+  function runCtx(action: AssignMenuAction, lang?: "ko" | "en", piece?: number, holderId?: number) {
     const target = ctxTarget;
     const caret = ctxMenu?.caret ?? null;
     setCtxMenu(null);
-    if (target) runUnitAction(target, action, lang, caret, piece);
+    if (target && action === "caption_of" && holderId !== undefined) attachCaption(target.id, holderId);
+    else if (target) runUnitAction(target, action, lang, caret, piece);
+  }
+
+  /** 캡션 자리의 "용지에서 줄 고르기"를 연다 - 짝 고르기와 함께 열리지 않는다 */
+  function startCaptionPick(bundleId: number) {
+    if (!shapeView) return;
+    setPairFrom(null);
+    setCaptionPick({ docId: shapeView.document.id, bundleId });
+  }
+
+  /** 줄 고르는 중에 Old 줄을 눌렀다 - 캡션이 될 수 있으면 붙이고 고르기를 닫는다, 아니면 까닭을 알리고 계속 기다린다(끌어 놓기와 같은 판단) */
+  function pickCaptionUnit(unitId: number) {
+    const unit = shapeModel?.units.get(unitId);
+    if (!unit || !captionPickBundle || !shapeModel) return;
+    const drop = resolveCaptionDrop([unit], captionPickBundle, shapeModel.units);
+    if (drop.kind === "refused") showToast(t(drop.reasonKey), "error");
+    if (drop.kind !== "attach") return;
+    setCaptionPick(null);
+    attachCaption(drop.unitId, drop.bundleId);
+  }
+
+  /** 글 한 줄을 표·그림의 캡션으로 붙인다(우클릭 "캡션으로 쓰기" · 캡션 자리의 줄 고르기) - 붙인 뒤 묶음 줄을 고른다 */
+  function attachCaption(unitId: number, bundleId: number) {
+    void runUnitEdit({ type: "attach_caption", unit_id: unitId, bundle_unit_id: bundleId }, t("assign.ctx.didAttachCaption"), bundleId);
   }
 
   /**
@@ -1761,6 +1788,7 @@ export function useAssignPage() {
     } else if (action === "pair_pick") {
       if (!shapeView) return;
       clearCarve();
+      setCaptionPick(null);
       setPairFrom({ docId: shapeView.document.id, unitId: target.id, picked: [] });
     } else if (action === "unpair") {
       const pairId = target.pair_id;
@@ -1768,13 +1796,10 @@ export function useAssignPage() {
       const members = [...(shapeModel?.units.values() ?? [])].filter((unit) => unit.pair_id === pairId).map((unit) => unit.id);
       if (pairId !== null) void runPairChange((docId, revision, undo) => deletePair(bundleId, docId, pairId, revision, undo), t("split.pairRemoved"), target.id, "unpair", members.length > 0 ? members : [target.id], { at: "box", unitId: target.id });
     } else if (action === "table_layout" && table && table.table_id !== null) unwrapTable(table.table_id);
-    else if (action === "caption_attach_prev" || action === "caption_attach_next") {
-      // 같은 일, 대상에 따라 짝이 바뀐다 - 묶음 대상이면 이웃 글을, 글 대상이면 이웃 묶음에 붙인다. 붙인 뒤 묶음 줄을 고른다
+    else if ((action === "caption_attach_prev" || action === "caption_attach_next") && isBundleKind(target.kind)) {
+      // 묶음 대상 - 바로 앞(뒤) 글을 캡션으로 붙인다(글 대상은 "캡션으로 쓰기" 줄들이 맡는다, runCtx). 붙인 뒤 묶음 줄을 고른다
       const neighbor = findNeighbors(target)[action === "caption_attach_prev" ? "prev" : "next"];
-      const isBundle = isBundleKind(target.kind);
-      const text = isBundle ? neighbor : target;
-      const holder = isBundle ? target : findBundleOf(neighbor);
-      if (text && holder) void runUnitEdit({ type: "attach_caption", unit_id: text.id, bundle_unit_id: holder.id }, t("assign.ctx.didAttachCaption"), holder.id);
+      if (neighbor) attachCaption(neighbor.id, target.id);
     } else if (action === "caption_detach" && target.group_unit_id !== null) void runUnitEdit({ type: "detach_caption", unit_id: target.id }, t("assign.ctx.didDetachCaption"), target.group_unit_id);
     else if (action === "lang" && lang && target.lang === "ref") void runUnitEdit({ type: "clear_ref", unit_id: target.id }, t("common.saved"), target.id, false, lang);
     else if (action === "lang" && lang) changeLanguage(target, lang);
@@ -3274,6 +3299,11 @@ export function useAssignPage() {
       void linkAsSource(unitId);
       return;
     }
+    // 캡션 줄 고르는 중 - 누른 줄이 그 표·그림의 캡션이 된다(고름은 그대로)
+    if (captionPickBundle) {
+      pickCaptionUnit(unitId);
+      return;
+    }
     // 짝 고르는 중 - New 문장의 짝을 고르는 중이면 Old 용지의 누르기는 평소처럼 그 줄을 고른다(짝은 같은 문서 안에서만 맺는다)
     if (pairSource && pairFrom && !isNewEdit) {
       pickPairUnit(unitId, keys.shiftKey);
@@ -3345,10 +3375,11 @@ export function useAssignPage() {
   }
 
   const handleKey = useEffectEvent((event: KeyboardEvent) => {
-    // 짝 고르는 중의 Esc는 그것부터 거둔다
-    if (event.key === "Escape" && pairSource && !isTypingTarget(event.target) && !document.querySelector('[role="dialog"],[role="menu"],[role="listbox"]')) {
+    // 짝 고르기 · 캡션 줄 고르기 중의 Esc는 그것부터 거둔다
+    if (event.key === "Escape" && (pairSource || captionPickBundle) && !isTypingTarget(event.target) && !document.querySelector('[role="dialog"],[role="menu"],[role="listbox"]')) {
       event.preventDefault();
       setPairFrom(null);
+      setCaptionPick(null);
       return;
     }
     // 짝 고르는 중에 모은 문장이 있으면 ↵가 맺는다(확정의 ↵보다 먼저)
@@ -3558,7 +3589,7 @@ export function useAssignPage() {
     oldPaneRef, undoState, buildUndo, markRecorded, bulk, setBulk, confirmingIdentical, setConfirmingIdentical,
     resetScope, setResetScope, accOpen, toggleAcc, saveUnits, slots, aiUnfilled, draftPlace, draftSectionKey, draftPosition, newDraft,
     draftSlotKey, placeResolved, canPlaceClick, pickedSpotKey, setCarvePick, carve, carveText, clearCarve, togglePairViewByButton,
-    pairFrom, setPairFrom, setRefEntryId, pairSource, selectToc, selectRow, openNewCtxMenu, openSolo, goToUnit, moveRow, hasUnitDraft,
+    pairFrom, setPairFrom, setRefEntryId, pairSource, captionPickBundle, setCaptionPick, startCaptionPick, selectToc, selectRow, openNewCtxMenu, openSolo, goToUnit, moveRow, hasUnitDraft,
     isFixedCaption, ctxGroups, rowViewUnits, rowSplitUnit, rowSplit, splitBlocked, rowRefUnit, refBlocked, isRefGate, isCaptionGateOn,
     confirmBlockKey, rowCaptionRefs, refCandidates, shapeLines, shapeFirstId, slotPlaces, slotCellTables, shapeMode, headingBack, rewrap, bandBack,
     stepBase, refPendingIds, isLinkedToWritten, captionPendingKeys, docDashboard, refDetail, refInfo, openCtxMenu, runUnitEdit,

@@ -2,6 +2,12 @@
 
 프로젝트 진행 현황 로그. 커밋 직전 갱신한다 (`rules/common/git.md` 규칙). v1.4.0(2026-11-20 정식 업데이트)까지의 항목은 [`docs/history/PROGRESS-archive.md`](docs/history/PROGRESS-archive.md)에 있다 — 정식 업데이트마다 그 릴리스까지의 항목을 거기로 옮긴다(`rules/common/git.md` "정식 업데이트 때 문서 정리").
 
+## 2026-11-21 — B10-3 캡션 지정 길 넷 (`feat/caption-pick-paths`)
+
+- 우클릭: 글 대상의 위/아래 캡션 항목(`caption_attach_prev/next` + `prevBundle/nextBundle`)을 `caption_of` 줄들로 바꿈 — `listCaptionHolders`가 가까운 표·그림 5개(자리 거리 → 원문 자리 차이)를 고르고 줄마다 `holder`(번호 · 거리 · 쪽)를 싣는다. 묶음 대상의 "위/아래 문장을 캡션으로"는 그대로. 다듬기 줄의 글 대상 캡션 단추는 없어졌다(캡션은 우클릭 · 캡션 자리가 맡음).
+- 줄 고르기는 짝 고르기(`pairFrom`)와 같은 꼴: 상태 `captionPick` · 안내 띠 · Esc · `handleOldClick` 앞단 가로채기, 판단은 끌어 놓기와 같은 `resolveCaptionDrop`. effect · 타이머는 더하지 않음. `slotPlaces`를 그리는 중에 읽게 돼 `buildUnitMenu` 앞으로 옮김(TDZ).
+- 검증: frontend 1,904 · lint · tsc, assign 스모크(새 단계: 우클릭 줄 · 줄 고르기 · Esc · 되돌리기 통과). 전체 스모크의 "언어 바꾸면 모양 전환" 단계가 두 번째 Ctrl+Z에서 응답을 못 기다리는 일이 두 번 있었으나 그 단계만 새 DB로 돌리면 19/19 — 메뉴를 다 지난 뒤의 되돌리기라 이 변경과 무관한, 전에도 기록된 흔들림으로 봄.
+
 ## 2026-11-21 — B10-2 캡션 규칙 넓히기 (`feat/caption-any-line`)
 
 - 캡션 가능 = 문장 · 제목 · 묶음이 풀린 칸 문장(서버 `CAPTIONABLE_KINDS` + `group_unit_id` 검사, 프런트 `getCaptionRefusal` 하나 — 메뉴 모델의 사본은 걷음). 거리 제한을 걷어 서버 `_measure_caption_distance` · `get_place_distance` · `CAPTION_REACH`(rule-cases 상수 포함)를 지웠고, 블록 자리는 후보 순서 잣대로만 남겼다. 그림 묶기 후보는 이웃 그림의 일이라 프런트 상수 `FIGURE_GROUP_REACH = 2`로 남김.
