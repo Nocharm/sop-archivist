@@ -271,7 +271,7 @@ describe("getBundleHeader", () => {
   const figureRow = rows.find((row) => row.type === "figure")!;
 
   it("previews the first row of a table and the block text of a figure", () => {
-    expect(getBundleHeader(tableRow, model)).toEqual({ kind: "table", unitId: 20, displayId: "D-20", preview: "열1 · 열2" });
+    expect(getBundleHeader(tableRow, model)).toEqual({ kind: "table", unitId: 20, displayId: "D-20", preview: "" }); // 1행 글을 캡션처럼 보이지 않는다(B10)
     expect(getBundleHeader(figureRow, model)).toMatchObject({ kind: "figure", unitId: 21, displayId: "D-21", preview: "그림 1 로터" });
   });
 });

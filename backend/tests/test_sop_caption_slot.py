@@ -7,7 +7,7 @@ import httpx2
 import pytest
 from fastapi.testclient import TestClient
 
-from app.sop.caption_slot import PlaceBlock, build_block_places, get_place_distance
+from app.sop.caption_slot import PlaceBlock, build_block_places
 from app.sop.constants import COVER_KINDS
 from app.sop.coverage import find_coverage_problems
 from tests.docx_factory import TINY_PNG, build_docx, make_drawing_run, p, tbl
@@ -130,8 +130,6 @@ def test_block_places_count_tables_once_and_skip_empty_paragraphs() -> None:
     places = build_block_places(blocks, {10: None, 11: 10, 12: None})
 
     assert places == {1: 0, 3: 1, 4: 2, 5: 2, 6: 2, 7: 3, 8: 4}
-    assert get_place_distance(places, [1], [4, 5, 6]) == 2
-    assert get_place_distance(places, [2], [4]) is None
 
 
 # ── ① 앞 문단 캡션 · ⑤ 문장 같은 캡션 ─────────────────────────────────────────
@@ -214,6 +212,7 @@ def test_a_lifted_first_row_caption_detaches_into_its_cell_and_unwraps_as_a_cell
 
 
 CELL_CAPTION = "표 1. 조제 탱크별 대상 장치"
+LAST_LINE = "이 절차는 탱크 A–C에 적용한다."
 
 
 def _setup_cell_caption(client: TestClient) -> tuple[Fixture, dict, dict]:
@@ -236,6 +235,20 @@ def test_a_caption_line_inside_a_cell_becomes_the_inner_tables_caption(client: T
     assert (caption["kind"], caption["group_unit_id"], caption["table_id"]) == ("caption", inner["id"], None)
     assert find_unit(fx.view, "필요한 가스켓을 설치한다.")["kind"] == "cell_sentence"
     _assert_covered(fx.view)
+
+
+def test_output_a_places_a_cell_caption_at_its_tables_caption_slot(client: TestClient) -> None:
+    # 칸 안 캡션의 결과물 A 위치는 바깥 칸 좌표가 아니라 안쪽 표의 캡션 자리(B10 — 명세가 권한 쪽)
+    fx, _, inner = _setup_cell_caption(client)
+    caption = find_unit(fx.view, CELL_CAPTION)
+
+    places = {
+        lang: {row["unit_id"]: row["location"]["place"] for row in _ok(client.get(f"/api/bundles/{fx.bundle_id}/outputs/a", params={"lang": lang}, headers=AUTHOR))}
+        for lang in ("ko", "en")
+    }
+
+    assert (places["ko"][caption["id"]], places["en"][caption["id"]]) == ("표 2 캡션", "Table 2 caption")
+    assert places["ko"][find_unit(fx.view, LAST_LINE)["id"]] == "표 1 · 1행 2열"  # 바깥 칸의 다른 줄은 그대로
 
 
 def test_a_cell_caption_goes_back_to_the_outer_cell_when_detached_or_its_table_unwraps(client: TestClient) -> None:
@@ -313,11 +326,34 @@ def test_a_caption_two_blocks_above_attaches_and_the_paragraph_between_stays(cli
     assert find_unit(_view(client, fx), FAR_CAPTION)["id"] == far["id"]
 
 
-def test_a_caption_three_blocks_away_is_too_far(client: TestClient) -> None:
+def test_a_far_caption_attaches_without_a_reach_limit(client: TestClient) -> None:
+    # B10 8-b — 거리 제한이 없다(세 칸 떨어진 캡션 꼴 문단도 붙고, 사이 글은 그대로)
     fx = _setup(client, p(HEADING) + p(FAR_CAPTION) + p(NOTE) + p(AFTER) + tbl([[CELL]]))
     (table,) = _units(fx.view, "table")
 
-    assert _code(_attach(client, fx, find_unit(fx.view, FAR_CAPTION), table)) == (422, "caption_not_adjacent")
+    _ok(_attach(client, fx, find_unit(fx.view, FAR_CAPTION), table))
+
+    assert (find_unit(_view(client, fx), FAR_CAPTION)["kind"], find_unit(_view(client, fx), NOTE)["kind"]) == ("caption", "sentence")
+
+
+def test_an_unwrapped_cell_line_becomes_a_caption_and_goes_back_when_detached(client: TestClient) -> None:
+    # 벗긴 바깥 표의 칸 줄(묶음 없는 칸 문장)도 캡션이 된다 — 떼면 그 칸 줄(묶음 없음)로, 아직 표인 칸 줄은 거절
+    fx, outer, inner = _setup_cell_caption(client)
+    line = find_unit(fx.view, LAST_LINE)
+    _ok(_edit(client, fx, {"type": "detach_caption", "unit_id": find_unit(fx.view, CELL_CAPTION)["id"]}))
+    assert _code(_attach(client, fx, line, inner)) == (422, "invalid_unit_kind")  # 바깥 표가 아직 표다
+    _ok(_edit(client, fx, {"type": "set_layout_table", "table_id": outer["table_id"], "is_layout": True}))
+    line = find_unit(_view(client, fx), LAST_LINE)
+    assert (line["kind"], line["group_unit_id"]) == ("cell_sentence", None)
+
+    _ok(_attach(client, fx, line, inner))
+    caption = find_unit(_view(client, fx), LAST_LINE)
+    assert (caption["kind"], caption["group_unit_id"]) == ("caption", inner["id"])
+
+    _ok(_edit(client, fx, {"type": "detach_caption", "unit_id": caption["id"]}))
+    freed = find_unit(_view(client, fx), LAST_LINE)
+    assert (freed["kind"], freed["group_unit_id"], freed["table_id"]) == ("cell_sentence", None, outer["table_id"])
+    _assert_covered(_view(client, fx))
 
 
 # ── ⑥ 그림 둘에 캡션 하나 ─────────────────────────────────────────────────────

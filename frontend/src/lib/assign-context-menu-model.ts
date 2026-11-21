@@ -3,6 +3,7 @@
 // 표·그림(묶음)은 묶음 도구(표 벗기기·캡션 붙이기)만, 캡션은 문장 도구 일부와 캡션 떼기를 받는다(명세 2026-11-16 §4.2).
 // 고치기는 Split의 편집을 그대로 부르므로 판단이 없는 단위만 받는다 - 배정된 문장은 먼저 배정을 취소한다(서버도 판단이 걸린 단위는 확인을 요구한다).
 import type { CoverStatus, ViewUnit } from "./api-sop";
+import { isCaptionableText } from "./caption-slot-model";
 import { isBandHeading, MERGE_BLOCKER_KEYS } from "./paper-model";
 import { getPairMergeReason, hasBothScripts, planJoin, type JoinPlan } from "./split-menu-model";
 
@@ -80,8 +81,6 @@ export function planLanguageChange(target: ViewUnit, lang: "ko" | "en", members:
 
 const EDITABLE_KINDS = new Set(["sentence", "heading", "cell_sentence", "caption"]);
 const BUNDLE_KINDS = new Set(["table", "figure"]);
-// 캡션으로 붙일 수 있는 글 - 묶이지 않은 문장·제목(서버 CAPTIONABLE_KINDS), 참조 줄은 아니다
-const CAPTIONABLE_KINDS = new Set(["sentence", "heading"]);
 
 function why(reason: string): string {
   return `assign.ctx.why.${reason}`;
@@ -109,11 +108,6 @@ function getEditBlocker(ctx: AssignMenuContext, unit: ViewUnit): string | null {
   if (!EDITABLE_KINDS.has(unit.kind)) return why("notText");
   if (ctx.isDecided(unit)) return why("assigned");
   return ctx.hasDraft(unit) ? why("unsaved") : null;
-}
-
-/** 묶이지 않은 글(참조 줄 아님) - 묶음의 캡션이 될 수 있다 */
-function isCaptionable(unit: ViewUnit): boolean {
-  return CAPTIONABLE_KINDS.has(unit.kind) && unit.group_unit_id === null && unit.lang !== "ref";
 }
 
 /** 한글 문장과 영어 문장인가 - 이런 이웃은 합치지 않고 한/영 짝으로 맺는다 */
@@ -169,7 +163,7 @@ function buildCaptionAttach(ctx: AssignMenuContext, side: "prev" | "next", text:
 
 /** 글 대상의 캡션 항목 - 바로 앞(뒤)이 표·그림일 때만 "위(아래) 표의 캡션으로 쓰기" */
 function buildTextCaptionItems(ctx: AssignMenuContext): AssignMenuItem[] {
-  if (!isCaptionable(ctx.target)) return [];
+  if (!isCaptionableText(ctx.target)) return [];
   return (["prev", "next"] as const).flatMap((side) => {
     const bundle = side === "prev" ? ctx.prevBundle : ctx.nextBundle;
     if (!bundle) return [];
@@ -195,7 +189,7 @@ function buildHeadingItems(ctx: AssignMenuContext, retireReason: string | null):
 function buildBundleCaptionItems(ctx: AssignMenuContext): AssignMenuItem[] {
   return (["prev", "next"] as const).flatMap((side) => {
     const text = side === "prev" ? ctx.prev : ctx.next;
-    if (text === null || !isCaptionable(text)) return [];
+    if (text === null || !isCaptionableText(text)) return [];
     return [buildCaptionAttach(ctx, side, text, ctx.target, `assign.ctx.captionAttach${side === "prev" ? "Prev" : "Next"}`)];
   });
 }

@@ -1,13 +1,15 @@
 // 캡션 자리(표 풀기·표준화 명세 F7) - 표·그림마다 캡션이 들어갈 자리(템플릿 규칙: 표는 위, 그림은 아래, §11-5)와 비어 있을 때의 후보,
 // 붙은 캡션이 문장 같은지(칩 테두리 주황), 한/영 한 줄 캡션을 나눌 자리, 끌어 놓은 문장을 붙이거나 칩을 끌어내 뗄 수 있는지를 정한다.
 // 오른쪽 칸 캡션 자리(components/assign/caption-slot.tsx)와 용지 끌어 놓기(assign/page.tsx)가 이 답대로 그린다.
-// 블록 자리(buildBlockPlaces · getPlaceDistance)는 backend app/sop/caption_slot.py의 사본이다 - 서버 attach_caption이 같은 거리로
-// 거절한다(caption_not_adjacent). 규칙을 바꾸면 함께 고치고 두 쪽 시험을 같은 사례로 둔다.
+// 블록 자리(buildBlockPlaces)는 backend app/sop/caption_slot.py의 사본이다(rule-cases.json block_places) - 후보를 가까운 순으로
+// 늘어놓는 잣대이고, 붙이기에 거리 제한은 없다(B10 8-b). 캡션이 될 수 있는 글(getCaptionRefusal)은 서버 editing.CAPTIONABLE_KINDS와 같다.
 import type { EditOp, ViewBlock, ViewTable, ViewUnit } from "./api-sop";
 import { hasBothScripts } from "./split-menu-model";
 
-/** 캡션으로 붙일 수 있는 거리(블록 자리 수) - 1은 바로 앞·뒤, 2는 사이에 문단·표·그림 하나 */
-export const CAPTION_REACH = 2;
+/** 캡션 있는 이웃 그림과 묶기 후보를 찾는 거리(블록 자리 수) - 묶기는 이웃 그림끼리의 일이라 가까운 것만 띄운다 */
+const FIGURE_GROUP_REACH = 2;
+/** 캡션 자리에 처음 펼쳐 둘 글 후보 수 - 나머지는 "더 보기" 뒤에(가까운 순) */
+export const NEAR_SHOWN = 4;
 /** 캡션 번호 뒤 글이 이보다 길고 마침표로 끝나면 문장 같은 캡션이다(동사 판정은 하지 않는다, §11-5) */
 const SENTENCE_LIKE_CHARS = 40;
 
@@ -133,9 +135,22 @@ export function getPlaceOffset(unit: Pick<ViewUnit, "spans" | "block_id">, bundl
   return best;
 }
 
-/** 캡션으로 붙일 수 있는 글 - 묶이지 않은 문장·제목, 참조 줄·목차 줄이 아니다(서버 CAPTIONABLE_KINDS) */
+/**
+ * 이 줄이 캡션이 될 수 없는 까닭(문구 키) - 될 수 있으면 null. 문장 · 제목 · 묶음이 풀린 칸 문장(벗긴 표의 줄)이고, 참조 줄 · 목차 줄이
+ * 아니다(서버 editing.CAPTIONABLE_KINDS · group_unit_id 검사와 같다). 까닭은 종류마다 캡션 문구로 따로 둔다
+ */
+export function getCaptionRefusal(unit: ViewUnit): string | null {
+  if (unit.kind === "caption") return "assign.captionSlot.why.alreadyCaption";
+  if (unit.kind === "cell_sentence" && unit.group_unit_id !== null) return "assign.captionSlot.why.inTable";
+  if (unit.kind !== "sentence" && unit.kind !== "heading" && unit.kind !== "cell_sentence") return "assign.captionSlot.why.notLine";
+  if (unit.noise_kind) return "assign.captionSlot.why.tocLine";
+  if (unit.lang === "ref") return "assign.captionSlot.why.refLine";
+  return null;
+}
+
+/** 캡션으로 붙일 수 있는 글(getCaptionRefusal이 없다) */
 export function isCaptionableText(unit: ViewUnit): boolean {
-  return (unit.kind === "sentence" || unit.kind === "heading") && unit.group_unit_id === null && unit.lang !== "ref" && !unit.noise_kind;
+  return getCaptionRefusal(unit) === null;
 }
 
 function comparePosition(a: ViewUnit, b: ViewUnit): number {
@@ -159,7 +174,7 @@ export function isSharedCaptioned(unit: ViewUnit, units: ReadonlyMap<number, Vie
 }
 
 export type CaptionCandidate =
-  /** 위아래 2칸 안의 글 - 캡션 꼴이면 모두, 아니면 바로 위·아래의 가장 가까운 글 하나 */
+  /** 글 후보(거리 제한 없음, 가까운 순) - 캡션 꼴이면 모두, 아니면 위·아래 가장 가까운 글 하나씩. distance 0은 같은 표(바깥 표) 안 */
   | { kind: "near"; unitId: number; side: "above" | "below"; distance: number; text: string; lang: string; isShaped: boolean; number: string | null; isBest: boolean }
   /** 표 첫 행 - 첫 행 칸 문장들이 캡션이 된다(set_first_row_caption). reasonKey면 서버가 받지 않는 첫 행이라 꺼 둔다 */
   | { kind: "first_row"; text: string; isShaped: boolean; number: string | null; isBest: boolean; reasonKey: string | null }
@@ -209,21 +224,26 @@ export interface CaptionSlotInput {
 
 const WHY_CAPTION_EXISTS = "assign.ctx.why.captionExists";
 
-/** 위아래 2칸 안의 글 후보 - 캡션 꼴은 모두, 아니면 그쪽에서 가장 가까운 바로 이웃 글 하나. 빈 자리에만 띄우니 언어가 겹칠 일이 없다 */
+/**
+ * 글 후보(B10 8-b) - 거리 제한 없이 캡션 꼴 글은 모두, 아니면 위 · 아래로 가장 가까운 글 하나씩. 가까운 순(블록 자리 거리 → 원문 자리 차이)이고
+ * 같은 바깥 표 안의 줄(벗긴 표 줄 · 칸 안 줄, 자리 거리 0)이 가장 가깝다. 위 · 아래는 원문 차례로 정한다. 빈 자리에만 띄우니 언어가 겹칠 일이 없다
+ */
 function listNearCandidates(bundle: ViewUnit, shape: BundleShape, units: ReadonlyMap<number, ViewUnit>, places: ReadonlyMap<number, number>): Extract<CaptionCandidate, { kind: "near" }>[] {
-  const near: { unit: ViewUnit; offset: number }[] = [];
+  const near: { unit: ViewUnit; offset: number; isAbove: boolean; gap: number }[] = [];
   for (const unit of units.values()) {
     if (!isCaptionableText(unit)) continue;
     const offset = getPlaceOffset(unit, bundle, places);
-    if (offset !== null && offset !== 0 && Math.abs(offset) <= CAPTION_REACH) near.push({ unit, offset });
+    if (offset === null) continue;
+    const isAbove = offset < 0 || (offset === 0 && comparePosition(unit, bundle) < 0);
+    near.push({ unit, offset, isAbove, gap: Math.abs(unit.pos_seq - bundle.pos_seq) });
   }
-  near.sort((a, b) => comparePosition(a.unit, b.unit));
-  const above = near.filter((entry) => entry.offset === -1).at(-1)?.unit;
-  const below = near.find((entry) => entry.offset === 1)?.unit;
+  near.sort((a, b) => Math.abs(a.offset) - Math.abs(b.offset) || a.gap - b.gap || comparePosition(a.unit, b.unit));
+  const above = near.find((entry) => entry.isAbove)?.unit;
+  const below = near.find((entry) => !entry.isAbove)?.unit;
   return near
     .filter(({ unit }) => isCaptionShaped(unit.text, shape) || unit === above || unit === below)
-    .map(({ unit, offset }) => ({
-      kind: "near", unitId: unit.id, side: offset < 0 ? "above" : "below", distance: Math.abs(offset), text: unit.text.trim(), lang: unit.lang,
+    .map(({ unit, offset, isAbove }) => ({
+      kind: "near", unitId: unit.id, side: isAbove ? "above" : "below", distance: Math.abs(offset), text: unit.text.trim(), lang: unit.lang,
       isShaped: isCaptionShaped(unit.text, shape), number: readCaptionHead(unit.text, shape)?.number ?? null, isBest: false,
     }));
 }
@@ -237,14 +257,14 @@ function buildFirstRowCandidate(bundle: ViewUnit, units: ReadonlyMap<number, Vie
   const rowCells = cells.filter((cell) => (cell.row_index ?? 0) === firstRow).sort(comparePosition);
   const langs = rowCells.map((cell) => cell.lang);
   const reasonKey = rowCells.length === cells.length ? "assign.captionSlot.why.oneRow"
-    : langs.includes("ref") ? "assign.ctx.why.notText"
+    : langs.includes("ref") ? "assign.captionSlot.why.refLine"
     : new Set(langs).size < langs.length ? "assign.captionSlot.why.firstRowLangs"
     : null;
   const head = rowCells.map((cell) => readCaptionHead(cell.text, "table")).find((found) => found !== null) ?? null;
   return { kind: "first_row", text: rowCells.map((cell) => cell.text.trim()).join(" | "), isShaped: head !== null, number: head?.number ?? null, isBest: false, reasonKey };
 }
 
-/** 캡션 있는 이웃 그림 후보 - 2칸 안의 그림 가운데 그 묶음(첫 그림)에 캡션이 있는 것, 묶음마다 하나 */
+/** 캡션 있는 이웃 그림 후보 - FIGURE_GROUP_REACH 안의 그림 가운데 그 묶음(첫 그림)에 캡션이 있는 것, 묶음마다 하나 */
 function listFigureCandidates(bundle: ViewUnit, units: ReadonlyMap<number, ViewUnit>, places: ReadonlyMap<number, number>): Extract<CaptionCandidate, { kind: "figure" }>[] {
   if (bundle.kind !== "figure") return [];
   const heads = new Set<number>();
@@ -252,7 +272,7 @@ function listFigureCandidates(bundle: ViewUnit, units: ReadonlyMap<number, ViewU
   for (const figure of [...units.values()].filter((unit) => unit.kind === "figure" && unit.id !== bundle.id).sort(comparePosition)) {
     const offset = getPlaceOffset(figure, bundle, places);
     const head = units.get(getFigureHead(figure));
-    if (offset === null || offset === 0 || Math.abs(offset) > CAPTION_REACH || !head || heads.has(head.id)) continue;
+    if (offset === null || offset === 0 || Math.abs(offset) > FIGURE_GROUP_REACH || !head || heads.has(head.id)) continue;
     const captions = listSlotCaptions(head, units);
     if (captions.length === 0) continue;
     heads.add(head.id);
@@ -313,17 +333,16 @@ export function buildCaptionSlot({ bundle, units, places, cellTables, written }:
 export type CaptionDrop = { kind: "attach"; unitId: number; bundleId: number } | { kind: "refused"; reasonKey: string } | { kind: "none" };
 
 /**
- * 끈 줄을 캡션 자리에 놓으면 - 묶이지 않은 글 한 줄이 2칸 안이고 그 언어 캡션이 없으면 붙인다(서버 attach_caption과 같은 판단).
+ * 끈 줄을 캡션 자리에 놓으면 - 캡션이 될 수 있는 글 한 줄이고 그 언어 캡션이 없으면 붙인다(서버 attach_caption과 같은 판단, 거리 제한 없음).
  * 그 묶음 자신이나 묶인 단위를 끌어 왔으면 놓을 자리가 아니다
  */
-export function resolveCaptionDrop(dragUnits: readonly ViewUnit[], bundle: ViewUnit, units: ReadonlyMap<number, ViewUnit>, places: ReadonlyMap<number, number>): CaptionDrop {
+export function resolveCaptionDrop(dragUnits: readonly ViewUnit[], bundle: ViewUnit, units: ReadonlyMap<number, ViewUnit>): CaptionDrop {
   if (dragUnits.some((unit) => unit.id === bundle.id || unit.group_unit_id === bundle.id)) return { kind: "none" };
   if (dragUnits.length !== 1) return { kind: "refused", reasonKey: "assign.captionSlot.why.oneLine" };
   const [unit] = dragUnits;
-  if (!isCaptionableText(unit)) return { kind: "refused", reasonKey: "assign.ctx.why.notText" };
+  const refusal = getCaptionRefusal(unit);
+  if (refusal !== null) return { kind: "refused", reasonKey: refusal };
   if (bundle.caption_figure_id) return { kind: "refused", reasonKey: "assign.captionSlot.why.shared" };
-  const offset = getPlaceOffset(unit, bundle, places);
-  if (offset === null || Math.abs(offset) > CAPTION_REACH) return { kind: "refused", reasonKey: "assign.captionSlot.why.tooFar" };
   if (listSlotCaptions(bundle, units).some((caption) => caption.lang === unit.lang)) return { kind: "refused", reasonKey: WHY_CAPTION_EXISTS };
   return { kind: "attach", unitId: unit.id, bundleId: bundle.id };
 }

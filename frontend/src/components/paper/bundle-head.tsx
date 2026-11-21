@@ -1,5 +1,5 @@
 // 표·그림 묶음 위 머리 줄 - 종류 표시 TABLE/FIGURE(REF 표시와 같은 자리·꼴로 조각 위 테두리에, 늘 보임) + 캡션(두 줄 말줄임, 고르면 펼침)
-// 또는 캡션이 없으면 경고색 "Caption needed"와 미리보기 한 줄 + 표시 ID. 표의 머리 줄은 그 표의 캡션 자리다(F7 - 표는 위, 그림은 그림 아래 따로).
+// 또는 캡션이 없으면 경고색 "Caption needed"(그림은 옛 추출의 그림 글 미리보기 한 줄 - 표의 1행 글은 캡션처럼 보이지 않게 두지 않는다, B10) + 표시 ID. 표의 머리 줄은 그 표의 캡션 자리다(F7 - 표는 위, 그림은 그림 아래 따로).
 // 단추가 아니다 - 누르면 감싼 조각 상자의 data-strip-unit로 묶음 전체가 골라진다(paper.tsx handleClick). 툴팁은 감싼 영역의 useDelegatedTip이 data-tip으로 띄운다.
 import type { ReactNode } from "react";
 
@@ -47,7 +47,6 @@ export function BundleHead({ head, selected, testId, caption, captionMissing = f
               {t("paper.captionNeeded")}
             </span>
           )}
-          {!hidePreview && head.kind === "table" && head.preview !== "" && <span className="bundle-head-label">{t("paper.bundleFirstRow")}</span>}
           {!hidePreview && <Truncate text={head.preview} className="bundle-head-text" />}
         </>
       )}

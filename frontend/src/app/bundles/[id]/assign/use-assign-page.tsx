@@ -2869,12 +2869,12 @@ export function useAssignPage() {
     const hit = line ? { targetId: Number(line.dataset.target), isReadOnly: line.closest(".pg[data-read-only]") !== null, hasPickButton: line.querySelector("button.new-hit") !== null } : null;
     return { line, drop: findAssignDrop(hit) };
   }
-  /** 포인터 밑의 Old 캡션 자리(표 머리 줄 · 그림 아래)와 끈 줄을 거기 놓으면 할 일(F7 - 2칸 안 글 한 줄이면 캡션으로 붙인다) */
+  /** 포인터 밑의 Old 캡션 자리(표 머리 줄 · 그림 아래)와 끈 줄을 거기 놓으면 할 일(F7 - 캡션이 될 수 있는 글 한 줄이면 붙인다, 거리 제한 없음) */
   function readCaptionDropAt(point: DragPoint, unitIds: readonly number[]): { drop: CaptionDrop; el: HTMLElement } | null {
     const el = findUnderPoint(point, '[data-pane="old"] [data-caption-slot]');
     const bundle = el ? shapeModel?.units.get(Number(el.dataset.captionSlot)) : undefined;
-    if (!el || !bundle || !shapeModel || !slotPlaces) return null;
-    return { drop: resolveCaptionDrop(unitIds.flatMap((id) => shapeModel.units.get(id) ?? []), bundle, shapeModel.units, slotPlaces), el };
+    if (!el || !bundle || !shapeModel) return null;
+    return { drop: resolveCaptionDrop(unitIds.flatMap((id) => shapeModel.units.get(id) ?? []), bundle, shapeModel.units), el };
   }
   /** 캡션 칩을 끈 곳 - 제 캡션 자리 밖 Old 용지 위면 떼서 문장으로(F7) */
   function readCaptionDetachAt(point: DragPoint, captionId: number): { detach: CaptionDetach; bundleId: number | null } {

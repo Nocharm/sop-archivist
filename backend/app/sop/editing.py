@@ -22,7 +22,6 @@ from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import clock
-from app.sop.caption_slot import CAPTION_REACH, PlaceBlock, build_block_places, get_place_distance
 from app.sop.captions import CAPTION_KIND
 from app.sop.constants import BULLET_SYMBOLS, MAX_PAIR_SIDE, PAIR_CONFIRMED, PAIR_SOURCE_HUMAN
 from app.sop.decision_steps import UndoMetaIn
@@ -117,7 +116,8 @@ CAPTION_OPS = ("attach_caption", "detach_caption", "set_first_row_caption")
 FIGURE_OPS = ("group_figures", "ungroup_figures")  # 그림 묶음(caption_figure_id)을 바꾸는 편집 — 든 그림 모두가 바뀐 묶음이다
 # 글자 범위를 고칠 수 있는 단위 — 그림·표는 범위를 나누거나 잇지 않는다
 TEXT_KINDS = ("sentence", "heading", "cell_sentence", CAPTION_KIND)
-CAPTIONABLE_KINDS = ("sentence", "heading")  # 캡션으로 붙일 수 있는 글 단위
+# 캡션으로 붙일 수 있는 글 단위 — 칸 문장은 묶음이 풀린 것(벗긴 표의 줄)만(B10, group_unit_id 검사가 가린다)
+CAPTIONABLE_KINDS = ("sentence", "heading", "cell_sentence")
 PAIR_LANGS = {"ko", "en"}  # 짝의 두 쪽 — 한쪽이 비면 짝을 지운다
 MAX_EDIT_UNITS = 2000  # 합치기·언어 바꾸기가 한 번에 고르는 단위 수 상한
 MAX_INDENT_SHIFT = 9  # units.indent_shift의 절댓값 상한 — 화면 단계는 셈한 단계 + 차이를 1–9로 자른다(프런트 indent-model)
@@ -182,9 +182,9 @@ class SetLayoutTableOp(BaseModel):
 
 
 class AttachCaptionOp(BaseModel):
-    """묶이지 않은 글 단위(문장·제목, REF 아님)를 표·그림 단위의 캡션으로 — 같은 범위·언어의 캡션 단위가 된다.
+    """묶이지 않은 글 단위(문장·제목·벗긴 표의 칸 줄, REF 아님)를 표·그림 단위의 캡션으로 — 같은 범위·언어의 캡션 단위가 된다.
 
-    글은 묶음에서 블록 자리 CAPTION_REACH 안에 있어야 한다(caption_slot — 사이의 문단은 그대로 남는다, F7 ④).
+    거리는 묻지 않는다(B10 8-b — 사이의 글은 그대로 남는다). 후보를 가까운 순으로 고르는 것은 화면의 몫이다(caption_slot).
     """
 
     type: Literal["attach_caption"]
@@ -1517,32 +1517,10 @@ async def _build_band_drafts(
     ]
 
 
-async def _measure_caption_distance(session: AsyncSession, extraction_id: ExtractionId, unit: Unit, bundle: Unit) -> int | None:
-    """글 단위와 묶음(표는 바깥 표, 그림은 그 블록) 사이의 블록 자리 거리(caption_slot) — 어느 쪽이든 자리가 없으면 None."""
-    rows = await session.execute(
-        select(SourceBlock.id, SourceBlock.seq, SourceBlock.kind, SourceBlock.text, SourceBlock.table_id).where(
-            SourceBlock.extraction_id == extraction_id
-        )
-    )
-    blocks = [PlaceBlock(*row) for row in rows.tuples()]
-    parents = dict(
-        (await session.execute(
-            select(SourceTable.id, SourceTable.parent_table_id).where(SourceTable.extraction_id == extraction_id)
-        )).tuples().all()
-    )
-    places = build_block_places(blocks, parents)
-    if bundle.kind in TABLE_UNIT_KINDS:
-        bundle_blocks = [block.id for block in blocks if block.table_id == bundle.table_id]
-    else:
-        bundle_blocks = [block.id for block in blocks if block.seq == bundle.pos_seq]
-    return get_place_distance(places, [span[0] for span in unit.spans], bundle_blocks)
-
-
 async def _plan_attach_caption(session: AsyncSession, extraction_id: ExtractionId, op: AttachCaptionOp) -> _Change:
     """글 단위를 은퇴시키고 같은 범위·언어의 캡션 단위를 그 묶음에 묶어 만든다 — 묶음마다 언어당 캡션 하나.
 
-    글은 묶음에서 블록 자리 CAPTION_REACH 안이어야 하고 사이의 문단은 그대로 남는다(F7 ④). 다른 그림의 캡션을 같이 쓰는 그림은
-    제 캡션을 받지 않는다(먼저 푼다).
+    글은 묶음에서 멀어도 되고 사이의 글은 그대로 남는다(B10 8-b). 다른 그림의 캡션을 같이 쓰는 그림은 제 캡션을 받지 않는다(먼저 푼다).
     """
     units = await load_active_units(session, extraction_id, [op.unit_id, op.bundle_unit_id])
     unit, bundle = units[op.unit_id], units[op.bundle_unit_id]
@@ -1552,9 +1530,6 @@ async def _plan_attach_caption(session: AsyncSession, extraction_id: ExtractionI
         raise_rule(422, "invalid_unit_kind", unit_ids=[bundle.id])
     if bundle.caption_figure_id is not None:
         raise_rule(422, "caption_shared", unit_ids=[bundle.id], figure_id=bundle.caption_figure_id)
-    distance = await _measure_caption_distance(session, extraction_id, unit, bundle)
-    if distance is None or distance > CAPTION_REACH:
-        raise_rule(422, "caption_not_adjacent", unit_ids=[unit.id, op.bundle_unit_id])
     taken = await session.scalar(
         select(Unit.id).where(
             Unit.group_unit_id == bundle.id, Unit.status == UNIT_ACTIVE, Unit.kind == CAPTION_KIND,

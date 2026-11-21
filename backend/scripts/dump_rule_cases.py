@@ -1,6 +1,6 @@
 """Write frontend/src/lib/rule-cases.json — inputs and backend answers for the rules the frontend copies.
 
-The frontend keeps copies of a few backend rules to preview before the save answer arrives (caption places, line numbers,
+The frontend keeps copies of a few backend rules to preview before the save answer arrives (caption candidate order, line numbers,
 number follow, constants). `tests/test_rule_cases.py` fails when this file is stale and `rule-cases.test.ts` fails when a
 frontend copy answers differently, so a rule change on either side breaks CI until both agree.
 
@@ -13,7 +13,7 @@ from types import SimpleNamespace
 from typing import Any
 
 from app.sop import constants
-from app.sop.caption_slot import CAPTION_REACH, PlaceBlock, build_block_places
+from app.sop.caption_slot import PlaceBlock, build_block_places
 from app.sop.numbering import MAX_NUMBER_CHARS, MAX_ROW_LEVEL, LevelRow, build_row_levels, plan_follow
 from app.sop.outputs import get_bullet_depths, number_lines
 from app.sop.renumber import FIGURE_CAPTION_RE, TABLE_CAPTION_RE
@@ -134,7 +134,6 @@ def build_rule_cases() -> dict[str, Any]:
             "BULLET_SYMBOLS": list(constants.BULLET_SYMBOLS),
             "NUMBER_STYLES": list(constants.NUMBER_STYLES),
             "MAX_NUMBER_CHARS": MAX_NUMBER_CHARS,
-            "CAPTION_REACH": CAPTION_REACH,
             "MAX_ROW_LEVEL": MAX_ROW_LEVEL,
         },
         "number_lines": [

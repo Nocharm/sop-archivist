@@ -834,7 +834,6 @@
   /* 위 2px - 종류 표시(위 테두리에서 7px 내려온다)와 오른쪽 끝 표시 ID가 겹치지 않게 */
   .bundle-head { display: flex; align-items: baseline; gap: 6px; min-width: 0; margin-top: 2px; padding: 0 4px; border-radius: var(--r-1); font-family: var(--font-ui); font-size: var(--fs-cap); line-height: var(--lh-cap); color: var(--ink-2); }
   .bundle-head[data-sel] { color: var(--ink); }
-  .bundle-head-label { flex: none; color: var(--ink-3); }
   .bundle-head-text { flex: 1 1 auto; }
   .bundle-head-missing { flex: none; font-weight: 600; color: var(--warn-ink); }
   /* 캡션은 두 줄에서 말줄임, 묶음을 고르면 다 펼친다(나눌 자리·Alt 긁기를 그때 한다). 줄 높이는 머리 줄 것 - 원문 조각의 27px를 따르지 않는다 */
@@ -2093,6 +2092,7 @@
   .cap-cand { display: flex; align-items: baseline; gap: 8px; width: 100%; min-width: 0; padding: 3px 6px; border: 1px solid var(--line); border-radius: var(--r-1); background: var(--surface); color: var(--ink); font-size: var(--fs-cap); text-align: left; cursor: pointer; }
   .cap-cand:hover:not([aria-disabled="true"]) { background: var(--menu-hover); }
   .cap-cand[data-best] { border-color: var(--accent-line); background: var(--accent-tint); }
+  .cap-more { border-style: dashed; color: var(--ink-3); }
   .cap-cand[aria-disabled="true"] { color: var(--ink-4); cursor: not-allowed; }
   .cap-cand-label { flex: 1 1 auto; min-width: 0; }
   .cap-cand-note { flex: none; color: var(--ink-3); font-size: var(--fs-micro); }

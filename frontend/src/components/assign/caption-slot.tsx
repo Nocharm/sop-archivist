@@ -1,16 +1,16 @@
 // 오른쪽 칸 1번 "다듬기"의 캡션 자리(표 풀기·표준화 명세 F7 · F12) - 고른 줄이 표·그림이면 그 캡션 자리 하나.
-// 비었으면 후보 단추를 한 줄씩(오른쪽에 작은 설명, 가장 그럴듯한 것을 강조), 채웠으면 캡션 칩(KO/EN 표시 · 글 · 출처)과 손잡이
+// 비었으면 후보 단추를 한 줄씩(오른쪽에 작은 설명, 가장 그럴듯한 것을 강조, 글 후보는 가까운 순 처음 몇 개 + 더 보기), 채웠으면 캡션 칩(KO/EN 표시 · 글 · 출처)과 손잡이
 // (↩ 다시 첫 행으로 · ✂ 한/영 나누기 · × 떼서 문장으로 · 그림 풀기). 문장 같은 캡션은 칩 테두리만 주황이고 옆에 떼기가 있다.
 // 상태 글자나 개수 띠는 두지 않는다 - 할 일은 후보 단추가 말한다. 무엇을 띄울지는 lib/caption-slot-model buildCaptionSlot이 정한다.
 "use client";
 
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 
 import { LangToken } from "@/components/paper/lang-token";
 import { Truncate } from "@/components/ui/motion";
 import { Tooltip } from "@/components/ui/tooltip";
 import type { UnitLang } from "@/lib/api-sop";
-import type { CaptionCandidate, CaptionChip, CaptionSlotView } from "@/lib/caption-slot-model";
+import { NEAR_SHOWN, type CaptionCandidate, type CaptionChip, type CaptionSlotView } from "@/lib/caption-slot-model";
 import { useI18n } from "@/lib/i18n";
 
 interface CaptionSlotProps {
@@ -39,6 +39,8 @@ const CHIP_NOTES: Record<CaptionChip["origin"], string | null> = {
 
 export function CaptionSlot({ slot, busy, blockedKey, writeBlockedKey, readDetachBlock, onCandidate, onWrite, onDetach, onSplit, onBackFirstRow, onUngroup }: CaptionSlotProps) {
   const { t } = useI18n();
+  // "더 보기"를 연 캡션 자리(묶음) - 다른 표·그림을 고르면 저절로 접힌다
+  const [openFor, setOpenFor] = useState<number | null>(null);
 
   /** 글 단추 하나 - 꺼진 단추는 aria-disabled로 포커스를 받아 까닭을 툴팁으로 보인다 */
   function renderButton(label: ReactNode, reasonKey: string | null, onPress: () => void, testId: string, extra: { isBest?: boolean; note?: string | null } = {}): ReactNode {
@@ -65,7 +67,9 @@ export function CaptionSlot({ slot, busy, blockedKey, writeBlockedKey, readDetac
       return { label: t(candidate.side === "above" ? "assign.captionSlot.cand.figureAbove" : "assign.captionSlot.cand.figureBelow", { text: candidate.text }), note: t("assign.captionSlot.note.figure") };
     }
     const label = candidate.kind === "near"
-      ? t(`assign.captionSlot.cand.${candidate.side}${candidate.distance === 1 ? "1" : ""}`, { k: candidate.distance, text: candidate.text })
+      ? candidate.distance === 0
+        ? t("assign.captionSlot.cand.inside", { text: candidate.text })
+        : t(`assign.captionSlot.cand.${candidate.side}${candidate.distance === 1 ? "1" : ""}`, { k: candidate.distance, text: candidate.text })
       : t("assign.captionSlot.cand.firstRow", { text: candidate.text });
     return { label, note: candidate.isShaped ? t("assign.captionSlot.note.shaped", { n: candidate.number ?? "" }) : t("assign.captionSlot.note.notShaped") };
   }
@@ -104,12 +108,24 @@ export function CaptionSlot({ slot, busy, blockedKey, writeBlockedKey, readDetac
   }
 
   const splitChip = slot.chips.find((chip) => chip.splitAt !== null && chip.unitId !== null);
+  // 글 후보는 가까운 순으로 처음 몇 개만(가장 그럴듯한 것은 늘), 나머지는 "더 보기" 뒤에
+  const isAllOpen = openFor === slot.bundleId;
+  const near = slot.candidates.filter((candidate) => candidate.kind === "near");
+  const shownNear = near.filter((candidate, index) => isAllOpen || index < NEAR_SHOWN || candidate.isBest);
+  const hiddenCount = near.length - shownNear.length;
+  const moreToggle = (hiddenCount > 0 || (isAllOpen && near.length > NEAR_SHOWN)) && (
+    <button type="button" className="cap-cand cap-more" data-testid="assign-caption-more" onClick={() => setOpenFor(isAllOpen ? null : slot.bundleId)}>
+      <span className="cap-cand-label">{isAllOpen ? t("assign.captionSlot.less") : t("assign.captionSlot.more", { n: hiddenCount })}</span>
+    </button>
+  );
   const helpKey = slot.state === "empty" ? "assign.captionSlot.help.empty" : slot.state === "written" ? "assign.captionSlot.help.written" : "assign.captionSlot.help.filled";
   return (
     <section className="cap-slot" data-state={slot.state} data-testid="assign-caption-slot" aria-label={t(`assign.captionSlot.title.${slot.state}`)}>
       <div className="cap-slot-title">{t(`assign.captionSlot.title.${slot.state}`)}</div>
       {slot.chips.map(renderChip)}
-      {slot.candidates.map(renderCandidate)}
+      {shownNear.map(renderCandidate)}
+      {moreToggle}
+      {slot.candidates.filter((candidate) => candidate.kind !== "near").map(renderCandidate)}
       {(slot.hasFirstRow || splitChip || slot.groupHeadId !== null) && (
         <div className="cap-slot-acts">
           {slot.hasFirstRow && renderButton(t("assign.captionSlot.backFirstRow"), blockedKey, onBackFirstRow, "assign-caption-back-first-row")}

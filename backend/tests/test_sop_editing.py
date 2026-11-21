@@ -673,12 +673,13 @@ def test_detach_from_a_bundle_confirmed_with_a_written_caption_needs_confirm(cli
     assert _find_coverage_problems(view) == []
 
 
-def test_attach_rejects_a_far_sentence(client: TestClient) -> None:
-    """캡션은 블록 자리 2 안까지(F7 ④) — 표 뒤 세 번째 문단은 멀다."""
-    fx = _setup(client, p(HEADING) + tbl([["합성 칸이다."]]) + p(AFTER_TABLE) + p(RECORD) + p(FAR))
+def test_attach_takes_a_far_sentence_but_not_a_line_still_in_a_table(client: TestClient) -> None:
+    """거리 제한은 없다(B10 8-b) — 표 뒤 세 번째 문단도 붙는다. 아직 표인 칸 줄(묶인 칸 문장)은 캡션이 될 수 없다."""
+    fx = _setup(client, p(HEADING) + tbl([["합성 칸이다."], ["둘째 칸이다."]]) + p(AFTER_TABLE) + p(RECORD) + p(FAR))
     table = next(unit for unit in fx.view["units"] if unit["kind"] == "table")
 
-    assert _code(_attach(client, fx, find_unit(fx.view, FAR), table)) == (422, "caption_not_adjacent")
+    assert _code(_attach(client, fx, find_unit(fx.view, "둘째 칸이다."), table)) == (422, "invalid_unit_kind")
+    _ok(_attach(client, fx, find_unit(fx.view, FAR), table))
 
 
 def test_attach_rejects_a_second_caption_in_the_same_language(client: TestClient) -> None:

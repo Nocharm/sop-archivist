@@ -1041,6 +1041,15 @@ def _format_place(index: _Index, unit: UnitInfo, labels: OutputLabels) -> str:
         # 띠 표 제목 줄은 칸 좌표가 아니라 "띠 표" — 번호(절)는 절 칸에 있다(F11)
         pieces.append(_format_outer_cells(index, unit.table_id, labels) + labels.band_table)
         return " · ".join(pieces)
+    if unit.kind == CAPTION_KIND and block.table_id is not None:
+        bundle = index.snap.units.get(unit.group_unit_id) if unit.group_unit_id is not None else None
+        if bundle is not None and bundle.table_id != block.table_id:
+            # 다른 표의 칸 줄이 캡션이 됐으면(칸 안 캡션 · 벗긴 표 줄, B10) 칸 좌표가 아니라 그 묶음의 캡션 자리다
+            if bundle.kind in TABLE_UNIT_KINDS and bundle.table_id is not None:
+                pieces.append(labels.table_caption_template.format(table=index.snap.tables[bundle.table_id].table_index + 1))
+            else:
+                pieces.append(labels.figure_caption)
+            return " · ".join(pieces)
     if block.table_index is not None and block.row_index is not None and block.col_index is not None:
         pieces.append(
             _format_outer_cells(index, block.table_id, labels)

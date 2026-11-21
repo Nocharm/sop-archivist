@@ -6,7 +6,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { NumberStyle } from "./api-sop";
-import { buildBlockPlaces, CAPTION_REACH, readCaptionHead } from "./caption-slot-model";
+import { buildBlockPlaces, readCaptionHead } from "./caption-slot-model";
 import { MAX_NUMBER_CHARS, planFollow } from "./number-model";
 import cases from "./rule-cases.json";
 import { getRowLevels, MAX_LEVEL } from "./strip-pill-model";
@@ -22,7 +22,6 @@ describe("rule cases shared with the backend", () => {
       MAX_BULLET_LEVEL,
       BULLET_SYMBOLS: [...BULLET_SYMBOLS],
       MAX_NUMBER_CHARS,
-      CAPTION_REACH,
       MAX_ROW_LEVEL: MAX_LEVEL,
     }).toEqual({ ...cases.constants, NUMBER_STYLES: undefined });
     // The frontend orders styles for its buttons; the set of values must match.

@@ -438,7 +438,7 @@ export interface BundleHeader {
   kind: "table" | "figure";
   unitId: number | null;
   displayId: string;
-  /** 캡션이 없을 때 머리 줄 한 줄 미리보기 - 표는 첫 행 칸 글, 그림은 그림 블록 글(새 추출은 비었다) */
+  /** 캡션이 없을 때 머리 줄 한 줄 미리보기 - 그림 블록 글(새 추출은 비었다), 표는 늘 빈 글(B10) */
   preview: string;
 }
 
@@ -447,9 +447,8 @@ export function getBundleHeader(row: Extract<PaperRow, { type: "table" | "figure
   const unitId = row.type === "table" ? row.item.unitId : row.unitId;
   const displayId = unitId === null ? "" : (model.units.get(unitId)?.display_id ?? "");
   if (row.type === "figure") return { kind: "figure", unitId, displayId, preview: row.block.text };
-  const firstRow = row.item.rows[0] ?? [];
-  const preview = firstRow.map((cell) => cell.text.trim()).filter(Boolean).join(" · ");
-  return { kind: "table", unitId, displayId, preview };
+  // 표는 미리보기를 두지 않는다 - 1행 글이 캡션처럼 보였다(B10). 첫 행은 캡션 자리의 후보 하나로만 보인다
+  return { kind: "table", unitId, displayId, preview: "" };
 }
 
 /** 묶음 블록(그림 블록 · 표 칸) 안에 범위를 둔 캡션 - 블록 글자를 그대로 조각으로 편다(같은 블록의 범위는 한 부분) */

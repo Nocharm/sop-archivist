@@ -1,15 +1,13 @@
-"""캡션 자리(F7) — 표·그림과 캡션 후보 글 사이를 블록 자리(문단 · 표 · 그림 하나가 한 자리, 빈 문단은 자리가 아니다)로 잰다.
+"""캡션 자리(F7) — 블록 자리(문단 · 표 · 그림 하나가 한 자리, 빈 문단은 자리가 아니다). 캡션 후보를 가까운 순으로 늘어놓는 잣대다.
 
-프런트 lib/caption-slot-model.ts의 buildBlockPlaces·getPlaceDistance가 같은 규칙의 사본이다(후보 단추와 끌어 놓기 미리 판정) —
-규칙을 바꾸면 함께 고치고 두 쪽 시험을 같은 사례로 둔다.
+붙이기에 거리 제한은 없다(B10 8-b — 서버는 거리를 재지 않는다). 프런트 lib/caption-slot-model.ts의 buildBlockPlaces가 같은 규칙의
+사본이고(후보 순서) rule-cases.json block_places로 대조한다 — 규칙을 바꾸면 함께 고친다.
 """
 
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 
 from app.sop.segment import has_visible_char
-
-CAPTION_REACH = 2  # 캡션으로 붙일 수 있는 거리(자리 수) — 1은 바로 앞·뒤, 2는 사이에 문단·표·그림 하나(F7 ④, 기본값 §11-5)
 
 
 @dataclass(frozen=True)
@@ -49,12 +47,3 @@ def build_block_places(blocks: Iterable[PlaceBlock], parent_of: Mapping[int, int
         index += 1
         places[block.id] = index
     return places
-
-
-def get_place_distance(places: Mapping[int, int], first: Iterable[int], second: Iterable[int]) -> int | None:
-    """두 블록 묶음 사이의 가장 가까운 자리 거리 — 어느 쪽이든 자리가 없으면 None."""
-    left = [places[block_id] for block_id in first if block_id in places]
-    right = [places[block_id] for block_id in second if block_id in places]
-    if not left or not right:
-        return None
-    return min(abs(a - b) for a in left for b in right)
