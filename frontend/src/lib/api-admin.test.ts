@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   addGrant,
+  batchGrants,
   createRole,
   deleteRole,
   getAiUsage,
@@ -83,6 +84,11 @@ describe("access helpers", () => {
     const removed = stubFetch(204);
     await removeGrant(4);
     expect(getLastCall(removed)).toEqual(["/api/access/grants/4", "DELETE", undefined]);
+
+    const batch = { add: [body], remove: [4] };
+    const batched = stubFetch(200, { added: [], removed: [4], skipped: [], unknown: [], missing: [] });
+    await batchGrants(batch);
+    expect(getLastCall(batched)).toEqual(["/api/access/grants/batch", "POST", batch]);
   });
 
   it("passes the audit limit only when given", async () => {
