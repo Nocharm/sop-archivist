@@ -4,6 +4,8 @@ Remark 고르기 도움(내 최근 사유 — 묶음 밖 `remarks_router`, 외�
 검사와 쓰기는 app/sop/decisions.py(입구 2 한 번에 확정은 app/sop/match.py, AI 제안 일괄 수락은 app/sop/accept_suggestions.py).
 """
 
+import logging
+import time
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Path, Query
@@ -49,7 +51,10 @@ from app.sop.remarks import (
     list_recent_remarks,
 )
 from app.sop.tobe import MAX_DB_INT
+from app.timing_log import TIMING_LOGGER
 from app.sop.written import NewCandidateOut, WrittenSentenceOut, list_new_candidates, list_written_sentences
+
+logger = logging.getLogger(TIMING_LOGGER)
 
 router = APIRouter(prefix="/api/bundles", tags=["sop-decisions"])
 remarks_router = APIRouter(prefix="/api/sop/remarks", tags=["sop-decisions"])
@@ -105,14 +110,22 @@ async def get_open_translations(
 async def save_relation_group(
     body: GroupSaveIn, ctx: BundleContext = Depends(_require_author), session: AsyncSession = Depends(get_session)
 ) -> GroupOut:
+    started = time.perf_counter()
     checked = await check_group(session, ctx.bundle, body)
     # 순서 굳히기는 되돌리기 단계의 앞 모습보다 먼저다 — 되돌려도 굳힌 순서는 남는다(decisions.freeze_positioned_docs)
     await freeze_positioned_docs(session, ctx.bundle, checked, ctx.login_id)
+    timings: dict[str, float] = {}
     group = await record_snapshot_step(
         session, ctx.bundle, ctx.login_id, body.undo, body.undo.op if body.undo and body.undo.op else body.action,
-        lambda: save_group(session, ctx.bundle, checked, ctx.login_id),
+        lambda: save_group(session, ctx.bundle, checked, ctx.login_id), timings,
     )
     await session.commit()
+    # 원문·이름·로그인 ID 없이 숫자만 — 저장이 느린 까닭을 덤프와 쓰기로 가른다(설계 split-first 6-1)
+    logger.info("group save timed", extra={
+        "bundle_id": ctx.bundle.id, "total_ms": round((time.perf_counter() - started) * 1000, 1),
+        "dump_ms": round(timings["dump_ms"], 1), "run_ms": round(timings["run_ms"], 1),
+        "unit_count": len(body.units), "target_count": len(body.targets),
+    })
     return group
 
 

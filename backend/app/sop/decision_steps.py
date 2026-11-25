@@ -1,5 +1,6 @@
 """Assign 되돌리기 스냅숏 엔진 — 묶음의 판단 상태 표를 덤프·비교·되쓴다 (설계: 2026-11-13-assign-undo §5.2·§5.3, docs/architecture/decisions.md)."""
 
+import time
 from collections import defaultdict
 from collections.abc import Awaitable, Callable, Collection
 from dataclasses import dataclass
@@ -366,19 +367,33 @@ async def record_snapshot_step(
     meta: UndoMetaIn | None,
     op: str,
     run: Callable[[], Awaitable[T]],
+    timings: dict[str, float] | None = None,
 ) -> T:
     """판단 저장 하나(run)를 감싸 전후 바뀐 행을 한 단계로 남긴다 — meta가 없으면 run만. 커밋은 호출부가 한다.
 
     같은 세션의 맨 끝 단계가 아직 applied이고 step_key가 같으면 그 단계에 이어 붙인다. 바뀐 것이 없으면 남기지 않는다.
+    timings를 주면 `dump_ms`(덤프 둘)와 `run_ms`(run + flush)를 밀리초로 채운다 — 측정 로그용(meta가 없으면 dump_ms는 0).
     """
+    timings = timings if timings is not None else {}
+    timings["dump_ms"] = 0.0
     if meta is None:
-        return await run()
+        started = time.perf_counter()
+        result = await run()
+        timings["run_ms"] = (time.perf_counter() - started) * 1000
+        return result
     # 덤프와 저장 사이에 다른 쓰기가 끼지 않게 먼저 잠근다(저장 함수가 다시 잠가도 같은 트랜잭션이다)
     await lock_bundle(session, bundle)
+    started = time.perf_counter()
     before_state = await dump_bundle_state(session, bundle.id)
+    dumped = time.perf_counter()
     result = await run()
     await session.flush()
-    before, after = diff_states(before_state, await dump_bundle_state(session, bundle.id))
+    ran = time.perf_counter()
+    after_state = await dump_bundle_state(session, bundle.id)
+    finished = time.perf_counter()
+    timings["dump_ms"] = ((dumped - started) + (finished - ran)) * 1000
+    timings["run_ms"] = (ran - dumped) * 1000
+    before, after = diff_states(before_state, after_state)
     if not any(before.values()) and not any(after.values()):
         return result
 

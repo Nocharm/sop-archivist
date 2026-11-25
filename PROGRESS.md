@@ -62,3 +62,7 @@
 ## 2026-11-26 — 다른 Bundle로 이동 제거 (`fix/remove-bundle-move`)
 
 - 쪼개기 먼저 1b. 만드는 길만 없애고 자료 · 서버 API는 둔다. 검토에서 H(보류)와 초안이 생긴 뒤의 잇기 · 삭제가 읽기 전용을 풀던 것을 막음(저장된 값 기준) — 명세 F2-R7 글자 그대로. 부르는 곳이 없어진 Combobox도 걷음(effect-baseline이 줄었다).
+
+## 2026-11-26 — Assign 반응 시간 재기 (`perf/assign-measure`)
+
+- 쪼개기 먼저 3a. `pw-perf-assign.mjs`에 글쇠 · 연타 · 필터 · 번호 시나리오, 서버는 `app.timing` 로거 하나만 켜 저장 시간을 JSON 한 줄로(원문 · 이름 없음). 검토에서 앱에 logging 설정이 없어 INFO가 버려지던 것을 잡음. 측정 결과 문서는 3b 앞뒤를 재서 `docs/qa/2026-11-assign-perf.md`에.
