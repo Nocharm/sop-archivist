@@ -283,13 +283,16 @@ export function NewPaper(props: NewPaperProps) {
       )}
       {props.banner}
       <div className="pane-body">
-        {model && view ? (
-          <div key={props.docId} className="new-slide" data-slide={slide.dir ?? undefined}>
-            {renderBody(model, view)}
-          </div>
-        ) : (
-          props.placeholder
-        )}
+        {/* 이 감싸개는 문서가 바뀌어도 그대로다 - 연결선이 크기를 지켜본다(LinkLines의 .pane-body > *) */}
+        <div>
+          {model && view ? (
+            <div key={props.docId} className="new-slide" data-slide={slide.dir ?? undefined}>
+              {renderBody(model, view)}
+            </div>
+          ) : (
+            props.placeholder
+          )}
+        </div>
       </div>
     </section>
   );

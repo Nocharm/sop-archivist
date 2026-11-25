@@ -1957,6 +1957,9 @@
   /* 이미 쓴 New 문서의 용지(components/assign/new-paper) - Old와 같은 Paper라 오른쪽에 줄 끝 표시 자리를 두고, 얹기의 글 감싸개(.new-text) 안 문단도 용지 문단과 같다 */
   .pg.new-sheet.new-paper[data-strips] .strip { padding-right: var(--pg-pad-r); }
   .pg[data-strips] :is(.strip, .cell-piece) > .new-text > p { margin-block: 0; }
+  /* 누를 수 없는 칸(Old 줄을 고르지 않았다)은 칠하지도 손가락 커서도 두지 않는다 */
+  .new-paper .new-cell:not([data-pickable]) { cursor: default; }
+  .new-paper .new-cell:not([data-pickable]):hover .su { background-color: transparent; }
   /* 문서를 바꾸면 새 문서가 옆에서 들어온다(.sheet[data-slide]와 같은 움직임) */
   .new-slide[data-slide="next"] { animation: new-slide-next var(--dur-base) var(--ease-enter); }
   .new-slide[data-slide="prev"] { animation: new-slide-prev var(--dur-base) var(--ease-enter); }
