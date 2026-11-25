@@ -17,6 +17,9 @@ from app.sop.refs import is_document_number
 from scripts.seed_sop_demo import (
     NESTED_TITLE,
     PAIR_TABLES_TITLE,
+    PARAGRAPH_EN,
+    PARAGRAPH_KO,
+    PARAGRAPH_TITLE,
     TOC_AFTER,
     TOC_EN,
     TOC_KO,
@@ -39,6 +42,7 @@ EXPECTED_BUNDLES = [
     (AI_STAGE_TITLE, "in_progress"),
     ("SYNTHETIC 5 UV 분광광도계", "in_progress"),
     ("SYNTHETIC 6 문서 관리", "in_progress"),
+    (PARAGRAPH_TITLE, "in_progress"),
     (TOC_TITLE, "in_progress"),
     (NESTED_TITLE, "in_progress"),
     (PAIR_TABLES_TITLE, "in_progress"),
@@ -165,6 +169,21 @@ def test_seed_links_bundles_for_the_map(seed_runs: SeedRuns) -> None:
     # 출력은 제목과 결과뿐 — 문장 글은 싣지 않는다
     assert "SYNTHETIC 5 UV 분광광도계" in first.stdout and "SYNTHETIC 6 문서 관리" in first.stdout
     assert "Warm up the lamp" not in first.stdout
+
+
+def test_paragraph_bundle_has_one_box_per_language(seed_runs: SeedRuns) -> None:
+    """문단 박스 묶음 — 한 문단의 한글 · 영어가 박스 하나씩이고 둘이 짝이다(Assign 문단 박스 스모크가 쓴다)."""
+    database_path, first, _, bundles = seed_runs
+    (bundle_id,) = [bundle_id for bundle_id, title, _ in bundles if title == PARAGRAPH_TITLE]
+
+    rows = _query(database_path, f"""
+        SELECT u.text, u.lang, m.pair_id IS NOT NULL FROM units u JOIN extractions e ON e.id = u.extraction_id
+        JOIN documents d ON d.id = e.document_id LEFT JOIN unit_pair_members m ON m.unit_id = u.id
+        WHERE d.bundle_id = {bundle_id} AND u.kind = 'sentence' ORDER BY u.local_no
+    """)
+
+    assert rows == [(PARAGRAPH_KO, "ko", 1), (PARAGRAPH_EN, "en", 1)]
+    assert PARAGRAPH_EN not in first.stdout
 
 
 def test_toc_bundle_marks_its_contents_lines(seed_runs: SeedRuns) -> None:

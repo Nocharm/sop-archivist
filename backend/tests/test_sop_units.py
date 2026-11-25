@@ -17,7 +17,7 @@ from tests.access_helpers import run_in_session
 from tests.docx_factory import TINY_PNG, build_docx, make_drawing_run, make_list, numbered, p, tbl
 from tests.sop_helpers import AUTHOR, OUTSIDER, REVIEWER, create_bundle, find_unit, get_view, set_members, upload
 
-pytestmark = pytest.mark.usefixtures("clean_sop")
+pytestmark = pytest.mark.usefixtures("clean_sop", "legacy_split_rule")
 
 OLD_NAME = "SYNTHETIC_OLD-1_Interleaved.docx"
 # 한/영 연달아 — 제목 한 쌍, 두 문장짜리 문단 한 쌍, 2×2 데이터 표, 캡션 있는 그림
@@ -81,7 +81,18 @@ def _count_queries() -> Iterator[list[str]]:
         event.remove(engine.sync_engine, "before_cursor_execute", _record)
 
 
-def test_upload_creates_units_with_full_coverage(client: TestClient) -> None:
+@pytest.mark.parametrize("rule", [1, 2])
+def test_upload_creates_units_with_full_coverage(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, rule: int
+) -> None:
+    monkeypatch.setattr("app.sop.ingest.NEW_SPLIT_RULE", rule)
+    # 한 문단에 같은 언어 문장 둘 — 규칙 1은 문장마다, 규칙 2는 박스 하나
+    ko = {1: ["합성 장비의 전원을 켠다.", "합성 기록은 보관한다."], 2: ["합성 장비의 전원을 켠다. 합성 기록은 보관한다."]}[rule]
+    en = {
+        1: ["Turn on the synthetic unit.", "Synthetic records are kept."],
+        2: ["Turn on the synthetic unit. Synthetic records are kept."],
+    }[rule]
+    first_table = 2 + len(ko) + len(en)
     bundle = create_bundle(client)
     doc = _upload_ready(client, bundle["id"], _interleaved_docx(), OLD_NAME)
 
@@ -89,27 +100,27 @@ def test_upload_creates_units_with_full_coverage(client: TestClient) -> None:
 
     units = view["units"]
     assert [unit["kind"] for unit in units] == [
-        "heading", "heading", "sentence", "sentence", "sentence", "sentence",
+        "heading", "heading", *["sentence"] * len(ko + en),
         "table", "cell_sentence", "cell_sentence", "cell_sentence", "cell_sentence", "figure", "caption",
     ]
     block_texts = {block["id"]: block["text"] for block in view["blocks"]}
     assert find_coverage_problems(block_texts, [unit["spans"] for unit in units if unit["kind"] in COVER_KINDS]) == []
     assert {unit["status"] for unit in units} == {"unassigned"}
     assert [unit["display_id"] for unit in units] == [f"OLD-1-{n:03d}" for n in range(1, len(units) + 1)]
-    assert [unit["lang"] for unit in units] == ["ko", "en", "ko", "ko", "en", "en", "neutral", "ko", "en", "ko", "en", "neutral", "ko"]
-    table = units[6]
-    assert {unit["group_unit_id"] for unit in units[7:11]} == {table["id"]}
+    assert [unit["lang"] for unit in units] == [
+        "ko", "en", *["ko"] * len(ko), *["en"] * len(en), "neutral", "ko", "en", "ko", "en", "neutral", "ko",
+    ]
+    table = units[first_table]
+    assert {unit["group_unit_id"] for unit in units[first_table + 1:first_table + 5]} == {table["id"]}
     assert (table["spans"], table["text"]) == ([], "")
-    figure = units[11]
+    figure = units[first_table + 5]
     caption = find_unit(view, "그림 1 합성 장비")
     assert (figure["kind"], figure["text"]) == ("figure", "")
     assert (caption["kind"], caption["group_unit_id"]) == ("caption", figure["id"])
     # 연달아: 표에 묶인 칸 문장과 중립 단위는 건너뛰고 이웃한 한글·영어 덩어리를 짝으로 제안한다
     assert _get_pair_texts(view) == [
         ("suggested", ["1. 목적", "1. Purpose"]),
-        ("suggested", [
-            "합성 장비의 전원을 켠다.", "합성 기록은 보관한다.", "Turn on the synthetic unit.", "Synthetic records are kept.",
-        ]),
+        ("suggested", [*ko, *en]),
     ]
     assert {pair["source"] for pair in view["pairs"]} == {"code"}
     first_pair = view["pairs"][0]
@@ -299,8 +310,13 @@ def _edit(client: TestClient, bundle_id: int, doc_id: int, op: dict) -> dict:
     return response.json()
 
 
-def test_docx_line_breaks_become_units_that_merge_back(client: TestClient) -> None:
-    # 줄바꿈(Shift+Enter)으로 한 문단에 쓴 두 줄 — 블록은 하나, 단위는 줄마다. 합치면 줄바꿈을 품은 한 단위다
+@pytest.mark.parametrize("rule", [1, 2])
+def test_docx_line_breaks_become_units_that_merge_back(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, rule: int
+) -> None:
+    # 줄바꿈(Shift+Enter)으로 한 문단에 쓴 두 줄 — 블록은 하나, 단위는 규칙 1이면 줄마다(합치면 줄바꿈을 품은 한 단위), 규칙 2면
+    # 같은 언어라 처음부터 하나이고 사람이 나눴다가 다시 합칠 수 있다
+    monkeypatch.setattr("app.sop.ingest.NEW_SPLIT_RULE", rule)
     soft = '<w:p><w:r><w:t>합성 장비를 켠다</w:t><w:br/><w:t>합성 문을 닫는다</w:t></w:r></w:p>'
     bundle = create_bundle(client)
     doc = _upload_ready(client, bundle["id"], build_docx(soft + p("합성 다음 문단.")), OLD_NAME)
@@ -308,6 +324,16 @@ def test_docx_line_breaks_become_units_that_merge_back(client: TestClient) -> No
     view = get_view(client, bundle["id"], doc["id"])
 
     assert [block["text"] for block in view["blocks"]] == ["합성 장비를 켠다\n합성 문을 닫는다", "합성 다음 문단."]
+    if rule == 2:
+        assert [(unit["text"], len(unit["spans"])) for unit in view["units"]] == [
+            ("합성 장비를 켠다 합성 문을 닫는다", 1), ("합성 다음 문단.", 1),
+        ]
+        joined = view["units"][0]
+        _edit(
+            client, bundle["id"], doc["id"],
+            {"type": "split", "unit_id": joined["id"], "at": len("합성 장비를 켠다")},
+        )
+        view = get_view(client, bundle["id"], doc["id"])
     assert [(unit["text"], unit["lang"]) for unit in view["units"]] == [
         ("합성 장비를 켠다", "ko"), ("합성 문을 닫는다", "ko"), ("합성 다음 문단.", "ko"),
     ]

@@ -1,9 +1,13 @@
-"""배정 화면 첫 진입 prepare — 묶기 계획이 한 번도 없었으면 먼저 쌓고, 남은 줄의 미리 분류 작업을 문서마다 한 번만 쌓는다(설계 §5.2)."""
+"""배정 화면 첫 진입 prepare — 묶기 계획이 한 번도 없었으면 먼저 쌓고, 남은 줄의 미리 분류 작업을 문서마다 한 번만 쌓는다(설계 §5.2).
+
+미리 분류는 `constants.AUTO_CLASSIFY`가 켜졌을 때만 쌓는다(지금은 꺼짐 — 쪼개기 먼저 설계 §5 H4).
+"""
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.settings import settings
+from app.sop.ai import constants
 from app.sop.ai.classify import CLASSIFY_KIND, select_classify_items
 from app.sop.ai.jobs import JobItem, enqueue_jobs
 from app.sop.ai.match_jobs import (
@@ -56,7 +60,7 @@ async def queue_prepare(session: AsyncSession, bundle_id: int, actor: str, *, do
         return []
     if not await _has_run_plan_before(session, bundle_id):
         await enqueue_auto_plan(session, bundle_id, actor, origin=PLAN_ORIGIN_PREPARE)
-    if not await has_assign_documents(session, bundle_id):
+    if not constants.AUTO_CLASSIFY or not await has_assign_documents(session, bundle_id):
         return []
     documents = await _list_unprepared_documents(session, bundle_id, document_id)
     if not documents:

@@ -17,12 +17,15 @@ BODY = (
 )
 
 
-def test_measure_counts_units_sections_and_signals() -> None:
-    metrics = measure_extraction(build_docx(BODY), "docx", with_aux=False)
+@pytest.mark.parametrize(("rule", "largest"), [(1, 5), (2, 4)])
+def test_measure_counts_units_sections_and_signals(rule: int, largest: int) -> None:
+    metrics = measure_extraction(build_docx(BODY), "docx", with_aux=False, rule=rule)
 
-    # 타자로 친 점 끌기 줄은 지금 쪼개기가 점 뒤에서 둘로 나눈다("관련 서식 ........" / "별첨")
-    assert metrics["units_by_kind"] == {"cell_sentence": 7, "sentence": 4, "table": 2}
-    assert (metrics["table_units"], metrics["largest_table_unit_sentences"]) == (2, 5)
+    # 타자로 친 점 끌기 줄은 규칙 1이 점 뒤에서 둘로 나눈다("관련 서식 ........" / "별첨") — 규칙 2는 같은 언어라 하나다
+    assert metrics["units_by_kind"] == {
+        "1": {"cell_sentence": 7, "sentence": 4, "table": 2}, "2": {"cell_sentence": 6, "sentence": 2, "table": 2},
+    }
+    assert (metrics["table_units"], metrics["largest_table_unit_sentences"]) == (2, largest)
     assert metrics["bare_label_units"] == 3  # "7.4", "A", "A-1"
     assert (metrics["empty_section_blocks"], metrics["sentence_like_section_labels"]) == (0, 0)
     assert (metrics["band_tables"], metrics["nested_tables"]) == (1, 0)

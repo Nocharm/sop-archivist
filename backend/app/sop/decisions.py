@@ -162,6 +162,8 @@ class GroupSaveIn(BaseModel):
     units: list[UnitDecisionIn] = Field(max_length=500)
     targets: list[TargetIn] = Field(max_length=2000)
     removed_target_ids: list[DbId] = Field(default_factory=list, max_length=2000)
+    # 지울 새 문장 → 화면이 본 revision(선택). 단위를 싣지 않는 저장(번역만 지우기)은 단위 revision이 막지 못해 이것으로 견준다
+    removed_revisions: dict[DbId, DbId] = Field(default_factory=dict, max_length=2000)
     # 짝의 한쪽만 이을 때 남는 쪽을 따로 줄로 — 그 단위가 든 짝을 이 저장 안에서 푼다(pair_settle). 판단은 바꾸지 않는다
     release_unit_ids: list[DbId] = Field(default_factory=list, max_length=500)
     # 사람이 받은 AI 제안(Assign의 Use) — 그 제안이 덮는 판단·입구 2 새 문장에 이어 두면 채택 기록이 그대로·고침·버림을 정한다
@@ -581,6 +583,11 @@ def _check_revisions(payload: GroupSaveIn, state: _State) -> None:
         {"entity": "target", "id": item.id, "current_revision": state.existing[item.id].revision}
         for item in payload.targets
         if item.id is not None and item.revision != state.existing[item.id].revision
+    ]
+    conflicts += [
+        {"entity": "target", "id": target_id, "current_revision": state.existing[target_id].revision}
+        for target_id in payload.removed_target_ids
+        if payload.removed_revisions.get(target_id, state.existing[target_id].revision) != state.existing[target_id].revision
     ]
     if conflicts:
         raise_rule(409, "revision_conflict", conflicts=conflicts)

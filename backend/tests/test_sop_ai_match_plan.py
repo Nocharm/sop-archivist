@@ -65,7 +65,7 @@ from tests.sop_helpers import (
     upload,
 )
 
-pytestmark = pytest.mark.usefixtures("clean_sop", "clean_ai_jobs", "clean_embedding_cache")
+pytestmark = pytest.mark.usefixtures("clean_sop", "clean_ai_jobs", "clean_embedding_cache", "legacy_split_rule")
 
 T = TypeVar("T")
 
@@ -349,6 +349,7 @@ def test_units_assigned_to_entrance_1_are_excluded(client: TestClient, fake_ai: 
     assert_target_untouched(read_target(NEW_1))
 
 
+@pytest.mark.usefixtures("hidden_ai_on")
 def test_units_with_a_classify_suggestion_are_excluded(client: TestClient, fake_ai: FakeAi) -> None:
     bundle = make_match_bundle(client, p(OLD_1) + p(OLD_2), p(NEW_1) + p(NEW_2), has_assign=True)
     suggested, free = read_old_ids(client, bundle, OLD_1, OLD_2)
@@ -483,6 +484,7 @@ def test_upload_origin_plan_writes_no_delete_candidates(client: TestClient, fake
     assert read_suggestion("new").content["target_ids"] == [read_target(LONE_NEW).id]
 
 
+@pytest.mark.usefixtures("hidden_ai_on")
 def test_prepare_origin_plan_writes_delete_candidates(client: TestClient, fake_ai: FakeAi) -> None:
     bundle = make_match_bundle(client, p(LONE_OLD), p(LONE_NEW))
     (unit,) = read_old_ids(client, bundle, LONE_OLD)
@@ -513,6 +515,7 @@ def test_repeated_text_pairs_one_to_one_and_leaves_no_delete_candidate(client: T
     assert client.get(f"/api/bundles/{bundle.id}/match/identical-candidates", headers=AUTHOR).json() == []
 
 
+@pytest.mark.usefixtures("hidden_ai_on")
 def test_same_vector_across_languages_never_pairs(
     client: TestClient, fake_ai: FakeAi, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -529,6 +532,7 @@ def test_same_vector_across_languages_never_pairs(
 # --- 남은 항목 ---
 
 
+@pytest.mark.usefixtures("hidden_ai_on")
 @pytest.mark.parametrize("has_assign", [False, True])
 def test_unmatched_old_is_delete_candidate_only_without_assign_docs(
     client: TestClient, fake_ai: FakeAi, has_assign: bool
@@ -822,6 +826,7 @@ def test_embedding_failure_falls_back_to_text(
     assert read_suggestion("one_to_one").content["retrieval"] == "embedding_failed"  # 꺼짐(no_index)과 다른 상태다
 
 
+@pytest.mark.usefixtures("hidden_ai_on")
 def test_embedding_threshold_differs_from_the_text_threshold(
     client: TestClient, fake_ai: FakeAi, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -848,6 +853,7 @@ def test_blank_texts_are_not_embedded(client: TestClient, fake_ai: FakeAi, monke
     assert suggested == {(read_target(NEW_1).id, *read_old_ids(client, bundle, OLD_1))}  # 그림은 잇지 않는다
 
 
+@pytest.mark.usefixtures("hidden_ai_on")
 @pytest.mark.parametrize(("old_blank", "new_blank"), [(True, True), (True, False), (False, True)])
 def test_blank_units_stay_unassigned(
     client: TestClient, fake_ai: FakeAi, old_blank: bool, new_blank: bool
@@ -873,6 +879,7 @@ def test_blank_units_stay_unassigned(
     assert read_links() == set()
 
 
+@pytest.mark.usefixtures("hidden_ai_on")
 def test_table_without_text_stays_unassigned(client: TestClient, fake_ai: FakeAi) -> None:
     empty_cells = [["", ""], ["", ""]]
     bundle = make_match_bundle(client, p(LONE_OLD) + tbl(empty_cells), p(LONE_NEW) + tbl(empty_cells))
@@ -885,6 +892,7 @@ def test_table_without_text_stays_unassigned(client: TestClient, fake_ai: FakeAi
     assert {row.content["shape"] for row in read_rows(AiSuggestion)} == {"delete_candidate", "new"}
 
 
+@pytest.mark.usefixtures("hidden_ai_on")
 def test_scores_are_not_stored(client: TestClient, fake_ai: FakeAi, monkeypatch: pytest.MonkeyPatch) -> None:
     bundle = make_match_bundle(
         client, p(OLD_1) + p(LONE_OLD) + tbl(CELLS), p(NEW_1) + p(LONE_NEW) + tbl(CELLS),
@@ -903,6 +911,7 @@ def test_scores_are_not_stored(client: TestClient, fake_ai: FakeAi, monkeypatch:
     assert plan_job.payload == {"origin": "user"}
 
 
+@pytest.mark.usefixtures("hidden_ai_on")
 def test_suggestions_are_read_as_kind_match(client: TestClient, fake_ai: FakeAi) -> None:
     bundle = make_match_bundle(client, p(LONE_OLD), p(LONE_NEW))
     plan(client, bundle.id)
@@ -916,6 +925,7 @@ def test_suggestions_are_read_as_kind_match(client: TestClient, fake_ai: FakeAi)
 # --- 다시 돌리기 ---
 
 
+@pytest.mark.usefixtures("hidden_ai_on")
 def test_rerun_keeps_unchanged_suggestions(client: TestClient, fake_ai: FakeAi) -> None:
     """다시 세운 계획이 같은 것을 쓰려 하면 밀어내지도 다시 쓰지도 않는다 — 제안 id가 그대로다(설계 §4)."""
     bundle = make_match_bundle(client, p(LONE_OLD), p(LONE_NEW))
@@ -930,6 +940,7 @@ def test_rerun_keeps_unchanged_suggestions(client: TestClient, fake_ai: FakeAi) 
     assert_only_suggestions_written()
 
 
+@pytest.mark.usefixtures("hidden_ai_on")
 def test_rerun_that_finds_a_pair_clears_the_old_suggestions(
     client: TestClient, fake_ai: FakeAi, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1004,6 +1015,7 @@ def test_rerun_leaves_a_used_table_and_its_ai_translation(client: TestClient, fa
     ]
 
 
+@pytest.mark.usefixtures("hidden_ai_on")
 def test_replan_of_a_changed_table_marks_its_suggestion_stale(
     client: TestClient, fake_ai: FakeAi, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1058,6 +1070,7 @@ def add_new_document(client: TestClient, bundle_id: int, body: str) -> None:
     assert uploaded.status_code == 201 and uploaded.json()["status"] == "ready", uploaded.text
 
 
+@pytest.mark.usefixtures("hidden_ai_on")
 def test_replan_keeps_unchanged_groups(client: TestClient, fake_ai: FakeAi, monkeypatch: pytest.MonkeyPatch) -> None:
     # 계획 → New 문서 하나 더 → 계획
     bundle = make_match_bundle(client, p(OLD_1) + p(OLD_2), p(NEW_1))
@@ -1157,6 +1170,7 @@ def test_user_plan_resuggests_a_cleared_group(
     assert read_links() == set()
 
 
+@pytest.mark.usefixtures("hidden_ai_on")
 def test_upload_plan_keeps_existing_delete_candidates(client: TestClient, fake_ai: FakeAi) -> None:
     """업로드 계획은 새 삭제 후보를 쓰지 않을 뿐이다 — 지금 규칙으로도 삭제 후보인 살아 있는 제안은 걷지 않는다."""
     bundle = make_match_bundle(client, p(LONE_OLD) + p(OLD_2), p(LONE_NEW))
@@ -1174,6 +1188,7 @@ def test_upload_plan_keeps_existing_delete_candidates(client: TestClient, fake_a
     assert {row.result for row in read_rows(AiSuggestion)} == {"applied"}
 
 
+@pytest.mark.usefixtures("hidden_ai_on")
 def test_upload_plan_clears_delete_candidates_once_assign_documents_exist(client: TestClient, fake_ai: FakeAi) -> None:
     """지금 규칙이 삭제 후보를 쓰지 않으면(배정 New 문서가 생겼다) 업로드 계획도 걷어 분류 몫으로 돌린다."""
     bundle = make_match_bundle(client, p(LONE_OLD), p(LONE_NEW))
@@ -1193,6 +1208,7 @@ def test_upload_plan_clears_delete_candidates_once_assign_documents_exist(client
 # --- 사람 확정 ---
 
 
+@pytest.mark.usefixtures("hidden_ai_on")
 def test_person_confirms_plan_suggestions_through_group_save(client: TestClient, fake_ai: FakeAi) -> None:
     """사람이 제안을 받으면(Use) 화면이 content의 묶음·출처·변경 종류로 저장을 채운다 — 그 저장이 판단·새 문장·연결을 쓴다."""
     changed = [CELLS[0], [REWRITTEN_CELL, CELLS[1][1]]]
@@ -1224,6 +1240,7 @@ def test_person_confirms_plan_suggestions_through_group_save(client: TestClient,
 # --- 낡은 항목 ---
 
 
+@pytest.mark.usefixtures("hidden_ai_on")
 def test_person_change_during_plan_is_left_alone(
     client: TestClient, fake_ai: FakeAi, monkeypatch: pytest.MonkeyPatch
 ) -> None:

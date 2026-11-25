@@ -8,8 +8,9 @@ import type { ReactNode } from "react";
 
 import { Tooltip } from "@/components/ui/tooltip";
 import { useBundle } from "@/lib/bundle-store";
+import { useDraftingOn } from "@/lib/drafting";
 import { useI18n } from "@/lib/i18n";
-import { getStageHref, isStageLocked, STAGES, type Stage, type StageKey } from "@/lib/stages";
+import { getStageHref, isStageLocked, listStages, type Stage, type StageKey } from "@/lib/stages";
 
 // 번호가 없는 단계의 표시 - 설명서(조각 머리)도 같은 표시를 쓴다
 export const STAGE_ICONS: Partial<Record<StageKey, typeof Files>> = {
@@ -22,6 +23,7 @@ export const STAGE_ICONS: Partial<Record<StageKey, typeof Files>> = {
 export function StageNav({ bundleId, current }: { bundleId: number; current: StageKey | null }) {
   const { t } = useI18n();
   const { bundle } = useBundle(bundleId);
+  const stages = listStages(useDraftingOn() === true);
   // 묶음을 아직 모르면 잠그지 않는다 - 잠깐 흐렸다가 풀리는 깜빡임이 없게
   const documentCount = bundle?.document_count ?? 1;
 
@@ -64,7 +66,7 @@ export function StageNav({ bundleId, current }: { bundleId: number; current: Sta
 
   return (
     <nav className="stages" aria-label={t("stage.nav")} data-testid="stage-nav">
-      {STAGES.map((stage) => {
+      {stages.map((stage) => {
         const Icon = STAGE_ICONS[stage.key];
         const mark =
           stage.step !== undefined ? (

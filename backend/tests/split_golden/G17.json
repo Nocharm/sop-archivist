@@ -1,0 +1,14 @@
+{
+  "shape": "번호 1이 없는 문서",
+  "layout": null,
+  "boxes": [
+    {"text": "합성 안내문", "lang": "ko", "kind": "sentence", "number": null, "excluded": null},
+    {"text": "", "lang": "neutral", "kind": "table", "number": null, "excluded": null},
+    {"text": "작성", "lang": "ko", "kind": "cell_sentence", "number": null, "excluded": null},
+    {"text": "검토", "lang": "ko", "kind": "cell_sentence", "number": null, "excluded": null},
+    {"text": "2. 범위", "lang": "ko", "kind": "heading", "number": "2.", "excluded": null},
+    {"text": "합성 공정에 적용한다.", "lang": "ko", "kind": "sentence", "number": null, "excluded": null},
+    {"text": "개정 이력", "lang": "ko", "kind": "heading", "number": null, "excluded": null},
+    {"text": "처음 만들었다.", "lang": "ko", "kind": "sentence", "number": null, "excluded": null}
+  ]
+}

@@ -431,6 +431,7 @@ def _read_outputs(db_path: pathlib.Path) -> tuple[Any, list[Any], list[list[str]
     return readiness, items, [[cell.text for cell in row.cells] for row in sheet.rows]
 
 
+@pytest.mark.usefixtures("c_sheet_on")
 def test_0020_moves_figure_caption_to_its_own_unit_and_target(tmp_path: pathlib.Path) -> None:
     # 올리기 전에 확정한 그림 — 이행 뒤에도 그림 새 문장·판단은 그대로, 캡션은 제 단위·새 문장으로 결과물 C·Excel에 나온다
     db_path = tmp_path / "captions.db"
@@ -1469,5 +1470,31 @@ def test_0036_adds_indent_shift_with_zero_and_empty_history_and_drops_it_back(tm
             unit_columns = {column["name"] for column in inspect(conn).get_columns("units")}
             edit_columns = {column["name"] for column in inspect(conn).get_columns("unit_edits")}
         assert "indent_shift" not in unit_columns and "indent_changes" not in edit_columns
+    finally:
+        engine.dispose()
+
+
+def test_split_rule_defaults_to_the_legacy_rule(tmp_path: pathlib.Path) -> None:
+    # 이미 올린 문서의 박스는 바뀌지 않는다 — 지난 추출은 모두 규칙 1로 남고, 단위 글 · 범위는 그대로다. 내리면 열이 빠진다
+    db_path = tmp_path / "split_rule.db"
+    config = _downgrade_to(db_path, "0037")
+    engine = _create_fk_engine(db_path)
+    try:
+        with engine.begin() as conn:
+            _insert_old_bundle(conn)
+            before = conn.execute(text("SELECT id, kind, text, spans, lang FROM units ORDER BY id")).tuples().all()
+
+        command.upgrade(config, "0038")
+
+        with engine.connect() as conn:
+            rules = conn.execute(text("SELECT split_rule FROM extractions")).scalars().all()
+            after = conn.execute(text("SELECT id, kind, text, spans, lang FROM units ORDER BY id")).tuples().all()
+        assert rules and set(rules) == {1}
+        assert after == before
+
+        command.downgrade(config, "0037")
+
+        with engine.connect() as conn:
+            assert "split_rule" not in {column["name"] for column in inspect(conn).get_columns("extractions")}
     finally:
         engine.dispose()

@@ -4,6 +4,7 @@ from fastapi.testclient import TestClient
 
 from app.sop.doc_meta import HeaderFields, detect_header_fields, detect_language_layout
 from app.sop.extract.types import ExtractedBlock
+from app.sop.segment import RULE_PARAGRAPH
 from tests.docx_factory import build_docx, make_grid_table, make_row, p
 from tests.sop_helpers import create_bundle, upload
 
@@ -191,3 +192,21 @@ def test_layout_trusts_language_half_marks_over_line_order() -> None:
     assert detect_language_layout(blocks, has_language_halves=True) == "ko_en_separate"
     # 한 언어뿐이면 절반 표시가 있어도(빈 템플릿 절반) 그 언어 하나다
     assert detect_language_layout([_block(0, "장갑을 낀다.")] * 3, has_language_halves=True) == "ko_only"
+
+
+def test_layout_reads_mixed_paragraphs_as_interleaved() -> None:
+    # 문단마다 한글 문장 뒤 영어 문장 — 줄로 재면 늘 한글(ko_only)이고, 규칙 2의 박스로 재면 번갈아다
+    blocks = [_block(n, f"합성 절차 {n}를 시작한다. Start the synthetic step {n} now.") for n in range(4)]
+
+    assert detect_language_layout(blocks, rule=RULE_PARAGRAPH, split_lines=True) == "ko_en_interleaved"
+    assert detect_language_layout(blocks) == "ko_only"  # 규칙 1은 전처럼 줄로 잰다
+    # 한글 문장 속 영어 낱말은 조각이 아니다
+    korean = [_block(n, "HEPA filter를 확인한다. Buffer A. 탱크에 넣는다.") for n in range(4)]
+    assert detect_language_layout(korean, rule=RULE_PARAGRAPH, split_lines=True) == "ko_only"
+
+
+def test_layout_of_separate_halves_is_unchanged() -> None:
+    blocks = [_block(n, "보호 장갑을 착용한다. 보안경을 쓴다.") for n in range(10)]
+    blocks += [_block(10 + n, "Wear protective gloves. Wear safety goggles.") for n in range(10)]
+
+    assert detect_language_layout(blocks, rule=RULE_PARAGRAPH, split_lines=True) == "ko_en_separate"

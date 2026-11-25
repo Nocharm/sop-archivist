@@ -18,6 +18,7 @@ from sqlalchemy import Row, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.settings import settings
+from app.sop.ai import constants
 from app.sop.ai.apply import (
     add_suggestion,
     can_receive_suggestion,
@@ -171,7 +172,8 @@ def _build_entry(row: Row[Any], kind: str, text: str) -> _Entry:
 
 
 async def _load_old_entries(session: AsyncSession, bundle_id: int) -> dict[int, _Entry]:
-    """AI가 쓸 수 있는 옛 단위 — 미배정이고 분류 제안이 살아 있지 않은 단위(분류 제안과 겹쳐 내지 않는다, 설계 §6.8).
+    """AI가 쓸 수 있는 옛 단위 — 미배정이고 분류 제안이 살아 있지 않은 단위(분류 제안과 겹쳐 내지 않는다, 설계 §6.8). 자동 칸 추천을 숨긴
+    동안(`AUTO_CLASSIFY`)은 분류 제안을 보지 않는다 — 사람이 치울 길이 없는 제안이 계획을 막지 않게(쪼개기 먼저 설계 §5 H4).
     입구 1로 간 단위는 상태에서 걸러지고, 칸 문장은 표 단위가 대신한다."""
     statement = (
         select(
@@ -188,7 +190,9 @@ async def _load_old_entries(session: AsyncSession, bundle_id: int) -> dict[int, 
         )
     )
     rows = (await session.execute(statement)).all()
-    classified = list_covered_unit_ids(await load_live_suggestions(session, bundle_id, (CLASSIFY_KIND,)))
+    classified: set[int] = set()
+    if constants.AUTO_CLASSIFY:
+        classified = list_covered_unit_ids(await load_live_suggestions(session, bundle_id, (CLASSIFY_KIND,)))
     open_rows = [row for row in rows if can_receive_suggestion(row.status, row.disposition) and row.id not in classified]
     members = await select_in_chunks(
         session,
@@ -685,7 +689,9 @@ class MatchPlanHandler:
             *await _plan_figures(session, by_kind[_FIGURE], loaded.olds, targets),
             *await _plan_new(session, lone_news, loaded.news, targets),
         ]
-        if not await has_assign_documents(session, job.bundle_id):  # 입구 1이 있으면 분류가 받도록 미배정으로 남긴다(설계 §7.10)
+        # 입구 1이 있으면 분류가 받도록 미배정으로 남긴다(설계 §7.10). PLAN_DELETES를 끈 동안은 새로 쓰지 않으니(아래) 늘 견줘, 이미 있는
+        # 삭제 후보가 숨긴 빈 문서의 유무에 따라 밀려나지 않게 한다
+        if not constants.PLAN_DELETES or not await has_assign_documents(session, job.bundle_id):
             writes += [_Write(loaded.olds[unit_id], _DELETE_CANDIDATE, "deleted", unit_ids=(unit_id,)) for unit_id in lone_olds]
 
         # 모양·단위·새 문장이 살아 있는 제안과 같으면 밀어내지도 쓰지도 않는다 — 제안 id가 그대로라 사람이 보던 줄이 흔들리지 않는다(설계 §4)
@@ -698,10 +704,12 @@ class MatchPlanHandler:
             rejected = await _load_rejected_keys(session, job.bundle_id)
             left = [write for write, kept in judged if kept is None and _get_write_key(write) in rejected]
             judged = [(write, kept) for write, kept in judged if kept is not None or _get_write_key(write) not in rejected]
-        # 업로드 계획은 새 삭제 후보만 쓰지 않는다 — 지금 규칙으로도 삭제 후보인 살아 있는 제안은 위에서 그대로 두었다(§4)
+        # 업로드 계획(과 PLAN_DELETES를 끈 동안의 모든 계획)은 새 삭제 후보만 쓰지 않는다 — 지금 규칙으로도 삭제 후보인 살아 있는
+        # 제안은 위에서 그대로 두었다(§4)
         changed = [
             write for write, kept in judged
-            if kept is None and not (origin == PLAN_ORIGIN_UPLOAD and write.shape == _DELETE_CANDIDATE)
+            if kept is None
+            and not (write.shape == _DELETE_CANDIDATE and (origin == PLAN_ORIGIN_UPLOAD or not constants.PLAN_DELETES))
         ]
         untouched = [*(write for write, kept in judged if kept is not None), *left]
         kept_ids = {kept.id for _, kept in judged if kept is not None}

@@ -1,0 +1,9 @@
+{
+  "shape": "한글 문단 사이 · 끝의 짧은 영어 조각",
+  "layout": null,
+  "boxes": [
+    {"text": "5. 절차", "lang": "ko", "kind": "heading", "number": "5.", "excluded": null},
+    {"text": "세척액을 준비한다. Buffer A. 탱크에 넣는다.", "lang": "ko", "kind": "sentence", "number": null, "excluded": null},
+    {"text": "희석액을 준비한다. Buffer A.", "lang": "ko", "kind": "sentence", "number": null, "excluded": null}
+  ]
+}

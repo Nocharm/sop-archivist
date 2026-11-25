@@ -1,7 +1,7 @@
 // Assign 화면의 한 부분 - page.tsx의 그리기에서 글자 그대로 옮겼다(쪼개기, 신뢰 기반 계획 스텝 4). 상태와 동작은 useAssignPage()가 준다.
 "use client";
 
-import { BookMarked, Captions, Columns2, ExternalLink, Redo2, Square, Trash2, Undo2, WandSparkles } from "lucide-react";
+import { BookMarked, Captions, Columns2, ExternalLink, Languages, Redo2, Square, Trash2, Undo2, WandSparkles } from "lucide-react";
 import { MissingWarnings } from "@/components/assign/missing-warnings";
 import { AssignMoreMenu } from "@/components/assign/more-menu";
 import { PendingCount } from "@/components/assign/pending-count";
@@ -17,7 +17,7 @@ export function AssignBar({ state }: { state: AssignPageState }) {
     t, bundleId, bundle, canEdit, docs, oldDocIds, identical, aiOn, rows, rowMap, rowOfUnit, mode, filter, counts, applyFilter, checked,
     viewOf, setManualOldDoc, oldView, view, changeView, aiMenuItems, isAnyPending, undoState, setBulk, setConfirmingIdentical, setResetScope,
     selectRow, goToUnit, refPendingIds, captionPendingKeys, splitPendingIds, readPendingItem, selectNextSplit, selectNextRef,
-    selectNextCaption, runUndoStep, done,
+    selectNextCaption, runUndoStep, done, leftovers, setLeftoverSheet,
   } = state;
 
   const identicalCount = identical.data?.length ?? 0;
@@ -107,6 +107,13 @@ export function AssignBar({ state }: { state: AssignPageState }) {
             onNext={selectNextCaption}
             testId="assign-caption-pending"
           />
+        )}
+        {/* 남은 AI 번역 - 숨긴 기능의 자료가 있을 때만. 검토 요청을 막아 여기서 정한다 */}
+        {canEdit && leftovers.length > 0 && (
+          <button type="button" className="btn h-7 text-st-ai" data-testid="assign-leftover-open" onClick={() => setLeftoverSheet(true)}>
+            <Languages size={14} strokeWidth={1.5} aria-hidden />
+            {t("assign.openTranslation.title", { n: leftovers.length })}
+          </button>
         )}
         {/* 누락 의심 경고 - 확인이 남아 있을 때만 보인다(검토 요청 조건). 원문 자리를 보거나 그 자리에서 확인한다 */}
         <MissingWarnings
