@@ -8,7 +8,8 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.sop.models import TargetSentence, Unit
+from app.sop.accept_suggestions import _is_open_unit, _Loaded
+from app.sop.models import TargetSentence, Unit, UnitDecision
 from app.sop.noise import (
     NOISE_FRONT,
     NOISE_HISTORY,
@@ -31,8 +32,10 @@ from tests.docx_factory import (
     p,
     tbl,
 )
-from tests.sop_helpers import AUTHOR, create_bundle, find_unit, get_bundle, get_view, upload
-from tests.split_golden.builder import cell
+from tests.sop_helpers import AUTHOR, create_bundle, find_unit, get_bundle, get_view, save_group, upload
+from tests.split_golden.builder import CASES, build_new_bytes, cell
+from tests.test_sop_decision_undo import _redo, _undo
+from tests.test_sop_new_edit_undo import _push_ids
 
 pytestmark = pytest.mark.usefixtures("clean_sop")
 
@@ -559,3 +562,239 @@ def test_noise_reasons_are_not_recent_remarks(client: TestClient) -> None:
 
     assert response.status_code == 200, response.text
     assert REASON not in {remark["text"] for remark in response.json()}
+
+
+# --- 여기부터 본문 (start_body) ---
+
+
+def _setup_case(client: TestClient, key: str, side: str = "old", bundle_id: int | None = None) -> Fixture:
+    """정답 문서 하나를 올린다 — 꼴은 split_golden/builder.py."""
+    if bundle_id is None:
+        bundle_id = create_bundle(client, is_synthetic=True)["id"]
+    case = CASES[key]
+    data = case.build() if side == "old" else build_new_bytes(case)
+    response = upload(client, bundle_id, data, f"SYNTHETIC_{key}_{side}.docx", side=side, doc_type="sop" if side == "new" else None)
+    assert response.status_code == 201, response.text
+    doc_id = response.json()["id"]
+    return Fixture(bundle_id, doc_id, get_view(client, bundle_id, doc_id))
+
+
+def _start_body(client: TestClient, fx: Fixture, text: str, occurrence: int = 1) -> httpx2.Response:
+    return _edit(client, fx, {"type": "start_body", "unit_id": find_unit(_view(client, fx), text, occurrence)["id"]})
+
+
+def _clear(client: TestClient, fx: Fixture, *texts: str) -> None:
+    ids = [find_unit(_view(client, fx), text)["id"] for text in texts]
+    response = _edit(client, fx, {"type": "clear_noise", "unit_ids": ids})
+    assert response.status_code == 200, response.text
+
+
+def _marked(view: dict, kind: str) -> list[int]:
+    return [unit["id"] for unit in view["units"] if unit["noise_kind"] == kind]
+
+
+@pytest.mark.parametrize("side", ["old", "new"])
+def test_start_body_marks_everything_before_it(client: TestClient, side: str) -> None:
+    fx = _setup_case(client, "G17", side)
+    assert _noise(fx.view) == {}
+
+    response = _start_body(client, fx, "2. 범위")
+
+    assert response.status_code == 200, response.text
+    view = _view(client, fx)
+    assert _texts(view, NOISE_FRONT) == ["합성 안내문", "작성", "검토"]
+    assert len(_noise(view)) == 4  # 표 단위까지
+    if side == "new":
+        assert not set(_noise(view)) & set(_load_written_units())
+
+
+def test_start_body_clears_front_marks_after_it(client: TestClient) -> None:
+    fx = _setup_case(client, "G14")
+    title = find_unit(fx.view, "합성 표준 절차서")
+    assert _write_reason(client, fx, find_unit(fx.view, "Summary of Changes")["id"]).status_code == 200
+    _clear(client, fx, "합성 표준 절차서")
+
+    assert _start_body(client, fx, "합성 표준 절차서").status_code == 200
+
+    view = _view(client, fx)
+    assert (_texts(view, NOISE_FRONT), _texts(view, NOISE_TOC)) == ([], TOC_TEXTS)
+    assert _reasons(view) == {}
+    _step(client, fx, "undo")
+    assert _reasons(_view(client, fx)) == {"Summary of Changes": REASON}
+    # 가운데 줄 — 앞은 앞부분 그대로, 바로 뒤로 이어진 앞부분만 비운다
+    _clear(client, fx, "Summary of Changes")
+    before = [unit_id for unit_id in _marked(fx.view, NOISE_FRONT) if unit_id != title["id"]]
+    heading = find_unit(fx.view, "Summary of Changes")["id"]
+
+    assert _start_body(client, fx, "Summary of Changes").status_code == 200
+
+    marked = _marked(_view(client, fx), NOISE_FRONT)
+    assert marked == [title["id"], *before[: before.index(heading)]]
+
+
+def test_start_body_moves_the_start_later(client: TestClient) -> None:
+    fx = _setup_case(client, "G14")
+
+    assert _start_body(client, fx, "2. 범위").status_code == 200
+
+    view = _view(client, fx)
+    assert _texts(view, NOISE_FRONT)[-2:] == ["1. 목적", "탱크 세척 방법을 정한다."]
+    assert len(_marked(view, NOISE_FRONT)) == len(_marked(fx.view, NOISE_FRONT)) + 2
+
+
+def test_start_body_in_the_second_half_stays_in_it(client: TestClient) -> None:
+    fx = _setup_case(client, "G15")
+    english = ["Synthetic Standard Procedure", "Approved", "Synthetic team"]
+    korean = [text for text in _texts(fx.view, NOISE_FRONT) if text not in english]
+    body = ["1. Purpose", "This procedure defines how to clean the tank."]
+
+    assert _start_body(client, fx, "2. Scope").status_code == 200
+    assert _texts(_view(client, fx), NOISE_FRONT) == [*korean, *english, *body]
+    # 다시 앞으로 — 앞부분이 된 1장을 삭제 취소하고 그 줄에서 시작한다(둘째 반쪽의 앞부분은 남는다)
+    _clear(client, fx, "1. Purpose")
+    assert _start_body(client, fx, "1. Purpose").status_code == 200
+    assert _texts(_view(client, fx), NOISE_FRONT) == [*korean, *english]
+    _clear(client, fx, "Synthetic Standard Procedure")
+    assert _start_body(client, fx, "Synthetic Standard Procedure").status_code == 200
+    assert _texts(_view(client, fx), NOISE_FRONT) == korean
+    assert _texts(_view(client, fx), NOISE_TOC) == _texts(fx.view, NOISE_TOC)
+
+
+def test_start_body_in_the_first_half_leaves_the_second_alone(client: TestClient) -> None:
+    fx = _setup_case(client, "G15")
+    english = ["Synthetic Standard Procedure", "Approved", "Synthetic team"]
+
+    # 첫 반쪽의 마지막 글 줄 — 바로 뒤의 앞부분은 둘째 반쪽의 것이다
+    response = _start_body(client, fx, "첨부 1 기록지")
+
+    assert response.status_code == 200, response.text
+    view = _view(client, fx)
+    assert _texts(view, NOISE_FRONT)[-3:] == english
+    assert find_unit(view, "합성 공정에 적용한다.")["noise_kind"] == NOISE_FRONT
+    assert {find_unit(view, text)["noise_kind"] for text in ("항목", "1. Purpose", "2. Scope")} == {None}
+
+
+def test_start_body_is_one_undo(client: TestClient) -> None:
+    fx = _setup_case(client, "G14")
+    assert _start_body(client, fx, "2. 범위").status_code == 200
+    after = _view(client, fx)
+
+    assert _step(client, fx, "undo")["op"] == "start_body"
+    assert _view(client, fx)["units"] == fx.view["units"]
+    _step(client, fx, "redo")
+    assert _view(client, fx)["units"] == after["units"]
+    # 이미 시작하는 줄이면 바뀐 것이 없다
+    revision = after["document"]["revision"] + 2
+    assert _start_body(client, fx, "2. 범위").json()["document_revision"] == revision
+
+
+def test_start_body_and_clear_undo_to_one_new_sentence_each(client: TestClient) -> None:
+    # New — 여기부터 본문 · 삭제 취소의 되돌리기(문서 기록 · Assign 단계 모두)가 새 문장을 단위마다 하나로 돌린다
+    fx = _setup_case(client, "G14", "new")
+    own = {unit["id"] for unit in fx.view["units"]}
+
+    def load_own() -> list[int]:
+        return sorted(unit_id for unit_id in _load_written_units() if unit_id in own)
+
+    title = find_unit(fx.view, "합성 표준 절차서")["id"]
+    ops = [
+        {"type": "start_body", "unit_id": find_unit(fx.view, "2. 범위")["id"]},
+        {"type": "clear_noise", "unit_ids": [title]},
+        {"type": "start_body", "unit_id": title},
+    ]
+    states = [load_own()]
+    for number, op in enumerate(ops, start=11):
+        response = client.post(
+            f"/api/bundles/{fx.bundle_id}/documents/{fx.doc_id}/edits", headers=AUTHOR,
+            json={"revision": _view(client, fx)["document"]["revision"], "op": op, "undo": {"session": "s1"}},
+        )
+        assert response.status_code == 200, response.text
+        states.append(load_own())
+        # sqlite가 지운 id를 다시 쓰면 중복이 가려진다
+        _push_ids(client, fx.bundle_id, number)
+    assert len({tuple(state) for state in states}) == 4
+
+    for step, names in (("step", ("undo", "redo", "undo")), ("edit", ("redo", "undo"))):
+        for name in names:
+            order = states[-2::-1] if name == "undo" else states[1:]
+            for state in order:
+                if step == "edit":
+                    _step(client, fx, name)
+                else:
+                    moved = (_undo if name == "undo" else _redo)(client, fx.bundle_id)
+                    assert moved.status_code == 200, moved.text
+                assert load_own() == state
+
+
+def test_start_body_refuses_a_decided_line(client: TestClient) -> None:
+    fx = _setup_case(client, "G17")
+    notice = find_unit(fx.view, "합성 안내문")
+    body = {"action": "delete", "reason": "합성", "units": [{"unit_id": notice["id"], "revision": 1}]}
+    assert client.post(f"/api/bundles/{fx.bundle_id}/decisions/bulk", json=body, headers=AUTHOR).status_code == 200
+
+    refused = _start_body(client, fx, "2. 범위")
+
+    assert (_code(refused), refused.json()["detail"]["unit_ids"]) == ((409, "unit_has_decision"), [notice["id"]])
+    assert _noise(_view(client, fx)) == {}
+
+    new = _setup_case(client, "G17", "new", create_bundle(client, is_synthetic=True)["id"])
+    old = _setup_case(client, "G17", "old", new.bundle_id)
+    linked = find_unit(new.view, "합성 안내문")["id"]
+    target_id, revision = run_in_session(lambda session: _load_target(session, linked))
+    saved = save_group(client, new.bundle_id, {
+        "action": "confirm",
+        "units": [{"unit_id": find_unit(old.view, "합성 안내문")["id"], "revision": 1, "disposition": "assigned"}],
+        "targets": [{
+            "key": "t", "id": target_id, "revision": revision, "kind": "sentence",
+            "source_unit_ids": [find_unit(old.view, "합성 안내문")["id"]],
+        }],
+    })
+    assert saved.status_code == 200, saved.text
+
+    refused = _start_body(client, new, "2. 범위")
+
+    assert (_code(refused), refused.json()["detail"]["unit_ids"]) == ((409, "unit_has_decision"), [linked])
+    assert _noise(_view(client, new)) == {}
+
+
+async def _load_target(session: AsyncSession, unit_id: int) -> tuple[int, int]:
+    row = (
+        await session.execute(
+            select(TargetSentence.id, TargetSentence.revision).where(TargetSentence.new_unit_id == unit_id)
+        )
+    ).one()
+    return row.id, row.revision
+
+
+def test_start_body_on_a_noise_line_is_refused(client: TestClient) -> None:
+    fx = _setup(client, headers=[p("합성 머리말")])
+
+    for text in (TITLE, TOC_TEXTS[0], "처음 만들었다.", "항목", "합성 머리말"):
+        assert _code(_start_body(client, fx, text)) == (422, "invalid_body_start"), text
+    assert _code(_edit(client, fx, {"type": "start_body", "unit_id": 999_999})) == (404, "unit_not_found")
+    assert _view(client, fx)["units"] == fx.view["units"]
+
+
+def test_start_body_keeps_history_marks(client: TestClient) -> None:
+    fx = _setup(client)
+
+    assert _start_body(client, fx, SCOPE).status_code == 200
+
+    view = _view(client, fx)
+    assert _texts(view, NOISE_HISTORY) == HISTORY_TEXTS
+    assert _texts(view, NOISE_FRONT)[-1] == "2. 범위"
+
+
+def test_accepting_suggestions_skips_lines_deleted_later(client: TestClient) -> None:
+    # 제안이 붙은 뒤 앞부분이 된 줄은 받을 수 있는 제안이 아니다
+    fx = _setup_case(client, "G17")
+    unit_id = find_unit(fx.view, "합성 안내문")["id"]
+    assert _start_body(client, fx, "2. 범위").status_code == 200
+
+    async def _is_open(session: AsyncSession) -> bool:
+        unit = await session.get_one(Unit, unit_id)
+        decision = await session.scalar(select(UnitDecision).where(UnitDecision.unit_id == unit_id))
+        loaded = _Loaded({unit_id: decision}, {unit_id: unit}, {}, {}, (), {}, {}, {})
+        return _is_open_unit(unit_id, loaded)
+
+    assert run_in_session(_is_open) is False

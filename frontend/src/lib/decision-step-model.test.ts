@@ -67,7 +67,7 @@ describe("getAssignUndoKey", () => {
 describe("shouldDropSelectionOnStep", () => {
   const step = (op: string, unitIds = [4]) => ({ op, unit_ids: unitIds });
   it("drops the selection for every unit-shape edit that can retire units", () => {
-    for (const op of ["cut", "carve", "merge", "unmerge", "move_boundary", "set_layout_table", "attach_caption", "detach_caption", "set_first_row_caption", "group_figures", "ungroup_figures", "set_heading", "clear_noise"]) {
+    for (const op of ["cut", "carve", "merge", "unmerge", "move_boundary", "set_layout_table", "attach_caption", "detach_caption", "set_first_row_caption", "group_figures", "ungroup_figures", "set_heading", "clear_noise", "start_body"]) {
       expect(shouldDropSelectionOnStep(step(op)), op).toBe(true);
     }
   });
@@ -90,7 +90,7 @@ describe("shouldDropSelectionOnStep", () => {
 
 describe("isUnitEditStep", () => {
   it("is true for every source edit step, shape and in-place", () => {
-    for (const op of ["cut", "carve", "merge", "unmerge", "move_boundary", "set_layout_table", "attach_caption", "detach_caption", "set_first_row_caption", "group_figures", "ungroup_figures", "set_heading", "clear_noise", "set_language", "set_ref", "clear_ref", "set_number", "set_noise_reason"]) {
+    for (const op of ["cut", "carve", "merge", "unmerge", "move_boundary", "set_layout_table", "attach_caption", "detach_caption", "set_first_row_caption", "group_figures", "ungroup_figures", "set_heading", "clear_noise", "start_body", "set_language", "set_ref", "clear_ref", "set_number", "set_noise_reason"]) {
       expect(isUnitEditStep(op), op).toBe(true);
     }
   });

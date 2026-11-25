@@ -8,7 +8,7 @@
 그림 묶기·풀기도 제자리다 — 그림 단위의 caption_figure_id만 바꾸고(옮기는 캡션은 칸 묶음처럼 regroup) 기록해 되돌린다.
 짝 카드 안 순서도 제자리다 — 구성원의 pair_seq만 바꾸고(pair_order.py) 기록해 되돌린다.
 벗긴 표 덩이 안 줄 순서도 제자리다 — 줄의 unwrap_seq만 바꾸고(unwrap_order.py) 기록해 되돌린다. 다시 표로 묶으면 같은 편집에서 비운다.
-저절로 삭제된 줄도 제자리다 — 삭제 취소는 noise_kind와 noise_reason을 비우고 사유 쓰기는 noise_reason만 바꾸며 기록해 되돌린다.
+저절로 삭제된 줄도 제자리다 — 삭제 취소 · 여기부터 본문은 noise_kind(비우면 noise_reason도), 사유 쓰기는 noise_reason만 바꾸며 기록해 되돌린다.
 들여쓰기도 제자리다 — 줄의 indent_shift만 바꾸고 기록해 되돌린다(set_indents, set_number의 기호 위로 맞춤).
 묶음 잠금·문서 revision·작업 중 검사와 커밋은 부르는 쪽(라우터)이 한다.
 """
@@ -16,15 +16,16 @@
 from collections import Counter, defaultdict
 from collections.abc import Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, fields
-from typing import Annotated, Literal, TypeVar, assert_never
+from typing import Annotated, Any, Literal, TypeVar, assert_never
 
 from pydantic import BaseModel, Field, SerializerFunctionWrapHandler, model_serializer, StringConstraints
-from sqlalchemy import delete, func, or_, select, update
+from sqlalchemy import Row, delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import clock
 from app.sop.captions import CAPTION_KIND
 from app.sop.constants import BULLET_SYMBOLS, MAX_PAIR_SIDE, PAIR_CONFIRMED, PAIR_SOURCE_HUMAN
+from app.sop.counterparts import BODY_PART
 from app.sop.decision_steps import UndoMetaIn
 from app.sop.decisions import DbId
 from app.sop.detach import (
@@ -54,6 +55,7 @@ from app.sop.models import (
     UnitPairMember,
     UnitRef,
 )
+from app.sop.noise import NOISE_FRONT, NoiseLine, find_body_starts, find_half_front
 from app.sop.numbering import (
     MAX_NUMBER_CHARS,
     NO_NUMBER,
@@ -82,6 +84,7 @@ from app.sop.segment import (
     is_band_heading,
     is_band_table,
     is_number_cell_range,
+    read_band_level,
     split_block_text,
 )
 from app.sop.spans import (
@@ -100,8 +103,10 @@ from app.sop.tobe import MAX_DB_INT
 from app.sop.unwrap_order import UnwrapTable, find_line_table, order_unwrapped, read_unwrap_tables
 from app.sop.units import (
     LINE_SPLIT_FORMAT,
+    SEPARATE_LAYOUT,
     UNIT_ACTIVE,
     get_latest_extraction_id,
+    get_noise_langs,
     pair_new_units,
     refresh_code_pairs,
     verify_document_coverage,
@@ -289,6 +294,14 @@ class SetNoiseReasonOp(BaseModel):
     reason: Annotated[str, StringConstraints(strip_whitespace=True, max_length=MAX_NOISE_REASON), NO_NUL]
 
 
+class StartBodyOp(BaseModel):
+    """여기부터 본문 — 그 줄 앞의 보통 줄을 본문 앞부분으로, 그 줄 뒤로 이어진 앞부분 표시를 비운다(쪼개기 먼저 설계 §7 R3). 한 편집이라
+    되돌리기 한 번이다. 목차 · 개정 이력 표시는 두고, 한/영 따로 문서의 둘째 반쪽에서는 그 반쪽만 바꾼다."""
+
+    type: Literal["start_body"]
+    unit_id: DbId
+
+
 class SetHeadingOp(BaseModel):
     """제목 ↔ 문장(F8b · 설계 2d) — 범위·글자는 그대로이고 단위 모양만 바뀐다(옛 단위 은퇴, 새 단위 생성 — 되돌리기 한 번).
 
@@ -339,7 +352,7 @@ class SwitchLanguageOp(BaseModel):
 EditOp = Annotated[
     SplitOp | MergeOp | UnmergeOp | MoveBoundaryOp | CarveOp | SetLanguageOp | SwitchLanguageOp
     | SetLayoutTableOp | AttachCaptionOp | DetachCaptionOp | SetFirstRowCaptionOp | GroupFiguresOp
-    | UngroupFiguresOp | SetRefOp | ClearRefOp | ClearNoiseOp | SetNoiseReasonOp | SetNumberOp | SetHeadingOp | ReorderPairOp
+    | UngroupFiguresOp | SetRefOp | ClearRefOp | ClearNoiseOp | SetNoiseReasonOp | StartBodyOp | SetNumberOp | SetHeadingOp | ReorderPairOp
     | ReorderUnwrappedOp | SetIndentsOp,
     Field(discriminator="type"),
 ]
@@ -933,7 +946,7 @@ async def _plan_clear_noise(session: AsyncSession, extraction_id: ExtractionId, 
     return _clear_marks(unit for unit in units if unit.noise_kind is not None)
 
 
-def _clear_marks(units: Iterable[Unit]) -> _Change:
+def _clear_marks(units: Iterable[Unit | Row[Any]]) -> _Change:
     """잡음 표시를 비우는 변경 — 적은 사유도 함께 비운다."""
     marked = list(units)
     return _Change(
@@ -969,6 +982,98 @@ async def _plan_set_noise_reason(session: AsyncSession, extraction_id: Extractio
     return _Change(
         noise_reasons={unit.id: (unit.noise_reason, op.reason) for unit in units if unit.noise_reason != op.reason}
     )
+
+
+@dataclass(frozen=True)
+class _BodyLines:
+    """여기부터 본문이 보는 문서의 줄 — 묶이지 않은 활성 단위(원문 순)와 그 판정 줄, 묶음 구성원."""
+
+    units: list[Row[Any]]
+    lines: list[NoiseLine]
+    members: dict[int, list[Row[Any]]]
+
+
+async def _load_body_lines(session: AsyncSession, extraction_id: ExtractionId) -> _BodyLines:
+    """앞부분 표시는 떼고 읽는다 — 사람이 본문 시작을 뒤로 옮긴 뒤에도 1장의 자리(반쪽의 경계)를 알게. 목차 · 개정 이력은 그대로."""
+    rows = (
+        await session.execute(
+            select(
+                Unit.id, Unit.kind, Unit.text, Unit.lang, Unit.table_id, Unit.group_unit_id, Unit.noise_kind,
+                Unit.noise_reason, Unit.number_read, Unit.number_set, SourceBlock.part, SourceBlock.heading_level,
+                SourceTable.signals,
+            )
+            # 단위 자리(pos_seq)의 블록이 그 단위의 부분이다
+            .join(SourceBlock, (SourceBlock.extraction_id == Unit.extraction_id) & (SourceBlock.seq == Unit.pos_seq))
+            .outerjoin(SourceTable, SourceTable.id == Unit.table_id)
+            .where(Unit.extraction_id == extraction_id, Unit.status == UNIT_ACTIVE)
+            .order_by(Unit.pos_seq, Unit.pos_start, Unit.id)
+        )
+    ).all()
+    members: dict[int, list[Row[Any]]] = defaultdict(list)
+    for row in rows:
+        if row.group_unit_id is not None:
+            members[row.group_unit_id].append(row)
+    units = [row for row in rows if row.group_unit_id is None]
+    lines = []
+    for row in units:
+        is_band = is_band_heading(row.kind, row.table_id)
+        lines.append(NoiseLine(
+            kind=row.kind, text=row.text,
+            langs=frozenset().union(*(get_noise_langs(item.lang, item.text) for item in [row, *members[row.id]])),
+            number=get_number(row), level=read_band_level(row.signals) if is_band else row.heading_level,
+            is_body=row.part == BODY_PART, is_flow=row.table_id is None or is_band,
+            noise=None if row.noise_kind == NOISE_FRONT else row.noise_kind,
+        ))
+    return _BodyLines(units, lines, members)
+
+
+async def _plan_start_body(
+    session: AsyncSession, document_id: int, extraction_id: ExtractionId, op: StartBodyOp
+) -> _Change:
+    """그 줄을 본문의 첫 줄로 — 보통 본문 줄이 아니면(삭제된 줄 · 묶인 칸 · 본문 밖) 422 invalid_body_start.
+
+    앞은 문서 처음부터, 둘째 반쪽이면 그 줄 바로 앞에 이어진 같은 언어 · 중립 줄까지를 앞부분으로 표시한다. 뒤는 끊김 없이 이어진 앞부분
+    표시만 비운다(사이의 목차 · 개정 이력은 건너뛰고, 첫 반쪽이면 둘째 반쪽의 앞부분에 닿지 않는다). 판단이 걸린 줄이 끼어 있으면
+    쓰기 길(_write_change)이 409 unit_has_decision으로 막는다.
+    """
+    await load_active_units(session, extraction_id, [op.unit_id])
+    body = await _load_body_lines(session, extraction_id)
+    units, lines = body.units, body.lines
+    at = next((index for index, unit in enumerate(units) if unit.id == op.unit_id), None)
+    if at is None or units[at].noise_kind is not None or not lines[at].is_body:
+        raise_rule(422, "invalid_body_start", unit_id=op.unit_id)
+    document = await session.get_one(Document, document_id)
+    starts = find_body_starts(lines, separate=document.language_layout == SEPARATE_LAYOUT)
+    second = starts[1] if len(starts) > 1 else None
+    # 둘째 반쪽의 앞부분이 시작하는 자리 — 첫 반쪽의 일은 여기에 닿지 않는다
+    half = len(lines) if second is None else find_half_front(lines, second, lines[second].langs)
+    own = lines[at].langs
+    if second is not None and at >= second:
+        begin = max(half, find_half_front(lines, at, lines[second].langs, crosses_numbers=True))
+        end = len(lines)
+    elif (
+        document.language_layout == SEPARATE_LAYOUT and starts and at > starts[0] and own
+        and not own & lines[starts[0]].langs
+    ):
+        begin, end = find_half_front(lines, at, own), len(lines)
+    else:
+        begin, end = 0, half
+    marks = [index for index in range(begin, at) if lines[index].is_body and units[index].noise_kind is None]
+    clears = []
+    for index in range(at + 1, end):
+        if not lines[index].is_body:
+            continue
+        if units[index].noise_kind is None:
+            break
+        if units[index].noise_kind == NOISE_FRONT:
+            clears.append(index)
+
+    def list_with_members(indexes: Iterable[int]) -> list[Row[Any]]:
+        return [item for index in indexes for item in (units[index], *body.members[units[index].id])]
+
+    change = _clear_marks(list_with_members(clears))
+    change.noises.update({item.id: (item.noise_kind, NOISE_FRONT) for item in list_with_members(marks)})
+    return change
 
 
 async def _plan_set_heading(
@@ -1908,6 +2013,8 @@ async def _plan(session: AsyncSession, document_id: int, extraction_id: Extracti
             return await _plan_clear_noise(session, extraction_id, op)
         case SetNoiseReasonOp():
             return await _plan_set_noise_reason(session, extraction_id, op)
+        case StartBodyOp():
+            return await _plan_start_body(session, document_id, extraction_id, op)
         case SetHeadingOp():
             return await _plan_set_heading(session, document_id, extraction_id, op)
         case ReorderPairOp():

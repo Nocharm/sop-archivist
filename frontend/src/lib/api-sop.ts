@@ -542,6 +542,8 @@ export type EditOp =
   | { type: "clear_noise"; unit_ids: number[] }
   /** 저절로 삭제된 줄의 사유 쓰기 - 빈 글이면 정한 문구로. 보통 줄이 섞이면 422 not_a_noise_line. 묶음은 구성원까지 */
   | { type: "set_noise_reason"; unit_ids: number[]; reason: string }
+  /** 여기부터 본문 - 그 줄 앞의 보통 줄을 본문 앞부분으로, 뒤로 이어진 앞부분 표시는 비운다(되돌리기 한 번). 보통 본문 줄이 아니면 422 invalid_body_start, 정한 줄이 끼면 409 unit_has_decision */
+  | { type: "start_body"; unit_id: number }
   /** 제목 ↔ 문장(F8b) - heading이 거짓이면 제목을 문장마다 나눠 바꾼 표시를 단다(번역 조항은 앞 조항의 번호를 물려받는다).
    *  참이면 바꾼 문장은 그 조항 줄 전체가 제목 하나로 돌아가고, 보통 문장은 그 문장이 제목이 된다. 한/영 짝은 새 단위로 다시 선다 */
   | { type: "set_heading"; unit_ids: number[]; heading: boolean }
