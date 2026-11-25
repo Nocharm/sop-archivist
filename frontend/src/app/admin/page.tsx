@@ -129,7 +129,7 @@ function AdminContent() {
         {/* 사용자를 바꾸거나 탭을 옮기면 패널을 새로 마운트해 이전 사용자의 데이터·오류가 남지 않게 한다 */}
         <div
           key={`${me.login_id}:${activeTab.key}:${activeTab.key === "access" ? sub : ""}`}
-          className="fade-in min-w-0 px-6 py-5"
+          className="adm-scope fade-in min-w-0 px-6 py-5"
           role="tabpanel"
           data-testid={`admin-panel-${activeTab.key}`}
         >
