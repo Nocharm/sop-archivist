@@ -82,6 +82,7 @@ import { useAssignFocus } from "@/lib/use-assign-focus";
 import { useDelayedFlag } from "@/lib/use-delayed-flag";
 import { useCutLine } from "@/lib/use-cut-line";
 import { pickSheetAnchor, pickSpaceSheet } from "@/lib/space-preview-model";
+import { buildAssignProgress } from "@/lib/progress-model";
 import { countRefLookups, isRefPending, pickRefUnit } from "@/lib/ref-model";
 import { isDeletedUnit } from "@/lib/deleted-fold-model";
 import { buildNavKeys, buildNoiseBlock, describeNoiseUnit, findNoiseBlock, listNoiseBlocks, readTocNavKey, readUnitNavKey, toTocNavKey, toUnitNavKey } from "@/lib/toc-block-model";
@@ -252,11 +253,6 @@ const NO_RELOAD_KEYS = { tobe: 0, written: 0, identical: 0, split: 0 };
 const NO_SUGGESTIONS: Promise<AiSuggestion[]> = Promise.resolve([]);
 
 const NO_TRANSLATIONS: Promise<OpenTranslation[]> = Promise.resolve([]);
-
-/** 끝낸 Old 줄 수 - 확정만 센다(보류는 아직 끝나지 않았다) */
-function countDone(rows: ClassifyRow[]): number {
-  return rows.filter((row) => row.status === "confirmed").length;
-}
 
 /** 처리 중인 일 → 용지의 알약 · 쉬머 · 잠금(설계 2026-11-20 D4). 판단 저장은 빛만 지나가고 잠그지 않으며(A1-R2 · R4), 묶음 전체 일은 알약이 없다 */
 function buildPaperPending(pending: readonly Pending[], queue: CommandQueueState, t: (key: string) => string): PaperPending {
@@ -1586,8 +1582,8 @@ export function useAssignPage() {
   const docDashboard = useMemo(() => {
     if (dashDocId === null || isSolo) return null;
     const codes = new Map<number, string>([...written.map((item): [number, string] => [item.target_doc_id, item.doc_code]), ...(tobeData?.docs ?? []).map((doc): [number, string] => [doc.id, doc.code])]);
-    return buildDocDashboard(rows, dashDocId, unitMap, (id) => codes.get(id) ?? "");
-  }, [dashDocId, isSolo, rows, unitMap, written, tobeData]);
+    return buildDocDashboard(rows, dashDocId, unitMap, (id) => codes.get(id) ?? "", [...(suggestions.data ?? []), ...(matchSuggestions.data ?? [])]);
+  }, [dashDocId, isSolo, rows, unitMap, written, tobeData, suggestions.data, matchSuggestions.data]);
   // 그 줄의 번호에 대한 EQUIS 표시와 새 문장에 쓸 제안 - 참조 카드와 결정 칸의 새 문장이 같은 답을 쓴다. 조회가 도는 동안은 조금 뒤 다시 읽는다
   const rowRefMark = rowRefUnit?.ref ?? null;
   // 묶음 · 후보와 같다 - 처리 중인 일이 그 Unit을 은퇴시켰을 수 있는 동안과 그 문서를 다시 받는 동안은 묻지 않는다(404)
@@ -4339,7 +4335,7 @@ export function useAssignPage() {
 
   // 누른 추천의 자리로 New 칸을 옮긴 뒤 - 그 자리가 그려지면(다른 문서·엮은 문서는 받아 온 뒤) 보이게 하고 번쩍인다. 다른 줄을 고르면 버린다
   const [revealPick, setRevealPick] = useState<{ destination: Destination; rowKey: string | null } | null>(null);
-  const done = countDone(rows);
+  const progress = buildAssignProgress(rows, unitMap);
 
   function renderPlaceLabel(dest: Destination): { title: string; text: string } {
     const option = labelOptions.find((item) => getDestinationId(item.destination) === getDestinationId(dest));
@@ -4398,7 +4394,7 @@ export function useAssignPage() {
     runSave, runClear, runUndoStep, confirmIdenticalAll, acceptAll, markNew, placeManage, pickDestination, pickNewSentence, handleNewPick, unlinkCell,
     handleJoinPick, readJoinAfter, pickJoinMenu, pickPlaceSpot, pickOwnAiLine, jumpToNew, openNewDoc, showInNew, jumpToOld,
     pickTemplateLine, fillTemplateMissing, isTemplateDrag, isOldDrag, finishPairPick, handleOldClick, handlePrimary, startEdit,
-    pickRecommendation, handleFramePress, primaryPlan, markRecHover, revealPick, setRevealPick, done, renderPlaceLabel, listDestinationEls,
+    pickRecommendation, handleFramePress, primaryPlan, markRecHover, revealPick, setRevealPick, progress, renderPlaceLabel, listDestinationEls,
     canClear, isRowDeleted, error, figureTab, composedCut, setComposedCutAt, handleComposedDoubleClick, dragComposedCut, splitComposedAtCut, planComposedGap, joinComposed,
   };
 }

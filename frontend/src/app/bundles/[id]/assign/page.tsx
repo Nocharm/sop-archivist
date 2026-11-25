@@ -86,7 +86,7 @@ export default function AssignPage() {
     runCtx, revertHeadings, planOldJoin, joinOld, renderOldActions, runSave, runClear, confirmIdenticalAll, acceptAll, pickDestination,
     pickNewSentence, handleNewPick, handleJoinPick, readJoinAfter, pickJoinMenu, handleFramePress, pickPlaceSpot, pickOwnAiLine, jumpToNew, openNewDoc,
     showInNew, jumpToOld, pickTemplateLine, fillTemplateMissing, isOldDrag, finishPairPick, handleOldClick, markRecHover, revealPick,
-    setRevealPick, done, renderPlaceLabel, listDestinationEls, error,
+    setRevealPick, progress, renderPlaceLabel, listDestinationEls, error,
   } = state;
 
 
@@ -549,7 +549,7 @@ export default function AssignPage() {
                       docLabel={oldView.document.doc_code || oldView.document.file_name}
                       docTitle={oldView.document.title}
                       stats={docDashboard}
-                      bundleLine={{ done, total: rows.length, refs: refPendingIds.length, captions: captionPendingKeys.length }}
+                      bundleLine={{ ...progress, refs: refPendingIds.length, captions: captionPendingKeys.length }}
                       onOpenDoc={openNewDoc}
                       isDocOpen={isNewDocOpen}
                     />

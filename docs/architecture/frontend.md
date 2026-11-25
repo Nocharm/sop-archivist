@@ -26,6 +26,7 @@ SOP 화면: `api-sop.ts`(SOP API 호출·응답 타입), 화면 규칙은 순수
   - 새 문장 칸 단위로 AI 나눔·합침 보존, 이미 쓴 문서 문장에 잇는 `link`는 닫힌 관계 묶음 전체를 보낸다.
   - 단 한/영 짝 줄을 한 언어만 이을 때 판단 없는 다른 언어 Unit은 확정 저장에서 빼고(`listLinkLeftovers` — 실으면 서버가 422 `hold_required`) 남는 단위를 같은 저장의 `release_unit_ids`로 보낸다 — 짝은 서버가 그 저장 안에서 풀고(`pair_settle`) 화면은 응답의 `pairs_dissolved`로 줄을 나눈다.
   - 줄은 서버 진행 숫자·검토 조건과 같은 규칙이다(`buildRows`, `backend/CLAUDE.md` 줄 기준 숫자).
+  - 진행 숫자는 `lib/progress-model.ts` 하나다(개요 · 목록 · Assign 위쪽 · 문서 대시보드) — 정한 줄을 처분별 칸(`listProgressParts`, 색 `PROGRESS_PART_FILL`)으로 가르고 그림 줄(`isFigureRow`)은 따로 센다. 상태 칩의 수는 거르는 줄 수라 그림을 센다. AI 제안 대기는 `ai-suggestion-model.countWaitingSuggestions`(서버 `tidy.py`와 같은 규칙).
 - `assign-model`(묶음 합치기·함께 확정·New 짝 함께 고르기 `addPartnerTargets`·추천 섞기·추천 고른 표시(짝 포함 비교)·이음 선·그 자리 메뉴 항목·확대/폭 범위).
 - `match-model`(같은 글자 일괄 확정 나누기).
 - `slot-status-model`(SOP 칸의 여섯 상태 · 요약 · N/A 사유 편집기 하나).
