@@ -492,6 +492,46 @@ describe("contents (TOC) lines", () => {
 
     expect(actions.some((action) => action === "split" || action.startsWith("merge_"))).toBe(false);
   });
+
+  it("locks table, caption, figure and heading items on a deleted line", () => {
+    const locked = { enabled: false, reasonKey: "assign.ctx.why.tocLine" };
+    const table = makeUnit(2, { kind: "table", lang: "neutral", table_id: 7, noise_kind: "front" });
+    const figure = makeUnit(5, { kind: "figure", lang: "neutral", noise_kind: "front" });
+    const caption = makeUnit(6, { kind: "caption", group_unit_id: 5, noise_kind: "front" });
+    const front = makeUnit(2, { noise_kind: "front" });
+
+    expect(find(ctx({ target: table, table }), "table_layout")).toMatchObject(locked);
+    expect(find(ctx({ target: table, table }), "caption_attach_prev")).toMatchObject(locked);
+    expect(find(ctx({ target: figure }), "caption_attach_next")).toMatchObject(locked);
+    expect(find(ctx({ target: caption, captionBundle: figure }), "caption_detach")).toMatchObject(locked);
+    expect(find(ctx({ captionHolders: [{ bundle: figure, distance: 1, side: "above" }] }), "caption_of")).toMatchObject(locked);
+    expect(find(ctx({ target: front }), "pair_pick")).toMatchObject(locked);
+    expect(getPairPickBlocker(front, ctx())).toBe("assign.ctx.why.tocLine");
+    expect(find(ctx({ next: makeUnit(3, { lang: "en", noise_kind: "front" }) }), "pair_next")).toMatchObject({ enabled: false, reasonKey: "split.noMergeToc" });
+    for (const target of [makeUnit(2, { kind: "heading", noise_kind: "history" }), front]) {
+      expect(buildAssignMenu(ctx({ target, canStartBody: true })).edit.some((item) => ["to_heading", "to_sentence", "start_body"].includes(item.action))).toBe(false);
+    }
+  });
+});
+
+describe("Body starts here", () => {
+  const has = (over: Partial<AssignMenuContext>) => buildAssignMenu(ctx({ canStartBody: true, ...over })).edit.some((item) => item.action === "start_body");
+
+  it("offers Body starts here on a body line only", () => {
+    expect(buildAssignMenu(ctx({ canStartBody: true })).edit.at(-1)).toEqual({ action: "start_body", enabled: true });
+    expect(has({ target: makeUnit(2, { kind: "heading" }) })).toBe(true);
+    expect(has({ target: makeUnit(2, { kind: "heading", table_id: 7 }) })).toBe(true); // 띠 표 제목 줄
+    expect(has({ canStartBody: false })).toBe(false); // New 문서 · 머리말
+    expect(has({ target: makeUnit(2, { noise_kind: "front" }) })).toBe(false);
+    expect(has({ target: makeUnit(2, { kind: "cell_sentence", table_id: 7 }) })).toBe(false); // 벗긴 표의 줄
+    expect(has({ target: makeUnit(2, { kind: "cell_sentence", table_id: 7, group_unit_id: 9 }) })).toBe(false);
+    expect(has({ target: makeUnit(2, { kind: "caption", group_unit_id: 9 }) })).toBe(false);
+  });
+
+  it("stays on for a decided or unsaved line - its own judgment is not touched", () => {
+    expect(find(ctx({ canStartBody: true, isDecided: () => true, hasDraft: () => true }), "start_body").enabled).toBe(true);
+    expect(find(ctx({ canStartBody: true, readOnly: true }), "start_body")).toMatchObject({ enabled: false, reasonKey: "assign.ctx.why.readOnly" });
+  });
 });
 
 

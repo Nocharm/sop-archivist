@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 from openpyxl import load_workbook
 from openpyxl.worksheet.worksheet import Worksheet
 
+from app.sop.models import Unit
 from app.sop.numbering import LevelRow, build_row_levels, build_section_numbers
 from app.sop.paragraph_excel import (
     FIGURE_MARKER,
@@ -20,8 +21,9 @@ from app.sop.paragraph_excel import (
     make_sheet_name,
 )
 from app.sop.sheet_model import Sheet
+from tests.access_helpers import update_row
 from tests.docx_factory import TINY_PNG, build_docx, make_drawing_run, make_list, numbered, p, tbl
-from tests.sop_helpers import OUTSIDER, create_bundle, find_unit, get_group_by_unit, get_view, save_group, upload
+from tests.sop_helpers import AUTHOR, OUTSIDER, create_bundle, find_unit, get_group_by_unit, get_view, save_group, upload
 
 pytestmark = pytest.mark.usefixtures("legacy_split_rule")
 
@@ -384,3 +386,52 @@ def test_an_unwrapped_table_inside_an_unwrapped_cell_keeps_the_outer_cell_number
         ["5.", "조제 탱크 운전"], ["1", "밸브를 연다."], ["1", "밸브를 닫는다."], ["1", "압력을 본다."], ["1", "온도를 본다."],
         ["2", "펌프를 켠다."], ["5.", "조제가 끝나면 기록을 남긴다."],
     ]
+
+
+def _mark(view: dict, kind: str, *texts: str, reason: str = "") -> None:
+    for text in texts:
+        update_row(Unit, find_unit(view, text)["id"], noise_kind=kind, noise_reason=reason)
+
+
+@pytest.mark.parametrize("side", ["old", "new"])
+def test_front_lines_are_struck_with_their_reason(client: TestClient, side: str) -> None:
+    # 저절로 삭제된 줄은 확정 삭제한 줄처럼 — Text는 번호까지 원문 그대로, 번호 · Lang 칸은 비고 미리 보기는 숨긴다
+    bundle_id = create_bundle(client, title="Paragraphs", is_synthetic=True)["id"]
+    body = p("합성 표준 절차서") + p("0.1 합성 결재") + tbl([["작성", "검토"], ["서명", "날짜"]]) + p("1. 본문 문장이다.") + p("9. 개정 이력")
+    uploaded = upload(client, bundle_id, build_docx(body), f"SYNTHETIC_{side}_Front.docx", side=side, doc_type="sop" if side == "new" else None)
+    assert uploaded.status_code == 201, uploaded.text
+    doc_id = uploaded.json()["id"]
+    view = get_view(client, bundle_id, doc_id)
+    _mark(view, "front", "합성 표준 절차서", "작성", "검토", "서명", "날짜")
+    _mark(view, "front", "0.1 합성 결재", reason="1장 앞이라 삭제")
+    _mark(view, "history", "9. 개정 이력")
+    table_id = next(unit["id"] for unit in view["units"] if unit["kind"] == "table")
+    update_row(Unit, table_id, noise_kind="front")
+
+    rows = _values(_read(client.get(f"/api/bundles/{bundle_id}/documents/{doc_id}/paragraphs.xlsx", headers=AUTHOR))[0])
+    preview = client.get(f"/api/bundles/{bundle_id}/documents/{doc_id}/paragraphs/preview", headers=AUTHOR).json()
+
+    assert rows[1:] == [
+        ["", "합성 표준 절차서", "", "", "Deleted — Before chapter 1"],
+        ["", "0.1 합성 결재", "", "", "Deleted — 1장 앞이라 삭제"],
+        ["", "작성 | 검토", "", "", "Deleted — Before chapter 1"],
+        ["", "서명 | 날짜", "", "", "Deleted"],
+        ["1.", "본문 문장이다.", "KO", "Read from text", ""],
+        ["", "9. 개정 이력", "", "", "Deleted — Change history"],
+    ]
+    assert [[cell["text"] for cell in row["cells"]] for row in preview["rows"]] == rows
+    assert [row["deleted"] for row in preview["rows"][1:]] == [True] * 4 + [False, True]
+    assert [row["cells"][1]["strike"] for row in preview["rows"][1:]] == [True] * 4 + [False, True]
+    assert preview["rows"][3]["unit_id"] == table_id
+
+
+def test_contents_lines_in_the_paragraph_excel_are_unchanged(client: TestClient) -> None:
+    # 목차 줄은 아직 보통 줄처럼 나온다(옛 문서 목차 체크는 뒤 브랜치)
+    bundle_id, doc_id = _setup(client)
+    view = get_view(client, bundle_id, doc_id)
+    before = _values(_read(client.get(f"/api/bundles/{bundle_id}/documents/{doc_id}/paragraphs.xlsx", headers=MEMBER))[0])
+    _mark(view, "toc", "이 절차는 합성 장비의 사용법을 정한다.", reason="합성 사유")
+
+    after = _values(_read(client.get(f"/api/bundles/{bundle_id}/documents/{doc_id}/paragraphs.xlsx", headers=MEMBER))[0])
+
+    assert after == before

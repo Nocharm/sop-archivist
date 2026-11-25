@@ -168,7 +168,7 @@ export function OutputARowView({ line, index, destKindLabel, changeLabel, status
         )}
       </td>
       <td>
-        {/* 목차 줄은 판단 상태가 없다 - 저절로 지운 줄이라 칩 대신 글(상태 표기는 화면 언어와 상관없이 영어) */}
+        {/* 저절로 삭제된 줄은 판단 상태가 없다 - 칩 대신 글(상태 표기는 화면 언어와 상관없이 영어) */}
         {row.noise_kind ? (
           <span className="text-xs text-ink-3" data-testid={`output-a-toc-${index}`}>
             {t("outputs.tocStatus")}

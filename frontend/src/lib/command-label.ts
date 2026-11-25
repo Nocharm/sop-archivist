@@ -22,6 +22,8 @@ const EDIT_LABEL_KEYS: Record<EditOp["type"], string> = {
   group_figures: "assign.step.group_figures",
   ungroup_figures: "assign.step.ungroup_figures",
   clear_noise: "assign.step.clear_noise",
+  set_noise_reason: "assign.step.set_noise_reason",
+  start_body: "assign.step.start_body",
   reorder_pair: "assign.step.reorder_pair",
   reorder_unwrapped: "assign.step.reorder_unwrapped",
 };

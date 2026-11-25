@@ -1356,8 +1356,8 @@
   .fold-elsewhere { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 6px; }
   .fold-elsewhere-label { width: 100%; color: var(--ink-3); font-size: var(--fs-micro); }
 
-  /* 목차 블록(Assign Old, MD 1 F6) - 배정 줄이 아닌 흐린 블록 하나. 접히면 머리 줄 + 처리 줄, 펼치면 원문 목차 줄 그대로(한/영 사이 점선 하나).
-     글은 --ink-3(라이트 약 5.6:1)로 물러나고 올리거나 고른 줄만 진해진다. 줄 끝 "목차 아님"은 고른 줄에만 */
+  /* 저절로 삭제된 줄의 블록(Assign Old, MD 1 F6 · 쪼개기 먼저 §7 R3) - 배정 줄이 아닌 흐린 블록 하나. 머리 한 줄과 늘 보이는 두 단추, 펼치면 원문 줄 그대로(취소선, 한/영 사이 점선 하나).
+     글은 --ink-3(라이트 약 5.6:1)로 물러나고 올리거나 고른 줄만 진해진다 */
   .toc-block { flex: 1 1 0; min-width: 0; margin-block: 2px; padding: 6px 10px; border: 1px dashed var(--line-2); border-radius: var(--r-1); background: var(--sunken); color: var(--ink-3); }
   .toc-block[data-sel] { border-style: solid; border-color: var(--accent); }
   .toc-head-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
@@ -1367,7 +1367,6 @@
   .toc-block[data-open] .toc-chevron { transform: rotate(90deg); }
   .toc-tag { flex: none; padding: 0 5px; border: 1px solid var(--line-2); border-radius: var(--r-1); font-size: var(--fs-micro); font-weight: 600; }
   .toc-head-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .toc-note { margin: 2px 0 0 19px; font-size: var(--fs-micro); }
   .toc-act { flex: none; height: 22px; padding: 0 8px; font-size: 11.5px; }
   /* 제목 → 문장 묶음 머리(F8b) - 바꾼 조항 짝의 첫 줄 위 한 줄. 목차 머리와 같은 흐린 꼬리표, 되돌리기는 줄 끝 */
   .shift-head { display: flex; align-items: center; gap: 6px; min-width: 0; margin: 4px 0 2px; color: var(--ink-3); font-size: 12px; }
@@ -1390,6 +1389,17 @@
   .toc-line[data-break] { margin-top: 4px; padding-top: 4px; border-top: 1px dashed var(--line-2); }
   .toc-line-text { flex: 1 1 0; min-width: 0; padding: 1px 4px; border: 0; border-radius: var(--r-1); background: none; color: var(--ink-3); font: inherit; font-size: 12.5px; text-align: left; white-space: pre-wrap; overflow-wrap: anywhere; cursor: pointer; }
   .toc-line-text:hover, .toc-line[data-picked] .toc-line-text { background: var(--hover); color: var(--ink-2); }
+  /* 머리의 글자 단추 둘 - 좁으면 머리 글 아래 줄로 내려가 글을 덮지 않는다. 누르는 면은 높이 26px */
+  .noise-head-row { flex-wrap: wrap; row-gap: 4px; }
+  .noise-head-row > .toc-head { flex: 1 1 180px; min-height: 26px; }
+  .noise-acts { display: inline-flex; flex: none; gap: 4px; margin-left: auto; }
+  .noise-act { flex: none; height: 26px; padding: 0 8px; font-size: 11.5px; }
+  .noise-line-text { text-decoration: line-through; text-decoration-color: color-mix(in oklab, currentColor 55%, transparent); }
+  .noise-line-reason { flex: 0 1 30%; min-width: 0; overflow: hidden; color: var(--ink-3); font-family: var(--font-sans); font-size: var(--fs-micro); text-overflow: ellipsis; white-space: nowrap; }
+  /* 줄 끝 아이콘 단추 둘 - 흐리게 늘 보이고, 라벨이 펼쳐질 폭을 잡아 두어 줄 글을 밀거나 덮지 않는다. 고른 줄은 삭제 취소가 펼친 채 */
+  .noise-line-acts { flex: none; width: 124px; }
+  .noise-line-acts > .mbtn { height: 26px; padding: 0 5px; font-size: 11.5px; opacity: .75; }
+  .noise-line-acts > .mbtn:is(:hover, :focus-visible, .reveal) { opacity: 1; }
 
   /* 접힌 삭제 줄(Assign Old, 설계 2026-11-20 D6) - 목차 블록처럼 흐린 한 줄. DELETED 꼬리표만 반투명 빨강, 나머지는 --ink-3로 물러나고 올리면 진해진다.
      Shift로 고른 줄(data-pick)은 강조색 테두리 */

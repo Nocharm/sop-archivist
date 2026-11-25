@@ -7,8 +7,8 @@ const key = (id: string) => job(id, "key", []);
 
 describe("command queue", () => {
   it("names the barriers", () => {
-    for (const kind of ["join", "split", "unmerge", "unwrap", "rewrap", "pair", "unpair", "lang", "heading", "caption", "figure", "toc", "undo"] as const) expect(isBarrier({ kind, isGlobal: false })).toBe(true);
-    for (const kind of ["save", "bulk", "ref", "order", "reorder", "key"] as const) expect(isBarrier({ kind, isGlobal: false })).toBe(false);
+    for (const kind of ["join", "split", "unmerge", "unwrap", "rewrap", "pair", "unpair", "lang", "heading", "caption", "figure", "undo"] as const) expect(isBarrier({ kind, isGlobal: false })).toBe(true);
+    for (const kind of ["save", "bulk", "ref", "order", "reorder", "toc", "key"] as const) expect(isBarrier({ kind, isGlobal: false })).toBe(false);
     expect(isBarrier({ kind: "bulk", isGlobal: true })).toBe(true); // 모두 받기 · 초기화
   });
 

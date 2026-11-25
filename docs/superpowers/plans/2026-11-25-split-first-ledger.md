@@ -21,7 +21,7 @@
 | 4c | `feat/assign-merge-keys` | 대기 | | | |
 | 4d | `feat/number-cell-buttons` | 합침 | v1.6.7 · 3670d20c | vitest 1969 · build 경고 0 · `assign:` 스모크 전체 통과(5c와 합친 트리) | IME 조합 중 Enter는 전과 같음(범위 밖), 번호 칸 단계 둘은 앞 단계에 기대어 혼자 돌리면 실패(dev에서도 같음) |
 | 5a | `feat/split-rule-2` | 합침 | v1.6.3 · 42e4751b | pytest 3404+시드 통과 · 10 xfail(R3 · R4 몫) · vitest 1934 · build 경고 0 · 스모크 전체 2111 통과 | PDF의 콜론 뒤 줄표 목록은 나누지 않는다(사람이 나눔) |
-| 5b | `feat/split-front-matter` | 진행(11-26) | | | |
+| 5b | `feat/split-front-matter` | 합침 | v1.6.11 · ff0a6718 | pytest 3622+시드 15 · vitest 2167 · build 경고 0 · 스모크 전체 2181(새 단계의 두 번 누름 하나는 단계를 고쳐 통과) | 아래 "아침에 볼 것" |
 | 5c | `feat/split-new-parity` | 합침 | v1.6.6 · d750564c | pytest 3453+시드 14(6 xfail = R3 몫) · vitest 1969 · build 경고 0 · `assign:` 스모크 전체 통과(4d와 합친 트리) | Old 한/영 짝이 New 두 문장에 이어져 하나만 풀린 뒤 다시 하기는 409(있던 것) |
 | 6-1 | `feat/new-paper-1-render` | 대기 | | | |
 | 6-2 | `feat/new-paper-2-pick` | 대기 | | | |
@@ -53,6 +53,12 @@
 - 3b · `frontend/src/lib/assign-focus-model.test.ts` `canStart` 시험 둘 → 판단 저장 중 잠그지 않음 · 둘 다 잡으면 잠김 · `dropFollows` · 큐 규칙(§14 승인)
 - 3c · `smoke/assign.mjs` "keys pressed during a slow save"의 marks · halted · `assign-paper-piece-<id>`의 `data-pending` → `assign-paper-deleted-u<id>`의 `data-pending` · 지운 박스가 누른 순간 접힘
 - 3c · `components/ui/motion.test.ts` · `motion.run(change, opt)` 6곳 → `begin(opt).commit(change)`(기대값 그대로), `lib/deleted-fold-model.test.ts` `OPTIONS`에 `pendingDeletes` · 필수 인자가 생김
+- 5b · `test_sop_ai_translate.py:1827` · `legacy_split_rule` 한 줄 · 1장 앞 문장이 앞부분으로 잠김(명세대로)
+- 5b · `test_sop_outputs.py:1244 · 1261` · 요약 열쇠 12 → 14(`front_deleted` · `history_deleted`) · 필드가 늘어남
+- 5b · `test_sop_split_golden.py` · 범위 G1~G21 → G1~G28, PENDING 비움 · `test_migrations.py` `_UNIT_NUMBER_COLUMNS`에 `noise_reason` · `test_seed_sop_demo.py` 문단 박스 묶음 문서 1 → 2 · 시드에 문서를 더함
+- 5b · `command-queue.test.ts` · "toc"를 장벽 → 장벽 아님 · 계획 5b T7이 3b의 목록을 바꿈
+- 5b · `assign-press-model.test.ts` 쌓는 글쇠에 "r", `toc-block-model.test.ts` 바뀐 이름 · 꼴에 맞춤
+- 5b · `smoke/assign.mjs` 목차 두 단계 · testid `assign-paper-toc-*` → `assign-paper-noise-*`, `assign-toc-*` → `assign-noise-*`, 단계 이름 둘 · 검사 25 → 25
 
 ## 아침에 볼 것 (사람이 정할 것 · 봐 줄 것)
 
@@ -69,3 +75,6 @@
 - 숨긴 칸에 배정된 줄에서 H(보류)를 누르거나 시스템 보류가 되면 다시 확정할 수 없다 — 배정 취소나 잇기로 나간다(설명서에 적음, 1a).
 - 이동한 줄(옛 기능)은 글자 그대로 읽기 전용으로 했다 — 보류 · 잇기 · 삭제로 바로 덮지 못하고 배정 취소부터 해야 한다. 운영의 "보류 + 이동" 줄은 배정 취소해야 검토 조건을 채운다(1b). 바로 덮게 하고 싶으면 말해 주세요.
 - **보류(H) · 배정 취소(U) · 일괄 뒤에는 고름이 그 자리에 머문다**(지금과 같음). A1-R2 글자대로 다음 박스로 옮길지 정한다(3b).
+- **앞부분 · 개정 이력 판정이 명세보다 좁다(5b)** — 거짓 삭제를 막으려 헷갈리면 제외하지 않는다. 놓치는 꼴: 이력 표가 없는 이력, 제목 스타일 표지, 안내 문장 셋 이상 표지, 장이 하나뿐인 문서 등(사람이 여기부터 본문 · 직접 삭제). 값(글 60 · 120자 등)은 합성 자료로 잡았다 — 실제 문서로 다시 정한다.
+- **New는 4-3(`new-paper-3-tools`) 전까지 거짓 제외를 되돌릴 화면이 없다**(블록 · 우클릭은 Old만) — 6-3이 들어가기 전에는 이 묶음을 운영에 올리지 않는 것을 권한다(5b 검토).
+- 삭제 취소(`clear_noise`)를 장벽으로 되돌릴지 — 지금은 응답 전에 누른 글쇠를 알림만 띄우고 버린다(계획 T7 글자대로).

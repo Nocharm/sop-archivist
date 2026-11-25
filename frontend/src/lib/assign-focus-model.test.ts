@@ -289,11 +289,15 @@ describe("readEditKind · listEditUnitIds", () => {
     expect(readEditKind({ type: "set_layout_table", table_id: 4, is_layout: false })).toBe("rewrap");
     expect(readEditKind({ type: "set_number", unit_id: 1, number: null, follow: false })).toBe("ref");
     expect(readEditKind({ type: "clear_noise", unit_ids: [1] })).toBe("toc");
+    expect(readEditKind({ type: "set_noise_reason", unit_ids: [1], reason: "" })).toBe("toc");
+    expect(readEditKind({ type: "start_body", unit_id: 1 })).toBe("toc");
   });
   it("lists the units an edit points at", () => {
     expect(listEditUnitIds({ type: "merge", unit_ids: [1, 2] })).toEqual([1, 2]);
     expect(listEditUnitIds({ type: "move_boundary", left_unit_id: 1, right_unit_id: 2, at: 3 })).toEqual([1, 2]);
     expect(listEditUnitIds({ type: "attach_caption", unit_id: 5, bundle_unit_id: 6 })).toEqual([5, 6]);
+    expect(listEditUnitIds({ type: "set_noise_reason", unit_ids: [7, 8], reason: "x" })).toEqual([7, 8]);
+    expect(listEditUnitIds({ type: "start_body", unit_id: 9 })).toEqual([9]);
     expect(listEditUnitIds({ type: "carve", block_id: 1, start: 0, end: 3 })).toEqual([]);
   });
 });

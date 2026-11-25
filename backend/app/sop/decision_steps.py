@@ -557,6 +557,10 @@ async def _restore_state(
     inactive = sorted(set(await _find_inactive_units(session, restore)) - set(retired))
     if inactive:
         raise_rule(409, "undo_conflict", unit_ids=inactive)
+    # 그 뒤 저절로 삭제된 줄(여기부터 본문 등)이 된 Unit에 판단 · 새 문장 · 짝을 되살리면 배정 줄이 아닌 줄에 판단이 남는다 — 먼저 삭제 취소
+    noise = await _find_noise_units(session, restore)
+    if noise:
+        raise_rule(409, "undo_conflict", unit_ids=noise)
     # 지울 새 문장·짝에 그 뒤 남이 붙인 행(출처·칸 문장·짝 멤버)이 있으면 같이 사라지므로 거절한다
     dependents = _find_unrecorded_dependents(expected, restore, current)
     if dependents is not None:
@@ -682,6 +686,23 @@ async def _find_inactive_units(session: AsyncSession, restore: Snapshot) -> list
         (await session.scalars(select(Unit.id).where(Unit.id.in_(unit_ids), Unit.status == UNIT_ACTIVE))).all()
     )
     return sorted(unit_ids - active)
+
+
+async def _find_noise_units(session: AsyncSession, restore: Snapshot) -> list[int]:
+    """되쓸 쪽이 판단(미배정이 아닌 것) · 출처 · 짝 · 새 문장을 거는 Unit 중 지금 잡음 표시(noise_kind)가 붙은 것."""
+    unit_ids = {
+        int(key) for key, row in restore.get("unit_decisions", {}).items()
+        if row["status"] != UNASSIGNED or row["disposition"] != UNASSIGNED
+    }
+    for name in ("target_sources", "unit_pair_members"):
+        unit_ids.update(row["unit_id"] for row in restore.get(name, {}).values())
+    unit_ids |= _list_new_units(restore)
+    if not unit_ids:
+        return []
+    rows = await select_in_chunks(
+        session, lambda chunk: select(Unit.id).where(Unit.id.in_(chunk), Unit.noise_kind.is_not(None)), unit_ids
+    )
+    return sorted(row[0] for row in rows)
 
 
 def _find_unrecorded_dependents(expected: Snapshot, restore: Snapshot, current: Snapshot) -> list[int] | None:
