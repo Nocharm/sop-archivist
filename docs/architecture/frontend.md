@@ -80,7 +80,7 @@ SOP 화면: `api-sop.ts`(SOP API 호출·응답 타입), 화면 규칙은 순수
 
 ## 9. 관리 화면·API·Markdown 보기
 
-- 관리 화면 `app/admin/page.tsx` + `components/admin/`: 탭·하위 탭은 주소(`?tab=&sub=`)에 두고 옛 `sub=lookup`은 부여로 연다. 부여는 `access-grants.tsx`(목록) + `grant-detail.tsx`(상세, 유효 권한 `effective-permissions.tsx`), 역할 여러 개 더하기는 `add-roles-popover.tsx`.
+- 관리 화면 `app/admin/page.tsx` + `components/admin/`: 탭·하위 탭은 주소(`?tab=&sub=`)에 두고 옛 `sub=lookup`은 부여로 연다. 부여는 `access-grants.tsx`(목록) + `grant-detail.tsx`(상세, 유효 권한 `effective-permissions.tsx`), 역할 여러 개 더하기는 `add-roles-popover.tsx`. 사내 AI로 등록은 `grant-ai-modal.tsx` — 읽기는 `readGrantsWithAi`(아무것도 쓰지 않음), 지금 부여와 맞춘 미리보기·동명이인 고르기·일괄 본문은 순수 모델 `lib/grant-ai-model.ts`, 반영은 `batchGrants`.
 - 규칙은 순수 모델 — `lib/grants-model.ts`(왼쪽 목록), `lib/audit-model.ts`(거르기·날짜 묶음), `lib/batch-jobs.ts`(작업마다 한 줄), `lib/subject-label.ts` + `lib/use-subject-names.ts`(대상 이름을 화면 언어로).
 - 관리 화면만의 CSS는 `styles/admin.css`(`.adm-*`, 표 모양은 관리 본문 `.adm-scope` 안에서만) — 공용 `DataList`·`components.css`를 고치지 않는다.
 - 백엔드에만 있던 묶음 관리·AI 요청·관리 묶음·AI 지침 API는 `lib/api-manage.ts`.

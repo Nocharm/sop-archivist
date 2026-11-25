@@ -1,10 +1,11 @@
 // 관리 > 권한 > 부여 - 왼쪽은 대상 목록(찾기·종류·역할 거르기, 30개씩 이어 그림), 오른쪽은 고른 대상의 받은 것·유효 권한·최근 변경. 부여가 없는 직원과 직원 목록에 없는 로그인 ID도 찾아서 조회한다.
 "use client";
 
-import { Building2, KeyRound, Plus, Search, TriangleAlert } from "lucide-react";
+import { Building2, KeyRound, Plus, Search, Sparkles, TriangleAlert } from "lucide-react";
 import { useRef, useState, type KeyboardEvent } from "react";
 
 import { GrantDetail, getGrantWhatLabel } from "@/components/admin/grant-detail";
+import { GrantAiModal } from "@/components/admin/grant-ai-modal";
 import { GrantFormModal } from "@/components/admin/grant-form-modal";
 import { PanelTitle } from "@/components/admin/panel-title";
 import { InlineNotice } from "@/components/inline-notice";
@@ -16,7 +17,7 @@ import { batchGrants, listAudit, listGrants, listRoles, removeGrant, type Grant,
 import { humanizeApiError, type TFunc } from "@/lib/api-errors";
 import { getSubjectKey, listGrantedSubjects, listSubjects, type GrantSubject, type SubjectFilter } from "@/lib/grants-model";
 import { useI18n } from "@/lib/i18n";
-import { BUTTON_PRIMARY } from "@/lib/ui-classes";
+import { BUTTON_PRIMARY, BUTTON_SECONDARY } from "@/lib/ui-classes";
 import { useLoaded } from "@/lib/use-loaded";
 import { useProgressiveList } from "@/lib/use-progressive-list";
 import { useSubjectDirectory } from "@/lib/use-subject-names";
@@ -53,6 +54,7 @@ export function AccessGrants({ initialRole }: { initialRole: string }) {
   const [isSmooth, setIsSmooth] = useState(false);
   const [version, setVersion] = useState(0);
   const [isFormOpen, setIsFormOpen] = useState(false);
+  const [isAiOpen, setIsAiOpen] = useState(false);
   const [isAddOpen, setIsAddOpen] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [freshIds, setFreshIds] = useState<ReadonlySet<number>>(NO_FRESH);
@@ -172,6 +174,10 @@ export function AccessGrants({ initialRole }: { initialRole: string }) {
           {t("grants.summary", { subjects: allSubjects.length, grants: data.length, roles: roles.data?.length ?? 0 })}
         </span>
         <span className="flex-1" />
+        <button type="button" data-testid="grant-ai-open" className={`${BUTTON_SECONDARY} shrink-0`} onClick={() => setIsAiOpen(true)}>
+          <Sparkles size={16} strokeWidth={1.5} />
+          {t("grants.ai.open")}
+        </button>
         <button type="button" data-testid="grant-create" className={`${BUTTON_PRIMARY} shrink-0`} onClick={() => setIsFormOpen(true)}>
           <Plus size={16} strokeWidth={1.5} />
           {t("grants.create")}
@@ -310,6 +316,17 @@ export function AccessGrants({ initialRole }: { initialRole: string }) {
 
       )}
 
+      {isAiOpen && (
+        <GrantAiModal
+          grants={data}
+          roleNames={new Map((roles.data ?? []).map((role) => [role.id, role.name]))}
+          onClose={() => setIsAiOpen(false)}
+          onSaved={() => {
+            setIsAiOpen(false);
+            reloadAll();
+          }}
+        />
+      )}
       {isFormOpen && (
         <GrantFormModal
           onClose={() => setIsFormOpen(false)}

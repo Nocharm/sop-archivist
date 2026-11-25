@@ -59,6 +59,6 @@ AI_PRIORITY_PRE_CLASSIFY = 2  # 미리 돌리기: 분류
 AI_ADOPTIONS = ("as_is", "edited", "rejected")  # 사람의 결과: 그대로 채택 | 고쳐서 채택 | 버림
 GUIDELINE_KEYS = (
     "rules", "prompt.classify", "prompt.translate", "prompt.split", "prompt.doc_meta", "prompt.tobe_list",
-    "prompt.unwrap_order",
+    "prompt.unwrap_order", "prompt.grant",
 )
 SYSTEM_HOLD_AI_INVALID = "system:ai_invalid_response"  # AI 응답이 규칙을 어겨 보류된 행 — 화면은 "AI 응답 무효"로 보인다

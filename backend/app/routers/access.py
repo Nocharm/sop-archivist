@@ -15,12 +15,21 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.access.audit import add_audit_event
 from app.access.catalog import PERMISSIONS, is_known_permission
+from app.access.grant_ai import (
+    GrantAiIn,
+    GrantAiOut,
+    load_grant_ai_context,
+    read_grant_text,
+    resolve_grant_reply,
+)
 from app.access.deps import require_permission
 from app.access.resolve import get_effective_access
 from app.access.sources import SourceOut, build_source_map, load_subject_names
 from app.clock import KST, now
 from app.db import get_session
 from app.models import AccessAuditEvent, AccessGrant, Role, RolePermission
+from app.settings import settings
+from app.sop.ai.runner import AiCallFailed
 
 # 같은 의존성 객체를 라우터와 엔드포인트(행위자 login_id가 필요한 곳)가 함께 써서 요청당 판정은 한 번만 돈다
 # (FastAPI 의존성 캐시). 라우터 단에도 걸어 두어 새 엔드포인트가 게이트 없이 열리는 일이 없게 한다.
@@ -423,6 +432,29 @@ async def apply_grant_batch(
         ],
         removed=removed, skipped=skipped, unknown=unknown, missing=missing,
     )
+
+
+@router.post("/grants/ai-read", response_model=GrantAiOut)
+async def read_grants_with_ai(
+    body: GrantAiIn,
+    actor: str = Depends(_require_manage),
+    session: AsyncSession = Depends(get_session),
+) -> GrantAiOut:
+    """관리자가 쓴 지시를 사내 AI가 읽어 줄마다 대상·동작·역할로 돌려준다 — 아무것도 쓰지 않고, 반영은 화면이 /grants/batch로 한다."""
+    if not settings.ai_enabled:
+        raise HTTPException(status_code=503, detail="AI is disabled")
+    guideline, roles = await load_grant_ai_context(session)
+    # 권한 판정과 위 읽기가 잡은 연결을 느린 AI 호출 동안 돌려준다 — 아래 대상 맞추기는 새 연결로 다시 연다
+    await session.close()
+    try:
+        reply, model = await read_grant_text(
+            login_id=actor, text=body.text, guideline=guideline, role_names=[role.name for role in roles]
+        )
+    except AiCallFailed as exc:
+        raise HTTPException(status_code=502, detail=f"AI call failed: {exc.code}") from exc
+    if reply is None:
+        raise HTTPException(status_code=502, detail="AI reply was not valid")
+    return GrantAiOut(lines=await resolve_grant_reply(session, reply, roles), model=model)
 
 
 @router.delete("/grants/{grant_id}", status_code=status.HTTP_204_NO_CONTENT)

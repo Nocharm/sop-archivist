@@ -9,7 +9,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 > 상태: **v1.5.0 — 정식 업데이트 2026-11-21**(다음 `dev` 번호는 1.6.0부터, 새 버전 규칙 첫 적용. 운영 배포는 사용자가 GitLab 파이프라인으로 올린 뒤 `CHANGELOG.md`에 날짜를 적는다. 직전 운영 배포는 v1.4.0, 2026-11-20. 운영 :7777, 개발 스택 :4444). 기능 이력은 `CHANGELOG.md`, 지금 진행은 `PROGRESS.md`. **2026-11-20부터 실사용자가 운영에 접속해 실제 데이터가 쌓인다** — 운영 DB는 지울 수 없는 자료다: Alembic 리비전이 기존 행을 지우거나 바꾸면 사용자 승인을 받고 CHANGELOG 배포 메모에 굵게 적으며, 배포 전 백업(`docs/deploy/backup.md`)을 확인한다. AI 층은 합성 SOP·가짜 AI로만 검증했고 유사도 임계값은 합성 자료로 잡은 값이다(실제 자료로 다시 정한다).
 > **서비스 버전**: 단일 소스 `frontend/package.json` `version`(상단 바에 표시). `dev`에 올릴 때마다 번호 하나(운영에 올린 뒤 첫 푸시는 MINOR, 그다음은 PATCH), `dev`→`main` 정식 업데이트는 번호를 올리지 않고 개발에서 본 번호 그대로 `vX.Y.Z` 태그(`rules/common/git.md`). 커밋·푸시는 GitHub에만, 사내 GitLab push·배포는 사용자. 운영 배포일은 CHANGELOG에 적는다.
 > **DB**: 로컬은 sqlite 파일(연결마다 `PRAGMA foreign_keys=ON`), 서버는 postgres. 스키마는 **Alembic**(backend 기동 때 head까지 자동 적용).
-> **원칙**: AI는 제안만 하고 사람이 줄마다 확정한다 — AI가 꺼지거나 실패해도 사람 경로는 돈다. AI 페이로드에 직원 실명을 싣지 않는다(역할·부서만). 공개 저장소라 실서버 IP·사내 호스트명·시크릿은 추적 파일에 넣지 않는다(`<server-ip>` 등).
+> **원칙**: AI는 제안만 하고 사람이 줄마다 확정한다 — AI가 꺼지거나 실패해도 사람 경로는 돈다. AI는 사내 모델로만 부른다(외부 모델·MCP 금지) — 직원 실명·로그인 ID는 그 기능에 필요할 때 실어도 된다(사용자 결정 2026-11-26, 전에는 실명 금지). 공개 저장소라 실서버 IP·사내 호스트명·시크릿은 추적 파일에 넣지 않는다(`<server-ip>` 등).
 
 ## Commands
 

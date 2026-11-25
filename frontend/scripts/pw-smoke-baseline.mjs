@@ -820,6 +820,64 @@ await runStep("admin outline is hidden without the permission", { devUser: "qa.l
 });
 
 // 15) 사용 설명서 - 로그인 전에 받은 조각 링크가 로그인 뒤 같은 조각으로 돌아오고, 읽음 표시가 읽은 양에 잡히며, 상단 바 도움말이 지금 화면을 설명하는 조각을 가리킨다
+// 사내 AI로 부여 등록 - 스모크 서버는 AI가 꺼져 있어 먼저 안내를 보고, 읽기 응답만 흉내 내 미리보기 · 고르기 · 반영을 밟는다(반영은 실제 일괄 저장, 끝에 되돌린다)
+await runStep("grants with AI as qa.lead", { devUser: "qa.lead", allowConsoleErrors: true }, async ({ page, takeShot }) => {
+  const api = (path, init = {}) => page.request.fetch(`${BASE}/api${path}`, { ...init, headers: { "X-Dev-User": "qa.lead", "Content-Type": "application/json" } });
+  const roles = await (await api("/access/roles")).json();
+  const roleId = (name) => roles.find((role) => role.name === name)?.id ?? null;
+  await page.goto(`${BASE}/admin?tab=access&sub=grants`);
+  await wait(page, "grant-ai-open");
+  await findById(page, "grant-ai-open").click();
+  await wait(page, "grant-ai");
+  check("the AI window opens with an empty preview", await page.locator('[data-testid="grant-ai-empty"]').isVisible());
+  check("apply waits for a reading", await page.locator('[data-testid="grant-ai-apply"]').isDisabled());
+  check("read waits for text", await page.locator('[data-testid="grant-ai-read"]').isDisabled());
+  await page.locator('[data-testid="grant-ai-text"]').fill("prod.member Operations");
+  await findById(page, "grant-ai-read").click();
+  await wait(page, "grant-ai-error");
+  check("AI off says to add one by one", (await getText(page, "grant-ai-error")).includes("Add grant"), await getText(page, "grant-ai-error"));
+
+  const user = (id) => ({ subject_type: "user", subject_id: id });
+  await page.route("**/api/access/grants/ai-read", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        model: "fake",
+        lines: [
+          { line: 1, action: "add", subjects: [{ written: "prod.member", matches: [user("prod.member")] }], roles: [{ written: "Operations", role_id: roleId("Operations") }], permissions: [] },
+          { line: 2, action: "add", subjects: [{ written: "ops.member", matches: [user("ops.member")] }], roles: [{ written: "Operations", role_id: roleId("Operations") }], permissions: [] },
+          { line: 3, action: "add", subjects: [{ written: "김민서", matches: [user("qa.member"), user("dev.admin")] }], roles: [{ written: "Permission Admin", role_id: roleId("Permission Admin") }], permissions: [] },
+          { line: 4, action: "add", subjects: [{ written: "홍길동", matches: [] }], roles: [{ written: "Ghost", role_id: null }], permissions: [] },
+        ],
+      }),
+    }),
+  );
+  await findById(page, "grant-ai-read").click();
+  await wait(page, "grant-ai-rows");
+  check("a new grant line counts as new", (await getText(page, "grant-ai-status-0")).includes("New 1"), await getText(page, "grant-ai-status-0"));
+  check("an already held line cannot be checked", (await getText(page, "grant-ai-status-1")).includes("Already held 1") && (await page.locator('[data-testid="grant-ai-check-1"]').isDisabled()), await getText(page, "grant-ai-status-1"));
+  check("two people with one name wait for a pick", (await getText(page, "grant-ai-status-2")).includes("Choose a person"), await getText(page, "grant-ai-status-2"));
+  check("an unknown person and role are lines to check", (await page.locator('[data-testid="grant-ai-row-3"]').getAttribute("data-check")) !== null && (await getText(page, "grant-ai-status-3")).includes("Not in the directory"), await getText(page, "grant-ai-status-3"));
+  check("apply counts only the clear change", (await getText(page, "grant-ai-apply")) === "Apply 1", await getText(page, "grant-ai-apply"));
+  await pickOption(page, "grant-ai-pick-2", "user:dev.admin");
+  check("picking the person adds that line", (await getText(page, "grant-ai-apply")) === "Apply 2", await getText(page, "grant-ai-apply"));
+  await page.locator('[data-testid="grant-ai-check-0"]').locator("..").click();
+  check("unchecking a line leaves it out", (await getText(page, "grant-ai-apply")) === "Apply 1", await getText(page, "grant-ai-apply"));
+  await page.locator('[data-testid="grant-ai-check-0"]').locator("..").click();
+  await takeShot("baseline-grants-ai.png");
+  await findById(page, "grant-ai-apply").click();
+  const doneToast = page.locator(".toast-stack", { hasText: "Added 2" });
+  await doneToast.waitFor({ timeout: T });
+  check("applying reports what changed", (await doneToast.innerText()).includes("revoked 0"), (await doneToast.innerText()).replace(/\s+/g, " "));
+  check("the window closes after applying", await page.locator('[data-testid="grant-ai"]').count() === 0);
+  const grants = await (await api("/access/grants")).json();
+  const made = grants.filter((grant) => (grant.subject_id === "prod.member" && grant.role_name === "Operations") || (grant.subject_id === "dev.admin" && grant.role_name === "Permission Admin"));
+  check("both grants exist on the server", made.length === 2, made.map((grant) => `${grant.subject_id}:${grant.role_name}`).join(","));
+  // 뒤 단계가 보는 부여 · 기록을 처음처럼 둔다
+  await api("/access/grants/batch", { method: "POST", data: { remove: made.map((grant) => grant.id) } });
+});
+
 await runStep("manual", {}, async ({ page, takeShot }) => {
   await page.goto(`${BASE}/manual#account`);
   await wait(page, "login-dev-user-qa.member");
