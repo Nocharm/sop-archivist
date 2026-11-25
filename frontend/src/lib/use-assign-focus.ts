@@ -41,7 +41,7 @@ export function useAssignFocus() {
     dispatch({ type: "clear", what });
   }
 
-  /** 멈췄던 때의 고름으로 */
+  /** 다시 시도가 멈춘 때의 고름을 되살린다 - 사람의 고름이 아니라 그 고름에서 누른 일은 다시 따라간다 */
   function restore(picks: Picks) {
     dispatch({ type: "restore", picks });
   }
@@ -51,7 +51,7 @@ export function useAssignFocus() {
     dispatch({ type: "start", pending, side });
   }
 
-  /** 응답이 왔다 - 고름이 누른 때 그대로면 그 박스를 따라간다(보기를 다시 받은 뒤 고른다). 일은 end까지 처리 중으로 남는다 */
+  /** 응답이 왔다 - 고름이 누른 때 그대로이고 그 사이 사람이 고르지 않았으면 그 박스를 따라간다(보기를 다시 받은 뒤 고른다). 일은 end까지 처리 중으로 남는다 */
   function succeed(pendingId: string, target: FollowTarget) {
     dispatch({ type: "succeed", pendingId, ...target });
   }

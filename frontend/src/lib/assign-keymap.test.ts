@@ -48,6 +48,11 @@ describe("the Assign key table", () => {
     expect([readId("K"), readId("ArrowUp")]).toEqual(["run move_prev", "run move_prev"]);
     expect(readId("Enter")).toBe("run confirm");
   });
+  it("has Shift+J and Shift+K for merging and they are not J/K", () => {
+    expect([readId("J", { shiftKey: true }), readId("K", { shiftKey: true })]).toEqual(["run merge_next", "run merge_prev"]);
+    expect([readId("j"), readId("k")]).toEqual(["run move_next", "run move_prev"]);
+    expect([formatAssignKey("merge_next"), formatAssignKey("merge_prev")]).toEqual(["⇧J", "⇧K"]);
+  });
   it("tells the deleted block from the deleted line by Shift", () => {
     expect([readId("u"), readId("U", { shiftKey: true })]).toEqual(["run clear", "run clear_block"]);
     expect([readId("r"), readId("R", { shiftKey: true })]).toEqual(["run remark", "run remark_block"]);
@@ -113,7 +118,7 @@ describe("what a key does where it is pressed", () => {
     for (const id of ["move_next", "go_pair", "view", "help", "part_next", "escape"] as const) expect(resolveAssignKey(entryOf(id), readOnly), id).toEqual({ run: id });
   });
   it("waits for a box that is still changing, and leaves deleted lines alone", () => {
-    for (const id of ["lang", "shape_mode", "number", "table", "ask_order"] as const) expect(resolveAssignKey(entryOf(id), { ...OPEN, isLocked: true }), id).toEqual({ refuseKey: `${WHY}.busy` });
+    for (const id of ["lang", "shape_mode", "number", "table", "ask_order", "merge_next", "merge_prev"] as const) expect(resolveAssignKey(entryOf(id), { ...OPEN, isLocked: true }), id).toEqual({ refuseKey: `${WHY}.busy` });
     // 들여쓰기는 저장 중인 값에서 이어 센다
     for (const id of ["indent", "outdent"] as const) expect(resolveAssignKey(entryOf(id), { ...OPEN, isLocked: true }), id).toEqual({ run: id });
     for (const id of ["lang", "shape_mode", "number", "table", "ask_order", "indent", "outdent"] as const) {

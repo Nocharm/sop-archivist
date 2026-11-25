@@ -340,7 +340,7 @@ def test_output_a_old_groups_equal_old_rows_and_every_cover_unit_appears_once(cl
     progress = get_bundle(client, fx.bundle_id)["progress"]
 
     old = [r for r in rows if r["row_kind"] in ("unit", "table", "cell") or (r["row_kind"] == "translation" and r["unit_id"])]
-    assert max(r["row_no"] for r in old) == progress["total"]
+    assert max(r["row_no"] for r in old) == progress["total"] + progress["figures_total"]  # 그림은 진행에서 따로 센다
     assert [r["row_no"] for r in rows if r["is_group_start"]] == list(range(1, len({r["row_no"] for r in rows}) + 1))
     cover = Counter(r["display_id"] for r in rows if r["row_kind"] in ("unit", "cell"))
     assert cover[_display(fx.old1, DUPLICATE)] == 2  # 중복 배정은 보낸 곳마다
@@ -809,8 +809,9 @@ def test_output_b_counts_rows(client: TestClient) -> None:
         ("delete", "delete", "Deleted", 5), ("move_external", "move_external", "Moved to another document", 1),
         ("unassigned", "unassigned", "Unassigned", 1),
     ]
-    # 옛 문서 노드 건수의 합은 진행 숫자의 줄 수다
-    assert sum(n["count"] for n in graph["nodes"] if n["kind"] == "old") == get_bundle(client, fx.bundle_id)["progress"]["total"]
+    # 옛 문서 노드 건수의 합은 진행 숫자의 줄 수다(그림은 진행에서 따로 센다)
+    progress = get_bundle(client, fx.bundle_id)["progress"]
+    assert sum(n["count"] for n in graph["nodes"] if n["kind"] == "old") == progress["total"] + progress["figures_total"]
     # lang은 라벨만 바꾼다
     assert [(n["id"], n["count"]) for n in ko["nodes"]] == [(n["id"], n["count"]) for n in graph["nodes"]]
     assert {n["label"] for n in ko["nodes"] if n["kind"] in ("delete", "move_external", "unassigned")} == {
@@ -876,7 +877,8 @@ def test_b_follows_the_row_disposition_of_the_summary(client: TestClient) -> Non
     assert (counts["delete"], counts["move_external"], counts["unassigned"]) == (
         summary["deleted"], summary["moved"], summary["no_destination"],
     ) == (1, 1, 3)
-    assert counts[old] == summary["old_rows"] == get_bundle(client, fx.bundle_id)["progress"]["total"]
+    progress = get_bundle(client, fx.bundle_id)["progress"]
+    assert counts[old] == summary["old_rows"] == progress["total"] + progress["figures_total"]
 
 
 # ── C 새 문서 ────────────────────────────────────────────────────────────────
@@ -1245,9 +1247,12 @@ SUMMARY_KEYS = (
     "old_rows", "assigned", "no_destination", "duplicate", "deleted", "moved", "new", "translated", "confirmed_rate",
     "single_language", "toc_deleted", "front_deleted", "history_deleted", "unwrapped_rows",
 )
-# 줄 기준 — 짝이 없어 단위마다 한 줄이고 표는 칸 넷을 묶어 한 줄이다: OLD-1 10줄(그림 보류·영어 미배정) + OLD-2 5줄.
+# 줄 기준 — 짝이 없어 단위마다 한 줄이고 표는 칸 넷을 묶어 한 줄이다: OLD-1 10줄(그림 보류·영어 미배정) + OLD-2 5줄. 그림 줄은 따로 센다.
 # 한 언어 글은 두 언어 문서(ko_en_separate)의 짝 없는 문장·제목 13개와 보류(처분은 배정)한 그림의 한글 캡션 하나다(번역 새 문장이 없다)
-PROGRESS = {"total": 15, "unassigned": 1, "confirmed": 13, "on_hold": 1, "single_language": 14}
+PROGRESS = {
+    "total": 14, "unassigned": 1, "confirmed": 13, "on_hold": 0, "single_language": 14,
+    "assigned": 7, "deleted": 5, "moved": 1, "figures_total": 1, "figures_decided": 0,
+}
 EMPTY_PROGRESS = dict.fromkeys(PROGRESS, 0)
 
 
@@ -1257,15 +1262,15 @@ def test_summary_numbers(client: TestClient) -> None:
     summary = _get_output(client, fx.bundle_id, "summary")
     progress = get_bundle(client, fx.bundle_id)["progress"]
 
-    # 한 벌 — 판 키가 없다. 줄 15(진행 숫자와 같은 줄), 확정 13(그림 보류·영어 미배정), 배정은 삭제·이동을 포함한다
+    # 한 벌 — 판 키가 없다. 줄 15(진행 숫자와 같은 줄, 그림 포함), 확정 13(그림 보류·영어 미배정), 배정은 삭제·이동을 포함한다
     assert summary == {
         "old_rows": 15, "assigned": 14, "no_destination": 1, "duplicate": 1, "deleted": 5, "moved": 1, "new": 1,
         "translated": 0, "confirmed_rate": 0.8667, "single_language": 14, "toc_deleted": 0,
         "front_deleted": 0, "history_deleted": 0, "unwrapped_rows": 0,
     }
     assert set(summary) == set(SUMMARY_KEYS)
-    assert summary["old_rows"] == progress["total"]
-    assert round(summary["confirmed_rate"] * summary["old_rows"]) == progress["confirmed"]
+    assert summary["old_rows"] == progress["total"] + progress["figures_total"]
+    assert round(summary["confirmed_rate"] * summary["old_rows"]) == progress["confirmed"] + progress["figures_decided"]
     assert summary["single_language"] == progress["single_language"]
     c, a = _get_output(client, fx.bundle_id, "outputs/c"), _get_output(client, fx.bundle_id, "outputs/a")
     assert (summary["duplicate"], summary["moved"], summary["new"]) == (1, 1, 1)
@@ -1363,6 +1368,7 @@ def test_progress_in_list_and_overview(client: TestClient) -> None:
     assert get_bundle(client, fx.bundle_id)["progress"] == PROGRESS
     assert get_bundle(client, empty)["progress"] == EMPTY_PROGRESS
     assert PROGRESS["total"] == sum(PROGRESS[status] for status in ("unassigned", "confirmed", "on_hold"))
+    assert PROGRESS["confirmed"] == sum(PROGRESS[part] for part in ("assigned", "deleted", "moved"))
 
 
 def test_output_c_item_counts_the_old_units_it_came_from(client: TestClient) -> None:

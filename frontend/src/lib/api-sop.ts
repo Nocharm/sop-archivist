@@ -14,10 +14,25 @@ export type MemberRole = "author" | "reviewer";
 export interface RowProgress {
   total: number;
   unassigned: number;
+  /** 정한 줄 - assigned + deleted + moved */
   confirmed: number;
   on_hold: number;
+  assigned: number;
+  deleted: number;
+  /** 다른 문서로 이동 - 화면에서 뺀 기능이라 옛 기록뿐이다 */
+  moved: number;
+  /** 그림 줄 - 위의 모든 숫자에서 빠지고 여기서만 센다(F3-R3) */
+  figures_total: number;
+  figures_decided: number;
   /** 한 언어만 있는 줄 - 보조 표시, 검토 요청 조건이 아니다 */
   single_language: number;
+}
+
+/** 개요의 남은 손질과 AI 제안 대기 - Assign 위쪽 줄의 표시와 같은 규칙을 묶음 전체로 센다 */
+export interface TidyCounts {
+  refs: number;
+  captions: number;
+  ai_waiting: number;
 }
 
 export interface BundleListItem {
@@ -81,6 +96,7 @@ export interface Bundle {
   my_role: MemberRole | null;
   members: BundleMember[];
   progress: RowProgress;
+  tidy: TidyCounts;
   next_action: NextAction;
   ai_jobs: AiJobCounts;
 }
@@ -89,6 +105,8 @@ export interface Bundle {
 export interface ReadinessIssue {
   code: string;
   count?: number;
+  /** 막는 줄 가운데 그림 - units_*에만, 그림이 있을 때만 */
+  figures?: number;
   missing?: string[];
   [key: string]: unknown;
 }
@@ -1611,10 +1629,22 @@ export function downloadExport(bundleId: number): Promise<{ blob: Blob; fileName
   return apiFetchBlobWithName(`/bundles/${bundleId}/export.xlsx`);
 }
 
-/** 문단 Excel - 쪼갠 단위 한 줄씩 한 열(docId가 null이면 Old 문서 모두, 문서마다 시트). tables=false면 표를 뺀다 */
-export function downloadParagraphs(bundleId: number, docId: number | null, tables: boolean): Promise<{ blob: Blob; fileName: string | null }> {
+/** 문단 Excel 받을 때 넣을 것 넷(서버 ParagraphInclude) - 표 · 삭제한 줄 · 그림 자리 · 옛 문서 목차 */
+export interface ParagraphInclude {
+  tables: boolean;
+  deleted: boolean;
+  figures: boolean;
+  toc: boolean;
+}
+
+/** 처음 값 - 지금 파일에서 옛 문서 목차만 뺀 것 */
+export const DEFAULT_INCLUDE: ParagraphInclude = { tables: true, deleted: true, figures: true, toc: false };
+
+/** 문단 Excel - 쪼갠 단위 한 줄씩 한 열(docId가 null이면 Old 문서 모두, 문서마다 시트). 넣을 것은 include로 고른다 */
+export function downloadParagraphs(bundleId: number, docId: number | null, include: ParagraphInclude): Promise<{ blob: Blob; fileName: string | null }> {
   const path = docId === null ? `/bundles/${bundleId}/old-paragraphs.xlsx` : `/bundles/${bundleId}/documents/${docId}/paragraphs.xlsx`;
-  return apiFetchBlobWithName(`${path}?tables=${tables}`);
+  const query = `tables=${include.tables}&deleted=${include.deleted}&figures=${include.figures}&toc=${include.toc}`;
+  return apiFetchBlobWithName(`${path}?${query}`);
 }
 
 /** 순서 바꾸기 요청 한 줄 - 뺀 값은 그대로 둔다. 깊이·번호 표시는 그 줄에만 붙는다(짝 상대·번역이 따라 바뀌지 않는다) */

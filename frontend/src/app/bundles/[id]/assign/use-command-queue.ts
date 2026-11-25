@@ -128,6 +128,7 @@ export interface CommandEnv {
   pick(next: SidePick): void;
   /** 두 쪽의 고름 - 멈춘 때의 것을 들어 두었다가 다시 시도가 되돌린다 */
   readPicks(): Picks;
+  /** 다시 시도가 멈춘 때의 고름을 되살린다(사람의 고름이 아니다) */
   restore(picks: Picks): void;
   /** 지금 화면에 보이는 판단 revision */
   readSeen(unitIds: readonly number[]): SeenRevisions;

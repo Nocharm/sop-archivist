@@ -42,6 +42,7 @@ from app.sop.review import (
 )
 from app.sop.schemas import NO_NUL, NoNulStr
 from app.sop.snapshot import RowProgress, load_bundle_progress
+from app.sop.tidy import TidyCounts, load_tidy_counts
 
 router = APIRouter(prefix="/api/bundles", tags=["sop-bundles"])
 
@@ -152,6 +153,8 @@ class BundleOut(BundleBase):
     members: list[MemberOut]
     # 개요의 진행 숫자(배정 화면 줄 기준, 상태별 줄 수)
     progress: RowProgress
+    # 남은 손질(참조 · 캡션)과 AI 제안 대기 — 개요에만 싣는다(묶음 목록 · 관리 목록의 질의 수는 그대로)
+    tidy: TidyCounts
     # 사람이 다음에 할 일 하나(검토 요청 조건을 해야 하는 순서로 훑은 것)
     next_action: NextAction
     # AI 작업 상태별 건수
@@ -216,10 +219,11 @@ async def build_bundle_out(
     members = (await load_members(session, [bundle.id]))[bundle.id]
     my_role = next((member.role for member in members if member.login_id == login_id), None)
     progress = (await load_bundle_progress(session, [bundle.id]))[bundle.id]
+    tidy = await load_tidy_counts(session, bundle.id)
     ai_jobs = await load_job_counts(session, bundle.id)
     document_count = await session.scalar(select(func.count(Document.id)).where(Document.bundle_id == bundle.id)) or 0
     return BundleOut(
-        **BundleBase.model_validate(bundle).model_dump(), my_role=my_role, members=members, progress=progress,
+        **BundleBase.model_validate(bundle).model_dump(), my_role=my_role, members=members, progress=progress, tidy=tidy,
         next_action=next_action or await get_next_action(session, bundle), ai_jobs=ai_jobs,
         document_count=document_count,
     )

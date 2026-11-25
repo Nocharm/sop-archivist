@@ -2,6 +2,7 @@
 
 import time
 from dataclasses import replace
+from collections.abc import Sequence
 from typing import Any, NamedTuple
 
 import httpx2
@@ -376,8 +377,9 @@ def test_front_lines_leave_the_rows_and_make_no_new_sentences(client: TestClient
     fx = _setup(client)
     assert (_texts(fx.view, NOISE_FRONT), _texts(fx.view, NOISE_HISTORY)) == (FRONT_TEXTS, HISTORY_TEXTS)
     assert _texts(fx.view, NOISE_TOC) == TOC_TEXTS
-    # 판단 줄은 본문의 제목 둘 · 문장 둘 · 표 하나 · 그림 하나뿐이다
-    assert get_bundle(client, fx.bundle_id)["progress"]["total"] == 6
+    # 판단 줄은 본문의 제목 둘 · 문장 둘 · 표 하나 · 그림 하나뿐이다(진행은 그림을 따로 센다)
+    progress = get_bundle(client, fx.bundle_id)["progress"]
+    assert (progress["total"], progress["figures_total"]) == (5, 1)
     title = find_unit(fx.view, TITLE)
     body = {"action": "delete", "reason": "합성", "units": [{"unit_id": title["id"], "revision": 1}]}
     refused = client.post(f"/api/bundles/{fx.bundle_id}/decisions/bulk", json=body, headers=AUTHOR)
@@ -1140,19 +1142,38 @@ def _build_big_lines(size: int) -> list[NoiseLine]:
     return lines
 
 
-def test_judging_a_big_document_stays_linear() -> None:
-    # 줄을 네 배로 늘려도 시간이 네 배쯤이다 — 표나 제목마다 문서 전체를 훑으면 열여섯 배가 된다
-    def measure(size: int) -> float:
-        lines = _build_big_lines(size)
-        best = float("inf")
-        for _ in range(3):
-            began = time.perf_counter()
-            find_noise_lines(lines, separate=True)
-            find_second_half(lines, find_body_starts(lines, separate=True))
-            best = min(best, time.perf_counter() - began)
-        return best
+class _CountedLines(list):
+    """읽은 줄 수를 센다 — 자리로 읽기는 1, 자르기는 그 길이, 훑기는 줄마다 1. 벽시계 없이 일의 양을 잰다(부하에서 흔들리지 않게)."""
 
-    small, big = measure(12_500), measure(50_000)
+    reads = 0
+
+    def __getitem__(self, key):  # type: ignore[override]
+        found = super().__getitem__(key)
+        self.reads += len(found) if isinstance(key, slice) else 1
+        return found
+
+    def __iter__(self):  # type: ignore[override]
+        for line in super().__iter__():
+            self.reads += 1
+            yield line
+
+
+def _judge(lines: Sequence[NoiseLine]) -> None:
+    find_noise_lines(lines, separate=True)
+    find_second_half(lines, find_body_starts(lines, separate=True))
+
+
+def test_judging_a_big_document_stays_linear() -> None:
+    # 줄을 네 배로 늘려도 읽는 줄이 네 배쯤이다 — 표나 제목마다 문서 전체를 훑으면 열여섯 배가 된다
+    def count_reads(size: int) -> int:
+        lines = _CountedLines(_build_big_lines(size))
+        _judge(lines)
+        return lines.reads
+
+    small, big = count_reads(12_500), count_reads(50_000)
 
     assert big < 8 * small, (small, big)
-    assert big < 5, big
+    # 줄 수와 상관없이 오래 걸리지 않는다 — 다른 일에 나눠 쓴 시간을 빼려고 이 프로세스의 CPU 시간으로 잰다
+    began = time.process_time()
+    _judge(_build_big_lines(50_000))
+    assert time.process_time() - began < 5

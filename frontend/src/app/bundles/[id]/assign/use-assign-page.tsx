@@ -56,6 +56,7 @@ import { pickDocRevision } from "@/lib/doc-revision";
 import { isMousePress, isTypingTarget, LAYER_SELECTOR, readKeyPlace, returnsToPaper, takesPrimaryEnter } from "@/lib/assign-key-target";
 import { findAssignKey, formatAssignKey, resolveAssignKey, routeKey, type AssignKeyContext, type AssignKeyId } from "@/lib/assign-keymap";
 import { isQueuedKey, isRepeatIgnored, type PressId } from "@/lib/assign-press-model";
+import { findJoinNeighbor, stepMergeArm, type MergeArm } from "@/lib/merge-arm-model";
 import { planPrimary } from "@/lib/primary-model";
 import { isSideFloating } from "@/lib/side-float-model";
 import { readPanelSide } from "@/lib/side-panel-model";
@@ -93,7 +94,8 @@ import { useAssignFocus } from "@/lib/use-assign-focus";
 import { useDelayedFlag } from "@/lib/use-delayed-flag";
 import { useCutLine } from "@/lib/use-cut-line";
 import { pickSheetAnchor, pickSpaceSheet } from "@/lib/space-preview-model";
-import { countRefLookups, isRefPending, pickRefUnit } from "@/lib/ref-model";
+import { buildAssignProgress } from "@/lib/progress-model";
+import { countRefLookups, countRefPending, isRefPending, pickRefUnit } from "@/lib/ref-model";
 import { isDeletedUnit } from "@/lib/deleted-fold-model";
 import { findShapeOfDoc, findShapeUnit, type DocShape, type PickSide } from "@/lib/doc-shape-model";
 import { buildNavKeys, buildNoiseBlock, describeNoiseUnit, findNoiseBlock, listNoiseBlocks, readTocNavKey, readUnitNavKey, toTocNavKey, toUnitNavKey } from "@/lib/toc-block-model";
@@ -240,10 +242,8 @@ const NO_SUGGESTIONS: Promise<AiSuggestion[]> = Promise.resolve([]);
 
 const NO_TRANSLATIONS: Promise<OpenTranslation[]> = Promise.resolve([]);
 
-/** 끝낸 Old 줄 수 - 확정만 센다(보류는 아직 끝나지 않았다) */
-function countDone(rows: ClassifyRow[]): number {
-  return rows.filter((row) => row.status === "confirmed").length;
-}
+/** 누르는 것만으로는 아무 일도 아닌 글쇠 - 무장한 합치기를 풀지 않는다(⇧J의 Shift) */
+const MODIFIER_KEYS: ReadonlySet<string> = new Set(["Shift", "Control", "Alt", "Meta", "CapsLock"]);
 
 /** 처리 중인 일 → 용지의 알약 · 쉬머 · 잠금(설계 2026-11-20 D4). 판단 저장은 빛만 지나가고 잠그지 않으며(A1-R2 · R4), 묶음 전체 일은 알약이 없다 */
 function buildPaperPending(pending: readonly Pending[], queue: CommandQueueState, t: (key: string) => string): PaperPending {
@@ -1313,6 +1313,13 @@ export function useAssignPage() {
   // 떨어진 문장과 한/영 짝 맺기 - 메뉴에서 시작하면 다음에 누르는 문장이 짝이 된다(Esc로 거둔다). 문서를 바꾸면 버려진다.
   // 셋 이상이면 Shift+클릭으로 모으고(picked) 마지막 문장을 그냥 누르거나 줄의 단추로 맺는다
   const [pairFrom, setPairFrom] = useState<{ docId: number; unitId: number; picked: number[] } | null>(null);
+  // ⇧J ⇧J · ⇧K ⇧K로 무장한 합치기 - 같은 글쇠를 한 번 더 누르면 실행한다. ref는 렌더 사이에 빠르게 이어 누른 글쇠가 보는 값이다
+  const [mergeArm, setMergeArmState] = useState<MergeArm | null>(null);
+  const mergeArmRef = useRef<MergeArm | null>(null);
+  function setMergeArm(next: MergeArm | null) {
+    mergeArmRef.current = next;
+    setMergeArmState(next);
+  }
   // 메뉴의 "참조 줄로 표시"로 번호 칸을 연 문장 - 제안도 확정도 없는 문장에 참조 카드를 띄운다
   const [refEntryId, setRefEntryId] = useState<number | null>(null);
   // 짝 고르기는 시작한 문서의 것이다 - 다른 쪽을 눌러도 이어진다
@@ -1629,6 +1636,8 @@ export function useAssignPage() {
     : null;
   const stepBase = shapeLines.length > 0 ? 1 : 0;
   const refPendingIds = (shapeTabs?.order ?? []).filter((id) => isRefPending(shapeModel?.units.get(id)) && (hasSolo || rowOfUnit.has(id)));
+  // 문서 대시보드의 Bundle 전체 칸 - 위쪽 수(지금 연 문서)와 달리 모든 Old 문서를 센다
+  const bundleRefPending = countRefPending(viewList ?? [], rowOfUnit);
   // 캡션이 필요한 표·그림의 줄 - 머리 줄의 Caption needed와 같은 규칙(lib/caption-model). 위쪽 줄에 남은 수, 누르면 다음 줄
   // 캡션이 필요 없는 묶음(이미 쓴 New 문서를 혼자 연 동안의 그 문서 단위, 그 문서에 이은 묶음) - 위쪽 줄 수와 머리 줄이 같은 판단을 쓴다
   const isLinkedToWritten = useMemo(() => makeIsLinkedToWritten(new Set(isSolo ? (soloView?.units.map((unit) => unit.id) ?? []) : []), linkedTargets), [isSolo, soloView, linkedTargets]);
@@ -1638,8 +1647,8 @@ export function useAssignPage() {
   const docDashboard = useMemo(() => {
     if (dashDocId === null || isSolo) return null;
     const codes = new Map<number, string>([...written.map((item): [number, string] => [item.target_doc_id, item.doc_code]), ...(tobeData?.docs ?? []).map((doc): [number, string] => [doc.id, doc.code])]);
-    return buildDocDashboard(rows, dashDocId, unitMap, (id) => codes.get(id) ?? "");
-  }, [dashDocId, isSolo, rows, unitMap, written, tobeData]);
+    return buildDocDashboard(rows, dashDocId, unitMap, (id) => codes.get(id) ?? "", [...(suggestions.data ?? []), ...(matchSuggestions.data ?? [])]);
+  }, [dashDocId, isSolo, rows, unitMap, written, tobeData, suggestions.data, matchSuggestions.data]);
   // 그 줄의 번호에 대한 EQUIS 표시와 새 문장에 쓸 제안 - 참조 카드와 결정 칸의 새 문장이 같은 답을 쓴다. 조회가 도는 동안은 조금 뒤 다시 읽는다
   const rowRefMark = rowRefUnit?.ref ?? null;
   // 묶음 · 후보와 같다 - 처리 중인 일이 그 Unit을 은퇴시켰을 수 있는 동안과 그 문서를 다시 받는 동안은 묻지 않는다(404)
@@ -4394,6 +4403,17 @@ export function useAssignPage() {
   }
 
   const handleKey = useEffectEvent((event: KeyboardEvent) => {
+    // 무장한 합치기 - Esc는 무장만 거두고(다른 Esc보다 먼저), 다른 글쇠는 무장을 풀고 제 일을 한다. Shift 같은 조합 글쇠를 누르는 것은 ⇧J의 앞부분이다
+    if (mergeArmRef.current !== null) {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setMergeArm(null);
+        return;
+      }
+      const hit = findAssignKey(event);
+      const isMerge = hit?.kind === "run" && (hit.entry.id === "merge_next" || hit.entry.id === "merge_prev");
+      if (!isMerge && !MODIFIER_KEYS.has(event.key)) setMergeArm(null);
+    }
     // 짝 고르기 · 캡션 줄 고르기 중의 Esc는 그것부터 거둔다
     if (event.key === "Escape" && (pairSource || captionPickBundle) && !isTypingTarget(event.target) && !document.querySelector('[role="dialog"],[role="menu"],[role="listbox"]')) {
       event.preventDefault();
@@ -4543,6 +4563,8 @@ export function useAssignPage() {
       return true;
     }
     if (hit.kind === "hint") return false;
+    // 장벽 뒤에 쌓아 두었다가 되살린 글쇠도 같은 규칙이다 - 합치기 글쇠가 아니면 무장을 푼다
+    if (hit.entry.id !== "merge_next" && hit.entry.id !== "merge_prev" && mergeArmRef.current !== null) setMergeArm(null);
     const noise = readNoiseKey(hit.entry.id, noisePick);
     // 마지막으로 누른 것이 저절로 삭제된 줄 - 판단 글쇠보다 먼저(삭제 · 보류 · 확정은 아무것도 하지 않는다)
     if (noise !== null && noisePick !== null) {
@@ -4556,6 +4578,25 @@ export function useAssignPage() {
     if ("run" in plan) return runKey(plan.run);
     showToast(t(plan.refuseKey), "info");
     return true;
+  }
+
+  /** ⇧J(1) · ⇧K(-1) - 첫 누름은 계획을 보아 무장하고(막히면 까닭만), 같은 박스 · 같은 쪽의 두 번째 누름이 합치거나 짝을 맺는다 */
+  function pressMerge(dir: 1 | -1) {
+    if (keyUnit === null || shapeTabs === null || shapeModel === null) return;
+    const toId = findJoinNeighbor(shapeTabs.order, keyUnit.id, dir);
+    // 이웃이 바뀌는 중이면 낡은 언어로 계획을 세우지 않는다 - 고른 박스와 같은 까닭으로 막는다
+    if (toId !== null && isBoxLocked(toId)) {
+      setMergeArm(null);
+      showToast(t("assign.key.why.busy"), "info");
+      return;
+    }
+    const [firstId, secondId] = dir === 1 ? [keyUnit.id, toId] : [toId, keyUnit.id];
+    const plan = toId === null ? { kind: null } : planAssignJoin(shapeModel.units.get(firstId ?? -1), shapeModel.units.get(secondId ?? -1), { isDecided: isUnitDecided, hasDraft: hasUnitDraft });
+    const step = stepMergeArm(mergeArmRef.current, { type: "key", dir, fromId: keyUnit.id, toId, plan });
+    setMergeArm(step.arm);
+    if (step.refuseKey !== null) showToast(t(step.refuseKey), "info");
+    // 합치기 · 짝 맺기는 우클릭 메뉴와 같은 길이다(확인창 · 되돌리기 한 칸 · 장벽)
+    if (step.run !== null) runUnitAction(shape, keyUnit, step.run.kind === "merge" ? (dir === 1 ? "merge_next" : "merge_prev") : dir === 1 ? "pair_next" : "pair_prev");
   }
 
   /** 할 수 있는 글쇠(resolveAssignKey가 run)의 일 - 브라우저에 맡길 것이면 false */
@@ -4650,6 +4691,10 @@ export function useAssignPage() {
       case "ask_order":
         if (orderTableId !== null) unwrapAi.onAsk(orderTableId);
         return true;
+      case "merge_next":
+      case "merge_prev":
+        pressMerge(id === "merge_next" ? 1 : -1);
+        return true;
       // 나머지는 다른 자리가 받는다 - 미리보기는 SpacePreview, 탭 · 되돌리기는 handleKey, 블록 글쇠는 noise-keys
       default:
         return false;
@@ -4662,12 +4707,19 @@ export function useAssignPage() {
     if (part !== null) setManualPart({ key: activeKey ?? "", part });
   });
 
+  // 무장한 합치기는 마우스로 누르면 풀린다(누른 것은 제 일을 한다)
+  const handlePointerDown = useEffectEvent(() => {
+    if (mergeArmRef.current !== null) setMergeArm(null);
+  });
+
   useEffect(() => {
     window.addEventListener("keydown", handleKey);
     window.addEventListener("popstate", handlePopState);
+    window.addEventListener("pointerdown", handlePointerDown, true);
     return () => {
       window.removeEventListener("keydown", handleKey);
       window.removeEventListener("popstate", handlePopState);
+      window.removeEventListener("pointerdown", handlePointerDown, true);
     };
   }, []);
 
@@ -4765,7 +4817,7 @@ export function useAssignPage() {
 
   // 누른 추천의 자리로 New 칸을 옮긴 뒤 - 그 자리가 그려지면(다른 문서·엮은 문서는 받아 온 뒤) 보이게 하고 번쩍인다. 다른 줄을 고르면 버린다
   const [revealPick, setRevealPick] = useState<{ destination: Destination; rowKey: string | null } | null>(null);
-  const done = countDone(rows);
+  const progress = buildAssignProgress(rows, unitMap);
 
   function renderPlaceLabel(dest: Destination): { title: string; text: string } {
     const option = labelOptions.find((item) => getDestinationId(item.destination) === getDestinationId(dest));
@@ -4814,17 +4866,17 @@ export function useAssignPage() {
     oldPaneRef, undoState, bulk, setBulk, runBulkDelete, runReset, confirmRemark, closeRemark, confirmingIdentical, setConfirmingIdentical,
     resetScope, setResetScope, accOpen, toggleAcc, saveUnits, slots, aiUnfilled, draftPlace, draftSectionKey, draftPosition, newDraft,
     draftSlotKey, placeResolved, canPlaceClick, pickedSpotKey, setCarvePick, carve, carveText, clearCarve, togglePairViewByButton,
-    pairFrom, setPairFrom, setRefEntryId, pairSource, isLeftPairPick, isRightPairPick, captionPickBundle, setCaptionPick, startCaptionPick, selectToc, selectRow, openNewCtxMenu, openSolo, goToUnit, moveRow, hasUnitDraft,
+    pairFrom, setPairFrom, mergeArm, setRefEntryId, pairSource, isLeftPairPick, isRightPairPick, captionPickBundle, setCaptionPick, startCaptionPick, selectToc, selectRow, openNewCtxMenu, openSolo, goToUnit, moveRow, hasUnitDraft,
     isFixedCaption, ctxGroups, rowViewUnits, rowSplitUnit, rowSplit, splitBlocked, rowRefUnit, refBlocked, isCaptionGateOn,
     confirmBlockKey, rowCaptionRefs, refCandidates, shapeLines, shapeFirstId, slotPlaces, slotCellTables, shapeMode, headingBack, rewrap, bandBack,
-    stepBase, refPendingIds, isLinkedToWritten, captionPendingKeys, docDashboard, refDetail, refInfo, openCtxMenu, runUnitEdit,
+    stepBase, refPendingIds, bundleRefPending, isLinkedToWritten, captionPendingKeys, docDashboard, refDetail, refInfo, openCtxMenu, runUnitEdit,
     rewrapTable, unwrapAi, describeEditConfirm, pairGrip, clearNoise, openNoiseReason, confirmNoiseReason, closeNoiseReason, noisePick, runCaptionRefChange, switchShapeMode, switchToPair,
     applySplitSuggestion, dismissSplitSuggestion, splitPendingIds, readPendingItem, selectNextSplit, selectNextRef, selectNextCaption,
     splitAtCut, handleOldDoubleClick, runCtx, runUnitAction, revertHeadings, planJoinIn, joinIn, renderOldActions, readReasonNeed,
     runSave, runClear, runUndoStep, confirmIdenticalAll, acceptAll, markNew, placeManage, pickDestination, pickNewSentence, pressNewBox, showNewDoc, jump, unlinkCell, pickBar, renderPickBar, linkWait, setLinkWait, handleBlankClick, checkedNew, setCheckedNew, pressEnter, primaryLink, primaryLinkLabel,
     handleJoinPick, readJoinAfter, pickJoinMenu, pickPlaceSpot, pickOwnAiLine, jumpToNew, openNewDoc, showInNew, jumpToOld,
     pickTemplateLine, fillTemplateMissing, isTemplateDrag, isOldDrag, finishPairPick, handleOldClick, handlePrimary, startEdit,
-    pickRecommendation, handleFramePress, primaryPlan, markRecHover, revealPick, setRevealPick, done, renderPlaceLabel, listDestinationEls,
+    pickRecommendation, handleFramePress, primaryPlan, markRecHover, revealPick, setRevealPick, progress, renderPlaceLabel, listDestinationEls,
     canClear, isRowDeleted, error, figureTab, composedCut, setComposedCutAt, handleComposedDoubleClick, dragComposedCut, splitComposedAtCut, planComposedGap, joinComposed,
   };
 }

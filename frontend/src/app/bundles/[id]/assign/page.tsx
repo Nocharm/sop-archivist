@@ -40,6 +40,7 @@ import { flashElement, Truncate } from "@/components/ui/motion";
 import { formatGapLabel, PLACE_REFUSAL_KEYS, readGapKey, type Placement, type PlaceSpot } from "@/lib/place-spot-model";
 import { listAckWarnings } from "@/lib/missing-warnings-model";
 import { type ChangeType, type EditOp } from "@/lib/api-sop";
+import { formatAssignKey } from "@/lib/assign-keymap";
 import { isBundleCaptionNeeded } from "@/lib/caption-model";
 import { countJoinedLines } from "@/lib/join-sentence-model";
 import type { CEdit } from "@/lib/c-edit-model";
@@ -82,13 +83,13 @@ export default function AssignPage() {
     templateTitles, linkPairs, view, changeView, zoomPane, setPanes, remarkEdit, setRemarkEdit, focusAfterRef, busy, isAnyPending, isGlobalPending, paperPending, pendingDeletes, expectedNumbers, editConfirm,
     oldPaneRef, bulk, setBulk, confirmingIdentical,
     setConfirmingIdentical, resetScope, setResetScope, slots, newDraft, draftSlotKey, placeResolved, canPlaceClick, pickedSpotKey,
-    setCarvePick, carve, carveText, clearCarve, togglePairViewByButton, pairFrom, setPairFrom, pairSource, isLeftPairPick, isRightPairPick, captionPickBundle, setCaptionPick, selectToc, openNewCtxMenu,
-    openSolo, goToUnit, ctxGroups, refPendingIds, isLinkedToWritten, captionPendingKeys, docDashboard, openCtxMenu, runUnitEdit,
+    setCarvePick, carve, carveText, clearCarve, togglePairViewByButton, pairFrom, setPairFrom, mergeArm, pairSource, isLeftPairPick, isRightPairPick, captionPickBundle, setCaptionPick, selectToc, openNewCtxMenu,
+    openSolo, goToUnit, ctxGroups, bundleRefPending, isLinkedToWritten, captionPendingKeys, docDashboard, openCtxMenu, runUnitEdit,
     rewrapTable, unwrapAi, describeEditConfirm, pairGrip, clearNoise, openNoiseReason, splitAtCut, handleOldDoubleClick,
     runCtx, revertHeadings, planJoinIn, joinIn, renderOldActions, confirmIdenticalAll, acceptAll,
     pressNewBox, renderPickBar, showNewDoc, jump, handleJoinPick, readJoinAfter, pickJoinMenu, handleFramePress, pickPlaceSpot, pickOwnAiLine, jumpToNew, openNewDoc,
     showInNew, jumpToOld, pickTemplateLine, fillTemplateMissing, isOldDrag, finishPairPick, handleOldClick, markRecHover, revealPick,
-    setRevealPick, done, renderPlaceLabel, listDestinationEls, error,
+    setRevealPick, progress, renderPlaceLabel, listDestinationEls, error,
   } = state;
 
 
@@ -381,7 +382,14 @@ export default function AssignPage() {
         </button>
       </div>
     ) : null;
-  const oldBanner = linkWaitBanner("old") ?? (isRightPairPick ? null : (pairBanner ?? captionBanner));
+  // ⇧J ⇧J · ⇧K ⇧K로 무장한 합치기의 안내 한 줄 - 다듬는 쪽 칸 머리 아래, 짝 고르기 · 캡션 고르기와 같은 자리(함께 열리지 않는다)
+  const mergeBanner = mergeArm ? (
+    <div className="flex items-center gap-2 border-b border-line bg-accent-tint px-3 py-1.5 text-xs" role="status" data-testid="assign-merge-armed">
+      <Link2 size={14} strokeWidth={1.5} className="flex-none text-ink-2" aria-hidden />
+      <span className="min-w-0 flex-1 text-ink">{t(mergeArm.kind === "merge" ? "assign.key.mergeArmedMerge" : "assign.key.mergeArmedPair", { key: formatAssignKey(mergeArm.dir === 1 ? "merge_next" : "merge_prev") })}</span>
+    </div>
+  ) : null;
+  const oldBanner = linkWaitBanner("old") ?? (isRightPairPick ? null : (pairBanner ?? captionBanner ?? (isNewEdit ? null : mergeBanner)));
   const placeOf = (unitIds: number[]) => {
     const decided = unitIds.map((id) => unitMap.get(id)).find((unit) => unit?.status === "confirmed");
     if (!decided) {
@@ -535,7 +543,7 @@ export default function AssignPage() {
                       docLabel={oldView.document.doc_code || oldView.document.file_name}
                       docTitle={oldView.document.title}
                       stats={docDashboard}
-                      bundleLine={{ done, total: rows.length, refs: refPendingIds.length, captions: captionPendingKeys.length }}
+                      bundleLine={{ ...progress, refs: bundleRefPending, captions: captionPendingKeys.length }}
                       onOpenDoc={openNewDoc}
                       isDocOpen={isNewDocOpen}
                     />
@@ -608,6 +616,7 @@ export default function AssignPage() {
                 unwrap={isSolo ? undefined : { canRewrap: canEdit, busy: isGlobalPending, onRewrap: (tableId) => rewrapTable(leftShape, tableId), ai: canEdit ? unwrapAi : undefined }}
                 // 처리 중인 일 - 누르는 즉시 그 자리 알약과 박스 쉬머, 그 박스만 잠근다(설계 D4)
                 pending={mode === "old" ? paperPending : undefined}
+                mergeArm={isNewEdit ? null : mergeArm}
                 paneRef={oldPaneRef}
                 renderPills={(unitId) => {
                   const targets = linkedTargets.get(unitId);
@@ -805,7 +814,7 @@ export default function AssignPage() {
                           {newAiChip}
                         </>
                       }
-                      banner={linkWaitBanner("new") ?? (isRightPairPick ? pairBanner : newAiBanner)}
+                      banner={linkWaitBanner("new") ?? (isRightPairPick ? pairBanner : ((isNewEdit ? mergeBanner : null) ?? newAiBanner))}
                       linesOn={view.lines}
                       onToggleLines={() => changeView({ lines: !view.lines })}
                       onWide={newFileId !== null ? () => openSolo(newFileId) : undefined}
@@ -827,6 +836,7 @@ export default function AssignPage() {
                       held={panel.side === "old" && newUnitId !== null}
                       showUnitIds={showUnitIds}
                       pending={mode === "old" ? paperPending : undefined}
+                      mergeArm={isNewEdit ? mergeArm : null}
                       onPick={pickNewBox}
                       onContextMenu={
                         canEdit && mode === "old"

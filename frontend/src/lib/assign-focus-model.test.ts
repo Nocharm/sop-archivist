@@ -43,6 +43,7 @@ const pickOldToc = (key: number): FocusEvent => pick(toc(key));
 const clear = (what: "all" | "new"): FocusEvent => ({ type: "clear", what });
 const choose = (): FocusEvent => ({ type: "choose_destination" });
 const oldSide = (next: OldPick): SidePick => ({ side: "old", pick: next });
+const restoreOld = (next: OldPick): FocusEvent => ({ type: "restore", picks: { old: next, new: NO_PICK, last: "old", act: "pick" } });
 const start = (pending: Pending, side?: "old" | "new"): FocusEvent => ({ type: "start", pending, side });
 const succeed = (pendingId: string, pickUnitId: number | null, over: { docId?: number | null; revision?: number | null } = {}): FocusEvent => ({ type: "succeed", pendingId, docId: 1, revision: 5, pickUnitId, ...over });
 
@@ -149,6 +150,33 @@ describe("follow (rule 3)", () => {
     const state = run(pick(unit(3)), start(job("a")), succeed("a", 10), pick(unit(8)));
     expect(state.follows).toEqual([]);
     expect(reduceFocus(state, loaded([doc(1, 5, [8, 10])])).old).toEqual(unit(8));
+  });
+  it("drops the follow when someone picks the same box again after the response - they chose it after the work (Del → Undo → click)", () => {
+    const state = run(pick(unit(3)), start(job("u", { kind: "undo", isGlobal: true })), succeed("u", 10, { docId: null, revision: null }), pick(unit(3)));
+    expect(state.follows).toEqual([]);
+    expect(reduceFocus(state, loaded([doc(1, 9, [3, 10])])).old).toEqual(unit(3));
+  });
+  it("does not follow when someone picked the same box again before the response", () => {
+    const state = run(pick(unit(3)), start(job("u", { kind: "undo", isGlobal: true })), pick(unit(3)), succeed("u", 10, { docId: null, revision: null }));
+    expect(state.follows).toEqual([]);
+    expect(reduceFocus(state, loaded([doc(1, 9, [3, 10])])).old).toEqual(unit(3));
+  });
+  it("follows again after Retry puts back the pick the work was pressed from - restoring is not someone's pick", () => {
+    const state = run(pick(unit(3)), start(job("a")), pick(unit(8)), restoreOld(unit(3)), succeed("a", 10), loaded([doc(1, 5, [3, 10])]));
+    expect(state.old).toEqual(unit(10));
+  });
+  it("does not revive work pressed from another pick when restoring", () => {
+    const state = run(pick(unit(5)), start(job("a")), pick(unit(8)), restoreOld(unit(3)), succeed("a", 10), loaded([doc(1, 5, [3, 10])]));
+    expect(state.old).toEqual(unit(3));
+  });
+  it("still follows work pressed after the pick", () => {
+    const state = run(pick(unit(3)), start(job("a")), pick(unit(3)), start(job("b")), succeed("b", 10), loaded([doc(1, 5, [3, 10])]));
+    expect(state.old).toEqual(unit(10));
+  });
+  it("a pick on the New side leaves Old work pressed before it to follow", () => {
+    const state = run(pick(unit(3)), start(job("a"), "old"), pickNew(70), succeed("a", 10), loaded([doc(1, 5, [3, 10])]));
+    expect(state.old).toEqual(unit(10));
+    expect(state.new).toMatchObject({ unitIds: [70] });
   });
   it("keeps the focus when the response names no box", () => {
     const state = run(pick(unit(3)), start(job("a")), succeed("a", null), loaded([doc(1, 5, [3])]));

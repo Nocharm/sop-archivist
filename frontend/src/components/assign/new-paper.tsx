@@ -60,6 +60,8 @@ export interface NewPaperProps {
   /** 여럿 고른 박스 */
   pickedUnitIds: ReadonlySet<number>;
   pending?: PaperPending;
+  /** ⇧J ⇧J · ⇧K ⇧K로 무장한 합치기의 두 박스 - 점선 미리보기 */
+  mergeArm?: { fromId: number; toId: number } | null;
   /** 박스를 누름 - anchor는 그 박스(칸이면 칸 조각) */
   onPick: (unitId: number, keys: { shiftKey: boolean; additive: boolean }, anchor: HTMLElement, event: MouseEvent) => void;
   /** 보여야 할 박스들(이동해 갈 곳 · 출처 없는 New의 고른 것) - 바뀌어 든 박스의 탭을 연다 */
@@ -248,7 +250,7 @@ export function NewPaper(props: NewPaperProps) {
         renderAtCut={props.cut ? props.renderAtCut : undefined}
         figureSource={{ bundleId: props.bundleId, docId: props.fileId }}
         // 이미 쓴 문서는 캡션을 요구하지 않는다(입구 2)
-        strips={{ isCaptionNeeded: () => false, pending: props.pending, overlay: paperOverlay }}
+        strips={{ isCaptionNeeded: () => false, pending: props.pending, mergeArm: props.mergeArm, overlay: paperOverlay }}
         testId="assign-new-paper"
       />
     );

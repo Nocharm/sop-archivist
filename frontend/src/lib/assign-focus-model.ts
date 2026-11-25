@@ -48,9 +48,11 @@ export interface Pending {
   isGlobal: boolean;
 }
 
-/** 처리 중인 일과 누른 때 그 쪽의 고름 - 응답 뒤 따라가기는 같은 쪽의 고름이 이것과 같을 때만 건다 */
+/** 처리 중인 일과 누른 때 그 쪽의 고름 - 응답 뒤 따라가기는 같은 쪽의 고름이 이것과 같고 그 사이 그 쪽에서 사람이 고르지 않았을 때만 건다 */
 export interface PendingEntry extends Pending {
   from: SidePick;
+  /** 누른 뒤 사람이 그 쪽에서 골랐다(같은 것을 다시 골랐어도) - 응답의 박스를 따라가지 않는다 */
+  isPickedOver: boolean;
 }
 
 /** 응답 뒤 고를 박스 - 그 문서 보기가 minRevision 이상으로 다시 오면 고른다. docId null은 응답이 문서를 알려 주지 않은 것(Undo) - 다음에 받은 보기 어디서든 찾는다 */
@@ -84,7 +86,7 @@ export type FocusEvent =
   /** 오른쪽 칸에서 보낼 곳을 골랐다 - 다음에 박스를 누를 때까지 Enter는 잇기가 아니라 확정이다 */
   | { type: "choose_destination" }
   | { type: "clear"; what: "all" | "new" }
-  /** 멈췄던 때의 고름으로 */
+  // 다시 시도가 멈춘 때의 고름을 되살린다 - 사람이 고른 것이 아니라, 그 고름에서 누른 일은 다시 따라갈 수 있다
   | { type: "restore"; picks: Picks }
   // side - 그 일이 고치는 문서의 쪽(모르면 마지막에 누른 쪽)
   | { type: "start"; pending: Pending; side?: PickSide }
@@ -142,28 +144,45 @@ function settlePicks(state: FocusState, next: Picks): FocusState {
   return follows === state.follows && isSamePicks(state, next) ? state : { ...state, old: next.old, new: next.new, last: next.last, act: next.act, follows };
 }
 
+/**
+ * 사람이 한쪽에서 골랐다 - 그 쪽의 따라가기를 모두 버리고 아직 응답이 없는 그 쪽의 일도 따라가지 않게 적는다. 같은 것을 다시 골랐어도 그 사람이 고른 것이다
+ * (Del → Ctrl+Z 뒤 지금 고른 줄을 누르면 되돌리기의 늦은 따라가기가 그 고름을 덮었다, 3b "고름은 처리 중에도 그대로"). 다른 쪽의 일 · 따라가기는 그대로다
+ */
+function pickByPerson(state: FocusState, event: SidePick): FocusState {
+  const next: Picks = { ...withPick<Picks>(state, event), act: "pick" };
+  const isMine = (from: SidePick) => from.side === event.side;
+  const follows = state.follows.some((follow) => isMine(follow.from)) ? state.follows.filter((follow) => !isMine(follow.from)) : state.follows;
+  const isLeft = (entry: PendingEntry) => isMine(entry.from) && !entry.isPickedOver;
+  const pending = state.pending.some(isLeft) ? state.pending.map((entry) => (isLeft(entry) ? { ...entry, isPickedOver: true } : entry)) : state.pending;
+  if (follows === state.follows && pending === state.pending && isSamePicks(state, next)) return state;
+  return { ...state, old: next.old, new: next.new, last: next.last, act: next.act, pending, follows };
+}
+
 export function reduceFocus(state: FocusState, event: FocusEvent): FocusState {
   switch (event.type) {
     case "pick":
-      // 사람이 다른 것을 고르면 그 쪽의 앞 고름에서 건 따라가기는 버린다. 다른 쪽의 것은 그대로다
-      return settlePicks(state, { ...withPick<Picks>(state, event), act: event.isAuto ? null : "pick" });
+      return event.isAuto ? settlePicks(state, { ...withPick<Picks>(state, event), act: null }) : pickByPerson(state, event);
     case "choose_destination":
       return settlePicks(state, { ...state, act: "destination" });
     case "clear":
       return settlePicks(state, event.what === "all" ? NO_PICKS : withPick<Picks>(state, { side: "new", pick: NO_PICK }));
-    case "restore":
-      return settlePicks(state, event.picks);
+    case "restore": {
+      // 멈춘 때의 고름에서 누른 일만 되살린다 - 다른 고름에서 누른 일과 따라가기는 그대로 두면 엉뚱한 박스로 간다(settlePicks가 쪽마다 거른다)
+      const isRestored = (entry: PendingEntry) => entry.isPickedOver && isSamePick(entry.from.pick, event.picks[entry.from.side]);
+      const pending = state.pending.some(isRestored) ? state.pending.map((entry) => (isRestored(entry) ? { ...entry, isPickedOver: false } : entry)) : state.pending;
+      return settlePicks(pending === state.pending ? state : { ...state, pending }, event.picks);
+    }
     case "start": {
       if (state.pending.some((entry) => entry.id === event.pending.id)) return state;
       // 고름은 그대로(규칙 2). 묶음 전체가 바뀌는 일은 앞 편집의 따라가기를 버린다 - 그 사이 은퇴할 Unit을 고르지 않게
-      const pending = [...state.pending, { ...event.pending, from: readSide(state, event.side ?? state.last ?? "old") }];
+      const pending = [...state.pending, { ...event.pending, from: readSide(state, event.side ?? state.last ?? "old"), isPickedOver: false }];
       return { ...state, pending, follows: event.pending.isGlobal ? [] : state.follows };
     }
     case "succeed": {
       // 일은 걷지 않는다 - 응답 뒤 다시 받기를 걸 때까지(표 벗기기는 새 보기를 놓을 때까지) 처리 중으로 남고, 부른 쪽이 fail로 걷는다
       const entry = state.pending.find((item) => item.id === event.pendingId);
-      // 따라갈 박스가 없거나 그 사이 그 쪽의 다른 것을 골랐으면 고름을 둔다(규칙 3)
-      if (!entry || event.pickUnitId === null || !isSamePick(entry.from.pick, state[entry.from.side])) return state;
+      // 따라갈 박스가 없거나 그 사이 그 쪽에서 사람이 골랐으면(같은 것이어도) 고름을 둔다(규칙 3)
+      if (!entry || event.pickUnitId === null || entry.isPickedOver || !isSamePick(entry.from.pick, state[entry.from.side])) return state;
       const follow: Follow = { pendingId: entry.id, kind: entry.kind, docId: event.docId, minRevision: event.revision, pickUnitId: event.pickUnitId, from: entry.from };
       return { ...state, follows: [...state.follows, follow] };
     }

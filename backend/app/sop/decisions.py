@@ -1820,7 +1820,7 @@ async def list_units(
         [unit.id for unit, *_ in rows],
     )
     pair_ids = {unit_id: pair_id for unit_id, pair_id in pair_rows}
-    captioned = await _find_captioned_units(session, [unit.id for unit, *_ in rows])
+    captioned = await find_captioned_units(session, [unit.id for unit, *_ in rows])
     items = []
     for unit, document, decision, group in rows:
         decisions = {unit.id: decision} if group is None else {unit.id: decision, group.unit_id: group}
@@ -1840,7 +1840,7 @@ async def list_units(
     return UnitsPageOut(total=total or 0, items=items)
 
 
-async def _find_captioned_units(session: AsyncSession, unit_ids: list[int]) -> set[int]:
+async def find_captioned_units(session: AsyncSession, unit_ids: list[int]) -> set[int]:
     """출처 새 문장 아래 캡션 새 문장(captions.is_caption_target과 같은 꼴)이 있는 단위 — 써 넣은 캡션은 캡션 단위가 없어 화면이 이것으로 안다."""
     caption = aliased(TargetSentence)
     rows = await select_in_chunks(

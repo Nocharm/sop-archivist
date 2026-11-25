@@ -1,4 +1,4 @@
-// 묶음 개요 - 왼쪽은 제목·상태, 지금 할 일 하나, 배정 현황(줄 기준 한 벌과 한 언어만 남은 글 수). 오른쪽 340px은 검토 요청 조건, AI 작업, 멤버(디자인 문서 8절).
+// 묶음 개요 - 왼쪽은 제목·상태, 지금 할 일 하나, 배정 현황(처분별 줄 수 한 벌, 그림·남은 손질·AI 제안 대기·한 언어만 남은 글 수). 오른쪽 340px은 검토 요청 조건, AI 작업, 멤버(디자인 문서 8절).
 "use client";
 
 import {
@@ -48,20 +48,13 @@ import {
 import { useBundle } from "@/lib/bundle-store";
 import { useDraftingOn } from "@/lib/drafting";
 import { useI18n } from "@/lib/i18n";
-import { countPending, getConfirmedPercent } from "@/lib/progress-model";
+import { countFiguresLeft, countPending, getDecidedPercent, listProgressParts, PROGRESS_PART_FILL } from "@/lib/progress-model";
 import { getLeftoverTranslationsHref, getNextActionHref, getStageHref, listStages, NEXT_ACTION_STAGE } from "@/lib/stages";
 import { useDelayedFlag } from "@/lib/use-delayed-flag";
-import { GATE_STAGE, splitGates, type GateKey } from "@/lib/review-gates";
+import { countOpenRows, GATE_STAGE, splitGates, type GateKey } from "@/lib/review-gates";
 import { useLoaded, type Loaded } from "@/lib/use-loaded";
 
 type TFunc = (key: string, vars?: Record<string, string | number>) => string;
-
-// 배정 현황 막대·표의 상태 순서와 채움 색 - 확정이 먼저, 미배정이 마지막
-const COVER_STATES = [
-  { key: "confirmed", fill: "var(--st-ok-fill)" },
-  { key: "on_hold", fill: "var(--st-hold-fill)" },
-  { key: "unassigned", fill: "var(--st-none-fill)" },
-] as const;
 
 // 다음 할 일 종류별 아이콘 - 화면이 열릴 때 한 번 움직이고 멈춘다(.next-badge)
 const NEXT_ICONS: Record<NextAction, LucideIcon> = {
@@ -110,7 +103,7 @@ function buildGateLines(readiness: Readiness, semanticTotal: number, t: TFunc): 
   const { blockers } = readiness;
   const noDocs = findIssue(blockers, "no_documents");
   const unresolved = findIssue(blockers, "unresolved_documents");
-  const units = sumCounts(blockers, "units_");
+  const open = countOpenRows(blockers);
   const targets = sumCounts(blockers, "targets_");
   const reasons = sumCounts(blockers, "duplicate_without_reason");
   const warnings = findIssue(blockers, "unacked_missing_text");
@@ -129,7 +122,11 @@ function buildGateLines(readiness: Readiness, semanticTotal: number, t: TFunc): 
       ok: !versions,
       label: versions ? t("gate.docVersions", { n: versions.count ?? 0 }) : t("gate.docVersionsOk"),
     },
-    { key: "units", ok: units === 0, label: units ? t("gate.units", { n: units }) : t("gate.unitsOk") },
+    {
+      key: "units",
+      ok: open.rows === 0,
+      label: open.rows === 0 ? t("gate.unitsOk") : open.figures > 0 ? t("gate.unitsFigures", { n: open.rows, f: open.figures }) : t("gate.units", { n: open.rows }),
+    },
     { key: "targets", ok: targets === 0, label: targets ? t("gate.targets", { n: targets }) : t("gate.targetsOk") },
     {
       key: "warnings",
@@ -152,11 +149,12 @@ function CoverageBar({ progress }: { progress: RowProgress }) {
       {progress.total === 0 ? (
         <span className="block h-full flex-1 rounded bg-line" />
       ) : (
-        COVER_STATES.filter((state) => progress[state.key] > 0).map((state) => (
+        listProgressParts(progress).filter((part) => part.count > 0).map((part) => (
           <span
-            key={state.key}
+            key={part.key}
             className="block h-full min-w-0.5 first:rounded-l last:rounded-r"
-            style={{ flexGrow: progress[state.key], flexBasis: 0, background: state.fill }}
+            data-part={part.key}
+            style={{ flexGrow: part.count, flexBasis: 0, background: PROGRESS_PART_FILL[part.key] }}
           />
         ))
       )}
@@ -174,13 +172,14 @@ function Coverage({ bundle }: { bundle: Bundle }) {
       </section>
     );
   }
-  const { progress } = bundle;
-  const percent = getConfirmedPercent(progress);
+  const { progress, tidy } = bundle;
+  const percent = getDecidedPercent(progress);
+  const parts = listProgressParts(progress);
   return (
     <section className="grid gap-2.5 rounded-lg border border-line bg-surface px-4 py-3.5" data-testid="overview-coverage">
       <h2 className="text-xs font-semibold text-ink-3">{t("overview.coverage")}</h2>
       <div className="grid gap-0.5" data-testid="overview-rate">
-        <span className="text-xs text-ink-3">Confirmed</span>
+        <span className="text-xs text-ink-3">{t("overview.decided")}</span>
         <span className="flex items-baseline gap-2 tabular-nums">
           <span className="text-[30px] leading-[38px] text-ink">
             {percent ?? "–"}
@@ -196,11 +195,11 @@ function Coverage({ bundle }: { bundle: Bundle }) {
         <thead>
           <tr className="text-xs text-ink-3">
             <th className="py-1 text-left font-normal" />
-            {COVER_STATES.map((state) => (
-              <th key={state.key} className="py-1 pl-3 text-right font-normal">
+            {parts.map((part) => (
+              <th key={part.key} className="py-1 pl-3 text-right font-normal">
                 <span className="inline-flex items-center gap-1">
-                  <i className="inline-block size-2 rounded-sm" style={{ background: state.fill }} aria-hidden />
-                  {t(`status.unit.${state.key}`)}
+                  <i className="inline-block size-2 rounded-sm" style={{ background: PROGRESS_PART_FILL[part.key] }} aria-hidden />
+                  {t(`progress.part.${part.key}`)}
                 </span>
               </th>
             ))}
@@ -210,15 +209,30 @@ function Coverage({ bundle }: { bundle: Bundle }) {
         <tbody>
           <tr className="border-t border-line">
             <td className="py-1">{t("overview.rows")}</td>
-            {COVER_STATES.map((state) => (
-              <td key={state.key} className="py-1 pl-3 text-right">
-                {progress[state.key]}
+            {parts.map((part) => (
+              <td key={part.key} className="py-1 pl-3 text-right" data-testid={`overview-part-${part.key}`}>
+                {part.count}
               </td>
             ))}
             <td className="py-1 pl-3 text-right">{progress.total}</td>
           </tr>
         </tbody>
       </table>
+      {progress.figures_total > 0 && (
+        <p className="text-xs text-ink-2" data-testid="overview-figures">
+          {t("progress.figures", { m: progress.figures_decided, n: progress.figures_total })}
+        </p>
+      )}
+      {tidy.refs + tidy.captions > 0 && (
+        <p className="text-xs text-ink-2" data-testid="overview-tidy">
+          {t("overview.tidy", { r: tidy.refs, c: tidy.captions })}
+        </p>
+      )}
+      {tidy.ai_waiting > 0 && (
+        <p className="text-xs text-ink-2" data-testid="overview-ai-waiting">
+          {t("progress.aiWaiting")} <span className="tabular-nums">{tidy.ai_waiting}</span>
+        </p>
+      )}
       {progress.single_language > 0 && (
         <p className="text-xs text-ink-3" data-testid="overview-single-language">
           {t("overview.singleLanguage", { n: progress.single_language })}
@@ -226,6 +240,14 @@ function Coverage({ bundle }: { bundle: Bundle }) {
       )}
     </section>
   );
+}
+
+/** 정할 것이 남았다는 제목 - 그림은 줄 수에 들지 않아 따로 말한다(그림만 남았는데 "0줄"이 되지 않게) */
+function readDecideTitle(progress: RowProgress, t: TFunc): string {
+  const rows = countPending(progress);
+  const figures = countFiguresLeft(progress);
+  if (figures === 0) return t("next.decide_units.title", { n: rows });
+  return rows === 0 ? t("next.decide_units.titleFigures", { f: figures }) : t("next.decide_units.titleWithFigures", { n: rows, f: figures });
 }
 
 function NextActionCard({ bundle, onRequestReview, onAddReviewer }: { bundle: Bundle; onRequestReview: () => void; onAddReviewer: () => void }) {
@@ -277,7 +299,7 @@ function NextActionCard({ bundle, onRequestReview, onAddReviewer }: { bundle: Bu
       </span>
       <div className="grid min-w-0 gap-0.5">
         <span className="text-xs text-ink-3">{t("overview.nextAction")}</span>
-        <h2 className="head-title justify-self-start">{t(`next.${action}.title`, { n: countPending(bundle.progress) })}</h2>
+        <h2 className="head-title justify-self-start">{action === "decide_units" ? readDecideTitle(bundle.progress, t) : t(`next.${action}.title`)}</h2>
         <p className="text-ink-2">{t(`next.${action}.body`)}</p>
       </div>
       <div>{button}</div>

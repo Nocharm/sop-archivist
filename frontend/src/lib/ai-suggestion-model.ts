@@ -1,7 +1,7 @@
 // Assign의 AI 추천 - 살아 있는 제안(적용됐고 사람이 아직 받거나 버리지 않은 것)에서 줄의 추천 자리와 Use 초안을 만든다.
 // AI는 판단·New 문장을 쓰지 않는다 - 사람이 Use로 받으면 이 초안이 채워지고 확정은 사람의 Confirm이다(설계 2026-11-19-ai-suggest-only D1·D2).
 
-import type { AiSuggestion } from "./api-sop";
+import type { AiSuggestion, CoverStatus } from "./api-sop";
 import { getDestinationId, type Destination, type DestinationOption, type SentenceSlot } from "./classify-model";
 
 /** 새 문서를 만드는 쪽과 함께 숨긴 AI 종류(쪼개기 먼저 설계 §5 H4) - 이미 있는 제안도 화면 어디에도 내지 않는다. 행은 바꾸지 않는다 */
@@ -43,6 +43,19 @@ export function findRowSuggestion(unitIds: readonly number[], status: string, in
     if (item && (found === null || found.id < item.id)) found = item;
   }
   return found;
+}
+
+/**
+ * AI 제안 대기 - 살아 있는 제안 가운데 덮는 단위가 모두 안 정한 줄에 있는 것(서버 tidy._count_waiting과 같은 규칙, F3-R2).
+ * statusOfUnit은 단위 → 그 줄의 상태라 은퇴한 단위는 없다. Old 단위가 없는 신규 제안은 안 정한 줄이 없어 세지 않는다. documentId가 null이면 묶음 전체
+ */
+export function countWaitingSuggestions(items: readonly AiSuggestion[], statusOfUnit: ReadonlyMap<number, CoverStatus>, documentId: number | null): number {
+  return items.filter((item) => {
+    if (!isLiveSuggestion(item) || HIDDEN_AI_KINDS.has(item.kind)) return false;
+    if (documentId !== null && item.document_id !== documentId) return false;
+    const unitIds = item.content.unit_ids ?? [];
+    return unitIds.length > 0 && unitIds.every((id) => statusOfUnit.get(id) === "unassigned");
+  }).length;
 }
 
 const BUNDLE_SHAPES = ["table", "figure"];

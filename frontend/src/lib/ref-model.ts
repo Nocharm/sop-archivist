@@ -14,6 +14,11 @@ export function isRefPending(unit: ViewUnit | undefined): boolean {
   return unit?.ref?.state === "proposed";
 }
 
+/** 묶음 전체에서 확인이 남은 제안 - 줄이 되는 단위만(서버 tidy._count_refs · 개요의 Left to tidy와 같은 셈). 문서 대시보드의 Bundle 전체 칸이 쓴다 */
+export function countRefPending(views: readonly { units: readonly ViewUnit[] }[], onRow: { has(unitId: number): boolean }): number {
+  return views.reduce((sum, view) => sum + view.units.filter((unit) => isRefPending(unit) && onRow.has(unit.id)).length, 0);
+}
+
 /** 줄(단위 여럿)에서 참조 카드를 보일 단위 - 확인이 남은 제안이 먼저, 없으면 확정된 참조 줄 */
 export function pickRefUnit(units: readonly ViewUnit[]): ViewUnit | null {
   return units.find((unit) => isRefPending(unit)) ?? units.find((unit) => unit.ref !== null) ?? null;

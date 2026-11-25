@@ -116,6 +116,9 @@
   --st-ok-fill: var(--accent);
   --st-hold-ink: oklch(.47 .10 70);
   --st-hold-fill: oklch(.67 .155 70);
+  /* Decided rows in the progress bar: deleted is a muted red (not an error), moved is teal (old records only). */
+  --st-del-fill: oklch(.62 .13 25);
+  --st-move-fill: oklch(.60 .09 190);
   --warn-ink: oklch(.50 .145 48);
   --warn-fill: oklch(.66 .16 50);
   --danger-ink: oklch(.49 .175 27);
@@ -228,6 +231,8 @@
   --st-ai-fill: oklch(.60 .15 305);
   --st-hold-ink: oklch(.85 .105 82);
   --st-hold-fill: oklch(.67 .135 78);
+  --st-del-fill: oklch(.60 .12 25);
+  --st-move-fill: oklch(.66 .09 190);
   --warn-ink: oklch(.81 .11 58);
   --warn-fill: oklch(.70 .14 55);
   --danger-ink: oklch(.77 .125 24);
