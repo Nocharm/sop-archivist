@@ -59,14 +59,6 @@ describe("mergeGroups", () => {
     expect(merged.units.map((unit) => unit.unit_id)).toEqual([10, 11]);
     expect(merged.targets.map((target) => target.id)).toEqual([71, 72]);
   });
-
-  it("keeps the translations that live outside the groups, once each", () => {
-    const merged = mergeGroups([
-      { units: [makeUnit(10, "confirmed")], targets: [], translations: [makeTarget(81)] },
-      { units: [makeUnit(11, "confirmed")], targets: [], translations: [makeTarget(81), makeTarget(82)] },
-    ]);
-    expect(merged.translations?.map((target) => target.id)).toEqual([81, 82]);
-  });
 });
 
 describe("listCoConfirmed", () => {

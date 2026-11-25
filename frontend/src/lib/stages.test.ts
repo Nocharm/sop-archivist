@@ -1,7 +1,7 @@
 // 묶음 주소 읽기 - 단계 경로와 묶음 밖 주소를 가른다.
 import { describe, expect, it } from "vitest";
 
-import { getAssignLineHref, getAssignSourceHref, getEditOriginalHref, getNewDocumentsHref, getNextActionHref, getStageHref, isStageLocked, listStages, NEXT_ACTION_STAGE, parseBundlePath, STAGES } from "./stages";
+import { getAssignLineHref, getAssignSourceHref, getEditOriginalHref, getLeftoverTranslationsHref, getNewDocumentsHref, getNextActionHref, getStageHref, isStageLocked, listStages, NEXT_ACTION_STAGE, parseBundlePath, STAGES } from "./stages";
 
 describe("parseBundlePath", () => {
   it("reads the overview and a stage", () => {
@@ -45,6 +45,10 @@ describe("listStages", () => {
 });
 
 describe("NEXT_ACTION_STAGE", () => {
+  it("opens the leftover translations on Assign", () => {
+    expect(getLeftoverTranslationsHref(4)).toBe("/bundles/4/assign?translations=1");
+  });
+
   it("sends unit decisions and reasons to Assign", () => {
     expect(NEXT_ACTION_STAGE.decide_units).toBe("assign");
     expect(NEXT_ACTION_STAGE.fill_reasons).toBe("assign");

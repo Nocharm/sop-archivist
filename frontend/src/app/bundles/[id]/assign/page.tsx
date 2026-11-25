@@ -33,6 +33,7 @@ import { CutPop } from "@/components/paper/cut-pop";
 import type { ComposedStyleChoice } from "@/components/paper/number-cell";
 import { FilterChip } from "@/components/status";
 import { ConfirmModal } from "@/components/ui/confirm-modal";
+import { LeftoverTranslations } from "@/components/assign/leftover-translations";
 import { AcceptSuggestionsModal } from "@/components/assign/accept-suggestions-modal";
 import { EmptyState } from "@/components/ui/empty-state";
 import { BundleLoadError } from "@/components/bundle-load-error";
@@ -850,6 +851,15 @@ export default function AssignPage() {
           testId="assign-identical-modal"
           onConfirm={() => void confirmIdenticalAll()}
           onClose={() => setConfirmingIdentical(false)}
+        />
+      )}
+      {state.isLeftoverOpen && (
+        <LeftoverTranslations
+          items={state.leftovers}
+          busy={isAnyPending}
+          onSettle={(item, action) => void state.settleTranslations([item], action)}
+          onGo={state.goToTranslation}
+          onClose={() => state.setLeftoverSheet(false)}
         />
       )}
       {acceptKind && (

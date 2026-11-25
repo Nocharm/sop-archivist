@@ -956,8 +956,6 @@ export interface GroupTarget {
 export interface Group {
   units: GroupUnit[];
   targets: GroupTarget[];
-  /** 이 묶음의 단위에서 옮긴 번역 가운데 targets에 없는 것(문장 번역은 묶음이 따로다) - 단위로 읽을 때만 */
-  translations?: GroupTarget[];
   /** 묶음 저장 응답에만 - 이 저장으로 확정된 짝·풀린 짝(서버가 판단을 보고 정한다) */
   pairs_confirmed?: number[];
   pairs_dissolved?: number[];
@@ -1017,12 +1015,36 @@ export async function listAllUnits(bundleId: number, documentId?: number): Promi
   }
 }
 
+/** 확정하지 않은 번역(AI 제안 · 보류) 하나 - 출처 Old 단위가 은퇴했으면 source_* · row_unit_id · document_id가 빈다 */
+export interface OpenTranslation {
+  id: number;
+  revision: number;
+  status: CoverStatus;
+  lang: UnitLang;
+  text: string;
+  target_doc_code: string;
+  /** 표 칸의 번역이면 그 표 새 문장 - 저장이 표 묶음 전체를 실어야 한다 */
+  parent_target_id: number | null;
+  source_unit_id: number | null;
+  source_display_id: string;
+  source_text: string;
+  /** 그 단위가 든 Assign 줄의 단위 - 칸 문장은 표 단위 */
+  row_unit_id: number | null;
+  document_id: number | null;
+  /** 출처 새 문장과 단위가 모두 살아 있나 - 아니면 지우기만 한다 */
+  can_confirm: boolean;
+}
+
+export function listOpenTranslations(bundleId: number): Promise<OpenTranslation[]> {
+  return apiFetch<OpenTranslation[]>(`/bundles/${bundleId}/translations/open`);
+}
+
 export function getGroupByUnit(bundleId: number, unitId: number): Promise<Group> {
   return apiFetch<Group>(`/bundles/${bundleId}/groups/by-unit/${unitId}`);
 }
 
 /** Assign 되돌리기 기록 메타 - 저장 본문의 undo. 한 사용자 동작의 요청들은 같은 step_key를 쓴다(서버가 한 단계로 합친다) */
-export type SaveOp = "confirm" | "hold" | "link" | "unlink" | "mark_new" | "link_source" | "split_new" | "merge_new";
+export type SaveOp = "confirm" | "hold" | "link" | "unlink" | "mark_new" | "link_source" | "split_new" | "merge_new" | "drop_translation";
 
 export interface UndoMeta {
   session: string;

@@ -87,6 +87,14 @@ export function getAssignSourceHref(bundleId: number, units: ReadonlyArray<{ doc
   return first ? getAssignLineHref(bundleId, first.document_id, first.unit_id) : getStageHref(bundleId, "assign");
 }
 
+/** 배정 화면을 남은 AI 번역 목록이 열린 채 여는 주소 값 - 남은 것이 없으면 아무 일도 없다 */
+export const LEFTOVER_TRANSLATIONS_PARAM = "translations";
+
+/** 남은 AI 번역 목록으로 가는 주소 - 개요의 새 문장 관문 카드가 쓴다 */
+export function getLeftoverTranslationsHref(bundleId: number): string {
+  return `${getStageHref(bundleId, "assign")}?${LEFTOVER_TRANSLATIONS_PARAM}=1`;
+}
+
 export function getStageHref(bundleId: number, key: StageKey): string {
   const stage = STAGES.find((item) => item.key === key);
   return `/bundles/${bundleId}${stage?.path ?? ""}`;

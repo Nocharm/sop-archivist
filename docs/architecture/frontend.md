@@ -28,7 +28,7 @@ SOP 화면: `api-sop.ts`(SOP API 호출·응답 타입), 화면 규칙은 순수
 - `match-model`(같은 글자 일괄 확정 나누기).
 - `slot-status-model`(SOP 칸의 여섯 상태 · 요약 · N/A 사유 편집기 하나).
 - `old-row-model`(Documents Old 목록의 줄 · 줄 끝 단추 · 펼칠 수 있는 줄).
-- **숨긴 기능**: `lib/drafting.ts` — 새 문서를 만드는 쪽(Order · 번호로 더하기 · 칸 배정 · 템플릿 보기 · 결과물 C)과 칸 추천 · 나누기 · 번역 · 목록 읽기 AI를 화면에서 숨기는 스위치 하나(쪼개기 먼저 설계 §5 H1). 단계 목록은 `stages.ts` `listStages(drafting)`(숨기면 Order가 빠지고 번호를 이어 매긴다 — 주소 읽기는 그대로 `STAGES`), AI 종류는 `ai-suggestion-model.ts` `HIDDEN_AI_KINDS`, 보낼 곳은 `classify-model.ts` `listPickOptions`(고르기) · `readHiddenPlace`(이미 보낸 곳 읽기), Documents는 `tobe-add-model.ts` `listTobeTools`, 결과물 탭은 `outputs-view-prefs.ts` `resolveOutputsTab`. 서버 쪽은 따로다 — `ai/constants.py` `AUTO_CLASSIFY` · `PLAN_DELETES`, `sheet_model.py` `SHOW_C_SHEET`.
+- **숨긴 기능**: `lib/drafting.ts` — 새 문서를 만드는 쪽(Order · 번호로 더하기 · 칸 배정 · 템플릿 보기 · 결과물 C)과 칸 추천 · 나누기 · 번역 · 목록 읽기 AI를 화면에서 숨기는 스위치 하나(쪼개기 먼저 설계 §5 H1). 단계 목록은 `stages.ts` `listStages(drafting)`(숨기면 Order가 빠지고 번호를 이어 매긴다 — 주소 읽기는 그대로 `STAGES`), AI 종류는 `ai-suggestion-model.ts` `HIDDEN_AI_KINDS`, 보낼 곳은 `classify-model.ts` `listPickOptions`(고르기) · `readHiddenPlace`(이미 보낸 곳 읽기), Documents는 `tobe-add-model.ts` `listTobeTools`, 결과물 탭은 `outputs-view-prefs.ts` `resolveOutputsTab`. 숨긴 동안 남은 AI 번역(`GET …/translations/open`)은 `translation-decision.ts`로 정한다 — 오른쪽 칸(고른 줄의 것)과 `components/assign/leftover-translations.tsx`(묶음 전체, 위쪽 줄 단추 · `?translations=1`)가 같은 저장을 쓰고, 칸 번역은 누른 때의 표 묶음을 새로 읽어 나머지가 모두 확정일 때만 보낸다. 서버 쪽은 따로다 — `ai/constants.py` `AUTO_CLASSIFY` · `PLAN_DELETES`, `sheet_model.py` `SHOW_C_SHEET`.
 
 ## 3. 3단계 Assign 화면 — `app/bundles/[id]/assign`(v0.10.0)
 

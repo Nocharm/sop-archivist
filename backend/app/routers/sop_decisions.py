@@ -38,6 +38,7 @@ from app.sop.detach import DetachReport
 from app.sop.groups import GroupOut, load_group
 from app.sop.match import BulkMatchIn, IdenticalCandidate, confirm_in_bulk, list_identical_candidates
 from app.sop.membership import BundleContext, ensure_active_account, ensure_editable, lock_bundle, require_bundle_role
+from app.sop.open_translations import OpenTranslationOut, list_open_translations
 from app.sop.remarks import (
     DEFAULT_MOVE_TARGETS,
     MAX_MOVE_TARGETS,
@@ -91,6 +92,13 @@ async def get_group_by_target(
     target_id: IdPath, ctx: BundleContext = Depends(_require_member), session: AsyncSession = Depends(get_session)
 ) -> GroupOut:
     return await load_group(session, ctx.bundle.id, target_id=target_id)
+
+
+@router.get("/{bundle_id}/translations/open", response_model=list[OpenTranslationOut])
+async def get_open_translations(
+    ctx: BundleContext = Depends(_require_member), session: AsyncSession = Depends(get_session)
+) -> list[OpenTranslationOut]:
+    return await list_open_translations(session, ctx.bundle.id)
 
 
 @router.post("/{bundle_id}/groups/save", response_model=GroupOut)

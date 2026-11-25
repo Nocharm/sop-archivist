@@ -436,4 +436,47 @@ await runStep("drafting hidden: rail, documents, assign and outputs show no draf
   await wait(page, "output-b");
   check("Outputs opens on B and has no Output C", (await count("outputs-tab-c")) + (await count("outputs-edit-order")) === 0 && (await count("outputs-tab-b")) === 1);
 });
+
+// 남은 AI 번역(쪼개기 먼저 설계 §5 H5) - 오른쪽 칸과 목록에서 정하면 그 자리에서 사라진다. 번역은 AI가 있어야 생겨 목록과 저장 응답을 화면 앞에서 바꿔 넣는다
+// (서버가 실제로 받아 지우고 되돌리는 것은 backend/tests/test_sop_hidden_drafting.py가 본다). DB는 바뀌지 않는다
+await runStep("drafting hidden: leftover AI translations settle from the inspector and the list", {}, async ({ page, takeShot }) => {
+  const headers = { "X-Dev-User": "qa.member" };
+  const api = `${BASE}/api/bundles/${halfBundleId}`;
+  const unit = (await (await page.request.get(`${api}/units?limit=1000`, { headers })).json()).items.find((entry) => entry.kind === "sentence" && entry.status === "unassigned" && entry.pair_id === null);
+  const base = { revision: 3, lang: "en", target_doc_code: "SOP-CF", parent_target_id: null };
+  let open = [
+    { ...base, id: 900001, status: "ai_suggested", text: "Synthetic leftover translation.", source_unit_id: unit.unit_id, source_display_id: unit.display_id, source_text: unit.text, row_unit_id: unit.unit_id, document_id: unit.document_id, can_confirm: true },
+    { ...base, id: 900002, status: "on_hold", text: "Synthetic translation without its Old line.", source_unit_id: null, source_display_id: "", source_text: "", row_unit_id: null, document_id: null, can_confirm: false },
+  ];
+  const saves = [];
+  await page.route("**/translations/open", (route) => route.fulfill({ json: open }));
+  await page.route("**/groups/save", (route) => {
+    const body = JSON.parse(route.request().postData() ?? "{}");
+    saves.push(body);
+    const done = new Set([...body.removed_target_ids, ...body.targets.map((target) => target.id)]);
+    open = open.filter((item) => !done.has(item.id));
+    return route.fulfill({ json: { units: [], targets: [], pairs_confirmed: [], pairs_dissolved: [] } });
+  });
+
+  await page.goto(`${BASE}/bundles/${halfBundleId}/assign?doc=${unit.document_id}&unit=${unit.unit_id}`);
+  await wait(page, "assign-translations");
+  check("the bar counts the leftover translations", (await getText(page, "assign-leftover-open")).includes("2"), await getText(page, "assign-leftover-open"));
+  await page.locator('[data-testid="assign-translation-confirm"]').click();
+  await page.locator('[data-testid="assign-translations"]').waitFor({ state: "detached", timeout: T });
+  check("confirming sends only that translation and the box goes away", saves.length === 1 && saves[0].units.length === 0 && saves[0].targets.length === 1 && saves[0].targets[0].id === 900001 && saves[0].undo.op === "confirm", JSON.stringify(saves[0]));
+
+  // 개요의 새 문장 관문 카드가 목록을 연 채 보낸다
+  await page.goto(`${BASE}/bundles/${halfBundleId}`);
+  await wait(page, "overview-gate-list");
+  if ((await page.locator('[data-testid="overview-gate-targets"]').count()) === 0) await page.locator('[data-testid="overview-gate-more"]').first().click();
+  check("the new-sentence gate opens the list", ((await page.locator('[data-testid="overview-gate-targets"]').getAttribute("href")) ?? "").endsWith("/assign?translations=1"));
+  await page.goto(`${BASE}/bundles/${halfBundleId}/assign?translations=1`);
+  await wait(page, "assign-leftover-900002");
+  check("a translation that lost its Old line can only be removed", (await page.locator('[data-testid="assign-leftover-900002-confirm"], [data-testid="assign-leftover-900002-go"]').count()) === 0 && (await page.locator('[data-testid="assign-leftover-900002-no-source"]').count()) === 1);
+  await takeShot("sop-assign-leftover-translations.png");
+  await page.locator('[data-testid="assign-leftover-900002-remove"]').click();
+  await page.locator('[data-testid="assign-leftover"]').waitFor({ state: "detached", timeout: T });
+  await page.locator('[data-testid="assign-leftover-open"]').waitFor({ state: "detached", timeout: T });
+  check("removing locks the seen revision and empties the list", saves.length === 2 && saves[1].removed_revisions["900002"] === 3 && saves[1].targets.length === 0 && saves[1].undo.op === "drop_translation", JSON.stringify(saves[1]));
+});
 }

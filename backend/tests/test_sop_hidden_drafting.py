@@ -8,10 +8,22 @@ from app.sop.ai import constants
 from app.sop.models import AiSuggestion
 from tests import test_sop_review as review
 from tests.ai_fixtures import clean_ai_jobs  # noqa: F401 -- 픽스처는 usefixtures가 이름으로 찾는다
-from tests.ai_fixtures import AI_SOP_DOC, make_match_bundle, plan, read_rows, run_jobs, run_plan, use_reply
+from tests.ai_fixtures import AI_SOP_DOC, edit_document, make_ai_bundle, make_match_bundle, plan, read_rows, run_jobs, run_plan, upload_second_document, use_reply
 from tests.docx_factory import p
 from tests.fake_ai import FakeAi
-from tests.sop_helpers import AUTHOR, find_unit, get_group_by_unit, put_tobe, save_group
+from tests.sop_helpers import (
+    AUTHOR,
+    OUTSIDER,
+    REVIEWER,
+    assign_as_is,
+    find_unit,
+    get_bundle,
+    get_group_by_unit,
+    get_view,
+    put_tobe,
+    save_group,
+)
+from tests.test_sop_ai_context import _count_queries as count_queries
 from tests.test_sop_ai_match_plan import LONE_NEW, LONE_OLD, NEW_1, NEW_2, OLD_1, OLD_2, find_live, queue_plan, read_old_ids
 from tests.test_sop_ai_prepare import post_prepare, read_jobs
 from tests.test_sop_ai_translate import (
@@ -107,19 +119,26 @@ def test_replan_leaves_an_existing_delete_candidate(
 # --- 막다른 길이 없게(H5) ---
 
 
+def read_open(client: TestClient, bundle_id: int) -> list[dict]:
+    response = client.get(f"/api/bundles/{bundle_id}/translations/open", headers=AUTHOR)
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
 def test_hidden_place_with_a_leftover_translation_reaches_review(client: TestClient, fake_ai: FakeAi) -> None:
     """칸에 확정한 줄과 아직 정하지 않은 AI 번역 — 번역을 지우면 막는 이유가 없어지고 배정 취소도 된다."""
     bundle, unit = make_assigned_unit(client)
     target = translate(client, fake_ai, bundle.id, unit["id"])
     assert "targets_ai_suggested" in read_blocker_codes(client, bundle.id)
-    (read,) = get_group_by_unit(client, bundle.id, unit["id"])["translations"]  # 화면이 이것을 보고 확정 · 지우기를 낸다
-    assert (read["id"], read["ai_text"], read["status"]) == (target.id, TRANSLATED, "ai_suggested")
+    (read,) = read_open(client, bundle.id)  # 화면이 이것을 보고 확정 · 지우기를 낸다
+    assert (read["id"], read["text"], read["status"], read["can_confirm"]) == (target.id, TRANSLATED, "ai_suggested", True)
+    assert (read["source_unit_id"], read["row_unit_id"], read["source_text"]) == (unit["id"], unit["id"], unit["text"])
 
     removed = remove_translation(client, bundle.id, target)
 
     assert removed.status_code == 200, removed.text
     assert not {code for code in read_blocker_codes(client, bundle.id) if code.startswith("targets_")}
-    assert get_group_by_unit(client, bundle.id, unit["id"])["translations"] == []
+    assert read_open(client, bundle.id) == []
     assert clear_unit(client, bundle.id, unit["id"]).status_code == 200
     assert get_group_by_unit(client, bundle.id, unit["id"])["units"][0]["decision"]["status"] == "unassigned"
 
@@ -165,15 +184,16 @@ def test_confirming_a_leftover_translation_keeps_the_row_decision(client: TestCl
 def test_settling_a_leftover_translation_is_one_undo_step(client: TestClient, fake_ai: FakeAi) -> None:
     bundle, unit = make_assigned_unit(client)
     target = translate(client, fake_ai, bundle.id, unit["id"])
-    undo = {"session": "s1", "op": "confirm", "focus_unit_id": unit["id"]}
+    undo = {"session": "s1", "op": "drop_translation", "focus_unit_id": unit["id"]}
     body = {"action": "confirm", "units": [], "targets": [], "removed_target_ids": [target.id], "undo": undo}
     assert save_group(client, bundle.id, body).status_code == 200
 
     undone = client.post(f"/api/bundles/{bundle.id}/decisions/undo", json={"session": "s1"}, headers=AUTHOR)
 
     assert undone.status_code == 200, undone.text
-    (read,) = get_group_by_unit(client, bundle.id, unit["id"])["translations"]
-    assert (read["id"], read["status"], read["ai_text"]) == (target.id, "ai_suggested", TRANSLATED)
+    assert undone.json()["op"] == "drop_translation"  # 화면이 "번역 지우기"를 되돌렸다고 말한다
+    (read,) = read_open(client, bundle.id)
+    assert (read["id"], read["status"], read["text"]) == (target.id, "ai_suggested", TRANSLATED)
 
 
 def test_clearing_a_hidden_place_leaves_an_orphan_the_row_still_shows(client: TestClient, fake_ai: FakeAi) -> None:
@@ -183,7 +203,8 @@ def test_clearing_a_hidden_place_leaves_an_orphan_the_row_still_shows(client: Te
     assert clear_unit(client, bundle.id, unit["id"]).status_code == 200
     assert "targets_on_hold" in read_blocker_codes(client, bundle.id)
 
-    (orphan,) = get_group_by_unit(client, bundle.id, unit["id"])["translations"]
+    (orphan,) = read_open(client, bundle.id)
+    assert (orphan["row_unit_id"], orphan["can_confirm"]) == (unit["id"], False)  # 출처 문장이 없어 지우기만
     body = {"action": "confirm", "units": [], "targets": [], "removed_target_ids": [orphan["id"]]}
     assert save_group(client, bundle.id, body).status_code == 200
 
@@ -191,14 +212,14 @@ def test_clearing_a_hidden_place_leaves_an_orphan_the_row_still_shows(client: Te
     assert load_translations(unit["id"]) == []
 
 
-def test_cell_translations_stay_in_the_group(client: TestClient, fake_ai: FakeAi) -> None:
-    """칸 번역은 표 묶음의 새 문장이라 translations에 겹쳐 싣지 않는다."""
+def test_a_cell_translation_names_its_table_row(client: TestClient, fake_ai: FakeAi) -> None:
     bundle, table, cell = make_assigned_table(client)
     target = translate(client, fake_ai, bundle.id, cell["id"])
 
-    group = get_group_by_unit(client, bundle.id, table["id"])
+    (read,) = read_open(client, bundle.id)
 
-    assert target.id in {item["id"] for item in group["targets"]} and group["translations"] == []
+    assert (read["id"], read["source_unit_id"], read["row_unit_id"]) == (target.id, cell["id"], table["id"])
+    assert read["parent_target_id"] is not None and read["can_confirm"]
 
 
 def test_removing_a_cell_translation_echoes_the_table(client: TestClient, fake_ai: FakeAi) -> None:
@@ -242,3 +263,92 @@ def test_removing_a_translation_someone_just_changed_is_refused(client: TestClie
     fresh = {**body, "removed_revisions": {target.id: kept.revision}}
     assert save_group(client, bundle.id, fresh).status_code == 200
     assert load_translations(unit["id"]) == []
+
+
+def delete_rows(client: TestClient, bundle_id: int, units: list[dict]) -> None:
+    body = {"action": "delete", "reason": "", "units": [
+        {"unit_id": unit["id"], "revision": get_group_by_unit(client, bundle_id, unit["id"])["units"][0]["decision"]["revision"]}
+        for unit in units
+    ]}
+    response = client.post(f"/api/bundles/{bundle_id}/decisions/bulk", json=body, headers=AUTHOR)
+    assert response.status_code == 200, response.text
+
+
+def make_retired_translation(client: TestClient, fake_ai: FakeAi, op: str) -> tuple[review.Fixture, int]:
+    """확정해 둔 번역의 출처 Old 단위를 나누거나 합쳐 은퇴시킨 묶음 — 묶음과 남은 번역 id."""
+    fx = review._make_ready(client)
+    unit, neighbor = (find_unit(fx.view, text) for text in (review.KO_1, review.KO_2))
+    target = translate(client, fake_ai, fx.bundle_id, unit["id"])
+    assert save_translation(client, fx.bundle_id, target).status_code == 200
+    edit = {"type": "split", "unit_id": unit["id"], "at": 6} if op == "split" else {"type": "merge", "unit_ids": [unit["id"], neighbor["id"]]}
+    edit_document(client, fx.bundle_id, fx.doc["id"], edit, confirm=True)
+    return fx, target.id
+
+
+@pytest.mark.parametrize("op", ["split", "merge"])
+def test_a_translation_of_a_retired_unit_is_listed_and_removed(client: TestClient, fake_ai: FakeAi, op: str) -> None:
+    """출처 단위가 나누기 · 합치기로 은퇴해 어느 줄에도 없는 번역 — 묶음 목록에서 지우고 검토 요청까지 간다."""
+    fx, target_id = make_retired_translation(client, fake_ai, op)
+    view = get_view(client, fx.bundle_id, fx.doc["id"])
+    delete_rows(client, fx.bundle_id, [unit for unit in view["units"] if unit["status"] == "unassigned"])
+    assert review._put_checks(client, fx.bundle_id).status_code == 200
+    assert read_blocker_codes(client, fx.bundle_id) == {"targets_on_hold"}
+    (read,) = read_open(client, fx.bundle_id)
+    assert (read["id"], read["status"], read["source_unit_id"], read["row_unit_id"], read["can_confirm"]) == (
+        target_id, "on_hold", None, None, False,
+    )
+
+    body = {"action": "confirm", "units": [], "targets": [], "removed_target_ids": [target_id],
+            "removed_revisions": {target_id: read["revision"]}, "undo": {"session": "s1", "op": "drop_translation"}}
+    removed = save_group(client, fx.bundle_id, body)
+
+    assert removed.status_code == 200, removed.text
+    assert read_open(client, fx.bundle_id) == []
+    undone = client.post(f"/api/bundles/{fx.bundle_id}/decisions/undo", json={"session": "s1"}, headers=AUTHOR)
+    assert undone.status_code == 200, undone.text
+    (restored,) = read_open(client, fx.bundle_id)  # Ctrl+Z 한 번으로 돌아온다
+    assert (restored["id"], restored["text"], restored["status"]) == (target_id, read["text"], "on_hold")
+    again = {"action": "confirm", "units": [], "targets": [], "removed_target_ids": [target_id]}
+    assert save_group(client, fx.bundle_id, again).status_code == 200
+    assert review._put_checks(client, fx.bundle_id).status_code == 200
+    requested = review._request(client, fx.bundle_id)
+    assert requested.status_code == 200, requested.text
+
+
+def test_reset_leaves_the_retired_translation_on_the_list(client: TestClient, fake_ai: FakeAi) -> None:
+    fx, target_id = make_retired_translation(client, fake_ai, "split")
+    reset = client.post(
+        f"/api/bundles/{fx.bundle_id}/decisions/reset",
+        json={"revision": get_bundle(client, fx.bundle_id)["revision"]}, headers=AUTHOR,
+    )
+    assert reset.status_code == 200, reset.text
+
+    assert [item["id"] for item in read_open(client, fx.bundle_id)] == [target_id]
+
+
+def test_open_translations_are_for_members_and_in_order(client: TestClient, fake_ai: FakeAi) -> None:
+    """구성원(검토자 포함)만 읽고, 출처 줄이 있는 것이 Old 문서 순서로 먼저, 출처 없는 것이 끝이다."""
+    fx, orphan_id = make_retired_translation(client, fake_ai, "split")
+    unit = find_unit(fx.view, review.KO_2)
+    live = translate(client, fake_ai, fx.bundle_id, unit["id"])
+    url = f"/api/bundles/{fx.bundle_id}/translations/open"
+
+    assert [item["id"] for item in read_open(client, fx.bundle_id)] == [live.id, orphan_id]
+    assert client.get(url, headers=REVIEWER).status_code == 200
+    assert client.get(url, headers=OUTSIDER).status_code == 404
+
+
+def test_open_translations_take_a_fixed_number_of_queries(client: TestClient, fake_ai: FakeAi) -> None:
+    bundle = make_ai_bundle(client)
+    texts = [f"합성 시험 문장 {name}를 확인한다." for name in "가나다라마"]
+    units = upload_second_document(client, bundle.id, "".join(p(text) for text in texts))["units"]
+    for unit in units:
+        assign_as_is(client, bundle.id, unit, bundle.sop_id, slot_key="purpose")
+    translate(client, fake_ai, bundle.id, units[0]["id"])
+    with count_queries() as one:
+        assert len(read_open(client, bundle.id)) == 1
+    for unit in units[1:]:
+        translate(client, fake_ai, bundle.id, unit["id"])
+    with count_queries() as many:
+        assert len(read_open(client, bundle.id)) == 5
+    assert len(many) == len(one)

@@ -46,7 +46,7 @@ function putFirst<T>(items: readonly T[], isFirst: (item: T) => boolean): T[] {
 export function AssignSidePanel({ state, headEnd }: { state: AssignPageState; headEnd: ReactNode }) {
   const {
     t, bundleId, canEdit, unitsKey, reloadData, docViews, tobeData, aiJobs, aiOn, aiBusy, suggestions, invalidUnitIds, unitMap, written,
-    writtenMap, rowOfUnit, options, isDrafting, hiddenPlace, openTranslations, translationBlocked, settleTranslations, groupPending, mode, activeKey, row, isNewEdit, hasSolo, tocOpen, setTocOpen, tocPick, tocBlocks, newRemarks,
+    writtenMap, rowOfUnit, options, isDrafting, hiddenPlace, openTranslations, translationBlocked, settleTranslations, mode, activeKey, row, isNewEdit, hasSolo, tocOpen, setTocOpen, tocPick, tocBlocks, newRemarks,
     setNewRemarks, cutUnitId, focusNew, groupData, draft, editing, savedDestination, destination, rowUnits, rowLangs, firstDecision,
     systemHold, reasonNow, moveCode, setDraft, rowLive, aiDest, aiWhy, recommendations, linkIds, pickedGroups, saveGroupData,
     viewOf, oldView, splitByUnit, shapeView, shapeModel, soloUnits, cutLine, writtenDocs, composedDoc, view, changeView, askAiScope,
@@ -507,18 +507,21 @@ export function AssignSidePanel({ state, headEnd }: { state: AssignPageState; he
         <div key={item.id} className="chosen-line" data-testid={`assign-translation-${item.id}`}>
           <LangToken lang={item.lang} />
           <span className="min-w-0 flex-1 text-[13px] leading-5 text-ink">
-            <ClampText text={item.confirmed_text || item.ai_text} />
+            <ClampText text={item.text} />
           </span>
         </div>
       ))}
       {canEdit && translationBlocked && <p className="text-xs text-ink-2" data-testid="assign-translation-blocked">{t("assign.hidden.translationBlocked")}</p>}
       {canEdit && (
         <div className="flex flex-wrap gap-1.5">
-          <button type="button" className="btn h-7" data-testid="assign-translation-confirm" disabled={busy || groupPending || translationBlocked} onClick={() => void settleTranslations("confirm")}>
-            <Check size={14} strokeWidth={1.5} aria-hidden />
-            {t("assign.hidden.translationConfirm")}
-          </button>
-          <button type="button" className="btn h-7" data-testid="assign-translation-remove" disabled={busy || groupPending || translationBlocked} onClick={() => void settleTranslations("remove")}>
+          {/* 출처 문장이 없어진 번역(배정 취소)은 지우기만 */}
+          {openTranslations.some((item) => item.can_confirm) && (
+            <button type="button" className="btn h-7" data-testid="assign-translation-confirm" disabled={isAnyPending || translationBlocked} onClick={() => void settleTranslations(openTranslations, "confirm")}>
+              <Check size={14} strokeWidth={1.5} aria-hidden />
+              {t("assign.hidden.translationConfirm")}
+            </button>
+          )}
+          <button type="button" className="btn h-7" data-testid="assign-translation-remove" disabled={isAnyPending || translationBlocked} onClick={() => void settleTranslations(openTranslations, "remove")}>
             <Trash2 size={14} strokeWidth={1.5} aria-hidden />
             {t("assign.hidden.translationRemove")}
           </button>

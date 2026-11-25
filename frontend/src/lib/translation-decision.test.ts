@@ -1,8 +1,8 @@
-// 남은 AI 번역 줄의 확정 · 지우기 - 문장 번역은 그것만 저장하고, 칸 번역은 표 묶음을 지금 그대로 함께 되보낸다.
+// 남은 AI 번역의 확정 · 지우기 - 문장 번역은 그것만 저장하고, 칸 번역은 표 묶음을 지금 그대로 함께 되보낸다.
 import { describe, expect, it } from "vitest";
 
-import type { Decision, Group, GroupTarget, GroupUnit } from "./api-sop";
-import { buildTranslationDecision, isTranslationBlocked, listOpenTranslations } from "./translation-decision";
+import type { Decision, Group, GroupTarget, GroupUnit, OpenTranslation } from "./api-sop";
+import { buildTranslationDecision, isTranslationBlocked, listRowTranslations } from "./translation-decision";
 
 const DECISION: Decision = { disposition: "assigned", move_target_code: "", reason: "사유", status: "confirmed", hold_reason: "", confirmed_by: "qa.member", confirmed_at: null, revision: 4 };
 
@@ -18,65 +18,78 @@ function makeTarget(id: number, extra: Partial<GroupTarget> = {}): GroupTarget {
   };
 }
 
-const translation = (id: number, unitId: number, extra: Partial<GroupTarget> = {}) =>
-  makeTarget(id, { origin: "translation", lang: "en", confirmed_text: "", ai_text: "Text", change_type: "translated", status: "ai_suggested", translation_source_unit_id: unitId, ...extra });
+function makeOpen(id: number, extra: Partial<OpenTranslation> = {}): OpenTranslation {
+  return {
+    id, revision: 2, status: "ai_suggested", lang: "en", text: "Text", target_doc_code: "SOP-CF", parent_target_id: null, source_unit_id: 1, source_display_id: "OLD-1-1", source_text: "글",
+    row_unit_id: 1, document_id: 1, can_confirm: true, ...extra,
+  };
+}
+
+describe("listRowTranslations", () => {
+  it("keeps the translations of the row, cells under their table, and none that lost their source", () => {
+    const items = [makeOpen(11), makeOpen(12, { row_unit_id: 2 }), makeOpen(13, { source_unit_id: 5, row_unit_id: 100 }), makeOpen(14, { source_unit_id: null, row_unit_id: null })];
+    expect(listRowTranslations(items, [1]).map((item) => item.id)).toEqual([11]);
+    expect(listRowTranslations(items, [100]).map((item) => item.id)).toEqual([13]);
+  });
+});
 
 describe("buildTranslationDecision for a sentence", () => {
-  const group: Group = { units: [makeUnit(1)], targets: [makeTarget(10, { source_unit_ids: [1] })], translations: [translation(11, 1)] };
-
   it("sends only the translation, so the row keeps who confirmed it and when", () => {
-    expect(buildTranslationDecision(group, [1], "confirm")).toMatchObject({ action: "confirm", units: [], removed_target_ids: [], targets: [{ id: 11, revision: 2, source_unit_ids: [] }] });
-    expect(buildTranslationDecision(group, [1], "remove")).toMatchObject({ action: "confirm", units: [], removed_target_ids: [11], removed_revisions: { 11: 2 }, targets: [] });
+    expect(buildTranslationDecision([makeOpen(11)], null, "confirm")).toMatchObject({ action: "confirm", units: [], removed_target_ids: [], targets: [{ id: 11, revision: 2, source_unit_ids: [] }] });
+    expect(buildTranslationDecision([makeOpen(11)], null, "remove")).toMatchObject({ action: "confirm", units: [], removed_target_ids: [11], removed_revisions: { 11: 2 }, targets: [] });
   });
 
-  it("settles a translation that went on hold, and leaves confirmed ones and other rows' alone", () => {
-    const mixed: Group = { ...group, translations: [translation(11, 1, { status: "on_hold" }), translation(12, 1, { status: "confirmed" }), translation(13, 2)] };
-    expect(listOpenTranslations(mixed, [1]).map((item) => item.id)).toEqual([11]);
-    expect(buildTranslationDecision(mixed, [1], "remove")?.removed_target_ids).toEqual([11]);
+  it("never confirms a translation without its source, only removes it", () => {
+    const orphan = makeOpen(12, { status: "on_hold", source_unit_id: null, row_unit_id: null, can_confirm: false });
+    expect(buildTranslationDecision([orphan], null, "confirm")).toBeNull();
+    expect(buildTranslationDecision([makeOpen(11), orphan], null, "confirm")?.targets.map((target) => target.id)).toEqual([11]);
+    expect(buildTranslationDecision([makeOpen(11), orphan], null, "remove")?.removed_target_ids).toEqual([11, 12]);
   });
 
   it("has nothing to do without a leftover translation", () => {
-    const groupWithoutTranslation: Group = { units: group.units, targets: group.targets };
-    expect(buildTranslationDecision(groupWithoutTranslation, [1], "remove")).toBeNull();
-    expect(buildTranslationDecision(null, [1], "confirm")).toBeNull();
+    expect(buildTranslationDecision([], null, "remove")).toBeNull();
   });
 });
 
 describe("buildTranslationDecision for a table cell", () => {
   // 표 9 · 칸 새 문장 10(확정, 출처 1)과 그 번역 11 - 칸 번역은 표 묶음 안이라 묶음 전체를 지금 그대로 되보낸다
+  const cell = makeOpen(11, { parent_target_id: 9, row_unit_id: 100 });
   const group: Group = {
     units: [makeUnit(100, { kind: "table", cell_unit_ids: [1] })],
     targets: [
       makeTarget(9, { kind: "table", lang: "neutral", source_unit_ids: [100], grid: { rows: 1, cols: 1 } }),
       makeTarget(10, { parent_target_id: 9, cell_row: 1, cell_col: 1, source_unit_ids: [1] }),
-      translation(11, 1, { parent_target_id: 9, cell_row: 1, cell_col: 1 }),
+      makeTarget(11, { origin: "translation", lang: "en", confirmed_text: "", ai_text: "Text", status: "ai_suggested", translation_source_unit_id: 1, parent_target_id: 9 }),
     ],
   };
   const units = [{ unit_id: 100, revision: 4, disposition: "assigned", move_target_code: "", reason: "사유" }];
 
   it("echoes the whole table and confirms the translation", () => {
-    expect(buildTranslationDecision(group, [100], "confirm")).toMatchObject({ action: "confirm", units, removed_target_ids: [], targets: [{ id: 9 }, { id: 10, parent_key: "t9" }, { id: 11 }] });
+    expect(buildTranslationDecision([cell], group, "confirm")).toMatchObject({ action: "confirm", units, removed_target_ids: [], targets: [{ id: 9 }, { id: 10, parent_key: "t9" }, { id: 11 }] });
   });
 
   it("echoes the rest and removes the translation", () => {
-    expect(buildTranslationDecision(group, [100], "remove")).toMatchObject({ action: "confirm", units, removed_target_ids: [11], removed_revisions: { 11: 2 }, targets: [{ id: 9 }, { id: 10 }] });
+    expect(buildTranslationDecision([cell], group, "remove")).toMatchObject({ action: "confirm", units, removed_target_ids: [11], removed_revisions: { 11: 2 }, targets: [{ id: 9 }, { id: 10 }] });
   });
 
   it("refuses when the save would also confirm another cell or row that is still open", () => {
     const heldCell: Group = { ...group, targets: group.targets.map((target) => (target.id === 10 ? { ...target, status: "on_hold" as const } : target)) };
     const otherUnit: Group = { ...group, units: [...group.units, makeUnit(200, { decision: { ...DECISION, status: "unassigned", disposition: "unassigned" } })] };
-    const otherTranslation: Group = { ...group, targets: [...group.targets, translation(12, 999, { parent_target_id: 9 })] };
+    const otherTranslation: Group = { ...group, targets: [...group.targets, makeTarget(12, { origin: "translation", status: "ai_suggested", parent_target_id: 9 })] };
     for (const open of [heldCell, otherUnit, otherTranslation]) {
-      expect(isTranslationBlocked(open, [100])).toBe(true);
-      expect(buildTranslationDecision(open, [100], "confirm")).toBeNull();
-      expect(buildTranslationDecision(open, [100], "remove")).toBeNull();
+      expect(isTranslationBlocked([cell], open)).toBe(true);
+      expect(buildTranslationDecision([cell], open, "confirm")).toBeNull();
+      expect(buildTranslationDecision([cell], open, "remove")).toBeNull();
     }
-    expect(isTranslationBlocked(group, [100])).toBe(false);
+    expect(isTranslationBlocked([cell], group)).toBe(false);
+  });
+
+  it("needs the table group, and the translation still in it", () => {
+    expect(buildTranslationDecision([cell], null, "remove")).toBeNull();
+    expect(buildTranslationDecision([cell], { ...group, targets: group.targets.filter((target) => target.id !== 11) }, "remove")).toBeNull();
   });
 
   it("never blocks a sentence translation, which is saved alone", () => {
-    const sentence: Group = { units: [makeUnit(1, { decision: { ...DECISION, status: "on_hold" } })], targets: [], translations: [translation(11, 1)] };
-    expect(isTranslationBlocked(sentence, [1])).toBe(false);
-    expect(buildTranslationDecision(sentence, [1], "confirm")?.targets.map((target) => target.id)).toEqual([11]);
+    expect(isTranslationBlocked([makeOpen(11)], { units: [makeUnit(1, { decision: { ...DECISION, status: "on_hold" } })], targets: [] })).toBe(false);
   });
 });

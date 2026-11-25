@@ -150,7 +150,7 @@ AI 없이 사람이 끝까지 가는 결정적 경로(계획 1). AI 층은 아�
 - 출처의 글·자리(칸 좌표·부모·출처 단위 집합 포함)가 바뀌거나 출처가 사라지면 `detach.sweep_translations`가 AI 번역은 지우고(제안 `stale`) 확정 번역은 보류(`system:related_unit_changed`)로 돌린다.
 - 저장(`decisions`)·순서 바꾸기(`routers/sop_outputs`)·떼어 내기(`detach`)·입구 2 새 문장 맞추기(`match.sync_new_doc_targets`)가 이것을 부르니, 새 문장의 글이나 자리를 바꾸는 새 경로도 부른다.
 - 출처가 그대로인 AI 번역은 표에 딸려 와도 일반 보류에서 뺀다(`detach._should_hold`, 보류하면 확정 글이 빈 보류가 된다).
-- 문장 번역은 출처 연결이 없어 관계 묶음이 저 하나다(칸 번역은 그 표의 묶음). 그래서 `GET …/groups/by-unit/{id}`는 그 묶음의 단위에서 옮긴 번역 가운데 묶음 밖의 것을 `translations`로 따로 싣는다(저장 요청의 닫힘에는 들지 않는다) — 화면은 확정하지 않은 것을 줄의 오른쪽 칸에서 확정하거나 지운다(`translation-decision.ts`). 배정을 취소한 줄에 남은 보류 번역도 여기 온다.
+- 아직 정하지 않은 번역(AI 제안 · 보류)은 `open_translations.list_open_translations`(`GET …/translations/open`)가 묶음 단위로 준다 — 문장 번역은 출처 연결이 없어 관계 묶음이 저 하나고, 출처 Old 단위가 나누기 · 합치기로 은퇴하거나 배정이 취소되면 어느 줄에서도 닿지 않아 `targets_on_hold`가 검토 요청을 막기만 한다. 질의는 한 번. 출처 새 문장과 단위가 모두 살아 있을 때만 `can_confirm`(아니면 화면이 지우기만 낸다). 정하는 것은 관계 묶음 저장이다: 문장 번역은 `units: []`에 그 번역만, 지우기는 `removed_target_ids` + `removed_revisions`(단위를 싣지 않아 단위 revision이 막지 못한다, 되돌리기 단계 이름 `drop_translation`), 칸 번역은 닫힌 표 묶음 전체(되보낸 것도 확정으로 쓰므로 나머지가 모두 확정일 때만 화면이 연다).
 - AI 번역 줄의 칸·단계·깊이는 출처를 따라 잠겨 있다(저장 경로는 422 `invalid_group`의 사유 `translation_locked`, 순서 바꾸기 엔드포인트는 422 `translation_locked`).
 - 번호 표시와 칸 안 순서는 그 줄 자신의 것이다 — 출처의 표시를 따라 바꾸지 않고(`detach._follow_source`도 덮지 않는다), 새 AI 번역은 번호 생략으로 출처 바로 뒤에 놓인다(순서를 정한 문서는 `target_placement.insert_after`, 아니면 결과물 정렬 키 — 제품 명세 §7.13 섹션 번호).
 

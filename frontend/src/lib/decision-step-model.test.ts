@@ -71,6 +71,9 @@ describe("shouldDropSelectionOnStep", () => {
       expect(shouldDropSelectionOnStep(step(op)), op).toBe(true);
     }
   });
+  it("keeps the selection when a leftover translation is put back", () => {
+    expect(shouldDropSelectionOnStep(step("drop_translation"))).toBe(false);
+  });
   it("keeps the selection for in-place edits", () => {
     for (const op of ["set_language", "set_ref", "clear_ref", "set_number"]) expect(shouldDropSelectionOnStep(step(op)), op).toBe(false);
   });
