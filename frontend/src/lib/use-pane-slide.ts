@@ -102,34 +102,36 @@ export function usePaneSlide(isSingle: boolean): { capture: () => void } {
 export function useSheetSlide(isAside: boolean): { capture: () => void } {
   const firstRef = useRef<number | null>(null);
 
-  // 슬라이드 이펙트보다 앞에 둔다 - 용지의 새 자리를 읽기 전에 data-spot이 달려 있어야 한다
-  useLayoutEffect(() => {
-    const panes = document.querySelector<HTMLElement>(PANES);
-    const pane = document.querySelector<HTMLElement>(OLD_PANE);
-    const sheet = document.querySelector<HTMLElement>(OLD_SHEET);
-    if (!isAside || !panes || !pane || !sheet) return undefined;
-    const measure = () => {
-      const plan = planSpotPlace({ pane: pane.getBoundingClientRect().width, sheet: sheet.getBoundingClientRect().width });
-      panes.dataset.spot = plan.kind;
-      panes.style.setProperty("--spot-w", `${plan.panel}px`);
-    };
-    measure();
-    const observer = new ResizeObserver(measure);
-    observer.observe(pane);
-    observer.observe(sheet);
-    return () => {
-      observer.disconnect();
-      delete panes.dataset.spot;
-      panes.style.removeProperty("--spot-w");
-    };
-  }, [isAside]);
-
+  // 한 이펙트에서 먼저 data-spot을 달고(용지의 새 자리를 읽기 전에 있어야 한다) 그다음 슬라이드를 시작한다 - 정리는 둘 다
   useLayoutEffect(() => {
     const first = firstRef.current;
     firstRef.current = null;
+    const panes = document.querySelector<HTMLElement>(PANES);
+    const pane = document.querySelector<HTMLElement>(OLD_PANE);
+    const sheet = document.querySelector<HTMLElement>(OLD_SHEET);
+    let stopObserving: (() => void) | undefined;
+    if (isAside && panes && pane && sheet) {
+      const measure = () => {
+        const plan = planSpotPlace({ pane: pane.getBoundingClientRect().width, sheet: sheet.getBoundingClientRect().width });
+        panes.dataset.spot = plan.kind;
+        panes.style.setProperty("--spot-w", `${plan.panel}px`);
+      };
+      measure();
+      const observer = new ResizeObserver(measure);
+      observer.observe(pane);
+      observer.observe(sheet);
+      stopObserving = () => {
+        observer.disconnect();
+        delete panes.dataset.spot;
+        panes.style.removeProperty("--spot-w");
+      };
+    }
     // 자리가 모자라 판이 덮으면 용지는 제자리다 - 움직임 표시를 달지 않는다
-    if (first === readSheetLeft()) return undefined;
-    return startSlide(first, "aside", null);
+    const stopSlide = first === readSheetLeft() ? undefined : startSlide(first, "aside", null);
+    return () => {
+      stopSlide?.();
+      stopObserving?.();
+    };
   }, [isAside]);
 
   return {
