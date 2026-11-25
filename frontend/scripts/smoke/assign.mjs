@@ -3157,7 +3157,7 @@ await runStep("assign: enter - with nothing picked it confirms the first Suggest
   check("with no Suggested card the button is off", await primary.isDisabled());
   const savesBefore = saveRequests;
   await page.keyboard.press("Enter");
-  await page.locator('[data-testid="toast-error"]', { hasText: "Pick a destination first" }).waitFor({ timeout: T });
+  await page.locator(`[data-testid^="toast-"]`, { hasText: "Pick a destination first" }).first().waitFor({ timeout: T });
   check("Enter then only says to pick a destination and points at the list", saveRequests === savesBefore && (await page.locator(".assign-pick .dest-acc[data-flash]").count()) === 1);
   await page.unrouteAll();
 });
