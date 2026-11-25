@@ -1,0 +1,9 @@
+{
+  "shape": "한 문단에 한글 문장들 뒤 영어 문장들",
+  "layout": null,
+  "boxes": [
+    {"text": "5. 절차", "lang": "ko", "kind": "heading", "number": "5.", "excluded": null},
+    {"text": "탱크를 비운다. 밸브를 닫는다.", "lang": "ko", "kind": "sentence", "number": null, "excluded": null},
+    {"text": "Drain the tank completely. Close the outlet valve.", "lang": "en", "kind": "sentence", "number": null, "excluded": null}
+  ]
+}

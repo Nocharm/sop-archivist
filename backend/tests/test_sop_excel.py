@@ -77,7 +77,7 @@ from tests.test_sop_outputs import (
 )
 from tests.test_sop_outputs import _setup as _setup_outputs_bundle
 
-pytestmark = pytest.mark.usefixtures("clean_sop")
+pytestmark = pytest.mark.usefixtures("clean_sop", "legacy_split_rule")
 
 XLSX_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"

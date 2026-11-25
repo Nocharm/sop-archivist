@@ -65,7 +65,7 @@ from tests.sop_helpers import (
     upload,
 )
 
-pytestmark = pytest.mark.usefixtures("clean_sop", "clean_ai_jobs", "clean_embedding_cache")
+pytestmark = pytest.mark.usefixtures("clean_sop", "clean_ai_jobs", "clean_embedding_cache", "legacy_split_rule")
 
 T = TypeVar("T")
 

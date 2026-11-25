@@ -6,9 +6,9 @@
 아직 추출기에 없는 지표(아이콘 표시·잡음 표시·한글 절반의 영어 단위·번호 대조)는 null이다.
 
 실행 (backend/ 에서):
-    bash:       .venv/bin/python -m scripts.measure_extraction <파일…> [--no-aux]
-    PowerShell: .venv\\Scripts\\python -m scripts.measure_extraction <파일…> [--no-aux]
---no-aux는 MarkItDown 보조 대조(느리다)를 건너뛴다.
+    bash:       .venv/bin/python -m scripts.measure_extraction <파일…> [--no-aux] [--rule 1|2]
+    PowerShell: .venv\\Scripts\\python -m scripts.measure_extraction <파일…> [--no-aux] [--rule 1|2]
+--no-aux는 MarkItDown 보조 대조(느리다)를 건너뛴다. --rule은 쪼개기 규칙(segment.RULE_*, 기본 2)이고, units_by_kind만 두 규칙을 함께 낸다.
 """
 
 import argparse
@@ -25,7 +25,16 @@ from app.sop.extract.docx_reader import FLAG_AUTO_NUMBERING, SIGNAL_BAND, SIGNAL
 from app.sop.extract.pdf_reader import read_pdf
 from app.sop.extract.types import ExtractionRejected, ExtractResult
 from app.sop.ingest import build_limits
-from app.sop.segment import BlockView, TableView, build_unit_drafts, build_unit_text, split_sentences
+from app.sop.segment import (
+    PARAS_SIGNAL,
+    RULE_LEGACY,
+    RULE_PARAGRAPH,
+    BlockView,
+    TableView,
+    build_unit_drafts,
+    build_unit_text,
+    split_sentences,
+)
 from app.sop.units import LINE_SPLIT_FORMAT
 
 SENTENCE_LIKE_LABEL_CHARS = 20  # 절 이름이 이보다 길면 제목이 아니라 문장을 절 이름으로 삼은 것으로 센다
@@ -35,12 +44,17 @@ _READERS = {"docx": read_docx, "pdf": read_pdf}
 _NOT_MEASURED = ("icon_marks", "icon_figures", "noise_marked_units", "en_units_in_ko_half", "numbering_mismatch")
 
 
-def measure_extraction(data: bytes, file_format: str, *, with_aux: bool = True) -> dict[str, object]:
+def measure_extraction(
+    data: bytes, file_format: str, *, with_aux: bool = True, rule: int = RULE_PARAGRAPH
+) -> dict[str, object]:
     """파일 하나의 지표 — 키는 설계(2026-11-17 template-fit) 작업 2의 측정 도구 표와 같고, 신호 수 몇 개를 더한다."""
     result = _READERS[file_format](data, build_limits())
-    layout = detect_language_layout(result.blocks, has_language_halves=result.has_language_halves)
+    split_lines = file_format == LINE_SPLIT_FORMAT
+    layout = detect_language_layout(
+        result.blocks, has_language_halves=result.has_language_halves, rule=rule, split_lines=split_lines
+    )
     header = detect_header_fields(result.blocks)
-    metrics = _measure_units(result, layout, split_lines=file_format == LINE_SPLIT_FORMAT)
+    metrics = _measure_units(result, layout, split_lines=split_lines, rule=rule)
     blocks = result.blocks
     labels = [block.section_label for block in blocks if block.part not in ("header", "footer")]
     metrics.update(
@@ -66,24 +80,32 @@ def measure_extraction(data: bytes, file_format: str, *, with_aux: bool = True) 
     return metrics
 
 
-def _measure_units(result: ExtractResult, layout: str, *, split_lines: bool) -> dict[str, object]:
+def _measure_units(result: ExtractResult, layout: str, *, split_lines: bool, rule: int) -> dict[str, object]:
     """단위 초안으로 세는 지표 — DB 없이 블록 seq를 블록 id로, 표 순번을 표 id로 쓴다(표는 모두 데이터 표)."""
     blocks = {block.seq: block for block in result.blocks}
     views = [
         BlockView(
             id=block.seq, seq=block.seq, kind=block.kind, part=block.part, text=block.text,
             heading_level=block.heading_level, flags=block.flags, table_id=block.table_index, row_index=block.row_index,
+            # 규칙 2는 칸 안 문단에서 나눈다 — 다른 신호(목차 · 번호 칸)는 전처럼 보지 않는다
+            signals={key: value for key, value in block.signals.items() if key == PARAS_SIGNAL},
         )
         for block in result.blocks
     ]
     tables = [TableView(id=table.index, is_layout=False) for table in result.tables]
-    drafts = build_unit_drafts(views, tables, layout, split_lines=split_lines)
+    drafts_by_rule = {
+        each: build_unit_drafts(views, tables, layout, split_lines=split_lines, rule=each)
+        for each in (RULE_LEGACY, RULE_PARAGRAPH)
+    }
+    drafts = drafts_by_rule[rule]
     texts = {block.seq: block.text for block in result.blocks}
     unit_texts = [build_unit_text(draft.spans, texts) for draft in drafts]
     headings = [(draft, text) for draft, text in zip(drafts, unit_texts, strict=True) if draft.kind == "heading"]
     cell_counts = Counter(draft.group_index for draft in drafts if draft.kind == "cell_sentence")
     return {
-        "units_by_kind": _count_sorted(draft.kind for draft in drafts),
+        "units_by_kind": {
+            str(each): _count_sorted(draft.kind for draft in of_rule) for each, of_rule in drafts_by_rule.items()
+        },
         "headings_by_level": _count_sorted(str(blocks[draft.pos_seq].heading_level) for draft, _ in headings),
         "multi_sentence_headings": sum(1 for _, text in headings if len(split_sentences(text)) >= 2),
         "largest_table_unit_sentences": max(cell_counts.values(), default=0),
@@ -106,13 +128,13 @@ def _count_aux_missing(data: bytes, file_format: str, result: ExtractResult) -> 
     return len(find_missing_text([block.text for block in result.blocks], markdown))
 
 
-def measure_file(path: Path, *, with_aux: bool) -> dict[str, object]:
+def measure_file(path: Path, *, with_aux: bool, rule: int) -> dict[str, object]:
     """경로 하나 → 지표 또는 거절·실패 까닭. 경로·이름·예외 메시지(원문이 실릴 수 있다)는 돌려주지 않는다."""
     file_format = path.suffix.lower().lstrip(".")
     if file_format not in _READERS:
         return {"rejected": "invalid_format"}
     try:
-        return measure_extraction(path.read_bytes(), file_format, with_aux=with_aux)
+        return measure_extraction(path.read_bytes(), file_format, with_aux=with_aux, rule=rule)
     except ExtractionRejected as error:
         return {"rejected": error.code}
     except Exception as error:  # noqa: BLE001 — 파일 하나가 죽어도 나머지를 잰다. 클래스 이름만 남긴다
@@ -123,9 +145,10 @@ def run(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description="Print extraction metrics (numbers only) for DOCX/PDF files.")
     parser.add_argument("paths", nargs="+", type=Path)
     parser.add_argument("--no-aux", action="store_true", help="skip the MarkItDown comparison")
+    parser.add_argument("--rule", type=int, choices=(RULE_LEGACY, RULE_PARAGRAPH), default=RULE_PARAGRAPH, help="split rule")
     args = parser.parse_args(argv)
     for number, path in enumerate(args.paths, start=1):
-        metrics = measure_file(path, with_aux=not args.no_aux)
+        metrics = measure_file(path, with_aux=not args.no_aux, rule=args.rule)
         print(f"#{number} {json.dumps(metrics, ensure_ascii=False, sort_keys=True)}")
     return 0
 

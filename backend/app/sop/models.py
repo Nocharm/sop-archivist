@@ -38,6 +38,7 @@ from app.sop.constants import (
     OUTLINE_ORIGINS,
     STATUSES,
 )
+from app.sop.segment import RULE_LEGACY
 
 
 def _build_in_check(column: str, values: Sequence[str]) -> str:
@@ -262,6 +263,8 @@ class Extraction(Base):
     # 머리글·바닥글·각주 같은 보조 영역 추출 결과 상태
     aux_status: Mapped[str] = mapped_column(String(10))
     aux_detail: Mapped[str] = mapped_column(String(100), default="")
+    # 쪼개기 규칙 번호(segment.RULE_*) — 이 추출의 단위를 만든 규칙이고, 단위를 다시 만드는 편집도 이것을 쓴다
+    split_rule: Mapped[int] = mapped_column(Integer, default=RULE_LEGACY, server_default="1")
 
 
 class SourceTable(Base):

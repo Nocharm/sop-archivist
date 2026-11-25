@@ -1,0 +1,14 @@
+{
+  "shape": "표 칸 하나에 문단 셋",
+  "layout": null,
+  "boxes": [
+    {"text": "5. 절차", "lang": "ko", "kind": "heading", "number": "5.", "excluded": null},
+    {"text": "", "lang": "neutral", "kind": "table", "number": null, "excluded": null},
+    {"text": "항목", "lang": "ko", "kind": "cell_sentence", "number": null, "excluded": null},
+    {"text": "내용", "lang": "ko", "kind": "cell_sentence", "number": null, "excluded": null},
+    {"text": "세척", "lang": "ko", "kind": "cell_sentence", "number": null, "excluded": null},
+    {"text": "탱크를 비운다. 물을 채운다.", "lang": "ko", "kind": "cell_sentence", "number": null, "excluded": null},
+    {"text": "밸브를 닫는다.", "lang": "ko", "kind": "cell_sentence", "number": null, "excluded": null},
+    {"text": "결과를 기록한다.", "lang": "ko", "kind": "cell_sentence", "number": null, "excluded": null}
+  ]
+}
