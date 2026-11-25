@@ -125,14 +125,17 @@ async function profileAction(cdp, page, kind, pieces, count) {
   console.log(sumTop(total, 20));
 }
 
-const SELECTED_OLD = '[data-pane="old"] [data-sel] [data-unit], [data-pane="old"] [data-unit][data-sel]';
+const SELECTED_OLD = '[data-pane="old"] [data-sel] [data-unit], [data-pane="old"] [data-unit][data-sel], [data-pane="old"] [data-strip-unit][data-sel], [data-pane="old"] [data-sel] [data-strip-unit]';
 
 const middle = (values) => summarize(values).p50;
 
 /** 글쇠 하나를 누른 때부터 고른 박스가 바뀔 때까지(ms). 20초 안에 안 바뀌면 -1 */
 async function measureKey(page, key) {
   await page.evaluate((selector) => {
-    const read = () => document.querySelector(selector)?.getAttribute("data-unit") ?? null;
+    const read = () => {
+      const el = document.querySelector(selector);
+      return el?.getAttribute("data-unit") ?? el?.getAttribute("data-strip-unit") ?? el?.closest("[data-strip-unit]")?.getAttribute("data-strip-unit") ?? null;
+    };
     window.__keyResult = new Promise((resolve) => {
       const first = read();
       window.addEventListener("keydown", () => {
@@ -176,6 +179,7 @@ function watchRequests(page) {
       const firstWrite = rows.find((row) => row.method !== "GET");
       return {
         count: rows.length,
+        gets: rows.filter((row) => row.method === "GET").length,
         ttfbMs: summarize(rows.map((row) => row.ttfb)),
         saveTtfbMs: firstWrite ? +firstWrite.ttfb.toFixed(1) : null,
         spanMs: rows.length === 0 ? 0 : Math.round(Math.max(...rows.map((row) => row.end)) - Math.min(...rows.map((row) => row.start))),
@@ -239,11 +243,16 @@ async function runNumber(page) {
       requestAnimationFrame(() => requestAnimationFrame(() => window.__inputMs.push(performance.now() - t0)));
     }, { capture: true });
   });
-  const cell = page.locator("button.num-cell").first();
-  await cell.scrollIntoViewIfNeeded();
-  await cell.click();
+  const cells = page.locator('[data-pane="old"] button.num-cell:not(:disabled)');
   const input = page.locator(".num-edit-input").first();
-  await input.waitFor({ timeout: 5000 });
+  // 연속 번호 칸이 아니면 글자 입력 칸이 안 뜬다 - 다음 칸을 몇 개 시도한다
+  for (let index = 0; index < Math.min(8, await cells.count()); index++) {
+    await cells.nth(index).scrollIntoViewIfNeeded();
+    await cells.nth(index).click();
+    if (await input.isVisible().catch(() => false)) break;
+    await page.keyboard.press("Escape");
+  }
+  await input.waitFor({ timeout: 3000 });
   await input.fill("");
   await page.evaluate(() => { window.__inputMs = []; });
   for (const char of "12.34") {
@@ -261,7 +270,7 @@ async function runIdle(page) {
   await page.waitForTimeout(60000);
   const tasks = await readLongTasks(page);
   const seen = requests.stop();
-  return { idle60s: { longTasks: tasks.length, longTaskMaxMs: Math.max(0, ...tasks), gets: seen.count, distinct: seen.distinct } };
+  return { idle60s: { longTasks: tasks.length, longTaskMaxMs: Math.max(0, ...tasks), gets: seen.gets, distinct: seen.distinct } };
 }
 
 /** 개발 서버에서만 이름이 읽힌다 - 커밋마다 파이버 나무에서 PerformedWork(flags & 1)인 PaperChunk를 센다 */
@@ -326,7 +335,9 @@ if (SCENARIO === "commits") {
         if (fiber === null || fiber === undefined) continue;
         const name = fiber.type?.name ?? fiber.type?.type?.name;
         if (name === "PaperChunk" && (fiber.flags & 1) !== 0) renders += 1;
-        stack.push(fiber.sibling, fiber.child);
+        stack.push(fiber.sibling);
+        // 이번 커밋에서 다시 만들어지지 않은 하위(지난 커밋의 PerformedWork)는 내려가지 않는다
+        if (fiber.alternate === null || fiber.alternate.child !== fiber.child) stack.push(fiber.child);
       }
       return renders;
     };
@@ -353,7 +364,8 @@ for (const doc of DOCS) {
   await page.goto(`${BASE}/bundles/${BUNDLE}/assign?doc=${doc}`);
   await page.locator(OLD_PIECE).first().waitFor({ timeout: 120000 });
   if (SCENARIO !== "frames") {
-    console.log(JSON.stringify({ doc, scenario: SCENARIO, cpu: CPU, lat: LAT, repeat: REPEAT, ...(await runScenario(page, cdp)) }));
+    const result = { doc, scenario: SCENARIO, cpu: CPU, lat: LAT, repeat: REPEAT, ...(await runScenario(page, cdp)) };
+    console.log(`RESULT ${JSON.stringify(result)}`);
     await page.close();
     continue;
   }

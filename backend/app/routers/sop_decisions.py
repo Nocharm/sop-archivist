@@ -50,9 +50,10 @@ from app.sop.remarks import (
     list_recent_remarks,
 )
 from app.sop.tobe import MAX_DB_INT
+from app.timing_log import TIMING_LOGGER
 from app.sop.written import NewCandidateOut, WrittenSentenceOut, list_new_candidates, list_written_sentences
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger(TIMING_LOGGER)
 
 router = APIRouter(prefix="/api/bundles", tags=["sop-decisions"])
 remarks_router = APIRouter(prefix="/api/sop/remarks", tags=["sop-decisions"])

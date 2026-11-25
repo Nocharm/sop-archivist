@@ -8,7 +8,7 @@ from tests.test_sop_decision_undo import STORAGE, Fixture, _setup
 
 pytestmark = pytest.mark.usefixtures("clean_sop")
 
-LOGGER = "app.routers.sop_decisions"
+LOGGER = "app.timing"
 
 
 def _save(client: TestClient, fx: Fixture, *, with_undo: bool) -> None:
