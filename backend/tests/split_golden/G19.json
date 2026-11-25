@@ -1,0 +1,14 @@
+{
+  "shape": "문단마다 한글 뒤 영어가 이어진 문서",
+  "layout": "ko_en_interleaved",
+  "boxes": [
+    {"text": "합성 절차 1를 시작한다.", "lang": "ko", "kind": "sentence", "number": null, "excluded": null},
+    {"text": "Start the synthetic step 1 now.", "lang": "en", "kind": "sentence", "number": null, "excluded": null},
+    {"text": "합성 절차 2를 시작한다.", "lang": "ko", "kind": "sentence", "number": null, "excluded": null},
+    {"text": "Start the synthetic step 2 now.", "lang": "en", "kind": "sentence", "number": null, "excluded": null},
+    {"text": "합성 절차 3를 시작한다.", "lang": "ko", "kind": "sentence", "number": null, "excluded": null},
+    {"text": "Start the synthetic step 3 now.", "lang": "en", "kind": "sentence", "number": null, "excluded": null},
+    {"text": "합성 절차 4를 시작한다.", "lang": "ko", "kind": "sentence", "number": null, "excluded": null},
+    {"text": "Start the synthetic step 4 now.", "lang": "en", "kind": "sentence", "number": null, "excluded": null}
+  ]
+}

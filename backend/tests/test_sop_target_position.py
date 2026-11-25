@@ -34,7 +34,7 @@ from tests.test_sop_decisions import (
 from tests.test_sop_decisions import _setup as _setup_sop_and_wi
 from tests.test_sop_numbering import PAIR_SLOT, PAIRED, _create_sop_bundle, _pair_units, _put_styles, _read_slot_lines
 
-pytestmark = pytest.mark.usefixtures("clean_sop")
+pytestmark = pytest.mark.usefixtures("clean_sop", "legacy_split_rule")
 
 FIRST, SECOND, THIRD = "Check the synthetic valve.", "Open the synthetic hatch.", "Close the synthetic hatch."
 DRAGGED, LATE = "Record the synthetic reading.", "Store the synthetic log."

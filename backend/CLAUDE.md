@@ -12,7 +12,7 @@ backend(FastAPI) 세부 구조와 backend에만 걸리는 체크리스트. 루�
 - **`app/access/` = 권한 판정 단일 소스.** `require_permission`·`/api/me`·관리 화면의 유효 권한 조회가 모두 `resolve.get_effective_access` 하나를 부른다 — 판정을 다른 곳에 새로 쓰지 않는다. 부여는 더하기만, 대상은 FK 없이(`subject_missing`). → 3
 - `app/hr/`: 동기화 가드 3종, `source="hr"` 행만 지운다. `app/orgchart.py`: 부서 체인. → 4
 - **`app/sop/` = SOP 재구성 코어**(AI 없이 사람이 끝까지 가는 결정적 경로). 라우터는 `routers/sop_*.py`. **원문 글자는 앱 로그에 남기지 않는다.** → 5
-  - 흐름: 업로드 `ingest.py` → 추출(spawn 자식 `extract/worker.py`, 동시 파싱 `ingest.MAX_PARALLEL_PARSES=2`) → 쪼개기 `segment.py`·`units.py` → 편집 `editing.py` → 배정·확정 `decisions.py`·`match.py` → 결과물(스냅숏 위 순수 함수) → 검토 `review.py`.
+  - 흐름: 업로드 `ingest.py` → 추출(spawn 자식 `extract/worker.py`, 동시 파싱 `ingest.MAX_PARALLEL_PARSES=2`) → 쪼개기 `segment.py`·`units.py`(규칙 번호 `extractions.split_rule` — 1 문장마다 · 2 문단 안 언어마다, 편집도 그 추출의 규칙을 따른다) → 편집 `editing.py` → 배정·확정 `decisions.py`·`match.py` → 결과물(스냅숏 위 순수 함수) → 검토 `review.py`.
   - 참조 지도 `ref_map.py`(읽기 전용): 구성원 아닌 Bundle은 번호·제목·상태·후속 문서·줄 수만, Bundle 제목과 문장은 싣지 않고 그 Bundle의 확인 안 된 제안 줄은 쓰지 않는다. 응답 필드는 `MAP_KEYS`·`LINES_KEYS`·`LINE_KEYS`·`WITHHELD_KEYS`가 박아 둔 것만, 글을 싣는 질의는 `load_line_texts` 하나. → 5.4
 - **`app/sop/ai/` = AI 제안 층.** 요청은 `ai_jobs` 행만 쌓고 곧바로 응답한다. 단일 실행기 `runner.py`가 `load → compute → apply`로 돌리고, 새 종류는 `JobHandler`를 `handlers.py` `HANDLERS`에 등록한다. 문서 정보 제안(`doc_meta_job.py`)도 값은 제안 행으로만 남고 사람이 눌러야 저장된다. 불변식은 아래 체크리스트. → 6
 - **떼어 내기는 한 함수군** `detach.py` `detach_units`/`detach_targets` — 새 경로가 판단·출처 연결을 직접 지우지 않는다. → 7
