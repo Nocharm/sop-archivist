@@ -35,7 +35,7 @@ import { findNearestCut } from "@/lib/paper-model";
 import { getNewDocumentsHref } from "@/lib/stages";
 import { describePrimary } from "@/lib/primary-model";
 import { readRefAdvice } from "@/lib/ref-model";
-import { buildTocBlock, describeTocParts, toggleTocOpen } from "@/lib/toc-block-model";
+import { describeTocParts, readNoiseReason, toggleTocOpen } from "@/lib/toc-block-model";
 
 import { type AssignPageState, SYSTEM_HOLDS } from "./use-assign-page";
 
@@ -48,14 +48,14 @@ function putFirst<T>(items: readonly T[], isFirst: (item: T) => boolean): T[] {
 export function AssignSidePanel({ state, headEnd }: { state: AssignPageState; headEnd: ReactNode }) {
   const {
     t, bundleId, canEdit, unitsKey, reloadData, docViews, tobeData, aiJobs, aiOn, aiBusy, suggestions, invalidUnitIds, unitMap, written,
-    writtenMap, rowOfUnit, options, isDrafting, hiddenPlace, legacyMove, openTranslations, translationBlocked, settleTranslations, mode, activeKey, row, isNewEdit, hasSolo, tocOpen, setTocOpen, tocPick, tocBlocks, newRemarks,
+    writtenMap, rowOfUnit, options, isDrafting, hiddenPlace, legacyMove, openTranslations, translationBlocked, settleTranslations, mode, activeKey, row, isNewEdit, hasSolo, tocOpen, setTocOpen, newRemarks,
     setNewRemarks, cutUnitId, focusNew, groupData, draft, editing, savedDestination, destination, rowUnits, rowLangs, firstDecision,
     systemHold, reasonNow, setDraft, rowLive, aiDest, aiWhy, recommendations, linkIds, pickedGroups, saveGroupData,
     viewOf, oldView, splitByUnit, shapeView, shapeModel, soloUnits, cutLine, writtenDocs, composedDoc, view, changeView, askAiScope,
     setRemarkEdit, firstTextRef, busy, isAnyPending, accOpen, toggleAcc, saveUnits, slots, aiUnfilled, draftPlace, draftSectionKey, draftPosition,
     placeResolved, setRefEntryId, moveRow, hasUnitDraft, isFixedCaption, rowViewUnits, rowSplitUnit, rowSplit, splitBlocked, rowRefUnit,
     refBlocked, isCaptionGateOn, rowCaptionRefs, refCandidates, shapeLines, shapeFirstId, slotPlaces, slotCellTables, startCaptionPick,
-    shapeMode, headingBack, rewrap, bandBack, stepBase, refPendingIds, refDetail, refInfo, runUnitEdit, clearToc, runCaptionRefChange,
+    shapeMode, headingBack, rewrap, bandBack, stepBase, refPendingIds, refDetail, refInfo, runUnitEdit, clearNoise, openNoiseReason, noisePick, runCaptionRefChange,
     switchShapeMode, applySplitSuggestion, dismissSplitSuggestion, selectNextSplit, selectNextRef, runUnitAction, readReasonNeed, runSave,
     runClear, markNew, placeManage, pickDestination, pickNewSentence, isTemplateDrag, handlePrimary, primaryPlan, startEdit,
     pickRecommendation, markRecHover, renderPlaceLabel, listDestinationEls, canClear, isRowDeleted,
@@ -777,29 +777,27 @@ export function AssignSidePanel({ state, headEnd }: { state: AssignPageState; he
     );
   }
 
-  /** 목차 칸(F12 G2 · G3) - 머리는 상태 칩 없이 "목차 · n줄"(블록)·"목차 · n행"(줄), 1 다듬기는 목차 줄과 그 단추, 2 보낼 곳은 추천 대신 까닭 글,
-   *  3 결정은 "따로 할 일 없음"과 꺼진 Confirm(Hold · Unassign은 그리지 않는다). 용지 블록 머리의 손잡이는 표가 적은 것만 여기 둔다 */
-  function renderTocPanel(pick: { docId: number; key: number; unitId: number | null }): ReactNode {
-    const view = viewOf(pick.docId);
-    const info = tocBlocks.find((item) => item.docId === pick.docId && item.key === pick.key);
-    if (!view || !info) return null;
-    const unitById = new Map(view.units.map((unit) => [unit.id, unit]));
-    const units = info.unitIds.flatMap((id) => unitById.get(id) ?? []);
-    const block = buildTocBlock(units);
-    if (!block) return null;
+  /** 저절로 삭제된 줄의 칸(F12 G2 · G3, 쪼개기 먼저 §7 R3) - 머리는 상태 칩 없이 "이름 · n줄"(블록)·"이름 · n행"(줄), 1 다듬기는 줄 · 사유와 사유 쓰기 ·
+   *  삭제 취소, 2 보낼 곳은 추천 대신 까닭 글, 3 결정은 "따로 할 일 없음"과 꺼진 Confirm(Hold · Unassign은 그리지 않는다) */
+  function renderNoisePanel(pick: NonNullable<typeof noisePick>): ReactNode {
+    const { docId, block } = pick;
+    const unitById = new Map(viewOf(docId)?.units.map((unit) => [unit.id, unit]));
     const lineAt = pick.unitId === null ? -1 : block.unitIds.indexOf(pick.unitId);
     const line = lineAt >= 0 ? block.lines[lineAt] : null;
     const isOpen = tocOpen.has(block.key);
-    const canClear = canEdit && !isNewEdit;
-    const parts = describeTocParts(units.map((unit) => unit.lang))
-      .map((part) => t(`assign.toc.part.${part.part}`, { n: part.n }))
+    const canAct = canEdit && !isNewEdit;
+    const name = t(`assign.noise.name.${block.kind}`);
+    const parts = describeTocParts(block.unitIds.map((id) => unitById.get(id)?.lang ?? "neutral"))
+      .map((part) => t(`assign.noise.part.${part.part}`, { n: part.n }))
       .join(" · ");
+    const reason = line !== null && line.reason !== "" ? line.reason : line !== null ? t(`assign.noise.reason.${block.kind}`) : readNoiseReason(block, t);
+    const unitIds = line === null ? block.unitIds : [line.unitId];
     return (
-      <div className="assign-side-body" data-testid="assign-toc-panel">
+      <div className="assign-side-body" data-testid="assign-noise-panel">
         <div className="assign-side-head">
           <div className="flex items-center gap-2">
-            <span className="min-w-0 flex-1 font-mono text-sm font-semibold" data-testid="assign-toc-head">
-              {line ? t("assign.toc.panelLine", { n: lineAt + 1 }) : t("assign.toc.panelBlock", { n: block.counts.total })}
+            <span className="min-w-0 flex-1 font-mono text-sm font-semibold" data-testid="assign-noise-head">
+              {line ? t("assign.noise.panelLine", { name, n: lineAt + 1 }) : t("assign.noise.panelBlock", { name, n: block.counts.total })}
             </span>
             <span className="flex flex-none gap-0.5">
               <Tooltip label={t("assign.rowPrev")} align="end">
@@ -818,41 +816,54 @@ export function AssignSidePanel({ state, headEnd }: { state: AssignPageState; he
         </div>
         <div className="assign-pick" data-testid="assign-pick">
           {renderStep(1, t("assign.step.shape"))}
-          <div className="toc-panel-shape" data-testid="assign-toc-shape">
+          <div className="toc-panel-shape" data-testid="assign-noise-shape">
             <p className="toc-panel-line">
-              <span className="toc-tag">{t("assign.toc.tag")}</span>
+              <span className="deleted-tag">{t("paper.deleted.tag")}</span>
               <span className="min-w-0" style={line ? { fontFamily: "var(--font-source)" } : undefined}>
-                {line ? line.text : t("assign.toc.summary", { n: block.counts.total, parts, state: t(isOpen ? "assign.toc.stateOpen" : "assign.toc.stateFolded") })}
+                {line ? line.text : t("assign.noise.summary", { n: block.counts.total, parts, state: t(isOpen ? "assign.noise.stateOpen" : "assign.noise.stateFolded") })}
               </span>
             </p>
+            <div className="flex min-w-0 items-start gap-1.5 text-xs">
+              <span className="flex-none leading-[26px] text-ink-3">{t("assign.noise.reasonLabel")}</span>
+              <span className="min-w-0 flex-1 py-1 leading-[18px] text-ink-2 [overflow-wrap:anywhere]" data-testid="assign-noise-reason-text">
+                {reason}
+              </span>
+              {canAct && (
+                <Tooltip label={t("assign.noise.write")} align="end">
+                  <button type="button" className="btn ghost h-[26px] w-[26px] flex-none justify-center p-0" aria-label={t("assign.noise.write")} disabled={busy} data-testid="assign-noise-reason-edit" onClick={() => openNoiseReason(docId, unitIds)}>
+                    <FilePen size={13} strokeWidth={1.5} aria-hidden />
+                  </button>
+                </Tooltip>
+              )}
+            </div>
             <div className="flex flex-wrap gap-1.5">
               {line === null && (
-                <button type="button" className="btn h-7" aria-expanded={isOpen} data-testid="assign-toc-toggle" onClick={() => setTocOpen((open) => toggleTocOpen(open, block.key))}>
-                  {t(isOpen ? "assign.toc.collapse" : "assign.toc.expand")}
+                <button type="button" className="btn h-7" aria-expanded={isOpen} data-testid="assign-noise-toggle" onClick={() => setTocOpen((open) => toggleTocOpen(open, block.key))}>
+                  {t(isOpen ? "assign.noise.collapse" : "assign.noise.expand")}
                 </button>
               )}
-              {line === null && canClear && (
-                <button type="button" className="btn h-7" disabled={busy} data-testid="assign-toc-all" onClick={() => clearToc(block.unitIds)}>
-                  {t("assign.toc.allNot")}
+              {canAct && (
+                <button type="button" className="btn h-7" disabled={busy} data-testid="assign-noise-reason" onClick={() => openNoiseReason(docId, unitIds)}>
+                  {t("assign.noise.write")} <kbd>R</kbd>
                 </button>
               )}
-              {line !== null && canClear && (
-                <button type="button" className="btn h-7" disabled={busy} data-testid="assign-toc-not" onClick={() => clearToc([line.unitId])}>
-                  {t("assign.toc.notThis")}
+              {canAct && (
+                <button type="button" className="btn h-7" disabled={busy} data-testid="assign-noise-clear" onClick={() => clearNoise(docId, unitIds)}>
+                  {t(line === null ? "assign.noise.clearAll" : "assign.noise.clear")} <kbd>U</kbd>
                 </button>
               )}
             </div>
           </div>
           {renderStep(2, t("assign.step.pick"))}
-          <p className="chosen-box is-empty mx-[var(--pad)] mb-[var(--pad)]" data-testid="assign-toc-why">
-            {line ? t("assign.toc.lineWhy", { n: block.counts.total - 1 }) : t("assign.toc.blockWhy")}
+          <p className="chosen-box is-empty mx-[var(--pad)] mb-[var(--pad)]" data-testid="assign-noise-why">
+            {line ? t("assign.noise.lineWhy", { n: block.counts.total - 1 }) : t(`assign.noise.why.${block.kind}`)}
           </p>
         </div>
         <div className="assign-decide" data-testid="assign-decide">
           <div className="assign-decide-body">
             {renderStep(3, t("assign.step.decide"))}
-            <p className="text-xs text-st-hold" role="status" data-testid="assign-toc-nothing">
-              {t("assign.toc.nothing")}
+            <p className="text-xs text-st-hold" role="status" data-testid="assign-noise-nothing">
+              {t("assign.noise.nothing")}
             </p>
           </div>
           <button type="button" className="btn pri assign-confirm" data-testid="assign-primary" disabled>
@@ -958,8 +969,7 @@ export function AssignSidePanel({ state, headEnd }: { state: AssignPageState; he
         </div>
       );
     }
-    const tocPanel = !row && tocPick ? renderTocPanel(tocPick) : null;
-    if (tocPanel) return tocPanel;
+    if (!row && noisePick !== null) return renderNoisePanel(noisePick);
     if (!row) {
       return (
         <div className="assign-side-body">

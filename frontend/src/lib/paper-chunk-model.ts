@@ -91,3 +91,10 @@ export function readChunkDeleted(folds: ReadonlyMap<number, DeletedFold> | undef
 export function readChunkNumbers(expected: ExpectedNumbers | undefined, unitIds: ReadonlySet<number>): string {
   return readOwnEntries(expected, unitIds);
 }
+
+/** 이 덩어리의 저절로 삭제된 블록 - 펼친 블록과 고른 블록 · 줄. 사유 · 줄은 용지 모델이 바뀌어 따로 견주지 않는다 */
+export function readChunkNoise(open: ReadonlySet<number> | undefined, selected: { key: number; unitId: number | null } | null | undefined, unitIds: ReadonlySet<number>): string {
+  const own = [...(open ?? [])].filter((key) => unitIds.has(key));
+  const picked = selected && unitIds.has(selected.unitId ?? selected.key) ? selected : null;
+  return own.length > 0 || picked !== null ? JSON.stringify([own, picked?.key, picked?.unitId]) : "";
+}

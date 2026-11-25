@@ -50,7 +50,7 @@ BODY = (
         ("Reference standards and equipment", False),
         ("1. Purpose", False),
         ("참고 사항", False),
-        ("7. References (" + "x" * 300 + ")", False),  # 긴 글은 절 제목이 아니다(MAX_REF_HEADING_CHARS)
+        ("7. References (" + "x" * 300 + ")", False),  # 긴 글은 절 제목이 아니다(MAX_SECTION_HEADING_CHARS)
     ],
 )
 def test_is_ref_section_heading(text: str, expected: bool) -> None:

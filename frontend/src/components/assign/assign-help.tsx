@@ -29,6 +29,7 @@ export function AssignHelp() {
     [t("assign.help.keyHold"), <kbd key="hold">H</kbd>],
     [t("assign.help.keyDelete"), <kbd key="delete">Del · ⌫</kbd>],
     [t("assign.help.keyClear"), <kbd key="clear">U</kbd>],
+    [t("assign.help.keyNoise"), <kbd key="noise">U · R</kbd>],
     [t("assign.help.keyShift"), <kbd key="shift">Shift + {t("assign.help.click")}</kbd>],
     [t("assign.help.keyCtrl"), <kbd key="ctrl">Ctrl + {t("assign.help.click")}</kbd>],
     [t(isDrafting ? "assign.help.keyDrag" : "assign.help.keyDragLink"), <kbd key="drag">{t("assign.help.drag")}</kbd>],

@@ -11,6 +11,7 @@ import {
   clampOffset,
   findDraftRow,
   findPickedGroup,
+  getFoldLabelKey,
   getFoldMark,
   getFrozenCount,
   getMoveRange,
@@ -155,6 +156,16 @@ describe("contents fold", () => {
   it("shows every row of an opened run, each pointing at the run's first row", () => {
     const items = listSheetItems(ROWS, 1, new Set([1]), true);
     expect(items.map((item) => (item.type === "row" ? [item.index, item.tocStart] : null))).toEqual([[1, 1], [2, 1], [3, null], [4, null]]);
+  });
+
+  it("breaks the fold where the kind changes", () => {
+    const rows = [
+      ...["front", "front", "toc", "toc", "history"].map((noise, at) => row([String(at + 1)], { toc: true, noise, unit_id: at + 1 })),
+      row(["6"], { toc: true, noise: "history", unit_id: 6 }),
+    ];
+    const items = listSheetItems(rows, 0, new Set(), true);
+    expect(items.map((item) => (item.type === "fold" ? `fold:${item.start}+${item.rows.length}` : `row:${item.index}`))).toEqual(["fold:0+2", "fold:2+2", "fold:4+2"]);
+    expect(items.map((item) => (item.type === "fold" ? getFoldLabelKey(item.rows) : null))).toEqual(["outputs.sheet.frontFolded", "outputs.sheet.tocFolded", "outputs.sheet.historyFolded"]);
   });
 
   it("does not fold when the sheet cannot fold", () => {

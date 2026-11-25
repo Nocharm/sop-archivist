@@ -13,7 +13,7 @@ export type AssignMenuAction =
   | "ref_mark" | "ref_clear"
   | "table_layout"
   | "caption_attach_prev" | "caption_attach_next" | "caption_of" | "caption_detach"
-  | "to_sentence" | "to_heading";
+  | "to_sentence" | "to_heading" | "start_body";
 
 export interface AssignMenuItem {
   action: AssignMenuAction;
@@ -44,6 +44,8 @@ export interface AssignMenuContext {
   prev: ViewUnit | null;
   next: ViewUnit | null;
   readOnly: boolean;
+  /** Old 문서의 본문(머리말 · 꼬리말 등이 아닌) 단위다 - "여기부터 본문"을 둔다 */
+  canStartBody?: boolean;
   /** 우클릭한 문장의 줄 상태 */
   rowStatus: CoverStatus;
   /** 우클릭한 줄이 삭제로 확정되어 있다(lib/deleted-fold-model isDeletedUnit) - 배정 취소를 "삭제 취소"로 부르고 삭제 항목을 숨긴다 */
@@ -100,7 +102,7 @@ function build(action: AssignMenuAction, reasonKey: string | null): AssignMenuIt
 function getRetireBlocker(ctx: AssignMenuContext, unit: ViewUnit): string | null {
   if (ctx.readOnly) return why("readOnly");
   if (!EDITABLE_KINDS.has(unit.kind)) return why("notText");
-  // 목차 줄은 나누거나 합치지 않는다 - 먼저 목차 아님(서버 422 toc_line_locked, 사용자 결정 2026-11-19)
+  // 저절로 삭제된 줄은 나누거나 합치지 않는다 - 먼저 삭제 취소(서버 422 toc_line_locked, 사용자 결정 2026-11-19)
   if (unit.noise_kind) return why("tocLine");
   return ctx.hasDraft(unit) ? why("unsaved") : null;
 }
@@ -125,9 +127,11 @@ function buildJoin(ctx: AssignMenuContext, neighbor: ViewUnit | null, side: "pre
   // 어느 한쪽이 이미 짝이면 배정을 풀어도 맺을 수 없다 - 먼저 할 일(배정·저장)보다 이 까닭이 앞선다(자기 짝과의 단추가 "배정됨"으로 보이던 것)
   if (isPair && (ctx.target.pair_id !== null || neighbor.pair_id !== null)) return build(action, "split.menu.why.alreadyPaired");
   // 합치기는 두 문장을 새 문장 하나로 바꾸니 배정이 있어도 묻고 한다. 짝은 제자리에서 맺어 배정이 있으면 막는다
-  const own = isPair ? getEditBlocker(ctx, ctx.target) : getRetireBlocker(ctx, ctx.target);
+  const own = (isPair ? getEditBlocker(ctx, ctx.target) : getRetireBlocker(ctx, ctx.target)) ?? (ctx.target.noise_kind ? why("tocLine") : null);
   if (own !== null) return build(action, own);
   if (neighbor === null) return build(action, why("noNeighbor"));
+  // 저절로 삭제된 줄과는 합치지도 짝 맺지도 않는다(서버 toc_line_locked)
+  if (neighbor.noise_kind) return build(action, MERGE_BLOCKER_KEYS.toc);
   // 캡션은 묶음에 딸린 글이라 이웃 문장과 합치거나 짝 맺지 않는다(떼고 나서)
   if (!EDITABLE_KINDS.has(neighbor.kind) || neighbor.kind === "caption") return build(action, why("neighborNotText"));
   if (isPair && ctx.isDecided(neighbor)) return build(action, why("neighborAssigned"));
@@ -147,7 +151,7 @@ function buildRefItem(ctx: AssignMenuContext, editReason: string | null): Assign
 function buildTableItems(ctx: AssignMenuContext): AssignMenuItem[] {
   const { table } = ctx;
   if (table === null) return [];
-  const blocker = ctx.readOnly ? why("readOnly") : ctx.hasDraft(table) ? why("unsaved") : null;
+  const blocker = ctx.readOnly ? why("readOnly") : table.noise_kind ? why("tocLine") : ctx.hasDraft(table) ? why("unsaved") : null;
   return [build("table_layout", blocker)];
 }
 
@@ -158,6 +162,7 @@ function buildTableItems(ctx: AssignMenuContext): AssignMenuItem[] {
 function buildCaptionAttach(ctx: AssignMenuContext, side: "prev" | "next", text: ViewUnit, bundle: ViewUnit, labelKey: string): AssignMenuItem {
   const [own, other] = ctx.target.id === bundle.id ? [bundle, text] : [text, bundle];
   const reason = ctx.readOnly ? why("readOnly")
+    : bundle.noise_kind || text.noise_kind ? why("tocLine")
     : ctx.hasDraft(own) ? why("unsaved")
     : ctx.hasDraft(other) ? why(other.id === bundle.id ? "bundleUnsaved" : "neighborUnsaved")
     : (ctx.listCaptionLangs?.(bundle) ?? []).includes(text.lang) ? why("captionExists") : null;
@@ -172,6 +177,7 @@ function buildTextCaptionItems(ctx: AssignMenuContext): AssignMenuItem[] {
   if (!isCaptionableText(ctx.target)) return [];
   return (ctx.captionHolders ?? []).map(({ bundle, distance, side }) => {
     const reason = ctx.readOnly ? why("readOnly")
+      : bundle.noise_kind ? why("tocLine")
       : ctx.hasDraft(ctx.target) ? why("unsaved")
       : ctx.hasDraft(bundle) ? why("bundleUnsaved")
       : bundle.caption_figure_id ? "assign.captionSlot.why.shared"
@@ -245,7 +251,7 @@ export function buildAssignMenu(ctx: AssignMenuContext): AssignMenuGroups {
   if (BUNDLE_KINDS.has(ctx.target.kind)) return { assign, edit: [...buildTableItems(ctx), ...buildBundleCaptionItems(ctx)] };
   // 캡션은 나누기·언어(한/영 한 줄 캡션을 나눠 언어를 따로)와 떼기만 - 떼기는 묶음을 바꾸니 배정이 있으면 서버가 묻는다
   if (ctx.target.kind === "caption") {
-    const detachReason = ctx.readOnly ? why("readOnly") : ctx.isFixedCaption?.(ctx.target) ? why("captionInFigure") : ctx.hasDraft(ctx.target) ? why("unsaved") : null;
+    const detachReason = ctx.readOnly ? why("readOnly") : ctx.target.noise_kind ? why("tocLine") : ctx.isFixedCaption?.(ctx.target) ? why("captionInFigure") : ctx.hasDraft(ctx.target) ? why("unsaved") : null;
     // 같은 묶음의 다른 캡션이 가진 언어로는 바꿀 수 없다(서버 caption_exists), 캡션은 참조 줄이 되지 않는다
     const taken = ctx.captionBundle ? (ctx.listCaptionLangs?.(ctx.captionBundle) ?? []) : [];
     const langReasons: AssignMenuItem["langReasons"] = { ref: why("captionNoRef") };
@@ -266,7 +272,7 @@ export function buildAssignMenu(ctx: AssignMenuContext): AssignMenuGroups {
       buildJoin(ctx, ctx.prev, "prev"),
       buildJoin(ctx, ctx.next, "next"),
       // 떨어져 있는 문장과 짝 맺기 - 짝이 없는 한글·영어 문장에서만. 누르면 다른 문장을 하나 고른다
-      ...(ctx.target.pair_id === null && (ctx.target.lang === "ko" || ctx.target.lang === "en") ? [build("pair_pick", editReason)] : []),
+      ...(ctx.target.pair_id === null && (ctx.target.lang === "ko" || ctx.target.lang === "en") ? [build("pair_pick", editReason ?? (ctx.target.noise_kind ? why("tocLine") : null))] : []),
       // 짝 풀기는 짝인 문장에서만 보인다
       ...(ctx.target.pair_id !== null ? [build("unpair", editReason)] : []),
       // 참조 줄은 언어가 없다 - 언어를 주려면 먼저 "참조 아님"으로 돌린다
@@ -276,8 +282,18 @@ export function buildAssignMenu(ctx: AssignMenuContext): AssignMenuGroups {
       ...buildHeadingItems(ctx, retireReason),
       ...buildTableItems(ctx),
       ...buildTextCaptionItems(ctx),
+      ...buildBodyStartItems(ctx),
     ],
   };
+}
+
+/** 여기부터 본문(쪼개기 먼저 설계 §7 R3) - Old 본문의 표 밖 글 줄(띠 표 제목 포함)에만. 이 줄 앞을 본문 앞부분으로 삭제하고 뒤의 앞부분 표시를 비운다.
+ *  이 줄 자신의 판단은 그대로라 배정이 있어도 막지 않는다 - 정한 줄이 앞에 끼어 있으면 서버가 거절한다 */
+function buildBodyStartItems(ctx: AssignMenuContext): AssignMenuItem[] {
+  const { target } = ctx;
+  const isFlow = target.group_unit_id === null && (target.table_id === null || isBandHeading(target));
+  if (!ctx.canStartBody || target.noise_kind || !isFlow || (target.kind !== "sentence" && target.kind !== "heading")) return [];
+  return [build("start_body", ctx.readOnly ? why("readOnly") : null)];
 }
 
 /**
@@ -295,6 +311,7 @@ export function planAssignJoin(first: ViewUnit | undefined, second: ViewUnit | u
 /** 떨어진 문장 짝 고르기에 그 문장을 넣을 수 없는 까닭의 문구 키 - 넣을 수 있으면 null. 언어 조합은 다 고른 뒤에 본다(getPairSetBlocker) */
 export function getPairPickBlocker(unit: ViewUnit, state: Pick<AssignMenuContext, "isDecided" | "hasDraft">): string | null {
   if (!EDITABLE_KINDS.has(unit.kind) || unit.kind === "caption") return why("notText");
+  if (unit.noise_kind) return why("tocLine");
   if (unit.lang !== "ko" && unit.lang !== "en") return "split.menu.why.noLanguage";
   if (unit.pair_id !== null) return "split.menu.why.alreadyPaired";
   if (state.isDecided(unit)) return why("neighborAssigned");

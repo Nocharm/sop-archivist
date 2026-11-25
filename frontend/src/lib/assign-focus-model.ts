@@ -277,6 +277,8 @@ export function readEditKind(op: EditOp): PendingKind {
     case "ungroup_figures":
       return "figure";
     case "clear_noise":
+    case "set_noise_reason":
+    case "start_body":
       return "toc";
     case "reorder_pair":
       return "order";
@@ -291,6 +293,7 @@ export function listEditUnitIds(op: EditOp): number[] {
     case "merge":
     case "set_language":
     case "clear_noise":
+    case "set_noise_reason":
     case "set_heading":
     case "group_figures":
     case "reorder_pair":
@@ -304,6 +307,7 @@ export function listEditUnitIds(op: EditOp): number[] {
     case "set_ref":
     case "clear_ref":
     case "set_number":
+    case "start_body":
       return [op.unit_id];
     case "set_indents":
       return op.units.map((item) => item.unit_id);

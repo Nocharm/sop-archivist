@@ -84,7 +84,8 @@ import { useCutLine } from "@/lib/use-cut-line";
 import { pickSheetAnchor, pickSpaceSheet } from "@/lib/space-preview-model";
 import { countRefLookups, isRefPending, pickRefUnit } from "@/lib/ref-model";
 import { isDeletedUnit } from "@/lib/deleted-fold-model";
-import { buildNavKeys, listTocBlocks, readTocNavKey, readUnitNavKey, toTocNavKey, toUnitNavKey } from "@/lib/toc-block-model";
+import { buildNavKeys, buildNoiseBlock, describeNoiseUnit, findNoiseBlock, listNoiseBlocks, readTocNavKey, readUnitNavKey, toTocNavKey, toUnitNavKey } from "@/lib/toc-block-model";
+import { isRestoringLines, readNoiseKey, toNoiseKeyId } from "@/lib/noise-keys";
 import { useEquisPolling } from "@/lib/use-equis-polling";
 import { useDocViews, type DocBatch } from "@/lib/use-doc-views";
 import { useLoaded } from "@/lib/use-loaded";
@@ -160,7 +161,11 @@ export function findDestinationDoc(destination: Destination | null, written: Map
 }
 
 /** Remark 창 - 고른 줄의 사유(저장이 사유를 요구해 열었으면 확인 뒤 그 저장을 잇는다) 또는 출처 없는 New 문장의 Remark. askId - 장벽 뒤에서 되살린 글쇠가 연 창이면 그 글쇠(답할 때까지 뒤의 글쇠가 기다린다) */
-export type RemarkEdit = { kind: "row"; need: "delete" | "hold" | "duplicate" | null; then: "confirm" | "hold" | null; askId?: string | null } | { kind: "new"; targetId: number };
+export type RemarkEdit =
+  | { kind: "row"; need: "delete" | "hold" | "duplicate" | null; then: "confirm" | "hold" | null; askId?: string | null }
+  | { kind: "new"; targetId: number }
+  /** 저절로 삭제된 줄의 사유 - 그 문서의 줄들, 지금 적힌 글(갈리면 빈 글), 장벽 뒤에서 되살린 글쇠가 열었으면 그 id */
+  | { kind: "noise"; docId: number; unitIds: readonly number[]; initial: string; isMixed: boolean; askId: string | null };
 
 /** 그 자리 메뉴 - 붙을 요소, 누른 자리(요소 기준, 키보드·이동이면 null), 어느 줄의 어느 New 문장에 대한 메뉴인지 */
 export interface MenuState {
@@ -562,13 +567,23 @@ export function useAssignPage() {
   const hasSolo = isSolo || isNewEdit;
   // 고른 것의 단추를 끈다 - 묶음 전체 일 동안은 모두, 그 밖에는 고른 줄(또는 New 문서의 고른 문장)의 모양이 바뀌는 중일 때만. 판단 저장 중인 줄은 다시 정할 수 있다(설계 D4, A1-R4)
   const busy = focusCtl.isGlobalPending || (row?.unitIds.some(focusCtl.isUnitLocked) ?? false) || (hasSolo && solo !== null && solo.unitId !== null && focusCtl.isUnitLocked(solo.unitId));
-  // 목차 블록 고름(MD 1 F6 · F12) - 배정 줄(row)이 아니라 남은 수·필터 수에 들지 않는다. 줄이나 New 문서를 고르면 가려진다.
+  // 저절로 삭제된 줄의 블록 고름(MD 1 F6 · F12, 쪼개기 먼저 §7 R3) - 배정 줄(row)이 아니라 남은 수·필터 수에 들지 않는다. 줄이나 New 문서를 고르면 가려진다.
   // unitId가 null이면 블록 전체, 아니면 펼친 블록의 줄 하나. 펼침은 블록 키(첫 줄 단위 id)로 이 화면을 연 동안만 기억한다(처음엔 접힘)
   const tocSel = focus.kind === "toc" ? focus : null;
   const [tocOpen, setTocOpen] = useState<ReadonlySet<number>>(() => new Set());
   const tocPick = mode === "old" && row === null && !hasSolo ? tocSel : null;
-  // 줄 이동(↑↓·J/K) 순서에 끼우는 목차 블록 - 문서 순 → 원문 순
-  const tocBlocks = useMemo(() => (viewList ?? []).flatMap((view) => listTocBlocks(view.units).map((block) => ({ ...block, docId: view.document.id }))), [viewList]);
+  // 줄 이동(↑↓·J/K) 순서에 끼우는 블록 - 문서 순 → 원문 순
+  const tocBlocks = useMemo(() => (viewList ?? []).flatMap((view) => listNoiseBlocks(view.units).map((block) => ({ ...block, docId: view.document.id }))), [viewList]);
+  // 고른 삭제 줄과 그 블록 - 첫 줄을 삭제 취소해 블록의 키가 바뀌어도 고른 줄이 든 블록이다
+  const noisePick = useMemo(() => {
+    const view = tocPick === null ? undefined : viewList?.find((item) => item.document.id === tocPick.docId);
+    const info = tocPick === null || !view ? undefined : findNoiseBlock(listNoiseBlocks(view.units), tocPick);
+    if (tocPick === null || !view || !info) return null;
+    const unitById = new Map(view.units.map((unit) => [unit.id, unit]));
+    const tables = new Map(view.tables.map((table) => [table.id, table]));
+    const block = buildNoiseBlock(info.unitIds.flatMap((id) => unitById.get(id) ?? []), (unit) => describeNoiseUnit(unit, tables, t));
+    return block === null ? null : { docId: tocPick.docId, unitId: tocPick.unitId, block };
+  }, [tocPick, viewList, t]);
   const [soloKey, setSoloKey] = useState(0);
   const soloLoad = useLoaded<DocumentView | null>(() => (solo !== null ? getDocumentView(bundleId, solo.docId) : Promise.resolve(null)), `${bundleId}:${solo?.docId ?? ""}:${soloKey}`);
   // 표 벗기기 · 다시 표로의 풀기 전환(걷기 · 펼치기 · 붙이기, F10) - Old 칸 안에서 바뀌는 표를 찾고 잰다.
@@ -979,7 +994,8 @@ export function useAssignPage() {
     const docOrder = [...oldView.units].sort((a, b) => a.pos_seq - b.pos_seq || (a.spans[0]?.[1] ?? 0) - (b.spans[0]?.[1] ?? 0)).map((unit) => unit.id);
     return { docOrder, bodyIds: new Set(oldView.units.filter((unit) => partOfBlock.get(unit.block_id) === "body").map((unit) => unit.id)) };
   }, [oldView]);
-  const spaceRowIds = isSolo ? soloUnits.map((unit) => unit.id) : (row?.unitIds ?? []);
+  // 저절로 삭제된 줄을 골랐으면 그 줄(블록이면 첫 줄) - 미리보기는 지운 줄을 고른 동안만 보인다
+  const spaceRowIds = isSolo ? soloUnits.map((unit) => unit.id) : (row?.unitIds ?? (noisePick === null ? [] : [noisePick.unitId ?? noisePick.block.key]));
   const spaceAnchor = spaceOrder === null ? null : pickSheetAnchor(spaceRowIds, isSolo ? (solo?.unitId ?? null) : pickedId, spaceOrder.docOrder, (unitId) => pickSpaceSheet(view.single) !== "paragraphs" || spaceOrder.bodyIds.has(unitId));
   const spaceUnitIds = spaceAnchor === null ? spaceRowIds : [spaceAnchor, ...spaceRowIds.filter((id) => id !== spaceAnchor)];
   const paneSlide = usePaneSlide(view.single);
@@ -1045,6 +1061,28 @@ export function useAssignPage() {
   function closeRemark() {
     const askId = remarkEdit?.kind === "row" ? (remarkEdit.askId ?? null) : null;
     focusAfterRef.current = "assign-primary";
+    setRemarkEdit(null);
+    commands.cancelAsk(askId);
+  }
+  /** 삭제된 줄의 사유 창을 연다 - 글쇠 · 단추를 누른 순간의 줄을 잡는다 */
+  function openNoiseReason(docId: number, unitIds: readonly number[]) {
+    const view = viewOf(docId);
+    if (!canEdit || !view || unitIds.length === 0) return;
+    const ids = new Set(unitIds);
+    const reasons = new Set(view.units.filter((unit) => ids.has(unit.id)).map((unit) => unit.noise_reason ?? ""));
+    setRemarkEdit({ kind: "noise", docId, unitIds, initial: reasons.size === 1 ? [...reasons][0] : "", isMixed: reasons.size > 1, askId: commands.openAsk() });
+  }
+  /** 사유 창의 확인 - 빈 글이면 정한 문구로 돌린다. 바뀐 것이 없으면 보내지 않는다 */
+  function confirmNoiseReason(text: string) {
+    if (remarkEdit?.kind !== "noise") return;
+    const { docId, unitIds, initial, isMixed, askId } = remarkEdit;
+    setRemarkEdit(null);
+    commands.answerAsk(askId, () => {
+      if (text !== initial || isMixed) runNoiseEdit(docId, { type: "set_noise_reason", unit_ids: [...unitIds], reason: text }, t("assign.noise.didReason"), null);
+    });
+  }
+  function closeNoiseReason() {
+    const askId = remarkEdit?.kind === "noise" ? remarkEdit.askId : null;
     setRemarkEdit(null);
     commands.cancelAsk(askId);
   }
@@ -1245,7 +1283,7 @@ export function useAssignPage() {
   const [captionPick, setCaptionPick] = useState<{ docId: number; bundleId: number } | null>(null);
   const captionPickBundle = captionPick !== null && captionPick.docId === shapeView?.document.id ? (shapeModel?.units.get(captionPick.bundleId) ?? null) : null;
 
-  /** 목차 블록(unitId null) 또는 그 줄 하나를 고른다 - 배정 줄 고름을 놓고 그 Old 문서를 연다. 결정 칸이 목차 칸(F12 G2 · G3)을 보인다 */
+  /** 저절로 삭제된 줄의 블록(unitId null) 또는 그 줄 하나를 고른다 - 배정 줄 고름을 놓고 그 Old 문서를 연다. 결정 칸이 그 블록 칸(F12 G2 · G3)을 보인다 */
   function selectToc(docId: number, key: number, unitId: number | null, scroll = true) {
     setMode("old");
     setChecked(new Set());
@@ -1256,7 +1294,7 @@ export function useAssignPage() {
     setRefEntryId(null);
     setManualOldDoc(docId);
     pickFocus({ kind: "toc", docId, key, unitId });
-    if (scroll) requestAnimationFrame(() => document.querySelector(`[data-testid="assign-paper-toc-${key}"]`)?.scrollIntoView({ block: "nearest" }));
+    if (scroll) requestAnimationFrame(() => document.querySelector(`[data-testid="assign-paper-noise-${key}"]`)?.scrollIntoView({ block: "nearest" }));
   }
 
   /** 줄을 고른다 - unitId를 주면 그 박스(누른 박스, 짝의 다른 구성원이어도 그것), 아니면 pickRowKey의 규칙. 고른 박스 id를 돌려준다 */
@@ -1373,7 +1411,7 @@ export function useAssignPage() {
       return (unitId !== null && figureTabIds.has(unitId)) === (activePart === "figures");
     };
     const walk = navKeys.filter((key) => isListed(key) && isFigureWalk(key));
-    const current = tocPick !== null ? toTocNavKey(tocPick.key) : isPairView ? activeKey : pickedId !== null ? toUnitNavKey(pickedId) : null;
+    const current = noisePick !== null ? toTocNavKey(noisePick.block.key) : isPairView ? activeKey : pickedId !== null ? toUnitNavKey(pickedId) : null;
     const next = stepInList(navKeys, walk, current, step);
     const tocKey = next === null ? null : readTocNavKey(next);
     const block = tocKey === null ? undefined : tocBlocks.find((item) => item.key === tocKey);
@@ -1471,6 +1509,7 @@ export function useAssignPage() {
       listCaptionLangs,
       isFixedCaption,
       captionBundle: target.kind === "caption" ? findBundleOf(target) : null,
+      canStartBody: shapeView !== null && oldDocIds.includes(shapeView.document.id) && shapeView.blocks.find((block) => block.id === target.block_id)?.part === "body",
       readOnly: !canEdit,
       rowStatus: row?.status ?? "unassigned",
       isDeleted: isRowDeleted,
@@ -1746,13 +1785,20 @@ export function useAssignPage() {
     commands.cancelAsk(askId);
   }
 
-  /** 목차 아님(줄 하나) · 모두 목차 아님(블록 전체) - 표시만 비우는 편집. 목차 고름을 놓고, 다시 받은 뒤 돌아온 첫 줄을 보통 줄로 고른다(F12 G4) */
-  function clearToc(unitIds: number[]) {
+  /** 삭제된 줄의 편집(삭제 취소 · 사유) - 누른 순간의 문서와 줄을 잡아 줄에 세운다. 결과 박스가 누를 때 정해져 있어 장벽이 아니다 */
+  function runNoiseEdit(docId: number, op: EditOp, okText: string, followId: number | null) {
+    const view = viewOf(docId);
+    if (canEdit && view) commands.enqueue(buildEditCommand(view, op, okText, followId));
+  }
+
+  /** 삭제 취소(줄 하나 · 블록 전체) - 표시와 사유만 비우는 편집. 고름은 그대로 두고, 다시 받은 뒤 돌아온 첫 줄을 보통 줄로 고른다(그 사이 다른 것을 골랐으면 두고, F12 G4) */
+  function clearNoise(docId: number, unitIds: readonly number[]) {
     if (unitIds.length === 0) return;
-    if (focus.kind === "toc") focusCtl.pick(NO_FOCUS);
-    // 블록 전체(또는 첫 줄)를 돌리면 그 키의 블록이 없어진다 - 되돌려 다시 생긴 블록은 처음처럼 접혀 있다
-    setTocOpen((open) => new Set([...open].filter((key) => !unitIds.includes(key))));
-    runUnitEdit({ type: "clear_noise", unit_ids: unitIds }, t(unitIds.length > 1 ? "assign.toc.didClearAll" : "assign.toc.didClear"), unitIds[0]);
+    // 블록의 첫 줄을 돌리면 키가 다음 줄로 바뀐다 - 남은 줄이 있으면 펼침을 잇고, 블록째 돌렸으면 되돌려 다시 생긴 블록은 처음처럼 접혀 있다
+    const cleared = new Set(unitIds);
+    const rests = tocBlocks.flatMap((block) => (tocOpen.has(block.key) && cleared.has(block.key) ? block.unitIds.filter((id) => !cleared.has(id)).slice(0, 1) : []));
+    setTocOpen((open) => new Set([...[...open].filter((key) => !cleared.has(key)), ...rests]));
+    runNoiseEdit(docId, { type: "clear_noise", unit_ids: [...unitIds] }, t(unitIds.length > 1 ? "assign.noise.didClearAll" : "assign.noise.didClear"), unitIds[0]);
   }
 
   /**
@@ -2063,6 +2109,7 @@ export function useAssignPage() {
     else if (action === "piece_lang" && lang && piece !== undefined) runShapeSwitch({ type: "switch_language", unit_id: target.id, lang, piece }, target.id);
     else if (action === "to_sentence") runUnitEdit({ type: "set_heading", unit_ids: [target.id], heading: false }, t("assign.headingShift.didSentence"), null);
     else if (action === "to_heading") revertHeadings([target.id]);
+    else if (action === "start_body") runUnitEdit({ type: "start_body", unit_id: target.id }, t("assign.ctx.didStartBody"), target.id);
   }
 
   /** 제목으로(되돌리기) - 제목에서 바꾼 문장은 서버가 그 조항 줄 전체를 모아 제목 하나로 돌린다(F8b). 한 편집이라 Ctrl+Z 한 번이다 */
@@ -2571,7 +2618,7 @@ export function useAssignPage() {
   // 알림의 되돌리기는 화면을 넘어 남는다 - 그 렌더의 함수를 붙들지 않게 가장 최근의 것을 미러한다(use-box-drag의 최신 config와 같은 짜임)
   const undoStepRef = useRef(runUndoStep);
   // 큐가 보낼 때 읽는 화면 값 - 명령은 누른 때의 것(줄 · Unit · 초안)만 싣고 나머지는 나갈 때의 값으로 보낸다(앞 응답 뒤의 값)
-  const live = { bundle, focus, hasTarget: row !== null || hasSolo || tocPick !== null, mode, activeKey, unitMap, rowMap, rowOfUnit, views: viewList, soloView: soloLoad.data, writtenMap, composedData, leftovers, isDrafting, labelOptions };
+  const live = { bundle, focus, hasTarget: row !== null || hasSolo || noisePick !== null, mode, activeKey, unitMap, rowMap, rowOfUnit, views: viewList, soloView: soloLoad.data, writtenMap, composedData, leftovers, isDrafting, labelOptions };
   const liveRef = useRef(live);
   // 커밋마다 큐를 한 번 돌린다(새 이펙트를 두지 않는다) - 장벽 · 되살린 글쇠가 세운 고름이 그려진 이 커밋의 값으로 다음 명령을 낸다
   useEffect(() => {
@@ -2723,7 +2770,7 @@ export function useAssignPage() {
   /** 장벽 뒤에 쌓인 글쇠 · 판단 단추를 지금 고름에서 다시 누른다 */
   function replayPress(press: Exclude<ReplayCommand, { kind: "pick" }>): boolean {
     if (press.kind === "key") {
-      if (!press.ctrl) return pressKey(press.key);
+      if (!press.ctrl) return pressKey(press.key, press.shift);
       pressUndo(press.shift ? "redo" : "undo");
       return true;
     }
@@ -4134,7 +4181,7 @@ export function useAssignPage() {
       if (commands.canQueueKey()) commands.enqueue({ kind: "key", key, shift: event.shiftKey, ctrl: false });
       return;
     }
-    if (pressKey(key)) event.preventDefault();
+    if (pressKey(key, event.shiftKey)) event.preventDefault();
   });
 
   /** Ctrl+Z - 기록이 아직 없어도 저장 중인 판단이 있으면 그 뒤에 선다 */
@@ -4142,10 +4189,26 @@ export function useAssignPage() {
     if (kind === "undo" ? undoState.canUndo || hasQueuedStep() : undoState.canRedo) runUndoStep(kind);
   }
 
+  /** 고른 삭제 줄을 되돌리는 중인가 - 삭제 취소의 응답이나 새 보기를 기다린다 */
+  function isRestoringPick(): boolean {
+    if (noisePick === null) return false;
+    const ops = commands.listUnsettled().flatMap(({ payload }) => (payload.kind === "edit" ? [payload.op] : []));
+    return docViews.isReloading(noisePick.docId) || isRestoringLines(ops, noisePick.unitId === null ? noisePick.block.unitIds : [noisePick.unitId]);
+  }
+
   /** 글쇠 하나를 지금 고름에서 - 했으면 true. 누를 때와, 장벽 뒤에 쌓아 두었다가 되살릴 때 함께 쓴다 */
-  function pressKey(key: string): boolean {
+  function pressKey(key: string, shift: boolean): boolean {
     const step = getRowStep(key);
+    const noiseKey = toNoiseKeyId(key, shift);
+    const noise = noiseKey === null ? null : readNoiseKey(noiseKey, noisePick);
     if (step !== null) moveRow(step);
+    // 마지막으로 누른 것이 저절로 삭제된 줄 - 판단 글쇠보다 먼저(삭제 · 보류 · 확정은 아무것도 하지 않는다)
+    else if (noise !== null && noisePick !== null) {
+      if (noise.kind === "clear") clearNoise(noisePick.docId, canEdit ? noise.unitIds : []);
+      // 삭제 취소가 끝나 보통 줄로 돌아오기 전에 누른 것 - 조용히 사라지지 않게 알린다
+      else if (isRestoringPick()) showToast(t("assign.noise.restoring"), "info");
+      else if (noise.kind === "reason") openNoiseReason(noisePick.docId, noise.unitIds);
+    }
     else if (key === "escape") {
       // AI 순서 미리보기부터 거두고(Keep as is), 나눌 선이 있으면 선을 거둔다(Split과 같다)
       if (orderPreview !== null) unwrapAi.onKeep(orderPreview.tableId, orderPreview.isSame);
@@ -4326,7 +4389,7 @@ export function useAssignPage() {
     isFixedCaption, ctxGroups, rowViewUnits, rowSplitUnit, rowSplit, splitBlocked, rowRefUnit, refBlocked, isCaptionGateOn,
     confirmBlockKey, rowCaptionRefs, refCandidates, shapeLines, shapeFirstId, slotPlaces, slotCellTables, shapeMode, headingBack, rewrap, bandBack,
     stepBase, refPendingIds, isLinkedToWritten, captionPendingKeys, docDashboard, refDetail, refInfo, openCtxMenu, runUnitEdit,
-    rewrapTable, unwrapAi, describeEditConfirm, pairGrip, clearToc, runCaptionRefChange, switchShapeMode, switchToPair,
+    rewrapTable, unwrapAi, describeEditConfirm, pairGrip, clearNoise, openNoiseReason, confirmNoiseReason, closeNoiseReason, noisePick, runCaptionRefChange, switchShapeMode, switchToPair,
     applySplitSuggestion, dismissSplitSuggestion, splitPendingIds, readPendingItem, selectNextSplit, selectNextRef, selectNextCaption,
     splitAtCut, handleOldDoubleClick, runCtx, runUnitAction, revertHeadings, planOldJoin, joinOld, renderOldActions, readReasonNeed,
     runSave, runClear, runUndoStep, confirmIdenticalAll, acceptAll, markNew, placeManage, pickDestination, pickNewSentence, handleNewPick, unlinkCell,

@@ -82,7 +82,7 @@ export default function AssignPage() {
     setConfirmingIdentical, resetScope, setResetScope, slots, newDraft, draftSlotKey, placeResolved, canPlaceClick, pickedSpotKey,
     setCarvePick, carve, carveText, clearCarve, togglePairViewByButton, pairFrom, setPairFrom, pairSource, captionPickBundle, setCaptionPick, selectToc, openNewCtxMenu,
     openSolo, goToUnit, ctxGroups, confirmBlockKey, refPendingIds, isLinkedToWritten, captionPendingKeys, docDashboard, openCtxMenu, runUnitEdit,
-    rewrapTable, unwrapAi, describeEditConfirm, pairGrip, clearToc, splitAtCut, handleOldDoubleClick,
+    rewrapTable, unwrapAi, describeEditConfirm, pairGrip, clearNoise, openNoiseReason, splitAtCut, handleOldDoubleClick,
     runCtx, revertHeadings, planOldJoin, joinOld, renderOldActions, runSave, runClear, confirmIdenticalAll, acceptAll, pickDestination,
     pickNewSentence, handleNewPick, handleJoinPick, readJoinAfter, pickJoinMenu, handleSidePress, pickPlaceSpot, pickOwnAiLine, jumpToNew, openNewDoc,
     showInNew, jumpToOld, pickTemplateLine, fillTemplateMissing, isOldDrag, finishPairPick, handleOldClick, markRecHover, revealPick,
@@ -592,15 +592,21 @@ export default function AssignPage() {
                 renderNote={placeOf}
                 // 삭제·이동한 묶음, 이미 쓴 New 문서(혼자 연 문서)의 묶음과 그 문서에 이은 묶음(입구 2 - 캡션을 그 문서가 정한다)은 캡션이 필요 없다
                 isCaptionNeeded={(unitId, hasCaption) => isBundleCaptionNeeded(unitMap.get(unitId), hasCaption, isLinkedToWritten(unitId))}
-                // 목차 줄은 Old 문서에서만 흐린 블록으로 접는다(MD 1 F6). 목차 아님은 다듬는 원문이 그 Old 문서일 때만 - New 문장을 고치는 동안은 접고 펴기만
-                toc={
+                // 저절로 삭제된 줄(목차 · 본문 앞부분 · 개정 이력)은 Old 문서에서만 흐린 블록으로 접는다(MD 1 F6 · 쪼개기 먼저 §7 R3). 사유 쓰기 · 삭제 취소는
+                // 다듬는 원문이 그 Old 문서일 때만 - New 문장을 고치는 동안은 접고 펴기만
+                noise={
                   isSolo
                     ? undefined
                     : {
-                        canClear: canEdit && !isNewEdit,
+                        canEdit: canEdit && !isNewEdit,
                         // 처리 중인 블록만 꺼진다(용지가 잠긴 Unit으로 본다) - 묶음 전체 일 동안은 모두
                         busy: isGlobalPending,
-                        onClear: clearToc,
+                        onClear: (unitIds) => {
+                          if (oldView) clearNoise(oldView.document.id, unitIds);
+                        },
+                        onReason: (unitIds) => {
+                          if (oldView) openNoiseReason(oldView.document.id, unitIds);
+                        },
                         open: tocOpen,
                         selected: tocPick !== null && tocPick.docId === oldView?.document.id ? tocPick : null,
                         onToggle: (key) => setTocOpen((open) => toggleTocOpen(open, key)),
@@ -654,7 +660,7 @@ export default function AssignPage() {
                 onRangeSelect={
                   canEdit && mode === "old" && oldView
                     ? (range) => {
-                        // 목차 줄의 글자는 떼어 내지 않는다(서버 toc_line_locked) - 먼저 목차 아님
+                        // 저절로 삭제된 줄의 글자는 떼어 내지 않는다(서버 toc_line_locked) - 먼저 삭제 취소
                         if (!hasTocLineIn(oldView.units, range.blockId)) setCarvePick({ docId: oldView.document.id, ...range });
                       }
                     : undefined
@@ -895,6 +901,18 @@ export default function AssignPage() {
           testId="assign-remark-modal"
           onClose={state.closeRemark}
           onConfirm={state.confirmRemark}
+        />
+      )}
+      {remarkEdit?.kind === "noise" && (
+        <RemarkModal
+          title={t("assign.noise.modalTitle")}
+          initial={remarkEdit.initial}
+          requiredMessage={null}
+          intro={<p className="text-xs text-ink-2">{t(remarkEdit.isMixed ? "assign.noise.modalMixed" : "assign.noise.modalIntro", { n: remarkEdit.unitIds.length })}</p>}
+          confirmLabel={t("common.save")}
+          testId="assign-noise-modal"
+          onClose={state.closeNoiseReason}
+          onConfirm={state.confirmNoiseReason}
         />
       )}
       {remarkEdit?.kind === "new" && (

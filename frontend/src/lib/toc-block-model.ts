@@ -1,13 +1,18 @@
-// 목차 블록 모델 - 잡음 표시(noise_kind "toc")가 붙은 줄이 연달아 오면 Assign 용지에서 흐린 블록 하나로 접는다(MD 1 F6).
-// 목차 줄은 배정 줄이 아니다(classify-model isNoiseUnit) - 블록은 줄 수와 언어별 수, 한/영 사이 점선 자리만 계산한다.
+// 저절로 삭제된 줄의 블록 모델 - 잡음 표시(noise_kind: 목차 · 본문 앞부분 · 개정 이력)가 붙은 줄이 연달아 오면 Assign 용지에서 종류마다 흐린 블록 하나로
+// 접는다(MD 1 F6, 쪼개기 먼저 설계 §7 R3). 배정 줄이 아니다(classify-model isNoiseUnit) - 블록은 줄과 수, 사유, 한/영 사이 점선 자리만 계산한다.
 
-import type { ViewUnit } from "./api-sop";
+import type { ViewTable, ViewUnit } from "./api-sop";
+import { getTableNumber } from "./unwrap-model";
+
+export type NoiseKind = "toc" | "front" | "history";
 
 export interface TocLine {
   unitId: number;
   text: string;
   /** 바로 앞 줄과 언어가 갈려(한글 목차 → 영어 목차) 그 사이에 점선을 둔다 */
   breakBefore: boolean;
+  /** 이 줄에 적은 사유 - 빈 글이면 정한 문구 */
+  reason: string;
 }
 
 export interface TocBlock {
@@ -18,34 +23,67 @@ export interface TocBlock {
   counts: { total: number; ko: number; en: number };
 }
 
+export interface NoiseBlock extends TocBlock {
+  kind: NoiseKind;
+  /** 줄들의 사유 - 모두 같으면 그 글(적지 않았으면 빈 글 = 정한 문구), 갈리면 isMixed */
+  reason: { text: string; isWritten: boolean; isMixed: boolean };
+}
+
+type NoiseUnit = Pick<ViewUnit, "id" | "lang" | "text" | "kind" | "group_unit_id" | "noise_kind" | "noise_reason" | "table_id">;
+
 /** 한/영 사이에만 점선 - 중립·참조 줄은 언어가 바뀐 것으로 치지 않는다 */
 const SPLIT_LANGS = new Set(["ko", "en"]);
 
-/** 연달아 오는 목차 줄(원문 순) → 블록 하나. 빈 목록은 null */
-export function buildTocBlock(units: ReadonlyArray<Pick<ViewUnit, "id" | "lang" | "text">>): TocBlock | null {
-  if (units.length === 0) return null;
+/** 블록의 줄 - 표 · 그림은 한 줄이고 그 칸 · 캡션(묶인 단위)은 제 줄이 없다 */
+function isLine(unit: Pick<ViewUnit, "group_unit_id">): boolean {
+  return unit.group_unit_id === null || unit.group_unit_id === undefined;
+}
+
+/** 연달아 오는 같은 종류의 삭제된 단위(원문 순) → 블록 하나. labelOf는 줄에 보일 글(표 "표 n (r×c)", 그림 "[Figure]"). 줄이 없으면 null */
+export function buildNoiseBlock<T extends NoiseUnit>(units: readonly T[], labelOf: (unit: T) => string): NoiseBlock | null {
+  const own = units.filter(isLine);
+  if (own.length === 0) return null;
   let previousLang: string | null = null;
-  const lines = units.map((unit) => {
+  const lines = own.map((unit) => {
     const isSplit = SPLIT_LANGS.has(unit.lang);
     const breakBefore = isSplit && previousLang !== null && previousLang !== unit.lang;
     if (isSplit) previousLang = unit.lang;
-    return { unitId: unit.id, text: unit.text, breakBefore };
+    return { unitId: unit.id, text: labelOf(unit), breakBefore, reason: unit.noise_reason ?? "" };
   });
+  const reasons = new Set(lines.map((line) => line.reason));
+  const text = reasons.size === 1 ? lines[0].reason : "";
   return {
-    key: units[0].id,
-    unitIds: units.map((unit) => unit.id),
+    key: own[0].id,
+    unitIds: own.map((unit) => unit.id),
     lines,
     counts: {
-      total: units.length,
-      ko: units.filter((unit) => unit.lang === "ko").length,
-      en: units.filter((unit) => unit.lang === "en").length,
+      total: own.length,
+      ko: own.filter((unit) => unit.lang === "ko").length,
+      en: own.filter((unit) => unit.lang === "en").length,
     },
+    kind: own[0].noise_kind ?? "toc",
+    reason: { text, isWritten: text !== "", isMixed: reasons.size > 1 },
   };
 }
 
-/** 줄 묶기 - 목차 줄이 바로 앞 칸도 목차 줄이면 같은 블록에 잇는다(짝 카드와 같은 자리에서 판단) */
-export function shouldJoinTocCard(previousIsToc: boolean, isToc: boolean): boolean {
-  return previousIsToc && isToc;
+type Translate = (key: string, vars?: Record<string, string | number>) => string;
+
+/** 블록의 사유 글 - 갈리면 그렇다는 말, 적지 않았으면 종류마다 정한 문구 */
+export function readNoiseReason(block: Pick<NoiseBlock, "kind" | "reason">, t: Translate): string {
+  if (block.reason.isMixed) return t("assign.noise.mixed");
+  return block.reason.text || t(`assign.noise.reason.${block.kind}`);
+}
+
+/** 줄에 보일 글 - 표 "표 n (r×c)", 그림 "[Figure]", 나머지는 원문 글 */
+export function describeNoiseUnit(unit: Pick<ViewUnit, "kind" | "text" | "table_id">, tables: ReadonlyMap<number, ViewTable>, t: Translate): string {
+  if (unit.kind === "figure") return "[Figure]";
+  const table = unit.kind === "table" && unit.table_id !== null ? tables.get(unit.table_id) : undefined;
+  return table ? t("assign.noise.table", { n: getTableNumber(table), rows: table.n_rows, cols: table.n_cols }) : unit.text;
+}
+
+/** 줄 묶기 - 바로 앞 칸도 같은 종류의 삭제된 줄이면 같은 블록에 잇는다(짝 카드와 같은 자리에서 판단) */
+export function shouldJoinNoiseCard(previous: NoiseKind | null, next: NoiseKind | null): boolean {
+  return next !== null && previous === next;
 }
 
 /** 블록의 줄 나눔 - 결정 칸 다듬기 줄 "(한글 4 · 영어 3 · 그 뒤 1)". 언어가 같은 줄 덩어리 앞 둘은 그 언어로, 나머지는 "그 뒤"로 센다 */
@@ -64,25 +102,33 @@ export function describeTocParts(langs: readonly string[]): TocPart[] {
   return after > 0 ? [...parts, { part: "after", n: after }] : parts;
 }
 
-/** 문서 하나의 목차 블록 - 용지 순(pos_seq, 첫 범위 시작)으로 이어진 목차 줄 덩어리. 사이에 다른 단위(표·칸 문장 포함)가 끼면 끊긴다.
- *  키는 첫 줄 단위 id - Paper가 같은 블록에 붙이는 키와 같다 */
-export function listTocBlocks(units: ReadonlyArray<Pick<ViewUnit, "id" | "kind" | "spans" | "pos_seq" | "noise_kind">>): Array<{ key: number; unitIds: number[] }> {
-  const order = [...units]
+/** 문서 하나의 블록 - 용지 순(pos_seq, 첫 범위 시작)으로 이어진 같은 종류의 삭제된 줄 덩어리. 사이에 다른 단위(표·칸 문장 포함)가 끼거나 종류가 바뀌면 끊긴다.
+ *  키는 첫 줄 단위 id - Paper가 같은 블록에 붙이는 키와 같다. 표 · 그림은 한 줄이고 그 칸 · 캡션은 세지 않는다 */
+export function listNoiseBlocks(
+  units: ReadonlyArray<Pick<ViewUnit, "id" | "kind" | "spans" | "pos_seq" | "noise_kind" | "group_unit_id">>,
+): Array<{ key: number; kind: NoiseKind; unitIds: number[] }> {
+  const order = units
+    .filter(isLine)
     .sort((a, b) => a.pos_seq - b.pos_seq || (a.spans[0]?.[1] ?? 0) - (b.spans[0]?.[1] ?? 0) || a.id - b.id);
-  const blocks: Array<{ key: number; unitIds: number[] }> = [];
-  let current: number[] | null = null;
+  const blocks: Array<{ key: number; kind: NoiseKind; unitIds: number[] }> = [];
+  let current: { key: number; kind: NoiseKind; unitIds: number[] } | null = null;
   for (const unit of order) {
     if (unit.noise_kind == null) {
       current = null;
       continue;
     }
-    if (current === null) {
-      current = [];
-      blocks.push({ key: unit.id, unitIds: current });
+    if (current === null || current.kind !== unit.noise_kind) {
+      current = { key: unit.id, kind: unit.noise_kind, unitIds: [] };
+      blocks.push(current);
     }
-    current.push(unit.id);
+    current.unitIds.push(unit.id);
   }
   return blocks;
+}
+
+/** 고른 것의 블록 - 줄을 골랐으면 그 줄이 든 블록(첫 줄을 삭제 취소해 키가 바뀌어도), 블록을 골랐으면 그 키의 줄이 든 블록 */
+export function findNoiseBlock<T extends { unitIds: readonly number[] }>(blocks: readonly T[], pick: { key: number; unitId: number | null }): T | undefined {
+  return blocks.find((block) => block.unitIds.includes(pick.unitId ?? pick.key));
 }
 
 const TOC_NAV_PREFIX = "toc:";

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { PaperPending } from "@/components/paper/paper";
 import type { DeletedFold } from "@/lib/deleted-fold-model";
-import { CHUNK_CARDS, CHUNK_MIN_CARDS, pickNearChunks, readChunkDeleted, readChunkNumbers, readChunkPending, sliceCards, sliceFoldEntries } from "@/lib/paper-chunk-model";
+import { CHUNK_CARDS, CHUNK_MIN_CARDS, pickNearChunks, readChunkDeleted, readChunkNoise, readChunkNumbers, readChunkPending, sliceCards, sliceFoldEntries } from "@/lib/paper-chunk-model";
 import type { FoldEntry } from "@/lib/paper-fold-model";
 
 describe("sliceCards", () => {
@@ -152,5 +152,20 @@ describe("pickNearChunks", () => {
 
   it("returns -1 when the paper is far from the view", () => {
     expect(pickNearChunks(boxes, { top: -5000, bottom: -4200 })).toEqual({ from: -1, to: -1 });
+  });
+});
+
+describe("readChunkNoise", () => {
+  const mine = new Set([1, 2, 3]);
+  it("reads only the blocks and the pick of its own chunk", () => {
+    expect(readChunkNoise(undefined, null, mine)).toBe("");
+    expect(readChunkNoise(new Set([9]), { key: 9, unitId: 10 }, mine)).toBe("");
+    expect(readChunkNoise(new Set([1, 9]), null, mine)).toBe(readChunkNoise(new Set([1]), { key: 9, unitId: null }, mine));
+    expect(readChunkNoise(new Set([1]), null, mine)).not.toBe("");
+  });
+  it("tells the head, a line and another line apart, even when the key left the block", () => {
+    const values = [{ key: 1, unitId: null }, { key: 1, unitId: 2 }, { key: 9, unitId: 3 }].map((pick) => readChunkNoise(new Set(), pick, mine));
+    expect(new Set(values).size).toBe(3);
+    expect(values).not.toContain("");
   });
 });

@@ -53,6 +53,15 @@ const tableModel = makeModel({
   ],
 });
 const numberModel = makeModel({ hasNumbers: true, units: (id) => ({ number: { value: String(id), read: String(id), source: "auto", is_set: false, content_start: 0, from_text: false, note: null } as never }) });
+/** 저절로 삭제된 블록 둘 - 2 · 3(가까운 덩어리)과 140~149(먼 4번째 덩어리, 표 하나와 용지 줄이 없는 그 표의 안쪽 표 900) */
+const NOISE_IDS = IDS.filter((id) => id >= 140 && id < 150);
+const INNER = 900;
+const makeNoiseModel = (reason = "") => {
+  const noise = makeModel({ units: (id) => (id === 2 || id === 3 || NOISE_IDS.includes(id) ? { noise_kind: "front", noise_reason: reason } : {}) });
+  const inner: ViewUnit = { ...noise.units.get(145)!, id: INNER, kind: "table", spans: [], text: "", pos_seq: 145 };
+  return { ...noise, units: new Map([...noise.units, [INNER, inner]]) };
+};
+const noiseModel = makeNoiseModel();
 const onUnitClick = () => undefined;
 const onOpenChange = vi.fn();
 /** 그린 단위 - describeTab(앞머리)이 부르는 statusOf로 센다 */
@@ -297,5 +306,70 @@ describe("what changes with every key", () => {
     expect(getButton(`p-rewrap-${UNWRAPPED}`)?.disabled).toBe(false);
     await render({ ...unwrap, pending: locked }, 1, { model: tableModel });
     expect(getButton(`p-rewrap-${UNWRAPPED}`)?.disabled).toBe(true);
+  });
+});
+
+describe("automatically deleted blocks in a far chunk", () => {
+  type Noise = NonNullable<Strips["noise"]>;
+  const noise = (over: Partial<Noise> = {}): Noise => ({ canEdit: true, busy: false, onClear: () => undefined, onReason: () => undefined, open: new Set(), selected: null, onToggle: () => undefined, onPick: () => undefined, ...over });
+  const arg = { model: noiseModel };
+  const pending = (part: Partial<NonNullable<Strips["pending"]>>) => ({ shimmerIds: new Set<number>(), lockedIds: new Set<number>(), pills: [], waits: new Map<number, number>(), ...part });
+  const isOpen = (key: number) => getButton(`p-noise-head-${key}`)?.getAttribute("aria-expanded") === "true";
+  /** 4번째 덩어리의 조각 - 블록 하나가 한 칸이라 앞 블록만큼 한 줄, 이 블록만큼 아홉 줄 뒤로 밀린다 */
+  const FAR = IDS.filter((id) => id >= 122 && id <= 170 && !NOISE_IDS.includes(id));
+  const listDrawn = () => listFar().filter((id) => id > 81);
+
+  it("opens, picks and folds - only its own chunk is drawn again", async () => {
+    await render({ noise: noise() }, 1, arg);
+    expect(isOpen(140)).toBe(false);
+    await render({ noise: noise({ open: new Set([140]), selected: { key: 140, unitId: 141 } }) }, 1, arg);
+    expect(isOpen(140)).toBe(true);
+    expect(host.querySelectorAll(".mbtn.reveal")).toHaveLength(1);
+    expect(listDrawn()).toEqual(FAR);
+    await render({ noise: noise({ open: new Set([140]), selected: { key: 140, unitId: 142 } }) }, 1, arg);
+    expect(getButton("p-noise-unit-clear-142")?.className).toContain("reveal");
+    await render({ noise: noise() }, 1, arg);
+    expect(isOpen(140)).toBe(false);
+  });
+
+  it("leaves the far chunks alone when a block near by opens and is picked", async () => {
+    await render({ noise: noise() }, 1, arg);
+    await render({ noise: noise({ open: new Set([2]), selected: { key: 2, unitId: 3 } }) }, 1, arg);
+    expect(isOpen(2)).toBe(true);
+    expect(listDrawn()).toEqual([]);
+  });
+
+  it.each([["a line", 143], ["an inner table that has no row of its own", INNER]])("turns its buttons off while %s is being written", async (_, id) => {
+    await render({ noise: noise() }, 1, arg);
+    expect(getButton("p-noise-clear-140")?.disabled).toBe(false);
+    await render({ noise: noise(), pending: pending({ lockedIds: new Set([id]), pills: [{ id: "a", kind: "toc", label: "Saving…", place: { at: "box", unitId: id } }] }) }, 1, arg);
+    expect(getButton("p-noise-clear-140")?.disabled).toBe(true);
+    expect(getButton("p-noise-reason-140")?.disabled).toBe(true);
+    expect(host.querySelector('[data-testid="p-noise-140"] [data-testid="p-pending"]')).not.toBeNull();
+    expect(listDrawn()).toEqual(FAR);
+    await render({ noise: noise() }, 1, arg);
+    expect(getButton("p-noise-clear-140")?.disabled).toBe(false);
+  });
+
+  it("shows a reason written on it", async () => {
+    await render({ noise: noise() }, 1, arg);
+    expect(getButton("p-noise-head-140")?.textContent).toContain("Before chapter 1");
+    await render({ noise: noise() }, 1, { model: makeNoiseModel("Not moved") });
+    expect(getButton("p-noise-head-140")?.textContent).toContain("Reason: Not moved");
+  });
+
+  it("is drawn again when every block turns off or a reader takes over", async () => {
+    await render({ noise: noise() }, 1, arg);
+    await render({ noise: noise({ busy: true }) }, 1, arg);
+    expect(getButton("p-noise-clear-140")?.disabled).toBe(true);
+    await render({ noise: noise({ canEdit: false }) }, 1, arg);
+    expect(getButton("p-noise-clear-140")).toBeNull();
+  });
+
+  it("keeps each peeked line of a folded list to itself", async () => {
+    const list = new Set(IDS.filter((id) => !NOISE_IDS.includes(id) && id !== 2 && id !== 3));
+    await render({ noise: noise(), fold: fold(list) }, 1, arg);
+    await render({ noise: noise(), fold: fold(list, { runs: new Set(), peeks: new Set(["u2-2-0", "u3-3-0"]) }) }, 1, arg);
+    expect([...host.querySelectorAll('[data-testid^="p-noise-head-"]')].map((el) => el.getAttribute("data-testid"))).toEqual(["p-noise-head-2", "p-noise-head-3"]);
   });
 });

@@ -2,7 +2,7 @@
 
 계산은 app/sop/outputs.py가 끝냈고 여기서는 그 결과를 칸 글로 옮긴다. 시스템 표시 값은 영어 한 벌이다(Excel·미리보기는 늘 en).
 32,767자 나누기도 여기서 해 미리보기와 파일이 같은 줄이 된다. xlsx 쓰기는 excel_export.build_workbook.
-미리보기 전용 값(A의 fit_widths·bands·column_keys, 줄의 unit_id·group_id·toc, 칸의 tone)은 화면만 읽고 xlsx에는 쓰지 않는다.
+미리보기 전용 값(A의 fit_widths·bands·column_keys, 줄의 unit_id·group_id·toc·noise, 칸의 tone)은 화면만 읽고 xlsx에는 쓰지 않는다.
 """
 
 import base64
@@ -17,8 +17,7 @@ from app.sop.captions import join_caption_texts
 from app.sop.constants import BULLET_SYMBOLS, NUMBER_BULLET, NUMBER_NOTE
 from app.sop.excel_export import ExportMeta, build_export_file_name, clean_cell_text, format_kst, split_cell_text
 from app.sop.flow_image import draw_flow_png
-from app.sop.noise import NOISE_TOC
-from app.sop.output_labels import LABELS
+from app.sop.output_labels import FIGURE_MARKER, LABELS
 from app.sop.outputs import (
     ARow,
     CItem,
@@ -97,17 +96,21 @@ SUMMARY_NAMES = (
     "Old rows", "Assigned", "No destination", "Duplicate assignments", "Deleted", "Moved", "New", "Translated",
     "Confirmed rate", "Single language",
 )
-TOC_SUMMARY_NAME = "Contents · auto-deleted"  # 목차 줄 수(summary.toc_deleted) — 목차 줄이 있는 묶음에만 싣는다
+# 저절로 삭제된 줄 수(요약 칸 → 이름) — 그런 줄이 있는 묶음에만 싣는다
+NOISE_SUMMARY_NAMES = {
+    "toc_deleted": "Contents · auto-deleted", "front_deleted": "Front matter · auto-deleted",
+    "history_deleted": "Change history · auto-deleted",
+}
 UNWRAPPED_SUMMARY_NAME = "Lines from unwrapped tables"  # 풀린 표에서 온 줄 수(summary.unwrapped_rows) — 그런 줄이 있을 때만 싣는다
 INFO_NAMES = (
     "Bundle title", "Status", "Created by", "Created at (KST)", "Exported by", "Exported at (KST)", "Guideline version",
     "Synthetic data",
 )
 _LABELS = LABELS["en"]
-_MARKERS = {"table": "[Table]", "figure": "[Figure]"}  # 확정한 캡션 글이 없는 표·그림 줄에만
+_MARKERS = {"table": "[Table]", "figure": FIGURE_MARKER}  # 확정한 캡션 글이 없는 표·그림 줄에만
 _CAPTION_POSITION = "Caption"  # 캡션 줄의 Cell position 칸 — 칸 줄의 "R 1 C 1" 자리
 _NO_WRAP_KINDS = ("status", "plain")  # 상태 줄·제목·이름 칸은 옆 칸으로 넘쳐 보이게 접지 않는다
-# 상태 코드 → 칩 색. 보류(on_hold)는 명세가 색을 정하지 않아 칩 없이 글로 남고, "del"은 Status가 Deleted로 적히는 줄(목차 줄 — 저절로 지운 줄)
+# 상태 코드 → 칩 색. 보류(on_hold)는 명세가 색을 정하지 않아 칩 없이 글로 남고, "del"은 Status가 Deleted로 적히는 줄(저절로 삭제된 줄)
 _STATUS_TONES: dict[str, CellTone] = {"confirmed": "ok", "ai_suggested": "ai", "unassigned": "un", "deleted": "del"}
 
 
@@ -131,10 +134,11 @@ class SheetRow(BaseModel):
     kind: RowKind
     wrap: bool  # 칸 글을 칸 폭 안에서 접는다(위 맞춤). False(상태 줄·plain 줄)면 접지 않아 옆 빈 칸으로 넘쳐 보인다
     cells: list[SheetCell]  # 늘 시트 열 수(widths)만큼 — 빈 칸도 싣는다
-    # 아래 셋은 미리보기 전용(A의 자료 줄에만) — 화면이 칸 글을 읽지 않고 고른 줄·같은 무리·목차 줄을 맞춘다
+    # 아래 셋은 미리보기 전용(A의 자료 줄에만) — 화면이 칸 글을 읽지 않고 고른 줄·같은 무리·저절로 삭제된 줄을 맞춘다
     unit_id: int | None = None  # 이 줄의 옛 단위(이어진 줄도 같은 값), 번역·신규 줄은 None
     group_id: str | None = None  # Group ID 칸과 같은 관계 묶음
-    toc: bool = False  # 목차 줄(ARow.noise_kind == "toc") — 화면이 연달아 오는 줄을 한 줄로 접는다
+    toc: bool = False  # 저절로 삭제된 줄(ARow.noise_kind) — 화면이 연달아 오는 줄을 한 줄로 접는다
+    noise: str | None = None  # 그 종류(noise.NOISE_KINDS) — 접기는 종류가 바뀌면 끊는다
     # 문단 Excel 미리보기 전용 — 지운 줄(화면은 숨기고 고른 동안만 보인다), 한 줄로 묶은 옛 단위 전부(unit_id는 그 첫 단위, 한 단위 줄은 빈 목록)
     deleted: bool = False
     unit_ids: list[int] = []
@@ -328,7 +332,7 @@ def _build_a_sheet(snap: BundleSnapshot, people: Mapping[str, str], document_id:
             starts = a_row.is_group_start and offset == 0
             row = _make_row("group_start" if starts else "in_group", line, italic=italic, numeric=(A_ROW_COLUMN,))
             row.unit_id, row.group_id = a_row.unit_id, a_row.group_id
-            row.toc = a_row.noise_kind == NOISE_TOC
+            row.toc, row.noise = a_row.noise_kind is not None, a_row.noise_kind
             status_cell = row.cells[A_STATUS_COLUMN - 1]
             if status_cell.text:  # 이어진 줄의 빈 Status 칸에는 칩이 없다
                 status_cell.tone = _STATUS_TONES.get(a_row.status)
@@ -375,9 +379,10 @@ def _build_b_sheet(snap: BundleSnapshot) -> Sheet:
     )
     for name, value in zip(SUMMARY_NAMES, values, strict=True):
         rows.append(_make_row("plain", _pad([name, str(value)], width), numeric=() if isinstance(value, str) else (2,)))
-    # 목차 줄 · 풀린 표의 줄이 있을 때만 — 없는 묶음의 파일은 그대로다
-    if summary.toc_deleted:
-        rows.append(_make_row("plain", _pad([TOC_SUMMARY_NAME, str(summary.toc_deleted)], width), numeric=(2,)))
+    # 저절로 삭제된 줄 · 풀린 표의 줄이 있을 때만 — 없는 묶음의 파일은 그대로다
+    for field, name in NOISE_SUMMARY_NAMES.items():
+        if count := getattr(summary, field):
+            rows.append(_make_row("plain", _pad([name, str(count)], width), numeric=(2,)))
     if summary.unwrapped_rows:
         rows.append(_make_row("plain", _pad([UNWRAPPED_SUMMARY_NAME, str(summary.unwrapped_rows)], width), numeric=(2,)))
 

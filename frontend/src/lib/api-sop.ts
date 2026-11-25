@@ -439,8 +439,10 @@ export interface ViewUnit {
   ref: UnitRefMark | null;
   /** 이 단위의 글이 가리키는 표·그림("표 3"·"아래 표") - 캡션 자기 머리 번호는 빠진다 */
   caption_refs: ViewCaptionRef[];
-  /** 잡음 표시 - "toc"면 목차 줄: 배정 줄이 없고(남은 수에서 빠짐) Assign 용지가 목차 블록으로 접는다. 편집 clear_noise가 비운다 */
-  noise_kind?: "toc" | null;
+  /** 잡음 표시 - 저절로 삭제된 줄(목차 · 본문 앞부분 · 개정 이력): 배정 줄이 없고(남은 수에서 빠짐) Assign 용지가 블록으로 접는다. 편집 clear_noise가 비운다 */
+  noise_kind?: "toc" | "front" | "history" | null;
+  /** 저절로 삭제된 줄에 적은 사유 - 빈 글이면 종류마다 정한 문구. 편집 set_noise_reason이 쓴다 */
+  noise_reason?: string;
   /** 제목 스타일 줄을 문장으로 바꾼 문장(F8b) - Assign의 "제목으로 되돌리기"와 묶음 머리 "[제목 → 문장]". 편집 set_heading이 오간다 */
   from_heading?: boolean;
   /** 캡션 하나를 같이 쓰는 그림 묶음(F7 ⑥)의 첫 그림 - 이 그림이 그 그림의 캡션을 같이 쓴다. 첫 그림 자신·묶이지 않은 단위는 null. 편집 group_figures·ungroup_figures가 오간다 */
@@ -536,8 +538,12 @@ export type EditOp =
   | { type: "set_number"; unit_id: number; number: string | null; follow: boolean; indent_shift?: number }
   /** 들여쓰기 차이(B8) - 여러 줄을 한 편집으로(되돌리기 한 칸). 번호 칸이 있는 줄만, 값은 -9…9 */
   | { type: "set_indents"; units: { unit_id: number; indent_shift: number }[] }
-  /** 목차 아님(줄 하나) · 모두 목차 아님(블록 전체) - 잡음 표시만 비운다(단위는 그대로, 되돌리기가 다시 붙인다) */
+  /** 삭제 취소(줄 하나 · 블록 전체) - 잡음 표시와 적은 사유만 비운다(단위는 그대로, 되돌리기가 다시 붙인다). 묶음은 구성원까지 */
   | { type: "clear_noise"; unit_ids: number[] }
+  /** 저절로 삭제된 줄의 사유 쓰기 - 빈 글이면 정한 문구로. 보통 줄이 섞이면 422 not_a_noise_line. 묶음은 구성원까지 */
+  | { type: "set_noise_reason"; unit_ids: number[]; reason: string }
+  /** 여기부터 본문 - 그 줄 앞의 보통 줄을 본문 앞부분으로, 뒤로 이어진 앞부분 표시는 비운다(되돌리기 한 번). 보통 본문 줄이 아니면 422 invalid_body_start, 정한 줄이 끼면 409 unit_has_decision */
+  | { type: "start_body"; unit_id: number }
   /** 제목 ↔ 문장(F8b) - heading이 거짓이면 제목을 문장마다 나눠 바꾼 표시를 단다(번역 조항은 앞 조항의 번호를 물려받는다).
    *  참이면 바꾼 문장은 그 조항 줄 전체가 제목 하나로 돌아가고, 보통 문장은 그 문장이 제목이 된다. 한/영 짝은 새 단위로 다시 선다 */
   | { type: "set_heading"; unit_ids: number[]; heading: boolean }
@@ -1342,7 +1348,7 @@ export interface OutputARow {
   confirmed_at: string | null;
   group_id: string | null;
   warnings: Array<Record<string, string>>;
-  /** "toc"면 목차 줄 - 보낸 곳 Deleted, status "deleted"(판단 상태가 아니다), 저절로 */
+  /** 저절로 삭제된 줄("toc" · "front" · "history") - 보낸 곳 Deleted, status "deleted"(판단 상태가 아니다) */
   noise_kind?: string | null;
 }
 
@@ -1441,8 +1447,10 @@ export interface OutputSummary {
   translated: number;
   confirmed_rate: number;
   single_language: number;
-  /** 목차 · 저절로 삭제 - 목차 줄 수(old_rows·assigned에 들고 deleted에는 들지 않는다) */
+  /** 저절로 삭제된 줄 수 - 목차 · 본문 앞부분 · 개정 이력(old_rows·assigned에 들고 deleted에는 들지 않는다) */
   toc_deleted: number;
+  front_deleted: number;
+  history_deleted: number;
   /** 풀린 표에서 온 줄 - 벗긴 표(레이아웃 표)의 칸 줄이 든 줄(MD 1 F11) */
   unwrapped_rows: number;
 }
@@ -1538,8 +1546,10 @@ export interface PreviewRow {
   /** 이 줄의 옛 단위와 관계 묶음(A의 자료 줄에만) - 고른 줄 · 같은 무리를 칸 글이 아니라 이 값으로 맞춘다 */
   unit_id: number | null;
   group_id: string | null;
-  /** 목차 줄 - 연달아 오면 한 줄로 접어 그린다 */
+  /** 저절로 삭제된 줄 - 같은 종류가 연달아 오면 한 줄로 접어 그린다 */
   toc: boolean;
+  /** 그 종류("toc" · "front" · "history") - 접기는 종류가 바뀌면 끊는다 */
+  noise?: string | null;
   /** 지운 줄(문단 Excel) - 화면은 숨기고, 그 줄을 고른 동안만 빨간 음영으로 보인다 */
   deleted: boolean;
   /** 한 줄로 묶은 옛 단위 전부(문단 Excel - 이어진 줄이 같은 새 문장 하나로 감). unit_id는 그 첫 단위, 한 단위 줄은 빈 목록 */

@@ -47,8 +47,8 @@ interface OldPaneProps {
   renderPills: (unitId: number) => ReactNode;
   /** 머리 줄에 "Caption needed"를 띄울 표·그림 단위(lib/caption-model isCaptionNeeded) */
   isCaptionNeeded: (unitId: number, hasCaption: boolean) => boolean;
-  /** 목차 줄을 흐린 블록 하나로 접는다(Old 문서) - 없으면 보통 조각(한 단으로 연 New 문서) */
-  toc?: NonNullable<NonNullable<ComponentProps<typeof Paper>["strips"]>["toc"]>;
+  /** 저절로 삭제된 줄을 종류마다 흐린 블록 하나로 접는다(Old 문서) - 없으면 보통 조각(한 단으로 연 New 문서) */
+  noise?: NonNullable<NonNullable<ComponentProps<typeof Paper>["strips"]>["noise"]>;
   /** 제목에서 바꾼 조항 묶음의 머리 "[제목 → 문장] … · ↺ 제목으로"(F8b) - 없으면 머리를 달지 않는다 */
   headingShift?: NonNullable<ComponentProps<typeof Paper>["strips"]>["headingShift"];
   /** 벗긴 표의 줄 묶음 머리 "↺ 다시 표로"(F1) - 없으면 머리 없이 왼쪽 세로선만 */
@@ -179,7 +179,7 @@ export function OldPane({ paneRef, ...props }: OldPaneProps) {
         onCutNudge={props.onCutNudge}
         renderAtCut={props.cut ? props.renderAtCut : undefined}
         figureSource={props.figureSource}
-        strips={{ statusOf: props.statusOf, renderNote: props.renderNote, renderPills: props.renderPills, fold: props.fold, join: props.join, isCaptionNeeded: props.isCaptionNeeded, toc: props.toc, headingShift: props.headingShift, unwrap: props.unwrap, pairHint, deleted: props.deleted, pending: props.pending, pairGrip: props.pairGrip }}
+        strips={{ statusOf: props.statusOf, renderNote: props.renderNote, renderPills: props.renderPills, fold: props.fold, join: props.join, isCaptionNeeded: props.isCaptionNeeded, noise: props.noise, headingShift: props.headingShift, unwrap: props.unwrap, pairHint, deleted: props.deleted, pending: props.pending, pairGrip: props.pairGrip }}
         renderUnitActions={props.renderUnitActions}
         dragBoxes={props.dragBoxes}
         numberCell={props.numberCell}
