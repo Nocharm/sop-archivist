@@ -8,21 +8,19 @@ import { useState } from "react";
 
 import { ConfirmModal } from "@/components/ui/confirm-modal";
 import { ClampText } from "@/components/ui/clamp-text";
-import { DataList, ListViewToggle, type DataColumn } from "@/components/ui/data-list";
 import { LoadError } from "@/components/ui/load-error";
 import { MarkdownView } from "@/components/ui/markdown-view";
 import { MorphButton } from "@/components/ui/morph-button";
 import { BusyLabel, Collapse, Refresh } from "@/components/ui/motion";
 import { showToast } from "@/components/ui/toast";
+import { translateOrRaw } from "@/lib/admin-format";
 import { humanizeApiError } from "@/lib/api-errors";
-import { activateGuidelineVersion, createGuidelineVersion, getGuidelineVersion, listGuidelines, type Guideline, type GuidelineVersionMeta } from "@/lib/api-manage";
+import { activateGuidelineVersion, createGuidelineVersion, getGuidelineVersion, listGuidelines, type Guideline } from "@/lib/api-manage";
 import { formatKst } from "@/lib/datetime";
 import { useI18n } from "@/lib/i18n";
 import { useDelayedFlag } from "@/lib/use-delayed-flag";
-import { useListView } from "@/lib/use-list-view";
 import { useLoaded } from "@/lib/use-loaded";
 
-const LIST_KEY = "admin-guideline-versions";
 // 백엔드 GuidelineContent·GuidelineNote 상한과 같은 값이어야 한다 - 넘기면 422로 돌아온다
 const CONTENT_MAX = 200_000;
 const NOTE_MAX = 2000;
@@ -38,14 +36,14 @@ function VersionViewer({ guideline, version, onEdit }: { guideline: Guideline; v
         <span className="sk h-[280px] w-full" />
       ) : (
         <>
-          <div className="max-h-[560px] overflow-auto rounded-md border border-line bg-surface px-5 py-4">
-            <MarkdownView source={loaded.data.content} testId="guideline-content" />
-          </div>
-          <div>
+          <div className="flex justify-end">
             <button type="button" className="btn" data-testid="guideline-edit" onClick={() => loaded.data && onEdit(loaded.data.content)}>
               <FilePlus2 size={14} strokeWidth={1.5} aria-hidden />
               {t("guidelines.editAsNew")}
             </button>
+          </div>
+          <div className="rounded-md border border-line bg-surface px-5 py-4">
+            <MarkdownView source={loaded.data.content} testId="guideline-content" />
           </div>
         </>
       )}
@@ -67,61 +65,6 @@ export function GuidelinesPanel() {
 
   const guideline = data?.find((item) => item.key === selectedKey) ?? data?.[0] ?? null;
   const shownVersion = viewVersion ?? guideline?.active_version ?? guideline?.versions[0]?.version ?? null;
-  const view = useListView(LIST_KEY);
-  const versionColumns: DataColumn<GuidelineVersionMeta>[] = [
-    {
-      key: "version",
-      header: t("guidelines.version"),
-      card: "title",
-      nowrap: true,
-      className: "w-[150px]",
-      cell: (version) => (
-        <span className="font-mono">
-          v{version.version}
-          {version.is_active && (
-            <span className="pill ok ml-2 font-sans">
-              <Check size={12} strokeWidth={1.5} aria-hidden />
-              {t("guidelines.active")}
-            </span>
-          )}
-        </span>
-      ),
-    },
-    {
-      key: "note",
-      header: t("guidelines.note"),
-      card: "body",
-      grow: true,
-      minWidth: 160,
-      cellTestId: (version) => `guideline-note-${version.version}`,
-      cell: (version) => (version.note ? <ClampText text={version.note} className="text-ink-2" /> : <span className="text-ink-4">–</span>),
-    },
-    {
-      key: "createdBy",
-      header: t("guidelines.createdBy"),
-      nowrap: true,
-      cell: (version) => (
-        <span className="block text-ink-2">
-          <span className="block font-mono text-xs">{version.created_by}</span>
-          <span className="block tabular-nums">{formatKst(version.created_at)}</span>
-        </span>
-      ),
-    },
-    {
-      key: "actions",
-      header: <span className="sr-only">{t("manage.rowActions")}</span>,
-      card: "actions",
-      className: "w-[100px] text-right",
-      cell: (version) =>
-        !version.is_active && (
-          // 행 선택으로 번지지 않게 감싼 칸에서 막는다. 라벨이 펼쳐질 자리는 고정(.mbtn-set)
-          <span className="row-actions mbtn-set w-[100px]" onClick={(event) => event.stopPropagation()}>
-            <MorphButton icon={Check} label={t("guidelines.activate")} testId={`guideline-activate-${version.version}`} disabled={activating !== null} onClick={() => setConfirming(version.version)} />
-          </span>
-        ),
-    },
-  ];
-
   function selectKey(key: string) {
     setSelectedKey(key);
     setViewVersion(null);
@@ -166,7 +109,7 @@ export function GuidelinesPanel() {
   }
 
   return (
-    <div className="grid grid-cols-[220px_minmax(0,1fr)] gap-5" data-testid="admin-guidelines">
+    <div className="grid grid-cols-[240px_minmax(0,1fr)] gap-5" data-testid="admin-guidelines">
       <nav className="grid content-start gap-0.5" aria-label={t("guidelines.keys")}>
         {data === null
           ? showSkeleton && [0, 1, 2, 3, 4].map((index) => <span key={index} className="sk h-12 w-full" />)
@@ -179,34 +122,62 @@ export function GuidelinesPanel() {
                 data-testid={`guideline-key-${item.key}`}
                 onClick={() => selectKey(item.key)}
               >
-                <span className="font-mono text-[13px] font-semibold">{item.key}</span>
-                <span className="text-xs text-ink-3">{item.active_version === null ? "–" : t("guidelines.activeVersion", { version: item.active_version })}</span>
+                <span className="text-[13px] font-semibold">{translateOrRaw(t, `guidelines.name.${item.key}`, item.key)}</span>
+                <span className="text-xs text-ink-3">
+                  <span className="font-mono">{item.key}</span>
+                  {" · "}
+                  {item.active_version === null ? "–" : t("guidelines.activeVersion", { version: item.active_version })}
+                </span>
               </button>
             ))}
       </nav>
       {guideline && (
         <section className="grid content-start gap-4" data-testid="guideline-detail">
-          <div className="grid gap-2">
-            <div className="flex justify-end">
-              <ListViewToggle listKey={LIST_KEY} view={view} testId="guideline-versions-view" />
-            </div>
-            <DataList
-              view={view}
-              rows={guideline.versions}
-              columns={versionColumns}
-              // 카드에서 동작 단추가 맨 아래 한 줄을 차지한다 - 라벨이 펼쳐져도 메타 글자를 덮지 않는다
-              cardActions="row"
-              getRowKey={(version) => version.version}
-              testId="guideline-versions"
-              rowTestId={(version) => `guideline-version-${version.version}`}
-              onRowClick={(version) => {
-                setViewVersion(version.version);
-                setDraft(null);
-              }}
-              isRowSelected={(version) => shownVersion === version.version}
-              cardMinWidth={260}
-              framed
-            />
+          <div className="adm-timeline" role="table" aria-label={t("guidelines.version")} data-testid="guideline-versions">
+            {guideline.versions.map((version) => (
+              <div
+                key={version.version}
+                role="row"
+                className="adm-version"
+                aria-selected={shownVersion === version.version}
+                data-testid={`guideline-version-${version.version}`}
+              >
+                <button
+                  type="button"
+                  role="cell"
+                  className="adm-version-main"
+                  aria-label={t("guidelines.viewVersion", { version: version.version })}
+                  onClick={() => {
+                    setViewVersion(version.version);
+                    setDraft(null);
+                  }}
+                >
+                  <span className="adm-node" data-active={version.is_active ? "" : undefined} aria-hidden />
+                  <span className="adm-two">
+                    <span className="adm-t1">
+                      <span className="font-mono">v{version.version}</span>
+                      {version.is_active && (
+                        <span className="pill ok font-sans">
+                          <Check size={12} strokeWidth={1.5} aria-hidden />
+                          {t("guidelines.active")}
+                        </span>
+                      )}
+                    </span>
+                    <span className="adm-t2" data-testid={`guideline-note-${version.version}`}>
+                      {version.note ? <ClampText text={version.note} /> : "–"}
+                    </span>
+                  </span>
+                  <span className="adm-meta">
+                    <span className="font-mono">{version.created_by}</span> · {formatKst(version.created_at)}
+                  </span>
+                </button>
+                {!version.is_active && (
+                  <span role="cell" className="row-actions-quiet mbtn-set w-[100px]">
+                    <MorphButton icon={Check} label={t("guidelines.activate")} testId={`guideline-activate-${version.version}`} disabled={activating !== null} onClick={() => setConfirming(version.version)} />
+                  </span>
+                )}
+              </div>
+            ))}
           </div>
           <Collapse open={draft === null && shownVersion !== null}>
             {shownVersion !== null && (

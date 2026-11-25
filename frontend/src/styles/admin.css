@@ -29,7 +29,27 @@
   .adm-outline tr[data-open] > td { border-bottom-color: transparent; }
   .adm-outline-children { display: flex; flex-wrap: wrap; gap: 12px; padding-bottom: 8px; }
   .adm-outline-field { display: grid; gap: 2px; width: 200px; }
+  .adm-avs { display: inline-flex; padding-left: 5px; }
+  .adm-av { display: inline-grid; place-items: center; width: 22px; height: 22px; margin-left: -5px; border: 1.5px solid var(--surface); border-radius: 50%; background: var(--line); font-size: var(--fs-micro); font-weight: 600; color: var(--ink-2); }
+  .adm-av.more { font-weight: 400; }
   .adm-outline-field.wide { flex: 1; min-width: 280px; }
+
+  /* AI 지침 버전 타임라인 */
+  .adm-timeline { display: grid; border: 1px solid var(--line); border-radius: var(--r-3); overflow: hidden; }
+  .adm-version { display: flex; align-items: center; min-height: 52px; border-bottom: 1px solid var(--line); padding-right: 8px; }
+  .adm-version:last-child { border-bottom: 0; }
+  .adm-version:hover { background: var(--hover); }
+  .adm-version[aria-selected="true"] { background: var(--sel-bg); }
+  .adm-version-main { flex: 1; display: flex; align-items: center; gap: 12px; min-width: 0; padding: 6px 14px; text-align: left; }
+  .adm-version .adm-two { flex: 1; }
+  .adm-node { flex: none; width: 9px; height: 9px; border: 2px solid var(--line-2); border-radius: 50%; background: var(--surface); }
+  .adm-node[data-active] { border-color: var(--accent); background: var(--accent); }
+
+  /* Bundle 진행 막대 · 구성원 머리글자 */
+  .adm-progress { display: grid; gap: 4px; width: 110px; }
+  .adm-bar-track { display: block; height: 4px; border-radius: 2px; background: var(--line); overflow: hidden; }
+  .adm-bar-track > span { display: block; height: 100%; background: var(--accent); }
+  .adm-av[data-off] { opacity: .5; }
 
   .adm-split { display: grid; grid-template-columns: minmax(280px, 1fr) minmax(0, 2fr); gap: 20px; align-items: start; }
   @media (max-width: 1023px) { .adm-split { grid-template-columns: minmax(0, 1fr); } }
