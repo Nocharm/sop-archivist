@@ -1,5 +1,7 @@
 # 관리 화면 다듬기 — 설계 스냅숏
 
+**2026-11-25 범위 고침(사용자 확정)**: 스텝 0·2·4·5·6·7·8과, 스텝 2가 쓰는 스텝 1만 한다. **스텝 3(사내 AI 등록)은 다른 세션(쪼개기 먼저, `docs/split-first`)과 겹쳐 뺀다** — AI 층·`GUIDELINE_KEYS`·지침 시드·가짜 AI·AI 규칙 문서는 건드리지 않는다. 스텝 5는 공용 `DataList`·`.dtable`을 바꾸지 않고 `styles/admin.css`의 관리 전용 규칙으로만. 공용 부품(`SubjectPicker`·`BundleStatusPill`·`MembersModal` 등)은 고치지 않는다. 작업은 모음 브랜치 `feat/admin-polish`에 스텝 브랜치(`feat/admin-polish-<n>-<이름>`)를 차례로 합치고, `dev` 머지·버전·CHANGELOG는 이 작업에서 하지 않는다(머지는 쪼개기 먼저 쪽이 주도).
+
 관리 메뉴(권한·운영·SOP 기준)의 표·편의 기능을 다듬는 일의 결정과 스텝. 2026-11-21~22 시안 세션에서 사용자와 정했다. 기능이 `main`에 머지되면 지운다(`rules/common/documentation.md` 폐기 정책) — 살아 있는 규칙은 그때 `frontend/docs/design/2026-11-07-frontend-design-foundations.md`·폴더 CLAUDE.md·`docs/architecture/`로 옮긴다.
 
 - 프로토타입(직접 눌러 보는 것, 예시 자료·흉내 AI): [`admin-polish/prototype.html`](admin-polish/prototype.html) — 부여·사내 AI 등록·역할·변경 기록. 브라우저로 파일을 열면 된다.
@@ -47,22 +49,24 @@
 
 ## 4. 스텝 (브랜치 하나 = 스텝 하나, 차례로 `dev`에 합친다)
 
+브랜치 이름은 2026-11-25부터 `feat/admin-polish-<n>-<이름>`이다(모음 브랜치에서 딴다). 아래 표의 이름은 처음 계획의 것이다.
+
 | # | 브랜치 | 일 | 비고 |
 |---|---|---|---|
 | 0 | `fix/admin-sub-tab-url` | 하위 탭 주소 `?tab=access&sub=grants`, 부여 이름을 화면 언어로(직원 캐시) | 작은 수정, 직접 |
 | 1 | `feat/admin-grants-batch-api` | `POST /api/access/grants/batch` + pytest + `lib/api.ts` 타입 | API 계약 → 계획 먼저 |
 | 2 | `feat/admin-grants-master-detail` | 부여 목록+상세, 유효 권한 흡수, 붙어 뜨는 고르기, 되돌리기 토스트, 이어 불러오기, 전환 규칙 | 설명서 글 같은 커밋 |
-| 3 | `feat/admin-grants-ai` | 사내 AI 등록: 백엔드 AI 작업(`call_ai_recorded`, 지침 `prompt.grant` 시드, 서버측 이름 검사) + 모달(보내기 전 검사·미리보기·확정은 batch API) + 규칙 문서 고침 | AI 층 불변식(`backend/CLAUDE.md`) 확인 |
+| ~~3~~ (뺌, 2026-11-25) | `feat/admin-grants-ai` | 사내 AI 등록: 백엔드 AI 작업(`call_ai_recorded`, 지침 `prompt.grant` 시드, 서버측 이름 검사) + 모달(보내기 전 검사·미리보기·확정은 batch API) + 규칙 문서 고침 | AI 층 불변식(`backend/CLAUDE.md`) 확인 |
 | 4 | `feat/admin-roles-matrix` | 역할 × 권한 표, 바뀐 칸 띠·저장 확인(받은 대상 건수), 받은 대상 호버 명단 → 부여로 거르기, 폼 권한 묶음 + `permission.<key>.hint` en·ko | 새 i18n 키 |
-| 5 | `feat/admin-table-style` | 공용 `DataList`·`.dtable`에 3절 규칙 | 공용 부품 → 전체 스모크·감사 넷 |
+| 5 | `feat/admin-polish-5-table-style` | `src/styles/admin.css`(관리 탭 본문 아래로만 한정)에 3절 규칙 — `DataList`·`.dtable`·`components.css`는 그대로 | 다른 화면에 안 닿는지 재고, 관리 장면만 감사 |
 | 6 | `feat/admin-rail-outline` | 레일 묶음 제목, 표준 골격 한 줄(키는 영문 제목 아래, 조용한 편집 칸, 하위 항목 펼침) | |
 | 7 | `feat/admin-guidelines-bundles` | AI 지침 읽을 이름 + 버전 타임라인, Bundle 진행 막대·구성원 요약·상태 필 | |
 | 8 | `feat/admin-audit-ops` | 변경 기록 날짜 묶음·작업 필·찾기·이어 불러오기(서버 `before` 커서), 배치 한 줄·동기화 요약 줄·AI 합계 | 서버 작은 변경 |
 
 ## 5. 지킬 것
 
-- 버전: v1.5.0 뒤 첫 앱 변경 `dev` 푸시가 **1.6.0**, 그 뒤 PATCH(루트 CLAUDE.md·`rules/common/git.md` 2026-11-21 버전 규칙).
+- 버전·CHANGELOG는 이 모음 브랜치에서 올리지 않는다(2026-11-25) — `dev`에 합칠 때 쪼개기 먼저 쪽과 맞춰 정한다.
 - 화면·라벨을 바꾸는 커밋에서 `frontend/public/manual/user-manual.md`의 관리 절 글도 고친다(그림은 정식 업데이트 때 바뀐 장면만).
 - 새 권한은 없다. 새 i18n 키는 en·ko 둘 다. 서버 거절 코드를 새로 만들면 `rule.<code>` 문구.
 - 운영 DB에 실자료가 있다 — 이번 일은 Alembic 없음. 생기면 사용자 승인.
-- 검증: 관리 화면 스모크는 `frontend/scripts/pw-smoke-baseline.mjs`(관리 탭·권한 식별자 `admin-tab-*`·`access-sub-*`·`grant-*`를 쓴다 — 식별자를 바꾸면 이 스크립트도 같은 커밋에서). 스텝마다 새 화면 단계를 더하고 기대값을 낮추지 않는다. 공용 부품(스텝 5)만 `pw-smoke-sop.mjs` 전체 + 감사 넷. 하위 에이전트는 서버·브라우저를 띄우지 않고 model을 명시한다.
+- 검증: 관리 화면 스모크는 `frontend/scripts/pw-smoke-baseline.mjs`(관리 탭·권한 식별자 `admin-tab-*`·`access-sub-*`·`grant-*`를 쓴다 — 식별자를 바꾸면 이 스크립트도 같은 커밋에서). 스텝마다 새 화면 단계를 더하고 기대값을 낮추지 않는다. 공용 부품은 건드리지 않으므로 전체 스모크·감사 넷 대신 관리 스모크와 관리 장면 감사만 한다. 하위 에이전트는 서버·브라우저를 띄우지 않고 model을 명시한다.
