@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { ViewUnit } from "./api-sop";
-import { getContent, getHiddenEnds, listFollowPreview, planFollow } from "./number-model";
+import { getContent, getHiddenEnds, getNumberSaveBlock, listFollowPreview, planFollow } from "./number-model";
 
 function unit(id: number, value: string | null, extra: Partial<ViewUnit> = {}): ViewUnit {
   return {
@@ -84,5 +84,17 @@ describe("getContent", () => {
   it("drops the number range and keeps text without one", () => {
     expect(getContent({ text: "6.2 합성 문장", content_start: 4 })).toBe("합성 문장");
     expect(getContent({ text: "합성 문장" })).toBe("합성 문장");
+  });
+});
+
+describe("getNumberSaveBlock", () => {
+  it("blocks saving an empty number with a reason", () => {
+    expect(getNumberSaveBlock({ kind: "continuous", text: "" })).toBe("assign.number.typeFirst");
+    expect(getNumberSaveBlock({ kind: "custom", text: "   " })).toBe("assign.number.typeFirst");
+    expect(getNumberSaveBlock({ kind: "continuous", text: "5.1" })).toBeNull();
+  });
+  it("does not block kinds that save at once", () => {
+    expect(getNumberSaveBlock({ kind: "bullet", text: "" })).toBeNull();
+    expect(getNumberSaveBlock({ kind: "none", text: "" })).toBeNull();
   });
 });

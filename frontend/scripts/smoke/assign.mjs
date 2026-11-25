@@ -4293,6 +4293,23 @@ await runStep("assign: number cell - a heading number sits in the cell, a fix re
   // Undo 한 번 = 고침과 따라 고침 한 걸음
   await page.locator('[data-testid="assign-undo"]').click();
   check("one Undo brings both numbers back", (await waitNumber(first.id, (number) => number.value === first.number.value && !number.is_set)) && (await waitNumber(second.id, (number) => number.value === second.number.value)));
+  // 확인 · 취소 단추(B3) - 확인은 Enter와 같은 저장, 빈 입력이면 꺼지고 까닭이 보이며, 취소는 저장 없이 닫는다
+  await page.locator(`[data-testid="assign-paper-num-${first.id}"]`).click();
+  await page.locator('[data-testid="assign-paper-num-kind-continuous"]').click();
+  await wait(page, "assign-paper-num-input");
+  await page.locator('[data-testid="assign-paper-num-input"]').fill("");
+  check("OK is off with a reason while the number is empty", (await page.locator('[data-testid="assign-paper-number-cell-ok"]').getAttribute("aria-disabled")) === "true" && (await getText(page, "assign-paper-number-cell-reason")).includes("Type a number"));
+  await page.locator('[data-testid="assign-paper-number-cell-cancel"]').click();
+  await page.locator('[data-testid="assign-paper-num-input"]').waitFor({ state: "detached", timeout: T });
+  check("Cancel closes the number box without saving", (await readNumber(first.id)).value === first.number.value);
+  await page.locator(`[data-testid="assign-paper-num-${first.id}"]`).click();
+  await page.locator('[data-testid="assign-paper-num-kind-continuous"]').click();
+  await wait(page, "assign-paper-num-input");
+  await page.locator('[data-testid="assign-paper-num-input"]').fill("8.");
+  await page.locator('[data-testid="assign-paper-number-cell-ok"]').click();
+  check("OK saves the same as Enter", (await waitNumber(first.id, (number) => number.value === "8." && number.is_set)) && (await waitNumber(second.id, (number) => number.value === "9.")));
+  await page.locator('[data-testid="assign-undo"]').click();
+  check("one Undo brings back the number saved with OK", (await waitNumber(first.id, (number) => number.value === first.number.value && !number.is_set)) && (await waitNumber(second.id, (number) => number.value === second.number.value)));
   // Esc는 저장하지 않고 닫는다
   await page.locator(`[data-testid="assign-paper-num-${first.id}"]`).click();
   await page.locator('[data-testid="assign-paper-num-kind-continuous"]').click();
