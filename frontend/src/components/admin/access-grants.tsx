@@ -37,7 +37,8 @@ function buildUndoInput(grant: Grant): GrantInput {
   return grant.role_id === null ? { ...base, permission: grant.permission ?? "" } : { ...base, role_id: grant.role_id };
 }
 
-export function AccessGrants() {
+/** initialRole - 역할 표에서 넘어오면 그 역할로 거른 채 연다(빈 글이면 거르지 않음) */
+export function AccessGrants({ initialRole }: { initialRole: string }) {
   const { t, lang } = useI18n();
   const grants = useLoaded(listGrants);
   const roles = useLoaded(listRoles);
@@ -47,7 +48,7 @@ export function AccessGrants() {
   const { capture } = useFlip(listRef);
   const [text, setText] = useState("");
   const [filter, setFilter] = useState<SubjectFilter>("all");
-  const [roleId, setRoleId] = useState("");
+  const [roleId, setRoleId] = useState(initialRole);
   const [selKey, setSelKey] = useState<string | null>(null);
   const [isSmooth, setIsSmooth] = useState(false);
   const [version, setVersion] = useState(0);

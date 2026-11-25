@@ -337,6 +337,40 @@ await runStep("admin access as qa.lead", { devUser: "qa.lead" }, async ({ page, 
   await wait(page, "effective-unknown");
   check("unregistered login id is explained, not an error", (await countById(page, "effective-none")) === 1);
 
+  await findById(page, "access-sub-roles").click();
+  await wait(page, "roles-list");
+  // 역할 × 권한 표 - 칸을 눌러 켜고 끈 뒤 띠에서 저장한다. 버리면 없던 일, 저장은 받은 대상 건수를 확인한 뒤
+  const smokeCell = smokeRole.locator('[data-testid$="-ai.admin"]');
+  await smokeCell.click();
+  check("a changed cell waits in the bar", (await getText(page, "roles-bar-text")).includes("1 cells changed"), await getText(page, "roles-bar-text"));
+  check("the cell shows as pending", (await smokeCell.getAttribute("data-pending")) !== null);
+  await findById(page, "roles-bar-drop").click();
+  await waitHidden(page, "roles-bar");
+  check("discard puts the cell back", (await smokeCell.getAttribute("aria-pressed")) === "false");
+  await smokeCell.click();
+  await findById(page, "roles-bar-save").click();
+  await wait(page, "roles-save");
+  check("save confirm names the role and the permission", (await getText(page, "roles-save")).includes("Smoke Role") && (await getText(page, "roles-save")).includes("Manage AI"), await getText(page, "roles-save"));
+  await findById(page, "roles-save-confirm").click();
+  await waitHidden(page, "roles-bar");
+  await page.reload();
+  await wait(page, "roles-list");
+  check("the saved cell survives a reload", (await smokeCell.getAttribute("aria-pressed")) === "true");
+  await smokeCell.click();
+  await findById(page, "roles-bar-save").click();
+  await findById(page, "roles-save-confirm").click();
+  await waitHidden(page, "roles-bar");
+
+  // 받은 대상 - 올리면 명단, 부여에서 보기는 그 역할로 거른다
+  await adminRole.locator('[data-testid^="role-holders-"]').first().hover();
+  await findByPrefix(page, "role-holders-pop-").waitFor({ state: "visible", timeout: T });
+  check("holder list names the subject", (await findByPrefix(page, "role-holders-pop-").innerText()).includes("Quality Division"));
+  await findByPrefix(page, "role-holders-open-").click();
+  await wait(page, "grants-table");
+  check("show in grants filters by the role", (await page.locator('[data-testid^="grants-subject-"]').count()) === 1 && (await getText(page, "grants-table")).includes("Quality Division"), await getText(page, "grants-table"));
+  await findById(page, "access-sub-roles").click();
+  await wait(page, "roles-list");
+
   // 정리 - 설명 수정 -> 부여 회수 -> 역할 삭제
   await findById(page, "access-sub-roles").click();
   await smokeRole.waitFor({ state: "visible", timeout: T });

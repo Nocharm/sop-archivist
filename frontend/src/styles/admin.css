@@ -134,6 +134,35 @@
   .adm-recent { display: grid; gap: 8px; }
   .adm-recent li { display: grid; gap: 1px; padding-left: 10px; border-left: 2px solid var(--line-2); font-size: var(--fs-ui); color: var(--ink); }
 
+  /* 역할 × 권한 표 */
+  .adm-matrix-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: var(--r-3); }
+  .adm-matrix { width: 100%; border-collapse: separate; border-spacing: 0; font-size: var(--fs-ui); line-height: var(--lh-ui); }
+  .adm-matrix th { padding: 8px 8px; font-size: var(--fs-cap); line-height: var(--lh-cap); font-weight: 500; color: var(--ink-3); text-align: left; vertical-align: bottom; border-bottom: 1px solid var(--line); }
+  .adm-matrix th.grp { text-align: center; border-left: 1px solid var(--line); color: var(--ink-2); font-weight: 600; }
+  .adm-matrix th.perm { min-width: 74px; max-width: 110px; text-align: center; overflow-wrap: break-word; }
+  .adm-matrix td { height: 52px; padding: 4px 8px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+  .adm-matrix th.name, .adm-matrix td.name { min-width: 200px; max-width: 320px; padding-left: 16px; }
+  .adm-matrix td.cell { text-align: center; }
+  .adm-matrix td.act, .adm-matrix th.act { width: 90px; padding-right: 12px; }
+  .adm-matrix tbody tr:last-child td { border-bottom: 0; }
+  .adm-matrix tbody tr:nth-child(even) td { background: var(--sunken); }
+  .adm-matrix tbody tr:hover td, .adm-matrix tbody tr:nth-child(even):hover td { background: var(--hover); }
+  .adm-cell { display: inline-grid; place-items: center; width: 28px; height: 28px; border: 1px solid var(--line); border-radius: var(--r-2); color: var(--accent); }
+  .adm-cell[aria-pressed="true"] { background: var(--accent-tint); }
+  .adm-cell:hover:not(:disabled) { border-color: var(--line-2); }
+  .adm-cell[data-pending] { border: 1px dashed var(--accent); }
+  .adm-cell:disabled { opacity: .6; }
+  .adm-bar { position: sticky; bottom: 16px; z-index: 5; display: flex; align-items: center; justify-content: center; gap: 10px; width: fit-content; max-width: 100%; margin: 0 auto; padding: 8px 14px; border: 1px solid var(--line-2); border-radius: var(--r-3); background: var(--raised); box-shadow: var(--shadow-2); font-size: var(--fs-ui); color: var(--ink-2); animation: fade-in var(--dur-base) var(--ease-enter); }
+
+  .adm-holders { position: relative; display: inline-flex; }
+  .adm-holders-btn { display: inline-flex; align-items: center; gap: 8px; min-height: 32px; border-radius: var(--r-2); white-space: nowrap; }
+  .adm-holders-btn:hover .adm-t2 { color: var(--accent); text-decoration: underline; }
+  .adm-holders-pop { position: fixed; z-index: 40; padding-top: 6px; }
+  .adm-pop-inner { display: grid; gap: 6px; padding: 10px 12px; border: 1px solid var(--line-2); border-radius: var(--r-3); background: var(--raised); box-shadow: var(--shadow-2); animation: fade-in var(--dur-fast) var(--ease-enter); }
+  .adm-holder { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: var(--fs-ui); color: var(--ink); }
+  .adm-holder b { font-weight: 600; }
+  .adm-pop-inner .adm-link { justify-self: start; padding-top: 2px; }
+
   /* 붙어 뜨는 고르기 - 화면을 어둡게 하지 않는다 */
   .adm-pop { position: absolute; left: 0; top: calc(100% + 6px); z-index: 30; width: 340px; max-width: calc(100vw - 48px); border: 1px solid var(--line-2); border-radius: var(--r-3); background: var(--raised); box-shadow: var(--shadow-2); animation: fade-in var(--dur-fast) var(--ease-enter); }
   .adm-pop-body { display: grid; gap: 2px; max-height: 320px; overflow-y: auto; padding: 10px; }
