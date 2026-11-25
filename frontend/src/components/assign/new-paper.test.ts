@@ -144,6 +144,9 @@ describe("NewPaper", () => {
     expect(h).toMatch(/strip-acts[^>]*>.*<i>menu<\/i>/);
   });
 
+  // 단추 줄을 마우스로 누른 뒤 포커스가 이 용지로 돌아온다(pick-bar의 .pane-body focus) - Old 용지와 같다
+  it("lets the paper take the focus back like the Old paper", () => expect(html()).toMatch(/class="pane-body" tabindex="-1" role="group" aria-label="New document text"/));
+
   it("opens the tab of a footnote that is asked for", () => {
     const view2 = { ...makeView(), blocks: [makeBlock(50, "First"), makeBlock(70, "Note", { part: "footnote", part_group: "footnote" })], units: [makeUnit(50, "First"), makeUnit(70, "Note")], tables: [] };
     const model2 = buildPaperModel(view2);

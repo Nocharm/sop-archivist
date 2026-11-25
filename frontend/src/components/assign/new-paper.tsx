@@ -307,7 +307,7 @@ export function NewPaper(props: NewPaperProps) {
         </div>
       )}
       {props.banner}
-      <div className="pane-body">
+      <div className="pane-body" tabIndex={-1} role="group" aria-label={t("assign.paperBody", { tag: props.tag })}>
         {/* 이 감싸개는 문서가 바뀌어도 그대로다 - 연결선이 크기를 지켜본다(LinkLines의 .pane-body > *) */}
         <div>
           {model && view ? (
