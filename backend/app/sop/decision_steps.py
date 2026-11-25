@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.clock import now
 from app.sop.constants import SLOT_HEADING
-from app.sop.detach import ORIGIN_TRANSLATION, load_source_target_ids
+from app.sop.detach import ORIGIN_TRANSLATION, UNASSIGNED, load_source_target_ids
 from app.sop.errors import raise_rule
 from app.sop.events import record_event
 from app.sop.groups import select_in_chunks
@@ -616,7 +616,7 @@ async def _move_unit_edit(session: AsyncSession, step: DecisionStep, actor: str,
     seen = await dump_bundle_state(session, document.bundle_id) if has_state else {}
     if has_state:
         _ensure_unchanged(expected, restore, seen)
-    settled = {int(key) for key in expected.get("unit_decisions", {})} | _list_new_units(expected)
+    settled = {int(key) for key in expected.get("unit_decisions", {})} | _list_settled_new_units(expected, seen)
     move = undo_edit if backwards else redo_edit
     # 찍은 상태가 있으면 짝은 스냅숏이 되쓴다 - 기록 재생이 짝을 다시 세우면(제목 ↔ 문장 · 표 표시) 새 짝 id가 되쓸 짝과 부딪친다
     result = await move(
@@ -638,6 +638,21 @@ def _list_new_units(state: Snapshot) -> set[int]:
     """찍은 새 문장이 붙은 New 문서 단위들(입구 1 새 문장은 없다)."""
     rows = state.get("target_sentences", {}).values()
     return {row["new_unit_id"] for row in rows if row["new_unit_id"] is not None}
+
+
+def _list_settled_new_units(expected: Snapshot, seen: Snapshot) -> set[int]:
+    """확인 없이 떼어도 되는 New 단위 — 찍은 새 문장의 단위에서, 찍지 않은 새 문장에 이음 · 판단이 걸린 단위를 뺀 것.
+
+    단위 하나에 새 문장이 둘인 자료가 있다(쪼개기 먼저 설계 §4-1의 결함이 남긴 중복) — 그 둘째 행에 남이 이은 것은 되쓰기가 모른다.
+    """
+    recorded = expected.get("target_sentences", {})
+    sourced = {row["target_id"] for row in seen.get("target_sources", {}).values()}
+    others = {
+        row["new_unit_id"]
+        for key, row in seen.get("target_sentences", {}).items()
+        if key not in recorded and (row["status"] != UNASSIGNED or row["id"] in sourced)
+    }
+    return _list_new_units(expected) - others
 
 
 async def _find_inactive_units(session: AsyncSession, restore: Snapshot) -> list[int]:

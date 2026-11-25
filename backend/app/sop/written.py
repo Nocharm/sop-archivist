@@ -215,8 +215,9 @@ async def _load_bundle_children(
         )
         .outerjoin(Unit, Unit.id == TargetSentence.new_unit_id)
         .where(TargetSentence.parent_target_id.in_(chunk))
-        # 새 문장 id가 아니라 Unit 순 — 편집이 다시 만든 새 문장은 id가 뒤로 밀린다. 덩이는 부모 id로 나누므로 한 부모의 자식은 한 덩이에 다 있다
-        .order_by(Unit.pos_seq, Unit.pos_start, Unit.id, TargetSentence.id),
+        # 새 문장 id가 아니라 Unit 순 — 편집이 다시 만든 새 문장은 id가 뒤로 밀린다. 덩이는 부모 id로 나누므로 한 부모의 자식은 한 덩이에 다 있다.
+        # 단위 없는 번역 행은 맨 뒤 — NULL 정렬 자리가 sqlite(맨 앞) · postgres(맨 뒤)에서 달라 첫 키로 못박는다
+        .order_by(Unit.id.is_(None), Unit.pos_seq, Unit.pos_start, Unit.id, TargetSentence.id),
         [target.id for target in bundle_targets],
     )
     cell_sources: dict[int, list[int]] = defaultdict(list)
