@@ -45,22 +45,24 @@ import { resolveLineParam } from "@/lib/assign-line-param";
 import { readAssignView, writeAssignView } from "@/lib/assign-view-prefs";
 import { loadBundle, useBundle } from "@/lib/bundle-store";
 import { describeDecisionStep, getAssignUndoKey, IN_PLACE_EDIT_OPS, isUnitEditStep, pickSaveOp, shouldDropSelectionOnStep } from "@/lib/decision-step-model";
-import { buildCellOwners, buildDestinationOptions, buildGroupSave, buildRows, buildSentenceSlots, describeLegacyMove, findSystemHold, getDestinationId, getRowStep, hasDraftChange, isSentenceUnit, listJoinedTargetIds, listLinkLeftovers, listPickOptions, listUnpairedKeys, readDestination, readHiddenPlace, readHumanReason, stepInList, type CellSource, type ClassifyFilter, type ClassifyRow, type Destination, type DestinationOption, type DropPosition, type RowDraft } from "@/lib/classify-model";
+import { buildCellOwners, buildDestinationOptions, buildGroupSave, buildRows, buildSentenceSlots, describeLegacyMove, findSystemHold, getDestinationId, hasDraftChange, isSentenceUnit, listJoinedTargetIds, listLinkLeftovers, listPickOptions, listUnpairedKeys, readDestination, readHiddenPlace, readHumanReason, stepInList, type CellSource, type ClassifyFilter, type ClassifyRow, type Destination, type DestinationOption, type DropPosition, type RowDraft } from "@/lib/classify-model";
 import { buildDocDashboard } from "@/lib/doc-dashboard-model";
 import { buildPaperWaits, isDecisionKind, listEditUnitIds, listTableUnitIds, NO_FOCUS, NO_PLACE, planReload, readEditKind, readEditPlace, readPendingLabelKey, type Focus, type Pending, type PendingPlace } from "@/lib/assign-focus-model";
 import { readEditLabelKey, trimReason } from "@/lib/command-label";
 import { isBarrier, listUnsettled } from "@/lib/command-queue";
 import { pickDocRevision } from "@/lib/doc-revision";
 import { isMousePress, isTypingTarget, LAYER_SELECTOR, readKeyPlace, returnsToPaper, takesPrimaryEnter } from "@/lib/assign-key-target";
-import { isQueuedKey, isRepeatIgnored } from "@/lib/assign-press-model";
+import { findAssignKey, formatAssignKey, resolveAssignKey, type AssignKeyContext, type AssignKeyId } from "@/lib/assign-keymap";
+import { isQueuedKey, isRepeatIgnored, type PressId } from "@/lib/assign-press-model";
 import { planPrimary } from "@/lib/primary-model";
 import { isSideFloating } from "@/lib/side-float-model";
 import { isUnwrapSuggestionApplicable, isUnwrapSuggestionUnchanged } from "@/lib/unwrap-ai-model";
 import { pickNextBox, type PendingOutcome } from "@/lib/next-box-model";
-import { listExpectedNumbers, readExpectedNumber, type SentNumber } from "@/lib/number-arrival-model";
+import { listExpectedNumbers, listExpectedShifts, readExpectedNumber, readOpShifts, type SentNumber, type SentShifts } from "@/lib/number-arrival-model";
 import { buildReloadAsk, isDocReload, isEmptyReload, mergeReloads, NO_RELOAD_ASK, splitReload, type ReloadAsk } from "@/lib/reload-ask-model";
 import { createWriteLog } from "@/lib/write-log";
-import type { PaperPending } from "@/components/paper/paper";
+import type { PaperNumberHandle, PaperPending } from "@/components/paper/paper";
+import { setHelpOpen, setHelpTab } from "@/lib/help-prefs";
 import { useI18n } from "@/lib/i18n";
 import { genId } from "@/lib/id";
 import { buildTranslationDecision, isTranslationBlocked, listRowTranslations } from "@/lib/translation-decision";
@@ -69,6 +71,8 @@ import { navigate } from "@/lib/nav-buffer";
 import { buildIdenticalBatches } from "@/lib/match-model";
 import { EMPTY_FOLD_OPEN, type FoldOpen } from "@/lib/paper-fold-model";
 import { buildPaperModel, buildPaperTabs, findNearestCut, isBandHeading, listFigureTabUnitIds, resolvePickUnit, shouldRecenter, type PaperTabKey } from "@/lib/paper-model";
+import { findPairTarget } from "@/lib/pair-hint-model";
+import { readPartState, stepPart, withPartState } from "@/lib/part-history";
 import { isSameOrder, movePairMember, orderPairCard, readPairSlot } from "@/lib/pair-order-model";
 import { moveUnwrapLines, readUnwrapSlot } from "@/lib/unwrap-order-model";
 import { useUnwrapAi } from "@/lib/use-unwrap-ai";
@@ -85,7 +89,7 @@ import { pickSheetAnchor, pickSpaceSheet } from "@/lib/space-preview-model";
 import { countRefLookups, isRefPending, pickRefUnit } from "@/lib/ref-model";
 import { isDeletedUnit } from "@/lib/deleted-fold-model";
 import { buildNavKeys, buildNoiseBlock, describeNoiseUnit, findNoiseBlock, listNoiseBlocks, readTocNavKey, readUnitNavKey, toTocNavKey, toUnitNavKey } from "@/lib/toc-block-model";
-import { isRestoringLines, readNoiseKey, toNoiseKeyId } from "@/lib/noise-keys";
+import { isRestoringLines, readNoiseKey } from "@/lib/noise-keys";
 import { useEquisPolling } from "@/lib/use-equis-polling";
 import { useDocViews, type DocBatch } from "@/lib/use-doc-views";
 import { useLoaded } from "@/lib/use-loaded";
@@ -793,7 +797,7 @@ export function useAssignPage() {
   });
 
   // --- 추천(① 추천 카드) - 저장된 AI 제안 → 같은 글자 → 비슷한 문장 ---
-  // 줄의 AI 추천 - 미배정 줄을 덮는 살아 있는 제안. 카드를 누르거나 A(Use)로 받으면 초안이 채워지고 확정은 사람이 한다(설계 §5 2-1)
+  // 줄의 AI 추천 - 미배정 줄을 덮는 살아 있는 제안. 카드를 누르거나 ⇧A(Use)로 받으면 초안이 채워지고 확정은 사람이 한다(설계 §5 2-1)
   const rowLive = row ? findRowSuggestion(row.unitIds, row.status, liveIndex) : null;
   const aiDest = rowLive ? readSuggestedDestination(rowLive) : null;
   const aiWhy = typeof rowLive?.content.reason === "string" ? rowLive.content.reason : "";
@@ -841,6 +845,8 @@ export function useAssignPage() {
   // 누른 순간 보일 것(A2-R6) - 삭제를 눌렀고 아직 저장되지 않은 줄(접힌다, 멈춘 것도 버릴 때까지)과 저장을 기다리는 번호의 기대 글(응답의 보기가 닿으면 그 값이 이긴다).
   // 내용이 같으면 같은 값이다 - 큐가 움직일 때마다 용지의 먼 덩어리를 다시 그리지 않게
   const [sentNumbers, setSentNumbers] = useState<readonly SentNumber[]>([]);
+  // 들여쓰기는 그리지 않고 다음 Tab만 읽는다 - 새 보기가 오면 빠진다(listExpectedShifts)
+  const sentShiftsRef = useRef<SentShifts[]>([]);
   const pendingDeleteKey = JSON.stringify([...readPendingOutcomes(listUnsettled(queueState))].flatMap(([key, outcome]) => (outcome === "deleted" ? [key] : [])));
   const pendingDeletes = useMemo(() => new Set(JSON.parse(pendingDeleteKey) as string[]), [pendingDeleteKey]);
   const pendingOps = [queueState.running, ...queueState.waiting].flatMap((command) => (command?.payload.kind === "edit" ? [command.payload.op] : []));
@@ -913,9 +919,25 @@ export function useAssignPage() {
     for (const item of written) for (const unitId of item.source_unit_ids) map.set(unitId, [...(map.get(unitId) ?? []), item]);
     return map;
   }, [written]);
+  // 번호 칸 글쇠(⇧N · Tab)가 부르는 용지들 - 머리말 · 꼬리말은 쪽마다 용지가 따로다
+  const numberHandles = useRef(new Set<PaperNumberHandle>());
+  const registerNumberHandle = useCallback((handle: PaperNumberHandle | null) => {
+    if (handle === null) return;
+    const handles = numberHandles.current;
+    handles.add(handle);
+    return () => void handles.delete(handle);
+  }, []);
   const [manualPart, setManualPart] = useState<{ key: string; part: PaperTabKey } | null>(null);
   const wantedPart = (manualPart?.key === (activeKey ?? "") ? manualPart.part : null) ?? partOf?.get(row?.unitIds[0] ?? (isSolo ? soloUnit?.id : undefined) ?? -1) ?? "body";
   const activePart = partKeys.includes(wantedPart) ? wantedPart : (partKeys[0] ?? "body");
+  /** 사람이 탭을 바꾼다(누름 · Ctrl+←→) - 뒤로 가기가 보던 탭으로 오게 지금 탭을 적어 두고 같은 주소의 기록을 하나 더한다(B2-R7) */
+  function changePart(part: PaperTabKey) {
+    if (part !== activePart) {
+      window.history.replaceState(withPartState(window.history.state, activePart), "");
+      window.history.pushState(withPartState(window.history.state, part), "");
+    }
+    setManualPart({ key: activeKey ?? "", part });
+  }
   // 필터 접기 - 지금 문서·부분에 맞는(또는 고른) Unit이 없으면 용지 대신 빈 상태와 맞는 곳 바로 가기(저절로 옮기지 않는다)
   const isInPart = (unitId: number) => partKeys.length <= 1 || partOf?.get(unitId) === activePart;
   const isFoldEmpty = !isSolo && foldMatch !== null && oldView !== null && !oldView.units.some((unit) => isInPart(unit.id) && (foldMatch.has(unit.id) || (row?.unitIds.includes(unit.id) ?? false)));
@@ -1130,7 +1152,7 @@ export function useAssignPage() {
   const saveUnits = rowUnits.map((unit) => ({ id: unit.unit_id, kind: unit.kind, lang: unit.lang, text: unit.text, content_start: unit.content_start, revision: unit.decision.revision }));
   // 새 문장 칸 - AI가 나눈 문장은 칸 여럿, 합친 문장은 칸 하나다
   const slots = buildSentenceSlots(groupData, saveUnits, draft.otherLang ?? null);
-  // Use(A)가 받는 카드 - 줄의 AI 추천 중 첫째
+  // Use(⇧A)가 받는 카드 - 줄의 AI 추천 중 첫째
   const aiRecommendation = recommendations.find((rec) => rec.source === "ai") ?? null;
   // AI가 나누거나 합쳐 칸에 채우지 못한 고쳐 쓴 글 - 받을 때 카드에 글을 보여 사람이 옮긴다
   const aiUnfilled = rowLive ? buildUseDraft(rowLive, slots).unfilledLangs : [];
@@ -1696,6 +1718,8 @@ export function useAssignPage() {
     // 번호는 그 자리 편집이라 보기를 큐가 빌 때 받는다 - 그때까지 기대 글을 둔다
     const sentNumber = isOld ? readExpectedNumber(op) : null;
     if (sentNumber !== null) setSentNumbers((prev) => [...prev.filter((item) => item.unitId !== sentNumber.unitId), { docId, revision, ...sentNumber }]);
+    const shifts = isOld ? readOpShifts(op) : [];
+    if (shifts.length > 0) sentShiftsRef.current = [...sentShiftsRef.current.filter((item) => item.docId === docId), { docId, revision, shifts }];
     // 편집이 받아들여진 뒤에만 하는 일(AI 제안 채택 기록) - 실패하면 afterOk가 스스로 알린다
     await afterOk?.();
     setRefEntryId(null);
@@ -2229,7 +2253,7 @@ export function useAssignPage() {
       showToast(t("assign.hidden.confirm"), "error");
       return;
     }
-    // 이동한 줄은 배정 취소 말고는 저장하지 않는다 - 보류(H)도 짝의 다른 쪽까지 쓰지 못하게 막는다
+    // 이동한 줄은 배정 취소 말고는 저장하지 않는다 - 보류(⇧H)도 짝의 다른 쪽까지 쓰지 못하게 막는다
     if (legacyMove !== null) {
       showToast(t("assign.legacyMove.confirm"), "error");
       return;
@@ -4163,23 +4187,40 @@ export function useAssignPage() {
       else if (commands.canQueueKey()) commands.enqueue({ kind: "key", key: "z", shift: undoKind === "redo", ctrl: true });
       return;
     }
-    if (event.metaKey || event.ctrlKey || event.altKey) return;
-    // 용지 · 오른쪽 칸의 Enter는 포커스가 다른 단추에 있어도 확정 단추다(B1-R1). 그 밖의 단추·링크의 Enter와 모든 단추의 Space는 그 단추를 누른다
-    const isPrimaryEnter = event.key === "Enter" && !event.defaultPrevented && takesPrimaryEnter(readKeyPlace(event.target), event.target);
-    if (event.key === "Enter" && !isPrimaryEnter) return;
-    if (event.key === " " && event.target instanceof HTMLElement && event.target.closest("button, a, [role='option'], [role='button']")) return;
-    // 세로선에 포커스가 있으면 ←→는 폭이다
-    if (event.target instanceof HTMLElement && event.target.closest(".pane-divider")) return;
+    const hit = findAssignKey(event);
     const key = event.key.toLowerCase();
-    // 앞에 장벽이 있으면 어느 박스의 글쇠인지 아직 모른다 - 쌓아 두었다가 장벽이 세운 고름에서 차례로 다시 누른다(A1-R3)
-    const isMove = getRowStep(key) !== null;
-    // 누르고 있어 되풀이된 것은 이동만 받는다
-    if (event.repeat && isRepeatIgnored(key, isMove)) {
-      // 막지 않으면 포커스가 있는 단추를 브라우저가 되풀이해 누른다
-      if (isPrimaryEnter) event.preventDefault();
+    if (hit?.kind === "run" && (hit.entry.id === "part_prev" || hit.entry.id === "part_next")) {
+      event.preventDefault();
+      // Pair view에는 탭이 없다
+      if (!event.repeat && !isPairView) changePart(stepPart(partKeys, activePart, hit.entry.id === "part_next" ? 1 : -1));
       return;
     }
-    if (commands.isDeferring() && isQueuedKey(key, isMove)) {
+    if (event.metaKey || event.ctrlKey || event.altKey) return;
+    // 고쳐 쓰기(E)는 숨긴 기능이라 글쇠 목록에 없다
+    const id: PressId | null = hit === null ? (isDrafting && key === "e" && !event.shiftKey ? "edit" : null) : hit.kind === "run" ? hit.entry.id : null;
+    // 용지 · 오른쪽 칸의 Enter는 포커스가 다른 단추에 있어도 확정 단추다(B1-R1). 그 밖의 단추·링크의 Enter와 모든 단추의 Space는 그 단추를 누른다
+    const isPrimaryEnter = id === "confirm" && !event.defaultPrevented && takesPrimaryEnter(readKeyPlace(event.target), event.target);
+    if (event.key === "Enter" && !isPrimaryEnter) return;
+    // Space 미리보기는 SpacePreview가 받는다
+    if (id === "preview") return;
+    // 세로선에 포커스가 있으면 ←→는 폭이다
+    if (event.target instanceof HTMLElement && event.target.closest(".pane-divider")) return;
+    // Tab은 용지에서 번호 칸이 있는 박스를 고른 동안만 들여쓰기다 - 입력 · 오른쪽 칸 · 메뉴에서는 포커스를 옮긴다(B2-R5)
+    if ((id === "indent" || id === "outdent") && !(hasNumberCell && event.target instanceof Element && event.target.closest('[data-pane="old"]') && readKeyPlace(event.target) === "paper")) return;
+    if (hit?.kind === "hint") {
+      // Shift를 빠뜨렸다 - 아무것도 하지 않고 글쇠만 알린다(B2-R3)
+      if (canEdit && !event.repeat) showToast(t("assign.key.hint", { key: formatAssignKey(hit.entry.id), label: t(hit.entry.labelKey) }), "info");
+      return;
+    }
+    if (id === null) return;
+    // 누르고 있어 되풀이된 것은 이동만 받는다
+    if (event.repeat && isRepeatIgnored(id)) {
+      // 막지 않으면 포커스가 있는 단추를 브라우저가 되풀이해 누른다
+      if (isPrimaryEnter || id === "indent" || id === "outdent") event.preventDefault();
+      return;
+    }
+    // 앞에 장벽이 있으면 어느 박스의 글쇠인지 아직 모른다 - 쌓아 두었다가 장벽이 세운 고름에서 차례로 다시 누른다(A1-R3)
+    if (commands.isDeferring() && isQueuedKey(id)) {
       event.preventDefault();
       if (commands.canQueueKey()) commands.enqueue({ kind: "key", key, shift: event.shiftKey, ctrl: false });
       return;
@@ -4199,51 +4240,183 @@ export function useAssignPage() {
     return docViews.isReloading(noisePick.docId) || isRestoringLines(ops, noisePick.unitId === null ? noisePick.block.unitIds : [noisePick.unitId]);
   }
 
-  /** 글쇠 하나를 지금 고름에서 - 했으면 true. 누를 때와, 장벽 뒤에 쌓아 두었다가 되살릴 때 함께 쓴다 */
+  // --- 글쇠(lib/assign-keymap) - 고른 박스에서 할 수 있는 일. 못 하는 까닭은 다듬기 줄 · 우클릭 메뉴와 같은 답이다 ---
+  const keyUnit = hasSolo ? soloUnit : (shapeModel?.units.get(pickedId ?? row?.unitIds[0] ?? -1) ?? null);
+  const keyItems = shapeLines.find((line) => line.unit.id === keyUnit?.id)?.items ?? [];
+  const langTo = keyUnit?.lang === "ko" ? "en" : "ko";
+  const langKeyItem = keyUnit?.lang === "neutral" ? undefined : keyItems.find((item) => item.action === "lang");
+  const tableKeyItem = keyItems.find((item) => item.action === "table_layout");
+  const hasNumberCell = canEdit && mode === "old" && !hasSolo && !isPairView && activePart !== "figures" && (paperModel?.hasNumberRanges ?? false) && (keyUnit?.number ?? null) !== null;
+
+  /** G가 갈 박스 - 누를 때만 찾는다(단위 전부를 훑는다) */
+  function findPairBox(): number | null {
+    return keyUnit !== null && shapeTabs !== null ? findPairTarget(keyUnit.id, listPairMembers(keyUnit), shapeTabs.order) : null;
+  }
+
+  function readOrderReason(): string | null {
+    if (!unwrapAi.enabled) return "assign.unwrapAi.offTip";
+    if (orderTableId === null) return "assign.key.why.notUnwrapped";
+    if (unwrapAi.busy.has(orderTableId)) return "assign.unwrapAi.already";
+    if (orderPreview !== null) return orderPreview.isSame ? "assign.unwrapAi.same" : "assign.key.why.orderReady";
+    const lines = [...(paperModel?.unwrapLines.values() ?? [])].filter((tableId) => tableId === orderTableId);
+    return lines.length < 2 ? "assign.key.why.oneLine" : null;
+  }
+
+  function readKeyContext(): AssignKeyContext {
+    return {
+      // 출처 없는 New를 보는 동안은 고른 줄이 가려져 있다 - 가려진 줄을 정하지 않는다
+      hasRow: row !== null && mode === "old",
+      hasBox: keyUnit !== null && mode === "old",
+      isDeletedLine: noisePick !== null,
+      canEdit,
+      hasCut: composedCut !== null || cutLine.at !== null,
+      hasPair: findPairBox() !== null,
+      isText: langKeyItem !== undefined,
+      langReasonKey: langKeyItem?.reasonKey ?? langKeyItem?.langReasons?.[langTo] ?? null,
+      shapeMode,
+      hasNumberCell,
+      hasAi: aiRecommendation !== null,
+      unwrappedTableId: rewrapTableId,
+      orderReasonKey: readOrderReason(),
+      tableId: tableKeyItem === undefined ? null : (findTableOf(keyUnit)?.table_id ?? null),
+      tableReasonKey: (tableKeyItem === undefined ? rewrap?.reasonKey : tableKeyItem.reasonKey) ?? null,
+      isLocked: busy,
+    };
+  }
+
+  /** 글쇠 하나를 지금 고름에서 - 했으면(못 하는 까닭을 알렸으면) true. 누를 때와, 장벽 뒤에 쌓아 두었다가 되살릴 때 함께 쓴다 */
   function pressKey(key: string, shift: boolean): boolean {
-    const step = getRowStep(key);
-    const noiseKey = toNoiseKeyId(key, shift);
-    const noise = noiseKey === null ? null : readNoiseKey(noiseKey, noisePick);
-    if (step !== null) moveRow(step);
+    const hit = findAssignKey({ key, shiftKey: shift, ctrlKey: false, metaKey: false, altKey: false });
+    if (hit === null) {
+      if (!isDrafting || key !== "e" || shift || !canEdit || !row) return false;
+      startEdit();
+      return true;
+    }
+    if (hit.kind === "hint") return false;
+    const noise = readNoiseKey(hit.entry.id, noisePick);
     // 마지막으로 누른 것이 저절로 삭제된 줄 - 판단 글쇠보다 먼저(삭제 · 보류 · 확정은 아무것도 하지 않는다)
-    else if (noise !== null && noisePick !== null) {
+    if (noise !== null && noisePick !== null) {
       if (noise.kind === "clear") clearNoise(noisePick.docId, canEdit ? noise.unitIds : []);
       // 삭제 취소가 끝나 보통 줄로 돌아오기 전에 누른 것 - 조용히 사라지지 않게 알린다
       else if (isRestoringPick()) showToast(t("assign.noise.restoring"), "info");
       else if (noise.kind === "reason") openNoiseReason(noisePick.docId, noise.unitIds);
+      return true;
     }
-    else if (key === "escape") {
-      // AI 순서 미리보기부터 거두고(Keep as is), 나눌 선이 있으면 선을 거둔다(Split과 같다)
-      if (orderPreview !== null) unwrapAi.onKeep(orderPreview.tableId, orderPreview.isSame);
-      else if (composedCut) setComposedCutAt(null);
-      else if (cutLine.at !== null) cutLine.clear();
-      else if (isNewEdit) setSolo(null);
-      else setChecked(new Set());
-    } else if (key === "v") {
-      // Pair view 동안은 보기를 바꾸지 않고 Pair view만 끈다 - 켜기 전 보기로 돌아간다
-      if (isPairView) closePairView();
-      else changeView({ single: !view.single });
-    } else if (key === "s" && canEdit && composedCut) splitComposedAtCut();
-    else if ((key === "arrowleft" || key === "arrowright") && canEdit && composedCut && composedCutItem) setComposedCutAt({ ...composedCut, at: stepComposedCut(composedCutItem.text, composedCut.at, key === "arrowleft" ? -1 : 1) });
-    else if (key === "s" && canEdit && hasSolo && cutLine.at !== null) splitAtCut();
-    else if ((key === "arrowleft" || key === "arrowright") && canEdit && isNewEdit && cutLine.at !== null) cutLine.nudge(key === "arrowleft" ? -1 : 1);
-    else if (!canEdit || !row) return false;
-    else if (key === "s" && cutLine.at !== null) splitAtCut();
-    // 출처 없는 New를 보는 동안은 오른쪽 칸에 확정 단추가 없다 - 가려진 줄을 확정하지 않는다
-    else if (key === "enter" && mode !== "old") return false;
-    else if (key === "enter") handlePrimary();
-    else if (key === "a" && canEdit && aiRecommendation) pickRecommendation(aiRecommendation, false); // Use - 줄의 AI 추천을 초안으로 받는다
-    else if (key === "e") startEdit();
-    else if (key === "h") runSave("hold");
-    else if (key === "u") runClear();
-    else if (key === "delete" || key === "backspace") decideNow({ kind: "delete" });
-    else return false;
+    const plan = resolveAssignKey(hit.entry, readKeyContext());
+    if ("run" in plan) return runKey(plan.run);
+    showToast(t(plan.refuseKey), "info");
     return true;
   }
 
+  /** 할 수 있는 글쇠(resolveAssignKey가 run)의 일 - 브라우저에 맡길 것이면 false */
+  function runKey(id: AssignKeyId): boolean {
+    switch (id) {
+      case "move_next":
+      case "move_prev":
+        moveRow(id === "move_next" ? 1 : -1);
+        return true;
+      case "escape":
+        // AI 순서 미리보기부터 거두고(Keep as is), 나눌 선이 있으면 선을 거둔다(Split과 같다)
+        if (orderPreview !== null) unwrapAi.onKeep(orderPreview.tableId, orderPreview.isSame);
+        else if (composedCut) setComposedCutAt(null);
+        else if (cutLine.at !== null) cutLine.clear();
+        else if (isNewEdit) setSolo(null);
+        else setChecked(new Set());
+        return true;
+      case "view":
+        // Pair view 동안은 보기를 바꾸지 않고 Pair view만 끈다 - 켜기 전 보기로 돌아간다
+        if (isPairView) closePairView();
+        else changeView({ single: !view.single });
+        return true;
+      case "help":
+        setHelpTab("assign", "keys");
+        setHelpOpen("assign", true);
+        unfoldSide();
+        return true;
+      case "split":
+        if (composedCut) splitComposedAtCut();
+        else splitAtCut();
+        return true;
+      case "cut_left":
+      case "cut_right": {
+        const step = id === "cut_left" ? -1 : 1;
+        if (canEdit && composedCut && composedCutItem) setComposedCutAt({ ...composedCut, at: stepComposedCut(composedCutItem.text, composedCut.at, step) });
+        else if (canEdit && isNewEdit && cutLine.at !== null) cutLine.nudge(step);
+        else return false;
+        return true;
+      }
+      case "confirm":
+        // 출처 없는 New를 보는 동안은 오른쪽 칸에 확정 단추가 없다 - 가려진 줄을 확정하지 않는다
+        if (!canEdit || !row || mode !== "old") return false;
+        handlePrimary();
+        return true;
+      case "use_ai":
+        // Use - 줄의 AI 추천을 초안으로 받는다
+        if (aiRecommendation) pickRecommendation(aiRecommendation, false);
+        return true;
+      case "hold":
+        runSave("hold");
+        return true;
+      case "clear":
+        runClear();
+        return true;
+      case "delete":
+        decideNow({ kind: "delete" });
+        return true;
+      case "remark":
+        // 이동한 줄(없앤 기능)은 읽기만 한다 - 오른쪽 칸의 Remark 연필도 없다
+        if (legacyMove !== null) showToast(t("assign.legacyMove.confirm"), "error");
+        else setRemarkEdit({ kind: "row", need: null, then: null, askId: commands.openAsk() });
+        return true;
+      case "go_pair": {
+        const pairBox = findPairBox();
+        if (pairBox !== null) goToUnit(pairBox);
+        return true;
+      }
+      case "lang":
+        if (keyUnit !== null) changeLanguage(keyUnit, langTo);
+        return true;
+      case "shape_mode":
+        if (shapeMode !== null) switchShapeMode(shapeMode.current === "one" ? "pair" : "one");
+        return true;
+      case "number":
+        if (keyUnit !== null && ![...numberHandles.current].some((handle) => handle.openNumber(keyUnit.id))) showToast(t("assign.key.why.noNumber"), "info");
+        return true;
+      case "indent":
+      case "outdent": {
+        const delta = id === "indent" ? 1 : -1;
+        const ops = commands.listUnsettled().flatMap(({ payload }) => (payload.kind === "edit" ? [payload.op] : []));
+        const shifts = listExpectedShifts(ops, sentShiftsRef.current, viewList ?? []);
+        const results = keyUnit === null ? [] : [...numberHandles.current].map((handle) => handle.requestIndent(keyUnit.id, delta, shifts));
+        if (!results.includes("done")) showToast(t(results.includes("end") ? (delta > 0 ? "assign.key.why.indentEnd" : "assign.key.why.outdentEnd") : "assign.key.why.noNumber"), "info");
+        return true;
+      }
+      case "table":
+        if (keyUnit !== null && tableKeyItem !== undefined) runUnitAction(keyUnit, "table_layout");
+        else rewrap?.onBack();
+        return true;
+      case "ask_order":
+        if (orderTableId !== null) unwrapAi.onAsk(orderTableId);
+        return true;
+      // 나머지는 다른 자리가 받는다 - 미리보기는 SpacePreview, 탭 · 되돌리기는 handleKey, 블록 글쇠는 noise-keys
+      default:
+        return false;
+    }
+  }
+
+  // 뒤로 · 앞으로 - 그 기록에 적힌 탭으로. 적힌 것이 없으면 원래 뒤로 가기다(Next가 맡는다)
+  const handlePopState = useEffectEvent((event: PopStateEvent) => {
+    const part = readPartState(event.state);
+    if (part !== null) setManualPart({ key: activeKey ?? "", part });
+  });
+
   useEffect(() => {
     window.addEventListener("keydown", handleKey);
-    return () => window.removeEventListener("keydown", handleKey);
+    window.addEventListener("popstate", handlePopState);
+    return () => {
+      window.removeEventListener("keydown", handleKey);
+      window.removeEventListener("popstate", handlePopState);
+    };
   }, []);
 
   // 옛 "원문 고치기" 주소로 들어옴 - 그 문서를 한 단으로 연다(Old 문서면 배정하던 그대로 넓게, 이미 쓴 New 문서면 그 원문). 없는 문서면 그냥 배정 화면이다
@@ -4381,7 +4554,7 @@ export function useAssignPage() {
     reasonNow, setDraft, unsavedCount, leaveTo, setLeaveTo, rowLive, aiDest, aiWhy, isAiRow, recommendations, linkIds,
     pickedGroups, saveGroupData, candidateIds, viewOf, setManualOldDoc, oldView, acceptKind, setAcceptKind, acceptDoc,
     paperModel, canPairView, isPairView, pairColumns, pairLinks, partKeys, oldDocId, splitByUnit, shapeView, shapeModel, soloUnit,
-    soloUnits, cutUnit, cutLine, linkedTargets, setManualPart, activePart, isFoldEmpty, foldElsewhere, writtenDocs, composedDocs,
+    soloUnits, cutUnit, cutLine, linkedTargets, registerNumberHandle, setManualPart, changePart, activePart, isFoldEmpty, foldElsewhere, writtenDocs, composedDocs,
     setManualNewDoc, toggleKey, liveDoc, isNewDocOpen, newDocId, newAiReturn, setNewAiReturn, isComposedDoc, newFileId, composedDoc,
     newRows, headingNotes, sectionMarks, joinableIds, templateTitles, linkPairs, view, changeView, zoomPane, setPanes, askAiScope,
     aiMenuItems, remarkEdit, setRemarkEdit, focusAfterRef, firstTextRef, busy, isAnyPending, isGlobalPending: focusCtl.isGlobalPending, paperPending, pendingDeletes, expectedNumbers, editConfirm, answerEditConfirm, cancelEditConfirm, canUndoNow, queueFailure, retryCommand: commands.retry, discardCommands: commands.discard,

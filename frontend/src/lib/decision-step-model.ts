@@ -1,5 +1,6 @@
 // Assign 되돌리기 모델 - 저장 종류 고르기, 알림 문구, Ctrl+Z 키 해석.
 import type { DecisionStepResult, SaveOp } from "@/lib/api-sop";
+import { findAssignKey } from "@/lib/assign-keymap";
 
 /** 알림 문구 - 메시지 키와 채울 값 */
 export interface StepMessage {
@@ -70,6 +71,6 @@ export function shouldDropSelectionOnStep(result: Pick<DecisionStepResult, "op" 
 /** Ctrl/⌘+Z는 되돌리기, +Shift는 다시 하기 - 글자 입력 중이거나 층이 열려 있으면 브라우저·층에 맡긴다 */
 export function getAssignUndoKey(event: KeyLike, ctx: { typing: boolean; layerOpen: boolean; canEdit: boolean }): "undo" | "redo" | null {
   if (ctx.typing || ctx.layerOpen || !ctx.canEdit) return null;
-  if (!(event.metaKey || event.ctrlKey) || event.altKey || event.key.toLowerCase() !== "z") return null;
-  return event.shiftKey ? "redo" : "undo";
+  const hit = findAssignKey(event);
+  return hit !== null && (hit.entry.id === "undo" || hit.entry.id === "redo") ? hit.entry.id : null;
 }

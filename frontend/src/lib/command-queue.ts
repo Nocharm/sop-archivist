@@ -33,8 +33,8 @@ export interface CommandQueue<T> {
   subscribe(listener: () => void): () => void;
   /** 줄 끝에 세운다 - isDeferred면 부른 쪽은 고름을 옮기지 않는다 */
   push(command: NewCommand<T>): { isDeferred: boolean };
-  /** 되살린 글쇠가 만든 명령 - 남은 글쇠 앞에 세운다 */
-  pushNext(command: NewCommand<T>): void;
+  /** 되살린 글쇠가 만든 명령 - 남은 글쇠 앞에 세운다. at은 그 되살림이 이미 앞에 세운 수(만든 차례대로 서게) */
+  pushNext(command: NewCommand<T>, at?: number): void;
   /** 다음 명령을 꺼내 달린다 - 이미 달리거나 멈췄거나 되묻는 중이면 null */
   take(): QueuedCommand<T> | null;
   /** 응답이 왔다 - 장벽이 아니면 settle과 같고, 장벽이면 새 보기의 고름이 선 뒤의 settle까지 달린다 */
@@ -119,8 +119,8 @@ export function createCommandQueue<T>(): CommandQueue<T> {
       update({ waiting: [...state.waiting, { ...command, isDeferred }] });
       return { isDeferred };
     },
-    pushNext(command) {
-      update({ waiting: [{ ...command, isDeferred: false }, ...state.waiting] });
+    pushNext(command, at = 0) {
+      update({ waiting: [...state.waiting.slice(0, at), { ...command, isDeferred: false }, ...state.waiting.slice(at)] });
     },
     take() {
       if (state.running !== null || state.halted !== null || state.asking !== null || state.waiting.length === 0) return null;
