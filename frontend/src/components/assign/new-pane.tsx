@@ -16,10 +16,11 @@
 // 엮은 문서는 머리의 "기본 | 템플릿" 전환(viewSwitch)으로 같은 줄을 회사 템플릿 모양(components/template/template-view)으로도 본다 - 템플릿이면 몸에 그 보기를 그린다.
 "use client";
 
-import { ChevronDown, ChevronUp, FilePlus2, FoldVertical, GripVertical, Link2, Scissors, Sparkles, Spline, X } from "lucide-react";
+import { FilePlus2, FoldVertical, GripVertical, Link2, Scissors, Sparkles, Spline } from "lucide-react";
 import { Fragment, useEffect, useEffectEvent, useRef, useState, type MouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 
 import { NewBundle } from "@/components/assign/new-bundle";
+import { NewAiTag, SourceChips } from "@/components/assign/new-sources";
 import { getSpotAttrs, PlaceGap, type PlaceSpotView } from "@/components/assign/place-spot";
 import { PaneZoom } from "@/components/assign/pane-zoom";
 import { RefMark } from "@/components/assign/ref-mark";
@@ -247,8 +248,6 @@ export function NewPaneEmpty({ zoom, onGoToBe }: { zoom: number; onGoToBe: () =>
   );
 }
 
-// 칩 줄에 먼저 보이는 출처 수 - 넘치면 "+N"을 눌러 펼친다(연결선은 접힌 출처를 "+N"에 잇는다)
-const VISIBLE_SOURCES = 2;
 // 빠진 줄을 접는 동안 더 그리는 시간(ms) - 접힘(--dur-slow 240ms)보다 조금 길게. 들어온 줄 표시도 이때 걷는다
 const ROW_EXIT_MS = 300;
 
@@ -415,66 +414,19 @@ export function NewPane(props: NewPaneProps) {
     setIsCutDragging(true);
   }
 
-  /** AI 제안 거르기의 꼬리표 - 고른 줄의 AI 제안이거나 고른 줄이 이미 간 곳일 때만 */
-  function renderAiTag(row: WrittenSentence): ReactNode {
-    const mark = props.aiFilter?.marks.get(getNewRowKey(row));
-    if (mark !== "mine_ai" && mark !== "mine_went") return null;
-    return (
-      <span className="new-ai-tag" data-testid={`assign-new-ai-tag-${row.target_id}`}>
-        {t(mark === "mine_ai" ? "assign.newAi.mine" : "assign.newAi.went")}
-      </span>
-    );
-  }
-
   /** 출처 칩들 - 문장 상자와 표 칸이 같은 칩을 쓴다. onUnlink가 있으면(칸) 칩마다 끊기 × */
   function renderChips(targetId: number, ids: number[], isAi: boolean, onUnlink?: (unitId: number) => void): ReactNode {
-    const isOpen = openSources.has(targetId);
-    const visible = isOpen || ids.length <= VISIBLE_SOURCES + 1 ? ids : ids.slice(0, VISIBLE_SOURCES);
-    const hidden = ids.slice(visible.length);
     return (
-      <>
-        {visible.map((unitId) => (
-          <Fragment key={unitId}>
-            <button
-              type="button"
-              className="new-src"
-              aria-label={t("assign.jumpOld", { id: props.sourceLabel(unitId) })}
-              data-src-unit={unitId}
-              data-ai={isAi ? "" : undefined}
-              data-testid={`assign-new-src-${targetId}-${unitId}`}
-              onClick={() => props.onJumpSource(unitId, targetId)}
-            >
-              {props.sourceLabel(unitId)}
-              <ChevronUp size={11} strokeWidth={2.5} className="new-src-dir" data-d="above" aria-hidden />
-              <ChevronDown size={11} strokeWidth={2.5} className="new-src-dir" data-d="below" aria-hidden />
-            </button>
-            {onUnlink && (
-              <button
-                type="button"
-                className="new-src new-src-x"
-                aria-label={t("assign.cellLink.unlink", { id: props.sourceLabel(unitId) })}
-                data-tip={t("assign.cellLink.unlink", { id: props.sourceLabel(unitId) })}
-                data-testid={`assign-new-src-x-${targetId}-${unitId}`}
-                onClick={() => onUnlink(unitId)}
-              >
-                <X size={11} strokeWidth={2.5} aria-hidden />
-              </button>
-            )}
-          </Fragment>
-        ))}
-        {hidden.length > 0 && (
-          <button
-            type="button"
-            className="new-src is-more"
-            aria-label={t("assign.moreSources", { n: hidden.length })}
-            data-src-more={hidden.join(",")}
-            data-testid={`assign-new-src-more-${targetId}`}
-            onClick={() => setOpenSources((prev) => new Set(prev).add(targetId))}
-          >
-            +{hidden.length}
-          </button>
-        )}
-      </>
+      <SourceChips
+        targetId={targetId}
+        ids={ids}
+        isAi={isAi}
+        sourceLabel={props.sourceLabel}
+        onJump={props.onJumpSource}
+        isOpen={openSources.has(targetId)}
+        onOpen={(id) => setOpenSources((prev) => new Set(prev).add(id))}
+        onUnlink={onUnlink}
+      />
     );
   }
 
@@ -491,7 +443,7 @@ export function NewPane(props: NewPaneProps) {
         {row.change_type === "new" && <span className="new-src is-new">{t("assign.markedNew")}</span>}
         {/* 참조 줄이 EQUIS와 어긋난다(번호·이름·EQUIS에 없음·폐기) - 출처가 없는 줄에도 뜬다. 이 문서의 글은 여기서 고치지 않아 알리기만 한다 */}
         <RefMark row={row} />
-        {renderAiTag(row)}
+        <NewAiTag targetId={row.target_id} mark={props.aiFilter?.marks.get(getNewRowKey(row))} />
       </span>
     );
   }
@@ -926,7 +878,7 @@ export function NewPane(props: NewPaneProps) {
                         inert={leaving || undefined}
                       >
                         <div className="new-item-inner">
-                          {row.kind !== "empty" && row.kind !== "sentence" && renderAiTag(row)}
+                          {row.kind !== "empty" && row.kind !== "sentence" && <NewAiTag targetId={row.target_id} mark={aiMark} />}
                           {renderRow(row, isSectionStart, previous)}
                         </div>
                       </div>

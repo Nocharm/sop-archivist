@@ -1954,6 +1954,12 @@
   .pg .new-sec { margin: 10px 0 4px; font: 600 var(--fs-cap) / var(--lh-cap) var(--font-ui); color: var(--ink-3); }
   .new-gap { height: 4px; }
   .new-gap[data-pair] { height: 0; }
+  /* 이미 쓴 New 문서의 용지(components/assign/new-paper) - Old와 같은 Paper라 오른쪽에 줄 끝 표시 자리를 두고, 얹기의 글 감싸개(.new-text) 안 문단도 용지 문단과 같다 */
+  .pg.new-sheet.new-paper[data-strips] .strip { padding-right: var(--pg-pad-r); }
+  .pg[data-strips] :is(.strip, .cell-piece) > .new-text > p { margin-block: 0; }
+  /* 문서를 바꾸면 새 문서가 옆에서 들어온다(.sheet[data-slide]와 같은 움직임) */
+  .new-slide[data-slide="next"] { animation: new-slide-next var(--dur-base) var(--ease-enter); }
+  .new-slide[data-slide="prev"] { animation: new-slide-prev var(--dur-base) var(--ease-enter); }
   /* 빈 템플릿 박스 사이 Join 틈(스텝 8) - New 칸 용지는 data-strips가 아니라 안쪽 여백 변수가 없다. 단추는 글 시작 x(--gap-tab)에 */
   .assign-pane[data-pane="new"] .strip-gap { --pg-pad-l: 0px; }
   .pg.new-sheet[data-strips] .strip { padding-right: var(--pg-pad-l); }
@@ -2086,6 +2092,12 @@
   .new-item[data-ai-view="mine"] :is(.new-bundle, .new-block) { outline: 1.5px solid var(--accent); outline-offset: 2px; border-radius: var(--r-1); }
   .new-item[data-ai-view="dim"] { opacity: 0.42; transition: opacity var(--dur-fast); }
   .new-item[data-ai-view="dim"]:is(:focus-within, :has([data-rec-hover], .new-line[data-state="picked"])) { opacity: 1; }
+  /* 이미 쓴 New 문서의 용지 - 같은 표시를 줄(.strip-row)에 단다 */
+  .pg[data-strips] :where(.strip-row[data-ai-view="mine"]) > .new-line { background: var(--accent-tint); box-shadow: var(--shadow-1), inset 0 0 0 1.5px var(--accent); }
+  .strip-row[data-ai-view="mine"] > .strip:not(.new-line) { outline: 1.5px solid var(--accent); outline-offset: 2px; }
+  .strip-row[data-ai-view="dim"] { opacity: 0.42; transition: opacity var(--dur-fast); }
+  .strip-row[data-ai-view="dim"]:is(:focus-within, :has([data-rec-hover], .new-line[data-state="picked"])) { opacity: 1; }
+  .strip > .new-ai-tag { display: block; text-align: right; }
   .new-ai-tag { font: 600 10px / 16px var(--font-ui); color: var(--accent); white-space: nowrap; }
   .new-item-inner > .new-ai-tag { display: block; text-align: right; }
   /* 다른 줄의 AI 제안을 접은 자리 - 칸마다 한 줄, 누르면 그 칸의 제안이 흐리게 펼쳐진다 */

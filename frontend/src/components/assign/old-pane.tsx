@@ -9,7 +9,7 @@ import { PaneZoom } from "@/components/assign/pane-zoom";
 import { SpotPanel, type SpotTarget } from "@/components/assign/spot-panel";
 import { FigureTab } from "@/components/paper/figure-tab";
 import { Paper, type CutDragPos, type PaperCut, type PaperNumberCell } from "@/components/paper/paper";
-import { PartTabs } from "@/components/paper/part-tabs";
+import { describeSheet, PartTabs } from "@/components/paper/part-tabs";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Select, type SelectOption } from "@/components/ui/select";
 import type { ViewUnit } from "@/lib/api-sop";
@@ -132,12 +132,6 @@ export function OldPane({ paneRef, ...props }: OldPaneProps) {
       }
     : props.pairHint;
 
-  /** 쪽의 설명 줄 - 쓰이는 구역(1구역 · 첫 쪽…), 구역 정보가 없는 옛 추출이나 각주는 "머리말 2"처럼 차례로 */
-  function describeSheet(sheet: PaperSheet, index: number): string {
-    if (sheet.refs.length === 0) return t("split.sheetOrdinal", { name: t(`split.part.${sheet.part}`), n: index + 1 });
-    return sheet.refs.map((ref) => t("split.sheetRef", { n: ref.section, type: t(`split.refType.${ref.type}`) })).join(", ");
-  }
-
   /** 그림 탭 용지의 속성 - 본문 용지와 같은 고르기 · 표시(틈 단추 · 번호 칸 · 나눌 선 · 필터 접기는 없다) */
   function buildPaperProps(paperModel: PaperModel, items: PaperItem[] | undefined): ComponentProps<typeof Paper> {
     return {
@@ -239,7 +233,7 @@ export function OldPane({ paneRef, ...props }: OldPaneProps) {
               {props.sheets.map((sheet, index) => (
                 <div key={sheet.key} className="sheet-set">
                   <p className="sheet-cap" data-testid={`assign-sheet-cap-${sheet.key}`}>
-                    {describeSheet(sheet, index)}
+                    {describeSheet(sheet, index, t)}
                   </p>
                   {renderPaper(model, sheet.items)}
                 </div>
