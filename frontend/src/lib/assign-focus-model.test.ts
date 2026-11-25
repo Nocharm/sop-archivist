@@ -3,7 +3,6 @@ import { describe, expect, it } from "vitest";
 import type { EditOp } from "./api-sop";
 import {
   applyLoaded,
-  canStart,
   INITIAL_FOCUS_STATE,
   isGlobalPending,
   isSameFocus,
@@ -165,15 +164,18 @@ describe("locks (rule 6)", () => {
     expect(isUnitLocked(state, 3)).toBe(true);
     expect(isUnitLocked(state, 5)).toBe(false);
   });
-  it("starts work on other units but not on a locked one", () => {
-    const state = run(start(job("a", { unitIds: [3, 4] })));
-    expect(canStart(state, job("b", { unitIds: [5] }))).toBe(true);
-    expect(canStart(state, job("b", { unitIds: [4, 5] }))).toBe(false);
-    expect(canStart(INITIAL_FOCUS_STATE, job("b", { isGlobal: true }))).toBe(true);
+  it("does not lock a box whose decision is being saved - it can be picked and decided again (A1-R4)", () => {
+    expect(isUnitLocked(run(start(job("a", { kind: "save", unitIds: [3] }))), 3)).toBe(false);
+    expect(isUnitLocked(run(start(job("a", { kind: "bulk", unitIds: [3] }))), 3)).toBe(false);
+    expect(isUnitLocked(run(start(job("a", { kind: "join", unitIds: [3] }))), 3)).toBe(true);
   });
-  it("never runs global work beside other work", () => {
-    expect(canStart(run(start(job("a", { unitIds: [3] }))), job("g", { isGlobal: true }))).toBe(false);
-    expect(canStart(run(start(job("g", { isGlobal: true }))), job("b", { unitIds: [9] }))).toBe(false);
+  it("still locks a box that a save and an edit both hold", () => {
+    expect(isUnitLocked(run(start(job("a", { kind: "save", unitIds: [3] })), start(job("b", { kind: "split", unitIds: [3] }))), 3)).toBe(true);
+  });
+  it("drops the follows again when waiting global work is finally sent", () => {
+    const state = run(pick(unit(3)), start(job("u", { kind: "undo", isGlobal: true })), start(job("a")), succeed("a", 10), { type: "dropFollows" });
+    expect(state.follows).toEqual([]);
+    expect(reduceFocus(state, { type: "dropFollows" })).toBe(state);
   });
   it("drops older follows when global work starts - Undo may retire the box they would pick", () => {
     const state = run(pick(unit(3)), start(job("a")), succeed("a", 10), start(job("u", { kind: "undo", isGlobal: true })));

@@ -64,6 +64,8 @@ export type FocusEvent =
   | { type: "start"; pending: Pending }
   | { type: "succeed"; pendingId: string; docId: number | null; revision: number | null; pickUnitId: number | null }
   | { type: "fail"; pendingId: string }
+  // 줄에서 기다리던 묶음 전체 일을 이제 보낸다 - 그 사이 앞 편집이 건 따라가기를 버린다(은퇴할 Unit을 고르지 않게)
+  | { type: "dropFollows" }
   // 한 번에 받은 문서들(지금은 Old 문서 전부 또는 한 단 New 문서 하나). liftUnit - 고를 수 있는 Unit으로 올린다(자기 · 묶음 · 없으면 null)
   | { type: "loaded"; docs: readonly LoadedDoc[]; liftUnit: (unitId: number) => number | null };
 
@@ -101,6 +103,8 @@ export function reduceFocus(state: FocusState, event: FocusEvent): FocusState {
       const pending = state.pending.filter((item) => item.id !== event.pendingId);
       return pending.length === state.pending.length ? state : { ...state, pending };
     }
+    case "dropFollows":
+      return state.follows.length === 0 ? state : { ...state, follows: [] };
     case "loaded":
       return applyLoaded(state, event).state;
   }
@@ -159,9 +163,14 @@ function dropVanished(focus: Focus, docs: readonly LoadedDoc[]): Focus {
 /** 처리 중인 일 목록만 - 화면 훅이 같은 렌더 안의 잇단 누름을 막으려고 따로 쥔 목록도 같은 규칙으로 본다 */
 type PendingList = { pending: readonly Pending[] };
 
-/** 처리 중인 일이 잡은 Unit인가 - 잠긴 박스는 고르기 · 끌기 · 틈 단추 · 우클릭 메뉴를 받지 않는다(규칙 6) */
+/** 판단 저장 - 박스의 모양을 바꾸지 않아 잠그지 않는다(A1-R4). 같은 박스에 이어 누른 것은 큐가 앞 응답의 revision으로 보낸다 */
+export function isDecisionKind(kind: PendingKind): boolean {
+  return kind === "save" || kind === "bulk";
+}
+
+/** 처리 중인 일이 잡은 Unit인가 - 잠긴 박스는 고르기 · 끌기 · 틈 단추 · 우클릭 메뉴를 받지 않는다(규칙 6). 판단 저장 중인 박스는 잠기지 않는다 */
 export function isUnitLocked(state: PendingList, unitId: number): boolean {
-  return state.pending.some((entry) => entry.unitIds.includes(unitId));
+  return state.pending.some((entry) => !isDecisionKind(entry.kind) && entry.unitIds.includes(unitId));
 }
 
 /** 묶음 전체 일(초기화 · 일괄 수락 · 같은 글자 일괄 확정 · Undo/Redo)이 처리 중인가 - 그동안은 모든 일이 꺼진다 */
