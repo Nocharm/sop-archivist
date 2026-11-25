@@ -1559,6 +1559,9 @@
   .pending-pill { position: absolute; z-index: 3; display: inline-flex; align-items: center; height: 18px; padding: 0 8px; border: 1px solid var(--accent); border-radius: 9px; background: var(--surface); color: var(--accent); font: 600 var(--fs-cap) / 1 var(--font-ui); white-space: nowrap; box-shadow: var(--shadow-1); pointer-events: none; }
   :is(.strip, .cell-piece) > .pending-pill { top: -9px; left: var(--pg-pad-l, 12px); }
   .cell-piece > .pending-pill { left: 4px; }
+  /* 기다리는 명령의 칩 - 아직 보내지 않아 테두리 · 글이 옅다. 같은 박스에 처리 중 알약이 있으면 오른쪽 끝으로 비킨다 */
+  .pending-pill.queue-chip { border-color: var(--line-2); color: var(--ink-2); }
+  :is(.strip, .cell-piece) > .pending-pill + .queue-chip { right: 8px; left: auto; }
   :is(.strip-gap, .cell-gap) > .pending-pill { top: 50%; left: calc(min(var(--gap-tab, 0px), var(--gap-tab-cap, 9999px)) + var(--pg-pad-l, 0px)); translate: 0 -50%; }
   .strip-gap:has(> .pending-pill) { z-index: 2; }
   :is(.unwrap-head, .toc-head-row) > .pending-pill { position: static; margin-left: 8px; }
@@ -1708,6 +1711,11 @@
 /* ---- Assign: Old 조각 ‖ New 원문 나란히(설계 2026-11-09-assign-unified §3, docs/architecture/decisions.md) ---- */
 @layer components {
   .assign-desk { display: grid; grid-template-rows: auto minmax(0, 1fr); gap: 10px; min-width: 0; min-height: 0; padding: 10px 14px 14px; background: var(--bg); }
+  /* 실패해 멈춘 명령의 알림 한 줄 - 위쪽 줄과 두 문서 사이에 제 줄을 얻는다(문서를 덮지 않는다) */
+  .assign-desk:has(> .queue-failed) { grid-template-rows: auto auto minmax(0, 1fr); }
+  .queue-failed { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 6px 10px; border: 1px solid var(--st-hold-line); border-radius: var(--r-2); background: var(--st-hold-tint); color: var(--ink); font-size: var(--fs-cap); line-height: 18px; }
+  .queue-failed > svg { flex: none; color: var(--st-hold-ink); }
+  .queue-failed > .btn { flex: none; }
     /* 상태 칩 한 벌 - Unit 상태·Assign 필터·용지 보류. 각진 mono 대문자, 톤마다 --sc-ink/--sc-tint, 고른 필터는 --sc-ink 채움 */
   .schip { --sc-ink: var(--ink-2); --sc-tint: var(--sunken); display: inline-flex; align-items: center; gap: 4px; height: 18px; padding: 0 6px 0 5px; border: 0; border-radius: var(--r-1); background: var(--sc-tint); color: var(--sc-ink); font: 700 9.5px / 1 var(--font-mono); letter-spacing: .03em; text-transform: uppercase; white-space: nowrap; }
   .schip[data-size="sm"] { height: 15px; gap: 3px; padding: 0 4px; font-size: 9px; }

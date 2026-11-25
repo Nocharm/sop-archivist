@@ -3,8 +3,8 @@ import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { DocumentView, UnitRow } from "./api-sop";
-import { EMPTY_DOC_VIEWS, groupUnitsByDoc, listDocUnits, listDocViews, listPlacedSince, mergeDocBatch, useDocViews, type DocBatch } from "./use-doc-views";
+import type { Decision, DocumentView, UnitRow } from "./api-sop";
+import { EMPTY_DOC_VIEWS, groupUnitsByDoc, listDocUnits, listDocViews, listPlacedSince, mergeDocBatch, patchUnitDecisions, useDocViews, type DocBatch } from "./use-doc-views";
 
 const api = vi.hoisted(() => ({ calls: [] as string[], revision: new Map<number, number>() }));
 vi.mock("./api-sop", () => ({
@@ -24,6 +24,28 @@ vi.mock("./api-sop", () => ({
 const view = (docId: number, revision = 1) => ({ document: { id: docId, revision }, units: [] }) as unknown as DocumentView;
 const row = (unitId: number, docId: number) => ({ unit_id: unitId, document_id: docId }) as UnitRow;
 const batch = (seq: number, views: DocumentView[], units: Array<[number, UnitRow[]]> = [], asked: number[] = []): DocBatch => ({ seq, views, units: new Map(units), asked });
+
+describe("patchUnitDecisions", () => {
+  const decision = { disposition: "delete", status: "confirmed", revision: 4 } as Decision;
+  it("puts a save's decisions on its rows without counting a placement", () => {
+    const placed = mergeDocBatch(EMPTY_DOC_VIEWS, batch(1, [view(1), view(2)], [[1, [row(10, 1), row(11, 1)]], [2, [row(20, 2)]]]));
+    const next = patchUnitDecisions(placed, 2, new Map([[10, decision]]));
+    expect(next.units.get(1)).toEqual([{ ...row(10, 1), decision, status: "confirmed" }, row(11, 1)]);
+    expect(next.units.get(2)).toBe(placed.units.get(2));
+    expect(next.placed).toBe(placed.placed);
+    expect(next.placedAt).toBe(placed.placedAt);
+  });
+  it("is not undone by rows asked before the save, and gives way to rows asked after it", () => {
+    const placed = mergeDocBatch(EMPTY_DOC_VIEWS, batch(1, [view(1)], [[1, [row(10, 1)]]]));
+    const patched = patchUnitDecisions(placed, 3, new Map([[10, decision]]));
+    expect(mergeDocBatch(patched, batch(2, [], [[1, [row(10, 1)]]])).units.get(1)).toEqual([{ ...row(10, 1), decision, status: "confirmed" }]);
+    expect(mergeDocBatch(patched, batch(4, [], [[1, [row(10, 1)]]])).units.get(1)).toEqual([row(10, 1)]);
+  });
+  it("keeps the same state when no row is named", () => {
+    const placed = mergeDocBatch(EMPTY_DOC_VIEWS, batch(1, [view(1)], [[1, [row(10, 1)]]]));
+    expect(patchUnitDecisions(placed, 2, new Map([[99, decision]]))).toBe(placed);
+  });
+});
 
 describe("mergeDocBatch", () => {
   it("places a document's view and rows together and counts one placement", () => {
@@ -86,6 +108,20 @@ describe("useDocViews", () => {
     api.calls = [];
     api.revision.clear();
     box.renders = [];
+  });
+
+  it("does not place a view an Undo overtook, and stops counting it as being read", async () => {
+    const root = createRoot(document.createElement("div"));
+    await act(async () => root.render(createElement(Harness)));
+    const placed = box.docs?.placed;
+    api.revision.set(1, 2);
+    let isOk: boolean | undefined;
+    await act(async () => {
+      isOk = await box.docs?.reload({ docs: [1], units: [1] }, () => false);
+    });
+    expect([isOk, box.docs?.placed, box.docs?.isReloading(1)]).toEqual([true, placed, false]);
+    expect(box.renders.at(-1)).toBe("1/1");
+    await act(async () => root.unmount());
   });
 
   it("after an edit fetches only that document's view and rows, and they arrive in one render", async () => {

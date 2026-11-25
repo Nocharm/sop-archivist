@@ -520,12 +520,12 @@ export function AssignSidePanel({ state, headEnd }: { state: AssignPageState; he
         <div className="flex flex-wrap gap-1.5">
           {/* 출처 문장이 없어진 번역(배정 취소)은 지우기만 */}
           {openTranslations.some((item) => item.can_confirm) && (
-            <button type="button" className="btn h-7" data-testid="assign-translation-confirm" disabled={isAnyPending || translationBlocked} onClick={() => void settleTranslations(openTranslations, "confirm")}>
+            <button type="button" className="btn h-7" data-testid="assign-translation-confirm" disabled={isAnyPending || translationBlocked} onClick={() => settleTranslations(openTranslations, "confirm")}>
               <Check size={14} strokeWidth={1.5} aria-hidden />
               {t("assign.hidden.translationConfirm")}
             </button>
           )}
-          <button type="button" className="btn h-7" data-testid="assign-translation-remove" disabled={isAnyPending || translationBlocked} onClick={() => void settleTranslations(openTranslations, "remove")}>
+          <button type="button" className="btn h-7" data-testid="assign-translation-remove" disabled={isAnyPending || translationBlocked} onClick={() => settleTranslations(openTranslations, "remove")}>
             <Trash2 size={14} strokeWidth={1.5} aria-hidden />
             {t("assign.hidden.translationRemove")}
           </button>
@@ -553,11 +553,11 @@ export function AssignSidePanel({ state, headEnd }: { state: AssignPageState; he
   // 배정 취소는 배정이 있을 때만 보인다(쓸 수 없는 단추는 숨긴다 - 1.2.0 피드백). 좁은 폭에서는 글쇠 표시를 뺀다 - 단축키는 Help에 있다
   const actions = canEdit && row && (
     <div className="@container flex gap-1.5" data-testid="assign-actions">
-      <button type="button" className="btn assign-alt flex-1" data-testid="assign-hold" disabled={busy || legacyMove !== null} onClick={() => void runSave("hold")}>
+      <button type="button" className="btn assign-alt flex-1" data-testid="assign-hold" disabled={busy || legacyMove !== null} onClick={() => runSave("hold")}>
         {t("classify.hold")} <kbd className="@max-[200px]:hidden">H</kbd>
       </button>
       {canClear && (
-        <button type="button" className="btn assign-alt flex-1" data-testid="assign-clear" disabled={busy} onClick={() => void runClear()}>
+        <button type="button" className="btn assign-alt flex-1" data-testid="assign-clear" disabled={busy} onClick={() => runClear()}>
           <Undo2 size={13} strokeWidth={1.5} aria-hidden />
           {t(isRowDeleted ? "assign.ctx.undoDelete" : "classify.clear")} <kbd className="@max-[200px]:hidden">U</kbd>
         </button>
@@ -669,15 +669,15 @@ export function AssignSidePanel({ state, headEnd }: { state: AssignPageState; he
   function runCaptionCandidate(candidate: Exclude<CaptionCandidate, { kind: "write" }>) {
     if (!rowBundle || !captionSlot) return;
     const { bundleId } = captionSlot;
-    if (candidate.kind === "near") void runUnitEdit({ type: "attach_caption", unit_id: candidate.unitId, bundle_unit_id: bundleId }, t("assign.ctx.didAttachCaption"), bundleId);
-    else if (candidate.kind === "first_row") void runUnitEdit({ type: "set_first_row_caption", table_unit_id: bundleId, caption: true }, t("assign.captionSlot.didFirstRow"), bundleId);
-    else void runUnitEdit({ type: "group_figures", unit_ids: [rowBundle.id, candidate.figureId] }, t("assign.captionSlot.didGroup"), rowBundle.id);
+    if (candidate.kind === "near") runUnitEdit({ type: "attach_caption", unit_id: candidate.unitId, bundle_unit_id: bundleId }, t("assign.ctx.didAttachCaption"), bundleId);
+    else if (candidate.kind === "first_row") runUnitEdit({ type: "set_first_row_caption", table_unit_id: bundleId, caption: true }, t("assign.captionSlot.didFirstRow"), bundleId);
+    else runUnitEdit({ type: "group_figures", unit_ids: [rowBundle.id, candidate.figureId] }, t("assign.captionSlot.didGroup"), rowBundle.id);
   }
   /** ✂ 한/영 나누기 - 모델이 고른 자리를 나눌 수 있는 자리로 맞춰 자른다(두 조각 모두 그 묶음의 캡션으로 남는다) */
   function splitCaption(unitId: number, at: number) {
     const unit = shapeModel?.units.get(unitId);
     const cut = unit ? findNearestCut(unit, at) : null;
-    if (cut !== null && captionSlot) void runUnitEdit({ type: "split", unit_id: unitId, at: cut }, t("assign.captionSlot.didSplit"), captionSlot.bundleId);
+    if (cut !== null && captionSlot) runUnitEdit({ type: "split", unit_id: unitId, at: cut }, t("assign.captionSlot.didSplit"), captionSlot.bundleId);
   }
   function renderCaptionSlot(): ReactNode {
     if (!captionSlot || !rowBundle) return null;
@@ -695,10 +695,10 @@ export function AssignSidePanel({ state, headEnd }: { state: AssignPageState; he
         onCandidate={runCaptionCandidate}
         onWrite={startEdit}
         onPickLine={() => startCaptionPick(bundleId)}
-        onDetach={(unitId) => void runUnitEdit({ type: "detach_caption", unit_id: unitId }, t("assign.ctx.didDetachCaption"), bundleId)}
+        onDetach={(unitId) => runUnitEdit({ type: "detach_caption", unit_id: unitId }, t("assign.ctx.didDetachCaption"), bundleId)}
         onSplit={splitCaption}
-        onBackFirstRow={() => void runUnitEdit({ type: "set_first_row_caption", table_unit_id: bundleId, caption: false }, t("assign.captionSlot.didBackFirstRow"), bundleId)}
-        onUngroup={() => void runUnitEdit({ type: "ungroup_figures", unit_id: rowBundle.id }, t("assign.captionSlot.didUngroup"), groupHeadId)}
+        onBackFirstRow={() => runUnitEdit({ type: "set_first_row_caption", table_unit_id: bundleId, caption: false }, t("assign.captionSlot.didBackFirstRow"), bundleId)}
+        onUngroup={() => runUnitEdit({ type: "ungroup_figures", unit_id: rowBundle.id }, t("assign.captionSlot.didUngroup"), groupHeadId)}
       />
     );
   }
@@ -723,8 +723,8 @@ export function AssignSidePanel({ state, headEnd }: { state: AssignPageState; he
             busy={busy}
             blockedReason={refBlocked}
             left={refPendingIds.length}
-            onConfirm={(number) => void runUnitEdit({ type: "set_ref", unit_id: rowRefUnit.id, number }, t("assign.ref.didConfirm"), rowRefUnit.id)}
-            onReject={() => void runUnitEdit({ type: "clear_ref", unit_id: rowRefUnit.id }, t("assign.ref.didReject"), rowRefUnit.id)}
+            onConfirm={(number) => runUnitEdit({ type: "set_ref", unit_id: rowRefUnit.id, number }, t("assign.ref.didConfirm"), rowRefUnit.id)}
+            onReject={() => runUnitEdit({ type: "clear_ref", unit_id: rowRefUnit.id }, t("assign.ref.didReject"), rowRefUnit.id)}
             onClose={() => setRefEntryId(null)}
             onNext={selectNextRef}
           />
@@ -736,8 +736,8 @@ export function AssignSidePanel({ state, headEnd }: { state: AssignPageState; he
             candidates={refCandidates}
             canEdit={canEdit && mode === "old"}
             busy={busy}
-            onDetach={(refId) => void runCaptionRefChange(refId, { state: "detached" }, t("assign.captionRef.didDetach"))}
-            onRelink={(refId, unitId) => void runCaptionRefChange(refId, { target_unit_id: unitId }, t("assign.captionRef.didRelink"))}
+            onDetach={(refId) => runCaptionRefChange(refId, { state: "detached" }, t("assign.captionRef.didDetach"))}
+            onRelink={(refId, unitId) => runCaptionRefChange(refId, { target_unit_id: unitId }, t("assign.captionRef.didRelink"))}
           />
         )}
         {rowSplitUnit && rowSplit && (
@@ -748,8 +748,8 @@ export function AssignSidePanel({ state, headEnd }: { state: AssignPageState; he
             busy={busy}
             blockedReason={splitBlocked}
             left={splitByUnit.size}
-            onApply={() => void applySplitSuggestion(rowSplitUnit, rowSplit)}
-            onDismiss={() => void dismissSplitSuggestion(rowSplit)}
+            onApply={() => applySplitSuggestion(rowSplitUnit, rowSplit)}
+            onDismiss={() => dismissSplitSuggestion(rowSplit)}
             onNext={selectNextSplit}
           />
         )}

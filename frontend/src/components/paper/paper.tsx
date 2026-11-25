@@ -70,6 +70,8 @@ export interface PaperPending {
   shimmerIds: ReadonlySet<number>;
   lockedIds: ReadonlySet<number>;
   pills: readonly { id: string; kind: string; label: string; place: PendingPlace }[];
+  /** 기다리는 명령의 박스 → 차례(첫째 대기 = 1) - 칩 "대기 n" */
+  waits: ReadonlyMap<number, number>;
 }
 
 /** 목차 줄(잡음 표시가 붙은 글 조각)인가 - 목차 블록으로 접는 화면(strips.toc)에서만 묻는다 */
@@ -793,6 +795,17 @@ export function Paper({
     ));
   }
 
+  /** 앞 명령을 기다리는 박스의 칩 "대기 n"(A1-R5) */
+  function renderWaitChip(unitId: number | null | undefined): ReactNode {
+    const n = unitId === null || unitId === undefined ? undefined : strips?.pending?.waits.get(unitId);
+    if (n === undefined) return null;
+    return (
+      <span className="pending-pill queue-chip" role="status" data-testid={`assign-queue-${unitId}`}>
+        {t("assign.queue.chip", { n })}
+      </span>
+    );
+  }
+
   /** 두 박스 사이 틈의 알약(붙이기 · 틈에서 맺은 짝) */
   function renderGapPills(prev: PaperRow, next: PaperRow): ReactNode {
     const firstId = readRowUnitId(prev);
@@ -1006,6 +1019,7 @@ export function Paper({
             <p data-block={cell.id}>{row.parts[0].segments.map((segment, at) => renderSegment(cell, segment, at))}</p>
             {renderActions(unit?.id)}
             {unit !== undefined && renderPendingPills((place) => place.at === "box" && place.unitId === unit.id)}
+            {renderWaitChip(unit?.id)}
           </div>
         </Fragment>
       );
@@ -1265,6 +1279,7 @@ export function Paper({
           {foot}
           {unit !== undefined && unit.id === selectedId && renderPairHint(unit.id)}
           {renderPendingPills((place) => (place.at === "box" && place.unitId === unitId) || (place.at === "table" && row.type === "table" && place.tableId === row.item.table.id))}
+          {renderWaitChip(unitId)}
           {pills}
           {renderMarks(unit, hasWarn, "strip-marks", inPairCard)}
           {row.type === "piece" && renderLang(unit)}
