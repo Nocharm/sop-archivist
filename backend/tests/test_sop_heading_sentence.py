@@ -4,8 +4,10 @@
 import httpx2
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.sop.models import Extraction
 from app.sop.numbering import NUMBER_PAIR, ClauseLine, find_inherited_numbers
 from app.sop.segment import BlockView, build_unit_drafts, is_heading_like, suggest_interleaved_pairs
 from app.sop.units import verify_document_coverage
@@ -230,3 +232,54 @@ def test_heading_to_sentence_and_back(client: TestClient) -> None:
     assert response.status_code == 200, response.text
     assert _shape(get_view(client, bundle_id, doc_id))[0] == ("heading", TITLE_EN, False, "5.2")
     _check_coverage(doc_id)
+
+
+MIXED = (
+    "5.3 배출 밸브를 모두 닫는다. 닫힌 것을 확인한다. Close all drain valves. Confirm that they are closed."
+)
+MIXED_SENTENCES = {
+    1: [
+        ("5.3 배출 밸브를 모두 닫는다.", "ko"), ("닫힌 것을 확인한다.", "ko"), ("Close all drain valves.", "ko"),
+        ("Confirm that they are closed.", "ko"),
+    ],
+    2: [
+        ("5.3 배출 밸브를 모두 닫는다. 닫힌 것을 확인한다.", "ko"),
+        ("Close all drain valves. Confirm that they are closed.", "en"),
+    ],
+}
+
+
+def _set_split_rule(doc_id: int, rule: int) -> None:
+    async def _run(session: AsyncSession) -> None:
+        await session.execute(update(Extraction).where(Extraction.document_id == doc_id).values(split_rule=rule))
+        await session.commit()
+
+    run_in_session(_run)
+
+
+@pytest.mark.parametrize("rule", [1, 2])
+def test_heading_to_sentence_keeps_the_documents_rule(client: TestClient, rule: int) -> None:
+    # 이미 올린 문서(규칙 1)는 편집으로 박스를 다시 만들어도 규칙 1 그대로다 — 언어도 전처럼 제목의 것을 잇는다
+    bundle_id = create_bundle(client, is_synthetic=True)["id"]
+    response = upload(client, bundle_id, build_docx(p(MIXED, "En2"), styles=STYLES), OLD_NAME)
+    doc_id = response.json()["id"]
+    _set_split_rule(doc_id, rule)
+    sentences = [unit["id"] for unit in get_view(client, bundle_id, doc_id)["units"]]
+    joined = _edit(client, bundle_id, doc_id, {"type": "set_heading", "unit_ids": sentences, "heading": True})
+    assert joined.status_code == 200, joined.text
+    heading = find_unit(get_view(client, bundle_id, doc_id), MIXED)
+
+    response = _edit(client, bundle_id, doc_id, {"type": "set_heading", "unit_ids": [heading["id"]], "heading": False})
+
+    assert response.status_code == 200, response.text
+    view = get_view(client, bundle_id, doc_id)
+    assert [(unit["text"], unit["lang"]) for unit in view["units"]] == MIXED_SENTENCES[rule]
+    assert all(unit["from_heading"] for unit in view["units"])
+    _check_coverage(doc_id)
+    _step(client, bundle_id, doc_id, "undo")
+    assert [(unit["kind"], unit["text"]) for unit in get_view(client, bundle_id, doc_id)["units"]] == [("heading", MIXED)]
+    _step(client, bundle_id, doc_id, "redo")
+    again = [unit["id"] for unit in get_view(client, bundle_id, doc_id)["units"]]
+    back = _edit(client, bundle_id, doc_id, {"type": "set_heading", "unit_ids": again[:1], "heading": True})
+    assert back.status_code == 200, back.text
+    assert [(unit["kind"], unit["text"]) for unit in get_view(client, bundle_id, doc_id)["units"]] == [("heading", MIXED)]
