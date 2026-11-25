@@ -13,7 +13,7 @@ import { findNewLine, findOldStrip, readNewLineEnd, readOldLineStart } from "@/c
 import { type JoinMenuItem } from "@/components/assign/join-menu";
 import { type ResetScope } from "@/components/assign/reset-modal";
 import { type AiAskItem } from "@/components/manage/ai-ask-menu";
-import { flashElement, useUnwrapMotion } from "@/components/ui/motion";
+import { flashElement, useUnwrapMotion, type UnwrapHandle, type UnwrapRunOptions } from "@/components/ui/motion";
 import { showToast } from "@/components/ui/toast";
 import { ApiError } from "@/lib/api";
 import { humanizeApiError } from "@/lib/api-errors";
@@ -53,6 +53,7 @@ import { isBarrier, listUnsettled } from "@/lib/command-queue";
 import { pickDocRevision } from "@/lib/doc-revision";
 import { isQueuedKey, isRepeatIgnored } from "@/lib/assign-press-model";
 import { pickNextBox, type PendingOutcome } from "@/lib/next-box-model";
+import { listExpectedNumbers, readExpectedNumber, type SentNumber } from "@/lib/number-arrival-model";
 import { buildReloadAsk, isDocReload, isEmptyReload, mergeReloads, NO_RELOAD_ASK, splitReload, type ReloadAsk } from "@/lib/reload-ask-model";
 import { createWriteLog } from "@/lib/write-log";
 import type { PaperPending } from "@/components/paper/paper";
@@ -295,6 +296,24 @@ function isSentDraft(draft: PageDraft | undefined, sent: PageDraft, reason: stri
 /** 누른 판단(확정 · 보류 · 삭제 · 배정 취소 · 일괄)인가 */
 function isDecisionCommand({ payload }: { payload: AssignCommand }): boolean {
   return payload.kind === "save" || payload.kind === "clear" || payload.kind === "bulk";
+}
+
+/** 아직 응답이 오지 않은 판단이 줄을 어떻게 만드나 - 다음 박스를 고를 때 이미 된 것으로 세고, 삭제는 용지가 바로 접는다 */
+function readPendingOutcomes(unsettled: ReadonlyArray<{ payload: AssignCommand }>): ReadonlyMap<string, PendingOutcome> {
+  const outcomes = new Map<string, PendingOutcome>();
+  for (const { payload } of unsettled) {
+    if (payload.kind === "bulk") for (const item of payload.rows) outcomes.set(item.rowKey, "deleted");
+    else if (payload.kind === "save") outcomes.set(payload.rowKey, payload.action === "hold" ? "held" : payload.destination?.kind === "delete" ? "deleted" : "confirmed");
+    else if (payload.kind === "clear") outcomes.delete(payload.rowKey);
+  }
+  return outcomes;
+}
+
+/** 편집이 풀기 전환(F10)으로 바뀌는 곳 - 표 벗기기 · 다시 표로(바로 안쪽 띠 표도 함께 제목 줄 ↔ 표로 바뀐다, F2)와 캡션. 아니면 null */
+function readUnwrapOptions(op: EditOp, view: DocumentView, followId: number | null): UnwrapRunOptions | null {
+  return op.type === "set_layout_table"
+    ? { scopes: listUnwrapScopes(new Map(view.tables.map((table) => [table.id, table])), op.table_id), reverse: !op.is_layout }
+    : getCaptionMotion(op, followId);
 }
 
 /** 다시 읽기 - 판단 저장 · AI 작업 끝 · 일괄 일 뒤(Unit 줄 전체와 판단이 바꾸는 목록 모두). withViews면 Old 문서 보기도(서버가 짝을 정리했다) */
@@ -566,14 +585,46 @@ export function useAssignPage() {
   }, [tocPick, viewList, t]);
   const [soloKey, setSoloKey] = useState(0);
   const soloLoad = useLoaded<DocumentView | null>(() => (solo !== null ? getDocumentView(bundleId, solo.docId) : Promise.resolve(null)), `${bundleId}:${solo?.docId ?? ""}:${soloKey}`);
+  // 표 벗기기 · 다시 표로의 풀기 전환(걷기 · 펼치기 · 붙이기, F10) - Old 칸 안에서 바뀌는 표를 찾고 잰다.
+  // 큐가 누른 순간 시작하고, 받은 보기를 고름에 알릴 때 따라가기 스크롤을 전환 뒤로 미루므로(B3) 둘보다 먼저 둔다
+  const oldPaneRef = useRef<HTMLElement | null>(null);
+  const unwrapMotion = useUnwrapMotion(oldPaneRef);
+  // 누른 순간 걷기를 시작한 풀기 전환(A2-R6), 명령 id마다 - 처리 중과 함께 시작하고, 새 보기를 놓기 전에 끝나면(거절 · 되묻기 · 버림) 거꾸로 돌린다.
+  // null은 앞 전환이 아직 돌아 그 뒤에 시작할 것
+  const unwrapStarts = useRef(new Map<string, UnwrapHandle | null>());
+  function startUnwrap(id: string, command: WriteCommand) {
+    const options = command.kind === "edit" && oldDocIds.includes(command.docId) ? readUnwrapOptions(command.op, command.view, command.followId) : null;
+    if (options === null) return;
+    const begin = () => {
+      if (unwrapStarts.current.get(id) !== null || unwrapMotion.afterMotion(begin)) return;
+      unwrapStarts.current.set(id, unwrapMotion.begin(options));
+    };
+    unwrapStarts.current.set(id, null);
+    begin();
+  }
+  /** 누른 순간 시작한 전환(없으면 지금 시작)을 넘겨받는다 - 이 뒤로는 끝나도 거꾸로 돌리지 않는다 */
+  function takeUnwrap(id: string, options: UnwrapRunOptions): UnwrapHandle {
+    const started = unwrapStarts.current.get(id) ?? unwrapMotion.begin(options);
+    unwrapStarts.current.delete(id);
+    return started;
+  }
+  function endCommand(id: string) {
+    focusCtl.end(id);
+    const started = unwrapStarts.current.get(id);
+    unwrapStarts.current.delete(id);
+    started?.revert();
+  }
   // 모든 쓰기가 지나는 한 줄(A1) - 아래 줄 없는 이펙트가 커밋마다 돌린다
   const commands = useCommandQueue(
     {
       pick: focusCtl.pick,
       readFocus: () => liveRef.current.focus,
       readSeen: (unitIds) => readSeen(unitIds),
-      start: focusCtl.start,
-      end: focusCtl.end,
+      start: (pending, command) => {
+        focusCtl.start(pending);
+        startUnwrap(pending.id, command);
+      },
+      end: (id) => endCommand(id),
       dropFollows: focusCtl.dropFollows,
       isSoloLoading: soloLoad.isLoading,
       send: (command, ctx) => sendCommand(command, ctx),
@@ -592,10 +643,6 @@ export function useAssignPage() {
   // 받은 보기를 고름에 알린다 - 편집 응답에서 건 따라가기가 그 박스를 고르고(고름이 누른 때 그대로일 때만), 사라진 Unit의 고름은 놓는다
   // (렌더 중 상태 맞추기, D1 규칙 3 · 5). Old 문서는 보기와 그 문서 줄을 한 번에 놓은 뒤에(useDocViews) - 줄은 둘 다에서 나와, 새 보기에 옛 줄이 섞인 렌더가 없다.
   // 알리는 문서는 이번에 보기를 놓은 문서만(줄만 다시 받았으면 모든 문서) - 다른 문서의 고름은 그 문서 보기가 오지 않았으니 그대로다
-  // 표 벗기기 · 다시 표로의 풀기 전환(걷기 · 펼치기 · 붙이기, F10) - Old 칸 안에서 바뀌는 표를 찾고 잰다.
-  // 받은 보기를 고름에 알릴 때 따라가기 스크롤을 전환 뒤로 미루므로(B3) 그보다 먼저 둔다
-  const oldPaneRef = useRef<HTMLElement | null>(null);
-  const unwrapMotion = useUnwrapMotion(oldPaneRef);
   const [seenLoad, setSeenLoad] = useState<{ placed: number; solo: DocumentView | null }>({ placed: 0, solo: null });
   if (viewList !== null && unitList !== null && docViews.placed !== seenLoad.placed) {
     const placed = docViews.placed;
@@ -788,6 +835,14 @@ export function useAssignPage() {
   const pendingList = focusCtl.pending;
   const queueState = commands.state;
   const paperPending = useMemo(() => buildPaperPending(pendingList, queueState, t), [pendingList, queueState, t]);
+  // 누른 순간 보일 것(A2-R6) - 삭제를 눌렀고 아직 저장되지 않은 줄(접힌다, 멈춘 것도 버릴 때까지)과 저장을 기다리는 번호의 기대 글(응답의 보기가 닿으면 그 값이 이긴다).
+  // 내용이 같으면 같은 값이다 - 큐가 움직일 때마다 용지의 먼 덩어리를 다시 그리지 않게
+  const [sentNumbers, setSentNumbers] = useState<readonly SentNumber[]>([]);
+  const pendingDeleteKey = JSON.stringify([...readPendingOutcomes(listUnsettled(queueState))].flatMap(([key, outcome]) => (outcome === "deleted" ? [key] : [])));
+  const pendingDeletes = useMemo(() => new Set(JSON.parse(pendingDeleteKey) as string[]), [pendingDeleteKey]);
+  const pendingOps = [queueState.running, ...queueState.waiting].flatMap((command) => (command?.payload.kind === "edit" ? [command.payload.op] : []));
+  const expectedNumberKey = JSON.stringify(listExpectedNumbers(pendingOps, sentNumbers, viewList ?? []));
+  const expectedNumbers = useMemo(() => new Map(JSON.parse(expectedNumberKey) as Array<[number, string | null]>), [expectedNumberKey]);
   // Pair view - 한/영 따로 문서를 KO | EN 두 칸으로 편 문서 id. 이 화면을 연 동안만 기억한다(새로 고치면 꺼져 있다).
   // 다른 문서·한 단의 New 문서 원문·출처 없는 New로 가면 꺼진다(렌더 중 상태 맞추기 - dropLink와 같은 짜임)
   const [pairViewDoc, setPairViewDoc] = useState<number | null>(null);
@@ -1634,6 +1689,9 @@ export function useAssignPage() {
     }
     // 문서가 바뀌지 않은 편집(참조 제안 물리기)은 서버도 단계를 남기지 않는다
     if (revision !== sentRevision) markRecorded();
+    // 번호는 그 자리 편집이라 보기를 큐가 빌 때 받는다 - 그때까지 기대 글을 둔다
+    const sentNumber = isOld ? readExpectedNumber(op) : null;
+    if (sentNumber !== null) setSentNumbers((prev) => [...prev.filter((item) => item.unitId !== sentNumber.unitId), { docId, revision, ...sentNumber }]);
     // 편집이 받아들여진 뒤에만 하는 일(AI 제안 채택 기록) - 실패하면 afterOk가 스스로 알린다
     await afterOk?.();
     setRefEntryId(null);
@@ -1645,11 +1703,9 @@ export function useAssignPage() {
     // 따라가기를 건 뒤에 알린다 - 바로 이어지는 되돌리기가 그 따라가기를 버릴 수 있게
     ctx.respond(ask.solo);
     // 표 벗기기 · 다시 표로와 캡션 붙이기 · 떼기 · 첫 행 올리기 · 그림 묶기 - 새 원문 보기를 먼저 받아 풀기 전환 안에서 놓는다
-    // (F10, 화면 안만 움직이고 움직임 줄이기면 번쩍임만). 캡션은 글이 캡션 자리로 미끄러져 들어간다. 알림은 전환 뒤
-    // 표는 바로 안쪽 띠 표도 함께 제목 줄 ↔ 표로 바뀐다(F2)
-    const motion = op.type === "set_layout_table"
-      ? { scopes: listUnwrapScopes(new Map(view.tables.map((table) => [table.id, table])), op.table_id), reverse: !op.is_layout }
-      : getCaptionMotion(op, followId);
+    // (F10, 화면 안만 움직이고 움직임 줄이기면 번쩍임만). 캡션은 글이 캡션 자리로 미끄러져 들어간다. 알림은 전환 뒤.
+    // 걷기는 누른 순간 이미 시작했다(startUnwrap) - 보기를 놓지 못하고 나가면 처리 중이 끝날 때 거꾸로 돈다
+    const motion = readUnwrapOptions(op, view, followId);
     if (motion !== null && isOld) {
       const fresh = ready ?? (await docViews.fetch({ docs: [docId], units: [docId] }).catch(() => null));
       if (fresh !== null && !ctx.isCurrent()) {
@@ -1660,10 +1716,15 @@ export function useAssignPage() {
         ctx.loseViews();
       } else {
         // 새 보기를 놓는 순간 처리 중을 걷는다 - 잠금 · 알약은 거기까지, 남은 움직임은 보이기만이다(다음 명령은 전환 끝까지 줄에서 기다린다)
-        await unwrapMotion.run(() => {
-          void placeReload(ask, ctx, fresh);
+        await takeUnwrap(ctx.id, motion).commit(() => {
+          // 남은 걷기를 기다리는 사이 되돌리기가 먼저 나갔으면 놓지 않는다 - 그 되돌리기의 보기와 두 번 놓이지 않게
+          if (ctx.isCurrent()) void placeReload(ask, ctx, fresh);
+          else {
+            requestReload(splitReload(ask).rest);
+            docViews.discard(fresh);
+          }
           focusCtl.end(ctx.id);
-        }, motion);
+        });
       }
     } else if (ready !== null) await placeReload(ask, ctx, ready);
     else await reloadAfter(ask, ctx, isWaited);
@@ -2297,17 +2358,6 @@ export function useAssignPage() {
     docViews.patchDecisions(new Map(saved.units.map((unit) => [unit.unit_id, unit.decision])));
   }
 
-  /** 아직 응답이 오지 않은 판단이 줄을 어떻게 만드나 - 다음 박스를 고를 때 이미 된 것으로 센다 */
-  function listPendingOutcomes(): ReadonlyMap<string, PendingOutcome> {
-    const outcomes = new Map<string, PendingOutcome>();
-    for (const { payload } of commands.listUnsettled()) {
-      if (payload.kind === "bulk") for (const item of payload.rows) outcomes.set(item.rowKey, "deleted");
-      else if (payload.kind === "save") outcomes.set(payload.rowKey, payload.action === "hold" ? "held" : payload.destination?.kind === "delete" ? "deleted" : "confirmed");
-      else if (payload.kind === "clear") outcomes.delete(payload.rowKey);
-    }
-    return outcomes;
-  }
-
   /**
    * 확정 뒤 고를 박스 - 고른 박스 둘레에서 같은 문서 · 같은 탭 · 거르기 목록 안, 되감기 없이(Assign 피드백 2026-11-20 항목 1).
    * 삭제는 바로 아래 박스(이미 삭제한 접힌 줄은 건너뜀), 다른 확정은 아래로 첫 미확정 박스. 저장 중인 것도 센다(lib/next-box-model)
@@ -2324,7 +2374,7 @@ export function useAssignPage() {
       from: saved.key,
       fromUnitId: pickedId,
       mode,
-      pending: listPendingOutcomes(),
+      pending: readPendingOutcomes(commands.listUnsettled()),
     });
   }
 
@@ -4238,7 +4288,7 @@ export function useAssignPage() {
     soloUnits, cutUnit, cutLine, linkedTargets, setManualPart, activePart, isFoldEmpty, foldElsewhere, writtenDocs, composedDocs,
     setManualNewDoc, toggleKey, liveDoc, isNewDocOpen, newDocId, newAiReturn, setNewAiReturn, isComposedDoc, newFileId, composedDoc,
     newRows, headingNotes, sectionMarks, joinableIds, templateTitles, linkPairs, view, changeView, zoomPane, setPanes, askAiScope,
-    aiMenuItems, remarkEdit, setRemarkEdit, focusAfterRef, firstTextRef, busy, isAnyPending, isGlobalPending: focusCtl.isGlobalPending, paperPending, editConfirm, answerEditConfirm, cancelEditConfirm, canUndoNow, queueFailure, retryCommand: commands.retry, discardCommands: commands.discard,
+    aiMenuItems, remarkEdit, setRemarkEdit, focusAfterRef, firstTextRef, busy, isAnyPending, isGlobalPending: focusCtl.isGlobalPending, paperPending, pendingDeletes, expectedNumbers, editConfirm, answerEditConfirm, cancelEditConfirm, canUndoNow, queueFailure, retryCommand: commands.retry, discardCommands: commands.discard,
     oldPaneRef, undoState, bulk, setBulk, runBulkDelete, runReset, confirmRemark, closeRemark, confirmingIdentical, setConfirmingIdentical,
     resetScope, setResetScope, accOpen, toggleAcc, saveUnits, slots, aiUnfilled, draftPlace, draftSectionKey, draftPosition, newDraft,
     draftSlotKey, placeResolved, canPlaceClick, pickedSpotKey, setCarvePick, carve, carveText, clearCarve, togglePairViewByButton,

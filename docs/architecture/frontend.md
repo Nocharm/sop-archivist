@@ -63,7 +63,8 @@ SOP 화면: `api-sop.ts`(SOP API 호출·응답 타입), 화면 규칙은 순수
 - 앱 안 이동은 `lib/nav-buffer.ts` `navigate()`(0.6초 버퍼, 같은 곳 재클릭·Esc 취소)로 하고 링크 클릭은 `components/nav-host.tsx`가 창 캡처 단계에서 같은 길로 돌린다 — 사람이 고른 이동에 `router.push`를 새로 쓰지 않는다(저장 안 한 변경 가드 `useLeaveGuard`도 이 길에 걸려 있다).
 - 접기·쉬머·폭 모핑·말줄임 툴팁은 `components/ui/motion.tsx`, 긴 목록은 `lib/use-progressive-list.ts`.
 - 목록 자리 바꿈(FLIP — 바뀔 줄만 재고 움직임 줄이기면 바로)은 `components/ui/motion.tsx` `useFlip`(거리는 `lib/flip.ts`).
-- 표 벗기기처럼 원문 모양이 바뀌는 전환(걷기 → 펼치기 → 붙이기, 줄마다 늦춤, 화면 안만, 움직임 줄이기면 바로 + 번쩍)은 `useUnwrapMotion`(`motion.tsx`, 사용법은 그 JSDoc, 순수 계산 `lib/unwrap-motion.ts`)으로 — 새로 짜지 않는다.
+- 표 벗기기처럼 원문 모양이 바뀌는 전환(걷기 → 펼치기 → 붙이기, 줄마다 늦춤, 화면 안만, 움직임 줄이기면 바로 + 번쩍)은 `useUnwrapMotion`(`motion.tsx`, 사용법은 그 JSDoc, 순수 계산 `lib/unwrap-motion.ts`)으로 — 새로 짜지 않는다. 누르면 `begin`(걷기), 새 모양을 받으면 그 손잡이의 `commit(change)`, 거절 · 되묻기면 `revert`(거꾸로)다. Assign은 큐의 처리 중 시작 · 끝(`CommandEnv.start` · `end`)에 걸어 둘 중 하나가 꼭 불린다.
+- 저장 전에 먼저 보이는 것(A2-R6)은 큐 상태에서 파생한다 — 삭제 접기는 `buildDeletedFolds`의 `pendingDeletes`(달리는 · 기다리는 · 멈춘 삭제의 줄 키, 접힘은 `Collapse startOpen`, 버린 삭제의 펼침은 `lib/use-released-folds.ts`), 번호는 `listExpectedNumbers`(응답 뒤 그 revision의 보기가 닿을 때까지, 실패하면 빠진다). 내용이 같으면 같은 값을 내려 용지의 먼 덩어리를 다시 그리지 않는다.
 - 호버로 드러나는 보조 단추는 `.row-actions`(`styles/motion.css`).
 
 ## 7. 상자 전체 끌기

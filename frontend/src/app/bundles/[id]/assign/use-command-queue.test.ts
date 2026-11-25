@@ -39,9 +39,10 @@ function createScreen() {
   const steps: Array<{ retired: number; made: number }> = [];
   let isUndoFocusGone = false;
   const unsent: Array<{ reason: string; n: number }> = [];
+  const motions: string[] = [];
   let lost = 0;
   const screen = {
-    log, dropped, refusals, unsent,
+    log, dropped, refusals, unsent, motions,
     lost: () => lost,
     /** 되돌리기 응답이 갈 자리를 알려 주지 않는다 */
     forgetUndoFocus: () => {
@@ -124,8 +125,14 @@ function createScreen() {
         pick: focusCtl.pick,
         readFocus: () => screen.focus,
         readSeen: (unitIds) => new Map(unitIds.map((id) => [id, screenRevision])),
-        start: focusCtl.start,
-        end: focusCtl.end,
+        start: (pending, command) => {
+          focusCtl.start(pending);
+          motions.push(`start ${command.kind === "global" ? command.label : command.kind}`);
+        },
+        end: (id) => {
+          focusCtl.end(id);
+          motions.push("end");
+        },
         dropFollows: focusCtl.dropFollows,
         isSoloLoading: false,
         send: async (command, ctx) => {
@@ -430,6 +437,18 @@ describe("a failure (A1-R7, AC3)", () => {
     await drain(screen);
     expect(screen.log).toEqual(["delete 1", "delete 2", "delete 2 again", "delete 3"]);
     expect(screen.commands.state).toEqual({ waiting: [], running: null, halted: null, asking: null });
+  });
+  it("starts the command's motion at the press and again on retry, and ends it when it fails or is dropped", async () => {
+    const screen = await open();
+    await press(screen, "m");
+    expect(screen.motions).toEqual(["start join 1"]); // 응답 전이다
+    await screen.respond(new Error("500"));
+    expect(screen.motions).toEqual(["start join 1", "end"]);
+    await act(async () => screen.commands.retry());
+    expect(screen.motions.slice(2)).toEqual(["start join 1"]);
+    await screen.respond(new Error("500"));
+    await act(async () => screen.commands.discard());
+    expect(screen.motions.slice(3)).toEqual(["end", "end"]);
   });
   it("discard empties the line and tells how many", async () => {
     const screen = await open();

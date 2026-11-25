@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { CoverStatus, Disposition, UnitRow } from "./api-sop";
-import { buildDeletedFolds, isDeletedLineOpen, readDeletedLine, type DeletedFoldOptions } from "./deleted-fold-model";
+import { buildDeletedFolds, isDeletedLineOpen, listReleasedFolds, readDeletedLine, type DeletedFoldOptions } from "./deleted-fold-model";
 
 type FoldUnit = Pick<UnitRow, "kind" | "lang" | "text" | "content_start" | "status" | "decision">;
 
@@ -17,7 +17,7 @@ const unit = (over: Partial<Omit<FoldUnit, "decision">> & { disposition?: Dispos
   };
 };
 
-const OPTIONS: DeletedFoldOptions = { filter: "all" };
+const OPTIONS: DeletedFoldOptions = { filter: "all", pendingDeletes: new Set() };
 
 describe("buildDeletedFolds", () => {
   it("folds a confirmed delete row and reads its line", () => {
@@ -76,6 +76,50 @@ describe("buildDeletedFolds", () => {
     const units = new Map([[1, unit()]]);
     expect(buildDeletedFolds(rows, units, { ...OPTIONS, filter: "confirmed" }).size).toBe(0);
     for (const filter of ["all", "unassigned", "on_hold", "ai_suggested"]) expect(buildDeletedFolds(rows, units, { ...OPTIONS, filter }).size).toBe(1);
+  });
+});
+
+describe("buildDeletedFolds while the delete is still being saved", () => {
+  const rows = [
+    { key: "u1", unitIds: [1] },
+    { key: "u2", unitIds: [2] },
+  ];
+  // u2는 아직 저장 전 - 보류 사유가 적힌 줄이다
+  const units = new Map([
+    [1, unit({ reason: "반복" })],
+    [2, unit({ status: "on_hold", disposition: "unassigned", reason: "물어볼 것", text: "장갑" })],
+  ]);
+
+  it("folds the row at the press and opens it again when the delete drops out of the queue", () => {
+    const folds = buildDeletedFolds(rows, units, { filter: "all", pendingDeletes: new Set(["u2"]) });
+    expect(folds.get(2)).toMatchObject({ rowKey: "u2", remark: "", isPending: true });
+    expect(folds.get(1)?.isPending).toBeUndefined();
+    // 실패해 빠지면 펼쳐진다
+    expect(buildDeletedFolds(rows, units, { filter: "all", pendingDeletes: new Set() }).has(2)).toBe(false);
+    expect(buildDeletedFolds(rows, units, { filter: "confirmed", pendingDeletes: new Set(["u2"]) }).size).toBe(0);
+  });
+
+  it("is an ordinary fold once the answer is in, even before the command leaves the queue", () => {
+    const saved = new Map([[2, unit({ reason: "반복" })]]);
+    expect(buildDeletedFolds([rows[1]], saved, { filter: "all", pendingDeletes: new Set(["u2"]) }).get(2)).toMatchObject({ remark: "반복" });
+    expect(buildDeletedFolds([rows[1]], saved, { filter: "all", pendingDeletes: new Set(["u2"]) }).get(2)?.isPending).toBeUndefined();
+  });
+
+  it("does not fold a row whose units are not loaded", () => {
+    expect(buildDeletedFolds([{ key: "u9", unitIds: [9] }], units, { filter: "all", pendingDeletes: new Set(["u9"]) }).size).toBe(0);
+  });
+
+  it("releases only a fold that was waiting for its answer - so the box opens instead of jumping", () => {
+    const folded = buildDeletedFolds(rows, units, { filter: "all", pendingDeletes: new Set(["u2"]) });
+    const reopened = buildDeletedFolds(rows, units, OPTIONS);
+    const released = listReleasedFolds(new Map(), folded, reopened);
+    expect([...released.keys()]).toEqual([2]);
+    expect(readDeletedLine(released, [2])?.rowKey).toBe("u2");
+    // 다시 받아도 남고(펼치는 중에 끊기지 않게), 다시 접히면 빠진다
+    expect([...listReleasedFolds(released, reopened, buildDeletedFolds(rows, units, OPTIONS)).keys()]).toEqual([2]);
+    expect(listReleasedFolds(released, reopened, folded).size).toBe(0);
+    // 저장까지 끝난 삭제가 풀리면(거르기 · 배정 취소) 감싸지 않는다
+    expect(listReleasedFolds(new Map(), reopened, new Map()).size).toBe(0);
   });
 });
 
