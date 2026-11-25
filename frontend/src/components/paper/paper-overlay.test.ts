@@ -32,8 +32,8 @@ const view: DocumentView = {
 const model = buildPaperModel(view);
 
 const make = (over: Partial<PaperOverlay> = {}): PaperOverlay => ({ isFolded: () => false, keyOf: () => "", boxProps: () => null, renderTop: () => null, ...over });
-function html(strips: Parameters<typeof Paper>[0]["strips"], pageClassName?: string): string {
-  const paper = createElement(Paper, { model, selectedId: null, onUnitClick: () => undefined, testId: "p", pageClassName, strips });
+function html(strips: Parameters<typeof Paper>[0]["strips"], pageClassName?: string, shown = model): string {
+  const paper = createElement(Paper, { model: shown, selectedId: null, onUnitClick: () => undefined, testId: "p", pageClassName, strips });
   return renderToStaticMarkup(createElement(LangProvider, null, paper));
 }
 
@@ -84,6 +84,23 @@ describe("an overlay on the paper", () => {
     expect(markup).not.toContain("p-piece-52");
     // 접힌 카드의 앞 틈도 없다 - 남은 카드 둘 사이 하나
     expect(markup.match(/class="strip-gap"/g)).toHaveLength(1);
+  });
+
+  it("folds one line of a pair card and keeps the other", () => {
+    const pairModel = buildPaperModel({ ...view, units: view.units.map((unit) => (unit.id === 50 || unit.id === 51 ? { ...unit, pair_id: 4 } : unit)) });
+    const folded = make({ isFolded: (id) => id === 50, renderFolded: (ids) => (ids.includes(50) ? createElement("button", { className: "new-ai-band" }) : null) });
+    const markup = html({ overlay: folded }, undefined, pairModel);
+    expect(markup.match(/new-ai-band/g)).toHaveLength(1);
+    expect(markup).not.toContain("p-piece-50");
+    expect(markup).toContain("p-piece-51");
+    // 접힌 줄과의 틈은 없다
+    expect(markup).not.toContain("p-gap-u51");
+  });
+
+  it("draws the band of every folded line of one card", () => {
+    const pairModel = buildPaperModel({ ...view, units: view.units.map((unit) => (unit.id === 50 || unit.id === 51 ? { ...unit, pair_id: 4 } : unit)) });
+    const folded = make({ isFolded: (id) => id === 50 || id === 51, renderFolded: (ids) => createElement("button", { className: "new-ai-band" }, ids.join(",")) });
+    expect(html({ overlay: folded }, undefined, pairModel).match(/new-ai-band/g)).toHaveLength(2);
   });
 
   it("adds a class to the page", () => expect(html({}, "new-sheet")).toContain('class="pg new-sheet"'));

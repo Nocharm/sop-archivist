@@ -45,8 +45,8 @@ interface Options extends Partial<NewPaperProps> {
   units?: (id: number) => Partial<ViewUnit>;
 }
 
-function html({ header = false, heading = false, over, units, ...props }: Options = {}): string {
-  const view: DocumentView = {
+function makeView({ header = false, heading = false, units }: Pick<Options, "header" | "heading" | "units"> = {}): DocumentView {
+  return {
     document: { id: 3 } as DocumentView["document"], extraction: null, has_number_ranges: false, pairs: [], part_groups: [], edits: { can_undo: false, can_redo: false },
     tables: [{ id: TABLE, table_index: 0, parent_table_id: null, part: "body", n_rows: 1, n_cols: 1, is_layout: false, is_band: false, anchor: null }],
     blocks: [
@@ -65,12 +65,16 @@ function html({ header = false, heading = false, over, units, ...props }: Option
       makeUnit(60, "Cell", { kind: "cell_sentence", table_id: TABLE, row_index: 0, group_unit_id: 900 }),
     ],
   };
+}
+
+function html({ header = false, heading = false, over, units, ...props }: Options = {}): string {
+  const view = makeView({ header, heading, units });
   const model = buildPaperModel(view);
   const overlay = buildNewOverlay({ rows: ROWS, candidateIds: NONE, pickedIds: NONE, focusId: null, shapeUnitId: null, aiFilter: null, openAiSections: new Set(), ...over });
   const full: NewPaperProps = {
     bundleId: 1, docOptions: [{ value: "1", label: "SOP-1" }], docId: "1", fileId: 3, onDocChange: () => undefined, tag: "New", linesOn: true, onToggleLines: () => undefined,
     zoom: 1, onZoom: () => undefined, view, model, tabs: buildPaperTabs(view, model), placeholder: createElement("span", { className: "sk" }), overlay, onOpenAiSection: () => undefined, cellPickable: false, cellDroppable: false,
-    onUnlink: () => undefined, sourceLabel: (id) => `1-${id}`, onJumpSource: () => undefined, selectedUnitId: null, pickedUnitIds: NONE, onPick: () => undefined, ...props,
+    onUnlink: () => undefined, sourceLabel: (id) => `1-${id}`, onJumpSource: () => undefined, selectedUnitId: null, pickedUnitIds: NONE, showUnitIds: [], onPick: () => undefined, ...props,
   };
   return renderToStaticMarkup(createElement(LangProvider, null, createElement(NewPaper, full)));
 }
@@ -129,6 +133,39 @@ describe("NewPaper", () => {
   it("opens the menu inside the pressed box", () => {
     const h = html({ foot: { unitId: 50, node: createElement("i", null, "menu") } });
     expect(h).toMatch(/new-line-acts[^>]*>.*<i>menu<\/i>/);
+  });
+
+  it("opens the tab of a footnote that is asked for", () => {
+    const view2 = { ...makeView(), blocks: [makeBlock(50, "First"), makeBlock(70, "Note", { part: "footnote", part_group: "footnote" })], units: [makeUnit(50, "First"), makeUnit(70, "Note")], tables: [] };
+    const model2 = buildPaperModel(view2);
+    const shown = { view: view2, model: model2, tabs: buildPaperTabs(view2, model2), over: { rows: [row(5, 50), row(8, 70, { section_path: "" })] } };
+    expect(html(shown)).not.toContain('data-target="8"');
+    const asked = html({ ...shown, showUnitIds: [70] });
+    expect(asked).toContain('data-target="8"');
+    expect(asked).toContain('data-tab="footer"');
+  });
+
+  it("draws a cell translation under its cell, read-only", () => {
+    const rows = ROWS.map((item) => (item.target_id === 90 && item.table ? { ...item, table: { ...item.table, cells: [...item.table.cells, { target_id: 77, row: 0, col: 0, lang: "ko" as const, text: "번역한 칸", status: "ai_suggested" as const, source_unit_ids: [], revision: 1, new_unit_id: null, change_type: null }] } } : item));
+    const h = html({ over: { rows }, cellPickable: true, cellDroppable: true });
+    expect(h).toMatch(/class="new-cell-note"[^>]*data-cell-target="77"[^>]*>/);
+    expect(h).toContain("번역한 칸");
+    expect(h).not.toContain("assign-new-cell-pick-77");
+    expect(h.match(/data-drop="cell"/g)).toHaveLength(1);
+    expect(h).toMatch(/class="new-cell-note"[^>]*data-open=""/);
+  });
+
+  it("marks a cell that is not confirmed", () => {
+    const rows = ROWS.map((item) => (item.target_id === 90 && item.table ? { ...item, table: { ...item.table, cells: item.table.cells.map((one) => ({ ...one, status: "unassigned" as const })) } } : item));
+    expect(html({ over: { rows } })).toMatch(/new-cell"[^>]*data-open=""/);
+    expect(html()).not.toContain("data-open");
+  });
+
+  it("shows the band when only one line of a pair card is folded", () => {
+    const rows = [row(5, 50, { source_unit_ids: [2], status: "ai_suggested", lang: "ko" }), row(6, 52, { source_unit_ids: [3], status: "confirmed" }), row(90, 900, { kind: "table", status: "ai_suggested", source_unit_ids: [4], table: { rows: 1, cols: 1, cells: [] } })];
+    const h = html({ over: { rows, aiFilter: buildNewAiFilter(true, [1], rows) }, units: () => ({ pair_id: 4 }) });
+    expect(h).toContain('data-testid="assign-new-ai-hidden-1"');
+    expect([h.includes('data-target="5"'), h.includes('data-target="6"'), h.includes("assign-new-90")]).toEqual([false, true, false]);
   });
 
   it("names a pair of boxes by one group", () => {

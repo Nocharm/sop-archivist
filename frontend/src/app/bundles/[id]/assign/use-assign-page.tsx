@@ -66,6 +66,7 @@ import { genId } from "@/lib/id";
 import { buildTranslationDecision, isTranslationBlocked, listRowTranslations } from "@/lib/translation-decision";
 import { useLeaveGuard } from "@/lib/leave-guard";
 import { navigate } from "@/lib/nav-buffer";
+import { hasStrayUnit } from "@/lib/new-overlay-model";
 import { buildIdenticalBatches } from "@/lib/match-model";
 import { EMPTY_FOLD_OPEN, type FoldOpen } from "@/lib/paper-fold-model";
 import { buildPaperModel, buildPaperTabs, findNearestCut, isBandHeading, listFigureTabUnitIds, resolvePickUnit, shouldRecenter, type PaperTabKey } from "@/lib/paper-model";
@@ -413,7 +414,7 @@ export function useAssignPage() {
 
   /** 결정 칸의 다시 불러오기 */
   function reloadData(withViews = false) {
-    requestReload(askAll(withViews));
+    requestReload({ ...askAll(withViews), solo: newDocFile !== null });
   }
 
   /** 관계 묶음을 받는다 - 언제 불렀는지 적어 두어 그 뒤 쓴 것이 들었으면 저장에 쓰지 않는다 */
@@ -1004,6 +1005,12 @@ export function useAssignPage() {
   const view = isDrafting ? savedView : { ...savedView, newTemplate: false };
   const paperFile = solo !== null && (!solo.inPlace || view.single) ? solo.docId : view.single || isComposedDoc ? null : newFileId;
   if (paperFile !== newDocFile) setNewDocFile(paperFile);
+  // New 문장 목록만 새로 왔다(남의 나누기 · 합치기) - 보기에 없는 Unit의 문장이 있으면 보기도 한 번 다시 받는다. 목록 하나에 한 번만 본다(렌더 중 상태 맞추기)
+  const [checkedWritten, setCheckedWritten] = useState<{ written: readonly WrittenSentence[]; file: number } | null>(null);
+  if (newView !== null && newDocFile !== null && !newLoad.isLoading && !isComposedDoc && newDocFile === newFileId && (checkedWritten?.written !== written || checkedWritten.file !== newDocFile)) {
+    setCheckedWritten({ written, file: newDocFile });
+    if (hasStrayUnit(written.filter((item) => item.target_doc_id === newDocId), new Set(newView.units.map((unit) => unit.id)))) setSoloKey((key) => key + 1);
+  }
   // Space 미리보기의 단위 - 가운데 맞출 단위(누른 박스, 문단 Excel에 없는 머리말 · 꼬리말이면 문서 차례로 가까운 위 본문 단위)가 맨 앞
   const spaceOrder = useMemo(() => {
     if (!oldView) return null;
@@ -1370,11 +1377,19 @@ export function useAssignPage() {
   }
 
   /** New 칸의 문장을 우클릭 - 그 문장을 고르고 고치기 메뉴를 연다(Old 줄을 고른 채여도). 문장이 아닌 박스(제목 · 표 · 칸)에는 메뉴가 없다 */
-  function openNewCtxMenu(unitId: number, targetId: number, click: { x: number; y: number }) {
+  function openNewCtxMenu(unitId: number, targetId: number, click: { x: number; y: number }): boolean {
     const anchor = document.querySelector<HTMLElement>(`[data-testid="assign-new-${targetId}"]`);
-    if (!canEdit || mode !== "old" || !anchor || !selectNewSentence(targetId)) return;
+    if (!canEdit || mode !== "old" || !anchor || !selectNewSentence(targetId)) return false;
     menuSeq.current += 1;
     setCtxMenu({ seq: menuSeq.current, unitId, boxId: null, rowKey: SOLO_ROW_KEY, anchor, click, caret: null });
+    return true;
+  }
+
+  /** New 칸에 그 문서를 연다 - 양 단에서 다듬으려고 고른 New 문장이 다른 문서의 것이면 놓는다(오른쪽 칸이 보이지 않는 문장을 가리키지 않게) */
+  function showNewDoc(docId: number) {
+    setManualNewDoc({ key: toggleKey, docId });
+    const fileId = (tobeData?.docs ?? []).find((doc) => doc.id === docId)?.document_id ?? null;
+    if (solo?.inPlace && solo.docId !== fileId) setSolo(null);
   }
 
   /** 이미 쓴 New 문서를 한 단으로 연다 - 고르던 줄을 놓고 그 문서의 원문을 넓게 보인다 */
@@ -3306,7 +3321,7 @@ export function useAssignPage() {
   function openNewDoc(docId: number) {
     if (!isNewDocOpen(docId)) return; // 숨긴 새 문서는 New 칸에 열지 않는다
     if (isPairView) closePairView();
-    setManualNewDoc({ key: toggleKey, docId });
+    showNewDoc(docId);
     if (view.single) changeView({ single: false });
   }
 
@@ -3314,7 +3329,7 @@ export function useAssignPage() {
   function showInNew(targetId: number) {
     if (isPairView) closePairView();
     const docId = findWrittenRow(targetId)?.target_doc_id;
-    if (docId !== undefined) setManualNewDoc({ key: toggleKey, docId });
+    if (docId !== undefined) showNewDoc(docId);
     if (view.single) changeView({ single: false });
     setJump({ side: "new", id: targetId, targetId, rowKey: "", quiet: true });
   }
@@ -3488,7 +3503,11 @@ export function useAssignPage() {
   }
   /** 포인터 밑의 New 칸 줄 상자와 거기 놓으면 보낼 곳 - 엮은 문서는 문장 사이(의미 묶음 상자의 중간선으로 앞·뒤)·빈 칸, 이미 쓴 문서는 문장 상자 밖이면 거절 */
   function readSendAt(point: DragPoint, dragUnitIds: readonly number[]): { drop: SendDrop; item: HTMLElement | null } {
-    if (findUnderPoint(point, '[data-pane="new"] .new-paper')) return { drop: findUnderPoint(point, ".new-line") ? { kind: "none" } : { kind: "refused", reason: "written_doc" }, item: null };
+    // 이미 쓴 문서 - 문장 밖의 줄 · 틈이면 까닭, 용지의 빈 곳이면 조용히 그만둔다
+    if (findUnderPoint(point, '[data-pane="new"] .new-paper')) {
+      const isRefused = findUnderPoint(point, ".new-paper :is(.strip-row, .strip-gap)") !== null && findUnderPoint(point, ".new-line") === null;
+      return { drop: isRefused ? { kind: "refused", reason: "written_doc" } : { kind: "none" }, item: null };
+    }
     const item = findUnderPoint(point, '[data-pane="new"] .new-item[data-row]:not([data-leave])');
     if (!item) return { drop: { kind: "none" }, item: null };
     const key = item.dataset.row ?? "";
@@ -4427,7 +4446,7 @@ export function useAssignPage() {
     rewrapTable, unwrapAi, describeEditConfirm, pairGrip, clearNoise, openNoiseReason, confirmNoiseReason, closeNoiseReason, noisePick, runCaptionRefChange, switchShapeMode, switchToPair,
     applySplitSuggestion, dismissSplitSuggestion, splitPendingIds, readPendingItem, selectNextSplit, selectNextRef, selectNextCaption,
     splitAtCut, handleOldDoubleClick, runCtx, runUnitAction, revertHeadings, planOldJoin, joinOld, renderOldActions, readReasonNeed,
-    runSave, runClear, runUndoStep, confirmIdenticalAll, acceptAll, markNew, placeManage, pickDestination, pickNewSentence, handleNewPick, pickUnlinkableNew, unlinkCell,
+    runSave, runClear, runUndoStep, confirmIdenticalAll, acceptAll, markNew, placeManage, pickDestination, pickNewSentence, handleNewPick, pickUnlinkableNew, showNewDoc, jump, unlinkCell,
     handleJoinPick, readJoinAfter, pickJoinMenu, pickPlaceSpot, pickOwnAiLine, jumpToNew, openNewDoc, showInNew, jumpToOld,
     pickTemplateLine, fillTemplateMissing, isTemplateDrag, isOldDrag, finishPairPick, handleOldClick, handlePrimary, startEdit,
     pickRecommendation, handleFramePress, primaryPlan, markRecHover, revealPick, setRevealPick, done, renderPlaceLabel, listDestinationEls,

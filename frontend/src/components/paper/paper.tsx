@@ -198,7 +198,7 @@ export type CutDragPos = { blockId: number; offset: number } | "start" | "end";
  * 여기서 그리는 값은 빠짐없이 keyOf의 글에 든다 - 화면에서 먼 덩어리는 이 글이 바뀔 때만 다시 그린다
  */
 export interface PaperOverlay {
-  /** 접혔다 - 카드의 모든 Unit이 접히면 카드 대신 renderFolded */
+  /** 접혔다 - 그 줄 대신 renderFolded, 카드의 줄이 모두 접히면 카드도 앞 틈도 없다 */
   isFolded: (unitId: number) => boolean;
   /** 이 Unit들에 얹은 것 전부를 이은 글 - 같으면 같은 모습 */
   keyOf: (unitIds: ReadonlySet<number>) => string;
@@ -210,7 +210,7 @@ export interface PaperOverlay {
   renderTop: (unitId: number) => ReactNode;
   /** 글 아래 */
   renderFoot?: (unitId: number) => ReactNode;
-  /** 접힌 카드의 자리 - 띠 하나 또는 null */
+  /** 접힌 줄의 자리 - 띠 하나 또는 null */
   renderFolded?: (unitIds: readonly number[]) => ReactNode;
   /** 글 감싸개의 속성 - 없으면 감싸지 않는다 */
   textProps?: (unitId: number) => StripAttrs | undefined;
@@ -313,8 +313,10 @@ interface PaperProps {
   /** 손잡이에서 ← →로 한 자리씩 */
   onCutNudge?: (step: 1 | -1) => void;
   onUnitDoubleClick?: (unitId: number, at: { blockId: number; offset: number } | null) => void;
-  /** 문장 줄을 우클릭하거나 메뉴 글쇠를 눌렀다 - 주면 브라우저 메뉴 대신 이 콜백이 불린다(Split) */
-  onUnitContextMenu?: (unitId: number, at: { x: number; y: number }, caret: { blockId: number; offset: number } | null) => void;
+  /** 문장 줄을 우클릭하거나 메뉴 글쇠를 눌렀다 - 주면 브라우저 메뉴 대신 이 콜백이 불린다(Split). false를 돌려주면 띄울 메뉴가 없어 브라우저 메뉴를 그대로 둔다 */
+  onUnitContextMenu?: (unitId: number, at: { x: number; y: number }, caret: { blockId: number; offset: number } | null) => boolean | void;
+  /** 글을 조금 긁으며 누른 것도 누르기로 친다(긁은 글은 푼다) - 글자를 골라 하는 일이 없는 용지 */
+  pressThroughSelection?: boolean;
   /** Unit이 있는 조각을 끌 수 있는 상자로(data-drag-box, lib/box-drag.ts) - 끌기는 화면이 붙인다. 표 칸 조각은 표 조각이 감싸 따로 달지 않는다 */
   dragBoxes?: boolean;
   /** 번호 칸 손잡이(Assign) - 주면 번호 범위가 있는 문서의 번호 칸을 눌러 고친다. number가 null이면 번호 없음 */
@@ -394,6 +396,7 @@ export function Paper({
   onCutNudge,
   onUnitDoubleClick,
   onUnitContextMenu,
+  pressThroughSelection = false,
   dragBoxes = false,
   numberCell,
   figureRows,
@@ -1139,9 +1142,14 @@ export function Paper({
     return attrs ? <div {...attrs}>{text}</div> : text;
   }
 
-  /** 카드의 모든 줄이 접혔나 */
-  function isFoldedCard(rows: readonly PaperRow[]): boolean {
-    return overlay !== undefined && rows.every((row) => overlay.isFolded(readRowUnitId(row) ?? -1));
+  /** 얹기가 접은 줄인가 - 짝 카드도 줄마다 접는다 */
+  function isFoldedRow(row: PaperRow): boolean {
+    return overlay?.isFolded(readRowUnitId(row) ?? -1) ?? false;
+  }
+
+  /** 접힌 줄의 자리(띠 하나 또는 아무것도 없음) */
+  function renderFoldedRow(row: PaperRow): ReactNode {
+    return <Fragment key={row.key}>{overlay?.renderFolded?.([readRowUnitId(row) ?? -1])}</Fragment>;
   }
 
   /** 표 칸 - 칸 문장마다 작은 조각으로 나누고 같은 칸의 이웃 조각 사이에 합치기를 둔다 */
@@ -1738,13 +1746,17 @@ export function Paper({
     const releasedLine = folds !== null && foldedLine === null ? readDeletedLine(releasedFolds, unitIds) : null;
     const deletedLine = foldedLine ?? releasedLine;
     const renderContent = () => {
-      const content = rows.map((row, index) => (
-        <Fragment key={row.key}>
-          {index > 0 && renderGap(rows[index - 1], row)}
-          {!isPeek && renderUnwrapHead(row)}
-          {renderRow(row, isPeek, rows.length > 1)}
-        </Fragment>
-      ));
+      const content = rows.map((row, index) =>
+        isFoldedRow(row) ? (
+          renderFoldedRow(row)
+        ) : (
+          <Fragment key={row.key}>
+            {index > 0 && !isFoldedRow(rows[index - 1]) && renderGap(rows[index - 1], row)}
+            {!isPeek && renderUnwrapHead(row)}
+            {renderRow(row, isPeek, rows.length > 1)}
+          </Fragment>
+        ),
+      );
       return rows.length > 1 ? <div className="strip-card">{content}</div> : content;
     };
     if (folds === null || deletedLine === null) return renderContent();
@@ -1768,7 +1780,7 @@ export function Paper({
     const renderCards = (group: CardGroup) =>
       group.cards.map((card, offset) => {
         const index = group.start + offset;
-        if (isFoldedCard(card)) return <Fragment key={card[0].key}>{overlay?.renderFolded?.(card.map((row) => readRowUnitId(row) ?? -1))}</Fragment>;
+        if (card.every(isFoldedRow)) return <Fragment key={card[0].key}>{card.map(renderFoldedRow)}</Fragment>;
         return (
           <Fragment key={card[0].key}>
             {spot?.marker && spot.marker.afterKey === null && index === 0 && spot.marker.node}
@@ -1902,7 +1914,10 @@ export function Paper({
 
   function handleClick(event: MouseEvent<HTMLDivElement>) {
     const selection = window.getSelection();
-    if (selection && !selection.isCollapsed) return; // 끌어 고르기는 mouseup이 맡는다
+    if (selection && !selection.isCollapsed) {
+      if (!pressThroughSelection) return; // 끌어 고르기는 mouseup이 맡는다
+      selection.removeAllRanges();
+    }
     if (pickWholeBundle && event.altKey) return; // Alt는 글자 긁기 - 고름을 옮기지 않는다
     const target = (event.target as HTMLElement).closest<HTMLElement>(".su[data-unit]");
     if (target) {
@@ -1950,9 +1965,8 @@ export function Paper({
     const holder = target.closest<HTMLElement>("[data-strip-unit]") ?? target.closest<HTMLElement>(".su[data-unit]");
     const unitId = Number(holder?.dataset.stripUnit ?? holder?.dataset.unit);
     if (!holder || !Number.isFinite(unitId)) return;
-    event.preventDefault();
     // 누른 글자 자리도 넘긴다 - Assign의 "Split here"가 그 자리에 나눌 선을 놓는다
-    onUnitContextMenu(unitId, { x: event.clientX, y: event.clientY }, readCaret(event.clientX, event.clientY));
+    if (onUnitContextMenu(unitId, { x: event.clientX, y: event.clientY }, readCaret(event.clientX, event.clientY)) !== false) event.preventDefault();
   }
 
   // 두 번 누를 때 브라우저가 낱말을 고르지 않게 - 나눌 자리를 정하는 동작이다

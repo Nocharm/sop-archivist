@@ -7,7 +7,7 @@ import { useEffect, useEffectEvent, useRef, useState } from "react";
 
 import { findLinkPartners, pickDrawnLinks, type LinkPair } from "@/lib/assign-model";
 import { isBoxDragActive } from "@/lib/box-drag";
-import { getLinkDirection, readFarSide, type LinkDirection } from "@/lib/link-direction-model";
+import { getLinkDirection, readFarSide, readHiddenTabSide, type LinkDirection } from "@/lib/link-direction-model";
 import { buildLinkPath, buildLinkStubs, isFarLink, type LinkStub } from "@/lib/link-route-model";
 
 /** 두 문서를 담은 틀(.assign-panes) 안에 둔다 - 틀이 선의 좌표 기준이자 마우스를 듣는 곳이다 */
@@ -110,6 +110,8 @@ function updateBadgeDirections(root: HTMLElement, newPane: HTMLElement, newBody:
   const frame = newBody.getBoundingClientRect();
   const view = { docId: currentDoc, scrollTop: newBody.scrollTop, height: newBody.clientHeight };
   const readSide = buildFarSideReader(frame);
+  // 다른 탭의 문장(각주 · 미주) - 용지가 그려진 뒤에만
+  const hiddenSide = newPane.querySelector(".new-paper") ? readHiddenTabSide(newPane.dataset.tab) : null;
   const next: Array<[HTMLElement, LinkDirection]> = [];
   for (const badge of root.querySelectorAll<HTMLElement>("[data-pane=\"old\"] [data-link-badge]")) {
     const refs = (badge.dataset.targets ?? "").split(",").map((part) => part.split(":").map(Number));
@@ -118,7 +120,8 @@ function updateBadgeDirections(root: HTMLElement, newPane: HTMLElement, newBody:
     if (here.length > 0) {
       const dirs = here.flatMap(([, targetId]): LinkDirection[] => {
         const line = findNewLine(newPane, targetId);
-        if (!line) return [];
+        // 문장이 아닌 것(표 · 그림)은 그려져 있어도 줄이 없다
+        if (!line) return hiddenSide === null || newPane.querySelector(`[data-testid="assign-new-${targetId}"]`) ? [] : [hiddenSide];
         const side = readSide(line);
         if (side !== null) return [side];
         const rect = line.getBoundingClientRect();

@@ -79,7 +79,7 @@ export default function AssignPage() {
     setDrafts, draft, groupPending, savedDestination, destination, rowUnits, reasonNow, setDraft, unsavedCount, leaveTo, setLeaveTo,
     aiDest, isAiRow, recommendations, linkIds, candidateIds, setManualOldDoc, oldView, acceptKind, setAcceptKind, acceptDoc, paperModel,
     canPairView, isPairView, pairColumns, pairLinks, partKeys, oldDocId, soloUnit, soloUnits, cutUnit, cutLine, linkedTargets,
-    setManualPart, activePart, isFoldEmpty, foldElsewhere, writtenDocs, composedDocs, setManualNewDoc, toggleKey, liveDoc, isNewDocOpen,
+    setManualPart, activePart, isFoldEmpty, foldElsewhere, writtenDocs, composedDocs, toggleKey, liveDoc, isNewDocOpen,
     newDocId, newAiReturn, setNewAiReturn, isComposedDoc, newFileId, newLoad, newView, newModel, newTabs, composedDoc, newRows, headingNotes, sectionMarks, joinableIds,
     templateTitles, linkPairs, view, changeView, zoomPane, setPanes, remarkEdit, setRemarkEdit, focusAfterRef, busy, isAnyPending, isGlobalPending, paperPending, pendingDeletes, expectedNumbers, editConfirm,
     oldPaneRef, bulk, setBulk, confirmingIdentical,
@@ -88,7 +88,7 @@ export default function AssignPage() {
     openSolo, goToUnit, ctxGroups, confirmBlockKey, refPendingIds, isLinkedToWritten, captionPendingKeys, docDashboard, openCtxMenu, runUnitEdit,
     rewrapTable, unwrapAi, describeEditConfirm, pairGrip, clearNoise, openNoiseReason, splitAtCut, handleOldDoubleClick,
     runCtx, revertHeadings, planOldJoin, joinOld, renderOldActions, runSave, runClear, confirmIdenticalAll, acceptAll, pickDestination,
-    pickNewSentence, handleNewPick, pickUnlinkableNew, handleJoinPick, readJoinAfter, pickJoinMenu, handleFramePress, pickPlaceSpot, pickOwnAiLine, jumpToNew, openNewDoc,
+    pickNewSentence, handleNewPick, pickUnlinkableNew, showNewDoc, jump, handleJoinPick, readJoinAfter, pickJoinMenu, handleFramePress, pickPlaceSpot, pickOwnAiLine, jumpToNew, openNewDoc,
     showInNew, jumpToOld, pickTemplateLine, fillTemplateMissing, isOldDrag, finishPairPick, handleOldClick, markRecHover, revealPick,
     setRevealPick, done, renderPlaceLabel, listDestinationEls, error,
   } = state;
@@ -264,7 +264,7 @@ export default function AssignPage() {
         data-testid="assign-new-ai-open"
         onClick={() => {
           setNewAiReturn(newAiPill.kind === "open" && newDocId !== null ? { key: toggleKey, docId: newDocId } : null);
-          setManualNewDoc({ key: toggleKey, docId: newAiPill.docId });
+          showNewDoc(newAiPill.docId);
         }}
       >
         {newAiPill.kind === "open" ? (
@@ -371,7 +371,10 @@ export default function AssignPage() {
   const isNewPairPick = isNewEdit && pairSource !== null && pairFrom !== null;
   const pickedNew = new Set(isNewPairPick ? pairFrom.picked.flatMap((unitId) => written.find((item) => item.new_unit_id === unitId)?.target_id ?? []) : [...linkIds, ...(destination?.kind === "join" ? [destination.targetId] : [])]);
   // 이미 쓴 New 문서의 박스 위에 얹을 것 - 렌더마다 다시 짓되 박스마다의 key가 글이라 용지의 먼 덩어리는 제 것이 바뀔 때만 다시 그린다
-  const newOverlay = buildNewOverlay({ rows: isComposedDoc ? [] : written.filter((item) => item.target_doc_id === newDocId), candidateIds, pickedIds: pickedNew, focusId: focusNew, shapeUnitId: isNewEdit ? (soloUnit?.id ?? null) : null, aiFilter: newAiFilter, openAiSections });
+  const newOverlay = buildNewOverlay({ rows: isComposedDoc ? [] : written.filter((item) => item.target_doc_id === newDocId), candidateIds, pickedIds: pickedNew, focusId: focusNew, shapeUnitId: isNewEdit ? (soloUnit?.id ?? null) : null, aiFilter: newAiFilter, openAiSections, tabOf: newTabs?.tabOf });
+  // New 용지에 보여야 할 박스 - 이동해 갈 곳, 누른 추천의 곳, 출처 없는 New의 고른 문장(각주 · 미주면 꼬리말 탭)
+  const readNewUnit = (targetId: number | null | undefined) => (targetId == null ? null : (newOverlay.unitOfTarget.get(targetId) ?? null));
+  const showUnitIds = [readNewUnit(jump?.side === "new" ? jump.id : null), readNewUnit(revealPick?.destination.kind === "link" ? revealPick.destination.targetIds[0] : null), readNewUnit(focusNew)];
   const isCellPickable = canEdit && mode === "old" && row !== null;
   const menuUnitId = menuLineId === null ? null : (newOverlay.unitOfTarget.get(menuLineId) ?? null);
   const readSourceLabel = (unitId: number) => (unitMap.get(unitId)?.display_id ?? String(unitId)).replace(/^OLD-/, "");
@@ -737,7 +740,7 @@ export default function AssignPage() {
                       bundleId={bundleId}
                       docOptions={newDocOptions}
                       docId={String(newDocId)}
-                      onDocChange={(value) => setManualNewDoc({ key: toggleKey, docId: Number(value) })}
+                      onDocChange={(value) => showNewDoc(Number(value))}
                       rows={composedRows}
                       headingNotes={headingNotes}
                       sectionMarks={sectionMarks}
@@ -828,7 +831,7 @@ export default function AssignPage() {
                       docOptions={newDocOptions}
                       docId={String(newDocId)}
                       fileId={newFileId ?? 0}
-                      onDocChange={(value) => setManualNewDoc({ key: toggleKey, docId: Number(value) })}
+                      onDocChange={(value) => showNewDoc(Number(value))}
                       tag={t("assign.writtenTag")}
                       headExtra={
                         <>
@@ -855,13 +858,14 @@ export default function AssignPage() {
                       onJumpSource={jumpToOld}
                       selectedUnitId={isNewEdit ? (cutUnit?.id ?? soloUnit?.id ?? null) : null}
                       pickedUnitIds={NO_NUMBERS}
+                      showUnitIds={showUnitIds}
                       pending={mode === "old" ? paperPending : undefined}
                       onPick={pickNewBox}
                       onContextMenu={
                         canEdit && mode === "old"
                           ? (unitId, at) => {
                               const box = newOverlay.boxes.get(unitId);
-                              if (box?.kind === "sentence") openNewCtxMenu(unitId, box.targetId, at);
+                              return box?.kind === "sentence" && openNewCtxMenu(unitId, box.targetId, at);
                             }
                           : undefined
                       }

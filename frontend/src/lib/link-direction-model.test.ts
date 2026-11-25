@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { getLinkDirection, readFarSide } from "./link-direction-model";
+import { getLinkDirection, readFarSide, readHiddenTabSide } from "./link-direction-model";
 
 const view = { docId: 1, scrollTop: 100, height: 400 };
 
@@ -28,6 +28,14 @@ describe("getLinkDirection", () => {
   it("treats touching an edge as visible", () => {
     expect(getLinkDirection({ docId: 1, top: 80, bottom: 100 }, view)).toBe("visible");
     expect(getLinkDirection({ docId: 1, top: 500, bottom: 530 }, view)).toBe("visible");
+  });
+});
+
+describe("readHiddenTabSide", () => {
+  it("points to the other tab of the New paper", () => {
+    // 각주 · 미주는 꼬리말 탭 - 본문 · 머리말을 보는 동안은 아래, 꼬리말 · 그림을 보는 동안 본문은 위
+    expect(["body", "header", "footer", "figures"].map(readHiddenTabSide)).toEqual(["below", "below", "above", "above"]);
+    expect(readHiddenTabSide(undefined)).toBeNull();
   });
 });
 

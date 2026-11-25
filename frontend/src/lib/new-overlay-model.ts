@@ -1,12 +1,22 @@
 // 이미 쓴 New 문서의 용지(components/assign/new-paper) 위에 얹을 것 - 박스는 Unit이고 New 문장은 new_unit_id로 잇는다.
 // Unit마다 한 덩이(NewBox)를 여기서 다 정하고 용지는 그리기만 한다. 덩이의 key는 그리는 값 전부를 이은 글이라, 화면에서 먼 덩어리는 제 Unit의 key가 바뀔 때만 다시 그린다(PaperChunk).
-import type { ChangeType, UnitLang, ViewUnit, WrittenSentence } from "@/lib/api-sop";
+import type { BundleCell, ChangeType, UnitLang, ViewUnit, WrittenSentence } from "@/lib/api-sop";
 import { getNewRowKey } from "@/lib/composed-model";
 import { readNewAiSectionKey, type NewAiBand, type NewAiFilter, type NewAiMark } from "@/lib/new-ai-filter-model";
 import { readWrittenRefMark } from "@/lib/ref-model";
 
 /** 박스의 모양 - 출처 없는 New에서 고른 것, 다듬으려고 고른 것, 이을 곳으로 고른 것, 이을 후보, 출처 없음 */
 export type NewBoxState = "focus" | "shape" | "picked" | "candidate" | "unsourced";
+
+/** 원문 조각이 없는 칸 문장(칸 번역) - 같은 행 · 열의 칸 조각 아래에 읽기 전용으로 보인다 */
+export interface NewCellNote {
+  targetId: number;
+  lang: UnitLang;
+  text: string;
+  isOpen: boolean;
+  isAi: boolean;
+  sourceIds: readonly number[];
+}
 
 export interface NewBox {
   unitId: number;
@@ -17,6 +27,10 @@ export interface NewBox {
   sourceIds: readonly number[];
   isAi: boolean;
   isMarkedNew: boolean;
+  /** 확정하지 않았다 - 표 칸은 점선 테두리 */
+  isOpen: boolean;
+  /** 이 칸 아래에 딸린 칸 문장 */
+  notes: readonly NewCellNote[];
   /** 참조 줄 표시가 있는 문장 - 칩 줄의 RefMark가 그린다 */
   refRow: WrittenSentence | null;
   state: NewBoxState | undefined;
@@ -24,7 +38,7 @@ export interface NewBox {
   ai: NewAiMark | undefined;
   /** AI 거르기로 접혔다 */
   isAiFolded: boolean;
-  /** 접힌 자리의 띠 - 칸마다 첫 접힌 박스 하나에만 */
+  /** 접힌 자리의 띠 - 칸마다(탭이 다르면 탭마다) 첫 접힌 박스 하나에만, count는 거기 접힌 박스 수 */
   band: NewAiBand | null;
   /** Old 줄을 이을 수 있나 - 문장과 표 칸만(표 · 그림은 아니다) */
   isLinkable: boolean;
@@ -51,6 +65,8 @@ export interface NewOverlayInput {
   aiFilter: NewAiFilter | null;
   /** AI 거르기에서 띠를 눌러 펼친 칸(readNewAiSectionKey) */
   openAiSections: ReadonlySet<string>;
+  /** Unit이 놓인 탭(PaperTabs.tabOf) - 없으면 모두 한 탭으로 친다 */
+  tabOf?: ReadonlyMap<number, string>;
 }
 
 /** 그리기 전의 박스 - 같은 Unit에 새 문장이 둘이면 하나만 남긴 뒤 모양을 정한다 */
@@ -62,7 +78,14 @@ interface RawBox {
   lang: UnitLang;
   sourceIds: readonly number[];
   isAi: boolean;
+  isOpen: boolean;
   changeType: ChangeType | null;
+  /** 표 칸의 자리 - 문장 · 묶음은 없다 */
+  place: string | null;
+}
+
+function formatPlace(row: WrittenSentence, cell: BundleCell): string {
+  return `${row.target_id}:${cell.row}:${cell.col}`;
 }
 
 function listRawBoxes(rows: readonly WrittenSentence[]): RawBox[] {
@@ -70,21 +93,34 @@ function listRawBoxes(rows: readonly WrittenSentence[]): RawBox[] {
     const own: RawBox[] =
       row.new_unit_id == null
         ? []
-        : [{ row, unitId: row.new_unit_id, targetId: row.target_id, kind: row.kind === "sentence" ? "sentence" : "bundle", lang: row.lang, sourceIds: row.source_unit_ids, isAi: row.status === "ai_suggested", changeType: row.change_type }];
+        : [{ row, unitId: row.new_unit_id, targetId: row.target_id, kind: row.kind === "sentence" ? "sentence" : "bundle", lang: row.lang, sourceIds: row.source_unit_ids, isAi: row.status === "ai_suggested", isOpen: row.status !== "confirmed", changeType: row.change_type, place: null }];
     const cells = (row.table?.cells ?? []).flatMap((cell): RawBox[] =>
       cell.new_unit_id == null
         ? []
-        : [{ row, unitId: cell.new_unit_id, targetId: cell.target_id, kind: "cell", lang: cell.lang, sourceIds: cell.source_unit_ids, isAi: cell.status === "ai_suggested", changeType: cell.change_type ?? null }],
+        : [{ row, unitId: cell.new_unit_id, targetId: cell.target_id, kind: "cell", lang: cell.lang, sourceIds: cell.source_unit_ids, isAi: cell.status === "ai_suggested", isOpen: cell.status !== "confirmed", changeType: cell.change_type ?? null, place: formatPlace(row, cell) }],
     );
     return [...own, ...cells];
   });
 }
 
-/** 같은 Unit의 새 문장 둘 중 보일 것 - 출처가 있는 것, 그다음 먼저 만든(작은 id) 것 */
-function isPreferred(next: RawBox, held: RawBox): boolean {
-  const hasNext = next.sourceIds.length > 0;
-  const hasHeld = held.sourceIds.length > 0;
-  return hasNext !== hasHeld ? hasNext : next.targetId < held.targetId;
+/** 같은 Unit의 새 문장 둘 중 보일 것 - 지금 보는 것(출처 없는 New의 고른 문장), 이을 곳으로 고른 것, 출처가 있는 것, 그다음 먼저 만든(작은 id) 것 */
+function isPreferred(next: RawBox, held: RawBox, input: NewOverlayInput): boolean {
+  const getRank = (box: RawBox) => (box.targetId === input.focusId ? 3 : input.pickedIds.has(box.targetId) ? 2 : box.sourceIds.length > 0 ? 1 : 0);
+  const gap = getRank(next) - getRank(held);
+  return gap !== 0 ? gap > 0 : next.targetId < held.targetId;
+}
+
+/** 원문 조각이 없는 칸 문장 → 그것을 보일 Unit(같은 자리의 마지막 칸 조각, 없으면 그 표) */
+function listCellNotes(rows: readonly WrittenSentence[], held: ReadonlyMap<number, RawBox>): Array<{ unitId: number; note: NewCellNote }> {
+  const unitAt = new Map<string, number>();
+  for (const box of held.values()) if (box.place !== null) unitAt.set(box.place, box.unitId);
+  return rows.flatMap((row) =>
+    (row.table?.cells ?? []).flatMap((cell) => {
+      const unitId = cell.new_unit_id == null ? (unitAt.get(formatPlace(row, cell)) ?? row.new_unit_id ?? null) : null;
+      if (unitId === null) return [];
+      return [{ unitId, note: { targetId: cell.target_id, lang: cell.lang, text: cell.text, isOpen: cell.status !== "confirmed", isAi: cell.status === "ai_suggested", sourceIds: cell.source_unit_ids } }];
+    }),
+  );
 }
 
 function readState(box: RawBox, input: NewOverlayInput): NewBoxState | undefined {
@@ -96,30 +132,56 @@ function readState(box: RawBox, input: NewOverlayInput): NewBoxState | undefined
   return undefined;
 }
 
+/** AI 거르기의 표시 - 칸은 표째 거른다(표시는 표 박스 하나에) */
+function readAiMark(box: RawBox, input: NewOverlayInput): NewAiMark | undefined {
+  return box.kind === "cell" ? undefined : input.aiFilter?.marks.get(getNewRowKey(box.row));
+}
+
+/** 이 문서 보기에 없는 Unit의 새 문장이 있나 - 보기보다 새 목록이다(남의 나누기 · 합치기) */
+export function hasStrayUnit(rows: readonly WrittenSentence[], unitIds: ReadonlySet<number>): boolean {
+  const isStray = (unitId: number | null | undefined) => unitId != null && !unitIds.has(unitId);
+  return rows.some((row) => isStray(row.new_unit_id) || (row.table?.cells ?? []).some((cell) => isStray(cell.new_unit_id)));
+}
+
 export function buildNewOverlay(input: NewOverlayInput): NewOverlay {
   const held = new Map<number, RawBox>();
   const unitOfTarget = new Map<number, number>();
   for (const box of listRawBoxes(input.rows)) {
     unitOfTarget.set(box.targetId, box.unitId);
     const before = held.get(box.unitId);
-    if (!before || isPreferred(box, before)) held.set(box.unitId, box);
+    if (!before || isPreferred(box, before, input)) held.set(box.unitId, box);
   }
-  const bandOf = new Map([...(input.aiFilter?.bands.values() ?? [])].map((band) => [band.sectionKey, band]));
+  const notesOf = new Map<number, NewCellNote[]>();
+  for (const { unitId, note } of listCellNotes(input.rows, held)) {
+    notesOf.set(unitId, [...(notesOf.get(unitId) ?? []), note]);
+    unitOfTarget.set(note.targetId, unitId);
+  }
+  // 접힌 박스는 칸 · 탭마다 띠 하나 - 띠가 다른 탭에 있으면 이 탭에서 펼칠 길이 없다
+  const foldOf = new Map<number, { section: string; group: string }>();
+  const foldCounts = new Map<string, number>();
+  for (const box of held.values()) {
+    const section = readNewAiSectionKey(box.row.section_path);
+    if (readAiMark(box, input) !== "other_ai" || input.openAiSections.has(section)) continue;
+    const group = `${input.tabOf?.get(box.unitId) ?? ""}:${section}`;
+    foldOf.set(box.unitId, { section, group });
+    foldCounts.set(group, (foldCounts.get(group) ?? 0) + 1);
+  }
   const boxes = new Map<number, NewBox>();
   for (const box of held.values()) {
-    // 칸은 표째 거른다 - 표시는 표(묶음) 박스 하나에
-    const ai = box.kind === "cell" ? undefined : input.aiFilter?.marks.get(getNewRowKey(box.row));
-    const section = readNewAiSectionKey(box.row.section_path);
-    const isAiFolded = ai === "other_ai" && !input.openAiSections.has(section);
-    const band = isAiFolded ? (bandOf.get(section) ?? null) : null;
-    if (band !== null) bandOf.delete(section);
+    const ai = readAiMark(box, input);
+    const fold = foldOf.get(box.unitId);
+    const isAiFolded = fold !== undefined;
+    const count = fold === undefined ? undefined : foldCounts.get(fold.group);
+    const band = fold !== undefined && count !== undefined ? { sectionKey: fold.section, count } : null;
+    if (fold !== undefined) foldCounts.delete(fold.group);
+    const notes = notesOf.get(box.unitId) ?? [];
     const refRow = box.kind === "sentence" && readWrittenRefMark(box.row) !== null ? box.row : null;
     const state = readState(box, input);
     const isMarkedNew = box.changeType === "new";
     boxes.set(box.unitId, {
-      unitId: box.unitId, targetId: box.targetId, kind: box.kind, lang: box.lang, sourceIds: box.sourceIds, isAi: box.isAi, isMarkedNew, refRow, state, ai, isAiFolded, band,
+      unitId: box.unitId, targetId: box.targetId, kind: box.kind, lang: box.lang, sourceIds: box.sourceIds, isAi: box.isAi, isMarkedNew, isOpen: box.isOpen, notes, refRow, state, ai, isAiFolded, band,
       isLinkable: box.kind !== "bundle",
-      key: [box.targetId, box.kind, box.lang, box.sourceIds.join(","), box.isAi, isMarkedNew, refRow ? readWrittenRefMark(refRow) : "", state ?? "", ai ?? "", isAiFolded, band?.count ?? ""].join("|"),
+      key: [box.targetId, box.kind, box.lang, box.sourceIds.join(","), box.isAi, isMarkedNew, box.isOpen, refRow ? readWrittenRefMark(refRow) : "", state ?? "", ai ?? "", isAiFolded, band?.count ?? "", notes.length > 0 ? JSON.stringify(notes) : ""].join("|"),
     });
   }
   return { boxes, unitOfTarget };

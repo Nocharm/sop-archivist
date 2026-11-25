@@ -17,7 +17,7 @@ import { Select, type SelectOption } from "@/components/ui/select";
 import { Tooltip } from "@/components/ui/tooltip";
 import type { DocumentView } from "@/lib/api-sop";
 import { useI18n } from "@/lib/i18n";
-import { readOverlayKey, readUnlinkableKey, type NewBox, type NewOverlay } from "@/lib/new-overlay-model";
+import { readOverlayKey, readUnlinkableKey, type NewBox, type NewCellNote, type NewOverlay } from "@/lib/new-overlay-model";
 import { listPartSheets, type FigureRowMode, type PaperItem, type PaperModel, type PaperTabKey, type PaperTabs } from "@/lib/paper-model";
 
 export interface NewPaperProps {
@@ -60,7 +60,10 @@ export interface NewPaperProps {
   pending?: PaperPending;
   /** 박스를 누름 - anchor는 그 박스(칸이면 칸 조각) */
   onPick: (unitId: number, keys: { shiftKey: boolean; additive: boolean }, anchor: HTMLElement, event: MouseEvent) => void;
-  onContextMenu?: (unitId: number, at: { x: number; y: number }, caret: { blockId: number; offset: number } | null) => void;
+  /** 보여야 할 박스들(이동해 갈 곳 · 출처 없는 New의 고른 것) - 바뀌어 든 박스의 탭을 연다 */
+  showUnitIds: readonly (number | null)[];
+  /** 띄울 메뉴가 없으면 false(브라우저 메뉴를 그대로 둔다) */
+  onContextMenu?: (unitId: number, at: { x: number; y: number }, caret: { blockId: number; offset: number } | null) => boolean;
   cut?: PaperCut | null;
   onCutDrag?: (pos: CutDragPos) => void;
   onCutNudge?: (step: 1 | -1) => void;
@@ -69,10 +72,8 @@ export interface NewPaperProps {
   foot?: { unitId: number; node: ReactNode } | null;
 }
 
-/** 누른 자리의 박스 - 칸이면 칸 조각, 앞머리(번호 칸)를 눌렀으면 그 줄의 박스 */
-function findPressedBox(target: Element): HTMLElement | null {
-  return target.closest<HTMLElement>(".cell-piece") ?? target.closest<HTMLElement>(".strip") ?? target.closest(".strip-row")?.querySelector<HTMLElement>(":scope > .strip") ?? null;
-}
+// 눌러도 박스를 누른 것이 아닌 자리 - 박스 안에 펼친 그 자리 메뉴의 빈자리, 칸에 딸린 읽기 전용 글, 왼쪽 번호 칸
+const NOT_PRESSED = ".strip-acts, .new-cell-note, .strip-lead";
 
 const ignoreDoubleClick = () => undefined;
 
@@ -82,12 +83,19 @@ export function NewPaper(props: NewPaperProps) {
   const { boxes } = overlay;
   // "+N"을 눌러 출처 칩을 모두 펼친 새 문장
   const [openSources, setOpenSources] = useState<ReadonlySet<number>>(new Set());
-  // 사람이 고른 탭 - 문서를 바꾸거나 다듬을 박스를 고르면 그 박스의 탭(없으면 본문)으로
-  const tabOwner = `${props.docId}:${props.selectedUnitId ?? ""}`;
-  const [manualTab, setManualTab] = useState<{ owner: string; key: PaperTabKey } | null>(null);
+  // 보는 탭 - 보여야 할 박스(이동해 갈 곳, 고른 것)가 바뀌어 들면 그 박스의 탭을 연다(각주 · 미주의 New 문장은 꼬리말 탭). 풀리면 보던 탭 그대로, 문서를 바꾸면 본문부터(렌더 중 상태 맞추기)
+  const asks = [...props.showUnitIds, props.selectedUnitId];
+  const [tab, setTab] = useState<{ docId: string; key: PaperTabKey; seen: readonly (number | null)[] }>({ docId: props.docId, key: "body", seen: [] });
+  const isSameDoc = tab.docId === props.docId;
+  const seen = isSameDoc ? tab.seen : [];
+  const isAsked = props.tabs !== null && asks.some((id, at) => id !== (seen[at] ?? null));
+  if (!isSameDoc || isAsked) {
+    const fresh = isAsked ? asks.find((id, at) => id !== null && id !== (seen[at] ?? null)) : null;
+    const wanted = fresh == null ? undefined : props.tabs?.tabOf.get(fresh);
+    setTab({ docId: props.docId, key: wanted ?? (isSameDoc ? tab.key : "body"), seen: isAsked ? asks : seen });
+  }
   const tabKeys = model ? (["body", "header", "footer", "figures"] as const).filter((key) => model[key].length > 0) : [];
-  const wantedTab = (manualTab?.owner === tabOwner ? manualTab.key : null) ?? props.tabs?.tabOf.get(props.selectedUnitId ?? -1) ?? "body";
-  const activeTab = tabKeys.includes(wantedTab) ? wantedTab : (tabKeys[0] ?? "body");
+  const activeTab = tabKeys.includes(tab.key) ? tab.key : (tabKeys[0] ?? "body");
   // 문서를 바꾸면 새 문서가 옆에서 들어온다 - 문서 목록에서 뒤 문서면 오른쪽에서, 앞 문서면 왼쪽에서(렌더 중 상태 맞추기)
   const [slide, setSlide] = useState<{ docId: string; dir: "next" | "prev" | null }>({ docId: props.docId, dir: null });
   if (slide.docId !== props.docId) {
@@ -101,8 +109,9 @@ export function NewPaper(props: NewPaperProps) {
     const own = [...ids].flatMap((id) => {
       const box = boxes.get(id);
       if (!box) return [];
+      const noteLabels = box.notes.flatMap((note) => [...note.sourceIds.map(props.sourceLabel), openSources.has(note.targetId)]);
       const cell = box.kind === "cell" ? [props.cellPickable, props.cellDroppable, props.onUnlink !== undefined] : [];
-      return [[id, ...box.sourceIds.map(props.sourceLabel), openSources.has(box.targetId), id === props.foot?.unitId, ...cell].join(",")];
+      return [[id, ...box.sourceIds.map(props.sourceLabel), openSources.has(box.targetId), id === props.foot?.unitId, ...noteLabels, ...cell].join(",")];
     });
     return `${readOverlayKey(boxes, ids)}/${own.join(";")}`;
   }
@@ -111,7 +120,7 @@ export function NewPaper(props: NewPaperProps) {
     if (box.kind === "cell") {
       return {
         className: "new-cell",
-        attrs: { "data-cell-target": box.targetId, "data-state": box.state, "data-pickable": props.cellPickable ? "" : undefined, "data-drop": props.cellDroppable ? "cell" : undefined },
+        attrs: { "data-cell-target": box.targetId, "data-state": box.state, "data-open": box.isOpen ? "" : undefined, "data-pickable": props.cellPickable ? "" : undefined, "data-drop": props.cellDroppable ? "cell" : undefined },
         testId: `assign-new-cell-${box.targetId}`,
       };
     }
@@ -123,6 +132,31 @@ export function NewPaper(props: NewPaperProps) {
     };
   }
 
+  function renderChips(targetId: number, ids: readonly number[], isAi: boolean, onUnlink?: (unitId: number) => void): ReactNode {
+    return (
+      <SourceChips
+        targetId={targetId}
+        ids={ids}
+        isAi={isAi}
+        sourceLabel={props.sourceLabel}
+        onJump={props.onJumpSource}
+        isOpen={openSources.has(targetId)}
+        onOpen={(id) => setOpenSources((prev) => new Set(prev).add(id))}
+        onUnlink={onUnlink}
+      />
+    );
+  }
+
+  /** 원문 조각이 없는 칸 문장(칸 번역) - 글과 출처만 보인다 */
+  function renderNote(note: NewCellNote): ReactNode {
+    return (
+      <div key={note.targetId} lang={note.lang === "neutral" ? undefined : note.lang} className="new-cell-note" data-cell-target={note.targetId} data-open={note.isOpen ? "" : undefined} data-testid={`assign-new-cell-${note.targetId}`}>
+        {note.sourceIds.length > 0 && <span className="new-srcs">{renderChips(note.targetId, note.sourceIds, note.isAi)}</span>}
+        {note.text}
+      </div>
+    );
+  }
+
   function renderTop(box: NewBox): ReactNode {
     if (box.kind === "bundle") return <NewAiTag targetId={box.targetId} mark={box.ai} />;
     const { onUnlink } = props;
@@ -130,16 +164,7 @@ export function NewPaper(props: NewPaperProps) {
     if (isEmpty) return null;
     return (
       <span className="new-srcs">
-        <SourceChips
-          targetId={box.targetId}
-          ids={box.sourceIds}
-          isAi={box.isAi}
-          sourceLabel={props.sourceLabel}
-          onJump={props.onJumpSource}
-          isOpen={openSources.has(box.targetId)}
-          onOpen={(id) => setOpenSources((prev) => new Set(prev).add(id))}
-          onUnlink={box.kind === "cell" && onUnlink ? (unitId) => onUnlink(box.targetId, unitId) : undefined}
-        />
+        {renderChips(box.targetId, box.sourceIds, box.isAi, box.kind === "cell" && onUnlink ? (unitId) => onUnlink(box.targetId, unitId) : undefined)}
         {box.kind === "sentence" && box.isMarkedNew && <span className="new-src is-new">{t("assign.markedNew")}</span>}
         {/* 참조 줄이 EQUIS와 어긋난다(번호·이름·EQUIS에 없음·폐기) - 출처가 없는 줄에도 뜬다. 이 문서의 글은 여기서 고치지 않아 알리기만 한다 */}
         {box.refRow !== null && <RefMark row={box.refRow} />}
@@ -175,12 +200,16 @@ export function NewPaper(props: NewPaperProps) {
       const box = boxes.get(id);
       return box ? renderTop(box) : null;
     },
-    renderFoot: (id) =>
-      props.foot?.unitId === id ? (
-        <Collapse open appear className="strip-acts new-line-acts">
-          {props.foot.node}
-        </Collapse>
-      ) : null,
+    renderFoot: (id) => (
+      <>
+        {boxes.get(id)?.notes.map(renderNote)}
+        {props.foot?.unitId === id && (
+          <Collapse open appear className="strip-acts new-line-acts">
+            {props.foot.node}
+          </Collapse>
+        )}
+      </>
+    ),
     renderFolded,
     textProps: (id) => {
       const box = boxes.get(id);
@@ -209,12 +238,11 @@ export function NewPaper(props: NewPaperProps) {
         // 표는 칸마다 고르고 잇는다
         pickWholeBundle={false}
         shiftClickPicks
+        pressThroughSelection
         onUnitClick={(unitId, _at, event) => {
           const target = event.target as Element;
-          // 박스 안에 펼친 그 자리 메뉴의 빈자리 - 박스를 다시 누른 것이 아니다
-          if (target.closest(".strip-acts")) return;
-          const anchor = findPressedBox(target);
-          if (anchor) props.onPick(unitId, { shiftKey: event.shiftKey, additive: event.ctrlKey || event.metaKey }, anchor, event);
+          const anchor = target.closest<HTMLElement>(".cell-piece, .strip");
+          if (anchor && !target.closest(NOT_PRESSED)) props.onPick(unitId, { shiftKey: event.shiftKey, additive: event.ctrlKey || event.metaKey }, anchor, event);
         }}
         onUnitContextMenu={props.onContextMenu}
         // 두 번 누르기로 하는 일은 없다 - 낱말이 골라져 둘째 누름이 먹히지 않게 자리만 잡는다
@@ -250,7 +278,7 @@ export function NewPaper(props: NewPaperProps) {
   }
 
   return (
-    <section className="assign-pane" style={{ "--z": props.zoom }} data-pane="new" data-doc={props.docId} data-testid="assign-new">
+    <section className="assign-pane" style={{ "--z": props.zoom }} data-pane="new" data-doc={props.docId} data-tab={activeTab} data-testid="assign-new">
       <div className="pane-head">
         {props.docOptions.length > 1 ? (
           <Select testId="assign-new-doc" ariaLabel={t("assign.newDoc")} size="sm" mono value={props.docId} options={props.docOptions} onChange={props.onDocChange} />
@@ -278,7 +306,7 @@ export function NewPaper(props: NewPaperProps) {
       </div>
       {tabKeys.length > 1 && (
         <div className="flex items-center">
-          <PartTabs keys={tabKeys} active={activeTab} onChange={(key) => setManualTab({ owner: tabOwner, key })} counts={{ figures: model?.figures.length }} testIdPrefix="assign-new-tab" />
+          <PartTabs keys={tabKeys} active={activeTab} onChange={(key) => setTab((prev) => ({ ...prev, key }))} counts={{ figures: model?.figures.length }} testIdPrefix="assign-new-tab" />
         </div>
       )}
       {props.banner}
