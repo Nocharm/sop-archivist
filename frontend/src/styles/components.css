@@ -2074,6 +2074,20 @@
   .renumber-mark, .pg .renumber-mark { display: inline-block; margin-right: 6px; padding: 0 5px; border: 1px solid var(--line-2); border-radius: var(--r-1); background: var(--sunken); font: 500 11px / 18px var(--font-mono); color: var(--ink-2); white-space: nowrap; vertical-align: 1px; }
 
   .assign-side { display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; border-left: 1px solid var(--line); background: var(--surface); }
+  /* 떼는 오른쪽 칸(components/assign/side-float.tsx, 설계 2026-11-25 §6 S3) - 뜨면 두 문서가 그 열을 쓴다. 층은 위치 판(20)보다 위, 메뉴 · 창(40~)보다 아래.
+     자리 · 크기는 인라인(lib/side-float-model). 테두리는 그림자로 그려 접은 높이가 머리 한 줄(36px) 그대로다 */
+  .assign-frame { grid-template-columns: minmax(0, 1fr) clamp(280px, 24vw, 420px); }
+  .assign-frame:has(> .assign-side[data-float]) { grid-template-columns: minmax(0, 1fr); }
+  .assign-side[data-float] { position: fixed; z-index: 30; border-left: 0; border-radius: var(--r-3); box-shadow: 0 0 0 1px var(--line-2), var(--shadow-2); }
+  .assign-side[data-folded] > :not(.side-float-head) { display: none; }
+  .side-float-head { flex: none; display: flex; align-items: center; gap: 2px; height: 36px; padding: 0 6px 0 var(--pad); border-bottom: 1px solid var(--line); background: var(--sunken); cursor: grab; touch-action: none; user-select: none; }
+  .side-float-head[data-drag] { cursor: grabbing; }
+  .side-float-title { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-cap); font-weight: 600; color: var(--ink-2); }
+  /* 칸이 뜨면 도구 줄 · New 칸 머리가 창 오른쪽 끝까지 온다 - 알림(오른쪽 위)이 되돌리기 단추를 덮지 않게 그 아래로 내린다. AI 작업 목록이 쓰는 인라인 값이 이긴다 */
+  :root:has(.assign-side[data-float]) { --toast-top: 132px; }
+  /* 오른쪽 아래에 뜬 판에 문서 끝 줄이 가려지지 않게 - 판 높이(창의 70%)만큼 더 굴려 판 위로 올릴 수 있다.
+     padding이 아니라 덧댄 빈 칸 - 스크롤 칸의 padding이 바뀌면 브라우저가 그때의 스크롤 고정을 건너뛰어 떼고 붙일 때 보던 줄이 튄다 */
+  .assign-frame:has(> .assign-side[data-float]) .pane-body::after { content: ""; display: block; height: 70vh; }
   /* 오른쪽 패널 - 위에서 아래로 일하는 순서: 머리(이 Unit·검사·확정한 사람) → ① 보낼 곳(이곳만 스크롤) → ② 결정 칸(아래에 붙음, 맨 끝 확정).
      결정 칸은 패널 몸통의 52%까지만 크고 넘치면 고른 곳 상자 부분만 스크롤(Remark·확정은 늘 보인다) - 목록이 늘 몇 줄은 보이고 확정은 화면 밖으로 나가지 않는다.
      패널이 아주 낮으면 몸통 전체가 스크롤된다(목록 최소 높이를 지키려고) */

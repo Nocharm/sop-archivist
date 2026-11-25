@@ -42,7 +42,8 @@ function putFirst<T>(items: readonly T[], isFirst: (item: T) => boolean): T[] {
   return [...items.filter(isFirst), ...items.filter((item) => !isFirst(item))];
 }
 
-export function AssignSidePanel({ state }: { state: AssignPageState }) {
+/** headEnd - 칸 머리 끝에 앉는 단추(좁은 창의 떼기, side-float). 없으면 null */
+export function AssignSidePanel({ state, headEnd }: { state: AssignPageState; headEnd: ReactNode }) {
   const {
     t, bundleId, canEdit, unitsKey, reloadData, docViews, tobeData, aiJobs, aiOn, aiBusy, suggestions, invalidUnitIds, unitMap, written,
     writtenMap, rowOfUnit, options, mode, activeKey, row, isNewEdit, hasSolo, tocOpen, setTocOpen, tocPick, tocBlocks, newRemarks,
@@ -744,6 +745,7 @@ export function AssignSidePanel({ state }: { state: AssignPageState }) {
                   <ArrowDown size={13} strokeWidth={1.6} aria-hidden />
                 </button>
               </Tooltip>
+              {headEnd}
             </span>
           </div>
         </div>
@@ -794,6 +796,9 @@ export function AssignSidePanel({ state }: { state: AssignPageState }) {
     );
   }
 
+  // 머리가 없는 모양(고르기 전 · 다 끝난 출처 없음)에서는 단추만 있는 머리 한 줄
+  const bareHead = headEnd ? <div className="flex flex-none justify-end px-[var(--pad)] pt-3">{headEnd}</div> : null;
+
   function renderSideBody() {
     if (mode === "unsourced") {
       const target = writtenMap.get(focusNew ?? -1);
@@ -807,6 +812,7 @@ export function AssignSidePanel({ state }: { state: AssignPageState }) {
                     {target.doc_code} {target.section_path}
                   </span>
                   <span className="pill warn">{t("assign.unsourced.title")}</span>
+                  {headEnd && <span className="ml-auto flex-none">{headEnd}</span>}
                 </div>
                 <div lang={target.lang === "neutral" ? undefined : target.lang}>
                   <ClampText text={target.text} className="text-[13px] leading-5 text-ink" tabbable={false} />
@@ -838,7 +844,10 @@ export function AssignSidePanel({ state }: { state: AssignPageState }) {
               </div>
             </>
           ) : (
-            <EmptyState icon={Check} testId="assign-unsourced-done" title={t("assign.unsourced.title")} body={t("assign.unsourced.done")} compact />
+            <>
+              {bareHead}
+              <EmptyState icon={Check} testId="assign-unsourced-done" title={t("assign.unsourced.title")} body={t("assign.unsourced.done")} compact />
+            </>
           )}
         </div>
       );
@@ -861,6 +870,7 @@ export function AssignSidePanel({ state }: { state: AssignPageState }) {
                     <ArrowDown size={13} strokeWidth={1.6} aria-hidden />
                   </button>
                 </Tooltip>
+                {headEnd}
               </span>
             </div>
             {rowBlock !== null && rowBlock.page !== null && (
@@ -886,6 +896,7 @@ export function AssignSidePanel({ state }: { state: AssignPageState }) {
     if (!row) {
       return (
         <div className="assign-side-body">
+          {bareHead}
           <div className="grid gap-1 rounded-md bg-sunken p-3 text-[13px] text-ink-2" style={{ margin: "var(--pad)" }} data-testid="assign-pick-prompt">
             <b className="text-ink">{t("assign.pickTitle")}</b>
             {t("assign.pickBody")}
@@ -913,6 +924,7 @@ export function AssignSidePanel({ state }: { state: AssignPageState }) {
                   <ArrowDown size={13} strokeWidth={1.6} aria-hidden />
                 </button>
               </Tooltip>
+              {headEnd}
             </span>
             {(docViews.error ?? suggestions.error) !== null && (
               <button type="button" className="btn h-6 gap-1 px-1.5 text-xs font-normal text-st-hold" data-testid="assign-refresh-error" onClick={() => reloadData(true)}>
