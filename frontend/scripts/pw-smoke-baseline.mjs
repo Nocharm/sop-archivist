@@ -251,6 +251,16 @@ await runStep("admin access as qa.lead", { devUser: "qa.lead" }, async ({ page, 
   const grantsText = await getText(page, "grants-table");
   check("demo grants are listed", grantsText.includes("Quality Division") && grantsText.includes("Ops Member") && grantsText.includes("Production Member"), grantsText.replace(/\s+/g, " "));
   check("no missing-subject badge for live subjects", (await findByPrefix(page, "grant-missing-").count()) === 0);
+  // 하위 탭은 주소에 남아 새로고침해도 그대로이고, 대상 이름은 화면 언어를 따른다
+  check("the sub tab is in the address", new URL(page.url()).search === "?tab=access&sub=grants", page.url());
+  await page.reload();
+  await wait(page, "grants-table");
+  check("reload stays on grants", await isSelected(page, "access-sub-grants"));
+  await findById(page, "top-bar-lang-ko").click();
+  await page.waitForFunction(() => document.querySelector('[data-testid="grants-table"]')?.textContent?.includes("품질본부"), null, { timeout: T }).catch(() => undefined);
+  check("grant subjects follow the screen language", (await getText(page, "grants-table")).includes("품질본부"), (await getText(page, "grants-table")).replace(/\s+/g, " "));
+  await findById(page, "top-bar-lang-en").click();
+  await page.waitForFunction(() => document.querySelector('[data-testid="grants-table"]')?.textContent?.includes("Quality Division"), null, { timeout: T });
 
   await findById(page, "grant-create").click();
   await wait(page, "grant-form");
