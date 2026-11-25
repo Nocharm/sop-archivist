@@ -19,6 +19,7 @@ from app.sop.excel_export import ExportMeta, build_export_file_name, clean_cell_
 from app.sop.flow_image import draw_flow_png
 from app.sop.output_labels import FIGURE_MARKER, LABELS
 from app.sop.outputs import (
+    STATUS_DELETED,
     ARow,
     CItem,
     FlowNode,
@@ -55,6 +56,7 @@ A_COLUMN_KEYS = (
     "number", "new_text", "ai_suggestion", "change", "remark", "status", "confirmed_by", "confirmed_at", "group_id",
     "checks",
 )
+A_OLD_TEXT_COLUMN = 6  # Old text(1부터) — 확정 삭제 줄에 취소선을 긋는 칸
 A_STATUS_COLUMN = 16  # Status(1부터) — 칩 색(tone)을 싣는 칸
 A_SHARED_COLUMNS = (1, 7, 8, 9, 15)  # Row·Destination·New doc·New doc title·Remark (1부터) — 묶음이 함께 쓰는 칸(제품 명세 §7.13 줄 규칙 (5))
 A_ROW_COLUMN = 1
@@ -334,10 +336,13 @@ def _build_a_sheet(
         a_rows = _keep_document_groups(snap, a_rows, document_id)
     for a_row in a_rows:
         italic = A_NOTE_COLUMNS if a_row.dest_is_note else ()
+        struck = a_row.dest_kind == "delete" and a_row.status in ("confirmed", STATUS_DELETED)  # 삭제를 보류한 줄은 아직 아님
         for offset, line in enumerate(_split_line(_list_a_texts(a_row, hide_places=hide_places), A_ID_COLUMN, A_SHARED_COLUMNS)):
             starts = a_row.is_group_start and offset == 0
             row = _make_row("group_start" if starts else "in_group", line, italic=italic, numeric=(A_ROW_COLUMN,))
             row.unit_id, row.group_id = a_row.unit_id, a_row.group_id
+            if struck:
+                row.cells[A_OLD_TEXT_COLUMN - 1].strike = True
             row.toc, row.noise = a_row.noise_kind is not None, a_row.noise_kind
             status_cell = row.cells[A_STATUS_COLUMN - 1]
             if status_cell.text:  # 이어진 줄의 빈 Status 칸에는 칩이 없다

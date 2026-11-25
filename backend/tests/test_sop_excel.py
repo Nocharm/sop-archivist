@@ -656,6 +656,42 @@ def test_preview_a_rows_carry_unit_group_tone_and_toc(client: TestClient) -> Non
     assert not any(row["toc"] for row in a["rows"])  # 목차가 없는 묶음 — 목차 줄은 test_sop_toc가 본다
 
 
+def _setup_strike(client: TestClient) -> tuple[Fixture, int]:
+    """배정 · 확정 삭제(이어진 줄이 되는 긴 글) · 보류 · 미배정 줄 하나씩 — 취소선은 확정 삭제 줄의 Old 칸만."""
+    long_drop = "가" * 40_000
+    fx = _setup(client, [KEEP, long_drop, OPEN, "Synthetic English line."], assign=False)
+    assign_as_is(client, fx.bundle_id, find_unit(fx.view, KEEP), fx.sop_id, slot_key="responsibilities")
+    _bulk(client, fx.bundle_id, "delete", find_unit(fx.view, long_drop), DROP_REASON)
+    assign_as_is(client, fx.bundle_id, find_unit(fx.view, OPEN), fx.sop_id, slot_key="responsibilities", hold_reason="Synthetic: hold")
+    return fx, A_COLUMN_KEYS.index("old_text")
+
+
+def test_deleted_rows_strike_the_old_text(client: TestClient) -> None:
+    fx, col = _setup_strike(client)
+
+    a_rows = _get_preview(client, fx.bundle_id)["sheets"][0]["rows"][2:]
+
+    # 배정 · 확정 삭제(이어진 줄 둘) · 보류 · 미배정
+    assert [row["cells"][col]["strike"] for row in a_rows] == [False, True, True, False, False]
+    sheet = _load(client, fx.bundle_id)["A Comparison"]
+    assert [bool(sheet.cell(index, col + 1).font.strike) for index in range(3, 8)] == [False, True, True, False, False]
+
+
+def test_other_columns_and_sheets_are_not_struck(client: TestClient) -> None:
+    fx, col = _setup_strike(client)
+
+    preview = _get_preview(client, fx.bundle_id)
+    struck = [
+        (sheet["name"], index, column)
+        for sheet in preview["sheets"]
+        for index, row in enumerate(sheet["rows"])
+        for column, cell in enumerate(row["cells"])
+        if cell["strike"]
+    ]
+
+    assert {(name, column) for name, _, column in struck} == {("A Comparison", col)}
+
+
 def test_preview_only_fields_follow_continued_rows_and_stay_out_of_the_file(client: TestClient) -> None:
     long_text = "가" * 40_000
     fx = _setup(client, [long_text])
