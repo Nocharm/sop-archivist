@@ -311,6 +311,7 @@ def test_a_restructured_table_is_accepted_without_a_reason(client: TestClient, f
     assert (table.status, table.change_type) == ("confirmed", "rewritten")
 
 
+@pytest.mark.usefixtures("hidden_ai_on")
 def test_new_and_delete_candidates_ride_the_match_accept(client: TestClient, fake_ai: FakeAi) -> None:
     # 신규는 Old 문서가 없어 Bundle 범위에만 들고, 신규 한 번에 확정 길로 받아 그대로 채택이다(§5 3-5)
     bundle = make_match(client, fake_ai, LONE_OLD, LONE_NEW)

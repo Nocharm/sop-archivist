@@ -46,9 +46,10 @@ import {
   type ReadinessIssue,
 } from "@/lib/api-sop";
 import { useBundle } from "@/lib/bundle-store";
+import { useDraftingOn } from "@/lib/drafting";
 import { useI18n } from "@/lib/i18n";
 import { countPending, getConfirmedPercent } from "@/lib/progress-model";
-import { getNextActionHref, getStageHref, NEXT_ACTION_STAGE, STAGES } from "@/lib/stages";
+import { getLeftoverTranslationsHref, getNextActionHref, getStageHref, listStages, NEXT_ACTION_STAGE } from "@/lib/stages";
 import { useDelayedFlag } from "@/lib/use-delayed-flag";
 import { GATE_STAGE, splitGates, type GateKey } from "@/lib/review-gates";
 import { useLoaded, type Loaded } from "@/lib/use-loaded";
@@ -231,7 +232,7 @@ function NextActionCard({ bundle, onRequestReview, onAddReviewer }: { bundle: Bu
   const { t } = useI18n();
   const action = bundle.next_action;
   const stageKey = NEXT_ACTION_STAGE[action];
-  const stage = STAGES.find((item) => item.key === stageKey);
+  const stage = listStages(useDraftingOn() === true).find((item) => item.key === stageKey);
   const isAuthor = bundle.my_role === "author";
   const Icon = NEXT_ICONS[action];
   let button = null;
@@ -348,7 +349,7 @@ function ReviewGate({ bundle, readiness, onRequestReview, onAddReviewer }: Revie
                     );
                     if (stage !== null) {
                       return (
-                        <Link key={line.key} href={getStageHref(bundle.id, stage)} className="gate-card fail go" data-testid={`overview-gate-${line.key}`}>
+                        <Link key={line.key} href={line.key === "targets" ? getLeftoverTranslationsHref(bundle.id) : getStageHref(bundle.id, stage)} className="gate-card fail go" data-testid={`overview-gate-${line.key}`}>
                           {body}
                         </Link>
                       );

@@ -184,6 +184,19 @@ export function buildDestinationOptions(tobe: ToBe): DestinationOption[] {
   return options;
 }
 
+/** 고르는 보낼 곳 - 새 문서를 만드는 쪽을 숨긴 동안은 없다. 이미 보낸 곳의 이름은 늘 buildDestinationOptions로 읽는다 */
+export function listPickOptions(tobe: ToBe, drafting: boolean): DestinationOption[] {
+  return drafting ? buildDestinationOptions(tobe) : [];
+}
+
+/** 아직 쓰지 않은 문서(숨긴 기능)의 자리면 그 번호와 칸 이름 - 이름을 못 찾으면(놓인 문장에 이은 초안 · 지운 칸) 이름은 빈 글. 아니면 null */
+export function readHiddenPlace(destination: Destination | null, options: readonly DestinationOption[]): { docCode: string; label: string } | null {
+  if (destination === null || destination.kind === "link" || destination.kind === "delete" || destination.kind === "move") return null;
+  const option = options.find((item) => item.id === getDestinationId(destination));
+  const sameDoc = option ?? options.find((item) => "docId" in item.destination && item.destination.docId === destination.docId);
+  return { docCode: sameDoc?.docCode ?? "", label: option?.label ?? "" };
+}
+
 /** 세는 보낼 곳인가 - 칸 제목 항목은 칸 줄에 딸린 것이라 개수에 넣지 않는다 */
 export function isPlaceOption(option: Pick<DestinationOption, "destination">): boolean {
   return option.destination.kind !== "slot_heading";

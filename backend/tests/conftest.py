@@ -203,6 +203,19 @@ def auto_prepare(fake_ai: FakeAi, monkeypatch: pytest.MonkeyPatch) -> FakeAi:
 
 
 @pytest.fixture
+def hidden_ai_on(monkeypatch: pytest.MonkeyPatch) -> None:
+    """숨긴 AI(자동 칸 추천 · 계획의 삭제 후보)를 켠다 — 코드를 지우지 않은 숨긴 길을 계속 보는 시험용(쪼개기 먼저 설계 §5 H4)."""
+    monkeypatch.setattr("app.sop.ai.constants.AUTO_CLASSIFY", True)
+    monkeypatch.setattr("app.sop.ai.constants.PLAN_DELETES", True)
+
+
+@pytest.fixture
+def c_sheet_on(monkeypatch: pytest.MonkeyPatch) -> None:
+    """숨긴 Excel C 시트를 켠다 — 지우지 않은 C 시트의 내용을 계속 보는 시험용(쪼개기 먼저 설계 §14)."""
+    monkeypatch.setattr("app.sop.sheet_model.SHOW_C_SHEET", True)
+
+
+@pytest.fixture
 def enforce(monkeypatch: pytest.MonkeyPatch) -> None:
     """dev 모드에서도 실제 권한 판정을 켠다 — 테스트가 끝나면 원래 값으로 복원."""
     monkeypatch.setattr(settings, "dev_enforce_permissions", True)

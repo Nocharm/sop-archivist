@@ -11,6 +11,7 @@ frontend(Next.js) 세부 구조와 frontend에만 걸리는 체크리스트. 루
 - **화면 규칙은 순수 모델에 두고 시험한다**(`paper-model`·`classify-model`·`assign-model` 등, API는 `api-sop.ts`). → 2
   - 용지 `content-visibility`는 덩어리에 한 겹만 — 줄에도 걸면 스크롤 고정이 놓친다. `tobe-draft`는 단계 번호를 다시 매기지 않는다.
   - `classify-model` `buildRows`의 줄은 서버 진행 숫자·검토 조건과 같은 규칙이다(`backend/CLAUDE.md` 줄 기준 숫자). 한/영 짝 줄을 한 언어만 이을 때 남는 Unit은 확정 저장에서 빼고(`listLinkLeftovers` — 실으면 422 `hold_required`) `release_unit_ids`로 보낸다.
+- **숨긴 기능(`lib/drafting.ts`)**: 새 문서를 만드는 쪽은 지우지 않고 `isDraftingOn()` · `useDraftingOn()`(서버 렌더 · 하이드레이션 중 null, `=== true`로 읽는다) 하나로 숨긴다. 운영 빌드에는 켜는 길이 없고 개발은 `localStorage sopa.drafting="1"`. 숨긴 기능의 스모크는 `runStep(…, { drafting: true }, …)`. → 2
 - **Assign** `app/bundles/[id]/assign`: 상태·데이터·동작은 `use-assign-page.tsx` `useAssignPage()`, `page.tsx`는 그리기. 고름·처리 중·따라가기는 `lib/assign-focus-model.ts` + `lib/use-assign-focus.ts` 한 곳. → 3
 - **UI 규칙(디자인 기초 문서)**: raw hex는 `src/styles/tokens.css` 밖에서 쓰지 않고, 다크는 토큰만 바꾸며 화면 코드가 테마로 분기하지 않고, 상태 표기는 화면 언어와 상관없이 영어다. → 5
 - **이동**: 앱 안 이동은 `lib/nav-buffer.ts` `navigate()` — 사람이 고른 이동에 `router.push`를 새로 쓰지 않는다(`useLeaveGuard`도 이 길에 걸려 있다). → 6
