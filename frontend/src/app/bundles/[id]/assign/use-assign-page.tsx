@@ -585,7 +585,10 @@ export function useAssignPage() {
     return block === null ? null : { docId: tocPick.docId, unitId: tocPick.unitId, block };
   }, [tocPick, viewList, t]);
   const [soloKey, setSoloKey] = useState(0);
-  const soloLoad = useLoaded<DocumentView | null>(() => (solo !== null ? getDocumentView(bundleId, solo.docId) : Promise.resolve(null)), `${bundleId}:${solo?.docId ?? ""}:${soloKey}`);
+  // 지금 보이는 이미 쓴 New 문서(파일의 문서 id) - 한 단이면 연 New 문서, 양 단이면 New 칸의 문서, 엮은 문서면 null(아래 paperFile이 렌더 중에 맞춘다).
+  // 양 단의 New 용지와 다듬기(한 단 · 그 자리)가 이 보기 하나를 같이 쓴다
+  const [newDocFile, setNewDocFile] = useState<number | null>(null);
+  const newLoad = useLoaded<DocumentView | null>(() => (newDocFile !== null ? getDocumentView(bundleId, newDocFile) : Promise.resolve(null)), `${bundleId}:${newDocFile ?? ""}:${soloKey}`);
   // 표 벗기기 · 다시 표로의 풀기 전환(걷기 · 펼치기 · 붙이기, F10) - Old 칸 안에서 바뀌는 표를 찾고 잰다.
   // 큐가 누른 순간 시작하고, 받은 보기를 고름에 알릴 때 따라가기 스크롤을 전환 뒤로 미루므로(B3) 둘보다 먼저 둔다
   const oldPaneRef = useRef<HTMLElement | null>(null);
@@ -627,7 +630,7 @@ export function useAssignPage() {
       },
       end: (id) => endCommand(id),
       dropFollows: focusCtl.dropFollows,
-      isSoloLoading: soloLoad.isLoading,
+      isSoloLoading: newLoad.isLoading,
       send: (command, ctx) => sendCommand(command, ctx),
       hasTarget: () => liveRef.current.hasTarget,
       replay: (command) => replayPress(command),
@@ -674,12 +677,15 @@ export function useAssignPage() {
       else if (!unwrapMotion.afterMotion(() => scrollToUnit(unitId, true))) scrollToUnit(unitId, true);
     }
   }
-  if (soloLoad.data !== null && !soloLoad.isLoading && soloLoad.data !== seenLoad.solo) {
-    const soloData = soloLoad.data;
+  if (newLoad.data !== null && !newLoad.isLoading && newLoad.data !== seenLoad.solo) {
+    const soloData = newLoad.data;
     setSeenLoad((prev) => ({ ...prev, solo: soloData }));
-    const unitIds = new Set(soloData.units.map((unit) => unit.id));
-    const loaded = focusCtl.load({ type: "loaded", docs: [{ docId: soloData.document.id, revision: soloData.document.revision, unitIds }], liftUnit: (unitId) => (unitIds.has(unitId) ? unitId : null) });
-    if (loaded.picked !== null && loaded.focus.kind === "new" && !loaded.focus.inPlace) scrollToUnit(loaded.picked.pickUnitId);
+    // 양 단의 New 칸은 고르지 않아도 받는다 - 그 문서를 고른 채일 때만 알린다(Old 문서를 기다리는 따라가기를 먹지 않게)
+    if (focus.kind === "new" && focus.docId === soloData.document.id) {
+      const unitIds = new Set(soloData.units.map((unit) => unit.id));
+      const loaded = focusCtl.load({ type: "loaded", docs: [{ docId: soloData.document.id, revision: soloData.document.revision, unitIds }], liftUnit: (unitId) => (unitIds.has(unitId) ? unitId : null) });
+      if (loaded.picked !== null && loaded.focus.kind === "new" && !loaded.focus.inPlace) scrollToUnit(loaded.picked.pickUnitId);
+    }
   }
   const [checked, setChecked] = useState<Set<string>>(new Set());
   const [selNew, setSelNew] = useState<number | null>(null);
@@ -826,7 +832,8 @@ export function useAssignPage() {
   // --- 원문 두 칸 ---
   const viewOf = (docId: number | undefined) => (viewList ?? []).find((view) => view.document.id === docId) ?? null;
   const [manualOldDoc, setManualOldDoc] = useState<number | null>(null);
-  const soloView = hasSolo && soloLoad.data?.document.id === solo.docId ? soloLoad.data : null;
+  const newView = newDocFile !== null && newLoad.data?.document.id === newDocFile ? newLoad.data : null;
+  const soloView = hasSolo && newView?.document.id === solo.docId ? newView : null;
   const oldView = isSolo ? soloView : viewOf(row?.documentId ?? manualOldDoc ?? oldDocIds[0]);
   // AI 추천 일괄 수락 - 상단 바 AI 알약 메뉴가 연다(그 알약은 묶음을 몰라 이 화면이 묶음·지금 Old 문서의 건수를 올려 둔다, 설계 §5 3-1)
   const [acceptKind, setAcceptKind] = useState<AcceptKind | null>(null);
@@ -897,11 +904,12 @@ export function useAssignPage() {
   }, [splitSuggestions.data, paperModel]);
   const partOf = paperTabs?.tabOf ?? null;
   // 다듬는 대상의 원문 - 보통은 왼쪽 용지(Old 문서, 또는 한 단으로 연 New 문서)이고, 양 단에서 New 문장을 고쳤으면 그 New 문서다
-  const newEditModel = useMemo(() => (isNewEdit && soloView ? buildPaperModel(soloView) : null), [isNewEdit, soloView]);
-  const newEditTabs = useMemo(() => (isNewEdit && soloView && newEditModel ? buildPaperTabs(soloView, newEditModel) : null), [isNewEdit, soloView, newEditModel]);
+  // 양 단의 New 용지 - 한 단으로 연 New 문서는 왼쪽 용지(paperModel)가 그린다
+  const newModel = useMemo(() => (newView && !isSolo ? buildPaperModel(newView) : null), [newView, isSolo]);
+  const newTabs = useMemo(() => (newView && newModel ? buildPaperTabs(newView, newModel) : null), [newView, newModel]);
   const shapeView = isNewEdit ? soloView : oldView;
-  const shapeModel = isNewEdit ? newEditModel : paperModel;
-  const shapeTabs = isNewEdit ? newEditTabs : paperTabs;
+  const shapeModel = isNewEdit ? (soloView && newModel) : paperModel;
+  const shapeTabs = isNewEdit ? (soloView && newTabs) : paperTabs;
   // New 문서에서 고른 문장과 그 짝 - 줄 대신 이것이 "고른 것"이다
   const soloUnit = hasSolo && solo.unitId !== null ? (shapeModel?.units.get(solo.unitId) ?? null) : null;
   const soloUnits: ViewUnit[] = soloUnit === null ? [] : soloUnit.pair_id === null ? [soloUnit] : (shapeView?.units ?? []).filter((unit) => unit.pair_id === soloUnit.pair_id);
@@ -961,6 +969,13 @@ export function useAssignPage() {
   const isComposedDoc = newDocId !== null && !writtenDocs.some(([docId]) => docId === newDocId);
   // 이미 쓴 New 문서의 올린 파일(문서) id - 원문 고치기를 그 문서로 연다
   const newFileId = (tobeData?.docs ?? []).find((doc) => doc.id === newDocId)?.document_id ?? null;
+  // 방금 보낸 문장을 New 칸에 들인다 - 이미 쓴 문서는 줄이 이미 있어 그 자리로 옮기고 번쩍인다(seq마다 한 번, 렌더 중 상태 맞추기). 엮은 문서는 다시 받아야 줄이 생겨 NewPane이 들인다
+  const [revealedSeq, setRevealedSeq] = useState<number | null>(null);
+  if (liveDoc !== null && !isComposedDoc && liveDoc.docId === newDocId && liveDoc.seq !== revealedSeq) {
+    setRevealedSeq(liveDoc.seq);
+    const [targetId] = liveDoc.targetIds;
+    if (targetId !== undefined) setJump({ side: "new", id: targetId, targetId, rowKey: "", quiet: true });
+  }
   const composed = useLoaded(
     () => (isComposedDoc && newDocId !== null ? getComposedDoc(bundleId, newDocId, uiLang) : Promise.resolve(null)),
     // 엮은 문서는 New 문장 목록과 함께 바뀐다(판단 저장 · 판단을 푼 편집 · New 문서 편집)
@@ -987,6 +1002,8 @@ export function useAssignPage() {
   const [savedView, setView] = useState(readAssignView);
   // 숨긴 동안 템플릿 보기는 없다 - 저장해 둔 값은 그대로 두고 꺼진 것으로 읽는다
   const view = isDrafting ? savedView : { ...savedView, newTemplate: false };
+  const paperFile = solo !== null && (!solo.inPlace || view.single) ? solo.docId : view.single || isComposedDoc ? null : newFileId;
+  if (paperFile !== newDocFile) setNewDocFile(paperFile);
   // Space 미리보기의 단위 - 가운데 맞출 단위(누른 박스, 문단 Excel에 없는 머리말 · 꼬리말이면 문서 차례로 가까운 위 본문 단위)가 맨 앞
   const spaceOrder = useMemo(() => {
     if (!oldView) return null;
@@ -1326,15 +1343,19 @@ export function useAssignPage() {
   /** 양 단의 New 칸에서 그 문장의 줄을 화면에 들인다 */
   function revealNewUnit(unitId: number) {
     const targetId = written.find((item) => item.new_unit_id === unitId)?.target_id;
-    if (targetId === undefined) return;
-    requestAnimationFrame(() => document.querySelector(`[data-testid="assign-new-${targetId}"]`)?.scrollIntoView({ block: "nearest" }));
+    const testId = targetId === undefined ? `assign-new-paper-piece-${unitId}` : `assign-new-${targetId}`;
+    requestAnimationFrame(() => document.querySelector(`[data-testid="${testId}"]`)?.scrollIntoView({ block: "nearest" }));
   }
 
   /** 양 단에서 New 칸의 문장을 다듬을 대상으로 고른다 - 고르던 Old 줄은 놓는다. 원문의 Unit을 모르는 문장(원문 없이 만든 것)은 고르지 않는다 */
   function selectNewSentence(targetId: number): boolean {
     const item = writtenMap.get(targetId);
     const docId = item ? ((tobeData?.docs ?? []).find((doc) => doc.id === item.target_doc_id)?.document_id ?? null) : null;
-    const unitId = item?.new_unit_id ?? null;
+    return selectNewUnit(docId, item?.new_unit_id ?? null);
+  }
+
+  /** 양 단의 New 문서에서 그 박스(Unit)를 다듬을 대상으로 고른다 - 이을 New 문장이 없는 박스(제목 …)도 같다 */
+  function selectNewUnit(docId: number | null, unitId: number | null): boolean {
     if (unitId === null || docId === null) return false;
     if (solo?.inPlace && solo.docId === docId && solo.unitId === unitId && row === null) return true;
     setMode("old");
@@ -1348,11 +1369,10 @@ export function useAssignPage() {
     return true;
   }
 
-  /** New 칸의 문장을 우클릭 - 그 문장을 고르고 고치기 메뉴를 연다(Old 줄을 고른 채여도) */
-  function openNewCtxMenu(targetId: number, click: { x: number; y: number }) {
-    const unitId = writtenMap.get(targetId)?.new_unit_id ?? null;
+  /** New 칸의 문장을 우클릭 - 그 문장을 고르고 고치기 메뉴를 연다(Old 줄을 고른 채여도). 문장이 아닌 박스(제목 · 표 · 칸)에는 메뉴가 없다 */
+  function openNewCtxMenu(unitId: number, targetId: number, click: { x: number; y: number }) {
     const anchor = document.querySelector<HTMLElement>(`[data-testid="assign-new-${targetId}"]`);
-    if (!canEdit || mode !== "old" || unitId === null || !anchor || !selectNewSentence(targetId)) return;
+    if (!canEdit || mode !== "old" || !anchor || !selectNewSentence(targetId)) return;
     menuSeq.current += 1;
     setCtxMenu({ seq: menuSeq.current, unitId, boxId: null, rowKey: SOLO_ROW_KEY, anchor, click, caret: null });
   }
@@ -1387,8 +1407,9 @@ export function useAssignPage() {
     if (hasSolo) {
       // 줄이 없는 문서 - 용지 순서로 다음(앞) 문장, 짝은 한 묶음으로 건너뛴다. 양 단의 New 칸에서는 그 칸에 줄이 있는 문장만 돈다
       const shown = new Set(written.map((item) => item.new_unit_id));
-      const order = isNewEdit ? (shapeTabs?.order ?? []).filter((id) => shown.has(id)) : (paperTabs?.order ?? []).filter((id) => partKeys.length <= 1 || partOf?.get(id) === activePart);
       const held = new Set(soloUnits.map((unit) => unit.id));
+      // 고른 박스는 줄이 없어도(제목) 차례의 기준으로 남긴다
+      const order = isNewEdit ? (shapeTabs?.order ?? []).filter((id) => shown.has(id) || held.has(id)) : (paperTabs?.order ?? []).filter((id) => partKeys.length <= 1 || partOf?.get(id) === activePart);
       const from = soloUnits.length === 0 ? (step === 1 ? -1 : order.length) : order.indexOf(step === 1 ? soloUnits[soloUnits.length - 1].id : soloUnits[0].id);
       for (let at = from + step; at >= 0 && at < order.length; at += step) {
         if (held.has(order[at])) continue;
@@ -2437,7 +2458,7 @@ export function useAssignPage() {
 
   /**
    * 확정한 곳을 오른쪽 칸에 바로 보인다 - 그 문서로 옮기고(다음 줄에서도, 손으로 고른 문서가 없을 때), 엮은 문서면 저장 응답으로 칸에 미리 넣는다.
-   * 그 문장이 그려지면 NewPane이 화면에 들이고, 잇는 선은 진하게 그린다. at은 저장이 실은 놓은 자리(칸 끝 대신 그 자리에 넣는다)
+   * 그 문장이 그려지면 화면에 들이고(이미 쓴 문서는 revealedSeq, 엮은 문서는 NewPane), 잇는 선은 진하게 그린다. at은 저장이 실은 놓은 자리(칸 끝 대신 그 자리에 넣는다)
    */
   function showSent(unitIds: readonly number[], destination: Destination, saved: Group, nextKey: string, at: { sectionKey: string; after: number | null } | null) {
     const docId = destination.kind === "slot" || destination.kind === "step" || destination.kind === "join" ? destination.docId : destination.kind === "link" ? (findWrittenRow(destination.targetIds[0])?.target_doc_id ?? null) : null;
@@ -2619,7 +2640,7 @@ export function useAssignPage() {
   // 알림의 되돌리기는 화면을 넘어 남는다 - 그 렌더의 함수를 붙들지 않게 가장 최근의 것을 미러한다(use-box-drag의 최신 config와 같은 짜임)
   const undoStepRef = useRef(runUndoStep);
   // 큐가 보낼 때 읽는 화면 값 - 명령은 누른 때의 것(줄 · Unit · 초안)만 싣고 나머지는 나갈 때의 값으로 보낸다(앞 응답 뒤의 값)
-  const live = { bundle, focus, hasTarget: row !== null || hasSolo || noisePick !== null, mode, activeKey, unitMap, rowMap, rowOfUnit, views: viewList, soloView: soloLoad.data, writtenMap, composedData, leftovers, isDrafting, labelOptions };
+  const live = { bundle, focus, hasTarget: row !== null || hasSolo || noisePick !== null, mode, activeKey, unitMap, rowMap, rowOfUnit, views: viewList, soloView: newLoad.data, newDocFile, isNewLoading: newLoad.isLoading, writtenMap, composedData, leftovers, isDrafting, labelOptions };
   const liveRef = useRef(live);
   // 커밋마다 큐를 한 번 돌린다(새 이펙트를 두지 않는다) - 장벽 · 되살린 글쇠가 세운 고름이 그려진 이 커밋의 값으로 다음 명령을 낸다
   useEffect(() => {
@@ -2758,7 +2779,7 @@ export function useAssignPage() {
   /** 실패를 사람 말로 - 무엇이 바뀌었는지 모르니 보기까지 다시 받는다(멈춘 동안 낡은 revision을 들고 있지 않게) */
   function readCommandFailure(err: unknown, command: WriteCommand): { reason: string; isRefusal: boolean } {
     writeLog.noteAll();
-    requestReload({ ...askAll(true), solo: liveRef.current.focus.kind === "new" });
+    requestReload({ ...askAll(true), solo: liveRef.current.newDocFile !== null });
     if (err instanceof CommandRefusal) return { reason: err.message, isRefusal: true };
     const rule = err instanceof ApiError ? err.rule : null;
     const isRefusal = err instanceof ApiError && err.status >= 400 && err.status < 500;
@@ -2821,6 +2842,8 @@ export function useAssignPage() {
     // Old 원문 편집의 되돌리기는 판단이 그대로라 Old 문서 보기 · 줄과 같은 글자 후보만(응답이 문서를 알려 주지 않아 모든 Old 문서, 설계 D2).
     // 판단 저장 단계 · New 문서를 고른 채는 모두 - 짝 모양이 바뀌었을 수 있어 원문 보기도. 편집 단계도 그 편집이 판단(배정 · 짝)을 바꿨으면 되살렸다 - 그때는 판단 단계처럼 모두(B6)
     const isEditOnly = held.kind !== "new" && isUnitEditStep(result.op) && !result.restored_decisions;
+    // 양 단에 보이는 New 문서는 고르지 않았어도 그 문서의 편집을 되돌린 것일 수 있다 - 기다리지 않고 큐가 빌 때 그 보기와 New 문장을
+    if (held.kind !== "new" && liveRef.current.newDocFile !== null) requestReload({ ...NO_RELOAD_ASK, solo: true, written: true });
     await placeReload(isEditOnly ? buildReloadAsk(planReload({ kind: "edit_undo", docId: null }, { aiOn }), oldDocIds) : { ...askAll(true), solo: held.kind === "new" }, ctx);
   }
 
@@ -3107,6 +3130,13 @@ export function useAssignPage() {
     if (pickNewSentence(targetId, additive) && row) openMenu(anchor, event, row.key, additive ? null : targetId);
   }
 
+  /** 이미 쓴 New 문서의 이을 수 없는 박스(제목 · 머리말 · 표 …)를 누름 - Old 줄을 골라 두었으면 까닭을 알리고, 아니면 그 박스를 다듬기로 고른다 */
+  function pickUnlinkableNew(unitId: number, why: string) {
+    if (mode !== "old" || !canEdit || (isNewEdit && pairSource !== null && pairFrom !== null)) return;
+    if (row !== null) showToast(why, "info");
+    else selectNewUnit(newDocFile, unitId);
+  }
+
   /** 놓인 New 문장을 누름(엮은 문서) - 그 줄 옆에 작은 메뉴를 연다. 고르기만 하고 저장은 결정 칸의 Confirm이 한다 */
   function handleJoinPick(targetId: number, anchor: HTMLElement, event: MouseEvent) {
     if (activeKey === null) return;
@@ -3370,7 +3400,8 @@ export function useAssignPage() {
     let frame = requestAnimationFrame(function step() {
       const el = jump.side === "new" ? findNewLine(document, jump.id) : findOldStrip(document, jump.id);
       if (!el) {
-        tries += 1;
+        // 받는 중인 New 문서는 올 때까지 기다린다
+        if (jump.side !== "new" || !liveRef.current.isNewLoading) tries += 1;
         if (tries < 60) frame = requestAnimationFrame(step);
         else setJump(null);
         return;
@@ -3457,9 +3488,9 @@ export function useAssignPage() {
   }
   /** 포인터 밑의 New 칸 줄 상자와 거기 놓으면 보낼 곳 - 엮은 문서는 문장 사이(의미 묶음 상자의 중간선으로 앞·뒤)·빈 칸, 이미 쓴 문서는 문장 상자 밖이면 거절 */
   function readSendAt(point: DragPoint, dragUnitIds: readonly number[]): { drop: SendDrop; item: HTMLElement | null } {
+    if (findUnderPoint(point, '[data-pane="new"] .new-paper')) return { drop: findUnderPoint(point, ".new-line") ? { kind: "none" } : { kind: "refused", reason: "written_doc" }, item: null };
     const item = findUnderPoint(point, '[data-pane="new"] .new-item[data-row]:not([data-leave])');
     if (!item) return { drop: { kind: "none" }, item: null };
-    if (!item.closest(".pg[data-read-only]")) return { drop: findUnderPoint(point, ".new-line, .new-block") ? { kind: "none" } : { kind: "refused", reason: "written_doc" }, item };
     const key = item.dataset.row ?? "";
     const sections = readDropSections();
     if (key.startsWith("slot:")) {
@@ -3606,13 +3637,13 @@ export function useAssignPage() {
     setDropPlace({ rowKey, destination, position: null, menu: false });
   }
   const isOldDrag = canDragOld({ canEdit, mode, isPairPicking: pairSource !== null && pairFrom !== null, isSolo });
-  /** 포인터 밑의 New 줄과 거기 놓으면 할 일 - 이번 걸음에는 이미 쓴 문서의 고를 수 있는 문장만 받는다 */
+  /** 포인터 밑의 New 줄과 거기 놓으면 할 일 - 이미 쓴 문서의 이을 수 있는 문장과 표 칸만 받는다 */
   function readDropAt(point: DragPoint): { line: HTMLElement | null; drop: AssignDrop } {
     // 이미 쓴 문서 표의 칸 상자(data-drop="cell")도 문장처럼 받는다(시안 2 D5)
     const cell = findUnderPoint(point, '[data-pane="new"] [data-drop="cell"][data-cell-target]');
-    if (cell) return { line: cell, drop: findAssignDrop({ targetId: Number(cell.dataset.cellTarget), isReadOnly: false, hasPickButton: false, isCell: true }) };
+    if (cell) return { line: cell, drop: findAssignDrop({ targetId: Number(cell.dataset.cellTarget), isReadOnly: false, isLinkable: true }) };
     const line = findUnderPoint(point, '[data-pane="new"] .new-line[data-target]');
-    const hit = line ? { targetId: Number(line.dataset.target), isReadOnly: line.closest(".pg[data-read-only]") !== null, hasPickButton: line.querySelector("button.new-hit") !== null } : null;
+    const hit = line ? { targetId: Number(line.dataset.target), isReadOnly: line.closest(".pg[data-read-only]") !== null, isLinkable: line.dataset.linkable !== undefined } : null;
     return { line, drop: findAssignDrop(hit) };
   }
   /** 포인터 밑의 Old 캡션 자리(표 머리 줄 · 그림 아래)와 끈 줄을 거기 놓으면 할 일(F7 - 캡션이 될 수 있는 글 한 줄이면 붙인다, 거리 제한 없음) */
@@ -4304,11 +4335,12 @@ export function useAssignPage() {
 
   // 출처 없는 New 문장을 고르면 New 원문이 그 문장을 보이게. Old 줄을 바꿀 때는 New 칸을 움직이지 않는다(1.2.0 피드백) - 추천 카드를 누를 때만 그리로 간다
   const newFocusId = focusNew;
+  const isNewPaperReady = newModel !== null;
   useEffect(() => {
     if (newFocusId === null || newDocId === null) return;
     const frame = requestAnimationFrame(() => document.querySelector(`[data-testid="assign-new-${newFocusId}"]`)?.scrollIntoView({ block: "nearest" }));
     return () => cancelAnimationFrame(frame);
-  }, [newFocusId, newDocId]);
+  }, [newFocusId, newDocId, isNewPaperReady]);
 
   // Remark 창이 닫히고(창을 거친 저장이면 저장이 끝난 뒤) 확정 단추로 포커스 - 꺼진 단추면 창이 되돌린 자리 그대로
   useEffect(() => {
@@ -4348,7 +4380,7 @@ export function useAssignPage() {
 
   /** 고른 곳이 New 칸에 그려진 상자 - 잇기는 그 문장(짝 포함), 엮은 문서의 칸·step은 그 칸의 줄(비었으면 빈 칸 자리). 지금 칸에 없으면 빈 목록 */
   function listDestinationEls(dest: Destination): HTMLElement[] {
-    const find = (id: number) => document.querySelector<HTMLElement>(`[data-pane="new"] [data-testid="assign-new-${id}"]`);
+    const find = (id: number) => document.querySelector<HTMLElement>(`[data-pane="new"] :is([data-testid="assign-new-${id}"], [data-testid="assign-new-cell-${id}"])`);
     let els: (HTMLElement | null)[] = [];
     if (dest.kind === "link") els = addPartnerTargets(dest.targetIds, writtenMap).map(find);
     else if (dest.kind === "join") els = composedDoc?.target_doc_id === dest.docId ? [find(dest.targetId)] : [];
@@ -4382,7 +4414,7 @@ export function useAssignPage() {
     pickedGroups, saveGroupData, candidateIds, viewOf, setManualOldDoc, oldView, acceptKind, setAcceptKind, acceptDoc,
     paperModel, canPairView, isPairView, pairColumns, pairLinks, partKeys, oldDocId, splitByUnit, shapeView, shapeModel, soloUnit,
     soloUnits, cutUnit, cutLine, linkedTargets, setManualPart, activePart, isFoldEmpty, foldElsewhere, writtenDocs, composedDocs,
-    setManualNewDoc, toggleKey, liveDoc, isNewDocOpen, newDocId, newAiReturn, setNewAiReturn, isComposedDoc, newFileId, composedDoc,
+    setManualNewDoc, toggleKey, liveDoc, isNewDocOpen, newDocId, newAiReturn, setNewAiReturn, isComposedDoc, newFileId, newLoad, newView, newModel, newTabs, composedDoc,
     newRows, headingNotes, sectionMarks, joinableIds, templateTitles, linkPairs, view, changeView, zoomPane, setPanes, askAiScope,
     aiMenuItems, remarkEdit, setRemarkEdit, focusAfterRef, firstTextRef, busy, isAnyPending, isGlobalPending: focusCtl.isGlobalPending, paperPending, pendingDeletes, expectedNumbers, editConfirm, answerEditConfirm, cancelEditConfirm, canUndoNow, queueFailure, retryCommand: commands.retry, discardCommands: commands.discard,
     oldPaneRef, undoState, bulk, setBulk, runBulkDelete, runReset, confirmRemark, closeRemark, confirmingIdentical, setConfirmingIdentical,
@@ -4395,7 +4427,7 @@ export function useAssignPage() {
     rewrapTable, unwrapAi, describeEditConfirm, pairGrip, clearNoise, openNoiseReason, confirmNoiseReason, closeNoiseReason, noisePick, runCaptionRefChange, switchShapeMode, switchToPair,
     applySplitSuggestion, dismissSplitSuggestion, splitPendingIds, readPendingItem, selectNextSplit, selectNextRef, selectNextCaption,
     splitAtCut, handleOldDoubleClick, runCtx, runUnitAction, revertHeadings, planOldJoin, joinOld, renderOldActions, readReasonNeed,
-    runSave, runClear, runUndoStep, confirmIdenticalAll, acceptAll, markNew, placeManage, pickDestination, pickNewSentence, handleNewPick, unlinkCell,
+    runSave, runClear, runUndoStep, confirmIdenticalAll, acceptAll, markNew, placeManage, pickDestination, pickNewSentence, handleNewPick, pickUnlinkableNew, unlinkCell,
     handleJoinPick, readJoinAfter, pickJoinMenu, pickPlaceSpot, pickOwnAiLine, jumpToNew, openNewDoc, showInNew, jumpToOld,
     pickTemplateLine, fillTemplateMissing, isTemplateDrag, isOldDrag, finishPairPick, handleOldClick, handlePrimary, startEdit,
     pickRecommendation, handleSidePress, primaryPlan, markRecHover, revealPick, setRevealPick, done, renderPlaceLabel, listDestinationEls,

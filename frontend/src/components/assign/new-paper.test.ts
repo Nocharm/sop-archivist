@@ -67,7 +67,7 @@ function html({ header = false, heading = false, over, units, ...props }: Option
   const overlay = buildNewOverlay({ rows: ROWS, candidateIds: NONE, pickedIds: NONE, focusId: null, shapeUnitId: null, aiFilter: null, openAiSections: new Set(), ...over });
   const full: NewPaperProps = {
     bundleId: 1, docOptions: [{ value: "1", label: "SOP-1" }], docId: "1", fileId: 3, onDocChange: () => undefined, tag: "New", linesOn: true, onToggleLines: () => undefined,
-    zoom: 1, onZoom: () => undefined, view, model, tabs: buildPaperTabs(view, model), overlay, onOpenAiSection: () => undefined, cellPickable: false, cellDroppable: false,
+    zoom: 1, onZoom: () => undefined, view, model, tabs: buildPaperTabs(view, model), placeholder: createElement("span", { className: "sk" }), overlay, onOpenAiSection: () => undefined, cellPickable: false, cellDroppable: false,
     onUnlink: () => undefined, sourceLabel: (id) => `1-${id}`, onJumpSource: () => undefined, selectedUnitId: null, pickedUnitIds: NONE, onPick: () => undefined, ...props,
   };
   return renderToStaticMarkup(createElement(LangProvider, null, createElement(NewPaper, full)));
@@ -134,9 +134,9 @@ describe("NewPaper", () => {
     expect(h.match(/data-pair-group="4"/g)).toHaveLength(2);
   });
 
-  it("waits with a skeleton until the document arrives", () => {
+  it("shows the placeholder until the document arrives", () => {
     const h = html({ view: null, model: null, tabs: null });
-    expect(h).toContain("sk ");
+    expect(h).toContain('class="sk"');
     expect(h).not.toContain("new-sheet");
   });
 });

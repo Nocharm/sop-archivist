@@ -37,10 +37,11 @@ export interface NewPaperProps {
   onWide?: () => void;
   zoom: number;
   onZoom: (dir: "+" | "-") => void;
-  /** 아직 받는 중이면 null - 그동안 뼈대 */
+  /** 아직 받지 못했으면 null - 그동안 placeholder(뼈대 · 불러오기 실패) */
   view: DocumentView | null;
   model: PaperModel | null;
   tabs: PaperTabs | null;
+  placeholder: ReactNode;
   overlay: NewOverlay;
   /** AI 거르기의 띠를 눌러 그 칸을 펼친다 - 펼친 칸은 얹기 층(openAiSections)이 안다 */
   onOpenAiSection: (sectionKey: string) => void;
@@ -72,6 +73,8 @@ export interface NewPaperProps {
 function findPressedBox(target: Element): HTMLElement | null {
   return target.closest<HTMLElement>(".cell-piece") ?? target.closest<HTMLElement>(".strip") ?? target.closest(".strip-row")?.querySelector<HTMLElement>(":scope > .strip") ?? null;
 }
+
+const ignoreDoubleClick = () => undefined;
 
 export function NewPaper(props: NewPaperProps) {
   const { t } = useI18n();
@@ -212,6 +215,8 @@ export function NewPaper(props: NewPaperProps) {
           if (anchor) props.onPick(unitId, { shiftKey: event.shiftKey, additive: event.ctrlKey || event.metaKey }, anchor, event);
         }}
         onUnitContextMenu={props.onContextMenu}
+        // 두 번 누르기로 하는 일은 없다 - 낱말이 골라져 둘째 누름이 먹히지 않게 자리만 잡는다
+        onUnitDoubleClick={ignoreDoubleClick}
         cut={props.cut}
         onCutDrag={props.onCutDrag}
         onCutNudge={props.onCutNudge}
@@ -281,7 +286,7 @@ export function NewPaper(props: NewPaperProps) {
             {renderBody(model, view)}
           </div>
         ) : (
-          <span className="sk h-[480px] w-full" />
+          props.placeholder
         )}
       </div>
     </section>
