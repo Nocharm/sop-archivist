@@ -203,6 +203,14 @@ describe("follow (rule 3)", () => {
     // Old 쪽을 따라가도 마지막에 누른 쪽과 한 일은 그대로다
     expect(reduceFocus(state, loaded([doc(1, 9, [40])]))).toMatchObject({ old: unit(40), new: newUnit(70), last: "new", act: "pick" });
   });
+  it("a follow on the side pressed last keeps the act - Enter still links after shaping the New box", () => {
+    const state = run(pickOld(3), pickNew(70), start(job("a", { docId: 7 }), "new"), succeed("a", 72, { docId: 7 }), loaded([doc(7, 5, [72])]));
+    expect(state).toMatchObject({ old: unit(3), new: newUnit(72), last: "new", act: "pick" });
+  });
+  it("Undo pressed with Old last still follows on Old when a New box is pressed before the response (the step keeps the document it was pressed with)", () => {
+    const state = run(pickOld(3), start(job("z", { kind: "undo", docId: null, isGlobal: true }), "old"), pickNew(70), succeed("z", 4, { docId: null, revision: null }), loaded([doc(1, 9, [4, 5])]));
+    expect(state).toMatchObject({ old: unit(4), new: newUnit(70), follows: [] });
+  });
   it("follows from no focus too (the toc block was let go before the edit)", () => {
     const state = run(pick(toc(5)), pick(NO_PICK), start(job("a", { kind: "toc" })), succeed("a", 5), loaded([doc(1, 5, [5])]));
     expect(state.old).toEqual(unit(5));

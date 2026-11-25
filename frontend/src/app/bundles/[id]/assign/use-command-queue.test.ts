@@ -217,7 +217,7 @@ function createScreen() {
       return true;
     }
     screen.press = (name) => {
-      if (name === "undo") commands.enqueue({ kind: "step", direction: "undo" });
+      if (name === "undo") commands.enqueue({ kind: "step", direction: "undo", docId: null });
       else if (commands.isDeferring()) {
         if (commands.canQueueKey()) commands.enqueue({ kind: "key", key: name, shift: false, ctrl: false });
       }
@@ -723,6 +723,9 @@ describe("isRepeatedSave", () => {
   });
   it("is not when something else was pressed on that row in between", () => {
     expect(isRepeatedSave(queued(save(), { kind: "clear", rowKey: "u1" } as AssignCommand), save())).toBe(false);
+  });
+  it("is not when the row was linked in between - Del, link, Del deletes again", () => {
+    expect(isRepeatedSave(queued(save({ isPick: true }), { kind: "link", rowKey: "u1" } as AssignCommand), save({ isPick: true }))).toBe(false);
   });
   it("counts a second Delete on the same row as repeated", () => {
     expect(isRepeatedSave(queued(save({ isPick: true })), save({ isPick: true, draft: { ...draft } }))).toBe(true);

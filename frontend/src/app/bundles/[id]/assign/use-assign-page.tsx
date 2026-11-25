@@ -1601,7 +1601,7 @@ export function useAssignPage() {
   // 새 문서 자리로 보내는 표·그림에 캡션이 없으면 Confirm이 꺼진다(명세 §3.4) - 캡션은 Edit and confirm에서 써 넣는다
   const isCaptionGateFor = (target: Destination | null) => row !== null && paperModel !== null && oldView?.document.id === row.documentId && isCaptionGate(row, target, paperModel.units, draft, groupData);
   const isCaptionGateOn = isCaptionGateFor(destination);
-  // Confirm을 막는 까닭 - 결정 칸 단추의 툴팁과 그 자리 메뉴(끌어 놓은 초안 포함)가 같은 답을 쓴다
+  // Confirm을 막는 까닭 - 결정 칸 단추의 툴팁과 확정(↵)이 같은 답을 쓴다
   const confirmBlockKey = readConfirmBlockKey({ isRefGate, isCaptionGate: isCaptionGateOn, isHiddenPlace: hiddenPlace !== null, isLegacyMove: legacyMove !== null });
   // 오른쪽 칸 1번(다듬기) - 고른 줄의 문장마다 할 수 있는 일. 우클릭 메뉴와 같은 답이다. 고칠 수 없는 사람에게는 줄을 보이지 않는다
   // 표·그림 줄이면 그 묶음의 캡션도 문장처럼 한 줄씩(언어 세 칸·자르기·캡션 떼기) - 용지 순서대로(캡션이 위면 위에)
@@ -2508,7 +2508,8 @@ export function useAssignPage() {
     isPicking: pairSource !== null || captionPickBundle !== null,
     isMultiPick: checked.size > 0 || checkedNew.size > 0,
     isCell: hasSolo && newUnitId !== null && newBoxes.get(newUnitId)?.kind === "cell",
-    last: isSolo ? (newUnitId !== null ? "new" : null) : panel.side,
+    // Old 줄을 Shift로 여럿 고르는 중이면 Old 쪽 - 일괄 확정은 확정 단추가 맡는다
+    last: checked.size > 0 ? "old" : isSolo ? (newUnitId !== null ? "new" : null) : panel.side,
     act: picks.act,
     old: row !== null && pickedId !== null ? { rowKey: row.key, unitId: pickedId, isConfirmed: row.status === "confirmed", savedTargetIds: rowLinks, blockKey: readConfirmBlockKey({ isRefGate, isCaptionGate: false, isLegacyMove: legacyMove !== null }) } : null,
     new: newUnitId !== null ? { unitId: newUnitId, targetIds: readLinkTargets(pressedTargets, rowLinks, writtenMap), additive: newPick.kind === "unit" && newPick.additive, hasSources: pickedNewUnits.some((id) => (newBoxes.get(id)?.sourceIds.length ?? 0) > 0), whyKey: newWhy } : null,
@@ -3069,7 +3070,7 @@ export function useAssignPage() {
       case "pair":
         return sendPairChange(command, ctx);
       case "step":
-        return sendUndoStep(command.direction, ctx);
+        return sendUndoStep(command.direction, command.docId, ctx);
       case "global":
         return command.run(ctx);
     }
@@ -3109,10 +3110,11 @@ export function useAssignPage() {
 
   /** 되돌리기는 장벽이고 대상이 없다 - 앞의 저장이 끝난 뒤 그 끝 단계를 되돌린다. 응답의 focus로 따로 따라간다 */
   function runUndoStep(direction: "undo" | "redo") {
-    if (canEdit) commands.enqueue({ kind: "step", direction });
+    // 누른 때 다듬던 New 문서 - 응답 때 다시 읽으면 그 사이 누른 New 박스의 문서로 따라가기가 걸려 Old 쪽 따라가기가 끝나지 않는다
+    if (canEdit) commands.enqueue({ kind: "step", direction, docId: liveRef.current.undoDocId });
   }
 
-  async function sendUndoStep(kind: "undo" | "redo", ctx: SendContext) {
+  async function sendUndoStep(kind: "undo" | "redo", undoDocId: number | null, ctx: SendContext) {
     let result: DecisionStepResult;
     try {
       result = await (kind === "undo" ? undoDecision : redoDecision)(bundleId, undoSession.current);
@@ -3135,8 +3137,7 @@ export function useAssignPage() {
       cutLine.clear();
       setCutUnitId(null);
     }
-    // 응답은 문서를 알려 주지 않는다 - New를 다듬던 중이면 그 문서에서, 아니면 다시 받은 Old 문서 어디서든 찾는다
-    const { undoDocId } = liveRef.current;
+    // 응답은 문서를 알려 주지 않는다 - 누른 때 New를 다듬던 중이면 그 문서에서, 아니면 다시 받은 Old 문서 어디서든 찾는다
     if (liveRef.current.mode === "unsourced" && result.focus_target_id !== null) setSelNew(result.focus_target_id);
     else if (result.focus_unit_id !== null) focusCtl.succeed(ctx.id, { docId: undoDocId, revision: null, pickUnitId: result.focus_unit_id });
     else if (result.focus_target_id !== null) showInNew(result.focus_target_id);
@@ -4434,7 +4435,7 @@ export function useAssignPage() {
       openCtxMenu(cutUnit?.id ?? pickedId ?? row.unitIds[0], null, null);
       return;
     }
-    // 그 자리 메뉴는 화면 단축키를 막지 않는다 - 메뉴가 떠 있어도 ↵가 확정이다(메뉴 안의 키는 메뉴가 먼저 받는다)
+    // 모달 · 떠 있는 메뉴 · 고르기 목록이 떠 있으면 화면 단축키를 쓰지 않는다(그 안의 키는 그 층이 먼저 받는다)
     if (bulk || isTypingTarget(event.target) || document.querySelector(LAYER_SELECTOR)) {
       if (event.key === "Escape" && editing) closeEditing();
       // 고치는 중에는 Enter가 줄바꿈이라 Ctrl+Enter로 저장한다

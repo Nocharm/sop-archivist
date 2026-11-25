@@ -33,6 +33,8 @@ export interface PickBar {
   tools: readonly PickTool[];
   more: readonly PickMoreId[];
   enter: PickEnter;
+  /** 단추 줄이 없어도 Enter를 여기서 정한다(New를 마지막에 눌렀다) - 확정 단추로 넘기지 않는다 */
+  holdsEnter: boolean;
 }
 
 export interface PickBarState {
@@ -54,7 +56,7 @@ export interface PickBarState {
   tools: readonly PickTool[];
 }
 
-const NONE: PickBar = { at: null, link: null, startLink: null, tools: [], more: [], enter: { kind: "none" } };
+const NONE: PickBar = { at: null, link: null, startLink: null, tools: [], more: [], enter: { kind: "none" }, holdsEnter: false };
 
 /** 이미 이어진 둘을 다시 누르면 끊기, Ctrl로 더했으면 더해 잇기, 이음 · 판단이 있으면 바꿔 잇기 */
 function readLinkKind(old: NonNullable<PickBarState["old"]>, next: NonNullable<PickBarState["new"]>): PickLink["kind"] {
@@ -71,7 +73,9 @@ function readResult(kind: PickLink["kind"], saved: readonly number[], targetIds:
 }
 
 export function buildPickBar(state: PickBarState): PickBar {
-  if (!state.canEdit || state.isPicking || state.isMultiPick || state.last === null) return NONE;
+  if (!state.canEdit || state.last === null) return NONE;
+  // 짝 고르기 · 여럿 고르기 중에는 단추 줄이 없다 - New를 마지막에 눌렀으면 Enter도 아무것도 하지 않는다(오른쪽 칸이 New 쪽이라 확정 단추가 보이지 않는다)
+  if (state.isPicking || state.isMultiPick) return state.last === "new" ? { ...NONE, holdsEnter: true } : NONE;
   const { old, last } = state;
   const next = state.new;
   const atUnit = last === "old" ? old?.unitId : next?.unitId;
@@ -83,24 +87,25 @@ export function buildPickBar(state: PickBarState): PickBar {
     const kind = readLinkKind(old, next);
     // 끊기는 막지 않는다 - 확정을 막는 까닭(참조 번호 · 캡션)은 잇는 쪽에만 걸린다
     const reasonKey = kind === "unlink" ? null : (old.blockKey ?? next.whyKey);
-    const isPress = state.act === "pick";
+    // 박스를 눌렀거나 New를 마지막에 눌렀으면 잇기 - 보낼 곳을 고른 뒤나 저장 뒤 Old가 옮겨 간 때만 확정이다(New 쪽 오른쪽 칸에는 확정 단추가 없다)
+    const isPress = state.act === "pick" || last === "new";
     const enter: PickEnter = !isPress ? (state.mode === "old" ? { kind: "confirm" } : { kind: "none" }) : kind === "unlink" ? { kind: "noop", noticeKey: "assign.pick.alreadyLinked" } : reasonKey !== null ? { kind: "noop", noticeKey: reasonKey } : { kind: "link" };
     const link: PickLink = { kind, rowKey: old.rowKey, unitId: old.unitId, targetIds: next.targetIds, result: readResult(kind, old.savedTargetIds, next.targetIds), reasonKey, isEnter: enter.kind === "link" };
     const hasLinks = last === "old" ? old.savedTargetIds.length > 0 : next.hasSources;
-    return { at, link, startLink: null, tools, more: [...(hasLinks ? (["show_linked"] as const) : []), ...extra], enter };
+    return { at, link, startLink: null, tools, more: [...(hasLinks ? (["show_linked"] as const) : []), ...extra], enter, holdsEnter: true };
   }
   const hasLinks = last === "old" ? (old?.savedTargetIds.length ?? 0) > 0 : (next?.hasSources ?? false);
   const enter: PickEnter = last === "old" && state.mode === "old" ? { kind: "confirm" } : { kind: "none" };
   const more: PickMoreId[] = [...(hasLinks ? (["show_linked", "unlink"] as const) : []), ...extra];
-  return { at, link: null, startLink: last === "old" ? "new" : "old", tools, more, enter };
+  return { at, link: null, startLink: last === "old" ? "new" : "old", tools, more, enter, holdsEnter: true };
 }
 
 /**
  * Enter의 뜻 - 양쪽을 고른 채 박스를 눌렀으면 잇기(또는 바꿀 것이 없다는 알림), 아니면 확정 단추의 판정(primary-model)이다.
- * 한쪽만 New를 고른 때는 아무것도 하지 않는다. 단추 줄이 없는 때(여럿 고름 · 짝 고르기 · 아무것도 고르지 않음)는 확정 단추에 맡긴다
+ * 한쪽만 New를 고른 때는 아무것도 하지 않는다. 단추 줄이 없는 때(여럿 고름 · 짝 고르기 · 아무것도 고르지 않음)는 확정 단추에 맡긴다 - New를 마지막에 눌렀으면 맡기지 않는다
  */
 export function resolveEnter(bar: PickBar, primary: { kind: "confirm" | "apply_order" | "blocked"; reasonKey?: string }): PickEnter {
   if (bar.enter.kind === "link" || bar.enter.kind === "noop") return bar.enter;
-  if (bar.enter.kind === "none" && bar.at !== null) return bar.enter;
+  if (bar.enter.kind === "none" && bar.holdsEnter) return bar.enter;
   return primary.kind === "blocked" && primary.reasonKey !== undefined && bar.at !== null ? { kind: "noop", noticeKey: primary.reasonKey } : { kind: "confirm" };
 }

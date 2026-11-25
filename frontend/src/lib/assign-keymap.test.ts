@@ -146,6 +146,12 @@ describe("Enter and the keys across both documents", () => {
     expect(resolveEnter(bar(3), confirm)).toEqual({ kind: "none" });
     expect(resolveEnter(buildPickBar({ ...base, canEdit: false }), confirm)).toEqual({ kind: "confirm" });
   });
+  it("Enter never confirms the Old row while New was pressed last - Shift-picking New or picking a New pair does nothing", () => {
+    expect(resolveEnter(buildPickBar({ ...base, isMultiPick: true }), confirm)).toEqual({ kind: "none" });
+    expect(resolveEnter(buildPickBar({ ...base, isPicking: true }), confirm)).toEqual({ kind: "none" });
+    expect(resolveEnter(buildPickBar({ ...base, isMultiPick: true, last: "old" }), confirm)).toEqual({ kind: "confirm" });
+    expect(resolveEnter(buildPickBar({ ...base, act: null }), confirm)).toEqual({ kind: "link" });
+  });
   it("judgement keys stay on Old, shape keys and J follow the last side", () => {
     expect(routeKey("Delete", on("new")).side).toBe("old");
     expect(routeKey("s", on("new")).side).toBe("new");

@@ -95,7 +95,8 @@ export type WriteCommand =
       okText: string;
       write: (revision: number, undo: UndoMeta) => Promise<{ document_revision: number }>;
     }
-  | { kind: "step"; direction: "undo" | "redo" }
+  // docId - 누른 때 다듬던 New 문서(없으면 null) - 응답 뒤 따라가기가 그 문서에서 찾는다
+  | { kind: "step"; direction: "undo" | "redo"; docId: number | null }
   // 같은 글자 · 모두 받기 · 초기화 · 신규 표시 · 출처 잇기 · 칸 떼기 · 표 참조 · 나누기 제안 버리기 · 남은 번역 · 끌어 맺은 짝 - label은 실패 알림의 이름(메시지 키)
   | { kind: "global"; label: string; pending: Omit<Pending, "id">; run: (ctx: SendContext) => Promise<void> };
 
@@ -434,7 +435,7 @@ export function useCommandQueue(env: CommandEnv, describePending: DescribePendin
 
 /** 같은 줄에 같은 판단을 또 눌렀나 - 그 줄에 마지막으로 선 것이 같은 초안 · 사유의 같은 저장이고 아직 끝나지 않았으면 되돌리기 단계만 하나 더 는다 */
 export function isRepeatedSave(unsettled: ReadonlyArray<{ payload: AssignCommand }>, next: Extract<WriteCommand, { kind: "save" }>): boolean {
-  const last = unsettled.map(({ payload }) => payload).filter((payload) => (payload.kind === "save" || payload.kind === "clear" ? payload.rowKey === next.rowKey : payload.kind === "bulk" && payload.rows.some((item) => item.rowKey === next.rowKey))).at(-1);
+  const last = unsettled.map(({ payload }) => payload).filter((payload) => (payload.kind === "save" || payload.kind === "clear" || payload.kind === "link" ? payload.rowKey === next.rowKey : payload.kind === "bulk" && payload.rows.some((item) => item.rowKey === next.rowKey))).at(-1);
   return last?.kind === "save" && last.action === next.action && last.reason === next.reason && last.isPick === next.isPick && (next.isPick || last.draft === next.draft);
 }
 

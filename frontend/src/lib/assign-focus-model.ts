@@ -226,9 +226,10 @@ export function applyLoaded(state: FocusState, event: Extract<FocusEvent, { type
   if (consumed.length === 0 && !isMoved) return { state, picked, consumed };
   if (!isMoved) return { state: { ...state, follows: kept }, picked, consumed };
   const next = { ...withPick(state, held), follows: kept };
-  // 저절로 옮긴 고름이다 - 다른 쪽을 마지막에 눌렀으면 그대로 그 쪽이다
+  // 저절로 옮긴 고름이다 - 다른 쪽을 마지막에 눌렀으면 그대로 그 쪽이다. 한 일(act)도 그대로 - 고른 박스를 다듬은 결과를 따라간 것이라
+  // 양쪽을 고른 채의 Enter는 여전히 잇기다(act null은 저장 뒤 다음 박스로 옮길 때만)
   const last = held.pick.kind === "none" ? next.last : (state.last ?? side);
-  return { state: { ...next, last, act: picked !== null && last === side ? null : state.act }, picked, consumed };
+  return { state: { ...next, last, act: state.act }, picked, consumed };
 }
 
 /** 그 따라가기가 이번에 받은 보기를 기다렸는가 - 문서를 모르면 받은 보기 무엇이든 */
