@@ -305,13 +305,13 @@ AI 없이 사람이 끝까지 가는 결정적 경로(계획 1). AI 층은 아�
 
 ### 12.13 제목 ↔ 문장 `segment.is_heading_like`(F8b, Alembic `0029`)
 
-- 제목다움 판정은 이 함수 하나를 옛 문서 쪼개기(`build_unit_drafts`의 `shift_headings` — 바꾼 문장에 `units.from_heading`)와 추출기 절 이름(`docx_reader` — 바꾼 조항은 번호가 있을 때만 절을 연다)이 함께 쓴다. 규칙을 바꾸면 두 곳이 같이 움직인다.
+- 제목다움 판정은 이 함수 하나를 쪼개기(`build_unit_drafts`의 `shift_headings` — Old와 규칙 2의 New, 규칙 1의 New는 제목 그대로. 바꾼 문장에 `units.from_heading`)와 추출기 절 이름(`docx_reader` — 바꾼 조항은 번호가 있을 때만 절을 연다)이 함께 쓴다. 규칙을 바꾸면 두 곳이 같이 움직인다.
 - 바꾼 문장은 코드 짝에서 조항마다 덩어리(같은 문장 수면 1:1)이고, 번호 없는 번역 조항의 첫 문장은 `numbering.find_inherited_numbers`로 앞 조항 번호를 받는다(`number_source = "pair"`, 처음 쪼개기와 편집 `set_heading`이 같이 쓴다).
 - 편집 `set_heading`과 그 되돌리기는 짝을 `units.pair_new_units`로 새 단위만 다시 세운다.
 
 ### 12.14 띠 표 → 제목 줄 `segment.is_certain_band`·`is_band_heading`(F4, Alembic 없음)
 
-- 꼴이 확실한 띠 표(표 신호 `band`, 본문의 바깥 표)는 옛 문서를 올릴 때 `units.create_initial_units`가 `source_tables.is_layout`을 켜 두고, 레이아웃 띠 표(`TableView.is_band`)는 `build_unit_drafts`가 번호 칸 + 제목 칸을 `heading` 단위 하나로 만든다.
+- 꼴이 확실한 띠 표(표 신호 `band`, 본문의 바깥 표)는 Old와 규칙 2의 New를 올릴 때 `units.create_initial_units`가 `source_tables.is_layout`을 켜 두고, 레이아웃 띠 표(`TableView.is_band`)는 `build_unit_drafts`가 번호 칸 + 제목 칸을 `heading` 단위 하나로 만든다. New 문장의 절 경로(`match._plan_targets`)는 제목 스타일 단계가 없는 띠 표 제목을 번호의 단계(`segment.read_band_level`)로 쌓는다 — 규칙 1의 New는 사람이 벗긴 띠 표도 전처럼 단계 없는 제목이다(이미 만든 New 문장의 절 경로를 바꾸지 않는다).
 - 띠 표의 `set_layout_table`은 단위 모양이 바뀌어 `editing._plan_band_layout`이 같은 `build_unit_drafts`로 제목 줄 ↔ 데이터 표(표 단위 + 새 칸 문장, `_Draft.group_draft`)를 다시 세운다.
 - 띠 표가 아닌 표의 `set_layout_table`은 바로 안쪽 띠 표도 같은 편집으로 함께 바꾼다(F2, `_merge_change`) — 그 밖의 안쪽 표는 누른 표만.
 - "`table_id`가 있는 `heading`" 판정은 결과물 A 위치(`outputs._format_place` — "띠 표")와 프런트 `paper-model.isBandHeading`(용지가 표 대신 제목 줄로 그림·Shape의 **Back to band table**)이 함께 쓴다.

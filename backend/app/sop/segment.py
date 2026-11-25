@@ -484,6 +484,12 @@ def is_band_table(signals: Mapping[str, object] | None) -> bool:
     return bool((signals or {}).get(BAND_SIGNAL))
 
 
+def read_band_level(signals: Mapping[str, object] | None) -> int | None:
+    """띠 표 번호의 제목 단계(점으로 나뉜 자리 수 — "7" 1, "7.4" 2), 띠 표가 아니면 None."""
+    band = (signals or {}).get(BAND_SIGNAL)
+    return int(band["level"]) if isinstance(band, Mapping) else None
+
+
 def is_certain_band(signals: Mapping[str, object] | None, parent_table_id: int | None, part: str) -> bool:
     """올리자마자 제목 줄로 만들 띠 표인가(F4 · §11-1) — 띠 표 신호가 있는 본문의 바깥 표. 데이터 표 안의 띠 표는 바깥 표를 벗길 때까지
     표 안에 두고(브랜치 6), 머리말·꼬리말의 띠 표 꼴은 절을 열지 않아 표로 둔다. 표로 둔 띠 표도 사람이 벗기면 제목 줄이 된다."""
