@@ -107,6 +107,7 @@ INFO_NAMES = (
     "Synthetic data",
 )
 _LABELS = LABELS["en"]
+PLACE_JOINER = " · "  # 위치 칸 조각 사이(outputs._format_place와 같다)
 _MARKERS = {"table": "[Table]", "figure": FIGURE_MARKER}  # 확정한 캡션 글이 없는 표·그림 줄에만
 _CAPTION_POSITION = "Caption"  # 캡션 줄의 Cell position 칸 — 칸 줄의 "R 1 C 1" 자리
 _NO_WRAP_KINDS = ("status", "plain")  # 상태 줄·제목·이름 칸은 옆 칸으로 넘쳐 보이게 접지 않는다
@@ -259,10 +260,12 @@ def _make_sheet(
 # --- A Comparison ---
 
 
-def _format_location(location: LocationOut) -> str:
+def _format_location(location: LocationOut, *, hide: Collection[str] = ()) -> str:
+    """위치 칸 — hide에 든 자리 조각("Paragraph" · "Figure")은 뺀다(Assign 미리보기, 파일 · Outputs 미리보기는 그대로)."""
     pieces = [f"§{location.section}"] if location.section else []
-    if location.place:
-        pieces.append(location.place)
+    place = [piece for piece in location.place.split(PLACE_JOINER) if piece not in hide]
+    if place:
+        pieces.append(PLACE_JOINER.join(place))
     if location.page is not None:
         pieces.append(f"~p. {location.page}" if location.page_basis == "estimated" else f"p. {location.page}")
     return " · ".join(pieces)
@@ -275,13 +278,13 @@ def _format_warnings(row: ARow) -> str:
     )
 
 
-def _list_a_texts(row: ARow) -> list[str]:
+def _list_a_texts(row: ARow, *, hide_places: Collection[str] = ()) -> list[str]:
     """결과물 A 한 줄의 칸 글(A_HEADERS 순서) — 미배정은 보낸 곳 칸이 빈 채로 보인다."""
     return [
         str(row.row_no),
         row.old_doc_code,
         row.old_doc_version,
-        _format_location(row.location),
+        _format_location(row.location, hide=hide_places),
         row.display_id,
         row.source_text,
         _LABELS.dest_kinds.get(row.dest_kind, ""),
@@ -315,12 +318,15 @@ def _keep_document_groups(snap: BundleSnapshot, a_rows: list[ARow], document_id:
     return kept
 
 
-def _build_a_sheet(snap: BundleSnapshot, people: Mapping[str, str], document_id: int | None = None) -> Sheet:
+def _build_a_sheet(
+    snap: BundleSnapshot, people: Mapping[str, str], document_id: int | None = None, *, preview: bool = False
+) -> Sheet:
     """ARow 하나가 한 줄(넘는 글은 이어진 줄) — 묶음 첫 줄 말고는 함께 쓰는 칸이 바로 윗줄과 같으면 흐리게(제품 명세 §7.14 되풀이 + 흐림, O6).
 
     흐림은 보이는 글(clean_cell_text를 거친 칸 글)끼리 견준다. 줄의 단위·관계 묶음과 Status 칸의 칩 색은 미리보기만 읽는다.
-    document_id를 주면 그 옛 문서의 묶음만 싣는다(Assign 미리보기).
+    document_id를 주면 그 옛 문서의 묶음만 싣는다(Assign 미리보기). preview면 위치 칸에서 "문단" · "그림" 글자를 뺀다(줄은 남긴다).
     """
+    hide_places = (_LABELS.paragraph, _LABELS.figure) if preview else ()
     rows = [_build_status_row(snap, len(A_HEADERS)), _make_row("header", A_HEADERS)]
     above: SheetRow | None = None
     a_rows = build_output_a(snap, "en", people)
@@ -328,7 +334,7 @@ def _build_a_sheet(snap: BundleSnapshot, people: Mapping[str, str], document_id:
         a_rows = _keep_document_groups(snap, a_rows, document_id)
     for a_row in a_rows:
         italic = A_NOTE_COLUMNS if a_row.dest_is_note else ()
-        for offset, line in enumerate(_split_line(_list_a_texts(a_row), A_ID_COLUMN, A_SHARED_COLUMNS)):
+        for offset, line in enumerate(_split_line(_list_a_texts(a_row, hide_places=hide_places), A_ID_COLUMN, A_SHARED_COLUMNS)):
             starts = a_row.is_group_start and offset == 0
             row = _make_row("group_start" if starts else "in_group", line, italic=italic, numeric=(A_ROW_COLUMN,))
             row.unit_id, row.group_id = a_row.unit_id, a_row.group_id
@@ -609,7 +615,7 @@ def build_a_preview(
 
     긴 문서에서 고른 줄이 앞 max_rows줄 밖이어도 보이게 한다. 고른 단위가 없거나 시트에 없으면 처음부터다. 뺀 위쪽 줄 수는 offset.
     """
-    return limit_window(_build_a_sheet(snap, people, document_id), A_HEAD_ROWS, around_unit_id, max_rows)
+    return limit_window(_build_a_sheet(snap, people, document_id, preview=True), A_HEAD_ROWS, around_unit_id, max_rows)
 
 
 def limit_window(sheet: Sheet, head_rows: int, around_unit_id: int | None, max_rows: int = MAX_PREVIEW_ROWS) -> Sheet:
