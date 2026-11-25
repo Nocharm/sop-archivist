@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { createCommandQueue, isBarrier, isIdle, listUnsettled, listWaitNumbers, mustDefer, type CommandKind, type QueuedCommand } from "./command-queue";
+import { createCommandQueue, isBarrier, isIdle, listUnsettled, listWaitNumbers, mustDefer, shouldHalt, type CommandKind, type QueuedCommand } from "./command-queue";
 
 const job = (id: string, kind: CommandKind, unitIds: number[], over: { isGlobal?: boolean } = {}): Omit<QueuedCommand<string>, "isDeferred"> => ({ id, kind, isGlobal: over.isGlobal ?? false, payload: id, unitIds });
 const key = (id: string) => job(id, "key", []);
@@ -222,6 +222,23 @@ describe("command queue", () => {
     expect(isIdle(q.getState())).toBe(false);
     q.drop();
     expect(isIdle(q.getState())).toBe(true);
+  });
+});
+
+describe("shouldHalt", () => {
+  const waiting = (count: number) => ({ waiting: Array.from({ length: count }, (_, n) => ({ ...job(`w${n}`, "save", [n]), isDeferred: false })) });
+  it("stops whenever something waits behind", () => {
+    expect(shouldHalt(job("m", "join", [3]), waiting(1), true)).toBe(true);
+    expect(shouldHalt(job("m", "undo", []), waiting(2), true)).toBe(true);
+  });
+  it("stops on a decision even alone - the pick already left its box", () => {
+    expect(shouldHalt(job("a", "save", [3]), waiting(0), true)).toBe(true);
+    expect(shouldHalt(job("a", "bulk", [3]), waiting(0), true)).toBe(true);
+  });
+  it("stops on a failure worth resending, and only tells about a refused edit with nothing behind it", () => {
+    expect(shouldHalt(job("m", "join", [3]), waiting(0), false)).toBe(true);
+    expect(shouldHalt(job("m", "join", [3]), waiting(0), true)).toBe(false);
+    expect(shouldHalt(job("m", "undo", []), waiting(0), true)).toBe(false);
   });
 });
 

@@ -85,6 +85,14 @@ export function listWaitNumbers<T>(state: Pick<QueueState<T>, "waiting">): Reado
   return numbers;
 }
 
+/**
+ * 실패하면 멈추나 - 뒤에 기다리는 것이 있거나, 고름이 이미 떠난 판단이거나, 다시 보내면 될 실패(서버 오류 · 끊김)면.
+ * 기다리는 것이 없는 편집 · 되돌리기를 서버가 거절했으면(isRefusal) 알림만 하고 지나간다 - 멈출 것이 없고 그대로 다시 보내도 같은 답이다
+ */
+export function shouldHalt<T>(command: Pick<QueuedCommand<T>, "kind">, state: Pick<QueueState<T>, "waiting">, isRefusal: boolean): boolean {
+  return !isRefusal || state.waiting.length > 0 || command.kind === "save" || command.kind === "bulk";
+}
+
 export function createCommandQueue<T>(): CommandQueue<T> {
   let state: QueueState<T> = { waiting: [], running: null, halted: null, asking: null };
   const listeners = new Set<() => void>();

@@ -160,7 +160,7 @@ function dropVanished(focus: Focus, docs: readonly LoadedDoc[]): Focus {
   return focus.unitId !== null && !doc.unitIds.has(focus.unitId) ? { ...focus, unitId: null } : focus;
 }
 
-/** 처리 중인 일 목록만 - 화면 훅이 같은 렌더 안의 잇단 누름을 막으려고 따로 쥔 목록도 같은 규칙으로 본다 */
+/** 처리 중인 일 목록만 */
 type PendingList = { pending: readonly Pending[] };
 
 /** 판단 저장 - 박스의 모양을 바꾸지 않아 잠그지 않는다(A1-R4). 같은 박스에 이어 누른 것은 큐가 앞 응답의 revision으로 보낸다 */
@@ -178,19 +178,12 @@ export function isGlobalPending(state: PendingList): boolean {
   return state.pending.some((entry) => entry.isGlobal);
 }
 
-/** 이 일을 지금 시작할 수 있는가 - 잠긴 Unit과 겹치거나, 묶음 전체 일과 다른 일이 함께면 안 된다(규칙 6) */
-export function canStart(state: PendingList, pending: Pending): boolean {
-  if (state.pending.length === 0) return true;
-  if (pending.isGlobal || isGlobalPending(state)) return false;
-  return !pending.unitIds.some((unitId) => isUnitLocked(state, unitId));
-}
-
 /**
  * 처리 중인 일이 이 Unit을 은퇴시켰을 수 있나 - 그 Unit을 잡은 일, 묶음 전체 일, 그 문서에서 Unit을 모르고 보낸 일(글자 범위 · 참조).
  * 서버는 응답 전에 이미 바꿨을 수 있어, 이 동안 그 Unit으로 묶음 · 후보 · 참조를 물으면 404가 난다(규칙 5의 뜻). 판단 저장은 Unit을 바꾸지 않는다
  */
 export function isUnitUnsettled(state: PendingList, docId: number, unitId: number): boolean {
-  return state.pending.some((entry) => entry.kind !== "save" && (entry.isGlobal || entry.unitIds.includes(unitId) || (entry.docId === docId && entry.unitIds.length === 0)));
+  return state.pending.some((entry) => (entry.isGlobal || !isDecisionKind(entry.kind)) && (entry.isGlobal || entry.unitIds.includes(unitId) || (entry.docId === docId && entry.unitIds.length === 0)));
 }
 
 /** 처리 중 알약의 글 키 - 판단 저장은 결정 칸 단추가 이미 보이고, 묶음 전체 일은 그릴 자리가 없어 null(설계 D4 표) */
