@@ -3987,7 +3987,7 @@ await runStep("assign: keys pressed during a slow save are kept in order", { all
     await page.waitForLoadState("networkidle");
   };
   const slowSaves = () => page.route(SAVE_URL, async (route) => {
-    await new Promise((done) => setTimeout(done, 800));
+    await new Promise((done) => setTimeout(done, 1500));
     await route.continue();
   });
 
