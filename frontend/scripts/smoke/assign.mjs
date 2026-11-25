@@ -432,6 +432,7 @@ async function prepareClickPlace(page, needed) {
       const response = page.waitForResponse((item) => item.url().includes("/groups/save"), { timeout: T });
       // 자리를 마우스로 누르면 포커스가 Old 용지로 돌아오고 ↵는 어디서든 확정 단추다(B1-R1) - 고른 자리가 확정 단추에 서기를 기다린다
       await page.locator('[data-testid="assign-primary"][data-state="confirm"]').waitFor({ timeout: T });
+      await page.waitForFunction(() => document.activeElement?.matches('[data-pane="old"] .pane-body') ?? false, null, { timeout: T });
       await page.keyboard.press("Enter");
       const body = (await request).postDataJSON();
       await response;
@@ -757,6 +758,15 @@ await runStep("assign: right-click an Old sentence to split it or change its lan
   await page.waitForLoadState("networkidle");
   check("the Shape language buttons change the language without dropping the selection", (await page.evaluate(() => window.__selDrops)) === 0);
   check("focus stays on the pressed language button", (await page.evaluate(() => document.activeElement?.getAttribute("data-testid"))) === `assign-shape-lang-${target.id}-${back}`);
+  // 마우스로 한 번 더 - 언어가 바뀌고 고름은 그대로, 포커스는 원문으로. 다시 눌러 처음 언어로 둔다
+  for (const lang of [back === "ko" ? "en" : "ko", back]) {
+    await page.locator(`[data-testid="assign-shape-lang-${target.id}-${lang}"]`).click();
+    await page.locator(`[data-testid="assign-shape-lang-${target.id}-${lang}"][aria-pressed="true"]`).waitFor({ timeout: T });
+    await page.waitForLoadState("networkidle");
+    const saved = (await viewUnits()).find((unit) => unit.id === target.id)?.lang;
+    const isOnPaper = await page.waitForFunction(() => document.activeElement?.matches('[data-pane="old"] .pane-body') ?? false, null, { timeout: T }).then(() => true, () => false);
+    check(`a mouse press on the ${lang.toUpperCase()} button changes the language and gives the focus back to the paper`, saved === lang && isOnPaper && (await page.evaluate(() => window.__selDrops)) === 0, `${saved} ${isOnPaper}`);
+  }
   // 여기서 나누기 - 선을 놓고 Split here
   const before = (await viewUnits()).length;
   await openMenu(target.id);
@@ -7282,7 +7292,7 @@ await runStep("assign: join a picked Old line to a placed New sentence of an unw
   const chosen = ((await page.locator('[data-testid="assign-chosen-join"]').textContent()) ?? "").trim();
   const chosenNote = ((await page.locator('[data-testid="assign-chosen-join-note"]').textContent()) ?? "").trim();
   check("the picked-place box shows the sentence and the join note", chosen.includes(sop.code) && chosenNote === "Link to this sentence (2 Old lines → 1 New sentence)", `${chosen} | ${chosenNote}`);
-  check("picking it saves nothing yet and Confirm is ready", saveRequests === 0 && (await page.locator('[data-testid="assign-primary"]').getAttribute("data-state")) === "confirm");
+  check("picking it saves nothing yet, Confirm is ready and the focus is on the paper", saveRequests === 0 && (await page.locator('[data-testid="assign-primary"]').getAttribute("data-state")) === "confirm" && (await page.waitForFunction(() => document.activeElement?.matches('[data-pane="old"] .pane-body') ?? false, null, { timeout: T }).then(() => true, () => false)));
   check("the joined sentence is drawn as picked", (await joinLine.getAttribute("aria-pressed")) === "true");
 
   // ↵로 확정 - 그 문장에 출처가 둘, 글은 그대로, 종류는 합침
@@ -7344,7 +7354,7 @@ await runStep("assign: click place - a gap between numbered lines, a category he
   await wait(page, "assign-chosen-position");
   const position = ((await page.locator('[data-testid="assign-chosen-position"]').textContent()) ?? "").trim();
   check("the picked-place box says after which line and the number it becomes", position.startsWith(boxWords) && position.includes(`${ctx.counted.number}.`), position);
-  check("clicking a spot only picks it - no save yet, Confirm is ready", ctx.saveCount() === before && (await page.locator('[data-testid="assign-primary"]').getAttribute("data-state")) === "confirm");
+  check("clicking a spot only picks it - no save yet, Confirm is ready and the focus is on the paper", ctx.saveCount() === before && (await page.locator('[data-testid="assign-primary"]').getAttribute("data-state")) === "confirm" && (await page.waitForFunction(() => document.activeElement?.matches('[data-pane="old"] .pane-body') ?? false, null, { timeout: T }).then(() => true, () => false)));
   check("the clicked gap stays drawn as picked", (await gap.getAttribute("data-place-picked")) === "");
   await takeShot("sop-assign-click-place-gap.png");
   const savedC = await ctx.confirmWithEnter(unitC);

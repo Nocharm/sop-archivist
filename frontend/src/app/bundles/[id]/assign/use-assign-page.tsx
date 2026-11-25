@@ -2370,6 +2370,8 @@ export function useAssignPage() {
     destination,
     recommendations: primaryCards,
     isSuggestedLoading: similar.isLoading && !isSimilarFresh,
+    // 처음 받는 동안만 - 다시 받는 동안은 앞의 것이 있고, 오류로 비었으면 막지 않는다
+    isFirstCardUnknown: [suggestions, matchSuggestions, identical].some((load) => load.data === null && load.isLoading),
     blockKey: destination !== null ? confirmBlockKey : readConfirmBlockKey({ isRefGate, isCaptionGate: isCaptionGateFor(primaryCards[0]?.destination ?? null), isHiddenPlace: hiddenPlace !== null, isLegacyMove: legacyMove !== null }),
     orderPreviewTableId: orderPreview !== null && !orderPreview.isSame ? orderPreview.tableId : null,
   });

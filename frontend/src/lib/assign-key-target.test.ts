@@ -75,6 +75,13 @@ describe("takesPrimaryEnter", () => {
     }
   });
 
+  it("leaves Enter to a focused link on the paper and in the right panel", () => {
+    document.body.innerHTML = '<aside data-testid="assign-inspector"><a href="/documents"><span id="it"></span></a></aside>';
+    const target = document.getElementById("it");
+    expect(takesPrimaryEnter(readKeyPlace(target), target)).toBe(false);
+    expect(takesPrimaryEnter("paper", target)).toBe(false);
+  });
+
   it("leaves Enter to typing, layers and pop-ups", () => {
     for (const place of ["typing", "layer", "pop"] as const) expect(takesPrimaryEnter(place, document.body)).toBe(false);
   });

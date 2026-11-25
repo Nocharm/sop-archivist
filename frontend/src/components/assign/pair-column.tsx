@@ -73,7 +73,7 @@ export function PairColumn({ side, items, docLabel, toggle, banner, selectedIds,
         <PaneZoom value={zoom} onStep={onZoom} testId={`assign-pair-zoom-${side}`} />
       </div>
       {banner}
-      <div className="pane-body" tabIndex={-1}>
+      <div className="pane-body" tabIndex={-1} role="group" aria-label={`${t("assign.pairView")} · ${side === "ko" ? "KO" : "EN"}`}>
         {items.length === 0 ? (
           <EmptyState compact icon={Languages} testId={`assign-pair-empty-${side}`} title={t("assign.pairView.empty")} />
         ) : (

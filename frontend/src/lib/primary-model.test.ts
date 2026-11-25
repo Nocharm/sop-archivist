@@ -76,4 +76,9 @@ describe("planPrimary while Suggested is loading", () => {
     expect(planPrimary({ ...base, isSuggestedLoading: true, destination: LINK })).toMatchObject({ kind: "confirm", from: "draft" });
     expect(planPrimary({ ...base, isSuggestedLoading: true, recommendations: [rec(LINK, "ai")] })).toMatchObject({ kind: "confirm", from: "card" });
   });
+
+  it("does not confirm a card before the sources that outrank it have arrived", () => {
+    expect(planPrimary({ ...base, isFirstCardUnknown: true, recommendations: [rec(LINK)] })).toEqual({ kind: "blocked", reasonKey: "assign.primary.loading" });
+    expect(planPrimary({ ...base, isFirstCardUnknown: true, recommendations: [rec(OTHER)], destination: LINK })).toMatchObject({ kind: "confirm", from: "draft" });
+  });
 });

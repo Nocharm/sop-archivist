@@ -16,19 +16,22 @@ export interface PrimaryInput {
   recommendations: readonly Recommendation[];
   /** 이 줄의 비슷한 문장이 아직 오지 않았다 - 카드가 없어도 "고를 것이 없다"가 아니다 */
   isSuggestedLoading?: boolean;
+  /** 앞자리 추천(AI · 같은 글)이 처음 오는 중이다 - 지금 첫 카드가 곧 첫 카드가 아닐 수 있어 카드가 있어도 확정하지 않는다 */
+  isFirstCardUnknown?: boolean;
   /** 확정을 막는 까닭(readConfirmBlockKey) - 카드로 확정할 때는 그 카드의 자리로 본 것 */
   blockKey: string | null;
   /** 고른 줄이 든 벗긴 표에 AI 순서 미리보기가 떠 있을 때만 그 표 */
   orderPreviewTableId: number | null;
 }
 
-export function planPrimary({ canEdit, hasRow, destination, recommendations, isSuggestedLoading = false, blockKey, orderPreviewTableId }: PrimaryInput): PrimaryPlan {
+export function planPrimary({ canEdit, hasRow, destination, recommendations, isSuggestedLoading = false, isFirstCardUnknown = false, blockKey, orderPreviewTableId }: PrimaryInput): PrimaryPlan {
   const blocked = (reasonKey: string): PrimaryPlan => ({ kind: "blocked", reasonKey });
   if (!canEdit || !hasRow) return blocked("assign.primary.pickFirst");
   if (orderPreviewTableId !== null) return { kind: "apply_order", tableId: orderPreviewTableId };
   if (blockKey !== null) return blocked(blockKey);
   const readTone = (target: Destination) => (target.kind === "delete" ? "danger" : "normal");
   if (destination !== null) return { kind: "confirm", from: "draft", destination, cardIndex: null, isAiAsIs: false, tone: readTone(destination) };
+  if (isFirstCardUnknown) return blocked("assign.primary.loading");
   const first = recommendations.at(0);
   if (first === undefined) return blocked(isSuggestedLoading ? "assign.primary.loading" : "assign.primary.pickFirst");
   return { kind: "confirm", from: "card", destination: first.destination, cardIndex: 0, isAiAsIs: first.source === "ai", tone: readTone(first.destination) };

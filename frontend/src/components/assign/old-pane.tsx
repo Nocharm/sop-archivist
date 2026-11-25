@@ -210,7 +210,7 @@ export function OldPane({ paneRef, ...props }: OldPaneProps) {
       )}
       {props.banner}
       {/* 오른쪽 칸 단추를 마우스로 누른 뒤 포커스가 돌아올 자리 */}
-      <div className="pane-body" tabIndex={-1}>
+      <div className="pane-body" tabIndex={-1} role="group" aria-label={t("assign.paperBody", { tag: props.docTag })}>
         {model && props.foldEmpty !== null ? (
           <EmptyState
             icon={ListFilter}

@@ -21,8 +21,9 @@ export function readKeyPlace(target: EventTarget | null): KeyPlace {
   return target.closest('[data-testid="assign-inspector"]') ? "side" : "other";
 }
 
-/** Enter가 확정 단추인 자리인가 - 용지와 오른쪽 칸은 다른 단추에 포커스가 있어도(그 단추는 Space로 누른다), 그 밖은 단추에 있지 않을 때만 */
+/** Enter가 확정 단추인 자리인가 - 용지와 오른쪽 칸은 다른 단추에 포커스가 있어도(그 단추는 Space로 누른다), 그 밖은 단추에 있지 않을 때만. 링크는 어디서나 제 Enter다(Space로 열리지 않는다) */
 export function takesPrimaryEnter(place: KeyPlace, target: EventTarget | null): boolean {
+  if (target instanceof Element && target.closest("a[href]")) return false;
   if (place === "paper" || place === "side") return true;
   return place === "other" && !(target instanceof Element && target.closest(CONTROL_SELECTOR));
 }
