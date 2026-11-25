@@ -6,11 +6,11 @@
 
 | # | 브랜치 | 상태 | 버전 · 커밋 | 게이트(pytest · vitest · build · 스모크) | 남은 것 · 물음 |
 |---|---|---|---|---|---|
-| 0 | `fix/new-edit-undo` | 진행(11-26) | | | |
+| 0 | `fix/new-edit-undo` | 합침 | v1.6.1 · f363167e | pytest 3244 + 시드 13 통과 · ruff · 스모크 1단계(화면 변경 없음) | 결과물 C의 칸 안 문장 순서는 id 순 그대로(계획 밖) |
 | 1a | `feat/hide-drafting` | 대기 | | | |
 | 1b | `fix/remove-bundle-move` | 대기 | | | |
 | 2a | `fix/pair-spot-scroll` | 합침 | v1.6.0 · 7a863a50 | vitest 1927 · build 경고 0 · 스모크 3단계 통과(pytest 해당 없음) | 스모크는 단추 자리가 바뀐 감사(겹침)를 정식 업데이트 전에 |
-| 2b | `feat/inspector-float` | 대기 | | | |
+| 2b | `feat/inspector-float` | 진행(11-26) | | | |
 | 3a | `perf/assign-measure` | 대기 | | | |
 | 3b | `fix/assign-command-queue` | 대기 | | | |
 | 3c | `fix/assign-instant-motion` | 대기 | | | |
@@ -19,8 +19,8 @@
 | 4a | `fix/assign-enter` | 대기 | | | |
 | 4b | `feat/assign-keymap` | 대기 | | | |
 | 4c | `feat/assign-merge-keys` | 대기 | | | |
-| 4d | `feat/number-cell-buttons` | 대기 | | | |
-| 5a | `feat/split-rule-2` | 대기 | | | |
+| 4d | `feat/number-cell-buttons` | 진행(11-26) | | | |
+| 5a | `feat/split-rule-2` | 진행(11-26) | | | |
 | 5b | `feat/split-front-matter` | 대기 | | | |
 | 5c | `feat/split-new-parity` | 대기 | | | |
 | 6-1 | `feat/new-paper-1-render` | 대기 | | | |
@@ -43,3 +43,5 @@
 - 벗긴 표 번호: 제목 5 · 본문 5.1 · 5.2 다음 표는 5.3으로 읽었다(5.2.1이 맞으면 한 줄 바꿈). 표 뒤에 이미 5.1이 있으면 번호가 겹칠 수 있다.
 - 합친 글 가운데에 뒤 줄의 번호 글자가 남는다(S17과 다름, 원문 글자를 지울 수 없어서).
 - 표 따라 하기는 임베딩이 꺼진 운영에서 공통 글자가 없는 행을 규칙으로 맞추지 못한다.
+- 결과물 C · Excel의 표 칸 안 문장은 아직 새 문장 id 순이다(Assign New 칸만 Unit 순으로 바뀜, 0번 검토) — 맞출지 정한다.
+- 운영에 이미 중복이 있으면 정리 전까지: 칸 중복은 되돌리기를 오가도 남고 표 밖 줄로 보일 수 있다. 중복 행에 남의 이음이 있으면 다시 하기가 409(0번).

@@ -1708,8 +1708,11 @@ class BundleFigureOut(BaseModel):
 
 
 def build_bundle_table(grid: dict[str, int] | None, cells: list[BundleCellOut]) -> BundleTableOut:
-    """칸 새 문장들을 표 하나로 — 격자는 표 새 문장의 grid와 칸 자리 중 큰 쪽(grid가 낡거나 없어도 칸이 빠지지 않게)."""
-    cells = sorted(cells, key=lambda cell: (cell.row, cell.col, cell.target_id))
+    """칸 새 문장들을 표 하나로 — 격자는 표 새 문장의 grid와 칸 자리 중 큰 쪽(grid가 낡거나 없어도 칸이 빠지지 않게).
+
+    한 칸 안 문장은 받은 차례 그대로다(이미 쓴 문서는 Unit 순서, 엮은 문서는 새 문장 id 순).
+    """
+    cells = sorted(cells, key=lambda cell: (cell.row, cell.col))
     rows = max([cell.row + 1 for cell in cells] + [grid["rows"] if grid else 0])
     cols = max([cell.col + 1 for cell in cells] + [grid["cols"] if grid else 0])
     return BundleTableOut(rows=rows, cols=cols, cells=cells)
