@@ -1,15 +1,16 @@
 // Assign Old 칸 문서 고르기 옆 단추 - 올리거나 누르면 그 문서의 진행(상태·간 곳·받는 New 문서)과 문단 Excel 내려받기가 뜬다(1.2.0 피드백 6번).
-// 올리면 잠깐 뒤 뜨고 상자 안으로 옮겨도 그대로다. 누르면 고정되어 바깥을 누르거나 Esc로 닫는다. 내려받기는 표를 넣을지 고른 뒤 받는다.
+// 올리면 잠깐 뒤 뜨고 상자 안으로 옮겨도 그대로다. 누르면 고정되어 바깥을 누르거나 Esc로 닫는다. 내려받기는 넣을 것을 묻는 창(paragraph-download-dialog)에서 고른 뒤 받는다.
 "use client";
 
-import { Download, Gauge, X } from "lucide-react";
+import { Download, Gauge } from "lucide-react";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
+import { ParagraphDownloadDialog } from "@/components/assign/paragraph-download-dialog";
 import { isTopEscLayer, placeBelow, popEscLayer, pushEscLayer, type FloatingPos } from "@/components/ui/floating";
 import { showToast } from "@/components/ui/toast";
 import { humanizeApiError } from "@/lib/api-errors";
-import { downloadParagraphs, type CoverStatus, type Disposition } from "@/lib/api-sop";
+import { downloadParagraphs, type CoverStatus, type Disposition, type ParagraphInclude } from "@/lib/api-sop";
 import type { DocDashboard as DocDashboardData } from "@/lib/doc-dashboard-model";
 import { useI18n } from "@/lib/i18n";
 import { saveBlob } from "@/lib/save-file";
@@ -50,7 +51,7 @@ export function DocDashboard({ bundleId, docId, docLabel, docTitle, stats, bundl
   const [open, setOpen] = useState(false);
   const [pinned, setPinned] = useState(false);
   const [pos, setPos] = useState<FloatingPos | null>(null);
-  // 고르던 내려받기 - 문서를 바꾸면 그 문서의 것이 아니므로 접힌 것으로 본다
+  // 묻는 중인 내려받기 - 문서를 바꾸면 그 문서의 것이 아니므로 닫힌 것으로 본다. 상자가 닫혀도(바깥 누름 · 포인터가 떠남) 창은 남는다
   const [picked, setPicked] = useState<{ kind: DownloadKind; docId: number } | null>(null);
   const pick = picked?.docId === docId ? picked.kind : null;
   const setPick = (kind: DownloadKind | null) => setPicked(kind === null ? null : { kind, docId });
@@ -66,7 +67,6 @@ export function DocDashboard({ bundleId, docId, docLabel, docTitle, stats, bundl
     setOpen(false);
     setPinned(false);
     setPos(null);
-    setPick(null);
   }
 
   const requestClose = useEffectEvent(() => close());
@@ -96,7 +96,8 @@ export function DocDashboard({ bundleId, docId, docLabel, docTitle, stats, bundl
     });
     const handleMouseDown = (event: MouseEvent) => {
       const target = event.target as Node;
-      if (panelRef.current?.contains(target) || triggerRef.current?.contains(target)) return;
+      // 받기 창은 body에 따로 떠 있다 - 그 안을 누르는 것은 바깥이 아니다
+      if (panelRef.current?.contains(target) || triggerRef.current?.contains(target) || (target instanceof Element && target.closest('[data-testid="space-download-dialog"]'))) return;
       requestClose();
     };
     const handleKey = (event: KeyboardEvent) => {
@@ -116,11 +117,11 @@ export function DocDashboard({ bundleId, docId, docLabel, docTitle, stats, bundl
     };
   }, [open]);
 
-  async function handleDownload(tables: boolean) {
+  async function handleDownload(include: ParagraphInclude) {
     if (pick === null) return;
     setBusy(true);
     try {
-      const { blob, fileName } = await downloadParagraphs(bundleId, pick === "doc" ? docId : null, tables);
+      const { blob, fileName } = await downloadParagraphs(bundleId, pick === "doc" ? docId : null, include);
       saveBlob(blob, fileName ?? `${pick === "doc" ? docLabel : "Old"}_paragraphs.xlsx`);
       showToast(t("outputs.fileCreated"));
       setPick(null);
@@ -132,26 +133,11 @@ export function DocDashboard({ bundleId, docId, docLabel, docTitle, stats, bundl
   }
 
   function renderDownload(kind: DownloadKind, label: string) {
-    if (pick !== kind) {
-      return (
-        <button type="button" className={kind === "doc" ? "btn h-8" : "btn ghost h-7 text-xs"} disabled={busy} data-testid={`assign-dash-download-${kind}`} onClick={() => setPick(kind)}>
-          <Download size={14} strokeWidth={1.5} aria-hidden />
-          {label}
-        </button>
-      );
-    }
     return (
-      <span className="doc-dash-pick" role="group" aria-label={label} data-testid={`assign-dash-pick-${kind}`}>
-        <button type="button" className="btn pri h-8" disabled={busy} data-testid={`assign-dash-tables-${kind}`} onClick={() => void handleDownload(true)}>
-          {t("assign.dash.withTables")}
-        </button>
-        <button type="button" className="btn h-8" disabled={busy} data-testid={`assign-dash-no-tables-${kind}`} onClick={() => void handleDownload(false)}>
-          {t("assign.dash.withoutTables")}
-        </button>
-        <button type="button" className="btn icon h-8 w-8" aria-label={t("common.cancel")} disabled={busy} onClick={() => setPick(null)}>
-          <X size={14} strokeWidth={1.5} aria-hidden />
-        </button>
-      </span>
+      <button type="button" className={kind === "doc" ? "btn h-8" : "btn ghost h-7 text-xs"} disabled={busy} data-testid={`assign-dash-download-${kind}`} onClick={() => setPick(kind)}>
+        <Download size={14} strokeWidth={1.5} aria-hidden />
+        {label}
+      </button>
     );
   }
 
@@ -268,6 +254,7 @@ export function DocDashboard({ bundleId, docId, docLabel, docTitle, stats, bundl
           </div>,
           document.body,
         )}
+      {pick !== null && <ParagraphDownloadDialog busy={busy} onConfirm={(include) => void handleDownload(include)} onClose={() => setPick(null)} />}
     </>
   );
 }

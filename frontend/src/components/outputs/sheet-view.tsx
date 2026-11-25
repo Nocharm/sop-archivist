@@ -160,8 +160,9 @@ export function SheetView({ sheet, selectedUnitId = null, centreKey = 0, draft, 
   const columnKeys = sheet.column_keys ?? [];
   const pickedGroup = findPickedGroup(sheet.rows, selectedUnitId);
   const draftRow = findDraftRow(sheet.rows, selectedUnitId, draft);
-  // 목차 접기는 열의 뜻(column_keys)을 아는 시트(A)에서만 - 접힌 줄의 글을 놓을 열을 찾아야 한다
-  const items = listShownItems(listSheetItems(sheet.rows, frozenCount, openTocs, sheet.column_keys !== null), selectedUnitId);
+  // 접을 줄(toc)은 서버가 단 시트(A · 문단 Excel)에만 있다 - 열의 뜻을 모르는 문단 Excel은 Text 칸에 한 줄로 접는다
+  const items = listShownItems(listSheetItems(sheet.rows, frozenCount, openTocs, true), selectedUnitId);
+  const isLineFold = sheet.column_keys === null;
   const hasHead = frozenCount > 0 || sheet.bands.length > 0;
 
   useEffect(() => {
@@ -214,7 +215,7 @@ export function SheetView({ sheet, selectedUnitId = null, centreKey = 0, draft, 
       imagePlaced = true;
     }
     if (item.type === "fold") {
-      const texts = { label: t(getFoldLabelKey(item.rows), { n: item.rows.length }), more: t("outputs.sheet.tocMore", { n: item.rows.length - 1 }) };
+      const texts = { label: t(isLineFold ? "outputs.sheet.tocFoldedLine" : getFoldLabelKey(item.rows), { n: item.rows.length }), more: t("outputs.sheet.tocMore", { n: item.rows.length - 1 }) };
       bodyRows.push(
         <SheetRowView
           key={`toc-${item.start}`}

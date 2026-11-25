@@ -652,9 +652,9 @@ await runStep("assign: the document dashboard counts the Old document and downlo
   await page.waitForTimeout(400);
   check("dashboard stays open while the pointer is inside", await page.locator('[data-testid="assign-dash-panel"]').isVisible());
   await page.locator('[data-testid="assign-dash-download-doc"]').click();
-  await wait(page, "assign-dash-pick-doc");
+  await wait(page, "space-download-dialog");
   await takeShot("sop-assign-dashboard.png");
-  const [download] = await Promise.all([page.waitForEvent("download", { timeout: T }), page.locator('[data-testid="assign-dash-no-tables-doc"]').click()]);
+  const [download] = await Promise.all([page.waitForEvent("download", { timeout: T }), page.locator('[data-testid="space-download-confirm"]').click()]);
   check("paragraph Excel is named after the document", /_paragraphs_\d{8}-\d{4}\.xlsx$/.test(download.suggestedFilename()), download.suggestedFilename());
   const paragraphRows = readXlsxRows(readFileSync(await download.path()));
   check("the paragraph Excel's header row is Section No. | Text | Lang | Number note | Remark", JSON.stringify(paragraphRows[0]) === JSON.stringify(PARAGRAPH_HEADERS), JSON.stringify(paragraphRows[0]));
@@ -3435,8 +3435,10 @@ await runStep("assign: Space preview in one pane shows the paragraph sheet with 
   check("the one-pane sheet has the five paragraph columns, Section No. first", JSON.stringify(header.map((text) => text.trim()).slice(0, 5)) === JSON.stringify(PARAGRAPH_HEADERS), JSON.stringify(header));
   check("its title and download button are the paragraph Excel's", (await sheet.getAttribute("aria-label")) === "Paragraph Excel preview" && (await getText(page, "assign-space-preview-download")).includes("Download paragraphs"));
   check("the picked line is painted in the paragraph sheet", (await page.locator(PARAGRAPH_PICKED_ROW).count()) > 0);
-  check("the foot says the paragraph sheet has the downloaded file's rows", (await getText(page, "assign-space-preview-legend")).includes("Paragraph Excel, 5 columns"));
-  const [download] = await Promise.all([page.waitForEvent("download", { timeout: T }), page.locator('[data-testid="assign-space-preview-download"]').click()]);
+  check("the foot says the preview folds the contents and hides figures and deleted lines", (await getText(page, "assign-space-preview-legend")).includes("folds the table of contents"));
+  await page.locator('[data-testid="assign-space-preview-download"]').click();
+  await wait(page, "space-download-dialog");
+  const [download] = await Promise.all([page.waitForEvent("download", { timeout: T }), page.locator('[data-testid="space-download-confirm"]').click()]);
   check("the download is the paragraph Excel of the document", /_paragraphs_\d{8}-\d{4}\.xlsx$/.test(download.suggestedFilename()), download.suggestedFilename());
   const rows = readXlsxRows(readFileSync(await download.path()));
   check("the downloaded file has the same header row", JSON.stringify(rows[0]) === JSON.stringify(PARAGRAPH_HEADERS), JSON.stringify(rows[0]));
@@ -3448,6 +3450,25 @@ await runStep("assign: Space preview in one pane shows the paragraph sheet with 
   await page.keyboard.press(" ");
   await wait(page, "assign-space-preview");
   check("back in two panes the sheet is Excel A again", (await sheet.getAttribute("data-sheet")) === "comparison");
+  await page.keyboard.press("Escape");
+});
+
+await runStep("assign: the Excel preview folds contents and hides figures", {}, async ({ page }) => {
+  const toc = await findTocBundle(page);
+  check("the demo seed has the contents bundle", toc !== null);
+  if (!toc) return;
+  await page.goto(`${BASE}/bundles/${toc.id}/assign`);
+  await wait(page, "assign-bar");
+  await setPaneView(page, "one");
+  await page.evaluate(() => (document.activeElement instanceof HTMLElement ? document.activeElement.blur() : undefined));
+  await page.keyboard.press("j");
+  await page.keyboard.press(" ");
+  await wait(page, "assign-space-preview-body");
+  const fold = page.locator('[data-testid^="assign-space-preview-toc-"][data-toc="folded"]');
+  await fold.first().waitFor({ timeout: T });
+  check("the contents are one folded line", (await fold.count()) === 1 && (await fold.first().innerText()).includes(`Table of contents · ${TOC_LINES} lines`), await fold.first().innerText());
+  const body = await page.locator('[data-testid="assign-space-preview-body"]').innerText();
+  check("no figure place and no Paragraph word in the preview", !body.includes("[Figure]") && !body.includes("Paragraph"), body.slice(0, 200));
   await page.keyboard.press("Escape");
 });
 
