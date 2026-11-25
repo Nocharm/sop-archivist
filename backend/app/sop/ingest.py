@@ -27,7 +27,7 @@ from app.sop.models import (
     SourceBlock,
     SourceTable,
 )
-from app.sop.segment import has_unstorable_char
+from app.sop.segment import RULE_PARAGRAPH, has_unstorable_char
 from app.sop.tobe import add_match_doc, check_match_doc, ensure_code_free, find_attachable_doc, temp_match_code
 from app.sop.units import create_initial_units
 
@@ -45,6 +45,9 @@ MAX_PARALLEL_PARSES = 2
 _parse_slots = asyncio.Semaphore(MAX_PARALLEL_PARSES)
 _FORMAT_BY_EXTENSION = {".docx": "docx", ".pdf": "pdf"}
 _STATUS_BY_OUTCOME = {"ok": "ready", "rejected": "rejected", "failed": "failed"}
+
+# 새로 올리는 문서(Old · New)의 쪼개기 규칙 — 이미 올린 문서의 추출은 제 규칙(extractions.split_rule)을 지닌다
+NEW_SPLIT_RULE: int = RULE_PARAGRAPH
 
 WARNING_MISSING_TEXT = "missing_text"
 # 누락 의심이 상한(MAX_MISSING_ITEMS)에서 멈췄다 — 더 있을 수 있음을 알릴 뿐이라 확인을 요구하지 않는다
@@ -213,6 +216,7 @@ async def _write_extraction(
     extraction = Extraction(
         document_id=document_id, extractor_version=EXTRACTOR_VERSION,
         aux_status="ok" if aux_error is None else "failed", aux_detail=aux_error or "",
+        split_rule=NEW_SPLIT_RULE,
     )
     session.add(extraction)
     await session.flush()

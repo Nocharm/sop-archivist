@@ -9,6 +9,10 @@ from typing import Literal
 from app.sop.constants import MAX_PAIR_SIDE
 from app.sop.noise import NOISE_TOC, find_toc_block_ids
 
+# 쪼개기 규칙 번호(extractions.split_rule, 설계 2026-11-25 R0) — 1은 문장마다, 2는 문단 안에서 이어진 같은 언어를 한 박스로.
+# 이미 올린 문서는 1이고 편집(제목 ↔ 문장 · 띠 표)까지 1로 다시 만든다 — 규칙을 바꿔도 예전 문서의 박스는 바뀌지 않는다
+RULE_LEGACY = 1
+RULE_PARAGRAPH = 2
 # 공백 외에 "빈 글자"로 보는 보이지 않는 글자 — ZWSP·ZWNJ·ZWJ·WORD JOINER·BOM(ZWNBSP)
 INVISIBLE_CHARS = "\u200b\u200c\u200d\u2060\ufeff"
 # Postgres text에 못 넣는 글자 — NUL, 그리고 UTF-8로 인코딩되지 않아 드라이버 오류 메시지에 글이 통째로 실리는 짝 없는 서로게이트

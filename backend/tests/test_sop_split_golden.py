@@ -9,7 +9,12 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.sop.models import Extraction
+from app.sop.segment import RULE_PARAGRAPH
+from tests.access_helpers import run_in_session
 from tests.sop_helpers import create_bundle, get_view, upload
 from tests.split_golden.builder import CASES, Case, build_new_bytes, read_boxes
 
@@ -74,3 +79,15 @@ def test_old_and_new_give_the_same_boxes(client: TestClient, key: str) -> None:
     old, new = (_upload(client, bundle_id, CASES[key], side) for side in SIDES)
 
     assert read_boxes(old) == read_boxes(new)
+
+
+def test_new_uploads_record_rule_2(client: TestClient) -> None:
+    bundle_id = create_bundle(client, is_synthetic=True)["id"]
+
+    doc_ids = [_upload(client, bundle_id, CASES["G01"], side)["document"]["id"] for side in SIDES]
+
+    async def _read(session: AsyncSession) -> list[int]:
+        rows = await session.scalars(select(Extraction.split_rule).where(Extraction.document_id.in_(doc_ids)))
+        return list(rows)
+
+    assert run_in_session(_read) == [RULE_PARAGRAPH, RULE_PARAGRAPH] == [2, 2]
