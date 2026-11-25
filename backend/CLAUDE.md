@@ -39,7 +39,7 @@ backend(FastAPI) 세부 구조와 backend에만 걸리는 체크리스트. 루�
     - 응답은 정해진 JSON 필드로만 읽고, 모든 글자는 `replace_unstorable_chars`를 거치며, 무효 제안에는 응답 원문을 남기지 않는다.
     - 로그에는 ID·건수·상태 코드·예외 클래스 이름만(`logger.exception` 금지, 트레이스백에 값이 실린다).
   - **임계값은 합성 자료로만 잡은 값이다**(`MATCH_EMBED_THRESHOLD`·`MATCH_TEXT_THRESHOLD`·`PAIR_THRESHOLD` 등) — 실제 모델·SOP로 시험하기 전에는 정확도·채택률을 근거로 주장하지 않는다. 숫자를 바꾸면 합성 시험을 같이 옮긴다. → 11.3
-  - **번역은 출처 새 문장을 따른다:** 새 문장의 글이나 자리를 바꾸는 새 경로는 `detach.sweep_translations`를 부른다. AI 번역 줄의 칸·단계·깊이는 잠겨 있고(422 `translation_locked`), 번호 표시와 칸 안 순서는 그 줄 자신의 것이다. → 11.4
+  - **번역은 출처 새 문장을 따른다:** 새 문장의 글이나 자리를 바꾸는 새 경로는 `detach.sweep_translations`를 부른다. AI 번역 줄의 칸·단계·깊이는 잠겨 있고(422 `translation_locked`), 번호 표시와 칸 안 순서는 그 줄 자신의 것이다. 확정하지 않은 번역은 검토 요청을 막고 출처가 은퇴하면 어느 줄에도 없어 `open_translations.py`(묶음 목록)로만 찾는다. → 11.4
   - **`request_id`**: 사람의 요청 한 번 = `enqueue_jobs` 한 번(또는 같은 값을 넘긴 여러 번), 작업이 뒤따라 쌓는 작업은 부모의 `request_id`를 넘긴다 — 빠뜨리면 상단 바에서 한 요청이 여러 줄로 갈라진다. → 11.5
   - **순위**: 꺼내는 순서는 `priority`만 정한다(`background`는 표시뿐). `match_plan`은 묶음마다 하나, 대기·실행 중이면 `classify`는 건너뛴다. 사람 요청이 아닌 작업은 `priority`를 넘긴다. → 11.6
   - **계획이 쓴다**: `match_plan`이 LLM 없이 제안을 쓴다. 작업 종류 `match`는 CHECK에만 남고 다시 시도하지 않으며(`AI_RETIRED_JOB_KINDS`), 옛 `provisional`은 읽지 않는다. `upload` 계획은 삭제 후보를 새로 쓰지 않고, 저절로 선 계획(`upload`·`prepare`)은 사람이 버린 묶음을 쓰지도 걷지도 않는다 — **Match**(`user`)만 다시 쓴다(`origin` 표). 숨긴 동안(`constants.PLAN_DELETES`)은 어느 계획도 삭제 후보를 새로 쓰지 않고 있는 것은 그대로 둔다. → 11.7
