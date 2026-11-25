@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { EquisInfo, UnitRefDetail, ViewUnit } from "./api-sop";
-import { countRefLookups, guessRefNumber, isRefPending, pickRefUnit, readRefAdvice, readWrittenRefMark } from "./ref-model";
+import { countRefLookups, countRefPending, guessRefNumber, isRefPending, pickRefUnit, readRefAdvice, readWrittenRefMark } from "./ref-model";
 
 function makeUnit(id: number, ref: ViewUnit["ref"]): ViewUnit {
   return {
@@ -37,6 +37,17 @@ describe("pickRefUnit", () => {
     expect(isRefPending(makeUnit(1, { state: "proposed", number: "SOP-A-1" }))).toBe(true);
     expect(isRefPending(makeUnit(1, { state: "confirmed", number: "SOP-A-1" }))).toBe(false);
     expect(isRefPending(undefined)).toBe(false);
+  });
+});
+
+describe("countRefPending", () => {
+  it("counts the proposals on rows across every Old document, like the overview's Left to tidy", () => {
+    const proposed = (id: number) => makeUnit(id, { state: "proposed", number: `SOP-A-${id}` });
+    const views = [{ units: [proposed(1), makeUnit(2, { state: "confirmed", number: "SOP-A-2" }), proposed(3)] }, { units: [proposed(4), makeUnit(5, null)] }];
+    const onRow = new Set([1, 2, 4, 5]); // 3은 줄이 아니다(저절로 삭제 · 표에 묶인 칸)
+
+    expect(countRefPending(views, onRow)).toBe(2);
+    expect(countRefPending([], onRow)).toBe(0);
   });
 });
 
