@@ -2113,6 +2113,7 @@ async def _write_change(
     confirm: bool,
     actor: str,
     settled: Collection[int] = (),
+    restoring_unit_ids: Collection[int] = (),
 ) -> EditResult:
     """검사(판단 있는 단위의 언어·확인 플래그) → 단위 은퇴·되살리기·만들기·언어 → 짝 정리 → 떼어 내기(옛)·새 문장 맞추기(새)
     와 칸 묶음·레이아웃 표 바꾸기 → 짝 다시 제안(표 표시가 바뀌면) → 커버리지 가드 → 문서 revision +1.
@@ -2121,6 +2122,7 @@ async def _write_change(
     다시 묶이는 칸 문장도 확인 대상이다 — 옛 문서는 레이아웃 칸이 가진 자기 판단이 표에 묶이며 떼어지고, 새 문서는 미배정이
     아닌 칸·표 새 문장이 새 부모 아래로 옮겨지지 않게 먼저 미배정으로 돌린다(R32).
     settled는 확인 없이 떼어도 되는 단위 — Assign 되돌리기 단계가 그 판단을 스냅숏으로 확인했고 곧 되쓴다(decision_steps._move_unit_edit).
+    restoring_unit_ids는 그 단계가 새 문장을 되쓸 새 문서 단위 — 새 문장 맞추기가 건너뛴다.
     """
     # 언어를 제자리에서 바꾸는 단위만 사람 결정과 어긋난다(R31) - 같은 변경에서 은퇴하거나 되살아나는 단위(합치기 풀기와
     # 그 되돌리기)는 글 그대로의 언어를 따라가는 것이라 묻지 않는다(은퇴는 아래 확인 플래그가 묻는다)
@@ -2180,7 +2182,8 @@ async def _write_change(
         await _apply_regroup(session, change.regroup)
         await _apply_layouts(session, change.layouts)
         detach = await sync_new_doc_targets(
-            session, document, created_unit_ids=activated, retired_unit_ids=change.retire, actor=actor
+            session, document, created_unit_ids=activated, retired_unit_ids=change.retire, actor=actor,
+            restoring_unit_ids=restoring_unit_ids,
         )
         if reset is not None:
             detach = _merge_reports(reset, detach)
@@ -2372,6 +2375,7 @@ async def _step_edit(
     session: AsyncSession, document: Document, edit: UnitEdit, *, backwards: bool, confirm: bool, actor: str,
     settled: Collection[int] = (),
     keeps_pairs: bool = False,
+    restoring_unit_ids: Collection[int] = (),
 ) -> EditStepResult:
     """기록 하나를 거꾸로(되돌리기) 또는 다시 적용하고 작업 기록을 남긴다 — keeps_pairs면 짝을 다시 세우지 않는다(부르는 쪽이 되쓴다)."""
     action = "unit.undo" if backwards else "unit.redo"
@@ -2398,7 +2402,7 @@ async def _step_edit(
         change.bundles = sorted({*change.figures, *(head for move in change.figures.values() for head in move if head is not None)})
     result = await _write_change(
         session, document, await get_latest_extraction_id(session, document.id), change, confirm=confirm, actor=actor,
-        settled=settled,
+        settled=settled, restoring_unit_ids=restoring_unit_ids,
     )
     _record(session, document, action, edit.op, result, change, actor)
     return EditStepResult(**result.model_dump(), op=edit.op, boundary_unit_ids=[], confirmed=None)
@@ -2406,7 +2410,7 @@ async def _step_edit(
 
 async def undo_edit(
     session: AsyncSession, document: Document, *, confirm: bool, actor: str, settled: Collection[int] = (),
-    keeps_pairs: bool = False,
+    keeps_pairs: bool = False, restoring_unit_ids: Collection[int] = (),
 ) -> EditStepResult:
     """마지막 적용 편집을 거꾸로 — 만든 단위를 은퇴시키고 은퇴시킨 단위를 원래 ID로 되살린다(되살린 단위의 판단은 미배정).
     칸 묶음과 레이아웃 표 표시도 편집 전으로 돌린다."""
@@ -2422,13 +2426,14 @@ async def undo_edit(
     edit.state = EDIT_UNDONE
     await session.flush()
     return await _step_edit(
-        session, document, edit, backwards=True, confirm=confirm, actor=actor, settled=settled, keeps_pairs=keeps_pairs
+        session, document, edit, backwards=True, confirm=confirm, actor=actor, settled=settled, keeps_pairs=keeps_pairs,
+        restoring_unit_ids=restoring_unit_ids,
     )
 
 
 async def redo_edit(
     session: AsyncSession, document: Document, *, confirm: bool, actor: str, settled: Collection[int] = (),
-    keeps_pairs: bool = False,
+    keeps_pairs: bool = False, restoring_unit_ids: Collection[int] = (),
 ) -> EditStepResult:
     """가장 최근에 되돌린 편집을 같은 단위 ID로 다시 적용한다."""
     edit = await session.scalar(
@@ -2440,7 +2445,8 @@ async def redo_edit(
     if edit is None:
         raise_rule(409, "nothing_to_redo")
     result = await _step_edit(
-        session, document, edit, backwards=False, confirm=confirm, actor=actor, settled=settled, keeps_pairs=keeps_pairs
+        session, document, edit, backwards=False, confirm=confirm, actor=actor, settled=settled, keeps_pairs=keeps_pairs,
+        restoring_unit_ids=restoring_unit_ids,
     )
     edit.state = EDIT_APPLIED
     await session.flush()

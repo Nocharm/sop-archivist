@@ -616,10 +616,13 @@ async def _move_unit_edit(session: AsyncSession, step: DecisionStep, actor: str,
     seen = await dump_bundle_state(session, document.bundle_id) if has_state else {}
     if has_state:
         _ensure_unchanged(expected, restore, seen)
-    settled = {int(key) for key in expected.get("unit_decisions", {})}
+    settled = {int(key) for key in expected.get("unit_decisions", {})} | _list_new_units(expected)
     move = undo_edit if backwards else redo_edit
     # 찍은 상태가 있으면 짝은 스냅숏이 되쓴다 - 기록 재생이 짝을 다시 세우면(제목 ↔ 문장 · 표 표시) 새 짝 id가 되쓸 짝과 부딪친다
-    result = await move(session, document, confirm=False, actor=actor, settled=settled, keeps_pairs=has_state)
+    result = await move(
+        session, document, confirm=False, actor=actor, settled=settled, keeps_pairs=has_state,
+        restoring_unit_ids=_list_new_units(restore),
+    )
     if has_state:
         await session.flush()
         current = await dump_bundle_state(session, document.bundle_id)
@@ -629,6 +632,12 @@ async def _move_unit_edit(session: AsyncSession, step: DecisionStep, actor: str,
         )
         # 단계 밖에서 은퇴한 단위로 맺은 짝(그 뒤 남이 맺은 짝)은 되쓰기가 모른다 - 기록 재생이 하던 대로 뺀다
         await leave_pairs(session, result.retired_unit_ids)
+
+
+def _list_new_units(state: Snapshot) -> set[int]:
+    """찍은 새 문장이 붙은 New 문서 단위들(입구 1 새 문장은 없다)."""
+    rows = state.get("target_sentences", {}).values()
+    return {row["new_unit_id"] for row in rows if row["new_unit_id"] is not None}
 
 
 async def _find_inactive_units(session: AsyncSession, restore: Snapshot) -> list[int]:
