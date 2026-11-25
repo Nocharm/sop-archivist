@@ -2185,6 +2185,10 @@
   .shape-mode button[aria-pressed="true"] { background: var(--surface); color: var(--ink); box-shadow: 0 0 0 1px var(--line-2); cursor: default; }
   .shape-mode button[aria-disabled="true"] { color: var(--ink-4); cursor: not-allowed; }
   .assign-confirm { width: 100%; height: 40px; font-size: 14px; }
+  .assign-confirm[aria-disabled="true"] { opacity: 0.5; cursor: not-allowed; }
+  .assign-confirm.danger kbd { background: transparent; border-color: currentColor; color: inherit; }
+  /* 눌러 옮긴 포커스의 자리일 뿐 Tab으로 오지 않는다 - 용지 전체에 테두리를 두르지 않는다 */
+  .pane-body:focus-visible { outline: none; }
   .assign-alt { height: 30px; min-width: 0; gap: 4px; padding: 0 6px; font-size: var(--fs-cap); font-weight: 400; width: 100%; }
   .assign-alt > :not(svg, kbd) { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
   /* Old 문서 대시보드 - 문서 고르기 옆 단추에서 뜨는 상자(1.2.0 피드백 6번). 색은 상태 칩과 같은 값 */

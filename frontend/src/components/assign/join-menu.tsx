@@ -7,6 +7,7 @@ import { useEffect, useEffectEvent, useRef, useState, type KeyboardEvent } from 
 import { createPortal } from "react-dom";
 
 import { isTopEscLayer, popEscLayer, pushEscLayer } from "@/components/ui/floating";
+import { isMousePress } from "@/lib/assign-key-target";
 import { useI18n } from "@/lib/i18n";
 import { placeLinkMenu } from "@/lib/link-menu-place";
 
@@ -21,7 +22,7 @@ interface JoinMenuProps {
   lineCount: number;
   /** 이 줄 다음에 놓기를 보일 수 있나 - 고른 줄이 이미 그 칸에 있으면 자리를 바꿀 수 없다 */
   canPlaceAfter: boolean;
-  onPick: (item: JoinMenuItem) => void;
+  onPick: (item: JoinMenuItem, isMouse: boolean) => void;
   onClose: () => void;
   /** 누른 문장 상자 안에 단추 줄로 - 자리를 재지 않고 문서 흐름에 놓인다 */
   inline?: boolean;
@@ -119,12 +120,12 @@ export function JoinMenu({ anchor, offset, lineCount, canPlaceAfter, onPick, onC
   const itemClass = inline ? "strip-act join-act" : "join-menu-item";
   const items = (
     <>
-      <button type="button" role="menuitem" className={itemClass} data-tone={inline ? "primary" : undefined} data-testid="assign-join-menu-join" onClick={() => onPick("join")}>
+      <button type="button" role="menuitem" className={itemClass} data-tone={inline ? "primary" : undefined} data-testid="assign-join-menu-join" onClick={(event) => onPick("join", isMousePress(event))}>
         <span>{t("assign.joinMenu.join")}</span>
         <em>{t("assign.joinMenu.joinNote", { n: lineCount })}</em>
       </button>
       {canPlaceAfter && (
-        <button type="button" role="menuitem" className={itemClass} data-tone={inline ? "quiet" : undefined} data-testid="assign-join-menu-after" onClick={() => onPick("after")}>
+        <button type="button" role="menuitem" className={itemClass} data-tone={inline ? "quiet" : undefined} data-testid="assign-join-menu-after" onClick={(event) => onPick("after", isMousePress(event))}>
           <span>{t("assign.joinMenu.after")}</span>
           <em>{t("assign.joinMenu.afterNote")}</em>
         </button>

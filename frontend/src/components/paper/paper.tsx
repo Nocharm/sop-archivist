@@ -1438,6 +1438,11 @@ export function Paper({
     const prefix = `${testId}-noise`;
     const name = t(`assign.noise.name.${block.kind}`);
     const reason = readNoiseReason(block, t);
+    // 단추가 속한 블록 · 줄을 함께 고른다 - 앞서 고른 줄에 이어 누른 글쇠(↵ · Del · H)가 떨어지지 않게
+    const pressAct = (unitId: number | null, run: () => void) => {
+      noise.onPick(block.key, unitId);
+      run();
+    };
     return (
       <div key={`noise-${block.key}`} className="strip-row">
         <span className="strip-lead-gap" style={{ width: width + STRIP_LEAD_EXTRA }} />
@@ -1460,10 +1465,10 @@ export function Paper({
             </button>
             {noise.canEdit && (
               <span className="noise-acts">
-                <button type="button" className="btn noise-act" disabled={isBusy} data-testid={`${prefix}-reason-${block.key}`} onClick={() => noise.onReason(block.unitIds)}>
+                <button type="button" className="btn noise-act" disabled={isBusy} data-testid={`${prefix}-reason-${block.key}`} onClick={() => pressAct(null, () => noise.onReason(block.unitIds))}>
                   {t("assign.noise.write")}
                 </button>
-                <button type="button" className="btn noise-act" disabled={isBusy} data-testid={`${prefix}-clear-${block.key}`} onClick={() => noise.onClear(block.unitIds)}>
+                <button type="button" className="btn noise-act" disabled={isBusy} data-testid={`${prefix}-clear-${block.key}`} onClick={() => pressAct(null, () => noise.onClear(block.unitIds))}>
                   {t("assign.noise.clearAll")}
                 </button>
               </span>
@@ -1489,11 +1494,11 @@ export function Paper({
                       {block.reason.isMixed && line.reason !== "" && <span className="noise-line-reason" data-tip={line.reason}>{line.reason}</span>}
                       {noise.canEdit && (
                         <span className="mbtn-set noise-line-acts">
-                          <button type="button" className={getMorphClassName("default", false)} aria-label={t("assign.noise.write")} disabled={isBusy} data-testid={`${prefix}-unit-reason-${line.unitId}`} onClick={() => noise.onReason([line.unitId])}>
+                          <button type="button" className={getMorphClassName("default", false)} aria-label={t("assign.noise.write")} disabled={isBusy} data-testid={`${prefix}-unit-reason-${line.unitId}`} onClick={() => pressAct(line.unitId, () => noise.onReason([line.unitId]))}>
                             <FilePen size={14} strokeWidth={1.5} aria-hidden />
                             <span className="mbtn-label" aria-hidden>{t("assign.noise.write")}</span>
                           </button>
-                          <button type="button" className={getMorphClassName("default", isPicked)} aria-label={t("assign.noise.clear")} disabled={isBusy} data-testid={`${prefix}-unit-clear-${line.unitId}`} onClick={() => noise.onClear([line.unitId])}>
+                          <button type="button" className={getMorphClassName("default", isPicked)} aria-label={t("assign.noise.clear")} disabled={isBusy} data-testid={`${prefix}-unit-clear-${line.unitId}`} onClick={() => pressAct(line.unitId, () => noise.onClear([line.unitId]))}>
                             <Undo2 size={14} strokeWidth={1.5} aria-hidden />
                             <span className="mbtn-label" aria-hidden>
                               {t("assign.noise.clear")} {isPicked && <kbd>U</kbd>}

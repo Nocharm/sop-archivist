@@ -84,7 +84,7 @@ export default function AssignPage() {
     openSolo, goToUnit, ctxGroups, confirmBlockKey, refPendingIds, isLinkedToWritten, captionPendingKeys, docDashboard, openCtxMenu, runUnitEdit,
     rewrapTable, unwrapAi, describeEditConfirm, pairGrip, clearNoise, openNoiseReason, splitAtCut, handleOldDoubleClick,
     runCtx, revertHeadings, planOldJoin, joinOld, renderOldActions, runSave, runClear, confirmIdenticalAll, acceptAll, pickDestination,
-    pickNewSentence, handleNewPick, handleJoinPick, readJoinAfter, pickJoinMenu, pickPlaceSpot, pickOwnAiLine, jumpToNew, openNewDoc,
+    pickNewSentence, handleNewPick, handleJoinPick, readJoinAfter, pickJoinMenu, handleFramePress, pickPlaceSpot, pickOwnAiLine, jumpToNew, openNewDoc,
     showInNew, jumpToOld, pickTemplateLine, fillTemplateMissing, isOldDrag, finishPairPick, handleOldClick, markRecHover, revealPick,
     setRevealPick, done, renderPlaceLabel, listDestinationEls, error,
   } = state;
@@ -322,7 +322,7 @@ export default function AssignPage() {
       open: placement.kind === "place",
       label: placement.kind === "refused" ? t(PLACE_REFUSAL_KEYS[placement.reason]) : label,
       picked: key === pickedSpotKey,
-      onPick: () => pickPlaceSpot(spot, key),
+      onPick: (isMouse) => pickPlaceSpot(spot, key, isMouse),
     });
     const heads = new Map<string, PlaceSpotView>();
     for (const head of placeResolved.heads) {
@@ -471,7 +471,7 @@ export default function AssignPage() {
 
   return (
     <>
-      <div className="assign-frame relative grid h-full min-h-0" data-testid="assign">
+      <div className="assign-frame relative grid h-full min-h-0" data-testid="assign" onClick={handleFramePress}>
         {/* 절대 위치라 격자 칸을 차지하지 않는다 - 작업 화면 바닥에서 올라온다 */}
         <SpacePreview
           bundleId={bundleId}

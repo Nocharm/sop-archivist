@@ -97,7 +97,7 @@ export function SpotPanel({ model, target, side, statusOf, figureSource, onPick,
   }
 
   return (
-    <aside ref={ref} className="spot-panel" data-side={side} role="dialog" aria-label={view.title} data-testid={testId}>
+    <aside ref={ref} className="spot-panel" data-side={side} role="group" aria-label={view.title} data-testid={testId}>
       <div className="spot-panel-head">
         <span className="spot-panel-title">{view.title}</span>
         <button type="button" className="btn ghost icon h-7 w-7 flex-none" aria-label={t("common.close")} data-testid={`${testId}-close`} onClick={onClose}>
