@@ -55,7 +55,7 @@ backend(FastAPI) 세부 구조와 backend에만 걸리는 체크리스트. 루�
   - **줄 기준 숫자** `snapshot.load_bundle_progress` ↔ `outputs.build_review_facts` ↔ 프런트 `classify-model.ts` `buildRows`: 같은 줄 규칙이라 줄의 뜻을 바꾸면 셋을 함께 고친다. 결과물도 `output_rows.build_meaning_rows`로 같은 줄. → 12.6
   - **짝의 운명** `pair_settle.settle_pairs`: **판단이나 짝을 쓰는 새 길을 만들면 그 끝에서 `settle_pairs`를 부른다**(시스템이 떼어 내는 길은 부르지 않는다). 짝 확정은 `pairs.mark_pair_confirmed` 한 곳. → 12.7
   - **경계 확인은 없다(v1.0.18)**: `units.boundary_confirmed` 열과 `editing._step_edit`의 `BOUNDARY_OPS` 가지는 지우지 않는다 — 운영 DB의 옛 되돌리기 기록이 막힌다. → 12.8
-  - **새 문서 새 문장 맞추기** `match.sync_new_doc_targets`: 단위를 바꾸는 새 경로는 새 문장을 직접 고치지 않고 이것을 부른다. → 12.9
+  - **새 문서 새 문장 맞추기** `match.sync_new_doc_targets`: 단위를 바꾸는 새 경로는 새 문장을 직접 고치지 않고 이것을 부른다. 새 문장을 스냅숏으로 되쓸 길은 그 단위를 `restoring_unit_ids`로 넘긴다(안 넘기면 단위 하나에 새 문장이 둘). → 12.9
   - **편집 쓰기 길** `editing._write_change`: 새 편집 종류는 `_Change`로 이 길에 얹는다. → 12.10
   - **문단 번호** `numbering.py`: 번호는 단위 글(`text`)에서 빼지 않는다. 번호 열은 `build_number_columns` 하나가 쓰고 사람은 `number_set`만 고친다. 번호 칸은 `get_number`·`get_hidden_len`·`strip_number`만 읽는다. 타자 번호 정규식은 `segment.TYPED_NUMBER_RE` 하나. 프런트 사본 `planFollow`를 함께 고친다. → 12.11
   - **NUL·서로게이트** `schemas.NO_NUL`/`NoNulStr`: DB까지 가는 새 글자 입력 칸은 이 타입을 쓴다(`StringConstraints` 뒤에 `NO_NUL`, 선택 칸은 `Annotated[str, StringConstraints(max_length=…), NO_NUL] | None`). 판정은 `segment.has_unstorable_char` 하나. → 12.12

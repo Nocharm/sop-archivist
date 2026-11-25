@@ -1173,8 +1173,30 @@ await runStep("assign: figures - the Figures tab holds the figure cards, Show po
   await page.locator('[data-testid="assign-tab-figures"]').click();
   await openSpot();
   check("in the single view Show position opens the panel on the right", (await panel.getAttribute("data-side")) === "right");
+  // 판을 연 채 탭을 오가면 용지가 다시 만들어진다 - data-spot이 새 용지와 맞아야 한다(좁은 창 · 큰 배율: 덮기라 용지는 가운데 그대로).
+  // 창과 배율은 판을 열기 전에 맞춘다(덮은 판이 확대 단추 위에 선다). 판이 덮고 있어 탭은 눌림 사건을 직접 보낸다
   await page.keyboard.press("Escape");
   await panel.waitFor({ state: "detached", timeout: T });
+  await page.setViewportSize({ width: 1280, height: VIEWPORT.height });
+  for (let tries = 0; tries < 20 && (await getText(page, "assign-old-zoom-value")) !== "160%"; tries += 1) await page.locator('[data-testid="assign-old-zoom-in"]').click();
+  await openSpot();
+  for (const tab of ["body", "figures", "body"]) {
+    await page.locator(`[data-testid="assign-tab-${tab}"]`).dispatchEvent("click");
+    await page.locator(`[data-testid="assign-tab-${tab}"][aria-selected="true"]`).waitFor({ timeout: T });
+  }
+  await page.waitForFunction(() => !document.querySelector(".assign-panes[data-motion]"), null, { timeout: T });
+  const spotState = await page.evaluate(() => {
+    const panes = document.querySelector(".assign-panes");
+    const pane = document.querySelector('[data-testid="assign-old"]').getBoundingClientRect().width;
+    const sheet = document.querySelector('[data-testid="assign-old"] .sheet')?.getBoundingClientRect();
+    return { spot: panes.dataset.spot ?? null, pane, sheet: sheet?.width ?? 0 };
+  });
+  const expectAside = spotState.pane - spotState.sheet - 12 >= 420;
+  check("after switching tabs with the panel open data-spot still matches the paper", (await panel.count()) === 1 && spotState.sheet > 0 && spotState.spot === (expectAside ? "aside" : "cover"), JSON.stringify(spotState));
+  await page.keyboard.press("Escape");
+  await panel.waitFor({ state: "detached", timeout: T });
+  await page.setViewportSize(VIEWPORT);
+  for (let tries = 0; tries < 20 && (await getText(page, "assign-old-zoom-value")) !== "100%"; tries += 1) await page.locator('[data-testid="assign-old-zoom-out"]').click();
   await page.locator('[data-testid="assign-view-two"]').click();
   await page.locator('[data-testid="assign-new"]').waitFor({ timeout: T });
   // 지우기 - Remark 없이 확정하면 카드가 흐린 한 줄로 접힌다
@@ -5314,12 +5336,13 @@ await runStep("assign: counterpart table - each table unwraps on its own with no
       const panel = document.querySelector('[data-testid="assign-pair-spot"]').getBoundingClientRect();
       return { pane: pane.width, paneRight: pane.right, sheetLeft: sheet.left, sheetRight: sheet.right, panelLeft: panel.left, panelWidth: panel.width };
     });
-  for (const width of [VIEWPORT.width, 1680]) {
+  for (const width of [VIEWPORT.width, 1680, 1920]) {
     await page.setViewportSize({ width, height: VIEWPORT.height });
     const centred = await readSheetLeft();
     await openPairSpot();
     const layout = await readLayout();
-    const isAside = layout.pane >= 1000;
+    // 용지 옆에 판 자리(420px 이상)가 남으면 옆으로 비켜서고, 아니면 덮는다(lib/spot-place-model) - 용지 폭은 어느 쪽이든 그대로
+    const isAside = layout.pane - (layout.sheetRight - layout.sheetLeft) - 12 >= 420;
     check(
       `at ${width}px one press opens the pair panel on the right with the pair box picked, the paper ${isAside ? "steps aside" : "stays and is covered"}`,
       (await pairSpot.getAttribute("data-side")) === "right" &&
@@ -5330,7 +5353,7 @@ await runStep("assign: counterpart table - each table unwraps on its own with no
         (isAside ? layout.sheetRight <= layout.panelLeft + 1 && layout.sheetLeft < centred - 1 : Math.abs(layout.sheetLeft - centred) <= 1),
       JSON.stringify({ ...layout, centred }),
     );
-    if (width !== VIEWPORT.width) await takeShot("sop-assign-pair-spot.png");
+    if (width === 1680) await takeShot("sop-assign-pair-spot.png");
     await page.keyboard.press("Escape");
     await pairSpot.waitFor({ state: "detached", timeout: T });
     await page.waitForFunction(() => !document.querySelector(".assign-panes[data-motion]"), null, { timeout: T });
@@ -5370,6 +5393,228 @@ await runStep("assign: counterpart table - each table unwraps on its own with no
   await page.locator('[data-testid="assign-undo"]').click();
   check("the seed bundle is left as found", (await waitView((view) => view.tables.every((table) => !table.is_layout))) !== null);
   check("the warning goes with Undo", (await readWarnings()).length === 0);
+});
+
+// 짝 판(1단 보기)을 열고 닫아도 용지 폭과 고른 박스의 화면 위쪽 자리가 그대로다(설계 2026-11-25 §6 S2) - 판이 용지 폭을 줄이면 위쪽 긴 줄이 다시 접혀 고른 박스가 위아래로 튀었다.
+// 안내 줄 짝이 있는 문서는 앞 단계와 같은 시드 9번 묶음(두 작업 표를 벗겨 짝을 만든다). 끝에 Undo 두 번으로 시드를 그대로 둔다
+await runStep("assign: the pair panel never moves the picked box up or down", {}, async ({ page }) => {
+  const headers = { "X-Dev-User": "qa.member" };
+  const bundles = await (await page.request.get(`${BASE}/api/bundles`, { headers })).json();
+  const bundle = bundles.find((item) => item.title === PAIR_TABLES_TITLE);
+  check("the demo seed has the separate-tables bundle", bundle !== undefined);
+  if (!bundle) return;
+  const docs = await (await page.request.get(`${BASE}/api/bundles/${bundle.id}/documents`, { headers })).json();
+  const readView = async () => (await page.request.get(`${BASE}/api/bundles/${bundle.id}/documents/${docs[0].id}/view`, { headers })).json();
+  const waitView = async (isDone) => {
+    for (let tries = 0; tries < 60; tries += 1) {
+      const view = await readView();
+      if (isDone(view)) return view;
+      await page.waitForTimeout(250);
+    }
+    return null;
+  };
+  const unwrapFromShape = async (tableId) => {
+    const unit = (await readView()).units.find((item) => item.kind === "table" && item.table_id === tableId);
+    const piece = page.locator(`[data-testid="assign-paper-piece-${unit.id}"]`);
+    const button = page.locator(`[data-testid="assign-shape-table_layout-${unit.id}"]`);
+    await piece.waitFor({ timeout: T });
+    for (let tries = 0; tries < 40; tries += 1) {
+      await piece.scrollIntoViewIfNeeded();
+      await piece.click();
+      await button.waitFor({ timeout: T });
+      if ((await button.getAttribute("aria-disabled")) !== "true") break;
+      await page.waitForTimeout(250);
+    }
+    await Promise.all([
+      page.waitForResponse((response) => response.request().method() === "GET" && new URL(response.url()).pathname === `/api/bundles/${bundle.id}/units`, { timeout: T }),
+      button.click(),
+    ]);
+  };
+  const [koWork, , enWork] = (await readView()).tables;
+  await page.goto(`${BASE}/bundles/${bundle.id}/assign`);
+  await wait(page, "assign-bar");
+  await unwrapFromShape(koWork.id);
+  await waitView((view) => view.tables[0].is_layout);
+  await unwrapFromShape(enWork.id);
+  const both = await waitView((view) => view.tables[2].is_layout && view.pairs.length > 0);
+  const korean = both?.units.find((item) => item.text === "세척액 농도를 확인한다.");
+  const english = both?.units.find((item) => item.text === "Check the detergent concentration.");
+  check("the two work tables are unwrapped and paired", Boolean(korean && english));
+  if (!korean || !english) return;
+
+  const piece = (id) => page.locator(`[data-testid="assign-paper-piece-${id}"]`);
+  const hint = page.locator(`[data-testid="assign-paper-pair-hint-${english.id}"]`);
+  const pairSpot = page.locator('[data-testid="assign-pair-spot"]');
+  await page.locator('[data-testid="assign-view-one"]').click();
+  await page.locator('[data-testid="assign-new"]').waitFor({ state: "detached", timeout: T });
+  const settle = () => page.waitForFunction(() => !document.querySelector(".assign-panes[data-motion]"), null, { timeout: T });
+  const setZoom = async (percent) => {
+    for (let tries = 0; tries < 20; tries += 1) {
+      const value = await getText(page, "assign-old-zoom-value");
+      if (value === `${percent}%`) return;
+      await page.locator(`[data-testid="assign-old-zoom-${Number.parseInt(value, 10) < percent ? "in" : "out"}"]`).click();
+    }
+  };
+  // 용지 폭과 고른 박스 위쪽 - 판 아래 깔린 Old 칸을 그대로 잰다
+  const measure = () =>
+    page.evaluate((id) => ({
+      top: document.querySelector(`[data-testid="assign-paper-piece-${id}"]`).getBoundingClientRect().top,
+      sheet: document.querySelector('[data-testid="assign-old"] .pane-body > *').getBoundingClientRect().width,
+    }), english.id);
+
+  for (const width of [1920, 1440, 1280]) {
+    for (const percent of [100, 160]) {
+      await page.setViewportSize({ width, height: VIEWPORT.height });
+      await setZoom(percent);
+      await settle();
+      await piece(english.id).click();
+      await piece(english.id).and(page.locator("[data-sel]")).waitFor({ timeout: T });
+      // 고른 박스 위에 긴 줄을 둔다 - 용지가 좁아지면 이 줄이 다시 접혀 박스가 아래로 밀린다
+      await page.evaluate((id) => {
+        const host = document.querySelector('[data-testid="assign-old"] .pane-body .sheet p, [data-testid="assign-old"] .pane-body .sheet .su');
+        if (host && !host.querySelector("[data-smoke-long]")) {
+          const long = document.createElement("span");
+          long.dataset.smokeLong = "";
+          long.textContent = ` ${"synthetic long line that wraps again when the paper gets narrower ".repeat(8)}`;
+          host.append(long);
+        }
+        document.querySelector(`[data-testid="assign-paper-piece-${id}"]`).scrollIntoView({ block: "center" });
+      }, english.id);
+      await page.waitForTimeout(150);
+      const before = await measure();
+      await hint.click();
+      await pairSpot.waitFor({ timeout: T });
+      await pairSpot.evaluate((el) => Promise.all(el.getAnimations().map((animation) => animation.finished)));
+      await settle();
+      const open = await measure();
+      await page.keyboard.press("Escape");
+      await pairSpot.waitFor({ state: "detached", timeout: T });
+      await settle();
+      const after = await measure();
+      const label = `at ${width}px and ${percent}% zoom`;
+      check(`${label} opening the pair panel keeps the paper width and the picked box in place`, Math.abs(open.top - before.top) <= 2 && Math.abs(open.sheet - before.sheet) <= 1, JSON.stringify({ before, open }));
+      check(`${label} closing it puts the picked box and the paper width back`, Math.abs(after.top - before.top) <= 2 && Math.abs(after.sheet - before.sheet) <= 1, JSON.stringify({ before, after }));
+    }
+  }
+  await page.setViewportSize(VIEWPORT);
+  await setZoom(100);
+  await page.locator('[data-testid="assign-view-two"]').click();
+  await page.locator('[data-testid="assign-new"]').waitFor({ timeout: T });
+
+  // 시드를 그대로 둔다 - Undo 두 번(영어 표 → 한글 표)
+  await page.locator('[data-testid="assign-undo"]').click();
+  await waitView((view) => view.tables[0].is_layout && !view.tables[2].is_layout);
+  await page.locator('[data-testid="assign-undo"]').click();
+  check("the seed bundle is left as found", (await waitView((view) => view.tables.every((table) => !table.is_layout))) !== null);
+});
+
+// 좁은 창에서 오른쪽 칸 떼기(설계 2026-11-25 §6 S3) - 두 문서가 그 열을 쓰고, 판은 머리로 끌려 창 안에만 있고, 자리 · 접힘을 기억하고, 모달이 아니라 단축키가 그대로 된다
+await runStep("assign: the side panel detaches below 1440px, drags inside the window, folds and comes back", {}, async ({ page, takeShot }) => {
+  const headers = { "X-Dev-User": "qa.member" };
+  const docs = (await (await page.request.get(`${BASE}/api/bundles/${halfBundleId}/documents`, { headers })).json()).filter((doc) => doc.side === "old" && doc.status === "ready");
+  const readView = async (docId) => (await page.request.get(`${BASE}/api/bundles/${halfBundleId}/documents/${docId}/view`, { headers })).json();
+  await page.goto(`${BASE}/bundles/${halfBundleId}/assign`);
+  await wait(page, "assign-bar");
+  await page.locator('[data-pane="old"] .strip[data-strip-unit]').first().waitFor({ timeout: T });
+  const side = page.locator('[data-testid="assign-inspector"]');
+  const detach = page.locator('[data-testid="assign-side-detach"]');
+  const head = page.locator('[data-testid="assign-side-head"]');
+  const fold = page.locator('[data-testid="assign-side-fold"]');
+  const readPanes = async () => (await page.locator(".assign-panes").boundingBox()).width;
+  const readSide = async () => side.boundingBox();
+  const isInside = (box) => box.x >= 0 && box.y >= 0 && box.x + box.width <= VIEWPORT.width + 1 && box.y + box.height <= VIEWPORT.height + 1;
+  const dragHead = async (dx, dy) => {
+    const box = await head.boundingBox();
+    const from = { x: box.x + 40, y: box.y + box.height / 2 };
+    await page.mouse.move(from.x, from.y);
+    await page.mouse.down();
+    await page.mouse.move(from.x + dx / 2, from.y + dy / 2, { steps: 4 });
+    await page.mouse.move(from.x + dx, from.y + dy, { steps: 4 });
+    await page.mouse.up();
+  };
+  const isNear = (a, b) => Math.abs(a.x - b.x) <= 1 && Math.abs(a.y - b.y) <= 1;
+
+  // 떼기 - 두 문서가 넓어지고 판은 오른쪽 아래(여백 16), 폭 320 · 높이는 창의 70%
+  check("a docked side panel has no drag head", (await head.count()) === 0 && (await side.getAttribute("data-float")) === null);
+  const dockedPanes = await readPanes();
+  await detach.click();
+  await head.waitFor({ timeout: T });
+  const start = await readSide();
+  check("detaching gives its column to the two documents", (await readPanes()) > dockedPanes + 200, `${dockedPanes} → ${await readPanes()}`);
+  check("the panel starts at the bottom right, 320px wide and 70% high", Math.abs(start.x - (VIEWPORT.width - 336)) <= 1 && Math.abs(start.y + start.height - (VIEWPORT.height - 16)) <= 1 && Math.abs(start.width - 320) <= 1 && Math.abs(start.height - VIEWPORT.height * 0.7) <= 1, JSON.stringify(start));
+  check("the panel is not a dialog", (await side.getAttribute("role")) === null && (await side.getAttribute("aria-label")) !== null);
+  await takeShot("sop-assign-side-float.png");
+
+  // 머리를 끌어 옮기고 새로 고쳐도 그 자리
+  await dragHead(-400, -200);
+  const moved = await readSide();
+  check("dragging the head moves the panel", isNear(moved, { x: start.x - 400, y: start.y - 200 }), JSON.stringify({ start, moved }));
+  await page.reload();
+  await wait(page, "assign-bar");
+  await head.waitFor({ timeout: T });
+  check("a reload keeps the panel detached at its place", isNear(await readSide(), moved), JSON.stringify(await readSide()));
+
+  // 창 끝까지 끌어도 창 안
+  const grabbed = await head.boundingBox();
+  await dragHead(VIEWPORT.width - 1 - (grabbed.x + 40), VIEWPORT.height - 1 - (grabbed.y + grabbed.height / 2));
+  const far = await readSide();
+  check("dragging past the corner stops at the window edge", isInside(far) && Math.abs(far.x + far.width - VIEWPORT.width) <= 1 && Math.abs(far.y + far.height - VIEWPORT.height) <= 1, JSON.stringify(far));
+
+  // 원문 누르기 · 글쇠 - 판이 떠 있어도 그대로
+  await openLooseOldDoc(page, halfBundleId);
+  let picked = null;
+  for (const doc of docs) {
+    for (const item of (await readView(doc.id)).units.filter((one) => one.kind === "sentence" && one.status === "unassigned" && one.pair_id === null)) {
+      if ((await page.locator(`[data-testid="assign-paper-piece-${item.id}"]`).count()) === 0) continue;
+      picked = { docId: doc.id, unit: item };
+      break;
+    }
+    if (picked) break;
+  }
+  check("the bundle has an unassigned sentence on screen", picked !== null);
+  if (picked === null) return;
+  const piece = page.locator(`[data-testid="assign-paper-piece-${picked.unit.id}"]`);
+  await piece.scrollIntoViewIfNeeded();
+  await piece.click();
+  await piece.and(page.locator("[data-sel]")).waitFor({ timeout: T });
+  const idBefore = await rowIds(page);
+  await page.keyboard.press("j");
+  await page.waitForFunction((before) => document.querySelector('[data-testid="assign-row-id"]')?.textContent?.trim() !== before, idBefore, { timeout: T }).catch(() => {});
+  check("J moves to the next row with the panel floating", (await rowIds(page)) !== idBefore, idBefore);
+  await piece.click();
+  await piece.and(page.locator("[data-sel]")).waitFor({ timeout: T });
+  const waitStatus = async (isDone) => {
+    for (let tries = 0; tries < 60; tries += 1) {
+      if (isDone((await readView(picked.docId)).units.find((item) => item.id === picked.unit.id)?.status)) return true;
+      await page.waitForTimeout(250);
+    }
+    return false;
+  };
+  await page.keyboard.press("Delete");
+  check("Del confirms the picked row as deleted with the panel floating", await waitStatus((status) => status === "confirmed"));
+  await page.locator('[data-testid="assign-undo"]').click();
+  check("Undo brings the row back", await waitStatus((status) => status === "unassigned"));
+
+  // 접기 - 머리 한 줄, 펼치면 그 자리에서 창 안으로
+  await fold.click();
+  await page.locator('[data-testid="assign-decide"]').waitFor({ state: "hidden", timeout: T });
+  const folded = await readSide();
+  check("folding leaves the head line only", Math.abs(folded.height - 36) <= 1 && (await fold.getAttribute("aria-expanded")) === "false" && isInside(folded), JSON.stringify(folded));
+
+  // 1440 이상이면 늘 붙고(기억은 남는다) 다시 좁아지면 뗀 채 · 접은 채
+  await page.setViewportSize({ width: 1440, height: VIEWPORT.height });
+  await head.waitFor({ state: "detached", timeout: T });
+  check("at 1440px the panel is docked, open, with no detach button", (await side.getAttribute("data-float")) === null && (await detach.count()) === 0 && (await page.locator('[data-testid="assign-toc-panel"], [data-testid="assign-pick"], [data-testid="assign-pick-prompt"]').first().isVisible()));
+  await page.setViewportSize(VIEWPORT);
+  await head.waitFor({ timeout: T });
+  check("back at 1248px it floats again, folded as it was", (await side.getAttribute("data-folded")) === "" && isNear(await readSide(), folded), JSON.stringify(await readSide()));
+  await fold.click();
+  check("unfolding keeps the whole panel inside the window", (await side.getAttribute("data-folded")) === null && isInside(await readSide()) && Math.abs((await readSide()).height - VIEWPORT.height * 0.7) <= 1, JSON.stringify(await readSide()));
+
+  // 붙이기
+  await page.locator('[data-testid="assign-side-attach"]').click();
+  await detach.waitFor({ timeout: T });
+  check("attaching puts the column back", (await side.getAttribute("data-float")) === null && Math.abs((await readPanes()) - dockedPanes) <= 1, `${dockedPanes} → ${await readPanes()}`);
 });
 
 // 끌어서 보내기(끌어다 놓기 설계 §6, 3걸음) - Old 조각을 아직 쓰지 않은 New 문서(New · from Assign)의 두 문장 사이나 빈 칸에 놓으면 그 줄의 초안이 되고(저장하지 않는다),

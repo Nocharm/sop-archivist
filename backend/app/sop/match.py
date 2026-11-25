@@ -296,6 +296,7 @@ async def sync_new_doc_targets(
     created_unit_ids: Collection[int],
     retired_unit_ids: Collection[int],
     actor: str,
+    restoring_unit_ids: Collection[int] = (),
 ) -> DetachReport:
     """쪼개기 편집 뒤 새 문서 하나의 새 문장 전체를 지금 단위에 맞춘다. 커밋은 호출부가 한다(묶음 잠금은 호출부가 쥔다).
 
@@ -304,6 +305,8 @@ async def sync_new_doc_targets(
     좌표·순서를 고치고 자리가 바뀐 새 문장의 번역을 다시 보게 한다. 제목 편집·언어 바꾸기·표 묶음 바꾸기는 단위를 제자리에서 바꾸므로
     만든·은퇴한 단위만 보면 낡는다.
     created_unit_ids는 전체를 다시 맞추므로 참고만 한다. 질의 수는 단위 수와 무관하다(수정은 바뀐 칸 묶음별 executemany).
+    restoring_unit_ids의 새 문장은 만들지도 고치지도 않는다 — Assign 되돌리기 단계가 곧 옛 id로 되쓴다(decision_steps._move_unit_edit).
+    여기서 만들면 단위 하나에 새 문장이 둘이 되고, 아직 되쓰지 않은 표의 칸은 부모를 찾지 못한다.
     """
     wants = {want.unit_id: want for want in await _load_wants(session, document)}
     current = await session.scalars(
@@ -315,10 +318,12 @@ async def sync_new_doc_targets(
     report = await detach_units(session, bundle_id=document.bundle_id, unit_ids=stale, cause="retired", actor=actor)
     targets = await _load_doc_targets(session, document)
     ids_by_unit = {target.new_unit_id: target.id for target in targets}
-    missing = [want for want in wants.values() if want.unit_id not in ids_by_unit]
+    restoring = set(restoring_unit_ids)
+    missing = [want for want in wants.values() if want.unit_id not in ids_by_unit and want.unit_id not in restoring]
     is_manual = await _is_manual_order(session, document)
     await _insert_targets(session, document, missing, ids_by_unit, _decide_new_orders(missing, targets, is_manual))
-    await sweep_translations(session, document.bundle_id, _refresh_targets(targets, wants, ids_by_unit, is_manual))
+    kept = [target for target in targets if target.new_unit_id not in restoring]
+    await sweep_translations(session, document.bundle_id, _refresh_targets(kept, wants, ids_by_unit, is_manual))
     await session.flush()
     return report
 

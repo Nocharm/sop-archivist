@@ -24,6 +24,7 @@ import { PairColumn, PairViewToggle } from "@/components/assign/pair-column";
 import { PairLines } from "@/components/assign/pair-lines";
 import { PaneDivider } from "@/components/assign/pane-divider";
 import { RecentRemarks, REMARK_MAX_LENGTH, RemarkModal } from "@/components/assign/remark-modal";
+import { SideFloat } from "@/components/assign/side-float";
 import { SpacePreview } from "@/components/assign/space-preview";
 import { ResetModal } from "@/components/assign/reset-modal";
 import { Modal } from "@/components/modal";
@@ -472,7 +473,7 @@ export default function AssignPage() {
 
   return (
     <>
-      <div className="relative grid h-full min-h-0 grid-cols-[minmax(0,1fr)_clamp(280px,24vw,420px)]" data-testid="assign">
+      <div className="assign-frame relative grid h-full min-h-0" data-testid="assign">
         {/* 절대 위치라 격자 칸을 차지하지 않는다 - 작업 화면 바닥에서 올라온다 */}
         <SpacePreview
           bundleId={bundleId}
@@ -815,10 +816,14 @@ export default function AssignPage() {
             </div>
           )}
         </div>
-        <aside className="assign-side" data-testid="assign-inspector">
-          <AssignSidePanel state={state} />
-          <AssignHelp />
-        </aside>
+        <SideFloat prefs={view} onChange={changeView}>
+          {(headEnd) => (
+            <>
+              <AssignSidePanel state={state} headEnd={headEnd} />
+              <AssignHelp />
+            </>
+          )}
+        </SideFloat>
       </div>
       {joinLineId === null && renderJoinMenu(false)}
       {menuLineId === null && renderLinkMenu(false)}
