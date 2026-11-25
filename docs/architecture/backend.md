@@ -43,7 +43,10 @@ AI 없이 사람이 끝까지 가는 결정적 경로(계획 1). AI 층은 아�
    - **쪼개기 규칙 번호** `extractions.split_rule`(Alembic `0038`, 이미 올린 문서는 1): 규칙 1 `RULE_LEGACY`는 문장마다(`split_sentences`, DOCX는 줄마다), 규칙 2 `RULE_PARAGRAPH`는 그 조각을 이어진 같은 언어끼리 다시 잇는다(`split_paragraph`) — 바깥 경계는 문단(칸 안 문단은 신호 `paras`)과 번호 · 글머리 · 문서 번호 줄(`find_marker_lines`, PDF는 접힌 줄에서 끊지 않게 글머리는 늘 · 문서 번호와 줄표는 앞 줄이 문장 끝이거나 블록 첫 줄도 같은 표식일 때 · 번호는 앞 번호를 이을 때와 첫 번호가 문장 끝 · 콜론 뒤에 올 때만. 칸 안 캡션 줄의 시작 · 끝도 경계다), 짧은 영어 예외는 `SHORT_ENGLISH_WORDS`. 새 문서는 Old · New 모두 `ingest.NEW_SPLIT_RULE`(2). 단위를 만드는 곳은 `split_block_text(rule=…)`를 거치고, 단위를 다시 만드는 편집(제목 → 문장, 띠 표 → 표)은 그 추출의 규칙을 읽는다(`editing._load_split_rule`). 배치 판정(`doc_meta.detect_language_layout`)도 규칙 2면 그 박스로 잰다.
    - 규칙 2는 Reference 절의 참조 줄을 잇지 않는다: 그 절일 수 있는 블록만(`refs.list_ref_section_blocks`) 규칙 1로 먼저 쪼개 REF 줄을 찾고 그 시작 자리를 `kept`로 넘긴다(`units._build_unit_rows`).
    - 꼴마다 정답 문서와 기대 박스는 `tests/split_golden/`(`test_sop_split_golden.py`, Old · New 둘 다) — 실제 문서에서 새 꼴이 나오면 먼저 여기에 더한다. 쪼개기를 보지 않는 옛 시험은 `legacy_split_rule` 픽스처로 규칙 1에서 돈다.
-   - 목차 줄 잡음 표시 `units.noise_kind`의 판정은 `noise.py` — 표시 단위는 판단 줄·AI 범위·입구 2 새 문장에서 빠지고 결과물 A에 "삭제 · 목차" 줄로 남는다, 비우는 길은 편집 `clear_noise`, Alembic `0027`.
+   - 저절로 삭제된 줄의 잡음 표시 `units.noise_kind`(`toc` 목차 · `front` 본문 앞부분 · `history` 개정 이력)의 판정은 `noise.py` — 표시 단위는 판단 줄·AI 범위·입구 2 새 문장에서 빠지고 결과물 A에 삭제 줄로 남는다, 비우는 길은 편집 `clear_noise`, Alembic `0027`.
+     - 목차는 블록 신호로 쪼갤 때(`segment`), 앞부분 · 개정 이력은 쪼갠 단위의 줄(`NoiseLine`)로 `units._mark_noise` — **규칙 2 추출만**이라 이미 올린 문서는 그대로다. 묶음(표 · 그림)의 칸 · 캡션은 묶음을 따른다.
+     - 본문 시작은 번호 "1"인 첫 제목이나 번호 문단(표 안 숫자 · 목차 줄은 아니다). 그 앞에 본문 번호("5." · "5.1")인 줄이나 더 위 단계 제목이 있으면 절 안의 단계라 아무것도 표시하지 않는다(G22). 한/영 따로 문서의 둘째 반쪽은 다른 언어의 1장 제목 바로 앞에 끊김 없이 이어진 그 언어 · 중립 줄만(`find_half_front` — 본문 번호 줄에서 멈추고, 문서 번호로 시작하는 참조 줄은 중립). 개정 이력은 1장 뒤 그 이름의 제목부터 같은 · 위 단계 제목 전까지.
+     - 잠금 `editing.ensure_not_noise`(422 `toc_line_locked`): 나누기 · 합치기 · 합치기 풀기 · 경계 · 골라 만들기 · 모양 전환 · 표 벗기기와 다시 표로(안쪽 띠 표까지) · 캡션 · 첫 행 캡션 · 그림 묶기 · 덩이 순서 · 짝 맺기. 제목 ↔ 문장 · 들여쓰기 · 번호는 저마다의 코드로 이미 막는다.
 3. → 편집 `editing.py`(서버 되돌리기/다시 하기)·한/영 짝 `pairs.py`.
 4. → 배정·확정 `decisions.py`(관계 묶음 단위 저장)·입구 2 짝 맞추기 `match.py`.
 5. → 결과물 `snapshot.py`(묶음을 DB 표마다 질의 한 번으로 읽은 불변 값) 위의 **순수 함수** `outputs.py`(A·B·C·요약)와 `sheet_model.py`(Excel·미리보기가 같이 쓰는 시트 모델)·`excel_export.py`(모델 → Graphite xlsx)·`flow_image.py`(Pillow, 저장소에 넣은 NanumGothic OFL 글꼴 `assets/fonts/`)·`output_labels.py`(언어별 문구).
@@ -294,7 +297,7 @@ AI 없이 사람이 끝까지 가는 결정적 경로(계획 1). AI 층은 아�
 - 글 앞 타자 번호는 제목 줄이든 본문 줄이든 처음부터 번호다(사용자 결정 2026-11-20, 본문 줄은 `is_read_from_text`로 "Read from text"를 알린다).
 - DOCX는 추출 신호가 없는 줄바꿈 뒤 줄머리의 타자 번호도 읽고(`reads_line_starts`, 정규식은 `segment.TYPED_NUMBER_RE` 하나), 첫 범위 전체가 번호이고 뒤 범위가 있으면 그 범위가 번호다.
 - 단위 글(`segment.build_unit_text`)은 범위를 띄어쓰기로 잇고 범위 안 줄바꿈도 띄어쓰기다(길이 그대로, Alembic `0035`가 옛 글을 바꿈) — 변경 종류의 "그대로"는 `numbering.is_source_text`가 줄바꿈을 띄어쓰기로 보고 견준다.
-- 목차 줄(`noise_kind`)은 번호 칸이 없다.
+- 저절로 삭제된 줄(`noise_kind`)은 번호 칸이 없다 — 앞부분 · 개정 이력은 번호 열을 그대로 두어 삭제 취소하면 번호 칸이 돌아온다.
 - 번호 칸의 값·가릴 길이·내용은 `get_number`·`get_hidden_len`·`strip_number`만 읽는다 — 새 문장 기본 글·변경 종류·문장 검사(`decisions`), 결과물 A 원문 칸·위치(`outputs`), 문서 보기(`routers/sop_documents._to_number_out`)가 함께 쓴다.
 - AI 입력 글은 번호를 품은 `text` 그대로다(§11-8).
 - 따라 고치기 `plan_follow`는 프런트 `lib/number-model.ts` `planFollow`가 미리 보기에 사본으로 쓰니 규칙을 바꾸면 함께 고친다(두 쪽 시험이 같은 사례다).

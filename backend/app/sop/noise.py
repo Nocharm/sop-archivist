@@ -143,6 +143,13 @@ def _read_level(line: NoiseLine) -> int:
     return 1 if line.kind == "heading" else _PARAGRAPH_LEVEL
 
 
+def _has_body_number(line: NoiseLine) -> bool:
+    return (
+        line.is_body and line.is_flow and line.noise is None and line.kind in _START_KINDS
+        and line.number is not None and _BODY_NUMBER.fullmatch(line.number.strip(".")) is not None
+    )
+
+
 def _has_body_before(lines: Sequence[NoiseLine], start: int) -> bool:
     """번호 1인 줄 앞에서 이미 본문이 시작했는가 — 본문 번호("5." · "5.1")인 줄이나 더 위 단계 제목(개정 이력 제목 말고)이 있으면.
 
@@ -150,11 +157,10 @@ def _has_body_before(lines: Sequence[NoiseLine], start: int) -> bool:
     """
     own = _read_level(lines[start])
     for line in lines[:start]:
-        if not line.is_body or not line.is_flow or line.noise is not None or line.kind not in _START_KINDS:
-            continue
-        if line.number is not None and _BODY_NUMBER.fullmatch(line.number.strip(".")):
+        if _has_body_number(line):
             return True
-        if line.kind == "heading" and _read_level(line) < own and not is_history_heading(line.text):
+        is_title = line.is_body and line.is_flow and line.noise is None and line.kind == "heading"
+        if is_title and _read_level(line) < own and not is_history_heading(line.text):
             return True
     return False
 
@@ -180,13 +186,19 @@ def find_body_starts(lines: Sequence[NoiseLine], *, separate: bool) -> list[int]
     return [first] if second is None else [first, second]
 
 
-def find_half_front(lines: Sequence[NoiseLine], at: int, langs: frozenset[str]) -> int:
+def find_half_front(
+    lines: Sequence[NoiseLine], at: int, langs: frozenset[str], *, crosses_numbers: bool = False
+) -> int:
     """둘째 반쪽의 앞부분이 시작하는 자리 — at 바로 앞으로 끊김 없이 이어진 langs · 중립 줄의 첫 자리(없으면 at).
 
-    맨 앞의 중립 줄은 뺀다 — 첫 반쪽 끝의 그림을 먹지 않게.
+    맨 앞의 중립 줄은 뺀다 — 첫 반쪽 끝의 그림을 먹지 않게. crosses_numbers가 아니면 본문 번호인 줄(한글 반쪽의 영어 제목 "9. Reference")에서
+    멈춘다 — 그 앞은 첫 반쪽이다.
     """
     start = at
-    while start > 0 and lines[start - 1].is_body and lines[start - 1].langs <= langs:
+    while (
+        start > 0 and lines[start - 1].is_body and lines[start - 1].langs <= langs
+        and (crosses_numbers or not _has_body_number(lines[start - 1]))
+    ):
         start -= 1
     while start < at and not lines[start].langs:
         start += 1

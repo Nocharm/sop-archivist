@@ -25,9 +25,7 @@ pytestmark = pytest.mark.usefixtures("clean_sop")
 GOLDEN_DIR = Path(__file__).parent / "split_golden"
 SIDES = ("old", "new")
 # 규칙 → 아직 못 맞는 것. "G01-old" 꼴은 정답 시험, "G11"처럼 쪽이 없는 것은 Old · New가 같은지 보는 시험이다
-PENDING: dict[str, frozenset[str]] = {
-    "R3": frozenset(f"{key}-{side}" for key in ("G14", "G15", "G16") for side in SIDES),
-}
+PENDING: dict[str, frozenset[str]] = {}
 
 
 def _mark(name: str, *values: object) -> object:
@@ -49,7 +47,7 @@ def _load_expected(key: str) -> dict:
 
 
 def test_every_shape_has_an_answer() -> None:
-    keys = {f"G{n:02d}" for n in range(1, 22)}
+    keys = {f"G{n:02d}" for n in range(1, 23)}
     assert set(CASES) == keys
     assert {path.stem for path in GOLDEN_DIR.glob("*.json")} == keys
     names = {f"{key}-{side}" for key in keys for side in SIDES} | keys

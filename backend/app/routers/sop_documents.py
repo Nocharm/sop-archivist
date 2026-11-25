@@ -338,7 +338,7 @@ class ViewUnitOut(BaseModel):
     ref: ViewUnitRefOut | None = None
     # 이 단위의 글 안 표·그림 참조(그 자리를 덮는 단위에 싣는다) — 나눈 뒤에도 참조가 든 쪽 단위가 갖는다
     caption_refs: list[CaptionRefOut] = []
-    # 잡음 표시(noise.py) — "toc"면 목차 줄: 배정 줄이 없고 Assign 용지가 목차 블록으로 접는다. 편집 clear_noise가 비운다
+    # 잡음 표시(noise.NOISE_KINDS) — 저절로 삭제된 줄: 배정 줄이 없고 Assign 용지가 종류마다 한 블록으로 접는다. 편집 clear_noise가 비운다
     noise_kind: str | None = None
     # 제목 스타일 줄을 문장으로 바꾼 문장(F8b) — Assign의 "제목으로 되돌리기"와 묶음 머리 "[제목 → 문장]"이 읽는다. 편집 set_heading이 오간다
     from_heading: bool = False

@@ -53,7 +53,6 @@ from app.sop.models import (
     UnitPairMember,
     UnitRef,
 )
-from app.sop.noise import NOISE_TOC
 from app.sop.numbering import (
     MAX_NUMBER_CHARS,
     NO_NUMBER,
@@ -507,11 +506,24 @@ def _ensure_text_kinds(units: Iterable[Unit]) -> None:
         raise_rule(422, "invalid_unit_kind", unit_ids=wrong)
 
 
-def _ensure_not_toc(units: Iterable[Unit]) -> None:
-    """목차 줄은 나누기 · 합치기 · 골라 만들기 · 경계 옮기기를 받지 않는다(사용자 결정 2026-11-19) — 먼저 목차 아님(clear_noise)."""
-    locked = sorted(unit.id for unit in units if unit.noise_kind == NOISE_TOC)
+def ensure_not_noise(units: Iterable[Unit]) -> None:
+    """저절로 삭제된 줄(잡음 표시 — 목차 · 본문 앞부분 · 개정 이력)은 모양을 바꾸는 편집과 짝을 받지 않는다(사용자 결정 2026-11-19, 쪼개기
+    먼저 설계 §7 R3) — 먼저 삭제 취소(clear_noise)."""
+    locked = sorted({unit.id for unit in units if unit.noise_kind is not None})
     if locked:
         raise_rule(422, "toc_line_locked", unit_ids=locked)
+
+
+async def _ensure_tables_not_noise(session: AsyncSession, extraction_id: ExtractionId, table_ids: Collection[int]) -> None:
+    """원문 표들의 활성 단위(표 단위 · 칸 · 띠 표 제목 줄)에 삭제된 줄이 있으면 422 — 묶인 캡션은 표 단위와 표시가 같다."""
+    ensure_not_noise(
+        await session.scalars(
+            select(Unit).where(
+                Unit.extraction_id == extraction_id, Unit.status == UNIT_ACTIVE, Unit.table_id.in_(table_ids),
+                Unit.noise_kind.is_not(None),
+            )
+        )
+    )
 
 
 async def load_active_units(
@@ -613,7 +625,7 @@ def _decide_merged_kind(units: Iterable[Unit]) -> str:
 async def _plan_split(session: AsyncSession, extraction_id: ExtractionId, op: SplitOp) -> _Change:
     unit = (await load_active_units(session, extraction_id, [op.unit_id]))[op.unit_id]
     _ensure_text_kinds([unit])
-    _ensure_not_toc([unit])
+    ensure_not_noise([unit])
     spans = to_spans(unit.spans)
     located = locate_text_offset(spans, op.at) if 0 < op.at < len(unit.text) else None
     if located is None:
@@ -648,7 +660,7 @@ async def _plan_merge(session: AsyncSession, extraction_id: ExtractionId, op: Me
     ensure_unique_units(op.unit_ids)
     units = sorted((await load_active_units(session, extraction_id, op.unit_ids)).values(), key=_get_position)
     _ensure_text_kinds(units)
-    _ensure_not_toc(units)
+    ensure_not_noise(units)
     _ensure_mergeable(units)
     langs = {unit.lang for unit in units}
     blocks = await _load_unit_blocks(session, extraction_id, units)
@@ -687,6 +699,7 @@ async def _plan_unmerge(session: AsyncSession, document_id: int, extraction_id: 
     언어로 돌아온다. 짝·판단은 되살리지 않는다(되돌리기와 같다).
     """
     unit = (await load_active_units(session, extraction_id, [op.unit_id]))[op.unit_id]
+    ensure_not_noise([unit])  # 되살린 단위에는 표시가 없다 — 삭제된 줄이 말없이 본문으로 돌아오지 않게
     edit = await find_merge_edit(session, document_id, unit.id)
     if edit is None:
         raise_rule(422, "cannot_unmerge", unit_id=unit.id)
@@ -717,7 +730,7 @@ async def _plan_move_boundary(session: AsyncSession, extraction_id: ExtractionId
     units = await load_active_units(session, extraction_id, [op.left_unit_id, op.right_unit_id])
     left, right = units[op.left_unit_id], units[op.right_unit_id]
     _ensure_text_kinds([left, right])
-    _ensure_not_toc([left, right])
+    ensure_not_noise([left, right])
     left_spans, right_spans = to_spans(left.spans), to_spans(right.spans)
     block_id, left_start, left_end = left_spans[-1]
     right_block_id, right_start, right_end = right_spans[0]
@@ -758,7 +771,7 @@ async def _plan_carve(session: AsyncSession, extraction_id: ExtractionId, op: Ca
     )
     hit_ids = [unit_id for unit_id, spans in rows if overlaps(to_spans(spans), op.block_id, start, end)]
     units = sorted((await load_active_units(session, extraction_id, hit_ids)).values(), key=_get_position)
-    _ensure_not_toc(units)
+    ensure_not_noise(units)
     # 붙인 캡션은 문단 안 다른 문장과 한 블록에 있을 수 있다 — 골라 만든 조각이 묶음 둘에 걸치지 않게 합치기와 같이 막는다
     _ensure_mergeable(units)
     blocks = await _load_unit_blocks(session, extraction_id, units)
@@ -786,7 +799,7 @@ async def _plan_switch_language(
     """언어를 바꿔 모양이 바뀌는 편집 — 모양이 바뀌지 않으면(짝이 아니거나 짝에 두 언어가 남는다) 422 no_shape_change, 보통 언어 바꾸기를 쓴다."""
     unit = (await load_active_units(session, extraction_id, [op.unit_id]))[op.unit_id]
     _ensure_text_kinds([unit])
-    _ensure_not_toc([unit])
+    ensure_not_noise([unit])
     if op.piece is not None:
         return await _plan_piece_language(session, document_id, extraction_id, unit, op)
     member_ids = list(
@@ -1343,21 +1356,21 @@ async def _plan_set_layout_table(
     if table.is_layout == op.is_layout:
         return _Change()
     if is_band_table(table.signals):
+        await _ensure_tables_not_noise(session, extraction_id, [table.id])
         return await _plan_band_layout(session, document_id, extraction_id, table, op.is_layout)
-    change = await _plan_plain_layout(session, extraction_id, table, op.is_layout)
-    inner_tables = (
-        await session.scalars(
-            select(SourceTable)
-            .where(
-                SourceTable.extraction_id == extraction_id, SourceTable.parent_table_id == table.id,
-                SourceTable.is_layout != op.is_layout,
-            )
-            .order_by(SourceTable.table_index)
+    inner_tables = await session.scalars(
+        select(SourceTable)
+        .where(
+            SourceTable.extraction_id == extraction_id, SourceTable.parent_table_id == table.id,
+            SourceTable.is_layout != op.is_layout,
         )
-    ).all()
-    for band in inner_tables:
-        if is_band_table(band.signals):
-            change = _merge_changes(change, await _plan_band_layout(session, document_id, extraction_id, band, op.is_layout))
+        .order_by(SourceTable.table_index)
+    )
+    bands = [inner for inner in inner_tables if is_band_table(inner.signals)]
+    await _ensure_tables_not_noise(session, extraction_id, [table.id, *(band.id for band in bands)])
+    change = await _plan_plain_layout(session, extraction_id, table, op.is_layout)
+    for band in bands:
+        change = _merge_changes(change, await _plan_band_layout(session, document_id, extraction_id, band, op.is_layout))
     if not op.is_layout:
         # 다시 표로 묶으면 덩이 줄 순서를 비운다 — 다시 벗겼을 때 낡은 순서가 살아나지 않게(되돌리면 돌아온다). 은퇴하는 줄은 값째 은퇴한다
         retiring = set(change.retire)
@@ -1541,6 +1554,7 @@ async def _plan_attach_caption(session: AsyncSession, extraction_id: ExtractionI
     """
     units = await load_active_units(session, extraction_id, [op.unit_id, op.bundle_unit_id])
     unit, bundle = units[op.unit_id], units[op.bundle_unit_id]
+    ensure_not_noise([unit, bundle])
     if unit.kind not in CAPTIONABLE_KINDS or unit.group_unit_id is not None or unit.lang == REF_LANG:
         raise_rule(422, "invalid_unit_kind", unit_ids=[unit.id])
     if bundle.kind not in BUNDLE_UNIT_KINDS:
@@ -1570,6 +1584,7 @@ async def _plan_detach_caption(session: AsyncSession, extraction_id: ExtractionI
     0020이 옮긴 옛 그림 캡션은 그림 블록 위에 있다 — 떼면 그림 블록 글이 따로 도는 문장이 되므로 막는다.
     """
     unit = (await load_active_units(session, extraction_id, [op.unit_id]))[op.unit_id]
+    ensure_not_noise([unit])
     if unit.kind != CAPTION_KIND:
         raise_rule(422, "invalid_unit_kind", unit_ids=[unit.id])
     blocks = await _load_unit_blocks(session, extraction_id, [unit])
@@ -1592,6 +1607,7 @@ async def _plan_first_row_caption(
     이미 있으면 422 caption_exists(reason first_row), 참조 줄이 있으면 invalid_unit_kind, 첫 행뿐인 표는 표가 비어 empty_table이다.
     """
     table = (await load_active_units(session, extraction_id, [op.table_unit_id]))[op.table_unit_id]
+    ensure_not_noise([table])
     if table.kind != "table":
         raise_rule(422, "invalid_unit_kind", unit_ids=[table.id])
     members = await _load_grouped_cells(session, [table.id])
@@ -1661,6 +1677,7 @@ async def _plan_group_figures(session: AsyncSession, extraction_id: ExtractionId
     members = await _load_figure_group(
         session, extraction_id, {unit.caption_figure_id or unit.id for unit in units.values()}
     )
+    ensure_not_noise(members)
     head = members[0]
     captions = await _load_bound_captions(session, [member.id for member in members])
     langs = Counter(caption.lang for caption in captions)
@@ -1689,6 +1706,7 @@ async def _plan_ungroup_figures(session: AsyncSession, extraction_id: Extraction
     if unit.kind != "figure":
         raise_rule(422, "invalid_unit_kind", unit_ids=[unit.id])
     members = await _load_figure_group(session, extraction_id, [unit.caption_figure_id or unit.id])
+    ensure_not_noise(members)
     figures = {member.id: (member.caption_figure_id, None) for member in members if member.caption_figure_id is not None}
     return _Change(figures=figures, bundles=[member.id for member in members] if figures else [])
 
@@ -1790,6 +1808,7 @@ async def _plan_reorder_unwrapped(session: AsyncSession, extraction_id: Extracti
     if not tables[table.id].is_unwrapped:
         raise_rule(422, "table_not_unwrapped", table_id=table.id)
     lines = await _load_unwrap_lines(session, extraction_id, table.id, tables)
+    ensure_not_noise(lines)
     current_order = [unit.id for unit in order_unwrapped(lines, lambda unit: unit.unwrap_seq, _get_position)]
     if set(current_order) != set(op.unit_ids):
         raise_rule(422, "unwrap_lines_mismatch", table_id=table.id, unit_ids=current_order)

@@ -1,4 +1,4 @@
-"""쪼개기 정답 문서 만들기 — 꼴(G01–G21)마다 합성 DOCX·PDF 하나를 시험 때 만들고, 원문 대조 응답을 기대 JSON과 같은 줄로 읽는다."""
+"""쪼개기 정답 문서 만들기 — 꼴(G01–G22)마다 합성 DOCX·PDF 하나를 시험 때 만들고, 원문 대조 응답을 기대 JSON과 같은 줄로 읽는다."""
 
 import zipfile
 from collections.abc import Callable
@@ -135,6 +135,11 @@ _LIST = [
     _pdf(
         "G21", "5.1 Drain the tank completely. Close the valve.", "5.2 Rinse the tank with purified water and",
         "wait for 10 minutes.", "5.3 Record the result.",
+    ),
+    _docx(
+        "G22",
+        p("합성 안내문") + _PROCEDURE + p(_PURPOSE) + p("1. 전원을 켠다.") + p("2. 압력을 확인한다.")
+        + h("6. 개정 이력") + p("처음 만들었다."),
     ),
 ]
 CASES: dict[str, Case] = {case.key: case for case in _LIST}
