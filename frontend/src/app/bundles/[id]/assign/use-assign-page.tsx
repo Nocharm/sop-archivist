@@ -52,7 +52,7 @@ import { pickDocRevision } from "@/lib/doc-revision";
 import type { PaperPending } from "@/components/paper/paper";
 import { useI18n } from "@/lib/i18n";
 import { genId } from "@/lib/id";
-import { buildTranslationDecision, listOpenTranslations } from "@/lib/translation-decision";
+import { buildTranslationDecision, isTranslationBlocked, listOpenTranslations } from "@/lib/translation-decision";
 import { useLeaveGuard } from "@/lib/leave-guard";
 import { buildIdenticalBatches } from "@/lib/match-model";
 import { EMPTY_FOLD_OPEN, type FoldOpen } from "@/lib/paper-fold-model";
@@ -604,6 +604,7 @@ export function useAssignPage() {
 
   // 확정하지 않은 번역 줄 - 검토 요청을 막는데 새 문서를 숨긴 동안 정할 자리가 오른쪽 칸뿐이다(어디로 보낸 줄이든)
   const openTranslations = isDrafting || row === null ? [] : listOpenTranslations(groupData, row.unitIds);
+  const translationBlocked = row !== null && isTranslationBlocked(groupData, row.unitIds);
 
   // 저장 전 고름·고친 글이 남은 줄이 있으면 다른 화면으로 가기 전에 묻는다(초안은 이 화면의 상태라 나가면 사라진다)
   const unsavedCount = Object.values(drafts).filter(hasDraftChange).length;
@@ -2115,7 +2116,8 @@ export function useAssignPage() {
 
   /** 고른 줄의 남은 번역을 확정하거나 지운다 - 줄의 판단은 그대로, 되돌리기 한 번 */
   async function settleTranslations(action: "confirm" | "remove") {
-    if (!row || busy) return;
+    // 묶음을 다시 받는 중이면 멈춘다 - 낡은 번역을 보고 정하지 않게
+    if (!row || busy || groupPending) return;
     const body = buildTranslationDecision(groupData, row.unitIds, action);
     if (body === null) return;
     const [focusId] = row.unitIds;
@@ -3631,7 +3633,7 @@ export function useAssignPage() {
   return {
     t, bundleId, bundle, canEdit, docs, oldDocs, oldDocIds, docViews, unitsKey, reloadData, tobe, tobeData, writtenList, identical,
     aiJobs, aiOn, aiBusy, suggestions, invalidUnitIds, readMarkStatus, readAiPlace, suggestedTargetUnits, unitMap, written, writtenMap, rows, rowMap,
-    rowOfUnit, options, labelOptions, isDrafting, hiddenPlace, openTranslations, settleTranslations, ready, showSkeleton, unsourced, mode, setMode, filter, counts, foldOpen, setFoldOpen, applyFilter, foldMatch,
+    rowOfUnit, options, labelOptions, isDrafting, hiddenPlace, openTranslations, translationBlocked, settleTranslations, ready, showSkeleton, unsourced, mode, setMode, filter, counts, foldOpen, setFoldOpen, applyFilter, foldMatch,
     clearRowPick, activeKey, row, pickedId, spaceUnitIds, spacePickSeq, solo, setSolo, isSolo, isNewEdit, hasSolo, tocOpen, setTocOpen, tocPick, tocBlocks, checked,
     setChecked, newRemarks, setNewRemarks, menu, setMenu, joinMenu, setJoinMenu, ctxMenu, setCtxMenu, cutUnitId, focusNew,
     groupData, setDrafts, draft, editing, groupPending, savedDestination, destination, rowUnits, rowLangs, firstDecision, systemHold,

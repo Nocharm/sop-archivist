@@ -197,3 +197,20 @@ def test_removing_a_cell_translation_echoes_the_table(client: TestClient, fake_a
 
     assert saved.status_code == 200, saved.text
     assert not {code for code in read_blocker_codes(client, bundle.id) if code.startswith("targets_")}
+
+
+def test_removing_a_translation_someone_just_changed_is_refused(client: TestClient, fake_ai: FakeAi) -> None:
+    """번역만 지우는 저장은 단위를 싣지 않아 단위 revision이 막지 못한다 — 지울 새 문장의 revision을 견준다."""
+    bundle, unit = make_assigned_unit(client)
+    target = translate(client, fake_ai, bundle.id, unit["id"])
+    body = {"action": "confirm", "units": [], "targets": [], "removed_target_ids": [target.id], "removed_revisions": {target.id: target.revision}}
+    assert save_translation(client, bundle.id, target, text="Edited by someone else.").status_code == 200  # 그 사이 남이 고쳐 확정
+
+    refused = save_group(client, bundle.id, body)
+
+    assert refused.status_code == 409, refused.text
+    (kept,) = load_translations(unit["id"])
+    assert (kept.confirmed_text, kept.status) == ("Edited by someone else.", "confirmed")
+    fresh = {**body, "removed_revisions": {target.id: kept.revision}}
+    assert save_group(client, bundle.id, fresh).status_code == 200
+    assert load_translations(unit["id"]) == []

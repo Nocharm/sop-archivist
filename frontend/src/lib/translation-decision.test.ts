@@ -2,7 +2,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { Decision, Group, GroupTarget, GroupUnit } from "./api-sop";
-import { buildTranslationDecision, listOpenTranslations } from "./translation-decision";
+import { buildTranslationDecision, isTranslationBlocked, listOpenTranslations } from "./translation-decision";
 
 const DECISION: Decision = { disposition: "assigned", move_target_code: "", reason: "사유", status: "confirmed", hold_reason: "", confirmed_by: "qa.member", confirmed_at: null, revision: 4 };
 
@@ -26,7 +26,7 @@ describe("buildTranslationDecision for a sentence", () => {
 
   it("sends only the translation, so the row keeps who confirmed it and when", () => {
     expect(buildTranslationDecision(group, [1], "confirm")).toMatchObject({ action: "confirm", units: [], removed_target_ids: [], targets: [{ id: 11, revision: 2, source_unit_ids: [] }] });
-    expect(buildTranslationDecision(group, [1], "remove")).toMatchObject({ action: "confirm", units: [], removed_target_ids: [11], targets: [] });
+    expect(buildTranslationDecision(group, [1], "remove")).toMatchObject({ action: "confirm", units: [], removed_target_ids: [11], removed_revisions: { 11: 2 }, targets: [] });
   });
 
   it("settles a translation that went on hold, and leaves confirmed ones and other rows' alone", () => {
@@ -59,6 +59,24 @@ describe("buildTranslationDecision for a table cell", () => {
   });
 
   it("echoes the rest and removes the translation", () => {
-    expect(buildTranslationDecision(group, [100], "remove")).toMatchObject({ action: "confirm", units, removed_target_ids: [11], targets: [{ id: 9 }, { id: 10 }] });
+    expect(buildTranslationDecision(group, [100], "remove")).toMatchObject({ action: "confirm", units, removed_target_ids: [11], removed_revisions: { 11: 2 }, targets: [{ id: 9 }, { id: 10 }] });
+  });
+
+  it("refuses when the save would also confirm another cell or row that is still open", () => {
+    const heldCell: Group = { ...group, targets: group.targets.map((target) => (target.id === 10 ? { ...target, status: "on_hold" as const } : target)) };
+    const otherUnit: Group = { ...group, units: [...group.units, makeUnit(200, { decision: { ...DECISION, status: "unassigned", disposition: "unassigned" } })] };
+    const otherTranslation: Group = { ...group, targets: [...group.targets, translation(12, 999, { parent_target_id: 9 })] };
+    for (const open of [heldCell, otherUnit, otherTranslation]) {
+      expect(isTranslationBlocked(open, [100])).toBe(true);
+      expect(buildTranslationDecision(open, [100], "confirm")).toBeNull();
+      expect(buildTranslationDecision(open, [100], "remove")).toBeNull();
+    }
+    expect(isTranslationBlocked(group, [100])).toBe(false);
+  });
+
+  it("never blocks a sentence translation, which is saved alone", () => {
+    const sentence: Group = { units: [makeUnit(1, { decision: { ...DECISION, status: "on_hold" } })], targets: [], translations: [translation(11, 1)] };
+    expect(isTranslationBlocked(sentence, [1])).toBe(false);
+    expect(buildTranslationDecision(sentence, [1], "confirm")?.targets.map((target) => target.id)).toEqual([11]);
   });
 });

@@ -997,6 +997,8 @@ export interface GroupSaveInput {
   units: Array<{ unit_id: number; revision: number; disposition: Disposition; move_target_code: string; reason: string }>;
   targets: TargetInput[];
   removed_target_ids: number[];
+  /** 지울 새 문장 → 화면이 본 revision - 다르면 409(그 사이 남이 고친 것을 지우지 않는다). 싣지 않은 것은 견주지 않는다 */
+  removed_revisions?: Record<number, number>;
   /** 짝의 한쪽만 이을 때 남는 단위 - 서버가 같은 저장 안에서 그 짝을 풀어 따로 줄로 남긴다 */
   release_unit_ids?: number[];
   /** Use로 받은 AI 제안 - 서버가 판단에 잇고 채택을 남긴다(이 묶음의 분류·묶기 제안이 아니면 404 suggestion_not_found) */
