@@ -18,7 +18,7 @@
 | 3e | `perf/assign-number-input` | 건너뜀 |  | 번호 칸 5글자 CPU 4배 가운데 값 25ms(기준 100ms) | 조건(100ms 초과)이 안 됨 — 브랜치를 만들지 않음 |
 | 4a | `fix/assign-enter` | 합침 | v1.6.12 · 53442350 | vitest 2203 · build 경고 0 · 스모크 전체 2208 + 새 단계 경합 하나 고쳐 3번 통과 | 보류 줄에서 ↵ 한 번이 첫 카드로 확정(B1-R2 글자대로) |
 | 4b | `feat/assign-keymap` | 합침 | v1.6.13 · 2f4c6f21 | vitest 2281 · build 경고 0 · `assign:` 스모크 1226 통과(고침 뒤 6단계 다시) | 맥에서 Ctrl+←→는 공간 전환과 겹칠 수 있음 |
-| 4c | `feat/assign-merge-keys` | 진행(11-26) | | | |
+| 4c | `feat/assign-merge-keys` | 합침 | v1.6.17 · 19d3ffe7 | vitest 2312 · build 경고 0 · 스모크 `assign: merge keys` 26 ×2 · keys · join · drag merge | 짝 카드의 "아래"는 문서 순서 이웃(화면 바로 아래와 다를 수 있음) |
 | 4d | `feat/number-cell-buttons` | 합침 | v1.6.7 · 3670d20c | vitest 1969 · build 경고 0 · `assign:` 스모크 전체 통과(5c와 합친 트리) | IME 조합 중 Enter는 전과 같음(범위 밖), 번호 칸 단계 둘은 앞 단계에 기대어 혼자 돌리면 실패(dev에서도 같음) |
 | 5a | `feat/split-rule-2` | 합침 | v1.6.3 · 42e4751b | pytest 3404+시드 통과 · 10 xfail(R3 · R4 몫) · vitest 1934 · build 경고 0 · 스모크 전체 2111 통과 | PDF의 콜론 뒤 줄표 목록은 나누지 않는다(사람이 나눔) |
 | 5b | `feat/split-front-matter` | 합침 | v1.6.11 · ff0a6718 | pytest 3622+시드 15 · vitest 2167 · build 경고 0 · 스모크 전체 2181(새 단계의 두 번 누름 하나는 단계를 고쳐 통과) | 아래 "아침에 볼 것" |

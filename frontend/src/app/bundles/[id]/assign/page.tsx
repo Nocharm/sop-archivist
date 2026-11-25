@@ -40,6 +40,7 @@ import { flashElement, Truncate } from "@/components/ui/motion";
 import { formatGapLabel, PLACE_REFUSAL_KEYS, readGapKey, type Placement, type PlaceSpot } from "@/lib/place-spot-model";
 import { listAckWarnings } from "@/lib/missing-warnings-model";
 import { type ChangeType, type EditOp } from "@/lib/api-sop";
+import { formatAssignKey } from "@/lib/assign-keymap";
 import { isBundleCaptionNeeded } from "@/lib/caption-model";
 import { countJoinedLines } from "@/lib/join-sentence-model";
 import { listLinkMenuItems, listUnlinkRemainder, type LinkMenuItem } from "@/lib/assign-model";
@@ -80,7 +81,7 @@ export default function AssignPage() {
     templateTitles, linkPairs, view, changeView, zoomPane, setPanes, remarkEdit, setRemarkEdit, focusAfterRef, busy, isAnyPending, isGlobalPending, paperPending, pendingDeletes, expectedNumbers, editConfirm,
     oldPaneRef, bulk, setBulk, confirmingIdentical,
     setConfirmingIdentical, resetScope, setResetScope, slots, newDraft, draftSlotKey, placeResolved, canPlaceClick, pickedSpotKey,
-    setCarvePick, carve, carveText, clearCarve, togglePairViewByButton, pairFrom, setPairFrom, pairSource, captionPickBundle, setCaptionPick, selectToc, openNewCtxMenu,
+    setCarvePick, carve, carveText, clearCarve, togglePairViewByButton, pairFrom, setPairFrom, mergeArm, pairSource, captionPickBundle, setCaptionPick, selectToc, openNewCtxMenu,
     openSolo, goToUnit, ctxGroups, confirmBlockKey, refPendingIds, isLinkedToWritten, captionPendingKeys, docDashboard, openCtxMenu, runUnitEdit,
     rewrapTable, unwrapAi, describeEditConfirm, pairGrip, clearNoise, openNoiseReason, splitAtCut, handleOldDoubleClick,
     runCtx, revertHeadings, planOldJoin, joinOld, renderOldActions, runSave, runClear, confirmIdenticalAll, acceptAll, pickDestination,
@@ -395,7 +396,16 @@ export default function AssignPage() {
       </button>
     </div>
   ) : null;
-  const oldBanner = pairBanner ?? captionBanner;
+  // ⇧J ⇧J · ⇧K ⇧K로 무장한 합치기의 안내 한 줄 - 짝 고르기 · 캡션 고르기와 같은 자리(함께 열리지 않는다)
+  const mergeBanner = mergeArm ? (
+    <div className="flex items-center gap-2 border-b border-line bg-accent-tint px-3 py-1.5 text-xs" role="status" data-testid="assign-merge-armed">
+      <Link2 size={14} strokeWidth={1.5} className="flex-none text-ink-2" aria-hidden />
+      <span className="min-w-0 flex-1 text-ink">{t(mergeArm.kind === "merge" ? "assign.key.mergeArmedMerge" : "assign.key.mergeArmedPair", { key: formatAssignKey(mergeArm.dir === 1 ? "merge_next" : "merge_prev") })}</span>
+    </div>
+  ) : null;
+  const oldBanner = pairBanner ?? captionBanner ?? mergeBanner;
+  // 무장한 두 박스 - New 문서의 문장이면 그 줄(target)의 박스다
+  const armTargetIds = mergeArm && isNewEdit ? new Set([mergeArm.fromId, mergeArm.toId].flatMap((unitId) => written.find((item) => item.new_unit_id === unitId)?.target_id ?? [])) : undefined;
   const placeOf = (unitIds: number[]) => {
     const decided = unitIds.map((id) => unitMap.get(id)).find((unit) => unit?.status === "confirmed");
     if (!decided) {
@@ -621,6 +631,7 @@ export default function AssignPage() {
                 unwrap={isSolo ? undefined : { canRewrap: canEdit && !isNewEdit, busy: isGlobalPending, onRewrap: rewrapTable, ai: canEdit && !isNewEdit ? unwrapAi : undefined }}
                 // 처리 중인 일 - 누르는 즉시 그 자리 알약과 박스 쉬머, 그 박스만 잠근다(설계 D4)
                 pending={mode === "old" ? paperPending : undefined}
+                mergeArm={mergeArm}
                 paneRef={oldPaneRef}
                 renderPills={(unitId) => {
                   const targets = linkedTargets.get(unitId);
@@ -737,11 +748,12 @@ export default function AssignPage() {
                     pickedIds={pickedNew}
                     focusId={focusNew}
                     shapeId={editTargetId}
+                    mergeArmTargets={armTargetIds}
                     onShape={canEdit && mode === "old" && !isComposedDoc ? openNewCtxMenu : undefined}
                     cut={isNewEdit && cutUnit !== null && cutLine.at !== null && cutTargetId !== null ? { targetId: cutTargetId, at: cutLine.at } : null}
                     cutPop={<CutPop busy={busy} onRun={splitAtCut} onCancel={cutLine.clear} testIdPrefix="assign" />}
                     onCutDrag={canEdit && isNewEdit ? cutLine.dragTo : undefined}
-                    banner={isNewEdit ? pairBanner : newAiBanner}
+                    banner={isNewEdit ? (pairBanner ?? mergeBanner) : newAiBanner}
                     sourceLabel={(unitId) => (unitMap.get(unitId)?.display_id ?? String(unitId)).replace(/^OLD-/, "")}
                     onPick={handleNewPick}
                     onJumpSource={jumpToOld}

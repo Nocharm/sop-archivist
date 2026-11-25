@@ -87,6 +87,8 @@ interface NewPaneProps {
   focusId: number | null;
   /** 양 단에서 다듬으려고 고른 문장 */
   shapeId?: number | null;
+  /** ⇧J ⇧J · ⇧K ⇧K로 무장한 합치기의 두 박스(줄 target) - 점선 미리보기 */
+  mergeArmTargets?: ReadonlySet<number>;
   sourceLabel: (unitId: number) => string;
   /** 줄을 누름 - anchor는 그 줄(그 자리 메뉴가 붙는다) */
   onPick: (targetId: number, additive: boolean, anchor: HTMLElement, event: MouseEvent) => void;
@@ -576,6 +578,7 @@ export function NewPane(props: NewPaneProps) {
             "data-pair-group": readGroup(row) ?? undefined,
             "data-sel": isSelected ? "" : undefined,
             "data-pending": isPending ? "" : undefined,
+            "data-merge-arm": props.mergeArmTargets?.has(row.target_id) ? "" : undefined,
             "data-testid": `assign-new-${row.target_id}`,
             // 빈 템플릿 박스 두 번 누르기 - 그 박스의 Old 줄을 고르고 누른 자리에 나눌 선(Old 용지와 같은 손짓, 스텝 8)
             onDoubleClick:
