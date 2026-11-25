@@ -22,7 +22,7 @@ from app.sop.captions import CAPTION_KIND, join_caption_texts
 from app.sop.constants import BULLET_SYMBOLS
 from app.sop.excel_export import build_workbook, clean_cell_text, split_cell_text
 from app.sop.models import Document, SourceBlock, SourceTable, TargetSource, Unit, UnitDecision, UnitPairMember
-from app.sop.noise import NOISE_FRONT, NOISE_HISTORY
+from app.sop.noise import NOISE_FRONT, NOISE_HISTORY, NOISE_TOC
 from app.sop.numbering import (
     NUMBER_CELL,
     NUMBERED_KINDS,
@@ -55,6 +55,19 @@ _NOISE_REMARKS = LABELS["en"].noise_remarks  # 이 시트의 글은 영어다(�
 _SKIPPED_KINDS = ("table",)  # 칸 문장을 묶는 단위 — 자기 글이 없다(행 줄의 Remark만 준다)
 _SHEET_NAME_LIMIT = 31  # Excel 시트 이름 최대 글자 수
 _SHEET_NAME_FORBIDDEN = str.maketrans({char: "_" for char in "[]:*?/\\"})
+
+
+@dataclass(frozen=True)
+class ParagraphInclude:
+    """받을 때 넣을 것 넷 — 표 · 삭제한 줄(확정 삭제 + 본문 앞부분 · 개정 이력) · 그림 자리 · 옛 문서 목차. 처음 값은 지금 파일에서 목차만 뺀 것."""
+
+    tables: bool = True
+    deleted: bool = True
+    figures: bool = True
+    toc: bool = False
+
+
+DEFAULT_INCLUDE = ParagraphInclude()
 
 
 @dataclass(frozen=True)
@@ -99,6 +112,8 @@ class _Entry:
     deleted: bool = False
     target_id: int | None = None
     has_section: bool = True  # 저절로 삭제된 줄은 절 번호를 이어받지 않는다
+    is_figure: bool = False
+    is_toc: bool = False  # 저절로 삭제된 줄 가운데 옛 문서 목차(본문 앞부분 · 개정 이력은 deleted)
 
 
 def format_number_note(read: str | None, now: str | None) -> str:
@@ -155,11 +170,11 @@ def _list_entries(lines: Sequence[UnitLine], include_tables: bool) -> list[_Entr
             caption = join_caption_texts(captions.get(line.unit_id, ()))
             text = " ".join(part for part in (FIGURE_MARKER, line.text, caption) if part)
             entries.append(_Entry(line.unit_id, line.lang, None, text, remark=line.remark, blocks=line.blocks, deleted=line.deleted,
-                                  has_section=not line.auto_deleted))
+                                  has_section=not line.auto_deleted, is_figure=True))
             continue
         entries.append(_Entry(
             line.unit_id, line.lang, line.number, line.text, line.number_note, line.remark, line.blocks, line.is_cell_number,
-            line.deleted, line.target_id, has_section=not line.auto_deleted,
+            line.deleted, line.target_id, has_section=not line.auto_deleted, is_toc=line.noise and not line.auto_deleted,
         ))
     return entries
 
@@ -206,13 +221,14 @@ _TEXT_COLUMN = PARAGRAPH_HEADERS.index("Text")
 
 def _make_row(
     texts: Sequence[str], *, head: bool = False, unit_id: int | None = None, unit_ids: Sequence[int] = (), indent: int = 0,
-    deleted: bool = False,
+    deleted: bool = False, toc: bool = False,
 ) -> SheetRow:
     cells = [SheetCell(text=clean_cell_text(text), head=head and bool(text)) for text in texts]
     if not head:
         cells[_TEXT_COLUMN] = cells[_TEXT_COLUMN].model_copy(update={"indent": indent, "faint": deleted, "strike": deleted})
     return SheetRow(
-        kind="header" if head else "in_group", wrap=True, cells=cells, unit_id=unit_id, deleted=deleted, unit_ids=list(unit_ids)
+        kind="header" if head else "in_group", wrap=True, cells=cells, unit_id=unit_id, deleted=deleted, unit_ids=list(unit_ids),
+        toc=toc, noise=NOISE_TOC if toc else None,
     )
 
 
@@ -223,15 +239,31 @@ def _format_remark(remarks: Sequence[str], deleted: bool) -> str:
     return f"{DELETED_REMARK} — {remark}" if remark else DELETED_REMARK
 
 
-def build_paragraph_sheet(lines: Sequence[UnitLine], include_tables: bool, name: str = "Sheet") -> Sheet:
-    """용지 순서의 단위 → 문단 Excel 시트 모델. 한 칸에 넘치는 글은 다음 줄 같은 열로 이어 쓴다(이어진 줄도 같은 unit_id)."""
-    entries = _list_entries(lines, include_tables)
+def _is_left_out(entry: _Entry, include: ParagraphInclude, preview: bool) -> bool:
+    """받는 파일에서 빠질 줄인가 — 미리 보기는 그림 자리를 늘 빼고, 삭제 줄 · 목차는 화면이 숨기거나 접으니 싣는다."""
+    if entry.is_figure and (preview or not include.figures):
+        return True
+    if entry.is_toc:
+        return not (include.toc or preview)
+    return entry.deleted and not include.deleted
+
+
+def build_paragraph_sheet(
+    lines: Sequence[UnitLine], include: ParagraphInclude = DEFAULT_INCLUDE, name: str = "Sheet", *, preview: bool = False
+) -> Sheet:
+    """용지 순서의 단위 → 문단 Excel 시트 모델. 한 칸에 넘치는 글은 다음 줄 같은 열로 이어 쓴다(이어진 줄도 같은 unit_id).
+
+    preview면 그림 자리를 빼고 목차 줄에 toc · noise를 달아 화면이 한 줄로 접게 한다. 섹션 번호는 빠질 줄까지 세어(받는 것과 무관하게) 같다.
+    """
+    entries = _list_entries(lines, include.tables)
     sections = build_section_numbers(entries)
     levels = _get_levels(lines)
     rows = [_make_row(PARAGRAPH_HEADERS, head=True)]
     for group in _group_entries(entries):
         members = [entries[index] for index in group]
         first = members[0]
+        if _is_left_out(first, include, preview):
+            continue
         langs = {member.lang for member in members}
         texts = [
             _format_section(sections[group[0]], first.number) if first.has_section else "",
@@ -245,7 +277,7 @@ def build_paragraph_sheet(lines: Sequence[UnitLine], include_tables: bool, name:
         for part in range(max(len(chunk) for chunk in chunks)):
             rows.append(_make_row(
                 [chunk[part] if part < len(chunk) else "" for chunk in chunks], unit_id=first.unit_id, unit_ids=unit_ids,
-                indent=levels.get(first.unit_id, 1) - 1, deleted=first.deleted,
+                indent=levels.get(first.unit_id, 1) - 1, deleted=first.deleted, toc=preview and first.is_toc,
             ))
     return Sheet(
         name=name, widths=list(PARAGRAPH_WIDTHS), rows=rows, freeze="A2", filter_columns=0, image_png=None, image_row=None,
@@ -254,15 +286,15 @@ def build_paragraph_sheet(lines: Sequence[UnitLine], include_tables: bool, name:
 
 
 def build_paragraph_preview(
-    lines: Sequence[UnitLine], include_tables: bool, name: str, around_unit_id: int | None, max_rows: int = MAX_PREVIEW_ROWS
+    lines: Sequence[UnitLine], include: ParagraphInclude, name: str, around_unit_id: int | None, max_rows: int = MAX_PREVIEW_ROWS
 ) -> Sheet:
-    """Assign Space 미리 보기 — 파일과 같은 시트를 고른 단위 가운데로 max_rows줄까지(Excel A 미리 보기와 같은 창 계약)."""
-    return limit_window(build_paragraph_sheet(lines, include_tables, name), PARAGRAPH_HEAD_ROWS, around_unit_id, max_rows)
+    """Assign Space 미리 보기 — 받을 파일의 줄에서 그림 자리를 빼고 목차를 접을 표시를 단 시트를 고른 단위 가운데로 max_rows줄까지."""
+    return limit_window(build_paragraph_sheet(lines, include, name, preview=True), PARAGRAPH_HEAD_ROWS, around_unit_id, max_rows)
 
 
 def build_paragraph_file(sheets: Sequence[Sheet]) -> bytes:
     """문단 Excel 시트들 → .xlsx 바이트(결과물 Excel과 같은 시트 쓰기). 순수 계산이라 스레드에서 부른다."""
-    return build_workbook(WorkbookModel(file_name="", sheets=list(sheets) or [build_paragraph_sheet([], True)]))
+    return build_workbook(WorkbookModel(file_name="", sheets=list(sheets) or [build_paragraph_sheet([])]))
 
 
 def make_sheet_name(name: str, taken: set[str]) -> str:
