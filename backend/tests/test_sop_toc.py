@@ -261,6 +261,18 @@ def test_output_a_keeps_each_toc_line_as_an_automatic_deleted_row(client: TestCl
     assert rows.index(returned) == len(toc)
 
 
+def test_front_matter_and_contents_rows_are_struck(client: TestClient) -> None:
+    fx = _setup(client)
+
+    a_sheet = _get(client, fx, "export/preview")["sheets"][0]
+    col = a_sheet["column_keys"].index("old_text")
+    toc = [row for row in a_sheet["rows"] if row["toc"]]
+    rest = [row for row in a_sheet["rows"][2:] if not row["toc"]]
+
+    assert toc and {row["cells"][col]["strike"] for row in toc} == {True}
+    assert {row["cells"][col]["strike"] for row in rest} == {False}
+
+
 def test_summary_and_flow_count_toc_lines_as_automatic_deletes(client: TestClient) -> None:
     fx = _setup(client)
 

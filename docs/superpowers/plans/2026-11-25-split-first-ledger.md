@@ -26,6 +26,7 @@
 | 6-1 | `feat/new-paper-1-render` | 모음 `feat/new-paper`에 합침 | 7dcf645f | vitest 2361 · build 경고 0 · `assign:` 스모크 1233 + 부하에서 흔들린 둘은 혼자 통과 | New 문장은 글쇠만으로 고를 길이 없음(계획 글자대로, 6-2에서 다시) |
 | 6-2 | `feat/new-paper-2-pick` | 진행(11-26) | | | |
 | 6-3 | `feat/new-paper-3-tools` | 대기 | | | |
+| 3b+ | `fix/undo-follow-after-click` | 진행(11-26) | | | 4c 스모크가 찾은 3b 결함: 되돌리기 뒤 다른 줄을 눌러도 늦은 따라가기가 고름을 덮음 |
 | 7 | 계획 4의 일곱 | 대기 | | | |
 | 8 | 계획 5의 아홉 | 진행 | | | 앞선 것에 매이지 않는 `space-preview-trim` · `excel-a-strike` · `progress-by-disposition`부터 |
 
