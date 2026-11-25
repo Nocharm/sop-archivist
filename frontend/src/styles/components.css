@@ -2225,7 +2225,6 @@
   .doc-dash-chip:disabled { cursor: default; color: var(--ink-3); }
   .doc-dash-dl { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; margin-top: 12px; }
   .doc-dash-dl small { margin-bottom: 6px; color: var(--ink-3); font-size: var(--fs-cap); }
-  .doc-dash-pick { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
   /* 위쪽 줄의 확인할 것 - 아이콘 + 수, 올리거나 포커스하면 이름(data-words)이 옆으로 펼쳐진다. 이름은 ::after라 글자 수(innerText)에 들지 않는다 */
   .pending-count { height: 28px; cursor: pointer; white-space: nowrap; }
   .pending-count::after { content: attr(data-words); display: inline-block; max-width: 0; margin-left: -4px; overflow: hidden; vertical-align: bottom; opacity: 0; transition: max-width var(--dur-base) var(--ease-move), opacity var(--dur-base); }

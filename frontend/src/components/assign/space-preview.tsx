@@ -7,11 +7,12 @@
 import { Download } from "lucide-react";
 import { useEffect, useEffectEvent, useMemo, useState } from "react";
 
+import { ParagraphDownloadDialog } from "@/components/assign/paragraph-download-dialog";
 import { SheetView } from "@/components/outputs/sheet-view";
 import { LoadError } from "@/components/ui/load-error";
 import { showToast } from "@/components/ui/toast";
 import { humanizeApiError } from "@/lib/api-errors";
-import { downloadExport, downloadParagraphs, getAssignSheetPreview, getParagraphSheetPreview } from "@/lib/api-sop";
+import { downloadExport, downloadParagraphs, getAssignSheetPreview, getParagraphSheetPreview, type ParagraphInclude } from "@/lib/api-sop";
 import { isTypingTarget, LAYER_SELECTOR } from "@/lib/assign-key-target";
 import { readSpacePreviewOpens, writeSpacePreviewOpens } from "@/lib/assign-view-prefs";
 import { useI18n } from "@/lib/i18n";
@@ -72,6 +73,8 @@ export function SpacePreview({ bundleId, sheet: sheetKind, enabled, docId, docCo
   const [request, setRequest] = useState<SheetRequest | null>(null);
   const [press, setPress] = useState<{ x: number; y: number } | null>(null);
   const [downloading, setDownloading] = useState(false);
+  // 문단 Excel은 받기 전에 넣을 것을 묻는다 - 시트를 닫아도 창은 남는다
+  const [isAsking, setIsAsking] = useState(false);
 
   // 보낼 곳이 없어지면(New 문서 한 단 고치기 · 문서 없음) 닫는다 - 렌더 중 상태 맞추기
   if (!enabled && space.phase !== "closed") setSpace(SPACE_CLOSED);
@@ -151,17 +154,18 @@ export function SpacePreview({ bundleId, sheet: sheetKind, enabled, docId, docCo
     };
   }, []);
 
-  async function handleDownload() {
+  async function handleDownload(include?: ParagraphInclude) {
     setDownloading(true);
     try {
-      if (isParagraphs && docId !== null) {
-        const { blob, fileName } = await downloadParagraphs(bundleId, docId, true);
+      if (include && docId !== null) {
+        const { blob, fileName } = await downloadParagraphs(bundleId, docId, include);
         saveBlob(blob, fileName ?? `${docCode || "Document"}_paragraphs.xlsx`);
       } else {
         const { blob, fileName } = await downloadExport(bundleId);
         saveBlob(blob, fileName ?? `BND-${String(bundleId).padStart(4, "0")}.xlsx`);
       }
       showToast(t("outputs.fileCreated"));
+      setIsAsking(false);
     } catch (err) {
       showToast(`${t("outputs.exportFailed")} ${humanizeApiError(err, t)}`, "error");
     } finally {
@@ -169,108 +173,118 @@ export function SpacePreview({ bundleId, sheet: sheetKind, enabled, docId, docCo
     }
   }
 
+  const dialog = isAsking && docId !== null ? <ParagraphDownloadDialog busy={downloading} onConfirm={(include) => void handleDownload(include)} onClose={() => setIsAsking(false)} /> : null;
+
   if (!isOpen) {
     // 처음 몇 번만 - 설명서에는 늘 있다
-    return enabled && opens < HINT_OPENS ? (
-      <p className="space-hint" data-testid="assign-space-hint">
-        <kbd>Space</kbd> {t("assign.spacePreview.hint")}
-      </p>
-    ) : null;
+    return (
+      <>
+        {enabled && opens < HINT_OPENS && (
+          <p className="space-hint" data-testid="assign-space-hint">
+            <kbd>Space</kbd> {t("assign.spacePreview.hint")}
+          </p>
+        )}
+        {dialog}
+      </>
+    );
   }
 
   return (
-    <section
-      className="space-sheet"
-      data-testid="assign-space-preview"
-      data-state={isKept ? "kept" : "held"}
-      data-sheet={sheetKind}
-      aria-label={isParagraphs ? t("assign.spacePreview.paragraphsTitle") : t("outputs.preview.title")}
-      // 시트 안 글쇠(↑ ↓ · PageUp …)는 시트를 옮긴다 - 같은 키가 화면에서 줄을 옮기지 않게 여기서 멈춘다
-      onKeyDown={(event) => {
-        if (event.defaultPrevented) event.stopPropagation();
-      }}
-    >
-      <span className="space-sheet-grip" aria-hidden />
-      <header className="space-sheet-head">
-        <b className="text-[14px] text-ink">{isParagraphs ? t("assign.spacePreview.paragraphsTitle") : t("outputs.preview.title")}</b>
-        <span className="space-sheet-tab">{sheet?.name ?? (isParagraphs ? docCode : "A Comparison")}</span>
-        <span className="flex-none" data-testid="assign-space-preview-scope">
-          {t("assign.spacePreview.scope", { doc: docCode, n: sheet ? countDataRows(sheet) : "…" })}
-        </span>
-        {picked && (
-          <span className="min-w-0 truncate text-ink" data-testid="assign-space-preview-picked">
-            {t("assign.spacePreview.picked")} <span className="font-mono font-semibold text-accent">{picked.id}</span> {picked.text}
-          </span>
-        )}
-        <span className="space-sheet-state" data-kept={isKept ? "" : undefined} data-testid="assign-space-preview-state">
-          {isKept ? t("assign.spacePreview.kept") : t("assign.spacePreview.holding")}
-        </span>
-        <button
-          type="button"
-          className="btn h-7 flex-none"
-          data-testid="assign-space-preview-download"
-          disabled={downloading}
-          // 누르기로 포커스를 가져가지 않는다 - 단추에 포커스가 남으면 다음 Space 탁이 시트를 닫지 않고 또 받는다
-          onPointerDown={(event) => event.preventDefault()}
-          onClick={() => void handleDownload()}
-        >
-          <Download size={14} strokeWidth={1.5} aria-hidden />
-          {downloading ? t("outputs.exporting") : isParagraphs ? t("assign.spacePreview.downloadParagraphs") : t("outputs.preview.download")}
-        </button>
-      </header>
-      <div
-        className="space-sheet-body"
-        // 누르는 동안 시트를 끌었으면 떼는 순간 닫는다(열어 두지 않는다) - 옮기기 자체는 시트 보기가 한다
-        onPointerDown={(event) => setPress({ x: event.clientX, y: event.clientY })}
-        onPointerMove={(event) => {
-          if (press && event.buttons !== 0 && isDragMove(event.clientX - press.x, event.clientY - press.y)) {
-            setPress(null);
-            dispatch({ type: "drag" });
-          }
+    <>
+      <section
+        className="space-sheet"
+        data-testid="assign-space-preview"
+        data-state={isKept ? "kept" : "held"}
+        data-sheet={sheetKind}
+        aria-label={isParagraphs ? t("assign.spacePreview.paragraphsTitle") : t("outputs.preview.title")}
+        // 시트 안 글쇠(↑ ↓ · PageUp …)는 시트를 옮긴다 - 같은 키가 화면에서 줄을 옮기지 않게 여기서 멈춘다
+        onKeyDown={(event) => {
+          if (event.defaultPrevented) event.stopPropagation();
         }}
-        onPointerUp={() => setPress(null)}
       >
-        {sheet ? (
-          <SheetView sheet={sheet} selectedUnitId={selectedUnitId} centreKey={pickSeq} draft={isParagraphs ? undefined : draft} testId="assign-space-preview" />
-        ) : preview.error != null ? (
-          <LoadError error={preview.error} onRetry={preview.reload} testId="assign-space-preview" />
-        ) : (
-          <div className="grid gap-2" aria-busy="true" data-testid="assign-space-preview-loading">
-            <span className="sk h-5 w-1/2" />
-            <span className="sk h-40 w-full" />
-          </div>
-        )}
-      </div>
-      <footer className="space-sheet-foot" data-testid="assign-space-preview-legend">
-        <span>
-          <i className="space-key" data-mark="picked" aria-hidden />
-          {t("assign.spacePreview.legendPicked")}
-        </span>
-        {isParagraphs && (
+        <span className="space-sheet-grip" aria-hidden />
+        <header className="space-sheet-head">
+          <b className="text-[14px] text-ink">{isParagraphs ? t("assign.spacePreview.paragraphsTitle") : t("outputs.preview.title")}</b>
+          <span className="space-sheet-tab">{sheet?.name ?? (isParagraphs ? docCode : "A Comparison")}</span>
+          <span className="flex-none" data-testid="assign-space-preview-scope">
+            {t("assign.spacePreview.scope", { doc: docCode, n: sheet ? countDataRows(sheet) : "…" })}
+          </span>
+          {picked && (
+            <span className="min-w-0 truncate text-ink" data-testid="assign-space-preview-picked">
+              {t("assign.spacePreview.picked")} <span className="font-mono font-semibold text-accent">{picked.id}</span> {picked.text}
+            </span>
+          )}
+          <span className="space-sheet-state" data-kept={isKept ? "" : undefined} data-testid="assign-space-preview-state">
+            {isKept ? t("assign.spacePreview.kept") : t("assign.spacePreview.holding")}
+          </span>
+          <button
+            type="button"
+            className="btn h-7 flex-none"
+            data-testid="assign-space-preview-download"
+            disabled={downloading}
+            // 누르기로 포커스를 가져가지 않는다 - 단추에 포커스가 남으면 다음 Space 탁이 시트를 닫지 않고 또 받는다
+            onPointerDown={(event) => event.preventDefault()}
+            onClick={() => (isParagraphs && docId !== null ? setIsAsking(true) : void handleDownload())}
+          >
+            <Download size={14} strokeWidth={1.5} aria-hidden />
+            {downloading ? t("outputs.exporting") : isParagraphs ? t("assign.spacePreview.downloadParagraphs") : t("outputs.preview.download")}
+          </button>
+        </header>
+        <div
+          className="space-sheet-body"
+          // 누르는 동안 시트를 끌었으면 떼는 순간 닫는다(열어 두지 않는다) - 옮기기 자체는 시트 보기가 한다
+          onPointerDown={(event) => setPress({ x: event.clientX, y: event.clientY })}
+          onPointerMove={(event) => {
+            if (press && event.buttons !== 0 && isDragMove(event.clientX - press.x, event.clientY - press.y)) {
+              setPress(null);
+              dispatch({ type: "drag" });
+            }
+          }}
+          onPointerUp={() => setPress(null)}
+        >
+          {sheet ? (
+            <SheetView sheet={sheet} selectedUnitId={selectedUnitId} centreKey={pickSeq} draft={isParagraphs ? undefined : draft} testId="assign-space-preview" />
+          ) : preview.error != null ? (
+            <LoadError error={preview.error} onRetry={preview.reload} testId="assign-space-preview" />
+          ) : (
+            <div className="grid gap-2" aria-busy="true" data-testid="assign-space-preview-loading">
+              <span className="sk h-5 w-1/2" />
+              <span className="sk h-40 w-full" />
+            </div>
+          )}
+        </div>
+        <footer className="space-sheet-foot" data-testid="assign-space-preview-legend">
           <span>
-            <i className="space-key" data-mark="deleted" aria-hidden />
-            {t("assign.spacePreview.legendDeleted")}
+            <i className="space-key" data-mark="picked" aria-hidden />
+            {t("assign.spacePreview.legendPicked")}
           </span>
-        )}
-        {!isParagraphs && (
-          <>
+          {isParagraphs && (
             <span>
-              <i className="space-key" data-mark="group" aria-hidden />
-              {t("assign.spacePreview.legendGroup")}
+              <i className="space-key" data-mark="deleted" aria-hidden />
+              {t("assign.spacePreview.legendDeleted")}
             </span>
-            <span>
-              <span className="sv-draft">{t("assign.spacePreview.legendDraftSample")}</span> {t("assign.spacePreview.legendDraft")}
+          )}
+          {!isParagraphs && (
+            <>
+              <span>
+                <i className="space-key" data-mark="group" aria-hidden />
+                {t("assign.spacePreview.legendGroup")}
+              </span>
+              <span>
+                <span className="sv-draft">{t("assign.spacePreview.legendDraftSample")}</span> {t("assign.spacePreview.legendDraft")}
+              </span>
+              <span>{t("outputs.sheet.legend")}</span>
+            </>
+          )}
+          {rest && (
+            <span data-testid="assign-space-preview-rest">
+              {t(isParagraphs ? "assign.spacePreview.restParagraphs" : "assign.spacePreview.rest", { above: rest.above, below: rest.below })}
             </span>
-            <span>{t("outputs.sheet.legend")}</span>
-          </>
-        )}
-        {rest && (
-          <span data-testid="assign-space-preview-rest">
-            {t(isParagraphs ? "assign.spacePreview.restParagraphs" : "assign.spacePreview.rest", { above: rest.above, below: rest.below })}
-          </span>
-        )}
-        <span className="ml-auto">{isParagraphs ? t("assign.spacePreview.sameFileParagraphs") : t("assign.spacePreview.sameFile")}</span>
-      </footer>
-    </section>
+          )}
+          <span className="ml-auto">{isParagraphs ? t("assign.spacePreview.sameFileParagraphs") : t("assign.spacePreview.sameFile")}</span>
+        </footer>
+      </section>
+    {dialog}
+    </>
   );
 }

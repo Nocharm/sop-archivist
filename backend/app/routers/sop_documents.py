@@ -82,6 +82,7 @@ from app.sop.models import (
     UnitRef,
 )
 from app.sop.paragraph_excel import (
+    ParagraphInclude,
     build_paragraph_file,
     build_paragraph_preview,
     build_paragraph_sheet,
@@ -1028,14 +1029,21 @@ async def download_document_file(
     )
 
 
+def _read_include(
+    tables: bool = Query(True), deleted: bool = Query(True), figures: bool = Query(True), toc: bool = Query(False)
+) -> ParagraphInclude:
+    """문단 Excel 받기의 질의 넷 — 처음 값은 지금 파일에서 옛 문서 목차만 뺀 것."""
+    return ParagraphInclude(tables=tables, deleted=deleted, figures=figures, toc=toc)
+
+
 async def _respond_paragraphs(
-    session: AsyncSession, bundle_id: int, documents: Sequence[Document], include_tables: bool, file_title: str
+    session: AsyncSession, bundle_id: int, documents: Sequence[Document], include: ParagraphInclude, file_title: str
 ) -> Response:
     """문서마다 시트 하나인 문단 Excel 응답 — 시트 이름은 문서 번호(없으면 제목)."""
     taken: set[str] = set()
     sheets = [
         build_paragraph_sheet(
-            await load_unit_lines(session, document), include_tables, make_sheet_name(document.doc_code or document.title, taken)
+            await load_unit_lines(session, document), include, make_sheet_name(document.doc_code or document.title, taken)
         )
         for document in documents
     ]
@@ -1056,25 +1064,25 @@ async def get_paragraphs_preview(
     MAX_PREVIEW_ROWS줄까지(Excel A 미리 보기와 같은 창 계약). Old · New 어느 쪽 문서든."""
     document = await _get_document(session, ctx.bundle.id, doc_id)
     lines = await load_unit_lines(session, document)
-    return build_paragraph_preview(lines, tables, make_sheet_name(document.doc_code or document.title, set()), around)
+    return build_paragraph_preview(lines, ParagraphInclude(tables=tables), make_sheet_name(document.doc_code or document.title, set()), around)
 
 
 @router.get("/{bundle_id}/documents/{doc_id}/paragraphs.xlsx")
 async def download_document_paragraphs(
     doc_id: IdPath,
-    tables: bool = Query(True),
+    include: ParagraphInclude = Depends(_read_include),
     ctx: BundleContext = Depends(_require_member),
     session: AsyncSession = Depends(get_session),
 ) -> Response:
-    """문서 하나의 문단 Excel — 쪼갠 단위 한 줄씩 다섯 열(Assign 문서 대시보드). tables=false면 아직 표인 표를 뺀다."""
+    """문서 하나의 문단 Excel — 쪼갠 단위 한 줄씩 다섯 열(Assign 문서 대시보드). 질의 넷으로 넣을 것을 고른다(_read_include)."""
     document = await _get_document(session, ctx.bundle.id, doc_id)
     title = f"{document.doc_code or document.title}_paragraphs"
-    return await _respond_paragraphs(session, ctx.bundle.id, [document], tables, title)
+    return await _respond_paragraphs(session, ctx.bundle.id, [document], include, title)
 
 
 @router.get("/{bundle_id}/old-paragraphs.xlsx")
 async def download_old_paragraphs(
-    tables: bool = Query(True),
+    include: ParagraphInclude = Depends(_read_include),
     ctx: BundleContext = Depends(_require_member),
     session: AsyncSession = Depends(get_session),
 ) -> Response:
@@ -1082,7 +1090,7 @@ async def download_old_paragraphs(
     documents = (await session.scalars(
         select(Document).where(Document.bundle_id == ctx.bundle.id, Document.side == "old").order_by(Document.id)
     )).all()
-    return await _respond_paragraphs(session, ctx.bundle.id, documents, tables, "Old_paragraphs")
+    return await _respond_paragraphs(session, ctx.bundle.id, documents, include, "Old_paragraphs")
 
 
 @router.get("/{bundle_id}/documents/{doc_id}/figures/{block_id}")

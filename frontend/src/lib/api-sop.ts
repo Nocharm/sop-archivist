@@ -1625,10 +1625,22 @@ export function downloadExport(bundleId: number): Promise<{ blob: Blob; fileName
   return apiFetchBlobWithName(`/bundles/${bundleId}/export.xlsx`);
 }
 
-/** 문단 Excel - 쪼갠 단위 한 줄씩 한 열(docId가 null이면 Old 문서 모두, 문서마다 시트). tables=false면 표를 뺀다 */
-export function downloadParagraphs(bundleId: number, docId: number | null, tables: boolean): Promise<{ blob: Blob; fileName: string | null }> {
+/** 문단 Excel 받을 때 넣을 것 넷(서버 ParagraphInclude) - 표 · 삭제한 줄 · 그림 자리 · 옛 문서 목차 */
+export interface ParagraphInclude {
+  tables: boolean;
+  deleted: boolean;
+  figures: boolean;
+  toc: boolean;
+}
+
+/** 처음 값 - 지금 파일에서 옛 문서 목차만 뺀 것 */
+export const DEFAULT_INCLUDE: ParagraphInclude = { tables: true, deleted: true, figures: true, toc: false };
+
+/** 문단 Excel - 쪼갠 단위 한 줄씩 한 열(docId가 null이면 Old 문서 모두, 문서마다 시트). 넣을 것은 include로 고른다 */
+export function downloadParagraphs(bundleId: number, docId: number | null, include: ParagraphInclude): Promise<{ blob: Blob; fileName: string | null }> {
   const path = docId === null ? `/bundles/${bundleId}/old-paragraphs.xlsx` : `/bundles/${bundleId}/documents/${docId}/paragraphs.xlsx`;
-  return apiFetchBlobWithName(`${path}?tables=${tables}`);
+  const query = `tables=${include.tables}&deleted=${include.deleted}&figures=${include.figures}&toc=${include.toc}`;
+  return apiFetchBlobWithName(`${path}?${query}`);
 }
 
 /** 순서 바꾸기 요청 한 줄 - 뺀 값은 그대로 둔다. 깊이·번호 표시는 그 줄에만 붙는다(짝 상대·번역이 따라 바뀌지 않는다) */

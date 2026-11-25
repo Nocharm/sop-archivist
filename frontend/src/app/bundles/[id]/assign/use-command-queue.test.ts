@@ -192,6 +192,14 @@ function createScreen() {
           // 되돌리기가 먼저 나갔으면 이 보기는 놓지 않는다(화면의 placeReload와 같다)
           await hold(views).then(() => (ctx.isCurrent() ? placeView(view) : undefined), () => ctx.loseViews());
         });
+      } else if (name === "t") {
+        // 들여쓰기처럼 한 글쇠가 저장 둘을 세운다 - 누른 줄, 이어진 줄들
+        for (const part of ["clicked", "rest"]) {
+          enqueue("ref", `${part} ${focusedId}`, [focusedId], async () => {
+            log.push(`${part} ${focusedId}`);
+            await hold(responses);
+          });
+        }
       } else if (name === "h") isRemarkOpen = commands.openAsk() ?? "live";
       return true;
     }
@@ -388,6 +396,20 @@ describe("a barrier (A1-R3, AC2)", () => {
     await press(screen, "d");
     await drain(screen);
     expect(screen.log).toEqual(["join 1", "delete 200"]);
+  });
+  it("no key waits behind a waiting r - what is typed next belongs to the Remark window it opens", async () => {
+    const screen = await open();
+    await press(screen, "m");
+    await press(screen, "r");
+    await press(screen, "d");
+    await drain(screen);
+    expect(screen.log).toEqual(["join 1"]);
+  });
+  it("two saves of one replayed key go out in the order the key made them, before the next key", async () => {
+    const screen = await open();
+    for (const name of ["m", "t", "t", "d"]) await press(screen, name);
+    await drain(screen);
+    expect(screen.log).toEqual(["join 1", "clicked 200", "rest 200", "clicked 200", "rest 200", "delete 200"]);
   });
   it("Undo does not wait for the view before it, and that view's follow is dropped", async () => {
     const screen = await open();
