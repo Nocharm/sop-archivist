@@ -72,6 +72,7 @@ import { buildIdenticalBatches } from "@/lib/match-model";
 import { EMPTY_FOLD_OPEN, type FoldOpen } from "@/lib/paper-fold-model";
 import { buildPaperModel, buildPaperTabs, findNearestCut, isBandHeading, listFigureTabUnitIds, resolvePickUnit, shouldRecenter, type PaperTabKey } from "@/lib/paper-model";
 import { findPairTarget } from "@/lib/pair-hint-model";
+import { readPartState, stepPart, withPartState } from "@/lib/part-history";
 import { isSameOrder, movePairMember, orderPairCard, readPairSlot } from "@/lib/pair-order-model";
 import { moveUnwrapLines, readUnwrapSlot } from "@/lib/unwrap-order-model";
 import { useUnwrapAi } from "@/lib/use-unwrap-ai";
@@ -927,6 +928,14 @@ export function useAssignPage() {
   const [manualPart, setManualPart] = useState<{ key: string; part: PaperTabKey } | null>(null);
   const wantedPart = (manualPart?.key === (activeKey ?? "") ? manualPart.part : null) ?? partOf?.get(row?.unitIds[0] ?? (isSolo ? soloUnit?.id : undefined) ?? -1) ?? "body";
   const activePart = partKeys.includes(wantedPart) ? wantedPart : (partKeys[0] ?? "body");
+  /** 사람이 탭을 바꾼다(누름 · Ctrl+←→) - 뒤로 가기가 보던 탭으로 오게 지금 탭을 적어 두고 같은 주소의 기록을 하나 더한다(B2-R7) */
+  function changePart(part: PaperTabKey) {
+    if (part !== activePart) {
+      window.history.replaceState(withPartState(window.history.state, activePart), "");
+      window.history.pushState(withPartState(window.history.state, part), "");
+    }
+    setManualPart({ key: activeKey ?? "", part });
+  }
   // 필터 접기 - 지금 문서·부분에 맞는(또는 고른) Unit이 없으면 용지 대신 빈 상태와 맞는 곳 바로 가기(저절로 옮기지 않는다)
   const isInPart = (unitId: number) => partKeys.length <= 1 || partOf?.get(unitId) === activePart;
   const isFoldEmpty = !isSolo && foldMatch !== null && oldView !== null && !oldView.units.some((unit) => isInPart(unit.id) && (foldMatch.has(unit.id) || (row?.unitIds.includes(unit.id) ?? false)));
@@ -4176,6 +4185,12 @@ export function useAssignPage() {
     }
     const hit = findAssignKey(event);
     const key = event.key.toLowerCase();
+    if (hit?.kind === "run" && (hit.entry.id === "part_prev" || hit.entry.id === "part_next")) {
+      event.preventDefault();
+      // Pair view에는 탭이 없다
+      if (!event.repeat && !isPairView) changePart(stepPart(partKeys, activePart, hit.entry.id === "part_next" ? 1 : -1));
+      return;
+    }
     if (event.metaKey || event.ctrlKey || event.altKey) return;
     // 고쳐 쓰기(E)는 숨긴 기능이라 글쇠 목록에 없다
     const id: PressId | null = hit === null ? (isDrafting && key === "e" && !event.shiftKey ? "edit" : null) : hit.kind === "run" ? hit.entry.id : null;
@@ -4382,9 +4397,19 @@ export function useAssignPage() {
     }
   }
 
+  // 뒤로 · 앞으로 - 그 기록에 적힌 탭으로. 적힌 것이 없으면 원래 뒤로 가기다(Next가 맡는다)
+  const handlePopState = useEffectEvent((event: PopStateEvent) => {
+    const part = readPartState(event.state);
+    if (part !== null) setManualPart({ key: activeKey ?? "", part });
+  });
+
   useEffect(() => {
     window.addEventListener("keydown", handleKey);
-    return () => window.removeEventListener("keydown", handleKey);
+    window.addEventListener("popstate", handlePopState);
+    return () => {
+      window.removeEventListener("keydown", handleKey);
+      window.removeEventListener("popstate", handlePopState);
+    };
   }, []);
 
   // 옛 "원문 고치기" 주소로 들어옴 - 그 문서를 한 단으로 연다(Old 문서면 배정하던 그대로 넓게, 이미 쓴 New 문서면 그 원문). 없는 문서면 그냥 배정 화면이다
@@ -4522,7 +4547,7 @@ export function useAssignPage() {
     reasonNow, setDraft, unsavedCount, leaveTo, setLeaveTo, rowLive, aiDest, aiWhy, isAiRow, recommendations, linkIds,
     pickedGroups, saveGroupData, candidateIds, viewOf, setManualOldDoc, oldView, acceptKind, setAcceptKind, acceptDoc,
     paperModel, canPairView, isPairView, pairColumns, pairLinks, partKeys, oldDocId, splitByUnit, shapeView, shapeModel, soloUnit,
-    soloUnits, cutUnit, cutLine, linkedTargets, registerNumberHandle, setManualPart, activePart, isFoldEmpty, foldElsewhere, writtenDocs, composedDocs,
+    soloUnits, cutUnit, cutLine, linkedTargets, registerNumberHandle, setManualPart, changePart, activePart, isFoldEmpty, foldElsewhere, writtenDocs, composedDocs,
     setManualNewDoc, toggleKey, liveDoc, isNewDocOpen, newDocId, newAiReturn, setNewAiReturn, isComposedDoc, newFileId, composedDoc,
     newRows, headingNotes, sectionMarks, joinableIds, templateTitles, linkPairs, view, changeView, zoomPane, setPanes, askAiScope,
     aiMenuItems, remarkEdit, setRemarkEdit, focusAfterRef, firstTextRef, busy, isAnyPending, isGlobalPending: focusCtl.isGlobalPending, paperPending, pendingDeletes, expectedNumbers, editConfirm, answerEditConfirm, cancelEditConfirm, canUndoNow, queueFailure, retryCommand: commands.retry, discardCommands: commands.discard,

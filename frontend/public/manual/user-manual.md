@@ -838,6 +838,7 @@ AI가 꺼져 있어도 빠진 언어를 직접 채울 수 있습니다. 칸에 �
 | <kbd>Shift</kbd>+<kbd>T</kbd> | 표 벗기기, 벗긴 표의 줄이면 다시 표로 |
 | <kbd>Shift</kbd>+<kbd>O</kbd> | 벗긴 표의 AI 순서 제안 받기(오면 <kbd>↵</kbd>로 적용) |
 | <kbd>V</kbd> | 문서 하나 · 둘 보기 |
+| <kbd>Ctrl</kbd>+<kbd>←</kbd> · <kbd>Ctrl</kbd>+<kbd>→</kbd> | 앞 · 다음 탭(본문 · 머리말 · 꼬리말 · 그림 가운데 있는 것, 끝에서 처음으로). 브라우저의 뒤로 가기는 보던 탭으로 돌아가고, 탭을 바꾼 만큼 다 돌아가면 이전 화면으로 갑니다 |
 | <kbd>Space</kbd>(누르고 있기) | Excel 미리보기 시트 — 떼면 닫힘. 짧게 탁 누르면 열어 두고, 다시 탁 또는 <kbd>Esc</kbd>로 닫기 |
 | <kbd>Ctrl</kbd>+<kbd>Z</kbd> | 판단 되돌리기 |
 | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd> | 다시 하기 |
@@ -1263,7 +1264,7 @@ AI는 제안만 합니다. 사람이 줄마다 확인해 확정하기 전에는 
 | **New documents** | 글 칸에서 <kbd>Enter</kbd> 저장, <kbd>Esc</kbd> 적던 것 버리기 |
 | **Order**(지금은 숨긴 기능) | 줄을 눌러 고른 뒤 <kbd>Alt</kbd>+<kbd>↑</kbd> <kbd>↓</kbd> 한 자리 옮기기(칸 끝에서 멈춤 — 다른 칸으로는 끌어서 옮기고, 키보드로 줄의 칸을 바꾸는 일은 **Assign** 화면에서 합니다), <kbd>Tab</kbd> <kbd>Shift</kbd>+<kbd>Tab</kbd> 들여쓰기·내어쓰기, <kbd>Esc</kbd> 고름 놓기(끄는 동안이면 끌기 취소), <kbd>Alt</kbd>를 누른 채 끌어 글자 고르기 |
 | **Map** | 지도 안에서 <kbd>↑</kbd> <kbd>↓</kbd> 같은 줄기, <kbd>←</kbd> <kbd>→</kbd> 옆 줄기, <kbd>Home</kbd> <kbd>End</kbd> 줄기의 처음 · 끝, <kbd>Enter</kbd> 고르기(줄기 머리에서는 접기), <kbd>Esc</kbd> 고름 풀기, <kbd>+</kbd> <kbd>-</kbd> <kbd>0</kbd> 확대 · **Fit all**, <kbd>/</kbd> 찾기, 지도 위에서 <kbd>Ctrl</kbd>+휠 확대 |
-| **Assign** | <kbd>↵</kbd> 확정(고른 곳이 없으면 추천 첫 카드로), <kbd>J</kbd> <kbd>K</kbd> 이동, <kbd>G</kbd> 짝으로, <kbd>U</kbd> 배정 지우기, <kbd>Del</kbd> 삭제, <kbd>R</kbd> **Remark**, <kbd>Shift</kbd>+<kbd>H</kbd> 보류, <kbd>Shift</kbd>+<kbd>A</kbd> AI 추천 받기, <kbd>Shift</kbd>+<kbd>L</kbd> 언어, <kbd>Shift</kbd>+<kbd>P</kbd> 한 문장 · 짝, <kbd>Shift</kbd>+<kbd>N</kbd> 번호 칸, <kbd>Shift</kbd>+<kbd>T</kbd> 표 벗기기, <kbd>Shift</kbd>+<kbd>O</kbd> AI 순서, <kbd>Tab</kbd> <kbd>Shift</kbd>+<kbd>Tab</kbd> 들여쓰기 · 내어쓰기, <kbd>V</kbd> 문서 하나 · 둘 보기, <kbd>Space</kbd> 누르고 있기 Excel 미리보기, <kbd>?</kbd> 도움말, <kbd>E</kbd> 고쳐 쓰기(지금은 숨긴 기능). 전부는 [Assign 단축키](#assign-keys) |
+| **Assign** | <kbd>↵</kbd> 확정(고른 곳이 없으면 추천 첫 카드로), <kbd>J</kbd> <kbd>K</kbd> 이동, <kbd>G</kbd> 짝으로, <kbd>U</kbd> 배정 지우기, <kbd>Del</kbd> 삭제, <kbd>R</kbd> **Remark**, <kbd>Shift</kbd>+<kbd>H</kbd> 보류, <kbd>Shift</kbd>+<kbd>A</kbd> AI 추천 받기, <kbd>Shift</kbd>+<kbd>L</kbd> 언어, <kbd>Shift</kbd>+<kbd>P</kbd> 한 문장 · 짝, <kbd>Shift</kbd>+<kbd>N</kbd> 번호 칸, <kbd>Shift</kbd>+<kbd>T</kbd> 표 벗기기, <kbd>Shift</kbd>+<kbd>O</kbd> AI 순서, <kbd>Tab</kbd> <kbd>Shift</kbd>+<kbd>Tab</kbd> 들여쓰기 · 내어쓰기, <kbd>V</kbd> 문서 하나 · 둘 보기, <kbd>Ctrl</kbd>+<kbd>←</kbd> <kbd>→</kbd> 탭(뒤로 가기는 보던 탭), <kbd>Space</kbd> 누르고 있기 Excel 미리보기, <kbd>?</kbd> 도움말, <kbd>E</kbd> 고쳐 쓰기(지금은 숨긴 기능). 전부는 [Assign 단축키](#assign-keys) |
 | 어디서나 | <kbd>Esc</kbd> 맨 위 창 닫기, 이동 취소 |
 
 Mac에서는 <kbd>Ctrl</kbd> 대신 <kbd>⌘</kbd>를 씁니다.
