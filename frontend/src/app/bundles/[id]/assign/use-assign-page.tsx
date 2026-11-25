@@ -4336,6 +4336,12 @@ export function useAssignPage() {
   function pressMerge(dir: 1 | -1) {
     if (keyUnit === null || shapeTabs === null || shapeModel === null) return;
     const toId = findJoinNeighbor(shapeTabs.order, keyUnit.id, dir);
+    // 이웃이 바뀌는 중이면 낡은 언어로 계획을 세우지 않는다 - 고른 박스와 같은 까닭으로 막는다
+    if (toId !== null && isBoxLocked(toId)) {
+      setMergeArm(null);
+      showToast(t("assign.key.why.busy"), "info");
+      return;
+    }
     const [firstId, secondId] = dir === 1 ? [keyUnit.id, toId] : [toId, keyUnit.id];
     const plan = toId === null ? { kind: null } : planAssignJoin(shapeModel.units.get(firstId ?? -1), shapeModel.units.get(secondId ?? -1), { isDecided: isUnitDecided, hasDraft: hasUnitDraft });
     const step = stepMergeArm(mergeArmRef.current, { type: "key", dir, fromId: keyUnit.id, toId, plan });

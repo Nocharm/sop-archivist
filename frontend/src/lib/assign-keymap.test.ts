@@ -117,7 +117,7 @@ describe("what a key does where it is pressed", () => {
     for (const id of ["move_next", "go_pair", "view", "help", "part_next", "escape"] as const) expect(resolveAssignKey(entryOf(id), readOnly), id).toEqual({ run: id });
   });
   it("waits for a box that is still changing, and leaves deleted lines alone", () => {
-    for (const id of ["lang", "shape_mode", "number", "table", "ask_order"] as const) expect(resolveAssignKey(entryOf(id), { ...OPEN, isLocked: true }), id).toEqual({ refuseKey: `${WHY}.busy` });
+    for (const id of ["lang", "shape_mode", "number", "table", "ask_order", "merge_next", "merge_prev"] as const) expect(resolveAssignKey(entryOf(id), { ...OPEN, isLocked: true }), id).toEqual({ refuseKey: `${WHY}.busy` });
     // 들여쓰기는 저장 중인 값에서 이어 센다
     for (const id of ["indent", "outdent"] as const) expect(resolveAssignKey(entryOf(id), { ...OPEN, isLocked: true }), id).toEqual({ run: id });
     for (const id of ["lang", "shape_mode", "number", "table", "ask_order", "indent", "outdent"] as const) {

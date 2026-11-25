@@ -160,12 +160,12 @@ function findRefusal({ id, when }: AssignKey, ctx: AssignKeyContext): string | n
   if (when === "row") return ctx.hasRow ? null : why("noRow");
   if (ctx.isDeletedLine) return "assign.ctx.why.tocLine";
   if (!ctx.hasBox) return why("noRow");
-  // 합치기는 이웃과 막는 까닭을 누를 때 따로 잰다(merge-arm-model) - 여기서는 고른 박스만 본다
-  if (when === "join") return null;
   if (when === "ai") return ctx.hasAi ? null : why("noAi");
   // 들여쓰기는 저장 중인 값에서 이어 센다 - 이어 누른 Tab을 버리지 않는다
   if (when === "box") return ctx.hasNumberCell ? null : why("noNumber");
   if (ctx.isLocked) return why("busy");
+  // 합치기는 이웃과 막는 까닭을 누를 때 따로 잰다(merge-arm-model) - 여기서는 고른 박스만 본다
+  if (when === "join") return null;
   if (when === "text") return ctx.isText ? ctx.langReasonKey : why("notText");
   if (when === "shape") return ctx.shapeMode === null ? why("noShape") : ctx.shapeMode.reasonKey;
   if (when === "table") return ctx.tableId === null && ctx.unwrappedTableId === null ? why("notTable") : ctx.tableReasonKey;
