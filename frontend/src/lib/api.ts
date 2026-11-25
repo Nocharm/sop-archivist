@@ -209,6 +209,20 @@ export interface GrantInput {
   permission?: string;
 }
 
+export interface GrantBatchInput {
+  add?: GrantInput[];
+  remove?: number[];
+}
+
+/** added·removed는 실제로 바뀐 것, skipped는 이미 있던 추가, unknown은 대상·역할·권한이 없는 추가, missing은 이미 없던 회수. */
+export interface GrantBatchResult {
+  added: Grant[];
+  removed: number[];
+  skipped: GrantInput[];
+  unknown: GrantInput[];
+  missing: number[];
+}
+
 /** 변경 기록 한 줄 - action은 role.create|update|delete, grant.add|remove. detail 모양은 action마다 다르다. */
 export interface AuditEvent {
   id: number;
@@ -346,6 +360,11 @@ export function listGrants(): Promise<Grant[]> {
 
 export function addGrant(body: GrantInput): Promise<Grant> {
   return apiFetch<Grant>("/access/grants", { method: "POST", body: JSON.stringify(body) });
+}
+
+/** 회수를 먼저, 추가를 나중에 한 트랜잭션으로 - 이미 있는 것·없는 것은 거절하지 않고 결과로 온다. 요청당 추가·회수 각 200개까지. */
+export function batchGrants(body: GrantBatchInput): Promise<GrantBatchResult> {
+  return apiFetch<GrantBatchResult>("/access/grants/batch", { method: "POST", body: JSON.stringify(body) });
 }
 
 export function removeGrant(id: number): Promise<void> {

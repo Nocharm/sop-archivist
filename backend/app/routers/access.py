@@ -31,6 +31,9 @@ router = APIRouter(prefix="/api/access", tags=["access"], dependencies=[Depends(
 # 변경 기록 한 번에 돌려주는 최대 건수 — 큰 limit은 거부하지 않고 이 값으로 자른다
 MAX_AUDIT_LIMIT = 500
 
+# 한 번에 다루는 추가·회수 상한 — 한 트랜잭션이 너무 커지지 않게
+MAX_BATCH_GRANTS = 200
+
 # 길이 상한은 컬럼 길이와 같다 — sqlite는 길이를 강제하지 않아 운영 Postgres에서만 500이 난다
 RoleName = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100)]
 PermissionKey = Annotated[str, StringConstraints(max_length=100)]
@@ -70,6 +73,24 @@ class GrantOut(BaseModel):
     permission: str | None
     created_by: str
     created_at: datetime
+
+
+class GrantBatchIn(BaseModel):
+    """여러 부여를 한 번에 — 회수를 먼저, 추가를 나중에 한 트랜잭션으로."""
+
+    add: list[GrantIn] = Field(default_factory=list, max_length=MAX_BATCH_GRANTS)
+    remove: list[int] = Field(default_factory=list, max_length=MAX_BATCH_GRANTS)
+
+
+class GrantBatchOut(BaseModel):
+    added: list[GrantOut]
+    removed: list[int]
+    # 이미 있는 부여(요청 안에서 겹친 것 포함)라 건너뛴 추가
+    skipped: list[GrantIn]
+    # 대상·역할·권한이 없어 쓰지 않은 추가
+    unknown: list[GrantIn]
+    # 이미 없는 부여라 할 일이 없던 회수 id
+    missing: list[int]
 
 
 class AuditOut(BaseModel):
@@ -323,6 +344,84 @@ async def add_grant(
         subject_name=subject_name, subject_missing=False,
         role_id=grant.role_id, role_name=role_name, permission=grant.permission,
         created_by=grant.created_by, created_at=_normalize_to_kst(grant.created_at),
+    )
+
+
+@router.post("/grants/batch", response_model=GrantBatchOut)
+async def apply_grant_batch(
+    body: GrantBatchIn,
+    actor: str = Depends(_require_manage),
+    session: AsyncSession = Depends(get_session),
+) -> GrantBatchOut:
+    """회수와 추가를 한 트랜잭션으로 한다 — 이미 있는 것·없는 것은 거절하지 않고 건너뛰어 결과로 알리고, 실제로 바뀐 항목마다 기록을 남긴다."""
+    if not body.add and not body.remove:
+        raise HTTPException(status_code=422, detail="add or remove is required")
+    for item in body.add:
+        if (item.role_id is None) == (item.permission is None):
+            raise HTTPException(status_code=422, detail="exactly one of role_id or permission is required")
+
+    roles = {role.id: role.name for role in (await session.scalars(select(Role))).all()}
+
+    removed: list[int] = []
+    missing: list[int] = []
+    for grant_id in dict.fromkeys(body.remove):
+        grant = await session.get(AccessGrant, grant_id)
+        if grant is None:
+            missing.append(grant_id)
+            continue
+        role_name = roles.get(grant.role_id) if grant.role_id is not None else None
+        add_audit_event(session, actor, "grant.remove", _build_grant_detail(grant, role_name))
+        await session.delete(grant)
+        removed.append(grant_id)
+    await session.flush()  # 회수한 것과 같은 부여를 다시 추가할 수 있게 먼저 반영한다
+
+    names = await load_subject_names(session, {(item.subject_type, item.subject_id) for item in body.add})
+    added: list[tuple[AccessGrant, str]] = []
+    skipped: list[GrantIn] = []
+    unknown: list[GrantIn] = []
+    for item in body.add:
+        subject_name = names.get((item.subject_type, item.subject_id))
+        if (
+            subject_name is None
+            or (item.role_id is not None and item.role_id not in roles)
+            or (item.permission is not None and not is_known_permission(item.permission))
+        ):
+            unknown.append(item)
+            continue
+        duplicate = await session.scalar(
+            select(AccessGrant.id).where(AccessGrant.build_identity_filter(
+                item.subject_type, item.subject_id, item.role_id, item.permission,
+            )).limit(1)
+        )
+        if duplicate is not None:
+            skipped.append(item)
+            continue
+        grant = AccessGrant(
+            subject_type=item.subject_type, subject_id=item.subject_id,
+            role_id=item.role_id, permission=item.permission, created_by=actor,
+        )
+        session.add(grant)
+        try:
+            await session.flush()  # 기록에 쓸 id와, 요청 안에서 겹친 추가를 다음 줄이 보게
+        except IntegrityError as exc:  # 검사 뒤 역할이 동시에 지워짐(FK)
+            await session.rollback()
+            raise HTTPException(status_code=422, detail="unknown role") from exc
+        role_name = roles.get(item.role_id) if item.role_id is not None else None
+        add_audit_event(session, actor, "grant.add", _build_grant_detail(grant, role_name))
+        added.append((grant, subject_name))
+    await _commit_or_conflict(session, 422, "unknown role")
+    return GrantBatchOut(
+        added=[
+            GrantOut(
+                id=grant.id, subject_type=grant.subject_type, subject_id=grant.subject_id,
+                subject_name=subject_name, subject_missing=False,
+                role_id=grant.role_id, role_name=roles.get(grant.role_id) if grant.role_id is not None else None,
+                permission=grant.permission, created_by=grant.created_by,
+                created_at=_normalize_to_kst(grant.created_at),
+            )
+            for grant, subject_name in added
+        ],
+        removed=removed, skipped=skipped, unknown=unknown, missing=missing,
     )
 
 
