@@ -521,6 +521,7 @@ def test_hold_leaves_the_adoption_open(client: TestClient, fake_ai: FakeAi) -> N
     assert read_suggestions("one_to_one")[0].adoption == "as_is"
 
 
+@pytest.mark.usefixtures("hidden_ai_on")
 def test_human_changing_sources_records_edited(
     client: TestClient, fake_ai: FakeAi, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -601,6 +602,7 @@ def test_dropping_one_piece_of_a_split_records_edited(
     assert suggestion.adoption == "edited"
 
 
+@pytest.mark.usefixtures("hidden_ai_on")
 def test_confirming_delete_candidate_without_a_reason(client: TestClient, fake_ai: FakeAi) -> None:
     """삭제의 Remark는 선택이다(요청서 4번) — 이유 없는 삭제 후보도 그대로 받아 삭제로 확정된다."""
     bundle = make_match_bundle(client, p(LONE_OLD), p(LONE_NEW))
@@ -618,6 +620,7 @@ def test_confirming_delete_candidate_without_a_reason(client: TestClient, fake_a
     assert (decision.disposition, decision.reason) == ("delete", "")
 
 
+@pytest.mark.usefixtures("hidden_ai_on")
 def test_confirming_delete_candidate_records_as_is(client: TestClient, fake_ai: FakeAi) -> None:
     bundle = make_match_bundle(client, p(LONE_OLD), p(LONE_NEW))
     (unit_id,) = read_old_ids(client, bundle, LONE_OLD)
@@ -630,6 +633,7 @@ def test_confirming_delete_candidate_records_as_is(client: TestClient, fake_ai: 
     assert (read_decision(unit_id).disposition, read_decision(unit_id).suggestion_id) == ("delete", suggestion.id)
 
 
+@pytest.mark.usefixtures("hidden_ai_on")
 def test_moving_a_delete_candidate_records_rejected(client: TestClient, fake_ai: FakeAi) -> None:
     bundle = make_match_bundle(client, p(LONE_OLD), p(LONE_NEW))
     (unit_id,) = read_old_ids(client, bundle, LONE_OLD)
@@ -671,6 +675,7 @@ def test_new_table_confirmed_through_group_save_records_as_is(client: TestClient
     assert suggestion.adoption == "as_is"
 
 
+@pytest.mark.usefixtures("hidden_ai_on")
 def test_giving_a_new_target_a_source_records_edited(client: TestClient, fake_ai: FakeAi) -> None:
     bundle = make_match_bundle(client, p(LONE_OLD), p(LONE_NEW))
     (unit_id,) = read_old_ids(client, bundle, LONE_OLD)

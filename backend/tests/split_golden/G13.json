@@ -1,0 +1,10 @@
+{
+  "shape": "띠 표(번호 칸 · 빈 칸 · 제목 칸)",
+  "layout": null,
+  "boxes": [
+    {"text": "5 절차", "lang": "ko", "kind": "heading", "number": "5", "excluded": null},
+    {"text": "탱크를 비운다.", "lang": "ko", "kind": "sentence", "number": null, "excluded": null},
+    {"text": "5.1 준비", "lang": "ko", "kind": "heading", "number": "5.1", "excluded": null},
+    {"text": "밸브를 닫는다.", "lang": "ko", "kind": "sentence", "number": null, "excluded": null}
+  ]
+}

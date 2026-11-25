@@ -71,6 +71,7 @@ from app.sop.pair_order import order_pair_card
 from app.sop.refs import REF_CONFIRMED, REF_LANG, REF_REJECTED, read_number_in_text
 from app.sop.schemas import NO_NUL
 from app.sop.segment import (
+    RULE_LEGACY,
     BlockView,
     TableView,
     build_unit_drafts,
@@ -80,7 +81,7 @@ from app.sop.segment import (
     is_band_heading,
     is_band_table,
     is_number_cell_range,
-    split_sentences,
+    split_block_text,
 )
 from app.sop.spans import (
     NEUTRAL,
@@ -933,7 +934,8 @@ async def _plan_set_heading(
     else:
         replaced = sorted(units.values(), key=_get_position)
         blocks = await _load_unit_blocks(session, extraction_id, replaced)
-        drafts = [draft for unit in replaced for draft in _build_sentence_drafts(unit, blocks)]
+        rule = await _load_split_rule(session, extraction_id)
+        drafts = [draft for unit in replaced for draft in _build_sentence_drafts(unit, blocks, rule)]
         await _inherit_numbers(session, extraction_id, drafts, {unit.id for unit in replaced})
     change = _build_replacement(replaced, drafts)
     change.repair_pairs = True
@@ -980,15 +982,27 @@ def _build_heading_draft(group: Sequence[Unit], blocks: Mapping[int, _Block]) ->
     )
 
 
-def _build_sentence_drafts(unit: Unit, blocks: Mapping[int, _Block]) -> list[_Draft]:
-    """제목 하나 → 범위마다 보통 문장 나누기(segment.split_sentences)로 나눈 문장들. 언어는 제목의 것을 잇는다."""
+async def _load_split_rule(session: AsyncSession, extraction_id: ExtractionId) -> int:
+    """그 추출의 쪼개기 규칙 — 단위를 다시 만드는 편집이 처음 쪼갠 규칙을 따른다(이미 올린 문서는 규칙 1)."""
+    return (await session.get_one(Extraction, extraction_id)).split_rule
+
+
+def _build_sentence_drafts(unit: Unit, blocks: Mapping[int, _Block], rule: int) -> list[_Draft]:
+    """제목 하나 → 범위마다 그 추출의 규칙(segment.split_block_text)으로 나눈 문장들. 언어는 제목의 것을 잇고, 규칙 2로 한글 ·
+    영어 박스가 갈린 제목만 박스마다 글자로 정한다(처음 쪼개기와 같게)."""
+    spans = [
+        (block_id, start + sentence_start, start + sentence_end)
+        for block_id, start, end in to_spans(unit.spans)
+        for sentence_start, sentence_end in split_block_text(blocks[block_id].text[start:end], rule=rule, split_lines=False)
+    ]
+    langs = {detect_language(blocks[block_id].text[start:end]) for block_id, start, end in spans}
+    by_text = rule != RULE_LEGACY and unit.lang != REF_LANG and {"ko", "en"} <= langs
     drafts: list[_Draft] = []
-    for block_id, start, end in to_spans(unit.spans):
-        for sentence_start, sentence_end in split_sentences(blocks[block_id].text[start:end]):
-            span = (block_id, start + sentence_start, start + sentence_end)
-            draft = _build_draft(unit, [span], blocks, kind="sentence", lang=unit.lang)
-            draft.from_heading = True
-            drafts.append(draft)
+    for span in spans:
+        draft = _build_draft(unit, [span], blocks, kind="sentence", lang=None if by_text else unit.lang)
+        draft.lang = draft.lang or unit.lang
+        draft.from_heading = True
+        drafts.append(draft)
     return drafts
 
 
@@ -1434,7 +1448,8 @@ async def _plan_band_layout(
     else:
         replaced = await _find_band_units(session, extraction_id, table.id)
     document = await session.get_one(Document, document_id)
-    drafts = await _build_band_drafts(session, document, extraction_id, table.id, to_layout)
+    rule = await _load_split_rule(session, extraction_id)
+    drafts = await _build_band_drafts(session, document, extraction_id, table.id, to_layout, rule)
     _carry_number_sets(replaced, drafts)
     change = _build_replacement(replaced, [*drafts, *extra])
     change.layouts = {table.id: (table.is_layout, to_layout)}
@@ -1481,9 +1496,9 @@ async def _find_band_units(session: AsyncSession, extraction_id: ExtractionId, t
 
 
 async def _build_band_drafts(
-    session: AsyncSession, document: Document, extraction_id: ExtractionId, table_id: int, is_layout: bool
+    session: AsyncSession, document: Document, extraction_id: ExtractionId, table_id: int, is_layout: bool, rule: int
 ) -> list[_Draft]:
-    """띠 표 칸 블록을 처음 쪼개기 규칙으로 — 레이아웃이면 제목 줄, 아니면 표 단위와 그 표에 묶일 칸 문장(group_draft)."""
+    """띠 표 칸 블록을 처음 쪼개기 규칙(그 추출의 rule)으로 — 레이아웃이면 제목 줄, 아니면 표 단위와 그 표에 묶일 칸 문장(group_draft)."""
     rows = await session.execute(
         select(
             SourceBlock.id, SourceBlock.seq, SourceBlock.kind, SourceBlock.part, SourceBlock.text,
@@ -1499,7 +1514,7 @@ async def _build_band_drafts(
     blocks = [BlockView(*row) for row in rows]
     drafts = build_unit_drafts(
         blocks, [TableView(table_id, is_layout, True)], document.language_layout,
-        split_lines=document.file_format == LINE_SPLIT_FORMAT,
+        split_lines=document.file_format == LINE_SPLIT_FORMAT, rule=rule,
     )
     texts = {block.id: block.text for block in blocks}
     signals = {block.id: block.signals for block in blocks if block.signals}

@@ -1,0 +1,7 @@
+{
+  "shape": "PDF 문단(줄바꿈이 화면 폭)",
+  "layout": null,
+  "boxes": [
+    {"text": "The operator drains the tank and then closes the outlet valve of the cleaning line. Record 0.8 bar as the target pressure.", "lang": "en", "kind": "sentence", "number": null, "excluded": null}
+  ]
+}

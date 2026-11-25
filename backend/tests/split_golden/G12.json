@@ -1,0 +1,9 @@
+{
+  "shape": "진짜 제목",
+  "layout": null,
+  "boxes": [
+    {"text": "5. 절차", "lang": "ko", "kind": "heading", "number": "5.", "excluded": null},
+    {"text": "5.2 Pre-cleaning", "lang": "en", "kind": "heading", "number": "5.2", "excluded": null},
+    {"text": "탱크를 비운다.", "lang": "ko", "kind": "sentence", "number": null, "excluded": null}
+  ]
+}

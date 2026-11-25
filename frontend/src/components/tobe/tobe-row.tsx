@@ -39,6 +39,8 @@ interface ToBeRowProps {
   slots: { rows: readonly SlotRow[]; summary: SlotSummary } | null;
   /** EQUIS가 아는 값의 제안 수 - 고칠 수 있을 때만 센다 */
   hintCount: number;
+  /** 쓴 파일이 없는 줄의 "아직 안 씀" 꼬리표를 두는가 */
+  showNotWritten: boolean;
   /** 직접 부모도 참조로 찾은 상위도 없는 WI - 받는 자료지만 7.2 · 결과물 C 머리에 상위가 없다 */
   noParent: boolean;
   /** 참조로 찾은 상위 SOP 번호(번호 순) - 이 줄이 그 아래 놓였으면 점선 나무 선과 "참조로 연결" 칩. 아니면 빈 목록 */
@@ -55,7 +57,7 @@ interface ToBeRowProps {
   panel: () => ReactNode;
 }
 
-export function ToBeRow({ doc, isChild, tobe, saved, written, equis, stepCount, slots, hintCount, noParent, refParents, canEdit, draggable, open, onToggle, unsavedEdit, onRemove, onEquisRefresh, panel }: ToBeRowProps) {
+export function ToBeRow({ doc, isChild, tobe, saved, written, equis, stepCount, slots, hintCount, showNotWritten, noParent, refParents, canEdit, draggable, open, onToggle, unsavedEdit, onRemove, onEquisRefresh, panel }: ToBeRowProps) {
   const { t } = useI18n();
   const prefix = `tobe-${doc.key}`;
   const block = saved ? getDocRemoveBlock(tobe, saved) : null;
@@ -167,7 +169,7 @@ export function ToBeRow({ doc, isChild, tobe, saved, written, equis, stepCount, 
               {written.doc_version !== "" && <span className="doc-meta-ver">v{written.doc_version}</span>}
             </span>
           ) : (
-            <span data-testid={`${prefix}-not-written`}>{t("tobe.notWritten")}</span>
+            showNotWritten && <span data-testid={`${prefix}-not-written`}>{t("tobe.notWritten")}</span>
           )}
           {doc.doc_type === "sop" && doc.is_equipment_sop && (
             // 좁아지면 글자가 숨고 아이콘만 남는다 - 그때도 무엇인지 알 수 있게 툴팁과 이름을 늘 단다

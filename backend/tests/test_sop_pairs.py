@@ -13,7 +13,7 @@ from tests.access_helpers import run_in_session, update_row
 from tests.docx_factory import build_docx, p, tbl
 from tests.sop_helpers import AUTHOR, REVIEWER, create_bundle, find_unit, get_view, set_members, upload
 
-pytestmark = pytest.mark.usefixtures("clean_sop")
+pytestmark = pytest.mark.usefixtures("clean_sop", "legacy_split_rule")
 
 OLD_NAME = "SYNTHETIC_OLD-1_Pairs.docx"
 KO_ON, EN_ON = "합성 장비를 켠다.", "Turn on the synthetic unit."

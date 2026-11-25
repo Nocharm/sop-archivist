@@ -21,21 +21,22 @@ import { buildDropSections, buildOldDragCard, canDragOld, findAssignDrop, findDr
 import { buildGapBlocks, buildPlaceSections, findPlaceBlock, formatPlacement, formatPlacementDest, isSpotOpen, listGapSpots, PLACE_REFUSAL_KEYS, readFixedSpot, readObjectParticle, readPlacePosition, resolvePlaceSpot, type Placement, type PlaceSection, type PlaceSpot } from "@/lib/place-spot-model";
 import { findUnderPoint, type BoxDragConfig, type DragHover, type DragPoint } from "@/lib/box-drag";
 import { DROP_LINE_HALF_PX, type DropLineAt } from "@/lib/drop-line";
+import { useDraftingOn } from "@/lib/drafting";
 import { useBoxDrag } from "@/lib/use-box-drag";
 import { findLastStep } from "@/lib/destination-manage-model";
 import { findSplitBlock, readSplitOffsets } from "@/lib/split-ai-tabs-model";
 import { pickPairPiece, planPairLanguages, type JoinKind, type JoinPlan } from "@/lib/split-menu-model";
 import { listAppliedSuggestions, requestAi, setSuggestionAdoption, type AiKind, type AiScope } from "@/lib/api-manage";
-import { addToBeDoc, addWiStep, acceptSuggestions, MAX_ACCEPT, bulkDecide, confirmPair, createPair, deletePair, editUnits, clearDecisions, confirmMatchesInBulk, getComposedDoc, getDocumentView, getGroupByTarget, getUnitRef, getGroupByUnit, getToBe, listDocuments, listIdenticalCandidates, listNewCandidates, listSuggestions, listWrittenSentences, redoDecision, removeToBeDoc, removeWiStep, saveGroup, undoDecision, updateCaptionRef, type AcceptKind, type AiSuggestion, type ComposedDoc, type ComposedItem, type DecisionStepResult, type DocumentView, type EditOp, type EditResult, type Group, type GroupSaveInput, type NewCandidate, type ToBe, type UndoMeta, type UnitRefDetail, type UnitRow, type ViewUnit, type WrittenSentence } from "@/lib/api-sop";
+import { addToBeDoc, addWiStep, acceptSuggestions, MAX_ACCEPT, bulkDecide, confirmPair, createPair, deletePair, editUnits, clearDecisions, confirmMatchesInBulk, getComposedDoc, getDocumentView, getGroupByTarget, getUnitRef, getGroupByUnit, getToBe, listDocuments, listIdenticalCandidates, listNewCandidates, listSuggestions, listWrittenSentences, redoDecision, listOpenTranslations, removeToBeDoc, removeWiStep, saveGroup, undoDecision, updateCaptionRef, type AcceptKind, type AiSuggestion, type ComposedDoc, type ComposedItem, type DecisionStepResult, type DocumentView, type EditOp, type EditResult, type Group, type GroupSaveInput, type NewCandidate, type OpenTranslation, type ToBe, type UndoMeta, type UnitRefDetail, type UnitRow, type ViewUnit, type WrittenSentence } from "@/lib/api-sop";
 import { listRefCandidates } from "@/lib/caption-ref-model";
 import { isBundleKind, isCaptionGate, listCaptionPendingRowKeys, makeIsLinkedToWritten, type CaptionUnit } from "@/lib/caption-model";
 import { buildBlockPlaces, getCaptionMotion, isCaptionableText, listCaptionHolders, resolveCaptionDetach, resolveCaptionDrop, type CaptionDetach, type CaptionDrop } from "@/lib/caption-slot-model";
 import { applyJoinedSources, listJoinableIds, shouldAdvanceAfterSave } from "@/lib/join-sentence-model";
 import { buildComposedMerge, buildComposedSplit, canEditComposed, findComposedCut, planComposedJoin, stepComposedCut } from "@/lib/composed-ops-model";
 import { applySavedTargets, buildComposedRows, isWrittenRow, listHeadingNotes, listSectionMarks, readSectionHead, removeClearedUnits, type NewPaneRow } from "@/lib/composed-model";
-import { addPartnerTargets, buildLinkPairs, buildRecommendations, listUnsourced, mergeGroups, readConfirmBlockKey, stepZoom, type Recommendation } from "@/lib/assign-model";
+import { addPartnerTargets, buildLinkPairs, buildRecommendations, dropHiddenRecommendations, listUnsourced, mergeGroups, readConfirmBlockKey, stepZoom, type Recommendation } from "@/lib/assign-model";
 import { countLiveOffer, splitAcceptIds } from "@/lib/ai-accept-model";
-import { buildUseDraft, findRowSuggestion, indexLiveSuggestions, readSuggestedDestination, readSuggestionPlace } from "@/lib/ai-suggestion-model";
+import { buildUseDraft, filterAiItems, findRowSuggestion, indexLiveSuggestions, readSuggestedDestination, readSuggestionPlace } from "@/lib/ai-suggestion-model";
 import { buildAssignMenu, getPairPickBlocker, getPairSetBlocker, planAssignJoin, planLanguageChange, planShapeMode, type AssignMenuAction, type AssignMenuGroups } from "@/lib/assign-context-menu-model";
 import { listHeadingBackUnits } from "@/lib/heading-shift-model";
 import { countDecidedLines, getTableNumber, getUnitUnwrapTable, listUnwrapScopes } from "@/lib/unwrap-model";
@@ -44,13 +45,14 @@ import { resolveLineParam } from "@/lib/assign-line-param";
 import { readAssignView, writeAssignView } from "@/lib/assign-view-prefs";
 import { loadBundle, useBundle } from "@/lib/bundle-store";
 import { describeDecisionStep, getAssignUndoKey, IN_PLACE_EDIT_OPS, isUnitEditStep, pickSaveOp, shouldDropSelectionOnStep } from "@/lib/decision-step-model";
-import { buildCellOwners, buildDestinationOptions, buildGroupSave, buildRows, buildSentenceSlots, findNextAfterSave, findSystemHold, getDestinationId, getRowStep, hasDraftChange, isSentenceUnit, listJoinedTargetIds, listUnpairedKeys, readDestination, readHumanReason, stepInList, type CellSource, type ClassifyFilter, type ClassifyRow, type Destination, type DestinationOption, type DropPosition, type RowDraft } from "@/lib/classify-model";
+import { buildCellOwners, buildDestinationOptions, buildGroupSave, buildRows, buildSentenceSlots, findNextAfterSave, findSystemHold, getDestinationId, getRowStep, hasDraftChange, isSentenceUnit, listJoinedTargetIds, listPickOptions, listUnpairedKeys, readDestination, readHiddenPlace, readHumanReason, stepInList, type CellSource, type ClassifyFilter, type ClassifyRow, type Destination, type DestinationOption, type DropPosition, type RowDraft } from "@/lib/classify-model";
 import { buildDocDashboard } from "@/lib/doc-dashboard-model";
 import { listEditUnitIds, listTableUnitIds, NO_FOCUS, NO_PLACE, planReload, readEditKind, readEditPlace, readPendingLabelKey, type Pending, type PendingPlace, type ReloadPlan } from "@/lib/assign-focus-model";
 import { pickDocRevision } from "@/lib/doc-revision";
 import type { PaperPending } from "@/components/paper/paper";
 import { useI18n } from "@/lib/i18n";
 import { genId } from "@/lib/id";
+import { buildTranslationDecision, isTranslationBlocked, listRowTranslations } from "@/lib/translation-decision";
 import { useLeaveGuard } from "@/lib/leave-guard";
 import { buildIdenticalBatches } from "@/lib/match-model";
 import { EMPTY_FOLD_OPEN, type FoldOpen } from "@/lib/paper-fold-model";
@@ -59,7 +61,7 @@ import { isSameOrder, movePairMember, orderPairCard, readPairSlot } from "@/lib/
 import { moveUnwrapLines, readUnwrapSlot } from "@/lib/unwrap-order-model";
 import { useUnwrapAi } from "@/lib/use-unwrap-ai";
 import { buildPairColumns, listPairLinks, PAIR_REFUSAL_KEYS, resolveBoxDrop, resolvePairDrop, type BoxDrop, type PairDrop, type PairDropContext } from "@/lib/pair-drop-model";
-import { ASSIGN_DOC_PARAM, ASSIGN_UNIT_PARAM, EDIT_ORIGINAL_PARAM, getStageHref } from "@/lib/stages";
+import { ASSIGN_DOC_PARAM, ASSIGN_UNIT_PARAM, EDIT_ORIGINAL_PARAM, getStageHref, LEFTOVER_TRANSLATIONS_PARAM } from "@/lib/stages";
 import { buildTemplateTitles } from "@/lib/template-model";
 import { useRegisterAiAcceptOffer } from "@/lib/use-ai-accept-offer";
 import { useAiJobs } from "@/lib/use-ai-jobs";
@@ -238,6 +240,11 @@ function isElementInPane(el: HTMLElement): boolean {
 /** 편집 뒤 뒤에서 다시 받는 목록의 키 - planReload가 고른 것만 하나씩 오른다(설계 D2) */
 const NO_RELOAD_KEYS = { tobe: 0, written: 0, identical: 0, split: 0 };
 
+/** 숨긴 종류의 제안 자리 - 부르지 않고 빈 목록 */
+const NO_SUGGESTIONS: Promise<AiSuggestion[]> = Promise.resolve([]);
+
+const NO_TRANSLATIONS: Promise<OpenTranslation[]> = Promise.resolve([]);
+
 /** 끝낸 Old 줄 수 - 확정만 센다(보류는 아직 끝나지 않았다) */
 function countDone(rows: ClassifyRow[]): number {
   return rows.filter((row) => row.status === "confirmed").length;
@@ -271,6 +278,8 @@ type EditToast = string | ((result: EditResult) => string);
 export function useAssignPage() {
 
   const { t, lang: uiLang } = useI18n();
+  // 새 문서를 만드는 쪽을 켰는가 - 숨긴 동안 숨긴 AI 제안은 받지도 않는다(줄 표시 · 카드 · 알약 · 거르기 수가 함께 빈다)
+  const isDrafting = useDraftingOn() === true;
   const bundleId = Number(useParams<{ id: string }>().id);
   const { bundle } = useBundle(bundleId);
   const canEdit = bundle?.my_role === "author" && bundle.status === "in_progress";
@@ -303,6 +312,14 @@ export function useAssignPage() {
   const [isPlaceBusy, setIsPlaceBusy] = useState(false);
   const writtenList = useLoaded(() => listWrittenSentences(bundleId), writtenKey);
   const identical = useLoaded(() => listIdenticalCandidates(bundleId), `${dataKey}:${reloadKeys.identical}`);
+  // 남은 번역(확정하지 않은 AI 번역 · 보류) - 검토 요청을 막는다. 판단을 풀며 문장을 나누고 합치면 생기므로 New 문장 목록과 함께 다시 받는다
+  const leftoverList = useLoaded(() => (isDrafting ? NO_TRANSLATIONS : listOpenTranslations(bundleId)), `${writtenKey}:${isDrafting}`);
+  const leftovers = useMemo(() => leftoverList.data ?? [], [leftoverList.data]);
+  // 남은 번역 목록 창 - 처음 받은 목록에 남은 것이 있고 개요의 새 문장 관문 카드 주소(?translations=1)로 왔을 때만 열린 채로 시작한다
+  // (렌더 중 상태 맞추기 한 번 - 나중에 편집으로 생긴 번역이 창을 저절로 열지 않게)
+  const [leftoverSheet, setLeftoverSheet] = useState<boolean | null>(null);
+  if (leftoverSheet === null && leftoverList.data !== null) setLeftoverSheet(leftovers.length > 0 && searchParams.has(LEFTOVER_TRANSLATIONS_PARAM));
+  const isLeftoverOpen = canEdit && leftovers.length > 0 && leftoverSheet === true;
   // AI 작업이 끝나면 단위·제안·New 문장을 다시 불러온다 - 제안이 보이고 다음 저장이 낡은 revision으로 409가 나지 않는다.
   // 원문 보기도 다시 받는다 - 나누기 제안 표시(split_suggestion_id)와 AI가 제안한 한/영 짝이 거기 실려 온다
   const aiJobs = useAiJobs(bundleId, () => {
@@ -313,10 +330,10 @@ export function useAssignPage() {
   });
   const aiOn = aiJobs.status?.ai_enabled ?? false;
   const aiBusy = (aiJobs.status?.jobs.queued ?? 0) + (aiJobs.status?.jobs.running ?? 0);
-  const suggestions = useLoaded(() => listSuggestions(bundleId, "classify"), dataKey);
+  const suggestions = useLoaded(() => (isDrafting ? listSuggestions(bundleId, "classify") : NO_SUGGESTIONS), `${dataKey}:${isDrafting}`);
   const matchSuggestions = useLoaded(() => listAppliedSuggestions(bundleId, "match"), dataKey);
   // 답이 무효였던 분류 - 그 줄은 미배정 그대로라 카드 자리에 "고르지 못했다" 한 줄만(설계 §5 2-6)
-  const invalidSuggestions = useLoaded(() => listSuggestions(bundleId, "classify", "invalid"), dataKey);
+  const invalidSuggestions = useLoaded(() => (isDrafting ? listSuggestions(bundleId, "classify", "invalid") : NO_SUGGESTIONS), `${dataKey}:${isDrafting}`);
 
   /** 판단 저장 · AI 작업 끝 · 일괄 일 뒤 - Unit 줄 전체와 판단이 바꾸는 목록을 모두. withViews면 Old 문서 보기도(서버가 짝을 정리했다) */
   function reloadData(withViews = false) {
@@ -369,12 +386,14 @@ export function useAssignPage() {
   const rows = useMemo(() => (viewList ? buildRows(viewList, unitMap) : []), [viewList, unitMap]);
   const rowMap = new Map(rows.map((row) => [row.key, row]));
   const rowOfUnit = new Map(rows.flatMap((row) => row.unitIds.map((id) => [id, row.key] as const)));
-  const options = useMemo(() => (tobeData ? buildDestinationOptions(tobeData) : []), [tobeData]);
+  // 고르는 보낼 곳과 이름을 읽는 보낼 곳 - 새 문서를 숨긴 동안 고를 것은 없어도 이미 보낸 줄의 간 곳 이름은 읽는다
+  const options = useMemo(() => (tobeData ? listPickOptions(tobeData, isDrafting) : []), [tobeData, isDrafting]);
+  const labelOptions = useMemo(() => (tobeData ? buildDestinationOptions(tobeData) : []), [tobeData]);
   /** Old 줄 아래 AI 간 곳 글 - 살아 있는 제안이 덮는 미배정 줄만. 확정 줄의 간 곳 줄과 같은 자리에 쓴다(줄 끝 ✦ 대신, 사용자 결정 2026-11-20) */
   function readAiPlace(unitIds: number[]): string | null {
     if (!unitIds.some((id) => readMarkStatus(id) === "ai_suggested")) return null;
     const live = findRowSuggestion(unitIds, "unassigned", liveIndex);
-    const place = live ? readSuggestionPlace(live, options) : null;
+    const place = live ? readSuggestionPlace(live, labelOptions) : null;
     return place === "delete" ? t("classify.deleted") : place;
   }
   const ready = viewList !== null && unitList !== null && tobeData !== null && writtenList.data !== null;
@@ -593,6 +612,10 @@ export function useAssignPage() {
     });
   }
 
+  // 고른 줄의 확정하지 않은 번역 - 어디로 보낸 줄이든 오른쪽 칸에서 정한다. 줄이 없는 것(출처 은퇴)은 남은 번역 목록에서
+  const openTranslations = row === null ? [] : listRowTranslations(leftovers, row.unitIds);
+  const translationBlocked = groupData !== null && isTranslationBlocked(openTranslations, groupData);
+
   // 저장 전 고름·고친 글이 남은 줄이 있으면 다른 화면으로 가기 전에 묻는다(초안은 이 화면의 상태라 나가면 사라진다)
   const unsavedCount = Object.values(drafts).filter(hasDraftChange).length;
   const [leaveTo, setLeaveTo] = useState<string | null>(null);
@@ -605,14 +628,16 @@ export function useAssignPage() {
   const aiWhy = typeof rowLive?.content.reason === "string" ? rowLive.content.reason : "";
   const isAiRow = aiDest !== null;
   const recommendations: Recommendation[] = row
-    ? buildRecommendations({
+    ? dropHiddenRecommendations(buildRecommendations({
         aiLinks: aiDest?.kind === "link" ? [{ targetIds: aiDest.targetIds, why: aiWhy }] : [],
         aiPlaces: aiDest && aiDest.kind !== "link" ? [{ destination: aiDest, why: aiWhy }] : [],
         identical: (identical.data ?? []).filter((item) => row.unitIds.includes(item.unit_id)).map((item) => item.target_id),
         similar: similar.data ?? [],
         headingPlaces: rowUnits.some(isBandHeading),
-      }, (ids) => addPartnerTargets(ids, writtenMap))
+      }, (ids) => addPartnerTargets(ids, writtenMap)), isDrafting)
     : [];
+  // 저장된 곳이 숨긴 새 문서의 자리면 그 번호와 칸 이름 - 읽기만 하고 확정하지 않는다(배정 취소나 잇기로 나간다)
+  const hiddenPlace = isDrafting ? null : readHiddenPlace(destination, labelOptions);
   const linkIds = destination?.kind === "link" ? destination.targetIds : [];
   // 고른 문장의 관계 묶음(합쳐진 다른 출처 등)은 고를 때 부른다 - 함께 확정되는 것을 미리 보이고 저장도 같은 묶음으로 한다
   const knownTargets = new Set(groupData?.targets.map((target) => target.id) ?? []);
@@ -666,7 +691,7 @@ export function useAssignPage() {
   // AI 나누기 제안 - 보는 Old 문서의 아직 정하지 않은 것. 문장마다 가장 새 제안 하나(전에는 쪼개기 화면에서만 적용·거절했다)
   const oldDocId = oldView?.document.id ?? null;
   useAiPrepare(bundleId, { enabled: canEdit && aiOn, documentId: oldDocId, onQueued: (n) => { showToast(t("ai.prepareQueued", { n })); aiJobs.watch(); } });
-  const splitSuggestions = useLoaded(() => (aiOn && oldDocId !== null ? listAppliedSuggestions(bundleId, "split", oldDocId) : Promise.resolve([])), `${aiOn}:${oldDocId}:${dataKey}:${reloadKeys.split}`);
+  const splitSuggestions = useLoaded(() => (isDrafting && aiOn && oldDocId !== null ? listAppliedSuggestions(bundleId, "split", oldDocId) : NO_SUGGESTIONS), `${isDrafting}:${aiOn}:${oldDocId}:${dataKey}:${reloadKeys.split}`);
   // 벗긴 표 AI 순서 제안(B11) - 놓기는 끌기와 같은 편집 한 번(reorder_unwrapped)이라 되돌리기도 한 칸
   const unwrapAi = useUnwrapAi({
     bundleId,
@@ -736,7 +761,7 @@ export function useAssignPage() {
   const writtenDocs = [...new Map(written.map((item) => [item.target_doc_id, item.doc_code])).entries()];
   // 오른쪽 칸은 항상 열려 있다 - 쓴 New 문서가 없으면 빈 안내
   // 아직 쓰지 않은 문서(To-Be의 Assign 입구) - 오른쪽 칸에 지금까지의 배정으로 엮어 보인다(서버 결과물 C 규칙, 읽기 전용)
-  const composedDocs = (tobeData?.docs ?? []).filter((doc) => doc.entrance === "assign");
+  const composedDocs = isDrafting ? (tobeData?.docs ?? []).filter((doc) => doc.entrance === "assign") : [];
   const [manualNewDoc, setManualNewDoc] = useState<{ key: string; docId: number } | null>(null);
   // 방금 확정해 보낸 곳 - 확정 뒤 고른 줄(key)에 있는 동안만 오른쪽 칸을 그 문서에 두고 그 문장을 잇는 선을 진하게. 손으로 고른 문서가 먼저, 다른 줄로 옮기면 평소대로
   const [liveNew, setLiveNew] = useState<{ key: string; docId: number; targetIds: number[]; seq: number } | null>(null);
@@ -776,7 +801,9 @@ export function useAssignPage() {
   const oldUnitIds = useMemo(() => new Set(oldView?.units.map((unit) => unit.id) ?? []), [oldView]);
   const linkPairs = buildLinkPairs(newRows.filter(isWrittenRow), oldUnitIds, draft.destination?.kind === "link" ? { units: rowUnits.map((unit) => ({ id: unit.unit_id, lang: unit.lang })), targetIds: draft.destination.targetIds } : null);
 
-  const [view, setView] = useState(readAssignView);
+  const [savedView, setView] = useState(readAssignView);
+  // 숨긴 동안 템플릿 보기는 없다 - 저장해 둔 값은 그대로 두고 꺼진 것으로 읽는다
+  const view = isDrafting ? savedView : { ...savedView, newTemplate: false };
   // Space 미리보기의 단위 - 가운데 맞출 단위(누른 박스, 문단 Excel에 없는 머리말 · 꼬리말이면 문서 차례로 가까운 위 본문 단위)가 맨 앞
   const spaceOrder = useMemo(() => {
     if (!oldView) return null;
@@ -824,17 +851,18 @@ export function useAssignPage() {
       showToast(humanizeApiError(err, t), "error");
     }
   }
-  const aiMenuItems: AiAskItem[] = [];
-  if (oldView) aiMenuItems.push({ key: "document", label: t("ai.classifyDocument"), run: () => askAiScope("classify", { document_id: oldView.document.id }) });
-  if (writtenDocs.length > 0) aiMenuItems.push({ key: "match", label: t("ai.kind.match"), run: () => askAiScope("match", {}) });
-  if (row && row.status !== "unassigned" && rowLangs.includes("ko")) aiMenuItems.push({ key: "to-en", label: t("ai.translateToEn"), run: () => askAiScope("translate", { unit_ids: row.unitIds, direction: "ko_to_en" }) });
-  if (row && row.status !== "unassigned" && rowLangs.includes("en")) aiMenuItems.push({ key: "to-ko", label: t("ai.translateToKo"), run: () => askAiScope("translate", { unit_ids: row.unitIds, direction: "en_to_ko" }) });
+  const aiAskItems: AiAskItem[] = [];
+  if (oldView) aiAskItems.push({ key: "document", label: t("ai.classifyDocument"), run: () => askAiScope("classify", { document_id: oldView.document.id }) });
+  if (writtenDocs.length > 0) aiAskItems.push({ key: "match", label: t("ai.kind.match"), run: () => askAiScope("match", {}) });
+  if (row && row.status !== "unassigned" && rowLangs.includes("ko")) aiAskItems.push({ key: "to-en", label: t("ai.translateToEn"), run: () => askAiScope("translate", { unit_ids: row.unitIds, direction: "ko_to_en" }) });
+  if (row && row.status !== "unassigned" && rowLangs.includes("en")) aiAskItems.push({ key: "to-ko", label: t("ai.translateToKo"), run: () => askAiScope("translate", { unit_ids: row.unitIds, direction: "en_to_ko" }) });
   // 서버가 건너뛸 줄(제목·표, 사람이 정했거나 짝 맞추기 제안이 채운 문장)이면 미리 끄고 까닭을 툴팁으로
   const splitBlock = findSplitBlock(rowUnits.map((unit) => ({ ...unit, suggestionKind: suggestionOf.get(unit.unit_id)?.kind ?? null })));
-  if (row) aiMenuItems.push({ key: "split", label: t("ai.splitRow"), disabledReason: splitBlock ? t(`ai.splitRowBlocked.${splitBlock}`) : null, run: () => askAiScope("split", { unit_ids: row.unitIds }) });
+  if (row) aiAskItems.push({ key: "split", label: t("ai.splitRow"), disabledReason: splitBlock ? t(`ai.splitRowBlocked.${splitBlock}`) : null, run: () => askAiScope("split", { unit_ids: row.unitIds }) });
   // 문서 전체 요청 두 가지 - 전에는 쪼개기 화면 용지 위 막대에만 있었다. 짝 제안은 한글·영어가 따로 적힌 문서에서만
-  if (oldView) aiMenuItems.push({ key: "split-document", label: t("ai.askSplitShort"), run: () => askAiScope("split", { document_id: oldView.document.id }) });
-  if (oldView?.document.language_layout === "ko_en_separate") aiMenuItems.push({ key: "pair-document", label: t("ai.askPairShort"), run: () => askAiScope("pair", { document_id: oldView.document.id }) });
+  if (oldView) aiAskItems.push({ key: "split-document", label: t("ai.askSplitShort"), run: () => askAiScope("split", { document_id: oldView.document.id }) });
+  if (oldView?.document.language_layout === "ko_en_separate") aiAskItems.push({ key: "pair-document", label: t("ai.askPairShort"), run: () => askAiScope("pair", { document_id: oldView.document.id }) });
+  const aiMenuItems = filterAiItems(aiAskItems, isDrafting);
 
   const [remarkEdit, setRemarkEdit] = useState<RemarkEdit | null>(null);
   // Remark 창을 닫은 뒤 포커스를 둘 단추(testid) - 창이 여는 곳으로 되돌린 뒤에 옮겨 ↵가 바로 확정이 되게
@@ -1281,7 +1309,7 @@ export function useAssignPage() {
   // 새 문서 자리로 보내는 표·그림에 캡션이 없으면 Confirm이 꺼진다(명세 §3.4) - 캡션은 Edit and confirm에서 써 넣는다
   const isCaptionGateOn = row !== null && paperModel !== null && oldView?.document.id === row.documentId && isCaptionGate(row, destination, paperModel.units, draft, groupData);
   // Confirm을 막는 까닭 - 결정 칸 단추의 툴팁과 그 자리 메뉴(끌어 놓은 초안 포함)가 같은 답을 쓴다
-  const confirmBlockKey = readConfirmBlockKey({ isRefGate, isCaptionGate: isCaptionGateOn });
+  const confirmBlockKey = readConfirmBlockKey({ isRefGate, isCaptionGate: isCaptionGateOn, isHiddenPlace: hiddenPlace !== null });
   // 오른쪽 칸 1번(다듬기) - 고른 줄의 문장마다 할 수 있는 일. 우클릭 메뉴와 같은 답이다. 고칠 수 없는 사람에게는 줄을 보이지 않는다
   // 표·그림 줄이면 그 묶음의 캡션도 문장처럼 한 줄씩(언어 세 칸·자르기·캡션 떼기) - 용지 순서대로(캡션이 위면 위에)
   const rowBundleSpan = new Set(rowViewUnits.filter((unit) => isBundleKind(unit.kind)).map((unit) => unit.id));
@@ -1921,6 +1949,10 @@ export function useAssignPage() {
       queuedSaveRef.current = { key: row.key, action, reason: reasonOverride };
       return;
     }
+    if (action === "confirm" && hiddenPlace !== null && !pick) {
+      showToast(t("assign.hidden.confirm"), "error");
+      return;
+    }
     if (action === "confirm" && isRefGate) {
       // 참조 줄 제안이 남았다 - 결정 전에 번호만 확인한다(오른쪽 칸 맨 위 카드). ↵·메뉴·사유 창 뒤 확정이 모두 여기를 지난다
       showToast(t("assign.ref.checkFirst"), "error");
@@ -2090,6 +2122,48 @@ export function useAssignPage() {
         reloadData();
       }
     });
+  }
+
+  /** 남은 번역을 확정하거나 지운다(오른쪽 칸은 고른 줄의 것 모두, 목록은 하나) - 줄의 판단은 그대로, 되돌리기 한 번 */
+  async function settleTranslations(items: readonly OpenTranslation[], action: "confirm" | "remove") {
+    const acting = action === "confirm" ? items.filter((item) => item.can_confirm) : [...items];
+    if (acting.length === 0 || isAnyPending) return;
+    const rowIds = [...new Set(acting.flatMap((item) => (item.row_unit_id === null ? [] : [item.row_unit_id])))];
+    await focusCtl.runPending({ kind: "save", docId: acting[0].document_id, unitIds: rowIds, place: NO_PLACE, isGlobal: false }, async () => {
+      try {
+        // 칸 번역은 닫힌 표 묶음을 실어야 한다 - 누른 때의 묶음을 새로 읽는다
+        const cells = acting.filter((item) => item.parent_target_id !== null);
+        const closure = cells.length > 0 ? mergeGroups(await Promise.all(cells.map((item) => getGroupByTarget(bundleId, item.id)))) : null;
+        const body = buildTranslationDecision(acting, closure, action);
+        if (body === null) {
+          showToast(t("assign.hidden.translationBlocked"), "error");
+        } else {
+          // 출처 줄이 없으면 되돌린 뒤 갈 자리도 없다(번역은 New 칸에 줄이 없다)
+          const focus = rowIds.length > 0 ? { focus_unit_id: rowIds[0] } : {};
+          await saveGroup(bundleId, body, buildUndo({ op: action === "confirm" ? "confirm" : "drop_translation", ...focus }));
+          markRecorded();
+          showToast(t(action === "confirm" ? "classify.confirmed" : "assign.hidden.translationRemoved"));
+          // 마지막 하나까지 정했으면 창은 닫힌 것으로 - 나중에 다시 생겨도 저절로 열리지 않게
+          if (acting.length >= leftovers.length) setLeftoverSheet(false);
+        }
+      } catch (err) {
+        showToast(humanizeApiError(err, t), "error");
+      }
+      // 문장 번역의 저장은 단위를 싣지 않아 판단 판(revision)이 그대로다 - 묶음의 열쇠가 바뀌지 않으니 직접 다시 받는다
+      group.reload();
+      reloadData();
+      void loadBundle(bundleId);
+    });
+  }
+
+  /** 남은 번역 목록에서 그 출처 줄로 - 창을 닫고 그 줄을 고른다 */
+  function goToTranslation(item: OpenTranslation) {
+    const key = item.row_unit_id === null ? undefined : rowOfUnit.get(item.row_unit_id);
+    if (key === undefined) return;
+    setLeftoverSheet(false);
+    setMode("old");
+    setSolo(null);
+    selectRow(key);
   }
 
   /** 묶음 전체 일 하나(같은 글자 일괄 확정) - withViews면 원문 보기도(서버가 짝을 정리하지만 어느 짝인지 알려 주지 않는다). 다른 일이 처리 중이면 시작하지 않는다 */
@@ -2344,7 +2418,7 @@ export function useAssignPage() {
   }
 
   const placeManage: DestinationManage | undefined =
-    canEdit && tobeData
+    canEdit && isDrafting && tobeData
       ? {
           tobe: tobeData,
           busy: isPlaceBusy,
@@ -2570,6 +2644,7 @@ export function useAssignPage() {
 
   /** 문서 대시보드의 받는 New 문서를 누름 - 그 문서를 New 칸에 연다 */
   function openNewDoc(docId: number) {
+    if (!isNewDocOpen(docId)) return; // 숨긴 새 문서는 New 칸에 열지 않는다
     if (isPairView) closePairView();
     setManualNewDoc({ key: toggleKey, docId });
     if (view.single) changeView({ single: false });
@@ -3390,7 +3465,7 @@ export function useAssignPage() {
   }
 
   function startEdit() {
-    if (!destination || destination.kind !== "slot" && destination.kind !== "step") return;
+    if (hiddenPlace !== null || !destination || (destination.kind !== "slot" && destination.kind !== "step")) return;
     unfoldSide();
     setDraft({}, true);
     requestAnimationFrame(() => firstTextRef.current?.focus());
@@ -3571,7 +3646,7 @@ export function useAssignPage() {
   const done = countDone(rows);
 
   function renderPlaceLabel(dest: Destination): { title: string; text: string } {
-    const option = options.find((item) => getDestinationId(item.destination) === getDestinationId(dest));
+    const option = labelOptions.find((item) => getDestinationId(item.destination) === getDestinationId(dest));
     return { title: option?.docCode ?? "", text: option?.label ?? "" };
   }
 
@@ -3597,7 +3672,7 @@ export function useAssignPage() {
   return {
     t, bundleId, bundle, canEdit, docs, oldDocs, oldDocIds, docViews, unitsKey, reloadData, tobe, tobeData, writtenList, identical,
     aiJobs, aiOn, aiBusy, suggestions, invalidUnitIds, readMarkStatus, readAiPlace, suggestedTargetUnits, unitMap, written, writtenMap, rows, rowMap,
-    rowOfUnit, options, ready, showSkeleton, unsourced, mode, setMode, filter, counts, foldOpen, setFoldOpen, applyFilter, foldMatch,
+    rowOfUnit, options, labelOptions, isDrafting, hiddenPlace, leftovers, isLeftoverOpen, setLeftoverSheet, openTranslations, translationBlocked, settleTranslations, goToTranslation, ready, showSkeleton, unsourced, mode, setMode, filter, counts, foldOpen, setFoldOpen, applyFilter, foldMatch,
     clearRowPick, activeKey, row, pickedId, spaceUnitIds, spacePickSeq, solo, setSolo, isSolo, isNewEdit, hasSolo, tocOpen, setTocOpen, tocPick, tocBlocks, checked,
     setChecked, newRemarks, setNewRemarks, menu, setMenu, joinMenu, setJoinMenu, ctxMenu, setCtxMenu, cutUnitId, focusNew,
     groupData, setDrafts, draft, editing, groupPending, savedDestination, destination, rowUnits, rowLangs, firstDecision, systemHold,

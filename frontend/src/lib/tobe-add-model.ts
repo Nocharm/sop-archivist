@@ -2,6 +2,16 @@
 // 그리고 EQUIS가 아는 값으로 줄의 칸을 채우자는 제안(자동으로 바꾸지 않고 사람이 누른다).
 import type { EquisInfo, TargetDoc, TargetDocType } from "./api-sop";
 
+/** Documents의 New 목록에 두는 도구 - 파일 올리기, 번호로 더하기, Excel 양식 · 가져오기, AI 목록 읽기, 표준 골격 선언, 칸 상태(막대 · 표 · 꼬리표), WI 단계 더하기 */
+export type TobeTool = "upload" | "add_row" | "template" | "import" | "read_list" | "declare" | "sections" | "add_step";
+
+const TOBE_TOOLS: readonly TobeTool[] = ["upload", "add_row", "template", "import", "read_list", "declare", "sections", "add_step"];
+
+/** 지금 두는 도구 - 새 문서를 만드는 쪽을 숨긴 동안 쓴 파일을 올리는 것만 */
+export function listTobeTools(drafting: boolean): readonly TobeTool[] {
+  return drafting ? TOBE_TOOLS : TOBE_TOOLS.filter((tool) => tool === "upload");
+}
+
 /** 붙여 넣은 글에서 번호들 - 줄·탭·쉼표·세미콜론으로 가르고 앞뒤 공백을 걷는다. 같은 번호는 한 번만(처음 나온 순서) */
 export function readCodes(text: string): string[] {
   const seen = new Set<string>();

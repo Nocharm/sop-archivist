@@ -325,7 +325,10 @@ for (const theme of ["light", "dark"]) {
     console.log("FAIL audit did not flag the low-contrast probe");
     total += 1;
   }
+  // 숨긴 기능(새 문서를 만드는 쪽)의 장면만 켜고 감사한다 - 나머지는 실사용 화면 그대로
+  const DRAFTING_SCREENS = new Set(["tobe-open", "outputs", "order-moved", "assign-tree-heading", "assign-composed", "review", "outputs-ai"]);
   for (const [name, path, ready, prep, options] of screens) {
+    await page.evaluate((on) => (on ? window.localStorage.setItem("sopa.drafting", "1") : window.localStorage.removeItem("sopa.drafting")), DRAFTING_SCREENS.has(name));
     // before - 이동 전에 응답을 가로채는 장면(처음 받는 응답을 바꿔야 한다). 정리 함수를 돌려주면 감사 뒤에 부른다
     const undo = options?.before ? await options.before(page) : null;
     await page.goto(`${BASE}${path}`);

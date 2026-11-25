@@ -197,7 +197,7 @@ const AUDIT_ENTRIES = [
     note: "every tobe-list row stays inside the list frame without sideways scroll, and the identity column (--doc-id-w) is >= 172px - 14-char number one line from 166px (measured 2026-11-17)",
   },
   {
-    id: "C3", ds: "mid", user: MEMBER, views: [1920],
+    id: "C3", ds: "mid", user: MEMBER, drafting: true, views: [1920],
     path: (ids) => `/bundles/${ids.mid[2]}/documents`,
     open: async (page) => {
       await page.locator('[data-testid^="tobe-"][data-testid$="-toggle"]').first().click();
@@ -312,7 +312,7 @@ const AUDIT_ENTRIES = [
   },
   {
     // 줄 끝 단추는 3단계(Order) 화면에만 있다 - 결과 화면의 C는 읽기 전용. 호버·포커스 때만 용지 바깥에 뜬다(1120 ⋯ 하나, 2560 한 줄 묶음)
-    id: "C8", ds: "worst", user: MEMBER, views: [1120, 2560],
+    id: "C8", ds: "worst", user: MEMBER, drafting: true, views: [1120, 2560],
     path: (ids) => `/bundles/${ids.w[1]}/order`,
     open: async (page) => {
       await page.locator('[data-testid^="output-c-item-"]').first().waitFor({ timeout: T });
@@ -1229,7 +1229,7 @@ const AUDIT_ENTRIES = [
   },
   {
     // T1: W1 Assign 나무의 칸 제목 자리(코드가 가장 긴 SOP) - 항목 글이 상자를 넘치지 않고 나무가 가로로 넘치지 않으며, 고른 칸 제목의 보낼 곳 카드가 넘치지 않는다
-    id: "T1", ds: "worst", user: MEMBER, views: [1120, 1920],
+    id: "T1", ds: "worst", user: MEMBER, drafting: true, views: [1120, 1920],
     path: (ids) => `/bundles/${ids.w[1]}/assign`,
     open: async (page) => {
       await page.locator('[data-testid="assign-bar"]').waitFor({ timeout: T });
@@ -1266,7 +1266,7 @@ const AUDIT_ENTRIES = [
   {
     // C13: W1 결과물 C를 이어 그리는 끝 - 마지막 줄이 끝 표지(output-c-more) 위에 있고, 이어 그리면 줄이 는다.
     // 결과 화면의 C는 읽기 전용이라 줄 끝 단추가 없다 - 단추 겹침은 Order 화면에서 잰다(C8, 겹침 감사의 outputs-c-rows·outputs-c-end-rows)
-    id: "C13", ds: "worst", user: MEMBER, views: [1120, 1920],
+    id: "C13", ds: "worst", user: MEMBER, drafting: true, views: [1120, 1920],
     path: (ids) => `/bundles/${ids.w[1]}/outputs`,
     open: async (page) => {
       await page.getByTestId("outputs-tab-c").click();
@@ -1295,7 +1295,7 @@ const AUDIT_ENTRIES = [
   {
     // N1: Assign New 칸의 엮은 문서 - 칸 머리의 칸 제목 출처가 길어도(여러 옛 문서) 칸 이름을 덮지 않고 한 줄에서 말줄임된다.
     //     W1에는 칸 제목이 없어 엮은 문서 응답의 칸마다 긴 출처 글을 넣어 그린다(DB는 그대로)
-    id: "N1", ds: "worst", user: MEMBER, views: [1120, 1440],
+    id: "N1", ds: "worst", user: MEMBER, drafting: true, views: [1120, 1440],
     path: (ids) => `/bundles/${ids.w[1]}/assign`,
     open: async (page) => {
       const note = `← ${Array.from({ length: 14 }, (_, i) => `OLD-${90 + i} §${i + 1}`).join(", ")}`;
@@ -1411,7 +1411,7 @@ const AUDIT_ENTRIES = [
   },
   {
     // TW2: 결과물 C - 시드가 OLD-89의 첫 표 셋(18열 표 포함)을 한 칸에 확정해 둔다. 600자 칸 표는 C에 없다
-    id: "TW2", ds: "worst", user: MEMBER, views: [1120, 1920],
+    id: "TW2", ds: "worst", user: MEMBER, drafting: true, views: [1120, 1920],
     path: (ids) => `/bundles/${ids.w[1]}/outputs`,
     open: async (page) => {
       await page.getByTestId("outputs-tab-c").click();
@@ -1611,8 +1611,8 @@ async function main() {
   if (entries.length === 0) throw new Error(`no audit entry for DS=${DS}${only ? ` ONLY=${only}` : ""}`);
   const browser = await chromium.launch({ executablePath: CHROME, headless: true });
   const contexts = new Map();
-  const getContext = async (user, width, lang, theme) => {
-    const key = `${user}|${width}|${lang}|${theme}`;
+  const getContext = async (user, width, lang, theme, drafting) => {
+    const key = `${user}|${width}|${lang}|${theme}|${drafting}`;
     if (!contexts.has(key)) {
       const ctx = await browser.newContext({ viewport: { width, height: HEIGHTS[width] ?? 900 }, deviceScaleFactor: 1 });
       await ctx.addInitScript((init) => {
@@ -1622,7 +1622,9 @@ async function main() {
         localStorage.setItem("sopa.theme", init.theme);
         // ?edit= 주소는 한 단 보기를 기억시킨다 - 뒤 항목이 그 상태를 물려받지 않게 문서를 읽을 때마다 지운다(양 단이 기본)
         localStorage.removeItem("sopa.assign.single");
-      }, { user, lang, theme });
+        // 숨긴 기능(새 문서를 만드는 쪽)의 항목만 켠다 - 나머지는 실사용 화면 그대로
+        if (init.drafting) localStorage.setItem("sopa.drafting", "1");
+      }, { user, lang, theme, drafting });
       contexts.set(key, ctx);
     }
     return contexts.get(key);
@@ -1637,7 +1639,7 @@ async function main() {
       for (const lang of langs) {
         for (const theme of themes) {
           for (const item of items) {
-            const ctx = await getContext(item.user, width, lang, theme);
+            const ctx = await getContext(item.user, width, lang, theme, entry.drafting === true);
             const page = await ctx.newPage();
             const tag = `${entry.id} ${width} ${lang} ${theme} ${item.url}`;
             runs += 1;

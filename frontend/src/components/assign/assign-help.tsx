@@ -6,6 +6,7 @@ import type { ReactNode } from "react";
 
 import { UnitStatusChip } from "@/components/status";
 import { HelpPanel } from "@/components/ui/help-panel";
+import { useDraftingOn } from "@/lib/drafting";
 import { useI18n } from "@/lib/i18n";
 
 function Row({ swatch, children }: { swatch: ReactNode; children: ReactNode }) {
@@ -19,17 +20,19 @@ function Row({ swatch, children }: { swatch: ReactNode; children: ReactNode }) {
 
 export function AssignHelp() {
   const { t } = useI18n();
+  // 새 문서를 숨긴 동안 고쳐 쓰기(E) · 칸으로 보내기 · 칸 제목의 설명을 뺀다
+  const isDrafting = useDraftingOn() === true;
   const keys: readonly (readonly [string, ReactNode])[] = [
     [t("assign.legend.keyMove"), <kbd key="move">↑ ↓ · J K</kbd>],
     [t("assign.legend.keyConfirm"), <kbd key="confirm">↵</kbd>],
-    [t("assign.legend.keyEdit"), <kbd key="edit">E</kbd>],
+    ...(isDrafting ? [[t("assign.legend.keyEdit"), <kbd key="edit">E</kbd>] as const] : []),
     [t("assign.help.keyHold"), <kbd key="hold">H</kbd>],
     [t("assign.help.keyDelete"), <kbd key="delete">Del · ⌫</kbd>],
     [t("assign.help.keyMoveTo"), <kbd key="move-to">M</kbd>],
     [t("assign.help.keyClear"), <kbd key="clear">U</kbd>],
     [t("assign.help.keyShift"), <kbd key="shift">Shift + {t("assign.help.click")}</kbd>],
     [t("assign.help.keyCtrl"), <kbd key="ctrl">Ctrl + {t("assign.help.click")}</kbd>],
-    [t("assign.help.keyDrag"), <kbd key="drag">{t("assign.help.drag")}</kbd>],
+    [t(isDrafting ? "assign.help.keyDrag" : "assign.help.keyDragLink"), <kbd key="drag">{t("assign.help.drag")}</kbd>],
     [t("assign.help.keyDragPair"), <kbd key="drag-pair">{t("assign.help.drag")}</kbd>],
     [t("assign.help.keyAltDrag"), <kbd key="alt-drag">Alt + {t("assign.help.drag")}</kbd>],
     [t("assign.help.keyZoom"), <kbd key="zoom">Ctrl + {t("assign.help.wheel")}</kbd>],
@@ -78,7 +81,7 @@ export function AssignHelp() {
           <Row swatch={<span className="legend-box" data-state="hover" />}>{t("assign.help.markHover")}</Row>
           <Row swatch={<span className="legend-box" data-state="flash" />}>{t("assign.help.markJump")}</Row>
           <Row swatch={<span className="legend-box" data-state="picked" />}>{t("assign.help.markLand")}</Row>
-          <Row swatch={<span className="tree-sub">{t("assign.slotHeading")}</span>}>{t("assign.help.slotHeading")}</Row>
+          {isDrafting && <Row swatch={<span className="tree-sub">{t("assign.slotHeading")}</span>}>{t("assign.help.slotHeading")}</Row>}
           <Row swatch={<span className="legend-line" aria-hidden />}>{t("assign.help.markLine")}</Row>
           <Row swatch={<span className="legend-line is-dashed" aria-hidden />}>{t("assign.help.markUnsaved")}</Row>
         </>

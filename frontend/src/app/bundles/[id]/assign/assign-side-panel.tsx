@@ -46,7 +46,7 @@ function putFirst<T>(items: readonly T[], isFirst: (item: T) => boolean): T[] {
 export function AssignSidePanel({ state, headEnd }: { state: AssignPageState; headEnd: ReactNode }) {
   const {
     t, bundleId, canEdit, unitsKey, reloadData, docViews, tobeData, aiJobs, aiOn, aiBusy, suggestions, invalidUnitIds, unitMap, written,
-    writtenMap, rowOfUnit, options, mode, activeKey, row, isNewEdit, hasSolo, tocOpen, setTocOpen, tocPick, tocBlocks, newRemarks,
+    writtenMap, rowOfUnit, options, isDrafting, hiddenPlace, openTranslations, translationBlocked, settleTranslations, mode, activeKey, row, isNewEdit, hasSolo, tocOpen, setTocOpen, tocPick, tocBlocks, newRemarks,
     setNewRemarks, cutUnitId, focusNew, groupData, draft, editing, savedDestination, destination, rowUnits, rowLangs, firstDecision,
     systemHold, reasonNow, moveCode, setDraft, rowLive, aiDest, aiWhy, recommendations, linkIds, pickedGroups, saveGroupData,
     viewOf, oldView, splitByUnit, shapeView, shapeModel, soloUnits, cutLine, writtenDocs, composedDoc, view, changeView, askAiScope,
@@ -65,8 +65,8 @@ export function AssignSidePanel({ state, headEnd }: { state: AssignPageState; he
   // --- 그리기 ---
   const isPlace = destination?.kind === "slot" || destination?.kind === "step";
   const primaryState = !destination ? "choose" : editing ? "save" : "confirm";
-  // 줄에 이미 그 언어 새 문장이 있으면(직접 쓴 것·쓰는 중인 칸·AI 번역) 만들기·쓰기를 보이지 않는다
-  const missingLang = canMakeOtherLanguage(rowLangs, savedDestination, row?.status === "confirmed");
+  // 줄에 이미 그 언어 새 문장이 있으면(직접 쓴 것·쓰는 중인 칸·AI 번역) 만들기·쓰기를 보이지 않는다. 새 문서를 숨긴 동안은 늘 없다
+  const missingLang = !isDrafting ? null : canMakeOtherLanguage(rowLangs, savedDestination, row?.status === "confirmed");
   const otherLang = missingLang !== null && !hasRowLanguage(missingLang, slots, groupData, row?.unitIds ?? []) ? missingLang : null;
   // 직접 쓰는 다른 언어 문장의 출처 - 줄의 글 단위(문장·제목·묶이지 않은 칸 문장. 표·그림은 칸 문장을 따로 쓰지 않는다)
   const writeOtherUnit = rowUnits.find((unit) => isSentenceUnit(unit.kind))?.unit_id ?? null;
@@ -166,7 +166,8 @@ export function AssignSidePanel({ state, headEnd }: { state: AssignPageState; he
   // 칸 제목 자리는 줄 단위가 모두 제목·문장일 때만 보인다 - 표·그림은 칸 제목의 출처가 아니다
   const canPickHeading = rowUnits.length > 0 && rowUnits.every((unit) => isHeadingSourceUnit(unit.kind));
   const treeOptions = listTreeOptions(options, canPickHeading);
-  const nearAnchor = destination ?? recommendations[0]?.destination ?? null;
+  // 숨긴 새 문서의 자리는 고를 거리가 아니라 첫 추천의 둘레를 보인다
+  const nearAnchor = (hiddenPlace === null ? destination : null) ?? recommendations[0]?.destination ?? null;
   const nearLinks = nearAnchor?.kind === "link" ? pickNearby(written, nearAnchor.targetIds) : [];
   const nearPlaces: DestinationOption[] = nearAnchor && nearAnchor.kind !== "link" ? listSiblingPlaces(options, nearAnchor) : [];
 
@@ -191,7 +192,7 @@ export function AssignSidePanel({ state, headEnd }: { state: AssignPageState; he
   const accSections: AccordionSection[] = [
     { key: "rec", icon: Sparkles, title: t("assign.acc.rec"), count: recommendations.length, body: recommendations.length === 0 ? <p className="text-xs text-ink-3">{t("assign.acc.none")}</p> : recommendations.map(renderRecommendation) },
     { key: "near", icon: Locate, title: t("assign.acc.near"), count: nearLinks.length + nearPlaces.length, body: renderNearby() },
-    { key: "all", icon: ListTree, title: t("assign.acc.all"), count: written.length + options.filter(isPlaceOption).length, body: <DestinationTree written={written} rows={tobeData ? listTreeRows(tobeData, treeOptions) : []} tobeHref={getNewDocumentsHref(bundleId)} onPickLink={pickNewSentence} onPickPlace={pickDestination} manage={placeManage} /> },
+    { key: "all", icon: ListTree, title: t("assign.acc.all"), count: written.length + options.filter(isPlaceOption).length, body: <DestinationTree written={written} rows={isDrafting && tobeData ? listTreeRows(tobeData, treeOptions) : []} tobeHref={getNewDocumentsHref(bundleId)} onPickLink={pickNewSentence} onPickPlace={pickDestination} manage={placeManage} /> },
     {
       key: "move",
       icon: MoveRight,
@@ -374,6 +375,15 @@ export function AssignSidePanel({ state, headEnd }: { state: AssignPageState; he
         </Refresh>
       );
     }
+    if (hiddenPlace !== null) {
+      return (
+        <Refresh key={shapeFirstId ?? ""} token={chosenToken} className="chosen-box" testId="assign-chosen">
+          <p className="text-[13px] leading-5 text-ink" data-testid="assign-hidden-place">
+            {t("assign.hidden.place", { code: hiddenPlace.docCode || "–", label: hiddenPlace.label || "–" })}
+          </p>
+        </Refresh>
+      );
+    }
     const placeLabel = isPlace ? renderPlaceLabel(destination) : null;
     // 고른 칸 안의 위치(MD 2 S3) - 열린 엮은 문서의 칸을 고른 초안일 때만: "6.1.1 다음 (6.1.2가 된다)" · "글머리 기호 줄 · 끝에"
     const placeAt = draftPlace && composedDoc && placeResolved && draftSectionKey !== null && draftPlace.docId === composedDoc.target_doc_id ? readPlacePosition(placeResolved.sections, draftSectionKey, draftPosition ? draftPosition.after : undefined) : null;
@@ -489,10 +499,41 @@ export function AssignSidePanel({ state, headEnd }: { state: AssignPageState; he
     );
   }
 
+  // 남은 번역 줄(확정 전 AI 번역 · 보류로 돌아간 번역) - 고른 곳과 상관없이 정할 수 있게 고른 곳 상자 아래에
+  const translationBox = openTranslations.length > 0 && (
+    <div className="chosen-box" data-testid="assign-translations">
+      <span className="chosen-label">{t("assign.hidden.translations")}</span>
+      {openTranslations.map((item) => (
+        <div key={item.id} className="chosen-line" data-testid={`assign-translation-${item.id}`}>
+          <LangToken lang={item.lang} />
+          <span className="min-w-0 flex-1 text-[13px] leading-5 text-ink">
+            <ClampText text={item.text} />
+          </span>
+        </div>
+      ))}
+      {canEdit && translationBlocked && <p className="text-xs text-ink-2" data-testid="assign-translation-blocked">{t("assign.hidden.translationBlocked")}</p>}
+      {canEdit && (
+        <div className="flex flex-wrap gap-1.5">
+          {/* 출처 문장이 없어진 번역(배정 취소)은 지우기만 */}
+          {openTranslations.some((item) => item.can_confirm) && (
+            <button type="button" className="btn h-7" data-testid="assign-translation-confirm" disabled={isAnyPending || translationBlocked} onClick={() => void settleTranslations(openTranslations, "confirm")}>
+              <Check size={14} strokeWidth={1.5} aria-hidden />
+              {t("assign.hidden.translationConfirm")}
+            </button>
+          )}
+          <button type="button" className="btn h-7" data-testid="assign-translation-remove" disabled={isAnyPending || translationBlocked} onClick={() => void settleTranslations(openTranslations, "remove")}>
+            <Trash2 size={14} strokeWidth={1.5} aria-hidden />
+            {t("assign.hidden.translationRemove")}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+
   // 확정 단추 - 결정 칸 맨 아래 늘 같은 자리의 가장 큰 단추. 고른 곳이 없으면 흐리게 꺼지고 까닭은 툴팁(↵는 위 목록의 첫 후보로 간다)
   const confirmButton = (
     <Tooltip label={t((destination !== null ? confirmBlockKey : null) ?? "assign.why.pickFirst")} suppressed={(destination !== null && confirmBlockKey === null) || !row}>
-      <button type="button" className="btn pri assign-confirm" data-testid="assign-primary" data-state={primaryState} disabled={!canEdit || !row || busy || !destination || isRefGate || isCaptionGateOn} onClick={handlePrimary}>
+      <button type="button" className="btn pri assign-confirm" data-testid="assign-primary" data-state={primaryState} disabled={!canEdit || !row || busy || !destination || isRefGate || isCaptionGateOn || hiddenPlace !== null} onClick={handlePrimary}>
         <span className="stack">
           <span data-on={primaryState !== "save" ? "" : undefined}>
             {t("classify.confirm")} <kbd>↵</kbd>
@@ -615,9 +656,11 @@ export function AssignSidePanel({ state, headEnd }: { state: AssignPageState; he
   /** 다듬기 걸음과 그 줄에 걸린 카드(참조 줄 확인·AI 나누기 제안) - Old 줄과 한 단의 New 문장이 같은 것을 쓴다 */
   // 고른 줄이 표·그림이면 다듬기 아래 그 캡션 자리(F7 · F12) - 써 넣은 캡션은 Edit and confirm의 캡션 칸(captionFields)에서 온다
   const rowBundle = shapeLines.length > 0 && !hasSolo ? (rowViewUnits.find((unit) => isBundleKind(unit.kind)) ?? null) : null;
-  const captionSlot = rowBundle && shapeModel && slotPlaces
+  const builtCaptionSlot = rowBundle && shapeModel && slotPlaces
     ? buildCaptionSlot({ bundle: rowBundle, units: shapeModel.units, places: slotPlaces, cellTables: slotCellTables, written: captionFields.filter((field) => field.unitId === null) })
     : null;
+  // 캡션 써 넣기는 새 문서 칸의 고쳐 쓰기라 숨긴 동안 후보에서 뺀다
+  const captionSlot = builtCaptionSlot && !isDrafting ? { ...builtCaptionSlot, candidates: builtCaptionSlot.candidates.filter((candidate) => candidate.kind !== "write") } : builtCaptionSlot;
   /** 캡션 자리의 후보 하나 - 글은 캡션으로 붙이고(2칸 안), 첫 행은 캡션으로 올리고, 캡션 있는 이웃 그림과는 묶는다. 모두 쪼개기 편집이라 Ctrl+Z로 되돌린다 */
   function runCaptionCandidate(candidate: Exclude<CaptionCandidate, { kind: "write" }>) {
     if (!rowBundle || !captionSlot) return;
@@ -980,7 +1023,7 @@ export function AssignSidePanel({ state, headEnd }: { state: AssignPageState; he
               </button>
             </p>
           )}
-          <div className="px-[var(--pad)] pb-[var(--pad)] pt-1">{aiNote}</div>
+          {isDrafting && <div className="px-[var(--pad)] pb-[var(--pad)] pt-1">{aiNote}</div>}
         </div>
         {/* ② 결정 칸 - 패널 아래에 붙는다. 다른 길 셋 · 고른 곳(높이 상한 안에서 이 부분만 스크롤) · 대상 문서 · Remark · 맨 아래 확정.
             다른 박스를 고르면 내용이 통째로 바뀌니 그 자리에서 한 번 쓸고 지나간다(스크롤로 끌지 않는다, 설계 2026-11-20 D5) */}
@@ -989,6 +1032,7 @@ export function AssignSidePanel({ state, headEnd }: { state: AssignPageState; he
             {renderStep(stepBase + 2, t("assign.step.decide"))}
             {actions}
             {renderChosen()}
+            {translationBox}
           </div>
           {destination?.kind === "move" && (
             <div className="flex min-w-0 items-center gap-2">
