@@ -89,6 +89,14 @@ describe("number keys on the paper", () => {
     expect(byKey?.[0].batch.map((change: { unitId: number }) => change.unitId)).toContain(4);
     expect(byKey?.slice(1)).toEqual([-1, "D-3"]);
   });
+  it("counts on from the shifts that are still being saved, so a second press goes one level further", () => {
+    handle!.requestIndent(3, -1);
+    const first = onIndent.mock.lastCall?.[0];
+    const saving = new Map([first.clicked, ...first.batch].map((change: { unitId: number; indentShift: number }) => [change.unitId, change.indentShift]));
+    handle!.requestIndent(3, -1, saving);
+    expect(onIndent.mock.lastCall?.[0].clicked).toEqual({ unitId: 3, indentShift: first.clicked.indentShift - 1 });
+    expect(onIndent.mock.lastCall?.[0].batch.map((change: { unitId: number }) => change.unitId)).toEqual(first.batch.map((change: { unitId: number }) => change.unitId));
+  });
   it("says the end without saving", () => {
     expect(handle!.requestIndent(1, -1)).toBe("end");
     expect(onSave).not.toHaveBeenCalled();

@@ -310,8 +310,8 @@ export interface PaperNumberCell {
 export interface PaperNumberHandle {
   /** 번호 칸 창을 연다(⇧N) */
   openNumber: (unitId: number) => boolean;
-  /** 번호 칸 창의 ◀ ▶ 한 번과 같은 값을 저장한다(Tab · ⇧Tab) - end는 더 갈 단계가 없다 */
-  requestIndent: (unitId: number, delta: -1 | 1) => "done" | "end" | null;
+  /** 번호 칸 창의 ◀ ▶ 한 번과 같은 값을 저장한다(Tab · ⇧Tab) - end는 더 갈 단계가 없다. shifts는 아직 보기에 없는 들여쓰기 차이(저장 중) */
+  requestIndent: (unitId: number, delta: -1 | 1, shifts?: ReadonlyMap<number, number>) => "done" | "end" | null;
 }
 
 /** 화면 좌표 → 블록 위치. 글자 조각 요소의 data-start에 글자 노드 안 위치를 더한다 */
@@ -673,7 +673,7 @@ export function Paper({
     return found !== null;
   }
 
-  function requestIndent(unitId: number, delta: -1 | 1): "done" | "end" | null {
+  function requestIndent(unitId: number, delta: -1 | 1, shifts?: ReadonlyMap<number, number>): "done" | "end" | null {
     const found = findNumberRow(unitId);
     if (!found) return null;
     if (readNumberKind(found.number.value) === "continuous") {
@@ -682,7 +682,8 @@ export function Paper({
       if (next !== null) numberCell?.onSave(unitId, next, true);
       return next === null ? "end" : "done";
     }
-    const plan = planIndent(indentRows, rowLevels, found.key, delta);
+    const rows = shifts === undefined || shifts.size === 0 ? indentRows : indentRows.map((row) => ({ ...row, shift: shifts.get(row.unitId ?? -1) ?? row.shift }));
+    const plan = planIndent(rows, rows === indentRows ? rowLevels : getRowLevels(rows), found.key, delta);
     if (plan) numberCell?.onIndent(plan, delta, found.unit.display_id);
     return plan ? "done" : "end";
   }

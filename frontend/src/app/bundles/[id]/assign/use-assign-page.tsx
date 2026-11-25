@@ -58,7 +58,7 @@ import { planPrimary } from "@/lib/primary-model";
 import { isSideFloating } from "@/lib/side-float-model";
 import { isUnwrapSuggestionApplicable, isUnwrapSuggestionUnchanged } from "@/lib/unwrap-ai-model";
 import { pickNextBox, type PendingOutcome } from "@/lib/next-box-model";
-import { listExpectedNumbers, readExpectedNumber, type SentNumber } from "@/lib/number-arrival-model";
+import { listExpectedNumbers, listExpectedShifts, readExpectedNumber, readOpShifts, type SentNumber, type SentShifts } from "@/lib/number-arrival-model";
 import { buildReloadAsk, isDocReload, isEmptyReload, mergeReloads, NO_RELOAD_ASK, splitReload, type ReloadAsk } from "@/lib/reload-ask-model";
 import { createWriteLog } from "@/lib/write-log";
 import type { PaperNumberHandle, PaperPending } from "@/components/paper/paper";
@@ -845,6 +845,8 @@ export function useAssignPage() {
   // 누른 순간 보일 것(A2-R6) - 삭제를 눌렀고 아직 저장되지 않은 줄(접힌다, 멈춘 것도 버릴 때까지)과 저장을 기다리는 번호의 기대 글(응답의 보기가 닿으면 그 값이 이긴다).
   // 내용이 같으면 같은 값이다 - 큐가 움직일 때마다 용지의 먼 덩어리를 다시 그리지 않게
   const [sentNumbers, setSentNumbers] = useState<readonly SentNumber[]>([]);
+  // 들여쓰기는 그리지 않고 다음 Tab만 읽는다 - 새 보기가 오면 빠진다(listExpectedShifts)
+  const sentShiftsRef = useRef<SentShifts[]>([]);
   const pendingDeleteKey = JSON.stringify([...readPendingOutcomes(listUnsettled(queueState))].flatMap(([key, outcome]) => (outcome === "deleted" ? [key] : [])));
   const pendingDeletes = useMemo(() => new Set(JSON.parse(pendingDeleteKey) as string[]), [pendingDeleteKey]);
   const pendingOps = [queueState.running, ...queueState.waiting].flatMap((command) => (command?.payload.kind === "edit" ? [command.payload.op] : []));
@@ -1716,6 +1718,8 @@ export function useAssignPage() {
     // 번호는 그 자리 편집이라 보기를 큐가 빌 때 받는다 - 그때까지 기대 글을 둔다
     const sentNumber = isOld ? readExpectedNumber(op) : null;
     if (sentNumber !== null) setSentNumbers((prev) => [...prev.filter((item) => item.unitId !== sentNumber.unitId), { docId, revision, ...sentNumber }]);
+    const shifts = isOld ? readOpShifts(op) : [];
+    if (shifts.length > 0) sentShiftsRef.current = [...sentShiftsRef.current.filter((item) => item.docId === docId), { docId, revision, shifts }];
     // 편집이 받아들여진 뒤에만 하는 일(AI 제안 채택 기록) - 실패하면 afterOk가 스스로 알린다
     await afterOk?.();
     setRefEntryId(null);
@@ -4380,7 +4384,9 @@ export function useAssignPage() {
       case "indent":
       case "outdent": {
         const delta = id === "indent" ? 1 : -1;
-        const results = keyUnit === null ? [] : [...numberHandles.current].map((handle) => handle.requestIndent(keyUnit.id, delta));
+        const ops = commands.listUnsettled().flatMap(({ payload }) => (payload.kind === "edit" ? [payload.op] : []));
+        const shifts = listExpectedShifts(ops, sentShiftsRef.current, viewList ?? []);
+        const results = keyUnit === null ? [] : [...numberHandles.current].map((handle) => handle.requestIndent(keyUnit.id, delta, shifts));
         if (!results.includes("done")) showToast(t(results.includes("end") ? (delta > 0 ? "assign.key.why.indentEnd" : "assign.key.why.outdentEnd") : "assign.key.why.noNumber"), "info");
         return true;
       }

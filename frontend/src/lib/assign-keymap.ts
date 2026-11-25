@@ -159,6 +159,8 @@ function findRefusal({ id, when }: AssignKey, ctx: AssignKeyContext): string | n
   if (ctx.isDeletedLine) return "assign.ctx.why.tocLine";
   if (!ctx.hasBox) return why("noRow");
   if (when === "ai") return ctx.hasAi ? null : why("noAi");
+  // 들여쓰기는 저장 중인 값에서 이어 센다 - 이어 누른 Tab을 버리지 않는다
+  if (when === "box") return ctx.hasNumberCell ? null : why("noNumber");
   if (ctx.isLocked) return why("busy");
   if (when === "text") return ctx.isText ? ctx.langReasonKey : why("notText");
   if (when === "shape") return ctx.shapeMode === null ? why("noShape") : ctx.shapeMode.reasonKey;
