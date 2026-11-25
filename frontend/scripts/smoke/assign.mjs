@@ -5380,6 +5380,150 @@ await runStep("assign: number levels - ◀ ▶ step a number one level, outdent 
   check("a third Undo turns the bullet back into a plain line", await waitUnit(first.id, (unit) => unit.number.value === null && !unit.number.is_set));
 });
 
+// 글쇠(11-23 명세 B2, S4) - 바꾸는 글쇠는 Shift, 빠뜨리면 알림만. Tab은 번호 칸 ▶와 같은 들여쓰기, Ctrl+→는 다음 탭이고 뒤로 가기는 보던 탭으로 온다(다 돌아가면 이전 화면).
+// 들여쓰기는 ⇧Tab과 Undo로, 사유 창은 Esc로 되돌려 시드 묶음을 처음 그대로 둔다
+await runStep("assign: keys", {}, async ({ page }) => {
+  const headers = { "X-Dev-User": "qa.member" };
+  const docs = await (await page.request.get(`${BASE}/api/bundles/${halfBundleId}/documents`, { headers })).json();
+  const readView = async (docId) => (await page.request.get(`${BASE}/api/bundles/${halfBundleId}/documents/${docId}/view`, { headers })).json();
+  const oldDocs = docs.filter((item) => item.side === "old" && item.status === "ready");
+  const openDoc = async (docId) => {
+    const select = page.locator('[data-testid="assign-old-doc"]');
+    if ((await select.count()) === 0) return;
+    await select.click();
+    await page.locator(`[data-testid="assign-old-doc-option-${docId}"]`).click();
+    await page.waitForTimeout(600);
+  };
+  const piece = (id) => page.locator(`[data-testid="assign-paper-piece-${id}"]`);
+  const pick = async (id) => {
+    await piece(id).scrollIntoViewIfNeeded();
+    await piece(id).click();
+    await piece(id).and(page.locator("[data-sel]")).waitFor({ timeout: T });
+  };
+  const info = (text) => page.locator('[data-testid="toast-info"]', { hasText: text });
+  const waitInfo = (text) => info(text).first().waitFor({ timeout: T }).then(() => true, () => false);
+  await page.goto(`${BASE}/bundles/${halfBundleId}/assign`);
+  await wait(page, "assign-bar");
+  // "N." 아래 번호 없는 줄 둘이 이어진 곳(짝 카드가 아닌 한 언어 목록) - 들여쓰기를 볼 자리
+  const startOf = (unit) => unit.spans[0]?.[1] ?? -1;
+  let found = null;
+  for (const doc of oldDocs) {
+    const view = await readView(doc.id);
+    if (!view.has_number_ranges || found !== null) continue;
+    await openDoc(doc.id);
+    const ordered = view.units.filter((unit) => unit.number && unit.table_id === null).sort((a, b) => a.pos_seq - b.pos_seq || startOf(a) - startOf(b) || a.id - b.id);
+    for (let index = 0; index + 2 < ordered.length && found === null; index += 1) {
+      const [top, first, second] = ordered.slice(index, index + 3);
+      if (!/^\d+\.$/.test(top.number.value ?? "") || new Set([top, first, second].map((unit) => unit.lang)).size !== 1) continue;
+      if (![first, second].every((unit) => unit.number.value === null && unit.number.read === null)) continue;
+      const leads = [first, second].map((unit) => page.locator(`[data-testid="assign-paper-lead-${unit.id}"]`));
+      const isPlain = async (lead) => (await lead.count()) === 1 && (await lead.getAttribute("data-bracket")) === null;
+      if ((await isPlain(leads[0])) && (await isPlain(leads[1]))) found = { doc, first, second };
+    }
+  }
+  check("the bundle has plain lines under a number on screen", found !== null);
+  if (found === null) return;
+  const { doc, first, second } = found;
+  const readShift = async (id) => (await readView(doc.id)).units.find((unit) => unit.id === id)?.indent_shift;
+  const waitShifts = async (shift) => {
+    for (let tries = 0; tries < 60; tries += 1) {
+      if ((await readShift(first.id)) === shift && (await readShift(second.id)) === shift) return true;
+      await page.waitForTimeout(250);
+    }
+    return false;
+  };
+  // H - 저장도 창도 없이 글쇠만 알린다, ⇧H는 사유 창
+  await pick(first.id);
+  let saves = 0;
+  page.on("request", (item) => {
+    if (item.url().includes("/groups/save")) saves += 1;
+  });
+  await page.keyboard.press("h");
+  const isHinted = await waitInfo("⇧H: Hold");
+  check("H alone holds nothing and names Shift+H", isHinted && saves === 0 && (await page.locator('[data-testid="assign-remark-modal"]').count()) === 0);
+  await page.keyboard.press("Shift+H");
+  await wait(page, "assign-remark-modal");
+  check("Shift+H asks for the Remark of a hold", true);
+  await page.keyboard.press("Escape");
+  await page.locator('[data-testid="assign-remark-modal"]').waitFor({ state: "detached", timeout: T });
+  // R - 보통 줄의 Remark 창
+  await pick(first.id);
+  await page.keyboard.press("r");
+  await wait(page, "assign-remark-modal");
+  check("R opens the Remark window of the line", true);
+  await page.keyboard.press("Escape");
+  await page.locator('[data-testid="assign-remark-modal"]').waitFor({ state: "detached", timeout: T });
+  check("closing both windows saved nothing", saves === 0, String(saves));
+  // M - 없앤 글쇠, ⇧T - 표 밖이면 까닭
+  await pick(first.id);
+  const rowBefore = await rowIds(page);
+  const toastsBefore = await page.locator('[data-testid^="toast-"]').count();
+  await page.keyboard.press("m");
+  await page.waitForTimeout(300);
+  check("M does nothing", (await rowIds(page)) === rowBefore && (await page.locator('[role="dialog"], [role="menu"]').count()) === 0 && (await page.locator('[data-testid^="toast-"]').count()) <= toastsBefore);
+  await page.keyboard.press("Shift+T");
+  check("Shift+T outside a table says why", await waitInfo("Only inside a table"));
+  // Tab - 번호 칸 ▶와 같은 값(이어진 줄까지), ⇧Tab은 되돌린다. 포커스는 용지에 남는다
+  await page.keyboard.press("Tab");
+  check("Tab indents the picked line and the line that follows", await waitShifts(1), `${await readShift(first.id)} / ${await readShift(second.id)}`);
+  check("Tab keeps the focus on the paper", await page.evaluate(() => Boolean(document.activeElement?.closest('[data-pane="old"] .pane-body'))));
+  await page.keyboard.press("Shift+Tab");
+  check("Shift+Tab outdents them again", await waitShifts(0), `${await readShift(first.id)} / ${await readShift(second.id)}`);
+  await page.locator(`.strip[data-testid="assign-paper-piece-${first.id}"]:not([data-pending])`).waitFor({ timeout: T });
+  await page.waitForLoadState("networkidle");
+  await page.keyboard.press("Shift+N");
+  await wait(page, `assign-paper-num-edit-${first.id}`);
+  check("Shift+N opens the number cell", true);
+  await page.locator('[data-testid="assign-paper-num-indent"]').click();
+  check("▶ in the number cell gives what Tab gave", await waitShifts(1), `${await readShift(first.id)} / ${await readShift(second.id)}`);
+  await page.keyboard.press("Escape");
+  await page.locator(`[data-testid="assign-paper-num-edit-${first.id}"]`).waitFor({ state: "detached", timeout: T });
+  await page.locator('[data-testid="assign-undo"]').click();
+  for (let tries = 0; tries < 60 && (await readShift(second.id)) !== 0; tries += 1) await page.waitForTimeout(250);
+  await page.locator('[data-testid="assign-undo"]').click();
+  check("two Undos put both lines back", await waitShifts(0), `${await readShift(first.id)} / ${await readShift(second.id)}`);
+  // ? - 오른쪽 칸 아래의 도움말(단축키 탭)
+  await pick(first.id);
+  await page.keyboard.press("?");
+  await wait(page, "assign-help-keys");
+  check("? opens the help on the keys tab", (await page.locator('[data-testid="assign-help-toggle"]').getAttribute("aria-expanded")) === "true" && (await page.locator('[data-testid="assign-help-keys"] kbd', { hasText: "⇧H" }).count()) === 1);
+  // 탭 - 이전 화면(Documents)에서 들어와 Ctrl+→로 바꾸고, 뒤로 가기는 보던 탭 → 이전 화면
+  await page.goto(`${BASE}/bundles/${halfBundleId}/documents`);
+  await page.waitForLoadState("networkidle");
+  await page.goto(`${BASE}/bundles/${halfBundleId}/assign`);
+  await wait(page, "assign-bar");
+  const readTab = () => page.locator('[data-testid="assign-tabs"] [aria-selected="true"]').getAttribute("data-testid");
+  let tabs = [];
+  for (const { id } of oldDocs) {
+    await openDoc(id);
+    tabs = await page.locator('[data-testid="assign-tabs"] [role="tab"]').evaluateAll((els) => els.map((el) => el.dataset.testid));
+    if (tabs.length > 1) break;
+  }
+  check("an Old document has more than one tab", tabs.length > 1, tabs.join(", "));
+  if (tabs.length < 2) return;
+  await page.waitForLoadState("networkidle");
+  const address = page.url();
+  await page.evaluate(() => {
+    window.__keysStay = true;
+  });
+  const start = await readTab();
+  await page.keyboard.press("Control+ArrowRight");
+  await page.waitForFunction((tab) => document.querySelector('[data-testid="assign-tabs"] [aria-selected="true"]')?.getAttribute("data-testid") !== tab, start, { timeout: T });
+  check("Ctrl+→ goes to the next tab on the same address", (await readTab()) === tabs[(tabs.indexOf(start) + 1) % tabs.length] && page.url() === address, `${start} -> ${await readTab()} ${page.url()}`);
+  await page.keyboard.press("Control+ArrowLeft");
+  await page.waitForFunction((tab) => document.querySelector('[data-testid="assign-tabs"] [aria-selected="true"]')?.getAttribute("data-testid") === tab, start, { timeout: T });
+  check("Ctrl+← comes back", true);
+  await page.goBack();
+  await page.waitForFunction((tab) => document.querySelector('[data-testid="assign-tabs"] [aria-selected="true"]')?.getAttribute("data-testid") !== tab, start, { timeout: T });
+  check("Back goes to the tab before", (await readTab()) === tabs[(tabs.indexOf(start) + 1) % tabs.length] && page.url() === address, `${await readTab()} ${page.url()}`);
+  await page.goBack();
+  await page.waitForFunction((tab) => document.querySelector('[data-testid="assign-tabs"] [aria-selected="true"]')?.getAttribute("data-testid") === tab, start, { timeout: T });
+  check("going back through tabs does not load the screen again", await page.evaluate(() => window.__keysStay === true));
+  await page.goBack();
+  await page.waitForURL(`**/bundles/${halfBundleId}/documents`, { timeout: T });
+  check("Back after the tabs are used up leaves for the screen before", true);
+});
+
 await runStep("assign: heading to sentence - Turn into sentences from the right-click menu, the group head and Back to heading, Undo steps back", {}, async ({ page, takeShot }) => {
   const headers = { "X-Dev-User": "qa.member" };
   const docs = await (await page.request.get(`${BASE}/api/bundles/${halfBundleId}/documents`, { headers })).json();
@@ -6133,6 +6277,12 @@ await runStep("assign: counterpart table - each table unwraps on its own with no
     return box.bottom > view.top && box.top < view.bottom;
   }, korean.id, { timeout: T }).then(() => true, () => false);
   check("the hint goes to the pair - it is picked and in view there and points back down", isPairInView && (await piece(english.id).getAttribute("data-mate")) === "" && (await hintOf(korean.id).getAttribute("data-dir")) === "down");
+  // 글쇠 G는 안내 줄과 같은 짝으로 간다 - 다시 누르면 돌아온다
+  await page.keyboard.press("g");
+  await piece(english.id).and(page.locator("[data-sel]")).waitFor({ timeout: T });
+  await page.keyboard.press("g");
+  await piece(korean.id).and(page.locator("[data-sel]")).waitFor({ timeout: T });
+  check("G goes to the pair and back", (await hintOf(korean.id).getAttribute("data-dir")) === "down");
   await takeShot("sop-assign-counterpart.png");
 
   // 1단 보기 - 안내 줄 한 번 누름은 오른쪽 짝 판(짝 박스와 앞뒤 3줄까지, 짝 박스를 칠함), 두 번 누름은 짝으로 간다(B7).
