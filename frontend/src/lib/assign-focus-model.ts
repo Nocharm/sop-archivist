@@ -64,6 +64,8 @@ export interface LoadedDoc {
 
 export type FocusEvent =
   | { type: "pick"; focus: Focus }
+  // 다시 시도가 멈춘 때의 고름을 되살린다 - 사람이 고른 것이 아니라, 그 고름에서 누른 일은 다시 따라갈 수 있다
+  | { type: "restore"; focus: Focus }
   | { type: "start"; pending: Pending }
   | { type: "succeed"; pendingId: string; docId: number | null; revision: number | null; pickUnitId: number | null }
   | { type: "fail"; pendingId: string }
@@ -87,6 +89,11 @@ export function reduceFocus(state: FocusState, event: FocusEvent): FocusState {
       if (isSameFocus(state.focus, event.focus) && state.follows.length === 0 && state.pending.every((entry) => entry.isPickedOver)) return state;
       const pending = state.pending.map((entry) => (entry.isPickedOver ? entry : { ...entry, isPickedOver: true }));
       return { focus: event.focus, pending, follows: [] };
+    }
+    case "restore": {
+      // 그 고름에서 누른 일만 되살린다 - 다른 고름에서 누른 일과 따라가기는 그대로 두면 엉뚱한 박스로 간다
+      const pending = state.pending.map((entry) => (entry.isPickedOver && isSameFocus(entry.from, event.focus) ? { ...entry, isPickedOver: false } : entry));
+      return { focus: event.focus, pending, follows: state.follows.filter((follow) => isSameFocus(follow.from, event.focus)) };
     }
     case "start": {
       if (state.pending.some((entry) => entry.id === event.pending.id)) return state;
@@ -162,6 +169,13 @@ function dropVanished(focus: Focus, docs: readonly LoadedDoc[]): Focus {
   if (focus.kind === "unit") return doc.unitIds.has(focus.unitId) ? focus : NO_FOCUS;
   if (focus.kind === "toc" && !doc.unitIds.has(focus.key)) return NO_FOCUS;
   return focus.unitId !== null && !doc.unitIds.has(focus.unitId) ? { ...focus, unitId: null } : focus;
+}
+
+/** New 문서 고름을 바꿀 때 고를 것 - 지금 고름과 같으면 null(이미 눌린 "한 단"을 다시 눌러도 New 편집의 따라가기를 버리지 않게), 놓으면 New 고름일 때만 NO_FOCUS */
+export function buildSoloPick(focus: Focus, solo: { docId: number; unitId: number | null; inPlace: boolean } | null): Focus | null {
+  if (solo === null) return focus.kind === "new" ? NO_FOCUS : null;
+  const next: Focus = { kind: "new", docId: solo.docId, unitId: solo.unitId, inPlace: solo.inPlace };
+  return isSameFocus(next, focus) ? null : next;
 }
 
 /** 처리 중인 일 목록만 */

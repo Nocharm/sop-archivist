@@ -29,6 +29,11 @@ export function useAssignFocus() {
     dispatch({ type: "pick", focus });
   }
 
+  /** 다시 시도가 멈춘 때의 고름을 되살린다 - 사람의 고름이 아니라 그 고름에서 누른 일은 다시 따라간다 */
+  function restore(focus: Focus) {
+    dispatch({ type: "restore", focus });
+  }
+
   /** 일 하나를 처리 중으로 세운다 - 줄에 서는 순간(아직 보내기 전이어도) 부른다. id는 명령 큐의 것이고 그것으로 succeed · end를 부른다 */
   function start(pending: Pending) {
     dispatch({ type: "start", pending });
@@ -65,6 +70,7 @@ export function useAssignFocus() {
     isUnitLocked: (unitId: number) => isUnitLocked(state, unitId),
     isUnitUnsettled: (docId: number, unitId: number) => isUnitUnsettled(state, docId, unitId),
     pick,
+    restore,
     start,
     succeed,
     end,

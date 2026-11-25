@@ -47,7 +47,7 @@ import { loadBundle, useBundle } from "@/lib/bundle-store";
 import { describeDecisionStep, getAssignUndoKey, IN_PLACE_EDIT_OPS, isUnitEditStep, pickSaveOp, shouldDropSelectionOnStep } from "@/lib/decision-step-model";
 import { buildCellOwners, buildDestinationOptions, buildGroupSave, buildRows, buildSentenceSlots, describeLegacyMove, findSystemHold, getDestinationId, hasDraftChange, isSentenceUnit, listJoinedTargetIds, listLinkLeftovers, listPickOptions, listUnpairedKeys, readDestination, readHiddenPlace, readHumanReason, stepInList, type CellSource, type ClassifyFilter, type ClassifyRow, type Destination, type DestinationOption, type DropPosition, type RowDraft } from "@/lib/classify-model";
 import { buildDocDashboard } from "@/lib/doc-dashboard-model";
-import { buildPaperWaits, isDecisionKind, listEditUnitIds, listTableUnitIds, NO_FOCUS, NO_PLACE, planReload, readEditKind, readEditPlace, readPendingLabelKey, type Focus, type Pending, type PendingPlace } from "@/lib/assign-focus-model";
+import { buildPaperWaits, buildSoloPick, isDecisionKind, listEditUnitIds, listTableUnitIds, NO_FOCUS, NO_PLACE, planReload, readEditKind, readEditPlace, readPendingLabelKey, type Focus, type Pending, type PendingPlace } from "@/lib/assign-focus-model";
 import { readEditLabelKey, trimReason } from "@/lib/command-label";
 import { isBarrier, listUnsettled } from "@/lib/command-queue";
 import { pickDocRevision } from "@/lib/doc-revision";
@@ -547,9 +547,8 @@ export function useAssignPage() {
   }
   /** New 문서 고름을 바꾼다 - null이면 New 문서 고름만 놓는다(Old 줄 · 목차 고름은 그대로) */
   function setSolo(next: SoloPick | null | ((prev: SoloPick | null) => SoloPick | null)) {
-    const value = typeof next === "function" ? next(solo) : next;
-    if (value !== null) pickFocus({ kind: "new", docId: value.docId, unitId: value.unitId, inPlace: value.inPlace });
-    else if (focus.kind === "new") pickFocus(NO_FOCUS);
+    const picked = buildSoloPick(focus, typeof next === "function" ? next(solo) : next);
+    if (picked !== null) pickFocus(picked);
   }
   // 고른 박스 - 짝 줄이어도 누른 박스 하나다(설계 D3). 짝의 다른 구성원은 용지가 곁에 딸린 표시(data-mate)로만 보인다
   const pickedId = focus.kind === "unit" && row !== null ? focus.unitId : null;
@@ -623,6 +622,7 @@ export function useAssignPage() {
   const commands = useCommandQueue(
     {
       pick: focusCtl.pick,
+      restore: focusCtl.restore,
       readFocus: () => liveRef.current.focus,
       readSeen: (unitIds) => readSeen(unitIds),
       start: (pending, command) => {

@@ -123,6 +123,7 @@ function createScreen() {
     const commands = useCommandQueue(
       {
         pick: focusCtl.pick,
+        restore: focusCtl.restore,
         readFocus: () => screen.focus,
         readSeen: (unitIds) => new Map(unitIds.map((id) => [id, screenRevision])),
         start: (pending, command) => {
@@ -547,6 +548,19 @@ describe("a failure (A1-R7, AC3)", () => {
     expect(screen.focus).toEqual(unit(1));
     await drain(screen);
     expect(screen.log).toEqual(["join 1", "join 1 again", "delete 200"]);
+  });
+  it("a join that waited behind a failed save still follows once Retry puts the pick back, and the key behind it lands on the joined box", async () => {
+    const screen = await open();
+    await press(screen, "d"); // 저장 1이 나가고 고름은 2로
+    await press(screen, "m"); // 2의 합치기가 저장 뒤에 선다
+    await press(screen, "j"); // 합치기 뒤에 쌓인 글쇠
+    await screen.respond(new Error("500")); // 저장 실패 - 멈춤
+    await click(screen, 70); // 멈춘 동안 둘러본다
+    await act(async () => screen.commands.retry()); // 고름을 멈춘 때의 2로 되살린다 - 사람이 고른 것이 아니다
+    expect(screen.focus).toEqual(unit(2));
+    await drain(screen);
+    expect(screen.log).toEqual(["delete 1", "delete 1 again", "join 2"]);
+    expect([screen.focus, screen.lost(), screen.dropped]).toEqual([unit(201), 0, []]);
   });
 });
 

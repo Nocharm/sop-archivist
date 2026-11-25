@@ -5,6 +5,7 @@ import { createCommandQueue } from "./command-queue";
 import {
   applyLoaded,
   buildPaperWaits,
+  buildSoloPick,
   INITIAL_FOCUS_STATE,
   isGlobalPending,
   isSameFocus,
@@ -95,6 +96,14 @@ describe("follow (rule 3)", () => {
     const state = run(pick(unit(3)), start(job("u", { kind: "undo", isGlobal: true })), pick(unit(3)), succeed("u", 10, { docId: null, revision: null }));
     expect(state.follows).toEqual([]);
     expect(reduceFocus(state, loaded([doc(1, 9, [3, 10])])).focus).toEqual(unit(3));
+  });
+  it("follows again after Retry puts back the pick the work was pressed from - restoring is not someone's pick", () => {
+    const state = run(pick(unit(3)), start(job("a")), pick(unit(8)), { type: "restore", focus: unit(3) }, succeed("a", 10), loaded([doc(1, 5, [3, 10])]));
+    expect(state.focus).toEqual(unit(10));
+  });
+  it("does not revive work pressed from another pick when restoring", () => {
+    const state = run(pick(unit(5)), start(job("a")), pick(unit(8)), { type: "restore", focus: unit(3) }, succeed("a", 10), loaded([doc(1, 5, [3, 10])]));
+    expect(state.focus).toEqual(unit(3));
   });
   it("still follows work pressed after the pick", () => {
     const state = run(pick(unit(3)), start(job("a")), pick(unit(3)), start(job("b")), succeed("b", 10), loaded([doc(1, 5, [3, 10])]));
@@ -365,5 +374,20 @@ describe("loaded with only the edited document", () => {
     expect(reduceFocus(waiting, loaded([doc(2, 9, [7])])).focus).toEqual(unit(3));
     // a box in doc 2 is not dropped by a batch that did not carry doc 2
     expect(run(pick(unit(7, 2)), loaded([doc(1, 5, [10])])).focus).toEqual(unit(7, 2));
+  });
+});
+
+describe("buildSoloPick", () => {
+  const solo = { docId: 7, unitId: 2, inPlace: true };
+  it("is nothing when the New document pick stays the same (pressing the pressed One-pane button again)", () => {
+    expect(buildSoloPick({ kind: "new", ...solo }, { ...solo })).toBeNull();
+  });
+  it("is the new New document pick when it changes", () => {
+    expect(buildSoloPick({ kind: "new", ...solo }, { ...solo, inPlace: false })).toEqual({ kind: "new", ...solo, inPlace: false });
+    expect(buildSoloPick(unit(3), solo)).toEqual({ kind: "new", ...solo });
+  });
+  it("lets go of a New document pick, and leaves an Old pick alone", () => {
+    expect(buildSoloPick({ kind: "new", ...solo }, null)).toEqual(NO_FOCUS);
+    expect(buildSoloPick(unit(3), null)).toBeNull();
   });
 });
