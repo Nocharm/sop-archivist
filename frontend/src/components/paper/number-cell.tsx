@@ -34,6 +34,12 @@ function isTextKind(kind: NumberKind): boolean {
   return kind === "continuous" || kind === "custom";
 }
 
+/** 그 줄의 번호 칸 창을 처음 연 입력 - 종류는 지금 값에서 읽는다 */
+export function startNumberEdit(unitId: number, value: string | null): NumberEdit {
+  const kind = readNumberKind(value);
+  return { unitId, kind, text: isTextKind(kind) ? (value ?? "") : "", follow: kind === "continuous" };
+}
+
 interface NumberCellProps {
   width: number;
   bracket?: PairBracket;
@@ -219,8 +225,7 @@ export function NumberCell({
   const sourceTip = preview ? null : number.note !== null ? t("assign.numberKind.source", { n: number.note }) : number.from_text ? t("assign.number.fromText") : null;
 
   function open() {
-    const kind = readNumberKind(number.value);
-    onEditChange({ unitId, kind, text: isTextKind(kind) ? (number.value ?? "") : "", follow: kind === "continuous" });
+    onEditChange(startNumberEdit(unitId, number.value));
   }
 
   function save() {

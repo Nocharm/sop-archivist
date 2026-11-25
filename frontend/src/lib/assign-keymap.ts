@@ -86,3 +86,59 @@ export function formatKeyPress({ key, shift }: Pick<AssignKey, "key" | "shift">)
 export function formatAssignKey(id: AssignKeyId): string {
   return ASSIGN_KEYS.filter((entry) => entry.id === id).map(formatKeyPress).join(" · ");
 }
+
+/** 지금 자리 - 까닭(reasonKey)은 단추 · 우클릭 메뉴가 보이는 것과 같은 답이다 */
+export interface AssignKeyContext {
+  /** Old의 배정 줄을 골랐다 */
+  hasRow: boolean;
+  /** 줄이나 New 문서의 문장을 골랐다 */
+  hasBox: boolean;
+  /** 저절로 삭제된 줄을 골랐다 - 먼저 삭제 취소해야 한다 */
+  isDeletedLine: boolean;
+  canEdit: boolean;
+  hasCut: boolean;
+  hasPair: boolean;
+  isText: boolean;
+  langReasonKey: string | null;
+  shapeMode: { reasonKey: string | null } | null;
+  hasNumberCell: boolean;
+  hasAi: boolean;
+  /** 고른 줄이 든 벗긴 표 */
+  unwrappedTableId: number | null;
+  orderReasonKey: string | null;
+  /** 고른 박스가 든(벗길 수 있는) 표 */
+  tableId: number | null;
+  tableReasonKey: string | null;
+  /** 고른 박스의 모양이 바뀌는 중이다 */
+  isLocked: boolean;
+}
+
+/** 그 글쇠를 지금 자리에서 누르면 - 하거나, 못 하는 까닭을 짧게 알린다(B2-R8) */
+export function resolveAssignKey(entry: AssignKey, ctx: AssignKeyContext): { run: AssignKeyId } | { refuseKey: string } {
+  const refuseKey = findRefusal(entry, ctx);
+  return refuseKey === null ? { run: entry.id } : { refuseKey };
+}
+
+function why(reason: string): string {
+  return `assign.key.why.${reason}`;
+}
+
+function findRefusal({ id, when }: AssignKey, ctx: AssignKeyContext): string | null {
+  // 확정 단추의 막힘은 primary-model이, 나눌 선이 없을 때의 화살표는 브라우저가 맡는다
+  if (when === "always" || id === "confirm" || id === "cut_left" || id === "cut_right") return null;
+  if (when === "pair") return ctx.hasPair ? null : why("noPair");
+  if (!ctx.canEdit) return "assign.ctx.why.readOnly";
+  if (when === "cut") return ctx.hasCut ? null : "split.menu.why.noCut";
+  // 삭제된 줄의 글쇠는 noise-keys가 먼저 받는다 - 여기까지 왔으면 삭제된 줄이 아니다
+  if (id === "clear_block" || id === "remark_block") return why("notDeleted");
+  if (when === "row") return ctx.hasRow ? null : why("noRow");
+  if (ctx.isDeletedLine) return "assign.ctx.why.tocLine";
+  if (!ctx.hasBox) return why("noRow");
+  if (when === "ai") return ctx.hasAi ? null : why("noAi");
+  if (ctx.isLocked) return why("busy");
+  if (when === "text") return ctx.isText ? ctx.langReasonKey : why("notText");
+  if (when === "shape") return ctx.shapeMode === null ? why("noShape") : ctx.shapeMode.reasonKey;
+  if (when === "table") return ctx.tableId === null && ctx.unwrappedTableId === null ? why("notTable") : ctx.tableReasonKey;
+  if (when === "unwrapped") return ctx.unwrappedTableId === null ? why("notUnwrapped") : ctx.orderReasonKey;
+  return ctx.hasNumberCell ? null : why("noNumber");
+}

@@ -6,6 +6,7 @@ import { useRef, useState, useSyncExternalStore } from "react";
 
 import type { AiSuggestion, DocumentView, EditOp, Group, UndoMeta, ViewUnit } from "@/lib/api-sop";
 import { isSameFocus, NO_PLACE, type Focus, type Pending, type PendingPlace } from "@/lib/assign-focus-model";
+import { opensTextBox } from "@/lib/assign-press-model";
 import type { Destination } from "@/lib/classify-model";
 import { createCommandQueue, isBarrier, isIdle, listUnsettled, mustDefer, shouldHalt, type QueuedCommand, type QueueState } from "@/lib/command-queue";
 import { enqueueDocWrite } from "@/lib/doc-write-queue";
@@ -360,8 +361,8 @@ export function useCommandQueue(env: CommandEnv, describePending: DescribePendin
     isDeferring: () => live.current.replayId === null && mustDefer(queue.getState()),
     /** 쌓인 글쇠 뒤의 고름도 차례를 기다리나 - 멈춘 동안은 둘러볼 수 있게 바로 고른다(다시 시도가 멈춘 때의 고름에서 잇는다) */
     isPickQueued: () => live.current.replayId === null && queue.getState().halted === null && queue.getState().waiting.some((command) => command.kind === "key"),
-    /** 글쇠를 더 쌓아도 되나 - 고쳐 쓰기(E)가 쌓여 있으면 그 뒤에 친 것은 열릴 글 칸의 글자다 */
-    canQueueKey: () => !listUnsettled(queue.getState()).some(({ payload }) => payload.kind === "key" && payload.key === "e"),
+    /** 글쇠를 더 쌓아도 되나 - 글 칸을 여는 글쇠(고쳐 쓰기 E · 번호 칸 ⇧N)가 쌓여 있으면 그 뒤에 친 것은 열릴 글 칸의 글자다 */
+    canQueueKey: () => !listUnsettled(queue.getState()).some(({ payload }) => payload.kind === "key" && !payload.ctrl && opensTextBox(payload)),
     /** 아직 끝나지 않은 명령 - 누르는 순간의 값(그려진 값이 아니라) */
     listUnsettled: () => listUnsettled(queue.getState()),
     /** 아직 되돌리기 기록에 없는 명령 - 응답이 온 장벽(새 보기만 기다린다)은 뺀다 */

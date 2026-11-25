@@ -539,7 +539,7 @@ await runStep("assign: H holds a unit without a destination, with a reason typed
   // 짝 줄이면 번호가 둘이다 - 첫 번호로 다시 찾는다
   const heldId = (await getText(page, "assign-row-id")).trim().split(" · ")[0];
   await page.waitForLoadState("networkidle");
-  await page.keyboard.press("h");
+  await page.keyboard.press("Shift+H");
   await wait(page, "assign-remark-modal");
   await page.locator('[data-testid="assign-remark-modal-text"]').fill("Smoke: not sure where it goes");
   await page.locator('[data-testid="assign-remark-modal-confirm"]').click();
@@ -682,7 +682,7 @@ await runStep("assign: a row moved earlier is read-only and Unassign frees it", 
     const saves = [];
     const onResponse = (response) => { if (response.url().includes("/groups/save")) saves.push(response.url()); };
     page.on("response", onResponse);
-    await page.keyboard.press("h");
+    await page.keyboard.press("Shift+H");
     await page.waitForTimeout(600);
     page.off("response", onResponse);
     return saves.length === 0 && (await page.locator('[data-testid="assign-legacy-move"]').count()) === 1;
@@ -3235,7 +3235,7 @@ await runStep("assign: AI suggestions come first and confirm one by one", {}, as
   const before = await progressDone(page);
   // AI는 판단을 쓰지 않는다 - 사람이 ↵를 누르거나(첫 카드로 바로, assign: enter 단계) A(Use)로 초안을 채운 뒤 ↵로 확정한다(설계 2026-11-19-ai-suggest-only D2)
   check("the row is not decided before Use", (await rowStatus(page)).includes("Unassigned"), await rowStatus(page));
-  await page.keyboard.press("a");
+  await page.keyboard.press("Shift+A");
   // 글쇠로 부른 Use는 고른 뒤 Confirm으로 포커스를 옮긴다 - 그 다음 ↵가 확정이다
   await page.waitForFunction(() => document.activeElement?.getAttribute("data-testid") === "assign-primary", null, { timeout: T });
   const saved = page.waitForRequest((request) => request.url().includes("/groups/save"), { timeout: T });
@@ -9254,7 +9254,7 @@ await runStep("assign: an AI-suggested figure takes its caption along when used"
   await openFigures(page, figure.document_id);
   await selectRowById(page, figure.display_id);
   await page.locator('[data-testid^="assign-rec-"] .dest-chip[data-source="ai"]').first().waitFor({ timeout: T });
-  await page.keyboard.press("a");
+  await page.keyboard.press("Shift+A");
   const line = page.locator(`[data-testid="assign-caption-${caption.lang}"]`);
   await line.waitFor({ timeout: T });
   check("Use puts the figure's caption in the decide box", (await line.innerText()).trim() === caption.text.trim(), await line.innerText());
