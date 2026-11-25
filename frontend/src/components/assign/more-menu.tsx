@@ -20,7 +20,7 @@ interface AssignMoreMenuProps {
   /** 원문이 같은 짝 수 - 0이면 항목이 없다 */
   identicalCount: number;
   onIdentical: () => void;
-  aiItems: AiAskItem[];
+  aiItems: readonly AiAskItem[];
   /** 지금 연 Old 문서 - 없으면 문서 초기화 항목을 막는다 */
   resetDocument: { id: number; label: string } | null;
   onReset: (scope: ResetScope) => void;

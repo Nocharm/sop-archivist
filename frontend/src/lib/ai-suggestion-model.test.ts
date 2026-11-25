@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { AiSuggestion } from "./api-sop";
-import { buildUseDraft, findRowSuggestion, indexLiveSuggestions, readSuggestedDestination, readSuggestionPlace } from "./ai-suggestion-model";
+import { buildUseDraft, dropHiddenSuggestions, filterAiItems, findRowSuggestion, HIDDEN_AI_KINDS, indexLiveSuggestions, readSuggestedDestination, readSuggestionPlace } from "./ai-suggestion-model";
 import type { SentenceSlot } from "./classify-model";
 
 function suggestion(id: number, kind: string, content: AiSuggestion["content"], extra: Partial<AiSuggestion> = {}): AiSuggestion {
@@ -11,6 +11,24 @@ function suggestion(id: number, kind: string, content: AiSuggestion["content"], 
 function slot(key: string, lang: "ko" | "en", sourceText: string, extra: Partial<SentenceSlot> = {}): SentenceSlot {
   return { key, target: null, lang, sourceIds: [Number(key.slice(1))], text: sourceText, sourceText, isAiPending: false, isTranslated: false, ...extra };
 }
+
+describe("hidden AI kinds", () => {
+  it("hides classify, split, translate and list reading", () => {
+    expect([...HIDDEN_AI_KINDS].sort()).toEqual(["classify", "split", "tobe_list", "translate"]);
+  });
+
+  it("drops hidden suggestions and keeps the rest", () => {
+    const items = [{ kind: "classify" }, { kind: "split" }, { kind: "match" }, { kind: "unwrap_order" }];
+    expect(dropHiddenSuggestions(items, false).map((item) => item.kind)).toEqual(["match", "unwrap_order"]);
+    expect(dropHiddenSuggestions(items, true)).toBe(items);
+  });
+
+  it("keeps only the requests whose answers are shown", () => {
+    const items = ["document", "match", "to-en", "to-ko", "split", "split-document", "pair-document"].map((key) => ({ key }));
+    expect(filterAiItems(items, false).map((item) => item.key)).toEqual(["match", "pair-document"]);
+    expect(filterAiItems(items, true)).toBe(items);
+  });
+});
 
 describe("indexLiveSuggestions and findRowSuggestion", () => {
   it("keeps the newest live suggestion per unit and drops stale or taken ones", () => {

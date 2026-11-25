@@ -525,6 +525,10 @@ describe("suggest mark", () => {
     expect(getMarks(makeSplitUnit({ split_suggestion_id: 4 }))).toContain("suggest");
     expect(getMarks(makeSplitUnit())).not.toContain("suggest");
   });
+
+  it("leaves the mark out while split suggestions are hidden", () => {
+    expect(getMarks(makeSplitUnit({ split_suggestion_id: 4 }), false, false)).toEqual([]);
+  });
 });
 
 describe("figures tab (mockup 2 D3)", () => {
