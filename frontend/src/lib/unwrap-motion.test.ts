@@ -11,6 +11,7 @@ import {
   pickOnScreenKeys,
   pickScrollAnchor,
   planUnwrapPhases,
+  planUnwrapRevert,
   type MotionBox,
   type UnwrapTimings,
 } from "./unwrap-motion";
@@ -50,6 +51,16 @@ describe("planUnwrapPhases", () => {
       after: { marker: "leave", duration: 160, easing: "exit" },
       direction: "reverse",
     });
+  });
+});
+
+describe("planUnwrapRevert", () => {
+  it("plays the first phase the other way round when the change is refused", () => {
+    expect(planUnwrapRevert(TIMINGS, false)).toEqual({ duration: planUnwrapPhases(TIMINGS, false).before.duration, direction: "reverse" });
+  });
+
+  it("brings the attached marks back when going back to a table is refused", () => {
+    expect(planUnwrapRevert(TIMINGS, true)).toEqual({ duration: 200, direction: "normal" });
   });
 });
 

@@ -1400,6 +1400,18 @@
   .deleted-open[data-open] > .fold-inner { animation: fold-release 0s var(--dur-slow) forwards; }
   @keyframes fold-release { to { overflow: visible; } }
   .pg[data-strips] .deleted-open .strip[data-strip-unit] { background: var(--danger-tint); }
+  /* 누른 순간 접힌 줄은 저장될 때까지 박스와 같은 처리 중 쉬머(motion.css pending-sweep)와 기다리는 칩, 저장되지 못해 다시 펼친 박스(deleted-release)는 위험 바탕 없이 */
+  .pg[data-strips] .deleted-line[data-pending] {
+    background-image: linear-gradient(100deg, transparent 30%, color-mix(in oklab, var(--accent) 16%, transparent) 50%, transparent 70%);
+    background-size: 250% 100%;
+    background-repeat: no-repeat;
+    animation: pending-sweep 1200ms linear infinite;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .pg[data-strips] .deleted-line[data-pending] { background-image: linear-gradient(color-mix(in oklab, var(--accent) 8%, transparent) 0 0); background-size: 100% 100%; animation: none; }
+  }
+  .deleted-line > .pending-pill { position: static; flex: none; height: 16px; }
+  .deleted-release[data-open] > .fold-inner { animation: fold-release 0s var(--dur-slow) forwards; }
   .fold-go { font-family: var(--font-mono); font-size: 12px; }
 
   /* 조각 사이 틈 - 위아래 합치기가 늘 보인다(평소엔 낮고 넓은 알약, 올리면 라벨이 펼쳐진다) */
@@ -1565,6 +1577,7 @@
   :is(.strip-gap, .cell-gap) > .pending-pill { top: 50%; left: calc(min(var(--gap-tab, 0px), var(--gap-tab-cap, 9999px)) + var(--pg-pad-l, 0px)); translate: 0 -50%; }
   .strip-gap:has(> .pending-pill) { z-index: 2; }
   :is(.unwrap-head, .toc-head-row) > .pending-pill { position: static; margin-left: 8px; }
+  .unwrap-head-row > .pending-pill { position: static; align-self: center; flex: none; margin-left: 8px; }
   /* 안내 줄이 선 박스의 줄 끝 고리 표시 - 짝이 멀리 있다는 것을 같이 알린다 */
   .pmark-host[data-on] { background: var(--accent-tint); }
   .pmark-host[data-on] .pmark.pair { color: var(--accent); }

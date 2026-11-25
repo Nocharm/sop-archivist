@@ -13,8 +13,8 @@
 | 2b | `feat/inspector-float` | 합침 | v1.6.2 · aec15ead | vitest 1934 · build 경고 0 · `assign:` 스모크 전체 1117 통과 · 겹침 감사 장면 1120/1280/1440 | 판을 맨 위로 끌면 상단 바를 덮음(다시 끌어 내릴 수 있음), 접어도 칸 끝 빈 칸은 남음 — 거슬리면 고침 |
 | 3a | `perf/assign-measure` | 합침 | (번호는 다음 푸시에 함께) 1aaa2de0 | pytest+시드 · vitest 1961 · ruff(화면 변경 없음, 스모크 해당 없음) | 결과 문서(T3)는 3b 앞뒤를 잰 뒤 |
 | 3b | `fix/assign-command-queue` | 합침 | v1.6.8 · 278c271d | vitest 2071 · build 경고 0 · `assign:` 스모크 1144(새 단계의 경합 하나는 응답을 기다리게 고쳐 통과) | 배정 취소 응답에 새 revision이 없어 취소 직후 같은 박스에 이어 누르면 그 단위만 받은 값을 씀 |
-| 3c | `fix/assign-instant-motion` | 진행(11-26) | | | |
-| 3d | `perf/assign-filter-chunks` | 대기 | | | |
+| 3c | `fix/assign-instant-motion` | 합침 | v1.6.9 · a4e02416 | vitest 2092 · build 경고 0 · `assign:` 스모크 전체 1164 통과 | 응답 뒤 처리에서 던지면 걷은 표 선이 잠깐 거꾸로 돌아 보일 수 있음(자료는 맞음) |
+| 3d | `perf/assign-filter-chunks` | 진행(11-26) | | | |
 | 3e | `perf/assign-number-input` | 건너뜀 |  | 번호 칸 5글자 CPU 4배 가운데 값 25ms(기준 100ms) | 조건(100ms 초과)이 안 됨 — 브랜치를 만들지 않음 |
 | 4a | `fix/assign-enter` | 대기 | | | |
 | 4b | `feat/assign-keymap` | 대기 | | | |
@@ -51,6 +51,8 @@
 - 1b · `source-rules.test.ts:199` 안내 글의 "(or Combobox)"만 뺌(규칙 그대로)
 - 5c · `frontend/src/lib/assign-focus-model.test.ts` `new_edit` 원인에 `isReleased: false` · 타입이 바뀜(기대값 그대로)
 - 3b · `frontend/src/lib/assign-focus-model.test.ts` `canStart` 시험 둘 → 판단 저장 중 잠그지 않음 · 둘 다 잡으면 잠김 · `dropFollows` · 큐 규칙(§14 승인)
+- 3c · `smoke/assign.mjs` "keys pressed during a slow save"의 marks · halted · `assign-paper-piece-<id>`의 `data-pending` → `assign-paper-deleted-u<id>`의 `data-pending` · 지운 박스가 누른 순간 접힘
+- 3c · `components/ui/motion.test.ts` · `motion.run(change, opt)` 6곳 → `begin(opt).commit(change)`(기대값 그대로), `lib/deleted-fold-model.test.ts` `OPTIONS`에 `pendingDeletes` · 필수 인자가 생김
 
 ## 아침에 볼 것 (사람이 정할 것 · 봐 줄 것)
 
