@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.equis.client import is_sendable_number
 from app.equis.rules import normalize_number
 from app.sop.models import Extraction, Unit, UnitRef
-from app.sop.noise import read_toc_reasons
+from app.sop.noise import list_heading_names, read_toc_reasons
 from app.sop.segment import (
     CAPTION_OF_FLAG,
     CLAUSE_NUMBER_FLAG,
@@ -45,10 +45,6 @@ _REF_SECTION_NAME = re.compile(
     r"|참고 ?문헌|참고 ?문서|참조(?: ?문서)?|관련 ?문서|참고 ?자료",
     re.IGNORECASE,
 )
-# 이보다 긴 글은 절 제목으로 보지 않는다 — 절 이름은 짧고, 번호 떼기가 긴 글에서 느려지지 않게
-MAX_REF_HEADING_CHARS = 200
-# 제목 앞 절 번호("7." · "7.1" · "(7)" · "VII.")
-_HEADING_NUMBER = re.compile(r"\s*(?:\(?\d+(?:\.\d+)*\.?\)?|[IVX]+\.)\s*")
 
 _NUMBER = rf"{DOCUMENT_NUMBER_BODY}(?![A-Za-z0-9])"
 _DOCUMENT_NUMBER = re.compile(DOCUMENT_NUMBER_BODY)
@@ -181,11 +177,7 @@ async def load_proposing_extractions(session: AsyncSession, extraction_ids: Coll
 
 def is_ref_section_heading(text: str) -> bool:
     """제목이 Reference 절을 여는가 — 절 번호를 떼고, 괄호 · 빗금으로 나뉜 조각("참고 문헌 (References)") 하나라도 이름과 같으면."""
-    if len(text) > MAX_REF_HEADING_CHARS:
-        return False
-    body = _HEADING_NUMBER.sub("", text, count=1)
-    parts = (" ".join(part.split()).strip(" :.-–") for part in re.split(r"[()/|]", body))
-    return any(part and _REF_SECTION_NAME.fullmatch(part) for part in parts)
+    return any(_REF_SECTION_NAME.fullmatch(part) for part in list_heading_names(text))
 
 
 @dataclass(frozen=True)
