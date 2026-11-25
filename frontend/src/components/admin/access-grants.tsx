@@ -17,7 +17,9 @@ import { humanizeApiError, type TFunc } from "@/lib/api-errors";
 import { formatKst } from "@/lib/datetime";
 import { useI18n } from "@/lib/i18n";
 import { BUTTON_PRIMARY, BUTTON_SECONDARY, CHIP } from "@/lib/ui-classes";
+import type { SubjectNames } from "@/lib/subject-label";
 import { useListView } from "@/lib/use-list-view";
+import { useSubjectNames } from "@/lib/use-subject-names";
 import { MorphButton } from "@/components/ui/morph-button";
 import { Tooltip } from "@/components/ui/tooltip";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -37,8 +39,8 @@ function getGrantWhatLabel(grant: Grant, t: TFunc): string {
   return translateOrRaw(t, `permission.${key}`, key);
 }
 
-function getGrantSubjectLabel(grant: Grant): string {
-  return grant.subject_missing ? grant.subject_id : grant.subject_name || grant.subject_id;
+function getGrantSubjectLabel(grant: Grant, names: SubjectNames): string {
+  return grant.subject_missing ? grant.subject_id : names.get(grant.subject_type, grant.subject_id, grant.subject_name);
 }
 
 function SubjectTypeIcon({ type }: { type: SubjectType }) {
@@ -204,11 +206,12 @@ function GrantFormModal({ onClose, onSaved }: GrantFormModalProps) {
 
 interface RevokeGrantModalProps {
   grant: Grant;
+  names: SubjectNames;
   onClose: () => void;
   onRevoked: () => void;
 }
 
-function RevokeGrantModal({ grant, onClose, onRevoked }: RevokeGrantModalProps) {
+function RevokeGrantModal({ grant, names, onClose, onRevoked }: RevokeGrantModalProps) {
   const { t } = useI18n();
   const [isRevoking, setIsRevoking] = useState(false);
   const [error, setError] = useState<unknown>(null);
@@ -247,7 +250,7 @@ function RevokeGrantModal({ grant, onClose, onRevoked }: RevokeGrantModalProps) 
       <p className="text-sm text-ink">
         {t("grants.revoke.body", {
           what: getGrantWhatLabel(grant, t),
-          subject: getGrantSubjectLabel(grant),
+          subject: getGrantSubjectLabel(grant, names),
         })}
       </p>
       {error !== null && (
@@ -262,6 +265,7 @@ function RevokeGrantModal({ grant, onClose, onRevoked }: RevokeGrantModalProps) 
 export function AccessGrants() {
   const { t } = useI18n();
   const grants = useLoaded(listGrants);
+  const names = useSubjectNames();
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [revokeTarget, setRevokeTarget] = useState<Grant | null>(null);
   const view = useListView(LIST_KEY);
@@ -280,7 +284,7 @@ export function AccessGrants() {
               <SubjectTypeIcon type={grant.subject_type} />
             </span>
           </Tooltip>
-          <span className="font-semibold text-ink">{getGrantSubjectLabel(grant)}</span>
+          <span className="font-semibold text-ink">{getGrantSubjectLabel(grant, names)}</span>
           {!grant.subject_missing && <span className="text-xs font-normal text-ink-3 [grid-column:2]">{grant.subject_id}</span>}
           {grant.subject_missing && (
             <span data-testid={`grant-missing-${grant.id}`} className={`${CHIP} gap-1 [grid-column:2]`}>
@@ -367,6 +371,7 @@ export function AccessGrants() {
       {revokeTarget !== null && (
         <RevokeGrantModal
           grant={revokeTarget}
+          names={names}
           onClose={() => setRevokeTarget(null)}
           onRevoked={() => {
             setRevokeTarget(null);

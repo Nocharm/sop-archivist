@@ -41,6 +41,11 @@ const ADMIN_TABS: AdminTab[] = [
 
 const ACCESS_SUBS: AccessSubKey[] = ["roles", "grants", "audit", "lookup"];
 
+// 주소의 하위 항목 - 모르는 값이면 null(기본 항목으로 떨어진다)
+function readSub(value: string | null): AccessSubKey | null {
+  return ACCESS_SUBS.find((key) => key === value) ?? null;
+}
+
 function AccessPanel({ sub }: { sub: AccessSubKey }) {
   return (
     <>
@@ -57,7 +62,9 @@ function AdminContent() {
   const me = useMe();
   const router = useRouter();
   const searchParams = useSearchParams();
-  const [sub, setSub] = useState<AccessSubKey>("roles");
+  // 하위 항목은 주소(?sub=)가 정한다 - 다른 탭에 다녀오면 마지막에 본 항목으로 돌아온다
+  const [lastSub, setLastSub] = useState<AccessSubKey>(() => readSub(searchParams.get("sub")) ?? "roles");
+  const sub = readSub(searchParams.get("sub")) ?? lastSub;
 
   const allowedTabs = ADMIN_TABS.filter((tab) => hasPermission(me, tab.permission));
   // 숨겨진 탭을 가리키는 딥링크(?tab=)는 허용된 첫 탭으로 떨어진다
@@ -70,14 +77,14 @@ function AdminContent() {
   if (!activeTab) return null;
 
   // 주소만 바꾼다(서버 왕복 없이 useSearchParams가 따라온다) - 새로고침·링크 공유에서 같은 탭이 열린다
-  const selectTab = (key: AdminTabKey) => {
-    window.history.replaceState(null, "", `/admin?tab=${key}`);
+  const selectTab = (key: AdminTabKey, nextSub: AccessSubKey = sub) => {
+    window.history.replaceState(null, "", key === "access" ? `/admin?tab=access&sub=${nextSub}` : `/admin?tab=${key}`);
   };
 
   // 권한 하위 항목을 누르면 권한 탭으로 옮기면서 그 항목을 연다
   const selectSub = (key: AccessSubKey) => {
-    setSub(key);
-    if (activeTab.key !== "access") selectTab("access");
+    setLastSub(key);
+    selectTab("access", key);
   };
 
   return (
