@@ -6,6 +6,7 @@
 |------|------|
 | [superpowers/specs/2026-11-05-sop-restructuring-e2e-design.md](superpowers/specs/2026-11-05-sop-restructuring-e2e-design.md) | 제품 설계: SOP 재구성 End-to-End(쪼개기 → 분류·제안 → 결과물 A·B·C, 두 입구, 데이터 모델, AI 경계, 화면 인수인계) |
 | [superpowers/specs/2026-11-25-split-first-design.md](superpowers/specs/2026-11-25-split-first-design.md) | 다음 패치 설계(승인 전): 새 문서 생성 숨기기, 화면 문제 셋, Old · New 같은 쪼개기 규칙, 양 단 New도 같은 용지, 손질 다듬기 — 스텝 · 브랜치 · 정답 문서 꼴 |
+| [superpowers/specs/2026-11-23-assign-feedback-2.md](superpowers/specs/2026-11-23-assign-feedback-2.md) | T/F 피드백 2차 명세 원문(17개 항목, 모두 확정 · 다음 패치 범위): 요구 · 문구 · 수용 기준 · 시나리오. 겹치는 곳은 쪼개기 먼저 설계 11-1절 |
 | [superpowers/handoff/2026-11-19-paragraph-split-requests.md](superpowers/handoff/2026-11-19-paragraph-split-requests.md) | 문서 문단 분리 · 문단 엑셀 개선 요청(사용자, 2026-11-19, 사진에서 옮김) 16항목 + 공통 요구(제로베이스 통일 설계)와 시안 1 · 2 결정. 작은 것 · 시안 1(v1.2.11) · 시안 2(v1.2.12~v1.3.2) 됨 — 남은 것은 끝 "다음 순서"의 4번 2차(매핑 · 비교 엑셀) |
 | [qa/feature-map.md](qa/feature-map.md) | 기능 맵(에이전트용) — 화면마다 도달 주소·조작 요점·알려진 함정·스모크 `ONLY` 머리·설명서 자리. 앱이 원본, 맵은 색인(화면을 바꾸면 같은 커밋에서 고친다) |
 | [../frontend/docs/design/2026-11-07-frontend-design-foundations.md](../frontend/docs/design/2026-11-07-frontend-design-foundations.md) | 프런트 디자인 기초 — 토큰(색 값의 단일 소스는 `frontend/src/styles/tokens.css`)·글꼴·화면 구조·상태 표현·동작 규칙·언어. 화면 코드 주석이 "디자인 문서 N절"로 절 번호를 참조한다 |
