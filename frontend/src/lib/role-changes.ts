@@ -29,3 +29,10 @@ export function applyRoleChanges(permissions: readonly string[], changes: Readon
 export function countHolders(roles: readonly Pick<Role, "grant_count">[]): number {
   return roles.reduce((sum, role) => sum + role.grant_count, 0);
 }
+
+/** 화면에 보이던 역할과 지금 서버의 역할이 같은가 - 사라졌으면 다르다 */
+export function isSameRole(shown: Pick<Role, "name" | "description" | "permissions">, fresh: Pick<Role, "name" | "description" | "permissions"> | undefined): boolean {
+  if (!fresh) return false;
+  const held = new Set(fresh.permissions);
+  return shown.name === fresh.name && shown.description === fresh.description && held.size === new Set(shown.permissions).size && shown.permissions.every((key) => held.has(key));
+}

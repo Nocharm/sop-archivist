@@ -9,7 +9,7 @@ from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
 from pydantic import BaseModel, Field, StringConstraints
-from sqlalchemy import delete, func, select
+from sqlalchemy import and_, delete, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -445,10 +445,24 @@ async def remove_grant(
 @router.get("/audit", response_model=list[AuditOut])
 async def list_audit(
     limit: int = Query(100, ge=1),
+    before: int | None = Query(None, ge=1),
     session: AsyncSession = Depends(get_session),
 ) -> list[AuditOut]:
+    """최신순. before(기록 id)를 주면 그 기록보다 먼저 남은 것만 — 이어 불러오기."""
+    stmt = select(AccessAuditEvent)
+    if before is not None:
+        # 시각이 같은 기록도 건너뛰지 않게 정렬과 같은 (시각, id)로 끊는다
+        anchor = await session.get(AccessAuditEvent, before)
+        if anchor is None:
+            raise HTTPException(status_code=404, detail="audit event not found")
+        stmt = stmt.where(
+            or_(
+                AccessAuditEvent.occurred_at < anchor.occurred_at,
+                and_(AccessAuditEvent.occurred_at == anchor.occurred_at, AccessAuditEvent.id < anchor.id),
+            )
+        )
     events = (await session.scalars(
-        select(AccessAuditEvent)
+        stmt
         .order_by(AccessAuditEvent.occurred_at.desc(), AccessAuditEvent.id.desc())
         .limit(min(limit, MAX_AUDIT_LIMIT))
     )).all()

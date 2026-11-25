@@ -9,6 +9,7 @@ import { DataList, ListViewToggle, type DataColumn } from "@/components/ui/data-
 import { Select } from "@/components/ui/select";
 import { EmptyState } from "@/components/ui/empty-state";
 import { PanelTitle } from "@/components/admin/panel-title";
+import { formatCount } from "@/lib/admin-format";
 import { getAiUsage, pingAi, type AiPing, type AiUsageDay } from "@/lib/api";
 import { humanizeApiError } from "@/lib/api-errors";
 import { useI18n } from "@/lib/i18n";
@@ -20,6 +21,10 @@ import { useLoaded } from "@/lib/use-loaded";
 const USAGE_DAY_OPTIONS = [7, 30, 90];
 const LIST_KEY = "admin-ai-usage";
 const DEFAULT_USAGE_DAYS = 30;
+
+function sumUsage(days: readonly AiUsageDay[], key: "calls" | "failed" | "prompt_tokens" | "completion_tokens"): number {
+  return days.reduce((sum, day) => sum + day[key], 0);
+}
 
 type PingResult = { kind: "ok"; ping: AiPing } | { kind: "error"; error: unknown };
 
@@ -49,7 +54,7 @@ export function AiPanel() {
     key,
     header: label,
     align: "end",
-    cell: (day) => day[key],
+    cell: (day) => formatCount(day[key]),
   });
   const usageColumns: DataColumn<AiUsageDay>[] = [
     { key: "date", header: t("ai.usage.column.date"), card: "title", nowrap: true, cell: (day) => <span className="tabular-nums">{day.date}</span> },
@@ -106,6 +111,16 @@ export function AiPanel() {
         )}
         {usage.data !== null && usage.data.length === 0 && (
           <EmptyState icon={Bot} testId="ai-usage-empty" title={t("ai.usage.empty")} compact />
+        )}
+        {usage.data !== null && usage.data.length > 0 && (
+          <p className="adm-note" data-testid="ai-usage-total">
+            {t("ai.usage.total", {
+              calls: formatCount(sumUsage(usage.data, "calls")),
+              failed: formatCount(sumUsage(usage.data, "failed")),
+              prompt: formatCount(sumUsage(usage.data, "prompt_tokens")),
+              completion: formatCount(sumUsage(usage.data, "completion_tokens")),
+            })}
+          </p>
         )}
         {usage.data !== null && usage.data.length > 0 && (
           <DataList

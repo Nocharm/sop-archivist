@@ -19,7 +19,7 @@ import { deleteRole, listGrants, listRoles, updateRole, type Role } from "@/lib/
 import { humanizeApiError } from "@/lib/api-errors";
 import { useI18n } from "@/lib/i18n";
 import { PERMISSION_GROUPS } from "@/lib/permission-groups";
-import { applyRoleChanges, countHolders, toggleChange, type RoleChanges } from "@/lib/role-changes";
+import { applyRoleChanges, countHolders, isSameRole, toggleChange, type RoleChanges } from "@/lib/role-changes";
 import { BUTTON_PRIMARY, BUTTON_SECONDARY } from "@/lib/ui-classes";
 import { useLoaded } from "@/lib/use-loaded";
 import { useSubjectDirectory } from "@/lib/use-subject-names";
@@ -104,6 +104,12 @@ export function AccessRoles({ onOpenGrants }: { onOpenGrants: (roleId: number) =
     setIsSaving(true);
     const left = new Map(changes);
     try {
+      // 저장은 역할의 권한 전체를 바꿔 쓴다 - 그 사이 다른 사람이 고친 역할을 옛 값으로 덮지 않게, 직전에 다시 받아 같을 때만 쓴다
+      const fresh = new Map((await listRoles()).map((role) => [role.id, role]));
+      if (changedRoles.some((role) => !isSameRole(role, fresh.get(role.id)))) {
+        showToast(t("roles.matrix.changedElsewhere"), "error");
+        return;
+      }
       for (const role of changedRoles) {
         await updateRole(role.id, { name: role.name, description: role.description, permissions: applyRoleChanges(role.permissions, changes.get(role.id)) });
         left.delete(role.id);

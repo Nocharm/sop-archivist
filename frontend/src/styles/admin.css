@@ -1,6 +1,63 @@
-/* 관리 화면(/admin) 전용 - .adm-* 이름과 [data-testid="admin-panel-*"] 안에서만 쓴다. 공용 components.css는 건드리지 않는다. 색은 토큰만. */
+/* 관리 화면(/admin) 전용 - .adm-* 이름과 관리 본문(.adm-scope) 안에서만 쓴다. 공용 components.css는 건드리지 않는다. 색은 토큰만. */
 
 @layer components {
+  /* 표 모양 - 공용 .dtable 위에 관리 본문에서만 얹는다: 줄 52px · 좌우 16px · 머리 배경 없음 · 짝수 줄 옅게 · 올린 줄 선택색 */
+  .adm-scope .dl-table th { padding: 8px 16px; background: transparent; font-size: var(--fs-cap); line-height: var(--lh-cap); font-weight: 500; color: var(--ink-3); }
+  .adm-scope .dl-table td { height: 52px; padding: 6px 16px; vertical-align: middle; }
+  .adm-scope .dl-table tbody tr:nth-child(even) td { background: var(--sunken); }
+  .adm-scope .dl-table tbody tr:hover td { background: var(--sel-bg); }
+  .adm-scope .dl-table tbody tr.dgroup td, .adm-scope .dl-table tbody tr.dgroup:hover td { height: auto; padding: 14px 16px 6px; background: transparent; }
+  /* 칩 - 테두리 없이 옅은 채움 */
+  .adm-scope .dl-table .tag, .adm-scope .dcard .tag { border-color: transparent; background: var(--sunken); color: var(--ink-2); }
+  .adm-scope .dl-table tbody tr:nth-child(even) .tag { background: var(--hover); }
+
+  /* 왼쪽 메뉴 묶음 제목 */
+  .adm-nav-group { padding: 12px 10px 4px; font-size: var(--fs-micro); line-height: var(--lh-micro); font-weight: 600; color: var(--ink-3); }
+  .side-nav > [role="presentation"]:first-child .adm-nav-group { padding-top: 0; }
+
+  /* 표준 골격 - 편집 칸은 평소 글처럼 보이고 올리거나 초점이 가면 테두리(크기가 같아 움직이지 않는다) */
+  .adm-outline td { height: 56px; padding: 4px 12px; vertical-align: middle; }
+  .adm-outline th { padding: 8px 12px; background: transparent; font-size: var(--fs-cap); font-weight: 500; color: var(--ink-3); }
+  .adm-quiet { width: 100%; min-width: 0; height: 28px; padding: 0 6px; margin-left: -6px; border: 1px solid transparent; border-radius: var(--r-1); background: transparent; color: var(--ink); font-size: var(--fs-ui); text-overflow: ellipsis; }
+  .adm-quiet.strong { font-weight: 600; }
+  .adm-quiet.mono { height: 22px; font-family: var(--font-mono); font-size: var(--fs-cap); }
+  .adm-quiet:hover:not(:disabled) { border-color: var(--line-2); background: var(--surface); }
+  .adm-quiet:focus, .adm-quiet.shown { border-color: var(--accent); outline: none; background: var(--surface); }
+  .adm-quiet:focus { box-shadow: 0 0 0 1px var(--accent); }
+  .adm-outline-key { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono); font-size: var(--fs-cap); line-height: var(--lh-cap); color: var(--ink-3); }
+  .adm-outline td:first-child { white-space: nowrap; }
+  .adm-outline-sub td { height: auto; padding-top: 0; border-top: 0; }
+  .adm-outline tr[data-open] > td { border-bottom-color: transparent; }
+  .adm-outline-children { display: flex; flex-wrap: wrap; gap: 12px; padding-bottom: 8px; }
+  .adm-outline-field { display: grid; gap: 2px; width: 200px; }
+  .adm-avs { display: inline-flex; padding-left: 5px; }
+  .adm-av { display: inline-grid; place-items: center; width: 22px; height: 22px; margin-left: -5px; border: 1.5px solid var(--surface); border-radius: 50%; background: var(--line); font-size: var(--fs-micro); font-weight: 600; color: var(--ink-2); }
+  .adm-av.more { font-weight: 400; }
+  .adm-outline-field.wide { flex: 1; min-width: 280px; }
+
+  /* 변경 기록 - 종류 점(부여 추가 · 회수 · 역할 변경) */
+  .adm-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--line-2); }
+  .adm-dot[data-kind="add"] { background: var(--st-ok-fill); }
+  .adm-dot[data-kind="remove"] { background: var(--danger-fill); }
+  .adm-dot[data-kind="role"] { background: var(--ink-3); }
+
+  /* AI 지침 버전 타임라인 */
+  .adm-timeline { display: grid; border: 1px solid var(--line); border-radius: var(--r-3); overflow: hidden; }
+  .adm-version { display: flex; align-items: center; min-height: 52px; border-bottom: 1px solid var(--line); padding-right: 8px; }
+  .adm-version:last-child { border-bottom: 0; }
+  .adm-version:hover { background: var(--hover); }
+  .adm-version[aria-selected="true"] { background: var(--sel-bg); }
+  .adm-version-main { flex: 1; display: flex; align-items: center; gap: 12px; min-width: 0; padding: 6px 14px; text-align: left; }
+  .adm-version .adm-two { flex: 1; }
+  .adm-node { flex: none; width: 9px; height: 9px; border: 2px solid var(--line-2); border-radius: 50%; background: var(--surface); }
+  .adm-node[data-active] { border-color: var(--accent); background: var(--accent); }
+
+  /* Bundle 진행 막대 · 구성원 머리글자 */
+  .adm-progress { display: grid; gap: 4px; width: 110px; }
+  .adm-bar-track { display: block; height: 4px; border-radius: 2px; background: var(--line); overflow: hidden; }
+  .adm-bar-track > span { display: block; height: 100%; background: var(--accent); }
+  .adm-av[data-off] { opacity: .5; }
+
   .adm-split { display: grid; grid-template-columns: minmax(280px, 1fr) minmax(0, 2fr); gap: 20px; align-items: start; }
   @media (max-width: 1023px) { .adm-split { grid-template-columns: minmax(0, 1fr); } }
   .adm-master { display: grid; gap: 8px; min-width: 0; }
@@ -98,9 +155,6 @@
   .adm-holders { position: relative; display: inline-flex; }
   .adm-holders-btn { display: inline-flex; align-items: center; gap: 8px; min-height: 32px; border-radius: var(--r-2); white-space: nowrap; }
   .adm-holders-btn:hover .adm-t2 { color: var(--accent); text-decoration: underline; }
-  .adm-avs { display: inline-flex; padding-left: 5px; }
-  .adm-av { display: inline-grid; place-items: center; width: 22px; height: 22px; margin-left: -5px; border: 1.5px solid var(--surface); border-radius: 50%; background: var(--sunken); font-size: var(--fs-micro); font-weight: 600; color: var(--ink-2); }
-  .adm-av.more { font-weight: 400; }
   .adm-holders-pop { position: fixed; z-index: 40; padding-top: 6px; }
   .adm-pop-inner { display: grid; gap: 6px; padding: 10px 12px; border: 1px solid var(--line-2); border-radius: var(--r-3); background: var(--raised); box-shadow: var(--shadow-2); animation: fade-in var(--dur-fast) var(--ease-enter); }
   .adm-holder { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: var(--fs-ui); color: var(--ink); }
