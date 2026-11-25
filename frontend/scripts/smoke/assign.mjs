@@ -2872,8 +2872,10 @@ await runStep("assign: front matter - folded blocks with buttons, U and R on a l
   const title = page.locator(`[data-testid="assign-paper-noise-line-${front[0].id}"]`);
   const pickTitle = async () => {
     if ((await head.getAttribute("aria-expanded")) !== "true") await head.click();
-    await title.click();
-    await page.locator(`.toc-line[data-picked] [data-testid="assign-paper-noise-line-${front[0].id}"]`).waitFor({ timeout: T });
+    // 고른 줄을 다시 누르면 고름이 풀린다 - 사유를 쓴 뒤처럼 이미 골라져 있으면 누르지 않는다
+    const picked = page.locator(`.toc-line[data-picked] [data-testid="assign-paper-noise-line-${front[0].id}"]`);
+    if ((await picked.count()) === 0) await title.click();
+    await picked.waitFor({ timeout: T });
   };
   await title.waitFor({ timeout: T });
   check("the table is one line with its size", (await page.locator(`[data-testid="assign-paper-noise-line-${front[1].id}"]`).innerText()).trim() === "Table 1 (2×2)");
