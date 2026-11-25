@@ -172,6 +172,17 @@ describe("contents fold", () => {
     expect(listSheetItems(ROWS, 1, new Set(), false).every((item) => item.type === "row")).toBe(true);
   });
 
+  it("folds contents rows of a paragraph sheet into one line", () => {
+    const rows = [row(["Section No."], { kind: "header" }), row(["", "목차 하나"], { toc: true, noise: "toc" }), row(["", "목차 둘"], { toc: true, noise: "toc" }), row(["1.", "본문"])];
+    expect(listSheetItems(rows, 1, new Set(), true).map((item) => item.type)).toEqual(["fold", "row"]);
+    expect(listSheetItems([rows[0], rows[1], rows[3]], 1, new Set(), true).map((item) => item.type)).toEqual(["row", "row"]);
+  });
+
+  it("puts the folded label in the Text column when the sheet has no column keys", () => {
+    const rows = [row(["", "목차 하나", "", "", "x"], { toc: true, noise: "toc" }), row(["", "목차 둘"], { toc: true, noise: "toc" })];
+    expect(buildFoldedCells(rows, [], { label: "▸ 목차 2줄", more: "" }).map((item) => item.text)).toEqual(["", "▸ 목차 2줄", "", "", "x"]);
+  });
+
   it("writes the row range, the label, the unit ellipsis and the more-lines tail onto the first row", () => {
     const cells = buildFoldedCells(ROWS.slice(1, 3), KEYS, { label: "Contents · 2 lines", more: "+ 1 more lines" });
     expect(cells.map((item) => item.text)).toEqual(["1-2", "Contents · 2 lines", "OLD-1-001 …", "1. Purpose ... 3 + 1 more lines", "Deleted"]);

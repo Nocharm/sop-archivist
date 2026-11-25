@@ -18,16 +18,16 @@
 | 3e | `perf/assign-number-input` | 건너뜀 |  | 번호 칸 5글자 CPU 4배 가운데 값 25ms(기준 100ms) | 조건(100ms 초과)이 안 됨 — 브랜치를 만들지 않음 |
 | 4a | `fix/assign-enter` | 합침 | v1.6.12 · 53442350 | vitest 2203 · build 경고 0 · 스모크 전체 2208 + 새 단계 경합 하나 고쳐 3번 통과 | 보류 줄에서 ↵ 한 번이 첫 카드로 확정(B1-R2 글자대로) |
 | 4b | `feat/assign-keymap` | 합침 | v1.6.13 · 2f4c6f21 | vitest 2281 · build 경고 0 · `assign:` 스모크 1226 통과(고침 뒤 6단계 다시) | 맥에서 Ctrl+←→는 공간 전환과 겹칠 수 있음 |
-| 4c | `feat/assign-merge-keys` | 대기 | | | |
+| 4c | `feat/assign-merge-keys` | 진행(11-26) | | | |
 | 4d | `feat/number-cell-buttons` | 합침 | v1.6.7 · 3670d20c | vitest 1969 · build 경고 0 · `assign:` 스모크 전체 통과(5c와 합친 트리) | IME 조합 중 Enter는 전과 같음(범위 밖), 번호 칸 단계 둘은 앞 단계에 기대어 혼자 돌리면 실패(dev에서도 같음) |
 | 5a | `feat/split-rule-2` | 합침 | v1.6.3 · 42e4751b | pytest 3404+시드 통과 · 10 xfail(R3 · R4 몫) · vitest 1934 · build 경고 0 · 스모크 전체 2111 통과 | PDF의 콜론 뒤 줄표 목록은 나누지 않는다(사람이 나눔) |
 | 5b | `feat/split-front-matter` | 합침 | v1.6.11 · ff0a6718 | pytest 3622+시드 15 · vitest 2167 · build 경고 0 · 스모크 전체 2181(새 단계의 두 번 누름 하나는 단계를 고쳐 통과) | 아래 "아침에 볼 것" |
 | 5c | `feat/split-new-parity` | 합침 | v1.6.6 · d750564c | pytest 3453+시드 14(6 xfail = R3 몫) · vitest 1969 · build 경고 0 · `assign:` 스모크 전체 통과(4d와 합친 트리) | Old 한/영 짝이 New 두 문장에 이어져 하나만 풀린 뒤 다시 하기는 409(있던 것) |
-| 6-1 | `feat/new-paper-1-render` | 진행(11-26) | | | |
-| 6-2 | `feat/new-paper-2-pick` | 대기 | | | |
+| 6-1 | `feat/new-paper-1-render` | 모음 `feat/new-paper`에 합침 | 7dcf645f | vitest 2361 · build 경고 0 · `assign:` 스모크 1233 + 부하에서 흔들린 둘은 혼자 통과 | New 문장은 글쇠만으로 고를 길이 없음(계획 글자대로, 6-2에서 다시) |
+| 6-2 | `feat/new-paper-2-pick` | 진행(11-26) | | | |
 | 6-3 | `feat/new-paper-3-tools` | 대기 | | | |
 | 7 | 계획 4의 일곱 | 대기 | | | |
-| 8 | 계획 5의 아홉 | 대기 | | | |
+| 8 | 계획 5의 아홉 | 진행 | | | 앞선 것에 매이지 않는 `space-preview-trim` · `excel-a-strike` · `progress-by-disposition`부터 |
 
 ## 따라 바뀐 시험 (브랜치 · 파일:줄 · 전 → 뒤 · 까닭)
 
@@ -64,6 +64,9 @@
 - 4b · `smoke/assign.mjs:542 · 685` `h` → `Shift+H`, `3238 · 9257` `a` → `Shift+A` · 글쇠가 바뀜
 - 4b · `assign-press-model.test.ts` 글자 → id(같은 검사), `noise-keys.test.ts` · `classify-model.test.ts` `getRowStep` 3개 → `assign-keymap.test.ts`로 옮김 · 함수가 없어짐
 - 4b · `paper-chunks.test.ts` 시간 제한 5초 → 30초(단언 그대로) · 부하에서 시간 초과
+- space-preview-trim · `test_sop_paragraph_excel.py` 호출 8곳 시그니처 · `test_contents_lines_in_the_paragraph_excel_are_unchanged` → `…are_left_out_unless_the_check_is_on`(기본에서 목차 줄이 빠짐, `toc=true`는 전과 같음) · F1
+- space-preview-trim · `test_remark_column_…_the_preview_matches_the_file` 파일 행에서 [Figure] 행을 뺀 것과 견줌 · `test_assign_preview_lists_only_…` 위치 칸만 비우고 견줌 · 미리보기가 그림 · Paragraph 글자를 뺌
+- space-preview-trim · `smoke/assign.mjs` 대시보드 · 한 단 문단 시트 단계가 받기 창을 거침(단계 수 같음), 푸터 글 · 창이 생김
 
 ## 아침에 볼 것 (사람이 정할 것 · 봐 줄 것)
 

@@ -33,7 +33,7 @@ from app.sop.excel_export import (
 )
 from app.sop.flow_image import KIND_COLORS, MAX_COLUMN_NODES, _limit_nodes, draw_flow_png
 from app.sop.models import Bundle, BundleEvent, SourceBlock, Unit
-from app.sop.outputs import FlowGraph, FlowNode
+from app.sop.outputs import FlowGraph, FlowNode, LocationOut
 from app.sop.sheet_model import (
     A_COLUMN_KEYS,
     A_HEADERS,
@@ -704,11 +704,41 @@ def test_assign_preview_lists_only_that_old_documents_groups(client: TestClient)
     full_ids = {row["unit_id"] for row in full["rows"] if row["unit_id"] is not None}
     assert old1_ids & full_ids == ids
     assert full_ids - old1_ids  # 파일에는 OLD-2의 줄이 있는데 빠졌다
-    # 줄은 파일과 같은 값·차례다(묶음째 남겨 흐림·Row 번호가 그대로)
-    data = iter(full["rows"])
-    assert all(row in data for row in sheet["rows"])
+    # 줄은 파일과 같은 값·차례다(묶음째 남겨 흐림·Row 번호가 그대로) — 위치 칸의 "Paragraph" 글자만 미리보기에서 뺀다
+    location = full["column_keys"].index("location")
+
+    def keep_place(row: dict) -> dict:
+        return {**row, "cells": [{**cell, "text": "" if at == location else cell["text"]} for at, cell in enumerate(row["cells"])]}
+
+    data = iter(keep_place(row) for row in full["rows"])
+    assert all(keep_place(row) in data for row in sheet["rows"])
     assert sheet["total_rows"] == len(sheet["rows"])
     assert _load_events(fx.bundle_id, "export") == []  # 미리보기는 기록을 남기지 않는다
+
+
+def test_assign_preview_drops_paragraph_and_figure_places() -> None:
+    hide = (sheet_model._LABELS.paragraph, sheet_model._LABELS.figure)
+
+    def place(section: str, text: str, page: int) -> LocationOut:
+        return LocationOut(section=section, place=text, page=page, page_basis="exact")
+
+    assert sheet_model._format_location(place("1", "Paragraph", 2), hide=hide) == "§1 · p. 2"
+    assert sheet_model._format_location(place("5", "Figure", 3), hide=hide) == "§5 · p. 3"
+    assert sheet_model._format_location(place("2", "Table 1", 4), hide=hide) == "§2 · Table 1 · p. 4"
+    assert sheet_model._format_location(place("2", "Header · Paragraph", 4), hide=hide) == "§2 · Header · p. 4"
+    assert sheet_model._format_location(place("1", "Paragraph", 2)) == "§1 · Paragraph · p. 2"
+
+
+def test_export_file_and_outputs_preview_keep_the_place(client: TestClient) -> None:
+    fx = _setup_outputs_bundle(client)
+    doc_id = fx.old1["document"]["id"]
+
+    file_a = _get_preview(client, fx.bundle_id)["sheets"][0]
+    assign_a = _get_a_preview(client, fx.bundle_id, doc_id).json()
+    location = file_a["column_keys"].index("location")
+
+    assert any("Paragraph" in row["cells"][location]["text"] for row in file_a["rows"][2:])
+    assert not any("Paragraph" in row["cells"][location]["text"] for row in assign_a["rows"][2:])
 
 
 def test_assign_preview_windows_long_documents_around_the_picked_unit(
