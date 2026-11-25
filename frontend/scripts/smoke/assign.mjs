@@ -5288,12 +5288,13 @@ await runStep("assign: counterpart table - each table unwraps on its own with no
       const panel = document.querySelector('[data-testid="assign-pair-spot"]').getBoundingClientRect();
       return { pane: pane.width, paneRight: pane.right, sheetLeft: sheet.left, sheetRight: sheet.right, panelLeft: panel.left, panelWidth: panel.width };
     });
-  for (const width of [VIEWPORT.width, 1680]) {
+  for (const width of [VIEWPORT.width, 1680, 1920]) {
     await page.setViewportSize({ width, height: VIEWPORT.height });
     const centred = await readSheetLeft();
     await openPairSpot();
     const layout = await readLayout();
-    const isAside = layout.pane >= 1000;
+    // 용지 옆에 판 자리(420px 이상)가 남으면 옆으로 비켜서고, 아니면 덮는다(lib/spot-place-model) - 용지 폭은 어느 쪽이든 그대로
+    const isAside = layout.pane - (layout.sheetRight - layout.sheetLeft) - 12 >= 420;
     check(
       `at ${width}px one press opens the pair panel on the right with the pair box picked, the paper ${isAside ? "steps aside" : "stays and is covered"}`,
       (await pairSpot.getAttribute("data-side")) === "right" &&
@@ -5304,7 +5305,7 @@ await runStep("assign: counterpart table - each table unwraps on its own with no
         (isAside ? layout.sheetRight <= layout.panelLeft + 1 && layout.sheetLeft < centred - 1 : Math.abs(layout.sheetLeft - centred) <= 1),
       JSON.stringify({ ...layout, centred }),
     );
-    if (width !== VIEWPORT.width) await takeShot("sop-assign-pair-spot.png");
+    if (width === 1680) await takeShot("sop-assign-pair-spot.png");
     await page.keyboard.press("Escape");
     await pairSpot.waitFor({ state: "detached", timeout: T });
     await page.waitForFunction(() => !document.querySelector(".assign-panes[data-motion]"), null, { timeout: T });
@@ -5344,6 +5345,119 @@ await runStep("assign: counterpart table - each table unwraps on its own with no
   await page.locator('[data-testid="assign-undo"]').click();
   check("the seed bundle is left as found", (await waitView((view) => view.tables.every((table) => !table.is_layout))) !== null);
   check("the warning goes with Undo", (await readWarnings()).length === 0);
+});
+
+// 짝 판(1단 보기)을 열고 닫아도 용지 폭과 고른 박스의 화면 위쪽 자리가 그대로다(설계 2026-11-25 §6 S2) - 판이 용지 폭을 줄이면 위쪽 긴 줄이 다시 접혀 고른 박스가 위아래로 튀었다.
+// 안내 줄 짝이 있는 문서는 앞 단계와 같은 시드 9번 묶음(두 작업 표를 벗겨 짝을 만든다). 끝에 Undo 두 번으로 시드를 그대로 둔다
+await runStep("assign: the pair panel never moves the picked box up or down", {}, async ({ page }) => {
+  const headers = { "X-Dev-User": "qa.member" };
+  const bundles = await (await page.request.get(`${BASE}/api/bundles`, { headers })).json();
+  const bundle = bundles.find((item) => item.title === PAIR_TABLES_TITLE);
+  check("the demo seed has the separate-tables bundle", bundle !== undefined);
+  if (!bundle) return;
+  const docs = await (await page.request.get(`${BASE}/api/bundles/${bundle.id}/documents`, { headers })).json();
+  const readView = async () => (await page.request.get(`${BASE}/api/bundles/${bundle.id}/documents/${docs[0].id}/view`, { headers })).json();
+  const waitView = async (isDone) => {
+    for (let tries = 0; tries < 60; tries += 1) {
+      const view = await readView();
+      if (isDone(view)) return view;
+      await page.waitForTimeout(250);
+    }
+    return null;
+  };
+  const unwrapFromShape = async (tableId) => {
+    const unit = (await readView()).units.find((item) => item.kind === "table" && item.table_id === tableId);
+    const piece = page.locator(`[data-testid="assign-paper-piece-${unit.id}"]`);
+    const button = page.locator(`[data-testid="assign-shape-table_layout-${unit.id}"]`);
+    await piece.waitFor({ timeout: T });
+    for (let tries = 0; tries < 40; tries += 1) {
+      await piece.scrollIntoViewIfNeeded();
+      await piece.click();
+      await button.waitFor({ timeout: T });
+      if ((await button.getAttribute("aria-disabled")) !== "true") break;
+      await page.waitForTimeout(250);
+    }
+    await Promise.all([
+      page.waitForResponse((response) => response.request().method() === "GET" && new URL(response.url()).pathname === `/api/bundles/${bundle.id}/units`, { timeout: T }),
+      button.click(),
+    ]);
+  };
+  const [koWork, , enWork] = (await readView()).tables;
+  await page.goto(`${BASE}/bundles/${bundle.id}/assign`);
+  await wait(page, "assign-bar");
+  await unwrapFromShape(koWork.id);
+  await waitView((view) => view.tables[0].is_layout);
+  await unwrapFromShape(enWork.id);
+  const both = await waitView((view) => view.tables[2].is_layout && view.pairs.length > 0);
+  const korean = both?.units.find((item) => item.text === "세척액 농도를 확인한다.");
+  const english = both?.units.find((item) => item.text === "Check the detergent concentration.");
+  check("the two work tables are unwrapped and paired", Boolean(korean && english));
+  if (!korean || !english) return;
+
+  const piece = (id) => page.locator(`[data-testid="assign-paper-piece-${id}"]`);
+  const hint = page.locator(`[data-testid="assign-paper-pair-hint-${english.id}"]`);
+  const pairSpot = page.locator('[data-testid="assign-pair-spot"]');
+  await page.locator('[data-testid="assign-view-one"]').click();
+  await page.locator('[data-testid="assign-new"]').waitFor({ state: "detached", timeout: T });
+  const settle = () => page.waitForFunction(() => !document.querySelector(".assign-panes[data-motion]"), null, { timeout: T });
+  const setZoom = async (percent) => {
+    for (let tries = 0; tries < 20; tries += 1) {
+      const value = await getText(page, "assign-old-zoom-value");
+      if (value === `${percent}%`) return;
+      await page.locator(`[data-testid="assign-old-zoom-${Number.parseInt(value, 10) < percent ? "in" : "out"}"]`).click();
+    }
+  };
+  // 용지 폭과 고른 박스 위쪽 - 판 아래 깔린 Old 칸을 그대로 잰다
+  const measure = () =>
+    page.evaluate((id) => ({
+      top: document.querySelector(`[data-testid="assign-paper-piece-${id}"]`).getBoundingClientRect().top,
+      sheet: document.querySelector('[data-testid="assign-old"] .pane-body > *').getBoundingClientRect().width,
+    }), english.id);
+
+  for (const width of [1920, 1440, 1280]) {
+    for (const percent of [100, 160]) {
+      await page.setViewportSize({ width, height: VIEWPORT.height });
+      await setZoom(percent);
+      await settle();
+      await piece(english.id).click();
+      await piece(english.id).and(page.locator("[data-sel]")).waitFor({ timeout: T });
+      // 고른 박스 위에 긴 줄을 둔다 - 용지가 좁아지면 이 줄이 다시 접혀 박스가 아래로 밀린다
+      await page.evaluate((id) => {
+        const host = document.querySelector('[data-testid="assign-old"] .pane-body .sheet p, [data-testid="assign-old"] .pane-body .sheet .su');
+        if (host && !host.querySelector("[data-smoke-long]")) {
+          const long = document.createElement("span");
+          long.dataset.smokeLong = "";
+          long.textContent = ` ${"synthetic long line that wraps again when the paper gets narrower ".repeat(8)}`;
+          host.append(long);
+        }
+        document.querySelector(`[data-testid="assign-paper-piece-${id}"]`).scrollIntoView({ block: "center" });
+      }, english.id);
+      await page.waitForTimeout(150);
+      const before = await measure();
+      await hint.click();
+      await pairSpot.waitFor({ timeout: T });
+      await pairSpot.evaluate((el) => Promise.all(el.getAnimations().map((animation) => animation.finished)));
+      await settle();
+      const open = await measure();
+      await page.keyboard.press("Escape");
+      await pairSpot.waitFor({ state: "detached", timeout: T });
+      await settle();
+      const after = await measure();
+      const label = `at ${width}px and ${percent}% zoom`;
+      check(`${label} opening the pair panel keeps the paper width and the picked box in place`, Math.abs(open.top - before.top) <= 2 && Math.abs(open.sheet - before.sheet) <= 1, JSON.stringify({ before, open }));
+      check(`${label} closing it puts the picked box and the paper width back`, Math.abs(after.top - before.top) <= 2 && Math.abs(after.sheet - before.sheet) <= 1, JSON.stringify({ before, after }));
+    }
+  }
+  await page.setViewportSize(VIEWPORT);
+  await setZoom(100);
+  await page.locator('[data-testid="assign-view-two"]').click();
+  await page.locator('[data-testid="assign-new"]').waitFor({ timeout: T });
+
+  // 시드를 그대로 둔다 - Undo 두 번(영어 표 → 한글 표)
+  await page.locator('[data-testid="assign-undo"]').click();
+  await waitView((view) => view.tables[0].is_layout && !view.tables[2].is_layout);
+  await page.locator('[data-testid="assign-undo"]').click();
+  check("the seed bundle is left as found", (await waitView((view) => view.tables.every((table) => !table.is_layout))) !== null);
 });
 
 // 끌어서 보내기(끌어다 놓기 설계 §6, 3걸음) - Old 조각을 아직 쓰지 않은 New 문서(New · from Assign)의 두 문장 사이나 빈 칸에 놓으면 그 줄의 초안이 되고(저장하지 않는다),

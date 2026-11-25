@@ -6,8 +6,11 @@
 
 import { useLayoutEffect, useRef } from "react";
 
+import { planSpotPlace } from "@/lib/spot-place-model";
+
 const PANES = ".assign-panes";
 const OLD_SHEET = `${PANES} [data-pane="old"] .sheet`;
+const OLD_PANE = `${PANES} [data-pane="old"]`;
 const NEW_PANE = `${PANES} [data-pane="new"]`;
 // 복제본에서 떼는 속성 - 테스트·코드가 진짜 요소로 잘못 찾거나(id) 들어오는 움직임이 다시 돌지 않게
 const GHOST_STRIP = ["data-testid", "id", "data-enter", "data-leave"];
@@ -92,11 +95,34 @@ export function usePaneSlide(isSingle: boolean): { capture: () => void } {
 }
 
 /**
- * 1단 보기에서 오른쪽 판(짝 엿보기 · 그림 위치)이 열리고 닫힐 때 - 가운데 용지가 판 옆으로 비켜서고 다시 가운데로 온다(B7). 판 자리를 비우는 것은 CSS(자리가 모자라면 판이 용지를 덮고 용지는 그대로다).
+ * 1단 보기에서 오른쪽 판(짝 엿보기 · 그림 위치)이 열리고 닫힐 때 - 용지는 폭 그대로 두고 자리 있으면 왼쪽으로 비켜서고 다시 가운데로 온다(B7 · §6 S2).
+ * 판이 열린 동안 칸 · 용지 폭을 재(`planSpotPlace`) `.assign-panes`에 data-spot("aside" | "cover")과 --spot-w(판 폭)를 단다 - 용지 폭이 줄지 않으니 줄이 다시 접히지 않고 보던 자리가 튀지 않는다. 자리를 비우는 몸은 CSS.
  * capture()는 판을 열거나 닫기 직전에 부른다. 잡지 않고 닫히면(다른 박스를 고름 등) 움직임 없이 바로 돌아온다.
  */
 export function useSheetSlide(isAside: boolean): { capture: () => void } {
   const firstRef = useRef<number | null>(null);
+
+  // 슬라이드 이펙트보다 앞에 둔다 - 용지의 새 자리를 읽기 전에 data-spot이 달려 있어야 한다
+  useLayoutEffect(() => {
+    const panes = document.querySelector<HTMLElement>(PANES);
+    const pane = document.querySelector<HTMLElement>(OLD_PANE);
+    const sheet = document.querySelector<HTMLElement>(OLD_SHEET);
+    if (!isAside || !panes || !pane || !sheet) return undefined;
+    const measure = () => {
+      const plan = planSpotPlace({ pane: pane.getBoundingClientRect().width, sheet: sheet.getBoundingClientRect().width });
+      panes.dataset.spot = plan.kind;
+      panes.style.setProperty("--spot-w", `${plan.panel}px`);
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(pane);
+    observer.observe(sheet);
+    return () => {
+      observer.disconnect();
+      delete panes.dataset.spot;
+      panes.style.removeProperty("--spot-w");
+    };
+  }, [isAside]);
 
   useLayoutEffect(() => {
     const first = firstRef.current;
