@@ -1,7 +1,7 @@
 // Assign 화면의 한 부분 - page.tsx의 그리기에서 글자 그대로 옮겼다(쪼개기, 신뢰 기반 계획 스텝 4). 상태와 동작은 useAssignPage()가 준다.
 "use client";
 
-import { ArrowDown, ArrowUp, Check, Columns2, FilePen, Link2, ListTree, Locate, MapPin, MoveRight, RefreshCw, Sparkles, Trash2, TriangleAlert, Undo2 } from "lucide-react";
+import { ArrowDown, ArrowUp, Check, Columns2, FilePen, Link2, ListTree, Locate, MapPin, RefreshCw, Sparkles, Trash2, TriangleAlert, Undo2 } from "lucide-react";
 import { Fragment, type ReactNode } from "react";
 import { DestCard } from "@/components/assign/dest-card";
 import { DestinationAccordion, type AccordionSection } from "@/components/assign/destination-accordion";
@@ -13,7 +13,6 @@ import { ShapeTools } from "@/components/assign/shape-tools";
 import { SplitSuggestionCard } from "@/components/assign/split-suggestion";
 import { ChangeKindChip } from "@/components/assign/change-kind-chip";
 import { LinkChoice } from "@/components/assign/link-choice";
-import { MoveTargetField } from "@/components/assign/move-target-field";
 import { RemarkLine } from "@/components/assign/remark-modal";
 import { LangToken } from "@/components/paper/lang-token";
 import { UnitStatusChip } from "@/components/status";
@@ -23,17 +22,20 @@ import { Refresh, Truncate } from "@/components/ui/motion";
 import { Tooltip } from "@/components/ui/tooltip";
 import { formatPlacePosition, readPlacePosition } from "@/lib/place-spot-model";
 import { type ViewUnit, type WrittenSentence } from "@/lib/api-sop";
+import { isMousePress } from "@/lib/assign-key-target";
 import { isBundleKind, listCaptionFields } from "@/lib/caption-model";
 import { buildCaptionSlot, type CaptionCandidate } from "@/lib/caption-slot-model";
 import { countJoinedLines } from "@/lib/join-sentence-model";
 import { canMakeOtherLanguage, isRecommendationPicked, listCoConfirmed, listSiblingPlaces, pickNearby, type Recommendation } from "@/lib/assign-model";
 import { readRewrites } from "@/lib/ai-suggestion-model";
-import { getDestinationId, hasRowLanguage, isHeadingSourceUnit, isPlaceOption, listTreeOptions, listTreeRows, isSentenceUnit, isTranslationOf, listJoinedTargetIds, listLinkLeftovers, pickLinkUnits, previewLinkChange, previewSlotChange, readCheckKey, readSlotKind, type DestinationOption } from "@/lib/classify-model";
+import { getDestinationId, hasRowLanguage, isHeadingSourceUnit, isPlaceOption, listTreeOptions, listTreeRows, isSentenceUnit, isTranslationOf, listJoinedTargetIds, listLinkLeftovers, pickLinkUnits, previewLinkChange, previewSlotChange, readCheckKey, readSlotKind, type Destination, type DestinationOption } from "@/lib/classify-model";
+import { readSectionNumber } from "@/lib/composed-model";
 import { formatKst } from "@/lib/datetime";
 import { findNearestCut } from "@/lib/paper-model";
 import { getNewDocumentsHref } from "@/lib/stages";
+import { describePrimary } from "@/lib/primary-model";
 import { readRefAdvice } from "@/lib/ref-model";
-import { buildTocBlock, describeTocParts, toggleTocOpen } from "@/lib/toc-block-model";
+import { describeTocParts, readNoiseReason, toggleTocOpen } from "@/lib/toc-block-model";
 
 import { type AssignPageState, SYSTEM_HOLDS } from "./use-assign-page";
 
@@ -42,19 +44,20 @@ function putFirst<T>(items: readonly T[], isFirst: (item: T) => boolean): T[] {
   return [...items.filter(isFirst), ...items.filter((item) => !isFirst(item))];
 }
 
-export function AssignSidePanel({ state }: { state: AssignPageState }) {
+/** headEnd - 칸 머리 끝에 앉는 단추(좁은 창의 떼기, side-float). 없으면 null */
+export function AssignSidePanel({ state, headEnd }: { state: AssignPageState; headEnd: ReactNode }) {
   const {
     t, bundleId, canEdit, unitsKey, reloadData, docViews, tobeData, aiJobs, aiOn, aiBusy, suggestions, invalidUnitIds, unitMap, written,
-    writtenMap, rowOfUnit, options, mode, activeKey, row, isNewEdit, hasSolo, tocOpen, setTocOpen, tocPick, tocBlocks, newRemarks,
+    writtenMap, rowOfUnit, options, isDrafting, hiddenPlace, legacyMove, openTranslations, translationBlocked, settleTranslations, mode, activeKey, row, isNewEdit, hasSolo, tocOpen, setTocOpen, newRemarks,
     setNewRemarks, cutUnitId, focusNew, groupData, draft, editing, savedDestination, destination, rowUnits, rowLangs, firstDecision,
-    systemHold, reasonNow, moveCode, setDraft, rowLive, aiDest, aiWhy, recommendations, linkIds, pickedGroups, saveGroupData,
+    systemHold, reasonNow, setDraft, rowLive, aiDest, aiWhy, recommendations, linkIds, pickedGroups, saveGroupData,
     viewOf, oldView, splitByUnit, shapeView, shapeModel, soloUnits, cutLine, writtenDocs, composedDoc, view, changeView, askAiScope,
     setRemarkEdit, firstTextRef, busy, isAnyPending, accOpen, toggleAcc, saveUnits, slots, aiUnfilled, draftPlace, draftSectionKey, draftPosition,
     placeResolved, setRefEntryId, moveRow, hasUnitDraft, isFixedCaption, rowViewUnits, rowSplitUnit, rowSplit, splitBlocked, rowRefUnit,
-    refBlocked, isRefGate, isCaptionGateOn, confirmBlockKey, rowCaptionRefs, refCandidates, shapeLines, shapeFirstId, slotPlaces, slotCellTables, startCaptionPick,
-    shapeMode, headingBack, rewrap, bandBack, stepBase, refPendingIds, refDetail, refInfo, runUnitEdit, clearToc, runCaptionRefChange,
+    refBlocked, isCaptionGateOn, rowCaptionRefs, refCandidates, shapeLines, shapeFirstId, slotPlaces, slotCellTables, startCaptionPick,
+    shapeMode, headingBack, rewrap, bandBack, stepBase, refPendingIds, refDetail, refInfo, runUnitEdit, clearNoise, openNoiseReason, noisePick, runCaptionRefChange,
     switchShapeMode, applySplitSuggestion, dismissSplitSuggestion, selectNextSplit, selectNextRef, runUnitAction, readReasonNeed, runSave,
-    runClear, markNew, placeManage, pickDestination, pickNewSentence, isTemplateDrag, handlePrimary, startEdit,
+    runClear, markNew, placeManage, pickDestination, pickNewSentence, isTemplateDrag, handlePrimary, primaryPlan, startEdit,
     pickRecommendation, markRecHover, renderPlaceLabel, listDestinationEls, canClear, isRowDeleted,
   } = state;
 
@@ -63,9 +66,8 @@ export function AssignSidePanel({ state }: { state: AssignPageState }) {
 
   // --- 그리기 ---
   const isPlace = destination?.kind === "slot" || destination?.kind === "step";
-  const primaryState = !destination ? "choose" : editing ? "save" : "confirm";
-  // 줄에 이미 그 언어 새 문장이 있으면(직접 쓴 것·쓰는 중인 칸·AI 번역) 만들기·쓰기를 보이지 않는다
-  const missingLang = canMakeOtherLanguage(rowLangs, savedDestination, row?.status === "confirmed");
+  // 줄에 이미 그 언어 새 문장이 있으면(직접 쓴 것·쓰는 중인 칸·AI 번역) 만들기·쓰기를 보이지 않는다. 새 문서를 숨긴 동안은 늘 없다
+  const missingLang = !isDrafting ? null : canMakeOtherLanguage(rowLangs, savedDestination, row?.status === "confirmed");
   const otherLang = missingLang !== null && !hasRowLanguage(missingLang, slots, groupData, row?.unitIds ?? []) ? missingLang : null;
   // 직접 쓰는 다른 언어 문장의 출처 - 줄의 글 단위(문장·제목·묶이지 않은 칸 문장. 표·그림은 칸 문장을 따로 쓰지 않는다)
   const writeOtherUnit = rowUnits.find((unit) => isSentenceUnit(unit.kind))?.unit_id ?? null;
@@ -77,6 +79,17 @@ export function AssignSidePanel({ state }: { state: AssignPageState }) {
   function startWriteOther(lang: "ko" | "en", unitId: number) {
     setDraft({ otherLang: { lang, unitId } }, true);
     requestAnimationFrame(() => document.querySelector<HTMLTextAreaElement>(`[data-testid="assign-text-x${unitId}"]`)?.focus());
+  }
+
+  /** 확정 단추에 적을 갈 곳의 짧은 이름 - 이미 쓴 문장은 절 번호(없으면 문서 번호), 칸은 칸 이름 */
+  function readPrimaryPlace(dest: Destination): string {
+    if (dest.kind === "link") {
+      const target = writtenMap.get(dest.targetIds[0]);
+      const section = readSectionNumber(target?.section_path ?? "");
+      return section ? `§${section}` : (target?.doc_code ?? "");
+    }
+    if (dest.kind === "join") return (tobeData?.docs ?? []).find((doc) => doc.id === dest.docId)?.code ?? "";
+    return renderPlaceLabel(dest).text;
   }
 
   function renderRecommendation(rec: Recommendation, index: number) {
@@ -108,20 +121,19 @@ export function AssignSidePanel({ state }: { state: AssignPageState }) {
           pressed={pressed}
           pending={pending}
           testId={`assign-rec-${index}`}
-          onClick={() => pickRecommendation(rec)}
+          onClick={(event) => pickRecommendation(rec, isMousePress(event))}
           onHover={(on) => markRecHover(on ? listDestinationEls(rec.destination) : [])}
         />
       );
     }
-    if (rec.destination.kind === "delete" || rec.destination.kind === "move") {
-      const isDelete = rec.destination.kind === "delete";
+    if (rec.destination.kind === "delete") {
       return (
         <DestCard
           key={rec.key}
-          icon={isDelete ? Trash2 : MoveRight}
+          icon={Trash2}
           tone="danger"
           title={t("assign.acc.move")}
-          text={t(isDelete ? "classify.deleted" : "classify.moved")}
+          text={t("classify.deleted")}
           foot={
             <>
               {chip}
@@ -131,7 +143,7 @@ export function AssignSidePanel({ state }: { state: AssignPageState }) {
           pressed={pressed}
           pending={pending}
           testId={`assign-rec-${index}`}
-          onClick={() => pickRecommendation(rec)}
+          onClick={(event) => pickRecommendation(rec, isMousePress(event))}
           onHover={(on) => markRecHover(on ? listDestinationEls(rec.destination) : [])}
         />
       );
@@ -156,7 +168,7 @@ export function AssignSidePanel({ state }: { state: AssignPageState }) {
         pressed={pressed}
         pending={pending}
         testId={`assign-rec-${index}`}
-        onClick={() => pickRecommendation(rec)}
+        onClick={(event) => pickRecommendation(rec, isMousePress(event))}
           onHover={(on) => markRecHover(on ? listDestinationEls(rec.destination) : [])}
       />
     );
@@ -165,7 +177,8 @@ export function AssignSidePanel({ state }: { state: AssignPageState }) {
   // 칸 제목 자리는 줄 단위가 모두 제목·문장일 때만 보인다 - 표·그림은 칸 제목의 출처가 아니다
   const canPickHeading = rowUnits.length > 0 && rowUnits.every((unit) => isHeadingSourceUnit(unit.kind));
   const treeOptions = listTreeOptions(options, canPickHeading);
-  const nearAnchor = destination ?? recommendations[0]?.destination ?? null;
+  // 숨긴 새 문서의 자리는 고를 거리가 아니라 첫 추천의 둘레를 보인다
+  const nearAnchor = (hiddenPlace === null ? destination : null) ?? recommendations[0]?.destination ?? null;
   const nearLinks = nearAnchor?.kind === "link" ? pickNearby(written, nearAnchor.targetIds) : [];
   const nearPlaces: DestinationOption[] = nearAnchor && nearAnchor.kind !== "link" ? listSiblingPlaces(options, nearAnchor) : [];
 
@@ -190,18 +203,15 @@ export function AssignSidePanel({ state }: { state: AssignPageState }) {
   const accSections: AccordionSection[] = [
     { key: "rec", icon: Sparkles, title: t("assign.acc.rec"), count: recommendations.length, body: recommendations.length === 0 ? <p className="text-xs text-ink-3">{t("assign.acc.none")}</p> : recommendations.map(renderRecommendation) },
     { key: "near", icon: Locate, title: t("assign.acc.near"), count: nearLinks.length + nearPlaces.length, body: renderNearby() },
-    { key: "all", icon: ListTree, title: t("assign.acc.all"), count: written.length + options.filter(isPlaceOption).length, body: <DestinationTree written={written} rows={tobeData ? listTreeRows(tobeData, treeOptions) : []} tobeHref={getNewDocumentsHref(bundleId)} onPickLink={pickNewSentence} onPickPlace={pickDestination} manage={placeManage} /> },
+    { key: "all", icon: ListTree, title: t("assign.acc.all"), count: written.length + options.filter(isPlaceOption).length, body: <DestinationTree written={written} rows={isDrafting && tobeData ? listTreeRows(tobeData, treeOptions) : []} tobeHref={getNewDocumentsHref(bundleId)} onPickLink={pickNewSentence} onPickPlace={pickDestination} manage={placeManage} /> },
     {
       key: "move",
-      icon: MoveRight,
+      icon: Trash2,
       title: t("assign.acc.move"),
       body: (
         <>
           <button type="button" className="tree-leaf" aria-pressed={destination?.kind === "delete"} data-testid="assign-pick-delete" onClick={() => pickDestination({ kind: "delete" })}>
             {t("classify.deleted")}
-          </button>
-          <button type="button" className="tree-leaf" aria-pressed={destination?.kind === "move"} data-testid="assign-pick-move" onClick={() => pickDestination({ kind: "move" })}>
-            {t("classify.moved")}
           </button>
         </>
       ),
@@ -373,6 +383,24 @@ export function AssignSidePanel({ state }: { state: AssignPageState }) {
         </Refresh>
       );
     }
+    if (hiddenPlace !== null) {
+      return (
+        <Refresh key={shapeFirstId ?? ""} token={chosenToken} className="chosen-box" testId="assign-chosen">
+          <p className="text-[13px] leading-5 text-ink" data-testid="assign-hidden-place">
+            {t("assign.hidden.place", { code: hiddenPlace.docCode || "–", label: hiddenPlace.label || "–" })}
+          </p>
+        </Refresh>
+      );
+    }
+    if (legacyMove !== null) {
+      return (
+        <Refresh key={shapeFirstId ?? ""} token={chosenToken} className="chosen-box" testId="assign-chosen">
+          <p className="text-[13px] leading-5 text-ink" data-testid="assign-legacy-move">
+            {t("assign.legacyMove", { code: legacyMove.code || "–" })}
+          </p>
+        </Refresh>
+      );
+    }
     const placeLabel = isPlace ? renderPlaceLabel(destination) : null;
     // 고른 칸 안의 위치(MD 2 S3) - 열린 엮은 문서의 칸을 고른 초안일 때만: "6.1.1 다음 (6.1.2가 된다)" · "글머리 기호 줄 · 끝에"
     const placeAt = draftPlace && composedDoc && placeResolved && draftSectionKey !== null && draftPlace.docId === composedDoc.target_doc_id ? readPlacePosition(placeResolved.sections, draftSectionKey, draftPosition ? draftPosition.after : undefined) : null;
@@ -404,10 +432,10 @@ export function AssignSidePanel({ state }: { state: AssignPageState }) {
             text={`${isConfirmedView ? `${t("assign.chosen.confirmed")} · ` : ""}${destination.kind === "link" ? `${t("assign.chosen.link")} · ${[...new Set(pickedRows.map((item) => item.doc_code))].join(", ")}` : destination.kind === "join" ? t("assign.chosen.join") : destination.kind === "slot_heading" ? t("assign.slotHeading") : isPlace ? (mergedLines >= 2 ? t("assign.chosen.merged", { n: mergedLines }) : t("assign.chosen.place")) : t("assign.acc.move")}`}
           />
         </span>
-        {(destination.kind === "delete" || destination.kind === "move") && (
+        {destination.kind === "delete" && (
           <span className="flex items-center gap-1.5 text-sm font-semibold text-ink">
-            {destination.kind === "delete" ? <Trash2 size={14} strokeWidth={1.75} className="flex-none text-danger" aria-hidden /> : <MoveRight size={14} strokeWidth={1.75} className="flex-none text-danger" aria-hidden />}
-            {t(destination.kind === "delete" ? "classify.deleted" : "classify.moved")}
+            <Trash2 size={14} strokeWidth={1.75} className="flex-none text-danger" aria-hidden />
+            {t("classify.deleted")}
           </span>
         )}
         {destination.kind === "link" && (
@@ -488,18 +516,56 @@ export function AssignSidePanel({ state }: { state: AssignPageState }) {
     );
   }
 
-  // 확정 단추 - 결정 칸 맨 아래 늘 같은 자리의 가장 큰 단추. 고른 곳이 없으면 흐리게 꺼지고 까닭은 툴팁(↵는 위 목록의 첫 후보로 간다)
+  // 남은 번역 줄(확정 전 AI 번역 · 보류로 돌아간 번역) - 고른 곳과 상관없이 정할 수 있게 고른 곳 상자 아래에
+  const translationBox = openTranslations.length > 0 && (
+    <div className="chosen-box" data-testid="assign-translations">
+      <span className="chosen-label">{t("assign.hidden.translations")}</span>
+      {openTranslations.map((item) => (
+        <div key={item.id} className="chosen-line" data-testid={`assign-translation-${item.id}`}>
+          <LangToken lang={item.lang} />
+          <span className="min-w-0 flex-1 text-[13px] leading-5 text-ink">
+            <ClampText text={item.text} />
+          </span>
+        </div>
+      ))}
+      {canEdit && translationBlocked && <p className="text-xs text-ink-2" data-testid="assign-translation-blocked">{t("assign.hidden.translationBlocked")}</p>}
+      {canEdit && (
+        <div className="flex flex-wrap gap-1.5">
+          {/* 출처 문장이 없어진 번역(배정 취소)은 지우기만 */}
+          {openTranslations.some((item) => item.can_confirm) && (
+            <button type="button" className="btn h-7" data-testid="assign-translation-confirm" disabled={isAnyPending || translationBlocked} onClick={() => settleTranslations(openTranslations, "confirm")}>
+              <Check size={14} strokeWidth={1.5} aria-hidden />
+              {t("assign.hidden.translationConfirm")}
+            </button>
+          )}
+          <button type="button" className="btn h-7" data-testid="assign-translation-remove" disabled={isAnyPending || translationBlocked} onClick={() => settleTranslations(openTranslations, "remove")}>
+            <Trash2 size={14} strokeWidth={1.5} aria-hidden />
+            {t("assign.hidden.translationRemove")}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+
+  // 확정 단추(= ↵) - 결정 칸 맨 아래 늘 같은 자리의 가장 큰 단추. 할 일 · 막는 까닭은 글쇠와 같은 답(primaryPlan)이고, 막히면 흐리게 두고 까닭은 툴팁(누르면 알림)
+  const primaryLabel = describePrimary(primaryPlan, primaryPlan.kind === "confirm" ? readPrimaryPlace(primaryPlan.destination) : "");
+  const primaryState = primaryPlan.kind === "apply_order" ? "order" : destination ? (editing ? "save" : "confirm") : primaryPlan.kind === "confirm" ? "choose" : "blocked";
   const confirmButton = (
-    <Tooltip label={t((destination !== null ? confirmBlockKey : null) ?? "assign.why.pickFirst")} suppressed={(destination !== null && confirmBlockKey === null) || !row}>
-      <button type="button" className="btn pri assign-confirm" data-testid="assign-primary" data-state={primaryState} disabled={!canEdit || !row || busy || !destination || isRefGate || isCaptionGateOn} onClick={handlePrimary}>
-        <span className="stack">
-          <span data-on={primaryState !== "save" ? "" : undefined}>
-            {t("classify.confirm")} <kbd>↵</kbd>
-          </span>
-          <span data-on={primaryState === "save" ? "" : undefined}>
-            {t("classify.saveConfirm")} <kbd>↵</kbd>
-          </span>
+    <Tooltip label={primaryPlan.kind === "blocked" ? t(primaryPlan.reasonKey) : ""} suppressed={primaryPlan.kind !== "blocked" || (!row && noisePick === null) || !canEdit}>
+      <button
+        type="button"
+        className={`btn ${primaryLabel.tone === "danger" ? "danger" : "pri"} assign-confirm`}
+        data-testid="assign-primary"
+        data-state={primaryState}
+        disabled={!canEdit || !row || busy}
+        aria-disabled={primaryPlan.kind === "blocked" || undefined}
+        onClick={handlePrimary}
+      >
+        <span className="min-w-0 truncate">
+          {primaryState === "save" && primaryLabel.tone === "normal" ? t("classify.saveConfirm") : t(primaryLabel.labelKey, primaryLabel.values)}
         </span>
+        {primaryLabel.suffixKey !== null && <span className="flex-none font-normal">{t(primaryLabel.suffixKey)}</span>}
+        <kbd>↵</kbd>
       </button>
     </Tooltip>
   );
@@ -507,11 +573,11 @@ export function AssignSidePanel({ state }: { state: AssignPageState }) {
   // 배정 취소는 배정이 있을 때만 보인다(쓸 수 없는 단추는 숨긴다 - 1.2.0 피드백). 좁은 폭에서는 글쇠 표시를 뺀다 - 단축키는 Help에 있다
   const actions = canEdit && row && (
     <div className="@container flex gap-1.5" data-testid="assign-actions">
-      <button type="button" className="btn assign-alt flex-1" data-testid="assign-hold" disabled={busy} onClick={() => void runSave("hold")}>
+      <button type="button" className="btn assign-alt flex-1" data-testid="assign-hold" disabled={busy || legacyMove !== null} onClick={() => runSave("hold")}>
         {t("classify.hold")} <kbd className="@max-[200px]:hidden">H</kbd>
       </button>
       {canClear && (
-        <button type="button" className="btn assign-alt flex-1" data-testid="assign-clear" disabled={busy} onClick={() => void runClear()}>
+        <button type="button" className="btn assign-alt flex-1" data-testid="assign-clear" disabled={busy} onClick={() => runClear()}>
           <Undo2 size={13} strokeWidth={1.5} aria-hidden />
           {t(isRowDeleted ? "assign.ctx.undoDelete" : "classify.clear")} <kbd className="@max-[200px]:hidden">U</kbd>
         </button>
@@ -519,17 +585,17 @@ export function AssignSidePanel({ state }: { state: AssignPageState }) {
     </div>
   );
 
-  // 지금 고른 곳에 꼭 필요한 Remark(지우기·옮기기·두 문서) - 비어 있으면 Remark 줄이 경고 색이 되고 쓰기 단추가 다음 할 일로 강조된다
+  // 지금 고른 곳에 꼭 필요한 Remark(지우기·두 문서) - 비어 있으면 Remark 줄이 경고 색이 되고 쓰기 단추가 다음 할 일로 강조된다
   const remarkNeed = row && destination ? readReasonNeed("confirm") : null;
   const isRemarkMissing = remarkNeed !== null && !reasonNow.trim();
   // Remark 한 줄(RemarkLine) - 꼭 필요한데 비었으면 글 자리가 경고 "…에는 필수"로 바뀌고 연필이 강조된 채 늘 보인다
   const remarkRow = (
     <RemarkLine
       text={reasonNow}
-      // 삭제·이동은 Remark를 비우면 처분 이름으로 기록된다 - 빈 자리에 그 글을 흐리게 보인다
-      emptyLabel={destination?.kind === "delete" ? t("remark.defaultDelete") : destination?.kind === "move" ? t("remark.defaultMove") : "–"}
+      // 삭제는 Remark를 비우면 처분 이름으로 기록된다 - 빈 자리에 그 글을 흐리게 보인다
+      emptyLabel={destination?.kind === "delete" ? t("remark.defaultDelete") : "–"}
       needMessage={isRemarkMissing ? t(`remark.need.${remarkNeed}`) : null}
-      canEdit={canEdit}
+      canEdit={canEdit && legacyMove === null}
       disabled={!row}
       onEdit={() => setRemarkEdit({ kind: "row", need: isRemarkMissing ? remarkNeed : null, then: null })}
       onPick={(text) => setDraft({ reason: text })}
@@ -614,22 +680,24 @@ export function AssignSidePanel({ state }: { state: AssignPageState }) {
   /** 다듬기 걸음과 그 줄에 걸린 카드(참조 줄 확인·AI 나누기 제안) - Old 줄과 한 단의 New 문장이 같은 것을 쓴다 */
   // 고른 줄이 표·그림이면 다듬기 아래 그 캡션 자리(F7 · F12) - 써 넣은 캡션은 Edit and confirm의 캡션 칸(captionFields)에서 온다
   const rowBundle = shapeLines.length > 0 && !hasSolo ? (rowViewUnits.find((unit) => isBundleKind(unit.kind)) ?? null) : null;
-  const captionSlot = rowBundle && shapeModel && slotPlaces
+  const builtCaptionSlot = rowBundle && shapeModel && slotPlaces
     ? buildCaptionSlot({ bundle: rowBundle, units: shapeModel.units, places: slotPlaces, cellTables: slotCellTables, written: captionFields.filter((field) => field.unitId === null) })
     : null;
+  // 캡션 써 넣기는 새 문서 칸의 고쳐 쓰기라 숨긴 동안 후보에서 뺀다
+  const captionSlot = builtCaptionSlot && !isDrafting ? { ...builtCaptionSlot, candidates: builtCaptionSlot.candidates.filter((candidate) => candidate.kind !== "write") } : builtCaptionSlot;
   /** 캡션 자리의 후보 하나 - 글은 캡션으로 붙이고(2칸 안), 첫 행은 캡션으로 올리고, 캡션 있는 이웃 그림과는 묶는다. 모두 쪼개기 편집이라 Ctrl+Z로 되돌린다 */
   function runCaptionCandidate(candidate: Exclude<CaptionCandidate, { kind: "write" }>) {
     if (!rowBundle || !captionSlot) return;
     const { bundleId } = captionSlot;
-    if (candidate.kind === "near") void runUnitEdit({ type: "attach_caption", unit_id: candidate.unitId, bundle_unit_id: bundleId }, t("assign.ctx.didAttachCaption"), bundleId);
-    else if (candidate.kind === "first_row") void runUnitEdit({ type: "set_first_row_caption", table_unit_id: bundleId, caption: true }, t("assign.captionSlot.didFirstRow"), bundleId);
-    else void runUnitEdit({ type: "group_figures", unit_ids: [rowBundle.id, candidate.figureId] }, t("assign.captionSlot.didGroup"), rowBundle.id);
+    if (candidate.kind === "near") runUnitEdit({ type: "attach_caption", unit_id: candidate.unitId, bundle_unit_id: bundleId }, t("assign.ctx.didAttachCaption"), bundleId);
+    else if (candidate.kind === "first_row") runUnitEdit({ type: "set_first_row_caption", table_unit_id: bundleId, caption: true }, t("assign.captionSlot.didFirstRow"), bundleId);
+    else runUnitEdit({ type: "group_figures", unit_ids: [rowBundle.id, candidate.figureId] }, t("assign.captionSlot.didGroup"), rowBundle.id);
   }
   /** ✂ 한/영 나누기 - 모델이 고른 자리를 나눌 수 있는 자리로 맞춰 자른다(두 조각 모두 그 묶음의 캡션으로 남는다) */
   function splitCaption(unitId: number, at: number) {
     const unit = shapeModel?.units.get(unitId);
     const cut = unit ? findNearestCut(unit, at) : null;
-    if (cut !== null && captionSlot) void runUnitEdit({ type: "split", unit_id: unitId, at: cut }, t("assign.captionSlot.didSplit"), captionSlot.bundleId);
+    if (cut !== null && captionSlot) runUnitEdit({ type: "split", unit_id: unitId, at: cut }, t("assign.captionSlot.didSplit"), captionSlot.bundleId);
   }
   function renderCaptionSlot(): ReactNode {
     if (!captionSlot || !rowBundle) return null;
@@ -647,10 +715,10 @@ export function AssignSidePanel({ state }: { state: AssignPageState }) {
         onCandidate={runCaptionCandidate}
         onWrite={startEdit}
         onPickLine={() => startCaptionPick(bundleId)}
-        onDetach={(unitId) => void runUnitEdit({ type: "detach_caption", unit_id: unitId }, t("assign.ctx.didDetachCaption"), bundleId)}
+        onDetach={(unitId) => runUnitEdit({ type: "detach_caption", unit_id: unitId }, t("assign.ctx.didDetachCaption"), bundleId)}
         onSplit={splitCaption}
-        onBackFirstRow={() => void runUnitEdit({ type: "set_first_row_caption", table_unit_id: bundleId, caption: false }, t("assign.captionSlot.didBackFirstRow"), bundleId)}
-        onUngroup={() => void runUnitEdit({ type: "ungroup_figures", unit_id: rowBundle.id }, t("assign.captionSlot.didUngroup"), groupHeadId)}
+        onBackFirstRow={() => runUnitEdit({ type: "set_first_row_caption", table_unit_id: bundleId, caption: false }, t("assign.captionSlot.didBackFirstRow"), bundleId)}
+        onUngroup={() => runUnitEdit({ type: "ungroup_figures", unit_id: rowBundle.id }, t("assign.captionSlot.didUngroup"), groupHeadId)}
       />
     );
   }
@@ -675,8 +743,8 @@ export function AssignSidePanel({ state }: { state: AssignPageState }) {
             busy={busy}
             blockedReason={refBlocked}
             left={refPendingIds.length}
-            onConfirm={(number) => void runUnitEdit({ type: "set_ref", unit_id: rowRefUnit.id, number }, t("assign.ref.didConfirm"), rowRefUnit.id)}
-            onReject={() => void runUnitEdit({ type: "clear_ref", unit_id: rowRefUnit.id }, t("assign.ref.didReject"), rowRefUnit.id)}
+            onConfirm={(number) => runUnitEdit({ type: "set_ref", unit_id: rowRefUnit.id, number }, t("assign.ref.didConfirm"), rowRefUnit.id)}
+            onReject={() => runUnitEdit({ type: "clear_ref", unit_id: rowRefUnit.id }, t("assign.ref.didReject"), rowRefUnit.id)}
             onClose={() => setRefEntryId(null)}
             onNext={selectNextRef}
           />
@@ -688,8 +756,8 @@ export function AssignSidePanel({ state }: { state: AssignPageState }) {
             candidates={refCandidates}
             canEdit={canEdit && mode === "old"}
             busy={busy}
-            onDetach={(refId) => void runCaptionRefChange(refId, { state: "detached" }, t("assign.captionRef.didDetach"))}
-            onRelink={(refId, unitId) => void runCaptionRefChange(refId, { target_unit_id: unitId }, t("assign.captionRef.didRelink"))}
+            onDetach={(refId) => runCaptionRefChange(refId, { state: "detached" }, t("assign.captionRef.didDetach"))}
+            onRelink={(refId, unitId) => runCaptionRefChange(refId, { target_unit_id: unitId }, t("assign.captionRef.didRelink"))}
           />
         )}
         {rowSplitUnit && rowSplit && (
@@ -700,8 +768,8 @@ export function AssignSidePanel({ state }: { state: AssignPageState }) {
             busy={busy}
             blockedReason={splitBlocked}
             left={splitByUnit.size}
-            onApply={() => void applySplitSuggestion(rowSplitUnit, rowSplit)}
-            onDismiss={() => void dismissSplitSuggestion(rowSplit)}
+            onApply={() => applySplitSuggestion(rowSplitUnit, rowSplit)}
+            onDismiss={() => dismissSplitSuggestion(rowSplit)}
             onNext={selectNextSplit}
           />
         )}
@@ -709,29 +777,27 @@ export function AssignSidePanel({ state }: { state: AssignPageState }) {
     );
   }
 
-  /** 목차 칸(F12 G2 · G3) - 머리는 상태 칩 없이 "목차 · n줄"(블록)·"목차 · n행"(줄), 1 다듬기는 목차 줄과 그 단추, 2 보낼 곳은 추천 대신 까닭 글,
-   *  3 결정은 "따로 할 일 없음"과 꺼진 Confirm(Hold · Unassign은 그리지 않는다). 용지 블록 머리의 손잡이는 표가 적은 것만 여기 둔다 */
-  function renderTocPanel(pick: { docId: number; key: number; unitId: number | null }): ReactNode {
-    const view = viewOf(pick.docId);
-    const info = tocBlocks.find((item) => item.docId === pick.docId && item.key === pick.key);
-    if (!view || !info) return null;
-    const unitById = new Map(view.units.map((unit) => [unit.id, unit]));
-    const units = info.unitIds.flatMap((id) => unitById.get(id) ?? []);
-    const block = buildTocBlock(units);
-    if (!block) return null;
+  /** 저절로 삭제된 줄의 칸(F12 G2 · G3, 쪼개기 먼저 §7 R3) - 머리는 상태 칩 없이 "이름 · n줄"(블록)·"이름 · n행"(줄), 1 다듬기는 줄 · 사유와 사유 쓰기 ·
+   *  삭제 취소, 2 보낼 곳은 추천 대신 까닭 글, 3 결정은 "따로 할 일 없음"과 꺼진 Confirm(Hold · Unassign은 그리지 않는다) */
+  function renderNoisePanel(pick: NonNullable<typeof noisePick>): ReactNode {
+    const { docId, block } = pick;
+    const unitById = new Map(viewOf(docId)?.units.map((unit) => [unit.id, unit]));
     const lineAt = pick.unitId === null ? -1 : block.unitIds.indexOf(pick.unitId);
     const line = lineAt >= 0 ? block.lines[lineAt] : null;
     const isOpen = tocOpen.has(block.key);
-    const canClear = canEdit && !isNewEdit;
-    const parts = describeTocParts(units.map((unit) => unit.lang))
-      .map((part) => t(`assign.toc.part.${part.part}`, { n: part.n }))
+    const canAct = canEdit && !isNewEdit;
+    const name = t(`assign.noise.name.${block.kind}`);
+    const parts = describeTocParts(block.unitIds.map((id) => unitById.get(id)?.lang ?? "neutral"))
+      .map((part) => t(`assign.noise.part.${part.part}`, { n: part.n }))
       .join(" · ");
+    const reason = line !== null && line.reason !== "" ? line.reason : line !== null ? t(`assign.noise.reason.${block.kind}`) : readNoiseReason(block, t);
+    const unitIds = line === null ? block.unitIds : [line.unitId];
     return (
-      <div className="assign-side-body" data-testid="assign-toc-panel">
+      <div className="assign-side-body" data-testid="assign-noise-panel">
         <div className="assign-side-head">
           <div className="flex items-center gap-2">
-            <span className="min-w-0 flex-1 font-mono text-sm font-semibold" data-testid="assign-toc-head">
-              {line ? t("assign.toc.panelLine", { n: lineAt + 1 }) : t("assign.toc.panelBlock", { n: block.counts.total })}
+            <span className="min-w-0 flex-1 font-mono text-sm font-semibold" data-testid="assign-noise-head">
+              {line ? t("assign.noise.panelLine", { name, n: lineAt + 1 }) : t("assign.noise.panelBlock", { name, n: block.counts.total })}
             </span>
             <span className="flex flex-none gap-0.5">
               <Tooltip label={t("assign.rowPrev")} align="end">
@@ -744,55 +810,70 @@ export function AssignSidePanel({ state }: { state: AssignPageState }) {
                   <ArrowDown size={13} strokeWidth={1.6} aria-hidden />
                 </button>
               </Tooltip>
+              {headEnd}
             </span>
           </div>
         </div>
         <div className="assign-pick" data-testid="assign-pick">
           {renderStep(1, t("assign.step.shape"))}
-          <div className="toc-panel-shape" data-testid="assign-toc-shape">
+          <div className="toc-panel-shape" data-testid="assign-noise-shape">
             <p className="toc-panel-line">
-              <span className="toc-tag">{t("assign.toc.tag")}</span>
+              <span className="deleted-tag">{t("paper.deleted.tag")}</span>
               <span className="min-w-0" style={line ? { fontFamily: "var(--font-source)" } : undefined}>
-                {line ? line.text : t("assign.toc.summary", { n: block.counts.total, parts, state: t(isOpen ? "assign.toc.stateOpen" : "assign.toc.stateFolded") })}
+                {line ? line.text : t("assign.noise.summary", { n: block.counts.total, parts, state: t(isOpen ? "assign.noise.stateOpen" : "assign.noise.stateFolded") })}
               </span>
             </p>
+            <div className="flex min-w-0 items-start gap-1.5 text-xs">
+              <span className="flex-none leading-[26px] text-ink-3">{t("assign.noise.reasonLabel")}</span>
+              <span className="min-w-0 flex-1 py-1 leading-[18px] text-ink-2 [overflow-wrap:anywhere]" data-testid="assign-noise-reason-text">
+                {reason}
+              </span>
+              {canAct && (
+                <Tooltip label={t("assign.noise.write")} align="end">
+                  <button type="button" className="btn ghost h-[26px] w-[26px] flex-none justify-center p-0" aria-label={t("assign.noise.write")} disabled={busy} data-testid="assign-noise-reason-edit" onClick={() => openNoiseReason(docId, unitIds)}>
+                    <FilePen size={13} strokeWidth={1.5} aria-hidden />
+                  </button>
+                </Tooltip>
+              )}
+            </div>
             <div className="flex flex-wrap gap-1.5">
               {line === null && (
-                <button type="button" className="btn h-7" aria-expanded={isOpen} data-testid="assign-toc-toggle" onClick={() => setTocOpen((open) => toggleTocOpen(open, block.key))}>
-                  {t(isOpen ? "assign.toc.collapse" : "assign.toc.expand")}
+                <button type="button" className="btn h-7" aria-expanded={isOpen} data-testid="assign-noise-toggle" onClick={() => setTocOpen((open) => toggleTocOpen(open, block.key))}>
+                  {t(isOpen ? "assign.noise.collapse" : "assign.noise.expand")}
                 </button>
               )}
-              {line === null && canClear && (
-                <button type="button" className="btn h-7" disabled={busy} data-testid="assign-toc-all" onClick={() => clearToc(block.unitIds)}>
-                  {t("assign.toc.allNot")}
+              {canAct && (
+                <button type="button" className="btn h-7" disabled={busy} data-testid="assign-noise-reason" onClick={() => openNoiseReason(docId, unitIds)}>
+                  {t("assign.noise.write")} <kbd>R</kbd>
                 </button>
               )}
-              {line !== null && canClear && (
-                <button type="button" className="btn h-7" disabled={busy} data-testid="assign-toc-not" onClick={() => clearToc([line.unitId])}>
-                  {t("assign.toc.notThis")}
+              {canAct && (
+                <button type="button" className="btn h-7" disabled={busy} data-testid="assign-noise-clear" onClick={() => clearNoise(docId, unitIds)}>
+                  {t(line === null ? "assign.noise.clearAll" : "assign.noise.clear")} <kbd>U</kbd>
                 </button>
               )}
             </div>
           </div>
           {renderStep(2, t("assign.step.pick"))}
-          <p className="chosen-box is-empty mx-[var(--pad)] mb-[var(--pad)]" data-testid="assign-toc-why">
-            {line ? t("assign.toc.lineWhy", { n: block.counts.total - 1 }) : t("assign.toc.blockWhy")}
+          <p className="chosen-box is-empty mx-[var(--pad)] mb-[var(--pad)]" data-testid="assign-noise-why">
+            {line ? t("assign.noise.lineWhy", { n: block.counts.total - 1 }) : t(`assign.noise.why.${block.kind}`)}
           </p>
         </div>
         <div className="assign-decide" data-testid="assign-decide">
           <div className="assign-decide-body">
             {renderStep(3, t("assign.step.decide"))}
-            <p className="text-xs text-st-hold" role="status" data-testid="assign-toc-nothing">
-              {t("assign.toc.nothing")}
+            <p className="text-xs text-st-hold" role="status" data-testid="assign-noise-nothing">
+              {t("assign.noise.nothing")}
             </p>
           </div>
-          <button type="button" className="btn pri assign-confirm" data-testid="assign-primary" disabled>
-            {t("classify.confirm")} <kbd>↵</kbd>
-          </button>
+          {confirmButton}
         </div>
       </div>
     );
   }
+
+  // 머리가 없는 모양(고르기 전 · 다 끝난 출처 없음)에서는 단추만 있는 머리 한 줄
+  const bareHead = headEnd ? <div className="flex flex-none justify-end px-[var(--pad)] pt-3">{headEnd}</div> : null;
 
   function renderSideBody() {
     if (mode === "unsourced") {
@@ -807,6 +888,7 @@ export function AssignSidePanel({ state }: { state: AssignPageState }) {
                     {target.doc_code} {target.section_path}
                   </span>
                   <span className="pill warn">{t("assign.unsourced.title")}</span>
+                  {headEnd && <span className="ml-auto flex-none">{headEnd}</span>}
                 </div>
                 <div lang={target.lang === "neutral" ? undefined : target.lang}>
                   <ClampText text={target.text} className="text-[13px] leading-5 text-ink" tabbable={false} />
@@ -838,7 +920,10 @@ export function AssignSidePanel({ state }: { state: AssignPageState }) {
               </div>
             </>
           ) : (
-            <EmptyState icon={Check} testId="assign-unsourced-done" title={t("assign.unsourced.title")} body={t("assign.unsourced.done")} compact />
+            <>
+              {bareHead}
+              <EmptyState icon={Check} testId="assign-unsourced-done" title={t("assign.unsourced.title")} body={t("assign.unsourced.done")} compact />
+            </>
           )}
         </div>
       );
@@ -861,6 +946,7 @@ export function AssignSidePanel({ state }: { state: AssignPageState }) {
                     <ArrowDown size={13} strokeWidth={1.6} aria-hidden />
                   </button>
                 </Tooltip>
+                {headEnd}
               </span>
             </div>
             {rowBlock !== null && rowBlock.page !== null && (
@@ -881,11 +967,11 @@ export function AssignSidePanel({ state }: { state: AssignPageState }) {
         </div>
       );
     }
-    const tocPanel = !row && tocPick ? renderTocPanel(tocPick) : null;
-    if (tocPanel) return tocPanel;
+    if (!row && noisePick !== null) return renderNoisePanel(noisePick);
     if (!row) {
       return (
         <div className="assign-side-body">
+          {bareHead}
           <div className="grid gap-1 rounded-md bg-sunken p-3 text-[13px] text-ink-2" style={{ margin: "var(--pad)" }} data-testid="assign-pick-prompt">
             <b className="text-ink">{t("assign.pickTitle")}</b>
             {t("assign.pickBody")}
@@ -913,6 +999,7 @@ export function AssignSidePanel({ state }: { state: AssignPageState }) {
                   <ArrowDown size={13} strokeWidth={1.6} aria-hidden />
                 </button>
               </Tooltip>
+              {headEnd}
             </span>
             {(docViews.error ?? suggestions.error) !== null && (
               <button type="button" className="btn h-6 gap-1 px-1.5 text-xs font-normal text-st-hold" data-testid="assign-refresh-error" onClick={() => reloadData(true)}>
@@ -968,7 +1055,7 @@ export function AssignSidePanel({ state }: { state: AssignPageState }) {
               </button>
             </p>
           )}
-          <div className="px-[var(--pad)] pb-[var(--pad)] pt-1">{aiNote}</div>
+          {isDrafting && <div className="px-[var(--pad)] pb-[var(--pad)] pt-1">{aiNote}</div>}
         </div>
         {/* ② 결정 칸 - 패널 아래에 붙는다. 다른 길 셋 · 고른 곳(높이 상한 안에서 이 부분만 스크롤) · 대상 문서 · Remark · 맨 아래 확정.
             다른 박스를 고르면 내용이 통째로 바뀌니 그 자리에서 한 번 쓸고 지나간다(스크롤로 끌지 않는다, 설계 2026-11-20 D5) */}
@@ -977,15 +1064,8 @@ export function AssignSidePanel({ state }: { state: AssignPageState }) {
             {renderStep(stepBase + 2, t("assign.step.decide"))}
             {actions}
             {renderChosen()}
+            {translationBox}
           </div>
-          {destination?.kind === "move" && (
-            <div className="flex min-w-0 items-center gap-2">
-              <span className="flex-none text-xs text-ink-3">{t("classify.moveTo")}</span>
-              <span className="block h-8 min-w-0 flex-1">
-                <MoveTargetField key={activeKey ?? ""} bundleId={bundleId} value={moveCode} disabled={!canEdit} testId="assign-move-code" onChange={(code) => setDraft({ moveCode: code })} />
-              </span>
-            </div>
-          )}
           {remarkRow}
           {confirmButton}
         </Refresh>

@@ -15,8 +15,9 @@ from app.db import engine
 from app.sop.detach import DetachReport
 from app.sop.match import MAX_BULK_MATCH, _plan_targets, sync_new_doc_targets
 from app.sop.models import Bundle, BundleEvent, Document, TargetDoc, TargetSentence, TargetSource, Unit
+from app.sop.segment import RULE_PARAGRAPH
 from tests.access_helpers import run_in_session, update_row
-from tests.docx_factory import TINY_PNG, build_docx, make_drawing_run, p, tbl
+from tests.docx_factory import TINY_PNG, build_docx, make_band_table, make_drawing_run, p, tbl
 from tests.sop_helpers import (
     AUTHOR,
     OUTSIDER,
@@ -30,8 +31,9 @@ from tests.sop_helpers import (
     set_members,
     upload,
 )
+from tests.split_golden.builder import CASES, build_new_bytes
 
-pytestmark = pytest.mark.usefixtures("clean_sop")
+pytestmark = pytest.mark.usefixtures("clean_sop", "legacy_split_rule")
 
 OLD_NAME = "SYNTHETIC_OLD-1_Match.docx"
 NEW_NAME = "SYNTHETIC_SOP-M_Match.docx"
@@ -257,6 +259,105 @@ def test_clause_number_headings_set_level_one_without_styles(client: TestClient)
 
     assert [(t["confirmed_text"], t["section_path"]) for t in targets] == [
         ("합성 장비를 켠다.", "1."), ("합성 시료를 넣는다.", "2."),
+    ]
+
+
+def _upload_golden(client: TestClient, bundle_id: int, key: str) -> dict:
+    return _upload_ready(client, bundle_id, build_new_bytes(CASES[key]), NEW_NAME, side="new", doc_type="sop")
+
+
+@pytest.fixture
+def paragraph_split_rule(legacy_split_rule: None, monkeypatch: pytest.MonkeyPatch) -> None:
+    """이 파일의 다른 시험과 달리 지금 올리는 문서의 규칙(2)으로 쪼갠다."""
+    monkeypatch.setattr("app.sop.ingest.NEW_SPLIT_RULE", RULE_PARAGRAPH)
+
+
+@pytest.mark.usefixtures("paragraph_split_rule")
+def test_band_headings_of_a_new_document_nest_in_the_section_path(client: TestClient) -> None:
+    """New의 띠 표도 제목 줄이 되고(R4), 띠 표 번호의 단계가 절 경로에 쌓인다."""
+    bundle = create_bundle(client, is_synthetic=True)
+
+    new_doc = _upload_golden(client, bundle["id"], "G13")
+
+    targets = _load_targets(new_doc["target_doc_id"])
+    assert [(t["kind"], t["confirmed_text"], t["section_path"]) for t in targets] == [
+        ("sentence", "탱크를 비운다.", "5 절차"), ("sentence", "밸브를 닫는다.", "5 절차 › 5.1 준비"),
+    ]
+
+
+@pytest.mark.usefixtures("paragraph_split_rule")
+def test_band_and_styled_headings_share_the_section_path(client: TestClient) -> None:
+    """띠 표와 제목 스타일을 섞어 쓴 문서 — 스타일 단계와 띠 표 단계가 한 줄로 쌓인다."""
+    bundle = create_bundle(client, is_synthetic=True)
+    body = p("5. 절차", "Heading1") + make_band_table("5.1", "준비") + p("탱크를 비운다.") + p("6. 기록", "Heading1") + p("결과를 적는다.")
+
+    new_doc = _upload_new(client, bundle["id"], body)
+
+    assert [t["section_path"] for t in _load_targets(new_doc["target_doc_id"])] == ["5. 절차 › 5.1 준비", "6. 기록"]
+
+
+@pytest.mark.usefixtures("paragraph_split_rule")
+def test_band_levels_keep_numberless_clause_lines_out_of_the_section_path(client: TestClient) -> None:
+    """띠 표가 절을 정하는 문서(제목 스타일 없음)의 조항 번호만 든 줄은 1단계 제목으로 서지 않는다 — 스타일 제목이 있는 문서와 같다."""
+    bundle = create_bundle(client, is_synthetic=True)
+    body = make_band_table("5", "절차") + make_band_table("5.1", "준비") + p("5.1.1") + p("탱크를 비운다.")
+
+    new_doc = _upload_new(client, bundle["id"], body)
+
+    view = get_view(client, bundle["id"], new_doc["id"])
+    assert find_unit(view, "5.1.1")["kind"] == "heading"
+    assert [t["section_path"] for t in _load_targets(new_doc["target_doc_id"])] == ["5 절차 › 5.1 준비"]
+
+
+@pytest.mark.usefixtures("paragraph_split_rule")
+def test_a_new_heading_clause_makes_linkable_sentences(client: TestClient) -> None:
+    """제목 스타일로 쓴 긴 조항은 New에서도 문장이 되어(R4) 새 문장이 생기고 Old 줄을 이어 확정한다."""
+    bundle_id = create_bundle(client, is_synthetic=True)["id"]
+    old = _upload_ready(client, bundle_id, CASES["G11"].build(), OLD_NAME)
+    new_doc = _upload_golden(client, bundle_id, "G11")
+    targets = _load_targets(new_doc["target_doc_id"])
+    assert [(t["lang"], t["confirmed_text"], t["section_path"]) for t in targets] == [
+        ("ko", "5.1 배출 밸브를 모두 닫는다. 닫힌 것을 확인한다.", "5. 절차"),
+        ("en", "Close all drain valves. Confirm that they are closed.", "5. 절차"),
+    ]
+
+    units = [find_unit(get_view(client, bundle_id, old["id"]), t["confirmed_text"]) for t in targets]
+    body = {
+        "action": "confirm", "units": [_assigned(unit) for unit in units],
+        "targets": [_link(t["lang"], t, [unit]) for t, unit in zip(targets, units, strict=True)],
+    }
+    response = save_group(client, bundle_id, body)
+
+    assert response.status_code == 200, response.text
+    assert {t["status"] for t in _load_targets(new_doc["target_doc_id"])} == {"confirmed"}
+
+
+def test_rule_1_new_documents_keep_their_headings(client: TestClient) -> None:
+    """이미 올린 New(규칙 1)는 제목 조항은 제목, 띠 표는 표 그대로다 — 사람이 띠 표를 벗겨도 절 경로는 전처럼 쌓이지 않는다."""
+    bundle_id = create_bundle(client, is_synthetic=True)["id"]
+    clause = _upload_golden(client, bundle_id, "G11")
+    assert [unit["kind"] for unit in get_view(client, bundle_id, clause["id"])["units"]] == ["heading", "heading"]
+    assert _load_targets(clause["target_doc_id"]) == []
+
+    band = _upload_ready(
+        client, bundle_id, build_new_bytes(CASES["G13"]), "SYNTHETIC_SOP-B_Band.docx", side="new", doc_type="sop"
+    )
+    view = get_view(client, bundle_id, band["id"])
+    assert [table["is_layout"] for table in view["tables"]] == [False, False]
+    assert [t["kind"] for t in _load_targets(band["target_doc_id"]) if t["parent_target_id"] is None] == [
+        "table", "sentence", "table", "sentence",
+    ]
+
+    for table in view["tables"]:
+        revision = get_view(client, bundle_id, band["id"])["document"]["revision"]
+        response = client.post(
+            f"/api/bundles/{bundle_id}/documents/{band['id']}/edits",
+            json={"revision": revision, "op": {"type": "set_layout_table", "table_id": table["id"], "is_layout": True}},
+            headers=AUTHOR,
+        )
+        assert response.status_code == 200, response.text
+    assert [(t["confirmed_text"], t["section_path"]) for t in _load_targets(band["target_doc_id"])] == [
+        ("탱크를 비운다.", "5 절차"), ("밸브를 닫는다.", "5.1 준비"),
     ]
 
 

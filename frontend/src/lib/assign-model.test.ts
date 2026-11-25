@@ -10,6 +10,7 @@ import {
   clampSplit,
   isSingleDrop,
   clampZoom,
+  dropHiddenRecommendations,
   findLinkPartners,
   isRecommendationPicked,
   listCoConfirmed,
@@ -22,8 +23,9 @@ import {
   pickDrawnLinks,
   pickNearby,
   stepZoom,
+  type Recommendation,
 } from "./assign-model";
-import type { DestinationOption } from "./classify-model";
+import type { Destination, DestinationOption } from "./classify-model";
 
 function makeDecision(status: Decision["status"]): Decision {
   return { disposition: "assigned", move_target_code: "", reason: "", status, hold_reason: "", confirmed_by: null, confirmed_at: null, revision: 1 };
@@ -343,7 +345,30 @@ describe("listUnlinkRemainder", () => {
   });
 });
 
+describe("dropHiddenRecommendations", () => {
+  const rec = (destination: Destination): Recommendation => ({ key: JSON.stringify(destination), destination, why: "", source: "ai" });
+  it("drops recommendations into hidden documents, the band heading place too", () => {
+    const recs = [
+      rec({ kind: "link", targetIds: [1] }),
+      rec({ kind: "slot", docId: 1, slotKey: "a" }),
+      rec({ kind: "slot_heading", docId: 1, slotKey: "a" }),
+      rec({ kind: "step", docId: 2, step: 1, part: "why" }),
+      rec({ kind: "delete" }),
+    ];
+    expect(dropHiddenRecommendations(recs, false).map((item) => item.destination.kind)).toEqual(["link", "delete"]);
+    expect(dropHiddenRecommendations(recs, true)).toBe(recs);
+  });
+});
+
 describe("readConfirmBlockKey", () => {
+  it("stops a row moved to another Bundle earlier before every other gate", () => {
+    expect(readConfirmBlockKey({ isLegacyMove: true, isHiddenPlace: true, isRefGate: true, isCaptionGate: true })).toBe("assign.legacyMove.confirm");
+  });
+
+  it("stops at a place in a hidden document before the other gates", () => {
+    expect(readConfirmBlockKey({ isHiddenPlace: true, isRefGate: true, isCaptionGate: true })).toBe("assign.hidden.confirm");
+  });
+
   it("names the reference check first, then the missing caption, and nothing when confirm is free", () => {
     expect(readConfirmBlockKey({ isRefGate: true, isCaptionGate: true })).toBe("assign.ref.checkFirst");
     expect(readConfirmBlockKey({ isRefGate: false, isCaptionGate: true })).toBe("assign.caption.needed");

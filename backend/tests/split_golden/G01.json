@@ -1,0 +1,8 @@
+{
+  "shape": "번호 문단 하나에 한글 문장 셋",
+  "layout": null,
+  "boxes": [
+    {"text": "5. 절차", "lang": "ko", "kind": "heading", "number": "5.", "excluded": null},
+    {"text": "5.1 탱크를 비운다. 밸브를 닫는다. 잔량을 기록한다.", "lang": "ko", "kind": "sentence", "number": "5.1", "excluded": null}
+  ]
+}

@@ -9,14 +9,15 @@ frontend(Next.js) 세부 구조와 frontend에만 걸리는 체크리스트. 루
 
 - **공통 lib**: `src/lib/api.ts` `apiFetch`, `api-errors.ts` `humanizeApiError`(서버 원문은 422 검증 사유에만), `keycloak-login.ts` OIDC 설정 단일 소스(PKCE는 `crypto.subtle`이 있을 때만), `genId()`·`copyText()`(secure context 우회). localStorage 키 접두는 `sopa.`. → 1
 - **화면 규칙은 순수 모델에 두고 시험한다**(`paper-model`·`classify-model`·`assign-model` 등, API는 `api-sop.ts`). → 2
-  - 용지 `content-visibility`는 덩어리에 한 겹만 — 줄에도 걸면 스크롤 고정이 놓친다. `tobe-draft`는 단계 번호를 다시 매기지 않는다.
+  - 용지 `content-visibility`는 덩어리에 한 겹만 — 줄에도 걸면 스크롤 고정이 놓친다. 덩어리 `deps`에 글쇠마다 새 값이 되는 것을 통째로 넣지 않는다(`readChunk…`로 그 안의 것만). `tobe-draft`는 단계 번호를 다시 매기지 않는다.
   - `classify-model` `buildRows`의 줄은 서버 진행 숫자·검토 조건과 같은 규칙이다(`backend/CLAUDE.md` 줄 기준 숫자). 한/영 짝 줄을 한 언어만 이을 때 남는 Unit은 확정 저장에서 빼고(`listLinkLeftovers` — 실으면 422 `hold_required`) `release_unit_ids`로 보낸다.
-- **Assign** `app/bundles/[id]/assign`: 상태·데이터·동작은 `use-assign-page.tsx` `useAssignPage()`, `page.tsx`는 그리기. 고름·처리 중·따라가기는 `lib/assign-focus-model.ts` + `lib/use-assign-focus.ts` 한 곳. → 3
+- **숨긴 기능(`lib/drafting.ts`)**: 새 문서를 만드는 쪽은 지우지 않고 `isDraftingOn()` · `useDraftingOn()`(서버 렌더 · 하이드레이션 중 null, `=== true`로 읽는다) 하나로 숨긴다. 운영 빌드에는 켜는 길이 없고 개발은 `localStorage sopa.drafting="1"`. 숨긴 기능의 스모크는 `runStep(…, { drafting: true }, …)`. → 2
+- **Assign** `app/bundles/[id]/assign`: 상태·데이터·동작은 `use-assign-page.tsx` `useAssignPage()`, `page.tsx`는 그리기. 고름·처리 중·따라가기는 `lib/assign-focus-model.ts` + `lib/use-assign-focus.ts` 한 곳. 쓰기는 모두 `use-command-queue.ts` `enqueue` 한 줄로(순수 모델 `lib/command-queue.ts`) — 화면에서 API 쓰기를 바로 부르지 않고, 보내기는 누른 때의 값이 아니라 `liveRef`(나갈 때의 값)와 `lib/write-log.ts`의 revision으로. 확정 단추(= Enter)가 할 일은 `lib/primary-model.ts` `planPrimary` 한 곳, 글쇠를 누른 자리는 `lib/assign-key-target.ts`(층 고르개 `LAYER_SELECTOR`도) — 비모달 판에 `role="dialog"`를 쓰지 않는다. → 3
 - **UI 규칙(디자인 기초 문서)**: raw hex는 `src/styles/tokens.css` 밖에서 쓰지 않고, 다크는 토큰만 바꾸며 화면 코드가 테마로 분기하지 않고, 상태 표기는 화면 언어와 상관없이 영어다. → 5
 - **이동**: 앱 안 이동은 `lib/nav-buffer.ts` `navigate()` — 사람이 고른 이동에 `router.push`를 새로 쓰지 않는다(`useLeaveGuard`도 이 길에 걸려 있다). → 6
 - **움직임·끌기는 새로 짜지 않는다**: `components/ui/motion.tsx`(접기·쉬머·`useFlip`·`useUnwrapMotion`), `lib/use-progressive-list.ts`, 보조 단추 `.row-actions`, 상자 끌기 `lib/box-drag.ts`·`use-box-drag.ts`(놓기 규칙은 화면마다 순수 모델). → 6·7
 - **결과물 C**: 화면에 먼저 얹고(`lib/c-edit-model.ts`) 저장은 `lib/c-save-queue.ts`로 하나씩. `section-number.ts` `numberLines`는 backend `outputs.number_lines`의 사본이라 함께 고친다(저장 응답이 이긴다). → 8
-- **Markdown 보기는 `components/ui/markdown-view.tsx` 하나** — 원문 HTML을 그대로 넣는 길을 새로 만들지 않는다. 관리 API는 `lib/api-manage.ts`. → 9
+- **Markdown 보기는 `components/ui/markdown-view.tsx` 하나** — 원문 HTML을 그대로 넣는 길을 새로 만들지 않는다. 관리 API는 `lib/api-manage.ts`. 관리 화면만의 CSS는 `styles/admin.css`(`.adm-*`, 표 모양은 `.adm-scope` 안에서만) — 공용 `DataList`·`components.css`를 고치지 않는다. 서버 커서로 이어 받는 목록은 `lib/use-cursor-list.ts`. → 4·9
 - **목록·값 고르기**: 읽기 목록 `DataList`, 값 고르기 `Select`(기본 `<select>`를 새로 쓰지 않는다), 고르거나 입력 `Combobox`. 본문 폭은 `--page-max`·`--page-max-wide`(`AppShell` `.page-wrap`). → 10·11
 - **화면 공통 부품**: 브라우저 기본 모양(체크박스·라디오·`title` 툴팁)을 쓰지 않는다 — `Checkbox`·`Tooltip`·`InfoTip`. 아이콘만 있는 표시는 호버·포커스에 툴팁, 수가 많으면 `useDelegatedTip`. 삭제류 `MorphButton`, 빈 화면 `EmptyState`, 알림 `toast.tsx`. → 12
   - 창은 `Modal`의 `size`(`sm`·`md`·`lg`·`xl`·`sheet`)로 폭을 고른다 — 새 창에 임의 폭 클래스를 쓰지 않는다.

@@ -5,13 +5,15 @@
 
 import type { HTMLAttributes, KeyboardEvent, MouseEvent } from "react";
 
+import { isMousePress } from "@/lib/assign-key-target";
+
 /** 자리 하나의 보기 - label은 올렸을 때의 꼬리표(틈 위치 · 못 놓는 까닭 · 알림, 없으면 빈 글), picked는 지금 고른 자리 */
 export interface PlaceSpotView {
   key: string;
   open: boolean;
   label: string;
   picked: boolean;
-  onPick: () => void;
+  onPick: (isMouse: boolean) => void;
 }
 
 export type SpotAttrs = HTMLAttributes<HTMLElement> & Record<`data-${string}`, string | undefined>;
@@ -22,7 +24,7 @@ function isInnerControl(event: MouseEvent<HTMLElement> | KeyboardEvent<HTMLEleme
   return target !== null && target !== event.currentTarget && event.currentTarget.contains(target);
 }
 
-/** 칸 자리(칸 머리 · 범주 행 · 빈 칸)에 다는 속성 - 누를 수 있으면 단추 역할(↵ · Space), 못 놓는 곳은 눌러도 아무 일 없는 꺼진 단추(까닭이 이름이라 보조기기도 읽는다) */
+/** 칸 자리(칸 머리 · 범주 행 · 빈 칸)에 다는 속성 - 누를 수 있으면 단추 역할(Space - ↵는 화면의 확정이다), 못 놓는 곳은 눌러도 아무 일 없는 꺼진 단추(까닭이 이름이라 보조기기도 읽는다) */
 export function getSpotAttrs(view: PlaceSpotView): SpotAttrs {
   const common: SpotAttrs = {
     "data-place": view.open ? "open" : "refused",
@@ -36,12 +38,12 @@ export function getSpotAttrs(view: PlaceSpotView): SpotAttrs {
     tabIndex: 0,
     "aria-pressed": view.picked,
     onClick: (event) => {
-      if (!isInnerControl(event)) view.onPick();
+      if (!isInnerControl(event)) view.onPick(isMousePress(event));
     },
     onKeyDown: (event) => {
-      if ((event.key !== "Enter" && event.key !== " ") || isInnerControl(event)) return;
+      if (event.key !== " " || isInnerControl(event)) return;
       event.preventDefault();
-      view.onPick();
+      view.onPick(false);
     },
   };
 }
@@ -62,7 +64,7 @@ export function PlaceGap({ view, testId }: { view: PlaceSpotView; testId: string
       tabIndex={view.open ? undefined : -1}
       aria-pressed={view.open ? view.picked : undefined}
       data-testid={testId}
-      onClick={view.open ? view.onPick : undefined}
+      onClick={view.open ? (event) => view.onPick(isMousePress(event)) : undefined}
     />
   );
 }

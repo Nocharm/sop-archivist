@@ -1,0 +1,13 @@
+{
+  "shape": "본문 번호가 5에서 시작하고 절 안 단계가 1부터인 문서",
+  "layout": null,
+  "boxes": [
+    {"text": "합성 안내문", "lang": "ko", "kind": "sentence", "number": null, "excluded": null},
+    {"text": "5. 절차", "lang": "ko", "kind": "heading", "number": "5.", "excluded": null},
+    {"text": "탱크 세척 방법을 정한다.", "lang": "ko", "kind": "sentence", "number": null, "excluded": null},
+    {"text": "1. 전원을 켠다.", "lang": "ko", "kind": "sentence", "number": "1.", "excluded": null},
+    {"text": "2. 압력을 확인한다.", "lang": "ko", "kind": "sentence", "number": "2.", "excluded": null},
+    {"text": "6. 개정 이력", "lang": "ko", "kind": "heading", "number": "6.", "excluded": null},
+    {"text": "처음 만들었다.", "lang": "ko", "kind": "sentence", "number": null, "excluded": null}
+  ]
+}

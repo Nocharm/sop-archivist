@@ -157,10 +157,11 @@ async def _load(session: AsyncSession, suggestions: Sequence[AiSuggestion]) -> _
 
 
 def _is_open_unit(unit_id: int, loaded: _Loaded) -> bool:
-    """아직 미배정인 활성 단위 — 글을 고치면 단위가 은퇴하니 활성이면 원문 그대로다. revision은 보지 않는다(되돌리기도 올린다)."""
+    """아직 미배정인 활성 단위 — 글을 고치면 단위가 은퇴하니 활성이면 원문 그대로다. revision은 보지 않는다(되돌리기도 올린다).
+    제안 뒤에 저절로 삭제된 줄이 된 것(여기부터 본문)은 판단하지 않는다."""
     decision = loaded.decisions.get(unit_id)
     return (
-        unit_id in loaded.units and decision is not None
+        unit_id in loaded.units and loaded.units[unit_id].noise_kind is None and decision is not None
         and decision.status == UNASSIGNED and decision.disposition == UNASSIGNED
     )
 

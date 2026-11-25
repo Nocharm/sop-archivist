@@ -1,14 +1,13 @@
-// 배정 초기화 확인 창 - 열자마자 dry_run으로 몇 줄이 미배정·보류로 가고 새 문장 몇 개가 지워지는지 세어 보인 뒤, 확정하면 같은 범위를 실제로 지운다.
+// 배정 초기화 확인 창 - 열자마자 dry_run으로 몇 줄이 미배정·보류로 가고 새 문장 몇 개가 지워지는지 세어 보인다. 확정하면 실제로 지우는 일은 화면의 명령 큐가 한다.
 "use client";
 
 import { RotateCcw } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 
 import { ConfirmModal } from "@/components/ui/confirm-modal";
-import { showToast } from "@/components/ui/toast";
 import { ApiError } from "@/lib/api";
 import { humanizeApiError } from "@/lib/api-errors";
-import { resetAssignments, type UndoMeta } from "@/lib/api-sop";
+import { resetAssignments } from "@/lib/api-sop";
 import { loadBundle } from "@/lib/bundle-store";
 import { useI18n } from "@/lib/i18n";
 import { useLoaded } from "@/lib/use-loaded";
@@ -21,13 +20,12 @@ interface ResetModalProps {
   scope: ResetScope;
   /** 묶음 revision - 초기화는 올리지 않으므로 미리 세기와 실제 실행에 같은 값을 쓴다 */
   revision: number;
-  /** 되돌리기 기록 메타 - 실제 실행에만 싣는다(미리 세기는 기록하지 않는다) */
-  undo?: UndoMeta;
-  onDone: () => void;
+  /** 확정 - 센 revision으로 실행한다 */
+  onRun: (revision: number) => void;
   onClose: () => void;
 }
 
-export function ResetModal({ bundleId, scope, revision, undo, onDone, onClose }: ResetModalProps) {
+export function ResetModal({ bundleId, scope, revision, onRun, onClose }: ResetModalProps) {
   const { t } = useI18n();
   const documentId = scope.kind === "document" ? scope.documentId : undefined;
   const preview = useLoaded(() => resetAssignments(bundleId, { revision, document_id: documentId, dry_run: true }), `${bundleId}:${documentId ?? "all"}:${revision}`);
@@ -36,24 +34,8 @@ export function ResetModal({ bundleId, scope, revision, undo, onDone, onClose }:
   useEffect(() => {
     if (isStale) void loadBundle(bundleId);
   }, [isStale, bundleId]);
-  const [busy, setBusy] = useState(false);
   const counts = preview.data;
   const total = counts ? counts.unassigned_units + counts.held_units + counts.deleted_targets + counts.held_targets : 0;
-
-  async function runReset() {
-    setBusy(true);
-    try {
-      const result = await resetAssignments(bundleId, { revision, document_id: documentId }, undo);
-      showToast(t("assign.reset.done", { n: result.unassigned_units }));
-      onDone();
-    } catch (err) {
-      showToast(humanizeApiError(err, t), "error");
-      // revision이 낡았을 수 있다 - 묶음을 다시 받으면 창이 새 revision으로 다시 센다
-      void loadBundle(bundleId);
-    } finally {
-      setBusy(false);
-    }
-  }
 
   let summary;
   if (preview.error !== null) {
@@ -85,10 +67,9 @@ export function ResetModal({ bundleId, scope, revision, undo, onDone, onClose }:
       confirmLabel={t("assign.reset.confirm")}
       confirmIcon={RotateCcw}
       danger
-      busy={busy}
       confirmDisabled={!counts || total === 0}
       testId="assign-reset-modal"
-      onConfirm={() => void runReset()}
+      onConfirm={() => onRun(revision)}
       onClose={onClose}
     />
   );

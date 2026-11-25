@@ -701,7 +701,7 @@
 <p>권한은 <b>표 기반</b>이다. 권한 키는 코드가 정의하고, 사람·부서에 역할 또는 권한을 <b>더하기만</b> 한다. 부서에 준 권한은 하위 부서까지 내려간다. 시스템 관리자(<code>APP_SYSADMINS</code>)는 모든 권한을 가진다. 묶음 멤버십(4장)과는 별개다.</p>
 <table>
   <tr><th>권한 키</th><th>할 수 있는 것</th><th>관리 화면 메뉴</th></tr>
-  <tr><td><code>permission.manage</code></td><td>역할·부여 관리, 변경 기록, 유효 권한 조회</td><td>Access</td></tr>
+  <tr><td><code>permission.manage</code></td><td>역할·부여 관리(부여 상세에서 유효 권한 조회), 변경 기록</td><td>Access</td></tr>
   <tr><td><code>directory.sync</code></td><td>HR 직원 디렉터리 동기화 실행·미리보기</td><td>Directory sync</td></tr>
   <tr><td><code>system.view</code></td><td>배치 작업(백업·동기화) 결과 보기</td><td>Batch jobs</td></tr>
   <tr><td><code>ai.admin</code></td><td>사내 AI 연결 시험, 사용량</td><td>AI</td></tr>
@@ -711,26 +711,26 @@
 </table>
 <figure class="shot" data-shot="admin-roles">
   <div class="frame"><img width="1440" height="900" src="img/admin-roles.png" alt="역할" loading="lazy"></div>
-  <figcaption><span class="fig">그림 14-1</span>관리 화면. 왼쪽 세로 메뉴에 권한별로 보이는 항목만 나온다(권한이 없으면 메뉴 자체가 없다).
-    <ol class="marks"><li data-n="1">Access(권한) 묶음. 아래 넷이 하위 항목이다.</li><li data-n="2">Roles: 권한 묶음에 이름을 붙인 것.</li><li data-n="3">새 역할.</li><li data-n="4">역할 목록과 들어 있는 권한·부여 수.</li></ol>
+  <figcaption><span class="fig">그림 14-1</span>관리 화면. 왼쪽 세로 메뉴에 권한별로 보이는 항목만 나온다(권한이 없으면 메뉴 자체가 없다). 항목은 사람·권한 / 운영 / SOP 기준으로 묶인다.
+    <ol class="marks"><li data-n="1">Access(권한). 아래 셋(Roles·Grants·Audit log)이 하위 항목이고, 고른 항목은 주소에 남는다.</li><li data-n="2">Roles: 권한 묶음에 이름을 붙인 것.</li><li data-n="3">새 역할.</li><li data-n="4">역할 목록과 들어 있는 권한·부여 수.</li></ol>
   </figcaption>
 </figure>
 <figure class="shot" data-shot="admin-grants">
   <div class="frame"><img width="1440" height="900" src="img/admin-grants.png" alt="부여" loading="lazy"></div>
   <figcaption><span class="fig">그림 14-2</span>부여(Grants).
-    <ol class="marks"><li data-n="1">Grants.</li><li data-n="2">부여 더하기: 사람 또는 부서에 역할 또는 권한 하나.</li><li data-n="3">부여 목록. 개편으로 사라진 부서·사람의 부여도 지우지 않고 "찾을 수 없음"으로 보인다. 표·카드 전환이 된다.</li></ol>
+    <ol class="marks"><li data-n="1">Grants.</li><li data-n="2">부여 더하기: 사람 또는 부서에 역할 또는 권한 하나.</li><li data-n="3">왼쪽은 부여받은 부서·사람 목록, 고르면 오른쪽에 그 대상의 부여가 나온다. 개편으로 사라진 부서·사람의 부여도 지우지 않고 "찾을 수 없음"으로 보인다. 역할은 여러 개를 한 번에 더할 수 있고, 회수는 바로 되며 5초 동안 되돌릴 수 있다.</li></ol>
   </figcaption>
 </figure>
 <figure class="shot" data-shot="admin-audit">
   <div class="frame"><img width="1440" height="900" src="img/admin-audit.png" alt="변경 기록" loading="lazy"></div>
-  <figcaption><span class="fig">그림 14-3</span>변경 기록(Audit log). 역할·부여의 모든 변경, 최신 순.
+  <figcaption><span class="fig">그림 14-3</span>변경 기록(Audit log). 역할·부여의 모든 변경, 최신 순. 날짜로 묶이고 종류·글자로 거르며, 아래로 내리면 30건씩 이어 불러온다.
     <ol class="marks"><li data-n="1">Audit log.</li><li data-n="2">시각·누가·무엇을·요약.</li></ol>
   </figcaption>
 </figure>
 <figure class="shot" data-shot="admin-lookup">
-  <div class="frame"><img width="1440" height="900" src="img/admin-lookup.png" alt="유효 권한 조회" loading="lazy"></div>
-  <figcaption><span class="fig">그림 14-4</span>유효 권한 조회(Lookup). 사람을 고르면 개인 부여 ∪ 소속 부서 체인 부여를 합친 결과와 각 권한의 출처를 보인다. 판정은 <code>/api/me</code>와 같은 함수 하나에서 나온다.
-    <ol class="marks"><li data-n="1">Lookup.</li></ol>
+  <div class="frame"><img width="1440" height="900" src="img/admin-lookup.png" alt="부여 상세의 유효 권한" loading="lazy"></div>
+  <figcaption><span class="fig">그림 14-4</span>부여 상세의 유효 권한. 부여 목록에서 사람을 찾아 고르면(부여가 없는 직원도 찾힌다) 개인 부여 ∪ 소속 부서 체인 부여를 합친 결과와 각 권한의 출처를 보인다. 판정은 <code>/api/me</code>와 같은 함수 하나에서 나온다.
+    <ol class="marks"><li data-n="1">대상 찾기.</li><li data-n="2">고른 대상의 부여와 유효 권한.</li></ol>
   </figcaption>
 </figure>
 <figure class="shot" data-shot="admin-directory">
@@ -741,7 +741,7 @@
 </figure>
 <figure class="shot" data-shot="admin-batch">
   <div class="frame"><img width="1440" height="900" src="img/admin-batch.png" alt="배치 작업" loading="lazy"></div>
-  <figcaption><span class="fig">그림 14-6</span>배치 작업. 로컬에는 기록이 없어 <b>예시 응답</b>으로 찍었다. 작업마다 성공·실패의 가장 최근 결과를 보인다(DB 백업은 매일 04:00, 14일 보존).
+  <figcaption><span class="fig">그림 14-6</span>배치 작업. 로컬에는 기록이 없어 <b>예시 응답</b>으로 찍었다. 한 작업이 한 줄이고 성공·실패의 가장 최근 결과를 나란히 보인다(DB 백업은 매일 04:00, 14일 보존).
     <ol class="marks"><li data-n="1">Batch jobs.</li><li data-n="2">결과 칩: 성공은 연한 회색, 실패는 꽉 찬 빨강.</li></ol>
   </figcaption>
 </figure>
@@ -760,7 +760,7 @@
 <figure class="shot" data-shot="admin-guidelines">
   <div class="frame"><img width="1440" height="900" src="img/admin-guidelines.png" alt="AI 지침" loading="lazy"></div>
   <figcaption><span class="fig">그림 14-9</span>AI 지침.
-    <ol class="marks"><li data-n="1">지침 키(rules, prompt.*)와 활성 버전.</li><li data-n="2">버전 이력. 줄을 누르면 그 버전을 본다. 활성이 아닌 버전에 "활성화".</li><li data-n="3">내용. 마크다운으로 그려 보이고, 고칠 때는 원문 + 미리 보기로 새 버전을 만든다.</li></ol>
+    <ol class="marks"><li data-n="1">지침 이름과 키(rules, prompt.*), 활성 버전.</li><li data-n="2">버전 타임라인. 줄을 누르면 그 버전을 본다. 활성이 아닌 버전에 "활성화".</li><li data-n="3">내용. 마크다운으로 그려 보이고, 고칠 때는 원문 + 미리 보기로 새 버전을 만든다.</li></ol>
   </figcaption>
 </figure>
 <figure class="shot" data-shot="account">

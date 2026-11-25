@@ -16,9 +16,11 @@
 SOP 화면: `api-sop.ts`(SOP API 호출·응답 타입), 화면 규칙은 순수 모델에 두고 시험한다.
 
 - `paper-model`(원문 용지):
-  - 긴 문서는 카드 40장씩 덩어리로 그려 화면에서 먼 덩어리는 다시 그리지 않고 브라우저도 건너뛴다, `paper-chunk-model`·`Paper`의 `PaperChunk`.
+  - 긴 문서는 카드 40장씩 덩어리로 그려 화면에서 먼 덩어리는 다시 그리지 않고 브라우저도 건너뛴다, `paper-chunk-model`·`Paper`의 `PaperChunk`. 필터로 접힌 목록도 접기 계획의 칸 40개씩 같은 덩어리다(`sliceFoldEntries`). 덩어리로 그릴지는 펼침 · 고름에 바뀌지 않는 접기 전 칸 수로 정하고, 펼친 묶음은 머리와 줄을 가르지 않은 채 접혔을 때처럼 한 칸으로 센다 — 묶음을 펼치고 접어도 어느 줄도 덩어리를 옮기지 않는다(옮긴 줄은 다시 마운트된다). 접힌 묶음 안을 골라 엿보기가 끼면 칸이 늘어, 그 뒤 경계의 줄만 옮긴다(덩어리 key는 자리 번호).
+  - 먼 덩어리를 다시 그릴지는 `PaperChunk`의 `deps`로 견준다. 글쇠마다 통째로 새 값이 되는 것(처리 중 · 삭제 접힘 · 저장 중인 번호)은 그대로 넣지 않고 덩어리마다 그 안의 것만 글로 읽어 넣는다(`readChunkPending` · `readChunkDeleted` · `readChunkNumbers`). 표 알약은 그 표나 벗긴 표의 머리가 든 덩어리에, 머리의 잠금은 묶음 · 표의 단위가 다른 덩어리에 있어도 든다(`chunkScopes`).
   - `content-visibility`는 덩어리에 한 겹만 — 줄에도 걸면 스크롤 고정이 놓친다.
-  - 목차 줄(`noise_kind`)은 Assign에서만 `strips.toc`로 흐린 블록 한 카드로 접는다 — `toc-block-model`, 목차 줄은 `buildRows`의 줄이 아니다.
+  - 저절로 삭제된 줄(`noise_kind` 목차 · 본문 앞부분 · 개정 이력)은 Assign의 Old에서만 `strips.noise`로 종류마다 흐린 블록 한 카드로 접는다 — `toc-block-model`(`listNoiseBlocks` · `buildNoiseBlock`, 표 · 그림은 한 줄이고 칸 · 캡션은 세지 않는다), `buildRows`의 줄이 아니다. 고름은 `Focus` `kind: "toc"`(블록 · 줄), 화면은 `noisePick`이 그 블록을 찾는다(첫 줄이 빠져 키가 바뀌어도 고른 줄로).
+    - 글쇠는 판단 글쇠보다 먼저 `lib/noise-keys.ts`(`U` · `R`, Shift는 블록 전체, Del · H · Enter는 아무것도 하지 않음). 편집 `clear_noise` · `set_noise_reason` · `start_body`는 처리 중 종류 `toc`이고 **장벽이 아니다**(결과 박스가 누를 때 정해져 있다) — 다시 받기는 큐가 빌 때. 삭제 취소는 고름을 그대로 두고 따라가기로 돌아온 줄을 고른다.
 - `tobe-draft`(To-Be 초안, 하위 항목은 줄 키에 묶고 단계 번호는 다시 매기지 않는다).
 - `classify-model`(Assign 줄·보낼 곳·저장 요청):
   - 새 문장 칸 단위로 AI 나눔·합침 보존, 이미 쓴 문서 문장에 잇는 `link`는 닫힌 관계 묶음 전체를 보낸다.
@@ -28,21 +30,30 @@ SOP 화면: `api-sop.ts`(SOP API 호출·응답 타입), 화면 규칙은 순수
 - `match-model`(같은 글자 일괄 확정 나누기).
 - `slot-status-model`(SOP 칸의 여섯 상태 · 요약 · N/A 사유 편집기 하나).
 - `old-row-model`(Documents Old 목록의 줄 · 줄 끝 단추 · 펼칠 수 있는 줄).
+- **숨긴 기능**: `lib/drafting.ts` — 새 문서를 만드는 쪽(Order · 번호로 더하기 · 칸 배정 · 템플릿 보기 · 결과물 C)과 칸 추천 · 나누기 · 번역 · 목록 읽기 AI를 화면에서 숨기는 스위치 하나(쪼개기 먼저 설계 §5 H1). 단계 목록은 `stages.ts` `listStages(drafting)`(숨기면 Order가 빠지고 번호를 이어 매긴다 — 주소 읽기는 그대로 `STAGES`), AI 종류는 `ai-suggestion-model.ts` `HIDDEN_AI_KINDS`, 보낼 곳은 `classify-model.ts` `listPickOptions`(고르기) · `readHiddenPlace`(이미 보낸 곳 읽기), Documents는 `tobe-add-model.ts` `listTobeTools`, 결과물 탭은 `outputs-view-prefs.ts` `resolveOutputsTab`. 숨긴 동안 남은 AI 번역(`GET …/translations/open`)은 `translation-decision.ts`로 정한다 — 오른쪽 칸(고른 줄의 것)과 `components/assign/leftover-translations.tsx`(묶음 전체, 위쪽 줄 단추 · `?translations=1`)가 같은 저장을 쓰고, 칸 번역은 누른 때의 표 묶음을 새로 읽어 나머지가 모두 확정일 때만 보낸다. 서버 쪽은 따로다 — `ai/constants.py` `AUTO_CLASSIFY` · `PLAN_DELETES`, `sheet_model.py` `SHOW_C_SHEET`.
 
 ## 3. 3단계 Assign 화면 — `app/bundles/[id]/assign`(v0.10.0)
 
 - 옛 `/classify`·`/match`는 이리로 넘긴다.
 - 상태 · 데이터 · 동작은 `use-assign-page.tsx` `useAssignPage()`, `page.tsx`는 그리기 — 위쪽 줄은 `assign-bar.tsx`, 오른쪽 결정 칸은 `assign-side-panel.tsx`, 둘 다 `state`(`AssignPageState`)를 받는다.
-- 고름 · 처리 중 · 따라가기는 순수 모델 `lib/assign-focus-model.ts` + 훅 `lib/use-assign-focus.ts` 한 곳 — 편집 중에도 고름을 두고, 응답 뒤 고름이 누른 때 그대로일 때만 결과 박스를 따라간다.
+- 고름 · 처리 중 · 따라가기는 순수 모델 `lib/assign-focus-model.ts` + 훅 `lib/use-assign-focus.ts` 한 곳 — 편집 중에도 고름을 두고, 응답 뒤 고름이 누른 때 그대로일 때만 결과 박스를 따라간다. 판단 저장 중인 박스는 잠기지 않는다(다시 고를 수 있다).
+- **명령 큐(한 줄)**: 판단 저장 · 배정 취소 · 일괄 · 그림 삭제 · 원문 편집 · 짝 · 되돌리기 · 묶음 전체 일(같은 글자 · 모두 받기 · 초기화 · 신규 표시 · 출처 잇기 …) · 번역 확정/지우기가 모두 `use-command-queue.ts` `enqueue`를 지난다. 순수 모델 `lib/command-queue.ts`(하나씩 · 장벽 · 실패 멈춤 · 되묻기)는 React를 모르고, 훅은 이펙트가 없다 — `use-assign-page.tsx`의 줄 없는 이펙트 하나가 커밋마다 `mount` · `pump`를 부른다.
+  - 판단(`save`)은 누른 순간 줄 · Unit · 초안을 잡고 `lib/next-box-model.ts` `pickNextBox`(저장 중인 것도 된 것으로 센다)로 고름을 옮긴다. 보류 · 배정 취소 · 일괄은 저장 뒤처럼 그 자리에 머문다. 한 언어만 이어 짝이 풀리는 저장은 결과 박스를 몰라 줄에서는 장벽(`unpair`)이다.
+  - 장벽(`isBarrier`) 앞에서 누른 글쇠 · 판단 단추 · (글쇠가 쌓인 뒤의) 클릭은 `key` · `press` · `pick`으로 쌓이고, 장벽의 보기가 놓여 고름이 선 **그 커밋**(`settleWait`)에서 하나씩 다시 눌린다. 되살린 글쇠가 만든 명령은 남은 글쇠 앞(`pushNext`)에, 사유 창을 열면 답할 때까지(`asking`) 뒤가 기다린다. 되돌리기(`step`)만 대상이 없어 앞 장벽의 응답 뒤 바로 나가고(New 문서 보기를 기다리는 장벽은 빼고), 그때 앞 장벽의 늦은 보기는 놓지 않는다(`ctx.isCurrent` · `useDocViews().discard`) — 놓으면 은퇴한 박스의 고름이 풀려 되돌리기가 따라가지 못한다. 장벽이 끝나자 고른 것이 사라졌으면 쌓인 글쇠를 버리고 알린다. 고쳐 쓰기(`E`)가 쌓이면 그 뒤 글쇠는 쌓지 않고, 누르고 있는 글쇠는 이동만 받는다(`lib/assign-press-model.ts`).
+  - 보낼 값은 누른 때가 아니라 나갈 때의 것(`liveRef`)이고, 판단 revision은 누른 때 화면에서 본 것(`seen`)을 `lib/write-log.ts`가 앞 응답으로 이어 준다(문서 revision은 `doc-revision`). 미룬 명령과 다시 시도는 나가는 때의 화면 값을 찍고, 보내려고 방금 받은 묶음의 revision은 화면에 없던 것 · 방금 비운 단위에만 쓴다(남이 바꾼 것을 덮지 않게). 받아 둔 관계 묶음은 그 뒤 쓴 것이 들지 않았을 때만 쓴다(`isFresh`).
+  - 저장 응답의 판단은 `useDocViews().patchDecisions`로 줄에 먼저 얹고, 다시 읽기는 `requestReload`(`lib/reload-ask-model.ts`)로 모아 큐가 빌 때(또는 멈췄을 때) 한 번 — 장벽의 문서 보기(`placeReload`)만 바로 받는다.
+  - 실패하면 멈추고 `queue-failure.tsx`(Retry · Discard)가 알린다. 뒤에 기다리는 것이 없는 편집 · 되돌리기의 거절(4xx)은 알림만(`shouldHalt`). 화면을 떠나면 남은 판단은 마저 보내고 글쇠는 버리며, 떠난 뒤의 실패와 멈춘 채 떠난 것은 못 나간 수를 알린다(나가기 확인은 초안 · 멈춘 것만 센다).
 - Old 원문(Split `Paper` 조각)이 곧 목록이고 옆에 이미 쓴 New 원문을 연다(`components/assign/`).
 - 두 문서 사이 세로선으로 폭, 마우스를 올린 문서만 Ctrl+휠·Ctrl ±로 확대(`lib/use-pane-zoom.ts`, 값은 `lib/assign-view-prefs.ts`가 `sopa.assign.*`에 기억).
+- **확정 단추 = Enter**(설계 2026-11-25 §6 S1 · 11-23 B1): `lib/primary-model.ts` `planPrimary`가 할 일(고른 곳 확정 · Suggested 첫 카드로 확정 · AI 순서 적용 · 막힘과 까닭)을, `describePrimary`가 이름 · 색을 정하고 단추와 `handlePrimary`가 같은 답을 읽는다. 카드 확정(`confirmCard`)은 Use와 같은 글 · `suggestionId`를 저장 명령에 싣고 초안에도 넣는다(`DecidePick` `kind: "card"` — 막음 · 캡션 조건은 그 카드의 자리로 본다, 버리면 앞 초안으로). 앞 줄의 비슷한 문장이 남아 있는 동안(`similar.key`)은 그 카드로 확정하지 않는다. 누른 자리는 `lib/assign-key-target.ts` `readKeyPlace`(typing · layer · pop · paper · side · other) — 용지 · 오른쪽 칸의 Enter는 포커스와 상관없이 확정이라 그 안의 단추는 Space로만 누르게 만든다. 마우스로 누른 오른쪽 칸 · 위쪽 도구 줄 · 문서 머리의 단추(`returnsToPaper`)는 화면 틀의 `handleFramePress`가 포커스를 바로 Old `.pane-body`(`tabIndex=-1`)로 돌린다(연 창은 닫힐 때 그리로 돌아오고, 글 칸은 뒤에 가져간다. `aria-haspopup`이면 두고). 저절로 삭제된 줄을 고른 동안은 `isDeletedLine`이라 막힘이고 Enter는 `noise-keys.ts`가 먼저 받아 아무것도 하지 않는다 — 블록의 단추는 그 블록 · 줄을 함께 고른다.
+- 오른쪽 칸의 틀은 `components/assign/side-float.tsx` — 창이 1440px보다 좁으면 떼어 띄운다(자리 셈 `lib/side-float-model.ts`, 창 크기 `lib/use-window-size.ts`, 기억은 `assign-view-prefs`의 `sideFloat`·`sideX`·`sideY`·`sideFolded`). 붙어 있든 떠 있든 같은 `<aside>`라 안의 내용이 다시 만들어지지 않고, 열 폭은 CSS(`.assign-frame:has(> .assign-side[data-float])`)가 바꾼다. 모달이 아니다(role 없음) — 화면 단축키는 `[role="dialog"]`이 있으면 멈춘다.
 - New 문장 목록·Old 하나의 New 후보는 서버 `app/sop/written.py`(`/written-sentences`·`/units/{id}/new-candidates`, 임베딩 캐시만 읽고 없으면 글자 유사도).
 
 ## 4. 공용 훅·저장소
 
 - `bundle-store`(묶음 캐시 — 화면 진입마다 다시 부르고 로그아웃·사용자 전환 때 비운다).
 - AI 작업 상태는 공용 폴러 `lib/ai-jobs-store.ts`(사용자당 하나, `GET /api/ai/jobs/recent`)가 읽고 규칙은 `ai-jobs-model.ts`, 상단 바 표시는 `components/ai-jobs-indicator.tsx`·`ai-jobs-popover.tsx`(`use-ai-jobs`는 그 묶음의 요청이 바뀔 때 `/ai/status`만 다시 읽는다).
-- `leave-guard`(미저장 이탈 가드)·`use-loaded`.
+- `leave-guard`(미저장 이탈 가드)·`use-loaded`·`use-cursor-list`(서버 커서로 한 묶음씩 이어 받는 목록 — 이미 받은 목록을 나눠 그리는 `use-progressive-list`와 다르다).
 - `ui-prefs`(화면 설정 값 목록)와 `layout.tsx`의 첫 페인트 전 boot 스크립트가 같은 값을 쓴다.
 
 ## 5. UI 규칙(디자인 기초 문서)
@@ -54,7 +65,8 @@ SOP 화면: `api-sop.ts`(SOP API 호출·응답 타입), 화면 규칙은 순수
 - 앱 안 이동은 `lib/nav-buffer.ts` `navigate()`(0.6초 버퍼, 같은 곳 재클릭·Esc 취소)로 하고 링크 클릭은 `components/nav-host.tsx`가 창 캡처 단계에서 같은 길로 돌린다 — 사람이 고른 이동에 `router.push`를 새로 쓰지 않는다(저장 안 한 변경 가드 `useLeaveGuard`도 이 길에 걸려 있다).
 - 접기·쉬머·폭 모핑·말줄임 툴팁은 `components/ui/motion.tsx`, 긴 목록은 `lib/use-progressive-list.ts`.
 - 목록 자리 바꿈(FLIP — 바뀔 줄만 재고 움직임 줄이기면 바로)은 `components/ui/motion.tsx` `useFlip`(거리는 `lib/flip.ts`).
-- 표 벗기기처럼 원문 모양이 바뀌는 전환(걷기 → 펼치기 → 붙이기, 줄마다 늦춤, 화면 안만, 움직임 줄이기면 바로 + 번쩍)은 `useUnwrapMotion`(`motion.tsx`, 사용법은 그 JSDoc, 순수 계산 `lib/unwrap-motion.ts`)으로 — 새로 짜지 않는다.
+- 표 벗기기처럼 원문 모양이 바뀌는 전환(걷기 → 펼치기 → 붙이기, 줄마다 늦춤, 화면 안만, 움직임 줄이기면 바로 + 번쩍)은 `useUnwrapMotion`(`motion.tsx`, 사용법은 그 JSDoc, 순수 계산 `lib/unwrap-motion.ts`)으로 — 새로 짜지 않는다. 누르면 `begin`(걷기), 새 모양을 받으면 그 손잡이의 `commit(change)`, 거절 · 되묻기면 `revert`(거꾸로)다. Assign은 큐의 처리 중 시작 · 끝(`CommandEnv.start` · `end`)에 걸어 둘 중 하나가 꼭 불린다.
+- 저장 전에 먼저 보이는 것(A2-R6)은 큐 상태에서 파생한다 — 삭제 접기는 `buildDeletedFolds`의 `pendingDeletes`(달리는 · 기다리는 · 멈춘 삭제의 줄 키, 접힘은 `Collapse startOpen`, 버린 삭제의 펼침은 `lib/use-released-folds.ts`), 번호는 `listExpectedNumbers`(응답 뒤 그 revision의 보기가 닿을 때까지, 실패하면 빠진다). 내용이 같으면 같은 값을 내려 용지의 먼 덩어리를 다시 그리지 않는다.
 - 호버로 드러나는 보조 단추는 `.row-actions`(`styles/motion.css`).
 
 ## 7. 상자 전체 끌기
@@ -66,8 +78,11 @@ SOP 화면: `api-sop.ts`(SOP API 호출·응답 타입), 화면 규칙은 순수
 - 결과물 C의 순서·깊이·표시는 화면에 먼저 얹고(`lib/c-edit-model.ts`) 저장은 한 번에 하나씩 보내며(`lib/c-save-queue.ts`, 의미 확인 체크도 같은 줄) 응답의 그 문서로 맞춘다.
 - 저장 전 번호 미리 세기 `section-number.ts` `numberLines`는 backend `outputs.number_lines`의 사본이라(저장 응답이 이긴다) 서버 규칙을 바꾸면 함께 고친다.
 
-## 9. 관리 API·Markdown 보기
+## 9. 관리 화면·API·Markdown 보기
 
+- 관리 화면 `app/admin/page.tsx` + `components/admin/`: 탭·하위 탭은 주소(`?tab=&sub=`)에 두고 옛 `sub=lookup`은 부여로 연다. 부여는 `access-grants.tsx`(목록) + `grant-detail.tsx`(상세, 유효 권한 `effective-permissions.tsx`), 역할 여러 개 더하기는 `add-roles-popover.tsx`.
+- 규칙은 순수 모델 — `lib/grants-model.ts`(왼쪽 목록), `lib/audit-model.ts`(거르기·날짜 묶음), `lib/batch-jobs.ts`(작업마다 한 줄), `lib/subject-label.ts` + `lib/use-subject-names.ts`(대상 이름을 화면 언어로).
+- 관리 화면만의 CSS는 `styles/admin.css`(`.adm-*`, 표 모양은 관리 본문 `.adm-scope` 안에서만) — 공용 `DataList`·`components.css`를 고치지 않는다.
 - 백엔드에만 있던 묶음 관리·AI 요청·관리 묶음·AI 지침 API는 `lib/api-manage.ts`.
 - Markdown 글(AI 지침)의 읽기 보기는 `components/ui/markdown-view.tsx` 하나를 쓴다(escape 뒤 서식만 태그로 — 원문 HTML을 그대로 넣는 길을 새로 만들지 않는다).
 
@@ -76,7 +91,6 @@ SOP 화면: `api-sop.ts`(SOP API 호출·응답 타입), 화면 규칙은 순수
 - 읽기 위주 목록은 `components/ui/data-list.tsx` `DataList`(열 정의 하나로 표·밀도 높은 카드, 보기는 `ListViewToggle`·`lib/use-list-view.ts`가 목록마다 `sopa.listView.<key>`에 기억, 남은 폭을 채우는 열은 `grow`)를 쓴다.
 - Documents의 문서 목록은 `components/documents/doc-row.tsx`(두 줄 줄 틀 — 줄 끝 단추는 호버 · 포커스, 좁으면 ⋯. 딸린 정보 줄은 넘치는 동안 `lib/use-meta-fit.ts`가 `data-fit` 단계를 올려 CSS가 정한 순서로 줄인다)를 쓴다.
 - 값 하나 고르기는 `components/ui/select.tsx` `Select`(떠 있는 목록은 `Menu` listbox, 항목 testid `<testId>-option-<value>`, 스모크는 트리거→항목 클릭)를 쓴다 — 기본 `<select>`를 새로 쓰지 않는다.
-- 추천 목록에서 고르거나 그대로 입력하는 칸은 `components/ui/combobox.tsx` `Combobox`(항목 testid `<testId>-option-<value>`, 입력 그대로 `<testId>-option-typed`).
 
 ## 11. 본문 폭
 

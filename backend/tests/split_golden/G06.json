@@ -1,0 +1,9 @@
+{
+  "shape": "번호 문단 뒤 번호 없는 문단",
+  "layout": null,
+  "boxes": [
+    {"text": "5. 절차", "lang": "ko", "kind": "heading", "number": "5.", "excluded": null},
+    {"text": "5.1 탱크를 비운다. 밸브를 닫는다.", "lang": "ko", "kind": "sentence", "number": "5.1", "excluded": null},
+    {"text": "작업이 끝나면 기록한다. 서명한다.", "lang": "ko", "kind": "sentence", "number": null, "excluded": null}
+  ]
+}

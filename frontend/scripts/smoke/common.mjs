@@ -15,7 +15,7 @@ export const BASE = process.env.BASE_URL ?? "http://localhost:3777";
 export const SHOT_DIR = resolve(SCRIPT_DIR, "../../../.shots");
 export const T = 15000;
 export const PREPARE = process.env.PREPARE === "1";
-export const PREPARE_STEP = "assign: first entry classifies the remaining rows in the background";
+export const PREPARE_STEP = "assign: first entry does not classify the remaining rows";
 // 지난 실행에서 실패한 단계 이름(.dev/는 git 밖) - ONLY_FAILED=1이면 그 단계만 다시 돈다.
 // 하나 고치고 화면 전체(Assign은 수 분)를 다시 돌지 않게(2026-11-20~22 세션 기록: 스모크가 도구 시간의 38%, 실패 뒤 다시 돌기가 잦았다)
 export const FAILED_FILE = resolve(SCRIPT_DIR, "../../../.dev/smoke-failed.txt");
@@ -118,7 +118,8 @@ export const check = (name, ok, detail = "") => {
 
 export const browser = await chromium.launch({ executablePath: CHROME, headless: true });
 
-export async function runStep(name, { devUser = "qa.member", storage = {}, allowConsoleErrors = false } = {}, run) {
+/** drafting - 새 문서를 만드는 쪽(숨긴 기능)을 켜고 돈다(개발 빌드에서만 듣는 sopa.drafting). 숨긴 기능을 쓰는 단계에만 붙인다 */
+export async function runStep(name, { devUser = "qa.member", storage = {}, drafting = false, allowConsoleErrors = false } = {}, run) {
   // ONLY_FAILED는 적어 둔 이름 그대로만 - 조각 맞추기면 이름이 겹치는 다른 단계까지 돈다
   const picked = ONLY_FAILED ? ONLY.includes(name) : ONLY.some((part) => name.includes(part));
   if (ONLY.length > 0 && name !== SETUP_STEP && !picked) return;
@@ -134,7 +135,7 @@ export async function runStep(name, { devUser = "qa.member", storage = {}, allow
         if (!window.localStorage.getItem(key)) window.localStorage.setItem(key, value);
       }
     },
-    { loginId: devUser, extra: storage },
+    { loginId: devUser, extra: drafting ? { ...storage, "sopa.drafting": "1" } : storage },
   );
   const page = await ctx.newPage();
   const consoleErrors = [];

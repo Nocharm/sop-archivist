@@ -6,8 +6,11 @@
 
 import { useLayoutEffect, useRef } from "react";
 
+import { planSpotPlace } from "@/lib/spot-place-model";
+
 const PANES = ".assign-panes";
 const OLD_SHEET = `${PANES} [data-pane="old"] .sheet`;
+const OLD_PANE = `${PANES} [data-pane="old"]`;
 const NEW_PANE = `${PANES} [data-pane="new"]`;
 // 복제본에서 떼는 속성 - 테스트·코드가 진짜 요소로 잘못 찾거나(id) 들어오는 움직임이 다시 돌지 않게
 const GHOST_STRIP = ["data-testid", "id", "data-enter", "data-leave"];
@@ -92,19 +95,46 @@ export function usePaneSlide(isSingle: boolean): { capture: () => void } {
 }
 
 /**
- * 1단 보기에서 오른쪽 판(짝 엿보기 · 그림 위치)이 열리고 닫힐 때 - 가운데 용지가 판 옆으로 비켜서고 다시 가운데로 온다(B7). 판 자리를 비우는 것은 CSS(자리가 모자라면 판이 용지를 덮고 용지는 그대로다).
+ * 1단 보기에서 오른쪽 판(짝 엿보기 · 그림 위치)이 열리고 닫힐 때 - 용지는 폭 그대로 두고 자리 있으면 왼쪽으로 비켜서고 다시 가운데로 온다(B7 · §6 S2).
+ * 판이 열린 동안 칸 · 용지 폭을 재(`planSpotPlace`) `.assign-panes`에 data-spot("aside" | "cover")과 --spot-w(판 폭)를 단다 - 용지 폭이 줄지 않으니 줄이 다시 접히지 않고 보던 자리가 튀지 않는다. 자리를 비우는 몸은 CSS.
+ * partKey(지금 보이는 파트 탭)가 바뀌면 용지가 다시 만들어지니 다시 잰다(탭만 바뀐 때는 first가 null이라 움직임이 없다).
  * capture()는 판을 열거나 닫기 직전에 부른다. 잡지 않고 닫히면(다른 박스를 고름 등) 움직임 없이 바로 돌아온다.
  */
-export function useSheetSlide(isAside: boolean): { capture: () => void } {
+export function useSheetSlide(isAside: boolean, partKey: string): { capture: () => void } {
   const firstRef = useRef<number | null>(null);
 
+  // 한 이펙트에서 먼저 data-spot을 달고(용지의 새 자리를 읽기 전에 있어야 한다) 그다음 슬라이드를 시작한다 - 정리는 둘 다
   useLayoutEffect(() => {
     const first = firstRef.current;
     firstRef.current = null;
+    const panes = document.querySelector<HTMLElement>(PANES);
+    const pane = document.querySelector<HTMLElement>(OLD_PANE);
+    const sheet = document.querySelector<HTMLElement>(OLD_SHEET);
+    let stopObserving: (() => void) | undefined;
+    if (isAside && panes && pane && sheet) {
+      const measure = () => {
+        const plan = planSpotPlace({ pane: pane.getBoundingClientRect().width, sheet: sheet.getBoundingClientRect().width });
+        if (!plan) return;
+        panes.dataset.spot = plan.kind;
+        panes.style.setProperty("--spot-w", `${plan.panel}px`);
+      };
+      measure();
+      const observer = new ResizeObserver(measure);
+      observer.observe(pane);
+      observer.observe(sheet);
+      stopObserving = () => {
+        observer.disconnect();
+        delete panes.dataset.spot;
+        panes.style.removeProperty("--spot-w");
+      };
+    }
     // 자리가 모자라 판이 덮으면 용지는 제자리다 - 움직임 표시를 달지 않는다
-    if (first === readSheetLeft()) return undefined;
-    return startSlide(first, "aside", null);
-  }, [isAside]);
+    const stopSlide = first === readSheetLeft() ? undefined : startSlide(first, "aside", null);
+    return () => {
+      stopSlide?.();
+      stopObserving?.();
+    };
+  }, [isAside, partKey]);
 
   return {
     capture: () => {

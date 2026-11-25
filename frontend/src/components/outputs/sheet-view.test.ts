@@ -124,6 +124,13 @@ describe("SheetView", () => {
     expect(host.querySelector<HTMLElement>('[data-testid="export-preview-toc-2"]')?.dataset.toc).toBe("folded");
   });
 
+  it("names each folded run of automatically deleted rows", () => {
+    const rows = [...A_SHEET.rows.slice(0, 2), aRow("1", 1, { toc: true, noise: "front" }), aRow("2", 2, { toc: true, noise: "front" }), aRow("3", 3, { toc: true, noise: "toc" }), aRow("4", 4, { toc: true, noise: "toc" })];
+    const host = render({ sheet: { ...A_SHEET, rows, total_rows: 6 } });
+    const labels = [2, 4].map((at) => host.querySelector<HTMLElement>(`[data-testid="export-preview-toc-${at}"] td:nth-child(2)`)?.textContent);
+    expect(labels).toEqual(["Front matter · 2 lines ▸ click to expand", "Contents · 2 lines ▸ click to expand"]);
+  });
+
   it("paints the picked unit and its group, and overlays the draft only on the picked row", () => {
     const host = render({ sheet: A_SHEET, selectedUnitId: 4, draft: { new_doc: "WI-9" } });
     const marks = Array.from(host.querySelectorAll<HTMLElement>('[data-testid="export-preview-body"] tr')).map((tr) => tr.dataset.mark ?? null);

@@ -371,13 +371,13 @@ export type UnitMark = "edited" | "pair" | "suggest" | "ref";
 /**
  * 종이 오른쪽 끝 아이콘 표시 - 예외(나눔·합침, 떨어진 짝)와 할 일(나누기 제안·참조 줄)만. 순서가 늘 같아야 줄마다 같은 자리에 온다.
  * 확정·AI 제안은 글 아래 간 곳 줄이, 붙은 짝은 짝 카드가 말한다 - 거의 모든 줄에 붙어 드문 표시를 묻었다(사용자 결정 2026-11-20).
- * inPairCard면 짝 표시를 뺀다
+ * inPairCard면 짝 표시를 빼고, showSplit이 꺼졌으면(나누기를 숨긴 동안) 나누기 제안 표시를 뺀다
  */
-export function getMarks(unit: ViewUnit, inPairCard = false): UnitMark[] {
+export function getMarks(unit: ViewUnit, inPairCard = false, showSplit = true): UnitMark[] {
   const marks: UnitMark[] = [];
   if (unit.is_edited) marks.push("edited");
   if (unit.pair_id !== null && !inPairCard) marks.push("pair");
-  if (unit.split_suggestion_id !== null) marks.push("suggest");
+  if (showSplit && unit.split_suggestion_id !== null) marks.push("suggest");
   // 참조 줄 제안 - 사람이 번호를 확인하기 전까지 줄 끝에 남는다
   if (unit.ref?.state === "proposed") marks.push("ref");
   return marks;
@@ -385,7 +385,7 @@ export function getMarks(unit: ViewUnit, inPairCard = false): UnitMark[] {
 
 const TEXT_KINDS = new Set(["sentence", "heading", "cell_sentence"]);
 
-/** 틈의 합치기를 쓸 수 없는 까닭 - 글이 아닌 것(표·그림), 목차 줄, 칸 문장 규칙. 언어는 보지 않는다(다른 언어끼리는 묶기가 짝을 고른다) */
+/** 틈의 합치기를 쓸 수 없는 까닭 - 글이 아닌 것(표·그림), 저절로 삭제된 줄(toc), 칸 문장 규칙. 언어는 보지 않는다(다른 언어끼리는 묶기가 짝을 고른다) */
 export type MergeBlocker = "not_text" | "toc" | "cell";
 
 /** 합칠 수 없는 까닭 → 문구 키 - 틈의 합치기 단추와 우클릭 메뉴가 같이 쓴다 */
@@ -400,14 +400,14 @@ type MergeSide = Pick<ViewUnit, "kind" | "noise_kind" | "group_unit_id">;
 /** 두 단위를 합칠 수 없는 까닭(서버 `_plan_merge`와 같은 기준) - 합칠 수 있으면 null */
 export function getMergeBlocker(a: MergeSide, b: MergeSide): MergeBlocker | null {
   if (!TEXT_KINDS.has(a.kind) || !TEXT_KINDS.has(b.kind)) return "not_text";
-  // 목차 줄은 먼저 목차 아님으로 돌린다(서버 422 toc_line_locked, 사용자 결정 2026-11-19)
+  // 저절로 삭제된 줄은 먼저 삭제 취소로 돌린다(서버 422 toc_line_locked, 사용자 결정 2026-11-19)
   if (a.noise_kind || b.noise_kind) return "toc";
   // 칸 문장은 같은 표 그룹(또는 모두 그룹 없음)끼리만
   if ((a.kind === "cell_sentence" || b.kind === "cell_sentence") && (a.kind !== b.kind || a.group_unit_id !== b.group_unit_id)) return "cell";
   return null;
 }
 
-/** 블록에 목차 줄이 걸쳐 있나 - 그 블록의 글자는 골라 만들기(carve)로 떼지 않는다(서버 422 toc_line_locked) */
+/** 블록에 저절로 삭제된 줄이 걸쳐 있나 - 그 블록의 글자는 골라 만들기(carve)로 떼지 않는다(서버 422 toc_line_locked) */
 export function hasTocLineIn(units: Iterable<ViewUnit>, blockId: number): boolean {
   for (const unit of units) if (unit.noise_kind && unit.spans.some(([spanBlockId]) => spanBlockId === blockId)) return true;
   return false;

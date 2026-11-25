@@ -1,7 +1,7 @@
 // Assign 화면의 한 부분 - page.tsx의 그리기에서 글자 그대로 옮겼다(쪼개기, 신뢰 기반 계획 스텝 4). 상태와 동작은 useAssignPage()가 준다.
 "use client";
 
-import { BookMarked, Captions, Columns2, ExternalLink, Redo2, Square, Trash2, Undo2, WandSparkles } from "lucide-react";
+import { BookMarked, Captions, Columns2, Languages, Redo2, Square, Trash2, Undo2, WandSparkles } from "lucide-react";
 import { MissingWarnings } from "@/components/assign/missing-warnings";
 import { AssignMoreMenu } from "@/components/assign/more-menu";
 import { PendingCount } from "@/components/assign/pending-count";
@@ -15,9 +15,9 @@ import { type AssignPageState, FILTERS, FILTER_ICON } from "./use-assign-page";
 export function AssignBar({ state }: { state: AssignPageState }) {
   const {
     t, bundleId, bundle, canEdit, docs, oldDocIds, identical, aiOn, rows, rowMap, rowOfUnit, mode, filter, counts, applyFilter, checked,
-    viewOf, setManualOldDoc, oldView, view, changeView, aiMenuItems, isAnyPending, undoState, setBulk, setConfirmingIdentical, setResetScope,
+    viewOf, setManualOldDoc, oldView, view, changeView, aiMenuItems, undoState, canUndoNow, setBulk, setConfirmingIdentical, setResetScope,
     selectRow, goToUnit, refPendingIds, captionPendingKeys, splitPendingIds, readPendingItem, selectNextSplit, selectNextRef,
-    selectNextCaption, runUndoStep, done,
+    selectNextCaption, runUndoStep, done, leftovers, setLeftoverSheet,
   } = state;
 
   const identicalCount = identical.data?.length ?? 0;
@@ -62,12 +62,12 @@ export function AssignBar({ state }: { state: AssignPageState }) {
         {canEdit && (
           <span className="flex items-center gap-1">
             <Tooltip label={t("assign.undo")}>
-              <button type="button" className="btn icon h-7 w-7" aria-label={t("assign.undo")} data-testid="assign-undo" disabled={isAnyPending || !undoState.canUndo} onClick={() => void runUndoStep("undo")}>
+              <button type="button" className="btn icon h-7 w-7" aria-label={t("assign.undo")} data-testid="assign-undo" disabled={!canUndoNow} onClick={() => runUndoStep("undo")}>
                 <Undo2 size={14} strokeWidth={1.5} aria-hidden />
               </button>
             </Tooltip>
             <Tooltip label={t("assign.redo")}>
-              <button type="button" className="btn icon h-7 w-7" aria-label={t("assign.redo")} data-testid="assign-redo" disabled={isAnyPending || !undoState.canRedo} onClick={() => void runUndoStep("redo")}>
+              <button type="button" className="btn icon h-7 w-7" aria-label={t("assign.redo")} data-testid="assign-redo" disabled={!undoState.canRedo} onClick={() => runUndoStep("redo")}>
                 <Redo2 size={14} strokeWidth={1.5} aria-hidden />
               </button>
             </Tooltip>
@@ -79,10 +79,6 @@ export function AssignBar({ state }: { state: AssignPageState }) {
             <button type="button" className="btn h-7" data-testid="assign-bulk-delete" onClick={() => setBulk("delete")}>
               <Trash2 size={14} strokeWidth={1.5} aria-hidden />
               {t("classify.deleted")}
-            </button>
-            <button type="button" className="btn h-7" data-testid="assign-bulk-move" onClick={() => setBulk("move")}>
-              <ExternalLink size={14} strokeWidth={1.5} aria-hidden />
-              {t("classify.moved")}
             </button>
           </span>
         )}
@@ -108,6 +104,13 @@ export function AssignBar({ state }: { state: AssignPageState }) {
             testId="assign-caption-pending"
           />
         )}
+        {/* 남은 AI 번역 - 숨긴 기능의 자료가 있을 때만. 검토 요청을 막아 여기서 정한다 */}
+        {canEdit && leftovers.length > 0 && (
+          <button type="button" className="btn h-7 text-st-ai" data-testid="assign-leftover-open" onClick={() => setLeftoverSheet(true)}>
+            <Languages size={14} strokeWidth={1.5} aria-hidden />
+            {t("assign.openTranslation.title", { n: leftovers.length })}
+          </button>
+        )}
         {/* 누락 의심 경고 - 확인이 남아 있을 때만 보인다(검토 요청 조건). 원문 자리를 보거나 그 자리에서 확인한다 */}
         <MissingWarnings
           bundleId={bundleId}
@@ -132,8 +135,6 @@ export function AssignBar({ state }: { state: AssignPageState }) {
         />
         <AssignMoreMenu
           canEdit={canEdit}
-          // 묶음 전체 일(같은 글자 확정 · 초기화)은 다른 일이 처리 중이면 시작하지 않는다
-          disabled={isAnyPending}
           identicalCount={identicalCount}
           onIdentical={() => setConfirmingIdentical(true)}
           aiItems={aiOn ? aiMenuItems : []}

@@ -18,6 +18,8 @@
 - `resolve.py` `get_effective_access`(개인 부여 ∪ 소속 부서 체인 부여, 역할은 권한으로 펼침, 퇴직자 무권한, `APP_SYSADMINS`는 전권).
 - `deps.py` `require_permission("<key>")`(라우터 의존성).
 - `sources.py`(권한 출처 응답 `SourceOut`·대상 이름 조회 — `/api/me`의 `sources`와 유효 권한 조회가 공유).
+- `POST /api/access/grants/batch`(`{add, remove}` 각 200건까지, 회수 먼저·추가 나중을 한 트랜잭션으로, 항목마다 변경 기록) — 이미 있거나 없는 항목은 거절하지 않고 `skipped`·`unknown`·`missing`으로 돌려준다. 역할 여러 개 더하기와 회수 되돌리기(같은 부여를 새로 만든다)가 쓴다.
+- `GET /api/access/audit?before=<기록 id>`는 그 기록보다 먼저 남은 것만 준다 — 시각이 같은 기록이 빠지지 않게 (시각, id)로 끊고, 기준 기록이 없으면 404.
 - `require_permission`·`/api/me`·관리 화면의 유효 권한 조회가 모두 `get_effective_access` 하나를 부른다 — 판정을 다른 곳에 새로 쓰지 않는다.
 - 부여는 더하기만 있고 부서 부여는 하위 부서까지 내려간다. 대상은 FK 없이 두어 개편으로 사라진 부서·사람의 부여도 지우지 않고 `subject_missing`으로 보인다.
 
@@ -40,7 +42,16 @@ AI 없이 사람이 끝까지 가는 결정적 경로(계획 1). AI 층은 아�
    - 결과 타입은 `extract/types.py`의 피클 가능한 불변 값 — 블록·표의 구조 신호 `signals`(번호 범위·목차 까닭·띠 표·표 꼴·안쪽 표 자리, 추출기 5부터 · 문장 속 그림 자리 `inline`, 추출기 7부터 → 문서 보기 그림 블록 `anchor`, 뜻은 그 파일의 docstring)도 여기에 실려 `source_blocks`·`source_tables`의 `signals` 열(Alembic `0025`, 옛 추출은 NULL)로 간다.
    - 업로드 동시 파싱은 `ingest.MAX_PARALLEL_PARSES=2` 세마포어.
 2. → 쪼개기 `segment.py`·`coverage.py`·`spans.py`(순수)와 단위 생성 `units.py`.
-   - 목차 줄 잡음 표시 `units.noise_kind`의 판정은 `noise.py` — 표시 단위는 판단 줄·AI 범위·입구 2 새 문장에서 빠지고 결과물 A에 "삭제 · 목차" 줄로 남는다, 비우는 길은 편집 `clear_noise`, Alembic `0027`.
+   - **쪼개기 규칙 번호** `extractions.split_rule`(Alembic `0038`, 이미 올린 문서는 1): 규칙 1 `RULE_LEGACY`는 문장마다(`split_sentences`, DOCX는 줄마다), 규칙 2 `RULE_PARAGRAPH`는 그 조각을 이어진 같은 언어끼리 다시 잇는다(`split_paragraph`) — 바깥 경계는 문단(칸 안 문단은 신호 `paras`)과 번호 · 글머리 · 문서 번호 줄(`find_marker_lines`, PDF는 접힌 줄에서 끊지 않게 글머리는 늘 · 문서 번호와 줄표는 앞 줄이 문장 끝이거나 블록 첫 줄도 같은 표식일 때 · 번호는 앞 번호를 이을 때와 첫 번호가 문장 끝 · 콜론 뒤에 올 때만. 칸 안 캡션 줄의 시작 · 끝도 경계다), 짧은 영어 예외는 `SHORT_ENGLISH_WORDS`. 새 문서는 Old · New 모두 `ingest.NEW_SPLIT_RULE`(2). 단위를 만드는 곳은 `split_block_text(rule=…)`를 거치고, 단위를 다시 만드는 편집(제목 → 문장, 띠 표 → 표)은 그 추출의 규칙을 읽는다(`editing._load_split_rule`). 배치 판정(`doc_meta.detect_language_layout`)도 규칙 2면 그 박스로 잰다.
+   - 규칙 2는 Reference 절의 참조 줄을 잇지 않는다: 그 절일 수 있는 블록만(`refs.list_ref_section_blocks`) 규칙 1로 먼저 쪼개 REF 줄을 찾고 그 시작 자리를 `kept`로 넘긴다(`units._build_unit_rows`).
+   - 꼴마다 정답 문서와 기대 박스는 `tests/split_golden/`(`test_sop_split_golden.py`, Old · New 둘 다) — 실제 문서에서 새 꼴이 나오면 먼저 여기에 더한다. 쪼개기를 보지 않는 옛 시험은 `legacy_split_rule` 픽스처로 규칙 1에서 돈다.
+   - 저절로 삭제된 줄의 잡음 표시 `units.noise_kind`(`toc` 목차 · `front` 본문 앞부분 · `history` 개정 이력)의 판정은 `noise.py` — 표시 단위는 판단 줄·AI 범위·입구 2 새 문장에서 빠지고 결과물 A에 삭제 줄로 남는다, 비우는 길은 편집 `clear_noise`, Alembic `0027`.
+     - 목차는 블록 신호로 쪼갤 때(`segment`), 앞부분 · 개정 이력은 쪼갠 단위의 줄(`NoiseLine`)로 `units._mark_noise` — **규칙 2 추출만**이라 이미 올린 문서는 그대로다. 묶음(표 · 그림)의 칸 · 캡션은 묶음을 따른다.
+     - **조금이라도 확실하지 않으면 표시하지 않는다**(G17 · G22–G28, `test_sop_front_matter.DOUBTFUL`). 본문 시작은 번호 "1"인 첫 제목이나 번호 문단이되 다음 장이 있어야 하고(`_opens_chapters` — 번호 문단은 짧은 제목 글이고 바로 다음 번호가 2), 그 앞에 본문의 증거(본문 번호 "5." · "1.0" · 제N장 · 로마자 · "1)" · 점 없는 번호, 모르는 제목, 이름만 적은 장 "목적", 다른 언어의 문장이나 다수, 긴 글)가 있으면 아니다(`_has_body_before`). 앞부분의 글 줄이 본문보다 많아도 아니다.
+     - 한/영 따로 문서의 둘째 반쪽은 첫 반쪽 앞부분과 꼴(글 · 표 · 그림 · 목차 차례)이 같은 만큼만(`_find_second_front`) — 한글 반쪽 끝의 영어 약어 · 참조 줄 · 기록지 표는 남는다. 개정 이력은 1장 뒤 그 이름뿐인 제목과 짧은 글, 머리 칸이 이력인 표 하나까지(`_find_history`).
+     - 적은 사유 `units.noise_reason`(빈 글 = 정한 문구, Alembic `0039`)은 편집 `set_noise_reason`이 쓰고 표시를 비우는 편집이 함께 비운다(`unit_edits.noise_reason_changes`). 표시와 사유를 바꾸는 편집은 묶음째다(`editing._load_with_bundle_members`).
+     - 여기부터 본문 `editing._plan_start_body`는 같은 판정 줄(앞부분 표시를 떼고 읽어 1장 자리를 안다)과 `find_body_starts` · `find_second_half`(1장 자리를 모르면 언어로)로 그 반쪽의 앞을 표시하고 뒤의 앞부분을 모두 비운다. 저절로 삭제된 줄에 판단을 되살리는 단계 되돌리기 · 다시 하기는 409 `undo_conflict`(`decision_steps._find_noise_units`).
+     - 잠금 `editing.ensure_not_noise`(422 `toc_line_locked`): 나누기 · 합치기 · 합치기 풀기 · 경계 · 골라 만들기 · 모양 전환 · 표 벗기기와 다시 표로(안쪽 띠 표까지) · 캡션 · 첫 행 캡션 · 그림 묶기 · 덩이 순서 · 짝 맺기. 제목 ↔ 문장 · 들여쓰기 · 번호는 저마다의 코드로 이미 막는다.
 3. → 편집 `editing.py`(서버 되돌리기/다시 하기)·한/영 짝 `pairs.py`.
 4. → 배정·확정 `decisions.py`(관계 묶음 단위 저장)·입구 2 짝 맞추기 `match.py`.
 5. → 결과물 `snapshot.py`(묶음을 DB 표마다 질의 한 번으로 읽은 불변 값) 위의 **순수 함수** `outputs.py`(A·B·C·요약)와 `sheet_model.py`(Excel·미리보기가 같이 쓰는 시트 모델)·`excel_export.py`(모델 → Graphite xlsx)·`flow_image.py`(Pillow, 저장소에 넣은 NanumGothic OFL 글꼴 `assets/fonts/`)·`output_labels.py`(언어별 문구).
@@ -77,6 +88,8 @@ AI 없이 사람이 끝까지 가는 결정적 경로(계획 1). AI 층은 아�
 ## 7. 떼어 내기는 한 함수군
 
 - 배정 지우기·문서 삭제·쪼개기 편집·새 문장 다시 맞추기가 모두 `detach.py` `detach_units`/`detach_targets`로 판단을 미배정·보류로 돌린다 — 새 경로가 판단·출처 연결을 직접 지우지 않는다.
+- 모양 전환(`switch_language`, `_Change.release`)은 Old와 New가 다르게 뗀다 — Old는 묻지 않고 미배정으로(3-c), New는 그 새 문장이 미배정이 아니면 409 `confirm_required`로 묻고 확인을 받으면 `detach_targets`로 이음을 풀어 이어져 있던 Old 줄을 보류로 둔다(R4). 미배정이고 출처도 없는 새 문장은 떼지 않는다.
+- 칸 하나를 떼는 일의 구경꾼(표 · 형제 칸 · 그 출처, `find_cell_bystanders`)은 배정 지우기 · New 칸의 은퇴(나누기 · 합치기) · 모양 전환이 함께 지킨다. New 쪽에서 떼는 칸이 표째 이은 Old 표의 칸과 이어져 있으면 구경꾼이 없다(칸의 판단은 그 표가 쥔다, `_find_cell_bystanders`). 칸이 다른 표로 다시 묶일 때(`is_regrouped`)도 없다.
 
 ## 8. 사내 AI 호출·사용량 — `app/ai_client.py`·`app/ai_usage.py`
 
@@ -150,6 +163,7 @@ AI 없이 사람이 끝까지 가는 결정적 경로(계획 1). AI 층은 아�
 - 출처의 글·자리(칸 좌표·부모·출처 단위 집합 포함)가 바뀌거나 출처가 사라지면 `detach.sweep_translations`가 AI 번역은 지우고(제안 `stale`) 확정 번역은 보류(`system:related_unit_changed`)로 돌린다.
 - 저장(`decisions`)·순서 바꾸기(`routers/sop_outputs`)·떼어 내기(`detach`)·입구 2 새 문장 맞추기(`match.sync_new_doc_targets`)가 이것을 부르니, 새 문장의 글이나 자리를 바꾸는 새 경로도 부른다.
 - 출처가 그대로인 AI 번역은 표에 딸려 와도 일반 보류에서 뺀다(`detach._should_hold`, 보류하면 확정 글이 빈 보류가 된다).
+- 아직 정하지 않은 번역(AI 제안 · 보류)은 `open_translations.list_open_translations`(`GET …/translations/open`)가 묶음 단위로 준다 — 문장 번역은 출처 연결이 없어 관계 묶음이 저 하나고, 출처 Old 단위가 나누기 · 합치기로 은퇴하거나 배정이 취소되면 어느 줄에서도 닿지 않아 `targets_on_hold`가 검토 요청을 막기만 한다. 질의는 한 번. 출처 새 문장과 단위가 모두 살아 있을 때만 `can_confirm`(아니면 화면이 지우기만 낸다). 정하는 것은 관계 묶음 저장이다: 문장 번역은 `units: []`에 그 번역만, 지우기는 `removed_target_ids` + `removed_revisions`(단위를 싣지 않아 단위 revision이 막지 못한다, 되돌리기 단계 이름 `drop_translation`), 칸 번역은 닫힌 표 묶음 전체(되보낸 것도 확정으로 쓰므로 나머지가 모두 확정일 때만 화면이 연다).
 - AI 번역 줄의 칸·단계·깊이는 출처를 따라 잠겨 있다(저장 경로는 422 `invalid_group`의 사유 `translation_locked`, 순서 바꾸기 엔드포인트는 422 `translation_locked`).
 - 번호 표시와 칸 안 순서는 그 줄 자신의 것이다 — 출처의 표시를 따라 바꾸지 않고(`detach._follow_source`도 덮지 않는다), 새 AI 번역은 번호 생략으로 출처 바로 뒤에 놓인다(순서를 정한 문서는 `target_placement.insert_after`, 아니면 결과물 정렬 키 — 제품 명세 §7.13 섹션 번호).
 
@@ -178,6 +192,7 @@ AI 없이 사람이 끝까지 가는 결정적 경로(계획 1). AI 층은 아�
   | `prepare`(배정 화면 첫 진입) | 같은 규칙 | 쓰지 않는다 |
   | `upload`(파일 읽기 끝) | **새로 쓰지 않는다** — 목록이 덜 찼을 수 있다 | 쓰지 않는다 |
 
+- **숨긴 동안(`ai/constants.py` `PLAN_DELETES = False`, 쪼개기 먼저 설계 §5 H4)**: 어느 `origin`도 삭제 후보를 새로 쓰지 않는다(표의 삭제 후보 칸은 켰을 때의 규칙). 이미 있는 삭제 후보는 배정 New 문서의 유무와 상관없이 같은 제안 id로 남고, 짝을 얻으면 걷힌다.
 - `upload`의 삭제 후보는 "새로 쓰지 않을" 뿐이다. 그대로 비교는 삭제 후보를 `origin`과 상관없이 지금 규칙이 쓸 것과 견준다 — 지금 규칙으로도 삭제 후보인 살아 있는 제안은 같은 제안 id로 남고, 짝을 얻었거나 배정 New 문서가 생겨 규칙이 달라졌으면 보통처럼 걷는다(걷은 뒤 새 삭제 후보는 쓰지 않는다).
 - 저절로 선 계획(`upload`·`prepare`)은 사람이 버린(채택 `rejected`) 짝 맞추기 제안과 `(모양, 단위, 새 문장)`이 같은 묶음을 쓰지도 걷지도 않고 그 줄을 그대로 둔다 — **Match**(`user`)는 다시 쓴다.
 
@@ -194,7 +209,7 @@ AI 없이 사람이 끝까지 가는 결정적 경로(계획 1). AI 층은 아�
 
 1. 설정이 꺼져 있으면 0건.
 2. 이미 쓴 New가 있고 `origin`이 `prepare`·`user`(키 없음 포함)인 `match_plan` 행이 상태와 상관없이 없으면 `enqueue_auto_plan(origin=prepare)`.
-3. 배정 New 문서가 없으면 분류 없음.
+3. 자동 칸 추천을 숨긴 동안(`ai/constants.py` `AUTO_CLASSIFY = False`)이거나 배정 New 문서가 없으면 분류 없음. 숨긴 동안은 계획(`match_jobs._load_old_entries`)도 살아 있는 분류 제안을 보지 않는다 — 사람이 치울 길이 없는 제안이 묶기를 막지 않게. 사람이 누른 요청 API(`POST /ai/classify`)는 그대로다.
 4. 읽힌 Old 문서 가운데 `background` 분류 행이 한 번도 없던 문서(열어 본 문서 먼저, 나머지는 문서 id 순)마다 `select_classify_items`로 골라 `AI_PRIORITY_PRE_CLASSIFY`·`background`로, 글이 똑같은 1:1 후보(`list_identical_candidates`, 짝이면 줄 전체)를 빼고 한 `request_id`로 쌓는다.
 
 - 응답 `queued`는 분류 작업만 세고 `ai.request` 기록은 남기지 않는다.
@@ -272,6 +287,8 @@ AI 없이 사람이 끝까지 가는 결정적 경로(계획 1). AI 층은 아�
 
 - 쪼개기 편집·되돌리기·다시 하기 뒤 새 문서 하나의 절 경로·언어·칸 부모·좌표·순서를 통째로 다시 맞춘다.
 - 단위를 바꾸는 새 경로가 새 문장을 직접 고치지 않고 이것을 부른다.
+- Assign 되돌리기 · 다시 하기(`decision_steps._move_unit_edit`)는 편집을 거꾸로 돌린 뒤 찍어 둔 새 문장을 옛 id로 되쓴다. 그래서 되쓸 새 문장의 단위를 `restoring_unit_ids`로 `undo_edit`·`redo_edit` → `_step_edit` → `_write_change`를 거쳐 넘기고, 맞추기는 그 단위의 새 문장을 만들지도 고치지도 않는다(만들면 단위 하나에 새 문장이 둘이 된다, 쪼개기 먼저 설계 §4-1). 은퇴한 단위의 떼어 내기는 그대로 돌고, 문서 편집 되돌리기(`edits/undo`)는 되쓸 것이 없어 넘기지 않는다.
+- 같은 단계가 찍은(= 지금과 같다고 확인한) 새 문장의 단위는 `settled`에도 들어 이은 칸이 있어도 다시 하기가 확인을 묻지 않는다. 그 단위에 찍지 않은 새 문장(옛 결함이 남긴 중복)이 더 있고 거기에 이음 · 판단이 걸려 있으면 빼서 409 `confirm_required`로 남긴다(`_list_settled_new_units`).
 
 ### 12.10 편집 쓰기 길 `editing._write_change`
 
@@ -285,7 +302,7 @@ AI 없이 사람이 끝까지 가는 결정적 경로(계획 1). AI 층은 아�
 - 글 앞 타자 번호는 제목 줄이든 본문 줄이든 처음부터 번호다(사용자 결정 2026-11-20, 본문 줄은 `is_read_from_text`로 "Read from text"를 알린다).
 - DOCX는 추출 신호가 없는 줄바꿈 뒤 줄머리의 타자 번호도 읽고(`reads_line_starts`, 정규식은 `segment.TYPED_NUMBER_RE` 하나), 첫 범위 전체가 번호이고 뒤 범위가 있으면 그 범위가 번호다.
 - 단위 글(`segment.build_unit_text`)은 범위를 띄어쓰기로 잇고 범위 안 줄바꿈도 띄어쓰기다(길이 그대로, Alembic `0035`가 옛 글을 바꿈) — 변경 종류의 "그대로"는 `numbering.is_source_text`가 줄바꿈을 띄어쓰기로 보고 견준다.
-- 목차 줄(`noise_kind`)은 번호 칸이 없다.
+- 저절로 삭제된 줄(`noise_kind`)은 번호 칸이 없다 — 앞부분 · 개정 이력은 번호 열을 그대로 두어 삭제 취소하면 번호 칸이 돌아온다.
 - 번호 칸의 값·가릴 길이·내용은 `get_number`·`get_hidden_len`·`strip_number`만 읽는다 — 새 문장 기본 글·변경 종류·문장 검사(`decisions`), 결과물 A 원문 칸·위치(`outputs`), 문서 보기(`routers/sop_documents._to_number_out`)가 함께 쓴다.
 - AI 입력 글은 번호를 품은 `text` 그대로다(§11-8).
 - 따라 고치기 `plan_follow`는 프런트 `lib/number-model.ts` `planFollow`가 미리 보기에 사본으로 쓰니 규칙을 바꾸면 함께 고친다(두 쪽 시험이 같은 사례다).
@@ -300,13 +317,13 @@ AI 없이 사람이 끝까지 가는 결정적 경로(계획 1). AI 층은 아�
 
 ### 12.13 제목 ↔ 문장 `segment.is_heading_like`(F8b, Alembic `0029`)
 
-- 제목다움 판정은 이 함수 하나를 옛 문서 쪼개기(`build_unit_drafts`의 `shift_headings` — 바꾼 문장에 `units.from_heading`)와 추출기 절 이름(`docx_reader` — 바꾼 조항은 번호가 있을 때만 절을 연다)이 함께 쓴다. 규칙을 바꾸면 두 곳이 같이 움직인다.
+- 제목다움 판정은 이 함수 하나를 쪼개기(`build_unit_drafts`의 `shift_headings` — Old와 규칙 2의 New, 규칙 1의 New는 제목 그대로. 바꾼 문장에 `units.from_heading`)와 추출기 절 이름(`docx_reader` — 바꾼 조항은 번호가 있을 때만 절을 연다)이 함께 쓴다. 규칙을 바꾸면 두 곳이 같이 움직인다.
 - 바꾼 문장은 코드 짝에서 조항마다 덩어리(같은 문장 수면 1:1)이고, 번호 없는 번역 조항의 첫 문장은 `numbering.find_inherited_numbers`로 앞 조항 번호를 받는다(`number_source = "pair"`, 처음 쪼개기와 편집 `set_heading`이 같이 쓴다).
 - 편집 `set_heading`과 그 되돌리기는 짝을 `units.pair_new_units`로 새 단위만 다시 세운다.
 
 ### 12.14 띠 표 → 제목 줄 `segment.is_certain_band`·`is_band_heading`(F4, Alembic 없음)
 
-- 꼴이 확실한 띠 표(표 신호 `band`, 본문의 바깥 표)는 옛 문서를 올릴 때 `units.create_initial_units`가 `source_tables.is_layout`을 켜 두고, 레이아웃 띠 표(`TableView.is_band`)는 `build_unit_drafts`가 번호 칸 + 제목 칸을 `heading` 단위 하나로 만든다.
+- 꼴이 확실한 띠 표(표 신호 `band`, 본문의 바깥 표)는 Old와 규칙 2의 New를 올릴 때 `units.create_initial_units`가 `source_tables.is_layout`을 켜 두고, 레이아웃 띠 표(`TableView.is_band`)는 `build_unit_drafts`가 번호 칸 + 제목 칸을 `heading` 단위 하나로 만든다. New 문장의 절 경로(`match._plan_targets`)는 제목 스타일 단계가 없는 띠 표 제목을 번호의 단계(`segment.read_band_level`)로 쌓는다 — 규칙 1의 New는 사람이 벗긴 띠 표도 전처럼 단계 없는 제목이다(이미 만든 New 문장의 절 경로를 바꾸지 않는다).
 - 띠 표의 `set_layout_table`은 단위 모양이 바뀌어 `editing._plan_band_layout`이 같은 `build_unit_drafts`로 제목 줄 ↔ 데이터 표(표 단위 + 새 칸 문장, `_Draft.group_draft`)를 다시 세운다.
 - 띠 표가 아닌 표의 `set_layout_table`은 바로 안쪽 띠 표도 같은 편집으로 함께 바꾼다(F2, `_merge_change`) — 그 밖의 안쪽 표는 누른 표만.
 - "`table_id`가 있는 `heading`" 판정은 결과물 A 위치(`outputs._format_place` — "띠 표")와 프런트 `paper-model.isBandHeading`(용지가 표 대신 제목 줄로 그림·Shape의 **Back to band table**)이 함께 쓴다.
@@ -341,6 +358,7 @@ AI 없이 사람이 끝까지 가는 결정적 경로(계획 1). AI 층은 아�
 ### 12.19 결과물 `outputs.py`
 
 - A·B·C·요약 숫자는 스냅숏(`snapshot.py`)만 받는 순수 함수이고 보낸 곳·칸 순서·신규 판정은 한 벌이다.
+- Excel C 시트는 `sheet_model.SHOW_C_SHEET = False`로 숨겨 두었다(시트 넷, 짓는 코드는 남는다) — 시트 이름은 `get_sheet_names()`, `SHEET_NAMES` 다섯은 자리 번호로 읽는다.
 - Excel·미리보기의 시트 모델(`sheet_model.py`)은 이 결과를 옮겨 쓰기만 하고(`excel_export.py`는 그 모델을 xlsx로 쓴다), 검토 조건(`review.py`)은 `outputs.build_review_facts`의 단위 재료를 쓴다 — 같은 규칙을 다시 계산하지 않는다.
 - 결과물은 한 벌이고(`?lang=`은 라벨 언어만) 옛 쪽 줄은 `output_rows.build_meaning_rows` 하나, 미리보기와 xlsx는 같은 시트 모델이라 칸 글·모양 판정은 `sheet_model.py`에만 둔다(쓰는 쪽에서 새로 정하면 미리보기와 파일이 어긋난다).
 - 섹션 번호 규칙 `outputs.number_lines`는 프런트 `section-number.numberLines`가 C 순서 바꾸기의 미리 세기에 사본으로 쓰고(직접 놓인 줄을 세지 않는 칸은 문서 골격 사본이 정한다 — `outline.DocOutline.counts_lines` 한 곳, 프런트는 절 응답의 `counts_lines`를 읽을 뿐 다시 정하지 않는다).

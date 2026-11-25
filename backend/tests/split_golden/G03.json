@@ -1,0 +1,11 @@
+{
+  "shape": "한 문단 안에서 한글 · 영어가 번갈아",
+  "layout": "ko_en_interleaved",
+  "boxes": [
+    {"text": "5. 절차", "lang": "ko", "kind": "heading", "number": "5.", "excluded": null},
+    {"text": "탱크를 비운다.", "lang": "ko", "kind": "sentence", "number": null, "excluded": null},
+    {"text": "Drain the tank completely.", "lang": "en", "kind": "sentence", "number": null, "excluded": null},
+    {"text": "밸브를 닫는다.", "lang": "ko", "kind": "sentence", "number": null, "excluded": null},
+    {"text": "Close the outlet valve.", "lang": "en", "kind": "sentence", "number": null, "excluded": null}
+  ]
+}

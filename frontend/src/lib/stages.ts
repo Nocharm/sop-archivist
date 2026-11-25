@@ -26,13 +26,25 @@ export const STAGES: readonly Stage[] = [
   { key: "assign", path: "/assign", step: 2, ready: true },
   // 3단계 - New 문서별 문장 순서와 문단번호
   { key: "order", path: "/order", step: 3, ready: true },
-  // 4단계 - 결과물과 검토. 검토 요청·완료·되돌림은 이 화면 위의 검토 띠에 있다(옛 /review는 여기로 넘긴다, B4)
+  // 4단계(Order를 숨긴 동안 3단계) - 결과물과 검토. 검토 요청·완료·되돌림은 이 화면 위의 검토 띠에 있다(옛 /review는 여기로 넘긴다, B4)
   { key: "outputs", path: "/outputs", step: 4, ready: true },
   // 번호 없는 보는 화면 - 문서 사이 참조와 후속 문서(참조 지도). 내 문서가 없어도 남의 문서를 찾아볼 수 있어 잠그지 않는다
   { key: "map", path: "/map", ready: true },
   // 레일 맨 아래 - 작업 기록 전체(개요 Activity의 "모두 보기")
   { key: "history", path: "/history", ready: true },
 ];
+
+/** 새 문서를 만드는 쪽에만 있는 단계 - 숨긴 동안 단계 목록에서 빠진다 */
+const DRAFTING_STAGES: ReadonlySet<StageKey> = new Set(["order"]);
+
+/** 화면에 보이는 단계 목록 - 숨긴 단계를 빼고 번호를 이어 매긴다. 주소 읽기(parseBundlePath)는 STAGES 전부를 본다 */
+export function listStages(drafting: boolean): readonly Stage[] {
+  if (drafting) return STAGES;
+  let step = 0;
+  return STAGES.filter((stage) => !DRAFTING_STAGES.has(stage.key)).map((stage) =>
+    stage.step === undefined ? stage : { ...stage, step: ++step },
+  );
+}
 
 // 문서가 하나도 없으면 들어가 봐야 할 일이 없는 단계. New 문서 목록은 Excel로 문서보다 먼저 채울 수 있고, Documents 화면에 있어 늘 열린다
 const NEEDS_DOCUMENTS: ReadonlySet<StageKey> = new Set(["assign", "order", "outputs"]);
@@ -73,6 +85,14 @@ export function getAssignLineHref(bundleId: number, docId: number, unitId: numbe
 export function getAssignSourceHref(bundleId: number, units: ReadonlyArray<{ document_id: number; unit_id: number }>): string {
   const first = units[0];
   return first ? getAssignLineHref(bundleId, first.document_id, first.unit_id) : getStageHref(bundleId, "assign");
+}
+
+/** 배정 화면을 남은 AI 번역 목록이 열린 채 여는 주소 값 - 남은 것이 없으면 아무 일도 없다 */
+export const LEFTOVER_TRANSLATIONS_PARAM = "translations";
+
+/** 남은 AI 번역 목록으로 가는 주소 - 개요의 새 문장 관문 카드가 쓴다 */
+export function getLeftoverTranslationsHref(bundleId: number): string {
+  return `${getStageHref(bundleId, "assign")}?${LEFTOVER_TRANSLATIONS_PARAM}=1`;
 }
 
 export function getStageHref(bundleId: number, key: StageKey): string {

@@ -286,10 +286,14 @@ def _add_paragraphs(document: DocxDocument, *texts: str, style: str | None = Non
 
 
 def _add_table(document: DocxDocument, rows: list[list[str]]) -> None:
+    """표 하나 — 칸 글의 줄바꿈("\\n")은 칸 안 문단을 나눈다."""
     table = document.add_table(rows=len(rows), cols=len(rows[0]))
     for row_cells, row_texts in zip(table.rows, rows, strict=True):
         for cell, text in zip(row_cells.cells, row_texts, strict=True):
-            cell.text = text
+            first, *rest = text.split("\n")
+            cell.text = first
+            for paragraph in rest:
+                cell.add_paragraph(paragraph)
 
 
 def _add_textbox(document: DocxDocument, paragraphs: list[str]) -> None:
@@ -712,16 +716,16 @@ def _build_old_7(sheet: _AnswerSheet) -> tuple[bytes, list[dict]]:
     ):
         document.add_paragraph(add_sentence(text, lang))
     document.add_paragraph(sheet.delete(doc, "표 9 참조.", "ko", MISSING_TABLE_REASON))
-    # 템플릿 표 — 칸마다 문장 두 개, 편집으로 레이아웃 표(보통 표로 만들고 편집으로 바꾼다)
+    # 템플릿 표 — 칸마다 문단 두 개(한 문단이면 쪼개기 규칙 2가 두 문장을 한 박스로 둔다), 편집으로 레이아웃 표(보통 표로 만들고 편집으로 바꾼다)
     document.add_paragraph(add_sentence("표 7. 기록 양식", "ko"))
     form_rows = [
-        ["작업자는 날짜를 적는다. 작업자는 서명한다.", "검토자는 결과를 확인한다. 검토자는 서명한다."],
-        ["장비 번호를 적는다. 로터 종류를 적는다.", "특이 사항을 적는다. 없으면 없음이라고 적는다."],
+        ["작업자는 날짜를 적는다.\n작업자는 서명한다.", "검토자는 결과를 확인한다.\n검토자는 서명한다."],
+        ["장비 번호를 적는다.\n로터 종류를 적는다.", "특이 사항을 적는다.\n없으면 없음이라고 적는다."],
     ]
     for row in form_rows:
         for cell_text in row:
-            for sentence in cell_text.split(". "):
-                add_sentence(sentence if sentence.endswith(".") else sentence + ".", "ko")
+            for sentence in cell_text.split("\n"):
+                add_sentence(sentence, "ko")
     _add_table(document, form_rows)
     edits = [{"doc": doc, "op": "set_layout_table", "table_index": 3, "is_layout": True}]
     return _save_docx(document), edits

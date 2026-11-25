@@ -7,7 +7,7 @@ import { act, createElement, useRef, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { useFlip, useUnwrapMotion, type UnwrapRunOptions } from "./motion";
+import { Collapse, useFlip, useUnwrapMotion, type UnwrapHandle, type UnwrapRunOptions } from "./motion";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -53,7 +53,8 @@ describe("useUnwrapMotion", () => {
   let holdAnimations = false;
   let host: HTMLDivElement;
   let root: Root;
-  let motion: { run: (change: () => void, options: UnwrapRunOptions) => Promise<void> };
+  let motion: { begin: (options: UnwrapRunOptions) => UnwrapHandle; afterMotion: (callback: () => void) => boolean };
+  const run = (change: () => void, options: UnwrapRunOptions) => motion.begin(options).commit(change);
   let setUnwrapped: (value: boolean) => void = () => {};
 
   /** 표(칸 글 a · b는 한 행, c는 다음 행)를 문장 카드 세 장으로 푸는 화면 - 뒤따르는 줄(after)은 밀려나고 far는 화면 밖이다. 자리는 data-left · data-top으로 준다(jsdom은 재지 못한다) */
@@ -132,7 +133,7 @@ describe("useUnwrapMotion", () => {
   });
 
   it("clears the table marks, then spreads the text top row first, then attaches the new marks", async () => {
-    await act(() => motion.run(() => setUnwrapped(true), SCOPES));
+    await act(() => run(() => setUnwrapped(true), SCOPES));
 
     // 1 걷기 - 옛 화면에서, 바꾸기 전에
     const cleared = listMarks("leave");
@@ -169,7 +170,7 @@ describe("useUnwrapMotion", () => {
     act(() => setUnwrapped(true));
     calls = [];
 
-    await act(() => motion.run(() => setUnwrapped(false), { ...SCOPES, reverse: true }));
+    await act(() => run(() => setUnwrapped(false), { ...SCOPES, reverse: true }));
 
     // 붙였던 것이 먼저 사라진다 - 같은 움직임을 거꾸로 튼다
     const detached = listMarks("enter");
@@ -195,7 +196,7 @@ describe("useUnwrapMotion", () => {
   it("changes at once and flashes the changed place under reduced motion", async () => {
     window.matchMedia = (() => ({ matches: true })) as unknown as typeof window.matchMedia;
 
-    await act(() => motion.run(() => setUnwrapped(true), SCOPES));
+    await act(() => run(() => setUnwrapped(true), SCOPES));
 
     expect(calls).toHaveLength(0);
     expect(host.querySelector("[data-testid='story-back']")).not.toBeNull();
@@ -207,7 +208,7 @@ describe("useUnwrapMotion", () => {
     holdAnimations = true;
     let first: Promise<void> = Promise.resolve();
     await act(async () => {
-      first = motion.run(() => {
+      first = run(() => {
         applied.push("unwrap");
         setUnwrapped(true);
       }, SCOPES);
@@ -216,7 +217,7 @@ describe("useUnwrapMotion", () => {
     holdAnimations = false;
 
     await act(async () => {
-      await motion.run(() => {
+      await run(() => {
         applied.push("wrap");
         setUnwrapped(false);
       }, { ...SCOPES, reverse: true });
@@ -231,12 +232,93 @@ describe("useUnwrapMotion", () => {
     const change = vi.fn();
     holdAnimations = true;
     await act(async () => {
-      void motion.run(change, SCOPES);
+      void run(change, SCOPES);
     });
     expect(change).not.toHaveBeenCalled();
 
     act(() => root.render(null));
 
     expect(change).toHaveBeenCalledTimes(1);
+  });
+
+  it("clears at the press and waits for the answer before it changes", async () => {
+    let handle: UnwrapHandle | null = null;
+    act(() => {
+      handle = motion.begin(SCOPES);
+    });
+    expect(calls.map((call) => call.target.dataset.testid ?? "scope")).toEqual(["scope", "story-mark"]);
+    expect(host.querySelector("[data-testid='story-back']")).toBeNull();
+
+    await act(() => (handle as unknown as UnwrapHandle).commit(() => setUnwrapped(true)));
+
+    // 걷기를 두 번 하지 않는다 - 표시 둘, 옮기는 글 넷, 붙는 표시 둘
+    expect(calls).toHaveLength(8);
+    expect(host.querySelector("[data-testid='story-back']")).not.toBeNull();
+  });
+
+  it("plays the clear phase back when the answer refuses, and changes nothing", async () => {
+    const settled = vi.fn();
+    await act(async () => {
+      const handle = motion.begin(SCOPES);
+      expect(motion.afterMotion(settled)).toBe(true);
+      calls = [];
+      handle.revert();
+      expect(settled).not.toHaveBeenCalled();
+    });
+
+    expect(calls.map((call) => call.options)).toEqual([0, 1].map(() => ({ duration: 160, easing: readToken("--ease-exit"), direction: "reverse", delay: 0 })));
+    expect(calls[1].keyframes).toEqual([{ offset: 1, opacity: 0 }]);
+    expect(host.querySelector("[data-testid='story-mark']")).not.toBeNull();
+    // 끝났다 - 기다리던 일을 하고, 다음 것은 기다리지 않는다
+    expect(settled).toHaveBeenCalledTimes(1);
+    expect(motion.afterMotion(settled)).toBe(false);
+  });
+
+  it("moves nothing at the press under reduced motion, and changes plainly when the screen is gone before the answer", async () => {
+    window.matchMedia = (() => ({ matches: true })) as unknown as typeof window.matchMedia;
+    const change = vi.fn();
+    motion.begin(SCOPES).revert();
+
+    const late = motion.begin(SCOPES);
+    act(() => root.render(null));
+    await act(() => late.commit(change));
+
+    expect(change).toHaveBeenCalledTimes(1);
+    expect(calls).toHaveLength(0);
+  });
+});
+
+describe("Collapse", () => {
+  let host: HTMLDivElement;
+  let root: Root;
+  const fold = () => host.querySelector<HTMLElement>(".fold");
+  const render = (props: { open: boolean; startOpen?: boolean }) => act(() => root.render(createElement(Collapse, props as Parameters<typeof Collapse>[0], "box")));
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["requestAnimationFrame", "cancelAnimationFrame", "setTimeout", "clearTimeout"] });
+    host = document.createElement("div");
+    root = createRoot(host);
+  });
+  afterEach(() => {
+    act(() => root.unmount());
+    vi.useRealTimers();
+  });
+
+  it("holds nothing when it first appears closed", () => {
+    render({ open: false });
+    expect(fold()).toBeNull();
+  });
+
+  it("folds from the open shape when a box that was open a moment ago first appears closed", () => {
+    render({ open: false, startOpen: true });
+    expect(fold()?.dataset.open).toBe("");
+    expect(fold()?.hasAttribute("inert")).toBe(true);
+
+    act(() => vi.advanceTimersByTime(20));
+    expect(fold()).not.toBeNull();
+    expect(fold()?.dataset.open).toBeUndefined();
+
+    act(() => vi.advanceTimersByTime(300));
+    expect(fold()).toBeNull();
   });
 });

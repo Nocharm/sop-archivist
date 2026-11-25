@@ -12,6 +12,7 @@ import {
   buildFoldedCells,
   findDraftRow,
   findPickedGroup,
+  getFoldLabelKey,
   getFoldMark,
   getFrozenCount,
   getRowMark,
@@ -213,7 +214,7 @@ export function SheetView({ sheet, selectedUnitId = null, centreKey = 0, draft, 
       imagePlaced = true;
     }
     if (item.type === "fold") {
-      const texts = { label: t("outputs.sheet.tocFolded", { n: item.rows.length }), more: t("outputs.sheet.tocMore", { n: item.rows.length - 1 }) };
+      const texts = { label: t(getFoldLabelKey(item.rows), { n: item.rows.length }), more: t("outputs.sheet.tocMore", { n: item.rows.length - 1 }) };
       bodyRows.push(
         <SheetRowView
           key={`toc-${item.start}`}
