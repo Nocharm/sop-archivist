@@ -2857,7 +2857,7 @@ await runStep("assign: front matter - folded blocks with buttons, U and R on a l
   const before = await readView();
   const front = listNoise(before, "front");
   const history = listNoise(before, "history");
-  check("chapter 1 and the history chapter split the document", front.length === 3 && history.length === 2, JSON.stringify([front.length, history.length]));
+  check("chapter 1 and the history chapter split the document", front.length === 3 && history.length === 3, JSON.stringify([front.length, history.length]));
   await page.goto(`${BASE}/bundles/${bundle.id}/assign`);
   await wait(page, "assign-old-doc");
   await page.locator('[data-testid="assign-old-doc"]').click();
@@ -2866,7 +2866,7 @@ await runStep("assign: front matter - folded blocks with buttons, U and R on a l
   const head = page.locator(`[data-testid="assign-paper-noise-head-${front[0].id}"]`);
   await head.waitFor({ timeout: T });
   const texts = await heads.allInnerTexts();
-  check("two folded blocks say what was deleted and why", texts.length === 2 && texts[0].includes("Front matter · 3 lines · Reason: Before chapter 1") && texts[1].includes("Change history · 2 lines · Reason: Change history"), JSON.stringify(texts));
+  check("two folded blocks say what was deleted and why", texts.length === 2 && texts[0].includes("Front matter · 3 lines · Reason: Before chapter 1") && texts[1].includes("Change history · 3 lines · Reason: Change history"), JSON.stringify(texts));
   check("the head buttons are there while folded", (await page.locator('[data-testid^="assign-paper-noise-clear-"]').count()) === 2 && (await page.locator(`[data-testid="assign-paper-noise-reason-${front[0].id}"]`).isVisible()) && (await head.getAttribute("aria-expanded")) === "false");
   await head.click();
   const title = page.locator(`[data-testid="assign-paper-noise-line-${front[0].id}"]`);

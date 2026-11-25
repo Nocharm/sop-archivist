@@ -81,7 +81,7 @@ import { pickSheetAnchor, pickSpaceSheet } from "@/lib/space-preview-model";
 import { countRefLookups, isRefPending, pickRefUnit } from "@/lib/ref-model";
 import { isDeletedUnit } from "@/lib/deleted-fold-model";
 import { buildNavKeys, buildNoiseBlock, describeNoiseUnit, findNoiseBlock, listNoiseBlocks, readTocNavKey, readUnitNavKey, toTocNavKey, toUnitNavKey } from "@/lib/toc-block-model";
-import { readNoiseKey, toNoiseKeyId } from "@/lib/noise-keys";
+import { isRestoringLines, readNoiseKey, toNoiseKeyId } from "@/lib/noise-keys";
 import { useEquisPolling } from "@/lib/use-equis-polling";
 import { useDocViews, type DocBatch } from "@/lib/use-doc-views";
 import { useLoaded } from "@/lib/use-loaded";
@@ -4108,6 +4108,13 @@ export function useAssignPage() {
     if (kind === "undo" ? undoState.canUndo || hasQueuedStep() : undoState.canRedo) runUndoStep(kind);
   }
 
+  /** 고른 삭제 줄을 되돌리는 중인가 - 삭제 취소의 응답이나 새 보기를 기다린다 */
+  function isRestoringPick(): boolean {
+    if (noisePick === null) return false;
+    const ops = commands.listUnsettled().flatMap(({ payload }) => (payload.kind === "edit" ? [payload.op] : []));
+    return docViews.isReloading(noisePick.docId) || isRestoringLines(ops, noisePick.unitId === null ? noisePick.block.unitIds : [noisePick.unitId]);
+  }
+
   /** 글쇠 하나를 지금 고름에서 - 했으면 true. 누를 때와, 장벽 뒤에 쌓아 두었다가 되살릴 때 함께 쓴다 */
   function pressKey(key: string, shift: boolean): boolean {
     const step = getRowStep(key);
@@ -4117,6 +4124,8 @@ export function useAssignPage() {
     // 마지막으로 누른 것이 저절로 삭제된 줄 - 판단 글쇠보다 먼저(삭제 · 보류 · 확정은 아무것도 하지 않는다)
     else if (noise !== null && noisePick !== null) {
       if (noise.kind === "clear") clearNoise(noisePick.docId, canEdit ? noise.unitIds : []);
+      // 삭제 취소가 끝나 보통 줄로 돌아오기 전에 누른 것 - 조용히 사라지지 않게 알린다
+      else if (isRestoringPick()) showToast(t("assign.noise.restoring"), "info");
       else if (noise.kind === "reason") openNoiseReason(noisePick.docId, noise.unitIds);
     }
     else if (key === "escape") {

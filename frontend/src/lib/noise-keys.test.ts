@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { readNoiseKey, toNoiseKeyId, type NoiseKeyId } from "./noise-keys";
+import { isRestoringLines, readNoiseKey, toNoiseKeyId, type NoiseKeyId } from "./noise-keys";
 
 const block = { unitIds: [4, 5, 6] };
 const line = { unitId: 5, block };
@@ -31,5 +31,11 @@ describe("keys on deleted lines", () => {
     expect(["u", "r"].map((key) => [toNoiseKeyId(key, false), toNoiseKeyId(key, true)])).toEqual([["clear", "clear_block"], ["remark", "remark_block"]]);
     expect(["delete", "backspace", "h", "enter"].map((key) => toNoiseKeyId(key, false))).toEqual(["delete", "delete", "hold", "confirm"]);
     for (const key of ["j", "a", "e", "s", "v", "escape", "arrowleft"]) expect(toNoiseKeyId(key, false), key).toBeNull();
+  });
+  it("knows when the picked lines are being restored", () => {
+    expect(isRestoringLines([{ type: "clear_noise", unit_ids: [5, 6] }], [4, 5])).toBe(true);
+    expect(isRestoringLines([{ type: "clear_noise", unit_ids: [9] }], [4, 5])).toBe(false);
+    expect(isRestoringLines([{ type: "set_noise_reason", unit_ids: [5], reason: "x" }], [5])).toBe(false);
+    expect(isRestoringLines([], [5])).toBe(false);
   });
 });
