@@ -45,7 +45,7 @@ function putFirst<T>(items: readonly T[], isFirst: (item: T) => boolean): T[] {
 export function AssignSidePanel({ state }: { state: AssignPageState }) {
   const {
     t, bundleId, canEdit, unitsKey, reloadData, docViews, tobeData, aiJobs, aiOn, aiBusy, suggestions, invalidUnitIds, unitMap, written,
-    writtenMap, rowOfUnit, options, isDrafting, hiddenPlace, mode, activeKey, row, isNewEdit, hasSolo, tocOpen, setTocOpen, tocPick, tocBlocks, newRemarks,
+    writtenMap, rowOfUnit, options, isDrafting, hiddenPlace, openTranslations, settleTranslations, mode, activeKey, row, isNewEdit, hasSolo, tocOpen, setTocOpen, tocPick, tocBlocks, newRemarks,
     setNewRemarks, cutUnitId, focusNew, groupData, draft, editing, savedDestination, destination, rowUnits, rowLangs, firstDecision,
     systemHold, reasonNow, moveCode, setDraft, rowLive, aiDest, aiWhy, recommendations, linkIds, pickedGroups, saveGroupData,
     viewOf, oldView, splitByUnit, shapeView, shapeModel, soloUnits, cutLine, writtenDocs, composedDoc, view, changeView, askAiScope,
@@ -497,6 +497,33 @@ export function AssignSidePanel({ state }: { state: AssignPageState }) {
       </Refresh>
     );
   }
+
+  // 남은 번역 줄(확정 전 AI 번역 · 보류로 돌아간 번역) - 고른 곳과 상관없이 정할 수 있게 고른 곳 상자 아래에
+  const translationBox = openTranslations.length > 0 && (
+    <div className="chosen-box" data-testid="assign-translations">
+      <span className="chosen-label">{t("assign.hidden.translations")}</span>
+      {openTranslations.map((item) => (
+        <div key={item.id} className="chosen-line" data-testid={`assign-translation-${item.id}`}>
+          <LangToken lang={item.lang} />
+          <span className="min-w-0 flex-1 text-[13px] leading-5 text-ink">
+            <ClampText text={item.confirmed_text || item.ai_text} />
+          </span>
+        </div>
+      ))}
+      {canEdit && (
+        <div className="flex flex-wrap gap-1.5">
+          <button type="button" className="btn h-7" data-testid="assign-translation-confirm" disabled={busy} onClick={() => void settleTranslations("confirm")}>
+            <Check size={14} strokeWidth={1.5} aria-hidden />
+            {t("assign.hidden.translationConfirm")}
+          </button>
+          <button type="button" className="btn h-7" data-testid="assign-translation-remove" disabled={busy} onClick={() => void settleTranslations("remove")}>
+            <Trash2 size={14} strokeWidth={1.5} aria-hidden />
+            {t("assign.hidden.translationRemove")}
+          </button>
+        </div>
+      )}
+    </div>
+  );
 
   // 확정 단추 - 결정 칸 맨 아래 늘 같은 자리의 가장 큰 단추. 고른 곳이 없으면 흐리게 꺼지고 까닭은 툴팁(↵는 위 목록의 첫 후보로 간다)
   const confirmButton = (
@@ -989,6 +1016,7 @@ export function AssignSidePanel({ state }: { state: AssignPageState }) {
             {renderStep(stepBase + 2, t("assign.step.decide"))}
             {actions}
             {renderChosen()}
+            {translationBox}
           </div>
           {destination?.kind === "move" && (
             <div className="flex min-w-0 items-center gap-2">

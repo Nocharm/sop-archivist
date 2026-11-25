@@ -8,11 +8,13 @@ import type { Group, NewCandidate, UnitLang, WrittenSentence } from "./api-sop";
 export function mergeGroups(groups: Group[]): Group {
   const units = new Map<number, Group["units"][number]>();
   const targets = new Map<number, Group["targets"][number]>();
+  const translations = new Map<number, Group["targets"][number]>();
   for (const group of groups) {
     for (const unit of group.units) if (!units.has(unit.unit_id)) units.set(unit.unit_id, unit);
     for (const target of group.targets) if (!targets.has(target.id)) targets.set(target.id, target);
+    for (const target of group.translations ?? []) translations.set(target.id, target);
   }
-  return { units: [...units.values()], targets: [...targets.values()] };
+  return { units: [...units.values()], targets: [...targets.values()], ...(translations.size > 0 ? { translations: [...translations.values()] } : {}) };
 }
 
 export interface CoConfirmed {

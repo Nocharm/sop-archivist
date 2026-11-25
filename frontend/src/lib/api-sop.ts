@@ -956,6 +956,8 @@ export interface GroupTarget {
 export interface Group {
   units: GroupUnit[];
   targets: GroupTarget[];
+  /** 이 묶음의 단위에서 옮긴 번역 가운데 targets에 없는 것(문장 번역은 묶음이 따로다) - 단위로 읽을 때만 */
+  translations?: GroupTarget[];
   /** 묶음 저장 응답에만 - 이 저장으로 확정된 짝·풀린 짝(서버가 판단을 보고 정한다) */
   pairs_confirmed?: number[];
   pairs_dissolved?: number[];

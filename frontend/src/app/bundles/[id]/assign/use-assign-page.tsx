@@ -52,6 +52,7 @@ import { pickDocRevision } from "@/lib/doc-revision";
 import type { PaperPending } from "@/components/paper/paper";
 import { useI18n } from "@/lib/i18n";
 import { genId } from "@/lib/id";
+import { buildTranslationDecision, listOpenTranslations } from "@/lib/translation-decision";
 import { useLeaveGuard } from "@/lib/leave-guard";
 import { buildIdenticalBatches } from "@/lib/match-model";
 import { EMPTY_FOLD_OPEN, type FoldOpen } from "@/lib/paper-fold-model";
@@ -600,6 +601,9 @@ export function useAssignPage() {
       return next;
     });
   }
+
+  // 확정하지 않은 번역 줄 - 검토 요청을 막는데 새 문서를 숨긴 동안 정할 자리가 오른쪽 칸뿐이다(어디로 보낸 줄이든)
+  const openTranslations = isDrafting || row === null ? [] : listOpenTranslations(groupData, row.unitIds);
 
   // 저장 전 고름·고친 글이 남은 줄이 있으면 다른 화면으로 가기 전에 묻는다(초안은 이 화면의 상태라 나가면 사라진다)
   const unsavedCount = Object.values(drafts).filter(hasDraftChange).length;
@@ -2109,6 +2113,26 @@ export function useAssignPage() {
     });
   }
 
+  /** 고른 줄의 남은 번역을 확정하거나 지운다 - 줄의 판단은 그대로, 되돌리기 한 번 */
+  async function settleTranslations(action: "confirm" | "remove") {
+    if (!row || busy) return;
+    const body = buildTranslationDecision(groupData, row.unitIds, action);
+    if (body === null) return;
+    const [focusId] = row.unitIds;
+    await focusCtl.runPending({ kind: "save", docId: row.documentId, unitIds: row.unitIds, place: NO_PLACE, isGlobal: false }, async () => {
+      try {
+        await saveGroup(bundleId, body, buildUndo({ op: "confirm", focus_unit_id: focusId }));
+        markRecorded();
+        showToast(t(action === "confirm" ? "classify.confirmed" : "assign.hidden.translationRemoved"));
+        reloadData();
+        void loadBundle(bundleId);
+      } catch (err) {
+        showToast(humanizeApiError(err, t), "error");
+        reloadData();
+      }
+    });
+  }
+
   /** 묶음 전체 일 하나(같은 글자 일괄 확정) - withViews면 원문 보기도(서버가 짝을 정리하지만 어느 짝인지 알려 주지 않는다). 다른 일이 처리 중이면 시작하지 않는다 */
   async function run(action: () => Promise<unknown>, message: string, withViews = false) {
     await focusCtl.runPending({ kind: "bulk", docId: null, unitIds: [], place: NO_PLACE, isGlobal: true }, async () => {
@@ -3607,7 +3631,7 @@ export function useAssignPage() {
   return {
     t, bundleId, bundle, canEdit, docs, oldDocs, oldDocIds, docViews, unitsKey, reloadData, tobe, tobeData, writtenList, identical,
     aiJobs, aiOn, aiBusy, suggestions, invalidUnitIds, readMarkStatus, readAiPlace, suggestedTargetUnits, unitMap, written, writtenMap, rows, rowMap,
-    rowOfUnit, options, labelOptions, isDrafting, hiddenPlace, ready, showSkeleton, unsourced, mode, setMode, filter, counts, foldOpen, setFoldOpen, applyFilter, foldMatch,
+    rowOfUnit, options, labelOptions, isDrafting, hiddenPlace, openTranslations, settleTranslations, ready, showSkeleton, unsourced, mode, setMode, filter, counts, foldOpen, setFoldOpen, applyFilter, foldMatch,
     clearRowPick, activeKey, row, pickedId, spaceUnitIds, spacePickSeq, solo, setSolo, isSolo, isNewEdit, hasSolo, tocOpen, setTocOpen, tocPick, tocBlocks, checked,
     setChecked, newRemarks, setNewRemarks, menu, setMenu, joinMenu, setJoinMenu, ctxMenu, setCtxMenu, cutUnitId, focusNew,
     groupData, setDrafts, draft, editing, groupPending, savedDestination, destination, rowUnits, rowLangs, firstDecision, systemHold,

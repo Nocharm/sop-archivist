@@ -172,6 +172,8 @@ class GroupTargetOut(BaseModel):
 class GroupOut(BaseModel):
     units: list[GroupUnitOut]
     targets: list[GroupTargetOut]
+    # 이 묶음의 단위에서 옮긴 번역 가운데 targets에 없는 것(문장 번역은 묶음이 따로다) — 단위로 읽을 때만 채운다
+    translations: list[GroupTargetOut] = []
     # 이 저장 끝에 서버가 확정하거나 푼 한/영 짝(pair_settle) — 관계 묶음 저장 응답에서만 채운다
     pairs_confirmed: list[int] = []
     pairs_dissolved: list[int] = []
@@ -327,6 +329,18 @@ def _build_target_out(target: TargetSentence, source_unit_ids: list[int], group_
     )
 
 
+async def _load_translations(session: AsyncSession, group: GroupOut) -> list[GroupTargetOut]:
+    """묶음의 단위(표면 칸 문장까지)에서 옮긴 번역 — 칸 번역은 이미 targets에 있어 뺀다."""
+    unit_ids = [unit_id for unit in group.units for unit_id in (unit.unit_id, *unit.cell_unit_ids)]
+    grouped = {target.id for target in group.targets}
+    rows = await select_in_chunks(
+        session,
+        lambda chunk: select(TargetSentence).where(TargetSentence.translation_source_unit_id.in_(chunk)).order_by(TargetSentence.id),
+        unit_ids,
+    )
+    return [_build_target_out(row[0], [], None) for row in rows if row[0].id not in grouped]
+
+
 async def load_group(
     session: AsyncSession, bundle_id: int, *, unit_id: int | None = None, target_id: int | None = None
 ) -> GroupOut:
@@ -344,7 +358,8 @@ async def load_group(
         )
         if found is None:
             raise_rule(404, "unit_not_found", unit_ids=[unit_id])
-        return await build_group_out(session, unit_ids=[unit_id], target_ids=[])
+        group = await build_group_out(session, unit_ids=[unit_id], target_ids=[])
+        return group.model_copy(update={"translations": await _load_translations(session, group)})
     found = await session.scalar(
         select(TargetSentence.id).where(TargetSentence.id == target_id, TargetSentence.bundle_id == bundle_id)
     )
