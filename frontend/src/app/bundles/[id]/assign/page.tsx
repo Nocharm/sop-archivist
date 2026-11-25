@@ -60,6 +60,7 @@ import { type SelectOption } from "@/components/ui/select";
 import { AssignSidePanel } from "./assign-side-panel";
 
 import { AssignBar } from "./assign-bar";
+import { QueueFailure } from "./queue-failure";
 import { useAssignPage, NO_NUMBERS, findDestinationDoc, readMenuCover, revealElement } from "./use-assign-page";
 
 export default function AssignPage() {
@@ -486,6 +487,7 @@ export default function AssignPage() {
         />
         <div className="assign-desk">
           <AssignBar state={state} />
+          {state.queueFailure !== null && <QueueFailure text={state.queueFailure} onRetry={state.retryCommand} onDiscard={state.discardCommands} />}
           {rows.length === 0 ? (
             <EmptyState
               icon={Inbox}

@@ -7,7 +7,7 @@ import { useRef, useState, useSyncExternalStore } from "react";
 import type { AiSuggestion, DocumentView, EditOp, Group, UndoMeta, ViewUnit } from "@/lib/api-sop";
 import { isSameFocus, NO_PLACE, type Focus, type Pending, type PendingPlace } from "@/lib/assign-focus-model";
 import type { Destination } from "@/lib/classify-model";
-import { createCommandQueue, isBarrier, isIdle, listUnsettled, mustDefer, shouldHalt, type QueuedCommand } from "@/lib/command-queue";
+import { createCommandQueue, isBarrier, isIdle, listUnsettled, mustDefer, shouldHalt, type QueuedCommand, type QueueState } from "@/lib/command-queue";
 import { enqueueDocWrite } from "@/lib/doc-write-queue";
 import { genId } from "@/lib/id";
 
@@ -79,6 +79,8 @@ export type WriteCommand =
   | { kind: "global"; label: string; pending: Omit<Pending, "id">; run: (ctx: SendContext) => Promise<void> };
 
 export type AssignCommand = WriteCommand | ReplayCommand;
+
+export type CommandQueueState = QueueState<AssignCommand>;
 
 /** 되묻고 다시 보낼 수 있는 편집 */
 export type ConfirmableCommand = Extract<WriteCommand, { confirm: boolean }>;
