@@ -374,7 +374,7 @@ Unit은 **한곳으로 보낼 수 있는 가장 작은 조각**입니다. 올릴
 - **쪼개기**: 나눌 자리를 두 번 눌러 선을 놓습니다(오른쪽 칸 **Shape** 줄의 가위 단추나 우클릭 메뉴의 **Split here** 도 선을 놓습니다). 선은 끌어서 옮기거나 <kbd>←</kbd> <kbd>→</kbd>로 옮깁니다(그 Unit 안에서만 움직입니다). 선 위 점 둘레에 마우스를 올리면 잡을 수 있는 자리가 옅은 색 띠로 보입니다. 잠시 뒤 선 옆에 뜨는 **Split here** 를 누르거나 <kbd>S</kbd>를 누르면 조각이 바로 둘로 나뉩니다. 나누지 않으려면 **Cancel**(<kbd>Esc</kbd>)을 누르거나, 그 문단 상자에서 글이 없는 곳(여백)을 누릅니다.
 - **조각 사이 간격**: 조각 사이는 평소 좁고, 고른 조각 곁과 마우스를 잠깐 머문 자리만 살짝 넓어집니다(조각 사이를 지나가기만 하면 벌어지지 않습니다). 한/영 짝의 구성원이 이웃해 있으면 몇 줄이든(1:1, 1:2 …) 옅은 바탕의 한 카드로 붙고 줄 사이에는 점선 한 줄만 남습니다(카드가 짝임을 말하므로 끝에 아이콘은 붙지 않습니다). 떨어져 있는 짝은 카드가 되지 않고 제자리에 그대로 있으며, 조각 끝에 고리 아이콘이 붙습니다. 그런 짝의 한쪽을 고르면 그 조각 끝의 고리 아이콘이 강조되고, 글 바로 아래에 "↑ 짝 KO · 위 §1"처럼 짝이 위·아래 어디에 있는지 흐린 한 줄이 뜹니다(언어는 짝의 언어, 자리는 짝의 번호 칸 값이나 Unit 번호. 떨어진 짝이 여럿이면 가장 가까운 하나와 +2처럼 남은 수). 그 줄을 누르면 짝의 원래 자리로 가서 그 조각을 고릅니다 — 거기서는 반대 방향으로 안내합니다.
 - **조각 왼쪽 번호 칸**: 조각마다 왼쪽 바깥에 절 번호 칸이 붙어 있습니다. 보류인 줄은 번호 칸에 마우스를 올리면 "on hold"가 뜹니다. 절 번호(예: 5.2.1)는 그 절의 첫 조각 번호 칸에만 한 번 보이고(짝 카드면 첫 줄에만, 둘째 줄부터는 첫 줄과 같은 폭), 그 줄 글 앞에 같은 번호가 있으면 글에서는 빼고 보입니다(화면에서만 빼고 원문은 그대로입니다). 번호 칸의 폭은 절 깊이로만 정해져서 깊은 절일수록 조각이 오른쪽에서 시작합니다(같은 깊이는 폭이 같습니다). 한 문서에서 그 깊이의 가장 긴 번호가 다 들어가도록 그 깊이의 칸이 함께 넓어지고, 다른 깊이는 그대로입니다. 창이 좁으면 깊은 번호는 "1.2.…"처럼 줄여 보이고, 번호 칸에 마우스를 올리면 전체 번호가 뜹니다. 보류인 줄은 글 첫머리에 ON HOLD 칩이 붙습니다.
-- **묶기**: 고른 조각의 바로 위나 아래 틈(틈과 그 위아래 조각 가장자리)에 마우스를 올리면 바로 옅은 바탕이 차오르기 시작하고, 잠깐 머물면 선이 그어지며, 글이 시작하는 자리 바로 아래에 **Join** 이 튀어나옵니다(번호 칸이 있는 조각을 고른 동안 <kbd>Tab</kbd>은 들여쓰기라, 키보드로는 <kbd>Shift</kbd>+<kbd>F10</kbd>의 우클릭 메뉴에서 앞·뒤와 합칩니다). 스쳐 지나가기만 하면 열리지 않습니다. 단추는 다 나타난 뒤에야 눌립니다. 묶으면 어떻게 될지는 두 조각의 언어로 시스템이 고릅니다 — 언어가 같으면 한 문장으로 합치고(단추에 접기 아이콘), 한글과 영어면 한/영 짝으로 묶습니다(단추에 고리 아이콘). 결과가 틀렸으면 오른쪽 칸 1 **Shape** 의 **One sentence** · **KO/EN pair** 로 바꿉니다([묶인 문장과 한/영 짝](#split-pair)).
+- **묶기**: 고른 조각의 바로 위나 아래 틈(틈과 그 위아래 조각 가장자리)에 마우스를 올리면 바로 옅은 바탕이 차오르기 시작하고, 잠깐 머물면 선이 그어지며, 글이 시작하는 자리 바로 아래에 **Join** 이 튀어나옵니다(번호 칸이 있는 조각을 고른 동안 <kbd>Tab</kbd>은 들여쓰기라, 키보드로는 <kbd>Shift</kbd>+<kbd>J</kbd>(아래 조각)·<kbd>Shift</kbd>+<kbd>K</kbd>(위 조각)를 두 번 눌러 합치거나 <kbd>Shift</kbd>+<kbd>F10</kbd>의 우클릭 메뉴에서 앞·뒤와 합칩니다). 스쳐 지나가기만 하면 열리지 않습니다. 단추는 다 나타난 뒤에야 눌립니다. 묶으면 어떻게 될지는 두 조각의 언어로 시스템이 고릅니다 — 언어가 같으면 한 문장으로 합치고(단추에 접기 아이콘), 한글과 영어면 한/영 짝으로 묶습니다(단추에 고리 아이콘). 결과가 틀렸으면 오른쪽 칸 1 **Shape** 의 **One sentence** · **KO/EN pair** 로 바꿉니다([묶인 문장과 한/영 짝](#split-pair)). 글쇠로 묶을 때는 <kbd>Shift</kbd>+<kbd>J</kbd>를 처음 누르면 저장 없이 고른 조각과 아래 이웃 조각에 점선이 그어지고 "한 번 더 ⇧J로 합치기 · Esc 취소"(언어가 다르면 "짝 맺기") 띠가 뜹니다. 같은 글쇠를 한 번 더 누르면 위 규칙대로 합치거나 짝을 맺고, <kbd>Shift</kbd>+<kbd>K</kbd>는 위 이웃과 같습니다. 다른 글쇠·클릭·<kbd>Esc</kbd>는 점선만 거두고(다른 글쇠와 클릭은 제 일도 합니다), 시간 제한은 없습니다. 막히는 조합(목차 줄 · 배정된 한/영 · 저장 전 고름 등)은 첫 누름에 까닭을 알리고 점선을 긋지 않습니다. 합친 것은 <kbd>Ctrl</kbd>+<kbd>Z</kbd> 한 번으로 되돌립니다.
 - **조각 아래 단추**: 합쳐서 만든 Unit을 고르면 그 조각 상자가 아래로 늘어나며 글 바로 아래에 **Unmerge** 가 펼쳐집니다(아래 조각들은 그만큼 밀려 내려갑니다). 다른 Unit을 고르면 접힙니다. 짝 풀기는 우클릭 메뉴의 **Separate the KO/EN pair** 나 **Shape** 줄의 단추로 합니다.
 - **합치기 풀기**: **Unmerge** 는 합치기 전의 Unit들을 원래 ID 그대로 되살립니다(그 Unit의 합치기만 골라 되돌리는 것). 합친 뒤 그 Unit을 다시 나누거나 경계를 옮겼다면 풀 수 없으니 되돌리기(<kbd>Ctrl</kbd>+<kbd>Z</kbd>)를 씁니다. 한글과 영어를 합친 것이면 되살린 Unit은 저마다 원래 언어로 돌아가고, 같은 언어끼리 합친 것이면 합친 Unit의 언어를 따릅니다. 짝은 되살아나지 않습니다(<kbd>Ctrl</kbd>+<kbd>Z</kbd>로 합치기를 되돌리면 짝도 돌아옵니다).
 - **글자를 골라 새 Unit**: 글자를 끌어 고르면 **New unit from selection** 이 나옵니다. **Make unit** 을 누르면 고른 글자만 새 Unit이 됩니다.
@@ -428,6 +428,7 @@ Unit은 **한곳으로 보낼 수 있는 가장 작은 조각**입니다. 올릴
 | 두 번 누르기 | 쪼갤 자리에 선 놓기 |
 | 끌기, <kbd>←</kbd> <kbd>→</kbd> | 선 옮기기 |
 | <kbd>S</kbd> | 선에서 쪼개기 |
+| <kbd>Shift</kbd>+<kbd>J</kbd> · <kbd>Shift</kbd>+<kbd>K</kbd> | 아래 · 위 조각과 합치기 — 처음 누르면 점선, 한 번 더 누르면 합치기(언어가 다르면 짝 맺기) |
 | <kbd>Shift</kbd>+<kbd>L</kbd> | 언어 KO ↔ EN |
 | <kbd>Shift</kbd>+<kbd>P</kbd> | 한 문장 ↔ 한/영 짝 |
 | <kbd>Shift</kbd>+<kbd>N</kbd> | 번호 칸 열기 |
@@ -831,6 +832,8 @@ AI가 꺼져 있어도 빠진 언어를 직접 채울 수 있습니다. 칸에 �
 | <kbd>Shift</kbd>+<kbd>A</kbd> | AI 추천 받기(초안으로 채우고, 확정은 <kbd>↵</kbd>) |
 | <kbd>S</kbd> | 나눌 선이 있을 때 여기서 나누기 |
 | <kbd>←</kbd> <kbd>→</kbd> | 나눌 선 옮기기 |
+| <kbd>Shift</kbd>+<kbd>J</kbd> | 아래 Unit과 합치기(언어가 다르면 짝 맺기). 처음 누르면 점선과 안내 띠만 뜨고, 같은 글쇠를 한 번 더 누르면 합친다. 다른 글쇠 · 클릭 · <kbd>Esc</kbd>는 무장만 거둔다 |
+| <kbd>Shift</kbd>+<kbd>K</kbd> | 위 Unit과 합치기(<kbd>Shift</kbd>+<kbd>J</kbd>와 같다) |
 | <kbd>Shift</kbd>+<kbd>L</kbd> | 언어 KO ↔ EN. 짝을 한 언어로 만들면 우클릭 메뉴와 같이 합치거나 짝을 푼다 |
 | <kbd>Shift</kbd>+<kbd>P</kbd> | 한 문장 ↔ 한/영 짝(**One sentence** · **KO/EN pair**) |
 | <kbd>Shift</kbd>+<kbd>N</kbd> | 번호 칸 열기 |
@@ -1264,7 +1267,7 @@ AI는 제안만 합니다. 사람이 줄마다 확인해 확정하기 전에는 
 | **New documents** | 글 칸에서 <kbd>Enter</kbd> 저장, <kbd>Esc</kbd> 적던 것 버리기 |
 | **Order**(지금은 숨긴 기능) | 줄을 눌러 고른 뒤 <kbd>Alt</kbd>+<kbd>↑</kbd> <kbd>↓</kbd> 한 자리 옮기기(칸 끝에서 멈춤 — 다른 칸으로는 끌어서 옮기고, 키보드로 줄의 칸을 바꾸는 일은 **Assign** 화면에서 합니다), <kbd>Tab</kbd> <kbd>Shift</kbd>+<kbd>Tab</kbd> 들여쓰기·내어쓰기, <kbd>Esc</kbd> 고름 놓기(끄는 동안이면 끌기 취소), <kbd>Alt</kbd>를 누른 채 끌어 글자 고르기 |
 | **Map** | 지도 안에서 <kbd>↑</kbd> <kbd>↓</kbd> 같은 줄기, <kbd>←</kbd> <kbd>→</kbd> 옆 줄기, <kbd>Home</kbd> <kbd>End</kbd> 줄기의 처음 · 끝, <kbd>Enter</kbd> 고르기(줄기 머리에서는 접기), <kbd>Esc</kbd> 고름 풀기, <kbd>+</kbd> <kbd>-</kbd> <kbd>0</kbd> 확대 · **Fit all**, <kbd>/</kbd> 찾기, 지도 위에서 <kbd>Ctrl</kbd>+휠 확대 |
-| **Assign** | <kbd>↵</kbd> 확정(고른 곳이 없으면 추천 첫 카드로), <kbd>J</kbd> <kbd>K</kbd> 이동, <kbd>G</kbd> 짝으로, <kbd>U</kbd> 배정 지우기, <kbd>Del</kbd> 삭제, <kbd>R</kbd> **Remark**, <kbd>Shift</kbd>+<kbd>H</kbd> 보류, <kbd>Shift</kbd>+<kbd>A</kbd> AI 추천 받기, <kbd>Shift</kbd>+<kbd>L</kbd> 언어, <kbd>Shift</kbd>+<kbd>P</kbd> 한 문장 · 짝, <kbd>Shift</kbd>+<kbd>N</kbd> 번호 칸, <kbd>Shift</kbd>+<kbd>T</kbd> 표 벗기기, <kbd>Shift</kbd>+<kbd>O</kbd> AI 순서, <kbd>Tab</kbd> <kbd>Shift</kbd>+<kbd>Tab</kbd> 들여쓰기 · 내어쓰기, <kbd>V</kbd> 문서 하나 · 둘 보기, <kbd>Ctrl</kbd>+<kbd>←</kbd> <kbd>→</kbd> 탭(뒤로 가기는 보던 탭), <kbd>Space</kbd> 누르고 있기 Excel 미리보기, <kbd>?</kbd> 도움말, <kbd>E</kbd> 고쳐 쓰기(지금은 숨긴 기능). 전부는 [Assign 단축키](#assign-keys) |
+| **Assign** | <kbd>↵</kbd> 확정(고른 곳이 없으면 추천 첫 카드로), <kbd>J</kbd> <kbd>K</kbd> 이동, <kbd>G</kbd> 짝으로, <kbd>U</kbd> 배정 지우기, <kbd>Del</kbd> 삭제, <kbd>R</kbd> **Remark**, <kbd>Shift</kbd>+<kbd>H</kbd> 보류, <kbd>Shift</kbd>+<kbd>A</kbd> AI 추천 받기, <kbd>Shift</kbd>+<kbd>J</kbd> <kbd>Shift</kbd>+<kbd>K</kbd> 두 번 눌러 아래 · 위와 합치기, <kbd>Shift</kbd>+<kbd>L</kbd> 언어, <kbd>Shift</kbd>+<kbd>P</kbd> 한 문장 · 짝, <kbd>Shift</kbd>+<kbd>N</kbd> 번호 칸, <kbd>Shift</kbd>+<kbd>T</kbd> 표 벗기기, <kbd>Shift</kbd>+<kbd>O</kbd> AI 순서, <kbd>Tab</kbd> <kbd>Shift</kbd>+<kbd>Tab</kbd> 들여쓰기 · 내어쓰기, <kbd>V</kbd> 문서 하나 · 둘 보기, <kbd>Ctrl</kbd>+<kbd>←</kbd> <kbd>→</kbd> 탭(뒤로 가기는 보던 탭), <kbd>Space</kbd> 누르고 있기 Excel 미리보기, <kbd>?</kbd> 도움말, <kbd>E</kbd> 고쳐 쓰기(지금은 숨긴 기능). 전부는 [Assign 단축키](#assign-keys) |
 | 어디서나 | <kbd>Esc</kbd> 맨 위 창 닫기, 이동 취소 |
 
 Mac에서는 <kbd>Ctrl</kbd> 대신 <kbd>⌘</kbd>를 씁니다.

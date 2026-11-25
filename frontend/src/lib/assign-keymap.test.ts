@@ -47,6 +47,11 @@ describe("the Assign key table", () => {
     expect([readId("K"), readId("ArrowUp")]).toEqual(["run move_prev", "run move_prev"]);
     expect(readId("Enter")).toBe("run confirm");
   });
+  it("has Shift+J and Shift+K for merging and they are not J/K", () => {
+    expect([readId("J", { shiftKey: true }), readId("K", { shiftKey: true })]).toEqual(["run merge_next", "run merge_prev"]);
+    expect([readId("j"), readId("k")]).toEqual(["run move_next", "run move_prev"]);
+    expect([formatAssignKey("merge_next"), formatAssignKey("merge_prev")]).toEqual(["⇧J", "⇧K"]);
+  });
   it("tells the deleted block from the deleted line by Shift", () => {
     expect([readId("u"), readId("U", { shiftKey: true })]).toEqual(["run clear", "run clear_block"]);
     expect([readId("r"), readId("R", { shiftKey: true })]).toEqual(["run remark", "run remark_block"]);
