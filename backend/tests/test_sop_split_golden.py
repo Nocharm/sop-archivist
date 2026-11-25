@@ -47,7 +47,7 @@ def _load_expected(key: str) -> dict:
 
 
 def test_every_shape_has_an_answer() -> None:
-    keys = {f"G{n:02d}" for n in range(1, 23)}
+    keys = {f"G{n:02d}" for n in range(1, 29)}
     assert set(CASES) == keys
     assert {path.stem for path in GOLDEN_DIR.glob("*.json")} == keys
     names = {f"{key}-{side}" for key in keys for side in SIDES} | keys

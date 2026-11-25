@@ -190,7 +190,7 @@ def test_paragraph_bundle_has_one_box_per_language(seed_runs: SeedRuns) -> None:
 
 
 def test_paragraph_bundle_has_a_document_with_front_matter_and_history(seed_runs: SeedRuns) -> None:
-    """같은 묶음의 둘째 문서 — 1장 앞 세 줄과 개정 이력 두 줄이 저절로 삭제되고 나머지는 배정 줄이다(Assign 본문 앞부분 스모크가 쓴다)."""
+    """같은 묶음의 둘째 문서 — 1장 앞 세 줄과 개정 이력 세 줄이 저절로 삭제되고 나머지는 배정 줄이다(Assign 본문 앞부분 스모크가 쓴다)."""
     database_path, _, _, bundles = seed_runs
     (bundle_id,) = [bundle_id for bundle_id, title, _ in bundles if title == PARAGRAPH_TITLE]
 
@@ -201,7 +201,7 @@ def test_paragraph_bundle_has_a_document_with_front_matter_and_history(seed_runs
         GROUP BY u.noise_kind
     """)
 
-    assert dict(rows) == {"front": 3, "history": 2, None: 4}
+    assert dict(rows) == {"front": 3, "history": 3, None: 4}
 
 
 def test_toc_bundle_marks_its_contents_lines(seed_runs: SeedRuns) -> None:

@@ -32,7 +32,16 @@ from tests.docx_factory import (
     p,
     tbl,
 )
-from tests.sop_helpers import AUTHOR, create_bundle, find_unit, get_bundle, get_view, save_group, upload
+from tests.sop_helpers import (
+    AUTHOR,
+    create_bundle,
+    find_unit,
+    get_bundle,
+    get_group_by_unit,
+    get_view,
+    save_group,
+    upload,
+)
 from tests.split_golden.builder import CASES, build_new_bytes, cell
 from tests.test_sop_decision_undo import _redo, _undo
 from tests.test_sop_new_edit_undo import _push_ids
@@ -105,22 +114,41 @@ def test_each_half_of_a_separate_document_drops_its_own_front() -> None:
 
 
 def test_a_korean_attachment_table_is_not_taken_by_the_second_half() -> None:
+    korean = [_p("합성 표준 절차서"), *_table("승인")]
     bilingual = _table("항목 Item", "온도", langs=BOTH)
-    english = [_p("Synthetic Standard Procedure", EN)]
+    english = [_p("Synthetic Standard Procedure", EN), *_table("Approved", langs=EN)]
 
-    found = _find([*BODY, *bilingual, *english, *EN_BODY], separate=True)
+    found = _find([*korean, *BODY, *bilingual, *english, *EN_BODY], separate=True)
 
-    assert found == [None] * (len(BODY) + len(bilingual)) + [NOISE_FRONT] + [None] * len(EN_BODY)
+    assert found == [NOISE_FRONT] * 3 + [None] * (len(BODY) + len(bilingual)) + [NOISE_FRONT] * 3 + [None] * len(EN_BODY)
 
 
 def test_a_leading_figure_of_the_second_run_is_left_alone() -> None:
     # 첫 반쪽 끝의 그림은 어느 쪽인지 알 수 없다 — 사이에 낀 그림은 앞부분이다
     figure = _line("figure", "", NEUTRAL, is_flow=False)
+    korean = [_p("합성 표준 절차서"), figure, _p("합성 팀 발행")]
     english = [_p("Synthetic Standard Procedure", EN), figure, _p("Issued by the synthetic team", EN)]
 
-    found = _find([*BODY, figure, *english, *EN_BODY], separate=True)
+    found = _find([*korean, *BODY, figure, *english, *EN_BODY], separate=True)
 
-    assert found == [None] * (len(BODY) + 1) + [NOISE_FRONT] * 3 + [None] * len(EN_BODY)
+    assert found == [NOISE_FRONT] * 3 + [None] * (len(BODY) + 1) + [NOISE_FRONT] * 3 + [None] * len(EN_BODY)
+
+
+def test_the_second_front_must_have_the_shape_of_the_first() -> None:
+    # 첫 반쪽 끝에 이어진 영어 줄과 가를 수 없으면 표시하지 않는다 — 첫 반쪽의 앞부분과 같은 꼴만
+    korean = [_p("합성 표준 절차서"), *_table("승인")]
+    abbreviations = [_p("QA: Quality Assurance", EN), _p("HEPA: High Efficiency Particulate Air", EN)]
+    record = _table("Item", "Value", langs=EN)
+    english = [_p("Synthetic Standard Procedure", EN), *_table("Approved", langs=EN)]
+    head = [NOISE_FRONT] * 3 + [None] * len(BODY)
+
+    tail = [None] * len(EN_BODY)
+    assert _find([*korean, *BODY, *abbreviations, *english, *EN_BODY], separate=True) == [*head, None, None, *[NOISE_FRONT] * 3, *tail]
+    assert _find([*korean, *BODY, *record, *english, *EN_BODY], separate=True) == [*head, *[None] * 3, *[NOISE_FRONT] * 3, *tail]
+    for run in (abbreviations, record, [*abbreviations, *record, *abbreviations], english[:1]):
+        assert _find([*korean, *BODY, *run, *EN_BODY], separate=True) == [*head, *[None] * len(run), *tail]
+    # 글뿐인 앞부분은 다른 글과 가를 수 없다
+    assert _find([_p("합성 표준 절차서"), *BODY, abbreviations[0], *EN_BODY], separate=True) == [NOISE_FRONT, *[None] * (len(BODY) + 1), *tail]
 
 
 def test_interleaved_documents_have_one_start() -> None:
@@ -138,14 +166,18 @@ def test_a_one_inside_a_table_is_not_a_start() -> None:
 
 
 def test_a_band_heading_is_a_start() -> None:
-    assert _find([_p("표지"), _h("1 목적", number="1")]) == [NOISE_FRONT, None]
+    body = [_h("1 목적", number="1"), _p("탱크 세척 방법을 정한다."), _h("2 범위", number="2")]
+
+    assert _find([_p("표지"), *body]) == [NOISE_FRONT, None, None, None]
 
 
 def test_header_and_footer_lines_are_never_marked() -> None:
     header = _p("합성 머리말", is_body=False)
 
-    assert _find([header, _p("표지"), *BODY, _h("개정 이력", number="9."), header]) == [
-        None, NOISE_FRONT, *[None] * len(BODY), NOISE_HISTORY, None
+    history = [_h("개정 이력", number="9."), *_table("개정", "내용")]
+
+    assert _find([header, _p("표지"), *BODY, *history, header]) == [
+        None, NOISE_FRONT, *[None] * len(BODY), *[NOISE_HISTORY] * 4, None
     ]
 
 
@@ -161,8 +193,29 @@ def test_history_ends_at_a_heading_of_the_same_or_higher_level() -> None:
     after = [_h("10. 첨부", number="10."), _p("기록지를 붙인다.")]
 
     assert _find([*BODY, *history, *after]) == [None] * len(BODY) + [NOISE_HISTORY] * len(history) + [None] * 2
-    nested = [_h("9. 기록", number="9."), _h("9.1 개정 이력", level=2, number="9.1"), _p("처음 만들었다."), *after]
-    assert _find([*BODY, *nested]) == [None] * (len(BODY) + 1) + [NOISE_HISTORY] * 2 + [None] * 2
+    nested = [_h("9. 기록", number="9."), _h("9.1 개정 이력", level=2, number="9.1"), _p("처음 만들었다."), *_table("개정"), *after]
+    assert _find([*BODY, *nested]) == [None] * (len(BODY) + 1) + [NOISE_HISTORY] * 4 + [None] * 2
+
+
+def test_history_is_its_heading_and_one_history_table() -> None:
+    # 조금이라도 다른 꼴이면 표시하지 않는다 — 이력 표가 없거나, 다른 표이거나, 사이에 글이 많거나, 다른 절이 시작했거나
+    heading, table, after = _h("2. 개정 이력", number="2."), _table("Rev", "Change", langs=EN), _p("기록지를 붙인다.")
+    body = [_h("1. 목적", number="1."), _p("탱크 세척 방법을 정한다."), _p("탱크를 비운다."), _h("3. 첨부", number="3.")]
+    marked = [NOISE_HISTORY] * 4
+
+    assert _find([*body, heading, *table, after, *_table("항목")]) == [None] * 4 + marked + [None] * 3
+    for between in (
+        [_p("3. 절차", number="3.")], [_p("부록 A 기록지")], [_p("첨부 1")], [_p("제3장 절차")], [_h("절차")], [_p("가다."), _p("나다."), _p("다다.")],
+        [_line("figure", "", NEUTRAL, is_flow=False)],
+    ):
+        assert _find([*body, heading, *between, *table]) == [None] * (4 + 1 + len(between) + 3)
+    assert _find([*body, heading, *_table("항목", "값")]) == [None] * 8
+    assert _find([*body, heading, after]) == [None] * 6
+    # 이력 절 안의 하위 번호는 끝이 아니다
+    assert _find([*body, heading, _p("2.1 처음 만들었다.", number="2.1"), *table]) == [None] * 4 + [NOISE_HISTORY] * 5
+    # 한/영 따로 문서에서 다른 언어의 글이 나오면 다른 반쪽이다
+    other = [heading, _p("Synthetic Standard Procedure", EN), *_table("Date", langs=EN)]
+    assert _find([*body, *other], separate=True) == [None] * 8
 
 
 def test_no_chapter_one_marks_nothing() -> None:
@@ -190,7 +243,29 @@ def test_front_titles_and_dates_do_not_hide_chapter_one() -> None:
 
     assert _find([*front, *BODY]) == [NOISE_FRONT] * 4 + [None] * len(BODY)
     # 장 번호를 글로만 쓴 문서 — 제목이 없으면 번호 문단이 본문 시작이다
-    assert _find([_p("표지"), _p("1. 목적", number="1."), _p("글이다.")]) == [NOISE_FRONT, None, None]
+    typed = [_p("1. 목적", number="1."), _p("글이다."), _p("2. 범위", number="2.")]
+    assert _find([_p("표지"), *typed]) == [NOISE_FRONT, None, None, None]
+    # 단계 목록("1." 바로 뒤 "2.", 마침표로 끝난 글, 앞에 문장)은 장이 아니다
+    assert _find([_p("표지"), _p("1. 전원 켜기", number="1."), _p("2. 압력 확인", number="2.")]) == [None] * 3
+    assert _find([_p("표지"), _p("1. 전원을 켠다.", number="1."), _p("글이다."), _p("2. 범위", number="2.")]) == [None] * 4
+    assert _find([_p("표지"), _p("탱크를 비운다."), *typed]) == [None] * 5
+    # 마침표 없이 끝난 한글 문장과 긴 글도 문장이다
+    assert _find([_p("표지"), _p("1. 전원을 켠다", number="1."), _p("글"), _p("2. 압력을 확인한다", number="2.")]) == [None] * 4
+    for text in ("탱크를 비운다", "물을 채울 것", "긴 글 " * 40):
+        assert _find([_p("표지"), _p(text), *typed]) == [None] * 5
+
+
+def test_more_front_than_body_marks_nothing() -> None:
+    front = [_p(f"표지 글 {n}") for n in "가나다라마"]
+
+    assert _find([*front, *BODY]) == [None] * 9
+    assert _find([*front[:4], *BODY]) == [NOISE_FRONT] * 4 + [None] * 4
+    # 문장은 둘까지 — 개정 요약 아래의 문장은 세지 않는다
+    prose = [_p(f"합성 안내 {n}이다.") for n in "가나다"]
+    assert _find([*prose, *BODY]) == [None] * 7
+    assert _find([*prose[:2], *BODY]) == [NOISE_FRONT] * 2 + [None] * 4
+    assert _find([_h("Summary of Changes", EN), *prose, *BODY]) == [NOISE_FRONT] * 4 + [None] * 4
+
 
 
 @pytest.mark.parametrize(
@@ -202,7 +277,10 @@ def test_history_headings(text: str) -> None:
     assert is_history_heading(text)
 
 
-@pytest.mark.parametrize("text", ["변경 관리", "Change Control", "개정 이력 관리 절차", "Revision", "", "개정 이력 " * 60])
+@pytest.mark.parametrize(
+    "text",
+    ["변경 관리", "Change Control", "개정 이력 관리 절차", "Revision", "", "개정 이력 " * 60, "6. 변경 관리 (변경 이력)", "변경 이력 / 승인 기록"],
+)
 def test_other_headings_are_not_history(text: str) -> None:
     assert not is_history_heading(text)
 
@@ -337,6 +415,7 @@ def test_front_lines_never_pair(client: TestClient) -> None:
         + "".join(p(text, "Heading1" if text[0] == "1" else None) for text in (
             "1. 목적", "1. Purpose", "탱크를 비운다.", "Drain the tank.", "밸브를 닫는다.", "Close the valve.",
         ))
+        + p("2. 범위", "Heading1") + p("2. Scope", "Heading1")
     )
     fx = _setup(client, body)
     pairs = {unit["text"]: unit["pair_id"] for unit in fx.view["units"]}
@@ -435,10 +514,10 @@ def test_a_deleted_line_locks_its_unwrapped_table(client: TestClient) -> None:
 
 
 def test_a_band_heading_of_the_history_stays_a_heading(client: TestClient) -> None:
-    body = make_band_table("1", "목적") + p(PURPOSE) + make_band_table("9", "개정 이력") + p("처음 만들었다.")
+    body = make_band_table("1", "목적") + p(PURPOSE) + p(SCOPE) + make_band_table("9", "개정 이력") + p("처음 만들었다.") + tbl([["개정"], ["01"]])
     fx = _setup(client, body)
     band = find_unit(fx.view, "9 개정 이력")
-    assert (band["noise_kind"], _texts(fx.view, NOISE_HISTORY)) == (NOISE_HISTORY, ["9 개정 이력", "처음 만들었다."])
+    assert (band["noise_kind"], _texts(fx.view, NOISE_HISTORY)) == (NOISE_HISTORY, ["9 개정 이력", "처음 만들었다.", "개정", "01"])
 
     response = _edit(client, fx, {"type": "set_layout_table", "table_id": band["table_id"], "is_layout": False})
 
@@ -460,16 +539,62 @@ def test_a_band_inside_a_table_locks_the_unwrapping(client: TestClient) -> None:
 
 def test_the_reference_lines_of_the_korean_half_are_not_front(client: TestClient) -> None:
     body = (
-        p("1. 목적", "Heading1") + p(PURPOSE) + p(SCOPE) + p("2. Reference", "Heading1")
-        + p("SOP-QC-0012 Cleaning of tanks") + p(EN_TITLE) + p("Approved by the synthetic team")
-        + p("1. Purpose", "Heading1") + p("This procedure defines how to clean the tank.") + p("It applies to the synthetic process.")
+        p(TITLE) + tbl([["승인"]]) + p("1. 목적", "Heading1") + p(PURPOSE) + p(SCOPE) + p("2. Reference", "Heading1")
+        + p("SOP-QC-0012 Cleaning of tanks") + p(EN_TITLE) + tbl([["Approved by the synthetic team"]])
+        + p("1. Purpose", "Heading1") + p("This procedure defines how to clean the tank.") + p("2. Reference", "Heading1")
+        + p("It applies to the synthetic process.")
     )
     fx = _setup(client, body)
     assert fx.view["document"]["language_layout"] == "ko_en_separate"
 
-    assert _texts(fx.view, NOISE_FRONT) == [EN_TITLE, "Approved by the synthetic team"]
+    assert _texts(fx.view, NOISE_FRONT) == [TITLE, "승인", EN_TITLE, "Approved by the synthetic team"]
     assert find_unit(fx.view, "SOP-QC-0012 Cleaning of tanks")["lang"] == "ref"
     assert {find_unit(fx.view, text)["lang"] for text in (EN_TITLE, "Approved by the synthetic team")} == {"en"}
+
+
+H1 = "Heading1"
+STEPS = p("1. 전원을 켠다.") + p("2. 압력을 확인한다.")
+KO_CHAPTERS = p("1. 목적", H1) + p(PURPOSE) + p("2. 범위", H1) + p(SCOPE)
+EN_HALF = (
+    p(EN_TITLE) + p("1. Purpose", H1) + p("This procedure defines how to clean the tank.") + p("2. Scope", H1)
+    + p("It applies to the synthetic process.")
+)
+# 검토에서 잘못 지운 꼴 — 번호 1이 장이 아닌 문서, 한글 반쪽에 "1."이 없는 문서, 개정 이력이 뒤 절을 먹던 문서. 아무것도 표시하지 않는다
+DOUBTFUL = {
+    "chapters 1.0": p("표지") + "".join(p(text, H1) for text in ("1.0 PURPOSE", "2.0 SCOPE", "3.0 PROCEDURE")) + STEPS,
+    "typed chapters 1.0": p("Cover") + p("1.0 PURPOSE") + p("Clean it.") + p("2.0 PROCEDURE") + p("1. Open the valve.") + p("2. Close it."),
+    "chapters by name": p("표지") + p("목적") + p(PURPOSE) + p("절차") + p("1. 전원 켜기") + p("켠다") + p("2. 압력 확인"),
+    "chapters 제N장": p("표지") + p("제1장 목적") + p(PURPOSE) + p("제2장 절차") + STEPS,
+    "articles 제N조": p("표지") + p("제1조(목적) 이 절차는 정한다.") + p("제2조(절차)") + STEPS,
+    "roman": p("표지") + p("I. 목적") + p(PURPOSE) + p("II. 절차") + STEPS,
+    "unicode roman": p("표지") + p("Ⅰ. 목적") + p("Ⅱ. 절차") + STEPS,
+    "letters": p("표지") + p("A. 목적") + p("B. 절차") + STEPS,
+    "parentheses": p("표지") + p("1) 목적") + p("2) 절차") + STEPS,
+    "no dot": p("표지") + p("1 목적", H1) + p(PURPOSE) + p("2 범위", H1) + STEPS,
+    "no dot typed": p("표지") + p("1 목적") + p("2 범위") + STEPS,
+    "dashes": p("표지") + p("1-1 목적") + p("2-1 절차") + STEPS,
+    "chapter zero": p("표지") + p("0. 일반 사항", H1) + p("모두에 적용한다.") + KO_CHAPTERS,
+    "attachment 1 after unnumbered headings": p("목적", H1) + p(PURPOSE) + p("첨부", H1) + p("1. 기록지", H1) + p("기록") + p("2. 점검표", H1),
+    "attachment 1 after 5": p("5 절차") + p(PURPOSE) + p("1. 기록지", H1) + p("기록") + p("2. 점검표", H1),
+    "body in a table": tbl([["목적", PURPOSE], ["범위", SCOPE]]) + p("1. 첨부 목록", H1) + p("기록") + p("2. 점검표", H1),
+    "cover with numbered notes": p("주의 사항") + p("1. 이 문서는 대외비이다.") + p("2. 복사하지 않는다.") + KO_CHAPTERS,
+    "separate, unnumbered Korean half": p(TITLE) + p("목적", H1) + p(PURPOSE) + p("절차", H1) + p(SCOPE) + EN_HALF,
+    "separate, Korean half by name": p(TITLE) + p("세척 개요") + p(PURPOSE) + p("세척 순서") + p(SCOPE) + EN_HALF,
+    "separate, Korean half 제N장": p(TITLE) + p("제1장 목적", H1) + p(PURPOSE) + p("제2장 절차", H1) + p(SCOPE) + EN_HALF,
+    "separate, Korean half 1.0": p(TITLE) + p("1.0 목적") + p(PURPOSE) + p("2.0 절차") + p(SCOPE) + EN_HALF,
+    "history before typed chapters": p("1. 목적", H1) + p(PURPOSE) + p("2. 개정 이력", H1) + p("3. 절차") + p("3.1 탱크를 비운다.") + p("4. 첨부") + p("기록한다."),
+    "history before an appendix": p("1. 목적", H1) + p(PURPOSE) + p("2. 개정 이력", H1) + p("부록 A 기록지") + tbl([["변경", "값"]]),
+    "history of a policy": p("1. 목적", H1) + p(PURPOSE) + p("5. 변경 이력", H1) + p("변경 이력은 QA가 관리한다."),
+    "history in parentheses": p("1. 목적", H1) + p(PURPOSE) + p("6. 변경 관리 (변경 이력)", H1) + p("QA가 승인한다.") + tbl([["변경", "일자"]]),
+    "history before a typed English half": KO_CHAPTERS + p("3. 개정 이력", H1) + EN_HALF.replace('<w:pPr><w:pStyle w:val="Heading1"/></w:pPr>', ""),
+}
+
+
+@pytest.mark.parametrize("name", DOUBTFUL)
+def test_doubtful_documents_are_left_alone(client: TestClient, name: str) -> None:
+    fx = _setup(client, DOUBTFUL[name])
+
+    assert _noise(fx.view) == {}
 
 
 # --- 사유 (set_noise_reason · clear_noise) ---
@@ -898,3 +1023,89 @@ def test_preview_folds_by_kind(client: TestClient) -> None:
     assert {(row["cells"][status]["text"], row["cells"][status]["tone"]) for row in a_sheet["rows"] if row["noise"]} == {
         ("Deleted", "del")
     }
+
+
+# --- 되돌리기가 삭제된 줄에 판단을 되살리지 않는다 ---
+
+
+def _bulk_delete(client: TestClient, fx: Fixture, unit_id: int, revision: int = 1) -> httpx2.Response:
+    body = {
+        "action": "delete", "reason": "합성", "units": [{"unit_id": unit_id, "revision": revision}], "undo": {"session": "s1"},
+    }
+    return client.post(f"/api/bundles/{fx.bundle_id}/decisions/bulk", json=body, headers=AUTHOR)
+
+
+def test_redoing_a_decision_on_a_deleted_line_is_refused(client: TestClient) -> None:
+    fx = _setup_case(client, "G17")
+    notice = find_unit(fx.view, "합성 안내문")["id"]
+    assert _bulk_delete(client, fx, notice).status_code == 200
+    assert _undo(client, fx.bundle_id).status_code == 200
+    assert _start_body(client, fx, "2. 범위").status_code == 200
+
+    refused = _redo(client, fx.bundle_id)
+
+    assert (_code(refused), refused.json()["detail"]["unit_ids"]) == ((409, "undo_conflict"), [notice])
+    assert find_unit(_view(client, fx), "합성 안내문")["status"] == "unassigned"
+    # 삭제 취소하면 다시 할 수 있다
+    _clear(client, fx, "합성 안내문")
+    assert _redo(client, fx.bundle_id).status_code == 200
+
+
+def test_undoing_a_cleared_decision_on_a_deleted_line_is_refused(client: TestClient) -> None:
+    fx = _setup_case(client, "G17")
+    notice = find_unit(fx.view, "합성 안내문")["id"]
+    assert _bulk_delete(client, fx, notice).status_code == 200
+    group = get_group_by_unit(client, fx.bundle_id, notice)
+    revision = next(unit for unit in group["units"] if unit["unit_id"] == notice)["decision"]["revision"]
+    cleared = client.post(
+        f"/api/bundles/{fx.bundle_id}/decisions/clear", headers=AUTHOR,
+        json={"unit_id": notice, "revision": revision, "undo": {"session": "s1"}},
+    )
+    assert cleared.status_code == 200, cleared.text
+    assert _start_body(client, fx, "2. 범위").status_code == 200
+
+    refused = _undo(client, fx.bundle_id)
+
+    assert (_code(refused), refused.json()["detail"]["unit_ids"]) == ((409, "undo_conflict"), [notice])
+
+
+# --- 여기부터 본문 — 반쪽을 모를 때 · 사이에 낀 보통 줄 ---
+
+UNKNOWN_HALVES = (
+    p(TITLE) + p("제1장 목적", H1) + p(PURPOSE) + p("제2장 범위", H1) + p(SCOPE)
+    + p(EN_TITLE) + p("PURPOSE", H1) + p("This procedure defines how to clean the tank.") + p("SCOPE", H1)
+    + p("It applies to the synthetic process.")
+)
+
+
+def test_start_body_stays_in_its_half_when_the_starts_are_unknown(client: TestClient) -> None:
+    fx = _setup(client, UNKNOWN_HALVES)
+    assert fx.view["document"]["language_layout"] == "ko_en_separate" and _noise(fx.view) == {}
+
+    assert _start_body(client, fx, "SCOPE").status_code == 200
+    assert _texts(_view(client, fx), NOISE_FRONT) == [EN_TITLE, "PURPOSE", "This procedure defines how to clean the tank."]
+    assert _start_body(client, fx, "제2장 범위").status_code == 200
+    assert _texts(_view(client, fx), NOISE_FRONT) == [
+        TITLE, "제1장 목적", PURPOSE, EN_TITLE, "PURPOSE", "This procedure defines how to clean the tank.",
+    ]
+
+
+def test_start_body_clears_every_front_line_after_it(client: TestClient) -> None:
+    # 사이에 사람이 이미 삭제 취소한 줄이 있어도 뒤의 앞부분을 모두 비운다
+    fx = _setup_case(client, "G14")
+    _clear(client, fx, "합성 표준 절차서", "문서 번호")
+
+    assert _start_body(client, fx, "합성 표준 절차서").status_code == 200
+
+    view = _view(client, fx)
+    assert (_texts(view, NOISE_FRONT), _texts(view, NOISE_TOC)) == ([], TOC_TEXTS)
+
+
+def test_start_body_leaves_the_tail_of_the_first_half_alone(client: TestClient) -> None:
+    # 한글 반쪽 마지막 장의 영어 약어 목록은 둘째 반쪽의 앞부분이 아니다
+    fx = _setup_case(client, "G27")
+    korean = _texts(fx.view, NOISE_FRONT)
+
+    assert _start_body(client, fx, "2. Scope").status_code == 200
+
+    assert _texts(_view(client, fx), NOISE_FRONT) == [*korean, "1. Purpose", "This procedure defines how to clean the tank."]

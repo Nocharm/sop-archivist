@@ -1,4 +1,4 @@
-"""쪼개기 정답 문서 만들기 — 꼴(G01–G22)마다 합성 DOCX·PDF 하나를 시험 때 만들고, 원문 대조 응답을 기대 JSON과 같은 줄로 읽는다."""
+"""쪼개기 정답 문서 만들기 — 꼴(G01–G28)마다 합성 DOCX·PDF 하나를 시험 때 만들고, 원문 대조 응답을 기대 JSON과 같은 줄로 읽는다."""
 
 import zipfile
 from collections.abc import Callable
@@ -140,6 +140,39 @@ _LIST = [
         "G22",
         p("합성 안내문") + _PROCEDURE + p(_PURPOSE) + p("1. 전원을 켠다.") + p("2. 압력을 확인한다.")
         + h("6. 개정 이력") + p("처음 만들었다."),
+    ),
+    # 아래 G23–G28은 앞부분 · 개정 이력으로 잘못 지우기 쉬운 꼴 — 확실하지 않으면 아무것도 제외하지 않는다
+    _docx(
+        "G23",
+        p("합성 표준 절차서") + h("목적") + p(_PURPOSE) + h("범위") + p(_SCOPE)
+        + p("Synthetic Standard Procedure") + h("1. Purpose") + p("This procedure defines how to clean the tank.")
+        + h("2. Scope") + p("It applies to the synthetic process."),
+    ),
+    _docx(
+        "G24",
+        p("합성 표준 절차서") + p("1.0 목적") + p(_PURPOSE) + p("2.0 절차") + p("1. 전원을 켠다.") + p("2. 압력을 확인한다.")
+        + p("3.0 기록") + p("기록한다."),
+    ),
+    _docx(
+        "G25",
+        p("합성 표준 절차서") + p("제1장 목적") + p(_PURPOSE) + p("제2장 절차") + p("1. 전원을 켠다.") + p("2. 압력을 확인한다."),
+    ),
+    _docx(
+        "G26",
+        h("1. 목적") + p(_PURPOSE) + h("2. 개정 이력") + _table(["Rev", "Change"], ["01", "New document"])
+        + p("3. 절차") + p("3.1 탱크를 비운다.") + p("부록 A 기록지") + _table(["항목", "값"]),
+    ),
+    _docx(
+        "G27",
+        p("합성 표준 절차서") + _table(["승인", "홍보팀"]) + h("1. 목적") + p(_PURPOSE) + h("2. 범위") + p(_SCOPE)
+        + h("3. 약어") + p("QA: Quality Assurance") + p("HEPA: High Efficiency Particulate Air")
+        + h("1. Purpose") + p("This procedure defines how to clean the tank.") + h("2. Scope")
+        + p("It applies to the synthetic process.") + h("3. Abbreviations") + p("See the list above."),
+    ),
+    _docx(
+        "G28",
+        h("1. 목적") + p(_PURPOSE) + h("6. 변경 관리 (변경 이력)") + p("변경은 품질팀이 승인한다.") + _table(["변경", "일자"])
+        + h("7. 기록") + p("기록한다."),
     ),
 ]
 CASES: dict[str, Case] = {case.key: case for case in _LIST}

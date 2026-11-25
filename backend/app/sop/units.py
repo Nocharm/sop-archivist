@@ -290,6 +290,7 @@ def _mark_noise(
             langs=group_langs.get(index if draft.group_index is None else draft.group_index, langs[index]),
             number=read_draft_number(row), level=band_levels.get(draft.table_id) if is_band else block.heading_level,
             is_body=block.part == BODY_PART, is_flow=draft.table_id is None or is_band, noise=draft.noise_kind,
+            group=draft.group_index,
         ))
     for index, noise_kind in find_noise_lines(lines, separate=separate).items():
         rows[index]["noise_kind"] = noise_kind

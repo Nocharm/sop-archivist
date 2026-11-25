@@ -243,6 +243,7 @@ FRONT_LINES = ("합성 표준 절차서", "Summary of Changes")
 FRONT_TABLE = (("문서 번호", "SOP-ABC-1060"), ("제목", "합성 탱크 세척"))
 FRONT_BODY = ("탱크 세척 방법을 정한다.", "합성 공정에 적용한다.")
 FRONT_HISTORY = ("개정 이력", "처음 만들었다.")
+FRONT_HISTORY_TABLE = (("개정", "내용"), ("01", "제정"))
 
 
 def _build_paragraph_bundle(client: TestClient, bundle_id: int) -> None:
@@ -257,6 +258,7 @@ def _build_paragraph_bundle(client: TestClient, bundle_id: int) -> None:
         p(FRONT_LINES[0]) + make_grid_table(2, "".join(make_row(list(row)) for row in FRONT_TABLE)) + p(FRONT_LINES[1], "Heading1")
         + p("1. 목적", "Heading1") + p(FRONT_BODY[0]) + p("2. 범위", "Heading1") + p(FRONT_BODY[1])
         + p(f"9. {FRONT_HISTORY[0]}", "Heading1") + p(FRONT_HISTORY[1])
+        + make_grid_table(2, "".join(make_row(list(row)) for row in FRONT_HISTORY_TABLE))
     )
     response = upload(client, bundle_id, build_docx(front), "SYNTHETIC_SOP-ABC-1060_Front_matter.docx")
     assert response.status_code == 201, response.text

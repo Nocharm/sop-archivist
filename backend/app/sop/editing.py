@@ -55,7 +55,7 @@ from app.sop.models import (
     UnitPairMember,
     UnitRef,
 )
-from app.sop.noise import NOISE_FRONT, NoiseLine, find_body_starts, find_half_front
+from app.sop.noise import NOISE_FRONT, NoiseLine, find_body_starts, find_half_front, find_second_front_begin, find_second_half
 from app.sop.numbering import (
     MAX_NUMBER_CHARS,
     NO_NUMBER,
@@ -295,7 +295,7 @@ class SetNoiseReasonOp(BaseModel):
 
 
 class StartBodyOp(BaseModel):
-    """여기부터 본문 — 그 줄 앞의 보통 줄을 본문 앞부분으로, 그 줄 뒤로 이어진 앞부분 표시를 비운다(쪼개기 먼저 설계 §7 R3). 한 편집이라
+    """여기부터 본문 — 그 줄 앞의 보통 줄을 본문 앞부분으로, 그 줄 뒤의 앞부분 표시를 비운다(쪼개기 먼저 설계 §7 R3). 한 편집이라
     되돌리기 한 번이다. 목차 · 개정 이력 표시는 두고, 한/영 따로 문서의 둘째 반쪽에서는 그 반쪽만 바꾼다."""
 
     type: Literal["start_body"]
@@ -1032,9 +1032,8 @@ async def _plan_start_body(
 ) -> _Change:
     """그 줄을 본문의 첫 줄로 — 보통 본문 줄이 아니면(삭제된 줄 · 묶인 칸 · 본문 밖) 422 invalid_body_start.
 
-    앞은 문서 처음부터, 둘째 반쪽이면 그 줄 바로 앞에 이어진 같은 언어 · 중립 줄까지를 앞부분으로 표시한다. 뒤는 끊김 없이 이어진 앞부분
-    표시만 비운다(사이의 목차 · 개정 이력은 건너뛰고, 첫 반쪽이면 둘째 반쪽의 앞부분에 닿지 않는다). 판단이 걸린 줄이 끼어 있으면
-    쓰기 길(_write_change)이 409 unit_has_decision으로 막는다.
+    앞은 문서 처음부터, 한/영 따로 문서의 둘째 반쪽이면 그 줄 바로 앞에 이어진 그 반쪽의 줄까지를 앞부분으로 표시한다. 뒤는 그 반쪽 끝까지의
+    앞부분 표시를 모두 비운다(목차 · 개정 이력은 둔다). 판단이 걸린 줄이 끼어 있으면 쓰기 길(_write_change)이 409 unit_has_decision으로 막는다.
     """
     await load_active_units(session, extraction_id, [op.unit_id])
     body = await _load_body_lines(session, extraction_id)
@@ -1043,30 +1042,20 @@ async def _plan_start_body(
     if at is None or units[at].noise_kind is not None or not lines[at].is_body:
         raise_rule(422, "invalid_body_start", unit_id=op.unit_id)
     document = await session.get_one(Document, document_id)
-    starts = find_body_starts(lines, separate=document.language_layout == SEPARATE_LAYOUT)
-    second = starts[1] if len(starts) > 1 else None
-    # 둘째 반쪽의 앞부분이 시작하는 자리 — 첫 반쪽의 일은 여기에 닿지 않는다
-    half = len(lines) if second is None else find_half_front(lines, second, lines[second].langs)
-    own = lines[at].langs
-    if second is not None and at >= second:
-        begin = max(half, find_half_front(lines, at, lines[second].langs, crosses_numbers=True))
-        end = len(lines)
-    elif (
-        document.language_layout == SEPARATE_LAYOUT and starts and at > starts[0] and own
-        and not own & lines[starts[0]].langs
-    ):
-        begin, end = find_half_front(lines, at, own), len(lines)
-    else:
-        begin, end = 0, half
+    separate = document.language_layout == SEPARATE_LAYOUT
+    starts = find_body_starts(lines, separate=separate)
+    # 둘째 반쪽이 시작하는 자리 — 1장 자리를 모르는 문서도 앞쪽 언어가 아닌 줄들로 안다(앞 반쪽을 통째로 지우지 않게)
+    half = find_second_half(lines, starts) if separate else None
+    begin, end = 0, len(lines)
+    if half is not None and at >= half:
+        is_known = len(starts) > 1
+        floor = find_second_front_begin(lines, starts) if is_known else half
+        langs = lines[starts[1] if is_known else half].langs
+        begin = min(at, max(floor, find_half_front(lines, at, langs, crosses_numbers=True)))
+    elif half is not None:
+        end = half
     marks = [index for index in range(begin, at) if lines[index].is_body and units[index].noise_kind is None]
-    clears = []
-    for index in range(at + 1, end):
-        if not lines[index].is_body:
-            continue
-        if units[index].noise_kind is None:
-            break
-        if units[index].noise_kind == NOISE_FRONT:
-            clears.append(index)
+    clears = [index for index in range(at + 1, end) if lines[index].is_body and units[index].noise_kind == NOISE_FRONT]
 
     def list_with_members(indexes: Iterable[int]) -> list[Row[Any]]:
         return [item for index in indexes for item in (units[index], *body.members[units[index].id])]
