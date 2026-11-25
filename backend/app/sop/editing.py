@@ -1,5 +1,5 @@
 """쪼개기 편집 — 나누기·합치기·경계 옮기기·골라 만들기·언어 바꾸기·레이아웃 표 바꾸기·캡션 붙이기·떼기·첫 행 ↔ 캡션·
-그림 묶기·풀기·잡음 표시 풀기·번호 고치기·제목 ↔ 문장·짝 카드 안 순서·벗긴 표 줄 순서와 서버 쪽
+그림 묶기·풀기·삭제 취소와 사유·번호 고치기·제목 ↔ 문장·짝 카드 안 순서·벗긴 표 줄 순서와 서버 쪽
 선형 되돌리기·다시 하기, 경계 확인 표시 (스펙 §6.4, §7.5).
 
 단위는 제자리에서 바뀌지 않는다: 편집은 옛 단위를 은퇴시키고 새 단위를 만들며, 되돌리기는 은퇴한 단위를 원래 ID로 되살린다.
@@ -8,6 +8,7 @@
 그림 묶기·풀기도 제자리다 — 그림 단위의 caption_figure_id만 바꾸고(옮기는 캡션은 칸 묶음처럼 regroup) 기록해 되돌린다.
 짝 카드 안 순서도 제자리다 — 구성원의 pair_seq만 바꾸고(pair_order.py) 기록해 되돌린다.
 벗긴 표 덩이 안 줄 순서도 제자리다 — 줄의 unwrap_seq만 바꾸고(unwrap_order.py) 기록해 되돌린다. 다시 표로 묶으면 같은 편집에서 비운다.
+저절로 삭제된 줄도 제자리다 — 삭제 취소는 noise_kind와 noise_reason을 비우고 사유 쓰기는 noise_reason만 바꾸며 기록해 되돌린다.
 들여쓰기도 제자리다 — 줄의 indent_shift만 바꾸고 기록해 되돌린다(set_indents, set_number의 기호 위로 맞춤).
 묶음 잠금·문서 revision·작업 중 검사와 커밋은 부르는 쪽(라우터)이 한다.
 """
@@ -121,6 +122,7 @@ TEXT_KINDS = ("sentence", "heading", "cell_sentence", CAPTION_KIND)
 CAPTIONABLE_KINDS = ("sentence", "heading", "cell_sentence")
 PAIR_LANGS = {"ko", "en"}  # 짝의 두 쪽 — 한쪽이 비면 짝을 지운다
 MAX_EDIT_UNITS = 2000  # 합치기·언어 바꾸기가 한 번에 고르는 단위 수 상한
+MAX_NOISE_REASON = 2000  # 저절로 삭제된 줄의 사유 글자 수 상한 — 판단의 사유와 같다
 MAX_INDENT_SHIFT = 9  # units.indent_shift의 절댓값 상한 — 화면 단계는 셈한 단계 + 차이를 1–9로 자른다(프런트 indent-model)
 
 Offset = Annotated[int, Field(ge=0, le=MAX_DB_INT)]
@@ -270,11 +272,21 @@ class SetIndentsOp(BaseModel):
 
     type: Literal["set_indents"]
     units: list[IndentIn] = Field(min_length=1, max_length=MAX_EDIT_UNITS)
+
+
 class ClearNoiseOp(BaseModel):
-    """잡음 표시 풀기 — 목차 아님(줄 하나) · 모두 목차 아님(블록 전체). 단위는 그대로이고 표시만 비운다(되돌리기가 다시 붙인다)."""
+    """삭제 취소(줄 하나 · 블록 전체) — 단위는 그대로이고 잡음 표시와 적은 사유만 비운다(되돌리기가 다시 붙인다). 묶음은 구성원까지."""
 
     type: Literal["clear_noise"]
     unit_ids: list[DbId] = Field(min_length=1, max_length=MAX_EDIT_UNITS)
+
+
+class SetNoiseReasonOp(BaseModel):
+    """저절로 삭제된 줄의 사유 쓰기 — 빈 글이면 종류마다 정한 문구로 돌린다. 묶음(표 · 그림)은 구성원까지. 판단을 묻지 않는다."""
+
+    type: Literal["set_noise_reason"]
+    unit_ids: list[DbId] = Field(min_length=1, max_length=MAX_EDIT_UNITS)
+    reason: Annotated[str, StringConstraints(strip_whitespace=True, max_length=MAX_NOISE_REASON), NO_NUL]
 
 
 class SetHeadingOp(BaseModel):
@@ -327,7 +339,7 @@ class SwitchLanguageOp(BaseModel):
 EditOp = Annotated[
     SplitOp | MergeOp | UnmergeOp | MoveBoundaryOp | CarveOp | SetLanguageOp | SwitchLanguageOp
     | SetLayoutTableOp | AttachCaptionOp | DetachCaptionOp | SetFirstRowCaptionOp | GroupFiguresOp
-    | UngroupFiguresOp | SetRefOp | ClearRefOp | ClearNoiseOp | SetNumberOp | SetHeadingOp | ReorderPairOp
+    | UngroupFiguresOp | SetRefOp | ClearRefOp | ClearNoiseOp | SetNoiseReasonOp | SetNumberOp | SetHeadingOp | ReorderPairOp
     | ReorderUnwrappedOp | SetIndentsOp,
     Field(discriminator="type"),
 ]
@@ -442,8 +454,10 @@ class _Change:
     # 번호 고치기 — 단위 → (지금 number_set, 바꿀 number_set)과 그 번호가 열던 절의 블록들
     numbers: dict[int, tuple[NumberSet, NumberSet]] = field(default_factory=dict)
     sections: list[SectionMove] = field(default_factory=list)
-    # 단위 → (지금 잡음 표시, 바꿀 잡음 표시) — 제자리에서 바뀐다(목차 아님과 그 되돌리기)
+    # 단위 → (지금 잡음 표시, 바꿀 잡음 표시) — 제자리에서 바뀐다(삭제 취소 · 여기부터 본문과 그 되돌리기)
     noises: dict[int, tuple[str | None, str | None]] = field(default_factory=dict)
+    # 단위 → (지금 사유, 바꿀 사유) — 제자리에서 바뀐다(사유 쓰기, 표시를 비우는 편집과 그 되돌리기). 판단을 묻지 않는다
+    noise_reasons: dict[int, tuple[str, str]] = field(default_factory=dict)
     # 그림 → (지금 caption_figure_id, 바꿀 caption_figure_id) — 제자리에서 바뀐다(그림 묶기·풀기와 그 되돌리기)
     figures: dict[int, tuple[int | None, int | None]] = field(default_factory=dict)
     # 짝 구성원 → (지금 pair_seq, 바꿀 pair_seq) — 제자리에서 바뀐다(짝 카드 안 순서와 그 되돌리기)
@@ -473,8 +487,8 @@ class _Change:
         범위가 그대로여도 종류·묶음이 바뀐다. 표 단위는 범위가 없어 범위로는 견줄 수 없으므로 묶음·표 표시가 바뀌면 바뀐 것이다.
         """
         if (
-            self.revive or self.langs or self.layouts or self.noises or self.numbers or self.figures or self.pair_seqs
-            or self.unwrap_seqs or self.indents or self.list_regrouped_cells()
+            self.revive or self.langs or self.layouts or self.noises or self.noise_reasons or self.numbers or self.figures
+            or self.pair_seqs or self.unwrap_seqs or self.indents or self.list_regrouped_cells()
         ):
             return False
         drafts = Counter((tuple(draft.spans), draft.kind, draft.group_unit_id) for draft in self.drafts)
@@ -913,11 +927,47 @@ async def _plan_clear_ref(session: AsyncSession, extraction_id: ExtractionId, op
 
 
 async def _plan_clear_noise(session: AsyncSession, extraction_id: ExtractionId, op: ClearNoiseOp) -> _Change:
-    """표시가 붙은 단위만 비운다 — 이미 표시가 없는 단위는 바뀌는 게 없다(블록 전체 풀기에 섞여 와도 된다)."""
+    """표시가 붙은 단위와 적은 사유만 비운다 — 이미 표시가 없는 단위는 바뀌는 게 없다(블록 전체 풀기에 섞여 와도 된다)."""
     ensure_unique_units(op.unit_ids)
-    units = await load_active_units(session, extraction_id, op.unit_ids)
+    units = await _load_with_bundle_members(session, extraction_id, op.unit_ids)
+    return _clear_marks(unit for unit in units if unit.noise_kind is not None)
+
+
+def _clear_marks(units: Iterable[Unit]) -> _Change:
+    """잡음 표시를 비우는 변경 — 적은 사유도 함께 비운다."""
+    marked = list(units)
     return _Change(
-        noises={unit_id: (unit.noise_kind, None) for unit_id, unit in sorted(units.items()) if unit.noise_kind is not None}
+        noises={unit.id: (unit.noise_kind, None) for unit in marked},
+        noise_reasons={unit.id: (unit.noise_reason, "") for unit in marked if unit.noise_reason},
+    )
+
+
+async def _load_with_bundle_members(
+    session: AsyncSession, extraction_id: ExtractionId, unit_ids: Collection[int]
+) -> list[Unit]:
+    """단위들과 그 묶음(표 · 그림)의 구성원 모두(id 순) — 칸이나 캡션을 주어도 묶음째다. 표시와 사유는 묶음이 함께 갖는다."""
+    units = await load_active_units(session, extraction_id, unit_ids)
+    owner_ids = {unit.group_unit_id or unit.id for unit in units.values()}
+    rows = await select_in_chunks(
+        session,
+        lambda chunk: select(Unit).where(
+            or_(Unit.id.in_(chunk), Unit.group_unit_id.in_(chunk)), Unit.extraction_id == extraction_id,
+            Unit.status == UNIT_ACTIVE,
+        ),
+        owner_ids,
+    )
+    return sorted({row[0].id: row[0] for row in rows}.values(), key=lambda unit: unit.id)
+
+
+async def _plan_set_noise_reason(session: AsyncSession, extraction_id: ExtractionId, op: SetNoiseReasonOp) -> _Change:
+    """표시가 없는 단위가 섞이면 422 not_a_noise_line — 보통 줄의 사유는 판단의 Remark다."""
+    ensure_unique_units(op.unit_ids)
+    units = await _load_with_bundle_members(session, extraction_id, op.unit_ids)
+    plain = [unit.id for unit in units if unit.noise_kind is None]
+    if plain:
+        raise_rule(422, "not_a_noise_line", unit_ids=plain)
+    return _Change(
+        noise_reasons={unit.id: (unit.noise_reason, op.reason) for unit in units if unit.noise_reason != op.reason}
     )
 
 
@@ -1856,6 +1906,8 @@ async def _plan(session: AsyncSession, document_id: int, extraction_id: Extracti
             return await _plan_set_number(session, extraction_id, op)
         case ClearNoiseOp():
             return await _plan_clear_noise(session, extraction_id, op)
+        case SetNoiseReasonOp():
+            return await _plan_set_noise_reason(session, extraction_id, op)
         case SetHeadingOp():
             return await _plan_set_heading(session, document_id, extraction_id, op)
         case ReorderPairOp():
@@ -2013,6 +2065,24 @@ async def _set_noises(session: AsyncSession, noises: Mapping[int, tuple[str | No
             changed += result.rowcount
     if changed != len(noises):
         raise RuntimeError(f"unit edit history out of sync: {changed} of {len(noises)} units had the recorded noise mark")
+
+
+async def _set_noise_reasons(session: AsyncSession, noise_reasons: Mapping[int, tuple[str, str]]) -> None:
+    """사유를 바꾼다 — 지금 사유가 기록과 다른 단위가 있으면 편집 기록과 어긋난 것이라 RuntimeError(버그 가드, 메시지에 사유 없음)."""
+    by_move: dict[tuple[str, str], list[int]] = defaultdict(list)
+    for unit_id, move in noise_reasons.items():
+        by_move[move].append(unit_id)
+    changed = 0
+    for (old, new), unit_ids in by_move.items():
+        for chunk in iter_chunks(unit_ids):
+            result = await session.execute(
+                update(Unit).where(Unit.id.in_(chunk), Unit.noise_reason == old).values(noise_reason=new)
+            )
+            changed += result.rowcount
+    if changed != len(noise_reasons):
+        raise RuntimeError(
+            f"unit edit history out of sync: {changed} of {len(noise_reasons)} units had the recorded noise reason"
+        )
 
 
 async def _set_figures(session: AsyncSession, figures: Mapping[int, tuple[int | None, int | None]]) -> None:
@@ -2213,6 +2283,7 @@ async def _write_change(
     await _set_numbers(session, change.numbers)
     await _apply_sections(session, extraction_id, change.sections)
     await _set_noises(session, change.noises)
+    await _set_noise_reasons(session, change.noise_reasons)
     await _set_figures(session, change.figures)
     await _set_pair_seqs(session, change.pair_seqs)
     # 덩이 줄 순서는 판단을 묻지 않는다 — 글 · 출처가 그대로라 결과물 A가 따르지 않는다(_plan_reorder_unwrapped)
@@ -2309,7 +2380,7 @@ def _record(
     """작업 기록 — 대상은 은퇴한·활성이 된·언어가 바뀐·다시 묶인 단위, 사유 칸에 편집 종류(split 등)."""
     unit_ids = sorted(
         {*result.created_unit_ids, *result.retired_unit_ids, *change.langs, *change.regroup, *change.bundles,
-         *change.noises, *change.numbers, *change.figures, *change.pair_seqs, *change.unwrap_seqs, *change.indents}
+         *change.noises, *change.noise_reasons, *change.numbers, *change.figures, *change.pair_seqs, *change.unwrap_seqs, *change.indents}
     )
     record_event(
         session, bundle_id=document.bundle_id, actor=actor, action=action, target_type="unit", target_ids=unit_ids,
@@ -2355,6 +2426,7 @@ async def apply_edit(
             lang_changes={str(unit_id): list(langs) for unit_id, langs in change.langs.items()},
             layout_changes={str(table_id): list(flags) for table_id, flags in change.layouts.items()},
             noise_changes={str(unit_id): list(noises) for unit_id, noises in change.noises.items()},
+            noise_reason_changes={str(unit_id): list(reasons) for unit_id, reasons in change.noise_reasons.items()},
             figure_changes={str(unit_id): list(figures) for unit_id, figures in change.figures.items()},
             pair_seq_changes={str(unit_id): list(seqs) for unit_id, seqs in change.pair_seqs.items()},
             unwrap_seq_changes={str(unit_id): list(seqs) for unit_id, seqs in change.unwrap_seqs.items()},
@@ -2410,6 +2482,11 @@ def _replay(edit: UnitEdit, *, backwards: bool) -> _Change:
         sections=[(first, last, *_orient((old, new), backwards=backwards)) for first, last, old, new in numbers.get("sections", [])],
         # 0027 전 기록은 빈 객체다(잡음 표시를 바꾼 편집이 없었다)
         noises={int(unit_id): _orient(noises, backwards=backwards) for unit_id, noises in (edit.noise_changes or {}).items()},
+        # 0039 전 기록은 빈 객체다(사유를 바꾼 편집이 없었다)
+        noise_reasons={
+            int(unit_id): _orient(reasons, backwards=backwards)
+            for unit_id, reasons in (edit.noise_reason_changes or {}).items()
+        },
         # 0030 전 기록은 빈 객체다(그림 묶음을 바꾼 편집이 없었다)
         figures={
             int(unit_id): _orient(figures, backwards=backwards) for unit_id, figures in (edit.figure_changes or {}).items()

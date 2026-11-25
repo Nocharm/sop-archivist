@@ -439,8 +439,10 @@ export interface ViewUnit {
   ref: UnitRefMark | null;
   /** 이 단위의 글이 가리키는 표·그림("표 3"·"아래 표") - 캡션 자기 머리 번호는 빠진다 */
   caption_refs: ViewCaptionRef[];
-  /** 잡음 표시 - "toc"면 목차 줄: 배정 줄이 없고(남은 수에서 빠짐) Assign 용지가 목차 블록으로 접는다. 편집 clear_noise가 비운다 */
-  noise_kind?: "toc" | null;
+  /** 잡음 표시 - 저절로 삭제된 줄(목차 · 본문 앞부분 · 개정 이력): 배정 줄이 없고(남은 수에서 빠짐) Assign 용지가 블록으로 접는다. 편집 clear_noise가 비운다 */
+  noise_kind?: "toc" | "front" | "history" | null;
+  /** 저절로 삭제된 줄에 적은 사유 - 빈 글이면 종류마다 정한 문구. 편집 set_noise_reason이 쓴다 */
+  noise_reason?: string;
   /** 제목 스타일 줄을 문장으로 바꾼 문장(F8b) - Assign의 "제목으로 되돌리기"와 묶음 머리 "[제목 → 문장]". 편집 set_heading이 오간다 */
   from_heading?: boolean;
   /** 캡션 하나를 같이 쓰는 그림 묶음(F7 ⑥)의 첫 그림 - 이 그림이 그 그림의 캡션을 같이 쓴다. 첫 그림 자신·묶이지 않은 단위는 null. 편집 group_figures·ungroup_figures가 오간다 */
@@ -536,8 +538,10 @@ export type EditOp =
   | { type: "set_number"; unit_id: number; number: string | null; follow: boolean; indent_shift?: number }
   /** 들여쓰기 차이(B8) - 여러 줄을 한 편집으로(되돌리기 한 칸). 번호 칸이 있는 줄만, 값은 -9…9 */
   | { type: "set_indents"; units: { unit_id: number; indent_shift: number }[] }
-  /** 목차 아님(줄 하나) · 모두 목차 아님(블록 전체) - 잡음 표시만 비운다(단위는 그대로, 되돌리기가 다시 붙인다) */
+  /** 삭제 취소(줄 하나 · 블록 전체) - 잡음 표시와 적은 사유만 비운다(단위는 그대로, 되돌리기가 다시 붙인다). 묶음은 구성원까지 */
   | { type: "clear_noise"; unit_ids: number[] }
+  /** 저절로 삭제된 줄의 사유 쓰기 - 빈 글이면 정한 문구로. 보통 줄이 섞이면 422 not_a_noise_line. 묶음은 구성원까지 */
+  | { type: "set_noise_reason"; unit_ids: number[]; reason: string }
   /** 제목 ↔ 문장(F8b) - heading이 거짓이면 제목을 문장마다 나눠 바꾼 표시를 단다(번역 조항은 앞 조항의 번호를 물려받는다).
    *  참이면 바꾼 문장은 그 조항 줄 전체가 제목 하나로 돌아가고, 보통 문장은 그 문장이 제목이 된다. 한/영 짝은 새 단위로 다시 선다 */
   | { type: "set_heading"; unit_ids: number[]; heading: boolean }

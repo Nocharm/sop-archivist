@@ -374,6 +374,8 @@ class Unit(Base):
     # 잡음 표시(noise.NOISE_KINDS) — 저절로 삭제된 줄(목차 · 본문 앞부분 · 개정 이력)이라 배정 줄·남은 수에서 빠지고 결과물에는 삭제 줄로 남는다.
     # 결정 행이 아니라 표시다(사람이 확정한 것처럼 꾸미지 않는다). 단위를 만들 때 붙이고, 편집 clear_noise · start_body가 바꾼다
     noise_kind: Mapped[str | None] = mapped_column(String(8), default=None)
+    # 저절로 삭제된 줄에 사람이 적은 사유 — 빈 글이면 종류마다 정한 문구(output_labels). 표시를 비우면 함께 비운다
+    noise_reason: Mapped[str] = mapped_column(Text, default="", server_default="")
     # 제목 스타일 줄을 문장으로 바꾼 문장 단위(F8b) — 처음 쪼개기(제목답지 않은 조항)와 편집 set_heading이 단다. 화면의 "제목으로
     # 되돌리기"·묶음 머리, 조항마다 1:1 짝(units._find_code_pairs), 번호 물려받기, 타자 번호를 처음부터 번호로 보기(numbering)가 읽는다
     from_heading: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
@@ -408,8 +410,10 @@ class UnitEdit(Base):
     layout_changes: Mapped[dict] = mapped_column(JSON, default=dict)
     # 번호 고침(set_number) — {"units": {단위: [전, 후 number_set]}, "sections": [[첫 블록 seq, 끝 seq, 전, 후 절 이름]]}. 다른 편집은 NULL
     number_changes: Mapped[dict | None] = mapped_column(JSON(none_as_null=True), default=None)
-    # 단위 → [지금 잡음 표시, 바꿀 잡음 표시] — 목차 아님(clear_noise)과 그 되돌리기
+    # 단위 → [지금 잡음 표시, 바꿀 잡음 표시] — 삭제 취소(clear_noise) · 여기부터 본문(start_body)과 그 되돌리기
     noise_changes: Mapped[dict] = mapped_column(JSON, default=dict)
+    # 단위 → [지금 사유, 바꿀 사유] — 사유 쓰기(set_noise_reason)와 표시를 비우는 편집, 그 되돌리기. 표시와 따로 바뀌어 noise_changes에 합치지 않는다
+    noise_reason_changes: Mapped[dict] = mapped_column(JSON, default=dict)
     # 그림 단위 → [지금 caption_figure_id, 바꿀 caption_figure_id] — 그림 묶기·풀기(group_figures·ungroup_figures)와 그 되돌리기
     figure_changes: Mapped[dict] = mapped_column(JSON, default=dict)
     # 단위 → [지금 pair_seq, 바꿀 pair_seq] — 짝 카드 안 순서 바꾸기(reorder_pair)와 그 되돌리기

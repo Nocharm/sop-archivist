@@ -467,3 +467,95 @@ def test_the_reference_lines_of_the_korean_half_are_not_front(client: TestClient
     assert _texts(fx.view, NOISE_FRONT) == [EN_TITLE, "Approved by the synthetic team"]
     assert find_unit(fx.view, "SOP-QC-0012 Cleaning of tanks")["lang"] == "ref"
     assert {find_unit(fx.view, text)["lang"] for text in (EN_TITLE, "Approved by the synthetic team")} == {"en"}
+
+
+# --- 사유 (set_noise_reason · clear_noise) ---
+
+REASON = "합성 사유 — 새 문서에는 표지가 없다."
+
+
+def _reasons(view: dict) -> dict[str, str]:
+    """사유가 적힌 단위의 글(글이 없으면 종류) → 사유."""
+    return {unit["text"] or unit["kind"]: unit["noise_reason"] for unit in view["units"] if unit["noise_reason"]}
+
+
+def _write_reason(client: TestClient, fx: Fixture, *unit_ids: int, reason: str = REASON) -> httpx2.Response:
+    return _edit(client, fx, {"type": "set_noise_reason", "unit_ids": list(unit_ids), "reason": reason})
+
+
+def test_reason_is_one_edit_and_undoes(client: TestClient) -> None:
+    fx = _setup(client)
+    ids = [find_unit(fx.view, text)["id"] for text in (TITLE, EN_TITLE)]
+    assert _reasons(fx.view) == {}
+
+    response = _write_reason(client, fx, *ids, reason=f"  {REASON} ")
+
+    assert response.status_code == 200, response.text
+    written = {TITLE: REASON, EN_TITLE: REASON}
+    assert _reasons(_view(client, fx)) == written
+    assert _step(client, fx, "undo")["op"] == "set_noise_reason"
+    assert _reasons(_view(client, fx)) == {}
+    _step(client, fx, "redo")
+    assert _reasons(_view(client, fx)) == written
+    # 같은 글은 바뀐 것이 없고, 빈 글은 정한 문구로 돌린다
+    revision = _view(client, fx)["document"]["revision"]
+    assert _write_reason(client, fx, *ids).json()["document_revision"] == revision
+    assert _write_reason(client, fx, ids[0], reason=" ").status_code == 200
+    assert _reasons(_view(client, fx)) == {EN_TITLE: REASON}
+    assert _noise(_view(client, fx)) == _noise(fx.view)
+
+
+def test_a_bundle_takes_its_members_along(client: TestClient) -> None:
+    fx = _setup(client)
+    table = next(unit for unit in _kinds(fx.view, "table") if unit["noise_kind"] == NOISE_FRONT)
+    figure = next(unit for unit in _kinds(fx.view, "figure") if unit["noise_kind"] == NOISE_FRONT)
+    cells = ["문서 번호", "제목", "SOP-QC-0001", "합성 세척 절차"]
+
+    assert _write_reason(client, fx, table["id"]).status_code == 200
+    assert _reasons(_view(client, fx)) == dict.fromkeys(["table", *cells], REASON)
+    # 칸 하나만 골라도 표와 함께다
+    assert _edit(client, fx, {"type": "clear_noise", "unit_ids": [find_unit(fx.view, "제목")["id"]]}).status_code == 200
+    view = _view(client, fx)
+    assert _reasons(view) == {} and not {table["id"], *(find_unit(view, text)["id"] for text in cells)} & set(_noise(view))
+    assert _edit(client, fx, {"type": "clear_noise", "unit_ids": [figure["id"]]}).status_code == 200
+    assert find_unit(_view(client, fx), CAPTION)["noise_kind"] is None
+    for _ in range(3):
+        _step(client, fx, "undo")
+    assert _view(client, fx)["units"] == fx.view["units"]
+
+
+def test_reason_needs_a_noise_line(client: TestClient) -> None:
+    fx = _setup(client)
+    ids = [find_unit(fx.view, text)["id"] for text in (TITLE, PURPOSE)]
+
+    response = _write_reason(client, fx, *ids)
+
+    assert (_code(response), response.json()["detail"]["unit_ids"]) == ((422, "not_a_noise_line"), ids[1:])
+    assert _reasons(_view(client, fx)) == {}
+    assert _write_reason(client, fx, ids[0], reason="가" * 2001).status_code == 422
+    assert _write_reason(client, fx, ids[0], reason="가\x00").status_code == 422
+
+
+def test_clear_noise_empties_the_reason_and_undo_brings_it_back(client: TestClient) -> None:
+    fx = _setup(client)
+    title = find_unit(fx.view, TITLE)["id"]
+    assert _write_reason(client, fx, title).status_code == 200
+
+    assert _edit(client, fx, {"type": "clear_noise", "unit_ids": [title]}).status_code == 200
+    assert _reasons(_view(client, fx)) == {} and title not in _noise(_view(client, fx))
+
+    _step(client, fx, "undo")
+    view = _view(client, fx)
+    assert _reasons(view) == {TITLE: REASON} and _noise(view)[title] == NOISE_FRONT
+    _step(client, fx, "redo")
+    assert _reasons(_view(client, fx)) == {}
+
+
+def test_noise_reasons_are_not_recent_remarks(client: TestClient) -> None:
+    fx = _setup(client)
+    assert _write_reason(client, fx, find_unit(fx.view, TITLE)["id"]).status_code == 200
+
+    response = client.get("/api/sop/remarks/recent", headers=AUTHOR)
+
+    assert response.status_code == 200, response.text
+    assert REASON not in {remark["text"] for remark in response.json()}
