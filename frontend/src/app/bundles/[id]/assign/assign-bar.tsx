@@ -1,7 +1,7 @@
 // Assign 화면의 한 부분 - page.tsx의 그리기에서 글자 그대로 옮겼다(쪼개기, 신뢰 기반 계획 스텝 4). 상태와 동작은 useAssignPage()가 준다.
 "use client";
 
-import { BookMarked, Captions, Columns2, ExternalLink, Languages, Redo2, Square, Trash2, Undo2, WandSparkles } from "lucide-react";
+import { BookMarked, Captions, Columns2, Languages, Redo2, Square, Trash2, Undo2, WandSparkles } from "lucide-react";
 import { MissingWarnings } from "@/components/assign/missing-warnings";
 import { AssignMoreMenu } from "@/components/assign/more-menu";
 import { PendingCount } from "@/components/assign/pending-count";
@@ -79,10 +79,6 @@ export function AssignBar({ state }: { state: AssignPageState }) {
             <button type="button" className="btn h-7" data-testid="assign-bulk-delete" onClick={() => setBulk("delete")}>
               <Trash2 size={14} strokeWidth={1.5} aria-hidden />
               {t("classify.deleted")}
-            </button>
-            <button type="button" className="btn h-7" data-testid="assign-bulk-move" onClick={() => setBulk("move")}>
-              <ExternalLink size={14} strokeWidth={1.5} aria-hidden />
-              {t("classify.moved")}
             </button>
           </span>
         )}

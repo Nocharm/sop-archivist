@@ -78,7 +78,6 @@ SOP 화면: `api-sop.ts`(SOP API 호출·응답 타입), 화면 규칙은 순수
 - 읽기 위주 목록은 `components/ui/data-list.tsx` `DataList`(열 정의 하나로 표·밀도 높은 카드, 보기는 `ListViewToggle`·`lib/use-list-view.ts`가 목록마다 `sopa.listView.<key>`에 기억, 남은 폭을 채우는 열은 `grow`)를 쓴다.
 - Documents의 문서 목록은 `components/documents/doc-row.tsx`(두 줄 줄 틀 — 줄 끝 단추는 호버 · 포커스, 좁으면 ⋯. 딸린 정보 줄은 넘치는 동안 `lib/use-meta-fit.ts`가 `data-fit` 단계를 올려 CSS가 정한 순서로 줄인다)를 쓴다.
 - 값 하나 고르기는 `components/ui/select.tsx` `Select`(떠 있는 목록은 `Menu` listbox, 항목 testid `<testId>-option-<value>`, 스모크는 트리거→항목 클릭)를 쓴다 — 기본 `<select>`를 새로 쓰지 않는다.
-- 추천 목록에서 고르거나 그대로 입력하는 칸은 `components/ui/combobox.tsx` `Combobox`(항목 testid `<testId>-option-<value>`, 입력 그대로 `<testId>-option-typed`).
 
 ## 11. 본문 폭
 

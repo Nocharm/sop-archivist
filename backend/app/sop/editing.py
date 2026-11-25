@@ -45,6 +45,7 @@ from app.sop.models import (
     SourceBlock,
     SourceTable,
     TargetSentence,
+    TargetSource,
     Unit,
     UnitDecision,
     UnitEdit,
@@ -309,11 +310,12 @@ class ReorderUnwrappedOp(BaseModel):
 
 
 class SwitchLanguageOp(BaseModel):
-    """언어를 바꿔 모양이 바뀌는 편집(B6, 사용자 결정 2026-11-20 3-a · 3-c) — 옛 문서만.
+    """언어를 바꿔 모양이 바뀌는 편집(B6, 사용자 결정 2026-11-20 3-a · 3-c).
 
     짝 구성원의 언어를 바꿔 짝이 한 언어가 되면 구성원을 합치거나(merge_pair — 이웃인지는 화면이 용지 순서로 본다, 합치기 이웃 검사와 같다)
     짝만 푼다. piece를 주면 합친 단위의 그 조각(합치기 전 단위, 원문 순 0부터 — 맨 앞 · 맨 뒤만)의 언어를 바꿔 떼고, 남은 조각(둘 이상이면 합친 채)과 짝을 맺는다.
-    모양이 바뀌는 단위의 배정은 묻지 않고 푼다(3-c — 화면은 알림의 되돌리기를 준다).
+    옛 문서는 모양이 바뀌는 단위의 배정을 묻지 않고 푼다(3-c — 화면은 알림의 되돌리기를 준다). 새 문서는 그 새 문장이 미배정이 아니면
+    409 confirm_required로 묻고 이음을 푼다(R4).
     """
 
     type: Literal["switch_language"]
@@ -455,7 +457,7 @@ class _Change:
     repair_pairs: bool = False
     # 짝을 다시 세우지 않는다(표 표시가 바뀌어도 코드 짝 제안을 새로 하지 않는다) — Assign 되돌리기 단계가 짝을 스냅숏으로 되쓸 때
     keeps_pairs: bool = False
-    # 모양 전환(switch_language)이 묻지 않고 판단을 떼는 단위 — 은퇴하지 않는 단위는 미배정으로 뗀다(3-c)
+    # 모양 전환(switch_language)이 판단을 떼는 단위 — 옛 문서는 묻지 않고 떼고(은퇴하지 않는 단위는 미배정으로, 3-c), 새 문서는 확인을 받아 새 문장의 이음을 푼다(R4)
     release: list[int] = field(default_factory=list)
     # 쓴 뒤 사람이 맺은 짝으로 묶을 단위 — 되살리는 단위 id와 이 변경이 만드는 단위(drafts 순번). 앞으로 가는 편집만(되돌리기의 짝은 Assign 단계가 되쓴다)
     pair_units: list[int] = field(default_factory=list)
@@ -2108,6 +2110,22 @@ async def _find_new_doc_targets(session: AsyncSession, unit_ids: Collection[int]
     return sorted(row[0] for row in rows)
 
 
+async def _find_decided_targets(session: AsyncSession, unit_ids: Collection[int]) -> list[int]:
+    """떼어 낼 것이 있는 입구 2 새 문장 — 미배정이 아니거나 출처가 있는 것."""
+    rows = await select_in_chunks(
+        session,
+        lambda chunk: select(TargetSentence.id).where(
+            TargetSentence.new_unit_id.in_(chunk), TargetSentence.origin == ORIGIN_NEW_DOC,
+            or_(
+                TargetSentence.status != UNASSIGNED,
+                select(TargetSource.target_id).where(TargetSource.target_id == TargetSentence.id).exists(),
+            ),
+        ),
+        unit_ids,
+    )
+    return sorted(row[0] for row in rows)
+
+
 def _merge_reports(first: DetachReport, second: DetachReport) -> DetachReport:
     """떼어 내기 결과 둘을 하나로(새 문서 R32 떼어 내기와 다시 맞추기, 옛 문서 은퇴와 캡션 묶음) — 나중에 지운 새 문장은 보류 목록에서 뺀다."""
     deleted = {*first.deleted_target_ids, *second.deleted_target_ids}
@@ -2142,13 +2160,15 @@ async def _write_change(
     # 언어를 제자리에서 바꾸는 단위만 사람 결정과 어긋난다(R31) - 같은 변경에서 은퇴하거나 되살아나는 단위(합치기 풀기와
     # 그 되돌리기)는 글 그대로의 언어를 따라가는 것이라 묻지 않는다(은퇴는 아래 확인 플래그가 묻는다)
     moving = {*change.retire, *change.revive}
-    # 되돌리기 단계가 확인한 단위와 모양 전환이 푸는 단위는 묻지 않는다(3-c)
-    settled = {*settled, *change.release}
+    # 모양 전환이 푸는 단위는 언어가 제자리에서 바뀌어도 막지 않는다 — 옛 문서는 묻지 않고(3-c), 새 문서는 아래 확인 플래그가 묻는다(R4)
+    released_new = change.release if document.side == "new" else []
+    unblocked = {*settled, *change.release}
+    unasked = set(settled) if document.side == "new" else unblocked
     # 잡음 표시를 다시 붙이는 단위(목차 아님 되돌리기)도 사람 결정과 어긋난다 — 그 사이 배정했으면 표시로 덮지 않는다
     marking = [unit_id for unit_id, (_, noise) in change.noises.items() if noise is not None]
     in_place = [unit_id for unit_id in [*change.langs, *marking] if unit_id not in moving]
     if in_place:
-        decided = [unit_id for unit_id in await _find_decided_units(session, document, in_place) if unit_id not in settled]
+        decided = [unit_id for unit_id in await _find_decided_units(session, document, in_place) if unit_id not in unblocked]
         if decided:
             raise_rule(409, "unit_has_decision", unit_ids=decided)
     if change.pair_seqs:
@@ -2158,9 +2178,9 @@ async def _write_change(
             raise_rule(409, "unit_has_decision", unit_ids=decided, reason="pair_order")
     regrouped = change.list_regrouped_cells()
     decided_bundles: list[int] = []
-    if change.retire or regrouped or change.bundles:
-        needing = await find_units_needing_confirm(session, [*change.retire, *regrouped, *change.bundles])
-        if needing and not confirm and not set(needing) <= settled:
+    if change.retire or regrouped or change.bundles or released_new:
+        needing = await find_units_needing_confirm(session, [*change.retire, *regrouped, *change.bundles, *released_new])
+        if needing and not confirm and not set(needing) <= unasked:
             raise_rule(409, "confirm_required", unit_ids=needing)
         # 캡션이 바뀐 묶음은 판단이 있을 때만 떼어 낸다 — 확정 새 문장에 바뀐 캡션이 빠지거나 남지 않게
         decided_bundles = sorted(set(needing) & set(change.bundles))
@@ -2194,6 +2214,13 @@ async def _write_change(
                 session, bundle_id=document.bundle_id,
                 target_ids=await _find_new_doc_targets(session, [*change.retire, *change.regroup, *decided_bundles]),
             )
+        # 제자리에서 언어가 바뀌는 새 문장만 — 은퇴하는 단위의 새 문장은 맞추기가 떼어 내며 지운다
+        released_ids = await _find_decided_targets(session, set(released_new) - set(change.retire))
+        if released_ids:
+            released = await detach_targets(
+                session, bundle_id=document.bundle_id, target_ids=released_ids, is_regrouped=False
+            )
+            reset = released if reset is None else _merge_reports(reset, released)
         await _apply_regroup(session, change.regroup)
         await _apply_layouts(session, change.layouts)
         detach = await sync_new_doc_targets(
@@ -2288,8 +2315,6 @@ async def apply_edit(
     바뀌는 게 없는 편집(같은 언어로 바꾸기, 범위가 그대로인 경계 옮기기·골라 만들기)은 아무것도 쓰지 않는다 — 확인도
     묻지 않고 revision·기록·다시 하기 기록도 그대로다.
     """
-    if isinstance(op, SwitchLanguageOp) and document.side != "old":
-        raise_rule(422, "invalid_side", document_id=document.id)
     extraction_id = await get_latest_extraction_id(session, document.id)
     change = await _plan(session, document.id, extraction_id, op)
     if isinstance(op, SetRefOp | ClearRefOp):
