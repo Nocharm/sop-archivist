@@ -10,13 +10,14 @@ import { MembersModal } from "@/components/manage/members-modal";
 import { BundleStatusPill } from "@/components/status";
 import { ClampText } from "@/components/ui/clamp-text";
 import { DataList, ListViewToggle, type DataColumn } from "@/components/ui/data-list";
-import { Truncate } from "@/components/ui/motion";
+import { PanelTitle } from "@/components/admin/panel-title";
 import { MorphButton } from "@/components/ui/morph-button";
+import { Tooltip } from "@/components/ui/tooltip";
 import { showToast } from "@/components/ui/toast";
 import { EmptyState } from "@/components/ui/empty-state";
 import { LoadError } from "@/components/ui/load-error";
 import { listAdminBundles, putAdminMembers, type AdminBundle } from "@/lib/api-manage";
-import type { RowProgress } from "@/lib/api-sop";
+import type { BundleStatus, RowProgress } from "@/lib/api-sop";
 import { formatKst } from "@/lib/datetime";
 import { getDisplayName } from "@/lib/display-name";
 import { useI18n } from "@/lib/i18n";
@@ -28,22 +29,52 @@ import { getBundleLabel } from "@/lib/bundle-label";
 
 const LIST_KEY = "admin-bundles";
 
-function ProgressText({ progress }: { progress: RowProgress }) {
+const STATUS_FILTERS: readonly (BundleStatus | "all")[] = ["all", "in_progress", "in_review", "done"];
+// 구성원 머리글자 원의 수 - 넘으면 +N
+const MEMBER_AVATARS = 4;
+
+function ProgressCell({ progress }: { progress: RowProgress }) {
   if (progress.total === 0) return <span className="text-ink-4">–</span>;
+  const percent = Math.round((progress.confirmed / progress.total) * 100);
   return (
-    <span className="tabular-nums">
-      {progress.confirmed}
-      <span className="text-ink-3">{` / ${progress.total}`}</span>
+    <span className="adm-progress">
+      <span className="tabular-nums">
+        {progress.confirmed}
+        <span className="text-ink-3">{` / ${progress.total}`}</span>
+      </span>
+      <span className="adm-bar-track" role="img" aria-label={`${percent}%`}>
+        <span style={{ width: `${percent}%` }} />
+      </span>
     </span>
   );
 }
 
-export function BundlesPanel() {
+// 겹친 구성원 - 이름이 다 안 들어가는 자리라 머리글자 원을 쓰고, 이름·역할은 툴팁에 둔다
+function MemberSummary({ bundle }: { bundle: AdminBundle }) {
   const { t, lang } = useI18n();
+  const names = bundle.members.map((member) => `${getDisplayName(member, lang)} (${t(`role.${member.role}`)}${member.active ? "" : `, ${t("overview.noAccess")}`})`);
+  if (names.length === 0) return <span className="text-ink-4">–</span>;
+  return (
+    <Tooltip label={names.join(", ")}>
+      <span className="adm-avs" tabIndex={0} role="img" aria-label={names.join(", ")} data-testid={`admin-bundle-people-${bundle.id}`}>
+        {bundle.members.slice(0, MEMBER_AVATARS).map((member) => (
+          <span key={member.login_id} className="adm-av" data-off={member.active ? undefined : ""}>
+            {getDisplayName(member, lang)[0] ?? ""}
+          </span>
+        ))}
+        {bundle.members.length > MEMBER_AVATARS && <span className="adm-av more">+{bundle.members.length - MEMBER_AVATARS}</span>}
+      </span>
+    </Tooltip>
+  );
+}
+
+export function BundlesPanel() {
+  const { t } = useI18n();
   const { data, error, isLoading, reload } = useLoaded(listAdminBundles);
   const showSkeleton = useDelayedFlag(isLoading && data === null);
   const [query, setQuery] = useState("");
   const [onlyAttention, setOnlyAttention] = useState(false);
+  const [status, setStatus] = useState<BundleStatus | "all">("all");
   const [editing, setEditing] = useState<AdminBundle | null>(null);
   const [overrides, setOverrides] = useState<Map<number, AdminBundle>>(new Map());
 
@@ -51,9 +82,10 @@ export function BundlesPanel() {
   const needle = query.trim().toLowerCase();
   const filtered = all
     .filter((bundle) => !onlyAttention || !bundle.has_active_author)
+    .filter((bundle) => status === "all" || bundle.status === status)
     .filter((bundle) => needle === "" || getBundleLabel(bundle).toLowerCase().includes(needle) || bundle.code.toLowerCase().includes(needle) || bundle.members.some((member) => member.login_id.includes(needle)));
   const attentionCount = all.filter((bundle) => !bundle.has_active_author).length;
-  const rows = useProgressiveList(filtered, `${needle}:${onlyAttention}`);
+  const rows = useProgressiveList(filtered, `${needle}:${onlyAttention}:${status}`);
   const view = useListView(LIST_KEY);
 
   const columns: DataColumn<AdminBundle>[] = [
@@ -77,21 +109,8 @@ export function BundlesPanel() {
       ),
     },
     { key: "status", header: t("bundles.colStatus"), card: "badge", nowrap: true, skeletonWidth: 84, cell: (bundle) => <BundleStatusPill status={bundle.status} /> },
-    {
-      key: "members",
-      header: t("overview.members"),
-      card: "body",
-      // 좁은 창에서는 열을 감춘다 - 구성원은 줄 끝 단추의 창에서 본다
-      className: "max-w-[280px] max-[1279px]:hidden",
-      skeletonWidth: 200,
-      cell: (bundle) => (
-        <Truncate
-          className="text-ink-2"
-          text={bundle.members.map((member) => `${getDisplayName(member, lang)} (${t(`role.${member.role}`)}${member.active ? "" : `, ${t("overview.noAccess")}`})`).join(", ")}
-        />
-      ),
-    },
-    { key: "confirmed", header: t("bundles.colConfirmed"), cardLabel: t("bundles.colConfirmed"), align: "end", nowrap: true, skeletonWidth: 60, cell: (bundle) => <ProgressText progress={bundle.progress} /> },
+    { key: "members", header: t("overview.members"), card: "body", nowrap: true, skeletonWidth: 80, cell: (bundle) => <MemberSummary bundle={bundle} /> },
+    { key: "confirmed", header: t("bundles.colConfirmed"), cardLabel: t("bundles.colConfirmed"), nowrap: true, skeletonWidth: 120, cell: (bundle) => <ProgressCell progress={bundle.progress} /> },
     {
       key: "created",
       header: t("adminBundles.created"),
@@ -116,6 +135,16 @@ export function BundlesPanel() {
 
   return (
     <div className="grid gap-4" data-testid="admin-bundles">
+      <div className="flex flex-wrap items-center gap-3">
+        <PanelTitle title={t("admin.tab.bundles")} info={t("adminBundles.intro")} testId="admin-bundles-info" />
+        <span className="adm-pills" role="group" aria-label={t("adminBundles.statusFilter")}>
+          {STATUS_FILTERS.map((key) => (
+            <button key={key} type="button" className="adm-pill" aria-pressed={status === key} data-testid={`admin-bundles-status-${key}`} onClick={() => setStatus(key)}>
+              {key === "all" ? t("adminBundles.all") : t(`status.bundle.${key}`)} <b>{key === "all" ? all.length : all.filter((bundle) => bundle.status === key).length}</b>
+            </button>
+          ))}
+        </span>
+      </div>
       <div className="flex flex-wrap items-center gap-2">
         <label className="flex h-8 min-w-[260px] flex-1 items-center gap-2 rounded-md border border-line-2 bg-surface px-2 focus-within:border-accent focus-within:ring-1 focus-within:ring-accent">
           <Search size={14} strokeWidth={1.5} className="text-ink-3" aria-hidden />

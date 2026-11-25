@@ -706,6 +706,41 @@ await runStep("admin outline as dev.admin", { devUser: "dev.admin" }, async ({ p
   check("the title goes back", (await putTitle(original)) === 200);
 });
 
+// Bundle 상태 거르기 · 진행 막대 · 구성원 요약, AI 지침 읽을 이름 · 버전 타임라인(본문은 상자 스크롤 없이)
+await runStep("admin bundles and guidelines as dev.admin", { devUser: "dev.admin" }, async ({ page, takeShot }) => {
+  await page.goto(`${BASE}/admin?tab=bundles`);
+  // 목록 틀은 쉬머일 때도 있다 - 첫 줄이 올 때까지 기다린다
+  await page.locator('[data-testid^="admin-bundle-link-"]').first().waitFor({ state: "visible", timeout: T });
+  const total = await page.locator('[data-testid^="admin-bundle-link-"]').count();
+  await findById(page, "admin-bundles-status-in_review").click();
+  const inReview = await page.locator('[data-testid^="admin-bundle-link-"]').count();
+  check("the status pill filters bundles", inReview > 0 && inReview < total, `${inReview} of ${total}`);
+  await findById(page, "admin-bundles-status-all").click();
+  check("progress is shown as a bar", (await page.locator(".adm-bar-track").count()) > 0);
+  const people = page.locator('[data-testid^="admin-bundle-people-"]').first();
+  check("the member summary reads the names", ((await people.getAttribute("aria-label")) ?? "").includes("("), (await people.getAttribute("aria-label")) ?? "");
+  await page.setViewportSize({ width: 1120, height: 800 });
+  check("the member summary stays on a narrow window", await people.isVisible());
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await takeShot("admin-bundles.png");
+
+  await page.goto(`${BASE}/admin?tab=guidelines`);
+  await wait(page, "guideline-content");
+  const firstKey = await getText(page, "guideline-key-rules");
+  check("a guideline has a readable name and keeps its key", firstKey.includes("Restructuring rules") && firstKey.includes("rules"), firstKey);
+  check("the version list has the active version", (await getText(page, "guideline-versions")).includes("Active"));
+  const boxed = await findById(page, "guideline-content").evaluate((el) => {
+    let node = el.parentElement;
+    while (node && node.tagName !== "MAIN") {
+      if (node.scrollHeight > node.clientHeight + 1 && /(auto|scroll)/.test(getComputedStyle(node).overflowY) && node.clientHeight <= 600) return true;
+      node = node.parentElement;
+    }
+    return false;
+  });
+  check("the guideline text is not boxed into an inner scroll", !boxed);
+  await takeShot("admin-guidelines.png");
+});
+
 await runStep("admin outline is hidden without the permission", { devUser: "qa.lead" }, async ({ page }) => {
   await page.goto(`${BASE}/admin`);
   await wait(page, "admin-tab-access");
