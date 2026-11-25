@@ -22,3 +22,10 @@ export function getLinkDirection(newAnchor: LinkAnchor | null, view: LinkView): 
   if (newAnchor.top > view.scrollTop + view.height) return "below";
   return "visible";
 }
+
+/** 덩어리(.strip-chunk)째로 가늠한 쪽 - 화면 밖 덩어리의 박스는 재지 않는다(재면 브라우저가 건너뛴 덩어리를 배치한다). 틀에 걸치거나 덩어리가 없으면 null(박스를 잰다) */
+export function readFarSide(chunk: { top: number; bottom: number } | null, frame: { top: number; bottom: number }): "above" | "below" | null {
+  if (chunk === null) return null;
+  if (chunk.bottom < frame.top) return "above";
+  return chunk.top > frame.bottom ? "below" : null;
+}
