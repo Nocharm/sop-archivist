@@ -28,7 +28,6 @@ export function AssignHelp() {
     ...(isDrafting ? [[t("assign.legend.keyEdit"), <kbd key="edit">E</kbd>] as const] : []),
     [t("assign.help.keyHold"), <kbd key="hold">H</kbd>],
     [t("assign.help.keyDelete"), <kbd key="delete">Del · ⌫</kbd>],
-    [t("assign.help.keyMoveTo"), <kbd key="move-to">M</kbd>],
     [t("assign.help.keyClear"), <kbd key="clear">U</kbd>],
     [t("assign.help.keyShift"), <kbd key="shift">Shift + {t("assign.help.click")}</kbd>],
     [t("assign.help.keyCtrl"), <kbd key="ctrl">Ctrl + {t("assign.help.click")}</kbd>],

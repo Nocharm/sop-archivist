@@ -90,10 +90,10 @@ export function buildRecommendations(input: RecommendInput, expandLink: (targetI
   return all.filter((rec) => !seen.has(rec.key) && seen.add(rec.key)).slice(0, MAX_RECOMMENDATIONS);
 }
 
-/** 아직 쓰지 않은 문서(숨긴 기능)로 보내라는 추천을 뺀다 - 잇기 · 삭제 · 이동만 남는다. 칸 추천에 앞세운 칸 제목 자리도 함께 빠진다 */
+/** 아직 쓰지 않은 문서(숨긴 기능)로 보내라는 추천을 뺀다 - 잇기 · 삭제만 남는다. 칸 추천에 앞세운 칸 제목 자리도 함께 빠진다 */
 export function dropHiddenRecommendations(recommendations: Recommendation[], drafting: boolean): Recommendation[] {
   if (drafting) return recommendations;
-  return recommendations.filter((rec) => rec.destination.kind === "link" || rec.destination.kind === "delete" || rec.destination.kind === "move");
+  return recommendations.filter((rec) => rec.destination.kind === "link" || rec.destination.kind === "delete");
 }
 
 /**
@@ -178,9 +178,10 @@ export function listLinkMenuItems(state: { picked: boolean; linked: boolean; con
 
 /**
  * Confirm을 막는 까닭(메시지 키) - 결정 칸의 Confirm 단추·↵·그 자리 메뉴(끌어 놓은 초안 포함)가 같은 순서로 쓴다.
- * 숨긴 새 문서의 자리는 확정하지 않고(배정 취소나 잇기만), 참조 번호 확인이 먼저, 그다음 캡션 없는 표·그림(서버 caption_required 전에 멈춘다). 막지 않으면 null.
+ * 이미 다른 Bundle로 이동한 줄(없앤 기능)은 읽기 전용이고(배정 취소만), 숨긴 새 문서의 자리는 확정하지 않고(배정 취소나 잇기만), 참조 번호 확인이 먼저, 그다음 캡션 없는 표·그림(서버 caption_required 전에 멈춘다). 막지 않으면 null.
  */
-export function readConfirmBlockKey(gates: { isRefGate: boolean; isCaptionGate: boolean; isHiddenPlace?: boolean }): "assign.hidden.confirm" | "assign.ref.checkFirst" | "assign.caption.needed" | null {
+export function readConfirmBlockKey(gates: { isRefGate: boolean; isCaptionGate: boolean; isHiddenPlace?: boolean; isLegacyMove?: boolean }): "assign.legacyMove.confirm" | "assign.hidden.confirm" | "assign.ref.checkFirst" | "assign.caption.needed" | null {
+  if (gates.isLegacyMove) return "assign.legacyMove.confirm";
   if (gates.isHiddenPlace) return "assign.hidden.confirm";
   if (gates.isRefGate) return "assign.ref.checkFirst";
   return gates.isCaptionGate ? "assign.caption.needed" : null;

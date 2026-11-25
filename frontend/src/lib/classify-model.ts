@@ -261,6 +261,12 @@ export function buildCellOwners(written: readonly WrittenSentence[]): Map<number
   return new Map(written.flatMap((row) => (row.table?.cells ?? []).map((cell) => [cell.target_id, row] as const)));
 }
 
+/** 옛 "다른 Bundle로 이동"(없앤 기능)으로 정한 줄이면 그 번호 - 읽기 전용으로 보이고 배정 취소만 된다. 아니면 null */
+export function describeLegacyMove(units: readonly Pick<UnitRow, "decision">[]): { code: string } | null {
+  const moved = units.find((unit) => unit.decision.disposition === "move_external");
+  return moved ? { code: moved.decision.move_target_code } : null;
+}
+
 /** 저장된 판단·새 문장에서 지금 보낼 곳을 읽는다. 여러 곳이면 첫 새 문장 기준 */
 export function readDestination(group: Group | null, unitIds: number[]): Destination | null {
   if (!group) return null;

@@ -30,6 +30,7 @@ import {
   pickRowStatus,
   previewLinkChange,
   previewSlotChange,
+  describeLegacyMove,
   readDestination,
   readHumanReason,
   readSlotKind,
@@ -324,6 +325,14 @@ describe("save request", () => {
 
   it("reads the current destination back", () => {
     expect(readDestination(group, [10, 11])).toEqual({ kind: "slot", docId: 6, slotKey: "scope" });
+  });
+
+  it("still reads a row moved to another Bundle earlier, read-only", () => {
+    const moved = { ...makeUnitRow(1, "confirmed"), decision: { ...makeUnitRow(1, "confirmed").decision, disposition: "move_external" as const, move_target_code: "SOP-QC-99999" } };
+    const movedGroup: Group = { units: [{ unit_id: 1, display_id: "D-1", document_id: 1, kind: "sentence", lang: "ko", text: "t1", group_id: null, decision: moved.decision, cell_unit_ids: [] }], targets: [] };
+    expect(readDestination(movedGroup, [1])).toEqual({ kind: "move" });
+    expect(describeLegacyMove([moved])).toEqual({ code: "SOP-QC-99999" });
+    expect(describeLegacyMove([makeUnitRow(2, "confirmed"), { ...makeUnitRow(3, "confirmed"), decision: { ...makeUnitRow(3, "confirmed").decision, disposition: "delete" } }])).toBeNull();
   });
 });
 

@@ -5,7 +5,7 @@
 // 상태 · 데이터 · 동작은 use-assign-page.tsx의 useAssignPage()에 있고, 이 파일은 그리기만 한다(쪼개기 1단계).
 "use client";
 
-import { ExternalLink, FileCheck2, FileUp, FolderOutput, Inbox, Link2, MousePointerClick, Sparkles, SquarePlus, Trash2, TriangleAlert, X } from "lucide-react";
+import { FileCheck2, FileUp, FolderOutput, Inbox, Link2, MousePointerClick, Sparkles, SquarePlus, Trash2, TriangleAlert, X } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useEffectEvent, useMemo, useRef, useState, type ReactNode } from "react";
 import { AssignContextMenu } from "@/components/assign/assign-context-menu";
@@ -15,7 +15,6 @@ import { JoinMenu } from "@/components/assign/join-menu";
 import { getSpotAttrs, PlaceGap, type PlaceSpotView, type SpotAttrs } from "@/components/assign/place-spot";
 import { LinkMenu } from "@/components/assign/link-menu";
 import { LinkBadge } from "@/components/assign/link-badge";
-import { MoveTargetField } from "@/components/assign/move-target-field";
 import { NewBundle } from "@/components/assign/new-bundle";
 import { NewPane, NewPaneEmpty, type NewPlaceSpots } from "@/components/assign/new-pane";
 import { DocDashboard } from "@/components/assign/doc-dashboard";
@@ -81,7 +80,7 @@ export default function AssignPage() {
     setManualPart, activePart, isFoldEmpty, foldElsewhere, writtenDocs, composedDocs, setManualNewDoc, toggleKey, liveDoc, isNewDocOpen,
     newDocId, newAiReturn, setNewAiReturn, isComposedDoc, newFileId, composedDoc, newRows, headingNotes, sectionMarks, joinableIds,
     templateTitles, linkPairs, view, changeView, zoomPane, setPanes, remarkEdit, setRemarkEdit, focusAfterRef, busy, isAnyPending, isGlobalPending, paperPending, editConfirm,
-    setEditConfirm, oldPaneRef, buildUndo, markRecorded, bulk, setBulk, confirmingIdentical, moveCode, isMoveAsk, setMoveAsk, decideNow,
+    setEditConfirm, oldPaneRef, buildUndo, markRecorded, bulk, setBulk, confirmingIdentical,
     setConfirmingIdentical, resetScope, setResetScope, slots, newDraft, draftSlotKey, placeResolved, canPlaceClick, pickedSpotKey,
     setCarvePick, carve, carveText, clearCarve, togglePairViewByButton, pairFrom, setPairFrom, pairSource, captionPickBundle, setCaptionPick, selectToc, openNewCtxMenu,
     openSolo, goToUnit, ctxGroups, confirmBlockKey, refPendingIds, isLinkedToWritten, captionPendingKeys, docDashboard, openCtxMenu, runUnitEdit,
@@ -963,38 +962,24 @@ export default function AssignPage() {
           onClose={() => setLeaveTo(null)}
         />
       )}
-      {isMoveAsk && row && (
-        <MoveModal
-          bundleId={bundleId}
-          initialCode={moveCode}
-          onClose={() => setMoveAsk(false)}
-          onConfirm={(code, moveReason) => {
-            setMoveAsk(false);
-            // 비운 사유는 저장된 사유를 그대로 둔다 - 그것도 없으면 결과물이 "이동"으로 적는다
-            decideNow({ kind: "move" }, code, moveReason || undefined);
-          }}
-        />
-      )}
       {bulk && (
         <BulkModal
-          bundleId={bundleId}
-          action={bulk}
           count={pickedOld.size}
           onClose={() => setBulk(null)}
-          onConfirm={async (bulkReason, code) => {
+          onConfirm={async (bulkReason) => {
             const unitRows = [...pickedOld].map((id) => unitMap.get(id)).filter((unit): unit is UnitRow => unit !== undefined);
             try {
               await bulkDecide(bundleId, {
-                action: bulk === "delete" ? "delete" : "move_external",
+                action: "delete",
                 reason: bulkReason,
-                move_target_code: code,
+                move_target_code: "",
                 units: unitRows.map((unit) => ({ unit_id: unit.unit_id, revision: unit.decision.revision })),
               }, buildUndo());
               markRecorded();
               showToast(t("classify.bulkDone", { n: unitRows.length }));
               setBulk(null);
               setChecked(new Set());
-              // 한 번에 삭제·이동도 서버가 짝을 정리하지만 어느 짝인지 알려 주지 않는다 - 짝 모양·문서 revision을 다시 받는다
+              // 한 번에 삭제도 서버가 짝을 정리하지만 어느 짝인지 알려 주지 않는다 - 짝 모양·문서 revision을 다시 받는다
               reloadData(true);
               void loadBundle(bundleId);
             } catch (err) {
@@ -1012,69 +997,19 @@ export default function AssignPage() {
 
 
 
-/** 한 줄 다른 문서로 이동(우클릭 메뉴·M) - 대상 문서를 고르면 바로 확정한다. 사유는 선택 */
-function MoveModal({ bundleId, initialCode, onClose, onConfirm }: { bundleId: number; initialCode: string; onClose: () => void; onConfirm: (code: string, reason: string) => void }) {
-  const { t } = useI18n();
-  const [code, setCode] = useState(initialCode);
-  const [reason, setReason] = useState("");
-  const ready = code.trim() !== "";
-  return (
-    <Modal
-      title={t("assign.moveModal.title")}
-      onClose={onClose}
-      testId="assign-move-modal"
-      footer={
-        <>
-          <button type="button" className="btn" data-testid="assign-move-cancel" onClick={onClose}>
-            <X size={16} strokeWidth={1.5} aria-hidden />
-            {t("common.cancel")}
-          </button>
-          <button type="button" className="btn pri" data-testid="assign-move-confirm" disabled={!ready} onClick={() => onConfirm(code.trim(), reason.trim())}>
-            <ExternalLink size={16} strokeWidth={1.5} aria-hidden />
-            {t("assign.moveModal.run")}
-          </button>
-        </>
-      }
-    >
-      <div className="grid gap-1">
-        <span className="text-xs text-ink-2">{t("classify.moveTo")}</span>
-        <MoveTargetField bundleId={bundleId} value={code} testId="assign-move-modal-code" autoFocus onChange={setCode} />
-      </div>
-      <label className="grid gap-1">
-        <span className="text-xs text-ink-2">{t("classify.reason")}</span>
-        <textarea
-          rows={2}
-          className="block w-full resize-y rounded-md border border-line-2 bg-surface px-2 py-[5px] text-[13px] leading-[19px] text-ink focus:border-accent focus:outline-none"
-          data-testid="assign-move-modal-reason"
-          placeholder={t("remark.blankMove")}
-          value={reason}
-          maxLength={REMARK_MAX_LENGTH}
-          onChange={(event) => setReason(event.target.value)}
-        />
-      </label>
-      <RecentRemarks testId="assign-move-modal-recent" onPick={setReason} />
-    </Modal>
-  );
-}
-
 interface BulkModalProps {
-  bundleId: number;
-  action: "delete" | "move";
   count: number;
   onClose: () => void;
-  onConfirm: (reason: string, code: string) => Promise<void>;
+  onConfirm: (reason: string) => Promise<void>;
 }
 
-function BulkModal({ bundleId, action, count, onClose, onConfirm }: BulkModalProps) {
+function BulkModal({ count, onClose, onConfirm }: BulkModalProps) {
   const { t } = useI18n();
   const [reason, setReason] = useState("");
-  const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
-  // Remark는 선택 - 비우면 결과물이 "삭제"·"이동"으로 적는다(요청서 4번)
-  const ready = action === "delete" || code.trim() !== "";
   return (
     <Modal
-      title={action === "delete" ? t("classify.bulkDeleteTitle") : t("classify.bulkMoveTitle")}
+      title={t("classify.bulkDeleteTitle")}
       onClose={onClose}
       isBusy={busy}
       testId="assign-bulk-modal"
@@ -1086,16 +1021,16 @@ function BulkModal({ bundleId, action, count, onClose, onConfirm }: BulkModalPro
           </button>
           <button
             type="button"
-            className={`btn ${action === "delete" ? "danger" : "pri"}`}
+            className="btn danger"
             data-testid="assign-bulk-confirm"
-            disabled={!ready || busy}
+            disabled={busy}
             onClick={async () => {
               setBusy(true);
-              await onConfirm(reason.trim(), code.trim());
+              await onConfirm(reason.trim());
               setBusy(false);
             }}
           >
-            {action === "delete" ? <Trash2 size={16} strokeWidth={1.5} aria-hidden /> : <ExternalLink size={16} strokeWidth={1.5} aria-hidden />}
+            <Trash2 size={16} strokeWidth={1.5} aria-hidden />
             {t("classify.bulkRun", { n: count })}
           </button>
         </>
@@ -1109,7 +1044,7 @@ function BulkModal({ bundleId, action, count, onClose, onConfirm }: BulkModalPro
           rows={3}
           className="block w-full resize-y rounded-md border border-line-2 bg-surface px-2 py-[5px] text-[13px] leading-[19px] text-ink focus:border-accent focus:outline-none"
           data-testid="assign-bulk-reason"
-          placeholder={t(action === "delete" ? "remark.blankDelete" : "remark.blankMove")}
+          placeholder={t("remark.blankDelete")}
           value={reason}
           maxLength={REMARK_MAX_LENGTH}
           autoFocus
@@ -1117,12 +1052,6 @@ function BulkModal({ bundleId, action, count, onClose, onConfirm }: BulkModalPro
         />
       </label>
       <RecentRemarks testId="assign-bulk-recent" onPick={setReason} />
-      {action === "move" && (
-        <div className="grid gap-1">
-          <span className="text-xs text-ink-2">{t("classify.moveTo")}</span>
-          <MoveTargetField bundleId={bundleId} value={code} testId="assign-bulk-code" onChange={setCode} />
-        </div>
-      )}
     </Modal>
   );
 }
