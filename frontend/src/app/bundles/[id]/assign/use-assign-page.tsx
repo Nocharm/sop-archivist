@@ -1756,14 +1756,15 @@ export function useAssignPage() {
     else runShapeSwitch({ type: "switch_language", unit_id: target.id, lang, merge_pair: plan.mergePair }, target.id);
   }
 
-  /** 모양 전환 편집 - 묻지 않고 바로(confirm, 3-c) 하고, 무엇이 됐는지와 풀린 배정 수를 알림에 */
+  /** 모양 전환 편집 - Old는 묻지 않고 바로(confirm, 3-c), New는 이은 문장이면 서버가 물은 뒤(R4) 하고, 무엇이 됐는지와 풀린 배정 수를 알림에 */
   function runShapeSwitch(op: Extract<EditOp, { type: "switch_language" }>, followId: number) {
     const describe = (result: EditResult) => {
       const key = result.shape === "merged" ? "assign.shape.merged" : result.shape === "unpaired" ? "assign.shape.unpaired" : "assign.shape.splitPair";
       const released = result.detach?.reset_unit_ids.length ?? 0;
       return `${t(key)}${released > 0 ? t("assign.shape.released", { n: released }) : ""}`;
     };
-    void runUnitEdit(op, describe, op.merge_pair ? null : followId, true);
+    const isOld = shapeView !== null && oldDocIds.includes(shapeView.document.id);
+    void runUnitEdit(op, describe, op.merge_pair ? null : followId, isOld);
   }
 
   /** 문장 하나에 대한 동작 - 우클릭 메뉴와 오른쪽 칸의 다듬기 줄이 함께 쓴다. caret은 누른 글자 자리(자를 선을 그 가까이에 놓는다) */

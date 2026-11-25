@@ -80,6 +80,7 @@ AI 없이 사람이 끝까지 가는 결정적 경로(계획 1). AI 층은 아�
 ## 7. 떼어 내기는 한 함수군
 
 - 배정 지우기·문서 삭제·쪼개기 편집·새 문장 다시 맞추기가 모두 `detach.py` `detach_units`/`detach_targets`로 판단을 미배정·보류로 돌린다 — 새 경로가 판단·출처 연결을 직접 지우지 않는다.
+- 모양 전환(`switch_language`, `_Change.release`)은 Old와 New가 다르게 뗀다 — Old는 묻지 않고 미배정으로(3-c), New는 그 새 문장이 미배정이 아니면 409 `confirm_required`로 묻고 확인을 받으면 `detach_targets`로 이음을 풀어 이어져 있던 Old 줄을 보류로 둔다(R4).
 
 ## 8. 사내 AI 호출·사용량 — `app/ai_client.py`·`app/ai_usage.py`
 
