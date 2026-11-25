@@ -89,6 +89,7 @@ KEEP = "합성 장비를 켠다."
 DROP = "합성 메모는 지운다."
 OPEN = "합성 시료를 넣는다."
 DROP_REASON = "Synthetic: obsolete note"
+HOLD_DROP = "합성 삭제 보류 메모."
 PAIR_KO = "합성 결과를 적는다."
 PAIR_EN = "Record the synthetic result."
 PAIR_REASON = "Synthetic: one meaning in two languages"
@@ -659,9 +660,15 @@ def test_preview_a_rows_carry_unit_group_tone_and_toc(client: TestClient) -> Non
 def _setup_strike(client: TestClient) -> tuple[Fixture, int]:
     """배정 · 확정 삭제(이어진 줄이 되는 긴 글) · 보류 · 미배정 줄 하나씩 — 취소선은 확정 삭제 줄의 Old 칸만."""
     long_drop = "가" * 40_000
-    fx = _setup(client, [KEEP, long_drop, OPEN, "Synthetic English line."], assign=False)
+    fx = _setup(client, [KEEP, long_drop, HOLD_DROP, OPEN, "Synthetic English line."], assign=False)
     assign_as_is(client, fx.bundle_id, find_unit(fx.view, KEEP), fx.sop_id, slot_key="responsibilities")
     _bulk(client, fx.bundle_id, "delete", find_unit(fx.view, long_drop), DROP_REASON)
+    held = find_unit(fx.view, HOLD_DROP)
+    body = {
+        "action": "hold", "hold_reason": "Synthetic: not sure", "targets": [],
+        "units": [{"unit_id": held["id"], "revision": get_group_by_unit(client, fx.bundle_id, held["id"])["units"][0]["decision"]["revision"], "disposition": "delete", "reason": DROP_REASON}],
+    }
+    assert save_group(client, fx.bundle_id, body).status_code == 200  # 삭제를 보류한 줄 — On hold
     assign_as_is(client, fx.bundle_id, find_unit(fx.view, OPEN), fx.sop_id, slot_key="responsibilities", hold_reason="Synthetic: hold")
     return fx, A_COLUMN_KEYS.index("old_text")
 
@@ -671,10 +678,10 @@ def test_deleted_rows_strike_the_old_text(client: TestClient) -> None:
 
     a_rows = _get_preview(client, fx.bundle_id)["sheets"][0]["rows"][2:]
 
-    # 배정 · 확정 삭제(이어진 줄 둘) · 보류 · 미배정
-    assert [row["cells"][col]["strike"] for row in a_rows] == [False, True, True, False, False]
+    # 배정 · 확정 삭제(이어진 줄 둘) · 삭제 보류 · 배정 보류 · 미배정
+    assert [row["cells"][col]["strike"] for row in a_rows] == [False, True, True, False, False, False]
     sheet = _load(client, fx.bundle_id)["A Comparison"]
-    assert [bool(sheet.cell(index, col + 1).font.strike) for index in range(3, 8)] == [False, True, True, False, False]
+    assert [bool(sheet.cell(index, col + 1).font.strike) for index in range(3, 9)] == [False, True, True, False, False, False]
 
 
 def test_other_columns_and_sheets_are_not_struck(client: TestClient) -> None:
