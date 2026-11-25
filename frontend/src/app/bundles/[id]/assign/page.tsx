@@ -78,16 +78,16 @@ export default function AssignPage() {
     tocPick, checked, newRemarks, setNewRemarks, menu, setMenu, joinMenu, setJoinMenu, ctxMenu, setCtxMenu, focusNew,
     setDrafts, draft, groupPending, savedDestination, destination, rowUnits, reasonNow, setDraft, unsavedCount, leaveTo, setLeaveTo,
     aiDest, isAiRow, recommendations, linkIds, candidateIds, setManualOldDoc, oldView, acceptKind, setAcceptKind, acceptDoc, paperModel,
-    canPairView, isPairView, pairColumns, pairLinks, partKeys, oldDocId, soloUnit, soloUnits, cutUnit, cutLine, linkedTargets,
+    canPairView, isPairView, pairColumns, pairLinks, partKeys, oldDocId, leftShape, soloUnit, soloUnits, cutUnit, cutLine, linkedTargets,
     registerNumberHandle, setManualPart, changePart, activePart, isFoldEmpty, foldElsewhere, writtenDocs, composedDocs, toggleKey, liveDoc, isNewDocOpen,
     newDocId, newAiReturn, setNewAiReturn, isComposedDoc, newFileId, newLoad, newView, newModel, newTabs, composedDoc, newRows, headingNotes, sectionMarks, joinableIds,
     templateTitles, linkPairs, view, changeView, zoomPane, setPanes, remarkEdit, setRemarkEdit, focusAfterRef, busy, isAnyPending, isGlobalPending, paperPending, pendingDeletes, expectedNumbers, editConfirm,
     oldPaneRef, bulk, setBulk, confirmingIdentical,
     setConfirmingIdentical, resetScope, setResetScope, slots, newDraft, draftSlotKey, placeResolved, canPlaceClick, pickedSpotKey,
-    setCarvePick, carve, carveText, clearCarve, togglePairViewByButton, pairFrom, setPairFrom, pairSource, captionPickBundle, setCaptionPick, selectToc, openNewCtxMenu,
+    setCarvePick, carve, carveText, clearCarve, togglePairViewByButton, pairFrom, setPairFrom, pairSource, isLeftPairPick, isRightPairPick, captionPickBundle, setCaptionPick, selectToc, openNewCtxMenu,
     openSolo, goToUnit, ctxGroups, confirmBlockKey, refPendingIds, isLinkedToWritten, captionPendingKeys, docDashboard, openCtxMenu, runUnitEdit,
     rewrapTable, unwrapAi, describeEditConfirm, pairGrip, clearNoise, openNoiseReason, splitAtCut, handleOldDoubleClick,
-    runCtx, revertHeadings, planOldJoin, joinOld, renderOldActions, runSave, runClear, confirmIdenticalAll, acceptAll, pickDestination,
+    runCtx, revertHeadings, planJoinIn, joinIn, renderOldActions, runSave, runClear, confirmIdenticalAll, acceptAll, pickDestination,
     pickNewSentence, handleNewPick, pickUnlinkableNew, showNewDoc, jump, handleJoinPick, readJoinAfter, pickJoinMenu, handleFramePress, pickPlaceSpot, pickOwnAiLine, jumpToNew, openNewDoc,
     showInNew, jumpToOld, pickTemplateLine, fillTemplateMissing, isOldDrag, finishPairPick, handleOldClick, markRecHover, revealPick,
     setRevealPick, done, renderPlaceLabel, listDestinationEls, error,
@@ -368,8 +368,7 @@ export default function AssignPage() {
     return view ? <PlaceGap view={view} testId={`assign-tpl-place-${lang}-${view.key}`} /> : null;
   }
   // 고른 New 문장 - 이을 문장, 또는 양 단에서 New 문장의 짝을 고르는 중이면 모은 문장
-  const isNewPairPick = isNewEdit && pairSource !== null && pairFrom !== null;
-  const pickedNew = new Set(isNewPairPick ? pairFrom.picked.flatMap((unitId) => written.find((item) => item.new_unit_id === unitId)?.target_id ?? []) : [...linkIds, ...(destination?.kind === "join" ? [destination.targetId] : [])]);
+  const pickedNew = new Set(isRightPairPick ? (pairFrom?.picked ?? []).flatMap((unitId) => written.find((item) => item.new_unit_id === unitId)?.target_id ?? []) : [...linkIds, ...(destination?.kind === "join" ? [destination.targetId] : [])]);
   // 이미 쓴 New 문서의 박스 위에 얹을 것 - 렌더마다 다시 짓되 박스마다의 key가 글이라 용지의 먼 덩어리는 제 것이 바뀔 때만 다시 그린다
   const newOverlay = buildNewOverlay({ rows: isComposedDoc ? [] : written.filter((item) => item.target_doc_id === newDocId), candidateIds, pickedIds: pickedNew, focusId: focusNew, shapeUnitId: isNewEdit ? (soloUnit?.id ?? null) : null, aiFilter: newAiFilter, openAiSections, tabOf: newTabs?.tabOf });
   // New 용지에 보여야 할 박스 - 이동해 갈 곳, 누른 추천의 곳, 출처 없는 New의 고른 문장(각주 · 미주면 꼬리말 탭)
@@ -389,7 +388,7 @@ export default function AssignPage() {
   // 확인이 남은 누락 의심 경고의 문단 - 용지의 그 줄에 표시한다. 위쪽 줄의 목록에서 확인하면(문서 목록을 다시 받아) 사라진다
   const warnBlockIds = new Set(listAckWarnings(docs.data ?? []).flatMap((item) => (item.docId === oldDocId && item.warning.acked_by === null && item.warning.block_id !== null ? [item.warning.block_id] : [])));
   // Shift로 고른 줄, 그리고 짝 고르기에서 모은 문장
-  const pickedOld = new Set([...[...checked].flatMap((key) => rowMap.get(key)?.unitIds ?? []), ...(pairSource && pairFrom && !isNewEdit ? pairFrom.picked : [])]);
+  const pickedOld = new Set([...[...checked].flatMap((key) => rowMap.get(key)?.unitIds ?? []), ...(isLeftPairPick ? (pairFrom?.picked ?? []) : [])]);
   // 짝 고르는 중의 안내 한 줄 - 고르는 문장이 있는 칸의 머리 아래에 둔다(Old 용지, 또는 양 단에서 New 문장을 다듬는 중이면 New 칸)
   const pairBanner = pairSource ? (
     <div className="flex items-center gap-2 border-b border-line bg-accent-tint px-3 py-1.5 text-xs" role="status" data-testid="assign-pair-pick">
@@ -417,7 +416,7 @@ export default function AssignPage() {
       </button>
     </div>
   ) : null;
-  const oldBanner = pairBanner ?? captionBanner;
+  const oldBanner = isRightPairPick ? null : (pairBanner ?? captionBanner);
   const placeOf = (unitIds: number[]) => {
     const decided = unitIds.map((id) => unitMap.get(id)).find((unit) => unit?.status === "confirmed");
     if (!decided) {
@@ -533,7 +532,7 @@ export default function AssignPage() {
                 items={pairColumns.ko}
                 docLabel={oldDocOptions.find((option) => option.value === String(oldView?.document.id))?.label}
                 toggle={<PairViewToggle on onToggle={togglePairViewByButton} />}
-                banner={oldBanner !== null && !isNewEdit ? oldBanner : null}
+                banner={oldBanner !== null ? oldBanner : null}
                 selectedIds={highlightIds}
                 pickedIds={pickedOld}
                 statusOf={readMarkStatus}
@@ -638,9 +637,9 @@ export default function AssignPage() {
                       }
                 }
                 // 제목에서 바꾼 조항 묶음 머리(F8b) - 되돌리기는 다듬는 원문이 그 Old 문서일 때만
-                headingShift={isSolo ? undefined : { canRevert: canEdit && !isNewEdit, busy: isGlobalPending, onRevert: revertHeadings }}
+                headingShift={isSolo ? undefined : { canRevert: canEdit && !isNewEdit, busy: isGlobalPending, onRevert: (unitIds) => revertHeadings(leftShape, unitIds) }}
                 // 벗긴 표의 줄 묶음 머리 "↺ 다시 표로"(F1) - 다듬는 원문이 그 Old 문서일 때만
-                unwrap={isSolo ? undefined : { canRewrap: canEdit && !isNewEdit, busy: isGlobalPending, onRewrap: rewrapTable, ai: canEdit && !isNewEdit ? unwrapAi : undefined }}
+                unwrap={isSolo ? undefined : { canRewrap: canEdit && !isNewEdit, busy: isGlobalPending, onRewrap: (tableId) => rewrapTable(leftShape, tableId), ai: canEdit && !isNewEdit ? unwrapAi : undefined }}
                 // 처리 중인 일 - 누르는 즉시 그 자리 알약과 박스 쉬머, 그 박스만 잠근다(설계 D4)
                 pending={mode === "old" ? paperPending : undefined}
                 paneRef={oldPaneRef}
@@ -653,7 +652,7 @@ export default function AssignPage() {
                 sheets={oldView && paperModel && activePart !== "body" ? listPartSheets(oldView, paperModel, activePart) : null}
                 onPartChange={changePart}
                 // 묶음째 고르는 것은 배정 때만 - 짝 고르기(칸 문장끼리도 짝을 맺는다)와 쓴 New 문서 다듬기(배정이 없다)는 칸 문장을 그대로 고른다
-                pickWholeBundle={!isSolo && !(pairSource && pairFrom && !isNewEdit)}
+                pickWholeBundle={!isSolo && !isLeftPairPick}
                 onUnitClick={handleOldClick}
                 onUnitContextMenu={(unitId, at, caret) => openCtxMenu(unitId, at, caret)}
                 onUnitDoubleClick={canEdit ? handleOldDoubleClick : undefined}
@@ -666,15 +665,15 @@ export default function AssignPage() {
                         expected: expectedNumbers,
                         handleRef: registerNumberHandle,
                         onSave: (unitId, number, follow, indentShift) =>
-                          runUnitEdit({ type: "set_number", unit_id: unitId, number, follow, ...(indentShift === undefined ? {} : { indent_shift: indentShift }) }, number === null ? t("assign.number.didClear") : t("assign.number.didSet", { n: number }), unitId),
+                          runUnitEdit(leftShape, { type: "set_number", unit_id: unitId, number, follow, ...(indentShift === undefined ? {} : { indent_shift: indentShift }) }, number === null ? t("assign.number.didClear") : t("assign.number.didSet", { n: number }), unitId),
                         // 들여쓰기는 두 번 저장한다(B8 7-a) - 누른 줄, 이어져 함께 바뀐 줄. Ctrl+Z 한 번이 함께 바뀐 줄만 되돌린다(같은 문서 쓰기는 차례로 간다)
                         onIndent: (plan, delta, label) => {
                           const toItem = (change: IndentChange) => ({ unit_id: change.unitId, indent_shift: change.indentShift });
                           const unitId = plan.clicked.unitId;
-                          runUnitEdit({ type: "set_indents", units: [toItem(plan.clicked)] }, t(delta < 0 ? "assign.number.didOutdent" : "assign.number.didIndent", { id: label }), unitId);
+                          runUnitEdit(leftShape, { type: "set_indents", units: [toItem(plan.clicked)] }, t(delta < 0 ? "assign.number.didOutdent" : "assign.number.didIndent", { id: label }), unitId);
                           if (plan.batch.length > 0) {
                             const done = t(delta < 0 ? "assign.number.didOutdentMore" : "assign.number.didIndentMore", { id: label, n: plan.batch.length });
-                            runUnitEdit({ type: "set_indents", units: plan.batch.map(toItem) }, done, unitId);
+                            runUnitEdit(leftShape, { type: "set_indents", units: plan.batch.map(toItem) }, done, unitId);
                           }
                         },
                       }
@@ -689,7 +688,7 @@ export default function AssignPage() {
                     : undefined
                 }
                 banner={
-                  oldBanner !== null && !isNewEdit ? (
+                  oldBanner !== null ? (
                     oldBanner
                   ) : carve && (
                     <div className="flex items-center gap-2 border-b border-line bg-accent-tint px-3 py-1.5 text-xs" role="status" data-testid="assign-carve">
@@ -703,7 +702,7 @@ export default function AssignPage() {
                         onClick={() => {
                           const op: EditOp = { type: "carve", block_id: carve.blockId, start: carve.start, end: carve.end };
                           clearCarve();
-                          runUnitEdit(op, t("split.didCarve"), null);
+                          runUnitEdit(leftShape, op, t("split.didCarve"), null);
                         }}
                       >
                         <SquarePlus size={14} strokeWidth={1.5} aria-hidden />
@@ -719,7 +718,7 @@ export default function AssignPage() {
                 onCutDrag={canEdit ? cutLine.drag : undefined}
                 onCutNudge={canEdit ? cutLine.nudge : undefined}
                 renderAtCut={() => <CutPop busy={busy} onRun={splitAtCut} onCancel={cutLine.clear} testIdPrefix="assign" />}
-                join={canEdit && mode === "old" ? { busy: isGlobalPending, plan: planOldJoin, onJoin: joinOld } : undefined}
+                join={canEdit && mode === "old" ? { busy: isGlobalPending, plan: (firstId, secondId) => planJoinIn(leftShape, firstId, secondId), onJoin: (firstId, secondId, kind) => joinIn(leftShape, firstId, secondId, kind) } : undefined}
                 renderUnitActions={renderOldActions}
                 figureSource={oldView ? { bundleId, docId: oldView.document.id } : undefined}
                 zoom={view.zoomOld}
@@ -840,7 +839,7 @@ export default function AssignPage() {
                           {newAiChip}
                         </>
                       }
-                      banner={isNewEdit ? pairBanner : newAiBanner}
+                      banner={isRightPairPick ? pairBanner : newAiBanner}
                       linesOn={view.lines}
                       onToggleLines={() => changeView({ lines: !view.lines })}
                       onWide={newFileId !== null ? () => openSolo(newFileId) : undefined}
