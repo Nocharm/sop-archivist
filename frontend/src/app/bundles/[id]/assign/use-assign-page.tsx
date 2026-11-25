@@ -84,7 +84,7 @@ import { useLoaded } from "@/lib/use-loaded";
 import { usePaneSlide } from "@/lib/use-pane-slide";
 import { usePaneZoom, type PaneKey, type ZoomDir } from "@/lib/use-pane-zoom";
 
-import { buildDecisionPending, CommandRefusal, useCommandQueue, type CommandQueueState, type ConfirmableCommand, type ReplayCommand, type SendContext, type WriteCommand } from "./use-command-queue";
+import { buildDecisionPending, CommandRefusal, useCommandQueue, type CommandQueueState, type ConfirmableCommand, type ReplayCommand, type SeenRevisions, type SendContext, type WriteCommand } from "./use-command-queue";
 
 
 export type Filter = ClassifyFilter;
@@ -2131,6 +2131,7 @@ export function useAssignPage() {
       draft: rowDraft,
       before: pick?.before ?? null,
       reason,
+      seen: readSeen(saveRow.unitIds),
       groups,
       isChecked: isLoaded,
       isPick: pick !== undefined,
@@ -2158,7 +2159,7 @@ export function useAssignPage() {
     if (destination === null && action !== "hold") throw new CommandRefusal(t("assign.queue.noPlace"));
     if (!command.isChecked && !isPick) checkSave(command, group, destination);
     const revisionOf = (unit: UnitRow) => {
-      const known = ctx.isRetry ? null : writeLog.pickRevision(unit.unit_id, unit.decision.revision);
+      const known = ctx.isRetry ? null : writeLog.pickRevision(unit.unit_id, command.seen.get(unit.unit_id) ?? unit.decision.revision);
       return known ?? group.units.find((item) => item.unit_id === unit.unit_id)?.decision.revision ?? unit.decision.revision;
     };
     // 고친 칸만 글을 보낸다 - 손대지 않은 AI 제안은 글·종류를 비워 보내 제안 그대로 받는다
@@ -2191,7 +2192,7 @@ export function useAssignPage() {
     requestReload(command.isSplit ? { ...askAll(false), units: [] } : askAll(false));
     if (!command.isSplit) return;
     // 한 언어만 이어 짝을 풀었으면 남은 문장의 줄로 옮긴다 - 다시 받아 그 줄이 생긴 뒤, 그 사이 다른 줄을 고르지 않았을 때. 풀리지 않았으면 다음 줄
-    const next = isSplit || savedRow === undefined ? null : pickNextAfterSave(savedRow, "open");
+    const next = savedRow !== undefined && shouldAdvanceAfterSave({ action, destinationKind: destination?.kind ?? null, isSplit }) ? pickNextAfterSave(savedRow, "open") : null;
     const follow = isSplit ? leftovers[0] : (next?.unitId ?? null);
     focusCtl.succeed(ctx.id, { docId, revision: null, pickUnitId: follow });
     ctx.respond();
@@ -2292,18 +2293,24 @@ export function useAssignPage() {
   }
 
   /** 보낼 판단 revision - 앞 응답의 것(모르거나 다시 시도면 묶음에서 읽는다). 없는 Unit은 빠진다 */
-  async function readRevisions(unitIds: readonly number[], isRetry: boolean): Promise<Array<{ unit_id: number; revision: number; isDecided: boolean }>> {
+  async function readRevisions(unitIds: readonly number[], seen: SeenRevisions, isRetry: boolean): Promise<Array<{ unit_id: number; revision: number; isDecided: boolean }>> {
     const units = unitIds.map((id) => liveRef.current.unitMap.get(id)).filter((unit): unit is UnitRow => unit !== undefined);
-    const isKnown = !isRetry && units.every((unit) => writeLog.pickRevision(unit.unit_id, unit.decision.revision) === unit.decision.revision);
+    const pickKnown = (unitId: number, now: number) => (isRetry ? null : writeLog.pickRevision(unitId, seen.get(unitId) ?? now));
+    const isKnown = !isRetry && units.every((unit) => pickKnown(unit.unit_id, unit.decision.revision) === unit.decision.revision);
     if (isKnown) return units.map((unit) => ({ unit_id: unit.unit_id, revision: unit.decision.revision, isDecided: unit.decision.disposition !== "unassigned" || unit.status !== "unassigned" }));
     const group = await loadRowGroup(bundleId, units.map((unit) => unit.unit_id));
     return group.units
       .filter((unit) => unitIds.includes(unit.unit_id))
       .map((unit) => ({
         unit_id: unit.unit_id,
-        revision: (isRetry ? null : writeLog.pickRevision(unit.unit_id, liveRef.current.unitMap.get(unit.unit_id)?.decision.revision ?? 0)) ?? unit.decision.revision,
+        revision: pickKnown(unit.unit_id, unit.decision.revision) ?? unit.decision.revision,
         isDecided: unit.decision.disposition !== "unassigned" || unit.decision.status !== "unassigned",
       }));
+  }
+
+  /** 누른 때 화면에 있던 판단 revision */
+  function readSeen(unitIds: readonly number[]): SeenRevisions {
+    return new Map(unitIds.flatMap((id) => { const unit = unitMap.get(id); return unit ? [[id, unit.decision.revision] as const] : []; }));
   }
 
   /** 배정 취소 - 누른 순간의 줄을 잡는다. 고름은 지금처럼 그 줄에 머문다 */
@@ -2317,12 +2324,12 @@ export function useAssignPage() {
     // 방금 누른 판단이 아직 저장 중인 줄도 취소할 것이 있다
     const isSaving = commands.listUnsettled().some(({ payload, unitIds }) => (payload.kind === "save" || payload.kind === "bulk" || payload.kind === "figure") && unitIds.some((id) => row.unitIds.includes(id)));
     if (!isDecided && !isSaving) return;
-    commands.enqueue({ kind: "clear", docId: row.documentId, rowKey: row.key, unitIds: row.unitIds, boxId: pickedId ?? row.unitIds[0], draft: drafts[row.key] ?? null, newDocId: isComposedDoc ? newDocId : null, toggleKey });
+    commands.enqueue({ kind: "clear", docId: row.documentId, rowKey: row.key, unitIds: row.unitIds, boxId: pickedId ?? row.unitIds[0], seen: readSeen(row.unitIds), draft: drafts[row.key] ?? null, newDocId: isComposedDoc ? newDocId : null, toggleKey });
     setMenu(null);
   }
 
-  async function sendClear({ rowKey, unitIds, draft: sent, newDocId: docId, toggleKey: key }: Extract<WriteCommand, { kind: "clear" }>, ctx: SendContext) {
-    const decided = (await readRevisions(unitIds, ctx.isRetry)).filter((unit) => unit.isDecided);
+  async function sendClear({ rowKey, unitIds, seen, draft: sent, newDocId: docId, toggleKey: key }: Extract<WriteCommand, { kind: "clear" }>, ctx: SendContext) {
+    const decided = (await readRevisions(unitIds, seen, ctx.isRetry)).filter((unit) => unit.isDecided);
     if (decided.length > 0) {
       writeLog.noteUnknown([...unitIds, ...(await clearDecisions(bundleId, decided.map(({ unit_id, revision }) => ({ unit_id, revision })), buildUndo({ step_key: genId(), focus_unit_id: unitIds[0] })))]);
       markRecorded();
@@ -2353,12 +2360,12 @@ export function useAssignPage() {
       return;
     }
     const targets = [...byRow].map(([rowKey, ids]) => ({ rowKey, unitIds: ids }));
-    commands.enqueue({ kind: "bulk", rows: targets, reason, skipped: picked.length - targets.reduce((sum, item) => sum + item.unitIds.length, 0) });
+    commands.enqueue({ kind: "bulk", rows: targets, seen: readSeen(picked.map((unit) => unit.unit_id)), reason, skipped: picked.length - targets.reduce((sum, item) => sum + item.unitIds.length, 0) });
     setChecked(new Set());
   }
 
-  async function sendBulk({ rows: targets, reason, skipped }: Extract<WriteCommand, { kind: "bulk" }>, ctx: SendContext) {
-    const units = await readRevisions(targets.flatMap((item) => item.unitIds), ctx.isRetry);
+  async function sendBulk({ rows: targets, seen, reason, skipped }: Extract<WriteCommand, { kind: "bulk" }>, ctx: SendContext) {
+    const units = await readRevisions(targets.flatMap((item) => item.unitIds), seen, ctx.isRetry);
     const done = await bulkDecide(bundleId, { action: "delete", reason, move_target_code: "", units: units.map(({ unit_id, revision }) => ({ unit_id, revision })) }, buildUndo());
     noteDecisions(done);
     markRecorded();
@@ -3853,11 +3860,11 @@ export function useAssignPage() {
   async function deleteFigure(unitId: number, reason: string) {
     const key = rowOfUnit.get(unitId);
     const unitIds = (key === undefined ? undefined : rowMap.get(key)?.unitIds) ?? [unitId];
-    commands.enqueue({ kind: "figure", unitId, unitIds, reason });
+    commands.enqueue({ kind: "figure", unitId, unitIds, seen: readSeen(unitIds), reason });
   }
 
-  async function sendFigure({ unitId, unitIds, reason }: Extract<WriteCommand, { kind: "figure" }>, ctx: SendContext) {
-    const units = await readRevisions(unitIds, ctx.isRetry);
+  async function sendFigure({ unitId, unitIds, seen, reason }: Extract<WriteCommand, { kind: "figure" }>, ctx: SendContext) {
+    const units = await readRevisions(unitIds, seen, ctx.isRetry);
     const done = await bulkDecide(bundleId, { action: "delete", reason, move_target_code: "", units: units.map(({ unit_id, revision }) => ({ unit_id, revision })) }, buildUndo({ focus_unit_id: unitId }));
     noteDecisions(done);
     markRecorded();

@@ -213,6 +213,9 @@ describe("no request for a unit pending work may have retired (rule 5 - the 404 
   });
   it("does not hold back for a decision save - it never retires a unit", () => {
     expect(isUnitUnsettled(run(start(job("s", { kind: "save", unitIds: [3] }))), 1, 3)).toBe(false);
+    expect(isUnitUnsettled(run(start(job("b", { kind: "bulk", docId: null, unitIds: [3] }))), 1, 3)).toBe(false);
+    // 묶음 전체 일(같은 글자 · 초기화)은 줄을 다시 묶을 수 있다
+    expect(isUnitUnsettled(run(start(job("g", { kind: "bulk", docId: null, isGlobal: true }))), 1, 3)).toBe(true);
   });
 });
 

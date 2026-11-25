@@ -19,6 +19,9 @@ export type ReplayCommand =
   | { kind: "press"; act: "confirm" | "hold" | "delete" | "clear"; reason?: string }
   | { kind: "pick"; focus: Focus };
 
+export type SeenRevisions = ReadonlyMap<number, number>;
+const NO_SEEN: SeenRevisions = new Map();
+
 /** 보내는 일 - 판단은 누른 순간의 줄 · Unit · 초안을 잡는다 */
 export type WriteCommand =
   | {
@@ -34,6 +37,8 @@ export type WriteCommand =
       /** 이 명령이 바꾸기 전의 초안 - 버리면 되돌린다. 바꾸지 않았으면 draft와 같은 것, 없었으면 null */
       before: PageDraft | null;
       reason: string;
+      /** 누른 때 화면에 있던 판단 revision - 그 사이 다른 사람이 바꿨으면 서버가 거절한다(이 화면이 쓴 것은 write-log가 잇는다) */
+      seen: SeenRevisions;
       /** 누른 때 받아 둔 줄의 묶음 - 그 뒤 쓴 것이 없을 때만 그대로 쓴다 */
       groups: readonly Group[] | null;
       /** 참조 · 캡션 · Remark 전제를 누를 때 다 보았나 - 아니면 나갈 때 묶음을 받아 본다 */
@@ -45,9 +50,9 @@ export type WriteCommand =
       nextKey: string | null;
       placedNote: string | null;
     }
-  | { kind: "clear"; docId: number; rowKey: string; unitIds: readonly number[]; boxId: number; draft: PageDraft | null; newDocId: number | null; toggleKey: string }
-  | { kind: "bulk"; rows: ReadonlyArray<{ rowKey: string; unitIds: readonly number[] }>; reason: string; skipped: number }
-  | { kind: "figure"; unitId: number; unitIds: readonly number[]; reason: string }
+  | { kind: "clear"; docId: number; rowKey: string; unitIds: readonly number[]; boxId: number; seen: SeenRevisions; draft: PageDraft | null; newDocId: number | null; toggleKey: string }
+  | { kind: "bulk"; rows: ReadonlyArray<{ rowKey: string; unitIds: readonly number[] }>; seen: SeenRevisions; reason: string; skipped: number }
+  | { kind: "figure"; unitId: number; unitIds: readonly number[]; seen: SeenRevisions; reason: string }
   | {
       kind: "edit";
       docId: number;
@@ -247,7 +252,8 @@ export function useCommandQueue(env: CommandEnv, describePending: DescribePendin
     }
     const payload = command.payload;
     if (!isReplay(payload)) {
-      void send(command, payload);
+      // 장벽 뒤에 눌렀으면 누른 때 본 revision은 그 장벽(되돌리기 · 일괄)이 올렸을 수 있다 - 나갈 때 화면의 것으로
+      void send(command, command.isDeferred && "seen" in payload ? { ...payload, seen: NO_SEEN } : payload);
       return;
     }
     // 화면을 떠났으면 글쇠가 가리킬 고름이 없다
