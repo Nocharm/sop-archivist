@@ -10,6 +10,7 @@
 //     keys 글쇠 → 다음 박스(j 6번 · Delete 6번) · burst Delete 연타(5번 150ms · 3번 60ms 섞어) · filter 필터 Unassigned 뒤 keys
 //     number 번호 칸 5글자 입력 지연 · idle 60초 무조작(가짜 AI를 켠 묶음) · commits 글쇠 한 번의 커밋 수와 PaperChunk 그리기 수(개발 서버)
 //     keys · burst · filter · commits는 판단을 쓴다 - is_synthetic 묶음이 아니면 멈추고, 다시 재려면 시드부터 새로
+//   NEW=7      긴 New 문서를 함께 연 시나리오 - New 칸에 열 To-Be 문서 id(그 문서의 첫 문장이 그려진 뒤 잰다)
 //   REPEAT=6   글쇠 시나리오를 몇 번 되풀이할지
 //   LAT=0      요청마다 더할 왕복 지연(ms) - 사내망 어림
 import { chromium } from "playwright-core";
@@ -21,6 +22,7 @@ const CPU = Number(process.env.CPU ?? "4");
 const SCENARIO = process.env.SCENARIO ?? "frames";
 const REPEAT = Number(process.env.REPEAT ?? "6");
 const LAT = Number(process.env.LAT ?? "0");
+const NEW_DOC = process.env.NEW ?? "";
 const DEV_USER = process.env.DEV_USER ?? "qa.member";
 const WRITING = ["keys", "burst", "filter", "commits"];
 if (!["frames", "keys", "burst", "filter", "number", "idle", "commits"].includes(SCENARIO)) throw new Error(`unknown SCENARIO ${SCENARIO}`);
@@ -363,6 +365,14 @@ for (const doc of DOCS) {
   const started = Date.now();
   await page.goto(`${BASE}/bundles/${BUNDLE}/assign?doc=${doc}`);
   await page.locator(OLD_PIECE).first().waitFor({ timeout: 120000 });
+  if (NEW_DOC !== "") {
+    const pane = page.locator('[data-testid="assign-new"]');
+    if ((await pane.getAttribute("data-doc")) !== NEW_DOC) {
+      await page.locator('[data-testid="assign-new-doc"]').click();
+      await page.locator(`[data-testid="assign-new-doc-option-${NEW_DOC}"]`).click();
+    }
+    await page.locator(`[data-testid="assign-new"][data-doc="${NEW_DOC}"] .new-line[data-target]`).first().waitFor({ timeout: 120000 });
+  }
   if (SCENARIO !== "frames") {
     const result = { doc, scenario: SCENARIO, cpu: CPU, lat: LAT, repeat: REPEAT, ...(await runScenario(page, cdp)) };
     console.log(`RESULT ${JSON.stringify(result)}`);
