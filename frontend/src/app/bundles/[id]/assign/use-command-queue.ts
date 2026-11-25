@@ -270,6 +270,7 @@ export function useCommandQueue(env: CommandEnv, describePending: DescribePendin
   function enqueue(payload: AssignCommand): void {
     const id = genId();
     const isFirst = live.current.replayId !== null;
+    const wasIdle = isIdle(queue.getState());
     const put = (command: Omit<QueuedCommand<AssignCommand>, "isDeferred">) => {
       if (isFirst) queue.pushNext(command);
       else queue.push(command);
@@ -282,7 +283,8 @@ export function useCommandQueue(env: CommandEnv, describePending: DescribePendin
       env.start({ ...pending, id });
       put({ id, kind, isGlobal: pending.isGlobal, payload, unitIds: pending.unitIds });
     }
-    if (!live.current.isMounted) pump();
+    // 비어 있던 줄이면 누른 그 자리에서 보낸다 - 커밋을 한 번 더 기다리지도, 그리지도 않게. 떠난 화면은 커밋이 없다
+    if (wasIdle || !live.current.isMounted) pump();
   }
 
   return {

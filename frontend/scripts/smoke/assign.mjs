@@ -3929,6 +3929,209 @@ await runStep("assign: a held Join shows the Joining pill and the shimmer at onc
   check("two undos return to the original sentence", (await readIds()).length === before);
 });
 
+// 명령 큐(Assign 피드백 2차 A1, 설계 2026-11-25-split-first 6-1) - 저장이 느려도 누른 글쇠는 하나도 사라지지 않고 누른 차례대로 저장되며, 누르는 즉시
+// 다음 박스로 간다. 합치기 뒤의 글쇠는 합친 박스에 떨어지고, 실패하면 뒤가 멈춰 알린다. 장면마다 그 문서의 배정을 비우고 새로 연다
+await runStep("assign: keys pressed during a slow save are kept in order", { allowConsoleErrors: true }, async ({ page, takeShot }) => {
+  const api = `${BASE}/api/bundles/${freshBundleId}`;
+  const headers = { "X-Dev-User": "qa.member" };
+  const getJson = async (path) => (await page.request.get(`${api}${path}`, { headers })).json();
+  const SAVE_URL = /\/api\/bundles\/\d+\/groups\/save$/;
+  const EDIT_URL = /\/api\/bundles\/\d+\/documents\/\d+\/edits$/;
+  // 짝 없는 문장 · 제목이 열 개 넘게 이어진 Old 문서 - 박스 하나가 줄 하나라 차례를 세기 쉽다
+  const readBoxes = async (docId) => {
+    const view = await getJson(`/documents/${docId}/view`);
+    const body = new Set(view.blocks.filter((block) => block.part === "body").map((block) => block.id));
+    return view.units.filter((item) => item.group_unit_id === null && !item.noise_kind && body.has(item.block_id)).sort((a, b) => a.pos_seq - b.pos_seq || (a.spans[0]?.[1] ?? 0) - (b.spans[0]?.[1] ?? 0));
+  };
+  let doc = null;
+  let boxes = [];
+  for (const candidate of (await getJson("/documents")).filter((item) => item.side === "old" && item.status === "ready")) {
+    const found = await readBoxes(candidate.id);
+    if (found.length < 10 || !found.every((item) => ["sentence", "heading"].includes(item.kind) && item.pair_id === null && item.status === "unassigned" && !item.ref)) continue;
+    doc = candidate;
+    boxes = found;
+    break;
+  }
+  check("the fresh bundle has a document of ten plain unassigned boxes", doc !== null);
+  if (doc === null) return;
+  const ids = boxes.map((item) => item.id);
+  const readDeleted = async () => (await getJson(`/units?limit=1000&offset=0&document_id=${doc.id}`)).items.filter((item) => item.status === "confirmed" && item.decision.disposition === "delete").map((item) => item.unit_id);
+  const waitDeleted = async (expected) => {
+    let now = [];
+    for (let tries = 0; tries < 80; tries += 1) {
+      now = await readDeleted();
+      if (now.length === expected.length && expected.every((id) => now.includes(id))) return true;
+      await page.waitForTimeout(250);
+    }
+    console.log(`      deleted ${JSON.stringify(now)}, expected ${JSON.stringify(expected)}`);
+    return false;
+  };
+  const stripOf = (unitId) => page.locator(`.strip[data-testid="assign-paper-piece-${unitId}"]`);
+  /** 그 박스가 골라질 때까지 걸린 시간(ms) - 안 되면 null */
+  const timePick = async (unitId, limit) => {
+    const from = Date.now();
+    const isPicked = await page.waitForFunction((id) => document.querySelector(`.strip[data-testid="assign-paper-piece-${id}"]`)?.hasAttribute("data-sel") ?? false, unitId, { timeout: limit, polling: "raf" }).then(() => true, () => false);
+    return isPicked ? Date.now() - from : null;
+  };
+  // 배정을 비우고 화면을 새로 열어 그 박스를 고른다
+  const reopen = async (unitId) => {
+    await page.unrouteAll({ behavior: "wait" });
+    await page.request.post(`${api}/decisions/reset`, { headers, data: { revision: (await getJson("")).revision, document_id: doc.id } });
+    await page.goto(`${BASE}/bundles/${freshBundleId}/assign`);
+    await wait(page, "assign-bar");
+    await page.locator('[data-testid="assign-old-doc"]').click();
+    await page.locator(`[data-testid="assign-old-doc-option-${doc.id}"]`).click();
+    await stripOf(unitId).waitFor({ timeout: T });
+    await stripOf(unitId).click();
+    await stripOf(unitId).and(page.locator("[data-sel]")).waitFor({ timeout: T });
+    await page.waitForLoadState("networkidle");
+  };
+  const slowSaves = () => page.route(SAVE_URL, async (route) => {
+    await new Promise((done) => setTimeout(done, 800));
+    await route.continue();
+  });
+
+  // 1. Delete · j · Delete - 첫째는 저장 중, 둘째는 대기 칩, 고름은 누르는 즉시, 다시 읽기는 끝에 한 번
+  await reopen(ids[0]);
+  await slowSaves();
+  let unitReads = 0;
+  const countReads = (request) => {
+    if (request.method() === "GET" && new URL(request.url()).pathname.endsWith(`/bundles/${freshBundleId}/units`)) unitReads += 1;
+  };
+  page.on("request", countReads);
+  const times = [];
+  await page.keyboard.press("Delete");
+  times.push(await timePick(ids[1], 300));
+  await page.keyboard.press("j");
+  times.push(await timePick(ids[2], 300));
+  await page.keyboard.press("Delete");
+  times.push(await timePick(ids[3], 300));
+  check("each press moves the pick within 300ms while the save is slow", times.every((ms) => ms !== null), JSON.stringify(times));
+  const marks = await page.evaluate(([first, second]) => ({
+    first: document.querySelector(`[data-testid="assign-paper-piece-${first}"]`)?.hasAttribute("data-pending") ?? null,
+    second: document.querySelector(`[data-testid="assign-paper-piece-${second}"]`)?.hasAttribute("data-pending") ?? null,
+    chip: document.querySelector(`[data-testid="assign-queue-${second}"]`)?.textContent ?? null,
+    firstChip: document.querySelector(`[data-testid="assign-queue-${first}"]`) !== null,
+  }), [ids[0], ids[2]]);
+  check("the first box is pending and the second one waits with a Queued chip", marks.first === true && marks.second === true && marks.chip === "Queued 1" && !marks.firstChip, JSON.stringify(marks));
+  await takeShot("sop-assign-queue.png");
+  check("both boxes are deleted, the one between is not", await waitDeleted([ids[0], ids[2]]));
+  await page.waitForFunction(() => document.querySelector('[data-pane="old"] [data-pending]') === null, null, { timeout: T });
+  await page.waitForLoadState("networkidle");
+  check("the rows are read again only once", unitReads === 1, String(unitReads));
+  page.off("request", countReads);
+
+  // 2. Delete 다섯 번을 0.15초마다 - 전에는 둘만 지워졌다
+  await reopen(ids[0]);
+  await slowSaves();
+  for (let count = 0; count < 5; count += 1) {
+    await page.keyboard.press("Delete");
+    await page.waitForTimeout(150);
+  }
+  check("five Deletes 150ms apart delete five boxes", await waitDeleted(ids.slice(0, 5)));
+  check("the pick is on the sixth box", (await timePick(ids[5], T)) !== null);
+
+  // 3. 합치기를 누르고 응답 전에 Delete - 합친 박스가 지워진다. 문장 하나를 먼저 둘로 나눈다(원래 모양으로 되돌린다)
+  const whole = boxes.find((item) => item.kind === "sentence" && item.text.trim().split(" ").length >= 4);
+  check("the document has a sentence long enough to cut", whole !== undefined);
+  if (whole !== undefined) {
+    await reopen(whole.id);
+    const before = (await readBoxes(doc.id)).map((item) => item.id);
+    const waitBoxes = async (count) => {
+      for (let tries = 0; tries < 60; tries += 1) {
+        const now = await readBoxes(doc.id);
+        if (now.length === count) return now;
+        await page.waitForTimeout(250);
+      }
+      return null;
+    };
+    await stripOf(whole.id).click({ button: "right" });
+    await wait(page, "assign-ctx-split");
+    await page.locator('[data-testid="assign-ctx-split"]').click();
+    await wait(page, "assign-cut-run");
+    await page.locator('[data-testid="assign-cut-run"]').click();
+    const halves = ((await waitBoxes(before.length + 1)) ?? []).filter((item) => !before.includes(item.id));
+    check("the sentence is cut in two", halves.length === 2);
+    if (halves.length === 2) {
+      await stripOf(halves[0].id).and(page.locator("[data-sel]")).waitFor({ timeout: T });
+      const join = page.locator(`[data-testid="assign-paper-join-${halves[0].id}-${halves[1].id}"]`);
+      await join.waitFor({ state: "attached", timeout: T });
+      await page.waitForLoadState("networkidle");
+      await page.waitForFunction(() => { const acts = document.querySelector(".strip-acts[data-open]"); return acts === null || acts.getAnimations().length === 0; }, null, { timeout: T });
+      await page.locator(".strip-gap", { has: join }).hover({ position: { x: 200, y: 2 } });
+      await page.waitForFunction(() => [...document.querySelectorAll(".strip-gap:hover .strip-merge")].some((el) => getComputedStyle(el).pointerEvents === "auto"), null, { timeout: T });
+      await page.route(EDIT_URL, async (route) => {
+        await new Promise((done) => setTimeout(done, 800));
+        await route.continue();
+      });
+      await join.click();
+      await page.locator('[data-testid="assign-paper-pending"][data-kind="join"]').waitFor({ timeout: T });
+      await page.keyboard.press("Delete");
+      check("Delete pressed during the join does not move the pick yet", (await stripOf(halves[0].id).getAttribute("data-sel")) === "");
+      const joined = ((await waitBoxes(before.length)) ?? []).find((item) => !before.includes(item.id));
+      check("the joined box is the one deleted", joined !== undefined && (await waitDeleted([joined.id])));
+      // 삭제 → 붙이기 → 자르기 차례로 되돌려 처음 문장으로
+      await page.unrouteAll({ behavior: "wait" });
+      await page.waitForLoadState("networkidle");
+      for (let count = 0; count < 3; count += 1) {
+        await page.locator('[data-testid="assign-undo"]:not([disabled])').click();
+        await page.waitForLoadState("networkidle");
+      }
+      const restored = (await waitBoxes(before.length)) ?? [];
+      check("three undos return to the original sentence", restored.map((item) => item.id).join(",") === before.join(",") && (await readDeleted()).length === 0);
+    }
+  }
+
+  // 4. 둘째 저장이 500 - 셋째는 나가지 않고 알림. 다시 시도로 끝까지, 다시 500이면 버리기로 빈다
+  await reopen(ids[0]);
+  let saves = 0;
+  let failing = 2;
+  await page.route(SAVE_URL, async (route) => {
+    saves += 1;
+    if (saves === failing) return route.fulfill({ status: 500, body: "smoke" });
+    await new Promise((done) => setTimeout(done, 300));
+    return route.continue();
+  });
+  for (let count = 0; count < 3; count += 1) await page.keyboard.press("Delete");
+  const failed = page.locator('[data-testid="assign-queue-failed"]');
+  await failed.waitFor({ timeout: T });
+  await page.waitForTimeout(800);
+  const note = (await getText(page, "assign-queue-failed-text")).trim();
+  check("after the second save fails the third is not sent and the notice says what stopped", saves === 2 && note.includes("Delete failed on box") && note.includes(boxes[1].display_id) && note.includes("1 queued actions paused"), `${saves} saves, ${note}`);
+  const halted = await page.evaluate(([second, third]) => [
+    document.querySelector(`[data-testid="assign-paper-piece-${second}"]`)?.hasAttribute("data-pending") ?? null,
+    document.querySelector(`[data-testid="assign-queue-${third}"]`) !== null,
+  ], [ids[1], ids[2]]);
+  check("the failed box is no longer pending and the third one still waits", halted[0] === false && halted[1] === true, JSON.stringify(halted));
+  await takeShot("sop-assign-queue-failed.png");
+  await page.locator('[data-testid="assign-queue-retry"]').click();
+  check("Retry sends the failed one and the rest", await waitDeleted(ids.slice(0, 3)));
+  check("the notice is gone", (await failed.count()) === 0);
+  saves = 0;
+  failing = 1;
+  await stripOf(ids[5]).click();
+  await stripOf(ids[5]).and(page.locator("[data-sel]")).waitFor({ timeout: T });
+  await page.keyboard.press("Delete");
+  await page.keyboard.press("Delete");
+  await failed.waitFor({ timeout: T });
+  await page.locator('[data-testid="assign-queue-discard"]').click();
+  await failed.waitFor({ state: "detached", timeout: T });
+  await page.waitForTimeout(800);
+  check("Discard empties the line and deletes nothing more", saves === 1 && (await page.locator('[data-testid^="assign-queue-"]').count()) === 0 && (await waitDeleted(ids.slice(0, 3))), String(saves));
+
+  // 5. Delete 바로 뒤 Ctrl+Z - 삭제가 저장된 뒤 되돌려진다
+  await reopen(ids[0]);
+  await slowSaves();
+  const undone = page.waitForResponse((response) => response.url().includes("/decisions/undo"), { timeout: T });
+  await page.keyboard.press("Delete");
+  await page.keyboard.press("ControlOrMeta+z");
+  check("Ctrl+Z right after Delete waits for that save and undoes it", (await undone).status() === 200 && (await waitDeleted([])));
+
+  await page.unrouteAll({ behavior: "wait" });
+  await page.request.post(`${api}/decisions/reset`, { headers, data: { revision: (await getJson("")).revision, document_id: doc.id } });
+  check("the document is clean again", (await readDeleted()).length === 0);
+});
+
 // 배정 화면에서 고른 글자로 새 Unit 만들기(전에는 쪼개기 화면에서만 했다) - 끌어 고르면 용지 위에 줄이 뜨고, 만들고, 되돌린다
 await runStep("assign: make a unit from a dragged selection, then undo", {}, async ({ page, takeShot }) => {
   await page.goto(`${BASE}/`);
