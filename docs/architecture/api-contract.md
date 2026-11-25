@@ -12,7 +12,7 @@
 | `POST /translate` | `{direction: "ko_to_en"\|"en_to_ko"}` + `document_id` 또는 `unit_ids` | `AiRequestOut` |
 | `POST /match` | `{}` | `AiRequestOut` |
 | `POST /pair` | `{document_id}` | `AiRequestOut` |
-| `POST /prepare` | `{document_id?}`(지금 열어 본 Old 문서, 먼저 분류) | `AiRequestOut` — `queued`는 분류 작업 수만(계획은 세지 않음), `skipped`는 늘 빈 목록 |
+| `POST /prepare` | `{document_id?}`(지금 열어 본 Old 문서, 먼저 분류) | `AiRequestOut` — `queued`는 분류 작업 수만(계획은 세지 않음), `skipped`는 늘 빈 목록. 자동 칸 추천을 숨긴 동안(`AUTO_CLASSIFY`) `queued`는 늘 0이다 |
 | `POST /split` | `{document_id}` 또는 `{unit_ids}` | `AiRequestOut` |
 | `GET /status` | | `AiStatusOut` |
 | `POST /cancel` | `{kind?}` | `{cancelled}` |

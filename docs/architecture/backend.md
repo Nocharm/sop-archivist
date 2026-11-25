@@ -178,6 +178,7 @@ AI 없이 사람이 끝까지 가는 결정적 경로(계획 1). AI 층은 아�
   | `prepare`(배정 화면 첫 진입) | 같은 규칙 | 쓰지 않는다 |
   | `upload`(파일 읽기 끝) | **새로 쓰지 않는다** — 목록이 덜 찼을 수 있다 | 쓰지 않는다 |
 
+- **숨긴 동안(`ai/constants.py` `PLAN_DELETES = False`, 쪼개기 먼저 설계 §5 H4)**: 어느 `origin`도 삭제 후보를 새로 쓰지 않는다(표의 삭제 후보 칸은 켰을 때의 규칙). 이미 있는 삭제 후보는 배정 New 문서의 유무와 상관없이 같은 제안 id로 남고, 짝을 얻으면 걷힌다.
 - `upload`의 삭제 후보는 "새로 쓰지 않을" 뿐이다. 그대로 비교는 삭제 후보를 `origin`과 상관없이 지금 규칙이 쓸 것과 견준다 — 지금 규칙으로도 삭제 후보인 살아 있는 제안은 같은 제안 id로 남고, 짝을 얻었거나 배정 New 문서가 생겨 규칙이 달라졌으면 보통처럼 걷는다(걷은 뒤 새 삭제 후보는 쓰지 않는다).
 - 저절로 선 계획(`upload`·`prepare`)은 사람이 버린(채택 `rejected`) 짝 맞추기 제안과 `(모양, 단위, 새 문장)`이 같은 묶음을 쓰지도 걷지도 않고 그 줄을 그대로 둔다 — **Match**(`user`)는 다시 쓴다.
 
@@ -194,7 +195,7 @@ AI 없이 사람이 끝까지 가는 결정적 경로(계획 1). AI 층은 아�
 
 1. 설정이 꺼져 있으면 0건.
 2. 이미 쓴 New가 있고 `origin`이 `prepare`·`user`(키 없음 포함)인 `match_plan` 행이 상태와 상관없이 없으면 `enqueue_auto_plan(origin=prepare)`.
-3. 배정 New 문서가 없으면 분류 없음.
+3. 자동 칸 추천을 숨긴 동안(`ai/constants.py` `AUTO_CLASSIFY = False`)이거나 배정 New 문서가 없으면 분류 없음. 숨긴 동안은 계획(`match_jobs._load_old_entries`)도 살아 있는 분류 제안을 보지 않는다 — 사람이 치울 길이 없는 제안이 묶기를 막지 않게. 사람이 누른 요청 API(`POST /ai/classify`)는 그대로다.
 4. 읽힌 Old 문서 가운데 `background` 분류 행이 한 번도 없던 문서(열어 본 문서 먼저, 나머지는 문서 id 순)마다 `select_classify_items`로 골라 `AI_PRIORITY_PRE_CLASSIFY`·`background`로, 글이 똑같은 1:1 후보(`list_identical_candidates`, 짝이면 줄 전체)를 빼고 한 `request_id`로 쌓는다.
 
 - 응답 `queued`는 분류 작업만 세고 `ai.request` 기록은 남기지 않는다.
@@ -343,6 +344,7 @@ AI 없이 사람이 끝까지 가는 결정적 경로(계획 1). AI 층은 아�
 ### 12.19 결과물 `outputs.py`
 
 - A·B·C·요약 숫자는 스냅숏(`snapshot.py`)만 받는 순수 함수이고 보낸 곳·칸 순서·신규 판정은 한 벌이다.
+- Excel C 시트는 `sheet_model.SHOW_C_SHEET = False`로 숨겨 두었다(시트 넷, 짓는 코드는 남는다) — 시트 이름은 `get_sheet_names()`, `SHEET_NAMES` 다섯은 자리 번호로 읽는다.
 - Excel·미리보기의 시트 모델(`sheet_model.py`)은 이 결과를 옮겨 쓰기만 하고(`excel_export.py`는 그 모델을 xlsx로 쓴다), 검토 조건(`review.py`)은 `outputs.build_review_facts`의 단위 재료를 쓴다 — 같은 규칙을 다시 계산하지 않는다.
 - 결과물은 한 벌이고(`?lang=`은 라벨 언어만) 옛 쪽 줄은 `output_rows.build_meaning_rows` 하나, 미리보기와 xlsx는 같은 시트 모델이라 칸 글·모양 판정은 `sheet_model.py`에만 둔다(쓰는 쪽에서 새로 정하면 미리보기와 파일이 어긋난다).
 - 섹션 번호 규칙 `outputs.number_lines`는 프런트 `section-number.numberLines`가 C 순서 바꾸기의 미리 세기에 사본으로 쓰고(직접 놓인 줄을 세지 않는 칸은 문서 골격 사본이 정한다 — `outline.DocOutline.counts_lines` 한 곳, 프런트는 절 응답의 `counts_lines`를 읽을 뿐 다시 정하지 않는다).
