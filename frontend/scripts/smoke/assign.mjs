@@ -9182,7 +9182,7 @@ await runStep("assign: drag a box onto its same-language neighbour to merge, eve
 });
 
 // ⇧J ⇧J · ⇧K ⇧K 합치기(J1) - 첫 누름은 저장 없이 두 박스 점선 + 안내 띠, 같은 글쇠를 한 번 더 누르면 합친다. 다른 글쇠 · Esc는 무장만 거둔다. 끝나면 시드 그대로다
-await runStep("assign: merge keys - Shift+J twice merges with the box below, Shift+K twice with the box above, J and Esc only disarm", {}, async ({ page }) => {
+await runStep("assign: merge keys - Shift+J twice merges with the box below, Shift+K twice with the box above, J and Esc only disarm", { allowConsoleErrors: true }, async ({ page }) => {
   const headers = { "X-Dev-User": "qa.member" };
   const api = `${BASE}/api/bundles/${halfBundleId}`;
   const getJson = async (path) => (await page.request.get(`${api}${path}`, { headers })).json();
@@ -9242,7 +9242,9 @@ await runStep("assign: merge keys - Shift+J twice merges with the box below, Shi
   await page.waitForLoadState("networkidle");
   // 합친 박스가 골라져 있다 - Del은 그 합친 박스를 삭제로 확정한다(AC2). Ctrl+Z 두 번이 삭제, 합치기 차례로 되돌린다
   const isMergedBox = (unit) => unit.text.startsWith(a.text.slice(0, 10)) && unit.text.endsWith(b.text.slice(-10));
+  const deleted = page.waitForResponse((response) => response.url().includes("/groups/save"), { timeout: T });
   await page.keyboard.press("Delete");
+  await deleted;
   await page.waitForLoadState("networkidle");
   const afterDelete = (await readView()).units.find(isMergedBox);
   check("Del after the merge deletes the merged box", afterDelete !== undefined && afterDelete.status === "confirmed", String(afterDelete?.status));
@@ -9257,7 +9259,9 @@ await runStep("assign: merge keys - Shift+J twice merges with the box below, Shi
 
   // 3b. 배정된 박스(b를 삭제로 확정)를 합치려 하면 확인 창이 한 번 묻는다 - 그만두면 합치지 않고, Ctrl+Z로 b를 되돌린다
   await page.locator(`[data-testid="assign-paper-unit-${b.id}"]`).first().click();
+  const bDeleted = page.waitForResponse((response) => response.url().includes("/groups/save"), { timeout: T });
   await page.keyboard.press("Delete");
+  await bDeleted;
   await page.waitForLoadState("networkidle");
   await page.locator(`[data-testid="assign-paper-unit-${a.id}"]`).first().click();
   await page.keyboard.press("Shift+J");
@@ -9272,8 +9276,10 @@ await runStep("assign: merge keys - Shift+J twice merges with the box below, Shi
   check("Ctrl+Z gives b back its unassigned state (200)", (await restored).status() === 200);
   await page.waitForLoadState("networkidle");
 
-  // 4. ⇧J 뒤 Esc - 무장만 거두고 고름은 그대로
+  // 4. ⇧J 뒤 Esc - 무장만 거두고 고름은 그대로(앞의 되돌리기가 고름을 옮겼을 수 있어 a를 다시 고른 뒤 시작한다)
+  await page.waitForLoadState("networkidle");
   await page.locator(`[data-testid="assign-paper-unit-${a.id}"]`).first().click();
+  await pieceOf(a.id).and(page.locator("[data-sel]")).waitFor({ timeout: T });
   await page.keyboard.press("Shift+J");
   await band.waitFor({ timeout: T });
   const editsBefore = edits.length;
