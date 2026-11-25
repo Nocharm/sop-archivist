@@ -34,7 +34,7 @@ export function useAssignFocus() {
     dispatch({ type: "start", pending });
   }
 
-  /** 응답이 왔다 - 고름이 누른 때 그대로면 그 박스를 따라간다(보기를 다시 받은 뒤 고른다). 일은 end까지 처리 중으로 남는다 */
+  /** 응답이 왔다 - 고름이 누른 때 그대로이고 그 사이 사람이 고르지 않았으면 그 박스를 따라간다(보기를 다시 받은 뒤 고른다). 일은 end까지 처리 중으로 남는다 */
   function succeed(pendingId: string, target: FollowTarget) {
     dispatch({ type: "succeed", pendingId, ...target });
   }

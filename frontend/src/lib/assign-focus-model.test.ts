@@ -86,6 +86,20 @@ describe("follow (rule 3)", () => {
     expect(state.follows).toEqual([]);
     expect(reduceFocus(state, loaded([doc(1, 5, [8, 10])])).focus).toEqual(unit(8));
   });
+  it("drops the follow when someone picks the same box again after the response - they chose it after the work (Del → Undo → click)", () => {
+    const state = run(pick(unit(3)), start(job("u", { kind: "undo", isGlobal: true })), succeed("u", 10, { docId: null, revision: null }), pick(unit(3)));
+    expect(state.follows).toEqual([]);
+    expect(reduceFocus(state, loaded([doc(1, 9, [3, 10])])).focus).toEqual(unit(3));
+  });
+  it("does not follow when someone picked the same box again before the response", () => {
+    const state = run(pick(unit(3)), start(job("u", { kind: "undo", isGlobal: true })), pick(unit(3)), succeed("u", 10, { docId: null, revision: null }));
+    expect(state.follows).toEqual([]);
+    expect(reduceFocus(state, loaded([doc(1, 9, [3, 10])])).focus).toEqual(unit(3));
+  });
+  it("still follows work pressed after the pick", () => {
+    const state = run(pick(unit(3)), start(job("a")), pick(unit(3)), start(job("b")), succeed("b", 10), loaded([doc(1, 5, [3, 10])]));
+    expect(state.focus).toEqual(unit(10));
+  });
   it("keeps the focus when the response names no box", () => {
     const state = run(pick(unit(3)), start(job("a")), succeed("a", null), loaded([doc(1, 5, [3])]));
     expect(state.focus).toEqual(unit(3));

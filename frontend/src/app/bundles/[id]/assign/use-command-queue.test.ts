@@ -178,6 +178,16 @@ function createScreen() {
           isReloadAsked = true;
         });
         focusCtl.pick(unit(focusedId + 1));
+      } else if (name === "x") {
+        // Del - 판단 저장이라 박스는 그대로지만 되돌리기 기록에 남는다(되돌리면 그 박스로 따라간다)
+        const deletedId = focusedId;
+        enqueue("save", `delete ${deletedId}`, [deletedId], async () => {
+          log.push(`delete ${deletedId}`);
+          await hold(responses);
+          steps.push({ retired: deletedId, made: -1 });
+          isReloadAsked = true;
+        });
+        focusCtl.pick(unit(deletedId + 1));
       } else if (name === "m") {
         enqueue("join", `join ${focusedId}`, [focusedId], async (ctx) => {
           log.push(`join ${focusedId}${ctx.isRetry ? " again" : ""}`);
@@ -442,6 +452,38 @@ describe("a barrier (A1-R3, AC2)", () => {
     expect(screen.log).toEqual(["delete 1"]);
     await drain(screen);
     expect(screen.log).toEqual(["delete 1", "undo"]);
+  });
+});
+
+describe("a pick made while Undo's view loads (3b - the pick stays while work runs)", () => {
+  it("keeps a click on another row - Undo's late follow does not pull the pick back", async () => {
+    const screen = await open();
+    await press(screen, "x");
+    await drain(screen);
+    await press(screen, "undo");
+    await screen.respond(); // 되돌리기 응답 - 따라가기는 새 보기를 기다린다
+    await click(screen, 5);
+    await drain(screen);
+    expect(screen.focus).toEqual(unit(5));
+  });
+  it("keeps a click on the row that was already picked - the person chose it after Undo", async () => {
+    const screen = await open();
+    await press(screen, "x");
+    await drain(screen);
+    expect(screen.focus).toEqual(unit(2));
+    await press(screen, "undo");
+    await screen.respond();
+    await click(screen, 2);
+    await drain(screen);
+    expect(screen.focus).toEqual(unit(2));
+  });
+  it("still picks the undone row when nothing was picked in between", async () => {
+    const screen = await open();
+    await press(screen, "x");
+    await drain(screen);
+    await press(screen, "undo");
+    await drain(screen);
+    expect(screen.focus).toEqual(unit(1));
   });
 });
 
