@@ -23,6 +23,7 @@ from sqlalchemy import Row, delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import clock
+from app.sop.ai.apply import close_unused_suggestions
 from app.sop.captions import CAPTION_KIND
 from app.sop.constants import BULLET_SYMBOLS, MAX_PAIR_SIDE, PAIR_CONFIRMED, PAIR_SOURCE_HUMAN
 from app.sop.counterparts import BODY_PART
@@ -2452,6 +2453,8 @@ async def _write_change(
         await pair_new_units(session, document, activated, actor)
     await session.flush()
     await verify_document_coverage(session, document.id)
+    # 은퇴한 단위를 덮던 분류·묶기 제안은 받을 줄이 없다 — 되돌려도 되살리지 않는다(decision_steps.record_unit_edit_step이 스냅숏에서 뺀다)
+    await close_unused_suggestions(session, document.bundle_id, unit_ids=change.retire, keep_linked=True)
     document.revision += 1
     return EditResult(
         document_revision=document.revision, created_unit_ids=activated, retired_unit_ids=sorted(change.retire),

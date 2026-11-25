@@ -18,6 +18,7 @@ from tests.ai_fixtures import (
     MatchBundle,
     clean_ai_jobs,  # noqa: F401 -- 픽스처는 usefixtures가 이름으로 찾는다
     clean_embedding_cache,  # noqa: F401
+    edit_document,
     find_ids,
     find_kind,
     make_ai_bundle,
@@ -371,3 +372,22 @@ def test_a_reference_line_keeps_its_text_without_the_paragraph_number() -> None:
     (shape,) = build_rewrite_shapes((1, "purpose", None, None), [ref], None)
 
     assert shape.text == "SOP-QA-001 합성 참조"
+
+
+def test_accept_all_never_touches_a_merged_away_row(client: TestClient, fake_ai: FakeAi) -> None:
+    # 합치면 두 줄의 제안이 거둬져(편집이 은퇴시킨 Unit) 미리 보기도 받기도 그 줄을 건드리지 않는다 — 쪼개기 먼저 E3-R4
+    bundle = make_ai_bundle(client)
+    ko_1, ko_2 = find_ids(client, bundle, AI_KO_1, AI_KO_2)
+    use_reply(fake_ai)
+    queue_units(client, bundle.id, [ko_1])
+    run_jobs()
+    queue_units(client, bundle.id, [ko_2])
+    run_jobs()
+    ids = [item["suggestion_id"] for item in preview(client, bundle.id, "classify", bundle.document_id)["items"]]
+    assert len(ids) == 2
+    edit_document(client, bundle.id, bundle.document_id, {"type": "merge", "unit_ids": [ko_1, ko_2]})
+
+    assert preview(client, bundle.id, "classify", bundle.document_id)["items"] == []
+    response = accept(client, bundle.id, "classify", ids)
+    assert (response.status_code, response.json()["accepted"]) == (200, 0), response.text
+    assert [(row.status, row.confirmed_by) for row in read_rows(UnitDecision)] == [("unassigned", None)] * len(read_rows(UnitDecision))

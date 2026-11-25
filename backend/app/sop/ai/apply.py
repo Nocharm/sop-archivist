@@ -95,7 +95,12 @@ def mark_stale(suggestions: Iterable[AiSuggestion]) -> None:
 
 
 async def close_unused_suggestions(
-    session: AsyncSession, bundle_id: int, *, unit_ids: Collection[int] = (), target_ids: Collection[int] = ()
+    session: AsyncSession,
+    bundle_id: int,
+    *,
+    unit_ids: Collection[int] = (),
+    target_ids: Collection[int] = (),
+    keep_linked: bool = False,
 ) -> None:
     """사람이 제안을 받지 않고 확정한 줄의 살아 있는 분류·묶기 제안을 밀어낸다(stale) — 채택은 남기지 않는다(받은 것이 아니다).
 
@@ -106,7 +111,14 @@ async def close_unused_suggestions(
         return
     await session.flush()  # 같은 저장이 방금 남긴 채택이 살아 있는 제안 질의에 보이게
     live = await load_live_suggestions(session, bundle_id, OFFERED_KINDS)
-    mark_stale(find_covering(live, unit_ids=unit_ids, target_ids=target_ids))
+    covering = find_covering(live, unit_ids=unit_ids, target_ids=target_ids)
+    if keep_linked and covering:
+        # 받아 보류한 줄이 가리키는 제안은 그 줄의 확정이 채택을 남길 곳이라 거두지 않는다
+        linked = set(await session.scalars(
+            select(UnitDecision.suggestion_id).where(UnitDecision.suggestion_id.in_([item.id for item in covering]))
+        ))
+        covering = [item for item in covering if item.id not in linked]
+    mark_stale(covering)
 
 
 def add_suggestion(

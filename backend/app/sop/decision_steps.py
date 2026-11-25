@@ -444,6 +444,9 @@ async def record_unit_edit_step(
         return
     await session.flush()
     before, after = diff_states(before_state, await dump_bundle_state(session, bundle.id))
+    # 편집이 거둔 AI 제안(stale)은 단계에 싣지 않는다 - 되돌려도 은퇴한 줄의 제안이 되살아나지 않는다(E3-R2)
+    before.pop("ai_suggestions", None)
+    after.pop("ai_suggestions", None)
     # 편집이 만든 단위의 빈 판단 행은 편집 기록의 몫이다(되돌리면 단위와 함께 은퇴해 남고 다시 하면 그대로 돌아온다) - 찍으면 그 뒤 그 조각을
     # 판단했을 때 confirm_required 대신 undo_conflict가 된다
     for unit_id in edit.created_unit_ids:
