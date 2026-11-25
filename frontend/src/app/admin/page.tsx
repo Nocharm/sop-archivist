@@ -46,11 +46,11 @@ function readSub(value: string | null): AccessSubKey | null {
   return ACCESS_SUBS.find((key) => key === value) ?? null;
 }
 
-function AccessPanel({ sub }: { sub: AccessSubKey }) {
+function AccessPanel({ sub, grantsRole, onOpenGrants }: { sub: AccessSubKey; grantsRole: string; onOpenGrants: (roleId: number) => void }) {
   return (
     <>
-      {sub === "roles" && <AccessRoles />}
-      {sub === "grants" && <AccessGrants />}
+      {sub === "roles" && <AccessRoles onOpenGrants={onOpenGrants} />}
+      {sub === "grants" && <AccessGrants initialRole={grantsRole} />}
       {sub === "audit" && <AccessAudit />}
     </>
   );
@@ -63,6 +63,8 @@ function AdminContent() {
   const searchParams = useSearchParams();
   // 하위 항목은 주소(?sub=)가 정한다 - 다른 탭에 다녀오면 마지막에 본 항목으로 돌아온다
   const [lastSub, setLastSub] = useState<AccessSubKey>(() => readSub(searchParams.get("sub")) ?? "roles");
+  // 부여를 거를 역할(?role=) - 역할 표의 받은 대상에서 넘어올 때만
+  const [grantsRole, setGrantsRole] = useState(() => searchParams.get("role") ?? "");
   const sub = readSub(searchParams.get("sub")) ?? lastSub;
 
   const allowedTabs = ADMIN_TABS.filter((tab) => hasPermission(me, tab.permission));
@@ -83,7 +85,15 @@ function AdminContent() {
   // 권한 하위 항목을 누르면 권한 탭으로 옮기면서 그 항목을 연다
   const selectSub = (key: AccessSubKey) => {
     setLastSub(key);
+    setGrantsRole("");
     selectTab("access", key);
+  };
+
+  // 역할의 받은 대상에서 부여 화면으로 - 그 역할로 거른 채 연다(부여 화면이 주소의 role을 읽는다)
+  const openGrantsOfRole = (roleId: number) => {
+    setLastSub("grants");
+    setGrantsRole(String(roleId));
+    window.history.replaceState(null, "", `/admin?tab=access&sub=grants&role=${roleId}`);
   };
 
   return (
@@ -133,7 +143,7 @@ function AdminContent() {
           role="tabpanel"
           data-testid={`admin-panel-${activeTab.key}`}
         >
-          {activeTab.key === "access" && <AccessPanel sub={sub} />}
+          {activeTab.key === "access" && <AccessPanel sub={sub} grantsRole={grantsRole} onOpenGrants={openGrantsOfRole} />}
           {activeTab.key === "directory" && <HrSyncPanel />}
           {activeTab.key === "batch" && <BatchRunsPanel />}
           {activeTab.key === "ai" && <AiPanel />}
