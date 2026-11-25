@@ -110,6 +110,8 @@ export class CommandRefusal extends Error {}
 /** 화면이 주는 것 - 그 렌더의 값이다 */
 export interface CommandEnv {
   pick(focus: Focus): void;
+  /** 다시 시도가 멈춘 때의 고름을 되살린다(사람의 고름이 아니다) */
+  restore(focus: Focus): void;
   readFocus(): Focus;
   /** 지금 화면에 보이는 판단 revision */
   readSeen(unitIds: readonly number[]): SeenRevisions;
@@ -402,7 +404,7 @@ export function useCommandQueue(env: CommandEnv, describePending: DescribePendin
       const { command } = halted;
       const focus = live.current.haltFocus;
       // 쌓인 글쇠는 멈춘 때의 고름에서 이어진다 - 그 사이 둘러본 박스에 떨어지지 않게
-      if (focus !== null && waiting.some((item) => item.isDeferred) && !isSameFocus(focus, env.readFocus())) env.pick(focus);
+      if (focus !== null && waiting.some((item) => item.isDeferred) && !isSameFocus(focus, env.readFocus())) env.restore(focus);
       if (!isReplay(command.payload)) env.start({ ...describePending(command.payload), id: command.id }, command.payload);
       live.current.retriedIds.add(command.id);
       queue.retry();

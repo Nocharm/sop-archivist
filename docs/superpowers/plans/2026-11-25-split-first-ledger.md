@@ -26,7 +26,7 @@
 | 6-1 | `feat/new-paper-1-render` | 모음 `feat/new-paper`에 합침 | 7dcf645f | vitest 2361 · build 경고 0 · `assign:` 스모크 1233 + 부하에서 흔들린 둘은 혼자 통과 | New 문장은 글쇠만으로 고를 길이 없음(계획 글자대로, 6-2에서 다시) |
 | 6-2 | `feat/new-paper-2-pick` | 진행(11-26) | | | |
 | 6-3 | `feat/new-paper-3-tools` | 대기 | | | |
-| 3b+ | `fix/undo-follow-after-click` | 진행(11-26) | | | 4c 스모크가 찾은 3b 결함: 되돌리기 뒤 다른 줄을 눌러도 늦은 따라가기가 고름을 덮음 |
+| 3b+ | `fix/undo-follow-after-click` | 합침 | v1.6.16 · f1cbc921 | vitest 2297 · build 경고 0 · `assign:` 스모크 1240 + 손질 뒤 5단계 | — |
 | 7 | 계획 4의 일곱 | 대기 | | | |
 | 8 | 계획 5의 아홉 | 진행 | | | 앞선 것에 매이지 않는 `space-preview-trim` · `excel-a-strike` · `progress-by-disposition`부터 |
 
@@ -96,3 +96,4 @@
 - 보류 줄의 ↵: 바꾸자고 제안한 것이 아니라 물은 것이라 지금 동작(첫 카드로 확정) 그대로 둔다. 바꿀 때는 따로 답을 받는다.
 - 성능에 문제가 없으면 하위 에이전트를 둘보다 더 늘려도 된다(스모크는 여전히 한 번에 하나).
 - 맥 시스템 글쇠: Ctrl+←→(탭 넘기기)가 macOS 공간 전환과 겹칠 수 있다(4b, 사내 PC는 Windows라 무관).
+- 6-2의 "승인받을 목록"(계획 3의 179줄: 감사 세 스크립트의 메뉴 장면, New 누름 = 고름, 칸 누르기, `data-state` → `data-sel`)은 처음 허락의 "동작이 바뀌어 따라 바뀌는 같은 성격"으로 보고 진행했다(같은 수의 단계 · 검사).
