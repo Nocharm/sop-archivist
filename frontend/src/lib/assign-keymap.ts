@@ -74,7 +74,6 @@ export const HELP_ONLY: readonly HelpOnlyKey[] = [
   { id: "zoom", presses: ["Ctrl + {wheel}"], labelKey: "assign.help.keyZoom" },
   { id: "sheet", presses: ["{wheel}"], labelKey: "assign.help.keySheet" },
   { id: "context_menu", presses: ["⇧F10"], labelKey: "assign.help.keyContext" },
-  { id: "link_menu", presses: ["↑", "↓", "←", "→"], labelKey: "assign.help.keyMenu" },
   { id: "edit", presses: ["E"], labelKey: "assign.legend.keyEdit", isDraftOnly: true },
 ];
 

@@ -160,7 +160,8 @@ export default function AssignPage() {
   const shownComposed = composedOrder.doc;
   const composedStrips = useMemo(() => (shownComposed ? buildComposedStrips(shownComposed) : null), [shownComposed]);
   // Ctrl+클릭으로 더한 New 박스 - 마지막에 누른 것은 진한 칠과 테(data-sel), 나머지는 여럿 고른 표시
-  const newMates = useMemo(() => (newPick.kind === "unit" && newPick.unitIds.length > 1 ? new Set(newPick.unitIds) : NO_NUMBERS), [newPick]);
+  const { checkedNew } = state;
+  const newMates = useMemo(() => (newPick.kind === "unit" && newPick.unitIds.length > 1 ? new Set(newPick.unitIds) : checkedNew.size > 0 ? checkedNew : NO_NUMBERS), [newPick, checkedNew]);
   if (!ready) {
     return error !== null ? (
       <BundleLoadError error={error} onRetry={reloadAll} testId="assign" />
@@ -369,7 +370,18 @@ export default function AssignPage() {
       </button>
     </div>
   ) : null;
-  const oldBanner = isRightPairPick ? null : (pairBanner ?? captionBanner);
+  // 이을 상대를 기다리는 안내 - 기다리는 쪽 칸 머리 아래(Esc · 그 쪽을 누르면 끝)
+  const linkWaitBanner = (to: "old" | "new") =>
+    state.linkWait === to ? (
+      <div className="flex items-center gap-2 border-b border-line bg-accent-tint px-3 py-1.5 text-xs" role="status" data-testid="assign-link-wait">
+        <Link2 size={14} strokeWidth={1.5} className="flex-none text-ink-2" aria-hidden />
+        <span className="min-w-0 flex-1 text-ink">{t(to === "new" ? "assign.linkWait.new" : "assign.linkWait.old")}</span>
+        <button type="button" className="btn ghost h-7 flex-none" data-testid="assign-link-wait-cancel" onClick={() => state.setLinkWait(null)}>
+          {t("common.cancel")} <kbd>Esc</kbd>
+        </button>
+      </div>
+    ) : null;
+  const oldBanner = linkWaitBanner("old") ?? (isRightPairPick ? null : (pairBanner ?? captionBanner));
   const placeOf = (unitIds: number[]) => {
     const decided = unitIds.map((id) => unitMap.get(id)).find((unit) => unit?.status === "confirmed");
     if (!decided) {
@@ -476,7 +488,7 @@ export default function AssignPage() {
               }
             />
           ) : (
-            <div ref={setPanes} className="assign-panes" data-single={view.single && !isPairView ? "" : undefined} data-pair-view={isPairView ? "" : undefined} style={{ "--split": `${view.split * 100}%` }}>
+            <div ref={setPanes} className="assign-panes" onClick={state.handleBlankClick} data-single={view.single && !isPairView ? "" : undefined} data-pair-view={isPairView ? "" : undefined} style={{ "--split": `${view.split * 100}%` }}>
               {pairColumns ? (
               // Pair view - Old 칸·New 칸·이음 선 자리에 KO 칸 | 세로선 | EN 칸 | 짝 선. 세로선(폭)과 확대(왼쪽 Old 값, 오른쪽 New 값)는 그대로 쓴다
               <>
@@ -793,7 +805,7 @@ export default function AssignPage() {
                           {newAiChip}
                         </>
                       }
-                      banner={isRightPairPick ? pairBanner : newAiBanner}
+                      banner={linkWaitBanner("new") ?? (isRightPairPick ? pairBanner : newAiBanner)}
                       linesOn={view.lines}
                       onToggleLines={() => changeView({ lines: !view.lines })}
                       onWide={newFileId !== null ? () => openSolo(newFileId) : undefined}

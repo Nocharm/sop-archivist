@@ -59,6 +59,7 @@ import { isQueuedKey, isRepeatIgnored, type PressId } from "@/lib/assign-press-m
 import { planPrimary } from "@/lib/primary-model";
 import { isSideFloating } from "@/lib/side-float-model";
 import { readPanelSide } from "@/lib/side-panel-model";
+import { BLANK_STOPS, resolveBlankClick } from "@/lib/blank-click-model";
 import { isUnwrapSuggestionApplicable, isUnwrapSuggestionUnchanged } from "@/lib/unwrap-ai-model";
 import { pickNextBox, type PendingOutcome } from "@/lib/next-box-model";
 import { listExpectedNumbers, listExpectedShifts, readExpectedNumber, readOpShifts, type SentNumber, type SentShifts } from "@/lib/number-arrival-model";
@@ -682,6 +683,8 @@ export function useAssignPage() {
     if (loaded.picked !== null && isSolo) scrollToUnit(loaded.picked.pickUnitId);
   }
   const [checked, setChecked] = useState<Set<string>>(new Set());
+  // New에서 Shift+클릭으로 여럿 고른 박스 - 위쪽 바는 "n줄 고름"만(합치기 · 표 벗기기는 다음 브랜치)
+  const [checkedNew, setCheckedNew] = useState<ReadonlySet<number>>(() => new Set());
   const [selNew, setSelNew] = useState<number | null>(null);
   // 출처 없는 New 문장마다 적는 중인 Remark - 없으면 저장된 값을 보인다
   const [newRemarks, setNewRemarks] = useState<Record<number, string>>({});
@@ -2494,7 +2497,7 @@ export function useAssignPage() {
     canEdit: canEdit && !isPairView,
     mode,
     isPicking: pairSource !== null || captionPickBundle !== null,
-    isMultiPick: checked.size > 0,
+    isMultiPick: checked.size > 0 || checkedNew.size > 0,
     isCell: hasSolo && newUnitId !== null && newBoxes.get(newUnitId)?.kind === "cell",
     last: isSolo ? (newUnitId !== null ? "new" : null) : panel.side,
     act: picks.act,
@@ -2678,6 +2681,35 @@ export function useAssignPage() {
     if (to === "new" && view.single) changeView({ single: false });
     if (to === "old" && isSolo) setSoloDocId(null);
     setLinkWait(to);
+  }
+
+  /** 두 용지의 빈 곳을 누름(.assign-panes의 누르기 하나) - 선 → 고르는 중 → 고름 전부 차례로 거둔다. 초안 · 사유는 그 줄에 남는다 */
+  function handleBlankClick(event: MouseEvent<HTMLElement>) {
+    if (!isMousePress(event) || !(event.target instanceof Element)) return;
+    const body = event.target.closest<HTMLElement>(".pane-body");
+    // 스크롤 막대 - 누른 x가 칸의 글 폭(clientWidth) 밖
+    const isScrollbar = body !== null && event.clientX - body.getBoundingClientRect().left > body.clientWidth;
+    const action = resolveBlankClick({
+      isSheetArea: body !== null && !isScrollbar,
+      isOnBox: event.target.closest(BLANK_STOPS) !== null,
+      hasTextSelection: !(window.getSelection()?.isCollapsed ?? true),
+      isDragging: document.querySelector("[data-drag-src]") !== null,
+      hasCut: cutLine.at !== null || composedCut !== null,
+      isPicking: pairSource !== null || captionPickBundle !== null || linkWait !== null,
+    });
+    if (action === "clear_cut") {
+      cutLine.clear();
+      setComposedCutAt(null);
+    } else if (action === "end_mode") {
+      setPairFrom(null);
+      setCaptionPick(null);
+      setLinkWait(null);
+    } else if (action === "clear_all") {
+      focusCtl.clear("all");
+      setChecked(new Set());
+      setCheckedNew(new Set());
+      setCtxMenu(null);
+    }
   }
 
   /** 그 박스 아래의 단추 줄 - 마지막에 누른 쪽 용지의 그 박스에만 */
@@ -3331,6 +3363,15 @@ export function useAssignPage() {
       pickCaptionUnit(unitId);
       return;
     }
+    if (shiftKey && canEdit) {
+      setCheckedNew((prev) => {
+        const next = new Set(prev);
+        if (!next.delete(unitId)) next.add(unitId);
+        return next;
+      });
+      return;
+    }
+    setCheckedNew(new Set());
     if (mode === "unsourced" && targetId !== null) setSelNew(targetId);
     if (linkWait === "new") setLinkWait(null);
     selectNewUnit(newDocFile, unitId, additive);
@@ -4236,6 +4277,7 @@ export function useAssignPage() {
     }
     // 처리 중인 박스는 고르지 않는다 - 다른 박스는 그대로 고른다(설계 D4)
     if (isBoxLocked(unitId)) return;
+    if (linkWait === "old") setLinkWait(null);
     // 캡션 줄 고르는 중 - 누른 줄이 그 표·그림의 캡션이 된다(고름은 그대로)
     if (captionPickBundle) {
       pickCaptionUnit(unitId);
@@ -4524,12 +4566,16 @@ export function useAssignPage() {
         moveRow(id === "move_next" ? 1 : -1);
         return true;
       case "escape":
-        // AI 순서 미리보기부터 거두고(Keep as is), 나눌 선이 있으면 선을 거둔다(Split과 같다)
-        if (orderPreview !== null) unwrapAi.onKeep(orderPreview.tableId, orderPreview.isSame);
+        // 이을 상대 기다리기를 먼저, 그다음 AI 순서 미리보기(Keep as is), 나눌 선이 있으면 선을 거둔다(Split과 같다)
+        if (linkWait !== null) setLinkWait(null);
+        else if (orderPreview !== null) unwrapAi.onKeep(orderPreview.tableId, orderPreview.isSame);
         else if (composedCut) setComposedCutAt(null);
         else if (cutLine.at !== null) cutLine.clear();
         else if (isNewShown && !isSolo) focusCtl.clear("new");
-        else setChecked(new Set());
+        else {
+          setChecked(new Set());
+          setCheckedNew(new Set());
+        }
         return true;
       case "view":
         // Pair view 동안은 보기를 바꾸지 않고 Pair view만 끈다 - 켜기 전 보기로 돌아간다
@@ -4775,7 +4821,7 @@ export function useAssignPage() {
     rewrapTable, unwrapAi, describeEditConfirm, pairGrip, clearNoise, openNoiseReason, confirmNoiseReason, closeNoiseReason, noisePick, runCaptionRefChange, switchShapeMode, switchToPair,
     applySplitSuggestion, dismissSplitSuggestion, splitPendingIds, readPendingItem, selectNextSplit, selectNextRef, selectNextCaption,
     splitAtCut, handleOldDoubleClick, runCtx, runUnitAction, revertHeadings, planJoinIn, joinIn, renderOldActions, readReasonNeed,
-    runSave, runClear, runUndoStep, confirmIdenticalAll, acceptAll, markNew, placeManage, pickDestination, pickNewSentence, pressNewBox, showNewDoc, jump, unlinkCell, pickBar, renderPickBar, linkWait, setLinkWait, pressEnter, primaryLink, primaryLinkLabel,
+    runSave, runClear, runUndoStep, confirmIdenticalAll, acceptAll, markNew, placeManage, pickDestination, pickNewSentence, pressNewBox, showNewDoc, jump, unlinkCell, pickBar, renderPickBar, linkWait, setLinkWait, handleBlankClick, checkedNew, setCheckedNew, pressEnter, primaryLink, primaryLinkLabel,
     handleJoinPick, readJoinAfter, pickJoinMenu, pickPlaceSpot, pickOwnAiLine, jumpToNew, openNewDoc, showInNew, jumpToOld,
     pickTemplateLine, fillTemplateMissing, isTemplateDrag, isOldDrag, finishPairPick, handleOldClick, handlePrimary, startEdit,
     pickRecommendation, handleFramePress, primaryPlan, markRecHover, revealPick, setRevealPick, done, renderPlaceLabel, listDestinationEls,
