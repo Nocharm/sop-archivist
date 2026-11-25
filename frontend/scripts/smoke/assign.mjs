@@ -2893,6 +2893,12 @@ await runStep("assign: front matter - folded blocks with buttons, U and R on a l
   await pickTitle();
   await takeShot("sop-assign-front-matter.png");
   // Del은 삭제된 줄에서 아무것도 하지 않고, U는 그 줄만 삭제 취소
+  let saves = 0;
+  page.on("request", (item) => {
+    if (item.url().includes("/groups/save")) saves += 1;
+  });
+  check("the deleted line's Confirm is the blocked confirm button", (await page.locator('[data-testid="assign-primary"]').getAttribute("data-state")) === "blocked" && (await page.locator('[data-testid="assign-primary"]').isDisabled()));
+  await page.keyboard.press("Enter");
   await page.keyboard.press("Delete");
   await page.keyboard.press("u");
   await page.locator(`[data-testid="assign-paper-piece-${front[0].id}"]`).waitFor({ timeout: T });
@@ -2911,6 +2917,30 @@ await runStep("assign: front matter - folded blocks with buttons, U and R on a l
   check("the head says the lines have different reasons", true);
   const rows = await (await page.request.get(`${api}/outputs/a?lang=en`, { headers })).json();
   check("Excel A's Remark is the written reason, the others the set phrase", JSON.stringify(rows.filter((item) => item.noise_kind === "front").map((item) => item.remark)) === JSON.stringify([FRONT_REASON, "Before chapter 1", "Before chapter 1"]));
+  // 보통 줄을 고른 채 블록 줄의 사유 단추를 누르면 그 줄이 골라진다 - 창을 닫고 누른 Enter가 앞서 고른 줄을 확정하지 않는다
+  const bodyLine = before.units.find((unit) => unit.text.startsWith("2."));
+  await page.locator(`[data-testid="assign-paper-piece-${bodyLine.id}"]`).scrollIntoViewIfNeeded();
+  await page.locator(`[data-testid="assign-paper-piece-${bodyLine.id}"]`).click();
+  await wait(page, "assign-row-id");
+  await page.locator(`[data-testid="assign-paper-noise-unit-reason-${front[0].id}"]`).click();
+  await wait(page, "assign-noise-modal");
+  await page.keyboard.press("Escape");
+  await page.locator('[data-testid="assign-noise-modal"]').waitFor({ state: "detached", timeout: T });
+  await wait(page, "assign-noise-panel");
+  await page.keyboard.press("Enter");
+  await page.waitForTimeout(400);
+  check("Enter on a deleted line confirms nothing, also after its buttons were pressed", saves === 0 && (await page.locator('[data-testid="assign-noise-panel"]').count()) === 1, String(saves));
+  // 오른쪽 칸의 사유 단추를 마우스로 눌러 연 창을 닫으면 포커스는 원문이고 Space는 미리보기다
+  await page.locator('[data-testid="assign-noise-reason"]').click();
+  await wait(page, "assign-noise-modal");
+  await page.keyboard.press("Escape");
+  await page.locator('[data-testid="assign-noise-modal"]').waitFor({ state: "detached", timeout: T });
+  await page.waitForFunction(() => document.activeElement?.matches('[data-pane="old"] .pane-body') ?? false, null, { timeout: T });
+  await page.keyboard.press(" ");
+  await wait(page, "assign-space-preview");
+  check("Space previews after the reason window was opened by mouse", (await page.locator('[data-testid="assign-noise-modal"]').count()) === 0);
+  await page.keyboard.press("Escape");
+  await page.locator('[data-testid="assign-space-preview"]').waitFor({ state: "detached", timeout: T });
   // Shift+U - 블록 전체, Ctrl+Z 한 번에 사유까지 돌아온다
   await pickTitle();
   await page.keyboard.press("Shift+U");

@@ -47,6 +47,11 @@ describe("planPrimary", () => {
     expect(planPrimary({ ...base, blockKey: "assign.ref.checkFirst" })).toEqual({ kind: "blocked", reasonKey: "assign.ref.checkFirst" });
   });
 
+  it("does nothing on an automatically deleted line", () => {
+    expect(planPrimary({ ...base, hasRow: false, isDeletedLine: true })).toEqual({ kind: "blocked", reasonKey: "assign.noise.nothing" });
+    expect(planPrimary({ ...base, isDeletedLine: true, destination: LINK, recommendations: [rec(LINK, "ai")], orderPreviewTableId: 7 })).toEqual({ kind: "blocked", reasonKey: "assign.noise.nothing" });
+  });
+
   it("is blocked for a read-only viewer or without a row", () => {
     expect(planPrimary({ ...base, canEdit: false, destination: LINK, orderPreviewTableId: 7 }).kind).toBe("blocked");
     expect(planPrimary({ ...base, hasRow: false, recommendations: [rec(LINK)], orderPreviewTableId: 7 }).kind).toBe("blocked");

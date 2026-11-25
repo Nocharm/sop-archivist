@@ -2414,6 +2414,7 @@ export function useAssignPage() {
   const primaryPlan = planPrimary({
     canEdit,
     hasRow: row !== null,
+    isDeletedLine: noisePick !== null,
     destination,
     recommendations: primaryCards,
     isSuggestedLoading: similar.isLoading && !isSimilarFresh,
@@ -3201,25 +3202,27 @@ export function useAssignPage() {
 
   /**
    * 고르거나 누른 뒤의 포커스 - 글쇠로 눌렀으면 결정 칸의 Confirm, 마우스면 Old 용지로 돌려 Space가 미리보기다(단추에 남으면 그 단추를 다시 누른다).
-   * pressed는 누른 단추 - 그 누름이 연 창 · 글 칸이 포커스를 가져갔으면 두고, 주지 않으면 늘 돌린다
    */
-  function focusAfterPress(isMouse: boolean, pressed: Element | null = null) {
+  function focusAfterPress(isMouse: boolean) {
     requestAnimationFrame(() => {
-      if (!isMouse) {
-        document.querySelector<HTMLElement>('[data-testid="assign-primary"]')?.focus({ preventScroll: true });
-        return;
-      }
-      const active = document.activeElement;
-      if ((pressed !== null && active !== pressed && active !== document.body) || document.querySelector(LAYER_SELECTOR)) return;
-      document.querySelector<HTMLElement>('[data-pane="old"] .pane-body')?.focus({ preventScroll: true });
+      if (!isMouse) document.querySelector<HTMLElement>('[data-testid="assign-primary"]')?.focus({ preventScroll: true });
+      else if (!document.querySelector(LAYER_SELECTOR)) focusPaper();
     });
   }
 
-  /** 오른쪽 칸의 단추를 마우스로 눌렀다 - 메뉴 · 목록을 여는 단추는 그 글쇠가 이어지게 둔다 */
+  function focusPaper() {
+    document.querySelector<HTMLElement>('[data-pane="old"] .pane-body')?.focus({ preventScroll: true });
+  }
+
+  /**
+   * 오른쪽 칸의 단추를 마우스로 눌렀다 - 포커스를 바로 돌린다: 그 누름이 여는 창은 닫힐 때 용지로 돌아오고(연 단추에 남으면 Space가 창을 다시 연다),
+   * 글 칸은 뒤에 포커스를 가져간다. 메뉴 · 목록을 여는 단추는 그 글쇠가 이어지게 둔다
+   */
   function handleSidePress(event: MouseEvent<HTMLElement>) {
     if (!isMousePress(event) || !(event.target instanceof Element) || !event.currentTarget.contains(event.target)) return;
     const pressed = event.target.closest("button, a, [role='button']");
-    if (pressed !== null && !pressed.hasAttribute("aria-haspopup")) focusAfterPress(true, pressed);
+    if (pressed === null || pressed.hasAttribute("aria-haspopup")) return;
+    if (document.activeElement === pressed || document.activeElement === document.body) focusPaper();
   }
 
   /** New 칸의 자리를 누름(클릭 배치, MD 2 S3) - 고르기만 한다. 끌기와 같은 자리 목록의 답으로 보낼 곳과 자리(position)를 정하고, 확정은 Confirm(↵) */

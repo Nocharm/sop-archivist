@@ -11,6 +11,8 @@ export type PrimaryPlan =
 export interface PrimaryInput {
   canEdit: boolean;
   hasRow: boolean;
+  /** 마지막으로 누른 것이 저절로 삭제된 줄이다(쪼개기 먼저 §7 R3) - 확정은 아무것도 하지 않는다 */
+  isDeletedLine?: boolean;
   destination: Destination | null;
   /** Suggested의 카드 - Nearby는 대상이 아니다 */
   recommendations: readonly Recommendation[];
@@ -24,8 +26,9 @@ export interface PrimaryInput {
   orderPreviewTableId: number | null;
 }
 
-export function planPrimary({ canEdit, hasRow, destination, recommendations, isSuggestedLoading = false, isFirstCardUnknown = false, blockKey, orderPreviewTableId }: PrimaryInput): PrimaryPlan {
+export function planPrimary({ canEdit, hasRow, isDeletedLine = false, destination, recommendations, isSuggestedLoading = false, isFirstCardUnknown = false, blockKey, orderPreviewTableId }: PrimaryInput): PrimaryPlan {
   const blocked = (reasonKey: string): PrimaryPlan => ({ kind: "blocked", reasonKey });
+  if (isDeletedLine) return blocked("assign.noise.nothing");
   if (!canEdit || !hasRow) return blocked("assign.primary.pickFirst");
   if (orderPreviewTableId !== null) return { kind: "apply_order", tableId: orderPreviewTableId };
   if (blockKey !== null) return blocked(blockKey);

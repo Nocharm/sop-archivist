@@ -551,7 +551,7 @@ export function AssignSidePanel({ state, headEnd }: { state: AssignPageState; he
   const primaryLabel = describePrimary(primaryPlan, primaryPlan.kind === "confirm" ? readPrimaryPlace(primaryPlan.destination) : "");
   const primaryState = primaryPlan.kind === "apply_order" ? "order" : destination ? (editing ? "save" : "confirm") : primaryPlan.kind === "confirm" ? "choose" : "blocked";
   const confirmButton = (
-    <Tooltip label={primaryPlan.kind === "blocked" ? t(primaryPlan.reasonKey) : ""} suppressed={primaryPlan.kind !== "blocked" || !row || !canEdit}>
+    <Tooltip label={primaryPlan.kind === "blocked" ? t(primaryPlan.reasonKey) : ""} suppressed={primaryPlan.kind !== "blocked" || (!row && noisePick === null) || !canEdit}>
       <button
         type="button"
         className={`btn ${primaryLabel.tone === "danger" ? "danger" : "pri"} assign-confirm`}
@@ -866,9 +866,7 @@ export function AssignSidePanel({ state, headEnd }: { state: AssignPageState; he
               {t("assign.noise.nothing")}
             </p>
           </div>
-          <button type="button" className="btn pri assign-confirm" data-testid="assign-primary" disabled>
-            {t("classify.confirm")} <kbd>↵</kbd>
-          </button>
+          {confirmButton}
         </div>
       </div>
     );

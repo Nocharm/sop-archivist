@@ -92,6 +92,12 @@ describe("automatically deleted blocks in the paper", () => {
     expect(noise.onReason).toHaveBeenCalledWith([12]);
   });
 
+  it("picks the block or the line a button belongs to, so Enter cannot confirm the row picked before", () => {
+    const { host, noise } = render({ open: new Set([11]) });
+    for (const testId of ["p-noise-reason-11", "p-noise-clear-11", "p-noise-unit-reason-12", "p-noise-unit-clear-12"]) act(() => find(host, testId)?.click());
+    expect(vi.mocked(noise.onPick).mock.calls).toEqual([[11, null], [11, null], [11, 12], [11, 12]]);
+  });
+
   it("only folds and unfolds for a reader", () => {
     const { host } = render({ canEdit: false, open: new Set([11]) });
     expect(host.querySelectorAll('[data-testid^="p-noise-clear-"], [data-testid^="p-noise-reason-"], [data-testid^="p-noise-unit-"]')).toHaveLength(0);
