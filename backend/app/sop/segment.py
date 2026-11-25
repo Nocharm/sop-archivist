@@ -251,6 +251,7 @@ def _append_trimmed(ranges: list[tuple[int, int]], text: str, start: int, end: i
 
 
 _MAX_NUMBER_DIGITS = 9  # 번호 마디 하나에서 읽는 자리 수 — 긴 숫자열(4,300자리 넘으면 int()가 예외)에 업로드가 죽지 않게
+_MAX_NUMBER_PARTS = 10  # 점 번호의 마디 수 — 넘으면 번호로 읽지 않는다(조작한 글이 줄마다의 견주기를 키우지 못하게)
 # 번호 하나의 읽기 — (차례 이름, 값). 점 번호의 값은 마디 묶음(5, 1), 나머지는 순번 하나다
 _NumberReading = tuple[tuple[str, ...], tuple[int, ...]]
 
@@ -261,7 +262,10 @@ def _read_line_number(text: str, at: int) -> list[_NumberReading]:
     if match is None:
         return []
     if match["dotted"] is not None:
-        return [(("dotted",), tuple(int(part[:_MAX_NUMBER_DIGITS]) for part in match["dotted"].split(".") if part))]
+        parts = match["dotted"].rstrip(".").split(".")
+        if len(parts) > _MAX_NUMBER_PARTS:
+            return []
+        return [(("dotted",), tuple(int(part[:_MAX_NUMBER_DIGITS]) for part in parts))]
     body = match["body"] or match["circled"]
     marks = (match["open"] or "", match["close"] or "")  # "1)"과 "(1)"은 다른 차례다
     if body.isdecimal():
@@ -282,10 +286,11 @@ def _is_number_after(
     앞 번호 5.1의 다음이 아니라 번호 줄이 아니다."""
     series, value = reading
     last = last_values.get(series)
-    if last is not None and (
-        value == (*last, 1) or any(value == (*last[:depth], last[depth] + 1) for depth in range(len(last)))
-    ):
-        return True
+    if last is not None:
+        depth = len(value)
+        is_next = depth <= len(last) and value[:-1] == last[: depth - 1] and value[-1] == last[depth - 1] + 1
+        if is_next or (depth == len(last) + 1 and value[:-1] == last and value[-1] == 1):
+            return True
     # 다른 차례의 번호 바로 뒤에 새로 시작하는 1 — "5.1" 아래 "a)"
     return value == (1,) and series not in previous
 

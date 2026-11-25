@@ -586,6 +586,14 @@ def test_plain_lines_are_not_marker_lines(line: str) -> None:
     assert find_marker_lines(f"다음을 준비한다\n{line}", split_lines=True) == []
 
 
+def test_numbers_with_too_many_parts_are_not_numbers() -> None:
+    # 점 조각이 아주 많은 줄은 번호로 읽지 않는다 — 뒤따르는 "0.8" 줄 많은 글이 줄마다 긴 번호를 견주지 않게
+    ten, eleven = ".".join(["1"] * 10), ".".join(["1"] * 11)
+    assert find_marker_lines(f"시작\n{ten} 켠다.\n{eleven} 끈다.", split_lines=True) == [len("시작\n")]
+    crafted = ".".join(["1"] * 20_000) + " start" + "\n0.8 bar" * 20_000
+    assert find_marker_lines(crafted, split_lines=False) == []
+
+
 def test_first_line_is_never_a_marker_line() -> None:
     assert find_marker_lines("1) 전원을 켠다.", split_lines=True) == []
 
