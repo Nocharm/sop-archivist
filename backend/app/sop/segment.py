@@ -1,6 +1,7 @@
 """규칙 쪼개기 — 빈 글자 판정·문장 경계·언어 판정·블록 → 단위 초안·한/영 연달아 짝 제안(DB를 모르는 순수 함수)."""
 
 import re
+from bisect import bisect_left
 from collections import Counter
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, replace
@@ -628,13 +629,14 @@ def build_unit_drafts(
                 previous_shifted is not None and not _has_leading_number(block)
                 and detect_language(block.text) not in (None, previous_shifted)
             )
+            block_kept = sorted(kept.get(block.id, ()))
             for start, end in _split_heading(block.text, split_lines):
                 if not shift_headings or (is_heading_like(block.text[start:end]) and not follows_shift):
                     drafts.append(_build_text_draft("heading", block, start, end))
                     continue
-                own_kept = {at - start for at in kept.get(block.id, ()) if start <= at < end}
+                line_kept = block_kept[bisect_left(block_kept, start):bisect_left(block_kept, end)]
                 for sentence_start, sentence_end in split_block_text(
-                    block.text[start:end], rule=rule, split_lines=False, kept=own_kept
+                    block.text[start:end], rule=rule, split_lines=False, kept={at - start for at in line_kept}
                 ):
                     draft = _build_text_draft("sentence", block, start + sentence_start, start + sentence_end)
                     drafts.append(replace(draft, from_heading=True))
