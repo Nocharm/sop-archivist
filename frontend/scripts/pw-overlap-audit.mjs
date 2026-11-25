@@ -65,17 +65,18 @@ async function findCovered(locator) {
   });
 }
 
-// 요소 안 글자가 제 상자를 넘치는지(잘려 보이는 라벨)와 화면 밖으로 나갔는지
-async function findSpill(locator) {
-  return locator.evaluate((el) => {
+// 요소 안 글자가 제 상자를 넘치는지(잘려 보이는 라벨)와 화면 밖으로 나갔는지. skip은 일부러 잘라 둔 자리(접힌 모핑 라벨 - 펼침은 올려서 재는 단추 감사의 몫)
+async function findSpill(locator, skip = null) {
+  return locator.evaluate((el, skipSelector) => {
     const box = el.getBoundingClientRect();
     const hits = [];
     if (box.left < 0 || box.top < 0 || box.right > window.innerWidth || box.bottom > window.innerHeight) hits.push("outside the viewport");
     for (const node of [el, ...el.querySelectorAll("*")]) {
+      if (skipSelector && node.matches(skipSelector)) continue;
       if (node.scrollWidth > node.clientWidth + 1 && getComputedStyle(node).overflowX !== "visible") hits.push(`clipped "${node.textContent.trim().slice(0, 30)}"`);
     }
     return hits;
-  });
+  }, skip);
 }
 
 // 펼치는 단추를 하나씩 올려 본다(앞 6개)
@@ -243,14 +244,14 @@ const outputsEndRowsScene = {
 };
 
 // 반환 { hits, linked } - linked가 0이면 잴 줄이 없었다는 뜻이라 통과로 치지 않는다
-// 메뉴 상자가 잇고 있는 두 줄(누른 New 줄과 짝 Old 줄)의 글 상자를 덮는가 - 떠 있는 메뉴가 아래 다른 글을 가리는 것은 괜찮지만 이 두 줄은 안 된다
+// 단추 줄이 잇고 있는 두 줄(누른 New 줄과 고른 Old 줄)의 글 상자를 덮는가 - 이 두 줄은 가리면 안 된다
 async function findCoveringLinkedLines(page, menu) {
   const box = await menu.boundingBox();
   return page.evaluate((m) => {
     const hit = (r) => r.width > 0 && r.height > 0 && Math.min(r.right, m.x + m.width) - Math.max(r.left, m.x) > 1 && Math.min(r.bottom, m.y + m.height) - Math.max(r.top, m.y) > 1;
     const hits = [];
-    const menuEl = document.querySelector('[data-testid="assign-link-menu"]');
-    // 누른 New 문단 상자 안에 단추 줄로 든 메뉴(inline, 사용자 결정 2026-11-19)는 그 상자를 늘려 글 아래에 앉는다 - 그 줄은 상자 대신 메뉴 밖 글자 자리와 견준다
+    const menuEl = document.querySelector('[data-testid="assign-pick-bar"]');
+    // 단추 줄은 마지막에 누른 New 박스 안에 들어 그 상자를 늘려 글 아래에 앉는다(쪼개기 먼저 §8) - 그 줄은 상자 대신 단추 줄 밖 글자 자리와 견준다
     const readTextRects = (line) => {
       const rects = [];
       const walker = document.createTreeWalker(line, NodeFilter.SHOW_TEXT);
@@ -263,29 +264,30 @@ async function findCoveringLinkedLines(page, menu) {
       return rects;
     };
     // New 줄은 줄 상자 전체(마지막 글줄이 짧아도 그 줄의 자리), Old 줄은 글줄마다
-    for (const line of document.querySelectorAll('[data-testid="assign-new"] .new-line[data-state="focus"], [data-testid="assign-new"] .new-line[data-state="picked"]')) {
+    // 고른 New 박스(data-sel) · 그 줄의 간 곳(data-state="picked") · 출처 없는 New에서 고른 것(focus)
+    for (const line of document.querySelectorAll('[data-testid="assign-new"] .new-line[data-sel], [data-testid="assign-new"] .new-line[data-state="focus"], [data-testid="assign-new"] .new-line[data-state="picked"]')) {
       const isHost = menuEl !== null && line.contains(menuEl);
       if (isHost ? readTextRects(line).some(hit) : hit(line.getBoundingClientRect())) hits.push(`New line "${line.textContent.trim().slice(0, 30)}"`);
     }
     for (const line of document.querySelectorAll('[data-testid="assign-old"] .su[data-sel]')) {
       if ([...line.getClientRects()].some(hit)) hits.push(`Old line "${line.textContent.trim().slice(0, 30)}"`);
     }
-    const linked = document.querySelectorAll('[data-testid="assign-new"] .new-line[data-state="focus"], [data-testid="assign-new"] .new-line[data-state="picked"], [data-testid="assign-old"] .su[data-sel]').length;
+    const linked = document.querySelectorAll('[data-testid="assign-new"] .new-line[data-sel], [data-testid="assign-new"] .new-line[data-state="focus"], [data-testid="assign-new"] .new-line[data-state="picked"], [data-testid="assign-old"] .su[data-sel]').length;
     return { hits, linked };
   }, box);
 }
 
-// Assign 그 자리 메뉴 - 떠 있는 메뉴라 아래 글을 가리는 것은 맞다. 대신 화면 안에 있고 라벨이 잘리지 않아야 한다.
-// 줄을 고르고 열어 둔 New 문서의 문장을 눌러 연다(고르기만 하고 저장하지 않으며 Esc로 닫는다)
+// Assign 박스 아래 단추 줄(쪼개기 먼저 §8, 옛 그 자리 메뉴의 자리) - 화면 안에 있고 라벨이 잘리지 않으며 잇고 있는 두 줄의 글을 가리지 않아야 한다.
+// 줄을 고르고 열어 둔 New 문서의 후보 문장을 눌러 띄운다(고르기만 하고 저장하지 않으며 Esc로 New 고름을 놓는다)
 const linkMenuScene = {
-  name: "assign-link-menu",
+  name: "assign-pick-bar",
   user: "qa.member",
   run: async (page, report) => {
     await page.goto(`${BASE}/bundles/${BUNDLE}/assign`);
     await page.locator('[data-testid="assign-bar"]').waitFor({ timeout: T });
     await page.locator('[data-testid="assign-filter-unassigned"]').click();
     await page.locator('[data-testid="assign-new"] .new-line').first().waitFor({ timeout: T });
-    // 같은 언어 New 후보(점선)가 있는 줄까지 옮긴다 - 다른 언어 문장은 고를 수 없어 메뉴가 뜨지 않는다
+    // New 후보(점선)가 있는 줄까지 옮긴다 - 후보를 누르면 그 Old 줄과 양쪽이 골라져 단추 줄에 잇기가 선다
     const candidate = page.locator('[data-testid="assign-new"] .new-line[data-state="candidate"] .new-text');
     for (let step = 0; step < 40 && (await candidate.count()) === 0; step += 1) {
       await page.keyboard.press("j");
@@ -293,14 +295,14 @@ const linkMenuScene = {
     }
     await candidate.first().scrollIntoViewIfNeeded();
     await candidate.first().click();
-    const menu = page.locator('[data-testid="assign-link-menu"]');
-    await page.locator('[data-testid^="assign-link-menu-"][role="menuitem"]').first().waitFor({ state: "visible", timeout: T });
+    const menu = page.locator('[data-testid="assign-pick-bar"]');
+    await page.locator('[data-testid="assign-pick-bar-link"]').waitFor({ state: "visible", timeout: T });
     await page.waitForTimeout(HOVER_SETTLE_MS);
-    const spill = await findSpill(menu);
-    if (spill.length > 0) report("assign-link-menu", spill.join(", "));
+    const spill = await findSpill(menu, ".mbtn-label");
+    if (spill.length > 0) report("assign-pick-bar", spill.join(", "));
     const covering = await findCoveringLinkedLines(page, menu);
-    if (covering.linked === 0) report("assign-link-menu covers linked lines", "no linked lines were measured");
-    if (covering.hits.length > 0) report("assign-link-menu covers linked lines", covering.hits.join(", "));
+    if (covering.linked === 0) report("assign-pick-bar covers linked lines", "no linked lines were measured");
+    if (covering.hits.length > 0) report("assign-pick-bar covers linked lines", covering.hits.join(", "));
     await page.keyboard.press("Escape");
   },
 };
