@@ -54,6 +54,30 @@ export const ASSIGN_KEYS: readonly AssignKey[] = [
   { id: "help", key: "?", shift: true, when: "always", labelKey: "assign.key.help" },
 ];
 
+/** 글쇠 처리에는 없고 도움말 · 설명서에만 있는 손짓 - {click} · {drag} · {wheel}은 화면 언어의 낱말로 바뀐다 */
+export interface HelpOnlyKey {
+  id: string;
+  presses: readonly string[];
+  labelKey: string;
+  /** 새 문서를 켠 동안의 설명 */
+  draftLabelKey?: string;
+  /** 새 문서를 켠 동안만 보인다 */
+  isDraftOnly?: boolean;
+}
+
+export const HELP_ONLY: readonly HelpOnlyKey[] = [
+  { id: "pick_many", presses: ["Shift + {click}"], labelKey: "assign.help.keyShift" },
+  { id: "add_new", presses: ["Ctrl + {click}"], labelKey: "assign.help.keyCtrl" },
+  { id: "drag_link", presses: ["{drag}"], labelKey: "assign.help.keyDragLink", draftLabelKey: "assign.help.keyDrag" },
+  { id: "drag_pair", presses: ["{drag}"], labelKey: "assign.help.keyDragPair" },
+  { id: "select_text", presses: ["Alt + {drag}"], labelKey: "assign.help.keyAltDrag" },
+  { id: "zoom", presses: ["Ctrl + {wheel}"], labelKey: "assign.help.keyZoom" },
+  { id: "sheet", presses: ["{wheel}"], labelKey: "assign.help.keySheet" },
+  { id: "context_menu", presses: ["⇧F10"], labelKey: "assign.help.keyContext" },
+  { id: "link_menu", presses: ["↑", "↓", "←", "→"], labelKey: "assign.help.keyMenu" },
+  { id: "edit", presses: ["E"], labelKey: "assign.legend.keyEdit", isDraftOnly: true },
+];
+
 /** run = 그 글쇠, hint = Shift를 빠뜨렸다(아무것도 하지 않고 "⇧H: Hold"만 알린다 - B2-R3) */
 export type KeyHit = { kind: "run"; entry: AssignKey } | { kind: "hint"; entry: AssignKey };
 
