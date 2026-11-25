@@ -285,7 +285,10 @@ await runStep("admin access as qa.lead", { devUser: "qa.lead" }, async ({ page, 
   await waitHidden(page, "grant-form");
   const smokeGrant = findByPrefix(page, "grant-row-", { hasText: "Smoke Role" });
   await smokeGrant.waitFor({ state: "visible", timeout: T });
-  check("new grant row names the person and the role", (await smokeGrant.innerText()).includes("Production Member") && (await smokeGrant.innerText()).includes("prod.member"), await smokeGrant.innerText());
+  // 저장한 대상이 골라져 상세 머리가 그 사람이고, 그 안의 부여 줄이 역할을 적는다
+  await page.waitForFunction(() => document.querySelector('[data-testid="grant-detail-name"]')?.textContent === "Production Member", null, { timeout: T });
+  const detailText = await getText(page, "grant-detail");
+  check("new grant row names the person and the role", detailText.includes("Production Member") && detailText.includes("prod.member") && (await smokeGrant.innerText()).includes("Smoke Role"), detailText.replace(/\s+/g, " ").slice(0, 160));
   await takeShot("baseline-admin-grants.png");
 
   // 변경 기록 - 최신순이라 부여 추가가 위, 역할 생성이 그 아래
@@ -297,22 +300,30 @@ await runStep("admin access as qa.lead", { devUser: "qa.lead" }, async ({ page, 
   check("audit row reads in plain language", topRow.includes("qa.lead") && topRow.includes("Grant added") && topRow.includes("Granted role") && topRow.includes("Smoke Role") && topRow.includes("prod.member"), topRow.replace(/\s+/g, " "));
   await takeShot("baseline-admin-access.png");
 
-  // 유효 권한 조회
-  await findById(page, "access-sub-lookup").click();
-  await findById(page, "effective-picker-search").fill("prod");
-  await wait(page, "effective-picker-option-prod.member");
-  await findById(page, "effective-picker-option-prod.member").click();
-  await wait(page, "effective-result");
+  // 유효 권한 - 옛 조회 항목은 부여 화면에 들어왔다(옛 주소 sub=lookup도 부여로 연다)
+  await page.goto(`${BASE}/admin?tab=access&sub=lookup`);
+  await wait(page, "grants-table");
+  check("the old lookup address opens grants", (await isSelected(page, "access-sub-grants")) && (await countById(page, "access-sub-lookup")) === 0);
+  await findById(page, "grants-search").fill("prod");
+  await wait(page, "grants-subject-user:prod.member");
+  await findById(page, "grants-subject-user:prod.member").click();
+  await page.waitForFunction(() => document.querySelector('[data-testid="grant-detail-name"]')?.textContent === "Production Member", null, { timeout: T });
+  await wait(page, "effective-perm-system.view");
   const prodPerm = await getText(page, "effective-perm-system.view");
   check("lookup shows the permission with both sources", prodPerm.includes("View system status") && prodPerm.includes("direct grant") && prodPerm.includes("via role Smoke Role"), prodPerm.replace(/\s+/g, " "));
   await takeShot("baseline-admin-lookup.png");
-  await findById(page, "effective-picker-search").fill("qa.mem");
-  await findById(page, "effective-picker-option-qa.member").click();
+  // 부여가 없는 직원도 찾기에 나온다
+  await findById(page, "grants-search").fill("qa.mem");
+  await wait(page, "grants-group-none");
+  check("people without grants are found", (await getText(page, "grants-group-none")).includes("No grants"), await getText(page, "grants-group-none"));
+  await findById(page, "grants-subject-user:qa.member").click();
   await page.waitForFunction(() => document.querySelector('[data-testid="effective-perm-permission.manage"]'), null, { timeout: T });
   const inherited = await getText(page, "effective-perm-permission.manage");
   check("department grant reaches a sub-department member", inherited.includes("Department") && inherited.includes("Quality Division") && inherited.includes("via role Permission Admin"), inherited.replace(/\s+/g, " "));
-  await findById(page, "effective-picker-search").fill("ghost.user");
-  await findById(page, "effective-picker-raw-option").click();
+  const inheritedRow = await getText(page, "grant-inherited-DIV-QA");
+  check("the detail lists what comes through the department", inheritedRow.includes("Permission Admin") && inheritedRow.includes("Quality Division"), inheritedRow.replace(/\s+/g, " "));
+  await findById(page, "grants-search").fill("ghost.user");
+  await findById(page, "grants-subject-user:ghost.user").click();
   await wait(page, "effective-unknown");
   check("unregistered login id is explained, not an error", (await countById(page, "effective-none")) === 1);
 
@@ -328,16 +339,50 @@ await runStep("admin access as qa.lead", { devUser: "qa.lead" }, async ({ page, 
   await page.waitForFunction(() => document.querySelector('[data-testid="roles-list"]')?.textContent?.includes("Created by the smoke test"), null, { timeout: T });
   check("edited description shows in the list", true);
 
+  // 부여 회수 - 확인 창 대신 5초 되돌리기 알림. 되돌리면 다시 생기고, 다시 회수하면 사라진 채 남는다
   await findById(page, "access-sub-grants").click();
+  await findById(page, "grants-search").fill("prod.member");
+  await findById(page, "grants-subject-user:prod.member").click();
   await smokeGrant.waitFor({ state: "visible", timeout: T });
   await smokeGrant.locator('[data-testid^="grant-remove-"]').click();
-  await wait(page, "grant-remove-modal");
-  const revokeText = await getText(page, "grant-remove-modal");
-  check("revoke confirm names the role and the person", revokeText.includes("Smoke Role") && revokeText.includes("Production Member"), revokeText.replace(/\s+/g, " "));
-  await findById(page, "grant-remove-confirm").click();
-  await waitHidden(page, "grant-remove-modal");
+  const revokeToast = page.locator(".toast-stack", { hasText: "Smoke Role" });
+  await revokeToast.waitFor({ state: "visible", timeout: T });
+  const revokeText = await revokeToast.innerText();
+  check("revoke toast names the role and the person", revokeText.includes("Smoke Role") && revokeText.includes("Production Member"), revokeText.replace(/\s+/g, " "));
   await smokeGrant.waitFor({ state: "detached", timeout: T });
   check("revoked grant disappears", true);
+  await revokeToast.getByRole("button", { name: "Undo" }).click();
+  await smokeGrant.waitFor({ state: "visible", timeout: T });
+  check("undo brings the grant back", true);
+  await smokeGrant.locator('[data-testid^="grant-remove-"]').click();
+  await smokeGrant.waitFor({ state: "detached", timeout: T });
+  check("the grant stays revoked without undo", true);
+
+  // 역할 더하기 - 줄에 붙어 뜨는 고르기를 키 A로 열고 여러 개를 한 번에, 이미 받은 역할은 목록에 없다
+  await findById(page, "grants-table").press("a");
+  await wait(page, "grant-add-pop");
+  const modalHtml = await page.evaluate(() => [...document.querySelectorAll('[role="dialog"][aria-modal="true"]')].map((el) => el.outerHTML.slice(0, 160)).join(" | "));
+  check("the add picker opens without a dimmed screen", modalHtml === "", modalHtml);
+  check("add is disabled until a role is picked", await findById(page, "grant-add-save").isDisabled());
+  await page.keyboard.press("Escape");
+  await findById(page, "grant-add-pop").waitFor({ state: "detached", timeout: T });
+  await findById(page, "grants-table").press("a");
+  await wait(page, "grant-add-pop");
+  await page.locator('[data-testid^="grant-add-role-"]').last().check();
+  await findById(page, "grant-add-save").click();
+  await findById(page, "grant-add-pop").waitFor({ state: "detached", timeout: T });
+  await smokeGrant.waitFor({ state: "visible", timeout: T });
+  check("the added role shows in the detail", true);
+  await smokeGrant.locator('[data-testid^="grant-remove-"]').click();
+  await smokeGrant.waitFor({ state: "detached", timeout: T });
+
+  // 키보드 ↑↓ - 고른 줄이 바로 바뀐다
+  await findById(page, "grants-search").fill("");
+  await findById(page, "grants-table").press("ArrowDown");
+  const afterDown = await page.locator('[data-testid^="grants-subject-"][aria-selected="true"]').getAttribute("data-testid");
+  await findById(page, "grants-table").press("ArrowUp");
+  const afterUp = await page.locator('[data-testid^="grants-subject-"][aria-selected="true"]').getAttribute("data-testid");
+  check("arrow keys move the selection", afterDown !== null && afterUp !== null && afterDown !== afterUp, `${afterDown} / ${afterUp}`);
 
   await findById(page, "access-sub-roles").click();
   await smokeRole.waitFor({ state: "visible", timeout: T });
@@ -587,21 +632,23 @@ await runStep("admin leftovers as qa.lead", { devUser: "qa.lead" }, async ({ pag
 
   await page.goto(`${BASE}/admin`);
   await findById(page, "access-sub-grants").click();
-  await wait(page, "grant-missing-91");
-  check("a vanished department is badged", (await getText(page, "grant-missing-91")).includes("Department not found"), await getText(page, "grant-missing-91"));
-  check("a vanished person is badged", (await getText(page, "grant-missing-92")).includes("Person not found"), await getText(page, "grant-missing-92"));
-  const missingRow = await findById(page, "grant-row-91").innerText();
+  await wait(page, "grant-missing-dept:GONE-DEPT");
+  const goneText = await getText(page, "grant-missing-dept:GONE-DEPT");
+  check("a vanished department is badged", goneText.includes("Department not found"), goneText);
+  const retiredText = await getText(page, "grant-missing-user:retired.person");
+  check("a vanished person is badged", retiredText.includes("Person not found"), retiredText);
+  await findById(page, "grants-subject-dept:GONE-DEPT").click();
+  await wait(page, "grant-row-91");
+  const missingRow = `${await getText(page, "grants-subject-dept:GONE-DEPT")} ${await getText(page, "grant-row-91")}`;
   check("the row still shows which subject it was", missingRow.includes("GONE-DEPT") && missingRow.includes("Permission Admin"), missingRow.replace(/\s+/g, " "));
   await takeShot("baseline-admin-grants-missing.png");
 
-  await findById(page, "access-sub-lookup").click();
-  await findById(page, "effective-picker-search").fill("retired.person");
-  await findById(page, "effective-picker-raw-option").click();
+  await findById(page, "grants-subject-user:retired.person").click();
   await wait(page, "effective-inactive");
   check("an inactive person is explained", (await getText(page, "effective-inactive")).includes("inactive") && (await countById(page, "effective-none")) === 1);
 
-  await findById(page, "effective-picker-search").fill("dev.admin");
-  await findById(page, "effective-picker-option-dev.admin").click();
+  await findById(page, "grants-search").fill("dev.admin");
+  await findById(page, "grants-subject-user:dev.admin").click();
   await wait(page, "effective-sysadmin");
   check("a system administrator is explained and holds all eight permissions", (await findByPrefix(page, "effective-perm-").count()) === 8);
   check("a known, active sysadmin gets no directory note", (await countById(page, "effective-sysadmin-note")) === 0);
@@ -613,8 +660,8 @@ await runStep("admin leftovers as qa.lead", { devUser: "qa.lead" }, async ({ pag
       permissions: ["directory.sync", "permission.manage", "system.view", "ai.admin"], sources: {},
     }),
   );
-  await findById(page, "effective-picker-search").fill("bootstrap.admin");
-  await findById(page, "effective-picker-raw-option").click();
+  await findById(page, "grants-search").fill("bootstrap.admin");
+  await findById(page, "grants-subject-user:bootstrap.admin").click();
   await page.waitForFunction(() => document.querySelector('[data-testid="effective-sysadmin-note"]'), null, { timeout: T });
   const bootstrapText = await getText(page, "effective-result");
   check("a sysadmin without an employee row is still shown as a system administrator", (await findById(page, "effective-sysadmin").isVisible()) && bootstrapText.includes("System administrator"), bootstrapText.replace(/\s+/g, " "));

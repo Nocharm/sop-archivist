@@ -6,7 +6,6 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useState } from "react";
 
 import { AccessAudit } from "@/components/admin/access-audit";
-import { AccessEffective } from "@/components/admin/access-effective";
 import { AccessGrants } from "@/components/admin/access-grants";
 import { AccessRoles } from "@/components/admin/access-roles";
 import { AiPanel } from "@/components/admin/ai-panel";
@@ -20,7 +19,7 @@ import { useI18n } from "@/lib/i18n";
 import { useMe } from "@/lib/session";
 
 type AdminTabKey = "access" | "directory" | "batch" | "ai" | "bundles" | "guidelines" | "outline";
-type AccessSubKey = "roles" | "grants" | "audit" | "lookup";
+type AccessSubKey = "roles" | "grants" | "audit";
 
 interface AdminTab {
   key: AdminTabKey;
@@ -39,10 +38,11 @@ const ADMIN_TABS: AdminTab[] = [
   { key: "outline", permission: "outline.manage", Icon: ListTree },
 ];
 
-const ACCESS_SUBS: AccessSubKey[] = ["roles", "grants", "audit", "lookup"];
+const ACCESS_SUBS: AccessSubKey[] = ["roles", "grants", "audit"];
 
-// 주소의 하위 항목 - 모르는 값이면 null(기본 항목으로 떨어진다)
+// 주소의 하위 항목 - 모르는 값이면 null(기본 항목으로 떨어진다). 유효 권한 조회(lookup)는 부여 화면에 들어가 옛 주소를 부여로 연다
 function readSub(value: string | null): AccessSubKey | null {
+  if (value === "lookup") return "grants";
   return ACCESS_SUBS.find((key) => key === value) ?? null;
 }
 
@@ -52,7 +52,6 @@ function AccessPanel({ sub }: { sub: AccessSubKey }) {
       {sub === "roles" && <AccessRoles />}
       {sub === "grants" && <AccessGrants />}
       {sub === "audit" && <AccessAudit />}
-      {sub === "lookup" && <AccessEffective />}
     </>
   );
 }
