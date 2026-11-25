@@ -6,11 +6,12 @@ from fastapi.testclient import TestClient
 from app.settings import settings
 from app.sop.ai import constants
 from app.sop.models import AiSuggestion
+from tests import test_sop_review as review
 from tests.ai_fixtures import clean_ai_jobs  # noqa: F401 -- 픽스처는 usefixtures가 이름으로 찾는다
 from tests.ai_fixtures import AI_SOP_DOC, make_match_bundle, plan, read_rows, run_jobs, run_plan, use_reply
 from tests.docx_factory import p
 from tests.fake_ai import FakeAi
-from tests.sop_helpers import AUTHOR, get_group_by_unit, put_tobe, save_group
+from tests.sop_helpers import AUTHOR, find_unit, get_group_by_unit, put_tobe, save_group
 from tests.test_sop_ai_match_plan import LONE_NEW, LONE_OLD, NEW_1, NEW_2, OLD_1, OLD_2, find_live, queue_plan, read_old_ids
 from tests.test_sop_ai_prepare import post_prepare, read_jobs
 from tests.test_sop_ai_translate import (
@@ -121,6 +122,33 @@ def test_hidden_place_with_a_leftover_translation_reaches_review(client: TestCli
     assert get_group_by_unit(client, bundle.id, unit["id"])["translations"] == []
     assert clear_unit(client, bundle.id, unit["id"]).status_code == 200
     assert get_group_by_unit(client, bundle.id, unit["id"])["units"][0]["decision"]["status"] == "unassigned"
+
+
+@pytest.mark.parametrize("settle", ["confirm", "remove"])
+def test_bundle_with_hidden_data_reaches_the_review_request(client: TestClient, fake_ai: FakeAi, settle: str) -> None:
+    """빈 문서에 배정한 줄 · 남은 번역 · 살아 있는 칸 추천이 있는 묶음 — 남는 화면의 동작만으로 검토 요청까지 간다(Review Focus 5)."""
+    fx = review._make_ready(client)  # 줄이 모두 빈 To-Be 문서의 칸에 있다
+    placed, cleared = (find_unit(fx.view, text) for text in (review.KO_1, review.KO_2))
+    target = translate(client, fake_ai, fx.bundle_id, placed["id"])
+    assert clear_unit(client, fx.bundle_id, cleared["id"]).status_code == 200  # 배정 취소
+    use_reply(fake_ai, rewrites={"ko": ["합성 고쳐 쓴 문장이다."]})
+    request_classify(client, fx.bundle_id, cleared["id"])
+    run_jobs()
+    assert [row.result for row in read_rows(AiSuggestion) if row.kind == "classify"] == ["applied"]
+    assert review._request(client, fx.bundle_id).status_code == 422
+
+    settled = save_translation(client, fx.bundle_id, target) if settle == "confirm" else remove_translation(client, fx.bundle_id, target)
+    assert settled.status_code == 200, settled.text
+    delete_body = {"action": "delete", "reason": "", "units": [{
+        "unit_id": cleared["id"], "revision": get_group_by_unit(client, fx.bundle_id, cleared["id"])["units"][0]["decision"]["revision"],
+    }]}
+    deleted = client.post(f"/api/bundles/{fx.bundle_id}/decisions/bulk", json=delete_body, headers=AUTHOR)
+    assert deleted.status_code == 200, deleted.text
+    assert review._put_checks(client, fx.bundle_id).status_code == 200
+
+    requested = review._request(client, fx.bundle_id)
+
+    assert requested.status_code == 200, requested.text
 
 
 def test_confirming_a_leftover_translation_keeps_the_row_decision(client: TestClient, fake_ai: FakeAi) -> None:
