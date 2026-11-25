@@ -170,4 +170,24 @@
   .adm-pop-opt { align-items: flex-start; padding: 6px 4px; border-radius: var(--r-2); }
   .adm-pop-opt:hover { background: var(--hover); }
   .adm-pop-foot { display: flex; justify-content: flex-end; gap: 8px; padding: 8px 10px; border-top: 1px solid var(--line); }
+  /* 사내 AI로 등록 미리보기 - 줄마다 고르기 · 대상 · 동작 · 역할 · 결과. 좁으면 역할·결과가 아랫줄로 */
+  .adm-ai-rows { display: grid; border: 1px solid var(--line); border-radius: var(--r-2); max-height: 20rem; overflow-y: auto; scrollbar-gutter: stable; }
+  .adm-ai-row { display: grid; grid-template-columns: 18px minmax(0, 1.4fr) 48px minmax(0, 1.1fr) minmax(0, 1.2fr); gap: 8px; align-items: center; padding: 8px 10px; border-top: 1px solid var(--line); font-size: var(--fs-cap); }
+  .adm-ai-row:first-child { border-top: 0; }
+  .adm-ai-row[data-check] { background: var(--warn-tint); }
+  .adm-ai-row[data-off] > :not(.cbx) { opacity: 0.6; }
+  @media (max-width: 720px) { .adm-ai-row { grid-template-columns: 18px minmax(0, 1fr) 40px; } .adm-ai-row > :nth-child(n + 4) { grid-column: 2 / -1; } }
+  .adm-ai-cells { display: flex; flex-wrap: wrap; gap: 4px; min-width: 0; }
+  /* 칩 안 글이 길면 칩이 줄을 바꾼다 - 옆 칸을 덮지 않게 */
+  .adm-ai-cells .adm-chip { height: auto; min-height: 22px; max-width: 100%; padding-block: 2px; overflow-wrap: anywhere; }
+  .adm-ai-who { flex-direction: column; align-items: flex-start; }
+  .adm-ai-name { display: inline-flex; align-items: center; gap: 4px; }
+  .adm-ai-op { font-weight: 600; color: var(--accent); }
+  .adm-ai-op[data-action="remove"] { color: var(--danger-ink); }
+  .adm-ai-status { display: flex; flex-wrap: wrap; gap: 2px 8px; color: var(--ink-3); }
+  .adm-ai-status [data-status="new"] { color: var(--accent); }
+  .adm-ai-status [data-status="remove"] { color: var(--danger-ink); }
+  .adm-ai-status [data-status="check"] { color: var(--warn-ink); }
+  .adm-chip[data-kind="role"] { background: var(--accent-tint); color: var(--accent); }
+  .adm-chip[data-bad] { background: var(--danger-tint); color: var(--danger-ink); }
 }

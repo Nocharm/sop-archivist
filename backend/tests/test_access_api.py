@@ -57,6 +57,7 @@ GUARDED_ROUTES = [
     ("POST", "/api/access/grants", {"subject_type": "user", "subject_id": "prod.member", "permission": "permission.manage"}),
     ("DELETE", "/api/access/grants/{grant_id}", None),
     ("POST", "/api/access/grants/batch", {"add": [{"subject_type": "user", "subject_id": "prod.member", "permission": "permission.manage"}]}),
+    ("POST", "/api/access/grants/ai-read", {"text": "prod.member permission.manage"}),
     ("GET", "/api/access/audit", None),
     ("GET", "/api/access/effective/qa.lead", None),
 ]

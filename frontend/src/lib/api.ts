@@ -223,6 +223,20 @@ export interface GrantBatchResult {
   missing: number[];
 }
 
+/** 사내 AI가 읽은 지시 한 줄 - 대상 글마다 맞은 직원·부서(0개면 목록에 없음, 2개 이상이면 동명이인), 역할·권한은 없으면 null. */
+export interface GrantAiLine {
+  line: number;
+  action: "add" | "remove";
+  subjects: { written: string; matches: { subject_type: SubjectType; subject_id: string }[] }[];
+  roles: { written: string; role_id: number | null }[];
+  permissions: { written: string; permission: string | null }[];
+}
+
+export interface GrantAiResult {
+  lines: GrantAiLine[];
+  model: string;
+}
+
 /** 변경 기록 한 줄 - action은 role.create|update|delete, grant.add|remove. detail 모양은 action마다 다르다. */
 export interface AuditEvent {
   id: number;
@@ -365,6 +379,11 @@ export function addGrant(body: GrantInput): Promise<Grant> {
 /** 회수를 먼저, 추가를 나중에 한 트랜잭션으로 - 이미 있는 것·없는 것은 거절하지 않고 결과로 온다. 요청당 추가·회수 각 200개까지. */
 export function batchGrants(body: GrantBatchInput): Promise<GrantBatchResult> {
   return apiFetch<GrantBatchResult>("/access/grants/batch", { method: "POST", body: JSON.stringify(body) });
+}
+
+/** 지시를 사내 AI로 읽기만 한다 - 아무것도 바꾸지 않는다. 반영은 batchGrants로. AI가 꺼져 있으면 503. */
+export function readGrantsWithAi(text: string): Promise<GrantAiResult> {
+  return apiFetch<GrantAiResult>("/access/grants/ai-read", { method: "POST", body: JSON.stringify({ text }) });
 }
 
 export function removeGrant(id: number): Promise<void> {
