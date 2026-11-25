@@ -431,6 +431,7 @@ def _read_outputs(db_path: pathlib.Path) -> tuple[Any, list[Any], list[list[str]
     return readiness, items, [[cell.text for cell in row.cells] for row in sheet.rows]
 
 
+@pytest.mark.usefixtures("c_sheet_on")
 def test_0020_moves_figure_caption_to_its_own_unit_and_target(tmp_path: pathlib.Path) -> None:
     # 올리기 전에 확정한 그림 — 이행 뒤에도 그림 새 문장·판단은 그대로, 캡션은 제 단위·새 문장으로 결과물 C·Excel에 나온다
     db_path = tmp_path / "captions.db"

@@ -39,12 +39,12 @@ backend(FastAPI) 세부 구조와 backend에만 걸리는 체크리스트. 루�
     - 응답은 정해진 JSON 필드로만 읽고, 모든 글자는 `replace_unstorable_chars`를 거치며, 무효 제안에는 응답 원문을 남기지 않는다.
     - 로그에는 ID·건수·상태 코드·예외 클래스 이름만(`logger.exception` 금지, 트레이스백에 값이 실린다).
   - **임계값은 합성 자료로만 잡은 값이다**(`MATCH_EMBED_THRESHOLD`·`MATCH_TEXT_THRESHOLD`·`PAIR_THRESHOLD` 등) — 실제 모델·SOP로 시험하기 전에는 정확도·채택률을 근거로 주장하지 않는다. 숫자를 바꾸면 합성 시험을 같이 옮긴다. → 11.3
-  - **번역은 출처 새 문장을 따른다:** 새 문장의 글이나 자리를 바꾸는 새 경로는 `detach.sweep_translations`를 부른다. AI 번역 줄의 칸·단계·깊이는 잠겨 있고(422 `translation_locked`), 번호 표시와 칸 안 순서는 그 줄 자신의 것이다. → 11.4
+  - **번역은 출처 새 문장을 따른다:** 새 문장의 글이나 자리를 바꾸는 새 경로는 `detach.sweep_translations`를 부른다. AI 번역 줄의 칸·단계·깊이는 잠겨 있고(422 `translation_locked`), 번호 표시와 칸 안 순서는 그 줄 자신의 것이다. 확정하지 않은 번역은 검토 요청을 막고 출처가 은퇴하면 어느 줄에도 없어 `open_translations.py`(묶음 목록)로만 찾는다. → 11.4
   - **`request_id`**: 사람의 요청 한 번 = `enqueue_jobs` 한 번(또는 같은 값을 넘긴 여러 번), 작업이 뒤따라 쌓는 작업은 부모의 `request_id`를 넘긴다 — 빠뜨리면 상단 바에서 한 요청이 여러 줄로 갈라진다. → 11.5
   - **순위**: 꺼내는 순서는 `priority`만 정한다(`background`는 표시뿐). `match_plan`은 묶음마다 하나, 대기·실행 중이면 `classify`는 건너뛴다. 사람 요청이 아닌 작업은 `priority`를 넘긴다. → 11.6
-  - **계획이 쓴다**: `match_plan`이 LLM 없이 제안을 쓴다. 작업 종류 `match`는 CHECK에만 남고 다시 시도하지 않으며(`AI_RETIRED_JOB_KINDS`), 옛 `provisional`은 읽지 않는다. `upload` 계획은 삭제 후보를 새로 쓰지 않고, 저절로 선 계획(`upload`·`prepare`)은 사람이 버린 묶음을 쓰지도 걷지도 않는다 — **Match**(`user`)만 다시 쓴다(`origin` 표). → 11.7
+  - **계획이 쓴다**: `match_plan`이 LLM 없이 제안을 쓴다. 작업 종류 `match`는 CHECK에만 남고 다시 시도하지 않으며(`AI_RETIRED_JOB_KINDS`), 옛 `provisional`은 읽지 않는다. `upload` 계획은 삭제 후보를 새로 쓰지 않고, 저절로 선 계획(`upload`·`prepare`)은 사람이 버린 묶음을 쓰지도 걷지도 않는다 — **Match**(`user`)만 다시 쓴다(`origin` 표). 숨긴 동안(`constants.PLAN_DELETES`)은 어느 계획도 삭제 후보를 새로 쓰지 않고 있는 것은 그대로 둔다. → 11.7
   - **저절로 쌓기(`AI_AUTO_PREPARE`)**: 업로드 호출부가 `lock_bundle`로 잠근 채 `enqueue_auto_plan`을 부르고 커밋한다. `ai.request` 기록은 남기지 않는다. 시험의 공용 가짜 AI는 이것을 끄고(`install_fake_ai(auto_prepare=False)`) 켜는 시험만 `auto_prepare` 픽스처. → 11.8
-  - **배정 화면 첫 진입(`prepare.queue_prepare`)**: 묶음 잠금 안에서 계획과 미리 분류를 쌓고, 응답 `queued`는 분류 작업만 세며 `ai.request` 기록은 남기지 않는다. → 11.9
+  - **배정 화면 첫 진입(`prepare.queue_prepare`)**: 묶음 잠금 안에서 계획과 미리 분류를 쌓고, 응답 `queued`는 분류 작업만 세며 `ai.request` 기록은 남기지 않는다. 숨긴 동안(`constants.AUTO_CLASSIFY`)은 분류를 쌓지 않고 계획이 살아 있는 분류 제안을 보지 않는다(켜는 시험은 `hidden_ai_on` 픽스처). → 11.9
   - **기록**: 채택은 사람의 저장 트랜잭션 안에서 `adoption.py`가 남긴다. `bundle_events`에는 `ai.request`·`ai.cancel`·`ai.retry`만 쓴다(조회 상한 500). → 11.10
 - **SOP 규칙 이중 사용 지점 — 아래는 각각 한 곳에만 쓴다.** 두 번째 구현을 만들면 커버리지·상태가 조용히 어긋난다. → 12
   - **변경 종류** `decisions._decide_change_type`·`_settle_table_types`: 사람이 고르지 않고 저장 입력도 받지 않는다(`TargetIn`에 `change_type` 없음). AI 쪽 사본 `apply.decide_ai_change_type`·`match_jobs._plan_table`·`classify._derive_change_type`을 함께 고친다. → 12.1
@@ -65,7 +65,7 @@ backend(FastAPI) 세부 구조와 backend에만 걸리는 체크리스트. 루�
   - **대응 표** `counterparts.py`: 표는 하나씩 벗긴다(사용자 결정 2026-11-19, 옛 `payload.counterpart_table_id`는 읽지 않는다). → 12.16
   - **참조 판정** `refs.read_ref_state`·`is_document_number`: 지도에 둘째 판정을 쓰지 않는다. 임시 번호는 `tobe.is_temp_match_code` 한 곳. Bundle을 건너 번호를 맞출 때는 양쪽 모두 번호 꼴(`ref_map._is_matchable`). → 12.17
   - **업무 규칙 거절** `errors.raise_rule(status, code, **context)`: `app/sop`·`routers/sop_*`에서 `HTTPException`을 직접 던지지 않는다(검사 `test_invariants.py`). revision 충돌은 `check_revision`(409 `revision_conflict`). → 12.18
-  - **결과물** `outputs.py`: 스냅숏만 받는 순수 함수다. 검토 조건은 `outputs.build_review_facts`를 쓰고 다시 계산하지 않는다. 칸 글·모양 판정은 `sheet_model.py`에만(미리보기와 xlsx가 같은 모델).
+  - **결과물** `outputs.py`: 스냅숏만 받는 순수 함수다. 검토 조건은 `outputs.build_review_facts`를 쓰고 다시 계산하지 않는다. 칸 글·모양 판정은 `sheet_model.py`에만(미리보기와 xlsx가 같은 모델). Excel C 시트는 `SHOW_C_SHEET`로 숨겨 두었다(시트 이름은 `get_sheet_names()`, 켜는 시험은 `c_sheet_on`).
     - 프런트 사본 `section-number.numberLines`(← `outputs.number_lines`)를 함께 고친다. 새 줄 배치는 `target_placement.arrange_new_targets` 하나. Excel의 모든 글 칸은 `write_text_cell` 하나(수식 방지). → 12.19
 - **SOP 데모·E2E는 한 벌의 몰이를 쓴다**: `scripts/sop_demo_driver.py`를 `tests/test_sop_e2e.py`와 `scripts/seed_sop_demo.py`가 함께 쓰고 정답은 `scripts/synthetic_sop.py`의 `SYNTHETIC_expected.json`이다. SOP API 모양이나 규칙을 바꾸면 드라이버·정답과 두 소비자를 함께 확인한다. 시드는 로컬 전용(운영 DB 금지). → 13
 

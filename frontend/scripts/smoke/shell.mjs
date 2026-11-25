@@ -137,7 +137,7 @@ await runStep("members picker keeps Add inside the panel and adds the person", {
   await page.keyboard.press("Escape");
 });
 
-await runStep("new bundle in one click, locked stages, empty assign", { devUser: "dev.admin" }, async ({ page }) => {
+await runStep("new bundle in one click, locked stages, empty assign", { drafting: true, devUser: "dev.admin" }, async ({ page }) => {
   await page.goto(`${BASE}/`);
   await page.locator('[data-testid="bundles-new"]').click();
   await page.waitForURL(/\/bundles\/\d+$/, { timeout: T });

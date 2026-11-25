@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { canAccept, countDeletes, countLiveOffer, countShapes, pickAcceptIds, splitAcceptIds } from "./ai-accept-model";
+import { canAccept, countDeletes, countLiveOffer, countShapes, listAcceptKinds, pickAcceptIds, splitAcceptIds } from "./ai-accept-model";
+import { dropHiddenSuggestions } from "./ai-suggestion-model";
 import type { AcceptItem, AiSuggestion } from "./api-sop";
 
 function item(suggestion_id: number, shape: string): AcceptItem {
@@ -57,5 +58,17 @@ describe("countLiveOffer", () => {
       suggestion(6, "split"),
     ], 1);
     expect(counts).toEqual({ classify: 1, match: 1 });
+  });
+
+  it("counts nothing hidden once hidden kinds are dropped", () => {
+    const items = [suggestion(1, "classify", { document_id: 7 }), suggestion(2, "match", { document_id: 7 })];
+    expect(countLiveOffer(dropHiddenSuggestions(items, false), 7)).toEqual({ classify: 0, match: 1 });
+  });
+});
+
+describe("listAcceptKinds", () => {
+  it("offers only match while drafting is hidden", () => {
+    expect(listAcceptKinds(false)).toEqual(["match"]);
+    expect(listAcceptKinds(true)).toEqual(["classify", "match"]);
   });
 });

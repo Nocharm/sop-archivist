@@ -37,6 +37,7 @@ CellTone = Literal["ok", "ai", "del", "un"]  # 상태 칩 색 — 확정·AI 제
 BandTone = Literal["asis", "tobe", "decision", "tracking"]
 
 SHEET_NAMES = ("A Comparison", "B Flow", "C New documents", "Info", "Documents")
+SHOW_C_SHEET = False  # 새 문서를 만드는 쪽을 숨긴 동안 C 시트를 뺀다(쪼개기 먼저 설계 §14). 짓는 코드는 남기고 시험이 켠다
 A_HEADERS = (
     "Row", "Old doc", "Ver.", "Location", "Unit ID", "Old text", "Destination", "New doc", "New doc title", "Place",
     "No.", "New text", "AI suggestion", "Change", "Remark", "Status", "Confirmed by", "Confirmed at", "Group ID",
@@ -565,15 +566,20 @@ def _build_documents_sheet(snap: BundleSnapshot, equis: Mapping[str, EquisOut]) 
 # --- 통합 문서 ---
 
 
+def get_sheet_names() -> tuple[str, ...]:
+    """통합 문서에 싣는 시트 이름 — C를 숨긴 동안 넷."""
+    return SHEET_NAMES if SHOW_C_SHEET else tuple(name for name in SHEET_NAMES if name != SHEET_NAMES[2])
+
+
 def build_workbook_model(
     snap: BundleSnapshot, meta: ExportMeta, people: Mapping[str, str], equis: Mapping[str, EquisOut] | None = None
 ) -> WorkbookModel:
-    """Excel 다섯 시트의 모델과 파일 이름 — 순수 계산이라 이벤트 루프 밖 스레드에서 부른다. people(로그인 ID → 이름)은 Confirmed by용,
+    """Excel 시트(`get_sheet_names`)의 모델과 파일 이름 — 순수 계산이라 이벤트 루프 밖 스레드에서 부른다. people(로그인 ID → 이름)은 Confirmed by용,
     equis(`build_equis_key` → 그 문서의 EQUIS 값)는 문서 목록 시트용이다."""
-    sheets = [
-        _build_a_sheet(snap, people), _build_b_sheet(snap), _build_c_sheet(snap), _build_info_sheet(snap, meta),
-        _build_documents_sheet(snap, equis or {}),
-    ]
+    sheets = [_build_a_sheet(snap, people), _build_b_sheet(snap)]
+    if SHOW_C_SHEET:
+        sheets.append(_build_c_sheet(snap))
+    sheets += [_build_info_sheet(snap, meta), _build_documents_sheet(snap, equis or {})]
     file_name = build_export_file_name(snap.bundle.id, snap.bundle.title, meta.exported_at)
     return WorkbookModel(file_name=file_name, sheets=sheets)
 

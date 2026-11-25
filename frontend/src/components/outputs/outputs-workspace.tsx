@@ -64,6 +64,7 @@ import {
   type SaveJob,
 } from "@/lib/c-save-queue";
 import { mapOutputEquis } from "@/lib/equis-model";
+import { useDraftingOn } from "@/lib/drafting";
 import { useI18n } from "@/lib/i18n";
 import { useLeaveGuard } from "@/lib/leave-guard";
 import { navigate } from "@/lib/nav-buffer";
@@ -71,7 +72,7 @@ import { buildAScreenLines } from "@/lib/output-groups";
 import { useDelayedFlag } from "@/lib/use-delayed-flag";
 import { useEquisPolling } from "@/lib/use-equis-polling";
 import { useLoaded } from "@/lib/use-loaded";
-import { readOrderTemplate, readOutputsView, writeOrderTemplate, writeOutputsView, type OutputsTab } from "@/lib/outputs-view-prefs";
+import { listOutputsTabs, readOrderTemplate, readOutputsView, resolveOutputsTab, writeOrderTemplate, writeOutputsView, type OutputsTab } from "@/lib/outputs-view-prefs";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useProgressiveList } from "@/lib/use-progressive-list";
 import { getAssignSourceHref, getNewDocumentsHref, getStageHref } from "@/lib/stages";
@@ -130,7 +131,8 @@ export function OutputsWorkspace({ mode }: { mode: OutputsMode }) {
   // 탭은 마지막으로 본 값에서 다시 연다 - 다른 단계에 다녀와도 처음(C)으로 돌아가지 않는다
   const [view, setView] = useState(readOutputsView);
   // 순서·문단번호 화면은 늘 C다 - 결과 화면에서 마지막으로 본 탭을 건드리지 않는다
-  const tab: OutputsTab = isOrder ? "c" : view.tab;
+  const isDrafting = useDraftingOn() === true;
+  const tab: OutputsTab = isOrder ? "c" : resolveOutputsTab(view.tab, isDrafting);
   function setTab(next: OutputsTab) {
     setView((prev) => ({ ...prev, tab: next }));
     writeOutputsView({ tab: next });
@@ -496,7 +498,7 @@ export function OutputsWorkspace({ mode }: { mode: OutputsMode }) {
           {canEditC && !orderTemplateProps?.on && <InfoTip text={t("order.dragHelp")} testId="order-drag-help" />}
           {!isOrder && (
           <div className="ml-2 flex gap-0.5 rounded-md bg-sunken p-0.5" role="tablist">
-            {(["a", "b", "c"] as const).map((item) => (
+            {listOutputsTabs(isDrafting).map((item) => (
               <button
                 key={item}
                 type="button"

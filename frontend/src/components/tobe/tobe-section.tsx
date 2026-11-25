@@ -4,7 +4,7 @@
 // WI 줄은 끌어 다른 SOP 줄에 놓으면 그 SOP 아래로 옮겨 바로 저장되고, 알림의 Undo가 앞의 부모로 되돌린다(설계 §7). Restore의 알림도 Undo를 지닌다(§8).
 "use client";
 
-import { Download, FileUp, ListTree, MoreHorizontal, Plus, Sparkles } from "lucide-react";
+import { Download, FileUp, ListTree, MoreHorizontal, Plus, Sparkles, Upload } from "lucide-react";
 import { Fragment, useEffect, useEffectEvent, useRef, useState, type ClipboardEvent } from "react";
 
 import { BundleLoadError } from "@/components/bundle-load-error";
@@ -48,6 +48,7 @@ import { getBundleLabel } from "@/lib/bundle-label";
 import { loadBundle, useBundle } from "@/lib/bundle-store";
 import { buildDownloadName } from "@/lib/download-name";
 import { hasRefreshingEquis, normalizeDocNumber } from "@/lib/equis-model";
+import { useDraftingOn } from "@/lib/drafting";
 import { useI18n } from "@/lib/i18n";
 import { useLeaveGuard } from "@/lib/leave-guard";
 import { navigate } from "@/lib/nav-buffer";
@@ -69,7 +70,7 @@ import {
   type SlotSummary,
 } from "@/lib/slot-status-model";
 import { NEW_DOCUMENTS_ANCHOR } from "@/lib/stages";
-import { ADD_PREVIEW_KEYS, describeAdd, listEquisHints, planAddRows, readCodes, type AddPreview } from "@/lib/tobe-add-model";
+import { ADD_PREVIEW_KEYS, describeAdd, listEquisHints, listTobeTools, planAddRows, readCodes, type AddPreview } from "@/lib/tobe-add-model";
 import { createDraft, orderDocs, type DraftDoc } from "@/lib/tobe-draft";
 import { useAiJobs } from "@/lib/use-ai-jobs";
 import { useBoxDrag } from "@/lib/use-box-drag";
@@ -103,6 +104,8 @@ function readDocId(key: string): number {
 
 interface ToBeSectionProps {
   bundleId: number;
+  /** 올리기 창 열기 - 쓴 파일만 두는 동안 빈 목록의 단추 */
+  onUpload: () => void;
   /** Documents 화면이 읽은 문서 목록 - 줄에 붙은 쓴 파일을 찾고, 올린 New 문서가 바뀌었는지 아는 데 쓴다. 아직 못 읽었으면 null */
   documents: SopDocument[] | null;
   /** 줄에 붙은 쓴 파일에 하는 일 - 미리 보기·내려받기·지우기와 그 파일의 버전·언어 배치 고치기(Documents 화면이 Old 문서에 쓰는 것과 같다) */
@@ -114,8 +117,11 @@ interface ToBeSectionProps {
   };
 }
 
-export function ToBeSection({ bundleId, documents, file }: ToBeSectionProps) {
+export function ToBeSection({ bundleId, documents, onUpload, file }: ToBeSectionProps) {
   const { t } = useI18n();
+  // 새 문서를 만드는 쪽을 숨긴 동안 쓴 파일을 붙이는 목록만 남는다
+  const isDrafting = useDraftingOn() === true;
+  const tools = new Set(listTobeTools(isDrafting));
   const { bundle } = useBundle(bundleId);
   const canEdit = bundle?.my_role === "author" && bundle.status === "in_progress";
   const { data, error, isLoading, reload } = useLoaded(() => getToBe(bundleId), String(bundleId));
@@ -157,7 +163,7 @@ export function ToBeSection({ bundleId, documents, file }: ToBeSectionProps) {
   const [pendingImport, setPendingImport] = useState<File | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   // 새 문서 목록 AI 읽기 - 아직 정하지 않은 제안이 있으면 목록 머리에 표시가 뜬다. AI 작업이 끝나면 다시 받는다. AI가 꺼져 있으면 길이 없다
-  const proposal = useLoaded(() => getToBeRead(bundleId), String(bundleId));
+  const proposal = useLoaded(() => (isDrafting ? getToBeRead(bundleId) : Promise.resolve(null)), `${bundleId}:${isDrafting}`);
   const aiJobs = useAiJobs(bundleId, proposal.reload);
   const aiOn = aiJobs.status?.ai_enabled ?? false;
   const readJobs = aiJobs.status?.by_kind.tobe_list;
@@ -587,19 +593,21 @@ export function ToBeSection({ bundleId, documents, file }: ToBeSectionProps) {
           {saving ? t("common.saving") : ""}
         </span>
         {/* AI가 읽어 둔 제안 - 사람이 보고 정하기를 기다린다(검토자에게는 보이지 않는다) */}
-        {canEdit && proposal.data !== null && (
+        {canEdit && tools.has("read_list") && proposal.data !== null && (
           <button type="button" className="btn h-7 text-st-ai" data-testid="tobe-proposal" onClick={() => setIsReading(true)}>
             <Sparkles size={14} strokeWidth={1.5} aria-hidden />
             {t("tobe.read.pending", { n: proposal.data.docs.length })}
           </button>
         )}
-        {canEdit && <input ref={fileRef} type="file" accept=".xlsx" className="sr-only" data-testid="tobe-import-file" onChange={(event) => event.target.files?.[0] && pickImportFile(event.target.files[0])} />}
+        {canEdit && tools.has("import") && <input ref={fileRef} type="file" accept=".xlsx" className="sr-only" data-testid="tobe-import-file" onChange={(event) => event.target.files?.[0] && pickImportFile(event.target.files[0])} />}
         {/* Excel 템플릿·가져오기는 가끔 쓰는 일이라 메뉴에 둔다 */}
-        <Tooltip label={t("tobe.more")} suppressed={menuOpen}>
-          <button ref={menuRef} type="button" className="btn ghost icon" aria-haspopup="menu" aria-expanded={menuOpen} aria-label={t("tobe.more")} data-testid="tobe-more" onClick={() => setMenuOpen((prev) => !prev)}>
-            <MoreHorizontal size={16} strokeWidth={1.5} aria-hidden />
-          </button>
-        </Tooltip>
+        {tools.has("template") && (
+          <Tooltip label={t("tobe.more")} suppressed={menuOpen}>
+            <button ref={menuRef} type="button" className="btn ghost icon" aria-haspopup="menu" aria-expanded={menuOpen} aria-label={t("tobe.more")} data-testid="tobe-more" onClick={() => setMenuOpen((prev) => !prev)}>
+              <MoreHorizontal size={16} strokeWidth={1.5} aria-hidden />
+            </button>
+          </Tooltip>
+        )}
         {menuOpen && (
           <Menu anchorRef={menuRef} onClose={() => setMenuOpen(false)} testId="tobe-more-menu" align="end">
             <button
@@ -662,7 +670,7 @@ export function ToBeSection({ bundleId, documents, file }: ToBeSectionProps) {
       ) : (
         <>
           {/* 번호로 더하기 - 목록 머리 바로 아래. 적는 동안 무엇이 더해질지(planAddRows의 결과 그대로) 옆에 적는다. Enter면 그 줄이 저장되고, 여러 줄을 붙여 넣으면 줄마다 하나씩 더한다 */}
-          {list !== null && canEdit && (
+          {list !== null && canEdit && tools.has("add_row") && (
             <form
               // doc-add - WI 줄을 끄는 동안 흐려지는 곳(components.css)
               className="doc-add flex flex-wrap items-center gap-x-2 gap-y-1 px-[var(--pad)] py-2"
@@ -726,7 +734,7 @@ export function ToBeSection({ bundleId, documents, file }: ToBeSectionProps) {
                   const equis = equisByCode.get(normalizeDocNumber(doc.code)) ?? null;
                   const hints = canEdit ? listEquisHints(doc, equis) : [];
                   // SOP 줄의 칸(그 문서 골격의 항목) - 줄과 펼친 곳의 표가 같은 값을 쓴다(줄마다 한 번)
-                  const slotRows = saved !== undefined && saved.doc_type === "sop" ? buildSlotRows(tobe, saved) : null;
+                  const slotRows = tools.has("sections") && saved !== undefined && saved.doc_type === "sop" ? buildSlotRows(tobe, saved) : null;
                   const slots = slotRows === null ? null : { rows: slotRows, summary: summarizeSlots(slotRows) };
                   const isLoose = doc.doc_type === "wi" && depth === 0;
                   const isFirstLoose = isLoose && index === rows.length - looseCount;
@@ -742,6 +750,7 @@ export function ToBeSection({ bundleId, documents, file }: ToBeSectionProps) {
                       stepCount={steps.length}
                       slots={slots}
                       hintCount={hints.length}
+                      showNotWritten={tools.has("sections")}
                       noParent={isLoose}
                       refParents={refParents}
                       canEdit={canEdit}
@@ -774,6 +783,8 @@ export function ToBeSection({ bundleId, documents, file }: ToBeSectionProps) {
                           onPatchOutline={(key, patch) => runWrite(() => patchOutlineItem(bundleId, docId, key, patch))}
                           onRemoveOutline={(key) => void runWrite(() => removeOutlineItem(bundleId, docId, key))}
                           file={file}
+                          canDeclare={tools.has("declare")}
+                          canAddStep={canEdit && tools.has("add_step")}
                           sections={renderSections(doc, slots)}
                         />
                       )}
@@ -842,7 +853,20 @@ export function ToBeSection({ bundleId, documents, file }: ToBeSectionProps) {
         />
       )}
       {list !== null && rows.length === 0 && (
-        <EmptyState icon={ListTree} testId="tobe-empty" title={t("tobe.emptyTitle")} body={canEdit ? t("tobe.emptyEdit") : t("tobe.empty")} />
+        <EmptyState
+          icon={ListTree}
+          testId="tobe-empty"
+          title={t("tobe.emptyTitle")}
+          body={!canEdit ? t("tobe.empty") : t(tools.has("add_row") ? "tobe.emptyEdit" : "next.fill_tobe.body")}
+          action={
+            canEdit && !tools.has("add_row") ? (
+              <button type="button" className="btn pri" data-testid="tobe-empty-upload" onClick={onUpload}>
+                <Upload size={16} strokeWidth={1.5} aria-hidden />
+                {t("documents.upload")}
+              </button>
+            ) : undefined
+          }
+        />
       )}
     </section>
   );

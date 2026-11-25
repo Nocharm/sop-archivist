@@ -22,6 +22,7 @@ import type { PendingPlace } from "@/lib/assign-focus-model";
 import { getBundleShape, getCaptionScope, isSentenceLike, type BundleShape } from "@/lib/caption-slot-model";
 import { readCaretPoint } from "@/lib/caret-point";
 import { isNoiseUnit } from "@/lib/classify-model";
+import { useDraftingOn } from "@/lib/drafting";
 import { useI18n } from "@/lib/i18n";
 import { pickNearChunks, sliceCards } from "@/lib/paper-chunk-model";
 import { buildFoldPlan, type FoldEntry, type FoldItem, type FoldOpen } from "@/lib/paper-fold-model";
@@ -329,6 +330,8 @@ export function Paper({
   spot,
 }: PaperProps) {
   const { t } = useI18n();
+  // 나누기 제안을 숨긴 동안 줄 끝 표시도 내지 않는다
+  const showSplitMark = useDraftingOn() === true;
   // 고치는 중인 번호 칸 - 한 번에 한 줄. 따라 바뀔 번호는 다른 줄의 번호 칸에 점선으로 미리 보인다
   const [numberEdit, setNumberEdit] = useState<NumberEdit | null>(null);
   const numberOrder = useMemo(() => {
@@ -845,7 +848,7 @@ export function Paper({
     if (!strips) return null;
     const marks = new Set<PaperMark>();
     if (unit) {
-      for (const mark of getMarks(unit, inPairCard)) marks.add(mark);
+      for (const mark of getMarks(unit, inPairCard, showSplitMark)) marks.add(mark);
     }
     if (hasWarn) marks.add("warn");
     if (marks.size === 0) return null;
