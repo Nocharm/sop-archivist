@@ -11,7 +11,7 @@
 | 1b | `fix/remove-bundle-move` | 합침 | v1.6.5 · edd65a9b | vitest 1964 · build 경고 0 · `assign:` 스모크 1117(낡은 시드로 난 1은 새 시드로 통과) | 이미 "보류 + 이동"인 줄은 확정할 수 없고 배정 취소로만 나간다 |
 | 2a | `fix/pair-spot-scroll` | 합침 | v1.6.0 · 7a863a50 | vitest 1927 · build 경고 0 · 스모크 3단계 통과(pytest 해당 없음) | 스모크는 단추 자리가 바뀐 감사(겹침)를 정식 업데이트 전에 |
 | 2b | `feat/inspector-float` | 합침 | v1.6.2 · aec15ead | vitest 1934 · build 경고 0 · `assign:` 스모크 전체 1117 통과 · 겹침 감사 장면 1120/1280/1440 | 판을 맨 위로 끌면 상단 바를 덮음(다시 끌어 내릴 수 있음), 접어도 칸 끝 빈 칸은 남음 — 거슬리면 고침 |
-| 3a | `perf/assign-measure` | 합침 | (번호는 다음 푸시에 함께) 1aaa2de0 | pytest+시드 · vitest 1961 · ruff(화면 변경 없음, 스모크 해당 없음) | 결과 문서(T3)는 3b 앞뒤를 잰 뒤 |
+| 3a | `perf/assign-measure` | 합침 | v1.6.6과 함께 · 1aaa2de0 | pytest+시드 · vitest 1961 · ruff(화면 변경 없음, 스모크 해당 없음) | 결과 문서(T3)는 3b 앞뒤를 잰 뒤 |
 | 3b | `fix/assign-command-queue` | 합침 | v1.6.8 · 278c271d | vitest 2071 · build 경고 0 · `assign:` 스모크 1144(새 단계의 경합 하나는 응답을 기다리게 고쳐 통과) | 배정 취소 응답에 새 revision이 없어 취소 직후 같은 박스에 이어 누르면 그 단위만 받은 값을 씀 |
 | 3c | `fix/assign-instant-motion` | 합침 | v1.6.9 · a4e02416 | vitest 2092 · build 경고 0 · `assign:` 스모크 전체 1164 통과 | 응답 뒤 처리에서 던지면 걷은 표 선이 잠깐 거꾸로 돌아 보일 수 있음(자료는 맞음) |
 | 3d | `perf/assign-filter-chunks` | 합침 | v1.6.10 · 9fe9f04b | vitest 2138 · build 경고 0 · `assign:` 스모크 1163 + 흔들린 1단계는 혼자 4번 통과 | 1,050박스로는 재지 않음(289박스) |
@@ -24,11 +24,28 @@
 | 5b | `feat/split-front-matter` | 합침 | v1.6.11 · ff0a6718 | pytest 3622+시드 15 · vitest 2167 · build 경고 0 · 스모크 전체 2181(새 단계의 두 번 누름 하나는 단계를 고쳐 통과) | 아래 "아침에 볼 것" |
 | 5c | `feat/split-new-parity` | 합침 | v1.6.6 · d750564c | pytest 3453+시드 14(6 xfail = R3 몫) · vitest 1969 · build 경고 0 · `assign:` 스모크 전체 통과(4d와 합친 트리) | Old 한/영 짝이 New 두 문장에 이어져 하나만 풀린 뒤 다시 하기는 409(있던 것) |
 | 6-1 | `feat/new-paper-1-render` | 모음 `feat/new-paper`에 합침 | 7dcf645f | vitest 2361 · build 경고 0 · `assign:` 스모크 1233 + 부하에서 흔들린 둘은 혼자 통과 | New 문장은 글쇠만으로 고를 길이 없음(계획 글자대로, 6-2에서 다시) |
-| 6-2 | `feat/new-paper-2-pick` | 진행(11-26) | | | |
+| 6-2 | `feat/new-paper-2-pick` | 진행 — 코드 · 스모크 커밋됨, **브라우저 확인과 fable 검토 전** | ecb0e3e0(7dcf645f 위 8개) | vitest 2418 · lint · tsc(구현자 보고), 스모크 · build 안 돌림 | 아래 "이어 가기" 2번 |
 | 6-3 | `feat/new-paper-3-tools` | 대기 | | | |
 | 3b+ | `fix/undo-follow-after-click` | 합침 | v1.6.16 · f1cbc921 | vitest 2297 · build 경고 0 · `assign:` 스모크 1240 + 손질 뒤 5단계 | — |
 | 7 | 계획 4의 일곱 | 대기 | | | |
-| 8 | 계획 5의 아홉 | 진행 | … · 6d1792ad | space-preview-trim v1.6.14 · excel-a-strike v1.6.15 · progress-by-disposition v1.6.18 합침 | 남은 여섯: tables-tab · unwrap-continue-numbers · table-follow 1~3 · ai-suggestions-retire |
+| 8 | 계획 5의 아홉 | 진행 | v1.6.18 · 6d1792ad | space-preview-trim v1.6.14 · excel-a-strike v1.6.15 · progress-by-disposition v1.6.18 합침 | 남은 여섯: tables-tab · unwrap-continue-numbers · table-follow 1~3 · ai-suggestions-retire |
+
+
+## 이어 가기 (2026-11-26 08시, 지휘 세션을 끊으며)
+
+`origin/dev` = **v1.6.18**(`3f01cfb4`). 세운 브랜치 없음. 다음 dev 번호는 `npm version patch`(1.6.19). 지휘 도구는 저장소 밖 `~/Documents/sop-orchestration/`(README 있음: 하위 에이전트 지침 두 개, `gate.sh` · `merge.py` · `ship.sh` · `wmerge.py`, 반응속도 측정). 새 세션은 지침 · `merge.py`의 `Claude-Session:` 줄을 자기 주소로 바꿔 쓴다.
+
+1. **모음 `feat/new-paper`** = `7dcf645f`(6-1까지, dev v1.6.13 바탕). 워크트리 `sop-wt-new-paper-1-render`는 6-1이 끝나 지워도 된다. dev에는 6-3까지 끝난 뒤 한 번(계획 3 머리말).
+2. **6-2 `feat/new-paper-2-pick`**(워크트리 `sop-wt-new-paper-2-pick`): 남은 일 — origin/dev(v1.6.18)를 합침(4c · 되돌리기 고침 · 진행 숫자와 `use-assign-page.tsx` · `page.tsx` 충돌 예상) → 게이트 → `ONLY="assign:"` 스모크(새 단계 다섯 포함, 단추 줄 `assign-pick-bar`) → **fable 검토**(두 고름 상태 · 되돌리기 고침의 `isPickedOver` · `restore`와 맞물림) → 모음에 합침. 구현자가 넘긴 판단: 한 언어 잇기의 "잇지 않는 문장" 안내가 확인 뒤 알림으로 옮겨짐(설명서 583행은 옛 흐름), New 용지의 `.pane-body`에 tabIndex가 없어 단추 줄의 포커스 되돌리기가 안 됨, `docs/qa/feature-map.md` 23행 · `.link-menu` CSS · `assign-key-target`의 `data-link-menu` 예외가 낡음.
+3. **6-3 `feat/new-paper-3-tools`** → 모음을 dev에(버전 · PROGRESS는 그때 한 번). 6-3 몫으로 넘어온 것: New 표 머리를 눌러 다듬기로 고르면 1 Shape · ⇧T가 닿음, "글자 골라 새 박스"에서 `pressThroughSelection`을 끔.
+4. **계획 4의 일곱**(전부 6에 매임) · **계획 5의 남은 여섯**: `fix/ai-suggestions-retire`(이제 진행 숫자의 `countWaitingSuggestions` · `WAITING_KINDS`가 dev에 있어 바로 할 수 있다 — 검토가 권한 대로 `WAITING_KINDS` ↔ 프런트 `HIDDEN_AI_KINDS`를 묶는 검사 하나), `feat/assign-tables-tab`, `feat/unwrap-continue-numbers`(계획 4의 `MergeRowsOp`가 먼저), 모음 `feat/table-follow` 1~3. **`feat/table-follow-3-ai`는 관리 세션의 `feat/admin-polish`(사내 AI 부여 등록 스텝)가 dev에 들어온 뒤에 시작**(관리 세션 요청, 2026-11-26 07시 — 그 브랜치는 이 패치에서 건드리지 않는다, 합치기는 관리 세션 · 사용자).
+
+**운영하며 배운 것**
+- 하위 에이전트는 셋 안팎. 넷 이상이면 부하 평균이 40~60으로 올라 스모크(100ms · 30s 기준)와 시간 시험이 흔들렸다. 흔들린 것은 혼자 다시 돌려 통과를 보고 합쳤다(장부 줄마다 적음).
+- 스모크는 한 번에 하나가 원칙. 급하면 다른 포트(`up 3797`)로 짧은 단계만.
+- dev를 브랜치에 합칠 때 긴 표 줄 md 충돌은 `wmerge.py`, 코드 충돌(대부분 `use-assign-page.tsx` · `page.tsx`의 구조 분해 · import 줄)은 양쪽을 다 넣어 풀고 `tsc` · `eslint`로 확인.
+- 새 스모크 단계는 거의 늘 처음에 경합으로 실패했다(응답 · 다시 읽기 전에 검사). 제품 결함인지 먼저 요청 로그로 가린다 — 4c의 Esc 단계가 3b 결함(되돌리기 중 클릭이 늦은 따라가기에 덮임)을 실제로 찾았다.
+- 하위 에이전트끼리 scratchpad 파일 이름이 겹쳐 남의 스크립트를 돌린 일이 있었다 — 지침에 `<브랜치 이름>/` 하위 폴더 규칙을 넣었다.
 
 ## 따라 바뀐 시험 (브랜치 · 파일:줄 · 전 → 뒤 · 까닭)
 
