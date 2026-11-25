@@ -588,6 +588,7 @@ def build_unit_drafts(
                 if group_index is None:
                     group_index = table_draft_index[block.table_id] = bundle_draft_index[block.seq] = len(drafts)
                     drafts.append(UnitDraft("table", [], NEUTRAL, block.table_id, None, None, block.seq, -1))
+            cell_captions = _read_cell_captions(block, bundle_seqs) if block.table_id not in band_heading_ids else {}
             if block.table_id in band_heading_ids:
                 # 벗긴 띠 표 — 칸 글은 제목이고(문장으로 쪼개지 않는다) 번호 칸은 아래 번호 칸 규칙으로 그 제목 줄의 번호 범위가 된다
                 cells = [
@@ -598,11 +599,15 @@ def build_unit_drafts(
                 cells = [
                     _build_text_draft("cell_sentence", block, start, end, block.table_id, block.row_index, group_index)
                     for start, end in split_block_text(
-                        block.text, rule=rule, split_lines=split_lines, paras=(block.signals or {}).get(PARAS_SIGNAL) or (),
+                        block.text, rule=rule, split_lines=split_lines,
+                        # 캡션은 문단의 첫 줄만이라 그 끝도 경계다 — 둘째 줄이 캡션 줄에 이어지면 캡션 초안과 겹친다
+                        paras=(
+                            *((block.signals or {}).get(PARAS_SIGNAL) or ()), *cell_captions,
+                            *(end for end, _ in cell_captions.values()),
+                        ),
                         kept=kept.get(block.id, ()),
                     )
                 ]
-            cell_captions = _read_cell_captions(block, bundle_seqs) if block.table_id not in band_heading_ids else {}
             if cell_captions:
                 cells = _swap_caption_lines(block, cells, cell_captions)
             if group_index is None and len(cells) == 1 and _is_number_cell(block, cells[0]):

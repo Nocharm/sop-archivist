@@ -632,6 +632,28 @@ def test_number_cell_takes_the_first_paragraph_box() -> None:
     assert (drafts[0].pos_seq, drafts[0].pos_start) == (0, 0)
 
 
+def test_second_line_of_a_caption_paragraph_is_not_joined_to_the_caption() -> None:
+    # 칸 안 캡션은 문단의 첫 줄만이다 — 같은 언어의 Shift+Enter 둘째 줄이 첫 줄에 이어지면 캡션과 같은 글자를 겹쳐 덮는다
+    text = "앞 글이다.\n표 1. 조제 조성\n단위는 mL이다.\n뒤 글이다."
+    head, tail = text.index("표 1."), text.index("\n단위")
+    work = BlockView(
+        1, 0, "table_cell", "body", text, None, (), 8, 0,
+        {"captions": [[head, tail, 1]], PARAS_SIGNAL: [0, head, text.index("뒤 글")]},
+    )
+
+    drafts = build_unit_drafts(
+        [work, _cell(2, 1, "탱크", 9, 0)], [TableView(8, True), TableView(9, False)], "ko_only", split_lines=True,
+        rule=RULE_PARAGRAPH,
+    )
+
+    lines = [(d.kind, text[d.spans[0][1] : d.spans[0][2]]) for d in drafts if d.spans and d.spans[0][0] == 1]
+    assert lines == [
+        ("cell_sentence", "앞 글이다."), ("caption", "표 1. 조제 조성"), ("cell_sentence", "단위는 mL이다."),
+        ("cell_sentence", "뒤 글이다."),
+    ]
+    assert find_coverage_problems({1: text, 2: "탱크"}, [d.spans for d in drafts if d.spans]) == []
+
+
 def test_captions_in_a_cell_stay_whole_under_rule_2() -> None:
     starts = [0, CELL_TEXT.index("표 1."), CELL_TEXT.index("이 절차는")]
     caption_end = starts[1] + len("표 1. 조제 탱크별 대상 장치")
