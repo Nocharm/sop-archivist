@@ -1,6 +1,6 @@
 """본문 앞부분(front) · 개정 이력(history) — 저절로 삭제된 줄을 찾는 규칙, 잠금, 사유, 여기부터 본문, 결과물(쪼개기 먼저 설계 §7 R3)."""
 
-from typing import NamedTuple
+from typing import Any, NamedTuple
 
 import httpx2
 import pytest
@@ -798,3 +798,103 @@ def test_accepting_suggestions_skips_lines_deleted_later(client: TestClient) -> 
         return _is_open_unit(unit_id, loaded)
 
     assert run_in_session(_is_open) is False
+
+
+# --- 결과물 ---
+
+
+def _get(client: TestClient, fx: Fixture, path: str, lang: str = "en") -> Any:
+    response = client.get(f"/api/bundles/{fx.bundle_id}/{path}?lang={lang}", headers=AUTHOR)
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def _list_noise_rows(client: TestClient, fx: Fixture, lang: str, kind: str) -> list[dict]:
+    return [row for row in _get(client, fx, "outputs/a", lang) if row["noise_kind"] == kind]
+
+
+def test_output_a_writes_the_reason_or_the_set_phrase(client: TestClient) -> None:
+    fx = _setup(client)
+    assert _write_reason(client, fx, find_unit(fx.view, TITLE)["id"], find_unit(fx.view, TOC_TEXTS[0])["id"]).status_code == 200
+    phrases = {
+        "en": {NOISE_FRONT: "Before chapter 1", NOISE_HISTORY: "Change history",
+               NOISE_TOC: "Contents · the app builds the new contents (automatic)"},
+        "ko": {NOISE_FRONT: "1장 앞이라 삭제", NOISE_HISTORY: "개정 이력이라 삭제",
+               NOISE_TOC: "목차 · 새 문서 목차는 앱이 만든다 (저절로)"},
+    }
+
+    for lang, expected in phrases.items():
+        remarks = {
+            kind: [row["remark"] for row in _list_noise_rows(client, fx, lang, kind)] for kind in expected
+        }
+        assert remarks == {
+            NOISE_FRONT: [REASON, *[expected[NOISE_FRONT]] * 5], NOISE_TOC: [REASON, expected[NOISE_TOC]],
+            NOISE_HISTORY: [expected[NOISE_HISTORY]] * 3,
+        }
+    rows = _get(client, fx, "outputs/a", "ko")
+    noise = [row for row in rows if row["noise_kind"]]
+    assert {(row["dest_kind"], row["change_type"], row["status"], row["confirmed_by"]) for row in noise} == {
+        ("delete", "deleted", "deleted", None)
+    }
+    # 줄마다 한 묶음이고 원문 순이다 — 앞부분 · 목차 · 본문 · 개정 이력
+    assert [row["row_no"] for row in rows] == sorted(row["row_no"] for row in rows)
+    kinds = [row["noise_kind"] for row in rows]
+    assert kinds[:8] == [NOISE_FRONT] * 6 + [NOISE_TOC] * 2 and kinds[-3:] == [NOISE_HISTORY] * 3
+
+
+def test_a_table_row_says_its_size(client: TestClient) -> None:
+    fx = _setup(client)
+
+    front = _list_noise_rows(client, fx, "ko", NOISE_FRONT)
+    history = _list_noise_rows(client, fx, "en", NOISE_HISTORY)
+
+    # 표 · 그림은 한 줄이고 칸 · 캡션은 제 줄이 없다. 언어는 든 글을, 글이 없는 그림은 앞 줄을 따른다
+    assert [(row["location"]["place"], row["source_text"]) for row in front] == [
+        ("본문 앞부분 · 한글 · 1행", TITLE),
+        ("본문 앞부분 · 영어 · 1행", EN_TITLE),
+        ("본문 앞부분 · 한글 · 2행", "표 1 (2×2)"),
+        ("본문 앞부분 · 한글 · 3행", "[Figure]"),
+        ("본문 앞부분 · 한글 · 4행", "[Figure]"),
+        ("본문 앞부분 · 영어 · 2행", "Summary of Changes"),
+    ]
+    assert [(row["location"]["place"], row["source_text"]) for row in history][-1] == (
+        "Change history · Korean · line 3", "Table 3 (2×2)"
+    )
+
+
+def test_summary_counts_each_kind(client: TestClient) -> None:
+    fx = _setup(client)
+
+    summary, graph = _get(client, fx, "summary"), _get(client, fx, "outputs/b")
+
+    counts = {name: summary[name] for name in ("toc_deleted", "front_deleted", "history_deleted", "deleted")}
+    assert counts == {"toc_deleted": 2, "front_deleted": 6, "history_deleted": 3, "deleted": 0}
+    assert (summary["old_rows"], summary["assigned"], summary["no_destination"]) == (6 + 11, 11, 6)
+    assert next(node["count"] for node in graph["nodes"] if node["id"] == "delete") == sum(counts.values())
+    assert _read_sheet_pairs(client, fx) >= {
+        ("Contents · auto-deleted", "2"), ("Front matter · auto-deleted", "6"), ("Change history · auto-deleted", "3"),
+    }
+    # 그런 줄이 없으면 파일에 없다
+    plain = _setup_case(client, "G17")
+    assert not {name for name, _ in _read_sheet_pairs(client, plain) if name.endswith("auto-deleted")}
+    assert _get(client, plain, "summary")["front_deleted"] == _get(client, plain, "summary")["history_deleted"] == 0
+
+
+def _read_sheet_pairs(client: TestClient, fx: Fixture) -> set[tuple[str, str]]:
+    """Excel B 시트의 앞 두 칸."""
+    b_sheet = _get(client, fx, "export/preview")["sheets"][1]
+    return {(row["cells"][0]["text"], row["cells"][1]["text"]) for row in b_sheet["rows"]}
+
+
+def test_preview_folds_by_kind(client: TestClient) -> None:
+    fx = _setup(client)
+
+    a_sheet = _get(client, fx, "export/preview")["sheets"][0]
+
+    marks = [(row["toc"], row["noise"]) for row in a_sheet["rows"] if row["unit_id"] is not None]
+    assert marks[:8] == [(True, NOISE_FRONT)] * 6 + [(True, NOISE_TOC)] * 2
+    assert set(marks[8:-3]) == {(False, None)} and marks[-3:] == [(True, NOISE_HISTORY)] * 3
+    status = a_sheet["column_keys"].index("status")
+    assert {(row["cells"][status]["text"], row["cells"][status]["tone"]) for row in a_sheet["rows"] if row["noise"]} == {
+        ("Deleted", "del")
+    }

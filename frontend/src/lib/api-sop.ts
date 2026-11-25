@@ -1347,7 +1347,7 @@ export interface OutputARow {
   confirmed_at: string | null;
   group_id: string | null;
   warnings: Array<Record<string, string>>;
-  /** "toc"면 목차 줄 - 보낸 곳 Deleted, status "deleted"(판단 상태가 아니다), 저절로 */
+  /** 저절로 삭제된 줄("toc" · "front" · "history") - 보낸 곳 Deleted, status "deleted"(판단 상태가 아니다) */
   noise_kind?: string | null;
 }
 
@@ -1446,8 +1446,10 @@ export interface OutputSummary {
   translated: number;
   confirmed_rate: number;
   single_language: number;
-  /** 목차 · 저절로 삭제 - 목차 줄 수(old_rows·assigned에 들고 deleted에는 들지 않는다) */
+  /** 저절로 삭제된 줄 수 - 목차 · 본문 앞부분 · 개정 이력(old_rows·assigned에 들고 deleted에는 들지 않는다) */
   toc_deleted: number;
+  front_deleted: number;
+  history_deleted: number;
   /** 풀린 표에서 온 줄 - 벗긴 표(레이아웃 표)의 칸 줄이 든 줄(MD 1 F11) */
   unwrapped_rows: number;
 }
@@ -1543,8 +1545,10 @@ export interface PreviewRow {
   /** 이 줄의 옛 단위와 관계 묶음(A의 자료 줄에만) - 고른 줄 · 같은 무리를 칸 글이 아니라 이 값으로 맞춘다 */
   unit_id: number | null;
   group_id: string | null;
-  /** 목차 줄 - 연달아 오면 한 줄로 접어 그린다 */
+  /** 저절로 삭제된 줄 - 같은 종류가 연달아 오면 한 줄로 접어 그린다 */
   toc: boolean;
+  /** 그 종류("toc" · "front" · "history") - 접기는 종류가 바뀌면 끊는다 */
+  noise?: string | null;
   /** 지운 줄(문단 Excel) - 화면은 숨기고, 그 줄을 고른 동안만 빨간 음영으로 보인다 */
   deleted: boolean;
   /** 한 줄로 묶은 옛 단위 전부(문단 Excel - 이어진 줄이 같은 새 문장 하나로 감). unit_id는 그 첫 단위, 한 단위 줄은 빈 목록 */

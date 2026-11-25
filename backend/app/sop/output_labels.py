@@ -2,6 +2,9 @@
 
 from dataclasses import dataclass
 
+from app.sop.noise import NOISE_FRONT, NOISE_HISTORY, NOISE_TOC
+
+FIGURE_MARKER = "[Figure]"  # 글이 없는 그림 줄의 글 — 두 언어 모두
 WI_PART_LABELS = {"instruction": "Instruction", "why": "Why"}
 
 
@@ -32,9 +35,11 @@ class OutputLabels:
     split: str
     translated: str
     wi_parts: dict[str, str]
-    toc_place_template: str  # 목차 줄의 위치(자리) — {lang} {n}(그 문서·언어 안 차례)
-    toc_langs: dict[str, str]  # 목차 줄 위치의 언어 이름
-    toc_remark: str  # 목차 줄의 Remark(저절로)
+    # 저절로 삭제된 줄(잡음 표시, noise.NOISE_KINDS) — 종류 → 글
+    noise_place_templates: dict[str, str]  # 위치(자리) — {lang} {n}(그 문서·종류·언어 안 차례)
+    noise_langs: dict[str, str]  # 그 위치의 언어 이름
+    noise_remarks: dict[str, str]  # 사유를 적지 않은 줄의 Remark(정한 문구)
+    noise_table_template: str  # 결과물 A 원문 칸 — 표 한 줄, {table} {rows} {cols}
     disposed_remarks: dict[str, str]  # Remark를 비운 삭제·이동 줄의 Remark — 처분 → 글
 
 
@@ -68,9 +73,16 @@ LABELS = {
         split="(나눔)",
         translated="(번역)",
         wi_parts=WI_PART_LABELS,
-        toc_place_template="목차 · {lang} · {n}행",
-        toc_langs={"ko": "한글", "en": "영어"},
-        toc_remark="목차 · 새 문서 목차는 앱이 만든다 (저절로)",
+        noise_place_templates={
+            NOISE_TOC: "목차 · {lang} · {n}행", NOISE_FRONT: "본문 앞부분 · {lang} · {n}행",
+            NOISE_HISTORY: "개정 이력 · {lang} · {n}행",
+        },
+        noise_langs={"ko": "한글", "en": "영어", "ref": "REF"},
+        noise_remarks={
+            NOISE_TOC: "목차 · 새 문서 목차는 앱이 만든다 (저절로)", NOISE_FRONT: "1장 앞이라 삭제",
+            NOISE_HISTORY: "개정 이력이라 삭제",
+        },
+        noise_table_template="표 {table} ({rows}×{cols})",
         disposed_remarks={"delete": "삭제", "move_external": "이동"},
     ),
     "en": OutputLabels(
@@ -104,9 +116,16 @@ LABELS = {
         split="(split)",
         translated="(translated)",
         wi_parts=WI_PART_LABELS,
-        toc_place_template="Contents · {lang} · line {n}",
-        toc_langs={"ko": "Korean", "en": "English"},
-        toc_remark="Contents · the app builds the new contents (automatic)",
+        noise_place_templates={
+            NOISE_TOC: "Contents · {lang} · line {n}", NOISE_FRONT: "Front matter · {lang} · line {n}",
+            NOISE_HISTORY: "Change history · {lang} · line {n}",
+        },
+        noise_langs={"ko": "Korean", "en": "English", "ref": "REF"},
+        noise_remarks={
+            NOISE_TOC: "Contents · the app builds the new contents (automatic)", NOISE_FRONT: "Before chapter 1",
+            NOISE_HISTORY: "Change history",
+        },
+        noise_table_template="Table {table} ({rows}×{cols})",
         disposed_remarks={"delete": "Deleted", "move_external": "Moved"},
     ),
 }
