@@ -1488,8 +1488,8 @@ await runStep("assign: written New document - identical, link by clicking, split
   }
   // 누르면 후보가 아니라 고른 문장이 된다 - 같은 줄을 계속 가리키게 testid로 붙잡는다
   const firstLine = page.locator(`[data-testid="${await candidate.first().getAttribute("data-testid")}"]`);
-  // 줄 가운데를 누르면 오른쪽 출처 칩에 닿을 수 있다 - 고르는 단추를 누른다
-  await firstLine.locator(".new-hit").click();
+  // 줄 가운데를 누르면 오른쪽 출처 칩에 닿을 수 있다 - 글을 누른다
+  await firstLine.locator(".new-text").click();
   check("clicking a New sentence picks it", (await firstLine.getAttribute("data-state")) === "picked");
   // 맥에서 Ctrl+클릭은 오른쪽 클릭이다 - 화면은 ⌘도 같은 뜻으로 받는다
   const multi = process.platform === "darwin" ? "Meta" : "Control";
@@ -1498,7 +1498,7 @@ await runStep("assign: written New document - identical, link by clicking, split
   const unpicked = await otherLangLines();
   const second = page.locator(`[data-testid="${await unpicked.first().getAttribute("data-testid")}"]`);
   const secondLang = await second.getAttribute("data-lang");
-  await second.locator(".new-hit").click({ modifiers: [multi] });
+  await second.locator(".new-text").click({ modifiers: [multi] });
   await page.locator('[data-testid^="assign-link-"]').nth(1).waitFor({ timeout: T });
   check("Ctrl+click adds a second sentence", (await page.locator('[data-testid^="assign-link-"]').count()) >= 2);
   check(
@@ -1508,7 +1508,7 @@ await runStep("assign: written New document - identical, link by clicking, split
   );
   await takeShot("sop-assign-link.png");
   // 첫 줄만 다시 누르면 고름이 그 문장(과 New 짝)으로 돌아간다 - 둘째의 짝이 함께 붙었을 수 있어 Ctrl로 하나씩 빼지 않는다
-  await firstLine.locator(".new-hit").click();
+  await firstLine.locator(".new-text").click();
   const linkedId = (await firstLine.getAttribute("data-testid")).replace("assign-new-", "");
   const readSources = async () => {
     const response = await page.request.get(`${BASE}/api/bundles/${halfBundleId}/written-sentences`, { headers: { "X-Dev-User": "qa.member" } });
@@ -1577,7 +1577,7 @@ await runStep("assign: drag an Old piece onto a written New sentence, it links l
   const pointInLine = async (id) => {
     await centre(`[data-testid="assign-new-${id}"]`);
     await page.waitForTimeout(150);
-    const box = await page.locator(`[data-testid="assign-new-${id}"] .new-hit`).boundingBox();
+    const box = await page.locator(`[data-testid="assign-new-${id}"] .new-text`).boundingBox();
     return { x: box.x + Math.min(60, box.width / 2), y: box.y + box.height / 2 };
   };
   const newPane = page.locator('[data-testid="assign-new"]');
@@ -1593,7 +1593,7 @@ await runStep("assign: drag an Old piece onto a written New sentence, it links l
     drops: document.querySelectorAll("[data-drop]").length,
     srcs: document.querySelectorAll("[data-drag-src]").length,
   }));
-  const isPressed = async (id) => (await page.locator(`[data-testid="assign-new-pick-${id}"]`).getAttribute("aria-pressed")) === "true";
+  const isPressed = async (id) => (await page.locator(`[data-testid="assign-new-${id}"]`).getAttribute("data-state")) === "picked";
   const menu = page.locator('[data-testid="assign-link-menu"]');
 
   // 1. 다른 줄을 먼저 골라 둔다 - 끄는 줄은 지금 고른 줄이 아니다
@@ -1965,7 +1965,7 @@ await runStep("assign: a text selection does not deaden clicks on Old pieces, Al
     await page.locator('[data-testid="assign-new-doc"]').click();
     await page.locator(`[data-testid="assign-new-doc-option-${written[0].target_doc_id}"]`).click();
   }
-  const line = page.locator('[data-testid="assign-new"] .pg:not([data-read-only]) .new-line[data-target] .new-hit').first();
+  const line = page.locator('[data-testid="assign-new"] .pg:not([data-read-only]) .new-line[data-target] .new-text').first();
   await line.waitFor({ timeout: T });
   await cell.evaluate((el) => el.scrollIntoView({ block: "center" }));
   await page.waitForTimeout(150);
@@ -2114,7 +2114,7 @@ await runStep("assign: KO/EN pair - recommendation shows picked, in-place menu c
   const isPicked = await card.locator('[data-testid$="-pending"]').waitFor({ timeout: T }).then(() => true, () => false);
   check("the recommendation shows as picked on a KO/EN pair row", isPicked && (await card.getAttribute("aria-pressed")) === "true");
   check("the card says it is not saved yet", (await card.locator('[data-testid$="-pending"]').count()) === 1);
-  if (found.partnerId !== null) check("both New sentences of the pair are picked", (await page.locator(`[data-testid="assign-new-pick-${found.partnerId}"]`).getAttribute("aria-pressed")) === "true");
+  if (found.partnerId !== null) check("both New sentences of the pair are picked", (await page.locator(`[data-testid="assign-new-${found.partnerId}"]`).getAttribute("data-state")) === "picked");
   // 카드 옆 확정 메뉴는 없다(1.2.0 피드백) - 마우스로 눌러도 Enter가 확정 단추다(B1-R1)
   await page.locator('[data-testid="assign-primary"][data-state="confirm"]').waitFor({ timeout: T });
   check("picking a card opens no in-place menu", (await page.locator("[data-link-menu]").count()) === 0);
@@ -2376,6 +2376,71 @@ await runStep("assign: New table - picking an Old line then a New cell links it,
   check("the cell is back to unassigned with no source, the others untouched", JSON.stringify(unlinked?.source_unit_ids) === "[]" && unlinked?.status === "unassigned" && others(after) === others(cellsBefore), JSON.stringify(unlinked));
   const bundle = await (await page.request.get(api, { headers })).json();
   check("the cell-link bundle is removed", (await page.request.delete(`${api}?revision=${bundle.revision}`, { headers })).ok());
+});
+
+// 같은 용지(쪼개기 먼저 §8 4-1) - 양 단의 이미 쓴 New 문서도 Old와 같은 용지라 머리말 · 꼬리말 · 그림 탭과 제목 줄이 보이고, 이을 수 없는 박스는 올리면 까닭이 뜬다.
+// 머리말 · 꼬리말 · 그림이 다 든 이미 쓴 New 문서가 시드에 없어 합성 docx 둘을 새 묶음에 올려 보고 끝에 묶음을 지운다
+await runStep("assign: The New paper has header, footer and figure tabs and tells why a heading cannot be linked", { devUser: "dev.admin" }, async ({ page, takeShot }) => {
+  const headers = { "X-Dev-User": "dev.admin" };
+  const backend = resolve(SCRIPT_DIR, "../../../backend");
+  const oldFile = resolve(SHOT_DIR, "SYNTHETIC_OLD-89_new_paper.docx");
+  const newFile = resolve(SHOT_DIR, "SYNTHETIC_SOP-89_new_paper.docx");
+  const build = [
+    "import sys",
+    "from tests.docx_factory import TINY_PNG, build_docx, make_drawing_run, p",
+    "open(sys.argv[1], 'wb').write(build_docx(p('합성 장비를 켠다.')))",
+    "open(sys.argv[2], 'wb').write(build_docx(p('1. 합성 절', 'Heading1') + p('합성 장비를 켠다.') + f\"<w:p>{make_drawing_run('image1.png')}</w:p>\" + p('그림 1 합성 장비', 'Caption'), media={'image1.png': TINY_PNG}, headers=[p('합성 머리말')], footers=[p('합성 꼬리말')]))",
+  ].join("\n");
+  execFileSync(findBackendPython(), ["-c", build, oldFile, newFile], { cwd: backend, stdio: "inherit" });
+  const created = await (await page.request.post(`${BASE}/api/bundles`, { headers, data: { title: "SYNTHETIC New paper tabs", is_synthetic: true } })).json();
+  const api = `${BASE}/api/bundles/${created.id}`;
+  const getJson = async (path) => (await page.request.get(`${api}${path}`, { headers })).json();
+  const mime = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+  const oldUp = await page.request.post(`${api}/documents`, { headers, multipart: { side: "old", file: { name: "SYNTHETIC_OLD-89_new_paper.docx", mimeType: mime, buffer: readFileSync(oldFile) } } });
+  const newUp = await page.request.post(`${api}/documents`, { headers, multipart: { side: "new", doc_type: "sop", file: { name: "SYNTHETIC_SOP-89_new_paper.docx", mimeType: mime, buffer: readFileSync(newFile) } } });
+  const oldDoc = await oldUp.json();
+  const newDoc = await newUp.json();
+  check("an Old document and a written New document with a header, a footer and a figure are uploaded", oldUp.status() === 201 && newUp.status() === 201 && oldDoc.status === "ready" && newDoc.status === "ready", `${oldUp.status()} ${newUp.status()}`);
+  const newUnits = (await getJson(`/documents/${newDoc.id}/view`)).units;
+  const heading = newUnits.find((unit) => unit.kind === "heading");
+  const sentence = (await getJson("/written-sentences")).find((row) => row.kind === "sentence");
+  const oldUnit = (await getJson(`/documents/${oldDoc.id}/view`)).units.find((unit) => unit.kind === "sentence");
+  check("the New document has a heading and a sentence to link", Boolean(heading && sentence && oldUnit));
+  if (!heading || !sentence || !oldUnit) return;
+  await page.goto(`${BASE}/bundles/${created.id}/assign`);
+  await wait(page, "assign-bar");
+  if ((await page.locator('[data-testid="assign-new"]').count()) === 0) await page.locator('[data-testid="assign-view-two"]').click();
+  // 본문 - 제목 줄이 보이고 이을 New 문장이 없다, 올리면 까닭
+  const headingBox = page.locator(`[data-testid="assign-new-paper-piece-${heading.id}"]`);
+  await headingBox.waitFor({ timeout: T });
+  check("the heading is on the New paper with no New sentence", (await headingBox.getAttribute("data-target")) === null && (await headingBox.innerText()).includes("합성 절"));
+  await headingBox.hover();
+  const tip = page.locator(".tip", { hasText: "A heading can't be linked" });
+  check("hovering the heading tells why it cannot be linked", await tip.waitFor({ timeout: T }).then(() => true, () => false));
+  await takeShot("sop-assign-new-paper.png");
+  // Old 줄을 고른 채 누르면 잇지 않고 까닭을 알린다
+  await page.locator(`[data-testid="assign-paper-piece-${oldUnit.id}"]`).click();
+  await wait(page, "assign-decide");
+  await headingBox.click();
+  await page.locator('[data-testid="toast-info"]', { hasText: "A heading can't be linked" }).waitFor({ timeout: T });
+  check("pressing the heading with an Old line picked only tells why", (await page.locator('[data-testid="assign-link-menu"]').count()) === 0 && (await page.locator('[data-testid="assign-solo"]').count()) === 0);
+  // 탭 - 머리말 · 꼬리말 · 그림
+  const tabs = await page.locator('[data-testid^="assign-new-tab-"]').evaluateAll((els) => els.map((el) => el.dataset.testid.replace("assign-new-tab-", "")));
+  check("the New paper has header, footer and figure tabs", JSON.stringify(tabs) === JSON.stringify(["body", "header", "footer", "figures"]), tabs.join(","));
+  for (const [tab, text] of [["header", "합성 머리말"], ["footer", "합성 꼬리말"]]) {
+    await page.locator(`[data-testid="assign-new-tab-${tab}"]`).click();
+    const shown = await page.locator('[data-testid="assign-new"] .new-paper', { hasText: text }).waitFor({ timeout: T }).then(() => true, () => false);
+    check(`the ${tab} tab shows its text and has no sentence to link`, shown && (await page.locator('[data-testid="assign-new"] .new-line').count()) === 0);
+  }
+  await page.locator('[data-testid="assign-new-tab-figures"]').click();
+  const image = page.locator('[data-testid="assign-new"] .new-paper img');
+  await image.waitFor({ timeout: T });
+  check("the figure tab shows the image", await image.evaluate((el) => el.complete && el.naturalWidth > 0));
+  await page.locator('[data-testid="assign-new-tab-body"]').click();
+  await page.locator(`[data-testid="assign-new-${sentence.target_id}"]`).waitFor({ timeout: T });
+  check("the body tab brings the sentence back", (await page.locator('[data-testid="assign-new"] .new-paper img').count()) === 0);
+  const bundle = await (await page.request.get(api, { headers })).json();
+  check("the New paper bundle is removed", (await page.request.delete(`${api}?revision=${bundle.revision}`, { headers })).ok());
 });
 
 // New 칸 템플릿 보기(MD 1 F9 · F8c) - 같은 줄을 회사 템플릿 모양으로: 결과물 C와 같은 줄 · 같은 번호, SOP는 영어 → 한글 절반, 짝은 두 절반에 같은 번호
@@ -3279,13 +3344,13 @@ await runStep("assign: New-side AI filter keeps only the picked line's suggestio
   // 다른 줄의 AI 제안이 있으면 칸마다 띠 하나로 접힌다 - 띠 글에 숨긴 수가 있고 누르면 펼쳐진다
   const bands = page.locator('[data-testid^="assign-new-ai-hidden-"]');
   const bandCount = await bands.count();
-  const dimCount = await page.locator('.new-item[data-ai-view="dim"]').count();
+  const dimCount = await page.locator('[data-pane="new"] .strip-row[data-ai-view="dim"]').count();
   console.log(`  (hidden bands ${bandCount}, dimmed rows ${dimCount}, picked line's tags ${await page.locator('[data-testid^="assign-new-ai-tag-"]').count()})`);
   if (bandCount > 0) {
     check("a band tells how many suggestions it hides", /\d/.test(await bands.first().innerText()));
-    const before = await page.locator(".new-item").count();
+    const before = await page.locator('[data-pane="new"] .new-line').count();
     await bands.first().click();
-    check("clicking a band opens that section's suggestions", (await page.locator(".new-item").count()) > before);
+    check("clicking a band opens that section's suggestions", (await page.locator('[data-pane="new"] .new-line').count()) > before);
   }
   await takeShot("sop-assign-new-ai-filter.png");
   // 알약 - 고른 줄의 제안이 다른 New 문서에 있을 때만 뜬다. 누르면 그 문서가 열리고 알약이 돌아가기가 된다
@@ -3306,7 +3371,7 @@ await runStep("assign: New-side AI filter keeps only the picked line's suggestio
   check("the chip stays on after a reload", (await page.locator('[data-testid="assign-new-ai-only"]').getAttribute("aria-pressed")) === "true");
   await page.locator('[data-testid="assign-new-ai-only"]').click();
   check("the chip turns off again", (await page.locator('[data-testid="assign-new-ai-only"]').getAttribute("aria-pressed")) === "false");
-  check("off means nothing is hidden or dimmed", (await page.locator('[data-testid^="assign-new-ai-hidden-"], .new-item[data-ai-view]').count()) === 0);
+  check("off means nothing is hidden or dimmed", (await page.locator('[data-testid^="assign-new-ai-hidden-"], [data-pane="new"] .strip-row[data-ai-view]').count()) === 0);
 });
 
 await runStep("assign: Space preview - hold shows the sheet, drag moves it, release closes", {}, async ({ page, takeShot }) => {
@@ -3797,12 +3862,12 @@ await runStep("assign: shape a written New sentence in place, in the two-documen
   await splitButton.waitFor({ timeout: T });
   check("the panel shows its Shape line and nothing to decide", (await page.locator('[data-testid^="assign-shape-line-"]').count()) === 1 && (await page.locator('[data-testid="assign-decide"]').count()) === 0);
   await splitButton.click();
-  const cut = page.locator(`[data-testid="assign-new-cut-${target.target_id}"]`);
+  const cut = page.locator('[data-testid="assign-new-paper-cut-handle"]');
   await cut.waitFor({ timeout: T });
-  const readCut = () => page.evaluate((id) => document.querySelector(`[data-testid="assign-new-cut-${id}"]`)?.previousSibling?.textContent?.length ?? -1, target.target_id);
+  const readCut = () => page.evaluate((id) => document.querySelector(`[data-testid="assign-new-${id}"] .cut-a`)?.textContent?.length ?? -1, target.target_id);
   const placed = await readCut();
   await page.keyboard.press("ArrowRight");
-  await page.waitForFunction(({ id, was }) => (document.querySelector(`[data-testid="assign-new-cut-${id}"]`)?.previousSibling?.textContent?.length ?? -1) > was, { id: target.target_id, was: placed }, { timeout: T });
+  await page.waitForFunction(({ id, was }) => (document.querySelector(`[data-testid="assign-new-${id}"] .cut-a`)?.textContent?.length ?? -1) > was, { id: target.target_id, was: placed }, { timeout: T });
   check("the cut sits inside the sentence and the arrow keys move it", placed > 0 && (await readCut()) > placed);
   await takeShot("sop-assign-new-inplace.png");
   await page.locator('[data-testid="assign-cut-run"]').click();
@@ -6746,14 +6811,15 @@ await runStep("assign: drag an Old piece between two sentences of a New · from 
   await page.waitForTimeout(600);
   const written = await getJson("/written-sentences");
   await openNewDoc(written[0].target_doc_id);
-  // 두 문장 사이 틈(없으면 줄의 앞머리 번호 칸) - 줄 상자 안이지만 문장 상자 밖
+  // 두 문장 사이 틈(없으면 줄의 앞머리 번호 칸) - 용지 안이지만 문장 상자 밖
+  await page.locator('[data-pane="new"] .new-paper .new-line').first().waitFor({ timeout: T });
   const gapPoint = await page.evaluate(() => {
-    const gap = document.querySelector('[data-pane="new"] .pg:not([data-read-only]) .new-gap:not([data-pair])');
-    const lead = document.querySelector('[data-pane="new"] .pg:not([data-read-only]) .new-item .strip-lead');
+    const gap = document.querySelector('[data-pane="new"] .new-paper .strip-gap:not([data-pair])');
+    const lead = document.querySelector('[data-pane="new"] .new-paper .strip-lead');
     const spot = gap ?? lead;
     spot.scrollIntoView({ block: "center" });
     const rect = spot.getBoundingClientRect();
-    const line = spot.closest(".new-item").querySelector(".new-line").getBoundingClientRect();
+    const line = document.querySelector('[data-pane="new"] .new-paper .new-line').getBoundingClientRect();
     return gap ? { x: line.left + Math.min(60, line.width / 2), y: rect.top + rect.height / 2 } : { x: rect.left + rect.width / 2, y: rect.top + Math.min(10, rect.height / 2) };
   });
   await dragThrough(page, await pointInUnit(unitY.unit_id), [gapPoint]);
@@ -8783,7 +8849,7 @@ await runStep("assign: drag an Old piece onto a nearby piece in the other langua
   const line = page.locator('[data-testid="assign-new"] .pg:not([data-read-only]) .new-line[data-target]:not([data-state="picked"])').first();
   await line.evaluate((el) => el.scrollIntoView({ block: "center" }));
   await page.waitForTimeout(150);
-  const lineBox = await line.locator(".new-hit").boundingBox();
+  const lineBox = await line.locator(".new-text").boundingBox();
   const requestsBeforeNew = pairRequests.length;
   await startDrag(y.id);
   await moveTo({ x: lineBox.x + Math.min(60, lineBox.width / 2), y: lineBox.y + lineBox.height / 2 });

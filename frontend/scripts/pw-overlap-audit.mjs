@@ -286,7 +286,7 @@ const linkMenuScene = {
     await page.locator('[data-testid="assign-filter-unassigned"]').click();
     await page.locator('[data-testid="assign-new"] .new-line').first().waitFor({ timeout: T });
     // 같은 언어 New 후보(점선)가 있는 줄까지 옮긴다 - 다른 언어 문장은 고를 수 없어 메뉴가 뜨지 않는다
-    const candidate = page.locator('[data-testid="assign-new"] .new-line[data-state="candidate"] .new-hit');
+    const candidate = page.locator('[data-testid="assign-new"] .new-line[data-state="candidate"] .new-text');
     for (let step = 0; step < 40 && (await candidate.count()) === 0; step += 1) {
       await page.keyboard.press("j");
       await page.waitForTimeout(400);

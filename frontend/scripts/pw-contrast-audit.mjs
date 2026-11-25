@@ -131,7 +131,7 @@ for (const theme of ["light", "dark"]) {
     }
     // 누른 뒤에는 후보가 아니라 고른 줄이 된다 - 같은 줄을 계속 가리키게 testid로 붙잡는다
     const line = page.locator(`[data-testid="${await candidate.first().getAttribute("data-testid")}"]`);
-    await line.locator(".new-hit").click();
+    await line.locator(".new-text").click();
     // 그 자리 메뉴(확정·취소)까지 뜬 상태로 잰다 - 늦게 뜨므로 보일 때까지 기다린다
     await page.locator('[data-testid="assign-link-menu-confirm"]').waitFor({ state: "visible", timeout: T });
   }

@@ -130,11 +130,11 @@ export function readOverlayKey(boxes: ReadonlyMap<number, NewBox>, unitIds: Read
   return [...unitIds].flatMap((id) => boxes.get(id) ? `${id}:${boxes.get(id)?.key}` : []).join(";");
 }
 
-/** 이 박스에 Old 줄을 이을 수 없는 까닭(문구 키) - 이을 수 있으면 null. part는 그 박스가 놓인 부분(본문 · 머리말 · 꼬리말) */
+/** 이 박스에 Old 줄을 이을 수 없는 까닭(문구 키) - 이을 수 있으면 null. part는 그 박스가 놓인 탭(본문 · 머리말 · 꼬리말 · 그림) */
 export function readUnlinkableKey(unit: ViewUnit, box: NewBox | undefined, part: string): string | null {
   if (box?.isLinkable) return null;
   if (unit.noise_kind) return "assign.newPaper.why.noise";
-  if (part !== "body") return "assign.newPaper.why.repeated";
+  if (part === "header" || part === "footer") return "assign.newPaper.why.repeated";
   if (unit.kind === "heading") return "assign.newPaper.why.heading";
   if (unit.kind === "caption") return "assign.newPaper.why.caption";
   if (box !== undefined || unit.kind === "table" || unit.kind === "figure") return "assign.newPaper.why.bundle";

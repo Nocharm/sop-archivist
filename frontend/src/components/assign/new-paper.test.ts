@@ -94,7 +94,7 @@ describe("NewPaper", () => {
     expect(h).toContain('data-testid="assign-new-cell-pick-7"');
     expect(h).toMatch(/data-testid="assign-new-90"/);
     expect(h).not.toContain('data-target="90"');
-    expect(html()).not.toMatch(/data-pickable|data-drop=/);
+    expect(html()).not.toMatch(/data-pickable|data-drop=|assign-new-cell-pick/);
   });
 
   it("shows header and footer tabs like the Old paper", () => {

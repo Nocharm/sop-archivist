@@ -113,6 +113,7 @@ describe("readUnlinkableKey", () => {
     expect(readUnlinkableKey(unit({}), undefined, "header")).toBe("assign.newPaper.why.repeated");
     expect(readUnlinkableKey(unit({ kind: "caption" }), undefined, "body")).toBe("assign.newPaper.why.caption");
     expect(readUnlinkableKey(unit({ kind: "table" }), build([table([])]).boxes.get(900), "body")).toBe("assign.newPaper.why.bundle");
+    expect(readUnlinkableKey(unit({ kind: "figure" }), undefined, "figures")).toBe("assign.newPaper.why.bundle");
     expect(readUnlinkableKey(unit({}), undefined, "body")).toBe("assign.newPaper.why.noTarget");
   });
 

@@ -125,7 +125,7 @@ const SCENES = [
         await page.keyboard.press("j");
         await page.waitForLoadState("networkidle");
       }
-      await candidate.first().locator(".new-hit").click();
+      await candidate.first().locator(".new-text").click();
       // 고르면 누른 곳 옆에 확정 메뉴가 늦게 뜬다 - 다 뜬 뒤에 찍는다
       await page.locator(id("assign-link-menu-confirm")).waitFor({ state: "visible", timeout: T });
     },

@@ -185,11 +185,13 @@ export function NewPaper(props: NewPaperProps) {
     textProps: (id) => {
       const box = boxes.get(id);
       if (!box || box.kind === "bundle") return undefined;
-      return { className: "new-text", "data-testid": `assign-new-${box.kind === "cell" ? "cell-pick" : "pick"}-${box.targetId}` };
+      // 칸은 누를 수 있을 때만 누르는 자리의 이름을 단다
+      const testId = box.kind === "sentence" ? `assign-new-pick-${box.targetId}` : props.cellPickable ? `assign-new-cell-pick-${box.targetId}` : undefined;
+      return { className: "new-text", "data-testid": testId };
     },
     readWhy: (id) => {
       const unit = model?.units.get(id);
-      const key = unit ? readUnlinkableKey(unit, boxes.get(id), activeTab === "figures" ? "body" : activeTab) : null;
+      const key = unit ? readUnlinkableKey(unit, boxes.get(id), activeTab) : null;
       return key === null ? null : t(key);
     },
   };
