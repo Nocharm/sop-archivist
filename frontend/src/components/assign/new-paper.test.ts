@@ -70,7 +70,7 @@ function makeView({ header = false, heading = false, units }: Pick<Options, "hea
 function html({ header = false, heading = false, over, units, ...props }: Options = {}): string {
   const view = makeView({ header, heading, units });
   const model = buildPaperModel(view);
-  const overlay = buildNewOverlay({ rows: ROWS, candidateIds: NONE, pickedIds: NONE, focusId: null, shapeUnitId: null, aiFilter: null, openAiSections: new Set(), ...over });
+  const overlay = buildNewOverlay({ rows: ROWS, candidateIds: NONE, pickedIds: NONE, focusId: null, aiFilter: null, openAiSections: new Set(), ...over });
   const full: NewPaperProps = {
     bundleId: 1, docOptions: [{ value: "1", label: "SOP-1" }], docId: "1", fileId: 3, onDocChange: () => undefined, tag: "New", linesOn: true, onToggleLines: () => undefined,
     zoom: 1, onZoom: () => undefined, view, model, tabs: buildPaperTabs(view, model), placeholder: createElement("span", { className: "sk" }), overlay, onOpenAiSection: () => undefined, cellPickable: false, cellDroppable: false,

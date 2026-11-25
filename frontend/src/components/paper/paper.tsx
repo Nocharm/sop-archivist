@@ -230,6 +230,8 @@ interface PaperProps {
   partnerIds?: ReadonlySet<number>;
   /** 짝 맞추기로 고른 단위 */
   pickedIds?: ReadonlySet<number>;
+  /** 먼저 고른 쪽의 용지다 - 다른 문서를 마지막에 눌렀다. 뿌리 표시 하나(data-held)라 덩어리를 다시 그리지 않는다 */
+  held?: boolean;
   /** 나눌 자리 미리 보기(고른 단위 안) */
   cut?: PaperCut | null;
   /** 누락 의심 등 경고가 걸린 블록 - 물결 밑줄 */
@@ -389,6 +391,7 @@ export function Paper({
   highlightIds,
   partnerIds,
   pickedIds,
+  held = false,
   cut,
   warnBlockIds,
   isDone,
@@ -2040,6 +2043,7 @@ export function Paper({
         data-strips={strips ? "" : undefined}
         data-whole-bundle={pickWholeBundle ? "" : undefined}
         data-dragging={isDragging ? "" : undefined}
+        data-held={held ? "" : undefined}
         onClick={handleClick}
         onDoubleClick={handleDoubleClick}
         onContextMenu={handleContextMenu}

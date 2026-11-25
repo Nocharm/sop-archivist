@@ -53,8 +53,10 @@ export interface NewPaperProps {
   onUnlink?: (targetId: number, unitId: number) => void;
   sourceLabel: (unitId: number) => string;
   onJumpSource: (unitId: number, targetId: number) => void;
-  /** 다듬으려고 고른 박스(나눌 선이 놓인 박스) */
+  /** 고른 박스(나눌 선이 놓인 박스) */
   selectedUnitId: number | null;
+  /** Old를 마지막에 눌렀다 - 여기 고른 것은 점선 테(먼저 고른 쪽) */
+  held?: boolean;
   /** 여럿 고른 박스 */
   pickedUnitIds: ReadonlySet<number>;
   pending?: PaperPending;
@@ -235,6 +237,7 @@ export function NewPaper(props: NewPaperProps) {
         pageClassName="new-sheet new-paper"
         selectedId={props.selectedUnitId}
         pickedIds={props.pickedUnitIds}
+        held={props.held}
         // 표는 칸마다 고르고 잇는다
         pickWholeBundle={false}
         shiftClickPicks

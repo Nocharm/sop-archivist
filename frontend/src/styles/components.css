@@ -1314,6 +1314,14 @@
   .pg[data-strips] .strip[data-bracket], .pg[data-strips] .strip[data-partner]:not([data-bracket]), .cell-piece[data-partner] { background: color-mix(in oklab, var(--accent) 4%, var(--paper)); }
   .cell-piece[data-partner] { box-shadow: inset 2px 0 0 var(--accent); }
   .cell-piece[data-sel] { outline: 2px solid var(--accent); outline-offset: -2px; }
+  /* 오른쪽 칸 위 "Old n 고름 · 결정 보기" - New를 눌렀지만 Old도 골라 두었을 때 한 줄 */
+  .assign-old-kept { display: flex; min-width: 0; margin: 0 var(--pad); padding: 4px 8px; border: 1px dashed var(--accent-line); border-radius: var(--r-1); font: 500 var(--fs-micro) / 16px var(--font-ui); color: var(--ink-2); text-align: left; cursor: pointer; }
+  .assign-old-kept:hover { color: var(--ink); border-style: solid; }
+  /* 두 쪽을 따로 고른다(쪼개기 먼저 §8) - 마지막에 누른 쪽은 진한 칠과 테, 먼저 고른 쪽(뿌리 data-held)은 점선 테만 */
+  .assign-panes .pg[data-strips]:not([data-held]) :is(.strip, .cell-piece)[data-sel]:not([data-state="focus"]) { background: var(--accent-tint); }
+  .pg[data-held] .cell-piece[data-sel] { outline-style: dashed; outline-width: 1.5px; }
+  .pg[data-strips][data-held] .strip-lead + .strip:is([data-sel], [data-partner])::after,
+  .pg[data-held] .strip-card:has(> .strip-row > .strip:is([data-sel], [data-partner])) > .strip-row > .strip-lead + .strip::after { border-style: dashed; }
   /* 조각에 테두리가 있으니 글줄 밑 막대는 겹친다 - 조각 종이에서는 뺀다 */
   .pg[data-strips] .su[data-sel] { background-image: none; }
   /* Assign Old 조각 끌기(끌어다 놓기 설계 G9·G10, 상자는 lib/box-drag.ts). 올리면 Order 줄과 같은 고리·그림자로 살짝 들린다.
@@ -2045,8 +2053,6 @@
   /* 출처 없음 - 상자 왼쪽 바깥의 따로 선 세로 막대(3px, 상자와 2px 틈, 모서리 거의 직각). 상자는 제 테두리·둥글기 그대로 - 테두리를 칠하면 오류 상자처럼 읽힌다.
      앞머리 틈(STRIP_LEAD_EXTRA 5px) 안이라 번호와 겹치지 않고, 출처가 없으니 연결선이 이 자리에 닿지 않는다 */
   .pg[data-strips] .new-line[data-state="unsourced"]::before { content: ""; position: absolute; top: -1px; bottom: -1px; left: -5px; width: 3px; border-radius: 1px; background: var(--danger-fill); pointer-events: none; }
-  /* 양 단에서 다듬으려고 고른 New 문장 - Old 용지의 고른 문장과 같은 강조색 테두리 */
-  .pg[data-strips] .new-line[data-state="shape"] { box-shadow: var(--shadow-1), inset 0 0 0 1.5px var(--accent); }
   /* 그 줄의 글 안에 놓인 나눌 선과 바로 아래의 나누기·취소 - 용지의 선과 같은 모양(끌지는 못하고 ←→로 옮긴다) */
   .new-cut { position: relative; display: inline-block; width: 0; height: 1.2em; margin-inline: 1px; border-left: 2px solid var(--ink); vertical-align: text-bottom; }
   .new-cut::before { content: ""; position: absolute; left: -5px; top: -5px; width: 8px; height: 8px; border-radius: 50%; background: var(--ink); }

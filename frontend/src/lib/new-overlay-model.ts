@@ -5,8 +5,8 @@ import { getNewRowKey } from "@/lib/composed-model";
 import { readNewAiSectionKey, type NewAiBand, type NewAiFilter, type NewAiMark } from "@/lib/new-ai-filter-model";
 import { readWrittenRefMark } from "@/lib/ref-model";
 
-/** 박스의 모양 - 출처 없는 New에서 고른 것, 다듬으려고 고른 것, 이을 곳으로 고른 것, 이을 후보, 출처 없음 */
-export type NewBoxState = "focus" | "shape" | "picked" | "candidate" | "unsourced";
+/** 박스의 모양 - 출처 없는 New에서 고른 것, 이은 곳(간 곳), 이을 후보, 출처 없음 */
+export type NewBoxState = "focus" | "picked" | "candidate" | "unsourced";
 
 /** 원문 조각이 없는 칸 문장(칸 번역) - 같은 행 · 열의 칸 조각 아래에 읽기 전용으로 보인다 */
 export interface NewCellNote {
@@ -60,8 +60,6 @@ export interface NewOverlayInput {
   pickedIds: ReadonlySet<number>;
   /** 출처 없는 New 모드에서 고른 새 문장 */
   focusId: number | null;
-  /** 다듬으려고 고른 Unit */
-  shapeUnitId: number | null;
   aiFilter: NewAiFilter | null;
   /** AI 거르기에서 띠를 눌러 펼친 칸(readNewAiSectionKey) */
   openAiSections: ReadonlySet<string>;
@@ -125,7 +123,6 @@ function listCellNotes(rows: readonly WrittenSentence[], held: ReadonlyMap<numbe
 
 function readState(box: RawBox, input: NewOverlayInput): NewBoxState | undefined {
   if (box.targetId === input.focusId) return "focus";
-  if (box.unitId === input.shapeUnitId) return "shape";
   if (input.pickedIds.has(box.targetId)) return "picked";
   if (input.candidateIds.has(box.targetId)) return "candidate";
   if (box.kind !== "bundle" && box.sourceIds.length === 0 && box.changeType !== "new") return "unsourced";

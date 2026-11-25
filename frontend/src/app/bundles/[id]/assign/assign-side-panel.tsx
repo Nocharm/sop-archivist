@@ -57,6 +57,7 @@ export function AssignSidePanel({ state, headEnd }: { state: AssignPageState; he
     placeResolved, setRefEntryId, moveRow, hasUnitDraft, isFixedCaption, rowViewUnits, rowSplitUnit, rowSplit, splitBlocked, rowRefUnit,
     refBlocked, isCaptionGateOn, rowCaptionRefs, refCandidates, shapeLines, shapeFirstId, slotPlaces, slotCellTables, startCaptionPick,
     shapeMode, headingBack, rewrap, bandBack, stepBase, refPendingIds, refDetail, refInfo, runUnitEdit, clearNoise, openNoiseReason, noisePick, runCaptionRefChange,
+    keptOldId, showKeptOld, unitMap: keptUnitMap,
     switchShapeMode, applySplitSuggestion, dismissSplitSuggestion, selectNextSplit, selectNextRef, runUnitAction, readReasonNeed, runSave,
     runClear, markNew, placeManage, pickDestination, pickNewSentence, isTemplateDrag, handlePrimary, primaryPlan, startEdit,
     pickRecommendation, markRecHover, renderPlaceLabel, listDestinationEls, canClear, isRowDeleted,
@@ -786,7 +787,7 @@ export function AssignSidePanel({ state, headEnd }: { state: AssignPageState; he
     const lineAt = pick.unitId === null ? -1 : block.unitIds.indexOf(pick.unitId);
     const line = lineAt >= 0 ? block.lines[lineAt] : null;
     const isOpen = tocOpen.has(block.key);
-    const canAct = canEdit && !isNewEdit;
+    const canAct = canEdit;
     const name = t(`assign.noise.name.${block.kind}`);
     const parts = describeTocParts(block.unitIds.map((id) => unitById.get(id)?.lang ?? "neutral"))
       .map((part) => t(`assign.noise.part.${part.part}`, { n: part.n }))
@@ -958,6 +959,12 @@ export function AssignSidePanel({ state, headEnd }: { state: AssignPageState; he
               </div>
             )}
           </div>
+          {/* New를 눌렀지만 Old 박스도 골라 두었다 - 그 줄의 결정으로 돌아가는 한 줄 */}
+          {keptOldId !== null && (
+            <button type="button" className="assign-old-kept" data-testid="assign-old-kept" onClick={showKeptOld}>
+              <Truncate text={t("assign.oldKept", { id: keptUnitMap.get(keptOldId)?.display_id ?? String(keptOldId) })} revealOnFocus />
+            </button>
+          )}
           {/* 이 문서의 문장은 배정하지 않는다 - 다듬기(1번)뿐이고, 왜 보낼 곳이 없는지 한 줄로 알린다 */}
           <div className="assign-pick" data-testid="assign-pick">
             {renderShapeCards(1)}

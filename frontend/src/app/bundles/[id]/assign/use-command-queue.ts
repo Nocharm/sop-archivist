@@ -5,7 +5,7 @@
 import { useRef, useState, useSyncExternalStore } from "react";
 
 import type { AiSuggestion, DocumentView, EditOp, Group, UndoMeta, ViewUnit } from "@/lib/api-sop";
-import { isSameFocus, NO_PLACE, type Focus, type Pending, type PendingPlace } from "@/lib/assign-focus-model";
+import { isSamePicks, NO_PLACE, type Pending, type PendingPlace, type Picks, type SidePick } from "@/lib/assign-focus-model";
 import { opensTextBox } from "@/lib/assign-press-model";
 import type { Destination } from "@/lib/classify-model";
 import { createCommandQueue, isBarrier, isIdle, listUnsettled, mustDefer, shouldHalt, type QueuedCommand, type QueueState } from "@/lib/command-queue";
@@ -18,7 +18,7 @@ import type { EditToast, PageDraft } from "./use-assign-page";
 export type ReplayCommand =
   | { kind: "key"; key: string; shift: boolean; ctrl: boolean }
   | { kind: "press"; act: "confirm" | "hold" | "delete" | "clear"; reason?: string }
-  | { kind: "pick"; focus: Focus };
+  | { kind: "pick"; pick: SidePick };
 
 export type SeenRevisions = ReadonlyMap<number, number>;
 
@@ -109,8 +109,10 @@ export class CommandRefusal extends Error {}
 
 /** 화면이 주는 것 - 그 렌더의 값이다 */
 export interface CommandEnv {
-  pick(focus: Focus): void;
-  readFocus(): Focus;
+  pick(next: SidePick): void;
+  /** 두 쪽의 고름 - 멈춘 때의 것을 들어 두었다가 다시 시도가 되돌린다 */
+  readPicks(): Picks;
+  restore(picks: Picks): void;
   /** 지금 화면에 보이는 판단 revision */
   readSeen(unitIds: readonly number[]): SeenRevisions;
   /** 처리 중이 시작한다 - 누른 때, 다시 시도, 되묻기의 답. 끝(end)은 성공 · 실패 · 되묻기 · 버림 모두 */
@@ -168,7 +170,7 @@ export function useCommandQueue(env: CommandEnv, describePending: DescribePendin
     hadTarget: false,
     retriedIds: new Set<string>(),
     /** 멈춘 때의 고름 - 다시 시도는 여기서 잇는다 */
-    haltFocus: null as Focus | null,
+    haltPicks: null as Picks | null,
   });
 
   function settleLater(id: string, isSolo: boolean) {
@@ -268,7 +270,7 @@ export function useCommandQueue(env: CommandEnv, describePending: DescribePendin
       env.end(id);
       const { reason, isRefusal } = env.readFailure(err, payload);
       if (shouldHalt(command, queue.getState(), isRefusal)) {
-        live.current.haltFocus = env.readFocus();
+        live.current.haltPicks = env.readPicks();
         queue.fail(id, reason);
         // 떠난 화면에는 다시 시도를 물을 자리가 없다
         if (!live.current.isMounted) leave();
@@ -315,7 +317,7 @@ export function useCommandQueue(env: CommandEnv, describePending: DescribePendin
       pump();
       return;
     }
-    if (payload.kind === "pick") env.pick(payload.focus);
+    if (payload.kind === "pick") env.pick(payload.pick);
     else {
       const isDone = replay(command.id, () => env.replay(payload));
       if (!isDone) env.notifyLost();
@@ -400,9 +402,9 @@ export function useCommandQueue(env: CommandEnv, describePending: DescribePendin
       const { halted, waiting } = queue.getState();
       if (halted === null) return;
       const { command } = halted;
-      const focus = live.current.haltFocus;
+      const held = live.current.haltPicks;
       // 쌓인 글쇠는 멈춘 때의 고름에서 이어진다 - 그 사이 둘러본 박스에 떨어지지 않게
-      if (focus !== null && waiting.some((item) => item.isDeferred) && !isSameFocus(focus, env.readFocus())) env.pick(focus);
+      if (held !== null && waiting.some((item) => item.isDeferred) && !isSamePicks(held, env.readPicks())) env.restore(held);
       if (!isReplay(command.payload)) env.start({ ...describePending(command.payload), id: command.id }, command.payload);
       live.current.retriedIds.add(command.id);
       queue.retry();

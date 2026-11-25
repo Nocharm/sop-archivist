@@ -74,7 +74,7 @@ export default function AssignPage() {
   const {
     t, bundleId, bundle, canEdit, docs, oldDocs, docViews, unitsKey, tobe, tobeData, writtenList, identical,
     readMarkStatus, readAiPlace, suggestedTargetUnits, unitMap, written, writtenMap, rows, rowMap, rowOfUnit, labelOptions, ready, showSkeleton, unsourced,
-    mode, setMode, foldOpen, setFoldOpen, foldMatch, clearRowPick, activeKey, row, pickedId, spaceUnitIds, spacePickSeq, solo, setSolo, isSolo, isNewEdit, tocOpen, setTocOpen,
+    mode, foldOpen, setFoldOpen, foldMatch, clearRowPick, activeKey, row, pickedId, spaceUnitIds, spacePickSeq, newPick, newUnitId, panel, soloDocId, setSoloDocId, isSolo, isNewEdit, tocOpen, setTocOpen,
     tocPick, checked, newRemarks, setNewRemarks, menu, setMenu, joinMenu, setJoinMenu, ctxMenu, setCtxMenu, focusNew,
     setDrafts, draft, groupPending, savedDestination, destination, rowUnits, reasonNow, setDraft, unsavedCount, leaveTo, setLeaveTo,
     aiDest, isAiRow, recommendations, linkIds, candidateIds, setManualOldDoc, oldView, acceptKind, setAcceptKind, acceptDoc, paperModel,
@@ -204,6 +204,8 @@ export default function AssignPage() {
   const composedOrder = useComposedOrder({ bundleId, doc: isComposedDoc ? composedDoc : null, labelLang: uiLang });
   const shownComposed = composedOrder.doc;
   const composedStrips = useMemo(() => (shownComposed ? buildComposedStrips(shownComposed) : null), [shownComposed]);
+  // Ctrl+클릭으로 더한 New 박스 - 마지막에 누른 것은 진한 칠과 테(data-sel), 나머지는 여럿 고른 표시
+  const newMates = useMemo(() => (newPick.kind === "unit" && newPick.unitIds.length > 1 ? new Set(newPick.unitIds) : NO_NUMBERS), [newPick]);
   if (!ready) {
     return error !== null ? (
       <BundleLoadError error={error} onRetry={reloadAll} testId="assign" />
@@ -223,7 +225,7 @@ export default function AssignPage() {
           label={t("assign.filterUnsourced")}
           count={unsourced.length}
           selected={mode === "unsourced"}
-          onClick={() => setMode("unsourced")}
+          onClick={state.enterUnsourced}
           testId="assign-filter-unsourced"
           icon={TriangleAlert}
           shrinks
@@ -370,7 +372,7 @@ export default function AssignPage() {
   // 고른 New 문장 - 이을 문장, 또는 양 단에서 New 문장의 짝을 고르는 중이면 모은 문장
   const pickedNew = new Set(isRightPairPick ? (pairFrom?.picked ?? []).flatMap((unitId) => written.find((item) => item.new_unit_id === unitId)?.target_id ?? []) : [...linkIds, ...(destination?.kind === "join" ? [destination.targetId] : [])]);
   // 이미 쓴 New 문서의 박스 위에 얹을 것 - 렌더마다 다시 짓되 박스마다의 key가 글이라 용지의 먼 덩어리는 제 것이 바뀔 때만 다시 그린다
-  const newOverlay = buildNewOverlay({ rows: isComposedDoc ? [] : written.filter((item) => item.target_doc_id === newDocId), candidateIds, pickedIds: pickedNew, focusId: focusNew, shapeUnitId: isNewEdit ? (soloUnit?.id ?? null) : null, aiFilter: newAiFilter, openAiSections, tabOf: newTabs?.tabOf });
+  const newOverlay = buildNewOverlay({ rows: isComposedDoc ? [] : written.filter((item) => item.target_doc_id === newDocId), candidateIds, pickedIds: pickedNew, focusId: focusNew, aiFilter: newAiFilter, openAiSections, tabOf: newTabs?.tabOf });
   // New 용지에 보여야 할 박스 - 이동해 갈 곳, 누른 추천의 곳, 출처 없는 New의 고른 문장(각주 · 미주면 꼬리말 탭)
   const readNewUnit = (targetId: number | null | undefined) => (targetId == null ? null : (newOverlay.unitOfTarget.get(targetId) ?? null));
   const showUnitIds = [readNewUnit(jump?.side === "new" ? jump.id : null), readNewUnit(revealPick?.destination.kind === "link" ? revealPick.destination.targetIds[0] : null), readNewUnit(focusNew)];
@@ -559,7 +561,7 @@ export default function AssignPage() {
               <>
               <OldPane
                 docOptions={paperDocOptions}
-                docId={String(oldView?.document.id ?? solo?.docId ?? "")}
+                docId={String(oldView?.document.id ?? soloDocId ?? "")}
                 docTitle={oldView?.document.title ?? ""}
                 docTag={isSolo ? t("assign.writtenTag") : "Old"}
                 docDash={
@@ -581,7 +583,7 @@ export default function AssignPage() {
                     openSolo(Number(value));
                     return;
                   }
-                  setSolo(null);
+                  setSoloDocId(null);
                   setManualOldDoc(Number(value));
                   clearRowPick();
                 }}
@@ -598,10 +600,11 @@ export default function AssignPage() {
                   setManualPart({ key: "", part });
                 }}
                 placeholder={<span className="sk h-[480px] w-full" />}
-                selectedId={mode === "old" && !isNewEdit ? (cutUnit?.id ?? pickedId ?? soloUnit?.id ?? null) : null}
-                highlightIds={mode === "old" ? highlightIds : NO_NUMBERS}
+                selectedId={(isNewEdit ? null : cutUnit?.id) ?? (isSolo ? soloUnit?.id : pickedId) ?? null}
+                highlightIds={highlightIds}
+                held={panel.side === "new" && !isSolo}
                 // 떨어진 짝 안내 줄 - 누르면 짝의 원래 자리로 가 그 박스를 고른다(설계 D3)
-                pairHint={mode === "old" && !isNewEdit ? { onGo: goToUnit } : undefined}
+                pairHint={mode === "old" ? { onGo: goToUnit } : undefined}
                 single={view.single}
                 // 짝 카드 안 순서 손잡이 - 고른 박스가 짝 전부가 이어 붙은 카드 안이면(설계 D8)
                 pairGrip={pairGrip}
@@ -619,7 +622,7 @@ export default function AssignPage() {
                   isSolo
                     ? undefined
                     : {
-                        canEdit: canEdit && !isNewEdit,
+                        canEdit,
                         // 처리 중인 블록만 꺼진다(용지가 잠긴 Unit으로 본다) - 묶음 전체 일 동안은 모두
                         busy: isGlobalPending,
                         onClear: (unitIds) => {
@@ -637,9 +640,9 @@ export default function AssignPage() {
                       }
                 }
                 // 제목에서 바꾼 조항 묶음 머리(F8b) - 되돌리기는 다듬는 원문이 그 Old 문서일 때만
-                headingShift={isSolo ? undefined : { canRevert: canEdit && !isNewEdit, busy: isGlobalPending, onRevert: (unitIds) => revertHeadings(leftShape, unitIds) }}
+                headingShift={isSolo ? undefined : { canRevert: canEdit, busy: isGlobalPending, onRevert: (unitIds) => revertHeadings(leftShape, unitIds) }}
                 // 벗긴 표의 줄 묶음 머리 "↺ 다시 표로"(F1) - 다듬는 원문이 그 Old 문서일 때만
-                unwrap={isSolo ? undefined : { canRewrap: canEdit && !isNewEdit, busy: isGlobalPending, onRewrap: (tableId) => rewrapTable(leftShape, tableId), ai: canEdit && !isNewEdit ? unwrapAi : undefined }}
+                unwrap={isSolo ? undefined : { canRewrap: canEdit, busy: isGlobalPending, onRewrap: (tableId) => rewrapTable(leftShape, tableId), ai: canEdit ? unwrapAi : undefined }}
                 // 처리 중인 일 - 누르는 즉시 그 자리 알약과 박스 쉬머, 그 박스만 잠근다(설계 D4)
                 pending={mode === "old" ? paperPending : undefined}
                 paneRef={oldPaneRef}
@@ -658,7 +661,7 @@ export default function AssignPage() {
                 onUnitDoubleClick={canEdit ? handleOldDoubleClick : undefined}
                 // 번호 칸 - 원문 글자는 그대로 두고 번호 범위만 바꾸는 쪼개기 편집이라 줄의 배정은 그대로다
                 numberCell={
-                  canEdit && mode === "old" && !isNewEdit && !isSolo
+                  canEdit && mode === "old" && !isSolo
                     ? {
                         // 그 줄이 처리 중이면 용지가 그 번호 칸만 끈다
                         busy: isGlobalPending,
@@ -856,8 +859,9 @@ export default function AssignPage() {
                       onUnlink={canEdit && mode === "old" ? (cellId, unitId) => state.unlinkCell(cellId, unitId) : undefined}
                       sourceLabel={readSourceLabel}
                       onJumpSource={jumpToOld}
-                      selectedUnitId={isNewEdit ? (cutUnit?.id ?? soloUnit?.id ?? null) : null}
-                      pickedUnitIds={NO_NUMBERS}
+                      selectedUnitId={(isNewEdit ? cutUnit?.id : null) ?? newUnitId}
+                      pickedUnitIds={newMates}
+                      held={panel.side === "old" && newUnitId !== null}
                       showUnitIds={showUnitIds}
                       pending={mode === "old" ? paperPending : undefined}
                       onPick={pickNewBox}

@@ -10,10 +10,12 @@ import {
   isUnitLocked,
   isUnitUnsettled,
   reduceFocus,
-  type Focus,
   type FocusEvent,
   type Pending,
+  type Picks,
+  type SidePick,
 } from "./assign-focus-model";
+import type { PickSide } from "./doc-shape-model";
 
 /** 응답이 알려 준 따라갈 자리 - pickUnitId가 null이면 고름을 둔다 */
 export interface FollowTarget {
@@ -25,13 +27,28 @@ export interface FollowTarget {
 export function useAssignFocus() {
   const [state, dispatch] = useReducer(reduceFocus, INITIAL_FOCUS_STATE);
 
-  function pick(focus: Focus) {
-    dispatch({ type: "pick", focus });
+  /** isAuto - 저장 뒤 다음 박스로 옮긴 것(사람이 누른 것이 아니다) */
+  function pick(next: SidePick, isAuto = false) {
+    dispatch({ type: "pick", isAuto, ...next });
   }
 
-  /** 일 하나를 처리 중으로 세운다 - 줄에 서는 순간(아직 보내기 전이어도) 부른다. id는 명령 큐의 것이고 그것으로 succeed · end를 부른다 */
-  function start(pending: Pending) {
-    dispatch({ type: "start", pending });
+  /** 오른쪽 칸에서 보낼 곳을 골랐다 - 다음에 박스를 누를 때까지 Enter는 확정이다 */
+  function chooseDestination() {
+    dispatch({ type: "choose_destination" });
+  }
+
+  function clear(what: "all" | "new") {
+    dispatch({ type: "clear", what });
+  }
+
+  /** 멈췄던 때의 고름으로 */
+  function restore(picks: Picks) {
+    dispatch({ type: "restore", picks });
+  }
+
+  /** 일 하나를 처리 중으로 세운다(side - 고치는 문서의 쪽) - 줄에 서는 순간(아직 보내기 전이어도) 부른다. id는 명령 큐의 것이고 그것으로 succeed · end를 부른다 */
+  function start(pending: Pending, side?: PickSide) {
+    dispatch({ type: "start", pending, side });
   }
 
   /** 응답이 왔다 - 고름이 누른 때 그대로면 그 박스를 따라간다(보기를 다시 받은 뒤 고른다). 일은 end까지 처리 중으로 남는다 */
@@ -53,11 +70,12 @@ export function useAssignFocus() {
   function load(event: Extract<FocusEvent, { type: "loaded" }>) {
     const result = applyLoaded(state, event);
     if (result.state !== state) dispatch(event);
-    return { focus: result.state.focus, picked: result.picked, consumed: result.consumed };
+    return { picks: result.state, picked: result.picked, consumed: result.consumed };
   }
 
   return {
-    focus: state.focus,
+    /** 두 쪽의 고름 */
+    picks: state,
     /** 처리 중인 일 - 용지가 알약 · 쉬머를 그린다 */
     pending: state.pending,
     isAnyPending: state.pending.length > 0,
@@ -65,6 +83,9 @@ export function useAssignFocus() {
     isUnitLocked: (unitId: number) => isUnitLocked(state, unitId),
     isUnitUnsettled: (docId: number, unitId: number) => isUnitUnsettled(state, docId, unitId),
     pick,
+    chooseDestination,
+    clear,
+    restore,
     start,
     succeed,
     end,

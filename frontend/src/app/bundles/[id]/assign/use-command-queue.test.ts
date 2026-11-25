@@ -4,14 +4,14 @@ import { act, createElement, useEffect, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { NO_PLACE, type Focus, type Pending, type PendingKind } from "@/lib/assign-focus-model";
+import { NO_PICKS, NO_PLACE, type OldPick, type Pending, type PendingKind, type Picks } from "@/lib/assign-focus-model";
 import { useAssignFocus } from "@/lib/use-assign-focus";
 
 import { buildDecisionPending, isRepeatedSave, useCommandQueue, type AssignCommand, type SendContext, type WriteCommand } from "./use-command-queue";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-const unit = (unitId: number): Focus => ({ kind: "unit", docId: 1, unitId });
+const unit = (unitId: number): OldPick => ({ kind: "unit", docId: 1, unitId });
 
 interface Wait {
   resolve: () => void;
@@ -51,7 +51,8 @@ function createScreen() {
     press: (() => undefined) as (name: string) => void,
     click: (() => undefined) as (unitId: number) => void,
     commands: null as unknown as ReturnType<typeof useCommandQueue>,
-    focus: unit(1) as Focus,
+    focus: unit(1),
+    picks: NO_PICKS as Picks,
     pending: [] as readonly Pending[],
     reloads: () => reloads,
     changeElsewhere: () => {
@@ -90,10 +91,11 @@ function createScreen() {
     const [placed, setPlaced] = useState({ n: 0, revision: 1, unitIds: alive });
     const placeView = (unitIds: Set<number>) => setPlaced((prev) => ({ n: prev.n + 1, revision: prev.revision + 1, unitIds }));
     const [seen, setSeen] = useState(0);
-    const focus = focusCtl.focus;
+    const pickOld = (pick: OldPick) => focusCtl.pick({ side: "old", pick });
+    const focus = focusCtl.picks.old;
     if (placed.n !== seen) {
       setSeen(placed.n);
-      focusCtl.load({ type: "loaded", docs: [{ docId: 1, revision: placed.revision, unitIds: placed.unitIds }], liftUnit: (id) => (placed.unitIds.has(id) ? id : null) });
+      focusCtl.load({ type: "loaded", side: "old", docs: [{ docId: 1, revision: placed.revision, unitIds: placed.unitIds }], liftUnit: (id) => (placed.unitIds.has(id) ? id : null) });
     }
     const focusedId = focus.kind === "unit" ? focus.unitId : null;
 
@@ -122,8 +124,9 @@ function createScreen() {
     }
     const commands = useCommandQueue(
       {
-        pick: focusCtl.pick,
-        readFocus: () => screen.focus,
+        pick: (next) => focusCtl.pick(next),
+        readPicks: () => screen.picks,
+        restore: focusCtl.restore,
         readSeen: (unitIds) => new Map(unitIds.map((id) => [id, screenRevision])),
         start: (pending, command) => {
           focusCtl.start(pending);
@@ -168,16 +171,16 @@ function createScreen() {
     function pressKey(name: string): boolean {
       if (name === "v") return false;
       // 고른 것이 없으면 j는 목록 처음으로 간다 - 그 뒤의 d가 엉뚱한 박스에 떨어진다
-      if (focusedId === null && name === "j") focusCtl.pick(unit(0));
+      if (focusedId === null && name === "j") pickOld(unit(0));
       if (focusedId === null) return name === "j";
-      if (name === "j") focusCtl.pick(unit(focusedId + 1));
+      if (name === "j") pickOld(unit(focusedId + 1));
       else if (name === "d") {
         enqueue("save", `delete ${focusedId}`, [focusedId], async (ctx) => {
           log.push(`delete ${focusedId}${ctx.isRetry ? " again" : ""}`);
           await hold(responses);
           isReloadAsked = true;
         });
-        focusCtl.pick(unit(focusedId + 1));
+        pickOld(unit(focusedId + 1));
       } else if (name === "m") {
         enqueue("join", `join ${focusedId}`, [focusedId], async (ctx) => {
           log.push(`join ${focusedId}${ctx.isRetry ? " again" : ""}`);
@@ -211,18 +214,19 @@ function createScreen() {
       else pressKey(name);
     };
     screen.click = (unitId) => {
-      if (commands.isPickQueued()) commands.enqueue({ kind: "pick", focus: unit(unitId) });
-      else focusCtl.pick(unit(unitId));
+      if (commands.isPickQueued()) commands.enqueue({ kind: "pick", pick: { side: "old", pick: unit(unitId) } });
+      else pickOld(unit(unitId));
     };
     useEffect(() => {
       screen.commands = commands;
-      screen.focus = focusCtl.focus;
+      screen.focus = focusCtl.picks.old;
+      screen.picks = focusCtl.picks;
       screen.pending = focusCtl.pending;
       const leave = commands.mount();
       commands.pump();
       return leave;
     });
-    return createElement("button", { "data-testid": "start", onClick: () => focusCtl.pick(unit(1)) });
+    return createElement("button", { "data-testid": "start", onClick: () => pickOld(unit(1)) });
   }
   return { screen, Screen };
 }

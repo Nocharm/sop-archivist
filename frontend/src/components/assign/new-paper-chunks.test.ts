@@ -65,7 +65,7 @@ function Screen() {
   const shown = useSyncExternalStore(subscribe, () => current);
   if (shown === null) return null;
   const { input, ...props } = shown;
-  const overlay = buildNewOverlay({ rows: listRows(), candidateIds: NONE, pickedIds: NONE, focusId: null, shapeUnitId: null, aiFilter: null, openAiSections: new Set(), ...input });
+  const overlay = buildNewOverlay({ rows: listRows(), candidateIds: NONE, pickedIds: NONE, focusId: null, aiFilter: null, openAiSections: new Set(), ...input });
   return createElement(NewPaper, {
     bundleId: 1, docOptions: [{ value: "1", label: "SOP-1" }], docId: "1", fileId: 3, onDocChange: noop, tag: "New", linesOn: true, onToggleLines: noop, zoom: 1, onZoom: noop,
     view, model, tabs, placeholder: null, overlay, onOpenAiSection: noop, cellPickable: false, cellDroppable: false, sourceLabel: getLabel, onJumpSource: noop, selectedUnitId: null,
@@ -120,7 +120,7 @@ describe("a far chunk of a long New paper", () => {
     ["a candidate", { input: { candidateIds: new Set([FAR + 1000]) } }, () => box()?.getAttribute("data-state"), null, "candidate"],
     ["a pick", { input: { pickedIds: new Set([FAR + 1000]) } }, () => box()?.getAttribute("data-state"), null, "picked"],
     ["the focus", { input: { focusId: FAR + 1000 } }, () => box()?.getAttribute("data-state"), null, "focus"],
-    ["shaping", { input: { shapeUnitId: FAR } }, () => box()?.getAttribute("data-state"), null, "shape"],
+    ["the picked box", { selectedUnitId: FAR }, () => box()?.hasAttribute("data-sel"), false, true],
     ["the menu in the box", { foot: { unitId: FAR, node: createElement("i") } }, () => box()?.querySelector("i") !== null, false, true],
     ["the AI filter", { input: { aiFilter: buildNewAiFilter(true, [9], listRows({ source_unit_ids: [12] })), rows: listRows({ source_unit_ids: [12] }) } }, () => box()?.closest(".strip-row")?.getAttribute("data-ai-view"), null, "dim"],
     ["a pickable cell", { cellPickable: true }, () => cell()?.hasAttribute("data-pickable"), false, true],
