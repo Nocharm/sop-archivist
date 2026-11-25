@@ -193,7 +193,7 @@ export default function AssignPage() {
     if (docViews.error !== null) docViews.retry();
   };
   // 삭제로 확정한 줄은 흐린 한 줄로 접는다(설계 D6) - 펼침은 용지가 고름으로 정한다(고른 동안만, 떠나면 다시 접힘)
-  const deletedFolds = useMemo(() => buildDeletedFolds(rows, unitMap, { filter: state.filter }), [rows, unitMap, state.filter]);
+  const deletedFolds = useMemo(() => buildDeletedFolds(rows, unitMap, { filter: state.filter, pendingDeletes: new Set() }),[rows, unitMap, state.filter]);
   // 빈 템플릿(엮은 문서) 기본 보기의 순서 · 칸 옮기기 · 번호 표시(시안 2 D6) - Order 화면과 같은 저장 길, 화면 문서에 먼저 얹고 두 보기가 같은 문서를 그린다
   const composedOrder = useComposedOrder({ bundleId, doc: isComposedDoc ? composedDoc : null, labelLang: uiLang });
   const shownComposed = composedOrder.doc;
