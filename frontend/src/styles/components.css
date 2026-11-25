@@ -1527,6 +1527,10 @@
   .num-kind:disabled { cursor: default; }
   .num-kind-bullet { min-width: 24px; padding: 0 6px; }
   .num-continuous { color: var(--ink-3); font-family: var(--font-mono); font-size: 11px; white-space: nowrap; }
+  .num-actions { display: flex; align-items: center; justify-content: flex-end; gap: 6px; }
+  .num-action { height: 24px; padding: 0 10px; font-size: 12px; }
+  .num-actions .num-note { margin-right: auto; }
+  .num-action[aria-disabled="true"] { opacity: 0.5; cursor: not-allowed; }
   .num-note { color: var(--ink-3); font-size: 11px; }
   .num-follow { display: flex; align-items: center; gap: 6px; cursor: pointer; }
   .num-follow-preview { display: flex; flex-wrap: wrap; gap: 4px 8px; font-family: var(--font-mono); font-size: 11px; color: var(--accent); }

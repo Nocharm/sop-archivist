@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import Any, Self
 
 from pydantic import BaseModel, Field, model_validator
-from sqlalchemy import Row, func, insert, select
+from sqlalchemy import Row, case, func, insert, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
@@ -44,6 +44,7 @@ from app.sop.models import (
     UnitDecision,
 )
 from app.sop.pair_settle import settle_pairs
+from app.sop.segment import RULE_PARAGRAPH, read_band_level
 from app.sop.units import UNIT_ACTIVE, get_latest_extraction_id
 
 # 머리말·꼬리말은 양식 반복이라 새 문장을 만들지 않고 절 경로에도 넣지 않는다(스펙 §6.7)
@@ -131,12 +132,17 @@ def _build_want(row: Row[Any], rank: int, path: str, targeted: set[int]) -> _Wan
     return _Want(row.id, rank, kind, lang, text, grid, path, group_unit_id, cell_row, cell_col)
 
 
+def _read_heading_level(row: Row[Any]) -> int | None:
+    """제목 단위의 단계 — 제목 스타일의 단계, 없으면 띠 표 번호의 단계(규칙 2의 문서만 band_signals가 있다)."""
+    return row.heading_level if row.heading_level is not None else read_band_level(row.band_signals)
+
+
 def _plan_targets(rows: Sequence[Row[Any]]) -> list[_Want]:
     """정렬 키 순 활성 단위 → 새 문장을 가져야 할 단위와 그 모습(머리말·꼬리말과 제목은 새 문장이 없다).
 
     절 경로는 본문 흐름(본문과 그 안의 글 상자)의 제목을 단계로 쌓아 " › "로 이은 것이다. 추출기는 본문 → 머리말·꼬리말 →
     각주·미주 순으로 블록을 내므로 본문 뒤 부분이 처음 나오면 흐름이 끝나고, 각주·미주는 마지막 본문 절을 물려받지 않고 빈
-    경로다. 제목 단계가 하나도 없는 문서는 조항 번호만 있는 제목을 1단계로 보고, 단계가 있는 문서의 단계 없는 조항 번호 줄은
+    경로다. 띠 표 제목은 번호의 단계다. 제목 단계가 하나도 없는 문서는 조항 번호만 있는 제목을 1단계로 보고, 단계가 있는 문서의 단계 없는 조항 번호 줄은
     경로에 넣지 않는다(스타일 제목이 이미 절을 정한다).
     """
     in_flow = []
@@ -145,7 +151,8 @@ def _plan_targets(rows: Sequence[Row[Any]]) -> list[_Want]:
         has_ended = has_ended or row.part in TRAILING_PARTS
         in_flow.append(not has_ended)
     has_levels = any(
-        is_body and row.kind == "heading" and row.heading_level is not None for row, is_body in zip(rows, in_flow, strict=True)
+        is_body and row.kind == "heading" and _read_heading_level(row) is not None
+        for row, is_body in zip(rows, in_flow, strict=True)
     )
     targeted = {row.id for row in rows if row.part not in REPEATED_PARTS and row.kind != "heading"}
     # 묶음 단위가 새 문장을 갖지 않는 캡션은 만들지 않는다 — 최상위 캡션 새 문장은 어디에도 없다(캡션은 늘 묶음의 자식)
@@ -157,9 +164,12 @@ def _plan_targets(rows: Sequence[Row[Any]]) -> list[_Want]:
             path = SECTION_SEPARATOR.join(text for _, text in stack) if is_body else ""
             wants.append(_build_want(row, len(wants), path, targeted))
             continue
-        level = row.heading_level if row.heading_level is not None else (None if has_levels else 1)
-        if row.kind != "heading" or not is_body or level is None:
+        if row.kind != "heading" or not is_body:
             continue
+        level = _read_heading_level(row)
+        if level is None and has_levels:
+            continue
+        level = level if level is not None else 1
         while stack and stack[-1][0] >= level:
             stack.pop()
         stack.append((level, row.text))
@@ -177,9 +187,14 @@ async def _load_wants(session: AsyncSession, document: Document) -> list[_Want]:
                 Unit.id, Unit.kind, Unit.text, Unit.lang, Unit.group_unit_id,
                 SourceBlock.part, SourceBlock.heading_level, SourceBlock.row_index.label("block_row_index"),
                 SourceBlock.col_index.label("block_col_index"), SourceTable.n_rows, SourceTable.n_cols,
+                # 띠 표 단계는 New의 띠 표가 제목 줄로 올라오는 규칙 2부터 본다 — 이미 올린 New(규칙 1)의 절 경로를 바꾸지 않는다
+                case(
+                    ((Unit.kind == "heading") & (Extraction.split_rule >= RULE_PARAGRAPH), SourceTable.signals)
+                ).label("band_signals"),
             )
             # 단위 자리(pos_seq)의 블록이 부분·제목 단계·칸 자리를 준다(표 단위는 첫 칸, 칸 문장은 자기 칸)
             .join(SourceBlock, (SourceBlock.extraction_id == Unit.extraction_id) & (SourceBlock.seq == Unit.pos_seq))
+            .join(Extraction, Extraction.id == Unit.extraction_id)
             .outerjoin(SourceTable, SourceTable.id == Unit.table_id)
             # 잡음 표시 단위(목차 줄)는 새 문장을 만들지 않는다(설계 2c) — 목차 줄은 문장 단위라 절 경로(제목)에도 닿지 않는다
             .where(Unit.extraction_id == extraction_id, Unit.status == UNIT_ACTIVE, Unit.noise_kind.is_(None))

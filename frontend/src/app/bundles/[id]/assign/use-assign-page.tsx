@@ -1553,7 +1553,7 @@ export function useAssignPage() {
     const isOld = oldDocIds.includes(docId);
     const view = readLiveView(docId) ?? pressedView;
     // confirm은 판단을 풀며 보낸 편집이다 - 대상(Target)이 지워져 To-Be · New 문장도 다시 받는다
-    const ask = buildReloadAsk(planReload(isOld ? { kind: "old_edit", docId, isInPlace: IN_PLACE_EDIT_OPS.has(op.type), isReleased: confirm } : { kind: "new_edit", docId }, { aiOn }), oldDocIds);
+    const ask = buildReloadAsk(planReload(isOld ? { kind: "old_edit", docId, isInPlace: IN_PLACE_EDIT_OPS.has(op.type), isReleased: confirm } : { kind: "new_edit", docId, isReleased: confirm }, { aiOn }), oldDocIds);
     const isWaited = isBarrier({ kind: readEditKind(op), isGlobal: false });
     // 자르기·합치기·언어 바꾸기 모두 Assign 기록에 넣는다(설계 §4.4) - 서버는 Split 편집 기록 번호만 가리킨다
     const undo = buildUndo({ focus_unit_id: op.type === "split" ? op.unit_id : (followId ?? undefined) });
@@ -1639,7 +1639,9 @@ export function useAssignPage() {
         confirmLabel: t("assign.unwrap.confirmRun"),
       };
     }
-    return { title: t("split.confirmTitle"), summary: t("split.confirmBody", { n: count }), confirmLabel: t("split.confirmRun") };
+    // New 문서는 거꾸로다 - New 문장의 이음이 풀리고 보류가 되는 것은 이어져 있던 Old 줄이다
+    const isNew = !oldDocIds.includes(command.docId);
+    return { title: t("split.confirmTitle"), summary: t(isNew ? "split.confirmBodyNew" : "split.confirmBody", { n: count }), confirmLabel: t("split.confirmRun") };
   }
 
   /** 확인창의 답 - 되물은 명령을 배정을 풀며 다시 보낸다(보내기 전에 물은 것이면 새로 세운다) */
@@ -1739,7 +1741,7 @@ export function useAssignPage() {
 
   async function sendSwitchToPair({ docId, view: pressedView, unit, confirm }: Extract<WriteCommand, { kind: "to_pair" }>, ctx: SendContext) {
     let restoredIds: number[] | null = null;
-    const ask = buildReloadAsk(planReload(oldDocIds.includes(docId) ? { kind: "old_edit", docId, isInPlace: false, isReleased: confirm } : { kind: "new_edit", docId }, { aiOn }), oldDocIds);
+    const ask = buildReloadAsk(planReload(oldDocIds.includes(docId) ? { kind: "old_edit", docId, isInPlace: false, isReleased: confirm } : { kind: "new_edit", docId, isReleased: confirm }, { aiOn }), oldDocIds);
     try {
       const undone = await editUnits(bundleId, docId, (readLiveView(docId) ?? pressedView).document.revision, { type: "unmerge", unit_id: unit.id }, confirm, buildUndo({ focus_unit_id: unit.id }));
       writeLog.noteAll();
@@ -1781,7 +1783,7 @@ export function useAssignPage() {
     let revision = (readLiveView(docId) ?? view).document.revision;
     let isCut = false;
     // 확인 창을 거쳐(confirm) 판단을 풀며 잘랐으면 판단을 푼 편집과 같다
-    const ask = buildReloadAsk(planReload(confirm ? { kind: "old_edit", docId, isInPlace: false, isReleased: true } : { kind: "split_suggestion", docId, isApplied: true }, { aiOn }), oldDocIds);
+    const ask = buildReloadAsk(planReload(!confirm ? { kind: "split_suggestion", docId, isApplied: true } : oldDocIds.includes(docId) ? { kind: "old_edit", docId, isInPlace: false, isReleased: true } : { kind: "new_edit", docId, isReleased: true }, { aiOn }), oldDocIds);
     try {
       for (const at of readSplitOffsets(suggestion.content.offsets).sort((a, b) => b - a)) {
         const result = await editUnits(bundleId, docId, revision, { type: "split", unit_id: unitId, at }, confirm, buildUndo({ focus_unit_id: unitId }));
@@ -1908,14 +1910,16 @@ export function useAssignPage() {
     else runShapeSwitch({ type: "switch_language", unit_id: target.id, lang, merge_pair: plan.mergePair }, target.id);
   }
 
-  /** 모양 전환 편집 - 묻지 않고 바로(confirm, 3-c) 하고, 무엇이 됐는지와 풀린 배정 수를 알림에 */
+  /** 모양 전환 편집 - Old는 묻지 않고 바로(confirm, 3-c), New는 이은 문장이면 서버가 물은 뒤(R4) 하고, 무엇이 됐는지와 풀린 배정 수를 알림에 */
   function runShapeSwitch(op: Extract<EditOp, { type: "switch_language" }>, followId: number) {
+    const isOld = shapeView !== null && oldDocIds.includes(shapeView.document.id);
     const describe = (result: EditResult) => {
       const key = result.shape === "merged" ? "assign.shape.merged" : result.shape === "unpaired" ? "assign.shape.unpaired" : "assign.shape.splitPair";
-      const released = result.detach?.reset_unit_ids.length ?? 0;
-      return `${t(key)}${released > 0 ? t("assign.shape.released", { n: released }) : ""}`;
+      // New는 판단이 풀리는 줄이 아니라 이음이 풀려 보류가 된 Old 줄을 센다
+      const released = (isOld ? result.detach?.reset_unit_ids : result.detach?.held_unit_ids)?.length ?? 0;
+      return `${t(key)}${released > 0 ? t(isOld ? "assign.shape.released" : "assign.shape.held", { n: released }) : ""}`;
     };
-    runUnitEdit(op, describe, op.merge_pair ? null : followId, true);
+    runUnitEdit(op, describe, op.merge_pair ? null : followId, isOld);
   }
 
   /** 문장 하나에 대한 동작 - 우클릭 메뉴와 오른쪽 칸의 다듬기 줄이 함께 쓴다. caret은 누른 글자 자리(자를 선을 그 가까이에 놓는다) */

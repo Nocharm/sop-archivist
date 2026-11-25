@@ -7,22 +7,22 @@
 | # | 브랜치 | 상태 | 버전 · 커밋 | 게이트(pytest · vitest · build · 스모크) | 남은 것 · 물음 |
 |---|---|---|---|---|---|
 | 0 | `fix/new-edit-undo` | 합침 | v1.6.1 · f363167e | pytest 3244 + 시드 13 통과 · ruff · 스모크 1단계(화면 변경 없음) | 결과물 C의 칸 안 문장 순서는 id 순 그대로(계획 밖) |
-| 1a | `feat/hide-drafting` | 진행(11-26) | | | |
-| 1b | `fix/remove-bundle-move` | 진행(11-26) | | | |
+| 1a | `feat/hide-drafting` | 합침 | v1.6.4 · 56c50032 | pytest 3260+시드 13 · vitest 1961 · build 경고 0 · 스모크 전체 2121 통과 · 운영 빌드에서 `sopa.drafting=1` 듣지 않음 확인 | 칸 번역을 정하면 표 묶음의 확정자 · 시각을 다시 쓴다(서버 닫힘 규칙) |
+| 1b | `fix/remove-bundle-move` | 합침 | v1.6.5 · edd65a9b | vitest 1964 · build 경고 0 · `assign:` 스모크 1117(낡은 시드로 난 1은 새 시드로 통과) | 이미 "보류 + 이동"인 줄은 확정할 수 없고 배정 취소로만 나간다 |
 | 2a | `fix/pair-spot-scroll` | 합침 | v1.6.0 · 7a863a50 | vitest 1927 · build 경고 0 · 스모크 3단계 통과(pytest 해당 없음) | 스모크는 단추 자리가 바뀐 감사(겹침)를 정식 업데이트 전에 |
 | 2b | `feat/inspector-float` | 합침 | v1.6.2 · aec15ead | vitest 1934 · build 경고 0 · `assign:` 스모크 전체 1117 통과 · 겹침 감사 장면 1120/1280/1440 | 판을 맨 위로 끌면 상단 바를 덮음(다시 끌어 내릴 수 있음), 접어도 칸 끝 빈 칸은 남음 — 거슬리면 고침 |
-| 3a | `perf/assign-measure` | 진행(11-26) | | | |
-| 3b | `fix/assign-command-queue` | 대기 | | | |
+| 3a | `perf/assign-measure` | 합침 | (번호는 다음 푸시에 함께) 1aaa2de0 | pytest+시드 · vitest 1961 · ruff(화면 변경 없음, 스모크 해당 없음) | 결과 문서(T3)는 3b 앞뒤를 잰 뒤 |
+| 3b | `fix/assign-command-queue` | 진행(11-26) | | | |
 | 3c | `fix/assign-instant-motion` | 대기 | | | |
 | 3d | `perf/assign-filter-chunks` | 대기 | | | |
 | 3e | `perf/assign-number-input` | 대기(재서 정함) | | | |
 | 4a | `fix/assign-enter` | 대기 | | | |
 | 4b | `feat/assign-keymap` | 대기 | | | |
 | 4c | `feat/assign-merge-keys` | 대기 | | | |
-| 4d | `feat/number-cell-buttons` | 진행(11-26) | | | |
+| 4d | `feat/number-cell-buttons` | 합침 | v1.6.7 · 3670d20c | vitest 1969 · build 경고 0 · `assign:` 스모크 전체 통과(5c와 합친 트리) | IME 조합 중 Enter는 전과 같음(범위 밖), 번호 칸 단계 둘은 앞 단계에 기대어 혼자 돌리면 실패(dev에서도 같음) |
 | 5a | `feat/split-rule-2` | 합침 | v1.6.3 · 42e4751b | pytest 3404+시드 통과 · 10 xfail(R3 · R4 몫) · vitest 1934 · build 경고 0 · 스모크 전체 2111 통과 | PDF의 콜론 뒤 줄표 목록은 나누지 않는다(사람이 나눔) |
 | 5b | `feat/split-front-matter` | 대기 | | | |
-| 5c | `feat/split-new-parity` | 진행(11-26) | | | |
+| 5c | `feat/split-new-parity` | 합침 | v1.6.6 · d750564c | pytest 3453+시드 14(6 xfail = R3 몫) · vitest 1969 · build 경고 0 · `assign:` 스모크 전체 통과(4d와 합친 트리) | Old 한/영 짝이 New 두 문장에 이어져 하나만 풀린 뒤 다시 하기는 409(있던 것) |
 | 6-1 | `feat/new-paper-1-render` | 대기 | | | |
 | 6-2 | `feat/new-paper-2-pick` | 대기 | | | |
 | 6-3 | `feat/new-paper-3-tools` | 대기 | | | |
@@ -39,6 +39,17 @@
 - 5a · `test_sop_units.py` `test_upload_creates_units_with_full_coverage` · `test_docx_line_breaks_…`, `test_sop_heading_sentence.py` 둘 · 규칙 1 → 규칙 1 · 2 둘 다 · 새 규칙의 기대를 더함(계획 5a T7)
 - 5a · `test_measure_extraction.py:17-` · `units_by_kind` 한 규칙(최대 5) → 두 규칙({1:5, 2:4}) · 도구가 규칙을 고르게 됨(계획 5a T7)
 - 5a · `test_seed_sop_demo.py` `EXPECTED_BUNDLES` 9 → 10 · 시연 묶음 하나를 더함
+- 1a · `test_sop_excel.py:246` · `test_sop_e2e.py:219` · 시트 5 → 4 · C 시트 숨김(§14)
+- 1a · `test_sop_excel.py:519 · 588 · 594` · `SHEET_NAMES` → `get_sheet_names()` · 같은 까닭(§14), `545` `filter_columns`에서 C 키를 뺌(목록 밖, 같은 까닭)
+- 1a · 숨긴 AI를 쓰는 backend 시험 · 고정물 `hidden_ai_on` · `c_sheet_on`만 더함(기대값 그대로)
+- 1a · `smoke/outputs.mjs` "A, B, C and the Excel preview" · 시트 5 → 4, `pw-overlap-audit.mjs` export-preview 5 → 4(§14)
+- 1a · `smoke/assign.mjs` `PREPARE_STEP` · "first entry classifies…" → "does not classify the remaining rows"(검사 수 같음, §14) — ai_suggested 칩은 "수가 잇기 제안에서만"으로 봄
+- 1a · `smoke/*.mjs` 숨긴 기능을 쓰는 단계에 `drafting: true`만, documents 1566 · 2012와 assign 1525는 숨긴 채 도는 앞부분과 켠 새 단계로 나눔(검사 수 +1)
+- 1a · layout · contrast · overlap 감사와 manual-shots의 숨긴 화면 장면에 `drafting: true`(실행은 정식 업데이트 전에)
+- 1b · `assign-context-menu-model.test.ts:55 · 73` · `["clear","move","delete"]` → `["clear","delete"]`, `["clear","move"]` → `["clear"]` · 이동 항목이 없어짐(정한 것 4)
+- 1b · `smoke/assign.mjs:665` 이동 단계(검사 3) → "a row moved earlier is read-only and Unassign frees it"(검사 5) · 동작이 바뀜(정한 것 4)
+- 1b · `source-rules.test.ts:199` 안내 글의 "(or Combobox)"만 뺌(규칙 그대로)
+- 5c · `frontend/src/lib/assign-focus-model.test.ts` `new_edit` 원인에 `isReleased: false` · 타입이 바뀜(기대값 그대로)
 
 ## 아침에 볼 것 (사람이 정할 것 · 봐 줄 것)
 
@@ -52,3 +63,5 @@
 - 운영에 이미 중복이 있으면 정리 전까지: 칸 중복은 되돌리기를 오가도 남고 표 밖 줄로 보일 수 있다. 중복 행에 남의 이음이 있으면 다시 하기가 409(0번).
 - 규칙 2에서 한글만 문서에 영어 문장이 하나 섞이면 배치 판정이 `ko_only` → `ko_en_separate`가 되어 짝 없는 줄이 "한 언어뿐" 수에 잡힌다(5a 검토, R2-7의 뜻 안).
 - PDF 문서 번호 · 줄표 줄머리는 앞 줄이 문장 끝일 때만 나누게 했다(계획은 늘 나눔) — 실제 PDF에서 확인.
+- 숨긴 칸에 배정된 줄에서 H(보류)를 누르거나 시스템 보류가 되면 다시 확정할 수 없다 — 배정 취소나 잇기로 나간다(설명서에 적음, 1a).
+- 이동한 줄(옛 기능)은 글자 그대로 읽기 전용으로 했다 — 보류 · 잇기 · 삭제로 바로 덮지 못하고 배정 취소부터 해야 한다. 운영의 "보류 + 이동" 줄은 배정 취소해야 검토 조건을 채운다(1b). 바로 덮게 하고 싶으면 말해 주세요.

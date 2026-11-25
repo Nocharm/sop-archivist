@@ -484,6 +484,12 @@ def is_band_table(signals: Mapping[str, object] | None) -> bool:
     return bool((signals or {}).get(BAND_SIGNAL))
 
 
+def read_band_level(signals: Mapping[str, object] | None) -> int | None:
+    """띠 표 번호의 제목 단계(점으로 나뉜 자리 수 — "7" 1, "7.4" 2), 띠 표가 아니면 None."""
+    band = (signals or {}).get(BAND_SIGNAL)
+    return int(band["level"]) if isinstance(band, Mapping) else None
+
+
 def is_certain_band(signals: Mapping[str, object] | None, parent_table_id: int | None, part: str) -> bool:
     """올리자마자 제목 줄로 만들 띠 표인가(F4 · §11-1) — 띠 표 신호가 있는 본문의 바깥 표. 데이터 표 안의 띠 표는 바깥 표를 벗길 때까지
     표 안에 두고(브랜치 6), 머리말·꼬리말의 띠 표 꼴은 절을 열지 않아 표로 둔다. 표로 둔 띠 표도 사람이 벗기면 제목 줄이 된다."""
@@ -585,7 +591,7 @@ def build_unit_drafts(
       이을 초안이 없으면(레이아웃 표) 표시를 무시하고 보통 문장으로 쪼갠다.
     - 목차 줄(noise.find_toc_block_ids): 문장으로 쪼개지 않고 블록 전체 범위 하나의 문장 단위에 잡음 표시 "toc"를 붙인다 —
       점 끌기("1. 목적 ........ 3")의 점에서 잘리면 목차 한 줄이 두 단위가 된다.
-    - shift_headings(옛 문서)면 제목답지 않은 제목 줄(is_heading_like)은 문장으로 쪼개고 from_heading 표시를 단다(F8b) — 조항형 옛 SOP의
+    - shift_headings(Old와 규칙 2의 New)면 제목답지 않은 제목 줄(is_heading_like)은 문장으로 쪼개고 from_heading 표시를 단다(F8b) — 조항형 옛 SOP의
       "제목 N수준" 조항. 번호 없는 제목 블록이 다른 언어의 바뀐 조항 바로 뒤에 오면 그 번역으로 보고 함께 바꾼다(짝이 문장마다 서게).
     """
     toc_block_ids = find_toc_block_ids(blocks)

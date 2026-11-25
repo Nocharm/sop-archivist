@@ -31,10 +31,15 @@ describe("reload asks gathered while the queue runs (A1-R6)", () => {
     expect(mergeReloads({ ...rest, ...views }, NO_RELOAD_ASK)).toEqual(ask);
   });
   it("reads the New document's own view instead when the edited document is not an Old one", () => {
-    expect(buildReloadAsk(planReload({ kind: "new_edit", docId: 9 }, ai), [4])).toEqual({ ...NO_RELOAD_ASK, solo: true, written: true, tobe: true });
+    expect(buildReloadAsk(planReload({ kind: "new_edit", docId: 9, isReleased: false }, ai), [4])).toEqual({ ...NO_RELOAD_ASK, solo: true, written: true, tobe: true });
     // 짝은 New 문서에서도 맺는다 - Unit이 바뀌니 New 문장 · To-Be도
     expect(buildReloadAsk(planReload({ kind: "pair", docId: 9 }, ai), [4])).toEqual({ ...NO_RELOAD_ASK, solo: true, written: true, tobe: true, bundle: true });
     expect(buildReloadAsk(planReload({ kind: "caption_ref", docId: 9 }, ai), [4])).toEqual({ ...NO_RELOAD_ASK, solo: true });
+  });
+  it("a New edit that released links reads every Old document too, with the New view (held Old rows)", () => {
+    const ask = buildReloadAsk(planReload({ kind: "new_edit", docId: 9, isReleased: true }, ai), [4, 5]);
+    expect(ask).toEqual({ ...NO_RELOAD_ASK, docs: "all", units: "all", solo: true, written: true, tobe: true, identical: true, bundle: true });
+    expect(splitReload(ask).views).toEqual({ docs: "all", units: "all", solo: true });
   });
   it("an edit Undo reads every Old document", () => {
     expect(buildReloadAsk(planReload({ kind: "edit_undo", docId: null }, ai), [4, 5])).toMatchObject({ docs: "all", units: "all", identical: true, bundle: true, solo: false });

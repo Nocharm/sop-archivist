@@ -11,7 +11,7 @@ import { useEffect, useRef, type KeyboardEvent } from "react";
 import type { NumberStyle, ViewNumber } from "@/lib/api-sop";
 import { useI18n } from "@/lib/i18n";
 import { useDismiss } from "@/lib/use-dismiss";
-import { MAX_NUMBER_CHARS, type NumberPreview } from "@/lib/number-model";
+import { getNumberSaveBlock, MAX_NUMBER_CHARS, type NumberPreview } from "@/lib/number-model";
 import { readNumberKind, type NumberKind } from "@/lib/number-kind-model";
 import { BULLET_SYMBOLS } from "@/lib/section-number";
 import type { PairBracket } from "@/lib/strip-pill-model";
@@ -225,8 +225,8 @@ export function NumberCell({
 
   function save() {
     if (!edit || busy) return;
+    if (getNumberSaveBlock(edit) !== null) return;
     const text = edit.text.trim();
-    if (text === "") return;
     onSave(text, edit.kind === "continuous" && edit.follow);
   }
 
@@ -327,6 +327,27 @@ export function NumberCell({
     );
   }
 
+  /** 취소 · 확인 - 확인은 Enter와 같은 save(). 빈 글이면 꺼 두고(aria-disabled라 툴팁은 뜬다) 까닭을 글로 보인다. 바깥 누르기는 지금대로 저장 없이 닫힘 */
+  function renderActions(current: NumberEdit) {
+    const block = getNumberSaveBlock(current);
+    const reason = block === null ? undefined : t(block);
+    return (
+      <span className="num-actions">
+        {reason && (
+          <span className="num-note" data-testid={`${testId}-number-cell-reason`}>
+            {reason}
+          </span>
+        )}
+        <button type="button" className="btn ghost num-action" data-testid={`${testId}-number-cell-cancel`} onClick={() => onEditChange(null)}>
+          {t("common.cancel")}
+        </button>
+        <button type="button" className="btn pri num-action" aria-disabled={block !== null ? "true" : undefined} data-tip={reason} data-testid={`${testId}-number-cell-ok`} disabled={busy} onClick={save}>
+          {t("assign.number.ok")}
+        </button>
+      </span>
+    );
+  }
+
   function handleKey(event: KeyboardEvent<HTMLInputElement>) {
     // 용지·화면의 단축키(J/K, Ctrl+Z)가 입력 글자를 가로채지 않게 한다
     event.stopPropagation();
@@ -386,6 +407,7 @@ export function NumberCell({
               {followed.length > 3 && <span className="num-follow-more">{t("assign.number.more", { n: followed.length - 3 })}</span>}
             </span>
           )}
+          {isTextKind(edit.kind) && renderActions(edit)}
           {number.note !== null && (
             <span className="num-note" data-testid={`${testId}-num-note`}>
               {t("assign.numberKind.note", { n: number.note })}
