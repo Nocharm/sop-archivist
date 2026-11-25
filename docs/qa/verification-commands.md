@@ -13,7 +13,7 @@ python3.11 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
 .venv/bin/python -m scripts.reset_db      # 로컬 데모 DB 초기화(backend/dev.db): Alembic base→head + 지침·dev 디렉터리·데모 권한. 서버 실행 금지
 .venv/bin/python -m scripts.seed_sop_worst # 로컬 전용(운영 DB 금지): seed_sop_demo 위에 극단 자료(W1 극단 묶음·W2~W7 단계별·가벼운 36개·참조 지도용 M1~M8(Old 문서 104개)·역할·부여·지침 버전)를 앱 API로 얹는다. 화면 배치 감사용 — 별도 sqlite 파일(DATABASE_URL)에 reset_db → seed_sop_demo → 이것 순서로, 같은 자료는 건너뛰어 다시 돌려도 된다(약 5분). 끝 줄 `worst seed done: 51 bundles`(W1~W7+light 36+M1~M8). qa.member의 목록에는 데모 5개 + 43 + M1~M5 = 53개(데모 6번·M6~M8은 prod.member 혼자). DEV_ENFORCE_PERMISSIONS 없이 돌린다
 .venv/bin/python -m scripts.seed_sop_demo # 로컬 전용(운영 DB 금지): 합성 SOP 묶음 4개(쪼개기 직후·분류 절반·검토 대기·AI 제안)를 앱 API로 만든다(작성자 qa.member, 검토자 qa.lead). 그 뒤에 참조 지도용 5 UV 분광광도계(qa.member·qa.lead)·6 문서 관리(prod.member 혼자)를 더한다. 묶음 2~4는 경계를 미리 모두 확인하고 "쪼개기 직후"만 미확인으로 남긴다(v1.0.3부터 경계 확인은 검토 요청 조건이 아니지만 시드는 그대로다). AI 제안 단계는 프로세스 안의 가짜 전송으로 돌아 AI 설정이 필요 없고 실제 모델을 부르지 않는다. 같은 제목이 있으면 건너뛰어 다시 돌려도 된다. AUTH_MODE=dev에서만 돈다(dev 의존성 python-docx 필요, DEV_ENFORCE_PERMISSIONS=true면 bundle.create가 없어 403)
-.venv/bin/python -m scripts.measure_extraction <파일…> [--no-aux]  # DOCX·PDF를 지금 추출기로 읽어 구조 숫자만 낸다(파싱 규칙 전후 비교용, DB·서버 없이). 줄마다 `#n {JSON}` — 경로·파일 이름·원문 글자는 출력하지 않아 실제 문서로 돌린 결과를 그대로 전해도 된다. `--no-aux`는 MarkItDown 보조 대조(느림)를 건너뛴다
+.venv/bin/python -m scripts.measure_extraction <파일…> [--no-aux] [--rule 1|2]  # DOCX·PDF를 지금 추출기로 읽어 구조 숫자만 낸다(파싱 규칙 전후 비교용, DB·서버 없이). 줄마다 `#n {JSON}` — 경로·파일 이름·원문 글자는 출력하지 않아 실제 문서로 돌린 결과를 그대로 전해도 된다. `--no-aux`는 MarkItDown 보조 대조(느림)를 건너뛴다
 AUTH_MODE=dev DEV_ENFORCE_PERMISSIONS=true APP_SYSADMINS=dev.admin .venv/bin/uvicorn app.main:app --reload --port 8777   # 개발 서버
 .venv/bin/python -m pytest tests/ -q -n auto   # 테스트(병렬, 작업자마다 DB 파일이 따로) — conftest가 AUTH_MODE·AI·HR 등을 baseline으로 고정해 backend/.env가 있어도 안전. 한 파일만 볼 때는 -n 없이
 .venv/bin/ruff check app/ tests/          # 린트(target py311)
@@ -57,7 +57,7 @@ py -3.11 -m venv .venv; .venv\Scripts\pip install -r requirements-dev.txt
 .venv\Scripts\python -m scripts.reset_db
 .venv\Scripts\python -m scripts.seed_sop_demo   # 로컬 전용(운영 DB 금지) — 설명은 bash 쪽과 같다
 .venv\Scripts\python -m scripts.seed_sop_worst  # 극단 자료 시드(로컬 전용) — 설명은 bash 쪽과 같다
-.venv\Scripts\python -m scripts.measure_extraction <파일…> [--no-aux]  # 추출 측정(숫자만) — 설명은 bash 쪽과 같다
+.venv\Scripts\python -m scripts.measure_extraction <파일…> [--no-aux] [--rule 1|2]  # 추출 측정(숫자만) — 설명은 bash 쪽과 같다
 $env:AUTH_MODE="dev"; $env:DEV_ENFORCE_PERMISSIONS="true"; $env:APP_SYSADMINS="dev.admin"; .venv\Scripts\uvicorn app.main:app --reload --port 8777
 .venv\Scripts\python -m pytest tests\ -q -n auto
 .venv\Scripts\ruff check app\ tests\

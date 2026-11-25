@@ -45,7 +45,7 @@ from tests.test_sop_outputs import (
     _setup,
 )
 
-pytestmark = pytest.mark.usefixtures("clean_sop")
+pytestmark = pytest.mark.usefixtures("clean_sop", "legacy_split_rule")
 
 ASSOCIATED = "document_relationships.associated_documents"
 QRA = f"{ASSOCIATED}.quality_risk_assessment"

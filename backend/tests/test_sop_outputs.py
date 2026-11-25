@@ -57,7 +57,7 @@ from tests.sop_helpers import (
 from scripts.synthetic_sop import build_synthetic_bundle
 from tests.test_sop_pairs import EN_BOTH, EN_ON, KO_KEEP, KO_LOAD, KO_ON
 
-pytestmark = pytest.mark.usefixtures("clean_sop")
+pytestmark = pytest.mark.usefixtures("clean_sop", "legacy_split_rule")
 
 OLD1_NAME = "SYNTHETIC_OLD-1_Outputs.docx"
 OLD2_NAME = "SYNTHETIC_OLD-2_Outputs.docx"

@@ -20,7 +20,7 @@ from tests.test_sop_decisions import RECORDS, WARM_UP, _body, _target, _unit_in
 from tests.test_sop_decisions import _setup as _setup_decisions
 from tests.test_sop_pair_settle import EN_HEAD, KO_HEAD
 
-pytestmark = pytest.mark.usefixtures("clean_sop")
+pytestmark = pytest.mark.usefixtures("clean_sop", "legacy_split_rule")
 
 RECORDS_EN = "Synthetic records are kept."
 

@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.sop.models import Extraction
 from app.sop.segment import RULE_PARAGRAPH
 from tests.access_helpers import run_in_session
-from tests.sop_helpers import create_bundle, get_view, upload
+from tests.sop_helpers import AUTHOR, create_bundle, get_view, upload
 from tests.split_golden.builder import CASES, Case, build_new_bytes, read_boxes
 
 pytestmark = pytest.mark.usefixtures("clean_sop")
@@ -87,3 +87,35 @@ def test_new_uploads_record_rule_2(client: TestClient) -> None:
         return list(rows)
 
     assert run_in_session(_read) == [RULE_PARAGRAPH, RULE_PARAGRAPH] == [2, 2]
+
+
+LEGACY_BOXES = {
+    "G02": [
+        ("5. 절차", "ko"), ("탱크를 비운다.", "ko"), ("밸브를 닫는다.", "ko"), ("Drain the tank completely.", "en"),
+        ("Close the outlet valve.", "en"),
+    ],
+    "G04": [("5. 절차", "ko"), ("탱크를 비우고", "ko"), ("잔량을 확인한다.", "ko"), ("결과를 기록한다.", "ko")],
+    "G11": [
+        ("5. 절차", "ko"), ("5.1 배출 밸브를 모두 닫는다.", "ko"), ("닫힌 것을 확인한다.", "ko"), ("Close all drain valves.", "en"),
+        ("Confirm that they are closed.", "en"),
+    ],
+}
+
+
+@pytest.mark.usefixtures("legacy_split_rule")
+@pytest.mark.parametrize("key", sorted(LEGACY_BOXES))
+def test_documents_of_rule_1_keep_their_boxes(client: TestClient, key: str) -> None:
+    # 이미 올린 문서(규칙 1)는 문장마다 · 줄마다 그대로이고, 언어 배치를 바꿔도 다시 쪼개지 않는다
+    bundle_id = create_bundle(client, is_synthetic=True)["id"]
+    view = _upload(client, bundle_id, CASES[key], "old")
+    before = [(unit["id"], unit["spans"]) for unit in view["units"]]
+    assert [(unit["text"], unit["lang"]) for unit in view["units"]] == LEGACY_BOXES[key]
+
+    doc = view["document"]
+    response = client.patch(
+        f"/api/bundles/{bundle_id}/documents/{doc['id']}",
+        json={"revision": doc["revision"], "language_layout": "ko_en_interleaved"}, headers=AUTHOR,
+    )
+
+    assert response.status_code == 200, response.text
+    assert [(unit["id"], unit["spans"]) for unit in get_view(client, bundle_id, doc["id"])["units"]] == before
