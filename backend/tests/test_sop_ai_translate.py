@@ -1824,6 +1824,7 @@ def test_retiring_a_matched_new_unit_removes_an_ai_translation(client: TestClien
     assert_swept(client, bundle.id, unit["id"])
 
 
+@pytest.mark.usefixtures("legacy_split_rule")  # 규칙 2면 1장 앞 문장이 저절로 삭제된 줄이라 제목과 합쳐지지 않는다(§7 R3)
 def test_new_section_for_a_matched_source_holds_a_confirmed_translation(client: TestClient, fake_ai: FakeAi) -> None:
     bundle, unit, view, target = make_match_translation(client, fake_ai)
     assert save_translation(client, bundle.id, target).status_code == 200
