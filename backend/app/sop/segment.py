@@ -2,7 +2,7 @@
 
 import re
 from collections import Counter
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import Literal
 
@@ -65,6 +65,30 @@ NUMBER_CELL = "cell"
 # 글 앞에 타자로 친 번호 — 점이 있어야 번호로 본다("1." "6.1" "1.10."). "3 times"처럼 숫자로 시작하는 문장을 집지 않게.
 # 추출기(docx_reader._find_number)가 문단 머리에서, numbering.read_number_range가 줄바꿈 뒤 줄머리에서 같은 꼴을 읽는다
 TYPED_NUMBER_RE = re.compile(r"(?:\d+(?:\.\d+)+\.?|\d+\.)(?=\s|$)")
+# 문서 번호 꼴(파일 이름에서 번호를 읽는 규칙과 같다, `filename.py`) — 영문 대문자 머리 + 하이픈 마디 + 숫자 끝. 참조 줄(refs.py)과
+# 규칙 2의 줄머리가 함께 쓴다 — 추출 자식이 모델을 물지 않게 이 모듈에 둔다
+DOCUMENT_NUMBER_BODY = r"[A-Z]{2,}(?:-[A-Z0-9]{1,8})*-\d{1,6}"
+# 규칙 2 — 한글 사이 · 끝의 영어 덩어리가 이보다 적은 낱말이면 앞 한글 박스에 잇는다("Buffer A."). 합성 자료로 잡은 값(실제 SOP 뒤 다시 정한다)
+SHORT_ENGLISH_WORDS = 3
+# 규칙 2의 줄머리(번호 말고) — 글머리 기호나 문서 번호면 DOCX · PDF 모두 그 줄에서 나눈다. 줄표는 "-5 °C"를 집지 않게 숫자 앞이면 아니다
+_LINE_MARKER_RE = re.compile(
+    rf"[•·*▪◦●○■□◆※]|[-–—](?!\d)|o(?=[ \t])|{DOCUMENT_NUMBER_BODY}(?![A-Za-z0-9])"
+)
+# 규칙 2의 줄머리 번호 — "5.1" "1." | "(1)" "1)" "a." "a)" "가." "ㄱ)" "iv." | "①"
+_LINE_NUMBER_RE = re.compile(
+    rf"(?P<dotted>{TYPED_NUMBER_RE.pattern})"
+    r"|(?P<open>\(?)(?P<body>\d{1,3}|[A-Za-z]|[가나다라마바사아자차카타파하ㄱ-ㅎ]|[ivx]{2,}|[IVX]{2,})(?P<close>\)|\.(?=\s|$))"
+    r"|(?P<circled>[①-⑳])"
+)
+# 글자 번호의 차례 — 한 글자는 자리 + 1이 값이다
+_LETTER_SERIES = (
+    "abcdefghijklmnopqrstuvwxyz", "ABCDEFGHIJKLMNOPQRSTUVWXYZ", "가나다라마바사아자차카타파하", "ㄱㄴㄷㄹㅁㅂㅅㅇㅈㅊㅋㅌㅍㅎ",
+    "①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳",
+)
+_ROMAN_SERIES = (
+    "i", "ii", "iii", "iv", "v", "vi", "vii", "viii", "ix", "x", "xi", "xii", "xiii", "xiv", "xv", "xvi", "xvii", "xviii",
+    "xix", "xx",
+)
 # docx_reader.SIGNAL_BAND와 같은 값 — 띠 표(1행 3칸: 번호 칸 | 빈 칸 | 제목 칸)의 표 신호 {"number", "level"}
 BAND_SIGNAL = "band"
 # docx_reader.SIGNAL_PLACE·SIGNAL_PARAS와 같은 값 — 안쪽 표의 바깥 칸 자리 {"row", "col", "para"}와 칸 안 문단 시작 자리
@@ -224,6 +248,143 @@ def _append_trimmed(ranges: list[tuple[int, int]], text: str, start: int, end: i
     trimmed = trim_blank_range(text, start, end)
     if trimmed is not None:
         ranges.append(trimmed)
+
+
+_MAX_NUMBER_DIGITS = 9  # 번호 마디 하나에서 읽는 자리 수 — 긴 숫자열(4,300자리 넘으면 int()가 예외)에 업로드가 죽지 않게
+# 번호 하나의 읽기 — (차례 이름, 값). 점 번호의 값은 마디 묶음(5, 1), 나머지는 순번 하나다
+_NumberReading = tuple[tuple[str, ...], tuple[int, ...]]
+
+
+def _read_line_number(text: str, at: int) -> list[_NumberReading]:
+    """at에서 시작하는 줄머리 번호의 읽기들 — 번호가 아니면 빈 목록. "i"는 로마 숫자 1이자 글자 9라 둘 다 낸다."""
+    match = _LINE_NUMBER_RE.match(text, at)
+    if match is None:
+        return []
+    if match["dotted"] is not None:
+        return [(("dotted",), tuple(int(part[:_MAX_NUMBER_DIGITS]) for part in match["dotted"].split(".") if part))]
+    body = match["body"] or match["circled"]
+    marks = (match["open"] or "", match["close"] or "")  # "1)"과 "(1)"은 다른 차례다
+    if body.isdecimal():
+        return [(("digit", *marks), (int(body),))]
+    readings: list[_NumberReading] = [
+        ((series, *marks), (series.index(body) + 1,)) for series in _LETTER_SERIES if len(body) == 1 and body in series
+    ]
+    if body.lower() in _ROMAN_SERIES:
+        case = "roman" if body.islower() else "ROMAN"
+        readings.append(((case, *marks), (_ROMAN_SERIES.index(body.lower()) + 1,)))
+    return readings
+
+
+def _is_number_after(
+    reading: _NumberReading, last_values: Mapping[tuple[str, ...], tuple[int, ...]], previous: set[tuple[str, ...]]
+) -> bool:
+    """PDF 블록에서 이 번호가 앞 번호들을 잇는가 — 같은 차례의 다음 번호 · 첫 하위 · 윗 단계 다음. 접힌 줄이 "0.8 bar"로 시작해도
+    앞 번호 5.1의 다음이 아니라 번호 줄이 아니다."""
+    series, value = reading
+    last = last_values.get(series)
+    if last is not None and (
+        value == (*last, 1) or any(value == (*last[:depth], last[depth] + 1) for depth in range(len(last)))
+    ):
+        return True
+    # 다른 차례의 번호 바로 뒤에 새로 시작하는 1 — "5.1" 아래 "a)"
+    return value == (1,) and series not in previous
+
+
+def find_marker_lines(text: str, *, split_lines: bool) -> list[int]:
+    """번호 · 글머리 기호 · 문서 번호로 시작하는 줄의 시작 자리(첫 줄 제외) — 규칙 2가 여기서는 같은 언어여도 나눈다.
+
+    split_lines(DOCX)면 줄머리가 맞으면 늘이다(줄바꿈은 글쓴이가 넣었다). PDF의 줄바꿈은 폭에 따라 접힌 것이라 글머리 · 문서
+    번호면 늘, 번호면 블록에서 바로 앞 번호(첫 줄 포함)를 이을 때만이다 — 앞 번호가 없으면 번호 줄로 보지 않는다.
+    """
+    if "\n" not in text:
+        return []
+    starts: list[int] = []
+    last_values: dict[tuple[str, ...], tuple[int, ...]] = {}
+    previous: set[tuple[str, ...]] = set()
+    line_start = 0
+    while line_start < len(text):
+        first = line_start
+        while first < len(text) and text[first] != "\n" and is_blank_char(text[first]):
+            first += 1
+        readings = _read_line_number(text, first)
+        if line_start > 0 and not split_lines:
+            readings = [item for item in readings if previous and _is_number_after(item, last_values, previous)]
+        if readings:
+            last_values.update(readings)
+            previous = {series for series, _ in readings}
+        if line_start > 0 and (readings or _LINE_MARKER_RE.match(text, first) is not None):
+            starts.append(line_start)
+        line_end = text.find("\n", first)
+        if line_end < 0:
+            break
+        line_start = line_end + 1
+    return starts
+
+
+@dataclass
+class _Run:
+    """같은 언어가 이어진 조각 덩어리 하나(규칙 2) — kept는 앞뒤와 잇지 않는 조각(참조 줄)이다."""
+
+    start: int
+    end: int
+    lang: Literal["ko", "en"] | None
+    kept: bool
+
+
+def split_paragraph(
+    text: str, *, split_lines: bool = False, paras: Sequence[int] = (), kept: Collection[int] = ()
+) -> list[tuple[int, int]]:
+    """규칙 2의 박스 범위(설계 2026-11-25 R2) — 문장 조각(split_sentences)을 이어진 같은 언어끼리 다시 잇는다.
+
+    바깥 경계는 번호 · 글머리 · 문서 번호 줄(find_marker_lines)과 칸 안 문단 시작(paras)이고, 배치는 보지 않는다. 언어를 모르는
+    조각(숫자 · 기호뿐)은 앞 조각을 따르고 맨 앞이면 뒤 조각을 따른다. kept는 잇지 않을 조각의 시작 자리(Reference 절의 참조 줄)다.
+    """
+    cuts = sorted({0, len(text), *find_marker_lines(text, split_lines=split_lines), *(at for at in paras if 0 < at < len(text))})
+    ranges: list[tuple[int, int]] = []
+    for segment_start, segment_end in zip(cuts, cuts[1:], strict=False):
+        ranges.extend(_join_segment(text, segment_start, segment_end, split_lines, kept))
+    return ranges
+
+
+def _join_segment(
+    text: str, segment_start: int, segment_end: int, split_lines: bool, kept: Collection[int]
+) -> list[tuple[int, int]]:
+    """바깥 경계 안의 조각들 → 박스 범위. 짧은 영어 예외는 조각이 아니라 덩어리째 본다."""
+    runs: list[_Run] = []
+    for piece_start, piece_end in split_sentences(text[segment_start:segment_end], split_lines=split_lines):
+        start, end = segment_start + piece_start, segment_start + piece_end
+        lang = detect_language(text[start:end])
+        last = runs[-1] if runs else None
+        if last is not None and start not in kept and not last.kept and (lang is None or last.lang in (None, lang)):
+            last.end = end
+            last.lang = last.lang or lang
+        else:
+            runs.append(_Run(start, end, lang, start in kept))
+    boxes: list[_Run] = []
+    for run in runs:
+        last = boxes[-1] if boxes and not run.kept and not boxes[-1].kept else None
+        if last is not None and (last.lang == run.lang or _is_short_english(text, last, run, split_lines)):
+            last.end = run.end  # 예외로 이은 영어 뒤의 한글도 다시 이어진다
+        else:
+            boxes.append(run)
+    return [(run.start, run.end) for run in boxes]
+
+
+def _is_short_english(text: str, last: _Run, run: _Run, split_lines: bool) -> bool:
+    """한글 박스에 이을 짧은 영어 덩어리인가 — DOCX에서 줄이 갈린 "온도↵Temperature"는 짝이라 잇지 않는다."""
+    if last.lang != "ko" or run.lang != "en" or (split_lines and "\n" in text[last.end:run.start]):
+        return False
+    words = sum(1 for word in text[run.start:run.end].split() if any(map(_is_latin_letter, word)))
+    return words < SHORT_ENGLISH_WORDS
+
+
+def split_block_text(
+    text: str, *, rule: int, split_lines: bool, paras: Sequence[int] = (), kept: Collection[int] = ()
+) -> list[tuple[int, int]]:
+    """추출의 규칙으로 블록 글을 나눈 범위 — 규칙 1은 문장마다(split_sentences 그대로), 규칙 2는 split_paragraph."""
+    if rule == RULE_LEGACY:
+        return split_sentences(text, split_lines=split_lines)
+    return split_paragraph(text, split_lines=split_lines, paras=paras, kept=kept)
 
 
 def detect_language(text: str) -> Literal["ko", "en"] | None:

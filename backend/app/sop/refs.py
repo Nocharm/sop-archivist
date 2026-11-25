@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.equis.client import is_sendable_number
 from app.equis.rules import normalize_number
 from app.sop.models import Extraction, Unit, UnitRef
+from app.sop.segment import DOCUMENT_NUMBER_BODY
 
 REF_LANG = "ref"
 REF_CONFIRMED = "confirmed"
@@ -36,10 +37,8 @@ _REF_SECTION_NAME = re.compile(
 # 제목 앞 절 번호("7." · "7.1" · "(7)" · "VII.")
 _HEADING_NUMBER = re.compile(r"\s*(?:\(?\d+(?:\.\d+)*\.?\)?|[IVX]+\.)\s*")
 
-# 문서 번호 꼴(파일 이름에서 번호를 읽는 규칙과 같다, `filename.py`) — 영문 대문자 머리 + 하이픈 마디 + 숫자 끝
-_NUMBER_BODY = r"[A-Z]{2,}(?:-[A-Z0-9]{1,8})*-\d{1,6}"
-_NUMBER = rf"{_NUMBER_BODY}(?![A-Za-z0-9])"
-_DOCUMENT_NUMBER = re.compile(_NUMBER_BODY)
+_NUMBER = rf"{DOCUMENT_NUMBER_BODY}(?![A-Za-z0-9])"
+_DOCUMENT_NUMBER = re.compile(DOCUMENT_NUMBER_BODY)
 # 줄 맨 앞의 번호만 제안한다 — 글머리 기호나 항목 번호는 건너뛴다. 문장 가운데의 번호는 사람이 직접 표시한다
 _LEADING_NUMBER = re.compile(rf"\s*(?:[-–•·*▪◦]\s*|\(?\d{{1,3}}[.)]\s*|\d+(?:\.\d+)+\s+)?({_NUMBER})")
 
