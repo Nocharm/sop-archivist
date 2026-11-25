@@ -1102,9 +1102,9 @@ export function clearDecision(bundleId: number, unitId: number, revision: number
 
 /**
  * 여러 단위를 차례로 지운다 - 앞 단위를 지우면 같은 관계 묶음의 나머지가 보류로 바뀌며 revision이 오르므로,
- * 그렇게 바뀐 단위는 지우기 전에 묶음을 다시 읽어 지금 revision을 쓴다(낡은 revision이면 409).
+ * 그렇게 바뀐 단위는 지우기 전에 묶음을 다시 읽어 지금 revision을 쓴다(낡은 revision이면 409). 판단이 바뀐 단위를 돌려준다(새 revision은 응답에 없다).
  */
-export async function clearDecisions(bundleId: number, units: Array<{ unit_id: number; revision: number }>, undo?: UndoMeta): Promise<void> {
+export async function clearDecisions(bundleId: number, units: Array<{ unit_id: number; revision: number }>, undo?: UndoMeta): Promise<number[]> {
   // 모든 단위 요청이 같은 step_key를 써 Ctrl+Z 한 번에 한꺼번에 되돌아간다
   const stepUndo = undo ? { ...undo, step_key: undo.step_key ?? genId() } : undefined;
   const reset = new Set<number>();
@@ -1120,6 +1120,7 @@ export async function clearDecisions(bundleId: number, units: Array<{ unit_id: n
     for (const id of report.reset_unit_ids) reset.add(id);
     for (const id of report.held_unit_ids) changed.add(id);
   }
+  return [...new Set([...reset, ...changed])];
 }
 
 /** 배정 초기화 건수 - dry_run이면 하게 될 건수(같은 길을 돌고 되돌려 실제와 같다) */

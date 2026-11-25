@@ -4,7 +4,7 @@
 
 import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 
-import { getDocumentView, listAllUnits, type DocumentView, type UnitRow } from "./api-sop";
+import { getDocumentView, listAllUnits, type Decision, type DocumentView, type UnitRow } from "./api-sop";
 
 /** 다시 받을 것 - docs는 보기를 받을 문서(all이면 모두), units는 줄을 받을 문서(all이면 전체 목록 한 번, null이면 받지 않음) */
 export interface DocReload {
@@ -69,6 +69,23 @@ export function mergeDocBatch(state: DocViewsState, batch: DocBatch): DocViewsSt
 /** since(placed 값) 뒤에 보기를 놓은 문서 */
 export function listPlacedSince(state: DocViewsState, since: number): number[] {
   return [...state.placedAt].filter(([, at]) => at > since).map(([id]) => id);
+}
+
+/**
+ * 저장 응답의 판단을 줄에 얹는다 - 큐가 빌 때 다시 받기 전에 화면이 먼저 안다(A1-R6). 얹은 문서는 seq로 그 전에 부른 받기를 막고,
+ * 보기를 놓은 것이 아니라 고름에는 알리지 않는다(placed 그대로 - 따라가기는 새 보기를 기다린다)
+ */
+export function patchUnitDecisions(state: DocViewsState, seq: number, decisions: ReadonlyMap<number, Decision>): DocViewsState {
+  const units = new Map(state.units);
+  const unitSeq = new Map(state.unitSeq);
+  let isChanged = false;
+  for (const [docId, rows] of state.units) {
+    if (!rows.some((row) => decisions.has(row.unit_id))) continue;
+    isChanged = true;
+    units.set(docId, rows.map((row) => { const decision = decisions.get(row.unit_id); return decision ? { ...row, decision, status: decision.status } : row; }));
+    unitSeq.set(docId, seq);
+  }
+  return isChanged ? { ...state, units, unitSeq } : state;
 }
 
 /** 전체 줄 목록을 문서마다 나눈다 - 부른 문서는 줄이 없어도 빈 배열로 */
@@ -140,15 +157,29 @@ export function useDocViews(bundleId: number, docIds: readonly number[] | null) 
     setState((prev) => mergeDocBatch(prev, batch));
   }
 
-  /** 받자마자 놓는다 - 실패는 error로 남는다(결정 칸의 다시 불러오기 단추가 보인다) */
-  async function reload(spec: DocReload): Promise<void> {
+  /** 저장 응답의 판단을 줄에 얹는다 */
+  function patchDecisions(decisions: ReadonlyMap<number, Decision>) {
+    seqRef.current += 1;
+    const seq = seqRef.current;
+    setState((prev) => patchUnitDecisions(prev, seq, decisions));
+  }
+
+  /** 받았으나 놓지 않는다 - 받는 중으로 센 것만 뺀다 */
+  function discard(batch: DocBatch) {
+    setState((prev) => countAsking(prev, batch.asked, -1));
+  }
+
+  /** 받자마자 놓는다 - 받았으면 true(그 사이 쓸모없어졌으면 - shouldPlace 거짓 - 놓지 않는다). 실패는 error로 남는다(결정 칸의 다시 불러오기 단추가 보인다) */
+  async function reload(spec: DocReload, shouldPlace: () => boolean = () => true): Promise<boolean> {
     let batch: DocBatch;
     try {
       batch = await fetchBatch(spec);
     } catch {
-      return;
+      return false;
     }
-    apply(batch);
+    if (shouldPlace()) apply(batch);
+    else discard(batch);
+    return true;
   }
 
   // 처음과 문서 목록이 바뀔 때 · 다시 시도 - 모두 받는다
@@ -186,6 +217,8 @@ export function useDocViews(bundleId: number, docIds: readonly number[] | null) 
     isReloading: (docId: number) => state.asking.has(docId),
     fetch: fetchBatch,
     apply,
+    discard,
+    patchDecisions,
     reload,
     retry: () => setRetryCount((count) => count + 1),
   };

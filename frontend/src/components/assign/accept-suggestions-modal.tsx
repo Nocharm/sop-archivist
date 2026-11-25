@@ -8,7 +8,6 @@ import { useState } from "react";
 
 import { Modal } from "@/components/modal";
 import { Checkbox } from "@/components/ui/checkbox";
-import { BusyLabel } from "@/components/ui/motion";
 import { canAccept, countDeletes, countShapes, pickAcceptIds } from "@/lib/ai-accept-model";
 import { getAcceptPreview, type AcceptKind } from "@/lib/api-sop";
 import { humanizeApiError } from "@/lib/api-errors";
@@ -20,12 +19,11 @@ interface AcceptSuggestionsModalProps {
   kind: AcceptKind;
   /** 지금 연 Old 문서 - 없으면 Bundle 전체만 고를 수 있다 */
   document: { id: number; label: string } | null;
-  busy: boolean;
   onAccept: (ids: number[], deleteReason: string) => void;
   onClose: () => void;
 }
 
-export function AcceptSuggestionsModal({ bundleId, kind, document, busy, onAccept, onClose }: AcceptSuggestionsModalProps) {
+export function AcceptSuggestionsModal({ bundleId, kind, document, onAccept, onClose }: AcceptSuggestionsModalProps) {
   const { t } = useI18n();
   const [isBundle, setIsBundle] = useState(document === null);
   const [includeDeletes, setIncludeDeletes] = useState(false);
@@ -51,7 +49,6 @@ export function AcceptSuggestionsModal({ bundleId, kind, document, busy, onAccep
       title={t(`aiAccept.title.${kind}`)}
       onClose={onClose}
       testId={testId}
-      isBusy={busy}
       size="sm"
       footer={
         <>
@@ -63,10 +60,11 @@ export function AcceptSuggestionsModal({ bundleId, kind, document, busy, onAccep
             type="button"
             className="btn pri"
             data-testid={`${testId}-confirm`}
-            disabled={busy || preview.data === null || !canAccept(items, includeDeletes)}
+            disabled={preview.data === null || !canAccept(items, includeDeletes)}
             onClick={() => onAccept(pickAcceptIds(items, includeDeletes), includeDeletes ? remark.trim() : "")}
           >
-            <BusyLabel busy={busy} icon={<Sparkles size={16} strokeWidth={1.5} aria-hidden />} label={t("aiAccept.confirm", { n: total })} />
+            <Sparkles size={16} strokeWidth={1.5} aria-hidden />
+            {t("aiAccept.confirm", { n: total })}
           </button>
         </>
       }

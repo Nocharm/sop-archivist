@@ -34,7 +34,13 @@ SOP 화면: `api-sop.ts`(SOP API 호출·응답 타입), 화면 규칙은 순수
 
 - 옛 `/classify`·`/match`는 이리로 넘긴다.
 - 상태 · 데이터 · 동작은 `use-assign-page.tsx` `useAssignPage()`, `page.tsx`는 그리기 — 위쪽 줄은 `assign-bar.tsx`, 오른쪽 결정 칸은 `assign-side-panel.tsx`, 둘 다 `state`(`AssignPageState`)를 받는다.
-- 고름 · 처리 중 · 따라가기는 순수 모델 `lib/assign-focus-model.ts` + 훅 `lib/use-assign-focus.ts` 한 곳 — 편집 중에도 고름을 두고, 응답 뒤 고름이 누른 때 그대로일 때만 결과 박스를 따라간다.
+- 고름 · 처리 중 · 따라가기는 순수 모델 `lib/assign-focus-model.ts` + 훅 `lib/use-assign-focus.ts` 한 곳 — 편집 중에도 고름을 두고, 응답 뒤 고름이 누른 때 그대로일 때만 결과 박스를 따라간다. 판단 저장 중인 박스는 잠기지 않는다(다시 고를 수 있다).
+- **명령 큐(한 줄)**: 판단 저장 · 배정 취소 · 일괄 · 그림 삭제 · 원문 편집 · 짝 · 되돌리기 · 묶음 전체 일(같은 글자 · 모두 받기 · 초기화 · 신규 표시 · 출처 잇기 …) · 번역 확정/지우기가 모두 `use-command-queue.ts` `enqueue`를 지난다. 순수 모델 `lib/command-queue.ts`(하나씩 · 장벽 · 실패 멈춤 · 되묻기)는 React를 모르고, 훅은 이펙트가 없다 — `use-assign-page.tsx`의 줄 없는 이펙트 하나가 커밋마다 `mount` · `pump`를 부른다.
+  - 판단(`save`)은 누른 순간 줄 · Unit · 초안을 잡고 `lib/next-box-model.ts` `pickNextBox`(저장 중인 것도 된 것으로 센다)로 고름을 옮긴다. 보류 · 배정 취소 · 일괄은 저장 뒤처럼 그 자리에 머문다. 한 언어만 이어 짝이 풀리는 저장은 결과 박스를 몰라 줄에서는 장벽(`unpair`)이다.
+  - 장벽(`isBarrier`) 앞에서 누른 글쇠 · 판단 단추 · (글쇠가 쌓인 뒤의) 클릭은 `key` · `press` · `pick`으로 쌓이고, 장벽의 보기가 놓여 고름이 선 **그 커밋**(`settleWait`)에서 하나씩 다시 눌린다. 되살린 글쇠가 만든 명령은 남은 글쇠 앞(`pushNext`)에, 사유 창을 열면 답할 때까지(`asking`) 뒤가 기다린다. 되돌리기(`step`)만 대상이 없어 앞 장벽의 응답 뒤 바로 나가고(New 문서 보기를 기다리는 장벽은 빼고), 그때 앞 장벽의 늦은 보기는 놓지 않는다(`ctx.isCurrent` · `useDocViews().discard`) — 놓으면 은퇴한 박스의 고름이 풀려 되돌리기가 따라가지 못한다. 장벽이 끝나자 고른 것이 사라졌으면 쌓인 글쇠를 버리고 알린다. 고쳐 쓰기(`E`)가 쌓이면 그 뒤 글쇠는 쌓지 않고, 누르고 있는 글쇠는 이동만 받는다(`lib/assign-press-model.ts`).
+  - 보낼 값은 누른 때가 아니라 나갈 때의 것(`liveRef`)이고, 판단 revision은 누른 때 화면에서 본 것(`seen`)을 `lib/write-log.ts`가 앞 응답으로 이어 준다(문서 revision은 `doc-revision`). 미룬 명령과 다시 시도는 나가는 때의 화면 값을 찍고, 보내려고 방금 받은 묶음의 revision은 화면에 없던 것 · 방금 비운 단위에만 쓴다(남이 바꾼 것을 덮지 않게). 받아 둔 관계 묶음은 그 뒤 쓴 것이 들지 않았을 때만 쓴다(`isFresh`).
+  - 저장 응답의 판단은 `useDocViews().patchDecisions`로 줄에 먼저 얹고, 다시 읽기는 `requestReload`(`lib/reload-ask-model.ts`)로 모아 큐가 빌 때(또는 멈췄을 때) 한 번 — 장벽의 문서 보기(`placeReload`)만 바로 받는다.
+  - 실패하면 멈추고 `queue-failure.tsx`(Retry · Discard)가 알린다. 뒤에 기다리는 것이 없는 편집 · 되돌리기의 거절(4xx)은 알림만(`shouldHalt`). 화면을 떠나면 남은 판단은 마저 보내고 글쇠는 버리며, 떠난 뒤의 실패와 멈춘 채 떠난 것은 못 나간 수를 알린다(나가기 확인은 초안 · 멈춘 것만 센다).
 - Old 원문(Split `Paper` 조각)이 곧 목록이고 옆에 이미 쓴 New 원문을 연다(`components/assign/`).
 - 두 문서 사이 세로선으로 폭, 마우스를 올린 문서만 Ctrl+휠·Ctrl ±로 확대(`lib/use-pane-zoom.ts`, 값은 `lib/assign-view-prefs.ts`가 `sopa.assign.*`에 기억).
 - 오른쪽 칸의 틀은 `components/assign/side-float.tsx` — 창이 1440px보다 좁으면 떼어 띄운다(자리 셈 `lib/side-float-model.ts`, 창 크기 `lib/use-window-size.ts`, 기억은 `assign-view-prefs`의 `sideFloat`·`sideX`·`sideY`·`sideFolded`). 붙어 있든 떠 있든 같은 `<aside>`라 안의 내용이 다시 만들어지지 않고, 열 폭은 CSS(`.assign-frame:has(> .assign-side[data-float])`)가 바꾼다. 모달이 아니다(role 없음) — 화면 단축키는 `[role="dialog"]`이 있으면 멈춘다.
