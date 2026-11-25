@@ -164,15 +164,21 @@ export function useDocViews(bundleId: number, docIds: readonly number[] | null) 
     setState((prev) => patchUnitDecisions(prev, seq, decisions));
   }
 
-  /** 받자마자 놓는다 - 받았으면 true. 실패는 error로 남는다(결정 칸의 다시 불러오기 단추가 보인다) */
-  async function reload(spec: DocReload): Promise<boolean> {
+  /** 받았으나 놓지 않는다 - 받는 중으로 센 것만 뺀다 */
+  function discard(batch: DocBatch) {
+    setState((prev) => countAsking(prev, batch.asked, -1));
+  }
+
+  /** 받자마자 놓는다 - 받았으면 true(그 사이 쓸모없어졌으면 - shouldPlace 거짓 - 놓지 않는다). 실패는 error로 남는다(결정 칸의 다시 불러오기 단추가 보인다) */
+  async function reload(spec: DocReload, shouldPlace: () => boolean = () => true): Promise<boolean> {
     let batch: DocBatch;
     try {
       batch = await fetchBatch(spec);
     } catch {
       return false;
     }
-    apply(batch);
+    if (shouldPlace()) apply(batch);
+    else discard(batch);
     return true;
   }
 
@@ -211,6 +217,7 @@ export function useDocViews(bundleId: number, docIds: readonly number[] | null) 
     isReloading: (docId: number) => state.asking.has(docId),
     fetch: fetchBatch,
     apply,
+    discard,
     patchDecisions,
     reload,
     retry: () => setRetryCount((count) => count + 1),

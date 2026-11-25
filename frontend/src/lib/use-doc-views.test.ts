@@ -110,6 +110,20 @@ describe("useDocViews", () => {
     box.renders = [];
   });
 
+  it("does not place a view an Undo overtook, and stops counting it as being read", async () => {
+    const root = createRoot(document.createElement("div"));
+    await act(async () => root.render(createElement(Harness)));
+    const placed = box.docs?.placed;
+    api.revision.set(1, 2);
+    let isOk: boolean | undefined;
+    await act(async () => {
+      isOk = await box.docs?.reload({ docs: [1], units: [1] }, () => false);
+    });
+    expect([isOk, box.docs?.placed, box.docs?.isReloading(1)]).toEqual([true, placed, false]);
+    expect(box.renders.at(-1)).toBe("1/1");
+    await act(async () => root.unmount());
+  });
+
   it("after an edit fetches only that document's view and rows, and they arrive in one render", async () => {
     const root = createRoot(document.createElement("div"));
     await act(async () => root.render(createElement(Harness)));

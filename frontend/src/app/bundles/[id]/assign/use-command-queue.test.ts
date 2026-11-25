@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { NO_PLACE, type Focus, type Pending, type PendingKind } from "@/lib/assign-focus-model";
 import { useAssignFocus } from "@/lib/use-assign-focus";
 
-import { buildDecisionPending, useCommandQueue, type SendContext, type WriteCommand } from "./use-command-queue";
+import { buildDecisionPending, isRepeatedSave, useCommandQueue, type AssignCommand, type SendContext, type WriteCommand } from "./use-command-queue";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -34,8 +34,19 @@ function createScreen() {
   let screenRevision = 1;
   let serverRevision = 1;
   let isRemarkOpen: string | null = null;
+  // 서버에 살아 있는 Unit - 합치기는 누른 박스를 은퇴시키고 새 박스를 만들며, 되돌리기는 그 반대다. 보기는 응답한 때의 것을 실어 온다
+  let alive = new Set(Array.from({ length: 400 }, (_, n) => n));
+  const steps: Array<{ retired: number; made: number }> = [];
+  let isUndoFocusGone = false;
+  const unsent: Array<{ reason: string; n: number }> = [];
+  let lost = 0;
   const screen = {
-    log, dropped, refusals,
+    log, dropped, refusals, unsent,
+    lost: () => lost,
+    /** 되돌리기 응답이 갈 자리를 알려 주지 않는다 */
+    forgetUndoFocus: () => {
+      isUndoFocusGone = true;
+    },
     press: (() => undefined) as (name: string) => void,
     click: (() => undefined) as (unitId: number) => void,
     commands: null as unknown as ReturnType<typeof useCommandQueue>,
@@ -75,12 +86,13 @@ function createScreen() {
 
   function Screen() {
     const focusCtl = useAssignFocus();
-    const [placed, setPlaced] = useState({ n: 0, revision: 1 });
+    const [placed, setPlaced] = useState({ n: 0, revision: 1, unitIds: alive });
+    const placeView = (unitIds: Set<number>) => setPlaced((prev) => ({ n: prev.n + 1, revision: prev.revision + 1, unitIds }));
     const [seen, setSeen] = useState(0);
     const focus = focusCtl.focus;
     if (placed.n !== seen) {
       setSeen(placed.n);
-      focusCtl.load({ type: "loaded", docs: [{ docId: 1, revision: placed.revision, unitIds: new Set(Array.from({ length: 400 }, (_, n) => n)) }], liftUnit: (id) => id });
+      focusCtl.load({ type: "loaded", docs: [{ docId: 1, revision: placed.revision, unitIds: placed.unitIds }], liftUnit: (id) => (placed.unitIds.has(id) ? id : null) });
     }
     const focusedId = focus.kind === "unit" ? focus.unitId : null;
 
@@ -97,9 +109,14 @@ function createScreen() {
       }
       if (command.kind !== "step") throw new Error(`unexpected ${command.kind}`);
       log.push(command.direction);
-      return hold(responses).then(() => {
+      return hold(responses).then(async () => {
+        const step = steps.pop();
+        if (step) alive = new Set([...alive].filter((id) => id !== step.made).concat(step.retired));
+        const view = alive;
+        if (step && !isUndoFocusGone) focusCtl.succeed(ctx.id, { docId: null, revision: null, pickUnitId: step.retired });
         ctx.respond();
-        return hold(views).then(() => setPlaced((prev) => ({ n: prev.n + 1, revision: prev.revision + 1 })));
+        await hold(views);
+        if (ctx.isCurrent()) placeView(view);
       });
     }
     const commands = useCommandQueue(
@@ -119,9 +136,12 @@ function createScreen() {
           await run(command, ctx);
           return "done";
         },
-        replay: (press) => {
-          if (press.kind === "key") pressKey(press.key);
+        hasTarget: () => screen.focus.kind !== "none",
+        replay: (press) => press.kind === "key" && pressKey(press.key),
+        notifyLost: () => {
+          lost += 1;
         },
+        notifyUnsent: (reason, n) => unsent.push({ reason, n }),
         readFailure: (err) => ({ reason: String((err as Error).message), isRefusal: isRefused }),
         notifyRefusal: (reason) => refusals.push(reason),
         notifyDropped: (n) => dropped.push(n),
@@ -138,8 +158,11 @@ function createScreen() {
     function enqueue(kind: PendingKind, name: string, unitIds: number[], send: (ctx: SendContext) => Promise<void>, isGlobal = false) {
       commands.enqueue({ kind: "global", label: name, pending: { kind, docId: isGlobal ? null : 1, unitIds, place: NO_PLACE, isGlobal }, run: send });
     }
-    function pressKey(name: string) {
-      if (focusedId === null) return;
+    function pressKey(name: string): boolean {
+      if (name === "v") return false;
+      // 고른 것이 없으면 j는 목록 처음으로 간다 - 그 뒤의 d가 엉뚱한 박스에 떨어진다
+      if (focusedId === null && name === "j") focusCtl.pick(unit(0));
+      if (focusedId === null) return name === "j";
       if (name === "j") focusCtl.pick(unit(focusedId + 1));
       else if (name === "d") {
         enqueue("save", `delete ${focusedId}`, [focusedId], async (ctx) => {
@@ -153,16 +176,23 @@ function createScreen() {
           log.push(`join ${focusedId}${ctx.isRetry ? " again" : ""}`);
           await hold(responses);
           const made = (nextUnit += 100);
+          steps.push({ retired: focusedId, made });
+          alive = new Set([...alive].filter((id) => id !== focusedId).concat(made));
+          const view = alive;
           focusCtl.succeed(ctx.id, { docId: 1, revision: null, pickUnitId: made });
           ctx.respond();
           isReloadAsked = true;
-          await hold(views).then(() => setPlaced((prev) => ({ n: prev.n + 1, revision: prev.revision + 1 })), () => ctx.loseViews());
+          // 되돌리기가 먼저 나갔으면 이 보기는 놓지 않는다(화면의 placeReload와 같다)
+          await hold(views).then(() => (ctx.isCurrent() ? placeView(view) : undefined), () => ctx.loseViews());
         });
       } else if (name === "h") isRemarkOpen = commands.openAsk() ?? "live";
+      return true;
     }
     screen.press = (name) => {
       if (name === "undo") commands.enqueue({ kind: "step", direction: "undo" });
-      else if (commands.isDeferring()) commands.enqueue({ kind: "key", key: name, shift: false, ctrl: false });
+      else if (commands.isDeferring()) {
+        if (commands.canQueueKey()) commands.enqueue({ kind: "key", key: name, shift: false, ctrl: false });
+      }
       else pressKey(name);
     };
     screen.click = (unitId) => {
@@ -281,6 +311,76 @@ describe("a barrier (A1-R3, AC2)", () => {
     expect(screen.log).toEqual(["join 1"]);
     expect(screen.dropped).toEqual([2]);
     expect(screen.commands.state).toEqual({ waiting: [], running: null, halted: null, asking: null });
+  });
+  it("Undo before the join's view - the late view is not placed, the undone box is picked and the next key lands on it", async () => {
+    const screen = await open();
+    await press(screen, "m");
+    await screen.respond();
+    await press(screen, "undo");
+    await press(screen, "d");
+    await screen.place(); // 합치기의 늦은 보기 - 1이 은퇴해 있다
+    expect(screen.focus).toEqual(unit(1));
+    await drain(screen);
+    expect(screen.log).toEqual(["join 1", "undo", "delete 1"]);
+    expect([screen.lost(), screen.dropped]).toEqual([0, []]);
+  });
+  it("two Undos in a row go back two steps and the next key lands on the first box", async () => {
+    const screen = await open();
+    await press(screen, "m");
+    await drain(screen);
+    await press(screen, "m");
+    await drain(screen);
+    expect(screen.focus).toEqual(unit(300));
+    await press(screen, "undo");
+    await press(screen, "undo");
+    await press(screen, "d");
+    await drain(screen);
+    expect(screen.log).toEqual(["join 1", "join 200", "undo", "undo", "delete 1"]);
+  });
+  it("keys are dropped with a notice, not sent elsewhere, when the box they would land on is gone", async () => {
+    const screen = await open();
+    await press(screen, "m");
+    await drain(screen);
+    screen.forgetUndoFocus();
+    await press(screen, "undo");
+    for (const name of ["j", "d"]) await press(screen, name);
+    await drain(screen);
+    expect(screen.focus.kind).toBe("none");
+    expect(screen.log).toEqual(["join 1", "undo"]);
+    expect(screen.dropped).toEqual([2]);
+  });
+  it("a single key that finds nothing to act on says so", async () => {
+    const screen = await open();
+    await press(screen, "m");
+    await press(screen, "v"); // 되살렸을 때 할 일이 없는 글쇠
+    await press(screen, "d");
+    await drain(screen);
+    expect(screen.lost()).toBe(1);
+    expect(screen.log).toEqual(["join 1", "delete 200"]);
+  });
+  it("a view lost by a join that Undo already overtook does not drop the keys behind that Undo", async () => {
+    const screen = await open();
+    await press(screen, "m");
+    await screen.respond();
+    await press(screen, "undo");
+    await press(screen, "d");
+    await screen.loseView();
+    await drain(screen);
+    expect(screen.log).toEqual(["join 1", "undo", "delete 1"]);
+    expect(screen.dropped).toEqual([]);
+  });
+  it("no key waits behind a waiting e - what is typed next belongs to the text box it opens", async () => {
+    const screen = await open();
+    await press(screen, "m");
+    await press(screen, "e");
+    await press(screen, "d");
+    await press(screen, "h");
+    await drain(screen);
+    expect(screen.log).toEqual(["join 1"]);
+    expect(screen.commands.state).toEqual({ waiting: [], running: null, halted: null, asking: null });
+    await press(screen, "d");
+    await drain(screen);
+    expect(screen.log).toEqual(["join 1", "delete 200"]);
   });
   it("Undo does not wait for the view before it, and that view's follow is dropped", async () => {
     const screen = await open();
@@ -464,6 +564,38 @@ describe("leaving the screen", () => {
     expect(sent).toEqual(["after"]);
     root = createRoot(host);
   });
+  it("stops and says how many did not go out when a save fails after leaving", async () => {
+    const screen = await open();
+    for (const name of ["d", "d", "d"]) await press(screen, name);
+    await act(async () => root.unmount());
+    await screen.respond();
+    await screen.respond(new Error("500"));
+    await drain(screen);
+    expect(screen.log).toEqual(["delete 1", "delete 2"]);
+    expect(screen.unsent).toEqual([{ reason: "500", n: 2 }]);
+    root = createRoot(host);
+  });
+  it("says what stayed halted when the screen is left", async () => {
+    const screen = await open();
+    for (const name of ["d", "d"]) await press(screen, name);
+    await screen.respond(new Error("500"));
+    expect(screen.unsent).toEqual([]);
+    await act(async () => root.unmount());
+    expect(screen.unsent).toEqual([{ reason: "500", n: 2 }]);
+    root = createRoot(host);
+  });
+  it("sends what waited behind a barrier's view, and tells about the keys it drops", async () => {
+    const screen = await open();
+    await press(screen, "d");
+    await press(screen, "m");
+    await press(screen, "j");
+    await screen.respond();
+    await act(async () => root.unmount());
+    await drain(screen);
+    expect(screen.log).toEqual(["delete 1", "join 2"]);
+    expect(screen.dropped).toEqual([1]);
+    root = createRoot(host);
+  });
   it("drains the saves already pressed", async () => {
     const screen = await open();
     for (const name of ["d", "d"]) await press(screen, name);
@@ -471,5 +603,29 @@ describe("leaving the screen", () => {
     await drain(screen);
     expect(screen.log).toEqual(["delete 1", "delete 2"]);
     root = createRoot(host);
+  });
+});
+
+describe("isRepeatedSave", () => {
+  const draft = { destination: null, texts: {}, reason: null, editing: false } as unknown as Extract<WriteCommand, { kind: "save" }>["draft"];
+  const save = (over: Partial<Extract<WriteCommand, { kind: "save" }>> = {}) => ({ kind: "save", action: "confirm", rowKey: "u1", draft, reason: "", isPick: false, ...over }) as AssignCommand & { kind: "save" };
+  const queued = (...payloads: AssignCommand[]) => payloads.map((payload) => ({ payload }));
+  it("is a second press of the same decision on the same draft while the first is not done", () => {
+    expect(isRepeatedSave(queued(save()), save())).toBe(true);
+    expect(isRepeatedSave(queued(save(), save({ rowKey: "u2" })), save())).toBe(true);
+  });
+  it("is not another row, another action, a changed draft or reason", () => {
+    expect(isRepeatedSave([], save())).toBe(false);
+    expect(isRepeatedSave(queued(save({ rowKey: "u2" })), save())).toBe(false);
+    expect(isRepeatedSave(queued(save({ action: "hold" })), save())).toBe(false);
+    expect(isRepeatedSave(queued(save({ draft: { ...draft } })), save())).toBe(false);
+    expect(isRepeatedSave(queued(save({ reason: "x" })), save())).toBe(false);
+  });
+  it("is not when something else was pressed on that row in between", () => {
+    expect(isRepeatedSave(queued(save(), { kind: "clear", rowKey: "u1" } as AssignCommand), save())).toBe(false);
+  });
+  it("counts a second Delete on the same row as repeated", () => {
+    expect(isRepeatedSave(queued(save({ isPick: true })), save({ isPick: true, draft: { ...draft } }))).toBe(true);
+    expect(isRepeatedSave(queued(save({ isPick: false })), save({ isPick: true }))).toBe(false);
   });
 });

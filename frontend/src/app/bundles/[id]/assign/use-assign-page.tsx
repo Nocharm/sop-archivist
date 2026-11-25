@@ -51,6 +51,7 @@ import { buildPaperWaits, isDecisionKind, listEditUnitIds, listTableUnitIds, NO_
 import { readEditLabelKey, trimReason } from "@/lib/command-label";
 import { isBarrier, listUnsettled } from "@/lib/command-queue";
 import { pickDocRevision } from "@/lib/doc-revision";
+import { isQueuedKey, isRepeatIgnored } from "@/lib/assign-press-model";
 import { pickNextBox, type PendingOutcome } from "@/lib/next-box-model";
 import { buildReloadAsk, isDocReload, isEmptyReload, mergeReloads, NO_RELOAD_ASK, splitReload, type ReloadAsk } from "@/lib/reload-ask-model";
 import { createWriteLog } from "@/lib/write-log";
@@ -59,6 +60,7 @@ import { useI18n } from "@/lib/i18n";
 import { genId } from "@/lib/id";
 import { buildTranslationDecision, isTranslationBlocked, listRowTranslations } from "@/lib/translation-decision";
 import { useLeaveGuard } from "@/lib/leave-guard";
+import { navigate } from "@/lib/nav-buffer";
 import { buildIdenticalBatches } from "@/lib/match-model";
 import { EMPTY_FOLD_OPEN, type FoldOpen } from "@/lib/paper-fold-model";
 import { buildPaperModel, buildPaperTabs, findNearestCut, isBandHeading, listFigureTabUnitIds, resolvePickUnit, shouldRecenter, type PaperTabKey } from "@/lib/paper-model";
@@ -84,7 +86,7 @@ import { useLoaded } from "@/lib/use-loaded";
 import { usePaneSlide } from "@/lib/use-pane-slide";
 import { usePaneZoom, type PaneKey, type ZoomDir } from "@/lib/use-pane-zoom";
 
-import { buildDecisionPending, CommandRefusal, useCommandQueue, type CommandQueueState, type ConfirmableCommand, type ReplayCommand, type SeenRevisions, type SendContext, type WriteCommand } from "./use-command-queue";
+import { buildDecisionPending, CommandRefusal, isRepeatedSave, useCommandQueue, type AssignCommand, type CommandQueueState, type ConfirmableCommand, type ReplayCommand, type SeenRevisions, type SendContext, type WriteCommand } from "./use-command-queue";
 
 
 export type Filter = ClassifyFilter;
@@ -285,8 +287,10 @@ function isSentDraft(draft: PageDraft | undefined, sent: PageDraft, reason: stri
   );
 }
 
-/** 장벽 뒤면 쌓아 두었다가 되살리는 글쇠 - 대상이나 차례가 걸린 것(줄 이동 · 나눌 선 · 판단) */
-const QUEUED_KEYS: ReadonlySet<string> = new Set(["s", "arrowleft", "arrowright", "enter", "a", "e", "h", "u", "delete", "backspace"]);
+/** 누른 판단(확정 · 보류 · 삭제 · 배정 취소 · 일괄)인가 */
+function isDecisionCommand({ payload }: { payload: AssignCommand }): boolean {
+  return payload.kind === "save" || payload.kind === "clear" || payload.kind === "bulk";
+}
 
 /** 다시 읽기 - 판단 저장 · AI 작업 끝 · 일괄 일 뒤(Unit 줄 전체와 판단이 바꾸는 목록 모두). withViews면 Old 문서 보기도(서버가 짝을 정리했다) */
 function askAll(withViews: boolean): ReloadAsk {
@@ -558,7 +562,10 @@ export function useAssignPage() {
       dropFollows: focusCtl.dropFollows,
       isSoloLoading: soloLoad.isLoading,
       send: (command, ctx) => sendCommand(command, ctx),
+      hasTarget: () => liveRef.current.hasTarget,
       replay: (command) => replayPress(command),
+      notifyLost: () => showToast(t("assign.queue.lost"), "info"),
+      notifyUnsent: (reason, n) => showToast(t("assign.queue.unsent", { n, reason: trimReason(reason) }), "error"),
       readFailure: (err, command) => readCommandFailure(err, command),
       notifyRefusal: (reason) => showToast(reason, "error"),
       notifyDropped: (n) => showToast(t("assign.queue.discarded", { n }), "info"),
@@ -708,9 +715,17 @@ export function useAssignPage() {
   const translationBlocked = groupData !== null && isTranslationBlocked(openTranslations, groupData);
 
   // 저장 전 고름·고친 글이 남은 줄이 있으면 다른 화면으로 가기 전에 묻는다(초안은 이 화면의 상태라 나가면 사라진다). 아직 보내지 않은 명령도 같다
-  const unsavedCount = Math.max(Object.values(drafts).filter(hasDraftChange).length, commands.state.waiting.length + Number(commands.state.halted !== null));
+  // 누른 판단은 나가도 마저 보내니 그 초안은 세지 않고, 멈춘 것 · 쌓인 글쇠 · 되묻는 것은 나가면 버려지니 센다
+  const savingRows = new Set(commands.listSavingRows());
+  const { state: queueNow } = commands;
+  const heldCount = queueNow.halted !== null || queueNow.asking !== null ? queueNow.waiting.length + 1 : queueNow.waiting.filter((command) => command.kind === "key").length;
+  const unsavedCount = Object.entries(drafts).filter(([key, item]) => !savingRows.has(key) && hasDraftChange(item)).length + heldCount;
   const [leaveTo, setLeaveTo] = useState<string | null>(null);
-  useLeaveGuard(unsavedCount > 0, setLeaveTo);
+  // 보내는 중이면 창을 닫거나 새로 고칠 때만 묻는다 - 앱 안 이동은 큐가 마저 보낸다
+  useLeaveGuard(unsavedCount > 0 || queueNow.waiting.length > 0 || listUnsettled(queueNow).some(isDecisionCommand), (href) => {
+    if (unsavedCount > 0) setLeaveTo(href);
+    else navigate(href, { immediate: true });
+  });
 
   // --- 추천(① 추천 카드) - 저장된 AI 제안 → 같은 글자 → 비슷한 문장 ---
   // 줄의 AI 추천 - 미배정 줄을 덮는 살아 있는 제안. 카드를 누르거나 A(Use)로 받으면 초안이 채워지고 확정은 사람이 한다(설계 §5 2-1)
@@ -994,9 +1009,10 @@ export function useAssignPage() {
   }
   /** 되돌리기 줄이 움직인 횟수(새 단계 · 되돌리기 · 다시 하기) - 알림의 Undo는 제 단계가 아직 맨 끝일 때만 그 단계를 되돌린다 */
   const stepTick = useRef(0);
-  /** 되돌리기 단계를 남길 쓰기가 아직 큐에 있나 - 그동안은 기록이 없어도 Undo가 줄에 선다 */
+  /** 누른 판단이 아직 큐에 있나 - 고름은 이미 떠나 저장된 것처럼 보이니 기록이 없어도 Undo가 그 뒤에 선다. 모양 편집은 응답까지 그 자리에 있고
+   *  그동안의 Ctrl+Z는 쌓였다가 되살아나니, 단추는 지금처럼 기록이 생긴 뒤(응답)에 켜진다 */
   function hasQueuedStep(): boolean {
-    return commands.listUnrecorded().some((command) => command.kind !== "key" && command.kind !== "undo");
+    return commands.listUnrecorded().some(isDecisionCommand);
   }
   /** 알림의 되돌리기 - 제 단계가 아직 맨 끝이고 그 뒤에 선 명령이 없을 때만(Ctrl+Z와 같은 줄이라 다른 단계를 되돌리지 않게) */
   function buildUndoAction() {
@@ -1526,8 +1542,9 @@ export function useAssignPage() {
       setSoloKey((key) => key + 1);
       ctx.waitSolo();
     }
+    // 되돌리기가 먼저 나갔으면 놓지 않는다 - 그 되돌리기가 모두 다시 받는다
     if (ready !== null) docViews.apply(ready);
-    else if (isDocReload(views) && !(await docViews.reload({ docs: views.docs, units: views.units }))) ctx.loseViews();
+    else if (isDocReload(views) && !(await docViews.reload({ docs: views.docs, units: views.units }, ctx.isCurrent))) ctx.loseViews();
   }
 
   /** 장벽이 아닌 편집의 다시 받기(번호 · 순서) - 모두 큐가 빌 때. 장벽이면 placeReload */
@@ -1587,7 +1604,7 @@ export function useAssignPage() {
     // 다시 받기보다 먼저 건다 - 아래 풀기 전환이 기다리는 사이에 새 보기가 닿아도 따라가게(D1 규칙 2 · 3)
     focusCtl.succeed(ctx.id, { docId, revision, pickUnitId: result.created_unit_ids[0] ?? followId });
     // 따라가기를 건 뒤에 알린다 - 바로 이어지는 되돌리기가 그 따라가기를 버릴 수 있게
-    ctx.respond();
+    ctx.respond(ask.solo);
     // 표 벗기기 · 다시 표로와 캡션 붙이기 · 떼기 · 첫 행 올리기 · 그림 묶기 - 새 원문 보기를 먼저 받아 풀기 전환 안에서 놓는다
     // (F10, 화면 안만 움직이고 움직임 줄이기면 번쩍임만). 캡션은 글이 캡션 자리로 미끄러져 들어간다. 알림은 전환 뒤
     // 표는 바로 안쪽 띠 표도 함께 제목 줄 ↔ 표로 바뀐다(F2)
@@ -1596,7 +1613,10 @@ export function useAssignPage() {
       : getCaptionMotion(op, followId);
     if (motion !== null && isOld) {
       const fresh = ready ?? (await docViews.fetch({ docs: [docId], units: [docId] }).catch(() => null));
-      if (fresh === null) {
+      if (fresh !== null && !ctx.isCurrent()) {
+        requestReload(splitReload(ask).rest);
+        docViews.discard(fresh);
+      } else if (fresh === null) {
         requestReload(ask);
         ctx.loseViews();
       } else {
@@ -1690,8 +1710,9 @@ export function useAssignPage() {
     // 짝이 바뀌면 줄이 다시 묶인다 - 고름은 두고(다시 받는 동안 옛 줄은 묶음을 부르지 않는다), 받은 뒤 그 문장의 줄을 고른다
     showToast(okText);
     focusCtl.succeed(ctx.id, { docId, revision: null, pickUnitId: followId });
-    ctx.respond();
-    await placeReload(buildReloadAsk(planReload({ kind: "pair", docId }, { aiOn }), oldDocIds), ctx);
+    const ask = buildReloadAsk(planReload({ kind: "pair", docId }, { aiOn }), oldDocIds);
+    ctx.respond(ask.solo);
+    await placeReload(ask, ctx);
   }
 
   /** 표·그림 참조를 떼거나 다시 잇는다 - 단위는 그대로라 고름을 두고 보기만 다시 받는다. 편집 기록(되돌리기)에는 들어가지 않는다 */
@@ -1705,9 +1726,10 @@ export function useAssignPage() {
       pending: { kind: "caption", docId, unitIds: [], place: NO_PLACE, isGlobal: false },
       run: async (ctx) => {
         await updateCaptionRef(bundleId, docId, refId, { revision: (readLiveView(docId) ?? view).document.revision, ...change });
-        ctx.respond();
+        const ask = buildReloadAsk(planReload({ kind: "caption_ref", docId }, { aiOn }), oldDocIds);
+        ctx.respond(ask.solo);
         showToast(okText);
-        await placeReload(buildReloadAsk(planReload({ kind: "caption_ref", docId }, { aiOn }), oldDocIds), ctx);
+        await placeReload(ask, ctx);
       },
     });
   }
@@ -1769,7 +1791,7 @@ export function useAssignPage() {
     cutLine.clear();
     setCutUnitId(null);
     focusCtl.succeed(ctx.id, { docId, revision: null, pickUnitId: restoredIds[0] ?? null });
-    ctx.respond();
+    ctx.respond(ask.solo);
     await placeReload(ask, ctx);
   }
 
@@ -1805,7 +1827,7 @@ export function useAssignPage() {
       markRecorded();
       showToast(humanizeApiError(err, t), "error");
     }
-    ctx.respond();
+    ctx.respond(ask.solo);
     await placeReload(ask, ctx);
   }
 
@@ -2125,7 +2147,7 @@ export function useAssignPage() {
     const isDelete = target !== null ? target.kind === "delete" : isRowDeleted;
     // 다음 미확정 줄로 - 지금 줄은 거르기 자리에 남는다. 놓인 문장에 잇기는 그 줄에 머문다(MD 1 F12 E4)
     const next = shouldAdvanceAfterSave({ action, destinationKind: target?.kind ?? null, isSplit }) ? pickNextAfterSave(saveRow, isDelete ? "below" : "open") : null;
-    commands.enqueue({
+    const command: Extract<WriteCommand, { kind: "save" }> = {
       kind: "save",
       action,
       docId: saveRow.documentId,
@@ -2144,7 +2166,10 @@ export function useAssignPage() {
       nextKey: next?.key ?? null,
       // 엮은 문서의 칸에 놓는 확정은 어디 몇 번이 되는지 알리고 되돌리기를 단다(MD 2 S3) - 저장 전 자리로 센다
       placedNote: action === "confirm" && !pick ? formatPlacedToast() : null,
-    });
+    };
+    // 갈 다음 박스가 없어 머문 줄에서 같은 것을 또 누름 - 이미 줄에 있다
+    if (isRepeatedSave(commands.listUnsettled(), command)) return;
+    commands.enqueue(command);
     // 저장했으면 메뉴의 고름은 끝났다 - 다음 줄이 없거나 같은 줄에 남아도 닫는다
     setMenu(null);
     if (next === null) return;
@@ -2451,7 +2476,7 @@ export function useAssignPage() {
   // 알림의 되돌리기는 화면을 넘어 남는다 - 그 렌더의 함수를 붙들지 않게 가장 최근의 것을 미러한다(use-box-drag의 최신 config와 같은 짜임)
   const undoStepRef = useRef(runUndoStep);
   // 큐가 보낼 때 읽는 화면 값 - 명령은 누른 때의 것(줄 · Unit · 초안)만 싣고 나머지는 나갈 때의 값으로 보낸다(앞 응답 뒤의 값)
-  const live = { bundle, focus, mode, activeKey, unitMap, rowMap, rowOfUnit, views: viewList, soloView: soloLoad.data, writtenMap, composedData, leftovers, isDrafting, labelOptions };
+  const live = { bundle, focus, hasTarget: row !== null || hasSolo || tocPick !== null, mode, activeKey, unitMap, rowMap, rowOfUnit, views: viewList, soloView: soloLoad.data, writtenMap, composedData, leftovers, isDrafting, labelOptions };
   const liveRef = useRef(live);
   // 커밋마다 큐를 한 번 돌린다(새 이펙트를 두지 않는다) - 장벽 · 되살린 글쇠가 세운 고름이 그려진 이 커밋의 값으로 다음 명령을 낸다
   useEffect(() => {
@@ -2601,13 +2626,17 @@ export function useAssignPage() {
   }
 
   /** 장벽 뒤에 쌓인 글쇠 · 판단 단추를 지금 고름에서 다시 누른다 */
-  function replayPress(press: Exclude<ReplayCommand, { kind: "pick" }>) {
+  function replayPress(press: Exclude<ReplayCommand, { kind: "pick" }>): boolean {
     if (press.kind === "key") {
-      if (press.ctrl) pressUndo(press.shift ? "redo" : "undo");
-      else pressKey(press.key);
-    } else if (press.act === "clear") runClear();
+      if (!press.ctrl) return pressKey(press.key);
+      pressUndo(press.shift ? "redo" : "undo");
+      return true;
+    }
+    if (row === null) return false;
+    if (press.act === "clear") runClear();
     else if (press.act === "delete") decideNow({ kind: "delete" });
     else runSave(press.act, press.reason);
+    return true;
   }
 
   /** 되돌리기는 장벽이고 대상이 없다 - 앞의 저장이 끝난 뒤 그 끝 단계를 되돌린다. 응답의 focus로 따로 따라간다 */
@@ -2644,7 +2673,7 @@ export function useAssignPage() {
     if (liveRef.current.mode === "unsourced" && result.focus_target_id !== null) setSelNew(result.focus_target_id);
     else if (result.focus_unit_id !== null) focusCtl.succeed(ctx.id, { docId: held.kind === "new" ? held.docId : null, revision: null, pickUnitId: result.focus_unit_id });
     else if (result.focus_target_id !== null) showInNew(result.focus_target_id);
-    ctx.respond();
+    ctx.respond(held.kind === "new");
     showToast(formatDecisionStep(result, kind));
     // Old 원문 편집의 되돌리기는 판단이 그대로라 Old 문서 보기 · 줄과 같은 글자 후보만(응답이 문서를 알려 주지 않아 모든 Old 문서, 설계 D2).
     // 판단 저장 단계 · New 문서를 고른 채는 모두 - 짝 모양이 바뀌었을 수 있어 원문 보기도. 편집 단계도 그 편집이 판단(배정 · 짝)을 바꿨으면 되살렸다 - 그때는 판단 단계처럼 모두(B6)
@@ -2685,13 +2714,18 @@ export function useAssignPage() {
     if (items.length > 0) {
       // 나눠 보낸 요청 모두가 같은 step_key - Ctrl+Z 한 번에 한꺼번에 되돌아간다
       const undo = buildUndo({ step_key: genId() });
+      const out = { n: 0 };
+      const seen = new Set(items.map((item) => `${item.unit_id}:${item.target_id}`));
       runGlobal("assign.step.confirm_identical", async () => {
-        for (const batch of buildIdenticalBatches(items)) {
+        // 기다리는 사이 앞 명령이 바꾼 줄이 있다 - 창에서 본 것 가운데 지금도 후보인 것만
+        const now = (await listIdenticalCandidates(bundleId)).filter((item) => seen.has(`${item.unit_id}:${item.target_id}`));
+        out.n = now.length;
+        for (const batch of buildIdenticalBatches(now)) {
           await confirmMatchesInBulk(bundleId, batch, undo);
           markRecorded();
         }
         // 한 번에 확정도 서버가 짝을 정리하지만 어느 짝인지 알려 주지 않는다 - 짝 모양·문서 revision을 다시 받는다
-      }, t("match.identicalDone", { n: items.length }), true);
+      }, () => t("match.identicalDone", { n: out.n }), true);
     }
     setConfirmingIdentical(false);
   }
@@ -3936,7 +3970,7 @@ export function useAssignPage() {
       // 고치는 중에는 Enter가 줄바꿈이라 Ctrl+Enter로 저장한다
       if (event.key === "Enter" && (event.ctrlKey || event.metaKey) && editing && isTypingTarget(event.target)) {
         event.preventDefault();
-        runSave("confirm");
+        if (!event.repeat) runSave("confirm");
       }
       return;
     }
@@ -3944,20 +3978,29 @@ export function useAssignPage() {
     const undoKind = getAssignUndoKey(event, { typing: isTypingTarget(event.target), layerOpen: document.querySelector('[role="dialog"],[role="menu"]:not([data-link-menu]),[role="listbox"]') !== null, canEdit });
     if (undoKind !== null) {
       event.preventDefault();
-      if (commands.isDeferring()) commands.enqueue({ kind: "key", key: "z", shift: undoKind === "redo", ctrl: true });
-      else pressUndo(undoKind);
+      // 누르고 있어 되풀이된 것은 받지 않는다 - 한 번에 하나씩 저장되는 줄에 되돌리기가 쌓인다
+      if (event.repeat) return;
+      if (!commands.isDeferring()) pressUndo(undoKind);
+      else if (commands.canQueueKey()) commands.enqueue({ kind: "key", key: "z", shift: undoKind === "redo", ctrl: true });
       return;
     }
     if (event.metaKey || event.ctrlKey || event.altKey) return;
     // 포커스된 단추·링크(추천 카드·나무 항목 등)의 Enter·Space는 그 단추를 누른다
-    if ((event.key === "Enter" || event.key === " ") && event.target instanceof HTMLElement && event.target.closest("button, a, [role='option'], [role='button']")) return;
+    if ((event.key === "Enter" || event.key === " ") && event.target instanceof HTMLElement && event.target.closest("button, a, [role='option'], [role='button']")) {
+      // 결정 칸 단추에 포커스를 둔 채 누르고 있으면 브라우저가 되풀이해 누른다 - 판단이 줄줄이 저장되지 않게
+      if (event.repeat && event.target.closest('[data-testid="assign-primary"], [data-testid="assign-hold"], [data-testid="assign-clear"]')) event.preventDefault();
+      return;
+    }
     // 세로선에 포커스가 있으면 ←→는 폭이다
     if (event.target instanceof HTMLElement && event.target.closest(".pane-divider")) return;
     const key = event.key.toLowerCase();
     // 앞에 장벽이 있으면 어느 박스의 글쇠인지 아직 모른다 - 쌓아 두었다가 장벽이 세운 고름에서 차례로 다시 누른다(A1-R3)
-    if (commands.isDeferring() && (getRowStep(key) !== null || QUEUED_KEYS.has(key))) {
+    const isMove = getRowStep(key) !== null;
+    // 누르고 있어 되풀이된 것은 이동만 받는다
+    if (event.repeat && isRepeatIgnored(key, isMove)) return;
+    if (commands.isDeferring() && isQueuedKey(key, isMove)) {
       event.preventDefault();
-      commands.enqueue({ kind: "key", key, shift: event.shiftKey, ctrl: false });
+      if (commands.canQueueKey()) commands.enqueue({ kind: "key", key, shift: event.shiftKey, ctrl: false });
       return;
     }
     if (pressKey(key)) event.preventDefault();
@@ -4124,7 +4167,7 @@ export function useAssignPage() {
   const haltedCommand = halted !== null && "kind" in halted.command.payload ? halted.command.payload : null;
   const queueFailure = halted === null || haltedCommand === null || haltedCommand.kind === "key" || haltedCommand.kind === "press" || haltedCommand.kind === "pick" ? null : describeFailure(haltedCommand, halted.reason, commands.state.waiting.length);
   // 저장 중인 판단이 있으면 기록이 아직 없어도 되돌리기가 그 뒤에 선다
-  const canUndoNow = undoState.canUndo || listUnsettled(commands.state).some((command) => command.kind !== "key" && command.kind !== "undo");
+  const canUndoNow = undoState.canUndo || listUnsettled(commands.state).some(isDecisionCommand);
 
   const error = docs.error ?? docViews.error ?? tobe.error ?? writtenList.error;
 

@@ -93,8 +93,10 @@ export interface SendContext {
   id: string;
   /** 다시 시도로 보낸다 - 멈춘 뒤 다시 읽어 사람이 보고 있는 화면의 값으로 */
   isRetry: boolean;
-  /** 응답이 왔다 - 장벽은 이 뒤 새 보기의 고름이 설 때까지 다음을 내보내지 않는다(되돌리기만 바로 잇는다) */
-  respond: () => void;
+  /** 응답이 왔다 - 장벽은 이 뒤 새 보기의 고름이 설 때까지 다음을 내보내지 않는다(되돌리기만 바로 잇는다 - isSolo면 New 문서 보기라 그것도 기다린다) */
+  respond: (isSolo?: boolean) => void;
+  /** 아직 이 명령의 차례인가 - 되돌리기가 먼저 나갔으면 아니다. 그때 온 보기는 놓지 않는다(되돌릴 모습이라 고름이 사라진 박스로 떨어진다) */
+  isCurrent: () => boolean;
   /** New 문서 보기를 다시 받는 장벽 - 그 보기가 놓일 때까지 기다린다 */
   waitSolo: () => void;
   /** 새 보기를 받지 못했다 - 뒤에 쌓인 글쇠는 무엇을 가리키는지 모르니 버리고 알린다 */
@@ -117,8 +119,14 @@ export interface CommandEnv {
   isSoloLoading: boolean;
   /** 보내기 - "asking"이면 창이 되묻는다 */
   send(command: WriteCommand, ctx: SendContext): Promise<"done" | "asking">;
-  /** 글쇠 · 단추를 그 렌더의 값으로 다시 누른다 */
-  replay(command: Exclude<ReplayCommand, { kind: "pick" }>): void;
+  /** 지금 고른 것이 있나(줄 · 목차 · New 문장) */
+  hasTarget(): boolean;
+  /** 글쇠 · 단추를 그 렌더의 값으로 다시 누른다 - 할 것이 없었으면 false */
+  replay(command: Exclude<ReplayCommand, { kind: "pick" }>): boolean;
+  /** 되살린 글쇠 하나가 할 것이 없었다 */
+  notifyLost(): void;
+  /** 화면을 떠난 뒤 실패해 나가지 못한 것 */
+  notifyUnsent(reason: string, count: number): void;
   /** 실패를 사람 말로 - isRefusal은 서버가 업무 규칙으로 거절한 것 */
   readFailure(err: unknown, command: WriteCommand): { reason: string; isRefusal: boolean };
   notifyRefusal(reason: string): void;
@@ -147,8 +155,13 @@ export function useCommandQueue(env: CommandEnv, describePending: DescribePendin
     replayId: null as string | null,
     /** 되살린 글쇠가 창을 열었다 */
     isAskOpened: false,
-    /** 응답은 왔고 새 보기를 기다리는 장벽 */
+    /** 응답은 왔고 새 보기를 기다리는 장벽 - canOvertake면 되돌리기가 그 보기를 기다리지 않는다 */
     respondedId: null as string | null,
+    canOvertake: false,
+    /** 새 고름이 그려지면 끝낼 명령 - 화면을 떠나 그 커밋이 없으면 바로 끝낸다 */
+    settleId: null as string | null,
+    /** 장벽을 보낼 때 고른 것이 있었나 - 끝났을 때 없으면 쌓인 글쇠가 갈 곳이 없다 */
+    hadTarget: false,
     retriedIds: new Set<string>(),
     /** 멈춘 때의 고름 - 다시 시도는 여기서 잇는다 */
     haltFocus: null as Focus | null,
@@ -156,6 +169,7 @@ export function useCommandQueue(env: CommandEnv, describePending: DescribePendin
 
   function settleLater(id: string, isSolo: boolean) {
     if (queue.getState().running?.id !== id) return;
+    live.current.settleId = id;
     if (live.current.isMounted) setSettleWait({ id, isSolo });
     else queue.settle(id);
   }
@@ -174,14 +188,34 @@ export function useCommandQueue(env: CommandEnv, describePending: DescribePendin
     if (dropped.length >= minCount) env.notifyDropped(dropped.length);
   }
 
-  function replay(id: string, run: () => void) {
+  function replay<R>(id: string, run: () => R): R {
     live.current.replayId = id;
     live.current.isAskOpened = false;
     try {
-      run();
+      return run();
     } finally {
       live.current.replayId = null;
     }
+  }
+
+  /** 화면을 떠났다 - 멈춘 것은 알리고, 누른 판단은 마저 보내고, 글쇠는 가리킬 고름이 없어 버리고 알린다 */
+  function leave() {
+    if (live.current.isMounted) return;
+    const { halted, asking, running, waiting } = queue.getState();
+    if (halted !== null) {
+      const dropped = queue.drop();
+      endAll(dropped);
+      env.notifyUnsent(halted.reason, dropped.length);
+      return;
+    }
+    if (asking !== null) dropAll(1);
+    else {
+      const keys = waiting.filter((command) => command.kind === "key").length;
+      if (keys > 0) env.notifyDropped(keys);
+    }
+    // 새 고름이 그려질 커밋이 이제 없다
+    if (running !== null && running.id === live.current.settleId) queue.settle(running.id);
+    pump();
   }
 
   async function send(command: QueuedCommand<AssignCommand>, payload: WriteCommand) {
@@ -189,19 +223,22 @@ export function useCommandQueue(env: CommandEnv, describePending: DescribePendin
     let isSolo = false;
     let isViewLost = false;
     live.current.respondedId = null;
+    live.current.hadTarget = env.hasTarget();
     // 기다리는 사이 앞 편집이 건 따라가기 - 은퇴할 Unit을 고르지 않게 보낼 때 다시 버린다
     if (command.isGlobal) env.dropFollows();
     const ctx: SendContext = {
       id,
       isRetry: live.current.retriedIds.has(id),
-      respond: () => {
+      respond: (isSolo = false) => {
         // 장벽이 아니면 보내기가 끝날 때 끝난다 - 응답 뒤에 이어 보내는 것(언어 되돌리기)이 다음 명령과 섞이지 않게
         if (isBarrier(command)) {
           live.current.respondedId = id;
+          live.current.canOvertake = !isSolo;
           queue.respond(id);
           pumpStep();
         }
       },
+      isCurrent: () => queue.getState().running?.id === id,
       waitSolo: () => {
         isSolo = true;
       },
@@ -217,7 +254,8 @@ export function useCommandQueue(env: CommandEnv, describePending: DescribePendin
       env.end(id);
       if (outcome === "asking") queue.ask(id);
       else {
-        if (isViewLost && queue.getState().waiting.some((item) => item.isDeferred)) dropAll(1);
+        // 되돌리기가 먼저 나갔으면 이 보기는 쓰지 않는다 - 뒤의 글쇠는 그 되돌리기가 세울 고름을 기다린다
+        if (isViewLost && ctx.isCurrent() && queue.getState().waiting.some((item) => item.isDeferred)) dropAll(1);
         if (isBarrier(command)) settleLater(id, isSolo);
         else queue.settle(id);
       }
@@ -227,6 +265,8 @@ export function useCommandQueue(env: CommandEnv, describePending: DescribePendin
       if (shouldHalt(command, queue.getState(), isRefusal)) {
         live.current.haltFocus = env.readFocus();
         queue.fail(id, reason);
+        // 떠난 화면에는 다시 시도를 물을 자리가 없다
+        if (!live.current.isMounted) leave();
       } else {
         env.notifyRefusal(reason);
         settleLater(id, false);
@@ -235,15 +275,20 @@ export function useCommandQueue(env: CommandEnv, describePending: DescribePendin
     if (!live.current.isMounted) pump();
   }
 
-  /** 되돌리기는 대상이 없어 앞 장벽의 새 보기를 기다리지 않는다 - 응답이 왔으면 바로 잇는다 */
+  /** 되돌리기는 대상이 없어 앞 장벽의 새 보기를 기다리지 않는다 - 응답이 왔으면 바로 잇는다(그 보기는 놓지 않는다, ctx.isCurrent). New 문서 보기는 거둘 수 없어 기다린다 */
   function pumpStep() {
     const { running, waiting } = queue.getState();
-    if (running !== null && running.id === live.current.respondedId && waiting[0]?.payload.kind === "step") queue.settle(running.id);
+    if (running !== null && running.id === live.current.respondedId && live.current.canOvertake && waiting[0]?.payload.kind === "step") queue.settle(running.id);
   }
 
   /** 다음 명령을 내보낸다 - 화면이 커밋마다 부른다(그 커밋의 env로) */
   function pump() {
-    if (settleWait !== null && !(settleWait.isSolo && env.isSoloLoading)) queue.settle(settleWait.id);
+    const { running: current, waiting: behind } = queue.getState();
+    if (settleWait !== null && current?.id === settleWait.id && !(settleWait.isSolo && env.isSoloLoading)) {
+      // 장벽이 끝나자 고른 것이 사라졌다 - 쌓인 글쇠를 엉뚱한 박스(목록 처음)에 떨어뜨리지 않고 버리고 알린다
+      if (isBarrier(current) && live.current.hadTarget && !env.hasTarget() && behind.some((item) => item.kind === "key")) dropAll(1);
+      queue.settle(settleWait.id);
+    }
     pumpStep();
     const command = queue.take();
     if (command === null) {
@@ -267,7 +312,8 @@ export function useCommandQueue(env: CommandEnv, describePending: DescribePendin
     }
     if (payload.kind === "pick") env.pick(payload.focus);
     else {
-      replay(command.id, () => env.replay(payload));
+      const isDone = replay(command.id, () => env.replay(payload));
+      if (!isDone) env.notifyLost();
       if (live.current.isAskOpened) {
         queue.ask(command.id);
         return;
@@ -305,12 +351,16 @@ export function useCommandQueue(env: CommandEnv, describePending: DescribePendin
       live.current.isMounted = true;
       return () => {
         live.current.isMounted = false;
+        // 커밋마다 걷혔다 다시 선다 - 이어 서지 않았으면 떠난 것이다
+        queueMicrotask(leave);
       };
     },
     /** 지금 누르면 대상을 미루나 - 되살리는 중이면 아니다 */
     isDeferring: () => live.current.replayId === null && mustDefer(queue.getState()),
     /** 쌓인 글쇠 뒤의 고름도 차례를 기다리나 - 멈춘 동안은 둘러볼 수 있게 바로 고른다(다시 시도가 멈춘 때의 고름에서 잇는다) */
     isPickQueued: () => live.current.replayId === null && queue.getState().halted === null && queue.getState().waiting.some((command) => command.kind === "key"),
+    /** 글쇠를 더 쌓아도 되나 - 고쳐 쓰기(E)가 쌓여 있으면 그 뒤에 친 것은 열릴 글 칸의 글자다 */
+    canQueueKey: () => !listUnsettled(queue.getState()).some(({ payload }) => payload.kind === "key" && payload.key === "e"),
     /** 아직 끝나지 않은 명령 - 누르는 순간의 값(그려진 값이 아니라) */
     listUnsettled: () => listUnsettled(queue.getState()),
     /** 아직 되돌리기 기록에 없는 명령 - 응답이 온 장벽(새 보기만 기다린다)은 뺀다 */
@@ -353,7 +403,15 @@ export function useCommandQueue(env: CommandEnv, describePending: DescribePendin
       queue.retry();
     },
     discard: () => dropAll(1),
+    /** 나가기 전 - 아직 끝나지 않은 저장이 실은 초안은 버려지지 않는다(멈춘 것은 나가지 못한다) */
+    listSavingRows: () => (queue.getState().halted !== null ? [] : listUnsettled(queue.getState()).flatMap(({ payload }) => (payload.kind === "save" ? [payload.rowKey] : []))),
   };
+}
+
+/** 같은 줄에 같은 판단을 또 눌렀나 - 그 줄에 마지막으로 선 것이 같은 초안 · 사유의 같은 저장이고 아직 끝나지 않았으면 되돌리기 단계만 하나 더 는다 */
+export function isRepeatedSave(unsettled: ReadonlyArray<{ payload: AssignCommand }>, next: Extract<WriteCommand, { kind: "save" }>): boolean {
+  const last = unsettled.map(({ payload }) => payload).filter((payload) => (payload.kind === "save" || payload.kind === "clear" ? payload.rowKey === next.rowKey : payload.kind === "bulk" && payload.rows.some((item) => item.rowKey === next.rowKey))).at(-1);
+  return last?.kind === "save" && last.action === next.action && last.reason === next.reason && last.isPick === next.isPick && (next.isPick || last.draft === next.draft);
 }
 
 /** 자리 없는 처리 중 표시(판단 저장) */

@@ -926,8 +926,7 @@ export default function AssignPage() {
             const href = leaveTo;
             setLeaveTo(null);
             setDrafts({});
-            // 아직 보내지 않은 명령도 버린다 - 떠난 뒤에 저장되지 않게
-            state.discardCommands();
+            // 이미 누른 판단은 버리지 않는다 - 큐가 떠난 뒤에도 마저 보낸다
             navigate(href, { immediate: true });
           }}
           onClose={() => setLeaveTo(null)}
