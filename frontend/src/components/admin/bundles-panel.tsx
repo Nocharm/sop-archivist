@@ -115,6 +115,8 @@ export function BundlesPanel() {
       key: "created",
       header: t("adminBundles.created"),
       nowrap: true,
+      // 좁은 창에서는 만든 날을 감춘다 - 상태·구성원·진행이 먼저다
+      className: "max-[1279px]:hidden",
       skeletonWidth: 110,
       cell: (bundle) => <span className="tabular-nums text-ink-2">{formatKst(bundle.created_at)}</span>,
     },
