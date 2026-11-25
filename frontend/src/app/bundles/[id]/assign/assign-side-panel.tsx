@@ -1,7 +1,7 @@
 // Assign 화면의 한 부분 - page.tsx의 그리기에서 글자 그대로 옮겼다(쪼개기, 신뢰 기반 계획 스텝 4). 상태와 동작은 useAssignPage()가 준다.
 "use client";
 
-import { ArrowDown, ArrowUp, Check, Columns2, FilePen, Link2, ListTree, Locate, MapPin, MoveRight, RefreshCw, Sparkles, Trash2, TriangleAlert, Undo2 } from "lucide-react";
+import { ArrowDown, ArrowUp, Check, Columns2, FilePen, Link2, ListTree, Locate, MapPin, RefreshCw, Sparkles, Trash2, TriangleAlert, Undo2 } from "lucide-react";
 import { Fragment, type ReactNode } from "react";
 import { DestCard } from "@/components/assign/dest-card";
 import { DestinationAccordion, type AccordionSection } from "@/components/assign/destination-accordion";
@@ -13,7 +13,6 @@ import { ShapeTools } from "@/components/assign/shape-tools";
 import { SplitSuggestionCard } from "@/components/assign/split-suggestion";
 import { ChangeKindChip } from "@/components/assign/change-kind-chip";
 import { LinkChoice } from "@/components/assign/link-choice";
-import { MoveTargetField } from "@/components/assign/move-target-field";
 import { RemarkLine } from "@/components/assign/remark-modal";
 import { LangToken } from "@/components/paper/lang-token";
 import { UnitStatusChip } from "@/components/status";
@@ -46,9 +45,9 @@ function putFirst<T>(items: readonly T[], isFirst: (item: T) => boolean): T[] {
 export function AssignSidePanel({ state, headEnd }: { state: AssignPageState; headEnd: ReactNode }) {
   const {
     t, bundleId, canEdit, unitsKey, reloadData, docViews, tobeData, aiJobs, aiOn, aiBusy, suggestions, invalidUnitIds, unitMap, written,
-    writtenMap, rowOfUnit, options, isDrafting, hiddenPlace, openTranslations, translationBlocked, settleTranslations, mode, activeKey, row, isNewEdit, hasSolo, tocOpen, setTocOpen, tocPick, tocBlocks, newRemarks,
+    writtenMap, rowOfUnit, options, isDrafting, hiddenPlace, legacyMove, openTranslations, translationBlocked, settleTranslations, mode, activeKey, row, isNewEdit, hasSolo, tocOpen, setTocOpen, tocPick, tocBlocks, newRemarks,
     setNewRemarks, cutUnitId, focusNew, groupData, draft, editing, savedDestination, destination, rowUnits, rowLangs, firstDecision,
-    systemHold, reasonNow, moveCode, setDraft, rowLive, aiDest, aiWhy, recommendations, linkIds, pickedGroups, saveGroupData,
+    systemHold, reasonNow, setDraft, rowLive, aiDest, aiWhy, recommendations, linkIds, pickedGroups, saveGroupData,
     viewOf, oldView, splitByUnit, shapeView, shapeModel, soloUnits, cutLine, writtenDocs, composedDoc, view, changeView, askAiScope,
     setRemarkEdit, firstTextRef, busy, isAnyPending, accOpen, toggleAcc, saveUnits, slots, aiUnfilled, draftPlace, draftSectionKey, draftPosition,
     placeResolved, setRefEntryId, moveRow, hasUnitDraft, isFixedCaption, rowViewUnits, rowSplitUnit, rowSplit, splitBlocked, rowRefUnit,
@@ -114,15 +113,14 @@ export function AssignSidePanel({ state, headEnd }: { state: AssignPageState; he
         />
       );
     }
-    if (rec.destination.kind === "delete" || rec.destination.kind === "move") {
-      const isDelete = rec.destination.kind === "delete";
+    if (rec.destination.kind === "delete") {
       return (
         <DestCard
           key={rec.key}
-          icon={isDelete ? Trash2 : MoveRight}
+          icon={Trash2}
           tone="danger"
           title={t("assign.acc.move")}
-          text={t(isDelete ? "classify.deleted" : "classify.moved")}
+          text={t("classify.deleted")}
           foot={
             <>
               {chip}
@@ -195,15 +193,12 @@ export function AssignSidePanel({ state, headEnd }: { state: AssignPageState; he
     { key: "all", icon: ListTree, title: t("assign.acc.all"), count: written.length + options.filter(isPlaceOption).length, body: <DestinationTree written={written} rows={isDrafting && tobeData ? listTreeRows(tobeData, treeOptions) : []} tobeHref={getNewDocumentsHref(bundleId)} onPickLink={pickNewSentence} onPickPlace={pickDestination} manage={placeManage} /> },
     {
       key: "move",
-      icon: MoveRight,
+      icon: Trash2,
       title: t("assign.acc.move"),
       body: (
         <>
           <button type="button" className="tree-leaf" aria-pressed={destination?.kind === "delete"} data-testid="assign-pick-delete" onClick={() => pickDestination({ kind: "delete" })}>
             {t("classify.deleted")}
-          </button>
-          <button type="button" className="tree-leaf" aria-pressed={destination?.kind === "move"} data-testid="assign-pick-move" onClick={() => pickDestination({ kind: "move" })}>
-            {t("classify.moved")}
           </button>
         </>
       ),
@@ -384,6 +379,15 @@ export function AssignSidePanel({ state, headEnd }: { state: AssignPageState; he
         </Refresh>
       );
     }
+    if (legacyMove !== null) {
+      return (
+        <Refresh key={shapeFirstId ?? ""} token={chosenToken} className="chosen-box" testId="assign-chosen">
+          <p className="text-[13px] leading-5 text-ink" data-testid="assign-legacy-move">
+            {t("assign.legacyMove", { code: legacyMove.code || "–" })}
+          </p>
+        </Refresh>
+      );
+    }
     const placeLabel = isPlace ? renderPlaceLabel(destination) : null;
     // 고른 칸 안의 위치(MD 2 S3) - 열린 엮은 문서의 칸을 고른 초안일 때만: "6.1.1 다음 (6.1.2가 된다)" · "글머리 기호 줄 · 끝에"
     const placeAt = draftPlace && composedDoc && placeResolved && draftSectionKey !== null && draftPlace.docId === composedDoc.target_doc_id ? readPlacePosition(placeResolved.sections, draftSectionKey, draftPosition ? draftPosition.after : undefined) : null;
@@ -415,10 +419,10 @@ export function AssignSidePanel({ state, headEnd }: { state: AssignPageState; he
             text={`${isConfirmedView ? `${t("assign.chosen.confirmed")} · ` : ""}${destination.kind === "link" ? `${t("assign.chosen.link")} · ${[...new Set(pickedRows.map((item) => item.doc_code))].join(", ")}` : destination.kind === "join" ? t("assign.chosen.join") : destination.kind === "slot_heading" ? t("assign.slotHeading") : isPlace ? (mergedLines >= 2 ? t("assign.chosen.merged", { n: mergedLines }) : t("assign.chosen.place")) : t("assign.acc.move")}`}
           />
         </span>
-        {(destination.kind === "delete" || destination.kind === "move") && (
+        {destination.kind === "delete" && (
           <span className="flex items-center gap-1.5 text-sm font-semibold text-ink">
-            {destination.kind === "delete" ? <Trash2 size={14} strokeWidth={1.75} className="flex-none text-danger" aria-hidden /> : <MoveRight size={14} strokeWidth={1.75} className="flex-none text-danger" aria-hidden />}
-            {t(destination.kind === "delete" ? "classify.deleted" : "classify.moved")}
+            <Trash2 size={14} strokeWidth={1.75} className="flex-none text-danger" aria-hidden />
+            {t("classify.deleted")}
           </span>
         )}
         {destination.kind === "link" && (
@@ -533,7 +537,7 @@ export function AssignSidePanel({ state, headEnd }: { state: AssignPageState; he
   // 확정 단추 - 결정 칸 맨 아래 늘 같은 자리의 가장 큰 단추. 고른 곳이 없으면 흐리게 꺼지고 까닭은 툴팁(↵는 위 목록의 첫 후보로 간다)
   const confirmButton = (
     <Tooltip label={t((destination !== null ? confirmBlockKey : null) ?? "assign.why.pickFirst")} suppressed={(destination !== null && confirmBlockKey === null) || !row}>
-      <button type="button" className="btn pri assign-confirm" data-testid="assign-primary" data-state={primaryState} disabled={!canEdit || !row || busy || !destination || isRefGate || isCaptionGateOn || hiddenPlace !== null} onClick={handlePrimary}>
+      <button type="button" className="btn pri assign-confirm" data-testid="assign-primary" data-state={primaryState} disabled={!canEdit || !row || busy || !destination || isRefGate || isCaptionGateOn || hiddenPlace !== null || legacyMove !== null} onClick={handlePrimary}>
         <span className="stack">
           <span data-on={primaryState !== "save" ? "" : undefined}>
             {t("classify.confirm")} <kbd>↵</kbd>
@@ -549,7 +553,7 @@ export function AssignSidePanel({ state, headEnd }: { state: AssignPageState; he
   // 배정 취소는 배정이 있을 때만 보인다(쓸 수 없는 단추는 숨긴다 - 1.2.0 피드백). 좁은 폭에서는 글쇠 표시를 뺀다 - 단축키는 Help에 있다
   const actions = canEdit && row && (
     <div className="@container flex gap-1.5" data-testid="assign-actions">
-      <button type="button" className="btn assign-alt flex-1" data-testid="assign-hold" disabled={busy} onClick={() => void runSave("hold")}>
+      <button type="button" className="btn assign-alt flex-1" data-testid="assign-hold" disabled={busy || legacyMove !== null} onClick={() => void runSave("hold")}>
         {t("classify.hold")} <kbd className="@max-[200px]:hidden">H</kbd>
       </button>
       {canClear && (
@@ -561,17 +565,17 @@ export function AssignSidePanel({ state, headEnd }: { state: AssignPageState; he
     </div>
   );
 
-  // 지금 고른 곳에 꼭 필요한 Remark(지우기·옮기기·두 문서) - 비어 있으면 Remark 줄이 경고 색이 되고 쓰기 단추가 다음 할 일로 강조된다
+  // 지금 고른 곳에 꼭 필요한 Remark(지우기·두 문서) - 비어 있으면 Remark 줄이 경고 색이 되고 쓰기 단추가 다음 할 일로 강조된다
   const remarkNeed = row && destination ? readReasonNeed("confirm") : null;
   const isRemarkMissing = remarkNeed !== null && !reasonNow.trim();
   // Remark 한 줄(RemarkLine) - 꼭 필요한데 비었으면 글 자리가 경고 "…에는 필수"로 바뀌고 연필이 강조된 채 늘 보인다
   const remarkRow = (
     <RemarkLine
       text={reasonNow}
-      // 삭제·이동은 Remark를 비우면 처분 이름으로 기록된다 - 빈 자리에 그 글을 흐리게 보인다
-      emptyLabel={destination?.kind === "delete" ? t("remark.defaultDelete") : destination?.kind === "move" ? t("remark.defaultMove") : "–"}
+      // 삭제는 Remark를 비우면 처분 이름으로 기록된다 - 빈 자리에 그 글을 흐리게 보인다
+      emptyLabel={destination?.kind === "delete" ? t("remark.defaultDelete") : "–"}
       needMessage={isRemarkMissing ? t(`remark.need.${remarkNeed}`) : null}
-      canEdit={canEdit}
+      canEdit={canEdit && legacyMove === null}
       disabled={!row}
       onEdit={() => setRemarkEdit({ kind: "row", need: isRemarkMissing ? remarkNeed : null, then: null })}
       onPick={(text) => setDraft({ reason: text })}
@@ -1034,14 +1038,6 @@ export function AssignSidePanel({ state, headEnd }: { state: AssignPageState; he
             {renderChosen()}
             {translationBox}
           </div>
-          {destination?.kind === "move" && (
-            <div className="flex min-w-0 items-center gap-2">
-              <span className="flex-none text-xs text-ink-3">{t("classify.moveTo")}</span>
-              <span className="block h-8 min-w-0 flex-1">
-                <MoveTargetField key={activeKey ?? ""} bundleId={bundleId} value={moveCode} disabled={!canEdit} testId="assign-move-code" onChange={(code) => setDraft({ moveCode: code })} />
-              </span>
-            </div>
-          )}
           {remarkRow}
           {confirmButton}
         </Refresh>

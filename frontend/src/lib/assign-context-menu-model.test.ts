@@ -52,7 +52,7 @@ function find(context: AssignMenuContext, action: AssignMenuAction) {
 describe("buildAssignMenu", () => {
   it("groups assign actions before edit actions", () => {
     const groups = buildAssignMenu(ctx());
-    expect(groups.assign.map((item) => item.action)).toEqual(["clear", "move", "delete"]);
+    expect(groups.assign.map((item) => item.action)).toEqual(["clear", "delete"]);
     expect(groups.edit.map((item) => item.action)).toEqual(["split", "merge_prev", "merge_next", "pair_pick", "lang", "ref_mark", "to_heading"]);
   });
 
@@ -70,11 +70,17 @@ describe("buildAssignMenu", () => {
   it("calls Unassign 'Undo delete' on a deleted row and hides Delete - sentence, table and caption alike", () => {
     for (const target of [makeUnit(2), makeUnit(2, { kind: "table" }), makeUnit(2, { kind: "caption" })]) {
       const { assign } = buildAssignMenu(ctx({ target, rowStatus: "confirmed", isDeleted: true, isDecided: () => true }));
-      expect(assign.map((item) => item.action)).toEqual(["clear", "move"]);
+      expect(assign.map((item) => item.action)).toEqual(["clear"]);
       expect(assign[0]).toMatchObject({ labelKey: "assign.ctx.undoDelete", enabled: true });
     }
     // 삭제가 아닌 줄은 그대로
     expect(buildAssignMenu(ctx({ rowStatus: "confirmed", isDeleted: false })).assign[0].labelKey).toBeUndefined();
+  });
+
+  it("leaves only Unassign on a row moved to another Bundle earlier", () => {
+    const { assign } = buildAssignMenu(ctx({ rowStatus: "confirmed", isLegacyMove: true, isDecided: () => true }));
+    expect(assign.map((item) => item.action)).toEqual(["clear"]);
+    expect(assign[0].enabled).toBe(true);
   });
 
   it("lets an assigned sentence be cut or merged (the screen asks before clearing the assignment) but not change language", () => {

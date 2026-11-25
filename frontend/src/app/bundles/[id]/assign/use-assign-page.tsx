@@ -45,7 +45,7 @@ import { resolveLineParam } from "@/lib/assign-line-param";
 import { readAssignView, writeAssignView } from "@/lib/assign-view-prefs";
 import { loadBundle, useBundle } from "@/lib/bundle-store";
 import { describeDecisionStep, getAssignUndoKey, IN_PLACE_EDIT_OPS, isUnitEditStep, pickSaveOp, shouldDropSelectionOnStep } from "@/lib/decision-step-model";
-import { buildCellOwners, buildDestinationOptions, buildGroupSave, buildRows, buildSentenceSlots, findNextAfterSave, findSystemHold, getDestinationId, getRowStep, hasDraftChange, isSentenceUnit, listJoinedTargetIds, listPickOptions, listUnpairedKeys, readDestination, readHiddenPlace, readHumanReason, stepInList, type CellSource, type ClassifyFilter, type ClassifyRow, type Destination, type DestinationOption, type DropPosition, type RowDraft } from "@/lib/classify-model";
+import { buildCellOwners, buildDestinationOptions, buildGroupSave, buildRows, buildSentenceSlots, describeLegacyMove, findNextAfterSave, findSystemHold, getDestinationId, getRowStep, hasDraftChange, isSentenceUnit, listJoinedTargetIds, listPickOptions, listUnpairedKeys, readDestination, readHiddenPlace, readHumanReason, stepInList, type CellSource, type ClassifyFilter, type ClassifyRow, type Destination, type DestinationOption, type DropPosition, type RowDraft } from "@/lib/classify-model";
 import { buildDocDashboard } from "@/lib/doc-dashboard-model";
 import { listEditUnitIds, listTableUnitIds, NO_FOCUS, NO_PLACE, planReload, readEditKind, readEditPlace, readPendingLabelKey, type Pending, type PendingPlace, type ReloadPlan } from "@/lib/assign-focus-model";
 import { pickDocRevision } from "@/lib/doc-revision";
@@ -95,16 +95,15 @@ export type Mode = "old" | "unsourced";
 // backend constants.SYSTEM_HOLD_* - 모르는 코드는 "시스템 보류"로 보인다
 export const SYSTEM_HOLDS = ["related_unit_changed", "ai_invalid_response"];
 
-/** 화면의 줄 초안 - 사유·이동 코드는 null이면 손대지 않은 것(저장된 값을 보인다), ""이면 사람이 비운 것 */
+/** 화면의 줄 초안 - 사유는 null이면 손대지 않은 것(저장된 값을 보인다), ""이면 사람이 비운 것 */
 export interface PageDraft extends Omit<RowDraft, "reason" | "moveCode"> {
   reason: string | null;
-  moveCode: string | null;
   editing: boolean;
   /** Use로 받은 AI 제안 - 저장이 실어 보내 서버가 채택을 남긴다(설계 2026-11-19-ai-suggest-only D2). 다른 곳을 고르면 비운다 */
   suggestionId?: number | null;
 }
 
-export const EMPTY_DRAFT: PageDraft = { destination: null, texts: {}, reason: null, moveCode: null, editing: false, suggestionId: null };
+export const EMPTY_DRAFT: PageDraft = { destination: null, texts: {}, reason: null, editing: false, suggestionId: null };
 export const NO_NUMBERS: ReadonlySet<number> = new Set();
 
 // 고름 · 처리 중 · 따라가기는 assign-focus-model(설계 2026-11-20 D1) - 편집 중에도 고름은 그대로다
@@ -157,7 +156,7 @@ export function findDestinationDoc(destination: Destination | null, written: Map
 }
 
 /** Remark 창 - 고른 줄의 사유(저장이 사유를 요구해 열었으면 확인 뒤 그 저장을 잇는다) 또는 출처 없는 New 문장의 Remark */
-export type RemarkEdit = { kind: "row"; need: "delete" | "move" | "hold" | "duplicate" | null; then: "confirm" | "hold" | null } | { kind: "new"; targetId: number };
+export type RemarkEdit = { kind: "row"; need: "delete" | "hold" | "duplicate" | null; then: "confirm" | "hold" | null } | { kind: "new"; targetId: number };
 
 /** 그 자리 메뉴 - 붙을 요소, 누른 자리(요소 기준, 키보드·이동이면 null), 어느 줄의 어느 New 문장에 대한 메뉴인지 */
 export interface MenuState {
@@ -266,10 +265,9 @@ function buildPaperPending(pending: readonly Pending[], t: (key: string) => stri
 }
 
 /** Assign 화면 한 벌의 상태와 동작 - page.tsx가 그리는 데 쓰는 이름을 모두 돌려준다 */
-/** 우클릭 메뉴·Del·M 창에서 고른 삭제·이동 - 그린 초안 대신 이 값으로 저장한다 */
+/** 우클릭 메뉴·Del에서 고른 삭제 - 그린 초안 대신 이 값으로 저장한다 */
 interface DecidePick {
-  destination: Extract<Destination, { kind: "delete" | "move" }>;
-  moveCode: string;
+  destination: Extract<Destination, { kind: "delete" }>;
 }
 
 /** 편집 알림 - 글 그대로, 또는 응답으로 짓는 글(모양 전환 - 그때는 알림에 되돌리기가 붙는다) */
@@ -592,10 +590,8 @@ export function useAssignPage() {
   const savedReason = rowUnits.map((unit) => readHumanReason(unit.decision)).find(Boolean) ?? "";
   const systemHold = rowUnits.map((unit) => findSystemHold(unit.decision)).find((code) => code !== null) ?? null;
   const reasonNow = draft.reason ?? savedReason;
-  const moveCode = draft.moveCode ?? firstDecision?.move_target_code ?? "";
-  // runSave·sendSave가 방금 고른 삭제·이동(pick)으로 가릴 때 읽는 그린 초안의 값
+  // runSave·sendSave가 방금 고른 삭제(pick)로 가릴 때 읽는 그린 초안의 값
   const currentDestination = destination;
-  const currentMoveCode = moveCode;
 
   function setDraft(patch: Partial<PageDraft>, nextEditing = editing) {
     if (!activeKey) return;
@@ -638,6 +634,9 @@ export function useAssignPage() {
     : [];
   // 저장된 곳이 숨긴 새 문서의 자리면 그 번호와 칸 이름 - 읽기만 하고 확정하지 않는다(배정 취소나 잇기로 나간다)
   const hiddenPlace = isDrafting ? null : readHiddenPlace(destination, labelOptions);
+  // 이미 다른 Bundle로 이동한 줄(없앤 기능) - 읽기만 하고 확정하지 않는다(배정 취소로 풀면 다시 고를 수 없다)
+  // 저장된 판단(unitMap)에서 바로 정한다 - 묶음(group)이 늦게 와도 그동안 Confirm이 켜지지 않고, 짝 한쪽만 이동이어도 읽기 전용이다
+  const legacyMove = describeLegacyMove(rowUnits);
   const linkIds = destination?.kind === "link" ? destination.targetIds : [];
   // 고른 문장의 관계 묶음(합쳐진 다른 출처 등)은 고를 때 부른다 - 함께 확정되는 것을 미리 보이고 저장도 같은 묶음으로 한다
   const knownTargets = new Set(groupData?.targets.map((target) => target.id) ?? []);
@@ -884,7 +883,7 @@ export function useAssignPage() {
   }
   /** 되돌리기 줄이 움직인 횟수(새 단계 · 되돌리기 · 다시 하기) - 알림의 Undo는 제 단계가 아직 맨 끝일 때만 그 단계를 되돌린다 */
   const stepTick = useRef(0);
-  const [bulk, setBulk] = useState<"delete" | "move" | null>(null);
+  const [bulk, setBulk] = useState<"delete" | null>(null);
   const [confirmingIdentical, setConfirmingIdentical] = useState(false);
   const [resetScope, setResetScope] = useState<ResetScope | null>(null);
   const [openAcc, setOpenAcc] = useState<{ key: string; open: Set<string> }>({ key: "", open: new Set(["rec"]) });
@@ -1281,6 +1280,7 @@ export function useAssignPage() {
       readOnly: !canEdit,
       rowStatus: row?.status ?? "unassigned",
       isDeleted: isRowDeleted,
+      isLegacyMove: legacyMove !== null,
       isDecided: isUnitDecided,
       hasDraft: hasUnitDraft,
       canSplit: findNearestCut(target, Math.floor(target.text.length / 2)) !== null,
@@ -1309,7 +1309,7 @@ export function useAssignPage() {
   // 새 문서 자리로 보내는 표·그림에 캡션이 없으면 Confirm이 꺼진다(명세 §3.4) - 캡션은 Edit and confirm에서 써 넣는다
   const isCaptionGateOn = row !== null && paperModel !== null && oldView?.document.id === row.documentId && isCaptionGate(row, destination, paperModel.units, draft, groupData);
   // Confirm을 막는 까닭 - 결정 칸 단추의 툴팁과 그 자리 메뉴(끌어 놓은 초안 포함)가 같은 답을 쓴다
-  const confirmBlockKey = readConfirmBlockKey({ isRefGate, isCaptionGate: isCaptionGateOn, isHiddenPlace: hiddenPlace !== null });
+  const confirmBlockKey = readConfirmBlockKey({ isRefGate, isCaptionGate: isCaptionGateOn, isHiddenPlace: hiddenPlace !== null, isLegacyMove: legacyMove !== null });
   // 오른쪽 칸 1번(다듬기) - 고른 줄의 문장마다 할 수 있는 일. 우클릭 메뉴와 같은 답이다. 고칠 수 없는 사람에게는 줄을 보이지 않는다
   // 표·그림 줄이면 그 묶음의 캡션도 문장처럼 한 줄씩(언어 세 칸·자르기·캡션 떼기) - 용지 순서대로(캡션이 위면 위에)
   const rowBundleSpan = new Set(rowViewUnits.filter((unit) => isBundleKind(unit.kind)).map((unit) => unit.id));
@@ -1799,7 +1799,6 @@ export function useAssignPage() {
     const table = findTableOf(target);
     if (action === "clear") void runClear();
     else if (action === "delete") decideNow({ kind: "delete" });
-    else if (action === "move") setMoveAsk(true);
     // 앱이 제안한 참조 줄(옛 추출의 REF?)은 언어 칸의 REF를 누르면 그 번호로 바로 확정한다(요청서 14) - 확인 단추와 같은 편집
     else if (action === "ref_mark" && target.ref?.state === "proposed") void runUnitEdit({ type: "set_ref", unit_id: target.id, number: target.ref.number }, t("assign.ref.didConfirm"), target.id);
     else if (action === "ref_mark") setRefEntryId(target.id);
@@ -1938,10 +1937,9 @@ export function useAssignPage() {
     return new Set(linkIds.map((id) => findWrittenRow(id)?.target_doc_id)).size > 1 ? "duplicate" : null;
   }
 
-  /** reasonOverride는 Remark 창에서 방금 확인한 사유, pick은 방금 고른 삭제·이동 - 초안 상태가 아직 반영되기 전이라 직접 넘긴다 */
+  /** reasonOverride는 Remark 창에서 방금 확인한 사유, pick은 방금 고른 삭제 - 초안 상태가 아직 반영되기 전이라 직접 넘긴다 */
   async function runSave(action: "confirm" | "hold", reasonOverride?: string, pick?: DecidePick) {
     const destination = pick?.destination ?? currentDestination;
-    const moveCode = pick?.moveCode ?? currentMoveCode;
     // 보낼 곳 없이는 보류만 된다(처분 unassigned + hold, 사유는 hold_reason)
     if (!row || busy || (!destination && action !== "hold")) return;
     if (isRowLoading) {
@@ -1951,6 +1949,11 @@ export function useAssignPage() {
     }
     if (action === "confirm" && hiddenPlace !== null && !pick) {
       showToast(t("assign.hidden.confirm"), "error");
+      return;
+    }
+    // 이동한 줄은 배정 취소 말고는 저장하지 않는다 - 보류(H)도 짝의 다른 쪽까지 쓰지 못하게 막는다
+    if (legacyMove !== null) {
+      showToast(t("assign.legacyMove.confirm"), "error");
       return;
     }
     if (action === "confirm" && isRefGate) {
@@ -1965,12 +1968,6 @@ export function useAssignPage() {
       return;
     }
     const reason = reasonOverride ?? reasonNow;
-    // 대상 문서를 먼저 본다 - 사유 창을 거친 뒤에 다시 막히지 않게
-    if (destination?.kind === "move" && !moveCode.trim()) {
-      showToast(t("classify.moveCodeNeeded"), "error");
-      document.querySelector<HTMLElement>('[data-testid="assign-move-code"]')?.focus();
-      return;
-    }
     const need = pick ? null : readReasonNeed(action);
     if (need !== null && !reason.trim()) {
       // 알림만 띄우지 않고 사유 창을 연다 - 확인하면 이 저장을 잇는다
@@ -1984,11 +1981,10 @@ export function useAssignPage() {
   /** runSave의 보내기 - 그 줄의 Unit은 응답까지 잠긴다(알약은 그리지 않는다, 설계 D4) */
   async function sendSave(job: string, row: ClassifyRow, action: "confirm" | "hold", reason: string, pick?: DecidePick) {
     const destination = pick?.destination ?? currentDestination;
-    const moveCode = pick?.moveCode ?? currentMoveCode;
     try {
       // 고친 칸만 글을 보낸다 - 손대지 않은 AI 제안은 글·종류를 비워 보내 제안 그대로 받는다
       const context = { units: saveUnits, group: saveGroupData, tables: buildTables(), captions: buildCaptions() };
-      const body = buildGroupSave({ ...draft, ...(pick ? { position: null } : {}), destination, reason, moveCode }, context, action, action === "hold" ? reason.trim() : "");
+      const body = buildGroupSave({ ...draft, ...(pick ? { position: null } : {}), destination, reason }, context, action, action === "hold" ? reason.trim() : "");
       // Use로 받은 제안을 싣는다 - 서버가 판단에 잇고 채택(그대로·고침·버림)을 남긴다
       if (draft.suggestionId) body.suggestion_id = draft.suggestionId;
       const leftovers = body.release_unit_ids ?? [];
@@ -2067,13 +2063,12 @@ export function useAssignPage() {
     if (!isRowLoading) runQueuedSave();
   }, [isRowLoading, queuedRowKey]);
 
-  // 삭제·이동 바로 확정(우클릭 메뉴·Del·M 창) - 초안에도 넣어 오른쪽 칸이 따라오고, 저장은 그 초안이 그려지기 전이라 보낼 곳을 직접 넘긴다
-  const [isMoveAsk, setMoveAsk] = useState(false);
-  function decideNow(next: DecidePick["destination"], code?: string, reason?: string) {
+  // 삭제 바로 확정(우클릭 메뉴·Del) - 초안에도 넣어 오른쪽 칸이 따라오고, 저장은 그 초안이 그려지기 전이라 보낼 곳을 직접 넘긴다
+  function decideNow(next: DecidePick["destination"]) {
     if (!row || !canEdit || busy) return;
-    const pick = { destination: next, moveCode: code ?? moveCode };
-    setDraft({ destination: next, position: null, moveCode: pick.moveCode });
-    void runSave("confirm", reason, pick);
+    const pick = { destination: next };
+    setDraft({ destination: next, position: null });
+    void runSave("confirm", undefined, pick);
   }
 
   /**
@@ -2446,7 +2441,17 @@ export function useAssignPage() {
       : undefined;
 
   /** use - Use로 받은 AI 제안의 초안(고쳐 쓴 글)과 제안 id. 없으면 다른 곳을 고른 것이라 받은 제안을 비운다 */
+  /** 이동한 줄(없앤 기능)에는 아무것도 새로 정하지 않는다 - 막았으면 안내를 띄우고 true. key는 놓은 줄(없으면 고른 줄) */
+  function blockLegacyMove(key: string | null = row?.key ?? null): boolean {
+    const target = key === null ? undefined : rowMap.get(key);
+    const moved = target ? describeLegacyMove(target.unitIds.map((id) => unitMap.get(id)).filter((unit): unit is UnitRow => unit !== undefined)) : null;
+    if (moved === null) return false;
+    showToast(t("assign.legacyMove.confirm"), "error");
+    return true;
+  }
+
   function pickDestination(next: Destination, use: Pick<PageDraft, "texts" | "suggestionId"> | null = null) {
+    if (blockLegacyMove()) return;
     // 보낼 곳을 다시 고르면 끌어 놓은 자리는 버린다
     setDraft({
       destination: next.kind === "link" ? { kind: "link", targetIds: addPartnerTargets(next.targetIds, writtenMap) } : next,
@@ -2465,7 +2470,7 @@ export function useAssignPage() {
       setSelNew(targetId);
       return false;
     }
-    if (!row || !canEdit) return false;
+    if (!row || !canEdit || blockLegacyMove()) return false;
     // 이 줄에 없는 언어의 New 문장도 잇는다 - 줄의 조각이 출처가 되어 번역이 된다(제품 명세 §7.7)
     const current = destination?.kind === "link" ? destination.targetIds : [];
     const isRemoving = additive && current.includes(targetId);
@@ -2872,7 +2877,7 @@ export function useAssignPage() {
   }
   /** 문장 사이·빈 칸에 놓음 - 잇기와 같은 줄 고르기 뒤 초안 적용은 관계 묶음이 온 뒤(dropPlace) */
   function applySendDrop(rowKey: string, drop: SendDrop) {
-    if ((drop.kind !== "gap" && drop.kind !== "slot") || newDocId === null) return;
+    if ((drop.kind !== "gap" && drop.kind !== "slot") || newDocId === null || blockLegacyMove(rowKey)) return;
     const destination = readSectionDestination(newDocId, drop.sectionKey);
     if (destination === null) return;
     setChecked(new Set());
@@ -2939,7 +2944,7 @@ export function useAssignPage() {
   }
   /** 템플릿 자리에 놓음 - 기본 보기 보내기와 같은 길(줄 고르기 → 관계 묶음이 온 뒤 초안 → 바로 확정). 막는 까닭이 있으면 메뉴를 그 자리 옆에 띄운다 */
   function applyTemplateDrop(rowKey: string, placement: Placement, el: HTMLElement | null) {
-    if (placement.kind !== "place" || newDocId === null) return;
+    if (placement.kind !== "place" || newDocId === null || blockLegacyMove(rowKey)) return;
     const destination = readSectionDestination(newDocId, placement.sectionKey);
     if (destination === null) return;
     const scope = '[data-testid="assign-new-tpl"]';
@@ -2969,6 +2974,7 @@ export function useAssignPage() {
   }
   /** 나무 줄에 놓음 - 그 줄을 누른 것과 같다(관계 묶음이 온 뒤 클릭과 같은 pickDestination, 자리·그 자리 메뉴 없음). New 칸의 문서는 바꾸지 않는다 */
   function applyTreeDrop(rowKey: string, destination: Destination) {
+    if (blockLegacyMove(rowKey)) return;
     setChecked(new Set());
     setCtxMenu(null);
     selectRow(rowKey, false);
@@ -3115,6 +3121,7 @@ export function useAssignPage() {
         applySendDrop(rowKey, readSendAt(point, unitIds).drop);
         return;
       }
+      if (blockLegacyMove(rowKey)) return;
       const lineRect = line.getBoundingClientRect();
       setChecked(new Set());
       setCtxMenu(null);
@@ -3540,7 +3547,6 @@ export function useAssignPage() {
     else if (key === "h") void runSave("hold");
     else if (key === "u") void runClear();
     else if (key === "delete" || key === "backspace") decideNow({ kind: "delete" });
-    else if (key === "m") setMoveAsk(true);
     else return;
     event.preventDefault();
   });
@@ -3672,11 +3678,11 @@ export function useAssignPage() {
   return {
     t, bundleId, bundle, canEdit, docs, oldDocs, oldDocIds, docViews, unitsKey, reloadData, tobe, tobeData, writtenList, identical,
     aiJobs, aiOn, aiBusy, suggestions, invalidUnitIds, readMarkStatus, readAiPlace, suggestedTargetUnits, unitMap, written, writtenMap, rows, rowMap,
-    rowOfUnit, options, labelOptions, isDrafting, hiddenPlace, leftovers, isLeftoverOpen, setLeftoverSheet, openTranslations, translationBlocked, settleTranslations, goToTranslation, ready, showSkeleton, unsourced, mode, setMode, filter, counts, foldOpen, setFoldOpen, applyFilter, foldMatch,
+    rowOfUnit, options, labelOptions, isDrafting, hiddenPlace, legacyMove, leftovers, isLeftoverOpen, setLeftoverSheet, openTranslations, translationBlocked, settleTranslations, goToTranslation, ready, showSkeleton, unsourced, mode, setMode, filter, counts, foldOpen, setFoldOpen, applyFilter, foldMatch,
     clearRowPick, activeKey, row, pickedId, spaceUnitIds, spacePickSeq, solo, setSolo, isSolo, isNewEdit, hasSolo, tocOpen, setTocOpen, tocPick, tocBlocks, checked,
     setChecked, newRemarks, setNewRemarks, menu, setMenu, joinMenu, setJoinMenu, ctxMenu, setCtxMenu, cutUnitId, focusNew,
     groupData, setDrafts, draft, editing, groupPending, savedDestination, destination, rowUnits, rowLangs, firstDecision, systemHold,
-    reasonNow, moveCode, setDraft, unsavedCount, leaveTo, setLeaveTo, rowLive, aiDest, aiWhy, isAiRow, recommendations, linkIds,
+    reasonNow, setDraft, unsavedCount, leaveTo, setLeaveTo, rowLive, aiDest, aiWhy, isAiRow, recommendations, linkIds,
     pickedGroups, saveGroupData, candidateIds, viewOf, setManualOldDoc, oldView, acceptKind, setAcceptKind, acceptDoc,
     paperModel, canPairView, isPairView, pairColumns, pairLinks, partKeys, oldDocId, splitByUnit, shapeView, shapeModel, soloUnit,
     soloUnits, cutUnit, cutLine, linkedTargets, setManualPart, activePart, isFoldEmpty, foldElsewhere, writtenDocs, composedDocs,
@@ -3693,7 +3699,7 @@ export function useAssignPage() {
     rewrapTable, unwrapAi, describeEditConfirm, pairGrip, clearToc, runCaptionRefChange, switchShapeMode, switchToPair,
     applySplitSuggestion, dismissSplitSuggestion, splitPendingIds, readPendingItem, selectNextSplit, selectNextRef, selectNextCaption,
     splitAtCut, handleOldDoubleClick, runCtx, runUnitAction, revertHeadings, planOldJoin, joinOld, renderOldActions, readReasonNeed,
-    runSave, runClear, runUndoStep, decideNow, isMoveAsk, setMoveAsk, confirmIdenticalAll, acceptAll, markNew, placeManage, pickDestination, pickNewSentence, handleNewPick, unlinkCell,
+    runSave, runClear, runUndoStep, confirmIdenticalAll, acceptAll, markNew, placeManage, pickDestination, pickNewSentence, handleNewPick, unlinkCell,
     handleJoinPick, readJoinAfter, pickJoinMenu, pickPlaceSpot, pickOwnAiLine, jumpToNew, openNewDoc, showInNew, jumpToOld,
     pickTemplateLine, fillTemplateMissing, isTemplateDrag, isOldDrag, finishPairPick, handleOldClick, handlePrimary, startEdit,
     pickRecommendation, markRecHover, revealPick, setRevealPick, done, renderPlaceLabel, listDestinationEls,

@@ -1244,20 +1244,6 @@ export function listRecentRemarks(limit = 10): Promise<RecentRemark[]> {
   return apiFetch<RecentRemark[]>(`/sop/remarks/recent?limit=${limit}`);
 }
 
-/** 외부 이동 대상 후보 - 내가 멤버인 다른 Bundle의 To-Be 문서와 전에 쓴 이동 코드 */
-export interface MoveTarget {
-  code: string;
-  title: string;
-  /** 이 코드를 가진 To-Be 문서의 Bundle 코드 - 전에 쓴 코드뿐이면 null */
-  bundle_code: string | null;
-  /** bundle = 이 Bundle에서 쓴 코드, mine = 내가 다른 Bundle에서 쓴 코드 */
-  used: "bundle" | "mine" | null;
-}
-
-export function listMoveTargets(bundleId: number, query: string): Promise<MoveTarget[]> {
-  return apiFetch<MoveTarget[]>(`/bundles/${bundleId}/move-targets?${new URLSearchParams({ q: query })}`);
-}
-
 export function listIdenticalCandidates(bundleId: number): Promise<IdenticalCandidate[]> {
   return apiFetch<IdenticalCandidate[]>(`/bundles/${bundleId}/match/identical-candidates`);
 }

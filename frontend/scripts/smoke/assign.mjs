@@ -662,27 +662,43 @@ await runStep("assign: the document dashboard counts the Old document and downlo
   check("Esc closes the dashboard", (await page.locator('[data-testid="assign-dash-panel"]').count()) === 0);
 });
 
-await runStep("assign: move picks its target doc from the dropdown", {}, async ({ page, takeShot }) => {
+// 다른 Bundle로 이동은 화면에서 없앴다(F2-R6~R8) - 전에 이동한 줄은 읽기 전용으로 보이고 배정 취소로만 풀린다
+await runStep("assign: a row moved earlier is read-only and Unassign frees it", {}, async ({ page, takeShot }) => {
+  const headers = { "X-Dev-User": "qa.member" };
+  const api = `${BASE}/api/bundles/${freshBundleId}`;
+  const getJson = async (path) => (await page.request.get(`${api}${path}`, { headers })).json();
+  const unit = (await getJson("/units?limit=1000")).items.find((item) => item.kind === "sentence" && item.status === "unassigned" && item.decision.disposition === "unassigned" && item.pair_id === null);
+  const moved = await page.request.post(`${api}/decisions/bulk`, { headers, data: { action: "move_external", reason: "", move_target_code: "SOP-QC-99999", units: [{ unit_id: unit.unit_id, revision: unit.decision.revision }] } });
+  if (!moved.ok()) throw new Error(`could not seed a moved row: ${moved.status()}`);
   await page.goto(`${BASE}/bundles/${freshBundleId}/assign`);
   await wait(page, "assign-bar");
-  for (let step = 0; step < 3; step += 1) await page.keyboard.press("j");
-  await wait(page, "assign-row-id");
-  if ((await page.locator('[data-testid="assign-pick-move"]').count()) === 0) await page.locator('[data-testid="assign-acc-move"]').click();
-  await page.locator('[data-testid="assign-pick-move"]').click();
-  // 다른 Bundle의 To-Be 문서가 추천으로 뜬다(데모 Bundle 넷 모두 qa.member가 멤버)
-  await page.locator('[data-testid="assign-move-code"]').click();
-  await page.locator('[data-testid="assign-move-code"]').fill("SOP");
-  const option = page.locator('[data-testid^="assign-move-code-option-"]:not([data-testid$="-typed"])').first();
-  await option.waitFor({ timeout: T });
-  const code = (await option.getAttribute("data-testid")).replace("assign-move-code-option-", "");
-  await takeShot("sop-assign-move-dropdown.png");
-  await option.click();
-  check("a suggested target doc fills the field", (await page.locator('[data-testid="assign-move-code"]').inputValue()) === code, code);
-  // 이동의 사유도 선택이다 - Remark 창 없이 저장된다
-  const saved = page.waitForResponse((response) => response.url().includes("/groups/save"), { timeout: T });
-  await page.locator('[data-testid="assign-primary"]').click();
-  check("move saves with the picked target", (await saved).ok());
-  check("move needs no Remark window", (await page.locator('[data-testid="assign-remark-modal"]').count()) === 0);
+  await selectRowById(page, unit.display_id);
+  await page.locator('[data-testid="assign-legacy-move"]').waitFor({ timeout: T });
+  await takeShot("sop-assign-legacy-move.png");
+  check("the moved row reads 'Moved to another document' with its number", ((await page.locator('[data-testid="assign-legacy-move"]').textContent()) ?? "").includes("SOP-QC-99999"), await page.locator('[data-testid="assign-legacy-move"]').textContent());
+  check("the moved row's Confirm is off", await page.locator('[data-testid="assign-primary"]').isDisabled());
+  check("Hold is off and H saves nothing on the moved row", (await page.locator('[data-testid="assign-hold"]').isDisabled()) && (await (async () => {
+    const saves = [];
+    const onResponse = (response) => { if (response.url().includes("/groups/save")) saves.push(response.url()); };
+    page.on("response", onResponse);
+    await page.keyboard.press("h");
+    await page.waitForTimeout(600);
+    page.off("response", onResponse);
+    return saves.length === 0 && (await page.locator('[data-testid="assign-legacy-move"]').count()) === 1;
+  })()));
+  await page.keyboard.press("m");
+  await page.waitForTimeout(300);
+  const el = page.locator(`[data-testid="assign-paper-unit-${unit.unit_id}"]`).first();
+  await el.evaluate((node) => node.scrollIntoView({ block: "center" }));
+  const box = await el.boundingBox();
+  await page.mouse.click(box.x + Math.min(40, box.width / 2), box.y + Math.min(12, box.height / 2), { button: "right" });
+  await wait(page, "assign-ctx-menu");
+  check("M opens no window and the right-click menu has no move item", (await page.locator('[data-testid="assign-move-modal"]').count()) === 0 && (await page.locator('[data-testid="assign-ctx-move"]').count()) === 0);
+  await page.keyboard.press("Escape");
+  await page.locator('[data-testid="assign-ctx-menu"]').waitFor({ state: "detached", timeout: T });
+  await page.locator('[data-testid="assign-clear"]').click();
+  await page.waitForFunction(() => document.querySelector('[data-testid="assign-row-status"]')?.getAttribute("data-tone") === "unassigned", null, { timeout: T });
+  check("Unassign frees the moved row", (await rowStatus(page)) === "Unassigned" && (await page.locator('[data-testid="assign-legacy-move"]').count()) === 0, await rowStatus(page));
 });
 
 // Old 문장 우클릭 메뉴(배정 + 문장 고치기) - 미배정 문장은 여기서 나누고 언어를 바꾸며, 배정된 문장의 고치기는 까닭과 함께 꺼져 있다

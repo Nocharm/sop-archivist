@@ -8,7 +8,7 @@
 |---|---|---|---|---|---|
 | 0 | `fix/new-edit-undo` | 합침 | v1.6.1 · f363167e | pytest 3244 + 시드 13 통과 · ruff · 스모크 1단계(화면 변경 없음) | 결과물 C의 칸 안 문장 순서는 id 순 그대로(계획 밖) |
 | 1a | `feat/hide-drafting` | 합침 | v1.6.4 · 56c50032 | pytest 3260+시드 13 · vitest 1961 · build 경고 0 · 스모크 전체 2121 통과 · 운영 빌드에서 `sopa.drafting=1` 듣지 않음 확인 | 칸 번역을 정하면 표 묶음의 확정자 · 시각을 다시 쓴다(서버 닫힘 규칙) |
-| 1b | `fix/remove-bundle-move` | 진행(11-26) | | | |
+| 1b | `fix/remove-bundle-move` | 합침 | v1.6.5 · edd65a9b | vitest 1964 · build 경고 0 · `assign:` 스모크 1117(낡은 시드로 난 1은 새 시드로 통과) | 이미 "보류 + 이동"인 줄은 확정할 수 없고 배정 취소로만 나간다 |
 | 2a | `fix/pair-spot-scroll` | 합침 | v1.6.0 · 7a863a50 | vitest 1927 · build 경고 0 · 스모크 3단계 통과(pytest 해당 없음) | 스모크는 단추 자리가 바뀐 감사(겹침)를 정식 업데이트 전에 |
 | 2b | `feat/inspector-float` | 합침 | v1.6.2 · aec15ead | vitest 1934 · build 경고 0 · `assign:` 스모크 전체 1117 통과 · 겹침 감사 장면 1120/1280/1440 | 판을 맨 위로 끌면 상단 바를 덮음(다시 끌어 내릴 수 있음), 접어도 칸 끝 빈 칸은 남음 — 거슬리면 고침 |
 | 3a | `perf/assign-measure` | 진행(11-26) | | | |
@@ -46,6 +46,9 @@
 - 1a · `smoke/assign.mjs` `PREPARE_STEP` · "first entry classifies…" → "does not classify the remaining rows"(검사 수 같음, §14) — ai_suggested 칩은 "수가 잇기 제안에서만"으로 봄
 - 1a · `smoke/*.mjs` 숨긴 기능을 쓰는 단계에 `drafting: true`만, documents 1566 · 2012와 assign 1525는 숨긴 채 도는 앞부분과 켠 새 단계로 나눔(검사 수 +1)
 - 1a · layout · contrast · overlap 감사와 manual-shots의 숨긴 화면 장면에 `drafting: true`(실행은 정식 업데이트 전에)
+- 1b · `assign-context-menu-model.test.ts:55 · 73` · `["clear","move","delete"]` → `["clear","delete"]`, `["clear","move"]` → `["clear"]` · 이동 항목이 없어짐(정한 것 4)
+- 1b · `smoke/assign.mjs:665` 이동 단계(검사 3) → "a row moved earlier is read-only and Unassign frees it"(검사 5) · 동작이 바뀜(정한 것 4)
+- 1b · `source-rules.test.ts:199` 안내 글의 "(or Combobox)"만 뺌(규칙 그대로)
 
 ## 아침에 볼 것 (사람이 정할 것 · 봐 줄 것)
 
@@ -60,3 +63,4 @@
 - 규칙 2에서 한글만 문서에 영어 문장이 하나 섞이면 배치 판정이 `ko_only` → `ko_en_separate`가 되어 짝 없는 줄이 "한 언어뿐" 수에 잡힌다(5a 검토, R2-7의 뜻 안).
 - PDF 문서 번호 · 줄표 줄머리는 앞 줄이 문장 끝일 때만 나누게 했다(계획은 늘 나눔) — 실제 PDF에서 확인.
 - 숨긴 칸에 배정된 줄에서 H(보류)를 누르거나 시스템 보류가 되면 다시 확정할 수 없다 — 배정 취소나 잇기로 나간다(설명서에 적음, 1a).
+- 이동한 줄(옛 기능)은 글자 그대로 읽기 전용으로 했다 — 보류 · 잇기 · 삭제로 바로 덮지 못하고 배정 취소부터 해야 한다. 운영의 "보류 + 이동" 줄은 배정 취소해야 검토 조건을 채운다(1b). 바로 덮게 하고 싶으면 말해 주세요.
