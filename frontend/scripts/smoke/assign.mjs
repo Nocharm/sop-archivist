@@ -2759,6 +2759,32 @@ await runStep("assign: nested table - unwrapping the work table puts the value t
   await piece.waitFor({ timeout: T });
 });
 
+// 문단 박스(쪼개기 규칙 2) - 시드 "SYNTHETIC 10 문단 박스": 한 문단에 한글 문장 둘 뒤 영어 문장 둘. 문장마다가 아니라 언어마다 박스 하나이고 둘이 짝 카드 하나다
+const PARAGRAPH_TITLE = "SYNTHETIC 10 문단 박스";
+const PARAGRAPH_BOXES = ["탱크를 비운다. 밸브를 닫는다.", "Drain the tank completely. Close the outlet valve."];
+
+await runStep("assign: paragraph boxes - one paragraph is one box per language and the two make one pair card", {}, async ({ page, takeShot }) => {
+  const headers = { "X-Dev-User": "qa.member" };
+  const bundles = await (await page.request.get(`${BASE}/api/bundles`, { headers })).json();
+  const bundle = bundles.find((item) => item.title === PARAGRAPH_TITLE);
+  check("the demo seed has the paragraph box bundle", bundle !== undefined);
+  if (!bundle) return;
+  const api = `${BASE}/api/bundles/${bundle.id}`;
+  const docs = await (await page.request.get(`${api}/documents`, { headers })).json();
+  const view = await (await page.request.get(`${api}/documents/${docs[0].id}/view`, { headers })).json();
+  const sentences = view.units.filter((unit) => unit.kind === "sentence");
+  check("the mixed paragraph is two boxes, one per language", JSON.stringify(sentences.map((unit) => [unit.text, unit.lang])) === JSON.stringify([[PARAGRAPH_BOXES[0], "ko"], [PARAGRAPH_BOXES[1], "en"]]), JSON.stringify(sentences.map((unit) => unit.text)));
+  check("the document reads as KO/EN interleaved", docs[0].language_layout === "ko_en_interleaved", docs[0].language_layout);
+  check("the two boxes are one KO/EN pair", sentences.length === 2 && sentences[0].pair_id !== null && sentences[0].pair_id === sentences[1].pair_id);
+  if (sentences.length !== 2) return;
+  await page.goto(`${BASE}/bundles/${bundle.id}/assign`);
+  const pieces = sentences.map((unit) => page.locator(`[data-testid="assign-paper-piece-${unit.id}"]`));
+  for (const piece of pieces) await piece.waitFor({ timeout: T });
+  const card = page.locator(".strip-card", { has: pieces[0] });
+  check("both boxes sit in one pair card", (await card.count()) === 1 && (await card.locator(`[data-testid="assign-paper-piece-${sentences[1].id}"]`).count()) === 1);
+  await takeShot("sop-assign-paragraph-boxes.png");
+});
+
 await runStep("assign: nested table - an inner table unwraps again and ↺ Back to table wraps only the pressed layer", {}, async ({ page }) => {
   const nested = await openNestedBundle(page);
   if (!nested) return;

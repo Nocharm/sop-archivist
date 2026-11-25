@@ -1,0 +1,8 @@
+{
+  "shape": "한글 문장 속 영어 장비 이름 · 약어 · 문서 번호",
+  "layout": null,
+  "boxes": [
+    {"text": "5. 절차", "lang": "ko", "kind": "heading", "number": "5.", "excluded": null},
+    {"text": "Biosafety Cabinet(BSC-01)의 HEPA filter를 확인한다. SOP-QC-0012에 따라 pH meter를 교정한다.", "lang": "ko", "kind": "sentence", "number": null, "excluded": null}
+  ]
+}

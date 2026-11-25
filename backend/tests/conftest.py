@@ -48,6 +48,7 @@ from app.models import (  # noqa: E402
 )
 from app.settings import settings  # noqa: E402
 from app.sop.models import Bundle, BundleDeletionRecord, EquisLookup, GuidelineVersion  # noqa: E402
+from app.sop.segment import RULE_LEGACY  # noqa: E402
 from tests.fake_ai import FakeAi, install_fake_ai  # noqa: E402
 
 
@@ -148,6 +149,16 @@ def legacy_ref_proposals(monkeypatch: pytest.MonkeyPatch) -> None:
     새 추출은 Reference 절 아래 줄만 쪼갤 때 확정하고 제안하지 않는다(test_sop_ref_section.py). 블록은 5와 6이 같다.
     """
     monkeypatch.setattr("app.sop.ingest.EXTRACTOR_VERSION", "5")
+
+
+@pytest.fixture
+def legacy_split_rule(monkeypatch: pytest.MonkeyPatch) -> None:
+    """올리는 문서를 쪼개기 규칙 1(문장마다)로 쪼갠다 — 이미 올린 문서의 길을 보는 시험용.
+
+    쪼개기를 보지 않는 시험이 합성 문서의 문장 하나를 글로 찾는다. 운영에 있는 문서는 모두 규칙 1이라 그 길의 검증이 그대로 필요하다
+    (규칙 2의 쪼개기는 test_sop_split_golden.py, 규칙 2로 끝까지 가는 길은 test_sop_e2e.py가 본다).
+    """
+    monkeypatch.setattr("app.sop.ingest.NEW_SPLIT_RULE", RULE_LEGACY)
 
 
 @pytest.fixture

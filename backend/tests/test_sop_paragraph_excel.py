@@ -3,6 +3,7 @@
 
 from io import BytesIO
 
+import pytest
 from fastapi.testclient import TestClient
 from openpyxl import load_workbook
 from openpyxl.worksheet.worksheet import Worksheet
@@ -21,6 +22,8 @@ from app.sop.paragraph_excel import (
 from app.sop.sheet_model import Sheet
 from tests.docx_factory import TINY_PNG, build_docx, make_drawing_run, make_list, numbered, p, tbl
 from tests.sop_helpers import OUTSIDER, create_bundle, find_unit, get_group_by_unit, get_view, save_group, upload
+
+pytestmark = pytest.mark.usefixtures("legacy_split_rule")
 
 NUMBERING = make_list(0, [("decimal", "%1."), ("decimal", "%1.%2")], [1])
 BODY = (

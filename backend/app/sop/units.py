@@ -1,7 +1,7 @@
 """단위 서비스 — 추출 블록을 규칙으로 쪼개 단위·판단 행·코드 짝을 쓰고, 언어 배치가 바뀌면 짝을 다시 제안하고, 커버리지를 지킨다."""
 
 import asyncio
-from collections.abc import Sequence
+from collections.abc import Collection, Mapping, Sequence
 
 from sqlalchemy import delete, func, insert, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -39,13 +39,16 @@ from app.sop.refs import (
     REF_CONFIRMED,
     REF_LANG,
     REF_SPLIT_ACTOR,
+    SENTENCE_KINDS,
     SectionLine,
     find_ref_section_lines,
     is_proposing_version,
+    list_ref_section_blocks,
     read_leading_ref_number,
 )
 from app.sop.segment import (
     NEUTRAL,
+    RULE_LEGACY,
     BlockView,
     TableView,
     UnitDraft,
@@ -119,6 +122,7 @@ async def create_initial_units(session: AsyncSession, document: Document, extrac
         document.file_format == LINE_SPLIT_FORMAT, document.side == "old",
         # 옛 추출기의 추출은 Reference 절을 확정하지 않고 글에서 제안한다(다시 쪼개도 같은 추출의 규칙을 따른다)
         not is_proposing_version(extraction.extractor_version),
+        extraction.split_rule,
     )
     if not drafts:
         return
@@ -168,17 +172,44 @@ def _build_unit_rows(
     split_lines: bool,
     shift_headings: bool = False,
     confirm_ref_sections: bool = False,
+    rule: int = RULE_LEGACY,
 ) -> tuple[list[UnitDraft], list[dict[str, object]]]:
     """블록·표 행 → 단위 초안과 INSERT 행(local_no는 1부터) — DB를 쓰지 않는 순수 계산이라 스레드에서 돌린다.
 
     shift_headings(옛 문서)면 제목답지 않은 제목 줄을 문장으로 바꾸고(F8b), 번호 없는 번역 조항의 첫 문장이 앞 조항의 번호를 물려받는다.
-    confirm_ref_sections면 Reference 절 아래 줄을 REF로 둔다(refs.find_ref_section_lines).
+    confirm_ref_sections면 Reference 절 아래 줄을 REF로 둔다(refs.find_ref_section_lines). 규칙 2는 참조 줄을 규칙 1의 줄로 먼저
+    찾아(한 문단에 줄바꿈으로 적은 참조 줄들을 잇지 않게) 그 조각을 그대로 둔 채 나머지를 잇는다(R2-6).
     """
     blocks = [BlockView(*row) for row in block_rows]
-    drafts = build_unit_drafts(
-        blocks, [TableView(*row) for row in table_rows], layout, split_lines=split_lines, shift_headings=shift_headings
-    )
+    tables = [TableView(*row) for row in table_rows]
+    by_block = {block.id: block for block in blocks}
     block_texts = {block.id: block.text for block in blocks}
+
+    def build_drafts(of: Sequence[BlockView], by_rule: int, kept: Mapping[int, Collection[int]]) -> list[UnitDraft]:
+        return build_unit_drafts(
+            of, tables, layout, split_lines=split_lines, shift_headings=shift_headings, rule=by_rule, kept=kept
+        )
+
+    def find_ref_lines(of: Sequence[UnitDraft], texts: Sequence[str]) -> list[int]:
+        section_lines = [
+            SectionLine(
+                draft.kind, text, draft.lang, by_block[draft.spans[0][0]].heading_level if draft.spans else None,
+                not draft.spans or by_block[draft.spans[0][0]].part == BODY_PART, draft.noise_kind is not None,
+            )
+            for draft, text in zip(of, texts, strict=True)
+        ]
+        return find_ref_section_lines(
+            section_lines, interleaved=layout == INTERLEAVED_LAYOUT, separate=layout == SEPARATE_LAYOUT
+        )
+
+    kept: dict[int, set[int]] = {}
+    # 규칙 1 초안은 Reference 절 블록만으로 만든다 — 200만 자 문서를 통째로 두 번 쪼개지 않게
+    if rule != RULE_LEGACY and confirm_ref_sections:
+        legacy = build_drafts(list_ref_section_blocks(blocks, tables), RULE_LEGACY, {})
+        for index in find_ref_lines(legacy, [build_unit_text(draft.spans, block_texts) for draft in legacy]):
+            for block_id, start, _ in legacy[index].spans:
+                kept.setdefault(block_id, set()).add(start)
+    drafts = build_drafts(blocks, rule, kept)
     signals = {block.id: block.signals for block in blocks if block.signals}
     rows = [
         {
@@ -206,18 +237,16 @@ def _build_unit_rows(
         rows[index].update(number_read=number, number_source=NUMBER_PAIR, number_len=0)
     if not confirm_ref_sections:
         return drafts, rows
-    by_block = {block.id: block for block in blocks}
-    section_lines = [
-        SectionLine(
-            draft.kind, str(row["text"]), draft.lang,
-            by_block[draft.spans[0][0]].heading_level if draft.spans else None,
-            not draft.spans or by_block[draft.spans[0][0]].part == BODY_PART, draft.noise_kind is not None,
-        )
-        for draft, row in zip(drafts, rows, strict=True)
-    ]
-    for index in find_ref_section_lines(
-        section_lines, interleaved=layout == INTERLEAVED_LAYOUT, separate=layout == SEPARATE_LAYOUT
-    ):
+    if rule == RULE_LEGACY:
+        ref_lines = find_ref_lines(drafts, [str(row["text"]) for row in rows])
+    else:
+        # 번호 칸이 앞에 붙은 줄은 둘째 범위가 글이다
+        ref_lines = [
+            index for index, draft in enumerate(drafts)
+            if draft.kind in SENTENCE_KINDS and draft.noise_kind is None
+            and any(start in kept.get(block_id, ()) for block_id, start, _ in draft.spans[:2])
+        ]
+    for index in ref_lines:
         rows[index]["lang"] = REF_LANG
     return drafts, rows
 

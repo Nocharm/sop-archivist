@@ -57,7 +57,7 @@ from tests.test_sop_outputs import _put_order
 from tests.test_sop_pair_settle import EN_HEAD, KO_HEAD, _dispose, _setup_pair, _setup_unpaired
 from tests.test_sop_pairs import _create as _create_pair
 
-pytestmark = pytest.mark.usefixtures("clean_sop")
+pytestmark = pytest.mark.usefixtures("clean_sop", "legacy_split_rule")
 
 OLD_NAME = "SYNTHETIC_OLD-1_Undo.docx"
 STORAGE = "합성 시료는 4 ℃에서 보관한다."

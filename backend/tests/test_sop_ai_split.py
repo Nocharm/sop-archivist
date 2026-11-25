@@ -36,7 +36,7 @@ from tests.docx_factory import p, tbl
 from tests.fake_ai import FakeAi
 from tests.sop_helpers import AUTHOR, REVIEWER, assign_as_is, find_unit, get_view
 
-pytestmark = pytest.mark.usefixtures("clean_sop", "clean_ai_jobs")
+pytestmark = pytest.mark.usefixtures("clean_sop", "clean_ai_jobs", "legacy_split_rule")
 
 # 합성 복합 문장 — 문장 끝 표시가 가운데 없어 규칙 쪼개기가 한 단위로 둔다
 PART_1 = "합성 밸브의 상태를 확인하고"

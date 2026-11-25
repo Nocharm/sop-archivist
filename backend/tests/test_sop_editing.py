@@ -39,7 +39,7 @@ from tests.sop_helpers import (
     upload,
 )
 
-pytestmark = pytest.mark.usefixtures("clean_sop")
+pytestmark = pytest.mark.usefixtures("clean_sop", "legacy_split_rule")
 
 OLD_NAME = "SYNTHETIC_OLD-1_Editing.docx"
 NEW_NAME = "SYNTHETIC_SOP-E_Editing.docx"

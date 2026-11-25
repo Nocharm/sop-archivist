@@ -1,0 +1,32 @@
+{
+  "shape": "한/영 따로 문서 — 반쪽마다 1장 앞",
+  "layout": "ko_en_separate",
+  "boxes": [
+    {"text": "합성 표준 절차서", "lang": "ko", "kind": "sentence", "number": null, "excluded": "front"},
+    {"text": "", "lang": "neutral", "kind": "table", "number": null, "excluded": "front"},
+    {"text": "승인", "lang": "ko", "kind": "cell_sentence", "number": null, "excluded": "front"},
+    {"text": "홍보팀", "lang": "ko", "kind": "cell_sentence", "number": null, "excluded": "front"},
+    {"text": "1. 목적 ........ 3", "lang": "ko", "kind": "sentence", "number": null, "excluded": "toc"},
+    {"text": "2. 범위 ........ 3", "lang": "ko", "kind": "sentence", "number": null, "excluded": "toc"},
+    {"text": "1. 목적", "lang": "ko", "kind": "heading", "number": "1.", "excluded": null},
+    {"text": "탱크 세척 방법을 정한다.", "lang": "ko", "kind": "sentence", "number": null, "excluded": null},
+    {"text": "2. 범위", "lang": "ko", "kind": "heading", "number": "2.", "excluded": null},
+    {"text": "합성 공정에 적용한다.", "lang": "ko", "kind": "sentence", "number": null, "excluded": null},
+    {"text": "첨부 1 기록지", "lang": "ko", "kind": "sentence", "number": null, "excluded": null},
+    {"text": "", "lang": "neutral", "kind": "table", "number": null, "excluded": null},
+    {"text": "항목", "lang": "ko", "kind": "cell_sentence", "number": null, "excluded": null},
+    {"text": "값", "lang": "ko", "kind": "cell_sentence", "number": null, "excluded": null},
+    {"text": "온도", "lang": "ko", "kind": "cell_sentence", "number": null, "excluded": null},
+    {"text": "측정", "lang": "ko", "kind": "cell_sentence", "number": null, "excluded": null},
+    {"text": "Synthetic Standard Procedure", "lang": "en", "kind": "sentence", "number": null, "excluded": "front"},
+    {"text": "", "lang": "neutral", "kind": "table", "number": null, "excluded": "front"},
+    {"text": "Approved", "lang": "en", "kind": "cell_sentence", "number": null, "excluded": "front"},
+    {"text": "Synthetic team", "lang": "en", "kind": "cell_sentence", "number": null, "excluded": "front"},
+    {"text": "1. Purpose ........ 3", "lang": "en", "kind": "sentence", "number": null, "excluded": "toc"},
+    {"text": "2. Scope ........ 3", "lang": "en", "kind": "sentence", "number": null, "excluded": "toc"},
+    {"text": "1. Purpose", "lang": "en", "kind": "heading", "number": "1.", "excluded": null},
+    {"text": "This procedure defines how to clean the tank.", "lang": "en", "kind": "sentence", "number": null, "excluded": null},
+    {"text": "2. Scope", "lang": "en", "kind": "heading", "number": "2.", "excluded": null},
+    {"text": "It applies to the synthetic process.", "lang": "en", "kind": "sentence", "number": null, "excluded": null}
+  ]
+}
