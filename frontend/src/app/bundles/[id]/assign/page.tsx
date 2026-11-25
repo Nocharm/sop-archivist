@@ -70,7 +70,7 @@ export default function AssignPage() {
   const { lang: uiLang } = useI18n();
   const {
     t, bundleId, bundle, canEdit, docs, oldDocs, docViews, unitsKey, reloadData, tobe, tobeData, writtenList, identical,
-    readMarkStatus, readAiPlace, suggestedTargetUnits, unitMap, written, writtenMap, rows, rowMap, rowOfUnit, options, ready, showSkeleton, unsourced,
+    readMarkStatus, readAiPlace, suggestedTargetUnits, unitMap, written, writtenMap, rows, rowMap, rowOfUnit, labelOptions, ready, showSkeleton, unsourced,
     mode, setMode, foldOpen, setFoldOpen, foldMatch, clearRowPick, activeKey, row, pickedId, spaceUnitIds, spacePickSeq, solo, setSolo, isSolo, isNewEdit, tocOpen, setTocOpen,
     tocPick, checked, setChecked, newRemarks, setNewRemarks, menu, setMenu, joinMenu, setJoinMenu, ctxMenu, setCtxMenu, focusNew,
     setDrafts, draft, groupPending, savedDestination, destination, rowUnits, reasonNow, setDraft, unsavedCount, leaveTo, setLeaveTo,
@@ -451,7 +451,7 @@ export default function AssignPage() {
   // Space 미리보기에 덮어 그릴 확정 전 고른 곳 - 새 SOP 칸 · WI 자리를 골랐고 아직 저장하지 않았을 때만(값은 서버에 보내지 않는다)
   const pendingPlace = draft.destination?.kind === "slot" || draft.destination?.kind === "slot_heading" || draft.destination?.kind === "step" ? draft.destination : null;
   const pendingDoc = pendingPlace ? (tobeData?.docs ?? []).find((doc) => doc.id === pendingPlace.docId) : undefined;
-  const pendingOption = pendingPlace ? options.find((option) => option.id === getDestinationId(pendingPlace)) : undefined;
+  const pendingOption = pendingPlace ? labelOptions.find((option) => option.id === getDestinationId(pendingPlace)) : undefined;
   // 문장마다의 변경 종류 - 결정 칸의 표시와 같은 규칙(구조 종류가 먼저, 아니면 글 비교 "=" / "수정")
   const readPendingChange = (slot: (typeof slots)[number]): ChangeType => readSlotKind(slot, slots) ?? previewSlotChange(slot, draft.texts[slot.key]);
   const isHeadingPick = pendingPlace?.kind === "slot_heading" || slots.length === 0;
@@ -551,6 +551,7 @@ export default function AssignPage() {
                       stats={docDashboard}
                       bundleLine={{ done, total: rows.length, refs: refPendingIds.length, captions: captionPendingKeys.length }}
                       onOpenDoc={openNewDoc}
+                      isDocOpen={isNewDocOpen}
                     />
                   ) : undefined
                 }

@@ -13,6 +13,7 @@ import { Tooltip } from "@/components/ui/tooltip";
 import type { TargetDoc, TargetDocType, ToBe, WrittenSentence } from "@/lib/api-sop";
 import { getDestinationId, isPlaceOption, type Destination, type TreeRow } from "@/lib/classify-model";
 import { checkNewDoc, getDocRemoveBlock, getStepRemoveBlock, listParentCodes, type NewDocDraft } from "@/lib/destination-manage-model";
+import { useDraftingOn } from "@/lib/drafting";
 import { useI18n } from "@/lib/i18n";
 
 /** 지우기 단추를 한 번 누른 뒤 다시 누르기를 기다리는 시간(ms) - 지나면 처음으로 돌아간다 */
@@ -66,6 +67,7 @@ function handleFormKey(event: KeyboardEvent, onSubmit: () => void, onCancel: () 
 
 export function DestinationTree({ written, rows: treeRows, tobeHref, onPickLink, onPickPlace, manage }: DestinationTreeProps) {
   const { t } = useI18n();
+  const isDrafting = useDraftingOn() === true;
   const rootRef = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState<Set<string>>(new Set());
   const toggle = (key: string) => setOpen((prev) => (prev.has(key) ? new Set([...prev].filter((item) => item !== key)) : new Set([...prev, key])));
@@ -289,7 +291,7 @@ export function DestinationTree({ written, rows: treeRows, tobeHref, onPickLink,
   if (writtenDocs.length === 0 && placeDocs.length === 0) {
     return (
       <div ref={rootRef} className="grid gap-1.5 px-3 py-4 text-[13px] leading-5 text-ink-2" data-testid="assign-tree-empty">
-        <p>{t("assign.tree.empty")}</p>
+        <p>{t(isDrafting ? "assign.tree.empty" : "assign.newEmpty.body")}</p>
         <Link href={tobeHref} className="text-link" data-testid="assign-tree-open-tobe">
           {t("assign.openTobe")}
         </Link>
