@@ -14,9 +14,9 @@
 | 3a | `perf/assign-measure` | 합침 | (번호는 다음 푸시에 함께) 1aaa2de0 | pytest+시드 · vitest 1961 · ruff(화면 변경 없음, 스모크 해당 없음) | 결과 문서(T3)는 3b 앞뒤를 잰 뒤 |
 | 3b | `fix/assign-command-queue` | 합침 | v1.6.8 · 278c271d | vitest 2071 · build 경고 0 · `assign:` 스모크 1144(새 단계의 경합 하나는 응답을 기다리게 고쳐 통과) | 배정 취소 응답에 새 revision이 없어 취소 직후 같은 박스에 이어 누르면 그 단위만 받은 값을 씀 |
 | 3c | `fix/assign-instant-motion` | 합침 | v1.6.9 · a4e02416 | vitest 2092 · build 경고 0 · `assign:` 스모크 전체 1164 통과 | 응답 뒤 처리에서 던지면 걷은 표 선이 잠깐 거꾸로 돌아 보일 수 있음(자료는 맞음) |
-| 3d | `perf/assign-filter-chunks` | 진행(11-26) | | | |
+| 3d | `perf/assign-filter-chunks` | 합침 | v1.6.10 · 9fe9f04b | vitest 2138 · build 경고 0 · `assign:` 스모크 1163 + 흔들린 1단계는 혼자 4번 통과 | 1,050박스로는 재지 않음(289박스) |
 | 3e | `perf/assign-number-input` | 건너뜀 |  | 번호 칸 5글자 CPU 4배 가운데 값 25ms(기준 100ms) | 조건(100ms 초과)이 안 됨 — 브랜치를 만들지 않음 |
-| 4a | `fix/assign-enter` | 대기 | | | |
+| 4a | `fix/assign-enter` | 진행(11-26) | | | |
 | 4b | `feat/assign-keymap` | 대기 | | | |
 | 4c | `feat/assign-merge-keys` | 대기 | | | |
 | 4d | `feat/number-cell-buttons` | 합침 | v1.6.7 · 3670d20c | vitest 1969 · build 경고 0 · `assign:` 스모크 전체 통과(5c와 합친 트리) | IME 조합 중 Enter는 전과 같음(범위 밖), 번호 칸 단계 둘은 앞 단계에 기대어 혼자 돌리면 실패(dev에서도 같음) |
