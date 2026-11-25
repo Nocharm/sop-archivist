@@ -309,6 +309,43 @@ describe("what changes with every key", () => {
   });
 });
 
+describe("what a screen lays over the boxes", () => {
+  type Overlay = NonNullable<Strips["overlay"]>;
+  /** 박스마다 얹은 글 하나 - 키도 그 글 */
+  const overlay = (marks: Record<number, string>, folded: number[] = []): Overlay => ({
+    isFolded: (id) => folded.includes(id),
+    keyOf: (ids) => [...ids].flatMap((id) => (marks[id] || folded.includes(id) ? `${id}:${marks[id]}:${folded.includes(id)}` : [])).join(";"),
+    boxProps: (id) => (marks[id] ? { attrs: { "data-state": marks[id] } } : null),
+    renderTop: () => null,
+    renderFolded: () => null,
+  });
+  const readState = (id: number) => pieceOf(id)?.getAttribute("data-state") ?? null;
+
+  it("leaves the far chunks alone when a box near by changes", async () => {
+    await render({ overlay: overlay({ 2: "a", 150: "x" }) }, 1);
+    await render({ overlay: overlay({ 2: "b", 150: "x" }) }, 1);
+    expect(listFar()).toEqual([]);
+    expect(readState(2)).toBe("b");
+  });
+
+  it("draws only the far chunk whose own box changed, and shows the change", async () => {
+    await render({ overlay: overlay({ 150: "x" }) }, 1);
+    await render({ overlay: overlay({ 150: "y" }) }, 1);
+    expect(listFar()).toEqual(FOURTH);
+    expect(readState(150)).toBe("y");
+    await render({ overlay: overlay({}) }, 1);
+    expect(readState(150)).toBeNull();
+  });
+
+  it("folds and unfolds a far card", async () => {
+    await render({ overlay: overlay({}) }, 1);
+    await render({ overlay: overlay({}, [150]) }, 1);
+    expect(pieceOf(150)).toBeNull();
+    await render({ overlay: overlay({}) }, 1);
+    expect(pieceOf(150)).not.toBeNull();
+  });
+});
+
 describe("automatically deleted blocks in a far chunk", () => {
   type Noise = NonNullable<Strips["noise"]>;
   const noise = (over: Partial<Noise> = {}): Noise => ({ canEdit: true, busy: false, onClear: () => undefined, onReason: () => undefined, open: new Set(), selected: null, onToggle: () => undefined, onPick: () => undefined, ...over });

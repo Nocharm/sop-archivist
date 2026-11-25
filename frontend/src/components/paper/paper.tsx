@@ -12,7 +12,7 @@ import { BundleHead } from "@/components/paper/bundle-head";
 import { FigureImage } from "@/components/paper/figure-image";
 import { LangToken } from "@/components/paper/lang-token";
 import { NumberCell, type NumberEdit } from "@/components/paper/number-cell";
-import { StripBox } from "@/components/paper/strip-box";
+import { StripBox, type StripAttrs } from "@/components/paper/strip-box";
 import { StripLead, STRIP_LEAD_EXTRA } from "@/components/paper/strip-lead";
 import { UnitStatusChip } from "@/components/status";
 import { getMorphClassName } from "@/components/ui/morph-button";
@@ -145,6 +145,11 @@ interface PaperChunkProps {
  * 먼 덩어리는 화면 밖이라 지난 모습이 보이지 않고, 가까워지면(live) 그 그리기에서 맞춘다. 줄은 DOM에 그대로 있어 찾기(Ctrl+F)·줄 데려오기·누르기(용지가 위임으로 듣는다)는 지금과 같다.
  * 덩어리 상자는 브라우저도 화면 밖이면 통째로 건너뛴다(CSS .strip-chunk content-visibility)
  */
+/** 얼리기는 이미 먼 덩어리만 - 가까웠다가 멀어지는 그리기는 한 번 더 그려 그때의 상태(고름 풀림 등)를 담고 언다 */
+export function isChunkFrozen(prev: PaperChunkProps, next: PaperChunkProps): boolean {
+  return !prev.live && !next.live && prev.deps.length === next.deps.length && prev.deps.every((value, index) => value === next.deps[index]);
+}
+
 const PaperChunk = memo(
   function PaperChunk({ isFold, render }: PaperChunkProps) {
     return (
@@ -153,8 +158,7 @@ const PaperChunk = memo(
       </div>
     );
   },
-  // 얼리기는 이미 먼 덩어리만 - 가까웠다가 멀어지는 그리기는 한 번 더 그려 그때의 상태(고름 풀림 등)를 담고 언다
-  (prev, next) => !prev.live && !next.live && prev.deps.length === next.deps.length && prev.deps.every((value, index) => value === next.deps[index]),
+  isChunkFrozen,
 );
 
 /** 용지를 굴리는 가장 가까운 조상 - 없으면 창 */
@@ -189,6 +193,31 @@ export interface PaperCut {
 /** 나눌 선을 끄는 자리 - 고른 단위 안이면 블록 위치, 단위 밖이면 어느 쪽으로 벗어났는지 */
 export type CutDragPos = { blockId: number; offset: number } | "start" | "end";
 
+/**
+ * 박스 위에 화면이 얹는 표시(이미 쓴 New 문서, components/assign/new-paper) - 모두 Unit마다의 값이고 용지는 그 뜻을 모른다.
+ * 여기서 그리는 값은 빠짐없이 keyOf의 글에 든다 - 화면에서 먼 덩어리는 이 글이 바뀔 때만 다시 그린다
+ */
+export interface PaperOverlay {
+  /** 접혔다 - 카드의 모든 Unit이 접히면 카드 대신 renderFolded */
+  isFolded: (unitId: number) => boolean;
+  /** 이 Unit들에 얹은 것 전부를 이은 글 - 같으면 같은 모습 */
+  keyOf: (unitIds: ReadonlySet<number>) => string;
+  /** 문장 박스 · 칸 조각에 더할 class · 속성과 testid - 얹을 것이 없으면 null */
+  boxProps: (unitId: number) => { className?: string; attrs?: StripAttrs; testId?: string } | null;
+  /** 줄 상자의 속성 */
+  rowAttrs?: (unitId: number) => StripAttrs | undefined;
+  /** 글 위 칩 줄 */
+  renderTop: (unitId: number) => ReactNode;
+  /** 글 아래 */
+  renderFoot?: (unitId: number) => ReactNode;
+  /** 접힌 카드의 자리 - 띠 하나 또는 null */
+  renderFolded?: (unitIds: readonly number[]) => ReactNode;
+  /** 글 감싸개의 속성 - 없으면 감싸지 않는다 */
+  textProps?: (unitId: number) => StripAttrs | undefined;
+  /** 올리면 보일 까닭(data-tip) - 표는 머리 줄에(칸 위에서는 뜨지 않게) */
+  readWhy?: (unitId: number) => string | null;
+}
+
 interface PaperProps {
   model: PaperModel;
   /** 이 용지에 그릴 것 - 주면 그 한 쪽만(Split의 탭·쪽), 없으면 머리말·본문·꼬리말을 한 장에 */
@@ -218,6 +247,8 @@ interface PaperProps {
   testId: string;
   /** 용지 자체의 testid - 한 화면에 용지가 여럿일 때(없으면 testId) */
   sheetTestId?: string;
+  /** 뿌리 .pg에 더할 class */
+  pageClassName?: string;
   /** 단위마다 종이 조각으로, 앞에 태그, 끝에 표시 */
   strips?: {
     /** Split - 조각 사이의 묶기(합치기냐 한/영 짝이냐는 plan이 고른다). 없으면 틈만 둔다(Assign) */
@@ -270,6 +301,8 @@ interface PaperProps {
     pairGrip?: { isAllowed: (unitId: number) => boolean };
     /** Assign 그림 탭 - 그림 카드 줄 끝 단추(위치 보기 · 지우기, 호버 · 포커스 때 보인다) */
     figureCard?: { renderActions: (unitId: number) => ReactNode };
+    /** 박스 위에 화면이 얹는 표시 - 없으면 마크업이 그대로다 */
+    overlay?: PaperOverlay;
   };
   /** strips에서 고른 조각의 글 바로 아래 줄(확인·짝 풀기 등 단추) - 조각 상자가 펼쳐지며 밀려 내려오고, 고름이 옮겨 가면 접힌다 */
   renderUnitActions?: (unitId: number) => ReactNode;
@@ -353,6 +386,7 @@ export function Paper({
   figureSource,
   testId,
   sheetTestId,
+  pageClassName,
   strips,
   renderUnitActions,
   renderAtCut,
@@ -396,6 +430,7 @@ export function Paper({
   const [isDragging, setIsDragging] = useState(false);
   const tip = useDelegatedTip();
   const hasStrips = strips !== undefined;
+  const overlay = strips?.overlay;
   // 단추 줄을 그리는 조각 - 지금 고른 것과 바로 전에 고른 것(접히는 동안). 수천 조각마다 접기 부품을 두지 않는다
   const [actionIds, setActionIds] = useState({ current: selectedId, previous: null as number | null });
   if (actionIds.current !== selectedId) setActionIds({ current: selectedId, previous: actionIds.current });
@@ -924,7 +959,7 @@ export function Paper({
         data-dir={pairHint.dir}
         aria-label={`${label} - ${t("paper.pairHint.go")}`}
         data-testid={`${testId}-pair-hint-${unitId}`}
-        data-target={pairHint.targetUnitId}
+        data-hint-target={pairHint.targetUnitId}
         onClick={(event) => {
           event.stopPropagation();
           if (onPeek) handlePairHintPress(() => onPeek(pairHint), () => onGo(pairHint.targetUnitId));
@@ -1090,6 +1125,25 @@ export function Paper({
     );
   }
 
+  function readOverlayBox(unitId: number | null | undefined) {
+    return unitId === null || unitId === undefined ? null : (overlay?.boxProps(unitId) ?? null);
+  }
+
+  function readOverlayWhy(unitId: number | null | undefined): string | undefined {
+    return unitId === null || unitId === undefined ? undefined : (overlay?.readWhy?.(unitId) ?? undefined);
+  }
+
+  /** 얹기의 글 감싸개 - 없으면 글 그대로 */
+  function wrapText(unitId: number | null | undefined, text: ReactNode): ReactNode {
+    const attrs = unitId === null || unitId === undefined ? undefined : overlay?.textProps?.(unitId);
+    return attrs ? <div {...attrs}>{text}</div> : text;
+  }
+
+  /** 카드의 모든 줄이 접혔나 */
+  function isFoldedCard(rows: readonly PaperRow[]): boolean {
+    return overlay !== undefined && rows.every((row) => overlay.isFolded(readRowUnitId(row) ?? -1));
+  }
+
   /** 표 칸 - 칸 문장마다 작은 조각으로 나누고 같은 칸의 이웃 조각 사이에 합치기를 둔다 */
   function renderCell(cell: ViewBlock): ReactNode {
     if (!strips) return <p data-block={cell.id}>{renderBlockText(cell)}</p>;
@@ -1099,11 +1153,12 @@ export function Paper({
       if (row.type !== "piece") return null;
       const unit = row.unitId === null ? undefined : model.units.get(row.unitId);
       const gapPills = index > 0 ? renderGapPills(rows[index - 1], row) : null;
+      const box = readOverlayBox(unit?.id);
       return (
         <Fragment key={row.key}>
           {index > 0 && <div className="cell-gap">{gapPills ?? renderMerge(rows[index - 1], row)}</div>}
           <div
-            className="cell-piece"
+            className={box?.className ? `cell-piece ${box.className}` : "cell-piece"}
             // 풀기 전환(useUnwrapMotion)이 칸 글을 벗긴 뒤의 문장 줄과 잇는 키 - 같은 블록 · 같은 시작 자리(readFlipKey)
             data-flip-key={`${cell.id}:${row.parts[0].segments[0]?.start ?? 0}`}
             data-strip-unit={unit?.id}
@@ -1111,11 +1166,15 @@ export function Paper({
             data-mate={unit !== undefined && isMate(unit.id) ? "" : undefined}
             data-partner={unit !== undefined && partnerIds?.has(unit.id) ? "" : undefined}
             data-pending={readPendingMark(unit?.id)}
-            data-testid={unit ? `${testId}-piece-${unit.id}` : undefined}
+            data-tip={readOverlayWhy(unit?.id)}
+            {...box?.attrs}
+            data-testid={box?.testId ?? (unit ? `${testId}-piece-${unit.id}` : undefined)}
           >
+            {unit !== undefined && overlay?.renderTop(unit.id)}
             {renderMarks(unit, false, "cell-marks")}
-            <p data-block={cell.id}>{row.parts[0].segments.map((segment, at) => renderSegment(cell, segment, at))}</p>
+            {wrapText(unit?.id, <p data-block={cell.id}>{row.parts[0].segments.map((segment, at) => renderSegment(cell, segment, at))}</p>)}
             {renderActions(unit?.id)}
+            {unit !== undefined && overlay?.renderFoot?.(unit.id)}
             {unit !== undefined && renderPendingPills((place) => place.at === "box" && place.unitId === unit.id)}
             {renderWaitChip(unit?.id)}
           </div>
@@ -1209,10 +1268,10 @@ export function Paper({
     return rows;
   }
 
-  function renderTable(item: Extract<PaperItem, { type: "table" }>, head: ReactNode = null, hiddenRows: ReadonlySet<number> = new Set()): ReactNode {
+  function renderTable(item: Extract<PaperItem, { type: "table" }>, head: ReactNode = null, hiddenRows: ReadonlySet<number> = new Set(), headTip?: string): ReactNode {
     return (
       <div className="grid grid-cols-[minmax(0,1fr)] gap-1">
-        {head !== null && <div data-unwrap-leave="">{head}</div>}
+        {head !== null && <div data-unwrap-leave="" data-tip={headTip}>{head}</div>}
         {/* 가로 스크롤은 표만 - 조각 상자가 스크롤하면 위 테두리의 종류 표시가 잘린다 */}
         <div className="ptbl-scroll">
           {/* 표 벗기기 · 다시 표로 때 표 선이 옅어지고(나타나고) 칸 글은 남아 미끄러진다(F10) */}
@@ -1318,6 +1377,8 @@ export function Paper({
     // 벗긴 표의 줄은 왼쪽 세로선 하나(F1), 표 줄과 벗긴 줄은 풀기 전환이 바꾸는 곳(data-unwrap-scope)이다
     const unwrapTable = getRowUnwrapTable(row, model.unwrapped, model.tables);
     const scopeTable = row.type === "table" ? row.item.table.id : unwrapTable;
+    const box = readOverlayBox(unitId);
+    const why = readOverlayWhy(unitId);
     return (
       <StripBox
         key={row.key}
@@ -1326,7 +1387,10 @@ export function Paper({
           "data-unwrap-scope": scopeTable === null ? undefined : `t${scopeTable}`,
           // 표 줄은 키를 달지 않는다 - 안의 칸 조각이 저마다 키를 단다(키 안에 키를 두지 않는다)
           "data-flip-key": row.type === "piece" ? readFlipKey(row, unit) : row.type === "figure" ? `f${row.block.id}` : undefined,
+          ...(unitId === null ? undefined : overlay?.rowAttrs?.(unitId)),
         }}
+        boxClassName={box?.className ? `strip ${box.className}` : undefined}
+        chips={unitId !== null && overlay?.renderTop(unitId)}
         before={unwrapTable !== null && renderRail(width)}
         lead={unit ? renderLead(unit, section, width, bracket) : null}
         leadWidth={width}
@@ -1341,7 +1405,9 @@ export function Paper({
           "data-drag-box": dragBoxes && unitId !== null && !isLocked(unitId) ? "" : undefined,
           "data-pending": readPendingMark(unitId),
           "data-unwrap-ai-moved": unitId !== null && unwrapAiMoves.get(unitId)?.moved ? "" : undefined,
-          "data-testid": `${testId}-piece-${unitId ?? row.key}`,
+          "data-tip": row.type === "table" ? undefined : why,
+          ...box?.attrs,
+          "data-testid": box?.testId ?? `${testId}-piece-${unitId ?? row.key}`,
         }}
       >
           {unit !== undefined && (renderUnwrapGrip(unit) ?? renderPairGrip(unit))}
@@ -1353,13 +1419,13 @@ export function Paper({
             </div>
           )}
           {row.type === "table"
-            ? renderTable(row.item, renderBundleHead(row, unit).head, listLiftedRows(row.item, row.captions ?? []))
+            ? renderTable(row.item, renderBundleHead(row, unit).head, listLiftedRows(row.item, row.captions ?? []), why)
             : row.type === "figure"
               ? (() => {
                   const { head, slot } = renderBundleHead(row, unit);
                   return renderFigure(row.block, head, (row.captions?.length ?? 0) > 0 || row.block.text.trim() === "", slot);
                 })()
-              : row.parts.map((part, partIndex) => {
+              : wrapText(unitId, row.parts.map((part, partIndex) => {
                   const skip = partIndex === 0 ? readHiddenPrefix(part.block, unit) : 0;
                   // 번호 칸으로 간 번호만 든 칸 블록 - 빈 줄을 두지 않는다
                   if (skip > 0 && part.segments.every((segment) => segment.end <= skip)) return null;
@@ -1371,9 +1437,10 @@ export function Paper({
                       {part.segments.map((segment, index) => renderSegment(part.block, segment, index, skip))}
                     </p>
                   );
-                })}
+                }))}
           {row.type === "figure" && unit !== undefined && strips?.figureCard?.renderActions(unit.id)}
           {renderActions(unit?.id)}
+          {unit !== undefined && overlay?.renderFoot?.(unit.id)}
           {foot}
           {unit !== undefined && unit.id === selectedId && renderPairHint(unit.id)}
           {renderPendingPills((place) => (place.at === "box" && place.unitId === unitId) || (place.at === "table" && row.type === "table" && place.tableId === row.item.table.id))}
@@ -1701,6 +1768,7 @@ export function Paper({
     const renderCards = (group: CardGroup) =>
       group.cards.map((card, offset) => {
         const index = group.start + offset;
+        if (isFoldedCard(card)) return <Fragment key={card[0].key}>{overlay?.renderFolded?.(card.map((row) => readRowUnitId(row) ?? -1))}</Fragment>;
         return (
           <Fragment key={card[0].key}>
             {spot?.marker && spot.marker.afterKey === null && index === 0 && spot.marker.node}
@@ -1721,7 +1789,7 @@ export function Paper({
       <PaperChunk
         key={key}
         live={nearChunks === null || (chunk.index >= nearChunks.from && chunk.index <= nearChunks.to) || liveChunkIds.has(chunk.index)}
-        deps={[...own, t, testId, dragBoxes, pickWholeBundle, strips?.noise?.busy, strips?.noise?.canEdit, shiftGroups, strips?.headingShift?.busy, strips?.headingShift?.canRevert, unwrapHeads, strips?.unwrap?.busy, strips?.unwrap?.canRewrap, strips?.unwrap?.ai?.enabled, strips?.unwrap?.ai?.busy, unwrapAiPreviews, unwrapOrders, unwrapAiMoves, chunkPending[chunk.index], chunkDeleted[chunk.index], chunkNumbers[chunk.index], chunkNoise[chunk.index]]}
+        deps={[...own, t, testId, dragBoxes, pickWholeBundle, strips?.noise?.busy, strips?.noise?.canEdit, shiftGroups, strips?.headingShift?.busy, strips?.headingShift?.canRevert, unwrapHeads, strips?.unwrap?.busy, strips?.unwrap?.canRewrap, strips?.unwrap?.ai?.enabled, strips?.unwrap?.ai?.busy, unwrapAiPreviews, unwrapOrders, unwrapAiMoves, chunkPending[chunk.index], chunkDeleted[chunk.index], chunkNumbers[chunk.index], chunkNoise[chunk.index], overlay ? overlay.keyOf(chunk.unitIds) : ""]}
         isFold={hasFold}
         render={render}
       />
@@ -1915,7 +1983,7 @@ export function Paper({
     <div className="sheet" data-testid={sheetTestId ?? testId}>
       <div
         ref={pageRef}
-        className="pg"
+        className={pageClassName ? `pg ${pageClassName}` : "pg"}
         data-strips={strips ? "" : undefined}
         data-whole-bundle={pickWholeBundle ? "" : undefined}
         data-dragging={isDragging ? "" : undefined}
