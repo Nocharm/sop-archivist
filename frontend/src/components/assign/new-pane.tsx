@@ -38,6 +38,7 @@ import { ViewSwitch } from "@/components/ui/view-switch";
 import type { BundleCell, ComposedDoc, WrittenSentence } from "@/lib/api-sop";
 import type { DraftLine } from "@/lib/assign-drop-model";
 import type { PlaceEdit } from "@/lib/c-edit-model";
+import { isMousePress } from "@/lib/assign-key-target";
 import { readCaretPoint } from "@/lib/caret-point";
 import { diffRows, getNewRowKey, isComposedRow, isWrittenRow, readSectionNumber, type ComposedHead, type ComposedStrips, type NewPaneRow, type SectionMark } from "@/lib/composed-model";
 import { useComposedGrip } from "@/lib/use-composed-grip";
@@ -54,7 +55,7 @@ export interface NewPlaceSpots {
   /** AI 제안 줄 - mine은 고른 줄의 제안(누르면 그 AI 추천을 고른 것과 같다), other는 다른 줄의 제안(누를 수 없고 올리면 aiOtherTip) */
   aiLines: ReadonlyMap<number, "mine" | "other">;
   aiOtherTip: string;
-  onPickAi: (targetId: number) => void;
+  onPickAi: (targetId: number, isMouse: boolean) => void;
 }
 
 interface NewPaneProps {
@@ -615,7 +616,7 @@ export function NewPane(props: NewPaneProps) {
                   {text}
                 </button>
               ) : props.place?.aiLines.get(row.target_id) === "mine" ? (
-                <button type="button" className="new-hit" data-testid={`assign-new-ai-pick-${row.target_id}`} onClick={() => props.place?.onPickAi(row.target_id)}>
+                <button type="button" className="new-hit" data-testid={`assign-new-ai-pick-${row.target_id}`} onClick={(event) => props.place?.onPickAi(row.target_id, isMousePress(event))}>
                   {text}
                 </button>
               ) : (

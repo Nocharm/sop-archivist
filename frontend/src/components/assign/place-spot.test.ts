@@ -1,3 +1,4 @@
+import type { KeyboardEvent, MouseEvent } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { getSpotAttrs, type PlaceSpotView } from "@/components/assign/place-spot";
 
@@ -21,5 +22,28 @@ describe("getSpotAttrs", () => {
     const attrs = getSpotAttrs({ ...base, picked: true });
     expect(attrs).toMatchObject({ role: "button", tabIndex: 0, "aria-pressed": true, "data-place": "open" });
     expect(attrs["aria-disabled"]).toBeUndefined();
+  });
+
+  it("takes Space but leaves Enter to the screen's confirm", () => {
+    const onPick = vi.fn();
+    const attrs = getSpotAttrs({ ...base, onPick });
+    const press = (key: string) => {
+      const preventDefault = vi.fn();
+      attrs.onKeyDown?.({ key, target: null, currentTarget: null, preventDefault } as unknown as KeyboardEvent<HTMLElement>);
+      return preventDefault;
+    };
+    expect(press("Enter")).not.toHaveBeenCalled();
+    expect(onPick).not.toHaveBeenCalled();
+    expect(press(" ")).toHaveBeenCalled();
+    expect(onPick).toHaveBeenCalledWith(false);
+  });
+
+  it("says whether the pick came from the mouse", () => {
+    const onPick = vi.fn();
+    const attrs = getSpotAttrs({ ...base, onPick });
+    const click = (detail: number) => attrs.onClick?.({ detail, target: null, currentTarget: null } as unknown as MouseEvent<HTMLElement>);
+    click(1);
+    click(0);
+    expect(onPick.mock.calls).toEqual([[true], [false]]);
   });
 });

@@ -51,7 +51,11 @@ import { buildPaperWaits, isDecisionKind, listEditUnitIds, listTableUnitIds, NO_
 import { readEditLabelKey, trimReason } from "@/lib/command-label";
 import { isBarrier, listUnsettled } from "@/lib/command-queue";
 import { pickDocRevision } from "@/lib/doc-revision";
+import { isMousePress, isTypingTarget, LAYER_SELECTOR, readKeyPlace, takesPrimaryEnter } from "@/lib/assign-key-target";
 import { isQueuedKey, isRepeatIgnored } from "@/lib/assign-press-model";
+import { planPrimary } from "@/lib/primary-model";
+import { isSideFloating } from "@/lib/side-float-model";
+import { isUnwrapSuggestionApplicable, isUnwrapSuggestionUnchanged } from "@/lib/unwrap-ai-model";
 import { pickNextBox, type PendingOutcome } from "@/lib/next-box-model";
 import { listExpectedNumbers, readExpectedNumber, type SentNumber } from "@/lib/number-arrival-model";
 import { buildReloadAsk, isDocReload, isEmptyReload, mergeReloads, NO_RELOAD_ASK, splitReload, type ReloadAsk } from "@/lib/reload-ask-model";
@@ -134,10 +138,6 @@ export const PAIR_RESTORE_STOPS = ["wheel", "pointerdown", "keydown", "touchstar
 /** 거르기 - "AI 추천"은 상태가 아니라 미배정이면서 살아 있는 제안이 있는 줄이다(설계 §5 2-3) */
 export function matchesFilter(item: { unitIds: number[]; status: string }, next: Filter, liveIndex: ReadonlyMap<number, AiSuggestion>): boolean {
   return next === "all" || (next === "ai_suggested" ? findRowSuggestion(item.unitIds, item.status, liveIndex) !== null : item.status === next);
-}
-
-export function isTypingTarget(target: EventTarget | null): boolean {
-  return target instanceof HTMLElement && (target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName));
 }
 
 /** 줄의 단위마다 그룹을 불러 합친다 - 짝의 두 쪽이 서로 다른 관계 묶음일 수 있다 */
@@ -270,8 +270,9 @@ function buildPaperPending(pending: readonly Pending[], queue: CommandQueueState
 }
 
 /** Assign 화면 한 벌의 상태와 동작 - page.tsx가 그리는 데 쓰는 이름을 모두 돌려준다 */
-/** 우클릭 메뉴·Del에서 고른 삭제 - 그린 초안 대신 이 값으로 저장한다. before는 그 줄의 앞 초안(없었으면 null) */
+/** 우클릭 메뉴·Del에서 고른 삭제, 또는 고르지 않고 확정한 추천 첫 카드 - 그린 초안 대신 이 값으로 저장한다. before는 그 줄의 앞 초안(없었으면 null) */
 interface DecidePick {
+  kind: "delete" | "card";
   draft: PageDraft;
   before: PageDraft | null;
 }
@@ -706,8 +707,10 @@ export function useAssignPage() {
   const group = useLoaded<Group | null>(() => (!row ? Promise.resolve(null) : !isViewSettled ? new Promise<never>(() => undefined) : loadMarked(() => loadRowGroup(bundleId, row.unitIds))), rowKey);
   const groupData = group.data;
   const sentenceUnitIds = (row?.unitIds ?? []).filter((id) => unitMap.get(id)?.kind !== "table" && unitMap.get(id)?.kind !== "figure");
-  const similar = useLoaded<NewCandidate[]>(
-    () => (written.length > 0 && sentenceUnitIds.length > 0 ? (isViewSettled ? loadRowCandidates(bundleId, sentenceUnitIds) : new Promise<never>(() => undefined)) : Promise.resolve([])),
+  // 다시 부르는 동안 앞 줄의 후보가 남는다 - 어느 문장들의 것인지 함께 든다(↵가 앞 줄의 카드로 확정하지 않게)
+  const similarKey = sentenceUnitIds.join(",");
+  const similar = useLoaded<{ key: string; items: NewCandidate[] }>(
+    async () => ({ key: similarKey, items: written.length > 0 && sentenceUnitIds.length > 0 ? await (isViewSettled ? loadRowCandidates(bundleId, sentenceUnitIds) : new Promise<never>(() => undefined)) : [] }),
     // 후보는 New 문장 목록에서 고른다 - 그 목록을 다시 받으면(판단 저장 · 판단을 푼 편집) 후보도
     `${rowKey}:${written.length > 0}:${writtenKey}`,
   );
@@ -746,9 +749,9 @@ export function useAssignPage() {
     setDrafts((prev) => (isSentDraft(prev[key], sent, reason) ? Object.fromEntries(Object.entries(prev).filter(([item]) => item !== key)) : prev));
   }
 
-  /** 버린 삭제 - 그 명령이 바꾼 초안을 그 전으로 돌린다 */
+  /** 버린 저장 - 그 명령이 바꾼 초안(삭제 · 추천 첫 카드)을 그 전으로 돌린다 */
   function restoreDraft(command: WriteCommand) {
-    if (command.kind !== "save" || !command.isPick) return;
+    if (command.kind !== "save" || command.before === command.draft) return;
     const { rowKey, draft: sent, before, reason } = command;
     setDrafts((prev) => {
       if (!isSentDraft(prev[rowKey], sent, reason)) return prev;
@@ -785,7 +788,7 @@ export function useAssignPage() {
         aiLinks: aiDest?.kind === "link" ? [{ targetIds: aiDest.targetIds, why: aiWhy }] : [],
         aiPlaces: aiDest && aiDest.kind !== "link" ? [{ destination: aiDest, why: aiWhy }] : [],
         identical: (identical.data ?? []).filter((item) => row.unitIds.includes(item.unit_id)).map((item) => item.target_id),
-        similar: similar.data ?? [],
+        similar: similar.data?.items ?? [],
         headingPlaces: rowUnits.some(isBandHeading),
       }, (ids) => addPartnerTargets(ids, writtenMap)), isDrafting)
     : [];
@@ -1498,7 +1501,8 @@ export function useAssignPage() {
   const refBlocked = rowRefUnit !== null && isUnitDecided(rowRefUnit) ? t("assign.ctx.why.assigned") : null;
   const isRefGate = row !== null && row.status !== "confirmed" && rowViewUnits.some(isRefPending);
   // 새 문서 자리로 보내는 표·그림에 캡션이 없으면 Confirm이 꺼진다(명세 §3.4) - 캡션은 Edit and confirm에서 써 넣는다
-  const isCaptionGateOn = row !== null && paperModel !== null && oldView?.document.id === row.documentId && isCaptionGate(row, destination, paperModel.units, draft, groupData);
+  const isCaptionGateFor = (target: Destination | null) => row !== null && paperModel !== null && oldView?.document.id === row.documentId && isCaptionGate(row, target, paperModel.units, draft, groupData);
+  const isCaptionGateOn = isCaptionGateFor(destination);
   // Confirm을 막는 까닭 - 결정 칸 단추의 툴팁과 그 자리 메뉴(끌어 놓은 초안 포함)가 같은 답을 쓴다
   const confirmBlockKey = readConfirmBlockKey({ isRefGate, isCaptionGate: isCaptionGateOn, isHiddenPlace: hiddenPlace !== null, isLegacyMove: legacyMove !== null });
   // 오른쪽 칸 1번(다듬기) - 고른 줄의 문장마다 할 수 있는 일. 우클릭 메뉴와 같은 답이다. 고칠 수 없는 사람에게는 줄을 보이지 않는다
@@ -2157,12 +2161,13 @@ export function useAssignPage() {
 
   /**
    * 판단 저장 - 누른 순간의 줄 · Unit · 초안을 잡아 큐에 세우고 고름을 다음 박스로 옮긴다(A1-R2). reasonOverride는 Remark 창에서 방금 확인한 사유,
-   * pick은 방금 고른 삭제 - 초안 상태가 아직 반영되기 전이라 직접 넘긴다
+   * pick은 방금 고른 삭제 · 추천 첫 카드 - 초안 상태가 아직 반영되기 전이라 직접 넘긴다
    */
   function runSave(action: "confirm" | "hold", reasonOverride?: string, pick?: DecidePick) {
+    const isDeletePick = pick?.kind === "delete";
     // 앞의 장벽이 어느 박스를 고를지 모른다 - 쌓아 두었다가 그 고름에서 다시 누른다
     if (commands.isDeferring()) {
-      commands.enqueue({ kind: "press", act: pick ? "delete" : action, reason: reasonOverride });
+      commands.enqueue({ kind: "press", act: isDeletePick ? "delete" : action, reason: reasonOverride });
       return;
     }
     if (!row) return;
@@ -2173,7 +2178,7 @@ export function useAssignPage() {
     const isSavedUnknown = target === null && !isLoaded && rowUnits.some((unit) => unit.decision.disposition !== "unassigned");
     // 보낼 곳 없이는 보류만 된다(처분 unassigned + hold, 사유는 hold_reason)
     if (target === null && !isSavedUnknown && action !== "hold") return;
-    if (action === "confirm" && hiddenPlace !== null && !pick) {
+    if (action === "confirm" && hiddenPlace !== null && !isDeletePick) {
       showToast(t("assign.hidden.confirm"), "error");
       return;
     }
@@ -2188,13 +2193,13 @@ export function useAssignPage() {
       return;
     }
     // 삭제·이동은 캡션 없이도 된다 - 지금 초안(새 문서 자리)의 캡션 조건을 따르지 않는다
-    if (action === "confirm" && isLoaded && isCaptionGateOn && !pick) {
+    if (action === "confirm" && isLoaded && isCaptionGateFor(target) && !isDeletePick) {
       // 캡션 없는 표·그림 - 단추는 꺼져 있고, ↵·메뉴 확정도 같은 까닭으로 멈춘다
       showToast(t("assign.caption.needed"), "error");
       return;
     }
     const reason = reasonOverride ?? reasonNow;
-    const need = pick ? null : readReasonNeed(action, target);
+    const need = isDeletePick ? null : readReasonNeed(action, target);
     if (need !== null && !reason.trim()) {
       // 알림만 띄우지 않고 사유 창을 연다 - 확인하면 이 저장을 잇는다
       openRemark(need, action);
@@ -2202,7 +2207,9 @@ export function useAssignPage() {
     }
     const saveRow = row;
     // 한 언어만 이어 짝이 풀리는 저장은 남은 문장으로 간다 - 결과 박스가 응답 뒤에 정해지는 장벽이다. 묶음을 아직 모르면 풀릴 수 있다고 본다
-    const groups = isLoaded && groupData !== null ? [groupData, ...(pickedGroups.data ?? [])] : null;
+    // 고르지 않은 카드의 문장이 든 묶음은 아직 부르지 않았다 - 나갈 때 받아 전제를 본다
+    const isGroupKnown = isLoaded && (pick?.kind !== "card" || listJoinedTargetIds(target).every((id) => knownTargets.has(id)));
+    const groups = isGroupKnown && groupData !== null ? [groupData, ...(pickedGroups.data ?? [])] : null;
     const isLinking = action === "confirm" && saveRow.pairId !== null && (target?.kind === "link" || target?.kind === "join");
     const isSplit = isLinking && (groups === null || listLinkLeftovers(target, { units: saveUnits, group: saveGroupData }).length > 0);
     const isDelete = target !== null ? target.kind === "delete" : isRowDeleted;
@@ -2217,12 +2224,12 @@ export function useAssignPage() {
       boxId: pickedId !== null && saveRow.unitIds.includes(pickedId) ? pickedId : saveRow.unitIds[0],
       destination: rowDraft.destination,
       draft: rowDraft,
-      before: pick?.before ?? null,
+      before: pick ? pick.before : rowDraft,
       reason,
       seen: readSeen(saveRow.unitIds),
       groups,
-      isChecked: isLoaded,
-      isPick: pick !== undefined,
+      isChecked: isGroupKnown,
+      isPick: isDeletePick,
       isSplit,
       nextKey: next?.key ?? null,
       // 엮은 문서의 칸에 놓는 확정은 어디 몇 번이 되는지 알리고 되돌리기를 단다(MD 2 S3) - 저장 전 자리로 센다
@@ -2339,7 +2346,43 @@ export function useAssignPage() {
     const before = drafts[row.key] ?? null;
     const picked: PageDraft = { ...draft, destination: next, position: null, suggestionId: null };
     if (!commands.isDeferring()) setDrafts((prev) => ({ ...prev, [row.key]: picked }));
-    runSave("confirm", undefined, { draft: picked, before });
+    runSave("confirm", undefined, { kind: "delete", draft: picked, before });
+  }
+
+  // --- 확정 단추(= ↵)가 지금 할 일 - 단추의 이름 · 색 · 꺼짐과 글쇠가 같은 답을 읽는다(lib/primary-model) ---
+  // 묶음을 받는 중인 정한 줄은 저장된 곳이 있다 - 추천 첫 카드로 덮지 않고 나갈 때 저장된 곳을 읽는다
+  const isSavedUnknown = isRowLoading && rowUnits.some((unit) => unit.decision.disposition !== "unassigned");
+  const isSimilarFresh = similar.data?.key === similarKey;
+  // 앞 줄의 비슷한 문장은 화면에만 남는다 - 확정할 카드로 보지 않는다(추천의 차례가 AI · 같은 글 · 비슷한 글이라 남는 것이 앞머리다)
+  const primaryCards = isSavedUnknown ? [] : isSimilarFresh ? recommendations : recommendations.filter((rec) => rec.source !== "similar");
+  // 고른 줄이 든 벗긴 표에 뜬 AI 순서 미리보기 - 지금 덩이와 같은 줄 집합일 때만 용지에 뜬다
+  const orderTableId = canEdit && !hasSolo && !isPairView && row !== null && paperModel !== null ? (row.unitIds.map((id) => paperModel.unwrapLines.get(id)).find((id) => id !== undefined) ?? null) : null;
+  const orderPreview = readOrderPreview(orderTableId);
+  function readOrderPreview(tableId: number | null): { tableId: number; order: readonly number[]; isSame: boolean } | null {
+    const order = tableId === null ? undefined : unwrapAi.previews.get(tableId);
+    if (tableId === null || order === undefined || paperModel === null) return null;
+    const current = paperModel.order.filter((id) => paperModel.unwrapLines.get(id) === tableId);
+    return isUnwrapSuggestionApplicable(current, order) ? { tableId, order, isSame: isUnwrapSuggestionUnchanged(current, order) } : null;
+  }
+  const primaryPlan = planPrimary({
+    canEdit,
+    hasRow: row !== null,
+    destination,
+    recommendations: primaryCards,
+    isSuggestedLoading: similar.isLoading && !isSimilarFresh,
+    blockKey: destination !== null ? confirmBlockKey : readConfirmBlockKey({ isRefGate, isCaptionGate: isCaptionGateFor(primaryCards[0]?.destination ?? null), isHiddenPlace: hiddenPlace !== null, isLegacyMove: legacyMove !== null }),
+    orderPreviewTableId: orderPreview !== null && !orderPreview.isSame ? orderPreview.tableId : null,
+  });
+
+  /** 고르지 않고 추천 첫 카드로 바로 확정 - AI 카드면 Use와 같이 고쳐 쓴 글과 제안 id를 명령에 싣는다(B1-R3). 초안에도 넣어 오른쪽 칸이 따라온다 */
+  function confirmCard(rec: Recommendation) {
+    if (!row) return;
+    const before = drafts[row.key] ?? null;
+    const use = rec.source === "ai" && rowLive ? { texts: { ...draft.texts, ...buildUseDraft(rowLive, slots).texts }, suggestionId: rowLive.id } : { suggestionId: null };
+    const picked: PageDraft = { ...draft, destination: rec.destination, position: null, ...use };
+    setDrafts((prev) => ({ ...prev, [row.key]: picked }));
+    markRecHover([]);
+    runSave("confirm", undefined, { kind: "card", draft: picked, before });
   }
 
   /**
@@ -3092,8 +3135,8 @@ export function useAssignPage() {
     return section && row ? resolveGapDrop(section, targetId, false, row.unitIds) : { kind: "none" };
   }
 
-  /** 작은 메뉴의 항목 - "이 문장에 잇기"는 그 문장이 보낼 곳이 되고, "이 줄 다음에 놓기"는 그 칸의 그 자리가 된다. 둘 다 Confirm으로 포커스를 옮겨 ↵가 확정한다 */
-  function pickJoinMenu(item: JoinMenuItem) {
+  /** 작은 메뉴의 항목 - "이 문장에 잇기"는 그 문장이 보낼 곳이 되고, "이 줄 다음에 놓기"는 그 칸의 그 자리가 된다. 둘 다 ↵가 확정한다 */
+  function pickJoinMenu(item: JoinMenuItem, isMouse: boolean) {
     const target = joinMenu?.targetId;
     setJoinMenu(null);
     if (target === undefined || !composedDoc) return;
@@ -3104,16 +3147,34 @@ export function useAssignPage() {
       if (drop.kind !== "gap" || destination === null) return;
       setDraft({ destination, position: { placeId: getDestinationId(destination), after: drop.after } });
     }
-    requestAnimationFrame(() => document.querySelector<HTMLElement>('[data-testid="assign-primary"]')?.focus({ preventScroll: true }));
+    focusAfterPress(isMouse);
   }
 
-  /** 결정 칸의 Confirm으로 포커스 - 고른 자리에 남으면 ↵가 확정 대신 그 자리를 다시 누른다 */
-  function focusPrimary() {
-    requestAnimationFrame(() => document.querySelector<HTMLElement>('[data-testid="assign-primary"]')?.focus({ preventScroll: true }));
+  /**
+   * 고르거나 누른 뒤의 포커스 - 글쇠로 눌렀으면 결정 칸의 Confirm, 마우스면 Old 용지로 돌려 Space가 미리보기다(단추에 남으면 그 단추를 다시 누른다).
+   * pressed는 누른 단추 - 그 누름이 연 창 · 글 칸이 포커스를 가져갔으면 두고, 주지 않으면 늘 돌린다
+   */
+  function focusAfterPress(isMouse: boolean, pressed: Element | null = null) {
+    requestAnimationFrame(() => {
+      if (!isMouse) {
+        document.querySelector<HTMLElement>('[data-testid="assign-primary"]')?.focus({ preventScroll: true });
+        return;
+      }
+      const active = document.activeElement;
+      if ((pressed !== null && active !== pressed && active !== document.body) || document.querySelector(LAYER_SELECTOR)) return;
+      document.querySelector<HTMLElement>('[data-pane="old"] .pane-body')?.focus({ preventScroll: true });
+    });
+  }
+
+  /** 오른쪽 칸의 단추를 마우스로 눌렀다 - 메뉴 · 목록을 여는 단추는 그 글쇠가 이어지게 둔다 */
+  function handleSidePress(event: MouseEvent<HTMLElement>) {
+    if (!isMousePress(event) || !(event.target instanceof Element) || !event.currentTarget.contains(event.target)) return;
+    const pressed = event.target.closest("button, a, [role='button']");
+    if (pressed !== null && !pressed.hasAttribute("aria-haspopup")) focusAfterPress(true, pressed);
   }
 
   /** New 칸의 자리를 누름(클릭 배치, MD 2 S3) - 고르기만 한다. 끌기와 같은 자리 목록의 답으로 보낼 곳과 자리(position)를 정하고, 확정은 Confirm(↵) */
-  function pickPlaceSpot(spot: PlaceSpot, key: string) {
+  function pickPlaceSpot(spot: PlaceSpot, key: string, isMouse: boolean) {
     if (!row || !composedDoc || !placeResolved) return;
     const placement = resolvePlaceSpot(placeResolved.sections, spot, row.unitIds);
     if (placement.kind !== "place") return;
@@ -3124,24 +3185,24 @@ export function useAssignPage() {
     if (placement.position === null) pickDestination(destination);
     else setDraft({ destination, position: { placeId, after: placement.position.after } });
     setSpotPick({ rowKey: row.key, key, placeId, after: placement.position ? placement.position.after : "none" });
-    focusPrimary();
+    focusAfterPress(isMouse);
   }
 
   /** 고른 줄 자신의 AI 제안 줄을 누름 - 오른쪽 AI 추천 카드를 누른 것과 같다(MD 2 §9-7). 카드가 없으면 그 칸을 고른다 */
-  function pickOwnAiLine(targetId: number) {
+  function pickOwnAiLine(targetId: number, isMouse: boolean) {
     if (!composedDoc) return;
     const docId = composedDoc.target_doc_id;
     const section = composedDoc.sections.find((candidate) => candidate.items.some((item) => item.target_id === targetId));
     if (!section) return;
     const rec = recommendations.find((item) => item.source === "ai" && "docId" in item.destination && item.destination.docId === docId && getSectionKey(item.destination) === section.location_key);
     if (rec) {
-      pickRecommendation(rec);
+      pickRecommendation(rec, isMouse);
       return;
     }
     const destination = readSectionDestination(docId, section.location_key);
     if (destination === null) return;
     pickDestination(destination);
-    focusPrimary();
+    focusAfterPress(isMouse);
   }
 
   /** Old 조각 아래 "→ 간 곳"을 누름 - 그 줄을 고르고 New 문서(닫혀 있거나 다른 문서면 열어서)의 그 문장으로 간다 */
@@ -3195,10 +3256,10 @@ export function useAssignPage() {
   }
 
   /** 템플릿 보기의 줄을 누름 - 출처 칩과 같은 길로 그 줄의 Old 출처를 고른다(지금 New 문서와 보기는 그대로) */
-  function pickTemplateLine(item: ComposedItem) {
+  function pickTemplateLine(item: ComposedItem, event: { detail: number }) {
     // 클릭 배치 중의 AI 제안 줄 - 고른 줄 자신의 것은 그 AI 추천을 고르고, 다른 줄의 것(확정 전)은 누를 수 없다
     if (canPlaceClick && item.status === "ai_suggested") {
-      if (row && item.source_unit_ids.some((id) => row.unitIds.includes(id))) pickOwnAiLine(item.target_id);
+      if (row && item.source_unit_ids.some((id) => row.unitIds.includes(id))) pickOwnAiLine(item.target_id, isMousePress(event));
       return;
     }
     const unitId = item.source_unit_ids[0];
@@ -3968,15 +4029,31 @@ export function useAssignPage() {
   }
 
   function handlePrimary() {
-    // 묶음을 받는 중인 정한 줄은 저장된 곳이 있다 - 나갈 때 읽는다(runSave)
-    const isSavedUnknown = isRowLoading && rowUnits.some((unit) => unit.decision.disposition !== "unassigned");
-    if (!destination && !isSavedUnknown && !commands.isDeferring()) {
-      unfoldSide();
-      // 고른 곳이 없으면 ↵는 바로 위 목록의 첫 후보(추천이 없으면 첫 묶음 제목)로 간다
-      (document.querySelector<HTMLElement>(".assign-pick .dest-card") ?? document.querySelector<HTMLElement>(".assign-pick .dest-acc-head"))?.focus();
+    // 앞의 장벽이 어느 박스를 고를지 모른다 - ↵를 쌓아 두었다가 그 고름에서 다시 누른다
+    if (commands.isDeferring()) {
+      if (commands.canQueueKey()) commands.enqueue({ kind: "key", key: "enter", shift: false, ctrl: false });
       return;
     }
-    runSave("confirm");
+    if (primaryPlan.kind === "apply_order") {
+      if (orderPreview !== null) unwrapAi.onApply(orderPreview.tableId, orderPreview.order);
+      return;
+    }
+    if (isSavedUnknown || (primaryPlan.kind === "confirm" && primaryPlan.from === "draft")) {
+      runSave("confirm");
+      return;
+    }
+    // 접어 둔 칸의 카드는 보이지 않는다 - 펴서 어디로 가는지 보인 뒤 다음 ↵가 확정한다
+    const isSideHidden = view.sideFolded && isSideFloating(window.innerWidth, view.sideFloat);
+    if (isSideHidden) unfoldSide();
+    if (primaryPlan.kind === "confirm") {
+      const card = primaryCards[primaryPlan.cardIndex ?? 0];
+      if (!isSideHidden && card) confirmCard(card);
+      return;
+    }
+    showToast(t(primaryPlan.reasonKey), "error");
+    if (primaryPlan.reasonKey !== "assign.primary.pickFirst") return;
+    const list = document.querySelector<HTMLElement>(".assign-pick .dest-acc");
+    if (list) flashElement(list);
   }
 
   /** 고쳐 쓰기를 닫는다 - 직접 쓰는 다른 언어 칸이 비어 있으면 그 칸도 걷어 "쓰기" 단추가 다시 나오게 한다 */
@@ -4015,7 +4092,7 @@ export function useAssignPage() {
       return;
     }
     // 그 자리 메뉴는 화면 단축키를 막지 않는다 - 메뉴가 떠 있어도 ↵가 확정이다(메뉴 안의 키는 메뉴가 먼저 받는다)
-    if (bulk || isTypingTarget(event.target) || document.querySelector('[role="dialog"],[role="menu"]:not([data-link-menu]),[role="listbox"]')) {
+    if (bulk || isTypingTarget(event.target) || document.querySelector(LAYER_SELECTOR)) {
       if (event.key === "Escape" && editing) closeEditing();
       // 고치는 중에는 Enter가 줄바꿈이라 Ctrl+Enter로 저장한다
       if (event.key === "Enter" && (event.ctrlKey || event.metaKey) && editing && isTypingTarget(event.target)) {
@@ -4025,7 +4102,7 @@ export function useAssignPage() {
       return;
     }
     // Ctrl/⌘+Z·+Shift - 글자 입력 중이거나 층이 열려 있으면 위에서 이미 돌아갔다(브라우저 글자 되돌리기)
-    const undoKind = getAssignUndoKey(event, { typing: isTypingTarget(event.target), layerOpen: document.querySelector('[role="dialog"],[role="menu"]:not([data-link-menu]),[role="listbox"]') !== null, canEdit });
+    const undoKind = getAssignUndoKey(event, { typing: isTypingTarget(event.target), layerOpen: document.querySelector(LAYER_SELECTOR) !== null, canEdit });
     if (undoKind !== null) {
       event.preventDefault();
       // 누르고 있어 되풀이된 것은 받지 않는다 - 한 번에 하나씩 저장되는 줄에 되돌리기가 쌓인다
@@ -4035,19 +4112,21 @@ export function useAssignPage() {
       return;
     }
     if (event.metaKey || event.ctrlKey || event.altKey) return;
-    // 포커스된 단추·링크(추천 카드·나무 항목 등)의 Enter·Space는 그 단추를 누른다
-    if ((event.key === "Enter" || event.key === " ") && event.target instanceof HTMLElement && event.target.closest("button, a, [role='option'], [role='button']")) {
-      // 결정 칸 단추에 포커스를 둔 채 누르고 있으면 브라우저가 되풀이해 누른다 - 판단이 줄줄이 저장되지 않게
-      if (event.repeat && event.target.closest('[data-testid="assign-primary"], [data-testid="assign-hold"], [data-testid="assign-clear"]')) event.preventDefault();
-      return;
-    }
+    // 용지 · 오른쪽 칸의 Enter는 포커스가 다른 단추에 있어도 확정 단추다(B1-R1). 그 밖의 단추·링크의 Enter와 모든 단추의 Space는 그 단추를 누른다
+    const isPrimaryEnter = event.key === "Enter" && !event.defaultPrevented && takesPrimaryEnter(readKeyPlace(event.target), event.target);
+    if (event.key === "Enter" && !isPrimaryEnter) return;
+    if (event.key === " " && event.target instanceof HTMLElement && event.target.closest("button, a, [role='option'], [role='button']")) return;
     // 세로선에 포커스가 있으면 ←→는 폭이다
     if (event.target instanceof HTMLElement && event.target.closest(".pane-divider")) return;
     const key = event.key.toLowerCase();
     // 앞에 장벽이 있으면 어느 박스의 글쇠인지 아직 모른다 - 쌓아 두었다가 장벽이 세운 고름에서 차례로 다시 누른다(A1-R3)
     const isMove = getRowStep(key) !== null;
     // 누르고 있어 되풀이된 것은 이동만 받는다
-    if (event.repeat && isRepeatIgnored(key, isMove)) return;
+    if (event.repeat && isRepeatIgnored(key, isMove)) {
+      // 막지 않으면 포커스가 있는 단추를 브라우저가 되풀이해 누른다
+      if (isPrimaryEnter) event.preventDefault();
+      return;
+    }
     if (commands.isDeferring() && isQueuedKey(key, isMove)) {
       event.preventDefault();
       if (commands.canQueueKey()) commands.enqueue({ kind: "key", key, shift: event.shiftKey, ctrl: false });
@@ -4066,8 +4145,9 @@ export function useAssignPage() {
     const step = getRowStep(key);
     if (step !== null) moveRow(step);
     else if (key === "escape") {
-      // 나눌 선이 있으면 선부터 거둔다(Split과 같다)
-      if (composedCut) setComposedCutAt(null);
+      // AI 순서 미리보기부터 거두고(Keep as is), 나눌 선이 있으면 선을 거둔다(Split과 같다)
+      if (orderPreview !== null) unwrapAi.onKeep(orderPreview.tableId, orderPreview.isSame);
+      else if (composedCut) setComposedCutAt(null);
       else if (cutLine.at !== null) cutLine.clear();
       else if (isNewEdit) setSolo(null);
       else setChecked(new Set());
@@ -4081,8 +4161,10 @@ export function useAssignPage() {
     else if ((key === "arrowleft" || key === "arrowright") && canEdit && isNewEdit && cutLine.at !== null) cutLine.nudge(key === "arrowleft" ? -1 : 1);
     else if (!canEdit || !row) return false;
     else if (key === "s" && cutLine.at !== null) splitAtCut();
+    // 출처 없는 New를 보는 동안은 오른쪽 칸에 확정 단추가 없다 - 가려진 줄을 확정하지 않는다
+    else if (key === "enter" && mode !== "old") return false;
     else if (key === "enter") handlePrimary();
-    else if (key === "a" && canEdit && aiRecommendation) pickRecommendation(aiRecommendation); // Use - 줄의 AI 추천을 초안으로 받는다
+    else if (key === "a" && canEdit && aiRecommendation) pickRecommendation(aiRecommendation, false); // Use - 줄의 AI 추천을 초안으로 받는다
     else if (key === "e") startEdit();
     else if (key === "h") runSave("hold");
     else if (key === "u") runClear();
@@ -4170,15 +4252,15 @@ export function useAssignPage() {
   }, [remarkEdit, busy]);
 
   /** 추천을 누름 - 고르고 New 칸을 그 자리로 옮긴다(다른 문서면 넘긴다). 확정은 결정 칸의 Confirm 하나 - 카드 옆 확정 메뉴는 띄우지 않는다(1.2.0 피드백).
-   *  포커스는 Confirm으로 - 카드에 남으면 ↵가 확정 대신 카드를 다시 누른다 */
-  function pickRecommendation(rec: Recommendation) {
+   *  글쇠로 골랐으면 포커스는 Confirm으로, 마우스면 Old 용지로 */
+  function pickRecommendation(rec: Recommendation, isMouse: boolean) {
     if (rec.source === "ai" && rowLive) {
       const use = buildUseDraft(rowLive, slots);
       pickDestination(rec.destination, { texts: use.texts, suggestionId: rowLive.id });
     } else pickDestination(rec.destination);
     markRecHover([]);
     setRevealPick({ destination: rec.destination, rowKey: activeKey });
-    requestAnimationFrame(() => document.querySelector<HTMLElement>('[data-testid="assign-primary"]')?.focus({ preventScroll: true }));
+    focusAfterPress(isMouse);
   }
 
   /** 추천 카드 ↔ New 상자를 같이 밝힌다 - 표시만 붙였다 뗀다(호버마다 화면을 다시 그리지 않게, 긴 문서) */
@@ -4239,7 +4321,7 @@ export function useAssignPage() {
     resetScope, setResetScope, accOpen, toggleAcc, saveUnits, slots, aiUnfilled, draftPlace, draftSectionKey, draftPosition, newDraft,
     draftSlotKey, placeResolved, canPlaceClick, pickedSpotKey, setCarvePick, carve, carveText, clearCarve, togglePairViewByButton,
     pairFrom, setPairFrom, setRefEntryId, pairSource, captionPickBundle, setCaptionPick, startCaptionPick, selectToc, selectRow, openNewCtxMenu, openSolo, goToUnit, moveRow, hasUnitDraft,
-    isFixedCaption, ctxGroups, rowViewUnits, rowSplitUnit, rowSplit, splitBlocked, rowRefUnit, refBlocked, isRefGate, isCaptionGateOn,
+    isFixedCaption, ctxGroups, rowViewUnits, rowSplitUnit, rowSplit, splitBlocked, rowRefUnit, refBlocked, isCaptionGateOn,
     confirmBlockKey, rowCaptionRefs, refCandidates, shapeLines, shapeFirstId, slotPlaces, slotCellTables, shapeMode, headingBack, rewrap, bandBack,
     stepBase, refPendingIds, isLinkedToWritten, captionPendingKeys, docDashboard, refDetail, refInfo, openCtxMenu, runUnitEdit,
     rewrapTable, unwrapAi, describeEditConfirm, pairGrip, clearToc, runCaptionRefChange, switchShapeMode, switchToPair,
@@ -4248,7 +4330,7 @@ export function useAssignPage() {
     runSave, runClear, runUndoStep, confirmIdenticalAll, acceptAll, markNew, placeManage, pickDestination, pickNewSentence, handleNewPick, unlinkCell,
     handleJoinPick, readJoinAfter, pickJoinMenu, pickPlaceSpot, pickOwnAiLine, jumpToNew, openNewDoc, showInNew, jumpToOld,
     pickTemplateLine, fillTemplateMissing, isTemplateDrag, isOldDrag, finishPairPick, handleOldClick, handlePrimary, startEdit,
-    pickRecommendation, markRecHover, revealPick, setRevealPick, done, renderPlaceLabel, listDestinationEls,
+    pickRecommendation, handleSidePress, primaryPlan, markRecHover, revealPick, setRevealPick, done, renderPlaceLabel, listDestinationEls,
     canClear, isRowDeleted, error, figureTab, composedCut, setComposedCutAt, handleComposedDoubleClick, dragComposedCut, splitComposedAtCut, planComposedGap, joinComposed,
   };
 }

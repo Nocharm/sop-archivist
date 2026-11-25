@@ -22,15 +22,18 @@ import { Refresh, Truncate } from "@/components/ui/motion";
 import { Tooltip } from "@/components/ui/tooltip";
 import { formatPlacePosition, readPlacePosition } from "@/lib/place-spot-model";
 import { type ViewUnit, type WrittenSentence } from "@/lib/api-sop";
+import { isMousePress } from "@/lib/assign-key-target";
 import { isBundleKind, listCaptionFields } from "@/lib/caption-model";
 import { buildCaptionSlot, type CaptionCandidate } from "@/lib/caption-slot-model";
 import { countJoinedLines } from "@/lib/join-sentence-model";
 import { canMakeOtherLanguage, isRecommendationPicked, listCoConfirmed, listSiblingPlaces, pickNearby, type Recommendation } from "@/lib/assign-model";
 import { readRewrites } from "@/lib/ai-suggestion-model";
-import { getDestinationId, hasRowLanguage, isHeadingSourceUnit, isPlaceOption, listTreeOptions, listTreeRows, isSentenceUnit, isTranslationOf, listJoinedTargetIds, listLinkLeftovers, pickLinkUnits, previewLinkChange, previewSlotChange, readCheckKey, readSlotKind, type DestinationOption } from "@/lib/classify-model";
+import { getDestinationId, hasRowLanguage, isHeadingSourceUnit, isPlaceOption, listTreeOptions, listTreeRows, isSentenceUnit, isTranslationOf, listJoinedTargetIds, listLinkLeftovers, pickLinkUnits, previewLinkChange, previewSlotChange, readCheckKey, readSlotKind, type Destination, type DestinationOption } from "@/lib/classify-model";
+import { readSectionNumber } from "@/lib/composed-model";
 import { formatKst } from "@/lib/datetime";
 import { findNearestCut } from "@/lib/paper-model";
 import { getNewDocumentsHref } from "@/lib/stages";
+import { describePrimary } from "@/lib/primary-model";
 import { readRefAdvice } from "@/lib/ref-model";
 import { buildTocBlock, describeTocParts, toggleTocOpen } from "@/lib/toc-block-model";
 
@@ -51,10 +54,10 @@ export function AssignSidePanel({ state, headEnd }: { state: AssignPageState; he
     viewOf, oldView, splitByUnit, shapeView, shapeModel, soloUnits, cutLine, writtenDocs, composedDoc, view, changeView, askAiScope,
     setRemarkEdit, firstTextRef, busy, isAnyPending, accOpen, toggleAcc, saveUnits, slots, aiUnfilled, draftPlace, draftSectionKey, draftPosition,
     placeResolved, setRefEntryId, moveRow, hasUnitDraft, isFixedCaption, rowViewUnits, rowSplitUnit, rowSplit, splitBlocked, rowRefUnit,
-    refBlocked, isRefGate, isCaptionGateOn, confirmBlockKey, rowCaptionRefs, refCandidates, shapeLines, shapeFirstId, slotPlaces, slotCellTables, startCaptionPick,
+    refBlocked, isCaptionGateOn, rowCaptionRefs, refCandidates, shapeLines, shapeFirstId, slotPlaces, slotCellTables, startCaptionPick,
     shapeMode, headingBack, rewrap, bandBack, stepBase, refPendingIds, refDetail, refInfo, runUnitEdit, clearToc, runCaptionRefChange,
     switchShapeMode, applySplitSuggestion, dismissSplitSuggestion, selectNextSplit, selectNextRef, runUnitAction, readReasonNeed, runSave,
-    runClear, markNew, placeManage, pickDestination, pickNewSentence, isTemplateDrag, handlePrimary, startEdit,
+    runClear, markNew, placeManage, pickDestination, pickNewSentence, isTemplateDrag, handlePrimary, primaryPlan, startEdit,
     pickRecommendation, markRecHover, renderPlaceLabel, listDestinationEls, canClear, isRowDeleted,
   } = state;
 
@@ -63,7 +66,6 @@ export function AssignSidePanel({ state, headEnd }: { state: AssignPageState; he
 
   // --- 그리기 ---
   const isPlace = destination?.kind === "slot" || destination?.kind === "step";
-  const primaryState = !destination ? "choose" : editing ? "save" : "confirm";
   // 줄에 이미 그 언어 새 문장이 있으면(직접 쓴 것·쓰는 중인 칸·AI 번역) 만들기·쓰기를 보이지 않는다. 새 문서를 숨긴 동안은 늘 없다
   const missingLang = !isDrafting ? null : canMakeOtherLanguage(rowLangs, savedDestination, row?.status === "confirmed");
   const otherLang = missingLang !== null && !hasRowLanguage(missingLang, slots, groupData, row?.unitIds ?? []) ? missingLang : null;
@@ -77,6 +79,17 @@ export function AssignSidePanel({ state, headEnd }: { state: AssignPageState; he
   function startWriteOther(lang: "ko" | "en", unitId: number) {
     setDraft({ otherLang: { lang, unitId } }, true);
     requestAnimationFrame(() => document.querySelector<HTMLTextAreaElement>(`[data-testid="assign-text-x${unitId}"]`)?.focus());
+  }
+
+  /** 확정 단추에 적을 갈 곳의 짧은 이름 - 이미 쓴 문장은 절 번호(없으면 문서 번호), 칸은 칸 이름 */
+  function readPrimaryPlace(dest: Destination): string {
+    if (dest.kind === "link") {
+      const target = writtenMap.get(dest.targetIds[0]);
+      const section = readSectionNumber(target?.section_path ?? "");
+      return section ? `§${section}` : (target?.doc_code ?? "");
+    }
+    if (dest.kind === "join") return (tobeData?.docs ?? []).find((doc) => doc.id === dest.docId)?.code ?? "";
+    return renderPlaceLabel(dest).text;
   }
 
   function renderRecommendation(rec: Recommendation, index: number) {
@@ -108,7 +121,7 @@ export function AssignSidePanel({ state, headEnd }: { state: AssignPageState; he
           pressed={pressed}
           pending={pending}
           testId={`assign-rec-${index}`}
-          onClick={() => pickRecommendation(rec)}
+          onClick={(event) => pickRecommendation(rec, isMousePress(event))}
           onHover={(on) => markRecHover(on ? listDestinationEls(rec.destination) : [])}
         />
       );
@@ -130,7 +143,7 @@ export function AssignSidePanel({ state, headEnd }: { state: AssignPageState; he
           pressed={pressed}
           pending={pending}
           testId={`assign-rec-${index}`}
-          onClick={() => pickRecommendation(rec)}
+          onClick={(event) => pickRecommendation(rec, isMousePress(event))}
           onHover={(on) => markRecHover(on ? listDestinationEls(rec.destination) : [])}
         />
       );
@@ -155,7 +168,7 @@ export function AssignSidePanel({ state, headEnd }: { state: AssignPageState; he
         pressed={pressed}
         pending={pending}
         testId={`assign-rec-${index}`}
-        onClick={() => pickRecommendation(rec)}
+        onClick={(event) => pickRecommendation(rec, isMousePress(event))}
           onHover={(on) => markRecHover(on ? listDestinationEls(rec.destination) : [])}
       />
     );
@@ -534,18 +547,25 @@ export function AssignSidePanel({ state, headEnd }: { state: AssignPageState; he
     </div>
   );
 
-  // 확정 단추 - 결정 칸 맨 아래 늘 같은 자리의 가장 큰 단추. 고른 곳이 없으면 흐리게 꺼지고 까닭은 툴팁(↵는 위 목록의 첫 후보로 간다)
+  // 확정 단추(= ↵) - 결정 칸 맨 아래 늘 같은 자리의 가장 큰 단추. 할 일 · 막는 까닭은 글쇠와 같은 답(primaryPlan)이고, 막히면 흐리게 두고 까닭은 툴팁(누르면 알림)
+  const primaryLabel = describePrimary(primaryPlan, primaryPlan.kind === "confirm" ? readPrimaryPlace(primaryPlan.destination) : "");
+  const primaryState = primaryPlan.kind === "apply_order" ? "order" : destination ? (editing ? "save" : "confirm") : primaryPlan.kind === "confirm" ? "choose" : "blocked";
   const confirmButton = (
-    <Tooltip label={t((destination !== null ? confirmBlockKey : null) ?? "assign.why.pickFirst")} suppressed={(destination !== null && confirmBlockKey === null) || !row}>
-      <button type="button" className="btn pri assign-confirm" data-testid="assign-primary" data-state={primaryState} disabled={!canEdit || !row || busy || !destination || isRefGate || isCaptionGateOn || hiddenPlace !== null || legacyMove !== null} onClick={handlePrimary}>
-        <span className="stack">
-          <span data-on={primaryState !== "save" ? "" : undefined}>
-            {t("classify.confirm")} <kbd>↵</kbd>
-          </span>
-          <span data-on={primaryState === "save" ? "" : undefined}>
-            {t("classify.saveConfirm")} <kbd>↵</kbd>
-          </span>
+    <Tooltip label={primaryPlan.kind === "blocked" ? t(primaryPlan.reasonKey) : ""} suppressed={primaryPlan.kind !== "blocked" || !row || !canEdit}>
+      <button
+        type="button"
+        className={`btn ${primaryLabel.tone === "danger" ? "danger" : "pri"} assign-confirm`}
+        data-testid="assign-primary"
+        data-state={primaryState}
+        disabled={!canEdit || !row || busy}
+        aria-disabled={primaryPlan.kind === "blocked" || undefined}
+        onClick={handlePrimary}
+      >
+        <span className="min-w-0 truncate">
+          {primaryState === "save" && primaryLabel.tone === "normal" ? t("classify.saveConfirm") : t(primaryLabel.labelKey, primaryLabel.values)}
         </span>
+        {primaryLabel.suffixKey !== null && <span className="flex-none font-normal">{t(primaryLabel.suffixKey)}</span>}
+        <kbd>↵</kbd>
       </button>
     </Tooltip>
   );

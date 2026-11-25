@@ -12,6 +12,7 @@ import { LoadError } from "@/components/ui/load-error";
 import { showToast } from "@/components/ui/toast";
 import { humanizeApiError } from "@/lib/api-errors";
 import { downloadExport, downloadParagraphs, getAssignSheetPreview, getParagraphSheetPreview } from "@/lib/api-sop";
+import { isTypingTarget, LAYER_SELECTOR } from "@/lib/assign-key-target";
 import { readSpacePreviewOpens, writeSpacePreviewOpens } from "@/lib/assign-view-prefs";
 import { useI18n } from "@/lib/i18n";
 import { saveBlob } from "@/lib/save-file";
@@ -32,15 +33,9 @@ import {
 } from "@/lib/space-preview-model";
 import { useLoaded } from "@/lib/use-loaded";
 
-// 화면의 층(창 · 메뉴 · 고르기 목록)이 떠 있으면 Space · Esc는 그 층의 것이다 - Assign 단축키와 같은 고르개
-const LAYER_SELECTOR = '[role="dialog"],[role="menu"]:not([data-link-menu]),[role="listbox"]';
-
+// 화면의 층(창 · 메뉴 · 고르기 목록)이 떠 있으면 Space · Esc는 그 층의 것이다
 function isLayerOpen(): boolean {
   return document.querySelector(LAYER_SELECTOR) !== null;
-}
-
-function isTyping(target: EventTarget | null): boolean {
-  return target instanceof HTMLElement && (target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName));
 }
 
 interface SheetRequest {
@@ -131,7 +126,7 @@ export function SpacePreview({ bundleId, sheet: sheetKind, enabled, docId, docCo
       return;
     }
     // 열어 둔 시트의 Esc는 시트만 닫는다 - 고른 체크 · 나눌 선을 거두는 화면 Esc보다 먼저(창 위 capture)
-    if (event.key === "Escape" && isOpen && !isTyping(event.target) && !isLayerOpen()) {
+    if (event.key === "Escape" && isOpen && !isTypingTarget(event.target) && !isLayerOpen()) {
       event.preventDefault();
       event.stopPropagation();
       dispatch({ type: "escape" });

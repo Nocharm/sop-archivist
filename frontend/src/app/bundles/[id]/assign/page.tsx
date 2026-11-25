@@ -84,7 +84,7 @@ export default function AssignPage() {
     openSolo, goToUnit, ctxGroups, confirmBlockKey, refPendingIds, isLinkedToWritten, captionPendingKeys, docDashboard, openCtxMenu, runUnitEdit,
     rewrapTable, unwrapAi, describeEditConfirm, pairGrip, clearToc, splitAtCut, handleOldDoubleClick,
     runCtx, revertHeadings, planOldJoin, joinOld, renderOldActions, runSave, runClear, confirmIdenticalAll, acceptAll, pickDestination,
-    pickNewSentence, handleNewPick, handleJoinPick, readJoinAfter, pickJoinMenu, pickPlaceSpot, pickOwnAiLine, jumpToNew, openNewDoc,
+    pickNewSentence, handleNewPick, handleJoinPick, readJoinAfter, pickJoinMenu, handleSidePress, pickPlaceSpot, pickOwnAiLine, jumpToNew, openNewDoc,
     showInNew, jumpToOld, pickTemplateLine, fillTemplateMissing, isOldDrag, finishPairPick, handleOldClick, markRecHover, revealPick,
     setRevealPick, done, renderPlaceLabel, listDestinationEls, error,
   } = state;
@@ -322,7 +322,7 @@ export default function AssignPage() {
       open: placement.kind === "place",
       label: placement.kind === "refused" ? t(PLACE_REFUSAL_KEYS[placement.reason]) : label,
       picked: key === pickedSpotKey,
-      onPick: () => pickPlaceSpot(spot, key),
+      onPick: (isMouse) => pickPlaceSpot(spot, key, isMouse),
     });
     const heads = new Map<string, PlaceSpotView>();
     for (const head of placeResolved.heads) {
@@ -817,7 +817,7 @@ export default function AssignPage() {
             </div>
           )}
         </div>
-        <SideFloat prefs={view} onChange={changeView}>
+        <SideFloat prefs={view} onChange={changeView} onPress={handleSidePress}>
           {(headEnd) => (
             <>
               <AssignSidePanel state={state} headEnd={headEnd} />

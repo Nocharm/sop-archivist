@@ -182,7 +182,8 @@ export function DocDashboard({ bundleId, docId, docLabel, docTitle, stats, bundl
         createPortal(
           <div
             ref={panelRef}
-            role="dialog"
+            // 모달이 아니다 - 올려 둔 채 화면 단축키가 그대로 돈다(B1-R6)
+            role="group"
             aria-label={t("assign.dash.title", { code: docLabel })}
             className="doc-dash"
             data-testid="assign-dash-panel"
