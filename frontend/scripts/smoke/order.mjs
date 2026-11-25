@@ -172,7 +172,7 @@ const waitFlash = (page, id) => page.waitForFunction((rowId) => document.querySe
 export async function run() {
 
 // 같은 일이 Order의 결과물 C에 - 장을 빼면 C 절 머리의 번호가 당겨지고, 되살리면 돌아온다. 빈 필수 절은 머리에 Empty가 붙는다. 빼기 · 되살리기는 API로 한다(화면은 위 단계)
-await runStep("order: a removed chapter shifts the C section numbers up, Restore brings them back, and an empty required section says Empty", {}, async ({ page }) => {
+await runStep("order: a removed chapter shifts the C section numbers up, Restore brings them back, and an empty required section says Empty", { drafting: true }, async ({ page }) => {
   const headers = { "X-Dev-User": "qa.member" };
   const start = await readToBe(page, halfBundleId);
   const sop = start.docs.find((doc) => doc.doc_type === "sop" && doc.entrance === "assign");
@@ -220,7 +220,7 @@ await runStep("order: a removed chapter shifts the C section numbers up, Restore
 
 // 템플릿 골격의 문장을 받지 않는 절(Order 화면의 C) - 하위만 묶는 절은 머리만, 7.2 Work Instructions는 그 SOP의 자식 WI가 읽기만 하는 줄로, 5장의 범주는 번호 없는 머리로 그린다.
 // 기대값은 서버 C에서 읽는다(자식 WI의 번호 · 제목, 절의 이름)
-await runStep("order: C draws a group as its heading only, the work-instruction list read-only and a category without a number", {}, async ({ page }) => {
+await runStep("order: C draws a group as its heading only, the work-instruction list read-only and a category without a number", { drafting: true }, async ({ page }) => {
   const c = await (await page.request.get(`${BASE}/api/bundles/${halfBundleId}/outputs/c?lang=en`, { headers: { "X-Dev-User": "qa.member" } })).json();
   const doc = c.docs.find((item) => item.doc_type === "sop" && item.entrance === "assign");
   const group = doc?.sections.find((section) => section.kind === "group" && section.na_reason === null);
@@ -250,7 +250,7 @@ await runStep("order: C draws a group as its heading only, the work-instruction 
 });
 
 // 줄 끝 단추 묶음은 호버·포커스 때만, 글 밖에 뜬다(끌어다 놓기 설계 §5, 사용자 결정 2026-11-16). 터치 화면에서는 늘 보인다
-await runStep("order: row-end buttons show only on hover or focus, one group at a time", {}, async ({ page, takeShot }) => {
+await runStep("order: row-end buttons show only on hover or focus, one group at a time", { drafting: true }, async ({ page, takeShot }) => {
   await page.goto(`${BASE}/bundles/${halfBundleId}/order`);
   await wait(page, "output-c");
   // 단추 묶음과 글 상자가 있는 줄이 넷 이상인 칸 - A는 위에 이웃 줄이 있는 둘째 줄, B는 넷째 줄
@@ -467,7 +467,9 @@ await runStep("order: row-end buttons show only on hover or focus, one group at 
   // 터치 화면 - 호버가 없으니 묶음이 늘 보이고 글 흐름 안에 있다
   const touch = await browser.newContext({ viewport: VIEWPORT, hasTouch: true, isMobile: true });
   await touch.addInitScript(() => {
-    if (location.protocol !== "about:" && !window.localStorage.getItem("sopa.devUser")) window.localStorage.setItem("sopa.devUser", "qa.member");
+    if (location.protocol === "about:") return;
+    if (!window.localStorage.getItem("sopa.devUser")) window.localStorage.setItem("sopa.devUser", "qa.member");
+    window.localStorage.setItem("sopa.drafting", "1");
   });
   try {
     const touchPage = await touch.newPage();
@@ -487,7 +489,7 @@ await runStep("order: row-end buttons show only on hover or focus, one group at 
   }
 });
 
-await runStep("order: indent a line on C and its section number changes", {}, async ({ page, takeShot }) => {
+await runStep("order: indent a line on C and its section number changes", { drafting: true }, async ({ page, takeShot }) => {
   await page.goto(`${BASE}/bundles/${halfBundleId}/order`);
   await wait(page, "output-c");
   // 들일 수 있는 첫 줄(앞줄이 있고 번호가 있는 줄) - SOP의 내용은 대부분 글머리 기호라 번호 줄이 있는 문서(WI나 절차가 든 SOP)를 찾아 연다
@@ -518,7 +520,7 @@ await runStep("order: indent a line on C and its section number changes", {}, as
 
 // 글머리 기호 줄은 번호 줄과 따로 센다 - 5장(General Requirements) 범주의 글머리 기호 줄은 앞 글머리 기호 줄 + 1까지, 단계 기호는 • ○ ▪(2026-11-18 MD 2 §S5 ①).
 // 5장 범주는 글머리 기호가 기본이라 번호 줄이 없다. 글머리 기호 줄이 둘 이상 든 5장 범주가 있는 문서를 찾아 연다. 들였다가 도로 내어 써 자료를 그대로 둔다
-await runStep("order: a chapter 5 bullet line indents with Tab to the second symbol and goes back with Shift+Tab", {}, async ({ page, takeShot }) => {
+await runStep("order: a chapter 5 bullet line indents with Tab to the second symbol and goes back with Shift+Tab", { drafting: true }, async ({ page, takeShot }) => {
   await page.goto(`${BASE}/bundles/${halfBundleId}/order`);
   await wait(page, "output-c");
   const [hit] = await findOrderDocs(page, () => {
@@ -558,7 +560,7 @@ await runStep("order: a chapter 5 bullet line indents with Tab to the second sym
 });
 
 // 번호 줄 규칙은 그대로다 - 6장 절차(번호가 기본)의 첫 번호 줄은 들일 수 없고, 둘째 번호 줄을 들이면 번호가 한 마디 늘고 기호는 없다
-await runStep("order: a chapter 6 numbered line keeps the numbered indent rule", {}, async ({ page }) => {
+await runStep("order: a chapter 6 numbered line keeps the numbered indent rule", { drafting: true }, async ({ page }) => {
   await page.goto(`${BASE}/bundles/${halfBundleId}/order`);
   await wait(page, "output-c");
   const [hit] = await findOrderDocs(page, () => {
@@ -593,7 +595,7 @@ await runStep("order: a chapter 6 numbered line keeps the numbered indent rule",
 });
 
 // N:1 출처 꼬리표 - 옛 두 줄 이상에서 온 줄에 올리거나 그 줄을 고르면 줄 아래에 source_note 그대로 뜨고, 출처가 하나인 줄에는 꼬리표가 없다(MD 2 §S5 ②)
-await runStep("order: a line merged from several Old lines shows its source tag on hover and when picked", {}, async ({ page }) => {
+await runStep("order: a line merged from several Old lines shows its source tag on hover and when picked", { drafting: true }, async ({ page }) => {
   const headers = { "X-Dev-User": "qa.member" };
   const output = await (await page.request.get(`${BASE}/api/bundles/${halfBundleId}/outputs/c?lang=en`, { headers })).json();
   const lines = output.docs.flatMap((doc) => doc.sections.flatMap((section) => section.items.map((item) => ({ ...item, docId: doc.target_doc_id }))));
@@ -629,7 +631,7 @@ await runStep("order: a line merged from several Old lines shows its source tag 
 });
 
 // 템플릿 보기(MD 2 §S5 ③) - Order 문서 머리의 기본 | 템플릿 전환: 보기만 하는 화면(줄 끝 단추 · 끌기 없음), 줄과 번호는 기본 보기(C)와 같고, 문서 머리가 넘치지 않는다
-await runStep("order: template view switch draws the same lines view-only, with no row-end buttons and no drag", {}, async ({ page, takeShot }) => {
+await runStep("order: template view switch draws the same lines view-only, with no row-end buttons and no drag", { drafting: true }, async ({ page, takeShot }) => {
   const headers = { "X-Dev-User": "qa.member" };
   await page.goto(`${BASE}/bundles/${halfBundleId}/order`);
   await wait(page, "output-c");
@@ -672,7 +674,7 @@ await runStep("order: template view switch draws the same lines view-only, with 
 });
 
 // 번역 없음 자리(4-d) - 템플릿 보기에서만 보이고, 누르면 그 줄의 Old 출처를 고른 채 Assign이 열린다(Order에는 번역 만들기 · 직접 쓰기가 없다)
-await runStep("order: the No translation slot shows only in the template view and opens Assign on the Old line", {}, async ({ page }) => {
+await runStep("order: the No translation slot shows only in the template view and opens Assign on the Old line", { drafting: true }, async ({ page }) => {
   await page.goto(`${BASE}/bundles/${halfBundleId}/order`);
   await wait(page, "output-c");
   await page.locator('[data-testid="order-view-template"]').waitFor({ timeout: T });
@@ -715,7 +717,7 @@ await runStep("order: the No translation slot shows only in the template view an
   await wait(page, "output-c");
 });
 
-await runStep("order: Alt+ArrowDown moves the picked line and keeps it picked", {}, async ({ page }) => {
+await runStep("order: Alt+ArrowDown moves the picked line and keeps it picked", { drafting: true }, async ({ page }) => {
   await page.goto(`${BASE}/bundles/${halfBundleId}/order`);
   await wait(page, "output-c");
   const [hit] = await findOrderDocs(page, () => {
@@ -790,7 +792,7 @@ await runStep("order: Alt+ArrowDown moves the picked line and keeps it picked", 
   page.off("request", onRequest);
 });
 
-await runStep("order: a depth-locked line (an already-written document) can be picked, moved and is not indented by Tab", {}, async ({ page }) => {
+await runStep("order: a depth-locked line (an already-written document) can be picked, moved and is not indented by Tab", { drafting: true }, async ({ page }) => {
   await page.goto(`${BASE}/bundles/${halfBundleId}/order`);
   await wait(page, "output-c");
   const [hit] = await findOrderDocs(page, () => {
@@ -842,7 +844,7 @@ await runStep("order: a depth-locked line (an already-written document) can be p
 });
 
 // 줄을 끌어 칸 안에서 옮기고 좌우로 깊이를 바꾼다(끌어다 놓기 설계 §4·§5). 마우스는 걸음으로 움직인다(dragTo는 쓰지 않는다). 바꾼 순서·깊이는 단계 안에서 되돌린다
-await runStep("order: drag a line to reorder and indent", {}, async ({ page, takeShot }) => {
+await runStep("order: drag a line to reorder and indent", { drafting: true }, async ({ page, takeShot }) => {
   await installCommitCounter(page);
   await page.goto(`${BASE}/bundles/${halfBundleId}/order`);
   await wait(page, "output-c");
@@ -1157,7 +1159,7 @@ await runStep("order: drag a line to reorder and indent", {}, async ({ page, tak
 // 같은 문서의 다른 칸으로 - 데모 시드 SOP-CF(아직 쓰지 않은 SOP): 1 Purpose의 의미 짝(덩어리)을 4 Responsibilities의 두 의미 묶음 사이로,
 // 하위 칸(5장의 범주 General Requirements › Safety)의 끝으로, 그 아래의 빈 칸(템플릿 골격에서는 8 Attachments나 9 Appendices)으로 옮긴 뒤 같은 길을 되짚어(Responsibilities를 거쳐) 빈 Purpose로 되돌린다.
 // 1–5 · 7 · 8장의 줄은 글머리 기호라 번호가 없다 - 표의 note는 그 칸에서 받을 번호이고, 번호를 받지 않는 줄이면 칸 이름이다(noteFor)
-await runStep("order: drag a block into another section, a sub-slot and an empty section", {}, async ({ page, takeShot }) => {
+await runStep("order: drag a block into another section, a sub-slot and an empty section", { drafting: true }, async ({ page, takeShot }) => {
   await installCommitCounter(page);
   await page.goto(`${BASE}/bundles/${halfBundleId}/order`);
   await wait(page, "output-c");
@@ -1334,7 +1336,7 @@ await runStep("order: drag a block into another section, a sub-slot and an empty
 
 // WI는 같은 부분끼리만 - 데모 시드 WI-01: Step 2 · Instruction의 의미 짝을 Step 3 · Instruction(줄 하나)의 끝으로. 지나는 길의 Step 2 · Why 위에서는 거절된다.
 // 되돌릴 때는 빈 Step 2 · Instruction으로
-await runStep("order: drag a WI line to another step", {}, async ({ page }) => {
+await runStep("order: drag a WI line to another step", { drafting: true }, async ({ page }) => {
   await page.goto(`${BASE}/bundles/${halfBundleId}/order`);
   await wait(page, "output-c");
   // 줄이 있는 step:N:instruction, 그 바로 뒤의 step:N:why, 줄이 있는 다른 step:M:instruction
@@ -1389,7 +1391,7 @@ await runStep("order: drag a WI line to another step", {}, async ({ page }) => {
 });
 
 // 이미 쓴 문서의 줄은 자기 칸을 떠나지 못한다 - 데모 시드 WI-04(이미 쓴 WI, 칸 셋 1. Preparation · 2. Operation · 3. After use). 데모 시드에 이미 쓴 SOP는 없다
-await runStep("order: a written document's block cannot leave its section", {}, async ({ page }) => {
+await runStep("order: a written document's block cannot leave its section", { drafting: true }, async ({ page }) => {
   await page.goto(`${BASE}/bundles/${halfBundleId}/order`);
   await wait(page, "output-c");
   const [hit] = await findOrderDocs(page, () => {
@@ -1415,7 +1417,7 @@ await runStep("order: a written document's block cannot leave its section", {}, 
 
 // 저장이 날아가는 동안 다른 칸에 놓기 - 데모 시드 SOP-CF: 4 Responsibilities의 둘째 묶음 첫 줄을 Alt+↓로 옮긴 저장을 붙잡은 채 1 Purpose의 덩어리를 2 Scope 끝에 놓는다.
 // 둘째 저장은 첫 응답 뒤에 나가고 둘 다 남는다. 끝에 둘 다 되돌린다
-await runStep("order: a drop into another section while a save is in flight is re-applied after it", {}, async ({ page }) => {
+await runStep("order: a drop into another section while a save is in flight is re-applied after it", { drafting: true }, async ({ page }) => {
   await page.goto(`${BASE}/bundles/${halfBundleId}/order`);
   await wait(page, "output-c");
   const [hit] = await findOrderDocs(page, () => {
@@ -1496,7 +1498,7 @@ await runStep("order: a drop into another section while a save is in flight is r
 
 // 끄는 동안 칸이 바뀐다 - 앞선 저장의 응답이 끄는 도중 닿으면 선은 새 데이터로 다시 세고 놓은 자리가 선과 같다.
 // 앞선 저장이 실패해 되돌려지며 덩어리가 바뀌면 그 끌기는 거절되고 놓아도 저장하지 않는다. 응답은 page.route로 붙잡아 끄는 도중에 푼다
-await runStep("order: a save landing mid-drag keeps the drop line and the saved order together, a rollback refuses the drag", { allowConsoleErrors: true }, async ({ page }) => {
+await runStep("order: a save landing mid-drag keeps the drop line and the saved order together, a rollback refuses the drag", { drafting: true, allowConsoleErrors: true }, async ({ page }) => {
   await page.goto(`${BASE}/bundles/${halfBundleId}/order`);
   await wait(page, "output-c");
   // 첫 두 줄이 같은 의미 짝(F·R)이고, 셋째 줄 뒤에 깊이 0의 의미 묶음 첫 줄 L이 있는 짧은 칸
@@ -1747,7 +1749,7 @@ await runStep("order: a save landing mid-drag keeps the drop line and the saved 
   await page.unroute(/\/targets\/order/);
 });
 
-await runStep("order: drag is off on a read-only bundle", { devUser: "qa.lead" }, async ({ page }) => {
+await runStep("order: drag is off on a read-only bundle", { drafting: true, devUser: "qa.lead" }, async ({ page }) => {
   await page.goto(`${BASE}/bundles/${halfBundleId}/order`);
   await wait(page, "output-c");
   const row = page.locator('[data-testid^="output-c-row-"]').nth(1);
@@ -1763,7 +1765,7 @@ await runStep("order: drag is off on a read-only bundle", { devUser: "qa.lead" }
   check("no drag starts", !state.flag && state.cards === 0, JSON.stringify(state));
 });
 
-await runStep("order: a move chosen from the narrow-frame menu keeps focus on that line's ⋯ button", {}, async ({ page }) => {
+await runStep("order: a move chosen from the narrow-frame menu keeps focus on that line's ⋯ button", { drafting: true }, async ({ page }) => {
   await page.setViewportSize({ width: 760, height: 900 });
   await page.goto(`${BASE}/bundles/${halfBundleId}/order`);
   await wait(page, "output-c");
@@ -1801,7 +1803,7 @@ await runStep("order: a move chosen from the narrow-frame menu keeps focus on th
   check("and moves back", (await back).ok() && (await readOrder()).indexOf(id) === start);
 });
 
-await runStep("order: mark a line as a note on C, the count continues and the note is italic", {}, async ({ page, takeShot }) => {
+await runStep("order: mark a line as a note on C, the count continues and the note is italic", { drafting: true }, async ({ page, takeShot }) => {
   await page.goto(`${BASE}/bundles/${halfBundleId}/order`);
   await wait(page, "output-c");
   // 같은 칸에서 같은 깊이로 이어지는 번호 줄 둘(X, Y) - X를 주석으로 바꾸면 Y가 X의 번호를 이어 받는다. 번호 줄이 있는 문서를 찾아 연다
@@ -1845,7 +1847,7 @@ await runStep("order: mark a line as a note on C, the count continues and the no
 // 하위 절을 두는 칸(6 Procedures)에 직접 놓인 줄은 번호가 없고 Numbered를 내놓지 않는다 - 그 아래 첫 절차(6.1)의 줄은 6.1.1부터다(제품 명세 §7.13 섹션 번호).
 // 6장으로 본다 - 5장의 범주는 번호가 없고 줄이 글머리 기호라 번호를 볼 수 없다. 6장과 그 절차는 기본 표시가 번호라 옮긴 줄의 표시도 그대로다.
 // 자료는 이 단계가 API로 만든다 - SOP의 번호 줄 둘을 순서 저장으로 6 칸과 6.1 칸의 맨 앞에 옮기고, 끝에 처음 순서·칸·깊이로 되돌린다(그 문서의 굳힌 순서는 남는다)
-await runStep("order: a line placed directly in a slot with sub slots has no number", {}, async ({ page }) => {
+await runStep("order: a line placed directly in a slot with sub slots has no number", { drafting: true }, async ({ page }) => {
   const PARENT = "procedures";
   const headers = { "X-Dev-User": "qa.member" };
   const api = `${BASE}/api/bundles/${halfBundleId}`;
@@ -1912,7 +1914,7 @@ await runStep("order: a line placed directly in a slot with sub slots has no num
 });
 
 // 순서 바꾸기는 화면에서 먼저 자리를 바꾸고 저장은 뒤에서 한 번에 하나씩 보낸다(제품 명세 §7.13 C 순서 바꾸기). 실패하면 되돌리고 알림을 띄운다
-await runStep("order: C reorder moves at once, saves one request at a time and rolls back a failed save", { allowConsoleErrors: true }, async ({ page, takeShot }) => {
+await runStep("order: C reorder moves at once, saves one request at a time and rolls back a failed save", { drafting: true, allowConsoleErrors: true }, async ({ page, takeShot }) => {
   await page.goto(`${BASE}/bundles/${halfBundleId}/order`);
   await wait(page, "output-c");
   // 위·아래 단추가 있는 줄이 넷 이상인 칸 - 첫 줄을 세 번 내릴 수 있다
@@ -2028,7 +2030,7 @@ await runStep("order: C reorder moves at once, saves one request at a time and r
 });
 
 // 저장과 다시 받기가 엇갈려도 저장된 바뀜이 사라지지 않고, 한 번의 409는 알림 하나이며, 떠났다 돌아와도 저장이 겹치지 않는다
-await runStep("order: C saves survive a slow refetch, one conflict toasts once, leaving does not race", { allowConsoleErrors: true }, async ({ page, takeShot }) => {
+await runStep("order: C saves survive a slow refetch, one conflict toasts once, leaving does not race", { drafting: true, allowConsoleErrors: true }, async ({ page, takeShot }) => {
   await page.goto(`${BASE}/bundles/${halfBundleId}/order`);
   await wait(page, "output-c");
   // 문서마다 위·아래 단추가 있는 줄이 셋 이상인 첫 칸 - 그 칸의 첫 줄을 옮긴다

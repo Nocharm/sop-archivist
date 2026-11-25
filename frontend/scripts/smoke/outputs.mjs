@@ -30,7 +30,7 @@ await runStep("outputs: the review bar tells the author what is left", {}, async
 });
 
 // 결과물은 새 문서마다 표·그림 번호를 1부터 다시 매기고 이은 참조도 따라간다(저장 글은 원문 번호 그대로) - 검토 대기 묶음은 OLD-7을 SOP에 모두 보냈다
-await runStep("outputs: renumbered table and figure captions with a reference", { storage: { "sopa.lang": "ko" } }, async ({ page, takeShot }) => {
+await runStep("outputs: renumbered table and figure captions with a reference", { drafting: true, storage: { "sopa.lang": "ko" } }, async ({ page, takeShot }) => {
   const headers = { "X-Dev-User": "qa.member" };
   const getJson = async (path) => (await page.request.get(`${BASE}/api${path}`, { headers })).json();
   const bundles = await getJson("/bundles");
@@ -93,7 +93,7 @@ await runStep("outputs: renumbered table and figure captions with a reference", 
   }
 });
 
-await runStep("outputs: A, B, C and the Excel preview", {}, async ({ page, takeShot }) => {
+await runStep("outputs: A, B, C and the Excel preview", { drafting: true }, async ({ page, takeShot }) => {
   await page.goto(`${BASE}/bundles/${halfBundleId}/outputs`);
   await wait(page, "output-c");
   check("C shows the new documents", (await getText(page, "output-c")).includes("SOP-CF"));
@@ -113,12 +113,12 @@ await runStep("outputs: A, B, C and the Excel preview", {}, async ({ page, takeS
   await page.locator('[data-testid="outputs-tab-b"]').click();
   await wait(page, "output-b");
   check("B shows flows from old documents", (await getText(page, "output-b")).includes("OLD-1"));
-  // Export Excel은 미리보기 창을 먼저 연다 - 파일과 같은 시트 다섯 장, 받기는 창에서
+  // Export Excel은 미리보기 창을 먼저 연다 - 파일과 같은 시트 네 장(C는 숨겨 두었다), 받기는 창에서
   await page.locator('[data-testid="outputs-export-open"]').click();
   await wait(page, "export-preview");
   await wait(page, "export-preview-sheet");
   const tabs = await page.locator('[data-testid^="export-preview-tab-"]').allInnerTexts();
-  check("the preview has the five sheet tabs in file order", JSON.stringify(tabs.map((name) => name.trim())) === JSON.stringify(["A Comparison", "B Flow", "C New documents", "Info", "Documents"]), JSON.stringify(tabs));
+  check("the preview has the four sheet tabs in file order", JSON.stringify(tabs.map((name) => name.trim())) === JSON.stringify(["A Comparison", "B Flow", "Info", "Documents"]), JSON.stringify(tabs));
   await takeShot("sop-outputs-preview.png");
   const download = page.waitForEvent("download", { timeout: T });
   await page.locator('[data-testid="export-preview-download"]').click();
@@ -208,7 +208,7 @@ await runStep("outputs: export preview fits the sheet, drags and switches tabs",
 });
 
 // 결과물 C는 읽기 전용이라 줄 끝 단추가 없다 - Order의 호버 바탕·다리(::after)가 새어 들지 않고 줄에 올려도 가로 스크롤이 늘지 않는다
-await runStep("outputs: read-only C rows keep their rest look on hover", {}, async ({ page }) => {
+await runStep("outputs: read-only C rows keep their rest look on hover", { drafting: true }, async ({ page }) => {
   for (const width of [1120, 1440]) {
     await page.setViewportSize({ width, height: 720 });
     await page.goto(`${BASE}/bundles/${halfBundleId}/outputs`);
@@ -235,7 +235,7 @@ await runStep("outputs: read-only C rows keep their rest look on hover", {}, asy
 });
 
 // 결과물 화면의 C는 읽기 전용 - 작성자라도 줄이 끌리지 않는다(G13)
-await runStep("outputs: read-only C rows do not start a drag", {}, async ({ page }) => {
+await runStep("outputs: read-only C rows do not start a drag", { drafting: true }, async ({ page }) => {
   await page.goto(`${BASE}/bundles/${halfBundleId}/outputs`);
   await page.locator('[data-testid="outputs-tab-c"]').click();
   const row = page.locator('[data-testid="output-c"] [data-testid^="output-c-row-"]').nth(1);
@@ -311,7 +311,7 @@ await runStep("review: reviewer does not see withdraw", { devUser: "qa.lead" }, 
   check("no withdraw on the overview", (await page.locator('[data-testid="overview-withdraw-review"]').count()) === 0);
 });
 
-await runStep("review: reviewer completes the bundle in review", { devUser: "qa.lead" }, async ({ page, takeShot }) => {
+await runStep("review: reviewer completes the bundle in review", { drafting: true, devUser: "qa.lead" }, async ({ page, takeShot }) => {
   await page.goto(`${BASE}/`);
   const review = page.locator('[data-testid^="bundles-row-"]', { hasText: "검토 대기" });
   const reviewId = Number((await review.getAttribute("data-testid")).replace("bundles-row-", ""));
@@ -348,7 +348,7 @@ await runStep("review: reviewer completes the bundle in review", { devUser: "qa.
 });
 
 // 네 단계 워크플로우 - 레일은 Documents·Assign·Order·Outputs, 원문 고치기(옛 쪼개기 화면)는 배정 화면 안에서 열린다. C는 Order에서만 고친다
-await runStep("four steps: rail, Order edits C and Outputs reads it", {}, async ({ page, takeShot }) => {
+await runStep("four steps: rail, Order edits C and Outputs reads it", { drafting: true }, async ({ page, takeShot }) => {
   await page.goto(`${BASE}/bundles/${halfBundleId}`);
   await wait(page, "stage-nav");
   const rail = await page.locator('[data-testid="stage-nav"] .stg-n').evaluateAll((els) => els.map((el) => `${el.textContent}:${el.parentElement.dataset.stage}`));
@@ -376,5 +376,64 @@ await runStep("four steps: rail, Order edits C and Outputs reads it", {}, async 
   await page.waitForURL(/\/order$/, { timeout: T });
   await wait(page, "order-docs");
   check("Edit order returns to the document last opened", (await page.locator('[data-testid^="order-doc-"][aria-current="true"]').getAttribute("data-testid")) === picked);
+});
+
+// 새 문서를 만드는 쪽을 숨긴 실사용 화면(쪼개기 먼저 설계 §5) - 레일 · Documents · Assign · Outputs에 그 길이 없고, 이미 빈 문서에 배정한 줄은 읽기 전용으로 보이며 배정 취소로 나간다.
+// 줄 하나를 API로 칸에 놓고 시작해 배정 취소로 끝낸다(묶음은 시작 때 그대로)
+await runStep("drafting hidden: rail, documents, assign and outputs show no drafting", {}, async ({ page, takeShot }) => {
+  const headers = { "X-Dev-User": "qa.member" };
+  const api = `${BASE}/api/bundles/${halfBundleId}`;
+  const getJson = async (path) => (await page.request.get(`${api}${path}`, { headers })).json();
+  const count = (testId, op = "=") => page.locator(`[data-testid${op}"${testId}"]`).count();
+
+  await page.goto(`${BASE}/bundles/${halfBundleId}`);
+  await wait(page, "stage-nav");
+  const rail = await page.locator('[data-testid="stage-nav"] .stg-n').evaluateAll((els) => els.map((el) => `${el.textContent}:${el.parentElement.dataset.stage}`));
+  check("the rail numbers Documents, Assign, Outputs", rail.join(" ") === "1:documents 2:assign 3:outputs", rail.join(" "));
+  await page.goto(`${BASE}/bundles/${halfBundleId}/order`);
+  await page.waitForURL(/\/assign$/, { timeout: T });
+  await wait(page, "assign-bar");
+  check("the Order address goes on to Assign", true);
+
+  await page.goto(`${BASE}/bundles/${halfBundleId}/documents`);
+  await wait(page, "tobe-list");
+  await page.locator('[data-testid="tobe-list"] [data-testid$="-row"]').first().waitFor({ timeout: T });
+  check("Documents keeps the New list without adding by number, Excel or AI reading", (await count("tobe-add-row")) + (await count("tobe-more")) + (await count("tobe-proposal")) === 0);
+  await page.locator('[data-testid="tobe-list"] [data-testid$="-toggle"]').first().click();
+  await page.locator('[data-testid="tobe-list"] [data-testid$="-panel"]').first().waitFor({ timeout: T });
+  check("an opened New row has no section table and no add step", (await page.locator('[data-testid="tobe-list"] :is([data-testid$="-slots"], [data-testid$="-add-step"], [data-testid$="-not-written"])').count()) === 0);
+
+  const tobe = await getJson("/tobe");
+  const sop = tobe.docs.find((doc) => doc.entrance === "assign" && doc.doc_type === "sop");
+  const naKeys = tobe.na_slots.filter((slot) => slot.code === sop.code).map((slot) => slot.slot_key);
+  const item = tobe.outline_items.find((entry) => entry.code === sop.code && entry.is_assignable && !entry.is_removed && !naKeys.some((key) => entry.key === key || entry.key.startsWith(`${key}.`)));
+  const readUnit = async (id) => (await getJson("/units?limit=1000")).items.find((entry) => entry.unit_id === id);
+  const unit = (await getJson("/units?limit=1000")).items.find((entry) => entry.kind === "sentence" && entry.status === "unassigned" && entry.decision.disposition === "unassigned" && entry.pair_id === null);
+  const placed = await page.request.post(`${api}/groups/save`, {
+    headers,
+    data: {
+      action: "confirm", hold_reason: "", removed_target_ids: [],
+      units: [{ unit_id: unit.unit_id, revision: unit.decision.revision, disposition: "assigned", move_target_code: "", reason: "" }],
+      targets: [{ key: `u${unit.unit_id}`, target_doc_id: sop.id, slot_key: item.key, kind: "sentence", lang: unit.lang, text: unit.text.trim(), source_unit_ids: [unit.unit_id] }],
+    },
+  });
+  check("a line is placed in an unwritten document through the API", placed.ok(), String(placed.status()));
+  await page.goto(`${BASE}/bundles/${halfBundleId}/assign?doc=${unit.document_id}&unit=${unit.unit_id}`);
+  await wait(page, "assign-hidden-place");
+  const shown = await getText(page, "assign-hidden-place");
+  check("the inspector names the hidden place", shown.includes(sop.code) && shown.includes("hidden feature"), shown);
+  check("the hidden place cannot be confirmed or rewritten", (await page.locator('[data-testid="assign-primary"]').isDisabled()) && (await count("assign-edit", "^=")) === 0);
+  if ((await page.locator('[data-testid="assign-acc-all"]').getAttribute("aria-expanded")) !== "true") await page.locator('[data-testid="assign-acc-all"]').click();
+  check("the All list has no place in an unwritten document", (await count("assign-tree-place-", "^=")) + (await count("assign-tree-add-doc")) === 0);
+  check("the New pane offers written documents only", (await count("assign-new-view-template")) === 0 && (await page.locator('[data-testid="assign-new"]').innerText()).includes("from Assign") === false);
+  await takeShot("sop-assign-hidden-place.png");
+  await page.locator('[data-testid="assign-clear"]').click();
+  await page.locator('[data-testid="assign-hidden-place"]').waitFor({ state: "detached", timeout: T });
+  const cleared = await readUnit(unit.unit_id);
+  check("undoing the assignment leaves the line Unassigned", cleared.status === "unassigned" && cleared.decision.disposition === "unassigned", cleared.status);
+
+  await page.goto(`${BASE}/bundles/${halfBundleId}/outputs`);
+  await wait(page, "output-b");
+  check("Outputs opens on B and has no Output C", (await count("outputs-tab-c")) + (await count("outputs-edit-order")) === 0 && (await count("outputs-tab-b")) === 1);
 });
 }

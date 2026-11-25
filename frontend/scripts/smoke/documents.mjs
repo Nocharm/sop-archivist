@@ -430,7 +430,7 @@ await runStep("old Edit original addresses open the document in the one-document
   await wait(page, "assign-new");
 });
 
-await runStep("new documents: nested rows, N/A detail, each cell saves as you leave it", { allowConsoleErrors: true }, async ({ page, takeShot }) => {
+await runStep("new documents: nested rows, N/A detail, each cell saves as you leave it", { drafting: true, allowConsoleErrors: true }, async ({ page, takeShot }) => {
   await page.goto(`${BASE}/bundles/${halfBundleId}/documents`);
   await page.locator('[data-testid$="-row"][data-testid^="tobe-id-"]').first().waitFor({ timeout: T });
   const codes = await page.locator('[data-testid$="-code-text"][data-testid^="tobe-id-"]').evaluateAll((els) => els.map((el) => (el.textContent ?? "").trim()));
@@ -532,7 +532,7 @@ await runStep("new documents: nested rows, N/A detail, each cell saves as you le
 });
 
 // 검토 v0.4.0: 앞 단계를 지워도 뒤 단계 번호가 그대로여야 한다(분류한 문장이 단계 번호를 가리킨다)
-await runStep("new documents: removing a step keeps the other numbers", {}, async ({ page }) => {
+await runStep("new documents: removing a step keeps the other numbers", { drafting: true }, async ({ page }) => {
   await page.goto(`${BASE}/bundles/${halfBundleId}/documents`);
   await page.locator('[data-testid$="-row"][data-testid^="tobe-id-"]').first().waitFor({ timeout: T });
   const wiRow = page.locator('[data-testid$="-row"][data-testid^="tobe-id-"]').nth(1);
@@ -574,7 +574,7 @@ await runStep("new documents: removing a step keeps the other numbers", {}, asyn
   check("restored the step list", (await readNumbers()).join(",") === before.join(","));
 });
 // 일부러 거절당하는 저장(409 · 500)은 따로 아래 단계에 둔다 - 이 단계는 콘솔 오류를 허용하지 않는다
-await runStep("new documents: the section table shows each section's state and saves N/A only with a reason", {}, async ({ page }) => {
+await runStep("new documents: the section table shows each section's state and saves N/A only with a reason", { drafting: true }, async ({ page }) => {
   const headers = { "X-Dev-User": "qa.member" };
   const start = await readToBe(page, halfBundleId);
   const naBefore = start.na_slots.length;
@@ -851,7 +851,7 @@ await runStep("new documents: the section table shows each section's state and s
 
 // 절차 선언(표준 골격 계획 스텝 5) - 6장의 절차를 문서마다 더하고, 이름을 고치고, 순서를 바꾸고, 뺀다. 더한 절차는 칸 상태 표에 6.x로 보인다.
 // 서버에 가는 저장은 모두 받아들여지는 것뿐이라 콘솔 오류를 허용하지 않는다(같은 제목 · 빈 제목은 화면이 보내기 전에 거둔다). 더한 절차는 끝에 화면에서 빼고, 중간에 멈췄으면 API로 지워 처음 골격으로 되돌린다
-await runStep("new documents: declare a procedure, rename it, see it in the sections table as 6.x, remove it", {}, async ({ page }) => {
+await runStep("new documents: declare a procedure, rename it, see it in the sections table as 6.x, remove it", { drafting: true }, async ({ page }) => {
   const headers = { "X-Dev-User": "qa.member" };
   const PARENT = "procedures";
   const ADDED_TITLE = "Smoke declared procedure";
@@ -966,7 +966,7 @@ await runStep("new documents: declare a procedure, rename it, see it in the sect
  * 하위의 N/A까지 본다 - 장을 빼면 하위의 N/A가 지워지고 되살려도 돌아오지 않아, 뒤 단계가 기대는 시드의 N/A(procedures.troubleshooting)를 잃는다
  */
 
-await runStep("new documents: remove a standard chapter with a reason, later chapters shift up, restore it", {}, async ({ page }) => {
+await runStep("new documents: remove a standard chapter with a reason, later chapters shift up, restore it", { drafting: true }, async ({ page }) => {
   const headers = { "X-Dev-User": "qa.member" };
   const REASON = "Smoke: not used in this SOP";
   const start = await readToBe(page, halfBundleId);
@@ -1017,7 +1017,7 @@ await runStep("new documents: remove a standard chapter with a reason, later cha
 
 // 거절된 N/A 저장 - 409 slot_has_targets(그 사이 문장이 들어왔다)는 둘 곳이 없어 편집기를 닫고, 그 밖의 실패는 적던 사유를 남긴다.
 // 거절 응답이 콘솔에 찍혀 이 단계만 콘솔 오류를 허용한다
-await runStep("new documents: a refused N/A save closes the editor, any other failure keeps the reason", { allowConsoleErrors: true }, async ({ page }) => {
+await runStep("new documents: a refused N/A save closes the editor, any other failure keeps the reason", { drafting: true, allowConsoleErrors: true }, async ({ page }) => {
   const start = await readToBe(page, halfBundleId);
   const sop = start.docs.find((doc) => doc.doc_type === "sop");
   const prefix = `tobe-id-${sop.id}`;
@@ -1072,7 +1072,7 @@ await runStep("new documents: a refused N/A save closes the editor, any other fa
   }
 });
 
-await runStep("new documents: rows read in two lines, a click or Enter opens a row, row-end buttons show on hover or focus", {}, async ({ page }) => {
+await runStep("new documents: rows read in two lines, a click or Enter opens a row, row-end buttons show on hover or focus", { drafting: true }, async ({ page }) => {
   const tobe = await readToBe(page, halfBundleId);
   const deletes = [];
   page.on("request", (request) => {
@@ -1262,7 +1262,7 @@ await runStep("new documents: rows read in two lines, a click or Enter opens a r
 });
 
 // 읽기 전용(검토자 · 검토 대기 묶음) - 줄은 펼쳐지고 값은 글자로만 보인다. 고치는 칸 · 줄 끝 단추 · 칸 표의 단추 · 등록 칸이 없다
-await runStep("new documents: a reviewer reads the rows and the section table, nothing edits", { devUser: "qa.lead" }, async ({ page }) => {
+await runStep("new documents: a reviewer reads the rows and the section table, nothing edits", { drafting: true, devUser: "qa.lead" }, async ({ page }) => {
   await page.goto(`${BASE}/`);
   await wait(page, "bundles-list");
   const review = page.locator('[data-testid^="bundles-row-"]', { hasText: "검토 대기" });
@@ -1292,7 +1292,7 @@ await runStep("new documents: a reviewer reads the rows and the section table, n
 });
 
 // 등록 칸과 줄의 칸 상태 요약(Documents 화면 설계 §6) - 번호 칸은 목록 머리 바로 아래에서 무엇을 더할지 미리 적고, SOP 줄은 칸 상태 막대(문장을 받는 칸마다 눈금 하나)와 요약 글, 단계는 문장 수를 보인다
-await runStep("new documents: the add field says what it will add, a row shows its sections at a glance", {}, async ({ page }) => {
+await runStep("new documents: the add field says what it will add, a row shows its sections at a glance", { drafting: true }, async ({ page }) => {
   const tobe = await readToBe(page, halfBundleId);
   const apiHeaders = { "X-Dev-User": "qa.member" };
   await page.goto(`${BASE}/bundles/${halfBundleId}/documents`);
@@ -1508,7 +1508,7 @@ await runStep("new documents: the add field says what it will add, a row shows i
 
 // 다시 받기가 저장 도중에 시작해(다른 칸의 거절) 저장 앞의 목록을 읽고 저장 뒤에 오면, 저장한 값이 되돌아 보였다 - 저장이 끝날 때 다시 받는 중이면 한 번 더 받는다.
 // 제목 저장(PATCH)은 1.5초 붙잡고, 그동안 다른 줄의 번호를 겹치게 고쳐 거절시킨다. 그 거절의 다시 받기(GET)는 바로 읽되 제목 저장의 응답 뒤까지 붙잡는다
-await runStep("new documents: a reload that starts during a save does not undo the save", { allowConsoleErrors: true }, async ({ page }) => {
+await runStep("new documents: a reload that starts during a save does not undo the save", { drafting: true, allowConsoleErrors: true }, async ({ page }) => {
   const tobe = await readToBe(page, halfBundleId);
   const sop = tobe.docs.find((doc) => doc.code === "SOP-CF");
   const wi = tobe.docs.find((doc) => doc.doc_type === "wi" && doc.entrance === "assign");
@@ -1563,7 +1563,7 @@ await runStep("new documents: a reload that starts during a save does not undo t
 
 // WI 줄을 SOP 줄에 끌어 상위 SOP 바꾸기(Documents 화면 설계 §7) - 놓으면 바로 저장되고 알림의 Undo가 되돌린다. Restore의 알림도 Undo를 지닌다(§8).
 // 둘째 SOP는 API로 만들고 끝에 지운다. 거절되는 Undo · 늦춘 저장이 있어 콘솔 오류를 허용한다
-await runStep("new documents: drag a WI onto another SOP to change its parent, Undo on the toast puts it back", { allowConsoleErrors: true }, async ({ page }) => {
+await runStep("new documents: drag a WI onto another SOP to change its parent, Undo on the toast puts it back", { drafting: true, allowConsoleErrors: true }, async ({ page }) => {
   const headers = { "X-Dev-User": "qa.member" };
   const jsonHeaders = { ...headers, "Content-Type": "application/json" };
   const api = `${BASE}/api/bundles/${halfBundleId}`;
@@ -1916,7 +1916,7 @@ await runStep("new documents: drag a WI onto another SOP to change its parent, U
 
 // 긴 목록에서 위의 WI를 아래 끝 SOP로 끌어(가장자리 자동 스크롤) 놓으면 그 줄은 새 자리에서 보인다 - 미끄러지는 중의 옛 자리로 화면을 끌고 올라가지 않는다.
 // SOP 둘과 그 사이 WI 12개는 API로 만들고 끝에 지운다
-await runStep("new documents: a WI dragged far down a long list stays in view where it lands", { allowConsoleErrors: true }, async ({ page }) => {
+await runStep("new documents: a WI dragged far down a long list stays in view where it lands", { drafting: true, allowConsoleErrors: true }, async ({ page }) => {
   const headers = { "X-Dev-User": "qa.member" };
   const jsonHeaders = { ...headers, "Content-Type": "application/json" };
   const api = `${BASE}/api/bundles/${halfBundleId}`;
@@ -1979,7 +1979,7 @@ await runStep("new documents: a WI dragged far down a long list stays in view wh
 });
 
 // 읽기 전용 Bundle(검토 대기, 검토자)에서는 끌 상자가 없다 - 눌러 움직여도 끌기가 아니고 떼면 펼친다
-await runStep("new documents: nothing drags on a read-only bundle", { devUser: "qa.lead" }, async ({ page }) => {
+await runStep("new documents: nothing drags on a read-only bundle", { drafting: true, devUser: "qa.lead" }, async ({ page }) => {
   await page.goto(`${BASE}/`);
   await wait(page, "bundles-list");
   const review = page.locator('[data-testid^="bundles-row-"]', { hasText: "검토 대기" });
@@ -2009,7 +2009,7 @@ await runStep("new documents: nothing drags on a read-only bundle", { devUser: "
 });
 
 // 목록 둘(v1.0.32) - 위는 Old 문서, 아래는 New 문서. 이미 쓴 New 문서의 파일은 따로 줄을 차지하지 않고 New 목록의 그 줄에 붙어 보인다
-await runStep("documents: an Old list and a New list, with written files on their rows", {}, async ({ page, takeShot }) => {
+await runStep("documents: an Old list and a New list, with written files on their rows", { drafting: true }, async ({ page, takeShot }) => {
   await page.goto(`${BASE}/`);
   const fresh = page.locator('[data-testid^="bundles-row-"]', { hasText: "쪼개기 직후" });
   const freshId = Number((await fresh.getAttribute("data-testid")).replace("bundles-row-", ""));
@@ -2442,7 +2442,7 @@ await runStep("documents: uploading keeps each row in its group and shows Waitin
 
 // AI로 목록 읽기(v1.0.34) - 템플릿에 맞지 않는 글을 붙여 넣으면 AI가 줄을 제안하고, 사람이 보고 고친 뒤 목록에 더한다.
 // 글에 없는 번호는 서버가 버린다(가짜 AI가 일부러 하나를 지어낸다). AI가 꺼진 백엔드에서는 메뉴에 항목이 없는 것만 본다.
-await runStep("documents: AI reads a free-form list into New rows", { devUser: "dev.admin" }, async ({ page }) => {
+await runStep("documents: AI reads a free-form list into New rows", { drafting: true, devUser: "dev.admin" }, async ({ page }) => {
   const headers = { "X-Dev-User": "dev.admin", "Content-Type": "application/json" };
   const created = await (await page.request.post(`${BASE}/api/bundles`, { headers, data: { title: "SYNTHETIC list reading", is_synthetic: true } })).json();
   await page.request.put(`${BASE}/api/bundles/${created.id}/tobe`, { headers, data: { revision: created.revision, docs: [{ code: "SOP-01", doc_type: "sop", title: "Synthetic SOP" }], na_slots: [], wi_steps: [] } });

@@ -451,7 +451,7 @@ async function prepareClickPlace(page, needed) {
 
 export async function run() {
 
-await runStep("assign: legend first, place, delete without a reason, edit, clear, bulk", { allowConsoleErrors: true }, async ({ page, takeShot }) => {
+await runStep("assign: legend first, place, delete without a reason, edit, clear, bulk", { drafting: true, allowConsoleErrors: true }, async ({ page, takeShot }) => {
   await page.goto(`${BASE}/bundles/${halfBundleId}/assign`);
   await wait(page, "assign-pick-prompt");
   check("help panel sits at the bottom of the inspector, folded by default", (await page.locator('[data-testid="assign-inspector"] [data-testid="assign-help"]').count()) === 1 && (await page.locator('[data-testid="assign-help-toggle"]').getAttribute("aria-expanded")) === "false");
@@ -586,7 +586,7 @@ await runStep("assign: hold an unassigned unit without a destination", {}, async
   check("the unit is on hold", true);
 });
 
-await runStep("assign: a reference line asks for its number before it can be decided", {}, async ({ page, takeShot }) => {
+await runStep("assign: a reference line asks for its number before it can be decided", { drafting: true }, async ({ page, takeShot }) => {
   await page.goto(`${BASE}/bundles/${freshBundleId}/assign`);
   await wait(page, "assign-bar");
   // 위쪽 줄의 남은 수를 누르면 확인이 남은 참조 줄 목록이 뜨고, Next가 그 줄로 간다(합성 문서 7절의 한 줄)
@@ -752,7 +752,7 @@ await runStep("assign: right-click an Old sentence to split it or change its lan
   check("the first piece's row is selected after the split", (await page.locator('[data-testid="assign-row-id"]').count()) === 1);
 });
 
-await runStep("assign: an edit survives looking at another unit", {}, async ({ page }) => {
+await runStep("assign: an edit survives looking at another unit", { drafting: true }, async ({ page }) => {
   await page.goto(`${BASE}/bundles/${freshBundleId}/assign`);
   await wait(page, "assign-bar");
   await page.keyboard.press("j");
@@ -1222,7 +1222,7 @@ await runStep("assign: figures - the Figures tab holds the figure cards, Show po
   check("Undo leaves the figure unassigned, as it was", restored?.status === "unassigned", restored?.status);
 });
 
-await runStep("assign: a bundle without a caption cannot be confirmed until one is written", {}, async ({ page, takeShot }) => {
+await runStep("assign: a bundle without a caption cannot be confirmed until one is written", { drafting: true }, async ({ page, takeShot }) => {
   const headers = { "X-Dev-User": "qa.member" };
   const getJson = async (path) => (await page.request.get(`${BASE}/api/bundles/${halfBundleId}${path}`, { headers })).json();
   // 데모 시드가 일부러 남긴 캡션 없는 미배정 표(OLD-7) - 캡션 단위도 써 넣은 캡션도 없다
@@ -1276,7 +1276,7 @@ await runStep("assign: a bundle without a caption cannot be confirmed until one 
 
 // AI는 제안만 한다(설계 2026-11-19-ai-suggest-only) - 요청한 분류는 줄 상태를 바꾸지 않고 AI 카드로 온다. 상단 바 AI 메뉴의 일괄 수락이
 // 나눈 고쳐 쓰기도 제안 모양 그대로 받고(D3), 되돌리기 한 번에 받은 것이 모두 추천으로 돌아간다
-await runStep("assign: an AI split is taken whole from the top bar and one undo takes it back", {}, async ({ page, takeShot }) => {
+await runStep("assign: an AI split is taken whole from the top bar and one undo takes it back", { drafting: true }, async ({ page, takeShot }) => {
   const status = await page.request.get(`${BASE}/api/bundles/${freshBundleId}/ai/status`, { headers: { "X-Dev-User": "qa.member" } });
   if (!status.ok() || !(await status.json()).ai_enabled) {
     console.log("  (AI is off in this backend - skipped)");
@@ -1522,7 +1522,7 @@ await runStep("assign: written New document - identical, link by clicking, split
 
 // 끌어서 잇기(끌어다 놓기 설계 §6, 2걸음) - Old 조각을 이미 쓴 New 문장에 놓으면 클릭으로 이을 때와 같은 상태(그 줄 고름 · 그 문장 고름 · 그 자리 메뉴)가 되고 저장은 하지 않는다.
 // 마우스는 걸음으로 움직인다(dragTo는 쓰지 않는다). 저장하지 않으므로 되돌릴 것이 없다
-await runStep("assign: drag an Old piece onto a written New sentence, it links like a click", {}, async ({ page, takeShot }) => {
+await runStep("assign: drag an Old piece onto a written New sentence, it links like a click", { drafting: true }, async ({ page, takeShot }) => {
   await installCommitCounter(page);
   const headers = { "X-Dev-User": "qa.member" };
   const readUnits = async () => (await (await page.request.get(`${BASE}/api/bundles/${halfBundleId}/units?limit=1000`, { headers })).json()).items;
@@ -2135,7 +2135,7 @@ await runStep("assign: KO/EN pair - recommendation shows picked, in-place menu c
 });
 
 // 칸 제목(제품 명세 §7.13 칸 제목) -옛 제목 짝을 SOP 칸의 칸 제목 자리로 확정하면 결과물 C와 Assign의 엮은 문서 미리 보기에서 칸 머리 옆에 "← OLD-1 §1"로 보인다. 끝에 원래 처분(지우기)으로 되돌린다
-await runStep("assign: an old heading confirmed as a slot heading shows on C and on the composed New pane", {}, async ({ page, takeShot }) => {
+await runStep("assign: an old heading confirmed as a slot heading shows on C and on the composed New pane", { drafting: true }, async ({ page, takeShot }) => {
   const headers = { "X-Dev-User": "qa.member" };
   const getJson = async (path) => (await page.request.get(`${BASE}/api/bundles/${halfBundleId}${path}`, { headers })).json();
   const sop = (await getJson("/tobe")).docs.find((doc) => doc.doc_type === "sop" && doc.entrance === "assign");
@@ -2200,7 +2200,7 @@ await runStep("assign: an old heading confirmed as a slot heading shows on C and
   check("its decision is deleted and confirmed again", after.decision.disposition === "delete" && after.decision.status === "confirmed", JSON.stringify(after.decision));
 });
 
-await runStep("assign: the New pane shows a real table and figure", {}, async ({ page, takeShot }) => {
+await runStep("assign: the New pane shows a real table and figure", { drafting: true }, async ({ page, takeShot }) => {
   const headers = { "X-Dev-User": "qa.member" };
   const getJson = async (path) => (await page.request.get(`${BASE}/api/bundles/${halfBundleId}${path}`, { headers })).json();
   // 표와 그림을 함께 받은 아직 쓰지 않은 문서를 서버 미리 보기에서 찾는다
@@ -2323,7 +2323,7 @@ await runStep("assign: New table - picking an Old line then a New cell links it,
 // New 칸 템플릿 보기(MD 1 F9 · F8c) - 같은 줄을 회사 템플릿 모양으로: 결과물 C와 같은 줄 · 같은 번호, SOP는 영어 → 한글 절반, 짝은 두 절반에 같은 번호
 /** 한/영 짝이 든 아직 쓰지 않은 문서(doc_type) - 같은 묶음 키에 영어·한글 문장이 다 있는 줄이 있는 첫 문서 */
 
-await runStep("assign: New template view draws the same lines as Output C in two halves", {}, async ({ page, takeShot }) => {
+await runStep("assign: New template view draws the same lines as Output C in two halves", { drafting: true }, async ({ page, takeShot }) => {
   const found = await findTemplateDoc(page, "sop");
   check("the bundle has a composed SOP with a KO/EN pair", Boolean(found), found ? `${found.doc.code} ${found.pair.target_id}/${found.partner.target_id}` : "none");
   if (!found) return;
@@ -2364,7 +2364,7 @@ await runStep("assign: New template view draws the same lines as Output C in two
   check("Basic brings back the usual New pane", (await page.locator('[data-testid="assign-new-tpl"]').count()) === 0);
 });
 
-await runStep("assign: New template view lights a pair in both halves and fills a missing translation", {}, async ({ page, takeShot }) => {
+await runStep("assign: New template view lights a pair in both halves and fills a missing translation", { drafting: true }, async ({ page, takeShot }) => {
   const found = await findTemplateDoc(page, "sop");
   check("the bundle has a composed SOP with a KO/EN pair", Boolean(found));
   if (!found) return;
@@ -2394,7 +2394,7 @@ await runStep("assign: New template view lights a pair in both halves and fills 
   check("a missing translation leads to Make / Write the other language", focused || !offered, `focused=${focused} offered=${offered}`);
 });
 
-await runStep("assign: New template view draws a WI in chapter tables, Korean half first", {}, async ({ page, takeShot }) => {
+await runStep("assign: New template view draws a WI in chapter tables, Korean half first", { drafting: true }, async ({ page, takeShot }) => {
   const headers = { "X-Dev-User": "qa.member" };
   const wi = (await (await page.request.get(`${BASE}/api/bundles/${halfBundleId}/tobe`, { headers })).json()).docs.find((doc) => doc.entrance === "assign" && doc.doc_type === "wi");
   check("the bundle has a WI not written yet", Boolean(wi));
@@ -2415,7 +2415,7 @@ await runStep("assign: New template view draws a WI in chapter tables, Korean ha
 // 템플릿 보기에 끌어 놓기(MD 1 F9) - 자리 목록 모델(place-spot-model)이 기본 보기와 같은 규칙으로 판단한다. 마우스는 걸음으로 움직인다(dragTo는 쓰지 않는다)
 /** 미배정·짝 없는 Old 문장 하나를 고르고, 아직 쓰지 않은 SOP를 New 칸 템플릿 보기로 연다 - 끌기 도우미를 돌려준다 */
 
-await runStep("assign: template view drag lights open spots, names the destination and refuses app-built spots with a reason", {}, async ({ page, takeShot }) => {
+await runStep("assign: template view drag lights open spots, names the destination and refuses app-built spots with a reason", { drafting: true }, async ({ page, takeShot }) => {
   await installCommitCounter(page);
   const ctx = await openTemplateDrag(page);
   if (!ctx?.category) return;
@@ -2470,7 +2470,7 @@ await runStep("assign: template view drag lights open spots, names the destinati
   check("the template view stays on the SOP", (await page.locator('[data-testid="assign-new"]').getAttribute("data-doc")) === String(sop.id));
 });
 
-await runStep("assign: template view drag onto a category row or between numbered lines confirms like the basic view, Undo takes it back", {}, async ({ page }) => {
+await runStep("assign: template view drag onto a category row or between numbered lines confirms like the basic view, Undo takes it back", { drafting: true }, async ({ page }) => {
   const ctx = await openTemplateDrag(page);
   if (!ctx?.category) return;
   const { getJson, sop, unit, pointInUnit, pointInSpot, readCard, composed, category } = ctx;
@@ -3040,7 +3040,7 @@ await runStep("assign: Space preview in one pane shows the paragraph sheet with 
 });
 
 // 필터 접기(2026-11-12) - 필터를 걸면 맞는 문장만 제 모양, 앞뒤 한 줄, 나머지는 묶음 한 줄. 목록은 걸 때의 스냅숏이라 확정해도 접히지 않는다
-await runStep("assign: a status filter folds the Old paper", {}, async ({ page, takeShot }) => {
+await runStep("assign: a status filter folds the Old paper", { drafting: true }, async ({ page, takeShot }) => {
   await page.goto(`${BASE}/`);
   await page.locator('[data-testid^="bundles-row-"]').first().waitFor({ timeout: T });
   const aiRow = page.locator('[data-testid^="bundles-row-"]', { hasText: "AI 제안" });
@@ -3207,7 +3207,7 @@ await runStep("assign: reset a document, then the whole bundle, after a dry-run 
 // 바로 생성(2026-11-09): 이름 없이 BND 코드로 만들고, 문서가 없으면 Split~Review는 잠기고 To-Be는 열려 있다
 // 배정 화면에서 AI 나누기 제안 받기·적용·되돌리기(전에는 요청만 되고 적용은 쪼개기 화면에서 했다). AI가 꺼져 있으면 건너뛴다
 // 배정된 문장에 적용하면 서버가 먼저 묻는다(409 confirm_required) - 콘솔에 오류로 찍히는 그 응답은 이 단계가 일부러 받는 것이다
-await runStep("assign: AI split suggestions - ask for the whole document, apply one, undo", { allowConsoleErrors: true }, async ({ page, takeShot }) => {
+await runStep("assign: AI split suggestions - ask for the whole document, apply one, undo", { drafting: true, allowConsoleErrors: true }, async ({ page, takeShot }) => {
   const headers = { "X-Dev-User": "qa.member" };
   const status = await page.request.get(`${BASE}/api/bundles/1/ai/status`, { headers });
   if (!status.ok() || !(await status.json()).ai_enabled) {
@@ -3471,7 +3471,7 @@ await runStep("assign: header and footer sheets say where they are used", {}, as
 });
 
 // 한 문장 ↔ 한/영 짝 바꾸기(v1.0.24) - 전에는 원문 고치기 화면에만 있었다. 짝인 줄을 한 문장으로 합치고, 합친 문장을 다시 짝으로 돌린다(풀기 + 짝 맺기를 한 번에)
-await runStep("assign: switch a KO/EN pair to one sentence and back", { allowConsoleErrors: true }, async ({ page, takeShot }) => {
+await runStep("assign: switch a KO/EN pair to one sentence and back", { drafting: true, allowConsoleErrors: true }, async ({ page, takeShot }) => {
   await page.goto(`${BASE}/`);
   const fresh = page.locator('[data-testid^="bundles-row-"]', { hasText: "쪼개기 직후" });
   const freshId = Number((await fresh.getAttribute("data-testid")).replace("bundles-row-", ""));
@@ -4004,7 +4004,7 @@ await runStep("assign: separate and pair KO/EN from the right-click menu", {}, a
 });
 
 // 배정 화면에서 보낼 곳 더하고 지우기 - All 목록에서 SOP·WI·단계를 만들고(한 줄씩 바로 저장), 두 번 눌러 지운다. 끝에는 목록이 처음과 같다
-await runStep("assign: add and delete destinations from the All list", {}, async ({ page, takeShot }) => {
+await runStep("assign: add and delete destinations from the All list", { drafting: true }, async ({ page, takeShot }) => {
   const readTobe = async () => (await page.request.get(`${BASE}/api/bundles/${halfBundleId}/tobe`, { headers: { "X-Dev-User": "qa.member" } })).json();
   const before = (await readTobe()).docs.map((doc) => doc.code);
   await page.goto(`${BASE}/bundles/${halfBundleId}/assign`);
@@ -4061,7 +4061,7 @@ await runStep("assign: add and delete destinations from the All list", {}, async
 
 // 배정된 문장도 자른다(v1.0.21) - 한 번 묻고 배정을 풀며 자른다(원문 고치기와 같은 규칙). 전에는 "먼저 배정을 지우라"며 막았다
 // 서버의 물음(409 confirm_required)이 콘솔에 오류로 찍힌다 - 이 단계가 일부러 받는 응답이다
-await runStep("assign: cutting an assigned sentence asks once, then clears its assignment", { allowConsoleErrors: true }, async ({ page, takeShot }) => {
+await runStep("assign: cutting an assigned sentence asks once, then clears its assignment", { drafting: true, allowConsoleErrors: true }, async ({ page, takeShot }) => {
   const headers = { "X-Dev-User": "qa.member" };
   const docs = await (await page.request.get(`${BASE}/api/bundles/${halfBundleId}/documents`, { headers })).json();
   const readView = async (docId) => (await page.request.get(`${BASE}/api/bundles/${halfBundleId}/documents/${docId}/view`, { headers })).json();
@@ -5024,7 +5024,7 @@ await runStep("assign: unwrap table - unwrapping and wrapping back keep the tabl
   check("wrapping back keeps the table head where it was", Math.abs(afterWrap - beforeWrap2) <= 1.5, `head top ${beforeWrap2} → ${afterWrap}`);
 });
 
-await runStep("assign: unwrap table - ↺ Back to table asks once when a line is assigned and wraps the table back", {}, async ({ page }) => {
+await runStep("assign: unwrap table - ↺ Back to table asks once when a line is assigned and wraps the table back", { drafting: true }, async ({ page }) => {
   const headers = { "X-Dev-User": "qa.member" };
   const docs = await (await page.request.get(`${BASE}/api/bundles/${halfBundleId}/documents`, { headers })).json();
   const readView = async (docId) => (await page.request.get(`${BASE}/api/bundles/${halfBundleId}/documents/${docId}/view`, { headers })).json();
@@ -5485,7 +5485,7 @@ await runStep("assign: the pair panel never moves the picked box up or down", {}
 // 끌어서 보내기(끌어다 놓기 설계 §6, 3걸음) - Old 조각을 아직 쓰지 않은 New 문서(New · from Assign)의 두 문장 사이나 빈 칸에 놓으면 그 줄의 초안이 되고(저장하지 않는다),
 // Confirm 때 문장 사이면 그 자리까지 저장한다. 자리를 받은 저장은 그 문서의 순서를 굳히고(manual_order) 화면에서 되돌릴 길이 없다 - 그래서 시드 묶음을 쓰는 Assign·Order 단계가 모두 끝난 뒤에 둔다.
 // 자료는 이 단계가 API로 만든다(A·B·C를 칸 K에, P를 칸 K2에). 끝에 이 단계가 확정한 줄은 Clear(U)로 되돌린다(굳힌 순서는 남는다)
-await runStep("assign: drag an Old piece between two sentences of a New · from Assign document, Confirm saves it at that place", {}, async ({ page, takeShot }) => {
+await runStep("assign: drag an Old piece between two sentences of a New · from Assign document, Confirm saves it at that place", { drafting: true }, async ({ page, takeShot }) => {
   await installCommitCounter(page);
   const headers = { "X-Dev-User": "qa.member" };
   const api = `${BASE}/api/bundles/${halfBundleId}`;
@@ -5904,7 +5904,7 @@ await runStep("assign: drag an Old piece between two sentences of a New · from 
   }
 });
 
-await runStep("assign: drag an Old piece onto a slot in the All list, in both views, it saves like a click", {}, async ({ page, takeShot }) => {
+await runStep("assign: drag an Old piece onto a slot in the All list, in both views, it saves like a click", { drafting: true }, async ({ page, takeShot }) => {
   await installCommitCounter(page);
   const headers = { "X-Dev-User": "qa.member" };
   const api = `${BASE}/api/bundles/${halfBundleId}`;
@@ -6187,7 +6187,7 @@ await runStep("assign: drag an Old piece onto a slot in the All list, in both vi
 });
 
 // 시드에는 단계가 있는 WI가 없다 - 이 단계가 API로 WI 하나와 단계 둘을 만들고 끝에 지운다
-await runStep("assign: drag an Old piece into a WI step, on its row in the All list and between two sentences of a step", {}, async ({ page, takeShot }) => {
+await runStep("assign: drag an Old piece into a WI step, on its row in the All list and between two sentences of a step", { drafting: true }, async ({ page, takeShot }) => {
   const headers = { "X-Dev-User": "qa.member" };
   const api = `${BASE}/api/bundles/${halfBundleId}`;
   const getJson = async (path) => (await page.request.get(`${api}${path}`, { headers })).json();
@@ -6381,7 +6381,7 @@ await runStep("assign: drag an Old piece into a WI step, on its row in the All l
 
 // 놓인 New 문장 잇기(MD 2 S3의 일부) - 아직 안 쓴 문서에 놓인 확정 문장을 누르면 작은 메뉴, "이 문장에 잇기"는 고르기만 하고 ↵가 저장한다(Old 2줄 → New 1문장).
 // 준비로 한 줄을 API로 5장 범주에 확정해 두고(문장 a), 다른 미배정 줄(b)을 골라 그 문장에 잇는다. 뒷정리로 두 줄의 배정을 지운다
-await runStep("assign: join a picked Old line to a placed New sentence of an unwritten document, Esc closes the menu, Enter saves it as a merged sentence", {}, async ({ page, takeShot }) => {
+await runStep("assign: join a picked Old line to a placed New sentence of an unwritten document, Esc closes the menu, Enter saves it as a merged sentence", { drafting: true }, async ({ page, takeShot }) => {
   const headers = { "X-Dev-User": "qa.member" };
   const api = `${BASE}/api/bundles/${halfBundleId}`;
   const getJson = async (path) => (await page.request.get(`${api}${path}`, { headers })).json();
@@ -6495,7 +6495,7 @@ await runStep("assign: join a picked Old line to a placed New sentence of an unw
   check("both lines are unassigned again", [unitA, unitB].every((unit) => left.get(unit.unit_id) === "unassigned"));
 });
 
-await runStep("assign: click place - a gap between numbered lines, a category head, an empty slot and a refused group title in the basic view", {}, async ({ page, takeShot }) => {
+await runStep("assign: click place - a gap between numbered lines, a category head, an empty slot and a refused group title in the basic view", { drafting: true }, async ({ page, takeShot }) => {
   const ctx = await prepareClickPlace(page, 4);
   check("the bundle is ready for click placing", !ctx.error && ctx.itemA && ctx.itemB, ctx.error ?? "");
   if (ctx.error || !ctx.itemA || !ctx.itemB) return;
@@ -6585,7 +6585,7 @@ await runStep("assign: click place - a gap between numbered lines, a category he
   check("every line is unassigned again after the clean-up", await ctx.cleanUp());
 });
 
-await runStep("assign: click place - the template view picks the same gap from either half and saves at that place", {}, async ({ page, takeShot }) => {
+await runStep("assign: click place - the template view picks the same gap from either half and saves at that place", { drafting: true }, async ({ page, takeShot }) => {
   const ctx = await prepareClickPlace(page, 1);
   check("the bundle is ready for click placing", !ctx.error && ctx.itemA && ctx.itemB, ctx.error ?? "");
   if (ctx.error || !ctx.itemA || !ctx.itemB) return;
@@ -6621,7 +6621,7 @@ await runStep("assign: click place - the template view picks the same gap from e
 // 빈 템플릿 기본 보기(시안 2 D6) - 칸 머리는 번호 칸에 칸 번호가 든 제목 박스, 고른 Old 줄에서 온 박스 왼쪽 손잡이로 줄을 다른 칸에 옮기면
 // Order 화면과 같은 PUT …/targets/order로 저장되고, 알림의 Undo가 원래 칸 · 자리로 돌린다. 준비 · 뒷정리는 클릭 배치와 같다(A · B를 번호 세는 칸에 놓고 끝에 지운다).
 // 순서 저장은 그 문서를 manual_order로 굳히는데, 이 SOP는 앞 클릭 배치 단계(자리를 받은 저장)가 이미 굳혀 뒤 단계에 새로 바뀌는 것은 없다 - 그래서 그 단계들 뒤에 둔다
-await runStep("assign: blank template basic view - a slot head is a heading box with its number, the grip moves a line to another slot, Undo", {}, async ({ page }) => {
+await runStep("assign: blank template basic view - a slot head is a heading box with its number, the grip moves a line to another slot, Undo", { drafting: true }, async ({ page }) => {
   const ctx = await prepareClickPlace(page, 1);
   check("the bundle is ready with two lines in a numbered section", !ctx.error && ctx.itemA && ctx.itemB, ctx.error ?? "");
   if (ctx.error || !ctx.itemA || !ctx.itemB) return;
@@ -6716,7 +6716,7 @@ await runStep("assign: blank template basic view - a slot head is a heading box 
 
 // 빈 템플릿 용지 위 나누기 · 합치기(시안 2 확인할 것 5, 스텝 8) - Old 용지와 같은 손짓: 박스를 두 번 눌러 나눌 선 → S, 고른 박스 아래 틈의 Join.
 // 저장은 묶음 저장(나눔 · 합침은 서버가 정한다), 되돌리기 두 번이면 처음으로. 한/영 짝은 Old 짝(createPair)이라 여기서는 다루지 않는다
-await runStep("assign: blank template paper - a double press splits a sentence, Join merges it back, Undo twice", {}, async ({ page }) => {
+await runStep("assign: blank template paper - a double press splits a sentence, Join merges it back, Undo twice", { drafting: true }, async ({ page }) => {
   const ctx = await prepareClickPlace(page, 1);
   check("the bundle is ready with two lines in a numbered section", !ctx.error && ctx.itemA && ctx.itemB, ctx.error ?? "");
   if (ctx.error || !ctx.itemA || !ctx.itemB) return;
@@ -8269,7 +8269,7 @@ await runStep("assign: the grip reorders a pair card, Undo restores it", {}, asy
 });
 
 // AI는 제안만 한다(설계 2026-11-19-ai-suggest-only) - 그림의 분류 추천은 카드로 오고, 사람이 Use(A)로 받으면 그림 아래 캡션이 초안에 함께 따라온다
-await runStep("assign: an AI-suggested figure takes its caption along when used", {}, async ({ page, takeShot }) => {
+await runStep("assign: an AI-suggested figure takes its caption along when used", { drafting: true }, async ({ page, takeShot }) => {
   const headers = { "X-Dev-User": "qa.member" };
   const api = (path, body) => (body === undefined ? page.request.get(`${BASE}/api/bundles/${freshBundleId}${path}`, { headers }) : page.request.post(`${BASE}/api/bundles/${freshBundleId}${path}`, { headers, data: body }));
   const status = await api("/ai/status");
@@ -8317,43 +8317,48 @@ await runStep("assign: an AI-suggested figure takes its caption along when used"
   check("the used suggestion counts as taken as is", taken === "as_is", taken);
 });
 
-// 배정 화면 첫 진입(설계 2026-11-15-ai-prepare-queue §5.2·§8) - PREPARE=1일 때만(머리말의 전제). 알림 → 상단 바 목록의 Background 줄 → 끝나면 AI suggested 수
+// 배정 화면 첫 진입 - PREPARE=1일 때만(머리말의 전제). 자동 칸 추천은 숨겨 두어 돌지 않는다(쪼개기 먼저 설계 §14 승인): 쌓인 분류가 없고 알림 · Background 줄 · 분류 제안이 없으며,
+// 묶기 계획은 그대로 돌아 AI suggested 수는 잇기 제안에서만 나온다
 await runStep(PREPARE_STEP, {}, async ({ page, takeShot }) => {
   await page.goto(`${BASE}/`);
   await page.locator('[data-testid^="bundles-row-"]').first().waitFor({ timeout: T });
   const half = page.locator('[data-testid^="bundles-row-"]', { hasText: "분류 절반" });
   const bundleId = Number((await half.getAttribute("data-testid")).replace("bundles-row-", ""));
   const headers = { "X-Dev-User": "qa.member" };
-  const status = await (await page.request.get(`${BASE}/api/bundles/${bundleId}/ai/status`, { headers })).json();
+  const getJson = async (path) => (await page.request.get(`${BASE}/api/bundles/${bundleId}${path}`, { headers })).json();
+  const status = await getJson("/ai/status");
   check("backend has AI on (PREPARE=1 needs the fake AI and AI_AUTO_PREPARE=true)", status.ai_enabled === true);
-  const before = await (await page.request.get(`${BASE}/api/bundles/${bundleId}/ai/suggestions?kind=classify`, { headers })).json();
+  const before = await getJson("/ai/suggestions?kind=classify");
   check("no AI suggestion before the first entry", before.total === 0, String(before.total));
 
+  const prepared = page.waitForResponse((response) => /\/ai\/prepare$/.test(new URL(response.url()).pathname), { timeout: T });
   await page.goto(`${BASE}/bundles/${bundleId}/assign`);
-  const toast = page.locator('[data-testid="toast-ok"]', { hasText: "in the background" });
-  await toast.first().waitFor({ timeout: T });
-  check("a toast says the remaining rows are classified in the background", /remaining \d+ rows/.test(await toast.first().innerText()), await toast.first().innerText());
+  const out = await (await prepared).json();
+  check("the first entry queues no classify job", out.queued === 0, JSON.stringify(out));
+  // 묶기 계획은 저절로 선다 - 다 끝난 뒤에 본다
+  let jobs = (await getJson("/ai/status")).jobs;
+  for (let step = 0; step < 60 && jobs.queued + jobs.running > 0; step += 1) {
+    await page.waitForTimeout(1000);
+    jobs = (await getJson("/ai/status")).jobs;
+  }
+  check("no toast says the remaining rows are classified", (await page.locator('[data-testid="toast-ok"]', { hasText: "in the background" }).count()) === 0);
 
   await page.locator('[data-testid="top-bar-ai"]').click();
-  const mark = page.locator('[data-testid="ai-jobs-popover"] [data-testid^="ai-jobs-request-"][data-testid$="-background"]');
-  await mark.first().waitFor({ timeout: T });
-  check("the AI job list marks the request as Background", (await mark.first().innerText()).trim() === "Background");
-  await mark.first().hover();
-  const tip = page.locator('[role="tooltip"]', { hasText: "Started automatically" });
-  await tip.first().waitFor({ timeout: T });
-  check("the mark explains itself on hover", true);
+  await wait(page, "ai-jobs-popover");
+  check("the AI job list has no Background request", (await page.locator('[data-testid="ai-jobs-popover"] [data-testid^="ai-jobs-request-"][data-testid$="-background"]').count()) === 0);
   await takeShot("sop-assign-prepare-popover.png");
-  const requestRow = (await mark.first().getAttribute("data-testid")).replace(/-background$/, "");
-  // 묶기 계획이 먼저 짝을 찾은 줄의 분류는 낡음(stale)으로 끝난다(설계 §5.2) - 실패·취소만 아니면 된다
-  const row = page.locator(`[data-testid="${requestRow}"]`);
-  await page.locator(`[data-testid="${requestRow}"]:not([data-outcome="running"]):not([data-outcome="queued"])`).waitFor({ timeout: 60000 });
-  const outcome = await row.getAttribute("data-outcome");
-  check("the background request finishes", outcome === "done" || outcome === "stale", outcome);
   await page.keyboard.press("Escape");
+  const after = await getJson("/ai/suggestions?kind=classify");
+  check("no classify suggestion after the jobs finish", after.total === 0, String(after.total));
 
-  // 끝나면 화면이 단위를 다시 받는다 - AI suggested 탭 수가 0보다 커진다
-  await page.waitForFunction(() => Number(document.querySelector('[data-testid="assign-filter-ai_suggested"] .schip-n')?.textContent ?? 0) > 0, null, { timeout: 30000 });
-  check("AI suggested tab count is above zero", true, await page.locator('[data-testid="assign-filter-ai_suggested"] .schip-n').textContent());
+  // AI suggested 칩의 수는 잇기 제안이 덮는 줄뿐이다 - 제안이 없으면 0(칩이 없거나 수가 빈다)
+  await page.reload();
+  await wait(page, "assign-bar");
+  await page.waitForLoadState("networkidle");
+  const matched = (await getJson("/ai/suggestions?kind=match&result=applied&limit=500")).items.filter((item) => item.adoption === null).flatMap((item) => item.content.unit_ids ?? []).length;
+  const count = page.locator('[data-testid="assign-filter-ai_suggested"] .schip-n');
+  const shown = (await count.count()) === 0 ? 0 : Number((await count.textContent()) || 0);
+  check("the AI suggested count comes from match suggestions only", matched === 0 ? shown === 0 : shown > 0 && shown <= matched, `${shown} of ${matched}`);
   await takeShot("sop-assign-prepare-done.png");
 });
 }

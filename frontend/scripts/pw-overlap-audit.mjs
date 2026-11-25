@@ -169,6 +169,7 @@ const findShownActs = (row) => row.locator(":scope > .c-acts:visible, :scope > .
 const readOpacity = (locator) => locator.evaluate((el) => Number(getComputedStyle(el).opacity));
 const outputsScene = {
   name: "outputs-c-rows",
+  drafting: true,
   user: "qa.member",
   run: async (page, report) => {
     // 줄 끝 단추는 3단계(Order) 화면에만 있다 - 결과 화면의 C는 읽기 전용
@@ -205,6 +206,7 @@ const outputsScene = {
 // 문서 끝 줄들 - 문서마다 끝까지 그린 뒤 마지막 세 줄에 올려, 단추가 글을 덮지 않고 스크롤 높이를 늘리지 않는지 본다(DB는 그대로)
 const outputsEndRowsScene = {
   name: "outputs-c-end-rows",
+  drafting: true,
   user: "qa.member",
   run: async (page, report) => {
     await page.goto(`${BASE}/bundles/${BUNDLE}/order`);
@@ -375,6 +377,7 @@ const aiJobsScene = {
 // C 순서 바꾸기 - 화면에 먼저 옮긴 줄의 끝 단추도 글을 덮지 않아야 한다. 저장(PUT)은 붙잡아 두었다가 실패로 돌려 DB를 바꾸지 않는다
 const outputsReorderScene = {
   name: "outputs-c-reorder",
+  drafting: true,
   user: "qa.member",
   run: async (page, report) => {
     let release = null;
@@ -417,8 +420,8 @@ const exportPreviewScene = {
     await page.locator('[data-testid="outputs-export-open"]').click();
     await page.locator('[data-testid="export-preview-sheet"] tbody tr').first().waitFor({ timeout: T });
     const tabs = await page.locator('[data-testid^="export-preview-tab-"]').all();
-    // 시트 다섯 장 - A·B·C·Info·Documents
-    if (tabs.length !== 5) report("export-preview tabs", `${tabs.length} tabs`);
+    // 시트 네 장 - A·B·Info·Documents(C는 숨겨 두었다)
+    if (tabs.length !== 4) report("export-preview tabs", `${tabs.length} tabs`);
     for (const tab of tabs) {
       const { hits, width } = await findCovered(tab);
       if (hits.length > 0) report(`${await tab.getAttribute("data-testid")} (${width}px)`, hits.join(", "));
@@ -486,6 +489,7 @@ const oldRowActsScene = makeRowActsScene("documents-row-acts", "documents-list",
 // 엮은 문서 미리 보기(아직 안 쓴 SOP)의 칸 제목 출처 - 칸 이름 뒤에서 말줄임하고 칸 이름을 덮지 않는다. 출처 글은 응답에 넣어 길게 그린다(DB는 그대로)
 const composedHeadingScene = {
   name: "assign-new-heading-note",
+  drafting: true,
   user: "qa.member",
   run: async (page, report) => {
     const note = `← ${Array.from({ length: 14 }, (_, i) => `OLD-${i + 1} §${i + 5}`).join(", ")}`;
@@ -578,12 +582,14 @@ for (const scene of scenes) {
     for (const lang of langs) {
       for (const theme of themes) {
         const ctx = await browser.newContext({ viewport: { width, height: 900 }, deviceScaleFactor: 1 });
-        await ctx.addInitScript(({ user, lang, theme }) => {
+        await ctx.addInitScript(({ user, lang, theme, drafting }) => {
           if (location.protocol === "about:") return;
           localStorage.setItem("sopa.devUser", user);
           localStorage.setItem("sopa.lang", lang);
           localStorage.setItem("sopa.theme", theme);
-        }, { user: scene.user, lang, theme });
+          // 숨긴 기능(새 문서를 만드는 쪽)의 장면만 켠다 - 나머지는 실사용 화면 그대로
+          if (drafting) localStorage.setItem("sopa.drafting", "1");
+        }, { user: scene.user, lang, theme, drafting: scene.drafting === true });
         const page = await ctx.newPage();
         const tag = `${scene.name} ${width} ${lang} ${theme}${LONG ? " long" : ""}`;
         const found = [];
