@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 
-import { isMousePress, readKeyPlace, takesPrimaryEnter, type KeyPlace } from "@/lib/assign-key-target";
+import { isMousePress, readKeyPlace, returnsToPaper, takesPrimaryEnter, type KeyPlace } from "@/lib/assign-key-target";
 
 const SCREEN = `
   <div class="assign-bar"><button data-testid="assign-filter-all">All</button></div>
@@ -84,6 +84,19 @@ describe("takesPrimaryEnter", () => {
 
   it("leaves Enter to typing, layers and pop-ups", () => {
     for (const place of ["typing", "layer", "pop"] as const) expect(takesPrimaryEnter(place, document.body)).toBe(false);
+  });
+});
+
+describe("returnsToPaper", () => {
+  it("gives the focus back after a press in the top bar, a document head and the right panel", () => {
+    for (const testId of ["assign-filter-all", "assign-old-zoom", "assign-near-4"]) expect(returnsToPaper(find(testId)), testId).toBe(true);
+  });
+
+  it("leaves the paper's own buttons, pop-ups, layers and buttons that open a list", () => {
+    for (const testId of ["assign-paper-fold-run-1", "num-kind", "assign-dash-download-doc", "toast-action-1", "menu-item", "assign-text-s1"]) expect(returnsToPaper(find(testId)), testId).toBe(false);
+    const opener = find("assign-filter-all");
+    opener.setAttribute("aria-haspopup", "menu");
+    expect(returnsToPaper(opener)).toBe(false);
   });
 });
 

@@ -51,7 +51,7 @@ import { buildPaperWaits, isDecisionKind, listEditUnitIds, listTableUnitIds, NO_
 import { readEditLabelKey, trimReason } from "@/lib/command-label";
 import { isBarrier, listUnsettled } from "@/lib/command-queue";
 import { pickDocRevision } from "@/lib/doc-revision";
-import { isMousePress, isTypingTarget, LAYER_SELECTOR, readKeyPlace, takesPrimaryEnter } from "@/lib/assign-key-target";
+import { isMousePress, isTypingTarget, LAYER_SELECTOR, readKeyPlace, returnsToPaper, takesPrimaryEnter } from "@/lib/assign-key-target";
 import { isQueuedKey, isRepeatIgnored } from "@/lib/assign-press-model";
 import { planPrimary } from "@/lib/primary-model";
 import { isSideFloating } from "@/lib/side-float-model";
@@ -3215,13 +3215,13 @@ export function useAssignPage() {
   }
 
   /**
-   * 오른쪽 칸의 단추를 마우스로 눌렀다 - 포커스를 바로 돌린다: 그 누름이 여는 창은 닫힐 때 용지로 돌아오고(연 단추에 남으면 Space가 창을 다시 연다),
-   * 글 칸은 뒤에 포커스를 가져간다. 메뉴 · 목록을 여는 단추는 그 글쇠가 이어지게 둔다
+   * 오른쪽 칸 · 위쪽 도구 줄 · 문서 머리의 단추를 마우스로 눌렀다 - 포커스를 바로 돌린다(거르기를 누르고 J · ↵로 이어 가게): 그 누름이 여는 창은 닫힐 때 용지로 돌아오고(연 단추에 남으면 Space가 창을 다시 연다),
+   * 글 칸은 뒤에 포커스를 가져간다
    */
-  function handleSidePress(event: MouseEvent<HTMLElement>) {
+  function handleFramePress(event: MouseEvent<HTMLElement>) {
     if (!isMousePress(event) || !(event.target instanceof Element) || !event.currentTarget.contains(event.target)) return;
     const pressed = event.target.closest("button, a, [role='button']");
-    if (pressed === null || pressed.hasAttribute("aria-haspopup")) return;
+    if (pressed === null || !returnsToPaper(pressed)) return;
     if (document.activeElement === pressed || document.activeElement === document.body) focusPaper();
   }
 
@@ -4398,7 +4398,7 @@ export function useAssignPage() {
     runSave, runClear, runUndoStep, confirmIdenticalAll, acceptAll, markNew, placeManage, pickDestination, pickNewSentence, handleNewPick, unlinkCell,
     handleJoinPick, readJoinAfter, pickJoinMenu, pickPlaceSpot, pickOwnAiLine, jumpToNew, openNewDoc, showInNew, jumpToOld,
     pickTemplateLine, fillTemplateMissing, isTemplateDrag, isOldDrag, finishPairPick, handleOldClick, handlePrimary, startEdit,
-    pickRecommendation, handleSidePress, primaryPlan, markRecHover, revealPick, setRevealPick, done, renderPlaceLabel, listDestinationEls,
+    pickRecommendation, handleFramePress, primaryPlan, markRecHover, revealPick, setRevealPick, done, renderPlaceLabel, listDestinationEls,
     canClear, isRowDeleted, error, figureTab, composedCut, setComposedCutAt, handleComposedDoubleClick, dragComposedCut, splitComposedAtCut, planComposedGap, joinComposed,
   };
 }

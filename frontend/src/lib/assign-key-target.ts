@@ -28,6 +28,12 @@ export function takesPrimaryEnter(place: KeyPlace, target: EventTarget | null): 
   return place === "other" && !(target instanceof Element && target.closest(CONTROL_SELECTOR));
 }
 
+/** 마우스로 누른 뒤 포커스를 용지로 돌릴 단추인가 - 오른쪽 칸 · 위쪽 도구 줄 · 문서 머리. 메뉴 · 목록을 여는 단추는 그 글쇠가 이어지게, 용지 안의 단추와 판은 그대로 둔다 */
+export function returnsToPaper(pressed: Element): boolean {
+  const place = readKeyPlace(pressed);
+  return (place === "side" || place === "other") && !pressed.hasAttribute("aria-haspopup");
+}
+
 /** 마우스(터치)로 누른 클릭인가 - 글쇠로 누르면 detail이 0이다 */
 export function isMousePress(event: { detail: number }): boolean {
   return event.detail > 0;
