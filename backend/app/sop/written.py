@@ -211,7 +211,7 @@ async def _load_bundle_children(
         lambda chunk: select(
             TargetSentence.id, TargetSentence.parent_target_id, TargetSentence.cell_row, TargetSentence.cell_col, TargetSentence.lang,
             TargetSentence.confirmed_text, TargetSentence.ai_text, TargetSentence.status, TargetSentence.kind,
-            TargetSentence.revision,
+            TargetSentence.revision, TargetSentence.new_unit_id, TargetSentence.change_type,
         )
         .outerjoin(Unit, Unit.id == TargetSentence.new_unit_id)
         .where(TargetSentence.parent_target_id.in_(chunk))
@@ -237,6 +237,7 @@ async def _load_bundle_children(
         cells[row.parent_target_id].append(BundleCellOut(
             target_id=row.id, row=row.cell_row or 0, col=row.cell_col or 0, lang=row.lang, text=text, status=row.status,
             source_unit_ids=cell_sources.get(row.id, []), revision=row.revision,
+            new_unit_id=row.new_unit_id, change_type=row.change_type,
         ))
     tables = {target.id: build_bundle_table(target.grid, cells[target.id]) for target in bundle_targets if target.kind == "table"}
     joined = {target_id: join_caption_texts(texts) for target_id, texts in captions.items()}

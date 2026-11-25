@@ -97,6 +97,23 @@ def test_written_sentences_carry_table_cells_and_figure_block(client: TestClient
     assert (rows["figure"]["caption"], rows["table"]["caption"]) == ("그림 1 합성 장비", None)
 
 
+def test_written_table_cells_carry_their_unit_and_change_type(client: TestClient) -> None:
+    bundle = create_bundle(client, is_synthetic=True)
+    assert put_tobe(client, bundle["id"], TOBE_DOCS).status_code == 200
+    new_doc = _upload_ready(
+        client, bundle["id"], build_docx(tbl([["합성 항목", "합성 값"]])), "SYNTHETIC_SOP-W_Cells.docx", side="new", doc_type="sop",
+    )
+    units = {unit["id"]: unit for unit in get_view(client, bundle["id"], new_doc["id"])["units"]}
+
+    written = _list_written(client, bundle["id"])
+
+    # 새 문서 용지가 칸 조각(Unit)에 이 문장을 얹는 열쇠
+    cells = next(row for row in written if row["kind"] == "table")["table"]["cells"]
+    assert [units[cell["new_unit_id"]]["text"] for cell in cells] == [cell["text"] for cell in cells]
+    assert {units[cell["new_unit_id"]]["kind"] for cell in cells} == {"cell_sentence"}
+    assert {cell["change_type"] for cell in cells} == {None}
+
+
 def test_written_sentences_reports_partner_target(client: TestClient) -> None:
     bundle_id, _, _ = _setup(
         client, p("합성 장비를 켠다."), p("합성 장비를 켠다.") + p("Turn on the synthetic unit."),

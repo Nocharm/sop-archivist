@@ -1716,6 +1716,9 @@ class BundleCellOut(BaseModel):
     source_unit_ids: list[int]  # 칸에 이은 Old 단위(출처 순서) — Assign New 칸이 칸 위에 출처 칩을 보인다
     # 이미 쓴 문서(written)의 칸만 싣는다 — 엮은 문서(composed)의 칸은 잇지 않아 스냅숏에 revision이 없다
     revision: int | None = None
+    # 이미 쓴 문서의 칸만 — 새 문서 용지가 칸 조각(Unit)에 이 문장을 얹는 열쇠와 "신규"로 판단했는지. 엮은 문서의 칸은 null
+    new_unit_id: int | None = None
+    change_type: str | None = None
 
 
 class BundleTableOut(BaseModel):

@@ -1208,6 +1208,10 @@ export interface BundleCell {
   source_unit_ids: number[];
   /** 이미 쓴 문서의 칸만 - 엮은 문서의 칸은 잇지 않아 null */
   revision?: number | null;
+  /** 이미 쓴 문서의 칸만 - 이 칸 문장이 온 새 문서 원문의 Unit(용지 칸 조각에 얹는 열쇠) */
+  new_unit_id?: number | null;
+  /** 이미 쓴 문서의 칸만 - "new"면 사람이 신규로 판단한 칸이라 출처 없음으로 치지 않는다 */
+  change_type?: ChangeType | null;
 }
 
 /** New 칸이 그리는 표 - 격자 크기와 칸 새 문장(행·열 순) */
