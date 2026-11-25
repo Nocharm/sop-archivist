@@ -316,7 +316,7 @@ export default function AssignPage() {
   const highlightIds = new Set(isSolo ? soloUnits.map((unit) => unit.id) : (row?.unitIds ?? []));
   // 템플릿 보기에서 칠할 줄 - 고른 Old 줄에서 온 새 문장(짝이면 두 절반 모두)
   const templateSelected = new Set((composedDoc?.sections ?? []).flatMap((section) => section.items.filter((item) => item.source_unit_ids.some((id) => highlightIds.has(id))).map((item) => item.target_id)));
-  const shownNewRows = isComposedDoc && shownComposed && shownComposed !== composedDoc ? buildComposedRows(shownComposed) : newRows;
+  const composedRows = composedDoc ? buildComposedRows(shownComposed ?? composedDoc) : [];
   /** 엮은 문서 번호 칸의 C 번호 표시 - 글머리 기호는 깊이도(• 0 · ○ 1 · ▪ 2) */
   function pickComposedStyle(targetId: number, choice: ComposedStyleChoice) {
     const edits: CEdit[] = [...(choice.depth === null ? [] : [{ kind: "indent" as const, targetId, depth: choice.depth }]), { kind: "style", targetId, style: choice.style }];
@@ -738,17 +738,13 @@ export default function AssignPage() {
                       docOptions={newDocOptions}
                       docId={String(newDocId)}
                       onDocChange={(value) => setManualNewDoc({ key: toggleKey, docId: Number(value) })}
-                      rows={shownNewRows}
+                      rows={composedRows}
                       headingNotes={headingNotes}
                       sectionMarks={sectionMarks}
                       rowsKey={!composedDoc ? `${newDocId}:loading` : String(newDocId)}
                       tag={t("assign.composedTag")}
-                      readOnly
                       joinableIds={joinableIds}
                       onJoinPick={handleJoinPick}
-                      candidateIds={candidateIds}
-                      focusId={focusNew}
-                      onPick={handleNewPick}
                       live={liveDoc && liveDoc.docId === newDocId ? { seq: liveDoc.seq, targetIds: liveDoc.targetIds } : null}
                       onReveal={(el, flash) => {
                         revealElement(el);
@@ -817,7 +813,7 @@ export default function AssignPage() {
                                   spotProps={newPlace ? readTemplateSpotProps : undefined}
                                   renderGap={newPlace ? renderTemplateGap : undefined}
                                   renderBlock={(item) => (
-                                    <NewBundle kind={item.kind === "figure" ? "figure" : "table"} table={item.table} figure={item.figure} caption={item.caption} renumber={item.renumber ?? null} captionRequired bundleId={bundleId} testId={`assign-new-tpl-block-${item.target_id}`} />
+                                    <NewBundle kind={item.kind === "figure" ? "figure" : "table"} table={item.table} figure={item.figure} caption={item.caption} renumber={item.renumber ?? null} bundleId={bundleId} testId={`assign-new-tpl-block-${item.target_id}`} />
                                   )}
                                   testId="assign-new-tpl"
                                 />

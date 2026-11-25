@@ -4,11 +4,13 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
 import type { DocumentView, ViewBlock, ViewUnit, WrittenSentence } from "@/lib/api-sop";
+import type { ComposedRow, EmptySlotRow } from "@/lib/composed-model";
 import { LangProvider } from "@/lib/i18n";
 import { buildNewAiFilter } from "@/lib/new-ai-filter-model";
 import { buildNewOverlay, type NewOverlayInput } from "@/lib/new-overlay-model";
 import { buildPaperModel, buildPaperTabs } from "@/lib/paper-model";
 
+import { NewPane } from "./new-pane";
 import { NewPaper, type NewPaperProps } from "./new-paper";
 
 const TABLE = 8;
@@ -138,5 +140,27 @@ describe("NewPaper", () => {
     const h = html({ view: null, model: null, tabs: null });
     expect(h).toContain('class="sk"');
     expect(h).not.toContain("new-sheet");
+  });
+});
+
+// 아직 쓰지 않은 문서(엮은 문서)는 NewPane이 그린다 - 읽기 전용 줄, 빈 칸 자리, 더 이을 수 있는 문장의 누름
+function paneHtml(rows: Array<ComposedRow | EmptySlotRow>): string {
+  const pane = createElement(NewPane, {
+    bundleId: 1, docOptions: [{ value: "2", label: "SOP-2" }], docId: "2", onDocChange: () => undefined, rows, rowsKey: "2", tag: "New", joinableIds: new Set([5]), onJoinPick: () => undefined,
+    pickedIds: new Set([5]), sourceLabel: (id) => `1-${id}`, onJumpSource: () => undefined, live: null, onReveal: () => undefined, zoom: 1, onZoom: () => undefined, linesOn: true, onToggleLines: () => undefined,
+  });
+  return renderToStaticMarkup(createElement(LangProvider, null, pane));
+}
+
+describe("NewPane", () => {
+  it("NewPane still draws an unwritten document", () => {
+    const composedRow: ComposedRow = { ...row(5, 50, { source_unit_ids: [9], status: "confirmed" }), number: "1.1", renumber: null };
+    const emptySlot: EmptySlotRow = { kind: "empty", key: "purpose", section_path: "2. Purpose", na: false, fixed: null, autoItems: [] };
+    const h = paneHtml([composedRow, emptySlot]);
+    expect(h).toContain("data-read-only");
+    expect(h).toContain('data-testid="assign-new-slot-purpose"');
+    expect(h).toContain("assign-new-join-5");
+    expect(h).toMatch(/data-state="picked"/);
+    expect(h).toContain('data-testid="assign-new-src-5-9"');
   });
 });
