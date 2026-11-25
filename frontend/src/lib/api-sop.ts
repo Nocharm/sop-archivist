@@ -550,8 +550,8 @@ export interface EditResult {
   document_revision: number;
   created_unit_ids: number[];
   retired_unit_ids: number[];
-  /** 떼어 낸 배정 - 판단을 미배정으로 되돌린 단위(옛 문서). 없으면 null */
-  detach?: { reset_unit_ids: number[] } | null;
+  /** 떼어 낸 배정 - 판단을 미배정으로 되돌린 단위(옛 문서)와 이음이 풀려 보류가 된 Old 단위(New 문서 편집). 없으면 null */
+  detach?: Pick<DetachReport, "reset_unit_ids" | "held_unit_ids"> | null;
   /** switch_language가 바꾼 모양 - 다른 편집은 null */
   shape?: "merged" | "unpaired" | "split_pair" | null;
 }

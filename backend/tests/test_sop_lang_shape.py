@@ -8,8 +8,9 @@ from fastapi.testclient import TestClient
 
 from app.sop.models import Unit
 from tests.access_helpers import update_row
-from tests.docx_factory import build_docx, p
+from tests.docx_factory import build_docx, p, tbl
 from tests.sop_helpers import AUTHOR, create_bundle, find_unit, get_view, save_group, upload
+from tests.test_sop_cell_link import link_cell
 from tests.test_sop_decision_undo import (
     TEXT_A,
     TEXT_B,
@@ -411,3 +412,110 @@ def test_new_refusals_stay(client: TestClient, case: str) -> None:
 
     assert response.status_code == 422 and response.json()["detail"]["code"] == case, response.text
     assert_same_state(_dump(fx.bundle_id), before)
+
+
+# ── New 표 칸 — 칸 하나의 일은 형제 칸과 상관이 없다(detach.find_cell_bystanders) ──────────────
+
+CELL_KO, CELL_EN, CELL_SIBLING = "밸브를 닫는다.", "Close the valve.", "합성 압력"
+CELLS = [[CELL_SIBLING, "합성 값"], [CELL_KO, CELL_EN]]
+CELL_KINDS = ["unpaired", "merged", "plain_merge"]
+
+
+def _setup_cells(client: TestClient, old_body: str) -> NewFixture:
+    """New 표의 한 행이 한/영 짝인 칸 둘 — far는 형제 칸이다."""
+    bundle_id = create_bundle(client, is_synthetic=True)["id"]
+    old = _ok(upload(client, bundle_id, build_docx(old_body), "SYNTHETIC_OLD-1_Cells.docx"), 201)
+    new_body = build_docx(p("1. 절", "Heading1") + tbl(CELLS), headers=[p("합성 새 문서")])
+    new = _ok(upload(client, bundle_id, new_body, "SYNTHETIC_SOP-L_Cells.docx", side="new", doc_type="sop"), 201)
+    view = get_view(client, bundle_id, new["id"])
+    units = (find_unit(view, text) for text in (CELL_KO, CELL_EN, CELL_SIBLING))
+    fx = NewFixture(bundle_id, old["id"], new["id"], *units)
+    _pair_new(client, fx, fx.ko, fx.en)
+    return fx
+
+
+def _link_cell(client: TestClient, fx: NewFixture, unit_id: int, old_text: str) -> int:
+    old = find_unit(get_view(client, fx.bundle_id, fx.old_id), old_text)
+    _ok(link_cell(client, fx.bundle_id, _new_targets(fx.bundle_id)[unit_id]["id"], [old["id"]]))
+    return old["id"]
+
+
+def _cell_op(fx: NewFixture, kind: str) -> dict:
+    if kind == "plain_merge":
+        return {"type": "merge", "unit_ids": [fx.ko["id"], fx.en["id"]]}
+    return {"type": "switch_language", "unit_id": fx.en["id"], "lang": "ko", "merge_pair": kind == "merged"}
+
+
+def _read_links(bundle_id: int, unit_id: int) -> tuple[str, list[int]]:
+    """New 단위의 (새 문장 상태, 출처 단위들)."""
+    state, target = _dump(bundle_id), _new_targets(bundle_id)[unit_id]
+    return target["status"], sorted(row["unit_id"] for row in state["target_sources"].values() if row["target_id"] == target["id"])
+
+
+def _status(bundle_id: int, unit_id: int) -> str:
+    return _dump(bundle_id)["unit_decisions"][str(unit_id)]["status"]
+
+
+@pytest.mark.parametrize("kind", CELL_KINDS)
+def test_changing_unlinked_new_cells_leaves_linked_siblings_alone(client: TestClient, kind: str) -> None:
+    fx = _setup_cells(client, p(CELL_SIBLING))
+    old = _link_cell(client, fx, fx.far["id"], CELL_SIBLING)
+    before = _dump(fx.bundle_id)
+
+    result = _ok(_edit(client, fx.bundle_id, fx.new_id, _cell_op(fx, kind)))
+
+    assert (result["detach"]["held_unit_ids"], result["detach"]["held_target_ids"]) == ([], [])
+    assert _status(fx.bundle_id, old) == "confirmed"
+    assert _read_links(fx.bundle_id, fx.far["id"]) == ("confirmed", [old])
+    after = _dump(fx.bundle_id)
+    _ok(_undo(client, fx.bundle_id))
+    assert_same_state(_dump(fx.bundle_id), before)
+    _ok(_redo(client, fx.bundle_id))
+    assert_same_state(_dump(fx.bundle_id), after)
+
+
+@pytest.mark.parametrize("kind", CELL_KINDS)
+def test_changing_a_linked_new_cell_holds_only_its_own(client: TestClient, kind: str) -> None:
+    # Old 두 줄은 같은 언어다 — 한/영이면 저절로 짝이 되어 두 줄의 운명이 엮인다
+    fx = _setup_cells(client, p(CELL_SIBLING) + p(CELL_KO))
+    sibling = _link_cell(client, fx, fx.far["id"], CELL_SIBLING)
+    own = _link_cell(client, fx, fx.en["id"], CELL_KO)
+    before = _dump(fx.bundle_id)
+    op = _cell_op(fx, kind)
+
+    refused = _edit(client, fx.bundle_id, fx.new_id, op)
+
+    assert refused.status_code == 409, refused.text
+    assert refused.json()["detail"] == {"code": "confirm_required", "unit_ids": [fx.en["id"]]}
+    result = _ok(_edit(client, fx.bundle_id, fx.new_id, op, confirm=True))
+    assert (result["detach"]["held_unit_ids"], result["detach"]["held_target_ids"]) == ([own], [])
+    assert (_status(fx.bundle_id, own), _status(fx.bundle_id, sibling)) == ("on_hold", "confirmed")
+    assert _read_links(fx.bundle_id, fx.far["id"]) == ("confirmed", [sibling])
+    after = _dump(fx.bundle_id)
+    _ok(_undo(client, fx.bundle_id))
+    assert_same_state(_dump(fx.bundle_id), before)
+    _ok(_redo(client, fx.bundle_id))
+    assert_same_state(_dump(fx.bundle_id), after)
+
+
+@pytest.mark.parametrize("kind", CELL_KINDS)
+def test_changing_a_cell_of_a_whole_linked_table_holds_the_old_table(client: TestClient, kind: str) -> None:
+    """Old 표째 이은 표 — 칸의 판단은 Old 표가 쥐고 있어, 칸 하나의 이음이 풀리면 그 표를 보류로 둔다(칸 글이 말없이 빠지지 않게)."""
+    fx = _setup_cells(client, tbl(CELLS))
+    view = get_view(client, fx.bundle_id, fx.old_id)
+    table = next(unit for unit in view["units"] if unit["kind"] == "table")
+    texts = {unit["id"]: unit["text"] for unit in get_view(client, fx.bundle_id, fx.new_id)["units"]}
+    targets = [
+        {
+            "key": f"t{row['id']}", "id": row["id"], "revision": row["revision"], "kind": row["kind"],
+            "source_unit_ids": [table["id"] if row["kind"] == "table" else find_unit(view, texts[unit_id])["id"]],
+        }
+        for unit_id, row in _new_targets(fx.bundle_id).items()
+    ]
+    _ok(save_group(client, fx.bundle_id, {"action": "confirm", "units": [_unit_in(table)], "targets": targets}))
+
+    result = _ok(_edit(client, fx.bundle_id, fx.new_id, _cell_op(fx, kind), confirm=True))
+
+    assert result["detach"]["held_unit_ids"] == [table["id"]]
+    assert _status(fx.bundle_id, table["id"]) == "on_hold"
+    assert _read_links(fx.bundle_id, fx.far["id"])[0] == "on_hold"

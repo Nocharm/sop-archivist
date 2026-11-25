@@ -1394,7 +1394,7 @@ export function useAssignPage() {
     const docId = view.document.id;
     const isOld = oldDocIds.includes(docId);
     // confirm은 판단을 풀며 보낸 편집이다 - 대상(Target)이 지워져 To-Be · New 문장도 다시 받는다
-    const plan = planReload(isOld ? { kind: "old_edit", docId, isInPlace: IN_PLACE_EDIT_OPS.has(op.type), isReleased: confirm } : { kind: "new_edit", docId }, { aiOn });
+    const plan = planReload(isOld ? { kind: "old_edit", docId, isInPlace: IN_PLACE_EDIT_OPS.has(op.type), isReleased: confirm } : { kind: "new_edit", docId, isReleased: confirm }, { aiOn });
     // 표 바꾸기는 그 표의 Unit 전부를 잡는다(벗기면 표 단위가 은퇴하고 칸 문장이 풀린다)
     const unitIds = op.type === "set_layout_table" ? listTableUnitIds(view.units, view.tables, op.table_id) : listEditUnitIds(op);
     await focusCtl.runPending({ kind: readEditKind(op), docId, unitIds, place: place ?? readEditPlace(op), isGlobal: false }, (job) => sendUnitEdit(job, view, op, okText, followId, confirm, thenLang, plan, afterOk));
@@ -1501,7 +1501,9 @@ export function useAssignPage() {
         confirmLabel: t("assign.unwrap.confirmRun"),
       };
     }
-    return { title: t("split.confirmTitle"), summary: t("split.confirmBody", { n: count }), confirmLabel: t("split.confirmRun") };
+    // New 문서는 거꾸로다 - New 문장의 이음이 풀리고 보류가 되는 것은 이어져 있던 Old 줄이다
+    const isNew = shapeView !== null && !oldDocIds.includes(shapeView.document.id);
+    return { title: t("split.confirmTitle"), summary: t(isNew ? "split.confirmBodyNew" : "split.confirmBody", { n: count }), confirmLabel: t("split.confirmRun") };
   }
 
   /** 목차 아님(줄 하나) · 모두 목차 아님(블록 전체) - 표시만 비우는 편집. 목차 고름을 놓고, 다시 받은 뒤 돌아온 첫 줄을 보통 줄로 고른다(F12 G4) */
@@ -1617,7 +1619,7 @@ export function useAssignPage() {
         focusCtl.succeed(job, { docId, revision: null, pickUnitId: restoredIds[0] ?? null });
       }
       // 풀기 · 언어 · 짝 맺기 - confirm이면 판단을 풀며 보냈다
-      if (!isAsking) reloadAfterEdit(planReload(oldDocIds.includes(docId) ? { kind: "old_edit", docId, isInPlace: false, isReleased: confirm } : { kind: "new_edit", docId }, { aiOn }));
+      if (!isAsking) reloadAfterEdit(planReload(oldDocIds.includes(docId) ? { kind: "old_edit", docId, isInPlace: false, isReleased: confirm } : { kind: "new_edit", docId, isReleased: confirm }, { aiOn }));
     }
   }
 
@@ -1758,12 +1760,13 @@ export function useAssignPage() {
 
   /** 모양 전환 편집 - Old는 묻지 않고 바로(confirm, 3-c), New는 이은 문장이면 서버가 물은 뒤(R4) 하고, 무엇이 됐는지와 풀린 배정 수를 알림에 */
   function runShapeSwitch(op: Extract<EditOp, { type: "switch_language" }>, followId: number) {
+    const isOld = shapeView !== null && oldDocIds.includes(shapeView.document.id);
     const describe = (result: EditResult) => {
       const key = result.shape === "merged" ? "assign.shape.merged" : result.shape === "unpaired" ? "assign.shape.unpaired" : "assign.shape.splitPair";
-      const released = result.detach?.reset_unit_ids.length ?? 0;
-      return `${t(key)}${released > 0 ? t("assign.shape.released", { n: released }) : ""}`;
+      // New는 판단이 풀리는 줄이 아니라 이음이 풀려 보류가 된 Old 줄을 센다
+      const released = (isOld ? result.detach?.reset_unit_ids : result.detach?.held_unit_ids)?.length ?? 0;
+      return `${t(key)}${released > 0 ? t(isOld ? "assign.shape.released" : "assign.shape.held", { n: released }) : ""}`;
     };
-    const isOld = shapeView !== null && oldDocIds.includes(shapeView.document.id);
     void runUnitEdit(op, describe, op.merge_pair ? null : followId, isOld);
   }
 

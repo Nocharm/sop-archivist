@@ -45,6 +45,7 @@ from app.sop.models import (
     SourceBlock,
     SourceTable,
     TargetSentence,
+    TargetSource,
     Unit,
     UnitDecision,
     UnitEdit,
@@ -2109,6 +2110,22 @@ async def _find_new_doc_targets(session: AsyncSession, unit_ids: Collection[int]
     return sorted(row[0] for row in rows)
 
 
+async def _find_decided_targets(session: AsyncSession, unit_ids: Collection[int]) -> list[int]:
+    """떼어 낼 것이 있는 입구 2 새 문장 — 미배정이 아니거나 출처가 있는 것."""
+    rows = await select_in_chunks(
+        session,
+        lambda chunk: select(TargetSentence.id).where(
+            TargetSentence.new_unit_id.in_(chunk), TargetSentence.origin == ORIGIN_NEW_DOC,
+            or_(
+                TargetSentence.status != UNASSIGNED,
+                select(TargetSource.target_id).where(TargetSource.target_id == TargetSentence.id).exists(),
+            ),
+        ),
+        unit_ids,
+    )
+    return sorted(row[0] for row in rows)
+
+
 def _merge_reports(first: DetachReport, second: DetachReport) -> DetachReport:
     """떼어 내기 결과 둘을 하나로(새 문서 R32 떼어 내기와 다시 맞추기, 옛 문서 은퇴와 캡션 묶음) — 나중에 지운 새 문장은 보류 목록에서 뺀다."""
     deleted = {*first.deleted_target_ids, *second.deleted_target_ids}
@@ -2192,13 +2209,18 @@ async def _write_change(
     detach = None
     if document.side == "new":
         reset = None
-        if change.regroup or decided_bundles or released_new:
+        if change.regroup or decided_bundles:
             reset = await detach_targets(
                 session, bundle_id=document.bundle_id,
-                target_ids=await _find_new_doc_targets(
-                    session, [*change.retire, *change.regroup, *decided_bundles, *released_new]
-                ),
+                target_ids=await _find_new_doc_targets(session, [*change.retire, *change.regroup, *decided_bundles]),
             )
+        # 제자리에서 언어가 바뀌는 새 문장만 — 은퇴하는 단위의 새 문장은 맞추기가 떼어 내며 지운다
+        released_ids = await _find_decided_targets(session, set(released_new) - set(change.retire))
+        if released_ids:
+            released = await detach_targets(
+                session, bundle_id=document.bundle_id, target_ids=released_ids, is_regrouped=False
+            )
+            reset = released if reset is None else _merge_reports(reset, released)
         await _apply_regroup(session, change.regroup)
         await _apply_layouts(session, change.layouts)
         detach = await sync_new_doc_targets(

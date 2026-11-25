@@ -297,6 +297,19 @@ def test_band_and_styled_headings_share_the_section_path(client: TestClient) -> 
 
 
 @pytest.mark.usefixtures("paragraph_split_rule")
+def test_band_levels_keep_numberless_clause_lines_out_of_the_section_path(client: TestClient) -> None:
+    """띠 표가 절을 정하는 문서(제목 스타일 없음)의 조항 번호만 든 줄은 1단계 제목으로 서지 않는다 — 스타일 제목이 있는 문서와 같다."""
+    bundle = create_bundle(client, is_synthetic=True)
+    body = make_band_table("5", "절차") + make_band_table("5.1", "준비") + p("5.1.1") + p("탱크를 비운다.")
+
+    new_doc = _upload_new(client, bundle["id"], body)
+
+    view = get_view(client, bundle["id"], new_doc["id"])
+    assert find_unit(view, "5.1.1")["kind"] == "heading"
+    assert [t["section_path"] for t in _load_targets(new_doc["target_doc_id"])] == ["5 절차 › 5.1 준비"]
+
+
+@pytest.mark.usefixtures("paragraph_split_rule")
 def test_a_new_heading_clause_makes_linkable_sentences(client: TestClient) -> None:
     """제목 스타일로 쓴 긴 조항은 New에서도 문장이 되어(R4) 새 문장이 생기고 Old 줄을 이어 확정한다."""
     bundle_id = create_bundle(client, is_synthetic=True)["id"]

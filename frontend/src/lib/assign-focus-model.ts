@@ -312,7 +312,7 @@ export function listEditUnitIds(op: EditOp): number[] {
 /** 편집 뒤 다시 받기의 까닭(설계 D2) - isReleased는 판단을 풀며(confirm) 보낸 편집 */
 export type ReloadCause =
   | { kind: "old_edit"; docId: number; isInPlace: boolean; isReleased: boolean }
-  | { kind: "new_edit"; docId: number }
+  | { kind: "new_edit"; docId: number; isReleased: boolean }
   | { kind: "pair"; docId: number }
   | { kind: "caption_ref"; docId: number }
   | { kind: "split_suggestion"; docId: number; isApplied: boolean }
@@ -353,6 +353,8 @@ export function planReload(cause: ReloadCause, ctx: { aiOn: boolean }): ReloadPl
       return { ...own, identical: true, splitSuggestions: ctx.aiOn ? cause.docId : null };
     }
     case "new_edit":
+      // 이음을 풀었으면 이어져 있던 Old 줄이 보류가 된다 - 어느 Old 문서인지 응답이 말하지 않아 모두 다시 받는다
+      if (cause.isReleased) return { ...NO_RELOAD, docs: "all", units: true, newDoc: cause.docId, written: true, tobe: true, identical: true, bundle: true };
       return { ...NO_RELOAD, newDoc: cause.docId, written: true, tobe: true };
     case "pair":
       // 짝은 엮은 New 문서의 짝 카드(같은 의미 키)도 바꾼다 - New 문장 목록과 함께 그 문서를 다시 받는다(스텝 8)
