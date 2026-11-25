@@ -446,6 +446,7 @@ def test_omitted_and_note_lines_take_no_number_in_outputs_a_and_c(client: TestCl
     ]
 
 
+@pytest.mark.usefixtures("c_sheet_on")
 def test_bullet_lines_take_no_number_and_show_their_section_number_in_a(client: TestClient) -> None:
     fx = _setup(client)
     wi = _get_output(client, fx.bundle_id, "outputs/c", "ko")["docs"][1]
@@ -515,6 +516,7 @@ def test_reorder_rejects_bad_number_styles(client: TestClient) -> None:
     assert same_on_match.status_code == 200, same_on_match.text
 
 
+@pytest.mark.usefixtures("c_sheet_on")
 def test_excel_leaves_unnumbered_cells_empty_and_italicizes_notes(client: TestClient) -> None:
     fx = _setup(client)
     wi = _get_output(client, fx.bundle_id, "outputs/c", "ko")["docs"][1]
