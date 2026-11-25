@@ -20,7 +20,6 @@ export type ReplayCommand =
   | { kind: "pick"; focus: Focus };
 
 export type SeenRevisions = ReadonlyMap<number, number>;
-const NO_SEEN: SeenRevisions = new Map();
 
 /** 보내는 일 - 판단은 누른 순간의 줄 · Unit · 초안을 잡는다 */
 export type WriteCommand =
@@ -92,7 +91,7 @@ export type ConfirmableCommand = Extract<WriteCommand, { confirm: boolean }>;
 
 export interface SendContext {
   id: string;
-  /** 다시 시도로 보낸다 - 누른 때의 revision 대신 지금 값으로 */
+  /** 다시 시도로 보낸다 - 멈춘 뒤 다시 읽어 사람이 보고 있는 화면의 값으로 */
   isRetry: boolean;
   /** 응답이 왔다 - 장벽은 이 뒤 새 보기의 고름이 설 때까지 다음을 내보내지 않는다(되돌리기만 바로 잇는다) */
   respond: () => void;
@@ -109,6 +108,8 @@ export class CommandRefusal extends Error {}
 export interface CommandEnv {
   pick(focus: Focus): void;
   readFocus(): Focus;
+  /** 지금 화면에 보이는 판단 revision */
+  readSeen(unitIds: readonly number[]): SeenRevisions;
   start(pending: Pending): void;
   end(id: string): void;
   dropFollows(): void;
@@ -252,8 +253,10 @@ export function useCommandQueue(env: CommandEnv, describePending: DescribePendin
     }
     const payload = command.payload;
     if (!isReplay(payload)) {
-      // 장벽 뒤에 눌렀으면 누른 때 본 revision은 그 장벽(되돌리기 · 일괄)이 올렸을 수 있다 - 나갈 때 화면의 것으로
-      void send(command, command.isDeferred && "seen" in payload ? { ...payload, seen: NO_SEEN } : payload);
+      // 장벽 뒤에 눌렀거나(그 장벽이 올렸을 수 있다) 다시 시도면(멈춘 뒤 다시 읽었다) 누른 때 본 revision은 낡았다 - 나가는 이때 화면의 것을 찍는다.
+      // 보내려고 받은 값을 쓰지 않는다 - 그 사이 남이 바꾼 것이 409로 잡히게
+      const isOld = command.isDeferred || live.current.retriedIds.has(command.id);
+      void send(command, isOld && "seen" in payload ? { ...payload, seen: env.readSeen(command.unitIds) } : payload);
       return;
     }
     // 화면을 떠났으면 글쇠가 가리킬 고름이 없다

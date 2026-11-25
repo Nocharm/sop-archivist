@@ -30,6 +30,9 @@ function createScreen() {
   let isRefused = false;
   let isConfirmAsked = false;
   let nextUnit = 100;
+  // 화면이 보고 있는 판단 revision과 서버의 것 - 다시 읽어야 같아진다
+  let screenRevision = 1;
+  let serverRevision = 1;
   let isRemarkOpen: string | null = null;
   const screen = {
     log, dropped, refusals,
@@ -39,6 +42,13 @@ function createScreen() {
     focus: unit(1) as Focus,
     pending: [] as readonly Pending[],
     reloads: () => reloads,
+    changeElsewhere: () => {
+      serverRevision += 1;
+    },
+    reread: () => {
+      screenRevision = serverRevision;
+    },
+    enqueueBulk: (unitIds: number[]) => act(async () => screen.commands.enqueue({ kind: "bulk", rows: unitIds.map((id) => ({ rowKey: `u${id}`, unitIds: [id] })), seen: new Map(unitIds.map((id) => [id, screenRevision])), reason: "", skipped: 0 })),
     remark: () => isRemarkOpen,
     closeRemark: () => {
       isRemarkOpen = null;
@@ -76,6 +86,15 @@ function createScreen() {
 
     function run(command: WriteCommand, ctx: SendContext): Promise<void> {
       if (command.kind === "global") return command.run(ctx);
+      if (command.kind === "bulk") {
+        // 서버의 낙관 잠금 - 실은 revision이 지금 것과 다르면 409
+        const sent = command.rows.flatMap((item) => item.unitIds.map((id) => command.seen.get(id)));
+        log.push(`bulk ${sent.join(",")}`);
+        return hold(responses).then(() => {
+          if (sent.some((revision) => revision !== serverRevision)) throw new Error("409");
+          serverRevision += 1;
+        });
+      }
       if (command.kind !== "step") throw new Error(`unexpected ${command.kind}`);
       log.push(command.direction);
       return hold(responses).then(() => {
@@ -87,6 +106,7 @@ function createScreen() {
       {
         pick: focusCtl.pick,
         readFocus: () => screen.focus,
+        readSeen: (unitIds) => new Map(unitIds.map((id) => [id, screenRevision])),
         start: focusCtl.start,
         end: focusCtl.end,
         dropFollows: focusCtl.dropFollows,
@@ -112,7 +132,7 @@ function createScreen() {
           reloads += 1;
         },
       },
-      (command) => (command.kind === "global" ? command.pending : command.kind === "step" ? { kind: "undo", docId: null, unitIds: [], place: NO_PLACE, isGlobal: true } : buildDecisionPending("save", 1, [])),
+      (command) => (command.kind === "global" ? command.pending : command.kind === "step" ? { kind: "undo", docId: null, unitIds: [], place: NO_PLACE, isGlobal: true } : buildDecisionPending(command.kind === "bulk" ? "bulk" : "save", 1, command.kind === "bulk" ? command.rows.flatMap((item) => item.unitIds) : [])),
     );
 
     function enqueue(kind: PendingKind, name: string, unitIds: number[], send: (ctx: SendContext) => Promise<void>, isGlobal = false) {
@@ -344,6 +364,56 @@ describe("a failure (A1-R7, AC3)", () => {
     expect(screen.focus).toEqual(unit(1));
     await drain(screen);
     expect(screen.log).toEqual(["join 1", "join 1 again", "delete 200"]);
+  });
+});
+
+describe("the optimistic lock", () => {
+  it("someone else's change while the command waits is refused and stops the line, not overwritten", async () => {
+    const screen = await open();
+    await press(screen, "d");
+    await screen.enqueueBulk([9]);
+    screen.changeElsewhere();
+    await drain(screen);
+    expect(screen.log).toEqual(["delete 1", "bulk 1"]);
+    expect(screen.commands.state.halted).toMatchObject({ reason: "409" });
+  });
+  it("a deferred command carries the revision on screen when it goes out, not the one before the barrier", async () => {
+    const screen = await open();
+    await press(screen, "m");
+    await screen.enqueueBulk([9]);
+    await screen.respond();
+    // 합치기가 올린 revision을 장벽의 다시 받기가 화면에 놓았다
+    screen.changeElsewhere();
+    screen.reread();
+    await screen.place();
+    await drain(screen);
+    expect(screen.log).toEqual(["join 1", "bulk 2"]);
+    expect(screen.commands.state.halted).toBeNull();
+  });
+  it("a deferred command is refused too when someone changes the row after the screen was read", async () => {
+    const screen = await open();
+    await press(screen, "m");
+    await screen.enqueueBulk([9]);
+    await screen.respond();
+    await screen.place();
+    screen.changeElsewhere();
+    await drain(screen);
+    expect(screen.log).toEqual(["join 1", "bulk 1"]);
+    expect(screen.commands.state.halted).toMatchObject({ reason: "409" });
+  });
+  it("Retry locks on what the screen shows now - refused again until it was read, then goes through", async () => {
+    const screen = await open();
+    await screen.enqueueBulk([9]);
+    screen.changeElsewhere();
+    await drain(screen);
+    await act(async () => screen.commands.retry());
+    await drain(screen);
+    expect(screen.commands.state.halted).toMatchObject({ reason: "409" });
+    screen.reread();
+    await act(async () => screen.commands.retry());
+    await drain(screen);
+    expect(screen.log).toEqual(["bulk 1", "bulk 1", "bulk 2"]);
+    expect(screen.commands.state).toEqual({ waiting: [], running: null, halted: null, asking: null });
   });
 });
 

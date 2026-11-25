@@ -27,7 +27,7 @@ import { findLastStep } from "@/lib/destination-manage-model";
 import { findSplitBlock, readSplitOffsets } from "@/lib/split-ai-tabs-model";
 import { pickPairPiece, planPairLanguages, type JoinKind, type JoinPlan } from "@/lib/split-menu-model";
 import { listAppliedSuggestions, requestAi, setSuggestionAdoption, type AiKind, type AiScope } from "@/lib/api-manage";
-import { addToBeDoc, addWiStep, acceptSuggestions, MAX_ACCEPT, bulkDecide, confirmPair, createPair, deletePair, editUnits, clearDecisions, confirmMatchesInBulk, getBundle, getComposedDoc, getDocumentView, getGroupByTarget, getUnitRef, getGroupByUnit, getToBe, listDocuments, listIdenticalCandidates, listNewCandidates, listSuggestions, listWrittenSentences, redoDecision, listOpenTranslations, removeToBeDoc, removeWiStep, resetAssignments, saveGroup, undoDecision, updateCaptionRef, type AcceptKind, type AiSuggestion, type ComposedDoc, type ComposedItem, type DecisionStepResult, type DocumentView, type EditOp, type EditResult, type Group, type GroupSaveInput, type NewCandidate, type OpenTranslation, type ToBe, type UndoMeta, type UnitRefDetail, type UnitRow, type ViewUnit, type WrittenSentence } from "@/lib/api-sop";
+import { addToBeDoc, addWiStep, acceptSuggestions, MAX_ACCEPT, bulkDecide, confirmPair, createPair, deletePair, editUnits, clearDecisions, confirmMatchesInBulk, getComposedDoc, getDocumentView, getGroupByTarget, getUnitRef, getGroupByUnit, getToBe, listDocuments, listIdenticalCandidates, listNewCandidates, listSuggestions, listWrittenSentences, redoDecision, listOpenTranslations, removeToBeDoc, removeWiStep, resetAssignments, saveGroup, undoDecision, updateCaptionRef, type AcceptKind, type AiSuggestion, type ComposedDoc, type ComposedItem, type DecisionStepResult, type DocumentView, type EditOp, type EditResult, type Group, type GroupSaveInput, type NewCandidate, type OpenTranslation, type ToBe, type UndoMeta, type UnitRefDetail, type UnitRow, type ViewUnit, type WrittenSentence } from "@/lib/api-sop";
 import { listRefCandidates } from "@/lib/caption-ref-model";
 import { isBundleKind, isCaptionGate, listCaptionPendingRowKeys, makeIsLinkedToWritten, type CaptionUnit } from "@/lib/caption-model";
 import { buildBlockPlaces, getCaptionMotion, isCaptionableText, listCaptionHolders, resolveCaptionDetach, resolveCaptionDrop, type CaptionDetach, type CaptionDrop } from "@/lib/caption-slot-model";
@@ -552,6 +552,7 @@ export function useAssignPage() {
     {
       pick: focusCtl.pick,
       readFocus: () => liveRef.current.focus,
+      readSeen: (unitIds) => readSeen(unitIds),
       start: focusCtl.start,
       end: focusCtl.end,
       dropFollows: focusCtl.dropFollows,
@@ -2157,15 +2158,12 @@ export function useAssignPage() {
     const unitIds = [...command.unitIds];
     const units = unitIds.map((id) => liveRef.current.unitMap.get(id)).filter((unit): unit is UnitRow => unit !== undefined);
     const isUsable = !ctx.isRetry && command.groups !== null && command.groups.every(writeLog.isFresh) && units.every((unit) => writeLog.pickRevision(unit.unit_id, 0) !== null);
-    const group = isUsable && command.groups !== null ? mergeGroups([...command.groups]) : await loadSaveGroup(unitIds, command.destination);
+    const group = isUsable && command.groups !== null ? mergeGroups([...command.groups]) : await loadSaveGroup(unitIds, command.destination, ctx.isRetry ? [] : (command.groups ?? []));
     const savedPlace = readDestination(group, unitIds);
     const destination = command.destination ?? savedPlace;
     if (destination === null && action !== "hold") throw new CommandRefusal(t("assign.queue.noPlace"));
     if (!command.isChecked && !isPick) checkSave(command, group, destination);
-    const revisionOf = (unit: UnitRow) => {
-      const known = ctx.isRetry ? null : writeLog.pickRevision(unit.unit_id, command.seen.get(unit.unit_id) ?? unit.decision.revision);
-      return known ?? group.units.find((item) => item.unit_id === unit.unit_id)?.decision.revision ?? unit.decision.revision;
-    };
+    const revisionOf = (unit: UnitRow) => writeLog.resolveRevision(unit.unit_id, command.seen, group.units.find((item) => item.unit_id === unit.unit_id)?.decision.revision ?? unit.decision.revision);
     // 고친 칸만 글을 보낸다 - 손대지 않은 AI 제안은 글·종류를 비워 보내 제안 그대로 받는다
     const context = {
       units: units.map((unit) => ({ id: unit.unit_id, kind: unit.kind, lang: unit.lang, text: unit.text, content_start: unit.content_start, revision: revisionOf(unit) })),
@@ -2203,12 +2201,13 @@ export function useAssignPage() {
     await placeReload({ ...NO_RELOAD_ASK, docs: "all", units: "all" }, ctx);
   }
 
-  /** 저장에 실을 관계 묶음 - 줄의 Unit과 고른 문장들의 것 */
-  async function loadSaveGroup(unitIds: number[], destination: Destination | null): Promise<Group> {
+  /** 저장에 실을 관계 묶음 - 줄의 Unit과 고른 문장들의 것. seen은 누른 때 보고 있던 묶음이라 새 문장의 revision은 그것으로 잠근다 */
+  async function loadSaveGroup(unitIds: number[], destination: Destination | null, seen: readonly Group[]): Promise<Group> {
     const group = await loadRowGroup(bundleId, unitIds);
     const known = new Set(group.targets.map((target) => target.id));
     const missing = listJoinedTargetIds(destination).filter((id) => !known.has(id));
-    return missing.length === 0 ? group : mergeGroups([group, ...(await Promise.all(missing.map((id) => getGroupByTarget(bundleId, id))))]);
+    const whole = missing.length === 0 ? group : mergeGroups([group, ...(await Promise.all(missing.map((id) => getGroupByTarget(bundleId, id))))]);
+    return { ...whole, targets: writeLog.lockTargets(whole.targets, seen) };
   }
 
   /** 누를 때 묶음이 없어 보지 못한 전제 - 어기면 보내지 않고 멈춰 까닭을 알린다(참조 줄은 누를 때 보았다) */
@@ -2296,25 +2295,24 @@ export function useAssignPage() {
     setComposedPatch((prev) => ({ base, doc: change(prev?.base === base ? prev.doc : base) }));
   }
 
-  /** 보낼 판단 revision - 앞 응답의 것(모르거나 다시 시도면 묶음에서 읽는다). 없는 Unit은 빠진다 */
-  async function readRevisions(unitIds: readonly number[], seen: SeenRevisions, isRetry: boolean): Promise<Array<{ unit_id: number; revision: number; isDecided: boolean }>> {
+  /** 보낼 판단 revision - 본 것과 앞 응답의 것(모르는 것만 묶음에서). 화면 줄이 그보다 낡았으면 판단이 남았는지도 묶음에서 읽는다. 없는 Unit은 빠진다 */
+  async function readRevisions(unitIds: readonly number[], seen: SeenRevisions): Promise<Array<{ unit_id: number; revision: number; isDecided: boolean }>> {
     const units = unitIds.map((id) => liveRef.current.unitMap.get(id)).filter((unit): unit is UnitRow => unit !== undefined);
-    const pickKnown = (unitId: number, now: number) => (isRetry ? null : writeLog.pickRevision(unitId, seen.get(unitId) ?? now));
-    const isKnown = !isRetry && units.every((unit) => pickKnown(unit.unit_id, unit.decision.revision) === unit.decision.revision);
+    const isKnown = units.every((unit) => writeLog.pickRevision(unit.unit_id, seen.get(unit.unit_id) ?? unit.decision.revision) === unit.decision.revision);
     if (isKnown) return units.map((unit) => ({ unit_id: unit.unit_id, revision: unit.decision.revision, isDecided: unit.decision.disposition !== "unassigned" || unit.status !== "unassigned" }));
     const group = await loadRowGroup(bundleId, units.map((unit) => unit.unit_id));
     return group.units
       .filter((unit) => unitIds.includes(unit.unit_id))
       .map((unit) => ({
         unit_id: unit.unit_id,
-        revision: pickKnown(unit.unit_id, unit.decision.revision) ?? unit.decision.revision,
+        revision: writeLog.resolveRevision(unit.unit_id, seen, unit.decision.revision),
         isDecided: unit.decision.disposition !== "unassigned" || unit.decision.status !== "unassigned",
       }));
   }
 
   /** 누른 때 화면에 있던 판단 revision */
   function readSeen(unitIds: readonly number[]): SeenRevisions {
-    return new Map(unitIds.flatMap((id) => { const unit = unitMap.get(id); return unit ? [[id, unit.decision.revision] as const] : []; }));
+    return new Map(unitIds.flatMap((id) => { const unit = liveRef.current.unitMap.get(id); return unit ? [[id, unit.decision.revision] as const] : []; }));
   }
 
   /** 배정 취소 - 누른 순간의 줄을 잡는다. 고름은 지금처럼 그 줄에 머문다 */
@@ -2332,8 +2330,8 @@ export function useAssignPage() {
     setMenu(null);
   }
 
-  async function sendClear({ rowKey, unitIds, seen, draft: sent, newDocId: docId, toggleKey: key }: Extract<WriteCommand, { kind: "clear" }>, ctx: SendContext) {
-    const decided = (await readRevisions(unitIds, seen, ctx.isRetry)).filter((unit) => unit.isDecided);
+  async function sendClear({ rowKey, unitIds, seen, draft: sent, newDocId: docId, toggleKey: key }: Extract<WriteCommand, { kind: "clear" }>) {
+    const decided = (await readRevisions(unitIds, seen)).filter((unit) => unit.isDecided);
     if (decided.length > 0) {
       writeLog.noteUnknown([...unitIds, ...(await clearDecisions(bundleId, decided.map(({ unit_id, revision }) => ({ unit_id, revision })), buildUndo({ step_key: genId(), focus_unit_id: unitIds[0] })))]);
       markRecorded();
@@ -2368,8 +2366,8 @@ export function useAssignPage() {
     setChecked(new Set());
   }
 
-  async function sendBulk({ rows: targets, seen, reason, skipped }: Extract<WriteCommand, { kind: "bulk" }>, ctx: SendContext) {
-    const units = await readRevisions(targets.flatMap((item) => item.unitIds), seen, ctx.isRetry);
+  async function sendBulk({ rows: targets, seen, reason, skipped }: Extract<WriteCommand, { kind: "bulk" }>) {
+    const units = await readRevisions(targets.flatMap((item) => item.unitIds), seen);
     const done = await bulkDecide(bundleId, { action: "delete", reason, move_target_code: "", units: units.map(({ unit_id, revision }) => ({ unit_id, revision })) }, buildUndo());
     noteDecisions(done);
     markRecorded();
@@ -2453,7 +2451,7 @@ export function useAssignPage() {
   // 알림의 되돌리기는 화면을 넘어 남는다 - 그 렌더의 함수를 붙들지 않게 가장 최근의 것을 미러한다(use-box-drag의 최신 config와 같은 짜임)
   const undoStepRef = useRef(runUndoStep);
   // 큐가 보낼 때 읽는 화면 값 - 명령은 누른 때의 것(줄 · Unit · 초안)만 싣고 나머지는 나갈 때의 값으로 보낸다(앞 응답 뒤의 값)
-  const live = { focus, mode, activeKey, unitMap, rowMap, rowOfUnit, views: viewList, soloView: soloLoad.data, writtenMap, composedData, leftovers, isDrafting, labelOptions };
+  const live = { bundle, focus, mode, activeKey, unitMap, rowMap, rowOfUnit, views: viewList, soloView: soloLoad.data, writtenMap, composedData, leftovers, isDrafting, labelOptions };
   const liveRef = useRef(live);
   // 커밋마다 큐를 한 번 돌린다(새 이펙트를 두지 않는다) - 장벽 · 되살린 글쇠가 세운 고름이 그려진 이 커밋의 값으로 다음 명령을 낸다
   useEffect(() => {
@@ -2569,9 +2567,9 @@ export function useAssignPage() {
       case "save":
         return sendSave(command, ctx);
       case "clear":
-        return sendClear(command, ctx);
+        return sendClear(command);
       case "bulk":
-        return sendBulk(command, ctx);
+        return sendBulk(command);
       case "figure":
         return sendFigure(command, ctx);
       case "edit":
@@ -2728,7 +2726,7 @@ export function useAssignPage() {
       label: "assign.step.reset",
       pending: { kind: "bulk", docId: null, unitIds: [], place: NO_PLACE, isGlobal: true },
       run: async (ctx) => {
-        const result = await resetAssignments(bundleId, { revision: ctx.isRetry ? (await getBundle(bundleId)).revision : revision, document_id: documentId }, undo);
+        const result = await resetAssignments(bundleId, { revision: ctx.isRetry ? (liveRef.current.bundle?.revision ?? revision) : revision, document_id: documentId }, undo);
         ctx.respond();
         writeLog.noteAll();
         markRecorded();
@@ -2773,11 +2771,11 @@ export function useAssignPage() {
     }
     const targetIds = addPartnerTargets([target.target_id], writtenMap);
     runGlobal("assign.step.link_source", async () => {
+      const seen = readSeen(sourceRow.unitIds);
       const rowGroup = await loadRowGroup(bundleId, sourceRow.unitIds);
       const extra = await Promise.all(targetIds.map((id) => getGroupByTarget(bundleId, id)));
       const link: Destination = { kind: "link", targetIds };
-      // 앞 명령이 이 줄을 바꿨을 수 있다 - 지금 줄과 방금 받은 묶음의 revision으로
-      const sourceUnits = readSourceUnits(sourceRow.unitIds, rowGroup);
+      const sourceUnits = readSourceUnits(sourceRow.unitIds, seen, rowGroup);
       const context = { units: sourceUnits.map(({ id, kind, lang, text, content_start, revision }) => ({ id, kind, lang, text, content_start, revision })), group: mergeGroups([rowGroup, ...extra]), tables: new Map() };
       const body = buildGroupSave({ destination: link, texts: {}, reason: sourceUnits[0]?.reason ?? "", moveCode: "" }, context, "confirm");
       // 이 문장에 없는 언어의 Old 문장은 서버가 짝을 풀어 제 줄로 남긴다 - 출처 없는 New를 계속 보게 고른 줄은 옮기지 않는다
@@ -2787,12 +2785,12 @@ export function useAssignPage() {
     }, t("match.linked"));
   }
 
-  /** 저장에 실을 줄의 Unit - 판단 revision은 앞 응답의 것(모르면 방금 받은 묶음의 것) */
-  function readSourceUnits(unitIds: readonly number[], loaded: Group) {
+  /** 저장에 실을 줄의 Unit - 판단 revision은 보낼 때 화면에서 본 것(seen - 묶음을 받기 전에 찍는다)과 앞 응답의 것 */
+  function readSourceUnits(unitIds: readonly number[], seen: SeenRevisions, loaded: Group) {
     return unitIds.flatMap((id) => {
       const unit = liveRef.current.unitMap.get(id);
       if (unit === undefined) return [];
-      const revision = writeLog.pickRevision(id, unit.decision.revision) ?? loaded.units.find((item) => item.unit_id === id)?.decision.revision ?? unit.decision.revision;
+      const revision = writeLog.resolveRevision(id, seen, loaded.units.find((item) => item.unit_id === id)?.decision.revision ?? unit.decision.revision);
       return [{ id, kind: unit.kind, lang: unit.lang, text: unit.text, content_start: unit.content_start, revision, reason: readHumanReason(unit.decision) }];
     });
   }
@@ -2806,14 +2804,15 @@ export function useAssignPage() {
     const sourceRow = key ? rowMap.get(key) : undefined;
     if (!sourceRow || !canEdit) return;
     runGlobal("assign.step.unlink", async () => {
+      const seen = readSeen(sourceRow.unitIds);
       const group = mergeGroups([await loadRowGroup(bundleId, sourceRow.unitIds), await getGroupByTarget(bundleId, cellId)]);
       const saved = readDestination(group, sourceRow.unitIds);
       const remainder = saved?.kind === "link" ? saved.targetIds.filter((id) => id !== cellId) : [];
       if (remainder.length === 0) {
         const decided = group.units.filter((unit) => sourceRow.unitIds.includes(unit.unit_id) && unit.decision.disposition !== "unassigned");
-        await clearDecisions(bundleId, decided.map((unit) => ({ unit_id: unit.unit_id, revision: unit.decision.revision })), buildUndo({ step_key: genId(), focus_unit_id: unitId }));
+        await clearDecisions(bundleId, decided.map((unit) => ({ unit_id: unit.unit_id, revision: writeLog.resolveRevision(unit.unit_id, seen, unit.decision.revision) })), buildUndo({ step_key: genId(), focus_unit_id: unitId }));
       } else {
-        const sourceUnits = readSourceUnits(sourceRow.unitIds, group);
+        const sourceUnits = readSourceUnits(sourceRow.unitIds, seen, group);
         const context = { units: sourceUnits.map(({ id, kind, lang, text, content_start, revision }) => ({ id, kind, lang, text, content_start, revision })), group, tables: new Map() };
         const body = buildGroupSave({ destination: { kind: "link", targetIds: remainder }, texts: {}, reason: sourceUnits[0]?.reason ?? "", moveCode: "" }, context, "confirm");
         applyPairSettle(sourceRow, await saveGroup(bundleId, body, buildUndo({ op: "unlink", focus_unit_id: unitId, focus_target_id: cellId })), body.release_unit_ids ?? []);
@@ -3868,7 +3867,7 @@ export function useAssignPage() {
   }
 
   async function sendFigure({ unitId, unitIds, seen, reason }: Extract<WriteCommand, { kind: "figure" }>, ctx: SendContext) {
-    const units = await readRevisions(unitIds, seen, ctx.isRetry);
+    const units = await readRevisions(unitIds, seen);
     const done = await bulkDecide(bundleId, { action: "delete", reason, move_target_code: "", units: units.map(({ unit_id, revision }) => ({ unit_id, revision })) }, buildUndo({ focus_unit_id: unitId }));
     noteDecisions(done);
     markRecorded();

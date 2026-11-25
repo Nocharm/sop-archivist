@@ -3,7 +3,7 @@
 
 interface SavedGroup {
   units: ReadonlyArray<{ unit_id: number; decision: { revision: number } }>;
-  targets: ReadonlyArray<{ id: number }>;
+  targets: ReadonlyArray<{ id: number; revision: number }>;
 }
 
 export interface WriteLog {
@@ -19,6 +19,16 @@ export interface WriteLog {
   noteAll(): void;
   /** 보낼 판단 revision - 화면이 든 값과 응답으로 안 값 중 큰 것. null이면 모른다(묶음에서 읽는다) */
   pickRevision(unitId: number, seen: number): number | null;
+  /**
+   * 낙관 잠금에 실을 revision - 사람이 본 것(seen)과 이 화면이 쓴 것이 이긴다. 보내려고 방금 받은 묶음의 것(loaded)을 실으면 그 사이 남이 바꾼 것을
+   * 보지도 않고 덮으니, 화면에 없던 단위와 이 화면이 방금 비워 revision을 모르는 단위에만 쓴다
+   */
+  resolveRevision(unitId: number, seen: ReadonlyMap<number, number>, loaded: number): number;
+  /**
+   * 새로 받은 묶음의 새 문장을, 누른 때 보고 있던 묶음(seen)의 revision으로 잠근다 - 이 화면이 그 뒤 쓴 것은 그 응답의 것.
+   * 무엇이 바뀌었는지 모르는 쓰기가 그 사이 있었거나 보지 못한 문장이면 받은 그대로다
+   */
+  lockTargets<T extends { id: number; revision: number }>(loaded: readonly T[], seen: readonly SavedGroup[]): T[];
   /** 받은 묶음이 언제 부른 것인지 */
   mark(group: SavedGroup, at: number): void;
   /** 그 묶음을 부른 뒤 거기 든 것을 쓴 적이 없나 - 부른 때를 모르면 거짓 */
@@ -34,6 +44,7 @@ export function createWriteLog(): WriteLog {
   const unknown = new Set<number>();
   const unitTicks = new Map<number, number>();
   const targetTicks = new Map<number, number>();
+  const targetRevisions = new Map<number, number>();
   const marks = new WeakMap<SavedGroup, number>();
 
   function noteRevisions(decisions: ReadonlyArray<{ unit_id: number; decision: { revision: number } }>): void {
@@ -47,13 +58,20 @@ export function createWriteLog(): WriteLog {
     epoch = tick;
   }
 
+  function pickRevision(unitId: number, seen: number): number | null {
+    return unknown.has(unitId) ? null : Math.max(seen, revisions.get(unitId) ?? 0);
+  }
+
   return {
     now: () => tick,
     noteSaved(saved) {
       tick += 1;
       noteRevisions(saved.units);
       for (const unit of saved.units) unitTicks.set(unit.unit_id, tick);
-      for (const target of saved.targets) targetTicks.set(target.id, tick);
+      for (const target of saved.targets) {
+        targetTicks.set(target.id, tick);
+        targetRevisions.set(target.id, Math.max(target.revision, targetRevisions.get(target.id) ?? 0));
+      }
     },
     noteDecisions(decisions) {
       noteAll();
@@ -64,7 +82,15 @@ export function createWriteLog(): WriteLog {
       for (const id of unitIds) unknown.add(id);
     },
     noteAll,
-    pickRevision: (unitId, seen) => (unknown.has(unitId) ? null : Math.max(seen, revisions.get(unitId) ?? 0)),
+    pickRevision,
+    resolveRevision: (unitId, seen, loaded) => pickRevision(unitId, seen.get(unitId) ?? loaded) ?? loaded,
+    lockTargets(loaded, seen) {
+      const seenRevisions = new Map(seen.filter((group) => (marks.get(group) ?? -1) >= epoch).flatMap((group) => group.targets.map((target) => [target.id, target.revision] as const)));
+      return loaded.map((target) => {
+        const revision = seenRevisions.get(target.id);
+        return revision === undefined ? target : { ...target, revision: Math.max(revision, targetRevisions.get(target.id) ?? 0) };
+      });
+    },
     mark(group, at) {
       marks.set(group, at);
     },
