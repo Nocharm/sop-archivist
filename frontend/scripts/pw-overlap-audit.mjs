@@ -1,5 +1,5 @@
 // 겹침 감사(Playwright + 시스템 Chrome) - 호버로 펼치거나 떠서 보이는 UI가 옆 글자·입력을 덮는지 잰다.
-// 모핑 단추(.mbtn — 라벨 폭은 px로 손으로 맞춘 값이라 번역이 길어지면 조용히 겹친다)·C 줄 끝 단추·Assign 그 자리 메뉴·상단 바 AI 작업 목록과 알림(요청 줄의 Background 표시 포함)·Assign 표·그림 머리 줄의 TABLE/FIGURE 표시.
+// 모핑 단추(.mbtn — 라벨 폭은 px로 손으로 맞춘 값이라 번역이 길어지면 조용히 겹친다)·C 줄 끝 단추·Assign 그 자리 메뉴·상단 바 AI 작업 목록과 알림(요청 줄의 Background 표시 포함)·Assign 표·그림 머리 줄의 TABLE/FIGURE 표시·Assign의 떼는 오른쪽 칸(1440px 미만 폭에서).
 // 전제: reset_db → seed_sop_demo 직후 backend 8777(DEV_ENFORCE_PERMISSIONS=true) + frontend 3777. DB를 바꾸지 않는다
 // (AI 목록과 알림은 /api/ai/jobs/recent 응답을 브라우저 안에서 바꿔 그린다).
 // 실행(frontend/ 에서): node scripts/pw-overlap-audit.mjs — 겹침이 하나라도 있으면 종료 코드 1, 그 화면은 ../.shots/overlap-*.png
@@ -573,7 +573,60 @@ const bundleHeadScene = {
   },
 };
 
-const scenes = [...mbtnScenes, tobeRowActsScene, oldRowActsScene, outputsScene, outputsEndRowsScene, outputsReorderScene, exportPreviewScene, composedHeadingScene, linkMenuScene, aiJobsScene, bundleHeadScene].filter((scene) => !only || only.includes(scene.name));
+// 떼는 오른쪽 칸(좁은 창) - 떠 있는 판이라 아래 글을 가리는 것은 맞다. 대신 붙어 있을 때 떼기 단추가 머리 글을 덮지 않고, 뜬 판은 펼치든 접든 화면 안에 있고,
+// 머리의 제목과 단추가 겹치지 않고, 내용이 320px에서 옆으로 넘치지 않고, 끝까지 굴린 문서의 마지막 줄이 판 위로 올라와야 한다. 1440px 이상이면 단추가 없어야 한다
+const sideFloatScene = {
+  name: "assign-side-float",
+  user: "qa.member",
+  run: async (page, report) => {
+    await page.goto(`${BASE}/bundles/${BUNDLE}/assign`);
+    await page.locator('[data-testid="assign-bar"]').waitFor({ timeout: T });
+    await page.locator('[data-testid="assign-new"] .new-line').first().waitFor({ timeout: T });
+    await page.keyboard.press("j");
+    await page.locator('[data-testid="assign-row-id"]').waitFor({ timeout: T });
+    const detach = page.locator('[data-testid="assign-side-detach"]');
+    if (page.viewportSize().width >= 1440) {
+      if ((await detach.count()) > 0) report("assign-side-detach", "shown at 1440px or wider");
+      return;
+    }
+    if (LONG) await page.locator('[data-testid="assign-row-id"]').evaluate((el) => { el.textContent = "SYNTHETIC-LONG-DOCUMENT-CODE-0001-1-001 · SYNTHETIC-LONG-DOCUMENT-CODE-0001-1-002"; });
+    const { hits, width } = await findCovered(detach);
+    if (hits.length > 0) report(`assign-side-detach (${width}px)`, hits.join(", "));
+    await detach.click();
+    await page.locator('[data-testid="assign-side-head"]').waitFor({ timeout: T });
+    await page.mouse.move(0, 0);
+    await page.waitForTimeout(HOVER_SETTLE_MS);
+    const readFloat = () => page.evaluate(() => {
+      const side = document.querySelector('[data-testid="assign-inspector"]');
+      const box = side.getBoundingClientRect();
+      const problems = [];
+      if (box.left < 0 || box.top < 0 || box.right > window.innerWidth || box.bottom > window.innerHeight) problems.push("outside the viewport");
+      const parts = [...side.querySelectorAll(".side-float-head > *")].map((el) => el.getBoundingClientRect());
+      for (let i = 1; i < parts.length; i += 1) if (parts[i].left < parts[i - 1].right - 1) problems.push("head parts overlap");
+      for (const el of [side, ...side.querySelectorAll(".side-float-head, .side-float-title, .assign-side-body, .assign-side-head, .assign-pick, .assign-decide, .assign-decide-body, .help-panel")]) {
+        if (el.scrollWidth > el.clientWidth + 1) problems.push(`${el.className} is ${el.scrollWidth - el.clientWidth}px too wide`);
+      }
+      return { problems, top: box.top };
+    });
+    const open = await readFloat();
+    if (open.problems.length > 0) report("assign-inspector floating", open.problems.join(", "));
+    // 점진 그리기라 높이가 멎을 때까지 끝으로 굴린다
+    const body = page.locator('[data-testid="assign-new"] .pane-body');
+    for (let step = 0, last = -1; step < 30; step += 1) {
+      const height = await body.evaluate((el) => { el.scrollTop = el.scrollHeight; return el.scrollHeight; });
+      await page.waitForTimeout(250);
+      if (height === last) break;
+      last = height;
+    }
+    const bottom = await page.locator('[data-testid="assign-new"] .new-line').last().evaluate((el) => el.getBoundingClientRect().bottom);
+    if (bottom > open.top + 1) report("last New line", `stays ${Math.round(bottom - open.top)}px under the panel at the end of the document`);
+    await page.locator('[data-testid="assign-side-fold"]').click();
+    const folded = await readFloat();
+    if (folded.problems.length > 0) report("assign-inspector folded", folded.problems.join(", "));
+  },
+};
+
+const scenes = [...mbtnScenes, tobeRowActsScene, oldRowActsScene, outputsScene, outputsEndRowsScene, outputsReorderScene, exportPreviewScene, composedHeadingScene, linkMenuScene, sideFloatScene, aiJobsScene, bundleHeadScene].filter((scene) => !only || only.includes(scene.name));
 const browser = await chromium.launch({ executablePath: CHROME, headless: true });
 let problems = 0;
 let runs = 0;
