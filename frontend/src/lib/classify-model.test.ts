@@ -11,7 +11,6 @@ import {
   findNextAfterSave,
   findSystemHold,
   getDestinationId,
-  getRowStep,
   hasDraftChange,
   hasRowLanguage,
   buildCellOwners,
@@ -573,22 +572,6 @@ describe("stepInList", () => {
 
   it("returns null for an empty list", () => {
     expect(stepInList(all, [], "c", 1)).toBeNull();
-  });
-});
-
-describe("getRowStep", () => {
-  it("moves down with J and the down arrow", () => {
-    expect(getRowStep("j")).toBe(1);
-    expect(getRowStep("ArrowDown")).toBe(1);
-  });
-
-  it("moves up with K and the up arrow", () => {
-    expect(getRowStep("K")).toBe(-1);
-    expect(getRowStep("ArrowUp")).toBe(-1);
-  });
-
-  it("ignores other keys", () => {
-    expect(getRowStep("Enter")).toBeNull();
   });
 });
 

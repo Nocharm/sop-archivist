@@ -38,3 +38,20 @@ export function getPairHint(selected: PairHintUnit, mates: readonly PairHintUnit
     more: far.length - 1,
   };
 }
+
+/**
+ * 짝으로 가기(글쇠 G)의 자리 - 떨어진 짝이 있으면 안내 줄과 같은 박스, 이어 붙은 짝뿐이면 곁의 박스. order는 용지 차례.
+ * 카드는 차례가 끊김 없이 이어진 구성원으로 본다
+ */
+export function findPairTarget(selectedId: number, members: readonly { id: number; lang: string }[], order: readonly number[]): number | null {
+  const at = new Map(order.map((id, index) => [id, index]));
+  const placed = members.flatMap((unit) => (at.has(unit.id) ? [{ id: unit.id, lang: unit.lang, at: at.get(unit.id)!, card: null as number | null, label: "" }] : [])).sort((a, b) => a.at - b.at);
+  placed.forEach((unit, index) => {
+    const above = placed[index - 1];
+    unit.card = above !== undefined && above.at === unit.at - 1 ? above.card : unit.id;
+  });
+  const own = placed.find((unit) => unit.id === selectedId);
+  const mates = placed.filter((unit) => unit.id !== selectedId);
+  if (!own || mates.length === 0) return null;
+  return (getPairHint(own, mates) ?? getPairHint({ ...own, card: null }, mates))?.targetUnitId ?? null;
+}

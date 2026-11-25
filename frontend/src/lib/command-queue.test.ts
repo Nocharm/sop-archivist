@@ -53,6 +53,19 @@ describe("command queue", () => {
     expect(q.take()?.id).toBe("k2");
   });
 
+  it("keeps the commands one replayed key makes in the order it made them, before the keys left", () => {
+    const q = createCommandQueue<string>();
+    q.push(job("m", "join", [3]));
+    q.push(key("k1"));
+    q.push(key("k2"));
+    q.take();
+    q.settle("m");
+    q.take();
+    q.pushNext(job("clicked", "ref", [7]));
+    q.pushNext(job("rest", "ref", [8]), 1);
+    expect(q.getState().waiting.map((command) => command.id)).toEqual(["clicked", "rest", "k2"]);
+  });
+
   it("stops after a failure, retries in place, and drop gives back what was waiting", () => {
     const q = createCommandQueue<string>();
     q.push(job("a", "save", [3]));

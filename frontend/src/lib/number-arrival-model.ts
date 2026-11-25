@@ -65,6 +65,25 @@ export function listExpectedNumbers(ops: readonly EditOp[], sent: readonly SentN
   return [...expected];
 }
 
+/** 누른 편집이 줄 들여쓰기 차이 [단위, 차이] - 저장은 정한 값이라 나중에 누른 것이 이긴다 */
+export function readOpShifts(op: EditOp): Array<[number, number]> {
+  if (op.type === "set_indents") return op.units.map((item) => [item.unit_id, item.indent_shift]);
+  return op.type === "set_number" && op.indent_shift !== undefined ? [[op.unit_id, op.indent_shift]] : [];
+}
+
+/** 응답은 왔고 그 편집이 든 보기를 아직 못 받은 들여쓰기 */
+export interface SentShifts {
+  docId: number;
+  revision: number;
+  shifts: ReadonlyArray<[number, number]>;
+}
+
+/** 아직 보기에 없는 들여쓰기 차이(listExpectedNumbers와 같은 규칙) - 저장이 느린 동안 Tab을 이어 눌러도 누른 만큼 들어가게 */
+export function listExpectedShifts(ops: readonly EditOp[], sent: readonly SentShifts[], views: ReadonlyArray<{ document: { id: number; revision: number } }>): Map<number, number> {
+  const waiting = sent.filter((item) => views.some(({ document }) => document.id === item.docId && document.revision < item.revision));
+  return new Map([...waiting.flatMap((item) => item.shifts), ...ops.flatMap(readOpShifts)]);
+}
+
 /** 단위 보기에 기대 글을 얹는다 - 얹을 것이 없으면 같은 것을 돌려준다(용지를 다시 그리지 않게) */
 export function applyExpectedNumbers<U extends Pick<ViewUnit, "number">>(units: ReadonlyMap<number, U>, expected: ReadonlyMap<number, string | null>): ReadonlyMap<number, U> {
   let shown: Map<number, U> | null = null;

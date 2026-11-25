@@ -11,6 +11,9 @@ import { buildPaperModel, type PaperModel } from "@/lib/paper-model";
 
 import { Paper } from "./paper";
 
+// 카드 수백 장을 통째로 그리는 시험이라 바쁜 기계(CI)에서 기본 5초를 넘는다 - 시간은 단언이 아니다
+vi.setConfig({ testTimeout: 30_000 });
+
 const COUNT = 200;
 const IDS = Array.from({ length: COUNT }, (_, at) => at + 1);
 /** 벗긴 표(줄 160 · 161 - 4번째 덩어리의 끝과 5번째의 첫 줄)와 아직 표인 것(150) */
