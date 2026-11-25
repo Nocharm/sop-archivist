@@ -1563,7 +1563,7 @@ await runStep("new documents: a reload that starts during a save does not undo t
 
 // WI 줄을 SOP 줄에 끌어 상위 SOP 바꾸기(Documents 화면 설계 §7) - 놓으면 바로 저장되고 알림의 Undo가 되돌린다. Restore의 알림도 Undo를 지닌다(§8).
 // 둘째 SOP는 API로 만들고 끝에 지운다. 거절되는 Undo · 늦춘 저장이 있어 콘솔 오류를 허용한다
-await runStep("new documents: drag a WI onto another SOP to change its parent, Undo on the toast puts it back", { drafting: true, allowConsoleErrors: true }, async ({ page }) => {
+await runStep("new documents: drag a WI onto another SOP to change its parent, Undo on the toast puts it back", { allowConsoleErrors: true }, async ({ page }) => {
   const headers = { "X-Dev-User": "qa.member" };
   const jsonHeaders = { ...headers, "Content-Type": "application/json" };
   const api = `${BASE}/api/bundles/${halfBundleId}`;
@@ -1572,17 +1572,14 @@ await runStep("new documents: drag a WI onto another SOP to change its parent, U
   const sopCf = start.docs.find((doc) => doc.code === "SOP-CF");
   // 쓴 파일이 없는 WI 둘(부모 SOP-CF) - 끌어 옮기고 되돌린다
   const [w, x] = start.docs.filter((doc) => doc.doc_type === "wi" && doc.parent_code === "SOP-CF" && doc.document_id === null);
-  const seedReason = start.na_slots.find((na) => na.code === "SOP-CF" && na.slot_key === "procedures.troubleshooting")?.reason ?? "";
   const parentOf = async (id) => (await readToBe(page, halfBundleId)).docs.find((doc) => doc.id === id)?.parent_code ?? null;
   const setParent = (id, code) => page.request.patch(`${api}/tobe/docs/${id}`, { headers: jsonHeaders, data: { parent_code: code } });
-  // 화면에서 나간 줄 PATCH와 N/A 요청(page.request로 보낸 것은 잡히지 않는다)
+  // 화면에서 나간 줄 PATCH(page.request로 보낸 것은 잡히지 않는다)
   const patches = [];
-  const naCalls = [];
   const pageErrors = [];
   page.on("request", (request) => {
     const path = decodeURIComponent(new URL(request.url()).pathname);
     if (request.method() === "PATCH" && /\/tobe\/docs\/\d+$/.test(path)) patches.push({ path, body: request.postData() ?? "" });
-    if (/\/tobe\/docs\/\d+\/na\//.test(path)) naCalls.push({ method: request.method(), path, body: request.postData() ?? "" });
   });
   page.on("pageerror", (err) => pageErrors.push(String(err)));
   const row = (doc) => page.locator(`[data-testid="tobe-id-${doc.id}-row"]`);
@@ -1685,7 +1682,7 @@ await runStep("new documents: drag a WI onto another SOP to change its parent, U
 
     // 3. 끄는 동안 - 표 · 놓을 줄 · 끄는 줄 · 화면 틀의 표시, SOP 줄만 또렷, 올린 줄의 단추 숨김, 줄들 위를 지나도 다시 그리지 않는다
     await page.locator(`[data-testid="tobe-id-${sopCf.id}-toggle"]`).click();
-    await wait(page, `tobe-id-${sopCf.id}-slots`);
+    await wait(page, `tobe-id-${sopCf.id}-panel`);
     await startDrag(w);
     // 펼침 전환 · 툴팁 같은 늦은 커밋이 가라앉은 뒤부터 센다
     await page.waitForTimeout(300);
@@ -1725,14 +1722,13 @@ await runStep("new documents: drag a WI onto another SOP to change its parent, U
     for (const [name, locator] of [
       ["own row", row(w)],
       ["Old row", page.locator('[data-testid="documents-list"] [data-testid^="documents-"][data-testid$="-row"]').first()],
-      ["open panel", page.locator(`[data-testid="tobe-id-${sopCf.id}-slots"]`)],
-      ["add row", page.locator('[data-testid="tobe-add-row"]')],
+      ["open panel", page.locator(`[data-testid="tobe-id-${sopCf.id}-panel"]`)],
       ["empty", page.locator('[data-testid="tobe-count"]')],
     ]) {
       await moveOver(locator, 0.5);
       silentOver[name] = `${await dropCount()}:${await noteText()}:${await destText()}`;
     }
-    check("nothing is marked over its own row, an Old row, an open panel, the add row or empty space", Object.values(silentOver).every((value) => value === "0:null:null"), JSON.stringify(silentOver));
+    check("nothing is marked over its own row, an Old row, an open panel or empty space", Object.values(silentOver).every((value) => value === "0:null:null"), JSON.stringify(silentOver));
 
     // 5. 놓이지 않는 것 - Esc, WI 위에 놓기, 빈 곳에 놓기
     await moveOver(row(sopDrag));
@@ -1814,16 +1810,6 @@ await runStep("new documents: drag a WI onto another SOP to change its parent, U
     check("Alt+drag selects the row's text and does not drag", altCards === 0 && selected !== "", `${altCards} "${selected}"`);
     await page.evaluate(() => window.getSelection()?.removeAllRanges());
 
-    // 10. 열린 메뉴는 줄을 누르면 닫힌다(G2 - 누름에서 preventDefault를 부르지 않는다)
-    await page.locator('[data-testid="tobe-more"]').click();
-    await wait(page, "tobe-more-menu");
-    await scrollTo(titleOf(w));
-    const menuPoint = await pointAt(titleOf(w), 0.3);
-    await page.mouse.click(menuPoint.x, menuPoint.y);
-    const menuClosed = await page.locator('[data-testid="tobe-more-menu"]').waitFor({ state: "detached", timeout: 2000 }).then(() => true, () => false);
-    check("pressing a row closes an open menu", menuClosed);
-    await openRows();
-
     // 11. 그사이 바뀐 뒤의 Undo - 남이 바꾼 것을 덮지 않는다
     await dropOn(w, sopDrag);
     const patchesBeforeStale = patches.length;
@@ -1880,7 +1866,84 @@ await runStep("new documents: drag a WI onto another SOP to change its parent, U
     await setParent(w.id, "SOP-CF");
     await openRows();
 
-    // 14. Restore의 Undo - 지우기 전의 사유로 다시 N/A
+  } finally {
+    // 중간에 멈췄어도 누른 단추를 놓는다(눌려 있지 않으면 아무 일도 없다)
+    await page.mouse.up();
+    for (const doc of [w, x]) if (doc && (await parentOf(doc.id)) !== "SOP-CF") await setParent(doc.id, "SOP-CF");
+    if (sopDrag) await page.request.delete(`${api}/tobe/docs/${sopDrag.id}`, { headers });
+    const end = await readToBe(page, halfBundleId);
+    check("the WIs are back under SOP-CF and SOP-DRAG is gone", [w, x].every((doc) => !doc || end.docs.find((item) => item.id === doc.id)?.parent_code === "SOP-CF") && !end.docs.some((doc) => doc.code === "SOP-DRAG"));
+  }
+});
+
+// 숨긴 도구가 있는 화면의 끌기 - 칸 표와 번호 더하기 줄 위는 놓을 곳이 아니고, 목록 메뉴는 줄을 누르면 닫히고, N/A 되돌리기(Restore)의 Undo(위 단계에서 떼었다)
+await runStep("new documents: dragging over the section table and the add row, the list menu, Restore's Undo", { drafting: true, allowConsoleErrors: true }, async ({ page }) => {
+  const headers = { "X-Dev-User": "qa.member" };
+  const jsonHeaders = { ...headers, "Content-Type": "application/json" };
+  const api = `${BASE}/api/bundles/${halfBundleId}`;
+  const start = await readToBe(page, halfBundleId);
+  const sopCf = start.docs.find((doc) => doc.code === "SOP-CF");
+  const w = start.docs.find((doc) => doc.doc_type === "wi" && doc.parent_code === "SOP-CF" && doc.document_id === null);
+  const seedReason = start.na_slots.find((na) => na.code === "SOP-CF" && na.slot_key === "procedures.troubleshooting")?.reason ?? "";
+  const naCalls = [];
+  page.on("request", (request) => {
+    const path = decodeURIComponent(new URL(request.url()).pathname);
+    if (/\/tobe\/docs\/\d+\/na\//.test(path)) naCalls.push({ method: request.method(), path, body: request.postData() ?? "" });
+  });
+  const titleOf = (doc) => page.locator(`[data-testid="tobe-id-${doc.id}-title-text"]`);
+  const card = page.locator('[data-testid="drag-card"]');
+  const toastFor = (tone, text) => page.locator(`[data-testid="toast-${tone}"]`, { hasText: text }).last();
+  const scrollTo = (locator) => locator.evaluate((el) => {
+    const pane = el.closest(".frame-view");
+    pane.scrollTop += el.getBoundingClientRect().top - 320;
+  });
+  const pointAt = async (locator, fx = 0.35, fy = 0.5) => {
+    const box = await locator.boundingBox();
+    return { x: box.x + box.width * fx, y: box.y + box.height * fy };
+  };
+  const openRows = async () => {
+    await page.goto(`${BASE}/bundles/${halfBundleId}/documents`);
+    await page.locator(TOBE_ROWS).first().waitFor({ timeout: T });
+  };
+  let sopDrag = null;
+  try {
+    // 놓을 수 있는 SOP가 하나 더 있어야 줄이 끌린다
+    await page.request.post(`${api}/tobe/docs`, { headers: jsonHeaders, data: { code: "SOP-DRAG", doc_type: "sop", parent_code: null } });
+    sopDrag = (await readToBe(page, halfBundleId)).docs.find((doc) => doc.code === "SOP-DRAG") ?? null;
+    await openRows();
+    await page.locator(`[data-testid="tobe-id-${sopCf.id}-toggle"]`).click();
+    await wait(page, `tobe-id-${sopCf.id}-slots`);
+    await scrollTo(titleOf(w));
+    const from = await pointAt(titleOf(w), 0.3);
+    await page.mouse.move(from.x, from.y);
+    await page.mouse.down();
+    await page.mouse.move(from.x, from.y + 10, { steps: 5 });
+    await card.waitFor({ timeout: T });
+    const silentOver = {};
+    for (const [name, locator] of [
+      ["section table", page.locator(`[data-testid="tobe-id-${sopCf.id}-slots"]`)],
+      ["add row", page.locator('[data-testid="tobe-add-row"]')],
+    ]) {
+      await scrollTo(locator);
+      const box = await locator.boundingBox();
+      await page.mouse.move(box.x + box.width * 0.5, box.y + Math.min(box.height / 2, 24), { steps: 6 });
+      silentOver[name] = `${await page.locator("[data-drop]").count()}:${await page.locator('[data-testid="drag-status"]').evaluate((el) => (el.textContent ?? "").trim() || null)}`;
+    }
+    check("nothing is marked over the section table or the add row", Object.values(silentOver).every((value) => value === "0:null"), JSON.stringify(silentOver));
+    await page.keyboard.press("Escape");
+    await page.mouse.up();
+
+    // 열린 메뉴는 줄을 누르면 닫힌다(G2 - 누름에서 preventDefault를 부르지 않는다)
+    await page.locator('[data-testid="tobe-more"]').click();
+    await wait(page, "tobe-more-menu");
+    await scrollTo(titleOf(w));
+    const menuPoint = await pointAt(titleOf(w), 0.3);
+    await page.mouse.click(menuPoint.x, menuPoint.y);
+    const menuClosed = await page.locator('[data-testid="tobe-more-menu"]').waitFor({ state: "detached", timeout: 2000 }).then(() => true, () => false);
+    check("pressing a row closes an open menu", menuClosed);
+    await openRows();
+
+    // Restore의 Undo - 지우기 전의 사유로 다시 N/A
     const prefix = `tobe-id-${sopCf.id}`;
     await page.locator(`[data-testid="${prefix}-toggle"]`).click();
     await wait(page, `${prefix}-slots`);
@@ -1903,20 +1966,17 @@ await runStep("new documents: drag a WI onto another SOP to change its parent, U
   } finally {
     // 중간에 멈췄어도 누른 단추를 놓는다(눌려 있지 않으면 아무 일도 없다)
     await page.mouse.up();
-    for (const doc of [w, x]) if (doc && (await parentOf(doc.id)) !== "SOP-CF") await setParent(doc.id, "SOP-CF");
     const now = await readToBe(page, halfBundleId);
     if (seedReason !== "" && !now.na_slots.some((na) => na.code === "SOP-CF" && na.slot_key === "procedures.troubleshooting")) {
       await page.request.put(`${api}/tobe/docs/${sopCf.id}/na/procedures.troubleshooting`, { headers: jsonHeaders, data: { reason: seedReason } });
     }
     if (sopDrag) await page.request.delete(`${api}/tobe/docs/${sopDrag.id}`, { headers });
-    const end = await readToBe(page, halfBundleId);
-    check("the WIs are back under SOP-CF and SOP-DRAG is gone", [w, x].every((doc) => !doc || end.docs.find((item) => item.id === doc.id)?.parent_code === "SOP-CF") && !end.docs.some((doc) => doc.code === "SOP-DRAG"));
   }
 });
 
 // 긴 목록에서 위의 WI를 아래 끝 SOP로 끌어(가장자리 자동 스크롤) 놓으면 그 줄은 새 자리에서 보인다 - 미끄러지는 중의 옛 자리로 화면을 끌고 올라가지 않는다.
 // SOP 둘과 그 사이 WI 12개는 API로 만들고 끝에 지운다
-await runStep("new documents: a WI dragged far down a long list stays in view where it lands", { drafting: true, allowConsoleErrors: true }, async ({ page }) => {
+await runStep("new documents: a WI dragged far down a long list stays in view where it lands", { allowConsoleErrors: true }, async ({ page }) => {
   const headers = { "X-Dev-User": "qa.member" };
   const jsonHeaders = { ...headers, "Content-Type": "application/json" };
   const api = `${BASE}/api/bundles/${halfBundleId}`;
@@ -1979,7 +2039,7 @@ await runStep("new documents: a WI dragged far down a long list stays in view wh
 });
 
 // 읽기 전용 Bundle(검토 대기, 검토자)에서는 끌 상자가 없다 - 눌러 움직여도 끌기가 아니고 떼면 펼친다
-await runStep("new documents: nothing drags on a read-only bundle", { drafting: true, devUser: "qa.lead" }, async ({ page }) => {
+await runStep("new documents: nothing drags on a read-only bundle", { devUser: "qa.lead" }, async ({ page }) => {
   await page.goto(`${BASE}/`);
   await wait(page, "bundles-list");
   const review = page.locator('[data-testid^="bundles-row-"]', { hasText: "검토 대기" });
@@ -2009,7 +2069,7 @@ await runStep("new documents: nothing drags on a read-only bundle", { drafting: 
 });
 
 // 목록 둘(v1.0.32) - 위는 Old 문서, 아래는 New 문서. 이미 쓴 New 문서의 파일은 따로 줄을 차지하지 않고 New 목록의 그 줄에 붙어 보인다
-await runStep("documents: an Old list and a New list, with written files on their rows", { drafting: true }, async ({ page, takeShot }) => {
+await runStep("documents: an Old list and a New list, with written files on their rows", {}, async ({ page, takeShot }) => {
   await page.goto(`${BASE}/`);
   const fresh = page.locator('[data-testid^="bundles-row-"]', { hasText: "쪼개기 직후" });
   const freshId = Number((await fresh.getAttribute("data-testid")).replace("bundles-row-", ""));
@@ -2027,7 +2087,6 @@ await runStep("documents: an Old list and a New list, with written files on thei
   const file = docs.find((doc) => doc.id === written.document_id);
   const cell = page.locator('[data-testid="tobe-list"] [data-testid$="-written"]:not([data-testid$="-not-written"])').first();
   check("a written file shows on its New row", (await cell.innerText()).includes(file.file_name.slice(0, 12)));
-  check("rows without a file say so", (await page.locator('[data-testid$="-not-written"]').count()) === tobe.docs.filter((doc) => doc.document_id === null).length);
   await takeShot("sop-documents-two-lists.png");
   // 미리 보기는 그 줄을 펼친 곳의 Written file 묶음에 있다
   const writtenRow = page.locator('[data-testid="tobe-list"] [data-testid$="-row"]').filter({ has: page.locator('[data-testid$="-written"]:not([data-testid$="-not-written"])') }).first();
@@ -2038,14 +2097,23 @@ await runStep("documents: an Old list and a New list, with written files on thei
   check("the file's preview opens from the row", true);
   await page.keyboard.press("Escape");
   await page.locator('[data-testid="documents-preview-split"]').waitFor({ state: "detached", timeout: T });
+  // 펼친 줄에 그 파일의 버전과 언어 배치가 있다
+  await page.locator(`[data-testid="${writtenPrefix}-written-detail"]`).waitFor({ timeout: T });
+  check("opening the row shows the file's version and language layout", (await page.locator('[data-testid$="-written-version"]').count()) === 1 && (await page.locator('[data-testid$="-written-layout"]').count()) === 1);
+});
+
+// 숨긴 도구 - 쓴 파일이 없는 줄의 꼬리표와 Excel 템플릿 · 가져오기 메뉴(위 단계에서 떼었다)
+await runStep("documents: New rows without a file say so and the list menu holds Excel", { drafting: true }, async ({ page }) => {
+  const fresh = (await (await page.request.get(`${BASE}/api/bundles`, { headers: { "X-Dev-User": "qa.member" } })).json()).find((bundle) => bundle.title.includes("쪼개기 직후"));
+  const tobe = await readToBe(page, fresh.id);
+  await page.goto(`${BASE}/bundles/${fresh.id}/documents`);
+  await page.locator(TOBE_ROWS).first().waitFor({ timeout: T });
+  check("rows without a file say so", (await page.locator('[data-testid$="-not-written"]').count()) === tobe.docs.filter((doc) => doc.document_id === null).length);
   // Excel 템플릿·가져오기는 메뉴에 있다
   await page.locator('[data-testid="tobe-more"]').click();
   await wait(page, "tobe-more-menu");
   check("the Excel template and import sit in the menu", (await page.locator('[data-testid="tobe-template"]').count()) === 1 && (await page.locator('[data-testid="tobe-import"]').count()) === 1);
   await page.keyboard.press("Escape");
-  // 펼친 줄에 그 파일의 버전과 언어 배치가 있다
-  await page.locator(`[data-testid="${writtenPrefix}-written-detail"]`).waitFor({ timeout: T });
-  check("opening the row shows the file's version and language layout", (await page.locator('[data-testid$="-written-version"]').count()) === 1 && (await page.locator('[data-testid$="-written-layout"]').count()) === 1);
 });
 
 // 올리는 창구 하나(v1.0.31) - Old와 New 파일을 한 창에서 올린다. 앱이 파일 이름의 번호로 쪽을 먼저 고르고, New 파일은 번호가 같은 빈 줄에 붙는다.

@@ -1522,13 +1522,12 @@ await runStep("assign: written New document - identical, link by clicking, split
 
 // 끌어서 잇기(끌어다 놓기 설계 §6, 2걸음) - Old 조각을 이미 쓴 New 문장에 놓으면 클릭으로 이을 때와 같은 상태(그 줄 고름 · 그 문장 고름 · 그 자리 메뉴)가 되고 저장은 하지 않는다.
 // 마우스는 걸음으로 움직인다(dragTo는 쓰지 않는다). 저장하지 않으므로 되돌릴 것이 없다
-await runStep("assign: drag an Old piece onto a written New sentence, it links like a click", { drafting: true }, async ({ page, takeShot }) => {
+await runStep("assign: drag an Old piece onto a written New sentence, it links like a click", {}, async ({ page, takeShot }) => {
   await installCommitCounter(page);
   const headers = { "X-Dev-User": "qa.member" };
   const readUnits = async () => (await (await page.request.get(`${BASE}/api/bundles/${halfBundleId}/units?limit=1000`, { headers })).json()).items;
   const written = await (await page.request.get(`${BASE}/api/bundles/${halfBundleId}/written-sentences`, { headers })).json();
   const writtenDocIds = [...new Set(written.map((row) => row.target_doc_id))];
-  const composedDocIds = (await (await page.request.get(`${BASE}/api/bundles/${halfBundleId}/tobe`, { headers })).json()).docs.filter((doc) => doc.entrance === "assign").map((doc) => doc.id);
   // 짝 없는 미배정 문장 - 줄 하나가 Unit 하나다
   const loose = new Map((await readUnits()).filter((unit) => unit.status === "unassigned" && unit.kind === "sentence" && unit.pair_id === null).map((unit) => [unit.unit_id, unit]));
   await page.goto(`${BASE}/bundles/${halfBundleId}/assign`);
@@ -1661,40 +1660,6 @@ await runStep("assign: drag an Old piece onto a written New sentence, it links l
   await page.keyboard.press("Escape");
   await page.locator('[data-pane="old"] .cut-anchor').first().waitFor({ state: "detached", timeout: T });
 
-  // 8. 아직 쓰지 않은 문서 - 그 문장은 잇는 대상이 아니다. 3걸음부터 문장 위는 보내기의 놓을 자리라 놓으면 저장 전 초안이 된다(잇기가 아니다)
-  let composedLine = null;
-  for (const docId of composedDocIds) {
-    await openNewDoc(docId);
-    const line = page.locator('[data-testid="assign-new"] .pg[data-read-only] .new-line[data-target]').first();
-    if (await line.waitFor({ timeout: 4000 }).then(() => true, () => false)) {
-      composedLine = Number(await line.getAttribute("data-target"));
-      break;
-    }
-  }
-  check("an unwritten New document with sentences opens", composedLine !== null, composedDocIds.join(","));
-  await centre(`[data-testid="assign-new-${composedLine}"]`);
-  const composedBox = await page.locator(`[data-testid="assign-new-${composedLine}"]`).boundingBox();
-  await dragThrough(page, await pointInUnit(bId), [{ x: composedBox.x + Math.min(60, composedBox.width / 2), y: composedBox.y + composedBox.height / 2 }]);
-  await page.waitForTimeout(100);
-  const overComposed = await readMarks();
-  const composedNote = await page.evaluate(() => ({
-    note: document.querySelector('[data-testid="drag-status"]')?.textContent ?? "",
-        dest: document.querySelector('[data-testid="drag-card"] .drag-card-dest')?.textContent ?? "",
-    lineDrops: document.querySelectorAll('[data-pane="new"] .new-line[data-drop]').length,
-  }));
-  // 끈 Unit은 미배정이라 어느 칸에도 문장이 없다 - "이미 이 칸에 있다" 거절이 될 수 없다
-  const bBefore = (await readUnits()).find((unit) => unit.unit_id === bId);
-  check("the dragged unit has no sentence anywhere yet", bBefore?.status === "unassigned" && bBefore.target_ids.length === 0, JSON.stringify(bBefore?.target_ids));
-  const sentByDrop = page.waitForResponse((response) => response.url().includes("/groups/save"), { timeout: T });
-  await page.mouse.up();
-  check("a sentence of an unwritten document is not a link target", overComposed.cards === 1 && composedNote.lineDrops === 0 && composedNote.note.startsWith("→ ") && composedNote.dest === composedNote.note, JSON.stringify({ ...overComposed, ...composedNote }));
-  await sentByDrop;
-  await page.waitForLoadState("networkidle");
-  const sentUnit = (await readUnits()).find((unit) => unit.unit_id === bId);
-  check("dropping there sends and confirms at once, not a link", sentUnit?.status !== "unassigned" && (await menu.count()) === 0 && !(sentUnit?.target_ids ?? []).includes(composedLine), JSON.stringify({ status: sentUnit?.status, targets: sentUnit?.target_ids }));
-  await page.keyboard.press("ControlOrMeta+z");
-  for (let step = 0; step < 30 && (await readUnits()).find((unit) => unit.unit_id === bId)?.status !== "unassigned"; step += 1) await page.waitForTimeout(300);
-  check("Ctrl+Z takes the sent sentence back", (await readUnits()).find((unit) => unit.unit_id === bId)?.status === "unassigned");
   // 아래 경주는 끈 줄이 고른 줄이 아닐 때다 - 앞서처럼 다른 줄(a)을 다시 고른다
   const aAgain = await pointInUnit(aId);
   await page.mouse.click(aAgain.x, aAgain.y);
@@ -1819,6 +1784,72 @@ await runStep("assign: drag an Old piece onto a written New sentence, it links l
   // 남겨 두면 뒤 단계(한/영 짝 추천 등)가 이 문장에 출처가 붙은 자료를 본다
   const cUndo = await page.request.post(`${BASE}/api/bundles/${halfBundleId}/decisions/undo`, { headers, data: { session: cUndoSession } });
   check("the step leaves the dropped line unassigned", cUndo.ok() && (await readUnits()).find((unit) => unit.unit_id === cId)?.status === "unassigned", String(cUndo.status()));
+});
+
+// 숨긴 도구 - 아직 쓰지 않은 문서(New · from Assign)의 문장 위에 놓기(위 단계에서 떼었다)
+await runStep("assign: drag an Old piece onto a sentence of an unwritten document, it sends instead of linking", { drafting: true }, async ({ page }) => {
+  const headers = { "X-Dev-User": "qa.member" };
+  const readUnits = async () => (await (await page.request.get(`${BASE}/api/bundles/${halfBundleId}/units?limit=1000`, { headers })).json()).items;
+  const composedDocIds = (await (await page.request.get(`${BASE}/api/bundles/${halfBundleId}/tobe`, { headers })).json()).docs.filter((doc) => doc.entrance === "assign").map((doc) => doc.id);
+  const loose = new Map((await readUnits()).filter((unit) => unit.status === "unassigned" && unit.kind === "sentence" && unit.pair_id === null).map((unit) => [unit.unit_id, unit]));
+  await page.goto(`${BASE}/bundles/${halfBundleId}/assign`);
+  await wait(page, "assign-bar");
+  await openLooseOldDoc(page, halfBundleId);
+  const shownIds = await page.locator('[data-pane="old"] .strip[data-strip-unit]').evaluateAll((els) => els.map((el) => Number(el.dataset.stripUnit)));
+  const [, bId] = shownIds.filter((id) => loose.has(id));
+  const centre = (selector) => page.locator(selector).first().evaluate((el) => el.scrollIntoView({ block: "center" }));
+  const pointInUnit = async (id) => {
+    await centre(`[data-testid="assign-paper-piece-${id}"]`);
+    await page.waitForTimeout(150);
+    return page.locator(`[data-testid="assign-paper-unit-${id}"]`).first().evaluate((el) => {
+      const rect = el.getClientRects()[0];
+      return { x: rect.left + Math.min(24, rect.width / 2), y: rect.top + rect.height / 2 };
+    });
+  };
+  const newPane = page.locator('[data-testid="assign-new"]');
+  await newPane.waitFor({ timeout: T });
+  const openNewDoc = async (docId) => {
+    if ((await newPane.getAttribute("data-doc")) === String(docId)) return;
+    await page.locator('[data-testid="assign-new-doc"]').click();
+    await page.locator(`[data-testid="assign-new-doc-option-${docId}"]`).click();
+    await page.waitForFunction((id) => document.querySelector('[data-testid="assign-new"]')?.getAttribute("data-doc") === String(id), docId, { timeout: T });
+  };
+  const readMarks = () => page.evaluate(() => ({ cards: document.querySelectorAll('[data-testid="drag-card"]').length }));
+  const menu = page.locator('[data-testid="assign-link-menu"]');
+  // 그 문장은 잇는 대상이 아니다. 문장 위는 보내기의 놓을 자리라 놓으면 바로 보낸다(잇기가 아니다)
+  let composedLine = null;
+  for (const docId of composedDocIds) {
+    await openNewDoc(docId);
+    const line = page.locator('[data-testid="assign-new"] .pg[data-read-only] .new-line[data-target]').first();
+    if (await line.waitFor({ timeout: 4000 }).then(() => true, () => false)) {
+      composedLine = Number(await line.getAttribute("data-target"));
+      break;
+    }
+  }
+  check("an unwritten New document with sentences opens", composedLine !== null, composedDocIds.join(","));
+  await centre(`[data-testid="assign-new-${composedLine}"]`);
+  const composedBox = await page.locator(`[data-testid="assign-new-${composedLine}"]`).boundingBox();
+  await dragThrough(page, await pointInUnit(bId), [{ x: composedBox.x + Math.min(60, composedBox.width / 2), y: composedBox.y + composedBox.height / 2 }]);
+  await page.waitForTimeout(100);
+  const overComposed = await readMarks();
+  const composedNote = await page.evaluate(() => ({
+    note: document.querySelector('[data-testid="drag-status"]')?.textContent ?? "",
+        dest: document.querySelector('[data-testid="drag-card"] .drag-card-dest')?.textContent ?? "",
+    lineDrops: document.querySelectorAll('[data-pane="new"] .new-line[data-drop]').length,
+  }));
+  // 끈 Unit은 미배정이라 어느 칸에도 문장이 없다 - "이미 이 칸에 있다" 거절이 될 수 없다
+  const bBefore = (await readUnits()).find((unit) => unit.unit_id === bId);
+  check("the dragged unit has no sentence anywhere yet", bBefore?.status === "unassigned" && bBefore.target_ids.length === 0, JSON.stringify(bBefore?.target_ids));
+  const sentByDrop = page.waitForResponse((response) => response.url().includes("/groups/save"), { timeout: T });
+  await page.mouse.up();
+  check("a sentence of an unwritten document is not a link target", overComposed.cards === 1 && composedNote.lineDrops === 0 && composedNote.note.startsWith("→ ") && composedNote.dest === composedNote.note, JSON.stringify({ ...overComposed, ...composedNote }));
+  await sentByDrop;
+  await page.waitForLoadState("networkidle");
+  const sentUnit = (await readUnits()).find((unit) => unit.unit_id === bId);
+  check("dropping there sends and confirms at once, not a link", sentUnit?.status !== "unassigned" && (await menu.count()) === 0 && !(sentUnit?.target_ids ?? []).includes(composedLine), JSON.stringify({ status: sentUnit?.status, targets: sentUnit?.target_ids }));
+  await page.keyboard.press("ControlOrMeta+z");
+  for (let step = 0; step < 30 && (await readUnits()).find((unit) => unit.unit_id === bId)?.status !== "unassigned"; step += 1) await page.waitForTimeout(300);
+  check("Ctrl+Z takes the sent sentence back", (await readUnits()).find((unit) => unit.unit_id === bId)?.status === "unassigned");
 });
 
 // 끌기 상자 위의 글자 고르기(끌어다 놓기 G3·G12) - 긁어 둔 글자가 남아도 Old 조각의 클릭·Shift+클릭은 그대로이고, Alt를 누르는 동안은 글자 커서다.
