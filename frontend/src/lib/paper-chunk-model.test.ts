@@ -55,14 +55,28 @@ describe("sliceFoldEntries", () => {
 
     // Act & Assert: 40번째 자리가 펼친 묶음 안이면 묶음 끝까지 한 덩어리
     expect(sliceFoldEntries([...full(39), ...run, ...full(120)])[0]).toEqual({ start: 0, count: 45 });
-    expect(sliceFoldEntries([...full(38), ...peeked, ...full(120)])[0]).toEqual({ start: 0, count: 42 });
+    expect(sliceFoldEntries([...full(39), ...peeked, ...full(120)])[0]).toEqual({ start: 0, count: 43 });
+  });
+
+  it("cuts at the same cards whether a run is open or not", () => {
+    // Arrange: 접힌 묶음 한 칸 ↔ 펼친 머리와 줄 - 펼친 것도 한 칸으로 센다
+    const lines = Array.from({ length: 90 }, (_, i): FoldEntry => ({ kind: "line", key: `l${i}`, runKey: "r" }));
+    const open: FoldEntry[] = [{ kind: "runHead", runKey: "r", memberKeys: [] }, ...lines];
+    const closed: FoldEntry[] = [{ kind: "run", runKey: "r", count: 90, from: "", to: "" }];
+
+    // Act & Assert
+    for (const [before, after] of [[10, 140], [30, 60]]) {
+      const shut = sliceFoldEntries([...full(before), ...closed, ...full(after)]);
+      const opened = sliceFoldEntries([...full(before), ...open, ...full(after)]);
+      expect(opened.map((slice) => slice.start + slice.count - 90)).toEqual(shut.map((slice) => slice.start + slice.count));
+    }
   });
 
   it("cuts between a run and whatever follows it", () => {
     const run: FoldEntry[] = [{ kind: "runHead", runKey: "r", memberKeys: ["l0"] }, { kind: "line", key: "l0", runKey: "r" }];
-    // 묶음 뒤의 엿보기 · 다른 묶음은 붙지 않는다
-    expect(sliceFoldEntries([...full(38), ...run, { kind: "peek", key: "x" }, ...full(120)])[0]).toEqual({ start: 0, count: 40 });
-    expect(sliceFoldEntries([...full(38), ...run, { kind: "runHead", runKey: "s", memberKeys: ["m"] }, { kind: "line", key: "m", runKey: "s" }, ...full(120)])[0]).toEqual({ start: 0, count: 40 });
+    // 묶음 뒤의 엿보기 · 다른 묶음은 붙지 않고 저마다 한 칸(묶음은 펼쳐도 한 칸)
+    expect(sliceFoldEntries([...full(38), ...run, { kind: "peek", key: "x" }, ...full(120)])[0]).toEqual({ start: 0, count: 41 });
+    expect(sliceFoldEntries([...full(38), ...run, { kind: "runHead", runKey: "s", memberKeys: ["m"] }, { kind: "line", key: "m", runKey: "s" }, ...full(120)])[0]).toEqual({ start: 0, count: 42 });
   });
 });
 

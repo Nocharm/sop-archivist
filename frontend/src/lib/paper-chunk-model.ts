@@ -26,21 +26,21 @@ export function sliceCards(cardCount: number): { isChunked: boolean; slices: Car
   return { isChunked, slices };
 }
 
-/** 필터로 접힌 목록의 덩어리 자르기 - 펼친 묶음의 머리와 그 줄(엿보는 줄 포함)은 가르지 않는다. CHUNK_MIN_CARDS보다 적으면 덩어리 하나(나누지 않음) */
+/** 필터로 접힌 목록의 덩어리 자르기 - 펼친 묶음의 머리와 그 줄(엿보는 줄 포함)은 가르지 않고, 접혔을 때처럼 한 칸으로 센다(펼쳐도 뒤 덩어리의 경계가 밀리지 않는다 -
+ *  밀리면 덩어리를 옮긴 줄이 다시 마운트된다). CHUNK_MIN_CARDS보다 적으면 덩어리 하나 */
 export function sliceFoldEntries(entries: readonly FoldEntry[], size: number = CHUNK_CARDS): readonly CardSlice[] {
   if (entries.length === 0) return [];
-  if (entries.length < CHUNK_MIN_CARDS) return [{ start: 0, count: entries.length }];
-  const slices: CardSlice[] = [];
-  let start = 0;
+  // 칸마다 첫 자리 - 펼친 묶음은 머리 자리 하나
+  const cells: number[] = [];
   let run: Extract<FoldEntry, { kind: "runHead" }> | null = null;
   entries.forEach((entry, at) => {
     const isInRun = run !== null && ((entry.kind === "line" && entry.runKey === run.runKey) || (entry.kind === "peek" && run.memberKeys.includes(entry.key)));
-    if (!isInRun) run = entry.kind === "runHead" ? entry : null;
-    if (isInRun || at - start < size) return;
-    slices.push({ start, count: at - start });
-    start = at;
+    if (isInRun) return;
+    run = entry.kind === "runHead" ? entry : null;
+    cells.push(at);
   });
-  return [...slices, { start, count: entries.length - start }];
+  const starts = cells.length < CHUNK_MIN_CARDS ? [0] : cells.filter((_, at) => at % size === 0);
+  return starts.map((start, at) => ({ start, count: (starts[at + 1] ?? entries.length) - start }));
 }
 
 /** 보이는 칸 위아래로 한 화면씩 더 넓힌 범위에 걸치는 덩어리 번호 범위(문서 순서) - 하나도 없으면 -1 */

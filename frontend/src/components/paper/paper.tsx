@@ -24,7 +24,7 @@ import { readCaretPoint } from "@/lib/caret-point";
 import { isNoiseUnit } from "@/lib/classify-model";
 import { useDraftingOn } from "@/lib/drafting";
 import { useI18n } from "@/lib/i18n";
-import { pickNearChunks, readChunkDeleted, readChunkNumbers, readChunkPending, sliceCards, sliceFoldEntries } from "@/lib/paper-chunk-model";
+import { CHUNK_MIN_CARDS, pickNearChunks, readChunkDeleted, readChunkNumbers, readChunkPending, sliceCards, sliceFoldEntries } from "@/lib/paper-chunk-model";
 import { buildFoldPlan, type FoldEntry, type FoldItem, type FoldOpen } from "@/lib/paper-fold-model";
 import { buildRows, flattenLineBreaks, getBundleHeader, getGapMerge, getItemSegments, getMarks, getTags, isBandHeading, isOtherTableCaption, MERGE_BLOCKER_KEYS, resolvePickUnit, type CaptionPiece, type FigureRowMode, type PaperItem, type PaperModel, type PaperRow, type Segment, type UnitMark } from "@/lib/paper-model";
 import type { JoinKind, JoinPlan } from "@/lib/split-menu-model";
@@ -103,8 +103,6 @@ interface ChunkSlot {
   index: number;
   unitIds: ReadonlySet<number>;
   rows: readonly PaperRow[];
-  /** 덩어리 첫 틈의 윗줄(앞 덩어리의 끝 줄) */
-  before: PaperRow | undefined;
 }
 
 /** 한 부분(머리말·본문·꼬리말)의 카드와 그 덩어리 */
@@ -113,9 +111,10 @@ interface CardGroup extends ChunkSlot {
   cards: PaperRow[][];
 }
 
-/** 필터로 접힌 목록의 덩어리 - signature가 같으면 같은 줄을 그린다 */
+/** 필터로 접힌 목록의 덩어리 - before는 첫 틈의 윗줄(앞 덩어리의 끝 조각, 바로 이웃일 때만), signature가 같으면 같은 줄을 그린다 */
 interface FoldGroup extends ChunkSlot {
   entries: FoldEntry[];
+  before: PaperRow | undefined;
   signature: string;
 }
 
@@ -476,7 +475,7 @@ export function Paper({
         const slice = cards.slice(start, start + count);
         const rows = slice.flat();
         const unitIds = new Set(rows.flatMap((row) => listRowUnitIds(row, model.segments)));
-        return { index: isChunked ? nextIndex++ : -1, start, cards: slice, unitIds, rows, before: cards[start - 1]?.at(-1) };
+        return { index: isChunked ? nextIndex++ : -1, start, cards: slice, unitIds, rows };
       });
       return { cards, groups, isChunked };
     });
@@ -520,9 +519,9 @@ export function Paper({
     let nextIndex = 0;
     return (JSON.parse(foldPlanKey) as FoldEntry[][]).map((plan, sectionIndex) => {
       const cellOf = new Map(foldCells[sectionIndex].map((cell) => [cell.item.key, cell]));
-      const slices = sliceFoldEntries(plan);
-      const isChunked = slices.length > 1;
-      const groups: FoldGroup[] = slices.map(({ start, count }) => {
+      // 덩어리로 그릴지는 접기 전 칸 수로 - 펼침 · 엿보기로 계획이 길어지고 짧아져도 맨 목록과 덩어리 사이를 오가지 않는다(오가면 모든 줄이 다시 마운트된다)
+      const isChunked = foldCells[sectionIndex].length >= CHUNK_MIN_CARDS;
+      const groups: FoldGroup[] = sliceFoldEntries(plan).map(({ start, count }) => {
         const entries = plan.slice(start, start + count);
         const cells = entries.flatMap((entry) => ("key" in entry ? (cellOf.get(entry.key) ?? []) : []));
         return {
@@ -651,13 +650,12 @@ export function Paper({
   const numberEditBulletShift = useMemo(() => (numberEditKey === null ? null : findBulletShift(indentRows, numberEditKey)), [indentRows, numberEditKey]);
   // 벗긴 표의 줄 덩이마다 첫 줄 - 그 줄 위에 묶음 머리("↺ 다시 표로")를 단다(F1). 부분마다 문서 순서로
   const unwrapHeads = useMemo(() => new Map(sections.flatMap((section) => [...findUnwrapHeads(section.rows, model.unwrapped, model.tables)])), [sections, model]);
-  // 덩어리마다 그 안에서 보이는 단위와 표 - 제 줄과 첫 틈의 윗줄에, 머리가 잠금을 묻는 단위(제목 → 문장 묶음, 벗긴 표의 줄 - 다른 덩어리에 걸쳐 있어도)를 더한다
+  // 덩어리마다 그 안에서 보이는 단위와 표 - 제 줄에, 머리가 잠금을 묻는 단위(제목 → 문장 묶음, 벗긴 표의 줄 - 다른 덩어리에 걸쳐 있어도)를 더한다
   const chunkScopes = useMemo(
     () =>
       chunks.map((chunk) => {
         const unitIds = new Set(chunk.unitIds);
         const tableIds = new Set<number>();
-        if (chunk.before) for (const id of listRowUnitIds(chunk.before, model.segments)) unitIds.add(id);
         const headTableIds = new Set<number>();
         for (const row of chunk.rows) {
           for (const id of shiftGroups.get(readRowUnitId(row) ?? -1)?.unitIds ?? []) unitIds.add(id);
@@ -673,7 +671,8 @@ export function Paper({
   const pending = strips?.pending;
   const chunkPending = useMemo(() => chunkScopes.map(({ unitIds, tableIds }) => readChunkPending(pending, unitIds, tableIds)), [chunkScopes, pending]);
   const deletedFolds = strips?.deleted?.folds;
-  const chunkDeleted = useMemo(() => chunkScopes.map(({ unitIds }) => `${readChunkDeleted(deletedFolds, unitIds)}|${readChunkDeleted(releasedFolds, unitIds)}`), [chunkScopes, deletedFolds, releasedFolds]);
+  // 풀린 것(releasedFolds)은 그 단위의 접힘이 바뀐 그 그리기에서만 바뀌어 따로 견주지 않는다
+  const chunkDeleted = useMemo(() => chunkScopes.map(({ unitIds }) => readChunkDeleted(deletedFolds, unitIds)), [chunkScopes, deletedFolds]);
   const expectedNumbers = numberCell?.expected;
   const chunkNumbers = useMemo(() => chunkScopes.map(({ unitIds }) => readChunkNumbers(expectedNumbers, unitIds)), [chunkScopes, expectedNumbers]);
   // 벗긴 표 덩이의 지금 줄 차례(표 id → 줄 id) - model.order가 사람이 바꾼 순서(unwrap_seq)를 이미 따른다
@@ -1729,8 +1728,8 @@ export function Paper({
     const { cellOf, groups, isChunked } = foldGroups[sectionIndex];
     const renderEntries = (group: FoldGroup) => group.entries.map((entry, at) => renderFoldEntry(entry, at > 0 ? readFoldTail(group.entries[at - 1], cellOf) : group.before, cellOf, fold));
     if (!isChunked) return groups.length > 0 ? renderEntries(groups[0]) : null;
-    // 덩어리 key는 자리 번호 - 묶음을 펼치거나 접어 줄이 몇 칸 밀려도 덩어리째 다시 붙이지 않고 경계의 줄만 옮긴다
-    return groups.map((group) => renderChunk(`fold-${group.index}`, group, [foldCells, fold.open, group.signature], () => renderEntries(group)));
+    // 덩어리 key는 자리 번호 - 고른 조각이 엿보기로 끼어 줄이 몇 칸 밀려도 덩어리째 다시 붙이지 않고 경계의 줄만 옮긴다
+    return groups.map((group, at) => renderChunk(`fold-${at}`, group, [foldCells, fold.open, group.signature], () => renderEntries(group)));
   }
 
   function renderFoldEntry(entry: FoldEntry, before: PaperRow | undefined, cellOf: ReadonlyMap<string, FoldCell>, fold: NonNullable<NonNullable<PaperProps["strips"]>["fold"]>): ReactNode {
