@@ -132,3 +132,15 @@ docker exec -i $DB sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "DROP OW
 | 연결 테스트 503 | db-viewer `SOURCE_SECRET_KEY` 미설정·불일치 — db-viewer 런북 |
 | 미리보기가 비어 있음 | 허용 스키마 미등록(§4-4) 또는 REVOKE 한 테이블 |
 | 새 릴리스 후 신규 테이블이 안 보임 | `ALTER DEFAULT PRIVILEGES` 누락(§3) — 실행 후 카탈로그 재수집 |
+
+## 6. 점검 질의 — New 문장 중복 세기
+
+New 문서 편집을 `Ctrl+Z`로 되돌릴 때 New 문장이 두 벌로 남던 결함(쪼개기 먼저 설계 §4-1)이 고치기 전에 만든 중복을 센다. **읽기만 하고 글 열은 고르지 않는다.** 정리는 행 삭제라 사용자 승인을 따로 받는다(여기서 지우지 않는다).
+
+```bash
+docker exec -i sop-archivist-db-1 sh -c 'psql -U dbviewer_ro -d "$POSTGRES_DB"' <<'SQL'
+select new_unit_id, count(*) from target_sentences where new_unit_id is not null group by 1 having count(*) > 1;
+SQL
+```
+
+결과가 0줄이면 중복이 없다. 줄이 있으면 `new_unit_id`마다 새 문장이 여러 행인 것이니 줄 수만 적어 두고 승인을 받는다.
