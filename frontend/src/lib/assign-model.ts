@@ -163,19 +163,6 @@ export function pickDrawnLinks<T extends LinkPair>(pairs: T[], focusUnits: Reado
   return marked.length > max ? marked.filter((pair) => pair.strong) : marked;
 }
 
-export type LinkMenuItem = "confirm" | "cancel" | "link" | "unlink" | "close";
-
-/**
- * 그 자리 메뉴의 항목 - 고른 뒤(저장 전)는 확정·취소, 이미 이어진 것은 끊기(AI가 이어 둔 것은 확정도), 그 밖의 후보 문장은 잇기.
- * 고칠 수 없는 묶음이거나, 고름이 없고 가리키는 문장도 없으면(추천에서 연 메뉴가 저장된 뒤) 메뉴를 띄우지 않는다 - 누를 수 없는 Link를 보이지 않게.
- */
-export function listLinkMenuItems(state: { picked: boolean; linked: boolean; confirmed: boolean; hasTarget: boolean; canEdit: boolean }): LinkMenuItem[] {
-  if (!state.canEdit) return [];
-  if (state.picked) return ["confirm", "cancel"];
-  if (state.linked) return state.confirmed ? ["unlink", "close"] : ["confirm", "unlink", "close"];
-  return state.hasTarget ? ["link", "close"] : [];
-}
-
 /**
  * Confirm을 막는 까닭(메시지 키) - 결정 칸의 Confirm 단추·↵·그 자리 메뉴(끌어 놓은 초안 포함)가 같은 순서로 쓴다.
  * 이미 다른 Bundle로 이동한 줄(없앤 기능)은 읽기 전용이고(배정 취소만), 숨긴 새 문서의 자리는 확정하지 않고(배정 취소나 잇기만), 참조 번호 확인이 먼저, 그다음 캡션 없는 표·그림(서버 caption_required 전에 멈춘다). 막지 않으면 null.

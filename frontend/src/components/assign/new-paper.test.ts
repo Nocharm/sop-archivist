@@ -139,9 +139,9 @@ describe("NewPaper", () => {
     expect(h).toContain('data-testid="assign-new-ai-tag-5"');
   });
 
-  it("opens the menu inside the pressed box", () => {
-    const h = html({ foot: { unitId: 50, node: createElement("i", null, "menu") } });
-    expect(h).toMatch(/new-line-acts[^>]*>.*<i>menu<\/i>/);
+  it("draws the pick bar inside the picked box", () => {
+    const h = html({ selectedUnitId: 50, renderUnitActions: (unitId) => (unitId === 50 ? createElement("i", null, "menu") : null) });
+    expect(h).toMatch(/strip-acts[^>]*>.*<i>menu<\/i>/);
   });
 
   it("opens the tab of a footnote that is asked for", () => {

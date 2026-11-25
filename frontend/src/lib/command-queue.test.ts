@@ -12,6 +12,16 @@ describe("command queue", () => {
     expect(isBarrier({ kind: "bulk", isGlobal: true })).toBe(true); // 모두 받기 · 초기화
   });
 
+  it("a link command keeps the row and the targets it was pressed with", () => {
+    const q = createCommandQueue<{ kind: "link"; boxId: number; targetIds: readonly number[] }>();
+    q.push({ id: "m", kind: "save", isGlobal: false, payload: { kind: "link", boxId: 3, targetIds: [71] }, unitIds: [3] });
+    // 앞 명령이 도는 동안 다른 줄을 고르고 또 눌러도 먼저 선 명령은 누른 때의 줄 · 문장 그대로 나간다
+    q.push({ id: "n", kind: "save", isGlobal: false, payload: { kind: "link", boxId: 9, targetIds: [72] }, unitIds: [9] });
+    expect(q.take()?.payload).toMatchObject({ boxId: 3, targetIds: [71] });
+    q.settle("m");
+    expect(q.take()?.payload).toMatchObject({ boxId: 9, targetIds: [72] });
+  });
+
   it("sends one at a time in the order pressed and numbers the waiting boxes", () => {
     const q = createCommandQueue<string>();
     q.push(job("a", "save", [3]));

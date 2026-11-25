@@ -12,7 +12,7 @@ import { PaneZoom } from "@/components/assign/pane-zoom";
 import { RefMark } from "@/components/assign/ref-mark";
 import { Paper, type CutDragPos, type PaperCut, type PaperOverlay, type PaperPending } from "@/components/paper/paper";
 import { describeSheet, PartTabs } from "@/components/paper/part-tabs";
-import { Collapse, Truncate } from "@/components/ui/motion";
+import { Truncate } from "@/components/ui/motion";
 import { Select, type SelectOption } from "@/components/ui/select";
 import { Tooltip } from "@/components/ui/tooltip";
 import type { DocumentView } from "@/lib/api-sop";
@@ -70,11 +70,11 @@ export interface NewPaperProps {
   onCutDrag?: (pos: CutDragPos) => void;
   onCutNudge?: (step: 1 | -1) => void;
   renderAtCut?: () => ReactNode;
-  /** 누른 박스 안 글 아래에 펼친 것(그 자리 메뉴) */
-  foot?: { unitId: number; node: ReactNode } | null;
+  /** 고른 박스의 글 아래 단추 줄(박스 아래 단추 줄) */
+  renderUnitActions?: (unitId: number) => ReactNode;
 }
 
-// 눌러도 박스를 누른 것이 아닌 자리 - 박스 안에 펼친 그 자리 메뉴의 빈자리, 칸에 딸린 읽기 전용 글, 왼쪽 번호 칸
+// 눌러도 박스를 누른 것이 아닌 자리 - 박스 아래 단추 줄의 빈자리, 칸에 딸린 읽기 전용 글, 왼쪽 번호 칸
 const NOT_PRESSED = ".strip-acts, .new-cell-note, .strip-lead";
 
 const ignoreDoubleClick = () => undefined;
@@ -106,14 +106,14 @@ export function NewPaper(props: NewPaperProps) {
     setSlide({ docId: props.docId, dir: from < 0 || to < 0 ? null : to > from ? "next" : "prev" });
   }
 
-  /** 모델의 key에 없는 것 - 칩 글 · 펼친 칩 · 그 자리 메뉴 · 칸을 지금 누르고 놓고 끊을 수 있나 */
+  /** 모델의 key에 없는 것 - 칩 글 · 펼친 칩 · 칸을 지금 누르고 놓고 끊을 수 있나 */
   function readKey(ids: ReadonlySet<number>): string {
     const own = [...ids].flatMap((id) => {
       const box = boxes.get(id);
       if (!box) return [];
       const noteLabels = box.notes.flatMap((note) => [...note.sourceIds.map(props.sourceLabel), openSources.has(note.targetId)]);
       const cell = box.kind === "cell" ? [props.cellPickable, props.cellDroppable, props.onUnlink !== undefined] : [];
-      return [[id, ...box.sourceIds.map(props.sourceLabel), openSources.has(box.targetId), id === props.foot?.unitId, ...noteLabels, ...cell].join(",")];
+      return [[id, ...box.sourceIds.map(props.sourceLabel), openSources.has(box.targetId), ...noteLabels, ...cell].join(",")];
     });
     return `${readOverlayKey(boxes, ids)}/${own.join(";")}`;
   }
@@ -202,16 +202,7 @@ export function NewPaper(props: NewPaperProps) {
       const box = boxes.get(id);
       return box ? renderTop(box) : null;
     },
-    renderFoot: (id) => (
-      <>
-        {boxes.get(id)?.notes.map(renderNote)}
-        {props.foot?.unitId === id && (
-          <Collapse open appear className="strip-acts new-line-acts">
-            {props.foot.node}
-          </Collapse>
-        )}
-      </>
-    ),
+    renderFoot: (id) => boxes.get(id)?.notes.map(renderNote),
     renderFolded,
     textProps: (id) => {
       const box = boxes.get(id);
@@ -238,6 +229,7 @@ export function NewPaper(props: NewPaperProps) {
         selectedId={props.selectedUnitId}
         pickedIds={props.pickedUnitIds}
         held={props.held}
+        renderUnitActions={props.renderUnitActions}
         // 표는 칸마다 고르고 잇는다
         pickWholeBundle={false}
         shiftClickPicks

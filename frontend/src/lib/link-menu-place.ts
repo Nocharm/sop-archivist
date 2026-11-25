@@ -31,13 +31,3 @@ export function placeLinkMenu(
   }
   return { top: Math.min(Math.max(top, MENU_EDGE), Math.max(MENU_EDGE, viewport.height - MENU_EDGE - menu.height)), left };
 }
-
-/** 이음 선 끝(New 문장 왼쪽 테두리)에 맞춰 놓는다 - 메뉴 왼쪽 끝이 선이 닿는 x에 오고, 세로는 줄 상자 아래(모자라면 위, 아주 높은 줄은 선 끝 y 근처) */
-export function placeLinkMenuAtLineEnd(
-  row: RowBox,
-  end: { x: number; y: number },
-  menu: { width: number; height: number },
-  viewport: { width: number; height: number },
-): { top: number; left: number } {
-  return placeLinkMenu(row, end.x + CLICK_LEAD, menu, viewport, end.y);
-}

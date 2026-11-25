@@ -121,7 +121,7 @@ describe("a far chunk of a long New paper", () => {
     ["a pick", { input: { pickedIds: new Set([FAR + 1000]) } }, () => box()?.getAttribute("data-state"), null, "picked"],
     ["the focus", { input: { focusId: FAR + 1000 } }, () => box()?.getAttribute("data-state"), null, "focus"],
     ["the picked box", { selectedUnitId: FAR }, () => box()?.hasAttribute("data-sel"), false, true],
-    ["the menu in the box", { foot: { unitId: FAR, node: createElement("i") } }, () => box()?.querySelector("i") !== null, false, true],
+    ["the bar in the box", { selectedUnitId: FAR, renderUnitActions: (unitId: number) => (unitId === FAR ? createElement("i") : null) }, () => box()?.querySelector("i") !== null, false, true],
     ["the AI filter", { input: { aiFilter: buildNewAiFilter(true, [9], listRows({ source_unit_ids: [12] })), rows: listRows({ source_unit_ids: [12] }) } }, () => box()?.closest(".strip-row")?.getAttribute("data-ai-view"), null, "dim"],
     ["a pickable cell", { cellPickable: true }, () => cell()?.hasAttribute("data-pickable"), false, true],
     ["a droppable cell", { cellDroppable: true }, () => cell()?.getAttribute("data-drop"), null, "cell"],

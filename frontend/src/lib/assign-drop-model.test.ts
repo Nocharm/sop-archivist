@@ -9,7 +9,6 @@ import {
   isPositionLive,
   listDraftLines,
   readSectionDestination,
-  resolveDropLink,
   resolveGapDrop,
   resolveSlotDrop,
   resolveTreeDrop,
@@ -57,20 +56,6 @@ describe("findAssignDrop", () => {
   it("links onto a cell box of a written table, never of a read-only one", () => {
     expect(findAssignDrop(hit({ targetId: 41 }))).toEqual({ kind: "link", targetId: 41 });
     expect(findAssignDrop(hit({ targetId: 41, isReadOnly: true }))).toEqual({ kind: "none" });
-  });
-});
-
-describe("resolveDropLink", () => {
-  const link = (ids: number[]) => ({ kind: "link" as const, targetIds: ids });
-  it("picks the sentence when nothing is saved there", () => {
-    expect(resolveDropLink({ draftDestination: null, savedDestination: null, targetId: 7 })).toBe("pick");
-    expect(resolveDropLink({ draftDestination: null, savedDestination: link([8]), targetId: 7 })).toBe("pick");
-  });
-  it("only opens the menu on the sentence the row is already saved to", () => {
-    expect(resolveDropLink({ draftDestination: null, savedDestination: link([7, 8]), targetId: 7 })).toBe("menu_only");
-  });
-  it("picks again when a draft is in progress, like a click", () => {
-    expect(resolveDropLink({ draftDestination: link([9]), savedDestination: link([7]), targetId: 7 })).toBe("pick");
   });
 });
 

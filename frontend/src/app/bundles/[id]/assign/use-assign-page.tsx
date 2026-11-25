@@ -10,6 +10,8 @@ import { SplitUnitActions } from "@/components/split/split-unit-actions";
 import { type PendingItem } from "@/components/assign/pending-count";
 import { createDragLinkLine, type DragLinkLine } from "@/components/assign/drag-link-line";
 import { findNewLine, findOldStrip, readNewLineEnd, readOldLineStart } from "@/components/assign/link-lines";
+import { PickBar } from "@/components/assign/pick-bar";
+import { ASSIGN_ACTION_LABELS } from "@/components/assign/assign-context-menu";
 import { type JoinMenuItem } from "@/components/assign/join-menu";
 import { type ResetScope } from "@/components/assign/reset-modal";
 import { type AiAskItem } from "@/components/manage/ai-ask-menu";
@@ -17,7 +19,7 @@ import { flashElement, useUnwrapMotion, type UnwrapHandle, type UnwrapRunOptions
 import { showToast } from "@/components/ui/toast";
 import { ApiError } from "@/lib/api";
 import { humanizeApiError } from "@/lib/api-errors";
-import { buildDropSections, buildOldDragCard, canDragOld, findAssignDrop, findDropBlock, getSectionKey, isPositionLive, listDraftLines, readSectionDestination, REFUSAL_KEYS, resolveDropLink, resolveGapDrop, resolveSlotDrop, resolveTreeDrop, type AssignDrop, type DraftLine, type DropSection, type SendDrop, type TreeDrop } from "@/lib/assign-drop-model";
+import { buildDropSections, buildOldDragCard, canDragOld, findAssignDrop, findDropBlock, getSectionKey, isPositionLive, listDraftLines, readSectionDestination, REFUSAL_KEYS, resolveGapDrop, resolveSlotDrop, resolveTreeDrop, type AssignDrop, type DraftLine, type DropSection, type SendDrop, type TreeDrop } from "@/lib/assign-drop-model";
 import { buildGapBlocks, buildPlaceSections, findPlaceBlock, formatPlacement, formatPlacementDest, isSpotOpen, listGapSpots, PLACE_REFUSAL_KEYS, readFixedSpot, readObjectParticle, readPlacePosition, resolvePlaceSpot, type Placement, type PlaceSection, type PlaceSpot } from "@/lib/place-spot-model";
 import { findUnderPoint, type BoxDragConfig, type DragHover, type DragPoint } from "@/lib/box-drag";
 import { DROP_LINE_HALF_PX, type DropLineAt } from "@/lib/drop-line";
@@ -69,7 +71,9 @@ import { genId } from "@/lib/id";
 import { buildTranslationDecision, isTranslationBlocked, listRowTranslations } from "@/lib/translation-decision";
 import { useLeaveGuard } from "@/lib/leave-guard";
 import { navigate } from "@/lib/nav-buffer";
-import { hasStrayUnit } from "@/lib/new-overlay-model";
+import { buildNewOverlay, hasStrayUnit, readUnlinkableKey } from "@/lib/new-overlay-model";
+import { buildPickBar, type PickLink, type PickMoreId, type PickToolId } from "@/lib/pick-bar-model";
+import { buildLinkSave } from "@/lib/link-save-model";
 import { buildIdenticalBatches } from "@/lib/match-model";
 import { EMPTY_FOLD_OPEN, type FoldOpen } from "@/lib/paper-fold-model";
 import { buildPaperModel, buildPaperTabs, findNearestCut, isBandHeading, listFigureTabUnitIds, resolvePickUnit, shouldRecenter, type PaperTabKey } from "@/lib/paper-model";
@@ -99,6 +103,7 @@ import { useLoaded } from "@/lib/use-loaded";
 import { usePaneSlide } from "@/lib/use-pane-slide";
 import { usePaneZoom, type PaneKey, type ZoomDir } from "@/lib/use-pane-zoom";
 
+import { readLinkTargets, readPickTools } from "./link-command";
 import { buildDecisionPending, CommandRefusal, isRepeatedSave, useCommandQueue, type AssignCommand, type CommandQueueState, type ConfirmableCommand, type ReplayCommand, type SeenRevisions, type SendContext, type WriteCommand } from "./use-command-queue";
 
 
@@ -162,20 +167,10 @@ export function findDestinationDoc(destination: Destination | null, written: Map
 
 /** Remark 창 - 고른 줄의 사유(저장이 사유를 요구해 열었으면 확인 뒤 그 저장을 잇는다) 또는 출처 없는 New 문장의 Remark. askId - 장벽 뒤에서 되살린 글쇠가 연 창이면 그 글쇠(답할 때까지 뒤의 글쇠가 기다린다) */
 export type RemarkEdit =
-  | { kind: "row"; need: "delete" | "hold" | "duplicate" | null; then: "confirm" | "hold" | null; askId?: string | null }
+  | { kind: "row"; need: "delete" | "hold" | "duplicate" | null; then: "confirm" | "hold" | "link" | null; askId?: string | null; link?: PickLink }
   | { kind: "new"; targetId: number }
   /** 저절로 삭제된 줄의 사유 - 그 문서의 줄들, 지금 적힌 글(갈리면 빈 글), 장벽 뒤에서 되살린 글쇠가 열었으면 그 id */
   | { kind: "noise"; docId: number; unitIds: readonly number[]; initial: string; isMixed: boolean; askId: string | null };
-
-/** 그 자리 메뉴 - 붙을 요소, 누른 자리(요소 기준, 키보드·이동이면 null), 어느 줄의 어느 New 문장에 대한 메뉴인지 */
-export interface MenuState {
-  /** 열 때마다 새 값 - 메뉴를 새로 그려 늦게 뜨는 움직임과 포커스 옮기기를 다시 한다 */
-  seq: number;
-  anchor: HTMLElement;
-  offset: { x: number; y: number } | null;
-  rowKey: string;
-  targetId: number | null;
-}
 
 /** 누른 자리를 요소 기준으로 - 키보드로 누르면(detail 0) 포인터 자리가 없다 */
 export function readMenuOffset(anchor: HTMLElement, event: MouseEvent | null): { x: number; y: number } | null {
@@ -184,17 +179,6 @@ export function readMenuOffset(anchor: HTMLElement, event: MouseEvent | null): {
   return {
     x: event.clientX - rect.left, y: event.clientY - rect.top,
   };
-}
-
-/** 그 자리 메뉴가 덮지 않을 상자 - New 문장이면 함께 골라지는 짝 문장 전부, Old 조각이면 그 줄의 조각 전부 */
-export function readMenuCover(anchor: HTMLElement, rowUnitIds: number[]): HTMLElement[] {
-  // 놓은 자리의 점선 초안·빈 칸 자리 표시·이미 쓴 표의 칸 - 그 상자 옆에 띄운다(Old 조각까지 덮지 않으려 하면 메뉴가 초안에서 멀어진다)
-  if (anchor.matches(".new-draft, .new-slot-empty, .new-cell")) return [anchor];
-  if (anchor.matches(".new-line")) {
-    const group = anchor.getAttribute("data-pair-group");
-    return group ? [...document.querySelectorAll<HTMLElement>(`.new-line[data-pair-group="${CSS.escape(group)}"]`)] : [anchor];
-  }
-  return rowUnitIds.flatMap((id) => [...document.querySelectorAll<HTMLElement>(`[data-testid="assign-paper-piece-${id}"]`)]);
 }
 
 /** 이동해 간 자리를 보이게 - 이미 화면 안이면 움직이지 않는다 */
@@ -246,6 +230,8 @@ function isElementInPane(el: HTMLElement): boolean {
 }
 
 /** 편집 뒤 뒤에서 다시 받는 목록의 키 - planReload가 고른 것만 하나씩 오른다(설계 D2) */
+const NO_SECTION_KEYS: ReadonlySet<string> = new Set();
+
 const NO_RELOAD_KEYS = { tobe: 0, written: 0, identical: 0, split: 0 };
 
 /** 숨긴 종류의 제안 자리 - 부르지 않고 빈 목록 */
@@ -296,7 +282,7 @@ function isSentDraft(draft: PageDraft | undefined, sent: PageDraft, reason: stri
 
 /** 누른 판단(확정 · 보류 · 삭제 · 배정 취소 · 일괄)인가 */
 function isDecisionCommand({ payload }: { payload: AssignCommand }): boolean {
-  return payload.kind === "save" || payload.kind === "clear" || payload.kind === "bulk";
+  return payload.kind === "save" || payload.kind === "clear" || payload.kind === "bulk" || payload.kind === "link";
 }
 
 /** 아직 응답이 오지 않은 판단이 줄을 어떻게 만드나 - 다음 박스를 고를 때 이미 된 것으로 세고, 삭제는 용지가 바로 접는다 */
@@ -305,6 +291,7 @@ function readPendingOutcomes(unsettled: ReadonlyArray<{ payload: AssignCommand }
   for (const { payload } of unsettled) {
     if (payload.kind === "bulk") for (const item of payload.rows) outcomes.set(item.rowKey, "deleted");
     else if (payload.kind === "save") outcomes.set(payload.rowKey, payload.action === "hold" ? "held" : payload.destination?.kind === "delete" ? "deleted" : "confirmed");
+    else if (payload.kind === "link") outcomes.set(payload.rowKey, "confirmed");
     else if (payload.kind === "clear") outcomes.delete(payload.rowKey);
   }
   return outcomes;
@@ -698,19 +685,11 @@ export function useAssignPage() {
   const [selNew, setSelNew] = useState<number | null>(null);
   // 출처 없는 New 문장마다 적는 중인 Remark - 없으면 저장된 값을 보인다
   const [newRemarks, setNewRemarks] = useState<Record<number, string>>({});
-  // 그 자리 메뉴와 이동 - 이동은 고른 줄·열린 문서가 다시 그려진 뒤에 그 자리를 찾는다
-  const [menu, setMenu] = useState<MenuState | null>(null);
+  // 이동 - 고른 줄·열린 문서가 다시 그려진 뒤에 그 자리를 찾아 보이고 번쩍인다
   const menuSeq = useRef(0);
-  /** at은 누른 자리를 이미 잰 것(요소 기준) - 끌어 놓은 자리처럼 클릭 이벤트가 없을 때 */
-  function openMenu(anchor: HTMLElement, event: MouseEvent | null, rowKey: string, targetId: number | null, at: { x: number; y: number } | null = null) {
-    menuSeq.current += 1;
-    setMenu({ seq: menuSeq.current, anchor, offset: at ?? readMenuOffset(anchor, event), rowKey, targetId });
-  }
-  // at - 끌어 놓은 자리(그 줄 기준). 있으면 메뉴가 클릭으로 연 것처럼 이음 선 끝에 뜬다. 키보드·"→ 간 곳" 이동에는 없다
-  // confirm - 끌어 놓아 고른 것이라 그 자리 메뉴 대신 바로 확정한다(1.2.0 피드백). 막는 까닭이 있으면 메뉴가 까닭과 함께 뜬다
-  const [jump, setJump] = useState<{ side: "old" | "new"; id: number; targetId: number; rowKey: string; quiet?: boolean; at?: { x: number; y: number }; confirm?: boolean } | null>(null);
-  // 고른 줄이 어떤 길로든 바뀌면(↑↓·저장 뒤 다음 줄·짝 풀림·문서 바꾸기) 메뉴를 닫는다 - 다른 줄에서 낡은 메뉴가 되살아나지 않게(렌더 중 상태 맞추기)
-  if (menu !== null && menu.rowKey !== activeKey) setMenu(null);
+  const [jump, setJump] = useState<{ side: "old" | "new"; id: number } | null>(null);
+  // 이을 상대를 기다리는 쪽 - 단추 줄의 "이을 상대 고르기". 반대쪽을 누르거나 Esc로 끝난다
+  const [linkWait, setLinkWait] = useState<PickSide | null>(null);
   // 놓인 New 문장을 눌러 연 작은 메뉴(이 문장에 잇기 · 이 줄 다음에 놓기) - 그 문장 줄 상자, 누른 자리. 고른 줄이 바뀌면 닫는다
   // 빈 템플릿 박스 안 나눌 선(스텝 8) - 그 박스가 고른 줄에서 왔을 때만 보인다(Old 선처럼 다른 줄을 고르면 사라진다)
   const [composedCutAt, setComposedCutAt] = useState<{ targetId: number; at: number } | null>(null);
@@ -761,6 +740,8 @@ export function useAssignPage() {
     if (!activeKey) return;
     // 보낼 곳을 바꾸는 길은 모두 여기를 지난다 - Use로 받은 제안은 그 제안의 자리를 고른 채일 때만 산다(그 밖은 받은 것이 아니다)
     const use = "destination" in patch && !("suggestionId" in patch) ? { suggestionId: null } : {};
+    // 오른쪽 칸에서 보낼 곳을 골랐다 - 다음에 박스를 누를 때까지 Enter는 잇기가 아니라 확정이다
+    if (patch.destination) focusCtl.chooseDestination();
     setDrafts((prev) => ({ ...prev, [activeKey]: { ...draft, ...patch, ...use, editing: nextEditing } }));
   }
 
@@ -1006,7 +987,7 @@ export function useAssignPage() {
   if (liveDoc !== null && !isComposedDoc && liveDoc.docId === newDocId && liveDoc.seq !== revealedSeq) {
     setRevealedSeq(liveDoc.seq);
     const [targetId] = liveDoc.targetIds;
-    if (targetId !== undefined) setJump({ side: "new", id: targetId, targetId, rowKey: "", quiet: true });
+    if (targetId !== undefined) setJump({ side: "new", id: targetId });
   }
   const composed = useLoaded(
     () => (isComposedDoc && newDocId !== null ? getComposedDoc(bundleId, newDocId, uiLang) : Promise.resolve(null)),
@@ -1029,7 +1010,6 @@ export function useAssignPage() {
   const templateTitles = useMemo(() => (tobeData && composedCode !== null ? buildTemplateTitles(tobeData, composedCode) : null), [tobeData, composedCode]);
   // 두 문서 사이 이음 - 저장된 출처와 고른 줄의 저장 전 고름
   const oldUnitIds = useMemo(() => new Set(oldView?.units.map((unit) => unit.id) ?? []), [oldView]);
-  const linkPairs = buildLinkPairs(newRows.filter(isWrittenRow), oldUnitIds, draft.destination?.kind === "link" ? { units: rowUnits.map((unit) => ({ id: unit.unit_id, lang: unit.lang })), targetIds: draft.destination.targetIds } : null);
 
   const [savedView, setView] = useState(readAssignView);
   // 숨긴 동안 템플릿 보기는 없다 - 저장해 둔 값은 그대로 두고 꺼진 것으로 읽는다
@@ -1110,8 +1090,9 @@ export function useAssignPage() {
     const { then, askId = null } = remarkEdit;
     focusAfterRef.current = "assign-primary";
     setRemarkEdit(null);
-    if (text !== reasonNow) setDraft({ reason: text });
-    commands.answerAsk(askId, () => (then ? runSave(then, text) : undefined));
+    if (text !== reasonNow && then !== "link") setDraft({ reason: text });
+    const { link } = remarkEdit;
+    commands.answerAsk(askId, () => (then === "link" ? link && runLink(link, text) : then ? runSave(then, text) : undefined));
   }
   function closeRemark() {
     const askId = remarkEdit?.kind === "row" ? (remarkEdit.askId ?? null) : null;
@@ -1256,7 +1237,6 @@ export function useAssignPage() {
     if (!oldView) return;
     cutLine.clear();
     clearCarve();
-    setMenu(null);
     setCtxMenu(null);
     stopPairRestore();
     pairScrollRef.current = document.querySelector<HTMLElement>('[data-pane="old"] .pane-body')?.scrollTop ?? 0;
@@ -1347,7 +1327,6 @@ export function useAssignPage() {
   function selectToc(docId: number, key: number, unitId: number | null, scroll = true) {
     setMode("old");
     setChecked(new Set());
-    setMenu(null);
     setCtxMenu(null);
     setCarvePick(null);
     setCutUnitId(null);
@@ -1363,7 +1342,6 @@ export function useAssignPage() {
     // 다른 박스를 고르면 편집 뒤 다시 받기를 기다리던 따라가기는 버려진다(모델의 pick) - 늦게 온 보기가 고름을 편집한 줄로 되돌리지 않게
     setCarvePick(null);
     const boxId = pickRowKey(key, unitId);
-    setMenu(null);
     setCtxMenu(null);
     if (key !== activeKey || hasSolo) {
       setCutUnitId(null);
@@ -1391,8 +1369,7 @@ export function useAssignPage() {
   function selectNewUnit(docId: number | null, unitId: number | null, additive = false): boolean {
     if (unitId === null || docId === null) return false;
     if (unitId !== newUnitId || !hasSolo) {
-      setMenu(null);
-      setCtxMenu(null);
+        setCtxMenu(null);
       setCarvePick(null);
       setCutUnitId(null);
       setRefEntryId(null);
@@ -1414,7 +1391,7 @@ export function useAssignPage() {
   }
 
   /** New 칸의 문장을 우클릭 - 그 문장을 고르고 고치기 메뉴를 연다(Old 고름은 그대로). 문장이 아닌 박스(제목 · 표 · 칸)에는 메뉴가 없다 */
-  function openNewCtxMenu(unitId: number, targetId: number, click: { x: number; y: number }): boolean {
+  function openNewCtxMenu(unitId: number, targetId: number, click: { x: number; y: number } | null): boolean {
     const anchor = document.querySelector<HTMLElement>(`[data-testid="assign-new-${targetId}"]`);
     if (!canEdit || mode !== "old" || !anchor || !selectNewSentence(targetId)) return false;
     menuSeq.current += 1;
@@ -1433,7 +1410,6 @@ export function useAssignPage() {
   function openSolo(docId: number) {
     setMode("old");
     setChecked(new Set());
-    setMenu(null);
     setCtxMenu(null);
     setCarvePick(null);
     setCutUnitId(null);
@@ -1692,7 +1668,6 @@ export function useAssignPage() {
     if (isSolo) selectNewUnit(soloDocId, unitId);
     else if (key !== activeKey || hasSolo || (boxId !== null && boxId !== pickedId)) picked = selectRow(key, false, boxId ?? undefined);
     setChecked(new Set());
-    setMenu(null);
     menuSeq.current += 1;
     setCtxMenu({ seq: menuSeq.current, unitId, boxId: isSolo ? null : picked, rowKey: key, anchor, click, caret });
   }
@@ -2211,9 +2186,12 @@ export function useAssignPage() {
 
   /** 고른 조각의 글 아래 단추 - 합친 문장 풀기(풀 것이 있을 때만 줄이 생긴다). 짝 풀기는 우클릭 메뉴에 있어 여기 두지 않는다(줄마다 단추 줄이 붙지 않게) */
   function renderOldActions(unitId: number): ReactNode {
+    const bar = renderPickBar(isSolo ? "new" : "old", unitId);
     const unit = paperModel?.units.get(unitId);
-    if (!canEdit || mode !== "old" || !unit || !unit.can_unmerge || hasUnitDraft(unit)) return null;
+    if (!canEdit || mode !== "old" || !unit || !unit.can_unmerge || hasUnitDraft(unit)) return bar;
     return (
+      <>
+      {bar}
       <SplitUnitActions
         key={unit.id}
         testIdPrefix="assign"
@@ -2224,6 +2202,7 @@ export function useAssignPage() {
         onUnpair={() => undefined}
         onUnmerge={() => runUnitEdit(leftShape, { type: "unmerge", unit_id: unit.id }, t("split.didUnmerge"), null)}
       />
+      </>
     );
   }
 
@@ -2365,7 +2344,6 @@ export function useAssignPage() {
     if (isRepeatedSave(commands.listUnsettled(), command)) return;
     commands.enqueue(command);
     // 저장했으면 메뉴의 고름은 끝났다 - 다음 줄이 없거나 같은 줄에 남아도 닫는다
-    setMenu(null);
     if (next === null) return;
     focusCtl.pick({ side: "old", pick: { kind: "unit", docId: saveRow.documentId, unitId: next.unitId } }, true);
     scrollToUnit(next.unitId);
@@ -2490,6 +2468,44 @@ export function useAssignPage() {
     const current = paperModel.order.filter((id) => paperModel.unwrapLines.get(id) === tableId);
     return isUnwrapSuggestionApplicable(current, order) ? { tableId, order, isSame: isUnwrapSuggestionUnchanged(current, order) } : null;
   }
+  // --- 박스 아래 단추 줄(lib/pick-bar-model) - 단추 줄 · Enter · 확정 단추가 같은 답을 읽는다(쪼개기 먼저 §8) ---
+  // 이미 쓴 New 문서의 박스 - 누른 Unit의 새 문장 · 칸인지 · 출처(덩이 모양은 용지의 얹기 층과 같은 규칙)
+  const newBoxes = useMemo(() => buildNewOverlay({ rows: isComposedDoc ? [] : written.filter((item) => item.target_doc_id === newDocId), candidateIds: NO_NUMBERS, pickedIds: NO_NUMBERS, focusId: focusNew, aiFilter: null, openAiSections: NO_SECTION_KEYS }).boxes, [isComposedDoc, written, newDocId, focusNew]);
+  /** 그 Old 줄에 이어진 새 문장(칸 문장 포함) - 묶음을 받기 전에 New 문장 목록에서 바로 안다 */
+  function listRowLinks(unitIds: readonly number[]): number[] {
+    const ids = new Set<number>();
+    for (const item of written) {
+      if (item.source_unit_ids.some((id) => unitIds.includes(id))) ids.add(item.target_id);
+      for (const cell of item.table?.cells ?? []) if (cell.source_unit_ids.some((id) => unitIds.includes(id))) ids.add(cell.target_id);
+    }
+    return [...ids];
+  }
+  const pickedNewUnits = isNewShown && newPick.kind === "unit" ? newPick.unitIds : [];
+  const pressedTargets = pickedNewUnits.flatMap((id) => {
+    const box = newBoxes.get(id);
+    return box?.isLinkable ? [box.targetId] : [];
+  });
+  const rowLinks = row ? listRowLinks(row.unitIds) : [];
+  const newWhy = pickedNewUnits.map((id) => { const unit = newModel?.units.get(id); return unit ? readUnlinkableKey(unit, newBoxes.get(id), newTabs?.tabOf.get(id) ?? "body") : null; }).find((key) => key !== null) ?? null;
+  const lastBoxId = hasSolo ? newUnitId : pickedId;
+  const lastUnit = lastBoxId === null ? undefined : shape?.model.units.get(lastBoxId);
+  const lastMenu = lastUnit ? buildUnitMenu(shape, lastUnit) : null;
+  const barTools = lastMenu ? readPickTools(lastMenu.edit) : [];
+  const pickBar = buildPickBar({
+    canEdit: canEdit && !isPairView,
+    mode,
+    isPicking: pairSource !== null || captionPickBundle !== null,
+    isMultiPick: checked.size > 0,
+    isCell: hasSolo && newUnitId !== null && newBoxes.get(newUnitId)?.kind === "cell",
+    last: isSolo ? (newUnitId !== null ? "new" : null) : panel.side,
+    act: picks.act,
+    old: row !== null && pickedId !== null ? { rowKey: row.key, unitId: pickedId, isConfirmed: row.status === "confirmed", savedTargetIds: rowLinks, blockKey: readConfirmBlockKey({ isRefGate, isCaptionGate: false, isLegacyMove: legacyMove !== null }) } : null,
+    new: newUnitId !== null ? { unitId: newUnitId, targetIds: readLinkTargets(pressedTargets, rowLinks, writtenMap), additive: newPick.kind === "unit" && newPick.additive, hasSources: pickedNewUnits.some((id) => (newBoxes.get(id)?.sourceIds.length ?? 0) > 0), whyKey: newWhy } : null,
+    tools: barTools,
+  });
+  const barLink = pickBar.link;
+  const draftLinkIds = barLink !== null && barLink.kind !== "unlink" ? barLink.targetIds : draft.destination?.kind === "link" ? draft.destination.targetIds : null;
+  const linkPairs = buildLinkPairs(newRows.filter(isWrittenRow), oldUnitIds, draftLinkIds !== null ? { units: rowUnits.map((unit) => ({ id: unit.unit_id, lang: unit.lang })), targetIds: [...draftLinkIds] } : null);
   const primaryPlan = planPrimary({
     canEdit,
     hasRow: row !== null,
@@ -2502,6 +2518,184 @@ export function useAssignPage() {
     blockKey: destination !== null ? confirmBlockKey : readConfirmBlockKey({ isRefGate, isCaptionGate: isCaptionGateFor(primaryCards[0]?.destination ?? null), isHiddenPlace: hiddenPlace !== null, isLegacyMove: legacyMove !== null }),
     orderPreviewTableId: orderPreview !== null && !orderPreview.isSame ? orderPreview.tableId : null,
   });
+
+  /** 이 줄의 이음 결과에 없는 언어가 남나 - 한 언어만 이어 짝이 풀리면 결과 박스가 응답 뒤에 정해진다(장벽). 언어를 모르면 풀린다고 본다 */
+  function isLinkSplit(linkRow: ClassifyRow, result: readonly number[]): boolean {
+    if (linkRow.pairId === null || result.length === 0) return false;
+    const langs = new Set(result.map((id) => written.find((item) => item.target_id === id)?.lang ?? written.flatMap((item) => item.table?.cells ?? []).find((cell) => cell.target_id === id)?.lang));
+    if (langs.has(undefined)) return true;
+    return linkRow.unitIds.some((id) => { const lang = unitMap.get(id)?.lang; return (lang === "ko" || lang === "en") && !langs.has(lang); });
+  }
+
+  /**
+   * 잇기 · 바꿔 잇기 · 더해 잇기 · 끊기 - 누른 순간의 줄과 문장을 잡아 줄에 세우고 즉시 다음 박스로(판단 저장과 같은 규칙). 잇고 나면 New 고름을 비운다.
+   * 그 줄의 저장 안 한 초안은 버리고 알린다. 다른 New 문서 둘에 걸치면 사유 창을 거친다. keepPicks면 고름을 옮기지 않는다(칸 칩 × · 더보기의 끊기 · 끌어 놓기의 고른 줄)
+   */
+  function runLink(link: PickLink, remark: string | null = null, keepPicks = false) {
+    if (!keepPicks && commands.isDeferring()) {
+      commands.enqueue({ kind: "press", act: "link" });
+      return;
+    }
+    const linkRow = rowMap.get(link.rowKey);
+    if (!linkRow || !canEdit || blockLegacyMove(linkRow.key)) return;
+    if (link.reasonKey !== null) {
+      showToast(t(link.reasonKey), "error");
+      return;
+    }
+    const isUnlink = link.kind === "unlink";
+    if (!isUnlink && remark === null && readReasonNeed("confirm", { kind: "link", targetIds: [...link.result] }) !== null && !(linkRow.key === activeKey ? reasonNow : "").trim()) {
+      setRemarkEdit({ kind: "row", need: "duplicate", then: "link", link, askId: commands.openAsk() });
+      return;
+    }
+    const isSplit = isLinkSplit(linkRow, link.result);
+    const next = isUnlink || isSplit || keepPicks || mode === "unsourced" ? null : pickNextAfterSave(linkRow, "open");
+    const pending = drafts[linkRow.key];
+    if (pending !== undefined && hasDraftChange(pending)) {
+      dropDraft(linkRow.key);
+      showToast(t("assign.pick.linkedDropDraft"), "info");
+    }
+    commands.enqueue({ kind: "link", docId: linkRow.documentId, rowKey: linkRow.key, unitIds: linkRow.unitIds, boxId: link.unitId, targetIds: link.targetIds, result: link.result, link: link.kind, remark: remark ?? (linkRow.key === activeKey && draft.reason !== null ? draft.reason : null), seen: readSeen(linkRow.unitIds), isSplit, nextKey: next?.key ?? null });
+    if (keepPicks) return;
+    if (mode === "unsourced") {
+      // 출처 없는 New는 New가 이끈다 - 다음 출처 없는 문장을 고른다(누른 것이 아니라 Enter는 아직 잇기가 아니다)
+      const after = unsourced.find((item) => !link.targetIds.includes(item.target_id));
+      const fileId = after ? ((tobeData?.docs ?? []).find((doc) => doc.id === after.target_doc_id)?.document_id ?? null) : null;
+      if (after && fileId !== null && after.new_unit_id != null) {
+        setSelNew(after.target_id);
+        focusCtl.pick({ side: "new", pick: { kind: "unit", docId: fileId, unitIds: [after.new_unit_id], additive: false } }, true);
+      } else focusCtl.clear("new");
+      return;
+    }
+    focusCtl.clear("new");
+    if (next === null) return;
+    focusCtl.pick({ side: "old", pick: { kind: "unit", docId: linkRow.documentId, unitId: next.unitId } }, true);
+    scrollToUnit(next.unitId);
+  }
+
+  /** 끌어 놓아 잇기 - 놓는 즉시 잇고 확정한다(1.2.0 피드백). 이미 이은 문장이면 알리기만, 막는 까닭이 있으면 알린다 */
+  function dropLinkOn(rowKey: string, targetId: number) {
+    const dropRow = rowMap.get(rowKey);
+    if (!dropRow) return;
+    const saved = listRowLinks(dropRow.unitIds);
+    const isRefBlocked = dropRow.status !== "confirmed" && dropRow.unitIds.some((id) => isRefPending(paperModel?.units.get(id)));
+    const bar = buildPickBar({
+      canEdit, mode: "old", isPicking: false, isMultiPick: false, isCell: false, last: "new", act: "pick",
+      old: { rowKey, unitId: dropRow.unitIds[0], isConfirmed: dropRow.status === "confirmed", savedTargetIds: saved, blockKey: readConfirmBlockKey({ isRefGate: isRefBlocked, isCaptionGate: false, isLegacyMove: describeLegacyMove(dropRow.unitIds.flatMap((id) => unitMap.get(id) ?? [])) !== null }) },
+      new: { unitId: -1, targetIds: readLinkTargets([targetId], saved, writtenMap), additive: false, hasSources: false, whyKey: null },
+      tools: [],
+    });
+    selectRow(rowKey, false);
+    if (bar.link === null) return;
+    if (bar.enter.kind === "noop") showToast(t(bar.enter.noticeKey), bar.link.kind === "unlink" ? "info" : "error");
+    else runLink(bar.link, null, true);
+    if (bar.enter.kind !== "noop") {
+      const next = isLinkSplit(dropRow, bar.link.result) ? null : pickNextAfterSave(dropRow, "open");
+      if (next !== null) {
+        focusCtl.pick({ side: "old", pick: { kind: "unit", docId: dropRow.documentId, unitId: next.unitId } }, true);
+        scrollToUnit(next.unitId);
+      }
+    }
+  }
+
+  /** 잇기 · 끊기의 보내기 - 그 줄과 결과 문장의 묶음을 보낼 때 새로 읽는다(줄 묶음을 기다리지 않는다), 판단 revision은 앞 응답의 것이 이긴다 */
+  async function sendLink(command: Extract<WriteCommand, { kind: "link" }>, ctx: SendContext) {
+    const { docId, rowKey, result, targetIds, remark } = command;
+    const unitIds = [...command.unitIds];
+    const group = await loadSaveGroup(unitIds, { kind: "link", targetIds: [...result] }, []);
+    const units = unitIds.flatMap((id) => {
+      const unit = liveRef.current.unitMap.get(id);
+      if (!unit) return [];
+      const fresh = group.units.find((item) => item.unit_id === id)?.decision ?? unit.decision;
+      return [{ ...unit, decision: { ...fresh, revision: writeLog.resolveRevision(id, command.seen, fresh.revision) } }];
+    });
+    const reason = remark ?? units.map((unit) => readHumanReason(unit.decision)).find(Boolean) ?? "";
+    const save = buildLinkSave({ row: { unitIds }, units, groups: [group], result, reason, tables: buildTables(docId, unitIds) });
+    const focus = targetIds[0] === undefined ? { focus_unit_id: unitIds[0] } : { focus_unit_id: unitIds[0], focus_target_id: targetIds[0] };
+    const savedRow = liveRef.current.rowMap.get(rowKey);
+    let released: number[] = [];
+    if (save.kind === "clear") {
+      if (save.units.length > 0) {
+        writeLog.noteUnknown([...unitIds, ...(await clearDecisions(bundleId, save.units, buildUndo({ step_key: genId(), ...focus })))]);
+        markRecorded();
+      }
+      showToast(t("assign.cellLink.unlinked"));
+    } else {
+      const saved = await saveGroup(bundleId, save.body, buildUndo({ op: command.link === "unlink" ? "unlink" : "link", ...focus }));
+      noteSaved(saved);
+      markRecorded();
+      showToast(t(command.link === "unlink" ? "assign.cellLink.unlinked" : "match.linked"));
+      released = save.released;
+      if (savedRow !== undefined) applyPairSettle(savedRow, saved, released);
+      if (command.link !== "unlink") showSent(unitIds, { kind: "link", targetIds: [...result] }, saved, command.nextKey ?? rowKey, null);
+    }
+    requestReload(command.isSplit ? { ...askAll(false), units: [] } : askAll(false));
+    if (!command.isSplit) return;
+    // 한 언어만 이어 짝을 풀었으면 남은 문장의 줄로 옮긴다 - 다시 받아 그 줄이 생긴 뒤, 그 사이 다른 줄을 고르지 않았을 때
+    focusCtl.succeed(ctx.id, { docId, revision: null, pickUnitId: released[0] ?? null });
+    ctx.respond();
+    await placeReload({ ...NO_RELOAD_ASK, docs: "all", units: "all" }, ctx);
+  }
+
+  /** 단추 줄의 ⋯ 메뉴 - 이은 줄 보기(반대쪽 용지를 옮기기만, 고름 그대로) · 끊기 · 그 밖의 손질(우클릭 메뉴) */
+  function runPickMore(id: PickMoreId) {
+    const at = pickBar.at;
+    if (at === null) return;
+    const box = at.side === "new" ? newBoxes.get(at.unitId) : undefined;
+    if (id === "tools") {
+      if (at.side === "new" && !isSolo && box) openNewCtxMenu(at.unitId, box.targetId, null);
+      else openCtxMenu(at.unitId, null, null);
+    } else if (id === "show_linked") {
+      if (at.side === "old" && rowLinks[0] !== undefined) showInNew(rowLinks[0]);
+      else if (box && box.sourceIds[0] !== undefined) showOldSource(box.sourceIds[0], box.targetId);
+    } else if (at.side === "old" && row !== null) unlinkFrom(row.key, rowLinks);
+    else if (box) {
+      // 그 New 문장을 출처 줄마다 뗀다
+      const rowKeys = new Set(box.sourceIds.flatMap((unitId) => rowOfUnit.get(unitId) ?? []));
+      for (const key of rowKeys) unlinkFrom(key, readLinkTargets([box.targetId], listRowLinks(rowMap.get(key)?.unitIds ?? []), writtenMap));
+    }
+  }
+
+  /** 출처 Old 조각을 보인다 - 고름은 그대로(보던 Old 문서면 그 자리로 굴리기만, 다른 문서면 그 줄을 고른다) */
+  function showOldSource(unitId: number, targetId: number) {
+    const sourceRow = rowMap.get(rowOfUnit.get(unitId) ?? "");
+    if (sourceRow && sourceRow.documentId === oldView?.document.id) {
+      if (isPairView) closePairView(unitId);
+      else scrollToUnit(unitId);
+      setJump({ side: "old", id: unitId });
+    } else jumpToOld(unitId, targetId, { quiet: true });
+  }
+
+  /** 손질 단추 - 다듬기 메뉴의 그 일 */
+  function runPickTool(id: PickToolId) {
+    const tool = barTools.find((item) => item.id === id);
+    if (tool?.action && lastUnit) runUnitAction(shape, lastUnit, tool.action);
+  }
+
+  /** 반대쪽에서 이을 상대를 고른다 - 안내 띠를 띄우고 기다린다(Esc · 반대쪽 누르기로 끝) */
+  function startLinkWait(to: PickSide) {
+    if (to === "new" && view.single) changeView({ single: false });
+    if (to === "old" && isSolo) setSoloDocId(null);
+    setLinkWait(to);
+  }
+
+  /** 그 박스 아래의 단추 줄 - 마지막에 누른 쪽 용지의 그 박스에만 */
+  function renderPickBar(side: PickSide, unitId: number): ReactNode {
+    const at = pickBar.at;
+    if (at === null || at.unitId !== unitId || at.side !== side) return null;
+    return (
+      <PickBar
+        bar={pickBar}
+        toolLabel={(toolId) => { const action = barTools.find((item) => item.id === toolId)?.action; return action && action in ASSIGN_ACTION_LABELS ? t(ASSIGN_ACTION_LABELS[action as keyof typeof ASSIGN_ACTION_LABELS]) : toolId; }}
+        keyOf={(toolId) => (toolId === "split" ? formatAssignKey("split") : null)}
+        busy={busy}
+        testId="assign-pick-bar"
+        onLink={() => barLink && runLink(barLink)}
+        onStartLink={startLinkWait}
+        onTool={runPickTool}
+        onMore={runPickMore}
+      />
+    );
+  }
 
   /** 고르지 않고 추천 첫 카드로 바로 확정 - AI 카드면 Use와 같이 고쳐 쓴 글과 제안 id를 명령에 싣는다(B1-R3). 초안에도 넣어 오른쪽 칸이 따라온다 */
   function confirmCard(rec: Recommendation) {
@@ -2571,10 +2765,9 @@ export function useAssignPage() {
     if (!row) return;
     const isDecided = rowUnits.some((unit) => unit.decision.disposition !== "unassigned" || unit.status !== "unassigned");
     // 방금 누른 판단이 아직 저장 중인 줄도 취소할 것이 있다
-    const isSaving = commands.listUnsettled().some(({ payload, unitIds }) => (payload.kind === "save" || payload.kind === "bulk" || payload.kind === "figure") && unitIds.some((id) => row.unitIds.includes(id)));
+    const isSaving = commands.listUnsettled().some(({ payload, unitIds }) => (payload.kind === "save" || payload.kind === "bulk" || payload.kind === "figure" || payload.kind === "link") && unitIds.some((id) => row.unitIds.includes(id)));
     if (!isDecided && !isSaving) return;
     commands.enqueue({ kind: "clear", docId: row.documentId, rowKey: row.key, unitIds: row.unitIds, boxId: pickedId ?? row.unitIds[0], seen: readSeen(row.unitIds), draft: drafts[row.key] ?? null, newDocId: isComposedDoc ? newDocId : null, toggleKey });
-    setMenu(null);
   }
 
   async function sendClear({ rowKey, unitIds, seen, draft: sent, newDocId: docId, toggleKey: key }: Extract<WriteCommand, { kind: "clear" }>) {
@@ -2719,6 +2912,7 @@ export function useAssignPage() {
     switch (command.kind) {
       case "save":
       case "clear":
+      case "link":
         return buildDecisionPending("save", command.docId, command.unitIds);
       case "bulk":
         return buildDecisionPending("bulk", null, command.rows.flatMap((item) => item.unitIds));
@@ -2746,6 +2940,8 @@ export function useAssignPage() {
         return t(command.action === "hold" ? "assign.step.hold" : command.isPick || command.destination?.kind === "delete" ? "assign.step.delete" : command.destination?.kind === "link" ? "assign.step.link" : "assign.step.confirm");
       case "clear":
         return t("classify.clear");
+      case "link":
+        return t(command.link === "unlink" ? "assign.step.unlink" : "assign.step.link");
       case "bulk":
       case "figure":
         return t("assign.step.delete");
@@ -2777,6 +2973,7 @@ export function useAssignPage() {
     switch (command.kind) {
       case "save":
       case "clear":
+      case "link":
         return command.boxId;
       case "figure":
         return command.unitId;
@@ -2814,6 +3011,8 @@ export function useAssignPage() {
         return sendSave(command, ctx);
       case "clear":
         return sendClear(command);
+      case "link":
+        return sendLink(command, ctx);
       case "bulk":
         return sendBulk(command);
       case "figure":
@@ -2854,6 +3053,11 @@ export function useAssignPage() {
       return true;
     }
     if (row === null) return false;
+    if (press.act === "link") {
+      if (barLink === null) return false;
+      runLink(barLink);
+      return true;
+    }
     if (press.act === "clear") runClear();
     else if (press.act === "delete") decideNow({ kind: "delete" });
     else runSave(press.act, press.reason);
@@ -2878,7 +3082,6 @@ export function useAssignPage() {
     writeLog.noteAll();
     stepTick.current += 1;
     setUndoState({ canUndo: result.can_undo, canRedo: result.can_redo });
-    setMenu(null);
     setCtxMenu(null);
     setChecked(new Set());
     // 되돌린 줄의 초안은 바뀌기 전 판단 위의 고름이다
@@ -2977,7 +3180,6 @@ export function useAssignPage() {
     const documentId = scope.kind === "document" ? scope.documentId : undefined;
     const undo = buildUndo(scope.kind === "document" ? { scope_label: scope.label } : {});
     setResetScope(null);
-    setMenu(null);
     commands.enqueue({
       kind: "global",
       label: "assign.step.reset",
@@ -3052,31 +3254,18 @@ export function useAssignPage() {
     });
   }
 
-  /**
-   * 칸 칩의 × - 그 Old 줄을 그 칸에서 뗀다(시안 2 D5). 그 자리 메뉴의 Unlink와 같은 저장이다: 줄의 다른 이음이 남으면 그곳만 남겨
-   * 확정하고, 없으면 배정을 지운다. 표의 다른 칸은 서버가 손대지 않는다(구경꾼)
-   */
+  /** 칸 칩의 × - 그 Old 줄을 그 칸에서 뗀다(시안 2 D5). 단추 줄의 끊기와 같은 명령이고 고름은 옮기지 않는다 */
   function unlinkCell(cellId: number, unitId: number) {
     const key = rowOfUnit.get(unitId);
-    const sourceRow = key ? rowMap.get(key) : undefined;
-    if (!sourceRow || !canEdit) return;
-    runGlobal("assign.step.unlink", async () => {
-      const seen = readSeen(sourceRow.unitIds);
-      const group = mergeGroups([await loadRowGroup(bundleId, sourceRow.unitIds), await getGroupByTarget(bundleId, cellId)]);
-      const saved = readDestination(group, sourceRow.unitIds);
-      const remainder = saved?.kind === "link" ? saved.targetIds.filter((id) => id !== cellId) : [];
-      if (remainder.length === 0) {
-        const decided = group.units.filter((unit) => sourceRow.unitIds.includes(unit.unit_id) && unit.decision.disposition !== "unassigned");
-        await clearDecisions(bundleId, decided.map((unit) => ({ unit_id: unit.unit_id, revision: writeLog.resolveRevision(unit.unit_id, seen, unit.decision.revision) })), buildUndo({ step_key: genId(), focus_unit_id: unitId }));
-      } else {
-        const sourceUnits = readSourceUnits(sourceRow.unitIds, seen, group);
-        const context = { units: sourceUnits.map(({ id, kind, lang, text, content_start, revision }) => ({ id, kind, lang, text, content_start, revision })), group, tables: new Map() };
-        const body = buildGroupSave({ destination: { kind: "link", targetIds: remainder }, texts: {}, reason: sourceUnits[0]?.reason ?? "", moveCode: "" }, context, "confirm");
-        applyPairSettle(sourceRow, await saveGroup(bundleId, body, buildUndo({ op: "unlink", focus_unit_id: unitId, focus_target_id: cellId })), body.release_unit_ids ?? []);
-      }
-      markRecorded();
-      if (sourceRow.key === liveRef.current.activeKey) dropDraft(sourceRow.key);
-    }, t("assign.cellLink.unlinked"));
+    if (key !== undefined) unlinkFrom(key, [cellId]);
+  }
+
+  /** 그 줄에서 이 문장들의 이음만 뗀다 - 남는 이음이 없으면 배정을 지운다 */
+  function unlinkFrom(rowKey: string, targetIds: readonly number[]) {
+    const sourceRow = rowMap.get(rowKey);
+    if (!sourceRow) return;
+    const saved = listRowLinks(sourceRow.unitIds);
+    runLink({ kind: "unlink", rowKey, unitId: sourceRow.unitIds[0], targetIds, result: saved.filter((id) => !targetIds.includes(id)), reasonKey: null, isEnter: false }, null, true);
   }
 
   /** 보낼 곳 한 줄을 더하거나 지운다 - 응답의 새 목록을 바로 쓰고, 묶음 revision이 올랐으니 묶음도 다시 읽는다 */
@@ -3168,31 +3357,19 @@ export function useAssignPage() {
     return next.length > 0;
   }
 
-  /** New 원문의 줄을 누름 - 이미 확정해 이은 문장이면 고름을 바꾸지 않고 끊기 메뉴를, 아니면 고른 뒤 확정 메뉴를 그 자리에 띄운다 */
-  function handleNewPick(targetId: number, additive: boolean, anchor: HTMLElement, event: MouseEvent) {
-    // New 문장의 짝을 고르는 중 - 누른 문장이 짝이 된다(다듬을 대상을 바꾸지 않는다). 원문의 Unit을 모르는 문장은 짝이 될 수 없다
+  /** New 용지의 박스를 누름 - 그 쪽 고름만 바꾼다(Old 고름 · 초안은 그대로). 짝 · 캡션 고르는 중이면 그 박스가 짝 · 캡션이 된다. Ctrl이면 더하거나 뺀다 */
+  function pressNewBox(unitId: number, targetId: number | null, additive: boolean, shiftKey = false) {
     if (isRightPairPick) {
-      const unitId = writtenMap.get(targetId)?.new_unit_id ?? null;
-      if (unitId !== null) pickPairUnit(unitId, event.shiftKey);
+      pickPairUnit(unitId, shiftKey);
       return;
     }
-    // Old 줄을 고르지 않은 채 누르면 그 New 문장을 다듬을 대상으로 고른다(Old 줄을 고른 채면 전처럼 그 줄에 잇는다)
-    if (mode === "old" && row === null && canEdit) {
-      selectNewSentence(targetId);
+    if (captionPickBundle !== null && captionShape === rightShape) {
+      pickCaptionUnit(unitId);
       return;
     }
-    if (mode === "old" && row && !additive && draft.destination === null && savedDestination?.kind === "link" && savedDestination.targetIds.includes(targetId)) {
-      openMenu(anchor, event, row.key, targetId);
-      return;
-    }
-    if (pickNewSentence(targetId, additive) && row) openMenu(anchor, event, row.key, additive ? null : targetId);
-  }
-
-  /** 이미 쓴 New 문서의 이을 수 없는 박스(제목 · 머리말 · 표 …)를 누름 - Old 줄을 골라 두었으면 까닭을 알리고, 아니면 그 박스를 다듬기로 고른다 */
-  function pickUnlinkableNew(unitId: number, why: string) {
-    if (mode !== "old" || !canEdit || isRightPairPick) return;
-    if (row !== null) showToast(why, "info");
-    else selectNewUnit(newDocFile, unitId);
+    if (mode === "unsourced" && targetId !== null) setSelNew(targetId);
+    if (linkWait === "new") setLinkWait(null);
+    selectNewUnit(newDocFile, unitId, additive);
   }
 
   /** 놓인 New 문장을 누름(엮은 문서) - 그 줄 옆에 작은 메뉴를 연다. 고르기만 하고 저장은 결정 칸의 Confirm이 한다 */
@@ -3353,11 +3530,11 @@ export function useAssignPage() {
     setMode("old");
     pickRowKey(key);
     setChecked(new Set());
-    setMenu(null);
     setManualNewDoc({ key, docId });
-    // New 칸의 그 문장으로 가는 길이라 한 단이면 양 단으로 편다
+    // New 칸의 그 문장으로 가는 길이라 한 단이면 양 단으로 편다. 그 문장도 골라 단추 줄이 그 박스에 뜬다(이어진 둘이라 끊기)
     if (view.single) changeView({ single: false });
-    setJump({ side: "new", id: targetId, targetId, rowKey: key });
+    selectNewSentence(targetId);
+    setJump({ side: "new", id: targetId });
   }
 
   /** 문서 대시보드의 받는 New 문서를 누름 - 그 문서를 New 칸에 연다 */
@@ -3374,12 +3551,12 @@ export function useAssignPage() {
     const docId = findWrittenRow(targetId)?.target_doc_id;
     if (docId !== undefined) showNewDoc(docId);
     if (view.single) changeView({ single: false });
-    setJump({ side: "new", id: targetId, targetId, rowKey: "", quiet: true });
+    setJump({ side: "new", id: targetId });
   }
 
   /**
    * New 문장의 "← 출처" 칩을 누름 - 그 출처 줄을 고르고(다른 Old 문서면 그 문서로) Old의 그 조각으로 간다.
-   * keep.docId는 엮은 문서(템플릿 보기)에서 그대로 둘 New 문서, keep.quiet면 그 자리 메뉴를 띄우지 않는다
+   * keep.docId는 엮은 문서(템플릿 보기)에서 그대로 둘 New 문서, keep.quiet면 그 New 문장은 고르지 않는다(출처 줄만 고른다)
    */
   function jumpToOld(unitId: number, targetId: number, keep: { docId?: number; quiet?: boolean } = {}) {
     setPairViewDoc(null);
@@ -3387,12 +3564,13 @@ export function useAssignPage() {
     const docId = keep.docId ?? findWrittenRow(targetId)?.target_doc_id;
     if (!key) return;
     setMode("old");
+    // 그 New 문장을 먼저 고르고 출처 줄을 고른다 - 단추 줄은 마지막에 고른 Old 박스에 뜬다(이어진 둘이라 끊기)
+    if (!keep.quiet) selectNewSentence(targetId);
     pickRowKey(key);
     setChecked(new Set());
-    setMenu(null);
     // 지금 보던 New 문서를 그대로 둔다 - 줄이 바뀌어도 이 문장 옆에서 이어 보게
     if (docId !== undefined) setManualNewDoc({ key, docId });
-    setJump({ side: "old", id: unitId, targetId, rowKey: key, quiet: keep.quiet });
+    setJump({ side: "old", id: unitId });
   }
 
   /** 템플릿 보기의 줄을 누름 - 출처 칩과 같은 길로 그 줄의 Old 출처를 고른다(지금 New 문서와 보기는 그대로) */
@@ -3451,7 +3629,7 @@ export function useAssignPage() {
     setFillOtherSeq((seq) => seq + 1);
   }
 
-  // 이동한 뒤 - 그 자리가 그려지면 보이게 하고 번쩍인 뒤 그 옆에 메뉴를 띄운다(다른 문서를 받는 중이면 몇 프레임 기다린다)
+  // 이동한 뒤 - 그 자리가 그려지면 보이게 하고 번쩍인다(다른 문서를 받는 중이면 몇 프레임 기다린다)
   useEffect(() => {
     if (!jump) return;
     let tries = 0;
@@ -3466,26 +3644,11 @@ export function useAssignPage() {
       }
       revealElement(el);
       flashElement(el);
-      if (jump.confirm) settleDrop(el, jump.rowKey, jump.targetId, jump.at ?? null);
-      else if (!jump.quiet) openMenu(el, null, jump.rowKey, jump.targetId, jump.at ?? null);
       setJump(null);
     });
     return () => cancelAnimationFrame(frame);
   }, [jump]);
 
-  // --- 끌어서 잇기(끌어다 놓기 설계 §6) - Old 조각을 이미 쓴 New 문장에 놓으면 클릭과 같은 상태가 된다(그 줄 고름 · 그 문장 고름 · 그 자리 메뉴, 저장은 하지 않는다) ---
-  // 놓은 줄의 관계 묶음이 와야 클릭과 같은 판단을 한다 - 그때까지 들고 있다가 렌더 중에 푼다(그 사이 다른 줄을 고르면 버린다). 메뉴는 jump 이펙트가 그 문장을 찾아 띄운다.
-  // at(놓은 자리, 그 줄 기준)을 메뉴에 넘겨 클릭으로 연 것처럼 이음 선 끝에 뜨게 한다(사용자 결정 v1.1.1 - 놓기는 그 문장 클릭과 같다)
-  const [dropLink, setDropLink] = useState<{ rowKey: string; targetId: number; at: { x: number; y: number } } | null>(null);
-  if (dropLink !== null && activeKey !== dropLink.rowKey) setDropLink(null);
-  else if (dropLink !== null && !groupPending) {
-    setDropLink(null);
-    const { rowKey: dropKey, targetId, at } = dropLink;
-    const action = resolveDropLink({ draftDestination: draft.destination, savedDestination, targetId });
-    // 이미 이은 문장(끊기 메뉴)은 그대로 메뉴, 새로 고른 것은 바로 확정
-    if (action === "menu_only") setJump({ side: "new", id: targetId, targetId, rowKey: dropKey, at });
-    else if (pickNewSentence(targetId, false)) setJump({ side: "new", id: targetId, targetId, rowKey: dropKey, at, confirm: true });
-  }
   // --- 끌어서 보내기(3걸음) - New · from Assign 문서의 두 문장 사이·빈 칸에 놓으면 그 줄의 초안이 된다(저장은 하지 않는다). 잇기와 같이 관계 묶음이 온 뒤 렌더 중에 푼다 ---
   // position은 문장 사이에 놓은 자리(없으면 빈 칸 - 클릭과 같은 pickDestination). menu면 이어서 점선 초안(빈 칸이면 그 자리 표시)에 그 자리 메뉴를 띄운다
   // anchor는 템플릿 보기에 놓았을 때 메뉴를 띄울 자리(그 보기에는 점선 초안이 없다)
@@ -3518,15 +3681,15 @@ export function useAssignPage() {
       }
       revealElement(el);
       flashElement(el);
-      settleDrop(el, draftMenu.rowKey, null, null);
+      settleDrop();
       setDraftMenu(null);
     });
     return () => cancelAnimationFrame(frame);
   }, [draftMenu]);
-  /** 끌어 놓은 고름 - 막는 까닭(참조 번호 · 캡션)이 없으면 바로 확정하고, 있으면 그 자리 메뉴가 까닭을 보인다. 사유가 필요하면 확정이 사유 창을 연다 */
-  const settleDrop = useEffectEvent((el: HTMLElement, rowKey: string, targetId: number | null, at: { x: number; y: number } | null) => {
+  /** 끌어 놓은 고름 - 막는 까닭(참조 번호 · 캡션)이 없으면 바로 확정하고, 있으면 그 까닭을 알린다. 사유가 필요하면 확정이 사유 창을 연다 */
+  const settleDrop = useEffectEvent(() => {
     if (confirmBlockKey === null) runSave("confirm");
-    else openMenu(el, null, rowKey, targetId, at);
+    else showToast(t(confirmBlockKey), "error");
   });
   const confirmTreeDrop = useEffectEvent(() => {
     setTreeConfirm(null);
@@ -3841,14 +4004,12 @@ export function useAssignPage() {
         return;
       }
       if (blockLegacyMove(rowKey)) return;
-      const lineRect = line.getBoundingClientRect();
       setChecked(new Set());
       setCtxMenu(null);
-      selectRow(rowKey, false);
       // 다른 줄을 골라도 New 칸은 놓은 문서에 둔다 - "→ 간 곳"과 같이(그 줄의 추천 문서로 넘어갔다 돌아오지 않게)
       const docId = findWrittenRow(drop.targetId)?.target_doc_id;
       if (docId !== undefined) setManualNewDoc({ key: rowKey, docId });
-      setDropLink({ rowKey, targetId: drop.targetId, at: { x: point.x - lineRect.left, y: point.y - lineRect.top } });
+      dropLinkOn(rowKey, drop.targetId);
     },
     onEnd: () => {
       for (const el of panesBoxRef.current?.querySelectorAll("[data-drag-src]") ?? []) el.removeAttribute("data-drag-src");
@@ -4618,7 +4779,7 @@ export function useAssignPage() {
     aiJobs, aiOn, aiBusy, suggestions, invalidUnitIds, readMarkStatus, readAiPlace, suggestedTargetUnits, unitMap, written, writtenMap, rows, rowMap,
     rowOfUnit, options, labelOptions, isDrafting, hiddenPlace, legacyMove, leftovers, isLeftoverOpen, setLeftoverSheet, openTranslations, translationBlocked, settleTranslations, goToTranslation, ready, showSkeleton, unsourced, mode, setMode, filter, counts, foldOpen, setFoldOpen, applyFilter, foldMatch,
     clearRowPick, activeKey, row, pickedId, keptOldId: panel.keptOldId, showKeptOld, enterUnsourced, spaceUnitIds, spacePickSeq, picks, newPick, newUnitId, panel, soloDocId, setSoloDocId, isSolo, isNewEdit, hasSolo, tocOpen, setTocOpen, tocPick, tocBlocks, checked,
-    setChecked, newRemarks, setNewRemarks, menu, setMenu, joinMenu, setJoinMenu, ctxMenu, setCtxMenu, cutUnitId, focusNew,
+    setChecked, newRemarks, setNewRemarks, joinMenu, setJoinMenu, ctxMenu, setCtxMenu, cutUnitId, focusNew,
     groupData, setDrafts, draft, editing, groupPending, savedDestination, destination, rowUnits, rowLangs, firstDecision, systemHold,
     reasonNow, setDraft, unsavedCount, leaveTo, setLeaveTo, rowLive, aiDest, aiWhy, isAiRow, recommendations, linkIds,
     pickedGroups, saveGroupData, candidateIds, viewOf, setManualOldDoc, oldView, acceptKind, setAcceptKind, acceptDoc,
@@ -4637,7 +4798,7 @@ export function useAssignPage() {
     rewrapTable, unwrapAi, describeEditConfirm, pairGrip, clearNoise, openNoiseReason, confirmNoiseReason, closeNoiseReason, noisePick, runCaptionRefChange, switchShapeMode, switchToPair,
     applySplitSuggestion, dismissSplitSuggestion, splitPendingIds, readPendingItem, selectNextSplit, selectNextRef, selectNextCaption,
     splitAtCut, handleOldDoubleClick, runCtx, runUnitAction, revertHeadings, planJoinIn, joinIn, renderOldActions, readReasonNeed,
-    runSave, runClear, runUndoStep, confirmIdenticalAll, acceptAll, markNew, placeManage, pickDestination, pickNewSentence, handleNewPick, pickUnlinkableNew, showNewDoc, jump, unlinkCell,
+    runSave, runClear, runUndoStep, confirmIdenticalAll, acceptAll, markNew, placeManage, pickDestination, pickNewSentence, pressNewBox, showNewDoc, jump, unlinkCell, pickBar, renderPickBar, linkWait, setLinkWait,
     handleJoinPick, readJoinAfter, pickJoinMenu, pickPlaceSpot, pickOwnAiLine, jumpToNew, openNewDoc, showInNew, jumpToOld,
     pickTemplateLine, fillTemplateMissing, isTemplateDrag, isOldDrag, finishPairPick, handleOldClick, handlePrimary, startEdit,
     pickRecommendation, handleFramePress, primaryPlan, markRecHover, revealPick, setRevealPick, done, renderPlaceLabel, listDestinationEls,

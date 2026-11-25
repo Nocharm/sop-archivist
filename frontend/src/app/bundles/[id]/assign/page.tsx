@@ -7,13 +7,12 @@
 
 import { FileCheck2, FileUp, FolderOutput, Inbox, Link2, MousePointerClick, Sparkles, SquarePlus, Trash2, TriangleAlert, X } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useEffectEvent, useMemo, useRef, useState, type MouseEvent, type ReactNode } from "react";
+import { useEffect, useEffectEvent, useMemo, useRef, useState, type ReactNode } from "react";
 import { AssignContextMenu } from "@/components/assign/assign-context-menu";
 import { AssignHelp } from "@/components/assign/assign-help";
 import { LinkLines } from "@/components/assign/link-lines";
 import { JoinMenu } from "@/components/assign/join-menu";
 import { getSpotAttrs, PlaceGap, type PlaceSpotView, type SpotAttrs } from "@/components/assign/place-spot";
-import { LinkMenu } from "@/components/assign/link-menu";
 import { LinkBadge } from "@/components/assign/link-badge";
 import { NewBundle } from "@/components/assign/new-bundle";
 import { NewPaper } from "@/components/assign/new-paper";
@@ -43,7 +42,6 @@ import { listAckWarnings } from "@/lib/missing-warnings-model";
 import { type ChangeType, type EditOp } from "@/lib/api-sop";
 import { isBundleCaptionNeeded } from "@/lib/caption-model";
 import { countJoinedLines } from "@/lib/join-sentence-model";
-import { listLinkMenuItems, listUnlinkRemainder, type LinkMenuItem } from "@/lib/assign-model";
 import type { CEdit } from "@/lib/c-edit-model";
 import { getDestinationId, previewSlotChange, readSlotKind } from "@/lib/classify-model";
 import { buildComposedRows, buildComposedStrips } from "@/lib/composed-model";
@@ -51,7 +49,7 @@ import { useI18n } from "@/lib/i18n";
 import { useComposedOrder } from "@/lib/use-composed-order";
 import { navigate } from "@/lib/nav-buffer";
 import { buildNewAiFilter, listNewAiLinks, readNewAiPill } from "@/lib/new-ai-filter-model";
-import { buildNewOverlay, readUnlinkableKey } from "@/lib/new-overlay-model";
+import { buildNewOverlay } from "@/lib/new-overlay-model";
 import { buildSheetDraft, isSpaceEnabled, pickSpaceSheet } from "@/lib/space-preview-model";
 import { buildDeletedFolds } from "@/lib/deleted-fold-model";
 import type { IndentChange } from "@/lib/indent-model";
@@ -63,7 +61,7 @@ import { AssignSidePanel } from "./assign-side-panel";
 
 import { AssignBar } from "./assign-bar";
 import { QueueFailure } from "./queue-failure";
-import { useAssignPage, NO_NUMBERS, findDestinationDoc, readMenuCover, revealElement } from "./use-assign-page";
+import { useAssignPage, NO_NUMBERS, findDestinationDoc, revealElement } from "./use-assign-page";
 
 const NO_SECTIONS: ReadonlySet<string> = new Set();
 
@@ -75,8 +73,8 @@ export default function AssignPage() {
     t, bundleId, bundle, canEdit, docs, oldDocs, docViews, unitsKey, tobe, tobeData, writtenList, identical,
     readMarkStatus, readAiPlace, suggestedTargetUnits, unitMap, written, writtenMap, rows, rowMap, rowOfUnit, labelOptions, ready, showSkeleton, unsourced,
     mode, foldOpen, setFoldOpen, foldMatch, clearRowPick, activeKey, row, pickedId, spaceUnitIds, spacePickSeq, newPick, newUnitId, panel, soloDocId, setSoloDocId, isSolo, isNewEdit, tocOpen, setTocOpen,
-    tocPick, checked, newRemarks, setNewRemarks, menu, setMenu, joinMenu, setJoinMenu, ctxMenu, setCtxMenu, focusNew,
-    setDrafts, draft, groupPending, savedDestination, destination, rowUnits, reasonNow, setDraft, unsavedCount, leaveTo, setLeaveTo,
+    tocPick, checked, newRemarks, setNewRemarks, joinMenu, setJoinMenu, ctxMenu, setCtxMenu, focusNew,
+    setDrafts, draft, destination, rowUnits, reasonNow, unsavedCount, leaveTo, setLeaveTo,
     aiDest, isAiRow, recommendations, linkIds, candidateIds, setManualOldDoc, oldView, acceptKind, setAcceptKind, acceptDoc, paperModel,
     canPairView, isPairView, pairColumns, pairLinks, partKeys, oldDocId, leftShape, soloUnit, soloUnits, cutUnit, cutLine, linkedTargets,
     registerNumberHandle, setManualPart, changePart, activePart, isFoldEmpty, foldElsewhere, writtenDocs, composedDocs, toggleKey, liveDoc, isNewDocOpen,
@@ -85,10 +83,10 @@ export default function AssignPage() {
     oldPaneRef, bulk, setBulk, confirmingIdentical,
     setConfirmingIdentical, resetScope, setResetScope, slots, newDraft, draftSlotKey, placeResolved, canPlaceClick, pickedSpotKey,
     setCarvePick, carve, carveText, clearCarve, togglePairViewByButton, pairFrom, setPairFrom, pairSource, isLeftPairPick, isRightPairPick, captionPickBundle, setCaptionPick, selectToc, openNewCtxMenu,
-    openSolo, goToUnit, ctxGroups, confirmBlockKey, refPendingIds, isLinkedToWritten, captionPendingKeys, docDashboard, openCtxMenu, runUnitEdit,
+    openSolo, goToUnit, ctxGroups, refPendingIds, isLinkedToWritten, captionPendingKeys, docDashboard, openCtxMenu, runUnitEdit,
     rewrapTable, unwrapAi, describeEditConfirm, pairGrip, clearNoise, openNoiseReason, splitAtCut, handleOldDoubleClick,
-    runCtx, revertHeadings, planJoinIn, joinIn, renderOldActions, runSave, runClear, confirmIdenticalAll, acceptAll, pickDestination,
-    pickNewSentence, handleNewPick, pickUnlinkableNew, showNewDoc, jump, handleJoinPick, readJoinAfter, pickJoinMenu, handleFramePress, pickPlaceSpot, pickOwnAiLine, jumpToNew, openNewDoc,
+    runCtx, revertHeadings, planJoinIn, joinIn, renderOldActions, confirmIdenticalAll, acceptAll,
+    pressNewBox, renderPickBar, showNewDoc, jump, handleJoinPick, readJoinAfter, pickJoinMenu, handleFramePress, pickPlaceSpot, pickOwnAiLine, jumpToNew, openNewDoc,
     showInNew, jumpToOld, pickTemplateLine, fillTemplateMissing, isOldDrag, finishPairPick, handleOldClick, markRecHover, revealPick,
     setRevealPick, done, renderPlaceLabel, listDestinationEls, error,
   } = state;
@@ -132,52 +130,9 @@ export default function AssignPage() {
     return () => cancelAnimationFrame(frame);
   }, [revealPick, newDocId, composedDoc, written, newModel]);
 
-  // 그 자리 메뉴 - 메뉴를 연 줄이 지금 고른 줄이고 그 줄의 묶음을 받은 뒤에만(받기 전에는 이음을 모른다)
-  const menuItems: LinkMenuItem[] =
-    menu && row && menu.rowKey === row.key && !groupPending
-      ? listLinkMenuItems({
-          picked: draft.destination !== null && (menu.targetId === null || linkIds.includes(menu.targetId)),
-          linked: menu.targetId !== null && savedDestination?.kind === "link" && savedDestination.targetIds.includes(menu.targetId),
-          confirmed: row.status === "confirmed",
-          hasTarget: menu.targetId !== null,
-          canEdit,
-        })
-      : [];
-
-  function runMenu(item: LinkMenuItem) {
-    const targetId = menu?.targetId ?? null;
-    if (item === "close") setMenu(null);
-    else if (item === "confirm") {
-      setMenu(null);
-      runSave("confirm");
-    } else if (item === "cancel") {
-      // 고름을 되돌린다 - 저장된 곳(없으면 빈 고름)으로
-      setDraft({ destination: null, position: null });
-      setMenu(null);
-    } else if (item === "link" && targetId !== null) {
-      // 고른 뒤 같은 메뉴가 확정·취소로 바뀐다
-      if (!pickNewSentence(targetId, false)) setMenu(null);
-    } else if (item === "unlink" && targetId !== null) {
-      const remainder = listUnlinkRemainder(savedDestination?.kind === "link" ? savedDestination.targetIds : [], targetId, writtenMap);
-      // 다른 문장이 남으면 그것만 고른 상태로(확정해야 저장된다), 하나뿐이면 배정을 지운다
-      if (remainder.length > 0) pickDestination({ kind: "link", targetIds: remainder });
-      else {
-        setMenu(null);
-        runClear();
-      }
-    }
-  }
-
-  // 그 자리 메뉴를 New 칸의 문단을 눌러 열었으면 떠 있지 않고 그 문단 상자 안에 단추 줄로 펼친다 - 눈이 누른 문단에 머문다(사용자 결정 2026-11-19).
-  // 추천 카드·Old 조각·끌어 놓은 초안에서 연 메뉴는 그대로 떠 있다
+  // 엮은 문서의 작은 메뉴를 New 칸의 문단을 눌러 열었으면 떠 있지 않고 그 문단 상자 안에 단추 줄로 펼친다 - 눈이 누른 문단에 머문다(사용자 결정 2026-11-19)
   const readInlineTarget = (anchor: HTMLElement): number | null => (anchor.matches('[data-pane="new"] .new-line') ? Number(anchor.dataset.target) : null);
-  const menuLineId = menu && menuItems.length > 0 ? readInlineTarget(menu.anchor) : null;
   const joinLineId = joinMenu && composedDoc ? readInlineTarget(joinMenu.anchor) : null;
-  function renderLinkMenu(inline: boolean): ReactNode {
-    if (!menu || menuItems.length === 0) return null;
-    const unitIds = rowMap.get(menu.rowKey)?.unitIds ?? [];
-    return <LinkMenu key={menu.seq} anchor={menu.anchor} cover={readMenuCover(menu.anchor, unitIds)} offset={menu.offset} lineUnits={unitIds} items={menuItems} isUnsaved={menuItems.includes("cancel")} confirmBlock={confirmBlockKey ? t(confirmBlockKey) : null} busy={busy} onAction={runMenu} onClose={() => setMenu(null)} inline={inline} />;
-  }
   function renderJoinMenu(inline: boolean): ReactNode {
     if (!joinMenu || !composedDoc) return null;
     const sources = composedDoc.sections.flatMap((section) => section.items).find((item) => item.target_id === joinMenu.targetId)?.source_unit_ids ?? [];
@@ -376,17 +331,13 @@ export default function AssignPage() {
   // New 용지에 보여야 할 박스 - 이동해 갈 곳, 누른 추천의 곳, 출처 없는 New의 고른 문장(각주 · 미주면 꼬리말 탭)
   const readNewUnit = (targetId: number | null | undefined) => (targetId == null ? null : (newOverlay.unitOfTarget.get(targetId) ?? null));
   const showUnitIds = [readNewUnit(jump?.side === "new" ? jump.id : null), readNewUnit(revealPick?.destination.kind === "link" ? revealPick.destination.targetIds[0] : null), readNewUnit(focusNew)];
-  const isCellPickable = canEdit && mode === "old" && row !== null;
-  const menuUnitId = menuLineId === null ? null : (newOverlay.unitOfTarget.get(menuLineId) ?? null);
+  const isCellPickable = canEdit;
   const readSourceLabel = (unitId: number) => (unitMap.get(unitId)?.display_id ?? String(unitId)).replace(/^OLD-/, "");
-  /** 이미 쓴 New 문서의 박스를 누름 - 이을 수 있는 박스는 그 New 문장을 누른 것, 그 밖은 까닭을 알리거나 다듬기로 고른다. 칸은 Old 줄을 고른 채일 때만 */
-  function pickNewBox(unitId: number, keys: { additive: boolean }, anchor: HTMLElement, event: MouseEvent) {
-    const box = newOverlay.boxes.get(unitId);
-    const unit = newModel?.units.get(unitId);
-    const why = unit ? readUnlinkableKey(unit, box, newTabs?.tabOf.get(unitId) ?? "body") : null;
-    if (why !== null) pickUnlinkableNew(unitId, t(why));
-    else if (box && (box.kind === "sentence" || isCellPickable)) handleNewPick(box.targetId, keys.additive, anchor, event);
+  /** 이미 쓴 New 문서의 박스를 누름 - 그 박스를 고른다(이을 수 없는 박스도 고르고 단추 줄의 잇기가 까닭을 보인다). 칸도 늘 누를 수 있다 */
+  function pickNewBox(unitId: number, keys: { shiftKey: boolean; additive: boolean }) {
+    pressNewBox(unitId, newOverlay.boxes.get(unitId)?.targetId ?? null, keys.additive, keys.shiftKey);
   }
+
   // 확인이 남은 누락 의심 경고의 문단 - 용지의 그 줄에 표시한다. 위쪽 줄의 목록에서 확인하면(문서 목록을 다시 받아) 사라진다
   const warnBlockIds = new Set(listAckWarnings(docs.data ?? []).flatMap((item) => (item.docId === oldDocId && item.warning.acked_by === null && item.warning.block_id !== null ? [item.warning.block_id] : [])));
   // Shift로 고른 줄, 그리고 짝 고르기에서 모은 문장
@@ -877,7 +828,7 @@ export default function AssignPage() {
                       onCutDrag={canEdit && isNewEdit ? cutLine.drag : undefined}
                       onCutNudge={canEdit && isNewEdit ? cutLine.nudge : undefined}
                       renderAtCut={() => <CutPop busy={busy} onRun={splitAtCut} onCancel={cutLine.clear} testIdPrefix="assign" />}
-                      foot={menuUnitId !== null ? { unitId: menuUnitId, node: renderLinkMenu(true) } : null}
+                      renderUnitActions={(unitId) => renderPickBar("new", unitId)}
                     />
                   )}
                   <LinkLines pairs={listNewAiLinks(linkPairs, newAiFilter, row?.unitIds ?? [])} focusUnits={highlightIds} focusTargets={liveDoc ? new Set([...pickedNew, ...liveDoc.targetIds]) : pickedNew} visible={view.lines} />
@@ -900,7 +851,6 @@ export default function AssignPage() {
         </SideFloat>
       </div>
       {joinLineId === null && renderJoinMenu(false)}
-      {menuUnitId === null && renderLinkMenu(false)}
       {ctxMenu && ctxGroups && (
         <AssignContextMenu
           key={ctxMenu.seq}
