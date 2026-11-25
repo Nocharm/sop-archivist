@@ -270,7 +270,7 @@ await runStep("bundle list", {}, async ({ page, takeShot }) => {
   freshBundleId = Number((await fresh.getAttribute("data-testid")).replace("bundles-row-", ""));
   const listApi = await page.request.get(`${BASE}/api/bundles`, { headers: { "X-Dev-User": "qa.member" } });
   const listed = (await listApi.json()).find((bundle) => bundle.id === halfBundleId);
-  check("half-classified row shows confirmed / total rows", (await getText(page, `bundles-confirmed-${halfBundleId}`)).includes(`/ ${listed.progress.total}`), String(listed.progress.total));
+  check("half-classified row shows decided / total rows", (await getText(page, `bundles-confirmed-${halfBundleId}`)).includes(`/ ${listed.progress.total}`), String(listed.progress.total));
   check("no stage nav outside a bundle", (await page.locator('[data-testid="stage-nav"]').count()) === 0);
   check("synthetic bundles are marked in the list", (await page.locator(`[data-testid="bundles-synthetic-${halfBundleId}"]`).count()) === 1);
   await takeShot("sop-bundle-list.png");

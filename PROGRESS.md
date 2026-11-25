@@ -117,3 +117,7 @@
 ## 2026-11-26 — ⇧J ⇧J · ⇧K ⇧K 합치기 (`feat/assign-merge-keys`)
 
 - 쪼개기 먼저 4c. 무장은 순수 모델 `merge-arm-model`, 실행은 우클릭 메뉴와 같은 길. 검토에서 처리 중인 박스 · 이웃의 막음을 더함. 스모크의 Esc 단계가 3b의 늦은 따라가기 결함을 드러내 `fix/undo-follow-after-click`으로 먼저 고침.
+
+## 2026-11-26 — 진행 숫자를 처분별로 (`fix/progress-by-disposition`)
+
+- 쪼개기 먼저 8의 하나. 세 사본(snapshot · outputs/review · progress-model.ts)을 함께 바꿈 — 검토에서 합성 자료 16벌로 서버와 화면의 1,424값을 맞대 어긋남 0, 검토 조건은 전과 같음. 대시보드의 "묶음 전체" 참조 수가 연 문서 하나만 세던 것도 고침. 큰 문서 판정 시험을 벽시계 대신 읽은 줄 수로.

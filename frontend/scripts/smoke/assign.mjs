@@ -644,9 +644,10 @@ await runStep("assign: the document dashboard counts the Old document and downlo
   await wait(page, "assign-dash");
   await page.locator('[data-testid="assign-dash"]').hover();
   await wait(page, "assign-dash-panel");
-  const [confirmed, total] = ((await getText(page, "assign-dash-confirmed")).match(/\d+/g) ?? []).map(Number);
-  const statusSum = (await page.locator('[data-testid^="assign-dash-status-"]').allInnerTexts()).reduce((sum, text) => sum + Number(text.match(/\d+$/)?.[0] ?? NaN), 0);
-  check("dashboard counts the document's rows by status", total > 0 && statusSum === total && confirmed <= total, `${confirmed}/${total} sum ${statusSum}`);
+  const [decided, total] = ((await getText(page, "assign-dash-confirmed")).match(/\d+/g) ?? []).map(Number);
+  const parts = await page.locator('[data-testid^="assign-dash-status-"]').evaluateAll((els) => els.map((el) => [el.dataset.testid.replace("assign-dash-status-", ""), Number(el.textContent.match(/\d+$/)?.[0] ?? NaN)]));
+  const sumOf = (keys) => parts.reduce((sum, [key, count]) => sum + (keys === null || keys.includes(key) ? count : 0), 0);
+  check("dashboard counts the document's rows by disposition", total > 0 && sumOf(null) === total && sumOf(["assigned", "deleted", "moved"]) === decided, `${decided}/${total} ${JSON.stringify(parts)}`);
   // 상자 안으로 옮겨도 닫히지 않는다
   await page.locator('[data-testid="assign-dash-download-doc"]').hover();
   await page.waitForTimeout(400);

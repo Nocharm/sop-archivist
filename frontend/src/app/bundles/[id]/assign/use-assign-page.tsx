@@ -87,7 +87,8 @@ import { useAssignFocus } from "@/lib/use-assign-focus";
 import { useDelayedFlag } from "@/lib/use-delayed-flag";
 import { useCutLine } from "@/lib/use-cut-line";
 import { pickSheetAnchor, pickSpaceSheet } from "@/lib/space-preview-model";
-import { countRefLookups, isRefPending, pickRefUnit } from "@/lib/ref-model";
+import { buildAssignProgress } from "@/lib/progress-model";
+import { countRefLookups, countRefPending, isRefPending, pickRefUnit } from "@/lib/ref-model";
 import { isDeletedUnit } from "@/lib/deleted-fold-model";
 import { buildNavKeys, buildNoiseBlock, describeNoiseUnit, findNoiseBlock, listNoiseBlocks, readTocNavKey, readUnitNavKey, toTocNavKey, toUnitNavKey } from "@/lib/toc-block-model";
 import { isRestoringLines, readNoiseKey } from "@/lib/noise-keys";
@@ -257,11 +258,6 @@ const NO_RELOAD_KEYS = { tobe: 0, written: 0, identical: 0, split: 0 };
 const NO_SUGGESTIONS: Promise<AiSuggestion[]> = Promise.resolve([]);
 
 const NO_TRANSLATIONS: Promise<OpenTranslation[]> = Promise.resolve([]);
-
-/** 끝낸 Old 줄 수 - 확정만 센다(보류는 아직 끝나지 않았다) */
-function countDone(rows: ClassifyRow[]): number {
-  return rows.filter((row) => row.status === "confirmed").length;
-}
 
 /** 누르는 것만으로는 아무 일도 아닌 글쇠 - 무장한 합치기를 풀지 않는다(⇧J의 Shift) */
 const MODIFIER_KEYS: ReadonlySet<string> = new Set(["Shift", "Control", "Alt", "Meta", "CapsLock"]);
@@ -1610,6 +1606,8 @@ export function useAssignPage() {
     : null;
   const stepBase = shapeLines.length > 0 ? 1 : 0;
   const refPendingIds = (shapeTabs?.order ?? []).filter((id) => isRefPending(shapeModel?.units.get(id)) && (hasSolo || rowOfUnit.has(id)));
+  // 문서 대시보드의 Bundle 전체 칸 - 위쪽 수(지금 연 문서)와 달리 모든 Old 문서를 센다
+  const bundleRefPending = countRefPending(viewList ?? [], rowOfUnit);
   // 캡션이 필요한 표·그림의 줄 - 머리 줄의 Caption needed와 같은 규칙(lib/caption-model). 위쪽 줄에 남은 수, 누르면 다음 줄
   // 캡션이 필요 없는 묶음(이미 쓴 New 문서를 혼자 연 동안의 그 문서 단위, 그 문서에 이은 묶음) - 위쪽 줄 수와 머리 줄이 같은 판단을 쓴다
   const isLinkedToWritten = useMemo(() => makeIsLinkedToWritten(new Set(isSolo ? (soloView?.units.map((unit) => unit.id) ?? []) : []), linkedTargets), [isSolo, soloView, linkedTargets]);
@@ -1619,8 +1617,8 @@ export function useAssignPage() {
   const docDashboard = useMemo(() => {
     if (dashDocId === null || isSolo) return null;
     const codes = new Map<number, string>([...written.map((item): [number, string] => [item.target_doc_id, item.doc_code]), ...(tobeData?.docs ?? []).map((doc): [number, string] => [doc.id, doc.code])]);
-    return buildDocDashboard(rows, dashDocId, unitMap, (id) => codes.get(id) ?? "");
-  }, [dashDocId, isSolo, rows, unitMap, written, tobeData]);
+    return buildDocDashboard(rows, dashDocId, unitMap, (id) => codes.get(id) ?? "", [...(suggestions.data ?? []), ...(matchSuggestions.data ?? [])]);
+  }, [dashDocId, isSolo, rows, unitMap, written, tobeData, suggestions.data, matchSuggestions.data]);
   // 그 줄의 번호에 대한 EQUIS 표시와 새 문장에 쓸 제안 - 참조 카드와 결정 칸의 새 문장이 같은 답을 쓴다. 조회가 도는 동안은 조금 뒤 다시 읽는다
   const rowRefMark = rowRefUnit?.ref ?? null;
   // 묶음 · 후보와 같다 - 처리 중인 일이 그 Unit을 은퇴시켰을 수 있는 동안과 그 문서를 다시 받는 동안은 묻지 않는다(404)
@@ -4566,7 +4564,7 @@ export function useAssignPage() {
 
   // 누른 추천의 자리로 New 칸을 옮긴 뒤 - 그 자리가 그려지면(다른 문서·엮은 문서는 받아 온 뒤) 보이게 하고 번쩍인다. 다른 줄을 고르면 버린다
   const [revealPick, setRevealPick] = useState<{ destination: Destination; rowKey: string | null } | null>(null);
-  const done = countDone(rows);
+  const progress = buildAssignProgress(rows, unitMap);
 
   function renderPlaceLabel(dest: Destination): { title: string; text: string } {
     const option = labelOptions.find((item) => getDestinationId(item.destination) === getDestinationId(dest));
@@ -4618,14 +4616,14 @@ export function useAssignPage() {
     pairFrom, setPairFrom, mergeArm, setRefEntryId, pairSource, captionPickBundle, setCaptionPick, startCaptionPick, selectToc, selectRow, openNewCtxMenu, openSolo, goToUnit, moveRow, hasUnitDraft,
     isFixedCaption, ctxGroups, rowViewUnits, rowSplitUnit, rowSplit, splitBlocked, rowRefUnit, refBlocked, isCaptionGateOn,
     confirmBlockKey, rowCaptionRefs, refCandidates, shapeLines, shapeFirstId, slotPlaces, slotCellTables, shapeMode, headingBack, rewrap, bandBack,
-    stepBase, refPendingIds, isLinkedToWritten, captionPendingKeys, docDashboard, refDetail, refInfo, openCtxMenu, runUnitEdit,
+    stepBase, refPendingIds, bundleRefPending, isLinkedToWritten, captionPendingKeys, docDashboard, refDetail, refInfo, openCtxMenu, runUnitEdit,
     rewrapTable, unwrapAi, describeEditConfirm, pairGrip, clearNoise, openNoiseReason, confirmNoiseReason, closeNoiseReason, noisePick, runCaptionRefChange, switchShapeMode, switchToPair,
     applySplitSuggestion, dismissSplitSuggestion, splitPendingIds, readPendingItem, selectNextSplit, selectNextRef, selectNextCaption,
     splitAtCut, handleOldDoubleClick, runCtx, runUnitAction, revertHeadings, planOldJoin, joinOld, renderOldActions, readReasonNeed,
     runSave, runClear, runUndoStep, confirmIdenticalAll, acceptAll, markNew, placeManage, pickDestination, pickNewSentence, handleNewPick, unlinkCell,
     handleJoinPick, readJoinAfter, pickJoinMenu, pickPlaceSpot, pickOwnAiLine, jumpToNew, openNewDoc, showInNew, jumpToOld,
     pickTemplateLine, fillTemplateMissing, isTemplateDrag, isOldDrag, finishPairPick, handleOldClick, handlePrimary, startEdit,
-    pickRecommendation, handleFramePress, primaryPlan, markRecHover, revealPick, setRevealPick, done, renderPlaceLabel, listDestinationEls,
+    pickRecommendation, handleFramePress, primaryPlan, markRecHover, revealPick, setRevealPick, progress, renderPlaceLabel, listDestinationEls,
     canClear, isRowDeleted, error, figureTab, composedCut, setComposedCutAt, handleComposedDoubleClick, dragComposedCut, splitComposedAtCut, planComposedGap, joinComposed,
   };
 }

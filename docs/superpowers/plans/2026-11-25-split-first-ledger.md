@@ -28,7 +28,7 @@
 | 6-3 | `feat/new-paper-3-tools` | 대기 | | | |
 | 3b+ | `fix/undo-follow-after-click` | 합침 | v1.6.16 · f1cbc921 | vitest 2297 · build 경고 0 · `assign:` 스모크 1240 + 손질 뒤 5단계 | — |
 | 7 | 계획 4의 일곱 | 대기 | | | |
-| 8 | 계획 5의 아홉 | 진행 | | | 앞선 것에 매이지 않는 `space-preview-trim` · `excel-a-strike` · `progress-by-disposition`부터 |
+| 8 | 계획 5의 아홉 | 진행 | … · 6d1792ad | space-preview-trim v1.6.14 · excel-a-strike v1.6.15 · progress-by-disposition v1.6.18 합침 | 남은 여섯: tables-tab · unwrap-continue-numbers · table-follow 1~3 · ai-suggestions-retire |
 
 ## 따라 바뀐 시험 (브랜치 · 파일:줄 · 전 → 뒤 · 까닭)
 
@@ -68,6 +68,10 @@
 - space-preview-trim · `test_sop_paragraph_excel.py` 호출 8곳 시그니처 · `test_contents_lines_in_the_paragraph_excel_are_unchanged` → `…are_left_out_unless_the_check_is_on`(기본에서 목차 줄이 빠짐, `toc=true`는 전과 같음) · F1
 - space-preview-trim · `test_remark_column_…_the_preview_matches_the_file` 파일 행에서 [Figure] 행을 뺀 것과 견줌 · `test_assign_preview_lists_only_…` 위치 칸만 비우고 견줌 · 미리보기가 그림 · Paragraph 글자를 뺌
 - space-preview-trim · `smoke/assign.mjs` 대시보드 · 한 단 문단 시트 단계가 받기 창을 거침(단계 수 같음), 푸터 글 · 창이 생김
+- progress · `test_sop_outputs.py:343 · 812 · 880 · 1270` `total` → `total + figures_total`, `1271` `confirmed` → `+ figures_decided`, `1250` `PROGRESS` 값, `test_sop_e2e.py:198`, `test_sop_front_matter.py:379` 6 → (5, 1), `test_sop_progress.py` 여러 곳 · 그림이 진행 total에서 빠짐(F3)
+- progress · `doc-dashboard-model.test.ts` `status` → `parts` 등, `progress-model.test.ts` 26% · 45 → 82% · 91(S10) · 처분별 셈
+- progress · `smoke/assign.mjs:647` 상태 합 → 처분 합(검사 수 같음), `common.mjs:273` 이름만 · F3
+- progress · `test_sop_front_matter.py:1158` 벽시계 비율 → 읽은 줄 수(네 배에 8배 미만, 기준 그대로) · 부하에서 흔들림
 
 ## 아침에 볼 것 (사람이 정할 것 · 봐 줄 것)
 

@@ -195,7 +195,8 @@ def test_end_to_end_both_entrances(client: TestClient, synthetic: SyntheticBundl
     outputs = run.load_outputs()
     a_rows = outputs["a"]
     assert {row["status"] for row in a_rows} == {"confirmed"}
-    assert summary["old_rows"] == run.get("")["progress"]["total"]
+    progress = run.get("")["progress"]
+    assert summary["old_rows"] == progress["total"] + progress["figures_total"]  # 진행 숫자는 그림을 따로 센다
     assert (summary["no_destination"], summary["duplicate"]) == (0, 1)
     # A 옛 문서 묶음(번호) → 그 묶음의 줄이 보낸 새 문서
     old_groups: dict[int, set[str]] = {row["row_no"]: set() for row in a_rows if row["row_kind"] in ("unit", "table", "cell")}

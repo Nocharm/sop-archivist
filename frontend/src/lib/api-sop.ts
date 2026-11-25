@@ -14,10 +14,25 @@ export type MemberRole = "author" | "reviewer";
 export interface RowProgress {
   total: number;
   unassigned: number;
+  /** 정한 줄 - assigned + deleted + moved */
   confirmed: number;
   on_hold: number;
+  assigned: number;
+  deleted: number;
+  /** 다른 문서로 이동 - 화면에서 뺀 기능이라 옛 기록뿐이다 */
+  moved: number;
+  /** 그림 줄 - 위의 모든 숫자에서 빠지고 여기서만 센다(F3-R3) */
+  figures_total: number;
+  figures_decided: number;
   /** 한 언어만 있는 줄 - 보조 표시, 검토 요청 조건이 아니다 */
   single_language: number;
+}
+
+/** 개요의 남은 손질과 AI 제안 대기 - Assign 위쪽 줄의 표시와 같은 규칙을 묶음 전체로 센다 */
+export interface TidyCounts {
+  refs: number;
+  captions: number;
+  ai_waiting: number;
 }
 
 export interface BundleListItem {
@@ -81,6 +96,7 @@ export interface Bundle {
   my_role: MemberRole | null;
   members: BundleMember[];
   progress: RowProgress;
+  tidy: TidyCounts;
   next_action: NextAction;
   ai_jobs: AiJobCounts;
 }
@@ -89,6 +105,8 @@ export interface Bundle {
 export interface ReadinessIssue {
   code: string;
   count?: number;
+  /** 막는 줄 가운데 그림 - units_*에만, 그림이 있을 때만 */
+  figures?: number;
   missing?: string[];
   [key: string]: unknown;
 }

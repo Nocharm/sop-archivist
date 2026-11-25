@@ -8,6 +8,8 @@ from typing import Protocol
 
 # 줄 상태 순서 — 앞일수록 덜 끝났다. 프런트 classify-model.ts의 STATUS_RANK와 같은 순서여야 한다
 ROW_STATUS_ORDER: tuple[str, ...] = ("unassigned", "ai_suggested", "on_hold", "confirmed")
+# 정한 줄의 처분 순서 — 구성 단위의 처분이 갈리면 앞선 것 하나가 줄의 처분이다(F3). 프런트 progress-model.ts DECIDED_PARTS와 같은 순서
+ROW_DISPOSITION_ORDER: tuple[str, ...] = ("assigned", "delete", "move_external")
 
 
 class CoverUnit(Protocol):
