@@ -1145,10 +1145,11 @@ AI는 제안만 합니다. 사람이 줄마다 확인해 확정하기 전에는 
 | 칸 | 적는 것 |
 |---|---|
 | **Key** | 항목의 이름표. 영문 소문자·숫자·`_`만 쓰고 글자로 시작한다. 점을 찍으면 하위 항목이다(`부모.하위`). 새로 더한 줄에서만 적을 수 있고, 저장한 키는 문서가 가리키고 있어 바꿀 수 없다 |
-| **Title** | 위 칸에 **English title**, 아래 칸에 **Korean title** |
-| **Kind** | **General**(문장을 받고 번호를 센다), **Category table**(문장을 받고 하위 항목은 번호 없는 범주다), **Named sub-items**(문서마다 하위 항목을 선언한다), **Group**(하위 항목만 둔다), **Auto list**(앱이 채운다). 그 아래 **Required** 는 꼭 있어야 하는 항목인지다 |
+| **Title** | **English title**. 저장한 줄은 바로 아래에 키가 작게 보인다(하위 항목은 끝 이름만, 올리면 전체) |
+| **Korean title** | 한글 제목. 칸은 평소 글처럼 보이고 올리거나 누르면 고칠 수 있다 |
+| **Kind** | **General**(문장을 받고 번호를 센다), **Category table**(문장을 받고 하위 항목은 번호 없는 범주다), **Named sub-items**(문서마다 하위 항목을 선언한다), **Group**(하위 항목만 둔다), **Auto list**(앱이 채운다). 옆 칸 **Required** 는 꼭 있어야 하는 항목인지다 |
 | **Default mark** | 그 항목에 놓이는 줄의 기본 번호 표시 |
-| **Sub-items** | **Child prefix**(비우면 하위 번호가 6.1, 6.2처럼 붙고, Appendix처럼 낱말을 적으면 Appendix 1, Appendix 2가 된다)와 **Suggested names**(문서가 하위 항목을 선언할 때 권하는 이름. 쉼표로 나눈다) |
+| **Sub-items** | 쓰는 종류의 줄에서 `Names: 12` 같은 글을 누르면 아래에 칸이 펼쳐진다. **Child prefix**(비우면 하위 번호가 6.1, 6.2처럼 붙고, Appendix처럼 낱말을 적으면 Appendix 1, Appendix 2가 된다)와 **Suggested names**(문서가 하위 항목을 선언할 때 권하는 이름. 쉼표로 나눈다) |
 
 - **Add item** 은 맨 끝에 최상위 항목을 더합니다. 줄 끝의 단추는 차례로 **Add sub-item**(그 항목 아래에 더하기), **Move up** · **Move down**(같은 부모 안에서 한 자리 옮기기. 하위 항목은 부모를 따라간다), **Remove**(하위 항목이 있으면 함께 뺀다)입니다. **General** 과 **Auto list** 항목에는 하위 항목을 둘 수 없습니다.
 - 고친 것은 **Save** 를 눌러야 저장됩니다. **Discard changes** 는 저장하지 않은 것을 모두 버립니다.

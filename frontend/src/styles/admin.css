@@ -10,6 +10,27 @@
   .adm-scope .dl-table .tag, .adm-scope .dcard .tag { border-color: transparent; background: var(--sunken); color: var(--ink-2); }
   .adm-scope .dl-table tbody tr:nth-child(even) .tag { background: var(--hover); }
 
+  /* 왼쪽 메뉴 묶음 제목 */
+  .adm-nav-group { padding: 12px 10px 4px; font-size: var(--fs-micro); line-height: var(--lh-micro); font-weight: 600; color: var(--ink-3); }
+  .side-nav > [role="presentation"]:first-child .adm-nav-group { padding-top: 0; }
+
+  /* 표준 골격 - 편집 칸은 평소 글처럼 보이고 올리거나 초점이 가면 테두리(크기가 같아 움직이지 않는다) */
+  .adm-outline td { height: 56px; padding: 4px 12px; vertical-align: middle; }
+  .adm-outline th { padding: 8px 12px; background: transparent; font-size: var(--fs-cap); font-weight: 500; color: var(--ink-3); }
+  .adm-quiet { width: 100%; min-width: 0; height: 28px; padding: 0 6px; margin-left: -6px; border: 1px solid transparent; border-radius: var(--r-1); background: transparent; color: var(--ink); font-size: var(--fs-ui); text-overflow: ellipsis; }
+  .adm-quiet.strong { font-weight: 600; }
+  .adm-quiet.mono { height: 22px; font-family: var(--font-mono); font-size: var(--fs-cap); }
+  .adm-quiet:hover:not(:disabled) { border-color: var(--line-2); background: var(--surface); }
+  .adm-quiet:focus, .adm-quiet.shown { border-color: var(--accent); outline: none; background: var(--surface); }
+  .adm-quiet:focus { box-shadow: 0 0 0 1px var(--accent); }
+  .adm-outline-key { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono); font-size: var(--fs-cap); line-height: var(--lh-cap); color: var(--ink-3); }
+  .adm-outline td:first-child { white-space: nowrap; }
+  .adm-outline-sub td { height: auto; padding-top: 0; border-top: 0; }
+  .adm-outline tr[data-open] > td { border-bottom-color: transparent; }
+  .adm-outline-children { display: flex; flex-wrap: wrap; gap: 12px; padding-bottom: 8px; }
+  .adm-outline-field { display: grid; gap: 2px; width: 200px; }
+  .adm-outline-field.wide { flex: 1; min-width: 280px; }
+
   .adm-split { display: grid; grid-template-columns: minmax(280px, 1fr) minmax(0, 2fr); gap: 20px; align-items: start; }
   @media (max-width: 1023px) { .adm-split { grid-template-columns: minmax(0, 1fr); } }
   .adm-master { display: grid; gap: 8px; min-width: 0; }

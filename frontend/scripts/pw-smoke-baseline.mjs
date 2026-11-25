@@ -678,6 +678,17 @@ await runStep("admin outline as dev.admin", { devUser: "dev.admin" }, async ({ p
   check("the outline lists numbered items from 1", numbers.length > 0 && numbers[0] === "1", numbers.join(" "));
   const save = page.locator('[data-testid="admin-outline-save"]');
   check("Save is off until something changes", await save.isDisabled());
+  // 한 줄 56px 안 - 키는 영문 제목 아래 한 줄, 하위 항목 칸은 눌러 펼친다
+  const rowHeights = await page.locator('[data-testid="admin-outline-table"] tbody > tr').evaluateAll((rows) => rows.map((row) => Math.round(row.getBoundingClientRect().height)));
+  check("every outline row fits one line", Math.max(...rowHeights) <= 58, rowHeights.join(" "));
+  const namesButton = page.locator('[data-testid^="admin-outline-row-"][data-testid$="-children"]').first();
+  await namesButton.click();
+  const subRow = page.locator('[data-testid$="-children-row"]').first();
+  await subRow.waitFor({ state: "visible", timeout: T });
+  check("sub-item fields unfold under the row", (await subRow.locator("input").count()) >= 1 && (await namesButton.getAttribute("aria-expanded")) === "true");
+  await namesButton.click();
+  await subRow.waitFor({ state: "detached", timeout: T });
+  check("the menu is grouped", (await countById(page, "admin-nav-people")) === 1 && (await countById(page, "admin-nav-ops")) === 1 && (await countById(page, "admin-nav-standard")) === 1);
   const firstRow = page.locator('[data-testid^="admin-outline-row-"][data-testid$="-title-en"]').first();
   const original = await firstRow.inputValue();
   const isOutlinePut = (response) => response.url().includes("/api/admin/outline") && response.request().method() === "PUT";
