@@ -29,7 +29,7 @@ from app.sop.models import (
 )
 from app.sop.segment import RULE_PARAGRAPH, has_unstorable_char
 from app.sop.tobe import add_match_doc, check_match_doc, ensure_code_free, find_attachable_doc, temp_match_code
-from app.sop.units import create_initial_units
+from app.sop.units import LINE_SPLIT_FORMAT, create_initial_units
 
 logger = logging.getLogger(__name__)
 
@@ -129,8 +129,10 @@ async def ingest_upload(
     )
     # 언어 배치는 Unit을 만들기 전에 정한다(배치가 Unit 언어를 가른다) — 사람은 문서 목록에서 바꿀 수 있다
     if outcome.result is not None:
-        document.language_layout = detect_language_layout(
-            outcome.result.blocks, has_language_halves=outcome.result.has_language_halves
+        # 규칙 2는 문단을 쪼개 재므로 200만 자 문서에 시간이 든다 — 이벤트 루프 밖에서
+        document.language_layout = await asyncio.to_thread(
+            detect_language_layout, outcome.result.blocks, has_language_halves=outcome.result.has_language_halves,
+            rule=NEW_SPLIT_RULE, split_lines=file_format == LINE_SPLIT_FORMAT,
         )
     session.add(document)
     try:

@@ -24,7 +24,6 @@ GOLDEN_DIR = Path(__file__).parent / "split_golden"
 SIDES = ("old", "new")
 # 규칙 → 아직 못 맞는 것. "G01-old" 꼴은 정답 시험, "G11"처럼 쪽이 없는 것은 Old · New가 같은지 보는 시험이다
 PENDING: dict[str, frozenset[str]] = {
-    "R2": frozenset(f"{key}-{side}" for key in ("G03", "G19") for side in SIDES),
     "R3": frozenset(f"{key}-{side}" for key in ("G14", "G15", "G16") for side in SIDES),
     "R4": frozenset({"G11-new", "G13-new", "G11", "G13"}),
 }
