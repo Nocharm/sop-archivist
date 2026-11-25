@@ -50,7 +50,7 @@ const STYLE_LABEL_KEYS: Record<NumberStyle, string> = {
   note: "outputs.markNote",
 };
 
-// 고르는 칸의 폭(px) - 열 폭(아래 colgroup)에서 칸 좌우 여백 20px를 뺀 값
+// 고르는 칸의 폭(px) - 열 폭(아래 colgroup)에서 칸 좌우 여백을 뺀 값
 const KIND_SELECT_WIDTH = 136;
 const STYLE_SELECT_WIDTH = 108;
 
@@ -92,10 +92,17 @@ interface OutlineRowViewProps {
 function OutlineRowView({ row, number, problem, canMoveUp, canMoveDown, withChildren, busy, onEdit, onAddChild, onMove, onRemove }: OutlineRowViewProps) {
   const { t } = useI18n();
   const id = `admin-outline-row-${row.rowId}`;
+  // 하위 항목 칸은 그 종류가 쓸 때만(머리말은 이름 붙인 하위 절, 권장 이름은 그것과 범주 표). 값이 남아 있으면 종류와 상관없이 보여 숨은 값이 저장되지 않게 한다
+  const hasPrefix = row.kind === "named_children" || row.child_prefix !== "";
+  const hasSuggestions = row.kind === "named_children" || row.kind === "category_table" || row.suggestions !== "";
+  const canExpand = hasPrefix || hasSuggestions;
+  const [open, setOpen] = useState(false);
+  const isOpen = canExpand && open;
+  const names = row.suggestions.split(",").filter((name) => name.trim() !== "").length;
   return (
-    <tr data-testid={id}>
-      <td>
-        <span className="flex h-8 items-center">
+    <>
+      <tr data-testid={id} data-open={isOpen ? "" : undefined}>
+        <td>
           {problem !== null ? (
             <Tooltip label={problem} align="start">
               <span className="inline-flex text-danger" tabIndex={0} role="img" aria-label={problem} data-testid={`${id}-problem`}>
@@ -107,57 +114,54 @@ function OutlineRowView({ row, number, problem, canMoveUp, canMoveDown, withChil
               {number ?? "–"}
             </span>
           )}
-        </span>
-      </td>
-      <td>
-        {row.isNew ? (
-          <input
-            className={`${INPUT_CELL} font-mono`}
-            // 새 줄은 표 끝이나 하위 끝에 생긴다 - 키 칸에 초점을 줘 그 줄이 화면에 들어오게 한다
-            autoFocus
-            value={row.key}
-            maxLength={KEY_MAX}
-            placeholder={t("outline.keyPlaceholder")}
-            aria-label={t("outline.colKey")}
-            spellCheck={false}
-            autoCapitalize="off"
+        </td>
+        <td>
+          <div className="adm-two">
+            <input className="adm-quiet strong" value={row.title_en} maxLength={TITLE_MAX} placeholder={t("outline.titleEn")} aria-label={t("outline.titleEn")} disabled={busy} data-testid={`${id}-title-en`} onChange={(event) => onEdit({ title_en: event.target.value })} />
+            {row.isNew ? (
+              <input
+                className="adm-quiet mono shown"
+                // 새 줄은 표 끝이나 하위 끝에 생긴다 - 키 칸에 초점을 줘 그 줄이 화면에 들어오게 한다
+                autoFocus
+                value={row.key}
+                maxLength={KEY_MAX}
+                placeholder={t("outline.keyPlaceholder")}
+                aria-label={t("outline.colKey")}
+                spellCheck={false}
+                autoCapitalize="off"
+                disabled={busy}
+                data-testid={`${id}-key`}
+                onChange={(event) => onEdit({ key: event.target.value })}
+              />
+            ) : (
+              <Tooltip label={row.key} align="start" shrinks>
+                {/* 하위 항목의 긴 키는 끝 이름만 - 전체는 툴팁(번호가 부모를 말해 준다) */}
+                <span className="adm-outline-key" tabIndex={0} data-testid={`${id}-key`} aria-label={row.key}>
+                  {row.key.includes(".") ? `….${row.key.split(".").pop() ?? ""}` : row.key}
+                </span>
+              </Tooltip>
+            )}
+          </div>
+        </td>
+        <td>
+          <input className="adm-quiet" lang="ko" value={row.title_ko} maxLength={TITLE_MAX} placeholder={t("outline.titleKo")} aria-label={t("outline.titleKo")} disabled={busy} data-testid={`${id}-title-ko`} onChange={(event) => onEdit({ title_ko: event.target.value })} />
+        </td>
+        <td>
+          <Select
+            testId={`${id}-kind`}
+            ariaLabel={t("outline.colKind")}
+            size="sm"
+            width={KIND_SELECT_WIDTH}
+            value={row.kind}
             disabled={busy}
-            data-testid={`${id}-key`}
-            onChange={(event) => onEdit({ key: event.target.value })}
+            options={OUTLINE_KINDS.map((kind) => ({ value: kind, label: t(`outline.kind.${kind}`) }))}
+            onChange={(kind) => onEdit({ kind })}
           />
-        ) : (
-          <span className="block py-1.5 font-mono text-xs leading-5 text-ink-2 [overflow-wrap:anywhere]" data-testid={`${id}-key`}>
-            {row.key}
-          </span>
-        )}
-      </td>
-      <td>
-        <div className="grid grid-cols-[minmax(0,1fr)] gap-1">
-          <input className={INPUT_CELL} value={row.title_en} maxLength={TITLE_MAX} placeholder={t("outline.titleEn")} aria-label={t("outline.titleEn")} disabled={busy} data-testid={`${id}-title-en`} onChange={(event) => onEdit({ title_en: event.target.value })} />
-          <input className={INPUT_CELL} lang="ko" value={row.title_ko} maxLength={TITLE_MAX} placeholder={t("outline.titleKo")} aria-label={t("outline.titleKo")} disabled={busy} data-testid={`${id}-title-ko`} onChange={(event) => onEdit({ title_ko: event.target.value })} />
-        </div>
-      </td>
-      <td>
-        <div className="grid gap-1">
-          <span className="flex h-8 items-center">
-            <Select
-              testId={`${id}-kind`}
-              ariaLabel={t("outline.colKind")}
-              size="sm"
-              width={KIND_SELECT_WIDTH}
-              value={row.kind}
-              disabled={busy}
-              options={OUTLINE_KINDS.map((kind) => ({ value: kind, label: t(`outline.kind.${kind}`) }))}
-              onChange={(kind) => onEdit({ kind })}
-            />
-          </span>
-          <span className="flex h-8 items-center">
-            <Checkbox testId={`${id}-required`} label={t("outline.colRequired")} checked={row.is_required} disabled={busy} onChange={(next) => onEdit({ is_required: next })} />
-          </span>
-        </div>
-      </td>
-      <td>
-        <span className="flex h-8 items-center">
+        </td>
+        <td>
+          <Checkbox testId={`${id}-required`} ariaLabel={t("outline.colRequired")} checked={row.is_required} disabled={busy} onChange={(next) => onEdit({ is_required: next })} />
+        </td>
+        <td>
           <Select
             testId={`${id}-style`}
             ariaLabel={t("outline.colStyle")}
@@ -168,30 +172,49 @@ function OutlineRowView({ row, number, problem, canMoveUp, canMoveDown, withChil
             options={NUMBER_STYLES.map((style) => ({ value: style, label: t(STYLE_LABEL_KEYS[style]) }))}
             onChange={(style) => onEdit({ default_style: style })}
           />
-        </span>
-      </td>
-      <td>
-        <div className="grid grid-cols-[minmax(0,1fr)] gap-1">
-          {/* 하위 항목 칸은 그 종류가 쓸 때만 보인다(머리말은 이름 붙인 하위 절, 권장 이름은 그것과 범주 표). 값이 남아 있으면 종류와 상관없이 보여 숨은 값이 저장되지 않게 한다 */}
-          {(row.kind === "named_children" || row.child_prefix !== "") && (
-            <input className={INPUT_CELL} value={row.child_prefix} maxLength={CHILD_PREFIX_MAX} placeholder={t("outline.colChildPrefix")} aria-label={t("outline.colChildPrefix")} disabled={busy} data-testid={`${id}-child-prefix`} onChange={(event) => onEdit({ child_prefix: event.target.value })} />
+        </td>
+        <td>
+          {canExpand ? (
+            <button type="button" className="adm-link" aria-expanded={isOpen} data-testid={`${id}-children`} onClick={() => setOpen((prev) => !prev)}>
+              {t("outline.childrenSummary", { count: names })}
+            </button>
+          ) : (
+            <span className="adm-t2">–</span>
           )}
-          {(row.kind === "named_children" || row.kind === "category_table" || row.suggestions !== "") && (
-            <input className={INPUT_CELL} value={row.suggestions} placeholder={t("outline.suggestionsPlaceholder")} aria-label={t("outline.colSuggestions")} disabled={busy} data-testid={`${id}-suggestions`} onChange={(event) => onEdit({ suggestions: event.target.value })} />
-          )}
-        </div>
-      </td>
-      {/* 좁은 창에서 표가 옆으로 밀려도(틀 안 가로 스크롤) 줄 끝 단추는 오른쪽에 붙어 늘 닿는다 */}
-      <td className="sticky right-0 bg-[var(--surface)]">
-        {/* 줄 끝 단추는 늘 제자리에 흐리게 있고 줄에 올리거나 초점이 가면 또렷해진다 */}
-        <span className="row-actions-quiet flex h-8 items-center justify-end gap-0.5">
-          <RowAction icon={CornerDownRight} label={t("outline.addChild")} testId={`${id}-add-child`} disabled={busy || !canAddChild(row)} onClick={onAddChild} />
-          <RowAction icon={ArrowUp} label={t("outline.moveUp")} testId={`${id}-up`} disabled={busy || !canMoveUp} onClick={() => onMove(-1)} />
-          <RowAction icon={ArrowDown} label={t("outline.moveDown")} testId={`${id}-down`} disabled={busy || !canMoveDown} onClick={() => onMove(1)} />
-          <RowAction icon={Trash2} label={t(withChildren ? "outline.removeWithChildren" : "outline.remove")} testId={`${id}-remove`} disabled={busy} danger onClick={onRemove} />
-        </span>
-      </td>
-    </tr>
+        </td>
+        {/* 좁은 창에서 표가 옆으로 밀려도(틀 안 가로 스크롤) 줄 끝 단추는 오른쪽에 붙어 늘 닿는다 */}
+        <td className="sticky right-0 bg-[var(--surface)]">
+          {/* 줄 끝 단추는 늘 제자리에 흐리게 있고 줄에 올리거나 초점이 가면 또렷해진다 */}
+          <span className="row-actions-quiet flex h-8 items-center justify-end gap-0.5">
+            <RowAction icon={CornerDownRight} label={t("outline.addChild")} testId={`${id}-add-child`} disabled={busy || !canAddChild(row)} onClick={onAddChild} />
+            <RowAction icon={ArrowUp} label={t("outline.moveUp")} testId={`${id}-up`} disabled={busy || !canMoveUp} onClick={() => onMove(-1)} />
+            <RowAction icon={ArrowDown} label={t("outline.moveDown")} testId={`${id}-down`} disabled={busy || !canMoveDown} onClick={() => onMove(1)} />
+            <RowAction icon={Trash2} label={t(withChildren ? "outline.removeWithChildren" : "outline.remove")} testId={`${id}-remove`} disabled={busy} danger onClick={onRemove} />
+          </span>
+        </td>
+      </tr>
+      {isOpen && (
+        <tr className="adm-outline-sub" data-testid={`${id}-children-row`}>
+          <td />
+          <td colSpan={7}>
+            <div className="adm-outline-children">
+              {hasPrefix && (
+                <label className="adm-outline-field">
+                  <span className="adm-t2">{t("outline.colChildPrefix")}</span>
+                  <input className={INPUT_CELL} value={row.child_prefix} maxLength={CHILD_PREFIX_MAX} placeholder={t("outline.colChildPrefix")} disabled={busy} data-testid={`${id}-child-prefix`} onChange={(event) => onEdit({ child_prefix: event.target.value })} />
+                </label>
+              )}
+              {hasSuggestions && (
+                <label className="adm-outline-field wide">
+                  <span className="adm-t2">{t("outline.colSuggestions")}</span>
+                  <input className={INPUT_CELL} value={row.suggestions} placeholder={t("outline.suggestionsPlaceholder")} disabled={busy} data-testid={`${id}-suggestions`} onChange={(event) => onEdit({ suggestions: event.target.value })} />
+                </label>
+              )}
+            </div>
+          </td>
+        </tr>
+      )}
+    </>
   );
 }
 
@@ -265,32 +288,34 @@ export function OutlinePanel() {
         </p>
       )}
       <div className="dlist-frame">
-        <table className="dtable min-w-[900px] table-fixed" data-testid="admin-outline-table">
+        <table className="dtable adm-outline min-w-[1040px] table-fixed" data-testid="admin-outline-table">
           <colgroup>
-            <col className="w-[56px]" />
-            <col className="w-[170px]" />
+            <col className="w-[72px]" />
             <col />
-            <col className="w-[156px]" />
-            <col className="w-[128px]" />
             <col />
-            <col className="w-[124px]" />
+            <col className="w-[164px]" />
+            <col className="w-[88px]" />
+            <col className="w-[136px]" />
+            <col className="w-[120px]" />
+            <col className="w-[132px]" />
           </colgroup>
           <thead>
             <tr>
               <th>{t("outline.colNumber")}</th>
               <th>
                 <span className="inline-flex items-center gap-1">
-                  {t("outline.colKey")}
+                  {t("outline.colTitle")}
                   <InfoTip text={t("outline.keyInfo")} testId="admin-outline-key-info" />
                 </span>
               </th>
-              <th>{t("outline.colTitle")}</th>
+              <th>{t("outline.titleKo")}</th>
               <th>
                 <span className="inline-flex items-center gap-1">
                   {t("outline.colKind")}
                   <InfoTip text={t("outline.kindInfo")} testId="admin-outline-kind-info" />
                 </span>
               </th>
+              <th>{t("outline.colRequired")}</th>
               <th>{t("outline.colStyle")}</th>
               <th>
                 <span className="inline-flex items-center gap-1">
