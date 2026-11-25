@@ -2653,6 +2653,7 @@ export function useAssignPage() {
   function fillTemplateMissing(source: ComposedItem) {
     const unitId = source.source_unit_ids[0];
     if (unitId === undefined || newDocId === null) return;
+    unfoldSide();
     jumpToOld(unitId, source.target_id, { docId: newDocId, quiet: true });
     setFillOtherSeq((seq) => seq + 1);
   }
@@ -3366,8 +3367,14 @@ export function useAssignPage() {
   // 그림 탭 카드 - 지우기는 Old 문서의 줄에만(한 단으로 연 New 문서는 줄이 없다)
   const figureTab = canEdit && !isSolo ? { onDelete: deleteFigure } : undefined;
 
+  /** 떼어 접어 둔 오른쪽 칸을 편다 - 그 안의 칸 · 단추로 이어지는 글쇠를 눌렀을 때(안 보이는 채 시작하지 않게) */
+  function unfoldSide() {
+    if (view.sideFloat && view.sideFolded) changeView({ sideFolded: false });
+  }
+
   function handlePrimary() {
     if (!destination) {
+      unfoldSide();
       // 고른 곳이 없으면 ↵는 바로 위 목록의 첫 후보(추천이 없으면 첫 묶음 제목)로 간다
       (document.querySelector<HTMLElement>(".assign-pick .dest-card") ?? document.querySelector<HTMLElement>(".assign-pick .dest-acc-head"))?.focus();
       return;
@@ -3384,6 +3391,7 @@ export function useAssignPage() {
 
   function startEdit() {
     if (!destination || destination.kind !== "slot" && destination.kind !== "step") return;
+    unfoldSide();
     setDraft({}, true);
     requestAnimationFrame(() => firstTextRef.current?.focus());
   }

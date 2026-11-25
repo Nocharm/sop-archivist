@@ -7,10 +7,10 @@
 | # | 브랜치 | 상태 | 버전 · 커밋 | 게이트(pytest · vitest · build · 스모크) | 남은 것 · 물음 |
 |---|---|---|---|---|---|
 | 0 | `fix/new-edit-undo` | 합침 | v1.6.1 · f363167e | pytest 3244 + 시드 13 통과 · ruff · 스모크 1단계(화면 변경 없음) | 결과물 C의 칸 안 문장 순서는 id 순 그대로(계획 밖) |
-| 1a | `feat/hide-drafting` | 대기 | | | |
+| 1a | `feat/hide-drafting` | 진행(11-26) | | | |
 | 1b | `fix/remove-bundle-move` | 대기 | | | |
 | 2a | `fix/pair-spot-scroll` | 합침 | v1.6.0 · 7a863a50 | vitest 1927 · build 경고 0 · 스모크 3단계 통과(pytest 해당 없음) | 스모크는 단추 자리가 바뀐 감사(겹침)를 정식 업데이트 전에 |
-| 2b | `feat/inspector-float` | 진행(11-26) | | | |
+| 2b | `feat/inspector-float` | 합침 | v1.6.2 · aec15ead | vitest 1934 · build 경고 0 · `assign:` 스모크 전체 1117 통과 · 겹침 감사 장면 1120/1280/1440 | 판을 맨 위로 끌면 상단 바를 덮음(다시 끌어 내릴 수 있음), 접어도 칸 끝 빈 칸은 남음 — 거슬리면 고침 |
 | 3a | `perf/assign-measure` | 대기 | | | |
 | 3b | `fix/assign-command-queue` | 대기 | | | |
 | 3c | `fix/assign-instant-motion` | 대기 | | | |
@@ -34,6 +34,7 @@
 - 2a · `frontend/scripts/smoke/assign.mjs` counterpart 단계의 창 폭 목록 · `[1248, 1680]` → `[1248, 1680, 1920]` · 1680에서는 판이 덮는 모양이 되어 비켜서는 모양을 1920에서 본다
 - 2a · 같은 단계 `isAside` · `pane >= 1000` → `pane - 용지 폭 - 12 >= 420` · 판 모양의 기준이 용지 옆 남는 자리로 바뀜
 - 2a · 같은 단계 스크린샷 조건 · `width !== 기본` → `width === 1680` · 창이 셋이 되어 같은 파일을 덮지 않게(그림은 그대로 1680)
+- 2b · `frontend/src/lib/assign-view-prefs.test.ts` 네 곳의 객체 전체 비교 · 같은 값 → 같은 값 + `...SIDE_DEFAULTS` · 새 설정 네 필드가 생김(단계 수 그대로)
 
 ## 아침에 볼 것 (사람이 정할 것 · 봐 줄 것)
 
