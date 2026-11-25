@@ -173,7 +173,7 @@ export function SpacePreview({ bundleId, sheet: sheetKind, enabled, docId, docCo
     }
   }
 
-  const dialog = isAsking ? <ParagraphDownloadDialog busy={downloading} onConfirm={(include) => void handleDownload(include)} onClose={() => setIsAsking(false)} /> : null;
+  const dialog = isAsking && docId !== null ? <ParagraphDownloadDialog busy={downloading} onConfirm={(include) => void handleDownload(include)} onClose={() => setIsAsking(false)} /> : null;
 
   if (!isOpen) {
     // 처음 몇 번만 - 설명서에는 늘 있다

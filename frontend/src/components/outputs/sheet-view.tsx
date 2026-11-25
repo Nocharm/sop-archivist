@@ -18,6 +18,7 @@ import {
   getRowMark,
   listBandTones,
   listSheetItems,
+  PARAGRAPH_TEXT_COLUMN,
   listShownItems,
   readDraftText,
   spanCells,
@@ -109,7 +110,7 @@ function SheetRowView({ row, cells, rowNumber, columnCount, columnKeys, bandTone
         return (
           <td key={column} colSpan={span > 1 ? span : undefined} data-head={cell.head ? "" : undefined} data-band={bandTones?.[column] ?? undefined} style={getCellStyle(cell, row)}>
             {renderCellText(cell, readDraftText(draft, key))}
-            {key === "location" && toc?.locationSuffix && <span className="sv-toc-toggle"> {toc.locationSuffix}</span>}
+            {(key === "location" || (columnKeys.length === 0 && column === PARAGRAPH_TEXT_COLUMN)) && toc?.locationSuffix && <span className="sv-toc-toggle"> {toc.locationSuffix}</span>}
             {key === "status" && pendingLabel && <span className="sv-pending">{pendingLabel}</span>}
           </td>
         );

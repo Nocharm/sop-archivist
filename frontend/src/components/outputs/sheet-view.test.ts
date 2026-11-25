@@ -135,6 +135,8 @@ describe("SheetView", () => {
     const folded = host.querySelector<HTMLElement>('[data-testid="export-preview-toc-1"]');
     expect(Array.from(folded?.querySelectorAll("td") ?? []).map((td) => td.textContent)).toEqual(["", "▸ Table of contents · 2 lines", "KO"]);
     expect(host.querySelectorAll('[data-testid="export-preview-body"] tr')).toHaveLength(2);
+    act(() => folded?.click());
+    expect(host.querySelector('[data-testid="export-preview-toc-1"] td:nth-child(2)')?.textContent).toContain("▾ Collapse");
   });
 
   it("names each folded run of automatically deleted rows", () => {
