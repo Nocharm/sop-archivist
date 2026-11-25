@@ -4502,6 +4502,71 @@ await runStep("assign: keys pressed during a slow save are kept in order", { all
   check("the document is clean again", (await readDeleted()).length === 0);
 });
 
+// 고름은 처리 중에도 그대로(설계 2026-11-25-split-first 6-1, 명세 A1) - Del → Ctrl+Z 뒤 다시 받는 사이에 누른 줄을 되돌리기의 늦은 따라가기가 덮지 않는다.
+// 전에는 지금 고른 줄(Del이 옮겨 간 줄)을 누르면 1.5초 안에 되돌린 줄로 튀었다. 아무것도 누르지 않으면 되돌린 줄을 고른다
+await runStep("assign: a row clicked while Undo reloads stays picked", {}, async ({ page }) => {
+  const api = `${BASE}/api/bundles/${freshBundleId}`;
+  const headers = { "X-Dev-User": "qa.member" };
+  const getJson = async (path) => (await page.request.get(`${api}${path}`, { headers })).json();
+  const isSave = (response) => /\/api\/bundles\/\d+\/groups\/save$/.test(response.url()) && response.request().method() === "POST";
+  // 되돌리기 뒤 다시 받는 보기 · 줄 - 늦춰서 누름이 반드시 그 사이에 든다
+  const isReload = (url) => /\/api\/bundles\/\d+\/(documents\/\d+\/view|units)$/.test(url.pathname);
+  let doc = null;
+  let ids = [];
+  for (const candidate of (await getJson("/documents")).filter((item) => item.side === "old" && item.status === "ready")) {
+    const view = await getJson(`/documents/${candidate.id}/view`);
+    const body = new Set(view.blocks.filter((block) => block.part === "body").map((block) => block.id));
+    const boxes = view.units.filter((item) => item.group_unit_id === null && !item.noise_kind && body.has(item.block_id)).sort((a, b) => a.pos_seq - b.pos_seq || (a.spans[0]?.[1] ?? 0) - (b.spans[0]?.[1] ?? 0));
+    if (boxes.length < 6 || !boxes.slice(0, 6).every((item) => ["sentence", "heading"].includes(item.kind) && item.pair_id === null && item.status === "unassigned")) continue;
+    doc = candidate;
+    ids = boxes.map((item) => item.id);
+    break;
+  }
+  check("the fresh bundle has a document that starts with six plain unassigned boxes", doc !== null);
+  if (doc === null) return;
+  const stripOf = (unitId) => page.locator(`.strip[data-testid="assign-paper-piece-${unitId}"]`);
+  const isPicked = (unitId) => page.evaluate((id) => document.querySelector(`.strip[data-testid="assign-paper-piece-${id}"]`)?.hasAttribute("data-sel") ?? false, unitId);
+  const reset = async () => page.request.post(`${api}/decisions/reset`, { headers, data: { revision: (await getJson("")).revision, document_id: doc.id } });
+  /** 첫 박스를 Del로 지우고 Ctrl+Z - 응답이 오면 click을 부르고(다시 받기는 늦춰 둔다) 2초 뒤 고른 박스들을 돌려준다 */
+  const deleteThenUndo = async (click) => {
+    await reset();
+    await page.goto(`${BASE}/bundles/${freshBundleId}/assign`);
+    await wait(page, "assign-bar");
+    await page.locator('[data-testid="assign-old-doc"]').click();
+    await page.locator(`[data-testid="assign-old-doc-option-${doc.id}"]`).click();
+    await stripOf(ids[0]).click();
+    await stripOf(ids[0]).and(page.locator("[data-sel]")).waitFor({ timeout: T });
+    await page.waitForLoadState("networkidle");
+    const saved = page.waitForResponse(isSave, { timeout: T });
+    await page.keyboard.press("Delete");
+    await saved;
+    await stripOf(ids[1]).and(page.locator("[data-sel]")).waitFor({ timeout: T });
+    await page.waitForLoadState("networkidle");
+    await page.route(isReload, async (route) => {
+      await new Promise((done) => setTimeout(done, 1000));
+      await route.continue();
+    });
+    const undone = page.waitForResponse((response) => response.url().includes("/decisions/undo"), { timeout: T });
+    await page.keyboard.press("ControlOrMeta+z");
+    check("Undo answers", (await undone).ok());
+    await click();
+    await page.waitForTimeout(2000);
+    await page.unrouteAll({ behavior: "wait" });
+    return Promise.all(ids.slice(0, 5).map(isPicked));
+  };
+  // 1. Del이 옮겨 간 줄(지금 고른 줄)을 다시 누름 - 전에 튀던 경우
+  const again = await deleteThenUndo(() => stripOf(ids[1]).click());
+  check("clicking the row the pick moved to keeps it picked 2s later", again[1] && !again[0], JSON.stringify(again));
+  // 2. 다른 줄을 누름
+  const other = await deleteThenUndo(() => stripOf(ids[4]).click());
+  check("clicking another row keeps that row picked 2s later", other[4] && !other[0], JSON.stringify(other));
+  // 3. 아무것도 누르지 않음 - 되돌린 줄을 고른다
+  const none = await deleteThenUndo(async () => undefined);
+  check("without a click Undo picks the undone row", none[0], JSON.stringify(none));
+  await reset();
+  check("the document is clean again", (await getJson(`/units?limit=1000&offset=0&document_id=${doc.id}`)).items.every((item) => !(item.status === "confirmed" && item.decision.disposition === "delete")));
+});
+
 // 움직임은 누른 순간 시작한다(Assign 피드백 2차 A2-R6, 설계 2026-11-25-split-first 6-1) - 삭제 접기 · 표 벗기기의 걷기 · 번호 새 글이 응답 전에 보이고, 거절되면 원래대로.
 // 끝에 모두 되돌려 시드 묶음을 처음 그대로 둔다
 await runStep("assign: deletion folds and unwrap start before the response, a refused edit rolls back", { allowConsoleErrors: true }, async ({ page, takeShot }) => {
@@ -9180,6 +9245,153 @@ await runStep("assign: drag a box onto its same-language neighbour to merge, eve
   const afterUndo = await readView();
   check("a and b are back with their own ids", isActive(afterUndo, a.id) && isActive(afterUndo, b.id));
   await page.waitForLoadState("networkidle");
+});
+
+// ⇧J ⇧J · ⇧K ⇧K 합치기(J1) - 첫 누름은 저장 없이 두 박스 점선 + 안내 띠, 같은 글쇠를 한 번 더 누르면 합친다. 다른 글쇠 · Esc는 무장만 거둔다. 끝나면 시드 그대로다
+await runStep("assign: merge keys - Shift+J twice merges with the box below, Shift+K twice with the box above, J and Esc only disarm", { allowConsoleErrors: true }, async ({ page }) => {
+  const headers = { "X-Dev-User": "qa.member" };
+  const api = `${BASE}/api/bundles/${halfBundleId}`;
+  const getJson = async (path) => (await page.request.get(`${api}${path}`, { headers })).json();
+  const sourceOrder = (one, two) => one.pos_seq - two.pos_seq || (one.spans[0]?.[1] ?? 0) - (two.spans[0]?.[1] ?? 0) || one.id - two.id;
+  const isFree = (unit) => unit.kind === "sentence" && !unit.noise_kind && (unit.status === null || unit.status === "unassigned");
+  let found = null;
+  for (const item of (await getJson("/documents")).filter((doc) => doc.side === "old" && doc.status === "ready" && doc.language_layout === "en_only")) {
+    const order = (await getJson(`/documents/${item.id}/view`)).units.filter((unit) => unit.group_unit_id === null).sort(sourceOrder);
+    const at = order.findIndex((_, i) => i + 2 < order.length && order.slice(i, i + 3).every((unit) => isFree(unit) && unit.lang === order[i].lang));
+    if (at >= 0) {
+      found = { doc: item, a: order[at], b: order[at + 1], c: order[at + 2] };
+      break;
+    }
+  }
+  check("a one-language document has three free sentences in a row", found !== null);
+  if (!found) return;
+  const { doc, a, b } = found;
+  const readView = () => getJson(`/documents/${doc.id}/view`);
+  const isActive = (view, id) => view.units.some((unit) => unit.id === id);
+  const pieceOf = (id) => page.locator(`[data-testid="assign-paper-piece-${id}"]`);
+  const armed = () => page.locator("[data-merge-arm]").evaluateAll((els) => els.map((el) => el.getAttribute("data-strip-unit")));
+  const band = page.locator('[data-testid="assign-merge-armed"]');
+  const edits = [];
+  page.on("request", (request) => {
+    if (/\/documents\/\d+\/edits$/.test(new URL(request.url()).pathname)) edits.push(request.postData());
+  });
+
+  await page.goto(`${BASE}/bundles/${halfBundleId}/assign`);
+  await wait(page, "assign-bar");
+  await page.locator('[data-testid="assign-old-doc"]').click();
+  await page.locator(`[data-testid="assign-old-doc-option-${doc.id}"]`).click();
+  await pieceOf(a.id).waitFor({ timeout: T });
+  await page.waitForLoadState("networkidle");
+  await page.locator(`[data-testid="assign-paper-unit-${a.id}"]`).first().click();
+  await pieceOf(a.id).and(page.locator("[data-sel]")).waitFor({ timeout: T });
+
+  // 1. 첫 ⇧J - 저장 없음, 두 박스 점선, 안내 띠
+  await page.keyboard.press("Shift+J");
+  await band.waitFor({ timeout: T });
+  check("Shift+J once arms a and b with the band and writes nothing", JSON.stringify(await armed()) === JSON.stringify([String(a.id), String(b.id)]) && (await band.textContent()).includes("Press ⇧J again to merge") && edits.length === 0, JSON.stringify({ armed: await armed(), edits: edits.length }));
+
+  // 2. 다른 글쇠(J) - 무장을 풀고 제 일(다음 박스로)
+  await page.keyboard.press("j");
+  await band.waitFor({ state: "detached", timeout: T });
+  check("J disarms and moves on to b", (await armed()).length === 0 && (await pieceOf(b.id).getAttribute("data-sel")) !== null && edits.length === 0);
+
+  // 3. ⇧K ⇧K - 위 박스와 합친다([a, b])
+  await page.keyboard.press("Shift+K");
+  await band.waitFor({ timeout: T });
+  check("Shift+K arms the box above", (await band.textContent()).includes("Press ⇧K again to merge") && JSON.stringify(await armed()) === JSON.stringify([String(a.id), String(b.id)]));
+  const merged = page.waitForResponse((response) => /\/edits$/.test(new URL(response.url()).pathname), { timeout: T });
+  await page.keyboard.press("Shift+K");
+  check("Shift+K again merges [a, b] (200)", (await merged).status() === 200 && JSON.stringify(JSON.parse(edits.at(-1)).op) === JSON.stringify({ type: "merge", unit_ids: [a.id, b.id] }), edits.at(-1));
+  await page.locator('[data-testid="toast-ok"]', { hasText: "Merged" }).waitFor({ timeout: T });
+  const afterMerge = await readView();
+  check("a and b are one box, the band is gone", !isActive(afterMerge, a.id) && !isActive(afterMerge, b.id) && (await band.count()) === 0);
+  await page.waitForLoadState("networkidle");
+  // 합친 박스가 골라져 있다 - Del은 그 합친 박스를 삭제로 확정한다(AC2). Ctrl+Z 두 번이 삭제, 합치기 차례로 되돌린다
+  const isMergedBox = (unit) => unit.text.startsWith(a.text.slice(0, 10)) && unit.text.endsWith(b.text.slice(-10));
+  const deleted = page.waitForResponse((response) => response.url().includes("/groups/save"), { timeout: T });
+  await page.keyboard.press("Delete");
+  await deleted;
+  await page.waitForLoadState("networkidle");
+  const afterDelete = (await readView()).units.find(isMergedBox);
+  check("Del after the merge deletes the merged box", afterDelete !== undefined && afterDelete.status === "confirmed", String(afterDelete?.status));
+  for (const [name, expectMerged] of [["the delete", true], ["the merge", false]]) {
+    const undone = page.waitForResponse((response) => response.url().includes("/decisions/undo"), { timeout: T });
+    await page.keyboard.press("ControlOrMeta+z");
+    check(`Ctrl+Z undoes ${name} (200)`, (await undone).status() === 200);
+    await page.waitForLoadState("networkidle");
+    const view = await readView();
+    check(`after undoing ${name} the merged box is ${expectMerged ? "back to unassigned" : "split again"}`, expectMerged ? view.units.find(isMergedBox)?.status === "unassigned" : isActive(view, a.id) && isActive(view, b.id));
+  }
+
+  // 3b. 배정된 박스(b를 삭제로 확정)를 합치려 하면 확인 창이 한 번 묻는다 - 그만두면 합치지 않고, Ctrl+Z로 b를 되돌린다
+  await page.locator(`[data-testid="assign-paper-unit-${b.id}"]`).first().click();
+  const bDeleted = page.waitForResponse((response) => response.url().includes("/groups/save"), { timeout: T });
+  await page.keyboard.press("Delete");
+  await bDeleted;
+  await page.waitForLoadState("networkidle");
+  await page.locator(`[data-testid="assign-paper-unit-${a.id}"]`).first().click();
+  await page.keyboard.press("Shift+J");
+  await band.waitFor({ timeout: T });
+  await page.keyboard.press("Shift+J");
+  await wait(page, "assign-edit-confirm");
+  await page.locator('[data-testid="assign-edit-confirm-cancel"]').click();
+  await page.locator('[data-testid="assign-edit-confirm"]').waitFor({ state: "detached", timeout: T });
+  check("cancelling the confirm leaves a and b apart", isActive(await readView(), a.id) && isActive(await readView(), b.id));
+  const restored = page.waitForResponse((response) => response.url().includes("/decisions/undo"), { timeout: T });
+  await page.keyboard.press("ControlOrMeta+z");
+  check("Ctrl+Z gives b back its unassigned state (200)", (await restored).status() === 200);
+  await page.waitForLoadState("networkidle");
+
+  // 4. ⇧J 뒤 Esc - 무장만 거두고 고름은 그대로(앞의 되돌리기가 고름을 옮겼을 수 있어 a를 다시 고른 뒤 시작한다)
+  await page.waitForLoadState("networkidle");
+  await page.locator(`[data-testid="assign-paper-unit-${a.id}"]`).first().click();
+  await pieceOf(a.id).and(page.locator("[data-sel]")).waitFor({ timeout: T });
+  await page.keyboard.press("Shift+J");
+  await band.waitFor({ timeout: T });
+  const editsBefore = edits.length;
+  await page.keyboard.press("Escape");
+  await band.waitFor({ state: "detached", timeout: T });
+  check("Esc only disarms - nothing saved, a stays picked", edits.length === editsBefore && (await armed()).length === 0 && (await pieceOf(a.id).getAttribute("data-sel")) !== null);
+});
+
+// ⇧J ⇧J로 다른 언어 이웃과 짝 맺기(J1-AC4) - 짝을 우클릭 메뉴로 푼 뒤 ⇧J 두 번으로 다시 맺는다. 끝은 처음 그대로 짝이다
+await runStep("assign: merge keys - Shift+J twice pairs the neighbour of the other language", {}, async ({ page }) => {
+  await page.goto(`${BASE}/`);
+  const fresh = page.locator('[data-testid^="bundles-row-"]', { hasText: "쪼개기 직후" });
+  const freshId = Number((await fresh.getAttribute("data-testid")).replace("bundles-row-", ""));
+  const headers = { "X-Dev-User": "qa.member" };
+  const docs = await (await page.request.get(`${BASE}/api/bundles/${freshId}/documents`, { headers })).json();
+  const oldDoc = docs.find((doc) => doc.side === "old" && doc.status === "ready");
+  const readUnits = async () => (await (await page.request.get(`${BASE}/api/bundles/${freshId}/documents/${oldDoc.id}/view`, { headers })).json()).units;
+  const sentences = (await readUnits()).filter((unit) => unit.kind === "sentence");
+  const ko = sentences.find((unit, index) => unit.lang === "ko" && unit.pair_id !== null && unit.status === "unassigned" && sentences[index + 1]?.pair_id === unit.pair_id && sentences[index + 1].lang === "en");
+  check("the fresh bundle has an unassigned KO/EN pair", ko !== undefined);
+  if (!ko) return;
+  const en = sentences[sentences.indexOf(ko) + 1];
+  await page.goto(`${BASE}/bundles/${freshId}/assign`);
+  await wait(page, "assign-bar");
+  const piece = page.locator(`[data-testid="assign-paper-piece-${ko.id}"], [data-testid="assign-paper-unit-${ko.id}"]`).first();
+  await piece.waitFor({ timeout: T });
+  await piece.scrollIntoViewIfNeeded();
+  await piece.click({ button: "right" });
+  await wait(page, "assign-ctx-unpair");
+  const separated = page.waitForResponse((response) => response.request().method() === "DELETE" && /\/pairs\/\d+/.test(response.url()), { timeout: T });
+  await page.locator('[data-testid="assign-ctx-unpair"]').click();
+  await separated;
+  await page.waitForFunction((id) => document.querySelector('[data-testid="assign-row-id"]')?.textContent?.trim() === id, ko.display_id, { timeout: T });
+  await page.waitForLoadState("networkidle");
+  await piece.click();
+  await page.keyboard.press("Shift+J");
+  const band = page.locator('[data-testid="assign-merge-armed"]');
+  await band.waitFor({ timeout: T });
+  check("the band says pair for a neighbour of the other language", (await band.textContent()).includes("Press ⇧J again to pair"), await band.textContent());
+  const joined = page.waitForResponse((response) => response.request().method() === "POST" && /\/pairs$/.test(response.url()), { timeout: T });
+  await page.keyboard.press("Shift+J");
+  check("Shift+J again saves the pair (200)", (await joined).ok());
+  await page.waitForLoadState("networkidle");
+  const after = await readUnits();
+  const kept = after.find((unit) => unit.id === ko.id);
+  check("the two sentences are a pair again", kept?.pair_id !== null && kept?.pair_id === after.find((unit) => unit.id === en.id)?.pair_id);
 });
 
 // 언어를 바꾸면 모양도(B6-3, 사용자 결정 2026-11-20 3-a · 3-c) - 이웃 짝의 한쪽을 같은 언어로 바꾸면 합치고, 합친 박스의 끝 조각을 다른 언어로 바꾸면 다시 짝,

@@ -266,6 +266,8 @@ interface PaperProps {
     deleted?: { folds: ReadonlyMap<number, DeletedFold> };
     /** Assign - 처리 중인 일. 잠긴 박스는 끌리지 않고 그 곁 틈 · 머리 단추가 꺼진다(고르기 · 우클릭은 화면이 막는다) */
     pending?: PaperPending;
+    /** Assign - ⇧J ⇧J · ⇧K ⇧K로 무장한 합치기 - 두 박스에 점선 미리보기(data-merge-arm). 덩어리가 모두 다시 그려지는 드문 값이라 덩어리마다 견주지 않는다 */
+    mergeArm?: { fromId: number; toId: number } | null;
     /** Assign - 고른 박스가 짝 전부가 이어 붙은 카드 안에 있으면 그 박스 왼쪽 가장자리에 점 여섯 손잡이(data-drag-handle, 설계 D8).
      *  손잡이 끌기(카드 안 순서)는 화면이 붙인다. isAllowed가 거짓인 박스(배정이 걸림 등)에는 그리지 않는다 */
     pairGrip?: { isAllowed: (unitId: number) => boolean };
@@ -916,6 +918,12 @@ export function Paper({
     );
   }
 
+  /** 무장한 합치기의 두 박스 - 점선 미리보기 */
+  function readArmMark(unitId: number | null | undefined): "" | undefined {
+    const arm = strips?.mergeArm;
+    return arm && unitId !== null && unitId !== undefined && (unitId === arm.fromId || unitId === arm.toId) ? "" : undefined;
+  }
+
   /** 빛이 지나가는 박스(처리 중) - 움직임 줄이기면 CSS가 옅은 바탕만 */
   function readPendingMark(unitId: number | null | undefined): "" | undefined {
     return unitId !== null && unitId !== undefined && strips?.pending?.shimmerIds.has(unitId) ? "" : undefined;
@@ -1150,6 +1158,7 @@ export function Paper({
             data-mate={unit !== undefined && isMate(unit.id) ? "" : undefined}
             data-partner={unit !== undefined && partnerIds?.has(unit.id) ? "" : undefined}
             data-pending={readPendingMark(unit?.id)}
+            data-merge-arm={readArmMark(unit?.id)}
             data-testid={unit ? `${testId}-piece-${unit.id}` : undefined}
           >
             {renderMarks(unit, false, "cell-marks")}
@@ -1379,6 +1388,7 @@ export function Paper({
           // 처리 중인 박스는 끌리지 않는다(설계 D4 - 잠금은 그 박스만)
           "data-drag-box": dragBoxes && unitId !== null && !isLocked(unitId) ? "" : undefined,
           "data-pending": readPendingMark(unitId),
+          "data-merge-arm": readArmMark(unitId),
           "data-unwrap-ai-moved": unitId !== null && unwrapAiMoves.get(unitId)?.moved ? "" : undefined,
           "data-testid": `${testId}-piece-${unitId ?? row.key}`,
         }}
@@ -1760,7 +1770,7 @@ export function Paper({
       <PaperChunk
         key={key}
         live={nearChunks === null || (chunk.index >= nearChunks.from && chunk.index <= nearChunks.to) || liveChunkIds.has(chunk.index)}
-        deps={[...own, t, testId, dragBoxes, pickWholeBundle, strips?.noise?.busy, strips?.noise?.canEdit, shiftGroups, strips?.headingShift?.busy, strips?.headingShift?.canRevert, unwrapHeads, strips?.unwrap?.busy, strips?.unwrap?.canRewrap, strips?.unwrap?.ai?.enabled, strips?.unwrap?.ai?.busy, unwrapAiPreviews, unwrapOrders, unwrapAiMoves, chunkPending[chunk.index], chunkDeleted[chunk.index], chunkNumbers[chunk.index], chunkNoise[chunk.index]]}
+        deps={[...own, t, testId, dragBoxes, pickWholeBundle, strips?.noise?.busy, strips?.noise?.canEdit, shiftGroups, strips?.headingShift?.busy, strips?.headingShift?.canRevert, unwrapHeads, strips?.unwrap?.busy, strips?.unwrap?.canRewrap, strips?.unwrap?.ai?.enabled, strips?.unwrap?.ai?.busy, unwrapAiPreviews, unwrapOrders, unwrapAiMoves, strips?.mergeArm, chunkPending[chunk.index], chunkDeleted[chunk.index], chunkNumbers[chunk.index], chunkNoise[chunk.index]]}
         isFold={hasFold}
         render={render}
       />

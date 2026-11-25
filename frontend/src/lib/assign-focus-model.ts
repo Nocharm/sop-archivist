@@ -29,9 +29,11 @@ export interface Pending {
   isGlobal: boolean;
 }
 
-/** 처리 중인 일과 누른 때의 고름 - 응답 뒤 따라가기는 고름이 이것과 같을 때만 건다 */
+/** 처리 중인 일과 누른 때의 고름 - 응답 뒤 따라가기는 고름이 이것과 같고 그 사이 사람이 고르지 않았을 때만 건다 */
 export interface PendingEntry extends Pending {
   from: Focus;
+  /** 누른 뒤 사람이 골랐다(같은 것을 다시 골랐어도) - 응답의 박스를 따라가지 않는다 */
+  isPickedOver: boolean;
 }
 
 /** 응답 뒤 고를 박스 - 그 문서 보기가 minRevision 이상으로 다시 오면 고른다. docId null은 응답이 문서를 알려 주지 않은 것(Undo) - 다음에 받은 보기 어디서든 찾는다 */
@@ -62,6 +64,8 @@ export interface LoadedDoc {
 
 export type FocusEvent =
   | { type: "pick"; focus: Focus }
+  // 다시 시도가 멈춘 때의 고름을 되살린다 - 사람이 고른 것이 아니라, 그 고름에서 누른 일은 다시 따라갈 수 있다
+  | { type: "restore"; focus: Focus }
   | { type: "start"; pending: Pending }
   | { type: "succeed"; pendingId: string; docId: number | null; revision: number | null; pickUnitId: number | null }
   | { type: "fail"; pendingId: string }
@@ -80,22 +84,28 @@ export function isSameFocus(a: Focus, b: Focus): boolean {
 export function reduceFocus(state: FocusState, event: FocusEvent): FocusState {
   switch (event.type) {
     case "pick": {
-      // 사람이 다른 것을 고르면 앞 고름에서 건 따라가기는 버린다(같은 것을 다시 고르면 둔다)
-      const follows = state.follows.filter((follow) => isSameFocus(follow.from, event.focus));
-      if (isSameFocus(state.focus, event.focus) && follows.length === state.follows.length) return state;
-      return { ...state, focus: event.focus, follows };
+      // 사람이 고르면 따라가기를 모두 버리고, 아직 응답이 없는 일도 따라가지 않게 적는다 - 같은 것을 다시 골랐어도 그 사람이 고른 것이다
+      // (Del → Ctrl+Z 뒤 지금 고른 줄을 누르면 되돌리기의 늦은 따라가기가 그 고름을 덮었다, 3b "고름은 처리 중에도 그대로")
+      if (isSameFocus(state.focus, event.focus) && state.follows.length === 0 && state.pending.every((entry) => entry.isPickedOver)) return state;
+      const pending = state.pending.map((entry) => (entry.isPickedOver ? entry : { ...entry, isPickedOver: true }));
+      return { focus: event.focus, pending, follows: [] };
+    }
+    case "restore": {
+      // 그 고름에서 누른 일만 되살린다 - 다른 고름에서 누른 일과 따라가기는 그대로 두면 엉뚱한 박스로 간다
+      const pending = state.pending.map((entry) => (entry.isPickedOver && isSameFocus(entry.from, event.focus) ? { ...entry, isPickedOver: false } : entry));
+      return { focus: event.focus, pending, follows: state.follows.filter((follow) => isSameFocus(follow.from, event.focus)) };
     }
     case "start": {
       if (state.pending.some((entry) => entry.id === event.pending.id)) return state;
       // 고름은 그대로(규칙 2). 묶음 전체가 바뀌는 일은 앞 편집의 따라가기를 버린다 - 그 사이 은퇴할 Unit을 고르지 않게
-      const pending = [...state.pending, { ...event.pending, from: state.focus }];
+      const pending = [...state.pending, { ...event.pending, from: state.focus, isPickedOver: false }];
       return { ...state, pending, follows: event.pending.isGlobal ? [] : state.follows };
     }
     case "succeed": {
       // 일은 걷지 않는다 - 응답 뒤 다시 받기를 걸 때까지(표 벗기기는 새 보기를 놓을 때까지) 처리 중으로 남고, 부른 쪽이 fail로 걷는다
       const entry = state.pending.find((item) => item.id === event.pendingId);
-      // 따라갈 박스가 없거나 그 사이 다른 것을 골랐으면 고름을 둔다(규칙 3)
-      if (!entry || event.pickUnitId === null || !isSameFocus(entry.from, state.focus)) return state;
+      // 따라갈 박스가 없거나 그 사이 사람이 골랐으면(같은 것이어도) 고름을 둔다(규칙 3)
+      if (!entry || event.pickUnitId === null || entry.isPickedOver || !isSameFocus(entry.from, state.focus)) return state;
       const follow: Follow = { pendingId: entry.id, kind: entry.kind, docId: event.docId, minRevision: event.revision, pickUnitId: event.pickUnitId, from: entry.from };
       return { ...state, follows: [...state.follows, follow] };
     }
@@ -159,6 +169,13 @@ function dropVanished(focus: Focus, docs: readonly LoadedDoc[]): Focus {
   if (focus.kind === "unit") return doc.unitIds.has(focus.unitId) ? focus : NO_FOCUS;
   if (focus.kind === "toc" && !doc.unitIds.has(focus.key)) return NO_FOCUS;
   return focus.unitId !== null && !doc.unitIds.has(focus.unitId) ? { ...focus, unitId: null } : focus;
+}
+
+/** New 문서 고름을 바꿀 때 고를 것 - 지금 고름과 같으면 null(이미 눌린 "한 단"을 다시 눌러도 New 편집의 따라가기를 버리지 않게), 놓으면 New 고름일 때만 NO_FOCUS */
+export function buildSoloPick(focus: Focus, solo: { docId: number; unitId: number | null; inPlace: boolean } | null): Focus | null {
+  if (solo === null) return focus.kind === "new" ? NO_FOCUS : null;
+  const next: Focus = { kind: "new", docId: solo.docId, unitId: solo.unitId, inPlace: solo.inPlace };
+  return isSameFocus(next, focus) ? null : next;
 }
 
 /** 처리 중인 일 목록만 */
