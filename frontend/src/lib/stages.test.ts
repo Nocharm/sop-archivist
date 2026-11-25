@@ -1,7 +1,7 @@
 // 묶음 주소 읽기 - 단계 경로와 묶음 밖 주소를 가른다.
 import { describe, expect, it } from "vitest";
 
-import { getAssignLineHref, getAssignSourceHref, getEditOriginalHref, getNewDocumentsHref, getNextActionHref, getStageHref, isStageLocked, NEXT_ACTION_STAGE, parseBundlePath, STAGES } from "./stages";
+import { getAssignLineHref, getAssignSourceHref, getEditOriginalHref, getNewDocumentsHref, getNextActionHref, getStageHref, isStageLocked, listStages, NEXT_ACTION_STAGE, parseBundlePath, STAGES } from "./stages";
 
 describe("parseBundlePath", () => {
   it("reads the overview and a stage", () => {
@@ -25,6 +25,22 @@ describe("parseBundlePath", () => {
   it("builds stage links", () => {
     expect(getStageHref(4, "overview")).toBe("/bundles/4");
     expect(getStageHref(4, "assign")).toBe("/bundles/4/assign");
+  });
+});
+
+describe("listStages", () => {
+  it("drops Order and renumbers Outputs while drafting is hidden", () => {
+    expect(listStages(false).map((stage) => [stage.key, stage.step])).toEqual([
+      ["overview", undefined],
+      ["documents", 1],
+      ["assign", 2],
+      ["outputs", 3],
+      ["map", undefined],
+      ["history", undefined],
+    ]);
+    expect(listStages(true)).toEqual(STAGES);
+    // 주소 읽기는 그대로 - 숨긴 화면으로 들어온 주소를 알아보아야 넘긴다
+    expect(parseBundlePath("/bundles/12/order")).toEqual({ bundleId: 12, stage: "order" });
   });
 });
 
