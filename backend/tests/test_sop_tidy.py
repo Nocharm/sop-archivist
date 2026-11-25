@@ -110,6 +110,22 @@ def test_noise_lines_are_not_left_to_tidy(client: TestClient) -> None:
     assert (tidy["refs"], tidy["captions"]) == (1, 0)
 
 
+def test_a_figure_sharing_the_first_figures_caption_needs_none(client: TestClient) -> None:
+    """캡션 하나를 같이 쓰는 그림 묶음(F7 ⑥) — 뒤 그림은 첫 그림의 캡션이 제 캡션이다(프런트 caption_figure_id 길과 같다)."""
+    fx = Fixture(client, FIGURE + FIGURE + p("Figure 1 Synthetic layout", "Caption"))
+    first, second = sorted(fx.of_kind("figure"), key=lambda unit: unit["pos_seq"])
+    assert find_unit(fx.view, "Figure 1 Synthetic layout")["group_unit_id"] == second["id"]
+    assert fx.tidy()["captions"] == 1  # 앞 그림은 캡션이 없다
+
+    body = {"revision": fx.view["document"]["revision"], "confirm": False, "op": {"type": "group_figures", "unit_ids": [first["id"], second["id"]]}}
+    response = client.post(f"/api/bundles/{fx.bundle_id}/documents/{fx.doc_id}/edits", json=body, headers=AUTHOR)
+    assert response.status_code == 200, response.text
+    units = {unit["id"]: unit for unit in get_view(client, fx.bundle_id, fx.doc_id)["units"]}
+    assert units[second["id"]]["caption_figure_id"] == first["id"]  # 캡션은 첫 그림으로 옮겼다
+
+    assert fx.tidy()["captions"] == 0
+
+
 def test_a_written_caption_and_a_linked_table_need_no_caption(client: TestClient) -> None:
     fx = Fixture(client, TABLE + p("Keep the record.") + tbl([["One"], ["Two"]]) + FIGURE)
     first, second = fx.of_kind("table")
