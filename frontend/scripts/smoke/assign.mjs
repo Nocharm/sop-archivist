@@ -4098,6 +4098,111 @@ await runStep("assign: join two pieces from the gap between them, then unmerge",
   check("three undos return to the original sentence", (await readIds()).length === before);
 });
 
+// 편집이 은퇴시킨 Unit의 제안은 거둔다(쪼개기 먼저 E3, S16) - 한 문장을 잘라 두 조각에 분류 제안을 받아 두고 틈의 Join으로 붙이면 AI 알약의 받을 수가 줄고,
+// 되돌리기 뒤에도 늘지 않는다. 끝에 되돌리기 한 번(붙이기 → 자르기까지 두 번)으로 시드를 처음 그대로 둔다
+await runStep("assign: merging two suggested boxes drops the AI count and Ctrl+Z does not bring it back", { drafting: true }, async ({ page }) => {
+  const headers = { "X-Dev-User": "qa.member" };
+  const status = await page.request.get(`${BASE}/api/bundles/${freshBundleId}/ai/status`, { headers });
+  if (!status.ok() || !(await status.json()).ai_enabled) {
+    console.log("  (AI is off in this backend - skipped)");
+    return;
+  }
+  const docs = await (await page.request.get(`${BASE}/api/bundles/${freshBundleId}/documents`, { headers })).json();
+  const readView = async (docId) => (await page.request.get(`${BASE}/api/bundles/${freshBundleId}/documents/${docId}/view`, { headers })).json();
+  await page.goto(`${BASE}/bundles/${freshBundleId}/assign`);
+  await wait(page, "assign-bar");
+  const pieceOf = (unitId) => page.locator(`[data-testid="assign-paper-piece-${unitId}"], [data-testid="assign-paper-unit-${unitId}"]`).first();
+  let doc = null;
+  let unit = null;
+  for (const candidate of docs.filter((item) => item.side === "old" && item.status === "ready")) {
+    const found = (await readView(candidate.id)).units.filter((item) => item.kind === "sentence" && item.status === "unassigned" && item.lang === "en" && item.pair_id === null && item.text.trim().split(" ").length >= 6);
+    if (found.length === 0) continue;
+    await page.locator('[data-testid="assign-old-doc"]').click();
+    await page.locator(`[data-testid="assign-old-doc-option-${candidate.id}"]`).click();
+    await page.waitForTimeout(600);
+    for (const item of found) {
+      if ((await pieceOf(item.id).count()) === 0) continue;
+      doc = candidate;
+      unit = item;
+      break;
+    }
+    if (unit !== null) break;
+  }
+  check("the fresh bundle has an unpaired English sentence on screen", unit !== null);
+  if (unit === null) return;
+  const readIds = async () => (await readView(doc.id)).units.map((item) => item.id);
+  const waitCount = async (expected) => {
+    for (let tries = 0; tries < 60; tries += 1) {
+      if ((await readIds()).length === expected) return true;
+      await page.waitForTimeout(250);
+    }
+    return false;
+  };
+  const beforeIds = await readIds();
+  const before = beforeIds.length;
+  // 잘라서 두 조각을 만들고 그 둘에 분류 제안을 받아 둔다 - 응답(API)이 아니라 저장된 제안 수로 기다린다
+  await pieceOf(unit.id).scrollIntoViewIfNeeded();
+  await pieceOf(unit.id).click({ button: "right" });
+  await wait(page, "assign-ctx-split");
+  await page.locator('[data-testid="assign-ctx-split"]').click();
+  await wait(page, "assign-cut-run");
+  await page.locator('[data-testid="assign-cut-run"]').click();
+  check("the sentence is cut in two", await waitCount(before + 1));
+  const halves = (await readView(doc.id)).units.filter((item) => !beforeIds.includes(item.id)).sort((a, b) => a.pos_seq - b.pos_seq);
+  const asked = await page.request.post(`${BASE}/api/bundles/${freshBundleId}/ai/classify`, { headers, data: { unit_ids: halves.map((half) => half.id) } });
+  check("classify is queued for both pieces", asked.ok(), String(asked.status()));
+  const countLive = async () => {
+    const list = await (await page.request.get(`${BASE}/api/bundles/${freshBundleId}/ai/suggestions?kind=classify&result=applied&limit=1000`, { headers })).json();
+    return list.items.filter((item) => item.adoption === null && (item.content.unit_ids ?? []).some((id) => halves.some((half) => half.id === id))).length;
+  };
+  let live = 0;
+  for (let tries = 0; tries < 120 && live === 0; tries += 1) {
+    live = await countLive();
+    if (live === 0) await page.waitForTimeout(500);
+  }
+  check("the pieces carry live AI suggestions", live >= 1, String(live));
+  // 알약의 받을 수 - 화면이 다시 읽은 뒤의 값(없으면 0). 열었다 닫는다
+  await page.reload();
+  await wait(page, "assign-bar");
+  const readOffered = async () => {
+    await page.waitForLoadState("networkidle");
+    if ((await page.locator('[data-testid="top-bar-ai"]').count()) === 0) return 0;
+    await page.locator('[data-testid="top-bar-ai"]').click();
+    const row = page.locator('[data-testid="ai-accept-classify-count"]');
+    const shown = (await row.count()) === 0 ? 0 : Number((await row.innerText()).trim());
+    await page.keyboard.press("Escape");
+    return shown;
+  };
+  const offered = await readOffered();
+  check("the AI menu counts the suggestions on the two pieces", offered >= live, `${offered} vs ${live}`);
+  // 붙이기 - 응답으로 줄 수가 돌아온 뒤 화면이 제안을 다시 읽을 때까지 기다린다
+  const join = page.locator(`[data-testid="assign-paper-join-${halves[0].id}-${halves[1].id}"]`);
+  await join.waitFor({ state: "attached", timeout: T });
+  await pieceOf(halves[0].id).click();
+  await page.locator(".strip-gap", { has: join }).hover({ position: { x: 200, y: 2 } });
+  await page.waitForFunction(() => [...document.querySelectorAll(".strip-gap:hover .strip-merge")].some((el) => getComputedStyle(el).pointerEvents === "auto"), null, { timeout: T });
+  await join.click();
+  check("Join merges the two pieces back into one sentence", await waitCount(before));
+  await page.waitForFunction(async ({ url, headers: h, ids }) => {
+    const list = await (await fetch(url, { headers: h })).json();
+    return !list.items.some((item) => item.result === "applied" && item.adoption === null && (item.content.unit_ids ?? []).some((id) => ids.includes(id)));
+  }, { url: `${BASE}/api/bundles/${freshBundleId}/ai/suggestions?kind=classify&limit=1000`, headers, ids: halves.map((half) => half.id) }, { timeout: T });
+  let merged = offered;
+  for (let tries = 0; tries < 20 && merged >= offered; tries += 1) {
+    merged = await readOffered();
+    if (merged >= offered) await page.waitForTimeout(300);
+  }
+  check("the AI count drops after the merge", merged < offered, `${offered} -> ${merged}`);
+  // 되돌리기 - 붙이기가 풀려도 거둔 제안은 돌아오지 않는다
+  await page.locator('[data-testid="assign-undo"]:not([disabled])').click();
+  check("Undo splits the sentence again", await waitCount(before + 1));
+  await page.waitForLoadState("networkidle");
+  check("Undo does not bring the AI count back", (await readOffered()) <= merged);
+  // 시드를 처음 그대로 - 자르기까지 되돌린다
+  await page.locator('[data-testid="assign-undo"]:not([disabled])').click();
+  check("the sentence is whole again", await waitCount(before));
+});
+
 // 편집 뒤 다시 받기 범위(설계 2026-11-20 D2, 시안 1 스텝 2) - 붙이기 뒤에는 고친 문서의 보기와 그 문서의 Unit 줄(units?…document_id=)만 다시 받는다.
 // 다른 Old 문서의 보기와 Bundle 전체 Unit 목록은 받지 않는다. 앞 단계처럼 한 문장을 잘라 두 조각을 틈의 Join으로 붙이고, 붙이기 응답부터 합친 박스를 고를 때까지의 GET을 센다.
 // 끝에 되돌리기 두 번(붙이기 → 자르기)으로 시드를 처음 그대로 둔다
