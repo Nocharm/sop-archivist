@@ -1,7 +1,14 @@
 import { describe, expect, it } from "vitest";
 
 import type { EquisInfo } from "./api-sop";
-import { describeAdd, listEquisHints, planAddRows, readCodes } from "./tobe-add-model";
+import { describeAdd, listEquisHints, listTobeTools, planAddRows, readCodes } from "./tobe-add-model";
+
+describe("listTobeTools", () => {
+  it("keeps only the upload while drafting is hidden", () => {
+    expect(listTobeTools(false)).toEqual(["upload"]);
+    expect(listTobeTools(true)).toEqual(["upload", "add_row", "template", "import", "read_list", "declare", "sections", "add_step"]);
+  });
+});
 
 describe("readCodes (numbers typed or pasted into the add field)", () => {
   it("reads one number, trimmed", () => expect(readCodes("  WI-07 ")).toEqual(["WI-07"]));

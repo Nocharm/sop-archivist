@@ -8,6 +8,18 @@ export interface OutputsView {
 const DEFAULTS: OutputsView = { tab: "c" };
 const KEYS: Record<keyof OutputsView, string> = { tab: "sopa.outputs.tab" };
 
+const TABS: readonly OutputsTab[] = ["a", "b", "c"];
+
+/** 보이는 탭 - 새 문서를 만드는 쪽을 숨긴 동안 C · New documents는 없다 */
+export function listOutputsTabs(drafting: boolean): readonly OutputsTab[] {
+  return drafting ? TABS : TABS.filter((tab) => tab !== "c");
+}
+
+/** 지금 그릴 탭 - 기억한 탭이 숨긴 C면 B(흐름). 기억한 값은 그대로 둔다 */
+export function resolveOutputsTab(tab: OutputsTab, drafting: boolean): OutputsTab {
+  return listOutputsTabs(drafting).includes(tab) ? tab : "b";
+}
+
 function readValue(key: string): string | null {
   try {
     return window.localStorage.getItem(key);

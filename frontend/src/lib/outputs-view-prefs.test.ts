@@ -1,6 +1,16 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { readOrderTemplate, readOutputsView, writeOrderTemplate, writeOutputsView } from "./outputs-view-prefs";
+import { listOutputsTabs, readOrderTemplate, readOutputsView, resolveOutputsTab, writeOrderTemplate, writeOutputsView } from "./outputs-view-prefs";
+
+describe("Output C while drafting is hidden", () => {
+  it("falls back to B and keeps the other tabs", () => {
+    expect(resolveOutputsTab("c", false)).toBe("b");
+    expect(resolveOutputsTab("a", false)).toBe("a");
+    expect(resolveOutputsTab("c", true)).toBe("c");
+    expect(listOutputsTabs(false)).toEqual(["a", "b"]);
+    expect(listOutputsTabs(true)).toEqual(["a", "b", "c"]);
+  });
+});
 
 describe("outputs view prefs", () => {
   beforeEach(() => window.localStorage.clear());
