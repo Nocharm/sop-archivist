@@ -56,17 +56,17 @@
 
 ## 브랜치 순서와 맡길 모델
 
-`S` = sonnet, `O` = opus. 구현과 검토의 모델을 따로 적는다(검토는 브랜치 끝에 한 번). 기계적인 글 · 문구 · 설명서 · 시험 돌리기만이면 `S`.
+`S` = sonnet, `O` = opus, `F` = fable(사용자 허락 2026-11-26, 아래 네 자리에만). 구현과 검토의 모델을 따로 적는다(검토는 브랜치 끝에 한 번). 기계적인 글 · 문구 · 설명서 · 시험 돌리기만이면 `S`.
 
 | # | 브랜치 | 구현 | 검토 | 앞서야 하는 것 |
 |---|---|---|---|---|
-| 0 | `fix/new-edit-undo` | O | O | – |
+| 0 | `fix/new-edit-undo` | O | F | – |
 | 1a | `feat/hide-drafting` | O | O | 0 |
 | 1b | `fix/remove-bundle-move` | S | O | 1a |
 | 2a | `fix/pair-spot-scroll` | S | S | – |
 | 2b | `feat/inspector-float` | O | S | 2a |
 | 3a | `perf/assign-measure` | S | S | 0 |
-| 3b | `fix/assign-command-queue` | O | O | 1b · 3a |
+| 3b | `fix/assign-command-queue` | O | F | 1b · 3a |
 | 3c | `fix/assign-instant-motion` | O | S | 3b |
 | 3d | `perf/assign-filter-chunks` | O | O | 3a |
 | 3e | `perf/assign-number-input` | O | S | 3a, 재서 100ms를 넘을 때만 |
@@ -77,9 +77,11 @@
 | 5a | `feat/split-rule-2` | O | O | – |
 | 5b | `feat/split-front-matter` | O | O | 5a · 3b |
 | 5c | `feat/split-new-parity` | O | O | 5a |
-| 6 | `feat/new-paper` ← `-1-render` · `-2-pick` · `-3-tools` | O | O | 4b · 5c |
+| 6 | `feat/new-paper` ← `-1-render` · `-2-pick` · `-3-tools` | O | O, `-2-pick`만 F | 4b · 5c |
 | 7 | 계획 4의 일곱 | 파일에 | 파일에 | 6 |
 | 8 | 계획 5의 아홉(모음 둘째 포함) | 파일에 | 파일에 | 7 |
+
+**Fable을 쓰는 네 자리**: 위 표의 검토 셋(운영 자료의 중복 · 글쇠 유실과 순서 · 두 고름의 상태가 걸려, 시험이 초록이어도 틀리기 쉬운 곳)과, opus 구현이 같은 게이트에서 **두 번 실패했을 때 세우기 전 한 번**. 그 한 번에는 실패 출력 · diff · 계획 절만 주고 원인부터 쓰게 한다. 그래도 안 되면 세운다. 지휘 세션과 나머지는 opus · sonnet이고, model을 빠뜨려 지휘 세션의 모델을 물려받게 하지 않는다.
 
 **막히면 건너뛰는 길**: 5a는 화면과 겹치지 않으므로 3b가 막혀도 먼저 할 수 있다. 4d · 2a · 5a는 서로 다른 워크트리에서 나란히 해도 된다. 앞선 것이 막힌 브랜치는 하지 않는다.
 
@@ -108,7 +110,7 @@
 - 운영 자료를 지우거나 바꿔야 한다 / Alembic이 더하기로 안 된다
 - 설계 14절에 없고 "동작이 바뀌어 따라 바뀌는 것"도 아닌 시험을 고쳐야 한다
 - 새 `useEffect`, 새 의존성, 새 env, 새 권한, nginx · Docker · CI 변경이 필요하다
-- 같은 게이트가 두 번 고쳐도 실패한다
+- 같은 게이트가 두 번 고쳐도 실패하고, Fable 한 번으로도 안 된다
 - 명세끼리 부딪히는데 11-1절에 답이 없다(사용자에게 보이는 동작이 갈릴 때)
 - `feat/admin-polish`와 같은 줄에서 충돌해 어느 쪽이 맞는지 모르겠다
 
