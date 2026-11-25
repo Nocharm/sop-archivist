@@ -835,7 +835,8 @@ export function useAssignPage() {
   // AI 추천 일괄 수락 - 상단 바 AI 알약 메뉴가 연다(그 알약은 묶음을 몰라 이 화면이 묶음·지금 Old 문서의 건수를 올려 둔다, 설계 §5 3-1)
   const [acceptKind, setAcceptKind] = useState<AcceptKind | null>(null);
   const acceptDoc = oldView && oldView.document.side === "old" ? { id: oldView.document.id, label: oldView.document.doc_code || oldView.document.file_name } : null;
-  const acceptCounts = countLiveOffer([...(suggestions.data ?? []), ...(matchSuggestions.data ?? [])], acceptDoc?.id ?? null);
+  const statusOfUnit = useMemo(() => new Map(rows.flatMap((row) => row.unitIds.map((id) => [id, row.status] as const))), [rows]);
+  const acceptCounts = countLiveOffer([...(suggestions.data ?? []), ...(matchSuggestions.data ?? [])], acceptDoc?.id ?? null, statusOfUnit);
   useRegisterAiAcceptOffer(canEdit ? { bundleId, counts: acceptCounts } : null, setAcceptKind);
   const paperModel = useMemo(() => (oldView ? buildPaperModel(oldView) : null), [oldView]);
   // 처리 중인 일의 알약 · 쉬머 · 잠금 - 같은 목록이면 같은 값이라 용지의 먼 덩어리를 다시 그리지 않는다
