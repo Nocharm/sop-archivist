@@ -187,6 +187,11 @@ describe("contents fold", () => {
     const cells = buildFoldedCells(ROWS.slice(1, 3), KEYS, { label: "Contents · 2 lines", more: "+ 1 more lines" });
     expect(cells.map((item) => item.text)).toEqual(["1-2", "Contents · 2 lines", "OLD-1-001 …", "1. Purpose ... 3 + 1 more lines", "Deleted"]);
   });
+
+  it("keeps the strike on a folded row", () => {
+    const struck = ROWS.slice(1, 3).map((item) => ({ ...item, cells: item.cells.map((c, column) => (column === 3 ? { ...c, strike: true } : c)) }));
+    expect(buildFoldedCells(struck, KEYS, { label: "Contents · 2 lines", more: "+ 1 more lines" })[3].strike).toBe(true);
+  });
 });
 
 describe("picked row, group and draft", () => {

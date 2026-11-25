@@ -4501,6 +4501,71 @@ await runStep("assign: keys pressed during a slow save are kept in order", { all
   check("the document is clean again", (await readDeleted()).length === 0);
 });
 
+// 고름은 처리 중에도 그대로(설계 2026-11-25-split-first 6-1, 명세 A1) - Del → Ctrl+Z 뒤 다시 받는 사이에 누른 줄을 되돌리기의 늦은 따라가기가 덮지 않는다.
+// 전에는 지금 고른 줄(Del이 옮겨 간 줄)을 누르면 1.5초 안에 되돌린 줄로 튀었다. 아무것도 누르지 않으면 되돌린 줄을 고른다
+await runStep("assign: a row clicked while Undo reloads stays picked", {}, async ({ page }) => {
+  const api = `${BASE}/api/bundles/${freshBundleId}`;
+  const headers = { "X-Dev-User": "qa.member" };
+  const getJson = async (path) => (await page.request.get(`${api}${path}`, { headers })).json();
+  const isSave = (response) => /\/api\/bundles\/\d+\/groups\/save$/.test(response.url()) && response.request().method() === "POST";
+  // 되돌리기 뒤 다시 받는 보기 · 줄 - 늦춰서 누름이 반드시 그 사이에 든다
+  const isReload = (url) => /\/api\/bundles\/\d+\/(documents\/\d+\/view|units)$/.test(url.pathname);
+  let doc = null;
+  let ids = [];
+  for (const candidate of (await getJson("/documents")).filter((item) => item.side === "old" && item.status === "ready")) {
+    const view = await getJson(`/documents/${candidate.id}/view`);
+    const body = new Set(view.blocks.filter((block) => block.part === "body").map((block) => block.id));
+    const boxes = view.units.filter((item) => item.group_unit_id === null && !item.noise_kind && body.has(item.block_id)).sort((a, b) => a.pos_seq - b.pos_seq || (a.spans[0]?.[1] ?? 0) - (b.spans[0]?.[1] ?? 0));
+    if (boxes.length < 6 || !boxes.slice(0, 6).every((item) => ["sentence", "heading"].includes(item.kind) && item.pair_id === null && item.status === "unassigned")) continue;
+    doc = candidate;
+    ids = boxes.map((item) => item.id);
+    break;
+  }
+  check("the fresh bundle has a document that starts with six plain unassigned boxes", doc !== null);
+  if (doc === null) return;
+  const stripOf = (unitId) => page.locator(`.strip[data-testid="assign-paper-piece-${unitId}"]`);
+  const isPicked = (unitId) => page.evaluate((id) => document.querySelector(`.strip[data-testid="assign-paper-piece-${id}"]`)?.hasAttribute("data-sel") ?? false, unitId);
+  const reset = async () => page.request.post(`${api}/decisions/reset`, { headers, data: { revision: (await getJson("")).revision, document_id: doc.id } });
+  /** 첫 박스를 Del로 지우고 Ctrl+Z - 응답이 오면 click을 부르고(다시 받기는 늦춰 둔다) 2초 뒤 고른 박스들을 돌려준다 */
+  const deleteThenUndo = async (click) => {
+    await reset();
+    await page.goto(`${BASE}/bundles/${freshBundleId}/assign`);
+    await wait(page, "assign-bar");
+    await page.locator('[data-testid="assign-old-doc"]').click();
+    await page.locator(`[data-testid="assign-old-doc-option-${doc.id}"]`).click();
+    await stripOf(ids[0]).click();
+    await stripOf(ids[0]).and(page.locator("[data-sel]")).waitFor({ timeout: T });
+    await page.waitForLoadState("networkidle");
+    const saved = page.waitForResponse(isSave, { timeout: T });
+    await page.keyboard.press("Delete");
+    await saved;
+    await stripOf(ids[1]).and(page.locator("[data-sel]")).waitFor({ timeout: T });
+    await page.waitForLoadState("networkidle");
+    await page.route(isReload, async (route) => {
+      await new Promise((done) => setTimeout(done, 1000));
+      await route.continue();
+    });
+    const undone = page.waitForResponse((response) => response.url().includes("/decisions/undo"), { timeout: T });
+    await page.keyboard.press("ControlOrMeta+z");
+    check("Undo answers", (await undone).ok());
+    await click();
+    await page.waitForTimeout(2000);
+    await page.unrouteAll({ behavior: "wait" });
+    return Promise.all(ids.slice(0, 5).map(isPicked));
+  };
+  // 1. Del이 옮겨 간 줄(지금 고른 줄)을 다시 누름 - 전에 튀던 경우
+  const again = await deleteThenUndo(() => stripOf(ids[1]).click());
+  check("clicking the row the pick moved to keeps it picked 2s later", again[1] && !again[0], JSON.stringify(again));
+  // 2. 다른 줄을 누름
+  const other = await deleteThenUndo(() => stripOf(ids[4]).click());
+  check("clicking another row keeps that row picked 2s later", other[4] && !other[0], JSON.stringify(other));
+  // 3. 아무것도 누르지 않음 - 되돌린 줄을 고른다
+  const none = await deleteThenUndo(async () => undefined);
+  check("without a click Undo picks the undone row", none[0], JSON.stringify(none));
+  await reset();
+  check("the document is clean again", (await getJson(`/units?limit=1000&offset=0&document_id=${doc.id}`)).items.every((item) => !(item.status === "confirmed" && item.decision.disposition === "delete")));
+});
+
 // 움직임은 누른 순간 시작한다(Assign 피드백 2차 A2-R6, 설계 2026-11-25-split-first 6-1) - 삭제 접기 · 표 벗기기의 걷기 · 번호 새 글이 응답 전에 보이고, 거절되면 원래대로.
 // 끝에 모두 되돌려 시드 묶음을 처음 그대로 둔다
 await runStep("assign: deletion folds and unwrap start before the response, a refused edit rolls back", { allowConsoleErrors: true }, async ({ page, takeShot }) => {
