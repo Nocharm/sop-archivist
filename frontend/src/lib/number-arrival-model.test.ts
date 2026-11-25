@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { UnitSpan, ViewNumber, ViewUnit } from "@/lib/api-sop";
-import { applyExpectedNumbers, findArrivedNumbers, listExpectedNumbers, readExpectedNumber } from "@/lib/number-arrival-model";
+import { applyExpectedNumbers, findArrivedNumbers, listExpectedNumbers, listExpectedShifts, readExpectedNumber } from "@/lib/number-arrival-model";
 
 type Box = Pick<ViewUnit, "id" | "spans" | "number">;
 
@@ -86,5 +86,26 @@ describe("listExpectedNumbers", () => {
     expect(listExpectedNumbers([], sent, [{ document: { id: 3, revision: 9 } }])).toEqual([]);
     expect(listExpectedNumbers([], sent, [])).toEqual([]);
     expect(listExpectedNumbers([{ type: "set_number", unit_id: 7, number: null, follow: false }], sent, views)).toEqual([[7, null]]);
+  });
+});
+
+describe("listExpectedShifts", () => {
+  const views = [{ document: { id: 3, revision: 8 } }];
+
+  it("takes the last pressed shift of each line, also from a number edit that carries one", () => {
+    const ops = [
+      { type: "set_indents" as const, units: [{ unit_id: 7, indent_shift: 1 }, { unit_id: 8, indent_shift: 1 }] },
+      { type: "merge" as const, unit_ids: [1, 2] },
+      { type: "set_indents" as const, units: [{ unit_id: 7, indent_shift: 2 }] },
+      { type: "set_number" as const, unit_id: 9, number: "•", follow: false, indent_shift: -1 },
+      { type: "set_number" as const, unit_id: 10, number: "5", follow: true },
+    ];
+    expect([...listExpectedShifts(ops, [], views)]).toEqual([[7, 2], [8, 1], [9, -1]]);
+  });
+  it("keeps a saved shift until the view that has it arrives", () => {
+    const sent = [{ docId: 3, revision: 9, shifts: [[7, 1]] as Array<[number, number]> }];
+    expect([...listExpectedShifts([], sent, views)]).toEqual([[7, 1]]);
+    expect([...listExpectedShifts([], sent, [{ document: { id: 3, revision: 9 } }])]).toEqual([]);
+    expect([...listExpectedShifts([], sent, [])]).toEqual([]);
   });
 });

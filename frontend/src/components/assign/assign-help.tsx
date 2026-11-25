@@ -6,6 +6,7 @@ import type { ReactNode } from "react";
 
 import { UnitStatusChip } from "@/components/status";
 import { HelpPanel } from "@/components/ui/help-panel";
+import { ASSIGN_KEYS, formatAssignKey, HELP_ONLY } from "@/lib/assign-keymap";
 import { useDraftingOn } from "@/lib/drafting";
 import { useI18n } from "@/lib/i18n";
 
@@ -22,25 +23,13 @@ export function AssignHelp() {
   const { t } = useI18n();
   // 새 문서를 숨긴 동안 고쳐 쓰기(E) · 칸으로 보내기 · 칸 제목의 설명을 뺀다
   const isDrafting = useDraftingOn() === true;
+  const writeGesture = (press: string) => press.replace(/\{(\w+)\}/, (_whole, gesture: string) => t(`assign.help.${gesture}`));
+  // 글쇠는 키 처리와 같은 표에서 - 여기에 따로 적지 않는다
   const keys: readonly (readonly [string, ReactNode])[] = [
-    [t("assign.legend.keyMove"), <kbd key="move">↑ ↓ · J K</kbd>],
-    [t("assign.legend.keyConfirm"), <kbd key="confirm">↵</kbd>],
-    ...(isDrafting ? [[t("assign.legend.keyEdit"), <kbd key="edit">E</kbd>] as const] : []),
-    [t("assign.help.keyHold"), <kbd key="hold">H</kbd>],
-    [t("assign.help.keyDelete"), <kbd key="delete">Del · ⌫</kbd>],
-    [t("assign.help.keyClear"), <kbd key="clear">U</kbd>],
-    [t("assign.help.keyNoise"), <kbd key="noise">U · R</kbd>],
-    [t("assign.help.keyShift"), <kbd key="shift">Shift + {t("assign.help.click")}</kbd>],
-    [t("assign.help.keyCtrl"), <kbd key="ctrl">Ctrl + {t("assign.help.click")}</kbd>],
-    [t(isDrafting ? "assign.help.keyDrag" : "assign.help.keyDragLink"), <kbd key="drag">{t("assign.help.drag")}</kbd>],
-    [t("assign.help.keyDragPair"), <kbd key="drag-pair">{t("assign.help.drag")}</kbd>],
-    [t("assign.help.keyAltDrag"), <kbd key="alt-drag">Alt + {t("assign.help.drag")}</kbd>],
-    [t("assign.help.keyZoom"), <kbd key="zoom">Ctrl + {t("assign.help.wheel")}</kbd>],
-    [t("assign.help.keyView"), <kbd key="view">V</kbd>],
-    [t("assign.help.keySpace"), <kbd key="space">Space</kbd>],
-    [t("assign.help.keyUndo"), <kbd key="undo">Ctrl Z</kbd>],
-    [t("assign.help.keyMenu"), <kbd key="menu">↑ ↓ ← →</kbd>],
-    [t("assign.help.keyEsc"), <kbd key="esc">Esc</kbd>],
+    ...[...new Map(ASSIGN_KEYS.map((entry) => [entry.id, entry.labelKey]))].map(([id, labelKey]) => [t(labelKey), <kbd key={id}>{formatAssignKey(id)}</kbd>] as const),
+    ...HELP_ONLY.filter((item) => isDrafting || !item.isDraftOnly).map(
+      (item) => [t((isDrafting ? item.draftLabelKey : undefined) ?? item.labelKey), <kbd key={item.id}>{item.presses.map(writeGesture).join(" ")}</kbd>] as const,
+    ),
   ];
   return (
     <HelpPanel

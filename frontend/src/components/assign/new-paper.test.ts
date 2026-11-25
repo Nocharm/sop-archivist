@@ -119,6 +119,15 @@ describe("NewPaper", () => {
     expect(html()).toContain("new-src-x");
   });
 
+  it("shows the numbers of the document, read-only", () => {
+    // 번호 칸 글쇠(⇧N · Tab)는 용지가 numberCell을 받아야 손잡이를 내놓는다 - New 용지는 받지 않는다
+    const number = { value: "1.1", read: "1.1", source: "auto" as const, is_set: false, content_start: 0, from_text: false, note: null };
+    const numbered = { ...makeView({ units: () => ({ number }) }), has_number_ranges: true };
+    const h = html({ view: numbered, model: buildPaperModel(numbered), tabs: buildPaperTabs(numbered, buildPaperModel(numbered)) });
+    expect(h).toContain("1.1");
+    expect(h).not.toMatch(/<button[^>]*data-testid="assign-new-paper-num-/);
+  });
+
   it("shows no Caption needed on a written table", () => expect(html()).not.toContain("caption-missing"));
 
   it("folds other lines' AI suggestions into a band", () => {
