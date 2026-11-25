@@ -12,7 +12,7 @@ describe("held-down keys", () => {
 
 describe("keys kept behind a barrier", () => {
   it("are the moves and everything that needs a box", () => {
-    for (const key of ["delete", "enter", "h", "u", "e", "a", "s", "arrowleft"]) expect(isQueuedKey(key, false), key).toBe(true);
+    for (const key of ["delete", "enter", "h", "u", "r", "e", "a", "s", "arrowleft"]) expect(isQueuedKey(key, false), key).toBe(true);
     expect(isQueuedKey("j", true)).toBe(true);
     for (const key of ["v", "escape", "x", "?"]) expect(isQueuedKey(key, false), key).toBe(false);
   });

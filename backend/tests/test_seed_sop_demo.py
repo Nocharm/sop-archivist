@@ -122,7 +122,10 @@ def test_seed_creates_bundles_at_stages(seed_runs: SeedRuns) -> None:
     assert [(title, status) for _, title, status in bundles] == EXPECTED_BUNDLES
     ids = [bundle_id for bundle_id, _, _ in bundles]
     documents = _query(database_path, "SELECT bundle_id, count(*) FROM documents GROUP BY bundle_id ORDER BY bundle_id")
-    assert documents == [(bundle_id, DOCUMENTS_PER_BUNDLE) for bundle_id in ids[:4]] + [(bundle_id, 1) for bundle_id in ids[4:]]
+    # 문단 박스 묶음만 둘이다 — 둘째는 본문 앞부분 · 개정 이력 문서
+    assert documents == [(bundle_id, DOCUMENTS_PER_BUNDLE) for bundle_id in ids[:4]] + [
+        (bundle_id, 2 if title == PARAGRAPH_TITLE else 1) for bundle_id, title, _ in bundles[4:]
+    ]
     confirmed = dict(_query(
         database_path,
         "SELECT bundle_id, count(*) FROM unit_decisions WHERE status = 'confirmed' GROUP BY bundle_id",
@@ -179,11 +182,26 @@ def test_paragraph_bundle_has_one_box_per_language(seed_runs: SeedRuns) -> None:
     rows = _query(database_path, f"""
         SELECT u.text, u.lang, m.pair_id IS NOT NULL FROM units u JOIN extractions e ON e.id = u.extraction_id
         JOIN documents d ON d.id = e.document_id LEFT JOIN unit_pair_members m ON m.unit_id = u.id
-        WHERE d.bundle_id = {bundle_id} AND u.kind = 'sentence' ORDER BY u.local_no
+        WHERE d.bundle_id = {bundle_id} AND d.doc_code = 'SOP-ABC-1050' AND u.kind = 'sentence' ORDER BY u.local_no
     """)
 
     assert rows == [(PARAGRAPH_KO, "ko", 1), (PARAGRAPH_EN, "en", 1)]
     assert PARAGRAPH_EN not in first.stdout
+
+
+def test_paragraph_bundle_has_a_document_with_front_matter_and_history(seed_runs: SeedRuns) -> None:
+    """같은 묶음의 둘째 문서 — 1장 앞 세 줄과 개정 이력 두 줄이 저절로 삭제되고 나머지는 배정 줄이다(Assign 본문 앞부분 스모크가 쓴다)."""
+    database_path, _, _, bundles = seed_runs
+    (bundle_id,) = [bundle_id for bundle_id, title, _ in bundles if title == PARAGRAPH_TITLE]
+
+    rows = _query(database_path, f"""
+        SELECT u.noise_kind, count(*) FROM units u JOIN extractions e ON e.id = u.extraction_id
+        JOIN documents d ON d.id = e.document_id
+        WHERE d.bundle_id = {bundle_id} AND d.doc_code = 'SOP-ABC-1060' AND u.status = 'active' AND u.group_unit_id IS NULL
+        GROUP BY u.noise_kind
+    """)
+
+    assert dict(rows) == {"front": 3, "history": 2, None: 4}
 
 
 def test_toc_bundle_marks_its_contents_lines(seed_runs: SeedRuns) -> None:

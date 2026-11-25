@@ -11,8 +11,8 @@ Assign 목차 블록·띠 표 제목 줄 스모크용).
 Assign 표 안 표 스모크용, MD 1 F2).
 한/영 따로 표: 9 한/영 따로 표(qa.member 작성자 — 한글 절반 표 둘 다음 영어 절반 표 둘, 값 표는 행 수가 다름, 배정 없음.
 Assign 대응 표 짝 스모크용).
-문단 박스: 10 문단 박스(qa.member 작성자 — 한 문단에 한글 문장 둘 뒤 영어 문장 둘이 든 Old 문서 하나, 배정 없음.
-Assign 문단 박스 스모크용, 쪼개기 규칙 2. 목록 맨 위 묶음이 그대로이도록 7번보다 먼저 만든다).
+문단 박스: 10 문단 박스(qa.member 작성자 — 한 문단에 한글 문장 둘 뒤 영어 문장 둘이 든 Old 문서 하나와, 표지 · 결재 표 · Summary of Changes ·
+1장 · 2장 · 개정 이력이 든 Old 문서 하나, 배정 없음. Assign 문단 박스 · 본문 앞부분 스모크용, 쪼개기 규칙 2. 목록 맨 위 묶음이 그대로이도록 7번보다 먼저 만든다).
 이미 같은 제목 묶음이 있으면 그 묶음은 건너뛰어 여러 번 돌려도 같은 결과다. 끝에 묶음별 상태·진행 숫자만 찍고 원문 글자는 찍지 않는다.
 
 개발 전용이다 — 합성 생성기가 개발 의존성 python-docx와 테스트 팩토리(tests.pdf_factory)를 쓰고, 합성 파일은 임시 디렉터리에
@@ -238,6 +238,11 @@ def _build_doc_bundle(client: TestClient, bundle_id: int) -> None:
 
 PARAGRAPH_TITLE = "SYNTHETIC 10 문단 박스"
 PARAGRAPH_KO, PARAGRAPH_EN = "탱크를 비운다. 밸브를 닫는다.", "Drain the tank completely. Close the outlet valve."
+# 저절로 삭제되는 본문 앞부분(1장 앞)과 개정 이력 — 1장 · 2장의 제목과 문장 넷만 배정 줄이다
+FRONT_LINES = ("합성 표준 절차서", "Summary of Changes")
+FRONT_TABLE = (("문서 번호", "SOP-ABC-1060"), ("제목", "합성 탱크 세척"))
+FRONT_BODY = ("탱크 세척 방법을 정한다.", "합성 공정에 적용한다.")
+FRONT_HISTORY = ("개정 이력", "처음 만들었다.")
 
 
 def _build_paragraph_bundle(client: TestClient, bundle_id: int) -> None:
@@ -246,6 +251,14 @@ def _build_paragraph_bundle(client: TestClient, bundle_id: int) -> None:
     put_tobe_codes(client, bundle_id, [build_tobe_doc("SOP-TNK", "SYNTHETIC Tank draining")])
     body = p("5. 절차", "Heading1") + p("5. Procedure", "Heading1") + p(f"{PARAGRAPH_KO} {PARAGRAPH_EN}")
     response = upload(client, bundle_id, build_docx(body), "SYNTHETIC_SOP-ABC-1050_Paragraphs.docx")
+    assert response.status_code == 201, response.text
+    assert response.json()["status"] == "ready", response.json()["status"]
+    front = (
+        p(FRONT_LINES[0]) + make_grid_table(2, "".join(make_row(list(row)) for row in FRONT_TABLE)) + p(FRONT_LINES[1], "Heading1")
+        + p("1. 목적", "Heading1") + p(FRONT_BODY[0]) + p("2. 범위", "Heading1") + p(FRONT_BODY[1])
+        + p(f"9. {FRONT_HISTORY[0]}", "Heading1") + p(FRONT_HISTORY[1])
+    )
+    response = upload(client, bundle_id, build_docx(front), "SYNTHETIC_SOP-ABC-1060_Front_matter.docx")
     assert response.status_code == 201, response.text
     assert response.json()["status"] == "ready", response.json()["status"]
 

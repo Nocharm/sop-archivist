@@ -2365,6 +2365,8 @@ async def _write_change(
     in_place = [unit_id for unit_id in [*change.langs, *marking] if unit_id not in moving]
     if in_place:
         decided = [unit_id for unit_id in await _find_decided_units(session, document, in_place) if unit_id not in unblocked]
+        if decided and set(decided) <= set(marking):
+            raise_rule(409, "unit_has_decision", unit_ids=decided, reason="noise")
         if decided:
             raise_rule(409, "unit_has_decision", unit_ids=decided)
     if change.pair_seqs:

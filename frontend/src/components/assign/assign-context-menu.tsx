@@ -3,7 +3,7 @@
 // 자리는 그 자리 메뉴와 같은 규칙(placeLinkMenu) - 그 줄의 조각들(한/영 짝이면 둘 다) 아래(모자라면 위)에 놓아 다룰 문장을 가리지 않는다.
 "use client";
 
-import { ArrowDownToLine, ArrowUpToLine, BookMarked, BookX, CaptionsOff, Eraser, Heading, Image as ImageIcon, LayoutList, Link2, MousePointerClick, PanelBottom, PanelTop, Pilcrow, Scissors, Table2, Trash2, Unlink, type LucideIcon } from "lucide-react";
+import { ArrowDownFromLine, ArrowDownToLine, ArrowUpToLine, BookMarked, BookX, CaptionsOff, Eraser, Heading, Image as ImageIcon, LayoutList, Link2, MousePointerClick, PanelBottom, PanelTop, Pilcrow, Scissors, Table2, Trash2, Unlink, type LucideIcon } from "lucide-react";
 import { useRef } from "react";
 
 import { Menu } from "@/components/ui/menu";
@@ -36,6 +36,7 @@ export const ASSIGN_ACTION_ICONS: Record<Exclude<AssignMenuAction, "lang" | "pie
   // 제목 ↔ 문장(F8b) - 문단 기호는 보통 문장, H는 제목
   to_sentence: Pilcrow,
   to_heading: Heading,
+  start_body: ArrowDownFromLine,
 };
 
 export const ASSIGN_ACTION_LABELS: Record<Exclude<AssignMenuAction, "lang" | "piece_lang" | "caption_of">, string> = {
@@ -59,6 +60,7 @@ export const ASSIGN_ACTION_LABELS: Record<Exclude<AssignMenuAction, "lang" | "pi
   // 제목에서 바꾼 문장이면 항목의 labelKey("제목으로 되돌리기")가 대신한다
   to_sentence: "assign.ctx.toSentence",
   to_heading: "assign.ctx.toHeading",
+  start_body: "assign.ctx.startBody",
 };
 
 const KEYS: Partial<Record<AssignMenuAction, string>> = { delete: "Del", clear: "U" };

@@ -5,7 +5,7 @@
 // strips.fold(Assign 필터)가 있으면 맞는 조각만 제 모양, 곁은 한 줄 판, 먼 구간은 묶음 한 줄로 접는다(paper-fold-model.ts) - 한 줄 판·묶음은 단추라 눌러도 조각을 고르지 않는다.
 "use client";
 
-import { BookMarked, ChevronRight, ChevronsDownUp, Ellipsis, FoldVertical, GripVertical, ImageIcon, Link2, Scissors, TriangleAlert, WandSparkles, type LucideIcon } from "lucide-react";
+import { BookMarked, ChevronRight, ChevronsDownUp, Ellipsis, FilePen, FoldVertical, GripVertical, ImageIcon, Link2, Scissors, TriangleAlert, Undo2, WandSparkles, type LucideIcon } from "lucide-react";
 import { Fragment, memo, useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 
 import { BundleHead } from "@/components/paper/bundle-head";
@@ -15,13 +15,13 @@ import { NumberCell, type NumberEdit } from "@/components/paper/number-cell";
 import { StripBox } from "@/components/paper/strip-box";
 import { StripLead, STRIP_LEAD_EXTRA } from "@/components/paper/strip-lead";
 import { UnitStatusChip } from "@/components/status";
+import { getMorphClassName } from "@/components/ui/morph-button";
 import { Collapse } from "@/components/ui/motion";
 import { useDelegatedTip } from "@/components/ui/delegated-tip";
 import type { ViewBlock, ViewUnit } from "@/lib/api-sop";
 import type { PendingPlace } from "@/lib/assign-focus-model";
 import { getBundleShape, getCaptionScope, isSentenceLike, type BundleShape } from "@/lib/caption-slot-model";
 import { readCaretPoint } from "@/lib/caret-point";
-import { isNoiseUnit } from "@/lib/classify-model";
 import { useDraftingOn } from "@/lib/drafting";
 import { useI18n } from "@/lib/i18n";
 import { pickNearChunks, sliceCards } from "@/lib/paper-chunk-model";
@@ -35,7 +35,7 @@ import { getCardTops, getHiddenPrefixLength, getPairBrackets, getPillWidth, getR
 import { buildHeadingShiftGroups, readHeadingShiftHead, type HeadingShiftGroup } from "@/lib/heading-shift-model";
 import { getPairHint, type PairHint, type PairHintUnit } from "@/lib/pair-hint-model";
 import { isDeletedLineOpen, readDeletedLine, type DeletedFold, type DeletedLine } from "@/lib/deleted-fold-model";
-import { buildTocBlock, shouldJoinTocCard } from "@/lib/toc-block-model";
+import { buildNoiseBlock, describeNoiseUnit, listNoiseBlocks, readNoiseReason, shouldJoinNoiseCard, type NoiseKind } from "@/lib/toc-block-model";
 import { findUnwrapHeads, getRowUnwrapTable } from "@/lib/unwrap-model";
 import { isUnwrapSuggestionUnchanged, readUnwrapMoves, type UnwrapLineMove } from "@/lib/unwrap-ai-model";
 import { buildStripRows } from "@/lib/figure-spot-model";
@@ -74,11 +74,10 @@ export interface PaperPending {
   waits: ReadonlyMap<number, number>;
 }
 
-/** 목차 줄(잡음 표시가 붙은 글 조각)인가 - 목차 블록으로 접는 화면(strips.toc)에서만 묻는다 */
-function isTocRow(row: PaperRow | undefined, units: ReadonlyMap<number, ViewUnit>): boolean {
-  if (row === undefined || row.type !== "piece" || row.unitId === null) return false;
-  const unit = units.get(row.unitId);
-  return unit !== undefined && isNoiseUnit(unit);
+/** 저절로 삭제된 줄(잡음 표시가 붙은 글 조각 · 표 · 그림)의 종류 - 아니면 null. 블록으로 접는 화면(strips.noise)에서만 묻는다 */
+function readNoiseKind(row: PaperRow | undefined, units: ReadonlyMap<number, ViewUnit>): NoiseKind | null {
+  const unitId = row === undefined ? null : readRowUnitId(row);
+  return unitId === null ? null : (units.get(unitId)?.noise_kind ?? null);
 }
 
 /** 접기에서 줄이 맞는지 볼 단위 - 표는 표 단위와 칸 안 문장 단위 모두, 표·그림은 머리 줄의 캡션 단위도 */
@@ -201,13 +200,14 @@ interface PaperProps {
     fold?: { matchIds: ReadonlySet<number>; open: FoldOpen; onOpenChange: (next: FoldOpen) => void };
     /** Assign - 머리 줄에 "Caption needed"를 띄울 묶음(lib/caption-model isCaptionNeeded). 없으면 캡션이 없는 묶음 모두 */
     isCaptionNeeded?: (unitId: number, hasCaption: boolean) => boolean;
-    /** Assign - 연달아 오는 목차 줄(noise_kind "toc")을 흐린 블록 하나로 접는다(처음엔 접힘, MD 1 F6). 없으면 보통 조각으로 그린다(Split).
+    /** Assign - 연달아 오는 저절로 삭제된 줄(noise_kind)을 종류마다 흐린 블록 하나로 접는다(처음엔 접힘, MD 1 F6 · 쪼개기 먼저 §7 R3). 없으면 보통 조각으로 그린다(Split).
      *  펼침(open)과 고른 블록·줄(selected - unitId null이면 블록 전체)은 화면이 쥔다(결정 칸이 같은 것을 보인다).
-     *  canClear면 펼친 블록에서 고른 줄 끝의 "목차 아님"과 머리의 "모두 목차 아님"을 보인다 - onClear(그 단위들)로 편집 clear_noise */
-    toc?: {
-      canClear: boolean;
+     *  canEdit면 머리와 줄 끝에 사유 쓰기 · 삭제 취소가 늘 보인다 - onReason · onClear(그 단위들)로 편집 set_noise_reason · clear_noise */
+    noise?: {
+      canEdit: boolean;
       busy: boolean;
       onClear: (unitIds: number[]) => void;
+      onReason: (unitIds: number[]) => void;
       open: ReadonlySet<number>;
       selected: { key: number; unitId: number | null } | null;
       onToggle: (key: number) => void;
@@ -363,8 +363,10 @@ export function Paper({
   // 단추 줄을 그리는 조각 - 지금 고른 것과 바로 전에 고른 것(접히는 동안). 수천 조각마다 접기 부품을 두지 않는다
   const [actionIds, setActionIds] = useState({ current: selectedId, previous: null as number | null });
   if (actionIds.current !== selectedId) setActionIds({ current: selectedId, previous: actionIds.current });
-  // 목차 블록 - 펼침·고름은 화면(strips.toc)이 쥔다
-  const hasToc = strips?.toc !== undefined;
+  // 저절로 삭제된 줄의 블록 - 펼침·고름은 화면(strips.noise)이 쥔다
+  const hasNoise = strips?.noise !== undefined;
+  // 줄 → 그 줄이 든 블록(용지 줄이 없는 안쪽 표 · 칸 안 그림까지)
+  const noiseBlockOf = useMemo(() => new Map(hasNoise ? listNoiseBlocks([...model.units.values()]).flatMap((block) => block.unitIds.map((id) => [id, block] as const)) : []), [model, hasNoise]);
   // 제목 → 문장 묶음 - 첫 단위 → 묶음(그 줄이 든 카드 위에 머리를 단다)
   const hasHeadingShift = strips?.headingShift !== undefined;
   const shiftGroups = useMemo(() => {
@@ -429,9 +431,9 @@ export function Paper({
       const cards: PaperRow[][] = [];
       for (const row of section.rows) {
         const last = cards[cards.length - 1];
-        // 연달아 오는 목차 줄은 한 카드(목차 블록) - 덩어리 나누기가 블록을 가르지 않는다
-        const joinsToc = hasToc && shouldJoinTocCard(isTocRow(last?.[last.length - 1], model.units), isTocRow(row, model.units));
-        if (last && (cardTops.has(readRowUnitId(row) ?? -1) || joinsToc)) last.push(row);
+        // 연달아 오는 같은 종류의 저절로 삭제된 줄은 한 카드(블록) - 덩어리 나누기가 블록을 가르지 않는다
+        const joinsNoise = hasNoise && shouldJoinNoiseCard(readNoiseKind(last?.[last.length - 1], model.units), readNoiseKind(row, model.units));
+        if (last && (cardTops.has(readRowUnitId(row) ?? -1) || joinsNoise)) last.push(row);
         else cards.push([row]);
       }
       const { isChunked, slices } = sliceCards(cards.length);
@@ -442,7 +444,7 @@ export function Paper({
       });
       return { cards, groups, isChunked };
     });
-  }, [sections, cardTops, model, hasToc]);
+  }, [sections, cardTops, model, hasNoise]);
   const chunkCount = cardGroups.reduce((sum, section) => sum + (section.isChunked ? section.groups.length : 0), 0);
   // 화면 가까이(위아래 한 화면씩 더) 있는 덩어리 번호 범위 - 재기 전(null)에는 모두 가깝다고 본다
   const [nearChunks, setNearChunks] = useState<{ from: number; to: number } | null>(null);
@@ -1310,60 +1312,68 @@ export function Paper({
         data-testid={`${testId}-gap-${row.key}`}
       >
         {hasRail && renderRail(Math.min(readTabWidth(prev), readTabWidth(row)))}
-        {/* 처리 중인 틈은 알약이 합치기 자리를 대신한다. 목차 블록 곁에는 합치기를 두지 않는다 - 목차 줄은 "목차 아님"으로 먼저 보통 줄로 돌린다. 접힌 삭제 줄 곁도 같다(펼쳐서 한다) */}
-        {renderGapPills(prev, row) ?? (!(hasToc && (isTocRow(prev, model.units) || isTocRow(row, model.units))) && !isDeletedRow(prev) && !isDeletedRow(row) && renderMerge(prev, row))}
+        {/* 처리 중인 틈은 알약이 합치기 자리를 대신한다. 저절로 삭제된 줄 곁에는 합치기를 두지 않는다 - 먼저 "삭제 취소"로 보통 줄로 돌린다. 접힌 삭제 줄 곁도 같다(펼쳐서 한다) */}
+        {renderGapPills(prev, row) ?? (!(hasNoise && (readNoiseKind(prev, model.units) ?? readNoiseKind(row, model.units)) !== null) && !isDeletedRow(prev) && !isDeletedRow(row) && renderMerge(prev, row))}
       </div>
     );
   }
 
-  /** 목차 블록 - 연달아 오는 목차 줄을 흐린 블록 하나로(MD 1 F6). 접히면 머리 줄과 처리 줄 둘, 펼치면 원문 목차 모양 그대로 줄마다(한/영 사이 점선).
-   *  머리를 누르면 펼치거나 접으며 블록을 고르고, 줄을 누르면 그 줄을 고른다(그 줄 끝에만 "목차 아님"). 고름은 배정 줄이 아니라 화면의 목차 고름이다(결정 칸 F12) */
-  function renderTocBlock(rows: readonly PaperRow[]): ReactNode {
-    const toc = strips?.toc;
-    const units = rows.flatMap((row) => {
-      const unit = model.units.get(readRowUnitId(row) ?? -1);
-      return unit ? [unit] : [];
+  /** 한 카드의 블록 줄 - 용지 줄이 없는 안쪽 표 · 칸 안 그림도 제 줄로 센다. 그림 탭에는 그림 줄만 있다 */
+  function listNoiseUnits(rows: readonly PaperRow[]): ViewUnit[] {
+    const ids = rows.flatMap((row) => {
+      const unitId = readRowUnitId(row);
+      if (unitId === null) return [];
+      return figureRows === "only" ? [unitId] : (noiseBlockOf.get(unitId)?.unitIds ?? [unitId]);
     });
-    const block = buildTocBlock(units);
-    if (!toc || !block) return null;
-    const isOpen = toc.open.has(block.key);
-    const picked = toc.selected?.key === block.key ? toc.selected : null;
-    const isBusy = toc.busy || block.unitIds.some(isLocked);
+    return [...new Set(ids)].flatMap((id) => model.units.get(id) ?? []);
+  }
+
+  /** 저절로 삭제된 줄의 블록 - 연달아 오는 같은 종류의 줄을 흐린 블록 하나로(MD 1 F6). 머리는 "DELETED 이름 · n줄 · 사유"와 늘 보이는 사유 쓰기 ·
+   *  모두 삭제 취소, 펼치면 원문 글 그대로 줄마다(취소선, 한/영 사이 점선)와 줄 끝의 같은 두 단추(흐리게, 고른 줄은 삭제 취소가 펼친 채).
+   *  머리를 누르면 펼치거나 접으며 블록을 고르고, 줄을 누르면 그 줄을 고른다. 고름은 배정 줄이 아니라 화면의 고름이다(결정 칸 F12) */
+  function renderNoiseBlock(rows: readonly PaperRow[]): ReactNode {
+    const noise = strips?.noise;
+    const block = buildNoiseBlock(listNoiseUnits(rows), (unit) => describeNoiseUnit(unit, model.tables, t));
+    if (!noise || !block) return null;
+    const isOpen = noise.open.has(block.key);
+    const picked = noise.selected !== null && block.unitIds.includes(noise.selected.unitId ?? noise.selected.key) ? noise.selected : null;
+    const isBusy = noise.busy || block.unitIds.some(isLocked);
     const width = readTabWidth(rows[0]);
-    const prefix = `${testId}-toc`;
+    const prefix = `${testId}-noise`;
+    const name = t(`assign.noise.name.${block.kind}`);
+    const reason = readNoiseReason(block, t);
     return (
-      <div key={`toc-${block.key}`} className="strip-row">
+      <div key={`noise-${block.key}`} className="strip-row">
         <span className="strip-lead-gap" style={{ width: width + STRIP_LEAD_EXTRA }} />
-        <div className="toc-block" data-open={isOpen ? "" : undefined} data-sel={picked !== null && picked.unitId === null ? "" : undefined} data-testid={`${prefix}-${block.key}`}>
-          <div className="toc-head-row">
+        <div className="toc-block" data-kind={block.kind} data-open={isOpen ? "" : undefined} data-sel={picked !== null && picked.unitId === null ? "" : undefined} data-testid={`${prefix}-${block.key}`}>
+          <div className="toc-head-row noise-head-row">
             <button
               type="button"
               className="toc-head"
               aria-expanded={isOpen}
+              data-tip={reason}
               data-testid={`${prefix}-head-${block.key}`}
               onClick={() => {
-                toc.onToggle(block.key);
-                toc.onPick(block.key, null);
+                noise.onToggle(block.key);
+                noise.onPick(block.key, null);
               }}
             >
               <ChevronRight size={13} strokeWidth={1.75} className="toc-chevron" aria-hidden />
-              <span className="toc-tag">{t("assign.toc.tag")}</span>
-              <span className="toc-head-text">{t("assign.toc.head", { n: block.counts.total })}</span>
+              <span className="deleted-tag">{t("paper.deleted.tag")}</span>
+              <span className="toc-head-text">{t("assign.noise.head", { name, n: block.counts.total, reason })}</span>
             </button>
-            {isOpen && toc.canClear && (
-              <button
-                type="button"
-                className="btn toc-act"
-                disabled={isBusy}
-                data-testid={`${prefix}-all-${block.key}`}
-                onClick={() => toc.onClear(block.unitIds)}
-              >
-                {t("assign.toc.allNot")}
-              </button>
+            {noise.canEdit && (
+              <span className="noise-acts">
+                <button type="button" className="btn noise-act" disabled={isBusy} data-testid={`${prefix}-reason-${block.key}`} onClick={() => noise.onReason(block.unitIds)}>
+                  {t("assign.noise.write")}
+                </button>
+                <button type="button" className="btn noise-act" disabled={isBusy} data-testid={`${prefix}-clear-${block.key}`} onClick={() => noise.onClear(block.unitIds)}>
+                  {t("assign.noise.clearAll")}
+                </button>
+              </span>
             )}
             {renderPendingPills((place) => place.at === "box" && block.unitIds.includes(place.unitId))}
           </div>
-          {!isOpen && <p className="toc-note" data-testid={`${prefix}-note-${block.key}`}>{t("assign.toc.note")}</p>}
           <Collapse open={isOpen} className="toc-body">
             {() => (
               <ol className="toc-lines" style={{ fontFamily: "var(--font-source)" }}>
@@ -1373,23 +1383,27 @@ export function Paper({
                     <li key={line.unitId} className="toc-line" data-break={line.breakBefore ? "" : undefined} data-picked={isPicked ? "" : undefined}>
                       <button
                         type="button"
-                        className="toc-line-text"
+                        className="toc-line-text noise-line-text"
                         aria-pressed={isPicked}
                         data-testid={`${prefix}-line-${line.unitId}`}
-                        onClick={() => toc.onPick(block.key, isPicked ? null : line.unitId)}
+                        onClick={() => noise.onPick(block.key, isPicked ? null : line.unitId)}
                       >
                         {line.text}
                       </button>
-                      {isPicked && toc.canClear && (
-                        <button
-                          type="button"
-                          className="btn toc-act"
-                          disabled={isBusy}
-                          data-testid={`${prefix}-not-${line.unitId}`}
-                          onClick={() => toc.onClear([line.unitId])}
-                        >
-                          {t("assign.toc.not")}
-                        </button>
+                      {block.reason.isMixed && line.reason !== "" && <span className="noise-line-reason" data-tip={line.reason}>{line.reason}</span>}
+                      {noise.canEdit && (
+                        <span className="mbtn-set noise-line-acts">
+                          <button type="button" className={getMorphClassName("default", false)} aria-label={t("assign.noise.write")} disabled={isBusy} data-testid={`${prefix}-unit-reason-${line.unitId}`} onClick={() => noise.onReason([line.unitId])}>
+                            <FilePen size={14} strokeWidth={1.5} aria-hidden />
+                            <span className="mbtn-label" aria-hidden>{t("assign.noise.write")}</span>
+                          </button>
+                          <button type="button" className={getMorphClassName("default", isPicked)} aria-label={t("assign.noise.clear")} disabled={isBusy} data-testid={`${prefix}-unit-clear-${line.unitId}`} onClick={() => noise.onClear([line.unitId])}>
+                            <Undo2 size={14} strokeWidth={1.5} aria-hidden />
+                            <span className="mbtn-label" aria-hidden>
+                              {t("assign.noise.clear")} {isPicked && <kbd>U</kbd>}
+                            </span>
+                          </button>
+                        </span>
                       )}
                     </li>
                   );
@@ -1544,7 +1558,7 @@ export function Paper({
 
   /** 한 칸(외톨이 줄 하나 또는 짝 카드 한 장) - 카드는 .strip-card로 감싸 강조 테두리가 줄 수와 상관없이 카드 전체에 둘린다(감싼 요소는 display: contents라 배치는 그대로) */
   function renderCard(rows: readonly PaperRow[], isPeek = false): ReactNode {
-    if (hasToc && isTocRow(rows[0], model.units)) return renderTocBlock(rows);
+    if (hasNoise && readNoiseKind(rows[0], model.units) !== null) return renderNoiseBlock(rows);
     // 거르기로 접힌 줄을 엿보기로 연 것은 살펴보려는 것이라 삭제 줄도 펼친다
     const folds = strips?.deleted && !isPeek ? strips.deleted.folds : null;
     const deletedLine = folds ? readDeletedLine(folds, rows.map((row) => readRowUnitId(row) ?? -1)) : null;
@@ -1592,7 +1606,7 @@ export function Paper({
       <PaperChunk
         key={group.cards[0][0].key}
         live={nearChunks === null || (group.index >= nearChunks.from && group.index <= nearChunks.to) || liveChunkIds.has(group.index)}
-        deps={[cardGroups, t, testId, dragBoxes, pickWholeBundle, strips?.toc?.open, strips?.toc?.selected, strips?.toc?.busy, strips?.toc?.canClear, shiftGroups, strips?.headingShift?.busy, strips?.headingShift?.canRevert, unwrapHeads, strips?.unwrap?.busy, strips?.unwrap?.canRewrap, strips?.unwrap?.ai?.enabled, strips?.unwrap?.ai?.busy, unwrapAiPreviews, unwrapOrders, unwrapAiMoves, strips?.deleted?.folds, strips?.pending]}
+        deps={[cardGroups, t, testId, dragBoxes, pickWholeBundle, strips?.noise?.open, strips?.noise?.selected, strips?.noise?.busy, strips?.noise?.canEdit, shiftGroups, strips?.headingShift?.busy, strips?.headingShift?.canRevert, unwrapHeads, strips?.unwrap?.busy, strips?.unwrap?.canRewrap, strips?.unwrap?.ai?.enabled, strips?.unwrap?.ai?.busy, unwrapAiPreviews, unwrapOrders, unwrapAiMoves, strips?.deleted?.folds, strips?.pending]}
         render={() => renderCards(group)}
       />
     ));

@@ -165,7 +165,7 @@ const readAllCount = async (page) => Number(await page.locator('[data-testid="as
 // 목차 블록 머리가 그 줄 수를 말할 때까지 - 편집 뒤 보기를 다시 받는다
 async function waitTocLines(page, n) {
   await page.waitForFunction(
-    (expected) => [...document.querySelectorAll('[data-testid^="assign-paper-toc-head-"]')].some((el) => (el.textContent ?? "").includes(`${expected} lines`)),
+    (expected) => [...document.querySelectorAll('[data-testid^="assign-paper-noise-head-"]')].some((el) => (el.textContent ?? "").includes(`${expected} lines`)),
     n,
     { timeout: T },
   );
@@ -2630,82 +2630,83 @@ await runStep("assign: a table reference shows its target and can be detached an
   check("linking again saves the same table by a person", saved.state === "linked" && saved.target_unit_id === target.id && saved.origin === "human", JSON.stringify(saved));
 });
 
-await runStep("assign: TOC block folds the contents, Not contents returns one line and undo puts it back", {}, async ({ page, takeShot }) => {
+await runStep("assign: TOC block folds the contents, Restore returns one line and undo puts it back", {}, async ({ page, takeShot }) => {
   const toc = await findTocBundle(page);
   check("the demo seed has the contents bundle", toc !== null);
   if (!toc) return;
   await page.goto(`${BASE}/bundles/${toc.id}/assign`);
-  const head = page.locator('[data-testid^="assign-paper-toc-head-"]');
+  const head = page.locator('[data-testid^="assign-paper-noise-head-"]');
   await head.first().waitFor({ timeout: T });
-  const key = (await head.first().getAttribute("data-testid")).replace("assign-paper-toc-head-", "");
+  const key = (await head.first().getAttribute("data-testid")).replace("assign-paper-noise-head-", "");
   check("the contents are one folded block", (await head.count()) === 1 && (await head.getAttribute("aria-expanded")) === "false");
   check("the block head says how many lines", (await head.innerText()).includes(`${TOC_LINES} lines`), await head.innerText());
-  check("the folded block shows the automatic delete line", await page.locator(`[data-testid="assign-paper-toc-note-${key}"]`).isVisible());
-  check("no contents line is drawn as a normal piece while folded", (await page.locator('[data-testid^="assign-paper-toc-line-"]').count()) === 0);
+  const headText = await head.innerText();
+  check("the folded head says deleted and why", headText.includes("DELETED") && headText.includes("Reason: The app builds the new contents"), headText);
+  check("no contents line is drawn as a normal piece while folded", (await page.locator('[data-testid^="assign-paper-noise-line-"]').count()) === 0);
   const before = await readAllCount(page);
   check("the remaining count leaves the contents lines out", before === toc.progress.total && before === 4, `${before} | ${toc.progress.total}`);
 
   await head.click();
-  await page.waitForFunction((testId) => document.querySelector(`[data-testid="${testId}"]`)?.getAttribute("aria-expanded") === "true", `assign-paper-toc-head-${key}`, { timeout: T });
-  const lines = page.locator('[data-testid^="assign-paper-toc-line-"]');
+  await page.waitForFunction((testId) => document.querySelector(`[data-testid="${testId}"]`)?.getAttribute("aria-expanded") === "true", `assign-paper-noise-head-${key}`, { timeout: T });
+  const lines = page.locator('[data-testid^="assign-paper-noise-line-"]');
   check("expanding shows every contents line", (await lines.count()) === TOC_LINES);
   check("a dashed break sits between the Korean and English contents", (await page.locator(".toc-line[data-break]").count()) >= 1);
-  check("the expanded head offers None of these are contents", await page.locator(`[data-testid="assign-paper-toc-all-${key}"]`).isVisible());
-  check("Not contents waits until a line is picked", (await page.locator('[data-testid^="assign-paper-toc-not-"]').count()) === 0);
-  // 결정 칸(F12 G2) - 머리를 누르면 블록이 골라진다: 상태 칩 없는 머리, 줄 수와 언어별 수, 펼치기 · 모두 목차 아님, 까닭 글, 따로 할 일 없음 · 꺼진 Confirm
-  await wait(page, "assign-toc-panel");
-  check("the panel head reads Contents · 8 lines without a status chip", (await getText(page, "assign-toc-head")).trim() === `Contents · ${TOC_LINES} lines` && (await page.locator('[data-testid="assign-row-status"]').count()) === 0, await getText(page, "assign-toc-head"));
-  check("section 1 counts the lines by language", (await getText(page, "assign-toc-shape")).includes("Korean 4 · English 3 · then 1"), await getText(page, "assign-toc-shape"));
-  check("section 1 offers collapse and None of these are contents", (await getText(page, "assign-toc-toggle")).includes("Collapse") && (await page.locator('[data-testid="assign-toc-all"]').isVisible()));
-  check("section 2 explains instead of recommending", (await page.locator('[data-testid="assign-toc-why"]').isVisible()) && (await page.locator(".assign-pick .dest-card").count()) === 0);
-  check("section 3 has nothing to do and Confirm is off", (await getText(page, "assign-toc-nothing")).trim() === "Nothing to do here" && (await page.locator('[data-testid="assign-primary"]').isDisabled()));
+  check("the head offers Write a reason and Restore all", (await page.locator(`[data-testid="assign-paper-noise-reason-${key}"]`).isVisible()) && (await page.locator(`[data-testid="assign-paper-noise-clear-${key}"]`).isVisible()));
+  check("every line has Restore at its end, picked or not", (await page.locator('[data-testid^="assign-paper-noise-unit-clear-"]').count()) === TOC_LINES);
+  // 결정 칸(F12 G2) - 머리를 누르면 블록이 골라진다: 상태 칩 없는 머리, 줄 수와 언어별 수, 펼치기 · 모두 삭제 취소, 까닭 글, 따로 할 일 없음 · 꺼진 Confirm
+  await wait(page, "assign-noise-panel");
+  check("the panel head reads Contents · 8 lines without a status chip", (await getText(page, "assign-noise-head")).trim() === `Contents · ${TOC_LINES} lines` && (await page.locator('[data-testid="assign-row-status"]').count()) === 0, await getText(page, "assign-noise-head"));
+  check("section 1 counts the lines by language", (await getText(page, "assign-noise-shape")).includes("Korean 4 · English 3 · then 1"), await getText(page, "assign-noise-shape"));
+  check("section 1 offers collapse and Restore all", (await getText(page, "assign-noise-toggle")).includes("Collapse") && (await getText(page, "assign-noise-clear")).includes("Restore all"));
+  check("section 2 explains instead of recommending", (await page.locator('[data-testid="assign-noise-why"]').isVisible()) && (await page.locator(".assign-pick .dest-card").count()) === 0);
+  check("section 3 has nothing to do and Confirm is off", (await getText(page, "assign-noise-nothing")).trim() === "Nothing to do here" && (await page.locator('[data-testid="assign-primary"]').isDisabled()));
   const after = lines.filter({ hasText: TOC_AFTER_TEXT });
-  const afterId = (await after.getAttribute("data-testid")).replace("assign-paper-toc-line-", "");
+  const afterId = (await after.getAttribute("data-testid")).replace("assign-paper-noise-line-", "");
   await after.click();
-  check("picking a line shows Not contents on that line only", (await page.locator('[data-testid^="assign-paper-toc-not-"]').count()) === 1 && (await page.locator(`[data-testid="assign-paper-toc-not-${afterId}"]`).isVisible()));
-  // 결정 칸(F12 G3) - 줄 하나: "목차 · n행", 그 줄 글과 목차 아님 (이 줄만)
-  await page.waitForFunction((n) => document.querySelector('[data-testid="assign-toc-head"]')?.textContent?.trim() === `Contents · line ${n}`, TOC_LINES, { timeout: T });
-  check("the panel shows the picked line and Not contents (this line only)", (await getText(page, "assign-toc-shape")).includes(TOC_AFTER_TEXT) && (await getText(page, "assign-toc-not")).includes("this line only"));
+  check("picking a line keeps Restore open on that line only", (await page.locator('.mbtn.reveal[data-testid^="assign-paper-noise-unit-clear-"]').count()) === 1 && (await page.locator(`.mbtn.reveal[data-testid="assign-paper-noise-unit-clear-${afterId}"]`).isVisible()));
+  // 결정 칸(F12 G3) - 줄 하나: "목차 · n행", 그 줄 글과 삭제 취소
+  await page.waitForFunction((n) => document.querySelector('[data-testid="assign-noise-head"]')?.textContent?.trim() === `Contents · line ${n}`, TOC_LINES, { timeout: T });
+  check("the panel shows the picked line and Restore", (await getText(page, "assign-noise-shape")).includes(TOC_AFTER_TEXT) && (await getText(page, "assign-noise-clear")).startsWith("Restore") && !(await getText(page, "assign-noise-clear")).includes("all"));
   await takeShot("sop-assign-toc-open.png");
-  await page.locator('[data-testid="assign-toc-not"]').click();
+  await page.locator('[data-testid="assign-noise-clear"]').click();
   await waitTocLines(page, TOC_LINES - 1);
   await page.locator(`[data-testid="assign-paper-piece-${afterId}"]`).waitFor({ timeout: T });
   check("the returned line is a normal piece and counts again", (await readAllCount(page)) === before + 1);
   // G4 - 돌린 줄이 골라져 보통 줄(Unassigned)의 결정 칸이 된다
   await page.waitForFunction(() => document.querySelector('[data-testid="assign-row-status"]')?.textContent?.includes("Unassigned"), null, { timeout: T });
-  check("selection moves to the returned line as an Unassigned row", (await page.locator('[data-testid="assign-toc-panel"]').count()) === 0);
+  check("selection moves to the returned line as an Unassigned row", (await page.locator('[data-testid="assign-noise-panel"]').count()) === 0);
 
   await page.locator('[data-testid="assign-undo"]').click();
   await waitTocLines(page, TOC_LINES);
   check("undo puts the line back into the contents", (await page.locator(`[data-testid="assign-paper-piece-${afterId}"]`).count()) === 0 && (await readAllCount(page)) === before);
 });
 
-await runStep("assign: TOC block None of these are contents returns the whole block and undo folds it back", {}, async ({ page }) => {
+await runStep("assign: TOC block Restore all returns the whole block and undo folds it back", {}, async ({ page }) => {
   const toc = await findTocBundle(page);
   if (!toc) return;
   await page.goto(`${BASE}/bundles/${toc.id}/assign`);
-  const head = page.locator('[data-testid^="assign-paper-toc-head-"]');
+  const head = page.locator('[data-testid^="assign-paper-noise-head-"]');
   await head.first().waitFor({ timeout: T });
-  const key = (await head.first().getAttribute("data-testid")).replace("assign-paper-toc-head-", "");
+  const key = (await head.first().getAttribute("data-testid")).replace("assign-paper-noise-head-", "");
   const before = await readAllCount(page);
   // J로 줄을 밟으면 목차 블록이 한 자리로 골라진다(접힌 채) - 남은 수는 그대로
   await page.keyboard.press("j");
-  await wait(page, "assign-toc-panel");
-  check("J lands on the folded contents block", (await getText(page, "assign-toc-shape")).includes("folded") && (await head.getAttribute("aria-expanded")) === "false" && (await readAllCount(page)) === before, await getText(page, "assign-toc-shape"));
-  await page.locator('[data-testid="assign-toc-toggle"]').click();
-  await page.waitForFunction((testId) => document.querySelector(`[data-testid="${testId}"]`)?.getAttribute("aria-expanded") === "true", `assign-paper-toc-head-${key}`, { timeout: T });
+  await wait(page, "assign-noise-panel");
+  check("J lands on the folded contents block", (await getText(page, "assign-noise-shape")).includes("folded") && (await head.getAttribute("aria-expanded")) === "false" && (await readAllCount(page)) === before, await getText(page, "assign-noise-shape"));
+  await page.locator('[data-testid="assign-noise-toggle"]').click();
+  await page.waitForFunction((testId) => document.querySelector(`[data-testid="${testId}"]`)?.getAttribute("aria-expanded") === "true", `assign-paper-noise-head-${key}`, { timeout: T });
   check("the panel's Expand opens the block in the paper", true);
   await page.keyboard.press("j");
   await page.locator('[data-testid="assign-row-status"]').waitFor({ timeout: T });
-  check("the next J goes on to the first body row", (await page.locator('[data-testid="assign-toc-panel"]').count()) === 0);
+  check("the next J goes on to the first body row", (await page.locator('[data-testid="assign-noise-panel"]').count()) === 0);
   await page.keyboard.press("k");
-  await wait(page, "assign-toc-panel");
-  await page.locator('[data-testid="assign-toc-all"]').click();
-  await page.waitForFunction(() => document.querySelectorAll('[data-testid^="assign-paper-toc-head-"]').length === 0, null, { timeout: T });
+  await wait(page, "assign-noise-panel");
+  await page.locator('[data-testid="assign-noise-clear"]').click();
+  await page.waitForFunction(() => document.querySelectorAll('[data-testid^="assign-paper-noise-head-"]').length === 0, null, { timeout: T });
   check("every contents line becomes a normal row", (await readAllCount(page)) === before + TOC_LINES);
   await page.locator('[data-testid="assign-undo"]').click();
   await waitTocLines(page, TOC_LINES);
-  check("undo folds the block back, closed", (await page.locator('[data-testid^="assign-paper-toc-head-"]').getAttribute("aria-expanded")) === "false" && (await readAllCount(page)) === before);
+  check("undo folds the block back, closed", (await page.locator('[data-testid^="assign-paper-noise-head-"]').getAttribute("aria-expanded")) === "false" && (await readAllCount(page)) === before);
 });
 
 await runStep("assign: band heading - one heading line with 7.4 in the number cell, Back to band table, Undo makes it a heading again", {}, async ({ page, takeShot }) => {
@@ -2830,6 +2831,96 @@ await runStep("assign: paragraph boxes - one paragraph is one box per language a
   const card = page.locator(".strip-card", { has: pieces[0] });
   check("both boxes sit in one pair card", (await card.count()) === 1 && (await card.locator(`[data-testid="assign-paper-piece-${sentences[1].id}"]`).count()) === 1);
   await takeShot("sop-assign-paragraph-boxes.png");
+});
+
+// 본문 앞부분 · 개정 이력(쪼개기 먼저 §7 R3) - 시드 "SYNTHETIC 10 문단 박스"의 둘째 문서: 표지 글 · 결재 표 · Summary of Changes, 1장 · 2장, 개정 이력. 끝에 편집을 되돌려 시드를 그대로 둔다
+const FRONT_CODE = "SOP-ABC-1060";
+const FRONT_REASON = "SYNTHETIC cover is not moved";
+
+await runStep("assign: front matter - folded blocks with buttons, U and R on a line, Shift+U, Body starts here, and the Excel remark", {}, async ({ page, takeShot }) => {
+  const headers = { "X-Dev-User": "qa.member" };
+  const bundles = await (await page.request.get(`${BASE}/api/bundles`, { headers })).json();
+  const bundle = bundles.find((item) => item.title === PARAGRAPH_TITLE);
+  const api = `${BASE}/api/bundles/${bundle?.id}`;
+  const doc = bundle ? (await (await page.request.get(`${api}/documents`, { headers })).json()).find((item) => item.doc_code === FRONT_CODE) : undefined;
+  check("the demo seed has the front matter document", doc !== undefined);
+  if (!doc) return;
+  const readView = async () => (await page.request.get(`${api}/documents/${doc.id}/view`, { headers })).json();
+  const listNoise = (view, kind) => view.units.filter((unit) => unit.noise_kind === kind && unit.group_unit_id === null);
+  const waitView = async (isDone) => {
+    for (let tries = 0; tries < 60; tries += 1) {
+      if (isDone(await readView())) return true;
+      await page.waitForTimeout(250);
+    }
+    return false;
+  };
+  const before = await readView();
+  const front = listNoise(before, "front");
+  const history = listNoise(before, "history");
+  check("chapter 1 and the history chapter split the document", front.length === 3 && history.length === 2, JSON.stringify([front.length, history.length]));
+  await page.goto(`${BASE}/bundles/${bundle.id}/assign`);
+  await wait(page, "assign-old-doc");
+  await page.locator('[data-testid="assign-old-doc"]').click();
+  await page.locator(`[data-testid="assign-old-doc-option-${doc.id}"]`).click();
+  const heads = page.locator('[data-testid^="assign-paper-noise-head-"]');
+  const head = page.locator(`[data-testid="assign-paper-noise-head-${front[0].id}"]`);
+  await head.waitFor({ timeout: T });
+  const texts = await heads.allInnerTexts();
+  check("two folded blocks say what was deleted and why", texts.length === 2 && texts[0].includes("Front matter · 3 lines · Reason: Before chapter 1") && texts[1].includes("Change history · 2 lines · Reason: Change history"), JSON.stringify(texts));
+  check("the head buttons are there while folded", (await page.locator('[data-testid^="assign-paper-noise-clear-"]').count()) === 2 && (await page.locator(`[data-testid="assign-paper-noise-reason-${front[0].id}"]`).isVisible()) && (await head.getAttribute("aria-expanded")) === "false");
+  await head.click();
+  const title = page.locator(`[data-testid="assign-paper-noise-line-${front[0].id}"]`);
+  const pickTitle = async () => {
+    if ((await head.getAttribute("aria-expanded")) !== "true") await head.click();
+    await title.click();
+    await page.locator(`.toc-line[data-picked] [data-testid="assign-paper-noise-line-${front[0].id}"]`).waitFor({ timeout: T });
+  };
+  await title.waitFor({ timeout: T });
+  check("the table is one line with its size", (await page.locator(`[data-testid="assign-paper-noise-line-${front[1].id}"]`).innerText()).trim() === "Table 1 (2×2)");
+  await pickTitle();
+  await takeShot("sop-assign-front-matter.png");
+  // Del은 삭제된 줄에서 아무것도 하지 않고, U는 그 줄만 삭제 취소
+  await page.keyboard.press("Delete");
+  await page.keyboard.press("u");
+  await page.locator(`[data-testid="assign-paper-piece-${front[0].id}"]`).waitFor({ timeout: T });
+  check("U restores the picked line only", await waitView((view) => listNoise(view, "front").length === 2 && view.units.find((unit) => unit.id === front[0].id)?.status === "unassigned"));
+  await page.keyboard.press("Control+z");
+  check("undo deletes it again", await waitView((view) => listNoise(view, "front").length === 3));
+  // R - 그 줄의 사유
+  await head.waitFor({ timeout: T });
+  await pickTitle();
+  await page.keyboard.press("r");
+  await wait(page, "assign-noise-modal");
+  await page.locator('[data-testid="assign-noise-modal-text"]').fill(FRONT_REASON);
+  await page.locator('[data-testid="assign-noise-modal-confirm"]').click();
+  check("R writes the reason of that line", await waitView((view) => view.units.filter((unit) => unit.noise_reason === FRONT_REASON).length === 1));
+  await page.waitForFunction((id) => document.querySelector(`[data-testid="${id}"]`)?.textContent?.includes("Different reasons"), `assign-paper-noise-head-${front[0].id}`, { timeout: T });
+  check("the head says the lines have different reasons", true);
+  const rows = await (await page.request.get(`${api}/outputs/a?lang=en`, { headers })).json();
+  check("Excel A's Remark is the written reason, the others the set phrase", JSON.stringify(rows.filter((item) => item.noise_kind === "front").map((item) => item.remark)) === JSON.stringify([FRONT_REASON, "Before chapter 1", "Before chapter 1"]));
+  // Shift+U - 블록 전체, Ctrl+Z 한 번에 사유까지 돌아온다
+  await pickTitle();
+  await page.keyboard.press("Shift+U");
+  check("Shift+U restores the whole block", await waitView((view) => listNoise(view, "front").length === 0));
+  await head.waitFor({ state: "detached", timeout: T });
+  await page.keyboard.press("Control+z");
+  check("one undo deletes the block again with its reason", await waitView((view) => listNoise(view, "front").length === 3 && view.units.some((unit) => unit.noise_reason === FRONT_REASON)));
+  // 우클릭 여기부터 본문 - 2장에서 시작하면 1장의 두 줄이 앞부분이 된다
+  const start = before.units.find((unit) => unit.text.startsWith("2."));
+  const piece = page.locator(`[data-testid="assign-paper-piece-${start.id}"]`);
+  await head.waitFor({ timeout: T });
+  await piece.scrollIntoViewIfNeeded();
+  await piece.click({ button: "right" });
+  await wait(page, "assign-ctx-menu");
+  await page.locator('[data-testid="assign-ctx-start_body"]').click();
+  check("Body starts here deletes everything before the line", await waitView((view) => listNoise(view, "front").length === 5 && view.units.find((unit) => unit.id === start.id)?.noise_kind === null));
+  await page.waitForFunction((id) => document.querySelector(`[data-testid="${id}"]`)?.textContent?.includes("5 lines"), `assign-paper-noise-head-${front[0].id}`, { timeout: T });
+  await page.keyboard.press("Control+z");
+  check("one undo puts the start back", await waitView((view) => listNoise(view, "front").length === 3));
+  // 사유까지 되돌려 시드를 그대로 둔다
+  await page.waitForFunction((id) => document.querySelector(`[data-testid="${id}"]`)?.textContent?.includes("3 lines"), `assign-paper-noise-head-${front[0].id}`, { timeout: T });
+  await page.keyboard.press("Control+z");
+  check("the seed is left as it was", await waitView((view) => view.units.every((unit) => unit.noise_reason === "")));
 });
 
 await runStep("assign: nested table - an inner table unwraps again and ↺ Back to table wraps only the pressed layer", {}, async ({ page }) => {
@@ -5874,7 +5965,7 @@ await runStep("assign: the side panel detaches below 1440px, drags inside the wi
   // 1440 이상이면 늘 붙고(기억은 남는다) 다시 좁아지면 뗀 채 · 접은 채
   await page.setViewportSize({ width: 1440, height: VIEWPORT.height });
   await head.waitFor({ state: "detached", timeout: T });
-  check("at 1440px the panel is docked, open, with no detach button", (await side.getAttribute("data-float")) === null && (await detach.count()) === 0 && (await page.locator('[data-testid="assign-toc-panel"], [data-testid="assign-pick"], [data-testid="assign-pick-prompt"]').first().isVisible()));
+  check("at 1440px the panel is docked, open, with no detach button", (await side.getAttribute("data-float")) === null && (await detach.count()) === 0 && (await page.locator('[data-testid="assign-noise-panel"], [data-testid="assign-pick"], [data-testid="assign-pick-prompt"]').first().isVisible()));
   await page.setViewportSize(VIEWPORT);
   await head.waitFor({ timeout: T });
   check("back at 1248px it floats again, folded as it was", (await side.getAttribute("data-folded")) === "" && isNear(await readSide(), folded), JSON.stringify(await readSide()));
