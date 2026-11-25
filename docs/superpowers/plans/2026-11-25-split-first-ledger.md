@@ -12,16 +12,16 @@
 | 2a | `fix/pair-spot-scroll` | 합침 | v1.6.0 · 7a863a50 | vitest 1927 · build 경고 0 · 스모크 3단계 통과(pytest 해당 없음) | 스모크는 단추 자리가 바뀐 감사(겹침)를 정식 업데이트 전에 |
 | 2b | `feat/inspector-float` | 합침 | v1.6.2 · aec15ead | vitest 1934 · build 경고 0 · `assign:` 스모크 전체 1117 통과 · 겹침 감사 장면 1120/1280/1440 | 판을 맨 위로 끌면 상단 바를 덮음(다시 끌어 내릴 수 있음), 접어도 칸 끝 빈 칸은 남음 — 거슬리면 고침 |
 | 3a | `perf/assign-measure` | 합침 | (번호는 다음 푸시에 함께) 1aaa2de0 | pytest+시드 · vitest 1961 · ruff(화면 변경 없음, 스모크 해당 없음) | 결과 문서(T3)는 3b 앞뒤를 잰 뒤 |
-| 3b | `fix/assign-command-queue` | 진행(11-26) | | | |
-| 3c | `fix/assign-instant-motion` | 대기 | | | |
+| 3b | `fix/assign-command-queue` | 합침 | v1.6.8 · 278c271d | vitest 2071 · build 경고 0 · `assign:` 스모크 1144(새 단계의 경합 하나는 응답을 기다리게 고쳐 통과) | 배정 취소 응답에 새 revision이 없어 취소 직후 같은 박스에 이어 누르면 그 단위만 받은 값을 씀 |
+| 3c | `fix/assign-instant-motion` | 진행(11-26) | | | |
 | 3d | `perf/assign-filter-chunks` | 대기 | | | |
-| 3e | `perf/assign-number-input` | 대기(재서 정함) | | | |
+| 3e | `perf/assign-number-input` | 건너뜀 |  | 번호 칸 5글자 CPU 4배 가운데 값 25ms(기준 100ms) | 조건(100ms 초과)이 안 됨 — 브랜치를 만들지 않음 |
 | 4a | `fix/assign-enter` | 대기 | | | |
 | 4b | `feat/assign-keymap` | 대기 | | | |
 | 4c | `feat/assign-merge-keys` | 대기 | | | |
 | 4d | `feat/number-cell-buttons` | 합침 | v1.6.7 · 3670d20c | vitest 1969 · build 경고 0 · `assign:` 스모크 전체 통과(5c와 합친 트리) | IME 조합 중 Enter는 전과 같음(범위 밖), 번호 칸 단계 둘은 앞 단계에 기대어 혼자 돌리면 실패(dev에서도 같음) |
 | 5a | `feat/split-rule-2` | 합침 | v1.6.3 · 42e4751b | pytest 3404+시드 통과 · 10 xfail(R3 · R4 몫) · vitest 1934 · build 경고 0 · 스모크 전체 2111 통과 | PDF의 콜론 뒤 줄표 목록은 나누지 않는다(사람이 나눔) |
-| 5b | `feat/split-front-matter` | 대기 | | | |
+| 5b | `feat/split-front-matter` | 진행(11-26) | | | |
 | 5c | `feat/split-new-parity` | 합침 | v1.6.6 · d750564c | pytest 3453+시드 14(6 xfail = R3 몫) · vitest 1969 · build 경고 0 · `assign:` 스모크 전체 통과(4d와 합친 트리) | Old 한/영 짝이 New 두 문장에 이어져 하나만 풀린 뒤 다시 하기는 409(있던 것) |
 | 6-1 | `feat/new-paper-1-render` | 대기 | | | |
 | 6-2 | `feat/new-paper-2-pick` | 대기 | | | |
@@ -50,6 +50,7 @@
 - 1b · `smoke/assign.mjs:665` 이동 단계(검사 3) → "a row moved earlier is read-only and Unassign frees it"(검사 5) · 동작이 바뀜(정한 것 4)
 - 1b · `source-rules.test.ts:199` 안내 글의 "(or Combobox)"만 뺌(규칙 그대로)
 - 5c · `frontend/src/lib/assign-focus-model.test.ts` `new_edit` 원인에 `isReleased: false` · 타입이 바뀜(기대값 그대로)
+- 3b · `frontend/src/lib/assign-focus-model.test.ts` `canStart` 시험 둘 → 판단 저장 중 잠그지 않음 · 둘 다 잡으면 잠김 · `dropFollows` · 큐 규칙(§14 승인)
 
 ## 아침에 볼 것 (사람이 정할 것 · 봐 줄 것)
 
@@ -65,3 +66,4 @@
 - PDF 문서 번호 · 줄표 줄머리는 앞 줄이 문장 끝일 때만 나누게 했다(계획은 늘 나눔) — 실제 PDF에서 확인.
 - 숨긴 칸에 배정된 줄에서 H(보류)를 누르거나 시스템 보류가 되면 다시 확정할 수 없다 — 배정 취소나 잇기로 나간다(설명서에 적음, 1a).
 - 이동한 줄(옛 기능)은 글자 그대로 읽기 전용으로 했다 — 보류 · 잇기 · 삭제로 바로 덮지 못하고 배정 취소부터 해야 한다. 운영의 "보류 + 이동" 줄은 배정 취소해야 검토 조건을 채운다(1b). 바로 덮게 하고 싶으면 말해 주세요.
+- **보류(H) · 배정 취소(U) · 일괄 뒤에는 고름이 그 자리에 머문다**(지금과 같음). A1-R2 글자대로 다음 박스로 옮길지 정한다(3b).

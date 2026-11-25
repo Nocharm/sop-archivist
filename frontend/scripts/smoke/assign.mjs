@@ -3987,7 +3987,7 @@ await runStep("assign: keys pressed during a slow save are kept in order", { all
     await page.waitForLoadState("networkidle");
   };
   const slowSaves = () => page.route(SAVE_URL, async (route) => {
-    await new Promise((done) => setTimeout(done, 800));
+    await new Promise((done) => setTimeout(done, 1500));
     await route.continue();
   });
 
@@ -4074,8 +4074,11 @@ await runStep("assign: keys pressed during a slow save are kept in order", { all
       // 삭제 → 붙이기 → 자르기 차례로 되돌려 처음 문장으로
       await page.unrouteAll({ behavior: "wait" });
       await page.waitForLoadState("networkidle");
+      // 되돌리기도 큐로 나간다 - 응답을 기다리지 않으면 상자 수가 이미 맞아(붙인 뒤 = 처음) 되돌리기 전에 센다
       for (let count = 0; count < 3; count += 1) {
+        const undone = page.waitForResponse((response) => response.url().includes("/decisions/undo"), { timeout: T });
         await page.locator('[data-testid="assign-undo"]:not([disabled])').click();
+        await undone;
         await page.waitForLoadState("networkidle");
       }
       const restored = (await waitBoxes(before.length)) ?? [];
