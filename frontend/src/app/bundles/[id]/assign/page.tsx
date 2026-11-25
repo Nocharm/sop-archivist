@@ -88,7 +88,7 @@ export default function AssignPage() {
     openSolo, goToUnit, ctxGroups, confirmBlockKey, refPendingIds, isLinkedToWritten, captionPendingKeys, docDashboard, openCtxMenu, runUnitEdit,
     rewrapTable, unwrapAi, describeEditConfirm, pairGrip, clearNoise, openNoiseReason, splitAtCut, handleOldDoubleClick,
     runCtx, revertHeadings, planOldJoin, joinOld, renderOldActions, runSave, runClear, confirmIdenticalAll, acceptAll, pickDestination,
-    pickNewSentence, handleNewPick, pickUnlinkableNew, handleJoinPick, readJoinAfter, pickJoinMenu, handleSidePress, pickPlaceSpot, pickOwnAiLine, jumpToNew, openNewDoc,
+    pickNewSentence, handleNewPick, pickUnlinkableNew, handleJoinPick, readJoinAfter, pickJoinMenu, handleFramePress, pickPlaceSpot, pickOwnAiLine, jumpToNew, openNewDoc,
     showInNew, jumpToOld, pickTemplateLine, fillTemplateMissing, isOldDrag, finishPairPick, handleOldClick, markRecHover, revealPick,
     setRevealPick, done, renderPlaceLabel, listDestinationEls, error,
   } = state;
@@ -490,7 +490,7 @@ export default function AssignPage() {
 
   return (
     <>
-      <div className="assign-frame relative grid h-full min-h-0" data-testid="assign">
+      <div className="assign-frame relative grid h-full min-h-0" data-testid="assign" onClick={handleFramePress}>
         {/* 절대 위치라 격자 칸을 차지하지 않는다 - 작업 화면 바닥에서 올라온다 */}
         <SpacePreview
           bundleId={bundleId}
@@ -882,7 +882,7 @@ export default function AssignPage() {
             </div>
           )}
         </div>
-        <SideFloat prefs={view} onChange={changeView} onPress={handleSidePress}>
+        <SideFloat prefs={view} onChange={changeView}>
           {(headEnd) => (
             <>
               <AssignSidePanel state={state} headEnd={headEnd} />

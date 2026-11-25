@@ -3083,10 +3083,15 @@ await runStep("assign: nested table - Output A locates an inner table line from 
 // Enter = 오른쪽 칸 확정 단추(설계 2026-11-25 §6 S1, 명세 B1) - 포커스가 어디 있어도 같고, 마우스로 누른 오른쪽 칸 단추 뒤의 Space는 미리보기다
 await runStep("assign: enter - it is the confirm button wherever the focus is, and Space previews after a mouse press", { drafting: true }, async ({ page, takeShot }) => {
   const isSave = (item) => item.url().includes("/groups/save") && item.method() === "POST";
-  const undo = async () => {
+  // 되돌린 줄이 다시 골라질 때까지 - 응답 뒤에 고름이 옮겨 가며 오른쪽 칸의 펼침이 그 줄의 것으로 바뀐다
+  const undo = async (rowText) => {
     const undone = page.waitForResponse((response) => response.url().includes("/decisions/undo"), { timeout: T });
     await page.keyboard.press("Control+z");
     await undone;
+    // 짝이면 고른 박스가 앞에 서서 차례가 다를 수 있다
+    const toSet = (text) => text.trim().split(" · ").sort().join(" · ");
+    for (let tries = 0; tries < 60 && toSet(await rowIds(page)) !== toSet(rowText); tries += 1) await page.waitForTimeout(250);
+    check("undo picks the row again", toSet(await rowIds(page)) === toSet(rowText), `${await rowIds(page)} | ${rowText}`);
     await page.waitForLoadState("networkidle");
   };
   await page.goto(`${BASE}/bundles/${halfBundleId}/assign`);
@@ -3108,7 +3113,7 @@ await runStep("assign: enter - it is the confirm button wherever the focus is, a
   check("Enter confirms while a tree leaf has the focus", (await (await request).response()).ok());
   await page.waitForLoadState("networkidle");
   check("and moves on to the next row", (await rowIds(page)) !== ids);
-  await undo();
+  await undo(ids);
 
   // 대시보드를 올린 채 - 비모달 판은 글쇠를 막지 않는다(AC2)
   // 다시 연다 - 펼쳐 둔 목록이 남아 있으면 pickFirstPlace가 접는다
@@ -3132,7 +3137,7 @@ await runStep("assign: enter - it is the confirm button wherever the focus is, a
   check("J and Enter work while the dashboard is open", (await (await overDash).response()).ok());
   await page.waitForLoadState("networkidle");
   await page.mouse.move(5, 5);
-  await undo();
+  await undo(beforeKey);
 
   // 오른쪽 칸 단추를 마우스로 누른 뒤 Space는 미리보기, 글쇠로 간 단추의 Space는 그 단추
   const near = page.locator('[data-testid="assign-acc-near"]');
@@ -3214,6 +3219,8 @@ await runStep("assign: enter - with nothing picked it confirms the first Suggest
   await wait(page, "assign-bar");
   await selectRowById(page, picked.split(" · ")[0]);
   await page.locator('[data-testid="assign-primary"][data-state="blocked"]').waitFor({ timeout: T });
+  // 추천을 받는 동안도 blocked다(까닭은 "still loading") - 다 받은 뒤의 까닭을 본다
+  await page.waitForLoadState("networkidle");
   check("with no Suggested card the button is off", await primary.isDisabled());
   const savesBefore = saveRequests;
   await page.keyboard.press("Enter");
