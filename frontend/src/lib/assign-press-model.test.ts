@@ -1,19 +1,30 @@
 import { describe, expect, it } from "vitest";
 
-import { isQueuedKey, isRepeatIgnored } from "./assign-press-model";
+import { isQueuedKey, isRepeatIgnored, opensTextBox } from "./assign-press-model";
 
 describe("held-down keys", () => {
   it("only moves repeat - a decision key held down acts once", () => {
-    for (const key of ["delete", "backspace", "enter", "h", "u", "a", "e", "s", "z"]) expect(isRepeatIgnored(key, false), key).toBe(true);
-    for (const key of ["j", "k", "arrowup", "arrowdown"]) expect(isRepeatIgnored(key, true), key).toBe(false);
-    for (const key of ["arrowleft", "arrowright"]) expect(isRepeatIgnored(key, false), key).toBe(false);
+    for (const id of ["delete", "confirm", "hold", "clear", "use_ai", "edit", "split", "undo", "indent", "part_next", "merge_next", "merge_prev"] as const) expect(isRepeatIgnored(id), id).toBe(true);
+    for (const id of ["move_next", "move_prev"] as const) expect(isRepeatIgnored(id), id).toBe(false);
+    for (const id of ["cut_left", "cut_right"] as const) expect(isRepeatIgnored(id), id).toBe(false);
   });
 });
 
 describe("keys kept behind a barrier", () => {
   it("are the moves and everything that needs a box", () => {
-    for (const key of ["delete", "enter", "h", "u", "r", "e", "a", "s", "arrowleft"]) expect(isQueuedKey(key, false), key).toBe(true);
-    expect(isQueuedKey("j", true)).toBe(true);
-    for (const key of ["v", "escape", "x", "?"]) expect(isQueuedKey(key, false), key).toBe(false);
+    for (const id of ["delete", "confirm", "hold", "clear", "remark", "edit", "use_ai", "split", "cut_left", "merge_next", "merge_prev"] as const) expect(isQueuedKey(id), id).toBe(true);
+    for (const id of ["go_pair", "lang", "shape_mode", "number", "ask_order", "table", "indent", "outdent", "clear_block", "remark_block"] as const) expect(isQueuedKey(id), id).toBe(true);
+    expect(isQueuedKey("move_next")).toBe(true);
+    for (const id of ["view", "escape", "help", "preview", "part_next", "undo"] as const) expect(isQueuedKey(id), id).toBe(false);
+  });
+});
+
+describe("keys that open a text box", () => {
+  it("are E, Shift+N and the Remark keys - what is typed after them belongs to the box", () => {
+    expect(opensTextBox({ key: "e", shift: false })).toBe(true);
+    expect(opensTextBox({ key: "r", shift: false })).toBe(true);
+    expect(opensTextBox({ key: "r", shift: true })).toBe(true);
+    expect(opensTextBox({ key: "n", shift: true })).toBe(true);
+    for (const press of [{ key: "n", shift: false }, { key: "h", shift: true }, { key: "j", shift: false }]) expect(opensTextBox(press), press.key).toBe(false);
   });
 });

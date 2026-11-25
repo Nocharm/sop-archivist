@@ -11,7 +11,7 @@ import { Truncate } from "@/components/ui/motion";
 import { BundleStatusPill, RoleTag } from "@/components/status";
 import { hasPermission } from "@/lib/access";
 import { humanizeApiError } from "@/lib/api-errors";
-import { getConfirmedPercent } from "@/lib/progress-model";
+import { getDecidedPercent } from "@/lib/progress-model";
 import { createBundle, listBundles, type BundleListItem, type RowProgress } from "@/lib/api-sop";
 import { formatKst } from "@/lib/datetime";
 import { useI18n } from "@/lib/i18n";
@@ -28,7 +28,7 @@ const LIST_KEY = "bundles";
 
 function ProgressValue({ progress }: { progress: RowProgress }) {
   if (progress.total === 0) return <span className="text-ink-4">–</span>;
-  const percent = getConfirmedPercent(progress) ?? 0;
+  const percent = getDecidedPercent(progress) ?? 0;
   return (
     <span className="inline-flex items-center justify-end gap-2">
       <span className="tabular-nums">

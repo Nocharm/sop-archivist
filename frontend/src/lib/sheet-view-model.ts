@@ -153,10 +153,13 @@ export function listSheetItems(rows: readonly PreviewRow[], from: number, openTo
   return items;
 }
 
-/** 접힌 무리의 칸 - 첫 줄의 칸에 Row 범위("1-8") · Location의 안내 글 · Unit ID의 "…" · Old text의 "외 n줄"만 바꾼다. 나머지(보낸 곳 · Remark · Status 칩)는 첫 줄 그대로 */
+export const PARAGRAPH_TEXT_COLUMN = 1; // 문단 Excel(column_keys 없음)의 Text 열 - 접힌 목차의 한 줄을 놓는다
+
+/** 접힌 무리의 칸 - column_keys가 없는 문단 Excel은 Text 칸에 안내 글 한 줄만 바꾼다. A는 첫 줄의 칸에 Row 범위("1-8") · Location의 안내 글 · Unit ID의 "…" · Old text의 "외 n줄"만 바꾼다. 나머지(보낸 곳 · Remark · Status 칩)는 첫 줄 그대로 */
 export function buildFoldedCells(rows: readonly PreviewRow[], columnKeys: readonly string[], texts: { label: string; more: string }): PreviewCell[] {
   const first = rows[0];
   const last = rows[rows.length - 1];
+  if (columnKeys.length === 0) return first.cells.map((cell, column) => (column === PARAGRAPH_TEXT_COLUMN ? { ...cell, text: texts.label } : cell));
   return first.cells.map((cell, column) => {
     const key = columnKeys[column];
     const lastText = last.cells[column]?.text ?? "";

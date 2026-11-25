@@ -40,12 +40,13 @@ from app.sop.models import (
 from app.sop.outline import DocOutline, load_doc_outlines
 from app.sop.refs import REF_CONFIRMED, REF_LANG, normalize_ref_code
 from app.sop.segment import read_table_place
-from app.sop.status import ROW_STATUS_ORDER
+from app.sop.status import ROW_DISPOSITION_ORDER, ROW_STATUS_ORDER
 from app.sop.units import UNIT_ACTIVE, compute_display_id
 
 NEUTRAL = "neutral"  # 그림·표처럼 언어가 없는 단위·새 문장의 언어 — 다른 언어 새 문장으로 치지 않는다
 # 한 언어만 남은 글을 세는 단위 종류·문서 언어 배치 — 그림·표는 언어가 없고, 한 언어 문서는 짝이 날 수 없다
 SINGLE_LANGUAGE_KINDS = ("sentence", "heading")
+FIGURE_KIND = "figure"  # 진행 숫자에서 따로 세는 줄(F3-R3)
 TWO_LANGUAGE_LAYOUTS = ("ko_en_interleaved", "ko_en_separate")
 
 
@@ -555,6 +556,7 @@ async def load_ref_parent_ids(session: AsyncSession, bundle_id: int, docs: Colle
 class RowProgress(BaseModel):
     """줄(짝 하나·짝 없는 판단 단위 하나) 상태별 수 — 배정 화면의 줄과 같은 규칙. 묶인 칸 문장은 표 줄에 들어 세지 않는다.
 
+    confirmed = assigned + deleted + moved(정한 줄의 처분). 그림 줄은 위 모두에서 빠지고 figures_*에만 든다 — 검토 조건은 그림까지 본다.
     single_language는 줄이 아니라 단위 수다 — 두 언어 문서에서 짝도 다른 언어 새 문장도 없는 글(문장·제목, 배정한 묶음의 캡션).
     """
 
@@ -562,7 +564,16 @@ class RowProgress(BaseModel):
     unassigned: int = 0
     confirmed: int = 0
     on_hold: int = 0
+    assigned: int = 0
+    deleted: int = 0
+    moved: int = 0
+    figures_total: int = 0
+    figures_decided: int = 0
     single_language: int = 0
+
+
+# 정한 줄의 처분 → RowProgress의 칸
+_DECIDED_FIELDS = {"assigned": "assigned", "delete": "deleted", "move_external": "moved"}
 
 
 def _select_old_units(bundle_ids: Collection[int], *columns: Any) -> Select[Any]:
@@ -581,7 +592,7 @@ def _select_old_units(bundle_ids: Collection[int], *columns: Any) -> Select[Any]
     )
 
 
-def _select_judged_units(bundle_ids: Collection[int], *columns: Any) -> Select[Any]:
+def select_judged_units(bundle_ids: Collection[int], *columns: Any) -> Select[Any]:
     """묶음들의 판단 단위(옛 문서·활성·최신 추출·묶이지 않은 단위, 판단 행 있음, 잡음 표시 없음)에 짝 구성원을 바깥 조인한 질의.
 
     잡음 표시(목차 줄)는 판단 줄이 아니라 남은 수·진행 숫자에서 빠진다(output_rows._list_judged_units와 같은 규칙).
@@ -591,6 +602,10 @@ def _select_judged_units(bundle_ids: Collection[int], *columns: Any) -> Select[A
         .join(UnitDecision, UnitDecision.unit_id == Unit.id)
         .where(Unit.group_unit_id.is_(None), Unit.noise_kind.is_(None))
     )
+
+
+# 줄 열쇠 — 짝이 있으면 짝 하나가 한 줄, 없으면 단위 하나가 한 줄. 단위 id에 음수를 붙여 짝 id와 겹치지 않게 한다
+ROW_KEY = func.coalesce(UnitPairMember.pair_id, -Unit.id)
 
 
 def _is_other_language(target_lang: ColumnElement[str]) -> ColumnElement[bool]:
@@ -605,20 +620,33 @@ async def load_bundle_progress(session: AsyncSession, bundle_ids: Collection[int
         return progress
     # 줄의 상태는 구성 단위 중 가장 덜 끝난 것(pick_row_status와 같은 규칙) — 상태 순번의 최솟값으로 고른다
     status_rank = case({status: rank for rank, status in enumerate(ROW_STATUS_ORDER)}, value=UnitDecision.status)
-    # 짝이 있으면 짝 하나가 한 줄, 없으면 단위 하나가 한 줄 — 단위 id에 음수를 붙여 짝 id와 겹치지 않게 한다
-    row_key = func.coalesce(UnitPairMember.pair_id, -Unit.id)
+    # 정한 줄의 처분은 구성 단위 가운데 앞선 것. 정한 단위에는 처분이 있어 else는 정하지 않은 줄에만 걸린다(그 줄의 값은 쓰지 않는다)
+    disposition_rank = case(
+        {name: rank for rank, name in enumerate(ROW_DISPOSITION_ORDER)}, value=UnitDecision.disposition, else_=0
+    )
     row_ranks = (
-        _select_judged_units(bundle_ids, Document.bundle_id, func.min(status_rank).label("rank"))
-        .group_by(Document.bundle_id, row_key)
+        select_judged_units(
+            bundle_ids, Document.bundle_id, func.min(status_rank).label("rank"),
+            func.min(disposition_rank).label("disposition"),
+            func.max(case((Unit.kind == FIGURE_KIND, 1), else_=0)).label("is_figure"),
+        )
+        .group_by(Document.bundle_id, ROW_KEY)
         .subquery()
     )
-    for bundle_id, rank, count in await session.execute(
-        select(row_ranks.c.bundle_id, row_ranks.c.rank, func.count()).group_by(row_ranks.c.bundle_id, row_ranks.c.rank)
+    columns = (row_ranks.c.bundle_id, row_ranks.c.rank, row_ranks.c.disposition, row_ranks.c.is_figure)
+    for bundle_id, rank, disposition, is_figure, count in await session.execute(
+        select(*columns, func.count()).group_by(*columns)
     ):
-        row_progress = progress[bundle_id]
-        row_progress.total += count
         status = ROW_STATUS_ORDER[rank]
-        setattr(row_progress, status, getattr(row_progress, status) + count)
+        is_decided = status == "confirmed"
+        if is_figure:
+            fields = ["figures_total", *(["figures_decided"] if is_decided else [])]
+        else:
+            decided_field = _DECIDED_FIELDS[ROW_DISPOSITION_ORDER[disposition]]
+            fields = ["total", status, *([decided_field] if is_decided else [])]
+        row_progress = progress[bundle_id]
+        for field in fields:
+            setattr(row_progress, field, getattr(row_progress, field) + count)
 
     has_other_language_target = or_(
         exists().where(TargetSentence.translation_source_unit_id == Unit.id, _is_other_language(TargetSentence.lang)),

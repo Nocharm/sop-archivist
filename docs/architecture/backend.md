@@ -267,7 +267,10 @@ AI 없이 사람이 끝까지 가는 결정적 경로(계획 1). AI 층은 아�
 ### 12.6 줄 기준 숫자 `snapshot.load_bundle_progress` ↔ `outputs.build_review_facts`
 
 - 진행 숫자(묶음 목록·개요·관리, `RowProgress`)와 검토 요청 조건의 `units_*` 건수는 같은 줄 규칙이다 — 짝 하나 전체 또는 짝 없는 판단 단위 하나(데이터 표는 한 줄, 묶인 칸 문장은 세지 않음, 그림 한 번, 잡음 표시 단위(목차 줄)는 세지 않음), 상태는 가장 덜 끝난 구성 단위.
-- 앞은 원문 글자를 읽지 않는 SQL 두 번이고 뒤는 스냅숏(`BundleSnapshot.pair_of`)에서 센다.
+- 앞은 원문 글자를 읽지 않는 SQL 두 번이고 뒤는 스냅숏(`BundleSnapshot.pair_of`)에서 센다. 줄 열쇠는 `snapshot.ROW_KEY`, 줄의 단위는 `snapshot.select_judged_units` 하나다.
+- 정한 줄(`confirmed`)은 처분으로 갈라 센다(`assigned` + `deleted` + `moved` = `confirmed`, F3) — 구성 단위의 처분이 갈리면 `status.ROW_DISPOSITION_ORDER`에서 앞선 것 하나가 줄의 처분이다(프런트 사본 `progress-model.ts` `DECIDED_PARTS`). 보낼 곳을 둔 보류는 보류다(상태가 먼저).
+- **그림 줄은 진행의 모든 숫자에서 빠지고** `figures_total` · `figures_decided`에만 든다(줄 종류 `snapshot.FIGURE_KIND`). 검토 조건(`row_status_counts`)은 그림까지 세고, 막는 이유 `units_*`가 그 가운데 그림 수를 `figures`로 함께 싣는다(0이면 키가 없다, `figure_status_counts`). 결과물의 줄(`build_summary.old_rows` 등)도 그림을 센다 — 진행 숫자와 견줄 때는 `total + figures_total`이다.
+- 개요의 남은 손질 · AI 제안 대기(`tidy.load_tidy_counts`, `BundleOut.tidy`)도 같은 줄(`select_judged_units`)에서 센다. 참조는 화면의 REF 표시, 캡션은 프런트 `caption-model.listCaptionPendingRowKeys`, AI는 `ai-suggestion-model.countWaitingSuggestions`와 같은 규칙이다. 글에서 참조를 제안하는 옛 추출(`load_proposing_extractions`)이 있을 때만 원문 글자를 읽는다 — 개요는 글자를 읽지 않는 것이 기본이다. 세는 종류는 `ai/constants.WAITING_KINDS`(숨긴 종류를 뺀 것)라 숨김을 풀 때 함께 고친다.
 - 프런트 `classify-model.ts` `buildRows`도 같은 줄이다 — 줄의 뜻을 바꾸면 셋을 함께 고친다(제품 명세 §6.5 커버리지).
 - 결과물 A의 묶음·B의 건수·C의 삭제·이동·요약(`build_summary`)도 같은 줄(`output_rows.build_meaning_rows`)을 쓴다.
 

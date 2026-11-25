@@ -6,12 +6,12 @@
 "use client";
 
 import { BookMarked, ChevronRight, ChevronsDownUp, Ellipsis, FilePen, FoldVertical, GripVertical, ImageIcon, Link2, Scissors, TriangleAlert, Undo2, WandSparkles, type LucideIcon } from "lucide-react";
-import { Fragment, memo, useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { Fragment, memo, useEffect, useEffectEvent, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type RefCallback } from "react";
 
 import { BundleHead } from "@/components/paper/bundle-head";
 import { FigureImage } from "@/components/paper/figure-image";
 import { LangToken } from "@/components/paper/lang-token";
-import { NumberCell, type NumberEdit } from "@/components/paper/number-cell";
+import { NumberCell, startNumberEdit, type NumberEdit } from "@/components/paper/number-cell";
 import { StripBox } from "@/components/paper/strip-box";
 import { StripLead, STRIP_LEAD_EXTRA } from "@/components/paper/strip-lead";
 import { UnitStatusChip } from "@/components/status";
@@ -19,6 +19,7 @@ import { getMorphClassName } from "@/components/ui/morph-button";
 import { Collapse } from "@/components/ui/motion";
 import { useDelegatedTip } from "@/components/ui/delegated-tip";
 import type { ViewBlock, ViewUnit } from "@/lib/api-sop";
+import { formatAssignKey } from "@/lib/assign-keymap";
 import type { PendingPlace } from "@/lib/assign-focus-model";
 import { getBundleShape, getCaptionScope, isSentenceLike, type BundleShape } from "@/lib/caption-slot-model";
 import { readCaretPoint } from "@/lib/caret-point";
@@ -29,7 +30,7 @@ import { buildFoldPlan, type FoldEntry, type FoldItem, type FoldOpen } from "@/l
 import { buildRows, flattenLineBreaks, getBundleHeader, getGapMerge, getItemSegments, getMarks, getTags, isBandHeading, isOtherTableCaption, MERGE_BLOCKER_KEYS, resolvePickUnit, type CaptionPiece, type FigureRowMode, type PaperItem, type PaperModel, type PaperRow, type Segment, type UnitMark } from "@/lib/paper-model";
 import type { JoinKind, JoinPlan } from "@/lib/split-menu-model";
 import { getHiddenEnds, listFollowPreview } from "@/lib/number-model";
-import { stepUnitContinuous, suggestUnitContinuous } from "@/lib/number-kind-model";
+import { readNumberKind, stepUnitContinuous, suggestUnitContinuous } from "@/lib/number-kind-model";
 import { findBulletShift, getIndentBounds, planIndent, type IndentPlan, type IndentRow } from "@/lib/indent-model";
 import { getCardTops, getHiddenPrefixLength, getPairBrackets, getPillWidth, getRowLevels, getSectionHeads, getTabWidths, getSectionLevel, getSectionPill, getVisibleSkip, sliceVisible, type PairBracket } from "@/lib/strip-pill-model";
 import { buildHeadingShiftGroups, readHeadingShiftHead, type HeadingShiftGroup } from "@/lib/heading-shift-model";
@@ -265,6 +266,8 @@ interface PaperProps {
     deleted?: { folds: ReadonlyMap<number, DeletedFold> };
     /** Assign - 처리 중인 일. 잠긴 박스는 끌리지 않고 그 곁 틈 · 머리 단추가 꺼진다(고르기 · 우클릭은 화면이 막는다) */
     pending?: PaperPending;
+    /** Assign - ⇧J ⇧J · ⇧K ⇧K로 무장한 합치기 - 두 박스에 점선 미리보기(data-merge-arm). 덩어리가 모두 다시 그려지는 드문 값이라 덩어리마다 견주지 않는다 */
+    mergeArm?: { fromId: number; toId: number } | null;
     /** Assign - 고른 박스가 짝 전부가 이어 붙은 카드 안에 있으면 그 박스 왼쪽 가장자리에 점 여섯 손잡이(data-drag-handle, 설계 D8).
      *  손잡이 끌기(카드 안 순서)는 화면이 붙인다. isAllowed가 거짓인 박스(배정이 걸림 등)에는 그리지 않는다 */
     pairGrip?: { isAllowed: (unitId: number) => boolean };
@@ -301,6 +304,16 @@ export interface PaperNumberCell {
   onSave: (unitId: number, number: string | null, follow: boolean, indentShift?: number) => void;
   /** 번호 칸 창의 ◀ ▶ 들여쓰기(B8) - 누른 줄과 이어져 함께 바뀌는 줄(lib/indent-model planIndent). label은 누른 줄의 표시 ID */
   onIndent: (plan: IndentPlan, delta: -1 | 1, label: string) => void;
+  /** 글쇠(⇧N · Tab)가 쓰는 손잡이 - 머리말 · 꼬리말은 용지가 쪽마다 따로라 여럿이 온다 */
+  handleRef?: RefCallback<PaperNumberHandle>;
+}
+
+/** 글쇠로 번호 칸을 다룬다 - 그 줄이 이 용지에 없거나 번호 칸이 없으면 하지 않는다 */
+export interface PaperNumberHandle {
+  /** 번호 칸 창을 연다(⇧N) */
+  openNumber: (unitId: number) => boolean;
+  /** 번호 칸 창의 ◀ ▶ 한 번과 같은 값을 저장한다(Tab · ⇧Tab) - end는 더 갈 단계가 없다. shifts는 아직 보기에 없는 들여쓰기 차이(저장 중) */
+  requestIndent: (unitId: number, delta: -1 | 1, shifts?: ReadonlyMap<number, number>) => "done" | "end" | null;
 }
 
 /** 화면 좌표 → 블록 위치. 글자 조각 요소의 data-start에 글자 노드 안 위치를 더한다 */
@@ -650,6 +663,34 @@ export function Paper({
   const numberEditKey = useMemo(() => (numberEditUnitId === null ? null : (indentRows.find((row) => row.unitId === numberEditUnitId)?.key ?? null)), [indentRows, numberEditUnitId]);
   const numberEditIndent = useMemo(() => (numberEditKey === null ? undefined : getIndentBounds(indentRows, rowLevels, numberEditKey)), [indentRows, rowLevels, numberEditKey]);
   const numberEditBulletShift = useMemo(() => (numberEditKey === null ? null : findBulletShift(indentRows, numberEditKey)), [indentRows, numberEditKey]);
+  function findNumberRow(unitId: number) {
+    const row = indentRows.find((item) => item.unitId === unitId);
+    const unit = numberUnits.get(unitId);
+    return numberCell && model.hasNumberRanges && row && unit?.number ? { key: row.key, unit, number: unit.number } : null;
+  }
+
+  function openNumber(unitId: number): boolean {
+    const found = findNumberRow(unitId);
+    if (found) setNumberEdit(startNumberEdit(unitId, found.number.value));
+    return found !== null;
+  }
+
+  function requestIndent(unitId: number, delta: -1 | 1, shifts?: ReadonlyMap<number, number>): "done" | "end" | null {
+    const found = findNumberRow(unitId);
+    if (!found) return null;
+    if (readNumberKind(found.number.value) === "continuous") {
+      const next = stepUnitContinuous(numberOrder, unitId, found.number.value ?? "", delta);
+      // 창을 열어 고칠 때와 같이 뒤 번호도 따라 고친다(연속 번호의 처음 값)
+      if (next !== null) numberCell?.onSave(unitId, next, true);
+      return next === null ? "end" : "done";
+    }
+    const rows = shifts === undefined || shifts.size === 0 ? indentRows : indentRows.map((row) => ({ ...row, shift: shifts.get(row.unitId ?? -1) ?? row.shift }));
+    const plan = planIndent(rows, rows === indentRows ? rowLevels : getRowLevels(rows), found.key, delta);
+    if (plan) numberCell?.onIndent(plan, delta, found.unit.display_id);
+    return plan ? "done" : "end";
+  }
+
+  useImperativeHandle(numberCell?.handleRef, () => ({ openNumber, requestIndent }));
   // 벗긴 표의 줄 덩이마다 첫 줄 - 그 줄 위에 묶음 머리("↺ 다시 표로")를 단다(F1). 부분마다 문서 순서로
   const unwrapHeads = useMemo(() => new Map(sections.flatMap((section) => [...findUnwrapHeads(section.rows, model.unwrapped, model.tables)])), [sections, model]);
   // 덩어리마다 그 안에서 보이는 단위와 표 - 제 줄에, 머리가 잠금을 묻는 단위(제목 → 문장 묶음, 벗긴 표의 줄, 저절로 삭제된 블록의 줄 - 다른 덩어리에 걸쳐 있거나 용지 줄이 없어도)를 더한다
@@ -875,6 +916,12 @@ export function Paper({
         {t("assign.unwrapAi.move", { from: move.from, to: move.to })}
       </span>
     );
+  }
+
+  /** 무장한 합치기의 두 박스 - 점선 미리보기 */
+  function readArmMark(unitId: number | null | undefined): "" | undefined {
+    const arm = strips?.mergeArm;
+    return arm && unitId !== null && unitId !== undefined && (unitId === arm.fromId || unitId === arm.toId) ? "" : undefined;
   }
 
   /** 빛이 지나가는 박스(처리 중) - 움직임 줄이기면 CSS가 옅은 바탕만 */
@@ -1111,6 +1158,7 @@ export function Paper({
             data-mate={unit !== undefined && isMate(unit.id) ? "" : undefined}
             data-partner={unit !== undefined && partnerIds?.has(unit.id) ? "" : undefined}
             data-pending={readPendingMark(unit?.id)}
+            data-merge-arm={readArmMark(unit?.id)}
             data-testid={unit ? `${testId}-piece-${unit.id}` : undefined}
           >
             {renderMarks(unit, false, "cell-marks")}
@@ -1340,6 +1388,7 @@ export function Paper({
           // 처리 중인 박스는 끌리지 않는다(설계 D4 - 잠금은 그 박스만)
           "data-drag-box": dragBoxes && unitId !== null && !isLocked(unitId) ? "" : undefined,
           "data-pending": readPendingMark(unitId),
+          "data-merge-arm": readArmMark(unitId),
           "data-unwrap-ai-moved": unitId !== null && unwrapAiMoves.get(unitId)?.moved ? "" : undefined,
           "data-testid": `${testId}-piece-${unitId ?? row.key}`,
         }}
@@ -1501,7 +1550,7 @@ export function Paper({
                           <button type="button" className={getMorphClassName("default", isPicked)} aria-label={t("assign.noise.clear")} disabled={isBusy} data-testid={`${prefix}-unit-clear-${line.unitId}`} onClick={() => pressAct(line.unitId, () => noise.onClear([line.unitId]))}>
                             <Undo2 size={14} strokeWidth={1.5} aria-hidden />
                             <span className="mbtn-label" aria-hidden>
-                              {t("assign.noise.clear")} {isPicked && <kbd>U</kbd>}
+                              {t("assign.noise.clear")} {isPicked && <kbd>{formatAssignKey("clear")}</kbd>}
                             </span>
                           </button>
                         </span>
@@ -1721,7 +1770,7 @@ export function Paper({
       <PaperChunk
         key={key}
         live={nearChunks === null || (chunk.index >= nearChunks.from && chunk.index <= nearChunks.to) || liveChunkIds.has(chunk.index)}
-        deps={[...own, t, testId, dragBoxes, pickWholeBundle, strips?.noise?.busy, strips?.noise?.canEdit, shiftGroups, strips?.headingShift?.busy, strips?.headingShift?.canRevert, unwrapHeads, strips?.unwrap?.busy, strips?.unwrap?.canRewrap, strips?.unwrap?.ai?.enabled, strips?.unwrap?.ai?.busy, unwrapAiPreviews, unwrapOrders, unwrapAiMoves, chunkPending[chunk.index], chunkDeleted[chunk.index], chunkNumbers[chunk.index], chunkNoise[chunk.index]]}
+        deps={[...own, t, testId, dragBoxes, pickWholeBundle, strips?.noise?.busy, strips?.noise?.canEdit, shiftGroups, strips?.headingShift?.busy, strips?.headingShift?.canRevert, unwrapHeads, strips?.unwrap?.busy, strips?.unwrap?.canRewrap, strips?.unwrap?.ai?.enabled, strips?.unwrap?.ai?.busy, unwrapAiPreviews, unwrapOrders, unwrapAiMoves, strips?.mergeArm, chunkPending[chunk.index], chunkDeleted[chunk.index], chunkNumbers[chunk.index], chunkNoise[chunk.index]]}
         isFold={hasFold}
         render={render}
       />

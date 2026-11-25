@@ -10,6 +10,7 @@ import { Menu } from "@/components/ui/menu";
 import { MenuLangRow } from "@/components/ui/menu-lang-row";
 import { useDelegatedTip } from "@/components/ui/delegated-tip";
 import type { AssignMenuAction, AssignMenuGroups, AssignMenuItem } from "@/lib/assign-context-menu-model";
+import { formatAssignKey } from "@/lib/assign-keymap";
 import { useI18n } from "@/lib/i18n";
 import { placeLinkMenu } from "@/lib/link-menu-place";
 
@@ -63,7 +64,7 @@ export const ASSIGN_ACTION_LABELS: Record<Exclude<AssignMenuAction, "lang" | "pi
   start_body: "assign.ctx.startBody",
 };
 
-const KEYS: Partial<Record<AssignMenuAction, string>> = { delete: "Del", clear: "U" };
+const KEYS: Partial<Record<AssignMenuAction, string>> = { delete: formatAssignKey("delete"), clear: formatAssignKey("clear") };
 
 interface AssignContextMenuProps {
   /** 누른 문장의 조각 - 닫으면 포커스가 돌아갈 곳 */

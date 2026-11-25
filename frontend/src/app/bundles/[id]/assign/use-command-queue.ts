@@ -6,6 +6,7 @@ import { useRef, useState, useSyncExternalStore } from "react";
 
 import type { AiSuggestion, DocumentView, EditOp, Group, UndoMeta, ViewUnit } from "@/lib/api-sop";
 import { isSameFocus, NO_PLACE, type Focus, type Pending, type PendingPlace } from "@/lib/assign-focus-model";
+import { opensTextBox } from "@/lib/assign-press-model";
 import type { Destination } from "@/lib/classify-model";
 import { createCommandQueue, isBarrier, isIdle, listUnsettled, mustDefer, shouldHalt, type QueuedCommand, type QueueState } from "@/lib/command-queue";
 import { enqueueDocWrite } from "@/lib/doc-write-queue";
@@ -109,6 +110,8 @@ export class CommandRefusal extends Error {}
 /** 화면이 주는 것 - 그 렌더의 값이다 */
 export interface CommandEnv {
   pick(focus: Focus): void;
+  /** 다시 시도가 멈춘 때의 고름을 되살린다(사람의 고름이 아니다) */
+  restore(focus: Focus): void;
   readFocus(): Focus;
   /** 지금 화면에 보이는 판단 revision */
   readSeen(unitIds: readonly number[]): SeenRevisions;
@@ -154,6 +157,8 @@ export function useCommandQueue(env: CommandEnv, describePending: DescribePendin
     isMounted: true,
     /** 되살리는 중인 글쇠 - 그동안 만든 명령은 남은 글쇠 앞에 선다 */
     replayId: null as string | null,
+    /** 이번 되살림이 남은 글쇠 앞에 이미 세운 명령 수 */
+    replayMade: 0,
     /** 되살린 글쇠가 창을 열었다 */
     isAskOpened: false,
     /** 응답은 왔고 새 보기를 기다리는 장벽 - canOvertake면 되돌리기가 그 보기를 기다리지 않는다 */
@@ -191,6 +196,7 @@ export function useCommandQueue(env: CommandEnv, describePending: DescribePendin
 
   function replay<R>(id: string, run: () => R): R {
     live.current.replayId = id;
+    live.current.replayMade = 0;
     live.current.isAskOpened = false;
     try {
       return run();
@@ -328,7 +334,7 @@ export function useCommandQueue(env: CommandEnv, describePending: DescribePendin
     const isFirst = live.current.replayId !== null;
     const wasIdle = isIdle(queue.getState());
     const put = (command: Omit<QueuedCommand<AssignCommand>, "isDeferred">) => {
-      if (isFirst) queue.pushNext(command);
+      if (isFirst) queue.pushNext(command, live.current.replayMade++);
       else queue.push(command);
     };
     if (isReplay(payload)) put({ id, kind: "key", isGlobal: false, payload, unitIds: [] });
@@ -360,8 +366,8 @@ export function useCommandQueue(env: CommandEnv, describePending: DescribePendin
     isDeferring: () => live.current.replayId === null && mustDefer(queue.getState()),
     /** 쌓인 글쇠 뒤의 고름도 차례를 기다리나 - 멈춘 동안은 둘러볼 수 있게 바로 고른다(다시 시도가 멈춘 때의 고름에서 잇는다) */
     isPickQueued: () => live.current.replayId === null && queue.getState().halted === null && queue.getState().waiting.some((command) => command.kind === "key"),
-    /** 글쇠를 더 쌓아도 되나 - 고쳐 쓰기(E)가 쌓여 있으면 그 뒤에 친 것은 열릴 글 칸의 글자다 */
-    canQueueKey: () => !listUnsettled(queue.getState()).some(({ payload }) => payload.kind === "key" && payload.key === "e"),
+    /** 글쇠를 더 쌓아도 되나 - 글 칸을 여는 글쇠(고쳐 쓰기 E · 번호 칸 ⇧N · Remark R)가 쌓여 있으면 그 뒤에 친 것은 열릴 글 칸의 글자다 */
+    canQueueKey: () => !listUnsettled(queue.getState()).some(({ payload }) => payload.kind === "key" && !payload.ctrl && opensTextBox(payload)),
     /** 아직 끝나지 않은 명령 - 누르는 순간의 값(그려진 값이 아니라) */
     listUnsettled: () => listUnsettled(queue.getState()),
     /** 아직 되돌리기 기록에 없는 명령 - 응답이 온 장벽(새 보기만 기다린다)은 뺀다 */
@@ -398,7 +404,7 @@ export function useCommandQueue(env: CommandEnv, describePending: DescribePendin
       const { command } = halted;
       const focus = live.current.haltFocus;
       // 쌓인 글쇠는 멈춘 때의 고름에서 이어진다 - 그 사이 둘러본 박스에 떨어지지 않게
-      if (focus !== null && waiting.some((item) => item.isDeferred) && !isSameFocus(focus, env.readFocus())) env.pick(focus);
+      if (focus !== null && waiting.some((item) => item.isDeferred) && !isSameFocus(focus, env.readFocus())) env.restore(focus);
       if (!isReplay(command.payload)) env.start({ ...describePending(command.payload), id: command.id }, command.payload);
       live.current.retriedIds.add(command.id);
       queue.retry();

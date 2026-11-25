@@ -11,6 +11,9 @@ import { buildPaperModel, type PaperModel } from "@/lib/paper-model";
 
 import { Paper } from "./paper";
 
+// 카드 수백 장을 통째로 그리는 시험이라 바쁜 기계(CI)에서 기본 5초를 넘는다 - 시간은 단언이 아니다
+vi.setConfig({ testTimeout: 30_000 });
+
 const COUNT = 200;
 const IDS = Array.from({ length: COUNT }, (_, at) => at + 1);
 /** 벗긴 표(줄 160 · 161 - 4번째 덩어리의 끝과 5번째의 첫 줄)와 아직 표인 것(150) */
@@ -250,6 +253,15 @@ describe("what changes with every key", () => {
     // 접힌 삭제 줄의 박스(150)는 그리지 않는다
     const own = (ids: number[]) => ids.filter((id) => id !== 150);
     expect(own(listFar())).toEqual(own(FOURTH));
+  });
+
+  it("draws the dashed preview on the two boxes of an armed merge and takes it back", async () => {
+    await render({}, 1);
+    expect(host.querySelectorAll("[data-merge-arm]").length).toBe(0);
+    await render({ mergeArm: { fromId: 2, toId: 3 } }, 1);
+    expect([...host.querySelectorAll("[data-merge-arm]")].map((el) => el.getAttribute("data-strip-unit"))).toEqual(["2", "3"]);
+    await render({}, 1);
+    expect(host.querySelectorAll("[data-merge-arm]").length).toBe(0);
   });
 
   it("shows a far number being saved and takes it back", async () => {

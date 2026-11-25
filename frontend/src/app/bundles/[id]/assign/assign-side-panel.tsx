@@ -22,6 +22,7 @@ import { Refresh, Truncate } from "@/components/ui/motion";
 import { Tooltip } from "@/components/ui/tooltip";
 import { formatPlacePosition, readPlacePosition } from "@/lib/place-spot-model";
 import { type ViewUnit, type WrittenSentence } from "@/lib/api-sop";
+import { formatAssignKey } from "@/lib/assign-keymap";
 import { isMousePress } from "@/lib/assign-key-target";
 import { isBundleKind, listCaptionFields } from "@/lib/caption-model";
 import { buildCaptionSlot, type CaptionCandidate } from "@/lib/caption-slot-model";
@@ -565,7 +566,7 @@ export function AssignSidePanel({ state, headEnd }: { state: AssignPageState; he
           {primaryState === "save" && primaryLabel.tone === "normal" ? t("classify.saveConfirm") : t(primaryLabel.labelKey, primaryLabel.values)}
         </span>
         {primaryLabel.suffixKey !== null && <span className="flex-none font-normal">{t(primaryLabel.suffixKey)}</span>}
-        <kbd>↵</kbd>
+        <kbd>{formatAssignKey("confirm")}</kbd>
       </button>
     </Tooltip>
   );
@@ -574,12 +575,12 @@ export function AssignSidePanel({ state, headEnd }: { state: AssignPageState; he
   const actions = canEdit && row && (
     <div className="@container flex gap-1.5" data-testid="assign-actions">
       <button type="button" className="btn assign-alt flex-1" data-testid="assign-hold" disabled={busy || legacyMove !== null} onClick={() => runSave("hold")}>
-        {t("classify.hold")} <kbd className="@max-[200px]:hidden">H</kbd>
+        {t("classify.hold")} <kbd className="@max-[200px]:hidden">{formatAssignKey("hold")}</kbd>
       </button>
       {canClear && (
         <button type="button" className="btn assign-alt flex-1" data-testid="assign-clear" disabled={busy} onClick={() => runClear()}>
           <Undo2 size={13} strokeWidth={1.5} aria-hidden />
-          {t(isRowDeleted ? "assign.ctx.undoDelete" : "classify.clear")} <kbd className="@max-[200px]:hidden">U</kbd>
+          {t(isRowDeleted ? "assign.ctx.undoDelete" : "classify.clear")} <kbd className="@max-[200px]:hidden">{formatAssignKey("clear")}</kbd>
         </button>
       )}
     </div>
@@ -844,12 +845,12 @@ export function AssignSidePanel({ state, headEnd }: { state: AssignPageState; he
               )}
               {canAct && (
                 <button type="button" className="btn h-7" disabled={busy} data-testid="assign-noise-reason" onClick={() => openNoiseReason(docId, unitIds)}>
-                  {t("assign.noise.write")} <kbd>R</kbd>
+                  {t("assign.noise.write")} <kbd>{formatAssignKey("remark")}</kbd>
                 </button>
               )}
               {canAct && (
                 <button type="button" className="btn h-7" disabled={busy} data-testid="assign-noise-clear" onClick={() => clearNoise(docId, unitIds)}>
-                  {t(line === null ? "assign.noise.clearAll" : "assign.noise.clear")} <kbd>U</kbd>
+                  {t(line === null ? "assign.noise.clearAll" : "assign.noise.clear")} <kbd>{formatAssignKey("clear")}</kbd>
                 </button>
               )}
             </div>
@@ -1014,9 +1015,9 @@ export function AssignSidePanel({ state, headEnd }: { state: AssignPageState; he
             <div className="grid gap-0.5 text-xs text-st-ai" data-testid="assign-ai-reason">
               <div className="flex items-start gap-1.5">
                 <Sparkles size={13} strokeWidth={1.5} className="mt-0.5 shrink-0" aria-hidden />
-                <span className="min-w-0 flex-1">{aiWhy ? <ClampText text={aiWhy} /> : t("assign.ai.useHint")}</span>
+                <span className="min-w-0 flex-1">{aiWhy ? <ClampText text={aiWhy} /> : t("assign.ai.useHint", { key: formatAssignKey("use_ai") })}</span>
               </div>
-              {aiWhy && canEdit && draft.suggestionId !== rowLive.id && <span className="pl-[19px] text-ink-3" data-testid="assign-ai-use-hint">{t("assign.ai.useHint")}</span>}
+              {aiWhy && canEdit && draft.suggestionId !== rowLive.id && <span className="pl-[19px] text-ink-3" data-testid="assign-ai-use-hint">{t("assign.ai.useHint", { key: formatAssignKey("use_ai") })}</span>}
               {draft.suggestionId === rowLive.id && aiUnfilled.length > 0 && (
                 <span className="grid gap-0.5 pl-[19px] text-ink-2" data-testid="assign-ai-unfilled">
                   <span>{t("assign.ai.unfilled")}</span>

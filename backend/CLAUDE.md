@@ -52,7 +52,7 @@ backend(FastAPI) 세부 구조와 backend에만 걸리는 체크리스트. 루�
   - **빈 글자 판정** `segment.py` `is_blank_char`·`has_visible_char`·`INVISIBLE_CHARS`: `isspace()`를 새로 쓰지 않는다(검사 `test_invariants.py`). 빠른 사본 `aux_compare.normalize_for_compare`, 프런트 사본 `rule-cases.json`. → 12.3
   - **관계 묶음 그래프** `groups.collect_component`: 연결 종류를 더하면 `_find_neighbors` 하나만 고친다. 칸 제목 상태는 `detach.apply_slot_heading_status` 하나로 정한다. → 12.4
   - **커버 상태** `status.get_cover_status`: SQL 사본 둘(`decisions` 단위 목록 거르기·`match`)을 함께 고친다. 줄 상태 순서 `status.pick_row_status` `ROW_STATUS_ORDER` = 프런트 `STATUS_RANK` = `snapshot.load_bundle_progress` SQL 순번 — 셋을 함께. → 12.5
-  - **줄 기준 숫자** `snapshot.load_bundle_progress` ↔ `outputs.build_review_facts` ↔ 프런트 `classify-model.ts` `buildRows`: 같은 줄 규칙이라 줄의 뜻을 바꾸면 셋을 함께 고친다. 결과물도 `output_rows.build_meaning_rows`로 같은 줄. → 12.6
+  - **줄 기준 숫자** `snapshot.load_bundle_progress` ↔ `outputs.build_review_facts` ↔ 프런트 `classify-model.ts` `buildRows`: 같은 줄 규칙이라 줄의 뜻을 바꾸면 셋을 함께 고친다. 결과물도 `output_rows.build_meaning_rows`로 같은 줄. 정한 줄의 처분 순서는 `status.ROW_DISPOSITION_ORDER` = 프런트 `progress-model.ts` `DECIDED_PARTS`. 그림 줄은 진행 숫자에서만 빠진다(`figures_*`) — 검토 조건 · 결과물은 센다. 개요의 남은 손질 · AI 제안 대기는 `tidy.py`(같은 줄, 개요에만). → 12.6
   - **짝의 운명** `pair_settle.settle_pairs`: **판단이나 짝을 쓰는 새 길을 만들면 그 끝에서 `settle_pairs`를 부른다**(시스템이 떼어 내는 길은 부르지 않는다). 짝 확정은 `pairs.mark_pair_confirmed` 한 곳. → 12.7
   - **경계 확인은 없다(v1.0.18)**: `units.boundary_confirmed` 열과 `editing._step_edit`의 `BOUNDARY_OPS` 가지는 지우지 않는다 — 운영 DB의 옛 되돌리기 기록이 막힌다. → 12.8
   - **새 문서 새 문장 맞추기** `match.sync_new_doc_targets`: 단위를 바꾸는 새 경로는 새 문장을 직접 고치지 않고 이것을 부른다. 새 문장을 스냅숏으로 되쓸 길은 그 단위를 `restoring_unit_ids`로 넘긴다(안 넘기면 단위 하나에 새 문장이 둘). → 12.9
