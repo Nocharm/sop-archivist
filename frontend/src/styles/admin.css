@@ -4,6 +4,8 @@
   /* 표 모양 - 공용 .dtable 위에 관리 본문에서만 얹는다: 줄 52px · 좌우 16px · 머리 배경 없음 · 짝수 줄 옅게 · 올린 줄 선택색 */
   .adm-scope .dl-table th { padding: 8px 16px; background: transparent; font-size: var(--fs-cap); line-height: var(--lh-cap); font-weight: 500; color: var(--ink-3); }
   .adm-scope .dl-table td { height: 52px; padding: 6px 16px; vertical-align: middle; }
+  /* 좁은 창에서는 칸 여백을 줄여 표가 틀 안에 든다 */
+  @media (max-width: 1279px) { .adm-scope .dl-table th, .adm-scope .dl-table td { padding-left: 10px; padding-right: 10px; } }
   .adm-scope .dl-table tbody tr:nth-child(even) td { background: var(--sunken); }
   .adm-scope .dl-table tbody tr:hover td { background: var(--sel-bg); }
   .adm-scope .dl-table tbody tr.dgroup td, .adm-scope .dl-table tbody tr.dgroup:hover td { height: auto; padding: 14px 16px 6px; background: transparent; }
