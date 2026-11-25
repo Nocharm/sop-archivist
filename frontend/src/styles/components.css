@@ -1289,10 +1289,12 @@
   /* 긴 문서의 카드 덩어리(Paper의 PaperChunk, 카드 40장) - 화면 밖 덩어리는 통째로 배치·칠하기를 건너뛴다. 줄·틈마다 건 것만으로는 그 수(1,300문단이면 약 2,650개)만큼
      교차 계산과 배치가 남아 스크롤 한 프레임이 35ms였다(CPU 4배) → 덩어리째 16ms. 어림 높이 1840px = 카드 40장 × 줄 어림 46px.
      고른 줄·나눌 선·포커스가 든 덩어리는 줄과 같이 늘 그린다 - 가두기(contain)가 안의 고정 위치 팝업 기준을 덩어리로 바꾼다.
-     덩어리 안의 줄·틈은 건너뛰지 않는다 - 두 겹이면 위로 굴릴 때 스크롤 고정이 가끔 놓쳐 화면이 1,000px 넘게 튀었다(한 겹이면 0) */
+     접힌 목록의 덩어리(data-fold)는 용지와 같은 격자다 - 묶음 단추가 줄 폭을 채우고, 바깥 여백이 겹치거나 덩어리 밖으로 새지 않아 나누기 전과 자리가 같다.
+     덩어리 안의 줄·틈·한 줄 판은 건너뛰지 않는다 - 두 겹이면 위로 굴릴 때 스크롤 고정이 가끔 놓쳐 화면이 1,000px 넘게 튀었다(한 겹이면 0) */
   .pg[data-strips] .strip-chunk { content-visibility: auto; overflow-clip-margin: 32px; contain-intrinsic-size: auto 1840px; }
+  .pg[data-strips] .strip-chunk[data-fold] { display: grid; grid-template-columns: minmax(0, 1fr); }
   .pg[data-strips] .strip-chunk:has(.strip[data-sel], .cut-anchor, :focus-visible) { content-visibility: visible; }
-  .pg[data-strips] .strip-chunk :is(.strip-row, .strip-gap) { content-visibility: visible; }
+  .pg[data-strips] .strip-chunk :is(.strip-row, .strip-gap, .fold-line) { content-visibility: visible; }
   .pg[data-strips] .strip-row > .strip { flex: 1 1 0; min-width: 0; }
   /* 화면 밖 조각은 그리지 않는다(Unit 수천 개) - 고른 조각·나눌 선이 있는 조각은 팝업·윤곽이 잘리지 않게 뺀다 */
   .pg[data-strips] .strip { position: relative; min-width: 0; padding: 6px var(--pg-pad-r) 6px var(--pg-pad-l); background: var(--paper); border: 1px solid var(--line-2); border-left: 0; border-radius: 0 var(--r-1) var(--r-1) 0; box-shadow: var(--shadow-1); }

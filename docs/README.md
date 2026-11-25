@@ -22,6 +22,7 @@
 | [deploy/backup.md](deploy/backup.md) | 일간 DB 백업 정책(덤프에 SOP 원문·원본 파일이 들어 있어 대외비), 기존 스택 복구·신규 서버 복구, 오프서버 사본 |
 | [deploy/db-viewer-readonly.md](deploy/db-viewer-readonly.md) | db-viewer 읽기 전용 연결(`dbviewer_ro`, 별칭 `sop-archivist-db`) |
 | [qa/2026-11-sop-parse-dependencies.md](qa/2026-11-sop-parse-dependencies.md) | 파싱 의존성·메모리 실측 — MarkItDown 새 패키지 목록, 메인이 될 수 없는 이유, 자식 프로세스 RSS, backend 메모리 상한 결정, Task 8에 넘기는 주의 |
+| [qa/2026-11-assign-perf.md](qa/2026-11-assign-perf.md) | Assign 반응 시간 실측 — 명령 큐 · 필터 덩어리 앞뒤의 글쇠 → 다음 박스, 연타, 번호 입력, 스크롤 튐(합성 자료, 로컬 운영 빌드) |
 | [qa/verification-commands.md](qa/verification-commands.md) | 로컬 실행·검증 명령 전체(bash·PowerShell) — 시드·서버·테스트·브라우저 스모크·배치/겹침/대비 감사·설명서 그림·가짜 AI·배포 스크립트 검증의 전제와 옵션 |
 | [qa/2026-11-10-design-workflow-convenience-review.md](qa/2026-11-10-design-workflow-convenience-review.md) | 디자인·워크플로우·편의성 전체 검토(v0.10.1) — 코드 감사 3건 + 극단 자료·5개 화면 조합 확인, 발견 표(근거 `파일:줄`·심각도·처리), 이번에 반영한 것과 보류한 것 |
 | [architecture/backend.md](architecture/backend.md) | backend 코드 구조 상세 — `backend/CLAUDE.md`가 줄여 싣는 내용의 원문(기동·권한·SOP 코어 흐름·AI 제안 층·불변식과 이중 사용 지점의 자세한 설명). 구조를 바꾸면 `backend/CLAUDE.md`와 같은 커밋에서 고친다 |
