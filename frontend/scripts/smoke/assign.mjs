@@ -1173,6 +1173,25 @@ await runStep("assign: figures - the Figures tab holds the figure cards, Show po
   await page.locator('[data-testid="assign-tab-figures"]').click();
   await openSpot();
   check("in the single view Show position opens the panel on the right", (await panel.getAttribute("data-side")) === "right");
+  // 판을 연 채 탭을 오가면 용지가 다시 만들어진다 - data-spot이 새 용지와 맞아야 한다(좁은 창 · 큰 배율: 덮기라 용지는 가운데 그대로)
+  await page.setViewportSize({ width: 1280, height: VIEWPORT.height });
+  for (let tries = 0; tries < 20 && (await getText(page, "assign-old-zoom-value")) !== "160%"; tries += 1) await page.locator('[data-testid="assign-old-zoom-in"]').click();
+  await page.locator('[data-testid="assign-tab-body"]').click();
+  await page.locator('[data-testid="assign-tab-body"][aria-selected="true"]').waitFor({ timeout: T });
+  await page.locator('[data-testid="assign-tab-figures"]').click();
+  await page.locator('[data-testid="assign-tab-figures"][aria-selected="true"]').waitFor({ timeout: T });
+  await page.locator('[data-testid="assign-tab-body"]').click();
+  await page.locator('[data-testid="assign-tab-body"][aria-selected="true"]').waitFor({ timeout: T });
+  await page.waitForFunction(() => !document.querySelector(".assign-panes[data-motion]"), null, { timeout: T });
+  const spotState = await page.evaluate(() => {
+    const panes = document.querySelector(".assign-panes");
+    const pane = document.querySelector('[data-testid="assign-old"]').getBoundingClientRect().width;
+    const sheet = document.querySelector('[data-testid="assign-old"] .sheet')?.getBoundingClientRect();
+    return { spot: panes.dataset.spot ?? null, pane, sheet: sheet?.width ?? 0, margin: sheet ? getComputedStyle(document.querySelector('[data-testid="assign-old"] .sheet')).marginLeft : null };
+  });
+  const expectAside = spotState.pane - spotState.sheet - 12 >= 420;
+  check("after switching tabs with the panel open data-spot still matches the paper", (await panel.count()) === 1 && spotState.sheet > 0 && spotState.spot === (expectAside ? "aside" : "cover"), JSON.stringify(spotState));
+  await page.setViewportSize(VIEWPORT);
   await page.keyboard.press("Escape");
   await panel.waitFor({ state: "detached", timeout: T });
   await page.locator('[data-testid="assign-view-two"]').click();

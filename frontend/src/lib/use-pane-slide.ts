@@ -97,9 +97,10 @@ export function usePaneSlide(isSingle: boolean): { capture: () => void } {
 /**
  * 1단 보기에서 오른쪽 판(짝 엿보기 · 그림 위치)이 열리고 닫힐 때 - 용지는 폭 그대로 두고 자리 있으면 왼쪽으로 비켜서고 다시 가운데로 온다(B7 · §6 S2).
  * 판이 열린 동안 칸 · 용지 폭을 재(`planSpotPlace`) `.assign-panes`에 data-spot("aside" | "cover")과 --spot-w(판 폭)를 단다 - 용지 폭이 줄지 않으니 줄이 다시 접히지 않고 보던 자리가 튀지 않는다. 자리를 비우는 몸은 CSS.
+ * partKey(지금 보이는 파트 탭)가 바뀌면 용지가 다시 만들어지니 다시 잰다(탭만 바뀐 때는 first가 null이라 움직임이 없다).
  * capture()는 판을 열거나 닫기 직전에 부른다. 잡지 않고 닫히면(다른 박스를 고름 등) 움직임 없이 바로 돌아온다.
  */
-export function useSheetSlide(isAside: boolean): { capture: () => void } {
+export function useSheetSlide(isAside: boolean, partKey: string): { capture: () => void } {
   const firstRef = useRef<number | null>(null);
 
   // 한 이펙트에서 먼저 data-spot을 달고(용지의 새 자리를 읽기 전에 있어야 한다) 그다음 슬라이드를 시작한다 - 정리는 둘 다
@@ -113,6 +114,7 @@ export function useSheetSlide(isAside: boolean): { capture: () => void } {
     if (isAside && panes && pane && sheet) {
       const measure = () => {
         const plan = planSpotPlace({ pane: pane.getBoundingClientRect().width, sheet: sheet.getBoundingClientRect().width });
+        if (!plan) return;
         panes.dataset.spot = plan.kind;
         panes.style.setProperty("--spot-w", `${plan.panel}px`);
       };
@@ -132,7 +134,7 @@ export function useSheetSlide(isAside: boolean): { capture: () => void } {
       stopSlide?.();
       stopObserving?.();
     };
-  }, [isAside]);
+  }, [isAside, partKey]);
 
   return {
     capture: () => {

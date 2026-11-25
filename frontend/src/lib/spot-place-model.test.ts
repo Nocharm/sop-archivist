@@ -14,4 +14,10 @@ describe("planSpotPlace", () => {
   ] as const)("pane %i sheet %i -> %s %i", (pane, sheet, kind, panel) => {
     expect(planSpotPlace({ pane, sheet })).toEqual({ kind, panel });
   });
+
+  it("plans nothing for a detached element (width 0)", () => {
+    expect(planSpotPlace({ pane: 0, sheet: 0 })).toBeNull();
+    expect(planSpotPlace({ pane: 1440, sheet: 0 })).toBeNull();
+    expect(planSpotPlace({ pane: 0, sheet: 860 })).toBeNull();
+  });
 });
