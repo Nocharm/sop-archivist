@@ -16,7 +16,7 @@
 SOP 화면: `api-sop.ts`(SOP API 호출·응답 타입), 화면 규칙은 순수 모델에 두고 시험한다.
 
 - `paper-model`(원문 용지):
-  - 긴 문서는 카드 40장씩 덩어리로 그려 화면에서 먼 덩어리는 다시 그리지 않고 브라우저도 건너뛴다, `paper-chunk-model`·`Paper`의 `PaperChunk`.
+  - 긴 문서는 카드 40장씩 덩어리로 그려 화면에서 먼 덩어리는 다시 그리지 않고 브라우저도 건너뛴다, `paper-chunk-model`·`Paper`의 `PaperChunk`. 필터로 접힌 목록도 접기 계획의 칸 40개씩 같은 덩어리다(`sliceFoldEntries`, 펼친 묶음의 머리와 줄은 가르지 않는다. 덩어리 key는 자리 번호라 묶음을 펼쳐도 경계의 줄만 옮긴다).
   - `content-visibility`는 덩어리에 한 겹만 — 줄에도 걸면 스크롤 고정이 놓친다.
   - 목차 줄(`noise_kind`)은 Assign에서만 `strips.toc`로 흐린 블록 한 카드로 접는다 — `toc-block-model`, 목차 줄은 `buildRows`의 줄이 아니다.
 - `tobe-draft`(To-Be 초안, 하위 항목은 줄 키에 묶고 단계 번호는 다시 매기지 않는다).

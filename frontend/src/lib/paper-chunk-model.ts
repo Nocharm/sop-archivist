@@ -1,4 +1,5 @@
 // 긴 원문 용지의 카드 덩어리 - 몇 장씩 묶을지와 화면 가까운 덩어리 고르기. 설계: 2026-11-17-assign-long-doc(구현 끝나 지웠다, git 이력)
+import type { FoldEntry } from "@/lib/paper-fold-model";
 
 // 긴 부분은 카드를 이만큼씩 덩어리로 묶는다 - 크면 덩어리가 화면 가까이 들 때 한 번에 그리는 양이, 작으면 스크롤마다 재는 덩어리 수가 는다.
 // CSS .strip-chunk의 어림 높이(1840px = 40장 × 줄 어림 46px)가 이 값을 따른다
@@ -19,6 +20,23 @@ export function sliceCards(cardCount: number): { isChunked: boolean; slices: Car
   const slices: CardSlice[] = [];
   for (let start = 0; start < cardCount; start += size) slices.push({ start, count: Math.min(size, cardCount - start) });
   return { isChunked, slices };
+}
+
+/** 필터로 접힌 목록의 덩어리 자르기 - 펼친 묶음의 머리와 그 줄(엿보는 줄 포함)은 가르지 않는다. CHUNK_MIN_CARDS보다 적으면 덩어리 하나(나누지 않음) */
+export function sliceFoldEntries(entries: readonly FoldEntry[], size: number = CHUNK_CARDS): readonly CardSlice[] {
+  if (entries.length === 0) return [];
+  if (entries.length < CHUNK_MIN_CARDS) return [{ start: 0, count: entries.length }];
+  const slices: CardSlice[] = [];
+  let start = 0;
+  let run: Extract<FoldEntry, { kind: "runHead" }> | null = null;
+  entries.forEach((entry, at) => {
+    const isInRun = run !== null && ((entry.kind === "line" && entry.runKey === run.runKey) || (entry.kind === "peek" && run.memberKeys.includes(entry.key)));
+    if (!isInRun) run = entry.kind === "runHead" ? entry : null;
+    if (isInRun || at - start < size) return;
+    slices.push({ start, count: at - start });
+    start = at;
+  });
+  return [...slices, { start, count: entries.length - start }];
 }
 
 /** 보이는 칸 위아래로 한 화면씩 더 넓힌 범위에 걸치는 덩어리 번호 범위(문서 순서) - 하나도 없으면 -1 */
