@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { addUnwrapAiAsk, isUnwrapSuggestionApplicable, isUnwrapSuggestionUnchanged, listUnwrapAiBusy, readUnwrapMoves } from "./unwrap-ai-model";
+import { addUnwrapAiAsk, isUnwrapSuggestionApplicable, isUnwrapSuggestionUnchanged, keepSamePreviews, listUnwrapAiBusy, readUnwrapMoves } from "./unwrap-ai-model";
 
 describe("isUnwrapSuggestionApplicable", () => {
   it("같은 줄 집합의 다른 차례면 적용할 수 있다", () => {
@@ -57,5 +57,16 @@ describe("작업 중 칩", () => {
   it("같은 표를 다시 물으면 앞 요청을 대신한다", () => {
     const asks = addUnwrapAiAsk(addUnwrapAiAsk([], 7, 0), 7, 0);
     expect(asks).toHaveLength(1);
+  });
+});
+
+describe("keepSamePreviews", () => {
+  const prev = new Map([[4, [1, 2]]]);
+
+  it("내용이 같으면 앞의 것을 그대로 준다 - 다시 받을 때마다 용지의 덩어리를 다시 그리지 않게", () => {
+    expect(keepSamePreviews(prev, new Map([[4, [1, 2]]]))).toBe(prev);
+  });
+  it("차례 · 표가 다르면 새것을 준다", () => {
+    for (const next of [new Map([[4, [2, 1]]]), new Map([[4, [1, 2, 3]]]), new Map([[5, [1, 2]]]), new Map([...prev, [5, [3, 4]]]), new Map<number, number[]>()]) expect(keepSamePreviews(prev, next)).toBe(next);
   });
 });

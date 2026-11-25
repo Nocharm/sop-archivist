@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
-import { CHUNK_CARDS, CHUNK_MIN_CARDS, pickNearChunks, sliceCards, sliceFoldEntries } from "@/lib/paper-chunk-model";
+import type { PaperPending } from "@/components/paper/paper";
+import type { DeletedFold } from "@/lib/deleted-fold-model";
+import { CHUNK_CARDS, CHUNK_MIN_CARDS, pickNearChunks, readChunkDeleted, readChunkNumbers, readChunkPending, sliceCards, sliceFoldEntries } from "@/lib/paper-chunk-model";
 import type { FoldEntry } from "@/lib/paper-fold-model";
 
 describe("sliceCards", () => {
@@ -61,6 +63,56 @@ describe("sliceFoldEntries", () => {
     // 묶음 뒤의 엿보기 · 다른 묶음은 붙지 않는다
     expect(sliceFoldEntries([...full(38), ...run, { kind: "peek", key: "x" }, ...full(120)])[0]).toEqual({ start: 0, count: 40 });
     expect(sliceFoldEntries([...full(38), ...run, { kind: "runHead", runKey: "s", memberKeys: ["m"] }, { kind: "line", key: "m", runKey: "s" }, ...full(120)])[0]).toEqual({ start: 0, count: 40 });
+  });
+});
+
+describe("what a chunk shows", () => {
+  const mine = new Set([1, 2]);
+
+  function pending(part: { lockedIds?: number[]; shimmerIds?: number[]; waits?: Array<[number, number]>; pills?: PaperPending["pills"] }): PaperPending {
+    return { lockedIds: new Set(part.lockedIds), shimmerIds: new Set(part.shimmerIds), waits: new Map(part.waits), pills: part.pills ?? [] };
+  }
+  const pill = (id: string, place: PaperPending["pills"][number]["place"], label = "Joining…") => ({ id, kind: "merge", label, place });
+  const folds = (items: Array<[number, string, string]>) =>
+    new Map(items.map(([id, rowKey, remark]): [number, DeletedFold] => [id, { rowKey, remark, kind: "text", lang: "en", text: "" }]));
+
+  it("reads the pending work of its own boxes only", () => {
+    const busy = pending({ lockedIds: [1], shimmerIds: [1], waits: [[2, 1]] });
+    expect(readChunkPending(undefined, mine)).toBe("");
+    expect(readChunkPending(busy, mine)).not.toBe("");
+    // 남의 덩어리 일은 값이 같다
+    expect(readChunkPending(pending({ lockedIds: [1, 9], shimmerIds: [1], waits: [[2, 1], [8, 2]] }), mine)).toBe(readChunkPending(busy, mine));
+    expect(readChunkPending(pending({ lockedIds: [9], shimmerIds: [9], waits: [[8, 2]] }), mine)).toBe("");
+    // 같은 박스라도 잠금 · 쉬머 · 차례가 다르면 다르다
+    expect(readChunkPending(pending({ shimmerIds: [1], waits: [[2, 1]] }), mine)).not.toBe(readChunkPending(busy, mine));
+    expect(readChunkPending(pending({ lockedIds: [1], shimmerIds: [1], waits: [[2, 2]] }), mine)).not.toBe(readChunkPending(busy, mine));
+  });
+
+  it("reads the pills placed inside it - a box, a gap or a table", () => {
+    expect(readChunkPending(pending({ pills: [pill("a", { at: "box", unitId: 2 })] }), mine)).not.toBe("");
+    expect(readChunkPending(pending({ pills: [pill("a", { at: "gap", firstId: 2, secondId: 3 })] }), mine)).not.toBe("");
+    expect(readChunkPending(pending({ pills: [pill("a", { at: "table", tableId: 7 })] }), mine, new Set([7]))).not.toBe("");
+    expect(readChunkPending(pending({ pills: [pill("a", { at: "box", unitId: 9 }), pill("b", { at: "gap", firstId: 8, secondId: 9 }), pill("c", { at: "table", tableId: 7 }), pill("d", { at: "none" })] }), mine)).toBe("");
+  });
+
+  it("reads the deleted lines of its own boxes only", () => {
+    expect(readChunkDeleted(undefined, mine)).toBe("");
+    expect(readChunkDeleted(folds([[1, "u1", "사유"], [9, "u9", ""]]), mine)).toBe(readChunkDeleted(folds([[1, "u1", "사유"]]), mine));
+    expect(readChunkDeleted(folds([[1, "u1", "다른 사유"]]), mine)).not.toBe(readChunkDeleted(folds([[1, "u1", "사유"]]), mine));
+    expect(readChunkDeleted(folds([[9, "u9", ""]]), mine)).toBe("");
+  });
+
+  it("tells a pressed delete from a saved one", () => {
+    const saved = folds([[1, "u1", ""]]);
+    const pressed = new Map([...saved].map(([id, item]): [number, DeletedFold] => [id, { ...item, isPending: true }]));
+    expect(readChunkDeleted(pressed, mine)).not.toBe(readChunkDeleted(saved, mine));
+  });
+
+  it("reads the numbers being saved in its own boxes only", () => {
+    expect(readChunkNumbers(undefined, mine)).toBe("");
+    expect(readChunkNumbers(new Map([[9, "5.2"]]), mine)).toBe("");
+    expect(readChunkNumbers(new Map([[1, "5.2"], [9, "7"]]), mine)).toBe(readChunkNumbers(new Map([[1, "5.2"]]), mine));
+    expect(readChunkNumbers(new Map([[1, null]]), mine)).not.toBe(readChunkNumbers(new Map([[1, "5.2"]]), mine));
   });
 });
 

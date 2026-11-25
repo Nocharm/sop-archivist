@@ -122,3 +122,30 @@ describe("a folded list", () => {
     expect(host.querySelector('[data-testid="p-piece-150"]')).not.toBeNull();
   });
 });
+
+describe("pending work and deletes", () => {
+  const pendingAt = (id: number): NonNullable<Strips["pending"]> => ({ shimmerIds: new Set([id]), lockedIds: new Set(), pills: [], waits: new Map() });
+  const foldsAt = (id: number, isPending?: true) => new Map([[id, { rowKey: `u${id}`, remark: "", kind: "text" as const, lang: "en" as const, text: `Line ${id}`, ...(isPending ? { isPending } : {}) }]]);
+
+  it.each([["the whole list", {}], ["a folded list", { fold: fold(new Set(IDS)) }]])("of one box leave the far chunks of %s alone", async (_, list) => {
+    await render({ ...list, deleted: { folds: new Map() } }, 1);
+    await render({ ...list, pending: pendingAt(1), deleted: { folds: foldsAt(1, true) } }, 2);
+    expect(listFar()).toEqual([]);
+    expect(host.querySelector('[data-testid="p-deleted-u1"]')).not.toBeNull();
+    // 저장이 끝나고, 다음 것을 누르고
+    await render({ ...list, pending: pendingAt(2), deleted: { folds: new Map([...foldsAt(1), ...foldsAt(2, true)]) } }, 3);
+    expect(listFar()).toEqual([]);
+  });
+
+  it("reach the far chunk they are in, and only it", async () => {
+    await render({ deleted: { folds: new Map() } }, 1);
+    await render({ pending: pendingAt(150), deleted: { folds: foldsAt(150, true) } }, 1);
+    expect(listFar()).toEqual(IDS.slice(120, 160));
+    expect(host.querySelector('[data-testid="p-piece-150"]')?.hasAttribute("data-pending")).toBe(true);
+    // 버리면(실패) 그 덩어리에서 펼친다
+    await render({ deleted: { folds: new Map() } }, 1);
+    expect(listFar()).toEqual(IDS.slice(120, 160));
+    expect(host.querySelector(".deleted-release")).not.toBeNull();
+    expect(host.querySelector('[data-testid="p-piece-150"]')?.hasAttribute("data-pending")).toBe(false);
+  });
+});
