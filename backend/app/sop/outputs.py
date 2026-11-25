@@ -55,6 +55,7 @@ from app.sop.renumber import (
 )
 from app.sop.segment import is_band_heading
 from app.sop.snapshot import (
+    FIGURE_KIND,
     NEUTRAL,
     BundleSnapshot,
     CaptionRefInfo,
@@ -1912,7 +1913,8 @@ def _is_unwrapped_cell(unit: UnitInfo) -> bool:
 
 @dataclass(frozen=True)
 class ReviewFacts:
-    row_status_counts: Counter[str]  # 줄 상태 → 줄 수 (진행 숫자와 같은 규칙 — 짝 하나·짝 없는 단위 하나가 한 줄)
+    row_status_counts: Counter[str]  # 줄 상태 → 줄 수 (진행 숫자와 같은 줄 규칙 — 짝 하나·짝 없는 단위 하나가 한 줄. 그림까지 센다)
+    figure_status_counts: Counter[str]  # 그 가운데 그림 줄 — 진행 숫자는 그림을 따로 세므로 막는 이유가 그림 수를 함께 말한다
     duplicate_unit_ids: list[int]  # 서로 다른 새 문서 둘 이상으로 간 판단 단위(칸 문장은 표 단위로 접는다), id 순
     caption_ref_warnings: tuple[CaptionRefWarning, ...] = ()  # 표·그림 참조 경고(build_renumbering) — 막지 않는다
 
@@ -1920,9 +1922,11 @@ class ReviewFacts:
 def build_review_facts(snap: BundleSnapshot) -> ReviewFacts:
     """검토 요청 조건이 읽는 단위 사실 — 요약·결과물과 같은 옛 단위 집합(_build_index)과 같은 보낸 곳 규칙(_group_dests)."""
     index = _build_index(snap)
-    counts = Counter(row.status for row in build_meaning_rows(snap))
+    rows = build_meaning_rows(snap)
+    counts = Counter(row.status for row in rows)
+    figures = Counter(row.status for row in rows if any(snap.units[unit_id].kind == FIGURE_KIND for unit_id in row.unit_ids))
     duplicates = {_get_decision_unit_id(unit) for unit in index.old_units if len(_group_dests(index, unit)) >= 2}
     return ReviewFacts(
-        row_status_counts=counts, duplicate_unit_ids=sorted(duplicates),
+        row_status_counts=counts, figure_status_counts=figures, duplicate_unit_ids=sorted(duplicates),
         caption_ref_warnings=build_renumbering(index, LABELS["en"]).warnings,  # 경고는 라벨 언어와 무관하다
     )

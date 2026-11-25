@@ -376,8 +376,9 @@ def test_front_lines_leave_the_rows_and_make_no_new_sentences(client: TestClient
     fx = _setup(client)
     assert (_texts(fx.view, NOISE_FRONT), _texts(fx.view, NOISE_HISTORY)) == (FRONT_TEXTS, HISTORY_TEXTS)
     assert _texts(fx.view, NOISE_TOC) == TOC_TEXTS
-    # 판단 줄은 본문의 제목 둘 · 문장 둘 · 표 하나 · 그림 하나뿐이다
-    assert get_bundle(client, fx.bundle_id)["progress"]["total"] == 6
+    # 판단 줄은 본문의 제목 둘 · 문장 둘 · 표 하나 · 그림 하나뿐이다(진행은 그림을 따로 센다)
+    progress = get_bundle(client, fx.bundle_id)["progress"]
+    assert (progress["total"], progress["figures_total"]) == (5, 1)
     title = find_unit(fx.view, TITLE)
     body = {"action": "delete", "reason": "합성", "units": [{"unit_id": title["id"], "revision": 1}]}
     refused = client.post(f"/api/bundles/{fx.bundle_id}/decisions/bulk", json=body, headers=AUTHOR)
