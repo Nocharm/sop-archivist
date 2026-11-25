@@ -124,3 +124,26 @@ def test_undo_and_redo_keep_one_new_sentence_per_unit(client: TestClient, case: 
         assert redo.status_code == 200, redo.text
         _assert_one_each(_dump(bundle_id))
         assert_same_state(_dump(bundle_id), after)
+
+
+def test_cell_sentences_follow_unit_order_after_split_and_edit_undo(client: TestClient) -> None:
+    bundle_id, _, new = _setup(client)
+    _push_ids(client, bundle_id, 2)
+
+    def read_cell() -> list[str]:
+        rows = client.get(f"/api/bundles/{bundle_id}/written-sentences", headers=AUTHOR).json()
+        table = next(row for row in rows if row["kind"] == "table")
+        return [cell["text"] for cell in table["table"]["cells"] if (cell["row"], cell["col"]) == (1, 1)]
+
+    assert read_cell() == [K1, K2]
+
+    unit = find_unit(get_view(client, bundle_id, new["id"]), K1)
+    _edit(client, bundle_id, new, {"type": "split", "unit_id": unit["id"], "at": 4})
+    assert read_cell() == ["새 필터", "를 끼우고 기록지에 적는다.", K2]
+
+    revision = get_view(client, bundle_id, new["id"])["document"]["revision"]
+    undo = client.post(
+        f"/api/bundles/{bundle_id}/documents/{new['id']}/edits/undo", json={"revision": revision}, headers=AUTHOR
+    )
+    assert undo.status_code == 200, undo.text
+    assert read_cell() == [K1, K2]

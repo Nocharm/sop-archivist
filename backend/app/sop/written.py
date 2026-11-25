@@ -212,8 +212,11 @@ async def _load_bundle_children(
             TargetSentence.id, TargetSentence.parent_target_id, TargetSentence.cell_row, TargetSentence.cell_col, TargetSentence.lang,
             TargetSentence.confirmed_text, TargetSentence.ai_text, TargetSentence.status, TargetSentence.kind,
             TargetSentence.revision,
-        # id 순은 덩이 안에서만이지만 덩이는 부모 id로 나누므로 한 부모의 자식은 한 덩이에 다 있다 — 같은 언어 캡션은 id 순으로 잇는다
-        ).where(TargetSentence.parent_target_id.in_(chunk)).order_by(TargetSentence.id),
+        )
+        .outerjoin(Unit, Unit.id == TargetSentence.new_unit_id)
+        .where(TargetSentence.parent_target_id.in_(chunk))
+        # 새 문장 id가 아니라 Unit 순 — 편집이 다시 만든 새 문장은 id가 뒤로 밀린다. 덩이는 부모 id로 나누므로 한 부모의 자식은 한 덩이에 다 있다
+        .order_by(Unit.pos_seq, Unit.pos_start, Unit.id, TargetSentence.id),
         [target.id for target in bundle_targets],
     )
     cell_sources: dict[int, list[int]] = defaultdict(list)
