@@ -9,6 +9,8 @@ export type PressId = AssignKeyId | "edit";
 const LIVE_IDS: ReadonlySet<PressId> = new Set<PressId>(["view", "preview", "escape", "help", "part_prev", "part_next", "undo", "redo"]);
 // 누르고 있어도 되는 것 - 줄 이동과 나눌 선 옮기기
 const REPEAT_IDS: ReadonlySet<PressId> = new Set<PressId>(["move_next", "move_prev", "cut_left", "cut_right"]);
+// 누르면 늘 글 칸(번호 칸 · 사유 창)이 열리는 것
+const TEXT_BOX_IDS: ReadonlySet<PressId> = new Set<PressId>(["number", "remark", "remark_block"]);
 
 /** 앞에 장벽이 있으면 쌓아 두었다가 되살릴 글쇠인가 */
 export function isQueuedKey(id: PressId): boolean {
@@ -24,5 +26,5 @@ export function isRepeatIgnored(id: PressId): boolean {
 export function opensTextBox({ key, shift }: { key: string; shift: boolean }): boolean {
   if (key === "e") return true;
   const hit = findAssignKey({ key, shiftKey: shift, ctrlKey: false, metaKey: false, altKey: false });
-  return hit?.kind === "run" && hit.entry.id === "number";
+  return hit?.kind === "run" && TEXT_BOX_IDS.has(hit.entry.id);
 }

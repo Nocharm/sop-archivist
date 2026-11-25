@@ -4264,8 +4264,9 @@ export function useAssignPage() {
 
   function readKeyContext(): AssignKeyContext {
     return {
-      hasRow: row !== null,
-      hasBox: keyUnit !== null,
+      // 출처 없는 New를 보는 동안은 고른 줄이 가려져 있다 - 가려진 줄을 정하지 않는다
+      hasRow: row !== null && mode === "old",
+      hasBox: keyUnit !== null && mode === "old",
       isDeletedLine: noisePick !== null,
       canEdit,
       hasCut: composedCut !== null || cutLine.at !== null,

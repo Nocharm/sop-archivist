@@ -155,6 +155,8 @@ export function useCommandQueue(env: CommandEnv, describePending: DescribePendin
     isMounted: true,
     /** 되살리는 중인 글쇠 - 그동안 만든 명령은 남은 글쇠 앞에 선다 */
     replayId: null as string | null,
+    /** 이번 되살림이 남은 글쇠 앞에 이미 세운 명령 수 */
+    replayMade: 0,
     /** 되살린 글쇠가 창을 열었다 */
     isAskOpened: false,
     /** 응답은 왔고 새 보기를 기다리는 장벽 - canOvertake면 되돌리기가 그 보기를 기다리지 않는다 */
@@ -192,6 +194,7 @@ export function useCommandQueue(env: CommandEnv, describePending: DescribePendin
 
   function replay<R>(id: string, run: () => R): R {
     live.current.replayId = id;
+    live.current.replayMade = 0;
     live.current.isAskOpened = false;
     try {
       return run();
@@ -329,7 +332,7 @@ export function useCommandQueue(env: CommandEnv, describePending: DescribePendin
     const isFirst = live.current.replayId !== null;
     const wasIdle = isIdle(queue.getState());
     const put = (command: Omit<QueuedCommand<AssignCommand>, "isDeferred">) => {
-      if (isFirst) queue.pushNext(command);
+      if (isFirst) queue.pushNext(command, live.current.replayMade++);
       else queue.push(command);
     };
     if (isReplay(payload)) put({ id, kind: "key", isGlobal: false, payload, unitIds: [] });
@@ -361,7 +364,7 @@ export function useCommandQueue(env: CommandEnv, describePending: DescribePendin
     isDeferring: () => live.current.replayId === null && mustDefer(queue.getState()),
     /** 쌓인 글쇠 뒤의 고름도 차례를 기다리나 - 멈춘 동안은 둘러볼 수 있게 바로 고른다(다시 시도가 멈춘 때의 고름에서 잇는다) */
     isPickQueued: () => live.current.replayId === null && queue.getState().halted === null && queue.getState().waiting.some((command) => command.kind === "key"),
-    /** 글쇠를 더 쌓아도 되나 - 글 칸을 여는 글쇠(고쳐 쓰기 E · 번호 칸 ⇧N)가 쌓여 있으면 그 뒤에 친 것은 열릴 글 칸의 글자다 */
+    /** 글쇠를 더 쌓아도 되나 - 글 칸을 여는 글쇠(고쳐 쓰기 E · 번호 칸 ⇧N · Remark R)가 쌓여 있으면 그 뒤에 친 것은 열릴 글 칸의 글자다 */
     canQueueKey: () => !listUnsettled(queue.getState()).some(({ payload }) => payload.kind === "key" && !payload.ctrl && opensTextBox(payload)),
     /** 아직 끝나지 않은 명령 - 누르는 순간의 값(그려진 값이 아니라) */
     listUnsettled: () => listUnsettled(queue.getState()),

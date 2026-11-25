@@ -63,6 +63,14 @@ describe("Assign keys", () => {
     expect(rows, "도움말은 `ASSIGN_KEYS` · `HELP_ONLY`를 차례대로 보입니다(`assign-help.tsx`)").toEqual(listed);
   });
 
+  it("the manual names no key that now needs Shift, or is gone, by itself", async () => {
+    const isBare = (letter: string) => letter === "m" || (ASSIGN_KEYS.some((entry) => entry.key === letter) && ASSIGN_KEYS.every((entry) => entry.key !== letter || entry.shift));
+    // 바뀐 글쇠를 알리는 줄만 옛 글쇠를 적는다
+    const lines = (await readManualSource()).split("\n").map((line, index) => ({ at: index + 1, line })).filter(({ line }) => !line.includes("**글쇠가 바뀌었습니다.**"));
+    const left = lines.flatMap(({ at, line }) => [...line.matchAll(/(?<!\+)<kbd>([A-Z])<\/kbd>/g)].filter(([, key]) => isBare(key.toLowerCase())).map(([, key]) => `user-manual.md:${at} ${key}`));
+    expect(left, "설명서의 이 글쇠를 `<kbd>Shift</kbd>+`로 고치거나(없앤 M은) 지우세요").toEqual([]);
+  });
+
   it("every key id has an en and ko label", () => {
     for (const labelKey of [...ASSIGN_KEYS, ...HELP_ONLY].map((item) => item.labelKey)) {
       for (const lang of ["en", "ko"] as const) expect((MESSAGES[lang] as Record<string, string>)[labelKey], `${lang} ${labelKey} - \`i18n-messages.ts\`에 문구를 더하세요`).toBeTruthy();

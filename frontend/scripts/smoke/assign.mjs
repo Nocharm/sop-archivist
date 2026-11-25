@@ -1542,6 +1542,10 @@ await runStep("assign: written New document - identical, link by clicking, split
   // 출처 없는 New - 신규로 표시
   await page.locator('[data-testid="assign-filter-unsourced"]').click();
   await wait(page, "assign-mark-new");
+  // 가려진 Old 줄은 글쇠로도 정하지 않는다(R · U · Del · ⇧H) - 까닭만 알린다
+  await page.keyboard.press("r");
+  await page.locator('[data-testid="toast-info"]', { hasText: "Pick an Old unit first" }).first().waitFor({ timeout: T });
+  check("R opens no Remark window for the hidden Old line", (await page.locator('[data-testid="assign-remark-modal"]').count()) === 0);
   await page.locator('[data-testid="assign-mark-new"]').click();
   await page.locator('[data-testid="toast-ok"]').first().waitFor({ timeout: T });
   check("an unsourced New sentence is marked new", true);

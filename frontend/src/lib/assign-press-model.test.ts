@@ -20,8 +20,10 @@ describe("keys kept behind a barrier", () => {
 });
 
 describe("keys that open a text box", () => {
-  it("are E and Shift+N - what is typed after them belongs to the box", () => {
+  it("are E, Shift+N and the Remark keys - what is typed after them belongs to the box", () => {
     expect(opensTextBox({ key: "e", shift: false })).toBe(true);
+    expect(opensTextBox({ key: "r", shift: false })).toBe(true);
+    expect(opensTextBox({ key: "r", shift: true })).toBe(true);
     expect(opensTextBox({ key: "n", shift: true })).toBe(true);
     for (const press of [{ key: "n", shift: false }, { key: "h", shift: true }, { key: "j", shift: false }]) expect(opensTextBox(press), press.key).toBe(false);
   });

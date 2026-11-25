@@ -1015,9 +1015,9 @@ export function AssignSidePanel({ state, headEnd }: { state: AssignPageState; he
             <div className="grid gap-0.5 text-xs text-st-ai" data-testid="assign-ai-reason">
               <div className="flex items-start gap-1.5">
                 <Sparkles size={13} strokeWidth={1.5} className="mt-0.5 shrink-0" aria-hidden />
-                <span className="min-w-0 flex-1">{aiWhy ? <ClampText text={aiWhy} /> : t("assign.ai.useHint")}</span>
+                <span className="min-w-0 flex-1">{aiWhy ? <ClampText text={aiWhy} /> : t("assign.ai.useHint", { key: formatAssignKey("use_ai") })}</span>
               </div>
-              {aiWhy && canEdit && draft.suggestionId !== rowLive.id && <span className="pl-[19px] text-ink-3" data-testid="assign-ai-use-hint">{t("assign.ai.useHint")}</span>}
+              {aiWhy && canEdit && draft.suggestionId !== rowLive.id && <span className="pl-[19px] text-ink-3" data-testid="assign-ai-use-hint">{t("assign.ai.useHint", { key: formatAssignKey("use_ai") })}</span>}
               {draft.suggestionId === rowLive.id && aiUnfilled.length > 0 && (
                 <span className="grid gap-0.5 pl-[19px] text-ink-2" data-testid="assign-ai-unfilled">
                   <span>{t("assign.ai.unfilled")}</span>
