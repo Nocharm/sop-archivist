@@ -6,10 +6,10 @@
 
 | # | 브랜치 | 상태 | 버전 · 커밋 | 게이트(pytest · vitest · build · 스모크) | 남은 것 · 물음 |
 |---|---|---|---|---|---|
-| 0 | `fix/new-edit-undo` | 대기 | | | |
+| 0 | `fix/new-edit-undo` | 진행(11-26) | | | |
 | 1a | `feat/hide-drafting` | 대기 | | | |
 | 1b | `fix/remove-bundle-move` | 대기 | | | |
-| 2a | `fix/pair-spot-scroll` | 대기 | | | |
+| 2a | `fix/pair-spot-scroll` | 합침 | v1.6.0 · 7a863a50 | vitest 1927 · build 경고 0 · 스모크 3단계 통과(pytest 해당 없음) | 스모크는 단추 자리가 바뀐 감사(겹침)를 정식 업데이트 전에 |
 | 2b | `feat/inspector-float` | 대기 | | | |
 | 3a | `perf/assign-measure` | 대기 | | | |
 | 3b | `fix/assign-command-queue` | 대기 | | | |
@@ -30,6 +30,10 @@
 | 8 | 계획 5의 아홉 | 대기 | | | |
 
 ## 따라 바뀐 시험 (브랜치 · 파일:줄 · 전 → 뒤 · 까닭)
+
+- 2a · `frontend/scripts/smoke/assign.mjs` counterpart 단계의 창 폭 목록 · `[1248, 1680]` → `[1248, 1680, 1920]` · 1680에서는 판이 덮는 모양이 되어 비켜서는 모양을 1920에서 본다
+- 2a · 같은 단계 `isAside` · `pane >= 1000` → `pane - 용지 폭 - 12 >= 420` · 판 모양의 기준이 용지 옆 남는 자리로 바뀜
+- 2a · 같은 단계 스크린샷 조건 · `width !== 기본` → `width === 1680` · 창이 셋이 되어 같은 파일을 덮지 않게(그림은 그대로 1680)
 
 ## 아침에 볼 것 (사람이 정할 것 · 봐 줄 것)
 

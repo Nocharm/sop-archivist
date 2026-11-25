@@ -116,7 +116,7 @@ export function OldPane({ paneRef, ...props }: OldPaneProps) {
   // 짝 판은 다른 박스를 고르거나(두 번 눌러 짝으로 감 · 글쇠 이동 포함) 2단 보기로 바꾸면 닫힌다 - 다시 그 박스로 와도 열리지 않게 지운다
   if (spot?.target.kind === "pair" && (spot.from !== props.selectedId || !props.single)) setSpot(null);
   const spotTarget = spot !== null && spot.docId === props.docId && model?.units.has(spot.target.unitId) ? spot.target : null;
-  const sheetSlide = useSheetSlide(spotTarget !== null && props.single);
+  const sheetSlide = useSheetSlide(spotTarget !== null && props.single, props.activePart);
 
   /** 판을 열고 닫는다 - 1단 보기면 그 직전 용지 자리를 잡아 비켜서는 움직임을 준다 */
   function changeSpot(next: { target: SpotTarget; from: number | null } | null) {
