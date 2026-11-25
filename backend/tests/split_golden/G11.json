@@ -1,0 +1,9 @@
+{
+  "shape": "제목 스타일로 쓴 긴 조항",
+  "layout": null,
+  "boxes": [
+    {"text": "5. 절차", "lang": "ko", "kind": "heading", "number": "5.", "excluded": null},
+    {"text": "5.1 배출 밸브를 모두 닫는다. 닫힌 것을 확인한다.", "lang": "ko", "kind": "sentence", "number": "5.1", "excluded": null},
+    {"text": "Close all drain valves. Confirm that they are closed.", "lang": "en", "kind": "sentence", "number": null, "excluded": null}
+  ]
+}

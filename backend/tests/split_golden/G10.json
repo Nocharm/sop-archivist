@@ -1,0 +1,14 @@
+{
+  "shape": "표 칸 안 KO / EN 두 줄",
+  "layout": null,
+  "boxes": [
+    {"text": "5. 절차", "lang": "ko", "kind": "heading", "number": "5.", "excluded": null},
+    {"text": "", "lang": "neutral", "kind": "table", "number": null, "excluded": null},
+    {"text": "항목", "lang": "ko", "kind": "cell_sentence", "number": null, "excluded": null},
+    {"text": "내용", "lang": "ko", "kind": "cell_sentence", "number": null, "excluded": null},
+    {"text": "온도", "lang": "ko", "kind": "cell_sentence", "number": null, "excluded": null},
+    {"text": "Temperature", "lang": "en", "kind": "cell_sentence", "number": null, "excluded": null},
+    {"text": "탱크를 비운다.", "lang": "ko", "kind": "cell_sentence", "number": null, "excluded": null},
+    {"text": "Drain it.", "lang": "en", "kind": "cell_sentence", "number": null, "excluded": null}
+  ]
+}

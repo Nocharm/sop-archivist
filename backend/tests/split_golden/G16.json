@@ -1,0 +1,17 @@
+{
+  "shape": "본문 뒤 개정 이력 절과 표",
+  "layout": null,
+  "boxes": [
+    {"text": "1. 목적", "lang": "ko", "kind": "heading", "number": "1.", "excluded": null},
+    {"text": "탱크 세척 방법을 정한다.", "lang": "ko", "kind": "sentence", "number": null, "excluded": null},
+    {"text": "9. Document Change History", "lang": "en", "kind": "heading", "number": null, "excluded": "history"},
+    {"text": "개정 내용을 적는다.", "lang": "ko", "kind": "sentence", "number": null, "excluded": "history"},
+    {"text": "", "lang": "neutral", "kind": "table", "number": null, "excluded": "history"},
+    {"text": "Rev", "lang": "en", "kind": "cell_sentence", "number": null, "excluded": "history"},
+    {"text": "Change", "lang": "en", "kind": "cell_sentence", "number": null, "excluded": "history"},
+    {"text": "01", "lang": "en", "kind": "cell_sentence", "number": null, "excluded": "history"},
+    {"text": "New document", "lang": "en", "kind": "cell_sentence", "number": null, "excluded": "history"},
+    {"text": "10. 첨부", "lang": "ko", "kind": "heading", "number": "10.", "excluded": null},
+    {"text": "기록지를 붙인다.", "lang": "ko", "kind": "sentence", "number": null, "excluded": null}
+  ]
+}

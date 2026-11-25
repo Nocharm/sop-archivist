@@ -1,0 +1,32 @@
+{
+  "shape": "표지 표 · 결재 표 · Summary of Changes · 목차 · 1장",
+  "layout": null,
+  "boxes": [
+    {"text": "합성 표준 절차서", "lang": "ko", "kind": "sentence", "number": null, "excluded": "front"},
+    {"text": "", "lang": "neutral", "kind": "table", "number": null, "excluded": "front"},
+    {"text": "문서 번호", "lang": "ko", "kind": "cell_sentence", "number": null, "excluded": "front"},
+    {"text": "SOP-QC-0001", "lang": "en", "kind": "cell_sentence", "number": null, "excluded": "front"},
+    {"text": "제목", "lang": "ko", "kind": "cell_sentence", "number": null, "excluded": "front"},
+    {"text": "합성 세척 절차", "lang": "ko", "kind": "cell_sentence", "number": null, "excluded": "front"},
+    {"text": "", "lang": "neutral", "kind": "table", "number": null, "excluded": "front"},
+    {"text": "작성", "lang": "ko", "kind": "cell_sentence", "number": null, "excluded": "front"},
+    {"text": "검토", "lang": "ko", "kind": "cell_sentence", "number": null, "excluded": "front"},
+    {"text": "승인", "lang": "ko", "kind": "cell_sentence", "number": null, "excluded": "front"},
+    {"text": "2026-01-02", "lang": "ko", "kind": "cell_sentence", "number": null, "excluded": "front"},
+    {"text": "2026-01-03", "lang": "ko", "kind": "cell_sentence", "number": null, "excluded": "front"},
+    {"text": "2026-01-04", "lang": "ko", "kind": "cell_sentence", "number": null, "excluded": "front"},
+    {"text": "Summary of Changes", "lang": "en", "kind": "heading", "number": null, "excluded": "front"},
+    {"text": "", "lang": "neutral", "kind": "table", "number": null, "excluded": "front"},
+    {"text": "개정", "lang": "ko", "kind": "cell_sentence", "number": null, "excluded": "front"},
+    {"text": "내용", "lang": "ko", "kind": "cell_sentence", "number": null, "excluded": "front"},
+    {"text": "1", "lang": "ko", "kind": "cell_sentence", "number": null, "excluded": "front"},
+    {"text": "1. 처음 만듦", "lang": "ko", "kind": "cell_sentence", "number": null, "excluded": "front"},
+    {"text": "목차", "lang": "ko", "kind": "sentence", "number": null, "excluded": "front"},
+    {"text": "1. 목적 ........ 3", "lang": "ko", "kind": "sentence", "number": null, "excluded": "toc"},
+    {"text": "2. 범위 ........ 3", "lang": "ko", "kind": "sentence", "number": null, "excluded": "toc"},
+    {"text": "1. 목적", "lang": "ko", "kind": "heading", "number": "1.", "excluded": null},
+    {"text": "탱크 세척 방법을 정한다.", "lang": "ko", "kind": "sentence", "number": null, "excluded": null},
+    {"text": "2. 범위", "lang": "ko", "kind": "heading", "number": "2.", "excluded": null},
+    {"text": "합성 공정에 적용한다.", "lang": "ko", "kind": "sentence", "number": null, "excluded": null}
+  ]
+}
