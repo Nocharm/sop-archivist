@@ -95,16 +95,15 @@ export type Mode = "old" | "unsourced";
 // backend constants.SYSTEM_HOLD_* - 모르는 코드는 "시스템 보류"로 보인다
 export const SYSTEM_HOLDS = ["related_unit_changed", "ai_invalid_response"];
 
-/** 화면의 줄 초안 - 사유·이동 코드는 null이면 손대지 않은 것(저장된 값을 보인다), ""이면 사람이 비운 것 */
+/** 화면의 줄 초안 - 사유는 null이면 손대지 않은 것(저장된 값을 보인다), ""이면 사람이 비운 것 */
 export interface PageDraft extends Omit<RowDraft, "reason" | "moveCode"> {
   reason: string | null;
-  moveCode: string | null;
   editing: boolean;
   /** Use로 받은 AI 제안 - 저장이 실어 보내 서버가 채택을 남긴다(설계 2026-11-19-ai-suggest-only D2). 다른 곳을 고르면 비운다 */
   suggestionId?: number | null;
 }
 
-export const EMPTY_DRAFT: PageDraft = { destination: null, texts: {}, reason: null, moveCode: null, editing: false, suggestionId: null };
+export const EMPTY_DRAFT: PageDraft = { destination: null, texts: {}, reason: null, editing: false, suggestionId: null };
 export const NO_NUMBERS: ReadonlySet<number> = new Set();
 
 // 고름 · 처리 중 · 따라가기는 assign-focus-model(설계 2026-11-20 D1) - 편집 중에도 고름은 그대로다
@@ -591,8 +590,6 @@ export function useAssignPage() {
   const savedReason = rowUnits.map((unit) => readHumanReason(unit.decision)).find(Boolean) ?? "";
   const systemHold = rowUnits.map((unit) => findSystemHold(unit.decision)).find((code) => code !== null) ?? null;
   const reasonNow = draft.reason ?? savedReason;
-  // 옛 이동 줄을 저장해도 그 번호가 그대로 가게 - 이동을 새로 정하는 길은 없다
-  const currentMoveCode = draft.moveCode ?? firstDecision?.move_target_code ?? "";
   // runSave·sendSave가 방금 고른 삭제(pick)로 가릴 때 읽는 그린 초안의 값
   const currentDestination = destination;
 
@@ -638,7 +635,8 @@ export function useAssignPage() {
   // 저장된 곳이 숨긴 새 문서의 자리면 그 번호와 칸 이름 - 읽기만 하고 확정하지 않는다(배정 취소나 잇기로 나간다)
   const hiddenPlace = isDrafting ? null : readHiddenPlace(destination, labelOptions);
   // 이미 다른 Bundle로 이동한 줄(없앤 기능) - 읽기만 하고 확정하지 않는다(배정 취소로 풀면 다시 고를 수 없다)
-  const legacyMove = destination?.kind === "move" ? describeLegacyMove(rowUnits) : null;
+  // 저장된 판단(unitMap)에서 바로 정한다 - 묶음(group)이 늦게 와도 그동안 Confirm이 켜지지 않고, 짝 한쪽만 이동이어도 읽기 전용이다
+  const legacyMove = describeLegacyMove(rowUnits);
   const linkIds = destination?.kind === "link" ? destination.targetIds : [];
   // 고른 문장의 관계 묶음(합쳐진 다른 출처 등)은 고를 때 부른다 - 함께 확정되는 것을 미리 보이고 저장도 같은 묶음으로 한다
   const knownTargets = new Set(groupData?.targets.map((target) => target.id) ?? []);
@@ -1282,6 +1280,7 @@ export function useAssignPage() {
       readOnly: !canEdit,
       rowStatus: row?.status ?? "unassigned",
       isDeleted: isRowDeleted,
+      isLegacyMove: legacyMove !== null,
       isDecided: isUnitDecided,
       hasDraft: hasUnitDraft,
       canSplit: findNearestCut(target, Math.floor(target.text.length / 2)) !== null,
@@ -1952,7 +1951,8 @@ export function useAssignPage() {
       showToast(t("assign.hidden.confirm"), "error");
       return;
     }
-    if (action === "confirm" && legacyMove !== null && !pick) {
+    // 이동한 줄은 배정 취소 말고는 저장하지 않는다 - 보류(H)도 짝의 다른 쪽까지 쓰지 못하게 막는다
+    if (legacyMove !== null) {
       showToast(t("assign.legacyMove.confirm"), "error");
       return;
     }
@@ -1984,7 +1984,7 @@ export function useAssignPage() {
     try {
       // 고친 칸만 글을 보낸다 - 손대지 않은 AI 제안은 글·종류를 비워 보내 제안 그대로 받는다
       const context = { units: saveUnits, group: saveGroupData, tables: buildTables(), captions: buildCaptions() };
-      const body = buildGroupSave({ ...draft, ...(pick ? { position: null } : {}), destination, reason, moveCode: currentMoveCode }, context, action, action === "hold" ? reason.trim() : "");
+      const body = buildGroupSave({ ...draft, ...(pick ? { position: null } : {}), destination, reason }, context, action, action === "hold" ? reason.trim() : "");
       // Use로 받은 제안을 싣는다 - 서버가 판단에 잇고 채택(그대로·고침·버림)을 남긴다
       if (draft.suggestionId) body.suggestion_id = draft.suggestionId;
       const leftovers = body.release_unit_ids ?? [];
@@ -2441,7 +2441,17 @@ export function useAssignPage() {
       : undefined;
 
   /** use - Use로 받은 AI 제안의 초안(고쳐 쓴 글)과 제안 id. 없으면 다른 곳을 고른 것이라 받은 제안을 비운다 */
+  /** 이동한 줄(없앤 기능)에는 아무것도 새로 정하지 않는다 - 막았으면 안내를 띄우고 true. key는 놓은 줄(없으면 고른 줄) */
+  function blockLegacyMove(key: string | null = row?.key ?? null): boolean {
+    const target = key === null ? undefined : rowMap.get(key);
+    const moved = target ? describeLegacyMove(target.unitIds.map((id) => unitMap.get(id)).filter((unit): unit is UnitRow => unit !== undefined)) : null;
+    if (moved === null) return false;
+    showToast(t("assign.legacyMove.confirm"), "error");
+    return true;
+  }
+
   function pickDestination(next: Destination, use: Pick<PageDraft, "texts" | "suggestionId"> | null = null) {
+    if (blockLegacyMove()) return;
     // 보낼 곳을 다시 고르면 끌어 놓은 자리는 버린다
     setDraft({
       destination: next.kind === "link" ? { kind: "link", targetIds: addPartnerTargets(next.targetIds, writtenMap) } : next,
@@ -2460,7 +2470,7 @@ export function useAssignPage() {
       setSelNew(targetId);
       return false;
     }
-    if (!row || !canEdit) return false;
+    if (!row || !canEdit || blockLegacyMove()) return false;
     // 이 줄에 없는 언어의 New 문장도 잇는다 - 줄의 조각이 출처가 되어 번역이 된다(제품 명세 §7.7)
     const current = destination?.kind === "link" ? destination.targetIds : [];
     const isRemoving = additive && current.includes(targetId);
@@ -2867,7 +2877,7 @@ export function useAssignPage() {
   }
   /** 문장 사이·빈 칸에 놓음 - 잇기와 같은 줄 고르기 뒤 초안 적용은 관계 묶음이 온 뒤(dropPlace) */
   function applySendDrop(rowKey: string, drop: SendDrop) {
-    if ((drop.kind !== "gap" && drop.kind !== "slot") || newDocId === null) return;
+    if ((drop.kind !== "gap" && drop.kind !== "slot") || newDocId === null || blockLegacyMove(rowKey)) return;
     const destination = readSectionDestination(newDocId, drop.sectionKey);
     if (destination === null) return;
     setChecked(new Set());
@@ -2934,7 +2944,7 @@ export function useAssignPage() {
   }
   /** 템플릿 자리에 놓음 - 기본 보기 보내기와 같은 길(줄 고르기 → 관계 묶음이 온 뒤 초안 → 바로 확정). 막는 까닭이 있으면 메뉴를 그 자리 옆에 띄운다 */
   function applyTemplateDrop(rowKey: string, placement: Placement, el: HTMLElement | null) {
-    if (placement.kind !== "place" || newDocId === null) return;
+    if (placement.kind !== "place" || newDocId === null || blockLegacyMove(rowKey)) return;
     const destination = readSectionDestination(newDocId, placement.sectionKey);
     if (destination === null) return;
     const scope = '[data-testid="assign-new-tpl"]';
@@ -2964,6 +2974,7 @@ export function useAssignPage() {
   }
   /** 나무 줄에 놓음 - 그 줄을 누른 것과 같다(관계 묶음이 온 뒤 클릭과 같은 pickDestination, 자리·그 자리 메뉴 없음). New 칸의 문서는 바꾸지 않는다 */
   function applyTreeDrop(rowKey: string, destination: Destination) {
+    if (blockLegacyMove(rowKey)) return;
     setChecked(new Set());
     setCtxMenu(null);
     selectRow(rowKey, false);
@@ -3110,6 +3121,7 @@ export function useAssignPage() {
         applySendDrop(rowKey, readSendAt(point, unitIds).drop);
         return;
       }
+      if (blockLegacyMove(rowKey)) return;
       const lineRect = line.getBoundingClientRect();
       setChecked(new Set());
       setCtxMenu(null);

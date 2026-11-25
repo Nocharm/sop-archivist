@@ -967,7 +967,15 @@ export default function AssignPage() {
           count={pickedOld.size}
           onClose={() => setBulk(null)}
           onConfirm={async (bulkReason) => {
-            const unitRows = [...pickedOld].map((id) => unitMap.get(id)).filter((unit): unit is UnitRow => unit !== undefined);
+            const picked = [...pickedOld].map((id) => unitMap.get(id)).filter((unit): unit is UnitRow => unit !== undefined);
+            // 이미 이동한 줄(없앤 기능)은 읽기 전용이라 빼고 나머지만 지운다 - 뺀 수는 알린다
+            const unitRows = picked.filter((unit) => unit.decision.disposition !== "move_external");
+            const skipped = picked.length - unitRows.length;
+            if (unitRows.length === 0) {
+              showToast(t("assign.legacyMove.confirm"), "error");
+              setBulk(null);
+              return;
+            }
             try {
               await bulkDecide(bundleId, {
                 action: "delete",
@@ -976,7 +984,7 @@ export default function AssignPage() {
                 units: unitRows.map((unit) => ({ unit_id: unit.unit_id, revision: unit.decision.revision })),
               }, buildUndo());
               markRecorded();
-              showToast(t("classify.bulkDone", { n: unitRows.length }));
+              showToast(skipped > 0 ? `${t("classify.bulkDone", { n: unitRows.length })} ${t("assign.legacyMove.skipped", { n: skipped })}` : t("classify.bulkDone", { n: unitRows.length }));
               setBulk(null);
               setChecked(new Set());
               // 한 번에 삭제도 서버가 짝을 정리하지만 어느 짝인지 알려 주지 않는다 - 짝 모양·문서 revision을 다시 받는다

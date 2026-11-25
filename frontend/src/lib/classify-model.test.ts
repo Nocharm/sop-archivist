@@ -332,6 +332,8 @@ describe("save request", () => {
     const movedGroup: Group = { units: [{ unit_id: 1, display_id: "D-1", document_id: 1, kind: "sentence", lang: "ko", text: "t1", group_id: null, decision: moved.decision, cell_unit_ids: [] }], targets: [] };
     expect(readDestination(movedGroup, [1])).toEqual({ kind: "move" });
     expect(describeLegacyMove([moved])).toEqual({ code: "SOP-QC-99999" });
+    // 짝의 한쪽만 이동이어도 줄 전체가 읽기 전용이고 번호는 이동한 단위의 것이다
+    expect(describeLegacyMove([makeUnitRow(5, "unassigned"), moved])).toEqual({ code: "SOP-QC-99999" });
     expect(describeLegacyMove([makeUnitRow(2, "confirmed"), { ...makeUnitRow(3, "confirmed"), decision: { ...makeUnitRow(3, "confirmed").decision, disposition: "delete" } }])).toBeNull();
   });
 });

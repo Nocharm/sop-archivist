@@ -677,6 +677,15 @@ await runStep("assign: a row moved earlier is read-only and Unassign frees it", 
   await takeShot("sop-assign-legacy-move.png");
   check("the moved row reads 'Moved to another document' with its number", ((await page.locator('[data-testid="assign-legacy-move"]').textContent()) ?? "").includes("SOP-QC-99999"), await page.locator('[data-testid="assign-legacy-move"]').textContent());
   check("the moved row's Confirm is off", await page.locator('[data-testid="assign-primary"]').isDisabled());
+  check("Hold is off and H saves nothing on the moved row", (await page.locator('[data-testid="assign-hold"]').isDisabled()) && (await (async () => {
+    const saves = [];
+    const onResponse = (response) => { if (response.url().includes("/groups/save")) saves.push(response.url()); };
+    page.on("response", onResponse);
+    await page.keyboard.press("h");
+    await page.waitForTimeout(600);
+    page.off("response", onResponse);
+    return saves.length === 0 && (await page.locator('[data-testid="assign-legacy-move"]').count()) === 1;
+  })()));
   await page.keyboard.press("m");
   await page.waitForTimeout(300);
   const el = page.locator(`[data-testid="assign-paper-unit-${unit.unit_id}"]`).first();

@@ -48,6 +48,8 @@ export interface AssignMenuContext {
   rowStatus: CoverStatus;
   /** 우클릭한 줄이 삭제로 확정되어 있다(lib/deleted-fold-model isDeletedUnit) - 배정 취소를 "삭제 취소"로 부르고 삭제 항목을 숨긴다 */
   isDeleted?: boolean;
+  /** 우클릭한 줄이 없앤 "다른 Bundle로 이동"으로 정해져 있다 - 읽기 전용이라 배정 취소만 남긴다 */
+  isLegacyMove?: boolean;
   /** 단위(칸 문장이면 묶인 표)에 판단이 있다 - 미배정이 아닌 상태나 처분 */
   isDecided: (unit: ViewUnit) => boolean;
   /** 단위의 줄에 저장 전 고름·고친 글이 있다 */
@@ -234,7 +236,7 @@ export function buildAssignMenu(ctx: AssignMenuContext): AssignMenuGroups {
   // 삭제는 줄 전체의 판단이라 문장 모양과 상관없이 늘 뜬다(배정 취소 뒤, 삭제가 맨 끝) - 저장을 막는 까닭(캡션·참조 확인 등)은 확정 길이 알린다
   const decide = build("delete", ctx.readOnly ? why("readOnly") : null);
   // 삭제된 줄 - 삭제를 푸는 것은 배정 취소와 같은 일이라 이름만 "삭제 취소"(단축키 U 그대로), 이미 삭제라 삭제 항목은 숨긴다
-  const assign = ctx.isDeleted ? [{ ...build("clear", clearReason), labelKey: "assign.ctx.undoDelete" }] : [build("clear", clearReason), decide];
+  const assign = ctx.isDeleted ? [{ ...build("clear", clearReason), labelKey: "assign.ctx.undoDelete" }] : ctx.isLegacyMove ? [build("clear", clearReason)] : [build("clear", clearReason), decide];
   const editReason = getEditBlocker(ctx, ctx.target);
   const retireReason = getRetireBlocker(ctx, ctx.target);
   const splitItem = build("split", retireReason ?? (ctx.canSplit ? null : why("nothingToSplit")));

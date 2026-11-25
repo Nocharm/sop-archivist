@@ -553,7 +553,7 @@ export function AssignSidePanel({ state, headEnd }: { state: AssignPageState; he
   // 배정 취소는 배정이 있을 때만 보인다(쓸 수 없는 단추는 숨긴다 - 1.2.0 피드백). 좁은 폭에서는 글쇠 표시를 뺀다 - 단축키는 Help에 있다
   const actions = canEdit && row && (
     <div className="@container flex gap-1.5" data-testid="assign-actions">
-      <button type="button" className="btn assign-alt flex-1" data-testid="assign-hold" disabled={busy} onClick={() => void runSave("hold")}>
+      <button type="button" className="btn assign-alt flex-1" data-testid="assign-hold" disabled={busy || legacyMove !== null} onClick={() => void runSave("hold")}>
         {t("classify.hold")} <kbd className="@max-[200px]:hidden">H</kbd>
       </button>
       {canClear && (
@@ -565,7 +565,7 @@ export function AssignSidePanel({ state, headEnd }: { state: AssignPageState; he
     </div>
   );
 
-  // 지금 고른 곳에 꼭 필요한 Remark(지우기·옮기기·두 문서) - 비어 있으면 Remark 줄이 경고 색이 되고 쓰기 단추가 다음 할 일로 강조된다
+  // 지금 고른 곳에 꼭 필요한 Remark(지우기·두 문서) - 비어 있으면 Remark 줄이 경고 색이 되고 쓰기 단추가 다음 할 일로 강조된다
   const remarkNeed = row && destination ? readReasonNeed("confirm") : null;
   const isRemarkMissing = remarkNeed !== null && !reasonNow.trim();
   // Remark 한 줄(RemarkLine) - 꼭 필요한데 비었으면 글 자리가 경고 "…에는 필수"로 바뀌고 연필이 강조된 채 늘 보인다
@@ -575,7 +575,7 @@ export function AssignSidePanel({ state, headEnd }: { state: AssignPageState; he
       // 삭제는 Remark를 비우면 처분 이름으로 기록된다 - 빈 자리에 그 글을 흐리게 보인다
       emptyLabel={destination?.kind === "delete" ? t("remark.defaultDelete") : "–"}
       needMessage={isRemarkMissing ? t(`remark.need.${remarkNeed}`) : null}
-      canEdit={canEdit}
+      canEdit={canEdit && legacyMove === null}
       disabled={!row}
       onEdit={() => setRemarkEdit({ kind: "row", need: isRemarkMissing ? remarkNeed : null, then: null })}
       onPick={(text) => setDraft({ reason: text })}

@@ -304,7 +304,8 @@ export interface RowDraft {
   /** 표·그림 캡션의 글 - 키는 caption-model getCaptionTextKey(캡션 단위의 고친 글은 단위, 써 넣은 캡션은 묶음·언어) */
   captionTexts?: Record<string, string>;
   reason: string;
-  moveCode: string;
+  /** 없앤 "다른 Bundle로 이동"의 번호 - 화면은 더 채우지 않는다(이동한 줄은 저장하지 않는다) */
+  moveCode?: string;
   /** 문장 사이에 놓아 만든 초안의 자리 - 보낼 곳이 놓은 곳일 때만 저장 요청에 싣는다 */
   position?: DropPosition | null;
 }
@@ -316,8 +317,8 @@ export interface OtherLangSlot {
 }
 
 /** 저장 전 변경이 있는 초안인가 - 고른 곳·고친 글·사유·이동 코드 중 하나라도 손댔으면 참(편집 칸만 열어 둔 것은 변경이 아니다) */
-export function hasDraftChange(draft: Pick<RowDraft, "destination" | "texts" | "captionTexts"> & { reason: string | null; moveCode: string | null }): boolean {
-  if (draft.destination !== null || draft.reason !== null || draft.moveCode !== null) return true;
+export function hasDraftChange(draft: Pick<RowDraft, "destination" | "texts" | "captionTexts"> & { reason: string | null; moveCode?: string | null }): boolean {
+  if (draft.destination !== null || draft.reason !== null || (draft.moveCode ?? null) !== null) return true;
   return [draft.texts, draft.captionTexts ?? {}].some((map) => Object.keys(map).length > 0);
 }
 
@@ -599,7 +600,7 @@ export function buildGroupSave(draft: RowDraft, context: SaveContext, action: "c
     unit_id: unit.id,
     revision: unit.revision,
     disposition: !destination ? ("unassigned" as const) : destination.kind === "delete" ? ("delete" as const) : destination.kind === "move" ? ("move_external" as const) : ("assigned" as const),
-    move_target_code: destination?.kind === "move" ? draft.moveCode.trim() : "",
+    move_target_code: destination?.kind === "move" ? (draft.moveCode ?? "").trim() : "",
     // 보낼 곳 없는 보류의 사유는 hold_reason이 맡는다
     reason: destination ? draft.reason.trim() : "",
   }));

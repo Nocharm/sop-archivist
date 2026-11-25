@@ -77,6 +77,12 @@ describe("buildAssignMenu", () => {
     expect(buildAssignMenu(ctx({ rowStatus: "confirmed", isDeleted: false })).assign[0].labelKey).toBeUndefined();
   });
 
+  it("leaves only Unassign on a row moved to another Bundle earlier", () => {
+    const { assign } = buildAssignMenu(ctx({ rowStatus: "confirmed", isLegacyMove: true, isDecided: () => true }));
+    expect(assign.map((item) => item.action)).toEqual(["clear"]);
+    expect(assign[0].enabled).toBe(true);
+  });
+
   it("lets an assigned sentence be cut or merged (the screen asks before clearing the assignment) but not change language", () => {
     const context = ctx({ rowStatus: "confirmed", isDecided: (unit) => unit.id === 2 });
     // 자르기·합치기는 그 문장을 새 문장으로 바꾼다 - 서버가 한 번 묻고 배정을 풀어 준다
