@@ -18,6 +18,8 @@
 - `resolve.py` `get_effective_access`(개인 부여 ∪ 소속 부서 체인 부여, 역할은 권한으로 펼침, 퇴직자 무권한, `APP_SYSADMINS`는 전권).
 - `deps.py` `require_permission("<key>")`(라우터 의존성).
 - `sources.py`(권한 출처 응답 `SourceOut`·대상 이름 조회 — `/api/me`의 `sources`와 유효 권한 조회가 공유).
+- `POST /api/access/grants/batch`(`{add, remove}` 각 200건까지, 회수 먼저·추가 나중을 한 트랜잭션으로, 항목마다 변경 기록) — 이미 있거나 없는 항목은 거절하지 않고 `skipped`·`unknown`·`missing`으로 돌려준다. 역할 여러 개 더하기와 회수 되돌리기(같은 부여를 새로 만든다)가 쓴다.
+- `GET /api/access/audit?before=<기록 id>`는 그 기록보다 먼저 남은 것만 준다 — 시각이 같은 기록이 빠지지 않게 (시각, id)로 끊고, 기준 기록이 없으면 404.
 - `require_permission`·`/api/me`·관리 화면의 유효 권한 조회가 모두 `get_effective_access` 하나를 부른다 — 판정을 다른 곳에 새로 쓰지 않는다.
 - 부여는 더하기만 있고 부서 부여는 하위 부서까지 내려간다. 대상은 FK 없이 두어 개편으로 사라진 부서·사람의 부여도 지우지 않고 `subject_missing`으로 보인다.
 

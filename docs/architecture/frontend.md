@@ -42,7 +42,7 @@ SOP 화면: `api-sop.ts`(SOP API 호출·응답 타입), 화면 규칙은 순수
 
 - `bundle-store`(묶음 캐시 — 화면 진입마다 다시 부르고 로그아웃·사용자 전환 때 비운다).
 - AI 작업 상태는 공용 폴러 `lib/ai-jobs-store.ts`(사용자당 하나, `GET /api/ai/jobs/recent`)가 읽고 규칙은 `ai-jobs-model.ts`, 상단 바 표시는 `components/ai-jobs-indicator.tsx`·`ai-jobs-popover.tsx`(`use-ai-jobs`는 그 묶음의 요청이 바뀔 때 `/ai/status`만 다시 읽는다).
-- `leave-guard`(미저장 이탈 가드)·`use-loaded`.
+- `leave-guard`(미저장 이탈 가드)·`use-loaded`·`use-cursor-list`(서버 커서로 한 묶음씩 이어 받는 목록 — 이미 받은 목록을 나눠 그리는 `use-progressive-list`와 다르다).
 - `ui-prefs`(화면 설정 값 목록)와 `layout.tsx`의 첫 페인트 전 boot 스크립트가 같은 값을 쓴다.
 
 ## 5. UI 규칙(디자인 기초 문서)
@@ -66,8 +66,11 @@ SOP 화면: `api-sop.ts`(SOP API 호출·응답 타입), 화면 규칙은 순수
 - 결과물 C의 순서·깊이·표시는 화면에 먼저 얹고(`lib/c-edit-model.ts`) 저장은 한 번에 하나씩 보내며(`lib/c-save-queue.ts`, 의미 확인 체크도 같은 줄) 응답의 그 문서로 맞춘다.
 - 저장 전 번호 미리 세기 `section-number.ts` `numberLines`는 backend `outputs.number_lines`의 사본이라(저장 응답이 이긴다) 서버 규칙을 바꾸면 함께 고친다.
 
-## 9. 관리 API·Markdown 보기
+## 9. 관리 화면·API·Markdown 보기
 
+- 관리 화면 `app/admin/page.tsx` + `components/admin/`: 탭·하위 탭은 주소(`?tab=&sub=`)에 두고 옛 `sub=lookup`은 부여로 연다. 부여는 `access-grants.tsx`(목록) + `grant-detail.tsx`(상세, 유효 권한 `effective-permissions.tsx`), 역할 여러 개 더하기는 `add-roles-popover.tsx`.
+- 규칙은 순수 모델 — `lib/grants-model.ts`(왼쪽 목록), `lib/audit-model.ts`(거르기·날짜 묶음), `lib/batch-jobs.ts`(작업마다 한 줄), `lib/subject-label.ts` + `lib/use-subject-names.ts`(대상 이름을 화면 언어로).
+- 관리 화면만의 CSS는 `styles/admin.css`(`.adm-*`, 표 모양은 관리 본문 `.adm-scope` 안에서만) — 공용 `DataList`·`components.css`를 고치지 않는다.
 - 백엔드에만 있던 묶음 관리·AI 요청·관리 묶음·AI 지침 API는 `lib/api-manage.ts`.
 - Markdown 글(AI 지침)의 읽기 보기는 `components/ui/markdown-view.tsx` 하나를 쓴다(escape 뒤 서식만 태그로 — 원문 HTML을 그대로 넣는 길을 새로 만들지 않는다).
 
