@@ -22,7 +22,7 @@
 | 4d | `feat/number-cell-buttons` | 진행(11-26) | | | |
 | 5a | `feat/split-rule-2` | 합침 | v1.6.3 · 42e4751b | pytest 3404+시드 통과 · 10 xfail(R3 · R4 몫) · vitest 1934 · build 경고 0 · 스모크 전체 2111 통과 | PDF의 콜론 뒤 줄표 목록은 나누지 않는다(사람이 나눔) |
 | 5b | `feat/split-front-matter` | 대기 | | | |
-| 5c | `feat/split-new-parity` | 진행(11-26) | | | |
+| 5c | `feat/split-new-parity` | 합침 | v1.6.6 · d750564c | pytest 3453+시드 14(6 xfail = R3 몫) · vitest 1969 · build 경고 0 · `assign:` 스모크 전체 통과(4d와 합친 트리) | Old 한/영 짝이 New 두 문장에 이어져 하나만 풀린 뒤 다시 하기는 409(있던 것) |
 | 6-1 | `feat/new-paper-1-render` | 대기 | | | |
 | 6-2 | `feat/new-paper-2-pick` | 대기 | | | |
 | 6-3 | `feat/new-paper-3-tools` | 대기 | | | |
@@ -49,6 +49,7 @@
 - 1b · `assign-context-menu-model.test.ts:55 · 73` · `["clear","move","delete"]` → `["clear","delete"]`, `["clear","move"]` → `["clear"]` · 이동 항목이 없어짐(정한 것 4)
 - 1b · `smoke/assign.mjs:665` 이동 단계(검사 3) → "a row moved earlier is read-only and Unassign frees it"(검사 5) · 동작이 바뀜(정한 것 4)
 - 1b · `source-rules.test.ts:199` 안내 글의 "(or Combobox)"만 뺌(규칙 그대로)
+- 5c · `frontend/src/lib/assign-focus-model.test.ts` `new_edit` 원인에 `isReleased: false` · 타입이 바뀜(기대값 그대로)
 
 ## 아침에 볼 것 (사람이 정할 것 · 봐 줄 것)
 

@@ -295,7 +295,10 @@ describe("planReload (D2 table)", () => {
     expect(planReload({ kind: "split_suggestion", docId: 4, isApplied: false }, ai)).toEqual({ docs: [4], units: false, newDoc: null, written: false, tobe: false, identical: false, splitSuggestions: 4, bundle: false });
   });
   it("a New document edit waits for that document and the New sentences, To-Be behind", () => {
-    expect(planReload({ kind: "new_edit", docId: 9 }, ai)).toEqual({ docs: [], units: false, newDoc: 9, written: true, tobe: true, identical: false, splitSuggestions: null, bundle: false });
+    expect(planReload({ kind: "new_edit", docId: 9, isReleased: false }, ai)).toEqual({ docs: [], units: false, newDoc: 9, written: true, tobe: true, identical: false, splitSuggestions: null, bundle: false });
+  });
+  it("a New document edit that released links also refreshes the Old rows it put on hold", () => {
+    expect(planReload({ kind: "new_edit", docId: 9, isReleased: true }, ai)).toEqual({ docs: "all", units: true, newDoc: 9, written: true, tobe: true, identical: true, splitSuggestions: null, bundle: true });
   });
   it("an edit Undo reloads every Old document when the response does not name one", () => {
     expect(planReload({ kind: "edit_undo", docId: null }, ai)).toEqual({ docs: "all", units: true, newDoc: null, written: false, tobe: false, identical: true, splitSuggestions: null, bundle: true });

@@ -49,6 +49,7 @@ from app.sop.refs import (
 from app.sop.segment import (
     NEUTRAL,
     RULE_LEGACY,
+    RULE_PARAGRAPH,
     BlockView,
     TableView,
     UnitDraft,
@@ -105,11 +106,13 @@ async def create_initial_units(session: AsyncSession, document: Document, extrac
             ).where(SourceTable.extraction_id == extraction.id)
         )
     ).all()
+    # 규칙 2부터 New도 Old와 같은 박스로 쪼갠다(R4) — 규칙 1의 New는 띠 표 · 제목 조항을 올린 그대로 둔다
+    shapes_headings = document.side == "old" or extraction.split_rule >= RULE_PARAGRAPH
     # 꼴이 확실한 띠 표는 올리자마자 벗긴 표(레이아웃)로 둔다 — 제목 줄이 되고, "표로 되돌리기"(set_layout_table)가 반대 길이다
-    # (F4 · §11-1). 띠 표는 표형 옛 SOP의 절 제목 표라 옛 문서만 본다
+    # (F4 · §11-1)
     bands = (
         {table_id for table_id, _, signals, parent, part in tables if is_certain_band(signals, parent, part)}
-        if document.side == "old" else set()
+        if shapes_headings else set()
     )
     if bands:
         await session.execute(update(SourceTable).where(SourceTable.id.in_(bands)).values(is_layout=True))
@@ -119,7 +122,7 @@ async def create_initial_units(session: AsyncSession, document: Document, extrac
     # 200만 자 쪼개기는 수 초까지 걸린다 — 단일 워커 backend가 묶음 잠금을 쥔 채 이벤트 루프를 막지 않게 스레드에서 돈다
     drafts, unit_rows = await asyncio.to_thread(
         _build_unit_rows, extraction.id, block_rows.all(), table_rows, document.language_layout,
-        document.file_format == LINE_SPLIT_FORMAT, document.side == "old",
+        document.file_format == LINE_SPLIT_FORMAT, shapes_headings,
         # 옛 추출기의 추출은 Reference 절을 확정하지 않고 글에서 제안한다(다시 쪼개도 같은 추출의 규칙을 따른다)
         not is_proposing_version(extraction.extractor_version),
         extraction.split_rule,
@@ -150,7 +153,7 @@ async def create_initial_units(session: AsyncSession, document: Document, extrac
         await session.execute(
             insert(UnitDecision), [{"unit_id": unit_id, "bundle_id": document.bundle_id} for unit_id in unit_ids]
         )
-        # 옛 문서의 표·그림 참조를 잇는다 — caption_refs → units 순환 import라 여기서 부른다
+        # 옛 문서의 표·그림 참조를 잇는다(New는 이미 제 번호를 갖고 있어 새 번호로 바꿔 쓸 일이 없다) — caption_refs → units 순환 import라 여기서 부른다
         from app.sop.caption_refs import detect_caption_refs
 
         await detect_caption_refs(session, extraction.id)
@@ -176,7 +179,7 @@ def _build_unit_rows(
 ) -> tuple[list[UnitDraft], list[dict[str, object]]]:
     """블록·표 행 → 단위 초안과 INSERT 행(local_no는 1부터) — DB를 쓰지 않는 순수 계산이라 스레드에서 돌린다.
 
-    shift_headings(옛 문서)면 제목답지 않은 제목 줄을 문장으로 바꾸고(F8b), 번호 없는 번역 조항의 첫 문장이 앞 조항의 번호를 물려받는다.
+    shift_headings(옛 문서와 규칙 2의 New)면 제목답지 않은 제목 줄을 문장으로 바꾸고(F8b), 번호 없는 번역 조항의 첫 문장이 앞 조항의 번호를 물려받는다.
     confirm_ref_sections면 Reference 절 아래 줄을 REF로 둔다(refs.find_ref_section_lines). 규칙 2는 참조 줄을 규칙 1의 줄로 먼저
     찾아(한 문단에 줄바꿈으로 적은 참조 줄들을 잇지 않게) 그 조각을 그대로 둔 채 나머지를 잇는다(R2-6).
     """
