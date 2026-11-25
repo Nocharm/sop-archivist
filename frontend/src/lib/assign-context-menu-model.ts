@@ -1,5 +1,5 @@
 // Assign Old 문장 우클릭 메뉴의 항목과 가능/불가 - 화면은 이 결과대로 항목을 켜고 끄며 까닭을 툴팁으로 보인다.
-// 두 묶음이다: 배정(삭제·이동은 바로 확정, 배정 취소 - 그 밖의 확정은 Enter·오른쪽 칸·그 자리 메뉴가 맡는다)과 문장 고치기(여기서 나누기·앞뒤 문장과 합치기 또는 한/영 짝 맺기·짝 풀기·언어).
+// 두 묶음이다: 배정(삭제는 바로 확정, 배정 취소 - 그 밖의 확정은 Enter·오른쪽 칸·그 자리 메뉴가 맡는다)과 문장 고치기(여기서 나누기·앞뒤 문장과 합치기 또는 한/영 짝 맺기·짝 풀기·언어).
 // 표·그림(묶음)은 묶음 도구(표 벗기기·캡션 붙이기)만, 캡션은 문장 도구 일부와 캡션 떼기를 받는다(명세 2026-11-16 §4.2).
 // 고치기는 Split의 편집을 그대로 부르므로 판단이 없는 단위만 받는다 - 배정된 문장은 먼저 배정을 취소한다(서버도 판단이 걸린 단위는 확인을 요구한다).
 import type { CoverStatus, ViewUnit } from "./api-sop";
@@ -8,7 +8,7 @@ import { isBandHeading, MERGE_BLOCKER_KEYS } from "./paper-model";
 import { getPairMergeReason, hasBothScripts, planJoin, type JoinPlan } from "./split-menu-model";
 
 export type AssignMenuAction =
-  | "delete" | "move" | "clear"
+  | "delete" | "clear"
   | "split" | "merge_prev" | "merge_next" | "pair_prev" | "pair_next" | "pair_pick" | "unpair" | "lang" | "piece_lang"
   | "ref_mark" | "ref_clear"
   | "table_layout"
@@ -48,6 +48,8 @@ export interface AssignMenuContext {
   rowStatus: CoverStatus;
   /** 우클릭한 줄이 삭제로 확정되어 있다(lib/deleted-fold-model isDeletedUnit) - 배정 취소를 "삭제 취소"로 부르고 삭제 항목을 숨긴다 */
   isDeleted?: boolean;
+  /** 우클릭한 줄이 없앤 "다른 Bundle로 이동"으로 정해져 있다 - 읽기 전용이라 배정 취소만 남긴다 */
+  isLegacyMove?: boolean;
   /** 단위(칸 문장이면 묶인 표)에 판단이 있다 - 미배정이 아닌 상태나 처분 */
   isDecided: (unit: ViewUnit) => boolean;
   /** 단위의 줄에 저장 전 고름·고친 글이 있다 */
@@ -231,10 +233,10 @@ function buildPieceItems(ctx: AssignMenuContext, retireReason: string | null): A
 
 export function buildAssignMenu(ctx: AssignMenuContext): AssignMenuGroups {
   const clearReason = ctx.readOnly ? why("readOnly") : ctx.rowStatus === "unassigned" && !ctx.isDecided(ctx.target) ? why("notAssigned") : null;
-  // 이동·삭제는 줄 전체의 판단이라 문장 모양과 상관없이 늘 뜬다(배정 취소 뒤, 삭제가 맨 끝) - 저장을 막는 까닭(캡션·참조 확인 등)은 확정 길이 알린다
-  const decide = [build("move", ctx.readOnly ? why("readOnly") : null), build("delete", ctx.readOnly ? why("readOnly") : null)];
+  // 삭제는 줄 전체의 판단이라 문장 모양과 상관없이 늘 뜬다(배정 취소 뒤, 삭제가 맨 끝) - 저장을 막는 까닭(캡션·참조 확인 등)은 확정 길이 알린다
+  const decide = build("delete", ctx.readOnly ? why("readOnly") : null);
   // 삭제된 줄 - 삭제를 푸는 것은 배정 취소와 같은 일이라 이름만 "삭제 취소"(단축키 U 그대로), 이미 삭제라 삭제 항목은 숨긴다
-  const assign = ctx.isDeleted ? [{ ...build("clear", clearReason), labelKey: "assign.ctx.undoDelete" }, decide[0]] : [build("clear", clearReason), ...decide];
+  const assign = ctx.isDeleted ? [{ ...build("clear", clearReason), labelKey: "assign.ctx.undoDelete" }] : ctx.isLegacyMove ? [build("clear", clearReason)] : [build("clear", clearReason), decide];
   const editReason = getEditBlocker(ctx, ctx.target);
   const retireReason = getRetireBlocker(ctx, ctx.target);
   const splitItem = build("split", retireReason ?? (ctx.canSplit ? null : why("nothingToSplit")));

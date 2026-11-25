@@ -196,7 +196,7 @@ const PATH_RULES: PathRule[] = [
     pattern: /<select[\s>]/,
     files: /\.tsx$/,
     allowed: {},
-    fix: "use components/ui/select.tsx Select (or Combobox)",
+    fix: "use components/ui/select.tsx Select",
   },
   {
     name: "router.push",

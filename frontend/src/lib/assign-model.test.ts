@@ -361,6 +361,10 @@ describe("dropHiddenRecommendations", () => {
 });
 
 describe("readConfirmBlockKey", () => {
+  it("stops a row moved to another Bundle earlier before every other gate", () => {
+    expect(readConfirmBlockKey({ isLegacyMove: true, isHiddenPlace: true, isRefGate: true, isCaptionGate: true })).toBe("assign.legacyMove.confirm");
+  });
+
   it("stops at a place in a hidden document before the other gates", () => {
     expect(readConfirmBlockKey({ isHiddenPlace: true, isRefGate: true, isCaptionGate: true })).toBe("assign.hidden.confirm");
   });
