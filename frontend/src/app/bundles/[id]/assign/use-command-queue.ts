@@ -112,7 +112,8 @@ export interface CommandEnv {
   readFocus(): Focus;
   /** 지금 화면에 보이는 판단 revision */
   readSeen(unitIds: readonly number[]): SeenRevisions;
-  start(pending: Pending): void;
+  /** 처리 중이 시작한다 - 누른 때, 다시 시도, 되묻기의 답. 끝(end)은 성공 · 실패 · 되묻기 · 버림 모두 */
+  start(pending: Pending, command: WriteCommand): void;
   end(id: string): void;
   dropFollows(): void;
   /** New 문서 보기를 받는 중인가 */
@@ -335,7 +336,7 @@ export function useCommandQueue(env: CommandEnv, describePending: DescribePendin
       const pending = describePending(payload);
       // 짝을 푸는 저장은 처리 중 표시로는 저장이고 줄에서는 장벽이다
       const kind = payload.kind === "save" && payload.isSplit ? "unpair" : pending.kind;
-      env.start({ ...pending, id });
+      env.start({ ...pending, id }, payload);
       put({ id, kind, isGlobal: pending.isGlobal, payload, unitIds: pending.unitIds });
     }
     // 비어 있던 줄이면 누른 그 자리에서 보낸다 - 커밋을 한 번 더 기다리지도, 그리지도 않게. 떠난 화면은 커밋이 없다
@@ -384,7 +385,7 @@ export function useCommandQueue(env: CommandEnv, describePending: DescribePendin
     },
     /** 되묻는 편집의 답 - 같은 명령을 그 자리에서 다시 보낸다 */
     resume: (id: string, payload: WriteCommand) => {
-      env.start({ ...describePending(payload), id });
+      env.start({ ...describePending(payload), id }, payload);
       queue.resume(id, payload);
     },
     /** 되묻기 · 창 취소 - 물은 것과 대기 전부를 버린다 */
@@ -398,7 +399,7 @@ export function useCommandQueue(env: CommandEnv, describePending: DescribePendin
       const focus = live.current.haltFocus;
       // 쌓인 글쇠는 멈춘 때의 고름에서 이어진다 - 그 사이 둘러본 박스에 떨어지지 않게
       if (focus !== null && waiting.some((item) => item.isDeferred) && !isSameFocus(focus, env.readFocus())) env.pick(focus);
-      if (!isReplay(command.payload)) env.start({ ...describePending(command.payload), id: command.id });
+      if (!isReplay(command.payload)) env.start({ ...describePending(command.payload), id: command.id }, command.payload);
       live.current.retriedIds.add(command.id);
       queue.retry();
     },

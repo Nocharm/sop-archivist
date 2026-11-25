@@ -40,7 +40,8 @@ import { findUnwrapHeads, getRowUnwrapTable } from "@/lib/unwrap-model";
 import { isUnwrapSuggestionUnchanged, readUnwrapMoves, type UnwrapLineMove } from "@/lib/unwrap-ai-model";
 import { buildStripRows } from "@/lib/figure-spot-model";
 import { useClickOrDouble } from "@/lib/use-click-or-double";
-import { useNumberArrival } from "@/lib/use-number-arrival";
+import { useNumberArrival, type ExpectedNumbers } from "@/lib/use-number-arrival";
+import { useReleasedFolds } from "@/lib/use-released-folds";
 
 /** 조각 끝 표시 - 단위의 것(UnitMark)에 그 조각이 놓인 블록의 경고를 더한다 */
 type PaperMark = UnitMark | "warn";
@@ -263,6 +264,8 @@ interface PaperProps {
 /** 고칠 수 있는 화면의 번호 칸 손잡이 */
 export interface PaperNumberCell {
   busy: boolean;
+  /** 저장을 기다리는 번호 - 응답 전에 먼저 보인다(A2-R6). 바뀔 때만 새 것이어야 한다(용지가 앞의 것과 견준다) */
+  expected?: ExpectedNumbers;
   /** indentShift를 주면 들여쓰기 차이도 같은 편집에서(기호를 고를 때 위 기호 줄 단계를 따름) */
   onSave: (unitId: number, number: string | null, follow: boolean, indentShift?: number) => void;
   /** 번호 칸 창의 ◀ ▶ 들여쓰기(B8) - 누른 줄과 이어져 함께 바뀌는 줄(lib/indent-model planIndent). label은 누른 줄의 표시 ID */
@@ -336,17 +339,19 @@ export function Paper({
   const showSplitMark = useDraftingOn() === true;
   // 고치는 중인 번호 칸 - 한 번에 한 줄. 따라 바뀔 번호는 다른 줄의 번호 칸에 점선으로 미리 보인다
   const [numberEdit, setNumberEdit] = useState<NumberEdit | null>(null);
+  // 편집 뒤 번호 칸이 새로 생긴 박스 - 번호 칸이 옅은 강조로 들어오는 전환(항목 6-b). 번호 고치기는 누른 순간 기대 글로 시작한다
+  const { shown: numberUnits, arrived: arrivedNumbers } = useNumberArrival(model.units, numberCell?.expected);
+  // 다음 번호 셈 · 따라 바뀔 번호도 보이는 번호(기대 글 포함)로
   const numberOrder = useMemo(() => {
     const startOf = (unit: ViewUnit) => unit.spans[0]?.[1] ?? -1;
-    return [...model.units.values()].sort((a, b) => a.pos_seq - b.pos_seq || startOf(a) - startOf(b) || a.id - b.id);
-  }, [model]);
+    return [...numberUnits.values()].sort((a, b) => a.pos_seq - b.pos_seq || startOf(a) - startOf(b) || a.id - b.id);
+  }, [numberUnits]);
   const followed = useMemo(() => {
     if (!numberEdit || !numberEdit.follow) return [];
     return listFollowPreview(numberOrder, numberEdit.unitId, numberEdit.text);
   }, [numberEdit, numberOrder]);
   const previewOf = useMemo(() => new Map(followed.map((item) => [item.unitId, item])), [followed]);
-  // 편집 응답 뒤 번호 칸이 새로 생긴 박스 - 번호 칸이 옅은 강조로 들어오는 전환(항목 6-b)
-  const arrivedNumbers = useNumberArrival(model.units);
+  const releasedFolds = useReleasedFolds(strips?.deleted?.folds);
   const unreadBlockIds = useMemo(() => {
     const ids = new Set<number>();
     for (const item of [...model.header, ...model.body, ...model.footer]) {
@@ -953,7 +958,7 @@ export function Paper({
           tip={describeTab(unit)}
           testId={testId}
           unitId={unit.id}
-          number={unit.number}
+          number={numberUnits.get(unit.id)?.number ?? unit.number}
           isUnread={unreadBlockIds.has(unit.block_id)}
           canEdit={numberCell !== undefined}
           busy={(numberCell?.busy ?? false) || isLocked(unit.id)}
@@ -1426,11 +1431,13 @@ export function Paper({
           data-tip={line.remark || undefined}
           data-pick={unitIds.some((id) => pickedIds?.has(id)) ? "" : undefined}
           data-strip-unit={unitId}
+          data-pending={readPendingMark(unitId)}
           data-testid={`${testId}-deleted-u${unitId}`}
           onClick={(event) => onUnitClick(unitId, null, event)}
         >
           <span className="deleted-tag">{t("paper.deleted.tag")}</span>
           <span className="deleted-text">{[line.kind, line.text].filter((part) => part !== null && part !== "").join(" · ")}</span>
+          {renderWaitChip(unitId)}
         </button>
       </div>
     );
@@ -1463,9 +1470,10 @@ export function Paper({
     const isSame = isPreview && isUnwrapSuggestionUnchanged(current, suggested);
     const isBusy = ai?.busy.has(tableId) ?? false;
     return (
-      <div className="strip-row unwrap-head-row" data-unwrap-scope={`t${tableId}`} data-unwrap-enter="" data-testid={`${testId}-unwrap-head-${tableId}`}>
+      <div className="strip-row unwrap-head-row" data-unwrap-scope={`t${tableId}`} data-testid={`${testId}-unwrap-head-${tableId}`}>
         <span className="strip-lead-gap" style={{ width: readTabWidth(row) + STRIP_LEAD_EXTRA }} />
-        <div className="unwrap-head">
+        {/* 다시 표로를 누르면 응답 전에 이것이 사라진다 - 처리 중 알약은 밖에 둔다 */}
+        <div className="unwrap-head" data-unwrap-enter="">
           {isBusy && (
             <span className="unwrap-ai-busy" data-testid={`${testId}-unwrap-ai-busy-${tableId}`}>
               {t("assign.unwrapAi.busy")}
@@ -1508,8 +1516,8 @@ export function Paper({
           >
             {t("assign.unwrap.rewrap")}
           </button>
-          {renderPendingPills((place) => place.at === "table" && place.tableId === tableId)}
         </div>
+        {renderPendingPills((place) => place.at === "table" && place.tableId === tableId)}
       </div>
     );
   }
@@ -1547,7 +1555,11 @@ export function Paper({
     if (hasToc && isTocRow(rows[0], model.units)) return renderTocBlock(rows);
     // 거르기로 접힌 줄을 엿보기로 연 것은 살펴보려는 것이라 삭제 줄도 펼친다
     const folds = strips?.deleted && !isPeek ? strips.deleted.folds : null;
-    const deletedLine = folds ? readDeletedLine(folds, rows.map((row) => readRowUnitId(row) ?? -1)) : null;
+    const unitIds = rows.map((row) => readRowUnitId(row) ?? -1);
+    const foldedLine = folds ? readDeletedLine(folds, unitIds) : null;
+    // 저장되지 못해 버린 삭제 - 같은 감싸개 안에서 줄이 접히고 박스가 펼쳐진다
+    const releasedLine = folds !== null && foldedLine === null ? readDeletedLine(releasedFolds, unitIds) : null;
+    const deletedLine = foldedLine ?? releasedLine;
     const renderContent = () => {
       const content = rows.map((row, index) => (
         <Fragment key={row.key}>
@@ -1560,11 +1572,13 @@ export function Paper({
     };
     if (folds === null || deletedLine === null) return renderContent();
     // 고른 동안만 펼친다 - 줄과 박스를 같은 자리에서 Collapse로 바꿔 펼칠 때 · 접힐 때 전환(움직임 줄이기면 바로). 펼친 박스는 옅은 위험 바탕(삭제 표시는 박스 안 상태 칩)
-    const isOpen = isDeletedLineOpen(folds, deletedLine.rowKey, selectedId);
+    const isOpen = releasedLine !== null || isDeletedLineOpen(folds, deletedLine.rowKey, selectedId);
+    // 방금 누른 삭제는 감싸지 않은 박스에서 온다 - 처음 붙어도 펼친 모양에서 접기 시작한다
+    const isPressed = deletedLine.isPending === true;
     return (
       <>
-        <Collapse open={!isOpen}>{renderDeletedLine(rows, deletedLine)}</Collapse>
-        <Collapse open={isOpen} className="deleted-open">
+        <Collapse open={!isOpen} appear={isPressed}>{renderDeletedLine(rows, deletedLine)}</Collapse>
+        <Collapse open={isOpen} startOpen={isPressed} className={releasedLine === null ? "deleted-open" : "deleted-release"}>
           {renderContent}
         </Collapse>
       </>
