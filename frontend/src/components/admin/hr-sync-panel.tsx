@@ -9,7 +9,7 @@ import { OutcomePill } from "@/components/status";
 import { DataList, ListViewToggle, type DataColumn } from "@/components/ui/data-list";
 import { EmptyState } from "@/components/ui/empty-state";
 import { PanelTitle } from "@/components/admin/panel-title";
-import { describeRunDetail, getAbortReasonKey } from "@/lib/admin-format";
+import { describeRunDetail, formatCount, getAbortReasonKey } from "@/lib/admin-format";
 import { ApiError, getHrSyncPreview, listHrSyncRuns, runHrSync, type HrSyncPreview, type HrSyncRun, type HrSyncSummary } from "@/lib/api";
 import { humanizeApiError } from "@/lib/api-errors";
 import { formatKst } from "@/lib/datetime";
@@ -123,7 +123,7 @@ export function HrSyncPanel() {
     key,
     header: t(`hr.runs.column.${key}`),
     align: "end",
-    cell: (run) => run[key],
+    cell: (run) => formatCount(run[key]),
   });
   const runColumns: DataColumn<HrSyncRun>[] = [
     { key: "time", header: t("hr.runs.column.time"), card: "title", nowrap: true, cell: (run) => <span className="tabular-nums">{formatKst(run.ran_at)}</span> },
@@ -146,7 +146,8 @@ export function HrSyncPanel() {
       ),
     },
   ];
-  // 목록 응답이 503이면 이 서버는 HR 연결이 없다 - 실행·미리보기를 막고 한 번만 안내한다
+  // 목록은 최신순이라 첫 줄이 최근 실행이다. 목록 응답이 503이면 이 서버는 HR 연결이 없다 - 실행·미리보기를 막고 한 번만 안내한다
+  const lastRun = runs.data?.[0] ?? null;
   const isNotConfigured = runs.error instanceof ApiError && runs.error.status === 503;
   const [busy, setBusy] = useState<"run" | "preview" | null>(null);
   const [result, setResult] = useState<SyncResult | null>(null);
@@ -208,12 +209,20 @@ export function HrSyncPanel() {
       {result?.kind === "run" && <RunSummary summary={result.summary} />}
       {result?.kind === "preview" && <PreviewSummary preview={result.preview} />}
 
+      {/* 동기화를 설정하지 않은 서버에서는 실행 기록 칸을 두지 않는다 - 위 안내만 남는다 */}
+      {!isNotConfigured && (
       <div className="space-y-3">
         <div className="flex items-center justify-between gap-3">
           <h3 className="text-sm font-semibold text-ink">{t("hr.runs.title")}</h3>
-          {!isNotConfigured && <ListViewToggle listKey={LIST_KEY} view={view} testId="hr-sync-runs-view" />}
+          <ListViewToggle listKey={LIST_KEY} view={view} testId="hr-sync-runs-view" />
         </div>
-        {runs.error !== null && !isNotConfigured && (
+        {lastRun && (
+          <p className="adm-note" data-testid="hr-sync-last">
+            <OutcomePill outcome={lastRun.outcome} />{" "}
+            {t("hr.runs.last", { time: formatKst(lastRun.ran_at), scanned: formatCount(lastRun.scanned), created: formatCount(lastRun.created), deactivated: formatCount(lastRun.deactivated), deleted: formatCount(lastRun.deleted) })}
+          </p>
+        )}
+        {runs.error !== null && (
           <InlineNotice testId="hr-sync-runs-error" tone="error">
             {humanizeApiError(runs.error, t)}
           </InlineNotice>
@@ -234,6 +243,7 @@ export function HrSyncPanel() {
           />
         )}
       </div>
+      )}
     </section>
   );
 }

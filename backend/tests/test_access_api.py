@@ -330,6 +330,18 @@ def test_audit_is_newest_first_and_limited(client: TestClient) -> None:
     assert client.get("/api/access/audit?limit=0", headers=LEAD).status_code == 422
 
 
+def test_audit_continues_before_a_given_event(client: TestClient) -> None:
+    for name in ("Page A", "Page B", "Page C"):
+        assert _post_role(client, name, []).status_code == 201
+    first_page = _list_audit(client, limit=2)
+
+    second_page = _get(client, f"/api/access/audit?limit=2&before={first_page[-1]['id']}")
+
+    assert [event["detail"]["name"] for event in first_page] == ["Page C", "Page B"]
+    assert [event["detail"]["name"] for event in second_page] == ["Page A"]
+    assert client.get("/api/access/audit?before=999999", headers=LEAD).status_code == 404
+
+
 def test_batch_adds_and_removes_in_one_call(client: TestClient) -> None:
     operations = _get_roles_by_name(client)["Operations"]["id"]
     prod_grant = _find_grant(client, "user", "prod.member")

@@ -298,6 +298,16 @@ await runStep("admin access as qa.lead", { devUser: "qa.lead" }, async ({ page, 
   check("newest changes are grant.add then role.create", actions[0] === "grant.add" && actions[1] === "role.create", actions.slice(0, 3).join(","));
   const topRow = await findByPrefix(page, "audit-row-").first().innerText();
   check("audit row reads in plain language", topRow.includes("qa.lead") && topRow.includes("Grant added") && topRow.includes("Granted role") && topRow.includes("Smoke Role") && topRow.includes("prod.member"), topRow.replace(/\s+/g, " "));
+  // 거르기 - 종류 알약과 찾기. 날짜로 묶여 있고 시각만 남는다
+  check("records are grouped by day", (await findByPrefix(page, "audit-table-group-").count()) >= 1);
+  await findById(page, "audit-filter-role").click();
+  const roleActions = await findByPrefix(page, "audit-row-").evaluateAll((els) => els.map((el) => el.getAttribute("data-action")));
+  check("the role pill keeps only role changes", roleActions.length > 0 && roleActions.every((action) => action?.startsWith("role.")), roleActions.join(","));
+  await findById(page, "audit-filter-all").click();
+  await findById(page, "audit-search").fill("no such record");
+  await wait(page, "audit-empty");
+  await findById(page, "audit-search").fill("");
+  await wait(page, "audit-table");
   await takeShot("baseline-admin-access.png");
 
   // 유효 권한 - 옛 조회 항목은 부여 화면에 들어왔다(옛 주소 sub=lookup도 부여로 연다)
@@ -601,6 +611,9 @@ await runStep("admin ops panels with mocked responses", { devUser: "ops.member",
   check("batch rows are keyed by job and outcome", (await countById(page, "batch-row-hr_sync-success")) === 1 && (await countById(page, "batch-row-db_backup-failure")) === 1);
   const batchText = await getText(page, "batch-table");
   check("known jobs get names, unknown jobs keep theirs", batchText.includes("Directory sync") && batchText.includes("Database backup") && batchText.includes("report_mail"), batchText.replace(/\s+/g, " "));
+  // 한 작업이 한 줄 - 결과 둘이 같은 줄 안에 나란히
+  const jobRows = await findByPrefix(page, "batch-job-").count();
+  check("one row per job", jobRows === 3, String(jobRows));
   await takeShot("baseline-admin-batch.png");
 
   await findById(page, "admin-tab-ai").click();
@@ -610,6 +623,8 @@ await runStep("admin ops panels with mocked responses", { devUser: "ops.member",
   check("ping reports the model and latency", okPing.includes("glm-test") && okPing.includes("842 ms") && okPing.includes("answered as expected"), okPing.replace(/\s+/g, " "));
   await wait(page, "ai-usage-table");
   check("usage rows are keyed by date", (await countById(page, "ai-usage-row-2026-11-03")) === 1 && (await countById(page, "ai-usage-row-2026-11-04")) === 1);
+  const totals = await getText(page, "ai-usage-total");
+  check("usage totals add up with thousands separators", totals.includes("17 calls") && totals.includes("4,600 prompt tokens"), totals);
   await takeShot("baseline-admin-ai-usage.png");
   await findById(page, "ai-ping").click();
   await page.waitForFunction(() => document.querySelector('[data-testid="ai-ping-result"]')?.textContent?.includes("Could not reach"), null, { timeout: T });
@@ -707,6 +722,29 @@ await runStep("admin outline as dev.admin", { devUser: "dev.admin" }, async ({ p
 });
 
 // Bundle 상태 거르기 · 진행 막대 · 구성원 요약, AI 지침 읽을 이름 · 버전 타임라인(본문은 상자 스크롤 없이)
+// 변경 기록 이어 불러오기 - 30건씩, 끝에 닿으면 마지막 기록 id 앞부터 받는다
+await runStep("audit log keeps loading older records", { devUser: "qa.lead" }, async ({ page }) => {
+  const asked = [];
+  const makeEvents = (from, count) =>
+    Array.from({ length: count }, (_, index) => ({ id: from - index, occurred_at: "2026-11-20T10:00:00+09:00", actor: "seed", action: "role.create", detail: { name: `Role ${from - index}`, permissions: [] } }));
+  await page.route("**/api/access/audit**", (route) => {
+    const before = new URL(route.request().url()).searchParams.get("before");
+    asked.push(before);
+    const body = before === null ? makeEvents(100, 30) : before === "71" ? makeEvents(70, 30) : makeEvents(40, 5);
+    return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
+  });
+  await page.goto(`${BASE}/admin?tab=access&sub=audit`);
+  await page.locator('[data-testid="audit-row-100"]').waitFor({ state: "visible", timeout: T });
+  // 끝까지 굴려 다음 묶음들을 부른다 - 화면 안에 닿으면 바로 이어진다
+  await page.waitForFunction(() => {
+    const more = document.querySelector('[data-testid="audit-more"]');
+    more?.scrollIntoView();
+    return document.querySelectorAll('[data-testid^="audit-row-"]').length >= 65 && !more;
+  }, null, { timeout: T });
+  // 첫 묶음은 개발 모드(StrictMode)에서 두 번 물을 수 있다 - 이어 부른 커서만 본다
+  check("older records are asked for by the last id", [...new Set(asked)].join(",") === ",71,41", asked.join(","));
+});
+
 await runStep("admin bundles and guidelines as dev.admin", { devUser: "dev.admin" }, async ({ page, takeShot }) => {
   await page.goto(`${BASE}/admin?tab=bundles`);
   // 목록 틀은 쉬머일 때도 있다 - 첫 줄이 올 때까지 기다린다

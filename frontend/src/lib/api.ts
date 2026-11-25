@@ -371,9 +371,13 @@ export function removeGrant(id: number): Promise<void> {
   return apiFetch<void>(`/access/grants/${id}`, { method: "DELETE" });
 }
 
-/** limit을 생략하면 서버 기본(100). 서버는 500으로 자른다. */
-export function listAudit(limit?: number): Promise<AuditEvent[]> {
-  return apiFetch<AuditEvent[]>(limit === undefined ? "/access/audit" : `/access/audit?limit=${limit}`);
+/** limit을 생략하면 서버 기본(100). 서버는 500으로 자른다. before(기록 id)를 주면 그보다 먼저 남은 기록부터 이어 받는다. */
+export function listAudit(limit?: number, before?: number): Promise<AuditEvent[]> {
+  const params = new URLSearchParams();
+  if (limit !== undefined) params.set("limit", String(limit));
+  if (before !== undefined) params.set("before", String(before));
+  const query = params.toString();
+  return apiFetch<AuditEvent[]>(query ? `/access/audit?${query}` : "/access/audit");
 }
 
 export function getEffective(loginId: string): Promise<EffectiveAccess> {

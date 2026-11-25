@@ -99,6 +99,10 @@ describe("access helpers", () => {
     const withLimit = stubFetch();
     await listAudit(50);
     expect(getLastCall(withLimit)[0]).toBe("/api/access/audit?limit=50");
+
+    const continued = stubFetch();
+    await listAudit(30, 12);
+    expect(getLastCall(continued)[0]).toBe("/api/access/audit?limit=30&before=12");
   });
 
   it("encodes the login id of an effective lookup", async () => {
