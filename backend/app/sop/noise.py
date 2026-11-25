@@ -131,6 +131,7 @@ MAX_HISTORY_INTRO = 2  # 개정 이력 제목과 그 표 사이의 글 줄 수
 _TERMINATORS = (".", "。", "!", "?")
 _CLOSERS = " \t\"'”’)]}」』"
 _KOREAN_ENDING = re.compile(r"(?:다|시오|세요|것|함|됨)$")  # 마침표 없이 끝난 한글 문장
+MAX_CHAPTER_DIGITS = 3
 MAX_LINE_CHARS = 120  # 이보다 긴 글은 표지 글이 아니라 문장으로 본다
 
 
@@ -175,6 +176,12 @@ def _is_flow_text(line: NoiseLine) -> bool:
 
 def _read_number(line: NoiseLine) -> str:
     return (line.number or "").strip(".")
+
+
+def _read_chapter(line: NoiseLine) -> int | None:
+    """장 번호(한 마디 정수) — 아니면 None. "²"는 isdigit이 참이지만 int가 던지므로 ASCII 숫자만, 장 번호답게 짧은 것만."""
+    number = _read_number(line)
+    return int(number) if number.isascii() and number.isdigit() and len(number) <= MAX_CHAPTER_DIGITS else None
 
 
 def _is_chapter_one(line: NoiseLine) -> bool:
@@ -260,17 +267,15 @@ def _opens_chapters(lines: Sequence[NoiseLine], start: int) -> bool:
     later = [(index, line) for index, line in enumerate(lines[start + 1 :], start=start + 1) if _is_flow_text(line)]
     if _is_styled(own):
         return any(
-            _is_styled(line) and _read_level(line) == _read_level(own)
-            and _read_number(line).isdigit() and int(_read_number(line)) > 1
-            for _, line in later
+            _is_styled(line) and _read_level(line) == _read_level(own) and (_read_chapter(line) or 0) > 1 for _, line in later
         )
     following = next(
-        ((index, line) for index, line in later if not _is_styled(line) and _read_number(line).isdigit()), None
+        ((index, line) for index, line in later if not _is_styled(line) and _read_chapter(line) is not None), None
     )
     if following is None or not _is_title(own):
         return False
     index, line = following
-    return _read_number(line) == "2" and _is_title(line) and index > start + 1
+    return _read_chapter(line) == 2 and _is_title(line) and index > start + 1
 
 
 def find_body_starts(lines: Sequence[NoiseLine], *, separate: bool) -> list[int]:
@@ -381,13 +386,20 @@ def find_second_front_begin(lines: Sequence[NoiseLine], starts: Sequence[int]) -
 
 
 def _find_table_end(lines: Sequence[NoiseLine], at: int) -> int:
-    """표 줄의 끝 자리(그 다음) — 묶인 칸의 마지막, 묶음을 모르면 이어진 칸 줄까지."""
-    members = [index for index, line in enumerate(lines) if line.group == at]
-    if members:
-        return max(members) + 1
+    """표 줄의 끝 자리(그 다음) — 표 밖 글 줄이 나올 때까지만 보고 묶인 칸의 마지막, 묶음을 모르면 이어진 칸 줄까지.
+
+    문서 전체를 훑지 않는다 — 이력 제목마다 부르므로 긴 문서에서 시간이 제곱으로 늘지 않게.
+    """
     end = at + 1
-    while end < len(lines) and lines[end].kind == "cell_sentence" and not lines[end].is_flow:
-        end += 1
+    has_group = end < len(lines) and lines[end].group == at
+    for index in range(at + 1, len(lines)):
+        line = lines[index]
+        if line.group == at:
+            end = index + 1
+        elif line.is_flow or (not has_group and line.kind != "cell_sentence"):
+            break
+        elif not has_group:
+            end = index + 1
     return end
 
 

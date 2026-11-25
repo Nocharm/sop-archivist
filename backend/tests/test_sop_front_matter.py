@@ -1,5 +1,7 @@
 """본문 앞부분(front) · 개정 이력(history) — 저절로 삭제된 줄을 찾는 규칙, 잠금, 사유, 여기부터 본문, 결과물(쪼개기 먼저 설계 §7 R3)."""
 
+import time
+from dataclasses import replace
 from typing import Any, NamedTuple
 
 import httpx2
@@ -18,6 +20,7 @@ from app.sop.noise import (
     NoiseLine,
     find_body_starts,
     find_noise_lines,
+    find_second_half,
     is_history_heading,
 )
 from tests.access_helpers import run_in_session, update_row
@@ -1109,3 +1112,47 @@ def test_start_body_leaves_the_tail_of_the_first_half_alone(client: TestClient) 
     assert _start_body(client, fx, "2. Scope").status_code == 200
 
     assert _texts(_view(client, fx), NOISE_FRONT) == [*korean, "1. Purpose", "This procedure defines how to clean the tank."]
+
+
+# --- 큰 문서 · 이상한 번호 ---
+
+
+@pytest.mark.parametrize("number", ["²", "２", "²²", "①", "٣"])
+def test_odd_digit_numbers_are_not_chapters(number: str) -> None:
+    # "²".isdigit()은 참이지만 int()가 던진다 — 올리기가 계속 실패하지 않게
+    lines = [_p("표지"), _h("1. 목적", number="1."), _p("글"), _h("다음", number=f"{number}.")]
+
+    assert find_body_starts(lines, separate=False) == []
+    typed = [_p("표지"), _p("1. 목적", number="1."), _p("글"), _p("다음", number=f"{number}.")]
+    assert find_body_starts(typed, separate=False) == []
+
+
+def _build_big_lines(size: int) -> list[NoiseLine]:
+    """최악 꼴 — 이력 제목과 표, 1장 제목이 되풀이되고 표마다 칸이 묶인다(한/영 반쪽)."""
+    lines = [_p("합성 표준 절차서"), *_table("승인"), *BODY]
+    while len(lines) < size:
+        half = EN if len(lines) > size // 2 else KO
+        lines += [_h("1. 목적", half, number="1."), _h("개정 이력", half)]
+        at = len(lines)
+        lines.append(_line("table", "", half, is_flow=False))
+        lines += [replace(_line("cell_sentence", "개정", half, is_flow=False), group=at) for _ in range(3)]
+        lines += [_p("글이다.", half), _p("2.1 글", half, number="2.1")]
+    return lines
+
+
+def test_judging_a_big_document_stays_linear() -> None:
+    # 줄을 네 배로 늘려도 시간이 네 배쯤이다 — 표나 제목마다 문서 전체를 훑으면 열여섯 배가 된다
+    def measure(size: int) -> float:
+        lines = _build_big_lines(size)
+        best = float("inf")
+        for _ in range(3):
+            began = time.perf_counter()
+            find_noise_lines(lines, separate=True)
+            find_second_half(lines, find_body_starts(lines, separate=True))
+            best = min(best, time.perf_counter() - began)
+        return best
+
+    small, big = measure(12_500), measure(50_000)
+
+    assert big < 8 * small, (small, big)
+    assert big < 5, big
