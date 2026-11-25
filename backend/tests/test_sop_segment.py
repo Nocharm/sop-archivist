@@ -564,11 +564,58 @@ def test_pdf_number_lines_need_the_next_number() -> None:
     assert _pieces(listed, split_lines=False) == listed.split("\n")
     skipped = "5.1 Wait until it reaches\n5.4 bar.\n3) Record it."
     assert _pieces(skipped, split_lines=False) == [skipped]
-    # 앞 번호가 없으면 번호 줄로 보지 않는다 — 글머리 · 문서 번호는 늘 나눈다
+    # 앞 번호가 없으면 첫 번호(1)만, 그것도 앞 줄이 문장 끝 · 콜론일 때만 번호 줄이다
     bare = "Set it to\n1. Record it."
     assert _pieces(bare, split_lines=False) == [bare]
-    marked = "Prepare the following items\n• gloves\nSOP-QC-0012 Sampling"
-    assert _pieces(marked, split_lines=False) == marked.split("\n")
+    decimal = "Record the target pressure.\n0.8 bar is the limit."
+    assert _pieces(decimal, split_lines=False) == [decimal]
+    second = "Record it.\n2) Wait."
+    assert _pieces(second, split_lines=False) == [second]
+    initial = "Approved by:\nA. Smith"
+    assert _pieces(initial, split_lines=False) == [initial]
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "다음 순서로 준비한다.\n1) 전원을 켠다.\n2) 압력을 확인한다.", "다음을 준비한다:\n① 장갑\n② 보안경",
+        "Prepare as follows:\na) Turn it on\nb) Check it", "다음을 따른다.\n가. 켠다\n나. 끈다", "Do this.\n1. Open it\n2. Close it",
+        "Do this.\n(1) Open it\n(2) Close it", "Wait 10 min.\n1) Open it\n2) Close it", "Do this.\na) Open it\nb) Close it",
+    ],
+)
+def test_pdf_lists_may_start_after_a_sentence_or_a_colon(text: str) -> None:
+    assert _pieces(text, split_lines=False) == text.split("\n")
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "시료는 다음 절차서인\nSOP-QC-0012에 따라 채취하고\nBSC-01 안에서 처리한다.", "Calibrate the balance per\nSOP-QC-0012 before use.",
+        "Rinse the plate with\nPBS-1 and wait.", "Wait for ten minutes\n— and stop.", "Keep the tank at 5\n- with the lid closed.",
+        "Refer to SOP No.\nSOP-QC-0012 before use.",
+    ],
+)
+def test_pdf_wrapped_lines_do_not_split_at_document_numbers_and_dashes(text: str) -> None:
+    assert _pieces(text, split_lines=False) == [text]
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Prepare the following items\n• gloves\n※ goggles",  # 글머리는 늘
+        "SOP-QC-0012 Sampling\nSOP-QC-0013 Cleaning",  # 블록 첫 줄도 문서 번호
+        "Follow the list below.\nSOP-QC-0012 Sampling",  # 앞 줄이 문장 끝
+        "- gloves\n- goggles", "Wear these.\n- gloves",
+    ],
+)
+def test_pdf_lines_split_where_the_marker_starts_a_line_of_its_own(text: str) -> None:
+    assert _pieces(text, split_lines=False) == text.split("\n")
+
+
+def test_pdf_reference_lines_kept_whole_are_not_cut_inside() -> None:
+    # 참조 줄(kept)은 규칙 1의 줄 그대로다 — 그 안의 번호 줄에서도 나누지 않는다
+    text = "SOP-QC-0012 Sampling\nSOP-QC-0013 Cleaning"
+    assert _pieces(text, split_lines=False, kept=[0]) == [text]
 
 
 @pytest.mark.parametrize(

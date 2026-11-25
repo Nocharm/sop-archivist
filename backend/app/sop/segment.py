@@ -28,6 +28,8 @@ ABBREVIATIONS = (
 )
 # 다음 글자와 상관없이 문장 끝이 아닌 약줄임 — "(e.g. ABC)"처럼 대문자·고유 이름이 바로 뒤에 온다
 NEVER_END_ABBREVIATIONS = ("e.g", "i.e")
+# 줄 끝에 와도 문장 끝이 아닌 약줄임 — "etc." "10 min."은 줄 끝에서 문장이 끝난 것일 수 있어 뺀다(PDF의 줄머리 표식 판정, _ends_before)
+_LEADING_ABBREVIATIONS = frozenset(ABBREVIATIONS) - {"etc", "min", "sec"}
 # 번호 약줄임 "No." "Nos."는 숫자 말고 여는 괄호·따옴표 앞에서도 문장 끝이 아니다 — '"Lot No. (a)"'
 NUMBER_ABBREVIATIONS = ("no", "nos")
 NUMBER_ABBREVIATION_FOLLOWERS = "(\"'“‘"
@@ -71,9 +73,9 @@ TYPED_NUMBER_RE = re.compile(r"(?:\d+(?:\.\d+)+\.?|\d+\.)(?=\s|$)")
 DOCUMENT_NUMBER_BODY = r"[A-Z]{2,}(?:-[A-Z0-9]{1,8})*-\d{1,6}"
 # 규칙 2 — 한글 사이 · 끝의 영어 덩어리가 이보다 적은 낱말이면 앞 한글 박스에 잇는다("Buffer A."). 합성 자료로 잡은 값(실제 SOP 뒤 다시 정한다)
 SHORT_ENGLISH_WORDS = 3
-# 규칙 2의 줄머리(번호 말고) — 글머리 기호나 문서 번호면 DOCX · PDF 모두 그 줄에서 나눈다. 줄표는 "-5 °C"를 집지 않게 숫자 앞이면 아니다
+# 규칙 2의 줄머리(번호 말고) — 글머리 기호 · 줄표 · 문서 번호. 줄표는 "-5 °C"를 집지 않게 숫자 앞이면 아니다
 _LINE_MARKER_RE = re.compile(
-    rf"[•·*▪◦●○■□◆※]|[-–—](?!\d)|o(?=[ \t])|{DOCUMENT_NUMBER_BODY}(?![A-Za-z0-9])"
+    rf"(?P<bullet>[•·*▪◦●○■□◆※]|o(?=[ \t]))|(?P<dash>[-–—])(?!\d)|(?P<document>{DOCUMENT_NUMBER_BODY})(?![A-Za-z0-9])"
 )
 # 규칙 2의 줄머리 번호 — "5.1" "1." | "(1)" "1)" "a." "a)" "가." "ㄱ)" "iv." | "①"
 _LINE_NUMBER_RE = re.compile(
@@ -86,6 +88,8 @@ _LETTER_SERIES = (
     "abcdefghijklmnopqrstuvwxyz", "ABCDEFGHIJKLMNOPQRSTUVWXYZ", "가나다라마바사아자차카타파하", "ㄱㄴㄷㄹㅁㅂㅅㅇㅈㅊㅋㅌㅍㅎ",
     "①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳",
 )
+# 앞 번호가 없는 PDF 줄에서 첫 번호로 보지 않는 차례 — "Approved by:↵A. Smith"의 머리글자
+_UPPER_SERIES = ("ABCDEFGHIJKLMNOPQRSTUVWXYZ", "ROMAN")
 _ROMAN_SERIES = (
     "i", "ii", "iii", "iv", "v", "vi", "vii", "viii", "ix", "x", "xi", "xii", "xiii", "xiv", "xv", "xvi", "xvii", "xviii",
     "xix", "xx",
@@ -296,29 +300,66 @@ def _is_number_after(
     return value == (1,) and series not in previous
 
 
-def find_marker_lines(text: str, *, split_lines: bool) -> list[int]:
-    """번호 · 글머리 기호 · 문서 번호로 시작하는 줄의 시작 자리(첫 줄 제외) — 규칙 2가 여기서는 같은 언어여도 나눈다.
+def _read_line_marker(text: str, at: int) -> str | None:
+    """at에서 시작하는 줄머리의 표식(번호 말고) — 글머리 "bullet" · 문서 번호 "document" · 줄표는 그 글자. 없으면 None."""
+    match = _LINE_MARKER_RE.match(text, at)
+    if match is None:
+        return None
+    return match["dash"] if match.lastgroup == "dash" else match.lastgroup
 
-    split_lines(DOCX)면 줄머리가 맞으면 늘이다(줄바꿈은 글쓴이가 넣었다). PDF의 줄바꿈은 폭에 따라 접힌 것이라 글머리 · 문서
-    번호면 늘, 번호면 블록에서 바로 앞 번호(첫 줄 포함)를 이을 때만이다 — 앞 번호가 없으면 번호 줄로 보지 않는다.
+
+def _ends_before(text: str, line_start: int, *, or_colon: bool = False) -> bool:
+    """줄 앞의 글이 문장 끝(or_colon이면 콜론도)으로 끝나는가 — PDF의 접힌 줄과 새로 시작하는 줄을 가른다."""
+    after = line_start
+    while after > 0 and is_blank_char(text[after - 1]):
+        after -= 1
+    if after > 0 and or_colon and text[after - 1] in ":：":
+        return True
+    end = after
+    while end > 0 and text[end - 1] in SENTENCE_CLOSERS:
+        end -= 1
+    if end == 0 or text[end - 1] not in SENTENCE_TERMINATORS:
+        return False
+    # 다음 글자는 줄머리 표식이라("a)") 소문자여도 새 문장일 수 있다 — 뒤에 번호가 이어지는 약줄임("No." "Ref.")만 본다
+    return text[end - 1] != "." or _read_token_before(text, end - 1).lower() not in _LEADING_ABBREVIATIONS
+
+
+def find_marker_lines(text: str, *, split_lines: bool) -> list[int]:
+    """번호 · 글머리 기호 · 줄표 · 문서 번호로 시작하는 줄의 시작 자리(첫 줄 제외) — 규칙 2가 여기서는 같은 언어여도 나눈다.
+
+    split_lines(DOCX)면 줄머리가 맞으면 늘이다(줄바꿈은 글쓴이가 넣었다). PDF의 줄바꿈은 폭에 따라 접힌 것이라 줄머리만으로는
+    모른다 — 글머리면 늘, 문서 번호 · 줄표는 앞 줄이 문장 끝이거나 블록 첫 줄도 같은 표식일 때, 번호는 바로 앞 번호(첫 줄 포함)를
+    이을 때와, 앞 번호가 없으면 첫 번호(1 · a · 가 · ①)이고 앞 줄이 문장 끝 · 콜론일 때만이다.
     """
     if "\n" not in text:
         return []
     starts: list[int] = []
     last_values: dict[tuple[str, ...], tuple[int, ...]] = {}
     previous: set[tuple[str, ...]] = set()
+    first_marker: str | None = None
     line_start = 0
     while line_start < len(text):
         first = line_start
         while first < len(text) and text[first] != "\n" and is_blank_char(text[first]):
             first += 1
         readings = _read_line_number(text, first)
-        if line_start > 0 and not split_lines:
-            readings = [item for item in readings if previous and _is_number_after(item, last_values, previous)]
+        marker = _read_line_marker(text, first)
+        if line_start == 0:
+            first_marker = marker
+        elif not split_lines:
+            if previous:
+                readings = [item for item in readings if _is_number_after(item, last_values, previous)]
+            else:
+                readings = [
+                    (series, value) for series, value in readings
+                    if value == (1,) and series[0] not in _UPPER_SERIES and _ends_before(text, line_start, or_colon=True)
+                ]
+            if marker not in (None, "bullet", first_marker) and not _ends_before(text, line_start):
+                marker = None
         if readings:
             last_values.update(readings)
             previous = {series for series, _ in readings}
-        if line_start > 0 and (readings or _LINE_MARKER_RE.match(text, first) is not None):
+        if line_start > 0 and (readings or marker is not None):
             starts.append(line_start)
         line_end = text.find("\n", first)
         if line_end < 0:
@@ -343,9 +384,17 @@ def split_paragraph(
     """규칙 2의 박스 범위(설계 2026-11-25 R2) — 문장 조각(split_sentences)을 이어진 같은 언어끼리 다시 잇는다.
 
     바깥 경계는 번호 · 글머리 · 문서 번호 줄(find_marker_lines)과 칸 안 문단 시작(paras)이고, 배치는 보지 않는다. 언어를 모르는
-    조각(숫자 · 기호뿐)은 앞 조각을 따르고 맨 앞이면 뒤 조각을 따른다. kept는 잇지 않을 조각의 시작 자리(Reference 절의 참조 줄)다.
+    조각(숫자 · 기호뿐)은 앞 조각을 따르고 맨 앞이면 뒤 조각을 따른다. kept는 잇지도 나누지도 않을 조각의 시작 자리(Reference 절의
+    참조 줄 — 규칙 1의 문장 그대로다)다.
     """
-    cuts = sorted({0, len(text), *find_marker_lines(text, split_lines=split_lines), *(at for at in paras if 0 < at < len(text))})
+    markers = find_marker_lines(text, split_lines=split_lines)
+    if kept and markers:
+        # 규칙 1의 조각 안에 든 번호 줄 — DOCX는 줄바꿈이 늘 조각 경계라 없고, PDF의 접힌 참조 줄에만 있다
+        ends = {start: end for start, end in split_sentences(text, split_lines=split_lines) if start in kept}
+        heads = sorted(ends)
+        owners = ((at, bisect_left(heads, at) - 1) for at in markers)
+        markers = [at for at, owner in owners if owner < 0 or at >= ends[heads[owner]]]
+    cuts = sorted({0, len(text), *markers, *(at for at in paras if 0 < at < len(text))})
     ranges: list[tuple[int, int]] = []
     for segment_start, segment_end in zip(cuts, cuts[1:], strict=False):
         ranges.extend(_join_segment(text, segment_start, segment_end, split_lines, kept))
