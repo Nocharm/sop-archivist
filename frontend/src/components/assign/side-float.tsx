@@ -4,7 +4,7 @@
 "use client";
 
 import { ChevronDown, ChevronUp, PanelRight, PictureInPicture2 } from "lucide-react";
-import { useRef, type MouseEvent, type PointerEvent, type ReactNode } from "react";
+import { useRef, type PointerEvent, type ReactNode } from "react";
 
 import { Tooltip } from "@/components/ui/tooltip";
 import type { AssignView } from "@/lib/assign-view-prefs";
@@ -17,13 +17,11 @@ type SidePrefs = Pick<AssignView, "sideFloat" | "sideX" | "sideY" | "sideFolded"
 interface SideFloatProps {
   prefs: SidePrefs;
   onChange: (patch: Partial<SidePrefs>) => void;
-  /** 칸 안을 눌렀다 - 마우스로 누른 단추면 포커스를 용지로 돌린다 */
-  onPress: (event: MouseEvent<HTMLElement>) => void;
   /** 칸의 내용 - headEnd(떼기 단추, 좁은 창에서 붙어 있을 때만)는 내용의 머리 끝에 앉는다 */
   children: (headEnd: ReactNode) => ReactNode;
 }
 
-export function SideFloat({ prefs, onChange, onPress, children }: SideFloatProps) {
+export function SideFloat({ prefs, onChange, children }: SideFloatProps) {
   const { t } = useI18n();
   const view = useWindowSize();
   // 잡은 점과 판 왼쪽 위의 차이, 지금까지 옮긴 자리(아직 움직이지 않았으면 null)
@@ -86,7 +84,6 @@ export function SideFloat({ prefs, onChange, onPress, children }: SideFloatProps
       data-float={isFloating ? "" : undefined}
       data-folded={isFolded ? "" : undefined}
       style={isFloating ? { left: at.x, top: at.y, width: size.w, height: size.h } : undefined}
-      onClick={onPress}
       data-testid="assign-inspector"
     >
       {isFloating && (

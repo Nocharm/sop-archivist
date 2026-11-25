@@ -16,14 +16,14 @@
 | 3c | `fix/assign-instant-motion` | 합침 | v1.6.9 · a4e02416 | vitest 2092 · build 경고 0 · `assign:` 스모크 전체 1164 통과 | 응답 뒤 처리에서 던지면 걷은 표 선이 잠깐 거꾸로 돌아 보일 수 있음(자료는 맞음) |
 | 3d | `perf/assign-filter-chunks` | 합침 | v1.6.10 · 9fe9f04b | vitest 2138 · build 경고 0 · `assign:` 스모크 1163 + 흔들린 1단계는 혼자 4번 통과 | 1,050박스로는 재지 않음(289박스) |
 | 3e | `perf/assign-number-input` | 건너뜀 |  | 번호 칸 5글자 CPU 4배 가운데 값 25ms(기준 100ms) | 조건(100ms 초과)이 안 됨 — 브랜치를 만들지 않음 |
-| 4a | `fix/assign-enter` | 진행(11-26) | | | |
-| 4b | `feat/assign-keymap` | 대기 | | | |
+| 4a | `fix/assign-enter` | 합침 | v1.6.12 · 53442350 | vitest 2203 · build 경고 0 · 스모크 전체 2208 + 새 단계 경합 하나 고쳐 3번 통과 | 보류 줄에서 ↵ 한 번이 첫 카드로 확정(B1-R2 글자대로) |
+| 4b | `feat/assign-keymap` | 진행(11-26) | | | |
 | 4c | `feat/assign-merge-keys` | 대기 | | | |
 | 4d | `feat/number-cell-buttons` | 합침 | v1.6.7 · 3670d20c | vitest 1969 · build 경고 0 · `assign:` 스모크 전체 통과(5c와 합친 트리) | IME 조합 중 Enter는 전과 같음(범위 밖), 번호 칸 단계 둘은 앞 단계에 기대어 혼자 돌리면 실패(dev에서도 같음) |
 | 5a | `feat/split-rule-2` | 합침 | v1.6.3 · 42e4751b | pytest 3404+시드 통과 · 10 xfail(R3 · R4 몫) · vitest 1934 · build 경고 0 · 스모크 전체 2111 통과 | PDF의 콜론 뒤 줄표 목록은 나누지 않는다(사람이 나눔) |
 | 5b | `feat/split-front-matter` | 합침 | v1.6.11 · ff0a6718 | pytest 3622+시드 15 · vitest 2167 · build 경고 0 · 스모크 전체 2181(새 단계의 두 번 누름 하나는 단계를 고쳐 통과) | 아래 "아침에 볼 것" |
 | 5c | `feat/split-new-parity` | 합침 | v1.6.6 · d750564c | pytest 3453+시드 14(6 xfail = R3 몫) · vitest 1969 · build 경고 0 · `assign:` 스모크 전체 통과(4d와 합친 트리) | Old 한/영 짝이 New 두 문장에 이어져 하나만 풀린 뒤 다시 하기는 409(있던 것) |
-| 6-1 | `feat/new-paper-1-render` | 대기 | | | |
+| 6-1 | `feat/new-paper-1-render` | 진행(11-26) | | | |
 | 6-2 | `feat/new-paper-2-pick` | 대기 | | | |
 | 6-3 | `feat/new-paper-3-tools` | 대기 | | | |
 | 7 | 계획 4의 일곱 | 대기 | | | |
@@ -59,6 +59,8 @@
 - 5b · `command-queue.test.ts` · "toc"를 장벽 → 장벽 아님 · 계획 5b T7이 3b의 목록을 바꿈
 - 5b · `assign-press-model.test.ts` 쌓는 글쇠에 "r", `toc-block-model.test.ts` 바뀐 이름 · 꼴에 맞춤
 - 5b · `smoke/assign.mjs` 목차 두 단계 · testid `assign-paper-toc-*` → `assign-paper-noise-*`, `assign-toc-*` → `assign-noise-*`, 단계 이름 둘 · 검사 25 → 25
+- 4a · `smoke/assign.mjs` 434 · 2108 · 7084 · 7146 · 포커스 = Confirm → `data-state="confirm"` + 포커스가 Old 용지 · S1(마우스 뒤 포커스)
+- 4a · `smoke/assign.mjs` 3180 묶음 단추 Enter → Space, 753/758 언어 단추 click → 글쇠 + 마우스 두 번 더(검사 +2), 4544 `isDisabled()` → `data-state` choose/blocked(고름이 풀렸다는 같은 뜻) · Enter의 뜻이 바뀜
 
 ## 아침에 볼 것 (사람이 정할 것 · 봐 줄 것)
 
@@ -78,3 +80,5 @@
 - **앞부분 · 개정 이력 판정이 명세보다 좁다(5b)** — 거짓 삭제를 막으려 헷갈리면 제외하지 않는다. 놓치는 꼴: 이력 표가 없는 이력, 제목 스타일 표지, 안내 문장 셋 이상 표지, 장이 하나뿐인 문서 등(사람이 여기부터 본문 · 직접 삭제). 값(글 60 · 120자 등)은 합성 자료로 잡았다 — 실제 문서로 다시 정한다.
 - **New는 4-3(`new-paper-3-tools`) 전까지 거짓 제외를 되돌릴 화면이 없다**(블록 · 우클릭은 Old만) — 6-3이 들어가기 전에는 이 묶음을 운영에 올리지 않는 것을 권한다(5b 검토).
 - 삭제 취소(`clear_noise`)를 장벽으로 되돌릴지 — 지금은 응답 전에 누른 글쇠를 알림만 띄우고 버린다(계획 T7 글자대로).
+- 보류한 줄에서 ↵ 한 번이면 추천 첫 카드로 확정된다(H → 사유 창 → ↵ 하면 보류가 풀림) — 보류 줄은 카드 확정에서 뺄지 정한다(4a).
+- 빠르게 두 번 누른 ↵는 다음 줄의 첫 카드를 확정한다(명세가 정한 결과). 써 보고 불편하면 말해 주세요.
