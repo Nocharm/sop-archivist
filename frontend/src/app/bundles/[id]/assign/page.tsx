@@ -5,7 +5,7 @@
 // 상태 · 데이터 · 동작은 use-assign-page.tsx의 useAssignPage()에 있고, 이 파일은 그리기만 한다(쪼개기 1단계).
 "use client";
 
-import { ExternalLink, FileCheck2, FileUp, FolderOutput, Inbox, Link2, MousePointerClick, Sparkles, SquarePlus, Trash2, TriangleAlert, X } from "lucide-react";
+import { FileCheck2, FileUp, FolderOutput, Inbox, Link2, MousePointerClick, Sparkles, SquarePlus, Trash2, TriangleAlert, X } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useEffectEvent, useMemo, useRef, useState, type ReactNode } from "react";
 import { AssignContextMenu } from "@/components/assign/assign-context-menu";
@@ -15,7 +15,6 @@ import { JoinMenu } from "@/components/assign/join-menu";
 import { getSpotAttrs, PlaceGap, type PlaceSpotView, type SpotAttrs } from "@/components/assign/place-spot";
 import { LinkMenu } from "@/components/assign/link-menu";
 import { LinkBadge } from "@/components/assign/link-badge";
-import { MoveTargetField } from "@/components/assign/move-target-field";
 import { NewBundle } from "@/components/assign/new-bundle";
 import { NewPane, NewPaneEmpty, type NewPlaceSpots } from "@/components/assign/new-pane";
 import { DocDashboard } from "@/components/assign/doc-dashboard";
@@ -24,6 +23,7 @@ import { PairColumn, PairViewToggle } from "@/components/assign/pair-column";
 import { PairLines } from "@/components/assign/pair-lines";
 import { PaneDivider } from "@/components/assign/pane-divider";
 import { RecentRemarks, REMARK_MAX_LENGTH, RemarkModal } from "@/components/assign/remark-modal";
+import { SideFloat } from "@/components/assign/side-float";
 import { SpacePreview } from "@/components/assign/space-preview";
 import { ResetModal } from "@/components/assign/reset-modal";
 import { Modal } from "@/components/modal";
@@ -32,19 +32,17 @@ import { CutPop } from "@/components/paper/cut-pop";
 import type { ComposedStyleChoice } from "@/components/paper/number-cell";
 import { FilterChip } from "@/components/status";
 import { ConfirmModal } from "@/components/ui/confirm-modal";
+import { LeftoverTranslations } from "@/components/assign/leftover-translations";
 import { AcceptSuggestionsModal } from "@/components/assign/accept-suggestions-modal";
 import { EmptyState } from "@/components/ui/empty-state";
 import { BundleLoadError } from "@/components/bundle-load-error";
 import { flashElement, Truncate } from "@/components/ui/motion";
-import { showToast } from "@/components/ui/toast";
-import { humanizeApiError } from "@/lib/api-errors";
 import { formatGapLabel, PLACE_REFUSAL_KEYS, readGapKey, type Placement, type PlaceSpot } from "@/lib/place-spot-model";
 import { listAckWarnings } from "@/lib/missing-warnings-model";
-import { bulkDecide, type ChangeType, type EditOp, type UnitRow } from "@/lib/api-sop";
+import { type ChangeType, type EditOp } from "@/lib/api-sop";
 import { isBundleCaptionNeeded } from "@/lib/caption-model";
 import { countJoinedLines } from "@/lib/join-sentence-model";
 import { listLinkMenuItems, listUnlinkRemainder, type LinkMenuItem } from "@/lib/assign-model";
-import { loadBundle } from "@/lib/bundle-store";
 import type { CEdit } from "@/lib/c-edit-model";
 import { getDestinationId, previewSlotChange, readSlotKind } from "@/lib/classify-model";
 import { buildComposedRows, buildComposedStrips } from "@/lib/composed-model";
@@ -62,6 +60,7 @@ import { type SelectOption } from "@/components/ui/select";
 import { AssignSidePanel } from "./assign-side-panel";
 
 import { AssignBar } from "./assign-bar";
+import { QueueFailure } from "./queue-failure";
 import { useAssignPage, NO_NUMBERS, findDestinationDoc, readMenuCover, revealElement } from "./use-assign-page";
 
 export default function AssignPage() {
@@ -69,23 +68,23 @@ export default function AssignPage() {
   // 엮은 문서 순서 저장 응답의 라벨 언어 - 엮은 문서를 받는 언어와 같게(화면 언어)
   const { lang: uiLang } = useI18n();
   const {
-    t, bundleId, bundle, canEdit, docs, oldDocs, docViews, unitsKey, reloadData, tobe, tobeData, writtenList, identical,
-    readMarkStatus, readAiPlace, suggestedTargetUnits, unitMap, written, writtenMap, rows, rowMap, rowOfUnit, options, ready, showSkeleton, unsourced,
+    t, bundleId, bundle, canEdit, docs, oldDocs, docViews, unitsKey, tobe, tobeData, writtenList, identical,
+    readMarkStatus, readAiPlace, suggestedTargetUnits, unitMap, written, writtenMap, rows, rowMap, rowOfUnit, labelOptions, ready, showSkeleton, unsourced,
     mode, setMode, foldOpen, setFoldOpen, foldMatch, clearRowPick, activeKey, row, pickedId, spaceUnitIds, spacePickSeq, solo, setSolo, isSolo, isNewEdit, tocOpen, setTocOpen,
-    tocPick, checked, setChecked, newRemarks, setNewRemarks, menu, setMenu, joinMenu, setJoinMenu, ctxMenu, setCtxMenu, focusNew,
+    tocPick, checked, newRemarks, setNewRemarks, menu, setMenu, joinMenu, setJoinMenu, ctxMenu, setCtxMenu, focusNew,
     setDrafts, draft, groupPending, savedDestination, destination, rowUnits, reasonNow, setDraft, unsavedCount, leaveTo, setLeaveTo,
     aiDest, isAiRow, recommendations, linkIds, candidateIds, setManualOldDoc, oldView, acceptKind, setAcceptKind, acceptDoc, paperModel,
     canPairView, isPairView, pairColumns, pairLinks, partKeys, oldDocId, soloUnit, soloUnits, cutUnit, cutLine, linkedTargets,
     setManualPart, activePart, isFoldEmpty, foldElsewhere, writtenDocs, composedDocs, setManualNewDoc, toggleKey, liveDoc, isNewDocOpen,
     newDocId, newAiReturn, setNewAiReturn, isComposedDoc, newFileId, composedDoc, newRows, headingNotes, sectionMarks, joinableIds,
-    templateTitles, linkPairs, view, changeView, zoomPane, setPanes, remarkEdit, setRemarkEdit, focusAfterRef, busy, isAnyPending, isGlobalPending, paperPending, editConfirm,
-    setEditConfirm, oldPaneRef, buildUndo, markRecorded, bulk, setBulk, confirmingIdentical, moveCode, isMoveAsk, setMoveAsk, decideNow,
+    templateTitles, linkPairs, view, changeView, zoomPane, setPanes, remarkEdit, setRemarkEdit, focusAfterRef, busy, isAnyPending, isGlobalPending, paperPending, pendingDeletes, expectedNumbers, editConfirm,
+    oldPaneRef, bulk, setBulk, confirmingIdentical,
     setConfirmingIdentical, resetScope, setResetScope, slots, newDraft, draftSlotKey, placeResolved, canPlaceClick, pickedSpotKey,
     setCarvePick, carve, carveText, clearCarve, togglePairViewByButton, pairFrom, setPairFrom, pairSource, captionPickBundle, setCaptionPick, selectToc, openNewCtxMenu,
     openSolo, goToUnit, ctxGroups, confirmBlockKey, refPendingIds, isLinkedToWritten, captionPendingKeys, docDashboard, openCtxMenu, runUnitEdit,
-    rewrapTable, unwrapAi, describeEditConfirm, pairGrip, clearToc, switchToPair, applySplitSuggestion, splitAtCut, handleOldDoubleClick,
+    rewrapTable, unwrapAi, describeEditConfirm, pairGrip, clearNoise, openNoiseReason, splitAtCut, handleOldDoubleClick,
     runCtx, revertHeadings, planOldJoin, joinOld, renderOldActions, runSave, runClear, confirmIdenticalAll, acceptAll, pickDestination,
-    pickNewSentence, handleNewPick, handleJoinPick, readJoinAfter, pickJoinMenu, pickPlaceSpot, pickOwnAiLine, jumpToNew, openNewDoc,
+    pickNewSentence, handleNewPick, handleJoinPick, readJoinAfter, pickJoinMenu, handleFramePress, pickPlaceSpot, pickOwnAiLine, jumpToNew, openNewDoc,
     showInNew, jumpToOld, pickTemplateLine, fillTemplateMissing, isOldDrag, finishPairPick, handleOldClick, markRecHover, revealPick,
     setRevealPick, done, renderPlaceLabel, listDestinationEls, error,
   } = state;
@@ -144,7 +143,7 @@ export default function AssignPage() {
     if (item === "close") setMenu(null);
     else if (item === "confirm") {
       setMenu(null);
-      void runSave("confirm");
+      runSave("confirm");
     } else if (item === "cancel") {
       // 고름을 되돌린다 - 저장된 곳(없으면 빈 고름)으로
       setDraft({ destination: null, position: null });
@@ -158,7 +157,7 @@ export default function AssignPage() {
       if (remainder.length > 0) pickDestination({ kind: "link", targetIds: remainder });
       else {
         setMenu(null);
-        void runClear();
+        runClear();
       }
     }
   }
@@ -193,8 +192,8 @@ export default function AssignPage() {
     for (const source of [docs, tobe, writtenList]) if (source.error !== null) source.reload();
     if (docViews.error !== null) docViews.retry();
   };
-  // 삭제로 확정한 줄은 흐린 한 줄로 접는다(설계 D6) - 펼침은 용지가 고름으로 정한다(고른 동안만, 떠나면 다시 접힘)
-  const deletedFolds = useMemo(() => buildDeletedFolds(rows, unitMap, { filter: state.filter }), [rows, unitMap, state.filter]);
+  // 삭제로 확정한 줄과 방금 삭제를 누른 줄은 흐린 한 줄로 접는다(설계 D6) - 펼침은 용지가 고름으로 정한다(고른 동안만, 떠나면 다시 접힘)
+  const deletedFolds = useMemo(() => buildDeletedFolds(rows, unitMap, { filter: state.filter, pendingDeletes }), [rows, unitMap, state.filter, pendingDeletes]);
   // 빈 템플릿(엮은 문서) 기본 보기의 순서 · 칸 옮기기 · 번호 표시(시안 2 D6) - Order 화면과 같은 저장 길, 화면 문서에 먼저 얹고 두 보기가 같은 문서를 그린다
   const composedOrder = useComposedOrder({ bundleId, doc: isComposedDoc ? composedDoc : null, labelLang: uiLang });
   const shownComposed = composedOrder.doc;
@@ -323,7 +322,7 @@ export default function AssignPage() {
       open: placement.kind === "place",
       label: placement.kind === "refused" ? t(PLACE_REFUSAL_KEYS[placement.reason]) : label,
       picked: key === pickedSpotKey,
-      onPick: () => pickPlaceSpot(spot, key),
+      onPick: (isMouse) => pickPlaceSpot(spot, key, isMouse),
     });
     const heads = new Map<string, PlaceSpotView>();
     for (const head of placeResolved.heads) {
@@ -451,7 +450,7 @@ export default function AssignPage() {
   // Space 미리보기에 덮어 그릴 확정 전 고른 곳 - 새 SOP 칸 · WI 자리를 골랐고 아직 저장하지 않았을 때만(값은 서버에 보내지 않는다)
   const pendingPlace = draft.destination?.kind === "slot" || draft.destination?.kind === "slot_heading" || draft.destination?.kind === "step" ? draft.destination : null;
   const pendingDoc = pendingPlace ? (tobeData?.docs ?? []).find((doc) => doc.id === pendingPlace.docId) : undefined;
-  const pendingOption = pendingPlace ? options.find((option) => option.id === getDestinationId(pendingPlace)) : undefined;
+  const pendingOption = pendingPlace ? labelOptions.find((option) => option.id === getDestinationId(pendingPlace)) : undefined;
   // 문장마다의 변경 종류 - 결정 칸의 표시와 같은 규칙(구조 종류가 먼저, 아니면 글 비교 "=" / "수정")
   const readPendingChange = (slot: (typeof slots)[number]): ChangeType => readSlotKind(slot, slots) ?? previewSlotChange(slot, draft.texts[slot.key]);
   const isHeadingPick = pendingPlace?.kind === "slot_heading" || slots.length === 0;
@@ -472,7 +471,7 @@ export default function AssignPage() {
 
   return (
     <>
-      <div className="relative grid h-full min-h-0 grid-cols-[minmax(0,1fr)_clamp(280px,24vw,420px)]" data-testid="assign">
+      <div className="assign-frame relative grid h-full min-h-0" data-testid="assign" onClick={handleFramePress}>
         {/* 절대 위치라 격자 칸을 차지하지 않는다 - 작업 화면 바닥에서 올라온다 */}
         <SpacePreview
           bundleId={bundleId}
@@ -488,6 +487,7 @@ export default function AssignPage() {
         />
         <div className="assign-desk">
           <AssignBar state={state} />
+          {state.queueFailure !== null && <QueueFailure text={state.queueFailure} onRetry={state.retryCommand} onDiscard={state.discardCommands} />}
           {rows.length === 0 ? (
             <EmptyState
               icon={Inbox}
@@ -551,6 +551,7 @@ export default function AssignPage() {
                       stats={docDashboard}
                       bundleLine={{ done, total: rows.length, refs: refPendingIds.length, captions: captionPendingKeys.length }}
                       onOpenDoc={openNewDoc}
+                      isDocOpen={isNewDocOpen}
                     />
                   ) : undefined
                 }
@@ -591,15 +592,21 @@ export default function AssignPage() {
                 renderNote={placeOf}
                 // 삭제·이동한 묶음, 이미 쓴 New 문서(혼자 연 문서)의 묶음과 그 문서에 이은 묶음(입구 2 - 캡션을 그 문서가 정한다)은 캡션이 필요 없다
                 isCaptionNeeded={(unitId, hasCaption) => isBundleCaptionNeeded(unitMap.get(unitId), hasCaption, isLinkedToWritten(unitId))}
-                // 목차 줄은 Old 문서에서만 흐린 블록으로 접는다(MD 1 F6). 목차 아님은 다듬는 원문이 그 Old 문서일 때만 - New 문장을 고치는 동안은 접고 펴기만
-                toc={
+                // 저절로 삭제된 줄(목차 · 본문 앞부분 · 개정 이력)은 Old 문서에서만 흐린 블록으로 접는다(MD 1 F6 · 쪼개기 먼저 §7 R3). 사유 쓰기 · 삭제 취소는
+                // 다듬는 원문이 그 Old 문서일 때만 - New 문장을 고치는 동안은 접고 펴기만
+                noise={
                   isSolo
                     ? undefined
                     : {
-                        canClear: canEdit && !isNewEdit,
+                        canEdit: canEdit && !isNewEdit,
                         // 처리 중인 블록만 꺼진다(용지가 잠긴 Unit으로 본다) - 묶음 전체 일 동안은 모두
                         busy: isGlobalPending,
-                        onClear: clearToc,
+                        onClear: (unitIds) => {
+                          if (oldView) clearNoise(oldView.document.id, unitIds);
+                        },
+                        onReason: (unitIds) => {
+                          if (oldView) openNoiseReason(oldView.document.id, unitIds);
+                        },
                         open: tocOpen,
                         selected: tocPick !== null && tocPick.docId === oldView?.document.id ? tocPick : null,
                         onToggle: (key) => setTocOpen((open) => toggleTocOpen(open, key)),
@@ -634,16 +641,17 @@ export default function AssignPage() {
                     ? {
                         // 그 줄이 처리 중이면 용지가 그 번호 칸만 끈다
                         busy: isGlobalPending,
+                        expected: expectedNumbers,
                         onSave: (unitId, number, follow, indentShift) =>
-                          void runUnitEdit({ type: "set_number", unit_id: unitId, number, follow, ...(indentShift === undefined ? {} : { indent_shift: indentShift }) }, number === null ? t("assign.number.didClear") : t("assign.number.didSet", { n: number }), unitId),
+                          runUnitEdit({ type: "set_number", unit_id: unitId, number, follow, ...(indentShift === undefined ? {} : { indent_shift: indentShift }) }, number === null ? t("assign.number.didClear") : t("assign.number.didSet", { n: number }), unitId),
                         // 들여쓰기는 두 번 저장한다(B8 7-a) - 누른 줄, 이어져 함께 바뀐 줄. Ctrl+Z 한 번이 함께 바뀐 줄만 되돌린다(같은 문서 쓰기는 차례로 간다)
                         onIndent: (plan, delta, label) => {
                           const toItem = (change: IndentChange) => ({ unit_id: change.unitId, indent_shift: change.indentShift });
                           const unitId = plan.clicked.unitId;
-                          void runUnitEdit({ type: "set_indents", units: [toItem(plan.clicked)] }, t(delta < 0 ? "assign.number.didOutdent" : "assign.number.didIndent", { id: label }), unitId);
+                          runUnitEdit({ type: "set_indents", units: [toItem(plan.clicked)] }, t(delta < 0 ? "assign.number.didOutdent" : "assign.number.didIndent", { id: label }), unitId);
                           if (plan.batch.length > 0) {
                             const done = t(delta < 0 ? "assign.number.didOutdentMore" : "assign.number.didIndentMore", { id: label, n: plan.batch.length });
-                            void runUnitEdit({ type: "set_indents", units: plan.batch.map(toItem) }, done, unitId);
+                            runUnitEdit({ type: "set_indents", units: plan.batch.map(toItem) }, done, unitId);
                           }
                         },
                       }
@@ -652,7 +660,7 @@ export default function AssignPage() {
                 onRangeSelect={
                   canEdit && mode === "old" && oldView
                     ? (range) => {
-                        // 목차 줄의 글자는 떼어 내지 않는다(서버 toc_line_locked) - 먼저 목차 아님
+                        // 저절로 삭제된 줄의 글자는 떼어 내지 않는다(서버 toc_line_locked) - 먼저 삭제 취소
                         if (!hasTocLineIn(oldView.units, range.blockId)) setCarvePick({ docId: oldView.document.id, ...range });
                       }
                     : undefined
@@ -672,7 +680,7 @@ export default function AssignPage() {
                         onClick={() => {
                           const op: EditOp = { type: "carve", block_id: carve.blockId, start: carve.start, end: carve.end };
                           clearCarve();
-                          void runUnitEdit(op, t("split.didCarve"), null);
+                          runUnitEdit(op, t("split.didCarve"), null);
                         }}
                       >
                         <SquarePlus size={14} strokeWidth={1.5} aria-hidden />
@@ -750,7 +758,7 @@ export default function AssignPage() {
                     }
                     aiFilter={newAiFilter}
                     place={newPlace}
-                    cellLink={isComposedDoc ? null : { pickable: canEdit && mode === "old" && row !== null, droppable: isOldDrag, onUnlink: canEdit && mode === "old" ? (cellId, unitId) => void state.unlinkCell(cellId, unitId) : undefined }}
+                    cellLink={isComposedDoc ? null : { pickable: canEdit && mode === "old" && row !== null, droppable: isOldDrag, onUnlink: canEdit && mode === "old" ? (cellId, unitId) => state.unlinkCell(cellId, unitId) : undefined }}
                     composed={
                       isComposedDoc && composedStrips
                         ? {
@@ -815,10 +823,14 @@ export default function AssignPage() {
             </div>
           )}
         </div>
-        <aside className="assign-side" data-testid="assign-inspector">
-          <AssignSidePanel state={state} />
-          <AssignHelp />
-        </aside>
+        <SideFloat prefs={view} onChange={changeView}>
+          {(headEnd) => (
+            <>
+              <AssignSidePanel state={state} headEnd={headEnd} />
+              <AssignHelp />
+            </>
+          )}
+        </SideFloat>
       </div>
       {joinLineId === null && renderJoinMenu(false)}
       {menuLineId === null && renderLinkMenu(false)}
@@ -839,11 +851,18 @@ export default function AssignPage() {
           summary={t("assign.identicalBody", { n: identical.data?.length ?? 0 })}
           confirmLabel={t("assign.identicalConfirm")}
           confirmIcon={Link2}
-          // 묶음 전체 일 - 다른 일이 처리 중이면 시작하지 않는다
-          busy={isAnyPending}
           testId="assign-identical-modal"
-          onConfirm={() => void confirmIdenticalAll()}
+          onConfirm={() => confirmIdenticalAll()}
           onClose={() => setConfirmingIdentical(false)}
+        />
+      )}
+      {state.isLeftoverOpen && (
+        <LeftoverTranslations
+          items={state.leftovers}
+          busy={isAnyPending}
+          onSettle={(item, action) => state.settleTranslations([item], action)}
+          onGo={state.goToTranslation}
+          onClose={() => state.setLeftoverSheet(false)}
         />
       )}
       {acceptKind && (
@@ -851,24 +870,16 @@ export default function AssignPage() {
           bundleId={bundleId}
           kind={acceptKind}
           document={acceptDoc}
-          busy={isAnyPending}
-          onAccept={(ids, reason) => void acceptAll(acceptKind, ids, reason)}
+          onAccept={(ids, reason) => acceptAll(acceptKind, ids, reason)}
           onClose={() => setAcceptKind(null)}
         />
       )}
       {editConfirm && (
         <ConfirmModal
           {...describeEditConfirm(editConfirm)}
-          busy={busy}
           testId="assign-edit-confirm"
-          onConfirm={() => {
-            const { retry } = editConfirm;
-            setEditConfirm(null);
-            if (retry.kind === "edit") void runUnitEdit(retry.op, retry.okText, retry.followId, true);
-            else if (retry.kind === "to_pair") void switchToPair(retry.unit, true);
-            else void applySplitSuggestion(retry.unit, retry.suggestion, true);
-          }}
-          onClose={() => setEditConfirm(null)}
+          onConfirm={state.answerEditConfirm}
+          onClose={state.cancelEditConfirm}
         />
       )}
       {resetScope && bundle && (
@@ -876,17 +887,7 @@ export default function AssignPage() {
           bundleId={bundleId}
           scope={resetScope}
           revision={bundle.revision}
-          undo={buildUndo(resetScope.kind === "document" ? { scope_label: resetScope.label } : {})}
-          onDone={() => {
-            markRecorded();
-            // 지운 범위의 저장 전 초안은 낡은 판단 위의 고름이라 버린다
-            const scope = resetScope;
-            setDrafts((prev) => Object.fromEntries(Object.entries(prev).filter(([key]) => scope.kind === "document" && rowMap.get(key)?.documentId !== scope.documentId)));
-            setResetScope(null);
-            setMenu(null);
-            reloadData();
-            void loadBundle(bundleId);
-          }}
+          onRun={(revision) => state.runReset(resetScope, revision)}
           onClose={() => setResetScope(null)}
         />
       )}
@@ -898,18 +899,20 @@ export default function AssignPage() {
           requiredMessage={remarkEdit.need ? t(`remark.need.${remarkEdit.need}`) : null}
           confirmLabel={t(remarkEdit.then === "hold" ? "remark.saveHold" : remarkEdit.then === "confirm" ? "remark.saveConfirm" : "common.save")}
           testId="assign-remark-modal"
-          onClose={() => {
-            focusAfterRef.current = "assign-primary";
-            setRemarkEdit(null);
-          }}
-          onConfirm={(text) => {
-            const then = remarkEdit.then;
-            focusAfterRef.current = "assign-primary";
-            setRemarkEdit(null);
-            // 글을 바꾸지 않고 확인하면 초안을 만들지 않는다 - 저장 안 한 변경으로 잡혀 나가기 확인·고치기 막힘이 생기지 않게
-            if (text !== reasonNow) setDraft({ reason: text });
-            if (then) void runSave(then, text);
-          }}
+          onClose={state.closeRemark}
+          onConfirm={state.confirmRemark}
+        />
+      )}
+      {remarkEdit?.kind === "noise" && (
+        <RemarkModal
+          title={t("assign.noise.modalTitle")}
+          initial={remarkEdit.initial}
+          requiredMessage={null}
+          intro={<p className="text-xs text-ink-2">{t(remarkEdit.isMixed ? "assign.noise.modalMixed" : "assign.noise.modalIntro", { n: remarkEdit.unitIds.length })}</p>}
+          confirmLabel={t("common.save")}
+          testId="assign-noise-modal"
+          onClose={state.closeNoiseReason}
+          onConfirm={state.confirmNoiseReason}
         />
       )}
       {remarkEdit?.kind === "new" && (
@@ -942,51 +945,17 @@ export default function AssignPage() {
             const href = leaveTo;
             setLeaveTo(null);
             setDrafts({});
+            // 이미 누른 판단은 버리지 않는다 - 큐가 떠난 뒤에도 마저 보낸다
             navigate(href, { immediate: true });
           }}
           onClose={() => setLeaveTo(null)}
         />
       )}
-      {isMoveAsk && row && (
-        <MoveModal
-          bundleId={bundleId}
-          initialCode={moveCode}
-          onClose={() => setMoveAsk(false)}
-          onConfirm={(code, moveReason) => {
-            setMoveAsk(false);
-            // 비운 사유는 저장된 사유를 그대로 둔다 - 그것도 없으면 결과물이 "이동"으로 적는다
-            decideNow({ kind: "move" }, code, moveReason || undefined);
-          }}
-        />
-      )}
       {bulk && (
         <BulkModal
-          bundleId={bundleId}
-          action={bulk}
           count={pickedOld.size}
           onClose={() => setBulk(null)}
-          onConfirm={async (bulkReason, code) => {
-            const unitRows = [...pickedOld].map((id) => unitMap.get(id)).filter((unit): unit is UnitRow => unit !== undefined);
-            try {
-              await bulkDecide(bundleId, {
-                action: bulk === "delete" ? "delete" : "move_external",
-                reason: bulkReason,
-                move_target_code: code,
-                units: unitRows.map((unit) => ({ unit_id: unit.unit_id, revision: unit.decision.revision })),
-              }, buildUndo());
-              markRecorded();
-              showToast(t("classify.bulkDone", { n: unitRows.length }));
-              setBulk(null);
-              setChecked(new Set());
-              // 한 번에 삭제·이동도 서버가 짝을 정리하지만 어느 짝인지 알려 주지 않는다 - 짝 모양·문서 revision을 다시 받는다
-              reloadData(true);
-              void loadBundle(bundleId);
-            } catch (err) {
-              showToast(humanizeApiError(err, t), "error");
-              // revision이 낡아 거절됐을 수 있다 - 다시 불러와야 다음 시도가 같은 이유로 실패하지 않는다
-              reloadData();
-            }
-          }}
+          onConfirm={(bulkReason) => state.runBulkDelete([...pickedOld], bulkReason)}
         />
       )}
     </>
@@ -996,71 +965,19 @@ export default function AssignPage() {
 
 
 
-/** 한 줄 다른 문서로 이동(우클릭 메뉴·M) - 대상 문서를 고르면 바로 확정한다. 사유는 선택 */
-function MoveModal({ bundleId, initialCode, onClose, onConfirm }: { bundleId: number; initialCode: string; onClose: () => void; onConfirm: (code: string, reason: string) => void }) {
-  const { t } = useI18n();
-  const [code, setCode] = useState(initialCode);
-  const [reason, setReason] = useState("");
-  const ready = code.trim() !== "";
-  return (
-    <Modal
-      title={t("assign.moveModal.title")}
-      onClose={onClose}
-      testId="assign-move-modal"
-      footer={
-        <>
-          <button type="button" className="btn" data-testid="assign-move-cancel" onClick={onClose}>
-            <X size={16} strokeWidth={1.5} aria-hidden />
-            {t("common.cancel")}
-          </button>
-          <button type="button" className="btn pri" data-testid="assign-move-confirm" disabled={!ready} onClick={() => onConfirm(code.trim(), reason.trim())}>
-            <ExternalLink size={16} strokeWidth={1.5} aria-hidden />
-            {t("assign.moveModal.run")}
-          </button>
-        </>
-      }
-    >
-      <div className="grid gap-1">
-        <span className="text-xs text-ink-2">{t("classify.moveTo")}</span>
-        <MoveTargetField bundleId={bundleId} value={code} testId="assign-move-modal-code" autoFocus onChange={setCode} />
-      </div>
-      <label className="grid gap-1">
-        <span className="text-xs text-ink-2">{t("classify.reason")}</span>
-        <textarea
-          rows={2}
-          className="block w-full resize-y rounded-md border border-line-2 bg-surface px-2 py-[5px] text-[13px] leading-[19px] text-ink focus:border-accent focus:outline-none"
-          data-testid="assign-move-modal-reason"
-          placeholder={t("remark.blankMove")}
-          value={reason}
-          maxLength={REMARK_MAX_LENGTH}
-          onChange={(event) => setReason(event.target.value)}
-        />
-      </label>
-      <RecentRemarks testId="assign-move-modal-recent" onPick={setReason} />
-    </Modal>
-  );
-}
-
 interface BulkModalProps {
-  bundleId: number;
-  action: "delete" | "move";
   count: number;
   onClose: () => void;
-  onConfirm: (reason: string, code: string) => Promise<void>;
+  onConfirm: (reason: string) => void;
 }
 
-function BulkModal({ bundleId, action, count, onClose, onConfirm }: BulkModalProps) {
+function BulkModal({ count, onClose, onConfirm }: BulkModalProps) {
   const { t } = useI18n();
   const [reason, setReason] = useState("");
-  const [code, setCode] = useState("");
-  const [busy, setBusy] = useState(false);
-  // Remark는 선택 - 비우면 결과물이 "삭제"·"이동"으로 적는다(요청서 4번)
-  const ready = action === "delete" || code.trim() !== "";
   return (
     <Modal
-      title={action === "delete" ? t("classify.bulkDeleteTitle") : t("classify.bulkMoveTitle")}
+      title={t("classify.bulkDeleteTitle")}
       onClose={onClose}
-      isBusy={busy}
       testId="assign-bulk-modal"
       footer={
         <>
@@ -1070,16 +987,11 @@ function BulkModal({ bundleId, action, count, onClose, onConfirm }: BulkModalPro
           </button>
           <button
             type="button"
-            className={`btn ${action === "delete" ? "danger" : "pri"}`}
+            className="btn danger"
             data-testid="assign-bulk-confirm"
-            disabled={!ready || busy}
-            onClick={async () => {
-              setBusy(true);
-              await onConfirm(reason.trim(), code.trim());
-              setBusy(false);
-            }}
+            onClick={() => onConfirm(reason.trim())}
           >
-            {action === "delete" ? <Trash2 size={16} strokeWidth={1.5} aria-hidden /> : <ExternalLink size={16} strokeWidth={1.5} aria-hidden />}
+            <Trash2 size={16} strokeWidth={1.5} aria-hidden />
             {t("classify.bulkRun", { n: count })}
           </button>
         </>
@@ -1093,7 +1005,7 @@ function BulkModal({ bundleId, action, count, onClose, onConfirm }: BulkModalPro
           rows={3}
           className="block w-full resize-y rounded-md border border-line-2 bg-surface px-2 py-[5px] text-[13px] leading-[19px] text-ink focus:border-accent focus:outline-none"
           data-testid="assign-bulk-reason"
-          placeholder={t(action === "delete" ? "remark.blankDelete" : "remark.blankMove")}
+          placeholder={t("remark.blankDelete")}
           value={reason}
           maxLength={REMARK_MAX_LENGTH}
           autoFocus
@@ -1101,12 +1013,6 @@ function BulkModal({ bundleId, action, count, onClose, onConfirm }: BulkModalPro
         />
       </label>
       <RecentRemarks testId="assign-bulk-recent" onPick={setReason} />
-      {action === "move" && (
-        <div className="grid gap-1">
-          <span className="text-xs text-ink-2">{t("classify.moveTo")}</span>
-          <MoveTargetField bundleId={bundleId} value={code} testId="assign-bulk-code" onChange={setCode} />
-        </div>
-      )}
     </Modal>
   );
 }

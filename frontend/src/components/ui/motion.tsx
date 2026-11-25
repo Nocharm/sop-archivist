@@ -21,6 +21,7 @@ import {
   pickOnScreenKeys,
   pickScrollAnchor,
   planUnwrapPhases,
+  planUnwrapRevert,
   type MarkerPhase,
   type MotionBox,
   type MotionSnapshot,
@@ -175,9 +176,38 @@ function readUnwrapTokens(): { timings: UnwrapTimings; easing: Record<MarkerPhas
   };
 }
 
+/** 움직일 수 있는가 - 없는 칸 · animate가 없는 곳 · 움직임 줄이기면 바로 바꾸고 번쩍이기만 한다 */
+function canAnimate(container: HTMLElement | null): container is HTMLElement {
+  return container !== null && typeof container.animate === "function" && !window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+}
+
+const readMarkKind = (mark: HTMLElement, marker: UnwrapMarker) => mark.getAttribute(`data-unwrap-${marker}`) ?? "";
+
+/** 걷기 - 사라질 표시가 옅어진다. revert는 그 움직임을 지금 자리에서 반대로 튼 것 */
+function playUnwrapClear(container: HTMLElement | null, scopes: readonly string[], reverse: boolean): { animation: Animation; revert: () => Animation }[] {
+  if (!canAnimate(container)) return [];
+  const { timings, easing: easings } = readUnwrapTokens();
+  const { before, direction } = planUnwrapPhases(timings, reverse);
+  const back = planUnwrapRevert(timings, reverse);
+  const easing = easings[before.easing];
+  return findUnwrapMarks(container, scopes, before.marker).map((mark) => {
+    const keyframes = buildMarkerKeyframes(before.marker, readMarkKind(mark, before.marker));
+    // 끝난 모양으로 붙들어 둔다(fill) - 응답을 기다리는 동안과 바꿈이 그려지기 전에 다시 나타나지 않게
+    const animation = mark.animate(keyframes, { duration: before.duration, easing, direction, fill: "forwards" });
+    return {
+      animation,
+      revert: () => {
+        const played = Math.min(Number(animation.currentTime ?? before.duration), before.duration);
+        animation.cancel();
+        return mark.animate(keyframes, { ...back, easing, delay: played - back.duration });
+      },
+    };
+  });
+}
+
 interface UnwrapRun {
   animations: Animation[];
-  /** 걷는 동안 미뤄 둔 바꿈 - 적용하면 null */
+  /** 걷는 동안 미뤄 둔 바꿈 - 응답 전이거나 적용했으면 null */
   change: (() => void) | null;
   /** 전환이 끝나면 부를 일(afterMotion) */
   settled: (() => void)[];
@@ -239,43 +269,70 @@ export interface UnwrapRunOptions {
   reverse?: boolean;
 }
 
+/** 누른 순간 시작한 풀기 전환 하나 - commit이나 revert 가운데 하나를 꼭 부른다(부를 때까지 걷은 채로 있다) */
+export interface UnwrapHandle {
+  /** 응답이 왔다 - 걷기가 끝나면 change를 그리고 펼친다. 전환이 끝나면(다음 begin이 앞지르면 그때) 풀린다 */
+  commit: (change: () => void) => Promise<void>;
+  /** 거절 · 되묻기 - 걷은 것을 거꾸로 되돌린다 */
+  revert: () => void;
+}
+
 /**
- * 풀기 전환 - 표 벗기기처럼 원문 모양이 바뀔 때 run(change)로 감싸면 세 단계로 바뀐다(명세 F10). 화면은 표시만 단다:
+ * 풀기 전환 - 표 벗기기처럼 원문 모양이 바뀔 때 누르면 begin, 새 모양을 받으면 그 손잡이의 commit(change)로 세 단계로 바뀐다(명세 F10, 누르는 순간 시작은 A2-R6).
+ * 화면은 표시만 단다:
  * - `data-unwrap-scope="<id>"` 바뀌는 곳을 감싼 요소(바꾸기 전과 뒤 모두)
  * - `data-unwrap-leave` 바꾸면 사라지는 것(TABLE 표시 · "캡션 필요" 줄), `data-unwrap-enter` 바꾸면 생기는 것("다시 표로" · 캡션 칩).
  *   값이 "frame"이면 글은 두고 틀(테두리 · 바탕 · 그림자)만 - 표 선과 음영, 왼쪽 세로선. 미끄러지는 글이 든 표시(캡션 칩)도 frame으로 단다(요소째 숨기면 글도 안 보인다)
  * - `data-flip-key` 같은 글(같은 Unit · span)의 옛 자리와 새 자리. 뒤따르는 줄에도 달면 밀려나는 것이 함께 미끄러진다. 글 조각(span)은 inline-block이어야 움직이고,
  *   키를 단 요소 안에 또 달지 않는다(안팎이 함께 옮겨져 두 번 움직인다)
  *
- * 1 걷기: leave 표시가 옅어진다(--dur-base · --ease-exit). 그동안 change는 미뤄 둔다 - 사라질 표시가 화면에 없으면 바로 바꾼다.
+ * 1 걷기: 누르면 leave 표시가 옅어진다(--dur-base · --ease-exit) - commit까지 걷은 채 기다리고, 거절이면 거꾸로(revert). 걷는 동안 온 change는 미뤄 둔다 - 사라질 표시가 화면에 없으면 바로 바꾼다.
  * 2 펼치기: change를 그 자리에서 그려(flushSync) 같은 키가 새 자리로 미끄러진다(--dur-spread · --ease-move, 위 줄부터 --stagger-step씩 늦게, --stagger-max까지).
  * 3 붙이기: enter 표시가 펼치기 뒤에 나타난다(--dur-attach · --ease-pop).
  * 긴 문서에서는 창에 보이는 것만 움직이고 나머지는 재지도 않고 바로 제자리다. 움직임 줄이기 설정이면 바로 바꾸고 바뀐 곳(scope)만 한 번 번쩍인다.
- * 전환이 끝나면(다음 run이 앞지르면 그때) 풀리는 Promise를 돌려준다 - 되돌리기 알림은 부른 쪽이 띄운다. 이벤트 핸들러에서 부른다(이펙트 안에서는 flushSync를 쓸 수 없다)
+ * 되돌리기 알림은 부른 쪽이 띄운다. begin은 어디서든, commit은 이펙트 밖에서 부른다(이펙트 안에서는 flushSync를 쓸 수 없다)
  */
-export function useUnwrapMotion(containerRef: RefObject<HTMLElement | null>): { run: (change: () => void, options: UnwrapRunOptions) => Promise<void>; afterMotion: (callback: () => void) => boolean } {
+export function useUnwrapMotion(containerRef: RefObject<HTMLElement | null>): { begin: (options: UnwrapRunOptions) => UnwrapHandle; afterMotion: (callback: () => void) => boolean } {
   const activeRef = useRef<UnwrapRun | null>(null);
 
   // 걷는 중에 화면을 떠나면 미뤄 둔 바꿈을 그대로 적용한다 - 사람이 한 편집이다
   useEffect(() => () => stopUnwrapRun(activeRef)?.(), []);
 
-  async function run(change: () => void, { scopes, reverse = false }: UnwrapRunOptions): Promise<void> {
+  function begin({ scopes, reverse = false }: UnwrapRunOptions): UnwrapHandle {
     // 앞선 전환이 아직 걷는 중이면 그 바꿈부터 - 차례가 바뀌지 않게
-    const earlier = stopUnwrapRun(activeRef);
-    if (earlier) flushSync(earlier);
-    const container = containerRef.current;
-    const active: UnwrapRun = { animations: [], change, settled: [] };
+    stopUnwrapRun(activeRef)?.();
+    const clears = playUnwrapClear(containerRef.current, scopes, reverse);
+    const active: UnwrapRun = { animations: clears.map((clear) => clear.animation), change: null, settled: [] };
     activeRef.current = active;
-    try {
-      await playUnwrapRun(container, active, change, scopes, reverse);
-    } finally {
+
+    function finish() {
       if (activeRef.current === active) activeRef.current = null;
       for (const callback of active.settled.splice(0)) callback();
     }
+
+    async function commit(change: () => void): Promise<void> {
+      try {
+        // 응답을 기다리는 사이 다음 전환이나 화면 떠나기가 앞질렀다 - 움직이지 않고 바꾼다
+        if (activeRef.current !== active) flushSync(change);
+        else {
+          active.change = change;
+          await playUnwrapChange(containerRef.current, active, change, scopes, reverse);
+        }
+      } finally {
+        finish();
+      }
+    }
+
+    function revert(): void {
+      if (activeRef.current === active) active.animations = clears.map((clear) => clear.revert());
+      void Promise.allSettled(active.animations.map((animation) => animation.finished)).then(finish);
+    }
+
+    return { commit, revert };
   }
 
-  async function playUnwrapRun(container: HTMLElement | null, active: UnwrapRun, change: () => void, scopes: readonly string[], reverse: boolean): Promise<void> {
-    if (!container || typeof container.animate !== "function" || window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) {
+  async function playUnwrapChange(container: HTMLElement | null, active: UnwrapRun, change: () => void, scopes: readonly string[], reverse: boolean): Promise<void> {
+    if (!canAnimate(container)) {
       active.change = null;
       const kept = container ? readScrollAnchor(container, scopes) : null;
       flushSync(change);
@@ -284,26 +341,20 @@ export function useUnwrapMotion(containerRef: RefObject<HTMLElement | null>): { 
       return;
     }
     const { timings, easing } = readUnwrapTokens();
-    const { before, after, direction } = planUnwrapPhases(timings, reverse);
-    const readKind = (mark: HTMLElement, marker: UnwrapMarker) => mark.getAttribute(`data-unwrap-${marker}`) ?? "";
-    // 걷기 전에 잰다 - 되돌리기의 걷기는 enter 표시(다시 표로 머리 줄)를 작게 줄여 윗변이 밀린다
-    const kept = readScrollAnchor(container, scopes);
-
-    // 끝난 모양으로 붙들어 둔다(fill) - 바꿈이 그려지기 전에 다시 나타나지 않게
-    active.animations = findUnwrapMarks(container, scopes, before.marker).map((mark) =>
-      mark.animate(buildMarkerKeyframes(before.marker, readKind(mark, before.marker)), { duration: before.duration, easing: easing[before.easing], direction, fill: "forwards" }),
-    );
+    const { after, direction } = planUnwrapPhases(timings, reverse);
     if (active.animations.length > 0) await Promise.allSettled(active.animations.map((animation) => animation.finished));
-    // 그사이 다음 run이나 화면 떠나기가 앞질렀다 - 바꿈은 거기서 적용했다
+    // 그사이 다음 begin이나 화면 떠나기가 앞질렀다 - 바꿈은 거기서 적용했다
     if (activeRef.current !== active) return;
 
     const first = takeUnwrapSnapshot(container);
+    // 바뀐 뒤에도 남은 표시가 숨은 채 굳지 않게 푼다. 바꾸기 전에 풀어 보던 자리를 잰다(같은 그리기라 보이지 않는다) -
+    // 되돌리기의 걷기는 enter 표시를 작게 줄여 윗변이 밀리고, 누른 때 재면 기다리는 동안의 스크롤을 되감는다
+    for (const animation of active.animations) animation.cancel();
+    const kept = readScrollAnchor(container, scopes);
     active.change = null;
     flushSync(change);
     // 보던 자리부터 되맞춘 뒤 끝 자리를 잰다 - 글은 옛 화면 자리에서 새 화면 자리로 미끄러진다
     restoreScrollAnchor(kept);
-    // 바뀐 뒤에도 남은 표시가 숨은 채 굳지 않게 푼다
-    for (const animation of active.animations) animation.cancel();
     const last = takeUnwrapSnapshot(container);
     const shifts = computeUnwrapShifts(first.snapshot.boxes, last.snapshot.boxes, pickOnScreenKeys(first.snapshot, last.snapshot));
     // 줄 차례는 펼친 쪽 화면의 자리로 센다 - 앞으로는 끝 자리, 되돌리기는 처음 자리
@@ -318,13 +369,13 @@ export function useUnwrapMotion(containerRef: RefObject<HTMLElement | null>): { 
     const spreadEnd = getSpreadEnd(delays, timings.spread);
     for (const mark of findUnwrapMarks(container, scopes, after.marker)) {
       // 펼치기가 끝날 때까지 숨은 모양으로 붙들어 둔다(fill)
-      animations.push(mark.animate(buildMarkerKeyframes(after.marker, readKind(mark, after.marker)), { duration: after.duration, easing: easing[after.easing], direction, delay: spreadEnd, fill: "backwards" }));
+      animations.push(mark.animate(buildMarkerKeyframes(after.marker, readMarkKind(mark, after.marker)), { duration: after.duration, easing: easing[after.easing], direction, delay: spreadEnd, fill: "backwards" }));
     }
     active.animations = animations;
     await Promise.allSettled(animations.map((animation) => animation.finished));
   }
 
-  /** 도는 전환이 있으면 끝난 뒤(다음 run이 앞질러도 그때) callback을 부르고 true - 없으면 부르지 않고 false(부른 쪽이 바로 한다).
+  /** 도는(또는 응답을 기다리는) 전환이 있으면 끝난 뒤(다음 begin이 앞질러도 그때) callback을 부르고 true - 없으면 부르지 않고 false(부른 쪽이 바로 한다).
    *  바꿈을 그리는 렌더에서 불러도 된다 - 따라가기 스크롤을 전환 뒤로 미룬다 */
   function afterMotion(callback: () => void): boolean {
     const active = activeRef.current;
@@ -333,16 +384,17 @@ export function useUnwrapMotion(containerRef: RefObject<HTMLElement | null>): { 
     return true;
   }
 
-  return { run, afterMotion };
+  return { begin, afterMotion };
 }
 
 // 접힘 전환(--dur-slow 240ms)보다 조금 길게 기다린 뒤 내용을 뗀다
 const COLLAPSE_EXIT_MS = 260;
 
-/** 열릴 때 붙이고 다음 프레임에 펼치며, 닫힐 때 접은 뒤 뗀다 - 닫힌 내용은 DOM에 남지 않는다. appear면 열린 채 처음 붙어도 접힌 모양에서 펼친다 */
-function usePresence(open: boolean, appear = false): { mounted: boolean; shown: boolean } {
-  const [mounted, setMounted] = useState(open);
-  const [shown, setShown] = useState(open && !appear);
+/** 열릴 때 붙이고 다음 프레임에 펼치며, 닫힐 때 접은 뒤 뗀다 - 닫힌 내용은 DOM에 남지 않는다. appear면 열린 채 처음 붙어도 접힌 모양에서 펼치고,
+ * startOpen이면 닫힌 채 처음 붙어도 펼친 모양에서 접는다(방금까지 감싸지 않고 그리던 것) */
+function usePresence(open: boolean, appear = false, startOpen = false): { mounted: boolean; shown: boolean } {
+  const [mounted, setMounted] = useState(open || startOpen);
+  const [shown, setShown] = useState(startOpen || (open && !appear));
   useEffect(() => {
     let frame = 0;
     let timer = 0;
@@ -360,13 +412,13 @@ function usePresence(open: boolean, appear = false): { mounted: boolean; shown: 
       window.clearTimeout(timer);
     };
   }, [open]);
-  return { mounted: mounted || open, shown: shown && open };
+  return { mounted: mounted || open, shown: shown && (open || startOpen) };
 }
 
 /** 접기·펼치기 - 높이를 grid 0fr↔1fr로 전환한다(높이를 재지 않아 내용이 바뀌어도 튀지 않는다). children이 함수면 붙어 있는 동안만 그린다.
- * appear면 열린 채 새로 붙어도 펼치며 나타난다. 접히는 동안 안쪽은 inert라 눌리거나 포커스를 받지 않는다 */
-export function Collapse({ open, children, testId, className, appear = false }: { open: boolean; children: ReactNode | (() => ReactNode); testId?: string; className?: string; appear?: boolean }) {
-  const { mounted, shown } = usePresence(open, appear);
+ * appear면 열린 채 새로 붙어도 펼치며 나타나고, startOpen이면 닫힌 채 새로 붙어도 접히며 사라진다. 접히는 동안 안쪽은 inert라 눌리거나 포커스를 받지 않는다 */
+export function Collapse({ open, children, testId, className, appear = false, startOpen = false }: { open: boolean; children: ReactNode | (() => ReactNode); testId?: string; className?: string; appear?: boolean; startOpen?: boolean }) {
+  const { mounted, shown } = usePresence(open, appear, startOpen);
   if (!mounted) return null;
   return (
     <div className={className ? `fold ${className}` : "fold"} data-open={shown ? "" : undefined} data-testid={testId} inert={!open || undefined}>

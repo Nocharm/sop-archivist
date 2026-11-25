@@ -32,6 +32,15 @@ export function isUnwrapSuggestionUnchanged(current: readonly number[], suggeste
   return isUnwrapSuggestionApplicable(current, suggested) && current.every((id, index) => id === suggested[index]);
 }
 
+/** 내용이 같은 미리 보기면 앞의 것 그대로 - 자료를 다시 받을 때마다 새것이면 용지의 덩어리를 모두 다시 그린다 */
+export function keepSamePreviews(prev: ReadonlyMap<number, readonly number[]>, next: ReadonlyMap<number, readonly number[]>): ReadonlyMap<number, readonly number[]> {
+  const isSame = prev.size === next.size && [...next].every(([tableId, order]) => {
+    const before = prev.get(tableId);
+    return before !== undefined && before.length === order.length && before.every((id, index) => id === order[index]);
+  });
+  return isSame ? prev : next;
+}
+
 /** 순서 제안을 요청한 표 하나 - baseline은 이 요청이 끝났다고 셀 수 있는 지금까지 끝난 순서 작업의 수(요청 때 끝난 수 + 앞서 기다리는 수 + 1) */
 export interface UnwrapAiAsk {
   tableId: number;

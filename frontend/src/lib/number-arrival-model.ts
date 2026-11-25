@@ -1,6 +1,7 @@
 // 번호가 새로 생긴 박스 고르기 - 합치기 · 표 벗기기 같은 편집 응답 뒤, 글 앞 번호가 번호 칸으로 빠지는 짧은 전환(항목 6-b)을 걸 박스.
 // 편집은 단위를 은퇴시키고 새로 만들어 id가 바뀌므로, 같은 id 또는 같은 첫 자리(블록 · 시작)의 앞 단위에 번호가 없었는지로 본다.
-import type { ViewUnit } from "@/lib/api-sop";
+// 번호 고치기는 응답을 기다리지 않고 기대 글을 먼저 보인다(A2-R6) - 전환도 누른 순간 시작하고, 응답 값이 이긴다.
+import type { EditOp, ViewUnit } from "@/lib/api-sop";
 
 const EMPTY: ReadonlySet<number> = new Set();
 
@@ -33,4 +34,45 @@ export function findArrivedNumbers(
     if (hadNumber === false) arrived.add(unit.id);
   }
   return arrived.size === 0 ? EMPTY : arrived;
+}
+
+/** 누른 편집이 줄 번호 - 번호 고치기가 아니면 null. 따라 바뀌는 뒤 번호는 응답이 준다 */
+export function readExpectedNumber(op: EditOp): { unitId: number; value: string | null } | null {
+  return op.type === "set_number" ? { unitId: op.unit_id, value: op.number } : null;
+}
+
+/** 응답은 왔고 그 편집이 든 보기를 아직 못 받은 번호 - revision은 응답의 문서 revision */
+export interface SentNumber {
+  docId: number;
+  revision: number;
+  unitId: number;
+  value: string | null;
+}
+
+/**
+ * 번호 칸에 먼저 보일 기대 글 [단위, 번호] - 아직 응답이 오지 않은 편집(ops, 나간 차례)과, 응답 뒤 그 revision의 보기가 닿지 않은 것(sent).
+ * 같은 단위면 나중에 누른 것. 보기가 닿으면 빠진다 - 응답 값이 이긴다
+ */
+export function listExpectedNumbers(ops: readonly EditOp[], sent: readonly SentNumber[], views: ReadonlyArray<{ document: { id: number; revision: number } }>): Array<[number, string | null]> {
+  const expected = new Map<number, string | null>();
+  for (const item of sent) {
+    if (views.some(({ document }) => document.id === item.docId && document.revision < item.revision)) expected.set(item.unitId, item.value);
+  }
+  for (const op of ops) {
+    const number = readExpectedNumber(op);
+    if (number !== null) expected.set(number.unitId, number.value);
+  }
+  return [...expected];
+}
+
+/** 단위 보기에 기대 글을 얹는다 - 얹을 것이 없으면 같은 것을 돌려준다(용지를 다시 그리지 않게) */
+export function applyExpectedNumbers<U extends Pick<ViewUnit, "number">>(units: ReadonlyMap<number, U>, expected: ReadonlyMap<number, string | null>): ReadonlyMap<number, U> {
+  let shown: Map<number, U> | null = null;
+  for (const [unitId, value] of expected) {
+    const unit = units.get(unitId);
+    if (!unit?.number || unit.number.value === value) continue;
+    shown ??= new Map(units);
+    shown.set(unitId, { ...unit, number: { ...unit.number, value, is_set: true } });
+  }
+  return shown ?? units;
 }

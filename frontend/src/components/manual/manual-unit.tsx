@@ -8,9 +8,10 @@ import { ReadStatePill } from "@/components/manual/read-state";
 import { STAGE_ICONS } from "@/components/stage-nav";
 import { MarkdownView, type MarkdownImageSize } from "@/components/ui/markdown-view";
 import { Tooltip } from "@/components/ui/tooltip";
+import { useDraftingOn } from "@/lib/drafting";
 import { useI18n } from "@/lib/i18n";
 import { getSectionStage, MANUAL_ASSET_BASE, MANUAL_LANG, type ManualSection, type ReadState } from "@/lib/manual";
-import { STAGES } from "@/lib/stages";
+import { listStages } from "@/lib/stages";
 
 interface ManualUnitProps {
   section: ManualSection;
@@ -24,8 +25,11 @@ interface ManualUnitProps {
 
 export function ManualUnit({ section, state, current, imageSizes, onMark, onUnmark }: ManualUnitProps) {
   const { t } = useI18n();
-  const stageKey = getSectionStage(section.id);
-  const step = stageKey ? STAGES.find((stage) => stage.key === stageKey)?.step : undefined;
+  const stages = listStages(useDraftingOn() === true);
+  // 숨긴 단계의 조각은 레일에 짝이 없어 단계 표시를 달지 않는다
+  const stage = stages.find((item) => item.key === getSectionStage(section.id));
+  const stageKey = stage?.key;
+  const step = stage?.step;
   const StageIcon = stageKey ? STAGE_ICONS[stageKey] : undefined;
   const stageLabel = stageKey ? t("manual.explains", { stage: t(`stage.${stageKey}`) }) : "";
   const testId = `manual-unit-${section.id}`;

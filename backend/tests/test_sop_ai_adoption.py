@@ -1022,6 +1022,37 @@ def test_using_a_match_suggestion_records_as_is(
     assert {item["suggestion_id"] for item in response.json()["targets"]} == {suggestion.id}
 
 
+@pytest.mark.usefixtures("clean_embedding_cache")
+def test_confirming_a_planned_link_with_its_suggestion_id_records_as_is(
+    client: TestClient, fake_ai: FakeAi, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # 화면이 추천 첫 카드(잇기 제안)로 바로 확정하는 저장 — 변경 종류 없이 제안의 New 문장과 suggestion_id만 싣는다(B1-R3).
+    # 제안 id를 빼고 같은 자리로 저장하면 받은 것이 아니라 채택에 들지 않는다
+    for uses_suggestion in (True, False):
+        bundle = make_match_bundle(client, p(MATCH_OLD), p(MATCH_NEW))
+        use_vectors(monkeypatch, fake_ai, {MATCH_OLD: 0, MATCH_NEW: 0})
+        (unit_id,) = read_old_ids(client, bundle, MATCH_OLD)
+        plan(client, bundle.id)
+        suggestion = find_live_suggestion(unit_id, kind="match")
+        targets = {row.id: row for row in read_rows(TargetSentence)}
+
+        response = save_group(client, bundle.id, {
+            "action": "confirm",
+            "units": [{"unit_id": unit_id, "revision": read_decision(unit_id).revision, "disposition": "assigned"}],
+            "targets": [
+                {"key": str(target_id), "id": target_id, "revision": targets[target_id].revision, "source_unit_ids": [unit_id]}
+                for target_id, _ in suggestion.content["links"]
+            ],
+            **({"suggestion_id": suggestion.id} if uses_suggestion else {}),
+        })
+
+        assert response.status_code == 200, response.text
+        (after,) = [row for row in read_suggestions() if row.id == suggestion.id]
+        assert (after.adoption, read_decision(unit_id).suggestion_id) == (
+            ("as_is", suggestion.id) if uses_suggestion else (None, None)
+        )
+
+
 # --- 편집으로 은퇴 ---
 
 

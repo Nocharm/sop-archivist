@@ -48,6 +48,7 @@ from app.models import (  # noqa: E402
 )
 from app.settings import settings  # noqa: E402
 from app.sop.models import Bundle, BundleDeletionRecord, EquisLookup, GuidelineVersion  # noqa: E402
+from app.sop.segment import RULE_LEGACY  # noqa: E402
 from tests.fake_ai import FakeAi, install_fake_ai  # noqa: E402
 
 
@@ -151,6 +152,16 @@ def legacy_ref_proposals(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture
+def legacy_split_rule(monkeypatch: pytest.MonkeyPatch) -> None:
+    """올리는 문서를 쪼개기 규칙 1(문장마다)로 쪼갠다 — 이미 올린 문서의 길을 보는 시험용.
+
+    쪼개기를 보지 않는 시험이 합성 문서의 문장 하나를 글로 찾는다. 운영에 있는 문서는 모두 규칙 1이라 그 길의 검증이 그대로 필요하다
+    (규칙 2의 쪼개기는 test_sop_split_golden.py, 규칙 2로 끝까지 가는 길은 test_sop_e2e.py가 본다).
+    """
+    monkeypatch.setattr("app.sop.ingest.NEW_SPLIT_RULE", RULE_LEGACY)
+
+
+@pytest.fixture
 def restore_guidelines(client: TestClient) -> Iterator[None]:
     """지침·프롬프트 버전 표를 테스트 전 상태로 되돌린다.
 
@@ -189,6 +200,19 @@ def auto_prepare(fake_ai: FakeAi, monkeypatch: pytest.MonkeyPatch) -> FakeAi:
     """fake_ai 위에 저절로 서는 AI(업로드 뒤 묶기 계획 등)를 켠다 — 같은 FakeAi를 돌려준다."""
     monkeypatch.setattr(settings, "ai_auto_prepare", True)
     return fake_ai
+
+
+@pytest.fixture
+def hidden_ai_on(monkeypatch: pytest.MonkeyPatch) -> None:
+    """숨긴 AI(자동 칸 추천 · 계획의 삭제 후보)를 켠다 — 코드를 지우지 않은 숨긴 길을 계속 보는 시험용(쪼개기 먼저 설계 §5 H4)."""
+    monkeypatch.setattr("app.sop.ai.constants.AUTO_CLASSIFY", True)
+    monkeypatch.setattr("app.sop.ai.constants.PLAN_DELETES", True)
+
+
+@pytest.fixture
+def c_sheet_on(monkeypatch: pytest.MonkeyPatch) -> None:
+    """숨긴 Excel C 시트를 켠다 — 지우지 않은 C 시트의 내용을 계속 보는 시험용(쪼개기 먼저 설계 §14)."""
+    monkeypatch.setattr("app.sop.sheet_model.SHOW_C_SHEET", True)
 
 
 @pytest.fixture

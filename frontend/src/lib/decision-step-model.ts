@@ -39,16 +39,16 @@ export function describeDecisionStep(
   return { key: `assign.${kind === "undo" ? "undone" : "redone"}.what`, vars: { action: `assign.step.${result.op}`, target } };
 }
 
-/** 제자리에서 바뀌는 편집 - Unit이 그대로라(언어·참조·번호·짝 카드 안 순서·벗긴 표 줄 순서·들여쓰기) 하고 난 뒤에도 고른 줄이 유효하다. 이름은 편집 요청의 type과 같다 */
-export const IN_PLACE_EDIT_OPS: ReadonlySet<string> = new Set(["set_language", "set_ref", "clear_ref", "set_number", "reorder_pair", "reorder_unwrapped", "set_indents"]);
+/** 제자리에서 바뀌는 편집 - Unit이 그대로라(언어·참조·번호·짝 카드 안 순서·벗긴 표 줄 순서·들여쓰기·삭제된 줄의 사유) 하고 난 뒤에도 고른 줄이 유효하다. 이름은 편집 요청의 type과 같다 */
+export const IN_PLACE_EDIT_OPS: ReadonlySet<string> = new Set(["set_language", "set_ref", "clear_ref", "set_number", "reorder_pair", "reorder_unwrapped", "set_indents", "set_noise_reason"]);
 
 /** 판단 저장 단계(되돌리기 기록의 op) - 판단만 바꾸고 Unit은 은퇴시키지 않는다. 되돌려도 고른 줄을 둔다 */
-const DECISION_STEP_OPS: ReadonlySet<string> = new Set(["confirm", "hold", "link", "unlink", "mark_new", "link_source", "split_new", "merge_new", "confirm_identical", "accept_ai", "delete", "move_out", "clear", "reset"]);
+const DECISION_STEP_OPS: ReadonlySet<string> = new Set(["confirm", "hold", "link", "unlink", "mark_new", "link_source", "split_new", "merge_new", "drop_translation", "confirm_identical", "accept_ai", "delete", "move_out", "clear", "reset"]);
 
 /** 원문 편집 단계(되돌리기 기록의 op, 자르기는 cut) - 서버는 판단이 걸린 편집을 되돌리지 않는다(confirm 없이) */
 const UNIT_EDIT_STEP_OPS: ReadonlySet<string> = new Set([
   "cut", "carve", "merge", "unmerge", "move_boundary", "set_layout_table", "attach_caption", "detach_caption", "set_first_row_caption",
-  "group_figures", "ungroup_figures", "set_heading", "clear_noise", ...IN_PLACE_EDIT_OPS,
+  "group_figures", "ungroup_figures", "set_heading", "clear_noise", "start_body", ...IN_PLACE_EDIT_OPS,
 ]);
 
 /**

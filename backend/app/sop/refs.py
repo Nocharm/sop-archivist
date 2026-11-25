@@ -15,12 +15,24 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.equis.client import is_sendable_number
 from app.equis.rules import normalize_number
 from app.sop.models import Extraction, Unit, UnitRef
+from app.sop.noise import list_heading_names, read_toc_reasons
+from app.sop.segment import (
+    CAPTION_OF_FLAG,
+    CLAUSE_NUMBER_FLAG,
+    DOCUMENT_NUMBER_BODY,
+    BlockView,
+    TableView,
+    has_visible_char,
+    is_heading_like,
+)
 
 REF_LANG = "ref"
 REF_CONFIRMED = "confirmed"
 REF_REJECTED = "rejected"
 # 참조 줄이 될 수 있는 단위 — 그림·표는 번호 영역을 갖지 않는다
 REF_KINDS = ("sentence", "heading", "cell_sentence")
+# Reference 절 아래에서 쪼개기가 REF로 확정하는 줄의 종류
+SENTENCE_KINDS = ("sentence", "cell_sentence")
 # 쪼개기가 Reference 절 아래 줄을 REF로 확정한 사람 표시(unit_refs.decided_by)
 REF_SPLIT_ACTOR = "system"
 # 이 추출기(extract.types.EXTRACTOR_VERSION)부터 쪼개기가 Reference 절 아래 줄을 REF로 확정하고, 글을 보고 제안하지 않는다
@@ -33,13 +45,9 @@ _REF_SECTION_NAME = re.compile(
     r"|참고 ?문헌|참고 ?문서|참조(?: ?문서)?|관련 ?문서|참고 ?자료",
     re.IGNORECASE,
 )
-# 제목 앞 절 번호("7." · "7.1" · "(7)" · "VII.")
-_HEADING_NUMBER = re.compile(r"\s*(?:\(?\d+(?:\.\d+)*\.?\)?|[IVX]+\.)\s*")
 
-# 문서 번호 꼴(파일 이름에서 번호를 읽는 규칙과 같다, `filename.py`) — 영문 대문자 머리 + 하이픈 마디 + 숫자 끝
-_NUMBER_BODY = r"[A-Z]{2,}(?:-[A-Z0-9]{1,8})*-\d{1,6}"
-_NUMBER = rf"{_NUMBER_BODY}(?![A-Za-z0-9])"
-_DOCUMENT_NUMBER = re.compile(_NUMBER_BODY)
+_NUMBER = rf"{DOCUMENT_NUMBER_BODY}(?![A-Za-z0-9])"
+_DOCUMENT_NUMBER = re.compile(DOCUMENT_NUMBER_BODY)
 # 줄 맨 앞의 번호만 제안한다 — 글머리 기호나 항목 번호는 건너뛴다. 문장 가운데의 번호는 사람이 직접 표시한다
 _LEADING_NUMBER = re.compile(rf"\s*(?:[-–•·*▪◦]\s*|\(?\d{{1,3}}[.)]\s*|\d+(?:\.\d+)+\s+)?({_NUMBER})")
 
@@ -169,9 +177,7 @@ async def load_proposing_extractions(session: AsyncSession, extraction_ids: Coll
 
 def is_ref_section_heading(text: str) -> bool:
     """제목이 Reference 절을 여는가 — 절 번호를 떼고, 괄호 · 빗금으로 나뉜 조각("참고 문헌 (References)") 하나라도 이름과 같으면."""
-    body = _HEADING_NUMBER.sub("", text, count=1)
-    parts = (" ".join(part.split()).strip(" :.-–") for part in re.split(r"[()/|]", body))
-    return any(part and _REF_SECTION_NAME.fullmatch(part) for part in parts)
+    return any(_REF_SECTION_NAME.fullmatch(part) for part in list_heading_names(text))
 
 
 @dataclass(frozen=True)
@@ -207,10 +213,50 @@ def find_ref_section_lines(lines: Sequence[SectionLine], *, interleaved: bool, s
                 level = own
             elif level is not None and own <= level:
                 level = None
-        elif level is not None and line.kind in ("sentence", "cell_sentence"):
+        elif level is not None and line.kind in SENTENCE_KINDS:
             (numbered if find_leading_number(line.text) else prose).append(index)
     paired = _find_prose_partners(lines, prose, interleaved=interleaved, separate=separate)
     return sorted([*numbered, *(index for index in prose if index not in paired)])
+
+
+def list_ref_section_blocks(blocks: Sequence[BlockView], tables: Sequence[TableView]) -> list[BlockView]:
+    """Reference 절 아래일 수 있는 블록(문서 순서, 절 제목과 닫는 제목 포함) — 규칙 2가 참조 줄을 찾을 때 규칙 1로 먼저 쪼개 볼 것만.
+
+    넉넉히 고른다: 절 이름인 제목 블록(벗긴 띠 표의 칸 포함)이면 열고, 쪼갠 뒤에도 제목일 것이 확실한 같거나 높은 단계의 제목
+    블록에서만 닫는다. 그래서 이 블록들의 초안에 find_ref_section_lines를 돌린 답은 문서 전체에 돌린 답과 같다.
+    """
+    bands = {table.id for table in tables if table.is_layout and table.is_band}
+    picked: list[BlockView] = []
+    level: int | None = None
+    heading_run: list[BlockView] = []  # 바로 앞에 이어진 제목 블록 — 앞 조항이 문장으로 바뀌면 번호 없는 제목도 따라 바뀐다(F8b)
+    for block in blocks:
+        is_heading = block.kind not in ("table_cell", "figure") and (
+            block.heading_level is not None or CLAUSE_NUMBER_FLAG in block.flags
+        )
+        is_band = block.table_id in bands
+        own = 1 if is_band else block.heading_level or 1
+        opens = (is_heading or is_band) and any(
+            is_ref_section_heading(line) for line in (block.text, *block.text.split("\n"))
+        )
+        if opens:
+            if level is None:
+                picked.extend(heading_run)
+            level = own if level is None else min(level, own)
+        if level is not None:
+            picked.append(block)
+        if (
+            level is not None and not opens and is_heading and not heading_run and own <= level and block.part == "body"
+            and not read_toc_reasons(block) and not any(flag.startswith(CAPTION_OF_FLAG) for flag in block.flags)
+            and has_visible_char(block.text)
+            and all(is_heading_like(line) for line in (block.text, *block.text.split("\n")))
+        ):
+            level = None  # 닫는 제목은 이미 골랐다
+            heading_run = []
+        elif is_heading:
+            heading_run.append(block)
+        else:
+            heading_run = []
+    return picked
 
 
 def _find_prose_partners(

@@ -4,8 +4,12 @@
 import httpx2
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import update
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.sop.coverage import find_coverage_problems
+from app.sop.models import Extraction
+from tests.access_helpers import run_in_session
 from tests.docx_factory import build_docx, make_band_table, make_grid_table, make_row, p
 from tests.sop_helpers import AUTHOR, create_bundle, find_unit, get_view, put_tobe, save_group, upload
 from tests.test_sop_decisions import _body, _unit_in
@@ -242,3 +246,31 @@ def test_a_fixed_band_number_survives_back_to_table_and_unwrapping_again(client:
     again = _edit(client, bundle_id, doc_id, {"type": "set_layout_table", "table_id": heading["table_id"], "is_layout": True})
     assert again.status_code == 200, again.text
     assert find_unit(get_view(client, bundle_id, doc_id), BAND)["number"]["value"] == "7.5"
+
+
+LONG_TITLE = "필터를 교체한다. 차압을 적는다. 서명한다."
+
+
+def _set_split_rule(doc_id: int, rule: int) -> None:
+    async def _run(session: AsyncSession) -> None:
+        await session.execute(update(Extraction).where(Extraction.document_id == doc_id).values(split_rule=rule))
+        await session.commit()
+
+    run_in_session(_run)
+
+
+@pytest.mark.parametrize(
+    ("rule", "cells"),
+    [(1, ["7.4", "필터를 교체한다.", "차압을 적는다.", "서명한다."]), (2, ["7.4", LONG_TITLE])],
+)
+def test_band_back_to_table_keeps_the_documents_rule(client: TestClient, rule: int, cells: list[str]) -> None:
+    bundle_id, _, doc_id = _setup(client, make_band_table("7.4", LONG_TITLE) + p(SENTENCE))
+    _set_split_rule(doc_id, rule)
+    heading = find_unit(get_view(client, bundle_id, doc_id), f"7.4 {LONG_TITLE}")
+
+    response = _edit(client, bundle_id, doc_id, {"type": "set_layout_table", "table_id": heading["table_id"], "is_layout": False})
+
+    assert response.status_code == 200, response.text
+    view = get_view(client, bundle_id, doc_id)
+    assert [unit["text"] for unit in view["units"] if unit["kind"] == "cell_sentence"] == cells
+    assert _covered(view)[0] == []

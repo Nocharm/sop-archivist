@@ -13,7 +13,7 @@ import { findNewLine, findOldStrip, readNewLineEnd, readOldLineStart } from "@/c
 import { type JoinMenuItem } from "@/components/assign/join-menu";
 import { type ResetScope } from "@/components/assign/reset-modal";
 import { type AiAskItem } from "@/components/manage/ai-ask-menu";
-import { flashElement, useUnwrapMotion } from "@/components/ui/motion";
+import { flashElement, useUnwrapMotion, type UnwrapHandle, type UnwrapRunOptions } from "@/components/ui/motion";
 import { showToast } from "@/components/ui/toast";
 import { ApiError } from "@/lib/api";
 import { humanizeApiError } from "@/lib/api-errors";
@@ -21,21 +21,22 @@ import { buildDropSections, buildOldDragCard, canDragOld, findAssignDrop, findDr
 import { buildGapBlocks, buildPlaceSections, findPlaceBlock, formatPlacement, formatPlacementDest, isSpotOpen, listGapSpots, PLACE_REFUSAL_KEYS, readFixedSpot, readObjectParticle, readPlacePosition, resolvePlaceSpot, type Placement, type PlaceSection, type PlaceSpot } from "@/lib/place-spot-model";
 import { findUnderPoint, type BoxDragConfig, type DragHover, type DragPoint } from "@/lib/box-drag";
 import { DROP_LINE_HALF_PX, type DropLineAt } from "@/lib/drop-line";
+import { useDraftingOn } from "@/lib/drafting";
 import { useBoxDrag } from "@/lib/use-box-drag";
 import { findLastStep } from "@/lib/destination-manage-model";
 import { findSplitBlock, readSplitOffsets } from "@/lib/split-ai-tabs-model";
 import { pickPairPiece, planPairLanguages, type JoinKind, type JoinPlan } from "@/lib/split-menu-model";
 import { listAppliedSuggestions, requestAi, setSuggestionAdoption, type AiKind, type AiScope } from "@/lib/api-manage";
-import { addToBeDoc, addWiStep, acceptSuggestions, MAX_ACCEPT, bulkDecide, confirmPair, createPair, deletePair, editUnits, clearDecisions, confirmMatchesInBulk, getComposedDoc, getDocumentView, getGroupByTarget, getUnitRef, getGroupByUnit, getToBe, listDocuments, listIdenticalCandidates, listNewCandidates, listSuggestions, listWrittenSentences, redoDecision, removeToBeDoc, removeWiStep, saveGroup, undoDecision, updateCaptionRef, type AcceptKind, type AiSuggestion, type ComposedDoc, type ComposedItem, type DecisionStepResult, type DocumentView, type EditOp, type EditResult, type Group, type GroupSaveInput, type NewCandidate, type ToBe, type UndoMeta, type UnitRefDetail, type UnitRow, type ViewUnit, type WrittenSentence } from "@/lib/api-sop";
+import { addToBeDoc, addWiStep, acceptSuggestions, MAX_ACCEPT, bulkDecide, confirmPair, createPair, deletePair, editUnits, clearDecisions, confirmMatchesInBulk, getComposedDoc, getDocumentView, getGroupByTarget, getUnitRef, getGroupByUnit, getToBe, listDocuments, listIdenticalCandidates, listNewCandidates, listSuggestions, listWrittenSentences, redoDecision, listOpenTranslations, removeToBeDoc, removeWiStep, resetAssignments, saveGroup, undoDecision, updateCaptionRef, type AcceptKind, type AiSuggestion, type ComposedDoc, type ComposedItem, type DecisionStepResult, type DocumentView, type EditOp, type EditResult, type Group, type GroupSaveInput, type NewCandidate, type OpenTranslation, type ToBe, type UndoMeta, type UnitRefDetail, type UnitRow, type ViewUnit, type WrittenSentence } from "@/lib/api-sop";
 import { listRefCandidates } from "@/lib/caption-ref-model";
 import { isBundleKind, isCaptionGate, listCaptionPendingRowKeys, makeIsLinkedToWritten, type CaptionUnit } from "@/lib/caption-model";
 import { buildBlockPlaces, getCaptionMotion, isCaptionableText, listCaptionHolders, resolveCaptionDetach, resolveCaptionDrop, type CaptionDetach, type CaptionDrop } from "@/lib/caption-slot-model";
 import { applyJoinedSources, listJoinableIds, shouldAdvanceAfterSave } from "@/lib/join-sentence-model";
 import { buildComposedMerge, buildComposedSplit, canEditComposed, findComposedCut, planComposedJoin, stepComposedCut } from "@/lib/composed-ops-model";
 import { applySavedTargets, buildComposedRows, isWrittenRow, listHeadingNotes, listSectionMarks, readSectionHead, removeClearedUnits, type NewPaneRow } from "@/lib/composed-model";
-import { addPartnerTargets, buildLinkPairs, buildRecommendations, listUnsourced, mergeGroups, readConfirmBlockKey, stepZoom, type Recommendation } from "@/lib/assign-model";
+import { addPartnerTargets, buildLinkPairs, buildRecommendations, dropHiddenRecommendations, listUnsourced, mergeGroups, readConfirmBlockKey, stepZoom, type Recommendation } from "@/lib/assign-model";
 import { countLiveOffer, splitAcceptIds } from "@/lib/ai-accept-model";
-import { buildUseDraft, findRowSuggestion, indexLiveSuggestions, readSuggestedDestination, readSuggestionPlace } from "@/lib/ai-suggestion-model";
+import { buildUseDraft, filterAiItems, findRowSuggestion, indexLiveSuggestions, readSuggestedDestination, readSuggestionPlace } from "@/lib/ai-suggestion-model";
 import { buildAssignMenu, getPairPickBlocker, getPairSetBlocker, planAssignJoin, planLanguageChange, planShapeMode, type AssignMenuAction, type AssignMenuGroups } from "@/lib/assign-context-menu-model";
 import { listHeadingBackUnits } from "@/lib/heading-shift-model";
 import { countDecidedLines, getTableNumber, getUnitUnwrapTable, listUnwrapScopes } from "@/lib/unwrap-model";
@@ -44,14 +45,27 @@ import { resolveLineParam } from "@/lib/assign-line-param";
 import { readAssignView, writeAssignView } from "@/lib/assign-view-prefs";
 import { loadBundle, useBundle } from "@/lib/bundle-store";
 import { describeDecisionStep, getAssignUndoKey, IN_PLACE_EDIT_OPS, isUnitEditStep, pickSaveOp, shouldDropSelectionOnStep } from "@/lib/decision-step-model";
-import { buildCellOwners, buildDestinationOptions, buildGroupSave, buildRows, buildSentenceSlots, findNextAfterSave, findSystemHold, getDestinationId, getRowStep, hasDraftChange, isSentenceUnit, listJoinedTargetIds, listUnpairedKeys, readDestination, readHumanReason, stepInList, type CellSource, type ClassifyFilter, type ClassifyRow, type Destination, type DestinationOption, type DropPosition, type RowDraft } from "@/lib/classify-model";
+import { buildCellOwners, buildDestinationOptions, buildGroupSave, buildRows, buildSentenceSlots, describeLegacyMove, findSystemHold, getDestinationId, getRowStep, hasDraftChange, isSentenceUnit, listJoinedTargetIds, listLinkLeftovers, listPickOptions, listUnpairedKeys, readDestination, readHiddenPlace, readHumanReason, stepInList, type CellSource, type ClassifyFilter, type ClassifyRow, type Destination, type DestinationOption, type DropPosition, type RowDraft } from "@/lib/classify-model";
 import { buildDocDashboard } from "@/lib/doc-dashboard-model";
-import { listEditUnitIds, listTableUnitIds, NO_FOCUS, NO_PLACE, planReload, readEditKind, readEditPlace, readPendingLabelKey, type Pending, type PendingPlace, type ReloadPlan } from "@/lib/assign-focus-model";
+import { buildPaperWaits, isDecisionKind, listEditUnitIds, listTableUnitIds, NO_FOCUS, NO_PLACE, planReload, readEditKind, readEditPlace, readPendingLabelKey, type Focus, type Pending, type PendingPlace } from "@/lib/assign-focus-model";
+import { readEditLabelKey, trimReason } from "@/lib/command-label";
+import { isBarrier, listUnsettled } from "@/lib/command-queue";
 import { pickDocRevision } from "@/lib/doc-revision";
+import { isMousePress, isTypingTarget, LAYER_SELECTOR, readKeyPlace, returnsToPaper, takesPrimaryEnter } from "@/lib/assign-key-target";
+import { isQueuedKey, isRepeatIgnored } from "@/lib/assign-press-model";
+import { planPrimary } from "@/lib/primary-model";
+import { isSideFloating } from "@/lib/side-float-model";
+import { isUnwrapSuggestionApplicable, isUnwrapSuggestionUnchanged } from "@/lib/unwrap-ai-model";
+import { pickNextBox, type PendingOutcome } from "@/lib/next-box-model";
+import { listExpectedNumbers, readExpectedNumber, type SentNumber } from "@/lib/number-arrival-model";
+import { buildReloadAsk, isDocReload, isEmptyReload, mergeReloads, NO_RELOAD_ASK, splitReload, type ReloadAsk } from "@/lib/reload-ask-model";
+import { createWriteLog } from "@/lib/write-log";
 import type { PaperPending } from "@/components/paper/paper";
 import { useI18n } from "@/lib/i18n";
 import { genId } from "@/lib/id";
+import { buildTranslationDecision, isTranslationBlocked, listRowTranslations } from "@/lib/translation-decision";
 import { useLeaveGuard } from "@/lib/leave-guard";
+import { navigate } from "@/lib/nav-buffer";
 import { buildIdenticalBatches } from "@/lib/match-model";
 import { EMPTY_FOLD_OPEN, type FoldOpen } from "@/lib/paper-fold-model";
 import { buildPaperModel, buildPaperTabs, findNearestCut, isBandHeading, listFigureTabUnitIds, resolvePickUnit, shouldRecenter, type PaperTabKey } from "@/lib/paper-model";
@@ -59,7 +73,7 @@ import { isSameOrder, movePairMember, orderPairCard, readPairSlot } from "@/lib/
 import { moveUnwrapLines, readUnwrapSlot } from "@/lib/unwrap-order-model";
 import { useUnwrapAi } from "@/lib/use-unwrap-ai";
 import { buildPairColumns, listPairLinks, PAIR_REFUSAL_KEYS, resolveBoxDrop, resolvePairDrop, type BoxDrop, type PairDrop, type PairDropContext } from "@/lib/pair-drop-model";
-import { ASSIGN_DOC_PARAM, ASSIGN_UNIT_PARAM, EDIT_ORIGINAL_PARAM, getStageHref } from "@/lib/stages";
+import { ASSIGN_DOC_PARAM, ASSIGN_UNIT_PARAM, EDIT_ORIGINAL_PARAM, getStageHref, LEFTOVER_TRANSLATIONS_PARAM } from "@/lib/stages";
 import { buildTemplateTitles } from "@/lib/template-model";
 import { useRegisterAiAcceptOffer } from "@/lib/use-ai-accept-offer";
 import { useAiJobs } from "@/lib/use-ai-jobs";
@@ -70,12 +84,15 @@ import { useCutLine } from "@/lib/use-cut-line";
 import { pickSheetAnchor, pickSpaceSheet } from "@/lib/space-preview-model";
 import { countRefLookups, isRefPending, pickRefUnit } from "@/lib/ref-model";
 import { isDeletedUnit } from "@/lib/deleted-fold-model";
-import { buildNavKeys, listTocBlocks, readTocNavKey, readUnitNavKey, toTocNavKey, toUnitNavKey } from "@/lib/toc-block-model";
+import { buildNavKeys, buildNoiseBlock, describeNoiseUnit, findNoiseBlock, listNoiseBlocks, readTocNavKey, readUnitNavKey, toTocNavKey, toUnitNavKey } from "@/lib/toc-block-model";
+import { isRestoringLines, readNoiseKey, toNoiseKeyId } from "@/lib/noise-keys";
 import { useEquisPolling } from "@/lib/use-equis-polling";
 import { useDocViews, type DocBatch } from "@/lib/use-doc-views";
 import { useLoaded } from "@/lib/use-loaded";
 import { usePaneSlide } from "@/lib/use-pane-slide";
 import { usePaneZoom, type PaneKey, type ZoomDir } from "@/lib/use-pane-zoom";
+
+import { buildDecisionPending, CommandRefusal, isRepeatedSave, useCommandQueue, type AssignCommand, type CommandQueueState, type ConfirmableCommand, type ReplayCommand, type SeenRevisions, type SendContext, type WriteCommand } from "./use-command-queue";
 
 
 export type Filter = ClassifyFilter;
@@ -93,16 +110,15 @@ export type Mode = "old" | "unsourced";
 // backend constants.SYSTEM_HOLD_* - 모르는 코드는 "시스템 보류"로 보인다
 export const SYSTEM_HOLDS = ["related_unit_changed", "ai_invalid_response"];
 
-/** 화면의 줄 초안 - 사유·이동 코드는 null이면 손대지 않은 것(저장된 값을 보인다), ""이면 사람이 비운 것 */
+/** 화면의 줄 초안 - 사유는 null이면 손대지 않은 것(저장된 값을 보인다), ""이면 사람이 비운 것 */
 export interface PageDraft extends Omit<RowDraft, "reason" | "moveCode"> {
   reason: string | null;
-  moveCode: string | null;
   editing: boolean;
   /** Use로 받은 AI 제안 - 저장이 실어 보내 서버가 채택을 남긴다(설계 2026-11-19-ai-suggest-only D2). 다른 곳을 고르면 비운다 */
   suggestionId?: number | null;
 }
 
-export const EMPTY_DRAFT: PageDraft = { destination: null, texts: {}, reason: null, moveCode: null, editing: false, suggestionId: null };
+export const EMPTY_DRAFT: PageDraft = { destination: null, texts: {}, reason: null, editing: false, suggestionId: null };
 export const NO_NUMBERS: ReadonlySet<number> = new Set();
 
 // 고름 · 처리 중 · 따라가기는 assign-focus-model(설계 2026-11-20 D1) - 편집 중에도 고름은 그대로다
@@ -120,19 +136,9 @@ interface SoloPick {
 // Pair view를 끈 뒤 스크롤 자리 맞추기를 멈추는 사람의 입력 - 굴림(휠·스크롤 막대 누름)·글쇠가 이긴다
 export const PAIR_RESTORE_STOPS = ["wheel", "pointerdown", "keydown", "touchstart"] as const;
 
-/** 배정이 걸려 서버가 되물은 편집 - 확인하면 같은 일을 confirm을 켜고 다시 보낸다 */
-export type ConfirmedEdit =
-  | { kind: "edit"; op: EditOp; okText: EditToast; followId: number | null }
-  | { kind: "to_pair"; unit: ViewUnit }
-  | { kind: "ai_split"; unit: ViewUnit; suggestion: AiSuggestion };
-
 /** 거르기 - "AI 추천"은 상태가 아니라 미배정이면서 살아 있는 제안이 있는 줄이다(설계 §5 2-3) */
 export function matchesFilter(item: { unitIds: number[]; status: string }, next: Filter, liveIndex: ReadonlyMap<number, AiSuggestion>): boolean {
   return next === "all" || (next === "ai_suggested" ? findRowSuggestion(item.unitIds, item.status, liveIndex) !== null : item.status === next);
-}
-
-export function isTypingTarget(target: EventTarget | null): boolean {
-  return target instanceof HTMLElement && (target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName));
 }
 
 /** 줄의 단위마다 그룹을 불러 합친다 - 짝의 두 쪽이 서로 다른 관계 묶음일 수 있다 */
@@ -154,8 +160,12 @@ export function findDestinationDoc(destination: Destination | null, written: Map
   return "docId" in destination ? destination.docId : null;
 }
 
-/** Remark 창 - 고른 줄의 사유(저장이 사유를 요구해 열었으면 확인 뒤 그 저장을 잇는다) 또는 출처 없는 New 문장의 Remark */
-export type RemarkEdit = { kind: "row"; need: "delete" | "move" | "hold" | "duplicate" | null; then: "confirm" | "hold" | null } | { kind: "new"; targetId: number };
+/** Remark 창 - 고른 줄의 사유(저장이 사유를 요구해 열었으면 확인 뒤 그 저장을 잇는다) 또는 출처 없는 New 문장의 Remark. askId - 장벽 뒤에서 되살린 글쇠가 연 창이면 그 글쇠(답할 때까지 뒤의 글쇠가 기다린다) */
+export type RemarkEdit =
+  | { kind: "row"; need: "delete" | "hold" | "duplicate" | null; then: "confirm" | "hold" | null; askId?: string | null }
+  | { kind: "new"; targetId: number }
+  /** 저절로 삭제된 줄의 사유 - 그 문서의 줄들, 지금 적힌 글(갈리면 빈 글), 장벽 뒤에서 되살린 글쇠가 열었으면 그 id */
+  | { kind: "noise"; docId: number; unitIds: readonly number[]; initial: string; isMixed: boolean; askId: string | null };
 
 /** 그 자리 메뉴 - 붙을 요소, 누른 자리(요소 기준, 키보드·이동이면 null), 어느 줄의 어느 New 문장에 대한 메뉴인지 */
 export interface MenuState {
@@ -238,39 +248,88 @@ function isElementInPane(el: HTMLElement): boolean {
 /** 편집 뒤 뒤에서 다시 받는 목록의 키 - planReload가 고른 것만 하나씩 오른다(설계 D2) */
 const NO_RELOAD_KEYS = { tobe: 0, written: 0, identical: 0, split: 0 };
 
+/** 숨긴 종류의 제안 자리 - 부르지 않고 빈 목록 */
+const NO_SUGGESTIONS: Promise<AiSuggestion[]> = Promise.resolve([]);
+
+const NO_TRANSLATIONS: Promise<OpenTranslation[]> = Promise.resolve([]);
+
 /** 끝낸 Old 줄 수 - 확정만 센다(보류는 아직 끝나지 않았다) */
 function countDone(rows: ClassifyRow[]): number {
   return rows.filter((row) => row.status === "confirmed").length;
 }
 
-/** 처리 중인 일 → 용지의 알약 · 쉬머 · 잠금(설계 2026-11-20 D4). 판단 저장은 잠그기만(결정 칸 단추가 이미 보인다), 묶음 전체 일은 알약이 없다(단추가 모두 꺼진다) */
-function buildPaperPending(pending: readonly Pending[], t: (key: string) => string): PaperPending {
+/** 처리 중인 일 → 용지의 알약 · 쉬머 · 잠금(설계 2026-11-20 D4). 판단 저장은 빛만 지나가고 잠그지 않으며(A1-R2 · R4), 묶음 전체 일은 알약이 없다 */
+function buildPaperPending(pending: readonly Pending[], queue: CommandQueueState, t: (key: string) => string): PaperPending {
+  // 아직 보내지 않은 것은 알약("Joining…") 대신 칩("Queued 1")이다
+  const waitingIds = new Set(queue.waiting.map((command) => command.id));
   const shimmerIds = new Set<number>();
   const lockedIds = new Set<number>();
   const pills: PaperPending["pills"][number][] = [];
   for (const entry of pending) {
-    for (const id of entry.unitIds) lockedIds.add(id);
-    const key = readPendingLabelKey(entry.kind);
-    if (key === null) continue;
     for (const id of entry.unitIds) shimmerIds.add(id);
-    if (entry.place.at !== "none") pills.push({ id: entry.id, kind: entry.kind, label: t(key), place: entry.place });
+    if (!isDecisionKind(entry.kind)) for (const id of entry.unitIds) lockedIds.add(id);
+    const key = readPendingLabelKey(entry.kind);
+    if (key !== null && entry.place.at !== "none" && !waitingIds.has(entry.id)) pills.push({ id: entry.id, kind: entry.kind, label: t(key), place: entry.place });
   }
-  return { shimmerIds, lockedIds, pills };
+  return { shimmerIds, lockedIds, pills, waits: buildPaperWaits(queue) };
 }
 
 /** Assign 화면 한 벌의 상태와 동작 - page.tsx가 그리는 데 쓰는 이름을 모두 돌려준다 */
-/** 우클릭 메뉴·Del·M 창에서 고른 삭제·이동 - 그린 초안 대신 이 값으로 저장한다 */
+/** 우클릭 메뉴·Del에서 고른 삭제, 또는 고르지 않고 확정한 추천 첫 카드 - 그린 초안 대신 이 값으로 저장한다. before는 그 줄의 앞 초안(없었으면 null) */
 interface DecidePick {
-  destination: Extract<Destination, { kind: "delete" | "move" }>;
-  moveCode: string;
+  kind: "delete" | "card";
+  draft: PageDraft;
+  before: PageDraft | null;
+}
+
+/** 그 초안이 저장에 실어 보낸 그대로인가 - 사유 창에서 확인한 글은 보낸 사유와 같으면 같은 것이고, 자리는 그 사이 사라질 수 있다 */
+function isSentDraft(draft: PageDraft | undefined, sent: PageDraft, reason: string): boolean {
+  return (
+    draft !== undefined &&
+    draft.destination === sent.destination &&
+    draft.texts === sent.texts &&
+    (draft.otherLang ?? null) === (sent.otherLang ?? null) &&
+    (draft.position == null || draft.position === sent.position) &&
+    (draft.reason === sent.reason || draft.reason === reason)
+  );
+}
+
+/** 누른 판단(확정 · 보류 · 삭제 · 배정 취소 · 일괄)인가 */
+function isDecisionCommand({ payload }: { payload: AssignCommand }): boolean {
+  return payload.kind === "save" || payload.kind === "clear" || payload.kind === "bulk";
+}
+
+/** 아직 응답이 오지 않은 판단이 줄을 어떻게 만드나 - 다음 박스를 고를 때 이미 된 것으로 세고, 삭제는 용지가 바로 접는다 */
+function readPendingOutcomes(unsettled: ReadonlyArray<{ payload: AssignCommand }>): ReadonlyMap<string, PendingOutcome> {
+  const outcomes = new Map<string, PendingOutcome>();
+  for (const { payload } of unsettled) {
+    if (payload.kind === "bulk") for (const item of payload.rows) outcomes.set(item.rowKey, "deleted");
+    else if (payload.kind === "save") outcomes.set(payload.rowKey, payload.action === "hold" ? "held" : payload.destination?.kind === "delete" ? "deleted" : "confirmed");
+    else if (payload.kind === "clear") outcomes.delete(payload.rowKey);
+  }
+  return outcomes;
+}
+
+/** 편집이 풀기 전환(F10)으로 바뀌는 곳 - 표 벗기기 · 다시 표로(바로 안쪽 띠 표도 함께 제목 줄 ↔ 표로 바뀐다, F2)와 캡션. 아니면 null */
+function readUnwrapOptions(op: EditOp, view: DocumentView, followId: number | null): UnwrapRunOptions | null {
+  return op.type === "set_layout_table"
+    ? { scopes: listUnwrapScopes(new Map(view.tables.map((table) => [table.id, table])), op.table_id), reverse: !op.is_layout }
+    : getCaptionMotion(op, followId);
+}
+
+/** 다시 읽기 - 판단 저장 · AI 작업 끝 · 일괄 일 뒤(Unit 줄 전체와 판단이 바꾸는 목록 모두). withViews면 Old 문서 보기도(서버가 짝을 정리했다) */
+function askAll(withViews: boolean): ReloadAsk {
+  return { ...NO_RELOAD_ASK, docs: withViews ? "all" : [], units: "all", lists: true, bundle: true };
 }
 
 /** 편집 알림 - 글 그대로, 또는 응답으로 짓는 글(모양 전환 - 그때는 알림에 되돌리기가 붙는다) */
-type EditToast = string | ((result: EditResult) => string);
+export type EditToast = string | ((result: EditResult) => string);
 
 export function useAssignPage() {
 
   const { t, lang: uiLang } = useI18n();
+  // 새 문서를 만드는 쪽을 켰는가 - 숨긴 동안 숨긴 AI 제안은 받지도 않는다(줄 표시 · 카드 · 알약 · 거르기 수가 함께 빈다)
+  const isDrafting = useDraftingOn() === true;
   const bundleId = Number(useParams<{ id: string }>().id);
   const { bundle } = useBundle(bundleId);
   const canEdit = bundle?.my_role === "author" && bundle.status === "in_progress";
@@ -303,25 +362,66 @@ export function useAssignPage() {
   const [isPlaceBusy, setIsPlaceBusy] = useState(false);
   const writtenList = useLoaded(() => listWrittenSentences(bundleId), writtenKey);
   const identical = useLoaded(() => listIdenticalCandidates(bundleId), `${dataKey}:${reloadKeys.identical}`);
+  // 남은 번역(확정하지 않은 AI 번역 · 보류) - 검토 요청을 막는다. 판단을 풀며 문장을 나누고 합치면 생기므로 New 문장 목록과 함께 다시 받는다
+  const leftoverList = useLoaded(() => (isDrafting ? NO_TRANSLATIONS : listOpenTranslations(bundleId)), `${writtenKey}:${isDrafting}`);
+  const leftovers = useMemo(() => leftoverList.data ?? [], [leftoverList.data]);
+  // 남은 번역 목록 창 - 처음 받은 목록에 남은 것이 있고 개요의 새 문장 관문 카드 주소(?translations=1)로 왔을 때만 열린 채로 시작한다
+  // (렌더 중 상태 맞추기 한 번 - 나중에 편집으로 생긴 번역이 창을 저절로 열지 않게)
+  const [leftoverSheet, setLeftoverSheet] = useState<boolean | null>(null);
+  if (leftoverSheet === null && leftoverList.data !== null) setLeftoverSheet(leftovers.length > 0 && searchParams.has(LEFTOVER_TRANSLATIONS_PARAM));
+  const isLeftoverOpen = canEdit && leftovers.length > 0 && leftoverSheet === true;
   // AI 작업이 끝나면 단위·제안·New 문장을 다시 불러온다 - 제안이 보이고 다음 저장이 낡은 revision으로 409가 나지 않는다.
   // 원문 보기도 다시 받는다 - 나누기 제안 표시(split_suggestion_id)와 AI가 제안한 한/영 짝이 거기 실려 온다
   const aiJobs = useAiJobs(bundleId, () => {
-    // 한 단으로 연 New 문서의 원문 보기도(그 문서의 나누기 제안 표시)
-    setSoloKey((key) => key + 1);
-    reloadData(true);
-    void loadBundle(bundleId);
+    // 한 단으로 연 New 문서의 원문 보기도(그 문서의 나누기 제안 표시). 큐가 도는 중이면 비었을 때 한 번에(A1-R6)
+    requestReload({ ...askAll(true), solo: true });
   });
   const aiOn = aiJobs.status?.ai_enabled ?? false;
   const aiBusy = (aiJobs.status?.jobs.queued ?? 0) + (aiJobs.status?.jobs.running ?? 0);
-  const suggestions = useLoaded(() => listSuggestions(bundleId, "classify"), dataKey);
+  const suggestions = useLoaded(() => (isDrafting ? listSuggestions(bundleId, "classify") : NO_SUGGESTIONS), `${dataKey}:${isDrafting}`);
   const matchSuggestions = useLoaded(() => listAppliedSuggestions(bundleId, "match"), dataKey);
   // 답이 무효였던 분류 - 그 줄은 미배정 그대로라 카드 자리에 "고르지 못했다" 한 줄만(설계 §5 2-6)
-  const invalidSuggestions = useLoaded(() => listSuggestions(bundleId, "classify", "invalid"), dataKey);
+  const invalidSuggestions = useLoaded(() => (isDrafting ? listSuggestions(bundleId, "classify", "invalid") : NO_SUGGESTIONS), `${dataKey}:${isDrafting}`);
 
-  /** 판단 저장 · AI 작업 끝 · 일괄 일 뒤 - Unit 줄 전체와 판단이 바꾸는 목록을 모두. withViews면 Old 문서 보기도(서버가 짝을 정리했다) */
+  // 이 화면이 쓴 뒤 아직 다시 읽지 않은 것 - 다음 명령의 revision과 받아 둔 묶음의 쓸모(A1-R4)
+  const [writeLog] = useState(createWriteLog);
+  // 큐가 비면 한 번에 받을 것
+  const reloadAskRef = useRef<ReloadAsk>(NO_RELOAD_ASK);
+  /** 다시 읽기를 건다 - 큐가 비었으면(멈췄을 때도) 바로, 도는 중이면 모아 두었다가 비었을 때 한 번(A1-R6) */
+  function requestReload(ask: ReloadAsk) {
+    reloadAskRef.current = mergeReloads(reloadAskRef.current, ask);
+    if (commands.canReload()) flushReload();
+  }
+
+  /** 모아 둔 다시 읽기를 한 번에 받는다 */
+  function flushReload() {
+    const ask = reloadAskRef.current;
+    if (isEmptyReload(ask)) return;
+    reloadAskRef.current = NO_RELOAD_ASK;
+    const at = writeLog.now();
+    if (isDocReload(ask)) void docViews.reload({ docs: ask.docs, units: ask.units }).then((isPlaced) => (isPlaced && ask.units === "all" ? writeLog.settle(at) : undefined));
+    if (ask.solo) setSoloKey((key) => key + 1);
+    if (ask.lists) setUnitsKey((key) => key + 1);
+    if (ask.tobe || ask.written || ask.identical || ask.split) {
+      setReloadKeys((prev) => ({ tobe: prev.tobe + Number(ask.tobe), written: prev.written + Number(ask.written), identical: prev.identical + Number(ask.identical), split: prev.split + Number(ask.split) }));
+    }
+    if (ask.bundle) void loadBundle(bundleId);
+    // 저장이 도는 동안 부른 묶음 - 그 저장이 건드린 것이 들었으면 다시 받는다(줄의 판단 revision은 그대로라 열쇠가 바뀌지 않는다)
+    if (groupData !== null && !group.isLoading && !writeLog.isFresh(groupData)) group.reload();
+    if (pickedGroups.data !== null && !pickedGroups.isLoading && !pickedGroups.data.every(writeLog.isFresh)) pickedGroups.reload();
+  }
+
+  /** 결정 칸의 다시 불러오기 */
   function reloadData(withViews = false) {
-    void docViews.reload({ docs: withViews ? "all" : [], units: "all" });
-    setUnitsKey((key) => key + 1);
+    requestReload(askAll(withViews));
+  }
+
+  /** 관계 묶음을 받는다 - 언제 불렀는지 적어 두어 그 뒤 쓴 것이 들었으면 저장에 쓰지 않는다 */
+  async function loadMarked(load: () => Promise<Group>): Promise<Group> {
+    const at = writeLog.now();
+    const loaded = await load();
+    writeLog.mark(loaded, at);
+    return loaded;
   }
   // 단위마다 가장 새 분류 답이 무효인 것만 - 그 뒤에 나온 답이 있으면 무효는 지난 일이다
   const invalidUnitIds = useMemo(() => {
@@ -369,12 +469,14 @@ export function useAssignPage() {
   const rows = useMemo(() => (viewList ? buildRows(viewList, unitMap) : []), [viewList, unitMap]);
   const rowMap = new Map(rows.map((row) => [row.key, row]));
   const rowOfUnit = new Map(rows.flatMap((row) => row.unitIds.map((id) => [id, row.key] as const)));
-  const options = useMemo(() => (tobeData ? buildDestinationOptions(tobeData) : []), [tobeData]);
+  // 고르는 보낼 곳과 이름을 읽는 보낼 곳 - 새 문서를 숨긴 동안 고를 것은 없어도 이미 보낸 줄의 간 곳 이름은 읽는다
+  const options = useMemo(() => (tobeData ? listPickOptions(tobeData, isDrafting) : []), [tobeData, isDrafting]);
+  const labelOptions = useMemo(() => (tobeData ? buildDestinationOptions(tobeData) : []), [tobeData]);
   /** Old 줄 아래 AI 간 곳 글 - 살아 있는 제안이 덮는 미배정 줄만. 확정 줄의 간 곳 줄과 같은 자리에 쓴다(줄 끝 ✦ 대신, 사용자 결정 2026-11-20) */
   function readAiPlace(unitIds: number[]): string | null {
     if (!unitIds.some((id) => readMarkStatus(id) === "ai_suggested")) return null;
     const live = findRowSuggestion(unitIds, "unassigned", liveIndex);
-    const place = live ? readSuggestionPlace(live, options) : null;
+    const place = live ? readSuggestionPlace(live, labelOptions) : null;
     return place === "delete" ? t("classify.deleted") : place;
   }
   const ready = viewList !== null && unitList !== null && tobeData !== null && writtenList.data !== null;
@@ -423,7 +525,7 @@ export function useAssignPage() {
   // 처음에는 아무 조각도 고르지 않는다 - 오른쪽 칸이 범례를 보인다
   const focusCtl = useAssignFocus();
   const { focus } = focusCtl;
-  // 묶음 전체 일(Undo/Redo · 일괄 · 같은 글자 확정)을 시작할 수 없다 - 다른 일이 하나라도 처리 중이면(설계 D1 규칙 6)
+  // 처리 중이거나 기다리는 일이 하나라도 있다
   const isAnyPending = focusCtl.isAnyPending;
   // 줄은 고른 Unit에서 파생한다 - 짝이 맺히거나 풀려 줄이 다시 묶여도 그 Unit의 줄을 그대로 고른다
   const activeKey = (focus.kind === "unit" ? rowOfUnit.get(focus.unitId) : undefined) ?? null;
@@ -434,11 +536,16 @@ export function useAssignPage() {
   // 이 문서의 문장은 배정하지 않으므로 줄(row)이 없다. 줄을 고르면(Old 문서로 돌아가는 것이다) 닫힌다
   // inPlace는 양 단에서 New 칸의 문장을 그 자리에서 고른 것이다 - 왼쪽은 Old 문서 그대로이고, 다듬는 대상만 그 New 문서가 된다
   const solo = focus.kind === "new" ? focus : null;
+  /** 사람이 고른다 - 장벽 뒤에 글쇠가 쌓여 있으면 고름도 그 뒤의 차례를 기다린다(쌓인 글쇠가 나중에 고른 박스에 떨어지지 않게) */
+  function pickFocus(next: Focus) {
+    if (commands.isPickQueued()) commands.enqueue({ kind: "pick", focus: next });
+    else focusCtl.pick(next);
+  }
   /** New 문서 고름을 바꾼다 - null이면 New 문서 고름만 놓는다(Old 줄 · 목차 고름은 그대로) */
   function setSolo(next: SoloPick | null | ((prev: SoloPick | null) => SoloPick | null)) {
     const value = typeof next === "function" ? next(solo) : next;
-    if (value !== null) focusCtl.pick({ kind: "new", docId: value.docId, unitId: value.unitId, inPlace: value.inPlace });
-    else if (focus.kind === "new") focusCtl.pick(NO_FOCUS);
+    if (value !== null) pickFocus({ kind: "new", docId: value.docId, unitId: value.unitId, inPlace: value.inPlace });
+    else if (focus.kind === "new") pickFocus(NO_FOCUS);
   }
   // 고른 박스 - 짝 줄이어도 누른 박스 하나다(설계 D3). 짝의 다른 구성원은 용지가 곁에 딸린 표시(data-mate)로만 보인다
   const pickedId = focus.kind === "unit" && row !== null ? focus.unitId : null;
@@ -448,34 +555,95 @@ export function useAssignPage() {
   function pickRowKey(key: string, unitId?: number): number | null {
     const target = rowMap.get(key);
     const boxId = target === undefined ? null : unitId !== undefined && target.unitIds.includes(unitId) ? unitId : pickedId !== null && target.unitIds.includes(pickedId) ? pickedId : target.unitIds[0];
-    focusCtl.pick(target && boxId !== null ? { kind: "unit", docId: target.documentId, unitId: boxId } : NO_FOCUS);
+    pickFocus(target && boxId !== null ? { kind: "unit", docId: target.documentId, unitId: boxId } : NO_FOCUS);
     return boxId;
   }
   /** Old 줄 고름만 놓는다 - New 문서 · 목차 고름은 그대로 */
   function clearRowPick() {
-    if (focus.kind === "unit") focusCtl.pick(NO_FOCUS);
+    if (focus.kind === "unit") pickFocus(NO_FOCUS);
   }
   const isSolo = solo !== null && !solo.inPlace && row === null;
   const isNewEdit = solo !== null && solo.inPlace && row === null;
   const hasSolo = isSolo || isNewEdit;
-  // 고른 것의 단추를 끈다 - 묶음 전체 일 동안은 모두, 그 밖에는 고른 줄(또는 New 문서의 고른 문장)이 처리 중일 때만. 다른 박스를 고르면 그 박스의 일은 된다(설계 D4)
+  // 고른 것의 단추를 끈다 - 묶음 전체 일 동안은 모두, 그 밖에는 고른 줄(또는 New 문서의 고른 문장)의 모양이 바뀌는 중일 때만. 판단 저장 중인 줄은 다시 정할 수 있다(설계 D4, A1-R4)
   const busy = focusCtl.isGlobalPending || (row?.unitIds.some(focusCtl.isUnitLocked) ?? false) || (hasSolo && solo !== null && solo.unitId !== null && focusCtl.isUnitLocked(solo.unitId));
-  // 목차 블록 고름(MD 1 F6 · F12) - 배정 줄(row)이 아니라 남은 수·필터 수에 들지 않는다. 줄이나 New 문서를 고르면 가려진다.
+  // 저절로 삭제된 줄의 블록 고름(MD 1 F6 · F12, 쪼개기 먼저 §7 R3) - 배정 줄(row)이 아니라 남은 수·필터 수에 들지 않는다. 줄이나 New 문서를 고르면 가려진다.
   // unitId가 null이면 블록 전체, 아니면 펼친 블록의 줄 하나. 펼침은 블록 키(첫 줄 단위 id)로 이 화면을 연 동안만 기억한다(처음엔 접힘)
   const tocSel = focus.kind === "toc" ? focus : null;
   const [tocOpen, setTocOpen] = useState<ReadonlySet<number>>(() => new Set());
   const tocPick = mode === "old" && row === null && !hasSolo ? tocSel : null;
-  // 줄 이동(↑↓·J/K) 순서에 끼우는 목차 블록 - 문서 순 → 원문 순
-  const tocBlocks = useMemo(() => (viewList ?? []).flatMap((view) => listTocBlocks(view.units).map((block) => ({ ...block, docId: view.document.id }))), [viewList]);
+  // 줄 이동(↑↓·J/K) 순서에 끼우는 블록 - 문서 순 → 원문 순
+  const tocBlocks = useMemo(() => (viewList ?? []).flatMap((view) => listNoiseBlocks(view.units).map((block) => ({ ...block, docId: view.document.id }))), [viewList]);
+  // 고른 삭제 줄과 그 블록 - 첫 줄을 삭제 취소해 블록의 키가 바뀌어도 고른 줄이 든 블록이다
+  const noisePick = useMemo(() => {
+    const view = tocPick === null ? undefined : viewList?.find((item) => item.document.id === tocPick.docId);
+    const info = tocPick === null || !view ? undefined : findNoiseBlock(listNoiseBlocks(view.units), tocPick);
+    if (tocPick === null || !view || !info) return null;
+    const unitById = new Map(view.units.map((unit) => [unit.id, unit]));
+    const tables = new Map(view.tables.map((table) => [table.id, table]));
+    const block = buildNoiseBlock(info.unitIds.flatMap((id) => unitById.get(id) ?? []), (unit) => describeNoiseUnit(unit, tables, t));
+    return block === null ? null : { docId: tocPick.docId, unitId: tocPick.unitId, block };
+  }, [tocPick, viewList, t]);
   const [soloKey, setSoloKey] = useState(0);
   const soloLoad = useLoaded<DocumentView | null>(() => (solo !== null ? getDocumentView(bundleId, solo.docId) : Promise.resolve(null)), `${bundleId}:${solo?.docId ?? ""}:${soloKey}`);
+  // 표 벗기기 · 다시 표로의 풀기 전환(걷기 · 펼치기 · 붙이기, F10) - Old 칸 안에서 바뀌는 표를 찾고 잰다.
+  // 큐가 누른 순간 시작하고, 받은 보기를 고름에 알릴 때 따라가기 스크롤을 전환 뒤로 미루므로(B3) 둘보다 먼저 둔다
+  const oldPaneRef = useRef<HTMLElement | null>(null);
+  const unwrapMotion = useUnwrapMotion(oldPaneRef);
+  // 누른 순간 걷기를 시작한 풀기 전환(A2-R6), 명령 id마다 - 처리 중과 함께 시작하고, 새 보기를 놓기 전에 끝나면(거절 · 되묻기 · 버림) 거꾸로 돌린다.
+  // null은 앞 전환이 아직 돌아 그 뒤에 시작할 것
+  const unwrapStarts = useRef(new Map<string, UnwrapHandle | null>());
+  function startUnwrap(id: string, command: WriteCommand) {
+    const options = command.kind === "edit" && oldDocIds.includes(command.docId) ? readUnwrapOptions(command.op, command.view, command.followId) : null;
+    if (options === null) return;
+    const begin = () => {
+      if (unwrapStarts.current.get(id) !== null || unwrapMotion.afterMotion(begin)) return;
+      unwrapStarts.current.set(id, unwrapMotion.begin(options));
+    };
+    unwrapStarts.current.set(id, null);
+    begin();
+  }
+  /** 누른 순간 시작한 전환(없으면 지금 시작)을 넘겨받는다 - 이 뒤로는 끝나도 거꾸로 돌리지 않는다 */
+  function takeUnwrap(id: string, options: UnwrapRunOptions): UnwrapHandle {
+    const started = unwrapStarts.current.get(id) ?? unwrapMotion.begin(options);
+    unwrapStarts.current.delete(id);
+    return started;
+  }
+  function endCommand(id: string) {
+    focusCtl.end(id);
+    const started = unwrapStarts.current.get(id);
+    unwrapStarts.current.delete(id);
+    started?.revert();
+  }
+  // 모든 쓰기가 지나는 한 줄(A1) - 아래 줄 없는 이펙트가 커밋마다 돌린다
+  const commands = useCommandQueue(
+    {
+      pick: focusCtl.pick,
+      readFocus: () => liveRef.current.focus,
+      readSeen: (unitIds) => readSeen(unitIds),
+      start: (pending, command) => {
+        focusCtl.start(pending);
+        startUnwrap(pending.id, command);
+      },
+      end: (id) => endCommand(id),
+      dropFollows: focusCtl.dropFollows,
+      isSoloLoading: soloLoad.isLoading,
+      send: (command, ctx) => sendCommand(command, ctx),
+      hasTarget: () => liveRef.current.hasTarget,
+      replay: (command) => replayPress(command),
+      notifyLost: () => showToast(t("assign.queue.lost"), "info"),
+      notifyUnsent: (reason, n) => showToast(t("assign.queue.unsent", { n, reason: trimReason(reason) }), "error"),
+      readFailure: (err, command) => readCommandFailure(err, command),
+      notifyRefusal: (reason) => showToast(reason, "error"),
+      notifyDropped: (n) => showToast(t("assign.queue.discarded", { n }), "info"),
+      onDrop: (command) => restoreDraft(command),
+      flushReload: () => flushReload(),
+    },
+    (command) => describePending(command),
+  );
   // 받은 보기를 고름에 알린다 - 편집 응답에서 건 따라가기가 그 박스를 고르고(고름이 누른 때 그대로일 때만), 사라진 Unit의 고름은 놓는다
   // (렌더 중 상태 맞추기, D1 규칙 3 · 5). Old 문서는 보기와 그 문서 줄을 한 번에 놓은 뒤에(useDocViews) - 줄은 둘 다에서 나와, 새 보기에 옛 줄이 섞인 렌더가 없다.
   // 알리는 문서는 이번에 보기를 놓은 문서만(줄만 다시 받았으면 모든 문서) - 다른 문서의 고름은 그 문서 보기가 오지 않았으니 그대로다
-  // 표 벗기기 · 다시 표로의 풀기 전환(걷기 · 펼치기 · 붙이기, F10) - Old 칸 안에서 바뀌는 표를 찾고 잰다.
-  // 받은 보기를 고름에 알릴 때 따라가기 스크롤을 전환 뒤로 미루므로(B3) 그보다 먼저 둔다
-  const oldPaneRef = useRef<HTMLElement | null>(null);
-  const unwrapMotion = useUnwrapMotion(oldPaneRef);
   const [seenLoad, setSeenLoad] = useState<{ placed: number; solo: DocumentView | null }>({ placed: 0, solo: null });
   if (viewList !== null && unitList !== null && docViews.placed !== seenLoad.placed) {
     const placed = docViews.placed;
@@ -551,11 +719,13 @@ export function useAssignPage() {
   // 안 끝나는 약속은 그 자리의 이전 값을 두고 isLoading만 켠다)
   const isViewSettled = row === null || (!docViews.isReloading(row.documentId) && !row.unitIds.some((id) => focusCtl.isUnitUnsettled(row.documentId, id)));
   const rowKey = `${activeKey}:${row?.unitIds.map((id) => `${id}.${unitMap.get(id)?.decision.revision ?? ""}`).join(",") ?? ""}${isViewSettled ? "" : ":wait"}`;
-  const group = useLoaded<Group | null>(() => (!row ? Promise.resolve(null) : !isViewSettled ? new Promise<never>(() => undefined) : loadRowGroup(bundleId, row.unitIds)), rowKey);
+  const group = useLoaded<Group | null>(() => (!row ? Promise.resolve(null) : !isViewSettled ? new Promise<never>(() => undefined) : loadMarked(() => loadRowGroup(bundleId, row.unitIds))), rowKey);
   const groupData = group.data;
   const sentenceUnitIds = (row?.unitIds ?? []).filter((id) => unitMap.get(id)?.kind !== "table" && unitMap.get(id)?.kind !== "figure");
-  const similar = useLoaded<NewCandidate[]>(
-    () => (written.length > 0 && sentenceUnitIds.length > 0 ? (isViewSettled ? loadRowCandidates(bundleId, sentenceUnitIds) : new Promise<never>(() => undefined)) : Promise.resolve([])),
+  // 다시 부르는 동안 앞 줄의 후보가 남는다 - 어느 문장들의 것인지 함께 든다(↵가 앞 줄의 카드로 확정하지 않게)
+  const similarKey = sentenceUnitIds.join(",");
+  const similar = useLoaded<{ key: string; items: NewCandidate[] }>(
+    async () => ({ key: similarKey, items: written.length > 0 && sentenceUnitIds.length > 0 ? await (isViewSettled ? loadRowCandidates(bundleId, sentenceUnitIds) : new Promise<never>(() => undefined)) : [] }),
     // 후보는 New 문장 목록에서 고른다 - 그 목록을 다시 받으면(판단 저장 · 판단을 푼 편집) 후보도
     `${rowKey}:${written.length > 0}:${writtenKey}`,
   );
@@ -573,10 +743,6 @@ export function useAssignPage() {
   const savedReason = rowUnits.map((unit) => readHumanReason(unit.decision)).find(Boolean) ?? "";
   const systemHold = rowUnits.map((unit) => findSystemHold(unit.decision)).find((code) => code !== null) ?? null;
   const reasonNow = draft.reason ?? savedReason;
-  const moveCode = draft.moveCode ?? firstDecision?.move_target_code ?? "";
-  // runSave·sendSave가 방금 고른 삭제·이동(pick)으로 가릴 때 읽는 그린 초안의 값
-  const currentDestination = destination;
-  const currentMoveCode = moveCode;
 
   function setDraft(patch: Partial<PageDraft>, nextEditing = editing) {
     if (!activeKey) return;
@@ -593,10 +759,38 @@ export function useAssignPage() {
     });
   }
 
-  // 저장 전 고름·고친 글이 남은 줄이 있으면 다른 화면으로 가기 전에 묻는다(초안은 이 화면의 상태라 나가면 사라진다)
-  const unsavedCount = Object.values(drafts).filter(hasDraftChange).length;
+  /** 저장에 실어 보낸 초안을 버린다 - 응답을 기다리는 사이 그 줄을 다시 골라 고친 초안이면 둔다 */
+  function dropSentDraft(key: string, sent: PageDraft, reason: string) {
+    setDrafts((prev) => (isSentDraft(prev[key], sent, reason) ? Object.fromEntries(Object.entries(prev).filter(([item]) => item !== key)) : prev));
+  }
+
+  /** 버린 저장 - 그 명령이 바꾼 초안(삭제 · 추천 첫 카드)을 그 전으로 돌린다 */
+  function restoreDraft(command: WriteCommand) {
+    if (command.kind !== "save" || command.before === command.draft) return;
+    const { rowKey, draft: sent, before, reason } = command;
+    setDrafts((prev) => {
+      if (!isSentDraft(prev[rowKey], sent, reason)) return prev;
+      const rest = Object.fromEntries(Object.entries(prev).filter(([item]) => item !== rowKey));
+      return before === null ? rest : { ...rest, [rowKey]: before };
+    });
+  }
+
+  // 고른 줄의 확정하지 않은 번역 - 어디로 보낸 줄이든 오른쪽 칸에서 정한다. 줄이 없는 것(출처 은퇴)은 남은 번역 목록에서
+  const openTranslations = row === null ? [] : listRowTranslations(leftovers, row.unitIds);
+  const translationBlocked = groupData !== null && isTranslationBlocked(openTranslations, groupData);
+
+  // 저장 전 고름·고친 글이 남은 줄이 있으면 다른 화면으로 가기 전에 묻는다(초안은 이 화면의 상태라 나가면 사라진다). 아직 보내지 않은 명령도 같다
+  // 누른 판단은 나가도 마저 보내니 그 초안은 세지 않고, 멈춘 것 · 쌓인 글쇠 · 되묻는 것은 나가면 버려지니 센다
+  const savingRows = new Set(commands.listSavingRows());
+  const { state: queueNow } = commands;
+  const heldCount = queueNow.halted !== null || queueNow.asking !== null ? queueNow.waiting.length + 1 : queueNow.waiting.filter((command) => command.kind === "key").length;
+  const unsavedCount = Object.entries(drafts).filter(([key, item]) => !savingRows.has(key) && hasDraftChange(item)).length + heldCount;
   const [leaveTo, setLeaveTo] = useState<string | null>(null);
-  useLeaveGuard(unsavedCount > 0, setLeaveTo);
+  // 보내는 중이면 창을 닫거나 새로 고칠 때만 묻는다 - 앱 안 이동은 큐가 마저 보낸다
+  useLeaveGuard(unsavedCount > 0 || queueNow.waiting.length > 0 || listUnsettled(queueNow).some(isDecisionCommand), (href) => {
+    if (unsavedCount > 0) setLeaveTo(href);
+    else navigate(href, { immediate: true });
+  });
 
   // --- 추천(① 추천 카드) - 저장된 AI 제안 → 같은 글자 → 비슷한 문장 ---
   // 줄의 AI 추천 - 미배정 줄을 덮는 살아 있는 제안. 카드를 누르거나 A(Use)로 받으면 초안이 채워지고 확정은 사람이 한다(설계 §5 2-1)
@@ -605,20 +799,25 @@ export function useAssignPage() {
   const aiWhy = typeof rowLive?.content.reason === "string" ? rowLive.content.reason : "";
   const isAiRow = aiDest !== null;
   const recommendations: Recommendation[] = row
-    ? buildRecommendations({
+    ? dropHiddenRecommendations(buildRecommendations({
         aiLinks: aiDest?.kind === "link" ? [{ targetIds: aiDest.targetIds, why: aiWhy }] : [],
         aiPlaces: aiDest && aiDest.kind !== "link" ? [{ destination: aiDest, why: aiWhy }] : [],
         identical: (identical.data ?? []).filter((item) => row.unitIds.includes(item.unit_id)).map((item) => item.target_id),
-        similar: similar.data ?? [],
+        similar: similar.data?.items ?? [],
         headingPlaces: rowUnits.some(isBandHeading),
-      }, (ids) => addPartnerTargets(ids, writtenMap))
+      }, (ids) => addPartnerTargets(ids, writtenMap)), isDrafting)
     : [];
+  // 저장된 곳이 숨긴 새 문서의 자리면 그 번호와 칸 이름 - 읽기만 하고 확정하지 않는다(배정 취소나 잇기로 나간다)
+  const hiddenPlace = isDrafting ? null : readHiddenPlace(destination, labelOptions);
+  // 이미 다른 Bundle로 이동한 줄(없앤 기능) - 읽기만 하고 확정하지 않는다(배정 취소로 풀면 다시 고를 수 없다)
+  // 저장된 판단(unitMap)에서 바로 정한다 - 묶음(group)이 늦게 와도 그동안 Confirm이 켜지지 않고, 짝 한쪽만 이동이어도 읽기 전용이다
+  const legacyMove = describeLegacyMove(rowUnits);
   const linkIds = destination?.kind === "link" ? destination.targetIds : [];
   // 고른 문장의 관계 묶음(합쳐진 다른 출처 등)은 고를 때 부른다 - 함께 확정되는 것을 미리 보이고 저장도 같은 묶음으로 한다
   const knownTargets = new Set(groupData?.targets.map((target) => target.id) ?? []);
   const missingIds = listJoinedTargetIds(destination).filter((id) => !knownTargets.has(id));
   const pickedGroups = useLoaded<Group[]>(
-    () => (missingIds.length > 0 ? Promise.all(missingIds.map((id) => getGroupByTarget(bundleId, id))) : Promise.resolve([])),
+    () => (missingIds.length > 0 ? Promise.all(missingIds.map((id) => loadMarked(() => getGroupByTarget(bundleId, id)))) : Promise.resolve([])),
     `${rowKey}:${missingIds.join(",")}`,
   );
   const saveGroupData = groupData ? mergeGroups([groupData, ...(pickedGroups.data ?? [])]) : null;
@@ -637,7 +836,16 @@ export function useAssignPage() {
   const paperModel = useMemo(() => (oldView ? buildPaperModel(oldView) : null), [oldView]);
   // 처리 중인 일의 알약 · 쉬머 · 잠금 - 같은 목록이면 같은 값이라 용지의 먼 덩어리를 다시 그리지 않는다
   const pendingList = focusCtl.pending;
-  const paperPending = useMemo(() => buildPaperPending(pendingList, t), [pendingList, t]);
+  const queueState = commands.state;
+  const paperPending = useMemo(() => buildPaperPending(pendingList, queueState, t), [pendingList, queueState, t]);
+  // 누른 순간 보일 것(A2-R6) - 삭제를 눌렀고 아직 저장되지 않은 줄(접힌다, 멈춘 것도 버릴 때까지)과 저장을 기다리는 번호의 기대 글(응답의 보기가 닿으면 그 값이 이긴다).
+  // 내용이 같으면 같은 값이다 - 큐가 움직일 때마다 용지의 먼 덩어리를 다시 그리지 않게
+  const [sentNumbers, setSentNumbers] = useState<readonly SentNumber[]>([]);
+  const pendingDeleteKey = JSON.stringify([...readPendingOutcomes(listUnsettled(queueState))].flatMap(([key, outcome]) => (outcome === "deleted" ? [key] : [])));
+  const pendingDeletes = useMemo(() => new Set(JSON.parse(pendingDeleteKey) as string[]), [pendingDeleteKey]);
+  const pendingOps = [queueState.running, ...queueState.waiting].flatMap((command) => (command?.payload.kind === "edit" ? [command.payload.op] : []));
+  const expectedNumberKey = JSON.stringify(listExpectedNumbers(pendingOps, sentNumbers, viewList ?? []));
+  const expectedNumbers = useMemo(() => new Map(JSON.parse(expectedNumberKey) as Array<[number, string | null]>), [expectedNumberKey]);
   // Pair view - 한/영 따로 문서를 KO | EN 두 칸으로 편 문서 id. 이 화면을 연 동안만 기억한다(새로 고치면 꺼져 있다).
   // 다른 문서·한 단의 New 문서 원문·출처 없는 New로 가면 꺼진다(렌더 중 상태 맞추기 - dropLink와 같은 짜임)
   const [pairViewDoc, setPairViewDoc] = useState<number | null>(null);
@@ -666,7 +874,7 @@ export function useAssignPage() {
   // AI 나누기 제안 - 보는 Old 문서의 아직 정하지 않은 것. 문장마다 가장 새 제안 하나(전에는 쪼개기 화면에서만 적용·거절했다)
   const oldDocId = oldView?.document.id ?? null;
   useAiPrepare(bundleId, { enabled: canEdit && aiOn, documentId: oldDocId, onQueued: (n) => { showToast(t("ai.prepareQueued", { n })); aiJobs.watch(); } });
-  const splitSuggestions = useLoaded(() => (aiOn && oldDocId !== null ? listAppliedSuggestions(bundleId, "split", oldDocId) : Promise.resolve([])), `${aiOn}:${oldDocId}:${dataKey}:${reloadKeys.split}`);
+  const splitSuggestions = useLoaded(() => (isDrafting && aiOn && oldDocId !== null ? listAppliedSuggestions(bundleId, "split", oldDocId) : NO_SUGGESTIONS), `${isDrafting}:${aiOn}:${oldDocId}:${dataKey}:${reloadKeys.split}`);
   // 벗긴 표 AI 순서 제안(B11) - 놓기는 끌기와 같은 편집 한 번(reorder_unwrapped)이라 되돌리기도 한 칸
   const unwrapAi = useUnwrapAi({
     bundleId,
@@ -675,7 +883,7 @@ export function useAssignPage() {
     status: aiJobs.status,
     dataKey,
     watch: aiJobs.watch,
-    reorder: (tableId, order, afterOk) => void runUnitEdit({ type: "reorder_unwrapped", table_id: tableId, unit_ids: order }, t("assign.unwrapAi.applied"), null, false, null, { at: "table", tableId }, afterOk),
+    reorder: (tableId, order, afterOk) => runUnitEdit({ type: "reorder_unwrapped", table_id: tableId, unit_ids: order }, t("assign.unwrapAi.applied"), null, false, null, { at: "table", tableId }, afterOk),
     t,
   });
   const splitByUnit = useMemo(() => {
@@ -736,7 +944,7 @@ export function useAssignPage() {
   const writtenDocs = [...new Map(written.map((item) => [item.target_doc_id, item.doc_code])).entries()];
   // 오른쪽 칸은 항상 열려 있다 - 쓴 New 문서가 없으면 빈 안내
   // 아직 쓰지 않은 문서(To-Be의 Assign 입구) - 오른쪽 칸에 지금까지의 배정으로 엮어 보인다(서버 결과물 C 규칙, 읽기 전용)
-  const composedDocs = (tobeData?.docs ?? []).filter((doc) => doc.entrance === "assign");
+  const composedDocs = isDrafting ? (tobeData?.docs ?? []).filter((doc) => doc.entrance === "assign") : [];
   const [manualNewDoc, setManualNewDoc] = useState<{ key: string; docId: number } | null>(null);
   // 방금 확정해 보낸 곳 - 확정 뒤 고른 줄(key)에 있는 동안만 오른쪽 칸을 그 문서에 두고 그 문장을 잇는 선을 진하게. 손으로 고른 문서가 먼저, 다른 줄로 옮기면 평소대로
   const [liveNew, setLiveNew] = useState<{ key: string; docId: number; targetIds: number[]; seq: number } | null>(null);
@@ -776,7 +984,9 @@ export function useAssignPage() {
   const oldUnitIds = useMemo(() => new Set(oldView?.units.map((unit) => unit.id) ?? []), [oldView]);
   const linkPairs = buildLinkPairs(newRows.filter(isWrittenRow), oldUnitIds, draft.destination?.kind === "link" ? { units: rowUnits.map((unit) => ({ id: unit.unit_id, lang: unit.lang })), targetIds: draft.destination.targetIds } : null);
 
-  const [view, setView] = useState(readAssignView);
+  const [savedView, setView] = useState(readAssignView);
+  // 숨긴 동안 템플릿 보기는 없다 - 저장해 둔 값은 그대로 두고 꺼진 것으로 읽는다
+  const view = isDrafting ? savedView : { ...savedView, newTemplate: false };
   // Space 미리보기의 단위 - 가운데 맞출 단위(누른 박스, 문단 Excel에 없는 머리말 · 꼬리말이면 문서 차례로 가까운 위 본문 단위)가 맨 앞
   const spaceOrder = useMemo(() => {
     if (!oldView) return null;
@@ -784,7 +994,8 @@ export function useAssignPage() {
     const docOrder = [...oldView.units].sort((a, b) => a.pos_seq - b.pos_seq || (a.spans[0]?.[1] ?? 0) - (b.spans[0]?.[1] ?? 0)).map((unit) => unit.id);
     return { docOrder, bodyIds: new Set(oldView.units.filter((unit) => partOfBlock.get(unit.block_id) === "body").map((unit) => unit.id)) };
   }, [oldView]);
-  const spaceRowIds = isSolo ? soloUnits.map((unit) => unit.id) : (row?.unitIds ?? []);
+  // 저절로 삭제된 줄을 골랐으면 그 줄(블록이면 첫 줄) - 미리보기는 지운 줄을 고른 동안만 보인다
+  const spaceRowIds = isSolo ? soloUnits.map((unit) => unit.id) : (row?.unitIds ?? (noisePick === null ? [] : [noisePick.unitId ?? noisePick.block.key]));
   const spaceAnchor = spaceOrder === null ? null : pickSheetAnchor(spaceRowIds, isSolo ? (solo?.unitId ?? null) : pickedId, spaceOrder.docOrder, (unitId) => pickSpaceSheet(view.single) !== "paragraphs" || spaceOrder.bodyIds.has(unitId));
   const spaceUnitIds = spaceAnchor === null ? spaceRowIds : [spaceAnchor, ...spaceRowIds.filter((id) => id !== spaceAnchor)];
   const paneSlide = usePaneSlide(view.single);
@@ -824,25 +1035,63 @@ export function useAssignPage() {
       showToast(humanizeApiError(err, t), "error");
     }
   }
-  const aiMenuItems: AiAskItem[] = [];
-  if (oldView) aiMenuItems.push({ key: "document", label: t("ai.classifyDocument"), run: () => askAiScope("classify", { document_id: oldView.document.id }) });
-  if (writtenDocs.length > 0) aiMenuItems.push({ key: "match", label: t("ai.kind.match"), run: () => askAiScope("match", {}) });
-  if (row && row.status !== "unassigned" && rowLangs.includes("ko")) aiMenuItems.push({ key: "to-en", label: t("ai.translateToEn"), run: () => askAiScope("translate", { unit_ids: row.unitIds, direction: "ko_to_en" }) });
-  if (row && row.status !== "unassigned" && rowLangs.includes("en")) aiMenuItems.push({ key: "to-ko", label: t("ai.translateToKo"), run: () => askAiScope("translate", { unit_ids: row.unitIds, direction: "en_to_ko" }) });
+  const aiAskItems: AiAskItem[] = [];
+  if (oldView) aiAskItems.push({ key: "document", label: t("ai.classifyDocument"), run: () => askAiScope("classify", { document_id: oldView.document.id }) });
+  if (writtenDocs.length > 0) aiAskItems.push({ key: "match", label: t("ai.kind.match"), run: () => askAiScope("match", {}) });
+  if (row && row.status !== "unassigned" && rowLangs.includes("ko")) aiAskItems.push({ key: "to-en", label: t("ai.translateToEn"), run: () => askAiScope("translate", { unit_ids: row.unitIds, direction: "ko_to_en" }) });
+  if (row && row.status !== "unassigned" && rowLangs.includes("en")) aiAskItems.push({ key: "to-ko", label: t("ai.translateToKo"), run: () => askAiScope("translate", { unit_ids: row.unitIds, direction: "en_to_ko" }) });
   // 서버가 건너뛸 줄(제목·표, 사람이 정했거나 짝 맞추기 제안이 채운 문장)이면 미리 끄고 까닭을 툴팁으로
   const splitBlock = findSplitBlock(rowUnits.map((unit) => ({ ...unit, suggestionKind: suggestionOf.get(unit.unit_id)?.kind ?? null })));
-  if (row) aiMenuItems.push({ key: "split", label: t("ai.splitRow"), disabledReason: splitBlock ? t(`ai.splitRowBlocked.${splitBlock}`) : null, run: () => askAiScope("split", { unit_ids: row.unitIds }) });
+  if (row) aiAskItems.push({ key: "split", label: t("ai.splitRow"), disabledReason: splitBlock ? t(`ai.splitRowBlocked.${splitBlock}`) : null, run: () => askAiScope("split", { unit_ids: row.unitIds }) });
   // 문서 전체 요청 두 가지 - 전에는 쪼개기 화면 용지 위 막대에만 있었다. 짝 제안은 한글·영어가 따로 적힌 문서에서만
-  if (oldView) aiMenuItems.push({ key: "split-document", label: t("ai.askSplitShort"), run: () => askAiScope("split", { document_id: oldView.document.id }) });
-  if (oldView?.document.language_layout === "ko_en_separate") aiMenuItems.push({ key: "pair-document", label: t("ai.askPairShort"), run: () => askAiScope("pair", { document_id: oldView.document.id }) });
+  if (oldView) aiAskItems.push({ key: "split-document", label: t("ai.askSplitShort"), run: () => askAiScope("split", { document_id: oldView.document.id }) });
+  if (oldView?.document.language_layout === "ko_en_separate") aiAskItems.push({ key: "pair-document", label: t("ai.askPairShort"), run: () => askAiScope("pair", { document_id: oldView.document.id }) });
+  const aiMenuItems = filterAiItems(aiAskItems, isDrafting);
 
   const [remarkEdit, setRemarkEdit] = useState<RemarkEdit | null>(null);
+  /** 사유 창의 확인 - 글을 바꾸지 않고 확인하면 초안을 만들지 않는다(저장 안 한 변경으로 잡혀 나가기 확인·고치기 막힘이 생기지 않게). 저장이 연 창이면 그 저장을 잇는다 */
+  function confirmRemark(text: string) {
+    if (remarkEdit?.kind !== "row") return;
+    const { then, askId = null } = remarkEdit;
+    focusAfterRef.current = "assign-primary";
+    setRemarkEdit(null);
+    if (text !== reasonNow) setDraft({ reason: text });
+    commands.answerAsk(askId, () => (then ? runSave(then, text) : undefined));
+  }
+  function closeRemark() {
+    const askId = remarkEdit?.kind === "row" ? (remarkEdit.askId ?? null) : null;
+    focusAfterRef.current = "assign-primary";
+    setRemarkEdit(null);
+    commands.cancelAsk(askId);
+  }
+  /** 삭제된 줄의 사유 창을 연다 - 글쇠 · 단추를 누른 순간의 줄을 잡는다 */
+  function openNoiseReason(docId: number, unitIds: readonly number[]) {
+    const view = viewOf(docId);
+    if (!canEdit || !view || unitIds.length === 0) return;
+    const ids = new Set(unitIds);
+    const reasons = new Set(view.units.filter((unit) => ids.has(unit.id)).map((unit) => unit.noise_reason ?? ""));
+    setRemarkEdit({ kind: "noise", docId, unitIds, initial: reasons.size === 1 ? [...reasons][0] : "", isMixed: reasons.size > 1, askId: commands.openAsk() });
+  }
+  /** 사유 창의 확인 - 빈 글이면 정한 문구로 돌린다. 바뀐 것이 없으면 보내지 않는다 */
+  function confirmNoiseReason(text: string) {
+    if (remarkEdit?.kind !== "noise") return;
+    const { docId, unitIds, initial, isMixed, askId } = remarkEdit;
+    setRemarkEdit(null);
+    commands.answerAsk(askId, () => {
+      if (text !== initial || isMixed) runNoiseEdit(docId, { type: "set_noise_reason", unit_ids: [...unitIds], reason: text }, t("assign.noise.didReason"), null);
+    });
+  }
+  function closeNoiseReason() {
+    const askId = remarkEdit?.kind === "noise" ? remarkEdit.askId : null;
+    setRemarkEdit(null);
+    commands.cancelAsk(askId);
+  }
   // Remark 창을 닫은 뒤 포커스를 둘 단추(testid) - 창이 여는 곳으로 되돌린 뒤에 옮겨 ↵가 바로 확정이 되게
   const focusAfterRef = useRef<string | null>(null);
   const firstTextRef = useRef<HTMLTextAreaElement>(null);
   // 배정이 걸린 문장을 자르거나 합치려 할 때 - 서버가 409 confirm_required로 물으면 확인을 받아 배정을 풀며 다시 보낸다(원문 고치기와 같은 규칙, 설계 2026-11-15 §3.5)
-  // 다시 보낼 일은 함수가 아니라 값으로 둔다 - 확인을 누른 그때의 화면 값(원문 보기·문서 판)으로 보내야 고친 뒤 새 줄을 따라간다
-  const [editConfirm, setEditConfirm] = useState<{ count: number; retry: ConfirmedEdit } | null>(null);
+  // 다시 보낼 일은 함수가 아니라 값으로 둔다 - 확인하면 큐가 같은 명령을 그 자리에서 다시 보낸다. askId가 null이면 보내기 전에 물은 것이라 새로 세운다
+  const [editConfirm, setEditConfirm] = useState<{ count: number; command: ConfirmableCommand; askId: string | null } | null>(null);
   // 되돌리기 기록은 이 화면을 연 동안만 - 세션 키가 서버 기록을 가른다(설계 2026-11-13-assign-undo §5.1, docs/architecture/decisions.md)
   const undoSession = useRef(genId());
   const [undoState, setUndoState] = useState({ canUndo: false, canRedo: false });
@@ -856,7 +1105,17 @@ export function useAssignPage() {
   }
   /** 되돌리기 줄이 움직인 횟수(새 단계 · 되돌리기 · 다시 하기) - 알림의 Undo는 제 단계가 아직 맨 끝일 때만 그 단계를 되돌린다 */
   const stepTick = useRef(0);
-  const [bulk, setBulk] = useState<"delete" | "move" | null>(null);
+  /** 누른 판단이 아직 큐에 있나 - 고름은 이미 떠나 저장된 것처럼 보이니 기록이 없어도 Undo가 그 뒤에 선다. 모양 편집은 응답까지 그 자리에 있고
+   *  그동안의 Ctrl+Z는 쌓였다가 되살아나니, 단추는 지금처럼 기록이 생긴 뒤(응답)에 켜진다 */
+  function hasQueuedStep(): boolean {
+    return commands.listUnrecorded().some(isDecisionCommand);
+  }
+  /** 알림의 되돌리기 - 제 단계가 아직 맨 끝이고 그 뒤에 선 명령이 없을 때만(Ctrl+Z와 같은 줄이라 다른 단계를 되돌리지 않게) */
+  function buildUndoAction() {
+    const tick = stepTick.current;
+    return { label: t("common.undo"), run: () => (stepTick.current === tick && commands.listUnrecorded().length === 0 ? undoStepRef.current("undo") : showToast(t("assign.pairDrag.undoStale"), "info")) };
+  }
+  const [bulk, setBulk] = useState<"delete" | null>(null);
   const [confirmingIdentical, setConfirmingIdentical] = useState(false);
   const [resetScope, setResetScope] = useState<ResetScope | null>(null);
   const [openAcc, setOpenAcc] = useState<{ key: string; open: Set<string> }>({ key: "", open: new Set(["rec"]) });
@@ -1024,7 +1283,7 @@ export function useAssignPage() {
   const [captionPick, setCaptionPick] = useState<{ docId: number; bundleId: number } | null>(null);
   const captionPickBundle = captionPick !== null && captionPick.docId === shapeView?.document.id ? (shapeModel?.units.get(captionPick.bundleId) ?? null) : null;
 
-  /** 목차 블록(unitId null) 또는 그 줄 하나를 고른다 - 배정 줄 고름을 놓고 그 Old 문서를 연다. 결정 칸이 목차 칸(F12 G2 · G3)을 보인다 */
+  /** 저절로 삭제된 줄의 블록(unitId null) 또는 그 줄 하나를 고른다 - 배정 줄 고름을 놓고 그 Old 문서를 연다. 결정 칸이 그 블록 칸(F12 G2 · G3)을 보인다 */
   function selectToc(docId: number, key: number, unitId: number | null, scroll = true) {
     setMode("old");
     setChecked(new Set());
@@ -1034,8 +1293,8 @@ export function useAssignPage() {
     setCutUnitId(null);
     setRefEntryId(null);
     setManualOldDoc(docId);
-    focusCtl.pick({ kind: "toc", docId, key, unitId });
-    if (scroll) requestAnimationFrame(() => document.querySelector(`[data-testid="assign-paper-toc-${key}"]`)?.scrollIntoView({ block: "nearest" }));
+    pickFocus({ kind: "toc", docId, key, unitId });
+    if (scroll) requestAnimationFrame(() => document.querySelector(`[data-testid="assign-paper-noise-${key}"]`)?.scrollIntoView({ block: "nearest" }));
   }
 
   /** 줄을 고른다 - unitId를 주면 그 박스(누른 박스, 짝의 다른 구성원이어도 그것), 아니면 pickRowKey의 규칙. 고른 박스 id를 돌려준다 */
@@ -1152,7 +1411,7 @@ export function useAssignPage() {
       return (unitId !== null && figureTabIds.has(unitId)) === (activePart === "figures");
     };
     const walk = navKeys.filter((key) => isListed(key) && isFigureWalk(key));
-    const current = tocPick !== null ? toTocNavKey(tocPick.key) : isPairView ? activeKey : pickedId !== null ? toUnitNavKey(pickedId) : null;
+    const current = noisePick !== null ? toTocNavKey(noisePick.block.key) : isPairView ? activeKey : pickedId !== null ? toUnitNavKey(pickedId) : null;
     const next = stepInList(navKeys, walk, current, step);
     const tocKey = next === null ? null : readTocNavKey(next);
     const block = tocKey === null ? undefined : tocBlocks.find((item) => item.key === tocKey);
@@ -1250,9 +1509,11 @@ export function useAssignPage() {
       listCaptionLangs,
       isFixedCaption,
       captionBundle: target.kind === "caption" ? findBundleOf(target) : null,
+      canStartBody: shapeView !== null && oldDocIds.includes(shapeView.document.id) && shapeView.blocks.find((block) => block.id === target.block_id)?.part === "body",
       readOnly: !canEdit,
       rowStatus: row?.status ?? "unassigned",
       isDeleted: isRowDeleted,
+      isLegacyMove: legacyMove !== null,
       isDecided: isUnitDecided,
       hasDraft: hasUnitDraft,
       canSplit: findNearestCut(target, Math.floor(target.text.length / 2)) !== null,
@@ -1279,9 +1540,10 @@ export function useAssignPage() {
   const refBlocked = rowRefUnit !== null && isUnitDecided(rowRefUnit) ? t("assign.ctx.why.assigned") : null;
   const isRefGate = row !== null && row.status !== "confirmed" && rowViewUnits.some(isRefPending);
   // 새 문서 자리로 보내는 표·그림에 캡션이 없으면 Confirm이 꺼진다(명세 §3.4) - 캡션은 Edit and confirm에서 써 넣는다
-  const isCaptionGateOn = row !== null && paperModel !== null && oldView?.document.id === row.documentId && isCaptionGate(row, destination, paperModel.units, draft, groupData);
+  const isCaptionGateFor = (target: Destination | null) => row !== null && paperModel !== null && oldView?.document.id === row.documentId && isCaptionGate(row, target, paperModel.units, draft, groupData);
+  const isCaptionGateOn = isCaptionGateFor(destination);
   // Confirm을 막는 까닭 - 결정 칸 단추의 툴팁과 그 자리 메뉴(끌어 놓은 초안 포함)가 같은 답을 쓴다
-  const confirmBlockKey = readConfirmBlockKey({ isRefGate, isCaptionGate: isCaptionGateOn });
+  const confirmBlockKey = readConfirmBlockKey({ isRefGate, isCaptionGate: isCaptionGateOn, isHiddenPlace: hiddenPlace !== null, isLegacyMove: legacyMove !== null });
   // 오른쪽 칸 1번(다듬기) - 고른 줄의 문장마다 할 수 있는 일. 우클릭 메뉴와 같은 답이다. 고칠 수 없는 사람에게는 줄을 보이지 않는다
   // 표·그림 줄이면 그 묶음의 캡션도 문장처럼 한 줄씩(언어 세 칸·자르기·캡션 떼기) - 용지 순서대로(캡션이 위면 위에)
   const rowBundleSpan = new Set(rowViewUnits.filter((unit) => isBundleKind(unit.kind)).map((unit) => unit.id));
@@ -1311,7 +1573,7 @@ export function useAssignPage() {
   const bandTableId = bandUnit?.table_id ?? null;
   // 띠 표는 표 머리가 없다 - 처리 중 알약은 그 제목 줄에
   const bandBack = bandUnit !== null && bandTableId !== null
-    ? { reasonKey: rowViewUnits.some(hasUnitDraft) ? "assign.ctx.why.unsaved" : null, onBack: () => void runUnitEdit({ type: "set_layout_table", table_id: bandTableId, is_layout: false }, t("assign.band.didTable"), null, false, null, { at: "box", unitId: bandUnit.id }) }
+    ? { reasonKey: rowViewUnits.some(hasUnitDraft) ? "assign.ctx.why.unsaved" : null, onBack: () => runUnitEdit({ type: "set_layout_table", table_id: bandTableId, is_layout: false }, t("assign.band.didTable"), null, false, null, { at: "box", unitId: bandUnit.id }) }
     : null;
   const stepBase = shapeLines.length > 0 ? 1 : 0;
   const refPendingIds = (shapeTabs?.order ?? []).filter((id) => isRefPending(shapeModel?.units.get(id)) && (hasSolo || rowOfUnit.has(id)));
@@ -1368,115 +1630,116 @@ export function useAssignPage() {
   }
 
   /**
-   * 편집 뒤 다시 받기(설계 D2) - 고친 Old 문서의 보기와 그 줄은 한 번에 받아 놓고(따라가기가 이것을 기다린다), 나머지는 planReload가 고른 목록만 뒤에서.
-   * ready - 이미 받아 둔 그 문서(같은 문서를 두 번 받지 않는다). Old 문서가 아닌 문서(한 단으로 연 New 문서)는 그 보기를 다시 받고,
-   * 그 문서의 Unit이 바뀌는 편집(나누기 제안 적용 · 짝)이면 New 문서 편집처럼 New 문장 목록 · To-Be도
+   * 장벽의 다시 받기(설계 D2) - 고친 문서의 보기와 그 줄만 곧바로 받아 놓고(따라가기가 이것을 기다린다), 나머지 목록은 큐가 빌 때 한 번.
+   * ready - 이미 받아 둔 그 문서(같은 문서를 두 번 받지 않는다). Old 문서가 아닌 문서(한 단으로 연 New 문서)는 그 보기를 다시 받는다
    */
-  function reloadAfterEdit(plan: ReloadPlan, ready: DocBatch | null = null) {
-    const oldIds = plan.docs === "all" ? "all" : plan.docs.filter((id) => oldDocIds.includes(id));
-    const isNewDoc = oldIds !== "all" && oldIds.length < plan.docs.length;
-    if (plan.newDoc !== null || isNewDoc) setSoloKey((key) => key + 1);
-    const tobe = plan.tobe || (isNewDoc && plan.units);
-    const written = plan.written || (isNewDoc && plan.units);
-    if (tobe || written || plan.identical || plan.splitSuggestions !== null) {
-      setReloadKeys((prev) => ({ tobe: prev.tobe + Number(tobe), written: prev.written + Number(written), identical: prev.identical + Number(plan.identical), split: prev.split + Number(plan.splitSuggestions !== null) }));
+  async function placeReload(ask: ReloadAsk, ctx: SendContext, ready: DocBatch | null = null) {
+    const { views, rest } = splitReload(ask);
+    requestReload(rest);
+    if (views.solo) {
+      setSoloKey((key) => key + 1);
+      ctx.waitSolo();
     }
-    if (plan.bundle) void loadBundle(bundleId);
+    // 되돌리기가 먼저 나갔으면 놓지 않는다 - 그 되돌리기가 모두 다시 받는다
     if (ready !== null) docViews.apply(ready);
-    else if (oldIds === "all" || oldIds.length > 0) void docViews.reload({ docs: oldIds, units: plan.units ? oldIds : null });
+    else if (isDocReload(views) && !(await docViews.reload({ docs: views.docs, units: views.units }, ctx.isCurrent))) ctx.loseViews();
   }
 
-  /** 편집 한 번 - 끝나면 원문 보기·단위를 다시 받고 followId(없으면 새로 생긴 첫 단위)의 줄을 고른다. confirm은 확인 창에서 다시 보낼 때만 켠다 */
+  /** 장벽이 아닌 편집의 다시 받기(번호 · 순서) - 모두 큐가 빌 때. 장벽이면 placeReload */
+  async function reloadAfter(ask: ReloadAsk, ctx: SendContext, isWaited: boolean) {
+    if (isWaited) await placeReload(ask, ctx);
+    else requestReload(ask);
+  }
+
+  /** 편집 한 번 - 끝나면 원문 보기·단위를 다시 받고 followId(없으면 새로 생긴 첫 단위)의 줄을 고른다. confirm은 묻지 않고 하는 모양 전환만 켠다(되묻기의 답은 큐가 켠다) */
   /** thenLang - 참조 줄을 푼 뒤 그 문장을 이 언어로(Shape 언어 세 칸에서 참조 줄의 KO·EN). place - 알약 자리(없으면 편집이 가리키는 곳, 틈의 붙이기는 그 틈) */
-  async function runUnitEdit(op: EditOp, okText: EditToast, followId: number | null, confirm = false, thenLang: "ko" | "en" | null = null, place: PendingPlace | null = null, afterOk?: () => Promise<void>) {
+  function runUnitEdit(op: EditOp, okText: EditToast, followId: number | null, confirm = false, thenLang: "ko" | "en" | null = null, place: PendingPlace | null = null, afterOk?: () => Promise<void>) {
     if (!shapeView) return;
-    const view = shapeView;
-    const docId = view.document.id;
-    const isOld = oldDocIds.includes(docId);
-    // confirm은 판단을 풀며 보낸 편집이다 - 대상(Target)이 지워져 To-Be · New 문장도 다시 받는다
-    const plan = planReload(isOld ? { kind: "old_edit", docId, isInPlace: IN_PLACE_EDIT_OPS.has(op.type), isReleased: confirm } : { kind: "new_edit", docId }, { aiOn });
+    commands.enqueue(buildEditCommand(shapeView, op, okText, followId, confirm, thenLang, place, afterOk));
+  }
+
+  function buildEditCommand(view: DocumentView, op: EditOp, okText: EditToast, followId: number | null, confirm = false, thenLang: "ko" | "en" | null = null, place: PendingPlace | null = null, afterOk?: () => Promise<void>): Extract<WriteCommand, { kind: "edit" }> {
     // 표 바꾸기는 그 표의 Unit 전부를 잡는다(벗기면 표 단위가 은퇴하고 칸 문장이 풀린다)
     const unitIds = op.type === "set_layout_table" ? listTableUnitIds(view.units, view.tables, op.table_id) : listEditUnitIds(op);
-    await focusCtl.runPending({ kind: readEditKind(op), docId, unitIds, place: place ?? readEditPlace(op), isGlobal: false }, (job) => sendUnitEdit(job, view, op, okText, followId, confirm, thenLang, plan, afterOk));
+    return { kind: "edit", docId: view.document.id, view, op, unitIds, okText, followId, confirm, thenLang, place: place ?? readEditPlace(op), afterOk };
   }
 
-  /** runUnitEdit의 보내기 - 같은 문서의 앞 쓰기 응답 뒤에 불린다(보낼 revision은 그때 고른다) */
-  async function sendUnitEdit(job: string, view: DocumentView, op: EditOp, okText: EditToast, followId: number | null, confirm: boolean, thenLang: "ko" | "en" | null, plan: ReloadPlan, afterOk?: () => Promise<void>) {
-    const docId = view.document.id;
+  /** 편집의 보내기 - 같은 문서의 앞 쓰기 응답 뒤에 불린다(보낼 revision은 그때 고른다) */
+  async function sendUnitEdit({ docId, view: pressedView, op, okText, followId, confirm, thenLang, afterOk }: Extract<WriteCommand, { kind: "edit" }>, ctx: SendContext) {
     const isOld = oldDocIds.includes(docId);
-    let isAsking = false;
-    let isReloaded = false;
-    try {
-      // 자르기·합치기·언어 바꾸기 모두 Assign 기록에 넣는다(설계 §4.4) - 서버는 Split 편집 기록 번호만 가리킨다
-      const undo = buildUndo({ focus_unit_id: op.type === "split" ? op.unit_id : (followId ?? undefined) });
-      // 보낸 revision과 같으면 서버가 아무것도 쓰지 않은 편집이다 - 이 탭이 먼저 쓴 값이 화면 값보다 새로울 수 있다(doc-revision.ts, 줄 선 앞 쓰기의 응답 포함)
-      const sentRevision = pickDocRevision(docId, view.document.revision);
-      const result = await editUnits(bundleId, docId, sentRevision, op, confirm, undo);
-      let revision = result.document_revision;
-      // 받아 둔 그 문서의 새 보기 · 줄 - 아래에서 그대로 놓아 같은 문서를 또 받지 않는다
-      let ready: DocBatch | null = null;
-      // 참조를 풀면 서버가 그 전 언어로 돌린다 - 고른 언어와 다를 때만 한 번 더 바꾼다
-      if (thenLang !== null && op.type === "clear_ref") {
-        ready = isOld ? await docViews.fetch({ docs: [docId], units: [docId] }) : null;
-        const restored = (ready?.views[0] ?? (await getDocumentView(bundleId, docId))).units.find((unit) => unit.id === op.unit_id);
-        if (restored && restored.lang !== thenLang) {
-          revision = (await editUnits(bundleId, docId, revision, { type: "set_language", unit_ids: [op.unit_id], lang: thenLang }, false, buildUndo({ focus_unit_id: op.unit_id }))).document_revision;
-          // 언어를 또 바꿨다 - 받아 둔 것은 그 사이 모습이라 놓고(따라가기는 revision이 모자라 기다린다) 다시 받는다
-          if (ready !== null) docViews.apply(ready);
-          ready = null;
-        }
+    const view = readLiveView(docId) ?? pressedView;
+    // confirm은 판단을 풀며 보낸 편집이다 - 대상(Target)이 지워져 To-Be · New 문장도 다시 받는다
+    const ask = buildReloadAsk(planReload(isOld ? { kind: "old_edit", docId, isInPlace: IN_PLACE_EDIT_OPS.has(op.type), isReleased: confirm } : { kind: "new_edit", docId, isReleased: confirm }, { aiOn }), oldDocIds);
+    const isWaited = isBarrier({ kind: readEditKind(op), isGlobal: false });
+    // 자르기·합치기·언어 바꾸기 모두 Assign 기록에 넣는다(설계 §4.4) - 서버는 Split 편집 기록 번호만 가리킨다
+    const undo = buildUndo({ focus_unit_id: op.type === "split" ? op.unit_id : (followId ?? undefined) });
+    // 보낸 revision과 같으면 서버가 아무것도 쓰지 않은 편집이다 - 이 탭이 먼저 쓴 값이 화면 값보다 새로울 수 있다(doc-revision.ts, 줄 선 앞 쓰기의 응답 포함)
+    const sentRevision = pickDocRevision(docId, view.document.revision);
+    const result = await editUnits(bundleId, docId, sentRevision, op, confirm, undo);
+    writeLog.noteAll();
+    let revision = result.document_revision;
+    // 받아 둔 그 문서의 새 보기 · 줄 - 아래에서 그대로 놓아 같은 문서를 또 받지 않는다
+    let ready: DocBatch | null = null;
+    // 참조를 풀면 서버가 그 전 언어로 돌린다 - 고른 언어와 다를 때만 한 번 더 바꾼다
+    if (thenLang !== null && op.type === "clear_ref") {
+      ready = isOld ? await docViews.fetch({ docs: [docId], units: [docId] }) : null;
+      const restored = (ready?.views[0] ?? (await getDocumentView(bundleId, docId))).units.find((unit) => unit.id === op.unit_id);
+      if (restored && restored.lang !== thenLang) {
+        revision = (await editUnits(bundleId, docId, revision, { type: "set_language", unit_ids: [op.unit_id], lang: thenLang }, false, buildUndo({ focus_unit_id: op.unit_id }))).document_revision;
+        // 언어를 또 바꿨다 - 받아 둔 것은 그 사이 모습이라 놓고(따라가기는 revision이 모자라 기다린다) 다시 받는다
+        if (ready !== null) docViews.apply(ready);
+        ready = null;
       }
-      // 문서가 바뀌지 않은 편집(참조 제안 물리기)은 서버도 단계를 남기지 않는다
-      if (revision !== sentRevision) markRecorded();
-      // 편집이 받아들여진 뒤에만 하는 일(AI 제안 채택 기록) - 실패하면 afterOk가 스스로 알린다
-      await afterOk?.();
-      setRefEntryId(null);
-      cutLine.clear();
-      setCutUnitId(null);
-      // 고름은 처리 중에도 그대로 - 응답의 첫 새 Unit(합친 박스 · 나눈 앞 조각, 없으면 followId)을, 고름이 누른 때 그대로면 다시 받은 뒤 고른다.
-      // 다시 받기보다 먼저 건다 - 아래 풀기 전환이 기다리는 사이에 새 보기가 닿아도 따라가게(D1 규칙 2 · 3)
-      focusCtl.succeed(job, { docId, revision, pickUnitId: result.created_unit_ids[0] ?? followId });
-      // 표 벗기기 · 다시 표로와 캡션 붙이기 · 떼기 · 첫 행 올리기 · 그림 묶기 - 새 원문 보기를 먼저 받아 풀기 전환 안에서 놓는다
-      // (F10, 화면 안만 움직이고 움직임 줄이기면 번쩍임만). 캡션은 글이 캡션 자리로 미끄러져 들어간다. 알림은 전환 뒤
-      // 표는 바로 안쪽 띠 표도 함께 제목 줄 ↔ 표로 바뀐다(F2)
-      const motion = op.type === "set_layout_table"
-        ? { scopes: listUnwrapScopes(new Map(view.tables.map((table) => [table.id, table])), op.table_id), reverse: !op.is_layout }
-        : getCaptionMotion(op, followId);
-      if (motion !== null && isOld) {
-        const fresh = ready ?? (await docViews.fetch({ docs: [docId], units: [docId] }));
-        isReloaded = true;
-        // 새 보기를 놓는 순간 처리 중을 걷는다 - 잠금 · 알약은 거기까지, 남은 움직임은 보이기만이다(같은 문서의 다음 쓰기는 전환 끝까지 줄에서 기다린다)
-        await unwrapMotion.run(() => {
-          reloadAfterEdit(plan, fresh);
-          focusCtl.end(job);
-        }, motion);
-      } else if (ready !== null) {
-        isReloaded = true;
-        reloadAfterEdit(plan, ready);
-      }
-      if (typeof okText === "string") showToast(okText);
-      else {
-        // 모양 전환(3-c)은 묻지 않고 했으니 알림이 되돌리기를 준다 - Ctrl+Z와 같은 길, 그 뒤 다른 단계가 없을 때만
-        const tick = stepTick.current;
-        const action = { label: t("common.undo"), run: () => (stepTick.current === tick ? void undoStepRef.current("undo") : showToast(t("assign.pairDrag.undoStale"), "info")) };
-        showToast(okText(result), "ok", revision !== sentRevision ? { action } : undefined);
-      }
-    } catch (err) {
-      // 판단이 걸린 단위를 바꾸는 편집은 한 번 묻는다 - 확인하면 배정을 풀며 다시 보낸다
-      const count = readConfirmCount(err);
-      isAsking = count !== null && !confirm;
-      if (count !== null && !confirm) setEditConfirm({ count, retry: { kind: "edit", op, okText, followId } });
-      else showToast(humanizeApiError(err, t), "error");
-    } finally {
-      // 되묻는 동안은 다시 받지 않는다 - 바뀐 것이 없고, 늦게 닿은 응답이 확인 뒤의 편집과 엇갈리면 새 줄을 따라가지 못한다.
-      // 일은 runPending이 이 뒤에 걷는다 - 다시 받기가 그 문서를 받는 중으로 센 뒤라 그 사이 은퇴한 Unit을 묻지 않는다
-      if (!isAsking && !isReloaded) reloadAfterEdit(plan);
     }
+    // 문서가 바뀌지 않은 편집(참조 제안 물리기)은 서버도 단계를 남기지 않는다
+    if (revision !== sentRevision) markRecorded();
+    // 번호는 그 자리 편집이라 보기를 큐가 빌 때 받는다 - 그때까지 기대 글을 둔다
+    const sentNumber = isOld ? readExpectedNumber(op) : null;
+    if (sentNumber !== null) setSentNumbers((prev) => [...prev.filter((item) => item.unitId !== sentNumber.unitId), { docId, revision, ...sentNumber }]);
+    // 편집이 받아들여진 뒤에만 하는 일(AI 제안 채택 기록) - 실패하면 afterOk가 스스로 알린다
+    await afterOk?.();
+    setRefEntryId(null);
+    cutLine.clear();
+    setCutUnitId(null);
+    // 고름은 처리 중에도 그대로 - 응답의 첫 새 Unit(합친 박스 · 나눈 앞 조각, 없으면 followId)을, 고름이 누른 때 그대로면 다시 받은 뒤 고른다.
+    // 다시 받기보다 먼저 건다 - 아래 풀기 전환이 기다리는 사이에 새 보기가 닿아도 따라가게(D1 규칙 2 · 3)
+    focusCtl.succeed(ctx.id, { docId, revision, pickUnitId: result.created_unit_ids[0] ?? followId });
+    // 따라가기를 건 뒤에 알린다 - 바로 이어지는 되돌리기가 그 따라가기를 버릴 수 있게
+    ctx.respond(ask.solo);
+    // 표 벗기기 · 다시 표로와 캡션 붙이기 · 떼기 · 첫 행 올리기 · 그림 묶기 - 새 원문 보기를 먼저 받아 풀기 전환 안에서 놓는다
+    // (F10, 화면 안만 움직이고 움직임 줄이기면 번쩍임만). 캡션은 글이 캡션 자리로 미끄러져 들어간다. 알림은 전환 뒤.
+    // 걷기는 누른 순간 이미 시작했다(startUnwrap) - 보기를 놓지 못하고 나가면 처리 중이 끝날 때 거꾸로 돈다
+    const motion = readUnwrapOptions(op, view, followId);
+    if (motion !== null && isOld) {
+      const fresh = ready ?? (await docViews.fetch({ docs: [docId], units: [docId] }).catch(() => null));
+      if (fresh !== null && !ctx.isCurrent()) {
+        requestReload(splitReload(ask).rest);
+        docViews.discard(fresh);
+      } else if (fresh === null) {
+        requestReload(ask);
+        ctx.loseViews();
+      } else {
+        // 새 보기를 놓는 순간 처리 중을 걷는다 - 잠금 · 알약은 거기까지, 남은 움직임은 보이기만이다(다음 명령은 전환 끝까지 줄에서 기다린다)
+        await takeUnwrap(ctx.id, motion).commit(() => {
+          // 남은 걷기를 기다리는 사이 되돌리기가 먼저 나갔으면 놓지 않는다 - 그 되돌리기의 보기와 두 번 놓이지 않게
+          if (ctx.isCurrent()) void placeReload(ask, ctx, fresh);
+          else {
+            requestReload(splitReload(ask).rest);
+            docViews.discard(fresh);
+          }
+          focusCtl.end(ctx.id);
+        });
+      }
+    } else if (ready !== null) await placeReload(ask, ctx, ready);
+    else await reloadAfter(ask, ctx, isWaited);
+    if (typeof okText === "string") showToast(okText);
+    // 모양 전환(3-c)은 묻지 않고 했으니 알림이 되돌리기를 준다 - Ctrl+Z와 같은 길, 그 뒤 다른 단계가 없을 때만
+    else showToast(okText(result), "ok", revision !== sentRevision ? { action: buildUndoAction() } : undefined);
   }
 
   /** 표 벗기기(F1) - 누른 표 하나만 벗긴다. 한/영 따로 문서에서 대응 표도 벗기면 서버가 같은 행끼리 짝을 제안한다(F8a) */
   function unwrapTable(tableId: number) {
-    void runUnitEdit({ type: "set_layout_table", table_id: tableId, is_layout: true }, t("assign.unwrap.didUnwrap"), null);
+    runUnitEdit({ type: "set_layout_table", table_id: tableId, is_layout: true }, t("assign.unwrap.didUnwrap"), null);
   }
 
   /** 다시 표로(F1) - 벗긴 표 전체를 표 한 줄로 되돌린다. 그 표의 줄에 배정이 있으면 서버가 되묻고 확인창이 한 번 묻는다(표 밖 줄의 배정은 그대로) */
@@ -1485,13 +1748,13 @@ export function useAssignPage() {
     const okText = t("assign.unwrap.didRewrap");
     // 판단이 풀릴 줄이 있으면 서버에 보내기 전에 확인창부터 - 확인하면 confirm을 켜고 보낸다(409를 거쳐 되묻지 않는다)
     const decided = paperModel ? countDecidedLines(paperModel.units.values(), tableId, (unitId) => unitMap.get(unitId)?.status, paperModel.tables) : 0;
-    if (decided > 0) setEditConfirm({ count: decided, retry: { kind: "edit", op, okText, followId: null } });
-    else void runUnitEdit(op, okText, null);
+    if (decided > 0 && shapeView) setEditConfirm({ count: decided, command: buildEditCommand(shapeView, op, okText, null), askId: null });
+    else runUnitEdit(op, okText, null);
   }
 
   /** 편집 확인창의 글 - 다시 표로면 그 표의 말(표 번호 · 확정된 줄 수, F12 A6), 아니면 판단이 지워진다는 공통 글 */
-  function describeEditConfirm({ count, retry }: { count: number; retry: ConfirmedEdit }): { title: string; summary: string; confirmLabel: string } {
-    const op = retry.kind === "edit" ? retry.op : null;
+  function describeEditConfirm({ count, command }: { count: number; command: ConfirmableCommand }): { title: string; summary: string; confirmLabel: string } {
+    const op = command.kind === "edit" ? command.op : null;
     if (op?.type === "set_layout_table" && !op.is_layout) {
       const table = (viewList ?? []).flatMap((view) => view.tables).find((item) => item.id === op.table_id);
       return {
@@ -1501,58 +1764,84 @@ export function useAssignPage() {
         confirmLabel: t("assign.unwrap.confirmRun"),
       };
     }
-    return { title: t("split.confirmTitle"), summary: t("split.confirmBody", { n: count }), confirmLabel: t("split.confirmRun") };
+    // New 문서는 거꾸로다 - New 문장의 이음이 풀리고 보류가 되는 것은 이어져 있던 Old 줄이다
+    const isNew = !oldDocIds.includes(command.docId);
+    return { title: t("split.confirmTitle"), summary: t(isNew ? "split.confirmBodyNew" : "split.confirmBody", { n: count }), confirmLabel: t("split.confirmRun") };
   }
 
-  /** 목차 아님(줄 하나) · 모두 목차 아님(블록 전체) - 표시만 비우는 편집. 목차 고름을 놓고, 다시 받은 뒤 돌아온 첫 줄을 보통 줄로 고른다(F12 G4) */
-  function clearToc(unitIds: number[]) {
+  /** 확인창의 답 - 되물은 명령을 배정을 풀며 다시 보낸다(보내기 전에 물은 것이면 새로 세운다) */
+  function answerEditConfirm() {
+    if (editConfirm === null) return;
+    const command: ConfirmableCommand = { ...editConfirm.command, confirm: true };
+    setEditConfirm(null);
+    if (editConfirm.askId === null) commands.enqueue(command);
+    else commands.resume(editConfirm.askId, command);
+  }
+
+  /** 확인창 취소 - 되묻던 것과 그 뒤에 쌓인 것을 버린다 */
+  function cancelEditConfirm() {
+    const askId = editConfirm?.askId ?? null;
+    setEditConfirm(null);
+    commands.cancelAsk(askId);
+  }
+
+  /** 삭제된 줄의 편집(삭제 취소 · 사유) - 누른 순간의 문서와 줄을 잡아 줄에 세운다. 결과 박스가 누를 때 정해져 있어 장벽이 아니다 */
+  function runNoiseEdit(docId: number, op: EditOp, okText: string, followId: number | null) {
+    const view = viewOf(docId);
+    if (canEdit && view) commands.enqueue(buildEditCommand(view, op, okText, followId));
+  }
+
+  /** 삭제 취소(줄 하나 · 블록 전체) - 표시와 사유만 비우는 편집. 고름은 그대로 두고, 다시 받은 뒤 돌아온 첫 줄을 보통 줄로 고른다(그 사이 다른 것을 골랐으면 두고, F12 G4) */
+  function clearNoise(docId: number, unitIds: readonly number[]) {
     if (unitIds.length === 0) return;
-    if (focus.kind === "toc") focusCtl.pick(NO_FOCUS);
-    // 블록 전체(또는 첫 줄)를 돌리면 그 키의 블록이 없어진다 - 되돌려 다시 생긴 블록은 처음처럼 접혀 있다
-    setTocOpen((open) => new Set([...open].filter((key) => !unitIds.includes(key))));
-    void runUnitEdit({ type: "clear_noise", unit_ids: unitIds }, t(unitIds.length > 1 ? "assign.toc.didClearAll" : "assign.toc.didClear"), unitIds[0]);
+    // 블록의 첫 줄을 돌리면 키가 다음 줄로 바뀐다 - 남은 줄이 있으면 펼침을 잇고, 블록째 돌렸으면 되돌려 다시 생긴 블록은 처음처럼 접혀 있다
+    const cleared = new Set(unitIds);
+    const rests = tocBlocks.flatMap((block) => (tocOpen.has(block.key) && cleared.has(block.key) ? block.unitIds.filter((id) => !cleared.has(id)).slice(0, 1) : []));
+    setTocOpen((open) => new Set([...[...open].filter((key) => !cleared.has(key)), ...rests]));
+    runNoiseEdit(docId, { type: "clear_noise", unit_ids: [...unitIds] }, t(unitIds.length > 1 ? "assign.noise.didClearAll" : "assign.noise.didClear"), unitIds[0]);
   }
 
   /**
    * 한/영 짝을 맺거나(kind pair) 푼다(unpair) - Assign 되돌리기 기록에 한 단계로 남는다(B6, Ctrl+Z가 푼 짝 · 맺은 짝을 되돌린다).
    * unitIds - 맺거나 풀 박스(잠긴다), place - 알약 자리(틈에서 맺었으면 그 틈, 아니면 앞 박스)
    */
-  async function runPairChange(write: (docId: number, revision: number, undo: UndoMeta) => Promise<{ document_revision: number }>, okText: string, followId: number, kind: "pair" | "unpair", unitIds: readonly number[], place: PendingPlace = { at: "box", unitId: unitIds[0] ?? followId }) {
+  function runPairChange(write: (docId: number, revision: number, undo: UndoMeta) => Promise<{ document_revision: number }>, okText: string, followId: number, kind: "pair" | "unpair", unitIds: readonly number[], place: PendingPlace = { at: "box", unitId: unitIds[0] ?? followId }) {
     if (!shapeView) return;
-    const view = shapeView;
-    const docId = view.document.id;
-    await focusCtl.runPending({ kind, docId, unitIds, place, isGlobal: false }, async (job) => {
-      try {
-        // 보낼 revision은 sendDocWrite가 앞 쓰기의 응답으로 이어 준다. revision이 그대로면 서버가 아무것도 쓰지 않아 단계도 없다
-        const sentRevision = pickDocRevision(docId, view.document.revision);
-        const { document_revision } = await write(docId, view.document.revision, buildUndo({ focus_unit_id: followId }));
-        if (document_revision !== sentRevision) markRecorded();
-        // 짝이 바뀌면 줄이 다시 묶인다 - 고름은 두고(다시 받는 동안 옛 줄은 묶음을 부르지 않는다), 받은 뒤 그 문장의 줄을 고른다
-        showToast(okText);
-        focusCtl.succeed(job, { docId, revision: null, pickUnitId: followId });
-      } catch (err) {
-        const isLinked = err instanceof ApiError && err.rule?.code === "confirm_required";
-        showToast(isLinked ? t("assign.ctx.why.assigned") : humanizeApiError(err, t), "error");
-      } finally {
-        reloadAfterEdit(planReload({ kind: "pair", docId }, { aiOn }));
-      }
-    });
+    const docId = shapeView.document.id;
+    commands.enqueue({ kind: "pair", docId, view: shapeView, unitIds, followId, place, pairKind: kind, okText, write: (revision, undo) => write(docId, revision, undo) });
+  }
+
+  async function sendPairChange({ docId, view: pressedView, followId, okText, write }: Extract<WriteCommand, { kind: "pair" }>, ctx: SendContext) {
+    const view = readLiveView(docId) ?? pressedView;
+    // 보낼 revision은 sendDocWrite가 앞 쓰기의 응답으로 이어 준다. revision이 그대로면 서버가 아무것도 쓰지 않아 단계도 없다
+    const sentRevision = pickDocRevision(docId, view.document.revision);
+    const { document_revision } = await write(view.document.revision, buildUndo({ focus_unit_id: followId }));
+    writeLog.noteAll();
+    if (document_revision !== sentRevision) markRecorded();
+    // 짝이 바뀌면 줄이 다시 묶인다 - 고름은 두고(다시 받는 동안 옛 줄은 묶음을 부르지 않는다), 받은 뒤 그 문장의 줄을 고른다
+    showToast(okText);
+    focusCtl.succeed(ctx.id, { docId, revision: null, pickUnitId: followId });
+    const ask = buildReloadAsk(planReload({ kind: "pair", docId }, { aiOn }), oldDocIds);
+    ctx.respond(ask.solo);
+    await placeReload(ask, ctx);
   }
 
   /** 표·그림 참조를 떼거나 다시 잇는다 - 단위는 그대로라 고름을 두고 보기만 다시 받는다. 편집 기록(되돌리기)에는 들어가지 않는다 */
-  async function runCaptionRefChange(refId: number, change: { state: "detached" } | { target_unit_id: number }, okText: string) {
+  function runCaptionRefChange(refId: number, change: { state: "detached" } | { target_unit_id: number }, okText: string) {
     if (!shapeView) return;
     const view = shapeView;
     const docId = view.document.id;
-    await focusCtl.runPending({ kind: "caption", docId, unitIds: [], place: NO_PLACE, isGlobal: false }, async () => {
-      try {
-        await updateCaptionRef(bundleId, docId, refId, { revision: view.document.revision, ...change });
+    commands.enqueue({
+      kind: "global",
+      label: "assign.queue.act.captionRef",
+      pending: { kind: "caption", docId, unitIds: [], place: NO_PLACE, isGlobal: false },
+      run: async (ctx) => {
+        await updateCaptionRef(bundleId, docId, refId, { revision: (readLiveView(docId) ?? view).document.revision, ...change });
+        const ask = buildReloadAsk(planReload({ kind: "caption_ref", docId }, { aiOn }), oldDocIds);
+        ctx.respond(ask.solo);
         showToast(okText);
-      } catch (err) {
-        showToast(humanizeApiError(err, t), "error");
-      } finally {
-        reloadAfterEdit(planReload({ kind: "caption_ref", docId }, { aiOn }));
-      }
+        await placeReload(ask, ctx);
+      },
     });
   }
 
@@ -1560,19 +1849,19 @@ export function useAssignPage() {
   function switchShapeMode(next: "one" | "pair") {
     if (!shapeTabs || shapeMode === null || shapeMode.current === next || shapeMode.reasonKey !== null) return;
     if (next === "pair") {
-      void switchToPair(rowViewUnits[0]);
+      switchToPair(rowViewUnits[0]);
       return;
     }
     const order = shapeTabs.order;
     const unitIds = rowViewUnits.map((unit) => unit.id).sort((a, b) => order.indexOf(a) - order.indexOf(b));
-    void runUnitEdit({ type: "merge", unit_ids: unitIds }, t("split.didMerge"), null);
+    runUnitEdit({ type: "merge", unit_ids: unitIds }, t("split.didMerge"), null);
   }
 
   /**
    * 합친 한 문장 → 한/영 짝: 합치기를 풀고(배정이 걸렸으면 한 번 묻는다) 되살아난 문장의 언어를 맞춘 뒤 짝으로 맺는다.
    * 풀기와 언어 바꾸기는 되돌리기 기록에 남고 짝 맺기는 남지 않는다(Undo 한 번에 합친 문장으로). 푼 뒤에 실패하면 어디까지 됐는지 알린다.
    */
-  async function switchToPair(unit: ViewUnit, confirm = false) {
+  function switchToPair(unit: ViewUnit) {
     if (!shapeView) return;
     const view = shapeView;
     // 끝 조각 하나가 영어인 한국어 문장이면 서버 편집 하나(B6) - Undo 한 번에 합친 문장, 배정은 묻지 않고 푼다(3-c)
@@ -1581,15 +1870,15 @@ export function useAssignPage() {
       runShapeSwitch({ type: "switch_language", unit_id: unit.id, lang: piece.lang, piece: piece.piece }, unit.id);
       return;
     }
-    await focusCtl.runPending({ kind: "pair", docId: view.document.id, unitIds: [unit.id], place: { at: "box", unitId: unit.id }, isGlobal: false }, (job) => sendSwitchToPair(job, view, unit, confirm));
+    commands.enqueue({ kind: "to_pair", docId: view.document.id, view, unit, confirm: false });
   }
 
-  async function sendSwitchToPair(job: string, sentView: DocumentView, unit: ViewUnit, confirm: boolean) {
-    const docId = sentView.document.id;
+  async function sendSwitchToPair({ docId, view: pressedView, unit, confirm }: Extract<WriteCommand, { kind: "to_pair" }>, ctx: SendContext) {
     let restoredIds: number[] | null = null;
-    let isAsking = false;
+    const ask = buildReloadAsk(planReload(oldDocIds.includes(docId) ? { kind: "old_edit", docId, isInPlace: false, isReleased: confirm } : { kind: "new_edit", docId, isReleased: confirm }, { aiOn }), oldDocIds);
     try {
-      const undone = await editUnits(bundleId, docId, sentView.document.revision, { type: "unmerge", unit_id: unit.id }, confirm, buildUndo({ focus_unit_id: unit.id }));
+      const undone = await editUnits(bundleId, docId, (readLiveView(docId) ?? pressedView).document.revision, { type: "unmerge", unit_id: unit.id }, confirm, buildUndo({ focus_unit_id: unit.id }));
+      writeLog.noteAll();
       restoredIds = undone.created_unit_ids;
       markRecorded();
       const view = await getDocumentView(bundleId, docId);
@@ -1604,69 +1893,68 @@ export function useAssignPage() {
       await createPair(bundleId, docId, revision, restored.map((item) => item.id));
       showToast(t("split.didJoin"));
     } catch (err) {
-      const count = readConfirmCount(err);
-      isAsking = count !== null && !confirm;
-      if (count !== null && !confirm) setEditConfirm({ count, retry: { kind: "to_pair", unit } });
-      else showToast(restoredIds !== null ? t("split.join.partly") : humanizeApiError(err, t), "error");
-    } finally {
-      if (restoredIds !== null) {
-        // 풀린 뒤로는 옛 단위가 없다 - 다시 받은 뒤 되살아난 첫 문장의 줄을 고른다(고름이 그대로일 때)
-        setRefEntryId(null);
-        cutLine.clear();
-        setCutUnitId(null);
-        focusCtl.succeed(job, { docId, revision: null, pickUnitId: restoredIds[0] ?? null });
-      }
-      // 풀기 · 언어 · 짝 맺기 - confirm이면 판단을 풀며 보냈다
-      if (!isAsking) reloadAfterEdit(planReload(oldDocIds.includes(docId) ? { kind: "old_edit", docId, isInPlace: false, isReleased: confirm } : { kind: "new_edit", docId }, { aiOn }));
+      // 풀기부터 거절됐으면 아무것도 바뀌지 않았다 - 되묻거나 멈춘다. 푼 뒤의 실패는 이미 바뀐 것이 있어 알리고 다시 받는다(다시 보내면 없는 Unit이다)
+      if (restoredIds === null) throw err;
+      showToast(t("split.join.partly"), "error");
     }
+    // 풀린 뒤로는 옛 단위가 없다 - 다시 받은 뒤 되살아난 첫 문장의 줄을 고른다(고름이 그대로일 때)
+    setRefEntryId(null);
+    cutLine.clear();
+    setCutUnitId(null);
+    focusCtl.succeed(ctx.id, { docId, revision: null, pickUnitId: restoredIds[0] ?? null });
+    ctx.respond(ask.solo);
+    await placeReload(ask, ctx);
   }
 
   /** AI 나누기 제안 적용 - 뒤쪽 위치부터 자르면 앞 조각의 위치가 바뀌지 않는다. 자를 때마다 되돌리기 기록에 한 단계씩 남는다 */
-  async function applySplitSuggestion(unit: ViewUnit, suggestion: AiSuggestion, confirm = false) {
+  function applySplitSuggestion(unit: ViewUnit, suggestion: AiSuggestion) {
     if (!oldView) return;
-    const view = oldView;
-    const docId = view.document.id;
-    await focusCtl.runPending({ kind: "split", docId, unitIds: [unit.id], place: { at: "box", unitId: unit.id }, isGlobal: false }, async (job) => {
-      let isAsking = false;
-      try {
-        let unitId = unit.id;
-        let revision = view.document.revision;
-        for (const at of readSplitOffsets(suggestion.content.offsets).sort((a, b) => b - a)) {
-          const result = await editUnits(bundleId, docId, revision, { type: "split", unit_id: unitId, at }, confirm, buildUndo({ focus_unit_id: unitId }));
-          revision = result.document_revision;
-          unitId = result.created_unit_ids[0] ?? unitId;
-        }
-        await setSuggestionAdoption(bundleId, suggestion.id, "as_is");
-        markRecorded();
-        cutLine.clear();
-        setCutUnitId(null);
-        showToast(t("split.didSplit"));
-        focusCtl.succeed(job, { docId, revision, pickUnitId: unitId });
-      } catch (err) {
-        // 첫 자르기에서 묻는다(배정이 걸린 것은 자르기 전의 그 문장이다) - 확인하면 처음부터 다시 자른다
-        const count = readConfirmCount(err);
-        isAsking = count !== null && !confirm;
-        if (count !== null && !confirm) setEditConfirm({ count, retry: { kind: "ai_split", unit, suggestion } });
-        else showToast(humanizeApiError(err, t), "error");
-      } finally {
-        // 확인 창을 거쳐(confirm) 판단을 풀며 잘랐으면 판단을 푼 편집과 같다
-        if (!isAsking) reloadAfterEdit(planReload(confirm ? { kind: "old_edit", docId, isInPlace: false, isReleased: true } : { kind: "split_suggestion", docId, isApplied: true }, { aiOn }));
-      }
-    });
+    commands.enqueue({ kind: "ai_split", docId: oldView.document.id, view: oldView, unit, suggestion, confirm: false });
   }
 
-  async function dismissSplitSuggestion(suggestion: AiSuggestion) {
+  async function sendAiSplit({ docId, view, unit, suggestion, confirm }: Extract<WriteCommand, { kind: "ai_split" }>, ctx: SendContext) {
+    let unitId = unit.id;
+    let revision = (readLiveView(docId) ?? view).document.revision;
+    let isCut = false;
+    // 확인 창을 거쳐(confirm) 판단을 풀며 잘랐으면 판단을 푼 편집과 같다
+    const ask = buildReloadAsk(planReload(!confirm ? { kind: "split_suggestion", docId, isApplied: true } : oldDocIds.includes(docId) ? { kind: "old_edit", docId, isInPlace: false, isReleased: true } : { kind: "new_edit", docId, isReleased: true }, { aiOn }), oldDocIds);
+    try {
+      for (const at of readSplitOffsets(suggestion.content.offsets).sort((a, b) => b - a)) {
+        const result = await editUnits(bundleId, docId, revision, { type: "split", unit_id: unitId, at }, confirm, buildUndo({ focus_unit_id: unitId }));
+        writeLog.noteAll();
+        isCut = true;
+        revision = result.document_revision;
+        unitId = result.created_unit_ids[0] ?? unitId;
+      }
+      await setSuggestionAdoption(bundleId, suggestion.id, "as_is");
+      markRecorded();
+      cutLine.clear();
+      setCutUnitId(null);
+      showToast(t("split.didSplit"));
+      focusCtl.succeed(ctx.id, { docId, revision, pickUnitId: unitId });
+    } catch (err) {
+      // 첫 자르기에서 묻는다(배정이 걸린 것은 자르기 전의 그 문장이다). 자른 뒤의 실패는 이미 바뀐 것이 있어 알리고 다시 받는다
+      if (!isCut) throw err;
+      markRecorded();
+      showToast(humanizeApiError(err, t), "error");
+    }
+    ctx.respond(ask.solo);
+    await placeReload(ask, ctx);
+  }
+
+  function dismissSplitSuggestion(suggestion: AiSuggestion) {
     if (!oldView) return;
     const docId = oldView.document.id;
-    await focusCtl.runPending({ kind: "save", docId, unitIds: suggestion.content.unit_ids ?? [], place: NO_PLACE, isGlobal: false }, async () => {
-      try {
+    commands.enqueue({
+      kind: "global",
+      label: "assign.queue.act.dismissSplit",
+      pending: buildDecisionPending("save", docId, suggestion.content.unit_ids ?? []),
+      run: async (ctx) => {
         await setSuggestionAdoption(bundleId, suggestion.id, "rejected");
-      } catch (err) {
-        showToast(humanizeApiError(err, t), "error");
-      } finally {
+        ctx.respond();
         // 용지의 제안 표시는 문서 보기에서 온다(한 단으로 연 New 문서면 그 보기)
-        reloadAfterEdit(planReload({ kind: "split_suggestion", docId, isApplied: false }, { aiOn }));
-      }
+        requestReload(buildReloadAsk(planReload({ kind: "split_suggestion", docId, isApplied: false }, { aiOn }), oldDocIds));
+      },
     });
   }
 
@@ -1704,7 +1992,7 @@ export function useAssignPage() {
   function splitAtCut() {
     // Pair view에는 용지(나눌 선)가 없다 - 보이지 않는 자리에서 자르지 않는다
     if (!cutUnit || cutLine.at === null || isPairView) return;
-    void runUnitEdit({ type: "split", unit_id: cutUnit.id, at: cutLine.at }, t("split.didSplit"), null);
+    runUnitEdit({ type: "split", unit_id: cutUnit.id, at: cutLine.at }, t("split.didSplit"), null);
   }
 
   /** 두 번 누른 자리에 나눌 선 - 메뉴의 "Split here"를 쓸 수 있는 문장만 */
@@ -1742,7 +2030,7 @@ export function useAssignPage() {
 
   /** 글 한 줄을 표·그림의 캡션으로 붙인다(우클릭 "캡션으로 쓰기" · 캡션 자리의 줄 고르기) - 붙인 뒤 묶음 줄을 고른다 */
   function attachCaption(unitId: number, bundleId: number) {
-    void runUnitEdit({ type: "attach_caption", unit_id: unitId, bundle_unit_id: bundleId }, t("assign.ctx.didAttachCaption"), bundleId);
+    runUnitEdit({ type: "attach_caption", unit_id: unitId, bundle_unit_id: bundleId }, t("assign.ctx.didAttachCaption"), bundleId);
   }
 
   /**
@@ -1752,30 +2040,31 @@ export function useAssignPage() {
   function changeLanguage(target: ViewUnit, lang: "ko" | "en") {
     const isOld = shapeView !== null && oldDocIds.includes(shapeView.document.id);
     const plan = isOld && shapeTabs ? planLanguageChange(target, lang, listPairMembers(target), shapeTabs.order) : { kind: "plain" as const };
-    if (plan.kind === "plain") void runUnitEdit({ type: "set_language", unit_ids: [target.id], lang }, t("common.saved"), target.id);
+    if (plan.kind === "plain") runUnitEdit({ type: "set_language", unit_ids: [target.id], lang }, t("common.saved"), target.id);
     else runShapeSwitch({ type: "switch_language", unit_id: target.id, lang, merge_pair: plan.mergePair }, target.id);
   }
 
-  /** 모양 전환 편집 - 묻지 않고 바로(confirm, 3-c) 하고, 무엇이 됐는지와 풀린 배정 수를 알림에 */
+  /** 모양 전환 편집 - Old는 묻지 않고 바로(confirm, 3-c), New는 이은 문장이면 서버가 물은 뒤(R4) 하고, 무엇이 됐는지와 풀린 배정 수를 알림에 */
   function runShapeSwitch(op: Extract<EditOp, { type: "switch_language" }>, followId: number) {
+    const isOld = shapeView !== null && oldDocIds.includes(shapeView.document.id);
     const describe = (result: EditResult) => {
       const key = result.shape === "merged" ? "assign.shape.merged" : result.shape === "unpaired" ? "assign.shape.unpaired" : "assign.shape.splitPair";
-      const released = result.detach?.reset_unit_ids.length ?? 0;
-      return `${t(key)}${released > 0 ? t("assign.shape.released", { n: released }) : ""}`;
+      // New는 판단이 풀리는 줄이 아니라 이음이 풀려 보류가 된 Old 줄을 센다
+      const released = (isOld ? result.detach?.reset_unit_ids : result.detach?.held_unit_ids)?.length ?? 0;
+      return `${t(key)}${released > 0 ? t(isOld ? "assign.shape.released" : "assign.shape.held", { n: released }) : ""}`;
     };
-    void runUnitEdit(op, describe, op.merge_pair ? null : followId, true);
+    runUnitEdit(op, describe, op.merge_pair ? null : followId, isOld);
   }
 
   /** 문장 하나에 대한 동작 - 우클릭 메뉴와 오른쪽 칸의 다듬기 줄이 함께 쓴다. caret은 누른 글자 자리(자를 선을 그 가까이에 놓는다) */
   function runUnitAction(target: ViewUnit, action: AssignMenuAction, lang?: "ko" | "en", caret: { blockId: number; offset: number } | null = null, piece?: number) {
     const table = findTableOf(target);
-    if (action === "clear") void runClear();
+    if (action === "clear") runClear();
     else if (action === "delete") decideNow({ kind: "delete" });
-    else if (action === "move") setMoveAsk(true);
     // 앱이 제안한 참조 줄(옛 추출의 REF?)은 언어 칸의 REF를 누르면 그 번호로 바로 확정한다(요청서 14) - 확인 단추와 같은 편집
-    else if (action === "ref_mark" && target.ref?.state === "proposed") void runUnitEdit({ type: "set_ref", unit_id: target.id, number: target.ref.number }, t("assign.ref.didConfirm"), target.id);
+    else if (action === "ref_mark" && target.ref?.state === "proposed") runUnitEdit({ type: "set_ref", unit_id: target.id, number: target.ref.number }, t("assign.ref.didConfirm"), target.id);
     else if (action === "ref_mark") setRefEntryId(target.id);
-    else if (action === "ref_clear") void runUnitEdit({ type: "clear_ref", unit_id: target.id }, t("assign.ref.didReject"), target.id);
+    else if (action === "ref_clear") runUnitEdit({ type: "clear_ref", unit_id: target.id }, t("assign.ref.didReject"), target.id);
     else if (action === "split") {
       // Pair view에는 용지가 없어 선이 보이지 않는다 - 끄고(고른 조각이 Old 용지에 보인다) 그 용지에 선을 놓는다
       if (isPairView) {
@@ -1794,11 +2083,11 @@ export function useAssignPage() {
       const order = shapeTabs.order;
       const other = order[order.indexOf(target.id) + (action === "merge_prev" ? -1 : 1)];
       const ids = action === "merge_prev" ? [other, target.id] : [target.id, other];
-      void runUnitEdit({ type: "merge", unit_ids: ids }, t("split.didMerge"), null);
+      runUnitEdit({ type: "merge", unit_ids: ids }, t("split.didMerge"), null);
     } else if ((action === "pair_prev" || action === "pair_next") && shapeTabs) {
       const order = shapeTabs.order;
       const other = order[order.indexOf(target.id) + (action === "pair_prev" ? -1 : 1)];
-      void runPairChange((docId, revision, undo) => createPair(bundleId, docId, revision, [target.id, other], undo), t("split.didJoin"), target.id, "pair", [target.id, other]);
+      runPairChange((docId, revision, undo) => createPair(bundleId, docId, revision, [target.id, other], undo), t("split.didJoin"), target.id, "pair", [target.id, other]);
     } else if (action === "pair_pick") {
       if (!shapeView) return;
       clearCarve();
@@ -1808,24 +2097,25 @@ export function useAssignPage() {
       const pairId = target.pair_id;
       // 짝의 구성원 모두가 잠긴다 - 알약은 누른 박스에
       const members = [...(shapeModel?.units.values() ?? [])].filter((unit) => unit.pair_id === pairId).map((unit) => unit.id);
-      if (pairId !== null) void runPairChange((docId, revision, undo) => deletePair(bundleId, docId, pairId, revision, undo), t("split.pairRemoved"), target.id, "unpair", members.length > 0 ? members : [target.id], { at: "box", unitId: target.id });
+      if (pairId !== null) runPairChange((docId, revision, undo) => deletePair(bundleId, docId, pairId, revision, undo), t("split.pairRemoved"), target.id, "unpair", members.length > 0 ? members : [target.id], { at: "box", unitId: target.id });
     } else if (action === "table_layout" && table && table.table_id !== null) unwrapTable(table.table_id);
     else if ((action === "caption_attach_prev" || action === "caption_attach_next") && isBundleKind(target.kind)) {
       // 묶음 대상 - 바로 앞(뒤) 글을 캡션으로 붙인다(글 대상은 "캡션으로 쓰기" 줄들이 맡는다, runCtx). 붙인 뒤 묶음 줄을 고른다
       const neighbor = findNeighbors(target)[action === "caption_attach_prev" ? "prev" : "next"];
       if (neighbor) attachCaption(neighbor.id, target.id);
-    } else if (action === "caption_detach" && target.group_unit_id !== null) void runUnitEdit({ type: "detach_caption", unit_id: target.id }, t("assign.ctx.didDetachCaption"), target.group_unit_id);
-    else if (action === "lang" && lang && target.lang === "ref") void runUnitEdit({ type: "clear_ref", unit_id: target.id }, t("common.saved"), target.id, false, lang);
+    } else if (action === "caption_detach" && target.group_unit_id !== null) runUnitEdit({ type: "detach_caption", unit_id: target.id }, t("assign.ctx.didDetachCaption"), target.group_unit_id);
+    else if (action === "lang" && lang && target.lang === "ref") runUnitEdit({ type: "clear_ref", unit_id: target.id }, t("common.saved"), target.id, false, lang);
     else if (action === "lang" && lang) changeLanguage(target, lang);
     else if (action === "piece_lang" && lang && piece !== undefined) runShapeSwitch({ type: "switch_language", unit_id: target.id, lang, piece }, target.id);
-    else if (action === "to_sentence") void runUnitEdit({ type: "set_heading", unit_ids: [target.id], heading: false }, t("assign.headingShift.didSentence"), null);
+    else if (action === "to_sentence") runUnitEdit({ type: "set_heading", unit_ids: [target.id], heading: false }, t("assign.headingShift.didSentence"), null);
     else if (action === "to_heading") revertHeadings([target.id]);
+    else if (action === "start_body") runUnitEdit({ type: "start_body", unit_id: target.id }, t("assign.ctx.didStartBody"), target.id);
   }
 
   /** 제목으로(되돌리기) - 제목에서 바꾼 문장은 서버가 그 조항 줄 전체를 모아 제목 하나로 돌린다(F8b). 한 편집이라 Ctrl+Z 한 번이다 */
   function revertHeadings(unitIds: number[]) {
     if (unitIds.length === 0) return;
-    void runUnitEdit({ type: "set_heading", unit_ids: unitIds, heading: true }, t("assign.headingShift.didHeading"), null);
+    runUnitEdit({ type: "set_heading", unit_ids: unitIds, heading: true }, t("assign.headingShift.didHeading"), null);
   }
 
   /** 조각 사이의 붙이기 단추가 할 일 - 같은 언어면 합치기, 한글·영어면 짝(원문 고치기와 같은 규칙에 Assign의 막는 까닭을 더한다) */
@@ -1836,8 +2126,8 @@ export function useAssignPage() {
   function joinOld(firstId: number, secondId: number, kind: JoinKind) {
     // 처리 중 알약은 누른 틈에(설계 D4)
     const gap: PendingPlace = { at: "gap", firstId, secondId };
-    if (kind === "merge") void runUnitEdit({ type: "merge", unit_ids: [firstId, secondId] }, t("split.didMerge"), null, false, null, gap);
-    else void runPairChange((docId, revision, undo) => createPair(bundleId, docId, revision, [firstId, secondId], undo), t("split.didJoin"), firstId, "pair", [firstId, secondId], gap);
+    if (kind === "merge") runUnitEdit({ type: "merge", unit_ids: [firstId, secondId] }, t("split.didMerge"), null, false, null, gap);
+    else runPairChange((docId, revision, undo) => createPair(bundleId, docId, revision, [firstId, secondId], undo), t("split.didJoin"), firstId, "pair", [firstId, secondId], gap);
   }
 
   /** 고른 조각의 글 아래 단추 - 합친 문장 풀기(풀 것이 있을 때만 줄이 생긴다). 짝 풀기는 우클릭 메뉴에 있어 여기 두지 않는다(줄마다 단추 줄이 붙지 않게) */
@@ -1853,16 +2143,16 @@ export function useAssignPage() {
         canUnmerge
         busy={busy}
         onUnpair={() => undefined}
-        onUnmerge={() => void runUnitEdit({ type: "unmerge", unit_id: unit.id }, t("split.didUnmerge"), null)}
+        onUnmerge={() => runUnitEdit({ type: "unmerge", unit_id: unit.id }, t("split.didUnmerge"), null)}
       />
     );
   }
 
-  function buildTables(): Map<number, { rows: number; cols: number; cells: CellSource[] }> {
+  function buildTables(docId: number, unitIds: readonly number[]): Map<number, { rows: number; cols: number; cells: CellSource[] }> {
     const tables = new Map<number, { rows: number; cols: number; cells: CellSource[] }>();
-    const source = viewOf(row?.documentId);
-    if (!source || !row) return tables;
-    for (const unitId of row.unitIds) {
+    const source = readLiveView(docId);
+    if (!source) return tables;
+    for (const unitId of unitIds) {
       const unit = source.units.find((item) => item.id === unitId);
       if (!unit || unit.kind !== "table" || unit.table_id === null) continue;
       const table = source.tables.find((item) => item.id === unit.table_id);
@@ -1878,11 +2168,11 @@ export function useAssignPage() {
   }
 
   /** 줄의 표·그림에 묶인 캡션 단위 - 저장 요청의 캡션 새 문장 출처(buildTables의 칸 문장과 같은 길) */
-  function buildCaptions(): Map<number, CaptionUnit[]> {
+  function buildCaptions(docId: number, unitIds: readonly number[]): Map<number, CaptionUnit[]> {
     const captions = new Map<number, CaptionUnit[]>();
-    const source = viewOf(row?.documentId);
-    if (!source || !row) return captions;
-    for (const unitId of row.unitIds) {
+    const source = readLiveView(docId);
+    if (!source) return captions;
+    for (const unitId of unitIds) {
       const units = source.units.filter((item) => item.kind === "caption" && item.group_unit_id === unitId);
       if (units.length > 0) captions.set(unitId, units.map((item) => ({ id: item.id, lang: item.lang, text: item.text })));
     }
@@ -1896,29 +2186,52 @@ export function useAssignPage() {
    */
   function applyPairSettle(savedRow: ClassifyRow, saved: Group, leftovers: number[]): boolean {
     const dissolved = saved.pairs_dissolved ?? [];
-    if (dissolved.length > 0) void docViews.reload({ docs: "all", units: null });
+    if (dissolved.length > 0) requestReload({ ...NO_RELOAD_ASK, docs: "all" });
     if (savedRow.pairId === null || !dissolved.includes(savedRow.pairId)) return false;
     setSnapshot((prev) => prev && { ...prev, keys: prev.keys.flatMap((key) => (key === savedRow.key ? listUnpairedKeys(savedRow) : [key])) });
-    const ids = leftovers.map((id) => unitMap.get(id)?.display_id ?? String(id)).join(", ");
+    const ids = leftovers.map((id) => liveRef.current.unitMap.get(id)?.display_id ?? String(id)).join(", ");
     showToast(leftovers.length > 0 ? t("assign.leftover.split", { ids }) : t("assign.pairDissolved"));
     return true;
   }
 
   /** 이 저장에 사유가 꼭 있어야 하는 까닭 - 없으면 null. 삭제·이동은 선택이다(비면 결과물이 "삭제"·"이동"으로 적는다, 요청서 4번) */
-  function readReasonNeed(action: "confirm" | "hold"): "hold" | "duplicate" | null {
+  function readReasonNeed(action: "confirm" | "hold", target: Destination | null = destination): "hold" | "duplicate" | null {
     if (action === "hold") return "hold";
-    return new Set(linkIds.map((id) => findWrittenRow(id)?.target_doc_id)).size > 1 ? "duplicate" : null;
+    const ids = target?.kind === "link" ? target.targetIds : [];
+    return new Set(ids.map((id) => findWrittenRow(id)?.target_doc_id)).size > 1 ? "duplicate" : null;
   }
 
-  /** reasonOverride는 Remark 창에서 방금 확인한 사유, pick은 방금 고른 삭제·이동 - 초안 상태가 아직 반영되기 전이라 직접 넘긴다 */
-  async function runSave(action: "confirm" | "hold", reasonOverride?: string, pick?: DecidePick) {
-    const destination = pick?.destination ?? currentDestination;
-    const moveCode = pick?.moveCode ?? currentMoveCode;
+  /** 사유 창을 연다 - 장벽 뒤에서 되살린 글쇠가 열었으면 답할 때까지 뒤의 글쇠가 기다린다 */
+  function openRemark(need: "hold" | "duplicate", then: "confirm" | "hold") {
+    setRemarkEdit({ kind: "row", need, then, askId: commands.openAsk() });
+  }
+
+  /**
+   * 판단 저장 - 누른 순간의 줄 · Unit · 초안을 잡아 큐에 세우고 고름을 다음 박스로 옮긴다(A1-R2). reasonOverride는 Remark 창에서 방금 확인한 사유,
+   * pick은 방금 고른 삭제 · 추천 첫 카드 - 초안 상태가 아직 반영되기 전이라 직접 넘긴다
+   */
+  function runSave(action: "confirm" | "hold", reasonOverride?: string, pick?: DecidePick) {
+    const isDeletePick = pick?.kind === "delete";
+    // 앞의 장벽이 어느 박스를 고를지 모른다 - 쌓아 두었다가 그 고름에서 다시 누른다
+    if (commands.isDeferring()) {
+      commands.enqueue({ kind: "press", act: isDeletePick ? "delete" : action, reason: reasonOverride });
+      return;
+    }
+    if (!row) return;
+    const rowDraft = pick?.draft ?? draft;
+    // 줄의 묶음을 아직 못 받았으면 저장된 곳도 캡션도 모른다 - 나갈 때 받아서 본다(못 지키면 멈춰 알린다)
+    const isLoaded = !isRowLoading;
+    const target = rowDraft.destination ?? (isLoaded ? savedDestination : null);
+    const isSavedUnknown = target === null && !isLoaded && rowUnits.some((unit) => unit.decision.disposition !== "unassigned");
     // 보낼 곳 없이는 보류만 된다(처분 unassigned + hold, 사유는 hold_reason)
-    if (!row || busy || (!destination && action !== "hold")) return;
-    if (isRowLoading) {
-      // 줄의 정보를 받는 중이다 - 누른 것을 버리지 않고, 다 받으면 한다(전에는 단추가 켜져 보이는데 눌러도 아무 일이 없었다)
-      queuedSaveRef.current = { key: row.key, action, reason: reasonOverride };
+    if (target === null && !isSavedUnknown && action !== "hold") return;
+    if (action === "confirm" && hiddenPlace !== null && !isDeletePick) {
+      showToast(t("assign.hidden.confirm"), "error");
+      return;
+    }
+    // 이동한 줄은 배정 취소 말고는 저장하지 않는다 - 보류(H)도 짝의 다른 쪽까지 쓰지 못하게 막는다
+    if (legacyMove !== null) {
+      showToast(t("assign.legacyMove.confirm"), "error");
       return;
     }
     if (action === "confirm" && isRefGate) {
@@ -1927,183 +2240,368 @@ export function useAssignPage() {
       return;
     }
     // 삭제·이동은 캡션 없이도 된다 - 지금 초안(새 문서 자리)의 캡션 조건을 따르지 않는다
-    if (action === "confirm" && isCaptionGateOn && !pick) {
+    if (action === "confirm" && isLoaded && isCaptionGateFor(target) && !isDeletePick) {
       // 캡션 없는 표·그림 - 단추는 꺼져 있고, ↵·메뉴 확정도 같은 까닭으로 멈춘다
       showToast(t("assign.caption.needed"), "error");
       return;
     }
     const reason = reasonOverride ?? reasonNow;
-    // 대상 문서를 먼저 본다 - 사유 창을 거친 뒤에 다시 막히지 않게
-    if (destination?.kind === "move" && !moveCode.trim()) {
-      showToast(t("classify.moveCodeNeeded"), "error");
-      document.querySelector<HTMLElement>('[data-testid="assign-move-code"]')?.focus();
-      return;
-    }
-    const need = pick ? null : readReasonNeed(action);
+    const need = isDeletePick ? null : readReasonNeed(action, target);
     if (need !== null && !reason.trim()) {
       // 알림만 띄우지 않고 사유 창을 연다 - 확인하면 이 저장을 잇는다
-      setRemarkEdit({ kind: "row", need, then: action });
+      openRemark(need, action);
       return;
     }
     const saveRow = row;
-    await focusCtl.runPending({ kind: "save", docId: row.documentId, unitIds: row.unitIds, place: NO_PLACE, isGlobal: false }, (job) => sendSave(job, saveRow, action, reason, pick));
+    // 한 언어만 이어 짝이 풀리는 저장은 남은 문장으로 간다 - 결과 박스가 응답 뒤에 정해지는 장벽이다. 묶음을 아직 모르면 풀릴 수 있다고 본다
+    // 고르지 않은 카드의 문장이 든 묶음은 아직 부르지 않았다 - 나갈 때 받아 전제를 본다
+    const isGroupKnown = isLoaded && (pick?.kind !== "card" || listJoinedTargetIds(target).every((id) => knownTargets.has(id)));
+    const groups = isGroupKnown && groupData !== null ? [groupData, ...(pickedGroups.data ?? [])] : null;
+    const isLinking = action === "confirm" && saveRow.pairId !== null && (target?.kind === "link" || target?.kind === "join");
+    const isSplit = isLinking && (groups === null || listLinkLeftovers(target, { units: saveUnits, group: saveGroupData }).length > 0);
+    const isDelete = target !== null ? target.kind === "delete" : isRowDeleted;
+    // 다음 미확정 줄로 - 지금 줄은 거르기 자리에 남는다. 놓인 문장에 잇기는 그 줄에 머문다(MD 1 F12 E4)
+    const next = shouldAdvanceAfterSave({ action, destinationKind: target?.kind ?? null, isSplit }) ? pickNextAfterSave(saveRow, isDelete ? "below" : "open") : null;
+    const command: Extract<WriteCommand, { kind: "save" }> = {
+      kind: "save",
+      action,
+      docId: saveRow.documentId,
+      rowKey: saveRow.key,
+      unitIds: saveRow.unitIds,
+      boxId: pickedId !== null && saveRow.unitIds.includes(pickedId) ? pickedId : saveRow.unitIds[0],
+      destination: rowDraft.destination,
+      draft: rowDraft,
+      before: pick ? pick.before : rowDraft,
+      reason,
+      seen: readSeen(saveRow.unitIds),
+      groups,
+      isChecked: isGroupKnown,
+      isPick: isDeletePick,
+      isSplit,
+      nextKey: next?.key ?? null,
+      // 엮은 문서의 칸에 놓는 확정은 어디 몇 번이 되는지 알리고 되돌리기를 단다(MD 2 S3) - 저장 전 자리로 센다
+      placedNote: action === "confirm" && !pick ? formatPlacedToast() : null,
+    };
+    // 갈 다음 박스가 없어 머문 줄에서 같은 것을 또 누름 - 이미 줄에 있다
+    if (isRepeatedSave(commands.listUnsettled(), command)) return;
+    commands.enqueue(command);
+    // 저장했으면 메뉴의 고름은 끝났다 - 다음 줄이 없거나 같은 줄에 남아도 닫는다
+    setMenu(null);
+    if (next === null) return;
+    focusCtl.pick({ kind: "unit", docId: saveRow.documentId, unitId: next.unitId });
+    scrollToUnit(next.unitId);
   }
 
-  /** runSave의 보내기 - 그 줄의 Unit은 응답까지 잠긴다(알약은 그리지 않는다, 설계 D4) */
-  async function sendSave(job: string, row: ClassifyRow, action: "confirm" | "hold", reason: string, pick?: DecidePick) {
-    const destination = pick?.destination ?? currentDestination;
-    const moveCode = pick?.moveCode ?? currentMoveCode;
-    try {
-      // 고친 칸만 글을 보낸다 - 손대지 않은 AI 제안은 글·종류를 비워 보내 제안 그대로 받는다
-      const context = { units: saveUnits, group: saveGroupData, tables: buildTables(), captions: buildCaptions() };
-      const body = buildGroupSave({ ...draft, ...(pick ? { position: null } : {}), destination, reason, moveCode }, context, action, action === "hold" ? reason.trim() : "");
-      // Use로 받은 제안을 싣는다 - 서버가 판단에 잇고 채택(그대로·고침·버림)을 남긴다
-      if (draft.suggestionId) body.suggestion_id = draft.suggestionId;
-      const leftovers = body.release_unit_ids ?? [];
-      // 끌어 놓은 자리를 실은 저장이면 미리 고침도 그 자리에 넣는다 - 끝에 넣으면 다시 읽을 때 줄이 뛴다
-      const sectionKey = getSectionKey(destination);
-      const at = draft.position && sectionKey !== null && body.targets.some((target) => target.position !== undefined) ? { sectionKey, after: draft.position.after } : null;
-      // 놓인 문장에 잇기도 출처를 잇는 일이라 알림의 되돌리기 이름이 잇기다
-      const op = destination?.kind === "join" && action === "confirm" ? "link" : pickSaveOp({ action, destinationKind: destination?.kind ?? null, savedLinkIds: savedDestination?.kind === "link" ? savedDestination.targetIds : [], nextLinkIds: pick ? [] : linkIds });
-      // 엮은 문서의 칸에 놓는 확정은 어디 몇 번이 되는지 알리고 되돌리기를 단다(MD 2 S3) - 저장 전 자리로 센다
-      const placedNote = action === "confirm" ? formatPlacedToast() : null;
-      const saved = await saveGroup(bundleId, body, buildUndo({ op, focus_unit_id: row.unitIds[0] }));
-      markRecorded();
-      // 저장했으면 메뉴의 고름은 끝났다 - 다음 줄이 없거나 같은 줄에 남아도 닫는다
-      setMenu(null);
-      if (placedNote !== null) showToast(placedNote, "ok", { action: { label: t("common.undo"), run: () => void undoStepRef.current("undo") } });
-      else showToast(action === "hold" ? t("classify.held") : t("classify.confirmed"));
-      const isSplit = applyPairSettle(row, saved, leftovers) && leftovers.length > 0;
-      // 다음 미확정 줄로 - 지금 줄은 거르기 자리에 남는다. 남는 쪽을 풀었으면 남은 문장의 줄이 다음이다
-      // 놓인 문장에 잇기는 그 줄에 머문다 - 곧바로 그 문장의 연필(Rewrite)로 포커스를 옮겨 고쳐 쓰게(MD 1 F12 E4)
-      const next = shouldAdvanceAfterSave({ action, destinationKind: destination?.kind ?? null, isSplit }) ? pickNextAfterSave(row, destination?.kind === "delete" ? "below" : "open") : null;
-      if (action === "confirm" && destination?.kind === "join" && !isSplit) setEditFocus({ key: row.key });
-      if (action === "confirm" && !pick) showSent(row, saved, next?.key ?? row.key, at);
-      dropDraft(row.key);
-      // 한 언어만 이어 짝을 풀었으면 남은 문장의 줄로 옮긴다 - 다시 받아 그 줄이 생긴 뒤, 그 사이 다른 줄을 고르지 않았을 때
-      if (isSplit) focusCtl.succeed(job, { docId: row.documentId, revision: null, pickUnitId: leftovers[0] });
-      // 다음 박스도 다시 받은 뒤, 그 사이 다른 박스를 고르지 않았을 때만 옮긴다(삭제 줄이 접히는 것과 한 번에 그려진다)
-      if (next) focusCtl.succeed(job, { docId: row.documentId, revision: null, pickUnitId: next.unitId });
-      reloadData();
-      void loadBundle(bundleId);
-    } catch (err) {
-      showToast(humanizeApiError(err, t), "error");
-      reloadData();
-    }
+  /** 판단 저장의 보내기 - 판단 revision은 앞 응답의 것이 이기고(A1-R4), 그 뒤 쓴 것이 든 묶음은 다시 받는다 */
+  async function sendSave(command: Extract<WriteCommand, { kind: "save" }>, ctx: SendContext) {
+    const { action, docId, rowKey, draft, reason, isPick } = command;
+    const unitIds = [...command.unitIds];
+    const units = unitIds.map((id) => liveRef.current.unitMap.get(id)).filter((unit): unit is UnitRow => unit !== undefined);
+    const isUsable = !ctx.isRetry && command.groups !== null && command.groups.every(writeLog.isFresh) && units.every((unit) => writeLog.pickRevision(unit.unit_id, 0) !== null);
+    const group = isUsable && command.groups !== null ? mergeGroups([...command.groups]) : await loadSaveGroup(unitIds, command.destination, ctx.isRetry ? [] : (command.groups ?? []));
+    const savedPlace = readDestination(group, unitIds);
+    const destination = command.destination ?? savedPlace;
+    if (destination === null && action !== "hold") throw new CommandRefusal(t("assign.queue.noPlace"));
+    if (!command.isChecked && !isPick) checkSave(command, group, destination);
+    const revisionOf = (unit: UnitRow) => writeLog.resolveRevision(unit.unit_id, command.seen, group.units.find((item) => item.unit_id === unit.unit_id)?.decision.revision ?? unit.decision.revision);
+    // 고친 칸만 글을 보낸다 - 손대지 않은 AI 제안은 글·종류를 비워 보내 제안 그대로 받는다
+    const context = {
+      units: units.map((unit) => ({ id: unit.unit_id, kind: unit.kind, lang: unit.lang, text: unit.text, content_start: unit.content_start, revision: revisionOf(unit) })),
+      group,
+      tables: buildTables(docId, unitIds),
+      captions: buildCaptions(docId, unitIds),
+    };
+    const body = buildGroupSave({ ...draft, destination, reason }, context, action, action === "hold" ? reason.trim() : "");
+    // Use로 받은 제안을 싣는다 - 서버가 판단에 잇고 채택(그대로·고침·버림)을 남긴다
+    if (draft.suggestionId) body.suggestion_id = draft.suggestionId;
+    const leftovers = body.release_unit_ids ?? [];
+    // 끌어 놓은 자리를 실은 저장이면 미리 고침도 그 자리에 넣는다 - 끝에 넣으면 다시 읽을 때 줄이 뛴다
+    const sectionKey = getSectionKey(destination);
+    const at = draft.position && sectionKey !== null && body.targets.some((target) => target.position !== undefined) ? { sectionKey, after: draft.position.after } : null;
+    // 놓인 문장에 잇기도 출처를 잇는 일이라 알림의 되돌리기 이름이 잇기다
+    const op = destination?.kind === "join" && action === "confirm" ? "link" : pickSaveOp({ action, destinationKind: destination?.kind ?? null, savedLinkIds: savedPlace?.kind === "link" ? savedPlace.targetIds : [], nextLinkIds: !isPick && destination?.kind === "link" ? destination.targetIds : [] });
+    const saved = await saveGroup(bundleId, body, buildUndo({ op, focus_unit_id: unitIds[0] }));
+    noteSaved(saved);
+    markRecorded();
+    if (command.placedNote !== null) showToast(command.placedNote, "ok", { action: { label: t("common.undo"), run: () => undoStepRef.current("undo") } });
+    else showToast(action === "hold" ? t("classify.held") : t("classify.confirmed"));
+    const savedRow = liveRef.current.rowMap.get(rowKey);
+    const isSplit = savedRow !== undefined && applyPairSettle(savedRow, saved, leftovers) && leftovers.length > 0;
+    if (action === "confirm" && destination?.kind === "join" && !isSplit && liveRef.current.activeKey === rowKey) setEditFocus({ key: rowKey });
+    if (action === "confirm" && !isPick && destination !== null) showSent(unitIds, destination, saved, command.nextKey ?? rowKey, at);
+    dropSentDraft(rowKey, draft, reason);
+    // 장벽이면 줄은 아래에서 곧바로 받는다
+    requestReload(command.isSplit ? { ...askAll(false), units: [] } : askAll(false));
+    if (!command.isSplit) return;
+    // 한 언어만 이어 짝을 풀었으면 남은 문장의 줄로 옮긴다 - 다시 받아 그 줄이 생긴 뒤, 그 사이 다른 줄을 고르지 않았을 때. 풀리지 않았으면 다음 줄
+    const next = savedRow !== undefined && shouldAdvanceAfterSave({ action, destinationKind: destination?.kind ?? null, isSplit }) ? pickNextAfterSave(savedRow, "open") : null;
+    const follow = isSplit ? leftovers[0] : (next?.unitId ?? null);
+    focusCtl.succeed(ctx.id, { docId, revision: null, pickUnitId: follow });
+    ctx.respond();
+    await placeReload({ ...NO_RELOAD_ASK, docs: "all", units: "all" }, ctx);
+  }
+
+  /** 저장에 실을 관계 묶음 - 줄의 Unit과 고른 문장들의 것. seen은 누른 때 보고 있던 묶음이라 새 문장의 revision은 그것으로 잠근다 */
+  async function loadSaveGroup(unitIds: number[], destination: Destination | null, seen: readonly Group[]): Promise<Group> {
+    const group = await loadRowGroup(bundleId, unitIds);
+    const known = new Set(group.targets.map((target) => target.id));
+    const missing = listJoinedTargetIds(destination).filter((id) => !known.has(id));
+    const whole = missing.length === 0 ? group : mergeGroups([group, ...(await Promise.all(missing.map((id) => getGroupByTarget(bundleId, id))))]);
+    return { ...whole, targets: writeLog.lockTargets(whole.targets, seen) };
+  }
+
+  /** 누를 때 묶음이 없어 보지 못한 전제 - 어기면 보내지 않고 멈춰 까닭을 알린다(참조 줄은 누를 때 보았다) */
+  function checkSave(command: Extract<WriteCommand, { kind: "save" }>, group: Group, destination: Destination | null) {
+    if (command.action === "confirm" && !liveRef.current.isDrafting && readHiddenPlace(destination, liveRef.current.labelOptions) !== null) throw new CommandRefusal(t("assign.hidden.confirm"));
+    const row = liveRef.current.rowMap.get(command.rowKey);
+    const view = readLiveView(command.docId);
+    if (command.action === "confirm" && row && view && isCaptionGate(row, destination, new Map(view.units.map((unit) => [unit.id, unit])), command.draft, group)) throw new CommandRefusal(t("assign.caption.needed"));
+    if (readReasonNeed(command.action, destination) !== null && !command.reason.trim()) throw new CommandRefusal(t("remark.need.duplicate"));
+  }
+
+  /** 저장 응답 - 새 판단 revision을 적고 줄에 얹는다(큐가 빌 때 다시 받기 전에 화면이 먼저 안다) */
+  function noteSaved(saved: Group) {
+    writeLog.noteSaved(saved);
+    docViews.patchDecisions(new Map(saved.units.map((unit) => [unit.unit_id, unit.decision])));
   }
 
   /**
    * 확정 뒤 고를 박스 - 고른 박스 둘레에서 같은 문서 · 같은 탭 · 거르기 목록 안, 되감기 없이(Assign 피드백 2026-11-20 항목 1).
-   * 삭제는 바로 아래 박스(이미 삭제한 접힌 줄은 건너뜀), 다른 확정은 아래로 첫 미확정 박스
+   * 삭제는 바로 아래 박스(이미 삭제한 접힌 줄은 건너뜀), 다른 확정은 아래로 첫 미확정 박스. 저장 중인 것도 센다(lib/next-box-model)
    */
   function pickNextAfterSave(saved: ClassifyRow, mode: "below" | "open"): { key: string; unitId: number } | null {
-    const listed = new Set(listKeys);
-    const readRowKey = (navKey: string) => {
-      if (readTocNavKey(navKey) !== null) return null;
-      const unitId = readUnitNavKey(navKey);
-      return unitId === null ? navKey : (rowOfUnit.get(unitId) ?? null);
-    };
-    const readBoxId = (navKey: string, key: string) => readUnitNavKey(navKey) ?? rowMap.get(key)?.unitIds[0] ?? null;
-    const readTab = (unitId: number) => partOf?.get(unitId) ?? "body";
-    const fromId = pickedId !== null && saved.unitIds.includes(pickedId) ? pickedId : saved.unitIds[0];
-    const from = isPairView ? saved.key : toUnitNavKey(fromId);
-    const isCandidate = (navKey: string) => {
-      const key = readRowKey(navKey);
-      const item = key === null ? undefined : rowMap.get(key);
-      if (key === null || !item || key === saved.key || !listed.has(key) || item.documentId !== saved.documentId) return false;
-      const boxId = readBoxId(navKey, key);
-      if (boxId === null || readTab(boxId) !== readTab(fromId)) return false;
-      return mode === "open" || !item.unitIds.every((id) => isDeletedUnit(unitMap.get(id)));
-    };
-    const isOpen = (navKey: string) => rowMap.get(readRowKey(navKey) ?? "")?.status !== "confirmed";
-    const next = findNextAfterSave(navKeys, from, mode, isCandidate, isOpen);
-    const key = next === null ? null : readRowKey(next);
-    const unitId = next === null || key === null ? null : readBoxId(next, key);
-    return key === null || unitId === null ? null : { key, unitId };
+    return pickNextBox({
+      order: navKeys,
+      rowMap,
+      rowOfUnit,
+      listed: new Set(listKeys),
+      isByRow: isPairView,
+      readTab: (unitId) => partOf?.get(unitId) ?? "body",
+      isDeleted: (key) => rowMap.get(key)?.unitIds.every((id) => isDeletedUnit(unitMap.get(id))) ?? false,
+      from: saved.key,
+      fromUnitId: pickedId,
+      mode,
+      pending: readPendingOutcomes(commands.listUnsettled()),
+    });
   }
 
-  // 줄의 정보를 받는 사이에 누른 확정·보류 - 다 받은 뒤 그 줄을 그대로 고르고 있을 때만 한다(그 사이 다른 줄로 갔으면 버린다)
-  const queuedSaveRef = useRef<{ key: string; action: "confirm" | "hold"; reason?: string } | null>(null);
   const isRowLoading = groupPending || pickedGroups.isLoading;
-  const runQueuedSave = useEffectEvent(() => {
-    const queued = queuedSaveRef.current;
-    queuedSaveRef.current = null;
-    if (queued && row?.key === queued.key) void runSave(queued.action, queued.reason);
-  });
-  const queuedRowKey = row?.key ?? null;
-  useEffect(() => {
-    if (!isRowLoading) runQueuedSave();
-  }, [isRowLoading, queuedRowKey]);
 
-  // 삭제·이동 바로 확정(우클릭 메뉴·Del·M 창) - 초안에도 넣어 오른쪽 칸이 따라오고, 저장은 그 초안이 그려지기 전이라 보낼 곳을 직접 넘긴다
-  const [isMoveAsk, setMoveAsk] = useState(false);
-  function decideNow(next: DecidePick["destination"], code?: string, reason?: string) {
-    if (!row || !canEdit || busy) return;
-    const pick = { destination: next, moveCode: code ?? moveCode };
-    setDraft({ destination: next, position: null, moveCode: pick.moveCode });
-    void runSave("confirm", reason, pick);
+  // 삭제 바로 확정(우클릭 메뉴·Del) - 초안에도 넣어 오른쪽 칸이 따라오고, 저장은 그 초안이 그려지기 전이라 보낼 곳을 직접 넘긴다
+  function decideNow(next: Extract<Destination, { kind: "delete" }>) {
+    if (!row || !canEdit) return;
+    const before = drafts[row.key] ?? null;
+    const picked: PageDraft = { ...draft, destination: next, position: null, suggestionId: null };
+    if (!commands.isDeferring()) setDrafts((prev) => ({ ...prev, [row.key]: picked }));
+    runSave("confirm", undefined, { kind: "delete", draft: picked, before });
+  }
+
+  // --- 확정 단추(= ↵)가 지금 할 일 - 단추의 이름 · 색 · 꺼짐과 글쇠가 같은 답을 읽는다(lib/primary-model) ---
+  // 묶음을 받는 중인 정한 줄은 저장된 곳이 있다 - 추천 첫 카드로 덮지 않고 나갈 때 저장된 곳을 읽는다
+  const isSavedUnknown = isRowLoading && rowUnits.some((unit) => unit.decision.disposition !== "unassigned");
+  const isSimilarFresh = similar.data?.key === similarKey;
+  // 앞 줄의 비슷한 문장은 화면에만 남는다 - 확정할 카드로 보지 않는다(추천의 차례가 AI · 같은 글 · 비슷한 글이라 남는 것이 앞머리다)
+  const primaryCards = isSavedUnknown ? [] : isSimilarFresh ? recommendations : recommendations.filter((rec) => rec.source !== "similar");
+  // 고른 줄이 든 벗긴 표에 뜬 AI 순서 미리보기 - 지금 덩이와 같은 줄 집합일 때만 용지에 뜬다
+  const orderTableId = canEdit && !hasSolo && !isPairView && row !== null && paperModel !== null ? (row.unitIds.map((id) => paperModel.unwrapLines.get(id)).find((id) => id !== undefined) ?? null) : null;
+  const orderPreview = readOrderPreview(orderTableId);
+  function readOrderPreview(tableId: number | null): { tableId: number; order: readonly number[]; isSame: boolean } | null {
+    const order = tableId === null ? undefined : unwrapAi.previews.get(tableId);
+    if (tableId === null || order === undefined || paperModel === null) return null;
+    const current = paperModel.order.filter((id) => paperModel.unwrapLines.get(id) === tableId);
+    return isUnwrapSuggestionApplicable(current, order) ? { tableId, order, isSame: isUnwrapSuggestionUnchanged(current, order) } : null;
+  }
+  const primaryPlan = planPrimary({
+    canEdit,
+    hasRow: row !== null,
+    isDeletedLine: noisePick !== null,
+    destination,
+    recommendations: primaryCards,
+    isSuggestedLoading: similar.isLoading && !isSimilarFresh,
+    // 처음 받는 동안만 - 다시 받는 동안은 앞의 것이 있고, 오류로 비었으면 막지 않는다
+    isFirstCardUnknown: [suggestions, matchSuggestions, identical].some((load) => load.data === null && load.isLoading),
+    blockKey: destination !== null ? confirmBlockKey : readConfirmBlockKey({ isRefGate, isCaptionGate: isCaptionGateFor(primaryCards[0]?.destination ?? null), isHiddenPlace: hiddenPlace !== null, isLegacyMove: legacyMove !== null }),
+    orderPreviewTableId: orderPreview !== null && !orderPreview.isSame ? orderPreview.tableId : null,
+  });
+
+  /** 고르지 않고 추천 첫 카드로 바로 확정 - AI 카드면 Use와 같이 고쳐 쓴 글과 제안 id를 명령에 싣는다(B1-R3). 초안에도 넣어 오른쪽 칸이 따라온다 */
+  function confirmCard(rec: Recommendation) {
+    if (!row) return;
+    const before = drafts[row.key] ?? null;
+    const use = rec.source === "ai" && rowLive ? { texts: { ...draft.texts, ...buildUseDraft(rowLive, slots).texts }, suggestionId: rowLive.id } : { suggestionId: null };
+    const picked: PageDraft = { ...draft, destination: rec.destination, position: null, ...use };
+    setDrafts((prev) => ({ ...prev, [row.key]: picked }));
+    markRecHover([]);
+    runSave("confirm", undefined, { kind: "card", draft: picked, before });
   }
 
   /**
    * 확정한 곳을 오른쪽 칸에 바로 보인다 - 그 문서로 옮기고(다음 줄에서도, 손으로 고른 문서가 없을 때), 엮은 문서면 저장 응답으로 칸에 미리 넣는다.
    * 그 문장이 그려지면 NewPane이 화면에 들이고, 잇는 선은 진하게 그린다. at은 저장이 실은 놓은 자리(칸 끝 대신 그 자리에 넣는다)
    */
-  function showSent(savedRow: ClassifyRow, saved: Group, nextKey: string, at: { sectionKey: string; after: number | null } | null) {
-    const docId = destination?.kind === "slot" || destination?.kind === "step" || destination?.kind === "join" ? destination.docId : destination?.kind === "link" ? (findWrittenRow(destination.targetIds[0])?.target_doc_id ?? null) : null;
-    if (docId === null || !destination) return;
-    const isMine = (target: Group["targets"][number]) => target.source_unit_ids.some((id) => savedRow.unitIds.includes(id)) || (target.translation_source_unit_id !== null && savedRow.unitIds.includes(target.translation_source_unit_id));
+  function showSent(unitIds: readonly number[], destination: Destination, saved: Group, nextKey: string, at: { sectionKey: string; after: number | null } | null) {
+    const docId = destination.kind === "slot" || destination.kind === "step" || destination.kind === "join" ? destination.docId : destination.kind === "link" ? (findWrittenRow(destination.targetIds[0])?.target_doc_id ?? null) : null;
+    if (docId === null) return;
+    const isMine = (target: Group["targets"][number]) => target.source_unit_ids.some((id) => unitIds.includes(id)) || (target.translation_source_unit_id !== null && unitIds.includes(target.translation_source_unit_id));
     const targetIds = destination.kind === "link" ? destination.targetIds : destination.kind === "join" ? [destination.targetId] : saved.targets.filter((target) => target.target_doc_id === docId && target.parent_target_id === null && isMine(target)).map((target) => target.id);
     setLiveNew((prev) => ({ key: nextKey, docId, targetIds, seq: (prev?.seq ?? 0) + 1 }));
-    if (composed.data?.target_doc_id === docId && destination.kind === "join") {
+    // 엮은 문서는 응답이 온 때 열려 있는 것 - 누른 뒤 다른 문서로 옮겼을 수 있다
+    const { composedData: base } = liveRef.current;
+    if (base?.target_doc_id === docId && destination.kind === "join") {
       // 놓인 문장은 그 자리에서 출처만 늘고 번호·글은 그대로다 - 칸 끝에 다시 넣지 않는다
       const joined = saved.targets.find((target) => target.id === destination.targetId);
-      if (joined) setComposedPatch({ base: composed.data, doc: applyJoinedSources(composedDoc ?? composed.data, joined.id, joined.source_unit_ids) });
-    } else if (composed.data?.target_doc_id === docId) {
-      const textOf = (unitIds: number[]) => unitIds.map((id) => unitMap.get(id)?.text ?? "").join(" ");
+      if (joined) patchComposed(base, (doc) => applyJoinedSources(doc, joined.id, joined.source_unit_ids));
+    } else if (base?.target_doc_id === docId) {
+      const textOf = (ids: number[]) => ids.map((id) => liveRef.current.unitMap.get(id)?.text ?? "").join(" ");
       // 앞 저장의 미리 고침 위에 얹는다 - 다시 읽기가 오기 전에 연달아 확정해도 앞 문장이 빠지지 않게
-      setComposedPatch({ base: composed.data, doc: applySavedTargets(composedDoc ?? composed.data, saved.targets, textOf, at) });
+      patchComposed(base, (doc) => applySavedTargets(doc, saved.targets, textOf, at));
     }
   }
 
-  async function runClear() {
-    if (!row || busy) return;
-    const decided = rowUnits.filter((unit) => unit.decision.disposition !== "unassigned" || unit.status !== "unassigned");
-    if (decided.length === 0) return;
-    const clearRow = row;
-    await focusCtl.runPending({ kind: "save", docId: row.documentId, unitIds: row.unitIds, place: NO_PLACE, isGlobal: false }, async () => {
-      try {
-        await clearDecisions(bundleId, decided.map((unit) => ({ unit_id: unit.unit_id, revision: unit.decision.revision })), buildUndo({ step_key: genId(), focus_unit_id: clearRow.unitIds[0] }));
+  /** 열린 엮은 문서를 미리 고친다 - 그때 받아 둔 문서(base)가 그대로인 동안만 산다 */
+  function patchComposed(base: ComposedDoc, change: (doc: ComposedDoc) => ComposedDoc) {
+    setComposedPatch((prev) => ({ base, doc: change(prev?.base === base ? prev.doc : base) }));
+  }
+
+  /** 보낼 판단 revision - 본 것과 앞 응답의 것(모르는 것만 묶음에서). 화면 줄이 그보다 낡았으면 판단이 남았는지도 묶음에서 읽는다. 없는 Unit은 빠진다 */
+  async function readRevisions(unitIds: readonly number[], seen: SeenRevisions): Promise<Array<{ unit_id: number; revision: number; isDecided: boolean }>> {
+    const units = unitIds.map((id) => liveRef.current.unitMap.get(id)).filter((unit): unit is UnitRow => unit !== undefined);
+    const isKnown = units.every((unit) => writeLog.pickRevision(unit.unit_id, seen.get(unit.unit_id) ?? unit.decision.revision) === unit.decision.revision);
+    if (isKnown) return units.map((unit) => ({ unit_id: unit.unit_id, revision: unit.decision.revision, isDecided: unit.decision.disposition !== "unassigned" || unit.status !== "unassigned" }));
+    const group = await loadRowGroup(bundleId, units.map((unit) => unit.unit_id));
+    return group.units
+      .filter((unit) => unitIds.includes(unit.unit_id))
+      .map((unit) => ({
+        unit_id: unit.unit_id,
+        revision: writeLog.resolveRevision(unit.unit_id, seen, unit.decision.revision),
+        isDecided: unit.decision.disposition !== "unassigned" || unit.decision.status !== "unassigned",
+      }));
+  }
+
+  /** 누른 때 화면에 있던 판단 revision */
+  function readSeen(unitIds: readonly number[]): SeenRevisions {
+    return new Map(unitIds.flatMap((id) => { const unit = liveRef.current.unitMap.get(id); return unit ? [[id, unit.decision.revision] as const] : []; }));
+  }
+
+  /** 배정 취소 - 누른 순간의 줄을 잡는다. 고름은 지금처럼 그 줄에 머문다 */
+  function runClear() {
+    if (commands.isDeferring()) {
+      commands.enqueue({ kind: "press", act: "clear" });
+      return;
+    }
+    if (!row) return;
+    const isDecided = rowUnits.some((unit) => unit.decision.disposition !== "unassigned" || unit.status !== "unassigned");
+    // 방금 누른 판단이 아직 저장 중인 줄도 취소할 것이 있다
+    const isSaving = commands.listUnsettled().some(({ payload, unitIds }) => (payload.kind === "save" || payload.kind === "bulk" || payload.kind === "figure") && unitIds.some((id) => row.unitIds.includes(id)));
+    if (!isDecided && !isSaving) return;
+    commands.enqueue({ kind: "clear", docId: row.documentId, rowKey: row.key, unitIds: row.unitIds, boxId: pickedId ?? row.unitIds[0], seen: readSeen(row.unitIds), draft: drafts[row.key] ?? null, newDocId: isComposedDoc ? newDocId : null, toggleKey });
+    setMenu(null);
+  }
+
+  async function sendClear({ rowKey, unitIds, seen, draft: sent, newDocId: docId, toggleKey: key }: Extract<WriteCommand, { kind: "clear" }>) {
+    const decided = (await readRevisions(unitIds, seen)).filter((unit) => unit.isDecided);
+    if (decided.length > 0) {
+      writeLog.noteUnknown([...unitIds, ...(await clearDecisions(bundleId, decided.map(({ unit_id, revision }) => ({ unit_id, revision })), buildUndo({ step_key: genId(), focus_unit_id: unitIds[0] })))]);
+      markRecorded();
+    }
+    // 엮은 문서에서 그 문장을 바로 뺀다 - 오른쪽 칸은 그 문서에 머물러(배정이 없어져 저절로 다른 문서로 가지 않게) 접히며 사라지는 것이 보이고, 다시 읽은 값이 맞춘다
+    const { composedData: base } = liveRef.current;
+    if (docId !== null && base?.target_doc_id === docId) {
+      setLiveNew((prev) => ({ key, docId, targetIds: [], seq: (prev?.seq ?? 0) + 1 }));
+      patchComposed(base, (doc) => removeClearedUnits(doc, new Set(unitIds)));
+    }
+    showToast(t("classify.cleared"));
+    if (sent !== null) dropSentDraft(rowKey, sent, sent.reason ?? "");
+    requestReload(askAll(false));
+  }
+
+  /** 일괄 삭제 - 이미 이동한 줄(없앤 기능)은 읽기 전용이라 빼고 나머지만 지운다, 뺀 수는 알린다 */
+  function runBulkDelete(unitIds: readonly number[], reason: string) {
+    const picked = unitIds.map((id) => unitMap.get(id)).filter((unit): unit is UnitRow => unit !== undefined);
+    const byRow = new Map<string, number[]>();
+    for (const unit of picked) {
+      if (unit.decision.disposition === "move_external") continue;
+      const key = rowOfUnit.get(unit.unit_id) ?? `u${unit.unit_id}`;
+      byRow.set(key, [...(byRow.get(key) ?? []), unit.unit_id]);
+    }
+    setBulk(null);
+    if (byRow.size === 0) {
+      showToast(t("assign.legacyMove.confirm"), "error");
+      return;
+    }
+    const targets = [...byRow].map(([rowKey, ids]) => ({ rowKey, unitIds: ids }));
+    commands.enqueue({ kind: "bulk", rows: targets, seen: readSeen(picked.map((unit) => unit.unit_id)), reason, skipped: picked.length - targets.reduce((sum, item) => sum + item.unitIds.length, 0) });
+    setChecked(new Set());
+  }
+
+  async function sendBulk({ rows: targets, seen, reason, skipped }: Extract<WriteCommand, { kind: "bulk" }>) {
+    const units = await readRevisions(targets.flatMap((item) => item.unitIds), seen);
+    const done = await bulkDecide(bundleId, { action: "delete", reason, move_target_code: "", units: units.map(({ unit_id, revision }) => ({ unit_id, revision })) }, buildUndo());
+    noteDecisions(done);
+    markRecorded();
+    const n = t("classify.bulkDone", { n: units.length });
+    showToast(skipped > 0 ? `${n} ${t("assign.legacyMove.skipped", { n: skipped })}` : n);
+    // 한 번에 삭제도 서버가 짝을 정리하지만 어느 짝인지 알려 주지 않는다 - 짝 모양·문서 revision을 다시 받는다
+    requestReload(askAll(true));
+  }
+
+  function noteDecisions(decisions: ReadonlyArray<{ unit_id: number; decision: UnitRow["decision"] }>) {
+    writeLog.noteDecisions(decisions);
+    docViews.patchDecisions(new Map(decisions.map((item) => [item.unit_id, item.decision])));
+  }
+
+  /** 남은 번역을 확정하거나 지운다(오른쪽 칸은 고른 줄의 것 모두, 목록은 하나) - 줄의 판단은 그대로, 되돌리기 한 번 */
+  function settleTranslations(items: readonly OpenTranslation[], action: "confirm" | "remove") {
+    const acting = action === "confirm" ? items.filter((item) => item.can_confirm) : [...items];
+    if (acting.length === 0) return;
+    const rowIds = [...new Set(acting.flatMap((item) => (item.row_unit_id === null ? [] : [item.row_unit_id])))];
+    commands.enqueue({
+      kind: "global",
+      label: action === "confirm" ? "assign.queue.act.translation" : "assign.step.drop_translation",
+      pending: buildDecisionPending("save", acting[0].document_id, rowIds),
+      run: async () => {
+        // 칸 번역은 닫힌 표 묶음을 실어야 한다 - 보내는 때의 묶음을 새로 읽는다
+        const cells = acting.filter((item) => item.parent_target_id !== null);
+        const closure = cells.length > 0 ? mergeGroups(await Promise.all(cells.map((item) => getGroupByTarget(bundleId, item.id)))) : null;
+        const body = buildTranslationDecision(acting, closure, action);
+        if (body === null) throw new CommandRefusal(t("assign.hidden.translationBlocked"));
+        // 출처 줄이 없으면 되돌린 뒤 갈 자리도 없다(번역은 New 칸에 줄이 없다)
+        const focus = rowIds.length > 0 ? { focus_unit_id: rowIds[0] } : {};
+        noteSaved(await saveGroup(bundleId, body, buildUndo({ op: action === "confirm" ? "confirm" : "drop_translation", ...focus })));
         markRecorded();
-        // 엮은 문서에서 그 문장을 바로 뺀다 - 오른쪽 칸은 그 문서에 머물러(배정이 없어져 저절로 다른 문서로 가지 않게) 접히며 사라지는 것이 보이고, 다시 읽은 값이 맞춘다
-        if (composed.data && isComposedDoc && newDocId !== null) {
-          const docId = newDocId;
-          setLiveNew((prev) => ({ key: toggleKey, docId, targetIds: [], seq: (prev?.seq ?? 0) + 1 }));
-          setComposedPatch({ base: composed.data, doc: removeClearedUnits(composedDoc ?? composed.data, new Set(clearRow.unitIds)) });
-        }
-        setMenu(null);
-        showToast(t("classify.cleared"));
-        dropDraft(clearRow.key);
-        reloadData();
-        void loadBundle(bundleId);
-      } catch (err) {
-        showToast(humanizeApiError(err, t), "error");
-        reloadData();
-      }
+        showToast(t(action === "confirm" ? "classify.confirmed" : "assign.hidden.translationRemoved"));
+        // 마지막 하나까지 정했으면 창은 닫힌 것으로 - 나중에 다시 생겨도 저절로 열리지 않게
+        if (acting.length >= liveRef.current.leftovers.length) setLeftoverSheet(false);
+        // 문장 번역의 저장은 단위를 싣지 않아 판단 판(revision)이 그대로다 - 묶음의 열쇠가 바뀌지 않으니 직접 다시 받는다
+        group.reload();
+        requestReload(askAll(false));
+      },
     });
   }
 
-  /** 묶음 전체 일 하나(같은 글자 일괄 확정) - withViews면 원문 보기도(서버가 짝을 정리하지만 어느 짝인지 알려 주지 않는다). 다른 일이 처리 중이면 시작하지 않는다 */
-  async function run(action: () => Promise<unknown>, message: string, withViews = false) {
-    await focusCtl.runPending({ kind: "bulk", docId: null, unitIds: [], place: NO_PLACE, isGlobal: true }, async () => {
-      try {
+  /** 남은 번역 목록에서 그 출처 줄로 - 창을 닫고 그 줄을 고른다 */
+  function goToTranslation(item: OpenTranslation) {
+    const key = item.row_unit_id === null ? undefined : rowOfUnit.get(item.row_unit_id);
+    if (key === undefined) return;
+    setLeftoverSheet(false);
+    setMode("old");
+    setSolo(null);
+    selectRow(key);
+  }
+
+  /** 묶음 전체 일 하나 - 장벽이라 응답 뒤 줄(withViews면 원문 보기도 - 서버가 짝을 정리하지만 어느 짝인지 알려 주지 않는다)을 다시 받을 때까지 다음 명령이 기다린다 */
+  function runGlobal(label: string, action: () => Promise<unknown>, message: string | (() => string), withViews = false) {
+    commands.enqueue({
+      kind: "global",
+      label,
+      pending: { kind: "bulk", docId: null, unitIds: [], place: NO_PLACE, isGlobal: true },
+      run: async (ctx) => {
         await action();
-        showToast(message);
-        reloadData(withViews);
-        void loadBundle(bundleId);
-      } catch (err) {
-        showToast(humanizeApiError(err, t), "error");
-        reloadData();
-      }
+        ctx.respond();
+        writeLog.noteAll();
+        showToast(typeof message === "string" ? message : message());
+        await placeReload(askAll(withViews), ctx);
+      },
     });
   }
 
@@ -2120,67 +2618,216 @@ export function useAssignPage() {
 
   // 알림의 되돌리기는 화면을 넘어 남는다 - 그 렌더의 함수를 붙들지 않게 가장 최근의 것을 미러한다(use-box-drag의 최신 config와 같은 짜임)
   const undoStepRef = useRef(runUndoStep);
+  // 큐가 보낼 때 읽는 화면 값 - 명령은 누른 때의 것(줄 · Unit · 초안)만 싣고 나머지는 나갈 때의 값으로 보낸다(앞 응답 뒤의 값)
+  const live = { bundle, focus, hasTarget: row !== null || hasSolo || noisePick !== null, mode, activeKey, unitMap, rowMap, rowOfUnit, views: viewList, soloView: soloLoad.data, writtenMap, composedData, leftovers, isDrafting, labelOptions };
+  const liveRef = useRef(live);
+  // 커밋마다 큐를 한 번 돌린다(새 이펙트를 두지 않는다) - 장벽 · 되살린 글쇠가 세운 고름이 그려진 이 커밋의 값으로 다음 명령을 낸다
   useEffect(() => {
     undoStepRef.current = runUndoStep;
+    liveRef.current = live;
+    const leave = commands.mount();
+    commands.pump();
+    return leave;
   });
 
-  async function runUndoStep(kind: "undo" | "redo") {
-    if (!canEdit) return;
-    // 묶음 전체 일이라 다른 일이 처리 중이면 시작하지 않고, 시작하면서 앞 편집의 따라가기를 버린다(모델의 start) - 응답을 기다리는 사이 그 편집의
-    // 다시 받기가 오면 따라가기가 걸려, 서버에서 이미 은퇴한 Unit을 골라 묶음을 부른다(404). 되돌리기는 응답의 focus로 따로 따라간다
-    await focusCtl.runPending({ kind: "undo", docId: null, unitIds: [], place: NO_PLACE, isGlobal: true }, (job) => sendUndoStep(job, kind));
+  /** 지금 화면이 든 그 문서의 보기 - Old 문서나 한 단으로 연 New 문서, 닫았으면 null */
+  function readLiveView(docId: number): DocumentView | null {
+    const { views, soloView: newView } = liveRef.current;
+    return (views ?? []).find((view) => view.document.id === docId) ?? (newView?.document.id === docId ? newView : null);
   }
 
-  async function sendUndoStep(job: string, kind: "undo" | "redo") {
-    let stepOp: string | null = null;
-    let restoredDecisions = true;
+  /** 명령의 처리 중 표시와 잠금 */
+  function describePending(command: WriteCommand): Omit<Pending, "id"> {
+    switch (command.kind) {
+      case "save":
+      case "clear":
+        return buildDecisionPending("save", command.docId, command.unitIds);
+      case "bulk":
+        return buildDecisionPending("bulk", null, command.rows.flatMap((item) => item.unitIds));
+      case "figure":
+        return { kind: "figure", docId: null, unitIds: command.unitIds, place: { at: "box", unitId: command.unitId }, isGlobal: false };
+      case "edit":
+        return { kind: readEditKind(command.op), docId: command.docId, unitIds: command.unitIds, place: command.place, isGlobal: false };
+      case "to_pair":
+        return { kind: "pair", docId: command.docId, unitIds: [command.unit.id], place: { at: "box", unitId: command.unit.id }, isGlobal: false };
+      case "ai_split":
+        return { kind: "split", docId: command.docId, unitIds: [command.unit.id], place: { at: "box", unitId: command.unit.id }, isGlobal: false };
+      case "pair":
+        return { kind: command.pairKind, docId: command.docId, unitIds: command.unitIds, place: command.place, isGlobal: false };
+      case "step":
+        return { kind: "undo", docId: null, unitIds: [], place: NO_PLACE, isGlobal: true };
+      case "global":
+        return command.pending;
+    }
+  }
+
+  /** 실패 알림이 부르는 이름 */
+  function readCommandLabel(command: WriteCommand): string {
+    switch (command.kind) {
+      case "save":
+        return t(command.action === "hold" ? "assign.step.hold" : command.isPick || command.destination?.kind === "delete" ? "assign.step.delete" : command.destination?.kind === "link" ? "assign.step.link" : "assign.step.confirm");
+      case "clear":
+        return t("classify.clear");
+      case "bulk":
+      case "figure":
+        return t("assign.step.delete");
+      case "edit":
+        return t(readEditLabelKey(command.op));
+      case "to_pair":
+        return t("assign.step.pair");
+      case "ai_split":
+        return t("assign.step.cut");
+      case "pair":
+        return t(`assign.step.${command.pairKind}`);
+      case "step":
+        return t(`assign.queue.act.${command.direction}`);
+      case "global":
+        return t(command.label);
+    }
+  }
+
+  /** 실패 알림 한 줄 */
+  function describeFailure(command: WriteCommand, reason: string, n: number): string {
+    const unitId = readCommandUnit(command);
+    const no = unitId === null ? undefined : unitMap.get(unitId)?.display_id;
+    const vars = { action: readCommandLabel(command), reason: trimReason(reason), n };
+    return no === undefined ? t("assign.queue.failedAll", vars) : t("assign.queue.failed", { ...vars, no });
+  }
+
+  /** 실패한 명령의 박스 - 없으면(되돌리기 · 묶음 전체 일) null */
+  function readCommandUnit(command: WriteCommand): number | null {
+    switch (command.kind) {
+      case "save":
+      case "clear":
+        return command.boxId;
+      case "figure":
+        return command.unitId;
+      case "to_pair":
+      case "ai_split":
+        return command.unit.id;
+      case "bulk":
+        return command.rows[0]?.unitIds[0] ?? null;
+      case "edit":
+      case "pair":
+        return command.unitIds[0] ?? command.followId;
+      case "step":
+        return null;
+      case "global":
+        return command.pending.unitIds[0] ?? null;
+    }
+  }
+
+  /** 큐의 보내기 - 판단이 걸린 단위를 바꾸는 편집은 한 번 묻고, 확인하면 배정을 풀며 다시 보낸다 */
+  async function sendCommand(command: WriteCommand, ctx: SendContext): Promise<"done" | "asking"> {
     try {
-      const result = await (kind === "undo" ? undoDecision : redoDecision)(bundleId, undoSession.current);
-      stepTick.current += 1;
-      stepOp = result.op;
-      restoredDecisions = result.restored_decisions;
-      setUndoState({ canUndo: result.can_undo, canRedo: result.can_redo });
-      setMenu(null);
-      setCtxMenu(null);
-      setChecked(new Set());
-      // 되돌린 줄의 초안은 바뀌기 전 판단 위의 고름이다
-      for (const key of new Set(result.unit_ids.map((id) => rowOfUnit.get(id)).filter((key) => key !== undefined))) dropDraft(key);
-      // 모양 편집(자르기·합치기·제목↔문장·캡션·그림 묶기 …)을 거꾸로·다시 하면 Unit이 은퇴할 수 있다 - 그 Unit에 놓인 나눌 선을 거둔다.
-      // 고름은 둔다 - 다시 받은 보기에 없으면 모델이 놓는다(D1 규칙 5)
-      if (shouldDropSelectionOnStep(result)) {
-        cutLine.clear();
-        setCutUnitId(null);
-      }
-      // 응답은 문서를 알려 주지 않는다 - New 문서를 고른 채면 그 문서에서, 아니면 다시 받은 Old 문서 어디서든 찾는다
-      if (mode === "unsourced" && result.focus_target_id !== null) setSelNew(result.focus_target_id);
-      else if (result.focus_unit_id !== null) focusCtl.succeed(job, { docId: hasSolo && solo ? solo.docId : null, revision: null, pickUnitId: result.focus_unit_id });
-      else if (result.focus_target_id !== null) showInNew(result.focus_target_id);
-      showToast(formatDecisionStep(result, kind));
+      await runCommand(command, ctx);
+      return "done";
+    } catch (err) {
+      const count = readConfirmCount(err);
+      if (count === null || !("confirm" in command) || command.confirm) throw err;
+      setEditConfirm({ count, command, askId: ctx.id });
+      return "asking";
+    }
+  }
+
+  function runCommand(command: WriteCommand, ctx: SendContext): Promise<void> {
+    switch (command.kind) {
+      case "save":
+        return sendSave(command, ctx);
+      case "clear":
+        return sendClear(command);
+      case "bulk":
+        return sendBulk(command);
+      case "figure":
+        return sendFigure(command, ctx);
+      case "edit":
+        return sendUnitEdit(command, ctx);
+      case "to_pair":
+        return sendSwitchToPair(command, ctx);
+      case "ai_split":
+        return sendAiSplit(command, ctx);
+      case "pair":
+        return sendPairChange(command, ctx);
+      case "step":
+        return sendUndoStep(command.direction, ctx);
+      case "global":
+        return command.run(ctx);
+    }
+  }
+
+  /** 실패를 사람 말로 - 무엇이 바뀌었는지 모르니 보기까지 다시 받는다(멈춘 동안 낡은 revision을 들고 있지 않게) */
+  function readCommandFailure(err: unknown, command: WriteCommand): { reason: string; isRefusal: boolean } {
+    writeLog.noteAll();
+    requestReload({ ...askAll(true), solo: liveRef.current.focus.kind === "new" });
+    if (err instanceof CommandRefusal) return { reason: err.message, isRefusal: true };
+    const rule = err instanceof ApiError ? err.rule : null;
+    const isRefusal = err instanceof ApiError && err.status >= 400 && err.status < 500;
+    // 되물을 수 없는 일(짝 · 되돌리기)에 판단이 걸렸다 - 묻지 않고 거절한다(설계 §4.4)
+    if (rule?.code === "confirm_required") return { reason: t("assign.ctx.why.assigned"), isRefusal };
+    if (command.kind === "step" && rule?.code === "undo_conflict") return { reason: formatUndoRefusal(rule.unit_ids, command.direction), isRefusal };
+    return { reason: humanizeApiError(err, t), isRefusal };
+  }
+
+  /** 장벽 뒤에 쌓인 글쇠 · 판단 단추를 지금 고름에서 다시 누른다 */
+  function replayPress(press: Exclude<ReplayCommand, { kind: "pick" }>): boolean {
+    if (press.kind === "key") {
+      if (!press.ctrl) return pressKey(press.key, press.shift);
+      pressUndo(press.shift ? "redo" : "undo");
+      return true;
+    }
+    if (row === null) return false;
+    if (press.act === "clear") runClear();
+    else if (press.act === "delete") decideNow({ kind: "delete" });
+    else runSave(press.act, press.reason);
+    return true;
+  }
+
+  /** 되돌리기는 장벽이고 대상이 없다 - 앞의 저장이 끝난 뒤 그 끝 단계를 되돌린다. 응답의 focus로 따로 따라간다 */
+  function runUndoStep(direction: "undo" | "redo") {
+    if (canEdit) commands.enqueue({ kind: "step", direction });
+  }
+
+  async function sendUndoStep(kind: "undo" | "redo", ctx: SendContext) {
+    let result: DecisionStepResult;
+    try {
+      result = await (kind === "undo" ? undoDecision : redoDecision)(bundleId, undoSession.current);
     } catch (err) {
       const code = err instanceof ApiError ? err.rule?.code : undefined;
       if (code === "nothing_to_undo") setUndoState((prev) => ({ ...prev, canUndo: false }));
       else if (code === "nothing_to_redo") setUndoState((prev) => ({ ...prev, canRedo: false }));
-      // 자르기를 거꾸로 할 조각에 그 사이 판단이 걸렸다 - 묻지 않고 거절한다(설계 §4.4)
-      if (code === "confirm_required") showToast(t("assign.ctx.why.assigned"), "error");
-      else if (code === "undo_conflict" && err instanceof ApiError) showToast(formatUndoRefusal(err.rule?.unit_ids, kind), "error");
-      else showToast(humanizeApiError(err, t), "error");
-    } finally {
-      // Old 원문 편집의 되돌리기는 판단이 그대로라 Old 문서 보기 · 줄과 같은 글자 후보만(응답이 문서를 알려 주지 않아 모든 Old 문서, 설계 D2).
-      // 판단 저장 단계 · New 문서를 고른 채 · 거절은 지금처럼 모두 - 거절도 그 사이 바뀐 것이 있다는 뜻이고, 짝 모양이 바뀌었을 수 있어 원문 보기도
-      // 편집 단계도 그 편집이 판단(배정 · 짝)을 바꿨으면 되살렸다 - 그때는 판단 단계처럼 모두(B6)
-      if (stepOp !== null && solo === null && isUnitEditStep(stepOp) && !restoredDecisions) reloadAfterEdit(planReload({ kind: "edit_undo", docId: null }, { aiOn }));
-      else {
-        if (solo !== null) setSoloKey((key) => key + 1);
-        reloadData(true);
-        void loadBundle(bundleId);
-      }
+      throw err;
     }
+    writeLog.noteAll();
+    stepTick.current += 1;
+    setUndoState({ canUndo: result.can_undo, canRedo: result.can_redo });
+    setMenu(null);
+    setCtxMenu(null);
+    setChecked(new Set());
+    // 되돌린 줄의 초안은 바뀌기 전 판단 위의 고름이다
+    for (const key of new Set(result.unit_ids.map((id) => liveRef.current.rowOfUnit.get(id)).filter((key) => key !== undefined))) dropDraft(key);
+    // 모양 편집(자르기·합치기·제목↔문장·캡션·그림 묶기 …)을 거꾸로·다시 하면 Unit이 은퇴할 수 있다 - 그 Unit에 놓인 나눌 선을 거둔다.
+    // 고름은 둔다 - 다시 받은 보기에 없으면 모델이 놓는다(D1 규칙 5)
+    if (shouldDropSelectionOnStep(result)) {
+      cutLine.clear();
+      setCutUnitId(null);
+    }
+    // 응답은 문서를 알려 주지 않는다 - New 문서를 고른 채면 그 문서에서, 아니면 다시 받은 Old 문서 어디서든 찾는다
+    const held = liveRef.current.focus;
+    if (liveRef.current.mode === "unsourced" && result.focus_target_id !== null) setSelNew(result.focus_target_id);
+    else if (result.focus_unit_id !== null) focusCtl.succeed(ctx.id, { docId: held.kind === "new" ? held.docId : null, revision: null, pickUnitId: result.focus_unit_id });
+    else if (result.focus_target_id !== null) showInNew(result.focus_target_id);
+    ctx.respond(held.kind === "new");
+    showToast(formatDecisionStep(result, kind));
+    // Old 원문 편집의 되돌리기는 판단이 그대로라 Old 문서 보기 · 줄과 같은 글자 후보만(응답이 문서를 알려 주지 않아 모든 Old 문서, 설계 D2).
+    // 판단 저장 단계 · New 문서를 고른 채는 모두 - 짝 모양이 바뀌었을 수 있어 원문 보기도. 편집 단계도 그 편집이 판단(배정 · 짝)을 바꿨으면 되살렸다 - 그때는 판단 단계처럼 모두(B6)
+    const isEditOnly = held.kind !== "new" && isUnitEditStep(result.op) && !result.restored_decisions;
+    await placeReload(isEditOnly ? buildReloadAsk(planReload({ kind: "edit_undo", docId: null }, { aiOn }), oldDocIds) : { ...askAll(true), solo: held.kind === "new" }, ctx);
   }
 
   /** 되돌리기 거절 알림 - 어느 줄이 걸렸는지 번호로(3개까지). 지금 목록에 없는 Unit(은퇴한 조각)은 빼고, 남는 것이 없으면 번호 없이 */
   function formatUndoRefusal(unitIds: unknown, kind: "undo" | "redo"): string {
     const ids = Array.isArray(unitIds) ? unitIds.filter((id): id is number => typeof id === "number") : [];
-    const labels = [...new Set(ids.map((id) => unitMap.get(id)?.display_id).filter((label): label is string => label !== undefined))];
+    const labels = [...new Set(ids.map((id) => liveRef.current.unitMap.get(id)?.display_id).filter((label): label is string => label !== undefined))];
     const rows = labels.length === 0 ? "" : ` (${labels.slice(0, 3).join(", ")}${labels.length > 3 ? ` +${labels.length - 3}` : ""})`;
     return t(kind === "undo" ? "assign.undoRefused" : "assign.redoRefused", { rows });
   }
@@ -2204,45 +2851,66 @@ export function useAssignPage() {
     return t(message.key, { action: t(String(action)), target: label === "" ? "" : ` · ${label}` });
   }
 
-  async function confirmIdenticalAll() {
+  function confirmIdenticalAll() {
     const items = identical.data ?? [];
     // 서버 상한(1000)씩 차례로 - revision은 후보 목록에 실려 온다
     if (items.length > 0) {
       // 나눠 보낸 요청 모두가 같은 step_key - Ctrl+Z 한 번에 한꺼번에 되돌아간다
       const undo = buildUndo({ step_key: genId() });
-      await run(async () => {
-        for (const batch of buildIdenticalBatches(items)) {
+      const out = { n: 0 };
+      const seen = new Set(items.map((item) => `${item.unit_id}:${item.target_id}`));
+      runGlobal("assign.step.confirm_identical", async () => {
+        // 기다리는 사이 앞 명령이 바꾼 줄이 있다 - 창에서 본 것 가운데 지금도 후보인 것만
+        const now = (await listIdenticalCandidates(bundleId)).filter((item) => seen.has(`${item.unit_id}:${item.target_id}`));
+        out.n = now.length;
+        for (const batch of buildIdenticalBatches(now)) {
           await confirmMatchesInBulk(bundleId, batch, undo);
           markRecorded();
         }
         // 한 번에 확정도 서버가 짝을 정리하지만 어느 짝인지 알려 주지 않는다 - 짝 모양·문서 revision을 다시 받는다
-      }, t("match.identicalDone", { n: items.length }), true);
+      }, () => t("match.identicalDone", { n: out.n }), true);
     }
     setConfirmingIdentical(false);
   }
 
   /** 고른 AI 추천을 한 번에 받는다 - 서버가 제안마다 사람의 저장 경로로 확정하고 한 되돌리기 단계로 남긴다. 그 사이 바뀐 것은 건너뛴 수로 알린다 */
-  async function acceptAll(kind: AcceptKind, ids: number[], deleteReason: string) {
-    await focusCtl.runPending({ kind: "bulk", docId: null, unitIds: [], place: NO_PLACE, isGlobal: true }, async () => {
-      try {
-        // 서버 상한(2000)씩 차례로 - 나눠 보낸 요청 모두가 같은 step_key라 Ctrl+Z 한 번에 한꺼번에 되돌아간다
-        const undo = buildUndo({ step_key: genId() });
-        const out = { accepted: 0, skipped: 0 };
-        for (const batch of splitAcceptIds(ids, MAX_ACCEPT)) {
-          const done = await acceptSuggestions(bundleId, { kind, suggestion_ids: batch, delete_reason: deleteReason }, undo);
-          out.accepted += done.accepted;
-          out.skipped += done.skipped;
-        }
-        if (out.accepted > 0) markRecorded();
-        showToast(t(out.skipped > 0 ? "aiAccept.doneSkipped" : "aiAccept.done", { n: out.accepted, skipped: out.skipped }));
-        setAcceptKind(null);
-      } catch (err) {
-        showToast(humanizeApiError(err, t), "error");
-      } finally {
-        // 받은 줄의 짝을 서버가 정리한다 - 짝 모양·문서 revision도 다시 받는다(같은 글자 한 번에 확정과 같다)
-        reloadData(true);
-        void loadBundle(bundleId);
+  function acceptAll(kind: AcceptKind, ids: number[], deleteReason: string) {
+    setAcceptKind(null);
+    const out = { accepted: 0, skipped: 0 };
+    // 받은 줄의 짝을 서버가 정리한다 - 짝 모양·문서 revision도 다시 받는다(같은 글자 한 번에 확정과 같다)
+    runGlobal("assign.step.accept_ai", async () => {
+      out.accepted = 0;
+      out.skipped = 0;
+      // 서버 상한(2000)씩 차례로 - 나눠 보낸 요청 모두가 같은 step_key라 Ctrl+Z 한 번에 한꺼번에 되돌아간다
+      const undo = buildUndo({ step_key: genId() });
+      for (const batch of splitAcceptIds(ids, MAX_ACCEPT)) {
+        const done = await acceptSuggestions(bundleId, { kind, suggestion_ids: batch, delete_reason: deleteReason }, undo);
+        out.accepted += done.accepted;
+        out.skipped += done.skipped;
       }
+      if (out.accepted > 0) markRecorded();
+    }, () => t(out.skipped > 0 ? "aiAccept.doneSkipped" : "aiAccept.done", { n: out.accepted, skipped: out.skipped }), true);
+  }
+
+  /** 배정 초기화(더보기) - 창이 센 묶음 revision으로 보내고, 다시 시도면 지금 revision으로. 지운 범위의 저장 전 초안은 낡은 판단 위의 고름이라 버린다 */
+  function runReset(scope: ResetScope, revision: number) {
+    const documentId = scope.kind === "document" ? scope.documentId : undefined;
+    const undo = buildUndo(scope.kind === "document" ? { scope_label: scope.label } : {});
+    setResetScope(null);
+    setMenu(null);
+    commands.enqueue({
+      kind: "global",
+      label: "assign.step.reset",
+      pending: { kind: "bulk", docId: null, unitIds: [], place: NO_PLACE, isGlobal: true },
+      run: async (ctx) => {
+        const result = await resetAssignments(bundleId, { revision: ctx.isRetry ? (liveRef.current.bundle?.revision ?? revision) : revision, document_id: documentId }, undo);
+        ctx.respond();
+        writeLog.noteAll();
+        markRecorded();
+        showToast(t("assign.reset.done", { n: result.unassigned_units }));
+        setDrafts((prev) => Object.fromEntries(Object.entries(prev).filter(([key]) => documentId !== undefined && liveRef.current.rowMap.get(key)?.documentId !== documentId)));
+        await placeReload(askAll(false), ctx);
+      },
     });
   }
 
@@ -2258,36 +2926,35 @@ export function useAssignPage() {
       targets: [{ key: `t${target.target_id}`, id: target.target_id, revision: target.revision, source_unit_ids: [], remark }],
       removed_target_ids: [],
     };
-    void run(async () => {
-      await saveGroup(bundleId, body, buildUndo({ op: "mark_new", focus_target_id: target.target_id }));
+    runGlobal("assign.step.mark_new", async () => {
+      // 앞 명령이 이 문장을 바꿨을 수 있다 - 지금 받아 둔 목록의 revision으로(다시 시도도 같다)
+      const revision = liveRef.current.writtenMap.get(target.target_id)?.revision ?? target.revision;
+      await saveGroup(bundleId, { ...body, targets: body.targets.map((item) => ({ ...item, revision })) }, buildUndo({ op: "mark_new", focus_target_id: target.target_id }));
       markRecorded();
     }, t("match.newDone"));
   }
 
   /** 출처 없는 New 모드에서 Old 조각을 누르면 그 줄을 이 문장의 출처로 잇는다(그 줄의 다른 곳은 바꾸기로 뗀다) */
-  async function linkAsSource(unitId: number) {
+  function linkAsSource(unitId: number) {
     const key = rowOfUnit.get(unitId);
     const sourceRow = key ? rowMap.get(key) : undefined;
     const target = writtenMap.get(focusNew ?? -1);
-    if (!sourceRow || !target || isAnyPending || !canEdit) return;
+    if (!sourceRow || !target || !canEdit) return;
     if (sourceRow.status !== "confirmed" && sourceRow.unitIds.some((id) => isRefPending(paperModel?.units.get(id)))) {
       // 눌러서 출처로 잇는 것도 그 줄의 결정이다 - 참조 줄 제안이 남았으면 먼저 그 줄에서 번호를 확인한다
       showToast(t("assign.ref.checkFirst"), "error");
       selectRow(sourceRow.key);
       return;
     }
-    const sourceUnits = sourceRow.unitIds.map((id) => unitMap.get(id)).filter((unit): unit is UnitRow => unit !== undefined);
     const targetIds = addPartnerTargets([target.target_id], writtenMap);
-    await run(async () => {
+    runGlobal("assign.step.link_source", async () => {
+      const seen = readSeen(sourceRow.unitIds);
       const rowGroup = await loadRowGroup(bundleId, sourceRow.unitIds);
       const extra = await Promise.all(targetIds.map((id) => getGroupByTarget(bundleId, id)));
       const link: Destination = { kind: "link", targetIds };
-      const context = {
-        units: sourceUnits.map((unit) => ({ id: unit.unit_id, kind: unit.kind, lang: unit.lang, text: unit.text, content_start: unit.content_start, revision: unit.decision.revision })),
-        group: mergeGroups([rowGroup, ...extra]),
-        tables: new Map(),
-      };
-      const body = buildGroupSave({ destination: link, texts: {}, reason: readHumanReason(sourceUnits[0]?.decision), moveCode: "" }, context, "confirm");
+      const sourceUnits = readSourceUnits(sourceRow.unitIds, seen, rowGroup);
+      const context = { units: sourceUnits.map(({ id, kind, lang, text, content_start, revision }) => ({ id, kind, lang, text, content_start, revision })), group: mergeGroups([rowGroup, ...extra]), tables: new Map() };
+      const body = buildGroupSave({ destination: link, texts: {}, reason: sourceUnits[0]?.reason ?? "", moveCode: "" }, context, "confirm");
       // 이 문장에 없는 언어의 Old 문장은 서버가 짝을 풀어 제 줄로 남긴다 - 출처 없는 New를 계속 보게 고른 줄은 옮기지 않는다
       const saved = await saveGroup(bundleId, body, buildUndo({ op: "link_source", focus_unit_id: unitId, focus_target_id: target.target_id }));
       markRecorded();
@@ -2295,33 +2962,40 @@ export function useAssignPage() {
     }, t("match.linked"));
   }
 
+  /** 저장에 실을 줄의 Unit - 판단 revision은 보낼 때 화면에서 본 것(seen - 묶음을 받기 전에 찍는다)과 앞 응답의 것 */
+  function readSourceUnits(unitIds: readonly number[], seen: SeenRevisions, loaded: Group) {
+    return unitIds.flatMap((id) => {
+      const unit = liveRef.current.unitMap.get(id);
+      if (unit === undefined) return [];
+      const revision = writeLog.resolveRevision(id, seen, loaded.units.find((item) => item.unit_id === id)?.decision.revision ?? unit.decision.revision);
+      return [{ id, kind: unit.kind, lang: unit.lang, text: unit.text, content_start: unit.content_start, revision, reason: readHumanReason(unit.decision) }];
+    });
+  }
+
   /**
    * 칸 칩의 × - 그 Old 줄을 그 칸에서 뗀다(시안 2 D5). 그 자리 메뉴의 Unlink와 같은 저장이다: 줄의 다른 이음이 남으면 그곳만 남겨
    * 확정하고, 없으면 배정을 지운다. 표의 다른 칸은 서버가 손대지 않는다(구경꾼)
    */
-  async function unlinkCell(cellId: number, unitId: number) {
+  function unlinkCell(cellId: number, unitId: number) {
     const key = rowOfUnit.get(unitId);
     const sourceRow = key ? rowMap.get(key) : undefined;
-    if (!sourceRow || isAnyPending || !canEdit) return;
-    const sourceUnits = sourceRow.unitIds.map((id) => unitMap.get(id)).filter((unit): unit is UnitRow => unit !== undefined);
-    await run(async () => {
+    if (!sourceRow || !canEdit) return;
+    runGlobal("assign.step.unlink", async () => {
+      const seen = readSeen(sourceRow.unitIds);
       const group = mergeGroups([await loadRowGroup(bundleId, sourceRow.unitIds), await getGroupByTarget(bundleId, cellId)]);
       const saved = readDestination(group, sourceRow.unitIds);
       const remainder = saved?.kind === "link" ? saved.targetIds.filter((id) => id !== cellId) : [];
       if (remainder.length === 0) {
         const decided = group.units.filter((unit) => sourceRow.unitIds.includes(unit.unit_id) && unit.decision.disposition !== "unassigned");
-        await clearDecisions(bundleId, decided.map((unit) => ({ unit_id: unit.unit_id, revision: unit.decision.revision })), buildUndo({ step_key: genId(), focus_unit_id: unitId }));
+        await clearDecisions(bundleId, decided.map((unit) => ({ unit_id: unit.unit_id, revision: writeLog.resolveRevision(unit.unit_id, seen, unit.decision.revision) })), buildUndo({ step_key: genId(), focus_unit_id: unitId }));
       } else {
-        const context = {
-          units: sourceUnits.map((unit) => ({ id: unit.unit_id, kind: unit.kind, lang: unit.lang, text: unit.text, content_start: unit.content_start, revision: unit.decision.revision })),
-          group,
-          tables: new Map(),
-        };
-        const body = buildGroupSave({ destination: { kind: "link", targetIds: remainder }, texts: {}, reason: readHumanReason(sourceUnits[0]?.decision), moveCode: "" }, context, "confirm");
+        const sourceUnits = readSourceUnits(sourceRow.unitIds, seen, group);
+        const context = { units: sourceUnits.map(({ id, kind, lang, text, content_start, revision }) => ({ id, kind, lang, text, content_start, revision })), group, tables: new Map() };
+        const body = buildGroupSave({ destination: { kind: "link", targetIds: remainder }, texts: {}, reason: sourceUnits[0]?.reason ?? "", moveCode: "" }, context, "confirm");
         applyPairSettle(sourceRow, await saveGroup(bundleId, body, buildUndo({ op: "unlink", focus_unit_id: unitId, focus_target_id: cellId })), body.release_unit_ids ?? []);
       }
       markRecorded();
-      if (sourceRow.key === activeKey) dropDraft(sourceRow.key);
+      if (sourceRow.key === liveRef.current.activeKey) dropDraft(sourceRow.key);
     }, t("assign.cellLink.unlinked"));
   }
 
@@ -2344,7 +3018,7 @@ export function useAssignPage() {
   }
 
   const placeManage: DestinationManage | undefined =
-    canEdit && tobeData
+    canEdit && isDrafting && tobeData
       ? {
           tobe: tobeData,
           busy: isPlaceBusy,
@@ -2372,7 +3046,17 @@ export function useAssignPage() {
       : undefined;
 
   /** use - Use로 받은 AI 제안의 초안(고쳐 쓴 글)과 제안 id. 없으면 다른 곳을 고른 것이라 받은 제안을 비운다 */
+  /** 이동한 줄(없앤 기능)에는 아무것도 새로 정하지 않는다 - 막았으면 안내를 띄우고 true. key는 놓은 줄(없으면 고른 줄) */
+  function blockLegacyMove(key: string | null = row?.key ?? null): boolean {
+    const target = key === null ? undefined : rowMap.get(key);
+    const moved = target ? describeLegacyMove(target.unitIds.map((id) => unitMap.get(id)).filter((unit): unit is UnitRow => unit !== undefined)) : null;
+    if (moved === null) return false;
+    showToast(t("assign.legacyMove.confirm"), "error");
+    return true;
+  }
+
   function pickDestination(next: Destination, use: Pick<PageDraft, "texts" | "suggestionId"> | null = null) {
+    if (blockLegacyMove()) return;
     // 보낼 곳을 다시 고르면 끌어 놓은 자리는 버린다
     setDraft({
       destination: next.kind === "link" ? { kind: "link", targetIds: addPartnerTargets(next.targetIds, writtenMap) } : next,
@@ -2391,7 +3075,7 @@ export function useAssignPage() {
       setSelNew(targetId);
       return false;
     }
-    if (!row || !canEdit) return false;
+    if (!row || !canEdit || blockLegacyMove()) return false;
     // 이 줄에 없는 언어의 New 문장도 잇는다 - 줄의 조각이 출처가 되어 번역이 된다(제품 명세 §7.7)
     const current = destination?.kind === "link" ? destination.targetIds : [];
     const isRemoving = additive && current.includes(targetId);
@@ -2462,7 +3146,7 @@ export function useAssignPage() {
     if (!composedCut || !composedCutItem || !canEdit) return;
     const { targetId, at } = composedCut;
     const item = composedCutItem;
-    void run(async () => {
+    runGlobal("assign.step.split_new", async () => {
       const body = buildComposedSplit(await getGroupByTarget(bundleId, targetId), targetId, item.text, at);
       await saveGroup(bundleId, body, buildUndo({ op: "split_new", focus_unit_id: item.source_unit_ids[0], focus_target_id: targetId }));
       markRecorded();
@@ -2481,13 +3165,13 @@ export function useAssignPage() {
   function joinComposed(upperId: number, lowerId: number, kind: JoinKind) {
     const upper = findComposedItem(upperId);
     const lower = findComposedItem(lowerId);
-    if (!upper || !lower || !canEdit || isAnyPending) return;
+    if (!upper || !lower || !canEdit) return;
     if (kind === "pair") {
       const ids = [upper.source_unit_ids[0], lower.source_unit_ids[0]];
-      void runPairChange((docId, revision, undo) => createPair(bundleId, docId, revision, ids, undo), t("split.didJoin"), ids[0], "pair", ids);
+      runPairChange((docId, revision, undo) => createPair(bundleId, docId, revision, ids, undo), t("split.didJoin"), ids[0], "pair", ids);
       return;
     }
-    void run(async () => {
+    runGlobal("assign.step.merge_new", async () => {
       const group = mergeGroups(await Promise.all([getGroupByTarget(bundleId, upperId), getGroupByTarget(bundleId, lowerId)]));
       const body = buildComposedMerge(group, { id: upperId, text: upper.text }, { id: lowerId, text: lower.text });
       await saveGroup(bundleId, body, buildUndo({ op: "merge_new", focus_unit_id: upper.source_unit_ids[0], focus_target_id: upperId }));
@@ -2501,8 +3185,8 @@ export function useAssignPage() {
     return section && row ? resolveGapDrop(section, targetId, false, row.unitIds) : { kind: "none" };
   }
 
-  /** 작은 메뉴의 항목 - "이 문장에 잇기"는 그 문장이 보낼 곳이 되고, "이 줄 다음에 놓기"는 그 칸의 그 자리가 된다. 둘 다 Confirm으로 포커스를 옮겨 ↵가 확정한다 */
-  function pickJoinMenu(item: JoinMenuItem) {
+  /** 작은 메뉴의 항목 - "이 문장에 잇기"는 그 문장이 보낼 곳이 되고, "이 줄 다음에 놓기"는 그 칸의 그 자리가 된다. 둘 다 ↵가 확정한다 */
+  function pickJoinMenu(item: JoinMenuItem, isMouse: boolean) {
     const target = joinMenu?.targetId;
     setJoinMenu(null);
     if (target === undefined || !composedDoc) return;
@@ -2513,16 +3197,36 @@ export function useAssignPage() {
       if (drop.kind !== "gap" || destination === null) return;
       setDraft({ destination, position: { placeId: getDestinationId(destination), after: drop.after } });
     }
-    requestAnimationFrame(() => document.querySelector<HTMLElement>('[data-testid="assign-primary"]')?.focus({ preventScroll: true }));
+    focusAfterPress(isMouse);
   }
 
-  /** 결정 칸의 Confirm으로 포커스 - 고른 자리에 남으면 ↵가 확정 대신 그 자리를 다시 누른다 */
-  function focusPrimary() {
-    requestAnimationFrame(() => document.querySelector<HTMLElement>('[data-testid="assign-primary"]')?.focus({ preventScroll: true }));
+  /**
+   * 고르거나 누른 뒤의 포커스 - 글쇠로 눌렀으면 결정 칸의 Confirm, 마우스면 Old 용지로 돌려 Space가 미리보기다(단추에 남으면 그 단추를 다시 누른다).
+   */
+  function focusAfterPress(isMouse: boolean) {
+    requestAnimationFrame(() => {
+      if (!isMouse) document.querySelector<HTMLElement>('[data-testid="assign-primary"]')?.focus({ preventScroll: true });
+      else if (!document.querySelector(LAYER_SELECTOR)) focusPaper();
+    });
+  }
+
+  function focusPaper() {
+    document.querySelector<HTMLElement>('[data-pane="old"] .pane-body')?.focus({ preventScroll: true });
+  }
+
+  /**
+   * 오른쪽 칸 · 위쪽 도구 줄 · 문서 머리의 단추를 마우스로 눌렀다 - 포커스를 바로 돌린다(거르기를 누르고 J · ↵로 이어 가게): 그 누름이 여는 창은 닫힐 때 용지로 돌아오고(연 단추에 남으면 Space가 창을 다시 연다),
+   * 글 칸은 뒤에 포커스를 가져간다
+   */
+  function handleFramePress(event: MouseEvent<HTMLElement>) {
+    if (!isMousePress(event) || !(event.target instanceof Element) || !event.currentTarget.contains(event.target)) return;
+    const pressed = event.target.closest("button, a, [role='button']");
+    if (pressed === null || !returnsToPaper(pressed)) return;
+    if (document.activeElement === pressed || document.activeElement === document.body) focusPaper();
   }
 
   /** New 칸의 자리를 누름(클릭 배치, MD 2 S3) - 고르기만 한다. 끌기와 같은 자리 목록의 답으로 보낼 곳과 자리(position)를 정하고, 확정은 Confirm(↵) */
-  function pickPlaceSpot(spot: PlaceSpot, key: string) {
+  function pickPlaceSpot(spot: PlaceSpot, key: string, isMouse: boolean) {
     if (!row || !composedDoc || !placeResolved) return;
     const placement = resolvePlaceSpot(placeResolved.sections, spot, row.unitIds);
     if (placement.kind !== "place") return;
@@ -2533,24 +3237,24 @@ export function useAssignPage() {
     if (placement.position === null) pickDestination(destination);
     else setDraft({ destination, position: { placeId, after: placement.position.after } });
     setSpotPick({ rowKey: row.key, key, placeId, after: placement.position ? placement.position.after : "none" });
-    focusPrimary();
+    focusAfterPress(isMouse);
   }
 
   /** 고른 줄 자신의 AI 제안 줄을 누름 - 오른쪽 AI 추천 카드를 누른 것과 같다(MD 2 §9-7). 카드가 없으면 그 칸을 고른다 */
-  function pickOwnAiLine(targetId: number) {
+  function pickOwnAiLine(targetId: number, isMouse: boolean) {
     if (!composedDoc) return;
     const docId = composedDoc.target_doc_id;
     const section = composedDoc.sections.find((candidate) => candidate.items.some((item) => item.target_id === targetId));
     if (!section) return;
     const rec = recommendations.find((item) => item.source === "ai" && "docId" in item.destination && item.destination.docId === docId && getSectionKey(item.destination) === section.location_key);
     if (rec) {
-      pickRecommendation(rec);
+      pickRecommendation(rec, isMouse);
       return;
     }
     const destination = readSectionDestination(docId, section.location_key);
     if (destination === null) return;
     pickDestination(destination);
-    focusPrimary();
+    focusAfterPress(isMouse);
   }
 
   /** Old 조각 아래 "→ 간 곳"을 누름 - 그 줄을 고르고 New 문서(닫혀 있거나 다른 문서면 열어서)의 그 문장으로 간다 */
@@ -2570,6 +3274,7 @@ export function useAssignPage() {
 
   /** 문서 대시보드의 받는 New 문서를 누름 - 그 문서를 New 칸에 연다 */
   function openNewDoc(docId: number) {
+    if (!isNewDocOpen(docId)) return; // 숨긴 새 문서는 New 칸에 열지 않는다
     if (isPairView) closePairView();
     setManualNewDoc({ key: toggleKey, docId });
     if (view.single) changeView({ single: false });
@@ -2603,10 +3308,10 @@ export function useAssignPage() {
   }
 
   /** 템플릿 보기의 줄을 누름 - 출처 칩과 같은 길로 그 줄의 Old 출처를 고른다(지금 New 문서와 보기는 그대로) */
-  function pickTemplateLine(item: ComposedItem) {
+  function pickTemplateLine(item: ComposedItem, event: { detail: number }) {
     // 클릭 배치 중의 AI 제안 줄 - 고른 줄 자신의 것은 그 AI 추천을 고르고, 다른 줄의 것(확정 전)은 누를 수 없다
     if (canPlaceClick && item.status === "ai_suggested") {
-      if (row && item.source_unit_ids.some((id) => row.unitIds.includes(id))) pickOwnAiLine(item.target_id);
+      if (row && item.source_unit_ids.some((id) => row.unitIds.includes(id))) pickOwnAiLine(item.target_id, isMousePress(event));
       return;
     }
     const unitId = item.source_unit_ids[0];
@@ -2653,6 +3358,7 @@ export function useAssignPage() {
   function fillTemplateMissing(source: ComposedItem) {
     const unitId = source.source_unit_ids[0];
     if (unitId === undefined || newDocId === null) return;
+    unfoldSide();
     jumpToOld(unitId, source.target_id, { docId: newDocId, quiet: true });
     setFillOtherSeq((seq) => seq + 1);
   }
@@ -2730,12 +3436,12 @@ export function useAssignPage() {
   }, [draftMenu]);
   /** 끌어 놓은 고름 - 막는 까닭(참조 번호 · 캡션)이 없으면 바로 확정하고, 있으면 그 자리 메뉴가 까닭을 보인다. 사유가 필요하면 확정이 사유 창을 연다 */
   const settleDrop = useEffectEvent((el: HTMLElement, rowKey: string, targetId: number | null, at: { x: number; y: number } | null) => {
-    if (confirmBlockKey === null) void runSave("confirm");
+    if (confirmBlockKey === null) runSave("confirm");
     else openMenu(el, null, rowKey, targetId, at);
   });
   const confirmTreeDrop = useEffectEvent(() => {
     setTreeConfirm(null);
-    if (confirmBlockKey === null) void runSave("confirm");
+    if (confirmBlockKey === null) runSave("confirm");
   });
   useEffect(() => {
     if (treeConfirm !== null) confirmTreeDrop();
@@ -2796,7 +3502,7 @@ export function useAssignPage() {
   }
   /** 문장 사이·빈 칸에 놓음 - 잇기와 같은 줄 고르기 뒤 초안 적용은 관계 묶음이 온 뒤(dropPlace) */
   function applySendDrop(rowKey: string, drop: SendDrop) {
-    if ((drop.kind !== "gap" && drop.kind !== "slot") || newDocId === null) return;
+    if ((drop.kind !== "gap" && drop.kind !== "slot") || newDocId === null || blockLegacyMove(rowKey)) return;
     const destination = readSectionDestination(newDocId, drop.sectionKey);
     if (destination === null) return;
     setChecked(new Set());
@@ -2863,7 +3569,7 @@ export function useAssignPage() {
   }
   /** 템플릿 자리에 놓음 - 기본 보기 보내기와 같은 길(줄 고르기 → 관계 묶음이 온 뒤 초안 → 바로 확정). 막는 까닭이 있으면 메뉴를 그 자리 옆에 띄운다 */
   function applyTemplateDrop(rowKey: string, placement: Placement, el: HTMLElement | null) {
-    if (placement.kind !== "place" || newDocId === null) return;
+    if (placement.kind !== "place" || newDocId === null || blockLegacyMove(rowKey)) return;
     const destination = readSectionDestination(newDocId, placement.sectionKey);
     if (destination === null) return;
     const scope = '[data-testid="assign-new-tpl"]';
@@ -2893,6 +3599,7 @@ export function useAssignPage() {
   }
   /** 나무 줄에 놓음 - 그 줄을 누른 것과 같다(관계 묶음이 온 뒤 클릭과 같은 pickDestination, 자리·그 자리 메뉴 없음). New 칸의 문서는 바꾸지 않는다 */
   function applyTreeDrop(rowKey: string, destination: Destination) {
+    if (blockLegacyMove(rowKey)) return;
     setChecked(new Set());
     setCtxMenu(null);
     selectRow(rowKey, false);
@@ -3013,12 +3720,12 @@ export function useAssignPage() {
     onDrop: ({ rowKey, unitIds, captionId }, point) => {
       if (captionId !== null) {
         const { detach, bundleId } = readCaptionDetachAt(point, captionId);
-        if (detach.kind === "detach") void runUnitEdit({ type: "detach_caption", unit_id: captionId }, t("assign.ctx.didDetachCaption"), bundleId);
+        if (detach.kind === "detach") runUnitEdit({ type: "detach_caption", unit_id: captionId }, t("assign.ctx.didDetachCaption"), bundleId);
         return;
       }
       const slot = readCaptionDropAt(point, unitIds);
       if (slot !== null && slot.drop.kind !== "none") {
-        if (slot.drop.kind === "attach") void runUnitEdit({ type: "attach_caption", unit_id: slot.drop.unitId, bundle_unit_id: slot.drop.bundleId }, t("assign.ctx.didAttachCaption"), slot.drop.bundleId);
+        if (slot.drop.kind === "attach") runUnitEdit({ type: "attach_caption", unit_id: slot.drop.unitId, bundle_unit_id: slot.drop.bundleId }, t("assign.ctx.didAttachCaption"), slot.drop.bundleId);
         return;
       }
       const tree = readTreeAt(point).drop;
@@ -3028,8 +3735,8 @@ export function useAssignPage() {
       if (drop.kind !== "link" || line === null) {
         // 합치기 · 짝 맺기는 줄을 고르지 않는다 - 저장 뒤 따라가기가 합친 박스 · 새 짝 줄을 고른다. 거절이면 아무 일도 없다
         const box = readBoxAt(point, unitIds).drop;
-        if (box.kind === "merge") void runUnitEdit({ type: "merge", unit_ids: box.unitIds }, t("split.didMerge"), null, false, null, { at: "box", unitId: box.unitIds[0] });
-        if (box.kind === "pair" || box.kind === "confirm") void runPairDrop(box);
+        if (box.kind === "merge") runUnitEdit({ type: "merge", unit_ids: box.unitIds }, t("split.didMerge"), null, false, null, { at: "box", unitId: box.unitIds[0] });
+        if (box.kind === "pair" || box.kind === "confirm") runPairDrop(box);
         if (box.kind !== "none") return;
         const tpl = readTemplateAt(point, unitIds);
         if (tpl.placement.kind !== "none") {
@@ -3039,6 +3746,7 @@ export function useAssignPage() {
         applySendDrop(rowKey, readSendAt(point, unitIds).drop);
         return;
       }
+      if (blockLegacyMove(rowKey)) return;
       const lineRect = line.getBoundingClientRect();
       setChecked(new Set());
       setCtxMenu(null);
@@ -3118,7 +3826,7 @@ export function useAssignPage() {
     },
     onDrop: ({ unit }, point) => {
       const { drop } = readPairViewAt(unit, point);
-      if (drop.kind === "pair" || drop.kind === "confirm") void runPairDrop(drop);
+      if (drop.kind === "pair" || drop.kind === "confirm") runPairDrop(drop);
     },
     onEnd: () => {
       for (const el of panesBoxRef.current?.querySelectorAll("[data-drag-src]") ?? []) el.removeAttribute("data-drag-src");
@@ -3169,7 +3877,7 @@ export function useAssignPage() {
     onDrop: (source, point) => {
       const drop = readGripDrop(source, point);
       if (drop === null || isSameOrder(drop.order, source.order)) return;
-      void runUnitEdit({ type: "reorder_pair", pair_id: source.pairId, unit_ids: drop.order }, t("assign.pairOrder.done"), source.unitId, false, null, { at: "box", unitId: source.unitId });
+      runUnitEdit({ type: "reorder_pair", pair_id: source.pairId, unit_ids: drop.order }, t("assign.pairOrder.done"), source.unitId, false, null, { at: "box", unitId: source.unitId });
     },
     onEnd: () => {
       for (const el of panesBoxRef.current?.querySelectorAll("[data-drag-src]") ?? []) el.removeAttribute("data-drag-src");
@@ -3227,7 +3935,7 @@ export function useAssignPage() {
     onDrop: (source, point) => {
       const drop = readUnwrapDrop(source, point);
       if (drop === null || isSameOrder(drop.order, source.order)) return;
-      void runUnitEdit({ type: "reorder_unwrapped", table_id: source.tableId, unit_ids: drop.order }, t("assign.unwrapOrder.done"), source.unitId, false, null, { at: "table", tableId: source.tableId });
+      runUnitEdit({ type: "reorder_unwrapped", table_id: source.tableId, unit_ids: drop.order }, t("assign.unwrapOrder.done"), source.unitId, false, null, { at: "table", tableId: source.tableId });
     },
     onEnd: () => {
       for (const el of panesBoxRef.current?.querySelectorAll("[data-drag-src]") ?? []) el.removeAttribute("data-drag-src");
@@ -3235,34 +3943,36 @@ export function useAssignPage() {
   };
   useBoxDrag(panesBoxRef, isOldDrag && ready && rows.length > 0 && !isPairView ? unwrapGripConfig : null);
 
-  /** 놓아서 맺기·확정 - 바로 저장하고 Undo가 든 알림을 띄운다. 놓은 박스가 처리 중이거나 묶음 전체 일 중이면 버린다 */
-  async function runPairDrop(drop: Extract<PairDrop, { kind: "pair" | "confirm" }>) {
-    if (!oldView || focusCtl.isGlobalPending) return;
+  /** 놓아서 맺기·확정 - 바로 저장하고 Undo가 든 알림을 띄운다 */
+  function runPairDrop(drop: Extract<PairDrop, { kind: "pair" | "confirm" }>) {
+    if (!oldView) return;
     // 문서와 revision은 보던 Old 문서에서 - 양 단에서 New 문장을 다듬는 중이면 shapeView는 New 문서다
     const doc = oldView.document;
     const unitIds = drop.kind === "pair" ? drop.unitIds : [...(paperModel?.units.values() ?? [])].filter((unit) => unit.pair_id === drop.pairId).map((unit) => unit.id);
     // New 문장 다듬기를 닫고(그 고름에서 건 따라가기도 버려진다) 저장 뒤 Old 줄을 따라간다
     setSolo(null);
-    await focusCtl.runPending({ kind: "pair", docId: doc.id, unitIds, place: unitIds.length > 0 ? { at: "box", unitId: unitIds[0] } : NO_PLACE, isGlobal: false }, async (job) => {
-      try {
+    commands.enqueue({
+      kind: "global",
+      label: drop.kind === "pair" ? "assign.step.pair" : "assign.step.confirm_pair",
+      pending: { kind: "pair", docId: doc.id, unitIds, place: unitIds.length > 0 ? { at: "box", unitId: unitIds[0] } : NO_PLACE, isGlobal: false },
+      run: async (ctx) => {
         const undo = buildUndo({ focus_unit_id: unitIds[0] });
-        const sentRevision = pickDocRevision(doc.id, doc.revision);
-        const { pair, document_revision } = drop.kind === "pair" ? await createPair(bundleId, doc.id, doc.revision, drop.unitIds, undo) : await confirmPair(bundleId, doc.id, drop.pairId, doc.revision, undo);
-        if (pair === null) return;
-        // 이미 확정이던 짝의 확정은 서버가 아무것도 쓰지 않아 되돌릴 단계가 없다 - Undo를 주지 않는다(주면 앞 단계를 되돌린다)
-        const isRecorded = document_revision !== sentRevision;
-        if (isRecorded) markRecorded();
-        // 알림은 같은 글이면 앞의 것을 지운다 - 번호를 적어 잇달아 맺어도 알림마다 제 Undo가 남게. Undo는 Ctrl+Z와 같은 길이다(그 뒤 다른 단계가 없을 때만)
-        const ids = pair.unit_ids.flatMap((unitId) => unitMap.get(unitId)?.display_id ?? []).join(" + ");
-        const tick = stepTick.current;
-        const action = { label: t("common.undo"), run: () => (stepTick.current === tick ? void undoStepRef.current("undo") : showToast(t("assign.pairDrag.undoStale"), "info")) };
-        showToast(t(drop.kind === "pair" ? "assign.pairDrag.done" : "assign.pairDrag.confirmed", { ids }), "ok", isRecorded ? { action } : undefined);
-        focusCtl.succeed(job, { docId: doc.id, revision: null, pickUnitId: pair.unit_ids[0] });
-      } catch (err) {
-        showToast(humanizeApiError(err, t), "error");
-      } finally {
-        reloadAfterEdit(planReload({ kind: "pair", docId: doc.id }, { aiOn }));
-      }
+        const revision = (readLiveView(doc.id)?.document ?? doc).revision;
+        const sentRevision = pickDocRevision(doc.id, revision);
+        const { pair, document_revision } = drop.kind === "pair" ? await createPair(bundleId, doc.id, revision, drop.unitIds, undo) : await confirmPair(bundleId, doc.id, drop.pairId, revision, undo);
+        writeLog.noteAll();
+        if (pair !== null) {
+          // 이미 확정이던 짝의 확정은 서버가 아무것도 쓰지 않아 되돌릴 단계가 없다 - Undo를 주지 않는다(주면 앞 단계를 되돌린다)
+          const isRecorded = document_revision !== sentRevision;
+          if (isRecorded) markRecorded();
+          // 알림은 같은 글이면 앞의 것을 지운다 - 번호를 적어 잇달아 맺어도 알림마다 제 Undo가 남게. Undo는 Ctrl+Z와 같은 길이다(그 뒤 다른 단계가 없을 때만)
+          const ids = pair.unit_ids.flatMap((unitId) => liveRef.current.unitMap.get(unitId)?.display_id ?? []).join(" + ");
+          showToast(t(drop.kind === "pair" ? "assign.pairDrag.done" : "assign.pairDrag.confirmed", { ids }), "ok", isRecorded ? { action: buildUndoAction() } : undefined);
+          focusCtl.succeed(ctx.id, { docId: doc.id, revision: null, pickUnitId: pair.unit_ids[0] });
+        }
+        ctx.respond();
+        await placeReload(buildReloadAsk(planReload({ kind: "pair", docId: doc.id }, { aiOn }), oldDocIds), ctx);
+      },
     });
   }
 
@@ -3277,7 +3987,7 @@ export function useAssignPage() {
     }
     const unitIds = [pairSource.id, ...others.map((unit) => unit.id)];
     setPairFrom(null);
-    void runPairChange((docId, revision, undo) => createPair(bundleId, docId, revision, unitIds, undo), t("split.didJoin"), unitIds[0], "pair", unitIds);
+    runPairChange((docId, revision, undo) => createPair(bundleId, docId, revision, unitIds, undo), t("split.didJoin"), unitIds[0], "pair", unitIds);
   }
 
   /** 짝 고르는 중에 문장을 눌렀다 - 그냥 누르면 그 문장까지 넣어 맺고, Shift+클릭은 모은다(Old 용지와 양 단의 New 칸이 같이 쓴다) */
@@ -3310,7 +4020,7 @@ export function useAssignPage() {
     // 처리 중인 박스는 고르지 않는다 - 다른 박스는 그대로 고른다(설계 D4)
     if (isBoxLocked(unitId)) return;
     if (mode === "unsourced") {
-      void linkAsSource(unitId);
+      linkAsSource(unitId);
       return;
     }
     // 캡션 줄 고르는 중 - 누른 줄이 그 표·그림의 캡션이 된다(고름은 그대로)
@@ -3349,30 +4059,53 @@ export function useAssignPage() {
   /** 그림 탭 카드의 삭제 확정 - 그 그림 줄(캡션 포함)을 삭제로(Remark 선택, 한 번에 삭제와 같은 저장 - 되돌리기로 돌린다, 시안 2 D3) */
   async function deleteFigure(unitId: number, reason: string) {
     const key = rowOfUnit.get(unitId);
-    const ids = (key === undefined ? undefined : rowMap.get(key)?.unitIds) ?? [unitId];
-    const units = ids.map((id) => unitMap.get(id)).filter((unit): unit is UnitRow => unit !== undefined);
-    try {
-      await bulkDecide(bundleId, { action: "delete", reason, move_target_code: "", units: units.map((unit) => ({ unit_id: unit.unit_id, revision: unit.decision.revision })) }, buildUndo({ focus_unit_id: unitId }));
-      markRecorded();
-      showToast(t("figures.deleted"), "ok", { action: { label: t("common.undo"), run: () => void undoStepRef.current("undo") } });
-      reloadData(true);
-      void loadBundle(bundleId);
-    } catch (err) {
-      showToast(humanizeApiError(err, t), "error");
-      // revision이 낡아 거절됐을 수 있다 - 다시 불러와야 다음 시도가 같은 이유로 실패하지 않는다
-      reloadData();
-    }
+    const unitIds = (key === undefined ? undefined : rowMap.get(key)?.unitIds) ?? [unitId];
+    commands.enqueue({ kind: "figure", unitId, unitIds, seen: readSeen(unitIds), reason });
+  }
+
+  async function sendFigure({ unitId, unitIds, seen, reason }: Extract<WriteCommand, { kind: "figure" }>, ctx: SendContext) {
+    const units = await readRevisions(unitIds, seen);
+    const done = await bulkDecide(bundleId, { action: "delete", reason, move_target_code: "", units: units.map(({ unit_id, revision }) => ({ unit_id, revision })) }, buildUndo({ focus_unit_id: unitId }));
+    noteDecisions(done);
+    markRecorded();
+    ctx.respond();
+    showToast(t("figures.deleted"), "ok", { action: { label: t("common.undo"), run: () => undoStepRef.current("undo") } });
+    await placeReload(askAll(true), ctx);
   }
   // 그림 탭 카드 - 지우기는 Old 문서의 줄에만(한 단으로 연 New 문서는 줄이 없다)
   const figureTab = canEdit && !isSolo ? { onDelete: deleteFigure } : undefined;
 
+  /** 떼어 접어 둔 오른쪽 칸을 편다 - 그 안의 칸 · 단추로 이어지는 글쇠를 눌렀을 때(안 보이는 채 시작하지 않게) */
+  function unfoldSide() {
+    if (view.sideFloat && view.sideFolded) changeView({ sideFolded: false });
+  }
+
   function handlePrimary() {
-    if (!destination) {
-      // 고른 곳이 없으면 ↵는 바로 위 목록의 첫 후보(추천이 없으면 첫 묶음 제목)로 간다
-      (document.querySelector<HTMLElement>(".assign-pick .dest-card") ?? document.querySelector<HTMLElement>(".assign-pick .dest-acc-head"))?.focus();
+    // 앞의 장벽이 어느 박스를 고를지 모른다 - ↵를 쌓아 두었다가 그 고름에서 다시 누른다
+    if (commands.isDeferring()) {
+      if (commands.canQueueKey()) commands.enqueue({ kind: "key", key: "enter", shift: false, ctrl: false });
       return;
     }
-    void runSave("confirm");
+    if (primaryPlan.kind === "apply_order") {
+      if (orderPreview !== null) unwrapAi.onApply(orderPreview.tableId, orderPreview.order);
+      return;
+    }
+    if (isSavedUnknown || (primaryPlan.kind === "confirm" && primaryPlan.from === "draft")) {
+      runSave("confirm");
+      return;
+    }
+    // 접어 둔 칸의 카드는 보이지 않는다 - 펴서 어디로 가는지 보인 뒤 다음 ↵가 확정한다
+    const isSideHidden = view.sideFolded && isSideFloating(window.innerWidth, view.sideFloat);
+    if (isSideHidden) unfoldSide();
+    if (primaryPlan.kind === "confirm") {
+      const card = primaryCards[primaryPlan.cardIndex ?? 0];
+      if (!isSideHidden && card) confirmCard(card);
+      return;
+    }
+    showToast(t(primaryPlan.reasonKey), "error");
+    if (primaryPlan.reasonKey !== "assign.primary.pickFirst") return;
+    const list = document.querySelector<HTMLElement>(".assign-pick .dest-acc");
+    if (list) flashElement(list);
   }
 
   /** 고쳐 쓰기를 닫는다 - 직접 쓰는 다른 언어 칸이 비어 있으면 그 칸도 걷어 "쓰기" 단추가 다시 나오게 한다 */
@@ -3383,7 +4116,8 @@ export function useAssignPage() {
   }
 
   function startEdit() {
-    if (!destination || destination.kind !== "slot" && destination.kind !== "step") return;
+    if (hiddenPlace !== null || !destination || (destination.kind !== "slot" && destination.kind !== "step")) return;
+    unfoldSide();
     setDraft({}, true);
     requestAnimationFrame(() => firstTextRef.current?.focus());
   }
@@ -3410,33 +4144,78 @@ export function useAssignPage() {
       return;
     }
     // 그 자리 메뉴는 화면 단축키를 막지 않는다 - 메뉴가 떠 있어도 ↵가 확정이다(메뉴 안의 키는 메뉴가 먼저 받는다)
-    if (bulk || isTypingTarget(event.target) || document.querySelector('[role="dialog"],[role="menu"]:not([data-link-menu]),[role="listbox"]')) {
+    if (bulk || isTypingTarget(event.target) || document.querySelector(LAYER_SELECTOR)) {
       if (event.key === "Escape" && editing) closeEditing();
       // 고치는 중에는 Enter가 줄바꿈이라 Ctrl+Enter로 저장한다
       if (event.key === "Enter" && (event.ctrlKey || event.metaKey) && editing && isTypingTarget(event.target)) {
         event.preventDefault();
-        void runSave("confirm");
+        if (!event.repeat) runSave("confirm");
       }
       return;
     }
     // Ctrl/⌘+Z·+Shift - 글자 입력 중이거나 층이 열려 있으면 위에서 이미 돌아갔다(브라우저 글자 되돌리기)
-    const undoKind = getAssignUndoKey(event, { typing: isTypingTarget(event.target), layerOpen: document.querySelector('[role="dialog"],[role="menu"]:not([data-link-menu]),[role="listbox"]') !== null, canEdit });
+    const undoKind = getAssignUndoKey(event, { typing: isTypingTarget(event.target), layerOpen: document.querySelector(LAYER_SELECTOR) !== null, canEdit });
     if (undoKind !== null) {
       event.preventDefault();
-      if (undoKind === "undo" ? undoState.canUndo : undoState.canRedo) void runUndoStep(undoKind);
+      // 누르고 있어 되풀이된 것은 받지 않는다 - 한 번에 하나씩 저장되는 줄에 되돌리기가 쌓인다
+      if (event.repeat) return;
+      if (!commands.isDeferring()) pressUndo(undoKind);
+      else if (commands.canQueueKey()) commands.enqueue({ kind: "key", key: "z", shift: undoKind === "redo", ctrl: true });
       return;
     }
     if (event.metaKey || event.ctrlKey || event.altKey) return;
-    // 포커스된 단추·링크(추천 카드·나무 항목 등)의 Enter·Space는 그 단추를 누른다
-    if ((event.key === "Enter" || event.key === " ") && event.target instanceof HTMLElement && event.target.closest("button, a, [role='option'], [role='button']")) return;
+    // 용지 · 오른쪽 칸의 Enter는 포커스가 다른 단추에 있어도 확정 단추다(B1-R1). 그 밖의 단추·링크의 Enter와 모든 단추의 Space는 그 단추를 누른다
+    const isPrimaryEnter = event.key === "Enter" && !event.defaultPrevented && takesPrimaryEnter(readKeyPlace(event.target), event.target);
+    if (event.key === "Enter" && !isPrimaryEnter) return;
+    if (event.key === " " && event.target instanceof HTMLElement && event.target.closest("button, a, [role='option'], [role='button']")) return;
     // 세로선에 포커스가 있으면 ←→는 폭이다
     if (event.target instanceof HTMLElement && event.target.closest(".pane-divider")) return;
     const key = event.key.toLowerCase();
+    // 앞에 장벽이 있으면 어느 박스의 글쇠인지 아직 모른다 - 쌓아 두었다가 장벽이 세운 고름에서 차례로 다시 누른다(A1-R3)
+    const isMove = getRowStep(key) !== null;
+    // 누르고 있어 되풀이된 것은 이동만 받는다
+    if (event.repeat && isRepeatIgnored(key, isMove)) {
+      // 막지 않으면 포커스가 있는 단추를 브라우저가 되풀이해 누른다
+      if (isPrimaryEnter) event.preventDefault();
+      return;
+    }
+    if (commands.isDeferring() && isQueuedKey(key, isMove)) {
+      event.preventDefault();
+      if (commands.canQueueKey()) commands.enqueue({ kind: "key", key, shift: event.shiftKey, ctrl: false });
+      return;
+    }
+    if (pressKey(key, event.shiftKey)) event.preventDefault();
+  });
+
+  /** Ctrl+Z - 기록이 아직 없어도 저장 중인 판단이 있으면 그 뒤에 선다 */
+  function pressUndo(kind: "undo" | "redo") {
+    if (kind === "undo" ? undoState.canUndo || hasQueuedStep() : undoState.canRedo) runUndoStep(kind);
+  }
+
+  /** 고른 삭제 줄을 되돌리는 중인가 - 삭제 취소의 응답이나 새 보기를 기다린다 */
+  function isRestoringPick(): boolean {
+    if (noisePick === null) return false;
+    const ops = commands.listUnsettled().flatMap(({ payload }) => (payload.kind === "edit" ? [payload.op] : []));
+    return docViews.isReloading(noisePick.docId) || isRestoringLines(ops, noisePick.unitId === null ? noisePick.block.unitIds : [noisePick.unitId]);
+  }
+
+  /** 글쇠 하나를 지금 고름에서 - 했으면 true. 누를 때와, 장벽 뒤에 쌓아 두었다가 되살릴 때 함께 쓴다 */
+  function pressKey(key: string, shift: boolean): boolean {
     const step = getRowStep(key);
+    const noiseKey = toNoiseKeyId(key, shift);
+    const noise = noiseKey === null ? null : readNoiseKey(noiseKey, noisePick);
     if (step !== null) moveRow(step);
+    // 마지막으로 누른 것이 저절로 삭제된 줄 - 판단 글쇠보다 먼저(삭제 · 보류 · 확정은 아무것도 하지 않는다)
+    else if (noise !== null && noisePick !== null) {
+      if (noise.kind === "clear") clearNoise(noisePick.docId, canEdit ? noise.unitIds : []);
+      // 삭제 취소가 끝나 보통 줄로 돌아오기 전에 누른 것 - 조용히 사라지지 않게 알린다
+      else if (isRestoringPick()) showToast(t("assign.noise.restoring"), "info");
+      else if (noise.kind === "reason") openNoiseReason(noisePick.docId, noise.unitIds);
+    }
     else if (key === "escape") {
-      // 나눌 선이 있으면 선부터 거둔다(Split과 같다)
-      if (composedCut) setComposedCutAt(null);
+      // AI 순서 미리보기부터 거두고(Keep as is), 나눌 선이 있으면 선을 거둔다(Split과 같다)
+      if (orderPreview !== null) unwrapAi.onKeep(orderPreview.tableId, orderPreview.isSame);
+      else if (composedCut) setComposedCutAt(null);
       else if (cutLine.at !== null) cutLine.clear();
       else if (isNewEdit) setSolo(null);
       else setChecked(new Set());
@@ -3444,23 +4223,23 @@ export function useAssignPage() {
       // Pair view 동안은 보기를 바꾸지 않고 Pair view만 끈다 - 켜기 전 보기로 돌아간다
       if (isPairView) closePairView();
       else changeView({ single: !view.single });
-    }
-    else if (key === "s" && canEdit && composedCut) splitComposedAtCut();
+    } else if (key === "s" && canEdit && composedCut) splitComposedAtCut();
     else if ((key === "arrowleft" || key === "arrowright") && canEdit && composedCut && composedCutItem) setComposedCutAt({ ...composedCut, at: stepComposedCut(composedCutItem.text, composedCut.at, key === "arrowleft" ? -1 : 1) });
     else if (key === "s" && canEdit && hasSolo && cutLine.at !== null) splitAtCut();
     else if ((key === "arrowleft" || key === "arrowright") && canEdit && isNewEdit && cutLine.at !== null) cutLine.nudge(key === "arrowleft" ? -1 : 1);
-    else if (!canEdit || !row) return;
+    else if (!canEdit || !row) return false;
     else if (key === "s" && cutLine.at !== null) splitAtCut();
+    // 출처 없는 New를 보는 동안은 오른쪽 칸에 확정 단추가 없다 - 가려진 줄을 확정하지 않는다
+    else if (key === "enter" && mode !== "old") return false;
     else if (key === "enter") handlePrimary();
-    else if (key === "a" && canEdit && aiRecommendation) pickRecommendation(aiRecommendation); // Use - 줄의 AI 추천을 초안으로 받는다
+    else if (key === "a" && canEdit && aiRecommendation) pickRecommendation(aiRecommendation, false); // Use - 줄의 AI 추천을 초안으로 받는다
     else if (key === "e") startEdit();
-    else if (key === "h") void runSave("hold");
-    else if (key === "u") void runClear();
+    else if (key === "h") runSave("hold");
+    else if (key === "u") runClear();
     else if (key === "delete" || key === "backspace") decideNow({ kind: "delete" });
-    else if (key === "m") setMoveAsk(true);
-    else return;
-    event.preventDefault();
-  });
+    else return false;
+    return true;
+  }
 
   useEffect(() => {
     window.addEventListener("keydown", handleKey);
@@ -3541,15 +4320,15 @@ export function useAssignPage() {
   }, [remarkEdit, busy]);
 
   /** 추천을 누름 - 고르고 New 칸을 그 자리로 옮긴다(다른 문서면 넘긴다). 확정은 결정 칸의 Confirm 하나 - 카드 옆 확정 메뉴는 띄우지 않는다(1.2.0 피드백).
-   *  포커스는 Confirm으로 - 카드에 남으면 ↵가 확정 대신 카드를 다시 누른다 */
-  function pickRecommendation(rec: Recommendation) {
+   *  글쇠로 골랐으면 포커스는 Confirm으로, 마우스면 Old 용지로 */
+  function pickRecommendation(rec: Recommendation, isMouse: boolean) {
     if (rec.source === "ai" && rowLive) {
       const use = buildUseDraft(rowLive, slots);
       pickDestination(rec.destination, { texts: use.texts, suggestionId: rowLive.id });
     } else pickDestination(rec.destination);
     markRecHover([]);
     setRevealPick({ destination: rec.destination, rowKey: activeKey });
-    requestAnimationFrame(() => document.querySelector<HTMLElement>('[data-testid="assign-primary"]')?.focus({ preventScroll: true }));
+    focusAfterPress(isMouse);
   }
 
   /** 추천 카드 ↔ New 상자를 같이 밝힌다 - 표시만 붙였다 뗀다(호버마다 화면을 다시 그리지 않게, 긴 문서) */
@@ -3563,7 +4342,7 @@ export function useAssignPage() {
   const done = countDone(rows);
 
   function renderPlaceLabel(dest: Destination): { title: string; text: string } {
-    const option = options.find((item) => getDestinationId(item.destination) === getDestinationId(dest));
+    const option = labelOptions.find((item) => getDestinationId(item.destination) === getDestinationId(dest));
     return { title: option?.docCode ?? "", text: option?.label ?? "" };
   }
 
@@ -3583,37 +4362,43 @@ export function useAssignPage() {
   }
 
   const canClear = row !== null && row.status !== "unassigned";
+  // 실패해 멈춘 명령의 알림 - 어느 박스의 무엇이 왜, 뒤에 몇 개가 멈췄나
+  const { halted } = commands.state;
+  const haltedCommand = halted !== null && "kind" in halted.command.payload ? halted.command.payload : null;
+  const queueFailure = halted === null || haltedCommand === null || haltedCommand.kind === "key" || haltedCommand.kind === "press" || haltedCommand.kind === "pick" ? null : describeFailure(haltedCommand, halted.reason, commands.state.waiting.length);
+  // 저장 중인 판단이 있으면 기록이 아직 없어도 되돌리기가 그 뒤에 선다
+  const canUndoNow = undoState.canUndo || listUnsettled(commands.state).some(isDecisionCommand);
 
   const error = docs.error ?? docViews.error ?? tobe.error ?? writtenList.error;
 
   return {
     t, bundleId, bundle, canEdit, docs, oldDocs, oldDocIds, docViews, unitsKey, reloadData, tobe, tobeData, writtenList, identical,
     aiJobs, aiOn, aiBusy, suggestions, invalidUnitIds, readMarkStatus, readAiPlace, suggestedTargetUnits, unitMap, written, writtenMap, rows, rowMap,
-    rowOfUnit, options, ready, showSkeleton, unsourced, mode, setMode, filter, counts, foldOpen, setFoldOpen, applyFilter, foldMatch,
+    rowOfUnit, options, labelOptions, isDrafting, hiddenPlace, legacyMove, leftovers, isLeftoverOpen, setLeftoverSheet, openTranslations, translationBlocked, settleTranslations, goToTranslation, ready, showSkeleton, unsourced, mode, setMode, filter, counts, foldOpen, setFoldOpen, applyFilter, foldMatch,
     clearRowPick, activeKey, row, pickedId, spaceUnitIds, spacePickSeq, solo, setSolo, isSolo, isNewEdit, hasSolo, tocOpen, setTocOpen, tocPick, tocBlocks, checked,
     setChecked, newRemarks, setNewRemarks, menu, setMenu, joinMenu, setJoinMenu, ctxMenu, setCtxMenu, cutUnitId, focusNew,
     groupData, setDrafts, draft, editing, groupPending, savedDestination, destination, rowUnits, rowLangs, firstDecision, systemHold,
-    reasonNow, moveCode, setDraft, unsavedCount, leaveTo, setLeaveTo, rowLive, aiDest, aiWhy, isAiRow, recommendations, linkIds,
+    reasonNow, setDraft, unsavedCount, leaveTo, setLeaveTo, rowLive, aiDest, aiWhy, isAiRow, recommendations, linkIds,
     pickedGroups, saveGroupData, candidateIds, viewOf, setManualOldDoc, oldView, acceptKind, setAcceptKind, acceptDoc,
     paperModel, canPairView, isPairView, pairColumns, pairLinks, partKeys, oldDocId, splitByUnit, shapeView, shapeModel, soloUnit,
     soloUnits, cutUnit, cutLine, linkedTargets, setManualPart, activePart, isFoldEmpty, foldElsewhere, writtenDocs, composedDocs,
     setManualNewDoc, toggleKey, liveDoc, isNewDocOpen, newDocId, newAiReturn, setNewAiReturn, isComposedDoc, newFileId, composedDoc,
     newRows, headingNotes, sectionMarks, joinableIds, templateTitles, linkPairs, view, changeView, zoomPane, setPanes, askAiScope,
-    aiMenuItems, remarkEdit, setRemarkEdit, focusAfterRef, firstTextRef, busy, isAnyPending, isGlobalPending: focusCtl.isGlobalPending, paperPending, editConfirm, setEditConfirm,
-    oldPaneRef, undoState, buildUndo, markRecorded, bulk, setBulk, confirmingIdentical, setConfirmingIdentical,
+    aiMenuItems, remarkEdit, setRemarkEdit, focusAfterRef, firstTextRef, busy, isAnyPending, isGlobalPending: focusCtl.isGlobalPending, paperPending, pendingDeletes, expectedNumbers, editConfirm, answerEditConfirm, cancelEditConfirm, canUndoNow, queueFailure, retryCommand: commands.retry, discardCommands: commands.discard,
+    oldPaneRef, undoState, bulk, setBulk, runBulkDelete, runReset, confirmRemark, closeRemark, confirmingIdentical, setConfirmingIdentical,
     resetScope, setResetScope, accOpen, toggleAcc, saveUnits, slots, aiUnfilled, draftPlace, draftSectionKey, draftPosition, newDraft,
     draftSlotKey, placeResolved, canPlaceClick, pickedSpotKey, setCarvePick, carve, carveText, clearCarve, togglePairViewByButton,
     pairFrom, setPairFrom, setRefEntryId, pairSource, captionPickBundle, setCaptionPick, startCaptionPick, selectToc, selectRow, openNewCtxMenu, openSolo, goToUnit, moveRow, hasUnitDraft,
-    isFixedCaption, ctxGroups, rowViewUnits, rowSplitUnit, rowSplit, splitBlocked, rowRefUnit, refBlocked, isRefGate, isCaptionGateOn,
+    isFixedCaption, ctxGroups, rowViewUnits, rowSplitUnit, rowSplit, splitBlocked, rowRefUnit, refBlocked, isCaptionGateOn,
     confirmBlockKey, rowCaptionRefs, refCandidates, shapeLines, shapeFirstId, slotPlaces, slotCellTables, shapeMode, headingBack, rewrap, bandBack,
     stepBase, refPendingIds, isLinkedToWritten, captionPendingKeys, docDashboard, refDetail, refInfo, openCtxMenu, runUnitEdit,
-    rewrapTable, unwrapAi, describeEditConfirm, pairGrip, clearToc, runCaptionRefChange, switchShapeMode, switchToPair,
+    rewrapTable, unwrapAi, describeEditConfirm, pairGrip, clearNoise, openNoiseReason, confirmNoiseReason, closeNoiseReason, noisePick, runCaptionRefChange, switchShapeMode, switchToPair,
     applySplitSuggestion, dismissSplitSuggestion, splitPendingIds, readPendingItem, selectNextSplit, selectNextRef, selectNextCaption,
     splitAtCut, handleOldDoubleClick, runCtx, runUnitAction, revertHeadings, planOldJoin, joinOld, renderOldActions, readReasonNeed,
-    runSave, runClear, runUndoStep, decideNow, isMoveAsk, setMoveAsk, confirmIdenticalAll, acceptAll, markNew, placeManage, pickDestination, pickNewSentence, handleNewPick, unlinkCell,
+    runSave, runClear, runUndoStep, confirmIdenticalAll, acceptAll, markNew, placeManage, pickDestination, pickNewSentence, handleNewPick, unlinkCell,
     handleJoinPick, readJoinAfter, pickJoinMenu, pickPlaceSpot, pickOwnAiLine, jumpToNew, openNewDoc, showInNew, jumpToOld,
     pickTemplateLine, fillTemplateMissing, isTemplateDrag, isOldDrag, finishPairPick, handleOldClick, handlePrimary, startEdit,
-    pickRecommendation, markRecHover, revealPick, setRevealPick, done, renderPlaceLabel, listDestinationEls,
+    pickRecommendation, handleFramePress, primaryPlan, markRecHover, revealPick, setRevealPick, done, renderPlaceLabel, listDestinationEls,
     canClear, isRowDeleted, error, figureTab, composedCut, setComposedCutAt, handleComposedDoubleClick, dragComposedCut, splitComposedAtCut, planComposedGap, joinComposed,
   };
 }

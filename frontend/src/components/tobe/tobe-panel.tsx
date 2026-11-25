@@ -55,11 +55,14 @@ interface ToBePanelProps {
     onDelete: (document: SopDocument) => void;
     onSave: (document: SopDocument, change: Omit<DocumentUpdateInput, "revision">) => Promise<unknown>;
   };
+  /** 표준 골격 선언 · WI 단계 더하기를 두는가 - 새 문서를 만드는 쪽을 숨긴 동안 없다 */
+  canDeclare: boolean;
+  canAddStep: boolean;
   /** SOP의 칸 상태 표 - 상태(편집기 · 저장)는 목록이 든다 */
   sections: ReactNode;
 }
 
-export function ToBePanel({ doc, tobe, saved, sops, steps, written, hints, isTitleLocked, canEdit, saving, saveDoc, changeType, onAddStep, onRenameStep, onRemoveStep, onAddOutline, onPatchOutline, onRemoveOutline, file, sections }: ToBePanelProps) {
+export function ToBePanel({ doc, tobe, saved, sops, steps, written, hints, isTitleLocked, canEdit, saving, saveDoc, changeType, onAddStep, onRenameStep, onRemoveStep, onAddOutline, onPatchOutline, onRemoveOutline, file, canDeclare, canAddStep, sections }: ToBePanelProps) {
   const { t } = useI18n();
   const prefix = `tobe-${doc.key}`;
   // 쓴 파일이 붙은 줄의 번호와 종류는 그 파일의 것이다
@@ -246,13 +249,13 @@ export function ToBePanel({ doc, tobe, saved, sops, steps, written, hints, isTit
       </section>
 
       {doc.doc_type === "sop" ? (
-        <div className="doc-panel-col">
+        (canDeclare || sections !== null) && <div className="doc-panel-col">
           {/* 범주 · 절차 · 부록 선언 - 이미 쓴 SOP는 구조가 파일의 것이라 묶음이 없다(buildDeclareGroups가 빈 목록을 준다) */}
-          {saved !== undefined && <OutlineDeclare prefix={prefix} groups={buildDeclareGroups(tobe, saved)} canEdit={canEdit} saving={saving} onAdd={onAddOutline} onPatch={onPatchOutline} onRemove={onRemoveOutline} />}
+          {saved !== undefined && canDeclare && <OutlineDeclare prefix={prefix} groups={buildDeclareGroups(tobe, saved)} canEdit={canEdit} saving={saving} onAdd={onAddOutline} onPatch={onPatchOutline} onRemove={onRemoveOutline} />}
           {sections}
         </div>
       ) : (
-        <section className="doc-panel-col" aria-label={t("tobe.panel.steps")}>
+        (canAddStep || steps.length > 0 || canDeclare) && <section className="doc-panel-col" aria-label={t("tobe.panel.steps")}>
           <h3 className="doc-panel-head">{t("tobe.panel.steps")}</h3>
           <div className="grid gap-1" data-testid={`${prefix}-steps`}>
             {steps.map((step) => (
@@ -284,7 +287,7 @@ export function ToBePanel({ doc, tobe, saved, sops, steps, written, hints, isTit
                 </span>
               </div>
             ))}
-            {canEdit && (
+            {canAddStep && (
               <button type="button" className="btn ghost h-7 justify-self-start" data-testid={`${prefix}-add-step`} disabled={saving} onClick={onAddStep}>
                 <Plus size={14} strokeWidth={1.5} aria-hidden />
                 {t("tobe.addStep")}

@@ -38,7 +38,7 @@ def _list_judged_units(snap: BundleSnapshot) -> list[UnitInfo]:
 
 
 def list_noise_units(snap: BundleSnapshot) -> list[UnitInfo]:
-    """잡음 표시(목차 줄)가 붙은 옛 문서 단위, order_key 순 — 판단 줄이 아니라 결과물 A의 "삭제 · 목차" 줄과 요약의 수로만 나간다."""
+    """저절로 삭제된(잡음 표시) 옛 문서 단위, order_key 순 — 판단 줄이 아니라 결과물 A의 삭제 줄과 요약의 수로만 나간다. 묶음(표 · 그림)은 한 줄."""
     return [unit for unit in _list_old_free_units(snap) if unit.noise_kind is not None]
 
 

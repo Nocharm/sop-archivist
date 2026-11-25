@@ -6,7 +6,7 @@ Assign Space 미리 보기가 같은 모델을 쓴다. 숨은 값(Unit ID · 그
 - 벗긴 표의 칸 줄은 보통 줄이다(벗긴 것은 문단). 아직 표인 데이터 표는 고를 수 있고, 넣으면 표 한 행이 한 줄(칸 글을 ` | `로 이음).
 - 그림은 제자리에 `[Figure] 캡션` 한 줄(그 그림에 묶인 캡션은 따로 줄을 두지 않는다).
 - 편집 반영(B9): 확정 삭제한 줄은 지우지 않고 Remark "Deleted"(사유가 있으면 "Deleted — 사유") · Text 취소선 · 회색 · Lang 빈 칸(미리 보기는
-  `deleted`로 숨긴다). 원문에서 이어진 줄이 확정 배정으로 같은 새 문장 하나에 가면 한 행. 점 기호 줄의 Section No.는 "5.1 •"이고 Text에
+  `deleted`로 숨긴다). 저절로 삭제된 본문 앞부분 · 개정 이력도 같다(사유를 적지 않았으면 정한 문구, 번호까지 글). 원문에서 이어진 줄이 확정 배정으로 같은 새 문장 하나에 가면 한 행. 점 기호 줄의 Section No.는 "5.1 •"이고 Text에
   기호가 없다. Text 칸 들여쓰기 = 용지의 번호 칸 단계(numbering.build_row_levels) − 1.
 설계: 2026-11-20-assign-mockup2 D4 (docs/architecture/decisions.md)
 """
@@ -22,6 +22,7 @@ from app.sop.captions import CAPTION_KIND, join_caption_texts
 from app.sop.constants import BULLET_SYMBOLS
 from app.sop.excel_export import build_workbook, clean_cell_text, split_cell_text
 from app.sop.models import Document, SourceBlock, SourceTable, TargetSource, Unit, UnitDecision, UnitPairMember
+from app.sop.noise import NOISE_FRONT, NOISE_HISTORY
 from app.sop.numbering import (
     NUMBER_CELL,
     NUMBERED_KINDS,
@@ -34,12 +35,12 @@ from app.sop.numbering import (
     is_read_from_text,
     strip_number,
 )
+from app.sop.output_labels import FIGURE_MARKER, LABELS
 from app.sop.pair_order import order_pair_card
 from app.sop.sheet_model import MAX_PREVIEW_ROWS, Sheet, SheetCell, SheetRow, WorkbookModel, limit_window
 from app.sop.units import UNIT_ACTIVE, get_latest_extraction_id
 from app.sop.unwrap_order import UnwrapTable, find_line_table, order_unwrapped_lines, read_unwrap_tables
 
-FIGURE_MARKER = "[Figure]"  # 결과물 Excel(sheet_model)의 그림 표시와 같은 글
 PARAGRAPH_HEADERS = ("Section No.", "Text", "Lang", "Number note", "Remark")
 PARAGRAPH_WIDTHS = (12, 90, 6, 18, 40)  # 글자 수 — 긴 글은 칸 안에서 접는다
 PARAGRAPH_HEAD_ROWS = 1  # 머리 줄 — 미리 보기 창을 잘라도 늘 싣는다(freeze "A2")
@@ -49,6 +50,8 @@ DELETED_REMARK = "Deleted"  # 확정 삭제한 줄의 Remark — 사유가 있�
 READ_FROM_TEXT_NOTE = "Read from text"  # 본문 줄 글 앞 타자 번호를 저절로 번호로 읽음(사람이 고치지 않음) — 틀렸으면 번호 칸에서 고친다
 CELL_JOINER = " | "  # 아직 표인 데이터 표 한 행의 칸 글 사이
 _LANG_LABELS = {"ko": "KO", "en": "EN", "ref": "REF"}  # 중립은 빈 칸
+_STRUCK_NOISE_KINDS = (NOISE_FRONT, NOISE_HISTORY)  # 확정 삭제한 줄처럼 싣는 저절로 삭제된 줄
+_NOISE_REMARKS = LABELS["en"].noise_remarks  # 이 시트의 글은 영어다(머리 · 노트와 같다)
 _SKIPPED_KINDS = ("table",)  # 칸 문장을 묶는 단위 — 자기 글이 없다(행 줄의 Remark만 준다)
 _SHEET_NAME_LIMIT = 31  # Excel 시트 이름 최대 글자 수
 _SHEET_NAME_FORBIDDEN = str.maketrans({char: "_" for char in "[]:*?/\\"})
@@ -77,7 +80,8 @@ class UnitLine:
     is_cell_number: bool = False  # 덩이의 숫자만 든 칸에서 읽은 번호(사람이 고치지 않음) — 덩이 안에서만 Section No.
     pair_id: int | None = None
     indent_shift: int = 0
-    noise: bool = False  # 목차 줄 — 번호 칸이 없다
+    noise: bool = False  # 저절로 삭제된 줄(잡음 표시) — 번호 칸이 없다
+    auto_deleted: bool = False  # 그 가운데 지운 줄로 싣는 것(본문 앞부분 · 개정 이력) — 목차 줄은 아직 보통 줄처럼 싣는다
 
 
 @dataclass(frozen=True)
@@ -94,6 +98,7 @@ class _Entry:
     is_cell_number: bool = False
     deleted: bool = False
     target_id: int | None = None
+    has_section: bool = True  # 저절로 삭제된 줄은 절 번호를 이어받지 않는다
 
 
 def format_number_note(read: str | None, now: str | None) -> str:
@@ -143,16 +148,18 @@ def _list_entries(lines: Sequence[UnitLine], include_tables: bool) -> list[_Entr
             entries.append(_Entry(
                 line.group_unit_id, "neutral", None, text, remark=table.remark if table and first_row else "",
                 blocks=table.blocks if table else (), deleted=bool(table and table.deleted),
+                has_section=not (table and table.auto_deleted),
             ))
             continue
         if line.kind == "figure":
             caption = join_caption_texts(captions.get(line.unit_id, ()))
             text = " ".join(part for part in (FIGURE_MARKER, line.text, caption) if part)
-            entries.append(_Entry(line.unit_id, line.lang, None, text, remark=line.remark, blocks=line.blocks, deleted=line.deleted))
+            entries.append(_Entry(line.unit_id, line.lang, None, text, remark=line.remark, blocks=line.blocks, deleted=line.deleted,
+                                  has_section=not line.auto_deleted))
             continue
         entries.append(_Entry(
             line.unit_id, line.lang, line.number, line.text, line.number_note, line.remark, line.blocks, line.is_cell_number,
-            line.deleted, line.target_id,
+            line.deleted, line.target_id, has_section=not line.auto_deleted,
         ))
     return entries
 
@@ -227,7 +234,7 @@ def build_paragraph_sheet(lines: Sequence[UnitLine], include_tables: bool, name:
         first = members[0]
         langs = {member.lang for member in members}
         texts = [
-            _format_section(sections[group[0]], first.number),
+            _format_section(sections[group[0]], first.number) if first.has_section else "",
             " ".join(member.text for member in members),
             "" if first.deleted or len(langs) > 1 else _LANG_LABELS.get(first.lang, ""),
             first.note,
@@ -326,24 +333,27 @@ async def load_unit_lines(session: AsyncSession, document: Document) -> list[Uni
         block = blocks[unit.spans[0][0]] if unit.spans else block_at.get(unit.pos_seq)
         if block is None:
             continue
-        number = get_number(unit)
+        auto_deleted = unit.noise_kind in _STRUCK_NOISE_KINDS
+        # 저절로 삭제된 줄은 번호 칸이 없어 번호까지 글이다(용지와 같다)
+        number = get_number(unit) if unit.noise_kind is None else None
         disposition, status, reason = decisions.get(unit.id, ("", "", ""))
         confirmed = status == "confirmed"
         unit_targets = targets.get(unit.id, set())
         lines.append(UnitLine(
-            unit_id=unit.id, kind=unit.kind, text=strip_number(unit.text, unit), part=block.part, block_id=block.id,
+            unit_id=unit.id, kind=unit.kind, text=strip_number(unit.text, unit) if unit.noise_kind is None else unit.text, part=block.part, block_id=block.id,
             table_id=unit.table_id, row_index=unit.row_index, col_index=block.col_index, group_unit_id=unit.group_unit_id,
             lang=unit.lang, number=number,
-            number_note=READ_FROM_TEXT_NOTE if is_read_from_text(unit) else format_number_note(get_number_note(unit), number),
-            remark=reason,
-            deleted=confirmed and disposition == "delete",
+            number_note="" if unit.noise_kind is not None
+            else READ_FROM_TEXT_NOTE if is_read_from_text(unit) else format_number_note(get_number_note(unit), number),
+            remark=(unit.noise_reason or _NOISE_REMARKS[unit.noise_kind]) if auto_deleted else reason,
+            deleted=auto_deleted or (confirmed and disposition == "delete"),
             target_id=next(iter(unit_targets)) if confirmed and disposition == "assigned" and len(unit_targets) == 1 else None,
             blocks=() if unit.group_unit_id is not None else _list_blocks(find_line_table(unit.kind, unit.table_id, block.table_id, tables), tables),
             # 띠 표 제목 줄(번호 칸 + 제목 칸)의 칸 번호는 절 번호라 덩이 밖으로 이어진다
             is_cell_number=unit.number_source == NUMBER_CELL and unit.number_set is None and unit.kind != SECTION_KIND,
             pair_id=pair_of.get(unit.id),
             indent_shift=unit.indent_shift,
-            noise=unit.noise_kind is not None,
+            noise=unit.noise_kind is not None, auto_deleted=auto_deleted,
         ))
     return lines
 

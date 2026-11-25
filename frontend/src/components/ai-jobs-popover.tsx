@@ -27,8 +27,10 @@ import {
   isRequestSlow,
   type RequestOutcome,
 } from "@/lib/ai-jobs-model";
+import { listAcceptKinds } from "@/lib/ai-accept-model";
 import { markFailuresSeen, pokeAiJobs, type AiJobsSnapshot } from "@/lib/ai-jobs-store";
 import { formatKstShort } from "@/lib/datetime";
+import { useDraftingOn } from "@/lib/drafting";
 import { useI18n } from "@/lib/i18n";
 import { getStageHref } from "@/lib/stages";
 import { useAiAcceptOffer } from "@/lib/use-ai-accept-offer";
@@ -82,6 +84,7 @@ interface AiJobsPopoverProps {
 export function AiJobsPopover({ anchorRef, snapshot, onClose }: AiJobsPopoverProps) {
   const { t } = useI18n();
   const acceptOffer = useAiAcceptOffer();
+  const acceptKinds = listAcceptKinds(useDraftingOn() === true);
   const panelRef = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState<FloatingPos | null>(null);
   const [clock, setClock] = useState(() => Date.now());
@@ -301,7 +304,7 @@ export function AiJobsPopover({ anchorRef, snapshot, onClose }: AiJobsPopoverPro
               {t("aiAccept.menuTitle")}
             </p>
             <div className="flex flex-wrap gap-2 px-3 pb-2">
-              {(["classify", "match"] as const).map((kind) => (
+              {acceptKinds.map((kind) => (
                 <button
                   key={kind}
                   type="button"

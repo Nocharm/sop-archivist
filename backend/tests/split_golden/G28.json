@@ -1,0 +1,15 @@
+{
+  "shape": "괄호 안에만 이력 이름이 든 제목",
+  "layout": null,
+  "boxes": [
+    {"text": "1. 목적", "lang": "ko", "kind": "heading", "number": "1.", "excluded": null},
+    {"text": "탱크 세척 방법을 정한다.", "lang": "ko", "kind": "sentence", "number": null, "excluded": null},
+    {"text": "6. 변경 관리 (변경 이력)", "lang": "ko", "kind": "heading", "number": "6.", "excluded": null},
+    {"text": "변경은 품질팀이 승인한다.", "lang": "ko", "kind": "sentence", "number": null, "excluded": null},
+    {"text": "", "lang": "neutral", "kind": "table", "number": null, "excluded": null},
+    {"text": "변경", "lang": "ko", "kind": "cell_sentence", "number": null, "excluded": null},
+    {"text": "일자", "lang": "ko", "kind": "cell_sentence", "number": null, "excluded": null},
+    {"text": "7. 기록", "lang": "ko", "kind": "heading", "number": "7.", "excluded": null},
+    {"text": "기록한다.", "lang": "ko", "kind": "sentence", "number": null, "excluded": null}
+  ]
+}

@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import type { EditOp } from "./api-sop";
+import { createCommandQueue } from "./command-queue";
 import {
   applyLoaded,
-  canStart,
+  buildPaperWaits,
   INITIAL_FOCUS_STATE,
   isGlobalPending,
   isSameFocus,
@@ -165,15 +166,18 @@ describe("locks (rule 6)", () => {
     expect(isUnitLocked(state, 3)).toBe(true);
     expect(isUnitLocked(state, 5)).toBe(false);
   });
-  it("starts work on other units but not on a locked one", () => {
-    const state = run(start(job("a", { unitIds: [3, 4] })));
-    expect(canStart(state, job("b", { unitIds: [5] }))).toBe(true);
-    expect(canStart(state, job("b", { unitIds: [4, 5] }))).toBe(false);
-    expect(canStart(INITIAL_FOCUS_STATE, job("b", { isGlobal: true }))).toBe(true);
+  it("does not lock a box whose decision is being saved - it can be picked and decided again (A1-R4)", () => {
+    expect(isUnitLocked(run(start(job("a", { kind: "save", unitIds: [3] }))), 3)).toBe(false);
+    expect(isUnitLocked(run(start(job("a", { kind: "bulk", unitIds: [3] }))), 3)).toBe(false);
+    expect(isUnitLocked(run(start(job("a", { kind: "join", unitIds: [3] }))), 3)).toBe(true);
   });
-  it("never runs global work beside other work", () => {
-    expect(canStart(run(start(job("a", { unitIds: [3] }))), job("g", { isGlobal: true }))).toBe(false);
-    expect(canStart(run(start(job("g", { isGlobal: true }))), job("b", { unitIds: [9] }))).toBe(false);
+  it("still locks a box that a save and an edit both hold", () => {
+    expect(isUnitLocked(run(start(job("a", { kind: "save", unitIds: [3] })), start(job("b", { kind: "split", unitIds: [3] }))), 3)).toBe(true);
+  });
+  it("drops the follows again when waiting global work is finally sent", () => {
+    const state = run(pick(unit(3)), start(job("u", { kind: "undo", isGlobal: true })), start(job("a")), succeed("a", 10), { type: "dropFollows" });
+    expect(state.follows).toEqual([]);
+    expect(reduceFocus(state, { type: "dropFollows" })).toBe(state);
   });
   it("drops older follows when global work starts - Undo may retire the box they would pick", () => {
     const state = run(pick(unit(3)), start(job("a")), succeed("a", 10), start(job("u", { kind: "undo", isGlobal: true })));
@@ -209,6 +213,35 @@ describe("no request for a unit pending work may have retired (rule 5 - the 404 
   });
   it("does not hold back for a decision save - it never retires a unit", () => {
     expect(isUnitUnsettled(run(start(job("s", { kind: "save", unitIds: [3] }))), 1, 3)).toBe(false);
+    expect(isUnitUnsettled(run(start(job("b", { kind: "bulk", docId: null, unitIds: [3] }))), 1, 3)).toBe(false);
+    // 묶음 전체 일(같은 글자 · 초기화)은 줄을 다시 묶을 수 있다
+    expect(isUnitUnsettled(run(start(job("g", { kind: "bulk", docId: null, isGlobal: true }))), 1, 3)).toBe(true);
+  });
+});
+
+describe("waiting chips (A1-R5)", () => {
+  it("numbers the boxes of what waits, the running one has none", () => {
+    const queue = createCommandQueue<string>();
+    for (const [id, unitId] of [["a", 3], ["b", 4], ["c", 5]] as const) queue.push({ id, kind: "save", isGlobal: false, payload: id, unitIds: [unitId] });
+    queue.take();
+    expect(buildPaperWaits(queue.getState())).toEqual(new Map([[4, 1], [5, 2]]));
+    queue.settle("a");
+    queue.take();
+    expect(buildPaperWaits(queue.getState())).toEqual(new Map([[5, 1]]));
+  });
+  it("keeps the numbers of what a failure stopped", () => {
+    const queue = createCommandQueue<string>();
+    for (const [id, unitId] of [["a", 3], ["b", 4]] as const) queue.push({ id, kind: "save", isGlobal: false, payload: id, unitIds: [unitId] });
+    queue.take();
+    queue.fail("a", "500");
+    expect(buildPaperWaits(queue.getState())).toEqual(new Map([[4, 1]]));
+  });
+  it("keeps the same map while nothing waits, so the far paper is not drawn again", () => {
+    const queue = createCommandQueue<string>();
+    const before = buildPaperWaits(queue.getState());
+    queue.push({ id: "a", kind: "save", isGlobal: false, payload: "a", unitIds: [3] });
+    queue.take();
+    expect(buildPaperWaits(queue.getState())).toBe(before);
   });
 });
 
@@ -256,11 +289,15 @@ describe("readEditKind · listEditUnitIds", () => {
     expect(readEditKind({ type: "set_layout_table", table_id: 4, is_layout: false })).toBe("rewrap");
     expect(readEditKind({ type: "set_number", unit_id: 1, number: null, follow: false })).toBe("ref");
     expect(readEditKind({ type: "clear_noise", unit_ids: [1] })).toBe("toc");
+    expect(readEditKind({ type: "set_noise_reason", unit_ids: [1], reason: "" })).toBe("toc");
+    expect(readEditKind({ type: "start_body", unit_id: 1 })).toBe("toc");
   });
   it("lists the units an edit points at", () => {
     expect(listEditUnitIds({ type: "merge", unit_ids: [1, 2] })).toEqual([1, 2]);
     expect(listEditUnitIds({ type: "move_boundary", left_unit_id: 1, right_unit_id: 2, at: 3 })).toEqual([1, 2]);
     expect(listEditUnitIds({ type: "attach_caption", unit_id: 5, bundle_unit_id: 6 })).toEqual([5, 6]);
+    expect(listEditUnitIds({ type: "set_noise_reason", unit_ids: [7, 8], reason: "x" })).toEqual([7, 8]);
+    expect(listEditUnitIds({ type: "start_body", unit_id: 9 })).toEqual([9]);
     expect(listEditUnitIds({ type: "carve", block_id: 1, start: 0, end: 3 })).toEqual([]);
   });
 });
@@ -295,7 +332,10 @@ describe("planReload (D2 table)", () => {
     expect(planReload({ kind: "split_suggestion", docId: 4, isApplied: false }, ai)).toEqual({ docs: [4], units: false, newDoc: null, written: false, tobe: false, identical: false, splitSuggestions: 4, bundle: false });
   });
   it("a New document edit waits for that document and the New sentences, To-Be behind", () => {
-    expect(planReload({ kind: "new_edit", docId: 9 }, ai)).toEqual({ docs: [], units: false, newDoc: 9, written: true, tobe: true, identical: false, splitSuggestions: null, bundle: false });
+    expect(planReload({ kind: "new_edit", docId: 9, isReleased: false }, ai)).toEqual({ docs: [], units: false, newDoc: 9, written: true, tobe: true, identical: false, splitSuggestions: null, bundle: false });
+  });
+  it("a New document edit that released links also refreshes the Old rows it put on hold", () => {
+    expect(planReload({ kind: "new_edit", docId: 9, isReleased: true }, ai)).toEqual({ docs: "all", units: true, newDoc: 9, written: true, tobe: true, identical: true, splitSuggestions: null, bundle: true });
   });
   it("an edit Undo reloads every Old document when the response does not name one", () => {
     expect(planReload({ kind: "edit_undo", docId: null }, ai)).toEqual({ docs: "all", units: true, newDoc: null, written: false, tobe: false, identical: true, splitSuggestions: null, bundle: true });

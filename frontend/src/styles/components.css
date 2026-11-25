@@ -687,19 +687,11 @@
   .menu[role="listbox"] { max-width: min(480px, calc(100vw - 16px)); max-height: min(320px, calc(100vh - 16px)); overflow-y: auto; }
   .menu-item.opt { height: auto; min-height: var(--ctl); padding-block: 5px; overflow-wrap: anywhere; }
 
-  /* 글을 치면서 고르는 칸(Combobox) - 입력 칸은 다른 입력과 같은 테두리·높이, 목록은 입력 칸 폭. 활성 항목은 메뉴 호버 행과 같은 모양 */
-  .combo-input { display: block; width: 100%; height: 32px; padding: 0 8px; border: 1px solid var(--line-2); border-radius: var(--r-1); background: var(--surface); color: var(--ink); font-size: 13px; }
-  .combo-input:focus { border-color: var(--accent); outline: none; }
-  .combo-input:disabled { color: var(--ink-3); cursor: not-allowed; }
-  .menu.combo-list { min-width: 0; max-width: none; }
-  .combo-option { cursor: pointer; flex-direction: column; align-items: stretch; gap: 0; }
-  .combo-option[data-active] { background: var(--menu-hover); box-shadow: inset 2px 0 0 var(--accent); border-radius: 0 var(--r-1) var(--r-1) 0; }
   /* Assign 우클릭 메뉴 - 확정 항목 오른쪽의 보낼 곳(흐리게, 길면 말줄임)과 글쇠 표시 */
   .menu-item > kbd { flex: none; }
   /* Remark 창의 최근 사유 - 누르면 칸을 채우는 한 줄 단추(두 줄까지) */
   .remark-recent { display: block; width: 100%; padding: 5px 8px; border: 1px solid var(--line); border-radius: var(--r-1); background: var(--surface); color: var(--ink-2); font-size: 12px; line-height: 18px; text-align: left; cursor: pointer; }
   .remark-recent:hover { border-color: var(--line-2); background: var(--menu-hover); color: var(--ink); }
-  .combo-hint { min-width: 0; font-size: var(--fs-micro); line-height: var(--lh-micro); color: var(--ink-3); overflow-wrap: anywhere; }
 
   /* 값 고르기 트리거 - 입력 칸과 같은 테두리·높이. 값이 길면 말줄임하고 화살표 자리는 늘 남긴다 */
   /* 라벨은 평소 가운데, 호버·포커스·열림 때 왼쪽으로 조금 밀리고 오른쪽에 쉐브론이 나타난다 */
@@ -1297,10 +1289,12 @@
   /* 긴 문서의 카드 덩어리(Paper의 PaperChunk, 카드 40장) - 화면 밖 덩어리는 통째로 배치·칠하기를 건너뛴다. 줄·틈마다 건 것만으로는 그 수(1,300문단이면 약 2,650개)만큼
      교차 계산과 배치가 남아 스크롤 한 프레임이 35ms였다(CPU 4배) → 덩어리째 16ms. 어림 높이 1840px = 카드 40장 × 줄 어림 46px.
      고른 줄·나눌 선·포커스가 든 덩어리는 줄과 같이 늘 그린다 - 가두기(contain)가 안의 고정 위치 팝업 기준을 덩어리로 바꾼다.
-     덩어리 안의 줄·틈은 건너뛰지 않는다 - 두 겹이면 위로 굴릴 때 스크롤 고정이 가끔 놓쳐 화면이 1,000px 넘게 튀었다(한 겹이면 0) */
+     접힌 목록의 덩어리(data-fold)는 용지와 같은 격자다 - 묶음 단추가 줄 폭을 채우고, 바깥 여백이 겹치거나 덩어리 밖으로 새지 않아 나누기 전과 자리가 같다.
+     덩어리 안의 줄·틈·한 줄 판은 건너뛰지 않는다 - 두 겹이면 위로 굴릴 때 스크롤 고정이 가끔 놓쳐 화면이 1,000px 넘게 튀었다(한 겹이면 0) */
   .pg[data-strips] .strip-chunk { content-visibility: auto; overflow-clip-margin: 32px; contain-intrinsic-size: auto 1840px; }
+  .pg[data-strips] .strip-chunk[data-fold] { display: grid; grid-template-columns: minmax(0, 1fr); }
   .pg[data-strips] .strip-chunk:has(.strip[data-sel], .cut-anchor, :focus-visible) { content-visibility: visible; }
-  .pg[data-strips] .strip-chunk :is(.strip-row, .strip-gap) { content-visibility: visible; }
+  .pg[data-strips] .strip-chunk :is(.strip-row, .strip-gap, .fold-line) { content-visibility: visible; }
   .pg[data-strips] .strip-row > .strip { flex: 1 1 0; min-width: 0; }
   /* 화면 밖 조각은 그리지 않는다(Unit 수천 개) - 고른 조각·나눌 선이 있는 조각은 팝업·윤곽이 잘리지 않게 뺀다 */
   .pg[data-strips] .strip { position: relative; min-width: 0; padding: 6px var(--pg-pad-r) 6px var(--pg-pad-l); background: var(--paper); border: 1px solid var(--line-2); border-left: 0; border-radius: 0 var(--r-1) var(--r-1) 0; box-shadow: var(--shadow-1); }
@@ -1362,8 +1356,8 @@
   .fold-elsewhere { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 6px; }
   .fold-elsewhere-label { width: 100%; color: var(--ink-3); font-size: var(--fs-micro); }
 
-  /* 목차 블록(Assign Old, MD 1 F6) - 배정 줄이 아닌 흐린 블록 하나. 접히면 머리 줄 + 처리 줄, 펼치면 원문 목차 줄 그대로(한/영 사이 점선 하나).
-     글은 --ink-3(라이트 약 5.6:1)로 물러나고 올리거나 고른 줄만 진해진다. 줄 끝 "목차 아님"은 고른 줄에만 */
+  /* 저절로 삭제된 줄의 블록(Assign Old, MD 1 F6 · 쪼개기 먼저 §7 R3) - 배정 줄이 아닌 흐린 블록 하나. 머리 한 줄과 늘 보이는 두 단추, 펼치면 원문 줄 그대로(취소선, 한/영 사이 점선 하나).
+     글은 --ink-3(라이트 약 5.6:1)로 물러나고 올리거나 고른 줄만 진해진다 */
   .toc-block { flex: 1 1 0; min-width: 0; margin-block: 2px; padding: 6px 10px; border: 1px dashed var(--line-2); border-radius: var(--r-1); background: var(--sunken); color: var(--ink-3); }
   .toc-block[data-sel] { border-style: solid; border-color: var(--accent); }
   .toc-head-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
@@ -1373,7 +1367,6 @@
   .toc-block[data-open] .toc-chevron { transform: rotate(90deg); }
   .toc-tag { flex: none; padding: 0 5px; border: 1px solid var(--line-2); border-radius: var(--r-1); font-size: var(--fs-micro); font-weight: 600; }
   .toc-head-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .toc-note { margin: 2px 0 0 19px; font-size: var(--fs-micro); }
   .toc-act { flex: none; height: 22px; padding: 0 8px; font-size: 11.5px; }
   /* 제목 → 문장 묶음 머리(F8b) - 바꾼 조항 짝의 첫 줄 위 한 줄. 목차 머리와 같은 흐린 꼬리표, 되돌리기는 줄 끝 */
   .shift-head { display: flex; align-items: center; gap: 6px; min-width: 0; margin: 4px 0 2px; color: var(--ink-3); font-size: 12px; }
@@ -1396,6 +1389,17 @@
   .toc-line[data-break] { margin-top: 4px; padding-top: 4px; border-top: 1px dashed var(--line-2); }
   .toc-line-text { flex: 1 1 0; min-width: 0; padding: 1px 4px; border: 0; border-radius: var(--r-1); background: none; color: var(--ink-3); font: inherit; font-size: 12.5px; text-align: left; white-space: pre-wrap; overflow-wrap: anywhere; cursor: pointer; }
   .toc-line-text:hover, .toc-line[data-picked] .toc-line-text { background: var(--hover); color: var(--ink-2); }
+  /* 머리의 글자 단추 둘 - 좁으면 머리 글 아래 줄로 내려가 글을 덮지 않는다. 누르는 면은 높이 26px */
+  .noise-head-row { flex-wrap: wrap; row-gap: 4px; }
+  .noise-head-row > .toc-head { flex: 1 1 180px; min-height: 26px; }
+  .noise-acts { display: inline-flex; flex: none; gap: 4px; margin-left: auto; }
+  .noise-act { flex: none; height: 26px; padding: 0 8px; font-size: 11.5px; }
+  .noise-line-text { text-decoration: line-through; text-decoration-color: color-mix(in oklab, currentColor 55%, transparent); }
+  .noise-line-reason { flex: 0 1 30%; min-width: 0; overflow: hidden; color: var(--ink-3); font-family: var(--font-sans); font-size: var(--fs-micro); text-overflow: ellipsis; white-space: nowrap; }
+  /* 줄 끝 아이콘 단추 둘 - 흐리게 늘 보이고, 라벨이 펼쳐질 폭을 잡아 두어 줄 글을 밀거나 덮지 않는다. 고른 줄은 삭제 취소가 펼친 채 */
+  .noise-line-acts { flex: none; width: 124px; }
+  .noise-line-acts > .mbtn { height: 26px; padding: 0 5px; font-size: 11.5px; opacity: .75; }
+  .noise-line-acts > .mbtn:is(:hover, :focus-visible, .reveal) { opacity: 1; }
 
   /* 접힌 삭제 줄(Assign Old, 설계 2026-11-20 D6) - 목차 블록처럼 흐린 한 줄. DELETED 꼬리표만 반투명 빨강, 나머지는 --ink-3로 물러나고 올리면 진해진다.
      Shift로 고른 줄(data-pick)은 강조색 테두리 */
@@ -1408,6 +1412,18 @@
   .deleted-open[data-open] > .fold-inner { animation: fold-release 0s var(--dur-slow) forwards; }
   @keyframes fold-release { to { overflow: visible; } }
   .pg[data-strips] .deleted-open .strip[data-strip-unit] { background: var(--danger-tint); }
+  /* 누른 순간 접힌 줄은 저장될 때까지 박스와 같은 처리 중 쉬머(motion.css pending-sweep)와 기다리는 칩, 저장되지 못해 다시 펼친 박스(deleted-release)는 위험 바탕 없이 */
+  .pg[data-strips] .deleted-line[data-pending] {
+    background-image: linear-gradient(100deg, transparent 30%, color-mix(in oklab, var(--accent) 16%, transparent) 50%, transparent 70%);
+    background-size: 250% 100%;
+    background-repeat: no-repeat;
+    animation: pending-sweep 1200ms linear infinite;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .pg[data-strips] .deleted-line[data-pending] { background-image: linear-gradient(color-mix(in oklab, var(--accent) 8%, transparent) 0 0); background-size: 100% 100%; animation: none; }
+  }
+  .deleted-line > .pending-pill { position: static; flex: none; height: 16px; }
+  .deleted-release[data-open] > .fold-inner { animation: fold-release 0s var(--dur-slow) forwards; }
   .fold-go { font-family: var(--font-mono); font-size: 12px; }
 
   /* 조각 사이 틈 - 위아래 합치기가 늘 보인다(평소엔 낮고 넓은 알약, 올리면 라벨이 펼쳐진다) */
@@ -1535,6 +1551,10 @@
   .num-kind:disabled { cursor: default; }
   .num-kind-bullet { min-width: 24px; padding: 0 6px; }
   .num-continuous { color: var(--ink-3); font-family: var(--font-mono); font-size: 11px; white-space: nowrap; }
+  .num-actions { display: flex; align-items: center; justify-content: flex-end; gap: 6px; }
+  .num-action { height: 24px; padding: 0 10px; font-size: 12px; }
+  .num-actions .num-note { margin-right: auto; }
+  .num-action[aria-disabled="true"] { opacity: 0.5; cursor: not-allowed; }
   .num-note { color: var(--ink-3); font-size: 11px; }
   .num-follow { display: flex; align-items: center; gap: 6px; cursor: pointer; }
   .num-follow-preview { display: flex; flex-wrap: wrap; gap: 4px 8px; font-family: var(--font-mono); font-size: 11px; color: var(--accent); }
@@ -1563,9 +1583,13 @@
   .pending-pill { position: absolute; z-index: 3; display: inline-flex; align-items: center; height: 18px; padding: 0 8px; border: 1px solid var(--accent); border-radius: 9px; background: var(--surface); color: var(--accent); font: 600 var(--fs-cap) / 1 var(--font-ui); white-space: nowrap; box-shadow: var(--shadow-1); pointer-events: none; }
   :is(.strip, .cell-piece) > .pending-pill { top: -9px; left: var(--pg-pad-l, 12px); }
   .cell-piece > .pending-pill { left: 4px; }
+  /* 기다리는 명령의 칩 - 아직 보내지 않아 테두리 · 글이 옅다. 같은 박스에 처리 중 알약이 있으면 오른쪽 끝으로 비킨다 */
+  .pending-pill.queue-chip { border-color: var(--line-2); color: var(--ink-2); }
+  :is(.strip, .cell-piece) > .pending-pill + .queue-chip { right: 8px; left: auto; }
   :is(.strip-gap, .cell-gap) > .pending-pill { top: 50%; left: calc(min(var(--gap-tab, 0px), var(--gap-tab-cap, 9999px)) + var(--pg-pad-l, 0px)); translate: 0 -50%; }
   .strip-gap:has(> .pending-pill) { z-index: 2; }
   :is(.unwrap-head, .toc-head-row) > .pending-pill { position: static; margin-left: 8px; }
+  .unwrap-head-row > .pending-pill { position: static; align-self: center; flex: none; margin-left: 8px; }
   /* 안내 줄이 선 박스의 줄 끝 고리 표시 - 짝이 멀리 있다는 것을 같이 알린다 */
   .pmark-host[data-on] { background: var(--accent-tint); }
   .pmark-host[data-on] .pmark.pair { color: var(--accent); }
@@ -1712,6 +1736,11 @@
 /* ---- Assign: Old 조각 ‖ New 원문 나란히(설계 2026-11-09-assign-unified §3, docs/architecture/decisions.md) ---- */
 @layer components {
   .assign-desk { display: grid; grid-template-rows: auto minmax(0, 1fr); gap: 10px; min-width: 0; min-height: 0; padding: 10px 14px 14px; background: var(--bg); }
+  /* 실패해 멈춘 명령의 알림 한 줄 - 위쪽 줄과 두 문서 사이에 제 줄을 얻는다(문서를 덮지 않는다) */
+  .assign-desk:has(> .queue-failed) { grid-template-rows: auto auto minmax(0, 1fr); }
+  .queue-failed { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 6px 10px; border: 1px solid var(--st-hold-line); border-radius: var(--r-2); background: var(--st-hold-tint); color: var(--ink); font-size: var(--fs-cap); line-height: 18px; }
+  .queue-failed > svg { flex: none; color: var(--st-hold-ink); }
+  .queue-failed > .btn { flex: none; }
     /* 상태 칩 한 벌 - Unit 상태·Assign 필터·용지 보류. 각진 mono 대문자, 톤마다 --sc-ink/--sc-tint, 고른 필터는 --sc-ink 채움 */
   .schip { --sc-ink: var(--ink-2); --sc-tint: var(--sunken); display: inline-flex; align-items: center; gap: 4px; height: 18px; padding: 0 6px 0 5px; border: 0; border-radius: var(--r-1); background: var(--sc-tint); color: var(--sc-ink); font: 700 9.5px / 1 var(--font-mono); letter-spacing: .03em; text-transform: uppercase; white-space: nowrap; }
   .schip[data-size="sm"] { height: 15px; gap: 3px; padding: 0 4px; font-size: 9px; }
@@ -2074,6 +2103,20 @@
   .renumber-mark, .pg .renumber-mark { display: inline-block; margin-right: 6px; padding: 0 5px; border: 1px solid var(--line-2); border-radius: var(--r-1); background: var(--sunken); font: 500 11px / 18px var(--font-mono); color: var(--ink-2); white-space: nowrap; vertical-align: 1px; }
 
   .assign-side { display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; border-left: 1px solid var(--line); background: var(--surface); }
+  /* 떼는 오른쪽 칸(components/assign/side-float.tsx, 설계 2026-11-25 §6 S3) - 뜨면 두 문서가 그 열을 쓴다. 층은 위치 판(20)보다 위, 메뉴 · 창(40~)보다 아래.
+     자리 · 크기는 인라인(lib/side-float-model). 테두리는 그림자로 그려 접은 높이가 머리 한 줄(36px) 그대로다 */
+  .assign-frame { grid-template-columns: minmax(0, 1fr) clamp(280px, 24vw, 420px); }
+  .assign-frame:has(> .assign-side[data-float]) { grid-template-columns: minmax(0, 1fr); }
+  .assign-side[data-float] { position: fixed; z-index: 30; border-left: 0; border-radius: var(--r-3); box-shadow: 0 0 0 1px var(--line-2), var(--shadow-2); }
+  .assign-side[data-folded] > :not(.side-float-head) { display: none; }
+  .side-float-head { flex: none; display: flex; align-items: center; gap: 2px; height: 36px; padding: 0 6px 0 var(--pad); border-bottom: 1px solid var(--line); background: var(--sunken); cursor: grab; touch-action: none; user-select: none; }
+  .side-float-head[data-drag] { cursor: grabbing; }
+  .side-float-title { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-cap); font-weight: 600; color: var(--ink-2); }
+  /* 칸이 뜨면 도구 줄 · New 칸 머리가 창 오른쪽 끝까지 온다 - 알림(오른쪽 위)이 되돌리기 단추를 덮지 않게 그 아래로 내린다. AI 작업 목록이 쓰는 인라인 값이 이긴다 */
+  :root:has(.assign-side[data-float]) { --toast-top: 132px; }
+  /* 오른쪽 아래에 뜬 판에 문서 끝 줄이 가려지지 않게 - 판 높이(창의 70%)만큼 더 굴려 판 위로 올릴 수 있다.
+     padding이 아니라 덧댄 빈 칸 - 스크롤 칸의 padding이 바뀌면 브라우저가 그때의 스크롤 고정을 건너뛰어 떼고 붙일 때 보던 줄이 튄다 */
+  .assign-frame:has(> .assign-side[data-float]) .pane-body::after { content: ""; display: block; height: 70vh; }
   /* 오른쪽 패널 - 위에서 아래로 일하는 순서: 머리(이 Unit·검사·확정한 사람) → ① 보낼 곳(이곳만 스크롤) → ② 결정 칸(아래에 붙음, 맨 끝 확정).
      결정 칸은 패널 몸통의 52%까지만 크고 넘치면 고른 곳 상자 부분만 스크롤(Remark·확정은 늘 보인다) - 목록이 늘 몇 줄은 보이고 확정은 화면 밖으로 나가지 않는다.
      패널이 아주 낮으면 몸통 전체가 스크롤된다(목록 최소 높이를 지키려고) */
@@ -2142,6 +2185,10 @@
   .shape-mode button[aria-pressed="true"] { background: var(--surface); color: var(--ink); box-shadow: 0 0 0 1px var(--line-2); cursor: default; }
   .shape-mode button[aria-disabled="true"] { color: var(--ink-4); cursor: not-allowed; }
   .assign-confirm { width: 100%; height: 40px; font-size: 14px; }
+  .assign-confirm[aria-disabled="true"] { opacity: 0.5; cursor: not-allowed; }
+  .assign-confirm.danger kbd { background: transparent; border-color: currentColor; color: inherit; }
+  /* 눌러 옮긴 포커스의 자리일 뿐 Tab으로 오지 않는다 - 용지 전체에 테두리를 두르지 않는다 */
+  .pane-body:focus-visible { outline: none; }
   .assign-alt { height: 30px; min-width: 0; gap: 4px; padding: 0 6px; font-size: var(--fs-cap); font-weight: 400; width: 100%; }
   .assign-alt > :not(svg, kbd) { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
   /* Old 문서 대시보드 - 문서 고르기 옆 단추에서 뜨는 상자(1.2.0 피드백 6번). 색은 상태 칩과 같은 값 */
@@ -2172,7 +2219,8 @@
   .doc-dash-kv b { margin-left: 4px; font-weight: 600; }
   .doc-dash-chips { display: flex; flex-wrap: wrap; gap: 4px; }
   .doc-dash-chip { padding: 1px 6px; border: 1px solid var(--line); border-radius: var(--r-1); font-size: var(--fs-cap); font-variant-numeric: tabular-nums; }
-  .doc-dash-chip:hover { background: var(--hover); }
+  .doc-dash-chip:hover:not(:disabled) { background: var(--hover); }
+  .doc-dash-chip:disabled { cursor: default; color: var(--ink-3); }
   .doc-dash-dl { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; margin-top: 12px; }
   .doc-dash-dl small { margin-bottom: 6px; color: var(--ink-3); font-size: var(--fs-cap); }
   .doc-dash-pick { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
@@ -2432,19 +2480,16 @@
   .figure-card-act { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; border: 1px solid var(--line-2); border-radius: var(--r-1); background: var(--surface); color: var(--ink-2); }
   .figure-card-act:hover { border-color: var(--ink-3); background: var(--hover); color: var(--ink); }
   .figure-card-act[data-tone="danger"]:hover { border-color: var(--danger-ink); background: var(--danger-tint); color: var(--danger-ink); }
-  /* 위치 판(spot-panel) - 2단 보기는 Old 칸 왼쪽에서, 1단 보기는 오른쪽에서 나온다(B7). 폭 600px(전 460의 약 1.3배) */
+  /* 위치 판(spot-panel) - 2단 보기는 Old 칸 왼쪽에서, 1단 보기는 오른쪽에서 나온다(B7). 폭 min(600px, 92%), 1단 보기는 --spot-w */
   .assign-pane:has(> .spot-panel) { position: relative; }
   .spot-panel { position: absolute; inset-block: 0; left: 0; z-index: 20; display: flex; flex-direction: column; width: min(600px, 92%); direction: ltr; border-right: 1px solid var(--line-2); background: var(--raised); box-shadow: var(--shadow-2); animation: spot-panel-in var(--dur-slow) cubic-bezier(.16, 1, .3, 1) both; }
   .spot-panel[data-side="right"] { left: auto; right: 0; border-right: 0; border-left: 1px solid var(--line-2); animation-name: spot-panel-in-right; }
   @keyframes spot-panel-in { from { transform: translateX(-100%); opacity: 0; } }
   @keyframes spot-panel-in-right { from { transform: translateX(100%); opacity: 0; } }
-  /* 1단 보기에서 판이 열리면 칸을 두 열(용지 | 판 min(600px, 45%))로 보고 가운데 용지가 판 옆으로 비켜선다(움직임은 lib/use-pane-slide useSheetSlide).
-     칸이 1000px보다 좁으면(용지가 약 540px 아래로 줄면) 비키지 않고 판(min(600px, 92%))이 용지를 덮는다 */
-  .assign-panes[data-single] [data-pane="old"] { container: old-pane / inline-size; }
-  @container old-pane (min-width: 1000px) {
-    .assign-panes[data-single] [data-pane="old"] > .spot-panel[data-side="right"] { width: min(600px, 45%); }
-    .assign-panes[data-single] [data-pane="old"]:has(> .spot-panel[data-side="right"]) > .pane-body { padding-right: calc(min(600px, 45cqi) + 12px); }
-  }
+  /* 1단 보기에서 판이 열리면(lib/use-pane-slide useSheetSlide가 data-spot · --spot-w를 단다) 용지는 폭 그대로다 - 자리가 있으면(aside) 왼쪽으로 붙고 판이 오른쪽 자리를 쓰고,
+     모자라면(cover) 용지는 제자리에 두고 판이 덮는다. 폭을 줄이면 줄이 다시 접혀 고른 박스가 위아래로 튀었다 */
+  .assign-panes[data-spot="aside"] [data-pane="old"] .sheet { margin-inline: 4px auto; }
+  .assign-panes[data-spot] [data-pane="old"] > .spot-panel[data-side="right"] { width: var(--spot-w); }
   .spot-panel-head { display: flex; align-items: center; gap: 8px; padding: 6px 8px 6px 12px; border-bottom: 1px solid var(--line); }
   .spot-panel-title { flex: 1 1 0; min-width: 0; font-size: 12px; font-weight: 600; color: var(--ink); }
   .spot-panel-body { flex: 1 1 0; min-height: 0; overflow-y: auto; padding: 10px 6px 16px; }

@@ -1,7 +1,7 @@
 """단위 서비스 — 추출 블록을 규칙으로 쪼개 단위·판단 행·코드 짝을 쓰고, 언어 배치가 바뀌면 짝을 다시 제안하고, 커버리지를 지킨다."""
 
 import asyncio
-from collections.abc import Sequence
+from collections.abc import Collection, Mapping, Sequence
 
 from sqlalchemy import delete, func, insert, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -28,6 +28,7 @@ from app.sop.models import (
     UnitPairMember,
     UnitRef,
 )
+from app.sop.noise import NoiseLine, find_noise_lines
 from app.sop.numbering import (
     NUMBER_PAIR,
     ClauseLine,
@@ -39,21 +40,28 @@ from app.sop.refs import (
     REF_CONFIRMED,
     REF_LANG,
     REF_SPLIT_ACTOR,
+    SENTENCE_KINDS,
     SectionLine,
+    find_leading_number,
     find_ref_section_lines,
     is_proposing_version,
+    list_ref_section_blocks,
     read_leading_ref_number,
 )
 from app.sop.segment import (
     NEUTRAL,
+    RULE_LEGACY,
+    RULE_PARAGRAPH,
     BlockView,
     TableView,
     UnitDraft,
     build_unit_drafts,
     build_unit_text,
     count_pair_directions,
+    is_band_heading,
     is_band_table,
     is_certain_band,
+    read_band_level,
     suggest_interleaved_pairs,
 )
 
@@ -102,23 +110,28 @@ async def create_initial_units(session: AsyncSession, document: Document, extrac
             ).where(SourceTable.extraction_id == extraction.id)
         )
     ).all()
+    # 규칙 2부터 New도 Old와 같은 박스로 쪼갠다(R4) — 규칙 1의 New는 띠 표 · 제목 조항을 올린 그대로 둔다
+    shapes_headings = document.side == "old" or extraction.split_rule >= RULE_PARAGRAPH
     # 꼴이 확실한 띠 표는 올리자마자 벗긴 표(레이아웃)로 둔다 — 제목 줄이 되고, "표로 되돌리기"(set_layout_table)가 반대 길이다
-    # (F4 · §11-1). 띠 표는 표형 옛 SOP의 절 제목 표라 옛 문서만 본다
+    # (F4 · §11-1)
     bands = (
         {table_id for table_id, _, signals, parent, part in tables if is_certain_band(signals, parent, part)}
-        if document.side == "old" else set()
+        if shapes_headings else set()
     )
     if bands:
         await session.execute(update(SourceTable).where(SourceTable.id.in_(bands)).values(is_layout=True))
     table_rows = [
         (table_id, is_layout or table_id in bands, is_band_table(signals)) for table_id, is_layout, signals, _, _ in tables
     ]
+    band_levels = {table_id: read_band_level(signals) for table_id, _, signals, _, _ in tables}
     # 200만 자 쪼개기는 수 초까지 걸린다 — 단일 워커 backend가 묶음 잠금을 쥔 채 이벤트 루프를 막지 않게 스레드에서 돈다
     drafts, unit_rows = await asyncio.to_thread(
         _build_unit_rows, extraction.id, block_rows.all(), table_rows, document.language_layout,
-        document.file_format == LINE_SPLIT_FORMAT, document.side == "old",
+        document.file_format == LINE_SPLIT_FORMAT, shapes_headings,
         # 옛 추출기의 추출은 Reference 절을 확정하지 않고 글에서 제안한다(다시 쪼개도 같은 추출의 규칙을 따른다)
         not is_proposing_version(extraction.extractor_version),
+        extraction.split_rule,
+        band_levels,
     )
     if not drafts:
         return
@@ -146,7 +159,7 @@ async def create_initial_units(session: AsyncSession, document: Document, extrac
         await session.execute(
             insert(UnitDecision), [{"unit_id": unit_id, "bundle_id": document.bundle_id} for unit_id in unit_ids]
         )
-        # 옛 문서의 표·그림 참조를 잇는다 — caption_refs → units 순환 import라 여기서 부른다
+        # 옛 문서의 표·그림 참조를 잇는다(New는 이미 제 번호를 갖고 있어 새 번호로 바꿔 쓸 일이 없다) — caption_refs → units 순환 import라 여기서 부른다
         from app.sop.caption_refs import detect_caption_refs
 
         await detect_caption_refs(session, extraction.id)
@@ -168,17 +181,46 @@ def _build_unit_rows(
     split_lines: bool,
     shift_headings: bool = False,
     confirm_ref_sections: bool = False,
+    rule: int = RULE_LEGACY,
+    band_levels: Mapping[int, int | None] = {},
 ) -> tuple[list[UnitDraft], list[dict[str, object]]]:
     """블록·표 행 → 단위 초안과 INSERT 행(local_no는 1부터) — DB를 쓰지 않는 순수 계산이라 스레드에서 돌린다.
 
-    shift_headings(옛 문서)면 제목답지 않은 제목 줄을 문장으로 바꾸고(F8b), 번호 없는 번역 조항의 첫 문장이 앞 조항의 번호를 물려받는다.
-    confirm_ref_sections면 Reference 절 아래 줄을 REF로 둔다(refs.find_ref_section_lines).
+    shift_headings(옛 문서와 규칙 2의 New)면 제목답지 않은 제목 줄을 문장으로 바꾸고(F8b), 번호 없는 번역 조항의 첫 문장이 앞 조항의 번호를 물려받는다.
+    confirm_ref_sections면 Reference 절 아래 줄을 REF로 둔다(refs.find_ref_section_lines). 규칙 2는 참조 줄을 규칙 1의 줄로 먼저
+    찾아(한 문단에 줄바꿈으로 적은 참조 줄들을 잇지 않게) 그 조각을 그대로 둔 채 나머지를 잇는다(R2-6). 규칙 2는 1장 앞과 개정 이력에
+    잡음 표시를 붙인다(R3) — 이미 올린 문서(규칙 1)는 그대로다.
     """
     blocks = [BlockView(*row) for row in block_rows]
-    drafts = build_unit_drafts(
-        blocks, [TableView(*row) for row in table_rows], layout, split_lines=split_lines, shift_headings=shift_headings
-    )
+    tables = [TableView(*row) for row in table_rows]
+    by_block = {block.id: block for block in blocks}
     block_texts = {block.id: block.text for block in blocks}
+
+    def build_drafts(of: Sequence[BlockView], by_rule: int, kept: Mapping[int, Collection[int]]) -> list[UnitDraft]:
+        return build_unit_drafts(
+            of, tables, layout, split_lines=split_lines, shift_headings=shift_headings, rule=by_rule, kept=kept
+        )
+
+    def find_ref_lines(of: Sequence[UnitDraft], texts: Sequence[str]) -> list[int]:
+        section_lines = [
+            SectionLine(
+                draft.kind, text, draft.lang, by_block[draft.spans[0][0]].heading_level if draft.spans else None,
+                not draft.spans or by_block[draft.spans[0][0]].part == BODY_PART, draft.noise_kind is not None,
+            )
+            for draft, text in zip(of, texts, strict=True)
+        ]
+        return find_ref_section_lines(
+            section_lines, interleaved=layout == INTERLEAVED_LAYOUT, separate=layout == SEPARATE_LAYOUT
+        )
+
+    kept: dict[int, set[int]] = {}
+    # 규칙 1 초안은 Reference 절 블록만으로 만든다 — 200만 자 문서를 통째로 두 번 쪼개지 않게
+    if rule != RULE_LEGACY and confirm_ref_sections:
+        legacy = build_drafts(list_ref_section_blocks(blocks, tables), RULE_LEGACY, {})
+        for index in find_ref_lines(legacy, [build_unit_text(draft.spans, block_texts) for draft in legacy]):
+            for block_id, start, _ in legacy[index].spans:
+                kept.setdefault(block_id, set()).add(start)
+    drafts = build_drafts(blocks, rule, kept)
     signals = {block.id: block.signals for block in blocks if block.signals}
     rows = [
         {
@@ -204,22 +246,57 @@ def _build_unit_rows(
     ]
     for index, number in find_inherited_numbers(lines).items():
         rows[index].update(number_read=number, number_source=NUMBER_PAIR, number_len=0)
+    if rule >= RULE_PARAGRAPH:
+        _mark_noise(drafts, rows, blocks, band_levels, separate=layout == SEPARATE_LAYOUT)
     if not confirm_ref_sections:
         return drafts, rows
-    by_block = {block.id: block for block in blocks}
-    section_lines = [
-        SectionLine(
-            draft.kind, str(row["text"]), draft.lang,
-            by_block[draft.spans[0][0]].heading_level if draft.spans else None,
-            not draft.spans or by_block[draft.spans[0][0]].part == BODY_PART, draft.noise_kind is not None,
-        )
-        for draft, row in zip(drafts, rows, strict=True)
-    ]
-    for index in find_ref_section_lines(
-        section_lines, interleaved=layout == INTERLEAVED_LAYOUT, separate=layout == SEPARATE_LAYOUT
-    ):
+    if rule == RULE_LEGACY:
+        ref_lines = find_ref_lines(drafts, [str(row["text"]) for row in rows])
+    else:
+        # 번호 칸이 앞에 붙은 줄은 둘째 범위가 글이다
+        ref_lines = [
+            index for index, draft in enumerate(drafts)
+            if draft.kind in SENTENCE_KINDS and rows[index]["noise_kind"] is None
+            and any(start in kept.get(block_id, ()) for block_id, start, _ in draft.spans[:2])
+        ]
+    for index in ref_lines:
         rows[index]["lang"] = REF_LANG
     return drafts, rows
+
+
+def get_noise_langs(lang: str, text: str) -> frozenset[str]:
+    """앞부분 판정이 보는 줄의 언어 — 문서 번호로 시작하는 줄(참조 줄)은 제목 언어가 그 반쪽의 언어가 아니라 중립으로 둔다(한글 반쪽
+    끝의 영어 제목 참조 줄을 둘째 반쪽의 앞부분으로 지우지 않게)."""
+    return frozenset({lang}) if lang in ("ko", "en") and find_leading_number(text) is None else frozenset()
+
+
+def _mark_noise(
+    drafts: Sequence[UnitDraft], rows: Sequence[dict[str, object]], blocks: Sequence[BlockView],
+    band_levels: Mapping[int, int | None], *, separate: bool,
+) -> None:
+    """본문 앞부분 · 개정 이력에 잡음 표시(noise.find_noise_lines) — 묶음(표 · 그림)의 칸 · 캡션은 묶음을 따른다. rows를 고친다."""
+    by_seq = {block.seq: block for block in blocks}
+    langs = [get_noise_langs(draft.lang, str(row["text"])) for draft, row in zip(drafts, rows, strict=True)]
+    group_langs: dict[int, frozenset[str]] = {}
+    for draft, own in zip(drafts, langs, strict=True):
+        if draft.group_index is not None:
+            group_langs[draft.group_index] = group_langs.get(draft.group_index, frozenset()) | own
+    lines = []
+    for index, (draft, row) in enumerate(zip(drafts, rows, strict=True)):
+        block = by_seq[draft.pos_seq]
+        is_band = is_band_heading(draft.kind, draft.table_id)
+        lines.append(NoiseLine(
+            kind=draft.kind, text=str(row["text"]),
+            langs=group_langs.get(index if draft.group_index is None else draft.group_index, langs[index]),
+            number=read_draft_number(row), level=band_levels.get(draft.table_id) if is_band else block.heading_level,
+            is_body=block.part == BODY_PART, is_flow=draft.table_id is None or is_band, noise=draft.noise_kind,
+            group=draft.group_index,
+        ))
+    for index, noise_kind in find_noise_lines(lines, separate=separate).items():
+        rows[index]["noise_kind"] = noise_kind
+    for draft, row in zip(drafts, rows, strict=True):
+        if draft.group_index is not None:
+            row["noise_kind"] = rows[draft.group_index]["noise_kind"]
 
 
 async def refresh_code_pairs(

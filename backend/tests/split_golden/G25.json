@@ -1,0 +1,12 @@
+{
+  "shape": "장이 제N장 꼴이고 절차 안 단계가 1부터",
+  "layout": null,
+  "boxes": [
+    {"text": "합성 표준 절차서", "lang": "ko", "kind": "sentence", "number": null, "excluded": null},
+    {"text": "제1장 목적", "lang": "ko", "kind": "sentence", "number": null, "excluded": null},
+    {"text": "탱크 세척 방법을 정한다.", "lang": "ko", "kind": "sentence", "number": null, "excluded": null},
+    {"text": "제2장 절차", "lang": "ko", "kind": "sentence", "number": null, "excluded": null},
+    {"text": "1. 전원을 켠다.", "lang": "ko", "kind": "sentence", "number": "1.", "excluded": null},
+    {"text": "2. 압력을 확인한다.", "lang": "ko", "kind": "sentence", "number": "2.", "excluded": null}
+  ]
+}

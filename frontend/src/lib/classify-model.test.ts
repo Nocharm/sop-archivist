@@ -17,7 +17,9 @@ import {
   buildCellOwners,
   isPlaceOption,
   isWrittenCell,
+  listPickOptions,
   listTreeOptions,
+  readHiddenPlace,
   listTreeRows,
   isSentenceUnit,
   isTranslationOf,
@@ -28,6 +30,7 @@ import {
   pickRowStatus,
   previewLinkChange,
   previewSlotChange,
+  describeLegacyMove,
   readDestination,
   readHumanReason,
   readSlotKind,
@@ -137,6 +140,21 @@ describe("destinations", () => {
     expect(options.find((option) => option.id === "slot:6:purpose")?.disabled).toBe(false);
     expect(options.filter((option) => option.docCode === "WI-01").map((option) => option.id)).toEqual(["step:7:1:instruction", "step:7:1:why"]);
     expect(options.some((option) => option.docCode === "WI-04")).toBe(false);
+  });
+
+  it("offers no place in an unwritten document while drafting is hidden", () => {
+    expect(listPickOptions(TOBE, false)).toEqual([]);
+    expect(listPickOptions(TOBE, true)).toEqual(buildDestinationOptions(TOBE));
+  });
+
+  it("still reads where a row sits in a hidden document", () => {
+    const options = buildDestinationOptions(TOBE);
+    for (const option of options) expect(readHiddenPlace(option.destination, options)).toEqual({ docCode: option.docCode, label: option.label });
+    // 놓인 문장에 이은 초안과 이름을 못 찾는 자리(지운 칸)도 숨긴 문서의 자리다 - 문서 번호까지는 읽는다
+    expect(readHiddenPlace({ kind: "join", docId: 6, targetId: 1 }, options)).toEqual({ docCode: "SOP-CF", label: "" });
+    expect(readHiddenPlace({ kind: "step", docId: 99, step: 1, part: "why" }, options)).toEqual({ docCode: "", label: "" });
+    const shown: Array<Destination | null> = [{ kind: "link", targetIds: [1] }, { kind: "delete" }, { kind: "move" }, null];
+    for (const destination of shown) expect(readHiddenPlace(destination, options)).toBeNull();
   });
 
   it("lists the SOP places in the outline's order with the item's own name and level", () => {
@@ -307,6 +325,16 @@ describe("save request", () => {
 
   it("reads the current destination back", () => {
     expect(readDestination(group, [10, 11])).toEqual({ kind: "slot", docId: 6, slotKey: "scope" });
+  });
+
+  it("still reads a row moved to another Bundle earlier, read-only", () => {
+    const moved = { ...makeUnitRow(1, "confirmed"), decision: { ...makeUnitRow(1, "confirmed").decision, disposition: "move_external" as const, move_target_code: "SOP-QC-99999" } };
+    const movedGroup: Group = { units: [{ unit_id: 1, display_id: "D-1", document_id: 1, kind: "sentence", lang: "ko", text: "t1", group_id: null, decision: moved.decision, cell_unit_ids: [] }], targets: [] };
+    expect(readDestination(movedGroup, [1])).toEqual({ kind: "move" });
+    expect(describeLegacyMove([moved])).toEqual({ code: "SOP-QC-99999" });
+    // 짝의 한쪽만 이동이어도 줄 전체가 읽기 전용이고 번호는 이동한 단위의 것이다
+    expect(describeLegacyMove([makeUnitRow(5, "unassigned"), moved])).toEqual({ code: "SOP-QC-99999" });
+    expect(describeLegacyMove([makeUnitRow(2, "confirmed"), { ...makeUnitRow(3, "confirmed"), decision: { ...makeUnitRow(3, "confirmed").decision, disposition: "delete" } }])).toBeNull();
   });
 });
 

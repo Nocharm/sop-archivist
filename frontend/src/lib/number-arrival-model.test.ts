@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { UnitSpan, ViewNumber, ViewUnit } from "@/lib/api-sop";
-import { findArrivedNumbers } from "@/lib/number-arrival-model";
+import { applyExpectedNumbers, findArrivedNumbers, listExpectedNumbers, readExpectedNumber } from "@/lib/number-arrival-model";
 
 type Box = Pick<ViewUnit, "id" | "spans" | "number">;
 
@@ -30,5 +30,61 @@ describe("findArrivedNumbers", () => {
     const prev = new Map([unit(1, [10, 0, 9], null)]);
 
     expect([...findArrivedNumbers(prev, new Map([unit(1, [10, 0, 9], "2.1")]))]).toEqual([1]);
+  });
+});
+
+describe("readExpectedNumber", () => {
+  it("reads the number a set_number edit will give", () => {
+    expect(readExpectedNumber({ type: "set_number", unit_id: 7, number: "5.2", follow: true })).toEqual({ unitId: 7, value: "5.2" });
+    expect(readExpectedNumber({ type: "set_number", unit_id: 7, number: null, follow: false })).toEqual({ unitId: 7, value: null });
+  });
+
+  it("knows no number for the other edits", () => {
+    expect(readExpectedNumber({ type: "merge", unit_ids: [1, 2] })).toBeNull();
+  });
+});
+
+describe("applyExpectedNumbers", () => {
+  it("shows the expected number and leaves the other boxes and the map of the server alone", () => {
+    const units = new Map([unit(1, [10, 0, 9], "6.1"), unit(2, [11, 0, 9], null)]);
+
+    const shown = applyExpectedNumbers(units, new Map([[1, "5.2"]]));
+
+    expect(shown.get(1)?.number?.value).toBe("5.2");
+    expect(shown.get(1)?.number?.read).toBe("6.1");
+    expect(shown.get(2)).toBe(units.get(2));
+    expect(units.get(1)?.number?.value).toBe("6.1");
+  });
+
+  it("gives the same map when nothing is expected, so nothing is drawn again", () => {
+    const units = new Map([unit(1, [10, 0, 9], "6.1")]);
+
+    expect(applyExpectedNumbers(units, new Map())).toBe(units);
+    expect(applyExpectedNumbers(units, new Map([[9, "1"]]))).toBe(units);
+  });
+
+  it("starts the arrival at the press and does not start it again when the answer agrees", () => {
+    const before = new Map([unit(1, [10, 0, 9], null)]);
+    const shown = applyExpectedNumbers(before, new Map([[1, "2.1"]]));
+
+    expect([...findArrivedNumbers(before, shown)]).toEqual([1]);
+    expect(findArrivedNumbers(shown, new Map([unit(1, [10, 0, 9], "2.1")])).size).toBe(0);
+  });
+});
+
+describe("listExpectedNumbers", () => {
+  const views = [{ document: { id: 3, revision: 8 } }];
+
+  it("takes the last press over the ones before it", () => {
+    expect(listExpectedNumbers([{ type: "set_number", unit_id: 7, number: "5.2", follow: true }, { type: "merge", unit_ids: [1, 2] }, { type: "set_number", unit_id: 7, number: "5.3", follow: true }], [], views)).toEqual([[7, "5.3"]]);
+  });
+
+  it("keeps an answered number until the view that carries it arrives - then the answer wins", () => {
+    const sent = [{ docId: 3, revision: 9, unitId: 7, value: "5.2" }];
+
+    expect(listExpectedNumbers([], sent, views)).toEqual([[7, "5.2"]]);
+    expect(listExpectedNumbers([], sent, [{ document: { id: 3, revision: 9 } }])).toEqual([]);
+    expect(listExpectedNumbers([], sent, [])).toEqual([]);
+    expect(listExpectedNumbers([{ type: "set_number", unit_id: 7, number: null, follow: false }], sent, views)).toEqual([[7, null]]);
   });
 });

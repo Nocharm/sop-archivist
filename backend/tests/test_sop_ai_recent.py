@@ -251,6 +251,7 @@ def post_prepare(client: TestClient, bundle_id: int) -> dict:
     return response.json()
 
 
+@pytest.mark.usefixtures("hidden_ai_on")
 def test_recent_marks_requests_with_background_jobs(client: TestClient, auto_prepare: FakeAi) -> None:
     bundle = make_ai_bundle(client)
     user = request_classify(client, bundle.id, unit_ids=find_ids(client, bundle, AI_KO_1, AI_EN_1)).json()
@@ -262,6 +263,7 @@ def test_recent_marks_requests_with_background_jobs(client: TestClient, auto_pre
     assert [r["background"] for r in recent] == [True, False]  # 미리 분류 요청, 사람 요청
 
 
+@pytest.mark.usefixtures("hidden_ai_on")
 def test_recent_keeps_the_mark_after_promotion(client: TestClient, auto_prepare: FakeAi) -> None:
     bundle = make_ai_bundle(client)
     prepared = post_prepare(client, bundle.id)

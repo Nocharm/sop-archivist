@@ -76,12 +76,12 @@ const SCENES = [
   { name: "tobe", user: "qa.member", path: "/bundles/1/documents", prep: (page) => page.locator(id("tobe-section")).scrollIntoViewIfNeeded(), marks: [text("Excel template"), text("Import Excel"), id("tobe-add"), `[data-testid$="-toggle"]`, id("tobe-save")] },
   {
     // To-Be 목록은 Documents 화면 아래쪽 영역이다 - 앱 설명서 그림은 그 영역만 잘라 찍는다
-    name: "tobe-sop", app: { name: "tobe", clip: id("tobe-section") }, user: "qa.member", path: "/bundles/1/documents",
+    name: "tobe-sop", drafting: true, app: { name: "tobe", clip: id("tobe-section") }, user: "qa.member", path: "/bundles/1/documents",
     prep: (page) => click(page, `[data-testid$="-toggle"]`),
     marks: [`[data-testid$="-slots"]`, `[data-testid*="-na-"]`],
   },
   {
-    name: "tobe-wi", user: "qa.member", path: "/bundles/1/documents",
+    name: "tobe-wi", drafting: true, user: "qa.member", path: "/bundles/1/documents",
     prep: async (page) => {
       await page.locator(`[data-testid$="-toggle"]`).nth(1).click();
     },
@@ -92,7 +92,7 @@ const SCENES = [
     marks: [id("assign-filters"), id("assign-old"), id("assign-pick-prompt"), id("assign-help")],
   },
   {
-    name: "assign-place", app: { name: "assign" }, user: "qa.member", path: "/bundles/2/assign",
+    name: "assign-place", drafting: true, app: { name: "assign" }, user: "qa.member", path: "/bundles/2/assign",
     prep: async (page) => {
       // 처음은 All(접지 않음) - 아직 정하지 않은 줄까지 J로 옮긴다
       for (let step = 0; step < 40; step += 1) {
@@ -108,7 +108,7 @@ const SCENES = [
     marks: [id("assign-chosen"), id("assign-primary"), id("assign-edit"), id("assign-hold"), '[data-testid^="assign-tree-place-"]:not([data-testid^="assign-tree-place-heading:"])'],
   },
   {
-    name: "assign-confirmed", user: "qa.member", path: "/bundles/2/assign",
+    name: "assign-confirmed", drafting: true, user: "qa.member", path: "/bundles/2/assign",
     prep: async (page) => {
       await click(page, id("assign-filter-confirmed"));
       await page.locator(id("assign-old")).getByText("이 절차는 Eppendorf").first().click();
@@ -179,7 +179,7 @@ const SCENES = [
   },
   {
     // 3단계 - New 문서를 하나씩 열어 순서·들여쓰기·번호를 고친다(작업 중인 묶음이라 줄 끝 단추가 보인다)
-    name: "order", appOnly: true, app: {}, user: "qa.member", path: "/bundles/2/order",
+    name: "order", drafting: true, appOnly: true, app: {}, user: "qa.member", path: "/bundles/2/order",
     prep: (page) => page.locator('[data-testid^="output-c-move-"]').first().waitFor({ state: "attached", timeout: T }),
   },
   {
@@ -196,9 +196,9 @@ const SCENES = [
     },
   },
   { name: "outputs-b", app: {}, user: "qa.member", path: "/bundles/3/outputs", prep: (page) => click(page, id("outputs-tab-b")), marks: [id("output-b")] },
-  { name: "outputs-c", app: {}, user: "qa.member", path: "/bundles/3/outputs", prep: (page) => click(page, id("outputs-tab-c")), marks: [id("output-c")] },
+  { name: "outputs-c", drafting: true, app: {}, user: "qa.member", path: "/bundles/3/outputs", prep: (page) => click(page, id("outputs-tab-c")), marks: [id("output-c")] },
   {
-    name: "outputs-c-wi", user: "qa.member", path: "/bundles/3/outputs",
+    name: "outputs-c-wi", drafting: true, user: "qa.member", path: "/bundles/3/outputs",
     prep: async (page) => {
       await click(page, id("outputs-tab-c"));
       await page.getByText("Operation of Eppendorf Centrifuge").first().scrollIntoViewIfNeeded();
@@ -324,11 +324,13 @@ for (const scene of SCENES) {
   if (APP_MANUAL ? !scene.app : scene.appOnly) continue;
   const viewport = APP_MANUAL && scene.app.width ? { ...VIEWPORT, width: scene.app.width } : VIEWPORT;
   const context = await browser.newContext({ viewport, deviceScaleFactor: 1 });
-  await context.addInitScript((user) => {
+  await context.addInitScript(({ user, drafting }) => {
     if (location.protocol === "about:") return;
     localStorage.setItem("sopa.devUser", user);
     localStorage.setItem("sopa.theme", "light");
-  }, scene.user);
+    // 숨긴 기능을 설명하는 조각의 장면만 켠다
+    if (drafting) localStorage.setItem("sopa.drafting", "1");
+  }, { user: scene.user, drafting: scene.drafting === true });
   if (scene.sampleBatch) await context.route("**/api/admin/batch-runs", (route) => route.fulfill({ json: SAMPLE_BATCH_RUNS }));
   const page = await context.newPage();
   const errors = [];

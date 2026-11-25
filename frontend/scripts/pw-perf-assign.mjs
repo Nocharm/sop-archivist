@@ -6,12 +6,24 @@
 //   TRACE=scroll|hover|click  그 동작의 브라우저 단계별 시간(배치·칠하기·히트 테스트)과 JS 호출 자리
 //   PROFILE=scroll|hover|click 그 동작의 JS 함수별 시간(개발 빌드에 대면 이름이 읽힌다)
 //   DEV_USER=qa.member
+//   SCENARIO=frames|keys|burst|filter|number|idle|commits  무엇을 잴지(기본 frames = 위의 프레임 비용). frames 밖은 조각 nth(4)를 누르고 1.5초 뒤에 시작한다
+//     keys 글쇠 → 다음 박스(j 6번 · Delete 6번) · burst Delete 연타(5번 150ms · 3번 60ms 섞어) · filter 필터 Unassigned 뒤 keys
+//     number 번호 칸 5글자 입력 지연 · idle 60초 무조작(가짜 AI를 켠 묶음) · commits 글쇠 한 번의 커밋 수와 PaperChunk 그리기 수(개발 서버)
+//     keys · burst · filter · commits는 판단을 쓴다 - is_synthetic 묶음이 아니면 멈추고, 다시 재려면 시드부터 새로
+//   REPEAT=6   글쇠 시나리오를 몇 번 되풀이할지
+//   LAT=0      요청마다 더할 왕복 지연(ms) - 사내망 어림
 import { chromium } from "playwright-core";
 
 const BASE = process.env.BASE_URL ?? "http://localhost:3777";
 const BUNDLE = process.env.BUNDLE;
 const DOCS = (process.env.DOCS ?? "").split(",").filter(Boolean);
 const CPU = Number(process.env.CPU ?? "4");
+const SCENARIO = process.env.SCENARIO ?? "frames";
+const REPEAT = Number(process.env.REPEAT ?? "6");
+const LAT = Number(process.env.LAT ?? "0");
+const DEV_USER = process.env.DEV_USER ?? "qa.member";
+const WRITING = ["keys", "burst", "filter", "commits"];
+if (!["frames", "keys", "burst", "filter", "number", "idle", "commits"].includes(SCENARIO)) throw new Error(`unknown SCENARIO ${SCENARIO}`);
 const CHROME = process.env.CHROME_PATH ?? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
 if (!BUNDLE || DOCS.length === 0) throw new Error("BUNDLE and DOCS (old document ids) are required");
 
@@ -113,6 +125,193 @@ async function profileAction(cdp, page, kind, pieces, count) {
   console.log(sumTop(total, 20));
 }
 
+const SELECTED_OLD = '[data-pane="old"] [data-sel] [data-unit], [data-pane="old"] [data-unit][data-sel], [data-pane="old"] [data-strip-unit][data-sel], [data-pane="old"] [data-sel] [data-strip-unit]';
+
+const middle = (values) => summarize(values).p50;
+
+/** 글쇠 하나를 누른 때부터 고른 박스가 바뀔 때까지(ms). 20초 안에 안 바뀌면 -1 */
+async function measureKey(page, key) {
+  await page.evaluate((selector) => {
+    const read = () => {
+      const el = document.querySelector(selector);
+      return el?.getAttribute("data-unit") ?? el?.getAttribute("data-strip-unit") ?? el?.closest("[data-strip-unit]")?.getAttribute("data-strip-unit") ?? null;
+    };
+    window.__keyResult = new Promise((resolve) => {
+      const first = read();
+      window.addEventListener("keydown", () => {
+        const t0 = performance.now();
+        const tick = () => {
+          if (read() !== first) return resolve(performance.now() - t0);
+          if (performance.now() - t0 > 20000) return resolve(-1);
+          requestAnimationFrame(tick);
+        };
+        requestAnimationFrame(tick);
+      }, { once: true, capture: true });
+    });
+  }, SELECTED_OLD);
+  await page.waitForTimeout(80);
+  await page.keyboard.press(key);
+  const ms = await page.evaluate(() => window.__keyResult);
+  await page.waitForLoadState("networkidle");
+  await page.waitForTimeout(700);
+  return ms;
+}
+
+/** 이 동안의 /api 요청을 모은다 - stop()이 TTFB · 저장 TTFB · 개수 · 폭포 길이 · 서로 다른 요청 목록을 돌려준다 */
+function watchRequests(page) {
+  const rows = [];
+  const onFinished = (request) => {
+    const url = new URL(request.url());
+    if (!url.pathname.startsWith("/api/")) return;
+    const timing = request.timing();
+    rows.push({
+      method: request.method(),
+      key: `${request.method()} ${url.pathname.replace(/\d+/g, "N")}`,
+      start: timing.startTime,
+      end: timing.startTime + timing.responseEnd,
+      ttfb: timing.responseStart,
+    });
+  };
+  page.on("requestfinished", onFinished);
+  return {
+    stop() {
+      page.off("requestfinished", onFinished);
+      const firstWrite = rows.find((row) => row.method !== "GET");
+      return {
+        count: rows.length,
+        gets: rows.filter((row) => row.method === "GET").length,
+        ttfbMs: summarize(rows.map((row) => row.ttfb)),
+        saveTtfbMs: firstWrite ? +firstWrite.ttfb.toFixed(1) : null,
+        spanMs: rows.length === 0 ? 0 : Math.round(Math.max(...rows.map((row) => row.end)) - Math.min(...rows.map((row) => row.start))),
+        distinct: [...new Set(rows.map((row) => row.key))],
+      };
+    },
+  };
+}
+
+async function readLongTasks(page) {
+  return page.evaluate(() => window.__longTasks.map((ms) => +ms.toFixed(0)));
+}
+
+/** 묶음의 Old 단위 중 disposition이 delete인 수 - listAllUnits와 같은 쪽매김 */
+async function countDeleted(page) {
+  let deleted = 0;
+  for (let offset = 0; ; offset += 1000) {
+    const response = await page.request.get(`${BASE}/api/bundles/${BUNDLE}/units?limit=1000&offset=${offset}`, { headers: { "X-Dev-User": DEV_USER } });
+    const body = await response.json();
+    deleted += (JSON.stringify(body.items).match(/"disposition":"delete"/g) ?? []).length;
+    if (offset + 1000 >= body.total || body.items.length === 0) return deleted;
+  }
+}
+
+async function runKeys(page) {
+  const out = {};
+  for (const key of ["j", "Delete"]) {
+    const requests = watchRequests(page);
+    await page.evaluate(() => { window.__longTasks = []; });
+    const values = [];
+    for (let i = 0; i < REPEAT; i++) values.push(await measureKey(page, key));
+    out[key] = { keyToNextMs: { median: middle(values), all: values.map((v) => +v.toFixed(1)) }, longTasksMs: await readLongTasks(page), requests: requests.stop() };
+  }
+  return out;
+}
+
+async function runBurst(page) {
+  const out = {};
+  const plans = [
+    { name: "delete5@150", keys: Array(5).fill("Delete"), gap: 150 },
+    { name: "delete-j-delete@60", keys: ["Delete", "j", "Delete"], gap: 60 },
+  ];
+  for (const plan of plans) {
+    const before = await countDeleted(page);
+    for (const key of plan.keys) {
+      await page.keyboard.press(key);
+      await page.waitForTimeout(plan.gap);
+    }
+    await page.waitForTimeout(3500);
+    const deletes = plan.keys.filter((key) => key === "Delete").length;
+    out[plan.name] = { pressedDelete: deletes, deleted: (await countDeleted(page)) - before };
+  }
+  return out;
+}
+
+async function runNumber(page) {
+  await page.evaluate(() => {
+    window.__inputMs = [];
+    document.addEventListener("input", () => {
+      const t0 = performance.now();
+      requestAnimationFrame(() => requestAnimationFrame(() => window.__inputMs.push(performance.now() - t0)));
+    }, { capture: true });
+  });
+  const cells = page.locator('[data-pane="old"] button.num-cell:not(:disabled)');
+  const input = page.locator(".num-edit-input").first();
+  // 연속 번호 칸이 아니면 글자 입력 칸이 안 뜬다 - 다음 칸을 몇 개 시도한다
+  for (let index = 0; index < Math.min(8, await cells.count()); index++) {
+    await cells.nth(index).scrollIntoViewIfNeeded();
+    await cells.nth(index).click();
+    if (await input.isVisible().catch(() => false)) break;
+    await page.keyboard.press("Escape");
+  }
+  await input.waitFor({ timeout: 3000 });
+  await input.fill("");
+  await page.evaluate(() => { window.__inputMs = []; });
+  for (const char of "12.34") {
+    await page.keyboard.type(char);
+    await page.waitForTimeout(250);
+  }
+  await page.keyboard.press("Escape");
+  const values = await page.evaluate(() => window.__inputMs);
+  return { numberInputMs: { median: middle(values), all: values.map((v) => +v.toFixed(1)) } };
+}
+
+async function runIdle(page) {
+  const requests = watchRequests(page);
+  await page.evaluate(() => { window.__longTasks = []; });
+  await page.waitForTimeout(60000);
+  const tasks = await readLongTasks(page);
+  const seen = requests.stop();
+  return { idle60s: { longTasks: tasks.length, longTaskMaxMs: Math.max(0, ...tasks), gets: seen.gets, distinct: seen.distinct } };
+}
+
+/** 개발 서버에서만 이름이 읽힌다 - 커밋마다 파이버 나무에서 PerformedWork(flags & 1)인 PaperChunk를 센다 */
+async function runCommits(page) {
+  const out = {};
+  for (const key of ["j", "Delete"]) {
+    await page.evaluate(() => { window.__commitLog = []; });
+    await measureKey(page, key);
+    out[key] = await page.evaluate(() => {
+      const log = window.__commitLog;
+      return { commits: log.length, paperChunkRenders: log };
+    });
+  }
+  return out;
+}
+
+async function runScenario(page, cdp) {
+  if (LAT > 0) {
+    await cdp.send("Network.enable");
+    await cdp.send("Network.emulateNetworkConditions", { offline: false, latency: LAT, downloadThroughput: -1, uploadThroughput: -1 });
+  }
+  await page.locator(`${OLD_PIECE}:visible`).nth(4).click();
+  await page.waitForTimeout(1500);
+  if (SCENARIO === "keys") return runKeys(page);
+  if (SCENARIO === "burst") return runBurst(page);
+  if (SCENARIO === "filter") {
+    await page.locator('[data-testid="assign-filter-unassigned"]').click();
+    await page.waitForTimeout(2500);
+    return runKeys(page);
+  }
+  if (SCENARIO === "number") return runNumber(page);
+  if (SCENARIO === "idle") return runIdle(page);
+  return runCommits(page);
+}
+
+async function assertSynthetic(ctx) {
+  const response = await ctx.request.get(`${BASE}/api/bundles/${BUNDLE}`, { headers: { "X-Dev-User": DEV_USER } });
+  const bundle = await response.json();
+  if (!bundle.is_synthetic) throw new Error(`SCENARIO=${SCENARIO} writes decisions but bundle ${BUNDLE} is not is_synthetic - stop`);
+}
+
 const browser = await chromium.launch({ executablePath: CHROME, headless: true });
 const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: 1 });
 await ctx.addInitScript((user) => {
@@ -123,7 +322,39 @@ await ctx.addInitScript((user) => {
   window.__events = [];
   new PerformanceObserver((list) => { for (const entry of list.getEntries()) window.__longTasks.push(entry.duration); }).observe({ type: "longtask", buffered: true });
   new PerformanceObserver((list) => { for (const entry of list.getEntries()) window.__events.push({ name: entry.name, duration: entry.duration }); }).observe({ type: "event", durationThreshold: 16, buffered: true });
-}, process.env.DEV_USER ?? "qa.member");
+}, DEV_USER);
+if (SCENARIO === "commits") {
+  // React 개발 빌드가 DevTools 훅에 알리는 커밋마다 PaperChunk 그리기를 센다(운영 빌드는 이름이 줄어 못 센다)
+  await ctx.addInitScript(() => {
+    const renderers = new Map();
+    const countChunks = (root) => {
+      let renders = 0;
+      const stack = [root.current];
+      while (stack.length > 0) {
+        const fiber = stack.pop();
+        if (fiber === null || fiber === undefined) continue;
+        const name = fiber.type?.name ?? fiber.type?.type?.name;
+        if (name === "PaperChunk" && (fiber.flags & 1) !== 0) renders += 1;
+        stack.push(fiber.sibling);
+        // 이번 커밋에서 다시 만들어지지 않은 하위(지난 커밋의 PerformedWork)는 내려가지 않는다
+        if (fiber.alternate === null || fiber.alternate.child !== fiber.child) stack.push(fiber.child);
+      }
+      return renders;
+    };
+    window.__commitLog = [];
+    window.__REACT_DEVTOOLS_GLOBAL_HOOK__ = {
+      renderers,
+      supportsFiber: true,
+      inject(internals) { renderers.set(renderers.size + 1, internals); return renderers.size; },
+      onScheduleFiberRoot() {},
+      onCommitFiberUnmount() {},
+      onCommitFiberRoot(id, root) { window.__commitLog.push(countChunks(root)); },
+      onPostCommitFiberRoot() {},
+      checkDCE() {},
+    };
+  });
+}
+if (WRITING.includes(SCENARIO)) await assertSynthetic(ctx);
 
 for (const doc of DOCS) {
   const page = await ctx.newPage();
@@ -132,6 +363,12 @@ for (const doc of DOCS) {
   const started = Date.now();
   await page.goto(`${BASE}/bundles/${BUNDLE}/assign?doc=${doc}`);
   await page.locator(OLD_PIECE).first().waitFor({ timeout: 120000 });
+  if (SCENARIO !== "frames") {
+    const result = { doc, scenario: SCENARIO, cpu: CPU, lat: LAT, repeat: REPEAT, ...(await runScenario(page, cdp)) };
+    console.log(`RESULT ${JSON.stringify(result)}`);
+    await page.close();
+    continue;
+  }
   await page.waitForTimeout(1500);
   const loadMs = Date.now() - started;
   if (process.env.INJECT) await page.addStyleTag({ content: process.env.INJECT });

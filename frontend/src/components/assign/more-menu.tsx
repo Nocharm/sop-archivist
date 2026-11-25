@@ -16,17 +16,16 @@ import { useI18n } from "@/lib/i18n";
 
 interface AssignMoreMenuProps {
   canEdit: boolean;
-  disabled: boolean;
   /** 원문이 같은 짝 수 - 0이면 항목이 없다 */
   identicalCount: number;
   onIdentical: () => void;
-  aiItems: AiAskItem[];
+  aiItems: readonly AiAskItem[];
   /** 지금 연 Old 문서 - 없으면 문서 초기화 항목을 막는다 */
   resetDocument: { id: number; label: string } | null;
   onReset: (scope: ResetScope) => void;
 }
 
-export function AssignMoreMenu({ canEdit, disabled, identicalCount, onIdentical, aiItems, resetDocument, onReset }: AssignMoreMenuProps) {
+export function AssignMoreMenu({ canEdit, identicalCount, onIdentical, aiItems, resetDocument, onReset }: AssignMoreMenuProps) {
   const { t } = useI18n();
   const anchorRef = useRef<HTMLButtonElement>(null);
   const [view, setView] = useState<"main" | "font" | null>(null);
@@ -81,7 +80,7 @@ export function AssignMoreMenu({ canEdit, disabled, identicalCount, onIdentical,
       {view === "main" && (
         <Menu anchorRef={anchorRef} onClose={close} testId="assign-more-list" align="end" label={label}>
           {canEdit && identicalCount > 0 && (
-            <button type="button" role="menuitem" className="menu-item" data-testid="assign-identical" disabled={disabled} onClick={() => pick(onIdentical)}>
+            <button type="button" role="menuitem" className="menu-item" data-testid="assign-identical" onClick={() => pick(onIdentical)}>
               <Link2 size={14} strokeWidth={1.5} aria-hidden />
               {t("assign.identical", { n: identicalCount })}
             </button>
@@ -97,13 +96,13 @@ export function AssignMoreMenu({ canEdit, disabled, identicalCount, onIdentical,
                     type="button"
                     role="menuitem"
                     className="menu-item"
-                    aria-disabled={reason || disabled ? "true" : undefined}
+                    aria-disabled={reason ? "true" : undefined}
                     aria-label={reason ? `${item.label} - ${reason}` : undefined}
                     data-tip={reason ?? undefined}
                     data-tip-side="left"
                     data-testid={`assign-ai-menu-${item.key}`}
                     onClick={() => {
-                      if (!reason && !disabled) void runAi(item);
+                      if (!reason) void runAi(item);
                     }}
                   >
                     <Sparkles size={14} strokeWidth={1.5} className="text-st-ai" aria-hidden />
@@ -126,14 +125,14 @@ export function AssignMoreMenu({ canEdit, disabled, identicalCount, onIdentical,
                 role="menuitem"
                 className="menu-item"
                 data-testid="assign-reset-document"
-                disabled={disabled || resetDocument === null}
+                disabled={resetDocument === null}
                 onClick={() => resetDocument && pick(() => onReset({ kind: "document", documentId: resetDocument.id, label: resetDocument.label }))}
               >
                 <RotateCcw size={14} strokeWidth={1.5} aria-hidden />
                 <span className="flex-none">{t("assign.reset.document")}</span>
                 {resetDocument && <span className="ml-auto min-w-0 truncate pl-3 font-mono text-[11px] text-ink-3">{resetDocument.label}</span>}
               </button>
-              <button type="button" role="menuitem" className="menu-item danger" data-testid="assign-reset-bundle" disabled={disabled} onClick={() => pick(() => onReset({ kind: "bundle" }))}>
+              <button type="button" role="menuitem" className="menu-item danger" data-testid="assign-reset-bundle" onClick={() => pick(() => onReset({ kind: "bundle" }))}>
                 <RotateCcw size={14} strokeWidth={1.5} aria-hidden />
                 {t("assign.reset.bundle")}
               </button>

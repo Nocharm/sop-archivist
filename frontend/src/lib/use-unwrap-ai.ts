@@ -8,7 +8,7 @@ import { showToast } from "@/components/ui/toast";
 import { humanizeApiError } from "@/lib/api-errors";
 import { listAppliedSuggestions, requestUnwrapOrder, setSuggestionAdoption } from "@/lib/api-manage";
 import type { AiJobCounts, AiStatus } from "@/lib/api-sop";
-import { addUnwrapAiAsk, listUnwrapAiBusy, type UnwrapAiAsk } from "@/lib/unwrap-ai-model";
+import { addUnwrapAiAsk, keepSamePreviews, listUnwrapAiBusy, type UnwrapAiAsk } from "@/lib/unwrap-ai-model";
 import { useLoaded } from "@/lib/use-loaded";
 
 export interface UnwrapAiStrip {
@@ -53,7 +53,11 @@ export function useUnwrapAi({ bundleId, docId, isOn, status, dataKey, watch, reo
     }
     return map;
   }, [suggestions.data]);
-  const previews = useMemo(() => new Map([...live].map(([tableId, item]) => [tableId, item.order])), [live]);
+  // 다시 받은 제안이 앞과 같으면 같은 값 - 렌더 중 상태 맞추기(이펙트 없음, useNumberArrival과 같은 꼴)
+  const loaded = useMemo<UnwrapAiStrip["previews"]>(() => new Map([...live].map(([tableId, item]) => [tableId, item.order])), [live]);
+  const [kept, setKept] = useState(loaded);
+  const previews = keepSamePreviews(kept, loaded);
+  if (previews !== kept) setKept(previews);
 
   async function record(tableId: number, adoption: "as_is" | "rejected") {
     const item = live.get(tableId);

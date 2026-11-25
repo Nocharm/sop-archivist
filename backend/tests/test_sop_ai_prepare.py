@@ -34,7 +34,7 @@ from tests.docx_factory import p
 from tests.fake_ai import FakeAi
 from tests.sop_helpers import AUTHOR, REVIEWER, get_view, put_tobe
 
-pytestmark = pytest.mark.usefixtures("clean_sop", "clean_ai_jobs")
+pytestmark = pytest.mark.usefixtures("clean_sop", "clean_ai_jobs", "hidden_ai_on")
 
 SAME = "합성 압력 게이지의 눈금을 매일 아침 확인한다."
 OLD_1 = "합성 장비의 전원을 켠 뒤 상태 표시등을 확인한다."

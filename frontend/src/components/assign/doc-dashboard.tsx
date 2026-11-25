@@ -36,11 +36,13 @@ interface DocDashboardProps {
   bundleLine: { done: number; total: number; refs: number; captions: number };
   /** 받는 New 문서를 New 칸에 연다 */
   onOpenDoc: (targetDocId: number) => void;
+  /** New 칸에 열 수 있는 문서인가 - 아직 쓰지 않은 문서를 숨긴 동안 그 문서의 단추는 꺼진다 */
+  isDocOpen: (targetDocId: number) => boolean;
 }
 
 type DownloadKind = "doc" | "all";
 
-export function DocDashboard({ bundleId, docId, docLabel, docTitle, stats, bundleLine, onOpenDoc }: DocDashboardProps) {
+export function DocDashboard({ bundleId, docId, docLabel, docTitle, stats, bundleLine, onOpenDoc, isDocOpen }: DocDashboardProps) {
   const { t } = useI18n();
   const triggerRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
@@ -180,7 +182,8 @@ export function DocDashboard({ bundleId, docId, docLabel, docTitle, stats, bundl
         createPortal(
           <div
             ref={panelRef}
-            role="dialog"
+            // 모달이 아니다 - 올려 둔 채 화면 단축키가 그대로 돈다(B1-R6)
+            role="group"
             aria-label={t("assign.dash.title", { code: docLabel })}
             className="doc-dash"
             data-testid="assign-dash-panel"
@@ -230,6 +233,7 @@ export function DocDashboard({ bundleId, docId, docLabel, docTitle, stats, bundl
                           key={target.docId}
                           type="button"
                           className="doc-dash-chip"
+                          disabled={!isDocOpen(target.docId)}
                           data-testid={`assign-dash-target-${target.docId}`}
                           onClick={() => {
                             close();

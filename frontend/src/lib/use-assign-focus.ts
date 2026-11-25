@@ -2,10 +2,9 @@
 // 다시 받은 보기는 화면이 렌더 중에 load로 알린다(effect를 화면 파일에 더하지 않는다, 설계 2026-11-20 D1).
 "use client";
 
-import { useReducer, useRef } from "react";
+import { useReducer } from "react";
 import {
   applyLoaded,
-  canStart,
   INITIAL_FOCUS_STATE,
   isGlobalPending,
   isUnitLocked,
@@ -15,8 +14,6 @@ import {
   type FocusEvent,
   type Pending,
 } from "./assign-focus-model";
-import { enqueueDocWrite } from "./doc-write-queue";
-import { genId } from "./id";
 
 /** 응답이 알려 준 따라갈 자리 - pickUnitId가 null이면 고름을 둔다 */
 export interface FollowTarget {
@@ -27,19 +24,14 @@ export interface FollowTarget {
 
 export function useAssignFocus() {
   const [state, dispatch] = useReducer(reduceFocus, INITIAL_FOCUS_STATE);
-  // 시작했고 아직 걷지 않은 일 - 상태는 다음 렌더에야 바뀌어, 같은 렌더의 함수로 잇달아 눌러도 canStart가 앞 일을 보게 따로 쥔다
-  const liveRef = useRef<readonly Pending[]>([]);
 
   function pick(focus: Focus) {
     dispatch({ type: "pick", focus });
   }
 
-  /** 일 하나를 처리 중으로 세운다 - 돌려준 id로 succeed · end를 부른다. 막을지는 부르는 쪽이 본다(runPending은 canStart로) */
-  function start(pending: Omit<Pending, "id">): string {
-    const id = genId();
-    liveRef.current = [...liveRef.current, { ...pending, id }];
-    dispatch({ type: "start", pending: { ...pending, id } });
-    return id;
+  /** 일 하나를 처리 중으로 세운다 - 줄에 서는 순간(아직 보내기 전이어도) 부른다. id는 명령 큐의 것이고 그것으로 succeed · end를 부른다 */
+  function start(pending: Pending) {
+    dispatch({ type: "start", pending });
   }
 
   /** 응답이 왔다 - 고름이 누른 때 그대로면 그 박스를 따라간다(보기를 다시 받은 뒤 고른다). 일은 end까지 처리 중으로 남는다 */
@@ -47,22 +39,14 @@ export function useAssignFocus() {
     dispatch({ type: "succeed", pendingId, ...target });
   }
 
-  /** 일을 걷는다 - 실패 · 되묻기 · 성공 모두. 두 번 불러도 된다(표 벗기기는 새 보기를 놓을 때 먼저 걷고 runPending이 끝에 또 부른다) */
+  /** 일을 걷는다 - 실패 · 되묻기 · 성공 모두. 두 번 불러도 된다(표 벗기기는 새 보기를 놓을 때 먼저 걷고 큐가 끝에 또 부른다) */
   function end(pendingId: string) {
-    liveRef.current = liveRef.current.filter((item) => item.id !== pendingId);
     dispatch({ type: "fail", pendingId });
   }
 
-  /**
-   * 일 하나 - 시작할 수 없으면(잠긴 Unit과 겹침 · 묶음 전체 일) null. 누르는 즉시 처리 중(알약 · 쉬머 · 잠금)으로 세우고,
-   * 원문 편집은 같은 문서의 앞 쓰기 응답 뒤에 보낸다(doc-write-queue, 설계 D4). send가 끝나면(실패해도) 걷는다 - 알림 · 다시 받기는 send가 한다
-   */
-  function runPending(pending: Omit<Pending, "id">, send: (pendingId: string) => Promise<void>): Promise<void> | null {
-    if (!canStart({ pending: liveRef.current }, { ...pending, id: "" })) return null;
-    const id = start(pending);
-    // 판단 저장은 문서 revision을 쓰지 않는다 - 원문 편집 뒤에 줄 세우지 않는다
-    const lane = pending.kind === "save" ? null : pending.docId;
-    return enqueueDocWrite(lane, () => send(id)).finally(() => end(id));
+  /** 기다리던 묶음 전체 일을 보낼 때 - 그 사이 건 따라가기를 버린다 */
+  function dropFollows() {
+    dispatch({ type: "dropFollows" });
   }
 
   /** 렌더 중에 부른다 - 받은 보기를 알리고, 이번에 고른 따라가기와 끝난 따라가기를 돌려준다(화면이 스크롤 · 거르기 목록을 맞춘다) */
@@ -84,7 +68,7 @@ export function useAssignFocus() {
     start,
     succeed,
     end,
+    dropFollows,
     load,
-    runPending,
   };
 }

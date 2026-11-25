@@ -5,7 +5,7 @@
 // strips.fold(Assign 필터)가 있으면 맞는 조각만 제 모양, 곁은 한 줄 판, 먼 구간은 묶음 한 줄로 접는다(paper-fold-model.ts) - 한 줄 판·묶음은 단추라 눌러도 조각을 고르지 않는다.
 "use client";
 
-import { BookMarked, ChevronRight, ChevronsDownUp, Ellipsis, FoldVertical, GripVertical, ImageIcon, Link2, Scissors, TriangleAlert, WandSparkles, type LucideIcon } from "lucide-react";
+import { BookMarked, ChevronRight, ChevronsDownUp, Ellipsis, FilePen, FoldVertical, GripVertical, ImageIcon, Link2, Scissors, TriangleAlert, Undo2, WandSparkles, type LucideIcon } from "lucide-react";
 import { Fragment, memo, useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 
 import { BundleHead } from "@/components/paper/bundle-head";
@@ -15,15 +15,16 @@ import { NumberCell, type NumberEdit } from "@/components/paper/number-cell";
 import { StripBox } from "@/components/paper/strip-box";
 import { StripLead, STRIP_LEAD_EXTRA } from "@/components/paper/strip-lead";
 import { UnitStatusChip } from "@/components/status";
+import { getMorphClassName } from "@/components/ui/morph-button";
 import { Collapse } from "@/components/ui/motion";
 import { useDelegatedTip } from "@/components/ui/delegated-tip";
 import type { ViewBlock, ViewUnit } from "@/lib/api-sop";
 import type { PendingPlace } from "@/lib/assign-focus-model";
 import { getBundleShape, getCaptionScope, isSentenceLike, type BundleShape } from "@/lib/caption-slot-model";
 import { readCaretPoint } from "@/lib/caret-point";
-import { isNoiseUnit } from "@/lib/classify-model";
+import { useDraftingOn } from "@/lib/drafting";
 import { useI18n } from "@/lib/i18n";
-import { pickNearChunks, sliceCards } from "@/lib/paper-chunk-model";
+import { CHUNK_MIN_CARDS, pickNearChunks, readChunkDeleted, readChunkNoise, readChunkNumbers, readChunkPending, sliceCards, sliceFoldEntries } from "@/lib/paper-chunk-model";
 import { buildFoldPlan, type FoldEntry, type FoldItem, type FoldOpen } from "@/lib/paper-fold-model";
 import { buildRows, flattenLineBreaks, getBundleHeader, getGapMerge, getItemSegments, getMarks, getTags, isBandHeading, isOtherTableCaption, MERGE_BLOCKER_KEYS, resolvePickUnit, type CaptionPiece, type FigureRowMode, type PaperItem, type PaperModel, type PaperRow, type Segment, type UnitMark } from "@/lib/paper-model";
 import type { JoinKind, JoinPlan } from "@/lib/split-menu-model";
@@ -34,12 +35,13 @@ import { getCardTops, getHiddenPrefixLength, getPairBrackets, getPillWidth, getR
 import { buildHeadingShiftGroups, readHeadingShiftHead, type HeadingShiftGroup } from "@/lib/heading-shift-model";
 import { getPairHint, type PairHint, type PairHintUnit } from "@/lib/pair-hint-model";
 import { isDeletedLineOpen, readDeletedLine, type DeletedFold, type DeletedLine } from "@/lib/deleted-fold-model";
-import { buildTocBlock, shouldJoinTocCard } from "@/lib/toc-block-model";
+import { buildNoiseBlock, describeNoiseUnit, listNoiseBlocks, readNoiseReason, shouldJoinNoiseCard, type NoiseKind } from "@/lib/toc-block-model";
 import { findUnwrapHeads, getRowUnwrapTable } from "@/lib/unwrap-model";
 import { isUnwrapSuggestionUnchanged, readUnwrapMoves, type UnwrapLineMove } from "@/lib/unwrap-ai-model";
 import { buildStripRows } from "@/lib/figure-spot-model";
 import { useClickOrDouble } from "@/lib/use-click-or-double";
-import { useNumberArrival } from "@/lib/use-number-arrival";
+import { useNumberArrival, type ExpectedNumbers } from "@/lib/use-number-arrival";
+import { useReleasedFolds } from "@/lib/use-released-folds";
 
 /** 조각 끝 표시 - 단위의 것(UnitMark)에 그 조각이 놓인 블록의 경고를 더한다 */
 type PaperMark = UnitMark | "warn";
@@ -69,13 +71,14 @@ export interface PaperPending {
   shimmerIds: ReadonlySet<number>;
   lockedIds: ReadonlySet<number>;
   pills: readonly { id: string; kind: string; label: string; place: PendingPlace }[];
+  /** 기다리는 명령의 박스 → 차례(첫째 대기 = 1) - 칩 "대기 n" */
+  waits: ReadonlyMap<number, number>;
 }
 
-/** 목차 줄(잡음 표시가 붙은 글 조각)인가 - 목차 블록으로 접는 화면(strips.toc)에서만 묻는다 */
-function isTocRow(row: PaperRow | undefined, units: ReadonlyMap<number, ViewUnit>): boolean {
-  if (row === undefined || row.type !== "piece" || row.unitId === null) return false;
-  const unit = units.get(row.unitId);
-  return unit !== undefined && isNoiseUnit(unit);
+/** 저절로 삭제된 줄(잡음 표시가 붙은 글 조각 · 표 · 그림)의 종류 - 아니면 null. 블록으로 접는 화면(strips.noise)에서만 묻는다 */
+function readNoiseKind(row: PaperRow | undefined, units: ReadonlyMap<number, ViewUnit>): NoiseKind | null {
+  const unitId = row === undefined ? null : readRowUnitId(row);
+  return unitId === null ? null : (units.get(unitId)?.noise_kind ?? null);
 }
 
 /** 접기에서 줄이 맞는지 볼 단위 - 표는 표 단위와 칸 안 문장 단위 모두, 표·그림은 머리 줄의 캡션 단위도 */
@@ -94,19 +97,46 @@ interface FoldCell {
   rows: PaperRow[];
 }
 
-/** 한 부분(머리말·본문·꼬리말)의 카드와 그 덩어리 - index는 덩어리로 그리는 부분들을 넘어 문서 순서(.strip-chunk 순서)이고, 덩어리로 나누지 않으면 -1 */
-interface CardGroup {
+/** 덩어리 한 자리 - index는 덩어리로 그리는 부분들을 넘어 문서 순서(.strip-chunk 순서)이고, 덩어리로 나누지 않으면 -1 */
+interface ChunkSlot {
   index: number;
+  unitIds: ReadonlySet<number>;
+  rows: readonly PaperRow[];
+}
+
+/** 한 부분(머리말·본문·꼬리말)의 카드와 그 덩어리 */
+interface CardGroup extends ChunkSlot {
   start: number;
   cards: PaperRow[][];
-  unitIds: ReadonlySet<number>;
+}
+
+/** 필터로 접힌 목록의 덩어리 - before는 첫 틈의 윗줄(앞 덩어리의 끝 조각, 바로 이웃일 때만), signature가 같으면 같은 줄을 그린다 */
+interface FoldGroup extends ChunkSlot {
+  entries: FoldEntry[];
+  before: PaperRow | undefined;
+  signature: string;
+}
+
+/** 이 부분의 접기 계획 */
+function planFold(items: readonly FoldItem[], matchIds: ReadonlySet<number>, open: FoldOpen, forcedIds: ReadonlySet<number>): FoldEntry[] {
+  const plan = buildFoldPlan(items, matchIds, open, forcedIds);
+  // 이 부분에 맞음이 없는데 고른 조각(출처 칩으로 건너옴)이 있으면 그 조각을 엿보기로 두고 둘레를 접는다 - 고른 조각은 늘 보여야 한다
+  if (plan.length > 0 || !items.some((item) => item.unitIds.some((id) => forcedIds.has(id)))) return plan;
+  return buildFoldPlan(items, forcedIds, open).map((entry) => (entry.kind === "full" ? { kind: "peek", key: entry.key } : entry));
+}
+
+/** 접힌 칸의 끝 줄 - 제 모양 조각(맞음 · 엿보기)이 아니면 없다(그 아래에는 틈을 두지 않는다) */
+function readFoldTail(entry: FoldEntry | undefined, cellOf: ReadonlyMap<string, FoldCell>): PaperRow | undefined {
+  return entry?.kind === "full" || entry?.kind === "peek" ? cellOf.get(entry.key)?.rows.at(-1) : undefined;
 }
 
 interface PaperChunkProps {
   /** 이번에 다시 그린다 - 화면 가까이 있거나 고른(방금 고른) 줄이 들었다 */
   live: boolean;
-  /** 하나라도 바뀌면 먼 덩어리도 다시 그린다 - 줄 구성·글말처럼 화면 밖 DOM도 맞아야 하는 것 */
+  /** 하나라도 바뀌면 먼 덩어리도 다시 그린다 - 줄 구성·글말처럼 화면 밖 DOM도 맞아야 하는 것. 글쇠마다 새 값이 되는 것은 그 덩어리 안의 것만 글로(readChunk…) */
   deps: readonly unknown[];
+  /** 필터로 접힌 목록의 덩어리 */
+  isFold: boolean;
   render: () => ReactNode;
 }
 
@@ -116,8 +146,12 @@ interface PaperChunkProps {
  * 덩어리 상자는 브라우저도 화면 밖이면 통째로 건너뛴다(CSS .strip-chunk content-visibility)
  */
 const PaperChunk = memo(
-  function PaperChunk({ render }: PaperChunkProps) {
-    return <div className="strip-chunk">{render()}</div>;
+  function PaperChunk({ isFold, render }: PaperChunkProps) {
+    return (
+      <div className="strip-chunk" data-fold={isFold ? "" : undefined}>
+        {render()}
+      </div>
+    );
   },
   // 얼리기는 이미 먼 덩어리만 - 가까웠다가 멀어지는 그리기는 한 번 더 그려 그때의 상태(고름 풀림 등)를 담고 언다
   (prev, next) => !prev.live && !next.live && prev.deps.length === next.deps.length && prev.deps.every((value, index) => value === next.deps[index]),
@@ -198,13 +232,14 @@ interface PaperProps {
     fold?: { matchIds: ReadonlySet<number>; open: FoldOpen; onOpenChange: (next: FoldOpen) => void };
     /** Assign - 머리 줄에 "Caption needed"를 띄울 묶음(lib/caption-model isCaptionNeeded). 없으면 캡션이 없는 묶음 모두 */
     isCaptionNeeded?: (unitId: number, hasCaption: boolean) => boolean;
-    /** Assign - 연달아 오는 목차 줄(noise_kind "toc")을 흐린 블록 하나로 접는다(처음엔 접힘, MD 1 F6). 없으면 보통 조각으로 그린다(Split).
+    /** Assign - 연달아 오는 저절로 삭제된 줄(noise_kind)을 종류마다 흐린 블록 하나로 접는다(처음엔 접힘, MD 1 F6 · 쪼개기 먼저 §7 R3). 없으면 보통 조각으로 그린다(Split).
      *  펼침(open)과 고른 블록·줄(selected - unitId null이면 블록 전체)은 화면이 쥔다(결정 칸이 같은 것을 보인다).
-     *  canClear면 펼친 블록에서 고른 줄 끝의 "목차 아님"과 머리의 "모두 목차 아님"을 보인다 - onClear(그 단위들)로 편집 clear_noise */
-    toc?: {
-      canClear: boolean;
+     *  canEdit면 머리와 줄 끝에 사유 쓰기 · 삭제 취소가 늘 보인다 - onReason · onClear(그 단위들)로 편집 set_noise_reason · clear_noise */
+    noise?: {
+      canEdit: boolean;
       busy: boolean;
       onClear: (unitIds: number[]) => void;
+      onReason: (unitIds: number[]) => void;
       open: ReadonlySet<number>;
       selected: { key: number; unitId: number | null } | null;
       onToggle: (key: number) => void;
@@ -260,6 +295,8 @@ interface PaperProps {
 /** 고칠 수 있는 화면의 번호 칸 손잡이 */
 export interface PaperNumberCell {
   busy: boolean;
+  /** 저장을 기다리는 번호 - 응답 전에 먼저 보인다(A2-R6). 바뀔 때만 새 것이어야 한다(용지가 앞의 것과 견준다) */
+  expected?: ExpectedNumbers;
   /** indentShift를 주면 들여쓰기 차이도 같은 편집에서(기호를 고를 때 위 기호 줄 단계를 따름) */
   onSave: (unitId: number, number: string | null, follow: boolean, indentShift?: number) => void;
   /** 번호 칸 창의 ◀ ▶ 들여쓰기(B8) - 누른 줄과 이어져 함께 바뀌는 줄(lib/indent-model planIndent). label은 누른 줄의 표시 ID */
@@ -329,19 +366,23 @@ export function Paper({
   spot,
 }: PaperProps) {
   const { t } = useI18n();
+  // 나누기 제안을 숨긴 동안 줄 끝 표시도 내지 않는다
+  const showSplitMark = useDraftingOn() === true;
   // 고치는 중인 번호 칸 - 한 번에 한 줄. 따라 바뀔 번호는 다른 줄의 번호 칸에 점선으로 미리 보인다
   const [numberEdit, setNumberEdit] = useState<NumberEdit | null>(null);
+  // 편집 뒤 번호 칸이 새로 생긴 박스 - 번호 칸이 옅은 강조로 들어오는 전환(항목 6-b). 번호 고치기는 누른 순간 기대 글로 시작한다
+  const { shown: numberUnits, arrived: arrivedNumbers } = useNumberArrival(model.units, numberCell?.expected);
+  // 다음 번호 셈 · 따라 바뀔 번호도 보이는 번호(기대 글 포함)로
   const numberOrder = useMemo(() => {
     const startOf = (unit: ViewUnit) => unit.spans[0]?.[1] ?? -1;
-    return [...model.units.values()].sort((a, b) => a.pos_seq - b.pos_seq || startOf(a) - startOf(b) || a.id - b.id);
-  }, [model]);
+    return [...numberUnits.values()].sort((a, b) => a.pos_seq - b.pos_seq || startOf(a) - startOf(b) || a.id - b.id);
+  }, [numberUnits]);
   const followed = useMemo(() => {
     if (!numberEdit || !numberEdit.follow) return [];
     return listFollowPreview(numberOrder, numberEdit.unitId, numberEdit.text);
   }, [numberEdit, numberOrder]);
   const previewOf = useMemo(() => new Map(followed.map((item) => [item.unitId, item])), [followed]);
-  // 편집 응답 뒤 번호 칸이 새로 생긴 박스 - 번호 칸이 옅은 강조로 들어오는 전환(항목 6-b)
-  const arrivedNumbers = useNumberArrival(model.units);
+  const releasedFolds = useReleasedFolds(strips?.deleted?.folds);
   const unreadBlockIds = useMemo(() => {
     const ids = new Set<number>();
     for (const item of [...model.header, ...model.body, ...model.footer]) {
@@ -358,8 +399,10 @@ export function Paper({
   // 단추 줄을 그리는 조각 - 지금 고른 것과 바로 전에 고른 것(접히는 동안). 수천 조각마다 접기 부품을 두지 않는다
   const [actionIds, setActionIds] = useState({ current: selectedId, previous: null as number | null });
   if (actionIds.current !== selectedId) setActionIds({ current: selectedId, previous: actionIds.current });
-  // 목차 블록 - 펼침·고름은 화면(strips.toc)이 쥔다
-  const hasToc = strips?.toc !== undefined;
+  // 저절로 삭제된 줄의 블록 - 펼침·고름은 화면(strips.noise)이 쥔다
+  const hasNoise = strips?.noise !== undefined;
+  // 줄 → 그 줄이 든 블록(용지 줄이 없는 안쪽 표 · 칸 안 그림까지)
+  const noiseBlockOf = useMemo(() => new Map(hasNoise ? listNoiseBlocks([...model.units.values()]).flatMap((block) => block.unitIds.map((id) => [id, block] as const)) : []), [model, hasNoise]);
   // 제목 → 문장 묶음 - 첫 단위 → 묶음(그 줄이 든 카드 위에 머리를 단다)
   const hasHeadingShift = strips?.headingShift !== undefined;
   const shiftGroups = useMemo(() => {
@@ -424,21 +467,83 @@ export function Paper({
       const cards: PaperRow[][] = [];
       for (const row of section.rows) {
         const last = cards[cards.length - 1];
-        // 연달아 오는 목차 줄은 한 카드(목차 블록) - 덩어리 나누기가 블록을 가르지 않는다
-        const joinsToc = hasToc && shouldJoinTocCard(isTocRow(last?.[last.length - 1], model.units), isTocRow(row, model.units));
-        if (last && (cardTops.has(readRowUnitId(row) ?? -1) || joinsToc)) last.push(row);
+        // 연달아 오는 같은 종류의 저절로 삭제된 줄은 한 카드(블록) - 덩어리 나누기가 블록을 가르지 않는다
+        const joinsNoise = hasNoise && shouldJoinNoiseCard(readNoiseKind(last?.[last.length - 1], model.units), readNoiseKind(row, model.units));
+        if (last && (cardTops.has(readRowUnitId(row) ?? -1) || joinsNoise)) last.push(row);
         else cards.push([row]);
       }
       const { isChunked, slices } = sliceCards(cards.length);
       const groups: CardGroup[] = slices.map(({ start, count }) => {
         const slice = cards.slice(start, start + count);
-        const unitIds = new Set(slice.flatMap((card) => card.flatMap((row) => listRowUnitIds(row, model.segments))));
-        return { index: isChunked ? nextIndex++ : -1, start, cards: slice, unitIds };
+        const rows = slice.flat();
+        const unitIds = new Set(rows.flatMap((row) => listRowUnitIds(row, model.segments)));
+        return { index: isChunked ? nextIndex++ : -1, start, cards: slice, unitIds, rows };
       });
       return { cards, groups, isChunked };
     });
-  }, [sections, cardTops, model, hasToc]);
-  const chunkCount = cardGroups.reduce((sum, section) => sum + (section.isChunked ? section.groups.length : 0), 0);
+  }, [sections, cardTops, model, hasNoise]);
+  // 접기 칸 - 부분마다 문서 순서로, 이웃한 짝 카드는 한 칸(첫 줄 key)
+  const hasFold = strips?.fold !== undefined;
+  const foldCells = useMemo(() => {
+    if (!hasFold) return [];
+    return sections.map((section) => {
+      const cells: FoldCell[] = [];
+      for (let index = 0; index < section.rows.length; index += 1) {
+        const row = section.rows[index];
+        const rows = [row];
+        if (brackets.get(readRowUnitId(row) ?? -1) === "top") {
+          while (index + 1 < section.rows.length && cardTops.has(readRowUnitId(section.rows[index + 1]) ?? -1)) {
+            index += 1;
+            rows.push(section.rows[index]);
+          }
+        }
+        cells.push({ item: { key: row.key, unitIds: rows.flatMap((one) => listRowUnitIds(one, model.segments)), section: readRowSection(row) }, rows });
+      }
+      return cells;
+    });
+  }, [hasFold, sections, brackets, cardTops, model]);
+  // 접혀 있어도 늘 펼쳐 보일 단위 - 고른 단위와 그 짝 구성원 모두(이웃하지 않은 구성원도). 출처 칩 등으로 필터 밖 단위를 고르면 저절로 엿보기가 된다
+  const foldForced = useMemo(() => {
+    const ids = new Set<number>();
+    if (selectedId === null) return ids;
+    ids.add(selectedId);
+    for (const mate of matesOf.get(selectedId) ?? []) ids.add(mate.id);
+    return ids;
+  }, [selectedId, matesOf]);
+  // 접기 계획 - 고를 때마다 다시 세지만 같은 계획이면 같은 글이라, 고른 조각이 맞음인 동안 아래 덩어리는 그대로다
+  const foldMatchIds = strips?.fold?.matchIds;
+  const foldOpen = strips?.fold?.open;
+  const foldPlanKey = useMemo(
+    () => (foldMatchIds && foldOpen ? JSON.stringify(foldCells.map((cells) => planFold(cells.map((cell) => cell.item), foldMatchIds, foldOpen, foldForced))) : "[]"),
+    [foldCells, foldMatchIds, foldOpen, foldForced],
+  );
+  const foldGroups = useMemo(() => {
+    let nextIndex = 0;
+    return (JSON.parse(foldPlanKey) as FoldEntry[][]).map((plan, sectionIndex) => {
+      const cellOf = new Map(foldCells[sectionIndex].map((cell) => [cell.item.key, cell]));
+      // 덩어리로 그릴지는 접기 전 칸 수로 - 펼침 · 엿보기로 계획이 길어지고 짧아져도 맨 목록과 덩어리 사이를 오가지 않는다(오가면 모든 줄이 다시 마운트된다)
+      const isChunked = foldCells[sectionIndex].length >= CHUNK_MIN_CARDS;
+      const groups: FoldGroup[] = sliceFoldEntries(plan).map(({ start, count }) => {
+        const entries = plan.slice(start, start + count);
+        const cells = entries.flatMap((entry) => ("key" in entry ? (cellOf.get(entry.key) ?? []) : []));
+        return {
+          index: isChunked ? nextIndex++ : -1,
+          entries,
+          signature: JSON.stringify([plan[start - 1], entries]),
+          unitIds: new Set(cells.flatMap((cell) => cell.item.unitIds)),
+          rows: cells.flatMap((cell) => cell.rows),
+          before: readFoldTail(plan[start - 1], cellOf),
+        };
+      });
+      return { cellOf, groups, isChunked };
+    });
+  }, [foldPlanKey, foldCells]);
+  // 지금 그리는 덩어리 - .strip-chunk 순서(index 순서)
+  const chunks = useMemo<ChunkSlot[]>(
+    () => (hasFold ? foldGroups.flatMap((section) => (section.isChunked ? section.groups : [])) : cardGroups.flatMap((section) => (section.isChunked ? section.groups : []))),
+    [hasFold, foldGroups, cardGroups],
+  );
+  const chunkCount = chunks.length;
   // 화면 가까이(위아래 한 화면씩 더) 있는 덩어리 번호 범위 - 재기 전(null)에는 모두 가깝다고 본다
   const [nearChunks, setNearChunks] = useState<{ from: number; to: number } | null>(null);
   useEffect(() => {
@@ -476,14 +581,11 @@ export function Paper({
   const continuous = useMemo(() => (numberEditUnitId === null ? null : suggestUnitContinuous(numberOrder, numberEditUnitId)), [numberEditUnitId, numberOrder]);
   const liveChunkIds = useMemo(() => {
     const ids = new Set<number>();
-    for (const section of cardGroups) {
-      if (!section.isChunked) continue;
-      for (const group of section.groups) {
-        if ([selectedId, actionIds.previous, numberEditUnitId].some((id) => id !== null && group.unitIds.has(id))) for (const index of [group.index - 1, group.index, group.index + 1]) ids.add(index);
-      }
+    for (const chunk of chunks) {
+      if ([selectedId, actionIds.previous, numberEditUnitId].some((id) => id !== null && chunk.unitIds.has(id))) for (const index of [chunk.index - 1, chunk.index, chunk.index + 1]) ids.add(index);
     }
     return ids;
-  }, [cardGroups, selectedId, actionIds.previous, numberEditUnitId]);
+  }, [chunks, selectedId, actionIds.previous, numberEditUnitId]);
 
   // 고른 조각 곁 틈을 벌릴 조각 - 이웃한 짝은 한 카드라 고른 줄이 카드 어디에 있든 카드 위아래가 같이 벌어진다
   const selectedBlock = useMemo(() => {
@@ -496,34 +598,6 @@ export function Paper({
     for (const [id, cardTop] of cardTops) if (cardTop === top) ids.add(id);
     return ids;
   }, [selectedId, brackets, cardTops]);
-  // 접기 칸 - 부분마다 문서 순서로, 이웃한 짝 카드는 한 칸(첫 줄 key)
-  const hasFold = strips?.fold !== undefined;
-  const foldCells = useMemo(() => {
-    if (!hasFold) return [];
-    return sections.map((section) => {
-      const cells: FoldCell[] = [];
-      for (let index = 0; index < section.rows.length; index += 1) {
-        const row = section.rows[index];
-        const rows = [row];
-        if (brackets.get(readRowUnitId(row) ?? -1) === "top") {
-          while (index + 1 < section.rows.length && cardTops.has(readRowUnitId(section.rows[index + 1]) ?? -1)) {
-            index += 1;
-            rows.push(section.rows[index]);
-          }
-        }
-        cells.push({ item: { key: row.key, unitIds: rows.flatMap((one) => listRowUnitIds(one, model.segments)), section: readRowSection(row) }, rows });
-      }
-      return cells;
-    });
-  }, [hasFold, sections, brackets, cardTops, model]);
-  // 접혀 있어도 늘 펼쳐 보일 단위 - 고른 단위와 그 짝 구성원 모두(이웃하지 않은 구성원도). 출처 칩 등으로 필터 밖 단위를 고르면 저절로 엿보기가 된다
-  const foldForced = useMemo(() => {
-    const ids = new Set<number>();
-    if (selectedId === null) return ids;
-    ids.add(selectedId);
-    for (const mate of matesOf.get(selectedId) ?? []) ids.add(mate.id);
-    return ids;
-  }, [selectedId, matesOf]);
   // 고른 박스의 떨어진 짝 - 이어 붙은 카드 안의 구성원은 바로 곁이라 안내하지 않는다. 자리 이름은 번호 칸 값(옛 추출은 절 번호), 없으면 표시 ID
   const hasPairHint = strips?.pairHint !== undefined;
   const handlePairHintPress = useClickOrDouble();
@@ -578,6 +652,35 @@ export function Paper({
   const numberEditBulletShift = useMemo(() => (numberEditKey === null ? null : findBulletShift(indentRows, numberEditKey)), [indentRows, numberEditKey]);
   // 벗긴 표의 줄 덩이마다 첫 줄 - 그 줄 위에 묶음 머리("↺ 다시 표로")를 단다(F1). 부분마다 문서 순서로
   const unwrapHeads = useMemo(() => new Map(sections.flatMap((section) => [...findUnwrapHeads(section.rows, model.unwrapped, model.tables)])), [sections, model]);
+  // 덩어리마다 그 안에서 보이는 단위와 표 - 제 줄에, 머리가 잠금을 묻는 단위(제목 → 문장 묶음, 벗긴 표의 줄, 저절로 삭제된 블록의 줄 - 다른 덩어리에 걸쳐 있거나 용지 줄이 없어도)를 더한다
+  const chunkScopes = useMemo(
+    () =>
+      chunks.map((chunk) => {
+        const unitIds = new Set(chunk.unitIds);
+        const tableIds = new Set<number>();
+        const headTableIds = new Set<number>();
+        for (const row of chunk.rows) {
+          for (const id of shiftGroups.get(readRowUnitId(row) ?? -1)?.unitIds ?? []) unitIds.add(id);
+          for (const id of noiseBlockOf.get(readRowUnitId(row) ?? -1)?.unitIds ?? []) unitIds.add(id);
+          if (row.type === "table") tableIds.add(row.item.table.id);
+          const headTableId = unwrapHeads.get(row.key);
+          if (headTableId !== undefined) headTableIds.add(headTableId);
+        }
+        if (headTableIds.size > 0) for (const unit of model.units.values()) if (unit.table_id !== null && headTableIds.has(unit.table_id)) unitIds.add(unit.id);
+        return { unitIds, tableIds: new Set([...tableIds, ...headTableIds]) };
+      }),
+    [chunks, model, shiftGroups, noiseBlockOf, unwrapHeads],
+  );
+  const pending = strips?.pending;
+  const chunkPending = useMemo(() => chunkScopes.map(({ unitIds, tableIds }) => readChunkPending(pending, unitIds, tableIds)), [chunkScopes, pending]);
+  const deletedFolds = strips?.deleted?.folds;
+  // 풀린 것(releasedFolds)은 그 단위의 접힘이 바뀐 그 그리기에서만 바뀌어 따로 견주지 않는다
+  const chunkDeleted = useMemo(() => chunkScopes.map(({ unitIds }) => readChunkDeleted(deletedFolds, unitIds)), [chunkScopes, deletedFolds]);
+  const expectedNumbers = numberCell?.expected;
+  const chunkNumbers = useMemo(() => chunkScopes.map(({ unitIds }) => readChunkNumbers(expectedNumbers, unitIds)), [chunkScopes, expectedNumbers]);
+  const noiseOpen = strips?.noise?.open;
+  const noiseSelected = strips?.noise?.selected;
+  const chunkNoise = useMemo(() => chunkScopes.map(({ unitIds }) => readChunkNoise(noiseOpen, noiseSelected, unitIds)), [chunkScopes, noiseOpen, noiseSelected]);
   // 벗긴 표 덩이의 지금 줄 차례(표 id → 줄 id) - model.order가 사람이 바꾼 순서(unwrap_seq)를 이미 따른다
   const unwrapOrders = useMemo(() => {
     const map = new Map<number, number[]>();
@@ -790,6 +893,17 @@ export function Paper({
     ));
   }
 
+  /** 앞 명령을 기다리는 박스의 칩 "대기 n"(A1-R5) */
+  function renderWaitChip(unitId: number | null | undefined): ReactNode {
+    const n = unitId === null || unitId === undefined ? undefined : strips?.pending?.waits.get(unitId);
+    if (n === undefined) return null;
+    return (
+      <span className="pending-pill queue-chip" role="status" data-testid={`assign-queue-${unitId}`}>
+        {t("assign.queue.chip", { n })}
+      </span>
+    );
+  }
+
   /** 두 박스 사이 틈의 알약(붙이기 · 틈에서 맺은 짝) */
   function renderGapPills(prev: PaperRow, next: PaperRow): ReactNode {
     const firstId = readRowUnitId(prev);
@@ -845,7 +959,7 @@ export function Paper({
     if (!strips) return null;
     const marks = new Set<PaperMark>();
     if (unit) {
-      for (const mark of getMarks(unit, inPairCard)) marks.add(mark);
+      for (const mark of getMarks(unit, inPairCard, showSplitMark)) marks.add(mark);
     }
     if (hasWarn) marks.add("warn");
     if (marks.size === 0) return null;
@@ -937,7 +1051,7 @@ export function Paper({
           tip={describeTab(unit)}
           testId={testId}
           unitId={unit.id}
-          number={unit.number}
+          number={numberUnits.get(unit.id)?.number ?? unit.number}
           isUnread={unreadBlockIds.has(unit.block_id)}
           canEdit={numberCell !== undefined}
           busy={(numberCell?.busy ?? false) || isLocked(unit.id)}
@@ -1003,6 +1117,7 @@ export function Paper({
             <p data-block={cell.id}>{row.parts[0].segments.map((segment, at) => renderSegment(cell, segment, at))}</p>
             {renderActions(unit?.id)}
             {unit !== undefined && renderPendingPills((place) => place.at === "box" && place.unitId === unit.id)}
+            {renderWaitChip(unit?.id)}
           </div>
         </Fragment>
       );
@@ -1262,6 +1377,7 @@ export function Paper({
           {foot}
           {unit !== undefined && unit.id === selectedId && renderPairHint(unit.id)}
           {renderPendingPills((place) => (place.at === "box" && place.unitId === unitId) || (place.at === "table" && row.type === "table" && place.tableId === row.item.table.id))}
+          {renderWaitChip(unitId)}
           {pills}
           {renderMarks(unit, hasWarn, "strip-marks", inPairCard)}
           {row.type === "piece" && renderLang(unit)}
@@ -1292,60 +1408,73 @@ export function Paper({
         data-testid={`${testId}-gap-${row.key}`}
       >
         {hasRail && renderRail(Math.min(readTabWidth(prev), readTabWidth(row)))}
-        {/* 처리 중인 틈은 알약이 합치기 자리를 대신한다. 목차 블록 곁에는 합치기를 두지 않는다 - 목차 줄은 "목차 아님"으로 먼저 보통 줄로 돌린다. 접힌 삭제 줄 곁도 같다(펼쳐서 한다) */}
-        {renderGapPills(prev, row) ?? (!(hasToc && (isTocRow(prev, model.units) || isTocRow(row, model.units))) && !isDeletedRow(prev) && !isDeletedRow(row) && renderMerge(prev, row))}
+        {/* 처리 중인 틈은 알약이 합치기 자리를 대신한다. 저절로 삭제된 줄 곁에는 합치기를 두지 않는다 - 먼저 "삭제 취소"로 보통 줄로 돌린다. 접힌 삭제 줄 곁도 같다(펼쳐서 한다) */}
+        {renderGapPills(prev, row) ?? (!(hasNoise && (readNoiseKind(prev, model.units) ?? readNoiseKind(row, model.units)) !== null) && !isDeletedRow(prev) && !isDeletedRow(row) && renderMerge(prev, row))}
       </div>
     );
   }
 
-  /** 목차 블록 - 연달아 오는 목차 줄을 흐린 블록 하나로(MD 1 F6). 접히면 머리 줄과 처리 줄 둘, 펼치면 원문 목차 모양 그대로 줄마다(한/영 사이 점선).
-   *  머리를 누르면 펼치거나 접으며 블록을 고르고, 줄을 누르면 그 줄을 고른다(그 줄 끝에만 "목차 아님"). 고름은 배정 줄이 아니라 화면의 목차 고름이다(결정 칸 F12) */
-  function renderTocBlock(rows: readonly PaperRow[]): ReactNode {
-    const toc = strips?.toc;
-    const units = rows.flatMap((row) => {
-      const unit = model.units.get(readRowUnitId(row) ?? -1);
-      return unit ? [unit] : [];
+  /** 한 카드의 블록 줄 - 용지 줄이 없는 안쪽 표 · 칸 안 그림도 제 줄로 센다. 그림 탭에는 그림 줄만, 필터로 접힌 목록에서 엿본 줄은 그 줄만 있다 */
+  function listNoiseUnits(rows: readonly PaperRow[], isPeek: boolean): ViewUnit[] {
+    const ids = rows.flatMap((row) => {
+      const unitId = readRowUnitId(row);
+      if (unitId === null) return [];
+      return figureRows === "only" || isPeek ? [unitId] : (noiseBlockOf.get(unitId)?.unitIds ?? [unitId]);
     });
-    const block = buildTocBlock(units);
-    if (!toc || !block) return null;
-    const isOpen = toc.open.has(block.key);
-    const picked = toc.selected?.key === block.key ? toc.selected : null;
-    const isBusy = toc.busy || block.unitIds.some(isLocked);
+    return [...new Set(ids)].flatMap((id) => model.units.get(id) ?? []);
+  }
+
+  /** 저절로 삭제된 줄의 블록 - 연달아 오는 같은 종류의 줄을 흐린 블록 하나로(MD 1 F6). 머리는 "DELETED 이름 · n줄 · 사유"와 늘 보이는 사유 쓰기 ·
+   *  모두 삭제 취소, 펼치면 원문 글 그대로 줄마다(취소선, 한/영 사이 점선)와 줄 끝의 같은 두 단추(흐리게, 고른 줄은 삭제 취소가 펼친 채).
+   *  머리를 누르면 펼치거나 접으며 블록을 고르고, 줄을 누르면 그 줄을 고른다. 고름은 배정 줄이 아니라 화면의 고름이다(결정 칸 F12) */
+  function renderNoiseBlock(rows: readonly PaperRow[], isPeek: boolean): ReactNode {
+    const noise = strips?.noise;
+    const block = buildNoiseBlock(listNoiseUnits(rows, isPeek), (unit) => describeNoiseUnit(unit, model.tables, t));
+    if (!noise || !block) return null;
+    const isOpen = noise.open.has(block.key);
+    const picked = noise.selected !== null && block.unitIds.includes(noise.selected.unitId ?? noise.selected.key) ? noise.selected : null;
+    const isBusy = noise.busy || block.unitIds.some(isLocked);
     const width = readTabWidth(rows[0]);
-    const prefix = `${testId}-toc`;
+    const prefix = `${testId}-noise`;
+    const name = t(`assign.noise.name.${block.kind}`);
+    const reason = readNoiseReason(block, t);
+    // 단추가 속한 블록 · 줄을 함께 고른다 - 앞서 고른 줄에 이어 누른 글쇠(↵ · Del · H)가 떨어지지 않게
+    const pressAct = (unitId: number | null, run: () => void) => {
+      noise.onPick(block.key, unitId);
+      run();
+    };
     return (
-      <div key={`toc-${block.key}`} className="strip-row">
+      <div key={`noise-${block.key}`} className="strip-row">
         <span className="strip-lead-gap" style={{ width: width + STRIP_LEAD_EXTRA }} />
-        <div className="toc-block" data-open={isOpen ? "" : undefined} data-sel={picked !== null && picked.unitId === null ? "" : undefined} data-testid={`${prefix}-${block.key}`}>
-          <div className="toc-head-row">
+        <div className="toc-block" data-kind={block.kind} data-open={isOpen ? "" : undefined} data-sel={picked !== null && picked.unitId === null ? "" : undefined} data-testid={`${prefix}-${block.key}`}>
+          <div className="toc-head-row noise-head-row">
             <button
               type="button"
               className="toc-head"
               aria-expanded={isOpen}
+              data-tip={reason}
               data-testid={`${prefix}-head-${block.key}`}
               onClick={() => {
-                toc.onToggle(block.key);
-                toc.onPick(block.key, null);
+                noise.onToggle(block.key);
+                noise.onPick(block.key, null);
               }}
             >
               <ChevronRight size={13} strokeWidth={1.75} className="toc-chevron" aria-hidden />
-              <span className="toc-tag">{t("assign.toc.tag")}</span>
-              <span className="toc-head-text">{t("assign.toc.head", { n: block.counts.total })}</span>
+              <span className="deleted-tag">{t("paper.deleted.tag")}</span>
+              <span className="toc-head-text">{t("assign.noise.head", { name, n: block.counts.total, reason })}</span>
             </button>
-            {isOpen && toc.canClear && (
-              <button
-                type="button"
-                className="btn toc-act"
-                disabled={isBusy}
-                data-testid={`${prefix}-all-${block.key}`}
-                onClick={() => toc.onClear(block.unitIds)}
-              >
-                {t("assign.toc.allNot")}
-              </button>
+            {noise.canEdit && (
+              <span className="noise-acts">
+                <button type="button" className="btn noise-act" disabled={isBusy} data-testid={`${prefix}-reason-${block.key}`} onClick={() => pressAct(null, () => noise.onReason(block.unitIds))}>
+                  {t("assign.noise.write")}
+                </button>
+                <button type="button" className="btn noise-act" disabled={isBusy} data-testid={`${prefix}-clear-${block.key}`} onClick={() => pressAct(null, () => noise.onClear(block.unitIds))}>
+                  {t("assign.noise.clearAll")}
+                </button>
+              </span>
             )}
             {renderPendingPills((place) => place.at === "box" && block.unitIds.includes(place.unitId))}
           </div>
-          {!isOpen && <p className="toc-note" data-testid={`${prefix}-note-${block.key}`}>{t("assign.toc.note")}</p>}
           <Collapse open={isOpen} className="toc-body">
             {() => (
               <ol className="toc-lines" style={{ fontFamily: "var(--font-source)" }}>
@@ -1355,23 +1484,27 @@ export function Paper({
                     <li key={line.unitId} className="toc-line" data-break={line.breakBefore ? "" : undefined} data-picked={isPicked ? "" : undefined}>
                       <button
                         type="button"
-                        className="toc-line-text"
+                        className="toc-line-text noise-line-text"
                         aria-pressed={isPicked}
                         data-testid={`${prefix}-line-${line.unitId}`}
-                        onClick={() => toc.onPick(block.key, isPicked ? null : line.unitId)}
+                        onClick={() => noise.onPick(block.key, isPicked ? null : line.unitId)}
                       >
                         {line.text}
                       </button>
-                      {isPicked && toc.canClear && (
-                        <button
-                          type="button"
-                          className="btn toc-act"
-                          disabled={isBusy}
-                          data-testid={`${prefix}-not-${line.unitId}`}
-                          onClick={() => toc.onClear([line.unitId])}
-                        >
-                          {t("assign.toc.not")}
-                        </button>
+                      {block.reason.isMixed && line.reason !== "" && <span className="noise-line-reason" data-tip={line.reason}>{line.reason}</span>}
+                      {noise.canEdit && (
+                        <span className="mbtn-set noise-line-acts">
+                          <button type="button" className={getMorphClassName("default", false)} aria-label={t("assign.noise.write")} disabled={isBusy} data-testid={`${prefix}-unit-reason-${line.unitId}`} onClick={() => pressAct(line.unitId, () => noise.onReason([line.unitId]))}>
+                            <FilePen size={14} strokeWidth={1.5} aria-hidden />
+                            <span className="mbtn-label" aria-hidden>{t("assign.noise.write")}</span>
+                          </button>
+                          <button type="button" className={getMorphClassName("default", isPicked)} aria-label={t("assign.noise.clear")} disabled={isBusy} data-testid={`${prefix}-unit-clear-${line.unitId}`} onClick={() => pressAct(line.unitId, () => noise.onClear([line.unitId]))}>
+                            <Undo2 size={14} strokeWidth={1.5} aria-hidden />
+                            <span className="mbtn-label" aria-hidden>
+                              {t("assign.noise.clear")} {isPicked && <kbd>U</kbd>}
+                            </span>
+                          </button>
+                        </span>
                       )}
                     </li>
                   );
@@ -1408,11 +1541,13 @@ export function Paper({
           data-tip={line.remark || undefined}
           data-pick={unitIds.some((id) => pickedIds?.has(id)) ? "" : undefined}
           data-strip-unit={unitId}
+          data-pending={readPendingMark(unitId)}
           data-testid={`${testId}-deleted-u${unitId}`}
           onClick={(event) => onUnitClick(unitId, null, event)}
         >
           <span className="deleted-tag">{t("paper.deleted.tag")}</span>
           <span className="deleted-text">{[line.kind, line.text].filter((part) => part !== null && part !== "").join(" · ")}</span>
+          {renderWaitChip(unitId)}
         </button>
       </div>
     );
@@ -1445,9 +1580,10 @@ export function Paper({
     const isSame = isPreview && isUnwrapSuggestionUnchanged(current, suggested);
     const isBusy = ai?.busy.has(tableId) ?? false;
     return (
-      <div className="strip-row unwrap-head-row" data-unwrap-scope={`t${tableId}`} data-unwrap-enter="" data-testid={`${testId}-unwrap-head-${tableId}`}>
+      <div className="strip-row unwrap-head-row" data-unwrap-scope={`t${tableId}`} data-testid={`${testId}-unwrap-head-${tableId}`}>
         <span className="strip-lead-gap" style={{ width: readTabWidth(row) + STRIP_LEAD_EXTRA }} />
-        <div className="unwrap-head">
+        {/* 다시 표로를 누르면 응답 전에 이것이 사라진다 - 처리 중 알약은 밖에 둔다 */}
+        <div className="unwrap-head" data-unwrap-enter="">
           {isBusy && (
             <span className="unwrap-ai-busy" data-testid={`${testId}-unwrap-ai-busy-${tableId}`}>
               {t("assign.unwrapAi.busy")}
@@ -1490,8 +1626,8 @@ export function Paper({
           >
             {t("assign.unwrap.rewrap")}
           </button>
-          {renderPendingPills((place) => place.at === "table" && place.tableId === tableId)}
         </div>
+        {renderPendingPills((place) => place.at === "table" && place.tableId === tableId)}
       </div>
     );
   }
@@ -1526,10 +1662,14 @@ export function Paper({
 
   /** 한 칸(외톨이 줄 하나 또는 짝 카드 한 장) - 카드는 .strip-card로 감싸 강조 테두리가 줄 수와 상관없이 카드 전체에 둘린다(감싼 요소는 display: contents라 배치는 그대로) */
   function renderCard(rows: readonly PaperRow[], isPeek = false): ReactNode {
-    if (hasToc && isTocRow(rows[0], model.units)) return renderTocBlock(rows);
+    if (hasNoise && readNoiseKind(rows[0], model.units) !== null) return renderNoiseBlock(rows, isPeek);
     // 거르기로 접힌 줄을 엿보기로 연 것은 살펴보려는 것이라 삭제 줄도 펼친다
     const folds = strips?.deleted && !isPeek ? strips.deleted.folds : null;
-    const deletedLine = folds ? readDeletedLine(folds, rows.map((row) => readRowUnitId(row) ?? -1)) : null;
+    const unitIds = rows.map((row) => readRowUnitId(row) ?? -1);
+    const foldedLine = folds ? readDeletedLine(folds, unitIds) : null;
+    // 저장되지 못해 버린 삭제 - 같은 감싸개 안에서 줄이 접히고 박스가 펼쳐진다
+    const releasedLine = folds !== null && foldedLine === null ? readDeletedLine(releasedFolds, unitIds) : null;
+    const deletedLine = foldedLine ?? releasedLine;
     const renderContent = () => {
       const content = rows.map((row, index) => (
         <Fragment key={row.key}>
@@ -1542,11 +1682,13 @@ export function Paper({
     };
     if (folds === null || deletedLine === null) return renderContent();
     // 고른 동안만 펼친다 - 줄과 박스를 같은 자리에서 Collapse로 바꿔 펼칠 때 · 접힐 때 전환(움직임 줄이기면 바로). 펼친 박스는 옅은 위험 바탕(삭제 표시는 박스 안 상태 칩)
-    const isOpen = isDeletedLineOpen(folds, deletedLine.rowKey, selectedId);
+    const isOpen = releasedLine !== null || isDeletedLineOpen(folds, deletedLine.rowKey, selectedId);
+    // 방금 누른 삭제는 감싸지 않은 박스에서 온다 - 처음 붙어도 펼친 모양에서 접기 시작한다
+    const isPressed = deletedLine.isPending === true;
     return (
       <>
-        <Collapse open={!isOpen}>{renderDeletedLine(rows, deletedLine)}</Collapse>
-        <Collapse open={isOpen} className="deleted-open">
+        <Collapse open={!isOpen} appear={isPressed}>{renderDeletedLine(rows, deletedLine)}</Collapse>
+        <Collapse open={isOpen} startOpen={isPressed} className={releasedLine === null ? "deleted-open" : "deleted-release"}>
           {renderContent}
         </Collapse>
       </>
@@ -1570,14 +1712,20 @@ export function Paper({
         );
       });
     if (!isChunked) return groups.length > 0 ? renderCards(groups[0]) : null;
-    return groups.map((group) => (
+    return groups.map((group) => renderChunk(group.cards[0][0].key, group, [cardGroups], () => renderCards(group)));
+  }
+
+  /** 덩어리 하나 - own은 그 보기(펼친 목록 · 접힌 목록)의 줄 구성 */
+  function renderChunk(key: string, chunk: ChunkSlot, own: readonly unknown[], render: () => ReactNode): ReactNode {
+    return (
       <PaperChunk
-        key={group.cards[0][0].key}
-        live={nearChunks === null || (group.index >= nearChunks.from && group.index <= nearChunks.to) || liveChunkIds.has(group.index)}
-        deps={[cardGroups, t, testId, dragBoxes, pickWholeBundle, strips?.toc?.open, strips?.toc?.selected, strips?.toc?.busy, strips?.toc?.canClear, shiftGroups, strips?.headingShift?.busy, strips?.headingShift?.canRevert, unwrapHeads, strips?.unwrap?.busy, strips?.unwrap?.canRewrap, strips?.unwrap?.ai?.enabled, strips?.unwrap?.ai?.busy, unwrapAiPreviews, unwrapOrders, unwrapAiMoves, strips?.deleted?.folds, strips?.pending]}
-        render={() => renderCards(group)}
+        key={key}
+        live={nearChunks === null || (chunk.index >= nearChunks.from && chunk.index <= nearChunks.to) || liveChunkIds.has(chunk.index)}
+        deps={[...own, t, testId, dragBoxes, pickWholeBundle, strips?.noise?.busy, strips?.noise?.canEdit, shiftGroups, strips?.headingShift?.busy, strips?.headingShift?.canRevert, unwrapHeads, strips?.unwrap?.busy, strips?.unwrap?.canRewrap, strips?.unwrap?.ai?.enabled, strips?.unwrap?.ai?.busy, unwrapAiPreviews, unwrapOrders, unwrapAiMoves, chunkPending[chunk.index], chunkDeleted[chunk.index], chunkNumbers[chunk.index], chunkNoise[chunk.index]]}
+        isFold={hasFold}
+        render={render}
       />
-    ));
+    );
   }
 
   /** 한 줄 판의 글 - 짝 카드는 줄마다 글을 " / "로, 표·그림은 이름만. 절 머리면 앞머리에 보인 번호를 글에서 뺀다(제 모양 조각과 같이) */
@@ -1598,95 +1746,90 @@ export function Paper({
       .join(" / ");
   }
 
-  /** 필터 접기 - 맞음·엿보기는 제 조각, 곁은 한 줄 판, 먼 구간은 묶음 한 줄. 틈은 조각끼리 이웃할 때만 */
-  function renderFolded(cells: readonly FoldCell[], fold: NonNullable<NonNullable<PaperProps["strips"]>["fold"]>): ReactNode {
-    const items = cells.map((cell) => cell.item);
-    let plan: FoldEntry[] = buildFoldPlan(items, fold.matchIds, fold.open, foldForced);
-    // 이 부분에 맞음이 없는데 고른 조각(출처 칩으로 건너옴)이 있으면 그 조각을 엿보기로 두고 둘레를 접는다 - 고른 조각은 늘 보여야 한다
-    if (plan.length === 0 && items.some((item) => item.unitIds.some((id) => foldForced.has(id)))) {
-      plan = buildFoldPlan(items, foldForced, fold.open).map((entry) => (entry.kind === "full" ? { kind: "peek", key: entry.key } : entry));
-    }
-    const cellOf = new Map(cells.map((cell) => [cell.item.key, cell]));
+  /** 필터 접기 - 맞음·엿보기는 제 조각, 곁은 한 줄 판, 먼 구간은 묶음 한 줄. 틈은 조각끼리 이웃할 때만(덩어리 첫 틈은 앞 덩어리의 끝 줄과) */
+  function renderFolded(sectionIndex: number, fold: NonNullable<NonNullable<PaperProps["strips"]>["fold"]>): ReactNode {
+    const { cellOf, groups, isChunked } = foldGroups[sectionIndex];
+    const renderEntries = (group: FoldGroup) => group.entries.map((entry, at) => renderFoldEntry(entry, at > 0 ? readFoldTail(group.entries[at - 1], cellOf) : group.before, cellOf, fold));
+    if (!isChunked) return groups.length > 0 ? renderEntries(groups[0]) : null;
+    // 덩어리 key는 자리 번호 - 고른 조각이 엿보기로 끼어 줄이 몇 칸 밀려도 덩어리째 다시 붙이지 않고 경계의 줄만 옮긴다
+    return groups.map((group, at) => renderChunk(`fold-${at}`, group, [foldCells, fold.open, group.signature], () => renderEntries(group)));
+  }
+
+  function renderFoldEntry(entry: FoldEntry, before: PaperRow | undefined, cellOf: ReadonlyMap<string, FoldCell>, fold: NonNullable<NonNullable<PaperProps["strips"]>["fold"]>): ReactNode {
     const leadWidth = (key: string): number => {
       const first = cellOf.get(key)?.rows[0];
       return (first ? readTabWidth(first) : 0) + STRIP_LEAD_EXTRA;
     };
     const { open, onOpenChange } = fold;
-    let prevRow: PaperRow | null = null;
-    return plan.map((entry) => {
-      if (entry.kind === "full" || entry.kind === "peek") {
-        const rows = cellOf.get(entry.key)?.rows ?? [];
-        const before = prevRow;
-        prevRow = rows[rows.length - 1] ?? null;
-        return (
-          <Fragment key={entry.key}>
-            {before && rows[0] && renderGap(before, rows[0])}
-            {renderCard(rows, entry.kind === "peek")}
-          </Fragment>
-        );
-      }
-      prevRow = null;
-      if (entry.kind === "line") {
-        const rows = cellOf.get(entry.key)?.rows ?? [];
-        const first = rows[0];
-        const unitId = first ? readRowUnitId(first) : null;
-        const unit = unitId === null ? undefined : model.units.get(unitId);
-        const width = first ? readTabWidth(first) : 0;
-        // 절 머리면 번호를 남긴다 - 짝 카드는 첫 줄이 first다
-        const isHead = unit !== undefined && sectionHeads.has(unit.id);
-        const foldNumber = model.hasNumberRanges ? (unit?.number?.value ?? null) : isHead && first ? getSectionPill(readRowSection(first)) : null;
-        return (
-          <button
-            key={`line-${entry.key}`}
-            type="button"
-            className="fold-line"
-            data-testid={`${testId}-fold-line-${entry.key}`}
-            onClick={() => onOpenChange({ runs: open.runs, peeks: new Set([...open.peeks, entry.key]) })}
-          >
-            {unit ? (
-              <StripLead width={width} number={foldNumber} dim={foldNumber === null} tip={describeTab(unit)} testId={`${testId}-fold`} id={unit.id} />
-            ) : (
-              <span className="strip-lead-gap" style={{ width: width + STRIP_LEAD_EXTRA }} />
-            )}
-            <span className="fold-line-text">{readLineText(rows)}</span>
-          </button>
-        );
-      }
-      if (entry.kind === "run") {
-        const range = entry.from === "" ? "" : entry.from === entry.to ? entry.from : `${entry.from}–${entry.to}`;
-        return (
-          <button
-            key={`run-${entry.runKey}`}
-            type="button"
-            className="fold-run"
-            style={{ marginLeft: leadWidth(entry.runKey) }}
-            aria-expanded={false}
-            data-testid={`${testId}-fold-run-${entry.runKey}`}
-            onClick={() => onOpenChange({ runs: new Set([...open.runs, entry.runKey]), peeks: open.peeks })}
-          >
-            <Ellipsis size={14} strokeWidth={1.75} aria-hidden />
-            <span>{t("paper.foldRun", { n: entry.count })}</span>
-            {range && <span className="fold-run-range">§ {range}</span>}
-            <span className="fold-run-act">{t("paper.foldExpand")}</span>
-          </button>
-        );
-      }
-      const members = new Set(entry.memberKeys);
+    if (entry.kind === "full" || entry.kind === "peek") {
+      const rows = cellOf.get(entry.key)?.rows ?? [];
+      return (
+        <Fragment key={entry.key}>
+          {before && rows[0] && renderGap(before, rows[0])}
+          {renderCard(rows, entry.kind === "peek")}
+        </Fragment>
+      );
+    }
+    if (entry.kind === "line") {
+      const rows = cellOf.get(entry.key)?.rows ?? [];
+      const first = rows[0];
+      const unitId = first ? readRowUnitId(first) : null;
+      const unit = unitId === null ? undefined : model.units.get(unitId);
+      const width = first ? readTabWidth(first) : 0;
+      // 절 머리면 번호를 남긴다 - 짝 카드는 첫 줄이 first다
+      const isHead = unit !== undefined && sectionHeads.has(unit.id);
+      const foldNumber = model.hasNumberRanges ? (unit?.number?.value ?? null) : isHead && first ? getSectionPill(readRowSection(first)) : null;
       return (
         <button
-          key={`head-${entry.runKey}`}
+          key={`line-${entry.key}`}
           type="button"
-          className="fold-head"
-          style={{ marginLeft: leadWidth(entry.runKey) }}
-          aria-expanded
-          data-testid={`${testId}-fold-head-${entry.runKey}`}
-          onClick={() => onOpenChange({ runs: new Set([...open.runs].filter((key) => key !== entry.runKey)), peeks: new Set([...open.peeks].filter((key) => !members.has(key))) })}
+          className="fold-line"
+          data-testid={`${testId}-fold-line-${entry.key}`}
+          onClick={() => onOpenChange({ runs: open.runs, peeks: new Set([...open.peeks, entry.key]) })}
         >
-          <ChevronsDownUp size={12} strokeWidth={1.75} aria-hidden />
-          {t("paper.foldCollapse")}
+          {unit ? (
+            <StripLead width={width} number={foldNumber} dim={foldNumber === null} tip={describeTab(unit)} testId={`${testId}-fold`} id={unit.id} />
+          ) : (
+            <span className="strip-lead-gap" style={{ width: width + STRIP_LEAD_EXTRA }} />
+          )}
+          <span className="fold-line-text">{readLineText(rows)}</span>
         </button>
       );
-    });
+    }
+    if (entry.kind === "run") {
+      const range = entry.from === "" ? "" : entry.from === entry.to ? entry.from : `${entry.from}–${entry.to}`;
+      return (
+        <button
+          key={`run-${entry.runKey}`}
+          type="button"
+          className="fold-run"
+          style={{ marginLeft: leadWidth(entry.runKey) }}
+          aria-expanded={false}
+          data-testid={`${testId}-fold-run-${entry.runKey}`}
+          onClick={() => onOpenChange({ runs: new Set([...open.runs, entry.runKey]), peeks: open.peeks })}
+        >
+          <Ellipsis size={14} strokeWidth={1.75} aria-hidden />
+          <span>{t("paper.foldRun", { n: entry.count })}</span>
+          {range && <span className="fold-run-range">§ {range}</span>}
+          <span className="fold-run-act">{t("paper.foldExpand")}</span>
+        </button>
+      );
+    }
+    const members = new Set(entry.memberKeys);
+    return (
+      <button
+        key={`head-${entry.runKey}`}
+        type="button"
+        className="fold-head"
+        style={{ marginLeft: leadWidth(entry.runKey) }}
+        aria-expanded
+        data-testid={`${testId}-fold-head-${entry.runKey}`}
+        onClick={() => onOpenChange({ runs: new Set([...open.runs].filter((key) => key !== entry.runKey)), peeks: new Set([...open.peeks].filter((key) => !members.has(key))) })}
+      >
+        <ChevronsDownUp size={12} strokeWidth={1.75} aria-hidden />
+        {t("paper.foldCollapse")}
+      </button>
+    );
   }
 
   function handleClick(event: MouseEvent<HTMLDivElement>) {
@@ -1785,7 +1928,7 @@ export function Paper({
       >
         {strips ? (
           sections.map((section, index) => {
-            const content = strips.fold ? renderFolded(foldCells[index] ?? [], strips.fold) : renderRows(index);
+            const content = strips.fold ? renderFolded(index, strips.fold) : renderRows(index);
             return section.edge === null ? (
               <Fragment key="body">{content}</Fragment>
             ) : (

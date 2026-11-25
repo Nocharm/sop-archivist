@@ -2,6 +2,7 @@
 // 2026-11-20-assign-mockup1 D1(규칙 1-6, docs/architecture/decisions.md). 화면 · 요청 · 시간은 모른다.
 
 import type { EditOp } from "./api-sop";
+import { listWaitNumbers, type QueueState } from "./command-queue";
 
 /** 고름 - Old 박스(Unit) 하나 · 목차 블록 · New 문서. 줄(row)은 고름에서 파생한다(rowOfUnit) */
 export type Focus =
@@ -64,6 +65,8 @@ export type FocusEvent =
   | { type: "start"; pending: Pending }
   | { type: "succeed"; pendingId: string; docId: number | null; revision: number | null; pickUnitId: number | null }
   | { type: "fail"; pendingId: string }
+  // 줄에서 기다리던 묶음 전체 일을 이제 보낸다 - 그 사이 앞 편집이 건 따라가기를 버린다(은퇴할 Unit을 고르지 않게)
+  | { type: "dropFollows" }
   // 한 번에 받은 문서들(지금은 Old 문서 전부 또는 한 단 New 문서 하나). liftUnit - 고를 수 있는 Unit으로 올린다(자기 · 묶음 · 없으면 null)
   | { type: "loaded"; docs: readonly LoadedDoc[]; liftUnit: (unitId: number) => number | null };
 
@@ -101,6 +104,8 @@ export function reduceFocus(state: FocusState, event: FocusEvent): FocusState {
       const pending = state.pending.filter((item) => item.id !== event.pendingId);
       return pending.length === state.pending.length ? state : { ...state, pending };
     }
+    case "dropFollows":
+      return state.follows.length === 0 ? state : { ...state, follows: [] };
     case "loaded":
       return applyLoaded(state, event).state;
   }
@@ -156,12 +161,17 @@ function dropVanished(focus: Focus, docs: readonly LoadedDoc[]): Focus {
   return focus.unitId !== null && !doc.unitIds.has(focus.unitId) ? { ...focus, unitId: null } : focus;
 }
 
-/** 처리 중인 일 목록만 - 화면 훅이 같은 렌더 안의 잇단 누름을 막으려고 따로 쥔 목록도 같은 규칙으로 본다 */
+/** 처리 중인 일 목록만 */
 type PendingList = { pending: readonly Pending[] };
 
-/** 처리 중인 일이 잡은 Unit인가 - 잠긴 박스는 고르기 · 끌기 · 틈 단추 · 우클릭 메뉴를 받지 않는다(규칙 6) */
+/** 판단 저장 - 박스의 모양을 바꾸지 않아 잠그지 않는다(A1-R4). 같은 박스에 이어 누른 것은 큐가 앞 응답의 revision으로 보낸다 */
+export function isDecisionKind(kind: PendingKind): boolean {
+  return kind === "save" || kind === "bulk";
+}
+
+/** 처리 중인 일이 잡은 Unit인가 - 잠긴 박스는 고르기 · 끌기 · 틈 단추 · 우클릭 메뉴를 받지 않는다(규칙 6). 판단 저장 중인 박스는 잠기지 않는다 */
 export function isUnitLocked(state: PendingList, unitId: number): boolean {
-  return state.pending.some((entry) => entry.unitIds.includes(unitId));
+  return state.pending.some((entry) => !isDecisionKind(entry.kind) && entry.unitIds.includes(unitId));
 }
 
 /** 묶음 전체 일(초기화 · 일괄 수락 · 같은 글자 일괄 확정 · Undo/Redo)이 처리 중인가 - 그동안은 모든 일이 꺼진다 */
@@ -169,19 +179,19 @@ export function isGlobalPending(state: PendingList): boolean {
   return state.pending.some((entry) => entry.isGlobal);
 }
 
-/** 이 일을 지금 시작할 수 있는가 - 잠긴 Unit과 겹치거나, 묶음 전체 일과 다른 일이 함께면 안 된다(규칙 6) */
-export function canStart(state: PendingList, pending: Pending): boolean {
-  if (state.pending.length === 0) return true;
-  if (pending.isGlobal || isGlobalPending(state)) return false;
-  return !pending.unitIds.some((unitId) => isUnitLocked(state, unitId));
-}
-
 /**
  * 처리 중인 일이 이 Unit을 은퇴시켰을 수 있나 - 그 Unit을 잡은 일, 묶음 전체 일, 그 문서에서 Unit을 모르고 보낸 일(글자 범위 · 참조).
  * 서버는 응답 전에 이미 바꿨을 수 있어, 이 동안 그 Unit으로 묶음 · 후보 · 참조를 물으면 404가 난다(규칙 5의 뜻). 판단 저장은 Unit을 바꾸지 않는다
  */
 export function isUnitUnsettled(state: PendingList, docId: number, unitId: number): boolean {
-  return state.pending.some((entry) => entry.kind !== "save" && (entry.isGlobal || entry.unitIds.includes(unitId) || (entry.docId === docId && entry.unitIds.length === 0)));
+  return state.pending.some((entry) => (entry.isGlobal || !isDecisionKind(entry.kind)) && (entry.isGlobal || entry.unitIds.includes(unitId) || (entry.docId === docId && entry.unitIds.length === 0)));
+}
+
+const NO_WAITS: ReadonlyMap<number, number> = new Map();
+
+/** 기다리는 명령의 박스 → 칩 "대기 n"(A1-R5) - 기다리는 것이 없으면 늘 같은 빈 값(용지를 다시 그리지 않게) */
+export function buildPaperWaits<T>(state: Pick<QueueState<T>, "waiting">): ReadonlyMap<number, number> {
+  return state.waiting.length === 0 ? NO_WAITS : listWaitNumbers(state);
 }
 
 /** 처리 중 알약의 글 키 - 판단 저장은 결정 칸 단추가 이미 보이고, 묶음 전체 일은 그릴 자리가 없어 null(설계 D4 표) */
@@ -267,6 +277,8 @@ export function readEditKind(op: EditOp): PendingKind {
     case "ungroup_figures":
       return "figure";
     case "clear_noise":
+    case "set_noise_reason":
+    case "start_body":
       return "toc";
     case "reorder_pair":
       return "order";
@@ -281,6 +293,7 @@ export function listEditUnitIds(op: EditOp): number[] {
     case "merge":
     case "set_language":
     case "clear_noise":
+    case "set_noise_reason":
     case "set_heading":
     case "group_figures":
     case "reorder_pair":
@@ -294,6 +307,7 @@ export function listEditUnitIds(op: EditOp): number[] {
     case "set_ref":
     case "clear_ref":
     case "set_number":
+    case "start_body":
       return [op.unit_id];
     case "set_indents":
       return op.units.map((item) => item.unit_id);
@@ -312,7 +326,7 @@ export function listEditUnitIds(op: EditOp): number[] {
 /** 편집 뒤 다시 받기의 까닭(설계 D2) - isReleased는 판단을 풀며(confirm) 보낸 편집 */
 export type ReloadCause =
   | { kind: "old_edit"; docId: number; isInPlace: boolean; isReleased: boolean }
-  | { kind: "new_edit"; docId: number }
+  | { kind: "new_edit"; docId: number; isReleased: boolean }
   | { kind: "pair"; docId: number }
   | { kind: "caption_ref"; docId: number }
   | { kind: "split_suggestion"; docId: number; isApplied: boolean }
@@ -353,6 +367,8 @@ export function planReload(cause: ReloadCause, ctx: { aiOn: boolean }): ReloadPl
       return { ...own, identical: true, splitSuggestions: ctx.aiOn ? cause.docId : null };
     }
     case "new_edit":
+      // 이음을 풀었으면 이어져 있던 Old 줄이 보류가 된다 - 어느 Old 문서인지 응답이 말하지 않아 모두 다시 받는다
+      if (cause.isReleased) return { ...NO_RELOAD, docs: "all", units: true, newDoc: cause.docId, written: true, tobe: true, identical: true, bundle: true };
       return { ...NO_RELOAD, newDoc: cause.docId, written: true, tobe: true };
     case "pair":
       // 짝은 엮은 New 문서의 짝 카드(같은 의미 키)도 바꾼다 - New 문장 목록과 함께 그 문서를 다시 받는다(스텝 8)

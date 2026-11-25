@@ -31,10 +31,12 @@ from app.settings import settings
 from app.sop.ai.guidelines import seed_guidelines
 from app.sop.ai.runner import requeue_running_jobs, run_ai_worker
 from app.sop.outline import seed_outline_standard
+from app.timing_log import configure_timing_log
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
+    configure_timing_log()
     # Alembic env.py가 asyncio.run을 쓰므로 실행 중인 루프를 막지 않게 스레드에서 돌린다.
     await asyncio.to_thread(run_migrations)
     # 지침·프롬프트의 첫 버전 — 버전이 없는 키만 저장소 시드 파일로 만든다(운영·dev 모두, AI가 꺼져 있어도 Excel 정보 시트가 읽는다)

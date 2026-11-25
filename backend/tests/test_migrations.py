@@ -370,6 +370,8 @@ _UNIT_NUMBER_COLUMNS = {
     "unwrap_seq": "INTEGER",
     # 들여쓰기 차이(0036)도 그 앞 리비전에서는 잠시 더했다 뺀다
     "indent_shift": "INTEGER NOT NULL DEFAULT 0",
+    # 저절로 삭제된 줄의 사유(0039)도 그 앞 리비전에서는 잠시 더했다 뺀다
+    "noise_reason": "TEXT NOT NULL DEFAULT ''",
 }
 
 
@@ -431,6 +433,7 @@ def _read_outputs(db_path: pathlib.Path) -> tuple[Any, list[Any], list[list[str]
     return readiness, items, [[cell.text for cell in row.cells] for row in sheet.rows]
 
 
+@pytest.mark.usefixtures("c_sheet_on")
 def test_0020_moves_figure_caption_to_its_own_unit_and_target(tmp_path: pathlib.Path) -> None:
     # 올리기 전에 확정한 그림 — 이행 뒤에도 그림 새 문장·판단은 그대로, 캡션은 제 단위·새 문장으로 결과물 C·Excel에 나온다
     db_path = tmp_path / "captions.db"
@@ -1469,5 +1472,71 @@ def test_0036_adds_indent_shift_with_zero_and_empty_history_and_drops_it_back(tm
             unit_columns = {column["name"] for column in inspect(conn).get_columns("units")}
             edit_columns = {column["name"] for column in inspect(conn).get_columns("unit_edits")}
         assert "indent_shift" not in unit_columns and "indent_changes" not in edit_columns
+    finally:
+        engine.dispose()
+
+
+def test_split_rule_defaults_to_the_legacy_rule(tmp_path: pathlib.Path) -> None:
+    # 이미 올린 문서의 박스는 바뀌지 않는다 — 지난 추출은 모두 규칙 1로 남고, 단위 글 · 범위는 그대로다. 내리면 열이 빠진다
+    db_path = tmp_path / "split_rule.db"
+    config = _downgrade_to(db_path, "0037")
+    engine = _create_fk_engine(db_path)
+    try:
+        with engine.begin() as conn:
+            _insert_old_bundle(conn)
+            before = conn.execute(text("SELECT id, kind, text, spans, lang FROM units ORDER BY id")).tuples().all()
+
+        command.upgrade(config, "0038")
+
+        with engine.connect() as conn:
+            rules = conn.execute(text("SELECT split_rule FROM extractions")).scalars().all()
+            after = conn.execute(text("SELECT id, kind, text, spans, lang FROM units ORDER BY id")).tuples().all()
+        assert rules and set(rules) == {1}
+        assert after == before
+
+        command.downgrade(config, "0037")
+
+        with engine.connect() as conn:
+            assert "split_rule" not in {column["name"] for column in inspect(conn).get_columns("extractions")}
+    finally:
+        engine.dispose()
+
+
+def test_0039_adds_an_empty_noise_reason_and_history_and_drops_them_back(tmp_path: pathlib.Path) -> None:
+    # 저절로 삭제된 줄의 사유 — 지난 단위는 사유 없음(정한 문구), 지난 편집 기록은 사유를 바꾸지 않았다(빈 객체). 표시는 그대로다
+    db_path = tmp_path / "noise_reason.db"
+    config = _downgrade_to(db_path, "0038")
+    engine = _create_fk_engine(db_path)
+    columns = "id, kind, text, spans, lang, noise_kind"
+    try:
+        with engine.begin() as conn:
+            ids = _insert_old_bundle(conn)
+            document_id = conn.execute(
+                text("SELECT document_id FROM extractions WHERE id = :e"), {"e": ids["extraction_id"]}
+            ).scalar_one()
+            _insert_values(conn, "unit_edits", {
+                "document_id": document_id, "seq": 1, "op": "clear_noise", "payload": "{}", "created_unit_ids": "[]",
+                "retired_unit_ids": "[]", "regrouped": "{}", "lang_changes": "{}", "layout_changes": "{}",
+                "noise_changes": "{}", "figure_changes": "{}", "pair_seq_changes": "{}", "unwrap_seq_changes": "{}",
+                "indent_changes": "{}", "state": "applied", "actor": "qa.member", "created_at": _NOW,
+            })
+            before = conn.execute(text(f"SELECT {columns} FROM units ORDER BY id")).tuples().all()
+
+        command.upgrade(config, "0039")
+
+        with engine.connect() as conn:
+            reasons = conn.execute(text("SELECT noise_reason FROM units")).scalars().all()
+            history = conn.execute(text("SELECT noise_reason_changes FROM unit_edits")).scalars().all()
+            after = conn.execute(text(f"SELECT {columns} FROM units ORDER BY id")).tuples().all()
+        assert reasons and set(reasons) == {""}
+        assert [json.loads(value) for value in history] == [{}]
+        assert after == before
+
+        command.downgrade(config, "0038")
+
+        with engine.connect() as conn:
+            unit_columns = {column["name"] for column in inspect(conn).get_columns("units")}
+            edit_columns = {column["name"] for column in inspect(conn).get_columns("unit_edits")}
+        assert "noise_reason" not in unit_columns and "noise_reason_changes" not in edit_columns
     finally:
         engine.dispose()
