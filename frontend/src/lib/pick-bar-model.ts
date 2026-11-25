@@ -94,3 +94,13 @@ export function buildPickBar(state: PickBarState): PickBar {
   const more: PickMoreId[] = [...(hasLinks ? (["show_linked", "unlink"] as const) : []), ...extra];
   return { at, link: null, startLink: last === "old" ? "new" : "old", tools, more, enter };
 }
+
+/**
+ * Enter의 뜻 - 양쪽을 고른 채 박스를 눌렀으면 잇기(또는 바꿀 것이 없다는 알림), 아니면 확정 단추의 판정(primary-model)이다.
+ * 한쪽만 New를 고른 때는 아무것도 하지 않는다. 단추 줄이 없는 때(여럿 고름 · 짝 고르기 · 아무것도 고르지 않음)는 확정 단추에 맡긴다
+ */
+export function resolveEnter(bar: PickBar, primary: { kind: "confirm" | "apply_order" | "blocked"; reasonKey?: string }): PickEnter {
+  if (bar.enter.kind === "link" || bar.enter.kind === "noop") return bar.enter;
+  if (bar.enter.kind === "none" && bar.at !== null) return bar.enter;
+  return primary.kind === "blocked" && primary.reasonKey !== undefined && bar.at !== null ? { kind: "noop", noticeKey: primary.reasonKey } : { kind: "confirm" };
+}

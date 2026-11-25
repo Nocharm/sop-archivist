@@ -59,7 +59,7 @@ export function AssignSidePanel({ state, headEnd }: { state: AssignPageState; he
     shapeMode, headingBack, rewrap, bandBack, stepBase, refPendingIds, refDetail, refInfo, runUnitEdit, clearNoise, openNoiseReason, noisePick, runCaptionRefChange,
     keptOldId, showKeptOld, unitMap: keptUnitMap,
     switchShapeMode, applySplitSuggestion, dismissSplitSuggestion, selectNextSplit, selectNextRef, runUnitAction, readReasonNeed, runSave,
-    runClear, markNew, placeManage, pickDestination, pickNewSentence, isTemplateDrag, handlePrimary, primaryPlan, startEdit,
+    runClear, markNew, placeManage, pickDestination, pickNewSentence, isTemplateDrag, pressEnter, primaryLink, primaryLinkLabel, primaryPlan, startEdit,
     pickRecommendation, markRecHover, renderPlaceLabel, listDestinationEls, canClear, isRowDeleted,
   } = state;
 
@@ -561,13 +561,15 @@ export function AssignSidePanel({ state, headEnd }: { state: AssignPageState; he
         data-state={primaryState}
         disabled={!canEdit || !row || busy}
         aria-disabled={primaryPlan.kind === "blocked" || undefined}
-        onClick={handlePrimary}
+        data-link={primaryLink !== null ? "" : undefined}
+        onClick={() => void pressEnter()}
       >
         <span className="min-w-0 truncate">
-          {primaryState === "save" && primaryLabel.tone === "normal" ? t("classify.saveConfirm") : t(primaryLabel.labelKey, primaryLabel.values)}
+          {primaryLink !== null ? t("assign.primary.linkTo", { n: primaryLinkLabel }) : primaryState === "save" && primaryLabel.tone === "normal" ? t("classify.saveConfirm") : t(primaryLabel.labelKey, primaryLabel.values)}
         </span>
-        {primaryLabel.suffixKey !== null && <span className="flex-none font-normal">{t(primaryLabel.suffixKey)}</span>}
-        <kbd>{formatAssignKey("confirm")}</kbd>
+        {primaryLink === null && primaryLabel.suffixKey !== null && <span className="flex-none font-normal">{t(primaryLabel.suffixKey)}</span>}
+        {/* Enter 표시는 그때 하는 쪽 단추에만 - 잇기면 박스 아래 단추 줄에 */}
+        {primaryLink === null && <kbd>{formatAssignKey("confirm")}</kbd>}
       </button>
     </Tooltip>
   );

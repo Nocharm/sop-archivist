@@ -168,3 +168,21 @@ function findRefusal({ id, when }: AssignKey, ctx: AssignKeyContext): string | n
   if (when === "unwrapped") return ctx.unwrappedTableId === null ? why("notUnwrapped") : ctx.orderReasonKey;
   return ctx.hasNumberCell ? null : why("noNumber");
 }
+
+/** 늘 Old 줄에 작용하는 판단 글쇠(쪼개기 먼저 §8) - 나머지 손질 글쇠와 J · K는 마지막으로 누른 쪽에 */
+const JUDGE_IDS: ReadonlySet<AssignKeyId> = new Set<AssignKeyId>(["confirm", "delete", "clear", "clear_block", "remark", "remark_block", "hold", "use_ai"]);
+/** 어느 쪽 박스와도 상관없는 글쇠 - 보기 · 미리보기 · 탭 · 되돌리기 · 거두기 · 도움말 */
+const FREE_IDS: ReadonlySet<AssignKeyId> = new Set<AssignKeyId>(["view", "preview", "part_prev", "part_next", "undo", "redo", "escape", "help"]);
+
+/**
+ * 글쇠가 어느 쪽에 작용하나 - 판단은 Old, 손질 · 이동은 마지막으로 누른 쪽. focusIn이 단추 줄이면 Tab은 브라우저의 포커스 옮기기다(id null).
+ * key는 event.key(대소문자 무관), Shift는 보지 않는다
+ */
+export function routeKey(key: string, ctx: { last: "old" | "new" | null; focusIn: "paper" | "pick-bar" | "other"; shift?: boolean }): { side: "old" | "new" | null; id: AssignKeyId | null } {
+  const hit = findAssignKey({ key, shiftKey: ctx.shift ?? false, ctrlKey: false, metaKey: false, altKey: false });
+  const id = hit?.kind === "run" ? hit.entry.id : null;
+  if (id === null) return { side: null, id: null };
+  if ((id === "indent" || id === "outdent") && ctx.focusIn !== "paper") return { side: null, id: null };
+  if (FREE_IDS.has(id)) return { side: null, id };
+  return { side: JUDGE_IDS.has(id) ? "old" : ctx.last, id };
+}

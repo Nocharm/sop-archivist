@@ -54,7 +54,7 @@ import { readEditLabelKey, trimReason } from "@/lib/command-label";
 import { isBarrier, listUnsettled } from "@/lib/command-queue";
 import { pickDocRevision } from "@/lib/doc-revision";
 import { isMousePress, isTypingTarget, LAYER_SELECTOR, readKeyPlace, returnsToPaper, takesPrimaryEnter } from "@/lib/assign-key-target";
-import { findAssignKey, formatAssignKey, resolveAssignKey, type AssignKeyContext, type AssignKeyId } from "@/lib/assign-keymap";
+import { findAssignKey, formatAssignKey, resolveAssignKey, routeKey, type AssignKeyContext, type AssignKeyId } from "@/lib/assign-keymap";
 import { isQueuedKey, isRepeatIgnored, type PressId } from "@/lib/assign-press-model";
 import { planPrimary } from "@/lib/primary-model";
 import { isSideFloating } from "@/lib/side-float-model";
@@ -72,7 +72,7 @@ import { buildTranslationDecision, isTranslationBlocked, listRowTranslations } f
 import { useLeaveGuard } from "@/lib/leave-guard";
 import { navigate } from "@/lib/nav-buffer";
 import { buildNewOverlay, hasStrayUnit, readUnlinkableKey } from "@/lib/new-overlay-model";
-import { buildPickBar, type PickLink, type PickMoreId, type PickToolId } from "@/lib/pick-bar-model";
+import { buildPickBar, resolveEnter, type PickLink, type PickMoreId, type PickToolId } from "@/lib/pick-bar-model";
 import { buildLinkSave } from "@/lib/link-save-model";
 import { buildIdenticalBatches } from "@/lib/match-model";
 import { EMPTY_FOLD_OPEN, type FoldOpen } from "@/lib/paper-fold-model";
@@ -1433,11 +1433,10 @@ export function useAssignPage() {
 
   function moveRow(step: 1 | -1) {
     if (hasSolo) {
-      // 줄이 없는 문서 - 용지 순서로 다음(앞) 문장, 짝은 한 묶음으로 건너뛴다. 양 단의 New 칸에서는 그 칸에 줄이 있는 문장만 돈다
-      const shown = new Set(written.map((item) => item.new_unit_id));
+      // 줄이 없는 문서 - 용지 순서로 다음(앞) 박스(제목 포함), 짝은 한 묶음으로, 저절로 삭제된 블록은 한 자리로 건너뛴다
       const held = new Set(soloUnits.map((unit) => unit.id));
-      // 고른 박스는 줄이 없어도(제목) 차례의 기준으로 남긴다
-      const order = isNewEdit ? (shapeTabs?.order ?? []).filter((id) => shown.has(id) || held.has(id)) : (paperTabs?.order ?? []).filter((id) => partKeys.length <= 1 || partOf?.get(id) === activePart);
+      const blockRest = new Set(listNoiseBlocks(shapeView?.units ?? []).flatMap((block) => block.unitIds.filter((id) => id !== block.key)));
+      const order = (isNewEdit ? (shapeTabs?.order ?? []) : (paperTabs?.order ?? []).filter((id) => partKeys.length <= 1 || partOf?.get(id) === activePart)).filter((id) => !blockRest.has(id));
       const from = soloUnits.length === 0 ? (step === 1 ? -1 : order.length) : order.indexOf(step === 1 ? soloUnits[soloUnits.length - 1].id : soloUnits[0].id);
       for (let at = from + step; at >= 0 && at < order.length; at += step) {
         if (held.has(order[at])) continue;
@@ -2504,6 +2503,9 @@ export function useAssignPage() {
     tools: barTools,
   });
   const barLink = pickBar.link;
+  // 확정 단추가 잇기다 - 양쪽을 고른 채 박스를 눌렀을 때(이름 "잇기 → New n", ↵ 표시는 단추 줄에)
+  const primaryLink = barLink !== null && barLink.kind !== "unlink" && pickBar.enter.kind !== "confirm" ? barLink : null;
+  const primaryLinkLabel = primaryLink === null ? "" : (() => { const target = findWrittenRow(primaryLink.targetIds[0] ?? -1); return target ? `${target.doc_code} ${target.section_path || target.order_index}` : ""; })();
   const draftLinkIds = barLink !== null && barLink.kind !== "unlink" ? barLink.targetIds : draft.destination?.kind === "link" ? draft.destination.targetIds : null;
   const linkPairs = buildLinkPairs(newRows.filter(isWrittenRow), oldUnitIds, draftLinkIds !== null ? { units: rowUnits.map((unit) => ({ id: unit.unit_id, lang: unit.lang })), targetIds: [...draftLinkIds] } : null);
   const primaryPlan = planPrimary({
@@ -3214,44 +3216,6 @@ export function useAssignPage() {
       await saveGroup(bundleId, { ...body, targets: body.targets.map((item) => ({ ...item, revision })) }, buildUndo({ op: "mark_new", focus_target_id: target.target_id }));
       markRecorded();
     }, t("match.newDone"));
-  }
-
-  /** 출처 없는 New 모드에서 Old 조각을 누르면 그 줄을 이 문장의 출처로 잇는다(그 줄의 다른 곳은 바꾸기로 뗀다) */
-  function linkAsSource(unitId: number) {
-    const key = rowOfUnit.get(unitId);
-    const sourceRow = key ? rowMap.get(key) : undefined;
-    const target = writtenMap.get(focusNew ?? -1);
-    if (!sourceRow || !target || !canEdit) return;
-    if (sourceRow.status !== "confirmed" && sourceRow.unitIds.some((id) => isRefPending(paperModel?.units.get(id)))) {
-      // 눌러서 출처로 잇는 것도 그 줄의 결정이다 - 참조 줄 제안이 남았으면 먼저 그 줄에서 번호를 확인한다
-      showToast(t("assign.ref.checkFirst"), "error");
-      selectRow(sourceRow.key);
-      return;
-    }
-    const targetIds = addPartnerTargets([target.target_id], writtenMap);
-    runGlobal("assign.step.link_source", async () => {
-      const seen = readSeen(sourceRow.unitIds);
-      const rowGroup = await loadRowGroup(bundleId, sourceRow.unitIds);
-      const extra = await Promise.all(targetIds.map((id) => getGroupByTarget(bundleId, id)));
-      const link: Destination = { kind: "link", targetIds };
-      const sourceUnits = readSourceUnits(sourceRow.unitIds, seen, rowGroup);
-      const context = { units: sourceUnits.map(({ id, kind, lang, text, content_start, revision }) => ({ id, kind, lang, text, content_start, revision })), group: mergeGroups([rowGroup, ...extra]), tables: new Map() };
-      const body = buildGroupSave({ destination: link, texts: {}, reason: sourceUnits[0]?.reason ?? "", moveCode: "" }, context, "confirm");
-      // 이 문장에 없는 언어의 Old 문장은 서버가 짝을 풀어 제 줄로 남긴다 - 출처 없는 New를 계속 보게 고른 줄은 옮기지 않는다
-      const saved = await saveGroup(bundleId, body, buildUndo({ op: "link_source", focus_unit_id: unitId, focus_target_id: target.target_id }));
-      markRecorded();
-      applyPairSettle(sourceRow, saved, body.release_unit_ids ?? []);
-    }, t("match.linked"));
-  }
-
-  /** 저장에 실을 줄의 Unit - 판단 revision은 보낼 때 화면에서 본 것(seen - 묶음을 받기 전에 찍는다)과 앞 응답의 것 */
-  function readSourceUnits(unitIds: readonly number[], seen: SeenRevisions, loaded: Group) {
-    return unitIds.flatMap((id) => {
-      const unit = liveRef.current.unitMap.get(id);
-      if (unit === undefined) return [];
-      const revision = writeLog.resolveRevision(id, seen, loaded.units.find((item) => item.unit_id === id)?.decision.revision ?? unit.decision.revision);
-      return [{ id, kind: unit.kind, lang: unit.lang, text: unit.text, content_start: unit.content_start, revision, reason: readHumanReason(unit.decision) }];
-    });
   }
 
   /** 칸 칩의 × - 그 Old 줄을 그 칸에서 뗀다(시안 2 D5). 단추 줄의 끊기와 같은 명령이고 고름은 옮기지 않는다 */
@@ -4272,10 +4236,6 @@ export function useAssignPage() {
     }
     // 처리 중인 박스는 고르지 않는다 - 다른 박스는 그대로 고른다(설계 D4)
     if (isBoxLocked(unitId)) return;
-    if (mode === "unsourced") {
-      linkAsSource(unitId);
-      return;
-    }
     // 캡션 줄 고르는 중 - 누른 줄이 그 표·그림의 캡션이 된다(고름은 그대로)
     if (captionPickBundle) {
       pickCaptionUnit(unitId);
@@ -4331,6 +4291,22 @@ export function useAssignPage() {
   /** 떼어 접어 둔 오른쪽 칸을 편다 - 그 안의 칸 · 단추로 이어지는 글쇠를 눌렀을 때(안 보이는 채 시작하지 않게) */
   function unfoldSide() {
     if (view.sideFloat && view.sideFolded) changeView({ sideFolded: false });
+  }
+
+  /** Enter와 확정 단추 - 양쪽을 고른 채 박스를 눌렀으면 잇기, 아니면 확정(resolveEnter). 할 것이 없으면 false */
+  function pressEnter(): boolean {
+    const enter = resolveEnter(pickBar, primaryPlan);
+    if (enter.kind === "link") {
+      if (barLink !== null) runLink(barLink);
+      return true;
+    }
+    if (enter.kind === "noop" && pickBar.enter.kind === "noop") {
+      showToast(t(enter.noticeKey), "info");
+      return true;
+    }
+    if (enter.kind === "none" || !canEdit || !row || mode !== "old") return false;
+    handlePrimary();
+    return true;
   }
 
   function handlePrimary() {
@@ -4435,6 +4411,9 @@ export function useAssignPage() {
     // 세로선에 포커스가 있으면 ←→는 폭이다
     if (event.target instanceof HTMLElement && event.target.closest(".pane-divider")) return;
     // Tab은 용지에서 번호 칸이 있는 박스를 고른 동안만 들여쓰기다 - 입력 · 오른쪽 칸 · 메뉴에서는 포커스를 옮긴다(B2-R5)
+    // 단추 줄 안의 Tab은 브라우저 기본(포커스 옮기기)이다
+    const focusIn = event.target instanceof Element && event.target.closest(".pick-bar") ? "pick-bar" : "paper";
+    if ((id === "indent" || id === "outdent") && routeKey(event.key, { last: picks.last, focusIn, shift: event.shiftKey }).id === null) return;
     if ((id === "indent" || id === "outdent") && !(hasNumberCell && event.target instanceof Element && event.target.closest('[data-pane="old"]') && readKeyPlace(event.target) === "paper")) return;
     if (hit?.kind === "hint") {
       // Shift를 빠뜨렸다 - 아무것도 하지 않고 글쇠만 알린다(B2-R3)
@@ -4575,10 +4554,8 @@ export function useAssignPage() {
         return true;
       }
       case "confirm":
-        // 출처 없는 New를 보는 동안은 오른쪽 칸에 확정 단추가 없다 - 가려진 줄을 확정하지 않는다
-        if (!canEdit || !row || mode !== "old") return false;
-        handlePrimary();
-        return true;
+        // 양쪽을 고른 채면 잇기. 출처 없는 New를 보는 동안은 오른쪽 칸에 확정 단추가 없다 - 가려진 줄을 확정하지 않는다
+        return pressEnter();
       case "use_ai":
         // Use - 줄의 AI 추천을 초안으로 받는다
         if (aiRecommendation) pickRecommendation(aiRecommendation, false);
@@ -4798,7 +4775,7 @@ export function useAssignPage() {
     rewrapTable, unwrapAi, describeEditConfirm, pairGrip, clearNoise, openNoiseReason, confirmNoiseReason, closeNoiseReason, noisePick, runCaptionRefChange, switchShapeMode, switchToPair,
     applySplitSuggestion, dismissSplitSuggestion, splitPendingIds, readPendingItem, selectNextSplit, selectNextRef, selectNextCaption,
     splitAtCut, handleOldDoubleClick, runCtx, runUnitAction, revertHeadings, planJoinIn, joinIn, renderOldActions, readReasonNeed,
-    runSave, runClear, runUndoStep, confirmIdenticalAll, acceptAll, markNew, placeManage, pickDestination, pickNewSentence, pressNewBox, showNewDoc, jump, unlinkCell, pickBar, renderPickBar, linkWait, setLinkWait,
+    runSave, runClear, runUndoStep, confirmIdenticalAll, acceptAll, markNew, placeManage, pickDestination, pickNewSentence, pressNewBox, showNewDoc, jump, unlinkCell, pickBar, renderPickBar, linkWait, setLinkWait, pressEnter, primaryLink, primaryLinkLabel,
     handleJoinPick, readJoinAfter, pickJoinMenu, pickPlaceSpot, pickOwnAiLine, jumpToNew, openNewDoc, showInNew, jumpToOld,
     pickTemplateLine, fillTemplateMissing, isTemplateDrag, isOldDrag, finishPairPick, handleOldClick, handlePrimary, startEdit,
     pickRecommendation, handleFramePress, primaryPlan, markRecHover, revealPick, setRevealPick, done, renderPlaceLabel, listDestinationEls,
