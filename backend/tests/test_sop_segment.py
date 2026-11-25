@@ -12,6 +12,7 @@ from app.sop.spans import join_close_spans
 from app.sop.segment import (
     CAPTIONS_SIGNAL,
     CLAUSE_NUMBER_FLAG,
+    PARAS_SIGNAL,
     RULE_LEGACY,
     RULE_PARAGRAPH,
     BlockView,
@@ -617,3 +618,49 @@ def test_split_paragraph_covers_every_visible_character(tmp_path: Path) -> None:
         for text in texts:
             spans = [[(1, start, end)] for start, end in split_paragraph(text, split_lines=split_lines)]
             assert find_coverage_problems({1: text}, spans) == []
+
+
+def test_number_cell_takes_the_first_paragraph_box() -> None:
+    text = "탱크를 비운다. 밸브를 닫는다."
+    blocks = [
+        BlockView(1, 0, "table_cell", "body", "A", None, (), 8, 0, {"numbers": [[0, 1, "cell"]]}), _cell(2, 1, text, 8, 0),
+    ]
+
+    drafts = build_unit_drafts(blocks, [TableView(8, True)], "ko_only", split_lines=True, rule=RULE_PARAGRAPH)
+
+    assert [draft.spans for draft in drafts] == [[(1, 0, 1), (2, 0, len(text))]]
+    assert (drafts[0].pos_seq, drafts[0].pos_start) == (0, 0)
+
+
+def test_captions_in_a_cell_stay_whole_under_rule_2() -> None:
+    starts = [0, CELL_TEXT.index("표 1."), CELL_TEXT.index("이 절차는")]
+    caption_end = starts[1] + len("표 1. 조제 탱크별 대상 장치")
+    work = BlockView(
+        1, 0, "table_cell", "body", CELL_TEXT, None, (), 8, 0,
+        {"captions": [[starts[1], caption_end, 1]], PARAS_SIGNAL: starts},
+    )
+
+    drafts = build_unit_drafts(
+        [work, _cell(2, 1, "탱크", 9, 0)], [TableView(8, True), TableView(9, False)], "ko_only", split_lines=True,
+        rule=RULE_PARAGRAPH,
+    )
+
+    lines = [(d.kind, CELL_TEXT[d.spans[0][1] : d.spans[0][2]]) for d in drafts if d.spans and d.spans[0][0] == 1]
+    assert lines == [
+        ("cell_sentence", "필요한 가스켓을 설치한다."), ("caption", "표 1. 조제 탱크별 대상 장치"),
+        ("cell_sentence", "이 절차는 탱크 A–C에 적용한다."),
+    ]
+
+
+def test_headings_figures_and_toc_lines_do_not_follow_the_rule() -> None:
+    blocks = [
+        BlockView(1, 0, "paragraph", "body", "1. 목적. 범위. ........ 3", None, (), None, None, {"toc": ["style"]}),
+        _para(2, 1, "목적\nPurpose", heading_level=1),
+        BlockView(3, 2, "figure", "body", "그림 글. 둘째.", None, (), None, None),
+    ]
+
+    by_rule = [
+        build_unit_drafts(blocks, [], "ko_only", split_lines=True, rule=rule) for rule in (RULE_LEGACY, RULE_PARAGRAPH)
+    ]
+
+    assert by_rule[0] == by_rule[1]

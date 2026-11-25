@@ -4,7 +4,14 @@
 import pytest
 from fastapi.testclient import TestClient
 
-from app.sop.refs import SectionLine, find_ref_section_lines, is_proposing_version, is_ref_section_heading
+from app.sop.refs import (
+    SectionLine,
+    find_ref_section_lines,
+    is_proposing_version,
+    is_ref_section_heading,
+    list_ref_section_blocks,
+)
+from app.sop.segment import BlockView, build_unit_drafts, build_unit_text
 from tests.docx_factory import build_docx, p
 from tests.sop_helpers import AUTHOR, create_bundle, find_unit, get_view, upload
 
@@ -133,3 +140,65 @@ def test_not_a_reference_restores_the_detected_language(client: TestClient) -> N
     assert response.status_code == 200, response.text
     unit = find_unit(get_view(client, bundle_id, doc_id), REF_LINE)
     assert (unit["lang"], unit["ref"]) == ("en", None)
+
+
+# --- 규칙 2가 참조 줄을 찾는 길(설계 2026-11-25 R2-6) ---
+
+
+def _block(block_id: int, text: str, level: int | None = None, **fields: object) -> BlockView:
+    values = {
+        "id": block_id, "seq": block_id, "kind": "paragraph", "part": "body", "text": text, "heading_level": level,
+        "flags": (), "table_id": None, "row_index": None, **fields,
+    }
+    return BlockView(**values)
+
+
+def _find_ref_texts(blocks: list[BlockView], layout: str = "ko_en_interleaved") -> list[tuple[str, str]]:
+    """규칙 1 초안에서 REF로 확정할 줄의 (글, 언어) — 쪼개기(_build_unit_rows)와 같은 길."""
+    texts = {block.id: block.text for block in blocks}
+    by_id = {block.id: block for block in blocks}
+    drafts = build_unit_drafts(blocks, [], layout, split_lines=True)
+    lines = [
+        SectionLine(
+            draft.kind, build_unit_text(draft.spans, texts), draft.lang, by_id[draft.spans[0][0]].heading_level,
+            by_id[draft.spans[0][0]].part == "body", draft.noise_kind is not None,
+        )
+        for draft in drafts
+    ]
+    found = find_ref_section_lines(lines, interleaved=layout == "ko_en_interleaved", separate=layout == "ko_en_separate")
+    return [(lines[index].text, lines[index].lang) for index in found]
+
+
+SECTION_DOCS = {
+    "two sections, nested levels": [
+        ("1. 목적", 1), (OUTSIDE_LINE, None), ("3. Reference", 1), (REF_LINE, None), ("3.1 Related documents", 2), (STANDARD, None),
+        ("3.2 기타", 2), (LATER_LINE, None), ("4. 책임", 1), (OUTSIDE_LINE, None), ("9. 참고 문헌", 1), (f"{REF_LINE}\n{STANDARD}", None),
+    ],
+    "a clause turned into sentences does not close the section": [
+        ("3. Reference", 1), (REF_LINE, None),
+        ("4. Close the valve and confirm that it is closed. Record the time and the name of the operator.", 1),
+        ("밸브를 닫는다", 1), (LATER_LINE, None), ("5. 책임", 1), (OUTSIDE_LINE, None),
+    ],
+    "a translated clause named like the section is not a heading": [
+        ("5.2.1 Close the valve. Confirm that the valve is closed and record it.", 2), ("참고 문헌", 2), (REF_LINE, None),
+        ("6. 책임", 1), (OUTSIDE_LINE, None),
+    ],
+    "no section": [("1. 목적", 1), (REF_LINE, None)],
+}
+
+
+@pytest.mark.parametrize("layout", ["ko_en_interleaved", "ko_en_separate", "ko_only"])
+@pytest.mark.parametrize("name", list(SECTION_DOCS))
+def test_section_blocks_give_the_same_answer_as_the_whole_document(name: str, layout: str) -> None:
+    blocks = [_block(index, text, level) for index, (text, level) in enumerate(SECTION_DOCS[name], start=1)]
+
+    picked = list_ref_section_blocks(blocks, [])
+
+    assert _find_ref_texts(picked, layout) == _find_ref_texts(blocks, layout)
+
+
+def test_only_section_blocks_are_split_twice() -> None:
+    blocks = [_block(index, text, level) for index, (text, level) in enumerate(SECTION_DOCS["two sections, nested levels"], start=1)]
+
+    assert [block.id for block in list_ref_section_blocks(blocks, [])] == [3, 4, 5, 6, 7, 8, 9, 11, 12]
+    assert list_ref_section_blocks(blocks[:2], []) == []

@@ -515,10 +515,14 @@ def build_unit_drafts(
     *,
     split_lines: bool = False,
     shift_headings: bool = True,
+    rule: int = RULE_LEGACY,
+    kept: Mapping[int, Collection[int]] = {},
 ) -> list[UnitDraft]:
     """블록(seq 순) → 단위 초안(정렬 키 순). 규칙은 설계 §6.4·§7.4, 데이터 규칙은 공용 계약.
 
     split_lines(DOCX)면 블록 안 줄바꿈에서도 단위를 나눈다 — 블록은 그대로 하나라, 합치면 줄바꿈을 품은 한 범위로 돌아간다.
+    rule은 그 추출의 쪼개기 규칙(extractions.split_rule)이다 — 아래에서 "문장"은 규칙 1이면 문장, 규칙 2면 이어진 같은 언어의 박스
+    (split_block_text). 제목 · 캡션 · 그림 · 목차 · 띠 표 줄은 규칙과 상관없다. kept는 규칙 2가 잇지 않을 조각 — 블록 id → 시작 자리들.
     - 문단: 제목 스타일이나 조항 번호만 있는 줄은 블록 전체가 제목(split_lines면 줄마다 제목 — "목적"/"Purpose" 두 줄 제목이
       언어별로 나뉜다), 아니면 문장마다. 머리말·각주 등도 같은 규칙.
     - 표 칸: 데이터 표는 표마다 첫 칸 자리에 표 단위(범위 없음·중립)를 두고 칸 문장을 묶는다. 레이아웃 표는 묶지 않는다.
@@ -592,7 +596,10 @@ def build_unit_drafts(
             else:
                 cells = [
                     _build_text_draft("cell_sentence", block, start, end, block.table_id, block.row_index, group_index)
-                    for start, end in split_sentences(block.text, split_lines=split_lines)
+                    for start, end in split_block_text(
+                        block.text, rule=rule, split_lines=split_lines, paras=(block.signals or {}).get(PARAS_SIGNAL) or (),
+                        kept=kept.get(block.id, ()),
+                    )
                 ]
             cell_captions = _read_cell_captions(block, bundle_seqs) if block.table_id not in band_heading_ids else {}
             if cell_captions:
@@ -625,14 +632,19 @@ def build_unit_drafts(
                 if not shift_headings or (is_heading_like(block.text[start:end]) and not follows_shift):
                     drafts.append(_build_text_draft("heading", block, start, end))
                     continue
-                for sentence_start, sentence_end in split_sentences(block.text[start:end]):
+                own_kept = {at - start for at in kept.get(block.id, ()) if start <= at < end}
+                for sentence_start, sentence_end in split_block_text(
+                    block.text[start:end], rule=rule, split_lines=False, kept=own_kept
+                ):
                     draft = _build_text_draft("sentence", block, start + sentence_start, start + sentence_end)
                     drafts.append(replace(draft, from_heading=True))
                 shifted_lang = detect_language(block.text[start:end])
         else:
             drafts.extend(
                 _build_text_draft("sentence", block, start, end)
-                for start, end in split_sentences(block.text, split_lines=split_lines)
+                for start, end in split_block_text(
+                    block.text, rule=rule, split_lines=split_lines, kept=kept.get(block.id, ())
+                )
             )
     if number_cell is not None:
         drafts.append(number_cell)
