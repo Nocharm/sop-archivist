@@ -152,3 +152,8 @@
 
 - 표 탭 · 본문 표 접기를 Old · New 용지에(E2-R1~R5, S15), 접힘은 문서마다 브라우저에 기억(`use-folded-tables`, 새 effect 없음). 표 탭도 같은 `Paper` · `strips`라 `renderFollow`가 그대로 뜬다(사용자 답).
 - 접힌 표 안 줄은 J/K와 확정 뒤 다음 줄 고르기에서 건너뛴다(검토 고침, `readStepTab`). 성능은 dev v1.6.23과 극단 시드로 견줘 긴 문서 J · Delete · 스크롤이 잡음 안(세워 둘 조건 ② 아님).
+
+## 2026-11-26 — feat/assign-table-menu (계획 4-2) dev에
+
+- 표 칸 · 벗긴 표 줄의 우클릭 메뉴를 "이 칸" · "이 표" 구역으로(C2-R1~R4, ⇧D 제외), 항목 호버 · 포커스에 닿는 칸을 칠한다(`menu-section-model` · `menu-reach-model` · `ReachPaint`, 칠 상태는 메뉴 안).
+- 메뉴의 AI order 켜짐 · 꺼짐을 ⇧O와 같은 `readUnwrapOrderReason`으로 모음, 한 단 New의 칠은 그린 용지 쪽으로(검토 고침).

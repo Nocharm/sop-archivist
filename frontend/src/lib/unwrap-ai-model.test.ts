@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { addUnwrapAiAsk, isUnwrapSuggestionApplicable, isUnwrapSuggestionUnchanged, keepSamePreviews, listUnwrapAiBusy, readUnwrapMoves } from "./unwrap-ai-model";
+import { addUnwrapAiAsk, isUnwrapSuggestionApplicable, isUnwrapSuggestionUnchanged, keepSamePreviews, listUnwrapAiBusy, readUnwrapMoves, readUnwrapOrderReason } from "./unwrap-ai-model";
 
 describe("isUnwrapSuggestionApplicable", () => {
   it("같은 줄 집합의 다른 차례면 적용할 수 있다", () => {
@@ -68,5 +68,21 @@ describe("keepSamePreviews", () => {
   });
   it("차례 · 표가 다르면 새것을 준다", () => {
     for (const next of [new Map([[4, [2, 1]]]), new Map([[4, [1, 2, 3]]]), new Map([[5, [1, 2]]]), new Map([...prev, [5, [3, 4]]]), new Map<number, number[]>()]) expect(keepSamePreviews(prev, next)).toBe(next);
+  });
+});
+
+describe("readUnwrapOrderReason", () => {
+  const base = { hasFollow: false, isAiOn: true, isBusy: false, current: [1, 2, 3], suggested: undefined };
+  it("is open when AI is on and the table has several lines", () => expect(readUnwrapOrderReason(base)).toBeNull());
+  it("refuses a one-line table the way the header button does", () => expect(readUnwrapOrderReason({ ...base, current: [1] })).toBe("assign.key.why.oneLine"));
+  it("refuses while a suggestion is already waiting, naming same or ready", () => {
+    expect(readUnwrapOrderReason({ ...base, suggested: [3, 1, 2] })).toBe("assign.key.why.orderReady");
+    expect(readUnwrapOrderReason({ ...base, suggested: [1, 2, 3] })).toBe("assign.unwrapAi.same");
+  });
+  it("ignores a stale suggestion", () => expect(readUnwrapOrderReason({ ...base, suggested: [1, 2] })).toBeNull());
+  it("stays open for follow-the-Korean-table even when AI is off or busy", () => expect(readUnwrapOrderReason({ ...base, hasFollow: true, isAiOn: false, isBusy: true })).toBeNull());
+  it("refuses with AI off, then busy", () => {
+    expect(readUnwrapOrderReason({ ...base, isAiOn: false })).toBe("assign.unwrapAi.offTip");
+    expect(readUnwrapOrderReason({ ...base, isBusy: true })).toBe("assign.unwrapAi.already");
   });
 });
