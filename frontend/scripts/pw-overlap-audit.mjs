@@ -668,7 +668,7 @@ const sideFloatScene = {
   },
 };
 
-// 연습 화면 Assign 양 단 머리 줄 - 문서가 하나뿐인 칸의 긴 파일 이름이 확대 단추 등 머리 줄의 자식을 제 칸 밖으로 밀거나 옆 칸 자식과 겹치지 않는다(1120 과제 칸을 편 상태)
+// 연습 화면 Assign 양 단 머리 줄 - 문서가 하나뿐인 칸의 긴 파일 이름이 확대 단추 등 머리 줄의 자식을 제 칸 밖으로 밀거나 옆 칸 자식과 겹치지 않는다(1120 폭. 오른쪽 과제 칸은 말풍선으로 바뀌어 없다)
 const panesHeadScene = {
   name: "assign-pane-head-narrow",
   user: "qa.member",
@@ -676,8 +676,6 @@ const panesHeadScene = {
     await page.setViewportSize({ width: 1120, height: 900 });
     await page.goto(`${BASE}/practice`);
     await page.locator('[data-testid="assign-old"]').waitFor({ timeout: T });
-    const fold = page.getByTestId("practice-tasks-fold");
-    if ((await fold.getAttribute("aria-expanded")) === "false") await fold.click();
     await page.waitForTimeout(800);
     const boxes = await page.evaluate(() => {
       const out = [];
