@@ -20,6 +20,7 @@ import { NewPane, NewPaneEmpty, type NewPlaceSpots } from "@/components/assign/n
 import { DocDashboard } from "@/components/assign/doc-dashboard";
 import { OldPane } from "@/components/assign/old-pane";
 import { PairColumn, PairViewToggle } from "@/components/assign/pair-column";
+import { PairBracket } from "@/components/assign/pair-bracket";
 import { PairLines } from "@/components/assign/pair-lines";
 import { PaneDivider } from "@/components/assign/pane-divider";
 import { RecentRemarks, REMARK_MAX_LENGTH, RemarkModal } from "@/components/assign/remark-modal";
@@ -57,6 +58,7 @@ import { buildSheetDraft, isSpaceEnabled, pickSpaceSheet } from "@/lib/space-pre
 import { buildDeletedFolds } from "@/lib/deleted-fold-model";
 import type { IndentChange } from "@/lib/indent-model";
 import { hasTocLineIn, listPartSheets } from "@/lib/paper-model";
+import { listPairMates } from "@/lib/pair-bracket-model";
 import { getNewDocumentsHref, getStageHref } from "@/lib/stages";
 import { toggleTocOpen } from "@/lib/toc-block-model";
 import { type SelectOption } from "@/components/ui/select";
@@ -101,6 +103,16 @@ export default function AssignPage() {
 
   // AI 거르기에서 띠를 눌러 펼친 칸(이미 쓴 New 문서) - key가 지금 것일 때만 산다
   const [aiOpen, setAiOpen] = useState<{ key: string; sections: ReadonlySet<string> }>({ key: "", sections: NO_SECTIONS });
+  // 떨어진 짝 괄호선(11-23 명세 E1) - 보이는 동안 그 칸의 안내 줄을 숨긴다. 알린 때의 고른 박스를 함께 쥐어, 고름이 바뀌면 다시 잴 때까지 안내 줄이 선다
+  const [bracketFor, setBracketFor] = useState<{ old: number | null; new: number | null }>({ old: null, new: null });
+  const oldSelectedId = (isNewEdit ? null : cutUnit?.id) ?? (isSolo ? soloUnit?.id : pickedId) ?? null;
+  const newSelectedId = (isNewEdit ? cutUnit?.id : null) ?? newUnitId;
+  const oldMateIds = useMemo(() => (paperModel ? listPairMates(paperModel.units, oldSelectedId) : []), [paperModel, oldSelectedId]);
+  const newMateIds = useMemo(() => (newModel ? listPairMates(newModel.units, newSelectedId) : []), [newModel, newSelectedId]);
+  function showBracket(side: "old" | "new", unitId: number | null, shown: boolean) {
+    const next = shown ? unitId : null;
+    setBracketFor((prev) => (prev[side] === next ? prev : { ...prev, [side]: next }));
+  }
   // New 문장에 포인터를 올리면 그 문장을 가리키는 추천 카드를 밝힌다. 카드에서 붙인 표시는 카드가 뗀다(그 사이 여기서 지우지 않게)
   const newHoverMarked = useRef(false);
   const markNewHover = useEffectEvent((target: EventTarget | null) => {
@@ -630,12 +642,12 @@ export default function AssignPage() {
                   setManualPart({ key: "", part });
                 }}
                 placeholder={<span className="sk h-[480px] w-full" />}
-                selectedId={(isNewEdit ? null : cutUnit?.id) ?? (isSolo ? soloUnit?.id : pickedId) ?? null}
+                selectedId={oldSelectedId}
                 highlightIds={highlightIds}
                 scope={pickScope}
                 held={panel.side === "new" && !isSolo}
                 // 떨어진 짝 안내 줄 - 누르면 짝의 원래 자리로 가 그 박스를 고른다(설계 D3)
-                pairHint={mode === "old" ? { onGo: goToUnit } : undefined}
+                pairHint={mode === "old" ? { onGo: goToUnit, isHidden: bracketFor.old !== null && bracketFor.old === oldSelectedId } : undefined}
                 single={view.single}
                 // 짝 카드 안 순서 손잡이 - 고른 박스가 짝 전부가 이어 붙은 카드 안이면(설계 D8)
                 pairGrip={pairGrip}
@@ -711,6 +723,8 @@ export default function AssignPage() {
                 figures={state.figureTab}
                 tableFold={state.oldTableFold}
               />
+              {/* 떨어진 짝이 모두 화면 안이면 왼쪽 괄호선 - 안내 줄이 있는 때만(그림 탭 · 출처 없는 New 모드는 없다) */}
+              <PairBracket side="old" pickedId={mode === "old" && activePart !== "figures" ? oldSelectedId : null} mateIds={oldMateIds} onShown={(shown) => showBracket("old", oldSelectedId, shown)} />
               {!view.single && (
               <>
               <PaneDivider value={view.split} onCommit={(ratio) => changeView({ split: ratio })} onCollapse={() => changeView({ single: true })} />
@@ -840,7 +854,7 @@ export default function AssignPage() {
                       onUnlink={canEdit && mode === "old" ? (cellId, unitId) => state.unlinkCell(cellId, unitId) : undefined}
                       sourceLabel={readSourceLabel}
                       onJumpSource={jumpToOld}
-                      selectedUnitId={(isNewEdit ? cutUnit?.id : null) ?? newUnitId}
+                      selectedUnitId={newSelectedId}
                       pickedUnitIds={newMates}
                       checkedRows={newChecks}
                       held={panel.side === "old" && newUnitId !== null}
@@ -880,8 +894,11 @@ export default function AssignPage() {
                       onUnitDoubleClick={rightTools.split ? handleNewDoubleClick : undefined}
                       onUnwrapTable={rightTools.unwrap && rightShape ? (tableId) => unwrapTable(rightShape, tableId) : undefined}
                       tableFold={state.newTableFold}
+                      // 떨어진 짝 안내 줄 - Old와 같다(누르면 짝으로 가 그 박스를 고른다)
+                      pairHint={mode === "old" ? { onGo: goToUnit, isHidden: bracketFor.new !== null && bracketFor.new === newSelectedId } : undefined}
                     />
                   )}
+                  {!isComposedDoc && <PairBracket side="new" pickedId={mode === "old" ? newSelectedId : null} mateIds={newMateIds} onShown={(shown) => showBracket("new", newSelectedId, shown)} />}
                   <LinkLines pairs={listNewAiLinks(linkPairs, newAiFilter, row?.unitIds ?? [])} focusUnits={highlightIds} focusTargets={liveDoc ? new Set([...pickedNew, ...liveDoc.targetIds]) : pickedNew} visible={view.lines} />
                 </>
               )}

@@ -37,3 +37,10 @@ export function resolvePairBracket(
   const middles = ys.slice(1, -1).map((y) => `M${x} ${y}H${x + TICK}`);
   return { d: [`M${x + TICK} ${first}H${x}V${last}H${x + TICK}`, ...middles].join(""), unitIds: ends.map((item) => item.unitId) };
 }
+
+/** 고른 박스의 짝 구성원(자신 빼고, 원문 순서) - 짝이 없으면 빈 목록. 같은 카드 안 구성원을 빼는 것은 괄호선 층이 화면에서 한다 */
+export function listPairMates(units: ReadonlyMap<number, { id: number; pair_id: number | null; pos_seq: number }>, unitId: number | null): number[] {
+  const pairId = unitId === null ? null : (units.get(unitId)?.pair_id ?? null);
+  if (pairId === null) return [];
+  return [...units.values()].filter((unit) => unit.pair_id === pairId && unit.id !== unitId).sort((a, b) => a.pos_seq - b.pos_seq).map((unit) => unit.id);
+}

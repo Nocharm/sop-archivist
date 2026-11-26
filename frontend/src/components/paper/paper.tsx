@@ -314,8 +314,8 @@ interface PaperProps {
       };
     };
     /** Assign - 고른 박스 바로 아래 떨어진 짝 안내 줄 "↑ 짝 KO · 위 §1"(lib/pair-hint-model). onGo(짝)는 그 박스를 고르고 그 자리로 스크롤한다.
-     *  onPeek이 있으면(1단 보기) 한 번 누름은 짝 엿보기 판(onPeek), 두 번 누름이 onGo다(B7) */
-    pairHint?: { onGo: (unitId: number) => void; onPeek?: (hint: PairHint) => void };
+     *  onPeek이 있으면(1단 보기) 한 번 누름은 짝 엿보기 판(onPeek), 두 번 누름이 onGo다(B7). isHidden이면 그리지 않는다 - 짝이 모두 화면 안이라 괄호선이 대신한다(11-23 명세 E1-R2) */
+    pairHint?: { onGo: (unitId: number) => void; onPeek?: (hint: PairHint) => void; isHidden?: boolean };
     /** Assign - 삭제로 확정한 줄을 흐린 한 줄 "DELETED · 종류 · 앞부분 글"로 접는다(lib/deleted-fold-model, 설계 D6). 접을 단위와 내용은 화면이 정한다.
      *  누르면 그 카드의 첫 단위를 고르고, 고른 동안만 펼친다(다른 박스를 고르면 다시 접힘, 둘 다 Collapse 전환). 접힌 줄은 끌기 · 틈 단추를 받지 않고 우클릭은 받는다 */
     deleted?: { folds: ReadonlyMap<number, DeletedFold> };
@@ -1154,7 +1154,7 @@ export function Paper({
   function renderPairHint(unitId: number): ReactNode {
     const onGo = strips?.pairHint?.onGo;
     const onPeek = strips?.pairHint?.onPeek;
-    if (!onGo || pairHint === null) return null;
+    if (!onGo || pairHint === null || strips?.pairHint?.isHidden) return null;
     const label = t(pairHint.dir === "up" ? "paper.pairHint.above" : "paper.pairHint.below", { lang: pairHint.lang, where: pairHint.where });
     return (
       <button
