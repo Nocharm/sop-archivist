@@ -1,0 +1,37 @@
+// 고름 두 겹(11-23 명세 C1) - 누른 조각(진하게)과 그것이 든 배정 박스 · 묶음(짝 카드 · 표, 얇은 테와 꼬리표).
+// 아직 표인 표의 칸을 누르면 칸이 골라지고 줄 · 배정 · 삭제는 표째다. J/K · 저장 뒤 다음 박스는 박스(줄)에서 걷는다
+import type { ViewTable, ViewUnit } from "@/lib/api-sop";
+import { getTableNumber } from "@/lib/unwrap-model";
+
+/** 누른 조각 unitId, 그것이 든 줄의 박스 boxId, 둘레에 그릴 묶음(없으면 null) - table은 꼬리표의 표 번호(1부터) */
+export interface PickScope {
+  unitId: number;
+  boxId: number;
+  group: { kind: "pair" | "table"; unitIds: readonly number[]; table: number | null } | null;
+}
+
+/** 칸 문장 · 캡션 → 그 묶음(표 · 그림) 단위, 아니면 자기 - 끌기 · 줄 찾기가 쓰는 박스 */
+export function resolveBoxUnit(unitId: number, units: ReadonlyMap<number, ViewUnit>): number {
+  return units.get(unitId)?.group_unit_id ?? unitId;
+}
+
+/** 그 Unit의 줄 키 - 묶인 칸 문장 · 캡션이면 그 묶음의 줄. groupOf는 묶인 Unit → 묶음 단위 */
+export function readRowKeyOf(unitId: number, rowOfUnit: ReadonlyMap<number, string>, groupOf: ReadonlyMap<number, number>): string | null {
+  const own = rowOfUnit.get(unitId);
+  if (own !== undefined) return own;
+  const groupId = groupOf.get(unitId);
+  return (groupId === undefined ? undefined : rowOfUnit.get(groupId)) ?? null;
+}
+
+/** 누른 조각 → 두 겹 고름. 묶인 칸 문장은 표 묶음, 같은 짝이 둘 이상인 줄은 짝 묶음, 그 밖(표 머리를 누른 표 · 벗긴 줄 · 그림 · 외톨이)은 묶음 없음 */
+export function buildPickScope(unitId: number, rowUnitIds: readonly number[], units: ReadonlyMap<number, ViewUnit>, tables: ReadonlyMap<number, ViewTable>): PickScope {
+  const boxId = resolveBoxUnit(unitId, units);
+  if (units.get(unitId)?.kind === "cell_sentence" && boxId !== unitId) {
+    const tableId = units.get(boxId)?.table_id ?? null;
+    const table = tableId === null ? undefined : tables.get(tableId);
+    return { unitId, boxId, group: { kind: "table", unitIds: rowUnitIds, table: table ? getTableNumber(table) : null } };
+  }
+  const pairId = units.get(boxId)?.pair_id ?? null;
+  const mates = pairId === null ? [] : rowUnitIds.filter((id) => units.get(id)?.pair_id === pairId);
+  return { unitId, boxId, group: mates.length >= 2 ? { kind: "pair", unitIds: mates, table: null } : null };
+}

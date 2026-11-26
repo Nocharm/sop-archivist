@@ -81,7 +81,8 @@ import { buildPickBar, resolveEnter, type PickLink, type PickMoreId, type PickTo
 import { buildLinkSave } from "@/lib/link-save-model";
 import { buildIdenticalBatches } from "@/lib/match-model";
 import { EMPTY_FOLD_OPEN, type FoldOpen } from "@/lib/paper-fold-model";
-import { buildPaperModel, buildPaperTabs, findNearestCut, isBandHeading, listFigureTabUnitIds, resolvePickUnit, shouldRecenter, type PaperTabKey } from "@/lib/paper-model";
+import { buildPaperModel, buildPaperTabs, findNearestCut, isBandHeading, listFigureTabUnitIds, shouldRecenter, type PaperTabKey } from "@/lib/paper-model";
+import { resolveBoxUnit } from "@/lib/pick-scope-model";
 import { findPairTarget } from "@/lib/pair-hint-model";
 import { readPartState, stepPart, withPartState } from "@/lib/part-history";
 import { isSameOrder, movePairMember, orderPairCard, readPairSlot } from "@/lib/pair-order-model";
@@ -4000,10 +4001,10 @@ export function useAssignPage() {
       const chipKey = chipBundle != null ? rowOfUnit.get(chipBundle) : undefined;
       // 처리 중인 박스는 끌리지 않는다(설계 D4) - 용지도 그 박스에 끌기 표시를 달지 않는다
       if (chipKey !== undefined) return isBoxLocked(chipId) ? null : { rowKey: chipKey, unitIds: [chipId], captionId: chipId };
-      // 누른 곳의 가장 안쪽 Unit(글 조각·표 칸 조각·캡션), 없으면 그 조각의 Unit. 묶음에 든 칸·캡션은 누를 때처럼 그 묶음으로 올린다(resolvePickUnit) - 끄는 것과 누르면 골라지는 것이 같다
+      // 누른 곳의 가장 안쪽 Unit(글 조각·표 칸 조각·캡션), 없으면 그 조각의 Unit. 묶음에 든 칸·캡션은 그 묶음 박스로 올린다(resolveBoxUnit) - 칸을 눌러 칸이 골라져도 끄는 것은 표째다
       const holder = target.closest<HTMLElement>("[data-unit], [data-strip-unit]");
       const pressedId = Number(holder?.dataset.unit ?? holder?.dataset.stripUnit ?? box.dataset.stripUnit);
-      const unitId = paperModel ? resolvePickUnit(pressedId, paperModel.units) : pressedId;
+      const unitId = paperModel ? resolveBoxUnit(pressedId, paperModel.units) : pressedId;
       const key = rowOfUnit.get(unitId) ?? rowOfUnit.get(Number(box.dataset.stripUnit));
       const unitIds = key === undefined ? undefined : rowMap.get(key)?.unitIds;
       return key !== undefined && unitIds && !unitIds.some(focusCtl.isUnitLocked) ? { rowKey: key, unitIds, captionId: null } : null;

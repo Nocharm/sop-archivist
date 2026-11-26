@@ -207,14 +207,16 @@ describe("hasTocLineIn", () => {
 });
 
 describe("resolvePickUnit", () => {
-  it("picks the table for a bound cell sentence and itself otherwise", () => {
+  it("picks a bound cell sentence itself, lifts a caption to its bundle and keeps others", () => {
     const units = new Map([
       [1, makeSplitUnit({ id: 1, kind: "table" })],
       [2, makeSplitUnit({ id: 2, kind: "cell_sentence", group_unit_id: 1 })],
       [3, makeSplitUnit({ id: 3, kind: "sentence" })],
+      [4, makeSplitUnit({ id: 4, kind: "caption", group_unit_id: 1 })],
     ]);
-    expect(resolvePickUnit(2, units)).toBe(1);
+    expect(resolvePickUnit(2, units)).toBe(2);
     expect(resolvePickUnit(3, units)).toBe(3);
+    expect(resolvePickUnit(4, units)).toBe(1);
   });
 });
 
