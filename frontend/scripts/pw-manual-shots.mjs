@@ -236,8 +236,13 @@ const SCENES = [
   },
   {
     name: "admin-lookup", user: "dev.admin", path: "/admin?tab=access",
-    prep: (page) => click(page, id("access-sub-lookup")),
-    marks: [id("access-sub-lookup")],
+    // 유효 권한 조회는 부여 화면에 들어왔다 - 사람을 찾아 고르면 오른쪽에 유효 권한이 나온다
+    prep: async (page) => {
+      await click(page, id("access-sub-grants"));
+      await page.getByTestId("grants-search").fill("prod.member");
+      await click(page, id("grants-subject-user:prod.member"));
+    },
+    marks: [id("grants-search"), id("grant-detail")],
   },
   { name: "admin-directory", user: "dev.admin", path: "/admin?tab=directory", marks: [id("admin-tab-directory"), id("hr-sync-run"), id("hr-sync-preview")] },
   { name: "admin-batch", user: "dev.admin", path: "/admin?tab=batch", sampleBatch: true, marks: [id("admin-tab-batch"), id("batch-table")] },

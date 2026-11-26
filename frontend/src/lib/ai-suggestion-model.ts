@@ -50,12 +50,15 @@ export function findRowSuggestion(unitIds: readonly number[], status: string, in
  * statusOfUnit은 단위 → 그 줄의 상태라 은퇴한 단위는 없다. Old 단위가 없는 신규 제안은 안 정한 줄이 없어 세지 않는다. documentId가 null이면 묶음 전체
  */
 export function countWaitingSuggestions(items: readonly AiSuggestion[], statusOfUnit: ReadonlyMap<number, CoverStatus>, documentId: number | null): number {
-  return items.filter((item) => {
-    if (!isLiveSuggestion(item) || HIDDEN_AI_KINDS.has(item.kind)) return false;
-    if (documentId !== null && item.document_id !== documentId) return false;
-    const unitIds = item.content.unit_ids ?? [];
-    return unitIds.length > 0 && unitIds.every((id) => statusOfUnit.get(id) === "unassigned");
-  }).length;
+  return items.filter((item) => !HIDDEN_AI_KINDS.has(item.kind) && isOpenSuggestion(item, statusOfUnit, documentId)).length;
+}
+
+/** 살아 있고 덮는 단위가 모두 안 정한 줄에 있는 제안 - 대기 수와 알약 수락 수가 같은 거르기를 쓴다. documentId가 null이면 묶음 전체 */
+export function isOpenSuggestion(item: AiSuggestion, statusOfUnit: ReadonlyMap<number, CoverStatus>, documentId: number | null): boolean {
+  if (!isLiveSuggestion(item)) return false;
+  if (documentId !== null && item.document_id !== documentId) return false;
+  const unitIds = item.content.unit_ids ?? [];
+  return unitIds.length > 0 && unitIds.every((id) => statusOfUnit.get(id) === "unassigned");
 }
 
 const BUNDLE_SHAPES = ["table", "figure"];

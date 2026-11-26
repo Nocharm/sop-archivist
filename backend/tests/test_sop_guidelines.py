@@ -53,6 +53,7 @@ REPLY_FIELDS = {
     "prompt.doc_meta": {"doc_code", "version"},
     "prompt.tobe_list": {"docs"},
     "prompt.unwrap_order": {"order", "reason"},
+    "prompt.grant": {"lines"},
 }
 
 

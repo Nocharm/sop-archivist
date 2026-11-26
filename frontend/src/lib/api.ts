@@ -209,6 +209,34 @@ export interface GrantInput {
   permission?: string;
 }
 
+export interface GrantBatchInput {
+  add?: GrantInput[];
+  remove?: number[];
+}
+
+/** added·removed는 실제로 바뀐 것, skipped는 이미 있던 추가, unknown은 대상·역할·권한이 없는 추가, missing은 이미 없던 회수. */
+export interface GrantBatchResult {
+  added: Grant[];
+  removed: number[];
+  skipped: GrantInput[];
+  unknown: GrantInput[];
+  missing: number[];
+}
+
+/** 사내 AI가 읽은 지시 한 줄 - 대상 글마다 맞은 직원·부서(0개면 목록에 없음, 2개 이상이면 동명이인), 역할·권한은 없으면 null. */
+export interface GrantAiLine {
+  line: number;
+  action: "add" | "remove";
+  subjects: { written: string; matches: { subject_type: SubjectType; subject_id: string }[] }[];
+  roles: { written: string; role_id: number | null }[];
+  permissions: { written: string; permission: string | null }[];
+}
+
+export interface GrantAiResult {
+  lines: GrantAiLine[];
+  model: string;
+}
+
 /** 변경 기록 한 줄 - action은 role.create|update|delete, grant.add|remove. detail 모양은 action마다 다르다. */
 export interface AuditEvent {
   id: number;
@@ -348,13 +376,27 @@ export function addGrant(body: GrantInput): Promise<Grant> {
   return apiFetch<Grant>("/access/grants", { method: "POST", body: JSON.stringify(body) });
 }
 
+/** 회수를 먼저, 추가를 나중에 한 트랜잭션으로 - 이미 있는 것·없는 것은 거절하지 않고 결과로 온다. 요청당 추가·회수 각 200개까지. */
+export function batchGrants(body: GrantBatchInput): Promise<GrantBatchResult> {
+  return apiFetch<GrantBatchResult>("/access/grants/batch", { method: "POST", body: JSON.stringify(body) });
+}
+
+/** 지시를 사내 AI로 읽기만 한다 - 아무것도 바꾸지 않는다. 반영은 batchGrants로. AI가 꺼져 있으면 503. */
+export function readGrantsWithAi(text: string): Promise<GrantAiResult> {
+  return apiFetch<GrantAiResult>("/access/grants/ai-read", { method: "POST", body: JSON.stringify({ text }) });
+}
+
 export function removeGrant(id: number): Promise<void> {
   return apiFetch<void>(`/access/grants/${id}`, { method: "DELETE" });
 }
 
-/** limit을 생략하면 서버 기본(100). 서버는 500으로 자른다. */
-export function listAudit(limit?: number): Promise<AuditEvent[]> {
-  return apiFetch<AuditEvent[]>(limit === undefined ? "/access/audit" : `/access/audit?limit=${limit}`);
+/** limit을 생략하면 서버 기본(100). 서버는 500으로 자른다. before(기록 id)를 주면 그보다 먼저 남은 기록부터 이어 받는다. */
+export function listAudit(limit?: number, before?: number): Promise<AuditEvent[]> {
+  const params = new URLSearchParams();
+  if (limit !== undefined) params.set("limit", String(limit));
+  if (before !== undefined) params.set("before", String(before));
+  const query = params.toString();
+  return apiFetch<AuditEvent[]>(query ? `/access/audit?${query}` : "/access/audit");
 }
 
 export function getEffective(loginId: string): Promise<EffectiveAccess> {

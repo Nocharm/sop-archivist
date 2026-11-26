@@ -18,6 +18,8 @@
 - `resolve.py` `get_effective_access`(개인 부여 ∪ 소속 부서 체인 부여, 역할은 권한으로 펼침, 퇴직자 무권한, `APP_SYSADMINS`는 전권).
 - `deps.py` `require_permission("<key>")`(라우터 의존성).
 - `sources.py`(권한 출처 응답 `SourceOut`·대상 이름 조회 — `/api/me`의 `sources`와 유효 권한 조회가 공유).
+- `POST /api/access/grants/batch`(`{add, remove}` 각 200건까지, 회수 먼저·추가 나중을 한 트랜잭션으로, 항목마다 변경 기록) — 이미 있거나 없는 항목은 거절하지 않고 `skipped`·`unknown`·`missing`으로 돌려준다. 역할 여러 개 더하기와 회수 되돌리기(같은 부여를 새로 만든다)가 쓴다.
+- `GET /api/access/audit?before=<기록 id>`는 그 기록보다 먼저 남은 것만 준다 — 시각이 같은 기록이 빠지지 않게 (시각, id)로 끊고, 기준 기록이 없으면 404.
 - `require_permission`·`/api/me`·관리 화면의 유효 권한 조회가 모두 `get_effective_access` 하나를 부른다 — 판정을 다른 곳에 새로 쓰지 않는다.
 - 부여는 더하기만 있고 부서 부여는 하위 부서까지 내려간다. 대상은 FK 없이 두어 개편으로 사라진 부서·사람의 부여도 지우지 않고 `subject_missing`으로 보인다.
 
@@ -119,7 +121,7 @@ AI 없이 사람이 끝까지 가는 결정적 경로(계획 1). AI 층은 아�
 
 ### 10.4 AI 호출
 
-- 페이로드에 직원 실명(`name`·`korean_name`)을 싣지 않는다 — 역할·부서 등 비식별 정보만.
+- 사내 모델로만 부른다(외부 모델 금지). 직원 실명(`name`·`korean_name`)·로그인 ID는 그 기능에 필요할 때만 싣는다(사용자 결정 2026-11-26, 전에는 실명 금지). 사내 AI로 부여 읽기(`access/grant_ai.py`, `POST /api/access/grants/ai-read`)는 관리자의 글과 역할 이름·권한 키를 보내고, 직원 명단은 보내지 않는다 — AI가 글에서 옮겨 쓴 이름·ID·부서는 서버가 응답을 받은 뒤 직원·부서 표에 맞춘다. 요청 안의 동기 호출이고(AI 작업 표를 쓰지 않음) 아무것도 쓰지 않으며, 반영은 화면이 `/grants/batch`로 한다.
 - 호출은 `call_ai_recorded`를 거쳐(검사: `test_invariants.py`) 사용량 행을 남기고(실패도 `ok=false`), 사용자에게 보이는 오류는 AI 주소·토큰을 뺀 문구다.
 - **AI 호출 동안 DB 연결을 잡지 않는다** — `call_ai_recorded`는 세션을 받지 않고, 요청 세션을 쓴 핸들러는 호출 직전 `await session.close()`로 돌려준다(`ping_ai`). AI 작업은 이 규칙을 구조로 지킨다 — 아래 11절.
 

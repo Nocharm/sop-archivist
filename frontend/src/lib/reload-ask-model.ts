@@ -20,10 +20,12 @@ export interface ReloadAsk {
   written: boolean;
   identical: boolean;
   split: boolean;
+  /** 분류 · 묶기 제안 목록 */
+  suggestions: boolean;
   bundle: boolean;
 }
 
-export const NO_RELOAD_ASK: ReloadAsk = { docs: [], units: [], solo: false, lists: false, tobe: false, written: false, identical: false, split: false, bundle: false };
+export const NO_RELOAD_ASK: ReloadAsk = { docs: [], units: [], solo: false, lists: false, tobe: false, written: false, identical: false, split: false, suggestions: false, bundle: false };
 
 function mergeDocs(a: DocSet, b: DocSet): DocSet {
   return a === "all" || b === "all" ? "all" : [...new Set([...a, ...b])];
@@ -39,6 +41,7 @@ export function mergeReloads(a: ReloadAsk, b: ReloadAsk): ReloadAsk {
     written: a.written || b.written,
     identical: a.identical || b.identical,
     split: a.split || b.split,
+    suggestions: a.suggestions || b.suggestions,
     bundle: a.bundle || b.bundle,
   };
 }
@@ -48,7 +51,7 @@ export function isDocReload(ask: Pick<ReloadAsk, "docs" | "units">): boolean {
 }
 
 export function isEmptyReload(ask: ReloadAsk): boolean {
-  return !isDocReload(ask) && !(ask.solo || ask.lists || ask.tobe || ask.written || ask.identical || ask.split || ask.bundle);
+  return !isDocReload(ask) && !(ask.solo || ask.lists || ask.tobe || ask.written || ask.identical || ask.split || ask.suggestions || ask.bundle);
 }
 
 /** 편집 뒤 다시 받을 것(planReload) → 모을 것. Old 문서가 아닌 문서(한 단으로 연 New 문서)는 그 보기와, Unit이 바뀌는 편집이면 New 문장 · To-Be도 */
@@ -64,6 +67,7 @@ export function buildReloadAsk(plan: ReloadPlan, oldDocIds: readonly number[]): 
     written: plan.written || (isNewDoc && plan.units),
     identical: plan.identical,
     split: plan.splitSuggestions !== null,
+    suggestions: plan.suggestions,
     bundle: plan.bundle,
   };
 }

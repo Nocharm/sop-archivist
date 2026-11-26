@@ -1070,11 +1070,9 @@ def test_unit_retired_by_edit_leaves_adoption_empty(client: TestClient, fake_ai:
     )
 
     (suggestion,) = read_suggestions()
-    assert (suggestion.result, suggestion.adoption, suggestion.adopted_by) == ("applied", None, None)
+    assert (suggestion.result, suggestion.adoption, suggestion.adopted_by) == ("stale", None, None)
     assert read_decision(unit["id"]).suggestion_id is None
-    assert get_adoption(client, bundle.id)["classify"] == {
-        "applied": 1, "as_is": 0, "edited": 0, "rejected": 0, "pending": 0, "adoption_rate": None,
-    }
+    assert "classify" not in get_adoption(client, bundle.id)  # 거둔 제안은 받은 것에도 대기에도 들지 않는다
 
 
 def test_retiring_one_side_takes_the_suggestion_out_of_pending(client: TestClient, fake_ai: FakeAi) -> None:
@@ -1085,7 +1083,7 @@ def test_retiring_one_side_takes_the_suggestion_out_of_pending(client: TestClien
 
     assert read_suggestions()[0].adoption is None
     assert read_decision(en).status == "unassigned"
-    assert get_adoption(client, bundle.id)["classify"]["pending"] == 0
+    assert "classify" not in get_adoption(client, bundle.id)  # 거둬서 대기가 아니다
 
 
 def test_held_side_of_a_retired_pair_stays_pending(client: TestClient, fake_ai: FakeAi) -> None:
@@ -1222,3 +1220,94 @@ def test_save_without_a_suggestion_records_nothing(client: TestClient, fake_ai: 
 
     assert group["units"][0]["decision"]["suggestion_id"] is None
     assert read_suggestions() == []
+
+
+# --- 편집이 은퇴시킨 Unit의 제안을 거둔다(쪼개기 먼저 E3) ---
+
+UNDO_META = {"session": "retire-test"}
+
+
+def suggest_two_pairs(client: TestClient, fake_ai: FakeAi) -> tuple[AiBundle, list[int]]:
+    """두 한/영 짝에 제안을 따로 받아 둔 묶음 — 제안 둘(앞 짝 · 뒤 짝)이 살아 있다."""
+    bundle = make_ai_bundle(client)
+    ids = find_ids(client, bundle, AI_KO_1, AI_EN_1, AI_KO_2, AI_EN_2)
+    use_reply(fake_ai)
+    queue_units(client, bundle.id, ids[:2])
+    run_jobs()
+    queue_units(client, bundle.id, ids[2:])
+    run_jobs()
+    return bundle, ids
+
+
+def read_results() -> list[str]:
+    return [row.result for row in sorted(read_suggestions(), key=lambda row: row.id)]
+
+
+def merge_with_undo_step(client: TestClient, bundle: AiBundle, unit_ids: list[int]) -> None:
+    """Assign 안의 합치기 — 되돌리기 단계(undo)를 함께 싣는다."""
+    revision = get_view(client, bundle.id, bundle.document_id)["document"]["revision"]
+    response = client.post(
+        f"/api/bundles/{bundle.id}/documents/{bundle.document_id}/edits",
+        json={"revision": revision, "op": {"type": "merge", "unit_ids": unit_ids}, "undo": UNDO_META}, headers=AUTHOR,
+    )
+    assert response.status_code == 200, response.text
+
+
+def step_edit(client: TestClient, bundle: AiBundle, action: str) -> None:
+    revision = get_view(client, bundle.id, bundle.document_id)["document"]["revision"]
+    response = client.post(
+        f"/api/bundles/{bundle.id}/documents/{bundle.document_id}/edits/{action}", json={"revision": revision}, headers=AUTHOR
+    )
+    assert response.status_code == 200, response.text
+
+
+def test_merging_retires_the_suggestions_of_both(client: TestClient, fake_ai: FakeAi) -> None:
+    bundle, (ko_1, _, ko_2, _) = suggest_two_pairs(client, fake_ai)
+    assert read_results() == ["applied", "applied"]
+
+    merge_with_undo_step(client, bundle, [ko_1, ko_2])
+
+    assert read_results() == ["stale", "stale"]
+
+
+def test_undo_does_not_bring_them_back(client: TestClient, fake_ai: FakeAi) -> None:
+    bundle, (ko_1, _, ko_2, _) = suggest_two_pairs(client, fake_ai)
+    merge_with_undo_step(client, bundle, [ko_1, ko_2])
+
+    response = client.post(f"/api/bundles/{bundle.id}/decisions/undo", json=UNDO_META, headers=AUTHOR)  # Assign 되돌리기
+    assert response.status_code == 200, response.text
+    assert read_results() == ["stale", "stale"]
+
+    merge_with_undo_step(client, bundle, [ko_1, ko_2])
+    step_edit(client, bundle, "undo")  # Split 화면의 되돌리기
+    assert read_results() == ["stale", "stale"]
+
+
+def test_redo_still_works(client: TestClient, fake_ai: FakeAi) -> None:
+    bundle, (ko_1, _, ko_2, _) = suggest_two_pairs(client, fake_ai)
+    merge_with_undo_step(client, bundle, [ko_1, ko_2])
+    step_edit(client, bundle, "undo")
+
+    step_edit(client, bundle, "redo")
+
+    assert read_results() == ["stale", "stale"]
+    assert find_unit(get_view(client, bundle.id, bundle.document_id), f"{AI_KO_1} {AI_KO_2}")
+
+
+def test_other_kinds_are_left_for_their_own_adoption(client: TestClient, fake_ai: FakeAi) -> None:
+    bundle, (ko_1, *_) = suggest_two_pairs(client, fake_ai)
+    split_id = attach_suggestion(bundle.id, ko_1, "unwrap_order")
+
+    edit_document(client, bundle.id, bundle.document_id, {"type": "split", "unit_id": ko_1, "at": 3})
+
+    assert [row.result for row in read_suggestions() if row.id == split_id] == ["applied"]
+
+
+def test_adoption_stats_do_not_count_stale(client: TestClient, fake_ai: FakeAi) -> None:
+    bundle, (ko_1, _, ko_2, _) = suggest_two_pairs(client, fake_ai)
+    assert use_suggestion(client, bundle.id, ko_1).status_code == 200  # 앞 제안은 그대로 받아 채택에 남는다
+    edit_document(client, bundle.id, bundle.document_id, {"type": "split", "unit_id": ko_2, "at": 3}, confirm=True)
+
+    assert get_adoption(client, bundle.id)["classify"] == {
+        "applied": 1, "as_is": 1, "edited": 0, "rejected": 0, "pending": 0, "adoption_rate": 1.0,
+    }

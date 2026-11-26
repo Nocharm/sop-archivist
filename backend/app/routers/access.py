@@ -9,18 +9,27 @@ from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
 from pydantic import BaseModel, Field, StringConstraints
-from sqlalchemy import delete, func, select
+from sqlalchemy import and_, delete, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.access.audit import add_audit_event
 from app.access.catalog import PERMISSIONS, is_known_permission
+from app.access.grant_ai import (
+    GrantAiIn,
+    GrantAiOut,
+    load_grant_ai_context,
+    read_grant_text,
+    resolve_grant_reply,
+)
 from app.access.deps import require_permission
 from app.access.resolve import get_effective_access
 from app.access.sources import SourceOut, build_source_map, load_subject_names
 from app.clock import KST, now
 from app.db import get_session
 from app.models import AccessAuditEvent, AccessGrant, Role, RolePermission
+from app.settings import settings
+from app.sop.ai.runner import AiCallFailed
 
 # 같은 의존성 객체를 라우터와 엔드포인트(행위자 login_id가 필요한 곳)가 함께 써서 요청당 판정은 한 번만 돈다
 # (FastAPI 의존성 캐시). 라우터 단에도 걸어 두어 새 엔드포인트가 게이트 없이 열리는 일이 없게 한다.
@@ -30,6 +39,9 @@ router = APIRouter(prefix="/api/access", tags=["access"], dependencies=[Depends(
 
 # 변경 기록 한 번에 돌려주는 최대 건수 — 큰 limit은 거부하지 않고 이 값으로 자른다
 MAX_AUDIT_LIMIT = 500
+
+# 한 번에 다루는 추가·회수 상한 — 한 트랜잭션이 너무 커지지 않게
+MAX_BATCH_GRANTS = 200
 
 # 길이 상한은 컬럼 길이와 같다 — sqlite는 길이를 강제하지 않아 운영 Postgres에서만 500이 난다
 RoleName = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100)]
@@ -70,6 +82,24 @@ class GrantOut(BaseModel):
     permission: str | None
     created_by: str
     created_at: datetime
+
+
+class GrantBatchIn(BaseModel):
+    """여러 부여를 한 번에 — 회수를 먼저, 추가를 나중에 한 트랜잭션으로."""
+
+    add: list[GrantIn] = Field(default_factory=list, max_length=MAX_BATCH_GRANTS)
+    remove: list[int] = Field(default_factory=list, max_length=MAX_BATCH_GRANTS)
+
+
+class GrantBatchOut(BaseModel):
+    added: list[GrantOut]
+    removed: list[int]
+    # 이미 있는 부여(요청 안에서 겹친 것 포함)라 건너뛴 추가
+    skipped: list[GrantIn]
+    # 대상·역할·권한이 없어 쓰지 않은 추가
+    unknown: list[GrantIn]
+    # 이미 없는 부여라 할 일이 없던 회수 id
+    missing: list[int]
 
 
 class AuditOut(BaseModel):
@@ -326,6 +356,107 @@ async def add_grant(
     )
 
 
+@router.post("/grants/batch", response_model=GrantBatchOut)
+async def apply_grant_batch(
+    body: GrantBatchIn,
+    actor: str = Depends(_require_manage),
+    session: AsyncSession = Depends(get_session),
+) -> GrantBatchOut:
+    """회수와 추가를 한 트랜잭션으로 한다 — 이미 있는 것·없는 것은 거절하지 않고 건너뛰어 결과로 알리고, 실제로 바뀐 항목마다 기록을 남긴다."""
+    if not body.add and not body.remove:
+        raise HTTPException(status_code=422, detail="add or remove is required")
+    for item in body.add:
+        if (item.role_id is None) == (item.permission is None):
+            raise HTTPException(status_code=422, detail="exactly one of role_id or permission is required")
+
+    roles = {role.id: role.name for role in (await session.scalars(select(Role))).all()}
+
+    removed: list[int] = []
+    missing: list[int] = []
+    for grant_id in dict.fromkeys(body.remove):
+        grant = await session.get(AccessGrant, grant_id)
+        if grant is None:
+            missing.append(grant_id)
+            continue
+        role_name = roles.get(grant.role_id) if grant.role_id is not None else None
+        add_audit_event(session, actor, "grant.remove", _build_grant_detail(grant, role_name))
+        await session.delete(grant)
+        removed.append(grant_id)
+    await session.flush()  # 회수한 것과 같은 부여를 다시 추가할 수 있게 먼저 반영한다
+
+    names = await load_subject_names(session, {(item.subject_type, item.subject_id) for item in body.add})
+    added: list[tuple[AccessGrant, str]] = []
+    skipped: list[GrantIn] = []
+    unknown: list[GrantIn] = []
+    for item in body.add:
+        subject_name = names.get((item.subject_type, item.subject_id))
+        if (
+            subject_name is None
+            or (item.role_id is not None and item.role_id not in roles)
+            or (item.permission is not None and not is_known_permission(item.permission))
+        ):
+            unknown.append(item)
+            continue
+        duplicate = await session.scalar(
+            select(AccessGrant.id).where(AccessGrant.build_identity_filter(
+                item.subject_type, item.subject_id, item.role_id, item.permission,
+            )).limit(1)
+        )
+        if duplicate is not None:
+            skipped.append(item)
+            continue
+        grant = AccessGrant(
+            subject_type=item.subject_type, subject_id=item.subject_id,
+            role_id=item.role_id, permission=item.permission, created_by=actor,
+        )
+        session.add(grant)
+        try:
+            await session.flush()  # 기록에 쓸 id와, 요청 안에서 겹친 추가를 다음 줄이 보게
+        except IntegrityError as exc:  # 검사 뒤 역할이 동시에 지워짐(FK)
+            await session.rollback()
+            raise HTTPException(status_code=422, detail="unknown role") from exc
+        role_name = roles.get(item.role_id) if item.role_id is not None else None
+        add_audit_event(session, actor, "grant.add", _build_grant_detail(grant, role_name))
+        added.append((grant, subject_name))
+    await _commit_or_conflict(session, 422, "unknown role")
+    return GrantBatchOut(
+        added=[
+            GrantOut(
+                id=grant.id, subject_type=grant.subject_type, subject_id=grant.subject_id,
+                subject_name=subject_name, subject_missing=False,
+                role_id=grant.role_id, role_name=roles.get(grant.role_id) if grant.role_id is not None else None,
+                permission=grant.permission, created_by=grant.created_by,
+                created_at=_normalize_to_kst(grant.created_at),
+            )
+            for grant, subject_name in added
+        ],
+        removed=removed, skipped=skipped, unknown=unknown, missing=missing,
+    )
+
+
+@router.post("/grants/ai-read", response_model=GrantAiOut)
+async def read_grants_with_ai(
+    body: GrantAiIn,
+    actor: str = Depends(_require_manage),
+    session: AsyncSession = Depends(get_session),
+) -> GrantAiOut:
+    """관리자가 쓴 지시를 사내 AI가 읽어 줄마다 대상·동작·역할로 돌려준다 — 아무것도 쓰지 않고, 반영은 화면이 /grants/batch로 한다."""
+    if not settings.ai_enabled:
+        raise HTTPException(status_code=503, detail="AI is disabled")
+    guideline, roles = await load_grant_ai_context(session)
+    # 권한 판정과 위 읽기가 잡은 연결을 느린 AI 호출 동안 돌려준다 — 아래 대상 맞추기는 새 연결로 다시 연다
+    await session.close()
+    try:
+        reply, model = await read_grant_text(
+            login_id=actor, text=body.text, guideline=guideline, role_names=[role.name for role in roles]
+        )
+    except AiCallFailed as exc:
+        raise HTTPException(status_code=502, detail=f"AI call failed: {exc.code}") from exc
+    if reply is None:
+        raise HTTPException(status_code=502, detail="AI reply was not valid")
+    return GrantAiOut(lines=await resolve_grant_reply(session, reply, roles), model=model)
+
+
 @router.delete("/grants/{grant_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def remove_grant(
     grant_id: int,
@@ -346,10 +477,24 @@ async def remove_grant(
 @router.get("/audit", response_model=list[AuditOut])
 async def list_audit(
     limit: int = Query(100, ge=1),
+    before: int | None = Query(None, ge=1),
     session: AsyncSession = Depends(get_session),
 ) -> list[AuditOut]:
+    """최신순. before(기록 id)를 주면 그 기록보다 먼저 남은 것만 — 이어 불러오기."""
+    stmt = select(AccessAuditEvent)
+    if before is not None:
+        # 시각이 같은 기록도 건너뛰지 않게 정렬과 같은 (시각, id)로 끊는다
+        anchor = await session.get(AccessAuditEvent, before)
+        if anchor is None:
+            raise HTTPException(status_code=404, detail="audit event not found")
+        stmt = stmt.where(
+            or_(
+                AccessAuditEvent.occurred_at < anchor.occurred_at,
+                and_(AccessAuditEvent.occurred_at == anchor.occurred_at, AccessAuditEvent.id < anchor.id),
+            )
+        )
     events = (await session.scalars(
-        select(AccessAuditEvent)
+        stmt
         .order_by(AccessAuditEvent.occurred_at.desc(), AccessAuditEvent.id.desc())
         .limit(min(limit, MAX_AUDIT_LIMIT))
     )).all()
