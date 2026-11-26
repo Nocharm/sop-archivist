@@ -1125,6 +1125,60 @@ def test_clear_detaches_and_holds_rest_of_group(client: TestClient) -> None:
     assert stale.json()["detail"]["code"] == "revision_conflict"
 
 
+def _bulk_clear(client: TestClient, fx: Fixture, units: list[dict], revisions: list[int], **fields: object) -> httpx2.Response:
+    body = {"action": "clear", "units": [{"unit_id": u["id"], "revision": r} for u, r in zip(units, revisions, strict=True)], **fields}
+    return client.post(f"/api/bundles/{fx.bundle_id}/decisions/bulk", json=body, headers=AUTHOR)
+
+
+def test_bulk_clear_unassigns_every_row_in_one_request(client: TestClient) -> None:
+    fx = _setup(client)
+    first, second = find_unit(fx.view, STORAGE), find_unit(fx.view, WARM_UP)
+    for unit in (first, second):
+        assign_as_is(client, fx.bundle_id, unit, fx.sop_id, slot_key="responsibilities")
+
+    response = _bulk_clear(client, fx, [first, second], [2, 2])
+
+    assert response.status_code == 200, response.text
+    assert [(row["unit_id"], row["decision"]["disposition"], row["decision"]["status"]) for row in response.json()] == [
+        (first["id"], "unassigned", "unassigned"), (second["id"], "unassigned", "unassigned"),
+    ]
+    assert get_group_by_unit(client, fx.bundle_id, first["id"])["targets"] == []
+
+
+def test_bulk_clear_refuses_a_stale_revision_and_changes_nothing(client: TestClient) -> None:
+    fx = _setup(client)
+    first, second = find_unit(fx.view, STORAGE), find_unit(fx.view, WARM_UP)
+    for unit in (first, second):
+        assign_as_is(client, fx.bundle_id, unit, fx.sop_id, slot_key="responsibilities")
+
+    response = _bulk_clear(client, fx, [first, second], [2, 1])
+
+    assert (response.status_code, response.json()["detail"]["code"]) == (409, "revision_conflict")
+    assert get_group_by_unit(client, fx.bundle_id, first["id"])["units"][0]["decision"]["status"] != "unassigned"
+
+
+def test_bulk_clear_holds_the_rest_of_a_linked_group(client: TestClient) -> None:
+    fx = _setup(client)
+    first, second = find_unit(fx.view, WARM_UP), find_unit(fx.view, RECORDS)
+    _merge(client, fx, first, second)
+
+    response = _bulk_clear(client, fx, [first], [2])
+
+    assert response.status_code == 200, response.text
+    assert get_group_by_unit(client, fx.bundle_id, second["id"])["units"][0]["decision"]["status"] == "on_hold"
+
+
+def test_bulk_clear_needs_an_author(client: TestClient) -> None:
+    fx = _setup(client)
+    assert set_members(client, fx.bundle_id, [("qa.member", "author"), ("qa.lead", "reviewer")]).status_code == 200
+    unit = find_unit(fx.view, STORAGE)
+    body = {"action": "clear", "units": [{"unit_id": unit["id"], "revision": 1}]}
+
+    response = client.post(f"/api/bundles/{fx.bundle_id}/decisions/bulk", json=body, headers=REVIEWER)
+
+    assert response.status_code == 403
+
+
 def test_every_old_cover_unit_has_exactly_one_status(client: TestClient) -> None:
     fx = _setup(client)
     table = next(unit for unit in fx.view["units"] if unit["kind"] == "table")

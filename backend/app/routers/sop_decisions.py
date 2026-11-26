@@ -30,6 +30,7 @@ from app.sop.decisions import (
     UnitsPageOut,
     check_group,
     clear_unit,
+    clear_units,
     dispose_units,
     freeze_positioned_docs,
     list_units,
@@ -133,9 +134,10 @@ async def save_relation_group(
 async def dispose_units_in_bulk(
     body: BulkDecisionIn, ctx: BundleContext = Depends(_require_author), session: AsyncSession = Depends(get_session)
 ) -> list[UnitDecisionRowOut]:
-    op = "move_out" if body.action == "move_external" else "delete"
+    op = {"move_external": "move_out", "clear": "clear"}.get(body.action, "delete")
+    run = clear_units if body.action == "clear" else dispose_units
     rows = await record_snapshot_step(
-        session, ctx.bundle, ctx.login_id, body.undo, op, lambda: dispose_units(session, ctx.bundle, body, ctx.login_id)
+        session, ctx.bundle, ctx.login_id, body.undo, op, lambda: run(session, ctx.bundle, body, ctx.login_id)
     )
     await session.commit()
     return rows
