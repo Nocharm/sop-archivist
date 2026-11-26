@@ -39,7 +39,7 @@
 | 8b | `feat/unwrap-continue-numbers` | 합침 | v1.6.31 · c1efc2ad | dev v1.6.29 · v1.6.30 합침 · pytest 3832+시드 15 · ruff · vitest 2715 · build 경고 0 · `assign:` 스모크 ALL PASS 1507 · opus 검토 막음 1 고침 → opus 재검토 통과 | — |
 | F5 | `feat/pick-bar-labels` | 합침 | v1.6.40 · c25d82de | dev(7a00b66c) 합침 · vitest 2736 · build 경고 0 · `assign:` 스모크 ALL PASS 1527(짝 판 단계 따라 고침 뒤) · overlap `assign-pick-bar` 1120 · 1280 · 1440 · 1920 en/ko 8/8 · 호버 깜빡임 0회(480–720px 상자, en/ko) · 검토 생략(CSS) | 기본 1120 · 1440 두 단에서는 Old 박스가 약 340px라 라벨이 거의 다 접힘 — 넓힐 때만 이름 |
 | F7b | `feat/new-cell-menu-two-pane` | 합침 | v1.6.39 · e81d6ecb | dev(26b35312) 합침 · vitest 2741 · build 경고 0 · `assign:` 스모크 ALL PASS 1527(새 Shift+F10 검사 4 포함) · 검토 생략(작은 일) | Old 줄을 골라 둔 채 New를 마지막에 누르면 Shift+F10이 New 메뉴를 연다(전에는 Old) |
-| F9 | `feat/practice-page` | 진행 |  | — | opus 설계 · 스텝 계획 중 |
+| F9 | `feat/practice-page`(모음) | 진행 | 설계 19c9db36 · 스텝 1 be583398 | 스텝 1 자료: pytest 3851+시드 15 · ruff · sonnet 검토 막음 0(CI 바이트 고정 손질 e7f5c93d) · 스텝 2 가짜 서버: vitest 2768 · opus 검토 막음 1(실제 큐 쓰기가 /practice에서 버려짐) 고치는 중 | 스텝 3 화면 · 스텝 4 과제 남음 |
 
 
 ## 이어 가기 (2026-11-26 밤 — 1차 피드백 중간, 다음 세션은 여기부터)
@@ -174,6 +174,9 @@
 - (F7b, 추천안) 메뉴 글쇠 · Shift+F10을 New 박스(한 단 · 양 단)에서도 연다 — 마지막에 고른 쪽 기준. Old를 골라 둔 채 New를 누르면 New 메뉴.
 - (F5, 에이전트 판단 그대로) 못 하는 손질도 이름을 보이고 까닭은 툴팁, ⋯는 줄 오른쪽 끝. 그림: /private/tmp/claude-501/-Users-hyeonjin-Documents-sop-archivist/cd35c95b-037a-4e82-bb7a-e837e4859e96/scratchpad/shots/pickbar/ (pickbar-<en|ko>-<1120|1440>.png = 실제 폭, -box<480–720>.png = 단추 줄 폭을 CSS로 강제한 것 — 박스보다 넓게 강제한 그림은 오른쪽이 잘려 보임). 호버 깜빡임은 재 보니 0회.
 - (F5) 기본 창 폭(1120 · 1440, 두 단)에서는 Old 박스가 좁아 라벨이 거의 다 접힌다(잇기만 이름). 이름을 더 자주 보이려면 접는 폭(components.css)을 낮추거나 아이콘 옆 짧은 이름을 정한다.
+- (F9 연습 페이지, 사용자 확정 11-26 밤) 오른쪽 과제 목록(A) · 자동 체크 · 기본 12개 · 한/영 짝 Old 하나 + New 하나 · 진입은 상단 바 사용자 메뉴의 '연습하기'(`user-menu-practice`, 설명서 항목 아래)와 설명서 머리 두 곳. 비교 그림 `/private/tmp/claude-501/-Users-hyeonjin-Documents-sop-archivist/cd35c95b-037a-4e82-bb7a-e837e4859e96/scratchpad/practice-layout.html`.
+- (F9, 설계 해석 — 확인) D20 "빈 New" = 문장은 있고 이음이 0인 New(문장이 없으면 잇기 · 확정 과제를 못 함). D21 "목차 삭제" 과제 = 이미 삭제로 접힌 목차 블록에 R로 사유 적기로 판정. 짝 D는 확정이 아니라 올린 그대로 `suggested` 짝. Old 자료는 규칙 2가 짝을 내도록 제목 · 목차 · 장 제목을 한/영 두 줄로 바꿈.
+- (F9, 검토 막음 고침 — 추천안) `/bundles/<id>` 요청은 id로만 가른다: -1이면 가짜, 0 이상이면 화면이 /practice여도 실제 서버(실제 Assign에서 밀린 저장이 연습 화면으로 옮길 때 버려지지 않게). 설계 D2를 바꿈.
 
 ## 사용자 답 (2026-11-26 아침)
 
