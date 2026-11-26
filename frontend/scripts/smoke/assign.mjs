@@ -4176,12 +4176,19 @@ await runStep("assign: merging two suggested boxes drops the AI count and Ctrl+Z
   const offered = await readOffered();
   check("the AI menu counts the suggestions on the two pieces", offered >= live, `${offered} vs ${live}`);
   // 붙이기 - 응답으로 줄 수가 돌아온 뒤 화면이 제안을 다시 읽을 때까지 기다린다
-  const join = page.locator(`[data-testid="assign-paper-join-${halves[0].id}-${halves[1].id}"]`);
-  await join.waitFor({ state: "attached", timeout: T });
-  await pieceOf(halves[0].id).click();
-  await page.locator(".strip-gap", { has: join }).hover({ position: { x: 200, y: 2 } });
-  await page.waitForFunction(() => [...document.querySelectorAll(".strip-gap:hover .strip-merge")].some((el) => getComputedStyle(el).pointerEvents === "auto"), null, { timeout: T });
-  await join.click();
+  // 메뉴를 닫은 Escape가 고름도 풀므로 앞 조각을 다시 고른 뒤 틈의 단추를 찾는다(단추는 고른 박스 곁 틈에만 있다)
+  const joinPieces = async () => {
+    await pieceOf(halves[0].id).click();
+    await page.locator(`.strip[data-testid="assign-paper-piece-${halves[0].id}"][data-sel]`).waitFor({ timeout: T });
+    const join = page.locator(`[data-testid="assign-paper-join-${halves[0].id}-${halves[1].id}"]`);
+    await join.waitFor({ state: "attached", timeout: T });
+    await page.waitForLoadState("networkidle");
+    await page.waitForFunction(() => { const acts = document.querySelector(".strip-acts[data-open]"); return acts === null || acts.getAnimations().length === 0; }, null, { timeout: T });
+    await page.locator(".strip-gap", { has: join }).hover({ position: { x: 200, y: 2 } });
+    await page.waitForFunction(() => [...document.querySelectorAll(".strip-gap:hover .strip-merge")].some((el) => getComputedStyle(el).pointerEvents === "auto"), null, { timeout: T });
+    await join.click();
+  };
+  await joinPieces();
   check("Join merges the two pieces back into one sentence", await waitCount(before));
   await page.waitForFunction(async ({ url, headers: h, ids }) => {
     const list = await (await fetch(url, { headers: h })).json();
@@ -4197,9 +4204,10 @@ await runStep("assign: merging two suggested boxes drops the AI count and Ctrl+Z
   await page.locator('[data-testid="assign-undo"]:not([disabled])').click();
   check("Undo splits the sentence again", await waitCount(before + 1));
   await page.waitForLoadState("networkidle");
-  check("Undo does not bring the AI count back", (await readOffered()) === merged);
-  // 시드를 처음 그대로 - 자르기까지 되돌린다
-  await page.locator('[data-testid="assign-undo"]:not([disabled])').click();
+  const afterUndo = await readOffered();
+  check("Undo does not bring the AI count back", afterUndo === merged, `${merged} -> ${afterUndo}`);
+  // 시드를 처음 그대로 - 화면을 다시 읽어 자르기는 되돌리기 목록에 없으니, 조각을 다시 붙인다
+  await joinPieces();
   check("the sentence is whole again", await waitCount(before));
 });
 

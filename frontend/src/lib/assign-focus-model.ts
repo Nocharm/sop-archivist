@@ -367,16 +367,18 @@ export interface ReloadPlan {
   identical: boolean;
   /** 이 문서의 AI 나누기 제안(AI 켬일 때만) */
   splitSuggestions: number | null;
+  /** 분류 · 묶기 제안 목록 - Unit을 은퇴시키는 편집이 제안을 거두고 되돌리기는 되살리지 않아, 화면이 든 목록이 낡는다 */
+  suggestions: boolean;
   bundle: boolean;
 }
 
-const NO_RELOAD: ReloadPlan = { docs: [], units: false, newDoc: null, written: false, tobe: false, identical: false, splitSuggestions: null, bundle: false };
+const NO_RELOAD: ReloadPlan = { docs: [], units: false, newDoc: null, written: false, tobe: false, identical: false, splitSuggestions: null, suggestions: false, bundle: false };
 
 /** 편집 하나 뒤에 다시 받을 것 - 설계 D2의 표 "편집 | 기다림 | 뒤에서" 한 줄씩 */
 export function planReload(cause: ReloadCause, ctx: { aiOn: boolean }): ReloadPlan {
   switch (cause.kind) {
     case "old_edit": {
-      const own = { ...NO_RELOAD, docs: [cause.docId], units: true, bundle: true };
+      const own = { ...NO_RELOAD, docs: [cause.docId], units: true, suggestions: !cause.isInPlace, bundle: true };
       // 판단을 풀었으면 대상(Target)이 지워진다 - To-Be · New 문장(엮은 문서) · 같은 글자 후보까지
       if (cause.isReleased) return { ...own, tobe: true, written: true, identical: true, splitSuggestions: cause.isInPlace || !ctx.aiOn ? null : cause.docId };
       // 제자리 편집(언어 · 참조 · 번호)은 글도 Unit도 그대로다
@@ -397,6 +399,6 @@ export function planReload(cause: ReloadCause, ctx: { aiOn: boolean }): ReloadPl
       if (!cause.isApplied) return { ...NO_RELOAD, docs: [cause.docId], splitSuggestions: ctx.aiOn ? cause.docId : null };
       return planReload({ kind: "old_edit", docId: cause.docId, isInPlace: false, isReleased: false }, ctx);
     case "edit_undo":
-      return { ...NO_RELOAD, docs: cause.docId === null ? "all" : [cause.docId], units: true, identical: true, bundle: true };
+      return { ...NO_RELOAD, docs: cause.docId === null ? "all" : [cause.docId], units: true, identical: true, suggestions: true, bundle: true };
   }
 }
