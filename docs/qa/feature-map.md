@@ -9,7 +9,7 @@
 - 사용자: dev 로그인은 localStorage `sopa.devUser`(API는 헤더 `X-Dev-User`). 스모크 기본은 `qa.member`, 권한 차등은 `dev.admin`(sysadmin).
 - 화면 하나만 확인: `frontend/`에서 `QUIET=1 ONLY="<머리>" node scripts/pw-smoke-sop.mjs`(첫 단계 `bundle list`는 늘 함께 돈다).
 - **숨긴 기능**(새 문서를 만드는 쪽 — Order · 번호로 더하기 · 칸 배정 · 템플릿 보기 · 결과물 C · 칸 추천/나누기/번역 AI): 개발 빌드에서 localStorage `sopa.drafting="1"`일 때만 보인다(운영 빌드에는 켜는 길이 없다). 숨긴 기능의 스모크 단계는 `runStep(…, { drafting: true }, …)`, 감사 · 그림 장면은 `drafting: true`. 숨긴 화면 자체는 `ONLY="drafting hidden"`.
-- 스모크 단계는 화면별 파일 `frontend/scripts/smoke/{shell,outputs,documents,order,assign,map}.mjs`에, 공용 도우미와 첫 단계는 `smoke/common.mjs`에 있다. `pw-smoke-sop.mjs`는 그 차례로 부르는 실행기다.
+- 스모크 단계는 화면별 파일 `frontend/scripts/smoke/{shell,outputs,documents,order,assign,map,practice}.mjs`에, 공용 도우미와 첫 단계는 `smoke/common.mjs`에 있다. `pw-smoke-sop.mjs`는 그 차례로 부르는 실행기다.
 
 ## 화면
 
@@ -29,6 +29,7 @@
 | 작업 기록 | `/bundles/{id}/history` | 묶음의 사건 목록 | 조회 상한 500 | — | `#history` |
 | 계정 · 화면 설정 | `/account`, 사용자 메뉴 | 레이아웃(레일/위 탭)·테마·언어, 첫 페인트 전 적용 | 첫 페인트 전 boot 스크립트와 `ui-prefs`가 같은 값을 써야 한다 | `layout menu`, `dark theme`, `Korean before first paint` | `#settings` |
 | 관리 | `/admin?tab=<탭>&sub=<roles·grants·audit>` | 역할·권한·AI 연결·HR 동기화. 부여는 왼쪽 목록(`grants-table` · 줄 `grants-subject-<user·dept>:<id>` · 찾기 `grants-search`) + 오른쪽 상세(`grant-detail`, 부여 줄 `grant-row-<id>`), 회수는 바로 되고 알림 Undo, 역할 더하기 `grant-add`·<kbd>A</kbd> → `grant-add-pop`, 사내 AI로 등록 `grant-ai-open` → `grant-ai`(읽기 `grant-ai-read`, 줄 `grant-ai-row-<n>`, 반영 `grant-ai-apply`, 서버 `POST /api/access/grants/ai-read`는 읽기만) | 권한 차등은 `DEV_ENFORCE_PERMISSIONS=true`에서만 보인다. 사내 AI가 꺼져 있으면 창에 안내만(스모크는 읽기 응답을 흉내 낸다) | `pw-smoke-baseline.mjs` | `#admin` |
+| 연습 화면 | `/practice` (사용자 메뉴 `user-menu-practice` · 설명서 머리 `manual-practice`, 두 곳뿐) | 위 띠 `practice-band` + **Start over**(`practice-start-over` = 새로 읽기), 실제 Assign(연습 Bundle -1) + 오른쪽 과제 칸 `practice-tasks` 12줄(`practice-task-<id>` `data-done` · `data-open`, 진행 `practice-progress` n/12, 펼친 줄의 `practice-task-manual`, 접기 `practice-tasks-fold`) — 자동 ✓(쓰기는 가짜 서버 기록, 고르기 · 키보드 그림은 틀이 본 손짓), 끝나면 다음이 펼쳐짐, 아무 과제나 눌러 펼침 | 연습 Bundle id -1 · 문서 id 900001~ · 실제로 가는 요청은 /api/me · /api/auth/mode · /api/ai/jobs/recent뿐(나머지는 브라우저 안 가짜 서버), 운영에서도 보인다. 1280px 밑에서는 과제 칸이 처음부터 접힌 막대(스모크 창 1248 — 넓게 보려면 창을 키운다), 잇기 · 카드 확정은 되돌리기 메타 `focus_target_id`로 갈린다 | `practice:` | `#practice` |
 | 사용 설명서 | `/manual` | 조각 목차·찾기·읽음 표시 | 글을 바꾸면 `manual-content.test.ts`가 라벨·그림·권한 키를 대조한다 | — | — |
 
 ## 감사 (화면 배치)

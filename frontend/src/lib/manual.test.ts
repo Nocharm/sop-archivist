@@ -134,6 +134,7 @@ describe("listImageRefs", () => {
 describe("getManualHref", () => {
   it("opens the section that explains the current screen", () => {
     expect(getManualHref("/bundles/12/assign")).toBe("/manual#assign");
+    expect(getManualHref("/practice")).toBe("/manual#practice");
     expect(getManualHref("/bundles/12")).toBe("/manual#bundle");
     expect(getManualHref("/bundles/12/history")).toBe("/manual#history");
     expect(getManualHref("/")).toBe("/manual#start");

@@ -2,7 +2,8 @@
 // 글은 Markdown 한 벌(public/manual/user-manual.md)이고 이 화면은 나눠 보이기만 한다. 읽음 표시는 이 브라우저에만 남는다(lib/manual-read.ts).
 "use client";
 
-import { SearchX } from "lucide-react";
+import { GraduationCap, SearchX } from "lucide-react";
+import Link from "next/link";
 import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 
 import { ManualToc } from "@/components/manual/manual-toc";
@@ -12,6 +13,7 @@ import { MarkdownView, type MarkdownImageSize } from "@/components/ui/markdown-v
 import { useI18n } from "@/lib/i18n";
 import { findSections, getReadState, MANUAL_LANG, parseManual } from "@/lib/manual";
 import { getManualKeyAction } from "@/lib/manual-keys";
+import { PRACTICE_PATH } from "@/lib/practice-route";
 import { setManualMark, useManualMarks } from "@/lib/manual-read";
 import { BUTTON_SECONDARY } from "@/lib/ui-classes";
 
@@ -194,6 +196,11 @@ export function ManualView({ source, imageSizes }: ManualViewProps) {
             {t("manual.koreanOnly")}
           </p>
         )}
+        {/* 연습 화면 진입 둘 중 하나(다른 하나는 사용자 메뉴) - 같은 탭 */}
+        <Link href={PRACTICE_PATH} className="practice-manual-link" data-testid="manual-practice">
+          <GraduationCap size={14} strokeWidth={1.5} aria-hidden />
+          {t("manual.practice")}
+        </Link>
         {!searching && doc.lead !== "" && <MarkdownView source={doc.lead} className="manual-lead" lang={MANUAL_LANG} testId="manual-lead" />}
         {visible.map((section) => (
           <ManualUnit

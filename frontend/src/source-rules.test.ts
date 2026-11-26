@@ -232,6 +232,17 @@ const PATH_RULES: PathRule[] = [
     allowed: {},
     fix: "use components/ui/tooltip.tsx Tooltip (or useDelegatedTip for many marks)",
   },
+  {
+    name: "raw fetch to the API",
+    // 맨 fetch( · window.fetch( · globalThis.fetch( - 남의 메서드(docViews.fetch()는 아니다
+    pattern: /(?:^|[^.\w$]|\b(?:window|globalThis|self)\.)fetch\(/,
+    files: /\.tsx?$/,
+    allowed: {
+      "src/lib/api.ts": "the shared path (apiFetch) - the practice screen's fake server cuts in there",
+      "src/lib/auth-mode.ts": "reads the auth mode once at boot, before any identity exists",
+    },
+    fix: "call apiFetch (src/lib/api.ts) - the practice screen's fake server cuts in at that one place, a raw fetch would reach the real server",
+  },
 ];
 
 describe("one path per concern", () => {
@@ -257,9 +268,13 @@ describe("one path per concern", () => {
       "native checkbox": '<input type="checkbox" />',
       dangerouslySetInnerHTML: "<div dangerouslySetInnerHTML={{ __html: x }} />",
       "native title tooltip": '<span title="Delete">',
+      "raw fetch to the API": "const res = await fetch(`/api/bundles/${id}`);",
     };
     for (const rule of PATH_RULES) expect(rule.pattern.test(sample[rule.name]), rule.name).toBe(true);
     expect(PATH_RULES[6].pattern.test('<Tooltip title="Delete">')).toBe(false);
+    const rawFetch = PATH_RULES[7].pattern;
+    expect(rawFetch.test("window.fetch(url)")).toBe(true);
+    expect(rawFetch.test("await docViews.fetch({ docs: [docId] })")).toBe(false);
   });
 });
 

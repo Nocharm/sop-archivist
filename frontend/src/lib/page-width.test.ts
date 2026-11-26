@@ -12,6 +12,8 @@ describe("getPageWidth", () => {
     ["/bundles/1/history", "wide"],
     ["/bundles/1/assign", "desk"],
     ["/bundles/1/map", "desk"],
+    // 연습 화면은 실제 Assign을 그리니 같은 폭
+    ["/practice", "desk"],
     ["/bundles/1/outputs", "default"],
     ["/bundles/1/review", "default"],
     ["/account", "default"],

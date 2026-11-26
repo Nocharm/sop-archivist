@@ -2,6 +2,7 @@
 // 경로는 `/api` 뒤만 적는다(`apiFetch("/me")` → `/api/me`). 개발 서버는 next.config rewrites, 운영은 nginx가 backend로 넘긴다.
 
 import { getStoredDevUser } from "./dev-auth";
+import { isPracticeRequest, readPathname } from "./practice-route";
 
 // 인증 토큰 — Providers가 Keycloak 로그인 후 주입한다. dev 모드면 null로 두고 X-Dev-User를 쓴다.
 let authToken: string | null = null;
@@ -106,8 +107,7 @@ export async function apiFetchBlobWithName(path: string): Promise<{ blob: Blob; 
   return { blob: await response.blob(), fileName: readDispositionFileName(response.headers.get("Content-Disposition")) };
 }
 
-async function sendRequest(path: string, init?: RequestInit): Promise<Response> {
-  const method = init?.method ?? "GET";
+async function sendToServer(path: string, method: string, init?: RequestInit): Promise<Response> {
   const headers: Record<string, string> = {};
   // multipart 같은 비문자열 body에는 브라우저가 Content-Type을 직접 정해야 하므로 문자열 body에만 JSON을 선언한다.
   if (typeof init?.body === "string") {
@@ -120,15 +120,25 @@ async function sendRequest(path: string, init?: RequestInit): Promise<Response> 
     const devUser = getStoredDevUser();
     if (devUser) headers["X-Dev-User"] = devUser;
   }
-
-  let response: Response;
   try {
-    response = await fetch(`/api${path}`, { ...init, headers: { ...headers, ...init?.headers } });
+    return await fetch(`/api${path}`, { ...init, headers: { ...headers, ...init?.headers } });
   } catch (e) {
     // 호출자가 일부러 취소한 요청은 오류가 아니다.
     // (이름으로 판별 - jsdom처럼 DOMException이 Error 하위 타입이 아닌 환경에서도 같게 동작한다)
     if (isRecord(e) && e.name === "AbortError") throw e;
     throw new ApiError(0, e instanceof Error ? e.message : String(e), `API ${method} ${path} failed: network error`);
+  }
+}
+
+async function sendRequest(path: string, init?: RequestInit): Promise<Response> {
+  const method = init?.method ?? "GET";
+  let response: Response;
+  if (isPracticeRequest(path, readPathname())) {
+    // 연습 화면 - 브라우저 안 가짜 서버가 답하고 실제 서버로는 보내지 않는다(설계 2026-11-26-practice-page D1). 동적 import라 연습 덩이에만 실린다
+    const { handlePracticeRequest } = await import("./practice/practice-server");
+    response = await handlePracticeRequest(method, path, init?.body);
+  } else {
+    response = await sendToServer(path, method, init);
   }
 
   if (!response.ok) {
