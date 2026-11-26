@@ -24,7 +24,7 @@ from app.sop.counterparts import TableFacts, is_candidate_kind, is_same_form, li
 from app.sop.errors import raise_rule
 from app.sop.decisions import BulkDecisionIn, BulkUnitIn, dispose_units
 from app.sop.detach import CONFIRMED, find_units_needing_confirm
-from app.sop.editing import EDIT_APPLIED, is_merge_edit, load_unwrapped_lines
+from app.sop.editing import EDIT_APPLIED, load_unwrapped_lines, read_merged_pieces
 from app.sop.models import Bundle, Document, SourceBlock, TableCounterpart, Unit, UnitDecision, UnitEdit
 from app.sop.numbering import get_number, strip_number
 from app.sop.segment import DOCUMENT_NUMBER_BODY
@@ -480,14 +480,19 @@ class FollowInputs:
 
 
 async def _load_pieces(session: AsyncSession, document_id: int, unit_ids: Collection[int]) -> dict[int, tuple[Unit, ...]]:
-    """합친 줄 → 합치기 전 조각(원문 순) — 문서 보기의 merge_pieces와 같은 기록(editing.is_merge_edit)을 읽는다."""
+    """합친 줄 → 합치기 전 조각(원문 순) — 문서 보기의 merge_pieces와 같은 기록(editing.read_merged_pieces)을 읽는다."""
     rows = await session.execute(
-        select(UnitEdit.op, UnitEdit.created_unit_ids, UnitEdit.retired_unit_ids).where(
+        select(UnitEdit.op, UnitEdit.created_unit_ids, UnitEdit.retired_unit_ids, UnitEdit.payload).where(
             UnitEdit.document_id == document_id, UnitEdit.state == EDIT_APPLIED
         )
     )
     wanted = set(unit_ids)
-    pieces_of = {created[0]: retired for op, created, retired in rows if is_merge_edit(op, created, retired) and created[0] in wanted}
+    pieces_of = {
+        unit_id: pieces
+        for op, created, retired, payload in rows
+        for unit_id, pieces in read_merged_pieces(op, payload, created, retired).items()
+        if unit_id in wanted
+    }
     if not pieces_of:
         return {}
     pieces = {

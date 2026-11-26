@@ -331,9 +331,10 @@ export function readPendingLabelKey(kind: PendingKind): string | null {
   }
 }
 
-/** 원문 편집의 알약 자리 - 표 바꾸기 · 벗긴 표 줄 순서는 표 머리, 그 밖은 가리키는 첫 박스. 틈의 붙이기는 부르는 쪽이 틈을 준다(이웃끼리인지는 화면이 안다) */
+/** 원문 편집의 알약 자리 - 표 바꾸기 · 벗긴 표 줄 순서는 표 머리(표 여럿은 첫 표), 그 밖은 가리키는 첫 박스. 틈의 붙이기는 부르는 쪽이 틈을 준다(이웃끼리인지는 화면이 안다) */
 export function readEditPlace(op: EditOp): PendingPlace {
   if (op.type === "set_layout_table" || op.type === "reorder_unwrapped" || op.type === "follow_table") return { at: "table", tableId: op.table_id };
+  if (op.type === "set_layout_tables") return op.table_ids.length === 0 ? NO_PLACE : { at: "table", tableId: op.table_ids[0] };
   const [unitId] = listEditUnitIds(op);
   return unitId === undefined ? NO_PLACE : { at: "box", unitId };
 }
@@ -353,6 +354,7 @@ export function listTableUnitIds(
 export function readEditKind(op: EditOp): PendingKind {
   switch (op.type) {
     case "merge":
+    case "merge_rows":
       return "join";
     case "split":
     case "split_sentences":
@@ -363,6 +365,8 @@ export function readEditKind(op: EditOp): PendingKind {
       return "unmerge";
     case "set_layout_table":
       return op.is_layout ? "unwrap" : "rewrap";
+    case "set_layout_tables":
+      return "unwrap";
     case "set_language":
     case "switch_language":
       return "lang";
@@ -397,6 +401,7 @@ export function readEditKind(op: EditOp): PendingKind {
 export function listEditUnitIds(op: EditOp): number[] {
   switch (op.type) {
     case "merge":
+    case "merge_rows":
     case "set_language":
     case "clear_noise":
     case "set_noise_reason":
@@ -428,6 +433,7 @@ export function listEditUnitIds(op: EditOp): number[] {
       return [op.table_unit_id];
     case "carve":
     case "set_layout_table":
+    case "set_layout_tables":
       return [];
   }
 }

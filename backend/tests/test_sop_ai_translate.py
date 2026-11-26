@@ -63,6 +63,7 @@ pytestmark = pytest.mark.usefixtures("clean_sop", "clean_ai_jobs")
 LONE_KO = "합성 세 번째 문장을 시험한다."
 LONE_KO_2 = "합성 네 번째 문장을 시험한다."
 LONE_EN = "Test the fifth synthetic sentence."
+LONE_EN_2 = "Test the sixth synthetic sentence."
 EDITED = "합성 세 번째 문장을 반드시 시험한다."
 TRANSLATED = "The third synthetic sentence shall be tested."
 SLOT = "purpose"
@@ -916,6 +917,35 @@ def test_confirming_a_suggested_pair_sweeps_the_ai_translation(client: TestClien
     assert saved.json()["pairs_confirmed"] == [pair_id]
     assert load_translations(ko["id"]) == []
     assert [suggestion.result for suggestion in read_suggestions()] == ["stale"]
+
+
+def test_a_translated_lone_unit_joining_rows_merged_together_sweeps_the_translation(client: TestClient, fake_ai: FakeAi) -> None:
+    """여럿 고른 줄 합치기(merge_rows)가 한 Unit뿐인 언어를 새 짝에 넣으면 사람이 짝을 맺을 때(create_pair)처럼 그 번역을 쓸어 낸다."""
+    bundle = make_ai_bundle(client)
+    view = upload_second_document(client, bundle.id, p(LONE_KO) + p(LONE_EN) + p(LONE_EN_2))
+    document = view["document"]
+    for pair in view["pairs"]:
+        revision = get_view(client, bundle.id, document["id"])["document"]["revision"]
+        response = client.delete(
+            f"/api/bundles/{bundle.id}/documents/{document['id']}/pairs/{pair['id']}", params={"revision": revision},
+            headers=AUTHOR,
+        )
+        assert response.status_code == 200, response.text
+    ko, en, en_2 = (find_unit(view, text) for text in (LONE_KO, LONE_EN, LONE_EN_2))
+    assign_as_is(client, bundle.id, ko, bundle.sop_id, slot_key=SLOT)
+    translate(client, fake_ai, bundle.id, ko["id"])
+    _suggest_pair(document["id"], [ko["id"], en["id"]])
+    revision = get_view(client, bundle.id, document["id"])["document"]["revision"]
+
+    merged = client.post(
+        f"/api/bundles/{bundle.id}/documents/{document['id']}/edits",
+        json={"revision": revision, "confirm": False, "op": {"type": "merge_rows", "unit_ids": [ko["id"], en["id"], en_2["id"]]}},
+        headers=AUTHOR,
+    )
+
+    assert merged.status_code == 200, merged.text
+    assert ko["id"] not in merged.json()["retired_unit_ids"]
+    assert load_translations(ko["id"]) == []
 
 
 def test_confirming_a_suggested_pair_holds_the_confirmed_translation(client: TestClient, fake_ai: FakeAi) -> None:

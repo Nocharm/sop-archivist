@@ -41,8 +41,8 @@ from app.sop.editing import (
     EditStepIn,
     FollowTableOp,
     apply_edit,
-    is_merge_edit,
     load_active_units,
+    read_merged_pieces,
     redo_edit,
     undo_edit,
 )
@@ -565,15 +565,19 @@ async def build_document_view(session: AsyncSession, document: Document) -> Docu
     pairs = await _load_view_pairs(session, document.id)
     created_lists = (
         await session.execute(
-            select(UnitEdit.op, UnitEdit.created_unit_ids, UnitEdit.retired_unit_ids).where(
+            select(UnitEdit.op, UnitEdit.created_unit_ids, UnitEdit.retired_unit_ids, UnitEdit.payload).where(
                 UnitEdit.document_id == document.id, UnitEdit.state == "applied"
             )
         )
     ).all()
     # 합치기 해제가 되살린 단위는 원래 모습이라 "나눔·합침" 표시를 하지 않는다(그 전 편집이 만든 단위면 그 기록이 표시한다)
-    edited_ids = {unit_id for op, created, _ in created_lists if op != "unmerge" for unit_id in created}
-    # 합친 단위 → 합치기 전 단위(조각). 짝을 한 언어로 바꿔 합친 것도 같다(editing.is_merge_edit)
-    pieces_of = {created[0]: retired for op, created, retired in created_lists if is_merge_edit(op, created, retired)}
+    edited_ids = {unit_id for op, created, _, _ in created_lists if op != "unmerge" for unit_id in created}
+    # 합친 단위 → 합치기 전 단위(조각). 짝을 한 언어로 바꿔 합친 것 · 여럿 고른 줄을 합친 박스마다도 같다(editing.read_merged_pieces)
+    pieces_of = {
+        unit_id: pieces
+        for op, created, retired, payload in created_lists
+        for unit_id, pieces in read_merged_pieces(op, payload, created, retired).items()
+    }
     merged_ids = set(pieces_of)
     active_ids = {unit.id for unit in units}
     piece_texts = await _load_piece_texts(session, [piece for unit_id, ids in pieces_of.items() if unit_id in active_ids for piece in ids])

@@ -1,4 +1,4 @@
-"""한/영 따로 — 대응 표의 문장 짝(MD 1 F8a, 사용자 결정 2026-11-19). 표는 하나씩 벗기고(함께 벗기기는 걷었다 — 요청서 8번),
+"""한/영 따로 — 대응 표의 문장 짝(MD 1 F8a, 사용자 결정 2026-11-19). 표는 한 표씩 또는 여럿을 골라 한 번에 벗기고(대응 표 저절로 함께 벗기기는 걷었다 — 요청서 8번),
 다른 언어 절반의 같은 꼴 표도 벗기면 두 표의 칸 줄이 같은 행 · 같은 순서로 한/영 짝 제안이 된다. 행 수가 다르면 짝 대신 경고가 남는다.
 자료는 표형 옛 SOP의 한글 절반 → 영어 절반(명세 §7 사례 1 · 부록 C 장면)을 본뜬 합성 문서다."""
 
@@ -197,3 +197,22 @@ def test_a_confirmed_pair_row_is_kept_and_the_other_rows_are_proposed_again(clie
     after = get_view(client, bundle_id, doc_id)
     assert _pairs(after) == WORK_PAIRS
     assert {pair["status"] for pair in after["pairs"] if pair["id"] == first["id"]} == {"confirmed"}
+
+
+def test_unwrapping_two_tables_at_once_pairs_their_lines_and_is_one_undo(client: TestClient) -> None:
+    bundle_id, doc_id = _setup(client)
+    view = get_view(client, bundle_id, doc_id)
+    ko_table, en_table = _table_id(view, KO_TABLE), _table_id(view, EN_TABLE)
+    op = {"type": "set_layout_tables", "table_ids": [ko_table, en_table]}
+
+    response = client.post(
+        f"/api/bundles/{bundle_id}/documents/{doc_id}/edits",
+        json={"revision": view["document"]["revision"], "confirm": False, "op": op}, headers=AUTHOR,
+    )
+
+    assert response.status_code == 200, response.text
+    view = get_view(client, bundle_id, doc_id)
+    assert _pairs(view) == WORK_PAIRS and {t["id"] for t in view["tables"] if t["is_layout"]} == {ko_table, en_table}
+    assert _coverage_problems(view) == []
+    _step(client, bundle_id, doc_id, "undo")
+    assert not any(t["is_layout"] for t in get_view(client, bundle_id, doc_id)["tables"])

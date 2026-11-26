@@ -167,3 +167,8 @@
 
 - `SplitSentencesOp`(`split_sentences`)를 `_write_change` 길의 편집 하나로(§9) — 경계는 규칙 1(`RULE_LEGACY`) 고정, 판단 · 짝 · New 새 문장까지 되돌리기 한 번(검토 뒤 시험 더함). 글쇠 ⇧S는 새 `when: "sentence"`(언어 글쇠의 막는 까닭을 빌리지 않게).
 - 메뉴가 한 줄 늘어 키 큰 메뉴가 박스 위 · 아래 어디에도 안 들어가면 박스 옆으로 비켜 선다(`placeLinkMenu`, Assign 우클릭만 — 지운 줄 메뉴가 박스를 덮던 스모크 실패).
+
+## 2026-11-26 — feat/assign-multi-merge (계획 4-4) dev에
+
+- `MergeRowsOp`(`merge_rows`) · `SetLayoutTablesOp`(`set_layout_tables`)를 `_write_change`의 `_Change` 하나로(§9) — 짝 줄은 언어끼리 합쳐 다시 짝, `payload.merged`로 합친 박스의 조각 · 풀기(`find_merged_pieces`, 옛 기록은 지금 규칙). Alembic 없음.
+- opus 검토가 바깥 표 + 칸 안 캡션 달린 안쪽 표를 함께 벗기면 캡션이 은퇴한 표 단위에 매달리는 것을 찾아 고침(차례로 벗긴 것과 같게). 합치며 짝에 드는 외톨이 Unit의 AI 번역도 `create_pair`처럼 쓸어 냄.
