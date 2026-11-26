@@ -67,7 +67,7 @@ export type WriteCommand =
       nextKey: string | null;
     }
   | { kind: "clear"; docId: number; rowKey: string; unitIds: readonly number[]; boxId: number; seen: SeenRevisions; draft: PageDraft | null; newDocId: number | null; toggleKey: string }
-  | { kind: "bulk"; rows: ReadonlyArray<{ rowKey: string; unitIds: readonly number[] }>; seen: SeenRevisions; reason: string; skipped: number }
+  | { kind: "bulk"; action: "delete" | "clear"; rows: ReadonlyArray<{ rowKey: string; unitIds: readonly number[] }>; seen: SeenRevisions; reason: string; skipped: number }
   | { kind: "figure"; unitId: number; unitIds: readonly number[]; seen: SeenRevisions; reason: string }
   | {
       kind: "edit";

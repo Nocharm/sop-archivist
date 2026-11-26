@@ -28,7 +28,7 @@ import { useBoxDrag } from "@/lib/use-box-drag";
 import { findLastStep } from "@/lib/destination-manage-model";
 import { buildDocTools } from "@/lib/doc-tools-model";
 import { describeNewTableAsk, readEditAsk, type EditAsk } from "@/lib/edit-ask-model";
-import { listNewRows, planMultiMerge, planMultiUnwrap, toggleChecked, type MultiRow } from "@/lib/multi-pick-model";
+import { listBulkActions, listNewRows, planBulkClear, planBulkLang, planMultiMerge, planMultiUnwrap, toggleChecked, type MultiRow } from "@/lib/multi-pick-model";
 import { findSplitBlock, readSplitOffsets } from "@/lib/split-ai-tabs-model";
 import { pickPairPiece, planPairLanguages, type JoinKind, type JoinPlan } from "@/lib/split-menu-model";
 import { listAppliedSuggestions, requestAi, setSuggestionAdoption, type AiKind, type AiScope } from "@/lib/api-manage";
@@ -301,7 +301,12 @@ function isDecisionCommand({ payload }: { payload: AssignCommand }): boolean {
 function readPendingOutcomes(unsettled: ReadonlyArray<{ payload: AssignCommand }>): ReadonlyMap<string, PendingOutcome> {
   const outcomes = new Map<string, PendingOutcome>();
   for (const { payload } of unsettled) {
-    if (payload.kind === "bulk") for (const item of payload.rows) outcomes.set(item.rowKey, "deleted");
+    if (payload.kind === "bulk") {
+      for (const item of payload.rows) {
+        if (payload.action === "clear") outcomes.delete(item.rowKey);
+        else outcomes.set(item.rowKey, "deleted");
+      }
+    }
     else if (payload.kind === "save") outcomes.set(payload.rowKey, payload.action === "hold" ? "held" : payload.destination?.kind === "delete" ? "deleted" : "confirmed");
     else if (payload.kind === "link") outcomes.set(payload.rowKey, "confirmed");
     else if (payload.kind === "clear") outcomes.delete(payload.rowKey);
@@ -1943,6 +1948,12 @@ export function useAssignPage() {
   const bulkShape = bulkRows.length > 0 ? findShapeOfDoc(shapes, bulkRows[0].docId) : null;
   const bulkMerge = bulkRows.length > 0 ? planMultiMerge(bulkRows, bulkShape?.tabs.order ?? [], hasUnitDraft) : null;
   const bulkUnwrap = bulkShape ? planMultiUnwrap(bulkRows, bulkShape.model.tables) : null;
+  const bulkClear = checked.size > 0 ? planBulkClear(bulkRows, unitMap) : null;
+  // 이미 배정된 줄 · 저장 전 고름은 언어를 바꾸지 않는다(우클릭 메뉴의 언어 항목과 같은 까닭)
+  const isLangLocked = (unit: ViewUnit) => isUnitDecided(unit) || hasUnitDraft(unit);
+  const bulkLangKo = bulkRows.length > 0 ? planBulkLang(bulkRows, "ko", isLangLocked) : null;
+  const bulkLangEn = bulkRows.length > 0 ? planBulkLang(bulkRows, "en", isLangLocked) : null;
+  const bulkActions = bulkRows.length > 0 ? listBulkActions(checked.size > 0 ? "old" : "new", bulkRows) : [];
 
   /** Old 줄을 여럿 고름에 넣거나 뺀다(Shift+클릭 · ⇧G). Old · New 여럿 고름은 함께 두지 않아 New 쪽을 비운다(쪼개기 먼저 계획 정한 것 1) */
   function toggleOldChecked(key: string, via: "click" | "key") {
@@ -1958,6 +1969,26 @@ export function useAssignPage() {
       return next;
     });
     setChecked((prev) => (prev.size === 0 ? prev : new Set()));
+  }
+
+  /** 위쪽 바의 배정 취소 - 누른 순간의 배정된 줄을 잡고 고름을 비운다(Old만). 일괄 삭제와 같은 판단 명령이라 앞 저장 뒤에 차례대로 간다 */
+  function runBulkClear() {
+    if (!bulkClear?.ok) return;
+    const ids = new Set(bulkClear.value.map((item) => item.unit_id));
+    const targets = bulkRows.map((item) => ({ rowKey: item.key, unitIds: item.units.map((unit) => unit.id).filter((id) => ids.has(id)) })).filter((item) => item.unitIds.length > 0);
+    commands.enqueue({ kind: "bulk", action: "clear", rows: targets, seen: readSeen([...ids]), reason: "", skipped: 0 });
+    setChecked(new Set());
+    setCheckedNew(new Set());
+  }
+
+  /** 위쪽 바의 언어 바꾸기 - 고름을 비우고 set_language 하나(unit_ids 여럿)로, 건너뛴 수는 알림에 */
+  function runBulkLang(lang: "ko" | "en") {
+    const plan = lang === "ko" ? bulkLangKo : bulkLangEn;
+    if (!plan?.ok || !bulkShape) return;
+    setChecked(new Set());
+    setCheckedNew(new Set());
+    const { unitIds, skipped } = plan.value;
+    runUnitEdit(bulkShape, { type: "set_language", unit_ids: [...unitIds], lang }, t(skipped > 0 ? "assign.bulk.didLangSkipped" : "assign.bulk.didLang", { n: unitIds.length, m: skipped }), null);
   }
 
   /** 위쪽 바의 합치기 - 고름을 비우고 언어마다 합쳐 다시 짝짓는 편집 하나(merge_rows) */
@@ -3050,11 +3081,24 @@ export function useAssignPage() {
       return;
     }
     const targets = [...byRow].map(([rowKey, ids]) => ({ rowKey, unitIds: ids }));
-    commands.enqueue({ kind: "bulk", rows: targets, seen: readSeen(picked.map((unit) => unit.unit_id)), reason, skipped: picked.length - targets.reduce((sum, item) => sum + item.unitIds.length, 0) });
+    commands.enqueue({ kind: "bulk", action: "delete", rows: targets, seen: readSeen(picked.map((unit) => unit.unit_id)), reason, skipped: picked.length - targets.reduce((sum, item) => sum + item.unitIds.length, 0) });
     setChecked(new Set());
   }
 
-  async function sendBulk({ rows: targets, seen, reason, skipped }: Extract<WriteCommand, { kind: "bulk" }>) {
+  /** 일괄 배정 취소 - 누른 순간 잡은 줄 가운데 지금도 판단이 남은 것만 요청 하나로(되돌리기 한 칸). 같은 묶음의 나머지는 서버가 보류로 두니 줄을 다시 받는다 */
+  async function sendBulkClear({ rows: targets, seen }: Extract<WriteCommand, { kind: "bulk" }>) {
+    const decided = (await readRevisions(targets.flatMap((item) => item.unitIds), seen)).filter((unit) => unit.isDecided);
+    if (decided.length > 0) {
+      noteDecisions(await bulkDecide(bundleId, { action: "clear", reason: "", move_target_code: "", units: decided.map(({ unit_id, revision }) => ({ unit_id, revision })) }, buildUndo()));
+      markRecorded();
+    }
+    showToast(t("assign.bulk.didClear", { n: decided.length }));
+    requestReload(askAll(true));
+  }
+
+  async function sendBulk(command: Extract<WriteCommand, { kind: "bulk" }>) {
+    if (command.action === "clear") return sendBulkClear(command);
+    const { rows: targets, seen, reason, skipped } = command;
     const units = await readRevisions(targets.flatMap((item) => item.unitIds), seen);
     const done = await bulkDecide(bundleId, { action: "delete", reason, move_target_code: "", units: units.map(({ unit_id, revision }) => ({ unit_id, revision })) }, buildUndo());
     noteDecisions(done);
@@ -3191,6 +3235,7 @@ export function useAssignPage() {
       case "link":
         return t(command.link === "unlink" ? "assign.step.unlink" : "assign.step.link");
       case "bulk":
+        return command.action === "clear" ? t("classify.clear") : t("assign.step.delete");
       case "figure":
         return t("assign.step.delete");
       case "edit":
@@ -5095,7 +5140,7 @@ export function useAssignPage() {
     setManualNewDoc, toggleKey, liveDoc, isNewDocOpen, newDocId, newAiReturn, setNewAiReturn, isComposedDoc, newFileId, newLoad, newView, newModel, newTabs, composedDoc,
     newRows, headingNotes, sectionMarks, joinableIds, templateTitles, linkPairs, view, changeView, zoomPane, setPanes, askAiScope,
     aiMenuItems, remarkEdit, setRemarkEdit, focusAfterRef, firstTextRef, busy, isAnyPending, isGlobalPending: focusCtl.isGlobalPending, paperPending, pendingDeletes, expectedNumbers, editConfirm, answerEditConfirm, cancelEditConfirm, canUndoNow, queueFailure, retryCommand: commands.retry, discardCommands: commands.discard,
-    oldPaneRef, undoState, bulk, setBulk, runBulkDelete, bulkMerge, bulkUnwrap, runBulkMerge, runBulkUnwrap, runReset, confirmRemark, closeRemark, confirmingIdentical, setConfirmingIdentical,
+    oldPaneRef, undoState, bulk, setBulk, runBulkDelete, bulkMerge, bulkUnwrap, runBulkMerge, runBulkUnwrap, bulkClear, bulkLangKo, bulkLangEn, bulkActions, runBulkClear, runBulkLang, runReset, confirmRemark, closeRemark, confirmingIdentical, setConfirmingIdentical,
     resetScope, setResetScope, accOpen, toggleAcc, saveUnits, slots, aiUnfilled, draftPlace, draftSectionKey, draftPosition, newDraft,
     draftSlotKey, placeResolved, canPlaceClick, pickedSpotKey, setCarvePick, carve, carveText, clearCarve, togglePairViewByButton,
     pairFrom, setPairFrom, mergeArm, setRefEntryId, pairSource, isLeftPairPick, isRightPairPick, captionPickBundle, setCaptionPick, startCaptionPick, selectToc, selectRow, openNewCtxMenu, openSolo, goToUnit, moveRow, hasUnitDraft,

@@ -846,6 +846,60 @@ await runStep("assign: legend first, place, delete without a reason, edit, clear
   await takeShot("sop-assign.png");
 });
 
+// ⇧G로 여럿 고르기(쪼개기 먼저 §9, 명세 G1 S6) - 두 줄을 확정해 두고 ⇧G · J로 고른 뒤 위쪽 바 Unassign 한 번(요청 하나)으로 둘 다 비우고,
+// Ctrl+Z 한 번에 둘 다 돌아오며, Esc가 고름을 푼다. 끝에 Ctrl+Z로 확정 둘도 돌려 다른 단계의 자료를 그대로 둔다
+await runStep("assign: Shift+G picks rows, Unassign clears them in one step and Ctrl+Z brings both back, Esc drops the picks", { drafting: true, allowConsoleErrors: true }, async ({ page }) => {
+  await page.goto(`${BASE}/bundles/${halfBundleId}/assign`);
+  await wait(page, "assign-pick-prompt");
+  await page.locator('[data-testid="assign-filter-unassigned"]').click();
+  await page.keyboard.press("j");
+  await wait(page, "assign-row-id");
+  const start = await progressDone(page);
+  const picked = [];
+  for (let n = 0; n < 2; n += 1) {
+    picked.push(await rowIds(page));
+    await pickFirstPlace(page);
+    await page.locator('[data-testid="assign-primary"]').click();
+    await page.waitForFunction((done) => Number(document.querySelector('[data-testid="assign-progress"]')?.textContent?.split("/")[0]) === done, start + n + 1, { timeout: T });
+  }
+  check("two rows are confirmed to pick later", picked.length === 2 && picked[0] !== picked[1], JSON.stringify(picked));
+  await selectRowById(page, picked[0].split(" · ")[0]);
+  await page.keyboard.press("Shift+G");
+  await wait(page, "assign-bulk");
+  check("Shift+G adds only the picked row", (await getText(page, "assign-bulk")).includes("1"), await getText(page, "assign-bulk"));
+  for (let step = 0; step < 400 && (await rowIds(page)) !== picked[1]; step += 1) await page.keyboard.press("j");
+  await page.keyboard.press("Shift+G");
+  await page.waitForFunction(() => (document.querySelector('[data-testid="assign-bulk"]')?.textContent ?? "").includes("2"), null, { timeout: T });
+  check("J and Shift+G again make two picked", (await getText(page, "assign-bulk")).includes("2"), await getText(page, "assign-bulk"));
+  const barIds = await page.locator('[data-testid="assign-bulk"] button').evaluateAll((nodes) => nodes.map((node) => node.getAttribute("data-testid")));
+  check("the Old bar lists Delete, Unassign, the two languages and Merge in order, with no move button", JSON.stringify(barIds.slice(0, 5)) === JSON.stringify(["assign-bulk-delete", "assign-bulk-unassign", "assign-bulk-lang-ko", "assign-bulk-lang-en", "assign-bulk-merge"]) && barIds.every((id) => id !== "assign-bulk-move"), JSON.stringify(barIds));
+  await page.keyboard.press("Escape");
+  await page.locator('[data-testid="assign-bulk"]').waitFor({ state: "detached", timeout: T });
+  check("Esc drops the picks", true);
+  await page.keyboard.press("Shift+G");
+  await wait(page, "assign-bulk");
+  for (let step = 0; step < 400 && (await rowIds(page)) !== picked[0]; step += 1) await page.keyboard.press("k");
+  await page.keyboard.press("Shift+G");
+  const unassign = page.locator('[data-testid="assign-bulk-unassign"]');
+  await unassign.waitFor({ timeout: T });
+  check("Unassign is on while an assigned row is picked", (await unassign.getAttribute("aria-disabled")) === null);
+  const calls = [];
+  page.on("request", (request) => { if (request.method() === "POST" && request.url().includes("/decisions/")) calls.push(request.url().split("/decisions/")[1]); });
+  await unassign.click();
+  await page.waitForFunction((done) => Number(document.querySelector('[data-testid="assign-progress"]')?.textContent?.split("/")[0]) < done, start + 2, { timeout: T });
+  const cleared = await progressDone(page);
+  check("one Unassign press clears what was picked and drops the picks", (await page.locator('[data-testid="assign-bulk"]').count()) === 0 && cleared <= start + 1, String(cleared));
+  check("the clear is one request", calls.filter((name) => name.startsWith("bulk")).length === 1 && calls.filter((name) => name.startsWith("clear")).length === 0, JSON.stringify(calls));
+  await page.keyboard.press("ControlOrMeta+z");
+  await page.waitForFunction((done) => Number(document.querySelector('[data-testid="assign-progress"]')?.textContent?.split("/")[0]) >= done, start + 2, { timeout: T });
+  check("one Ctrl+Z brings every cleared row back", (await progressDone(page)) === start + 2, String(await progressDone(page)));
+  for (let n = 0; n < 2; n += 1) {
+    await page.keyboard.press("ControlOrMeta+z");
+    await page.waitForFunction((done) => Number(document.querySelector('[data-testid="assign-progress"]')?.textContent?.split("/")[0]) === done, start + 1 - n, { timeout: T });
+  }
+  check("two more Ctrl+Z leave the bundle as it was", (await progressDone(page)) === start, String(await progressDone(page)));
+});
+
 await runStep("assign: H holds a unit without a destination, with a reason typed in", {}, async ({ page }) => {
   await page.goto(`${BASE}/bundles/${freshBundleId}/assign`);
   await wait(page, "assign-bar");

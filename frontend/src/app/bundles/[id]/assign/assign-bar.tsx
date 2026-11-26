@@ -1,7 +1,7 @@
 // Assign 화면의 한 부분 - page.tsx의 그리기에서 글자 그대로 옮겼다(쪼개기, 신뢰 기반 계획 스텝 4). 상태와 동작은 useAssignPage()가 준다.
 "use client";
 
-import { BookMarked, Captions, Columns2, Combine, Image as FigureIcon, Languages, LayoutList, Redo2, Square, Trash2, Undo2, WandSparkles } from "lucide-react";
+import { BookMarked, Captions, Columns2, Combine, Image as FigureIcon, Languages, LayoutList, Redo2, Square, Trash2, Undo2, WandSparkles, XCircle } from "lucide-react";
 import { MissingWarnings } from "@/components/assign/missing-warnings";
 import { AssignMoreMenu } from "@/components/assign/more-menu";
 import { PendingCount } from "@/components/assign/pending-count";
@@ -9,6 +9,7 @@ import { ReadOnlyNote } from "@/components/read-only-note";
 import { FilterChip } from "@/components/status";
 import { Tooltip } from "@/components/ui/tooltip";
 import { loadBundle } from "@/lib/bundle-store";
+import type { BulkAction } from "@/lib/multi-pick-model";
 
 import { type AssignPageState, FILTERS, FILTER_ICON } from "./use-assign-page";
 
@@ -17,30 +18,38 @@ export function AssignBar({ state }: { state: AssignPageState }) {
     t, bundleId, bundle, canEdit, docs, oldDocIds, identical, aiOn, rowMap, rowOfUnit, mode, filter, counts, applyFilter, checked,
     viewOf, setManualOldDoc, oldView, view, changeView, aiMenuItems, undoState, canUndoNow, setBulk, setConfirmingIdentical, setResetScope,
     selectRow, goToUnit, refPendingIds, captionPendingKeys, splitPendingIds, readPendingItem, selectNextSplit, selectNextRef,
-    selectNextCaption, runUndoStep, progress, leftovers, setLeftoverSheet, bulkMerge, bulkUnwrap, runBulkMerge, runBulkUnwrap,
+    selectNextCaption, runUndoStep, progress, leftovers, setLeftoverSheet, bulkMerge, bulkUnwrap, runBulkMerge, runBulkUnwrap, bulkClear, bulkLangKo, bulkLangEn, bulkActions, runBulkClear, runBulkLang,
   } = state;
 
-  /** 여럿 고른 줄의 합치기 · 표 벗기기 - 합치기는 늘 보이고(못 하면 흐리게 + 까닭 툴팁), 표 벗기기는 표만 골랐을 때만(쪼개기 먼저 설계 §9) */
-  const bulkEdits = (
-    <>
-      {bulkMerge !== null && (
-        <Tooltip label={bulkMerge.ok ? "" : t(bulkMerge.reasonKey)} suppressed={bulkMerge.ok}>
-          <button type="button" className="btn h-7" aria-disabled={bulkMerge.ok ? undefined : "true"} data-testid="assign-bulk-merge" onClick={() => bulkMerge.ok && runBulkMerge()}>
-            <Combine size={14} strokeWidth={1.5} aria-hidden />
-            {t("assign.bulk.merge")}
-          </button>
-        </Tooltip>
-      )}
-      {bulkUnwrap !== null && (
-        <Tooltip label={bulkUnwrap.ok ? "" : t(bulkUnwrap.reasonKey)} suppressed={bulkUnwrap.ok}>
-          <button type="button" className="btn h-7" aria-disabled={bulkUnwrap.ok ? undefined : "true"} data-testid="assign-bulk-unwrap" onClick={() => bulkUnwrap.ok && runBulkUnwrap()}>
-            <LayoutList size={14} strokeWidth={1.5} aria-hidden />
-            {t("assign.bulk.unwrap")}
-          </button>
-        </Tooltip>
-      )}
-    </>
-  );
+  /** 여럿 고른 줄의 단추 - 차례는 listBulkActions(Old: 삭제 · 배정 취소 · 언어 · 합치기 · 표 벗기기, New: 합치기 · 표 벗기기 · 언어). 못 하는 것은 흐리게 + 까닭 툴팁(쪼개기 먼저 설계 §9, 명세 G1) */
+  const renderBulkButton = (action: BulkAction) => {
+    if (action === "delete") {
+      return (
+        <button key={action} type="button" className="btn h-7" data-testid="assign-bulk-delete" onClick={() => setBulk("delete")}>
+          <Trash2 size={14} strokeWidth={1.5} aria-hidden />
+          {t("classify.deleted")}
+        </button>
+      );
+    }
+    const lang = action === "lang_ko" ? "ko" : "en";
+    const spec = {
+      unassign: { plan: bulkClear, icon: XCircle, label: "assign.bulk.unassign", testId: "assign-bulk-unassign", run: runBulkClear },
+      lang_ko: { plan: bulkLangKo, icon: Languages, label: "assign.bulk.langKo", testId: "assign-bulk-lang-ko", run: () => runBulkLang(lang) },
+      lang_en: { plan: bulkLangEn, icon: Languages, label: "assign.bulk.langEn", testId: "assign-bulk-lang-en", run: () => runBulkLang(lang) },
+      merge: { plan: bulkMerge, icon: Combine, label: "assign.bulk.merge", testId: "assign-bulk-merge", run: runBulkMerge },
+      unwrap: { plan: bulkUnwrap, icon: LayoutList, label: "assign.bulk.unwrap", testId: "assign-bulk-unwrap", run: runBulkUnwrap },
+    }[action];
+    const { plan, icon: Icon } = spec;
+    if (plan === null) return null;
+    return (
+      <Tooltip key={action} label={plan.ok ? "" : t(plan.reasonKey)} suppressed={plan.ok}>
+        <button type="button" className="btn h-7" aria-disabled={plan.ok ? undefined : "true"} data-testid={spec.testId} onClick={() => plan.ok && spec.run()}>
+          <Icon size={14} strokeWidth={1.5} aria-hidden />
+          {t(spec.label)}
+        </button>
+      </Tooltip>
+    );
+  };
 
   const identicalCount = identical.data?.length ?? 0;
   const bar = (
@@ -107,18 +116,14 @@ export function AssignBar({ state }: { state: AssignPageState }) {
         {checked.size > 0 && canEdit && (
           <span className="flex items-center gap-1.5 text-xs" data-testid="assign-bulk">
             <span className="text-ink-2">{t("classify.pickedCount", { n: checked.size })}</span>
-            {bulkEdits}
-            <button type="button" className="btn h-7" data-testid="assign-bulk-delete" onClick={() => setBulk("delete")}>
-              <Trash2 size={14} strokeWidth={1.5} aria-hidden />
-              {t("classify.deleted")}
-            </button>
+            {bulkActions.map(renderBulkButton)}
           </span>
         )}
-        {/* New에서 Shift로 여럿 고름 - 수와 합치기 · 표 벗기기(언어는 다음 브랜치) */}
+        {/* New에서 Shift · ⇧G로 여럿 고름 - 수와 합치기 · 표 벗기기 · 언어 */}
         {state.checkedNew.size > 0 && canEdit && (
           <span className="flex items-center gap-1.5 text-xs" data-testid="assign-bulk-new">
             <span className="text-ink-2">{t("classify.pickedCount", { n: state.checkedNew.size })}</span>
-            {bulkEdits}
+            {bulkActions.map(renderBulkButton)}
           </span>
         )}
         {/* 확인할 것 - 아이콘 + 수(올리면 이름), 누르면 그 줄 목록 창. 누락 경고는 문서별 확인 창 */}
