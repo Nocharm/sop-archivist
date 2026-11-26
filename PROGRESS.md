@@ -215,3 +215,8 @@
 ## 2026-11-27 — Fm 메뉴가 이동 뒤 열린 채 남던 결함 (fix/user-menu-close-on-nav)
 
 - nav-host의 capture click이 `stopPropagation`해 항목의 `closeAll`이 안 불렸다 — nav-host는 그대로 두고 user-menu · ai-jobs-indicator가 경로가 바뀌면 렌더 중에 닫는다(새 effect 없음). 연습 페이지 스모크가 찾음.
+
+## 2026-11-27 — F9 연습 페이지 (feat/practice-page, 스텝 4개)
+
+- 설계 · 계획(opus) → 스텝 1 백엔드가 합성 docx로 뽑는 연습 자료 JSON + 신선도 시험 · 2 `api.ts` 앞 가짜 서버(25경로, 업무 규칙 사본 없음) · 3 `/practice` 띠 + 실제 Assign(`useRouteBundleId` 한 줄) · 진입 두 곳 · 4 과제 12개 자동 ✓.
+- opus 검토가 막은 것: 실제 Assign에서 밀린 저장이 /practice로 옮길 때 버려짐 → `/bundles/<id>`는 id로만 가름(-1만 가짜). D22 짐작(확정 op)이 틀려 잇기/확정은 `focus_target_id`로 가름. 연습 스모크가 앞부터 있던 메뉴 결함을 찾음(v1.6.41).
