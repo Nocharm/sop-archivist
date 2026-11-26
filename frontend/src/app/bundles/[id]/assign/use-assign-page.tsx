@@ -83,6 +83,7 @@ import { buildIdenticalBatches } from "@/lib/match-model";
 import { EMPTY_FOLD_OPEN, type FoldOpen } from "@/lib/paper-fold-model";
 import { buildPaperModel, buildPaperTabs, findNearestCut, isBandHeading, listFigureTabUnitIds, listTabKeys, resolvePickUnit, shouldRecenter, type PaperTabKey } from "@/lib/paper-model";
 import { isTableWalkUnit } from "@/lib/table-tab-model";
+import { useFoldedTables } from "@/lib/use-folded-tables";
 import { findPairTarget } from "@/lib/pair-hint-model";
 import { readPartState, stepPart, withPartState } from "@/lib/part-history";
 import { isSameOrder, movePairMember, orderPairCard, readPairSlot } from "@/lib/pair-order-model";
@@ -878,6 +879,8 @@ export function useAssignPage() {
   const paperTabs = useMemo(() => (oldView && paperModel ? buildPaperTabs(oldView, paperModel) : null), [oldView, paperModel]);
   // AI 나누기 제안 - 보는 Old 문서의 아직 정하지 않은 것. 문장마다 가장 새 제안 하나(전에는 쪼개기 화면에서만 적용·거절했다)
   const oldDocId = oldView?.document.id ?? null;
+  // 접은 본문 표(11-23 명세 E2) - 왼쪽 용지 문서마다 기억
+  const oldTableFold = useFoldedTables(oldDocId);
   useAiPrepare(bundleId, { enabled: canEdit && aiOn, documentId: oldDocId, onQueued: (n) => { showToast(t("ai.prepareQueued", { n })); aiJobs.watch(); } });
   const splitSuggestions = useLoaded(() => (isDrafting && aiOn && oldDocId !== null ? listAppliedSuggestions(bundleId, "split", oldDocId) : NO_SUGGESTIONS), `${isDrafting}:${aiOn}:${oldDocId}:${dataKey}:${reloadKeys.split}`);
   // 벗긴 표 AI 순서 제안(B11) - 놓기는 끌기와 같은 편집 한 번(reorder_unwrapped)이라 되돌리기도 한 칸
@@ -947,6 +950,8 @@ export function useAssignPage() {
   // 편집은 어느 문서를 고치는지 인자로 받는다(DocShape) - 왼쪽 용지(Old 문서, 한 단으로 연 New 문서)와 양 단의 New 용지
   const leftShape: DocShape | null = oldView && paperModel && paperTabs ? { side: isSolo ? "new" : "old", view: oldView, model: paperModel, tabs: paperTabs } : null;
   const rightShape: DocShape | null = !isSolo && newView && newModel && newTabs ? { side: "new", view: newView, model: newModel, tabs: newTabs } : null;
+  // 양 단 New 용지의 접은 표 - 문서마다 기억(같은 문서를 한 단으로 열면 왼쪽 용지가 같은 기억을 읽는다)
+  const newTableFold = useFoldedTables(rightShape?.view.document.id ?? null);
   const shapes = [leftShape, rightShape].filter((item): item is DocShape => item !== null);
   function shapeOf(side: PickSide): DocShape | null {
     return shapes.find((item) => item.side === side) ?? null;
@@ -1004,7 +1009,7 @@ export function useAssignPage() {
   const isInPart = (unitId: number) => partKeys.length <= 1 || (activePart === "tables" ? partOf?.get(unitId) === "body" && isTableStep(unitId) : partOf?.get(unitId) === activePart);
   /** J/K가 밟을 왼쪽 용지 단위인가 - 표 탭은 그 문서의 표만, 다른 탭은 접힌 표를 건너뛴다(11-23 명세 E2) */
   function isTableStep(unitId: number): boolean {
-    return paperModel === null || isTableWalkUnit(paperModel.tableBlocks, paperModel.units, NO_NUMBERS, activePart === "tables", unitId);
+    return paperModel === null || isTableWalkUnit(paperModel.tableBlocks, paperModel.units, oldTableFold.folded, activePart === "tables", unitId);
   }
   const isFoldEmpty = !isSolo && foldMatch !== null && oldView !== null && !oldView.units.some((unit) => isInPart(unit.id) && (foldMatch.has(unit.id) || (row?.unitIds.includes(unit.id) ?? false)));
   const foldElsewhere = useMemo(() => {
@@ -1510,7 +1515,7 @@ export function useAssignPage() {
   /** J/K가 밟을 양 단 New 용지 단위인가 - 그 용지가 보는 탭(NewPaper가 data-tab에 적는다)이 표 탭이면 표만, 아니면 접힌 표를 건너뛴다 */
   function isNewTableStep(unitId: number): boolean {
     const newTab = document.querySelector<HTMLElement>('[data-testid="assign-new"][data-tab]')?.dataset.tab;
-    return newModel === null || isTableWalkUnit(newModel.tableBlocks, newModel.units, NO_NUMBERS, newTab === "tables", unitId);
+    return newModel === null || isTableWalkUnit(newModel.tableBlocks, newModel.units, newTableFold.folded, newTab === "tables", unitId);
   }
 
   function moveRow(step: 1 | -1) {
@@ -4992,6 +4997,7 @@ export function useAssignPage() {
     pickTemplateLine, fillTemplateMissing, isTemplateDrag, isOldDrag, finishPairPick, handleOldClick, handlePrimary, startEdit,
     pickRecommendation, handleFramePress, primaryPlan, markRecHover, revealPick, setRevealPick, progress, renderPlaceLabel, listDestinationEls,
     canClear, isRowDeleted, error, figureTab, composedCut, setComposedCutAt, handleComposedDoubleClick, dragComposedCut, splitComposedAtCut, planComposedGap, joinComposed,
+    oldTableFold, newTableFold,
   };
 }
 

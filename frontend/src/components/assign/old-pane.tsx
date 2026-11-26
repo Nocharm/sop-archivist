@@ -18,6 +18,8 @@ import type { FoldOpen } from "@/lib/paper-fold-model";
 import type { PairHint } from "@/lib/pair-hint-model";
 import type { PaperItem, PaperModel, PaperSheet, PaperTabKey } from "@/lib/paper-model";
 import type { JoinKind, JoinPlan } from "@/lib/split-menu-model";
+import { isAllFolded } from "@/lib/table-tab-model";
+import type { FoldedTables } from "@/lib/use-folded-tables";
 import { useSheetSlide } from "@/lib/use-pane-slide";
 
 interface OldPaneProps {
@@ -110,6 +112,8 @@ interface OldPaneProps {
   docDash?: ReactNode;
   /** 그림 탭 카드의 삭제 확정(시안 2 D3) - 없으면 지우기 단추가 없다(한 단으로 연 New 문서 · 고칠 수 없는 사람) */
   figures?: { onDelete?: (unitId: number, reason: string) => Promise<void> };
+  /** 접은 본문 표(11-23 명세 E2) - 표 머리 접기 · 본문 탭 위 표 모두 접기. 없으면 접지 않는다 */
+  tableFold?: FoldedTables;
 }
 
 export function OldPane({ paneRef, ...props }: OldPaneProps) {
@@ -180,7 +184,7 @@ export function OldPane({ paneRef, ...props }: OldPaneProps) {
         onCutNudge={props.onCutNudge}
         renderAtCut={props.cut ? props.renderAtCut : undefined}
         figureSource={props.figureSource}
-        strips={{ statusOf: props.statusOf, renderNote: props.renderNote, renderPills: props.renderPills, fold: tableRows === "only" ? undefined : props.fold, join: props.join, isCaptionNeeded: props.isCaptionNeeded, noise: props.noise, headingShift: props.headingShift, unwrap: props.unwrap, pairHint, deleted: props.deleted, pending: props.pending, mergeArm: props.mergeArm, pairGrip: props.pairGrip }}
+        strips={{ statusOf: props.statusOf, renderNote: props.renderNote, renderPills: props.renderPills, fold: tableRows === "only" ? undefined : props.fold, join: props.join, isCaptionNeeded: props.isCaptionNeeded, noise: props.noise, headingShift: props.headingShift, unwrap: props.unwrap, pairHint, deleted: props.deleted, pending: props.pending, mergeArm: props.mergeArm, pairGrip: props.pairGrip, tables: props.tableFold && { folded: props.tableFold.folded, onToggle: props.tableFold.toggle } }}
         renderUnitActions={props.renderUnitActions}
         dragBoxes={props.dragBoxes}
         numberCell={props.numberCell}
@@ -207,6 +211,11 @@ export function OldPane({ paneRef, ...props }: OldPaneProps) {
       {props.partKeys.length > 1 && (
         <div className="flex items-center">
           <PartTabs keys={props.partKeys} active={props.activePart} onChange={props.onPartChange} counts={{ figures: model?.figures.length, tables: model?.tableBlocks.length }} testIdPrefix="assign-tab" />
+          {props.tableFold && model && props.activePart === "body" && model.tableBlocks.length > 0 && (
+            <button type="button" className="btn ghost tables-fold-all" data-testid="assign-tables-fold-all" onClick={() => props.tableFold?.toggleAll(model.tableBlocks)}>
+              {t(isAllFolded(props.tableFold.folded, model.tableBlocks) ? "assign.tableFold.allOpen" : "assign.tableFold.all")}
+            </button>
+          )}
         </div>
       )}
       {props.banner}

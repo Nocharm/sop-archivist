@@ -20,9 +20,11 @@ interface BundleHeadProps {
   slotId?: number;
   /** 캡션이 머리 줄 밖(그림 아래 캡션 자리)에 있다 - 미리보기를 두지 않는다 */
   hidePreview?: boolean;
+  /** 줄 끝 단추(표 접기) - 감싼 조각 상자의 고르기를 받지 않는다(용지가 단추 누름은 넘긴다) */
+  actions?: ReactNode;
 }
 
-export function BundleHead({ head, selected, testId, caption, captionMissing = false, slotId, hidePreview = false }: BundleHeadProps) {
+export function BundleHead({ head, selected, testId, caption, captionMissing = false, slotId, hidePreview = false, actions }: BundleHeadProps) {
   const { t } = useI18n();
   const label = t(head.kind === "table" ? "paper.bundleTable" : "paper.bundleFigure");
   return (
@@ -51,6 +53,7 @@ export function BundleHead({ head, selected, testId, caption, captionMissing = f
         </>
       )}
       <span className="bundle-head-id">{head.displayId}</span>
+      {actions}
     </div>
   );
 }

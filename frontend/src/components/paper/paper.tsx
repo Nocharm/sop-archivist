@@ -38,10 +38,10 @@ import { buildHeadingShiftGroups, readHeadingShiftHead, type HeadingShiftGroup }
 import { getPairHint, type PairHint, type PairHintUnit } from "@/lib/pair-hint-model";
 import { isDeletedLineOpen, readDeletedLine, type DeletedFold, type DeletedLine } from "@/lib/deleted-fold-model";
 import { buildNoiseBlock, describeNoiseUnit, listNoiseBlocks, readNoiseReason, shouldJoinNoiseCard, type NoiseKind } from "@/lib/toc-block-model";
-import { findUnwrapHeads, getRowUnwrapTable } from "@/lib/unwrap-model";
+import { findUnwrapHeads, getRowUnwrapTable, getTableNumber } from "@/lib/unwrap-model";
 import { isUnwrapSuggestionUnchanged, readUnwrapMoves, type UnwrapLineMove } from "@/lib/unwrap-ai-model";
 import { buildStripRows } from "@/lib/figure-spot-model";
-import { findRowTable } from "@/lib/table-tab-model";
+import { findRowTable, keepFoldedHeads, resolveFolded } from "@/lib/table-tab-model";
 import { describeCounterpart, describeFollowItem, hasFollowChange, listCounterpartChoices, NO_COUNTERPART_VALUE, PICK_VALUE } from "@/lib/table-follow-model";
 import type { TableFollowStrip } from "@/lib/use-table-follow";
 import { useClickOrDouble } from "@/lib/use-click-or-double";
@@ -322,6 +322,9 @@ interface PaperProps {
     figureCard?: { renderActions: (unitId: number) => ReactNode };
     /** 박스 위에 화면이 얹는 표시 - 없으면 마크업이 그대로다 */
     overlay?: PaperOverlay;
+    /** Assign 본문 - 표 접기(11-23 명세 E2). folded는 접은 표(문서마다 기억은 화면이), 고른 단위 · 짝이 든 표는 접혀 있어도 펼쳐 그린다(resolveFolded).
+     *  바깥 표 머리에 접기 단추, 접힌 표는 한 줄 단추(누르면 onToggle로 펼침)이고 그 표의 줄은 DOM에 없다. links는 New 표의 이은 칸 수(표 id → 수). 표 탭(tableRows="only")에는 걸지 않는다 */
+    tables?: { folded: ReadonlySet<number>; onToggle: (tableId: number) => void; links?: ReadonlyMap<number, { linked: number; total: number }> };
   };
   /** strips에서 고른 조각의 글 바로 아래 줄(확인·짝 풀기 등 단추) - 조각 상자가 펼쳐지며 밀려 내려오고, 고름이 옮겨 가면 접힌다 */
   renderUnitActions?: (unitId: number) => ReactNode;
@@ -483,6 +486,17 @@ export function Paper({
     return map;
   }, [hasHeadingShift, model]);
 
+  // 접은 표 - 고른 단위 · 짝이 든 표는 펼친다. 고른 채 접기를 누른 표는 그 고름 동안 접힌 채다(foldPress). 같은 접힘이면 같은 글이라 고를 때마다 줄을 다시 펴지 않는다
+  const tableFold = tableRows === "all" ? strips?.tables : undefined;
+  const [foldPress, setFoldPress] = useState<{ selectedId: number | null; tableId: number } | null>(null);
+  const foldedKey = useMemo(() => {
+    if (!tableFold || tableFold.folded.size === 0) return "";
+    const open = new Set<number>();
+    for (const id of [selectedId, ...(pickedIds ?? []), ...(highlightIds ?? [])]) if (id !== null) open.add(model.units.get(id)?.group_unit_id ?? id);
+    const pressed = foldPress !== null && foldPress.selectedId === selectedId && tableFold.folded.has(foldPress.tableId) ? [foldPress.tableId] : [];
+    return [...new Set([...resolveFolded(tableFold.folded, model.tableBlocks, open), ...pressed])].sort((a, b) => a - b).join(",");
+  }, [tableFold, selectedId, pickedIds, highlightIds, model, foldPress]);
+
   // 조각 줄 - 모델이 바뀔 때만 다시 편다(고르기·확인으로는 그대로)
   const sections = useMemo(() => {
     if (!hasStrips) return [];
@@ -497,12 +511,27 @@ export function Paper({
     // 표 탭은 본문의 표 줄만(벗긴 표의 줄 · 띠 표 제목 줄 · 안쪽 표는 바깥 표의 것)
     const tableIds = new Set(model.tableBlocks.map((block) => block.tableId));
     const isShownRow = (row: PaperRow) => tableRows === "all" || tableIds.has(findRowTable(row, model.tables) ?? -1);
+    // 접은 표는 첫 줄 하나만 남아 한 줄 자리 표시가 된다(renderTableFold)
+    const folded = new Set(foldedKey === "" ? [] : foldedKey.split(",").map(Number));
     return lists.filter((list) => list.items.length > 0).map((list) => ({
       edge: list.edge,
       // 그림 줄 - 본문 탭은 빼고 그림 탭은 그것만(시안 2 D3). 위치 판은 그 그림 앞뒤 줄만
-      rows: buildStripRows(list.items, model, figureRows).filter((row) => (!spot || spot.keys.has(row.key)) && isShownRow(row)),
+      rows: keepFoldedHeads(buildStripRows(list.items, model, figureRows).filter((row) => (!spot || spot.keys.has(row.key)) && isShownRow(row)), folded, model.tables),
     }));
-  }, [hasStrips, items, model, figureRows, tableRows, spot]);
+  }, [hasStrips, items, model, figureRows, tableRows, spot, foldedKey]);
+  // 접힌 표의 자리 줄 - 줄 key → 표 id
+  const tableFoldRows = useMemo(() => {
+    const map = new Map<string, number>();
+    if (foldedKey === "") return map;
+    const folded = new Set(foldedKey.split(",").map(Number));
+    for (const section of sections) {
+      for (const row of section.rows) {
+        const tableId = findRowTable(row, model.tables);
+        if (tableId !== null && folded.has(tableId)) map.set(row.key, tableId);
+      }
+    }
+    return map;
+  }, [sections, foldedKey, model]);
   // 짝 - 단위 → 같은 짝의 다른 구성원(원문 순서, 떨어진 구성원 포함). 한 카드는 아래 brackets가 정한다(같은 쪽·같은 부분의 끊김 없는 줄만)
   const matesOf = useMemo(() => {
     const byPair = new Map<number, ViewUnit[]>();
@@ -1358,7 +1387,7 @@ export function Paper({
     const isSelected = unit.id === selectedId || (highlightIds?.has(unit.id) ?? false) || captions.some((piece) => piece.unitId !== null && piece.unitId === selectedId);
     const header = getBundleHeader(row, model);
     if (row.type === "table") {
-      return { head: <BundleHead head={header} selected={isSelected} testId={testId} caption={chips ?? undefined} captionMissing={isMissing} slotId={unit.id} />, slot: null };
+      return { head: <BundleHead head={header} selected={isSelected} testId={testId} caption={chips ?? undefined} captionMissing={isMissing} slotId={unit.id} actions={renderTableFoldButton(row.item.table.id)} />, slot: null };
     }
     const slot = (
       <div
@@ -1578,6 +1607,44 @@ export function Paper({
     return group !== undefined && group === model.figureGroupOf.get(row.unitId);
   }
 
+  /** 바깥 표 머리의 접기 단추(본문만) - 고름이 펼친 표(이미 접은 표)는 저장은 두고 이 고름 동안 다시 접는다 */
+  function renderTableFoldButton(tableId: number): ReactNode {
+    if (!tableFold || !model.tableBlocks.some((block) => block.tableId === tableId)) return null;
+    return (
+      <button
+        type="button"
+        className="btn ghost table-fold-btn"
+        aria-expanded
+        data-testid={`assign-table-fold-${tableId}`}
+        onClick={() => {
+          setFoldPress({ selectedId, tableId });
+          if (!tableFold.folded.has(tableId)) tableFold.onToggle(tableId);
+        }}
+      >
+        {t("assign.tableFold.collapse")}
+      </button>
+    );
+  }
+
+  /** 접힌 표의 한 줄 "▸ Table 2 · 캡션 · 4 x 2"(New는 뒤에 이은 칸 수) - 누르면 펼친다 */
+  function renderTableFold(row: PaperRow): ReactNode {
+    const tableId = tableFoldRows.get(row.key);
+    const block = model.tableBlocks.find((item) => item.tableId === tableId);
+    const table = tableId === undefined ? undefined : model.tables.get(tableId);
+    if (!tableFold || !block || !table) return null;
+    const links = tableFold.links?.get(block.tableId);
+    const values = { n: getTableNumber(table), caption: block.caption, rows: block.rows, cols: block.cols };
+    return (
+      <div key={`table-fold-${block.tableId}`} className="strip-row">
+        <span className="strip-lead-gap" style={{ width: readTabWidth(row) + STRIP_LEAD_EXTRA }} />
+        <button type="button" className="table-fold-line" aria-expanded={false} data-testid={`assign-table-folded-${block.tableId}`} onClick={() => tableFold.onToggle(block.tableId)}>
+          <span className="table-fold-text">{t(block.caption === "" ? "assign.tableFold.lineBare" : "assign.tableFold.line", values)}</span>
+          {links && <span className="table-fold-links">· {t("assign.newTable.links", { m: links.linked, n: links.total })}</span>}
+        </button>
+      </div>
+    );
+  }
+
   /** 표 탭에서 다른 표끼리 맞닿은 틈 - 본문에서는 사이에 글이 있던 두 표라 합치기를 두지 않는다 */
   function isAcrossTables(prev: PaperRow, row: PaperRow): boolean {
     return tableRows === "only" && findRowTable(prev, model.tables) !== findRowTable(row, model.tables);
@@ -1615,7 +1682,7 @@ export function Paper({
       >
         {hasRail && renderRail(Math.min(readTabWidth(prev), readTabWidth(row)))}
         {/* 처리 중인 틈은 알약이 합치기 자리를 대신한다. 저절로 삭제된 줄 곁에는 합치기를 두지 않는다 - 먼저 "삭제 취소"로 보통 줄로 돌린다. 접힌 삭제 줄 곁도 같다(펼쳐서 한다) */}
-        {renderGapPills(prev, row) ?? (!(hasNoise && (readNoiseKind(prev, model.units) ?? readNoiseKind(row, model.units)) !== null) && !isDeletedRow(prev) && !isDeletedRow(row) && !isAcrossTables(prev, row) && renderMerge(prev, row))}
+        {renderGapPills(prev, row) ?? (!(hasNoise && (readNoiseKind(prev, model.units) ?? readNoiseKind(row, model.units)) !== null) && !isDeletedRow(prev) && !isDeletedRow(row) && !isAcrossTables(prev, row) && !tableFoldRows.has(prev.key) && !tableFoldRows.has(row.key) && renderMerge(prev, row))}
       </div>
     );
   }
@@ -1863,7 +1930,17 @@ export function Paper({
   function renderUnwrapHead(row: PaperRow): ReactNode {
     const unwrap = strips?.unwrap;
     const tableId = unwrapHeads.get(row.key);
-    if (!unwrap?.canRewrap || tableId === undefined) return null;
+    if (tableId === undefined) return null;
+    const fold = renderTableFoldButton(tableId);
+    if (!unwrap?.canRewrap) {
+      // 고칠 수 없어도 접기는 있다 - 머리에 그것만
+      return fold === null ? null : (
+        <div className="strip-row unwrap-head-row" data-unwrap-scope={`t${tableId}`} data-testid={`${testId}-unwrap-head-${tableId}`}>
+          <span className="strip-lead-gap" style={{ width: readTabWidth(row) + STRIP_LEAD_EXTRA }} />
+          <div className="unwrap-head">{fold}</div>
+        </div>
+      );
+    }
     const ai = unwrap.ai;
     const isLockedTable = [...model.units.values()].some((unit) => unit.table_id === tableId && isLocked(unit.id));
     const isOff = unwrap.busy || isLockedTable;
@@ -1921,6 +1998,7 @@ export function Paper({
           >
             {t("assign.unwrap.rewrap")}
           </button>
+          {fold}
         </div>
         {renderPendingPills((place) => place.at === "table" && place.tableId === tableId)}
       </div>
@@ -1957,6 +2035,7 @@ export function Paper({
 
   /** 한 칸(외톨이 줄 하나 또는 짝 카드 한 장) - 카드는 .strip-card로 감싸 강조 테두리가 줄 수와 상관없이 카드 전체에 둘린다(감싼 요소는 display: contents라 배치는 그대로) */
   function renderCard(rows: readonly PaperRow[], isPeek = false): ReactNode {
+    if (rows.length === 1 && tableFoldRows.has(rows[0].key)) return renderTableFold(rows[0]);
     if (hasNoise && readNoiseKind(rows[0], model.units) !== null) return renderNoiseBlock(rows, isPeek);
     // 거르기로 접힌 줄을 엿보기로 연 것은 살펴보려는 것이라 삭제 줄도 펼친다
     const folds = strips?.deleted && !isPeek ? strips.deleted.folds : null;
@@ -1969,6 +2048,8 @@ export function Paper({
       const content = rows.map((row, index) =>
         isFoldedRow(row) ? (
           renderFoldedRow(row)
+        ) : tableFoldRows.has(row.key) ? (
+          renderTableFold(row)
         ) : (
           <Fragment key={row.key}>
             {index > 0 && !isFoldedRow(rows[index - 1]) && renderGap(rows[index - 1], row)}

@@ -87,6 +87,19 @@ export function findRowTable(row: PaperRow, tables: ReadonlyMap<number, ViewTabl
   return tableId === null ? null : findOuterTable(tables, tableId);
 }
 
+/** 접힌 표의 줄은 첫 줄 하나만 남긴다 - 그 줄 자리에 용지가 한 줄 자리 표시를 그린다(나머지 줄은 DOM에 없다) */
+export function keepFoldedHeads(rows: PaperRow[], folded: ReadonlySet<number>, tables: ReadonlyMap<number, ViewTable>): PaperRow[] {
+  if (folded.size === 0) return rows;
+  const seen = new Set<number>();
+  return rows.filter((row) => {
+    const tableId = findRowTable(row, tables);
+    if (tableId === null || !folded.has(tableId)) return true;
+    if (seen.has(tableId)) return false;
+    seen.add(tableId);
+    return true;
+  });
+}
+
 /** 그릴 때의 접힘 - 고른 단위가 든 표는 펼친다(저장 뒤 고름이 접힌 표 안으로 가도 보이게) */
 export function resolveFolded(folded: ReadonlySet<number>, blocks: readonly TableBlock[], openUnitIds: ReadonlySet<number>): ReadonlySet<number> {
   if (folded.size === 0 || openUnitIds.size === 0) return folded;

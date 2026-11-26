@@ -19,7 +19,8 @@ import type { DocumentView } from "@/lib/api-sop";
 import { useI18n } from "@/lib/i18n";
 import { readOverlayKey, readTableLinks, readUnlinkableKey, type NewBox, type NewCellNote, type NewOverlay } from "@/lib/new-overlay-model";
 import { listPartSheets, listTabKeys, type FigureRowMode, type PaperItem, type PaperModel, type PaperTabKey, type PaperTabs } from "@/lib/paper-model";
-import { findUnitTable } from "@/lib/table-tab-model";
+import { findUnitTable, isAllFolded } from "@/lib/table-tab-model";
+import type { FoldedTables } from "@/lib/use-folded-tables";
 
 export interface NewPaperProps {
   bundleId: number;
@@ -92,6 +93,8 @@ export interface NewPaperProps {
   onUnitDoubleClick?: (unitId: number, caret: { blockId: number; offset: number } | null) => void;
   /** 표 머리의 "표 벗기기"(표 id) - 없으면 단추 없이 이은 칸 수만 */
   onUnwrapTable?: (tableId: number) => void;
+  /** 접은 본문 표(11-23 명세 E2) - 접힌 표 한 줄에 이은 칸 수가 붙는다. 없으면 접지 않는다 */
+  tableFold?: FoldedTables;
 }
 
 // 눌러도 박스를 누른 것이 아닌 자리 - 박스 아래 단추 줄의 빈자리, 칸에 딸린 읽기 전용 글, 왼쪽 번호 칸
@@ -105,6 +108,11 @@ export function NewPaper(props: NewPaperProps) {
   const { boxes } = overlay;
   // 표마다 칸 문장 수와 이은 수 - 표 머리에 보인다(쪼개기 먼저 §8 4-3)
   const tableLinks = model ? readTableLinks(model, boxes) : new Map<number, { linked: number; total: number }>();
+  // 접힌 표 한 줄의 이은 칸 수 - 표 단위가 아니라 표 id로
+  const foldLinks = new Map([...tableLinks].flatMap(([unitId, links]) => {
+    const tableId = model?.units.get(unitId)?.table_id;
+    return tableId == null ? [] : [[tableId, links] as const];
+  }));
   // "+N"을 눌러 출처 칩을 모두 펼친 새 문장
   const [openSources, setOpenSources] = useState<ReadonlySet<number>>(new Set());
   // 보는 탭 - 보여야 할 박스(이동해 갈 곳, 고른 것)가 바뀌어 들면 그 박스의 탭을 연다(각주 · 미주의 New 문장은 꼬리말 탭). 풀리면 보던 탭 그대로, 문서를 바꾸면 본문부터(렌더 중 상태 맞추기)
@@ -319,7 +327,7 @@ export function NewPaper(props: NewPaperProps) {
         renderAtCut={props.cut ? props.renderAtCut : undefined}
         figureSource={{ bundleId: props.bundleId, docId: props.fileId }}
         // 이미 쓴 문서는 캡션을 요구하지 않는다(입구 2)
-        strips={{ isCaptionNeeded: () => false, pending: props.pending, mergeArm: props.mergeArm, overlay: paperOverlay, noise: props.noise, headingShift: props.headingShift, unwrap: props.unwrap, join: props.join }}
+        strips={{ isCaptionNeeded: () => false, pending: props.pending, mergeArm: props.mergeArm, overlay: paperOverlay, noise: props.noise, headingShift: props.headingShift, unwrap: props.unwrap, join: props.join, tables: props.tableFold && { folded: props.tableFold.folded, onToggle: props.tableFold.toggle, links: foldLinks } }}
         testId="assign-new-paper"
       />
     );
@@ -375,6 +383,11 @@ export function NewPaper(props: NewPaperProps) {
       {tabKeys.length > 1 && (
         <div className="flex items-center">
           <PartTabs keys={tabKeys} active={activeTab} onChange={(key) => setTab((prev) => ({ ...prev, key }))} counts={{ figures: model?.figures.length, tables: model?.tableBlocks.length }} testIdPrefix="assign-new-tab" />
+          {props.tableFold && model && activeTab === "body" && model.tableBlocks.length > 0 && (
+            <button type="button" className="btn ghost tables-fold-all" data-testid="assign-new-tables-fold-all" onClick={() => props.tableFold?.toggleAll(model.tableBlocks)}>
+              {t(isAllFolded(props.tableFold.folded, model.tableBlocks) ? "assign.tableFold.allOpen" : "assign.tableFold.all")}
+            </button>
+          )}
         </div>
       )}
       {props.banner}

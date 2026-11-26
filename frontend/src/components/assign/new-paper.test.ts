@@ -243,6 +243,15 @@ describe("NewPaper", () => {
     await act(async () => root.unmount());
   });
 
+  it("folds a New table into one line that tells its linked cells, with fold-all over the body", () => {
+    const tableFold = { folded: new Set([TABLE]), toggle: () => undefined, toggleAll: () => undefined };
+    const h = html({ tableFold });
+    expect(h).toContain(`data-testid="assign-table-folded-${TABLE}"`);
+    expect(h).toContain("1 of 1 cells linked");
+    expect(h).not.toContain('data-testid="assign-new-cell-7"');
+    expect(h).toMatch(/data-testid="assign-new-tables-fold-all"[^>]*>Expand all tables</);
+  });
+
   it("shows the placeholder until the document arrives", () => {
     const h = html({ view: null, model: null, tabs: null });
     expect(h).toContain('class="sk"');

@@ -83,14 +83,25 @@ afterEach(async () => {
   root = null;
   host = null;
 });
-async function mount(props: Options): Promise<HTMLElement> {
-  host = document.createElement("div");
-  document.body.append(host);
-  root = createRoot(host);
-  const paper = createElement(Paper, { model, items: model.body, selectedId: null, onUnitClick: noop, testId: "assign-paper", tableRows: props.tableRows, strips: props.strips ?? {} });
+async function draw(props: Options): Promise<HTMLElement> {
+  if (!host) {
+    host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+  }
+  const paper = createElement(Paper, { model, items: model.body, selectedId: props.selectedId ?? null, onUnitClick: noop, testId: "assign-paper", tableRows: props.tableRows, strips: props.strips ?? {} });
   await act(async () => root?.render(createElement(LangProvider, null, paper)));
   return host;
 }
+const mount = draw;
+async function press(testId: string): Promise<void> {
+  await act(async () => host?.querySelector<HTMLButtonElement>(`[data-testid="${testId}"]`)?.click());
+}
+/** 접기 단추를 뺀 마크업 - 접은 것이 없으면 줄은 그대로다 */
+function stripFold(markup: string): string {
+  return markup.replace(/<button[^>]*data-testid="assign-table-fold-\d+"[^>]*>[^<]*<\/button>/g, "");
+}
+const fold = (ids: number[], more: Partial<NonNullable<Strips["tables"]>> = {}): NonNullable<Strips["tables"]> => ({ folded: new Set(ids), onToggle: noop, ...more });
 
 describe("tables tab", () => {
   it("draws tables only, each under its place", () => {
@@ -128,5 +139,60 @@ describe("tables tab", () => {
     // 본문에서는 표 5 첫 줄 위가 문장이라 합치기가 있고, 표 탭에서는 그 위가 다른 표라 없다
     expect(html({ selectedId: 31, strips: { join } })).toContain('data-testid="assign-paper-join-14-31"');
     expect(html({ selectedId: 31, tableRows: "only", strips: { join } })).not.toMatch(/assign-paper-join-\d+-31"/);
+  });
+});
+
+describe("folding a body table", () => {
+  const unwrap: Strips["unwrap"] = { canRewrap: true, busy: false, onRewrap: noop };
+
+  it("folds a table into one line and opens on press", async () => {
+    const h = html({ strips: { tables: fold([2]) } });
+    expect(h).toContain("▸ Table 2 · 배양 조건 · 4 x 2");
+    expect(h).not.toContain("assign-paper-piece-21");
+    const onToggle = vi.fn();
+    await mount({ strips: { tables: fold([2], { onToggle }) } });
+    await press("assign-table-folded-2");
+    expect(onToggle).toHaveBeenCalledWith(2);
+  });
+
+  it("folds an unwrapped table and its head into one line", () => {
+    const h = html({ strips: { unwrap, tables: fold([5]) } });
+    expect(h).toContain("▸ Table 5 · 3 x 3");
+    expect(h).not.toContain("assign-paper-piece-31");
+    expect(h).not.toContain("assign-paper-unwrap-head-5");
+    expect(h).toContain("assign-paper-piece-14");
+  });
+
+  it("a folded New table tells its linked cells", () => expect(html({ strips: { tables: fold([2], { links: new Map([[2, { linked: 1, total: 4 }]]) }) } })).toContain("1 of 4"));
+
+  it("draws the same markup when nothing is folded", () => expect(stripFold(html({ strips: { unwrap, tables: fold([]) } }))).toBe(html({ strips: { unwrap } })));
+
+  it("puts Collapse on both heads, even with no rewrap, and none on the tables tab", () => {
+    expect(html({ strips: { unwrap, tables: fold([]) } })).toMatch(/assign-table-fold-2[\s\S]*assign-table-fold-5/);
+    expect(html({ strips: { unwrap: { ...unwrap, canRewrap: false }, tables: fold([]) } })).toContain('data-testid="assign-table-fold-5"');
+    const tab = html({ tableRows: "only", strips: { unwrap, tables: fold([2]) } });
+    expect(tab).not.toContain("assign-table-fold-");
+    expect(tab).toContain("assign-paper-piece-21");
+  });
+
+  it("keeps the table of the picked unit open", () => {
+    const h = html({ selectedId: 21, strips: { tables: fold([2]) } });
+    expect(h).toContain("assign-paper-piece-21");
+    expect(h).not.toContain("assign-table-folded-2");
+  });
+
+  it("collapses a picked table on Collapse, also one the pick had opened", async () => {
+    const onToggle = vi.fn();
+    await draw({ selectedId: 21, strips: { tables: fold([], { onToggle }) } });
+    await press("assign-table-fold-2");
+    expect(onToggle).toHaveBeenCalledWith(2);
+    const shown = await draw({ selectedId: 21, strips: { tables: fold([2], { onToggle }) } });
+    expect(shown.querySelector('[data-testid="assign-table-folded-2"]')).not.toBeNull();
+    // 접힌 채 고른 표(고름이 펼친 것)는 접기를 누르면 저장은 그대로 두고 다시 접힌다
+    onToggle.mockClear();
+    await draw({ selectedId: 22, strips: { tables: fold([2], { onToggle }) } });
+    await press("assign-table-fold-2");
+    expect(onToggle).not.toHaveBeenCalled();
+    expect(shown.querySelector('[data-testid="assign-table-folded-2"]')).not.toBeNull();
   });
 });
