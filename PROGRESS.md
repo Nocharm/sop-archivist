@@ -224,3 +224,7 @@
 ## 2026-11-27 — Fh 문서 하나인 칸 머리 줄 (fix/assign-new-head-fit)
 
 - `.pane-head > * { flex-shrink: 0 }` 때문에 하나뿐인 문서 제목 `.pane-title`이 줄지 않았다 — Old · New 모두 `Truncate` + `flex-shrink: 1; min-width: 4ch`. 연습 화면(1120, 과제 칸 펼침) 그림에서 찾음. overlap 감사 새 장면 `assign-pane-head-narrow`(고치기 전 16 문제를 잡음).
+
+## 2026-11-27 — 설명서 그림 — 바뀐 장면만 (docs/manual-shots-1-6)
+
+- 새 장면 넷(practice · assign-keyboard-map · assign-queued(저장을 6초 늦춰 칩을 띄움, mutates라 맨 끝) · assign-new-cell-menu(합성 묶음을 만들고 지움))과 다시 찍은 셋(user-menu · assign · assign-link), 설명서에 그림 줄 넷.
