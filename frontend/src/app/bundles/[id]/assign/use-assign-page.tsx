@@ -1192,6 +1192,11 @@ export function useAssignPage() {
   const spaceRowIds = isSolo ? soloUnits.map((unit) => unit.id) : (row?.unitIds ?? (noisePick === null ? [] : [noisePick.unitId ?? noisePick.block.key]));
   const spaceAnchor = spaceOrder === null ? null : pickSheetAnchor(spaceRowIds, isSolo ? newUnitId : pickedBoxId, spaceOrder.docOrder, (unitId) => pickSpaceSheet(view.single) !== "paragraphs" || spaceOrder.bodyIds.has(unitId));
   const spaceUnitIds = spaceAnchor === null ? spaceRowIds : [spaceAnchor, ...spaceRowIds.filter((id) => id !== spaceAnchor)];
+  // Space 시트 원본 탭이 따라갈 Unit들 - 누른 박스가 맨 앞이고, 시트처럼 가까운 위 본문 단위로 바꾸지 않는다(원본에는 머리말 · 꼬리말도 그려진다)
+  const spaceOldPick = isSolo ? newUnitId : pickedBoxId;
+  const spaceOriginalIds = spaceOldPick !== null && spaceRowIds.includes(spaceOldPick) ? [spaceOldPick, ...spaceRowIds.filter((id) => id !== spaceOldPick)] : spaceRowIds;
+  // 양 단 원본 탭의 오른쪽 - New 칸 용지의 올린 파일(엮은 문서면 null = 원본 없음)과 마지막에 누른 New 박스부터의 고름. New 문서가 없으면 null
+  const spaceNewOriginal = newDocId === null ? null : { docId: newDocFile, unitIds: isNewShown && newPick.kind === "unit" ? [...newPick.unitIds].reverse() : [] };
   const paneSlide = usePaneSlide(view.single);
   function changeView(patch: Partial<typeof view>) {
     // 보기 단추(한 단·양 단)·세로선 끝까지 접기는 Pair view를 끄고 눌린 보기로 간다 - 다시 그려진 Old 용지는 고른 조각(없으면 켜기 전 자리)을 보인다
@@ -5178,7 +5183,7 @@ export function useAssignPage() {
     t, bundleId, bundle, canEdit, docs, oldDocs, oldDocIds, docViews, unitsKey, reloadData, tobe, tobeData, writtenList, identical,
     aiJobs, aiOn, aiBusy, suggestions, invalidUnitIds, readMarkStatus, readAiPlace, suggestedTargetUnits, unitMap, written, writtenMap, rows, rowMap,
     rowOfUnit, options, labelOptions, isDrafting, hiddenPlace, legacyMove, leftovers, isLeftoverOpen, setLeftoverSheet, openTranslations, translationBlocked, settleTranslations, goToTranslation, ready, showSkeleton, unsourced, mode, setMode, filter, counts, foldOpen, setFoldOpen, applyFilter, foldMatch,
-    clearRowPick, activeKey, row, pickedId, pickScope, keptOldId: panel.keptOldId, showKeptOld, enterUnsourced, spaceUnitIds, spacePickSeq, picks, newPick, newUnitId, panel, soloDocId, setSoloDocId, isSolo, isNewEdit, hasSolo, tocOpen, setTocOpen, tocPick, tocBlocks, checked,
+    clearRowPick, activeKey, row, pickedId, pickScope, keptOldId: panel.keptOldId, showKeptOld, enterUnsourced, spaceUnitIds, spaceOriginalIds, spaceNewOriginal, spacePickSeq, picks, newPick, newUnitId, panel, soloDocId, setSoloDocId, isSolo, isNewEdit, hasSolo, tocOpen, setTocOpen, tocPick, tocBlocks, checked,
     setChecked, newRemarks, setNewRemarks, joinMenu, setJoinMenu, ctxMenu, setCtxMenu, cutUnitId, focusNew,
     groupData, setDrafts, draft, editing, groupPending, savedDestination, destination, rowUnits, rowLangs, firstDecision, systemHold,
     reasonNow, setDraft, unsavedCount, leaveTo, setLeaveTo, rowLive, aiDest, aiWhy, isAiRow, recommendations, linkIds,

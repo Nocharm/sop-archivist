@@ -12,6 +12,7 @@ import {
   clearDecisions,
   createPair,
   editUnits,
+  fetchOriginalPlaces,
   getAiStatus,
   getBundle,
   getDocumentView,
@@ -80,7 +81,7 @@ async function catchApiError(promise: Promise<unknown>): Promise<ApiError> {
 
 describe("practice requests never reach the real server", () => {
   it("answers every read Assign makes on the practice bundle", async () => {
-    expect(PRACTICE_ROUTE_COUNT).toBe(25);
+    expect(PRACTICE_ROUTE_COUNT).toBe(26);
     expect((await getBundle(B)).my_role).toBe("author");
     expect((await listDocuments(B)).map((doc) => doc.id)).toEqual([TEST_OLD_DOC, 900002]);
     expect((await getDocumentView(B, TEST_OLD_DOC)).units.length).toBe(12);
@@ -97,6 +98,8 @@ describe("practice requests never reach the real server", () => {
     expect((await getTableCounterpart(B, TEST_OLD_DOC, TEST_TABLE)).source_table_id).toBeNull();
     expect((await getUnitRef(B, TEST_OLD_DOC, U.title)).state).toBeNull();
     expect(await listRecentRemarks()).toEqual([]);
+    // 연습 문서는 원본 파일이 없다 - Space 시트 원본 탭이 "원본 파일 없음"을 보인다(Not available이 아니다)
+    expect(await fetchOriginalPlaces(B, TEST_OLD_DOC)).toEqual({ file_format: "none", page_basis: null, places: [] });
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 

@@ -45,7 +45,8 @@ export function OriginalView({ bundleId, docId, pickedUnitIds, repeating, testId
   }
 
   const downloadButton = (
-    <button type="button" className="btn" data-testid={`${testId}-download`} onClick={() => void handleDownload()}>
+    // 누르기로 포커스를 가져가지 않는다 - Space 시트 안이라 포커스가 남으면 다음 Space 탁이 시트를 닫지 않고 또 받는다(시트 받기 단추와 같다)
+    <button type="button" className="btn" data-testid={`${testId}-download`} onPointerDown={(event) => event.preventDefault()} onClick={() => void handleDownload()}>
       <Download size={14} strokeWidth={1.5} aria-hidden />
       {t("assign.original.download")}
     </button>
@@ -87,7 +88,7 @@ export function OriginalView({ bundleId, docId, pickedUnitIds, repeating, testId
         <div className="ov-empty" role="alert" data-testid={`${testId}-error`}>
           {t("assign.original.failed")}
           <div className="ov-empty-actions">
-            <button type="button" className="btn" data-testid={`${testId}-retry`} onClick={retry}>
+            <button type="button" className="btn" data-testid={`${testId}-retry`} onPointerDown={(event) => event.preventDefault()} onClick={retry}>
               <RefreshCw size={14} strokeWidth={1.5} aria-hidden />
               {t("common.retry")}
             </button>

@@ -4366,6 +4366,8 @@ await runStep("assign: Space preview - a short tap keeps it open, Esc and anothe
   await page.keyboard.press(" ");
   await wait(page, "assign-space-preview");
   await page.keyboard.press(" ");
+  // 탁 뒤 0.3초 닫힘 움직임(그사이 다시 탁 하면 탭을 바꾼다, D3)이 끝나면 닫힌다
+  await sheet.waitFor({ state: "detached", timeout: T }).catch(() => {});
   check("another short tap closes it", (await sheet.count()) === 0);
   await setPaneView(page, "two"); // 다음 단계들은 양 단에서 시작한다
 });
@@ -4473,6 +4475,177 @@ await runStep("assign: Space preview in one pane shows the paragraph sheet with 
   await wait(page, "assign-space-preview");
   check("back in two panes the sheet is Excel A again", (await sheet.getAttribute("data-sheet")) === "comparison");
   await page.keyboard.press("Escape");
+});
+
+// 원본 보기(2026-11-27 설계 D1~D3 · D6~D8) - Space 시트의 탭 둘: 결과 미리보기 · 원본 보기. 원본은 .ov-host의 그림자 뿌리 안에 그려진다.
+// 시드 Old 문서는 합성 DOCX(OLD-5만 PDF), 이미 쓴 New WI-04 · WI-05도 DOCX다. 단계마다 기억한 탭(sopa.assign.spaceTab)을 끝에 지운다
+const SPACE_TAB_KEY = "sopa.assign.spaceTab";
+const ORIGINAL_HOST = (testId) => `[data-testid="${testId}"] .ov-host`;
+// 그림자 뿌리 안 칠한 문단들의 글 앞부분 - 칠이 옮겨 갔는지 견준다
+const readOriginalPicked = (page, testId) => page.locator(ORIGINAL_HOST(testId)).evaluate((el) => [...(el.shadowRoot?.querySelectorAll(".is-ov-picked") ?? [])].map((node) => (node.textContent ?? "").trim().slice(0, 60)));
+async function openOriginalTab(page, testId = "space-original") {
+  await page.keyboard.press(" ");
+  await wait(page, "assign-space-preview");
+  await page.locator('[data-testid="space-tab-original"]').click();
+  await page.locator(`[data-testid="${testId}"][data-state="ready"]`).waitFor({ timeout: T });
+}
+
+await runStep("assign: Space preview - Space sheet: tabs switch between Result preview and Original", {}, async ({ page }) => {
+  await openFirstAssign(page, "one");
+  const sheet = page.locator('[data-testid="assign-space-preview"]');
+  const resultBody = page.locator('[data-testid="assign-space-preview-body"]');
+  await page.keyboard.press(" ");
+  await wait(page, "assign-space-preview-body");
+  check("the sheet opens on Result preview at first", (await sheet.getAttribute("data-tab")) === "result" && (await page.locator('[data-testid="space-tab-result"]').getAttribute("aria-selected")) === "true");
+  await page.locator('[data-testid="space-tab-original"]').click();
+  await page.locator('[data-testid="space-original"][data-state="ready"]').waitFor({ timeout: T });
+  check("the Original tab draws the source document", (await sheet.getAttribute("data-tab")) === "original" && (await page.locator('[data-testid="space-tab-original"]').getAttribute("aria-selected")) === "true");
+  check("Result preview is hidden but kept", (await resultBody.count()) === 1 && !(await resultBody.isVisible()));
+  check("the download button belongs to Result preview only", (await page.locator('[data-testid="assign-space-preview-download"]').count()) === 0);
+  check("clicking a tab leaves the focus off it", await page.evaluate(() => document.activeElement?.closest('[role="tab"]') == null));
+  // 탭을 오가도 원본을 다시 그리지 않는다 - 첫 장에 붙인 표시가 돌아와서도 남아 있다
+  const marked = await page.locator(ORIGINAL_HOST("space-original")).evaluate((el) => {
+    const first = el.shadowRoot?.querySelector("section.sopa-ov");
+    if (first) first.dataset.smokeMark = "1";
+    return first != null;
+  });
+  await page.locator('[data-testid="space-tab-result"]').click();
+  await resultBody.waitFor({ state: "visible", timeout: T });
+  check("Result preview comes back", (await sheet.getAttribute("data-tab")) === "result" && !(await page.locator('[data-testid="space-original"]').isVisible()));
+  await page.locator('[data-testid="space-tab-original"]').click();
+  await page.locator('[data-testid="space-original"]').waitFor({ state: "visible", timeout: T });
+  check("switching back does not draw the original again", marked && (await page.locator(ORIGINAL_HOST("space-original")).evaluate((el) => el.shadowRoot?.querySelector('section.sopa-ov[data-smoke-mark="1"]') != null)));
+  await page.keyboard.press("Escape");
+  await page.evaluate((key) => localStorage.removeItem(key), SPACE_TAB_KEY);
+});
+
+await runStep("assign: Space preview - Space sheet: a second tap while closing flips the tab", {}, async ({ page }) => {
+  await openFirstAssign(page, "one");
+  const sheet = page.locator('[data-testid="assign-space-preview"]');
+  await page.keyboard.press(" ");
+  await wait(page, "assign-space-preview");
+  check("a short tap keeps the sheet open on Result preview", (await sheet.getAttribute("data-state")) === "kept" && (await sheet.getAttribute("data-tab")) === "result");
+  // 둘째 탁은 닫힘 움직임(0.3초) 안에 - press는 누르고 바로 뗀다
+  await page.keyboard.press(" ");
+  check("a tap on a kept sheet starts closing", (await sheet.getAttribute("data-state")) === "closing");
+  await page.keyboard.press(" ");
+  check("a second tap while closing keeps the sheet open", (await sheet.getAttribute("data-state")) === "kept");
+  check("the second tap flips to Original", (await sheet.getAttribute("data-tab")) === "original" && (await page.locator('[data-testid="space-tab-original"]').getAttribute("aria-selected")) === "true");
+  await page.waitForTimeout(400);
+  check("the flipped sheet is still open after the closing time", (await sheet.count()) === 1 && (await sheet.getAttribute("data-state")) === "kept");
+  await page.keyboard.press(" ");
+  await page.keyboard.press(" ");
+  check("another double tap flips back to Result preview", (await sheet.getAttribute("data-tab")) === "result");
+  await page.keyboard.press(" ");
+  await sheet.waitFor({ state: "detached", timeout: T }).catch(() => {});
+  check("a single tap closes the sheet after the fade", (await sheet.count()) === 0);
+  await page.evaluate((key) => localStorage.removeItem(key), SPACE_TAB_KEY);
+});
+
+await runStep("assign: Space preview - Space sheet: the last tab is remembered after reload", {}, async ({ page }) => {
+  await openFirstAssign(page, "one");
+  const sheet = page.locator('[data-testid="assign-space-preview"]');
+  await page.keyboard.press(" ");
+  await wait(page, "assign-space-preview");
+  await page.locator('[data-testid="space-tab-original"]').click();
+  check("choosing Original writes it down", (await page.evaluate((key) => localStorage.getItem(key), SPACE_TAB_KEY)) === "original");
+  await page.keyboard.press("Escape");
+  await page.reload();
+  await wait(page, "assign-bar");
+  await page.evaluate(() => (document.activeElement instanceof HTMLElement ? document.activeElement.blur() : undefined));
+  await page.keyboard.press("j");
+  // 누르고 있기도 기억한 탭으로 연다(D3)
+  await page.keyboard.down(" ");
+  await wait(page, "assign-space-preview");
+  check("holding Space after a reload opens the remembered Original tab", (await sheet.getAttribute("data-tab")) === "original" && (await sheet.getAttribute("data-state")) === "held");
+  await page.locator('[data-testid="space-original"]').waitFor({ timeout: T });
+  await page.waitForTimeout(300); // 짧게 탁(250ms 미만)이 되지 않게
+  await page.keyboard.up(" ");
+  await sheet.waitFor({ state: "detached", timeout: T }).catch(() => {});
+  check("releasing the hold closes it", (await sheet.count()) === 0);
+  await page.evaluate((key) => localStorage.removeItem(key), SPACE_TAB_KEY);
+});
+
+await runStep("assign: Space preview - Space sheet: Original paints the picked paragraph", {}, async ({ page }) => {
+  await openFirstAssign(page, "one");
+  await openOriginalTab(page);
+  await page.waitForFunction((sel) => document.querySelector(sel)?.shadowRoot?.querySelector(".is-ov-picked") != null, ORIGINAL_HOST("space-original"), { timeout: T });
+  const first = await readOriginalPicked(page, "space-original");
+  check("the picked box's paragraph is painted in the original", first.length > 0, JSON.stringify(first));
+  check("the page chip says where it is", /^\d+ \/ \d+$/.test((await getText(page, "space-original-page-chip")).trim()), await getText(page, "space-original-page-chip"));
+  await page.keyboard.press("j");
+  await page
+    .waitForFunction(
+      ({ sel, before }) => {
+        const nodes = [...(document.querySelector(sel)?.shadowRoot?.querySelectorAll(".is-ov-picked") ?? [])];
+        return nodes.length > 0 && JSON.stringify(nodes.map((node) => (node.textContent ?? "").trim().slice(0, 60))) !== before;
+      },
+      { sel: ORIGINAL_HOST("space-original"), before: JSON.stringify(first) },
+      { timeout: T },
+    )
+    .catch(() => {});
+  const next = await readOriginalPicked(page, "space-original");
+  check("J moves the paint to the next box's paragraph", next.length > 0 && JSON.stringify(next) !== JSON.stringify(first), `${JSON.stringify(first)} → ${JSON.stringify(next)}`);
+  await page.waitForTimeout(350); // 굴림(0.25초) · 흐림(0.09 + 0.14초)이 끝나도록
+  check("the painted paragraph is in view", await page.locator(ORIGINAL_HOST("space-original")).evaluate((el) => {
+    const painted = el.shadowRoot?.querySelector(".is-ov-picked");
+    const scroller = el.closest(".ov-scroll");
+    if (!painted || !scroller) return false;
+    const box = painted.getBoundingClientRect();
+    const view = scroller.getBoundingClientRect();
+    return box.bottom > view.top && box.top < view.bottom;
+  }));
+  await page.keyboard.press("Escape");
+  await page.evaluate((key) => localStorage.removeItem(key), SPACE_TAB_KEY);
+});
+
+await runStep("assign: Space preview - Space sheet: two-pane shows both originals", {}, async ({ page }) => {
+  await openFirstAssign(page, "two");
+  // New 칸을 이미 쓴 문서(원본 DOCX가 있는 WI-04 · WI-05)로 - 앱에서 만든 New는 원본 파일이 없다
+  await page.locator('[data-testid="assign-new-doc"]').click();
+  const written = page.locator('[data-testid^="assign-new-doc-option-"]', { hasText: /WI-0[45]/ }).first();
+  const hasWritten = (await written.count()) > 0;
+  check("the demo bundle lists an already-written New document", hasWritten);
+  if (!hasWritten) return;
+  await written.click();
+  await page.evaluate(() => (document.activeElement instanceof HTMLElement ? document.activeElement.blur() : undefined));
+  await page.keyboard.press(" ");
+  await wait(page, "assign-space-preview");
+  await page.locator('[data-testid="space-tab-original"]').click();
+  await page.locator('[data-testid="space-original-old"][data-state="ready"]').waitFor({ timeout: T });
+  await page.locator('[data-testid="space-original-new"][data-state="ready"]').waitFor({ timeout: T });
+  const left = await page.locator('[data-testid="space-original-old"]').boundingBox();
+  const right = await page.locator('[data-testid="space-original-new"]').boundingBox();
+  check("two panes draw the Old original on the left and the New original on the right", left.x + left.width <= right.x + 1, JSON.stringify([left, right]));
+  check("no one-pane original in two panes", (await page.locator('[data-testid="space-original"]').count()) === 0);
+  const split = await page.evaluate(() => Number(localStorage.getItem("sopa.assign.split") ?? "0.5"));
+  const ratio = left.width / (left.width + right.width);
+  check("the two originals split like the main divider", Math.abs(ratio - split) < 0.05, `${ratio.toFixed(3)} vs ${split}`);
+  const pages = await Promise.all(["space-original-old", "space-original-new"].map((testId) => page.locator(ORIGINAL_HOST(testId)).evaluate((el) => el.shadowRoot?.querySelectorAll("section.sopa-ov").length ?? 0)));
+  check("both originals have pages", pages.every((count) => count > 0), JSON.stringify(pages));
+  await page.keyboard.press("Escape");
+  await page.evaluate((key) => localStorage.removeItem(key), SPACE_TAB_KEY);
+});
+
+await runStep("assign: Space preview - Space sheet: pages are one paper tall", {}, async ({ page }) => {
+  await openFirstAssign(page, "one");
+  await openOriginalTab(page);
+  // 배율(zoom)이 걸려 있어 화면 크기를 종이 폭으로 나눈 배율로 되돌려 잰다. 여유는 쪽 나누기의 PAGE_SLACK_PX(6) + 1
+  const pages = await page.locator(ORIGINAL_HOST("space-original")).evaluate((el) =>
+    [...(el.shadowRoot?.querySelectorAll("section.sopa-ov") ?? [])].map((one) => {
+      const rect = one.getBoundingClientRect();
+      return { width: Number.parseFloat(one.style.width), paper: Number.parseFloat(one.style.minHeight), shownWidth: rect.width, shownHeight: rect.height };
+    }),
+  );
+  check("the original has pages with a paper size", pages.length > 0 && pages.every((one) => one.width > 0 && one.paper > 0), JSON.stringify(pages.slice(0, 2)));
+  if (pages.length === 0) return;
+  const scale = pages[0].shownWidth / pages[0].width;
+  const tall = pages.map((one, index) => ({ index, height: Math.round(one.shownHeight / scale), paper: one.paper })).filter((one) => one.height > one.paper + 7);
+  check("no page runs past one paper height", tall.length === 0, JSON.stringify(tall.slice(0, 3)));
+  const heights = pages.map((one) => one.shownHeight);
+  check("every page is the same height", Math.max(...heights) - Math.min(...heights) <= 7 * scale + 1, JSON.stringify(heights.map((height) => Math.round(height))));
+  await page.keyboard.press("Escape");
+  await page.evaluate((key) => localStorage.removeItem(key), SPACE_TAB_KEY);
 });
 
 await runStep("assign: the Excel preview folds contents and hides figures", {}, async ({ page }) => {
