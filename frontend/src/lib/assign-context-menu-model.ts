@@ -11,7 +11,7 @@ export type AssignMenuAction =
   | "delete" | "clear"
   | "split" | "merge_prev" | "merge_next" | "pair_prev" | "pair_next" | "pair_pick" | "unpair" | "lang" | "piece_lang"
   | "ref_mark" | "ref_clear"
-  | "table_layout"
+  | "table_layout" | "table_rewrap" | "table_ai_order"
   | "caption_attach_prev" | "caption_attach_next" | "caption_of" | "caption_detach"
   | "to_sentence" | "to_heading" | "start_body";
 
@@ -153,6 +153,13 @@ function buildTableItems(ctx: AssignMenuContext): AssignMenuItem[] {
   if (table === null) return [];
   const blocker = ctx.readOnly ? why("readOnly") : table.noise_kind ? why("tocLine") : ctx.hasDraft(table) ? why("unsaved") : null;
   return [build("table_layout", blocker)];
+}
+
+/** 벗긴 표 항목 - 다시 표로 · AI 순서(C2-R4). 까닭은 머리 단추와 같은 문구: 읽기 전용 · 저장 전 고름(다시 표로), 읽기 전용 · AI 꺼짐 · 이미 묻는 중(AI 순서) */
+export function buildUnwrappedTableItems(ctx: { readOnly: boolean; hasDraft: boolean; isAiOn: boolean; isAiBusy: boolean }): AssignMenuItem[] {
+  const rewrap = ctx.readOnly ? why("readOnly") : ctx.hasDraft ? why("unsaved") : null;
+  const order = ctx.readOnly ? why("readOnly") : !ctx.isAiOn ? "assign.unwrapAi.offTip" : ctx.isAiBusy ? "assign.unwrapAi.already" : null;
+  return [build("table_rewrap", rewrap), build("table_ai_order", order)];
 }
 
 /**
