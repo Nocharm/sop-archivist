@@ -413,6 +413,15 @@ def test_continued_numbers_say_the_original(client: TestClient) -> None:
     assert [[row[0], row[3]] for row in rows[2:]] == [
         ["5.1", "Original 1"], ["5.2", "Original 2"], ["5.3", "Original 3"], ["B", "Source A → B"],
     ]
+    view = get_view(client, bundle_id, doc_id)
+    refixed = client.post(
+        f"/api/bundles/{bundle_id}/documents/{doc_id}/edits",
+        json={"revision": view["document"]["revision"], "op": {"type": "set_number", "unit_id": find_unit(view, "3 유량을 기록한다.")["id"], "number": "5.2.1", "follow": False}},
+        headers=AUTHOR,
+    )
+    assert refixed.status_code == 200, refixed.text
+    rows = _values(_read(client.get(f"/api/bundles/{bundle_id}/documents/{doc_id}/paragraphs.xlsx", headers=MEMBER))[0])
+    assert rows[4][3] == "Source 3 → 5.2.1"  # 사람이 다시 고친 칸은 이은 번호가 아니다
 
 
 def _mark(view: dict, kind: str, *texts: str, reason: str = "") -> None:

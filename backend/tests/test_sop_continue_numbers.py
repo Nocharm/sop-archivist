@@ -371,3 +371,35 @@ def test_new_merge_keeps_written_numbers(client: TestClient) -> None:
     _merge(client, bundle_id, doc_id, ROW_TWO, ROW_THREE)
 
     assert _numbers(client, bundle_id, doc_id) == ["1", "2", "4"]
+
+
+@clean
+def test_only_applied_continue_records_count_as_continued(client: TestClient) -> None:
+    bundle_id, doc_id = _setup(client)
+    _unwrap(client, bundle_id, doc_id, undo=None)
+    lines = [unit["id"] for unit in get_view(client, bundle_id, doc_id)["units"] if unit["text"] in (ROW_TWO, ROW_THREE)]
+
+    applied = _load_continued(doc_id)
+    _doc_step(client, bundle_id, doc_id, "undo")
+    undone = _load_continued(doc_id)
+
+    assert [applied.get(unit_id) for unit_id in lines] == ["5.2", "5.3"] and undone == {}
+
+
+@clean
+def test_a_table_already_unwrapped_in_the_same_request_keeps_its_numbers(client: TestClient) -> None:
+    """set_layout_tables에 이미 벗긴 표(번호 1 2 3, 이 기능 전 운영의 표)가 섞여도 이번에 벗긴 표만 매긴다."""
+    bundle_id, doc_id = _setup(client, TWO_TABLES)
+    _unwrap(client, bundle_id, doc_id, 0, undo=None)
+    _doc_step(client, bundle_id, doc_id, "undo")  # 번호만 되돌린다 — 벗긴 채 1 2 3
+    table_ids = [table["id"] for table in get_view(client, bundle_id, doc_id)["tables"]]
+
+    _edit(client, bundle_id, doc_id, {"type": "set_layout_tables", "table_ids": table_ids})
+
+    assert [_numbers(client, bundle_id, doc_id, 0), _numbers(client, bundle_id, doc_id, 1)] == [["1", "2", "3"], ["5.1", "5.2"]]
+
+
+def _load_continued(doc_id: int) -> dict[int, str]:
+    from app.sop.editing import load_continued_numbers
+
+    return run_in_session(lambda session: load_continued_numbers(session, doc_id))

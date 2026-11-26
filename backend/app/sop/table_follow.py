@@ -24,7 +24,7 @@ from app.sop.counterparts import TableFacts, is_candidate_kind, is_same_form, li
 from app.sop.errors import raise_rule
 from app.sop.decisions import BulkDecisionIn, BulkUnitIn, dispose_units
 from app.sop.detach import CONFIRMED, find_units_needing_confirm
-from app.sop.editing import EDIT_APPLIED, load_unwrapped_lines, read_merged_pieces
+from app.sop.editing import EDIT_APPLIED, load_continued_numbers, load_unwrapped_lines, read_merged_pieces
 from app.sop.models import Bundle, Document, SourceBlock, TableCounterpart, Unit, UnitDecision, UnitEdit
 from app.sop.numbering import get_number, is_continued_number, strip_number
 from app.sop.segment import DOCUMENT_NUMBER_BODY
@@ -523,6 +523,7 @@ async def _load_follow_lines(
         )
     )
     pieces = await _load_pieces(session, document_id, unit_ids)
+    continued = await load_continued_numbers(session, document_id)
     lines = [
         FollowLine(
             unit_id=unit.id, number=get_number(unit), text=strip_number(unit.text, unit),
@@ -532,7 +533,8 @@ async def _load_follow_lines(
         for unit in units
     ]
     worked = bool(deleted or pieces) or any(
-        unit.unwrap_seq is not None or unit.indent_shift != 0 or (unit.number_set is not None and not is_continued_number(unit))
+        unit.unwrap_seq is not None or unit.indent_shift != 0
+        or (unit.number_set is not None and not is_continued_number(unit.id, unit.number_set, continued))
         for unit in units
     )
     return lines, worked

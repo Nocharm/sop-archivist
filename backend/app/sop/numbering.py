@@ -340,13 +340,11 @@ def _clamp_level(level: int) -> int:
     return min(max(level, 1), MAX_ROW_LEVEL)
 
 
-def is_continued_number(unit: NumberedUnit) -> bool:
-    """벗긴 표의 숫자 칸 번호를 위 번호 아래로 이어 매겼는가("1" → "5.1", editing.continue_numbers) — 사람이 고친 번호가 아니다.
+def is_continued_number(unit_id: int, number_set: str | None, continued: Mapping[int, str]) -> bool:
+    """벗긴 표의 숫자 칸 번호가 저절로 이어 매긴 그대로인가("1" → "5.1") — continued는 적용 중인 이어 매기기 기록이 단위마다 쓴 값
+    (editing.load_continued_numbers). 지금 값이 그 값과 같을 때만 참이라 사람이 다시 고친 번호 · 이 기능 전에 사람이 고친 번호는 거짓이다.
     문단 Excel 번호 노트가 원래 번호("Original 1")를 적고 칸 번호처럼 표 안에만 두며, 한글 표처럼 하기는 손댄 표로 치지 않는다."""
-    return (
-        unit.number_source == NUMBER_CELL and bool(unit.number_set) and unit.number_read is not None
-        and get_section_level(unit.number_set or "") > get_section_level(unit.number_read)
-    )
+    return number_set is not None and continued.get(unit_id) == number_set
 
 
 def is_number_fixed(unit: NumberedUnit) -> bool:

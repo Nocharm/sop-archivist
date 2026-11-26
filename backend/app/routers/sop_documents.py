@@ -42,7 +42,9 @@ from app.sop.editing import (
     FollowTableOp,
     apply_edit,
     continue_numbers,
+    find_wrapped_tables,
     list_unwrapping_tables,
+    plan_continue_numbers,
     load_active_units,
     read_merged_pieces,
     redo_edit,
@@ -927,6 +929,8 @@ async def edit_units(
     revision = document.revision
     # Assign 단계는 편집이 함께 바꾼 판단 · 짝도 찍는다(되돌리면 되살린다) - 편집 전 상태를 먼저 읽는다
     before_state = await dump_bundle_state(session, ctx.bundle.id) if body.undo is not None else None
+    # 이번에 벗기는 표 - 이미 벗긴 표(그 번호는 사람 것이거나 이 기능 전 것)는 번호를 잇지 않는다
+    unwrapping = await find_wrapped_tables(session, list_unwrapping_tables(body.op)) if document.side == "old" else []
     result = await apply_edit(session, document, body.op, confirm=body.confirm, actor=ctx.login_id)
     edited = result.document_revision != revision
     deletes = body.op.list_delete_ids() if isinstance(body.op, FollowTableOp) else []
@@ -945,17 +949,17 @@ async def edit_units(
         await record_unit_edit_step(
             session, ctx.bundle, ctx.login_id, body.undo, document.id, before_state, result.closed_suggestion_ids
         )
-    unwrapping = list_unwrapping_tables(body.op) if edited else []
-    if unwrapping:
-        # 벗긴 Old 표의 번호 잇기는 벗기기 뒤 따로 한 칸이다(11-23 명세 D1-R5) - 첫 되돌리기는 번호만, 둘째가 다시 표로
+    numbering = await plan_continue_numbers(session, document, unwrapping) if edited and unwrapping else None
+    if numbering is not None:
+        # 벗긴 Old 표의 번호 잇기는 벗기기 뒤 따로 한 칸이다(11-23 명세 D1-R5) - 첫 되돌리기는 번호만, 둘째가 다시 표로.
+        # 바뀔 줄이 있을 때만 단계 덤프를 뜬다
         numbering_state = await dump_bundle_state(session, ctx.bundle.id) if body.undo is not None else None
-        numbered = await continue_numbers(session, document, unwrapping, actor=ctx.login_id)
-        if numbered is not None:
-            if body.undo is not None and numbering_state is not None:
-                await record_unit_edit_step(
-                    session, ctx.bundle, ctx.login_id, body.undo, document.id, numbering_state, numbered.closed_suggestion_ids
-                )
-            result.document_revision = numbered.document_revision
+        numbered = await continue_numbers(session, document, numbering, actor=ctx.login_id)
+        if body.undo is not None and numbering_state is not None:
+            await record_unit_edit_step(
+                session, ctx.bundle, ctx.login_id, body.undo, document.id, numbering_state, numbered.closed_suggestion_ids
+            )
+        result.document_revision = numbered.document_revision
     await session.commit()
     return result
 

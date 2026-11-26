@@ -2885,6 +2885,21 @@ async def _save_edit(
 CONTINUE_NUMBERS = "continue_numbers"  # 벗긴 Old 표의 번호 잇기 편집 기록 op — 요청 종류가 아니라 벗기기 요청 뒤 서버가 남긴다
 
 
+async def load_continued_numbers(session: AsyncSession, document_id: int) -> dict[int, str]:
+    """적용 중인 이어 매기기 기록(op "continue_numbers")이 단위마다 쓴 번호 — 같은 단위면 나중 기록. 되돌린 기록은 세지 않는다."""
+    edits = await session.scalars(
+        select(UnitEdit.number_changes)
+        .where(UnitEdit.document_id == document_id, UnitEdit.op == CONTINUE_NUMBERS, UnitEdit.state == EDIT_APPLIED)
+        .order_by(UnitEdit.seq)
+    )
+    written: dict[int, str] = {}
+    for changes in edits:
+        for unit_id, (_, after) in ((changes or {}).get("units") or {}).items():
+            if after:
+                written[int(unit_id)] = after
+    return written
+
+
 def list_unwrapping_tables(op: EditOp) -> list[int]:
     """벗기는 편집(set_layout_table is_layout · set_layout_tables)이 고른 표 — 다른 편집은 빈 목록."""
     if isinstance(op, SetLayoutTableOp):
@@ -2894,15 +2909,28 @@ def list_unwrapping_tables(op: EditOp) -> list[int]:
     return []
 
 
-async def continue_numbers(
-    session: AsyncSession, document: Document, table_ids: Sequence[int], *, actor: str
-) -> EditResult | None:
-    """벗긴 표의 숫자 칸 번호 잇기(11-23 명세 D1) — 편집 기록 하나(op "continue_numbers", 되돌리기 한 칸). 벗기기 요청이 그 편집을 쓴
-    뒤 같은 요청에서 부른다 — 첫 되돌리기는 번호만(벗긴 채), 둘째가 다시 표로(D1-R5, 여럿 벗기기도 두 칸 — 설계 §11-1).
+async def find_wrapped_tables(session: AsyncSession, table_ids: Sequence[int]) -> list[int]:
+    """table_ids 가운데 아직 표인(벗기지 않은) 원문 표 — 벗기기 편집 전에 불러 이번에 벗기는 표만 번호를 잇는다(이미 벗긴 표는 그대로)."""
+    if not table_ids:
+        return []
+    wrapped = set(await session.scalars(select(SourceTable.id).where(SourceTable.id.in_(table_ids), SourceTable.is_layout.is_(False))))
+    return [table_id for table_id in dict.fromkeys(table_ids) if table_id in wrapped]
+
+
+@dataclass(frozen=True)
+class NumberingPlan:
+    """벗긴 표 번호 잇기의 계획 — 계획과 쓰기를 나눠, 바뀔 줄이 있을 때만 부르는 쪽이 Assign 단계의 덤프를 뜬다."""
+
+    extraction_id: ExtractionId
+    table_ids: list[int]
+    change: _Change
+
+
+async def plan_continue_numbers(session: AsyncSession, document: Document, table_ids: Sequence[int]) -> NumberingPlan | None:
+    """벗긴 표의 숫자 칸 번호 잇기(11-23 명세 D1)의 계획 — table_ids는 이번 편집이 벗긴 표(find_wrapped_tables로 편집 전에 고른 것).
 
     Old 문서만 매긴다 — New는 이미 쓴 번호가 제 번호다(설계 §11-1). 흐름 줄은 묶이지 않은 활성 · 잡음 없는 번호 칸 단위를 원문 차례로,
-    표는 문서 차례로 하나씩(앞 표의 새 번호를 뒤 표가 이어 센다, numbering.plan_continue). 번호만 바꾸는 편집이라 판단 · 짝을 묻지도
-    바꾸지도 않는다. 아직 표인 표 · 바뀌는 줄이 없으면 아무것도 쓰지 않고 None.
+    표는 문서 차례로 하나씩(앞 표의 새 번호를 뒤 표가 이어 센다, numbering.plan_continue). 아직 표인 표 · 바뀌는 줄이 없으면 None.
     """
     if document.side != "old":
         return None
@@ -2959,9 +2987,16 @@ async def continue_numbers(
             flow[index] = replace(flow[index], number=number, is_cell=False)
     if not numbers:
         return None
-    change = _Change(numbers=numbers)
-    result = await _write_change(session, document, extraction_id, change, confirm=False, actor=actor)
-    await _save_edit(session, document, CONTINUE_NUMBERS, {"type": CONTINUE_NUMBERS, "table_ids": picked}, result, change, actor)
+    return NumberingPlan(extraction_id=extraction_id, table_ids=picked, change=_Change(numbers=numbers))
+
+
+async def continue_numbers(session: AsyncSession, document: Document, plan: NumberingPlan, *, actor: str) -> EditResult:
+    """번호 잇기 계획을 편집 기록 하나(op "continue_numbers", 되돌리기 한 칸)로 쓴다. 벗기기 요청이 그 편집을 쓴 뒤 같은 요청에서 부른다 —
+    첫 되돌리기는 번호만(벗긴 채), 둘째가 다시 표로(D1-R5, 여럿 벗기기도 두 칸 — 설계 §11-1). 번호만 바꾸는 편집이라 판단 · 짝을 묻지도
+    바꾸지도 않는다."""
+    result = await _write_change(session, document, plan.extraction_id, plan.change, confirm=False, actor=actor)
+    payload: dict[str, object] = {"type": CONTINUE_NUMBERS, "table_ids": plan.table_ids}
+    await _save_edit(session, document, CONTINUE_NUMBERS, payload, result, plan.change, actor)
     return result
 
 

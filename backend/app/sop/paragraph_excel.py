@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.sop.captions import CAPTION_KIND, join_caption_texts
 from app.sop.constants import BULLET_SYMBOLS
+from app.sop.editing import load_continued_numbers
 from app.sop.excel_export import build_workbook, clean_cell_text, split_cell_text
 from app.sop.models import Document, SourceBlock, SourceTable, TargetSource, Unit, UnitDecision, UnitPairMember
 from app.sop.noise import NOISE_FRONT, NOISE_HISTORY, NOISE_TOC
@@ -361,6 +362,7 @@ async def load_unit_lines(session: AsyncSession, document: Document) -> list[Uni
     )).tuples().all():
         targets.setdefault(unit_id, set()).add(target_id)
     block_at = {block.seq: block for block in blocks.values()}
+    continued = await load_continued_numbers(session, document.id)
     lines: list[UnitLine] = []
     for unit in units:
         # 그림·표 단위는 범위가 없고 정렬 키(pos_seq)가 제 블록의 seq다
@@ -379,7 +381,7 @@ async def load_unit_lines(session: AsyncSession, document: Document) -> list[Uni
             lang=unit.lang, number=number,
             number_note="" if unit.noise_kind is not None
             else READ_FROM_TEXT_NOTE if is_read_from_text(unit)
-            else ORIGINAL_NOTE.format(read=unit.number_read) if is_continued_number(unit)
+            else ORIGINAL_NOTE.format(read=unit.number_read) if is_continued_number(unit.id, unit.number_set, continued)
             else format_number_note(get_number_note(unit), number),
             remark=(unit.noise_reason or _NOISE_REMARKS[unit.noise_kind]) if auto_deleted else reason,
             deleted=auto_deleted or (confirmed and disposition == "delete"),
@@ -387,7 +389,8 @@ async def load_unit_lines(session: AsyncSession, document: Document) -> list[Uni
             blocks=() if unit.group_unit_id is not None else _list_blocks(find_line_table(unit.kind, unit.table_id, block.table_id, tables), tables),
             # 띠 표 제목 줄(번호 칸 + 제목 칸)의 칸 번호는 절 번호라 덩이 밖으로 이어진다. 위 번호 아래로 이어 매긴 칸 번호(5.1)도 칸 번호다 —
             # 표 뒤 문단은 표 앞 번호(5)로 돌아간다
-            is_cell_number=unit.number_source == NUMBER_CELL and (unit.number_set is None or is_continued_number(unit))
+            is_cell_number=unit.number_source == NUMBER_CELL
+            and (unit.number_set is None or is_continued_number(unit.id, unit.number_set, continued))
             and unit.kind != SECTION_KIND,
             pair_id=pair_of.get(unit.id),
             indent_shift=unit.indent_shift,
