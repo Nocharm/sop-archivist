@@ -1485,7 +1485,38 @@ await runStep("assign: the cell menu has this cell and this table, hovering pain
   await page.locator('[data-testid="assign-ctx-reach"]').waitFor({ state: "attached", timeout: T });
   check("old: hovering Back to table rings the table's lines", (await outlineOf("old", oldParts.cell.id)) === "dashed");
   await closeMenu();
-  // New 표 칸 - 양 단의 New 칸은 문장 박스만 메뉴를 열어(openNewCtxMenu) 표 칸은 그 문서를 한 단으로 열어야 한다. 한 단의 New도 왼쪽 용지(data-pane="old")에 그려진다. 같은 구역, 배정 항목 없음
+  // 양 단의 New 표 칸 · 표 머리(오른쪽 용지, data-pane="new") - 한 단으로 연 New와 같은 메뉴(openNewCtxMenu): 칸은 이 칸 위 · 이 표 아래, 표 머리는 이 표 하나, 배정 구역 없음
+  if ((await page.locator('[data-testid="assign-new"]').count()) === 0) await page.locator('[data-testid="assign-view-two"]').click();
+  await wait(page, "assign-new");
+  const openNewMenu = async (selector) => {
+    const box = page.locator(selector).first();
+    await box.scrollIntoViewIfNeeded({ timeout: T });
+    await box.click({ button: "right" });
+    await wait(page, "assign-ctx-menu");
+  };
+  await openNewMenu(`[data-pane="new"] [data-strip-unit="${newParts.cell.id}"]`);
+  const pairCellIds = await listIds();
+  check("new beside old: a table cell menu has this cell above this table without assignment items", pairCellIds.indexOf("assign-ctx-section-cell") === 0 && pairCellIds.indexOf("assign-ctx-section-table") > 0 && !pairCellIds.includes("assign-ctx-section-assign") && !pairCellIds.includes("assign-ctx-clear") && !pairCellIds.includes("assign-ctx-delete"), pairCellIds.join(","));
+  await page.locator('[data-testid="assign-ctx-table_layout"]').hover();
+  await page.locator('[data-testid="assign-ctx-reach"]').waitFor({ state: "attached", timeout: T });
+  check("new beside old: hovering Unwrap table rings the New table", (await outlineOf("new", newParts.table.id)) === "dashed");
+  await closeMenu();
+  check("new beside old: Esc closes the cell menu", (await page.locator('[data-testid="assign-ctx-menu"]').count()) === 0);
+  await openNewMenu(`[data-testid="assign-new-paper-head-${newParts.table.id}"]`);
+  const pairHeadIds = await listIds();
+  check("new beside old: a table head menu has this table only", pairHeadIds[0] === "assign-ctx-section-table" && !pairHeadIds.includes("assign-ctx-section-cell") && !pairHeadIds.includes("assign-ctx-section-assign") && pairHeadIds.includes("assign-ctx-table_layout"), pairHeadIds.join(","));
+  await closeMenu();
+  // 글쇠로 - New 칸을 누른 뒤(마지막에 누른 쪽이 New) Shift+F10이 우클릭과 같은 칸 메뉴를 연다. 고름이 칸으로 옮겨 가지 않아 표 머리 메뉴가 열리면 아래 검사가 잡는다
+  const pairCellBox = page.locator(`[data-pane="new"] [data-strip-unit="${newParts.cell.id}"]`).first();
+  await pairCellBox.scrollIntoViewIfNeeded({ timeout: T });
+  await pairCellBox.click();
+  await page.keyboard.press("Shift+F10");
+  await wait(page, "assign-ctx-menu");
+  const pairKeyIds = await listIds();
+  check("new beside old: Shift+F10 on a picked New cell opens the same cell menu", pairKeyIds.indexOf("assign-ctx-section-cell") === 0 && pairKeyIds.indexOf("assign-ctx-section-table") > 0 && !pairKeyIds.includes("assign-ctx-section-assign") && !pairKeyIds.includes("assign-ctx-clear"), pairKeyIds.join(","));
+  await closeMenu();
+  check("new beside old: Esc closes the menu opened by Shift+F10", (await page.locator('[data-testid="assign-ctx-menu"]').count()) === 0);
+  // 한 단으로 연 New 표 칸 - 한 단의 New는 왼쪽 용지(data-pane="old")에 그려진다. 같은 구역, 배정 항목 없음
   await page.goto(`${BASE}/bundles/${created.id}/assign?edit=${newDoc.id}`);
   await wait(page, "assign-bar");
   await openMenu(`assign-paper-unit-${newParts.cell.id}`);
@@ -1495,6 +1526,13 @@ await runStep("assign: the cell menu has this cell and this table, hovering pain
   await page.locator('[data-testid="assign-ctx-reach"]').waitFor({ state: "attached", timeout: T });
   check("new: hovering Unwrap table rings the New table", (await outlineOf("old", newParts.table.id)) === "dashed");
   await closeMenu();
+  // 글쇠로 - 우클릭으로 고른 칸이 그대로 골라져 있다. Shift+F10이 같은 칸 메뉴를 그 칸에서 연다
+  await page.keyboard.press("Shift+F10");
+  await wait(page, "assign-ctx-menu");
+  const soloKeyIds = await listIds();
+  check("new: Shift+F10 on the picked cell opens the same cell menu", JSON.stringify(soloKeyIds) === JSON.stringify(newIds), soloKeyIds.join(","));
+  await closeMenu();
+  check("new: Esc closes the menu opened by Shift+F10", (await page.locator('[data-testid="assign-ctx-menu"]').count()) === 0);
   await removeShapeBundle(page, { api, headers });
 });
 
@@ -8049,7 +8087,8 @@ await runStep("assign: the pair panel never moves the picked box up or down", {}
       await page.setViewportSize({ width, height: VIEWPORT.height });
       await setZoom(percent);
       await settle();
-      await piece(english.id).click();
+      // 글 자리를 누른다 - 이미 고른 박스의 가운데에는 이름이 펼쳐진 단추 줄(잇기 상대 고르기 등)이 온다(1차 피드백 5)
+      await piece(english.id).click({ position: { x: 24, y: 12 } });
       await piece(english.id).and(page.locator("[data-sel]")).waitFor({ timeout: T });
       // 처음 고르면 박스 안에서 단추 줄이 펼쳐진다(쪼개기 먼저 §8, --dur-slow) - 다 펼친 뒤에 잰다. 펼치는 동안은 그 아래 짝 안내가 움직여
       // 안내 누르기가 빗나가고 Playwright가 다시 굴려 누른다(그 굴림이 판이 박스를 옮긴 것처럼 잡힌다)
@@ -8088,7 +8127,7 @@ await runStep("assign: the pair panel never moves the picked box up or down", {}
   await page.setViewportSize({ width: 1920, height: VIEWPORT.height });
   await setZoom(100);
   await settle();
-  await piece(english.id).click();
+  await piece(english.id).click({ position: { x: 24, y: 12 } });
   await piece(english.id).and(page.locator("[data-sel]")).waitFor({ timeout: T });
   await hint.click();
   await pairSpot.waitFor({ timeout: T });

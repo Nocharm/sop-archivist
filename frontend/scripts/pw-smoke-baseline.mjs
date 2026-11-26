@@ -97,7 +97,11 @@ await runStep("account as qa.lead", { devUser: "qa.lead" }, async ({ page, takeS
   await page.locator('[data-testid="top-bar-user"]').click();
   await page.locator('[data-testid="user-menu-admin"]').waitFor({ state: "visible", timeout: T }).catch(() => undefined);
   check("admin link in the user menu", await page.locator('[data-testid="user-menu-admin"]').isVisible());
-  await page.keyboard.press("Escape");
+  await page.locator('[data-testid="user-menu-admin"]').click();
+  await page.waitForURL(/\/admin/, { timeout: T });
+  check("user menu closes after navigating from an item", (await page.locator('[data-testid="user-menu"]').count()) === 0 && (await page.locator('[data-testid="top-bar-user"]').getAttribute("aria-expanded")) === "false");
+  await page.goto(`${BASE}/account`);
+  await wait(page, "account-permissions");
   check("dev switcher shows current user", (await page.locator('[data-testid="dev-user-switcher"]').getAttribute("data-value")) === "qa.lead");
   await takeShot("baseline-account.png");
 });

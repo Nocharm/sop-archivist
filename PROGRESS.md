@@ -203,3 +203,15 @@
 - 참조 칸 이름(`feat/ref-section-forms`, v1.6.36): 조사 결과 참조 칸은 정상 동작(제목 스타일 + 이름 목록)이었고 목록에 Form이 없었다 — `_REF_SECTION_NAME`에 form(s) · 서식 · 양식, 조각을 and · & · , · 및으로 한 번 더 나눠 조각마다 통째로 맞춤("Forms and equipment" · "Formulation"은 닫힘). 굵은 글 제목은 여전히 열지 않음. Reference 아래가 안 된 실제 사례 · 표 꼴 개정 이력(6)은 실제 문서로 분석한 뒤.
 - 밀린 명령 이름(`feat/assign-queue-labels`, v1.6.37, 사용자 결정 1-A): 박스를 잡은 명령은 그 박스 칩 "Queued · X"(같으면 ×n, 섞이면 +n), 박스 없는 명령(Undo · Redo · 장벽 뒤 글쇠)은 Undo 옆 `assign-queue-global` 하나. 규칙은 `command-queue.ts` `listQueueWaits` · `formatQueueWait`, 칩 순번 대신 개수. 나누기 이름 Cut → Split(단추와 같게). `assign:` 1516 통과.
 - 키보드 그림(`feat/assign-keyboard-map`, v1.6.38, 사용자 결정 3-A + 화면 피드백 셋): 처음 자판 전체 · 파스텔 채움은 "낡아 보임" → 예전 시안 모양(둥근 타일 · 큰 글쇠 · 짧은 이름) 요청 → "자판 전체는 좋음, Esc 자리 현실화" → 75% 배열(Esc · F열 · Del 위 줄, 화살표를 블록 안에) · Graphite 톤(중립 타일 + 종류 아래 띠, 앱 토큰만). 글쇠 표(`ASSIGN_KEYS`)에서 그림(`keyboard-map-model.ts`), 창이 떠 있는 동안 누른 글쇠는 `data-pressed` · 기능 있으면 `data-flash`(effect 없이 onKeyDown). `Modal` 크기 `board` 하나 더함.
+
+## 2026-11-26 — F7b 양 단 New 칸 메뉴 (feat/new-cell-menu-two-pane)
+
+- 양 단 New 칸 · 머리 · 제목 · 캡션 · 그림 우클릭 = 한 단 메뉴(`buildMenuSections(…, doc)`), Shift+F10 · 메뉴 글쇠는 마지막 고른 쪽(`readMenuKeyTarget`) — 사용자가 자는 동안 추천안(New 박스에서도 열기)으로 정함.
+
+## 2026-11-27 — F5 단추 줄 라벨 (feat/pick-bar-labels)
+
+- 순수 CSS container query로 단추 줄 이름 접기, 못 하는 손질도 이름 + 까닭은 툴팁, ⋯는 줄 오른쪽 끝(에이전트 판단 그대로). 넓은 박스 가운데에 단추가 오게 되어 짝 판 스모크 단계는 박스 글 자리를 누르게 따라 고침.
+
+## 2026-11-27 — Fm 메뉴가 이동 뒤 열린 채 남던 결함 (fix/user-menu-close-on-nav)
+
+- nav-host의 capture click이 `stopPropagation`해 항목의 `closeAll`이 안 불렸다 — nav-host는 그대로 두고 user-menu · ai-jobs-indicator가 경로가 바뀌면 렌더 중에 닫는다(새 effect 없음). 연습 페이지 스모크가 찾음.

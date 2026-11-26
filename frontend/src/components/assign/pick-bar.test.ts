@@ -37,6 +37,17 @@ describe("PickBar", () => {
     expect(markup).toMatch(/pick-tool-split"[^>]*aria-disabled="true"/);
     expect(markup).not.toContain(' disabled=""');
   });
+  it("labels an unavailable tool with its name and keeps the reason in the tip and aria-label", () => {
+    const markup = html(row(2, { split: "assign.ctx.why.nothingToSplit" }));
+    const button = markup.match(/<button[^>]*pick-tool-split"[^>]*>.*?<\/button>/)?.[0] ?? "";
+    expect(button).toContain('aria-label="This sentence is too short to split."');
+    expect(button).toContain('data-tip="This sentence is too short to split."');
+    expect(button).toMatch(/class="mbtn-label"[^>]*>split<\/span>/);
+  });
+  it("puts the partner pick and more inside the folding group after the tools", () => {
+    const group = html(row(2)).match(/<span class="pick-tools">(.*)<\/span><\/div>$/)?.[1] ?? "";
+    expect(order(group)).toEqual(["split", "merge_prev", "merge_next", "pair", "sep", "start", "more"]);
+  });
   it("draws the Enter mark only on the link", () => {
     expect(html(row(4)).match(/<kbd>↵<\/kbd>/g)).toHaveLength(1);
     expect(html(row(11))).not.toContain("<kbd>↵</kbd>");
