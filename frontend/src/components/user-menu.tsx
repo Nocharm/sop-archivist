@@ -65,6 +65,13 @@ export function UserMenu() {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
   const [flyout, setFlyout] = useState<"right" | "left" | null>(null);
+  // nav-host가 앱 안 링크 click을 capture에서 가로채 항목의 onClick이 안 불리므로, 경로가 바뀌면 렌더 중에 닫는다
+  const [seenPath, setSeenPath] = useState(pathname);
+  if (pathname !== seenPath) {
+    setSeenPath(pathname);
+    setOpen(false);
+    setFlyout(null);
+  }
   const triggerRef = useRef<HTMLButtonElement>(null);
   const layoutRef = useRef<HTMLButtonElement>(null);
   const closeTimer = useRef<number | null>(null);

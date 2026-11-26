@@ -4,6 +4,7 @@
 "use client";
 
 import { Loader2, Sparkles } from "lucide-react";
+import { usePathname } from "next/navigation";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 
 import { AiJobsPopover } from "@/components/ai-jobs-popover";
@@ -25,6 +26,13 @@ export function AiJobsIndicator() {
   const seen = useSeenFailures();
   const acceptOffer = useAiAcceptOffer();
   const [open, setOpen] = useState(false);
+  // nav-host가 앱 안 링크 click을 capture에서 가로채 팝오버 링크의 onClose가 안 불리므로, 경로가 바뀌면 렌더 중에 닫는다
+  const pathname = usePathname();
+  const [seenPath, setSeenPath] = useState(pathname);
+  if (pathname !== seenPath) {
+    setSeenPath(pathname);
+    setOpen(false);
+  }
   const triggerRef = useRef<HTMLButtonElement>(null);
   const previousRef = useRef<RecentAiJobs | null>(null);
   // 탭이 가려진 동안 끝난 요청 - 알림은 몇 초 뒤 사라지므로 돌아왔을 때 띄운다
