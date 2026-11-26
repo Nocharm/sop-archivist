@@ -32,6 +32,11 @@ describe("the Assign key table", () => {
     expect(readId("S", { shiftKey: true })).toBe("run split_sentences");
     expect(readId("s")).toBe("run split");
   });
+  it("lists Shift+G for the multi-pick and G still goes to the pair", () => {
+    expect(findAssignKey(press("G", { shiftKey: true }))).toMatchObject({ kind: "run", entry: { id: "multi_pick", when: "box" } });
+    expect(readId("g")).toBe("run go_pair");
+    expect(formatAssignKey("multi_pick")).toBe("⇧G");
+  });
   it("has no duplicate key and shift", () => {
     const presses = ASSIGN_KEYS.map((entry) => `${entry.key}${entry.shift ? "+shift" : ""}`);
     expect(presses.filter((item, index) => presses.indexOf(item) !== index)).toEqual([]);
@@ -101,6 +106,7 @@ describe("what a key does where it is pressed", () => {
     ["lang", { langReasonKey: "assign.ctx.why.refLang" }, "assign.ctx.why.refLang"],
     ["split", { hasCut: false }, "split.menu.why.noCut"],
     ["split_sentences", { isText: false }, `${WHY}.notText`],
+    ["multi_pick", { hasBox: false }, `${WHY}.noRow`],
     ["hold", { hasRow: false }, `${WHY}.noRow`],
     ["remark", { hasRow: false }, `${WHY}.noRow`],
     ["clear_block", {}, `${WHY}.notDeleted`],

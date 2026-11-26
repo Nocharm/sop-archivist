@@ -28,7 +28,7 @@ import { useBoxDrag } from "@/lib/use-box-drag";
 import { findLastStep } from "@/lib/destination-manage-model";
 import { buildDocTools } from "@/lib/doc-tools-model";
 import { describeNewTableAsk, readEditAsk, type EditAsk } from "@/lib/edit-ask-model";
-import { listNewRows, planMultiMerge, planMultiUnwrap, type MultiRow } from "@/lib/multi-pick-model";
+import { listNewRows, planMultiMerge, planMultiUnwrap, toggleChecked, type MultiRow } from "@/lib/multi-pick-model";
 import { findSplitBlock, readSplitOffsets } from "@/lib/split-ai-tabs-model";
 import { pickPairPiece, planPairLanguages, type JoinKind, type JoinPlan } from "@/lib/split-menu-model";
 import { listAppliedSuggestions, requestAi, setSuggestionAdoption, type AiKind, type AiScope } from "@/lib/api-manage";
@@ -1944,6 +1944,22 @@ export function useAssignPage() {
   const bulkMerge = bulkRows.length > 0 ? planMultiMerge(bulkRows, bulkShape?.tabs.order ?? [], hasUnitDraft) : null;
   const bulkUnwrap = bulkShape ? planMultiUnwrap(bulkRows, bulkShape.model.tables) : null;
 
+  /** Old 줄을 여럿 고름에 넣거나 뺀다(Shift+클릭 · ⇧G). Old · New 여럿 고름은 함께 두지 않아 New 쪽을 비운다(쪼개기 먼저 계획 정한 것 1) */
+  function toggleOldChecked(key: string, via: "click" | "key") {
+    setChecked((prev) => toggleChecked(prev, key, activeKey, via));
+    setCheckedNew((prev) => (prev.size === 0 ? prev : new Set()));
+  }
+
+  /** New 박스를 여럿 고름에 넣거나 뺀다(Shift+누르기 · ⇧G) - Old 쪽을 비운다 */
+  function toggleNewChecked(unitId: number) {
+    setCheckedNew((prev) => {
+      const next = new Set(prev);
+      if (!next.delete(unitId)) next.add(unitId);
+      return next;
+    });
+    setChecked((prev) => (prev.size === 0 ? prev : new Set()));
+  }
+
   /** 위쪽 바의 합치기 - 고름을 비우고 언어마다 합쳐 다시 짝짓는 편집 하나(merge_rows) */
   function runBulkMerge() {
     if (!bulkMerge?.ok || !bulkShape) return;
@@ -3562,11 +3578,7 @@ export function useAssignPage() {
       return;
     }
     if (shiftKey && canEdit) {
-      setCheckedNew((prev) => {
-        const next = new Set(prev);
-        if (!next.delete(unitId)) next.add(unitId);
-        return next;
-      });
+      toggleNewChecked(unitId);
       return;
     }
     setCheckedNew(new Set());
@@ -4505,13 +4517,7 @@ export function useAssignPage() {
     const key = findRowKey(unitId);
     if (!key) return;
     if (keys.shiftKey && canEdit) {
-      setChecked((prev) => {
-        const next = new Set(prev);
-        if (next.has(key)) next.delete(key);
-        else next.add(key);
-        if (activeKey && prev.size === 0 && activeKey !== key) next.add(activeKey);
-        return next;
-      });
+      toggleOldChecked(key, "click");
       return;
     }
     setChecked(new Set());
@@ -4910,6 +4916,12 @@ export function useAssignPage() {
       case "ask_order":
         if (orderTableId !== null && pickOrderAction({ follow: orderFollow?.mode ?? "none", count: orderFollow?.count ?? 0 }) === "follow") followPlan.onApply(orderTableId);
         else if (orderTableId !== null) shapeUnwrapAi.onAsk(orderTableId);
+        return true;
+      case "multi_pick":
+        // 마지막으로 누른 쪽의 고른 박스를 넣거나 뺀다 - 한 단으로 연 New 문서에는 줄 목록이 없다
+        if (isSolo) showToast(t("assign.key.why.noRow"), "info");
+        else if (isNewEdit && newUnitId !== null) toggleNewChecked(newUnitId);
+        else if (activeKey !== null) toggleOldChecked(activeKey, "key");
         return true;
       case "merge_next":
       case "merge_prev":

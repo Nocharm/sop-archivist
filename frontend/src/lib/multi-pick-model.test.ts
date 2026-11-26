@@ -1,9 +1,9 @@
 // 여럿 고른 줄의 합치기 · 표 벗기기 계획(쪼개기 먼저 설계 §9) - 이웃 검사와 막는 까닭만 화면이, 합치기 · 짝 다시 맺기는 서버가
 import { describe, expect, it } from "vitest";
 
-import type { ViewTable, ViewUnit } from "@/lib/api-sop";
+import type { UnitRow, ViewTable, ViewUnit } from "@/lib/api-sop";
 
-import { type MultiRow, listNewRows, planMultiMerge, planMultiUnwrap } from "./multi-pick-model";
+import { type MultiRow, listBulkActions, listNewRows, planBulkClear, planBulkLang, planMultiMerge, planMultiUnwrap, toggleChecked } from "./multi-pick-model";
 
 function u(id: number, over: Partial<ViewUnit> = {}): ViewUnit {
   return {
@@ -73,5 +73,52 @@ describe("listNewRows", () => {
     expect(listNewRows([70], units, 7)[0].units.map((unit) => unit.id)).toEqual([70, 71]);
     expect(listNewRows([71, 70, 72], units, 7).map((item) => item.units.map((unit) => unit.id))).toEqual([[70, 71], [72]]);
     expect(listNewRows([70], units, 7)[0].docId).toBe(7);
+  });
+});
+
+describe("toggleChecked", () => {
+  it("the key adds only the picked row, the click adds the active row too", () => {
+    expect([...toggleChecked(new Set(), "b", "a", "key")]).toEqual(["b"]);
+    expect([...toggleChecked(new Set(), "b", "a", "click")]).toEqual(["b", "a"]);
+    expect([...toggleChecked(new Set(["b"]), "b", null, "key")]).toEqual([]);
+  });
+
+  it("the click adds the active row only while nothing is picked yet", () => expect([...toggleChecked(new Set(["b"]), "c", "a", "click")]).toEqual(["b", "c"]));
+});
+
+function unitRow(id: number, over: Partial<UnitRow> = {}, disposition = "unassigned"): UnitRow {
+  return { unit_id: id, status: "unassigned", decision: { disposition, revision: 3 }, ...over } as unknown as UnitRow;
+}
+const rowMap = new Map([[1, unitRow(1, { status: "confirmed" }, "assigned")], [2, unitRow(2)]]);
+const lone = (id: number, over: Partial<ViewUnit> = {}): MultiRow => ({ key: `row-${id}`, docId: 1, units: [u(id, over)] });
+
+describe("planBulkClear", () => {
+  it("clears only decided rows", () => {
+    expect(planBulkClear([lone(1), lone(2)], rowMap)).toEqual({ ok: true, value: [{ unit_id: 1, revision: 3 }] });
+    expect(planBulkClear([lone(2)], rowMap)).toMatchObject({ ok: false, reasonKey: "assign.bulk.why.notAssigned" });
+  });
+});
+
+describe("planBulkLang", () => {
+  const pair = (ko: number, en: number) => rowOf(1, ko, en);
+  it("skips same-language, paired, merged, decided and non-text rows", () => {
+    const rows = [lone(1), lone(2, { lang: "en" }), pair(3, 4), lone(5, { can_unmerge: true }), tableRow(10), lone(6)];
+    expect(planBulkLang(rows, "en", (unit) => unit.id === 6)).toEqual({ ok: true, value: { unitIds: [1], skipped: 5 } });
+    expect(planBulkLang([pair(3, 4)], "en", none)).toMatchObject({ ok: false, reasonKey: "assign.bulk.why.noneToChange" });
+  });
+
+  it("skips reference and neutral lines, refuses another document", () => {
+    expect(planBulkLang([lone(1), lone(2, { lang: "ref" }), lone(3, { lang: "neutral" })], "en", none)).toEqual({ ok: true, value: { unitIds: [1], skipped: 2 } });
+    expect(planBulkLang([lone(1), { ...lone(2), docId: 9 }], "en", none)).toMatchObject({ reasonKey: "assign.bulk.why.otherDoc" });
+  });
+});
+
+describe("listBulkActions", () => {
+  it("offers a bar per side", () => {
+    const rows = [row(1), row(2)];
+    expect(listBulkActions("old", rows)).toEqual(["delete", "unassign", "lang_ko", "lang_en", "merge"]);
+    expect(listBulkActions("new", rows)).toEqual(["merge", "lang_ko", "lang_en"]);
+    expect(listBulkActions("old", [tableRow(10), tableRow(11)])).toContain("unwrap");
+    expect(listBulkActions("new", [tableRow(10), tableRow(11)])).toEqual(["merge", "unwrap", "lang_ko", "lang_en"]);
   });
 });
