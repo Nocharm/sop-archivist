@@ -1235,7 +1235,7 @@ await runStep("assign: two-level pick - a pair half, a table cell and Del delete
 });
 
 // 표 칸 우클릭(11-23 명세 C2 · S9) - "이 칸" 위 · "이 표" 아래 두 구역, 항목에 올리면 닿는 칸이 칠해지고 떠나면 걷힌다. 벗긴 표의 줄은 이 칸 아래 이 표(다시 표로 · AI 순서),
-// 양 단의 New 표 칸도 같은 구역이되 배정 항목이 없다. 합성 docx 둘(같은 본문)을 새 묶음에 올려 보고 끝에 묶음을 지운다
+// 한 단으로 연 New 문서의 표 칸도 같은 구역이되 배정 항목이 없다. 합성 docx 둘(같은 본문)을 새 묶음에 올려 보고 끝에 묶음을 지운다
 await runStep("assign: the cell menu has this cell and this table, hovering paints the reached cells", { devUser: "dev.admin" }, async ({ page }) => {
   const headers = { "X-Dev-User": "dev.admin" };
   const backend = resolve(SCRIPT_DIR, "../../../backend");
@@ -1320,13 +1320,15 @@ await runStep("assign: the cell menu has this cell and this table, hovering pain
   await page.locator('[data-testid="assign-ctx-reach"]').waitFor({ state: "attached", timeout: T });
   check("old: hovering Back to table rings the table's lines", (await outlineOf("old", oldParts.cell.id)) === "dashed");
   await closeMenu();
-  // 양 단의 New 표 칸 - 같은 구역, 배정 항목 없음
-  await openMenu(`assign-new-paper-unit-${newParts.cell.id}`);
+  // New 표 칸 - 양 단의 New 칸은 문장 박스만 메뉴를 열어(openNewCtxMenu) 표 칸은 그 문서를 한 단으로 열어야 한다. 한 단의 New도 왼쪽 용지(data-pane="old")에 그려진다. 같은 구역, 배정 항목 없음
+  await page.goto(`${BASE}/bundles/${created.id}/assign?edit=${newDoc.id}`);
+  await wait(page, "assign-bar");
+  await openMenu(`assign-paper-unit-${newParts.cell.id}`);
   const newIds = await listIds();
   check("new: a table cell menu has this cell and this table without assignment items", newIds.includes("assign-ctx-section-cell") && newIds.includes("assign-ctx-section-table") && newIds.includes("assign-ctx-table_layout") && !newIds.includes("assign-ctx-clear") && !newIds.includes("assign-ctx-delete"), newIds.join(","));
   await page.locator('[data-testid="assign-ctx-table_layout"]').hover();
   await page.locator('[data-testid="assign-ctx-reach"]').waitFor({ state: "attached", timeout: T });
-  check("new: hovering Unwrap table rings the New table", (await outlineOf("new", newParts.table.id)) === "dashed");
+  check("new: hovering Unwrap table rings the New table", (await outlineOf("old", newParts.table.id)) === "dashed");
   await closeMenu();
   await removeShapeBundle(page, { api, headers });
 });
