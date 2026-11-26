@@ -417,9 +417,10 @@ export function hasTocLineIn(units: Iterable<ViewUnit>, blockId: number): boolea
   return false;
 }
 
-/** 누른 단위 → 고를 단위. 표에 묶인 칸 문장이면 그 묶음 단위, 아니면 자기(Assign은 표·그림을 묶음째 배정한다) */
+/** 누른 단위 → 고를 단위. 캡션(칸 문장 밖의 묶인 단위)이면 그 묶음 단위, 표에 묶인 칸 문장은 자기 - 칸이 골라지고 배정은 표째다(11-23 명세 C1-R3, 박스는 pick-scope-model resolveBoxUnit) */
 export function resolvePickUnit(unitId: number, units: ReadonlyMap<number, ViewUnit>): number {
-  return units.get(unitId)?.group_unit_id ?? unitId;
+  const unit = units.get(unitId);
+  return unit === undefined || unit.kind === "cell_sentence" ? unitId : (unit.group_unit_id ?? unitId);
 }
 
 // ── Split 2차 개편(2026-11-10): 단위마다 종이 한 조각, 조각 사이 합치기, 본문·머리말·꼬리말 탭, 나눌 선 끌기 ──

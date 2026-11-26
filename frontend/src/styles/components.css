@@ -1282,7 +1282,7 @@
   .pg[data-strips] { --pg-pad-l: 12px; --pg-pad-r: 68px; padding: 0; gap: 0; }
   /* content-visibility는 칠 영역을 줄 안쪽으로 자르므로 조각 그림자(--shadow-1, 아래로 24px)가 잘리지 않게 자르는 선을 바깥으로 민다 */
   .pg[data-strips] .strip-row { display: flex; align-items: stretch; content-visibility: auto; overflow-clip-margin: 32px; contain-intrinsic-size: auto 46px; }
-  .pg[data-strips] .strip-row:has(.strip[data-sel], .cut-anchor, :focus-visible) { content-visibility: visible; }
+  .pg[data-strips] .strip-row:has(.strip[data-sel], .cell-piece[data-sel], .cut-anchor, :focus-visible) { content-visibility: visible; }
   /* 조각 사이 틈도 화면 밖이면 그리지 않는다 - 틈마다 합치기 단추·아이콘이 들어, 1,300문단 문서에서 틈 1,300개가 스크롤·호버마다 배치·칠하기·히트 테스트를 다시 탔다.
      올림 자리(::before, 위아래 10px)와 알약이 틈 밖으로 나오니 자르는 선을 12px 민다 - 줄이면 틈 가장자리에서 호버가 안 걸린다 */
   .pg[data-strips] .strip-gap { content-visibility: auto; overflow-clip-margin: 12px; contain-intrinsic-size: auto 4px; }
@@ -1293,7 +1293,7 @@
      덩어리 안의 줄·틈·한 줄 판은 건너뛰지 않는다 - 두 겹이면 위로 굴릴 때 스크롤 고정이 가끔 놓쳐 화면이 1,000px 넘게 튀었다(한 겹이면 0) */
   .pg[data-strips] .strip-chunk { content-visibility: auto; overflow-clip-margin: 32px; contain-intrinsic-size: auto 1840px; }
   .pg[data-strips] .strip-chunk[data-fold] { display: grid; grid-template-columns: minmax(0, 1fr); }
-  .pg[data-strips] .strip-chunk:has(.strip[data-sel], .cut-anchor, :focus-visible) { content-visibility: visible; }
+  .pg[data-strips] .strip-chunk:has(.strip[data-sel], .cell-piece[data-sel], .cut-anchor, :focus-visible) { content-visibility: visible; }
   .pg[data-strips] .strip-chunk :is(.strip-row, .strip-gap, .fold-line) { content-visibility: visible; }
   .pg[data-strips] .strip-row > .strip { flex: 1 1 0; min-width: 0; }
   /* 화면 밖 조각은 그리지 않는다(Unit 수천 개) - 고른 조각·나눌 선이 있는 조각은 팝업·윤곽이 잘리지 않게 뺀다 */
@@ -1303,8 +1303,6 @@
   .pg[data-strips] .strip[data-strip-unit], .pg[data-strips] .strip-row:has(> .strip[data-strip-unit]) > .strip-lead, .cell-piece[data-strip-unit] { cursor: pointer; }
   /* :where로 낮춘 우선순위 - 고른 문장 윤곽(배경 없음)·Ctrl로 고른 바탕(data-pick)이 이긴다 */
   :where(html:not([data-box-drag])) :where(.pg[data-strips] .strip-row:hover > .strip[data-strip-unit]:not([data-kind="table"]), .cell-piece[data-strip-unit]:hover) .su { background-color: var(--hover); }
-  /* 묶음째 고르는 화면(Assign 배정)은 표 어디에 올려도(머리 줄·캡션·칸) 누르면 표 전체가 골라지니 표 전체의 글을 같이 칠한다 - 캡션이나 칸 하나만 칠하면 그것만 골라질 것처럼 보인다 */
-  :where(html:not([data-box-drag])) :where(.pg[data-strips][data-whole-bundle] .strip-row:hover > .strip[data-strip-unit][data-kind="table"]) .su { background-color: var(--hover); }
   /* 표·그림 조각은 스크롤하지 않는다 - 위 테두리의 종류 표시(.strip-lang)가 잘린다. 넓은 표는 .ptbl-scroll, 넓은 그림은 .pfig가 가로로 스크롤한다 */
   .pg[data-strips] .strip[data-kind="table"] { padding-left: var(--pg-pad-l); padding-right: var(--pg-pad-r); }
   .pg[data-strips] .pfig { overflow-x: auto; }
@@ -1601,9 +1599,20 @@
   .num-follow-more { color: var(--ink-3); }
   /* 카드 강조 테두리 - 조각 바깥 2px. 짝 카드(.strip-card, 줄 수와 상관없이)는 한 줄이라도 강조면 모든 줄에 두르되 맞닿는 쪽은 열어 한 테두리로 읽힌다(줄마다 그림자 고리를 두면 사이에 선이 생긴다) */
   .strip-card { display: contents; }
-  /* 고른 조각(문단)과 그 짝에 두른다. 맞은편 강조(data-link-hover)는 바탕만 - 마우스를 올린 곳이 고른 것처럼 보이지 않게 */
+  /* 고른 조각(문단)과 그 짝에 두른다. 맞은편 강조(data-link-hover)는 바탕만 - 마우스를 올린 곳이 고른 것처럼 보이지 않게.
+     짝 카드 전체에 두르는 것은 두 겹 고름(data-group)이 없는 용지(위치 판)만 - Assign은 아래 얇은 테가 카드를, 이 2px가 누른 조각만 두른다 */
   .pg[data-strips] .strip-lead + .strip:is([data-sel], [data-partner])::after,
-  .strip-card:has(> .strip-row > .strip:is([data-sel], [data-partner])) > .strip-row > .strip-lead + .strip::after { content: ""; position: absolute; inset: var(--ring-inset, -2px); border: solid var(--accent); border-width: var(--ring-bw, 2px); border-radius: var(--ring-r, calc(var(--r-1) + 2px)); pointer-events: none; }
+  .strip-card:has(> .strip-row > .strip:is([data-sel], [data-partner]):not([data-group])) > .strip-row > .strip-lead + .strip::after { content: ""; position: absolute; inset: var(--ring-inset, -2px); border: solid var(--accent); border-width: var(--ring-bw, 2px); border-radius: var(--ring-r, calc(var(--r-1) + 2px)); pointer-events: none; }
+  /* 고름 두 겹(11-23 명세 C1) - 누른 조각이 든 짝 카드 · 표는 얇은 테 1px(카드는 맞닿는 쪽을 연 채), 누른 조각은 2px를 제 둘레에 다 두른다 */
+  .pg[data-strips] .strip-lead + .strip[data-group]::after { content: ""; position: absolute; inset: var(--ring-inset, -2px); border: solid var(--accent-line); border-width: var(--ring-bw-thin, 1px); border-radius: var(--ring-r, calc(var(--r-1) + 2px)); pointer-events: none; }
+  .pg[data-strips] .strip-lead + .strip[data-group][data-sel]::after { inset: -2px; border-color: var(--accent); border-width: 2px; border-radius: calc(var(--r-1) + 2px); }
+  .pg[data-strips][data-held] .strip-lead + .strip[data-group]::after { border-style: dashed; }
+  .pg[data-strips] .strip-lead + .strip[data-bracket="top"] { --ring-bw-thin: 1px 1px 0; }
+  .pg[data-strips] .strip-lead + .strip[data-bracket="bottom"] { --ring-bw-thin: 0 1px 1px; }
+  .pg[data-strips] .strip[data-bracket="middle"] { --ring-bw-thin: 0 1px; }
+  /* 묶음 꼬리표 - 카드 첫 줄 · 표 조각의 위 테두리 선 왼쪽(오른쪽은 종류 · 언어 표시 .strip-lang 자리). 같은 자리에 처리 중 알약이 뜨면 비킨다. 눌러지지 않는다(밑의 박스를 누른 것으로) */
+  .group-tag { position: absolute; top: -9px; left: var(--pg-pad-l, 12px); z-index: 2; height: 16px; padding: 0 4px; border-radius: var(--r-1); background: var(--paper); color: var(--accent); font: 600 var(--fs-micro) / 16px var(--font-ui); white-space: nowrap; pointer-events: none; }
+  .strip:has(> .pending-pill) > .group-tag { visibility: hidden; }
   /* 고른 박스의 짝(data-mate) - 고른 것이 아니라 곁에 딸린 것이라 흐린 점선 테두리만(설계 2026-11-20 D3). 고른 박스와 한 카드면 위 카드 테두리가 이긴다 */
   .pg[data-strips] .strip-lead + .strip[data-mate]::after { content: ""; position: absolute; inset: -2px; border: 1px dashed var(--accent-line); border-radius: calc(var(--r-1) + 2px); pointer-events: none; }
   .cell-piece[data-mate] { outline: 1px dashed var(--accent-line); outline-offset: -1px; }

@@ -27,8 +27,16 @@
 | 6-2 | `feat/new-paper-2-pick` | 모음 `feat/new-paper`에 합침 | d574eda1(9fcc501d) | dev v1.6.18 합침(충돌 13) · vitest 2475 · build 경고 0 · `assign:` 스모크 1305(시간 단계 하나는 혼자 2번 통과) · Enter · 잇기 단계 95 | fable 검토 두 번: 손질 뒤 Enter가 숨은 확정 · 되돌리기의 문서가 응답 때 정해짐 · Del→잇기→Del · 그 고침이 만든 출처 없음 두 번째 Enter 갈아 끼움 — 모두 고침. 스모크가 찾은 제품 결함: 빈 곳 누르기가 Pair 조각 · 칸 자리 · 템플릿 자리 고름을 지움, 짝 놓기가 New 다듬기에 머묾, 메뉴 위로 단추 줄이 펼쳐짐 — 고침 |
 | 6-3 | `feat/new-paper-3-tools` | 모음에 합침 → 모음을 dev에 | v1.6.22 · c8e014c2 | dev v1.6.21 합침 · pytest 3756+시드 15 · vitest 2545 · build 경고 0 · `assign:` 스모크 1400(100ms 단계는 혼자 통과, 그림 캡션 단계는 혼자 두 번에 한 번 통과 — dev 기반 브랜치에서도 흔들림) | opus 검토 막음 1 · 권함 1 고침, 스모크 뒤 제품 고침 셋은 opus 짧은 검토 통과 |
 | 3b+ | `fix/undo-follow-after-click` | 합침 | v1.6.16 · f1cbc921 | vitest 2297 · build 경고 0 · `assign:` 스모크 1240 + 손질 뒤 5단계 | — |
-| 7 | 계획 4의 일곱 | 대기 | | | |
+| 7a | `feat/assign-two-level-pick` | 합침 | v1.6.23 · 00d81d1e | vitest 2562 · build 경고 0 · `assign:` 스모크 전부 통과(두 번째 전체 실행 ALL PASS, 첫 실행의 필터 단계는 따라 고침) · opus 검토 막음 0 · 권함 1 고침 | 꼬리표가 글 · 보류 칩과 겹치는지(세워 둘 조건 ③)는 그림으로 보지 않음 — 감사 때 |
+| 7b | `feat/assign-table-menu` | 대기 | | | |
+| 7c | `feat/assign-multi-mark` | 대기 | | | |
+| 7d | `feat/assign-multi-merge` | 대기 | | | |
+| 7e | `feat/assign-multi-pick` | 대기 | | | |
+| 7f | `feat/split-by-sentence` | 대기 | | | |
+| 7g | `feat/assign-pair-bracket` | 대기 | | | |
 | 8 | 계획 5의 아홉 | 진행 | v1.6.21 · 69826fdd | space-preview-trim v1.6.14 · excel-a-strike v1.6.15 · progress-by-disposition v1.6.18 · ai-suggestions-retire v1.6.20 · 모음 table-follow v1.6.21 합침(pytest 3747+시드 15 · vitest 2371 · build 경고 0 · `assign:` 스모크 1274 전부 · AI 단계는 가짜 AI로 14) | 남은 둘: tables-tab · unwrap-continue-numbers(둘 다 6 · 계획 4에 매임) |
+| 8a | `feat/assign-tables-tab` | 진행 | | | |
+| 8b | `feat/unwrap-continue-numbers` | 대기 | | | 7d(`MergeRowsOp`) 뒤 |
 
 
 ## 이어 가기 (2026-11-26 14시, 지휘 세션을 끊으며)
@@ -94,6 +102,9 @@
 - table-follow-2 · 없음(새 시험만). table-follow-3 · `test_sop_ai_llm.py:134` 시드 7 → 8, `test_sop_guidelines.py` `REPLY_FIELDS`에 `prompt.table_follow`, `test_sop_table_follow.py` ai 시험에 `lines` 단언 한 줄, `ai-suggestion-model.test.ts`에 `HIDDEN_AI_KINDS.has("table_follow") === false` · 새 지침 키 · 응답 필드가 늘어남
 - 6-3 · `test_sop_tables.py:389` 409 응답에 `linked_cells` · `held_rows` · New 표 응답 꼴이 늘어남, `new-paper.test.ts:106` testid 글자 · 새 testid가 옛 글자를 품어서
 - 6-2 · `baa5cde3` 한 단을 닫은 근거 `assign-solo` 수 0 → `.assign-panes`에 `data-single` 없음(Old 태그 검사 그대로) · 닫아도 New 고름이 남음(계획 T3), `e4d3a51c` 짝 판을 단추 줄이 다 펼친 뒤에 잼(검사 · 한도 그대로)
+- 7a · `paper-model.test.ts:210-219` 묶인 칸 → 표 기대를 칸 → 칸으로, 캡션 → 묶음 사례 더함 · C1-R3
+- 7a · `smoke/assign.mjs` 표 칸 단계 이름 · 1083 "칸 글을 누르면 표 전체" → "표 줄 다듬기에 Unwrap table" · 1084 표 조각 data-sel → 칸 data-sel + 표 `data-group="table"`(검사 2 그대로) · C1-R3, 정한 것 5
+- 7a · `smoke/assign.mjs:4182 · 4184` `:is([data-sel], [data-mate])` → `+ [data-group="pair"]`, `:741 · :1802` 짝 카드 다른 조각 글도 읽게 selector 더함 · 이웃한 짝의 다른 조각이 data-mate 대신 data-group을 받음
 
 ## 아침에 볼 것 (사람이 정할 것 · 봐 줄 것)
 
@@ -134,3 +145,4 @@
 - 스모크 `has:`에는 pane에 뿌리를 둔 locator가 아니라 `page.locator(testid)`를 넘긴다(바깥에 대고 다시 찾는다).
 - New를 오른쪽에 연 채로도(Old 다듬기 중) Old 표의 '한글 표처럼 하기'가 켜져 있다 — dev는 이때 껐지만 6-3이 그때도 Old 표 도구를 켜 두게 해 맞췄다. 끄려면 `page.tsx`의 `follow:` 한 줄.
 - New 표 풀기 전환(움직임)은 없다(New 보기를 `docViews`로 받지 않음). 스모크 그림 캡션 단계(`the New pane shows a real table and figure`)가 가끔 흔들린다.
+- 7a: 계획의 `:721` 짝 1px · 꼬리표 검사는 그 문서에 짝이 없어 새 S8 단계로 옮겼다. 짝 카드 2px 규칙은 scope 없는 위치 판에서만 남는다. `paper.tsx` `selectedBlock`은 아직 `selectedId`로 재서 칸을 골라도 표 위아래 틈이 벌어지지 않는다(표는 합치기 대상이 아니라 해는 없어 보임).

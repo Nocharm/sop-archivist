@@ -19,6 +19,7 @@ import type { DocumentView } from "@/lib/api-sop";
 import { useI18n } from "@/lib/i18n";
 import { readOverlayKey, readTableLinks, readUnlinkableKey, type NewBox, type NewCellNote, type NewOverlay } from "@/lib/new-overlay-model";
 import { listPartSheets, listTabKeys, type FigureRowMode, type PaperItem, type PaperModel, type PaperTabKey, type PaperTabs } from "@/lib/paper-model";
+import { buildPickScope, resolveBoxUnit, type PickScope } from "@/lib/pick-scope-model";
 import { findUnitTable, isAllFolded } from "@/lib/table-tab-model";
 import type { FoldedTables } from "@/lib/use-folded-tables";
 
@@ -102,6 +103,9 @@ const NOT_PRESSED = ".strip-acts, .new-cell-note, .strip-lead";
 
 const ignoreDoubleClick = () => undefined;
 
+// 묶음 꼬리표 testid 앞말(assign-new-group-<박스>)과 칸마다 박스인 용지
+const NEW_GROUP_TAG = { testIdPrefix: "assign-new", isCellBox: true };
+
 export function NewPaper(props: NewPaperProps) {
   const { t } = useI18n();
   const { model, view, overlay } = props;
@@ -137,6 +141,17 @@ export function NewPaper(props: NewPaperProps) {
     const to = props.docOptions.findIndex((option) => option.value === props.docId);
     setSlide({ docId: props.docId, dir: from < 0 || to < 0 ? null : to > from ? "next" : "prev" });
   }
+
+  /** 고름 두 겹(11-23 명세 C1) - 고른 박스가 든 짝 카드 · 표를 얇은 테와 꼬리표로. New는 칸마다 박스라 표 꼬리표에 "배정은 표째"가 없다 */
+  function readScope(): PickScope | null {
+    const unitId = props.selectedUnitId;
+    if (unitId === null || !model) return null;
+    const box = model.units.get(resolveBoxUnit(unitId, model.units));
+    const pairId = box?.pair_id ?? null;
+    const rowIds = pairId === null ? [box?.id ?? unitId] : [...model.units.values()].filter((unit) => unit.pair_id === pairId).map((unit) => unit.id);
+    return buildPickScope(unitId, rowIds, model.units, model.tables);
+  }
+  const scope = readScope();
 
   /** 모델의 key에 없는 것 - 칩 글 · 펼친 칩 · 칸을 지금 누르고 놓고 끊을 수 있나 */
   function readKey(ids: ReadonlySet<number>): string {
@@ -303,6 +318,8 @@ export function NewPaper(props: NewPaperProps) {
         tableRows={tableRows}
         pageClassName="new-sheet new-paper"
         selectedId={props.selectedUnitId}
+        scope={scope}
+        groupTag={NEW_GROUP_TAG}
         pickedIds={props.pickedUnitIds}
         held={props.held}
         renderUnitActions={props.renderUnitActions}
