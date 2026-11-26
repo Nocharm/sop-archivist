@@ -124,12 +124,12 @@ def _rank(table: TableFacts, candidates: Iterable[TableFacts], orders: Mapping[i
     )
 
 
-def _list_candidates(table: TableFacts, tables: Sequence[TableFacts], *, is_layout: bool) -> list[TableFacts]:
-    """다른 언어 절반의 같은 겹(바깥 표끼리 · 칸 안의 표끼리) 표 가운데 벗김 상태가 is_layout인 것."""
+def list_candidates(table: TableFacts, tables: Sequence[TableFacts], *, is_layout: bool | None = None) -> list[TableFacts]:
+    """다른 언어 절반의 같은 겹(바깥 표끼리 · 칸 안의 표끼리) 표 가운데 벗김 상태가 is_layout인 것(None이면 벗김 상태를 보지 않는다)."""
     return [
         other for other in tables
         if other.id != table.id and _is_candidate_kind(other) and other.lang != table.lang
-        and (other.parent_id is None) == (table.parent_id is None) and other.is_layout == is_layout
+        and (other.parent_id is None) == (table.parent_id is None) and (is_layout is None or other.is_layout == is_layout)
     ]
 
 
@@ -146,7 +146,7 @@ def match_unwrapped_tables(tables: Sequence[TableFacts]) -> list[tuple[int, int]
     for table in sorted(by_id.values(), key=lambda item: item.index):
         if table.lang != "ko" or table.id in used:
             continue
-        free = [other for other in _list_candidates(table, list(by_id.values()), is_layout=True) if other.id not in used]
+        free = [other for other in list_candidates(table, list(by_id.values()), is_layout=True) if other.id not in used]
         ranked = _rank(table, free, orders)
         if ranked and is_same_form(table, ranked[0]):
             matches.append((table.id, ranked[0].id))
