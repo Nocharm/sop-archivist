@@ -220,3 +220,7 @@
 
 - 설계 · 계획(opus) → 스텝 1 백엔드가 합성 docx로 뽑는 연습 자료 JSON + 신선도 시험 · 2 `api.ts` 앞 가짜 서버(25경로, 업무 규칙 사본 없음) · 3 `/practice` 띠 + 실제 Assign(`useRouteBundleId` 한 줄) · 진입 두 곳 · 4 과제 12개 자동 ✓.
 - opus 검토가 막은 것: 실제 Assign에서 밀린 저장이 /practice로 옮길 때 버려짐 → `/bundles/<id>`는 id로만 가름(-1만 가짜). D22 짐작(확정 op)이 틀려 잇기/확정은 `focus_target_id`로 가름. 연습 스모크가 앞부터 있던 메뉴 결함을 찾음(v1.6.41).
+
+## 2026-11-27 — Fh 문서 하나인 칸 머리 줄 (fix/assign-new-head-fit)
+
+- `.pane-head > * { flex-shrink: 0 }` 때문에 하나뿐인 문서 제목 `.pane-title`이 줄지 않았다 — Old · New 모두 `Truncate` + `flex-shrink: 1; min-width: 4ch`. 연습 화면(1120, 과제 칸 펼침) 그림에서 찾음. overlap 감사 새 장면 `assign-pane-head-narrow`(고치기 전 16 문제를 잡음).
