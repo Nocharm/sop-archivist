@@ -40,7 +40,7 @@
 | F5 | `feat/pick-bar-labels` | 합침 | v1.6.40 · c25d82de | dev(7a00b66c) 합침 · vitest 2736 · build 경고 0 · `assign:` 스모크 ALL PASS 1527(짝 판 단계 따라 고침 뒤) · overlap `assign-pick-bar` 1120 · 1280 · 1440 · 1920 en/ko 8/8 · 호버 깜빡임 0회(480–720px 상자, en/ko) · 검토 생략(CSS) | 기본 1120 · 1440 두 단에서는 Old 박스가 약 340px라 라벨이 거의 다 접힘 — 넓힐 때만 이름 |
 | F7b | `feat/new-cell-menu-two-pane` | 합침 | v1.6.39 · e81d6ecb | dev(26b35312) 합침 · vitest 2741 · build 경고 0 · `assign:` 스모크 ALL PASS 1527(새 Shift+F10 검사 4 포함) · 검토 생략(작은 일) | Old 줄을 골라 둔 채 New를 마지막에 누르면 Shift+F10이 New 메뉴를 연다(전에는 Old) |
 | F9 | `feat/practice-page`(모음) | 진행 | 설계 19c9db36 · 스텝 1 be583398 | 스텝 1 자료: pytest 3851+시드 15 · ruff · sonnet 검토 막음 0(CI 바이트 고정 손질 e7f5c93d) · 스텝 2 가짜 서버: vitest 2768 · opus 검토 막음 1(실제 큐 쓰기가 /practice에서 버려짐) 고치는 중 | 스텝 3 화면 · 스텝 4 과제 남음 |
-| Fm | `fix/user-menu-close-on-nav` | 진행 |  |  | 연습 스모크가 찾은 앞부터 있던 결함 |
+| Fm | `fix/user-menu-close-on-nav` | 합침 | v1.6.41 · bc8c35f3 | vitest 2743 · build 경고 0 · baseline `account` 스모크 ALL PASS(새 검사 'user menu closes after navigating from an item') · 검토 생략(작은 일) | AI 작업 팝오버가 이동 뒤 닫히는 것은 스모크에 없음 |
 
 
 ## 이어 가기 (2026-11-26 밤 — 1차 피드백 중간, 다음 세션은 여기부터)
@@ -149,6 +149,7 @@
 - assign-queue-labels · `smoke/assign.mjs` 약 4645 자르기 알림 글 "Cut" → "Split" · 되돌리기 · 실패 알림 · 대기 칩의 이름 `assign.step.cut`을 단추 줄 이름 Split(나누기)에 맞춤. 같은 브랜치의 느린 저장 단계: 1번 "Queued 1" → "Queued · Delete"(순번 대신 개수 · 이름, 사용자 결정 1-A), 3 · 5 · 6번 검사 더함
 - F7b · `side-panel-model.test.ts` 새 시험 4 · `smoke/assign.mjs` 칸 메뉴 단계에 Shift+F10 검사 4 더함(기존 그대로) · 새 동작
 - F5 · `smoke/assign.mjs` "the pair panel never moves the picked box up or down" 고른 박스 다시 누르기 둘 · 가운데 → 글 자리(`position {x:24,y:12}`) · 라벨이 펼쳐진 단추 줄이 넓은 박스 가운데에 와서 160%에서 '잇기 상대 고르기'가 눌림(검사 · 기대 그대로)
+- Fm · `pw-smoke-baseline.mjs` account 단계 · 관리 항목 확인 뒤 Escape → 그 항목을 눌러 이동 + 닫힘 검사, 뒤 검사를 위해 /account로 돌아감(기존 검사 그대로) · 새 동작
 
 ## 아침에 볼 것 (사람이 정할 것 · 봐 줄 것)
 
