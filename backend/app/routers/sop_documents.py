@@ -41,6 +41,8 @@ from app.sop.editing import (
     EditStepIn,
     FollowTableOp,
     apply_edit,
+    continue_numbers,
+    list_unwrapping_tables,
     load_active_units,
     read_merged_pieces,
     redo_edit,
@@ -943,6 +945,17 @@ async def edit_units(
         await record_unit_edit_step(
             session, ctx.bundle, ctx.login_id, body.undo, document.id, before_state, result.closed_suggestion_ids
         )
+    unwrapping = list_unwrapping_tables(body.op) if edited else []
+    if unwrapping:
+        # 벗긴 Old 표의 번호 잇기는 벗기기 뒤 따로 한 칸이다(11-23 명세 D1-R5) - 첫 되돌리기는 번호만, 둘째가 다시 표로
+        numbering_state = await dump_bundle_state(session, ctx.bundle.id) if body.undo is not None else None
+        numbered = await continue_numbers(session, document, unwrapping, actor=ctx.login_id)
+        if numbered is not None:
+            if body.undo is not None and numbering_state is not None:
+                await record_unit_edit_step(
+                    session, ctx.bundle, ctx.login_id, body.undo, document.id, numbering_state, numbered.closed_suggestion_ids
+                )
+            result.document_revision = numbered.document_revision
     await session.commit()
     return result
 

@@ -15,7 +15,7 @@
 
 from collections import Counter, defaultdict
 from collections.abc import Collection, Iterable, Mapping, Sequence
-from dataclasses import dataclass, field, fields
+from dataclasses import dataclass, field, fields, replace
 from typing import Annotated, Any, Literal, TypeVar, assert_never
 
 from pydantic import BaseModel, Field, SerializerFunctionWrapHandler, model_serializer, StringConstraints
@@ -64,11 +64,13 @@ from app.sop.numbering import (
     NUMBER_PAIR,
     NUMBERED_KINDS,
     ClauseLine,
+    FlowLine,
     build_number_columns,
     find_inherited_numbers,
     get_hidden_len,
     get_number,
     normalize_number,
+    plan_continue,
     plan_follow,
     read_draft_number,
 )
@@ -76,6 +78,7 @@ from app.sop.pair_order import order_pair_card
 from app.sop.refs import REF_CONFIRMED, REF_LANG, REF_REJECTED, read_number_in_text
 from app.sop.schemas import NO_NUL
 from app.sop.segment import (
+    NUMBER_CELL,
     RULE_LEGACY,
     BlockView,
     TableView,
@@ -2784,9 +2787,20 @@ async def apply_edit(
     payload = op.model_dump()
     if change.merged:
         payload["merged"] = change.merged
+    await _save_edit(session, document, op.type, payload, result, change, actor)
+    if isinstance(op, SwitchLanguageOp):
+        result.shape = "split_pair" if op.piece is not None else "merged" if op.merge_pair else "unpaired"
+    return result
+
+
+async def _save_edit(
+    session: AsyncSession, document: Document, op_type: str, payload: dict[str, object], result: EditResult, change: _Change,
+    actor: str,
+) -> None:
+    """쓴 변경을 편집 기록 하나(되돌리기 한 칸)와 작업 기록으로 남긴다 — 편집 요청과 벗긴 뒤 번호 잇기(continue_numbers)가 함께 쓴다."""
     session.add(
         UnitEdit(
-            document_id=document.id, seq=await _start_new_edit(session, document), op=op.type, payload=payload,
+            document_id=document.id, seq=await _start_new_edit(session, document), op=op_type, payload=payload,
             created_unit_ids=result.created_unit_ids, retired_unit_ids=result.retired_unit_ids,
             regrouped={str(cell_id): list(move) for cell_id, move in change.regroup.items()},
             lang_changes={str(unit_id): list(langs) for unit_id, langs in change.langs.items()},
@@ -2800,10 +2814,90 @@ async def apply_edit(
             number_changes=_dump_numbers(change), actor=actor,
         )
     )
-    _record(session, document, "unit.edit", op.type, result, change, actor)
+    _record(session, document, "unit.edit", op_type, result, change, actor)
     await session.flush()
-    if isinstance(op, SwitchLanguageOp):
-        result.shape = "split_pair" if op.piece is not None else "merged" if op.merge_pair else "unpaired"
+
+
+CONTINUE_NUMBERS = "continue_numbers"  # 벗긴 Old 표의 번호 잇기 편집 기록 op — 요청 종류가 아니라 벗기기 요청 뒤 서버가 남긴다
+
+
+def list_unwrapping_tables(op: EditOp) -> list[int]:
+    """벗기는 편집(set_layout_table is_layout · set_layout_tables)이 고른 표 — 다른 편집은 빈 목록."""
+    if isinstance(op, SetLayoutTableOp):
+        return [op.table_id] if op.is_layout else []
+    if isinstance(op, SetLayoutTablesOp):
+        return list(op.table_ids)
+    return []
+
+
+async def continue_numbers(
+    session: AsyncSession, document: Document, table_ids: Sequence[int], *, actor: str
+) -> EditResult | None:
+    """벗긴 표의 숫자 칸 번호 잇기(11-23 명세 D1) — 편집 기록 하나(op "continue_numbers", 되돌리기 한 칸). 벗기기 요청이 그 편집을 쓴
+    뒤 같은 요청에서 부른다 — 첫 되돌리기는 번호만(벗긴 채), 둘째가 다시 표로(D1-R5, 여럿 벗기기도 두 칸 — 설계 §11-1).
+
+    Old 문서만 매긴다 — New는 이미 쓴 번호가 제 번호다(설계 §11-1). 흐름 줄은 묶이지 않은 활성 · 잡음 없는 번호 칸 단위를 원문 차례로,
+    표는 문서 차례로 하나씩(앞 표의 새 번호를 뒤 표가 이어 센다, numbering.plan_continue). 번호만 바꾸는 편집이라 판단 · 짝을 묻지도
+    바꾸지도 않는다. 아직 표인 표 · 바뀌는 줄이 없으면 아무것도 쓰지 않고 None.
+    """
+    if document.side != "old":
+        return None
+    extraction_id = await get_latest_extraction_id(session, document.id)
+    tables = await _load_unwrap_tables(session, extraction_id)
+    picked = [table_id for table_id in dict.fromkeys(table_ids) if table_id in tables and tables[table_id].is_unwrapped]
+    if not picked:
+        return None
+    units = list(
+        await session.scalars(
+            select(Unit)
+            .where(
+                Unit.extraction_id == extraction_id, Unit.status == UNIT_ACTIVE, Unit.kind.in_(NUMBERED_KINDS),
+                Unit.noise_kind.is_(None), Unit.group_unit_id.is_(None),
+            )
+            .order_by(Unit.pos_seq, Unit.pos_start, Unit.id)
+        )
+    )
+    cells = {
+        block_id: (table_id, row_index, col_index, text)
+        for block_id, table_id, row_index, col_index, text in (
+            await session.execute(
+                select(SourceBlock.id, SourceBlock.table_id, SourceBlock.row_index, SourceBlock.col_index, SourceBlock.text).where(
+                    SourceBlock.extraction_id == extraction_id, SourceBlock.table_id.is_not(None)
+                )
+            )
+        ).tuples()
+    }
+    # 행마다 글이 있는 첫 칸 — 번호 칸이 그 칸일 때만 행 번호다(값 칸 "농도 | 5 | %"의 5는 아니다)
+    first_cols: dict[tuple[int, int | None], int] = {}
+    for table_id, row_index, col_index, text in cells.values():
+        if col_index is not None and has_visible_char(text):
+            key = (table_id, row_index)
+            first_cols[key] = min(first_cols.get(key, col_index), col_index)
+    flow: list[FlowLine] = []
+    for unit in units:
+        cell = cells.get(unit.spans[0][0]) if unit.spans else None
+        is_cell = (
+            unit.number_source == NUMBER_CELL and unit.number_set is None and cell is not None
+            and cell[2] == first_cols.get((cell[0], cell[1]))
+        )
+        line_table = (
+            None if is_band_heading(unit.kind, unit.table_id)
+            else find_line_table(unit.kind, unit.table_id, None if cell is None else cell[0], tables)
+        )
+        flow.append(FlowLine(number=get_number(unit), lang=unit.lang, kind=unit.kind, table_id=line_table, is_cell=is_cell))
+    firsts = {line.table_id: index for index, line in reversed(list(enumerate(flow))) if line.table_id is not None}
+    numbers: dict[int, tuple[NumberSet, NumberSet]] = {}
+    for table_id in sorted((table_id for table_id in picked if table_id in firsts), key=firsts.__getitem__):
+        for index, number in plan_continue(flow, table_id).items():
+            if len(number) > MAX_NUMBER_CHARS:
+                continue
+            numbers[units[index].id] = (units[index].number_set, number)
+            flow[index] = replace(flow[index], number=number, is_cell=False)
+    if not numbers:
+        return None
+    change = _Change(numbers=numbers)
+    result = await _write_change(session, document, extraction_id, change, confirm=False, actor=actor)
+    await _save_edit(session, document, CONTINUE_NUMBERS, {"type": CONTINUE_NUMBERS, "table_ids": picked}, result, change, actor)
     return result
 
 

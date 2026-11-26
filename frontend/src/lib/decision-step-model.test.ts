@@ -83,7 +83,7 @@ describe("shouldDropSelectionOnStep", () => {
     expect(shouldDropSelectionOnStep(step("drop_translation"))).toBe(false);
   });
   it("keeps the selection for in-place edits", () => {
-    for (const op of ["set_language", "set_ref", "clear_ref", "set_number", "set_noise_reason"]) expect(shouldDropSelectionOnStep(step(op)), op).toBe(false);
+    for (const op of ["set_language", "set_ref", "clear_ref", "set_number", "continue_numbers", "set_noise_reason"]) expect(shouldDropSelectionOnStep(step(op)), op).toBe(false);
   });
   it("keeps the selection for decision steps", () => {
     for (const op of ["confirm", "hold", "link", "unlink", "mark_new", "link_source", "confirm_identical", "accept_ai", "delete", "move_out", "clear", "reset"]) {
@@ -98,7 +98,7 @@ describe("shouldDropSelectionOnStep", () => {
 
 describe("isUnitEditStep", () => {
   it("is true for every source edit step, shape and in-place", () => {
-    for (const op of ["cut", "carve", "merge", "unmerge", "move_boundary", "set_layout_table", "attach_caption", "detach_caption", "set_first_row_caption", "group_figures", "ungroup_figures", "set_heading", "clear_noise", "start_body", "set_language", "set_ref", "clear_ref", "set_number", "set_noise_reason"]) {
+    for (const op of ["cut", "carve", "merge", "unmerge", "move_boundary", "set_layout_table", "attach_caption", "detach_caption", "set_first_row_caption", "group_figures", "ungroup_figures", "set_heading", "clear_noise", "start_body", "set_language", "set_ref", "clear_ref", "set_number", "continue_numbers", "set_noise_reason"]) {
       expect(isUnitEditStep(op), op).toBe(true);
     }
   });
