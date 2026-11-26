@@ -640,7 +640,8 @@ async function runShapeTools({ page, place, docId, prefix, sideTestId, api, head
     await join.waitFor({ state: "attached", timeout: T });
     // 단추는 틈에 올렸을 때만 눌린다(pointer-events) - 단추 줄이 다 펼쳐진 뒤 틈에 올려 누른다(gap join 단계와 같은 길)
     await page.waitForFunction(() => { const acts = document.querySelector(".strip-acts[data-open]"); return acts === null || acts.getAnimations().length === 0; }, null, { timeout: T });
-    await pane.locator(".strip-gap", { has: join }).hover({ position: { x: 200, y: 2 } });
+    // has:는 바깥 locator에 대고 다시 찾으므로 pane에 뿌리를 둔 join이 아니라 testid만으로 넘긴다
+    await pane.locator(".strip-gap", { has: page.locator(`[data-testid="${prefix}-join-${first.id}-${second.id}"]`) }).hover({ position: { x: 200, y: 2 } });
     await page.waitForFunction(() => [...document.querySelectorAll(".strip-gap:hover .strip-merge")].some((el) => getComputedStyle(el).pointerEvents === "auto"), null, { timeout: T });
     const joined = waitEdit();
     await join.click();
