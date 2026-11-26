@@ -152,6 +152,13 @@ class SplitOp(BaseModel):
     at: Offset
 
 
+class SplitSentencesOp(BaseModel):
+    """박스 하나를 문장마다 — 규칙 1의 문장 경계로 자른다(이미 올린 문서의 박스 규칙은 그대로)."""
+
+    type: Literal["split_sentences"]
+    unit_id: DbId
+
+
 class MergeOp(BaseModel):
     type: Literal["merge"]
     unit_ids: list[DbId] = Field(min_length=2, max_length=MAX_EDIT_UNITS)
@@ -382,7 +389,7 @@ EditOp = Annotated[
     SplitOp | MergeOp | UnmergeOp | MoveBoundaryOp | CarveOp | SetLanguageOp | SwitchLanguageOp
     | SetLayoutTableOp | AttachCaptionOp | DetachCaptionOp | SetFirstRowCaptionOp | GroupFiguresOp
     | UngroupFiguresOp | SetRefOp | ClearRefOp | ClearNoiseOp | SetNoiseReasonOp | StartBodyOp | SetNumberOp | SetHeadingOp | ReorderPairOp
-    | ReorderUnwrappedOp | SetIndentsOp | FollowTableOp,
+    | ReorderUnwrappedOp | SetIndentsOp | FollowTableOp | SplitSentencesOp,
     Field(discriminator="type"),
 ]
 
@@ -700,6 +707,29 @@ async def _plan_split(session: AsyncSession, extraction_id: ExtractionId, op: Sp
     drafts = [_build_draft(unit, left, blocks), _build_draft(unit, right, blocks)]
     if unit.kind == CAPTION_KIND:
         await _ensure_caption_split_languages(session, unit, [draft.lang for draft in drafts])
+    return _build_replacement([unit], drafts)
+
+
+async def _plan_split_sentences(session: AsyncSession, extraction_id: ExtractionId, op: SplitSentencesOp) -> _Change:
+    """범위마다 규칙 1의 문장 경계로 잘라 조각마다 초안 하나 — 합친 박스는 범위 경계에서도 나뉘어 합치기 전 자리로 돌아간다.
+    캡션은 언어마다 하나 규칙이라 받지 않고, 조각이 하나뿐이면 나눌 것이 없다."""
+    unit = (await load_active_units(session, extraction_id, [op.unit_id]))[op.unit_id]
+    if unit.kind not in ("sentence", "cell_sentence", "heading"):
+        raise_rule(422, "invalid_unit_kind", unit_ids=[unit.id])
+    ensure_not_noise([unit])
+    blocks = await _load_unit_blocks(session, extraction_id, [unit])
+    spans = [
+        (block_id, start + sentence_start, start + sentence_end)
+        for block_id, start, end in to_spans(unit.spans)
+        for sentence_start, sentence_end in split_block_text(
+            blocks[block_id].text[start:end], rule=RULE_LEGACY, split_lines=blocks[block_id].splits_lines
+        )
+    ]
+    if len(spans) < 2:
+        raise_rule(422, "empty_part", unit_id=unit.id, reason="one_sentence")
+    drafts = [_build_draft(unit, [span], blocks) for span in spans]
+    for draft in drafts:
+        draft.lang = draft.lang or unit.lang
     return _build_replacement([unit], drafts)
 
 
@@ -2121,6 +2151,8 @@ async def _plan(session: AsyncSession, document_id: int, extraction_id: Extracti
             return await _plan_set_indents(session, extraction_id, op)
         case FollowTableOp():
             return await _plan_follow_table(session, document_id, extraction_id, op)
+        case SplitSentencesOp():
+            return await _plan_split_sentences(session, extraction_id, op)
         case _:
             assert_never(op)
 

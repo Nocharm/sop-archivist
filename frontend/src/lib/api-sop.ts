@@ -528,6 +528,8 @@ export interface DocumentView {
 
 export type EditOp =
   | { type: "split"; unit_id: number; at: number }
+  /** 박스 하나를 문장마다(규칙 1 경계) - 되돌리기 한 번 */
+  | { type: "split_sentences"; unit_id: number }
   | { type: "merge"; unit_ids: number[] }
   | { type: "unmerge"; unit_id: number }
   | { type: "move_boundary"; left_unit_id: number; right_unit_id: number; at: number }

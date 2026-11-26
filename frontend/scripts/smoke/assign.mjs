@@ -1097,6 +1097,108 @@ await runStep("assign: right-click an Old sentence to split it or change its lan
   check("the first piece's row is selected after the split", (await page.locator('[data-testid="assign-row-id"]').count()) === 1);
 });
 
+// 문장마다 나누기(쪼개기 먼저 §9) - 합친 박스는 합치기 전 자리로 나뉘고 되돌리기 한 번, 한 문장뿐이면 까닭을 알린다. 세 길: Old 우클릭 메뉴 · New ⇧S · New Shape 줄 단추.
+// 양 단 New 박스에는 우클릭 메뉴가 없다(문장 박스만 연다) - 글쇠 · Shape 줄로 본다. 합성 docx 둘(같은 본문)을 새 묶음에 올려 보고 끝에 묶음을 지운다
+await runStep("assign: Split by sentence makes one box per sentence, one Ctrl+Z, a single sentence tells why", { devUser: "dev.admin", allowConsoleErrors: true }, async ({ page }) => {
+  const headers = { "X-Dev-User": "dev.admin" };
+  const backend = resolve(SCRIPT_DIR, "../../../backend");
+  const oldFile = resolve(SHOT_DIR, "SYNTHETIC_OLD-91_split_sentences.docx");
+  const newFile = resolve(SHOT_DIR, "SYNTHETIC_SOP-91_split_sentences.docx");
+  const build = [
+    "import sys",
+    "from tests.docx_factory import build_docx, p",
+    "body = p('5. 절차', 'Heading1') + p('탱크를 비운다.') + p('밸브를 닫는다.') + p('펌프를 끈다.') + p('압력을 확인한다.') + p('온도를 기록한다.') + p('합성 장비를 끈다.')",
+    "open(sys.argv[1], 'wb').write(build_docx(body))",
+    "open(sys.argv[2], 'wb').write(build_docx(body, headers=[p('합성 새 문서')]))",
+  ].join("\n");
+  execFileSync(findBackendPython(), ["-c", build, oldFile, newFile], { cwd: backend, stdio: "inherit" });
+  const created = await (await page.request.post(`${BASE}/api/bundles`, { headers, data: { title: "SYNTHETIC split by sentence", is_synthetic: true } })).json();
+  const api = `${BASE}/api/bundles/${created.id}`;
+  const getJson = async (path) => (await page.request.get(`${api}${path}`, { headers })).json();
+  const mime = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+  const oldUp = await page.request.post(`${api}/documents`, { headers, multipart: { side: "old", file: { name: "SYNTHETIC_OLD-91_split_sentences.docx", mimeType: mime, buffer: readFileSync(oldFile) } } });
+  const newUp = await page.request.post(`${api}/documents`, { headers, multipart: { side: "new", doc_type: "sop", file: { name: "SYNTHETIC_SOP-91_split_sentences.docx", mimeType: mime, buffer: readFileSync(newFile) } } });
+  const oldDoc = await oldUp.json();
+  const newDoc = await newUp.json();
+  check("an Old and a written New document are uploaded", oldUp.status() === 201 && newUp.status() === 201 && oldDoc.status === "ready" && newDoc.status === "ready", `${oldUp.status()} ${newUp.status()}`);
+  const readUnits = async (docId) => (await getJson(`/documents/${docId}/view`)).units;
+  // 이웃한 두 문장을 API로 합쳐 문장 둘이 든 박스를 만든다
+  const makeBox = async (docId, text1, text2) => {
+    const view = await getJson(`/documents/${docId}/view`);
+    const one = view.units.find((unit) => unit.text === text1);
+    const two = view.units.find((unit) => unit.text === text2);
+    if (!one || !two) return null;
+    const merged = await page.request.post(`${api}/documents/${docId}/edits`, { headers, data: { revision: view.document.revision, confirm: false, op: { type: "merge", unit_ids: [one.id, two.id] } } });
+    return merged.status() === 200 ? (await readUnits(docId)).find((unit) => unit.text.includes(text1) && unit.text.includes(text2)) : null;
+  };
+  const oldBox = await makeBox(oldDoc.id, "탱크를 비운다.", "밸브를 닫는다.");
+  const newBoxKey = await makeBox(newDoc.id, "탱크를 비운다.", "밸브를 닫는다.");
+  const newBoxButton = await makeBox(newDoc.id, "펌프를 끈다.", "압력을 확인한다.");
+  const isReady = oldBox && newBoxKey && newBoxButton;
+  check("each document has a box with two sentences", Boolean(isReady));
+  if (!isReady) {
+    await removeShapeBundle(page, { api, headers });
+    return;
+  }
+  const waitCount = async (docId, expected) => {
+    for (let tries = 0; tries < 60; tries += 1) {
+      if ((await readUnits(docId)).length === expected) return true;
+      await page.waitForTimeout(250);
+    }
+    return false;
+  };
+  const undo = async (docId, expected) => {
+    await page.waitForLoadState("networkidle");
+    await page.locator('[data-testid="assign-undo"]:not([disabled])').click();
+    return waitCount(docId, expected);
+  };
+  await page.goto(`${BASE}/bundles/${created.id}/assign`);
+  await wait(page, "assign-bar");
+  if ((await page.locator('[data-testid="assign-new"]').count()) === 0) await page.locator('[data-testid="assign-view-two"]').click();
+  await wait(page, "assign-new");
+  // 1) Old - 우클릭 메뉴
+  const oldBefore = (await readUnits(oldDoc.id)).length;
+  const oldPiece = page.locator(`[data-testid="assign-paper-unit-${oldBox.id}"]`).first();
+  await oldPiece.evaluate((node) => node.scrollIntoView({ block: "center" }));
+  await oldPiece.click({ button: "right" });
+  await wait(page, "assign-ctx-menu");
+  check("the menu offers Split by sentence right under Split here", await page.locator('[data-testid="assign-ctx-menu"] [data-testid^="assign-ctx-"]').evaluateAll((els) => { const ids = els.map((el) => el.getAttribute("data-testid")); return ids.indexOf("assign-ctx-split_sentences") === ids.indexOf("assign-ctx-split") + 1; }));
+  await page.locator('[data-testid="assign-ctx-split_sentences"]').click();
+  check("old: Split by sentence from the menu makes one box per sentence", await waitCount(oldDoc.id, oldBefore + 1));
+  check("old: one Undo puts the box back", await undo(oldDoc.id, oldBefore));
+  // 2) New - 박스를 누르고 Shift+S(양 단 New 박스에는 우클릭 메뉴가 없다)
+  await page.waitForLoadState("networkidle");
+  const newBefore = (await readUnits(newDoc.id)).length;
+  const keyPiece = page.locator(`[data-testid="assign-new-paper-unit-${newBoxKey.id}"]`).first();
+  await keyPiece.evaluate((node) => node.scrollIntoView({ block: "center" }));
+  await keyPiece.click();
+  await page.keyboard.press("Shift+S");
+  const isConfirm = await page.locator('[data-testid="assign-edit-confirm-confirm"]').waitFor({ timeout: 2000 }).then(() => true, () => false);
+  if (isConfirm) await page.locator('[data-testid="assign-edit-confirm-confirm"]').click();
+  check("new: Shift+S splits the picked New box by sentence", await waitCount(newDoc.id, newBefore + 1));
+  check("new: one Undo puts the box back", await undo(newDoc.id, newBefore));
+  // 3) New - 오른쪽 칸 Shape 줄의 단추
+  await page.waitForLoadState("networkidle");
+  const buttonPiece = page.locator(`[data-testid="assign-new-paper-unit-${newBoxButton.id}"]`).first();
+  await buttonPiece.evaluate((node) => node.scrollIntoView({ block: "center" }));
+  await buttonPiece.click();
+  await page.locator(`[data-testid="assign-shape-line-${newBoxButton.id}"]`).hover();
+  await page.locator(`[data-testid="assign-shape-split_sentences-${newBoxButton.id}"]`).click();
+  if (await page.locator('[data-testid="assign-edit-confirm-confirm"]').waitFor({ timeout: 2000 }).then(() => true, () => false)) await page.locator('[data-testid="assign-edit-confirm-confirm"]').click();
+  check("new: the Shape line button splits the box by sentence", await waitCount(newDoc.id, newBefore + 1));
+  check("new: one Undo puts the box back (button)", await undo(newDoc.id, newBefore));
+  // 한 문장뿐인 박스에서 Shift+S - 아무것도 바뀌지 않고 까닭을 알린다
+  await page.waitForLoadState("networkidle");
+  const single = (await readUnits(newDoc.id)).find((unit) => unit.text === "온도를 기록한다.");
+  const singlePiece = page.locator(`[data-testid="assign-new-paper-unit-${single.id}"]`).first();
+  await singlePiece.evaluate((node) => node.scrollIntoView({ block: "center" }));
+  await singlePiece.click();
+  await page.keyboard.press("Shift+S");
+  await page.locator('[data-testid^="toast-"]', { hasText: "only one sentence" }).first().waitFor({ timeout: T });
+  check("Shift+S on a single sentence says there is only one and changes nothing", (await readUnits(newDoc.id)).length === newBefore);
+  await removeShapeBundle(page, { api, headers });
+});
+
 await runStep("assign: an edit survives looking at another unit", { drafting: true }, async ({ page }) => {
   await page.goto(`${BASE}/bundles/${freshBundleId}/assign`);
   await wait(page, "assign-bar");

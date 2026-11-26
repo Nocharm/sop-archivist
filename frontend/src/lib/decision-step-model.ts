@@ -48,7 +48,7 @@ const DECISION_STEP_OPS: ReadonlySet<string> = new Set(["confirm", "hold", "link
 
 /** 원문 편집 단계(되돌리기 기록의 op, 자르기는 cut) - 서버는 판단이 걸린 편집을 되돌리지 않는다(confirm 없이) */
 const UNIT_EDIT_STEP_OPS: ReadonlySet<string> = new Set([
-  "cut", "carve", "merge", "unmerge", "move_boundary", "set_layout_table", "attach_caption", "detach_caption", "set_first_row_caption",
+  "cut", "split_sentences", "carve", "merge", "unmerge", "move_boundary", "set_layout_table", "attach_caption", "detach_caption", "set_first_row_caption",
   "group_figures", "ungroup_figures", "set_heading", "clear_noise", "start_body", ...IN_PLACE_EDIT_OPS,
 ]);
 

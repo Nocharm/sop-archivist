@@ -274,6 +274,107 @@ def test_split_rejects_bad_offsets(client: TestClient, case: str, code: str) -> 
 
 # ── 합치기 ────────────────────────────────────────────────────────────────────
 
+# ── 문장마다 나누기 ───────────────────────────────────────────────────────────
+
+S1, S2, S3 = "합성 장비를 켠다.", "합성 시료를 넣는다.", "합성 결과를 확인한다."
+THREE_SENTENCES = f"{S1} {S2} {S3}"
+
+
+def _setup_paragraph_box(client: TestClient, monkeypatch: pytest.MonkeyPatch, body: str, side: str = "old") -> Fixture:
+    """규칙 2로 올려 문단 하나가 박스 하나인 문서 — 문장마다 나누기는 이미 올린 문서도 규칙 1 경계로 자른다."""
+    monkeypatch.setattr("app.sop.ingest.NEW_SPLIT_RULE", 2)
+    if side == "new":
+        bundle = create_bundle(client, is_synthetic=True)
+        doc = _upload_ready(client, bundle["id"], build_docx(body), NEW_NAME, side="new", doc_type="sop")
+        return Fixture(bundle["id"], 0, doc, get_view(client, bundle["id"], doc["id"]))
+    return _setup(client, body)
+
+
+def _split_sentences(client: TestClient, fx: Fixture, unit: dict, **kwargs: bool) -> httpx2.Response:
+    return _edit(client, fx.bundle_id, fx.doc["id"], {"type": "split_sentences", "unit_id": unit["id"]}, **kwargs)
+
+
+def test_split_sentences_cuts_at_every_sentence_in_one_edit(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    fx = _setup_paragraph_box(client, monkeypatch, p(THREE_SENTENCES))
+    box = find_unit(fx.view, THREE_SENTENCES)
+
+    result = _ok(_split_sentences(client, fx, box))
+
+    view = get_view(client, fx.bundle_id, fx.doc["id"])
+    by_id = {unit["id"]: unit for unit in view["units"]}
+    assert [by_id[unit_id]["text"] for unit_id in result["created_unit_ids"]] == [S1, S2, S3]
+    assert result["retired_unit_ids"] == [box["id"]]
+    assert _find_coverage_problems(view) == []
+
+
+def test_a_merged_box_splits_back_into_its_places(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    fx = _setup_paragraph_box(client, monkeypatch, p(S1) + p(ENGLISH) + p(S2))
+    _ok(_merge(client, fx, find_unit(fx.view, S1), find_unit(fx.view, S2)))
+    view = get_view(client, fx.bundle_id, fx.doc["id"])
+    merged = next(unit for unit in view["units"] if S1 in unit["text"] and S2 in unit["text"])
+
+    result = _ok(_split_sentences(client, fx, merged))
+
+    view = get_view(client, fx.bundle_id, fx.doc["id"])
+    by_id = {unit["id"]: unit for unit in view["units"]}
+    assert [by_id[unit_id]["text"] for unit_id in result["created_unit_ids"]] == [S1, S2]
+
+
+def test_split_sentences_is_one_undo_step(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    fx = _setup_paragraph_box(client, monkeypatch, p(THREE_SENTENCES))
+    box = find_unit(fx.view, THREE_SENTENCES)
+    _ok(_split_sentences(client, fx, box))
+
+    _ok(_step(client, fx.bundle_id, fx.doc["id"], "undo"))
+
+    view = get_view(client, fx.bundle_id, fx.doc["id"])
+    assert find_unit(view, THREE_SENTENCES)["id"] == box["id"]
+    assert [unit["text"] for unit in view["units"] if unit["text"] in (S1, S2, S3)] == []
+
+
+def test_one_sentence_and_a_caption_are_refused(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    fx = _setup_paragraph_box(client, monkeypatch, p(S1) + tbl([["합성 값", "Synthetic value"]]))
+    one = find_unit(fx.view, S1)
+    table = next(unit for unit in fx.view["units"] if unit["kind"] not in ("sentence", "heading", "cell_sentence"))
+
+    refused = _split_sentences(client, fx, one)
+
+    assert _code(refused) == (422, "empty_part")
+    assert refused.json()["detail"]["reason"] == "one_sentence"
+    assert _code(_split_sentences(client, fx, table)) == (422, "invalid_unit_kind")
+
+
+def test_the_first_piece_keeps_the_number(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    fx = _setup_paragraph_box(client, monkeypatch, p(f"5.1 {S1} {S2}"))
+    box = next(unit for unit in fx.view["units"] if S1 in unit["text"])
+
+    result = _ok(_split_sentences(client, fx, box))
+
+    view = get_view(client, fx.bundle_id, fx.doc["id"])
+    first, second = (next(unit for unit in view["units"] if unit["id"] == unit_id) for unit_id in result["created_unit_ids"])
+    assert (first["number"]["value"], second["number"]["value"]) == ("5.1", None)
+
+
+def test_a_new_document_box_splits_and_its_targets_follow(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    fx = _setup_paragraph_box(client, monkeypatch, p(THREE_SENTENCES), side="new")
+    box = find_unit(fx.view, THREE_SENTENCES)
+
+    _ok(_split_sentences(client, fx, box))
+
+    targets = _load_targets(fx.doc["target_doc_id"])
+    assert [target["text"] for target in targets] == [S1, S2, S3]
+
+
+def test_a_decided_box_asks_first(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    fx = _setup_paragraph_box(client, monkeypatch, p(THREE_SENTENCES))
+    box = find_unit(fx.view, THREE_SENTENCES)
+    _save_merged_target(client, fx, box)
+
+    refused = _split_sentences(client, fx, box)
+
+    assert _code(refused) == (409, "confirm_required")
+
+
 
 def test_merge_far_apart_sentences(client: TestClient) -> None:
     fx = _setup(client)

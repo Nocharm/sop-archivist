@@ -9,7 +9,7 @@ import { getPairMergeReason, hasBothScripts, planJoin, type JoinPlan } from "./s
 
 export type AssignMenuAction =
   | "delete" | "clear"
-  | "split" | "merge_prev" | "merge_next" | "pair_prev" | "pair_next" | "pair_pick" | "unpair" | "lang" | "piece_lang"
+  | "split" | "split_sentences" | "merge_prev" | "merge_next" | "pair_prev" | "pair_next" | "pair_pick" | "unpair" | "lang" | "piece_lang"
   | "ref_mark" | "ref_clear"
   | "table_layout" | "table_rewrap" | "table_ai_order"
   | "caption_attach_prev" | "caption_attach_next" | "caption_of" | "caption_detach"
@@ -253,6 +253,8 @@ export function buildAssignMenu(ctx: AssignMenuContext): AssignMenuGroups {
   const editReason = getEditBlocker(ctx, ctx.target);
   const retireReason = getRetireBlocker(ctx, ctx.target);
   const splitItem = build("split", retireReason ?? (ctx.canSplit ? null : why("nothingToSplit")));
+  // 문장 수는 화면이 세지 않는다(서버 규칙의 사본을 만들지 않는다) - 한 문장이면 서버가 거절하고 그 문구를 알린다
+  const splitSentencesItem = build("split_sentences", retireReason ?? (ctx.canSplit ? null : why("nothingToSplit")));
   const langItem = { ...build("lang", editReason ?? (ctx.target.lang === "ref" ? why("refLang") : null)), lang: ctx.target.lang, ...buildShapeLangReasons(ctx, editReason) };
   // 묶음(표·그림)에는 문장 항목이 뜻이 없어 묶음 항목만 둔다
   if (BUNDLE_KINDS.has(ctx.target.kind)) return { assign, edit: [...buildTableItems(ctx), ...buildBundleCaptionItems(ctx)] };
@@ -276,6 +278,7 @@ export function buildAssignMenu(ctx: AssignMenuContext): AssignMenuGroups {
     assign,
     edit: [
       splitItem,
+      splitSentencesItem,
       buildJoin(ctx, ctx.prev, "prev"),
       buildJoin(ctx, ctx.next, "next"),
       // 떨어져 있는 문장과 짝 맺기 - 짝이 없는 한글·영어 문장에서만. 누르면 다른 문장을 하나 고른다
@@ -335,7 +338,7 @@ export function getPairSetBlocker(units: ViewUnit[]): string | null {
 
 // 다듬기 줄에 단추로 두는 일 - 언어는 세 칸이, 참조 줄 표시는 아래 카드가, 확정·지우기는 3번이 맡는다
 const SHAPE_LINE_ACTIONS: ReadonlySet<AssignMenuAction> = new Set([
-  "split", "merge_prev", "pair_prev", "merge_next", "pair_next", "pair_pick", "unpair", "table_layout",
+  "split", "split_sentences", "merge_prev", "pair_prev", "merge_next", "pair_next", "pair_pick", "unpair", "table_layout",
   "caption_detach", "to_sentence",
 ]);
 

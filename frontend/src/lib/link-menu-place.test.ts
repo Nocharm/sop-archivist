@@ -41,5 +41,18 @@ describe("placeLinkMenu", () => {
       expect(top + menu.height).toBeLessThanOrEqual(view.height - 8);
     }
   });
+
+  it("위·아래 모두 안 맞고 옆이 비어 있으면 줄 옆(오른쪽)에 놓아 줄을 덮지 않는다", () => {
+    const tall = { width: 260, height: 571 };
+    const view = { width: 1000, height: 720 };
+    expect(placeLinkMenu({ top: 163, bottom: 222, left: 135, right: 500 }, 300, tall, view)).toEqual({ top: 141, left: 510 });
+  });
+
+  it("오른쪽이 모자라면 왼쪽에, 양옆도 없으면 누른 y 근처에 겹쳐 선다", () => {
+    const tall = { width: 260, height: 571 };
+    const view = { width: 1000, height: 720 };
+    expect(placeLinkMenu({ top: 163, bottom: 222, left: 400, right: 900 }, 300, tall, view)).toEqual({ top: 141, left: 130 });
+    expect(placeLinkMenu({ top: 163, bottom: 222, left: 100, right: 950 }, 300, tall, view, 180).top).toBe(141);
+  });
 });
 
