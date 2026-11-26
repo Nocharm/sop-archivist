@@ -2,7 +2,6 @@
 // 2026-11-20-assign-mockup1 D1(규칙 1-6, docs/architecture/decisions.md). 화면 · 요청 · 시간은 모른다.
 
 import type { EditOp } from "./api-sop";
-import { listWaitNumbers, type QueueState } from "./command-queue";
 import type { PickSide } from "./doc-shape-model";
 
 /** 저절로 삭제된 줄의 블록(unitId null이면 블록 전체)이나 그 줄 하나 */
@@ -286,13 +285,6 @@ export function isGlobalPending(state: PendingList): boolean {
  */
 export function isUnitUnsettled(state: PendingList, docId: number, unitId: number): boolean {
   return state.pending.some((entry) => (entry.isGlobal || !isDecisionKind(entry.kind)) && (entry.isGlobal || entry.unitIds.includes(unitId) || (entry.docId === docId && entry.unitIds.length === 0)));
-}
-
-const NO_WAITS: ReadonlyMap<number, number> = new Map();
-
-/** 기다리는 명령의 박스 → 칩 "대기 n"(A1-R5) - 기다리는 것이 없으면 늘 같은 빈 값(용지를 다시 그리지 않게) */
-export function buildPaperWaits<T>(state: Pick<QueueState<T>, "waiting">): ReadonlyMap<number, number> {
-  return state.waiting.length === 0 ? NO_WAITS : listWaitNumbers(state);
 }
 
 /** 처리 중 알약의 글 키 - 판단 저장은 결정 칸 단추가 이미 보이고, 묶음 전체 일은 그릴 자리가 없어 null(설계 D4 표) */
