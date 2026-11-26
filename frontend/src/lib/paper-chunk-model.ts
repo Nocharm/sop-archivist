@@ -58,7 +58,7 @@ export function pickNearChunks(boxes: ReadonlyArray<{ top: number; bottom: numbe
 
 // 덩어리 다시 그리기의 판단 - 처리 중 · 삭제 접힘 · 저장 중인 번호는 글쇠마다 통째로 새 값이라, 덩어리마다 그 안의 것만 글로 읽어 견준다(그 안에 없으면 빈 글)
 
-/** 이 덩어리의 처리 중 표시 - 잠금 · 쉬머 · 대기 차례 · 알약. tableIds는 이 덩어리에 표나 벗긴 표의 머리가 있는 표 */
+/** 이 덩어리의 처리 중 표시 - 잠금 · 쉬머 · 대기 칩 · 알약. tableIds는 이 덩어리에 표나 벗긴 표의 머리가 있는 표 */
 export function readChunkPending(pending: PaperPending | undefined, unitIds: ReadonlySet<number>, tableIds: ReadonlySet<number> = new Set()): string {
   if (!pending) return "";
   const isHere = (place: PendingPlace): boolean => {

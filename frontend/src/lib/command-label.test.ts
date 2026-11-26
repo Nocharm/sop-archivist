@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { EDIT_LABELS, readEditLabelKey, trimReason } from "./command-label";
+import { EDIT_LABELS, readEditLabelKey, readKeyLabelKey, trimReason } from "./command-label";
 import { MESSAGES } from "./i18n-messages";
 
 describe("command labels in the failure notice", () => {
@@ -18,6 +18,28 @@ describe("command labels in the failure notice", () => {
       for (const name of ["{action}", "{no}", "{reason}", "{n}"]) expect(MESSAGES[lang]["assign.queue.failed"]).toContain(name);
       for (const name of ["{action}", "{reason}", "{n}"]) expect(MESSAGES[lang]["assign.queue.failedAll"]).toContain(name);
       expect(MESSAGES[lang]["assign.queue.chip"]).toContain("{n}");
+      expect(MESSAGES[lang]["assign.queue.chipNamed"]).toContain("{action}");
+      for (const name of ["{action}", "{n}"]) expect(MESSAGES[lang]["assign.queue.chipMore"]).toContain(name);
+      for (const name of ["{action}", "{n}"]) expect(MESSAGES[lang]["assign.queue.chipTimes"]).toContain(name);
+    }
+  });
+});
+
+describe("names of keys queued behind a barrier", () => {
+  it("names a key by the command it sends and leaves moves unnamed", () => {
+    expect(readKeyLabelKey({ key: "j", shift: true, ctrl: false })).toBe("assign.step.merge");
+    expect(readKeyLabelKey({ key: "enter", shift: false, ctrl: false })).toBe("assign.step.confirm");
+    expect(readKeyLabelKey({ key: "delete", shift: false, ctrl: false })).toBe("assign.step.delete");
+    expect(readKeyLabelKey({ key: "z", shift: false, ctrl: true })).toBe("assign.queue.act.undo");
+    expect(readKeyLabelKey({ key: "z", shift: true, ctrl: true })).toBe("assign.queue.act.redo");
+    expect(readKeyLabelKey({ key: "j", shift: false, ctrl: false })).toBeNull();
+    expect(readKeyLabelKey({ key: "q", shift: false, ctrl: false })).toBeNull();
+  });
+  it("every key name exists in both languages", () => {
+    for (const press of [{ key: "s", shift: false }, { key: "s", shift: true }, { key: "h", shift: true }, { key: "u", shift: false }, { key: "u", shift: true }, { key: "l", shift: true }, { key: "t", shift: true }, { key: "`", shift: false }, { key: "k", shift: true }]) {
+      const labelKey = readKeyLabelKey({ ...press, ctrl: false }) ?? "";
+      expect(MESSAGES.en[labelKey], `${press.key} ${labelKey}`).toBeTruthy();
+      expect(MESSAGES.ko[labelKey], `${press.key} ${labelKey}`).toBeTruthy();
     }
   });
 });

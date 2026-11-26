@@ -9,7 +9,7 @@ import { CHUNK_CARDS } from "@/lib/paper-chunk-model";
 import { EMPTY_FOLD_OPEN, type FoldOpen } from "@/lib/paper-fold-model";
 import { buildPaperModel, type PaperModel } from "@/lib/paper-model";
 
-import { Paper } from "./paper";
+import { Paper, type QueueChip } from "./paper";
 
 // 카드 수백 장을 통째로 그리는 시험이라 바쁜 기계(CI)에서 기본 5초를 넘는다 - 시간은 단언이 아니다
 vi.setConfig({ testTimeout: 30_000 });
@@ -233,7 +233,7 @@ describe("what changes with every key", () => {
   const changes: Array<[string, (id: number) => [Strips, Partial<Shown>?]]> = [
     ["a shimmer", (id) => [{ pending: pending({ shimmerIds: new Set([id]) }) }]],
     ["a lock", (id) => [{ pending: pending({ lockedIds: new Set([id]) }) }]],
-    ["a wait", (id) => [{ pending: pending({ waits: new Map([[id, 1]]) }) }]],
+    ["a wait", (id) => [{ pending: pending({ waits: new Map([[id, { kind: "save", text: "Queued · Delete" }]]) }) }]],
     ["a deleted line", (id) => [{ deleted: { folds: foldsAt(id) } }]],
     ["a number being saved", (id) => [{}, { expected: new Map([[id, "9.9"]]) }]],
   ];
@@ -362,7 +362,7 @@ describe("automatically deleted blocks in a far chunk", () => {
   type Noise = NonNullable<Strips["noise"]>;
   const noise = (over: Partial<Noise> = {}): Noise => ({ canEdit: true, busy: false, onClear: () => undefined, onReason: () => undefined, open: new Set(), selected: null, onToggle: () => undefined, onPick: () => undefined, ...over });
   const arg = { model: noiseModel };
-  const pending = (part: Partial<NonNullable<Strips["pending"]>>) => ({ shimmerIds: new Set<number>(), lockedIds: new Set<number>(), pills: [], waits: new Map<number, number>(), ...part });
+  const pending = (part: Partial<NonNullable<Strips["pending"]>>) => ({ shimmerIds: new Set<number>(), lockedIds: new Set<number>(), pills: [], waits: new Map<number, QueueChip>(), ...part });
   const isOpen = (key: number) => getButton(`p-noise-head-${key}`)?.getAttribute("aria-expanded") === "true";
   /** 4번째 덩어리의 조각 - 블록 하나가 한 칸이라 앞 블록만큼 한 줄, 이 블록만큼 아홉 줄 뒤로 밀린다 */
   const FAR = IDS.filter((id) => id >= 122 && id <= 170 && !NOISE_IDS.includes(id));

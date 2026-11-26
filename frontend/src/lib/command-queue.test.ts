@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { createCommandQueue, isBarrier, isIdle, listUnsettled, listWaitNumbers, mustDefer, shouldHalt, type CommandKind, type QueuedCommand } from "./command-queue";
+import { createCommandQueue, formatQueueWait, isBarrier, isIdle, listQueueWaits, listUnsettled, mustDefer, shouldHalt, type CommandKind, type QueuedCommand } from "./command-queue";
 
 const job = (id: string, kind: CommandKind, unitIds: number[], over: { isGlobal?: boolean } = {}): Omit<QueuedCommand<string>, "isDeferred"> => ({ id, kind, isGlobal: over.isGlobal ?? false, payload: id, unitIds });
 const key = (id: string) => job(id, "key", []);
+/** 칩의 이름 - 명령 id 그대로 */
+const named = (command: QueuedCommand<string>) => ({ name: command.payload });
 
 describe("command queue", () => {
   it("names the barriers", () => {
@@ -29,7 +31,7 @@ describe("command queue", () => {
     q.push(job("c", "save", [5]));
     expect(q.take()?.id).toBe("a");
     expect(q.take()).toBeNull();
-    expect(listWaitNumbers(q.getState())).toEqual(new Map([[4, 1], [5, 2]]));
+    expect(listQueueWaits(q.getState(), named).boxes).toEqual(new Map([[4, { kind: "save", names: ["b"] }], [5, { kind: "save", names: ["c"] }]]));
     q.settle("a");
     expect(q.take()?.id).toBe("b");
     q.settle("b");
@@ -223,14 +225,16 @@ describe("command queue", () => {
     expect(calls).toBe(3);
   });
 
-  it("numbers a box by its first waiting command and a barrier by its first box", () => {
+  it("gathers a box's waiting commands and puts a barrier on its first box only", () => {
     const q = createCommandQueue<string>();
     q.push(job("a", "save", [1]));
     q.push(job("b", "save", [4, 5]));
-    q.push(job("c", "save", [4]));
+    q.push(job("c", "split", [4]));
     q.push(job("t", "unwrap", [8, 9, 10]));
     q.take();
-    expect(listWaitNumbers(q.getState())).toEqual(new Map([[4, 1], [5, 1], [8, 3]]));
+    const { boxes, global } = listQueueWaits(q.getState(), named);
+    expect(boxes).toEqual(new Map([[4, { kind: "save", names: ["b", "c"] }], [5, { kind: "save", names: ["b"] }], [8, { kind: "unwrap", names: ["t"] }]]));
+    expect(global).toBeNull();
   });
 
   it("lists everything unsettled in order and is idle only when empty", () => {
@@ -245,6 +249,57 @@ describe("command queue", () => {
     expect(isIdle(q.getState())).toBe(false);
     q.drop();
     expect(isIdle(q.getState())).toBe(true);
+  });
+});
+
+describe("waiting chips (A1-R5)", () => {
+  it("shows what waits, never the running one, and keeps what a failure stopped", () => {
+    const q = createCommandQueue<string>();
+    for (const [id, unitId] of [["a", 3], ["b", 4]] as const) q.push(job(id, "save", [unitId]));
+    q.take();
+    expect([...listQueueWaits(q.getState(), named).boxes.keys()]).toEqual([4]);
+    q.fail("a", "500");
+    expect([...listQueueWaits(q.getState(), named).boxes.keys()]).toEqual([4]);
+  });
+
+  it("gathers commands without a box - undo and keys pressed behind a barrier - into one global wait", () => {
+    const q = createCommandQueue<string>();
+    q.push(job("a", "join", [1, 2]));
+    q.take();
+    q.push(key("merge"));
+    q.push(job("undo", "undo", [], { isGlobal: true }));
+    const { boxes, global } = listQueueWaits(q.getState(), named);
+    expect(boxes.size).toBe(0);
+    expect(global).toEqual({ kind: "key", names: ["merge", "undo"] });
+  });
+
+  it("leaves out what readName refuses (a pick behind a barrier) and keeps a key it cannot name", () => {
+    const q = createCommandQueue<string>();
+    q.push(job("a", "join", [1, 2]));
+    q.take();
+    q.push(key("pick"));
+    q.push(key("move"));
+    const wait = listQueueWaits(q.getState(), (command) => (command.payload === "pick" ? null : { name: null })).global;
+    expect(wait).toEqual({ kind: "key", names: [null] });
+  });
+
+  it("keeps the same empty value while nothing waits, so the far paper is not drawn again", () => {
+    const q = createCommandQueue<string>();
+    const before = listQueueWaits(q.getState(), named);
+    q.push(job("a", "save", [3]));
+    q.take();
+    expect(listQueueWaits(q.getState(), named)).toBe(before);
+    q.push(key("pick"));
+    expect(listQueueWaits(q.getState(), () => null)).toBe(before);
+  });
+
+  it("writes one name, a repeat as ×n, a mix as +rest, and only a count without any name", () => {
+    expect(formatQueueWait({ kind: "split", names: ["Split"] })).toEqual({ key: "assign.queue.chipNamed", vars: { action: "Split" } });
+    expect(formatQueueWait({ kind: "undo", names: ["Undo", "Undo"] })).toEqual({ key: "assign.queue.chipTimes", vars: { action: "Undo", n: 2 } });
+    expect(formatQueueWait({ kind: "split", names: ["Split", "Confirm", "Delete"] })).toEqual({ key: "assign.queue.chipMore", vars: { action: "Split", n: 2 } });
+    // 이름 모르는 글쇠가 앞이면 뒤의 이름을 쓰고 그 글쇠도 센다
+    expect(formatQueueWait({ kind: "key", names: [null, "Delete"] })).toEqual({ key: "assign.queue.chipMore", vars: { action: "Delete", n: 1 } });
+    expect(formatQueueWait({ kind: "key", names: [null, null] })).toEqual({ key: "assign.queue.chip", vars: { n: 2 } });
   });
 });
 
