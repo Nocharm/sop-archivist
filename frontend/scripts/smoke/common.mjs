@@ -1,7 +1,6 @@
 // Shared parts of the SOP smoke: settings, check/runStep, browser, helpers used by more than one screen, and the setup step.
 // Split from pw-smoke-sop.mjs (2026-11-19). Screen steps live in ./<screen>.mjs; the runner is ../pw-smoke-sop.mjs.
 
-import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -50,18 +49,8 @@ export const VIEWPORT = { width: 1248, height: 720 };
 
 mkdirSync(SHOT_DIR, { recursive: true });
 
-/** backend 파이썬(xlsx 읽기 · 합성 SOP 만들기) - BACKEND_PYTHON → 이 체크아웃의 backend/.venv → 원본 체크아웃(git common dir의 부모)의 backend/.venv.
- *  워크트리에는 venv가 없어, BACKEND_PYTHON을 빠뜨리면 xlsx 단계가 "file argument … undefined"로 거짓 실패했다(2026-11-20) */
-export function findBackendPython() {
-  if (process.env.BACKEND_PYTHON) return process.env.BACKEND_PYTHON;
-  const findVenv = (root) => [".venv/bin/python", ".venv/Scripts/python.exe"].map((path) => resolve(root, "backend", path)).find(existsSync);
-  const own = findVenv(resolve(BACKEND_DIR, ".."));
-  if (own) return own;
-  const common = String(execFileSync("git", ["rev-parse", "--path-format=absolute", "--git-common-dir"], { cwd: SCRIPT_DIR })).trim();
-  const main = findVenv(dirname(common));
-  if (main) return main;
-  throw new Error(`backend venv python not found in ${resolve(BACKEND_DIR, ".venv")} or ${resolve(dirname(common), "backend/.venv")}. Fix: in backend/ run python3.11 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt, or set BACKEND_PYTHON=<absolute path>`);
-}
+// backend 파이썬 찾기는 부작용 없는 모듈에 둔다(pw-manual-shots도 가져온다)
+export { findBackendPython } from "./backend-python.mjs";
 
 // 시드 지문 - scripts/dev-worktree.sh가 DB를 시드 스냅숏으로 되돌릴 때마다 묶음별 "updated_at#마지막 History 사건 id"를 여기에 적는다(.dev/는 git 밖).
 // 판단 · 편집은 묶음 updated_at을 바꾸지 않아 사건 id가 필요하다

@@ -7,11 +7,12 @@
 //       frontend/public/manual/img/<app.name>.png로. 묶음을 바꾸는 장면이 없어 같은 DB에서 여러 번 돌려도 된다.
 //       개발 서버에만 있는 것(dev 사용자 고르기, Next 개발 표시)은 가리고 찍는다 - 실제 사용자가 보는 화면과 같게.
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { chromium } from "playwright-core";
+import { findBackendPython } from "./smoke/backend-python.mjs";
 
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 const APP_MANUAL = process.env.MANUAL === "app";
@@ -27,17 +28,6 @@ const MIME_DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingm
 // 장면이 찍은 뒤 되돌릴 일(합성 묶음 지우기, 늦춘 저장 풀기) - prep이 더하고 장면이 끝나면 돌린다
 const cleanup = [];
 
-// 합성 docx를 만드는 backend 파이썬 - BACKEND_PYTHON -> 이 체크아웃의 backend/.venv -> 원본 체크아웃의 backend/.venv(워크트리에는 venv가 없다)
-function findBackendPython() {
-  if (process.env.BACKEND_PYTHON) return process.env.BACKEND_PYTHON;
-  const findVenv = (root) => [".venv/bin/python", ".venv/Scripts/python.exe"].map((path) => resolve(root, "backend", path)).find(existsSync);
-  const own = findVenv(resolve(BACKEND_DIR, ".."));
-  if (own) return own;
-  const common = String(execFileSync("git", ["rev-parse", "--path-format=absolute", "--git-common-dir"], { cwd: SCRIPT_DIR })).trim();
-  const main = findVenv(dirname(common));
-  if (main) return main;
-  throw new Error("backend venv python not found. Fix: set BACKEND_PYTHON=<absolute path to a python with backend requirements>");
-}
 
 // 로컬에는 배치 기록이 없어 관리 > 배치 작업은 예시 응답으로 찍는다(설명서 캡션에 예시라고 적는다)
 const SAMPLE_BATCH_RUNS = [
