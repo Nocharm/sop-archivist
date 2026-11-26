@@ -64,7 +64,7 @@ import { isQueuedKey, isRepeatIgnored, type PressId } from "@/lib/assign-press-m
 import { findJoinNeighbor, stepMergeArm, type MergeArm } from "@/lib/merge-arm-model";
 import { planPrimary } from "@/lib/primary-model";
 import { isSideFloating } from "@/lib/side-float-model";
-import { readPanelSide } from "@/lib/side-panel-model";
+import { readMenuKeyTarget, readPanelSide } from "@/lib/side-panel-model";
 import { BLANK_STOPS, resolveBlankClick } from "@/lib/blank-click-model";
 import { listFollowTableIds, pickOrderAction } from "@/lib/table-follow-model";
 import { isUnwrapSuggestionApplicable, isUnwrapSuggestionUnchanged, readUnwrapOrderReason } from "@/lib/unwrap-ai-model";
@@ -4722,11 +4722,13 @@ export function useAssignPage() {
       finishPairPick(pairFrom.picked);
       return;
     }
-    // 메뉴 글쇠·Shift+F10 - 고른 줄(나눌 선이 있으면 그 문장)에서 우클릭 메뉴를 연다
+    // 메뉴 글쇠·Shift+F10 - 마지막에 누른 쪽의 박스(Old 줄 · 양 단의 New · 한 단으로 연 New, 나눌 선이 있으면 그 문장)에서 우클릭과 같은 메뉴를 연다
     const isMenuKey = event.key === "ContextMenu" || (event.key === "F10" && event.shiftKey);
-    if (isMenuKey && row && mode === "old" && !bulk && !isTypingTarget(event.target) && !document.querySelector('[role="dialog"],[role="menu"],[role="listbox"]')) {
+    const menuAt = isMenuKey ? readMenuKeyTarget({ side: panel.side, isSolo, cutId: cutUnit?.id ?? null, oldId: row ? (pickedId ?? row.unitIds[0]) : null, newId: newUnitId }) : null;
+    if (menuAt && mode === "old" && !bulk && !isTypingTarget(event.target) && !document.querySelector('[role="dialog"],[role="menu"],[role="listbox"]')) {
       event.preventDefault();
-      openCtxMenu(cutUnit?.id ?? pickedId ?? row.unitIds[0], null, null);
+      if (menuAt.pane === "new") openNewCtxMenu(menuAt.unitId, null, null);
+      else openCtxMenu(menuAt.unitId, null, null);
       return;
     }
     // 모달 · 떠 있는 메뉴 · 고르기 목록이 떠 있으면 화면 단축키를 쓰지 않는다(그 안의 키는 그 층이 먼저 받는다)

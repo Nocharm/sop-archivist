@@ -9,3 +9,13 @@ export function readPanelSide(picks: Pick<Picks, "old" | "new" | "last">, shown:
   const side = picks.last !== null && has[picks.last] ? picks.last : picks.last !== null && has[other] ? other : null;
   return { side, keptOldId: side === "new" && has.old && picks.old.kind === "unit" ? picks.old.unitId : null };
 }
+
+/**
+ * 메뉴 글쇠 · Shift+F10이 우클릭 메뉴를 열 박스 - 마지막에 누른 쪽(오른쪽 칸과 같은 답). 아무것도 안 골랐으면 null.
+ * cutId는 그 쪽 나눌 선의 문장 - Old 줄과 한 단으로 연 New("solo")는 그 문장에서 연다. 양 단의 New는 우클릭처럼 고른 박스에서 연다
+ */
+export function readMenuKeyTarget(at: { side: PickSide | null; isSolo: boolean; cutId: number | null; oldId: number | null; newId: number | null }): { pane: "old" | "new" | "solo"; unitId: number } | null {
+  if (at.side === "old" && at.oldId !== null) return { pane: "old", unitId: at.cutId ?? at.oldId };
+  if (at.side !== "new" || at.newId === null) return null;
+  return at.isSolo ? { pane: "solo", unitId: at.cutId ?? at.newId } : { pane: "new", unitId: at.newId };
+}

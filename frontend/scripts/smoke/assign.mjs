@@ -1506,6 +1506,16 @@ await runStep("assign: the cell menu has this cell and this table, hovering pain
   const pairHeadIds = await listIds();
   check("new beside old: a table head menu has this table only", pairHeadIds[0] === "assign-ctx-section-table" && !pairHeadIds.includes("assign-ctx-section-cell") && !pairHeadIds.includes("assign-ctx-section-assign") && pairHeadIds.includes("assign-ctx-table_layout"), pairHeadIds.join(","));
   await closeMenu();
+  // 글쇠로 - New 칸을 누른 뒤(마지막에 누른 쪽이 New) Shift+F10이 우클릭과 같은 칸 메뉴를 연다. 고름이 칸으로 옮겨 가지 않아 표 머리 메뉴가 열리면 아래 검사가 잡는다
+  const pairCellBox = page.locator(`[data-pane="new"] [data-strip-unit="${newParts.cell.id}"]`).first();
+  await pairCellBox.scrollIntoViewIfNeeded({ timeout: T });
+  await pairCellBox.click();
+  await page.keyboard.press("Shift+F10");
+  await wait(page, "assign-ctx-menu");
+  const pairKeyIds = await listIds();
+  check("new beside old: Shift+F10 on a picked New cell opens the same cell menu", pairKeyIds.indexOf("assign-ctx-section-cell") === 0 && pairKeyIds.indexOf("assign-ctx-section-table") > 0 && !pairKeyIds.includes("assign-ctx-section-assign") && !pairKeyIds.includes("assign-ctx-clear"), pairKeyIds.join(","));
+  await closeMenu();
+  check("new beside old: Esc closes the menu opened by Shift+F10", (await page.locator('[data-testid="assign-ctx-menu"]').count()) === 0);
   // 한 단으로 연 New 표 칸 - 한 단의 New는 왼쪽 용지(data-pane="old")에 그려진다. 같은 구역, 배정 항목 없음
   await page.goto(`${BASE}/bundles/${created.id}/assign?edit=${newDoc.id}`);
   await wait(page, "assign-bar");
@@ -1516,6 +1526,13 @@ await runStep("assign: the cell menu has this cell and this table, hovering pain
   await page.locator('[data-testid="assign-ctx-reach"]').waitFor({ state: "attached", timeout: T });
   check("new: hovering Unwrap table rings the New table", (await outlineOf("old", newParts.table.id)) === "dashed");
   await closeMenu();
+  // 글쇠로 - 우클릭으로 고른 칸이 그대로 골라져 있다. Shift+F10이 같은 칸 메뉴를 그 칸에서 연다
+  await page.keyboard.press("Shift+F10");
+  await wait(page, "assign-ctx-menu");
+  const soloKeyIds = await listIds();
+  check("new: Shift+F10 on the picked cell opens the same cell menu", JSON.stringify(soloKeyIds) === JSON.stringify(newIds), soloKeyIds.join(","));
+  await closeMenu();
+  check("new: Esc closes the menu opened by Shift+F10", (await page.locator('[data-testid="assign-ctx-menu"]').count()) === 0);
   await removeShapeBundle(page, { api, headers });
 });
 
