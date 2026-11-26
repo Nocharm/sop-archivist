@@ -27,7 +27,7 @@ import { findLastStep } from "@/lib/destination-manage-model";
 import { findSplitBlock, readSplitOffsets } from "@/lib/split-ai-tabs-model";
 import { pickPairPiece, planPairLanguages, type JoinKind, type JoinPlan } from "@/lib/split-menu-model";
 import { listAppliedSuggestions, requestAi, setSuggestionAdoption, type AiKind, type AiScope } from "@/lib/api-manage";
-import { addToBeDoc, addWiStep, acceptSuggestions, MAX_ACCEPT, bulkDecide, confirmPair, createPair, deletePair, editUnits, clearDecisions, confirmMatchesInBulk, getComposedDoc, getDocumentView, getGroupByTarget, getUnitRef, getGroupByUnit, getToBe, listDocuments, listIdenticalCandidates, listNewCandidates, listSuggestions, listWrittenSentences, redoDecision, listOpenTranslations, removeToBeDoc, removeWiStep, resetAssignments, saveGroup, undoDecision, updateCaptionRef, type AcceptKind, type AiSuggestion, type ComposedDoc, type ComposedItem, type DecisionStepResult, type DocumentView, type EditOp, type EditResult, type Group, type GroupSaveInput, type NewCandidate, type OpenTranslation, type ToBe, type UndoMeta, type UnitRefDetail, type UnitRow, type ViewUnit, type WrittenSentence } from "@/lib/api-sop";
+import { addToBeDoc, addWiStep, acceptSuggestions, MAX_ACCEPT, bulkDecide, confirmPair, createPair, deletePair, editUnits, clearDecisions, confirmMatchesInBulk, getComposedDoc, getDocumentView, getGroupByTarget, getUnitRef, getGroupByUnit, getTableCounterpart, getToBe, listDocuments, listIdenticalCandidates, listNewCandidates, listSuggestions, listWrittenSentences, redoDecision, listOpenTranslations, removeToBeDoc, removeWiStep, resetAssignments, saveGroup, setTableCounterpart, undoDecision, updateCaptionRef, type AcceptKind, type AiSuggestion, type ComposedDoc, type ComposedItem, type DecisionStepResult, type DocumentView, type EditOp, type EditResult, type Group, type GroupSaveInput, type NewCandidate, type OpenTranslation, type TableCounterpart, type ToBe, type UndoMeta, type UnitRefDetail, type UnitRow, type ViewUnit, type WrittenSentence } from "@/lib/api-sop";
 import { listRefCandidates } from "@/lib/caption-ref-model";
 import { isBundleKind, isCaptionGate, listCaptionPendingRowKeys, makeIsLinkedToWritten, type CaptionUnit } from "@/lib/caption-model";
 import { buildBlockPlaces, getCaptionMotion, isCaptionableText, listCaptionHolders, resolveCaptionDetach, resolveCaptionDrop, type CaptionDetach, type CaptionDrop } from "@/lib/caption-slot-model";
@@ -57,6 +57,7 @@ import { isQueuedKey, isRepeatIgnored, type PressId } from "@/lib/assign-press-m
 import { findJoinNeighbor, stepMergeArm, type MergeArm } from "@/lib/merge-arm-model";
 import { planPrimary } from "@/lib/primary-model";
 import { isSideFloating } from "@/lib/side-float-model";
+import { listFollowTableIds } from "@/lib/table-follow-model";
 import { isUnwrapSuggestionApplicable, isUnwrapSuggestionUnchanged } from "@/lib/unwrap-ai-model";
 import { pickNextBox, type PendingOutcome } from "@/lib/next-box-model";
 import { listExpectedNumbers, listExpectedShifts, readExpectedNumber, readOpShifts, type SentNumber, type SentShifts } from "@/lib/number-arrival-model";
@@ -256,6 +257,7 @@ const NO_RELOAD_KEYS = { tobe: 0, written: 0, identical: 0, split: 0 };
 
 /** 숨긴 종류의 제안 자리 - 부르지 않고 빈 목록 */
 const NO_SUGGESTIONS: Promise<AiSuggestion[]> = Promise.resolve([]);
+const NO_COUNTERPARTS: ReadonlyMap<number, TableCounterpart> = new Map();
 
 const NO_TRANSLATIONS: Promise<OpenTranslation[]> = Promise.resolve([]);
 
@@ -892,6 +894,30 @@ export function useAssignPage() {
     reorder: (tableId, order, afterOk) => runUnitEdit({ type: "reorder_unwrapped", table_id: tableId, unit_ids: order }, t("assign.unwrapAi.applied"), null, false, null, { at: "table", tableId }, afterOk),
     t,
   });
+  // 벗긴 영어 표의 짝 한글 표(11-23 명세 D2-R3) - 보는 Old 문서의 벗긴 영어 표마다 한 번씩. 점수는 원문 표 · 표 언어 · 언어 배치와 사람의 답만 보므로
+  // 편집마다 다시 읽지 않고 그것이 바뀔 때만. 고르기는 문서를 바꾸지 않아 큐를 지나지 않고 바로 저장한 뒤 다시 읽는다
+  const followTableIds = useMemo(() => (oldView ? listFollowTableIds(oldView) : []), [oldView]);
+  // 후보는 표마다 칸 언어와 언어 배치로 정해진다 - 벗기지 않은 표의 언어를 바꾸거나 배치를 바꾸면 다시 읽는다(편집마다는 아니다)
+  const followTablesKey = oldView ? `${oldView.document.language_layout}|${oldView.tables.map((table) => `${table.id}${table.lang ?? "-"}`).join(",")}` : "";
+  const counterparts = useLoaded(
+    async () => {
+      if (!canEdit || oldDocId === null || followTableIds.length === 0) return NO_COUNTERPARTS;
+      const answers = await Promise.all(followTableIds.map(async (tableId) => [tableId, await getTableCounterpart(bundleId, oldDocId, tableId)] as const));
+      return new Map(answers);
+    },
+    `${canEdit}:${oldDocId}:${followTableIds.join(",")}:${followTablesKey}`,
+  );
+  const tableFollow = canEdit && oldDocId !== null
+    ? {
+        answers: counterparts.data ?? NO_COUNTERPARTS,
+        onPick: (tableId: number, sourceTableId: number | null) => {
+          setTableCounterpart(bundleId, oldDocId, tableId, sourceTableId).then(
+            () => counterparts.reload(),
+            (err: unknown) => showToast(humanizeApiError(err, t), "error"),
+          );
+        },
+      }
+    : undefined;
   const splitByUnit = useMemo(() => {
     const map = new Map<number, AiSuggestion>();
     for (const item of splitSuggestions.data ?? []) {
@@ -4617,7 +4643,7 @@ export function useAssignPage() {
     isFixedCaption, ctxGroups, rowViewUnits, rowSplitUnit, rowSplit, splitBlocked, rowRefUnit, refBlocked, isCaptionGateOn,
     confirmBlockKey, rowCaptionRefs, refCandidates, shapeLines, shapeFirstId, slotPlaces, slotCellTables, shapeMode, headingBack, rewrap, bandBack,
     stepBase, refPendingIds, bundleRefPending, isLinkedToWritten, captionPendingKeys, docDashboard, refDetail, refInfo, openCtxMenu, runUnitEdit,
-    rewrapTable, unwrapAi, describeEditConfirm, pairGrip, clearNoise, openNoiseReason, confirmNoiseReason, closeNoiseReason, noisePick, runCaptionRefChange, switchShapeMode, switchToPair,
+    rewrapTable, unwrapAi, tableFollow, describeEditConfirm, pairGrip, clearNoise, openNoiseReason, confirmNoiseReason, closeNoiseReason, noisePick, runCaptionRefChange, switchShapeMode, switchToPair,
     applySplitSuggestion, dismissSplitSuggestion, splitPendingIds, readPendingItem, selectNextSplit, selectNextRef, selectNextCaption,
     splitAtCut, handleOldDoubleClick, runCtx, runUnitAction, revertHeadings, planOldJoin, joinOld, renderOldActions, readReasonNeed,
     runSave, runClear, runUndoStep, confirmIdenticalAll, acceptAll, markNew, placeManage, pickDestination, pickNewSentence, handleNewPick, unlinkCell,

@@ -95,7 +95,7 @@ def is_same_form(first: TableFacts, second: TableFacts) -> bool:
     )
 
 
-def _is_candidate_kind(table: TableFacts) -> bool:
+def is_candidate_kind(table: TableFacts) -> bool:
     """대응 표가 될 수 있는 표 — 본문의 언어가 하나인 표. 띠 표는 절 제목 줄이 되므로 뺀다."""
     return table.part == BODY_PART and table.lang in PAIR_LANGS and not table.is_band
 
@@ -105,7 +105,7 @@ def _list_half_orders(tables: Sequence[TableFacts]) -> dict[int, int]:
     orders: dict[int, int] = {}
     seen: dict[tuple[str | None, bool], int] = {}
     for table in tables:
-        if not _is_candidate_kind(table):
+        if not is_candidate_kind(table):
             continue
         key = (table.lang, table.parent_id is None)
         orders[table.id] = seen.get(key, 0)
@@ -124,12 +124,12 @@ def _rank(table: TableFacts, candidates: Iterable[TableFacts], orders: Mapping[i
     )
 
 
-def _list_candidates(table: TableFacts, tables: Sequence[TableFacts], *, is_layout: bool) -> list[TableFacts]:
-    """다른 언어 절반의 같은 겹(바깥 표끼리 · 칸 안의 표끼리) 표 가운데 벗김 상태가 is_layout인 것."""
+def list_candidates(table: TableFacts, tables: Sequence[TableFacts], *, is_layout: bool | None = None) -> list[TableFacts]:
+    """다른 언어 절반의 같은 겹(바깥 표끼리 · 칸 안의 표끼리) 표 가운데 벗김 상태가 is_layout인 것(None이면 벗김 상태를 보지 않는다)."""
     return [
         other for other in tables
-        if other.id != table.id and _is_candidate_kind(other) and other.lang != table.lang
-        and (other.parent_id is None) == (table.parent_id is None) and other.is_layout == is_layout
+        if other.id != table.id and is_candidate_kind(other) and other.lang != table.lang
+        and (other.parent_id is None) == (table.parent_id is None) and (is_layout is None or other.is_layout == is_layout)
     ]
 
 
@@ -139,14 +139,14 @@ def match_unwrapped_tables(tables: Sequence[TableFacts]) -> list[tuple[int, int]
     벗긴 한글 표는 문서 순서대로, 아직 대응 표가 없는 벗긴 영어 표 가운데 같은 꼴인 가장 비슷한 표와 맺는다(따로 벗긴 두 표도
     둘 다 벗기면 맺어진다). 표 하나는 대응 표 하나만 갖는다.
     """
-    by_id = {table.id: table for table in tables if table.is_layout and _is_candidate_kind(table)}
+    by_id = {table.id: table for table in tables if table.is_layout and is_candidate_kind(table)}
     used: set[int] = set()
     matches: list[tuple[int, int]] = []
     orders = _list_half_orders(tables)
     for table in sorted(by_id.values(), key=lambda item: item.index):
         if table.lang != "ko" or table.id in used:
             continue
-        free = [other for other in _list_candidates(table, list(by_id.values()), is_layout=True) if other.id not in used]
+        free = [other for other in list_candidates(table, list(by_id.values()), is_layout=True) if other.id not in used]
         ranked = _rank(table, free, orders)
         if ranked and is_same_form(table, ranked[0]):
             matches.append((table.id, ranked[0].id))
