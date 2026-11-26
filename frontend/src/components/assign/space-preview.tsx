@@ -77,7 +77,7 @@ export function SpacePreview({ bundleId, sheet: sheetKind, enabled, docId, docCo
   const [press, setPress] = useState<{ x: number; y: number } | null>(null);
   // 시트 높이 비율 - 손잡이를 끌어 바꾸고 떼면 기억한다
   const [height, setHeight] = useState(readSpaceSheetHeight);
-  const [resize, setResize] = useState<{ moved: boolean } | null>(null);
+  const [resize, setResize] = useState<{ startY: number; moved: boolean } | null>(null);
   const [downloading, setDownloading] = useState(false);
   // 문단 Excel은 받기 전에 넣을 것을 묻는다 - 시트를 닫아도 창은 남는다
   const [isAsking, setIsAsking] = useState(false);
@@ -161,13 +161,16 @@ export function SpacePreview({ bundleId, sheet: sheetKind, enabled, docId, docCo
   }, []);
 
   function handleGripMove(event: PointerEvent<HTMLElement>) {
-    const parent = event.currentTarget.offsetParent;
+    // 기준은 시트가 붙은 작업 화면 - 손잡이 자신의 offsetParent는 시트다(손잡이가 position: relative)
+    const parent = event.currentTarget.parentElement?.offsetParent;
     if (!resize || !parent) return;
+    // 손 떨림 몇 px는 끌기가 아니다 - 본문 끌기와 같은 문턱(isDragMove)을 넘어야 높이를 바꾼다
+    if (!resize.moved && !isDragMove(0, event.clientY - resize.startY)) return;
     const rect = parent.getBoundingClientRect();
     setHeight(readDragHeight(event.clientY, rect.bottom, rect.height));
     // 누르는 동안 높이를 바꿨으면 본문 끌기와 같게 떼는 순간 닫는다 - 한 번만 알린다
     if (!resize.moved) {
-      setResize({ moved: true });
+      setResize({ ...resize, moved: true });
       dispatch({ type: "drag" });
     }
   }
@@ -240,7 +243,7 @@ export function SpacePreview({ bundleId, sheet: sheetKind, enabled, docId, docCo
           onPointerDown={(event) => {
             event.preventDefault();
             event.currentTarget.setPointerCapture(event.pointerId);
-            setResize({ moved: false });
+            setResize({ startY: event.clientY, moved: false });
           }}
           onPointerMove={handleGripMove}
           onPointerUp={handleGripEnd}

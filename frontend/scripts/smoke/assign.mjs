@@ -4370,6 +4370,40 @@ await runStep("assign: Space preview - a short tap keeps it open, Esc and anothe
   await setPaneView(page, "two"); // 다음 단계들은 양 단에서 시작한다
 });
 
+// 손잡이가 끌 수 있게 생겼는데 움직이지 않았다(2026-11-27) - 끌면 높이가 바뀌고 한계(30~90%)에서 멈추며, 다시 열어도 그 높이다
+await runStep("assign: Space preview - dragging the grip resizes the sheet within limits and remembers it", {}, async ({ page }) => {
+  await openFirstAssign(page, "two");
+  const sheet = page.locator('[data-testid="assign-space-preview"]');
+  const gripBox = () => page.locator('[data-testid="assign-space-preview-resize"]').boundingBox();
+  await page.keyboard.press(" ");
+  await wait(page, "assign-space-preview");
+  // 올라오는 움직임이 끝난 뒤에 손잡이 자리를 잰다 - 움직이는 중에 재면 마우스가 손잡이를 빗나간다
+  await page.waitForFunction(() => document.querySelector('[data-testid="assign-space-preview"]').getAnimations().length === 0);
+  const area = await page.evaluate(() => document.querySelector('[data-testid="assign-space-preview"]').offsetParent.getBoundingClientRect().toJSON());
+  const ratio = async () => (await sheet.boundingBox()).height / area.height;
+  check("the sheet starts near 70% of the work area", Math.abs((await ratio()) - 0.7) < 0.03);
+  const dragTo = async (y) => {
+    const grip = await gripBox();
+    await page.mouse.move(grip.x + grip.width / 2, grip.y + grip.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(grip.x + grip.width / 2, y, { steps: 6 });
+    await page.mouse.up();
+  };
+  await dragTo(area.bottom - area.height * 0.45);
+  check("dragging the grip down makes the sheet about 45% high", Math.abs((await ratio()) - 0.45) < 0.03);
+  check("the sheet stays open after a resize", (await sheet.getAttribute("data-state")) === "kept");
+  await dragTo(area.bottom - area.height * 0.05);
+  check("the sheet stops at the 30% floor", Math.abs((await ratio()) - 0.3) < 0.02);
+  await dragTo(area.top - 40);
+  check("the sheet stops at the 90% ceiling", Math.abs((await ratio()) - 0.9) < 0.02);
+  await page.keyboard.press("Escape");
+  await page.keyboard.press(" ");
+  await wait(page, "assign-space-preview");
+  check("reopening keeps the last height", Math.abs((await ratio()) - 0.9) < 0.02);
+  await page.keyboard.press("Escape");
+  await page.evaluate(() => localStorage.removeItem("sopa.assign.spaceHeight")); // 다음 단계는 처음 높이로
+});
+
 // 문단 시트의 고른 행 - 고른 줄이 확정 삭제한 줄이면 picked 대신 deleted(빨간 음영)로 칠한다(B9). Excel A에는 deleted가 없다
 const PARAGRAPH_PICKED_ROW = '[data-testid="assign-space-preview-body"] tr[data-mark="picked"], [data-testid="assign-space-preview-body"] tr[data-mark="deleted"]';
 
