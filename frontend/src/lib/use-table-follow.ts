@@ -9,7 +9,7 @@ import { showToast } from "@/components/ui/toast";
 import { humanizeApiError } from "@/lib/api-errors";
 import { listAppliedSuggestions, requestTableFollow, setSuggestionAdoption } from "@/lib/api-manage";
 import { getTableFollow, type AiJobCounts, type AiStatus, type AiSuggestion, type EditOp, type TableFollow } from "@/lib/api-sop";
-import { buildFollowOp, readFollowSuggestion } from "@/lib/table-follow-model";
+import { buildFollowOp, pickApplyAdoption, pickKeepAdoption, readFollowSuggestion } from "@/lib/table-follow-model";
 import { addUnwrapAiAsk, listUnwrapAiBusy, type UnwrapAiAsk } from "@/lib/unwrap-ai-model";
 import { useLoaded } from "@/lib/use-loaded";
 
@@ -68,6 +68,8 @@ export function useTableFollow({ bundleId, docId, tableIds, dataKey, apply, isAi
   );
   // 그대로 두기 - 규칙 제안은 이 화면에서만 감춘다(저장하지 않는다, D2-R7). AI 제안은 채택(버림)을 남겨 다시 읽으면 빠진다
   const [kept, setKept] = useState<ReadonlySet<number>>(new Set());
+  // 한 줄이라도 적용한 AI 제안의 표 - 그 표의 그대로 두기는 버림이 아니라 고쳐서 채택(edited)
+  const [touched, setTouched] = useState<ReadonlySet<number>>(new Set());
   const [each, setEach] = useState<ReadonlySet<number>>(new Set());
   const { plans, suggestionIds, asks } = useMemo(() => {
     const newest = new Map<number, AiSuggestion>();
@@ -85,7 +87,7 @@ export function useTableFollow({ bundleId, docId, tableIds, dataKey, apply, isAi
         const item = newest.get(tableId);
         const plan = item === undefined ? null : readFollowSuggestion(item, answer.lines);
         if (item !== undefined && plan !== null) {
-          map.set(tableId, plan);
+          if (!kept.has(tableId)) map.set(tableId, plan);
           ids.set(tableId, item.id);
         } else {
           ask.add(tableId);
@@ -101,7 +103,7 @@ export function useTableFollow({ bundleId, docId, tableIds, dataKey, apply, isAi
     return next;
   }
 
-  async function record(tableId: number, adoption: "as_is" | "rejected") {
+  async function record(tableId: number, adoption: "as_is" | "edited" | "rejected") {
     const id = suggestionIds.get(tableId);
     if (id === undefined) return;
     try {
@@ -131,15 +133,20 @@ export function useTableFollow({ bundleId, docId, tableIds, dataKey, apply, isAi
     onApply: (tableId, only) => {
       const plan = plans.get(tableId);
       if (plan === undefined) return;
-      // 다 적용하면 AI 제안은 채택(as_is)을 남긴다 - 한 줄씩 적용하는 동안은 열어 둔다
-      const afterOk = plan.mode === "ai" && only === undefined ? () => record(tableId, "as_is") : undefined;
+      // 다 적용하면 AI 제안은 채택(as_is)을 남기고, 한 줄씩 적용하는 동안은 열어 둔다(합치기가 든 줄은 줄 집합이 바뀌어 제안이 사라지므로 edited)
+      const adoption = plan.mode === "ai" ? pickApplyAdoption(plan.items, only) : null;
+      if (plan.mode === "ai" && only !== undefined) setTouched((prev) => new Set(prev).add(tableId));
+      const afterOk = adoption === null ? undefined : () => record(tableId, adoption);
       apply(tableId, buildFollowOp(tableId, plan.items, only, plan.lines), afterOk);
     },
     onEach: (tableId) => setEach((prev) => toggle(prev, tableId)),
     onKeep: (tableId) => {
       const plan = plans.get(tableId);
-      if (plan?.mode === "ai") void record(tableId, plan.count === 0 ? "as_is" : "rejected");
-      else setKept((prev) => new Set(prev).add(tableId));
+      if (plan?.mode === "ai") {
+        const adoption = pickKeepAdoption(plan.count, touched.has(tableId));
+        if (adoption !== null) void record(tableId, adoption);
+        else setKept((prev) => new Set(prev).add(tableId)); // 바꿀 것이 없다는 답의 닫기는 채택으로 세지 않는다
+      } else setKept((prev) => new Set(prev).add(tableId));
     },
     reload: loaded.reload,
     ai: { enabled: isAiOn, asks, busy, onAsk: (tableId) => void ask(tableId) },

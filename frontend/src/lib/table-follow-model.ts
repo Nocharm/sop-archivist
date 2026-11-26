@@ -115,6 +115,7 @@ export function pickOrderAction(state: { follow: TableFollow["mode"]; count: num
 
 /**
  * AI 제안(서버 table_follow_job 내용: items · lines · source_table_id) -> 규칙 제안과 같은 TableFollow(mode "ai"). 같은 칩 · 적용 · 하나씩 보기를 쓴다.
+lines는 지금 덩이 차례다(작업 때의 차례가 아니다 - 사람이 줄을 옮겼으면 한 줄 적용의 order가 그 차례 위에서 세워진다).
  * 제안이 가리킨 영어 줄 집합이 지금 덩이 줄과 다르면(그 사이 합치기 · 풀기 등) 낡아서 null - 그대로 놓으면 서버가 422로 막는다
  */
 export function readFollowSuggestion(suggestion: Pick<AiSuggestion, "content">, current: readonly number[]): TableFollow | null {
@@ -124,5 +125,17 @@ export function readFollowSuggestion(suggestion: Pick<AiSuggestion, "content">, 
   if (!lines.every((id): id is number => typeof id === "number" && now.has(id))) return null;
   const read = items as FollowItem[];
   if (!read.every((item) => Array.isArray(item.unit_ids) && item.unit_ids.length > 0)) return null;
-  return { source_table_id: typeof sourceTableId === "number" ? sourceTableId : null, mode: "ai", items: read, count: read.filter(hasFollowChange).length, lines };
+  return { source_table_id: typeof sourceTableId === "number" ? sourceTableId : null, mode: "ai", items: read, count: read.filter(hasFollowChange).length, lines: [...current] };
+}
+
+/** AI 제안을 적용한 뒤 남길 채택 - 전부 적용이면 as_is, 한 줄만이면 합치기가 든 때만 edited(줄 집합이 바뀌어 제안이 사라지므로), 아니면 열어 둔다(null) */
+export function pickApplyAdoption(items: readonly FollowItem[], only: readonly number[] | undefined): "as_is" | "edited" | null {
+  if (only === undefined) return "as_is";
+  return items.some((item) => item.unit_ids.length > 1 && only.includes(item.unit_ids[0])) ? "edited" : null;
+}
+
+/** AI 제안을 그대로 두기 - 한 줄이라도 적용한 표는 edited, 아니면 rejected. 바꿀 것이 없다는 답(count 0)의 닫기는 기록하지 않는다(null) */
+export function pickKeepAdoption(count: number, touched: boolean): "edited" | "rejected" | null {
+  if (count === 0) return null;
+  return touched ? "edited" : "rejected";
 }
