@@ -638,8 +638,12 @@ async function runShapeTools({ page, place, docId, prefix, sideTestId, api, head
     await pane.locator(`[data-testid="${prefix}-unit-${first.id}"]`).click();
     const join = pane.locator(`[data-testid="${prefix}-join-${first.id}-${second.id}"]`);
     await join.waitFor({ state: "attached", timeout: T });
+    // 단추는 틈에 올렸을 때만 눌린다(pointer-events) - 단추 줄이 다 펼쳐진 뒤 틈에 올려 누른다(gap join 단계와 같은 길)
+    await page.waitForFunction(() => { const acts = document.querySelector(".strip-acts[data-open]"); return acts === null || acts.getAnimations().length === 0; }, null, { timeout: T });
+    await pane.locator(".strip-gap", { has: join }).hover({ position: { x: 200, y: 2 } });
+    await page.waitForFunction(() => [...document.querySelectorAll(".strip-gap:hover .strip-merge")].some((el) => getComputedStyle(el).pointerEvents === "auto"), null, { timeout: T });
     const joined = waitEdit();
-    await join.click({ force: true });
+    await join.click();
     check(name("Join in the gap makes them one box"), (await joined).ok() && (await waitView((view) => unitOf(view, SHAPE_JOIN_TEXTS[0]) === undefined)));
     check(name("Ctrl+Z splits them apart again"), (await pressUndo()) && (await waitView((view) => unitOf(view, SHAPE_JOIN_TEXTS[1]) !== undefined)));
   }
