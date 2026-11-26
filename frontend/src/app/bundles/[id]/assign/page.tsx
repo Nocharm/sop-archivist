@@ -703,6 +703,7 @@ export default function AssignPage() {
                 dragBoxes={isOldDrag}
                 headExtra={canPairView ? <PairViewToggle on={false} onToggle={togglePairViewByButton} /> : undefined}
                 figures={state.figureTab}
+                tableFold={state.oldTableFold}
               />
               {!view.single && (
               <>
@@ -871,6 +872,7 @@ export default function AssignPage() {
                       onRangeSelect={rightTools.carve && newView ? (range) => pickCarve(newView, range) : undefined}
                       onUnitDoubleClick={rightTools.split ? handleNewDoubleClick : undefined}
                       onUnwrapTable={rightTools.unwrap && rightShape ? (tableId) => unwrapTable(rightShape, tableId) : undefined}
+                      tableFold={state.newTableFold}
                     />
                   )}
                   <LinkLines pairs={listNewAiLinks(linkPairs, newAiFilter, row?.unitIds ?? [])} focusUnits={highlightIds} focusTargets={liveDoc ? new Set([...pickedNew, ...liveDoc.targetIds]) : pickedNew} visible={view.lines} />

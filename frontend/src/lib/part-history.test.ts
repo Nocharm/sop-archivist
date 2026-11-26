@@ -23,6 +23,7 @@ describe("the part kept in browser history", () => {
   });
   it("ignores a state without a part", () => {
     expect(readPartState(withPartState({ __NA: true }, "footer"))).toBe("footer");
+    expect(readPartState(withPartState({ __NA: true }, "tables"))).toBe("tables");
     for (const state of [null, undefined, "body", 3, {}, { __NA: true }, { assignPart: 1 }, { assignPart: "tables-of-old" }]) expect(readPartState(state), JSON.stringify(state)).toBeNull();
   });
 });

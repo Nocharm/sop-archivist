@@ -147,3 +147,8 @@
 
 - 누른 조각(pickedId)과 배정 박스(boxId)를 `pick-scope-model`로 갈랐다(C1-R1~R5). 칸을 눌러도 Del · U · 잇기 · 확정 · 끌기는 표째, 다듬기(언어 · 번호)만 누른 칸.
 - 이웃한 짝의 다른 조각은 `data-mate` 대신 `data-group="pair"` — 스모크 locator 셋을 같은 검사 수로 따라 고침. 양 단에서 New를 마지막에 누르면 Shape 맨 위가 누른 New 조각(검토 고침, `pickShapeScope`).
+
+## 2026-11-26 — feat/assign-tables-tab (계획 5) dev에
+
+- 표 탭 · 본문 표 접기를 Old · New 용지에(E2-R1~R5, S15), 접힘은 문서마다 브라우저에 기억(`use-folded-tables`, 새 effect 없음). 표 탭도 같은 `Paper` · `strips`라 `renderFollow`가 그대로 뜬다(사용자 답).
+- 접힌 표 안 줄은 J/K와 확정 뒤 다음 줄 고르기에서 건너뛴다(검토 고침, `readStepTab`). 성능은 dev v1.6.23과 극단 시드로 견줘 긴 문서 J · Delete · 스크롤이 잡음 안(세워 둘 조건 ② 아님).
