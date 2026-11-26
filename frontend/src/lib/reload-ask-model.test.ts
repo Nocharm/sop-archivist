@@ -24,7 +24,7 @@ describe("reload asks gathered while the queue runs (A1-R6)", () => {
   });
   it("turns an Old edit's plan into its view and rows plus the lists behind", () => {
     const ask = buildReloadAsk(planReload({ kind: "old_edit", docId: 4, isInPlace: false, isReleased: false }, ai), [4, 5]);
-    expect(ask).toEqual({ ...NO_RELOAD_ASK, docs: [4], units: [4], identical: true, split: true, bundle: true });
+    expect(ask).toEqual({ ...NO_RELOAD_ASK, docs: [4], units: [4], identical: true, split: true, suggestions: true, bundle: true });
     const { views, rest } = splitReload(ask);
     expect(views).toEqual({ docs: [4], units: [4], solo: false });
     expect(isDocReload(rest)).toBe(false);

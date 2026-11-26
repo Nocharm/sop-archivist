@@ -252,7 +252,7 @@ function isElementInPane(el: HTMLElement): boolean {
 }
 
 /** 편집 뒤 뒤에서 다시 받는 목록의 키 - planReload가 고른 것만 하나씩 오른다(설계 D2) */
-const NO_RELOAD_KEYS = { tobe: 0, written: 0, identical: 0, split: 0 };
+const NO_RELOAD_KEYS = { tobe: 0, written: 0, identical: 0, split: 0, suggestions: 0 };
 
 /** 숨긴 종류의 제안 자리 - 부르지 않고 빈 목록 */
 const NO_SUGGESTIONS: Promise<AiSuggestion[]> = Promise.resolve([]);
@@ -351,7 +351,7 @@ export function useAssignPage() {
   const oldDocIds = oldDocs.map((doc) => doc.id);
   // Old 문서 보기와 Unit 줄 - 문서마다 쥐고, 편집 뒤에는 고친 문서만 다시 받는다(설계 2026-11-20 D2)
   const docViews = useDocViews(bundleId, docs.data === null ? null : oldDocIds);
-  // 판단 저장 · AI 작업 끝 · 일괄 일 뒤에 오른다 - 아래 목록이 모두 다시 받는다(분류 · 묶기 · 무효 제안과 Remark 최근 목록은 이때만).
+  // 판단 저장 · AI 작업 끝 · 일괄 일 뒤에 오른다 - 아래 목록이 모두 다시 받는다(무효 제안과 Remark 최근 목록은 이때만, 분류 · 묶기 제안은 편집 뒤 planReload가 고르면 키만 올라 다시 받는다).
   // 편집 뒤에는 오르지 않고 planReload가 고른 목록의 키만 오른다
   const [unitsKey, setUnitsKey] = useState(0);
   const dataKey = `${bundleId}:${unitsKey}`;
@@ -382,8 +382,8 @@ export function useAssignPage() {
   });
   const aiOn = aiJobs.status?.ai_enabled ?? false;
   const aiBusy = (aiJobs.status?.jobs.queued ?? 0) + (aiJobs.status?.jobs.running ?? 0);
-  const suggestions = useLoaded(() => (isDrafting ? listSuggestions(bundleId, "classify") : NO_SUGGESTIONS), `${dataKey}:${isDrafting}`);
-  const matchSuggestions = useLoaded(() => listAppliedSuggestions(bundleId, "match"), dataKey);
+  const suggestions = useLoaded(() => (isDrafting ? listSuggestions(bundleId, "classify") : NO_SUGGESTIONS), `${dataKey}:${isDrafting}:${reloadKeys.suggestions}`);
+  const matchSuggestions = useLoaded(() => listAppliedSuggestions(bundleId, "match"), `${dataKey}:${reloadKeys.suggestions}`);
   // 답이 무효였던 분류 - 그 줄은 미배정 그대로라 카드 자리에 "고르지 못했다" 한 줄만(설계 §5 2-6)
   const invalidSuggestions = useLoaded(() => (isDrafting ? listSuggestions(bundleId, "classify", "invalid") : NO_SUGGESTIONS), `${dataKey}:${isDrafting}`);
 
@@ -406,8 +406,8 @@ export function useAssignPage() {
     if (isDocReload(ask)) void docViews.reload({ docs: ask.docs, units: ask.units }).then((isPlaced) => (isPlaced && ask.units === "all" ? writeLog.settle(at) : undefined));
     if (ask.solo) setSoloKey((key) => key + 1);
     if (ask.lists) setUnitsKey((key) => key + 1);
-    if (ask.tobe || ask.written || ask.identical || ask.split) {
-      setReloadKeys((prev) => ({ tobe: prev.tobe + Number(ask.tobe), written: prev.written + Number(ask.written), identical: prev.identical + Number(ask.identical), split: prev.split + Number(ask.split) }));
+    if (ask.tobe || ask.written || ask.identical || ask.split || ask.suggestions) {
+      setReloadKeys((prev) => ({ tobe: prev.tobe + Number(ask.tobe), written: prev.written + Number(ask.written), identical: prev.identical + Number(ask.identical), split: prev.split + Number(ask.split), suggestions: prev.suggestions + Number(ask.suggestions) }));
     }
     if (ask.bundle) void loadBundle(bundleId);
     // 저장이 도는 동안 부른 묶음 - 그 저장이 건드린 것이 들었으면 다시 받는다(줄의 판단 revision은 그대로라 열쇠가 바뀌지 않는다)
@@ -835,7 +835,8 @@ export function useAssignPage() {
   // AI 추천 일괄 수락 - 상단 바 AI 알약 메뉴가 연다(그 알약은 묶음을 몰라 이 화면이 묶음·지금 Old 문서의 건수를 올려 둔다, 설계 §5 3-1)
   const [acceptKind, setAcceptKind] = useState<AcceptKind | null>(null);
   const acceptDoc = oldView && oldView.document.side === "old" ? { id: oldView.document.id, label: oldView.document.doc_code || oldView.document.file_name } : null;
-  const acceptCounts = countLiveOffer([...(suggestions.data ?? []), ...(matchSuggestions.data ?? [])], acceptDoc?.id ?? null);
+  const statusOfUnit = useMemo(() => new Map(rows.flatMap((row) => row.unitIds.map((id) => [id, row.status] as const))), [rows]);
+  const acceptCounts = countLiveOffer([...(suggestions.data ?? []), ...(matchSuggestions.data ?? [])], acceptDoc?.id ?? null, statusOfUnit);
   useRegisterAiAcceptOffer(canEdit ? { bundleId, counts: acceptCounts } : null, setAcceptKind);
   const paperModel = useMemo(() => (oldView ? buildPaperModel(oldView) : null), [oldView]);
   // 처리 중인 일의 알약 · 쉬머 · 잠금 - 같은 목록이면 같은 값이라 용지의 먼 덩어리를 다시 그리지 않는다

@@ -126,3 +126,8 @@
 ## 2026-11-26 — 진행 숫자를 처분별로 (`fix/progress-by-disposition`)
 
 - 쪼개기 먼저 8의 하나. 세 사본(snapshot · outputs/review · progress-model.ts)을 함께 바꿈 — 검토에서 합성 자료 16벌로 서버와 화면의 1,424값을 맞대 어긋남 0, 검토 조건은 전과 같음. 대시보드의 "묶음 전체" 참조 수가 연 문서 하나만 세던 것도 고침. 큰 문서 판정 시험을 벽시계 대신 읽은 줄 수로.
+
+## 2026-11-26 — fix/ai-suggestions-retire — 편집이 바꾼 Unit의 AI 제안 거두기
+
+- 편집(`_write_change`)이 은퇴시킨 Unit의 분류 · 묶기 제안을 stale로 거두고, 되돌리기 단계에서는 이번에 거둔 id만 빼서 되살리지 않는다(번역 제안의 stale은 전처럼 되돌린다 — 검토가 찾은 회귀를 고침). 받아 보류한 줄이 가리키는 제안은 남긴다(`keep_linked`).
+- 알약 · 수락 창 · 개요가 안 정한 줄의 제안만 센다(`countLiveOffer`). 구조 편집 · 되돌리기 뒤 제안 목록을 다시 받는다 — 스모크가 '되돌린 뒤 옛 캐시가 다시 세어짐'을 찾아 고침. `WAITING_KINDS == OFFERED_KINDS - HIDDEN_AI_KINDS`를 불변식 시험으로 묶음.
