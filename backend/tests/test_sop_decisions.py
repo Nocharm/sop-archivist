@@ -1168,6 +1168,19 @@ def test_bulk_clear_holds_the_rest_of_a_linked_group(client: TestClient) -> None
     assert get_group_by_unit(client, fx.bundle_id, second["id"])["units"][0]["decision"]["status"] == "on_hold"
 
 
+def test_bulk_clear_response_carries_the_held_sibling_with_its_new_revision(client: TestClient) -> None:
+    fx = _setup(client)
+    first, second = find_unit(fx.view, WARM_UP), find_unit(fx.view, RECORDS)
+    _merge(client, fx, first, second)
+
+    rows = _bulk_clear(client, fx, [first], [2]).json()
+
+    by_unit = {row["unit_id"]: row["decision"] for row in rows}
+    assert set(by_unit) == {first["id"], second["id"]}
+    live = get_group_by_unit(client, fx.bundle_id, second["id"])["units"][0]["decision"]
+    assert (by_unit[second["id"]]["status"], by_unit[second["id"]]["revision"]) == ("on_hold", live["revision"])
+
+
 def test_bulk_clear_needs_an_author(client: TestClient) -> None:
     fx = _setup(client)
     assert set_members(client, fx.bundle_id, [("qa.member", "author"), ("qa.lead", "reviewer")]).status_code == 200

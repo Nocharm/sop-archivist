@@ -1722,7 +1722,18 @@ async def clear_units(
     await session.flush()
     for _, decision in loaded.values():  # detach가 판단을 바꿨으니 지금 모습으로
         await session.refresh(decision)
-    return [UnitDecisionRowOut(unit_id=unit_id, decision=DecisionOut.model_validate(loaded[unit_id][1])) for unit_id in unit_ids]
+    # 같은 관계 묶음에서 보류로 바뀐 형제도 싣는다 - revision이 올랐으니 화면이 낡은 값으로 이어 저장해 409가 나지 않게
+    siblings = [unit_id for unit_id in report.held_unit_ids if unit_id not in loaded]
+    held = (
+        list(await session.scalars(
+            select(UnitDecision).where(UnitDecision.unit_id.in_(siblings)).execution_options(populate_existing=True)
+        ))
+        if siblings else []
+    )
+    return [
+        *(UnitDecisionRowOut(unit_id=unit_id, decision=DecisionOut.model_validate(loaded[unit_id][1])) for unit_id in unit_ids),
+        *(UnitDecisionRowOut(unit_id=row.unit_id, decision=DecisionOut.model_validate(row)) for row in held),
+    ]
 
 
 async def reset_assignments(session: AsyncSession, bundle: Bundle, payload: ResetIn, actor: str) -> ResetOut:

@@ -1976,7 +1976,8 @@ export function useAssignPage() {
     if (!bulkClear?.ok) return;
     const ids = new Set(bulkClear.value.map((item) => item.unit_id));
     const targets = bulkRows.map((item) => ({ rowKey: item.key, unitIds: item.units.map((unit) => unit.id).filter((id) => ids.has(id)) })).filter((item) => item.unitIds.length > 0);
-    commands.enqueue({ kind: "bulk", action: "clear", rows: targets, seen: readSeen([...ids]), reason: "", skipped: 0 });
+    const sent = targets.flatMap((item) => (drafts[item.rowKey] ? [{ rowKey: item.rowKey, draft: drafts[item.rowKey] }] : []));
+    commands.enqueue({ kind: "bulk", action: "clear", rows: targets, seen: readSeen([...ids]), reason: "", skipped: 0, drafts: sent });
     setChecked(new Set());
     setCheckedNew(new Set());
   }
@@ -3086,13 +3087,15 @@ export function useAssignPage() {
   }
 
   /** 일괄 배정 취소 - 누른 순간 잡은 줄 가운데 지금도 판단이 남은 것만 요청 하나로(되돌리기 한 칸). 같은 묶음의 나머지는 서버가 보류로 두니 줄을 다시 받는다 */
-  async function sendBulkClear({ rows: targets, seen }: Extract<WriteCommand, { kind: "bulk" }>) {
+  async function sendBulkClear({ rows: targets, seen, drafts: sentDrafts = [] }: Extract<WriteCommand, { kind: "bulk" }>) {
     const decided = (await readRevisions(targets.flatMap((item) => item.unitIds), seen)).filter((unit) => unit.isDecided);
     if (decided.length > 0) {
       noteDecisions(await bulkDecide(bundleId, { action: "clear", reason: "", move_target_code: "", units: decided.map(({ unit_id, revision }) => ({ unit_id, revision })) }, buildUndo()));
       markRecorded();
     }
-    showToast(t("assign.bulk.didClear", { n: decided.length }));
+    // 이미 다 미배정이면 바뀐 것이 없다 - "0개" 알림을 띄우지 않는다
+    if (decided.length > 0) showToast(t("assign.bulk.didClear", { n: decided.length }));
+    for (const { rowKey, draft: sent } of sentDrafts) dropSentDraft(rowKey, sent, sent.reason ?? "");
     requestReload(askAll(true));
   }
 
