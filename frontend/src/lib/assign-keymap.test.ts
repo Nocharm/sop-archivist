@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { ASSIGN_KEYS, findAssignKey, formatAssignKey, resolveAssignKey, type AssignKeyContext, type AssignKeyId } from "./assign-keymap";
+import { ASSIGN_KEYS, findAssignKey, formatAssignKey, resolveAssignKey, routeKey, type AssignKeyContext, type AssignKeyId } from "./assign-keymap";
+import { buildPickBar, resolveEnter, type PickBarState } from "./pick-bar-model";
 
 type Press = Parameters<typeof findAssignKey>[0];
 const press = (key: string, extra: Partial<Press> = {}): Press => ({ key, shiftKey: false, ctrlKey: false, metaKey: false, altKey: false, ...extra });
@@ -127,5 +128,39 @@ describe("what a key does where it is pressed", () => {
   it("keeps Enter and the cut arrows to the screen - they fall back to the browser when there is nothing to do", () => {
     const nothing = { ...OPEN, hasRow: false, hasBox: false, hasCut: false, canEdit: false };
     for (const id of ["confirm", "cut_left", "cut_right"] as const) expect(resolveAssignKey(entryOf(id), nothing)).toEqual({ run: id });
+  });
+});
+
+describe("Enter and the keys across both documents", () => {
+  const open = { rowKey: "r3", unitId: 3, isConfirmed: false, savedTargetIds: [], blockKey: null };
+  const sentence = { unitId: 700, targetIds: [70], additive: false, hasSources: false, whyKey: null };
+  const base: PickBarState = { canEdit: true, mode: "old", isPicking: false, isMultiPick: false, isCell: false, last: "new", act: "pick", old: open, new: sentence, tools: [] };
+  /** 결정표의 줄 - 4 양쪽을 누름, 11 보낼 곳을 고른 뒤, 3 New만 */
+  const bar = (n: 3 | 4 | 11) => buildPickBar(n === 11 ? { ...base, act: "destination", last: "old" } : n === 3 ? { ...base, old: null } : base);
+  const confirm = { kind: "confirm" as const };
+  const on = (last: "old" | "new") => ({ last, focusIn: "paper" as const });
+
+  it("Enter links while both are picked, else asks the primary", () => {
+    expect(resolveEnter(bar(4), confirm)).toEqual({ kind: "link" });
+    expect(resolveEnter(bar(11), confirm)).toEqual({ kind: "confirm" });
+    expect(resolveEnter(bar(3), confirm)).toEqual({ kind: "none" });
+    expect(resolveEnter(buildPickBar({ ...base, canEdit: false }), confirm)).toEqual({ kind: "confirm" });
+  });
+  it("Enter never confirms the Old row while New was pressed last - Shift-picking New or picking a New pair does nothing", () => {
+    expect(resolveEnter(buildPickBar({ ...base, isMultiPick: true }), confirm)).toEqual({ kind: "none" });
+    expect(resolveEnter(buildPickBar({ ...base, isPicking: true }), confirm)).toEqual({ kind: "none" });
+    expect(resolveEnter(buildPickBar({ ...base, isMultiPick: true, last: "old" }), confirm)).toEqual({ kind: "confirm" });
+    // New를 저절로 고른 때(잇기 뒤 출처 없는 다음 문장)도 아무것도 하지 않는다 - 잇지도, 숨은 확정도 없다
+    expect(resolveEnter(buildPickBar({ ...base, act: null }), confirm)).toEqual({ kind: "none" });
+  });
+  it("judgement keys stay on Old, shape keys and J follow the last side", () => {
+    expect(routeKey("Delete", on("new")).side).toBe("old");
+    expect(routeKey("s", on("new")).side).toBe("new");
+    expect(routeKey("j", on("new")).side).toBe("new");
+    expect(routeKey("v", on("new")).side).toBeNull();
+  });
+  it("Tab indents on the paper and not inside the bar", () => {
+    expect(routeKey("Tab", on("new")).id).toBe("indent");
+    expect(routeKey("Tab", { last: "new", focusIn: "pick-bar" }).id).toBeNull();
   });
 });

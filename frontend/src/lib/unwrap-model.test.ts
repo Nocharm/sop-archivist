@@ -81,6 +81,12 @@ describe("unwrapped tables on the paper", () => {
     expect(countDecidedLines(view.units, 7, (id) => statuses.get(id))).toBe(2); // 표 밖 줄(30)은 세지 않는다
     expect(countDecidedLines(view.units, 7, () => undefined)).toBe(0);
   });
+
+  // New 문서의 줄은 판단이 없어 보기의 status가 null이다 - 다시 표로 전에 묻지 않는다(묻는 것은 서버, 쪼개기 먼저 §8 4-3)
+  it("counts no decided lines in a document without decisions", () => {
+    const written = view.units.map((unit) => ({ ...unit, status: null }));
+    expect(countDecidedLines(written, 7, () => undefined)).toBe(0);
+  });
 });
 
 // 표 안 표(F2) - 벗긴 바깥 표 7의 둘째 칸 "가 문장.\n나 문장." 두 문단 사이에 안쪽 값 표 8, 둘째 행 첫 칸 앞에 안쪽 띠 표 9

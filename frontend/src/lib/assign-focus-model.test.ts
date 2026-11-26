@@ -5,58 +5,122 @@ import { createCommandQueue, isBarrier } from "./command-queue";
 import {
   applyLoaded,
   buildPaperWaits,
-  buildSoloPick,
   INITIAL_FOCUS_STATE,
   isGlobalPending,
-  isSameFocus,
+  isSamePick,
   isUnitLocked,
   isUnitUnsettled,
   listEditUnitIds,
   listTableUnitIds,
-  NO_FOCUS,
+  NO_PICK,
   NO_PLACE,
   planReload,
   readEditKind,
   readEditPlace,
   readPendingLabelKey,
   reduceFocus,
-  type Focus,
   type FocusEvent,
   type FocusState,
   type LoadedDoc,
+  type NewPick,
+  type OldPick,
   type Pending,
+  type SidePick,
+  toggleNewPick,
 } from "./assign-focus-model";
 
-const unit = (unitId: number, docId = 1): Focus => ({ kind: "unit", docId, unitId });
+const unit = (unitId: number, docId = 1): OldPick => ({ kind: "unit", docId, unitId });
+const newUnit = (...unitIds: number[]): Extract<NewPick, { kind: "unit" }> => ({ kind: "unit", docId: 7, unitIds, additive: false });
+const toc = (key: number, unitId: number | null = null): OldPick => ({ kind: "toc", docId: 1, key, unitId });
 const job = (id: string, over: Partial<Pending> = {}): Pending => ({ id, kind: "join", docId: 1, unitIds: [], place: NO_PLACE, isGlobal: false, ...over });
 const doc = (docId: number, revision: number, ids: number[]): LoadedDoc => ({ docId, revision, unitIds: new Set(ids) });
-const loaded = (docs: LoadedDoc[], liftUnit: (id: number) => number | null = (id) => (docs.some((item) => item.unitIds.has(id)) ? id : null)): Extract<FocusEvent, { type: "loaded" }> => ({ type: "loaded", docs, liftUnit });
+const loaded = (docs: LoadedDoc[], liftUnit: (id: number) => number | null = (id) => (docs.some((item) => item.unitIds.has(id)) ? id : null)): Extract<FocusEvent, { type: "loaded" }> => ({ type: "loaded", side: docs.some((item) => item.docId === 7) ? "new" : "old", docs, liftUnit });
 const run = (...events: FocusEvent[]): FocusState => events.reduce(reduceFocus, INITIAL_FOCUS_STATE);
-const pick = (focus: Focus): FocusEvent => ({ type: "pick", focus });
-const start = (pending: Pending): FocusEvent => ({ type: "start", pending });
+const pick = (next: OldPick): FocusEvent => ({ type: "pick", side: "old", pick: next });
+const pickNew = (...unitIds: number[]): FocusEvent => ({ type: "pick", side: "new", pick: newUnit(...unitIds) });
+const pickOld = (unitId: number): FocusEvent => pick(unit(unitId));
+const pickOldToc = (key: number): FocusEvent => pick(toc(key));
+const clear = (what: "all" | "new"): FocusEvent => ({ type: "clear", what });
+const choose = (): FocusEvent => ({ type: "choose_destination" });
+const oldSide = (next: OldPick): SidePick => ({ side: "old", pick: next });
+const restoreOld = (next: OldPick): FocusEvent => ({ type: "restore", picks: { old: next, new: NO_PICK, last: "old", act: "pick" } });
+const start = (pending: Pending, side?: "old" | "new"): FocusEvent => ({ type: "start", pending, side });
 const succeed = (pendingId: string, pickUnitId: number | null, over: { docId?: number | null; revision?: number | null } = {}): FocusEvent => ({ type: "succeed", pendingId, docId: 1, revision: 5, pickUnitId, ...over });
 
 describe("pick (rule 1)", () => {
-  it("holds one focus at a time - a toc block or a New document replaces the picked box", () => {
-    expect(run(pick(unit(3)), pick({ kind: "toc", docId: 1, key: 9, unitId: null })).focus).toEqual({ kind: "toc", docId: 1, key: 9, unitId: null });
-    expect(run(pick(unit(3)), pick({ kind: "new", docId: 7, unitId: null, inPlace: false })).focus.kind).toBe("new");
+  it("holds one pick per side - a toc block replaces the picked box, a New box leaves it", () => {
+    expect(run(pick(unit(3)), pick(toc(9))).old).toEqual(toc(9));
+    const state = run(pick(unit(3)), pickNew(70));
+    expect(state.old).toEqual(unit(3));
+    expect(state.new.kind).toBe("unit");
+  });
+  it("keeps one pick per side", () => {
+    const state = run(pickOld(3), pickNew(70));
+    expect(state.old).toEqual(unit(3));
+    expect(state.new).toMatchObject({ unitIds: [70] });
+    expect(state.last).toBe("new");
+  });
+  it("Ctrl adds and removes, a plain press replaces", () => {
+    const two = toggleNewPick(newUnit(70), 7, 71, true);
+    expect(two).toMatchObject({ unitIds: [70, 71], additive: true });
+    expect(toggleNewPick(two, 7, 70, true)).toMatchObject({ unitIds: [71] });
+    expect(toggleNewPick(two, 7, 72, false)).toMatchObject({ unitIds: [72], additive: false });
+    expect(toggleNewPick(toggleNewPick(NO_PICK, 7, 70, true), 7, 70, true)).toEqual(NO_PICK);
+  });
+  it("starts over when Ctrl adds a box of another New document", () => {
+    expect(toggleNewPick(newUnit(70), 8, 90, true)).toEqual({ kind: "unit", docId: 8, unitIds: [90], additive: true });
+  });
+  it("picking New keeps a follow started from Old", () => {
+    expect(run(pickOld(3), start(job("a")), succeed("a", 4), pickNew(70)).follows).toHaveLength(1);
+  });
+  it("clear new keeps the Old pick and clear all empties both", () => {
+    expect(run(pickOld(3), pickNew(70), clear("new"))).toMatchObject({ old: unit(3), new: { kind: "none" }, last: "old" });
+    const state = run(pickOld(3), pickNew(70), clear("all"));
+    expect(state).toMatchObject({ old: NO_PICK, new: NO_PICK, last: null });
+  });
+  it("letting go of one side leaves the other as the last one", () => {
+    expect(run(pickNew(70), pickOld(3), pick(NO_PICK)).last).toBe("new");
+    expect(run(pickOld(3), pick(NO_PICK)).last).toBeNull();
+  });
+  it("choosing a destination turns the act and a press turns it back", () => {
+    expect(run(pickOld(3), choose()).act).toBe("destination");
+    expect(run(pickOld(3), choose(), pickNew(70)).act).toBe("pick");
+    // 같은 박스를 다시 눌러도 누른 것이다
+    expect(run(pickOld(3), choose(), pickOld(3)).act).toBe("pick");
+  });
+  it("a move after a save is not a press - Enter does not link the held New pick", () => {
+    expect(run(pickOld(3), pickNew(70), { type: "pick", isAuto: true, ...oldSide(unit(4)) })).toMatchObject({ old: unit(4), last: "old", act: null });
+  });
+  it("goes back to the picks it was stopped with", () => {
+    const held = run(pickOld(3), pickNew(70));
+    const state = reduceFocus(run(pickOld(8)), { type: "restore", picks: held });
+    expect(state).toMatchObject({ old: unit(3), new: newUnit(70), last: "new", act: "pick" });
+  });
+  it("a toc block on one side leaves the other side", () => {
+    expect(run(pickNew(70), pickOldToc(9)).new).toMatchObject({ unitIds: [70] });
   });
   it("keeps the same state object when the same thing is picked again", () => {
     const state = run(pick(unit(3)));
     expect(reduceFocus(state, pick(unit(3)))).toBe(state);
   });
   it("compares every field of a focus", () => {
-    expect(isSameFocus(unit(3, 1), unit(3, 2))).toBe(false);
-    expect(isSameFocus({ kind: "new", docId: 7, unitId: 1, inPlace: true }, { kind: "new", docId: 7, unitId: 1, inPlace: false })).toBe(false);
-    expect(isSameFocus(NO_FOCUS, NO_FOCUS)).toBe(true);
+    expect(isSamePick(unit(3, 1), unit(3, 2))).toBe(false);
+    expect(isSamePick(newUnit(70), { ...newUnit(70), additive: true })).toBe(false);
+    expect(isSamePick(newUnit(70, 71), newUnit(70))).toBe(false);
+    expect(isSamePick(toc(9), toc(9, 4))).toBe(false);
+    expect(isSamePick(NO_PICK, NO_PICK)).toBe(true);
   });
 });
 
 describe("start keeps the focus (rule 2)", () => {
   it("does not touch the focus while an edit is pending", () => {
     const state = run(pick(unit(3)), start(job("a", { unitIds: [3, 4] })));
-    expect(state.focus).toEqual(unit(3));
-    expect(state.pending.map((entry) => entry.from)).toEqual([unit(3)]);
+    expect(state.old).toEqual(unit(3));
+    expect(state.pending.map((entry) => entry.from)).toEqual([oldSide(unit(3))]);
+  });
+  it("starts from the side of the document the work changes", () => {
+    const state = run(pickOld(3), pickNew(70), start(job("a"), "old"), start(job("b")));
+    expect(state.pending.map((entry) => entry.from)).toEqual([oldSide(unit(3)), { side: "new", pick: newUnit(70) }]);
   });
   it("ignores a second start with the same id", () => {
     const state = run(start(job("a")));
@@ -65,72 +129,97 @@ describe("start keeps the focus (rule 2)", () => {
 });
 
 describe("follow (rule 3)", () => {
+  // 화면의 runPairDrop이 놓은 Old 조각을 먼저 고르는 까닭 - 따라가기만으로는 New를 마지막에 누른 채라 오른쪽 칸이 New 다듬기에 남는다
+  it("an Old drop made while New was pressed last turns the panel to Old only as an Old press", () => {
+    const drop = (...press: FocusEvent[]) => run(pickNew(70), ...press, start(job("p"), "old"), succeed("p", 4), loaded([doc(1, 5, [3, 4])]));
+    expect(drop()).toMatchObject({ old: unit(4), last: "new" });
+    expect(drop(pickOld(3))).toMatchObject({ old: unit(4), last: "old" });
+  });
   it("picks the response's box once its document comes back at that revision", () => {
     const waiting = run(pick(unit(3)), start(job("a")), succeed("a", 10));
     // 일은 부른 쪽이 걷을 때까지 처리 중이다(응답 뒤 전환 · 다시 받기를 거는 동안)
     expect(waiting.pending.map((entry) => entry.id)).toEqual(["a"]);
     expect(waiting.follows.map((follow) => follow.kind)).toEqual(["join"]);
     // 낡은 판(늦게 온 앞 보기)은 기다린다
-    expect(reduceFocus(waiting, loaded([doc(1, 4, [3, 4])])).focus).toEqual(unit(3));
+    expect(reduceFocus(waiting, loaded([doc(1, 4, [3, 4])])).old).toEqual(unit(3));
     const after = applyLoaded(waiting, loaded([doc(1, 5, [10, 11])]));
-    expect(after.state.focus).toEqual(unit(10));
+    expect(after.state.old).toEqual(unit(10));
     expect(after.picked?.pickUnitId).toBe(10);
     expect(after.state.follows).toEqual([]);
   });
   it("does not follow when someone picked another box before the response", () => {
     const state = run(pick(unit(3)), start(job("a")), pick(unit(8)), succeed("a", 10));
     expect(state.follows).toEqual([]);
-    expect(state.focus).toEqual(unit(8));
+    expect(state.old).toEqual(unit(8));
   });
   it("drops the follow when someone picks another box after the response", () => {
     const state = run(pick(unit(3)), start(job("a")), succeed("a", 10), pick(unit(8)));
     expect(state.follows).toEqual([]);
-    expect(reduceFocus(state, loaded([doc(1, 5, [8, 10])])).focus).toEqual(unit(8));
+    expect(reduceFocus(state, loaded([doc(1, 5, [8, 10])])).old).toEqual(unit(8));
   });
   it("drops the follow when someone picks the same box again after the response - they chose it after the work (Del → Undo → click)", () => {
     const state = run(pick(unit(3)), start(job("u", { kind: "undo", isGlobal: true })), succeed("u", 10, { docId: null, revision: null }), pick(unit(3)));
     expect(state.follows).toEqual([]);
-    expect(reduceFocus(state, loaded([doc(1, 9, [3, 10])])).focus).toEqual(unit(3));
+    expect(reduceFocus(state, loaded([doc(1, 9, [3, 10])])).old).toEqual(unit(3));
   });
   it("does not follow when someone picked the same box again before the response", () => {
     const state = run(pick(unit(3)), start(job("u", { kind: "undo", isGlobal: true })), pick(unit(3)), succeed("u", 10, { docId: null, revision: null }));
     expect(state.follows).toEqual([]);
-    expect(reduceFocus(state, loaded([doc(1, 9, [3, 10])])).focus).toEqual(unit(3));
+    expect(reduceFocus(state, loaded([doc(1, 9, [3, 10])])).old).toEqual(unit(3));
   });
   it("follows again after Retry puts back the pick the work was pressed from - restoring is not someone's pick", () => {
-    const state = run(pick(unit(3)), start(job("a")), pick(unit(8)), { type: "restore", focus: unit(3) }, succeed("a", 10), loaded([doc(1, 5, [3, 10])]));
-    expect(state.focus).toEqual(unit(10));
+    const state = run(pick(unit(3)), start(job("a")), pick(unit(8)), restoreOld(unit(3)), succeed("a", 10), loaded([doc(1, 5, [3, 10])]));
+    expect(state.old).toEqual(unit(10));
   });
   it("does not revive work pressed from another pick when restoring", () => {
-    const state = run(pick(unit(5)), start(job("a")), pick(unit(8)), { type: "restore", focus: unit(3) }, succeed("a", 10), loaded([doc(1, 5, [3, 10])]));
-    expect(state.focus).toEqual(unit(3));
+    const state = run(pick(unit(5)), start(job("a")), pick(unit(8)), restoreOld(unit(3)), succeed("a", 10), loaded([doc(1, 5, [3, 10])]));
+    expect(state.old).toEqual(unit(3));
   });
   it("still follows work pressed after the pick", () => {
     const state = run(pick(unit(3)), start(job("a")), pick(unit(3)), start(job("b")), succeed("b", 10), loaded([doc(1, 5, [3, 10])]));
-    expect(state.focus).toEqual(unit(10));
+    expect(state.old).toEqual(unit(10));
+  });
+  it("a pick on the New side leaves Old work pressed before it to follow", () => {
+    const state = run(pick(unit(3)), start(job("a"), "old"), pickNew(70), succeed("a", 10), loaded([doc(1, 5, [3, 10])]));
+    expect(state.old).toEqual(unit(10));
+    expect(state.new).toMatchObject({ unitIds: [70] });
   });
   it("keeps the focus when the response names no box", () => {
     const state = run(pick(unit(3)), start(job("a")), succeed("a", null), loaded([doc(1, 5, [3])]));
-    expect(state.focus).toEqual(unit(3));
+    expect(state.old).toEqual(unit(3));
   });
   it("lifts a box with no row to its group (a table cell to its table)", () => {
     const waiting = run(pick(unit(3)), start(job("a")), succeed("a", 21));
-    expect(reduceFocus(waiting, loaded([doc(1, 5, [20, 21])], (id) => (id === 21 ? 20 : id))).focus).toEqual(unit(20));
+    expect(reduceFocus(waiting, loaded([doc(1, 5, [20, 21])], (id) => (id === 21 ? 20 : id))).old).toEqual(unit(20));
   });
   it("finds the box in whichever document came back when the response named none (Undo)", () => {
     const waiting = run(pick(unit(3)), start(job("u", { kind: "undo", isGlobal: true })), succeed("u", 40, { docId: null, revision: null }));
-    expect(reduceFocus(waiting, loaded([doc(1, 9, [3]), doc(2, 4, [40])])).focus).toEqual(unit(40, 2));
+    expect(reduceFocus(waiting, loaded([doc(1, 9, [3]), doc(2, 4, [40])])).old).toEqual(unit(40, 2));
   });
   it("follows inside the New document it was started from, and nowhere else", () => {
-    const from: Focus = { kind: "new", docId: 7, unitId: 1, inPlace: true };
-    const waiting = run(pick(from), start(job("a", { docId: 7 })), succeed("a", 2, { docId: 7 }));
-    expect(reduceFocus(waiting, loaded([doc(7, 5, [2])])).focus).toEqual({ ...from, unitId: 2 });
-    const elsewhere = run(pick(from), start(job("b")), succeed("b", 2, { docId: 1 }));
-    expect(reduceFocus(elsewhere, loaded([doc(1, 5, [2])])).focus).toEqual(from);
+    const waiting = run(pickNew(70), start(job("a", { docId: 7 })), succeed("a", 2, { docId: 7 }));
+    expect(reduceFocus(waiting, loaded([doc(7, 5, [2])])).new).toEqual(newUnit(2));
+    const elsewhere = run(pickNew(70), start(job("b")), succeed("b", 2, { docId: 1 }));
+    expect(reduceFocus(elsewhere, loaded([doc(1, 5, [2])])).new).toEqual(newUnit(70));
+  });
+  it("a New document coming back does not eat a follow on the Old side", () => {
+    const waiting = run(pickOld(3), pickNew(70), start(job("u", { kind: "undo", isGlobal: true }), "old"), succeed("u", 40, { docId: null, revision: null }));
+    const state = reduceFocus(waiting, loaded([doc(7, 9, [70])]));
+    expect(state.follows).toHaveLength(1);
+    // Old 쪽을 따라가도 마지막에 누른 쪽과 한 일은 그대로다
+    expect(reduceFocus(state, loaded([doc(1, 9, [40])]))).toMatchObject({ old: unit(40), new: newUnit(70), last: "new", act: "pick" });
+  });
+  it("a follow on the side pressed last keeps the act - Enter still links after shaping the New box", () => {
+    const state = run(pickOld(3), pickNew(70), start(job("a", { docId: 7 }), "new"), succeed("a", 72, { docId: 7 }), loaded([doc(7, 5, [72])]));
+    expect(state).toMatchObject({ old: unit(3), new: newUnit(72), last: "new", act: "pick" });
+  });
+  it("Undo pressed with Old last still follows on Old when a New box is pressed before the response (the step keeps the document it was pressed with)", () => {
+    const state = run(pickOld(3), start(job("z", { kind: "undo", docId: null, isGlobal: true }), "old"), pickNew(70), succeed("z", 4, { docId: null, revision: null }), loaded([doc(1, 9, [4, 5])]));
+    expect(state).toMatchObject({ old: unit(4), new: newUnit(70), follows: [] });
   });
   it("follows from no focus too (the toc block was let go before the edit)", () => {
-    const state = run(pick({ kind: "toc", docId: 1, key: 5, unitId: null }), pick(NO_FOCUS), start(job("a", { kind: "toc" })), succeed("a", 5), loaded([doc(1, 5, [5])]));
-    expect(state.focus).toEqual(unit(5));
+    const state = run(pick(toc(5)), pick(NO_PICK), start(job("a", { kind: "toc" })), succeed("a", 5), loaded([doc(1, 5, [5])]));
+    expect(state.old).toEqual(unit(5));
   });
   it("leaves a follow for another document waiting", () => {
     const waiting = run(pick(unit(3)), start(job("a", { docId: 2 })), succeed("a", 10, { docId: 2 }));
@@ -145,7 +234,7 @@ describe("fail (rule 4)", () => {
     const state = reduceFocus(waiting, { type: "fail", pendingId: "b" });
     expect(state.pending.map((entry) => entry.id)).toEqual(["a"]);
     expect(state.follows).toHaveLength(1);
-    expect(state.focus).toEqual(unit(3));
+    expect(state.old).toEqual(unit(3));
   });
   it("ends the work after succeed and keeps its follow (the caller always ends in finally)", () => {
     const state = run(pick(unit(3)), start(job("a")), succeed("a", 10), { type: "fail", pendingId: "a" });
@@ -157,25 +246,29 @@ describe("fail (rule 4)", () => {
 
 describe("a vanished unit is never selected (rule 5)", () => {
   it("lets go of a box its document no longer has", () => {
-    expect(run(pick(unit(3)), loaded([doc(1, 5, [4])])).focus).toEqual(NO_FOCUS);
+    expect(run(pick(unit(3)), loaded([doc(1, 5, [4])])).old).toEqual(NO_PICK);
   });
   it("keeps a box when another document came back", () => {
-    expect(run(pick(unit(3)), loaded([doc(2, 5, [4])])).focus).toEqual(unit(3));
+    expect(run(pick(unit(3)), loaded([doc(2, 5, [4])])).old).toEqual(unit(3));
   });
   it("keeps the retired box while its own follow still waits, then moves to the follow", () => {
     const waiting = run(pick(unit(3)), start(job("a", { docId: 2 })), succeed("a", 10, { docId: 2 }));
     // 다른 문서(1)가 먼저 오고 고른 3이 거기 없어도, 3에서 건 따라가기가 기다리면 둔다
-    expect(reduceFocus(waiting, loaded([doc(1, 5, [4])])).focus).toEqual(unit(3));
+    expect(reduceFocus(waiting, loaded([doc(1, 5, [4])])).old).toEqual(unit(3));
   });
   it("does not pick a follow whose box is gone, and lets go of the retired focus", () => {
     const state = run(pick(unit(3)), start(job("a")), succeed("a", 10), loaded([doc(1, 5, [11])]));
-    expect(state.focus).toEqual(NO_FOCUS);
+    expect(state.old).toEqual(NO_PICK);
     expect(state.follows).toEqual([]);
   });
-  it("keeps a toc block or a New document open but drops the line that went away", () => {
-    expect(run(pick({ kind: "toc", docId: 1, key: 5, unitId: 6 }), loaded([doc(1, 5, [5])])).focus).toEqual({ kind: "toc", docId: 1, key: 5, unitId: null });
-    expect(run(pick({ kind: "toc", docId: 1, key: 5, unitId: null }), loaded([doc(1, 5, [6])])).focus).toEqual(NO_FOCUS);
-    expect(run(pick({ kind: "new", docId: 7, unitId: 2, inPlace: false }), loaded([doc(7, 5, [3])])).focus).toEqual({ kind: "new", docId: 7, unitId: null, inPlace: false });
+  it("keeps a toc block but drops the line that went away", () => {
+    expect(run(pick(toc(5, 6)), loaded([doc(1, 5, [5])])).old).toEqual(toc(5));
+    expect(run(pick(toc(5)), loaded([doc(1, 5, [6])])).old).toEqual(NO_PICK);
+    expect(run(pickNew(2), loaded([doc(7, 5, [3])])).new).toEqual(NO_PICK);
+  });
+  it("drops only the vanished New unit", () => {
+    const state = run(pickOld(3), { type: "pick", side: "new", pick: newUnit(70, 71) }, loaded([doc(7, 2, [71])]));
+    expect(state).toMatchObject({ old: unit(3), new: { unitIds: [71] } });
   });
   it("returns the same state when nothing changed", () => {
     const state = run(pick(unit(3)));
@@ -205,7 +298,7 @@ describe("locks (rule 6)", () => {
   it("drops older follows when global work starts - Undo may retire the box they would pick", () => {
     const state = run(pick(unit(3)), start(job("a")), succeed("a", 10), start(job("u", { kind: "undo", isGlobal: true })));
     expect(state.follows).toEqual([]);
-    expect(state.focus).toEqual(unit(3));
+    expect(state.old).toEqual(unit(3));
   });
   it("keeps the units locked after the response until the work ends (the reload is not asked yet, an unwrap's new view not placed)", () => {
     const state = run(start(job("a", { unitIds: [3, 4] })), succeed("a", 10));
@@ -382,24 +475,9 @@ describe("loaded with only the edited document", () => {
   it("follows the merged box from that document's batch and leaves a focus in another document alone", () => {
     // Join in doc 1 - the batch carries doc 1's view and rows together, so the follow lands in one event
     const waiting = run(pick(unit(3)), start(job("a", { unitIds: [3, 4] })), succeed("a", 10));
-    expect(run(pick(unit(3)), start(job("a", { unitIds: [3, 4] })), succeed("a", 10), loaded([doc(1, 5, [10, 5])])).focus).toEqual(unit(10));
-    expect(reduceFocus(waiting, loaded([doc(2, 9, [7])])).focus).toEqual(unit(3));
+    expect(run(pick(unit(3)), start(job("a", { unitIds: [3, 4] })), succeed("a", 10), loaded([doc(1, 5, [10, 5])])).old).toEqual(unit(10));
+    expect(reduceFocus(waiting, loaded([doc(2, 9, [7])])).old).toEqual(unit(3));
     // a box in doc 2 is not dropped by a batch that did not carry doc 2
-    expect(run(pick(unit(7, 2)), loaded([doc(1, 5, [10])])).focus).toEqual(unit(7, 2));
-  });
-});
-
-describe("buildSoloPick", () => {
-  const solo = { docId: 7, unitId: 2, inPlace: true };
-  it("is nothing when the New document pick stays the same (pressing the pressed One-pane button again)", () => {
-    expect(buildSoloPick({ kind: "new", ...solo }, { ...solo })).toBeNull();
-  });
-  it("is the new New document pick when it changes", () => {
-    expect(buildSoloPick({ kind: "new", ...solo }, { ...solo, inPlace: false })).toEqual({ kind: "new", ...solo, inPlace: false });
-    expect(buildSoloPick(unit(3), solo)).toEqual({ kind: "new", ...solo });
-  });
-  it("lets go of a New document pick, and leaves an Old pick alone", () => {
-    expect(buildSoloPick({ kind: "new", ...solo }, null)).toEqual(NO_FOCUS);
-    expect(buildSoloPick(unit(3), null)).toBeNull();
+    expect(run(pick(unit(7, 2)), loaded([doc(1, 5, [10])])).old).toEqual(unit(7, 2));
   });
 });

@@ -7,7 +7,7 @@ import { useEffect, useEffectEvent, useRef, useState } from "react";
 
 import { findLinkPartners, pickDrawnLinks, type LinkPair } from "@/lib/assign-model";
 import { isBoxDragActive } from "@/lib/box-drag";
-import { getLinkDirection, type LinkDirection } from "@/lib/link-direction-model";
+import { getLinkDirection, readFarSide, readHiddenTabSide, type LinkDirection } from "@/lib/link-direction-model";
 import { buildLinkPath, buildLinkStubs, isFarLink, type LinkStub } from "@/lib/link-route-model";
 
 /** 두 문서를 담은 틀(.assign-panes) 안에 둔다 - 틀이 선의 좌표 기준이자 마우스를 듣는 곳이다 */
@@ -80,6 +80,9 @@ function readHover(target: EventTarget | null): Hover | null {
   if (!(target instanceof Element)) return null;
   const line = target.closest<HTMLElement>("[data-pane=\"new\"] .new-line[data-target]");
   if (line) return { side: "new", id: Number(line.dataset.target) };
+  // 칸에 이은 선은 칸에서 끝난다 - 칸에 올려도 그 선이 진해진다(쪼개기 먼저 §8 4-3)
+  const cell = target.closest<HTMLElement>("[data-pane=\"new\"] .new-cell[data-cell-target]");
+  if (cell) return { side: "new", id: Number(cell.dataset.cellTarget) };
   const strip = target.closest<HTMLElement>("[data-pane=\"old\"] .cell-piece, [data-pane=\"old\"] .strip");
   const unit = strip?.querySelector<HTMLElement>("[data-unit]");
   return unit ? { side: "old", id: Number(unit.dataset.unit) } : null;
@@ -89,21 +92,43 @@ function readAnchorY(rect: DOMRect): number {
   return rect.top + Math.min(rect.height / 2, FIRST_LINE_Y);
 }
 
+/** 조각이 화면 밖 덩어리에 있으면 그 쪽(above · below) - 아니면 null이고 조각을 잰다. 한 번 잴 때마다 덩어리 상자를 한 번씩만 읽는다 */
+function buildFarSideReader(frame: DOMRect): (el: Element) => "above" | "below" | null {
+  const sides = new Map<Element, "above" | "below" | null>();
+  return (el) => {
+    const chunk = el.closest(".strip-chunk");
+    if (chunk === null) return null;
+    const known = sides.get(chunk);
+    if (known !== undefined) return known;
+    const side = readFarSide(chunk.getBoundingClientRect(), frame);
+    sides.set(chunk, side);
+    return side;
+  };
+}
+
 /** 연결 배지마다 이어진 New 문장이 오른쪽 칸 화면 안·위·아래·다른 문서 중 어디인지 data-dir로 단다 - 열린 문서의 문장이 하나라도 보이면 보임 */
 // 두 방향 표시 모두 위치를 다 읽은 뒤에 쓴다 - 읽기 사이에 data-dir을 쓰면 다음 읽기가 문서 전체 배치를 다시 계산시킨다
 function updateBadgeDirections(root: HTMLElement, newPane: HTMLElement, newBody: HTMLElement) {
   const currentDoc = Number(newPane.dataset.doc);
   const frame = newBody.getBoundingClientRect();
   const view = { docId: currentDoc, scrollTop: newBody.scrollTop, height: newBody.clientHeight };
+  const readSide = buildFarSideReader(frame);
+  // 다른 탭의 문장(각주 · 미주) - 용지가 그려진 뒤에만
+  const hiddenSide = newPane.querySelector(".new-paper") ? readHiddenTabSide(newPane.dataset.tab) : null;
   const next: Array<[HTMLElement, LinkDirection]> = [];
   for (const badge of root.querySelectorAll<HTMLElement>("[data-pane=\"old\"] [data-link-badge]")) {
     const refs = (badge.dataset.targets ?? "").split(",").map((part) => part.split(":").map(Number));
     const here = refs.filter(([docId]) => docId === currentDoc);
     let dir: LinkDirection = refs[0] ? getLinkDirection({ docId: refs[0][0], top: 0, bottom: 0 }, view) : "none";
     if (here.length > 0) {
-      const dirs = here.flatMap(([, targetId]) => {
-        const rect = findNewLine(newPane, targetId)?.getBoundingClientRect();
-        return rect ? [getLinkDirection({ docId: currentDoc, top: rect.top - frame.top + view.scrollTop, bottom: rect.bottom - frame.top + view.scrollTop }, view)] : [];
+      const dirs = here.flatMap(([, targetId]): LinkDirection[] => {
+        const line = findNewLine(newPane, targetId);
+        // 문장이 아닌 것(표 · 그림)은 그려져 있어도 줄이 없다
+        if (!line) return hiddenSide === null || newPane.querySelector(`[data-testid="assign-new-${targetId}"]`) ? [] : [hiddenSide];
+        const side = readSide(line);
+        if (side !== null) return [side];
+        const rect = line.getBoundingClientRect();
+        return [getLinkDirection({ docId: currentDoc, top: rect.top - frame.top + view.scrollTop, bottom: rect.bottom - frame.top + view.scrollTop }, view)];
       });
       dir = dirs.includes("visible") ? "visible" : (dirs[0] ?? "none");
     }
@@ -115,10 +140,17 @@ function updateBadgeDirections(root: HTMLElement, newPane: HTMLElement, newBody:
 /** New 출처 칩마다 그 Old 조각이 왼쪽 칸 화면 안·위·아래 중 어디인지 data-dir로 단다 - 칩 오른쪽 갈매기. 조각이 그려져 있지 않으면(다른 Old 문서) none */
 function updateChipDirections(newPane: HTMLElement, oldBody: HTMLElement, findOld: (unitId: number) => HTMLElement | null) {
   const frame = oldBody.getBoundingClientRect();
+  const readSide = buildFarSideReader(frame);
   const next: Array<[HTMLElement, LinkDirection]> = [];
   for (const chip of newPane.querySelectorAll<HTMLElement>("[data-src-unit]")) {
-    const rect = findOld(Number(chip.dataset.srcUnit))?.getBoundingClientRect();
-    next.push([chip, !rect ? "none" : rect.bottom < frame.top ? "above" : rect.top > frame.bottom ? "below" : "visible"]);
+    const strip = findOld(Number(chip.dataset.srcUnit));
+    const side = strip && readSide(strip);
+    if (strip === null || side !== null) {
+      next.push([chip, side ?? "none"]);
+      continue;
+    }
+    const rect = strip.getBoundingClientRect();
+    next.push([chip, rect.bottom < frame.top ? "above" : rect.top > frame.bottom ? "below" : "visible"]);
   }
   for (const [chip, dir] of next) if (chip.dataset.dir !== dir) chip.dataset.dir = dir;
 }
@@ -135,15 +167,6 @@ export function readNewLineEnd(newEl: HTMLElement, unitId: number): { x: number;
   const newRect = newEl.getBoundingClientRect();
   const chipRect = findSourceChip(newEl, unitId)?.getBoundingClientRect();
   return { x: newRect.left, y: chipRect ? chipRect.top + chipRect.height / 2 : readAnchorY(newRect) };
-}
-
-/** 그 New 문장과 그 Old 조각들 사이에 지금 그려진 선의 New 쪽 끝 - 선이 없으면(한 단 보기·선 끔·한쪽 끝이 스크롤 밖) null. 그 자리 메뉴가 선 끝 옆에 뜨려고 쓴다 */
-export function findDrawnLinkEnd(newEl: HTMLElement, unitIds: readonly number[]): { x: number; y: number } | null {
-  const svg = newEl.closest(".assign-panes")?.querySelector(".link-lines");
-  const targetId = newEl.dataset.target;
-  if (!svg || targetId === undefined) return null;
-  const unitId = unitIds.find((id) => svg.querySelector(`[data-link="${id}:${targetId}"]`) !== null);
-  return unitId === undefined ? null : readNewLineEnd(newEl, unitId);
 }
 
 /** New 줄에서 그 Old 조각의 출처 칩 - 접혀 있으면 "+N" 칩 */
@@ -193,11 +216,15 @@ export function LinkLines({ pairs, focusUnits, focusTargets, visible }: LinkLine
     const targets = new Set(focusTargets);
     if (hover?.side === "old") units.add(hover.id);
     if (hover?.side === "new") targets.add(hover.id);
+    const readOldSide = buildFarSideReader(oldFrame);
+    const readNewSide = buildFarSideReader(newFrame);
     const onScreen: Array<LinkPair & { start: { x: number; y: number }; end: { x: number; y: number } }> = [];
     for (const pair of pairs) {
       const oldEl = findOld(pair.unitId);
       const newEl = findNewLine(newPane, pair.targetId);
       if (!oldEl || !newEl) continue;
+      // 화면 밖 덩어리의 끝은 재지 않는다 - 어차피 그리지 않을 이음이다
+      if (readOldSide(oldEl) !== null || readNewSide(newEl) !== null) continue;
       // 두 끝 모두 상자 바깥 테두리 - 선이 배지·칩을 찌르지 않고 그 높이에서 상자에 닿는다
       const start = readOldLineStart(oldEl);
       const end = readNewLineEnd(newEl, pair.unitId);

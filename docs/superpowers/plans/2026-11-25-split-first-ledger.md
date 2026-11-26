@@ -25,7 +25,7 @@
 | 5c | `feat/split-new-parity` | 합침 | v1.6.6 · d750564c | pytest 3453+시드 14(6 xfail = R3 몫) · vitest 1969 · build 경고 0 · `assign:` 스모크 전체 통과(4d와 합친 트리) | Old 한/영 짝이 New 두 문장에 이어져 하나만 풀린 뒤 다시 하기는 409(있던 것) |
 | 6-1 | `feat/new-paper-1-render` | 모음 `feat/new-paper`에 합침 | 7dcf645f | vitest 2361 · build 경고 0 · `assign:` 스모크 1233 + 부하에서 흔들린 둘은 혼자 통과 | New 문장은 글쇠만으로 고를 길이 없음(계획 글자대로, 6-2에서 다시) |
 | 6-2 | `feat/new-paper-2-pick` | 모음 `feat/new-paper`에 합침 | d574eda1(9fcc501d) | dev v1.6.18 합침(충돌 13) · vitest 2475 · build 경고 0 · `assign:` 스모크 1305(시간 단계 하나는 혼자 2번 통과) · Enter · 잇기 단계 95 | fable 검토 두 번: 손질 뒤 Enter가 숨은 확정 · 되돌리기의 문서가 응답 때 정해짐 · Del→잇기→Del · 그 고침이 만든 출처 없음 두 번째 Enter 갈아 끼움 — 모두 고침. 스모크가 찾은 제품 결함: 빈 곳 누르기가 Pair 조각 · 칸 자리 · 템플릿 자리 고름을 지움, 짝 놓기가 New 다듬기에 머묾, 메뉴 위로 단추 줄이 펼쳐짐 — 고침 |
-| 6-3 | `feat/new-paper-3-tools` | 진행 — 코드 · 검토 · 고침 끝, **dev v1.6.21을 합치는 중**(충돌 넷: page.tsx · use-assign-page.tsx · paper.tsx · feature-map). 워크트리 `sop-wt-new-paper-2-pick`(이름은 옛것), 끝 5be84333 | vitest 2527 · 합치기 전 게이트 pytest 3690 · 시드 15 · build 경고 0 · `assign:` 1324 + 새 단계 `shaping tools…` 혼자 76 통과 | opus 검토 막음 1(스모크 본문에 둘째 장 제목 없음) · 권함 1(New 줄 순서 손잡이) 고침. 스모크가 찾은 제품 결함: Shift+누르기 선택 범위(6-3 퇴행) · New 줄을 확정으로 셈(`status` null) · 되돌리기 중 쌓인 Ctrl+Z를 버림(명령 큐, fable 한 번으로 고침). 합치기 뒤 게이트 · 전체 `assign:` 스모크 → 모음 합침 → 모음을 dev에 |
+| 6-3 | `feat/new-paper-3-tools` | 모음에 합침 → 모음을 dev에 | v1.6.22 · c8e014c2 | dev v1.6.21 합침 · pytest 3756+시드 15 · vitest 2545 · build 경고 0 · `assign:` 스모크 1400(100ms 단계는 혼자 통과, 그림 캡션 단계는 혼자 두 번에 한 번 통과 — dev 기반 브랜치에서도 흔들림) | opus 검토 막음 1 · 권함 1 고침, 스모크 뒤 제품 고침 셋은 opus 짧은 검토 통과 |
 | 3b+ | `fix/undo-follow-after-click` | 합침 | v1.6.16 · f1cbc921 | vitest 2297 · build 경고 0 · `assign:` 스모크 1240 + 손질 뒤 5단계 | — |
 | 7 | 계획 4의 일곱 | 대기 | | | |
 | 8 | 계획 5의 아홉 | 진행 | v1.6.21 · 69826fdd | space-preview-trim v1.6.14 · excel-a-strike v1.6.15 · progress-by-disposition v1.6.18 · ai-suggestions-retire v1.6.20 · 모음 table-follow v1.6.21 합침(pytest 3747+시드 15 · vitest 2371 · build 경고 0 · `assign:` 스모크 1274 전부 · AI 단계는 가짜 AI로 14) | 남은 둘: tables-tab · unwrap-continue-numbers(둘 다 6 · 계획 4에 매임) |
@@ -91,6 +91,8 @@
 - ai-suggestions-retire · `test_sop_ai_adoption.py:1073` `applied` → `stale`, `:1075` · `~1088` 종류 키 → `"classify" not in` · 편집이 거둔 제안은 applied에서 빠짐(계획 `test_adoption_stats_do_not_count_stale`)
 - ai-suggestions-retire · `ai-accept-model.test.ts` `countLiveOffer` 셋째 인자, `assign-focus-model.test.ts` · `reload-ask-model.test.ts` 기대 객체에 `suggestions` 필드 · 필드가 늘어남(기대값 그대로)
 - table-follow-2 · 없음(새 시험만). table-follow-3 · `test_sop_ai_llm.py:134` 시드 7 → 8, `test_sop_guidelines.py` `REPLY_FIELDS`에 `prompt.table_follow`, `test_sop_table_follow.py` ai 시험에 `lines` 단언 한 줄, `ai-suggestion-model.test.ts`에 `HIDDEN_AI_KINDS.has("table_follow") === false` · 새 지침 키 · 응답 필드가 늘어남
+- 6-3 · `test_sop_tables.py:389` 409 응답에 `linked_cells` · `held_rows` · New 표 응답 꼴이 늘어남, `new-paper.test.ts:106` testid 글자 · 새 testid가 옛 글자를 품어서
+- 6-2 · `baa5cde3` 한 단을 닫은 근거 `assign-solo` 수 0 → `.assign-panes`에 `data-single` 없음(Old 태그 검사 그대로) · 닫아도 New 고름이 남음(계획 T3), `e4d3a51c` 짝 판을 단추 줄이 다 펼친 뒤에 잼(검사 · 한도 그대로)
 
 ## 아침에 볼 것 (사람이 정할 것 · 봐 줄 것)
 
@@ -129,3 +131,5 @@
 - 임베딩을 켜면 화면 GET(임베딩 씀)과 AI 요청 판정(임베딩 안 씀)이 갈려 422 `follow_not_needed`가 날 수 있다 — 켤 때 함께 본다.
 - 가짜 AI 서버는 **고친 브랜치의 워크트리에서** 띄운다(dev 체크아웃 것은 새 응답이 없어 `invalid`가 된다). AI 단계는 `AI_ENABLED=true AI_BASE_URL=http://localhost:9999/v1 AI_API_TOKEN=fake AI_MODEL=fake AI_AUTO_PREPARE=false scripts/dev-worktree.sh reset`으로 backend를 켠 뒤 그 단계만.
 - 스모크 `has:`에는 pane에 뿌리를 둔 locator가 아니라 `page.locator(testid)`를 넘긴다(바깥에 대고 다시 찾는다).
+- New를 오른쪽에 연 채로도(Old 다듬기 중) Old 표의 '한글 표처럼 하기'가 켜져 있다 — dev는 이때 껐지만 6-3이 그때도 Old 표 도구를 켜 두게 해 맞췄다. 끄려면 `page.tsx`의 `follow:` 한 줄.
+- New 표 풀기 전환(움직임)은 없다(New 보기를 `docViews`로 받지 않음). 스모크 그림 캡션 단계(`the New pane shows a real table and figure`)가 가끔 흔들린다.

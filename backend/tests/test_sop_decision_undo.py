@@ -744,6 +744,32 @@ def test_undo_brings_back_deleted_new_sentence_same_id(client: TestClient) -> No
     assert restored is not None and restored.confirmed_text == TEXT_A
 
 
+def test_undo_restores_the_links_of_a_confirmed_new_unwrap(client: TestClient) -> None:
+    """묻고 확인해 벗긴 New 표 — Assign 되돌리기가 칸의 이음과 Old 판단을 처음대로 되살린다(쪼개기 먼저 설계 §8 4-3)."""
+    # 이 파일을 가져오는 시험 파일이라 여기서 가져온다(모듈 머리에서는 서로 가져오기가 된다)
+    from tests.test_sop_new_edit_undo import _link_cell, _strip
+    from tests.test_sop_new_edit_undo import _setup as _setup_new_table
+
+    bundle_id, old, new = _setup_new_table(client)
+    _link_cell(client, bundle_id, old, new)
+    before = _dump(bundle_id)
+    view = get_view(client, bundle_id, new["id"])
+    url = f"/api/bundles/{bundle_id}/documents/{new['id']}/edits"
+    body = {
+        "revision": view["document"]["revision"], "confirm": False, "undo": UNDO,
+        "op": {"type": "set_layout_table", "table_id": view["tables"][0]["id"], "is_layout": True},
+    }
+    asked = client.post(url, json=body, headers=AUTHOR)
+    assert asked.status_code == 409 and asked.json()["detail"]["linked_cells"] == 1, asked.text
+    _ok(client.post(url, json={**body, "confirm": True}, headers=AUTHOR))
+
+    _ok(_undo(client, bundle_id))
+
+    after = _dump(bundle_id)
+    for name in ("target_sources", "unit_decisions"):
+        assert _strip({key: after[name].get(key, {}) for key in before[name]}) == _strip(before[name])
+
+
 def test_undo_restores_dissolved_pair(client: TestClient) -> None:
     fx = _setup_decisions(client)
     ko, en = find_unit(fx.view, KO_HEAD), find_unit(fx.view, EN_HEAD)

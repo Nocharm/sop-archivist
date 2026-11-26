@@ -13,9 +13,9 @@ import { AssignHelp } from "@/components/assign/assign-help";
 import { LinkLines } from "@/components/assign/link-lines";
 import { JoinMenu } from "@/components/assign/join-menu";
 import { getSpotAttrs, PlaceGap, type PlaceSpotView, type SpotAttrs } from "@/components/assign/place-spot";
-import { LinkMenu } from "@/components/assign/link-menu";
 import { LinkBadge } from "@/components/assign/link-badge";
 import { NewBundle } from "@/components/assign/new-bundle";
+import { NewPaper } from "@/components/assign/new-paper";
 import { NewPane, NewPaneEmpty, type NewPlaceSpots } from "@/components/assign/new-pane";
 import { DocDashboard } from "@/components/assign/doc-dashboard";
 import { OldPane } from "@/components/assign/old-pane";
@@ -30,6 +30,8 @@ import { Modal } from "@/components/modal";
 import { TemplateView, type TemplateSpot } from "@/components/template/template-view";
 import { CutPop } from "@/components/paper/cut-pop";
 import type { ComposedStyleChoice } from "@/components/paper/number-cell";
+import type { PaperNumberCell } from "@/components/paper/paper";
+import type { DocShape } from "@/lib/doc-shape-model";
 import { FilterChip } from "@/components/status";
 import { ConfirmModal } from "@/components/ui/confirm-modal";
 import { LeftoverTranslations } from "@/components/assign/leftover-translations";
@@ -39,11 +41,10 @@ import { BundleLoadError } from "@/components/bundle-load-error";
 import { flashElement, Truncate } from "@/components/ui/motion";
 import { formatGapLabel, PLACE_REFUSAL_KEYS, readGapKey, type Placement, type PlaceSpot } from "@/lib/place-spot-model";
 import { listAckWarnings } from "@/lib/missing-warnings-model";
-import { type ChangeType, type EditOp } from "@/lib/api-sop";
+import { type ChangeType, type DocumentView, type EditOp } from "@/lib/api-sop";
 import { formatAssignKey } from "@/lib/assign-keymap";
 import { isBundleCaptionNeeded } from "@/lib/caption-model";
 import { countJoinedLines } from "@/lib/join-sentence-model";
-import { listLinkMenuItems, listUnlinkRemainder, type LinkMenuItem } from "@/lib/assign-model";
 import type { CEdit } from "@/lib/c-edit-model";
 import { getDestinationId, previewSlotChange, readSlotKind } from "@/lib/classify-model";
 import { buildComposedRows, buildComposedStrips } from "@/lib/composed-model";
@@ -51,6 +52,7 @@ import { useI18n } from "@/lib/i18n";
 import { useComposedOrder } from "@/lib/use-composed-order";
 import { navigate } from "@/lib/nav-buffer";
 import { buildNewAiFilter, listNewAiLinks, readNewAiPill } from "@/lib/new-ai-filter-model";
+import { buildNewOverlay } from "@/lib/new-overlay-model";
 import { buildSheetDraft, isSpaceEnabled, pickSpaceSheet } from "@/lib/space-preview-model";
 import { buildDeletedFolds } from "@/lib/deleted-fold-model";
 import type { IndentChange } from "@/lib/indent-model";
@@ -62,7 +64,12 @@ import { AssignSidePanel } from "./assign-side-panel";
 
 import { AssignBar } from "./assign-bar";
 import { QueueFailure } from "./queue-failure";
-import { useAssignPage, NO_NUMBERS, findDestinationDoc, readMenuCover, revealElement } from "./use-assign-page";
+import { useAssignPage, NO_NUMBERS, findDestinationDoc, revealElement } from "./use-assign-page";
+
+const NO_SECTIONS: ReadonlySet<string> = new Set();
+
+// New 용지의 삭제된 줄 블록은 고르지 않는다 - 블록 고름(결정 칸 · U · R 글쇠)은 Old 문서만이다
+const ignoreNoisePick = () => undefined;
 
 export default function AssignPage() {
   const state = useAssignPage();
@@ -71,27 +78,29 @@ export default function AssignPage() {
   const {
     t, bundleId, bundle, canEdit, docs, oldDocs, docViews, unitsKey, tobe, tobeData, writtenList, identical,
     readMarkStatus, readAiPlace, suggestedTargetUnits, unitMap, written, writtenMap, rows, rowMap, rowOfUnit, labelOptions, ready, showSkeleton, unsourced,
-    mode, setMode, foldOpen, setFoldOpen, foldMatch, clearRowPick, activeKey, row, pickedId, spaceUnitIds, spacePickSeq, solo, setSolo, isSolo, isNewEdit, tocOpen, setTocOpen,
-    tocPick, checked, newRemarks, setNewRemarks, menu, setMenu, joinMenu, setJoinMenu, ctxMenu, setCtxMenu, focusNew,
-    setDrafts, draft, groupPending, savedDestination, destination, rowUnits, reasonNow, setDraft, unsavedCount, leaveTo, setLeaveTo,
+    mode, foldOpen, setFoldOpen, foldMatch, clearRowPick, activeKey, row, pickedId, spaceUnitIds, spacePickSeq, newPick, newUnitId, panel, soloDocId, setSoloDocId, isSolo, isNewEdit, tocOpen, setTocOpen,
+    tocPick, checked, newRemarks, setNewRemarks, joinMenu, setJoinMenu, ctxMenu, setCtxMenu, focusNew,
+    setDrafts, draft, destination, rowUnits, reasonNow, unsavedCount, leaveTo, setLeaveTo,
     aiDest, isAiRow, recommendations, linkIds, candidateIds, setManualOldDoc, oldView, acceptKind, setAcceptKind, acceptDoc, paperModel,
-    canPairView, isPairView, pairColumns, pairLinks, partKeys, oldDocId, soloUnit, soloUnits, cutUnit, cutLine, linkedTargets,
-    registerNumberHandle, setManualPart, changePart, activePart, isFoldEmpty, foldElsewhere, writtenDocs, composedDocs, setManualNewDoc, toggleKey, liveDoc, isNewDocOpen,
-    newDocId, newAiReturn, setNewAiReturn, isComposedDoc, newFileId, composedDoc, newRows, headingNotes, sectionMarks, joinableIds,
+    canPairView, isPairView, pairColumns, pairLinks, partKeys, oldDocId, leftShape, soloUnit, soloUnits, cutUnit, cutLine, linkedTargets,
+    registerNumberHandle, setManualPart, changePart, activePart, isFoldEmpty, foldElsewhere, writtenDocs, composedDocs, toggleKey, liveDoc, isNewDocOpen,
+    newDocId, newAiReturn, setNewAiReturn, isComposedDoc, newFileId, newLoad, newView, newModel, newTabs, composedDoc, newRows, headingNotes, sectionMarks, joinableIds,
     templateTitles, linkPairs, view, changeView, zoomPane, setPanes, remarkEdit, setRemarkEdit, focusAfterRef, busy, isAnyPending, isGlobalPending, paperPending, pendingDeletes, expectedNumbers, editConfirm,
     oldPaneRef, bulk, setBulk, confirmingIdentical,
     setConfirmingIdentical, resetScope, setResetScope, slots, newDraft, draftSlotKey, placeResolved, canPlaceClick, pickedSpotKey,
-    setCarvePick, carve, carveText, clearCarve, togglePairViewByButton, pairFrom, setPairFrom, mergeArm, pairSource, captionPickBundle, setCaptionPick, selectToc, openNewCtxMenu,
-    openSolo, goToUnit, ctxGroups, confirmBlockKey, bundleRefPending, isLinkedToWritten, captionPendingKeys, docDashboard, openCtxMenu, runUnitEdit,
-    rewrapTable, unwrapAi, tableFollow, describeEditConfirm, pairGrip, clearNoise, openNoiseReason, splitAtCut, handleOldDoubleClick,
-    runCtx, revertHeadings, planOldJoin, joinOld, renderOldActions, runSave, runClear, confirmIdenticalAll, acceptAll, pickDestination,
-    pickNewSentence, handleNewPick, handleJoinPick, readJoinAfter, pickJoinMenu, handleFramePress, pickPlaceSpot, pickOwnAiLine, jumpToNew, openNewDoc,
+    setCarvePick, carve, carveText, clearCarve, togglePairViewByButton, pairFrom, setPairFrom, mergeArm, pairSource, isLeftPairPick, isRightPairPick, captionPickBundle, setCaptionPick, selectToc, openNewCtxMenu,
+    openSolo, goToUnit, ctxGroups, bundleRefPending, isLinkedToWritten, captionPendingKeys, docDashboard, openCtxMenu, runUnitEdit,
+    rewrapTable, unwrapTable, unwrapAi, newUnwrapAi, tableFollow, leftTools, rightTools, rightShape, describeEditConfirm, pairGrip, clearNoise, openNoiseReason, splitAtCut, handleOldDoubleClick, handleNewDoubleClick, carveShape,
+    runCtx, revertHeadings, planJoinIn, joinIn, renderOldActions, confirmIdenticalAll, acceptAll,
+    pressNewBox, renderPickBar, showNewDoc, jump, handleJoinPick, readJoinAfter, pickJoinMenu, handleFramePress, pickPlaceSpot, pickOwnAiLine, jumpToNew, openNewDoc,
     showInNew, jumpToOld, pickTemplateLine, fillTemplateMissing, isOldDrag, finishPairPick, handleOldClick, markRecHover, revealPick,
     setRevealPick, progress, renderPlaceLabel, listDestinationEls, error,
   } = state;
 
 
 
+  // AI 거르기에서 띠를 눌러 펼친 칸(이미 쓴 New 문서) - key가 지금 것일 때만 산다
+  const [aiOpen, setAiOpen] = useState<{ key: string; sections: ReadonlySet<string> }>({ key: "", sections: NO_SECTIONS });
   // New 문장에 포인터를 올리면 그 문장을 가리키는 추천 카드를 밝힌다. 카드에서 붙인 표시는 카드가 뗀다(그 사이 여기서 지우지 않게)
   const newHoverMarked = useRef(false);
   const markNewHover = useEffectEvent((target: EventTarget | null) => {
@@ -125,54 +134,11 @@ export default function AssignPage() {
     if (!revealPick) return;
     const frame = requestAnimationFrame(() => showPicked());
     return () => cancelAnimationFrame(frame);
-  }, [revealPick, newDocId, composedDoc, written]);
+  }, [revealPick, newDocId, composedDoc, written, newModel]);
 
-  // 그 자리 메뉴 - 메뉴를 연 줄이 지금 고른 줄이고 그 줄의 묶음을 받은 뒤에만(받기 전에는 이음을 모른다)
-  const menuItems: LinkMenuItem[] =
-    menu && row && menu.rowKey === row.key && !groupPending
-      ? listLinkMenuItems({
-          picked: draft.destination !== null && (menu.targetId === null || linkIds.includes(menu.targetId)),
-          linked: menu.targetId !== null && savedDestination?.kind === "link" && savedDestination.targetIds.includes(menu.targetId),
-          confirmed: row.status === "confirmed",
-          hasTarget: menu.targetId !== null,
-          canEdit,
-        })
-      : [];
-
-  function runMenu(item: LinkMenuItem) {
-    const targetId = menu?.targetId ?? null;
-    if (item === "close") setMenu(null);
-    else if (item === "confirm") {
-      setMenu(null);
-      runSave("confirm");
-    } else if (item === "cancel") {
-      // 고름을 되돌린다 - 저장된 곳(없으면 빈 고름)으로
-      setDraft({ destination: null, position: null });
-      setMenu(null);
-    } else if (item === "link" && targetId !== null) {
-      // 고른 뒤 같은 메뉴가 확정·취소로 바뀐다
-      if (!pickNewSentence(targetId, false)) setMenu(null);
-    } else if (item === "unlink" && targetId !== null) {
-      const remainder = listUnlinkRemainder(savedDestination?.kind === "link" ? savedDestination.targetIds : [], targetId, writtenMap);
-      // 다른 문장이 남으면 그것만 고른 상태로(확정해야 저장된다), 하나뿐이면 배정을 지운다
-      if (remainder.length > 0) pickDestination({ kind: "link", targetIds: remainder });
-      else {
-        setMenu(null);
-        runClear();
-      }
-    }
-  }
-
-  // 그 자리 메뉴를 New 칸의 문단을 눌러 열었으면 떠 있지 않고 그 문단 상자 안에 단추 줄로 펼친다 - 눈이 누른 문단에 머문다(사용자 결정 2026-11-19).
-  // 추천 카드·Old 조각·끌어 놓은 초안에서 연 메뉴는 그대로 떠 있다
+  // 엮은 문서의 작은 메뉴를 New 칸의 문단을 눌러 열었으면 떠 있지 않고 그 문단 상자 안에 단추 줄로 펼친다 - 눈이 누른 문단에 머문다(사용자 결정 2026-11-19)
   const readInlineTarget = (anchor: HTMLElement): number | null => (anchor.matches('[data-pane="new"] .new-line') ? Number(anchor.dataset.target) : null);
-  const menuLineId = menu && menuItems.length > 0 ? readInlineTarget(menu.anchor) : null;
   const joinLineId = joinMenu && composedDoc ? readInlineTarget(joinMenu.anchor) : null;
-  function renderLinkMenu(inline: boolean): ReactNode {
-    if (!menu || menuItems.length === 0) return null;
-    const unitIds = rowMap.get(menu.rowKey)?.unitIds ?? [];
-    return <LinkMenu key={menu.seq} anchor={menu.anchor} cover={readMenuCover(menu.anchor, unitIds)} offset={menu.offset} lineUnits={unitIds} items={menuItems} isUnsaved={menuItems.includes("cancel")} confirmBlock={confirmBlockKey ? t(confirmBlockKey) : null} busy={busy} onAction={runMenu} onClose={() => setMenu(null)} inline={inline} />;
-  }
   function renderJoinMenu(inline: boolean): ReactNode {
     if (!joinMenu || !composedDoc) return null;
     const sources = composedDoc.sections.flatMap((section) => section.items).find((item) => item.target_id === joinMenu.targetId)?.source_unit_ids ?? [];
@@ -199,6 +165,9 @@ export default function AssignPage() {
   const composedOrder = useComposedOrder({ bundleId, doc: isComposedDoc ? composedDoc : null, labelLang: uiLang });
   const shownComposed = composedOrder.doc;
   const composedStrips = useMemo(() => (shownComposed ? buildComposedStrips(shownComposed) : null), [shownComposed]);
+  // Ctrl+클릭으로 더한 New 박스 - 마지막에 누른 것은 진한 칠과 테(data-sel), 나머지는 여럿 고른 표시
+  const { checkedNew } = state;
+  const newMates = useMemo(() => (newPick.kind === "unit" && newPick.unitIds.length > 1 ? new Set(newPick.unitIds) : checkedNew.size > 0 ? checkedNew : NO_NUMBERS), [newPick, checkedNew]);
   if (!ready) {
     return error !== null ? (
       <BundleLoadError error={error} onRetry={reloadAll} testId="assign" />
@@ -218,7 +187,7 @@ export default function AssignPage() {
           label={t("assign.filterUnsourced")}
           count={unsourced.length}
           selected={mode === "unsourced"}
-          onClick={() => setMode("unsourced")}
+          onClick={state.enterUnsourced}
           testId="assign-filter-unsourced"
           icon={TriangleAlert}
           shrinks
@@ -234,6 +203,9 @@ export default function AssignPage() {
   const newAiPill = readNewAiPill({ isOn: view.newAiOnly, suggestionDocId: isNewDocOpen(newAiDocId) ? newAiDocId : null, openDocId: newDocId, returnDocId: newAiReturn?.key === toggleKey ? newAiReturn.docId : null });
   const newAiLinked = newAiDest?.kind === "link" ? writtenMap.get(newAiDest.targetIds[0]) : undefined;
   const newAiPlace = newAiDest === null ? null : newAiLinked ? { title: newAiLinked.doc_code, text: newAiLinked.section_path } : renderPlaceLabel(newAiDest);
+  // 펼친 칸은 고른 줄이나 문서가 바뀌면 다시 접힌다
+  const aiOpenKey = `${newDocId ?? ""}:${newAiFilter?.key ?? ""}`;
+  const openAiSections = aiOpen.key === aiOpenKey ? aiOpen.sections : NO_SECTIONS;
   const newAiChip = (
     <>
       <button type="button" className="schip schip-btn new-ai-chip" data-tone="ai_suggested" aria-pressed={view.newAiOnly} data-testid="assign-new-ai-only" onClick={() => changeView({ newAiOnly: !view.newAiOnly })}>
@@ -256,7 +228,7 @@ export default function AssignPage() {
         data-testid="assign-new-ai-open"
         onClick={() => {
           setNewAiReturn(newAiPill.kind === "open" && newDocId !== null ? { key: toggleKey, docId: newDocId } : null);
-          setManualNewDoc({ key: toggleKey, docId: newAiPill.docId });
+          showNewDoc(newAiPill.docId);
         }}
       >
         {newAiPill.kind === "open" ? (
@@ -308,7 +280,7 @@ export default function AssignPage() {
   const highlightIds = new Set(isSolo ? soloUnits.map((unit) => unit.id) : (row?.unitIds ?? []));
   // 템플릿 보기에서 칠할 줄 - 고른 Old 줄에서 온 새 문장(짝이면 두 절반 모두)
   const templateSelected = new Set((composedDoc?.sections ?? []).flatMap((section) => section.items.filter((item) => item.source_unit_ids.some((id) => highlightIds.has(id))).map((item) => item.target_id)));
-  const shownNewRows = isComposedDoc && shownComposed && shownComposed !== composedDoc ? buildComposedRows(shownComposed) : newRows;
+  const composedRows = composedDoc ? buildComposedRows(shownComposed ?? composedDoc) : [];
   /** 엮은 문서 번호 칸의 C 번호 표시 - 글머리 기호는 깊이도(• 0 · ○ 1 · ▪ 2) */
   function pickComposedStyle(targetId: number, choice: ComposedStyleChoice) {
     const edits: CEdit[] = [...(choice.depth === null ? [] : [{ kind: "indent" as const, targetId, depth: choice.depth }]), { kind: "style", targetId, style: choice.style }];
@@ -359,16 +331,24 @@ export default function AssignPage() {
     const view = key === null ? undefined : newPlace?.gaps.get(key);
     return view ? <PlaceGap view={view} testId={`assign-tpl-place-${lang}-${view.key}`} /> : null;
   }
-  // 양 단에서 다듬으려고 고른 New 문장의 줄, 그리고 나눌 선이 놓인 줄
-  const editTargetId = isNewEdit && soloUnit !== null ? (written.find((item) => item.new_unit_id === soloUnit.id)?.target_id ?? null) : null;
-  const cutTargetId = isNewEdit && cutUnit !== null ? (written.find((item) => item.new_unit_id === cutUnit.id)?.target_id ?? null) : null;
   // 고른 New 문장 - 이을 문장, 또는 양 단에서 New 문장의 짝을 고르는 중이면 모은 문장
-  const isNewPairPick = isNewEdit && pairSource !== null && pairFrom !== null;
-  const pickedNew = new Set(isNewPairPick ? pairFrom.picked.flatMap((unitId) => written.find((item) => item.new_unit_id === unitId)?.target_id ?? []) : [...linkIds, ...(destination?.kind === "join" ? [destination.targetId] : [])]);
+  const pickedNew = new Set(isRightPairPick ? (pairFrom?.picked ?? []).flatMap((unitId) => written.find((item) => item.new_unit_id === unitId)?.target_id ?? []) : [...linkIds, ...(destination?.kind === "join" ? [destination.targetId] : [])]);
+  // 이미 쓴 New 문서의 박스 위에 얹을 것 - 렌더마다 다시 짓되 박스마다의 key가 글이라 용지의 먼 덩어리는 제 것이 바뀔 때만 다시 그린다
+  const newOverlay = buildNewOverlay({ rows: isComposedDoc ? [] : written.filter((item) => item.target_doc_id === newDocId), candidateIds, pickedIds: pickedNew, focusId: focusNew, aiFilter: newAiFilter, openAiSections, tabOf: newTabs?.tabOf });
+  // New 용지에 보여야 할 박스 - 이동해 갈 곳, 누른 추천의 곳, 출처 없는 New의 고른 문장(각주 · 미주면 꼬리말 탭)
+  const readNewUnit = (targetId: number | null | undefined) => (targetId == null ? null : (newOverlay.unitOfTarget.get(targetId) ?? null));
+  const showUnitIds = [readNewUnit(jump?.side === "new" ? jump.id : null), readNewUnit(revealPick?.destination.kind === "link" ? revealPick.destination.targetIds[0] : null), readNewUnit(focusNew)];
+  const isCellPickable = canEdit;
+  const readSourceLabel = (unitId: number) => (unitMap.get(unitId)?.display_id ?? String(unitId)).replace(/^OLD-/, "");
+  /** 이미 쓴 New 문서의 박스를 누름 - 그 박스를 고른다(이을 수 없는 박스도 고르고 단추 줄의 잇기가 까닭을 보인다). 칸도 늘 누를 수 있다 */
+  function pickNewBox(unitId: number, keys: { shiftKey: boolean; additive: boolean }) {
+    pressNewBox(unitId, newOverlay.boxes.get(unitId)?.targetId ?? null, keys.additive, keys.shiftKey);
+  }
+
   // 확인이 남은 누락 의심 경고의 문단 - 용지의 그 줄에 표시한다. 위쪽 줄의 목록에서 확인하면(문서 목록을 다시 받아) 사라진다
   const warnBlockIds = new Set(listAckWarnings(docs.data ?? []).flatMap((item) => (item.docId === oldDocId && item.warning.acked_by === null && item.warning.block_id !== null ? [item.warning.block_id] : [])));
   // Shift로 고른 줄, 그리고 짝 고르기에서 모은 문장
-  const pickedOld = new Set([...[...checked].flatMap((key) => rowMap.get(key)?.unitIds ?? []), ...(pairSource && pairFrom && !isNewEdit ? pairFrom.picked : [])]);
+  const pickedOld = new Set([...[...checked].flatMap((key) => rowMap.get(key)?.unitIds ?? []), ...(isLeftPairPick ? (pairFrom?.picked ?? []) : [])]);
   // 짝 고르는 중의 안내 한 줄 - 고르는 문장이 있는 칸의 머리 아래에 둔다(Old 용지, 또는 양 단에서 New 문장을 다듬는 중이면 New 칸)
   const pairBanner = pairSource ? (
     <div className="flex items-center gap-2 border-b border-line bg-accent-tint px-3 py-1.5 text-xs" role="status" data-testid="assign-pair-pick">
@@ -396,16 +376,74 @@ export default function AssignPage() {
       </button>
     </div>
   ) : null;
-  // ⇧J ⇧J · ⇧K ⇧K로 무장한 합치기의 안내 한 줄 - 짝 고르기 · 캡션 고르기와 같은 자리(함께 열리지 않는다)
+  // 이을 상대를 기다리는 안내 - 기다리는 쪽 칸 머리 아래(Esc · 그 쪽을 누르면 끝)
+  const linkWaitBanner = (to: "old" | "new") =>
+    state.linkWait === to ? (
+      <div className="flex items-center gap-2 border-b border-line bg-accent-tint px-3 py-1.5 text-xs" role="status" data-testid="assign-link-wait">
+        <Link2 size={14} strokeWidth={1.5} className="flex-none text-ink-2" aria-hidden />
+        <span className="min-w-0 flex-1 text-ink">{t(to === "new" ? "assign.linkWait.new" : "assign.linkWait.old")}</span>
+        <button type="button" className="btn ghost h-7 flex-none" data-testid="assign-link-wait-cancel" onClick={() => state.setLinkWait(null)}>
+          {t("common.cancel")} <kbd>Esc</kbd>
+        </button>
+      </div>
+    ) : null;
+  // ⇧J ⇧J · ⇧K ⇧K로 무장한 합치기의 안내 한 줄 - 다듬는 쪽 칸 머리 아래, 짝 고르기 · 캡션 고르기와 같은 자리(함께 열리지 않는다)
   const mergeBanner = mergeArm ? (
     <div className="flex items-center gap-2 border-b border-line bg-accent-tint px-3 py-1.5 text-xs" role="status" data-testid="assign-merge-armed">
       <Link2 size={14} strokeWidth={1.5} className="flex-none text-ink-2" aria-hidden />
       <span className="min-w-0 flex-1 text-ink">{t(mergeArm.kind === "merge" ? "assign.key.mergeArmedMerge" : "assign.key.mergeArmedPair", { key: formatAssignKey(mergeArm.dir === 1 ? "merge_next" : "merge_prev") })}</span>
     </div>
   ) : null;
-  const oldBanner = pairBanner ?? captionBanner ?? mergeBanner;
-  // 무장한 두 박스 - New 문서의 문장이면 그 줄(target)의 박스다
-  const armTargetIds = mergeArm && isNewEdit ? new Set([mergeArm.fromId, mergeArm.toId].flatMap((unitId) => written.find((item) => item.new_unit_id === unitId)?.target_id ?? [])) : undefined;
+  const oldBanner = linkWaitBanner("old") ?? (isRightPairPick ? null : (pairBanner ?? captionBanner ?? (isNewEdit ? null : mergeBanner)));
+  /** 번호 칸 - 원문 글자는 그대로 두고 번호 범위만 바꾸는 쪼개기 편집이라 줄의 배정은 그대로다. 고치는 문서는 그 용지의 문서(Old · New) */
+  function buildNumberCell(paperShape: DocShape | null): PaperNumberCell {
+    return {
+      // 그 줄이 처리 중이면 용지가 그 번호 칸만 끈다
+      busy: isGlobalPending,
+      expected: expectedNumbers,
+      handleRef: registerNumberHandle,
+      onSave: (unitId, number, follow, indentShift) =>
+        runUnitEdit(paperShape, { type: "set_number", unit_id: unitId, number, follow, ...(indentShift === undefined ? {} : { indent_shift: indentShift }) }, number === null ? t("assign.number.didClear") : t("assign.number.didSet", { n: number }), unitId),
+      // 들여쓰기는 두 번 저장한다(B8 7-a) - 누른 줄, 이어져 함께 바뀐 줄. Ctrl+Z 한 번이 함께 바뀐 줄만 되돌린다(같은 문서 쓰기는 차례로 간다)
+      onIndent: (plan, delta, label) => {
+        const toItem = (change: IndentChange) => ({ unit_id: change.unitId, indent_shift: change.indentShift });
+        const unitId = plan.clicked.unitId;
+        runUnitEdit(paperShape, { type: "set_indents", units: [toItem(plan.clicked)] }, t(delta < 0 ? "assign.number.didOutdent" : "assign.number.didIndent", { id: label }), unitId);
+        if (plan.batch.length > 0) {
+          const done = t(delta < 0 ? "assign.number.didOutdentMore" : "assign.number.didIndentMore", { id: label, n: plan.batch.length });
+          runUnitEdit(paperShape, { type: "set_indents", units: plan.batch.map(toItem) }, done, unitId);
+        }
+      },
+    };
+  }
+  /** 글자를 끌어 고름 - 저절로 삭제된 줄의 글자는 떼어 내지 않는다(서버 toc_line_locked), 먼저 삭제 취소 */
+  function pickCarve(paperView: DocumentView, range: { blockId: number; start: number; end: number }) {
+    if (!hasTocLineIn(paperView.units, range.blockId)) setCarvePick({ docId: paperView.document.id, ...range });
+  }
+  // 글자 골라 새 박스의 띠 - 글자를 고른 문서의 용지 위에 선다(왼쪽 용지 · 양 단의 New)
+  const carveBanner = carve && (
+    <div className="flex items-center gap-2 border-b border-line bg-accent-tint px-3 py-1.5 text-xs" role="status" data-testid="assign-carve">
+      <span className="flex-none font-semibold text-ink">{t("split.carve")}</span>
+      <Truncate className="min-w-0 flex-1 text-ink-2" text={carveText} testId="assign-carve-text" />
+      <button
+        type="button"
+        className="btn h-7 flex-none"
+        data-testid="assign-carve-run"
+        disabled={busy}
+        onClick={() => {
+          const op: EditOp = { type: "carve", block_id: carve.blockId, start: carve.start, end: carve.end };
+          clearCarve();
+          runUnitEdit(carveShape, op, t("split.didCarve"), null);
+        }}
+      >
+        <SquarePlus size={14} strokeWidth={1.5} aria-hidden />
+        {t("split.carveRun")}
+      </button>
+      <button type="button" className="btn ghost icon h-7 w-7 flex-none" aria-label={t("common.cancel")} data-testid="assign-carve-cancel" onClick={clearCarve}>
+        <X size={14} strokeWidth={1.5} aria-hidden />
+      </button>
+    </div>
+  );
   const placeOf = (unitIds: number[]) => {
     const decided = unitIds.map((id) => unitMap.get(id)).find((unit) => unit?.status === "confirmed");
     if (!decided) {
@@ -512,7 +550,7 @@ export default function AssignPage() {
               }
             />
           ) : (
-            <div ref={setPanes} className="assign-panes" data-single={view.single && !isPairView ? "" : undefined} data-pair-view={isPairView ? "" : undefined} style={{ "--split": `${view.split * 100}%` }}>
+            <div ref={setPanes} className="assign-panes" onClick={state.handleBlankClick} data-single={view.single && !isPairView ? "" : undefined} data-pair-view={isPairView ? "" : undefined} style={{ "--split": `${view.split * 100}%` }}>
               {pairColumns ? (
               // Pair view - Old 칸·New 칸·이음 선 자리에 KO 칸 | 세로선 | EN 칸 | 짝 선. 세로선(폭)과 확대(왼쪽 Old 값, 오른쪽 New 값)는 그대로 쓴다
               <>
@@ -521,7 +559,7 @@ export default function AssignPage() {
                 items={pairColumns.ko}
                 docLabel={oldDocOptions.find((option) => option.value === String(oldView?.document.id))?.label}
                 toggle={<PairViewToggle on onToggle={togglePairViewByButton} />}
-                banner={oldBanner !== null && !isNewEdit ? oldBanner : null}
+                banner={oldBanner !== null ? oldBanner : null}
                 selectedIds={highlightIds}
                 pickedIds={pickedOld}
                 statusOf={readMarkStatus}
@@ -548,7 +586,7 @@ export default function AssignPage() {
               <>
               <OldPane
                 docOptions={paperDocOptions}
-                docId={String(oldView?.document.id ?? solo?.docId ?? "")}
+                docId={String(oldView?.document.id ?? soloDocId ?? "")}
                 docTitle={oldView?.document.title ?? ""}
                 docTag={isSolo ? t("assign.writtenTag") : "Old"}
                 docDash={
@@ -570,12 +608,12 @@ export default function AssignPage() {
                     openSolo(Number(value));
                     return;
                   }
-                  setSolo(null);
+                  setSoloDocId(null);
                   setManualOldDoc(Number(value));
                   clearRowPick();
                 }}
                 model={paperModel}
-                fold={foldMatch && !isSolo ? { matchIds: foldMatch, open: foldOpen, onOpenChange: setFoldOpen } : undefined}
+                fold={foldMatch && leftTools.fold ? { matchIds: foldMatch, open: foldOpen, onOpenChange: setFoldOpen } : undefined}
                 foldEmpty={
                   isFoldEmpty
                     ? foldElsewhere.map((place) => ({ ...place, label: `${oldDocOptions.find((option) => option.value === String(place.docId))?.label ?? place.docId} · ${t(`split.tab.${place.part}`)} · ${place.count}` }))
@@ -587,28 +625,29 @@ export default function AssignPage() {
                   setManualPart({ key: "", part });
                 }}
                 placeholder={<span className="sk h-[480px] w-full" />}
-                selectedId={mode === "old" && !isNewEdit ? (cutUnit?.id ?? pickedId ?? soloUnit?.id ?? null) : null}
-                highlightIds={mode === "old" ? highlightIds : NO_NUMBERS}
+                selectedId={(isNewEdit ? null : cutUnit?.id) ?? (isSolo ? soloUnit?.id : pickedId) ?? null}
+                highlightIds={highlightIds}
+                held={panel.side === "new" && !isSolo}
                 // 떨어진 짝 안내 줄 - 누르면 짝의 원래 자리로 가 그 박스를 고른다(설계 D3)
-                pairHint={mode === "old" && !isNewEdit ? { onGo: goToUnit } : undefined}
+                pairHint={mode === "old" ? { onGo: goToUnit } : undefined}
                 single={view.single}
                 // 짝 카드 안 순서 손잡이 - 고른 박스가 짝 전부가 이어 붙은 카드 안이면(설계 D8)
                 pairGrip={pairGrip}
                 // 삭제로 확정한 줄의 접힌 한 줄 - 한 단으로 연 New 문서에는 줄이 없다
-                deleted={isSolo ? undefined : { folds: deletedFolds }}
+                deleted={leftTools.deleted ? { folds: deletedFolds } : undefined}
                 pickedIds={pickedOld}
                 warnBlockIds={warnBlockIds}
                 statusOf={readMarkStatus}
                 renderNote={placeOf}
                 // 삭제·이동한 묶음, 이미 쓴 New 문서(혼자 연 문서)의 묶음과 그 문서에 이은 묶음(입구 2 - 캡션을 그 문서가 정한다)은 캡션이 필요 없다
                 isCaptionNeeded={(unitId, hasCaption) => isBundleCaptionNeeded(unitMap.get(unitId), hasCaption, isLinkedToWritten(unitId))}
-                // 저절로 삭제된 줄(목차 · 본문 앞부분 · 개정 이력)은 Old 문서에서만 흐린 블록으로 접는다(MD 1 F6 · 쪼개기 먼저 §7 R3). 사유 쓰기 · 삭제 취소는
-                // 다듬는 원문이 그 Old 문서일 때만 - New 문장을 고치는 동안은 접고 펴기만
+                // 저절로 삭제된 줄(목차 · 본문 앞부분 · 개정 이력)은 흐린 블록으로 접는다(MD 1 F6 · 쪼개기 먼저 §7 R3 · §8 4-3). 한 단으로 연 New도 같은
+                // 블록 · 사유 쓰기 · 삭제 취소이고, 블록 고름(결정 칸 · U · R 글쇠)은 Old 문서만이다
                 noise={
-                  isSolo
+                  !leftTools.noise
                     ? undefined
                     : {
-                        canEdit: canEdit && !isNewEdit,
+                        canEdit,
                         // 처리 중인 블록만 꺼진다(용지가 잠긴 Unit으로 본다) - 묶음 전체 일 동안은 모두
                         busy: isGlobalPending,
                         onClear: (unitIds) => {
@@ -618,20 +657,21 @@ export default function AssignPage() {
                           if (oldView) openNoiseReason(oldView.document.id, unitIds);
                         },
                         open: tocOpen,
-                        selected: tocPick !== null && tocPick.docId === oldView?.document.id ? tocPick : null,
+                        selected: !isSolo && tocPick !== null && tocPick.docId === oldView?.document.id ? tocPick : null,
                         onToggle: (key) => setTocOpen((open) => toggleTocOpen(open, key)),
                         onPick: (key, unitId) => {
-                          if (oldView) selectToc(oldView.document.id, key, unitId, false);
+                          if (oldView && !isSolo) selectToc(oldView.document.id, key, unitId, false);
                         },
                       }
                 }
-                // 제목에서 바꾼 조항 묶음 머리(F8b) - 되돌리기는 다듬는 원문이 그 Old 문서일 때만
-                headingShift={isSolo ? undefined : { canRevert: canEdit && !isNewEdit, busy: isGlobalPending, onRevert: revertHeadings }}
-                // 벗긴 표의 줄 묶음 머리 "↺ 다시 표로"(F1) - 다듬는 원문이 그 Old 문서일 때만
-                unwrap={isSolo ? undefined : { canRewrap: canEdit && !isNewEdit, busy: isGlobalPending, onRewrap: rewrapTable, ai: canEdit && !isNewEdit ? unwrapAi : undefined, follow: isNewEdit ? undefined : tableFollow }}
+                // 제목에서 바꾼 조항 묶음 머리(F8b) - Old와 한 단으로 연 New 모두
+                headingShift={leftTools.headingShift ? { canRevert: canEdit, busy: isGlobalPending, onRevert: (unitIds) => revertHeadings(leftShape, unitIds) } : undefined}
+                // 벗긴 표의 줄 묶음 머리 "↺ 다시 표로"(F1)와 AI 순서 제안 - Old와 한 단으로 연 New 모두
+                // 짝 한글 표 고르기 · 한글 표처럼 하기는 Old 영어 표에만(table-follow 설계 §9) - 한 단으로 연 New 머리에는 붙이지 않는다
+                unwrap={{ canRewrap: leftTools.unwrap, busy: isGlobalPending, onRewrap: (tableId) => rewrapTable(leftShape, tableId), ai: leftTools.unwrapAi ? unwrapAi : undefined, lineGrip: leftTools.lineGrip, follow: isSolo ? undefined : tableFollow }}
                 // 처리 중인 일 - 누르는 즉시 그 자리 알약과 박스 쉬머, 그 박스만 잠근다(설계 D4)
                 pending={mode === "old" ? paperPending : undefined}
-                mergeArm={mergeArm}
+                mergeArm={isNewEdit ? null : mergeArm}
                 paneRef={oldPaneRef}
                 renderPills={(unitId) => {
                   const targets = linkedTargets.get(unitId);
@@ -642,73 +682,19 @@ export default function AssignPage() {
                 sheets={oldView && paperModel && activePart !== "body" ? listPartSheets(oldView, paperModel, activePart) : null}
                 onPartChange={changePart}
                 // 묶음째 고르는 것은 배정 때만 - 짝 고르기(칸 문장끼리도 짝을 맺는다)와 쓴 New 문서 다듬기(배정이 없다)는 칸 문장을 그대로 고른다
-                pickWholeBundle={!isSolo && !(pairSource && pairFrom && !isNewEdit)}
+                pickWholeBundle={leftTools.wholeBundle && !isLeftPairPick}
                 onUnitClick={handleOldClick}
                 onUnitContextMenu={(unitId, at, caret) => openCtxMenu(unitId, at, caret)}
-                onUnitDoubleClick={canEdit ? handleOldDoubleClick : undefined}
+                onUnitDoubleClick={leftTools.split ? handleOldDoubleClick : undefined}
                 // 번호 칸 - 원문 글자는 그대로 두고 번호 범위만 바꾸는 쪼개기 편집이라 줄의 배정은 그대로다
-                numberCell={
-                  canEdit && mode === "old" && !isNewEdit && !isSolo
-                    ? {
-                        // 그 줄이 처리 중이면 용지가 그 번호 칸만 끈다
-                        busy: isGlobalPending,
-                        expected: expectedNumbers,
-                        handleRef: registerNumberHandle,
-                        onSave: (unitId, number, follow, indentShift) =>
-                          runUnitEdit({ type: "set_number", unit_id: unitId, number, follow, ...(indentShift === undefined ? {} : { indent_shift: indentShift }) }, number === null ? t("assign.number.didClear") : t("assign.number.didSet", { n: number }), unitId),
-                        // 들여쓰기는 두 번 저장한다(B8 7-a) - 누른 줄, 이어져 함께 바뀐 줄. Ctrl+Z 한 번이 함께 바뀐 줄만 되돌린다(같은 문서 쓰기는 차례로 간다)
-                        onIndent: (plan, delta, label) => {
-                          const toItem = (change: IndentChange) => ({ unit_id: change.unitId, indent_shift: change.indentShift });
-                          const unitId = plan.clicked.unitId;
-                          runUnitEdit({ type: "set_indents", units: [toItem(plan.clicked)] }, t(delta < 0 ? "assign.number.didOutdent" : "assign.number.didIndent", { id: label }), unitId);
-                          if (plan.batch.length > 0) {
-                            const done = t(delta < 0 ? "assign.number.didOutdentMore" : "assign.number.didIndentMore", { id: label, n: plan.batch.length });
-                            runUnitEdit({ type: "set_indents", units: plan.batch.map(toItem) }, done, unitId);
-                          }
-                        },
-                      }
-                    : undefined
-                }
-                onRangeSelect={
-                  canEdit && mode === "old" && oldView
-                    ? (range) => {
-                        // 저절로 삭제된 줄의 글자는 떼어 내지 않는다(서버 toc_line_locked) - 먼저 삭제 취소
-                        if (!hasTocLineIn(oldView.units, range.blockId)) setCarvePick({ docId: oldView.document.id, ...range });
-                      }
-                    : undefined
-                }
-                banner={
-                  oldBanner !== null && !isNewEdit ? (
-                    oldBanner
-                  ) : carve && (
-                    <div className="flex items-center gap-2 border-b border-line bg-accent-tint px-3 py-1.5 text-xs" role="status" data-testid="assign-carve">
-                      <span className="flex-none font-semibold text-ink">{t("split.carve")}</span>
-                      <Truncate className="min-w-0 flex-1 text-ink-2" text={carveText} testId="assign-carve-text" />
-                      <button
-                        type="button"
-                        className="btn h-7 flex-none"
-                        data-testid="assign-carve-run"
-                        disabled={busy}
-                        onClick={() => {
-                          const op: EditOp = { type: "carve", block_id: carve.blockId, start: carve.start, end: carve.end };
-                          clearCarve();
-                          runUnitEdit(op, t("split.didCarve"), null);
-                        }}
-                      >
-                        <SquarePlus size={14} strokeWidth={1.5} aria-hidden />
-                        {t("split.carveRun")}
-                      </button>
-                      <button type="button" className="btn ghost icon h-7 w-7 flex-none" aria-label={t("common.cancel")} data-testid="assign-carve-cancel" onClick={clearCarve}>
-                        <X size={14} strokeWidth={1.5} aria-hidden />
-                      </button>
-                    </div>
-                  )
-                }
+                numberCell={leftTools.numberCell ? buildNumberCell(leftShape) : undefined}
+                onRangeSelect={leftTools.carve && oldView ? (range) => pickCarve(oldView, range) : undefined}
+                banner={oldBanner ?? (carveShape !== null && carveShape === leftShape ? carveBanner : null)}
                 cut={isNewEdit ? null : cutLine.cut}
                 onCutDrag={canEdit ? cutLine.drag : undefined}
                 onCutNudge={canEdit ? cutLine.nudge : undefined}
                 renderAtCut={() => <CutPop busy={busy} onRun={splitAtCut} onCancel={cutLine.clear} testIdPrefix="assign" />}
-                join={canEdit && mode === "old" ? { busy: isGlobalPending, plan: planOldJoin, onJoin: joinOld } : undefined}
+                join={leftTools.join ? { busy: isGlobalPending, plan: (firstId, secondId) => planJoinIn(leftShape, firstId, secondId), onJoin: (firstId, secondId, kind) => joinIn(leftShape, firstId, secondId, kind) } : undefined}
                 renderUnitActions={renderOldActions}
                 figureSource={oldView ? { bundleId, docId: oldView.document.id } : undefined}
                 zoom={view.zoomOld}
@@ -724,108 +710,168 @@ export default function AssignPage() {
                 <NewPaneEmpty zoom={view.zoomNew} onGoToBe={() => navigate(getNewDocumentsHref(bundleId))} />
               ) : (
                 <>
-                  <NewPane
-                    lineActions={menuLineId !== null ? { targetId: menuLineId, node: renderLinkMenu(true) } : joinLineId !== null ? { targetId: joinLineId, node: renderJoinMenu(true) } : null}
-                    bundleId={bundleId}
-                    docOptions={newDocOptions}
-                    docId={String(newDocId)}
-                    onDocChange={(value) => setManualNewDoc({ key: toggleKey, docId: Number(value) })}
-                    rows={shownNewRows}
-                    headingNotes={headingNotes}
-                    sectionMarks={sectionMarks}
-                    rowsKey={isComposedDoc && !composedDoc ? `${newDocId}:loading` : String(newDocId)}
-                    tag={isComposedDoc ? t("assign.composedTag") : t("assign.writtenTag")}
-                    onEditOriginal={!isComposedDoc && newFileId !== null ? () => openSolo(newFileId) : undefined}
-                    readOnly={isComposedDoc}
-                    joinableIds={joinableIds}
-                    onJoinPick={handleJoinPick}
-                    live={liveDoc && liveDoc.docId === newDocId ? { seq: liveDoc.seq, targetIds: liveDoc.targetIds } : null}
-                    onReveal={(el, flash) => {
-                      revealElement(el);
-                      if (flash) flashElement(el);
-                    }}
-                    candidateIds={candidateIds}
-                    pickedIds={pickedNew}
-                    focusId={focusNew}
-                    shapeId={editTargetId}
-                    mergeArmTargets={armTargetIds}
-                    onShape={canEdit && mode === "old" && !isComposedDoc ? openNewCtxMenu : undefined}
-                    cut={isNewEdit && cutUnit !== null && cutLine.at !== null && cutTargetId !== null ? { targetId: cutTargetId, at: cutLine.at } : null}
-                    cutPop={<CutPop busy={busy} onRun={splitAtCut} onCancel={cutLine.clear} testIdPrefix="assign" />}
-                    onCutDrag={canEdit && isNewEdit ? cutLine.dragTo : undefined}
-                    banner={isNewEdit ? (pairBanner ?? mergeBanner) : newAiBanner}
-                    sourceLabel={(unitId) => (unitMap.get(unitId)?.display_id ?? String(unitId)).replace(/^OLD-/, "")}
-                    onPick={handleNewPick}
-                    onJumpSource={jumpToOld}
-                    zoom={view.zoomNew}
-                    onZoom={(dir) => zoomPane("new", dir)}
-                    linesOn={view.lines}
-                    onToggleLines={() => changeView({ lines: !view.lines })}
-                    draft={newDraft}
-                    draftSlotKey={draftSlotKey}
-                    headExtra={
-                      <>
-                        {unsourcedChip}
-                        {newAiChip}
-                      </>
-                    }
-                    aiFilter={newAiFilter}
-                    place={newPlace}
-                    cellLink={isComposedDoc ? null : { pickable: canEdit && mode === "old" && row !== null, droppable: isOldDrag, onUnlink: canEdit && mode === "old" ? (cellId, unitId) => state.unlinkCell(cellId, unitId) : undefined }}
-                    composed={
-                      isComposedDoc && composedStrips
-                        ? {
-                            strips: composedStrips,
-                            selectedIds: templateSelected,
-                            order:
-                              canEdit && shownComposed
-                                ? {
-                                    doc: shownComposed,
-                                    busy: composedOrder.busy,
-                                    pendingIds: composedOrder.pendingIds,
-                                    onPlace: (edit, note) => void composedOrder.place(edit, t("assign.composedOrder.moved", { place: note })),
-                                    onStyle: pickComposedStyle,
-                                  }
-                                : null,
-                            ops:
-                              canEdit && mode === "old"
-                                ? {
-                                    cut: state.composedCut,
-                                    cutPop: <CutPop busy={busy} onRun={state.splitComposedAtCut} onCancel={() => state.setComposedCutAt(null)} testIdPrefix="assign" />,
-                                    onDoubleClick: state.handleComposedDoubleClick,
-                                    onCutDrag: state.dragComposedCut,
-                                    plan: state.planComposedGap,
-                                    onJoin: state.joinComposed,
-                                    busy: isAnyPending,
-                                  }
-                                : null,
-                          }
-                        : null
-                    }
-                    viewSwitch={
-                      isComposedDoc && composedDoc && templateTitles
-                        ? {
-                            template: view.newTemplate,
-                            onChange: (template) => changeView({ newTemplate: template }),
-                            body: (
-                              <TemplateView
-                                doc={shownComposed ?? composedDoc}
-                                titles={templateTitles}
-                                selectedIds={templateSelected}
-                                onPickLine={pickTemplateLine}
-                                onMissing={canEdit ? fillTemplateMissing : undefined}
-                                spotProps={newPlace ? readTemplateSpotProps : undefined}
-                                renderGap={newPlace ? renderTemplateGap : undefined}
-                                renderBlock={(item) => (
-                                  <NewBundle kind={item.kind === "figure" ? "figure" : "table"} table={item.table} figure={item.figure} caption={item.caption} renumber={item.renumber ?? null} captionRequired bundleId={bundleId} testId={`assign-new-tpl-block-${item.target_id}`} />
-                                )}
-                                testId="assign-new-tpl"
-                              />
-                            ),
-                          }
-                        : null
-                    }
-                  />
+                  {isComposedDoc ? (
+                    <NewPane
+                      lineActions={joinLineId !== null ? { targetId: joinLineId, node: renderJoinMenu(true) } : null}
+                      bundleId={bundleId}
+                      docOptions={newDocOptions}
+                      docId={String(newDocId)}
+                      onDocChange={(value) => showNewDoc(Number(value))}
+                      rows={composedRows}
+                      headingNotes={headingNotes}
+                      sectionMarks={sectionMarks}
+                      rowsKey={!composedDoc ? `${newDocId}:loading` : String(newDocId)}
+                      tag={t("assign.composedTag")}
+                      joinableIds={joinableIds}
+                      onJoinPick={handleJoinPick}
+                      live={liveDoc && liveDoc.docId === newDocId ? { seq: liveDoc.seq, targetIds: liveDoc.targetIds } : null}
+                      onReveal={(el, flash) => {
+                        revealElement(el);
+                        if (flash) flashElement(el);
+                      }}
+                      pickedIds={pickedNew}
+                      banner={newAiBanner}
+                      sourceLabel={readSourceLabel}
+                      onJumpSource={jumpToOld}
+                      zoom={view.zoomNew}
+                      onZoom={(dir) => zoomPane("new", dir)}
+                      linesOn={view.lines}
+                      onToggleLines={() => changeView({ lines: !view.lines })}
+                      draft={newDraft}
+                      draftSlotKey={draftSlotKey}
+                      headExtra={
+                        <>
+                          {unsourcedChip}
+                          {newAiChip}
+                        </>
+                      }
+                      aiFilter={newAiFilter}
+                      place={newPlace}
+                      composed={
+                        composedStrips
+                          ? {
+                              strips: composedStrips,
+                              selectedIds: templateSelected,
+                              order:
+                                canEdit && shownComposed
+                                  ? {
+                                      doc: shownComposed,
+                                      busy: composedOrder.busy,
+                                      pendingIds: composedOrder.pendingIds,
+                                      onPlace: (edit, note) => void composedOrder.place(edit, t("assign.composedOrder.moved", { place: note })),
+                                      onStyle: pickComposedStyle,
+                                    }
+                                  : null,
+                              ops:
+                                canEdit && mode === "old"
+                                  ? {
+                                      cut: state.composedCut,
+                                      cutPop: <CutPop busy={busy} onRun={state.splitComposedAtCut} onCancel={() => state.setComposedCutAt(null)} testIdPrefix="assign" />,
+                                      onDoubleClick: state.handleComposedDoubleClick,
+                                      onCutDrag: state.dragComposedCut,
+                                      plan: state.planComposedGap,
+                                      onJoin: state.joinComposed,
+                                      busy: isAnyPending,
+                                    }
+                                  : null,
+                            }
+                          : null
+                      }
+                      viewSwitch={
+                        composedDoc && templateTitles
+                          ? {
+                              template: view.newTemplate,
+                              onChange: (template) => changeView({ newTemplate: template }),
+                              body: (
+                                <TemplateView
+                                  doc={shownComposed ?? composedDoc}
+                                  titles={templateTitles}
+                                  selectedIds={templateSelected}
+                                  onPickLine={pickTemplateLine}
+                                  onMissing={canEdit ? fillTemplateMissing : undefined}
+                                  spotProps={newPlace ? readTemplateSpotProps : undefined}
+                                  renderGap={newPlace ? renderTemplateGap : undefined}
+                                  renderBlock={(item) => (
+                                    <NewBundle kind={item.kind === "figure" ? "figure" : "table"} table={item.table} figure={item.figure} caption={item.caption} renumber={item.renumber ?? null} bundleId={bundleId} testId={`assign-new-tpl-block-${item.target_id}`} />
+                                  )}
+                                  testId="assign-new-tpl"
+                                />
+                              ),
+                            }
+                          : null
+                      }
+                    />
+                  ) : (
+                    <NewPaper
+                      bundleId={bundleId}
+                      docOptions={newDocOptions}
+                      docId={String(newDocId)}
+                      fileId={newFileId ?? 0}
+                      onDocChange={(value) => showNewDoc(Number(value))}
+                      tag={t("assign.writtenTag")}
+                      headExtra={
+                        <>
+                          {unsourcedChip}
+                          {newAiChip}
+                        </>
+                      }
+                      banner={linkWaitBanner("new") ?? (isRightPairPick ? pairBanner : ((isNewEdit ? mergeBanner : null) ?? (carveShape !== null && carveShape === rightShape ? carveBanner : null) ?? newAiBanner))}
+                      linesOn={view.lines}
+                      onToggleLines={() => changeView({ lines: !view.lines })}
+                      onWide={newFileId !== null ? () => openSolo(newFileId) : undefined}
+                      zoom={view.zoomNew}
+                      onZoom={(dir) => zoomPane("new", dir)}
+                      view={newView}
+                      model={newModel}
+                      tabs={newTabs}
+                      placeholder={newLoad.error !== null ? <BundleLoadError error={newLoad.error} onRetry={newLoad.reload} testId="assign-new" /> : <span className="sk h-[480px] w-full" />}
+                      overlay={newOverlay}
+                      onOpenAiSection={(section) => setAiOpen({ key: aiOpenKey, sections: new Set(openAiSections).add(section) })}
+                      cellPickable={isCellPickable}
+                      cellDroppable={isOldDrag}
+                      onUnlink={canEdit && mode === "old" ? (cellId, unitId) => state.unlinkCell(cellId, unitId) : undefined}
+                      sourceLabel={readSourceLabel}
+                      onJumpSource={jumpToOld}
+                      selectedUnitId={(isNewEdit ? cutUnit?.id : null) ?? newUnitId}
+                      pickedUnitIds={newMates}
+                      held={panel.side === "old" && newUnitId !== null}
+                      showUnitIds={showUnitIds}
+                      pending={mode === "old" ? paperPending : undefined}
+                      mergeArm={isNewEdit ? mergeArm : null}
+                      onPick={pickNewBox}
+                      onContextMenu={
+                        canEdit && mode === "old"
+                          ? (unitId, at) => {
+                              const box = newOverlay.boxes.get(unitId);
+                              return box?.kind === "sentence" && openNewCtxMenu(unitId, box.targetId, at);
+                            }
+                          : undefined
+                      }
+                      cut={isNewEdit ? cutLine.cut : null}
+                      onCutDrag={canEdit && isNewEdit ? cutLine.drag : undefined}
+                      onCutNudge={canEdit && isNewEdit ? cutLine.nudge : undefined}
+                      renderAtCut={() => <CutPop busy={busy} onRun={splitAtCut} onCancel={cutLine.clear} testIdPrefix="assign" />}
+                      renderUnitActions={(unitId) => renderPickBar("new", unitId)}
+                      // 손질(lib/doc-tools-model) - Old 용지와 같은 부품, 고치는 문서는 이 New 문서(쪼개기 먼저 §8 4-3). 블록 고름은 Old만이라 New 블록은 접고 펴기와 단추만
+                      noise={rightTools.noise && newView ? {
+                        canEdit,
+                        busy: isGlobalPending,
+                        onClear: (unitIds) => clearNoise(newView.document.id, unitIds),
+                        onReason: (unitIds) => openNoiseReason(newView.document.id, unitIds),
+                        open: tocOpen,
+                        selected: null,
+                        onToggle: (key) => setTocOpen((open) => toggleTocOpen(open, key)),
+                        onPick: ignoreNoisePick,
+                      } : undefined}
+                      headingShift={rightTools.headingShift ? { canRevert: canEdit, busy: isGlobalPending, onRevert: (unitIds) => revertHeadings(rightShape, unitIds) } : undefined}
+                      unwrap={{ canRewrap: rightTools.unwrap, busy: isGlobalPending, onRewrap: (tableId) => rewrapTable(rightShape, tableId), ai: rightTools.unwrapAi ? newUnwrapAi : undefined, lineGrip: rightTools.lineGrip }}
+                      numberCell={rightTools.numberCell ? buildNumberCell(rightShape) : undefined}
+                      join={rightTools.join ? { busy: isGlobalPending, plan: (firstId, secondId) => planJoinIn(rightShape, firstId, secondId), onJoin: (firstId, secondId, kind) => joinIn(rightShape, firstId, secondId, kind) } : undefined}
+                      onRangeSelect={rightTools.carve && newView ? (range) => pickCarve(newView, range) : undefined}
+                      onUnitDoubleClick={rightTools.split ? handleNewDoubleClick : undefined}
+                      onUnwrapTable={rightTools.unwrap && rightShape ? (tableId) => unwrapTable(rightShape, tableId) : undefined}
+                    />
+                  )}
                   <LinkLines pairs={listNewAiLinks(linkPairs, newAiFilter, row?.unitIds ?? [])} focusUnits={highlightIds} focusTargets={liveDoc ? new Set([...pickedNew, ...liveDoc.targetIds]) : pickedNew} visible={view.lines} />
                 </>
               )}
@@ -846,7 +892,6 @@ export default function AssignPage() {
         </SideFloat>
       </div>
       {joinLineId === null && renderJoinMenu(false)}
-      {menuLineId === null && renderLinkMenu(false)}
       {ctxMenu && ctxGroups && (
         <AssignContextMenu
           key={ctxMenu.seq}

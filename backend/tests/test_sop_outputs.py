@@ -1061,6 +1061,8 @@ def test_composed_doc_carries_table_cells_and_figure_block(client: TestClient) -
     assert [(cell["row"], cell["col"], cell["text"]) for cell in table["table"]["cells"]] == [
         (0, 0, "항목"), (0, 1, "Item"), (1, 0, "합성 값"), (1, 1, "Synthetic value"),
     ]
+    # 엮은 문서의 칸은 잇지 않아 Unit도 변경 종류도 싣지 않는다
+    assert {(cell["new_unit_id"], cell["change_type"]) for cell in table["table"]["cells"]} == {(None, None)}
     assert table["figure"] is None
     # 그림 줄은 출처 단위의 그림 블록 - 보류여도 이미지는 보인다
     figure = next(item for section in wi["sections"] for item in section["items"] if item["kind"] == "figure")

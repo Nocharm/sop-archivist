@@ -52,13 +52,14 @@ export function AssignSidePanel({ state, headEnd }: { state: AssignPageState; he
     writtenMap, rowOfUnit, options, isDrafting, hiddenPlace, legacyMove, openTranslations, translationBlocked, settleTranslations, mode, activeKey, row, isNewEdit, hasSolo, tocOpen, setTocOpen, newRemarks,
     setNewRemarks, cutUnitId, focusNew, groupData, draft, editing, savedDestination, destination, rowUnits, rowLangs, firstDecision,
     systemHold, reasonNow, setDraft, rowLive, aiDest, aiWhy, recommendations, linkIds, pickedGroups, saveGroupData,
-    viewOf, oldView, splitByUnit, shapeView, shapeModel, soloUnits, cutLine, writtenDocs, composedDoc, view, changeView, askAiScope,
+    viewOf, oldView, splitByUnit, shape, shapeView, shapeModel, soloUnits, cutLine, writtenDocs, composedDoc, view, changeView, askAiScope,
     setRemarkEdit, firstTextRef, busy, isAnyPending, accOpen, toggleAcc, saveUnits, slots, aiUnfilled, draftPlace, draftSectionKey, draftPosition,
     placeResolved, setRefEntryId, moveRow, hasUnitDraft, isFixedCaption, rowViewUnits, rowSplitUnit, rowSplit, splitBlocked, rowRefUnit,
     refBlocked, isCaptionGateOn, rowCaptionRefs, refCandidates, shapeLines, shapeFirstId, slotPlaces, slotCellTables, startCaptionPick,
     shapeMode, headingBack, rewrap, bandBack, stepBase, refPendingIds, refDetail, refInfo, runUnitEdit, clearNoise, openNoiseReason, noisePick, runCaptionRefChange,
+    keptOldId, showKeptOld, unitMap: keptUnitMap,
     switchShapeMode, applySplitSuggestion, dismissSplitSuggestion, selectNextSplit, selectNextRef, runUnitAction, readReasonNeed, runSave,
-    runClear, markNew, placeManage, pickDestination, pickNewSentence, isTemplateDrag, handlePrimary, primaryPlan, startEdit,
+    runClear, markNew, placeManage, pickDestination, pickNewSentence, isTemplateDrag, pressEnter, primaryLink, primaryLinkLabel, primaryPlan, startEdit,
     pickRecommendation, markRecHover, renderPlaceLabel, listDestinationEls, canClear, isRowDeleted,
   } = state;
 
@@ -560,13 +561,15 @@ export function AssignSidePanel({ state, headEnd }: { state: AssignPageState; he
         data-state={primaryState}
         disabled={!canEdit || !row || busy}
         aria-disabled={primaryPlan.kind === "blocked" || undefined}
-        onClick={handlePrimary}
+        data-link={primaryLink !== null ? "" : undefined}
+        onClick={() => void pressEnter()}
       >
         <span className="min-w-0 truncate">
-          {primaryState === "save" && primaryLabel.tone === "normal" ? t("classify.saveConfirm") : t(primaryLabel.labelKey, primaryLabel.values)}
+          {primaryLink !== null ? t("assign.primary.linkTo", { n: primaryLinkLabel }) : primaryState === "save" && primaryLabel.tone === "normal" ? t("classify.saveConfirm") : t(primaryLabel.labelKey, primaryLabel.values)}
         </span>
-        {primaryLabel.suffixKey !== null && <span className="flex-none font-normal">{t(primaryLabel.suffixKey)}</span>}
-        <kbd>{formatAssignKey("confirm")}</kbd>
+        {primaryLink === null && primaryLabel.suffixKey !== null && <span className="flex-none font-normal">{t(primaryLabel.suffixKey)}</span>}
+        {/* Enter 표시는 그때 하는 쪽 단추에만 - 잇기면 박스 아래 단추 줄에 */}
+        {primaryLink === null && <kbd>{formatAssignKey("confirm")}</kbd>}
       </button>
     </Tooltip>
   );
@@ -690,15 +693,15 @@ export function AssignSidePanel({ state, headEnd }: { state: AssignPageState; he
   function runCaptionCandidate(candidate: Exclude<CaptionCandidate, { kind: "write" }>) {
     if (!rowBundle || !captionSlot) return;
     const { bundleId } = captionSlot;
-    if (candidate.kind === "near") runUnitEdit({ type: "attach_caption", unit_id: candidate.unitId, bundle_unit_id: bundleId }, t("assign.ctx.didAttachCaption"), bundleId);
-    else if (candidate.kind === "first_row") runUnitEdit({ type: "set_first_row_caption", table_unit_id: bundleId, caption: true }, t("assign.captionSlot.didFirstRow"), bundleId);
-    else runUnitEdit({ type: "group_figures", unit_ids: [rowBundle.id, candidate.figureId] }, t("assign.captionSlot.didGroup"), rowBundle.id);
+    if (candidate.kind === "near") runUnitEdit(shape, { type: "attach_caption", unit_id: candidate.unitId, bundle_unit_id: bundleId }, t("assign.ctx.didAttachCaption"), bundleId);
+    else if (candidate.kind === "first_row") runUnitEdit(shape, { type: "set_first_row_caption", table_unit_id: bundleId, caption: true }, t("assign.captionSlot.didFirstRow"), bundleId);
+    else runUnitEdit(shape, { type: "group_figures", unit_ids: [rowBundle.id, candidate.figureId] }, t("assign.captionSlot.didGroup"), rowBundle.id);
   }
   /** ✂ 한/영 나누기 - 모델이 고른 자리를 나눌 수 있는 자리로 맞춰 자른다(두 조각 모두 그 묶음의 캡션으로 남는다) */
   function splitCaption(unitId: number, at: number) {
     const unit = shapeModel?.units.get(unitId);
     const cut = unit ? findNearestCut(unit, at) : null;
-    if (cut !== null && captionSlot) runUnitEdit({ type: "split", unit_id: unitId, at: cut }, t("assign.captionSlot.didSplit"), captionSlot.bundleId);
+    if (cut !== null && captionSlot) runUnitEdit(shape, { type: "split", unit_id: unitId, at: cut }, t("assign.captionSlot.didSplit"), captionSlot.bundleId);
   }
   function renderCaptionSlot(): ReactNode {
     if (!captionSlot || !rowBundle) return null;
@@ -711,15 +714,15 @@ export function AssignSidePanel({ state, headEnd }: { state: AssignPageState; he
         writeBlockedKey={isPlace ? null : "assign.captionSlot.why.pickPlace"}
         readDetachBlock={(unitId) => {
           const caption = shapeModel?.units.get(unitId);
-          return caption && isFixedCaption(caption) ? "assign.ctx.why.captionInFigure" : null;
+          return caption && isFixedCaption(shape, caption) ? "assign.ctx.why.captionInFigure" : null;
         }}
         onCandidate={runCaptionCandidate}
         onWrite={startEdit}
-        onPickLine={() => startCaptionPick(bundleId)}
-        onDetach={(unitId) => runUnitEdit({ type: "detach_caption", unit_id: unitId }, t("assign.ctx.didDetachCaption"), bundleId)}
+        onPickLine={() => startCaptionPick(shape, bundleId)}
+        onDetach={(unitId) => runUnitEdit(shape, { type: "detach_caption", unit_id: unitId }, t("assign.ctx.didDetachCaption"), bundleId)}
         onSplit={splitCaption}
-        onBackFirstRow={() => runUnitEdit({ type: "set_first_row_caption", table_unit_id: bundleId, caption: false }, t("assign.captionSlot.didBackFirstRow"), bundleId)}
-        onUngroup={() => runUnitEdit({ type: "ungroup_figures", unit_id: rowBundle.id }, t("assign.captionSlot.didUngroup"), groupHeadId)}
+        onBackFirstRow={() => runUnitEdit(shape, { type: "set_first_row_caption", table_unit_id: bundleId, caption: false }, t("assign.captionSlot.didBackFirstRow"), bundleId)}
+        onUngroup={() => runUnitEdit(shape, { type: "ungroup_figures", unit_id: rowBundle.id }, t("assign.captionSlot.didUngroup"), groupHeadId)}
       />
     );
   }
@@ -730,7 +733,7 @@ export function AssignSidePanel({ state, headEnd }: { state: AssignPageState; he
         {shapeLines.length > 0 && (
           <>
             {renderStep(n, t("assign.step.shape"))}
-            <ShapeTools lines={shapeLines} cutUnitId={cutLine.at !== null ? cutUnitId : null} busy={busy} onAction={(unit, action, lang) => runUnitAction(unit, action, lang)} mode={shapeMode} onMode={switchShapeMode} headingBack={headingBack} bandBack={bandBack} rewrap={rewrap} />
+            <ShapeTools lines={shapeLines} cutUnitId={cutLine.at !== null ? cutUnitId : null} busy={busy} onAction={(unit, action, lang) => runUnitAction(shape, unit, action, lang)} mode={shapeMode} onMode={switchShapeMode} headingBack={headingBack} bandBack={bandBack} rewrap={rewrap} />
             {renderCaptionSlot()}
           </>
         )}
@@ -744,8 +747,8 @@ export function AssignSidePanel({ state, headEnd }: { state: AssignPageState; he
             busy={busy}
             blockedReason={refBlocked}
             left={refPendingIds.length}
-            onConfirm={(number) => runUnitEdit({ type: "set_ref", unit_id: rowRefUnit.id, number }, t("assign.ref.didConfirm"), rowRefUnit.id)}
-            onReject={() => runUnitEdit({ type: "clear_ref", unit_id: rowRefUnit.id }, t("assign.ref.didReject"), rowRefUnit.id)}
+            onConfirm={(number) => runUnitEdit(shape, { type: "set_ref", unit_id: rowRefUnit.id, number }, t("assign.ref.didConfirm"), rowRefUnit.id)}
+            onReject={() => runUnitEdit(shape, { type: "clear_ref", unit_id: rowRefUnit.id }, t("assign.ref.didReject"), rowRefUnit.id)}
             onClose={() => setRefEntryId(null)}
             onNext={selectNextRef}
           />
@@ -757,8 +760,8 @@ export function AssignSidePanel({ state, headEnd }: { state: AssignPageState; he
             candidates={refCandidates}
             canEdit={canEdit && mode === "old"}
             busy={busy}
-            onDetach={(refId) => runCaptionRefChange(refId, { state: "detached" }, t("assign.captionRef.didDetach"))}
-            onRelink={(refId, unitId) => runCaptionRefChange(refId, { target_unit_id: unitId }, t("assign.captionRef.didRelink"))}
+            onDetach={(refId) => runCaptionRefChange(shape, refId, { state: "detached" }, t("assign.captionRef.didDetach"))}
+            onRelink={(refId, unitId) => runCaptionRefChange(shape, refId, { target_unit_id: unitId }, t("assign.captionRef.didRelink"))}
           />
         )}
         {rowSplitUnit && rowSplit && (
@@ -769,7 +772,7 @@ export function AssignSidePanel({ state, headEnd }: { state: AssignPageState; he
             busy={busy}
             blockedReason={splitBlocked}
             left={splitByUnit.size}
-            onApply={() => applySplitSuggestion(rowSplitUnit, rowSplit)}
+            onApply={() => applySplitSuggestion(shape, rowSplitUnit, rowSplit)}
             onDismiss={() => dismissSplitSuggestion(rowSplit)}
             onNext={selectNextSplit}
           />
@@ -786,7 +789,7 @@ export function AssignSidePanel({ state, headEnd }: { state: AssignPageState; he
     const lineAt = pick.unitId === null ? -1 : block.unitIds.indexOf(pick.unitId);
     const line = lineAt >= 0 ? block.lines[lineAt] : null;
     const isOpen = tocOpen.has(block.key);
-    const canAct = canEdit && !isNewEdit;
+    const canAct = canEdit;
     const name = t(`assign.noise.name.${block.kind}`);
     const parts = describeTocParts(block.unitIds.map((id) => unitById.get(id)?.lang ?? "neutral"))
       .map((part) => t(`assign.noise.part.${part.part}`, { n: part.n }))
@@ -958,6 +961,12 @@ export function AssignSidePanel({ state, headEnd }: { state: AssignPageState; he
               </div>
             )}
           </div>
+          {/* New를 눌렀지만 Old 박스도 골라 두었다 - 그 줄의 결정으로 돌아가는 한 줄 */}
+          {keptOldId !== null && (
+            <button type="button" className="assign-old-kept" data-testid="assign-old-kept" onClick={showKeptOld}>
+              <Truncate text={t("assign.oldKept", { id: keptUnitMap.get(keptOldId)?.display_id ?? String(keptOldId) })} revealOnFocus />
+            </button>
+          )}
           {/* 이 문서의 문장은 배정하지 않는다 - 다듬기(1번)뿐이고, 왜 보낼 곳이 없는지 한 줄로 알린다 */}
           <div className="assign-pick" data-testid="assign-pick">
             {renderShapeCards(1)}

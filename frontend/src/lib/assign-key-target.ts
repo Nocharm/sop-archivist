@@ -3,8 +3,8 @@
 /** typing = 글 칸, layer = 모달 · 메뉴 · 고르기 목록, pop = 비모달 판과 알림(제 단추를 Enter로 누른다), paper = 용지, side = 오른쪽 칸 */
 export type KeyPlace = "typing" | "layer" | "pop" | "paper" | "side" | "other";
 
-/** 화면 단축키를 막는 층 - 그 자리 메뉴(data-link-menu)는 막지 않는다(메뉴가 떠 있어도 ↵가 확정이다) */
-export const LAYER_SELECTOR = '[role="dialog"],[role="menu"]:not([data-link-menu]),[role="listbox"]';
+/** 화면 단축키를 막는 층 - 모달 · 떠 있는 메뉴 · 고르기 목록 */
+export const LAYER_SELECTOR = '[role="dialog"],[role="menu"],[role="listbox"]';
 
 const CONTROL_SELECTOR = 'button, a, [role="button"], [role="option"]';
 

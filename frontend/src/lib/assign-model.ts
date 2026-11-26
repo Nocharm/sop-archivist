@@ -116,12 +116,20 @@ export interface LinkPair {
   ai: boolean;
 }
 
+/** 선이 끝날 수 있는 새 문장 - 문장 줄과 표의 칸 문장(표 줄 자체는 표째 이은 때만 출처가 있다) */
+export type LinkableRow = Pick<WrittenSentence, "target_id" | "source_unit_ids" | "status" | "lang">;
+
+/** New 문장 목록을 선이 끝날 곳으로 편다 - 칸에 이은 선은 표가 아니라 그 칸에서 끝난다(쪼개기 먼저 §8 4-3) */
+export function listLinkableRows(rows: readonly WrittenSentence[]): LinkableRow[] {
+  return rows.flatMap((row) => [row, ...(row.table?.cells ?? [])]);
+}
+
 /**
  * 두 문서 사이에 그릴 이음 - 지금 열린 New 문서의 문장 출처 중 지금 열린 Old 문서의 조각만, 그리고 고른 줄의 아직 저장 안 한 고름.
  * 고름은 같은 언어 Old 조각과 잇고, 줄에 그 언어 조각이 없으면 줄의 조각 모두와 잇는다(저장도 그 조각들이 출처인 번역이다, 제품 명세 §7.7).
  */
 export function buildLinkPairs(
-  newRows: WrittenSentence[],
+  newRows: readonly LinkableRow[],
   oldUnitIds: ReadonlySet<number>,
   draft: { units: Array<{ id: number; lang: UnitLang }>; targetIds: number[] } | null,
 ): LinkPair[] {
@@ -161,19 +169,6 @@ export const MAX_LINES_ALL = 40;
 export function pickDrawnLinks<T extends LinkPair>(pairs: T[], focusUnits: ReadonlySet<number>, focusTargets: ReadonlySet<number>, max = MAX_LINES_ALL): Array<T & { strong: boolean }> {
   const marked = pairs.map((pair) => ({ ...pair, strong: pair.draft || focusUnits.has(pair.unitId) || focusTargets.has(pair.targetId) }));
   return marked.length > max ? marked.filter((pair) => pair.strong) : marked;
-}
-
-export type LinkMenuItem = "confirm" | "cancel" | "link" | "unlink" | "close";
-
-/**
- * 그 자리 메뉴의 항목 - 고른 뒤(저장 전)는 확정·취소, 이미 이어진 것은 끊기(AI가 이어 둔 것은 확정도), 그 밖의 후보 문장은 잇기.
- * 고칠 수 없는 묶음이거나, 고름이 없고 가리키는 문장도 없으면(추천에서 연 메뉴가 저장된 뒤) 메뉴를 띄우지 않는다 - 누를 수 없는 Link를 보이지 않게.
- */
-export function listLinkMenuItems(state: { picked: boolean; linked: boolean; confirmed: boolean; hasTarget: boolean; canEdit: boolean }): LinkMenuItem[] {
-  if (!state.canEdit) return [];
-  if (state.picked) return ["confirm", "cancel"];
-  if (state.linked) return state.confirmed ? ["unlink", "close"] : ["confirm", "unlink", "close"];
-  return state.hasTarget ? ["link", "close"] : [];
 }
 
 /**

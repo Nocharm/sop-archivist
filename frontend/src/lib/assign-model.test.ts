@@ -5,6 +5,7 @@ import type { Decision, Group, GroupTarget, GroupUnit, NewCandidate, WrittenSent
 import {
   addPartnerTargets,
   buildLinkPairs,
+  listLinkableRows,
   buildRecommendations,
   canMakeOtherLanguage,
   clampSplit,
@@ -14,7 +15,6 @@ import {
   findLinkPartners,
   isRecommendationPicked,
   listCoConfirmed,
-  listLinkMenuItems,
   readConfirmBlockKey,
   listSiblingPlaces,
   listUnlinkRemainder,
@@ -284,6 +284,11 @@ describe("buildLinkPairs", () => {
     expect(pairs.filter((pair) => pair.draft)).toEqual([{ unitId: 10, targetId: 73, draft: true, ai: false }]);
   });
 
+  it("draws a link to a cell, not to its table", () => {
+    const tableRow = makeWritten(90, { kind: "table", table: { rows: 1, cols: 1, cells: [{ target_id: 7, row: 0, col: 0, lang: "ko", text: "합성 칸", status: "confirmed", source_unit_ids: [9], revision: 1, new_unit_id: 70, change_type: null }] } });
+    expect(buildLinkPairs(listLinkableRows([tableRow]), new Set([9]), null)).toEqual([{ unitId: 9, targetId: 7, draft: false, ai: false }]);
+  });
+
   it("draws a line to a New sentence the row has no language for, from every unit of the row", () => {
     // 영어 단위 하나, 한글 새 문장 하나 → 선 하나(번역으로 이어진다)
     expect(buildLinkPairs(rows, new Set([5]), { units: [{ id: 5, lang: "en" }], targetIds: [71] })).toEqual([{ unitId: 5, targetId: 71, draft: true, ai: false }]);
@@ -311,25 +316,6 @@ describe("findLinkPartners and pickDrawnLinks", () => {
   it("draws only focused lines when there are many", () => {
     expect(pickDrawnLinks(pairs, new Set(), new Set([71]), 2)).toEqual([{ unitId: 10, targetId: 71, draft: false, ai: false, strong: true }]);
     expect(pickDrawnLinks(pairs, new Set(), new Set(), 2)).toEqual([]);
-  });
-});
-
-describe("listLinkMenuItems", () => {
-  it("offers confirm after picking, unlink on a confirmed link, link otherwise", () => {
-    expect(listLinkMenuItems({ picked: true, linked: true, confirmed: true, hasTarget: true, canEdit: true })).toEqual(["confirm", "cancel"]);
-    expect(listLinkMenuItems({ picked: false, linked: true, confirmed: true, hasTarget: true, canEdit: true })).toEqual(["unlink", "close"]);
-    expect(listLinkMenuItems({ picked: false, linked: true, confirmed: false, hasTarget: true, canEdit: true })).toEqual(["confirm", "unlink", "close"]);
-    expect(listLinkMenuItems({ picked: false, linked: false, confirmed: false, hasTarget: true, canEdit: true })).toEqual(["link", "close"]);
-  });
-
-  it("shows nothing when the bundle cannot be edited", () => {
-    expect(listLinkMenuItems({ picked: true, linked: false, confirmed: false, hasTarget: true, canEdit: false })).toEqual([]);
-  });
-
-  it("shows nothing when nothing is picked and no sentence is known (a recommendation menu after saving)", () => {
-    expect(listLinkMenuItems({ picked: false, linked: false, confirmed: true, hasTarget: false, canEdit: true })).toEqual([]);
-    // 고른 채로면 문장을 몰라도 확정할 수 있다(추천 카드에서 연 메뉴)
-    expect(listLinkMenuItems({ picked: true, linked: false, confirmed: false, hasTarget: false, canEdit: true })).toEqual(["confirm", "cancel"]);
   });
 });
 

@@ -91,6 +91,12 @@ export function AssignBar({ state }: { state: AssignPageState }) {
             </button>
           </span>
         )}
+        {/* New에서 Shift로 여럿 고름 - 수만(합치기 · 표 벗기기는 다음 브랜치) */}
+        {state.checkedNew.size > 0 && canEdit && (
+          <span className="text-xs text-ink-2" data-testid="assign-bulk-new">
+            {t("classify.pickedCount", { n: state.checkedNew.size })}
+          </span>
+        )}
         {/* 확인할 것 - 아이콘 + 수(올리면 이름), 누르면 그 줄 목록 창. 누락 경고는 문서별 확인 창 */}
         {aiOn && splitPendingIds.length > 0 && (
           <PendingCount icon={WandSparkles} tone="ai" words={t("assign.pending.split")} label={t("ai.pendingCount", { n: splitPendingIds.length })} items={splitPendingIds.map(readPendingItem)} onGo={goToUnit} onNext={selectNextSplit} testId="assign-split-pending" />

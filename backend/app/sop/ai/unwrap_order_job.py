@@ -58,12 +58,12 @@ async def _find_active_table_ids(session: AsyncSession, bundle_id: int, document
 async def select_unwrap_order_items(
     session: AsyncSession, bundle_id: int, *, document_id: int, table_id: int
 ) -> list[JobItem]:
-    """요청 표를 작업 한 줄로 — 옛 문서 최신 추출의 벗긴 표이고 줄이 둘 이상일 때만 받는다.
+    """요청 표를 작업 한 줄로 — Old · New 문서 최신 추출의 벗긴 표이고 줄이 둘 이상일 때만 받는다.
 
     아니면 422(unwrap_not_unwrapped · unwrap_too_few_lines), 문서·표가 이 묶음 것이 아니면 404다. 같은 표의 작업이
     이미 줄에 있으면 쌓지 않는다(빈 목록).
     """
-    documents = await load_latest_extractions(session, bundle_id, document_id)
+    documents = await load_latest_extractions(session, bundle_id, document_id, sides=("old", "new"))
     extraction_id = next(iter(documents), None)
     if extraction_id is None:
         raise_rule(404, "document_not_found")
