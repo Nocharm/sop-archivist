@@ -31,14 +31,19 @@ export function listTableBlocks(view: Pick<DocumentView, "blocks" | "units">, mo
   for (const unit of view.units) if (unit.kind === "table" && unit.table_id !== null) tableUnit.set(unit.table_id, unit.id);
   const captions = new Map<number, string[]>();
   for (const unit of [...view.units].sort((a, b) => a.pos_seq - b.pos_seq)) {
-    if (unit.kind === "caption" && unit.group_unit_id !== null) captions.set(unit.group_unit_id, [...(captions.get(unit.group_unit_id) ?? []), unit.text]);
+    if (unit.kind !== "caption" || unit.group_unit_id === null) continue;
+    const list = captions.get(unit.group_unit_id) ?? [];
+    list.push(unit.text);
+    captions.set(unit.group_unit_id, list);
   }
   const lines = new Map<number, number[]>();
   for (const id of model.order) {
     const lineTable = model.unwrapLines.get(id);
     if (lineTable === undefined) continue;
     const outer = findOuterTable(model.tables, lineTable);
-    lines.set(outer, [...(lines.get(outer) ?? []), id]);
+    const list = lines.get(outer) ?? [];
+    list.push(id);
+    lines.set(outer, list);
   }
   const out: TableBlock[] = [];
   const seen = new Set<number>();
@@ -69,10 +74,17 @@ export function listTableTabUnitIds(blocks: readonly TableBlock[]): number[] {
   return blocks.flatMap((block) => block.unitIds);
 }
 
+// 표 목록마다 단위 → 표 - J/K가 글쇠마다 모든 줄에 묻는다(목록은 모델마다 한 벌이라 그 목록에 붙여 둔다)
+const unitTables = new WeakMap<readonly TableBlock[], Map<number, number>>();
+
 /** 단위가 든 표 탭의 표 - 칸 문장 · 캡션은 묶인 표 단위로 찾는다. 표 탭에 없으면 null */
 export function findUnitTable(blocks: readonly TableBlock[], unitId: number, units: ReadonlyMap<number, Pick<ViewUnit, "group_unit_id">>): number | null {
-  const id = units.get(unitId)?.group_unit_id ?? unitId;
-  return blocks.find((block) => block.unitIds.includes(id))?.tableId ?? null;
+  let map = unitTables.get(blocks);
+  if (!map) {
+    map = new Map(blocks.flatMap((block) => block.unitIds.map((id) => [id, block.tableId] as const)));
+    unitTables.set(blocks, map);
+  }
+  return map.get(units.get(unitId)?.group_unit_id ?? unitId) ?? null;
 }
 
 /** 탭에서 J/K가 밟을 단위인가 - 표 탭은 표의 단위만, 다른 탭은 접힌 표의 단위를 건너뛴다(접힌 표는 용지에 없다) */
