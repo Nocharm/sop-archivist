@@ -6702,7 +6702,8 @@ await runStep("assign: unwrap table - Unwrap table turns the table into sentence
   await wait(page, `assign-paper-unwrap-head-${unit.table_id}`);
   // 머리는 단추 둘 - ✦ AI order(B11, AI가 꺼져 있으면 흐린 단추)와 ↺ Back to table
   const headButtons = await page.locator(`[data-testid="assign-paper-unwrap-head-${unit.table_id}"] button`).allTextContents();
-  check("the group head holds ✦ AI order and ↺ Back to table", headButtons.map((text) => text.trim()).join(" | ") === "✦ AI order | ↺ Back to table", headButtons.join(" | "));
+  // 본문의 바깥 표라 머리 끝에 접기가 붙는다(11-23 명세 E2)
+  check("the group head holds ✦ AI order and ↺ Back to table, then Collapse", headButtons.map((text) => text.trim()).join(" | ") === "✦ AI order | ↺ Back to table | Collapse", headButtons.join(" | "));
   check("the lines carry the left rail", (await page.locator(`[data-unwrap-scope="t${unit.table_id}"] .unwrap-rail`).count()) >= lines.length);
   await takeShot("sop-assign-unwrap.png");
   // 벗긴 줄을 고르면 Shape 맨 아래에도 ↺ Back to table(F12 A3)
