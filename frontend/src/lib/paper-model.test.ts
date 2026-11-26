@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import type { DocumentView, ViewBlock, ViewPartGroup, ViewUnit } from "./api-sop";
 import type { PaperRow } from "./paper-model";
-import { buildPaperModel, buildPaperTabs, buildRows, foldCaptionRows, listFigureTabUnitIds, listPartSheets, pickFigureRows, canSplitAt, clampSplitAt, getBundleHeader, getGapMerge, getMergeBlocker, hasTocLineIn, resolveCutDrag, getMarks, getTags, isBandHeading, isOtherTableCaption, readWarningText, resolvePickUnit, shouldRecenter, toBlockOffset, toUnitOffset } from "./paper-model";
+import { buildPaperModel, buildPaperTabs, buildRows, foldCaptionRows, listFigureTabUnitIds, listPartSheets, listTabKeys, pickFigureRows, canSplitAt, clampSplitAt, getBundleHeader, getGapMerge, getMergeBlocker, hasTocLineIn, resolveCutDrag, getMarks, getTags, isBandHeading, isOtherTableCaption, readWarningText, resolvePickUnit, shouldRecenter, toBlockOffset, toUnitOffset } from "./paper-model";
 
 function makeBlock(id: number, seq: number, text: string, extra: Partial<ViewBlock> = {}): ViewBlock {
   return {
@@ -585,7 +585,8 @@ describe("figures tab (mockup 2 D3)", () => {
 
   it("adds a Figures tab after the others whose J/K order is card order, and the body tab skips figures", () => {
     const tabs = buildPaperTabs(view, model);
-    expect(tabs.tabs.map((tab) => tab.key)).toEqual(["body", "header", "figures"]);
+    // 본문에 데이터 표(9)가 있어 표 탭이 맨 뒤에 붙는다(11-23 명세 E2)
+    expect(tabs.tabs.map((tab) => tab.key)).toEqual(["body", "header", "figures", "tables"]);
     expect(tabs.tabs[0].unitIds).toEqual([10, 11, 40, 41]);
     expect(tabs.tabs[2].unitIds).toEqual([20, 21, 30, 31, 50]);
     expect(tabs.tabOf.get(50)).toBe("figures");
@@ -597,5 +598,39 @@ describe("figures tab (mockup 2 D3)", () => {
     const plainModel = buildPaperModel(plain);
     expect(plainModel.figures).toEqual([]);
     expect(buildPaperTabs(plain, plainModel).tabs.map((tab) => tab.key)).toEqual(["body"]);
+  });
+});
+
+describe("tables tab (11-23 E2)", () => {
+  // 본문 문장 · 그림 · 표(7, §5, 표 단위 20 · 칸 문장 21)
+  const blocks = [
+    makeBlock(1, 0, "Body."),
+    makeBlock(2, 1, "", { kind: "figure" }),
+    makeBlock(3, 2, "cell", { kind: "table_cell", table_id: 7, row_index: 0, col_index: 0, section_label: "5" }),
+  ];
+  const units = [
+    makeUnit(10, [[1, 0, 5]], "Body."),
+    makeUnit(30, [], "", { kind: "figure", block_id: 2, pos_seq: 1 }),
+    makeUnit(20, [], "", { kind: "table", table_id: 7, block_id: 3, pos_seq: 2 }),
+    makeUnit(21, [[3, 0, 4]], "cell", { kind: "cell_sentence", table_id: 7, group_unit_id: 20 }),
+  ];
+  const withTable = makeView(blocks, units);
+  withTable.tables = [{ id: 7, table_index: 0, parent_table_id: null, part: "body", n_rows: 1, n_cols: 1, is_layout: false, is_band: false, anchor: null }];
+  const noTable = makeView(blocks.slice(0, 2), units.slice(0, 2));
+  const keys = (view: DocumentView) => buildPaperTabs(view, buildPaperModel(view)).tabs.map((tab) => tab.key);
+
+  it("offers a tables tab only when there is a table", () => {
+    expect(keys(withTable)).toEqual(["body", "figures", "tables"]);
+    expect(keys(noTable)).not.toContain("tables");
+    expect(listTabKeys(buildPaperModel(withTable))).toEqual(["body", "figures", "tables"]);
+    expect(listTabKeys(buildPaperModel(noTable))).toEqual(["body", "figures"]);
+  });
+
+  it("a picked table stays in the body tab", () => expect(buildPaperTabs(withTable, buildPaperModel(withTable)).tabOf.get(20)).toBe("body"));
+
+  it("walks the tables tab by table and keeps each unit once in the whole order", () => {
+    const tabs = buildPaperTabs(withTable, buildPaperModel(withTable));
+    expect(tabs.tabs.find((tab) => tab.key === "tables")?.unitIds).toEqual([20]);
+    expect(tabs.order).toEqual([10, 20, 21, 30]);
   });
 });

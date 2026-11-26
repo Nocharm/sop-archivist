@@ -1396,6 +1396,15 @@
   .pg[data-strips] .strip-row:has(> .unwrap-rail) { position: relative; }
   .unwrap-rail { position: absolute; top: 0; bottom: 0; width: 0; border-left: 2px solid color-mix(in oklch, var(--accent) 45%, transparent); pointer-events: none; }
   .unwrap-head { display: flex; flex: 1 1 0; align-items: center; justify-content: flex-end; gap: 6px; min-width: 0; margin: 4px 0 2px; }
+  /* 표 탭(11-23 명세 E2) - 표마다 앞에 흐린 위치 머리 "§5 아래" */
+  .table-place { min-width: 0; margin: 10px 0 2px; overflow: hidden; color: var(--ink-3); font-size: 12px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+  /* 본문 표 접기 - 바깥 표 머리 끝의 작은 접기 단추, 접힌 표는 점선 한 줄 단추(누르면 펼침). 글은 --ink-3(라이트 약 5.6:1) */
+  .table-fold-btn { flex: none; align-self: center; height: 20px; padding: 0 6px; font-size: 11.5px; }
+  .table-fold-line { display: flex; flex: 1 1 0; align-items: center; gap: 6px; min-width: 0; height: 26px; margin-block: 2px; padding: 0 10px; border: 1px dashed var(--line-2); border-radius: var(--r-1); background: none; color: var(--ink-3); font: inherit; font-size: 12px; text-align: left; cursor: pointer; }
+  .table-fold-line:hover { background: var(--hover); color: var(--ink-2); }
+  .table-fold-text, .table-fold-links { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .table-fold-links { flex: none; }
+  .tables-fold-all { flex: none; height: 24px; margin-left: auto; padding: 0 8px; font-size: 12px; }
   /* AI 순서 제안(B11) - 머리의 작업 중 칩 · 같은 차례 글, 옮겨 갈 줄의 "4 → 1" 칩과 옅은 색 바탕 */
   .unwrap-ai-busy, .unwrap-ai-note { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-3); font-size: 12px; }
   .unwrap-ai-ask { display: inline-flex; }

@@ -35,7 +35,7 @@
 | 7f | `feat/split-by-sentence` | 대기 | | | |
 | 7g | `feat/assign-pair-bracket` | 대기 | | | |
 | 8 | 계획 5의 아홉 | 진행 | v1.6.21 · 69826fdd | space-preview-trim v1.6.14 · excel-a-strike v1.6.15 · progress-by-disposition v1.6.18 · ai-suggestions-retire v1.6.20 · 모음 table-follow v1.6.21 합침(pytest 3747+시드 15 · vitest 2371 · build 경고 0 · `assign:` 스모크 1274 전부 · AI 단계는 가짜 AI로 14) | 남은 둘: tables-tab · unwrap-continue-numbers(둘 다 6 · 계획 4에 매임) |
-| 8a | `feat/assign-tables-tab` | 진행 | | | |
+| 8a | `feat/assign-tables-tab` | 합침 | v1.6.24 · 9d9f177d | dev v1.6.23 합침 · vitest 2593 · build 경고 0 · `assign:` 스모크 1435 + 따라 고친 1검사 혼자 16 통과 · sonnet 검토 막음 0 · 권함 1 고침 · perf(52문서 CPU1 J 22.1→24.1 · Delete 25.1→24.5ms, 스크롤 같음) | 표 탭 J/K는 그 문서의 표만(그림 탭은 모든 Old 문서), 벗긴 표 캡션은 접힌 줄에 안 보임 |
 | 8b | `feat/unwrap-continue-numbers` | 대기 | | | 7d(`MergeRowsOp`) 뒤 |
 
 
@@ -105,6 +105,11 @@
 - 7a · `paper-model.test.ts:210-219` 묶인 칸 → 표 기대를 칸 → 칸으로, 캡션 → 묶음 사례 더함 · C1-R3
 - 7a · `smoke/assign.mjs` 표 칸 단계 이름 · 1083 "칸 글을 누르면 표 전체" → "표 줄 다듬기에 Unwrap table" · 1084 표 조각 data-sel → 칸 data-sel + 표 `data-group="table"`(검사 2 그대로) · C1-R3, 정한 것 5
 - 7a · `smoke/assign.mjs:4182 · 4184` `:is([data-sel], [data-mate])` → `+ [data-group="pair"]`, `:741 · :1802` 짝 카드 다른 조각 글도 읽게 selector 더함 · 이웃한 짝의 다른 조각이 data-mate 대신 data-group을 받음
+- 8a · `paper-model.test.ts` "adds a Figures tab after the others" 탭 목록에 "tables" · 픽스처 본문에 표가 있어 표 탭이 생김
+- 8a · `new-paper.test.ts` `not.toContain('assign-new-tab-')` → `'assign-new-tab-header"'` · 표가 있으면 탭 줄이 늘 섬
+- 8a · `smoke/assign.mjs` 그림 단계 "탭 줄 끝이 Figures" → "끝이 Figures, 또는 Figures 다음이 Tables" · 탭 차례 B2
+- 8a · `smoke/assign.mjs` 필터 접기 단계 부분마다 셈에서 `assign-tab-tables`를 뺌 · 표 탭은 본문 표를 다시 모은 탭이라 두 번 세지 않게
+- 8a · `smoke/assign.mjs:6706` 벗긴 표 머리 "✦ AI order | ↺ Back to table" → "… | Collapse"(검사 1 그대로) · 머리 끝에 접기 단추(E2)
 
 ## 아침에 볼 것 (사람이 정할 것 · 봐 줄 것)
 
@@ -146,3 +151,4 @@
 - New를 오른쪽에 연 채로도(Old 다듬기 중) Old 표의 '한글 표처럼 하기'가 켜져 있다 — dev는 이때 껐지만 6-3이 그때도 Old 표 도구를 켜 두게 해 맞췄다. 끄려면 `page.tsx`의 `follow:` 한 줄.
 - New 표 풀기 전환(움직임)은 없다(New 보기를 `docViews`로 받지 않음). 스모크 그림 캡션 단계(`the New pane shows a real table and figure`)가 가끔 흔들린다.
 - 7a: 계획의 `:721` 짝 1px · 꼬리표 검사는 그 문서에 짝이 없어 새 S8 단계로 옮겼다. 짝 카드 2px 규칙은 scope 없는 위치 판에서만 남는다. `paper.tsx` `selectedBlock`은 아직 `selectedId`로 재서 칸을 골라도 표 위아래 틈이 벌어지지 않는다(표는 합치기 대상이 아니라 해는 없어 보임).
+- 8a: 성능 6회 가운데 값이 몇 칸에서 ±20% 넘게 오갔다(작은 문서 CPU4 J 42.8→52.8, 52문서 CPU4 filter Delete 44.7→54.6, 대신 작은 문서 CPU1 filter Delete 23→6.4) — 방향이 섞여 잡음으로 봤다. 정식 업데이트 전 perf를 한 번 더 잰다.

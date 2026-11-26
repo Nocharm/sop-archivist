@@ -1,5 +1,6 @@
 // 이미 쓴 New 문서의 용지 - 연결선이 찾는 표시, Old와 같은 탭, 이을 수 없는 박스의 까닭, 칸의 칩과 끊기.
-import { createElement } from "react";
+import { act, createElement } from "react";
+import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
@@ -103,7 +104,8 @@ describe("NewPaper", () => {
 
   it("shows header and footer tabs like the Old paper", () => {
     expect(html({ header: true })).toContain('data-testid="assign-new-tab-header"');
-    expect(html()).not.toContain('data-testid="assign-new-tab-');
+    // 본문에 표가 있으면 표 탭이 늘 있어(11-23 명세 E2) 탭 줄은 서고, 머리말 탭은 머리말이 있을 때만
+    expect(html()).not.toContain('data-testid="assign-new-tab-header"');
   });
 
   it("draws a heading with no target and tells why", () => {
@@ -214,6 +216,40 @@ describe("NewPaper", () => {
   it("names a pair of boxes by one group", () => {
     const h = html({ units: () => ({ pair_id: 4 }) });
     expect(h.match(/data-pair-group="4"/g)).toHaveLength(2);
+  });
+
+  it("offers a Tables tab that keeps a picked table and leaves for a body line (11-23 E2)", async () => {
+    const view = makeView();
+    const model = buildPaperModel(view);
+    const overlay = buildNewOverlay({ rows: ROWS, candidateIds: NONE, pickedIds: NONE, focusId: null, aiFilter: null, openAiSections: new Set() });
+    const base: NewPaperProps = {
+      bundleId: 1, docOptions: [{ value: "1", label: "SOP-1" }], docId: "1", fileId: 3, onDocChange: () => undefined, tag: "New", linesOn: true, onToggleLines: () => undefined,
+      zoom: 1, onZoom: () => undefined, view, model, tabs: buildPaperTabs(view, model), placeholder: null, overlay, onOpenAiSection: () => undefined, cellPickable: false, cellDroppable: false,
+      sourceLabel: (id) => `1-${id}`, onJumpSource: () => undefined, selectedUnitId: null, pickedUnitIds: NONE, showUnitIds: [], onPick: () => undefined,
+    };
+    const host = document.createElement("div");
+    const root = createRoot(host);
+    const draw = (selectedUnitId: number | null) => act(async () => root.render(createElement(LangProvider, null, createElement(NewPaper, { ...base, selectedUnitId }))));
+    const tabOf = () => host.querySelector<HTMLElement>('[data-testid="assign-new"]')?.dataset.tab;
+    await draw(null);
+    await act(async () => host.querySelector<HTMLButtonElement>('[data-testid="assign-new-tab-tables"]')?.click());
+    expect(tabOf()).toBe("tables");
+    expect(host.querySelector('[data-testid="assign-new-5"]')).toBeNull();
+    // 표의 칸을 고르면 표 탭에 남고, 본문 문장을 고르면 본문 탭으로 간다
+    await draw(60);
+    expect(tabOf()).toBe("tables");
+    await draw(50);
+    expect(tabOf()).toBe("body");
+    await act(async () => root.unmount());
+  });
+
+  it("folds a New table into one line that tells its linked cells, with fold-all over the body", () => {
+    const tableFold = { folded: new Set([TABLE]), toggle: () => undefined, toggleAll: () => undefined };
+    const h = html({ tableFold });
+    expect(h).toContain(`data-testid="assign-table-folded-${TABLE}"`);
+    expect(h).toContain("1 of 1 cells linked");
+    expect(h).not.toContain('data-testid="assign-new-cell-7"');
+    expect(h).toMatch(/data-testid="assign-new-tables-fold-all"[^>]*>Expand all tables</);
   });
 
   it("shows the placeholder until the document arrives", () => {
