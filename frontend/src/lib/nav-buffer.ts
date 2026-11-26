@@ -4,6 +4,10 @@
 
 import { useSyncExternalStore } from "react";
 
+import { showToast } from "@/components/ui/toast";
+import { MESSAGES } from "@/lib/i18n-messages";
+import { isPracticeBundlePath } from "@/lib/practice-route";
+
 /** 버퍼 길이(ms). 사용자 요청 0.5~0.7초의 가운데 - 바꾸면 진행 막대 CSS(.nav-progress)의 전환 시간도 같이 본다 */
 export const NAV_BUFFER_MS = 600;
 // 이동을 보낸 뒤 경로가 끝내 안 바뀌면(같은 주소 등) 진행 표시를 거두는 상한(ms)
@@ -88,6 +92,12 @@ export function cancelNav(): void {
  * 버퍼 중인 같은 목적지를 다시 고르면 취소, 다른 목적지면 그쪽으로 다시 건다.
  */
 export function navigate(href: string, { immediate = false }: { immediate?: boolean } = {}): void {
+  // 연습 Bundle의 다른 단계 화면은 없다(설계 2026-11-26-practice-page D13) - 링크 클릭도 NavHost가 여기로 보내니 한 곳에서 막는다
+  if (isPracticeBundlePath(href)) {
+    // React 밖이라 화면 언어는 <html lang>에서 읽는다(use-ui-pref와 같은 기준)
+    showToast(MESSAGES[document.documentElement.lang === "ko" ? "ko" : "en"]["practice.notHere"], "info");
+    return;
+  }
   if (state.phase === "buffer" && state.href === href && !immediate) {
     cancelNav();
     return;
