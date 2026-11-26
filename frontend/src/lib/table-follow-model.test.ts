@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { DocumentView, FollowItem, TableCounterpart, ViewTable } from "@/lib/api-sop";
-import { buildFollowOp, describeCounterpart, describeFollowItem, listCounterpartChoices, listFollowTableIds, pickOrderAction } from "@/lib/table-follow-model";
+import { buildFollowOp, describeCounterpart, describeFollowItem, listCounterpartChoices, listFollowTableIds, pickOrderAction, readFollowSuggestion } from "@/lib/table-follow-model";
 
 const ASK = { lang: "en", side: "old", isUnwrapped: true, status: "ambiguous" } as const;
 
@@ -140,5 +140,21 @@ describe("buildFollowOp with order-only rows", () => {
     ];
     expect(buildFollowOp(5, plan, [34], [31, 32, 33, 34])).toEqual({ type: "follow_table", table_id: 5, items: [{ unit_ids: [34] }], order: [34, 31, 32, 33] });
     expect(buildFollowOp(5, plan, [31], [31, 32, 33, 34]).order).toEqual([31, 32, 34]); // 합칠 일 자신은 꼬리(33)를 뺀다
+  });
+});
+
+describe("readFollowSuggestion", () => {
+  const suggestion = { content: { table_id: 5, source_table_id: 3, items: PLAN, lines: [1, 2, 3, 4], reason: "r" } };
+
+  it("reads an AI suggestion into the same items", () => {
+    const plan = readFollowSuggestion(suggestion, [4, 3, 2, 1]);
+    expect(plan?.items).toEqual(PLAN);
+    expect(plan).toMatchObject({ mode: "ai", source_table_id: 3, count: 4, lines: [1, 2, 3, 4] });
+  });
+
+  it("drops an AI suggestion whose lines changed", () => {
+    expect(readFollowSuggestion(suggestion, [1, 2, 3])).toBeNull();
+    expect(readFollowSuggestion(suggestion, [1, 2, 3, 9])).toBeNull();
+    expect(readFollowSuggestion({ content: { table_id: 5 } }, [1, 2, 3, 4])).toBeNull();
   });
 });

@@ -466,7 +466,7 @@ class FollowOut(BaseModel):
     mode: Literal["rule", "ai", "none"]
     items: list[FollowItemOut]
     count: int
-    lines: list[int]  # rule일 때 영어 표의 지금 덩이 차례(줄 id 전부) — 한 줄만 적용할 때 순서를 합치지 않은 줄까지 세운다. 아니면 빈 목록
+    lines: list[int]  # rule · ai일 때 영어 표의 지금 덩이 차례(줄 id 전부) — 한 줄만 적용할 때 순서를 합치지 않은 줄까지 세우고, AI 제안이 낡았는지 본다. 아니면 빈 목록
 
 
 @dataclass(frozen=True)
@@ -572,7 +572,7 @@ def answer_follow(inputs: FollowInputs, vectors: Mapping[str, np.ndarray] | None
         return none
     plan = build_follow_plan(source, inputs.lines, match_rows(source, inputs.lines, vectors))
     if plan is None:
-        return FollowOut(source_table_id=source_id, mode="ai", items=[], count=0, lines=[])
+        return FollowOut(source_table_id=source_id, mode="ai", items=[], count=0, lines=[line.unit_id for line in inputs.lines])
     items = [
         FollowItemOut(
             unit_ids=list(item.unit_ids), order=item.order, number=item.number, indent=item.indent,

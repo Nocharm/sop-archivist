@@ -131,7 +131,7 @@ export interface AiStatus {
   ai_enabled: boolean;
   embed_enabled: boolean;
   jobs: AiJobCounts;
-  /** 종류별 같은 모양(classify·translate·match·pair·split·unwrap_order) */
+  /** 종류별 같은 모양(classify·translate·match·pair·split·unwrap_order·table_follow) */
   by_kind: Record<string, AiJobCounts>;
   /** 실패 코드별 건수(timeout·server_error·connection·client_error·config·interrupted·no_candidates·internal) */
   failed_errors: Record<string, number>;
@@ -166,7 +166,7 @@ export function getAiStatus(bundleId: number): Promise<AiStatus> {
   return apiFetch<AiStatus>(`/bundles/${bundleId}/ai/status`);
 }
 
-export type AiJobKind = "classify" | "translate" | "match_plan" | "match" | "pair" | "split" | "unwrap_order" | "doc_meta" | "tobe_list";
+export type AiJobKind = "classify" | "translate" | "match_plan" | "match" | "pair" | "split" | "unwrap_order" | "table_follow" | "doc_meta" | "tobe_list";
 export type AiJobStatus = keyof AiJobCounts;
 
 /** 요청 한 번(같은 request_id)의 집계 - total은 24시간 범위와 상관없이 센다. 짝 맞추기는 도중에 total이 는다 */
@@ -646,7 +646,7 @@ export interface TableFollow {
   items: FollowItem[];
   /** 칩이 있는 일의 수 - 머리 "한글 표처럼 하기 · n건" */
   count: number;
-  /** rule일 때 영어 표의 지금 덩이 차례(줄 id 전부) - 한 줄만 적용할 때 순서를 세운다 */
+  /** rule · ai일 때 영어 표의 지금 덩이 차례(줄 id 전부) - 한 줄만 적용할 때 순서를 세우고, AI 제안이 낡았는지 본다 */
   lines: number[];
 }
 
