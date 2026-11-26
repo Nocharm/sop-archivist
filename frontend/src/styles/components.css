@@ -1776,6 +1776,23 @@
       radial-gradient(farthest-side at 50% 0, color-mix(in oklab, var(--ink) 22%, transparent), transparent) top / 100% 6px scroll no-repeat,
       radial-gradient(farthest-side at 50% 100%, color-mix(in oklab, var(--ink) 22%, transparent), transparent) bottom / 100% 6px scroll no-repeat;
   }
+  /* Assign 키보드 그림 - 한 줄 60칸(키 하나 4칸)이라 줄이 나란하고, 칸 폭이 창 폭을 따른다 */
+  .kbd-map { display: grid; gap: 4px; min-width: 0; }
+  .kbd-row { display: grid; grid-template-columns: repeat(60, minmax(0, 1fr)); gap: 4px; }
+  .kbd-cap { display: grid; align-content: start; gap: 2px; min-width: 0; min-height: 66px; padding: 3px; border: 1px solid var(--line); border-radius: var(--r-1); background: var(--sunken); color: var(--ink-3); font-size: var(--fs-micro); line-height: 13px; text-align: center; overflow-wrap: anywhere; }
+  .kbd-cap[data-kind="move"] { border-color: var(--kbd-move-line); }
+  .kbd-cap[data-kind="judge"] { border-color: var(--kbd-judge-line); }
+  .kbd-cap[data-kind="shape"] { border-color: var(--kbd-shape-line); }
+  .kbd-cap[data-kind="free"] { border-color: var(--kbd-free-line); }
+  .kbd-cap[data-kind] { background: var(--surface); color: var(--ink); }
+  .kbd-cap-name { font: 600 var(--fs-micro) / 13px var(--font-mono); color: var(--ink-3); }
+  .kbd-line { min-width: 0; border-radius: 2px; padding: 0 2px; }
+  .kbd-line[data-kind="move"], .kbd-swatch[data-kind="move"] { background: var(--kbd-move-chip); }
+  .kbd-line[data-kind="judge"], .kbd-swatch[data-kind="judge"] { background: var(--kbd-judge-chip); }
+  .kbd-line[data-kind="shape"], .kbd-swatch[data-kind="shape"] { background: var(--kbd-shape-chip); }
+  .kbd-line[data-kind="free"], .kbd-swatch[data-kind="free"] { background: var(--kbd-free-chip); }
+  .kbd-legend { display: flex; flex-wrap: wrap; gap: 6px 16px; align-items: center; font-size: var(--fs-cap); line-height: var(--lh-cap); color: var(--ink-2); }
+  .kbd-swatch { display: inline-block; width: 12px; height: 12px; margin-right: 6px; border-radius: 2px; vertical-align: -2px; }
   .help-panel-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
   .help-panel-partner { flex: none; width: 18px; height: 12px; border-radius: 0 2px 2px 0; background: color-mix(in oklab, var(--st-ai-fill) 13%, var(--paper)); box-shadow: inset 3px 0 0 var(--st-ai-ink), inset 0 0 0 1px var(--line-2); }
 

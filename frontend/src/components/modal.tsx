@@ -19,14 +19,15 @@ function findFocusable(root: HTMLElement): HTMLElement[] {
 }
 
 /** 창 폭 - 내용이 들어가는 가장 좁은 것을 고른다(시선이 좌우로 덜 움직인다) */
-export type ModalSize = "sm" | "md" | "lg" | "xl" | "sheet";
+export type ModalSize = "sm" | "md" | "lg" | "xl" | "board" | "sheet";
 
-// 폭은 여기 한 곳에서만 정한다 - 384·448·512·768px
+// 폭은 여기 한 곳에서만 정한다 - 384·448·512·768·1152px
 const PANEL_WIDTH: Record<ModalSize, string> = {
   sm: "max-w-sm", // 확인 창 - 두세 줄 글과 단추 둘
   md: "max-w-md", // 입력 칸·짧은 목록
   lg: "max-w-lg", // 이어 읽는 글(문서 미리 보기)
   xl: "max-w-3xl", // 칸이 여럿 나란한 표(업로드 결과 행)
+  board: "max-w-6xl", // 그림 한 장이 폭을 다 쓰는 창(Assign 키보드 그림) - 1120px 창에서는 바탕 여백 16px씩 안쪽 전체
   sheet: "max-w-none flex flex-col", // Excel 미리보기 - 뷰포트 가장자리에서 24px 안쪽 거의 전체(시트 보기가 남은 높이를 다 쓴다)
 };
 
