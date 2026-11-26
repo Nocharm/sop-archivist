@@ -8,7 +8,7 @@ AI를 부르지 않는다 — 임베딩은 켜져 있을 때만 쓰고, 꺼졌�
 
 import re
 from collections import Counter
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import Literal
 
@@ -22,7 +22,11 @@ from app.sop.ai.embeddings import EmbeddingUnavailable, embed_texts
 from app.sop.constants import ROW_MATCH_THRESHOLD, TABLE_FOLLOW_MARGIN, TABLE_FOLLOW_THRESHOLD
 from app.sop.counterparts import TableFacts, is_candidate_kind, is_same_form, list_candidates
 from app.sop.errors import raise_rule
-from app.sop.models import Document, SourceBlock, TableCounterpart
+from app.sop.decisions import BulkDecisionIn, BulkUnitIn, dispose_units
+from app.sop.detach import CONFIRMED, find_units_needing_confirm
+from app.sop.editing import EDIT_APPLIED, is_merge_edit, load_unwrapped_lines
+from app.sop.models import Bundle, Document, SourceBlock, TableCounterpart, Unit, UnitDecision, UnitEdit
+from app.sop.numbering import get_number, strip_number
 from app.sop.segment import DOCUMENT_NUMBER_BODY
 from app.sop.units import get_latest_extraction_id, load_table_facts
 
@@ -49,6 +53,7 @@ _ABBREVIATION = re.compile(r"(?<![A-Za-z])[A-Z]{2,}(?![A-Za-z])")
 
 
 INTERLEAVED_LAYOUT = "ko_en_interleaved"
+DISPOSITION_DELETE = "delete"  # 판단의 삭제 처분(constants.DISPOSITIONS) — 한글 표의 확정 삭제를 읽고 영어 표에 같은 처분을 쓴다
 
 
 @dataclass(frozen=True)
@@ -258,8 +263,8 @@ def _read_depth(number: str | None) -> int | None:
 
 
 def _read_relative_depths(lines: Sequence[FollowLine]) -> list[int | None]:
-    """줄마다 표 안 상대 깊이 — 줄 깊이 − 그 표의 가장 얕은 깊이."""
-    depths = [_read_depth(line.number) for line in lines]
+    """줄마다 표 안 상대 깊이 — 줄 깊이 − 그 표의 가장 얕은 깊이. 확정 삭제된 줄의 번호는 보지 않는다(남은 번호가 표의 깊이를 정하지 않게)."""
+    depths = [None if line.deleted else _read_depth(line.number) for line in lines]
     known = [depth for depth in depths if depth is not None]
     return [None if depth is None else depth - min(known) for depth in depths]
 
@@ -386,15 +391,29 @@ async def load_counterpart_inputs(session: AsyncSession, document: Document, tab
     )
 
 
+def _list_counterpart_texts(inputs: CounterpartInputs) -> set[str]:
+    """짝 점수의 뜻이 볼 글 — 영어 표와 후보 표의 행 글. 영어 표가 아니거나 후보가 없으면 없다."""
+    if inputs.table is None or not inputs.candidates:
+        return set()
+    return {text for item in (inputs.table, *(table for _, table in inputs.candidates.values())) for text in item.rows}
+
+
+async def _embed(texts: set[str], *, login_id: str) -> dict[str, np.ndarray] | None:
+    """글들의 임베딩 — 글이 없거나 임베딩이 꺼졌거나 실패하면 None(꼴과 토큰만 본다)."""
+    if not texts:
+        return None
+    try:
+        return await embed_texts(sorted(texts), login_id=login_id)
+    except EmbeddingUnavailable:
+        return None
+
+
 async def compute_counterpart(inputs: CounterpartInputs, *, login_id: str) -> CounterpartOut:
     """재료 → 짝 답. 세션을 받지 않는다 — 임베딩이 꺼졌거나 실패하면 꼴과 토큰만 본다."""
-    vectors: dict[str, np.ndarray] | None = None
-    if inputs.table is not None and inputs.candidates:
-        texts = sorted({text for item in (inputs.table, *(table for _, table in inputs.candidates.values())) for text in item.rows})
-        try:
-            vectors = await embed_texts(texts, login_id=login_id)
-        except EmbeddingUnavailable:
-            vectors = None
+    return _answer_counterpart(inputs, await _embed(_list_counterpart_texts(inputs), login_id=login_id))
+
+
+def _answer_counterpart(inputs: CounterpartInputs, vectors: Mapping[str, np.ndarray] | None) -> CounterpartOut:
     scores = (
         {table_id: score_tables(table, inputs.table, vectors) for table_id, (_, table) in inputs.candidates.items()}
         if inputs.table is not None else {}
@@ -428,3 +447,160 @@ async def save_counterpart(
         session.add(row)
     row.source_table_id, row.decided_by, row.decided_at = source_table_id, actor, now()
     return replace(inputs, has_choice=True, chosen=source_table_id)
+
+
+class FollowItemOut(BaseModel):
+    unit_ids: list[int]
+    order: int | None
+    number: str | None
+    indent: bool
+    indent_shift: int | None
+    delete: bool
+
+
+class FollowOut(BaseModel):
+    """영어 표에 한글 표처럼 하기 — rule이면 items가 규칙 제안(덩이 차례, 칩이 없는 줄도 싣는다 — 화면이 순서를 다시 세운다), ai면 맞춘 꼴이
+    달라 AI 길, none이면 제안이 없다(짝이 없거나 · 어느 쪽이 벗기지 않았거나 · 한글 표를 손대지 않음). count는 칩이 있는 일의 수. 저장하지 않는다(D2-R7)."""
+
+    source_table_id: int | None
+    mode: Literal["rule", "ai", "none"]
+    items: list[FollowItemOut]
+    count: int
+
+
+@dataclass(frozen=True)
+class FollowInputs:
+    """한글 표처럼 하기를 셀 재료 — DB에서 읽은 뒤 세션 없이 센다. lines는 영어 표의 덩이 줄(벗기지 않았으면 None),
+    sources는 벗긴 한글 후보 표마다 (덩이 줄, 손댔나)."""
+
+    counterpart: CounterpartInputs
+    lines: list[FollowLine] | None
+    sources: dict[int, tuple[list[FollowLine], bool]]
+
+
+async def _load_pieces(session: AsyncSession, document_id: int, unit_ids: Collection[int]) -> dict[int, tuple[Unit, ...]]:
+    """합친 줄 → 합치기 전 조각(원문 순) — 문서 보기의 merge_pieces와 같은 기록(editing.is_merge_edit)을 읽는다."""
+    rows = await session.execute(
+        select(UnitEdit.op, UnitEdit.created_unit_ids, UnitEdit.retired_unit_ids).where(
+            UnitEdit.document_id == document_id, UnitEdit.state == EDIT_APPLIED
+        )
+    )
+    wanted = set(unit_ids)
+    pieces_of = {created[0]: retired for op, created, retired in rows if is_merge_edit(op, created, retired) and created[0] in wanted}
+    if not pieces_of:
+        return {}
+    pieces = {
+        unit.id: unit
+        for unit in await session.scalars(
+            select(Unit).where(Unit.id.in_([piece for ids in pieces_of.values() for piece in ids]))
+            .order_by(Unit.pos_seq, Unit.pos_start, Unit.id)
+        )
+    }
+    return {unit_id: tuple(unit for piece, unit in pieces.items() if piece in ids) for unit_id, ids in pieces_of.items()}
+
+
+async def _load_follow_lines(
+    session: AsyncSession, document_id: int, extraction_id: int, table_id: int
+) -> tuple[list[FollowLine], bool] | None:
+    """벗긴 표 하나의 덩이 줄(덩이 차례)과 손댔나 — 벗긴 표가 아니면 None. 손댄 것 = 덩이 순서 · 확정 삭제 · 합치기 · 들여쓰기 · 사람이 고친 번호."""
+    units = await load_unwrapped_lines(session, extraction_id, table_id)
+    if units is None:
+        return None
+    unit_ids = [unit.id for unit in units]
+    deleted = set(
+        await session.scalars(
+            select(UnitDecision.unit_id).where(
+                UnitDecision.unit_id.in_(unit_ids), UnitDecision.disposition == DISPOSITION_DELETE,
+                UnitDecision.status == CONFIRMED,
+            )
+        )
+    )
+    pieces = await _load_pieces(session, document_id, unit_ids)
+    lines = [
+        FollowLine(
+            unit_id=unit.id, number=get_number(unit), text=strip_number(unit.text, unit),
+            pieces=tuple(strip_number(piece.text, piece) for piece in pieces.get(unit.id, ())),
+            indent_shift=unit.indent_shift, deleted=unit.id in deleted,
+        )
+        for unit in units
+    ]
+    worked = bool(deleted or pieces) or any(
+        unit.unwrap_seq is not None or unit.indent_shift != 0 or unit.number_set is not None for unit in units
+    )
+    return lines, worked
+
+
+async def load_follow_inputs(session: AsyncSession, document: Document, table_id: int) -> FollowInputs:
+    """영어 표 하나의 한글 표처럼 하기 재료 — 짝 재료(load_counterpart_inputs의 검사 그대로)와 영어 표 · 벗긴 한글 후보 표의 덩이 줄."""
+    counterpart = await load_counterpart_inputs(session, document, table_id)
+    if counterpart.table is None:
+        return FollowInputs(counterpart=counterpart, lines=None, sources={})
+    own = await _load_follow_lines(session, document.id, counterpart.extraction_id, table_id)
+    sources: dict[int, tuple[list[FollowLine], bool]] = {}
+    if own is not None:
+        for source_id in counterpart.candidates:
+            loaded = await _load_follow_lines(session, document.id, counterpart.extraction_id, source_id)
+            if loaded is not None:
+                sources[source_id] = loaded
+    return FollowInputs(counterpart=counterpart, lines=own[0] if own is not None else None, sources=sources)
+
+
+def _list_line_texts(lines: Iterable[FollowLine]) -> set[str]:
+    return {text for line in lines for text in (line.text, *line.pieces) if _has_letter(text)}
+
+
+async def compute_follow(inputs: FollowInputs, *, login_id: str) -> FollowOut:
+    """재료 → 한글 표처럼 하기. 세션을 받지 않는다 — 임베딩은 짝 점수와 행 짝이 한 번에 받는다(꺼졌거나 실패하면 토큰만, 정한 것 7)."""
+    texts = _list_counterpart_texts(inputs.counterpart)
+    if inputs.lines is not None and inputs.sources:
+        texts |= _list_line_texts(inputs.lines)
+        for lines, _ in inputs.sources.values():
+            texts |= _list_line_texts(lines)
+    vectors = await _embed(texts, login_id=login_id)
+    answer = _answer_counterpart(inputs.counterpart, vectors)
+    source_id = answer.source_table_id
+    none = FollowOut(source_table_id=source_id, mode="none", items=[], count=0)
+    if answer.status != "matched" or source_id is None or inputs.lines is None or source_id not in inputs.sources:
+        return none
+    source, worked = inputs.sources[source_id]
+    if not worked:
+        return none
+    plan = build_follow_plan(source, inputs.lines, match_rows(source, inputs.lines, vectors))
+    if plan is None:
+        return FollowOut(source_table_id=source_id, mode="ai", items=[], count=0)
+    items = [
+        FollowItemOut(
+            unit_ids=list(item.unit_ids), order=item.order, number=item.number, indent=item.indent,
+            indent_shift=item.indent_shift, delete=item.delete,
+        )
+        for item in plan
+    ]
+    return FollowOut(source_table_id=source_id, mode="rule", items=items, count=count_follow_items(plan))
+
+
+async def dispose_follow_deletes(
+    session: AsyncSession, bundle: Bundle, unit_ids: Sequence[int], *, confirm: bool, actor: str
+) -> None:
+    """한글 표처럼 하기의 삭제 줄을 판단으로 확정한다(사유 빈칸, 판단 revision은 지금 값) — 편집과 같은 요청 · 트랜잭션이라 되돌리기 한 번.
+
+    이미 삭제로 확정된 줄은 건너뛴다. 사람의 판단이 걸린 줄은 confirm 없이 409 confirm_required(편집의 확인과 같은 물음),
+    새 문장이 달린 줄은 decisions.dispose_units가 409 unit_has_targets로 편집까지 물린다. 커밋하지 않는다.
+    """
+    rows = await session.execute(
+        select(UnitDecision.unit_id, UnitDecision.revision, UnitDecision.disposition, UnitDecision.status).where(
+            UnitDecision.unit_id.in_(unit_ids)
+        )
+    )
+    pending = {
+        unit_id: revision for unit_id, revision, disposition, status in rows
+        if not (disposition == DISPOSITION_DELETE and status == CONFIRMED)
+    }
+    if not pending:
+        return
+    needing = await find_units_needing_confirm(session, list(pending))
+    if needing and not confirm:
+        raise_rule(409, "confirm_required", unit_ids=needing)
+    payload = BulkDecisionIn(
+        action=DISPOSITION_DELETE, units=[BulkUnitIn(unit_id=unit_id, revision=revision) for unit_id, revision in sorted(pending.items())]
+    )
+    await dispose_units(session, bundle, payload, actor)

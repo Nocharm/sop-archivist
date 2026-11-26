@@ -39,6 +39,7 @@ from app.sop.editing import (
     EditResult,
     EditStepResult,
     EditStepIn,
+    FollowTableOp,
     apply_edit,
     is_merge_edit,
     load_active_units,
@@ -105,7 +106,16 @@ from app.sop.schemas import NO_NUL, NoNulStr
 from app.sop.segment import find_anchor_offset, is_band_table, read_figure_inline, read_table_place
 from app.sop.sheet_model import Sheet
 from app.sop.status import get_cover_status
-from app.sop.table_follow import CounterpartOut, compute_counterpart, load_counterpart_inputs, save_counterpart
+from app.sop.table_follow import (
+    CounterpartOut,
+    FollowOut,
+    compute_counterpart,
+    compute_follow,
+    dispose_follow_deletes,
+    load_counterpart_inputs,
+    load_follow_inputs,
+    save_counterpart,
+)
 from app.sop.tobe import MAX_DB_INT, release_match_doc, rename_match_doc, temp_match_code
 from app.sop.units import (
     UNIT_ACTIVE,
@@ -912,8 +922,20 @@ async def edit_units(
     # Assign 단계는 편집이 함께 바꾼 판단 · 짝도 찍는다(되돌리면 되살린다) - 편집 전 상태를 먼저 읽는다
     before_state = await dump_bundle_state(session, ctx.bundle.id) if body.undo is not None else None
     result = await apply_edit(session, document, body.op, confirm=body.confirm, actor=ctx.login_id)
+    edited = result.document_revision != revision
+    deletes = body.op.list_delete_ids() if isinstance(body.op, FollowTableOp) else []
+    if deletes:
+        # 한글 표처럼 하기의 삭제는 판단이다 - 편집과 같은 트랜잭션에서 쓰고 편집 전 덤프로 한 단계에 담는다(D2-R8, 되돌리기 한 번).
+        # 편집이 비었으면(삭제만) 판단 저장처럼 스냅숏 단계 하나
+        async def _dispose() -> None:
+            await dispose_follow_deletes(session, ctx.bundle, deletes, confirm=body.confirm, actor=ctx.login_id)
+
+        if edited or body.undo is None:
+            await _dispose()
+        else:
+            await record_snapshot_step(session, ctx.bundle, ctx.login_id, body.undo, body.op.type, _dispose)
     # 바뀐 것이 없는 편집은 Split 기록도 revision도 그대로라 Assign 단계도 남기지 않는다(언어 바꾸기는 단위를 만들지 않는다)
-    if body.undo is not None and before_state is not None and result.document_revision != revision:
+    if body.undo is not None and before_state is not None and edited:
         await record_unit_edit_step(
             session, ctx.bundle, ctx.login_id, body.undo, document.id, before_state, result.closed_suggestion_ids
         )
@@ -1044,6 +1066,20 @@ async def choose_table_counterpart(
     await session.commit()
     await session.close()  # 아래 임베딩 호출 동안 연결을 잡지 않는다
     return await compute_counterpart(inputs, login_id=ctx.login_id)
+
+
+@router.get("/{bundle_id}/documents/{doc_id}/tables/{table_id}/follow", response_model=FollowOut)
+async def get_table_follow(
+    doc_id: IdPath,
+    table_id: IdPath,
+    ctx: BundleContext = Depends(_require_member),
+    session: AsyncSession = Depends(get_session),
+) -> FollowOut:
+    """벗긴 영어 Old 표에 한글 짝 표에서 한 일을 제안한다(11-23 명세 D2-R4~R7) — 맞춘 꼴이 같으면 규칙(rule), 다르면 ai, 아니면 none. 저장하지 않는다."""
+    document = await _get_document(session, ctx.bundle.id, doc_id)
+    inputs = await load_follow_inputs(session, document, table_id)
+    await session.close()  # 임베딩 호출 동안 풀 연결을 붙들지 않는다(이후 DB는 쓰지 않는다)
+    return await compute_follow(inputs, login_id=ctx.login_id)
 
 
 @router.patch("/{bundle_id}/documents/{doc_id}/caption-refs/{ref_id}", response_model=CaptionRefResult)

@@ -9,10 +9,15 @@ import httpx2
 import numpy as np
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import engine
 from app.sop.constants import TABLE_FOLLOW_THRESHOLD
 from app.sop.counterparts import TableFacts
+from app.sop.editing import load_unwrapped_lines
+from app.sop.models import AiSuggestion, SourceTable, UnitDecision
+from app.sop.numbering import get_number, strip_number
 from app.sop.table_follow import (
     FollowLine,
     FollowTable,
@@ -24,10 +29,12 @@ from app.sop.table_follow import (
     read_tokens,
     score_tables,
 )
+from tests.access_helpers import run_in_session
 from tests.ai_fixtures import clean_embedding_cache  # noqa: F401 -- 픽스처는 usefixtures가 이름으로 찾는다
 from tests.ai_helpers import build_embed_body, enable_embed, install_ai_transport, read_payload, vector_for
 from tests.docx_factory import build_docx, make_grid_table, make_row, p
 from tests.sop_helpers import AUTHOR, REVIEWER, create_bundle, get_view, set_members, upload
+from tests.test_sop_decision_undo import _dump, _ok, _redo, _undo, assert_same_state
 
 
 def table(*rows: str, n_cols: int = 2) -> FollowTable:
@@ -374,3 +381,223 @@ def test_an_already_deleted_english_line_is_not_deleted_again() -> None:
     plan = build_follow_plan(KO_LINES, english, match_rows(KO_LINES, english, VECTORS))
 
     assert plan is not None and plan[3].delete is False and count_follow_items(plan) == 3
+
+
+# --- 한글 표처럼 하기 API와 편집 하나(D2-R5~R8, AC3 · S18) — 위 한/영 따로 합성 문서의 작업 표 둘을 벗기고 한글 표를 손본다 ---
+
+UNDO = {"session": "s1"}
+
+
+def _edit(client: TestClient, bundle_id: int, doc_id: int, op: dict, *, confirm: bool = False, undo: dict | None = None) -> httpx2.Response:
+    revision = get_view(client, bundle_id, doc_id)["document"]["revision"]
+    body: dict = {"revision": revision, "op": op, "confirm": confirm}
+    if undo is not None:
+        body["undo"] = undo
+    return client.post(f"/api/bundles/{bundle_id}/documents/{doc_id}/edits", json=body, headers=AUTHOR)
+
+
+def _read_lines(table_id: int) -> list[tuple[int, str | None, str]]:
+    """벗긴 표의 덩이 줄(덩이 차례) — (단위, 번호, 번호를 뺀 내용)."""
+
+    async def _run(session: AsyncSession) -> list[tuple[int, str | None, str]]:
+        extraction_id = await session.scalar(select(SourceTable.extraction_id).where(SourceTable.id == table_id))
+        units = await load_unwrapped_lines(session, extraction_id, table_id) or []
+        return [(unit.id, get_number(unit), strip_number(unit.text, unit)) for unit in units]
+
+    return run_in_session(_run)
+
+
+def _is_deleted(unit_id: int) -> bool:
+    async def _run(session: AsyncSession) -> bool:
+        decision = await session.scalar(select(UnitDecision).where(UnitDecision.unit_id == unit_id))
+        return decision is not None and (decision.disposition, decision.status) == ("delete", "confirmed")
+
+    return run_in_session(_run)
+
+
+def _count_suggestions(bundle_id: int) -> int:
+    return run_in_session(lambda session: session.scalar(select(func.count()).select_from(AiSuggestion).where(AiSuggestion.bundle_id == bundle_id)))
+
+
+def _bulk(client: TestClient, bundle_id: int, unit_id: int, action: str = "delete", **extra: str) -> None:
+    body = {"action": action, "units": [{"unit_id": unit_id, "revision": 1}], **extra}
+    response = client.post(f"/api/bundles/{bundle_id}/decisions/bulk", json=body, headers=AUTHOR)
+    assert response.status_code == 200, response.text
+
+
+def _setup_unwrapped(client: TestClient) -> tuple[int, int, list[int], list[int], list[int]]:
+    """작업 표 둘을 벗긴 문서 — (묶음, 문서, 표들, 한글 줄들, 영어 줄들)."""
+    bundle_id, doc_id, tables = _setup(client)
+    for table_index in (KO_STEPS_TABLE, EN_STEPS_TABLE):
+        response = _edit(client, bundle_id, doc_id, {"type": "set_layout_table", "table_id": tables[table_index], "is_layout": True})
+        assert response.status_code == 200, response.text
+    korean = [unit_id for unit_id, _, _ in _read_lines(tables[KO_STEPS_TABLE])]
+    english = [unit_id for unit_id, _, _ in _read_lines(tables[EN_STEPS_TABLE])]
+    assert len(korean) == len(english) == 4
+    return bundle_id, doc_id, tables, korean, english
+
+
+def _work_korean(client: TestClient, bundle_id: int, doc_id: int, korean: list[int]) -> None:
+    """S18의 손본 한글 표 — 5.1 · 5.2 · 5.2.1, 빈 칸 줄은 확정 삭제."""
+    for unit_id, number in zip(korean, ("5.1", "5.2", "5.2.1"), strict=False):
+        response = _edit(client, bundle_id, doc_id, {"type": "set_number", "unit_id": unit_id, "number": number, "follow": False})
+        assert response.status_code == 200, response.text
+    _bulk(client, bundle_id, korean[3])
+
+
+def _install_meanings(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """임베딩을 켜고 S18의 뜻이 같은 글끼리 같은 벡터를 준다 — 돌려받은 리스트에 부른 경로가 쌓인다(채팅 호출이 없는지 본다)."""
+    enable_embed(monkeypatch)
+    paths: list[str] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        paths.append(request.url.path)
+        return httpx2.Response(200, json=build_embed_body([VECTORS[text].tolist() if text in VECTORS else vector_for(text, len(VECTORS["(blank)"])) for text in read_payload(request)["input"]]))
+
+    install_ai_transport(monkeypatch, handler)
+    return paths
+
+
+def _get_follow(client: TestClient, bundle_id: int, doc_id: int, table_id: int) -> dict:
+    response = client.get(f"/api/bundles/{bundle_id}/documents/{doc_id}/tables/{table_id}/follow", headers=AUTHOR)
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def _to_op(table_id: int, follow: dict, only: tuple[int, ...] | None = None) -> dict:
+    """GET follow의 답 → 편집 — 화면의 buildFollowOp와 같은 꼴(칩이 있는 일, 순서는 다 맞출 때만)."""
+    items = [item for item in follow["items"] if only is None or item["unit_ids"][0] in only]
+    ops = []
+    for item in items:
+        if not (len(item["unit_ids"]) > 1 or item["number"] or item["indent_shift"] is not None or item["delete"]):
+            continue
+        op: dict = {"unit_ids": item["unit_ids"]}
+        if item["delete"]:
+            op["delete"] = True
+        if item["number"] is not None:
+            op["number"] = item["number"]
+        if item["indent_shift"] is not None:
+            op["indent_shift"] = item["indent_shift"]
+        ops.append(op)
+    order = None
+    if only is None and any(item["order"] is not None for item in follow["items"]):
+        places = sorted(range(len(follow["items"])), key=lambda index: (follow["items"][index]["order"] or index + 1) - 1)
+        order = [follow["items"][index]["unit_ids"][0] for index in places]
+    return {"type": "follow_table", "table_id": table_id, "items": ops, "order": order}
+
+
+@pytest.mark.usefixtures("clean_sop", "clean_embedding_cache")
+def test_s18_apply_and_one_undo(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    bundle_id, doc_id, tables, korean, english = _setup_unwrapped(client)
+    _work_korean(client, bundle_id, doc_id, korean)
+    paths = _install_meanings(monkeypatch)
+    follow = _get_follow(client, bundle_id, doc_id, tables[EN_STEPS_TABLE])
+    assert (follow["mode"], follow["count"], follow["source_table_id"]) == ("rule", 4, tables[KO_STEPS_TABLE])
+    assert [(item["unit_ids"], item["order"], item["number"], item["indent"], item["delete"]) for item in follow["items"]] == [
+        ([english[0]], 2, "5.2", False, False), ([english[1]], 1, "5.1", False, False),
+        ([english[2]], None, "5.2.1", True, False), ([english[3]], None, None, False, True),
+    ]
+    before = _dump(bundle_id)
+
+    _ok(_edit(client, bundle_id, doc_id, _to_op(tables[EN_STEPS_TABLE], follow), undo=UNDO))
+
+    # 삭제 줄은 지우기만 한다(번호를 함께 고치지 않는다 — FollowItemIn의 삭제는 다른 일과 함께 받지 않는다)
+    assert [line[1:] for line in _read_lines(tables[EN_STEPS_TABLE])] == [
+        ("5.1", "Prepare the equipment."), ("5.2", "Take 10 mL of sample."), ("5.2.1", "Keep at 4 °C after."), ("4", "(blank)"),
+    ]
+    assert _is_deleted(english[3])
+    assert _count_suggestions(bundle_id) == 0 and all(path.endswith("/embeddings") for path in paths)  # 규칙 제안은 AI가 아니다(D2-R7)
+    _ok(_undo(client, bundle_id))
+    assert_same_state(_dump(bundle_id), before)
+    _ok(_redo(client, bundle_id))
+    assert _is_deleted(english[3])
+    assert [line[1] for line in _read_lines(tables[EN_STEPS_TABLE])] == ["5.1", "5.2", "5.2.1", "4"]
+
+
+@pytest.mark.usefixtures("clean_sop", "clean_embedding_cache")
+def test_without_embeddings_untied_rows_go_to_ai(client: TestClient) -> None:
+    bundle_id, doc_id, tables, korean, _ = _setup_unwrapped(client)
+    _work_korean(client, bundle_id, doc_id, korean)
+
+    follow = _get_follow(client, bundle_id, doc_id, tables[EN_STEPS_TABLE])
+
+    assert (follow["mode"], follow["items"], follow["count"]) == ("ai", [], 0)  # 장비 ↔ equipment는 토큰이 없다(정한 것 7)
+
+
+@pytest.mark.usefixtures("clean_sop")
+def test_follow_is_none_until_the_korean_table_was_worked_on(client: TestClient) -> None:
+    bundle_id, doc_id, tables, _, _ = _setup_unwrapped(client)
+
+    follow = _get_follow(client, bundle_id, doc_id, tables[EN_STEPS_TABLE])
+
+    assert (follow["mode"], follow["source_table_id"], follow["count"]) == ("none", tables[KO_STEPS_TABLE], 0)
+    assert _get_follow(client, bundle_id, doc_id, tables[EN_TRAINING_TABLE])["mode"] == "none"  # 벗기지 않은 표
+
+
+@pytest.mark.usefixtures("clean_sop")
+def test_a_decided_line_asks_once(client: TestClient) -> None:
+    bundle_id, doc_id, tables, _, english = _setup_unwrapped(client)
+    _bulk(client, bundle_id, english[3], "move_external", move_target_code="SOP-OTHER")
+    op = {"type": "follow_table", "table_id": tables[EN_STEPS_TABLE], "items": [{"unit_ids": [english[3]], "delete": True}]}
+
+    asked = _edit(client, bundle_id, doc_id, op, undo=UNDO)
+    confirmed = _edit(client, bundle_id, doc_id, op, confirm=True, undo=UNDO)
+
+    assert _code(asked) == (409, "confirm_required")
+    assert confirmed.status_code == 200, confirmed.text
+    assert _is_deleted(english[3])
+
+
+@pytest.mark.usefixtures("clean_sop")
+def test_one_item_alone_is_one_step(client: TestClient) -> None:
+    bundle_id, doc_id, tables, _, english = _setup_unwrapped(client)
+    before = _dump(bundle_id)
+    op = {"type": "follow_table", "table_id": tables[EN_STEPS_TABLE], "items": [{"unit_ids": [english[3]], "delete": True}], "order": None}
+
+    result = _ok(_edit(client, bundle_id, doc_id, op, undo=UNDO))
+
+    assert result["created_unit_ids"] == [] and _is_deleted(english[3])  # 편집은 비고 판단만 — 스냅숏 단계 하나
+    _ok(_undo(client, bundle_id))
+    assert_same_state(_dump(bundle_id), before)
+
+
+@pytest.mark.usefixtures("clean_sop")
+def test_follow_merges_lines_in_one_edit_and_one_undo(client: TestClient) -> None:
+    bundle_id, doc_id, tables, _, english = _setup_unwrapped(client)
+    before = _dump(bundle_id)
+    op = {
+        "type": "follow_table", "table_id": tables[EN_STEPS_TABLE],
+        "items": [{"unit_ids": [english[1], english[0]], "number": "5.1"}, {"unit_ids": [english[2]], "number": "5.2"}],
+        "order": [english[1], english[2], english[3]],
+    }
+
+    result = _ok(_edit(client, bundle_id, doc_id, op, undo=UNDO))
+
+    lines = _read_lines(tables[EN_STEPS_TABLE])
+    assert [line[1] for line in lines] == ["5.1", "5.2", "4"]
+    assert lines[0][0] == result["created_unit_ids"][0] and "Prepare the equipment." in lines[0][2]
+    _ok(_undo(client, bundle_id))
+    after = _dump(bundle_id)
+    # 합친 줄의 빈 판단 행은 편집 기록의 몫이라 되돌려도 은퇴한 단위와 함께 남는다(decision_steps.record_unit_edit_step) — 그것만 빼고 같다
+    for unit_id in result["created_unit_ids"]:
+        assert after["unit_decisions"].pop(str(unit_id))["disposition"] == "unassigned"
+    assert_same_state(after, before)
+    assert [line[1] for line in _read_lines(tables[EN_STEPS_TABLE])] == ["1", "2", "3", "4"]
+
+
+@pytest.mark.usefixtures("clean_sop")
+def test_items_outside_the_table_are_refused(client: TestClient) -> None:
+    bundle_id, doc_id, tables, korean, english = _setup_unwrapped(client)
+    outside = {"type": "follow_table", "table_id": tables[EN_STEPS_TABLE], "items": [{"unit_ids": [korean[0]], "number": "5.1"}]}
+    short_order = {**outside, "items": [{"unit_ids": [english[0]], "number": "5.1"}], "order": english[:3]}
+
+    assert _code(_edit(client, bundle_id, doc_id, outside)) == (422, "unwrap_lines_mismatch")
+    assert _code(_edit(client, bundle_id, doc_id, short_order)) == (422, "unwrap_lines_mismatch")
+
+
+@pytest.mark.usefixtures("clean_sop")
+def test_delete_with_merge_in_one_item_is_refused(client: TestClient) -> None:
+    bundle_id, doc_id, tables, _, english = _setup_unwrapped(client)
+    op = {"type": "follow_table", "table_id": tables[EN_STEPS_TABLE], "items": [{"unit_ids": english[2:], "delete": True}]}
+
+    assert _code(_edit(client, bundle_id, doc_id, op)) == (422, "invalid_follow_item")
