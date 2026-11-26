@@ -31,7 +31,7 @@ import { describeNewTableAsk, readEditAsk, type EditAsk } from "@/lib/edit-ask-m
 import { findSplitBlock, readSplitOffsets } from "@/lib/split-ai-tabs-model";
 import { pickPairPiece, planPairLanguages, type JoinKind, type JoinPlan } from "@/lib/split-menu-model";
 import { listAppliedSuggestions, requestAi, setSuggestionAdoption, type AiKind, type AiScope } from "@/lib/api-manage";
-import { addToBeDoc, addWiStep, acceptSuggestions, MAX_ACCEPT, bulkDecide, confirmPair, createPair, deletePair, editUnits, clearDecisions, confirmMatchesInBulk, getComposedDoc, getDocumentView, getGroupByTarget, getUnitRef, getGroupByUnit, getToBe, listDocuments, listIdenticalCandidates, listNewCandidates, listSuggestions, listWrittenSentences, redoDecision, listOpenTranslations, removeToBeDoc, removeWiStep, resetAssignments, saveGroup, undoDecision, updateCaptionRef, type AcceptKind, type AiSuggestion, type ComposedDoc, type ComposedItem, type DecisionStepResult, type DocumentView, type EditOp, type EditResult, type Group, type GroupSaveInput, type NewCandidate, type OpenTranslation, type ToBe, type UndoMeta, type UnitRefDetail, type UnitRow, type ViewUnit, type WrittenSentence } from "@/lib/api-sop";
+import { addToBeDoc, addWiStep, acceptSuggestions, MAX_ACCEPT, bulkDecide, confirmPair, createPair, deletePair, editUnits, clearDecisions, confirmMatchesInBulk, getComposedDoc, getDocumentView, getGroupByTarget, getUnitRef, getGroupByUnit, getTableCounterpart, getToBe, listDocuments, listIdenticalCandidates, listNewCandidates, listSuggestions, listWrittenSentences, redoDecision, listOpenTranslations, removeToBeDoc, removeWiStep, resetAssignments, saveGroup, setTableCounterpart, undoDecision, updateCaptionRef, type AcceptKind, type AiSuggestion, type ComposedDoc, type ComposedItem, type DecisionStepResult, type DocumentView, type EditOp, type EditResult, type Group, type GroupSaveInput, type NewCandidate, type OpenTranslation, type TableCounterpart, type ToBe, type UndoMeta, type UnitRefDetail, type UnitRow, type ViewUnit, type WrittenSentence } from "@/lib/api-sop";
 import { listRefCandidates } from "@/lib/caption-ref-model";
 import { isBundleKind, isCaptionGate, listCaptionPendingRowKeys, makeIsLinkedToWritten, type CaptionUnit } from "@/lib/caption-model";
 import { buildBlockPlaces, getCaptionMotion, isCaptionableText, listCaptionHolders, resolveCaptionDetach, resolveCaptionDrop, type CaptionDetach, type CaptionDrop } from "@/lib/caption-slot-model";
@@ -63,6 +63,7 @@ import { planPrimary } from "@/lib/primary-model";
 import { isSideFloating } from "@/lib/side-float-model";
 import { readPanelSide } from "@/lib/side-panel-model";
 import { BLANK_STOPS, resolveBlankClick } from "@/lib/blank-click-model";
+import { listFollowTableIds, pickOrderAction } from "@/lib/table-follow-model";
 import { isUnwrapSuggestionApplicable, isUnwrapSuggestionUnchanged } from "@/lib/unwrap-ai-model";
 import { pickNextBox, type PendingOutcome } from "@/lib/next-box-model";
 import { listExpectedNumbers, listExpectedShifts, readExpectedNumber, readOpShifts, type SentNumber, type SentShifts } from "@/lib/number-arrival-model";
@@ -85,6 +86,7 @@ import { findPairTarget } from "@/lib/pair-hint-model";
 import { readPartState, stepPart, withPartState } from "@/lib/part-history";
 import { isSameOrder, movePairMember, orderPairCard, readPairSlot } from "@/lib/pair-order-model";
 import { moveUnwrapLines, readUnwrapSlot } from "@/lib/unwrap-order-model";
+import { useTableFollow } from "@/lib/use-table-follow";
 import { useUnwrapAi } from "@/lib/use-unwrap-ai";
 import { buildPairColumns, listPairLinks, PAIR_REFUSAL_KEYS, resolveBoxDrop, resolvePairDrop, type BoxDrop, type PairDrop, type PairDropContext } from "@/lib/pair-drop-model";
 import { ASSIGN_DOC_PARAM, ASSIGN_UNIT_PARAM, EDIT_ORIGINAL_PARAM, getStageHref, LEFTOVER_TRANSLATIONS_PARAM } from "@/lib/stages";
@@ -109,7 +111,7 @@ import { usePaneSlide } from "@/lib/use-pane-slide";
 import { usePaneZoom, type PaneKey, type ZoomDir } from "@/lib/use-pane-zoom";
 
 import { readLinkTargets, readPickTools } from "./link-command";
-import { buildDecisionPending, CommandRefusal, isRepeatedSave, useCommandQueue, type AssignCommand, type CommandQueueState, type ConfirmableCommand, type ReplayCommand, type SeenRevisions, type SendContext, type WriteCommand } from "./use-command-queue";
+import { buildDecisionPending, CommandRefusal, isRepeatedFollow, isRepeatedSave, useCommandQueue, type AssignCommand, type CommandQueueState, type ConfirmableCommand, type ReplayCommand, type SeenRevisions, type SendContext, type WriteCommand } from "./use-command-queue";
 
 
 export type Filter = ClassifyFilter;
@@ -241,6 +243,7 @@ const NO_RELOAD_KEYS = { tobe: 0, written: 0, identical: 0, split: 0, suggestion
 
 /** 숨긴 종류의 제안 자리 - 부르지 않고 빈 목록 */
 const NO_SUGGESTIONS: Promise<AiSuggestion[]> = Promise.resolve([]);
+const NO_COUNTERPARTS: ReadonlyMap<number, TableCounterpart> = new Map();
 
 const NO_TRANSLATIONS: Promise<OpenTranslation[]> = Promise.resolve([]);
 
@@ -887,6 +890,45 @@ export function useAssignPage() {
     reorder: (tableId, order, afterOk) => runUnitEdit(leftShape, { type: "reorder_unwrapped", table_id: tableId, unit_ids: order }, t("assign.unwrapAi.applied"), null, false, null, { at: "table", tableId }, afterOk),
     t,
   });
+  // 벗긴 영어 표의 짝 한글 표(11-23 명세 D2-R3) - 보는 Old 문서의 벗긴 영어 표마다 한 번씩. 점수는 원문 표 · 표 언어 · 언어 배치와 사람의 답만 보므로
+  // 편집마다 다시 읽지 않고 그것이 바뀔 때만. 고르기는 문서를 바꾸지 않아 큐를 지나지 않고 바로 저장한 뒤 다시 읽는다
+  const followTableIds = useMemo(() => (oldView ? listFollowTableIds(oldView) : []), [oldView]);
+  // 후보는 표마다 칸 언어와 언어 배치로 정해진다 - 벗기지 않은 표의 언어를 바꾸거나 배치를 바꾸면 다시 읽는다(편집마다는 아니다)
+  const followTablesKey = oldView ? `${oldView.document.language_layout}|${oldView.tables.map((table) => `${table.id}${table.lang ?? "-"}`).join(",")}` : "";
+  const counterparts = useLoaded(
+    async () => {
+      if (!canEdit || oldDocId === null || followTableIds.length === 0) return NO_COUNTERPARTS;
+      const answers = await Promise.all(followTableIds.map(async (tableId) => [tableId, await getTableCounterpart(bundleId, oldDocId, tableId)] as const));
+      return new Map(answers);
+    },
+    `${canEdit}:${oldDocId}:${followTableIds.join(",")}:${followTablesKey}`,
+  );
+  // 한글 표처럼 하기(D2-R8) - 제안은 저장되지 않아 문서 revision · 판단이 바뀔 때마다 다시 읽는다. 적용은 편집 한 번(삭제 판단까지 되돌리기 한 칸)
+  const followPlan = useTableFollow({
+    bundleId,
+    docId: oldDocId,
+    tableIds: canEdit ? followTableIds : [],
+    dataKey: `${dataKey}:${oldView?.document.revision ?? 0}`,
+    apply: (tableId, op, afterOk) => {
+      if (!isRepeatedFollow(commands.listUnsettled(), tableId)) runUnitEdit(leftShape, op, t("assign.follow.applied"), null, false, null, { at: "table", tableId }, afterOk);
+    },
+    isAiOn: aiOn,
+    status: aiJobs.status,
+    watch: aiJobs.watch,
+    t,
+  });
+  const tableFollow = canEdit && oldDocId !== null
+    ? {
+        answers: counterparts.data ?? NO_COUNTERPARTS,
+        plan: followPlan,
+        onPick: (tableId: number, sourceTableId: number | null) => {
+          setTableCounterpart(bundleId, oldDocId, tableId, sourceTableId).then(
+            () => counterparts.reload(),
+            (err: unknown) => showToast(humanizeApiError(err, t), "error"),
+          );
+        },
+      }
+    : undefined;
   const splitByUnit = useMemo(() => {
     const map = new Map<number, AiSuggestion>();
     for (const item of splitSuggestions.data ?? []) {
@@ -1765,7 +1807,10 @@ export function useAssignPage() {
       }
     }
     // 문서가 바뀌지 않은 편집(참조 제안 물리기)은 서버도 단계를 남기지 않는다
-    if (revision !== sentRevision) markRecorded();
+    // 한글 표처럼 하기는 삭제만이어도(revision 그대로) 서버가 판단 단계 하나를 남긴다 - 그때는 제안도 다시 읽는다(열쇠의 revision이 그대로다)
+    const disposed = (result.disposed_unit_ids?.length ?? 0) > 0;
+    if (revision !== sentRevision || disposed) markRecorded();
+    if (disposed) followPlan.reload();
     // 번호는 그 자리 편집이라 보기를 큐가 빌 때 받는다 - 그때까지 기대 글을 둔다
     const sentNumber = isOld ? readExpectedNumber(op) : null;
     if (sentNumber !== null) setSentNumbers((prev) => [...prev.filter((item) => item.unitId !== sentNumber.unitId), { docId, revision, ...sentNumber }]);
@@ -2505,6 +2550,8 @@ export function useAssignPage() {
   const shapeUnwrapAi = shape !== null && shape === rightShape ? newUnwrapAi : unwrapAi;
   const orderUnitIds = hasSolo ? soloUnits.map((unit) => unit.id) : (row?.unitIds ?? []);
   const orderTableId = canEdit && !isPairView && shapeModel !== null ? (orderUnitIds.map((id) => shapeModel.unwrapLines.get(id)).find((id) => id !== undefined) ?? null) : null;
+  // 한글 표처럼 하기는 Old 영어 표에만(table-follow 설계 §9) - 마지막에 누른 쪽이 New 용지면 AI 순서 제안으로
+  const orderFollow = orderTableId !== null && shape?.side === "old" ? followPlan.plans.get(orderTableId) : undefined;
   const orderPreview = readOrderPreview(orderTableId);
   function readOrderPreview(tableId: number | null): { tableId: number; order: readonly number[]; isSame: boolean } | null {
     const order = tableId === null ? undefined : shapeUnwrapAi.previews.get(tableId);
@@ -4573,6 +4620,7 @@ export function useAssignPage() {
   }
 
   function readOrderReason(): string | null {
+    if (orderFollow !== undefined) return null;
     if (!shapeUnwrapAi.enabled) return "assign.unwrapAi.offTip";
     if (orderTableId === null) return "assign.key.why.notUnwrapped";
     if (shapeUnwrapAi.busy.has(orderTableId)) return "assign.unwrapAi.already";
@@ -4738,7 +4786,8 @@ export function useAssignPage() {
         else rewrap?.onBack();
         return true;
       case "ask_order":
-        if (orderTableId !== null) shapeUnwrapAi.onAsk(orderTableId);
+        if (orderTableId !== null && pickOrderAction({ follow: orderFollow?.mode ?? "none", count: orderFollow?.count ?? 0 }) === "follow") followPlan.onApply(orderTableId);
+        else if (orderTableId !== null) shapeUnwrapAi.onAsk(orderTableId);
         return true;
       case "merge_next":
       case "merge_prev":
@@ -4919,7 +4968,7 @@ export function useAssignPage() {
     isFixedCaption, ctxGroups, rowViewUnits, rowSplitUnit, rowSplit, splitBlocked, rowRefUnit, refBlocked, isCaptionGateOn,
     confirmBlockKey, rowCaptionRefs, refCandidates, shapeLines, shapeFirstId, slotPlaces, slotCellTables, shapeMode, headingBack, rewrap, bandBack,
     stepBase, refPendingIds, bundleRefPending, isLinkedToWritten, captionPendingKeys, docDashboard, refDetail, refInfo, openCtxMenu, runUnitEdit,
-    rewrapTable, unwrapTable, unwrapAi, newUnwrapAi, leftTools, rightTools, rightShape, describeEditConfirm, pairGrip, clearNoise, openNoiseReason, confirmNoiseReason, closeNoiseReason, noisePick, runCaptionRefChange, switchShapeMode, switchToPair,
+    rewrapTable, unwrapTable, unwrapAi, newUnwrapAi, tableFollow, leftTools, rightTools, rightShape, describeEditConfirm, pairGrip, clearNoise, openNoiseReason, confirmNoiseReason, closeNoiseReason, noisePick, runCaptionRefChange, switchShapeMode, switchToPair,
     applySplitSuggestion, dismissSplitSuggestion, splitPendingIds, readPendingItem, selectNextSplit, selectNextRef, selectNextCaption,
     splitAtCut, handleOldDoubleClick, handleNewDoubleClick, carveShape, runCtx, runUnitAction, revertHeadings, planJoinIn, joinIn, renderOldActions, readReasonNeed,
     runSave, runClear, runUndoStep, confirmIdenticalAll, acceptAll, markNew, placeManage, pickDestination, pickNewSentence, pressNewBox, showNewDoc, jump, unlinkCell, pickBar, renderPickBar, linkWait, setLinkWait, handleBlankClick, checkedNew, setCheckedNew, pressEnter, primaryLink, primaryLinkLabel,

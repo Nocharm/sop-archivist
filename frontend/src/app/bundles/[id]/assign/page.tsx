@@ -90,7 +90,7 @@ export default function AssignPage() {
     setConfirmingIdentical, resetScope, setResetScope, slots, newDraft, draftSlotKey, placeResolved, canPlaceClick, pickedSpotKey,
     setCarvePick, carve, carveText, clearCarve, togglePairViewByButton, pairFrom, setPairFrom, mergeArm, pairSource, isLeftPairPick, isRightPairPick, captionPickBundle, setCaptionPick, selectToc, openNewCtxMenu,
     openSolo, goToUnit, ctxGroups, bundleRefPending, isLinkedToWritten, captionPendingKeys, docDashboard, openCtxMenu, runUnitEdit,
-    rewrapTable, unwrapTable, unwrapAi, newUnwrapAi, leftTools, rightTools, rightShape, describeEditConfirm, pairGrip, clearNoise, openNoiseReason, splitAtCut, handleOldDoubleClick, handleNewDoubleClick, carveShape,
+    rewrapTable, unwrapTable, unwrapAi, newUnwrapAi, tableFollow, leftTools, rightTools, rightShape, describeEditConfirm, pairGrip, clearNoise, openNoiseReason, splitAtCut, handleOldDoubleClick, handleNewDoubleClick, carveShape,
     runCtx, revertHeadings, planJoinIn, joinIn, renderOldActions, confirmIdenticalAll, acceptAll,
     pressNewBox, renderPickBar, showNewDoc, jump, handleJoinPick, readJoinAfter, pickJoinMenu, handleFramePress, pickPlaceSpot, pickOwnAiLine, jumpToNew, openNewDoc,
     showInNew, jumpToOld, pickTemplateLine, fillTemplateMissing, isOldDrag, finishPairPick, handleOldClick, markRecHover, revealPick,
@@ -667,7 +667,8 @@ export default function AssignPage() {
                 // 제목에서 바꾼 조항 묶음 머리(F8b) - Old와 한 단으로 연 New 모두
                 headingShift={leftTools.headingShift ? { canRevert: canEdit, busy: isGlobalPending, onRevert: (unitIds) => revertHeadings(leftShape, unitIds) } : undefined}
                 // 벗긴 표의 줄 묶음 머리 "↺ 다시 표로"(F1)와 AI 순서 제안 - Old와 한 단으로 연 New 모두
-                unwrap={{ canRewrap: leftTools.unwrap, busy: isGlobalPending, onRewrap: (tableId) => rewrapTable(leftShape, tableId), ai: leftTools.unwrapAi ? unwrapAi : undefined, lineGrip: leftTools.lineGrip }}
+                // 짝 한글 표 고르기 · 한글 표처럼 하기는 Old 영어 표에만(table-follow 설계 §9) - 한 단으로 연 New 머리에는 붙이지 않는다
+                unwrap={{ canRewrap: leftTools.unwrap, busy: isGlobalPending, onRewrap: (tableId) => rewrapTable(leftShape, tableId), ai: leftTools.unwrapAi ? unwrapAi : undefined, lineGrip: leftTools.lineGrip, follow: isSolo ? undefined : tableFollow }}
                 // 처리 중인 일 - 누르는 즉시 그 자리 알약과 박스 쉬머, 그 박스만 잠근다(설계 D4)
                 pending={mode === "old" ? paperPending : undefined}
                 mergeArm={isNewEdit ? null : mergeArm}

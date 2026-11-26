@@ -446,6 +446,11 @@ export function isRepeatedSave(unsettled: ReadonlyArray<{ payload: AssignCommand
   return last?.kind === "save" && last.action === next.action && last.reason === next.reason && last.isPick === next.isPick && (next.isPick || last.draft === next.draft);
 }
 
+/** 같은 표의 한글 표처럼 하기가 아직 끝나지 않았나 - 응답 전에 다시 누르면(⇧O 두 번) 낡은 계획이 한 번 더 나가므로 버린다 */
+export function isRepeatedFollow(unsettled: ReadonlyArray<{ payload: AssignCommand }>, tableId: number): boolean {
+  return unsettled.some(({ payload }) => payload.kind === "edit" && payload.op.type === "follow_table" && payload.op.table_id === tableId);
+}
+
 /** 자리 없는 처리 중 표시(판단 저장) */
 export function buildDecisionPending(kind: "save" | "bulk", docId: number | null, unitIds: readonly number[]): Omit<Pending, "id"> {
   return { kind, docId, unitIds, place: NO_PLACE, isGlobal: false };

@@ -1403,6 +1403,14 @@
   .unwrap-ai-ask { display: inline-flex; }
   .unwrap-ai-move { position: absolute; top: 4px; right: 6px; z-index: 1; padding: 0 6px; border: 1px solid color-mix(in oklab, var(--accent) 45%, transparent); border-radius: var(--r-1); background: var(--paper); color: var(--accent); font-size: 11px; font-variant-numeric: tabular-nums; line-height: 18px; pointer-events: none; }
   .pg[data-strips] .strip[data-unwrap-ai-moved] { background: color-mix(in oklab, var(--accent) 8%, var(--paper)); }
+  /* 한글 표처럼 하기(11-23 명세 D2-R8) - 줄 오른쪽 위 칩 묶음. 칩은 눌러도 줄을 고르는 것으로 지나가고, 하나씩 보기의 줄 적용 단추만 받는다 */
+  .follow-chips { position: absolute; top: 4px; right: 6px; z-index: 1; display: inline-flex; align-items: center; gap: 4px; max-width: 60%; pointer-events: none; }
+  .follow-chip { padding: 0 6px; border: 1px solid color-mix(in oklab, var(--accent) 45%, transparent); border-radius: var(--r-1); background: var(--paper); color: var(--accent); font-size: 11px; font-variant-numeric: tabular-nums; line-height: 18px; white-space: nowrap; }
+  .follow-chip[data-kind="delete"] { border-color: color-mix(in oklab, var(--danger-ink) 45%, transparent); color: var(--danger-ink); }
+  .follow-row-apply { pointer-events: auto; }
+  /* 머리 글 "한글 표처럼 하기 · n건" · "표 n과 짝"은 줄지 않는다 - .unwrap-ai-note의 min-width: 0이면 단추가 많은 머리에서 폭 0으로 사라졌다. 넘치면 머리가 두 줄로 접힌다 */
+  .follow-head-note { flex: none; min-width: auto; color: var(--ink-2); }
+  .unwrap-head:has(> .follow-head-note) { flex-wrap: wrap; row-gap: 4px; }
   /* Assign 결정 칸의 목차 다듬기 줄(F12 G2 · G3) - 용지 블록과 같은 흐린 점선 상자 */
   .toc-panel-shape { display: grid; gap: 8px; margin: 0 var(--pad) var(--pad); padding: 8px 10px; border: 1px dashed var(--line-2); border-radius: var(--r-1); background: var(--sunken); }
   .toc-panel-line { display: flex; align-items: baseline; gap: 6px; min-width: 0; margin: 0; color: var(--ink-2); font-size: 12.5px; overflow-wrap: anywhere; }

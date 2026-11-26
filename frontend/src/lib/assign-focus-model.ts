@@ -34,7 +34,7 @@ export interface Picks {
 export const NO_PICKS: Picks = { old: NO_PICK, new: NO_PICK, last: null, act: null };
 
 export type PendingKind =
-  | "join" | "split" | "unmerge" | "unwrap" | "rewrap" | "pair" | "unpair" | "lang" | "heading" | "ref" | "caption" | "toc" | "figure" | "order" | "reorder" | "save" | "undo" | "bulk";
+  | "join" | "split" | "unmerge" | "unwrap" | "rewrap" | "pair" | "unpair" | "lang" | "heading" | "ref" | "caption" | "toc" | "figure" | "order" | "reorder" | "follow" | "save" | "undo" | "bulk";
 export type PendingPlace = { at: "gap"; firstId: number; secondId: number } | { at: "box"; unitId: number } | { at: "table"; tableId: number } | { at: "none" };
 export const NO_PLACE: PendingPlace = { at: "none" };
 
@@ -315,6 +315,8 @@ export function readPendingLabelKey(kind: PendingKind): string | null {
       return "assign.working.lang";
     case "reorder":
       return "assign.working.reorder";
+    case "follow":
+      return "assign.working.follow";
     case "heading":
     case "ref":
     case "caption":
@@ -331,7 +333,7 @@ export function readPendingLabelKey(kind: PendingKind): string | null {
 
 /** 원문 편집의 알약 자리 - 표 바꾸기 · 벗긴 표 줄 순서는 표 머리, 그 밖은 가리키는 첫 박스. 틈의 붙이기는 부르는 쪽이 틈을 준다(이웃끼리인지는 화면이 안다) */
 export function readEditPlace(op: EditOp): PendingPlace {
-  if (op.type === "set_layout_table" || op.type === "reorder_unwrapped") return { at: "table", tableId: op.table_id };
+  if (op.type === "set_layout_table" || op.type === "reorder_unwrapped" || op.type === "follow_table") return { at: "table", tableId: op.table_id };
   const [unitId] = listEditUnitIds(op);
   return unitId === undefined ? NO_PLACE : { at: "box", unitId };
 }
@@ -385,6 +387,8 @@ export function readEditKind(op: EditOp): PendingKind {
       return "order";
     case "reorder_unwrapped":
       return "reorder";
+    case "follow_table":
+      return "follow";
   }
 }
 
@@ -412,6 +416,8 @@ export function listEditUnitIds(op: EditOp): number[] {
       return [op.unit_id];
     case "set_indents":
       return op.units.map((item) => item.unit_id);
+    case "follow_table":
+      return op.items.flatMap((item) => item.unit_ids);
     case "move_boundary":
       return [op.left_unit_id, op.right_unit_id];
     case "attach_caption":

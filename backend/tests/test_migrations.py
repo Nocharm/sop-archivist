@@ -1540,3 +1540,42 @@ def test_0039_adds_an_empty_noise_reason_and_history_and_drops_them_back(tmp_pat
         assert "noise_reason" not in unit_columns and "noise_reason_changes" not in edit_columns
     finally:
         engine.dispose()
+
+
+def test_table_counterparts_start_empty_and_hold_one_row_per_table(tmp_path: pathlib.Path) -> None:
+    # 사람이 정한 짝 표(D2-R3) — 새 표만 더하고 지난 자료는 그대로다. 영어 표 하나에 한 행, 추출이 지워지면 함께 지워진다
+    db_path = tmp_path / "table_counterparts.db"
+    config = _downgrade_to(db_path, "0039")
+    engine = _create_fk_engine(db_path)
+    try:
+        with engine.begin() as conn:
+            ids = _insert_old_bundle(conn)
+            before = conn.execute(text("SELECT id, kind, text, spans, lang FROM units ORDER BY id")).tuples().all()
+
+        command.upgrade(config, "0040")
+
+        with engine.begin() as conn:
+            assert conn.execute(text("SELECT count(*) FROM table_counterparts")).scalar() == 0
+            assert conn.execute(text("SELECT id, kind, text, spans, lang FROM units ORDER BY id")).tuples().all() == before
+            korean, english = (
+                _insert_row(
+                    conn, "source_tables", extraction_id=ids["extraction_id"], table_index=index, part="body",
+                    xml_path=f"/tbl[{index}]", n_rows=2, n_cols=2, is_layout=False,
+                )
+                for index in (0, 1)
+            )
+            row = {"extraction_id": ids["extraction_id"], "table_id": english, "decided_by": "qa.member", "decided_at": _NOW}
+            _insert_row(conn, "table_counterparts", **row, source_table_id=korean)
+        with pytest.raises(IntegrityError), engine.begin() as conn:
+            _insert_row(conn, "table_counterparts", **row, source_table_id=None)
+
+        with engine.begin() as conn:
+            conn.execute(text("DELETE FROM extractions WHERE id = :e"), {"e": ids["extraction_id"]})
+            assert conn.execute(text("SELECT count(*) FROM table_counterparts")).scalar() == 0
+
+        command.downgrade(config, "0039")
+
+        with engine.connect() as conn:
+            assert "table_counterparts" not in inspect(conn).get_table_names()
+    finally:
+        engine.dispose()
