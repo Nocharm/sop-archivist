@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { NO_PLACE, type Focus, type Pending, type PendingKind } from "@/lib/assign-focus-model";
 import { useAssignFocus } from "@/lib/use-assign-focus";
 
-import { buildDecisionPending, isRepeatedSave, useCommandQueue, type AssignCommand, type SendContext, type WriteCommand } from "./use-command-queue";
+import { buildDecisionPending, isRepeatedFollow, isRepeatedSave, useCommandQueue, type AssignCommand, type SendContext, type WriteCommand } from "./use-command-queue";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -700,6 +700,15 @@ describe("leaving the screen", () => {
     await drain(screen);
     expect(screen.log).toEqual(["delete 1", "delete 2"]);
     root = createRoot(host);
+  });
+});
+
+describe("isRepeatedFollow", () => {
+  const follow = (tableId: number) => ({ kind: "edit", op: { type: "follow_table", table_id: tableId, items: [{ unit_ids: [1] }], order: null } }) as unknown as AssignCommand;
+  it("is a second Korean table follow on the same table before the first answers (stale plan)", () => {
+    expect(isRepeatedFollow([{ payload: follow(5) }], 5)).toBe(true);
+    expect(isRepeatedFollow([{ payload: follow(6) }], 5)).toBe(false);
+    expect(isRepeatedFollow([], 5)).toBe(false);
   });
 });
 

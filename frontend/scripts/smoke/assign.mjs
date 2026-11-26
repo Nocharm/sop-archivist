@@ -8539,6 +8539,205 @@ await runStep("assign: leaving Pair view on a long document shows a piece picked
   check("the long-document bundle is removed", (await page.request.delete(`${api}?revision=${bundle.revision}`, { headers })).ok());
 });
 
+// 짝 표 고르기(11-23 명세 D2-R3) - 한/영 따로 문서에 같은 토큰(10 mL · 4 °C)의 같은 꼴 한글 표가 둘이면 벗긴 영어 표 머리가 짝을 묻는다.
+// 고르면 바로 저장(PUT)하고 다시 읽은 답(GET)이 고른 표를 보이며, 새로고침 뒤에도 그대로다. 합성 docx(tests.docx_factory)를 새 묶음에 올리고 끝에 지운다
+await runStep("assign: an English table asks for its Korean table when two look alike", { devUser: "dev.admin" }, async ({ page }) => {
+  const headers = { "X-Dev-User": "dev.admin" };
+  const backend = resolve(SCRIPT_DIR, "../../../backend");
+  const file = resolve(SHOT_DIR, "SYNTHETIC_OLD-86_table_follow.docx");
+  const build = [
+    "import sys",
+    "from tests.docx_factory import build_docx, p, tbl",
+    "ko = [['1', '장비를 준비한다.'], ['2', '시료 10 mL를 채취한다.'], ['3', '채취 뒤 4 °C에 둔다.']]",
+    "ko2 = [['1', '장비를 점검한다.'], ['2', '시료 10 mL를 옮긴다.'], ['3', '옮긴 뒤 4 °C에 둔다.']]",
+    "en = [['1', 'Take 10 mL of sample.'], ['2', 'Prepare the equipment.'], ['3', 'Keep at 4 °C after.']]",
+    "body = p('1. 시료 채취', 'Heading1') + p('이 절은 시료 채취를 다룬다.') + tbl(ko) + tbl(ko2) + p('1. Sampling', 'Heading1') + p('This section covers sampling.') + tbl(en)",
+    "open(sys.argv[1], 'wb').write(build_docx(body))",
+  ].join("\n");
+  execFileSync(findBackendPython(), ["-c", build, file], { cwd: backend, stdio: "inherit" });
+  const created = await (await page.request.post(`${BASE}/api/bundles`, { headers, data: { title: "SYNTHETIC table follow", is_synthetic: true } })).json();
+  const api = `${BASE}/api/bundles/${created.id}`;
+  const uploaded = await page.request.post(`${api}/documents`, { headers, multipart: { side: "old", file: { name: "SYNTHETIC_OLD-86_table_follow.docx", mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", buffer: readFileSync(file) } } });
+  let doc = await uploaded.json();
+  if (doc.language_layout !== "ko_en_separate") doc = await (await page.request.patch(`${api}/documents/${doc.id}`, { headers, data: { revision: doc.revision, language_layout: "ko_en_separate" } })).json();
+  let view = await (await page.request.get(`${api}/documents/${doc.id}/view`, { headers })).json();
+  const [koTable, ko2Table, enTable] = view.tables;
+  const unwrapped = await page.request.post(`${api}/documents/${doc.id}/edits`, { headers, data: { revision: view.document.revision, confirm: false, op: { type: "set_layout_table", table_id: enTable.id, is_layout: true } } });
+  view = await (await page.request.get(`${api}/documents/${doc.id}/view`, { headers })).json();
+  const counterpartPath = `/documents/${doc.id}/tables/${enTable.id}/counterpart`;
+  const before = await (await page.request.get(`${api}${counterpartPath}`, { headers })).json();
+  check(
+    "a separate document with two look-alike Korean tables and an unwrapped English table is uploaded",
+    uploaded.status() === 201 && unwrapped.ok() && view.tables[2].is_layout && enTable.lang === "en" && before.status === "ambiguous",
+    `${uploaded.status()} ${unwrapped.status()} ${enTable.lang} ${before.status}`,
+  );
+  await page.goto(`${BASE}/bundles/${created.id}/assign`);
+  await wait(page, "assign-bar");
+  const pick = page.locator(`[data-testid="assign-follow-pick-${enTable.id}"]`);
+  await pick.waitFor({ timeout: T });
+  check("the English table head asks to pick its counterpart", (await pick.getAttribute("data-value")) === "pick");
+  await pick.click();
+  await wait(page, `assign-follow-pick-${enTable.id}-list`);
+  check(
+    "the choices are both Korean tables and no counterpart",
+    (await page.locator(`[data-testid="assign-follow-pick-${enTable.id}-option-${koTable.id}"]`).count()) === 1
+      && (await page.locator(`[data-testid="assign-follow-pick-${enTable.id}-option-${ko2Table.id}"]`).count()) === 1
+      && (await page.locator(`[data-testid="assign-follow-pick-${enTable.id}-option-none"]`).count()) === 1,
+  );
+  const isCounterpart = (method) => (response) => response.request().method() === method && new URL(response.url()).pathname.endsWith(`/api/bundles/${created.id}${counterpartPath}`);
+  const saved = page.waitForResponse(isCounterpart("PUT"), { timeout: T });
+  const reread = page.waitForResponse(isCounterpart("GET"), { timeout: T });
+  await page.locator(`[data-testid="assign-follow-pick-${enTable.id}-option-${ko2Table.id}"]`).click();
+  const savedOk = (await saved).ok();
+  await reread;
+  await page.waitForFunction(({ id, want }) => document.querySelector(`[data-testid="assign-follow-pick-${id}"]`)?.getAttribute("data-value") === want, { id: enTable.id, want: String(ko2Table.id) }, { timeout: T });
+  const stored = await (await page.request.get(`${api}${counterpartPath}`, { headers })).json();
+  check("picking a Korean table saves it and the head shows it", savedOk && stored.decided && stored.source_table_id === ko2Table.id, JSON.stringify(stored));
+  await page.reload();
+  await wait(page, "assign-bar");
+  await pick.waitFor({ timeout: T });
+  await page.waitForFunction(({ id, want }) => document.querySelector(`[data-testid="assign-follow-pick-${id}"]`)?.getAttribute("data-value") === want, { id: enTable.id, want: String(ko2Table.id) }, { timeout: T });
+  check("the choice survives a reload", (await pick.getAttribute("data-value")) === String(ko2Table.id));
+  const bundle = await (await page.request.get(api, { headers })).json();
+  check("the table-follow bundle is removed", (await page.request.delete(`${api}?revision=${bundle.revision}`, { headers })).ok());
+});
+
+// 한글 표처럼 하기(11-23 명세 D2-R8 · S18) - 손본 한글 표(5.1 · 5.2 · 5.2.1, 빈 칸 삭제)의 일이 벗긴 영어 표 머리에 "· 4"와 줄 칩 넷으로 뜨고,
+// Apply는 편집 하나로 순서 · 번호 · 삭제를 하고 Undo 한 번에 모두 돌아온다. 검증 스택은 임베딩이 꺼져 있어 줄마다 공통 토큰(10 mL · 20 rpm · 4 °C)을 둔다.
+// 합성 docx(tests.docx_factory)를 새 묶음에 올리고 끝에 지운다
+await runStep("assign: follow the Korean table — four chips, Apply, one Undo brings everything back", { devUser: "dev.admin" }, async ({ page }) => {
+  const headers = { "X-Dev-User": "dev.admin" };
+  const backend = resolve(SCRIPT_DIR, "../../../backend");
+  const file = resolve(SHOT_DIR, "SYNTHETIC_OLD-85_table_follow_rule.docx");
+  const build = [
+    "import sys",
+    "from tests.docx_factory import build_docx, p, tbl",
+    "ko = [['1', '장비를 20 rpm으로 켠다.'], ['2', '시료 10 mL를 채취한다.'], ['3', '채취 뒤 4 °C에 둔다.'], ['4', '(빈 칸)']]",
+    "en = [['1', 'Take 10 mL of sample.'], ['2', 'Start the equipment at 20 rpm.'], ['3', 'Keep at 4 °C after.'], ['4', '(blank)']]",
+    "body = p('1. 시료 채취', 'Heading1') + p('이 절은 시료 채취를 다룬다.') + tbl(ko) + p('1. Sampling', 'Heading1') + p('This section covers sampling.') + tbl(en)",
+    "open(sys.argv[1], 'wb').write(build_docx(body))",
+  ].join("\n");
+  execFileSync(findBackendPython(), ["-c", build, file], { cwd: backend, stdio: "inherit" });
+  const created = await (await page.request.post(`${BASE}/api/bundles`, { headers, data: { title: "SYNTHETIC table follow rule", is_synthetic: true } })).json();
+  const api = `${BASE}/api/bundles/${created.id}`;
+  const uploaded = await page.request.post(`${api}/documents`, { headers, multipart: { side: "old", file: { name: "SYNTHETIC_OLD-85_table_follow_rule.docx", mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", buffer: readFileSync(file) } } });
+  let doc = await uploaded.json();
+  if (doc.language_layout !== "ko_en_separate") doc = await (await page.request.patch(`${api}/documents/${doc.id}`, { headers, data: { revision: doc.revision, language_layout: "ko_en_separate" } })).json();
+  const readView = async () => (await page.request.get(`${api}/documents/${doc.id}/view`, { headers })).json();
+  const edit = async (op) => page.request.post(`${api}/documents/${doc.id}/edits`, { headers, data: { revision: (await readView()).document.revision, confirm: false, op } });
+  const [koTable, enTable] = (await readView()).tables;
+  const unwrapOk = (await edit({ type: "set_layout_table", table_id: koTable.id, is_layout: true })).ok() && (await edit({ type: "set_layout_table", table_id: enTable.id, is_layout: true })).ok();
+  // 벗긴 표의 줄(원문 순) - 칸 문장은 첫 칸 블록의 표를 table_id로 갖는다
+  const linesOf = (view, tableId) => view.units.filter((unit) => unit.table_id === tableId && unit.group_unit_id === null).sort((one, two) => one.pos_seq - two.pos_seq || one.id - two.id);
+  const koLines = linesOf(await readView(), koTable.id);
+  let worked = koLines.length === 4;
+  for (const [index, number] of ["5.1", "5.2", "5.2.1"].entries()) worked = worked && (await edit({ type: "set_number", unit_id: koLines[index].id, number, follow: false })).ok();
+  const deleted = await page.request.post(`${api}/decisions/bulk`, { headers, data: { action: "delete", units: [{ unit_id: koLines[3].id, revision: 1 }] } });
+  const followPath = `/documents/${doc.id}/tables/${enTable.id}/follow`;
+  const plan = await (await page.request.get(`${api}${followPath}`, { headers })).json();
+  check(
+    "a worked Korean table and an unwrapped English table give a rule plan of four",
+    uploaded.status() === 201 && unwrapOk && worked && deleted.ok() && plan.mode === "rule" && plan.count === 4 && plan.source_table_id === koTable.id,
+    `${uploaded.status()} ${unwrapOk} ${worked} ${deleted.status()} ${JSON.stringify(plan)}`,
+  );
+  const enLines = linesOf(await readView(), enTable.id);
+  const readEnglish = async () => {
+    const view = await readView();
+    const rows = (await (await page.request.get(`${api}/units?limit=1000&offset=0&document_id=${doc.id}`, { headers })).json()).items;
+    const disposition = rows.find((row) => row.unit_id === enLines[3].id)?.decision.disposition;
+    return { numbers: enLines.map((line) => view.units.find((unit) => unit.id === line.id)?.number?.value ?? null), seqs: enLines.map((line) => view.units.find((unit) => unit.id === line.id)?.unwrap_seq ?? null), disposition };
+  };
+  const original = await readEnglish();
+  await page.goto(`${BASE}/bundles/${created.id}/assign`);
+  await wait(page, "assign-bar");
+  const head = page.locator(`[data-testid="assign-follow-${enTable.id}"]`);
+  await head.waitFor({ timeout: T });
+  const chips = await Promise.all(enLines.map((line) => page.locator(`[data-testid="assign-follow-chips-${line.id}"]`).count()));
+  check("the English table head says four and each line carries its chips", ((await head.textContent()) ?? "").includes("· 4") && chips.every((count) => count === 1), `${await head.textContent()} ${chips}`);
+  const applied = page.waitForResponse((response) => response.request().method() === "POST" && new URL(response.url()).pathname.endsWith(`/documents/${doc.id}/edits`), { timeout: T });
+  await page.locator(`[data-testid="assign-follow-apply-${enTable.id}"]`).click();
+  const appliedResponse = await applied;
+  check("Apply sends one follow_table edit", appliedResponse.ok() && appliedResponse.request().postDataJSON()?.op?.type === "follow_table", String(appliedResponse.status()));
+  await head.waitFor({ state: "detached", timeout: T });
+  const after = await readEnglish();
+  check(
+    "the English table now reads 5.2 · 5.1 · 5.2.1 with the equipment line first and the blank line deleted",
+    JSON.stringify(after.numbers.slice(0, 3)) === JSON.stringify(["5.2", "5.1", "5.2.1"]) && after.seqs[1] === 0 && after.seqs[0] === 1 && after.disposition === "delete",
+    JSON.stringify(after),
+  );
+  const undone = page.waitForResponse((response) => response.url().includes("/decisions/undo"), { timeout: T });
+  await page.locator('[data-testid="assign-undo"]:not([disabled])').click();
+  const undoOk = (await undone).ok();
+  await page.waitForLoadState("networkidle");
+  const back = await readEnglish();
+  check("one Undo brings back the order, the numbers and the blank line", undoOk && JSON.stringify(back) === JSON.stringify(original), `${JSON.stringify(back)} vs ${JSON.stringify(original)}`);
+  await head.waitFor({ timeout: T });
+  const bundle = await (await page.request.get(api, { headers })).json();
+  check("the table-follow rule bundle is removed", (await page.request.delete(`${api}?revision=${bundle.revision}`, { headers })).ok());
+});
+
+// 한글 표처럼 하기 AI(D2-R9 · R10) - 줄마다 내용이 달라 규칙이 못 푸는 표(임베딩이 꺼진 검증 스택에서 장비 ↔ equipment는 토큰이 없다)는 머리에 "✦ AI로 한글 표처럼 하기"가 서고,
+// 눌러 가짜 AI(받은 줄 차례 그대로 + 첫 줄 번호 한 칸)가 답하면 규칙 제안과 같은 칩 · 적용이 온다. 적용은 편집 하나, 채택(as_is)이 남는다. AI가 꺼진 backend면 건너뛴다
+await runStep("assign: follow the Korean table with AI when the rows differ", { devUser: "dev.admin", allowConsoleErrors: true }, async ({ page }) => {
+  const headers = { "X-Dev-User": "dev.admin" };
+  // halfBundleId는 시드 묶음이라 멤버(qa.member)만 상태를 읽는다 - dev.admin은 404다
+  const status = await page.request.get(`${BASE}/api/bundles/${halfBundleId}/ai/status`, { headers: { "X-Dev-User": "qa.member" } });
+  if (!status.ok() || !(await status.json()).ai_enabled) {
+    console.log("  (AI is off in this backend - skipped)");
+    return;
+  }
+  const backend = resolve(SCRIPT_DIR, "../../../backend");
+  const file = resolve(SHOT_DIR, "SYNTHETIC_OLD-87_table_follow_ai.docx");
+  const build = [
+    "import sys",
+    "from tests.docx_factory import build_docx, p, tbl",
+    "ko = [['1', '장비를 준비한다.'], ['2', '시료를 채취한다.'], ['3', '기록을 남긴다.'], ['4', '(빈 칸)']]",
+    "en = [['1', 'Take the sample.'], ['2', 'Prepare the equipment.'], ['3', 'Keep the record.'], ['4', '(blank)']]",
+    "body = p('1. 시료 채취', 'Heading1') + p('이 절은 시료 채취를 다룬다.') + tbl(ko) + p('1. Sampling', 'Heading1') + p('This section covers sampling.') + tbl(en)",
+    "open(sys.argv[1], 'wb').write(build_docx(body))",
+  ].join("\n");
+  execFileSync(findBackendPython(), ["-c", build, file], { cwd: backend, stdio: "inherit" });
+  const created = await (await page.request.post(`${BASE}/api/bundles`, { headers, data: { title: "SYNTHETIC table follow ai", is_synthetic: true } })).json();
+  const api = `${BASE}/api/bundles/${created.id}`;
+  const uploaded = await page.request.post(`${api}/documents`, { headers, multipart: { side: "old", file: { name: "SYNTHETIC_OLD-87_table_follow_ai.docx", mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", buffer: readFileSync(file) } } });
+  let doc = await uploaded.json();
+  if (doc.language_layout !== "ko_en_separate") doc = await (await page.request.patch(`${api}/documents/${doc.id}`, { headers, data: { revision: doc.revision, language_layout: "ko_en_separate" } })).json();
+  const readView = async () => (await page.request.get(`${api}/documents/${doc.id}/view`, { headers })).json();
+  const edit = async (op) => page.request.post(`${api}/documents/${doc.id}/edits`, { headers, data: { revision: (await readView()).document.revision, confirm: false, op } });
+  const [koTable, enTable] = (await readView()).tables;
+  const unwrapOk = (await edit({ type: "set_layout_table", table_id: koTable.id, is_layout: true })).ok() && (await edit({ type: "set_layout_table", table_id: enTable.id, is_layout: true })).ok();
+  const linesOf = (view, tableId) => view.units.filter((unit) => unit.table_id === tableId && unit.group_unit_id === null).sort((one, two) => one.pos_seq - two.pos_seq || one.id - two.id);
+  const koLines = linesOf(await readView(), koTable.id);
+  let worked = koLines.length === 4;
+  for (const [index, number] of ["5.1", "5.2", "5.3"].entries()) worked = worked && (await edit({ type: "set_number", unit_id: koLines[index].id, number, follow: false })).ok();
+  // 토큰이 없는 표는 점수가 임계값 아래라 짝이 안 잡힌다 - 사람이 짝 표를 먼저 정한다(D2-R3 → R9)
+  const picked = await page.request.put(`${api}/documents/${doc.id}/tables/${enTable.id}/counterpart`, { headers, data: { source_table_id: koTable.id } });
+  const plan = await (await page.request.get(`${api}/documents/${doc.id}/tables/${enTable.id}/follow`, { headers })).json();
+  check("rows without shared tokens go to the AI way, not the rule way", uploaded.status() === 201 && unwrapOk && worked && picked.ok() && plan.mode === "ai" && plan.items.length === 0, JSON.stringify(plan));
+  const enLines = linesOf(await readView(), enTable.id);
+  await page.goto(`${BASE}/bundles/${created.id}/assign`);
+  await wait(page, "assign-bar");
+  const ask = page.locator(`[data-testid="assign-follow-ai-${enTable.id}"]`);
+  await ask.waitFor({ timeout: T });
+  const asked = page.waitForResponse((response) => response.request().method() === "POST" && new URL(response.url()).pathname.endsWith("/ai/table_follow"), { timeout: T });
+  await ask.click();
+  check("the head button asks AI for this table", (await asked).ok());
+  const head = page.locator(`[data-testid="assign-follow-${enTable.id}"]`);
+  await head.waitFor({ timeout: 60_000 });
+  check("AI's answer comes as one chip on the first line (number 9.9) with the same head and Apply", ((await head.textContent()) ?? "").includes("· 1") && (await page.locator(`[data-testid="assign-follow-chips-${enLines[0].id}"]`).count()) === 1, await head.textContent());
+  const applied = page.waitForResponse((response) => response.request().method() === "POST" && new URL(response.url()).pathname.endsWith(`/documents/${doc.id}/edits`), { timeout: T });
+  await page.locator(`[data-testid="assign-follow-apply-${enTable.id}"]`).click();
+  const appliedResponse = await applied;
+  check("Apply sends one follow_table edit", appliedResponse.ok() && appliedResponse.request().postDataJSON()?.op?.type === "follow_table", String(appliedResponse.status()));
+  await head.waitFor({ state: "detached", timeout: T });
+  const first = (await readView()).units.find((unit) => unit.id === enLines[0].id);
+  check("the first English line took the number", first?.number?.value === "9.9", JSON.stringify(first?.number));
+  const suggestions = await (await page.request.get(`${api}/ai/suggestions?kind=table_follow&result=applied&limit=100`, { headers })).json();
+  check("applying left an as_is adoption on the suggestion", suggestions.items.length === 1 && suggestions.items[0].adoption === "as_is", JSON.stringify(suggestions.items.map((item) => item.adoption)));
+  const bundle = await (await page.request.get(api, { headers })).json();
+  check("the table-follow AI bundle is removed", (await page.request.delete(`${api}?revision=${bundle.revision}`, { headers })).ok());
+});
+
 // Pair view에서 끌어 짝 맺기(끌어다 놓기 4걸음) - 조각을 맞은편 언어의 조각에 놓으면 바로 짝이 되고(제안 짝의 구성원끼리면 그 제안을 확정), 알림의 Undo가 그 짝을 푼다.
 // 제안 짝은 검증 스택에 임베딩이 없어 만들 수 없다 - API로 맺은 짝을 원문 보기 응답에서 suggested로 바꿔 그린다(page.route). 확정 호출 자체는 진짜 서버로 간다.
 // 자료는 API로 만들고 끝에 짝을 모두 풀고 그 문서의 판단을 비운다. 409·거절 알림이 콘솔에 찍히므로 콘솔 오류를 허락하고, 처리되지 않은 예외(pageerror)는 따로 센다

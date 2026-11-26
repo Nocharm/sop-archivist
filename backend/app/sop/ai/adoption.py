@@ -29,7 +29,7 @@ Place = tuple[int | None, str | None, int | None, str | None]  # (새 문서, �
 
 _MATCH_KIND = "match"
 # 이어진 판단·새 문장·짝이 없어 저장이 채택을 정하지 않는다 — 사람이 직접 남긴다(record_manual_adoption). 순서 바꾸기도 편집 길이라 나누기와 같다
-_MANUAL_KINDS = ("split", "unwrap_order")
+_MANUAL_KINDS = ("split", "unwrap_order", "table_follow")
 # 저장과 견줄 수 있는 종류 — classify는 content의 처분·자리·고쳐 쓴 글, translate는 새 문장의 ai_text, match는 content의 출처와 견준다
 _JUDGED_KINDS = ("classify", "translate", _MATCH_KIND)
 _NO_TEXT_KINDS = (*TABLE_UNIT_KINDS, "figure")  # 새 문장에 글자가 없는 단위

@@ -62,7 +62,7 @@ backend(FastAPI) 세부 구조와 backend에만 걸리는 체크리스트. 루�
   - **제목 ↔ 문장** `segment.is_heading_like`: 쪼개기와 추출기 절 이름이 함께 쓴다 — 규칙을 바꾸면 두 곳이 같이 움직인다. → 12.13
   - **띠 표 → 제목 줄** `segment.is_certain_band`·`is_band_heading`: "`table_id`가 있는 `heading`" 판정은 `outputs._format_place`와 프런트 `paper-model.isBandHeading`이 함께 쓴다. → 12.14
   - **캡션 자리** `caption_slot.build_block_places`: 프런트 사본 `lib/caption-slot-model.ts`를 함께 고친다. `editing.CAPTIONABLE_KINDS` = 프런트 `getCaptionRefusal`, `decisions._find_shared_captioned` = 프런트 `isSharedCaptioned`. → 12.15
-  - **대응 표** `counterparts.py`: 표는 하나씩 벗긴다(사용자 결정 2026-11-19, 옛 `payload.counterpart_table_id`는 읽지 않는다). → 12.16
+  - **대응 표** `counterparts.py`: 표는 하나씩 벗긴다(사용자 결정 2026-11-19, 옛 `payload.counterpart_table_id`는 읽지 않는다). 영어 표의 짝 한글 표 점수 · 사람이 정한 짝(`table_counterparts`) · 행 짝과 한글 표처럼 하기 계획(저장하지 않는다)은 `table_follow.py` 하나, 적용은 편집 `follow_table` 하나 + 같은 요청의 삭제 판단(되돌리기 한 번). → 12.16
   - **참조 판정** `refs.read_ref_state`·`is_document_number`: 지도에 둘째 판정을 쓰지 않는다. 임시 번호는 `tobe.is_temp_match_code` 한 곳. Bundle을 건너 번호를 맞출 때는 양쪽 모두 번호 꼴(`ref_map._is_matchable`). → 12.17
   - **업무 규칙 거절** `errors.raise_rule(status, code, **context)`: `app/sop`·`routers/sop_*`에서 `HTTPException`을 직접 던지지 않는다(검사 `test_invariants.py`). revision 충돌은 `check_revision`(409 `revision_conflict`). → 12.18
   - **결과물** `outputs.py`: 스냅숏만 받는 순수 함수다. 검토 조건은 `outputs.build_review_facts`를 쓰고 다시 계산하지 않는다. 칸 글·모양 판정은 `sheet_model.py`에만(미리보기와 xlsx가 같은 모델). Excel C 시트는 `SHOW_C_SHEET`로 숨겨 두었다(시트 이름은 `get_sheet_names()`, 켜는 시험은 `c_sheet_on`).

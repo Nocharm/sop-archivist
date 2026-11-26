@@ -28,7 +28,7 @@
 | 6-3 | `feat/new-paper-3-tools` | 진행 — 워크트리 `sop-wt-new-paper-2-pick`(이름은 옛것), 바탕 23592285(모음 + dev v1.6.20) | | | 끝나면 모음 → dev(버전 · PROGRESS 그때) |
 | 3b+ | `fix/undo-follow-after-click` | 합침 | v1.6.16 · f1cbc921 | vitest 2297 · build 경고 0 · `assign:` 스모크 1240 + 손질 뒤 5단계 | — |
 | 7 | 계획 4의 일곱 | 대기 | | | |
-| 8 | 계획 5의 아홉 | 진행 | v1.6.20 · 64a0f062 | space-preview-trim v1.6.14 · excel-a-strike v1.6.15 · progress-by-disposition v1.6.18 · ai-suggestions-retire v1.6.20 합침(pytest 3681+시드 15 · vitest 2353 · build 경고 0 · `assign:` 스모크 1259 + 시간 단계 혼자 통과 · 새 AI 단계는 가짜 AI로 18 통과) | 남은 다섯: tables-tab · unwrap-continue-numbers(둘 다 6에 매임) · 모음 `feat/table-follow` — 1 짝 표 고르기는 모음에 합침(399277c4: pytest 3693 · vitest 2356 · build 경고 0 · `assign:` 1265 + 시간 단계 혼자 2번, opus 검토 막음 1 고침 — 임계값 아래도 후보가 있으면 고르기), 2 진행(워크트리 `sop-wt-table-follow-1-counterpart`, 이름은 옛것), 3 대기 |
+| 8 | 계획 5의 아홉 | 진행 | v1.6.21 · 69826fdd | space-preview-trim v1.6.14 · excel-a-strike v1.6.15 · progress-by-disposition v1.6.18 · ai-suggestions-retire v1.6.20 · 모음 table-follow v1.6.21 합침(pytest 3747+시드 15 · vitest 2371 · build 경고 0 · `assign:` 스모크 1274 전부 · AI 단계는 가짜 AI로 14) | 남은 둘: tables-tab · unwrap-continue-numbers(둘 다 6 · 계획 4에 매임) |
 
 
 ## 이어 가기 (2026-11-26 08시, 지휘 세션을 끊으며)
@@ -95,6 +95,7 @@
 - progress · `test_sop_front_matter.py:1158` 벽시계 비율 → 읽은 줄 수(네 배에 8배 미만, 기준 그대로) · 부하에서 흔들림
 - ai-suggestions-retire · `test_sop_ai_adoption.py:1073` `applied` → `stale`, `:1075` · `~1088` 종류 키 → `"classify" not in` · 편집이 거둔 제안은 applied에서 빠짐(계획 `test_adoption_stats_do_not_count_stale`)
 - ai-suggestions-retire · `ai-accept-model.test.ts` `countLiveOffer` 셋째 인자, `assign-focus-model.test.ts` · `reload-ask-model.test.ts` 기대 객체에 `suggestions` 필드 · 필드가 늘어남(기대값 그대로)
+- table-follow-2 · 없음(새 시험만). table-follow-3 · `test_sop_ai_llm.py:134` 시드 7 → 8, `test_sop_guidelines.py` `REPLY_FIELDS`에 `prompt.table_follow`, `test_sop_table_follow.py` ai 시험에 `lines` 단언 한 줄, `ai-suggestion-model.test.ts`에 `HIDDEN_AI_KINDS.has("table_follow") === false` · 새 지침 키 · 응답 필드가 늘어남
 
 ## 아침에 볼 것 (사람이 정할 것 · 봐 줄 것)
 
@@ -129,3 +130,5 @@
 - `feat/assign-tables-tab`이 들어오면 표 탭에도 `renderFollow`(짝 표 고르기)를 넣는다(지금은 `renderUnwrapHead` 안).
 - 고른 Old 박스 안에서 단추 줄이 240ms 동안 펼쳐지며 그 아래 짝 안내 단추가 줄 높이만큼 내려간다 — 고르자마자 안내를 누르면 빗나갈 수 있다(6-2 검토). 거슬리면 안내를 단추 줄 위로.
 - 100ms 시간 단계(`deletion folds and unwrap start before the response`)가 다른 게이트와 겹치면 102~117ms로 실패한다(세 브랜치 모두, 혼자면 통과).
+- 표 따라 하기: 임베딩이 꺼진 운영에서는 토큰이 없는 행이 하나만 있어도 AI 길로 간다(정한 것 7). `follow_table`로 합친 줄은 조각 표시 · 합치기 풀기가 없고 Ctrl+Z로만 돌아온다. AI가 "바꿀 것 없음"이라 답한 뒤 닫기는 채택으로 세지 않는다.
+- 임베딩을 켜면 화면 GET(임베딩 씀)과 AI 요청 판정(임베딩 안 씀)이 갈려 422 `follow_not_needed`가 날 수 있다 — 켤 때 함께 본다.
