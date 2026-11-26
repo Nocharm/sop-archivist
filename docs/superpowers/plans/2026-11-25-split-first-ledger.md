@@ -41,6 +41,7 @@
 | F7b | `feat/new-cell-menu-two-pane` | 합침 | v1.6.39 · e81d6ecb | dev(26b35312) 합침 · vitest 2741 · build 경고 0 · `assign:` 스모크 ALL PASS 1527(새 Shift+F10 검사 4 포함) · 검토 생략(작은 일) | Old 줄을 골라 둔 채 New를 마지막에 누르면 Shift+F10이 New 메뉴를 연다(전에는 Old) |
 | F9 | `feat/practice-page`(모음) | 합침 | v1.6.42 · 6690c2f2 | pytest 3851+시드 15 · ruff · vitest 2808 · build 경고 0 · `practice:` ALL PASS 52 · `FULL=1` ALL PASS 2588 · 검토: 스텝 1 sonnet 0 · 2 opus 막음 1 고침 · 3 opus 0 · 4 sonnet 0 · 모음 전체 opus 0(권함 1 — 진짜 자료 시험 더함) | 그림 `/private/tmp/claude-501/-Users-hyeonjin-Documents-sop-archivist/cd35c95b-037a-4e82-bb7a-e837e4859e96/scratchpad/shots/practice-final/`(1440 en · 1120 ko). 과제 칸 J/K 판정은 키가 용지 안에서 눌릴 때만(접기 단추를 누른 뒤엔 줄을 다시 눌러야) |
 | Fm | `fix/user-menu-close-on-nav` | 합침 | v1.6.41 · bc8c35f3 | vitest 2743 · build 경고 0 · baseline `account` 스모크 ALL PASS(새 검사 'user menu closes after navigating from an item') · 검토 생략(작은 일) | AI 작업 팝오버가 이동 뒤 닫히는 것은 스모크에 없음 |
+| Fh | `fix/assign-new-head-fit` | 진행 |  |  | 연습 그림이 찾은 앞부터 있던 겹침 |
 
 
 ## 이어 가기 (2026-11-26 밤 — 1차 피드백 중간, 다음 세션은 여기부터)
