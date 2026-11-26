@@ -1,5 +1,6 @@
 // Assign 보기 설정 - 문서별 확대(Old·New)·두 문서 폭·연결선 켜기·한 단 보기·New 쪽 AI 제안 거르기 · New 칸 템플릿 보기 · 뗀 오른쪽 칸(자리 · 접힘) · Space 미리보기를 연 횟수를 사람마다 브라우저에 기억한다. 저장소가 막혀 있으면 기본값으로 그린다.
 import { clampSplit, clampZoom } from "./assign-model";
+import { clampSheetHeight, SHEET_HEIGHT_DEFAULT } from "./space-preview-model";
 
 export interface AssignView {
   zoomOld: number;
@@ -83,5 +84,21 @@ export function writeSpacePreviewOpens(count: number): void {
     window.localStorage.setItem(SPACE_OPENS_KEY, String(count));
   } catch {
     // 기억하지 못하면 다음에도 안내가 보일 뿐이다
+  }
+}
+
+const SPACE_HEIGHT_KEY = "sopa.assign.spaceHeight";
+
+/** Space 미리보기 시트 높이 비율 - 끌어 바꾼 값을 기억한다. 없거나 이상하면 기본값, 한계 밖이면 한계로 */
+export function readSpaceSheetHeight(): number {
+  const stored = readNumber(SPACE_HEIGHT_KEY);
+  return stored === null ? SHEET_HEIGHT_DEFAULT : clampSheetHeight(stored);
+}
+
+export function writeSpaceSheetHeight(ratio: number): void {
+  try {
+    window.localStorage.setItem(SPACE_HEIGHT_KEY, String(ratio));
+  } catch {
+    // 기억하지 못하면 다음에 기본 높이로 열릴 뿐이다
   }
 }

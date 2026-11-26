@@ -5,7 +5,7 @@
 "use client";
 
 import { Download } from "lucide-react";
-import { useEffect, useEffectEvent, useMemo, useState } from "react";
+import { useEffect, useEffectEvent, useMemo, useState, type PointerEvent } from "react";
 
 import { ParagraphDownloadDialog } from "@/components/assign/paragraph-download-dialog";
 import { SheetView } from "@/components/outputs/sheet-view";
@@ -14,7 +14,7 @@ import { showToast } from "@/components/ui/toast";
 import { humanizeApiError } from "@/lib/api-errors";
 import { downloadExport, downloadParagraphs, getAssignSheetPreview, getParagraphSheetPreview, type ParagraphInclude } from "@/lib/api-sop";
 import { isTypingTarget, LAYER_SELECTOR } from "@/lib/assign-key-target";
-import { readSpacePreviewOpens, writeSpacePreviewOpens } from "@/lib/assign-view-prefs";
+import { readSpacePreviewOpens, readSpaceSheetHeight, writeSpacePreviewOpens, writeSpaceSheetHeight } from "@/lib/assign-view-prefs";
 import { useI18n } from "@/lib/i18n";
 import { saveBlob } from "@/lib/save-file";
 import { isDragMove, type SheetDraft } from "@/lib/sheet-view-model";
@@ -26,6 +26,9 @@ import {
   isOwnSpaceTarget,
   isSpaceKept,
   isSpaceOpen,
+  readDragHeight,
+  SHEET_HEIGHT_MAX,
+  SHEET_HEIGHT_MIN,
   SPACE_CLOSED,
   stepSpace,
   type SpaceEvent,
@@ -72,6 +75,9 @@ export function SpacePreview({ bundleId, sheet: sheetKind, enabled, docId, docCo
   const [opens, setOpens] = useState(readSpacePreviewOpens);
   const [request, setRequest] = useState<SheetRequest | null>(null);
   const [press, setPress] = useState<{ x: number; y: number } | null>(null);
+  // 시트 높이 비율 - 손잡이를 끌어 바꾸고 떼면 기억한다
+  const [height, setHeight] = useState(readSpaceSheetHeight);
+  const [resize, setResize] = useState<{ moved: boolean } | null>(null);
   const [downloading, setDownloading] = useState(false);
   // 문단 Excel은 받기 전에 넣을 것을 묻는다 - 시트를 닫아도 창은 남는다
   const [isAsking, setIsAsking] = useState(false);
@@ -154,6 +160,23 @@ export function SpacePreview({ bundleId, sheet: sheetKind, enabled, docId, docCo
     };
   }, []);
 
+  function handleGripMove(event: PointerEvent<HTMLElement>) {
+    const parent = event.currentTarget.offsetParent;
+    if (!resize || !parent) return;
+    const rect = parent.getBoundingClientRect();
+    setHeight(readDragHeight(event.clientY, rect.bottom, rect.height));
+    // 누르는 동안 높이를 바꿨으면 본문 끌기와 같게 떼는 순간 닫는다 - 한 번만 알린다
+    if (!resize.moved) {
+      setResize({ moved: true });
+      dispatch({ type: "drag" });
+    }
+  }
+
+  function handleGripEnd() {
+    if (resize?.moved) writeSpaceSheetHeight(height);
+    setResize(null);
+  }
+
   async function handleDownload(include?: ParagraphInclude) {
     setDownloading(true);
     try {
@@ -193,6 +216,7 @@ export function SpacePreview({ bundleId, sheet: sheetKind, enabled, docId, docCo
     <>
       <section
         className="space-sheet"
+        style={{ height: `${height * 100}%` }}
         data-testid="assign-space-preview"
         data-state={isKept ? "kept" : "held"}
         data-sheet={sheetKind}
@@ -202,7 +226,26 @@ export function SpacePreview({ bundleId, sheet: sheetKind, enabled, docId, docCo
           if (event.defaultPrevented) event.stopPropagation();
         }}
       >
-        <span className="space-sheet-grip" aria-hidden />
+        <div
+          className="space-sheet-grip"
+          role="separator"
+          aria-orientation="horizontal"
+          aria-label={t("assign.spacePreview.resize")}
+          aria-valuemin={Math.round(SHEET_HEIGHT_MIN * 100)}
+          aria-valuemax={Math.round(SHEET_HEIGHT_MAX * 100)}
+          aria-valuenow={Math.round(height * 100)}
+          data-testid="assign-space-preview-resize"
+          data-active={resize ? "" : undefined}
+          // 누르기로 포커스를 옮기지 않는다 - 포커스가 남으면 다음 Space 탁이 시트를 닫지 않는다(받기 단추와 같다)
+          onPointerDown={(event) => {
+            event.preventDefault();
+            event.currentTarget.setPointerCapture(event.pointerId);
+            setResize({ moved: false });
+          }}
+          onPointerMove={handleGripMove}
+          onPointerUp={handleGripEnd}
+          onPointerCancel={handleGripEnd}
+        />
         <header className="space-sheet-head">
           <b className="text-[14px] text-ink">{isParagraphs ? t("assign.spacePreview.paragraphsTitle") : t("outputs.preview.title")}</b>
           <span className="space-sheet-tab">{sheet?.name ?? (isParagraphs ? docCode : "A Comparison")}</span>

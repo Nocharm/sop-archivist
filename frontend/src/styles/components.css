@@ -1895,10 +1895,13 @@
   .assign-bar-end { display: flex; flex: none; flex-wrap: nowrap; align-items: center; gap: 4px; margin-left: auto; }
   .assign-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 4px; min-height: 30px; }
   .assign-panes { position: relative; display: grid; grid-template-columns: minmax(0, var(--split, 50%)) 12px minmax(0, 1fr); min-height: 0; }
-  /* Space 미리보기(components/assign/space-preview.tsx) - 작업 화면 바닥에서 올라오는 시트, 높이는 작업 화면의 약 70%. 여는 움직임은 --dur-base(움직임 줄이기면 0) */
-  .space-sheet { position: absolute; inset-inline: 0; bottom: 0; z-index: 40; display: flex; flex-direction: column; height: 70%; min-height: 0; border-top: 1px solid var(--line-2); border-radius: 10px 10px 0 0; background: var(--surface); box-shadow: 0 -14px 30px -14px oklch(0 0 0 / .4); animation: space-sheet-in var(--dur-base) var(--ease-enter); }
+  /* Space 미리보기(components/assign/space-preview.tsx) - 작업 화면 바닥에서 올라오는 시트, 높이는 작업 화면 비율로 인라인(기본 · 한계는 lib/space-preview-model.ts). 여는 움직임은 --dur-base(움직임 줄이기면 0) */
+  .space-sheet { position: absolute; inset-inline: 0; bottom: 0; z-index: 40; display: flex; flex-direction: column; min-height: 0; border-top: 1px solid var(--line-2); border-radius: 10px 10px 0 0; background: var(--surface); box-shadow: 0 -14px 30px -14px oklch(0 0 0 / .4); animation: space-sheet-in var(--dur-base) var(--ease-enter); }
   @keyframes space-sheet-in { from { transform: translateY(100%); } }
-  .space-sheet-grip { flex: none; width: 44px; height: 4px; margin: 6px auto 0; border-radius: 2px; background: var(--line-2); }
+  /* 손잡이 - 보이는 막대는 ::before 4px, 누를 수 있는 자리는 12px 투명 띠 */
+  .space-sheet-grip { position: relative; flex: none; height: 12px; cursor: ns-resize; touch-action: none; }
+  .space-sheet-grip::before { content: ""; position: absolute; left: 50%; top: 4px; width: 44px; height: 4px; margin-left: -22px; border-radius: 2px; background: var(--line-2); }
+  .space-sheet-grip:hover::before, .space-sheet-grip[data-active]::before { background: var(--ink-3); }
   .space-sheet-head { display: flex; flex: none; align-items: center; gap: 10px; min-width: 0; padding: 6px 14px 8px; border-bottom: 1px solid var(--line); font-size: 12.5px; color: var(--ink-2); white-space: nowrap; }
   .space-sheet-tab { flex: none; padding: 2px 9px; border-radius: var(--r-1); box-shadow: 0 0 0 1px var(--line-2); font-size: 12px; font-weight: 600; color: var(--ink); }
   .space-sheet-state { flex: none; margin-left: auto; font-size: 11.5px; color: var(--accent); }
