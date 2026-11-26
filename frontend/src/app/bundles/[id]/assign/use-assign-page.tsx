@@ -1843,7 +1843,7 @@ export function useAssignPage() {
     const ask = buildReloadAsk(planReload(isOld ? { kind: "old_edit", docId, isInPlace: IN_PLACE_EDIT_OPS.has(op.type), isReleased: confirm } : { kind: "new_edit", docId, isReleased: confirm }, { aiOn }), oldDocIds);
     const isWaited = isBarrier({ kind: readEditKind(op), isGlobal: false });
     // 자르기·합치기·언어 바꾸기 모두 Assign 기록에 넣는다(설계 §4.4) - 서버는 Split 편집 기록 번호만 가리킨다
-    const undo = buildUndo({ focus_unit_id: op.type === "split" ? op.unit_id : (followId ?? undefined) });
+    const undo = buildUndo({ focus_unit_id: op.type === "split" || op.type === "split_sentences" ? op.unit_id : (followId ?? undefined) });
     // 보낸 revision과 같으면 서버가 아무것도 쓰지 않은 편집이다 - 이 탭이 먼저 쓴 값이 화면 값보다 새로울 수 있다(doc-revision.ts, 줄 선 앞 쓰기의 응답 포함)
     const sentRevision = pickDocRevision(docId, view.document.revision);
     const result = await editUnits(bundleId, docId, sentRevision, op, confirm, undo);
