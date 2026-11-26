@@ -1049,8 +1049,8 @@ await runStep("assign: an edit survives looking at another unit", { drafting: tr
   check("the edit is still there", (await textarea.inputValue()) === "Smoke: edit kept across units");
 });
 
-// 표는 묶음째 배정한다 - 칸 글자를 눌러도 표 전체가 골라지고(전에는 아무 일도 없었다), Alt를 누른 채 끌면 글자가 골라진다
-await runStep("assign: a click anywhere on a table picks the whole table, Alt still selects text", {}, async ({ page }) => {
+// 표는 묶음째 배정한다 - 칸 글자를 누르면 그 칸이 골라지고 줄 · 배정은 표째다(고름 두 겹, 11-23 명세 C1-R3 - 전에는 표 전체가 골라졌다), Alt를 누른 채 끌면 글자가 골라진다
+await runStep("assign: a click on a table cell picks the cell while the table stays the row, Alt still selects text", {}, async ({ page }) => {
   await page.goto(`${BASE}/`);
   const fresh = page.locator('[data-testid^="bundles-row-"]', { hasText: "쪼개기 직후" });
   const freshId = Number((await fresh.getAttribute("data-testid")).replace("bundles-row-", ""));
@@ -1080,8 +1080,8 @@ await runStep("assign: a click anywhere on a table picks the whole table, Alt st
   await cellText.click();
   const unwrap = page.locator(`[data-testid="assign-shape-table_layout-${table.id}"]`);
   await unwrap.waitFor({ state: "attached", timeout: T });
-  check("clicking cell text picks the whole table (Shape offers Unwrap table)", (await unwrap.getAttribute("aria-label")) === "Unwrap table");
-  check("the table piece is the selected one", (await page.locator(`[data-testid="assign-paper-piece-${table.id}"]`).getAttribute("data-sel")) === "");
+  check("clicking cell text keeps Unwrap table on the table line of Shape", (await unwrap.getAttribute("aria-label")) === "Unwrap table");
+  check("the cell piece is the selected one and the table piece only gets the thin group ring", (await page.locator(`.cell-piece[data-testid="assign-paper-piece-${cell.id}"]`).getAttribute("data-sel")) === "" && (await page.locator(`[data-testid="assign-paper-piece-${table.id}"]`).getAttribute("data-group")) === "table");
   // Alt+끌기 - 칸 글자 첫머리에서 끝까지
   const box = await cellText.boundingBox();
   await page.keyboard.down("Alt");
@@ -1093,6 +1093,83 @@ await runStep("assign: a click anywhere on a table picks the whole table, Alt st
   const selected = await page.evaluate(() => window.getSelection()?.toString() ?? "");
   check("Alt+drag still selects text", selected.trim().length > 0, JSON.stringify(selected));
   await page.evaluate(() => window.getSelection()?.removeAllRanges());
+});
+
+// 고름 두 겹(11-23 명세 C1 · S8) - 짝의 한 조각을 누르면 그 조각만 2px이고 카드는 얇은 테 1px와 꼬리표 하나, 표 칸을 누르면 칸이 골라지고 표는 얇은 테와
+// "Group · Table n (assigned as a whole)", Del은 표 전체를 지운다. 양 단의 New도 같은 두 겹이다(칸마다 박스라 꼬리표에 "배정은 표째"가 없다).
+// 시드에 한/영 짝 카드와 표가 함께 든 Old · New 문서가 없어 합성 docx 둘(같은 본문)을 새 묶음에 올려 보고 끝에 묶음을 지운다
+const TWO_LEVEL_PAIR = "탱크를 비운다. 밸브를 닫는다. Drain the tank completely. Close the outlet valve.";
+await runStep("assign: two-level pick - a pair half, a table cell and Del deletes the whole table", { devUser: "dev.admin" }, async ({ page }) => {
+  const headers = { "X-Dev-User": "dev.admin" };
+  const backend = resolve(SCRIPT_DIR, "../../../backend");
+  const oldFile = resolve(SHOT_DIR, "SYNTHETIC_OLD-89_two_level.docx");
+  const newFile = resolve(SHOT_DIR, "SYNTHETIC_SOP-89_two_level.docx");
+  const build = [
+    "import sys",
+    "from tests.docx_factory import build_docx, p, tbl",
+    `body = p('5. 절차', 'Heading1') + p('5. Procedure', 'Heading1') + p('${TWO_LEVEL_PAIR}') + tbl([['합성 항목', '합성 값'], ['합성 온도', '합성 결과']])`,
+    "open(sys.argv[1], 'wb').write(build_docx(body))",
+    "open(sys.argv[2], 'wb').write(build_docx(body, headers=[p('합성 새 문서')]))",
+  ].join("\n");
+  execFileSync(findBackendPython(), ["-c", build, oldFile, newFile], { cwd: backend, stdio: "inherit" });
+  const created = await (await page.request.post(`${BASE}/api/bundles`, { headers, data: { title: "SYNTHETIC two-level pick", is_synthetic: true } })).json();
+  const api = `${BASE}/api/bundles/${created.id}`;
+  const getJson = async (path) => (await page.request.get(`${api}${path}`, { headers })).json();
+  const mime = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+  const oldUp = await page.request.post(`${api}/documents`, { headers, multipart: { side: "old", file: { name: "SYNTHETIC_OLD-89_two_level.docx", mimeType: mime, buffer: readFileSync(oldFile) } } });
+  const newUp = await page.request.post(`${api}/documents`, { headers, multipart: { side: "new", doc_type: "sop", file: { name: "SYNTHETIC_SOP-89_two_level.docx", mimeType: mime, buffer: readFileSync(newFile) } } });
+  const oldDoc = await oldUp.json();
+  const newDoc = await newUp.json();
+  check("an Old and a written New document with a pair card and a table are uploaded", oldUp.status() === 201 && newUp.status() === 201 && oldDoc.status === "ready" && newDoc.status === "ready", `${oldUp.status()} ${newUp.status()}`);
+  // 짝 카드의 두 박스와 표 · 그 표의 칸 문장 "합성 온도"
+  const readParts = async (docId) => {
+    const units = (await getJson(`/documents/${docId}/view`)).units;
+    const table = units.find((unit) => unit.kind === "table");
+    return { pair: units.filter((unit) => unit.kind === "sentence" && unit.pair_id !== null), table, cell: units.find((unit) => unit.kind === "cell_sentence" && unit.group_unit_id === table?.id && unit.text === "합성 온도") };
+  };
+  const oldParts = await readParts(oldDoc.id);
+  const newParts = await readParts(newDoc.id);
+  const isReady = [oldParts, newParts].every((parts) => parts.pair.length === 2 && parts.table && parts.cell);
+  check("both documents have a KO/EN pair card and a table with its cell", isReady, JSON.stringify([oldParts, newParts].map((parts) => [parts.pair.length, parts.table?.id, parts.cell?.id])));
+  if (!isReady) {
+    await removeShapeBundle(page, { api, headers });
+    return;
+  }
+  await page.goto(`${BASE}/bundles/${created.id}/assign`);
+  await wait(page, "assign-bar");
+  if ((await page.locator('[data-testid="assign-new"]').count()) === 0) await page.locator('[data-testid="assign-view-two"]').click();
+  await wait(page, "assign-new");
+  // 조각 상자의 고리 굵기 - 왼쪽 변(카드 줄은 맞닿는 위 · 아래 변이 열려 있다)
+  const ringOf = (pane, unitId) => page.evaluate(([side, id]) => { const el = document.querySelector(`[data-pane="${side}"] .strip[data-strip-unit="${id}"]`); return el ? getComputedStyle(el, "::after").borderLeftWidth : null; }, [pane, unitId]);
+  const pressText = async (testId) => {
+    const text = page.locator(`[data-testid="${testId}"]`).first();
+    await text.scrollIntoViewIfNeeded({ timeout: T });
+    await text.click();
+  };
+  /** 한 용지의 두 겹 - 짝의 한 조각, 그다음 표 칸. prefix는 글 조각 testid 앞말, groupPrefix는 꼬리표 testid 앞말 */
+  const checkPaper = async ({ pane, prefix, groupPrefix, parts, tableTag }) => {
+    const [first, second] = parts.pair;
+    await pressText(`${prefix}-unit-${first.id}`);
+    await page.locator(`[data-pane="${pane}"] .strip[data-strip-unit="${first.id}"][data-sel]`).waitFor({ timeout: T });
+    const other = page.locator(`[data-pane="${pane}"] .strip[data-strip-unit="${second.id}"]`);
+    check(`${pane}: the pressed pair half gets the 2px ring, the other half only the 1px group ring`, (await ringOf(pane, first.id)) === "2px" && (await ringOf(pane, second.id)) === "1px" && (await other.getAttribute("data-sel")) === null && (await other.getAttribute("data-group")) === "pair", `${await ringOf(pane, first.id)} ${await ringOf(pane, second.id)}`);
+    check(`${pane}: the pair card has one Group · pair tag`, (await page.locator(`[data-pane="${pane}"] .group-tag`).count()) === 1 && (await page.locator(`[data-testid="${groupPrefix}-group-${first.id}"]`).innerText()).trim() === "Group · pair");
+    await pressText(`${prefix}-unit-${parts.cell.id}`);
+    await page.locator(`[data-pane="${pane}"] .cell-piece[data-strip-unit="${parts.cell.id}"][data-sel]`).waitFor({ timeout: T });
+    const tablePiece = page.locator(`[data-pane="${pane}"] .strip[data-strip-unit="${parts.table.id}"]`);
+    check(`${pane}: a table cell is picked while its table only gets the thin ring and the table tag`, (await tablePiece.getAttribute("data-sel")) === null && (await tablePiece.getAttribute("data-group")) === "table" && (await page.locator(`[data-testid="${groupPrefix}-group-${parts.table.id}"]`).innerText()).trim() === tableTag);
+  };
+  await checkPaper({ pane: "old", prefix: "assign-paper", groupPrefix: "assign-paper", parts: oldParts, tableTag: "Group · Table 1 (assigned as a whole)" });
+  // Del은 칸이 아니라 표 줄 전체를 지운다(C1-AC3)
+  await page.keyboard.press("Delete");
+  const isTableDeleted = await page.waitForFunction(async ([path, id, user]) => {
+    const items = (await (await fetch(path, { headers: { "X-Dev-User": user } })).json()).items;
+    return items.some((item) => item.unit_id === id && item.status === "confirmed" && item.decision.disposition === "delete");
+  }, [`/api/bundles/${created.id}/units?limit=1000&offset=0&document_id=${oldDoc.id}`, oldParts.table.id, "dev.admin"], { timeout: T }).then(() => true, () => false);
+  check("old: Del with a cell picked deletes the whole table row", isTableDeleted);
+  await checkPaper({ pane: "new", prefix: "assign-new-paper", groupPrefix: "assign-new", parts: newParts, tableTag: "Group · Table 1" });
+  await page.keyboard.press("Escape");
+  await removeShapeBundle(page, { api, headers });
 });
 
 // 배정 화면에서 표를 우클릭하면 표 메뉴(표 벗기기)가 뜬다 - 표 머리 줄을 우클릭한다(칸 위가 아니라 표 전체). 벗기기와 되돌리기는 아래 unwrap 단계가 본다
