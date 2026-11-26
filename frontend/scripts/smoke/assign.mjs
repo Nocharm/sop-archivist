@@ -702,6 +702,68 @@ async function runShapeTools({ page, place, docId, prefix, sideTestId, api, head
   }
 }
 
+/**
+ * 표 탭 · 본문 표 접기 한 벌(11-23 명세 E2, S15) - place(old · new-pair)만 다르고 검사 이름 · 차례가 같다. 문서의 표 하나(아직 표)로
+ * 접기 → 새로고침해도 접힘 → 한 줄을 눌러 펼침 → 모두 접기 · 펼치기 → 표 탭(표만, 위치 머리, 접기 없음) → J가 그 탭 안에 머문다.
+ * 끝에 모두 펼쳐 두어 기억(localStorage)도 지워진다. reopen은 새로고침 뒤 양 단 보기와 New 용지를 기다린다
+ */
+async function runTableFold({ page, place, docId, prefix, sideTestId, tabPrefix, foldAllId, api, headers, reopen }) {
+  const pane = page.locator(`[data-testid="${sideTestId}"]`);
+  const name = (text) => `[${place}] ${text}`;
+  const view = await (await page.request.get(`${api}/documents/${docId}/view`, { headers })).json();
+  const unit = view.units.find((item) => item.kind === "table");
+  const table = view.tables.find((item) => item.id === unit?.table_id);
+  check(name("the document has a table that is still a table"), unit !== undefined && table !== undefined);
+  if (!unit || !table) return;
+  const tab = (key) => page.locator(`[data-testid="${tabPrefix}-${key}"]`);
+  const readActiveTab = () => page.locator(`[data-testid="${tabPrefix}s"] [aria-selected="true"]`).getAttribute("data-testid");
+  const head = pane.locator(`[data-testid="${prefix}-head-${unit.id}"]`);
+  const folded = pane.locator(`[data-testid="assign-table-folded-${table.id}"]`);
+  const foldAll = page.locator(`[data-testid="${foldAllId}"]`);
+  const tabText = (await tab("tables").innerText()).replace(/\s+/g, " ").trim();
+  check(name("the tab row ends with Tables and the number of tables"), tabText === "Tables 1" && (await page.locator(`[data-testid="${tabPrefix}s"] [role="tab"]`).last().getAttribute("data-testid")) === `${tabPrefix}-tables`, tabText);
+  // 본문 탭 - 표 머리 끝의 접기
+  await tab("body").click();
+  await head.waitFor({ timeout: T });
+  await pane.locator(`[data-testid="assign-table-fold-${table.id}"]`).click();
+  await folded.waitFor({ timeout: T });
+  const line = (await folded.innerText()).replace(/\s+/g, " ").trim();
+  check(name("Collapse folds the table into one line with its number and size, and its rows leave the page"), line.startsWith(`▸ Table ${table.table_index + 1} · `) && line.includes(`${table.n_rows} x ${table.n_cols}`) && (await head.count()) === 0, line);
+  await page.reload();
+  await reopen();
+  await folded.waitFor({ timeout: T });
+  check(name("the fold survives a reload"), (await head.count()) === 0);
+  await folded.click();
+  await head.waitFor({ timeout: T });
+  check(name("pressing the folded line opens the table"), (await folded.count()) === 0);
+  // 모두 접기 · 펼치기 - 하나라도 펼쳐 있으면 모두 접기
+  check(name("the fold-all button collapses while a table is open"), (await foldAll.innerText()).trim() === "Collapse all tables");
+  await foldAll.click();
+  await folded.waitFor({ timeout: T });
+  check(name("Collapse all tables folds the tables and turns into Expand all tables"), (await foldAll.innerText()).trim() === "Expand all tables");
+  await foldAll.click();
+  await head.waitFor({ timeout: T });
+  check(name("Expand all tables opens them again"), (await folded.count()) === 0);
+  // 표 탭 - 표만(글 조각 없음), 절이 있으면 위치 머리, 접기 없음
+  await tab("tables").click();
+  await page.locator(`[data-testid="${tabPrefix}-tables"][aria-selected="true"]`).waitFor({ timeout: T });
+  await head.waitFor({ timeout: T });
+  const pieces = await pane.locator('.strip[data-kind="piece"]').count();
+  const placeHead = pane.locator(`[data-testid="assign-table-place-${table.id}"]`);
+  const placeText = (await placeHead.count()) > 0 ? (await placeHead.innerText()).trim() : "";
+  check(name("the Tables tab holds the table alone, under its place when it has one, with no Collapse"), pieces === 0 && (placeText === "" || placeText.startsWith("Under §")) && (await pane.locator('[data-testid^="assign-table-fold-"]').count()) === 0, `${pieces} pieces, place "${placeText}"`);
+  // 표를 고르고 J · J - 표 탭에 머문다(표 밖 박스로 가면 탭이 본문으로 바뀐다)
+  await head.click();
+  await page.evaluate(() => (document.activeElement instanceof HTMLElement ? document.activeElement.blur() : undefined));
+  await page.keyboard.press("j");
+  await page.keyboard.press("j");
+  await page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(() => done(null)))));
+  check(name("J stays on the Tables tab"), (await readActiveTab()) === `${tabPrefix}-tables` && (await head.count()) === 1, String(await readActiveTab()));
+  await page.keyboard.press("Escape");
+  await tab("body").click();
+  await head.waitFor({ timeout: T });
+}
+
 export async function run() {
 
 await runStep("assign: legend first, place, delete without a reason, edit, clear, bulk", { drafting: true, allowConsoleErrors: true }, async ({ page, takeShot }) => {
@@ -1407,7 +1469,10 @@ await runStep("assign: figures - the Figures tab holds the figure cards, Show po
   const card = page.locator(`[data-testid="assign-paper-piece-${figure.unit_id}"]`);
   await card.waitFor({ timeout: T });
   const tabText = (await page.locator('[data-testid="assign-tab-figures"]').innerText()).replace(/\s+/g, " ").trim();
-  check("the tab row ends with Figures and the number of cards", /^Figures \d+$/.test(tabText) && (await page.locator('[data-testid="assign-tabs"] [role="tab"]').last().getAttribute("data-testid")) === "assign-tab-figures", tabText);
+  // 표가 있는 문서는 Tables 탭이 그림 뒤 맨 끝이다(11-23 명세 E2 - B2 글쇠표의 탭 차례)
+  const tabIds = await page.locator('[data-testid="assign-tabs"] [role="tab"]').evaluateAll((els) => els.map((el) => el.dataset.testid));
+  const figuresAt = tabIds.indexOf("assign-tab-figures");
+  check("the tab row ends with Figures (then Tables when there is a table) and the number of cards", /^Figures \d+$/.test(tabText) && (figuresAt === tabIds.length - 1 || (figuresAt === tabIds.length - 2 && tabIds.at(-1) === "assign-tab-tables")), `${tabText} | ${tabIds.join(",")}`);
   await takeShot("sop-assign-figures-tab.png");
   // 본문 탭 - 그림 줄도 그 자리 표시도 없다
   await page.locator('[data-testid="assign-tab-body"]').click();
@@ -4040,7 +4105,8 @@ await runStep("assign: a status filter folds the Old paper", { drafting: true },
       await docTrigger.click();
       await page.locator(`[data-testid="${value}"]`).click();
     }
-    const tabs = await page.locator('[data-testid^="assign-tab-"]:not([data-testid="assign-tabs"])').evaluateAll((els) => els.map((el) => el.dataset.testid));
+    // Tables 탭은 본문의 표를 다시 모은 것이라 부분이 아니다 - 세면 표 줄이 두 번 든다(11-23 명세 E2)
+    const tabs = (await page.locator('[data-testid^="assign-tab-"]:not([data-testid="assign-tabs"])').evaluateAll((els) => els.map((el) => el.dataset.testid))).filter((tab) => tab !== "assign-tab-tables");
     for (const tab of tabs.length > 0 ? tabs : [null]) {
       if (tab) await page.locator(`[data-testid="${tab}"]`).click();
       await page.locator(`${old} .strip-row, [data-testid="assign-fold-empty"]`).first().waitFor({ timeout: T });
@@ -4424,6 +4490,24 @@ await runStep("assign: shaping tools work the same on Old, on New alone and on N
   await page.waitForFunction(() => document.querySelector('[data-testid="assign-old-tag"]')?.textContent?.includes("New") ?? false, null, { timeout: T });
   check("Wide view opens the New document alone", (await page.locator(".assign-panes").getAttribute("data-single")) !== null);
   await runShapeTools({ page, place: "new-wide", docId: newDoc.id, prefix: "assign-paper", sideTestId: "assign-old", api, headers });
+  await removeShapeBundle(page, shape);
+});
+
+// 표 탭 · 본문 표 접기(11-23 명세 E2, S15) - Old 칸과 양 단 New 칸이 같은 검사 함수(runTableFold)를 돈다. 손질 검사와 같은 합성 묶음(표 하나)을 새로 올리고 끝에 지운다
+await runStep("assign: tables tab and folding — fold survives a reload, J stays in the tab", { devUser: "dev.admin" }, async ({ page }) => {
+  const shape = await createShapeBundle(page, "SYNTHETIC tables tab and folding");
+  const { api, headers, bundleId, oldDoc, newDoc } = shape;
+  if (oldDoc.status !== "ready" || newDoc.status !== "ready") return;
+  const reopen = async () => {
+    await wait(page, "assign-bar");
+    await page.waitForLoadState("networkidle");
+    if ((await page.locator('[data-testid="assign-new"]').count()) === 0) await page.locator('[data-testid="assign-view-two"]').click();
+    await page.locator('[data-testid="assign-new-paper"]').waitFor({ timeout: T });
+  };
+  await page.goto(`${BASE}/bundles/${bundleId}/assign`);
+  await reopen();
+  await runTableFold({ page, place: "old", docId: oldDoc.id, prefix: "assign-paper", sideTestId: "assign-old", tabPrefix: "assign-tab", foldAllId: "assign-tables-fold-all", api, headers, reopen });
+  await runTableFold({ page, place: "new-pair", docId: newDoc.id, prefix: "assign-new-paper", sideTestId: "assign-new", tabPrefix: "assign-new-tab", foldAllId: "assign-new-tables-fold-all", api, headers, reopen });
   await removeShapeBundle(page, shape);
 });
 
