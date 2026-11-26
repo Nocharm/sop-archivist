@@ -58,7 +58,7 @@ Rules for TypeScript/JavaScript projects. Imported by `frontend/CLAUDE.md` (load
 | Boolean | `is` / `has` / `should` prefix | `isValid`, `hasAccess` |
 | File names | `kebab-case` or `camelCase` (follow project convention) | `user-profile.ts` |
 
-**Function names must start with a verb** — verb→purpose table is shared in `rules/common/naming.md`. TS casing: `getUser`, `createSession`, `isValid()`.
+**Function names must start with a verb** — verb→purpose table is shared in `rules/common/conventions.md`. TS casing: `getUser`, `createSession`, `isValid()`.
 
 For React event handlers, `handle` is the caller-side convention and `on` is the prop-side convention: `<Button onClick={handleSubmit} />`.
 

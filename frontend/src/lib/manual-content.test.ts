@@ -97,7 +97,7 @@ describe("user manual text", () => {
     // 정식 업데이트 준비 커밋이 CHANGELOG 제목을 달 때 설명서도 다시 읽고 이 값을 그 번호로 올린다. 운영 급한 수정은 같은 줄이라 그대로 둔다
     expect(
       toLine(doc.version),
-      `Re-read the manual against v${latest}, then set its header to version: ${latest} and today's updated (rules/common/git.md "사용 설명서 버전")`,
+      `Re-read the manual against v${latest}, then set its header to version: ${latest} and today's updated (docs/deploy/release.md "사용 설명서")`,
     ).toBe(toLine(latest));
     expect(doc.updated).toMatch(/^\d{4}-\d{2}-\d{2}$/);
   });
