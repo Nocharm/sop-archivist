@@ -117,7 +117,7 @@ AI 없이 사람이 끝까지 가는 결정적 경로(계획 1). AI 층은 아�
 
 ### 10.3 프런트가 사본을 둔 규칙
 
-- 대상: `number_lines`·`get_bullet_depths`·`plan_follow`·`build_block_places`·빈 글자 판정·상수.
+- 대상: `number_lines`·`get_bullet_depths`·`plan_follow`·`plan_continue`(벗긴 표 번호 이어 매기기, 프런트 `continue-number-model.ts`)·`build_block_places`·빈 글자 판정·상수.
 - 바꾸면 `.venv/bin/python -m scripts.dump_rule_cases`로 `frontend/src/lib/rule-cases.json`을 다시 뽑고 프런트 사본이 `npx vitest run src/lib/rule-cases.test.ts`를 통과하게 고친다 — 뽑지 않으면 `tests/test_rule_cases.py`가, 사본이 다르면 vitest가 실패한다. 새 사본을 만들면 사례도 더한다.
 
 ### 10.4 AI 호출
@@ -318,6 +318,8 @@ AI 없이 사람이 끝까지 가는 결정적 경로(계획 1). AI 층은 아�
 - 번호 칸의 값·가릴 길이·내용은 `get_number`·`get_hidden_len`·`strip_number`만 읽는다 — 새 문장 기본 글·변경 종류·문장 검사(`decisions`), 결과물 A 원문 칸·위치(`outputs`), 문서 보기(`routers/sop_documents._to_number_out`)가 함께 쓴다.
 - AI 입력 글은 번호를 품은 `text` 그대로다(§11-8).
 - 따라 고치기 `plan_follow`는 프런트 `lib/number-model.ts` `planFollow`가 미리 보기에 사본으로 쓰니 규칙을 바꾸면 함께 고친다(두 쪽 시험이 같은 사례다).
+- 벗긴 표 번호 이어 매기기(11-23 명세 D1, Alembic 없음): Old 표를 벗기는 요청(`set_layout_table` · `set_layout_tables`)은 그 편집 뒤 `editing.continue_numbers`가 편집 기록 하나(`op = "continue_numbers"`, `number_changes`만)를 더 남긴다 — 되돌리기 두 칸(번호 → 다시 표로), Assign 단계도 둘. 규칙은 순수 함수 `plan_continue`(위 번호 `find_parent_number`: 표 밖의 가장 가까운 같은 언어 숫자 번호, 본문 번호의 부모가 앞에 있으면 부모 — 제목 5 · 본문 5.1 · 표 → 5.2)이고 행 첫 칸의 사람이 고치지 않은 숫자 칸 번호(`NUMBER_CELL`)만 바꾼다. New는 매기지 않는다. 문단 Excel은 이어 매긴 칸 번호(`paragraph_excel.is_continued_number`)를 칸 번호처럼 표 안에만 두고 Number note에 `Original 1`. 프런트 사본 `lib/continue-number-model.ts`.
+- 합치면 뒤 번호 당기기(D1-R6): Old의 `merge` · `merge_rows`는 같은 편집에서 같은 목록(`_load_number_siblings` — 따라 고치기와 같은 후보)의 뒤 번호를 `plan_pull`로 당기고(사라진 줄의 아래 줄은 남은 줄 아래로), `unmerge`는 되살린 마지막 줄부터 `plan_follow`로 다시 센다. New는 당기지 않는다.
 - 레이아웃 표의 번호만 든 칸은 `segment.build_unit_drafts`가 같은 행 첫 줄의 범위 앞에 붙인다.
 
 ### 12.12 입력 글자의 NUL·서로게이트 `schemas.NO_NUL`/`NoNulStr`

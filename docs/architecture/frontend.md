@@ -154,3 +154,4 @@ SOP 화면: `api-sop.ts`(SOP API 호출·응답 타입), 화면 규칙은 순수
 - 용지(`components/paper/paper.tsx`)는 `model.hasNumberRanges`일 때 번호 칸(`number-cell.tsx`)에 그 줄의 번호를 보이고 번호 범위를 가리며(`lib/number-model.ts` `getHiddenEnds`), 옛 추출은 전처럼 절 첫 줄의 번호만 가린다(`strip-pill-model.ts`).
 - New 초안의 원문은 번호를 뺀 내용이다(`classify-model.ts` `getContent`).
 - 따라 고치기 미리 보기 `planFollow`는 서버 `numbering.plan_follow`의 사본이라 함께 고친다.
+- 벗긴 표 번호 이어 매기기(11-23 명세 D1)는 서버가 Old 표를 벗길 때 매기고(편집 `continue_numbers`, 되돌리기 한 칸), `lib/continue-number-model.ts`(`findParentNumber` · `planContinue`)가 서버 `numbering.find_parent_number` · `plan_continue`의 사본이다(`rule-cases.json` `plan_continue`). 번호 칸 창의 연속 제안 `number-kind-model.suggestUnitContinuous`는 벗긴 표 줄이면 위 번호 아래 다음 순번(제목 5 아래 → 5.1)을 낸다.

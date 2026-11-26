@@ -5,8 +5,9 @@
 
 import { describe, expect, it } from "vitest";
 
-import type { NumberStyle } from "./api-sop";
+import type { NumberStyle, UnitLang } from "./api-sop";
 import { buildBlockPlaces, readCaptionHead } from "./caption-slot-model";
+import { planContinue } from "./continue-number-model";
 import { MAX_NUMBER_CHARS, planFollow } from "./number-model";
 import cases from "./rule-cases.json";
 import { getRowLevels, MAX_LEVEL } from "./strip-pill-model";
@@ -34,6 +35,11 @@ describe("rule cases shared with the backend", () => {
 
   it.each(cases.plan_follow)("planFollow($numbers, $index, $next) matches numbering.plan_follow", ({ numbers, index, next, follow }) => {
     expect(toRecord(planFollow(numbers, index, next))).toEqual(follow);
+  });
+
+  it.each(cases.plan_continue.map((c, i) => ({ ...c, i })))("planContinue case $i matches numbering.plan_continue", ({ lines, table_id, changes }) => {
+    const flow = lines.map((line) => ({ number: line.number, lang: line.lang as UnitLang, kind: line.kind, tableId: line.table_id, isCell: line.is_cell }));
+    expect(toRecord(planContinue(flow, table_id))).toEqual(changes);
   });
 
   it.each(cases.bullet_depths)("getSectionDepths bullet lines match outputs.get_bullet_depths", ({ items, depths }) => {

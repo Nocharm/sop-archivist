@@ -14,7 +14,7 @@ from typing import Any
 
 from app.sop import constants
 from app.sop.caption_slot import PlaceBlock, build_block_places
-from app.sop.numbering import MAX_NUMBER_CHARS, MAX_ROW_LEVEL, LevelRow, build_row_levels, plan_follow
+from app.sop.numbering import MAX_NUMBER_CHARS, MAX_ROW_LEVEL, FlowLine, LevelRow, build_row_levels, plan_continue, plan_follow
 from app.sop.outputs import get_bullet_depths, number_lines
 from app.sop.renumber import FIGURE_CAPTION_RE, TABLE_CAPTION_RE
 from app.sop.unwrap_order import order_unwrapped, order_unwrapped_lines
@@ -49,6 +49,27 @@ PLAN_FOLLOW_INPUTS: list[tuple[list[str | None], int, str]] = [
     (["A.", "B.", "C."], 1, "F."),
     (["1", "2", "3"], 2, "9"),
     (["1", "2"], 0, "x"),
+    (["5.1", "5.2", "5.4"], 1, "5.2"),  # D1 answer table: 5.2 + 5.3 merged, the rest is pulled
+]
+
+# Unwrapped table numbering (numbering.plan_continue, 11-23 spec D1): (number, lang, kind, table_id, is_cell) per line; table 9 is unwrapped.
+_H, _B, _C = "heading", "sentence", "cell_sentence"
+PLAN_CONTINUE_INPUTS: list[list[tuple[str | None, str, str, int | None, bool]]] = [
+    [("5", "ko", _H, None, False), ("1", "ko", _C, 9, True), ("2", "ko", _C, 9, True), ("3", "ko", _C, 9, True)],
+    [("5", "ko", _H, None, False), ("5.1", "ko", _C, 8, False), ("5.2", "ko", _C, 8, False), ("5.3", "ko", _C, 8, False),
+     ("1", "ko", _C, 9, True), ("2", "ko", _C, 9, True)],  # second table under the same heading goes on
+    [("5", "ko", _H, None, False), ("5.1", "ko", _B, None, False), ("1", "ko", _C, 9, True), ("2", "ko", _C, 9, True)],
+    [("5.2", "ko", _B, None, False), ("1", "ko", _C, 9, True), ("2", "ko", _C, 9, True)],  # no 5 above: under 5.2
+    [("5", "ko", _H, None, False), ("1)", "ko", _B, None, False), ("1", "ko", _C, 9, True), ("2", "ko", _C, 9, True)],
+    [("5", "ko", _H, None, False), ("•", "ko", _B, None, False), ("1", "ko", _C, 9, True), ("2", "ko", _C, 9, True)],
+    [("1", "ko", _C, 9, True), ("2", "ko", _C, 9, True), ("3", "ko", _C, 9, True)],  # no number above: as is
+    [("5", "ko", _H, None, False), ("5.1", "ko", _B, None, False), ("5", "en", _H, None, False), ("1", "en", _C, 9, True),
+     ("2", "en", _C, 9, True)],  # the English half counts on its own
+    [("5", "ko", _H, None, False), ("5", "en", _H, None, False), ("1", "ko", _C, 9, True), ("1", "en", _C, 9, True),
+     ("2", "ko", _C, 9, True), ("2", "en", _C, 9, True)],  # alternating languages share the numbers
+    [("5", "ko", _H, None, False), ("7", "ko", _C, 9, False), ("1", "ko", _C, 9, True)],  # a number a person fixed stays
+    [("5.", "ko", _H, None, False), ("1.", "ko", _C, 9, True), ("1.1", "ko", _C, 9, True), ("2", "ko", _C, 9, True),
+     ("•", "ko", _C, 9, False), ("A-1", "ko", _C, 9, True)],  # trailing dot, deeper cell, other kinds
 ]
 
 # (number_style, indent_level) per line of one section; bullet lines count apart from numbered ones.
@@ -147,6 +168,19 @@ def build_rule_cases() -> dict[str, Any]:
                 "follow": {str(k): v for k, v in sorted(plan_follow(numbers, index, new).items())},
             }
             for numbers, index, new in PLAN_FOLLOW_INPUTS
+        ],
+        "plan_continue": [
+            {
+                "lines": [
+                    {"number": number, "lang": lang, "kind": kind, "table_id": table_id, "is_cell": is_cell}
+                    for number, lang, kind, table_id, is_cell in lines
+                ],
+                "table_id": 9,
+                "changes": {
+                    str(k): v for k, v in sorted(plan_continue([FlowLine(*line) for line in lines], 9).items())
+                },
+            }
+            for lines in PLAN_CONTINUE_INPUTS
         ],
         "block_places": _build_place_cases(),
         "caption_heads": [

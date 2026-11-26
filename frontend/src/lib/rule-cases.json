@@ -255,6 +255,455 @@
       "index": 0,
       "next": "x",
       "follow": {}
+    },
+    {
+      "numbers": [
+        "5.1",
+        "5.2",
+        "5.4"
+      ],
+      "index": 1,
+      "next": "5.2",
+      "follow": {
+        "2": "5.3"
+      }
+    }
+  ],
+  "plan_continue": [
+    {
+      "lines": [
+        {
+          "number": "5",
+          "lang": "ko",
+          "kind": "heading",
+          "table_id": null,
+          "is_cell": false
+        },
+        {
+          "number": "1",
+          "lang": "ko",
+          "kind": "cell_sentence",
+          "table_id": 9,
+          "is_cell": true
+        },
+        {
+          "number": "2",
+          "lang": "ko",
+          "kind": "cell_sentence",
+          "table_id": 9,
+          "is_cell": true
+        },
+        {
+          "number": "3",
+          "lang": "ko",
+          "kind": "cell_sentence",
+          "table_id": 9,
+          "is_cell": true
+        }
+      ],
+      "table_id": 9,
+      "changes": {
+        "1": "5.1",
+        "2": "5.2",
+        "3": "5.3"
+      }
+    },
+    {
+      "lines": [
+        {
+          "number": "5",
+          "lang": "ko",
+          "kind": "heading",
+          "table_id": null,
+          "is_cell": false
+        },
+        {
+          "number": "5.1",
+          "lang": "ko",
+          "kind": "cell_sentence",
+          "table_id": 8,
+          "is_cell": false
+        },
+        {
+          "number": "5.2",
+          "lang": "ko",
+          "kind": "cell_sentence",
+          "table_id": 8,
+          "is_cell": false
+        },
+        {
+          "number": "5.3",
+          "lang": "ko",
+          "kind": "cell_sentence",
+          "table_id": 8,
+          "is_cell": false
+        },
+        {
+          "number": "1",
+          "lang": "ko",
+          "kind": "cell_sentence",
+          "table_id": 9,
+          "is_cell": true
+        },
+        {
+          "number": "2",
+          "lang": "ko",
+          "kind": "cell_sentence",
+          "table_id": 9,
+          "is_cell": true
+        }
+      ],
+      "table_id": 9,
+      "changes": {
+        "4": "5.4",
+        "5": "5.5"
+      }
+    },
+    {
+      "lines": [
+        {
+          "number": "5",
+          "lang": "ko",
+          "kind": "heading",
+          "table_id": null,
+          "is_cell": false
+        },
+        {
+          "number": "5.1",
+          "lang": "ko",
+          "kind": "sentence",
+          "table_id": null,
+          "is_cell": false
+        },
+        {
+          "number": "1",
+          "lang": "ko",
+          "kind": "cell_sentence",
+          "table_id": 9,
+          "is_cell": true
+        },
+        {
+          "number": "2",
+          "lang": "ko",
+          "kind": "cell_sentence",
+          "table_id": 9,
+          "is_cell": true
+        }
+      ],
+      "table_id": 9,
+      "changes": {
+        "2": "5.2",
+        "3": "5.3"
+      }
+    },
+    {
+      "lines": [
+        {
+          "number": "5.2",
+          "lang": "ko",
+          "kind": "sentence",
+          "table_id": null,
+          "is_cell": false
+        },
+        {
+          "number": "1",
+          "lang": "ko",
+          "kind": "cell_sentence",
+          "table_id": 9,
+          "is_cell": true
+        },
+        {
+          "number": "2",
+          "lang": "ko",
+          "kind": "cell_sentence",
+          "table_id": 9,
+          "is_cell": true
+        }
+      ],
+      "table_id": 9,
+      "changes": {
+        "1": "5.2.1",
+        "2": "5.2.2"
+      }
+    },
+    {
+      "lines": [
+        {
+          "number": "5",
+          "lang": "ko",
+          "kind": "heading",
+          "table_id": null,
+          "is_cell": false
+        },
+        {
+          "number": "1)",
+          "lang": "ko",
+          "kind": "sentence",
+          "table_id": null,
+          "is_cell": false
+        },
+        {
+          "number": "1",
+          "lang": "ko",
+          "kind": "cell_sentence",
+          "table_id": 9,
+          "is_cell": true
+        },
+        {
+          "number": "2",
+          "lang": "ko",
+          "kind": "cell_sentence",
+          "table_id": 9,
+          "is_cell": true
+        }
+      ],
+      "table_id": 9,
+      "changes": {
+        "2": "5.1",
+        "3": "5.2"
+      }
+    },
+    {
+      "lines": [
+        {
+          "number": "5",
+          "lang": "ko",
+          "kind": "heading",
+          "table_id": null,
+          "is_cell": false
+        },
+        {
+          "number": "•",
+          "lang": "ko",
+          "kind": "sentence",
+          "table_id": null,
+          "is_cell": false
+        },
+        {
+          "number": "1",
+          "lang": "ko",
+          "kind": "cell_sentence",
+          "table_id": 9,
+          "is_cell": true
+        },
+        {
+          "number": "2",
+          "lang": "ko",
+          "kind": "cell_sentence",
+          "table_id": 9,
+          "is_cell": true
+        }
+      ],
+      "table_id": 9,
+      "changes": {
+        "2": "5.1",
+        "3": "5.2"
+      }
+    },
+    {
+      "lines": [
+        {
+          "number": "1",
+          "lang": "ko",
+          "kind": "cell_sentence",
+          "table_id": 9,
+          "is_cell": true
+        },
+        {
+          "number": "2",
+          "lang": "ko",
+          "kind": "cell_sentence",
+          "table_id": 9,
+          "is_cell": true
+        },
+        {
+          "number": "3",
+          "lang": "ko",
+          "kind": "cell_sentence",
+          "table_id": 9,
+          "is_cell": true
+        }
+      ],
+      "table_id": 9,
+      "changes": {}
+    },
+    {
+      "lines": [
+        {
+          "number": "5",
+          "lang": "ko",
+          "kind": "heading",
+          "table_id": null,
+          "is_cell": false
+        },
+        {
+          "number": "5.1",
+          "lang": "ko",
+          "kind": "sentence",
+          "table_id": null,
+          "is_cell": false
+        },
+        {
+          "number": "5",
+          "lang": "en",
+          "kind": "heading",
+          "table_id": null,
+          "is_cell": false
+        },
+        {
+          "number": "1",
+          "lang": "en",
+          "kind": "cell_sentence",
+          "table_id": 9,
+          "is_cell": true
+        },
+        {
+          "number": "2",
+          "lang": "en",
+          "kind": "cell_sentence",
+          "table_id": 9,
+          "is_cell": true
+        }
+      ],
+      "table_id": 9,
+      "changes": {
+        "3": "5.1",
+        "4": "5.2"
+      }
+    },
+    {
+      "lines": [
+        {
+          "number": "5",
+          "lang": "ko",
+          "kind": "heading",
+          "table_id": null,
+          "is_cell": false
+        },
+        {
+          "number": "5",
+          "lang": "en",
+          "kind": "heading",
+          "table_id": null,
+          "is_cell": false
+        },
+        {
+          "number": "1",
+          "lang": "ko",
+          "kind": "cell_sentence",
+          "table_id": 9,
+          "is_cell": true
+        },
+        {
+          "number": "1",
+          "lang": "en",
+          "kind": "cell_sentence",
+          "table_id": 9,
+          "is_cell": true
+        },
+        {
+          "number": "2",
+          "lang": "ko",
+          "kind": "cell_sentence",
+          "table_id": 9,
+          "is_cell": true
+        },
+        {
+          "number": "2",
+          "lang": "en",
+          "kind": "cell_sentence",
+          "table_id": 9,
+          "is_cell": true
+        }
+      ],
+      "table_id": 9,
+      "changes": {
+        "2": "5.1",
+        "3": "5.1",
+        "4": "5.2",
+        "5": "5.2"
+      }
+    },
+    {
+      "lines": [
+        {
+          "number": "5",
+          "lang": "ko",
+          "kind": "heading",
+          "table_id": null,
+          "is_cell": false
+        },
+        {
+          "number": "7",
+          "lang": "ko",
+          "kind": "cell_sentence",
+          "table_id": 9,
+          "is_cell": false
+        },
+        {
+          "number": "1",
+          "lang": "ko",
+          "kind": "cell_sentence",
+          "table_id": 9,
+          "is_cell": true
+        }
+      ],
+      "table_id": 9,
+      "changes": {
+        "2": "5.1"
+      }
+    },
+    {
+      "lines": [
+        {
+          "number": "5.",
+          "lang": "ko",
+          "kind": "heading",
+          "table_id": null,
+          "is_cell": false
+        },
+        {
+          "number": "1.",
+          "lang": "ko",
+          "kind": "cell_sentence",
+          "table_id": 9,
+          "is_cell": true
+        },
+        {
+          "number": "1.1",
+          "lang": "ko",
+          "kind": "cell_sentence",
+          "table_id": 9,
+          "is_cell": true
+        },
+        {
+          "number": "2",
+          "lang": "ko",
+          "kind": "cell_sentence",
+          "table_id": 9,
+          "is_cell": true
+        },
+        {
+          "number": "•",
+          "lang": "ko",
+          "kind": "cell_sentence",
+          "table_id": 9,
+          "is_cell": false
+        },
+        {
+          "number": "A-1",
+          "lang": "ko",
+          "kind": "cell_sentence",
+          "table_id": 9,
+          "is_cell": true
+        }
+      ],
+      "table_id": 9,
+      "changes": {
+        "1": "5.1.",
+        "2": "5.1.1",
+        "3": "5.2"
+      }
     }
   ],
   "block_places": [
