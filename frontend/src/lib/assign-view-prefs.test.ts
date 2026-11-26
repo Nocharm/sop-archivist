@@ -1,7 +1,7 @@
 // Assign 보기 설정 - 문서별 확대와 폭을 사람마다 브라우저에 기억한다. 저장소가 없거나 값이 이상하면 기본값.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { readAssignView, readSpacePreviewOpens, writeAssignView, writeSpacePreviewOpens } from "./assign-view-prefs";
+import { readAssignView, readSpacePreviewOpens, readSpaceSheetHeight, writeAssignView, writeSpacePreviewOpens, writeSpaceSheetHeight } from "./assign-view-prefs";
 
 const SIDE_DEFAULTS = { sideFloat: false, sideX: null, sideY: null, sideFolded: false };
 
@@ -83,5 +83,19 @@ describe("assign view prefs", () => {
       throw new Error("blocked");
     });
     expect(() => writeSpacePreviewOpens(3)).not.toThrow();
+  });
+
+  it("remembers the Space sheet height, default when unknown, clamped when out of range, safe when blocked", () => {
+    expect(readSpaceSheetHeight()).toBe(0.7);
+    writeSpaceSheetHeight(0.5);
+    expect(readSpaceSheetHeight()).toBe(0.5);
+    window.localStorage.setItem("sopa.assign.spaceHeight", "5");
+    expect(readSpaceSheetHeight()).toBe(0.9);
+    window.localStorage.setItem("sopa.assign.spaceHeight", "junk");
+    expect(readSpaceSheetHeight()).toBe(0.7);
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new Error("blocked");
+    });
+    expect(() => writeSpaceSheetHeight(0.4)).not.toThrow();
   });
 });

@@ -4,7 +4,22 @@ import type { ChangeType, PreviewSheet, TargetDocType } from "@/lib/api-sop";
 import { getFrozenCount, type SheetDraft } from "@/lib/sheet-view-model";
 
 export const TAP_MS = 250; // 이보다 짧게 누르고 그사이 끌지 않았으면 "짧게 탁" - 열어 두거나(닫힌 데서) 닫는다(열어 둔 데서)
+export const SHEET_HEIGHT_MIN = 0.3; // 시트 높이 비율(작업 화면 높이 대비 0~1)의 아래 한계 - 이보다 낮으면 머리 · 바닥만 남는다
+export const SHEET_HEIGHT_MAX = 0.9; // 위 한계 - 위쪽 도구 줄이 조금은 보이게
+export const SHEET_HEIGHT_DEFAULT = 0.7; // 처음 높이 비율 - 이 값이 시트 높이의 유일한 기본값이다
 export const HINT_OPENS = 3; // 닫혀 있을 때의 작은 안내는 이만큼 열어 볼 때까지만 보인다
+
+/** 시트 높이 비율을 한계 안으로 - 숫자가 아니면 기본값 */
+export function clampSheetHeight(ratio: number): number {
+  if (!Number.isFinite(ratio)) return SHEET_HEIGHT_DEFAULT;
+  return Math.min(Math.max(ratio, SHEET_HEIGHT_MIN), SHEET_HEIGHT_MAX);
+}
+
+/** 끈 자리(clientY)에서 시트 높이 비율 - 시트는 작업 화면 바닥에 붙어 있어 (바닥 - 끈 자리) / 작업 화면 높이다 */
+export function readDragHeight(clientY: number, parentBottom: number, parentHeight: number): number {
+  if (!(parentHeight > 0)) return SHEET_HEIGHT_DEFAULT;
+  return clampSheetHeight((parentBottom - clientY) / parentHeight);
+}
 
 /** closed · held(누르는 동안) · kept(열어 둠) · keptHeld(열어 둔 채 다시 누르는 동안) */
 export type SpacePhase = "closed" | "held" | "kept" | "keptHeld";

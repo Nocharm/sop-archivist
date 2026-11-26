@@ -237,3 +237,7 @@
 ## 2026-11-27 — F9b 연습 화면 말풍선 (feat/practice-coach)
 
 - 시안 A(스포트라이트) + 완료 플립(사용자 11-27). 오른쪽 과제 칸 · 좁은 창 접기를 지우고 `practice-coach.tsx` · 자리 셈 `coach-place.ts` · 공용 훅 `use-target-rect.ts`(effect 1, 화면 쪽 effect · 타이머 0, 넘어가기는 `animationend`). 막은 클릭을 막지 않는다.
+
+## 2026-11-27 — Space 시트 높이 끌기 (F10, v1.6.45)
+
+- Space 시트 위 손잡이를 끌어 작업 화면 높이의 30~90%로 조절하고 보기 설정에 기억한다(사용자 11-27, 이번 정식 업데이트에). 비율 기준은 시트가 아니라 작업 화면(손잡이 offsetParent 버그 고침), 스모크 `assign: Space preview`에 끌기 단계.

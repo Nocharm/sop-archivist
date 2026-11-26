@@ -43,7 +43,7 @@
 | Fm | `fix/user-menu-close-on-nav` | 합침 | v1.6.41 · bc8c35f3 | vitest 2743 · build 경고 0 · baseline `account` 스모크 ALL PASS(새 검사 'user menu closes after navigating from an item') · 검토 생략(작은 일) | AI 작업 팝오버가 이동 뒤 닫히는 것은 스모크에 없음 |
 | Fh | `fix/assign-new-head-fit` | 합침 | v1.6.43 · 62f34e6c | vitest 2808 · build 경고 0 · `assign:` + `practice:` ALL PASS 1572 · overlap 새 장면 4/4(고치기 전 dev 코드에서 16 실패 확인) · Assign 장면 다섯 1120/1440 20/20 · 검토 생략(CSS · 작은 일) | — |
 | F9b | `feat/practice-coach` | 합침 | v1.6.44 · c6831dfd | vitest 2832 · build 경고 0 · `practice:` ALL PASS 56(첫 실행) · overlap `assign-pane-head-narrow` 4/4 · 그림 `practice` 다시 · 검토 생략(연습 화면만, Assign 파일 변경 없음) | 그림 `/private/tmp/claude-501/-Users-hyeonjin-Documents-sop-archivist/cd35c95b-037a-4e82-bb7a-e837e4859e96/scratchpad/shots/coach/`(1440 en 앞면 · 뒤집힘 · 다음, 1120 ko) |
-| F10 | `feat/space-sheet-resize` | 대기 |  | vitest(space-preview-model · assign-view-prefs · source-rules · i18n · manual) · lint · tsc · `assign: Space preview` ALL PASS 41(새 단계 "dragging the grip resizes…") · 검토: 지휘 세션이 diff 봄(손잡이 offsetParent 버그 고침) | Space 시트 높이 끌기 30~90% 기억(사용자 11-27, 이번 업데이트에). 워크트리 `../sop-wt-space-sheet-resize`, 커밋 9ac2b4f0 |
+| F10 | `feat/space-sheet-resize` | 합침 | v1.6.45 · 9ac2b4f0 | vitest(space-preview-model · assign-view-prefs · source-rules · i18n · manual) · lint · tsc · `assign: Space preview` ALL PASS 41 · 검토: 지휘 세션이 diff 봄 | — |
 | F11 | `feat/original-view`(모음) | 진행 |  |  | Space 시트 "원본 보기" 탭 — 원본 DOCX 인쇄 미리보기 + 고른 문단 따라가기(사용자 11-27 승인, 이번 업데이트에). 설계 `docs/superpowers/specs/2026-11-27-original-view-design.md`(모음 브랜치), 시작 프롬프트 `~/Documents/sop-orchestration/original-view-next.md` |
 
 

@@ -5,6 +5,8 @@ import type { PreviewRow } from "@/lib/api-sop";
 
 import {
   buildSheetDraft,
+  clampSheetHeight,
+  readDragHeight,
   countDataRows,
   findSheetUnit,
   pickSheetAnchor,
@@ -181,5 +183,21 @@ describe("buildSheetDraft", () => {
       change: "= · Modified",
     });
     expect(buildSheetDraft({ docType: "wi", docCode: "WI-1", docTitle: "", place: "1 Step · Instruction", texts: [], changes: ["heading"] })).toMatchObject({ destination: "WI", change: "Slot heading" });
+  });
+});
+
+describe("sheet height", () => {
+  it("clamps the ratio to 0.3..0.9 and falls back to 0.7 for non-numbers", () => {
+    expect(clampSheetHeight(0.5)).toBe(0.5);
+    expect(clampSheetHeight(0.1)).toBe(0.3);
+    expect(clampSheetHeight(1.4)).toBe(0.9);
+    expect(clampSheetHeight(Number.NaN)).toBe(0.7);
+  });
+
+  it("reads the ratio from the pointer, measured from the work area bottom", () => {
+    expect(readDragHeight(500, 1000, 1000)).toBe(0.5);
+    expect(readDragHeight(100, 1000, 1000)).toBe(0.9);
+    expect(readDragHeight(990, 1000, 1000)).toBe(0.3);
+    expect(readDragHeight(500, 1000, 0)).toBe(0.7);
   });
 });
