@@ -4153,7 +4153,8 @@ await runStep("assign: a written New document opens on its own with the same too
   check("the one-document list also offers the written New document", true);
   await page.locator('[data-testid="assign-view-two"]').click();
   await wait(page, "assign-new");
-  check("two documents closes it - the left side is an Old document again", (await page.locator('[data-testid="assign-solo"]').count()) === 0 && (await getText(page, "assign-old-tag")) === "Old");
+  // 한 단을 닫아도 New 고름은 남는다(쪼개기 먼저 §8 - 마지막에 누른 New 박스의 다듬기가 오른쪽 칸 assign-solo에 그대로) - 닫힌 것은 한 단 보기로 본다
+  check("two documents closes it - the left side is an Old document again", (await page.locator(".assign-panes").getAttribute("data-single")) === null && (await getText(page, "assign-old-tag")) === "Old");
 });
 
 // 양 단에서 New 문장 바로 다듬기(v1.0.29) - Old 줄을 고르지 않은 채 New 문장을 누르면 그 문장이 골라지고, 그 자리에서 자르고 되돌린다. Old 줄을 고른 채면 그 박스 아래 단추 줄이 잇기를 보인다
