@@ -8710,8 +8710,10 @@ await runStep("assign: follow the Korean table with AI when the rows differ", { 
   const koLines = linesOf(await readView(), koTable.id);
   let worked = koLines.length === 4;
   for (const [index, number] of ["5.1", "5.2", "5.3"].entries()) worked = worked && (await edit({ type: "set_number", unit_id: koLines[index].id, number, follow: false })).ok();
+  // 토큰이 없는 표는 점수가 임계값 아래라 짝이 안 잡힌다 - 사람이 짝 표를 먼저 정한다(D2-R3 → R9)
+  const picked = await page.request.put(`${api}/documents/${doc.id}/tables/${enTable.id}/counterpart`, { headers, data: { source_table_id: koTable.id } });
   const plan = await (await page.request.get(`${api}/documents/${doc.id}/tables/${enTable.id}/follow`, { headers })).json();
-  check("rows without shared tokens go to the AI way, not the rule way", uploaded.status() === 201 && unwrapOk && worked && plan.mode === "ai" && plan.items.length === 0, JSON.stringify(plan));
+  check("rows without shared tokens go to the AI way, not the rule way", uploaded.status() === 201 && unwrapOk && worked && picked.ok() && plan.mode === "ai" && plan.items.length === 0, JSON.stringify(plan));
   const enLines = linesOf(await readView(), enTable.id);
   await page.goto(`${BASE}/bundles/${created.id}/assign`);
   await wait(page, "assign-bar");
