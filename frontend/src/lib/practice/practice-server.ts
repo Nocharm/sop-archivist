@@ -49,7 +49,17 @@ export type PracticeWriteRoute =
 
 /** 한 일 기록 한 줄 - 과제 판정이 읽는다. append-only라 되돌려도 줄지 않는다(D9) */
 export type PracticeLogEntry =
-  | { route: PracticeWriteRoute; editType?: string; undoOp?: string; action?: string; unitIds: number[] }
+  | {
+      route: PracticeWriteRoute;
+      editType?: string;
+      undoOp?: string;
+      action?: string;
+      unitIds: number[];
+      /** 되돌리기 메타의 focus_target_id - 잇기 길만 싣는다(잇기 · 카드 확정을 가른다, D22) */
+      focusTargetId?: number;
+      /** 한/영 짝 둘을 한 문장으로 합친 merge(⇧P의 첫걸음) - 합치기(⇧J) 과제로 세지 않는다 */
+      isPairJoin?: boolean;
+    }
   | { act: PracticeAct };
 
 /** 과제 칸이 useSyncExternalStore로 읽는 값 - 쓰기 · 손짓마다 새 객체(판 번호가 오른다) */
@@ -154,7 +164,13 @@ const ROUTES: Route[] = [
       return {
         status: 200,
         body: saveGroup(state, input),
-        entry: { route: "groups/save", action: input.action, undoOp: input.undo?.op, unitIds: input.units.map((unit) => unit.unit_id) },
+        entry: {
+          route: "groups/save",
+          action: input.action,
+          undoOp: input.undo?.op,
+          unitIds: input.units.map((unit) => unit.unit_id),
+          ...(input.undo?.focus_target_id === undefined ? {} : { focusTargetId: input.undo.focus_target_id }),
+        },
       };
     },
   },
@@ -185,11 +201,13 @@ const ROUTES: Route[] = [
     pattern: new RegExp(String.raw`^${BUNDLE}/documents/(\d+)/edits$`),
     handle: ({ state, match, body }) => {
       const input = body as EditBody;
-      const result = applyEdit(state, readId(match, 2), input);
       const op = input.op;
+      // 합치기 전의 보기로 본다 - 합친 뒤에는 짝이 지워진다
+      const isPairJoin = op.type === "merge" && hasDocument(state, readId(match, 2)) && isPairUnits(readView(state, readId(match, 2)).units, op.unit_ids);
+      const result = applyEdit(state, readId(match, 2), input);
       const unitIds = "unit_ids" in op ? op.unit_ids : "unit_id" in op ? [op.unit_id] : result.retired_unit_ids;
       const editType = op.type === "set_layout_table" && op.is_layout ? "set_layout_table:unwrap" : op.type;
-      return { status: 200, body: result, entry: { route: "edits", editType, undoOp: input.undo?.op, unitIds } };
+      return { status: 200, body: result, entry: { route: "edits", editType, undoOp: input.undo?.op, unitIds, ...(isPairJoin ? { isPairJoin } : {}) } };
     },
   },
   {
@@ -220,6 +238,12 @@ const ROUTES: Route[] = [
 
 /** 가짜 서버가 흉내 내는 경로 수 - 시험이 설계 §5의 25와 맞춘다 */
 export const PRACTICE_ROUTE_COUNT = ROUTES.length;
+
+/** 합칠 Unit 모두가 같은 짝이다 */
+function isPairUnits(units: readonly { id: number; pair_id: number | null }[], unitIds: readonly number[]): boolean {
+  const pairIds = new Set(unitIds.map((id) => units.find((unit) => unit.id === id)?.pair_id ?? null));
+  return pairIds.size === 1 && !pairIds.has(null);
+}
 
 function replyStep(state: PracticeState, direction: "undo" | "redo"): Reply {
   const result = stepDecision(state, direction);

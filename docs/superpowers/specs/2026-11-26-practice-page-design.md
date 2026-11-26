@@ -54,7 +54,7 @@ T/F 사람이 실제 자료를 건드리지 않고 Assign의 손짓 열둘(고�
 | D19 | 과제 글의 글쇠는 `ASSIGN_KEYS`의 id로 적고 `formatAssignKey`로 그린다. | U3 "실제 글쇠는 keymap과 맞춘다". 시험이 id가 표에 있고 그 글쇠가 U3의 글쇠(J/K · Enter · ⇧H · U · ⇧J · ⇧P · ⇧T · Ctrl+Z · ?)와 같은지 본다 — 글쇠가 바뀌면 시험이 알리고 과제 글이 따라간다. |
 | D20 | **"빈 New"(U4)를 "아직 아무것도 이어지지 않은 New 문서"로 읽는다** — 문장은 있고(Old 짝 둘을 고쳐 쓴 글 · 그 밖의 두셋), 이음 · 확정은 하나도 없다. | 문장이 없는 New면 "New에 잇기" · "확정(Enter)"이 이을 상대가 없어 할 수 없다(숨긴 기능이 꺼진 Assign은 이미 쓴 New 문장에만 잇는다). 미리 확정한 줄도 두지 않아 처음 화면에 이음이 없다 — 그래서 "배정 취소"는 잇기나 확정을 먼저 한 뒤에 된다(과제 글이 그렇게 알린다, 순서 자유는 그대로). |
 | D21 | **"목차 삭제"(U3)는 저절로 삭제된 목차 블록에 사유를 적는 것(R, `set_noise_reason`)으로 판정한다.** 과제 글: 목차 블록이 이미 삭제로 접혀 있음을 보고, 블록을 골라 R로 사유를 적는다. | 지금 올리는 규칙(규칙 2)은 목차를 올릴 때 이미 삭제로 접는다(`noise_kind: "toc"`) — 사람이 할 일은 확인과 사유다. 목차를 일반 줄로 두고 Del로 지우게 하면 실제와 다른 화면을 가르친다. |
-| D22 | **"New에 잇기"와 "확정(Enter)"은 보내는 요청의 `undo.op`로 가른다**: 잇기 = Old · New를 고르고 단추 줄의 잇기(또는 끌어 놓기 · 양쪽 고른 Enter), 확정 = Old 줄 하나에서 추천 카드가 든 채 Enter(`planPrimary`의 첫 카드 확정). 스텝 4가 두 손짓의 실제 본문을 시험으로 고정한다(예상: `"link"` · `"confirm"`). | 둘 다 `groups/save`로 나간다. 사람에게는 다른 손짓이라 U3가 나눴다. |
+| D22 | **"New에 잇기"와 "확정(Enter)"은 보내는 요청의 되돌리기 메타 `focus_target_id`로 가른다**: 잇기 = Old · New를 고르고 단추 줄의 잇기(또는 끌어 놓기 · 양쪽 고른 Enter) — `sendLink`가 이은 New 문장을 `focus_target_id`로 싣는다. 확정 = Old 줄 하나에서 추천 카드가 든 채 Enter(`planPrimary`의 첫 카드 확정) — `sendSave`는 `focus_unit_id`만 싣는다. (스텝 4가 실제 본문을 시험으로 고정하며 고침 11-27 — 처음 짐작은 `undo.op` `"link"` · `"confirm"`이었으나 카드도 New 문장으로 가는 확정이라 `pickSaveOp`가 둘 다 `"link"`를 낸다) | 둘 다 `groups/save` · `action: "confirm"` · `op: "link"`로 나간다. 사람에게는 다른 손짓이라 U3가 나눴다. `practice-tasks.test.ts`가 두 보내기의 메타 줄을 소스로 붙들어, 바뀌면 판정을 다시 맞추라고 알린다. |
 | D23 | 브랜치는 **모음 브랜치** `feat/practice-page`에서 스텝 브랜치를 딴다(계획 문서). | 자료만 · 가짜 서버만 · 과제 없는 빈 화면만으로는 `dev`에서 확인할 것이 반쪽이다. |
 | D24 | 설명서는 `## 연습 화면 {#practice}` 조각 하나를 `## 시작하기 {#start}` 바로 뒤에 더한다(글은 스텝 3 · 4, 그림은 정식 업데이트 준비 때 장면 `practice`). | 도움말 단추가 여는 자리는 조각(`##`) 단위다(`getManualHref` · `MANUAL_PAGE_SECTION`). Map · History처럼 화면 하나가 조각 하나다. |
 
@@ -219,7 +219,7 @@ interface PracticeState {
 | `pairs/{p}` DELETE · `confirm` | 짝을 지우고 `pair_id`를 비움 · 상태만 `confirmed` | `{document_revision, pair}` |
 | `decisions/undo` · `redo` | D8 — 사진을 꺼내 되쓰고 반대쪽 스택에 지금 상태를 넣는다. 스택이 비면 백엔드가 쓰는 "되돌릴 것 없음" 거절을 그대로(스텝 2가 `decision_steps.py`에서 코드를 확인). | `{op, unit_ids, focus_unit_id, focus_target_id, scope_label, can_undo, can_redo, restored_decisions: true}` |
 
-모든 쓰기는 `log`에 `{route, editType?, undoOp?, action?, unitIds}`를 남기고 판 번호를 올린다. revision 검사 · 409 · 422 검증은 하지 않는다.
+모든 쓰기는 `log`에 `{route, editType?, undoOp?, action?, unitIds, focusTargetId?, isPairJoin?}`(뒤의 둘은 과제 판정용 — D22 · 짝 합치기)를 남기고 판 번호를 올린다. revision 검사 · 409 · 422 검증은 하지 않는다.
 
 ### 6.4 실제 서버로 새는 요청이 0임을 지키는 법
 
@@ -235,11 +235,11 @@ interface PracticeState {
 | # | id | 과제(en · ko 메시지) | 글쇠(`ASSIGN_KEYS` id) | 판정(`log`) | 설명서 |
 |---|---|---|---|---|---|
 | 1 | `pick` | 줄을 눌러 고르고 J · K로 옮겨 본다 | `move_next` · `move_prev` | 손짓 `key: move_next|move_prev` | `#assign` |
-| 2 | `link` | 짝 A를 고르고 오른쪽 New에서 A′를 골라 단추 줄의 잇기(또는 끌어 놓기) | – | `groups/save`, `undoOp: "link"`(D22) | `#assign-destination` |
-| 3 | `confirm` | 짝 B를 고르면 추천 카드가 뜬다 — Enter로 그 카드대로 확정 | `confirm` | `groups/save`, `action: "confirm"`, `undoOp: "confirm"`(D22) | `#assign-confirm` |
+| 2 | `link` | 짝 A를 고르고 오른쪽 New에서 A′를 골라 단추 줄의 잇기(또는 끌어 놓기) | – | `groups/save`, `undoOp: "link"` + `focusTargetId` 있음(D22) | `#assign-destination` |
+| 3 | `confirm` | 짝 B를 고르면 추천 카드가 뜬다 — Enter로 그 카드대로 확정 | `confirm` | `groups/save`, `action: "confirm"` + `focusTargetId` 없음(D22) | `#assign-confirm` |
 | 4 | `hold` | 짝 C에서 ⇧H, 사유를 적어 보류 | `hold` | `groups/save`, `action: "hold"` | `#assign-confirm` |
 | 5 | `unassign` | 이은 줄이나 확정한 줄을 고르고 U — 아직 없으면 2 · 3을 먼저 | `clear` | `decisions/clear` 또는 `decisions/bulk` `clear` | `#assign-confirm` |
-| 6 | `merge` | 끊긴 두 조각의 앞 조각에서 ⇧J를 두 번 | `merge_next` | `edits` `merge` | `#split-edit` |
+| 6 | `merge` | 끊긴 두 조각의 앞 조각에서 ⇧J를 두 번 | `merge_next` | `edits` `merge`(⇧P의 짝 합치기 `isPairJoin`은 빼고) | `#split-edit` |
 | 7 | `split` | 두 문장이 한 박스인 줄을 나눌 자리에서 두 번 눌러 선을 놓고 S | `split` | `edits` `split` | `#split-edit` |
 | 8 | `pair` | 짝 D에서 ⇧P로 한 문장이 되는 것을 보고, 다시 ⇧P로 한/영 짝으로 | `shape_mode` | `pairs` POST | `#split-pair` |
 | 9 | `unwrap` | 표를 고르고 ⇧T로 벗겨 줄로 본다(다시 ⇧T면 표로) | `table` | `edits` `set_layout_table` `is_layout: true` | `#assign-unwrap` |

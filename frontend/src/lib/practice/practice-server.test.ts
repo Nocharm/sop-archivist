@@ -3,6 +3,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ApiError } from "../api";
+import { buildRecommendations, mergeGroups } from "../assign-model";
+import { buildGroupSave } from "../classify-model";
+import { pickSaveOp } from "../decision-step-model";
+import { buildLinkSave } from "../link-save-model";
+import { planPrimary } from "../primary-model";
 import {
   clearDecisions,
   createPair,
@@ -28,10 +33,12 @@ import {
   undoDecision,
   type GroupSaveInput,
   type SaveOp,
+  type UnitRow,
 } from "../api-sop";
 import { PRACTICE_BUNDLE_ID, PRACTICE_PATH } from "../practice-route";
 
 import { PRACTICE_ROUTE_COUNT, handlePracticeRequest, notePracticeAct, readPracticeSnapshot, resetPracticeServer, subscribePractice, type PracticeLogEntry } from "./practice-server";
+import { listAchieved } from "./practice-tasks";
 import { TEST_OLD_DOC, TEST_TABLE, TEST_TARGETS, TEST_UNITS as U, buildPracticeTestFixture } from "./practice-test-fixture";
 
 const B = PRACTICE_BUNDLE_ID;
@@ -152,6 +159,47 @@ describe("practice requests never reach the real server", () => {
     expect(after.version).toBe(before.version + 3);
     expect(heard).toHaveBeenCalledTimes(4);
     expect(readPracticeSnapshot()).toBe(after);
+  });
+});
+
+// D22 - 잇기와 카드 확정은 둘 다 groups/save다. Assign의 실제 명령 모델로 지은 본문을 보내 기록이 어떻게 갈리는지 고정한다.
+// 되돌리기 메타는 use-assign-page.tsx의 sendLink · sendSave가 짓는 꼴 그대로(그 두 줄은 practice-tasks.test.ts가 소스로 붙든다)
+describe("link and card confirm land as different tasks (D22)", () => {
+  const toSource = (unit: UnitRow) => ({ id: unit.unit_id, kind: unit.kind, lang: unit.lang, text: unit.text, content_start: unit.content_start, revision: unit.decision.revision });
+
+  it("pins the bodies Assign's command models build", async () => {
+    const units = await listAllUnits(B, TEST_OLD_DOC);
+    const rowOf = (ids: number[]) => units.filter((unit) => ids.includes(unit.unit_id));
+    // 잇기: Old 짝 A를 고르고 New A′를 골라 단추 줄의 잇기 - link-save-model buildLinkSave, 메타는 sendLink(op link + 이은 문장)
+    const rowA = [U.pairAKo, U.pairAEn];
+    const link = buildLinkSave({ row: { unitIds: rowA }, units: rowOf(rowA), groups: [await getGroupByUnit(B, U.pairAKo), await getGroupByTarget(B, TEST_TARGETS.aPrime)], result: [TEST_TARGETS.aPrime], reason: "" });
+    if (link.kind !== "save") throw new Error("link should save");
+    await saveGroup(B, link.body, { session: SESSION, op: "link", focus_unit_id: rowA[0], focus_target_id: TEST_TARGETS.aPrime });
+    // 카드 확정: Old 짝 B 하나를 고른 채 Enter - primary-model planPrimary의 첫 카드, 메타는 sendSave(pickSaveOp + 고른 Unit만)
+    const rowB = [U.pairBKo, U.pairBEn];
+    const recommendations = buildRecommendations({ aiLinks: [], aiPlaces: [], identical: [], similar: await listNewCandidates(B, U.pairBKo) });
+    const plan = planPrimary({ canEdit: true, hasRow: true, destination: null, recommendations, blockKey: null, orderPreviewTableId: null });
+    if (plan.kind !== "confirm") throw new Error(`card confirm planned ${plan.kind}`);
+    const group = mergeGroups([await getGroupByUnit(B, U.pairBKo), await getGroupByTarget(B, TEST_TARGETS.bPrime)]);
+    const body = buildGroupSave({ destination: plan.destination, texts: {}, reason: "" }, { units: rowOf(rowB).map(toSource), group, tables: new Map() }, "confirm");
+    const op = pickSaveOp({ action: "confirm", destinationKind: plan.destination.kind, savedLinkIds: [], nextLinkIds: plan.destination.kind === "link" ? plan.destination.targetIds : [] });
+    await saveGroup(B, body, { session: SESSION, op, focus_unit_id: rowB[0] });
+
+    // 카드도 New 문장으로 가는 확정이라 op는 "link"다(설계가 처음 짐작한 "confirm"이 아니다) - 가르는 것은 이은 문장을 싣느냐다
+    expect(listWrites().map(({ action, undoOp, focusTargetId }) => [action, undoOp, focusTargetId ?? null])).toEqual([
+      ["confirm", "link", TEST_TARGETS.aPrime],
+      ["confirm", "link", null],
+    ]);
+    const log = readPracticeSnapshot().log;
+    expect([...listAchieved(log.slice(0, 1))]).toEqual(["link"]);
+    expect([...listAchieved(log.slice(1))]).toEqual(["confirm"]);
+  });
+
+  it("marks the Shift+P join of a pair so it is not the Merge task", async () => {
+    await editUnits(B, TEST_OLD_DOC, 3, { type: "merge", unit_ids: [U.pairAKo, U.pairAEn] }, false, { session: SESSION });
+    await editUnits(B, TEST_OLD_DOC, 4, { type: "merge", unit_ids: [U.brokenHead, U.brokenTail] }, false, { session: SESSION });
+    expect(listWrites().map((entry) => entry.isPairJoin ?? false)).toEqual([true, false]);
+    expect([...listAchieved(readPracticeSnapshot().log)]).toEqual(["merge"]);
   });
 });
 
