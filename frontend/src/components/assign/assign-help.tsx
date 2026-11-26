@@ -40,7 +40,8 @@ export function AssignHelp() {
         screen="assign"
         keys={keys}
         keysFooter={
-          <button type="button" className="btn ghost w-full" data-testid="assign-help-keyboard-map" onClick={() => setMapOpen(true)}>
+          // 창을 여는 단추라 마우스로 눌러도 포커스를 용지로 돌리지 않는다(returnsToPaper) - Esc로 닫으면 이 단추로 돌아온다
+          <button type="button" className="btn ghost w-full" aria-haspopup="dialog" data-testid="assign-help-keyboard-map" onClick={() => setMapOpen(true)}>
             {t("assign.kbd.open")}
           </button>
         }
