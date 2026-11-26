@@ -129,6 +129,12 @@ describe("start keeps the focus (rule 2)", () => {
 });
 
 describe("follow (rule 3)", () => {
+  // 화면의 runPairDrop이 놓은 Old 조각을 먼저 고르는 까닭 - 따라가기만으로는 New를 마지막에 누른 채라 오른쪽 칸이 New 다듬기에 남는다
+  it("an Old drop made while New was pressed last turns the panel to Old only as an Old press", () => {
+    const drop = (...press: FocusEvent[]) => run(pickNew(70), ...press, start(job("p"), "old"), succeed("p", 4), loaded([doc(1, 5, [3, 4])]));
+    expect(drop()).toMatchObject({ old: unit(4), last: "new" });
+    expect(drop(pickOld(3))).toMatchObject({ old: unit(4), last: "old" });
+  });
   it("picks the response's box once its document comes back at that revision", () => {
     const waiting = run(pick(unit(3)), start(job("a")), succeed("a", 10));
     // 일은 부른 쪽이 걷을 때까지 처리 중이다(응답 뒤 전환 · 다시 받기를 거는 동안)

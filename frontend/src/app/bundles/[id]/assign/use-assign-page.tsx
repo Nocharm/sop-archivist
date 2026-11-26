@@ -4219,6 +4219,8 @@ export function useAssignPage() {
     // 문서와 revision은 보던 Old 문서에서 - 양 단에서 New 문장을 다듬는 중이면 shapeView는 New 문서다
     const doc = oldView.document;
     const unitIds = drop.kind === "pair" ? drop.unitIds : [...(paperModel?.units.values() ?? [])].filter((unit) => unit.pair_id === drop.pairId).map((unit) => unit.id);
+    // 놓은 것은 Old 조각을 누른 것이다 - Old 쪽을 마지막에 누른 쪽으로 세워, 따라간 짝 줄이 오른쪽 칸에 서고 New 다듬기는 닫힌다(New 고름은 남는다)
+    if (unitIds.length > 0) pickOld({ kind: "unit", docId: doc.id, unitId: unitIds[0] });
     commands.enqueue({
       kind: "global",
       label: drop.kind === "pair" ? "assign.step.pair" : "assign.step.confirm_pair",
