@@ -89,7 +89,7 @@ export default function AssignPage() {
     oldPaneRef, bulk, setBulk, confirmingIdentical,
     setConfirmingIdentical, resetScope, setResetScope, slots, newDraft, draftSlotKey, placeResolved, canPlaceClick, pickedSpotKey,
     setCarvePick, carve, carveText, clearCarve, togglePairViewByButton, pairFrom, setPairFrom, mergeArm, pairSource, isLeftPairPick, isRightPairPick, captionPickBundle, setCaptionPick, selectToc, openNewCtxMenu,
-    openSolo, goToUnit, ctxGroups, bundleRefPending, isLinkedToWritten, captionPendingKeys, docDashboard, openCtxMenu, runUnitEdit,
+    openSolo, goToUnit, ctxSections, ctxSide, readCtxReach, bundleRefPending, isLinkedToWritten, captionPendingKeys, docDashboard, openCtxMenu, runUnitEdit,
     rewrapTable, unwrapTable, unwrapAi, newUnwrapAi, tableFollow, leftTools, rightTools, rightShape, describeEditConfirm, pairGrip, clearNoise, openNoiseReason, splitAtCut, handleOldDoubleClick, handleNewDoubleClick, carveShape,
     runCtx, revertHeadings, planJoinIn, joinIn, renderOldActions, confirmIdenticalAll, acceptAll,
     pressNewBox, renderPickBar, showNewDoc, jump, handleJoinPick, readJoinAfter, pickJoinMenu, handleFramePress, pickPlaceSpot, pickOwnAiLine, jumpToNew, openNewDoc,
@@ -902,13 +902,15 @@ export default function AssignPage() {
         </SideFloat>
       </div>
       {joinLineId === null && renderJoinMenu(false)}
-      {ctxMenu && ctxGroups && (
+      {ctxMenu && ctxSections && (
         <AssignContextMenu
           key={ctxMenu.seq}
           anchor={ctxMenu.anchor}
           readCover={() => (rowMap.get(ctxMenu.rowKey)?.unitIds ?? []).flatMap((id) => [...document.querySelectorAll<HTMLElement>(`[data-testid="assign-paper-piece-${id}"]`)])}
           click={ctxMenu.click}
-          groups={ctxGroups}
+          sections={ctxSections}
+          side={ctxSide}
+          readReach={readCtxReach}
           onPick={runCtx}
           onClose={() => setCtxMenu(null)}
         />

@@ -575,6 +575,38 @@ const bundleHeadScene = {
   },
 };
 
+// 표 칸 우클릭 메뉴(11-23 명세 C2) - 이 칸 · 이 표 두 구역이 화면 안에 있고 구역 머리 · 항목 글이 잘리지 않는다.
+// 표 칸이 있는 Old 문서를 ?edit=로 열어 칸을 우클릭만 한다(고르기만 하고 저장하지 않는다)
+const cellMenuScene = {
+  name: "assign-cell-menu",
+  user: "qa.member",
+  run: async (page, report) => {
+    const documents = await (await page.request.get(`${BASE}/api/bundles/${BUNDLE}/documents`, { headers: { "X-Dev-User": "qa.member" } })).json();
+    let cell = null;
+    for (const doc of documents) {
+      await page.goto(`${BASE}/bundles/${BUNDLE}/assign?edit=${doc.id}`);
+      await page.locator('[data-testid="assign-bar"]').waitFor({ timeout: T });
+      await page.waitForTimeout(800);
+      cell = page.locator('[data-testid="assign-old"] .cell-piece [data-testid^="assign-paper-unit-"]').first();
+      if ((await cell.count()) > 0) break;
+      cell = null;
+    }
+    if (cell === null) {
+      report("assign-cell-menu", "no document with a table cell");
+      return;
+    }
+    await cell.scrollIntoViewIfNeeded();
+    await cell.click({ button: "right" });
+    const menu = page.locator('[data-testid="assign-ctx-menu"]');
+    await menu.waitFor({ timeout: T });
+    await page.waitForTimeout(HOVER_SETTLE_MS);
+    if ((await page.locator('[data-testid="assign-ctx-section-cell"]').count()) === 0 || (await page.locator('[data-testid="assign-ctx-section-table"]').count()) === 0) report("assign-cell-menu", "the menu has no this-cell / this-table sections");
+    const hits = await findSpill(menu);
+    if (hits.length > 0) report("assign-cell-menu", hits.join(", "));
+    await page.keyboard.press("Escape");
+  },
+};
+
 // 떼는 오른쪽 칸(좁은 창) - 떠 있는 판이라 아래 글을 가리는 것은 맞다. 대신 붙어 있을 때 떼기 단추가 머리 글을 덮지 않고, 뜬 판은 펼치든 접든 화면 안에 있고,
 // 머리의 제목과 단추가 겹치지 않고, 내용이 320px에서 옆으로 넘치지 않고, 끝까지 굴린 문서의 마지막 줄이 판 위로 올라와야 한다. 1440px 이상이면 단추가 없어야 한다
 const sideFloatScene = {
@@ -628,7 +660,7 @@ const sideFloatScene = {
   },
 };
 
-const scenes = [...mbtnScenes, tobeRowActsScene, oldRowActsScene, outputsScene, outputsEndRowsScene, outputsReorderScene, exportPreviewScene, composedHeadingScene, linkMenuScene, sideFloatScene, aiJobsScene, bundleHeadScene].filter((scene) => !only || only.includes(scene.name));
+const scenes = [...mbtnScenes, tobeRowActsScene, oldRowActsScene, outputsScene, outputsEndRowsScene, outputsReorderScene, exportPreviewScene, composedHeadingScene, linkMenuScene, sideFloatScene, aiJobsScene, bundleHeadScene, cellMenuScene].filter((scene) => !only || only.includes(scene.name));
 const browser = await chromium.launch({ executablePath: CHROME, headless: true });
 let problems = 0;
 let runs = 0;

@@ -57,3 +57,13 @@ export function addUnwrapAiAsk(asks: readonly UnwrapAiAsk[], tableId: number, fi
 export function listUnwrapAiBusy(asks: readonly UnwrapAiAsk[], finished: number): Set<number> {
   return new Set(asks.filter((ask) => finished < ask.doneAt).map((ask) => ask.tableId));
 }
+
+/** AI 순서를 지금 물을 수 없는 까닭의 문구 키 - 머리 단추 · ⇧O · 우클릭 메뉴 항목이 같은 답을 쓴다. 한글 표처럼 하기가 있으면 AI 꺼짐 · 작업 중과 상관없이 열려 있다.
+ *  current는 그 벗긴 표의 줄 차례, suggested는 놓지 않은 제안(없으면 undefined) */
+export function readUnwrapOrderReason(args: { hasFollow: boolean; isAiOn: boolean; isBusy: boolean; current: readonly number[]; suggested: readonly number[] | undefined }): string | null {
+  if (args.hasFollow) return null;
+  if (!args.isAiOn) return "assign.unwrapAi.offTip";
+  if (args.isBusy) return "assign.unwrapAi.already";
+  if (args.suggested !== undefined && isUnwrapSuggestionApplicable(args.current, args.suggested)) return isUnwrapSuggestionUnchanged(args.current, args.suggested) ? "assign.unwrapAi.same" : "assign.key.why.orderReady";
+  return args.current.length < 2 ? "assign.key.why.oneLine" : null;
+}
