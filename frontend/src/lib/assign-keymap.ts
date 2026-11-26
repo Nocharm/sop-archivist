@@ -5,7 +5,7 @@ export type AssignKeyId =
   | "move_next" | "move_prev" | "confirm" | "escape" | "delete" | "clear" | "clear_block" | "remark" | "remark_block"
   | "split" | "split_sentences" | "cut_left" | "cut_right" | "view" | "preview" | "go_pair"
   | "hold" | "lang" | "shape_mode" | "number" | "use_ai" | "ask_order" | "table" | "indent" | "outdent"
-  | "merge_next" | "merge_prev" | "part_prev" | "part_next" | "undo" | "redo" | "help";
+  | "merge_next" | "merge_prev" | "multi_pick" | "part_prev" | "part_next" | "undo" | "redo" | "help";
 
 /** 그 글쇠가 바라는 것 - 어긋나면 resolveAssignKey가 까닭을 준다 */
 export type AssignKeyWhen = "always" | "row" | "cut" | "pair" | "text" | "sentence" | "shape" | "number" | "ai" | "unwrapped" | "table" | "box" | "join";
@@ -45,6 +45,7 @@ export const ASSIGN_KEYS: readonly AssignKey[] = [
   { id: "outdent", key: "tab", shift: true, when: "box", labelKey: "assign.key.outdent" },
   { id: "merge_next", key: "j", shift: true, when: "join", labelKey: "assign.key.mergeNext" },
   { id: "merge_prev", key: "k", shift: true, when: "join", labelKey: "assign.key.mergePrev" },
+  { id: "multi_pick", key: "g", shift: true, when: "box", labelKey: "assign.key.multiPick" },
   { id: "table", key: "t", shift: true, when: "table", labelKey: "assign.key.table" },
   { id: "ask_order", key: "o", shift: true, when: "unwrapped", labelKey: "assign.key.askOrder" },
   { id: "view", key: "v", shift: false, when: "always", labelKey: "assign.key.view" },
@@ -162,7 +163,8 @@ function findRefusal({ id, when }: AssignKey, ctx: AssignKeyContext): string | n
   if (!ctx.hasBox) return why("noRow");
   if (when === "ai") return ctx.hasAi ? null : why("noAi");
   // 들여쓰기는 저장 중인 값에서 이어 센다 - 이어 누른 Tab을 버리지 않는다
-  if (when === "box") return ctx.hasNumberCell ? null : why("noNumber");
+  // ⇧G(여럿 고름)는 고른 박스만 있으면 된다 - 번호 칸은 들여쓰기의 조건
+  if (when === "box") return id === "multi_pick" || ctx.hasNumberCell ? null : why("noNumber");
   if (ctx.isLocked) return why("busy");
   // 합치기는 이웃과 막는 까닭을 누를 때 따로 잰다(merge-arm-model) - 여기서는 고른 박스만 본다
   if (when === "join") return null;

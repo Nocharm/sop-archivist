@@ -445,6 +445,22 @@ def test_assign_merge_records_merge_step_and_undo_reverts_it(client: TestClient)
     assert merged["created_unit_ids"][0] not in {unit["id"] for unit in view["units"] if unit["status"] == "active"}
 
 
+def test_bulk_clear_unassigns_every_row_in_one_step(client: TestClient) -> None:
+    fx = _setup_rich(client)
+    _confirm_unit(client, fx, fx.a)
+    _confirm_unit(client, fx, fx.b)
+    before = _dump(fx.bundle_id)
+    body = {"action": "clear", "units": [{"unit_id": u["id"], "revision": 2} for u in (fx.a, fx.b)], "undo": UNDO}
+
+    rows = _ok(client.post(f"/api/bundles/{fx.bundle_id}/decisions/bulk", json=body, headers=AUTHOR))
+
+    assert {row["decision"]["disposition"] for row in rows} == {"unassigned"}
+    (step,) = _load_steps(fx.bundle_id)[-1:]
+    assert step.op == "clear"
+    _ok(_undo(client, fx.bundle_id))
+    assert_same_state(_dump(fx.bundle_id), before)
+
+
 # ── 되돌리기·다시 하기 ───────────────────────────────────────────────────────
 
 OTHER_AUTHOR = REVIEWER  # 아래 시험에서 작성자로 넣는다
