@@ -1,6 +1,32 @@
-// 실패 알림이 부르는 명령의 이름(메시지 키) - 되돌리기 알림과 같은 이름을 쓴다(assign.step.*), 거기 없는 것만 assign.queue.act.*
+// 실패 알림 · 대기 칩이 부르는 명령의 이름(메시지 키) - 되돌리기 알림과 같은 이름을 쓴다(assign.step.*), 거기 없는 것만 assign.queue.act.*
 
 import type { EditOp } from "./api-sop";
+import { findAssignKey, type AssignKeyId } from "./assign-keymap";
+
+// 장벽 뒤에 쌓인 글쇠의 이름 - 그 글쇠가 보낼 명령과 같은 이름. 없는 것(이동 · 나눌 선 옮기기 · 글 칸 여는 글쇠 등)은 이름 없이 수만 보인다
+const KEY_LABEL_KEYS: Partial<Record<AssignKeyId, string>> = {
+  confirm: "assign.step.confirm",
+  delete: "assign.step.delete",
+  clear: "classify.clear",
+  clear_block: "classify.clear",
+  hold: "assign.step.hold",
+  split: "assign.step.cut",
+  split_sentences: "assign.step.split_sentences",
+  merge_next: "assign.step.merge",
+  merge_prev: "assign.step.merge",
+  lang: "assign.step.set_language",
+  table: "assign.step.set_layout_table",
+  indent: "assign.step.set_indents",
+  outdent: "assign.step.set_indents",
+  undo: "assign.queue.act.undo",
+  redo: "assign.queue.act.redo",
+};
+
+/** 쌓인 글쇠(key는 readKeyName의 글자)의 이름 - 모르면 null */
+export function readKeyLabelKey(press: { key: string; shift: boolean; ctrl: boolean }): string | null {
+  const hit = findAssignKey({ key: press.key, shiftKey: press.shift, ctrlKey: press.ctrl, metaKey: false, altKey: false });
+  return hit?.kind === "run" ? (KEY_LABEL_KEYS[hit.entry.id] ?? null) : null;
+}
 
 const EDIT_LABEL_KEYS: Record<EditOp["type"], string> = {
   merge: "assign.step.merge",
