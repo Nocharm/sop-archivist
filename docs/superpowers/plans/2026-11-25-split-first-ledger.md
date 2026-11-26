@@ -48,6 +48,7 @@
    - (11-26 저녁, `2ccff578` = v1.6.31) 전체 스모크 `FULL=1`(새 시드): **2522 통과 · 1 실패** — `assign: the New pane shows a real table and figure`의 그림 캡션 검사(`the figure row shows its caption line above it`). reset 뒤 그 단계만 다시 돌려 16/16 통과 → 알려진 흔들림. 제품 결함 후보 없음. 감사 넷은 아직.
    - 같은 흔들림의 두 번째 고침이라 검사를 고쳤다(`test/smoke-caption-settle`): `readCaptionLine`이 캡션 줄을 한 번만 읽던 것을 T 안에서 맞을 때까지 다시 읽고, 실패하면 본 값(줄 수 · 글 · 뒤 형제 · missing)을 남긴다. 기대값 그대로. 그 단계 3/3 · `assign:` 1507 통과 — 부하 속 확인은 다음 `FULL=1`에서.
    - (11-26 밤, `f2e20b78`) 감사 넷: overlap 80/80(`assign-cell-menu` 포함) · contrast 전부 · manual-shots(`MANUAL=app` · 시스템) 모든 장면 찍힘(그림은 커밋하지 않음) · layout `DS=worst` **196 중 5 실패** — P1 1120 · 1920은 탭 4 ≠ 5만(1a C 시트 숨김을 감사가 못 따라감, 기대값 낡음), A4b는 W1 A 줄이 738이라 네 자리 Row가 0개(자료 전제가 깨져 잴 것이 없음), **X0 · A11 `/admin?tab=access` 1120은 제품 결함 후보**(아래 "아침에 볼 것"). 감사 뒤 dev가 바뀌면 그 화면의 항목만 `ONLY=`로 다시.
+   - 같은 날 다 고침(사용자 "다 처리"): X0 · A11은 `fix/admin-roles-fit`(v1.6.32, 원인은 켜진 칸 `sr-only`가 스크롤 상자 밖으로 새어 문서를 넓힘 + 긴 이름 줄바꿈), P1 · A4b는 `test/layout-audit-stale`. 넷 모두 다시 통과. 나머지 191은 `f2e20b78` 결과 그대로.
 2. perf 한 번 더(`perf.sh`, 8a에서 몇 칸이 ±20% 오감 · 7g는 재지 않음).
 3. 설명서 그림은 바뀐 장면만(`ONLY=<장면>`), 설명서 머리 `version` · `updated`, CHANGELOG 릴리스 제목, 루트 `CLAUDE.md` 상태 줄 · README, 끝난 계획 · 설계 스냅숏 지우기(`rules/common/git.md` 정식 업데이트).
 4. 아래 "아침에 볼 것"을 사용자와 정리 — 특히 8b 합치면 당기기의 범위, 7b 양 단 New 칸 메뉴 없음, 7c 첫 Shift+클릭이 지금 줄도 넣음, 7g 괄호선 동안 빈 줄.
@@ -122,12 +123,12 @@
 - 8b · `test_sop_paragraph_excel.py:358-359 · 388-389` 칸 번호 1 2 3 → 5.1 5.2 5.3, `number-kind-model.test.ts:73` "6" → "5.1" · 명세 D1이 이름을 댄 시험
 - 8b · `test_sop_table_follow.py:508 · 516 · 583 · 591` · `test_sop_ai_table_follow.py:205 · 251` "4" → "1.4" 등 · 고정물이 제목 1 아래 표를 벗겨 번호가 이어짐(D1)
 - 8b · `decision-step-model.test.ts:86 · 101` 목록에 `continue_numbers`만 더함
+- layout-audit-stale · `pw-layout-audit.mjs` P1 `value.tabs === 5` → `4` · 1a §14 C 시트 숨김(스모크 · overlap은 1a 때 바꿈), A4b 네 자리 Row가 없으면 번호 칸 마지막 20개에 네 자리를 넣어 잰다(한 줄 기준 그대로) · W1 옛 줄 738(규칙 2 문단 박스) · 사용자 승인 "다 처리"
 - smoke-caption-settle · `smoke/assign.mjs` "the New pane shows a real table and figure"의 `readCaptionLine` · 한 번 읽기 → T 안에서 맞을 때까지 다시 읽기, 실패 글에 본 값 · `FULL=1`에서만 탭 전환 중 한 프레임을 읽어 흔들림(기대값 · 검사 수 그대로)
 
 ## 아침에 볼 것 (사람이 정할 것 · 봐 줄 것)
 
-- **(11-26 밤 layout 감사) 관리 › 역할 표가 1120에서 넘친다** — X0: 문서에 가로 스크롤이 생김(맨 오른쪽 "받은 대상" 열이 틀 밖으로 잘림), A11: 긴 이름 역할 줄이 167px(기준 140). 권한 묶음 머리가 있는 역할 매트릭스(admin-polish 역할 스텝, v1.6.19)의 열 폭 합이 1120 본문보다 넓고 이름 칸이 좁아 이름이 네 줄로 꺾인다. 고치지 않음 — 표를 틀 안 가로 스크롤로 넣을지 · 기준을 매트릭스에 맞춰 다시 정할지 정한다.
-- 같은 감사의 낡은 기대값 둘(고치려면 승인): P1 `value.tabs === 5` → 4(1a §14, 스모크 · overlap은 그때 4로 바꿈), A4b는 W1 시드가 옛 줄 1,000개를 넘지 않게 되어(738) 전제를 다시 세우거나 항목을 바꾼다.
+- ~~(11-26 밤 layout 감사) 관리 › 역할 표 1120 넘침 · 낡은 기대값 P1 · A4b~~ — 같은 날 고침("이어 가기" 1번 아래).
 
 - 짧은 영어 예외: 한 줄의 `탱크를 비운다. Drain it.`은 한 박스가 된다(계획 2 "정한 것" 2).
 - 운영에 이미 생긴 New 문장 중복을 세는 질의(읽기 전용)와 정리 여부.
