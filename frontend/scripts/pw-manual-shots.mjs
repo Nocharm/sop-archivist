@@ -139,13 +139,12 @@ const SCENES = [
     marks: [id("assign-more"), id("assign-new"), `${id("assign-new")} .new-line[data-sel]`, id("assign-pick-bar"), id("assign-divider"), id("assign-new-zoom-value")],
   },
   {
-    // 연습 화면 - 1120 폭은 1280 미만이라 과제 칸이 접혀 시작한다 - 펴서 첫 과제가 펼쳐진 모습(앱 안 설명서만)
+    // 연습 화면 - 첫 과제의 상자가 밝고 그 옆 말풍선이 앞면으로 선 모습(앱 안 설명서만). 서는 애니메이션(420ms)이 끝난 뒤 찍는다
     name: "practice", appOnly: true, app: {}, user: "qa.member", path: "/practice",
     prep: async (page) => {
-      await page.locator(id("practice-tasks")).waitFor({ timeout: T });
-      if ((await page.locator(`${id("practice-tasks")}[data-folded]`).count()) > 0) await click(page, id("practice-tasks-fold"));
-      await page.locator(`${id("practice-tasks")}:not([data-folded])`).waitFor({ timeout: T });
-      await page.locator(id("practice-task-manual")).waitFor({ state: "visible", timeout: T });
+      await page.locator(`${id("practice-coach")}[data-task="pick"]:not([data-pending])`).waitFor({ timeout: T });
+      await page.locator(id("practice-coach-hole")).waitFor({ state: "visible", timeout: T });
+      await page.locator(`${id("practice-coach-flip")}[data-done="false"]`).evaluate((el) => Promise.all(el.getAnimations().map((animation) => animation.finished)));
     },
   },
   {

@@ -8,8 +8,9 @@ import { ASSIGN_KEYS, formatAssignKey } from "../assign-keymap";
 import { MESSAGES } from "../i18n-messages";
 import { readManualSource } from "../manual-files";
 
+import fixture from "./practice-fixture.json";
 import type { PracticeLogEntry } from "./practice-server";
-import { PRACTICE_TASKS, listAchieved, pickOpenTask, type PracticeTaskId } from "./practice-tasks";
+import { PRACTICE_TASKS, listAchieved, listTargetSelectors, pickNextTask, pickOpenTask, readCoachView, type PracticeTaskId } from "./practice-tasks";
 
 /** U3의 글쇠 - 표의 첫 글쇠가 이것이어야 한다(↵ = Enter). 글쇠를 바꾸면 여기서 걸리고 과제 글은 formatAssignKey로 따라간다 */
 const U3_KEYS: Record<PracticeTaskId, string[]> = {
@@ -68,6 +69,100 @@ describe("the practice task table", () => {
   it("points every task at a place the manual has", async () => {
     const manual = await readManualSource();
     for (const task of PRACTICE_TASKS) expect(manual.includes(`{#${task.anchor}}`), `${task.id}: no {#${task.anchor}} in user-manual.md`).toBe(true);
+  });
+
+  it("names a chapter with an en and ko message for every task", () => {
+    for (const task of PRACTICE_TASKS) {
+      for (const lang of ["en", "ko"] as const) expect(MESSAGES[lang][`practice.chapter.${task.chapter}`], `${lang} practice.chapter.${task.chapter}`).toBeTruthy();
+    }
+  });
+});
+
+// 말풍선 대상(2026-11-27 시안 A) - 과제 글이 가리키는 연습 자료의 자리. 자료를 다시 뽑아 id가 바뀌면 여기서 걸린다
+describe("the box each task lights up", () => {
+  const oldUnits = fixture.views["900001"].units;
+  const fix = "the practice fixture changed - point the task's target in practice-tasks.ts at the unit its body text names";
+
+  it("lights the Old unit the task text names (pairs by their Korean side)", () => {
+    const expected: Partial<Record<PracticeTaskId, string>> = {
+      link: "Old Unit마다 새 문서의 어디로 갈지 정하고 확정합니다.",
+      confirm: "추천 카드를 누르면 고르기만 하고, 이어서 Enter로 바로 확정합니다.",
+      hold: "정할 수 없는 Unit은 사유를 적어 미룹니다.",
+      merge: "나누기와 합치기는 확정과 같은 저장이라",
+      split: "정할 수 없는 Unit은 보류합니다. 보류한 Unit은 On hold에 모입니다.",
+      pair: "한/영 짝은 한 문장으로 합치고 다시 짝으로 풉니다.",
+    };
+    for (const [id, text] of Object.entries(expected)) {
+      const target = PRACTICE_TASKS.find((task) => task.id === id)?.target;
+      const unit = target && "unit" in target ? oldUnits.find((item) => item.id === target.unit) : undefined;
+      expect(unit?.text, `${id}: ${fix}`).toBe(text);
+    }
+    const table = PRACTICE_TASKS.find((task) => task.id === "unwrap")?.target;
+    expect(table && "unit" in table ? oldUnits.find((item) => item.id === table.unit)?.kind : null, `unwrap: ${fix}`).toBe("table");
+  });
+
+  it("lights the contents block by the first unit of the toc run", () => {
+    const target = PRACTICE_TASKS.find((task) => task.id === "toc")?.target;
+    const first = oldUnits.find((unit) => unit.noise_kind === "toc");
+    expect(target, `toc: ${fix}`).toEqual({ noise: first?.id });
+    expect(listTargetSelectors(target!, [])).toEqual([`[data-testid="assign-old"] [data-testid="assign-paper-noise-${first?.id}"]`]);
+  });
+
+  it("finds an Old unit by its box first, then its text, then its deleted line", () => {
+    expect(listTargetSelectors({ unit: 15 }, [])).toEqual([
+      '[data-testid="assign-old"] [data-testid="assign-paper-piece-15"]',
+      '[data-testid="assign-old"] [data-testid="assign-paper-unit-15"]',
+      '[data-testid="assign-old"] [data-testid="assign-paper-deleted-u15"]',
+    ]);
+    expect(listTargetSelectors({ testId: "assign-undo" }, [])).toEqual(['[data-testid="assign-undo"]']);
+  });
+
+  it("lights the line last linked or confirmed for Unassign, and nothing before there is one", () => {
+    const target = PRACTICE_TASKS.find((task) => task.id === "unassign")!.target;
+    expect(listTargetSelectors(target, [SAMPLES.pick, SAMPLES.hold])).toEqual([]);
+    expect(listTargetSelectors(target, [SAMPLES.link, SAMPLES.confirm, SAMPLES.hold])[0]).toContain("assign-paper-piece-15");
+  });
+});
+
+describe("skipping a task", () => {
+  it("goes to the next task not done yet, wrapping round to the start", () => {
+    expect(pickNextTask([], "pick")).toBe("link");
+    expect(pickNextTask([SAMPLES.link, SAMPLES.confirm], "pick")).toBe("hold");
+    expect(pickNextTask([SAMPLES.pick], "keyboard")).toBe("link");
+  });
+
+  it("has nowhere to go when the task shown is the only one left", () => {
+    const allButToc = Object.values(SAMPLES).filter((entry) => entry !== SAMPLES.toc);
+    expect(pickNextTask(allButToc, "toc")).toBeNull();
+  });
+});
+
+describe("what the coach card shows", () => {
+  it("shows the open task face up", () => {
+    expect(readCoachView([], null, { id: "pick", since: 0 })).toEqual({ id: "pick", isDone: false });
+  });
+
+  it("flips the task it was showing once that task is done, then the next one face up once it has moved on", () => {
+    const log = [SAMPLES.pick];
+    expect(readCoachView(log, null, { id: "pick", since: 0 })).toEqual({ id: "pick", isDone: true });
+    expect(readCoachView(log, null, { id: "link", since: 1 })).toEqual({ id: "link", isDone: false });
+  });
+
+  it("does not flip for another task done meanwhile - that one only fills its dot", () => {
+    expect(readCoachView([SAMPLES.split], null, { id: "pick", since: 0 })).toEqual({ id: "pick", isDone: false });
+  });
+
+  it("flips a done task picked again only when it is done again after the pick", () => {
+    const log = [SAMPLES.pick];
+    const picked = { id: "pick" as const, since: 1 };
+    expect(readCoachView(log, picked, picked)).toEqual({ id: "pick", isDone: false });
+    expect(readCoachView([...log, SAMPLES.pick], picked, picked)).toEqual({ id: "pick", isDone: true });
+  });
+
+  it("flips the last task before the finish card", () => {
+    const all = Object.values(SAMPLES);
+    expect(readCoachView(all, null, { id: "keyboard", since: all.length - 1 })).toEqual({ id: "keyboard", isDone: true });
+    expect(readCoachView(all, null, { id: null, since: all.length })).toEqual({ id: null, isDone: false });
   });
 });
 

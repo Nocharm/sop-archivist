@@ -42,7 +42,7 @@
 | F9 | `feat/practice-page`(모음) | 합침 | v1.6.42 · 6690c2f2 | pytest 3851+시드 15 · ruff · vitest 2808 · build 경고 0 · `practice:` ALL PASS 52 · `FULL=1` ALL PASS 2588 · 검토: 스텝 1 sonnet 0 · 2 opus 막음 1 고침 · 3 opus 0 · 4 sonnet 0 · 모음 전체 opus 0(권함 1 — 진짜 자료 시험 더함) | 그림 `/private/tmp/claude-501/-Users-hyeonjin-Documents-sop-archivist/cd35c95b-037a-4e82-bb7a-e837e4859e96/scratchpad/shots/practice-final/`(1440 en · 1120 ko). 과제 칸 J/K 판정은 키가 용지 안에서 눌릴 때만(접기 단추를 누른 뒤엔 줄을 다시 눌러야) |
 | Fm | `fix/user-menu-close-on-nav` | 합침 | v1.6.41 · bc8c35f3 | vitest 2743 · build 경고 0 · baseline `account` 스모크 ALL PASS(새 검사 'user menu closes after navigating from an item') · 검토 생략(작은 일) | AI 작업 팝오버가 이동 뒤 닫히는 것은 스모크에 없음 |
 | Fh | `fix/assign-new-head-fit` | 합침 | v1.6.43 · 62f34e6c | vitest 2808 · build 경고 0 · `assign:` + `practice:` ALL PASS 1572 · overlap 새 장면 4/4(고치기 전 dev 코드에서 16 실패 확인) · Assign 장면 다섯 1120/1440 20/20 · 검토 생략(CSS · 작은 일) | — |
-| F9b | `feat/practice-coach` | 진행 |  |  | 연습 화면 말풍선 스포트라이트 + 완료 플립(사용자 11-27 아침, 이번 업데이트에) — 끝나면 준비 커밋을 v1.6.44로 다시 맞춤 |
+| F9b | `feat/practice-coach` | 합침 | v1.6.44 · c6831dfd | vitest 2832 · build 경고 0 · `practice:` ALL PASS 56(첫 실행) · overlap `assign-pane-head-narrow` 4/4 · 그림 `practice` 다시 · 검토 생략(연습 화면만, Assign 파일 변경 없음) | 그림 `/private/tmp/claude-501/-Users-hyeonjin-Documents-sop-archivist/cd35c95b-037a-4e82-bb7a-e837e4859e96/scratchpad/shots/coach/`(1440 en 앞면 · 뒤집힘 · 다음, 1120 ko) |
 
 
 ## 이어 가기 (2026-11-27 새벽 — 밤샘 끝, 정식 업데이트 준비 커밋까지. 다음은 여기부터)
@@ -173,6 +173,7 @@
 - Fm · `pw-smoke-baseline.mjs` account 단계 · 관리 항목 확인 뒤 Escape → 그 항목을 눌러 이동 + 닫힘 검사, 뒤 검사를 위해 /account로 돌아감(기존 검사 그대로) · 새 동작
 - F9 · 새 시험만(연습 vitest · `practice:` 스모크 5단계). `practice.mjs`를 실제 자료에 맞춘 것(제목 줄 → 첫 문장, `confirm` → `confirm|choose`, 요소 수 → Unit id 수)은 같은 브랜치 안의 새 단계라 기대 완화 아님
 - Fh · 새 감사 장면만(`pw-overlap-audit.mjs` `assign-pane-head-narrow`)
+- F9b · `smoke/practice.mjs` 과제 칸 검사(칸 위치 · 36px 접힌 막대 · 펼친 과제 · `practice-task-*`) → 말풍선 · 점 검사(`practice-coach` · `practice-coach-flip[data-done]` · `practice-dot-*`), entry 19 → 22 · follow 15 → 16 · 사용자 요청 동작 변경(11-27)
 
 ## 아침에 볼 것 (사람이 정할 것 · 봐 줄 것)
 
@@ -208,6 +209,7 @@
 - (F9, 검토 막음 고침 — 추천안) `/bundles/<id>` 요청은 id로만 가른다: -1이면 가짜, 0 이상이면 화면이 /practice여도 실제 서버(실제 Assign에서 밀린 저장이 연습 화면으로 옮길 때 버려지지 않게). 설계 D2를 바꿈.
 - (F9, 에이전트 판단) 연습 Old 자료는 규칙 2가 짝을 내도록 제목 · 목차 · 장 제목을 한/영 두 줄로 바꿨고, 짝 E는 100KB 예산으로 뺐다. 과제 '한/영 짝' · '표 벗기기' · '목차' 셋은 스모크로 따라 하지 않고 단위 시험만 덮는다 — 화면에서 한 번 해 보기를 권함.
 - (F9) 연습 화면 띠는 `--warn-fill` 왼쪽 막대(주황) + 중립 바탕. 톤이 튀면 말해 주세요.
+- (F9b) Link 과제의 밝힌 상자는 Old 짝의 한글 상자만이라 아래 영어 짝 상자는 어둡게 남는다. 말풍선은 New 문장 몇 줄을 덮을 수 있다(카드는 클릭을 막지 않음 — 카드 글자를 누르면 밑 줄이 눌린다). 장 이름 묶음은 시안 C 것(기본 · 손질 · 정리 · 고수). 뒤집기 뒤 다음 과제로 약 1.3초.
 
 ## 사용자 답 (2026-11-26 아침)
 

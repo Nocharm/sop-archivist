@@ -10,7 +10,7 @@ const REAL_PATHS = new Set(["/api/me", "/api/auth/mode", "/api/ai/jobs/recent"])
 
 const PRACTICE_UNIT = '[data-testid="assign-old"] [data-testid^="assign-paper-unit-"]';
 
-// The task column starts folded below this width (practice-frame.tsx PRACTICE_NARROW_QUERY) - the smoke window (1248) is under it
+// A wide window for following the tasks - the coach card sits right of the lit box when there is room
 const WIDE = { width: 1600, height: 900 };
 
 // Leaks seen while following the tasks - the backend step reports them too (each step has its own browser context)
@@ -32,9 +32,17 @@ async function openPractice(page) {
   await wait(page, "assign-bar");
 }
 
-const task = (page, id) => page.locator(`[data-testid="practice-task-${id}"]`);
-const waitDone = (page, id) => page.locator(`[data-testid="practice-task-${id}"][data-done="true"]`).waitFor({ timeout: T });
-const readOpenTask = (page) => page.evaluate(() => document.querySelector('[data-testid^="practice-task-"][data-open]')?.getAttribute("data-testid") ?? null);
+// The band's dot fills when the task is done; the coach card shows one task at a time (data-task) and flips to the check (data-done) once it is done
+const dot = (page, id) => page.locator(`[data-testid="practice-dot-${id}"]`);
+const waitDone = (page, id) => page.locator(`[data-testid="practice-dot-${id}"][data-done="true"]`).waitFor({ timeout: T });
+const readCoach = (page) => page.evaluate(() => {
+  const coach = document.querySelector('[data-testid="practice-coach"]');
+  return coach ? `${coach.getAttribute("data-task")}:${coach.querySelector('[data-testid="practice-coach-flip"]')?.getAttribute("data-done")}` : null;
+});
+// The card flips to the check while it still shows the task done (the flip runs about 1.3s, then animationend moves it on)
+const waitFlip = (page, id) => page.locator(`[data-testid="practice-coach"][data-task="${id}"] [data-testid="practice-coach-flip"][data-done="true"]`).waitFor({ timeout: T });
+// The card stands face up on this task and has measured its box (data-pending goes once the lit box is placed) - wait for it before the next key so the scroll to the box cannot race a click
+const waitCoach = (page, id) => page.locator(`[data-testid="practice-coach"][data-task="${id}"]:not([data-pending]) [data-testid="practice-coach-flip"][data-done="false"]`).waitFor({ timeout: T });
 // Units, not elements - a merged unit draws each of its pieces under the same testid
 const countOld = (page) => page.evaluate((sel) => new Set([...document.querySelectorAll(sel)].map((el) => el.getAttribute("data-testid"))).size, PRACTICE_UNIT);
 const oldUnit = (page, text) => page.locator(PRACTICE_UNIT, { hasText: text }).first();
@@ -66,7 +74,10 @@ await runStep("practice: entry and band", {}, async ({ page, takeShot }) => {
   await wait(page, "assign-bar");
   check("the band says nothing is saved", (await getText(page, "practice-band")).includes("Practice — nothing is saved"), await getText(page, "practice-band"));
   check("Start over is on the band", await page.locator('[data-testid="practice-start-over"]').isVisible());
-  check("the task column is on the right of the band's row", (await getBox(page, "practice-tasks")).x > (await getBox(page, "assign")).x);
+  // the old right task column took about 300px (or a 36px bar under 1280px) - now nothing sits beside Assign
+  const assignBox = await getBox(page, "assign");
+  const bandBox = await getBox(page, "practice-band");
+  check("there is no task column - Assign spans the band's width", (await page.locator('[data-testid="practice-tasks"]').count()) === 0 && assignBox.x + assignBox.width >= bandBox.x + bandBox.width - 24, `${assignBox.x + assignBox.width} vs ${bandBox.x + bandBox.width}`);
   check("Assign is the real one (its frame is drawn)", (await page.locator('[data-testid="assign"]').count()) === 1);
   // the user menu on /practice has no Practice item, and the book button opens the practice piece
   await page.locator('[data-testid="top-bar-user"]').click();
@@ -74,32 +85,43 @@ await runStep("practice: entry and band", {}, async ({ page, takeShot }) => {
   check("the user menu has no Practice item on the practice screen", (await page.locator('[data-testid="user-menu-practice"]').count()) === 0);
   await page.keyboard.press("Escape");
   check("the help link points at the practice piece", (await page.locator('[data-testid="top-bar-manual"]').getAttribute("href")) === "/manual#practice");
-  // the smoke window is under 1280px - the task column starts as the folded bar, still showing how many tasks are done
-  await page.locator('[data-testid="practice-tasks"][data-folded]').waitFor({ timeout: T });
-  const startBar = await getBox(page, "practice-tasks");
-  check("a narrow window starts with the task column folded to a 36px bar", Math.round(startBar.width) === 36, String(startBar.width));
-  check("the folded bar shows the progress 0/12", (await page.locator('[data-testid="practice-progress"]').isVisible()) && (await getText(page, "practice-progress")).trim() === "0/12", await getText(page, "practice-progress"));
-  // unfold - twelve tasks, none done, the first one open with its keys and the manual link
-  await page.locator('[data-testid="practice-tasks-fold"]').click();
-  await page.locator('[data-testid="practice-tasks"]:not([data-folded])').waitFor({ timeout: T });
-  const open = await getBox(page, "practice-tasks");
-  check("unfolding opens the column wider than the bar", open.width > startBar.width, `${startBar.width} -> ${open.width}`);
-  check("the column lists twelve tasks, none done", (await page.locator('[data-testid^="practice-task-"][data-done]').count()) === 12 && (await page.locator('[data-testid^="practice-task-"][data-done="true"]').count()) === 0);
-  check("the progress reads 0/12", (await getText(page, "practice-progress")).trim() === "0/12", await getText(page, "practice-progress"));
-  check("the first task is open with its keys", (await readOpenTask(page)) === "practice-task-pick" && (await task(page, "pick").locator("kbd").count()) > 0, String(await readOpenTask(page)));
-  const manual = page.locator('[data-testid="practice-task-manual"]');
-  check("the open task links to its place in the manual in a new tab", (await manual.getAttribute("href")) === "/manual#assign" && (await manual.getAttribute("target")) === "_blank", String(await manual.getAttribute("href")));
-  // fold and unfold the task column
-  await page.locator('[data-testid="practice-tasks-fold"]').click();
-  await page.locator('[data-testid="practice-tasks"][data-folded]').waitFor({ timeout: T });
-  const folded = await getBox(page, "practice-tasks");
-  check("folding leaves a 36px bar", Math.round(folded.width) === 36 && folded.width < open.width, `${open.width} -> ${folded.width}`);
-  await page.locator('[data-testid="practice-tasks-fold"]').click();
-  await page.locator('[data-testid="practice-tasks"]:not([data-folded])').waitFor({ timeout: T });
-  check("unfolding brings the column back", Math.round((await getBox(page, "practice-tasks")).width) === Math.round(open.width));
+  // the band: twelve dots, none done, the first one now, and 0/12 - the same count the folded task column used to show
+  await page.locator(PRACTICE_UNIT).first().waitFor({ timeout: T });
+  check("the band draws twelve progress dots", (await page.locator('[data-testid^="practice-dot-"][data-done]').count()) === 12);
+  check("the band shows the progress 0/12", (await page.locator('[data-testid="practice-progress"]').isVisible()) && (await getText(page, "practice-progress")).trim() === "0/12", await getText(page, "practice-progress"));
+  check("no dot is done yet", (await page.locator('[data-testid^="practice-dot-"][data-done="true"]').count()) === 0);
+  check("the first dot is the task now", (await page.locator('[data-testid^="practice-dot-"][data-now="true"]').count()) === 1 && (await dot(page, "pick").getAttribute("data-now")) === "true");
+  // the coach card: the first task with its chapter, keys and the manual link, standing next to the lit box
+  await waitCoach(page, "pick");
+  check("the coach card shows the first task with its chapter", (await getText(page, "practice-coach")).includes("Task 1 / 12 · Basics"), await getText(page, "practice-coach"));
+  check("the coach card shows the keys to press", (await page.locator('[data-testid="practice-coach"] kbd').count()) > 0);
+  const manual = page.locator('[data-testid="practice-coach-manual"]');
+  check("the coach card links to its place in the manual in a new tab", (await manual.getAttribute("href")) === "/manual#assign" && (await manual.getAttribute("target")) === "_blank", String(await manual.getAttribute("href")));
+  // the lit box is the task's Old unit (practice-tasks.ts target: unit 11, the 1. Purpose heading pair) and the card stands beside it, on screen
+  const lit = await page.evaluate(() => {
+    const target = document.querySelector('[data-testid="assign-old"] [data-testid="assign-paper-piece-11"]') ?? document.querySelector('[data-testid="assign-old"] [data-testid="assign-paper-unit-11"]');
+    const hole = document.querySelector('[data-testid="practice-coach-hole"]');
+    if (!target || !hole) return null;
+    const t = target.getBoundingClientRect();
+    const h = hole.getBoundingClientRect();
+    return { cx: t.left + t.width / 2, cy: t.top + t.height / 2, h: { left: h.left, right: h.right, top: h.top, bottom: h.bottom } };
+  });
+  check("the lit box sits on the task's Old unit", lit !== null && lit.cx >= lit.h.left && lit.cx <= lit.h.right && lit.cy >= lit.h.top && lit.cy <= lit.h.bottom, JSON.stringify(lit));
+  const card = await getBox(page, "practice-coach");
+  const viewport = page.viewportSize();
+  check("the coach card stands beside the lit box, inside the window", ["right", "below", "above"].includes(await page.locator('[data-testid="practice-coach"]').getAttribute("data-place")) && card.x >= 0 && card.y >= 0 && card.x + card.width <= viewport.width && card.y + card.height <= viewport.height, JSON.stringify(card));
+  // a dot goes to its task (any order), and Skip goes on to the next task not done yet
+  await dot(page, "hold").click();
+  await waitCoach(page, "hold");
+  check("pressing a dot moves the coach card to that task", (await dot(page, "hold").getAttribute("data-now")) === "true" && (await dot(page, "pick").getAttribute("data-now")) === "false");
+  await page.locator('[data-testid="practice-coach-skip"]').click();
+  await waitCoach(page, "unassign");
+  check("Skip goes on to the next task not done yet, leaving the skipped one not done", (await dot(page, "hold").getAttribute("data-done")) === "false" && (await dot(page, "unassign").getAttribute("data-now")) === "true");
+  // Unassign has nothing linked yet - its card floats under the band with no lit box
+  check("a task with no box yet floats its card in the middle with no dim", (await page.locator('[data-testid="practice-coach"]').getAttribute("data-place")) === "center" && (await page.locator('[data-testid="practice-coach-hole"]').count()) === 0);
   await takeShot("sop-practice-band.png");
   // U5: the Assign help (?) has no practice link - only the user menu and the manual head lead here
-  // pick a line first so the key lands in Assign (focus is on the fold button now)
+  // pick a line first so the key lands in Assign (focus is on the Skip button now) - the dim lets the click through
   await clickOld(page, "Old Unit마다 새 문서의 어디로 갈지 정하고 확정합니다.");
   await page.keyboard.press("?");
   await wait(page, "assign-help-keys");
@@ -118,8 +140,8 @@ await runStep("practice: follow tasks", {}, async ({ page }) => {
   const leaks = watchLeaks(page);
   await page.setViewportSize(WIDE);
   await openPractice(page);
-  await page.locator('[data-testid="practice-tasks"]:not([data-folded])').waitFor({ timeout: T });
-  check("a wide window starts with the task column open", true);
+  await waitCoach(page, "pick");
+  check("the coach card starts on the first task, face up", (await readCoach(page)) === "pick:false", String(await readCoach(page)));
   if ((await page.locator('[data-testid="assign-new"]').count()) === 0) await page.locator('[data-testid="assign-view-two"]').click();
   await page.locator(PRACTICE_UNIT).first().waitFor({ timeout: T });
   await page.waitForLoadState("networkidle");
@@ -134,13 +156,15 @@ await runStep("practice: follow tasks", {}, async ({ page }) => {
   await waitDone(page, "split");
   await page.waitForFunction(([sel, count]) => new Set([...document.querySelectorAll(sel)].map((el) => el.getAttribute("data-testid"))).size === count + 1, [PRACTICE_UNIT, before], { timeout: T });
   check("Split: the box is two boxes and the task is ticked", true);
-  check("Split was not the first open task, so the first task stays open", (await readOpenTask(page)) === "practice-task-pick", String(await readOpenTask(page)));
+  check("Split was not the coach's task, so only its dot fills and the card stays on Pick face up", (await readCoach(page)) === "pick:false", String(await readCoach(page)));
 
   // Pick and move: click a line, J
   await clickOld(page, "Old Unit마다 새 문서의 어디로 갈지 정하고 확정합니다.");
   await page.keyboard.press("j");
   await waitDone(page, "pick");
-  check("Pick: J in Assign ticks the task and the next open task opens", (await readOpenTask(page)) === "practice-task-link", String(await readOpenTask(page)));
+  await waitFlip(page, "pick");
+  await waitCoach(page, "link");
+  check("Pick: J fills its dot, the card flips to the check and moves on to Link", (await dot(page, "link").getAttribute("data-now")) === "true");
 
   // Confirm with a card: pick pair B, wait for its suggestion card, Enter
   const pairB = "추천 카드를 누르면 고르기만 하고, 이어서 Enter로 바로 확정합니다.";
@@ -150,7 +174,7 @@ await runStep("practice: follow tasks", {}, async ({ page }) => {
   await page.locator('[data-testid="assign-primary"]:is([data-state="confirm"], [data-state="choose"])').waitFor({ timeout: T });
   await page.keyboard.press("Enter");
   await waitDone(page, "confirm");
-  check("Confirm: Enter on the card ticks Confirm and not Link", (await task(page, "link").getAttribute("data-done")) === "false");
+  check("Confirm: Enter on the card ticks Confirm and not Link, and the coach stays on Link", (await dot(page, "link").getAttribute("data-done")) === "false" && (await readCoach(page)) === "link:false", String(await readCoach(page)));
   await page.waitForLoadState("networkidle");
   await clickOld(page, pairB);
   await page.locator('[data-testid="assign-chosen"]:not(.is-empty)').waitFor({ timeout: T });
@@ -171,7 +195,9 @@ await runStep("practice: follow tasks", {}, async ({ page }) => {
   await link.waitFor({ state: "visible", timeout: T });
   await link.click();
   await waitDone(page, "link");
-  check("Link: the bar's Link ticks the task", true);
+  await waitFlip(page, "link");
+  await waitCoach(page, "hold");
+  check("Link: the bar's Link ticks the task, the card flips and moves on to Hold", true);
   await page.waitForLoadState("networkidle");
 
   // Hold: Shift+H on pair C with a reason - the hold mark shows on the paper
@@ -182,15 +208,17 @@ await runStep("practice: follow tasks", {}, async ({ page }) => {
   await page.locator('[data-testid="assign-remark-modal-text"]').fill("Practice: ask the owner");
   await page.locator('[data-testid="assign-remark-modal-confirm"]').click();
   await waitDone(page, "hold");
+  await waitFlip(page, "hold");
+  await waitCoach(page, "merge");
   const holdMark = page.locator('[data-testid="assign-old"] [data-testid^="assign-paper-hold-"]');
   await holdMark.first().waitFor({ timeout: T });
-  check("Hold: the hold mark is on the paper and the task is ticked", true);
+  check("Hold: the hold mark is on the paper, the task is ticked and the card moved on to Merge", true);
 
   // Undo: Ctrl+Z takes the hold back - the mark goes, the Hold tick stays
   await page.keyboard.press("ControlOrMeta+z");
   await waitDone(page, "undo");
   await holdMark.first().waitFor({ state: "detached", timeout: T });
-  check("Undo: Ctrl+Z takes the hold back and Hold stays ticked", (await task(page, "hold").getAttribute("data-done")) === "true");
+  check("Undo: Ctrl+Z takes the hold back and Hold stays ticked", (await dot(page, "hold").getAttribute("data-done")) === "true");
 
   // Merge: Shift+J twice on the first broken piece - two boxes become one
   const beforeMerge = await countOld(page);
@@ -198,8 +226,10 @@ await runStep("practice: follow tasks", {}, async ({ page }) => {
   await page.keyboard.press("Shift+J");
   await page.keyboard.press("Shift+J");
   await waitDone(page, "merge");
+  await waitFlip(page, "merge");
+  await waitCoach(page, "pair");
   await page.waitForFunction(([sel, count]) => new Set([...document.querySelectorAll(sel)].map((el) => el.getAttribute("data-testid"))).size === count - 1, [PRACTICE_UNIT, beforeMerge], { timeout: T });
-  check("Merge: the two pieces are one box and the task is ticked", true);
+  check("Merge: the two pieces are one box, the task is ticked and the card moved on to Pair", true);
 
   // Keyboard map: ? opens the help, then its Keyboard map button
   await page.keyboard.press("?");
@@ -212,10 +242,12 @@ await runStep("practice: follow tasks", {}, async ({ page }) => {
 
   const done = ["split", "pick", "confirm", "unassign", "link", "hold", "undo", "merge", "keyboard"];
   check("the progress counts the nine tasks followed", (await getText(page, "practice-progress")).trim() === `${done.length}/12`, await getText(page, "practice-progress"));
-  check("the open task is the first one not done yet", (await readOpenTask(page)) === "practice-task-pair", String(await readOpenTask(page)));
-  // any task opens when pressed, done or not
-  await task(page, "toc").locator("button").click();
-  check("pressing a task opens it", (await readOpenTask(page)) === "practice-task-toc", String(await readOpenTask(page)));
+  check("the band fills the nine dots followed", (await page.locator('[data-testid^="practice-dot-"][data-done="true"]').count()) === done.length);
+  check("the coach card is on the first task not done yet", (await readCoach(page)) === "pair:false", String(await readCoach(page)));
+  // any task opens when its dot is pressed, done or not
+  await dot(page, "toc").click();
+  await waitCoach(page, "toc");
+  check("pressing a dot moves the card to that task", (await dot(page, "toc").getAttribute("data-now")) === "true");
   await page.waitForLoadState("networkidle");
   followLeaks = leaks;
 });
