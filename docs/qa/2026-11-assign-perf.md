@@ -1,6 +1,6 @@
 # Assign 반응 시간 — 명령 큐 · 필터 덩어리 앞뒤 (2026-11-26)
 
-쪼개기 먼저 패치의 반응속도 스텝(설계 `docs/superpowers/specs/2026-11-25-split-first-design.md` 6-1절)의 실측이다. 같은 기계에서 같은 시드로 앞뒤를 쟀다.
+쪼개기 먼저 패치의 반응속도 스텝(설계 `docs/architecture/decisions.md`의 `## 2026-11-25-split-first` 6-1절)의 실측이다. 같은 기계에서 같은 시드로 앞뒤를 쟀다.
 
 ## 어떻게 쟀나
 

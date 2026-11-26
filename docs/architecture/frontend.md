@@ -160,7 +160,7 @@ SOP 화면: `api-sop.ts`(SOP API 호출·응답 타입), 화면 규칙은 순수
 
 ## 17. 연습 화면(`/practice`) — 가짜 서버
 
-설계 `docs/superpowers/specs/2026-11-26-practice-page-design.md`. 실제 Assign 부품을 그대로 쓰고 API 부르기만 브라우저 메모리의 가짜 서버로 돌린다 — 서버 · DB에는 아무것도 가지 않는다.
+설계 `docs/architecture/decisions.md`의 `## 2026-11-26-practice-page`. 실제 Assign 부품을 그대로 쓰고 API 부르기만 브라우저 메모리의 가짜 서버로 돌린다 — 서버 · DB에는 아무것도 가지 않는다.
 
 - **끼우는 자리 하나**: `lib/api.ts` `sendRequest`가 인증 헤더 · `fetch` 앞에서 `lib/practice-route.ts` `isPracticeRequest(path, readPathname())`를 묻고, 참이면 `await import("./practice/practice-server")`의 `handlePracticeRequest(method, path, body)`가 `Response`를 짓는다. 그 뒤 `!response.ok` → `ApiError` · `rule`은 실제와 같은 줄이다. 동적 import라 가짜 서버와 자료는 연습 덩이에만 실린다.
 - **판정(D2)**: Bundle 경로는 id로만 — 연습 Bundle(`PRACTICE_BUNDLE_ID = -1`) 아래는 화면 주소와 상관없이 늘 가짜(떠난 뒤 명령 큐가 마저 보내는 쓰기도), 실제 id는 `/practice`에서도 실제 서버(실제 Assign의 큐가 남은 저장을 잃지 않게). 화면이 `/practice`이면 Bundle 밖 경로 중 `REAL_ON_PRACTICE`(`/me` · `/ai/jobs/recent` — 읽기만, SOP 자료 아님) 밖 모두 가짜. 운영 빌드에서도 같고 `lib/drafting`을 읽지 않는다.

@@ -5,11 +5,8 @@
 | 문서 | 내용 |
 |------|------|
 | [superpowers/specs/2026-11-05-sop-restructuring-e2e-design.md](superpowers/specs/2026-11-05-sop-restructuring-e2e-design.md) | 제품 설계: SOP 재구성 End-to-End(쪼개기 → 분류·제안 → 결과물 A·B·C, 두 입구, 데이터 모델, AI 경계, 화면 인수인계) |
-| [superpowers/specs/2026-11-25-split-first-design.md](superpowers/specs/2026-11-25-split-first-design.md) | 다음 패치 설계(2026-11-25 승인): 새 문서 생성 숨기기, 화면 문제 셋, Old · New 같은 쪼개기 규칙, 양 단 New도 같은 용지, 손질 다듬기 — 스텝 · 브랜치 · 정답 문서 꼴 |
-| [superpowers/plans/2026-11-25-split-first.md](superpowers/plans/2026-11-25-split-first.md) | 쪼개기 먼저 구현 계획의 차례 · 공용 계약 · 운영 방법(브랜치별 단계는 `-1` ~ `-5`, 진행은 `-ledger`) |
-| [superpowers/specs/2026-11-26-practice-page-design.md](superpowers/specs/2026-11-26-practice-page-design.md) | 연습 페이지(`/practice`) 설계: 실제 Assign + 브라우저 안 가짜 서버(`api.ts` 한 곳), 백엔드가 뽑는 연습 자료, 오른쪽 과제 칸 12개 자동 체크, 진입 두 곳 — 사용자 결정 U1~U5 · 설계 결정 D1~D24 |
-| [superpowers/plans/2026-11-26-practice-page.md](superpowers/plans/2026-11-26-practice-page.md) | 연습 페이지 구현 계획: 모음 브랜치 `feat/practice-page`와 스텝 넷(자료 · 가짜 서버 · 화면 · 과제), 공용 계약, dev 합치기 |
-| [superpowers/specs/2026-11-23-assign-feedback-2.md](superpowers/specs/2026-11-23-assign-feedback-2.md) | T/F 피드백 2차 명세 원문(17개 항목, 모두 확정 · 다음 패치 범위): 요구 · 문구 · 수용 기준 · 시나리오. 겹치는 곳은 쪼개기 먼저 설계 11-1절 |
+| [superpowers/plans/2026-11-25-split-first-ledger.md](superpowers/plans/2026-11-25-split-first-ledger.md) | 쪼개기 먼저 · 연습 페이지 장부(넘김 문서) — 브랜치별 결과와 "아침에 볼 것". v1.6.43 정식 업데이트를 main에 합친 뒤 지운다 |
+| [superpowers/specs/2026-11-23-assign-feedback-2.md](superpowers/specs/2026-11-23-assign-feedback-2.md) | T/F 피드백 2차 명세 원문(17개 항목): 요구 · 문구 · 수용 기준 · 시나리오. v1.6.43까지 모두 끝났고 **F2-R1~R5(To-Be 문서로 이동 · 새 문서 추가 ⇧D)만 보류** — 숨긴 새 문서 기능을 다시 켤 때 함께. 겹치는 곳의 결정은 `architecture/decisions.md` `## 2026-11-25-split-first` 11-1절 |
 | [superpowers/handoff/2026-11-19-paragraph-split-requests.md](superpowers/handoff/2026-11-19-paragraph-split-requests.md) | 문서 문단 분리 · 문단 엑셀 개선 요청(사용자, 2026-11-19, 사진에서 옮김) 16항목 + 공통 요구(제로베이스 통일 설계)와 시안 1 · 2 결정. 작은 것 · 시안 1(v1.2.11) · 시안 2(v1.2.12~v1.3.2) 됨 — 남은 것은 끝 "다음 순서"의 4번 2차(매핑 · 비교 엑셀) |
 | [qa/feature-map.md](qa/feature-map.md) | 기능 맵(에이전트용) — 화면마다 도달 주소·조작 요점·알려진 함정·스모크 `ONLY` 머리·설명서 자리. 앱이 원본, 맵은 색인(화면을 바꾸면 같은 커밋에서 고친다) |
 | [../frontend/docs/design/2026-11-07-frontend-design-foundations.md](../frontend/docs/design/2026-11-07-frontend-design-foundations.md) | 프런트 디자인 기초 — 토큰(색 값의 단일 소스는 `frontend/src/styles/tokens.css`)·글꼴·화면 구조·상태 표현·동작 규칙·언어. 화면 코드 주석이 "디자인 문서 N절"로 절 번호를 참조한다 |

@@ -1,6 +1,6 @@
 # 쪼개기 먼저 — 장부
 
-지휘 세션이 브랜치를 시작 · 끝낼 때마다 고친다. 압축되거나 새 세션이면 이 파일과 `git log --oneline origin/dev`부터 읽는다. 하는 법은 [`2026-11-25-split-first.md`](2026-11-25-split-first.md).
+지휘 세션이 브랜치를 시작 · 끝낼 때마다 고친다. 압축되거나 새 세션이면 이 파일과 `git log --oneline origin/dev`부터 읽는다. 하는 법은 쪼개기 먼저 구현 계획 차례(지움 — git 이력).
 
 상태: 대기 · 진행 · 합침 · 세움(사람을 기다림) · 건너뜀(조건이 안 됨)
 
@@ -44,7 +44,26 @@
 | Fh | `fix/assign-new-head-fit` | 합침 | v1.6.43 · 62f34e6c | vitest 2808 · build 경고 0 · `assign:` + `practice:` ALL PASS 1572 · overlap 새 장면 4/4(고치기 전 dev 코드에서 16 실패 확인) · Assign 장면 다섯 1120/1440 20/20 · 검토 생략(CSS · 작은 일) | — |
 
 
-## 이어 가기 (2026-11-26 밤 — 1차 피드백 중간, 다음 세션은 여기부터)
+## 이어 가기 (2026-11-27 새벽 — 밤샘 끝, 정식 업데이트 준비 커밋까지. 다음은 여기부터)
+
+`origin/dev` = **v1.6.43** + 준비 커밋 `chore(release): v1.6.43`(이 장부도 그 커밋 안). main 합치기 · 태그 · GitLab · 배포는 사용자.
+- **dev에 들어감(밤샘)**: v1.6.39 양 단 New 칸 메뉴 + New 박스 Shift+F10(F7b) · v1.6.40 단추 줄 라벨(F5) · v1.6.41 메뉴가 이동 뒤 열린 채 남던 결함(Fm, 연습 스모크가 찾음) · v1.6.42 연습 페이지 `/practice`(F9, 스텝 4개 모음 브랜치) · v1.6.43 문서 하나인 칸 머리 줄 겹침(Fh, 연습 그림이 찾음) · 설명서 그림(바뀐 장면 7) · `findBackendPython` 한 곳으로(그림 스크립트가 소스 규칙에 걸림) · 준비 커밋.
+- **스모크 · 감사 · perf**(모두 통과):
+  - `FULL=1`: 연습 모음 브랜치(dev v1.6.41 포함) ALL PASS 2588, **최종 dev v1.6.43 ALL PASS 2588**. 브랜치마다 `assign:` 1527 · 1527 · `practice:` 52 · `assign:`+`practice:` 1572 · baseline `account` ALL PASS.
+  - 감사(dev v1.6.41, 바뀐 화면): layout `DS=worst` Assign · 상단 바 · 관리 19항목 151/151 · overlap Assign 다섯 장면 × 1120/1280/1440/1920 40/40 · 새 장면 `assign-pane-head-narrow` 4/4(고치기 전 16 실패) · contrast 전부 · 설명서 그림 7장면.
+  - perf(운영 빌드 · 극단 시드, v1.6.41 vs v1.6.24): 52문서 CPU1 J 24.1→9.7 · Delete 24.5→10.4ms, CPU4 53.2→51.7 · 57.7→56.1ms, 작은 문서 CPU1 filter Delete 6.4→21.5ms(v1.6.23 23ms 수준으로 돌아온 잡음), 스크롤 끊김 0, burst 손실 0. 결과 `~/Documents/sop-orchestration/perf-v1641.txt`. 7g 괄호선 · 스크롤 막대 pointermove · 대기 칩 · 키보드 그림은 따로 시나리오가 없어 이 셈(스크롤 · 글쇠 · 필터)에 섞여 잰 것 — 어긋남 없음.
+- **흔들림**: F5 첫 `assign:` 실행에서 느린 저장 단계 둘(게이트를 나란히 돌린 부하, 혼자 다시 통과). 그 밖에 흔들림 없음.
+- **추천안으로 정한 것 · 그림**: 아래 "아침에 볼 것"의 (F…) 줄들. 그림: 단추 줄 `/private/tmp/claude-501/-Users-hyeonjin-Documents-sop-archivist/cd35c95b-037a-4e82-bb7a-e837e4859e96/scratchpad/shots/pickbar/`, 연습 화면 `…/scratchpad/shots/practice-final/`(1440 en · 1120 ko), 설명서 그림은 저장소 `frontend/public/manual/img/`(practice · assign-keyboard-map · assign-queued · assign-new-cell-menu · user-menu · assign · assign-link).
+- **아침에 할 것**: ① "아침에 볼 것" 맨 위 **v1.5.0 운영 배포 여부**(Alembic 0035가 기존 `units.text`를 바꿈) 확인 ② 개발 서버 :4444에서 체크리스트 `docs/qa/2026-11-26-release-frontend-checklist.html`의 1차 피드백 절 손으로 보기(특히 연습 페이지) ③ 괜찮으면 main 합치기:
+  ```bash
+  git fetch && git switch dev && git pull --ff-only
+  git tag -a v1.6.43 -m "v1.6.43 — 정식 업데이트" && git switch main && git pull --ff-only && git merge --no-ff dev -m "Merge dev into main (v1.6.43)" && git push origin main && git push origin v1.6.43 && git switch dev
+  ```
+  그 뒤 GitLab 파이프라인 `deploy-production` ▶ → 상단 바 v1.6.43 확인 → `CHANGELOG.md` v1.6.43에 배포일 → 이 장부 지우기(끝난 계획과 같은 정책).
+- 미룸(그대로): 6 표 꼴 개정 이력 · 7 Reference 아래가 안 된 경우 · 스모크 "맞을 때까지 읽기" 공용 함수.
+- 정리: 워크트리는 `admin-polish`(다른 트랙)만 남김. 밤샘 브랜치는 로컬 · 원격 모두 지움.
+
+## 이어 가기 (2026-11-26 밤 — 1차 피드백 중간)
 
 `origin/dev` = **v1.6.38**(`81b80a5f`). 1차 피드백 답은 맨 아래 "사용자 답 (11-26 밤)".
 - dev에 들어감: 8 스크롤 막대 v1.6.33 · 2 Tab=J/K · `` ` `` 들여쓰기 v1.6.34 · 4 짝 판 두 번 누름 v1.6.35 · 7 Forms 참조 칸 v1.6.36 · 1 밀린 명령 이름 v1.6.37 · 3 키보드 그림 v1.6.38(75% 배열 · Graphite 톤 · 누른 글쇠 표시) · 표 접기 스모크 흔들림 고침.
@@ -155,6 +174,10 @@
 - Fh · 새 감사 장면만(`pw-overlap-audit.mjs` `assign-pane-head-narrow`)
 
 ## 아침에 볼 것 (사람이 정할 것 · 봐 줄 것)
+
+- **(정식 업데이트, 먼저) CHANGELOG에 v1.5.0의 운영 배포 기록이 없다.** 운영이 아직 v1.4.0이면 이번 배포에 v1.5.0의 **Alembic `0035`(기존 `units.text`의 줄바꿈을 띄어쓰기로 바꿈, 사용자 승인 2026-11-21)**도 함께 돈다 — 배포 메모 첫 줄에 굵게 적었다. v1.5.0 뒤 리비전 0038~0041은 더하기만(0041 downgrade만 행을 지움). env · 의존성 · 권한 변경 없음. 배포 전 백업(`docs/deploy/backup.md`) 확인.
+- (정식 업데이트) README 5줄 기능 설명에 지금 숨긴 Order · 결과물 C가 남아 있다(준비 커밋 범위 밖이라 그대로).
+- (정식 업데이트) `2026-11-23-assign-feedback-2.md`는 F2-R1~R5(To-Be 문서로 보내기 · ⇧D, 숨긴 새 문서 기능)가 보류라 남겼다. 끝난 계획 · 설계는 지우고 인용 부분은 `docs/architecture/decisions.md`로 옮김.
 
 - ~~(11-26 밤 layout 감사) 관리 › 역할 표 1120 넘침 · 낡은 기대값 P1 · A4b~~ — 같은 날 고침("이어 가기" 1번 아래).
 

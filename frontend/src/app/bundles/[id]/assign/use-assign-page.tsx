@@ -2024,7 +2024,7 @@ export function useAssignPage() {
   const bulkLangEn = bulkRows.length > 0 ? planBulkLang(bulkRows, "en", isLangLocked) : null;
   const bulkActions = bulkRows.length > 0 ? listBulkActions(checked.size > 0 ? "old" : "new", bulkRows) : [];
 
-  /** Old 줄을 여럿 고름에 넣거나 뺀다(Shift+클릭 · ⇧G). Old · New 여럿 고름은 함께 두지 않아 New 쪽을 비운다(쪼개기 먼저 계획 정한 것 1) */
+  /** Old 줄을 여럿 고름에 넣거나 뺀다(Shift+클릭 · ⇧G). Old · New 여럿 고름은 함께 두지 않아 New 쪽을 비운다(쪼개기 먼저 계획 4 정한 것 1) */
   function toggleOldChecked(key: string, via: "click" | "key") {
     setChecked((prev) => toggleChecked(prev, key, activeKey, via));
     setCheckedNew((prev) => (prev.size === 0 ? prev : new Set()));

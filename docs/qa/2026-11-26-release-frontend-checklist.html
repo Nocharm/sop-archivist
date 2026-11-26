@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>정식 업데이트 화면 체크리스트</title>
-<!-- v1.5.0(마지막 main) → dev v1.6.32 사이 프런트 변경을 화면에서 손으로 볼 것. 항목은 아래 SECTIONS 한 곳, 체크는 이 브라우저에만 남는다. -->
+<!-- v1.5.0(마지막 main) → dev v1.6.43 사이 프런트 변경을 화면에서 손으로 볼 것. 항목은 아래 SECTIONS 한 곳, 체크는 이 브라우저에만 남는다. -->
 <style>
   :root {
     --bg: #f7f7f5; --card: #ffffff; --text: #1d1d1b; --muted: #6b6b66;
@@ -85,7 +85,7 @@
 <body>
 <main>
   <h1>정식 업데이트 화면 체크리스트</h1>
-  <p class="sub">마지막 main <b>v1.5.0</b> → dev <b>v1.6.32</b>. 개발 서버(:4444)에서 화면으로 볼 것만 추렸습니다.</p>
+  <p class="sub">마지막 main <b>v1.5.0</b> → dev <b>v1.6.43</b>. 개발 서버(:4444)에서 화면으로 볼 것만 추렸습니다.</p>
   <p class="sub">자세한 것은 <code>CHANGELOG.md</code> · 장부 "아침에 볼 것"(<code>docs/superpowers/plans/2026-11-25-split-first-ledger.md</code>).</p>
   <div class="bar">
     <div class="meter"><i id="fill"></i></div>
@@ -109,7 +109,7 @@
       { id: "auto-smoke", title: "전체 스모크 <code>FULL=1</code> 통과",
         note: ["ok", "11-26 <code>2ccff578</code>: 2522 통과 · 1 흔들림(New 판 그림 캡션) — 검사를 고침 <code>f2e20b78</code>, 부하 속 확인은 다음 <code>FULL=1</code>에서"] },
       { id: "auto-audits", title: "감사 넷", detail: ["layout <code>DS=worst</code>", "overlap — 새 장면 <code>assign-cell-menu</code>", "contrast", "manual-shots(<code>MANUAL=app</code> · 시스템)"],
-        note: ["ok", "11-26 <code>f2e20b78</code>: overlap 80/80 · contrast · manual-shots 통과, layout 196 중 5 실패 → 관리 역할 표 고침(v1.6.32) · 낡은 기대값 둘 고침"] },
+        note: ["ok", "11-26 <code>f2e20b78</code>: overlap 80/80 · contrast · manual-shots 통과, layout 196 중 5 실패 → 관리 역할 표 고침(v1.6.32) · 낡은 기대값 둘 고침<br>11-27 dev v1.6.41(바뀐 화면만): layout <code>DS=worst</code> Assign · 상단 바 · 관리 19항목 151/151 · overlap Assign 장면 다섯 × 1120 · 1280 · 1440 · 1920 40/40 + 새 장면 <code>assign-pane-head-narrow</code>(v1.6.43) 4/4 · contrast 전부 통과 · 설명서 그림 바뀐 장면 7(새 4 · 다시 3). 스모크 <code>FULL=1</code> 연습 페이지 모음 브랜치 ALL PASS 2588, 최종 dev v1.6.43 = ALL PASS 2588. perf(운영 빌드 · 극단 시드): 52문서 CPU1 J 24.1→9.7 · Delete 24.5→10.4ms, CPU4 J 53.2→51.7 · Delete 57.7→56.1ms, 작은 문서 CPU1 필터 Delete 6.4→21.5ms(v1.6.23 23ms 수준의 잡음), 모두 100ms 아래 · 스크롤 끊김 0"] },
       { id: "auto-after", title: "기준 커밋 뒤 dev가 바뀌었으면 그 화면만 다시", detail: ["바뀐 화면의 스모크 <code>ONLY=\"&lt;화면&gt;:\"</code>", "그 화면의 감사 항목 <code>ONLY=&lt;id&gt;</code>"] },
       { id: "auto-perf", title: "perf 다시 재기", detail: ["극단 시드", "8a에서 몇 칸이 ±20% 오감", "7g 괄호선은 아직 안 잼"] },
       { id: "auto-manual", title: "설명서 그림과 머리", detail: ["그림은 바뀐 장면만 <code>ONLY=&lt;장면&gt;</code>", "머리 <code>version</code> · <code>updated</code>"] },
@@ -182,6 +182,9 @@
       { id: "fb-queue", ver: "v1.6.37", title: "밀린 명령에 이름 — 박스 칩 <b>Queued · Merge</b>, 박스 없는 일은 Undo 옆 알약", detail: ["되돌리기 · 다시 하기 · 장벽 뒤 글쇠는 위쪽 줄", "나누기 이름이 단추와 같은 Split(나누기)"] },
       { id: "fb-pickbar", ver: "v1.6.40", title: "단추 줄은 폭이 되면 이름까지, 좁으면 덜 쓰는 것부터 아이콘", detail: ["접히는 차례: 이을 상대 → 짝 → 위 합치기 → 아래 합치기 → 나누기", "아이콘에 올리면 0.16초에 펼침", "못 하는 손질은 이름을 보이고 까닭은 툴팁", "⋯는 줄 오른쪽 끝"] },
       { id: "fb-newmenu", ver: "v1.6.39", title: "양 단 New 표 칸 · 표 머리에도 우클릭 메뉴(이 칸 · 이 표)", detail: ["메뉴 글쇠 · <kbd>Shift</kbd>+<kbd>F10</kbd>도 마지막에 고른 박스(Old · New)에서 열림"] },
+      { id: "fb-menuclose", ver: "v1.6.41", title: "사용자 메뉴 · AI 작업 목록에서 앱 안 링크로 이동하면 메뉴가 닫힌다", detail: ["전에는 열린 채 남았다"] },
+      { id: "fb-practice", ver: "v1.6.42", title: "연습 페이지 <code>/practice</code> — 서버에 아무것도 쓰지 않는다", detail: ["사용자 메뉴 <b>Practice</b> · 설명서 머리에서 들어감", "오른쪽 과제 12개가 손짓대로 자동 ✓", "1280px 미만은 과제 칸이 접힌 막대로 시작"] },
+      { id: "fb-headfit", ver: "v1.6.43", title: "문서가 하나인 Assign 칸 머리 줄 — 좁은 칸에서 제목이 말줄임", detail: ["확대 단추가 옆 칸 머리를 덮지 않음", "전체 이름은 툴팁"] },
     ] },
     { title: "관리 화면", where: "/admin — v1.6.19(관리 세션에서 중간에 합침), 칩 숫자는 스텝", items: [
       { id: "adm-url", ver: "0", title: "하위 탭이 주소에 남는다", detail: ["새로 고침 · 뒤로 가기", "대상 이름은 화면 언어"] },

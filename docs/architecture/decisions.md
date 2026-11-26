@@ -905,3 +905,478 @@ export function canStart(state: FocusState, pending: Pending): boolean;
 - **D5 AI 분류.** 분류 지침 · 응답 모양에서 `change_type`을 뺀다 — 받는 쪽(저장)이 글로 정한다. 제안 기록의 `change_type`은 쓰지 않거나 글로 정한 값만 둔다. 채택 판정(adoption)은 둘을 기준으로.
 - **D6 AI 묶기.** LLM `match` 작업(말투 · 고쳐 씀 판정, `prompt.match`)을 걷는다. 계획(`match_plan`, LLM 없음)이 종류를 바로 정하고 "다듬기 대기"(`provisional`)가 없어진다 — 일괄 수락 미리 보기의 `excluded_provisional`도 뺀다. 제안 종류 `match`(계획이 쓰는 제안)는 그대로다. DB의 `ai_jobs.kind` 제약은 옛 행 때문에 그대로 둔다.
 - **D7 화면.** 결정 칸의 세 칸 고르기를 읽기 전용 "=" / "수정" 표시로 바꾼다(화면은 미리 보기로 같은 규칙을 쓰고 서버 응답이 이긴다). 저장 몸통에서 고른 종류를 뺀다. 일괄 수락 창의 "다듬기 대기" 줄과 AI 작업 목록의 `match` 작업 이름을 뺀다. 표 구성을 바꾸는 손잡이는 그대로이고 그 표시는 "수정"이다.
+
+## 2026-11-25-split-first
+원래 제목: 쪼개기 먼저 — 다음 패치 설계. 부르는 이름: "쪼개기 먼저 설계"(`split-first`). A1 · B2 · E3 · F2 같은 항목 이름은 남긴 명세 `docs/superpowers/specs/2026-11-23-assign-feedback-2.md`의 것이다.
+
+### 4-1. 스텝 0 — New 편집 되돌리기 결함 (`fix/new-edit-undo`)
+
+코드 대조에서 찾았고 로컬 시험(sqlite)으로 확인했다(운영도 같은 코드이고 닿는 길이다. postgres에서는 중복 쪽으로 간다고 본다). Assign에서 New 문서를 손질(나누기 · 합치기 · 표 벗기기)한 뒤 `Ctrl+Z`를 누르면 되살아난 Unit의 **New 문장이 중복으로 남는다**. 편집 되돌리기가 `sync_new_doc_targets`(`match.py`)로 새 문장을 새로 만들고, 이어 단계 되쓰기(`decision_steps._restore_state`)가 옛 id의 새 문장을 또 넣는다. 이은 칸이 있으면 그 뒤 다시 하기가 409 `confirm_required`로 막힌다(`settled`가 Old 판단 id뿐). 이음과 확정은 되살아난다.
+- 고침: 단계 되돌리기 · 다시 하기 중에는 되쓸 새 문장의 `new_unit_id`에 새 행을 만들지 않는다. `settled`에 단계가 찍은 새 문장의 `new_unit_id`도 넣는다.
+- 시험은 id를 다시 쓰지 않는 조건(편집 뒤 다른 New 문서를 올려 id를 민다)에서 나누기 · 합치기 · 벗기기 · 다시 표로를 되돌리고 다시 한다. 새 문장 수가 `new_unit_id`마다 하나인지 본다.
+- 함께 본 것: 문서 편집 되돌리기(`edits/undo`)로 표 벗기기를 되돌리면 양 단 New의 칸 안 문장 순서가 바뀐다(`outputs.build_bundle_table`이 새 문장 id로 정렬). Unit 순서로 바꾼다.
+- 이 브랜치가 맨 앞이다. New를 손질하는 자리를 넓히기 전에 고쳐야 한다. **운영에 이미 생긴 중복**은 읽기 전용으로 세기만 하고, 정리는 행 삭제라 따로 승인받는다(§14).
+
+### 5. 스텝 1 — 숨기기 (`feat/hide-drafting`)
+
+**H1 [제안]** 숨김 여부는 상수 하나(`frontend/src/lib/drafting.ts` `isDraftingOn()`)로 읽는다. 기본은 꺼짐. `NODE_ENV !== "production"`일 때만 브라우저 저장 `sopa.drafting = "1"`로 켤 수 있다 — 숨긴 기능의 스모크(대부분 `order.mjs`)를 계속 돌려 코드가 썩지 않게 하려는 것이고, 운영 빌드에는 켜는 길이 없다. 코드는 지우지 않는다.
+
+**H2** 화면에서 사라지는 것
+
+| 자리 | 사라지는 것 | 남는 것 |
+|---|---|---|
+| 단계 이동 | 3단계 Order. Outputs가 3단계가 된다 [제안] | Documents · Assign · Outputs · Map · History |
+| Documents의 New 문서 | 번호로 더하기(`tobe-add-row`), Excel 양식 · 가져오기, AI 목록 읽기, 표준 골격 선언, 칸 상태 표(N/A), WI 단계 더하기 | 파일 올리기, 목록, 파일이 없는 줄에 쓴 파일 붙이기, 번호 · 제목 · 상위 고치기, 지우기 |
+| Assign 오른쪽 New 칸 | 아직 쓰지 않은 문서(New · from Assign), 기본 · 템플릿 전환, 클릭 배치, 끌어서 보내기 | 이미 쓴 New 문서, 끌어서 잇기 |
+| Assign 오른쪽 칸 | All 나무의 칸 · 새 문서 · 단계 추가, Nearby의 칸, 고쳐 쓰기(E), 다른 언어 만들기 · 쓰기 | Suggested의 잇기 · 같은 글, Nearby의 New 문장, All의 New 문장, 삭제, 이동, 보류, 배정 취소 |
+| Assign 더보기 | AI 칸 추천, 번역, 문장 나누기 | 같은 글 일괄 확정, 잇기 제안, 한/영 짝 제안, 글꼴, 초기화 |
+| Outputs | C · New documents 탭, 순서 고치기 링크 | A, B(흐름), 요약, 의미 확인, Excel(A · B · Info · Documents) |
+
+결과물 B는 Old에서 New로 간 흐름이라 생성 기능이 아니다. 남긴다 [제안, 1차 결정판의 잘못을 고침]. 주소로 직접 들어온 `/order`는 `/assign`으로 넘긴다.
+
+**H3 이미 있는 빈 To-Be 문서 [U 7A]** — 보낼 곳에서 빠진다(`buildDestinationOptions`가 빈 목록). 이미 그리로 보낸 박스는 간 곳 줄이 그대로 보이고, 오른쪽 칸에 "새 문서 칸에 배정됨 · 번호 §칸(숨긴 기능)"을 읽기 전용으로 보인다. 그대로 두거나, **배정 취소**하거나, 이미 쓴 New 문장에 **이어 바꾼다**(잇기는 지금도 배정을 갈아 끼운다) [제안]. New 문서 고르기 목록에는 이미 쓴 문서만 있다. 쓴 문서가 하나도 없으면 빈 칸 안내에 Documents로 가는 단추가 뜬다(지금 있는 `NewPaneEmpty`).
+
+**H4 AI [U 8A]**
+- 남김: 잇기 제안(`match_plan`), 한/영 짝(`pair`), 벗긴 표 순서(`unwrap_order`), 문서 정보(`doc_meta`).
+- 숨김: 칸 추천(`classify`, 삭제 추천 포함), 번역(`translate`), New 목록 읽기(`tobe_list`), 문장 나누기(`split`).
+- 자동 실행에서 `classify`만 뺀다(`prepare.queue_prepare`의 분류 쌓기). 요청 API와 관리 화면의 작업 목록은 건드리지 않는다.
+- 이미 있는 `classify` · `split` 제안은 박스 아래 표시 · 추천 카드 · 위쪽 알약 · "모두 받기" · 필터 칩의 수 어디에도 나오지 않는다. 행은 바꾸지 않는다.
+- **묶기 계획이 숨긴 제안에 막히지 않게 한다**: 지금은 살아 있는 `classify` 제안이 걸린 Unit을 계획이 건너뛴다(`ai/match_jobs.py:174-192`). 숨긴 제안은 사람이 치울 길이 없으므로 계획이 그 제안을 보지 않게 한다 [제안].
+- **묶기 계획의 삭제 후보도 내지 않는다**: 계획은 빈 To-Be 문서가 없는 묶음에서 짝 없는 Unit에 삭제 후보를 쓴다(`match_jobs.py:688-689`). 8A에서 삭제 추천을 남기지 않기로 했고, 보이지 않는 빈 문서의 유무로 동작이 갈리면 안 되므로 늘 쓰지 않는다 [제안].
+- 위 셋은 서버 동작이라 H1의 화면 상수와 따로다. 첫 진입 자동 분류를 기다리는 스모크 단계(`smoke/assign.mjs:8184`)를 "자동 칸 추천이 돌지 않는다"로 바꾼다 — 사용자 승인 2026-11-25, 커밋 메시지에 사유를 적는다.
+
+**H5 막다른 길이 없게** — 확정하지 않은 AI 번역 줄은 검토 요청을 막는다(`targets_ai_suggested`). 새 번역 요청만 숨기고, **이미 있는 번역 줄의 확정 · 지우기는 오른쪽 칸에 남긴다**. 다른 막는 이유(`duplicate_without_reason`, `semantic_checks_incomplete`)는 남는 화면에서 풀 수 있다. `fill_tobe`의 할 일 문구는 "New 파일을 올리세요"로 바꾼다.
+
+**확인**: 운영 빌드에서 `sopa.drafting`을 켜도 나타나지 않는다. 빈 문서에 배정한 묶음에서 배정 취소와 검토 요청까지 간다. 설명서는 숨긴 절을 빼지 않고 머리에 "지금은 숨긴 기능"을 단다 [B].
+
+### 6-1. 스텝 2-1 — 반응속도 [U 시안 3차]
+
+T/F 원문(11-23): "삭제 처리 중에 다음 셀로 이동해서 삭제를 보내면 명령이 스킵됨" · "전체적으로 프론트 반응이 좀 느림" · "애니메이션도 더 즉각적으로". **11-23 명세의 A1 · A2에서 이미 결정된 것이다 [U 11-23]**: 누르는 즉시 다음 박스 + 명령 큐, 실패하면 뒤 정지 + 알림, 먼저 재고 큰 원인부터. 이 설계의 앞선 판이 비목표로 잘못 빼 두었다. 요구 · 원인 후보 · 문구 · 수용 기준은 그 명세 A1 · A2가 원문이고 여기에는 실측과 이 설계와 맞닿는 곳만 적는다.
+
+**실측(2026-11-25, 합성 문서, 로컬 운영 빌드 + sqlite, 창 1440)** — 글쇠를 누른 때부터 고름이 다음 박스로 옮겨질 때까지, 6번의 가운데 값. 운영(postgres · 사내망)은 더 느릴 수 있다.
+
+| 잰 것 | 63박스 | 1,050박스 | 목표 |
+|---|---|---|---|
+| `J`(이동만) | 11ms / CPU 4배 34ms | 13ms / 49ms | 그대로 |
+| `Del` → 다음 박스 | 76ms / 110ms | 303ms / 366ms | CPU 4배 100ms 안 |
+| `Del` → 다음 박스, 필터 Unassigned | – | CPU 4배 618ms | CPU 4배 100ms 안 |
+| `J`, 필터 Unassigned | – | CPU 4배 148ms | CPU 4배 60ms 안 |
+| `Del` 5번을 0.15초마다 | 5개 삭제 | **2개만 삭제(3개 사라짐)** | 5개 모두 |
+| `Del` 한 번의 요청 수 | 11 | 14 | 줄줄이 누르면 다시 읽기 1번 |
+
+까닭: 저장 응답(53ms) 뒤 행 목록과 딸린 요청 10여 개를 다시 읽고 나서야 고름이 옮겨진다. 긴 작업은 한 번에 50~80ms 두세 개뿐이라 그리기가 주범이 아니다. 필터를 켜면 용지 덩어리 나누기가 꺼져(`renderFolded`) 따로 느리다.
+
+- **`perf/assign-measure`** — `pw-perf-assign.mjs`에 위 시나리오(글쇠 → 다음 박스, 연타, 필터, 번호 칸 5글자, 요청 수)를 넣고 결과 문서 `docs/qa/2026-11-assign-perf.md`를 둔다. 서버 `/groups/save`의 처리 시간과 그중 `dump_bundle_state` 시간을 구조화 로그로 남긴다(원문 · 이름 없이).
+- **`fix/assign-command-queue`** — 쓰기를 모두 한 줄 큐로 보낸다: 판단 저장 · 즉시 확정 · 배정 취소 · 원문 편집 · 짝 · 되돌리기/다시 하기 · 일괄 · 그림 삭제 · 잇기(스텝 4) · 사유 쓰기와 삭제 취소(R3).
+  - 판단 명령(Del · ⇧H · U · Enter · 일괄 · 잇기)은 누른 순간의 대상(줄 + Unit)을 잡고 **즉시** 처리 중 표시와 함께 고름을 다음 박스로 옮긴다. 다음 박스 규칙은 지금 저장 뒤 규칙과 같다.
+  - 결과 박스가 응답 뒤에 정해지는 명령(합치기 · 나누기 · 벗기기 · 다시 표로 · 짝 · 언어 전환 · 되돌리기)은 **장벽**이다: 응답까지 고름을 두고, 그동안 누른 글쇠는 쌓아 두었다가 그 뒤의 고름 기준으로 차례로 한다.
+  - 같은 박스에 이어진 명령은 앞 응답의 revision으로 보낸다. 둘째부터 "대기 n" 칩. 행 목록 다시 읽기는 큐가 빌 때 한 번.
+  - 실패하면 큐를 멈추고 그 박스의 표시를 되돌린 뒤 알린다(어느 박스 · 무엇 · 까닭 · 대기 n) + **다시 시도** · **버리기**. 조용히 버리는 길(`busy` 조기 return, `queuedSaveRef` 한 칸, `canStart` null)을 없앤다.
+  - 큐 · 장벽 · 실패 멈춤은 순수 모델로 떼어 vitest로 본다.
+- **`fix/assign-instant-motion`** — 삭제 줄 접기 · 벗기기 전환 · 번호 도착 강조를 누르는 순간 시작한다. 기다리는 동안 처리 중 표시, 실패하면 거꾸로 돌린다.
+- **`perf/assign-filter-chunks`** — 필터가 켜져도 덩어리를 나눈다. 저장마다 덩어리 전체가 다시 그려지는 값(`strips.pending` · `deleted.folds` · 매번 새 `Map`)을 줄 단위로 좁힌다.
+- **`perf/assign-number-input`** — 먼저 잰 뒤 느리면 고친다(번호 칸 글자마다 용지 전체 계산). 재서 문제가 없으면 브랜치를 만들지 않는다.
+- 진짜 가상화(화면 밖 줄을 DOM에서 뺌)는 지금처럼 보류다. 위 목표에 못 미칠 때만 다시 연다.
+
+**왜 스텝 4보다 앞인가**: 잇기 · 손질이 새로 생기기 전에 쓰기 길을 하나로 모아야 새 명령이 같은 길로 들어간다.
+
+### 7. 스텝 3 — 같은 규칙
+
+#### R3 본문 앞부분 · 개정 이력 제외 (`feat/split-front-matter`) [회의]
+- 잡음 종류를 더한다: `front`(본문 앞부분), `history`(개정 이력). `noise.py`의 목차 표시와 같은 길(배정 줄 · 남은 수 · 진행 · 검토에서 빠지고, 결과물 A에는 "삭제(저절로)"로 남음). New에서는 New 문장을 만들지 않는다.
+- **한 줄에 종류 하나**: 1장 앞은 목차 줄이면 `toc`, 나머지는 모두 `front`(Summary of Changes 포함). `history`는 1장 뒤에서만 붙인다. 접힌 블록은 종류가 바뀌면 끊고, 머리 단추는 그 블록에만 작용한다. 수는 종류마다 따로 센다 [제안].
+- **표 · 그림에 붙는 표시**: 묶음(표 · 그림) Unit과 든 칸 · 캡션에 함께 붙고 함께 비워진다. 블록 줄과 A 줄에는 "표 n (r×c)" · "[Figure]"로 적고 1줄로 센다. 잠그는 것에 표 벗기기 · 다시 표로 · 캡션 붙이기/떼기 · 그림 묶기 · 제목↔문장 · 글자 골라 새 박스 · 들여쓰기를 더한다(지금 서버 잠금은 `toc`만 본다) [제안].
+- **본문 시작** = 본문 흐름에서 번호가 "1"인 첫 제목이나 번호 문단. 목차 줄과 표 안의 숫자는 보지 않는다(띠 표 제목은 본다). 못 찾으면 아무것도 제외하지 않는다.
+- 한/영 따로 문서의 둘째 반쪽: 추출기가 반쪽 경계를 남기지 않으므로, 다른 언어의 둘째 "1" 제목 **바로 앞에 끊김 없이 이어진 그 언어 · 중립 블록만** 제외한다. 첫 반쪽 끝의 한글 첨부는 건드리지 않는다 [제안].
+- **개정 이력** = 제목 글이 Summary of Change(s) · Revision History · Document Change History · 개정 이력 · 변경 이력인 절과 그 아래 표. 같은 단계나 위 단계 제목이 나오면 끝.
+- 목적 · Reference 등 1장부터는 매핑 대상이다 [회의]. 2번 요청(일부 절 제외)은 하지 않는다.
+- **화면에서는 "삭제"다 [U 시안 1차]** — 따로 "앞부분 아님"이라는 말을 두지 않는다. 흐린 블록 하나로 접어 "DELETED 본문 앞부분 · n줄 · 사유 1장 앞이라 삭제" / "DELETED 개정 이력 · n줄 · 사유 개정 이력이라 삭제"로 보인다. 펼치면 글에 취소선. Old · New 모두. 머리말 · 꼬리말은 대상이 아니다.
+- **단추는 늘 보인다 [U 시안 2차]** — 접혀 있어도 머리 오른쪽에 **사유 쓰기** · **모두 삭제 취소**(글자까지). 펼치면 줄마다 끝에 같은 두 단추가 아이콘으로 늘 있고(흐리게, 올리면 이름이 펼쳐짐) 고른 줄은 **삭제 취소 `U`** 가 펼쳐진 채다. 글쇠 [U 시안 3차]: 줄 **`U` 삭제 취소 · `R` 사유 쓰기**, 블록 전체 **`Shift+U` · `Shift+R`**(블록 머리를 고른 때는 Shift 없이도 블록 전체). 보통 Old 줄에서도 `R`은 Remark 쓰기다 [제안]. `R`은 지금 쓰지 않는 글쇠다. 지금은 Shift를 눌러도 같은 글쇠로 치므로 Shift 조합을 따로 가른다. 고른 줄의 오른쪽 칸에도 사유와 두 단추가 있다. 누르는 면은 높이 26px 이상.
+- `U`는 지금 배정 취소 글쇠다. **마지막으로 누른 것이 삭제된 줄이면** Old든 New든 `U`는 삭제 취소이고 Old 판단은 건드리지 않는다. 그때 Del · ⇧H · Enter는 아무것도 하지 않는다 [제안].
+- **사유** [U]: 종류마다 정한 문구가 처음부터 들어 있고 **사유 쓰기**로 바꿀 수 있다. 줄에서 누르면 그 줄, 머리에서 누르면 블록 전체다. 지금 있는 Remark 창을 쓰고 최근 사유에서 고를 수 있다(잡음 사유는 최근 목록에 쌓지 않는다). `units.noise_reason`(글, 기본 빈칸 = 정한 문구)과 편집 기록의 전 · 후 열을 더하고 편집 `set_noise_reason`으로 적는다(되돌리기 한 번). Excel A의 Remark는 적은 사유, 없으면 정한 문구. 문단 Excel과 Space 미리 보기에는 확정 삭제 줄처럼 취소선과 "Deleted — 사유"로 나오고 F1의 **삭제한 줄** 체크를 따른다(미리보기에서는 숨김, 고른 동안만). 목차 줄은 F1의 **옛 문서 목차** 체크를 따른다(미리보기 1줄, 받기 기본 끔). New의 사유는 그 문서의 문단 Excel에 나온다. 삭제 취소하면 적은 사유도 비운다(되돌리면 돌아온다) [제안].
+- 저장은 확정한 판단 행이 아니라 **잡음 표시**다 [제안]. 판단 행으로 쓰면 사람이 확정한 것처럼 보이고(`outputs._build_toc_row`의 원칙), 진행 숫자가 부풀며, 판단 행이 없는 New에는 쓸 수 없다. 그래서 보통 삭제 줄과 달리 확정 수 · 남은 수에 들어가지 않는다.
+- 목차 블록도 같은 말을 쓴다: "DELETED 목차 · n줄 · 사유 앱이 새 목차를 만듦", "목차 아님" → "삭제 취소" [제안].
+- 되돌리는 길: **삭제 취소**(편집 `clear_noise`, 사유도 함께 비움), 본문 줄 우클릭 **여기부터 본문**(새 편집 하나 = Ctrl+Z 한 번). 첫 반쪽에서는 문서 처음부터 그 줄 앞까지, 둘째 반쪽에서는 그 줄 바로 앞에 이어진 같은 언어 블록까지 제외하고, 그 뒤의 앞부분 표시는 비운다. 목차 · 개정 이력 표시는 남긴다. **정한 박스가 끼어 있으면 거절**하고 먼저 배정 취소하라고 알린다(지금 서버 규칙 `unit_has_decision` 그대로) [제안].
+- 삭제된 줄은 목차 줄처럼 나누기 · 합치기 · 짝 · 번호가 잠긴다.
+- 목차라고 못박은 곳(결과물 문구, 시트 접기, 요약 수, 용지 블록, 우클릭 까닭)을 종류별로 넓힌다.
+
+### 8. 스텝 4 — 같은 용지 (모음 `feat/new-paper`) [U 5B · 6B]
+
+사실: 양 단의 New는 `NewPane`(944줄)이 New 문장 목록을 따로 그린다. 한 단의 New는 Old와 같은 `Paper`(1,808줄)를 쓰지만 번호 칸 · 다시 표로 · 제목 되돌리기 · 목차 접기가 꺼져 있다(`isSolo`).
+
+**스텝 4-1 그리기 (`feat/new-paper-1-render`)** — 양 단에서 이미 쓴 New 문서를 `Paper`로 그린다.
+- 박스는 Unit이고 New 문장은 `new_unit_id`로 잇는다. 새 얹기 층이 출처 칩(본문 위 줄), 후보 · 고른 곳 · 출처 없음 표시, EQUIS 표시, AI 거르기, 표 칸의 칩과 끊기를 그린다.
+- 연결선 · 끌어 놓기 · 화면에 들이기는 `[data-target]`을 찾는다. 용지 박스에 같은 표시를 달아 그대로 쓴다.
+- 머리말 · 꼬리말 · 그림 탭이 Old와 같아진다. 제목 · 제외된 줄은 보이되 이을 수 없다(올리면 까닭).
+- 엮은 문서(숨긴 기능)는 `NewPane`에 남는다. 이미 쓴 문서용 가지는 `NewPane`에서 걷는다.
+
+**스텝 4-2 고르기 (`feat/new-paper-2-pick`)** — Old든 New든 누르면 고른다 [U 6B]. 고름은 쪽마다 따로 남고, **단추 줄은 마지막으로 누른 박스 아래 하나만** 뜬다. 무엇이 앞에 오는지는 고른 것이 정한다 [U 시안 1차].
+
+**단추 줄은 늘 한 줄이다 [U 시안 2차]** — 손질은 아이콘만 두고 올리거나 포커스가 오면 이름과 글쇠가 옆으로 펼쳐진다(용지에서 `Tab`은 들여쓰기라 단추로 가지 않는다 — 손질마다 글쇠가 있고, 단추 줄 안에 포커스가 있으면 보통 `Tab`이다)(문서 화면의 `.mbtn` 모핑 단추, 펼쳐도 줄이 늘지 않게 자리를 미리 잡는다). **잇기**만 글자까지 보인다. 묶음(`.mbtn-set`)은 하나에 올리면 나머지가 접히므로 **손질만** 묶고 잇기 · `⋯`는 묶음 밖에 둔다. 못 하는 손질은 `aria-disabled`로 두고 올리면 이름 대신 까닭이 펼쳐진다. 공용 `.mbtn` 규칙은 바꾸지 않고 Assign 전용 선택자로 더한다(관리 화면과 겹치지 않게). 폭이 모자라면 뒤에서부터 `⋯`로 들어간다(표 칸 안은 잇기와 `⋯`만). 손질과 잇기 쪽은 사이에 세로 선을 둔다. 좁은 터치 화면은 지원 범위 밖이다.
+
+| 고른 것 | 단추 줄 | 더보기 |
+|---|---|---|
+| 한쪽만(Old든 New든) | 손질 아이콘: 나누기 · 위와 · 아래와 합치기 · 한/영 짝, 선 뒤에 이을 상대 고르기 | 이은 줄 보기, 끊기, 그 밖의 손질 |
+| 양쪽 다 | **잇기**(↵, 글자) 다음에 손질 아이콘 — 이미 확정돼 있으면 **바꿔 잇기**, `Ctrl`+클릭으로 더했으면 **더해 잇기**, 이미 이어진 둘이면 **끊기** | 이은 줄 보기, 그 밖의 손질 |
+
+- **순서가 바뀌어도 같다** [U]: Old → New든 New → Old든 두 번째로 누른 박스 아래에 같은 잇기 줄이 뜬다. 먼저 고른 쪽은 점선 테, 마지막에 누른 쪽은 진한 칠과 테다.
+- **문단 밖을 누르면 고름이 풀린다** [U]: 두 용지의 빈 곳을 누르면 양쪽 고름과 여럿 고름이 모두 풀린다. 짝 · 캡션 고르는 중이면 첫 누름은 그 모드만 끝낸다. **Esc는 지금 그대로다**(선 → New 고름 → 여럿 고름, Old 고름은 남는다). 글 긁기 · 스크롤 막대 · 단추 · 떠 있는 판 · 오른쪽 칸은 아니다. 나눌 선이 있으면 첫 누름은 지금처럼 선만 거둔다. 적던 사유 · 초안은 그 줄에 남는다 [제안].
+- **잇기**는 이음과 확정을 한 번에 한다. 지금도 고른 뒤 확정을 한 번 더 누르므로 누르는 수는 같다 [제안]. 잇고 나면 New 고름이 풀려 다음 줄은 다시 손질이 앞에 온다. 이미 이어진 짝의 표시(간 곳)는 고름이 아니다. 끌어서 잇기는 그대로.
+- **Enter와 초안**: New를 눌러도 Old 줄의 초안은 바뀌지 않는다. Enter는 오른쪽 칸 확정 단추(B1)이고, 그 단추의 이름이 마지막에 한 일을 따른다 — 박스를 눌러 양쪽을 고른 뒤면 "잇기 → New n", 오른쪽 칸에서 보낼 곳을 고른 뒤면 "확정 → 그곳". `↵` 표시는 그때 하는 쪽 단추에만 붙는다. 잇기를 하면 그 줄의 저장 안 한 초안은 버리고 알림에 적는다 [제안].
+- **오른쪽 칸**은 마지막으로 누른 쪽을 보인다. New를 눌렀고 Old도 골라 두었으면 New 다듬기 위에 "Old n 고름 · 결정 보기" 한 줄을 둔다 [제안].
+- 지금 New를 누르면 뜨는 그 자리 메뉴(`LinkMenu`)는 없앤다. 끌어 놓기는 지금처럼 **놓는 즉시 잇고 확정한다**(1.2.0 피드백). 지금 메뉴가 까닭을 보이던 막힌 놓기는 알림으로 까닭을 보인다. 안 보이는 쪽(한 단 · Pair view)의 고름은 단추 줄과 Enter에 세지 않는다.
+- New에서도 Shift+클릭 여럿 고르기가 된다(한 단 · 양 단). 위쪽 바는 합치기 · 표 벗기기만 보인다(삭제 · 이동은 Old만) [제안].
+- 하나만 고른 잇기는 지금처럼 그 줄의 이음을 **갈아 끼운다**. 이미 이어진 박스에서 Enter는 아무것도 바꾸지 않고 알린다.
+- **이을 상대 고르기**는 반대쪽에서 누를 박스를 기다린다는 안내를 띄운다(Esc로 그만). **이은 줄 보기**는 반대쪽 용지를 이어진 박스로 옮긴다(8번 피드백, 다른 New 문서면 그 문서를 연다) [제안].
+- **"출처 없음" 거르기**도 같은 흐름이다 [제안]. 지금은 Old를 누르는 즉시 이어져 잘못 누르면 바로 저장된다. 이제 Old를 누르고 Enter(또는 잇기)로 한 번 더 확인한다. 누르는 수가 하나 늘지만 다른 자리와 같아진다.
+- 판단 글쇠(Enter · Del · ⇧H · U)는 늘 Old 줄에 작용한다(삭제된 줄을 누른 때는 R3). 단 양쪽을 고른 채의 Enter는 **잇기**다. 손질 글쇠(S · ← · → · ⇧J ⇧J · ⇧K ⇧K · ⇧L · ⇧P · ⇧N · ⇧T · Tab)와 J · K는 마지막으로 누른 쪽에 작용한다. 아무것도 고르지 않은 때의 J는 보이는 첫 줄을 고른다 [제안].
+- Shift+클릭 여럿 고르기와 짝 · 캡션 고르는 중에는 단추 줄이 뜨지 않는다.
+
+**스텝 4-3 손질 (`feat/new-paper-3-tools`)** — New 한 단 · 양 단 모두에서 두 번 눌러 나누기, 틈 합치기, 번호 칸 고치기, 다시 표로, 바뀐 조항을 제목으로, 목차 · 앞부분 접기, 글자 골라 새 박스가 된다. 같은 부품 · 같은 문구 · 같은 되돌리기.
+- 한 단 New와 양 단 New는 폭만 다르다. 가위 단추(원문 고치기)는 "넓게 보기"가 된다 [제안].
+- **New 표 벗기기 [U 시안 1차]** — New 본문이 표 안에 든 경우가 많아 벗긴 뒤 잇는다. 2026-11-20 "칸에 잇기만"을 바꾼다. 벗기지 않은 표는 지금처럼 칸에 잇는다.
+  - **벗기지 않고 칸마다 이을 때의 표시 [U 시안 2차]**: 표 머리에 "칸 문장 n 가운데 m 이음"과 막대, **표 벗기기** 단추. 이은 칸은 옅은 강조색 칠 · 왼쪽 강조색 막대 · 칸 위 출처 칩, 아직인 칸은 왼쪽 빨간 막대(문장 상자와 같은 뜻), 고른 칸은 진한 칠 · 테와 "r행 c열 · k/n" 꼬리표, Old를 고른 채 올린 칸은 점선 테와 "여기에 잇기". 끌고 있는 동안은 놓을 수 있는 칸이 모두 점선 테. 연결선은 표가 아니라 그 칸에서 끝난다. 한 칸에 문장이 여럿이면 문장마다 이 표시를 쓴다. 벗긴 줄과 칸의 색 뜻이 같다.
+  - 사실: 서버는 New에서도 벗기기 · 다시 표로를 받고, New 한 단의 우클릭 메뉴에는 이미 "표 벗기기"가 있다. 없는 것은 양 단, 다시 표로 단추, 줄 순서, AI 순서다(`isSolo`). 이 넷을 연다.
+  - 합성 문서로 확인: 번호 칸 · 한글 · 영어가 든 New 표를 벗기면 번호가 다음 줄의 번호 칸으로 가고, 벗긴 줄마다 New 문장이 생기며, 한/영 짝이 제안된다.
+  - 칸 안 글은 처음부터 규칙 2로 묶이므로 벗기면 언어별 박스가 그대로 줄이 된다.
+  - 이미 이은 칸이 있으면 벗기기 · 다시 표로 전에 "이은 칸 n개의 이음이 풀리고, 이어져 있던 Old 줄 m개는 보류로 갑니다"를 묻는다(서버는 이음을 풀며 그 Old 줄을 보류로 둔다 — 지금 확인창 글은 Old 기준이라 New에서는 방향이 반대다). n · m은 `confirm_required` 응답에 실어 준다. `Ctrl+Z`는 이음과 확정을 되살린다(스텝 0의 고침 뒤).
+
+**확인**: 기능 하나마다 Old · New 한 단 · New 양 단 세 자리를 같은 스모크 함수로 돌린다. 긴 문서 두 개를 나란히 열어 `pw-perf-assign.mjs`로 지금보다 느려지지 않는지 본다.
+
+### 9. 스텝 5 — 손질 다듬기
+
+| 브랜치 | 내용 | 출처 |
+|---|---|---|
+| `feat/assign-multi-merge` | Shift+클릭으로 여럿 고른 위쪽 바에 **합치기**(원문에서 이웃한 같은 문서 박스)와 **표 벗기기**(같은 문서의 표만 여럿 골랐을 때) [U 시안 2차]. 짝 줄이면 한글끼리 · 영어끼리 합치고 합친 둘을 다시 짝으로 맺는다(편집 하나) [제안]. 표는 여러 표를 받는 편집 하나(`table_ids`)로, 하나라도 안 되면 아무것도 하지 않고 까닭. 짝 제안은 끝에 한 번. Old · New 같음, 되돌리기 한 번. "표는 하나씩"이라고 적은 문서(`backend/CLAUDE.md` · `backend.md` · 설명서)를 같은 커밋에서 고친다 | 1번, 시안 2차 |
+| `feat/assign-multi-mark` | 여럿 고른 표시를 눈에 띄게: 이어진 줄마다 바깥 테 3px 하나와 "n줄 고름" 꼬리표, 줄마다 강조색 칠 · 왼쪽 막대(각진 모서리) · 오른쪽 체크. 떨어진 줄은 덩어리마다 테. 라이트 · 다크에서 테와 바탕 대비 3:1 이상 [U 시안 1차] | 시안 1차 |
+| `feat/split-by-sentence` | 고른 박스만 **문장마다 나누기**(우클릭 · Shape 줄 · `⇧S`). 규칙 1의 문장 경계를 쓰고 되돌리기 한 번 | 1 · 10번 |
+| `feat/assign-two-level-pick` | 묶음(짝 · 표)은 얇은 테와 꼬리표, 누른 조각은 진하게. 표 칸을 누르면 그 칸이 진하고 배정은 표째 | 7번, C1 |
+| `feat/assign-table-menu` | 표 우클릭을 "이 칸" · "이 표" 두 구역으로, 항목에 올리면 닿는 칸을 칠함 | 7번, C2 |
+| `fix/excel-a-strike` | Excel A의 삭제 줄 Old 글에 취소선 | 6번 [회의] |
+
+11-23 명세 항목(세부는 그 명세):
+
+| 브랜치 | 항목 | 이 설계와 맞닿는 곳 |
+|---|---|---|
+| `fix/remove-bundle-move` | F2-R6 · R7 · R8 | 다른 Bundle로 이동(M · 우클릭 · Moved · 일괄)을 화면에서 없앰. 이미 이동한 박스는 읽기 전용 |
+| `feat/assign-keymap` | B2 | 글쇠표 한 곳. 새 글쇠 `R` · `⇧U` · `⇧R` · `⇧S`를 더하고 ⇧D(F2)와 E(숨김)는 뺀다 |
+| `feat/assign-merge-keys` | J1 | Old · New 같음 |
+| `feat/number-cell-buttons` | B3 | Old · New 같음 |
+| `feat/assign-multi-pick` | G1 | To-Be 이동 · 다른 Bundle 이동은 뺀다. New는 합치기 · 표 벗기기 · 언어만 |
+| `feat/assign-pair-bracket` | E1 | Old · New 같음 |
+| `feat/assign-tables-tab` | E2 | Old · New 같음. 접힌 New 표에도 "n 가운데 m 이음" |
+| `feat/unwrap-continue-numbers` | D1 | **New는 저절로 매기지 않는다**(이미 쓴 번호가 제 번호). 여럿 벗기기는 되돌리기 두 칸(번호 → 다시 표로). 여럿 합치기도 뒤 번호를 당긴다 |
+| 모음 `feat/table-follow` ← `-1-counterpart` · `-2-rule` · `-3-ai` | D2 | Old만. 새 AI 작업은 8A의 "쪼개기를 돕는 것"에 든다 |
+| `fix/progress-by-disposition` | F3 | 잡음 줄은 지금처럼 빠짐. "AI 제안 대기"는 숨긴 제안을 세지 않음 |
+| `fix/ai-suggestions-retire` | E3 | F3의 세기를 쓴다. 숨긴 제안 제외(H4) |
+| `feat/space-preview-trim` | F1 | 앞부분 · 개정 이력은 삭제한 줄 체크를 따른다 |
+
+### 11-1. 2026-11-23 명세와 겹치는 곳
+
+사용자(2026-11-25): "중복되지 않았던 영역은 모두 범위에 넣어야 해. 적어 뒀던 내용은 모두 확정한 셈." 그래서 17개 항목이 모두 범위이고, **같은 자리를 다르게 정한 곳만** 나중 결정(11-25)을 따른다.
+
+| 명세 | 11-25 결정 | 이렇게 한다 |
+|---|---|---|
+| F2-R1~R5 To-Be 문서로 이동 · 새 문서 추가(⇧D) | 2A · 7A 새 문서 추가와 빈 To-Be 문서를 숨김 | 대상이 바로 그 숨긴 문서라 **보류**(숨김을 풀 때 함께). C2 · G1의 To-Be 이동 항목과 ⇧D도 뺀다 |
+| F2-R6~R8 다른 Bundle 이동 제거 | 겹치지 않음 | 넣는다. 그동안 줄은 잇기 · 삭제 · 보류로 정한다 |
+| B1 Enter = 확정 단추 | 6B · 시안 3차 양쪽 고름의 Enter = 잇기 | 확정 단추가 "잇기 → New n"이 되어 하나로 맞는다 |
+| B2 글쇠표 | 시안 3차 "단축키도 배정" | 그 표를 쓰고 `R` · `⇧U` · `⇧R` · `⇧S`를 더한다. E는 숨긴 기능이라 쉰다. A(→ ⇧A)는 남는 AI 추천(잇기)만 받는다 |
+| B2 Esc(거두기: 선 → New 고름 → 체크) | 빈 곳을 누르면 고름이 풀림 | Esc는 그 표대로, 빈 곳 누르기는 따로 |
+| B2 Tab = 들여쓰기 | 단추 줄의 포커스 펼침 | 용지에서 Tab은 들여쓰기 |
+| E3 · F3의 AI 세기 | 8A 숨긴 AI 종류 | 숨긴 종류는 세지 않는다 |
+| F1 옛 문서 목차 · 삭제 행 | 앞부분 · 개정 이력을 삭제로 | 앞부분 · 개정 이력은 삭제 행, 목차는 목차 |
+| D1 벗길 때 저절로 번호 | New 표 벗기기(시안 1차) | Old만 저절로. New는 쓴 번호 그대로, 사람이 번호 칸에서 바꿀 수 있다 [제안] |
+| D1-R5 되돌리기 두 칸 | 표 여럿 벗기기 "되돌리기 한 번" | 여럿이어도 두 칸(번호 → 벗기기)으로 센다 |
+| D2 새 AI 작업 | 8A 쪼개기 · 잇기를 돕는 AI만 | 쪼개기를 돕는 것이라 넣는다 |
+| G2 버전 PATCH +1 | 지금 버전 규칙(`rules/common/git.md`) | 운영 뒤 첫 푸시는 MINOR |
+| 그 밖의 손질 전부 | 5B 양 단 New도 같은 용지 | Old 전용이라고 적지 않은 것은 New에서도 같다 |
+
+### 14. 정한 것 (남은 물음 없음)
+
+| 물음 | 답 [U] |
+|---|---|
+| Excel의 C 시트 | 통째로 가림(시안 3차 "애매하면 숨겨 놔, 나중에 다른 데 추가"). 짓는 코드는 남기고 상수로 뺀다. 합성 묶음 셋에서 C의 글 111줄 가운데 A에 없는 것은 번호를 다시 매긴 표 캡션 1줄뿐이고 삭제 16줄은 모두 A에 있다 |
+| New 표 벗기기 · 표 여럿 벗기기 | 넣음 |
+| Claude API | 매핑 패치 때 합성 문서로만(부록) |
+| Ctrl+Z 결함 | 이것만 먼저 고쳐 `dev`에 |
+| 반응속도 · 11-23 명세의 나머지 | 모두 넣음(11-1절) |
+
+**승인된 시험 변경**(시안 3차, 커밋 메시지에 까닭) — 단계를 빼거나 기준을 낮추지 않고 새 동작을 같은 수의 단계로 본다.
+- 자동 칸 추천(`smoke/assign.mjs:8184`): 돌지 않는다.
+- 목차 블록(`smoke/assign.mjs` 2574 · 2584-2585 · 2588 · 2590 · 2592 · 2596 · 2598-2599): "고른 줄에만 단추" → "늘 보임", 문구 DELETED.
+- 그 자리 메뉴(`assign-link-menu` 18줄): 누르기는 메뉴 → 단추 줄, 끌어 놓기가 막힌 때는 메뉴 → 알림.
+- 고리 2px(`assign.mjs:721`, 11-23 명세 C1).
+- C 시트(`test_sop_excel.py` 246 · 519 · 588 · 594, `test_sop_e2e.py:219`, `smoke/outputs.mjs:121`, `pw-overlap-audit.mjs:420`): 5시트 → 4시트. C 내용 시험은 상수를 켜고 그대로.
+- 11-23 명세가 이름을 대고 고치라 한 시험(C1 `assign.mjs:721` · F3 `:86, 477, 3169` · F1 `:641-659, 2993-3006` · E1 `:5247` · B3 `:4187-4468` · C2 `:885-888` · A1-T2 `canStart` 등): 그 명세가 확정이므로 승인된 것으로 본다. 이름이 없는 것은 구현 계획에서 목록을 만들어 승인받는다(B2 글쇠 바꾸기 · 다른 Bundle 이동 제거가 스모크를 더 바꾼다).
+
+**따로 승인받을 것** — 운영에 이미 생긴 New 문장 중복의 정리. 스텝 0 뒤 읽기 전용으로 센다(`new_unit_id`마다 2 이상인 행).
+
+## 2026-11-25-split-first-3
+원래 제목: 쪼개기 먼저 3 — 같은 용지 (`feat/new-paper`). 부르는 이름: "쪼개기 먼저 계획 3"(계획 `-3`).
+
+### 정한 것 (계획을 쓰며 나온 물음의 답)
+1. **끌어 놓기는 지금처럼 놓는 즉시 잇고 확정**한다(설계 §8). -2 T6의 `onDrop`은 `enqueue`로 바로 보낸다. 막힌 놓기만 알림.
+2. New 여럿 고르기의 위쪽 바는 `feat/assign-multi-merge` 전까지 "n줄 고름"만.
+3. 안 보이는 쪽의 고름은 세지 않는다.
+4. 스모크: 선택자만 바뀌는 곳과 공통 함수로 옮기는 곳은 "동작이 바뀌어 따라 바뀌는 것"이다. 같은 수의 단계로 고치고 커밋에 목록을 적는다. 그 밖은 세운다.
+5. 표째 이은 New 표(n = 0, m > 0)는 "이어져 있던 Old 줄 m개는 보류로 갑니다"만 보인다.
+
+## 2026-11-25-split-first-4
+원래 제목: 쪼개기 먼저 4 — 고름 · 손질 다듬기 (스텝 5). 부르는 이름: "쪼개기 먼저 계획 4"(계획 `-4`).
+
+### 정한 것 (계획을 쓰며 나온 물음의 답)
+1. 한쪽에서 여럿 고르면 다른 쪽 여럿 고름은 비운다(바가 하나).
+2. 일괄 언어 바꾸기는 배정된 줄을 건너뛰고 건너뛴 수에 넣는다.
+3. New의 묶음 꼬리표는 괄호 "(배정은 표째)"를 뺀다.
+4. 짝 줄과 한 언어 줄을 섞어 골라도 같은 언어끼리 합치고 짝을 다시 맺는다.
+5. `assign.mjs:773-817`(C1-R3이 반대를 정함) · `:5281-5325`(E1-R2)는 동작이 바뀌어 따라 바뀌는 시험이다 — 같은 수의 단계로 고치고 커밋에 까닭.
+6. 짝이 둘 다 보이면 안내 줄이 숨어 옆 판을 열 길이 없는 것은 E1-R2대로다.
+
+## 2026-11-26-practice-page
+원래 제목: 연습 페이지(`/practice`): 설계. 부르는 이름: "연습 페이지 설계"(`practice design`).
+
+### 2. 정한 것
+
+#### 2.1 사용자 결정(질문 창, 11-26 밤)
+
+| # | 정한 것 |
+|---|---|
+| U1 | **과제 안내 자리 = 오른쪽 과제 목록.** Old · New 용지(와 Assign 오른쪽 결정 칸) 옆 오른쪽 칸에 과제 12개 체크리스트가 늘 보이고, 지금 과제만 펼쳐져 무엇을 누르는지(글쇠)와 "설명서에서 보기 →"(en "See in the manual →") 링크가 보인다. 끝낸 과제는 ✓. 위에 띠 "연습 화면 — 저장되지 않음"(en "Practice — nothing is saved")과 "처음부터"(en "Start over") 단추. 좁은 창에서는 과제 칸을 접을 수 있다. |
+| U2 | **진행 = 화면이 알아채 자동 체크**(가짜 서버 상태로 판정). 과제를 끝내면 다음 과제가 펼쳐진다. 순서는 자유 — 아무 과제나 먼저 해도 된다. |
+| U3 | **과제 = 기본 12개**: 줄 고르기 · 옮기기(J/K) / New에 잇기 / 확정(Enter) / 보류(⇧H) / 배정 취소(U) / 합치기(⇧J) / 나누기 / 한·영 짝(⇧P) / 표 벗기기(⇧T) / 목차 삭제 / 되돌리기(Ctrl+Z) / 키보드 그림(?). 실제 글쇠는 `lib/assign-keymap.ts`와 맞춘다. |
+| U4 | **자료 = 한/영 짝이 섞인 Old 문서 하나(표 하나 · 목차 블록 포함) + 빈 New 하나.** UI 언어는 사용자 설정(en/ko)을 따르고 자료 글은 한 벌. |
+| U5 | **진입은 두 곳만**: 상단 바 도움말(설명서 자리에 "연습하기" 항목)과 설명서 `/manual` 머리의 "연습 화면에서 따라 해 보기 →" 링크. Assign의 ? 도움말 창과 Bundle 목록에는 넣지 않는다. |
+
+#### 2.2 설계가 정한 것
+
+| # | 정한 것 | 까닭 |
+|---|---|---|
+| D1 | 가짜 서버는 `src/lib/api.ts` `sendRequest` **한 곳**에서 갈아 끼운다. `fetch` 앞에서 `isPracticeRequest(path, pathname)`이 참이면 `await import("./practice/practice-server")`의 `handlePracticeRequest(method, path, body)`가 `Response`를 지어 돌려주고, 그 뒤 오류 처리(`ApiError` · `rule`)는 실제와 같은 줄을 지난다. | Assign의 모든 읽기 · 쓰기가 `apiFetch` → `sendRequest`를 지난다(실측: Assign 트리 229파일에서 `/api`로 가는 `fetch`는 `api.ts` 하나, 나머지 하나는 부팅 때의 `auth-mode.ts`). 부품마다 주입하면 52개 함수를 건드린다. 동적 import라 가짜 서버와 자료는 연습 화면 덩이에만 실린다. |
+| D2 | 연습 요청의 판정은 둘: ① Bundle 경로(`/bundles/<id>…`)는 **id로만** 정한다 — `-1`이면 화면 주소와 상관없이 **늘** 가짜, 실제 id(0 이상)면 `/practice`에서도 실제 서버. ② Bundle 밖 경로는 지금 화면 주소가 `/practice`이고 실제로 보낼 목록(`/me`, `/ai/jobs/recent`) 밖이면 가짜. 주소 판정은 `typeof window` 가드. (스텝 2 검토로 고침 11-27 — 처음에는 `/practice`에서 실제 Bundle 경로도 가짜였다) | ①은 화면을 떠난 뒤에도 큐가 마저 보내는 판단("앱 안 이동은 큐가 마저 보낸다")이 실제 서버로 새지 않게 하고, 거꾸로 실제 Assign에서 글쇠를 누르고 바로 연습으로 와도 `use-command-queue` `leave()`가 `/practice`에서 보내는 실제 Bundle의 남은 저장을 가짜가 422로 버려 운영 판단을 잃지 않게 한다. 연습 Assign은 -1 밖의 Bundle id를 부르지 않는다(과제 순서 시험의 fetch 0회). ②는 Bundle 밖 경로(`/sop/remarks/recent` 등)와 앞으로 생길 경로를 기본으로 막는다 — 새는 길은 목록에 적은 것만. `/me`는 신원(새로 연 `/practice`에서도 로그인 상태를 읽어야 한다), `/ai/jobs/recent`는 상단 바 공용 폴러(가짜 빈 답이 실제 AI 작업 표시를 지우지 않게) — 둘 다 읽기만이고 SOP 자료가 아니다. |
+| D3 | 연습 Bundle id는 상수 `PRACTICE_BUNDLE_ID = -1`(`src/lib/practice-route.ts`, 무거운 import 없음 — `api.ts`가 가져온다). 연습 문서 id는 900001부터(자료를 뽑을 때 정한다). | 실제 id는 1부터 오르는 양수라 겹치지 않는다. 문서 id는 브라우저 저장 키(`sopa.assign.tablesFolded.<문서 id>`)에 들어가므로 실제 문서의 접은 표와 섞이지 않게 멀리 둔다. |
+| D4 | 연습 자료는 **실제 백엔드가 뽑는다**: `backend/scripts/dump_practice_fixture.py`가 합성 DOCX 둘(Old · New)을 지어 임시 sqlite에 TestClient로 올리고, 화면이 처음 읽는 GET 응답과 표 벗긴 모습(D7)을 `frontend/src/lib/practice/practice-fixture.json`에 쓴다. `backend/tests/test_practice_fixture.py`가 파일이 지금 백엔드의 답과 같은지 본다(`test_rule_cases.py`와 같은 꼴). | 용지는 블록 · 범위 · 번호 칸 · 짝 · 잡음 표시가 서로 맞아야 그려진다. 손으로 쓰면 틀리고, 백엔드가 응답 꼴을 바꾸면 연습만 조용히 깨진다. 뽑은 자료면 처음 모습이 실제와 같고, 꼴이 바뀌면 CI가 알린다. |
+| D5 | 가짜 서버는 **과제에 쓰는 동작만** 흉내 내고(§6.3), 받은 요청을 검사하지 않고 그대로 반영한다. 그 밖의 경로 · 편집 종류는 `422 {detail: {code: "practice_unsupported", what}}` — 화면은 기존 길(`humanizeApiError` → `rule.practice_unsupported`)로 "Not available in practice" 알림을 띄운다. | 서버 업무 규칙의 사본을 만들지 않는다(사용자 결정). 막는 판단은 이미 화면의 순수 모델(`pick-bar-model` · `primary-model` · `planShapeMode` …)이 한다. 거절 길을 새로 만들지 않고 규칙 거절 문구 길을 쓴다. |
+| D6 | 원문 편집은 일곱 종류만: `split` · `merge` · `unmerge` · `set_language` · `set_layout_table` · `set_noise_reason` · `clear_noise`. 앞의 넷은 "글자 자르기 · 잇기 · 되살리기 · 값 바꾸기"만 하는 일반 연산이고 번호 칸 · 문장 경계 규칙은 하지 않는다. 짝은 맺기 · 풀기 · 확정. | U3의 과제가 이것만 쓴다 — ⇧P는 짝 카드면 `merge`, 합친 문장이면 `unmerge` → `set_language` → `pairs` POST(`use-assign-page.tsx` `switchShapeMode` · `switchToPair` 실측), ⇧T는 `set_layout_table`, 목차의 사유는 `set_noise_reason`, 되돌릴 때 쓰는 `clear_noise`. 쪼갠 뒤 번호 칸이 실제와 조금 달라도 연습에는 지장이 없다. |
+| D7 | 표 벗기기 · 다시 표로(`set_layout_table`)는 흉내 내지 않고 **백엔드가 뽑은 두 모습 사이를 바꾼다**: 자료가 그 표의 `wrapped`(처음)와 `unwrapped`(실제 서버로 벗긴 뒤의 `tables` · 바뀐 Unit들)를 함께 싣고, 가짜는 그 Unit 묶음을 갈아 끼운다. | 표 벗기기는 번호만 든 칸 합치기 · 띠 표 · 안쪽 표가 얽힌 서버 규칙이다(`editing._plan_set_layout_table`). 자료의 표 하나만 다루니 두 모습을 찍어 두면 사본 없이 실제와 같다. |
+| D8 | 되돌리기 · 다시 하기는 **상태 통째 사진**으로 한다: `undo` 메타가 실린 쓰기마다 쓰기 전 상태를 쌓고(같은 `step_key`의 이어진 요청은 한 칸), `decisions/undo`가 꺼내 되쓴다. 응답의 `unit_ids`는 사진 둘의 판단 · 단위 차이에서 짓는다. | 서버의 단계 기록 규칙을 흉내 내지 않고도 판단 · 편집 · 짝이 한 줄로 되돌아간다. 상태가 작아(Unit 40개 안팎) 사진이 싸다. |
+| D9 | 과제 판정(U2)은 연습 상태의 **한 일 기록**(append-only `log`)으로 한다. 쓰기 열 과제는 가짜 서버가 받은 요청(경로 · 편집 종류 · `undo.op` · Unit id)으로, 서버에 자취가 없는 두 과제(고르기 · 옮기기, 키보드 그림)는 연습 틀이 본 손짓 — 틀의 `onKeyDownCapture`가 `findAssignKey`로 찾은 `move_next` · `move_prev`, `onClickCapture`가 본 키보드 그림 여는 단추 — 을 같은 `log`에 적는다(`notePracticeAct`). 한 번 이룬 과제는 계속 ✓(되돌려도 지우지 않는다). 어느 줄에서 해도 된다. | U2 "가짜 서버 상태로 판정"을 따르되 두 과제는 서버에 아무것도 오가지 않아 상태가 없다 — 그 둘만 손짓을 같은 기록에 넣어 판정 길은 하나다. 글쇠는 `ASSIGN_KEYS` 표로 찾아 글쇠를 바꾸면 따라간다. React 합성 이벤트라 이펙트가 없고, Assign은 `window` 버블 단계에서 듣고 전파를 막지 않아(실측) 틀의 캡처가 먼저 본다. 되돌리기 과제가 앞 과제의 ✓를 지우면 헷갈린다. |
+| D10 | 펼친 과제(U1 · U2)는 렌더 중에 셈한다: 사람이 누른 과제가 있고 그것을 누른 뒤 아직 이루지 않았으면 그것, 아니면 첫 미완료(차례대로). 다 끝나면 "다 했어요" 한 줄과 **Start over**. | 타이머 · 이펙트 없이 "끝나면 다음이 펼쳐짐"과 "순서 자유"가 함께 된다. |
+| D11 | 연습 상태는 가짜 서버 모듈의 변수에만 산다 — 페이지를 새로 읽으면 처음, 앱 안에서 떠났다 돌아오면 이어진다. **Start over**는 `window.location.reload()`. | 상태를 지우는 길이 "모듈이 새로 읽힘" 하나라 렌더 중 부작용 · 이펙트가 없다. 설명서 링크는 새 탭이라 하던 연습이 그대로다. |
+| D12 | Assign은 `useParams().id` 한 줄만 바꾼다: `use-assign-page.tsx`의 `Number(useParams<{ id: string }>().id)` → `useRouteBundleId()`(새 `src/lib/use-route-bundle-id.ts` — `BundleIdContext` 값이 있으면 그것, 없으면 `useParams`). `/practice`는 `<BundleIdContext value={PRACTICE_BUNDLE_ID}><AssignPage /></BundleIdContext>`로 `app/bundles/[id]/assign/page.tsx`의 기본 내보내기를 그대로 그린다. | 주소 · 라우터 의존은 이 한 줄과, 연습에서는 닿지 않는 `router.replace` 둘(옛 `?edit=` · `?doc=&unit=` 주소를 읽을 때만)뿐이다(실측 §12). 페이지 파일은 기본 내보내기만 가져다 쓰니 Next 페이지 내보내기 규칙에 걸리지 않는다. |
+| D13 | 연습 Bundle 주소로 가는 이동(`/bundles/-1/...`)은 `lib/nav-buffer.ts` `navigate()`가 막고 "Not available in practice" 알림을 띄운다. | `DestinationTree`의 To-Be 링크 · 빈 화면의 Documents 링크 같은 다른 단계 길이 연습 Bundle의 실제 단계 화면으로 가지 않게 한다. `nav-host`가 앱 안 `<a>` 클릭을 모두 `navigate()`로 보내니 한 곳이면 된다. 주소창에 `/bundles/-1/assign`을 직접 치면 띠 없는 연습이 되지만(모든 요청이 D2 ①로 가짜) 아무것도 저장되지 않아 둔다. |
+| D14 | 화면 틀: 상단 바 아래 **띠**(한 줄, 폭 전체) → 그 아래 두 칸 grid `minmax(0, 1fr) | 과제 칸`. 과제 칸 폭 `clamp(240px, 18vw, 300px)`, 접으면 36px 세로 막대(진행 `n/12`와 펴기 단추만). 접힘은 `useState` 하나(기억하지 않는다). 사람이 누르기 전에는 창 폭이 정한다 — 1280px 밑이면 처음부터 접힌 막대(`data-pref="auto"`를 CSS 미디어 쿼리가 첫 그림부터 접고, React는 `matchMedia`를 `useSyncExternalStore`로 읽어 단추 이름을 맞춘다. 스텝 4에서 더함 11-27 — 1120px ko에서 과제 칸이 Assign 머리 줄을 겹치게 했다). | U1. Assign의 오른쪽 결정 칸은 Assign 안에 그대로 있고 과제 칸은 그 바깥 오른쪽이다. Assign이 창 폭 1440px 밑에서 결정 칸을 띄우는 셈(`side-float-model`)은 창 폭을 보므로 과제 칸만큼 좁아진 사이 폭(1440~1740px)에서 용지가 빠듯하다 — 그때 접는다(U1 "좁은 창에서는 접을 수 있게"). 기억은 한 화면의 일이라 두지 않는다. |
+| D15 | U5를 이렇게 놓는다: ① **상단 바 사용자 메뉴의 도움말 항목 `user-menu-manual`("User manual") 바로 아래에 `user-menu-practice`**("Practice" / "연습하기", 아이콘 `GraduationCap`, 같은 탭 이동, `/practice`에서는 빠짐). ② 설명서 화면 머리(`manual-view.tsx` 첫 줄, 한국어 글 안내 옆)의 링크 `manual-practice`("Try it in the practice screen →" / "연습 화면에서 따라 해 보기 →", 같은 탭). 책 아이콘 `top-bar-manual`은 그대로 링크 하나이고, `/practice`에서는 새 설명서 조각 `#practice`로 연다. Assign 도움말 창(`assign-help.tsx`) · Bundle 목록은 건드리지 않는다. | 상단 바에서 설명서가 "항목"으로 있는 곳은 사용자 메뉴의 `user-menu-manual`이다 — 그 자리에 항목 하나를 더하는 것이 U5의 "설명서 자리에 '연습하기' 항목"과 맞고 새 메뉴 부품이 없다. 책 아이콘을 메뉴로 바꾸면 기준 스모크(`pw-smoke-baseline.mjs`가 `top-bar-manual`의 `href`를 바로 본다)의 기대를 바꿔야 한다. 연습은 하던 일을 덮어도 되는 화면이라 같은 탭(떠날 때는 Assign의 나가기 확인이 그대로 걸린다). **(내 판단 — U5의 자리 해석, 사용자 확인 대상)** |
+| D16 | 권한 키를 더하지 않는다. `AppShell`의 로그인 게이트만 지난다. 연습 Bundle의 `my_role`은 자료에서 `"author"`, `status`는 `"in_progress"`라 편집이 켜진다. | 서버에 아무것도 쓰지 않으니 막을 권한이 없다(사용자 결정 "로그인 사용자 누구나"). |
+| D17 | 숨긴 기능과 다른 길이다: 연습은 `isDraftingOn()`을 읽지 않고 운영 빌드에서도 늘 있다. 연습 안의 Assign은 실제와 같이 `useDraftingOn()`을 읽으므로 운영에서는 숨긴 쪽이 꺼진 Assign이 된다. 개발에서 `sopa.drafting="1"`을 켜면 숨긴 쪽 읽기는 빈 답 · 쓰기는 `practice_unsupported`(최선만, 시험하지 않는다). | 사용자 결정 "운영에서도 보여야 한다". 연습은 운영 사용자가 보는 Assign을 가르치는 것이라 숨긴 쪽을 따로 다룰 까닭이 없다. |
+| D18 | 보기 설정(`sopa.assign.*` — 한 단/양 단 · 확대 · 결정 칸 띄우기)은 실제 Assign과 같이 기억된다. | 사람 취향이라 같이 가도 된다. 따로 두려면 Assign 저장 층을 고쳐야 한다(실제 Assign 변경 최소). |
+| D19 | 과제 글의 글쇠는 `ASSIGN_KEYS`의 id로 적고 `formatAssignKey`로 그린다. | U3 "실제 글쇠는 keymap과 맞춘다". 시험이 id가 표에 있고 그 글쇠가 U3의 글쇠(J/K · Enter · ⇧H · U · ⇧J · ⇧P · ⇧T · Ctrl+Z · ?)와 같은지 본다 — 글쇠가 바뀌면 시험이 알리고 과제 글이 따라간다. |
+| D20 | **"빈 New"(U4)를 "아직 아무것도 이어지지 않은 New 문서"로 읽는다** — 문장은 있고(Old 짝 둘을 고쳐 쓴 글 · 그 밖의 두셋), 이음 · 확정은 하나도 없다. | 문장이 없는 New면 "New에 잇기" · "확정(Enter)"이 이을 상대가 없어 할 수 없다(숨긴 기능이 꺼진 Assign은 이미 쓴 New 문장에만 잇는다). 미리 확정한 줄도 두지 않아 처음 화면에 이음이 없다 — 그래서 "배정 취소"는 잇기나 확정을 먼저 한 뒤에 된다(과제 글이 그렇게 알린다, 순서 자유는 그대로). |
+| D21 | **"목차 삭제"(U3)는 저절로 삭제된 목차 블록에 사유를 적는 것(R, `set_noise_reason`)으로 판정한다.** 과제 글: 목차 블록이 이미 삭제로 접혀 있음을 보고, 블록을 골라 R로 사유를 적는다. | 지금 올리는 규칙(규칙 2)은 목차를 올릴 때 이미 삭제로 접는다(`noise_kind: "toc"`) — 사람이 할 일은 확인과 사유다. 목차를 일반 줄로 두고 Del로 지우게 하면 실제와 다른 화면을 가르친다. |
+| D22 | **"New에 잇기"와 "확정(Enter)"은 보내는 요청의 되돌리기 메타 `focus_target_id`로 가른다**: 잇기 = Old · New를 고르고 단추 줄의 잇기(또는 끌어 놓기 · 양쪽 고른 Enter) — `sendLink`가 이은 New 문장을 `focus_target_id`로 싣는다. 확정 = Old 줄 하나에서 추천 카드가 든 채 Enter(`planPrimary`의 첫 카드 확정) — `sendSave`는 `focus_unit_id`만 싣는다. (스텝 4가 실제 본문을 시험으로 고정하며 고침 11-27 — 처음 짐작은 `undo.op` `"link"` · `"confirm"`이었으나 카드도 New 문장으로 가는 확정이라 `pickSaveOp`가 둘 다 `"link"`를 낸다) | 둘 다 `groups/save` · `action: "confirm"` · `op: "link"`로 나간다. 사람에게는 다른 손짓이라 U3가 나눴다. `practice-tasks.test.ts`가 두 보내기의 메타 줄을 소스로 붙들어, 바뀌면 판정을 다시 맞추라고 알린다. |
+| D23 | 브랜치는 **모음 브랜치** `feat/practice-page`에서 스텝 브랜치를 딴다(계획 문서). | 자료만 · 가짜 서버만 · 과제 없는 빈 화면만으로는 `dev`에서 확인할 것이 반쪽이다. |
+| D24 | 설명서는 `## 연습 화면 {#practice}` 조각 하나를 `## 시작하기 {#start}` 바로 뒤에 더한다(글은 스텝 3 · 4, 그림은 정식 업데이트 준비 때 장면 `practice`). | 도움말 단추가 여는 자리는 조각(`##`) 단위다(`getManualHref` · `MANUAL_PAGE_SECTION`). Map · History처럼 화면 하나가 조각 하나다. |
+
+### 3. 화면
+
+```
+┌ 상단 바 ─ SOP Archivist v1.6.x ──────────────────── [AI] [📖] [사용자 ▾ … User manual · Practice] [EN|KO] ┐
+├ 띠 practice-band ─ ▍ Practice — nothing is saved · Reloading starts over          [Start over] ┤
+├ Assign(실제 부품, 연습 Bundle) ─────────────────────────────────┬ 과제 칸 practice-tasks ─────┤
+│ Old 용지              │ New 용지          │ 결정 칸(Assign)     │ Tasks · 3/12           [⟩] │
+│                       │                   │                     │ ✓ Pick and move a line     │
+│                       │                   │                     │ ✓ Link to New              │
+│                       │                   │                     │ ▾ Confirm  ────────────────│
+│                       │                   │                     │   Pick pair B and press    │
+│                       │                   │                     │   [Enter] with the card…   │
+│                       │                   │                     │   See in the manual →      │
+│                       │                   │                     │ ○ Hold                     │
+│                       │                   │                     │ ○ …                        │
+```
+
+- **띠** `practice-band`: 바탕 `--sunken`, 왼쪽 3px 띠는 기존 주의 토큰(파스텔 채움 없음), 아이콘 `FlaskConical`(상단 바 "Synthetic data"와 같은 뜻의 아이콘). 글 `practice.band`("Practice — nothing is saved" / "연습 화면 — 저장되지 않음"), 흐린 보조 글 `practice.bandHint`("Reloading starts over" / "새로 읽으면 처음으로"), 오른쪽 `practice-start-over`("Start over" / "처음부터", `btn ghost`).
+- **과제 칸** `practice-tasks`(`<aside>`, 모달 아님 — role 없음): 머리 "Tasks" · 진행 `n/12`(`practice-progress`) · 접기 단추(`practice-tasks-fold`). 과제 줄 `practice-task-<id>`(`data-done="true|false"`, `data-open`) — 왼쪽 점: 미완료는 빈 점(`--line-2` 테두리), 끝낸 것은 ✓(`CircleCheck`, 기존 확정 색 토큰), 펼친 줄은 왼쪽 2px 강조 띠(막대 쪽 모서리 직각). 펼친 줄 아래: 할 일 한두 줄(글쇠는 `<kbd>` — `formatAssignKey`)과 `practice-task-manual` 링크("See in the manual →" / "설명서에서 보기 →", `/manual#<anchor>`, 새 탭). 줄 머리를 누르면 그 과제가 펼쳐진다(D10).
+- 접힌 과제 칸 `data-folded`: 36px 막대에 `n/12`와 펴기 단추만.
+- 높이: 띠는 `flex: none`, 아래 grid는 남은 높이(`min-height: 0`), 과제 칸은 저 혼자 세로 스크롤. Assign 쪽 CSS는 고치지 않고 연습 페이지의 감싸개만 더한다(`.practice-*` 새 선택자, `components.css` 끝 — 공용 규칙은 바꾸지 않는다).
+- 폰 폭은 생각하지 않는다(Assign 자체가 데스크톱 화면).
+
+### 4. 연습 자료
+
+#### 4.1 만드는 법
+
+`backend/scripts/dump_practice_fixture.py`(개발 전용, `synthetic_sop.py`처럼 python-docx와 테스트 팩토리 `build_docx` · `p` · `make_style` · `upload`를 쓴다):
+
+1. 빈 임시 sqlite로 앱을 띄우고(테스트가 DB를 만드는 길과 같게) TestClient · dev 작성자 헤더를 쓴다.
+2. 문서 id를 900001부터 받게 한다(D3) — 예: 버리는 Bundle에 작은 문서 하나를 올린 뒤 그 행 id를 900000으로 옮겨 sqlite의 다음 행 id를 밀어 둔다. 방법은 스텝 1이 정하되 시험이 "자료의 문서 id ≥ 900001"을 본다.
+3. 연습 Bundle을 만들고 Old DOCX(`SYNTHETIC_PRACTICE-OLD.docx`)와 New DOCX(`SYNTHETIC_PRACTICE-NEW.docx`, New 쪽 올리기)를 올린다. 지금 올리는 규칙(규칙 2)으로 쪼개진다. 판단 · 이음은 하나도 만들지 않는다(D20).
+4. 화면이 처음 읽는 응답을 받아 쓴다: `GET /bundles/{b}` · `/documents` · 문서마다 `/view` · `/units?limit=1000` · `/tobe` · `/written-sentences` · New 문장마다 `/groups/by-target/{t}`(→ `targets`) · Old 문장 Unit마다 `/units/{u}/new-candidates`.
+5. 표 벗긴 모습(D7): 표에 실제 `set_layout_table`(`is_layout: true`)을 보내 그 뒤 보기에서 그 표의 `tables` 줄과 표 · 칸 Unit을 `tableVariants.<tableId>.unwrapped`로 찍고, 처음 모습을 `wrapped`로 둔다. 찍은 뒤 되돌려(`decisions/undo`) 4의 처음 응답과 같은지 확인한다.
+6. 다듬기: `bundle.id`와 모든 `bundle_id` → -1, 제목 "Practice", 구성원은 합성 한 명(`practice`), 시각 칸은 고정 값(`2026-11-26T00:00:00+09:00`), `*_by`는 `practice`, `my_role` "author". 키 차례를 정렬해 같은 입력이면 같은 바이트.
+7. `{ "_generated": "backend/scripts/dump_practice_fixture.py", bundle, documents, views: {<docId>: DocumentView}, units, tobe, written, targets, candidates: {<unitId>: NewCandidate[]}, tableVariants: {<tableId>: {wrapped, unwrapped}} }`로 쓴다.
+
+`backend/tests/test_practice_fixture.py`: 파일이 `render_practice_fixture()`와 같은지(다르면 "다시 뽑고 `npx vitest run src/lib/practice`를 돌려라"), 그리고 §4.2의 각 자리가 의도대로 나왔는지 — 나눌 Unit이 두 문장, 합칠 두 조각이 이웃한 같은 언어(⇧J로 합쳐지는 자리), ⇧P 짝이 확정 · 이웃 짝, 목차 줄 `noise_kind == "toc"`, 표 Unit 하나(벗기기 전), 짝 B의 후보에 New B′가 첫째, 이음 · 확정 0 — 쪼개기 규칙이 바뀌어 자리가 무너지면 여기서 걸린다.
+
+프런트는 `practice-fixture.json`을 타입으로 묶는다(`satisfies PracticeFixture` — 필드가 `api-sop.ts` 타입과 어긋나면 tsc가 잡는다).
+
+#### 4.2 Old 문서 — 설명서 글로 지은 합성 SOP(짧게, 한 벌)
+
+모든 문장은 사용 설명서에서 따온 합성 글이다(실제 SOP 원문 아님, 파일 이름 `SYNTHETIC_`). 아래는 차례와 쓰임이고, 글은 스텝 1이 설명서에서 고른다. UI가 en이어도 자료 글은 이 한 벌이다(U4).
+
+| # | 블록 | 쓰임(과제) |
+|---|---|---|
+| 1 | 제목 "연습용 SOP — Assign 따라 하기" | 제목 줄, 고르기 · 옮기기 |
+| 2 | 목차 머리 + 목차 스타일 줄 3(점 끌기 · 쪽 번호) | 목차 블록(저절로 삭제) — 목차 삭제(R 사유) |
+| 3 | 1. 목적 제목 | – |
+| 4 | 한/영 이웃 문단 짝 A(설명서 "Old Unit마다 새 문서의 어디로 갈지 정하고 확정합니다" 류) | New에 잇기(New A′를 골라 잇기) |
+| 5 | 한/영 이웃 문단 짝 B — New B′와 글이 비슷해 추천 카드가 뜬다 | 확정(Enter), 그 뒤 배정 취소(U) |
+| 6 | 한/영 짝 C | 보류(⇧H) |
+| 7 | 한 문단에 두 문장인 한국어 Unit("정할 수 없는 Unit은 보류합니다. 보류한 Unit은 On hold에 모입니다.") | 나누기(두 번 눌러 선 → S) |
+| 8 | 문장 하나가 두 문단으로 끊긴 같은 언어 두 조각 | 합치기(⇧J ⇧J) |
+| 9 | 한/영 이웃 짝 D | 한·영 짝(⇧P로 한 문장 ↔ 짝) |
+| 10 | 표 하나(3행 × 2열, 글쇠 · 뜻 — 번호만 든 칸 · 띠 · 안쪽 표 없음) | 표 벗기기(⇧T) |
+| 11 | 끝 문단 한/영 짝 E | 여유 |
+
+되돌리기(Ctrl+Z)와 키보드 그림(?)은 자리가 따로 없다.
+
+#### 4.3 New 문서 — 아무것도 이어지지 않은 New(D20)
+
+New 문서 하나(`SYNTHETIC_PRACTICE-NEW`, SOP): A′(A를 고쳐 쓴 한/영 두 문장), B′(B와 거의 같은 한/영), 그 밖의 문장 두셋, 이을 수 없는 제목 줄 하나(이을 수 없다는 까닭 툴팁이 보이게). 이음 · 확정은 없다.
+
+### 5. Assign이 부르는 API (실측)
+
+`app/bundles/[id]/assign/page.tsx`에서 import를 따라간 229파일이 `api.ts` · `api-sop.ts` · `api-manage.ts`에서 가져다 쓰는 함수 전부. "가짜"의 뜻: **상태** = 연습 상태에서 지어 답, **자료** = 뽑은 자료 그대로, **빈 답** = 빈 목록 · 꺼짐, **흉내** = 쓰기를 상태에 반영, **안 됨** = `practice_unsupported`, **실제** = 실제 서버로(D2).
+
+| 함수 | 메서드 · 경로(`/api` 뒤) | 쓰는 곳 | 과제에 필요 | 가짜 |
+|---|---|---|---|---|
+| `getMe` | GET `/me` | 세션(껍데기) | – | 실제 |
+| `getRecentAiJobs` | GET `/ai/jobs/recent` | `lib/ai-jobs-store.ts`(상단 바) | – | 실제 |
+| `getBundle` | GET `/bundles/{b}` | `lib/bundle-store.ts` | 예(편집 켜짐) | 자료 |
+| `listDocuments` | GET `/bundles/{b}/documents` | 훅 | 예 | 자료 |
+| `getDocumentView` | GET `/bundles/{b}/documents/{d}/view` | 훅 · `use-doc-views` | 예 | 상태 |
+| `listAllUnits` | GET `/bundles/{b}/units?…&document_id=` | `use-doc-views` | 예 | 상태 |
+| `getToBe` | GET `/bundles/{b}/tobe` | 훅 | 예(New 문서 목록) | 자료 |
+| `listWrittenSentences` | GET `/bundles/{b}/written-sentences` | 훅 | 예(New 문장 · 출처) | 상태 |
+| `getGroupByUnit` | GET `/bundles/{b}/groups/by-unit/{u}` | 훅 · `clearDecisions` | 예 | 상태 |
+| `getGroupByTarget` | GET `/bundles/{b}/groups/by-target/{t}` | 훅 | 예 | 상태 |
+| `listNewCandidates` | GET `/bundles/{b}/units/{u}/new-candidates` | 훅(추천 카드) | 예(확정) | 자료(처음 Unit만, 새 Unit은 빈 답) |
+| `listRecentRemarks` | GET `/sop/remarks/recent` | `remark-modal.tsx` | 예(보류 · 목차 사유 창) | 상태(연습에서 쓴 사유) |
+| `getAiStatus` | GET `/bundles/{b}/ai/status` | `use-ai-jobs` | 예(꺼짐을 알려 AI 단추가 숨는다) | 빈 답(`ai_enabled: false`) |
+| `listSuggestions` · `listAppliedSuggestions` | GET `/bundles/{b}/ai/suggestions?…` | 훅 · `use-unwrap-ai` · `use-table-follow` | 아니오 | 빈 답 |
+| `listIdenticalCandidates` | GET `/bundles/{b}/match/identical-candidates` | 훅 | 아니오 | 빈 답(같은 글자 일괄 단추가 안 보이게) |
+| `listOpenTranslations` | GET `/bundles/{b}/translations/open` | 훅 | 아니오 | 빈 답 |
+| `getTableCounterpart` | GET `…/documents/{d}/tables/{t}/counterpart` | 훅(따를 표가 있을 때만) | 아니오 | 빈 답(`null` 상대) |
+| `getUnitRef` | GET `…/documents/{d}/units/{u}/ref` | 훅(참조 줄을 고를 때만 — 자료에 없음) | 아니오 | 빈 답(`state: null`) |
+| `saveGroup` | POST `/bundles/{b}/groups/save` | 훅(명령 큐) | 예(잇기 · 확정 · 보류) | 흉내 |
+| `bulkDecide` | POST `/bundles/{b}/decisions/bulk` | 훅 | 예(여럿 배정 취소) | 흉내(`delete` · `clear`, `move_external`은 안 됨) |
+| `clearDecision`(`clearDecisions` 안) | POST `/bundles/{b}/decisions/clear` | 훅 | 예(배정 취소) | 흉내 |
+| `undoDecision` · `redoDecision` | POST `/bundles/{b}/decisions/undo` · `redo` | 훅 | 예(되돌리기) | 흉내(D8) |
+| `editUnits` | POST `…/documents/{d}/edits` | 훅 | 예(합치기 · 나누기 · 짝 · 표 · 목차) | 흉내: D6의 일곱 종류. 나머지는 안 됨 |
+| `createPair` | POST `…/documents/{d}/pairs` | 훅 | 예(⇧P로 짝으로) | 흉내 |
+| `deletePair` | DELETE `…/documents/{d}/pairs/{p}?revision=` | 훅 | 아니오(짝 풀기) | 흉내 |
+| `confirmPair` | POST `…/documents/{d}/pairs/{p}/confirm` | 훅 | 아니오 | 흉내(상태 `confirmed`) |
+| `ackWarning` | POST `/bundles/{b}/warnings/{w}/ack` | `missing-warnings.tsx` | 아니오(자료에 경고 없음) | 안 됨 |
+| `acceptSuggestions` · `getAcceptPreview` | POST `…/ai/accept` · GET `…/ai/accept-preview` | 훅 · `accept-suggestions-modal` | 아니오(AI 꺼짐) | 안 됨 |
+| `requestAi` · `prepareAi` · `requestTableFollow` · `requestUnwrapOrder` | POST `…/ai/{kind}` · `ai/prepare` · `ai/table_follow` · `ai/unwrap_order` | 훅 · `use-ai-prepare` · `use-table-follow` · `use-unwrap-ai` | 아니오 | 안 됨 |
+| `setSuggestionAdoption` | POST `…/ai/suggestions/{s}/adoption` | 훅 외 | 아니오 | 안 됨 |
+| `confirmMatchesInBulk` | POST `/bundles/{b}/match/bulk-confirm` | 훅 | 아니오 | 안 됨 |
+| `resetAssignments` | POST `/bundles/{b}/decisions/reset` | 훅 · `reset-modal` | 아니오 | 안 됨 |
+| `addToBeDoc` · `removeToBeDoc` · `addWiStep` · `removeWiStep` | POST · DELETE `/bundles/{b}/tobe/docs…` | 훅(숨긴 기능) | 아니오 | 안 됨 |
+| `getComposedDoc` · `putTargetOrder` | GET `…/outputs/c/docs/{d}` · PUT `…/targets/order` | 훅 · `use-composed-order`(숨긴 기능) | 아니오 | 안 됨 |
+| `getTableFollow` · `setTableCounterpart` | GET `…/tables/{t}/follow` · PUT `…/counterpart` | `use-table-follow` · 훅(영어 벗긴 표의 한글 표 따르기) | 아니오 | 안 됨 |
+| `updateCaptionRef` | PATCH `…/caption-refs/{r}` | 훅 | 아니오 | 안 됨 |
+| `getFigureImage` | GET `…/documents/{d}/figures/{blk}` | `figure-image.tsx`(자료에 그림 없음) | 아니오 | 안 됨 |
+| `getAssignSheetPreview` · `getParagraphSheetPreview` · `downloadExport` · `downloadParagraphs` | GET `…/export/preview/a` · `…/paragraphs/preview` · `…/export.xlsx` · 문단 Excel | `space-preview.tsx` · `doc-dashboard.tsx` | 아니오 | 안 됨 |
+
+가짜 서버가 흉내 내는 것: **경로 25개(함수 26개)** — 쓰기 9(`groups/save` · `decisions/bulk` · `decisions/clear` · `decisions/undo` · `decisions/redo` · `edits` · `pairs` POST · `pairs/{p}` DELETE · `pairs/{p}/confirm`), 상태 · 자료 읽기 10(`/bundles/{b}` · `documents` · `view` · `units` · `tobe` · `written-sentences` · `groups/by-unit` · `groups/by-target` · `new-candidates` · `/sop/remarks/recent`), 빈 답 6(`ai/status` · `ai/suggestions` · `identical-candidates` · `translations/open` · `counterpart` · `units/{u}/ref`). 나머지는 모두 안 됨. 표 벗긴 영어 표가 생기면 Assign이 `getTableCounterpart`를 부를 수 있어 빈 답으로 둔다(자료의 표는 한국어 · 영어 섞임이라 보통 부르지 않는다 — 스텝 2가 확인).
+
+### 6. 가짜 서버
+
+#### 6.1 끼우는 자리
+
+- `src/lib/practice-route.ts`: `PRACTICE_PATH = "/practice"`, `PRACTICE_BUNDLE_ID = -1`, `REAL_ON_PRACTICE = ["/me", "/ai/jobs/recent"]`, `isPracticeRequest(path, pathname)`(순수 — 시험), 브라우저용 `readPathname()`.
+- `src/lib/api.ts` `sendRequest`: 인증 헤더를 짓기 전에 `if (isPracticeRequest(path, readPathname()))` → `const { handlePracticeRequest } = await import("./practice/practice-server")` → `response = await handlePracticeRequest(method, path, init?.body)`. 그 뒤 `!response.ok` 처리는 그대로(가짜의 거절도 실제와 같은 `ApiError`). `fetch`는 부르지 않는다.
+- `src/lib/practice/practice-server.ts`: 상태 하나 · 길잡이(메서드 + 경로 패턴 → 처리 함수) · `notePracticeAct(act)`(D9) · `subscribePractice(listener)` · `readPracticeSnapshot()`(과제 칸이 `useSyncExternalStore`로 읽는다, 쓰기 · 손짓마다 판 번호가 오른다). 응답은 `new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } })`, 204는 본문 없음. 처리 함수의 반환은 `api-sop.ts` 타입으로 묶는다(`satisfies Group` 등).
+- `src/lib/practice/practice-state.ts`(순수): 자료 → 상태, 상태 → 응답 꼴(`DocumentView` · `UnitRow` · `Group` · `WrittenSentence`), 쓰기 연산(§6.3). React · fetch 없음 — 시험의 몸통.
+
+#### 6.2 상태
+
+```ts
+interface PracticeState {
+  docRevision: Record<number, number>;
+  views: Record<number, DocumentView>;   // units[] · pairs · tables를 여기서 고친다
+  decisions: Record<number, Decision>;   // Unit id → 판단(자료 units[].decision에서)
+  targets: Record<number, GroupTarget>;  // New 문장(자료 targets에서), source_unit_ids로 잇는다
+  merged: Record<number, ViewUnit[]>;    // merge가 만든 Unit → 합치기 전 Unit들(unmerge가 옛 id 그대로 되살린다)
+  remarks: RecentRemark[];
+  nextId: number;                        // 새 Unit · 짝 id, 950001부터
+  undo: Snapshot[]; redo: Snapshot[];    // D8
+  log: PracticeLogEntry[];               // D9, append-only — 되돌려도 지우지 않는다
+}
+```
+
+응답 짓기:
+- `view`: `views[d]`, `units[].status`는 판단에서, `edits.can_undo/can_redo`는 스택에서.
+- `units`: 보기의 Unit마다 `UnitRow` — `decision` · `status`(판단에서, 없으면 `unassigned`) · `target_ids` · `target_doc_ids`(`targets`의 `source_unit_ids`로 거꾸로) · `content_start`(보기의 `number.content_start`). 잡음 줄 · 칸 문장을 넣고 빼는 것은 자료의 처음 응답과 같게 한다(시험: 처음 상태에서 지은 `units`가 자료의 `units`와 같다).
+- 묶음 ID(`group_id`) · 새 Unit의 표시 ID는 표시용으로만 — 묶음 ID는 백엔드 `groups.build_group_ids`를 줄인 것(표 묶음 접기 없음), 표시 ID는 그 문서의 다음 순번.
+- `groups/by-unit` · `by-target`: Unit ↔ 새 문장(출처) · 칸 문장 ↔ 표(`group_unit_id`) · 칸 새 문장 ↔ 표 새 문장(`parent_target_id`)을 따라간 연결 요소(백엔드 `groups.collect_component`와 같은 그래프 걷기 — 짝은 넣지 않는다).
+- `written-sentences`: 자료의 목록에 `targets`의 `source_unit_ids` · `status` · `revision`을 덮어 쓴다(시험: 처음 상태에서 지은 목록 = 자료).
+
+#### 6.3 쓰기 — 받은 것을 그대로 반영한다
+
+| 경로 | 반영 | 응답 |
+|---|---|---|
+| `groups/save` | `units[]`마다 판단을 `{disposition, reason, move_target_code, status: action === "confirm" ? "confirmed" : "on_hold", hold_reason}`로, revision +1. `targets[]`의 `id`가 있으면 그 새 문장의 `source_unit_ids` · `status`를 받은 값으로(새 `id` 없는 새 문장 만들기는 안 됨 — 숨긴 기능). `removed_target_ids`는 출처를 비운다(이미 쓴 문서의 문장은 지우지 않는다). `release_unit_ids`는 그 Unit의 짝을 푼다. | 저장한 Unit들의 연결 요소 `Group` + `pairs_dissolved` |
+| `decisions/bulk` | `delete`: 판단 `{disposition: "delete", status: "confirmed", reason}`. `clear`: 판단을 처음 값(미배정)으로, 그 Unit을 출처에서 뺀다. | `[{unit_id, decision}]` |
+| `decisions/clear` | `clear`와 같다 | `{reset_unit_ids, deleted_target_ids: [], held_unit_ids: [], held_target_ids: []}` |
+| `edits` `split` | Unit의 글을 `at`에서 둘로(범위가 여럿이면 글 자리를 범위로 걸어 찾는다), 오른쪽 조각은 새 id · `number: null` · `is_edited: true`, 언어는 한글이 있으면 ko 아니면 en(설명서에 적힌 규칙 문장 그대로), 판단은 둘 다 미배정. 문서 revision +1. | `{document_revision, created_unit_ids: [왼, 오], retired_unit_ids: [원래]}` |
+| `edits` `merge` | 받은 Unit들의 범위를 이어 하나로(새 id, `can_unmerge: true`, `merge_pieces` = 조각 글, 언어는 한글 규칙), 짝이면 짝을 지운다. 합치기 전 Unit을 `merged`에 둔다. | 같은 꼴 |
+| `edits` `unmerge` | `merged`의 Unit들을 옛 id 그대로 되살린다 | 같은 꼴 |
+| `edits` `set_language` | `lang`만 바꾼다 | `created/retired` 빈 목록 |
+| `edits` `set_layout_table` | D7 — `tableVariants`의 `unwrapped` / `wrapped` 묶음으로 그 표의 `tables` 줄과 표 · 칸 Unit을 갈아 끼운다(이미 그 모습이면 그대로) | 같은 꼴(사라진 · 생긴 Unit id) |
+| `edits` `set_noise_reason` · `clear_noise` | `noise_reason` 쓰기 · `noise_kind` · `noise_reason` 비우기 | 같은 꼴 |
+| `pairs` POST | 새 `ViewPair{status: "confirmed", source: "human"}`, 구성원의 `pair_id` | `{document_revision, pair}` |
+| `pairs/{p}` DELETE · `confirm` | 짝을 지우고 `pair_id`를 비움 · 상태만 `confirmed` | `{document_revision, pair}` |
+| `decisions/undo` · `redo` | D8 — 사진을 꺼내 되쓰고 반대쪽 스택에 지금 상태를 넣는다. 스택이 비면 백엔드가 쓰는 "되돌릴 것 없음" 거절을 그대로(스텝 2가 `decision_steps.py`에서 코드를 확인). | `{op, unit_ids, focus_unit_id, focus_target_id, scope_label, can_undo, can_redo, restored_decisions: true}` |
+
+모든 쓰기는 `log`에 `{route, editType?, undoOp?, action?, unitIds, focusTargetId?, isPairJoin?}`(뒤의 둘은 과제 판정용 — D22 · 짝 합치기)를 남기고 판 번호를 올린다. revision 검사 · 409 · 422 검증은 하지 않는다.
+
+#### 6.4 실제 서버로 새는 요청이 0임을 지키는 법
+
+1. **구조**: Bundle 경로는 id로만 — `/bundles/-1` 아래는 주소와 상관없이 가짜, 실제 id는 늘 실제(D2 ①). `/practice`에서 Bundle 밖 경로는 목록 둘(`/me` · `/ai/jobs/recent`)만 실제(D2 ②). 판정은 `fetch` 앞 한 곳.
+2. **소스 검사**: `src/source-rules.test.ts` "one path per concern"에 규칙 "raw fetch to the API"를 더한다 — `fetch(`는 `src/lib/api.ts`(공용 길)와 `src/lib/auth-mode.ts`(부팅 때 인증 방식 한 번)에만. 새 파일이 `/api`를 직접 부르면 실패하고, 메시지는 "apiFetch를 써라 — 연습 화면의 가짜 서버가 그 한 곳에서 끼어든다".
+3. **단위 시험**(`src/lib/practice/practice-server.test.ts`): 전역 `fetch`를 스파이로 바꾸고, `api-sop.ts`의 실제 함수로 과제 순서(목록 → 보기 → 잇기 → 확정 → 보류 → 배정 취소 → 합치기 → 나누기 → ⇧P 두 번 → 표 벗기기 → 목차 사유 → 되돌리기)를 연습 Bundle id로 부른 뒤 `fetch`가 한 번도 불리지 않았는지. `api.test.ts`: 주소가 `/practice`일 때 `/me`와 실제 Bundle의 쓰기(`POST /bundles/5/groups/save`)는 `fetch`로, `/sop/remarks/recent`는 가짜로, 주소가 다른 곳일 때 `/bundles/-1/groups/save`는 가짜로.
+4. **스모크**(`practice: nothing reaches the backend`): 띠가 보인 뒤부터 과제를 따라 하고 새로 읽는 동안 `page.on("request")`로 `/api/` 요청을 모아 `/api/me` · `/api/auth/mode` · `/api/ai/jobs/recent` 밖이 0인지.
+
+### 7. 과제(U3)
+
+`src/lib/practice/practice-tasks.ts`(순수): `PRACTICE_TASKS: { id, titleKey, bodyKey, anchor, keys: AssignKeyId[], isDone(entry): boolean }[]`, `listAchieved(log)`(기록에서 이룬 과제 집합 — 기록이 append-only라 한 번 이룬 것은 남는다), `pickOpenTask(log, picked)`(D10). 판정은 "그 손짓이 한 번 성공했다"이고 어느 줄이든 된다. 과제 글이 자료의 알맞은 자리를 가리킨다.
+
+| # | id | 과제(en · ko 메시지) | 글쇠(`ASSIGN_KEYS` id) | 판정(`log`) | 설명서 |
+|---|---|---|---|---|---|
+| 1 | `pick` | 줄을 눌러 고르고 J · K로 옮겨 본다 | `move_next` · `move_prev` | 손짓 `key: move_next|move_prev` | `#assign` |
+| 2 | `link` | 짝 A를 고르고 오른쪽 New에서 A′를 골라 단추 줄의 잇기(또는 끌어 놓기) | – | `groups/save`, `undoOp: "link"` + `focusTargetId` 있음(D22) | `#assign-destination` |
+| 3 | `confirm` | 짝 B를 고르면 추천 카드가 뜬다 — Enter로 그 카드대로 확정 | `confirm` | `groups/save`, `action: "confirm"` + `focusTargetId` 없음(D22) | `#assign-confirm` |
+| 4 | `hold` | 짝 C에서 ⇧H, 사유를 적어 보류 | `hold` | `groups/save`, `action: "hold"` | `#assign-confirm` |
+| 5 | `unassign` | 이은 줄이나 확정한 줄을 고르고 U — 아직 없으면 2 · 3을 먼저 | `clear` | `decisions/clear` 또는 `decisions/bulk` `clear` | `#assign-confirm` |
+| 6 | `merge` | 끊긴 두 조각의 앞 조각에서 ⇧J를 두 번 | `merge_next` | `edits` `merge`(⇧P의 짝 합치기 `isPairJoin`은 빼고) | `#split-edit` |
+| 7 | `split` | 두 문장이 한 박스인 줄을 나눌 자리에서 두 번 눌러 선을 놓고 S | `split` | `edits` `split` | `#split-edit` |
+| 8 | `pair` | 짝 D에서 ⇧P로 한 문장이 되는 것을 보고, 다시 ⇧P로 한/영 짝으로 | `shape_mode` | `pairs` POST | `#split-pair` |
+| 9 | `unwrap` | 표를 고르고 ⇧T로 벗겨 줄로 본다(다시 ⇧T면 표로) | `table` | `edits` `set_layout_table` `is_layout: true` | `#assign-unwrap` |
+| 10 | `toc` | 목차가 이미 삭제로 접힌 블록을 골라 R로 사유를 적는다(D21) | `remark` | `edits` `set_noise_reason` | `#assign-toc` |
+| 11 | `undo` | Ctrl+Z로 방금 한 일을 되돌린다 | `undo` | `decisions/undo` 성공 | `#assign-undo` |
+| 12 | `keyboard` | ?로 도움말을 열고 키보드 그림을 연다 | `help` | 손짓 `click: keyboard-map`(여는 단추의 testid는 스텝 4가 고정) | `#assign-keys` |
+
+- 앵커는 지금 설명서의 자리 이름이다. 시험이 과제 앵커마다 `user-manual.md`에 `{#anchor}`가 있는지 본다(앵커를 바꾸면 여기서 걸린다).
+- 시험이 과제 `keys`가 `ASSIGN_KEYS`에 있고 `formatAssignKey`의 글쇠가 U3와 같은지(J · K · Enter · ⇧H · U · ⇧J · S · ⇧P · ⇧T · R · Ctrl+Z · ?) 본다(D19).
+- 설명서 뷰어가 `###` 자리 이름 해시(`#split-edit`)로 그 자리를 여는지 스텝 4가 확인한다 — `manual-view.tsx` `openTarget(id)`가 조각 id만 받으면 그 스텝에서 `###` id → 조각 + 스크롤로 넓힌다(작은 고침, 이펙트 수 그대로).
+
+### 10. 스모크 `practice:`
+
+새 파일 `frontend/scripts/smoke/practice.mjs`(`run()` 안에 단계들, `pw-smoke-sop.mjs`가 `runMap()` 뒤에 `runPractice()`). 단계 이름이 모두 `practice:`로 시작해 `ONLY="practice:"`로 걸린다. 서버에 쓰지 않으니 `dev-worktree.sh reset`이 필요 없다.
+
+| 단계 | 보는 것 |
+|---|---|
+| `practice: entry and band` | 홈에서 사용자 메뉴를 열어 `user-menu-practice`를 눌러 `/practice`에 간다, 띠 글 "Practice — nothing is saved", 과제 칸 12줄 · `0/12` · 첫 과제가 펼쳐져 글쇠와 `practice-task-manual`(`/manual#assign`, 새 탭)이 보인다. `/practice`에서는 사용자 메뉴에 `user-menu-practice`가 없고 `top-bar-manual`의 주소가 `/manual#practice`. 설명서 머리 `manual-practice`가 `/practice`로 간다. Assign 화면의 도움말 창에는 연습 링크가 없다(U5). 과제 칸 접기 · 펴기 |
+| `practice: follow tasks` | 순서를 섞어 다섯: 나누기(두 번 눌러 선 → S) → 고르기 · 옮기기(J) → 확정(짝 B → Enter) → 보류(⇧H, 사유) → 되돌리기(Ctrl+Z) — 과제마다 `practice-task-<id>` `data-done="true"`와 용지의 결과(박스 둘 · 확정 표시 · 보류 표시 · 되돌린 모습), 끝낼 때마다 다음 미완료가 펼쳐진다(`data-open`) |
+| `practice: nothing reaches the backend` | 위 두 단계와 새로 읽기 동안 `/api/` 요청 중 `/api/me` · `/api/auth/mode` · `/api/ai/jobs/recent` 밖이 0 |
+| `practice: reload starts over` | 과제 하나를 이룬 뒤 **Start over** → `0/12`, 그 Unit이 다시 처음 모습 |
+| `practice: unsupported says so` | 안 되는 동작 하나(스텝 4가 고른다 — 예: Space 미리 보기의 내려받기)에 "Not available in practice"가 뜬다 |
