@@ -9,37 +9,17 @@ import {
   paginateRendered,
   renderMetafiles,
   replaceUnrenderable,
-  sanitizeMetafileSvg,
   stripUnsafeLinks,
 } from "./original-render";
 
-// rtf.js 묶음은 바깥 그리개라 가짜로 - 부르는 쪽이 만든 설정(width · 범위)과 돌려받은 SVG 처리만 본다
-const rendererState = vi.hoisted(() => ({ emf: 0, wmf: 0, fail: false, settings: [] as unknown[] }));
-function makeFakeSvg(settings: unknown): SVGElement {
-  rendererState.settings.push(settings);
-  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-  svg.append(document.createElementNS("http://www.w3.org/2000/svg", "path"));
-  return svg;
-}
-vi.mock("rtf.js/dist/EMFJS.bundle.min.js", () => ({
-  Renderer: class {
-    constructor() {
-      rendererState.emf += 1;
-      if (rendererState.fail) throw new Error("bad emf");
-    }
-    render(settings: unknown) {
-      return makeFakeSvg(settings);
-    }
-  },
-}));
-vi.mock("rtf.js/dist/WMFJS.bundle.min.js", () => ({
-  Renderer: class {
-    constructor() {
-      rendererState.wmf += 1;
-    }
-    render(settings: unknown) {
-      return makeFakeSvg(settings);
-    }
+// emf-converter는 바깥 그리개라 가짜로 - 부르는 쪽이 넘긴 옵션과 돌려받은 PNG 처리만 본다
+const converterState = vi.hoisted(() => ({ calls: 0, fail: false, options: [] as unknown[] }));
+vi.mock("emf-converter/lite", () => ({
+  convertMetafileToDataUrl: async (_input: unknown, options: unknown) => {
+    converterState.calls += 1;
+    converterState.options.push(options);
+    if (converterState.fail) throw new Error("bad metafile");
+    return "data:image/png;base64,iVBORw0KGgo=";
   },
 }));
 
@@ -206,28 +186,26 @@ function metafileUri(kind: "emf" | "wmf"): string {
 
 describe("renderMetafiles", () => {
   beforeEach(() => {
-    Object.assign(rendererState, { emf: 0, wmf: 0, fail: false, settings: [] });
+    Object.assign(converterState, { calls: 0, fail: false, options: [] });
   });
 
-  it("draws an EMF image as inline svg", async () => {
+  it("draws an EMF image as a PNG in the same img", async () => {
     const img = el("img", { src: metafileUri("emf") });
     const root = el("div", {}, img);
 
     expect(await renderMetafiles(root)).toEqual({ drawn: 1, failed: 0 });
 
-    expect(root.querySelector("img")).toBeNull();
-    expect(root.querySelector("span.sopa-ov-metafile > svg")).not.toBeNull();
-    expect(rendererState.settings[0]).toMatchObject({ wExt: 100, hExt: 50, xExt: 100, yExt: 50, mapMode: 8 });
+    expect(root.querySelector("img")).toBe(img);
+    expect(img.getAttribute("src")).toBe("data:image/png;base64,iVBORw0KGgo=");
+    expect(converterState.options[0]).toMatchObject({ dpiScale: 2, timeoutMs: 5000 });
   });
 
-  it("draws a WMF image with the WMF renderer", async () => {
+  it("draws a WMF image too", async () => {
     const root = el("div", {}, el("img", { src: metafileUri("wmf") }));
 
     expect(await renderMetafiles(root)).toEqual({ drawn: 1, failed: 0 });
 
-    expect(rendererState.wmf).toBe(1);
-    expect(rendererState.emf).toBe(0);
-    expect(rendererState.settings[0]).toMatchObject({ xExt: 200, yExt: 100 });
+    expect(converterState.calls).toBe(1);
   });
 
   it("keeps the original size and position", async () => {
@@ -239,58 +217,25 @@ describe("renderMetafiles", () => {
 
     await renderMetafiles(root);
 
-    const box = root.querySelector<HTMLElement>("span.sopa-ov-metafile");
-    expect([box?.style.width, box?.style.height, box?.style.position]).toEqual(["120pt", "80pt", "absolute"]);
+    expect([img.style.width, img.style.height, img.style.position]).toEqual(["120pt", "80pt", "absolute"]);
   });
 
-  it("leaves the image for the hatch box when the renderer throws", async () => {
-    rendererState.fail = true;
+  it("leaves the image for the hatch box when the converter throws or the bytes are not a metafile", async () => {
+    converterState.fail = true;
     const root = el("div", {}, el("img", { src: metafileUri("emf") }), el("img", { src: "data:image/x-emf;base64,AQAAAA==" }));
 
     expect(await renderMetafiles(root)).toEqual({ drawn: 0, failed: 2 });
 
     expect(replaceUnrenderable(root, "x")).toBe(2);
-    expect(root.querySelector("svg")).toBeNull();
+    expect(converterState.calls).toBe(1);
   });
 
-  it("does not load rtf.js when there is no metafile", async () => {
+  it("does not load the converter when there is no metafile", async () => {
     const root = el("div", {}, el("img", { src: "data:image/png;base64,iVBORw0KGgo=" }));
 
     expect(await renderMetafiles(root)).toEqual({ drawn: 0, failed: 0 });
 
-    expect(rendererState.emf + rendererState.wmf).toBe(0);
-  });
-});
-
-describe("sanitizeMetafileSvg", () => {
-  it("strips script, foreignObject, event handlers and external hrefs", () => {
-    const ns = "http://www.w3.org/2000/svg";
-    const svg = document.createElementNS(ns, "svg");
-    svg.setAttribute("onload", "x()");
-    const mk = (tag: string, attrs: Record<string, string> = {}) => {
-      const node = document.createElementNS(ns, tag);
-      for (const [key, value] of Object.entries(attrs)) node.setAttribute(key, value);
-      svg.append(node);
-      return node;
-    };
-    mk("script");
-    mk("foreignObject");
-    const rect = mk("rect", { onclick: "x()", fill: "red" });
-    const web = mk("image", { href: "https://evil.test/a.png" });
-    const js = mk("a", { "xlink:href": "javascript:alert(1)" });
-    const data = mk("image", { href: "data:image/png;base64,AA==" });
-    const local = mk("use", { href: "#a" });
-
-    sanitizeMetafileSvg(svg);
-
-    expect(svg.querySelector("script, foreignObject")).toBeNull();
-    expect(svg.hasAttribute("onload")).toBe(false);
-    expect(rect.hasAttribute("onclick")).toBe(false);
-    expect(rect.getAttribute("fill")).toBe("red");
-    expect(web.hasAttribute("href")).toBe(false);
-    expect(js.hasAttribute("xlink:href")).toBe(false);
-    expect(data.hasAttribute("href")).toBe(true);
-    expect(local.hasAttribute("href")).toBe(true);
+    expect(converterState.calls).toBe(0);
   });
 });
 

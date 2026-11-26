@@ -1,5 +1,5 @@
 // 원본 DOCX를 그리고 그린 DOM을 다듬는 React 없는 모듈 - 표지 심은 부분 파일로 다시 묶어 docx-preview로 그린 뒤
-// 위험한 링크를 지우고, 종이 높이로 쪽을 나누고, 쪽 번호를 채우고, EMF·WMF 그림은 rtf.js로 SVG를 그리고 못 그린 것만 빗금 상자로 바꾼다.
+// 위험한 링크를 지우고, 종이 높이로 쪽을 나누고, 쪽 번호를 채우고, EMF·WMF 그림은 emf-converter로 PNG를 그리고 못 그린 것만 빗금 상자로 바꾼다.
 // 그리개(docx-preview · jszip)는 원본 탭을 처음 열 때 import()로만 불러온다 - 첫 화면 번들에 넣지 않는다.
 // 설계: docs/superpowers/specs/2026-11-27-original-view-design.md §5.2·§5.3·§5.5
 
@@ -301,23 +301,11 @@ export function stripUnsafeLinks(root: HTMLElement): void {
   }
 }
 
-const SVG_NS = "http://www.w3.org/2000/svg";
-const METAFILE_CLASS = `${OV_CLASS}-metafile`;
-const SAFE_SVG_HREF_RE = /^(data:|#)/i;
-const MM_ANISOTROPIC = 8;
 const DATA_BASE64_RE = /^data:[^,]*;base64,([\s\S]*)$/i;
-
-/** 메타파일 그림에 들어 있는 위험한 SVG 요소 · 속성을 지운다 - script · foreignObject · on* · data:/# 아닌 href */
-export function sanitizeMetafileSvg(svg: SVGElement): void {
-  for (const bad of svg.querySelectorAll("script, foreignObject")) bad.remove();
-  for (const node of [svg, ...svg.querySelectorAll("*")]) {
-    for (const attr of [...node.attributes]) {
-      const name = attr.name.toLowerCase();
-      const isHref = name === "href" || name === "xlink:href";
-      if (name.startsWith("on") || (isHref && !SAFE_SVG_HREF_RE.test(attr.value.trim()))) node.removeAttribute(attr.name);
-    }
-  }
-}
+// 메타파일 하나에 쓰는 최대 시간(ms) - 넘으면 빗금 상자로 물러난다(아주 큰 Visio 도면이 원본 탭을 붙잡지 않게)
+const METAFILE_TIMEOUT_MS = 5000;
+// 2배로 그린다 - 칸 폭 배율(zoom)로 키워 봐도 흐리지 않게
+const METAFILE_DPI_SCALE = 2;
 
 function decodeDataUri(src: string): ArrayBuffer | null {
   const match = DATA_BASE64_RE.exec(src.trim());
@@ -329,70 +317,42 @@ function decodeDataUri(src: string): ArrayBuffer | null {
 }
 
 /** EMF 머리(" EMF" 표식)와 WMF(자리 지정 머리 또는 형식 0001/0002)를 바이트로 알아본다 - MIME은 믿지 않는다 */
-function readMetafileKind(view: DataView): "emf" | "wmf" | null {
-  if (view.byteLength >= 44 && view.getUint32(0, true) === 1 && view.getUint32(40, true) === 0x464d4520) return "emf";
-  if (view.byteLength >= 22 && view.getUint32(0, true) === 0x9ac6cdd7) return "wmf";
-  if (view.byteLength >= 18 && [1, 2].includes(view.getUint16(0, true)) && view.getUint16(2, true) === 9) return "wmf";
-  return null;
+function isMetafile(view: DataView): boolean {
+  if (view.byteLength >= 44 && view.getUint32(0, true) === 1 && view.getUint32(40, true) === 0x464d4520) return true;
+  if (view.byteLength >= 22 && view.getUint32(0, true) === 0x9ac6cdd7) return true;
+  return view.byteLength >= 18 && [1, 2].includes(view.getUint16(0, true)) && view.getUint16(2, true) === 9;
 }
 
-/** 머리에 적힌 그림 크기(장치 단위) - 없으면 칸 크기(px)로 대신한다 */
-function readMetafileExtent(view: DataView, kind: "emf" | "wmf", fallback: { w: number; h: number }): { w: number; h: number } {
-  let w = 0;
-  let h = 0;
-  if (kind === "emf") {
-    w = view.getInt32(16, true) - view.getInt32(8, true) + 1;
-    h = view.getInt32(20, true) - view.getInt32(12, true) + 1;
-  } else if (view.getUint32(0, true) === 0x9ac6cdd7) {
-    w = view.getInt16(10, true) - view.getInt16(6, true);
-    h = view.getInt16(12, true) - view.getInt16(8, true);
-  }
-  return w > 0 && h > 0 ? { w, h } : fallback;
-}
-
-async function drawMetafile(img: HTMLImageElement): Promise<SVGElement | null> {
+/** 메타파일 하나를 PNG data 주소로 - emf-converter(lite)가 Windows GDI · GDI+ 기록을 캔버스에 다시 그린다. 못 그리면 null */
+async function drawMetafile(img: HTMLImageElement): Promise<string | null> {
   const buffer = decodeDataUri(img.getAttribute("src") ?? "");
-  if (buffer === null) return null;
-  const view = new DataView(buffer);
-  const kind = readMetafileKind(view);
-  if (kind === null) return null;
-  const px = { w: img.width > 0 ? img.width : 300, h: img.height > 0 ? img.height : 150 };
-  const extent = readMetafileExtent(view, kind, px);
-  const settings = { width: "100%", height: "100%", wExt: extent.w, hExt: extent.h, xExt: extent.w, yExt: extent.h, mapMode: MM_ANISOTROPIC };
-  // rtf.js 루트는 2MB짜리 RTF 묶음까지 끌어오므로 EMF · WMF 묶음만 따로 불러온다
-  const svg =
-    kind === "emf"
-      ? new (await import("rtf.js/dist/EMFJS.bundle.min.js")).Renderer(buffer).render(settings)
-      : new (await import("rtf.js/dist/WMFJS.bundle.min.js")).Renderer(buffer).render(settings);
-  if (svg.namespaceURI !== SVG_NS || svg.querySelector("path, rect, line, polygon, polyline, ellipse, text, image") === null) return null;
-  sanitizeMetafileSvg(svg);
-  return svg;
+  if (buffer === null || !isMetafile(new DataView(buffer))) return null;
+  const { convertMetafileToDataUrl } = await import("emf-converter/lite");
+  const png = await convertMetafileToDataUrl(buffer, { dpiScale: METAFILE_DPI_SCALE, timeoutMs: METAFILE_TIMEOUT_MS });
+  return png !== null && png.startsWith("data:image/png") ? png : null;
 }
 
-/** 메타파일 그림(EMF · WMF)을 rtf.js로 SVG로 그려 같은 자리 · 같은 크기로 바꾼다 - 못 그린 것은 그대로 두어 replaceUnrenderable이 빗금 상자로 바꾼다 */
+/** 메타파일 그림(EMF · WMF)을 같은 img의 PNG로 바꾼다(크기 · 자리 그대로) - 못 그린 것은 그대로 두어 replaceUnrenderable이 빗금 상자로 바꾼다.
+ *  결과는 래스터 그림이라 SVG처럼 거를 것이 없다 */
 export async function renderMetafiles(root: HTMLElement): Promise<{ drawn: number; failed: number }> {
   const targets = [...root.querySelectorAll("img")].filter((img) => METAFILE_SRC_RE.test(img.getAttribute("src") ?? ""));
   let drawn = 0;
   let failed = 0;
   for (const img of targets) {
-    let svg: SVGElement | null = null;
+    let png: string | null = null;
     try {
-      svg = await drawMetafile(img);
+      png = await drawMetafile(img);
     } catch {
-      svg = null; // 깨진 메타파일 - 그리기를 멈추지 않고 빗금 상자로 물러난다(실패 수로 알린다)
+      png = null; // 깨진 메타파일 · 시간 초과 - 그리기를 멈추지 않고 빗금 상자로 물러난다(실패 수로 알린다)
     }
-    if (svg === null) {
+    if (png === null) {
       failed += 1;
       continue;
     }
-    const box = img.ownerDocument.createElement("span");
-    box.className = METAFILE_CLASS;
-    box.style.cssText = img.style.cssText;
-    if (box.style.position !== "absolute") box.style.display = "inline-block";
-    if (box.style.width === "" && img.width > 0) box.style.width = `${img.width}px`;
-    if (box.style.height === "" && img.height > 0) box.style.height = `${img.height}px`;
-    box.append(svg);
-    img.replaceWith(box);
+    // 2배로 그린 PNG가 제 크기로 커지지 않게 지금 보이는 크기를 못 박는다
+    if (img.style.width === "" && img.width > 0) img.style.width = `${img.width}px`;
+    if (img.style.height === "" && img.height > 0) img.style.height = `${img.height}px`;
+    img.setAttribute("src", png);
     drawn += 1;
   }
   return { drawn, failed };

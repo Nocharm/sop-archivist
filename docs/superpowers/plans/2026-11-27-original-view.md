@@ -281,6 +281,8 @@
 - [ ] **Step 2–4:** FAIL → 구현 → PASS, 전체 vitest · lint · tsc.
 - [ ] **Step 5: Commit** `feat(assign): draw EMF and WMF images in the original view — 원본 보기에서 EMF · WMF 그림 그리기`
 
+> **바뀜(2026-11-27 지휘 세션)**: 위 `rtf.js`는 글자(`EXTTEXTOUTW`) · 비트맵(`STRETCHDIBITS`) · 타원 · 변환을 건너뛰어(소스 확인 + 합성 EMF 비교) 사용자 승인 뒤 `emf-converter/lite` 4.28.1로 바꿨다. 결과는 같은 img의 PNG(2배, 5초 제한)라 SVG 거르기(`sanitizeMetafileSvg`)는 없앴다.
+
 ## 모음 → dev (지휘 세션)
 
 1. 스텝 3 합친 뒤 모음에서 `gate.sh ../sop-wt-original-view be fe build`, 고친 화면 스모크 `ONLY="assign: Space preview"` · `ONLY="practice:"`, 화면 확인(한 단 · 양단 · 다크 · 좁은 창).
