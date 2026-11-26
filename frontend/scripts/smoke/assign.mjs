@@ -6839,6 +6839,18 @@ await runStep("assign: keys", {}, async ({ page }) => {
   await page.keyboard.press("?");
   await wait(page, "assign-help-keys");
   check("? opens the help on the keys tab", (await page.locator('[data-testid="assign-help-toggle"]').getAttribute("aria-expanded")) === "true" && (await page.locator('[data-testid="assign-help-keys"] kbd', { hasText: "⇧H" }).count()) === 1);
+  // 키보드 그림 - 단추가 큰 창을 열고(J는 이동 색), Esc가 닫으면 포커스가 단추로 돌아온다
+  await page.locator('[data-testid="assign-help-keyboard-map"]').click();
+  await wait(page, "assign-keyboard-map");
+  check("the Keyboard map button opens the map with J tinted as a move key", (await page.locator('[data-testid="assign-keyboard-map-key-KeyJ"]').getAttribute("data-kind")) === "move");
+  // 창이 열린 동안 J를 누르면 그 키가 눌린 모양 + 한 번 반짝이고, Assign의 고름은 옮겨 가지 않는다
+  const pickedBefore = await page.locator("[data-sel]").first().getAttribute("data-testid");
+  await page.keyboard.down("KeyJ");
+  check("holding J lights its key on the map (pressed + flash) without moving the Assign pick", (await page.locator('[data-testid="assign-keyboard-map-key-KeyJ"][data-pressed][data-flash]').count()) === 1 && (await page.locator("[data-sel]").first().getAttribute("data-testid")) === pickedBefore);
+  await page.keyboard.up("KeyJ");
+  await page.keyboard.press("Escape");
+  await page.locator('[data-testid="assign-keyboard-map"]').waitFor({ state: "detached", timeout: T });
+  check("Esc closes the keyboard map and focus returns to its button", (await page.locator('[data-testid="assign-keyboard-map"]').count()) === 0 && (await page.evaluate(() => document.activeElement?.getAttribute("data-testid"))) === "assign-help-keyboard-map");
   // 탭 - 이전 화면(Documents)에서 들어와 Ctrl+→로 바꾸고, 뒤로 가기는 보던 탭 → 이전 화면
   await page.goto(`${BASE}/bundles/${halfBundleId}/documents`);
   await page.waitForLoadState("networkidle");

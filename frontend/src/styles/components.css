@@ -1778,6 +1778,31 @@
       radial-gradient(farthest-side at 50% 0, color-mix(in oklab, var(--ink) 22%, transparent), transparent) top / 100% 6px scroll no-repeat,
       radial-gradient(farthest-side at 50% 100%, color-mix(in oklab, var(--ink) 22%, transparent), transparent) bottom / 100% 6px scroll no-repeat;
   }
+  /* Assign 키보드 그림 - 한 줄 60칸(키 하나 4칸)이라 줄이 나란하고 칸 폭이 창 폭을 따른다. 쓰는 키는 종류 색, 나머지는 조용히 */
+  .kbd-map { display: grid; gap: 5px; min-width: 0; }
+  .kbd-row { display: grid; grid-template-columns: repeat(60, minmax(0, 1fr)); gap: 0 5px; }
+  .kbd-cap { display: grid; align-content: center; justify-items: center; gap: 1px; box-sizing: border-box; height: 64px; min-width: 0; padding: 3px 2px; border: 1px solid var(--line); border-radius: 9px; background: transparent; color: var(--ink-3); text-align: center; overflow-wrap: normal; word-break: keep-all; }
+  /* 쓰는 키 - 중립 타일 + 아래 3px 띠가 종류 색 */
+  .kbd-cap[data-kind] { background: var(--surface); border-color: var(--line-2); color: var(--ink); box-shadow: inset 0 -3px 0 var(--kbd-stripe); }
+  .kbd-cap[data-kind="move"], .kbd-swatch[data-kind="move"] { --kbd-stripe: var(--accent); }
+  .kbd-cap[data-kind="judge"], .kbd-swatch[data-kind="judge"] { --kbd-stripe: var(--lang-en-ink); }
+  .kbd-cap[data-kind="shape"], .kbd-swatch[data-kind="shape"] { --kbd-stripe: var(--st-ai-ink); }
+  .kbd-cap[data-kind="free"], .kbd-swatch[data-kind="free"] { --kbd-stripe: var(--ink-3); }
+  /* 누르고 있는 키 - 강조색으로 찍힌다. 쓰는 키는 누르는 순간 종류 색으로 한 번 반짝(움직임 줄이기면 없음) */
+  .kbd-cap[data-pressed] { transform: scale(.96); background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+  .kbd-map[data-shift] .kbd-line { opacity: .5; }
+  .kbd-map[data-shift] .kbd-line.is-shift { opacity: 1; font-weight: 700; }
+  @media (prefers-reduced-motion: no-preference) {
+    .kbd-cap[data-flash] { animation: kbd-flash 400ms ease-out; }
+    @keyframes kbd-flash { from { box-shadow: inset 0 -3px 0 var(--kbd-stripe), 0 0 0 0 var(--kbd-stripe); } to { box-shadow: inset 0 -3px 0 var(--kbd-stripe), 0 0 0 8px transparent; } }
+  }
+  .kbd-cap-name { font: 600 18px / 22px var(--font-mono); }
+  .kbd-cap-name.is-small { font-size: 12px; line-height: 16px; }
+  /* 낱말 가운데서 끊지 않는다 - 1120 창의 글쇠 폭(약 57px)에 "⇧Sentence"가 한 줄로 든다 */
+  .kbd-line { min-width: 0; font-size: 10.5px; line-height: 12px; letter-spacing: -0.01em; white-space: nowrap; }
+  .kbd-line + .kbd-line { white-space: normal; }
+  .kbd-legend { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px 16px; align-items: center; font-size: var(--fs-cap); line-height: var(--lh-cap); color: var(--ink-2); }
+  .kbd-swatch { display: inline-block; width: 16px; height: 8px; margin-right: 6px; border: 1px solid var(--line-2); border-radius: 3px; background: var(--surface); box-shadow: inset 0 -3px 0 var(--kbd-stripe); vertical-align: -1px; }
   .help-panel-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
   .help-panel-partner { flex: none; width: 18px; height: 12px; border-radius: 0 2px 2px 0; background: color-mix(in oklab, var(--st-ai-fill) 13%, var(--paper)); box-shadow: inset 3px 0 0 var(--st-ai-ink), inset 0 0 0 1px var(--line-2); }
 
