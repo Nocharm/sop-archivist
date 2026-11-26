@@ -7,14 +7,22 @@ AI를 부르지 않는다 — 임베딩은 켜져 있을 때만 쓰고, 꺼졌�
 import re
 from collections import Counter
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Literal
 
 import numpy as np
+from pydantic import BaseModel
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.clock import now
+from app.sop.ai.embeddings import EmbeddingUnavailable, embed_texts
 from app.sop.constants import TABLE_FOLLOW_MARGIN, TABLE_FOLLOW_THRESHOLD
-from app.sop.counterparts import TableFacts, is_same_form, list_candidates
+from app.sop.counterparts import TableFacts, is_candidate_kind, is_same_form, list_candidates
+from app.sop.errors import raise_rule
+from app.sop.models import Document, SourceBlock, TableCounterpart
 from app.sop.segment import DOCUMENT_NUMBER_BODY
+from app.sop.units import get_latest_extraction_id, load_table_facts
 
 CounterpartStatus = Literal["matched", "ambiguous", "none"]
 
@@ -36,6 +44,9 @@ _UNITS = (
 )
 _QUANTITY = re.compile(rf"(?<![\d.])(\d+(?:\.\d+)?)\s?({_UNITS})(?![A-Za-z0-9])", re.IGNORECASE)
 _ABBREVIATION = re.compile(r"(?<![A-Za-z])[A-Z]{2,}(?![A-Za-z])")
+
+
+INTERLEAVED_LAYOUT = "ko_en_interleaved"
 
 
 @dataclass(frozen=True)
@@ -149,3 +160,119 @@ def list_counterpart_candidates(table: TableFacts, tables: Sequence[TableFacts],
         return candidates
     above = [other for other in candidates if other.index < table.index and is_same_form(table, other)]
     return above[-1:]
+
+
+class CounterpartCandidateOut(BaseModel):
+    table_id: int
+    table_no: int  # 문서 안 표 순번(1부터) — 화면의 "표 {n}"
+    score: float
+
+
+class CounterpartOut(BaseModel):
+    """영어 표의 짝 답 — 후보는 점수 큰 차례. decided는 사람이 정한 답인가(정했으면 바꿀 수 있게 고르기를 보인다)."""
+
+    table_no: int
+    status: CounterpartStatus
+    source_table_id: int | None
+    decided: bool
+    candidates: list[CounterpartCandidateOut]
+
+
+@dataclass(frozen=True)
+class CounterpartInputs:
+    """짝 답을 셀 재료 — DB에서 읽은 뒤 세션 없이 센다(임베딩 호출 동안 연결을 잡지 않는다)."""
+
+    extraction_id: int
+    table_no: int
+    table: FollowTable | None  # 영어 표가 아니면 None — 후보도 없다
+    candidates: dict[int, tuple[int, FollowTable]]  # 한글 표 → (표 순번, 표)
+    has_choice: bool
+    chosen: int | None
+
+
+def _build_follow_table(facts: TableFacts, cells: Sequence[tuple[int, str]]) -> FollowTable:
+    """표 사실과 칸 글(행, 글 — 원문 차례) → 점수 표. 글자가 없는 칸(번호 칸 값 · 기호)은 뺀다."""
+    rows: dict[int, list[str]] = {}
+    for row_index, text in cells:
+        if _has_letter(text):
+            rows.setdefault(row_index, []).append(text.strip())
+    return FollowTable(n_rows=facts.n_rows, n_cols=facts.n_cols, rows=tuple(" ".join(rows[row]) for row in sorted(rows)))
+
+
+async def load_counterpart_inputs(session: AsyncSession, document: Document, table_id: int) -> CounterpartInputs:
+    """문서의 최신 추출에서 영어 표 하나의 짝 재료 — Old가 아니면 422 invalid_side, 그 추출의 표가 아니면 404 table_not_found."""
+    if document.side != "old":
+        raise_rule(422, "invalid_side", side=document.side)
+    extraction_id = await get_latest_extraction_id(session, document.id)
+    facts = await load_table_facts(session, extraction_id) if extraction_id is not None else []
+    target = next((table for table in facts if table.id == table_id), None)
+    if extraction_id is None or target is None:
+        raise_rule(404, "table_not_found", table_id=table_id)
+    is_english = is_candidate_kind(target) and target.lang == "en"
+    candidates = (
+        list_counterpart_candidates(target, facts, interleaved=document.language_layout == INTERLEAVED_LAYOUT)
+        if is_english else []
+    )
+    wanted = [target, *candidates]
+    cells: dict[int, list[tuple[int, str]]] = {table.id: [] for table in wanted}
+    rows = await session.execute(
+        select(SourceBlock.table_id, SourceBlock.row_index, SourceBlock.text)
+        .where(
+            SourceBlock.extraction_id == extraction_id, SourceBlock.kind == "table_cell",
+            SourceBlock.table_id.in_(cells),
+        )
+        .order_by(SourceBlock.seq)
+    )
+    for cell_table, row_index, text in rows:
+        cells[cell_table].append((row_index or 0, text))
+    choice = await session.scalar(select(TableCounterpart).where(TableCounterpart.table_id == table_id))
+    return CounterpartInputs(
+        extraction_id=extraction_id, table_no=target.index + 1,
+        table=_build_follow_table(target, cells[target.id]) if is_english else None,
+        candidates={table.id: (table.index + 1, _build_follow_table(table, cells[table.id])) for table in candidates},
+        has_choice=choice is not None, chosen=choice.source_table_id if choice is not None else None,
+    )
+
+
+async def compute_counterpart(inputs: CounterpartInputs, *, login_id: str) -> CounterpartOut:
+    """재료 → 짝 답. 세션을 받지 않는다 — 임베딩이 꺼졌거나 실패하면 꼴과 토큰만 본다."""
+    vectors: dict[str, np.ndarray] | None = None
+    if inputs.table is not None and inputs.candidates:
+        texts = sorted({text for item in (inputs.table, *(table for _, table in inputs.candidates.values())) for text in item.rows})
+        try:
+            vectors = await embed_texts(texts, login_id=login_id)
+        except EmbeddingUnavailable:
+            vectors = None
+    scores = (
+        {table_id: score_tables(table, inputs.table, vectors) for table_id, (_, table) in inputs.candidates.items()}
+        if inputs.table is not None else {}
+    )
+    answer = pick_counterpart(scores, inputs.chosen, has_choice=inputs.has_choice)
+    candidates = sorted(
+        (
+            CounterpartCandidateOut(table_id=table_id, table_no=table_no, score=round(scores[table_id], 3))
+            for table_id, (table_no, _) in inputs.candidates.items()
+        ),
+        key=lambda item: (-item.score, item.table_no),
+    )
+    return CounterpartOut(
+        table_no=inputs.table_no, status=answer.status, source_table_id=answer.source_table_id,
+        decided=inputs.has_choice, candidates=candidates,
+    )
+
+
+async def save_counterpart(
+    session: AsyncSession, inputs: CounterpartInputs, table_id: int, source_table_id: int | None, *, actor: str
+) -> CounterpartInputs:
+    """사람이 고른 짝(None = 짝 없음)을 표마다 한 행으로 남긴다 — 영어 표가 아니거나 후보가 아닌 표는 404 table_not_found.
+    커밋은 부르는 쪽이 한다. 돌려주는 재료는 고른 것을 담는다."""
+    if inputs.table is None:
+        raise_rule(404, "table_not_found", table_id=table_id)
+    if source_table_id is not None and source_table_id not in inputs.candidates:
+        raise_rule(404, "table_not_found", table_id=source_table_id)
+    row = await session.scalar(select(TableCounterpart).where(TableCounterpart.table_id == table_id))
+    if row is None:
+        row = TableCounterpart(extraction_id=inputs.extraction_id, table_id=table_id, decided_by=actor)
+        session.add(row)
+    row.source_table_id, row.decided_by, row.decided_at = source_table_id, actor, now()
+    return replace(inputs, has_choice=True, chosen=source_table_id)

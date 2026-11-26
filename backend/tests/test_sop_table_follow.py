@@ -5,11 +5,19 @@
 
 import math
 
+import httpx2
 import numpy as np
+import pytest
+from fastapi.testclient import TestClient
 
+from app.db import engine
 from app.sop.constants import TABLE_FOLLOW_THRESHOLD
 from app.sop.counterparts import TableFacts
 from app.sop.table_follow import FollowTable, list_counterpart_candidates, pick_counterpart, read_tokens, score_tables
+from tests.ai_fixtures import clean_embedding_cache  # noqa: F401 -- 픽스처는 usefixtures가 이름으로 찾는다
+from tests.ai_helpers import build_embed_body, enable_embed, install_ai_transport, read_payload, vector_for
+from tests.docx_factory import build_docx, make_grid_table, make_row, p
+from tests.sop_helpers import AUTHOR, REVIEWER, create_bundle, get_view, set_members, upload
 
 
 def table(*rows: str, n_cols: int = 2) -> FollowTable:
@@ -102,3 +110,167 @@ def test_separate_offers_every_korean_table_of_the_same_layer() -> None:
     inner = facts(7, 5, "ko", parent_id=1)
     candidates = list_counterpart_candidates(TABLES[3], [*TABLES, inner], interleaved=False)
     assert [item.id for item in candidates] == [1, 2, 3]
+
+
+# --- 저장과 API(D2-R3) — 한/영 따로 합성 문서: 0 한글 작업 표 · 1 한글 교육 표 · 2 영어 작업 표(S18의 표 5) · 3 영어 교육 표(표 6) ---
+
+OLD_NAME = "SYNTHETIC_SYN-FOLLOW-1_Separate_tables.docx"
+WIDTHS = [1588, 8050]
+KO_STEPS = [["1", "장비를 준비한다."], ["2", "시료 10 mL를 채취한다."], ["3", "채취 뒤 4 °C에 둔다."], ["4", "(빈 칸)"]]
+KO_TRAINING = [["1", "교육 기록을 확인한다."], ["2", "교육생이 서명한다."], ["3", "강사가 기록을 점검한다."], ["4", "(빈 칸)"]]
+EN_STEPS = [["1", "Take 10 mL of sample."], ["2", "Prepare the equipment."], ["3", "Keep at 4 °C after."], ["4", "(blank)"]]
+EN_TRAINING = [["1", "Training record"], ["2", "Trainee signs the form."], ["3", "Trainer checks the record."], ["4", "(blank)"]]
+KO_STEPS_TABLE, KO_TRAINING_TABLE, EN_STEPS_TABLE, EN_TRAINING_TABLE = range(4)
+
+
+def _grid(rows: list[list[str]]) -> str:
+    return make_grid_table(len(WIDTHS), "".join(make_row(row) for row in rows), WIDTHS)
+
+
+BODY = (
+    p("1. 시료 채취", "Heading1") + p("이 절은 시료 채취를 다룬다.") + _grid(KO_STEPS) + _grid(KO_TRAINING)
+    + p("1. Sampling", "Heading1") + p("This section covers sampling.") + _grid(EN_STEPS) + _grid(EN_TRAINING)
+)
+
+
+def _setup(client: TestClient, *, side: str = "old", body: str = BODY, bundle_id: int | None = None) -> tuple[int, int, list[int]]:
+    if bundle_id is None:
+        bundle_id = create_bundle(client, is_synthetic=True)["id"]
+    extra = {"doc_type": "sop"} if side == "new" else {}
+    name = OLD_NAME if side == "old" else "SYNTHETIC_SYN-FOLLOW-2_New.docx"
+    response = upload(client, bundle_id, build_docx(body), name, side=side, **extra)
+    assert response.status_code == 201 and response.json()["status"] == "ready", response.text
+    doc_id = response.json()["id"]
+    return bundle_id, doc_id, [table["id"] for table in get_view(client, bundle_id, doc_id)["tables"]]
+
+
+def _url(bundle_id: int, doc_id: int, table_id: int) -> str:
+    return f"/api/bundles/{bundle_id}/documents/{doc_id}/tables/{table_id}/counterpart"
+
+
+def _get(client: TestClient, bundle_id: int, doc_id: int, table_id: int, headers: dict[str, str] = AUTHOR) -> httpx2.Response:
+    return client.get(_url(bundle_id, doc_id, table_id), headers=headers)
+
+
+def _put(
+    client: TestClient, bundle_id: int, doc_id: int, table_id: int, source: int | None, headers: dict[str, str] = AUTHOR
+) -> httpx2.Response:
+    return client.put(_url(bundle_id, doc_id, table_id), json={"source_table_id": source}, headers=headers)
+
+
+def _code(response: httpx2.Response) -> tuple[int, str]:
+    return response.status_code, response.json()["detail"]["code"]
+
+
+@pytest.mark.usefixtures("clean_sop")
+def test_counterpart_get_returns_status_and_candidates(client: TestClient) -> None:
+    bundle_id, doc_id, tables = _setup(client)
+
+    steps = _get(client, bundle_id, doc_id, tables[EN_STEPS_TABLE])
+    training = _get(client, bundle_id, doc_id, tables[EN_TRAINING_TABLE])
+
+    assert steps.status_code == 200, steps.text
+    assert steps.json() == {
+        "table_no": 3, "status": "matched", "source_table_id": tables[KO_STEPS_TABLE], "decided": False,
+        "candidates": [
+            {"table_id": tables[KO_STEPS_TABLE], "table_no": 1, "score": 1.0},
+            {"table_id": tables[KO_TRAINING_TABLE], "table_no": 2, "score": 0.3},
+        ],
+    }
+    assert (training.json()["status"], training.json()["source_table_id"]) == ("none", None)  # AC1 — 같은 꼴이지만 토큰이 없다
+    korean = _get(client, bundle_id, doc_id, tables[KO_STEPS_TABLE]).json()
+    assert (korean["status"], korean["candidates"]) == ("none", [])  # 한글 표는 짝을 묻지 않는다
+
+
+@pytest.mark.usefixtures("clean_sop")
+def test_choosing_a_counterpart_is_stored_and_wins(client: TestClient) -> None:
+    bundle_id, doc_id, tables = _setup(client)
+
+    chosen = _put(client, bundle_id, doc_id, tables[EN_TRAINING_TABLE], tables[KO_TRAINING_TABLE])
+    again = _put(client, bundle_id, doc_id, tables[EN_STEPS_TABLE], tables[KO_TRAINING_TABLE])
+
+    assert chosen.status_code == 200, chosen.text
+    assert (chosen.json()["status"], chosen.json()["source_table_id"], chosen.json()["decided"]) == (
+        "matched", tables[KO_TRAINING_TABLE], True,
+    )
+    assert again.status_code == 200, again.text  # 점수가 낮은 표도 사람이 고르면 짝이다
+    read = _get(client, bundle_id, doc_id, tables[EN_STEPS_TABLE]).json()
+    assert (read["status"], read["source_table_id"], read["decided"]) == ("matched", tables[KO_TRAINING_TABLE], True)
+    changed = _put(client, bundle_id, doc_id, tables[EN_STEPS_TABLE], tables[KO_STEPS_TABLE]).json()
+    assert changed["source_table_id"] == tables[KO_STEPS_TABLE]  # 다시 고르면 같은 행을 바꾼다
+    events = client.get(f"/api/bundles/{bundle_id}/events", headers=AUTHOR)
+    assert [event["action"] for event in events.json()].count("table.counterpart") == 3
+
+
+@pytest.mark.usefixtures("clean_sop")
+def test_choosing_none_is_stored(client: TestClient) -> None:
+    bundle_id, doc_id, tables = _setup(client)
+
+    response = _put(client, bundle_id, doc_id, tables[EN_STEPS_TABLE], None)
+
+    assert response.status_code == 200, response.text
+    read = _get(client, bundle_id, doc_id, tables[EN_STEPS_TABLE]).json()
+    assert (read["status"], read["source_table_id"], read["decided"]) == ("none", None, True)
+    assert get_view(client, bundle_id, doc_id)["document"]["revision"] == 1  # 문서는 바뀌지 않는다
+
+
+@pytest.mark.usefixtures("clean_sop")
+def test_new_document_is_refused(client: TestClient) -> None:
+    bundle_id, doc_id, tables = _setup(client, side="new")
+
+    assert _code(_get(client, bundle_id, doc_id, tables[EN_STEPS_TABLE])) == (422, "invalid_side")
+    assert _code(_put(client, bundle_id, doc_id, tables[EN_STEPS_TABLE], None)) == (422, "invalid_side")
+
+
+@pytest.mark.usefixtures("clean_sop")
+def test_other_documents_table_is_404(client: TestClient) -> None:
+    bundle_id, doc_id, tables = _setup(client)
+    other_body = p("2. 기록", "Heading1") + _grid(KO_TRAINING) + p("2. Records", "Heading1") + _grid(EN_TRAINING)
+    _, _, others = _setup(client, body=other_body, bundle_id=bundle_id)
+
+    assert _code(_get(client, bundle_id, doc_id, others[0])) == (404, "table_not_found")
+    assert _code(_put(client, bundle_id, doc_id, others[0], None)) == (404, "table_not_found")
+    assert _code(_put(client, bundle_id, doc_id, tables[EN_STEPS_TABLE], others[0])) == (404, "table_not_found")
+    assert _code(_put(client, bundle_id, doc_id, tables[KO_STEPS_TABLE], None)) == (404, "table_not_found")  # 한글 표
+
+
+@pytest.mark.usefixtures("clean_sop")
+def test_reader_cannot_choose(client: TestClient) -> None:
+    bundle_id, doc_id, tables = _setup(client)
+    assert set_members(client, bundle_id, [("qa.member", "author"), ("qa.lead", "reviewer")]).status_code == 200
+
+    assert _get(client, bundle_id, doc_id, tables[EN_STEPS_TABLE], headers=REVIEWER).status_code == 200
+    assert _code(_put(client, bundle_id, doc_id, tables[EN_STEPS_TABLE], None, headers=REVIEWER)) == (403, "role_required")
+
+
+@pytest.mark.usefixtures("clean_sop", "clean_embedding_cache")
+def test_embed_call_holds_no_session(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    bundle_id, doc_id, tables = _setup(client)
+    enable_embed(monkeypatch)
+    seen: list[int] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        seen.append(engine.pool.checkedout())
+        inputs = read_payload(request)["input"]
+        return httpx2.Response(200, json=build_embed_body([vector_for(text) for text in inputs]))
+
+    install_ai_transport(monkeypatch, handler)
+
+    response = _get(client, bundle_id, doc_id, tables[EN_STEPS_TABLE])
+
+    assert response.status_code == 200, response.text
+    assert seen == [0]
+    assert response.json()["status"] == "matched"
+
+
+@pytest.mark.usefixtures("clean_sop", "clean_embedding_cache")
+def test_embedding_failure_falls_back_to_tokens(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    bundle_id, doc_id, tables = _setup(client)
+    tokens_only = _get(client, bundle_id, doc_id, tables[EN_STEPS_TABLE]).json()  # 임베딩이 꺼진 기본 환경
+    enable_embed(monkeypatch)
+    install_ai_transport(monkeypatch, lambda request: httpx2.Response(400, json={"error": "bad model"}))
+
+    response = _get(client, bundle_id, doc_id, tables[EN_STEPS_TABLE])
+
+    assert response.status_code == 200, response.text
+    assert response.json() == tokens_only

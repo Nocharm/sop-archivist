@@ -287,6 +287,22 @@ class SourceTable(Base):
     signals: Mapped[dict | None] = mapped_column(JSON(none_as_null=True), default=None)
 
 
+class TableCounterpart(Base):
+    """사람이 정한 영어 표의 짝 한글 표(11-23 명세 D2-R3) — 표마다 한 행. source_table_id가 NULL이면 "짝 없음"으로 정했다."""
+
+    __tablename__ = "table_counterparts"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    extraction_id: Mapped[int] = mapped_column(ForeignKey("extractions.id", ondelete="CASCADE"), index=True)
+    table_id: Mapped[int] = mapped_column(ForeignKey("source_tables.id", ondelete="CASCADE"), unique=True)
+    # SET NULL이 아니라 CASCADE — 짝 표가 사라지면 "짝 없음"으로 바뀌지 않고 정한 것이 없어진다(다시 점수로 고른다)
+    source_table_id: Mapped[int | None] = mapped_column(
+        ForeignKey("source_tables.id", ondelete="CASCADE"), index=True, default=None
+    )
+    decided_by: Mapped[str] = mapped_column(String(100))
+    decided_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
 class SourceBlock(Base):
     """원문 블록 — 문단·표 칸·그림 하나. text는 만든 뒤 바꾸지 않는다(원문 불변)."""
 

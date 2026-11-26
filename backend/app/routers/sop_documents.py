@@ -105,6 +105,7 @@ from app.sop.schemas import NO_NUL, NoNulStr
 from app.sop.segment import find_anchor_offset, is_band_table, read_figure_inline, read_table_place
 from app.sop.sheet_model import Sheet
 from app.sop.status import get_cover_status
+from app.sop.table_follow import CounterpartOut, compute_counterpart, load_counterpart_inputs, save_counterpart
 from app.sop.tobe import MAX_DB_INT, release_match_doc, rename_match_doc, temp_match_code
 from app.sop.units import (
     UNIT_ACTIVE,
@@ -995,6 +996,52 @@ async def delete_unit_pair(
     result = PairResult(document_revision=document.revision, pair=None)
     await session.commit()
     return result
+
+
+class CounterpartIn(BaseModel):
+    """영어 표의 짝 한글 표 — null이면 "짝 없음"으로 정한다."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    source_table_id: Annotated[int, Field(ge=1, le=MAX_DB_INT)] | None
+
+
+@router.get("/{bundle_id}/documents/{doc_id}/tables/{table_id}/counterpart", response_model=CounterpartOut)
+async def get_table_counterpart(
+    doc_id: IdPath,
+    table_id: IdPath,
+    ctx: BundleContext = Depends(_require_member),
+    session: AsyncSession = Depends(get_session),
+) -> CounterpartOut:
+    """영어 Old 표의 짝 한글 표 — 사람이 정했으면 그것, 아니면 꼴 · 토큰 · 뜻 점수로 matched | ambiguous | none(11-23 명세 D2-R1~R3)."""
+    document = await _get_document(session, ctx.bundle.id, doc_id)
+    inputs = await load_counterpart_inputs(session, document, table_id)
+    # 읽기는 끝났다 — 임베딩 호출 동안 풀 연결을 붙들지 않게 먼저 돌려준다(이후 DB는 쓰지 않는다)
+    await session.close()
+    return await compute_counterpart(inputs, login_id=ctx.login_id)
+
+
+@router.put("/{bundle_id}/documents/{doc_id}/tables/{table_id}/counterpart", response_model=CounterpartOut)
+async def choose_table_counterpart(
+    body: CounterpartIn,
+    doc_id: IdPath,
+    table_id: IdPath,
+    ctx: BundleContext = Depends(_require_author),
+    session: AsyncSession = Depends(get_session),
+) -> CounterpartOut:
+    """사람이 짝 표를 정한다 — 문서를 바꾸지 않으므로 revision · 되돌리기 단계 없이 저장하고 기록만 남긴다."""
+    await lock_bundle(session, ctx.bundle)
+    ensure_editable(ctx.bundle)
+    document = await _get_document(session, ctx.bundle.id, doc_id)
+    inputs = await load_counterpart_inputs(session, document, table_id)
+    inputs = await save_counterpart(session, inputs, table_id, body.source_table_id, actor=ctx.login_id)
+    record_event(
+        session, bundle_id=ctx.bundle.id, actor=ctx.login_id, action="table.counterpart", target_type="table",
+        target_ids=[table_id], detail={"document_id": document.id, "source_table_id": body.source_table_id},
+    )
+    await session.commit()
+    await session.close()  # 아래 임베딩 호출 동안 연결을 잡지 않는다
+    return await compute_counterpart(inputs, login_id=ctx.login_id)
 
 
 @router.patch("/{bundle_id}/documents/{doc_id}/caption-refs/{ref_id}", response_model=CaptionRefResult)
