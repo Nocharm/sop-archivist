@@ -28,10 +28,12 @@ from app.sop.numbering import (
     NUMBERED_KINDS,
     SECTION_KIND,
     LevelRow,
+    NumberedUnit,
     build_row_levels,
     build_section_numbers,
     get_number,
     get_number_note,
+    get_section_level,
     is_read_from_text,
     strip_number,
 )
@@ -48,6 +50,7 @@ NUMBER_NOTE = "Source {read} → {now}"  # 사람이 고친 번호의 원문 번
 NO_NUMBER_NOTE = "none"
 DELETED_REMARK = "Deleted"  # 확정 삭제한 줄의 Remark — 사유가 있으면 "Deleted — 사유"
 READ_FROM_TEXT_NOTE = "Read from text"  # 본문 줄 글 앞 타자 번호를 저절로 번호로 읽음(사람이 고치지 않음) — 틀렸으면 번호 칸에서 고친다
+ORIGINAL_NOTE = "Original {read}"  # 벗긴 표에서 위 번호 아래로 이어 매긴 칸 번호의 원래 번호(11-23 명세 D1-R7)
 CELL_JOINER = " | "  # 아직 표인 데이터 표 한 행의 칸 글 사이
 _LANG_LABELS = {"ko": "KO", "en": "EN", "ref": "REF"}  # 중립은 빈 칸
 _STRUCK_NOISE_KINDS = (NOISE_FRONT, NOISE_HISTORY)  # 확정 삭제한 줄처럼 싣는 저절로 삭제된 줄
@@ -376,18 +379,30 @@ async def load_unit_lines(session: AsyncSession, document: Document) -> list[Uni
             table_id=unit.table_id, row_index=unit.row_index, col_index=block.col_index, group_unit_id=unit.group_unit_id,
             lang=unit.lang, number=number,
             number_note="" if unit.noise_kind is not None
-            else READ_FROM_TEXT_NOTE if is_read_from_text(unit) else format_number_note(get_number_note(unit), number),
+            else READ_FROM_TEXT_NOTE if is_read_from_text(unit)
+            else ORIGINAL_NOTE.format(read=unit.number_read) if is_continued_number(unit)
+            else format_number_note(get_number_note(unit), number),
             remark=(unit.noise_reason or _NOISE_REMARKS[unit.noise_kind]) if auto_deleted else reason,
             deleted=auto_deleted or (confirmed and disposition == "delete"),
             target_id=next(iter(unit_targets)) if confirmed and disposition == "assigned" and len(unit_targets) == 1 else None,
             blocks=() if unit.group_unit_id is not None else _list_blocks(find_line_table(unit.kind, unit.table_id, block.table_id, tables), tables),
-            # 띠 표 제목 줄(번호 칸 + 제목 칸)의 칸 번호는 절 번호라 덩이 밖으로 이어진다
-            is_cell_number=unit.number_source == NUMBER_CELL and unit.number_set is None and unit.kind != SECTION_KIND,
+            # 띠 표 제목 줄(번호 칸 + 제목 칸)의 칸 번호는 절 번호라 덩이 밖으로 이어진다. 위 번호 아래로 이어 매긴 칸 번호(5.1)도 칸 번호다 —
+            # 표 뒤 문단은 표 앞 번호(5)로 돌아간다
+            is_cell_number=unit.number_source == NUMBER_CELL and (unit.number_set is None or is_continued_number(unit))
+            and unit.kind != SECTION_KIND,
             pair_id=pair_of.get(unit.id),
             indent_shift=unit.indent_shift,
             noise=unit.noise_kind is not None, auto_deleted=auto_deleted,
         ))
     return lines
+
+
+def is_continued_number(unit: NumberedUnit) -> bool:
+    """벗긴 표의 숫자 칸 번호를 위 번호 아래로 이어 매겼는가("1" → "5.1", editing.continue_numbers) — 번호 노트가 원래 번호를 적는다."""
+    return (
+        unit.number_source == NUMBER_CELL and bool(unit.number_set) and unit.number_read is not None
+        and get_section_level(unit.number_set or "") > get_section_level(unit.number_read)
+    )
 
 
 def _list_blocks(innermost: int | None, tables: Mapping[int, UnwrapTable]) -> tuple[int, ...]:
