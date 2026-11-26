@@ -17,6 +17,7 @@ SOP 화면: `api-sop.ts`(SOP API 호출·응답 타입), 화면 규칙은 순수
 
 - `paper-model`(원문 용지):
   - 고름 두 겹(11-23 명세 C1)은 `pick-scope-model` — `resolvePickUnit`(누르면 고를 것: 칸 문장은 칸, 캡션은 묶음)과 `resolveBoxUnit`(그것이 든 박스: 칸 · 캡션은 묶음, 끌기 · 줄 찾기), `buildPickScope`가 누른 조각 · 줄의 박스 · 묶음(짝 카드 · 표)을 내고 `Paper`의 `scope`가 묶음을 얇은 테(`data-group`)와 꼬리표 하나로 그린다. 이웃한 짝만 묶음(떨어진 짝은 `data-mate`), `scope`가 없는 용지(위치 판)는 짝 카드 전체에 2px 그대로. 칸을 고른 표의 삭제 접힘은 `scope.boxId`로 묻는다.
+  - 여럿 고른 표시(11-25 명세 §9)는 `multi-mark-model` — `buildCheckMarks`가 카드 순서에서 고른 카드가 이어진 덩어리를 찾고(사이에 안 고른 카드가 끼면 갈린다), `Paper`의 `checkedRows`(Unit → 줄 키, Old Shift · New Ctrl)가 줄마다 `data-check`(윗 가장자리는 덩어리 첫 줄, 아랫 가장자리는 끝 줄)와 틈 `data-check="gap"` · 오른쪽 체크 `.strip-check` · 첫 카드의 꼬리표 `.check-tag`로 그린다. 짝 카드는 한 줄로 세고, 여럿 고른 동안은 묶음 꼬리표(`group-tag`)를 그리지 않는다. 덩어리 `deps`에는 `readCheckKey` 글 하나. `data-pick`은 짝 고르기만 남았다.
   - 긴 문서는 카드 40장씩 덩어리로 그려 화면에서 먼 덩어리는 다시 그리지 않고 브라우저도 건너뛴다, `paper-chunk-model`·`Paper`의 `PaperChunk`. 필터로 접힌 목록도 접기 계획의 칸 40개씩 같은 덩어리다(`sliceFoldEntries`). 덩어리로 그릴지는 펼침 · 고름에 바뀌지 않는 접기 전 칸 수로 정하고, 펼친 묶음은 머리와 줄을 가르지 않은 채 접혔을 때처럼 한 칸으로 센다 — 묶음을 펼치고 접어도 어느 줄도 덩어리를 옮기지 않는다(옮긴 줄은 다시 마운트된다). 접힌 묶음 안을 골라 엿보기가 끼면 칸이 늘어, 그 뒤 경계의 줄만 옮긴다(덩어리 key는 자리 번호).
   - 먼 덩어리를 다시 그릴지는 `PaperChunk`의 `deps`로 견준다. 글쇠마다 통째로 새 값이 되는 것(처리 중 · 삭제 접힘 · 저장 중인 번호)은 그대로 넣지 않고 덩어리마다 그 안의 것만 글로 읽어 넣는다(`readChunkPending` · `readChunkDeleted` · `readChunkNumbers`). 표 알약은 그 표나 벗긴 표의 머리가 든 덩어리에, 머리의 잠금은 묶음 · 표의 단위가 다른 덩어리에 있어도 든다(`chunkScopes`).
   - `content-visibility`는 덩어리에 한 겹만 — 줄에도 걸면 스크롤 고정이 놓친다.

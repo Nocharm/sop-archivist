@@ -835,6 +835,9 @@ await runStep("assign: legend first, place, delete without a reason, edit, clear
   await units.nth(4).click({ modifiers: ["Shift"] });
   await units.nth(6).click({ modifiers: ["Shift"] });
   await wait(page, "assign-bulk");
+  // 떨어진 두 줄은 덩어리마다 꼬리표 하나(11-25 명세 §9)
+  const checkTags = await page.locator('[data-testid^="assign-check-run-"]').allTextContents();
+  check("two apart rows picked with Shift get one tag each", checkTags.length === 2 && checkTags.every((text) => text.includes("rows picked")), JSON.stringify(checkTags));
   await page.locator('[data-testid="assign-bulk-delete"]').click();
   await page.locator('[data-testid="assign-bulk-reason"]').fill("Header text");
   await page.locator('[data-testid="assign-bulk-confirm"]').click();
