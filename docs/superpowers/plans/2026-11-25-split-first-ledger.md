@@ -40,6 +40,7 @@
 | F5 | `feat/pick-bar-labels` | 합침 | v1.6.40 · c25d82de | dev(7a00b66c) 합침 · vitest 2736 · build 경고 0 · `assign:` 스모크 ALL PASS 1527(짝 판 단계 따라 고침 뒤) · overlap `assign-pick-bar` 1120 · 1280 · 1440 · 1920 en/ko 8/8 · 호버 깜빡임 0회(480–720px 상자, en/ko) · 검토 생략(CSS) | 기본 1120 · 1440 두 단에서는 Old 박스가 약 340px라 라벨이 거의 다 접힘 — 넓힐 때만 이름 |
 | F7b | `feat/new-cell-menu-two-pane` | 합침 | v1.6.39 · e81d6ecb | dev(26b35312) 합침 · vitest 2741 · build 경고 0 · `assign:` 스모크 ALL PASS 1527(새 Shift+F10 검사 4 포함) · 검토 생략(작은 일) | Old 줄을 골라 둔 채 New를 마지막에 누르면 Shift+F10이 New 메뉴를 연다(전에는 Old) |
 | F9 | `feat/practice-page`(모음) | 진행 | 설계 19c9db36 · 스텝 1 be583398 | 스텝 1 자료: pytest 3851+시드 15 · ruff · sonnet 검토 막음 0(CI 바이트 고정 손질 e7f5c93d) · 스텝 2 가짜 서버: vitest 2768 · opus 검토 막음 1(실제 큐 쓰기가 /practice에서 버려짐) 고치는 중 | 스텝 3 화면 · 스텝 4 과제 남음 |
+| Fm | `fix/user-menu-close-on-nav` | 진행 |  |  | 연습 스모크가 찾은 앞부터 있던 결함 |
 
 
 ## 이어 가기 (2026-11-26 밤 — 1차 피드백 중간, 다음 세션은 여기부터)
