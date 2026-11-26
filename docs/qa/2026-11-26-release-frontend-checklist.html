@@ -94,14 +94,19 @@
     <label><input type="checkbox"><span class="t">키 큰 메뉴는 박스를 덮지 않고 옆으로 비킴 <span class="v">v1.6.27</span></span></label>
     <label><input type="checkbox"><span class="t">Old 표를 벗기면 숫자 칸이 5.1 · 5.2로 이어짐, 첫 Ctrl+Z는 번호만 <span class="v">v1.6.31</span></span></label>
     <label><input type="checkbox"><span class="t">번호 있는 줄을 합치면 뒤 번호가 당겨짐 <span class="v">v1.6.31</span> <span class="w">제목 합치면 문서 끝까지 — 써 보고 정함</span></span></label>
-    <label><input type="checkbox"><span class="t">벗긴 영어 표 "한글 표처럼 하기" — 칩 넷 · Apply · Ctrl+Z 한 번, 꼴이 다르면 AI <span class="v">v1.6.21</span></span></label>
+    <label><input type="checkbox"><span class="t">영어 표 머리 "짝 표 고르기" — 닮은 한글 표가 둘이면 고르라고 물음 <span class="v">v1.6.21 · 1</span></span></label>
+    <label><input type="checkbox"><span class="t">벗긴 영어 표 "한글 표처럼 하기" — 순서 · 삭제 · 합치기 · 들여쓰기 · 번호 칩 · Apply · Ctrl+Z 한 번 <span class="v">v1.6.21 · 2</span></span></label>
+    <label><input type="checkbox"><span class="t">행 꼴이 다르면 AI에 묻기(사내 AI · 가짜 AI로만 확인함) <span class="v">v1.6.21 · 3</span></span></label>
+    <label><input type="checkbox"><span class="t">되돌리기 · 편집 처리 중 누른 줄에 고름이 남음(되돌린 줄로 튀지 않음) <span class="v">v1.6.16</span></span></label>
     <label><input type="checkbox"><span class="t">삭제 접기 · 벗기기 전환이 누르는 순간 시작, 실패하면 거꾸로 <span class="v">v1.6.9</span></span></label>
     <label><input type="checkbox"><span class="t">번호 칸 창 확인 · 취소 단추 <span class="v">v1.6.7</span></span></label>
   </section>
 
   <section>
     <h2>Assign — 용지 · 판</h2>
-    <label><input type="checkbox"><span class="t">이미 쓴 New 문서도 양 단에서 Old와 같은 용지(머리말 · 꼬리말 · 그림 탭), 양쪽 고르면 Enter가 잇기 <span class="v">v1.6.22</span></span></label>
+    <label><input type="checkbox"><span class="t">이미 쓴 New 문서도 양 단에서 Old와 같은 용지 — 머리말 · 꼬리말 · 그림 탭, 제목 줄, 진짜 표 · 그림 <span class="v">v1.6.22 · 6-1</span></span></label>
+    <label><input type="checkbox"><span class="t">New도 누르면 고름, 누른 박스 아래 단추 줄에서 잇기 · 다듬기, Old · New 둘 다 고르면 Enter가 잇기, 빈 곳 누르면 두 고름 해제(Esc는 Old 고름 유지) <span class="v">v1.6.22 · 6-2</span></span></label>
+    <label><input type="checkbox"><span class="t">New에서도 표 벗기기 · 다시 표로 · 번호 · 나누기 · 제목 되돌리기 · 줄 순서 · 앞부분 삭제 되돌리기 <span class="v">v1.6.22 · 6-3</span></span></label>
     <label><input type="checkbox"><span class="t">Tables 탭 · 본문 표 접기(새로 고침해도 기억), 표 탭에도 짝 표 고르기 · 따라 하기 <span class="v">v1.6.24</span></span></label>
     <label><input type="checkbox"><span class="t">1440px보다 좁으면 오른쪽 칸을 떼어 옮기고 접음 <span class="v">v1.6.2</span></span></label>
     <label><input type="checkbox"><span class="t">짝 · 그림 위치 판을 열어도 용지 폭 · 자리 그대로 <span class="v">v1.6.0</span></span></label>
@@ -110,11 +115,24 @@
   </section>
 
   <section>
-    <h2>결과물 · Excel · 관리</h2>
+    <h2>결과물 · Excel</h2>
     <label><input type="checkbox"><span class="t">Excel A에서 삭제 줄 Old 글에 취소선 <span class="v">v1.6.15</span></span></label>
     <label><input type="checkbox"><span class="t">Space 미리보기 목차 한 줄 접기, 문단 Excel 받을 때 넣을 것 고르는 창 <span class="v">v1.6.14</span></span></label>
     <label><input type="checkbox"><span class="t">문단 Excel 칸 번호 5.1 · 5.2, 사람이 고친 칸은 "Source 3 → 5.2.1" <span class="v">v1.6.31</span></span></label>
-    <label><input type="checkbox"><span class="t">관리 화면: 부여 목록+상세 · 사내 AI로 등록 · 역할 × 권한 표 <span class="v">v1.6.19</span></span></label>
+  </section>
+
+  <section>
+    <h2>관리 화면 <span class="v">v1.6.19 · 관리 세션에서 중간에 합침</span></h2>
+    <label><input type="checkbox"><span class="t">하위 탭이 주소에 남음(새로 고침 · 뒤로 가기), 대상 이름은 화면 언어 <span class="v">0</span></span></label>
+    <label><input type="checkbox"><span class="t">부여 목록+상세 — 유효 권한 조회를 흡수, 부여 없는 직원 찾기, 역할 여러 개 더하기 <kbd>A</kbd>(한 번에 저장) <span class="v">1 · 2</span></span></label>
+    <label><input type="checkbox"><span class="t">회수는 5초 안에 <b>Undo</b> <span class="v">2</span></span></label>
+    <label><input type="checkbox"><span class="t"><b>사내 AI로 등록</b> — 평소 말투 지시 → 줄마다 미리보기 → 고른 줄만 반영, 동명이인은 그 줄에서 고름 <span class="v">3</span> <span class="w">실명이 사내 AI로 감(사용자 결정)</span></span></label>
+    <label><input type="checkbox"><span class="t">역할 × 권한 표 — 바뀐 칸 저장 띠 · 저장 전 확인 · 받은 대상 명단 → 부여로 거르기 · 권한 설명 <span class="v">4</span></span></label>
+    <label><input type="checkbox"><span class="t">표 모양 · 메뉴 묶음 제목 · 표준 골격 한 줄 <span class="v">5 · 6</span></span></label>
+    <label><input type="checkbox"><span class="t">AI 지침 이름 · 버전 타임라인, 새 지침 <code>prompt.grant</code> v1 <span class="v">7</span></span></label>
+    <label><input type="checkbox"><span class="t">Bundle 관리: 상태 거르기 · 진행 막대 · 구성원 요약 <span class="v">7</span></span></label>
+    <label><input type="checkbox"><span class="t">변경 기록 날짜 묶음 · 거르기 · 이어 불러오기, 배치 한 작업 한 줄 · 동기화 요약 · AI 사용량 합계 <span class="v">8</span></span></label>
+    <label><input type="checkbox"><span class="t">좁은 창에서 Bundle 관리 표가 틀 안에 남음 <span class="v">9</span></span></label>
   </section>
 
   <p class="note"><span class="w">주황 글</span>은 사용자가 정할 동작(장부 "아침에 볼 것"). 배포 메모: Alembic 0038(<code>extractions.split_rule</code>) 등 더하기만 — 배포 전 백업 확인.</p>
