@@ -147,7 +147,8 @@ function createScreen() {
           return "done";
         },
         hasTarget: () => screen.focus.kind !== "none",
-        replay: (press) => press.kind === "key" && pressKey(press.key),
+        // 되살린 Ctrl+Z는 화면의 pressUndo처럼 되돌리기 한 단계를 세운다
+        replay: (press) => press.kind === "key" && (press.ctrl ? (commands.enqueue({ kind: "step", direction: "undo", docId: null }), true) : pressKey(press.key)),
         notifyLost: () => {
           lost += 1;
         },
@@ -218,6 +219,8 @@ function createScreen() {
     }
     screen.press = (name) => {
       if (name === "undo") commands.enqueue({ kind: "step", direction: "undo", docId: null });
+      // 글쇠 Ctrl+Z - 앞에 장벽이 있으면 화면처럼 글쇠로 쌓였다가 되살아난다(단추 "undo"는 바로 한 단계)
+      else if (name === "ctrl+z") commands.enqueue(commands.isDeferring() ? { kind: "key", key: "z", shift: false, ctrl: true } : { kind: "step", direction: "undo", docId: null });
       else if (commands.isDeferring()) {
         if (commands.canQueueKey()) commands.enqueue({ kind: "key", key: name, shift: false, ctrl: false });
       }
@@ -376,6 +379,34 @@ describe("a barrier (A1-R3, AC2)", () => {
     await drain(screen);
     expect(screen.focus.kind).toBe("none");
     expect(screen.log).toEqual(["join 1", "undo"]);
+    expect(screen.dropped).toEqual([2]);
+  });
+  // 다시 표로 → Ctrl+Z → Ctrl+Z: 첫 되돌리기가 고른 표 줄을 은퇴시키고 갈 자리를 알려 주지 않는다. 그 응답을 기다리는 사이 누른 둘째 Ctrl+Z는 대상이 없는 글쇠라 버리지 않는다
+  it("Ctrl+Z pressed while an Undo runs still goes out when that Undo leaves nothing picked", async () => {
+    const screen = await open();
+    for (let n = 0; n < 2; n += 1) {
+      await press(screen, "m");
+      await drain(screen);
+    }
+    screen.forgetUndoFocus();
+    await press(screen, "undo");
+    await press(screen, "ctrl+z");
+    await drain(screen);
+    expect(screen.focus.kind).toBe("none");
+    expect(screen.log).toEqual(["join 1", "join 200", "undo", "undo"]);
+    expect(screen.dropped).toEqual([]);
+  });
+  it("keys behind that Ctrl+Z are dropped with it only when a key before it has lost its box", async () => {
+    const screen = await open();
+    for (let n = 0; n < 2; n += 1) {
+      await press(screen, "m");
+      await drain(screen);
+    }
+    screen.forgetUndoFocus();
+    await press(screen, "undo");
+    for (const name of ["d", "ctrl+z"]) await press(screen, name);
+    await drain(screen);
+    expect(screen.log).toEqual(["join 1", "join 200", "undo"]);
     expect(screen.dropped).toEqual([2]);
   });
   it("a single key that finds nothing to act on says so", async () => {

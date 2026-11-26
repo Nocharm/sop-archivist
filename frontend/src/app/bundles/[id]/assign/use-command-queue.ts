@@ -163,6 +163,13 @@ function isReplay(command: AssignCommand): command is ReplayCommand {
   return command.kind === "key" || command.kind === "press" || command.kind === "pick";
 }
 
+/** 고름이 사라지면 갈 곳이 없는 글쇠가 쌓여 있나. 맨 앞이 Ctrl+Z · 다시 하기면 아니다 - 대상이 없는 글쇠고, 그 되돌리기가 뒤에 쌓인 것의 고름을 다시 세운다 */
+function hasStrandedKey(behind: readonly QueuedCommand<AssignCommand>[]): boolean {
+  const next = behind[0]?.payload;
+  if (next?.kind === "key" && next.ctrl) return false;
+  return behind.some((item) => item.kind === "key");
+}
+
 /** 처리 중 표시 · 잠금 - 판단은 저장, 나머지는 편집 종류대로 */
 export type DescribePending = (command: WriteCommand) => Omit<Pending, "id">;
 
@@ -311,7 +318,7 @@ export function useCommandQueue(env: CommandEnv, describePending: DescribePendin
     const { running: current, waiting: behind } = queue.getState();
     if (settleWait !== null && current?.id === settleWait.id && !(settleWait.isSolo && env.isSoloLoading)) {
       // 장벽이 끝나자 고른 것이 사라졌다 - 쌓인 글쇠를 엉뚱한 박스(목록 처음)에 떨어뜨리지 않고 버리고 알린다
-      if (isBarrier(current) && live.current.hadTarget && !env.hasTarget() && behind.some((item) => item.kind === "key")) dropAll(1);
+      if (isBarrier(current) && live.current.hadTarget && !env.hasTarget() && hasStrandedKey(behind)) dropAll(1);
       queue.settle(settleWait.id);
     }
     pumpStep();
