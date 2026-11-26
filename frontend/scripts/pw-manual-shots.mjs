@@ -197,6 +197,8 @@ const SCENES = [
       const table = newView.units.find((unit) => unit.kind === "table");
       const cell = newView.units.find((unit) => unit.kind === "cell_sentence" && unit.group_unit_id === table?.id && unit.text === "합성 온도");
       await page.goto(`${BASE}/bundles/${created.id}/assign`, { waitUntil: "networkidle" });
+      // 장면이 스스로 옮겨 가 처음에 넣은 가림 CSS가 사라졌다 - 개발 서버에만 있는 표시를 다시 가린다
+      await page.addStyleTag({ content: APP_HIDE_CSS });
       await page.locator(id("assign-bar")).waitFor({ timeout: T });
       if ((await page.locator(id("assign-new")).count()) === 0) await click(page, id("assign-view-two"));
       await page.locator(id("assign-new")).waitFor({ timeout: T });
