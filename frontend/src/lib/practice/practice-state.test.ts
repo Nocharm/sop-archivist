@@ -1,8 +1,10 @@
 // 연습 상태(설계 §6.2 · §6.3) - 처음 상태에서 지은 응답이 자료와 같고, 쓰기 표의 줄마다 반영 · 응답 꼴, 되돌리기 사진(D8).
-// 자료는 손으로 줄인 시험 자료(practice-test-fixture.ts) - 진짜 자료가 합쳐지면 처음 응답 시험은 그것으로도 돈다.
+// 처음 응답 시험은 손으로 줄인 시험 자료(practice-test-fixture.ts)와 진짜 자료(practice-fixture.json) 둘 다로 돈다.
 import { describe, expect, it } from "vitest";
 
 import type { GroupSaveInput } from "../api-sop";
+
+import realFixture from "./practice-fixture.json";
 
 import {
   PracticeUnsupportedError,
@@ -21,6 +23,7 @@ import {
   readView,
   saveGroup,
   stepDecision,
+  type PracticeFixture,
   type PracticeState,
 } from "./practice-state";
 import { TEST_NEW_DOC, TEST_OLD_DOC, TEST_TABLE, TEST_TARGETS, TEST_UNITS as U, buildPracticeTestFixture } from "./practice-test-fixture";
@@ -62,6 +65,17 @@ describe("first responses equal the fixture", () => {
     for (const [docId, view] of Object.entries(fixture.views)) expect(readView(state, Number(docId))).toEqual(view);
     expect(listCandidates(state, U.pairBKo).map((card) => card.target_id)).toEqual([TEST_TARGETS.bPrime]);
     expect(listCandidates(state, 999)).toEqual([]);
+  });
+
+  it("builds the same first responses from the real fixture JSON", () => {
+    const fixture = realFixture as unknown as PracticeFixture;
+    const state = createPracticeState(fixture);
+    const hint = "practice-fixture.json가 바뀌었다 - 자료를 다시 뽑았으면 practice-state가 새 필드를 옮기는지 본다";
+    expect(listUnitRows(state), hint).toEqual(fixture.units);
+    for (const doc of fixture.documents) expect(listUnitRows(state, doc.id), hint).toEqual(fixture.units.filter((unit) => unit.document_id === doc.id));
+    expect(listWritten(state), hint).toEqual(fixture.written);
+    for (const [docId, view] of Object.entries(fixture.views)) expect(readView(state, Number(docId)), hint).toEqual(view);
+    for (const [targetId, target] of Object.entries(fixture.targets)) expect(readGroup(state, [], [Number(targetId)]).targets, hint).toEqual([target]);
   });
 });
 

@@ -230,7 +230,7 @@ interface PracticeState {
 
 ## 7. 과제(U3)
 
-`src/lib/practice/practice-tasks.ts`(순수): `PRACTICE_TASKS: { id, titleKey, bodyKey, anchor, keys: AssignKeyId[], isDone(log): boolean }[]`, `listAchieved(log)`(기록에서 이룬 과제 집합 — 기록이 append-only라 한 번 이룬 것은 남는다), `pickOpenTask(achieved, picked)`(D10). 판정은 "그 손짓이 한 번 성공했다"이고 어느 줄이든 된다. 과제 글이 자료의 알맞은 자리를 가리킨다.
+`src/lib/practice/practice-tasks.ts`(순수): `PRACTICE_TASKS: { id, titleKey, bodyKey, anchor, keys: AssignKeyId[], isDone(entry): boolean }[]`, `listAchieved(log)`(기록에서 이룬 과제 집합 — 기록이 append-only라 한 번 이룬 것은 남는다), `pickOpenTask(log, picked)`(D10). 판정은 "그 손짓이 한 번 성공했다"이고 어느 줄이든 된다. 과제 글이 자료의 알맞은 자리를 가리킨다.
 
 | # | id | 과제(en · ko 메시지) | 글쇠(`ASSIGN_KEYS` id) | 판정(`log`) | 설명서 |
 |---|---|---|---|---|---|

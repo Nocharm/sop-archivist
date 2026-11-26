@@ -40,7 +40,7 @@
 | `handlePracticeRequest(method, path, body): Promise<Response>` | `frontend/src/lib/practice/practice-server.ts` | `api.ts`가 동적 import로 부른다(D1) | 2 |
 | `notePracticeAct(act)` · `subscribePractice` · `readPracticeSnapshot` · `PracticeLogEntry` | 같은 파일 | 손짓 적기(D9) · 과제 칸이 읽는 상태 | 2 |
 | `BundleIdContext` · `useRouteBundleId()` | `frontend/src/lib/use-route-bundle-id.ts` | Assign의 Bundle id(D12) | 3 |
-| `PRACTICE_TASKS` · `listAchieved(log)` · `pickOpenTask(achieved, picked)` | `frontend/src/lib/practice/practice-tasks.ts` | 과제 표 · 판정 · 펼칠 과제(설계 §7, D10) | 4 |
+| `PRACTICE_TASKS` · `listAchieved(log)` · `pickOpenTask(log, picked)` | `frontend/src/lib/practice/practice-tasks.ts` | 과제 표 · 판정 · 펼칠 과제(설계 §7, D10) | 4 |
 | testid `practice-band` · `practice-start-over` · `practice-tasks` · `practice-tasks-fold` · `practice-progress` · `practice-task-<id>`(`data-done` · `data-open`) · `practice-task-manual` · `user-menu-practice` · `manual-practice` | 화면 | 스모크 · 그림 장면 | 3 · 4 |
 | 거절 코드 `practice_unsupported` → `rule.practice_unsupported` | 가짜 서버 · i18n | 연습에서 안 되는 것(D5) | 2 |
 
