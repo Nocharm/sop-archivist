@@ -927,13 +927,13 @@ async def edit_units(
     if deletes:
         # 한글 표처럼 하기의 삭제는 판단이다 - 편집과 같은 트랜잭션에서 쓰고 편집 전 덤프로 한 단계에 담는다(D2-R8, 되돌리기 한 번).
         # 편집이 비었으면(삭제만) 판단 저장처럼 스냅숏 단계 하나
-        async def _dispose() -> None:
-            await dispose_follow_deletes(session, ctx.bundle, deletes, confirm=body.confirm, actor=ctx.login_id)
+        async def _dispose() -> list[int]:
+            return await dispose_follow_deletes(session, ctx.bundle, deletes, confirm=body.confirm, actor=ctx.login_id)
 
         if edited or body.undo is None:
-            await _dispose()
+            result.disposed_unit_ids = await _dispose()
         else:
-            await record_snapshot_step(session, ctx.bundle, ctx.login_id, body.undo, body.op.type, _dispose)
+            result.disposed_unit_ids = await record_snapshot_step(session, ctx.bundle, ctx.login_id, body.undo, body.op.type, _dispose)
     # 바뀐 것이 없는 편집은 Split 기록도 revision도 그대로라 Assign 단계도 남기지 않는다(언어 바꾸기는 단위를 만들지 않는다)
     if body.undo is not None and before_state is not None and edited:
         await record_unit_edit_step(

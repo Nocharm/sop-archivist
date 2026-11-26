@@ -466,6 +466,7 @@ class FollowOut(BaseModel):
     mode: Literal["rule", "ai", "none"]
     items: list[FollowItemOut]
     count: int
+    lines: list[int]  # rule일 때 영어 표의 지금 덩이 차례(줄 id 전부) — 한 줄만 적용할 때 순서를 합치지 않은 줄까지 세운다. 아니면 빈 목록
 
 
 @dataclass(frozen=True)
@@ -559,7 +560,7 @@ async def compute_follow(inputs: FollowInputs, *, login_id: str) -> FollowOut:
     vectors = await _embed(texts, login_id=login_id)
     answer = _answer_counterpart(inputs.counterpart, vectors)
     source_id = answer.source_table_id
-    none = FollowOut(source_table_id=source_id, mode="none", items=[], count=0)
+    none = FollowOut(source_table_id=source_id, mode="none", items=[], count=0, lines=[])
     if answer.status != "matched" or source_id is None or inputs.lines is None or source_id not in inputs.sources:
         return none
     source, worked = inputs.sources[source_id]
@@ -567,7 +568,7 @@ async def compute_follow(inputs: FollowInputs, *, login_id: str) -> FollowOut:
         return none
     plan = build_follow_plan(source, inputs.lines, match_rows(source, inputs.lines, vectors))
     if plan is None:
-        return FollowOut(source_table_id=source_id, mode="ai", items=[], count=0)
+        return FollowOut(source_table_id=source_id, mode="ai", items=[], count=0, lines=[])
     items = [
         FollowItemOut(
             unit_ids=list(item.unit_ids), order=item.order, number=item.number, indent=item.indent,
@@ -575,16 +576,19 @@ async def compute_follow(inputs: FollowInputs, *, login_id: str) -> FollowOut:
         )
         for item in plan
     ]
-    return FollowOut(source_table_id=source_id, mode="rule", items=items, count=count_follow_items(plan))
+    return FollowOut(
+        source_table_id=source_id, mode="rule", items=items, count=count_follow_items(plan),
+        lines=[line.unit_id for line in inputs.lines],
+    )
 
 
 async def dispose_follow_deletes(
     session: AsyncSession, bundle: Bundle, unit_ids: Sequence[int], *, confirm: bool, actor: str
-) -> None:
+) -> list[int]:
     """한글 표처럼 하기의 삭제 줄을 판단으로 확정한다(사유 빈칸, 판단 revision은 지금 값) — 편집과 같은 요청 · 트랜잭션이라 되돌리기 한 번.
 
     이미 삭제로 확정된 줄은 건너뛴다. 사람의 판단이 걸린 줄은 confirm 없이 409 confirm_required(편집의 확인과 같은 물음),
-    새 문장이 달린 줄은 decisions.dispose_units가 409 unit_has_targets로 편집까지 물린다. 커밋하지 않는다.
+    새 문장이 달린 줄은 decisions.dispose_units가 409 unit_has_targets로 편집까지 물린다. 커밋하지 않는다. 확정한 단위를 돌려준다.
     """
     rows = await session.execute(
         select(UnitDecision.unit_id, UnitDecision.revision, UnitDecision.disposition, UnitDecision.status).where(
@@ -596,7 +600,7 @@ async def dispose_follow_deletes(
         if not (disposition == DISPOSITION_DELETE and status == CONFIRMED)
     }
     if not pending:
-        return
+        return []
     needing = await find_units_needing_confirm(session, list(pending))
     if needing and not confirm:
         raise_rule(409, "confirm_required", unit_ids=needing)
@@ -604,3 +608,4 @@ async def dispose_follow_deletes(
         action=DISPOSITION_DELETE, units=[BulkUnitIn(unit_id=unit_id, revision=revision) for unit_id, revision in sorted(pending.items())]
     )
     await dispose_units(session, bundle, payload, actor)
+    return sorted(pending)

@@ -588,6 +588,8 @@ export interface EditResult {
   detach?: Pick<DetachReport, "reset_unit_ids" | "held_unit_ids"> | null;
   /** switch_language가 바꾼 모양 - 다른 편집은 null */
   shape?: "merged" | "unpaired" | "split_pair" | null;
+  /** 한글 표처럼 하기가 같은 요청에서 삭제로 확정한 단위 - 있으면 revision이 그대로여도 되돌리기 단계가 생겼다. 없으면 빠진다 */
+  disposed_unit_ids?: number[];
 }
 
 /** 되돌리기·다시 하기 응답 - 무엇을 거꾸로(다시) 했는지. 경계 확인 기록이면 바뀐 단위와 바뀐 뒤 값 */
@@ -644,6 +646,8 @@ export interface TableFollow {
   items: FollowItem[];
   /** 칩이 있는 일의 수 - 머리 "한글 표처럼 하기 · n건" */
   count: number;
+  /** rule일 때 영어 표의 지금 덩이 차례(줄 id 전부) - 한 줄만 적용할 때 순서를 세운다 */
+  lines: number[];
 }
 
 export function getTableFollow(bundleId: number, docId: number, tableId: number): Promise<TableFollow> {

@@ -117,3 +117,28 @@ describe("pickOrderAction", () => {
     expect(pickOrderAction({ follow: "ai", count: 0 })).toBe("order");
   });
 });
+
+describe("buildFollowOp with order-only rows", () => {
+  // 한글 표를 순서만 바꿨다 - 칩이 순서뿐인 줄도 보낼 일이다(items가 비면 서버가 422)
+  const ORDER_ONLY: FollowItem[] = [
+    { unit_ids: [21], order: 2, number: null, indent: false, indent_shift: null, delete: false },
+    { unit_ids: [22], order: 1, number: null, indent: false, indent_shift: null, delete: false },
+    { unit_ids: [23], order: null, number: null, indent: false, indent_shift: null, delete: false },
+  ];
+
+  it("sends the moved rows and the order, whole or one row", () => {
+    expect(buildFollowOp(5, ORDER_ONLY)).toEqual({ type: "follow_table", table_id: 5, items: [{ unit_ids: [21] }, { unit_ids: [22] }], order: [22, 21, 23] });
+    expect(buildFollowOp(5, ORDER_ONLY, [21], [21, 22, 23])).toEqual({ type: "follow_table", table_id: 5, items: [{ unit_ids: [21] }], order: [22, 21, 23] });
+  });
+
+  it("keeps the unmerged tail lines of another row when one row is applied", () => {
+    // 덩이 차례 31 · 32 · 33 · 34 - 31과 33을 합칠 일이 있고, 34만 맨 앞으로 옮긴다
+    const plan: FollowItem[] = [
+      { unit_ids: [31, 33], order: 2, number: null, indent: false, indent_shift: null, delete: false },
+      { unit_ids: [32], order: 3, number: null, indent: false, indent_shift: null, delete: false },
+      { unit_ids: [34], order: 1, number: null, indent: false, indent_shift: null, delete: false },
+    ];
+    expect(buildFollowOp(5, plan, [34], [31, 32, 33, 34])).toEqual({ type: "follow_table", table_id: 5, items: [{ unit_ids: [34] }], order: [34, 31, 32, 33] });
+    expect(buildFollowOp(5, plan, [31], [31, 32, 33, 34]).order).toEqual([31, 32, 34]); // 합칠 일 자신은 꼬리(33)를 뺀다
+  });
+});

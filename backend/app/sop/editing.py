@@ -410,15 +410,20 @@ class EditResult(BaseModel):
     detach: DetachReport | None
     # switch_language가 바꾼 모양 — 짝을 합침 | 짝만 풂(떨어져 있어 합치지 않음) | 조각을 떼어 짝으로. 다른 편집은 None
     shape: Literal["merged", "unpaired", "split_pair"] | None = None
+    # 한글 표처럼 하기(follow_table)가 같은 요청에서 삭제로 확정한 단위 — 화면이 판단을 다시 받고 되돌리기 단계를 센다(revision은 그대로일 수 있다).
+    # 비면 응답에 싣지 않는다
+    disposed_unit_ids: list[int] = Field(default_factory=list)
     # 이 편집이 거둔 분류·묶기 제안 id — 응답에는 싣지 않고 Assign 되돌리기 단계가 스냅숏에서 그 행만 뺀다
     closed_suggestion_ids: list[int] = Field(default_factory=list, exclude=True)
 
     @model_serializer(mode="wrap")
     def _drop_empty_shape(self, handler: SerializerFunctionWrapHandler) -> dict:
-        """모양 전환이 아닌 편집의 응답은 전과 같은 꼴 — shape는 값이 있을 때만 싣는다."""
+        """모양 전환 · 삭제가 아닌 편집의 응답은 전과 같은 꼴 — shape · disposed_unit_ids는 값이 있을 때만 싣는다."""
         data = handler(self)
         if data.get("shape") is None:
             data.pop("shape", None)
+        if not data.get("disposed_unit_ids"):
+            data.pop("disposed_unit_ids", None)
         return data
 
 

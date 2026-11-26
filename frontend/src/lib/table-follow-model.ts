@@ -72,32 +72,40 @@ function toFollowInput(item: FollowItem): FollowItemInput {
   };
 }
 
-/** 편집에 실을 일인가 - 순서만 바뀌는 줄은 order가 맡고, 들여쓰기 칩만 있는 줄(번호 깊이 차이)은 번호가 맡는다 */
-function isSentItem(item: FollowItem): boolean {
-  return item.delete || item.unit_ids.length > 1 || item.number !== null || item.indent_shift !== null;
+/** 다 맞춘 뒤 일의 차례(첫 단위 id) - 일마다 자리(order, 없으면 지금 자리) */
+function listTargetHeads(items: readonly FollowItem[]): number[] {
+  return items
+    .map((item, index) => ({ head: item.unit_ids[0], place: (item.order ?? index + 1) - 1, index }))
+    .sort((a, b) => a.place - b.place || a.index - b.index)
+    .map((entry) => entry.head);
 }
 
 /**
- * 규칙 제안 → 편집 follow_table. only가 없으면 다(적용), 있으면 그 줄(첫 단위 id)만(하나씩 보기의 적용).
- * order는 덩이 줄 전부(합칠 줄은 그 첫 줄)의 새 차례 - 다 맞출 때는 일마다 자리(order, 없으면 지금 자리), 한 줄이면 그 줄만 제자리로 옮긴다. 옮길 것이 없으면 null
+ * 규칙 제안 → 편집 follow_table. only가 없으면 다(적용), 있으면 그 줄(첫 단위 id)만(하나씩 보기의 적용). 칩이 있는 일은 순서 칩뿐이어도 싣는다(비면 서버가 422).
+ * order는 덩이 줄 전부(합칠 줄은 그 첫 줄)의 새 차례 - 다 맞출 때는 다 맞춘 차례, 한 줄이면 lines(서버가 준 지금 덩이 차례, 합치지 않은 줄까지)에서
+ * 그 줄만 다 맞춘 차례의 다음 일 바로 앞으로 옮긴다(그 줄이 합칠 일이면 꼬리 줄은 뺀다). 옮길 것이 없으면 null
  */
-export function buildFollowOp(tableId: number, items: readonly FollowItem[], only?: readonly number[]): Extract<EditOp, { type: "follow_table" }> {
-  const current = items.map((item) => item.unit_ids[0]);
-  const picked = only === undefined ? items : items.filter((item) => only.includes(item.unit_ids[0]));
+export function buildFollowOp(
+  tableId: number,
+  items: readonly FollowItem[],
+  only?: readonly number[],
+  lines: readonly number[] = items.flatMap((item) => item.unit_ids),
+): Extract<EditOp, { type: "follow_table" }> {
+  const picked = (only === undefined ? items : items.filter((item) => only.includes(item.unit_ids[0]))).filter(hasFollowChange);
+  const target = listTargetHeads(items);
   let order: number[] | null = null;
-  if (only === undefined && items.some((item) => item.order !== null)) {
-    order = items
-      .map((item, index) => ({ head: item.unit_ids[0], place: (item.order ?? index + 1) - 1, index }))
-      .sort((a, b) => a.place - b.place || a.index - b.index)
-      .map((entry) => entry.head);
-  } else if (only !== undefined) {
+  if (only === undefined && items.some((item) => item.order !== null)) order = target;
+  else if (only !== undefined) {
     const moving = picked.find((item) => item.order !== null);
-    if (moving !== undefined && moving.order !== null) {
-      const rest = current.filter((head) => head !== moving.unit_ids[0]);
-      order = [...rest.slice(0, moving.order - 1), moving.unit_ids[0], ...rest.slice(moving.order - 1)];
+    if (moving !== undefined) {
+      const [head, ...tails] = moving.unit_ids;
+      const next = target[target.indexOf(head) + 1];
+      const rest = lines.filter((id) => id !== head && !tails.includes(id));
+      const at = next === undefined ? -1 : rest.indexOf(next);
+      order = at < 0 ? [...rest, head] : [...rest.slice(0, at), head, ...rest.slice(at)];
     }
   }
-  return { type: "follow_table", table_id: tableId, items: picked.filter(isSentItem).map(toFollowInput), order };
+  return { type: "follow_table", table_id: tableId, items: picked.map(toFollowInput), order };
 }
 
 /** ⇧O의 뜻 - 보이는 규칙 제안이 있으면 그대로 하기, 아니면 지금처럼 AI 순서 제안(D2-R8) */

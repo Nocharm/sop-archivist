@@ -16,6 +16,8 @@ export interface TableFollowStrip {
   onApply: (tableId: number, only?: readonly number[]) => void;
   onEach: (tableId: number) => void;
   onKeep: (tableId: number) => void;
+  /** 다시 읽기 - 삭제만 한 적용은 revision이 그대로라 열쇠가 바뀌지 않는다 */
+  reload: () => void;
 }
 
 interface UseTableFollowArgs {
@@ -61,9 +63,10 @@ export function useTableFollow({ bundleId, docId, tableIds, dataKey, apply }: Us
     each,
     onApply: (tableId, only) => {
       const plan = plans.get(tableId);
-      if (plan !== undefined) apply(tableId, buildFollowOp(tableId, plan.items, only));
+      if (plan !== undefined) apply(tableId, buildFollowOp(tableId, plan.items, only, plan.lines));
     },
     onEach: (tableId) => setEach((prev) => toggle(prev, tableId)),
     onKeep: (tableId) => setKept((prev) => new Set(prev).add(tableId)),
+    reload: loaded.reload,
   };
 }

@@ -493,14 +493,16 @@ def test_s18_apply_and_one_undo(client: TestClient, monkeypatch: pytest.MonkeyPa
     paths = _install_meanings(monkeypatch)
     follow = _get_follow(client, bundle_id, doc_id, tables[EN_STEPS_TABLE])
     assert (follow["mode"], follow["count"], follow["source_table_id"]) == ("rule", 4, tables[KO_STEPS_TABLE])
+    assert follow["lines"] == english  # 영어 표의 지금 덩이 차례 — 하나씩 보기의 순서가 합치지 않은 꼬리 줄까지 싣는다
     assert [(item["unit_ids"], item["order"], item["number"], item["indent"], item["delete"]) for item in follow["items"]] == [
         ([english[0]], 2, "5.2", False, False), ([english[1]], 1, "5.1", False, False),
         ([english[2]], None, "5.2.1", True, False), ([english[3]], None, None, False, True),
     ]
     before = _dump(bundle_id)
 
-    _ok(_edit(client, bundle_id, doc_id, _to_op(tables[EN_STEPS_TABLE], follow), undo=UNDO))
+    applied = _ok(_edit(client, bundle_id, doc_id, _to_op(tables[EN_STEPS_TABLE], follow), undo=UNDO))
 
+    assert applied["disposed_unit_ids"] == [english[3]]
     # 삭제 줄은 지우기만 한다(번호를 함께 고치지 않는다 — FollowItemIn의 삭제는 다른 일과 함께 받지 않는다)
     assert [line[1:] for line in _read_lines(tables[EN_STEPS_TABLE])] == [
         ("5.1", "Prepare the equipment."), ("5.2", "Take 10 mL of sample."), ("5.2.1", "Keep at 4 °C after."), ("4", "(blank)"),
@@ -557,6 +559,9 @@ def test_one_item_alone_is_one_step(client: TestClient) -> None:
     result = _ok(_edit(client, bundle_id, doc_id, op, undo=UNDO))
 
     assert result["created_unit_ids"] == [] and _is_deleted(english[3])  # 편집은 비고 판단만 — 스냅숏 단계 하나
+    assert result["disposed_unit_ids"] == [english[3]]  # 화면이 판단을 다시 받고 되돌리기 단추를 켠다(revision은 그대로)
+    again = _ok(_edit(client, bundle_id, doc_id, op, undo=UNDO))
+    assert "disposed_unit_ids" not in again  # 이미 지운 줄 — 아무것도 하지 않아 단계도 없다
     _ok(_undo(client, bundle_id))
     assert_same_state(_dump(bundle_id), before)
 
@@ -601,3 +606,27 @@ def test_delete_with_merge_in_one_item_is_refused(client: TestClient) -> None:
     op = {"type": "follow_table", "table_id": tables[EN_STEPS_TABLE], "items": [{"unit_ids": english[2:], "delete": True}]}
 
     assert _code(_edit(client, bundle_id, doc_id, op)) == (422, "invalid_follow_item")
+
+
+def test_a_reorder_only_korean_table_plans_order_only() -> None:
+    korean = follow_lines([KO[1], KO[0], KO[2]], start=301)  # 한글 표는 순서만 바꿨다(번호는 영어 표와 같다) — 칩은 순서뿐
+    english = follow_lines([("5.1", EN[1][1]), ("5.2", EN[0][1]), ("5.2.1", EN[2][1])], start=21)
+
+    plan = build_follow_plan(korean, english, match_rows(korean, english, VECTORS))
+
+    assert plan is not None
+    assert [(item.unit_ids, item.order, item.number) for item in plan] == [((21,), 2, None), ((22,), 1, None), ((23,), None, None)]
+
+
+@pytest.mark.usefixtures("clean_sop")
+def test_an_order_only_follow_reorders_in_one_edit(client: TestClient) -> None:
+    bundle_id, doc_id, tables, _, english = _setup_unwrapped(client)
+    before = _dump(bundle_id)
+    op = {"type": "follow_table", "table_id": tables[EN_STEPS_TABLE], "items": [{"unit_ids": [english[0]]}], "order": [english[1], english[0], *english[2:]]}
+
+    result = _ok(_edit(client, bundle_id, doc_id, op, undo=UNDO))
+
+    assert "disposed_unit_ids" not in result  # 삭제가 없는 편집의 응답은 전과 같은 꼴
+    assert [line[0] for line in _read_lines(tables[EN_STEPS_TABLE])] == [english[1], english[0], *english[2:]]
+    _ok(_undo(client, bundle_id))
+    assert_same_state(_dump(bundle_id), before)

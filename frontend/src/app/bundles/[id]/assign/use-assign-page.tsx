@@ -100,7 +100,7 @@ import { useLoaded } from "@/lib/use-loaded";
 import { usePaneSlide } from "@/lib/use-pane-slide";
 import { usePaneZoom, type PaneKey, type ZoomDir } from "@/lib/use-pane-zoom";
 
-import { buildDecisionPending, CommandRefusal, isRepeatedSave, useCommandQueue, type AssignCommand, type CommandQueueState, type ConfirmableCommand, type ReplayCommand, type SeenRevisions, type SendContext, type WriteCommand } from "./use-command-queue";
+import { buildDecisionPending, CommandRefusal, isRepeatedFollow, isRepeatedSave, useCommandQueue, type AssignCommand, type CommandQueueState, type ConfirmableCommand, type ReplayCommand, type SeenRevisions, type SendContext, type WriteCommand } from "./use-command-queue";
 
 
 export type Filter = ClassifyFilter;
@@ -915,7 +915,9 @@ export function useAssignPage() {
     docId: oldDocId,
     tableIds: canEdit ? followTableIds : [],
     dataKey: `${dataKey}:${oldView?.document.revision ?? 0}`,
-    apply: (tableId, op) => runUnitEdit(op, t("assign.follow.applied"), null, false, null, { at: "table", tableId }),
+    apply: (tableId, op) => {
+      if (!isRepeatedFollow(commands.listUnsettled(), tableId)) runUnitEdit(op, t("assign.follow.applied"), null, false, null, { at: "table", tableId });
+    },
   });
   const tableFollow = canEdit && oldDocId !== null
     ? {
@@ -1760,8 +1762,10 @@ export function useAssignPage() {
       }
     }
     // 문서가 바뀌지 않은 편집(참조 제안 물리기)은 서버도 단계를 남기지 않는다
-    // 한글 표처럼 하기는 삭제만이어도(revision 그대로) 판단 단계 하나를 남긴다
-    if (revision !== sentRevision || op.type === "follow_table") markRecorded();
+    // 한글 표처럼 하기는 삭제만이어도(revision 그대로) 서버가 판단 단계 하나를 남긴다 - 그때는 제안도 다시 읽는다(열쇠의 revision이 그대로다)
+    const disposed = (result.disposed_unit_ids?.length ?? 0) > 0;
+    if (revision !== sentRevision || disposed) markRecorded();
+    if (disposed) followPlan.reload();
     // 번호는 그 자리 편집이라 보기를 큐가 빌 때 받는다 - 그때까지 기대 글을 둔다
     const sentNumber = isOld ? readExpectedNumber(op) : null;
     if (sentNumber !== null) setSentNumbers((prev) => [...prev.filter((item) => item.unitId !== sentNumber.unitId), { docId, revision, ...sentNumber }]);
