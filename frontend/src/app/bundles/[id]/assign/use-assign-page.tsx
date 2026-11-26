@@ -1,7 +1,7 @@
 // Assign 화면의 상태 · 데이터 · 동작 - 화면(page.tsx)은 그리기만 한다. 쪼개기 1단계(신뢰 기반 계획 스텝 4): 본문은 page.tsx에서 글자 그대로 옮겼다.
 
 import { Circle, CircleCheck, CircleDashed, CirclePause, ListFilter, type LucideIcon } from "lucide-react";
-import { useParams, useRouter, useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState, type MouseEvent, type ReactNode } from "react";
 import { type DestinationManage } from "@/components/assign/destination-tree";
 import { type CaptionRefEntry } from "@/components/assign/caption-ref-list";
@@ -115,6 +115,7 @@ import { useDocViews, type DocBatch } from "@/lib/use-doc-views";
 import { useLoaded } from "@/lib/use-loaded";
 import { usePaneSlide } from "@/lib/use-pane-slide";
 import { usePaneZoom, type PaneKey, type ZoomDir } from "@/lib/use-pane-zoom";
+import { useRouteBundleId } from "@/lib/use-route-bundle-id";
 
 import { readLinkTargets, readPickTools } from "./link-command";
 import { buildDecisionPending, CommandRefusal, isRepeatedFollow, isRepeatedSave, useCommandQueue, type AssignCommand, type CommandQueueState, type ConfirmableCommand, type ReplayCommand, type SeenRevisions, type SendContext, type WriteCommand } from "./use-command-queue";
@@ -397,7 +398,7 @@ export function useAssignPage() {
   const { t, lang: uiLang } = useI18n();
   // 새 문서를 만드는 쪽을 켰는가 - 숨긴 동안 숨긴 AI 제안은 받지도 않는다(줄 표시 · 카드 · 알약 · 거르기 수가 함께 빈다)
   const isDrafting = useDraftingOn() === true;
-  const bundleId = Number(useParams<{ id: string }>().id);
+  const bundleId = useRouteBundleId();
   const { bundle } = useBundle(bundleId);
   const canEdit = bundle?.my_role === "author" && bundle.status === "in_progress";
   // 옛 "원문 고치기" 주소(?edit=문서 id 또는 first) - 그 화면은 없어졌다. 그 문서를 한 단으로 열고 주소에서 값을 뗀다(아래 openEditParam)

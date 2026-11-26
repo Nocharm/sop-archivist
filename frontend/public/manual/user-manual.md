@@ -76,6 +76,7 @@ SOP Archivist는 옛 SOP 여러 편(Old)을 새 SOP·WI 구조(New)로 옮기는
 | **Admin** | 관리 화면을 연다. 관리 권한이 있을 때만 보인다 |
 | **Layout** | **Navigation** 에서 단계 이동을 **Left rail** 또는 **Top tabs** 로, **Theme** 에서 **Light** 또는 **Dark** 로 바꾼다 |
 | **Manual** | 이 설명서를 새 탭으로 연다 |
+| **Practice** | [연습 화면](#practice)으로 간다 |
 | **Sign out** | 로그아웃한다 |
 
 - 화면 말은 오른쪽 위 **EN** | **KO** 로 바꿉니다. 상태 이름과 Bundle·Old·New·Unit 같은 용어는 어느 쪽에서나 영어입니다.
@@ -87,6 +88,15 @@ SOP Archivist는 옛 SOP 여러 편(Old)을 새 SOP·WI 구조(New)로 옮기는
 - 저장하지 않은 변경이 있으면 떠나기 전에 먼저 묻습니다.
 - 상단 막대의 화살표 **Back to bundles** 는 Bundle 목록으로 돌아갑니다.
 - 창이 떠 있을 때 <kbd>Esc</kbd>는 맨 위의 창 하나만 닫고, 초점은 그 창을 연 곳으로 돌아갑니다.
+
+## 연습 화면 {#practice}
+
+실제 SOP를 건드리지 않고 Assign을 손으로 익히는 화면입니다. 화면은 실제 **Assign** 과 같은 부품이고, 올려 둔 연습용 문서로 줄 고르기·잇기·확정·보류·합치기·나누기·한/영 짝·표 벗기기를 해 볼 수 있습니다. 한 일은 이 브라우저 안에서만 받아 적고 서버에는 아무것도 가지 않으니, 마음껏 눌러 보고 되돌려 보세요.
+
+- **들어가는 길은 두 곳**입니다. 오른쪽 위 사용자 메뉴의 **Practice**, 그리고 이 설명서 맨 위의 **Try it in the practice screen →** 입니다. 같은 탭에서 열립니다.
+- 맨 위 띠에 **Practice — nothing is saved** 가 보입니다. 창을 새로 읽으면 처음 모습으로 돌아가고, **Start over** 를 눌러도 같습니다.
+- 오른쪽 **Tasks** 칸은 해 볼 과제를 모아 두는 자리입니다. 화면이 좁으면 칸 위의 접기 단추로 접어 용지를 넓게 볼 수 있고, 다시 눌러 폅니다.
+- 연습에서는 AI 제안·Excel 내려받기·다른 단계 화면처럼 연습 자료에 없는 동작은 **Not available in practice** 라고 알려 줍니다.
 
 ## Bundle과 Overview {#bundle}
 

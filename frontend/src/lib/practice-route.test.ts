@@ -69,4 +69,14 @@ describe("practice modules and the hidden-feature switch", () => {
     // Fix: practice must not read isDraftingOn/useDraftingOn - the Assign inside it reads the switch itself
     expect(offenders).toEqual([]);
   });
+
+  it("keeps the practice screen files off lib/drafting too", () => {
+    const src = resolve(__dirname, "..");
+    const dirs = [join(src, "app", "practice"), join(src, "components", "practice")];
+    const files = dirs.flatMap((dir) => readdirSync(dir).filter((name) => /\.tsx?$/.test(name)).map((name) => join(dir, name)));
+    const offenders = files.filter((path) => /from\s+["'][^"']*drafting["']/.test(readFileSync(path, "utf8")));
+    // Fix: the practice screen must not read isDraftingOn/useDraftingOn - only the Assign inside it does
+    expect(files.length).toBeGreaterThan(0);
+    expect(offenders).toEqual([]);
+  });
 });
