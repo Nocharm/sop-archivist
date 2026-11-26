@@ -727,6 +727,8 @@ async function runTableFold({ page, place, docId, prefix, sideTestId, tabPrefix,
   await head.waitFor({ timeout: T });
   await pane.locator(`[data-testid="assign-table-fold-${table.id}"]`).click();
   await folded.waitFor({ timeout: T });
+  // 접힌 줄이 막 그려진 프레임에는 글이 아직 비어 있을 수 있다 - 글이 찰 때까지 기다린 뒤 읽는다(기대값은 그대로)
+  await folded.locator(".table-fold-text").filter({ hasText: /\S/ }).waitFor({ timeout: T });
   const line = (await folded.innerText()).replace(/\s+/g, " ").trim();
   check(name("Collapse folds the table into one line with its number and size, and its rows leave the page"), line.startsWith(`▸ Table ${table.table_index + 1} · `) && line.includes(`${table.n_rows} x ${table.n_cols}`) && (await head.count()) === 0, line);
   await page.reload();
