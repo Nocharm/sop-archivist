@@ -59,7 +59,9 @@ export async function renderOriginal(file: Blob, parts: Record<string, string>, 
   const body = await zip.file(partPath("document"))?.async("string");
   if (body?.includes("tblHeader")) zip.file(partPath("document"), markHeaderRows(body));
   const repacked = await zip.generateAsync({ type: "blob" });
-  await docx.renderAsync(repacked, host, styleHost, {
+  // 그리개 <style>은 올린 문서에서 만든 글이다 - 문서에 붙이기 전에(붙이면 @import · url()을 바로 받으러 간다) 떼어 둔 곳에 그려 거른다
+  const staging = host.ownerDocument.createElement("div");
+  await docx.renderAsync(repacked, host, staging, {
     className: OV_CLASS,
     inWrapper: true,
     breakPages: true,
@@ -72,6 +74,8 @@ export async function renderOriginal(file: Blob, parts: Record<string, string>, 
     // 그림은 보통 blob 주소라 형식을 알 수 없다 - 메타파일이 든 문서만 형식이 보이는 data 주소로 그려 빗금 상자로 바꾼다
     useBase64URL: names.some((name) => METAFILE_PART_RE.test(name)),
   });
+  scopeRenderedStyles(staging);
+  styleHost.replaceChildren(...staging.childNodes);
   for (const mark of host.querySelectorAll(`span[id^="${HEAD_ROW_MARK}"]`)) {
     mark.closest("tr")?.classList.add(HEAD_ROW_CLASS);
     mark.remove();
@@ -144,6 +148,89 @@ export function markHeaderRows(xml: string): string {
     count += 1;
   }
   return count > 0 ? new XMLSerializer().serializeToString(doc) : xml;
+}
+
+// 그리개가 내는 선택자는 모두 클래스 접두 아래다: .sopa-ov · .sopa-ov-wrapper · section.sopa-ov · p.sopa-ov_<스타일> · p.sopa-ov-num-1-0:before
+// - 첫 겹이 (태그 이름 +) sopa-ov 집안 클래스인 것만 남긴다. 스타일 id에 `}`를 넣어 바깥 선택자를 끼우는 것을 여기서 막는다
+const SCOPED_SELECTOR_RE = new RegExp(`^(?:[a-zA-Z][\\w-]*)?\\.${OV_CLASS}(?:[-_][\\w-]*)?(?![\\w-])`);
+const CSS_URL_RE = /url\(\s*(['"]?)([^'")]*)\1\s*\)/gi;
+const SAFE_URL_RE = /^\s*(?:blob|data):/i;
+const STYLE_RULE = 1;
+const FONT_FACE_RULE = 5;
+
+/** 쉼표로 나눈 선택자들 - 괄호 · 대괄호 안의 쉼표(:is(a, b))는 나누지 않는다 */
+function splitSelectors(text: string): string[] {
+  const out: string[] = [];
+  let depth = 0;
+  let from = 0;
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i];
+    if (ch === "(" || ch === "[") depth += 1;
+    else if (ch === ")" || ch === "]") depth -= 1;
+    else if (ch === "," && depth === 0) {
+      out.push(text.slice(from, i).trim());
+      from = i + 1;
+    }
+  }
+  out.push(text.slice(from).trim());
+  return out;
+}
+
+/** 모든 url()이 blob:/data:인가 - 꼴을 못 읽은 url(도 있으면 아니다(닫힌 쪽으로) */
+function hasOnlyLocalUrls(cssText: string): boolean {
+  const matches = [...cssText.matchAll(CSS_URL_RE)];
+  const opened = cssText.match(/url\(/gi)?.length ?? 0;
+  return matches.length === opened && matches.every((match) => SAFE_URL_RE.test(match[2]));
+}
+
+function isScopedRule(rule: CSSRule): boolean {
+  if (!hasOnlyLocalUrls(rule.cssText)) return false;
+  // 글꼴은 주소(src)가 있고 blob:/data:일 때만 - 주소 없는 @font-face는 쓸모가 없으니 닫힌 쪽으로 버린다
+  if (rule.type === FONT_FACE_RULE) {
+    const src = (rule as CSSFontFaceRule).style.getPropertyValue("src");
+    return /url\(/i.test(src) && hasOnlyLocalUrls(src);
+  }
+  if (rule.type !== STYLE_RULE) return false; // @import · @media · @keyframes · @page … 는 그리개가 내지 않는다
+  return splitSelectors((rule as CSSStyleRule).selectorText).every((selector) => SCOPED_SELECTOR_RE.test(selector));
+}
+
+/** CSS 글을 문서에 붙이지 않고 규칙으로 읽는다 - 만든 시트(replaceSync)는 @import를 버리고 받지 않는다, 없으면(jsdom) 비활성 문서에서 */
+function readCssRules(text: string, owner: Document): CSSRule[] | null {
+  if (typeof CSSStyleSheet !== "undefined" && "replaceSync" in CSSStyleSheet.prototype) {
+    try {
+      const sheet = new CSSStyleSheet();
+      sheet.replaceSync(text);
+      return [...sheet.cssRules];
+    } catch {
+      // 만든 시트를 못 쓰는 환경 - 아래 비활성 문서로 읽는다
+    }
+  }
+  const inert = owner.implementation.createHTMLDocument("");
+  const probe = inert.createElement("style");
+  probe.textContent = text;
+  inert.head.append(probe);
+  return probe.sheet === null ? null : [...probe.sheet.cssRules];
+}
+
+/**
+ * 그리개가 styleHost에 넣은 <style>을 sopa-ov 범위 규칙만 남기고 다시 쓴다(textContent) - 올린 문서의 CSS를 믿지 않는다.
+ * 범위 밖 선택자 · @import · blob:/data: 밖 url()이 든 규칙을 버리고, @font-face는 글꼴 주소가 blob:/data:일 때만 둔다. 버린 규칙 수를 돌려준다.
+ */
+export function scopeRenderedStyles(styleHost: HTMLElement): number {
+  let dropped = 0;
+  for (const style of styleHost.querySelectorAll("style")) {
+    const text = style.textContent ?? "";
+    const rules = readCssRules(text, styleHost.ownerDocument);
+    if (rules === null) {
+      if (text.trim() !== "") dropped += 1;
+      style.textContent = "";
+      continue;
+    }
+    const kept = rules.filter(isScopedRule);
+    dropped += rules.length - kept.length;
+    style.textContent = kept.map((rule) => rule.cssText).join("\n");
+  }
+  return dropped;
 }
 
 /** 올린 문서 안의 링크는 http(s) · 문서 안 #만 남긴다 - javascript: · file: · data: 는 href를 지우고 글은 둔다 */

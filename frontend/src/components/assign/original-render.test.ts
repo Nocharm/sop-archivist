@@ -235,3 +235,53 @@ describe("renderOriginal", () => {
     expect(styles.querySelector("style")).not.toBeNull();
   });
 });
+
+describe("scopeRenderedStyles", () => {
+  function buildStyles(...texts: string[]): HTMLElement {
+    const host = document.createElement("div");
+    for (const text of texts) {
+      const style = document.createElement("style");
+      style.textContent = text;
+      host.append(style);
+    }
+    return host;
+  }
+
+  it("drops rules outside the sopa-ov scope", async () => {
+    const { scopeRenderedStyles } = await import("./original-render");
+    const host = buildStyles(
+      "body { display: none; } .app-x { color: red; } .sopa-ov p { margin: 0pt; } .sopa-ov-wrapper { padding: 30px; }",
+      "p.sopa-ov_heading1 span { font-weight: bold; } section.sopa-ov { width: 600px; } p.sopa-ov-num-1-0::before { content: '1'; }",
+      ".sopa-ov p, .app-x { color: blue; } .sopa-ovx { color: green; } p.sopa-ov_x {} div { color: red; }",
+    );
+
+    const dropped = scopeRenderedStyles(host);
+
+    const text = host.textContent ?? "";
+    expect(dropped).toBe(5);
+    expect(text).not.toMatch(/body|app-x|sopa-ovx|div/);
+    for (const kept of [".sopa-ov p", ".sopa-ov-wrapper", "p.sopa-ov_heading1 span", "section.sopa-ov", "p.sopa-ov-num-1-0::before"]) {
+      expect(text).toContain(kept);
+    }
+  });
+
+  it("drops external urls in styles", async () => {
+    const { scopeRenderedStyles } = await import("./original-render");
+    const host = buildStyles(
+      '@import url("https://evil/a.css");',
+      ".sopa-ov p { background: url(https://evil/x); } .sopa-ov-wrapper { --sopa-ov-dot: url(blob:http://local/1); } .sopa-ov span { background: url(data:image/png;base64,AAAA); }",
+      "@font-face { font-family: Evil; src: url(https://evil/font.woff); }",
+      "@font-face { font-family: Kept; src: url(blob:http://local/font); }",
+    );
+
+    scopeRenderedStyles(host);
+
+    const text = host.textContent ?? "";
+    expect(text).not.toContain("evil");
+    expect(text).not.toContain("@import");
+    expect(text).toContain("blob:http://local/1");
+    expect(text).toContain("data:image/png");
+    // jsdom의 CSSOM은 @font-face의 src를 버려 blob 글꼴이 남는지는 브라우저에서만 보인다 - 여기서는 바깥 글꼴이 빠지는 것만 본다
+    expect(text).not.toContain("Evil");
+  });
+});
