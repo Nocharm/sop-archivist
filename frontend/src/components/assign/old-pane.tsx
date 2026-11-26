@@ -11,6 +11,7 @@ import { FigureTab } from "@/components/paper/figure-tab";
 import { Paper, type CutDragPos, type PaperCut, type PaperNumberCell } from "@/components/paper/paper";
 import { describeSheet, PartTabs } from "@/components/paper/part-tabs";
 import { EmptyState } from "@/components/ui/empty-state";
+import { Truncate } from "@/components/ui/motion";
 import { Select, type SelectOption } from "@/components/ui/select";
 import type { ViewUnit } from "@/lib/api-sop";
 import { useI18n } from "@/lib/i18n";
@@ -208,7 +209,7 @@ export function OldPane({ paneRef, ...props }: OldPaneProps) {
         {props.docOptions.length > 1 ? (
           <Select testId="assign-old-doc" ariaLabel={t("assign.oldDoc")} size="sm" mono value={props.docId} options={props.docOptions} onChange={props.onDocChange} />
         ) : (
-          <span className="pane-title">{props.docOptions[0]?.label}</span>
+          <span className="pane-title"><Truncate text={props.docOptions[0]?.tip ?? (typeof props.docOptions[0]?.label === "string" ? props.docOptions[0].label : "")} /></span>
         )}
         {props.docDash}
         <span className="tag" data-testid="assign-old-tag">{props.docTag}</span>

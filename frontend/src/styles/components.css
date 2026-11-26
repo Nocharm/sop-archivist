@@ -1973,6 +1973,8 @@
   .pane-head:has(.pane-toggle.has-label) > .pane-sub { flex-shrink: 1000; }
   /* KO 칸 머리의 문서 번호도 줄어든다 - 세로선 30%(머리 212px)에서 3px 넘쳤다(잰 값) */
   .pair-col > .pane-head > .pane-title { flex-shrink: 1; }
+  /* 문서가 하나뿐이면 제목 글도 고르기 목록처럼 줄어들고 말줄임 - 좁은 칸(1120 연습 화면 Old 약 290px)에서 긴 파일 이름이 확대 단추를 옆 칸 위로 밀었다 */
+  .assign-pane > .pane-head > .pane-title { flex-shrink: 1; min-width: 4ch; }
 
   /* Pair view - 한/영 따로 문서의 한 언어 Unit을 원문 순서로 편 조각 목록. 용지와 같은 폭 상한으로 세로선 쪽에 붙는다(.sheet와 같은 방향) */
   .pair-list { display: flex; flex-direction: column; gap: 4px; width: 100%; max-width: calc(860px * var(--z, 1)); }

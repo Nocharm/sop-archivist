@@ -668,7 +668,44 @@ const sideFloatScene = {
   },
 };
 
-const scenes = [...mbtnScenes, tobeRowActsScene, oldRowActsScene, outputsScene, outputsEndRowsScene, outputsReorderScene, exportPreviewScene, composedHeadingScene, linkMenuScene, sideFloatScene, aiJobsScene, bundleHeadScene, cellMenuScene].filter((scene) => !only || only.includes(scene.name));
+// 연습 화면 Assign 양 단 머리 줄 - 문서가 하나뿐인 칸의 긴 파일 이름이 확대 단추 등 머리 줄의 자식을 제 칸 밖으로 밀거나 옆 칸 자식과 겹치지 않는다(1120 과제 칸을 편 상태)
+const panesHeadScene = {
+  name: "assign-pane-head-narrow",
+  user: "qa.member",
+  run: async (page, report) => {
+    await page.setViewportSize({ width: 1120, height: 900 });
+    await page.goto(`${BASE}/practice`);
+    await page.locator('[data-testid="assign-old"]').waitFor({ timeout: T });
+    const fold = page.getByTestId("practice-tasks-fold");
+    if ((await fold.getAttribute("aria-expanded")) === "false") await fold.click();
+    await page.waitForTimeout(800);
+    const boxes = await page.evaluate(() => {
+      const out = [];
+      for (const pane of ["old", "new"]) {
+        const head = document.querySelector(`[data-testid="assign-${pane}"] > .pane-head`);
+        if (!head) continue;
+        const hb = head.getBoundingClientRect();
+        for (const child of head.children) {
+          const r = child.getBoundingClientRect();
+          if (r.width === 0 || getComputedStyle(child).visibility === "hidden") continue;
+          out.push({ pane, name: child.getAttribute("data-testid") ?? child.className, left: r.left, right: r.right, headLeft: hb.left, headRight: hb.right });
+        }
+      }
+      return out;
+    });
+    if (boxes.length === 0) report("assign-pane-head-narrow", "no pane head found");
+    for (const b of boxes) {
+      if (b.right > b.headRight + 1 || b.left < b.headLeft - 1) report(`${b.pane} head child ${b.name}`, `outside its head (${Math.round(b.left)}-${Math.round(b.right)} vs ${Math.round(b.headLeft)}-${Math.round(b.headRight)})`);
+    }
+    for (const a of boxes.filter((x) => x.pane === "old")) {
+      for (const b of boxes.filter((x) => x.pane === "new")) {
+        if (a.right > b.left + 1 && b.right > a.left + 1) report("old/new head children", `${a.name} overlaps ${b.name}`);
+      }
+    }
+  },
+};
+
+const scenes = [...mbtnScenes, tobeRowActsScene, oldRowActsScene, outputsScene, outputsEndRowsScene, outputsReorderScene, exportPreviewScene, composedHeadingScene, linkMenuScene, sideFloatScene, aiJobsScene, bundleHeadScene, cellMenuScene, panesHeadScene].filter((scene) => !only || only.includes(scene.name));
 const browser = await chromium.launch({ executablePath: CHROME, headless: true });
 let problems = 0;
 let runs = 0;
