@@ -17,6 +17,7 @@ import { useI18n } from "@/lib/i18n";
 import type { FoldOpen } from "@/lib/paper-fold-model";
 import type { PairHint } from "@/lib/pair-hint-model";
 import type { PaperItem, PaperModel, PaperSheet, PaperTabKey } from "@/lib/paper-model";
+import type { PickScope } from "@/lib/pick-scope-model";
 import type { JoinKind, JoinPlan } from "@/lib/split-menu-model";
 import { useSheetSlide } from "@/lib/use-pane-slide";
 
@@ -38,6 +39,8 @@ interface OldPaneProps {
   placeholder: ReactNode;
   selectedId: number | null;
   highlightIds: ReadonlySet<number>;
+  /** 고름 두 겹 - 누른 조각이 든 묶음(짝 카드 · 표)의 얇은 테와 꼬리표 */
+  scope?: PickScope | null;
   /** New를 마지막에 눌렀다 - 여기 고른 것은 점선 테(먼저 고른 쪽) */
   held?: boolean;
   pickedIds: ReadonlySet<number>;
@@ -143,6 +146,7 @@ export function OldPane({ paneRef, ...props }: OldPaneProps) {
       items,
       selectedId: props.selectedId,
       highlightIds: props.highlightIds,
+      scope: props.scope,
       pickedIds: props.pickedIds,
       held: props.held,
       warnBlockIds: props.warnBlockIds,
@@ -165,6 +169,7 @@ export function OldPane({ paneRef, ...props }: OldPaneProps) {
         items={items}
         selectedId={props.selectedId}
         highlightIds={props.highlightIds}
+        scope={props.scope}
         pickedIds={props.pickedIds}
         held={props.held}
         warnBlockIds={props.warnBlockIds}

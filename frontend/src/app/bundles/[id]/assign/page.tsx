@@ -78,7 +78,7 @@ export default function AssignPage() {
   const {
     t, bundleId, bundle, canEdit, docs, oldDocs, docViews, unitsKey, tobe, tobeData, writtenList, identical,
     readMarkStatus, readAiPlace, suggestedTargetUnits, unitMap, written, writtenMap, rows, rowMap, rowOfUnit, labelOptions, ready, showSkeleton, unsourced,
-    mode, foldOpen, setFoldOpen, foldMatch, clearRowPick, activeKey, row, pickedId, spaceUnitIds, spacePickSeq, newPick, newUnitId, panel, soloDocId, setSoloDocId, isSolo, isNewEdit, tocOpen, setTocOpen,
+    mode, foldOpen, setFoldOpen, foldMatch, clearRowPick, activeKey, row, pickedId, pickScope, spaceUnitIds, spacePickSeq, newPick, newUnitId, panel, soloDocId, setSoloDocId, isSolo, isNewEdit, tocOpen, setTocOpen,
     tocPick, checked, newRemarks, setNewRemarks, joinMenu, setJoinMenu, ctxMenu, setCtxMenu, focusNew,
     setDrafts, draft, destination, rowUnits, reasonNow, unsavedCount, leaveTo, setLeaveTo,
     aiDest, isAiRow, recommendations, linkIds, candidateIds, setManualOldDoc, oldView, acceptKind, setAcceptKind, acceptDoc, paperModel,
@@ -627,6 +627,7 @@ export default function AssignPage() {
                 placeholder={<span className="sk h-[480px] w-full" />}
                 selectedId={(isNewEdit ? null : cutUnit?.id) ?? (isSolo ? soloUnit?.id : pickedId) ?? null}
                 highlightIds={highlightIds}
+                scope={pickScope}
                 held={panel.side === "new" && !isSolo}
                 // 떨어진 짝 안내 줄 - 누르면 짝의 원래 자리로 가 그 박스를 고른다(설계 D3)
                 pairHint={mode === "old" ? { onGo: goToUnit } : undefined}

@@ -36,6 +36,7 @@ import { findBulletShift, getIndentBounds, planIndent, type IndentPlan, type Ind
 import { getCardTops, getHiddenPrefixLength, getPairBrackets, getPillWidth, getRowLevels, getSectionHeads, getTabWidths, getSectionLevel, getSectionPill, getVisibleSkip, sliceVisible, type PairBracket } from "@/lib/strip-pill-model";
 import { buildHeadingShiftGroups, readHeadingShiftHead, type HeadingShiftGroup } from "@/lib/heading-shift-model";
 import { getPairHint, type PairHint, type PairHintUnit } from "@/lib/pair-hint-model";
+import type { PickScope } from "@/lib/pick-scope-model";
 import { isDeletedLineOpen, readDeletedLine, type DeletedFold, type DeletedLine } from "@/lib/deleted-fold-model";
 import { buildNoiseBlock, describeNoiseUnit, listNoiseBlocks, readNoiseReason, shouldJoinNoiseCard, type NoiseKind } from "@/lib/toc-block-model";
 import { findUnwrapHeads, getRowUnwrapTable } from "@/lib/unwrap-model";
@@ -229,6 +230,10 @@ interface PaperProps {
   selectedId: number | null;
   /** 고른 단위와 함께 가는 단위(Assign에서 고른 박스의 짝) - 고른 단위 밖의 것은 곁에 딸린 표시(data-mate, 흐린 점선 테두리)로 */
   highlightIds?: ReadonlySet<number>;
+  /** 고름 두 겹(Assign, 11-23 명세 C1) - selectedId(누른 조각)가 든 묶음(짝 카드 · 표)을 얇은 테(data-group)와 꼬리표로. 없으면 고른 조각만 */
+  scope?: PickScope | null;
+  /** 묶음 꼬리표의 testid 앞말(없으면 testId)과, 표 칸이 저마다 박스인 용지(New)인가 - 그러면 표 꼬리표에 "배정은 표째"를 붙이지 않는다 */
+  groupTag?: { testIdPrefix: string; isCellBox: boolean };
   /** 고른 단위의 한/영 짝 - 조각 바탕과 왼쪽 막대로 알린다 */
   partnerIds?: ReadonlySet<number>;
   /** 짝 맞추기로 고른 단위 */
@@ -245,7 +250,7 @@ interface PaperProps {
   onRangeSelect?: (range: { blockId: number; start: number; end: number }) => void;
   /** Shift+클릭이 여럿 고르기인 화면(Assign) - 끌어 고르기(onRangeSelect)를 함께 써도 Shift+클릭이 글자 선택을 늘리지 않게 한다 */
   shiftClickPicks?: boolean;
-  /** 표·그림 어디를 눌러도 묶음 전체를 고른다(Assign 배정) - 칸 문장·칸 틈·칸 표시를 눌러도 표 단위로 부른다. Alt 누름은 글자 고르기라 고르지 않는다. 끄면 칸 문장을 그대로 고른다(한/영 짝 고르기, 쓴 New 문서 다듬기) */
+  /** 표·그림을 묶음째 배정하는 용지(Assign 배정) - 캡션 · 칸 틈 · 표 머리를 누르면 묶음으로 올려 부르고, 칸 문장은 칸 그대로 부른다(고름 두 겹, 배정은 표째 - 11-23 명세 C1-R3). Alt 누름은 글자 고르기라 고르지 않는다. 끄면 누른 단위를 그대로 고른다(한/영 짝 고르기, 쓴 New 문서 다듬기) */
   pickWholeBundle?: boolean;
   /** 그림을 받을 묶음·문서 - 없으면 그림 자리 상자만 */
   figureSource?: { bundleId: number; docId: number };
@@ -404,6 +409,8 @@ export function Paper({
   items,
   selectedId,
   highlightIds,
+  scope,
+  groupTag,
   partnerIds,
   pickedIds,
   held = false,
@@ -929,9 +936,32 @@ export function Paper({
     );
   }
 
-  /** 고른 단위와 함께 가는 다른 단위(고른 박스의 짝) - 고른 것처럼 보이지 않게 따로 표시한다 */
+  /** 고른 단위와 함께 가는 다른 단위(고른 박스의 짝) - 고른 것처럼 보이지 않게 따로 표시한다. 고른 조각이 든 묶음(얇은 테)은 아니다 */
   function isMate(unitId: number): boolean {
-    return unitId !== selectedId && (highlightIds?.has(unitId) ?? false);
+    return unitId !== selectedId && readGroupMark(unitId) === undefined && (highlightIds?.has(unitId) ?? false);
+  }
+
+  /** 고른 조각이 든 묶음의 얇은 테(data-group) - 표는 그 표 조각, 짝은 고른 조각과 한 카드인 구성원만(떨어진 짝은 곁에 딸린 점선 data-mate 그대로) */
+  function readGroupMark(unitId: number): "pair" | "table" | undefined {
+    const group = scope?.group;
+    if (!scope || !group || !group.unitIds.includes(unitId)) return undefined;
+    if (group.kind === "table") return "table";
+    const cardOf = (id: number) => (brackets.has(id) ? (cardTops.get(id) ?? id) : null);
+    const card = cardOf(scope.unitId);
+    return card !== null && cardOf(unitId) === card ? "pair" : undefined;
+  }
+
+  /** 묶음 꼬리표 - 카드 첫 줄(표는 표 조각)의 위 테두리 선 왼쪽에 하나. 고른 덩어리에만 있어 덩어리 deps에 넣지 않는다(고른 덩어리는 늘 live) */
+  function renderGroupTag(unitId: number): ReactNode {
+    const mark = readGroupMark(unitId);
+    const group = scope?.group;
+    if (!scope || !group || mark === undefined || (mark === "pair" && cardTops.has(unitId))) return null;
+    const label = mark === "pair" ? t("paper.group.pair") : t(groupTag?.isCellBox ? "paper.group.tableCells" : "paper.group.table", { n: group.table ?? "" });
+    return (
+      <span className="group-tag" data-testid={`${groupTag?.testIdPrefix ?? testId}-group-${scope.boxId}`}>
+        {label}
+      </span>
+    );
   }
 
   /** 처리 중인 일이 잡은 박스 - 끌기 · 틈 단추 · 머리 단추를 받지 않는다 */
@@ -1347,8 +1377,8 @@ export function Paper({
       </span>
     );
     const isMissing = strips?.isCaptionNeeded ? strips.isCaptionNeeded(unit.id, hasCaption) : !hasCaption;
-    // 캡션 단위를 바로 고른 때(짝 고르기·나눌 선)도 펼친 채 - 나눌 선 아래에서 다시 접히지 않게
-    const isSelected = unit.id === selectedId || (highlightIds?.has(unit.id) ?? false) || captions.some((piece) => piece.unitId !== null && piece.unitId === selectedId);
+    // 캡션 단위를 바로 고른 때(짝 고르기·나눌 선)도, 표의 칸을 고른 때(두 겹 고름)도 펼친 채 - 나눌 선 아래에서 다시 접히지 않게
+    const isSelected = unit.id === selectedId || scope?.boxId === unit.id || (highlightIds?.has(unit.id) ?? false) || captions.some((piece) => piece.unitId !== null && piece.unitId === selectedId);
     const header = getBundleHeader(row, model);
     if (row.type === "table") {
       return { head: <BundleHead head={header} selected={isSelected} testId={testId} caption={chips ?? undefined} captionMissing={isMissing} slotId={unit.id} />, slot: null };
@@ -1509,6 +1539,7 @@ export function Paper({
           "data-kind": row.type,
           "data-sel": unit !== undefined && unit.id === selectedId ? "" : undefined,
           "data-mate": unit !== undefined && isMate(unit.id) ? "" : undefined,
+          "data-group": unit !== undefined ? readGroupMark(unit.id) : undefined,
           "data-partner": unit !== undefined && partnerIds?.has(unit.id) ? "" : undefined,
           "data-strip-unit": unitId ?? undefined,
           // 처리 중인 박스는 끌리지 않는다(설계 D4 - 잠금은 그 박스만)
@@ -1521,6 +1552,7 @@ export function Paper({
           "data-testid": box?.testId ?? `${testId}-piece-${unitId ?? row.key}`,
         }}
       >
+          {unit !== undefined && renderGroupTag(unit.id)}
           {unit !== undefined && (renderUnwrapGrip(unit) ?? renderPairGrip(unit))}
           {unit !== undefined && renderUnwrapAiMove(unit)}
           {unit !== undefined && renderFollowChips(unit)}
@@ -1700,8 +1732,8 @@ export function Paper({
   function isDeletedRow(row: PaperRow): boolean {
     const folds = strips?.deleted?.folds;
     const fold = folds?.get(readRowUnitId(row) ?? -1);
-    // 고른 박스가 든 줄은 펼쳐 그린다(isDeletedLineOpen) - 그 곁 틈은 평소대로
-    return fold !== undefined && folds !== undefined && !isDeletedLineOpen(folds, fold.rowKey, selectedId);
+    // 고른 박스가 든 줄은 펼쳐 그린다(isDeletedLineOpen, 칸을 골랐으면 그 표) - 그 곁 틈은 평소대로
+    return fold !== undefined && folds !== undefined && !isDeletedLineOpen(folds, fold.rowKey, scope?.boxId ?? selectedId);
   }
 
   /** 접힌 삭제 줄(설계 D6) - 목차 블록처럼 흐린 한 줄, DELETED 꼬리표만 반투명 빨강, Remark는 툴팁. 누르면 카드의 첫 단위를 골라 펼친다.
@@ -1954,7 +1986,8 @@ export function Paper({
     };
     if (folds === null || deletedLine === null) return renderContent();
     // 고른 동안만 펼친다 - 줄과 박스를 같은 자리에서 Collapse로 바꿔 펼칠 때 · 접힐 때 전환(움직임 줄이기면 바로). 펼친 박스는 옅은 위험 바탕(삭제 표시는 박스 안 상태 칩)
-    const isOpen = releasedLine !== null || isDeletedLineOpen(folds, deletedLine.rowKey, selectedId);
+    // 칸을 고른 표는 그 표가 박스다 - 칸 id로 물으면 펼친 삭제 표가 칸을 누르는 순간 접힌다
+    const isOpen = releasedLine !== null || isDeletedLineOpen(folds, deletedLine.rowKey, scope?.boxId ?? selectedId);
     // 방금 누른 삭제는 감싸지 않은 박스에서 온다 - 처음 붙어도 펼친 모양에서 접기 시작한다
     const isPressed = deletedLine.isPending === true;
     return (
@@ -2193,7 +2226,6 @@ export function Paper({
         ref={pageRef}
         className={pageClassName ? `pg ${pageClassName}` : "pg"}
         data-strips={strips ? "" : undefined}
-        data-whole-bundle={pickWholeBundle ? "" : undefined}
         data-dragging={isDragging ? "" : undefined}
         data-held={held ? "" : undefined}
         onClick={handleClick}
