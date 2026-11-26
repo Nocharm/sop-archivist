@@ -6893,6 +6893,12 @@ await runStep("assign: the pair panel never moves the picked box up or down", {}
       await settle();
       await piece(english.id).click();
       await piece(english.id).and(page.locator("[data-sel]")).waitFor({ timeout: T });
+      // 처음 고르면 박스 안에서 단추 줄이 펼쳐진다(쪼개기 먼저 §8, --dur-slow) - 다 펼친 뒤에 잰다. 펼치는 동안은 그 아래 짝 안내가 움직여
+      // 안내 누르기가 빗나가고 Playwright가 다시 굴려 누른다(그 굴림이 판이 박스를 옮긴 것처럼 잡힌다)
+      await page.waitForFunction((id) => {
+        const fold = document.querySelector(`[data-testid="assign-paper-piece-${id}"] .strip-acts`);
+        return fold === null || (fold.hasAttribute("data-open") && fold.getAnimations().length === 0);
+      }, english.id, { timeout: T });
       // 고른 박스 위에 긴 줄을 둔다 - 용지가 좁아지면 이 줄이 다시 접혀 박스가 아래로 밀린다
       await page.evaluate((id) => {
         const host = document.querySelector('[data-testid="assign-old"] .pane-body .sheet p, [data-testid="assign-old"] .pane-body .sheet .su');
