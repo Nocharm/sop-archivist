@@ -179,7 +179,8 @@ export function AccessRoles({ onOpenGrants }: { onOpenGrants: (roleId: number) =
                     <tr key={role.id} data-testid={`role-row-${role.id}`} data-changed={pending ? "" : undefined}>
                       <td className="name">
                         <span className="adm-two">
-                          <span className="adm-t1">{role.name}</span>
+                          {/* 띄어쓰기 없는 긴 이름도 두 줄까지 - 전체 이름은 편집 창 · 칸 aria-label에 있다(감사 A11, 줄 140px 이하) */}
+                          <span className="adm-t1"><span className="clamp-2">{role.name}</span></span>
                           {role.description && <span className="adm-t2 clamp-2">{role.description}</span>}
                         </span>
                       </td>
