@@ -31,13 +31,14 @@
 | 8 | 계획 5의 아홉 | 진행 | v1.6.21 · 69826fdd | space-preview-trim v1.6.14 · excel-a-strike v1.6.15 · progress-by-disposition v1.6.18 · ai-suggestions-retire v1.6.20 · 모음 table-follow v1.6.21 합침(pytest 3747+시드 15 · vitest 2371 · build 경고 0 · `assign:` 스모크 1274 전부 · AI 단계는 가짜 AI로 14) | 남은 둘: tables-tab · unwrap-continue-numbers(둘 다 6 · 계획 4에 매임) |
 
 
-## 이어 가기 (2026-11-26 13시, 지휘 세션을 끊으며)
+## 이어 가기 (2026-11-26 14시, 지휘 세션을 끊으며)
 
-`origin/dev` = **v1.6.21**(`3222f822`, 모음 table-follow). 세운 브랜치 없음. 다음 dev 번호는 `npm version patch`(**1.6.22**). 푸시 전에 dev를 받는다. 지휘 도구 `~/Documents/sop-orchestration/`(README · 지침 둘 · `gate.sh` · `merge.py` · `ship.sh` · `wmerge.py`). 새 세션은 지침 · `merge.py`의 `Claude-Session:` 줄을 자기 주소로 바꾼다.
+`origin/dev` = **v1.6.22**(`49f76e09`, 모음 new-paper 6-1~6-3). 세운 브랜치 · 남은 워크트리 없음. 다음 dev 번호는 `npm version patch`(**1.6.23**). 푸시 전에 dev를 받는다. 지휘 도구 `~/Documents/sop-orchestration/`(README · 지침 둘 · `gate.sh` · `merge.py` · `ship.sh` · `wmerge.py`). 새 세션은 지침 · `merge.py`의 `Claude-Session:` 줄을 자기 주소로 바꾼다.
 
-1. **6-3 → 모음 `feat/new-paper` → dev**: 워크트리 `sop-wt-new-paper-2-pick`에서 6-3 브랜치에 dev v1.6.21을 합치는 중(하위 에이전트, 끝나면 커밋돼 있다 — `git log -1`이 `Merge dev (v1.6.21) into feat/new-paper-3-tools`인지 본다. 아니면 합치기부터). 그 뒤: 게이트(`gate.sh <wt> fe build be`) → `up 3787` → 전체 `ONLY="assign:"` 스모크(실패는 reset 뒤 혼자 다시) → 6-3을 모음에 `--no-ff`(워크트리에서 `git checkout feat/new-paper && git merge --no-ff feat/new-paper-3-tools`) → `merge.py`로 `feat/new-paper`를 dev에(버전 patch, PROGRESS는 6-1 · 6-2 · 6-3 요약 하나, CHANGELOG 계획 3 머리말 문구) → `ship.sh feat/new-paper <wt>`. 6-3의 스모크 뒤 제품 고침(b1436791 · d5b23f7d · 5be84333 큐)은 검토를 따로 안 거쳤다 — 합치기 전에 opus로 그 셋만 짧게 보게 하면 좋다.
-2. **6이 dev에 들어가면 운영에 올려도 된다는 조건(사용자 결정: 6-3 전에는 운영 금지)이 풀린다** — 운영 배포 자체는 사용자 몫.
-3. **계획 4의 일곱**(`docs/superpowers/plans/2026-11-25-split-first-4.md`, 전부 6에 매임) · **계획 5의 남은 둘**: `feat/assign-tables-tab`(표 탭에도 `renderFollow`를 넣는다), `feat/unwrap-continue-numbers`(계획 4의 `MergeRowsOp`가 먼저).
+1. **6-3이 dev에 들어가 "6-3 전에는 운영에 올리지 않는다"(사용자 결정)가 풀렸다** — 운영 배포는 사용자 몫(GitLab).
+2. **계획 4의 일곱**(`docs/superpowers/plans/2026-11-25-split-first-4.md`, 스텝 5 — 6에 매였던 것, 이제 할 수 있다). 지휘 문서 표 7번. 차례 · 모델은 계획 4 머리 표를 따른다.
+3. **계획 5의 남은 둘**: `feat/assign-tables-tab`(6에 매였던 것, 이제 할 수 있다 — 표 탭에도 `renderFollow`(짝 표 고르기 · 따라 하기)를 넣는다), `feat/unwrap-continue-numbers`(계획 4의 `MergeRowsOp`가 먼저).
+4. 계획 4 · 5가 끝나면 패치 전체를 정식 업데이트(dev→main)로 — 그때 감사 넷 · 전체 스모크 · 설명서 그림(바뀐 장면만), 장부의 "아침에 볼 것"을 사용자와 정리.
 
 **운영하며 배운 것**
 - 하위 에이전트는 셋 안팎. 넷 이상이면 부하 평균이 40~60으로 올라 스모크(100ms · 30s 기준)와 시간 시험이 흔들렸다. 흔들린 것은 혼자 다시 돌려 통과를 보고 합쳤다(장부 줄마다 적음).
