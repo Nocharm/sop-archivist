@@ -69,7 +69,9 @@ export function countDecidedLines(
   for (const unit of units) {
     const isOwnLine = unit.kind === "cell_sentence" && unit.group_unit_id === null && unit.table_id === tableId;
     const isInnerBand = isBandHeading(unit) && unit.table_id !== null && tables.get(unit.table_id)?.parent_table_id === tableId;
-    if ((isOwnLine || isInnerBand) && (statusOf(unit.id) ?? unit.status) !== "unassigned") count += 1;
+    // status null은 판단이 없는 줄(New 문서) - 확정된 줄로 세지 않는다
+    const status = statusOf(unit.id) ?? unit.status;
+    if ((isOwnLine || isInnerBand) && status !== null && status !== "unassigned") count += 1;
   }
   return count;
 }
