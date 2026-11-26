@@ -2,7 +2,7 @@
 // 레이아웃 하위 메뉴는 호버나 →로 열리고, 화면 오른쪽에 자리가 없으면 왼쪽으로 뒤집혀 열린다(pickFlyoutSide).
 "use client";
 
-import { BookOpen, ChevronDown, ChevronRight, Clock3, LogOut, Moon, PanelLeft, PanelTop, Shield, Sun, UserRound, type LucideIcon } from "lucide-react";
+import { BookOpen, ChevronDown, ChevronRight, Clock3, GraduationCap, LogOut, Moon, PanelLeft, PanelTop, Shield, Sun, UserRound, type LucideIcon } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useRef, useState, type KeyboardEvent, type ReactNode } from "react";
@@ -14,6 +14,7 @@ import { getDisplayName } from "@/lib/display-name";
 import { pickFlyoutSide } from "@/lib/flyout";
 import { useI18n } from "@/lib/i18n";
 import { getManualHref } from "@/lib/manual";
+import { PRACTICE_PATH } from "@/lib/practice-route";
 import { useSession } from "@/lib/session";
 import { setUiPref, useUiPref } from "@/lib/use-ui-pref";
 
@@ -171,6 +172,13 @@ export function UserMenu() {
             <BookOpen size={15} strokeWidth={1.5} className="text-ink-3" aria-hidden />
             {t("nav.manual")}
           </a>
+          {/* 연습 화면 진입 둘 중 하나(다른 하나는 설명서 머리) - 연습 안에서는 빠진다 */}
+          {pathname !== PRACTICE_PATH && (
+            <Link href={PRACTICE_PATH} role="menuitem" className="menu-item" data-testid="user-menu-practice" onClick={closeAll}>
+              <GraduationCap size={15} strokeWidth={1.5} className="text-ink-3" aria-hidden />
+              {t("nav.practice")}
+            </Link>
+          )}
           <div className="menu-sep" role="separator" />
           <button type="button" role="menuitem" className="menu-item danger" data-testid="user-menu-signout" onClick={() => { closeAll(); signOut(); }}>
             <LogOut size={15} strokeWidth={1.5} aria-hidden />

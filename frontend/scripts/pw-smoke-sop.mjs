@@ -21,6 +21,7 @@ import { run as runDocuments } from "./smoke/documents.mjs";
 import { run as runOrder } from "./smoke/order.mjs";
 import { run as runAssign } from "./smoke/assign.mjs";
 import { run as runMap } from "./smoke/map.mjs";
+import { run as runPractice } from "./smoke/practice.mjs";
 
 await checkSeedFingerprint();
 await runSetup();
@@ -30,6 +31,7 @@ await runDocuments();
 await runOrder();
 await runAssign();
 await runMap();
+await runPractice();
 
 await browser.close();
 saveFailedSteps();

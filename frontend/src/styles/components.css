@@ -2630,3 +2630,21 @@
   .spot-panel .cut-anchor { width: auto; }
   .spot-chip { display: inline-flex; align-items: center; margin-inline: 3px; padding: 0 5px; border: 1px dashed var(--accent); border-radius: var(--r-1); background: var(--accent-tint); font-family: var(--font-mono); font-size: 11px; font-weight: 600; line-height: 16px; color: var(--accent); white-space: nowrap; vertical-align: 1px; }
 }
+
+/* 연습 화면 /practice(설계 2026-11-26-practice-page §3) - 띠 한 줄 + 아래 두 칸(실제 Assign | 과제 칸). 공용 규칙은 건드리지 않고 새 선택자만 */
+@layer components {
+  .practice { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+  .practice-band { display: flex; flex: none; align-items: center; gap: 8px; padding: 6px 12px; border-bottom: 1px solid var(--line); border-left: 3px solid var(--warn-fill); background: var(--sunken); font-size: var(--fs-ui); color: var(--ink-2); }
+  .practice-band-title { font-weight: 600; color: var(--ink); }
+  .practice-band-hint { flex: 1 1 0; min-width: 0; overflow: hidden; color: var(--ink-3); white-space: nowrap; text-overflow: ellipsis; }
+  .practice-band-act { flex: none; }
+  .practice-grid { display: grid; flex: 1 1 0; grid-template-columns: minmax(0, 1fr) clamp(240px, 18vw, 300px); min-height: 0; }
+  .practice-grid[data-folded] { grid-template-columns: minmax(0, 1fr) 36px; }
+  .practice-main { min-width: 0; min-height: 0; }
+  .practice-tasks { display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow-y: auto; border-left: 1px solid var(--line); background: var(--surface); }
+  .practice-tasks-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 8px 8px 12px; border-bottom: 1px solid var(--line); }
+  .practice-tasks[data-folded] .practice-tasks-head { flex-direction: column; padding: 8px 4px; border-bottom: 0; }
+  .practice-tasks-title { font-size: var(--fs-ui); font-weight: 600; color: var(--ink); }
+  .practice-manual-link { display: inline-flex; align-items: center; gap: 6px; align-self: flex-start; font-size: var(--fs-ui); color: var(--accent); }
+  .practice-manual-link:hover { text-decoration: underline; }
+}
