@@ -7638,6 +7638,89 @@ await runStep("assign: two tables unwrap together from the bar", {}, async ({ pa
   check("one Ctrl+Z wraps both tables back and the pairs go", (await waitView((view) => view.tables.every((table) => !table.is_layout) && view.pairs.length === 0)) !== null);
 });
 
+// 벗긴 표 번호 이어 매기기(11-23 명세 D1 · S17) - 제목 "5. 조작 순서" 아래 숫자 칸 표(1-4)를 ⇧T로 벗기면 5.1-5.4(Number note "Original 1"),
+// 5.2에서 ⇧J ⇧J면 5.2 + 5.3이 한 박스가 되고 뒤 5.4가 5.3, Ctrl+Z 세 번이 합치기 → 번호 → 벗기기 차례로 되돌린다. 합성 docx를 새 묶음에 올리고 끝에 지운다
+await runStep("assign: unwrapping an Old table continues the numbers, Undo steps numbers then table, ⇧J ⇧J pulls", { devUser: "dev.admin" }, async ({ page }) => {
+  const headers = { "X-Dev-User": "dev.admin" };
+  const backend = resolve(SCRIPT_DIR, "../../../backend");
+  const oldFile = resolve(SHOT_DIR, "SYNTHETIC_OLD-5_Steps.docx");
+  const build = [
+    "import sys",
+    "from tests.docx_factory import build_docx, p, tbl",
+    "rows = [['1', '전원을 켠다.'], ['2', '압력이 0.2 MPa가 되면'], ['3', '밸브를 연다.'], ['4', '10분 동안 순환한다.']]",
+    "body = p('5. 조작 순서', 'Heading1') + tbl(rows) + p('6. 기록', 'Heading1')",
+    "open(sys.argv[1], 'wb').write(build_docx(body))",
+  ].join("\n");
+  execFileSync(findBackendPython(), ["-c", build, oldFile], { cwd: backend, stdio: "inherit" });
+  const created = await (await page.request.post(`${BASE}/api/bundles`, { headers, data: { title: "SYNTHETIC continue numbers", is_synthetic: true } })).json();
+  const api = `${BASE}/api/bundles/${created.id}`;
+  const getJson = async (path) => (await page.request.get(`${api}${path}`, { headers })).json();
+  const mime = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+  const oldUp = await page.request.post(`${api}/documents`, { headers, multipart: { side: "old", file: { name: "SYNTHETIC_OLD-5_Steps.docx", mimeType: mime, buffer: readFileSync(oldFile) } } });
+  const oldDoc = await oldUp.json();
+  const readView = () => getJson(`/documents/${oldDoc.id}/view`);
+  const table = oldUp.status() === 201 && oldDoc.status === "ready" ? (await readView()).units.find((unit) => unit.kind === "table") : undefined;
+  check("an Old document with heading 5 and a numbered step table is uploaded", table !== undefined, `${oldUp.status()} ${oldDoc.status}`);
+  if (table === undefined) {
+    await removeShapeBundle(page, { api, headers });
+    return;
+  }
+  const isLayout = (view) => view.tables.find((item) => item.id === table.table_id)?.is_layout === true;
+  const linesOf = (view) => view.units.filter((unit) => unit.kind === "cell_sentence" && unit.table_id === table.table_id && unit.group_unit_id === null).sort((a, b) => a.pos_seq - b.pos_seq);
+  const numbersOf = (view) => linesOf(view).map((unit) => unit.number?.value ?? null).join(" ");
+  const waitView = async (isDone) => {
+    for (let tries = 0; tries < 60; tries += 1) {
+      const view = await readView();
+      if (isDone(view)) return view;
+      await page.waitForTimeout(250);
+    }
+    return null;
+  };
+  const undo = page.locator('[data-testid="assign-undo"]');
+  await page.goto(`${BASE}/bundles/${created.id}/assign`);
+  await wait(page, "assign-bar");
+
+  // 1. 표 머리를 고르고 ⇧T - 벗기기와 번호 잇기가 한 요청, 용지 번호 칸도 5.1
+  const tableHead = page.locator(`[data-testid="assign-paper-head-${table.id}"]`);
+  await tableHead.scrollIntoViewIfNeeded({ timeout: T });
+  await tableHead.click();
+  await page.keyboard.press("Shift+T");
+  const unwrapped = await waitView((view) => isLayout(view) && numbersOf(view) === "5.1 5.2 5.3 5.4");
+  check("Shift+T unwraps the table and its number cells read 5.1 5.2 5.3 5.4", unwrapped !== null, numbersOf(await readView()));
+  if (unwrapped === null) {
+    await removeShapeBundle(page, { api, headers });
+    return;
+  }
+  const [first, second, third] = linesOf(unwrapped);
+  const numberCell = page.locator(`[data-testid="assign-paper-num-${first.id}"]`);
+  const isShown = await numberCell.waitFor({ timeout: T }).then(async () => (await numberCell.innerText()).trim() === "5.1", () => false);
+  check("the paper number cell of the first line shows 5.1", isShown);
+  const preview = await getJson(`/documents/${oldDoc.id}/paragraphs/preview`);
+  const lineIds = new Set(linesOf(unwrapped).map((line) => line.id));
+  const notes = preview.rows.filter((row) => lineIds.has(row.unit_id)).map((row) => row.cells[3].text);
+  check("the paragraph Excel says Original 1-4 in Number note", notes.join(" | ") === "Original 1 | Original 2 | Original 3 | Original 4", notes.join(" | "));
+
+  // 2. 5.2에서 ⇧J ⇧J - 5.2 + 5.3이 한 박스, 뒤 5.4가 5.3
+  await page.locator(`[data-testid="assign-paper-unit-${second.id}"]`).first().click();
+  await page.locator(`[data-testid="assign-paper-piece-${second.id}"]`).and(page.locator("[data-sel]")).waitFor({ timeout: T });
+  await page.keyboard.press("Shift+J");
+  await page.locator('[data-testid="assign-merge-armed"]').waitFor({ timeout: T });
+  await page.keyboard.press("Shift+J");
+  const merged = await waitView((view) => numbersOf(view) === "5.1 5.2 5.3");
+  const box = merged === null ? undefined : linesOf(merged)[1];
+  check("Shift+J twice joins 5.2 and 5.3 and pulls 5.4 up to 5.3", box !== undefined && box.text.includes(second.text) && box.text.includes(third.text), numbersOf(await readView()));
+
+  // 3. Ctrl+Z 세 번 - 합치기 전 → 원래 번호(벗긴 채) → 다시 표
+  await undo.click();
+  check("the first Undo brings back 5.1 5.2 5.3 5.4", (await waitView((view) => numbersOf(view) === "5.1 5.2 5.3 5.4")) !== null, numbersOf(await readView()));
+  await undo.click();
+  check("the second Undo gives the original numbers 1 2 3 4 with the table still unwrapped", (await waitView((view) => isLayout(view) && numbersOf(view) === "1 2 3 4")) !== null, numbersOf(await readView()));
+  await undo.click();
+  check("the third Undo wraps the table back", (await waitView((view) => !isLayout(view))) !== null);
+  await page.keyboard.press("Escape");
+  await removeShapeBundle(page, { api, headers });
+});
+
 // 여럿 고른 줄 합치기(쪼개기 먼저 §9) - Old: "쪼개기 직후" 묶음에서 이웃한 한/영 짝 카드 둘을 Shift로 함께 골라 위쪽 바 Merge를 누르면 한글끼리 · 영어끼리
 // 합쳐 다시 짝, Ctrl+Z 한 번에 네 박스와 짝 둘이 돌아온다. New: 양 단 New 용지에서 이웃한 같은 언어 문장 둘을 Shift로 골라 Merge, Ctrl+Z로 돌린다(시드 그대로)
 await runStep("assign: rows picked together merge by language and pair again, one Ctrl+Z", {}, async ({ page }) => {
