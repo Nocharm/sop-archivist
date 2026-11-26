@@ -33,6 +33,7 @@ from app.sop.detach import (
     ORIGIN_NEW_DOC,
     UNASSIGNED,
     DetachReport,
+    count_new_table_links,
     detach_targets,
     detach_units,
     find_units_needing_confirm,
@@ -2371,6 +2372,10 @@ async def _write_change(
     if change.retire or regrouped or change.bundles or released_new:
         needing = await find_units_needing_confirm(session, [*change.retire, *regrouped, *change.bundles, *released_new])
         if needing and not confirm and not set(needing) <= unasked:
+            if document.side == "new" and change.layouts:
+                # New 표 바꾸기는 방향이 Old와 반대라(이음이 풀리고 Old 줄이 보류) 묻는 창이 그 수를 보인다
+                linked_cells, held_rows = await count_new_table_links(session, needing)
+                raise_rule(409, "confirm_required", unit_ids=needing, linked_cells=linked_cells, held_rows=held_rows)
             raise_rule(409, "confirm_required", unit_ids=needing)
         # 캡션이 바뀐 묶음은 판단이 있을 때만 떼어 낸다 — 확정 새 문장에 바뀐 캡션이 빠지거나 남지 않게
         decided_bundles = sorted(set(needing) & set(change.bundles))
