@@ -45,7 +45,15 @@
 | F9b | `feat/practice-coach` | 합침 | v1.6.44 · c6831dfd | vitest 2832 · build 경고 0 · `practice:` ALL PASS 56(첫 실행) · overlap `assign-pane-head-narrow` 4/4 · 그림 `practice` 다시 · 검토 생략(연습 화면만, Assign 파일 변경 없음) | 그림 `/private/tmp/claude-501/-Users-hyeonjin-Documents-sop-archivist/cd35c95b-037a-4e82-bb7a-e837e4859e96/scratchpad/shots/coach/`(1440 en 앞면 · 뒤집힘 · 다음, 1120 ko) |
 
 
-## 이어 가기 (2026-11-27 새벽 — 밤샘 끝, 정식 업데이트 준비 커밋까지. 다음은 여기부터)
+## 이어 가기 (2026-11-27 아침 — 연습 화면 말풍선까지, 준비 커밋을 v1.6.44로. 다음은 여기부터)
+
+- (11-27 아침) 사용자 요청으로 연습 화면을 말풍선 스포트라이트 + 완료 플립으로 바꿔 **v1.6.44**(F9b)를 더했고, 준비 커밋 내용(CHANGELOG 릴리스 제목 · 설명서 머리 · CLAUDE.md · README · 체크리스트)을 v1.6.44로 다시 맞췄다. 아래 v1.6.43 글은 그때의 기록 — **main 합치기 · 태그는 v1.6.44**:
+  ```bash
+  git fetch && git switch dev && git pull --ff-only
+  git tag -a v1.6.44 -m "v1.6.44 — 정식 업데이트" && git switch main && git pull --ff-only && git merge --no-ff dev -m "Merge dev into main (v1.6.44)" && git push origin main && git push origin v1.6.44 && git switch dev
+  ```
+
+### 새벽 기록 (v1.6.43 준비 커밋 때)
 
 `origin/dev` = **v1.6.43** + 준비 커밋 `chore(release): v1.6.43`(이 장부도 그 커밋 안). main 합치기 · 태그 · GitLab · 배포는 사용자.
 - **dev에 들어감(밤샘)**: v1.6.39 양 단 New 칸 메뉴 + New 박스 Shift+F10(F7b) · v1.6.40 단추 줄 라벨(F5) · v1.6.41 메뉴가 이동 뒤 열린 채 남던 결함(Fm, 연습 스모크가 찾음) · v1.6.42 연습 페이지 `/practice`(F9, 스텝 4개 모음 브랜치) · v1.6.43 문서 하나인 칸 머리 줄 겹침(Fh, 연습 그림이 찾음) · 설명서 그림(바뀐 장면 7) · `findBackendPython` 한 곳으로(그림 스크립트가 소스 규칙에 걸림) · 준비 커밋.
