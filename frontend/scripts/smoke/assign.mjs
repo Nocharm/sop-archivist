@@ -4642,7 +4642,7 @@ await runStep("assign: AI split suggestions - ask for the whole document, apply 
   await page.waitForFunction((before) => document.querySelector('[data-testid="assign-row-id"]')?.textContent?.trim() !== before && document.querySelector('[data-testid="assign-undo"]')?.disabled === false, rowBefore, { timeout: T });
   check("Apply split cuts the sentence and moves to the new piece", true);
   await page.locator('[data-testid="assign-undo"]').click();
-  await page.waitForFunction(() => [...document.querySelectorAll('[data-testid="toast-ok"]')].some((toast) => toast.textContent?.includes("Cut")), null, { timeout: T });
+  await page.waitForFunction(() => [...document.querySelectorAll('[data-testid="toast-ok"]')].some((toast) => toast.textContent?.includes("Split")), null, { timeout: T });
   check("Undo takes the cut back", true);
 });
 

@@ -127,6 +127,7 @@
 - smoke-caption-settle · `smoke/assign.mjs` "the New pane shows a real table and figure"의 `readCaptionLine` · 한 번 읽기 → T 안에서 맞을 때까지 다시 읽기, 실패 글에 본 값 · `FULL=1`에서만 탭 전환 중 한 프레임을 읽어 흔들림(기대값 · 검사 수 그대로)
 - assign-tab-keys · `smoke/assign.mjs` 번호 칸 들여쓰기 단계 · `Tab`/`Shift+Tab` → `Backquote`/`Shift+Backquote`(검사 3 그대로), Tab=J · ⇧Tab=K 검사 2 더함 · `assign-keymap.test.ts` `⇧Tab` → ``⇧` ``, Tab 들여쓰기 시험 → Tab 옮기기 · ` 들여쓰기 · 사용자 요청 글쇠 변경(1차 피드백 2, 승인)
 - smoke-fold-settle · `smoke/assign.mjs` 표 탭 · 접기 단계 "Collapse folds the table…" · 글 기다린 뒤 한 번 읽기 → T 안에서 맞을 때까지 다시 읽기, 실패 글에 본 값 · dev 코드에서도 3번에 1번 접는 중 빈 글로 실패(기대값 · 검사 수 그대로)
+- assign-queue-labels · `smoke/assign.mjs` 약 4645 자르기 알림 글 "Cut" → "Split" · 되돌리기 · 실패 알림 · 대기 칩의 이름 `assign.step.cut`을 단추 줄 이름 Split(나누기)에 맞춤. 같은 브랜치의 느린 저장 단계: 1번 "Queued 1" → "Queued · Delete"(순번 대신 개수 · 이름, 사용자 결정 1-A), 3 · 5 · 6번 검사 더함
 
 ## 아침에 볼 것 (사람이 정할 것 · 봐 줄 것)
 
