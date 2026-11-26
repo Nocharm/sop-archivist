@@ -26,6 +26,7 @@ const EDIT_LABEL_KEYS: Record<EditOp["type"], string> = {
   start_body: "assign.step.start_body",
   reorder_pair: "assign.step.reorder_pair",
   reorder_unwrapped: "assign.step.reorder_unwrapped",
+  follow_table: "assign.step.follow_table",
 };
 
 export function readEditLabelKey(op: Pick<EditOp, "type">): string {

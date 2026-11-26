@@ -51,7 +51,7 @@ export interface CommandQueue<T> {
 }
 
 // 응답 뒤에야 결과 박스가 정해지는 일 - 참조(번호) · 순서 · 판단 · 저절로 삭제된 줄(toc - 삭제 취소 · 사유 · 여기부터 본문)은 박스가 그대로라 장벽이 아니다
-const BARRIER_KINDS: ReadonlySet<CommandKind> = new Set<CommandKind>(["join", "split", "unmerge", "unwrap", "rewrap", "pair", "unpair", "lang", "heading", "caption", "figure", "undo"]);
+const BARRIER_KINDS: ReadonlySet<CommandKind> = new Set<CommandKind>(["join", "split", "unmerge", "unwrap", "rewrap", "pair", "unpair", "lang", "heading", "caption", "figure", "follow", "undo"]);
 
 export function isBarrier(command: Pick<QueuedCommand<unknown>, "kind" | "isGlobal">): boolean {
   return command.isGlobal || BARRIER_KINDS.has(command.kind);

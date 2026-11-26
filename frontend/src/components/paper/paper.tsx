@@ -19,7 +19,7 @@ import { getMorphClassName } from "@/components/ui/morph-button";
 import { Collapse } from "@/components/ui/motion";
 import { useDelegatedTip } from "@/components/ui/delegated-tip";
 import { Select } from "@/components/ui/select";
-import type { TableCounterpart, ViewBlock, ViewUnit } from "@/lib/api-sop";
+import type { FollowItem, TableCounterpart, ViewBlock, ViewUnit } from "@/lib/api-sop";
 import { formatAssignKey } from "@/lib/assign-keymap";
 import type { PendingPlace } from "@/lib/assign-focus-model";
 import { getBundleShape, getCaptionScope, isSentenceLike, type BundleShape } from "@/lib/caption-slot-model";
@@ -41,7 +41,8 @@ import { buildNoiseBlock, describeNoiseUnit, listNoiseBlocks, readNoiseReason, s
 import { findUnwrapHeads, getRowUnwrapTable } from "@/lib/unwrap-model";
 import { isUnwrapSuggestionUnchanged, readUnwrapMoves, type UnwrapLineMove } from "@/lib/unwrap-ai-model";
 import { buildStripRows } from "@/lib/figure-spot-model";
-import { describeCounterpart, listCounterpartChoices, NO_COUNTERPART_VALUE, PICK_VALUE } from "@/lib/table-follow-model";
+import { describeCounterpart, describeFollowItem, hasFollowChange, listCounterpartChoices, NO_COUNTERPART_VALUE, PICK_VALUE } from "@/lib/table-follow-model";
+import type { TableFollowStrip } from "@/lib/use-table-follow";
 import { useClickOrDouble } from "@/lib/use-click-or-double";
 import { useNumberArrival, type ExpectedNumbers } from "@/lib/use-number-arrival";
 import { useReleasedFolds } from "@/lib/use-released-folds";
@@ -261,7 +262,12 @@ interface PaperProps {
       ai?: { enabled: boolean; busy: ReadonlySet<number>; previews: ReadonlyMap<number, readonly number[]>; onAsk: (tableId: number) => void; onApply: (tableId: number, order: readonly number[]) => void; onKeep: (tableId: number, isSame: boolean) => void };
       /** Old 영어 표의 짝 한글 표(11-23 명세 D2-R3) - answers는 표마다 서버의 답. 애매하거나 사람이 정했거나 짝 없다는 답이어도 후보가 있으면 머리에 "짝 표 고르기", 짝이 정해지면
        *  흐린 "표 n과 짝". onPick(표 id, 한글 표 id | null = 짝 없음)은 바로 저장한다(문서를 바꾸지 않는다) */
-      follow?: { answers: ReadonlyMap<number, TableCounterpart>; onPick: (tableId: number, sourceTableId: number | null) => void };
+      follow?: {
+        answers: ReadonlyMap<number, TableCounterpart>;
+        onPick: (tableId: number, sourceTableId: number | null) => void;
+        /** 한글 표처럼 하기(D2-R8) - 규칙 제안이 있는 표의 머리에 "한글 표처럼 하기 · n건" [적용] [하나씩 보기] [그대로 두기], 줄마다 칩(하나씩 보기면 줄 적용 단추) */
+        plan?: TableFollowStrip;
+      };
     };
     /** Assign - 고른 박스 바로 아래 떨어진 짝 안내 줄 "↑ 짝 KO · 위 §1"(lib/pair-hint-model). onGo(짝)는 그 박스를 고르고 그 자리로 스크롤한다.
      *  onPeek이 있으면(1단 보기) 한 번 누름은 짝 엿보기 판(onPeek), 두 번 누름이 onGo다(B7) */
@@ -743,6 +749,13 @@ export function Paper({
     for (const [tableId, suggested] of unwrapAiPreviews ?? []) for (const [id, move] of readUnwrapMoves(unwrapOrders.get(tableId) ?? [], suggested)) all.set(id, move);
     return all;
   }, [unwrapAiPreviews, unwrapOrders]);
+  // 한글 표처럼 하기의 줄 칩 - 일의 첫 줄(합칠 줄은 그 첫 줄) → (표, 일)
+  const followPlans = strips?.unwrap?.follow?.plan?.plans;
+  const followRows = useMemo(() => {
+    const map = new Map<number, { tableId: number; item: FollowItem }>();
+    for (const [tableId, plan] of followPlans ?? []) for (const item of plan.items) if (hasFollowChange(item)) map.set(item.unit_ids[0], { tableId, item });
+    return map;
+  }, [followPlans]);
   // 표 칸 안의 조각 줄 - 칸이 많은 표에서 고를 때마다 다시 펴지 않게
   const cellRows = useMemo(() => {
     const map = new Map<number, PaperRow[]>();
@@ -919,6 +932,37 @@ export function Paper({
     return (
       <span className="unwrap-ai-move" data-testid={`${testId}-unwrap-ai-move-${unit.id}`}>
         {t("assign.unwrapAi.move", { from: move.from, to: move.to })}
+      </span>
+    );
+  }
+
+  /** 한글 표처럼 하기의 줄 칩(D2-R8) - 줄 오른쪽 위. 하나씩 보기를 연 표면 그 줄만 적용하는 단추가 붙는다 */
+  function renderFollowChips(unit: ViewUnit): ReactNode {
+    const plan = strips?.unwrap?.follow?.plan;
+    const row = followRows.get(unit.id);
+    if (!plan || !row) return null;
+    const isEach = plan.each.has(row.tableId);
+    return (
+      <span className="follow-chips" data-each={isEach ? "" : undefined} data-testid={`assign-follow-chips-${unit.id}`}>
+        {describeFollowItem(row.item).map((chip) => (
+          <span key={chip.key} className="follow-chip" data-kind={chip.key.slice("assign.follow.".length)}>
+            {t(chip.key, chip.values)}
+          </span>
+        ))}
+        {isEach && (
+          <button
+            type="button"
+            className="btn toc-act follow-row-apply"
+            disabled={strips?.unwrap?.busy || isLocked(unit.id)}
+            data-testid={`assign-follow-row-apply-${unit.id}`}
+            onClick={(event) => {
+              event.stopPropagation();
+              plan.onApply(row.tableId, [unit.id]);
+            }}
+          >
+            {t("assign.follow.apply")}
+          </button>
+        )}
       </span>
     );
   }
@@ -1400,6 +1444,7 @@ export function Paper({
       >
           {unit !== undefined && (renderUnwrapGrip(unit) ?? renderPairGrip(unit))}
           {unit !== undefined && renderUnwrapAiMove(unit)}
+          {unit !== undefined && renderFollowChips(unit)}
           {/* 표·그림의 보류 칩 - 표 위 제 줄(data-start 밖)이라 표를 덮지 않고, 눌러도 조각 상자를 누른 것으로 그 단위를 고른다 */}
           {row.type !== "piece" && isHold && (
             <div className="strip-hold">
@@ -1619,6 +1664,29 @@ export function Paper({
     return <span className="unwrap-rail" style={{ left: leadWidth + STRIP_LEAD_EXTRA - 4 }} data-unwrap-enter="frame" aria-hidden />;
   }
 
+  /** 벗긴 영어 표 머리의 "한글 표처럼 하기 · n건"(D2-R8) - [적용]은 편집 하나(되돌리기 한 번), [하나씩 보기]는 줄마다 적용 단추, [그대로 두기]는 이 화면에서만 감춘다 */
+  function renderFollowPlan(tableId: number, isOff: boolean): ReactNode {
+    const plan = strips?.unwrap?.follow?.plan;
+    const found = plan?.plans.get(tableId);
+    if (!plan || !found) return null;
+    return (
+      <>
+        <span className="unwrap-ai-note" data-testid={`assign-follow-${tableId}`}>
+          {t("assign.follow.head", { n: found.count })}
+        </span>
+        <button type="button" className="btn pri toc-act" disabled={isOff} data-testid={`assign-follow-apply-${tableId}`} onClick={() => plan.onApply(tableId)}>
+          {t("assign.follow.apply")}
+        </button>
+        <button type="button" className="btn toc-act" aria-pressed={plan.each.has(tableId)} data-testid={`assign-follow-each-${tableId}`} onClick={() => plan.onEach(tableId)}>
+          {t("assign.follow.each")}
+        </button>
+        <button type="button" className="btn toc-act" data-testid={`assign-follow-keep-${tableId}`} onClick={() => plan.onKeep(tableId)}>
+          {t("assign.follow.keep")}
+        </button>
+      </>
+    );
+  }
+
   /** 벗긴 영어 표 머리의 짝 표(D2-R3) - 애매하거나 사람이 정했거나 짝이 없다는 답이어도 후보가 있으면 고르기(후보 "표 n" + "짝 없음"), 짝이 정해졌으면 흐린 "표 n과 짝" */
   function renderFollow(tableId: number, isOff: boolean): ReactNode {
     const follow = strips?.unwrap?.follow;
@@ -1704,6 +1772,7 @@ export function Paper({
               </button>
             </span>
           )}
+          {renderFollowPlan(tableId, isOff)}
           {renderFollow(tableId, isOff)}
           <button
             type="button"
@@ -1809,7 +1878,7 @@ export function Paper({
       <PaperChunk
         key={key}
         live={nearChunks === null || (chunk.index >= nearChunks.from && chunk.index <= nearChunks.to) || liveChunkIds.has(chunk.index)}
-        deps={[...own, t, testId, dragBoxes, pickWholeBundle, strips?.noise?.busy, strips?.noise?.canEdit, shiftGroups, strips?.headingShift?.busy, strips?.headingShift?.canRevert, unwrapHeads, strips?.unwrap?.busy, strips?.unwrap?.canRewrap, strips?.unwrap?.ai?.enabled, strips?.unwrap?.ai?.busy, strips?.unwrap?.follow?.answers, unwrapAiPreviews, unwrapOrders, unwrapAiMoves, strips?.mergeArm, chunkPending[chunk.index], chunkDeleted[chunk.index], chunkNumbers[chunk.index], chunkNoise[chunk.index]]}
+        deps={[...own, t, testId, dragBoxes, pickWholeBundle, strips?.noise?.busy, strips?.noise?.canEdit, shiftGroups, strips?.headingShift?.busy, strips?.headingShift?.canRevert, unwrapHeads, strips?.unwrap?.busy, strips?.unwrap?.canRewrap, strips?.unwrap?.ai?.enabled, strips?.unwrap?.ai?.busy, strips?.unwrap?.follow?.answers, followRows, strips?.unwrap?.follow?.plan?.each, unwrapAiPreviews, unwrapOrders, unwrapAiMoves, strips?.mergeArm, chunkPending[chunk.index], chunkDeleted[chunk.index], chunkNumbers[chunk.index], chunkNoise[chunk.index]]}
         isFold={hasFold}
         render={render}
       />

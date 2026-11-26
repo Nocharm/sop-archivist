@@ -57,7 +57,7 @@ import { isQueuedKey, isRepeatIgnored, type PressId } from "@/lib/assign-press-m
 import { findJoinNeighbor, stepMergeArm, type MergeArm } from "@/lib/merge-arm-model";
 import { planPrimary } from "@/lib/primary-model";
 import { isSideFloating } from "@/lib/side-float-model";
-import { listFollowTableIds } from "@/lib/table-follow-model";
+import { listFollowTableIds, pickOrderAction } from "@/lib/table-follow-model";
 import { isUnwrapSuggestionApplicable, isUnwrapSuggestionUnchanged } from "@/lib/unwrap-ai-model";
 import { pickNextBox, type PendingOutcome } from "@/lib/next-box-model";
 import { listExpectedNumbers, listExpectedShifts, readExpectedNumber, readOpShifts, type SentNumber, type SentShifts } from "@/lib/number-arrival-model";
@@ -77,6 +77,7 @@ import { findPairTarget } from "@/lib/pair-hint-model";
 import { readPartState, stepPart, withPartState } from "@/lib/part-history";
 import { isSameOrder, movePairMember, orderPairCard, readPairSlot } from "@/lib/pair-order-model";
 import { moveUnwrapLines, readUnwrapSlot } from "@/lib/unwrap-order-model";
+import { useTableFollow } from "@/lib/use-table-follow";
 import { useUnwrapAi } from "@/lib/use-unwrap-ai";
 import { buildPairColumns, listPairLinks, PAIR_REFUSAL_KEYS, resolveBoxDrop, resolvePairDrop, type BoxDrop, type PairDrop, type PairDropContext } from "@/lib/pair-drop-model";
 import { ASSIGN_DOC_PARAM, ASSIGN_UNIT_PARAM, EDIT_ORIGINAL_PARAM, getStageHref, LEFTOVER_TRANSLATIONS_PARAM } from "@/lib/stages";
@@ -908,9 +909,18 @@ export function useAssignPage() {
     },
     `${canEdit}:${oldDocId}:${followTableIds.join(",")}:${followTablesKey}`,
   );
+  // 한글 표처럼 하기(D2-R8) - 제안은 저장되지 않아 문서 revision · 판단이 바뀔 때마다 다시 읽는다. 적용은 편집 한 번(삭제 판단까지 되돌리기 한 칸)
+  const followPlan = useTableFollow({
+    bundleId,
+    docId: oldDocId,
+    tableIds: canEdit ? followTableIds : [],
+    dataKey: `${dataKey}:${oldView?.document.revision ?? 0}`,
+    apply: (tableId, op) => runUnitEdit(op, t("assign.follow.applied"), null, false, null, { at: "table", tableId }),
+  });
   const tableFollow = canEdit && oldDocId !== null
     ? {
         answers: counterparts.data ?? NO_COUNTERPARTS,
+        plan: followPlan,
         onPick: (tableId: number, sourceTableId: number | null) => {
           setTableCounterpart(bundleId, oldDocId, tableId, sourceTableId).then(
             () => counterparts.reload(),
@@ -1750,7 +1760,8 @@ export function useAssignPage() {
       }
     }
     // 문서가 바뀌지 않은 편집(참조 제안 물리기)은 서버도 단계를 남기지 않는다
-    if (revision !== sentRevision) markRecorded();
+    // 한글 표처럼 하기는 삭제만이어도(revision 그대로) 판단 단계 하나를 남긴다
+    if (revision !== sentRevision || op.type === "follow_table") markRecorded();
     // 번호는 그 자리 편집이라 보기를 큐가 빌 때 받는다 - 그때까지 기대 글을 둔다
     const sentNumber = isOld ? readExpectedNumber(op) : null;
     if (sentNumber !== null) setSentNumbers((prev) => [...prev.filter((item) => item.unitId !== sentNumber.unitId), { docId, revision, ...sentNumber }]);
@@ -4301,6 +4312,7 @@ export function useAssignPage() {
   }
 
   function readOrderReason(): string | null {
+    if (orderTableId !== null && followPlan.plans.has(orderTableId)) return null;
     if (!unwrapAi.enabled) return "assign.unwrapAi.offTip";
     if (orderTableId === null) return "assign.key.why.notUnwrapped";
     if (unwrapAi.busy.has(orderTableId)) return "assign.unwrapAi.already";
@@ -4463,9 +4475,12 @@ export function useAssignPage() {
         if (keyUnit !== null && tableKeyItem !== undefined) runUnitAction(keyUnit, "table_layout");
         else rewrap?.onBack();
         return true;
-      case "ask_order":
-        if (orderTableId !== null) unwrapAi.onAsk(orderTableId);
+      case "ask_order": {
+        const follow = orderTableId === null ? undefined : followPlan.plans.get(orderTableId);
+        if (orderTableId !== null && pickOrderAction({ follow: follow?.mode ?? "none", count: follow?.count ?? 0 }) === "follow") followPlan.onApply(orderTableId);
+        else if (orderTableId !== null) unwrapAi.onAsk(orderTableId);
         return true;
+      }
       case "merge_next":
       case "merge_prev":
         pressMerge(id === "merge_next" ? 1 : -1);

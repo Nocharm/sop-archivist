@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { EditOp } from "./api-sop";
-import { createCommandQueue } from "./command-queue";
+import { createCommandQueue, isBarrier } from "./command-queue";
 import {
   applyLoaded,
   buildPaperWaits,
@@ -289,6 +289,13 @@ describe("pending pill (D4)", () => {
     const op: EditOp = { type: "reorder_unwrapped", table_id: 4, unit_ids: [9, 8] };
     expect([readEditKind(op), readPendingLabelKey(readEditKind(op))]).toEqual(["reorder", "assign.working.reorder"]);
     expect(readEditPlace(op)).toEqual({ at: "table", tableId: 4 });
+  });
+  it("shows the Korean table follow at the table head, locks its lines and holds the queue behind it (D2-R8)", () => {
+    const op: EditOp = { type: "follow_table", table_id: 4, items: [{ unit_ids: [9, 8], number: "5.1" }, { unit_ids: [7], delete: true }], order: null };
+    expect([readEditKind(op), readPendingLabelKey(readEditKind(op))]).toEqual(["follow", "assign.working.follow"]);
+    expect(readEditPlace(op)).toEqual({ at: "table", tableId: 4 });
+    expect(listEditUnitIds(op)).toEqual([9, 8, 7]);
+    expect(isBarrier({ kind: readEditKind(op), isGlobal: false })).toBe(true);
   });
   it("locks a table's units, its inner band table's and the captions grouped under them", () => {
     const units = [
