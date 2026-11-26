@@ -192,3 +192,4 @@
 
 - dev `2ccff578`에서 `FULL=1` 2522 통과 · 1 실패(알려진 흔들림인 New 판 그림 캡션, 혼자 다시 돌려 통과). 결과는 split-first 장부 "이어 가기" 1번 아래에. 감사 넷 · perf는 남음.
 - 같은 흔들림의 두 번째 고침이라 스모크 `readCaptionLine`을 맞을 때까지 다시 읽게 고침(`test/smoke-caption-settle`, 기대값 그대로, 실패 글에 본 값). 단계 3/3 · `assign:` 1507 통과.
+- 감사 넷(`f2e20b78`): overlap · contrast · manual-shots 통과, layout `DS=worst` 196 중 5 실패 — 낡은 기대값 3(P1 탭 5→4 둘, A4b 자료 전제), 관리 역할 표 1120 넘침 2(X0 · A11)는 제품 결함 후보로 장부 "아침에 볼 것"에. 고치지 않음.
