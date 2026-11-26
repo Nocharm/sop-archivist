@@ -1,6 +1,7 @@
 """문서 업로드 — 격리 추출(시간 초과·죽은 자식·보조 실패), 거절 기록, 중복, 새 문서의 To-Be 연결, 내려받기, 경고 확인, 로그."""
 
 import asyncio
+import hashlib
 import logging
 import multiprocessing
 from functools import partial
@@ -714,3 +715,40 @@ def test_upload_logs_no_text(client: TestClient, caplog: pytest.LogCaptureFixtur
     assert f"document={rejected.json()['id']}" in app_log
     for text in ("quokka", "Zebra", "SYNTHETIC"):
         assert text not in app_log
+
+
+def test_file_has_cache_headers(client: TestClient) -> None:
+    bundle = create_bundle(client)
+    data = _sample_docx()
+    doc = upload(client, bundle["id"], data, DOCX_NAME).json()
+
+    response = client.get(f"/api/bundles/{bundle['id']}/documents/{doc['id']}/file", headers=AUTHOR)
+
+    assert response.headers["etag"] == f'"{hashlib.sha256(data).hexdigest()}"'
+    assert "private" in response.headers["cache-control"]
+    assert "max-age=86400" in response.headers["cache-control"]
+
+
+def test_file_not_modified_when_etag_matches(client: TestClient) -> None:
+    bundle = create_bundle(client)
+    doc = upload(client, bundle["id"], _sample_docx(), DOCX_NAME).json()
+    url = f"/api/bundles/{bundle['id']}/documents/{doc['id']}/file"
+    etag = client.get(url, headers=AUTHOR).headers["etag"]
+
+    for header in (etag, f"W/{etag}", f'"other", {etag}', "*"):
+        response = client.get(url, headers={**AUTHOR, "If-None-Match": header})
+        assert response.status_code == 304, header
+        assert response.content == b""
+        assert response.headers["etag"] == etag and "max-age=86400" in response.headers["cache-control"]
+
+
+def test_file_sent_when_etag_differs(client: TestClient) -> None:
+    bundle = create_bundle(client)
+    data = _sample_docx()
+    doc = upload(client, bundle["id"], data, DOCX_NAME).json()
+
+    response = client.get(
+        f"/api/bundles/{bundle['id']}/documents/{doc['id']}/file", headers={**AUTHOR, "If-None-Match": '"other"'}
+    )
+
+    assert response.status_code == 200 and response.content == data

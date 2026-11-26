@@ -9,7 +9,7 @@ from io import BytesIO
 from typing import Annotated, Literal, Self
 from urllib.parse import quote
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, Path, Query, Response, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, Header, Path, Query, Response, UploadFile
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StringConstraints, model_validator
 from sqlalchemy import Row, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -1130,20 +1130,36 @@ async def get_original_places(
     return await load_original_places(session, document)
 
 
+def _matches_etag(if_none_match: str | None, etag: str) -> bool:
+    """If-None-Match가 etag와 맞는지 — `*`·쉼표 목록·약한 접두(W/)를 받는다."""
+    if if_none_match is None:
+        return False
+    candidates = [part.strip().removeprefix("W/") for part in if_none_match.split(",")]
+    return "*" in candidates or etag in candidates
+
+
 @router.get("/{bundle_id}/documents/{doc_id}/file")
 async def download_document_file(
     doc_id: IdPath,
     ctx: BundleContext = Depends(_require_member),
     session: AsyncSession = Depends(get_session),
+    if_none_match: Annotated[str | None, Header()] = None,
 ) -> Response:
     document = await _get_document(session, ctx.bundle.id, doc_id)
+    # 같은 파일은 sha256이 같다 — 원본 보기가 탭을 열 때마다 다시 받지 않게 ETag를 단다
+    cache_headers = {"ETag": f'"{document.sha256}"', "Cache-Control": "private, max-age=86400"}
+    if _matches_etag(if_none_match, cache_headers["ETag"]):
+        # 바이트는 읽지 않고 있는지만 본다
+        if await session.scalar(select(DocumentFile.document_id).where(DocumentFile.document_id == document.id)) is None:
+            raise_rule(404, "file_not_found")
+        return Response(status_code=304, headers=cache_headers)
     stored = await session.get(DocumentFile, document.id)
     if stored is None:  # 받지 않았거나 추출에 실패한 문서는 바이트를 남기지 않았다
         raise_rule(404, "file_not_found")
     return Response(
         content=stored.content,
         media_type=_FILE_MEDIA_TYPES[document.file_format],
-        headers={"Content-Disposition": build_content_disposition(document.file_name)},
+        headers={"Content-Disposition": build_content_disposition(document.file_name), **cache_headers},
     )
 
 
