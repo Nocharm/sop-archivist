@@ -7880,51 +7880,60 @@ await runStep("assign: the pair panel never moves the picked box up or down", {}
 });
 
 // 떨어진 짝 괄호선(11-23 명세 E1 · S14) - 고른 박스의 떨어진 짝이 모두 그 칸 화면 안이면 번호 칸 왼쪽에 괄호선 하나가 둘을 잇고 안내 줄은 숨는다.
-// 하나가 화면 밖으로 나가면(사이 줄을 길게 늘여 민다) 괄호선이 사라지고 안내 줄이 선다. Old와 양 단 New가 같다. 짝은 API로 맺고 끝에 푼다(쪼개기 직후 묶음은 배정이 없다)
-await runStep("assign: a far pair on screen gets a bracket in Old and New, the hint hides", {}, async ({ page }) => {
-  const headers = { "X-Dev-User": "qa.member" };
-  const api = `${BASE}/api/bundles/${freshBundleId}`;
+// 하나가 화면 밖으로 나가면(사이 줄을 길게 늘여 민다) 괄호선이 사라지고 안내 줄이 선다. Old와 양 단 New가 같다.
+// 시드에 기대지 않는다 - 합성 docx 둘(같은 본문, 한글 문장과 세 줄 건너 영어 문장)을 새 묶음에 올려 그 둘을 API로 짝 맺고 끝에 묶음을 지운다
+const BRACKET_KO = "합성 탱크를 비운다.";
+const BRACKET_EN = "Empty the synthetic tank.";
+const BRACKET_GAP = ["합성 밸브를 잠근다.", "합성 압력계를 읽는다.", "합성 기록지를 정리한다."];
+await runStep("assign: a far pair on screen gets a bracket in Old and New, the hint hides", { devUser: "dev.admin" }, async ({ page }) => {
+  const headers = { "X-Dev-User": "dev.admin" };
+  const backend = resolve(SCRIPT_DIR, "../../../backend");
+  const oldFile = resolve(SHOT_DIR, "SYNTHETIC_OLD-92_far_pair.docx");
+  const newFile = resolve(SHOT_DIR, "SYNTHETIC_SOP-92_far_pair.docx");
+  const paras = [BRACKET_KO, ...BRACKET_GAP, BRACKET_EN, "Record the synthetic range."].map((text) => `p('${text}')`).join(" + ");
+  const build = [
+    "import sys",
+    "from tests.docx_factory import build_docx, p",
+    `body = p('1. 절차', 'Heading1') + ${paras}`,
+    "open(sys.argv[1], 'wb').write(build_docx(body))",
+    "open(sys.argv[2], 'wb').write(build_docx(body, headers=[p('합성 새 문서')]))",
+  ].join("\n");
+  execFileSync(findBackendPython(), ["-c", build, oldFile, newFile], { cwd: backend, stdio: "inherit" });
+  const created = await (await page.request.post(`${BASE}/api/bundles`, { headers, data: { title: "SYNTHETIC far pair bracket", is_synthetic: true } })).json();
+  const api = `${BASE}/api/bundles/${created.id}`;
   const getJson = async (path) => (await page.request.get(`${api}${path}`, { headers })).json();
   const readView = (docId) => getJson(`/documents/${docId}/view`);
-  const sourceOrder = (one, two) => one.pos_seq - two.pos_seq || (one.spans[0]?.[1] ?? 0) - (two.spans[0]?.[1] ?? 0) || one.id - two.id;
-  // 짝 없는 한글 문장 하나와 그 아래 2~4줄 건너 짝 없는 영어 문장, 그리고 늘일 사이 첫 줄 - 용지에 박스로 서는 줄만 센다(칸 문장 · 저절로 삭제된 줄 · 판단한 줄은 뺀다)
-  const findFarPair = (view, isPickable) => {
-    const units = view.units.filter((unit) => unit.group_unit_id === null && !unit.noise_kind && (unit.status === null || unit.status === "unassigned")).sort(sourceOrder);
-    const isFree = (unit, lang) => unit.kind === "sentence" && unit.lang === lang && unit.pair_id === null && isPickable(unit.id);
-    for (let at = 0; at < units.length; at += 1) {
-      const en = isFree(units[at], "ko") ? units.slice(at + 3, at + 6).find((unit) => isFree(unit, "en")) : undefined;
-      if (en) return { docId: view.document.id, ko: units[at], en, mid: units[at + 1] };
+  const mime = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+  const oldUp = await page.request.post(`${api}/documents`, { headers, multipart: { side: "old", file: { name: "SYNTHETIC_OLD-92_far_pair.docx", mimeType: mime, buffer: readFileSync(oldFile) } } });
+  const newUp = await page.request.post(`${api}/documents`, { headers, multipart: { side: "new", doc_type: "sop", file: { name: "SYNTHETIC_SOP-92_far_pair.docx", mimeType: mime, buffer: readFileSync(newFile) } } });
+  const oldDoc = await oldUp.json();
+  const newDoc = await newUp.json();
+  // 한글 문장 · 영어 문장 · 늘일 사이 첫 줄을 찾고, 저절로 맺힌 짝이 있으면 풀고 그 둘을 짝 맺는다
+  const makeFarPair = async (docId) => {
+    const unitOf = (view, text) => view.units.find((unit) => unit.text === text && unit.group_unit_id === null);
+    for (const text of [BRACKET_KO, BRACKET_EN]) {
+      const view = await readView(docId);
+      const pairId = unitOf(view, text)?.pair_id;
+      if (pairId != null) await page.request.delete(`${api}/documents/${docId}/pairs/${pairId}?revision=${view.document.revision}`, { headers });
     }
-    return null;
+    const view = await readView(docId);
+    const [ko, en, mid] = [BRACKET_KO, BRACKET_EN, BRACKET_GAP[0]].map((text) => unitOf(view, text));
+    if (!ko || !en || !mid) return null;
+    const made = await page.request.post(`${api}/documents/${docId}/pairs`, { headers, data: { revision: view.document.revision, unit_ids: [ko.id, en.id] } });
+    return made.ok() ? { docId, ko, en, mid } : null;
   };
-  const docs = await getJson("/documents");
-  await page.goto(`${BASE}/bundles/${freshBundleId}/assign`);
+  const isUploaded = oldUp.status() === 201 && newUp.status() === 201 && oldDoc.status === "ready" && newDoc.status === "ready";
+  const oldPair = isUploaded ? await makeFarPair(oldDoc.id) : null;
+  const newPair = isUploaded ? await makeFarPair(newDoc.id) : null;
+  check("an Old and a written New document each get a KO/EN pair three lines apart", oldPair !== null && newPair !== null, `${oldUp.status()} ${newUp.status()} old=${oldPair !== null} new=${newPair !== null}`);
+  if (oldPair === null || newPair === null) {
+    await removeShapeBundle(page, { api, headers });
+    return;
+  }
+  await page.goto(`${BASE}/bundles/${created.id}/assign`);
   await wait(page, "assign-bar");
-  await page.waitForLoadState("networkidle");
   if ((await page.locator('[data-testid="assign-new"]').count()) === 0) await page.locator('[data-testid="assign-view-two"]').click();
   await wait(page, "assign-new");
-  const shownNewDoc = Number(await page.locator('[data-testid="assign-new"]').getAttribute("data-doc"));
-  const written = new Set((await getJson("/written-sentences")).filter((row) => row.kind === "sentence" && row.target_doc_id === shownNewDoc && row.new_unit_id != null).map((row) => row.new_unit_id));
-  let oldPair = null;
-  let newPair = null;
-  for (const doc of docs.filter((item) => item.status === "ready")) {
-    const view = await readView(doc.id);
-    if (doc.side === "old" && oldPair === null) oldPair = findFarPair(view, () => true);
-    if (doc.side === "new" && newPair === null) newPair = findFarPair(view, (id) => written.has(id));
-  }
-  check("the fresh bundle has a far KO/EN candidate in an Old and in the shown New document", oldPair !== null && newPair !== null, JSON.stringify({ old: oldPair?.docId, new: newPair?.docId }));
-  if (oldPair === null || newPair === null) return;
-  const makePair = async (pair) => page.request.post(`${api}/documents/${pair.docId}/pairs`, { headers, data: { revision: (await readView(pair.docId)).document.revision, unit_ids: [pair.ko.id, pair.en.id] } });
-  await makePair(oldPair);
-  await makePair(newPair);
-  await page.reload();
-  await wait(page, "assign-bar");
-  await page.waitForLoadState("networkidle");
-  // Old 칸이 다른 문서면 그 문서로
-  if ((await page.locator(`[data-pane="old"] .pane-body .strip[data-strip-unit="${oldPair.ko.id}"]`).count()) === 0 && (await page.locator('[data-testid="assign-old-doc"]').count()) > 0) {
-    await page.locator('[data-testid="assign-old-doc"]').click();
-    await page.locator(`[data-testid="assign-old-doc-option-${oldPair.docId}"]`).click();
-  }
   // 창을 높여 두 끝이 한 화면에 들게 하고, 고른 박스를 칸 위쪽에 둔다
   await page.setViewportSize({ width: VIEWPORT.width, height: 1400 });
   const styles = [];
@@ -7951,16 +7960,10 @@ await runStep("assign: a far pair on screen gets a bracket in Old and New, the h
   check("New: with both ends on screen one bracket joins the pair and the hint hides", results.new.bracket);
   check("New: when the pair leaves the screen the bracket goes and the hint points down", results.new.hint);
 
-  // 시드를 그대로 둔다 - 늘인 줄 · 창 크기를 되돌리고 맺은 짝을 푼다
+  // 늘인 줄 · 창 크기를 되돌리고 묶음을 지운다
   for (const style of styles) await style.evaluate((tag) => tag.remove());
   await page.setViewportSize(VIEWPORT);
-  for (const pair of [oldPair, newPair]) {
-    const view = await readView(pair.docId);
-    const pairId = view.units.find((unit) => unit.id === pair.ko.id)?.pair_id;
-    if (pairId != null) await page.request.delete(`${api}/documents/${pair.docId}/pairs/${pairId}?revision=${view.document.revision}`, { headers });
-  }
-  const after = await Promise.all([oldPair, newPair].map((pair) => readView(pair.docId)));
-  check("the pairs made for this step are undone", after.every((view, at) => view.units.find((unit) => unit.id === [oldPair, newPair][at].ko.id)?.pair_id === null));
+  await removeShapeBundle(page, { api, headers });
 });
 
 // 좁은 창에서 오른쪽 칸 떼기(설계 2026-11-25 §6 S3) - 두 문서가 그 열을 쓰고, 판은 머리로 끌려 창 안에만 있고, 자리 · 접힘을 기억하고, 모달이 아니라 단축키가 그대로 된다
