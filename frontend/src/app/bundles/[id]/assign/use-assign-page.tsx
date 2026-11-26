@@ -82,7 +82,7 @@ import { buildLinkSave } from "@/lib/link-save-model";
 import { buildIdenticalBatches } from "@/lib/match-model";
 import { EMPTY_FOLD_OPEN, type FoldOpen } from "@/lib/paper-fold-model";
 import { buildPaperModel, buildPaperTabs, findNearestCut, isBandHeading, listFigureTabUnitIds, listTabKeys, resolvePickUnit, shouldRecenter, type PaperTabKey } from "@/lib/paper-model";
-import { isTableWalkUnit } from "@/lib/table-tab-model";
+import { findUnitTable, isTableWalkUnit } from "@/lib/table-tab-model";
 import { useFoldedTables } from "@/lib/use-folded-tables";
 import { findPairTarget } from "@/lib/pair-hint-model";
 import { readPartState, stepPart, withPartState } from "@/lib/part-history";
@@ -995,7 +995,10 @@ export function useAssignPage() {
     return () => void handles.delete(handle);
   }, []);
   const [manualPart, setManualPart] = useState<{ key: string; part: PaperTabKey } | null>(null);
-  const wantedPart = (manualPart?.key === (activeKey ?? "") ? manualPart.part : null) ?? partOf?.get(row?.unitIds[0] ?? (isSolo ? soloUnit?.id : undefined) ?? -1) ?? "body";
+  const partUnitId = row?.unitIds[0] ?? (isSolo ? soloUnit?.id : undefined) ?? -1;
+  // 표 탭에서 고른 표 단위는 표 탭에 둔다 - 표의 tabOf는 본문이라 줄이 바뀌어도 표 탭을 지킨다(11-23 명세 E2)
+  const isTablesKept = manualPart?.part === "tables" && paperModel !== null && findUnitTable(paperModel.tableBlocks, partUnitId, paperModel.units) !== null;
+  const wantedPart = (manualPart?.key === (activeKey ?? "") || isTablesKept ? (manualPart?.part ?? null) : null) ?? partOf?.get(partUnitId) ?? "body";
   const activePart = partKeys.includes(wantedPart) ? wantedPart : (partKeys[0] ?? "body");
   /** 사람이 탭을 바꾼다(누름 · Ctrl+←→) - 뒤로 가기가 보던 탭으로 오게 지금 탭을 적어 두고 같은 주소의 기록을 하나 더한다(B2-R7) */
   function changePart(part: PaperTabKey) {
@@ -2540,7 +2543,8 @@ export function useAssignPage() {
       rowOfUnit,
       listed: new Set(listKeys),
       isByRow: isPairView,
-      readTab: (unitId) => partOf?.get(unitId) ?? "body",
+      // 표 탭에서는 다음 박스도 그 문서의 표에서
+      readTab: (unitId) => (activePart === "tables" ? (isTableStep(unitId) ? "tables" : "body") : (partOf?.get(unitId) ?? "body")),
       isDeleted: (key) => rowMap.get(key)?.unitIds.every((id) => isDeletedUnit(unitMap.get(id))) ?? false,
       from: saved.key,
       fromUnitId: pickedId,
