@@ -5,7 +5,7 @@
 
 import { useEffect, useEffectEvent, useReducer, useRef, type RefObject } from "react";
 
-import { openOriginalRoot, paginateRendered, readPartsToMark, renderOriginal, replaceUnrenderable, stripUnsafeLinks } from "@/components/assign/original-render";
+import { openOriginalRoot, paginateRendered, readPartsToMark, renderMetafiles, renderOriginal, replaceUnrenderable, stripUnsafeLinks } from "@/components/assign/original-render";
 import { fetchOriginalPlaces } from "@/lib/api-sop";
 import { downloadDocumentFile } from "@/lib/api-manage";
 import { useI18n } from "@/lib/i18n";
@@ -96,6 +96,8 @@ export function useOriginalRender(
       await renderOriginal(file, planted.parts, body, styles);
       if (cancelled) return;
       stripUnsafeLinks(body);
+      await renderMetafiles(body);
+      if (cancelled) return;
       replaceUnrenderable(body, readEmfLabel());
       const pageCount = paginateRendered(body);
       doneRef.current = runKey;

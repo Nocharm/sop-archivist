@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   NUMPAGES_TOKEN,
@@ -6,9 +6,41 @@ import {
   markHeaderRows,
   markPageFields,
   paginateRendered,
+  renderMetafiles,
   replaceUnrenderable,
+  sanitizeMetafileSvg,
   stripUnsafeLinks,
 } from "./original-render";
+
+// rtf.js 묶음은 바깥 그리개라 가짜로 - 부르는 쪽이 만든 설정(width · 범위)과 돌려받은 SVG 처리만 본다
+const rendererState = vi.hoisted(() => ({ emf: 0, wmf: 0, fail: false, settings: [] as unknown[] }));
+function makeFakeSvg(settings: unknown): SVGElement {
+  rendererState.settings.push(settings);
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.append(document.createElementNS("http://www.w3.org/2000/svg", "path"));
+  return svg;
+}
+vi.mock("rtf.js/dist/EMFJS.bundle.min.js", () => ({
+  Renderer: class {
+    constructor() {
+      rendererState.emf += 1;
+      if (rendererState.fail) throw new Error("bad emf");
+    }
+    render(settings: unknown) {
+      return makeFakeSvg(settings);
+    }
+  },
+}));
+vi.mock("rtf.js/dist/WMFJS.bundle.min.js", () => ({
+  Renderer: class {
+    constructor() {
+      rendererState.wmf += 1;
+    }
+    render(settings: unknown) {
+      return makeFakeSvg(settings);
+    }
+  },
+}));
 
 const W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
 
@@ -150,6 +182,114 @@ describe("replaceUnrenderable", () => {
     ]);
     expect(boxes[0].textContent).toBe("Preview unavailable (EMF)");
     expect(root.querySelectorAll("img")).toHaveLength(1);
+  });
+});
+
+/** 최소 EMF 머리(형식 1 · " EMF" 표식 · 범위 0..99) / 자리 지정 WMF 머리를 data 주소로 */
+function metafileUri(kind: "emf" | "wmf"): string {
+  const bytes = new Uint8Array(kind === "emf" ? 88 : 22);
+  const view = new DataView(bytes.buffer);
+  if (kind === "emf") {
+    view.setUint32(0, 1, true);
+    view.setUint32(4, 88, true);
+    view.setInt32(16, 99, true);
+    view.setInt32(20, 49, true);
+    view.setUint32(40, 0x464d4520, true);
+  } else {
+    view.setUint32(0, 0x9ac6cdd7, true);
+    view.setInt16(10, 200, true);
+    view.setInt16(12, 100, true);
+  }
+  return `data:image/x-${kind};base64,${btoa(String.fromCharCode(...bytes))}`;
+}
+
+describe("renderMetafiles", () => {
+  beforeEach(() => {
+    Object.assign(rendererState, { emf: 0, wmf: 0, fail: false, settings: [] });
+  });
+
+  it("draws an EMF image as inline svg", async () => {
+    const img = el("img", { src: metafileUri("emf") });
+    const root = el("div", {}, img);
+
+    expect(await renderMetafiles(root)).toEqual({ drawn: 1, failed: 0 });
+
+    expect(root.querySelector("img")).toBeNull();
+    expect(root.querySelector("span.sopa-ov-metafile > svg")).not.toBeNull();
+    expect(rendererState.settings[0]).toMatchObject({ wExt: 100, hExt: 50, xExt: 100, yExt: 50, mapMode: 8 });
+  });
+
+  it("draws a WMF image with the WMF renderer", async () => {
+    const root = el("div", {}, el("img", { src: metafileUri("wmf") }));
+
+    expect(await renderMetafiles(root)).toEqual({ drawn: 1, failed: 0 });
+
+    expect(rendererState.wmf).toBe(1);
+    expect(rendererState.emf).toBe(0);
+    expect(rendererState.settings[0]).toMatchObject({ xExt: 200, yExt: 100 });
+  });
+
+  it("keeps the original size and position", async () => {
+    const img = el("img", { src: metafileUri("emf") });
+    img.style.width = "120pt";
+    img.style.height = "80pt";
+    img.style.position = "absolute";
+    const root = el("div", {}, img);
+
+    await renderMetafiles(root);
+
+    const box = root.querySelector<HTMLElement>("span.sopa-ov-metafile");
+    expect([box?.style.width, box?.style.height, box?.style.position]).toEqual(["120pt", "80pt", "absolute"]);
+  });
+
+  it("leaves the image for the hatch box when the renderer throws", async () => {
+    rendererState.fail = true;
+    const root = el("div", {}, el("img", { src: metafileUri("emf") }), el("img", { src: "data:image/x-emf;base64,AQAAAA==" }));
+
+    expect(await renderMetafiles(root)).toEqual({ drawn: 0, failed: 2 });
+
+    expect(replaceUnrenderable(root, "x")).toBe(2);
+    expect(root.querySelector("svg")).toBeNull();
+  });
+
+  it("does not load rtf.js when there is no metafile", async () => {
+    const root = el("div", {}, el("img", { src: "data:image/png;base64,iVBORw0KGgo=" }));
+
+    expect(await renderMetafiles(root)).toEqual({ drawn: 0, failed: 0 });
+
+    expect(rendererState.emf + rendererState.wmf).toBe(0);
+  });
+});
+
+describe("sanitizeMetafileSvg", () => {
+  it("strips script, foreignObject, event handlers and external hrefs", () => {
+    const ns = "http://www.w3.org/2000/svg";
+    const svg = document.createElementNS(ns, "svg");
+    svg.setAttribute("onload", "x()");
+    const mk = (tag: string, attrs: Record<string, string> = {}) => {
+      const node = document.createElementNS(ns, tag);
+      for (const [key, value] of Object.entries(attrs)) node.setAttribute(key, value);
+      svg.append(node);
+      return node;
+    };
+    mk("script");
+    mk("foreignObject");
+    const rect = mk("rect", { onclick: "x()", fill: "red" });
+    const web = mk("image", { href: "https://evil.test/a.png" });
+    const js = mk("a", { "xlink:href": "javascript:alert(1)" });
+    const data = mk("image", { href: "data:image/png;base64,AA==" });
+    const local = mk("use", { href: "#a" });
+
+    sanitizeMetafileSvg(svg);
+
+    expect(svg.querySelector("script, foreignObject")).toBeNull();
+    expect(svg.hasAttribute("onload")).toBe(false);
+    expect(rect.hasAttribute("onclick")).toBe(false);
+    expect(rect.getAttribute("fill")).toBe("red");
+    expect(web.hasAttribute("href")).toBe(false);
+    expect(js.hasAttribute("xlink:href")).toBe(false);
+    expect(data.hasAttribute("href")).toBe(true);
+    expect(local.hasAttribute("href")).toBe(true);
   });
 });
 
