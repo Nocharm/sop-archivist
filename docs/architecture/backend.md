@@ -305,6 +305,7 @@ AI 없이 사람이 끝까지 가는 결정적 경로(계획 1). AI 층은 아�
 
 - 편집·되돌리기·다시 하기가 하나로 합쳐 검사(판단 있는 단위·확인 플래그) → 단위 은퇴·생성 → 떼어 내기·맞추기 → 커버리지 가드 → 문서 revision +1을 돈다.
 - 새 편집 종류는 `_Change`로 이 길에 얹는다.
+- 합친 박스와 그 조각은 편집 기록 하나에서 `read_merged_pieces`로만 읽는다(문서 보기 `merge_pieces` · 합치기 풀기 · 조각 언어 · 한글 표처럼 하기). 옛 `merge` · `switch_language`는 만든 1 · 은퇴 2 이상이면 합친 것이고, 여럿 고른 줄 합치기 `merge_rows`는 박스마다의 조각을 `payload.merged`(`_Change.merged`, 만든 단위와 같은 원문 순)에 남긴다 — 운영의 옛 기록에는 그 키가 없어도 같은 답이다.
 
 ### 12.11 문단 번호 `numbering.py`(표 풀기·표준화 명세 F5, Alembic `0028`)
 
@@ -349,9 +350,9 @@ AI 없이 사람이 끝까지 가는 결정적 경로(계획 1). AI 층은 아�
 ### 12.16 대응 표 `counterparts.py`(F8a, Alembic 없음)
 
 - 한/영 따로 문서의 같은 꼴 표 판정(`is_same_form`)과 비슷한 차례는 이 순수 모듈에 두고 짝 다시 세우기(`units.refresh_code_pairs` → `_find_table_pairs`)가 쓴다 — 둘 다 벗긴 한글 표를 같은 꼴인 가장 비슷한 벗긴 영어 표와 맺는다.
-- 표는 하나씩 벗긴다(함께 벗기기는 걷었다, 사용자 결정 2026-11-19 — 옛 편집 기록의 `payload.counterpart_table_id`는 읽지 않는다).
+- 표는 한 표씩 또는 여럿을 골라 한 번에 벗긴다 — 여럿은 편집 `set_layout_tables`(`_plan_set_layout_tables`)가 표마다의 변경을 `_merge_changes`로 이어 되돌리기 한 번이고, 벗길 바깥 표와 함께 고른 안쪽 띠 표는 건너뛴다(바깥 표가 데려간다). 대응 표를 저절로 함께 벗기기는 걷었다(사용자 결정 2026-11-19 — 옛 편집 기록의 `payload.counterpart_table_id`는 읽지 않는다).
 - 행 수가 다른 대응 표는 추출 경고 `pair_rows_differ`(확인 불필요)로 남고 짝을 다시 세울 때마다 맞춘다.
-- 영어 Old 표의 짝 한글 표(11-23 명세 D2-R1~R3)는 `table_follow.py`가 꼴 · 언어 무관 토큰 · (켜져 있으면) 임베딩으로 고르고 후보는 `counterparts.list_candidates`(벗김 상태 무관)를 쓴다. 애매하면 사람이 고르고 그 답은 `table_counterparts`(Alembic `0040`, 표마다 한 행, NULL = 짝 없음)에 남는다 — 사람의 답이 점수를 이긴다. 읽기는 세션을 닫은 뒤 임베딩을 부른다. 짝이 정해지고 두 표가 벗긴 표면 `match_rows`가 행을 내용으로 맞추고 `build_follow_plan`이 한글 표에서 한 일(순서 · 삭제 · 합치기 · 들여쓰기 · 번호)을 계획한다(D2-R4 · R5, 맞춘 꼴이 다르면 `None` = AI 길). 계획은 저장하지 않는다(`GET …/tables/{t}/follow`, D2-R7). 적용 편집 `follow_table`(`editing._plan_follow_table`)은 `_plan_merge`의 초안 · `_plan_set_number`(따라 고치지 않음) · `_plan_set_indents` · 덩이 순서를 `_merge_changes`로 한 변경에 담고, 삭제 줄은 라우터가 같은 트랜잭션에서 `table_follow.dispose_follow_deletes`(→ `decisions.dispose_units`)로 쓴 뒤 편집 전 덤프로 Assign 단계 하나를 남긴다(편집이 비었으면 `record_snapshot_step`). 이 편집이 만든 합친 줄은 `is_merge_edit`가 보는 합치기 기록이 아니라 조각 표시 · 합치기 풀기가 없다(되돌리기는 된다).
+- 영어 Old 표의 짝 한글 표(11-23 명세 D2-R1~R3)는 `table_follow.py`가 꼴 · 언어 무관 토큰 · (켜져 있으면) 임베딩으로 고르고 후보는 `counterparts.list_candidates`(벗김 상태 무관)를 쓴다. 애매하면 사람이 고르고 그 답은 `table_counterparts`(Alembic `0040`, 표마다 한 행, NULL = 짝 없음)에 남는다 — 사람의 답이 점수를 이긴다. 읽기는 세션을 닫은 뒤 임베딩을 부른다. 짝이 정해지고 두 표가 벗긴 표면 `match_rows`가 행을 내용으로 맞추고 `build_follow_plan`이 한글 표에서 한 일(순서 · 삭제 · 합치기 · 들여쓰기 · 번호)을 계획한다(D2-R4 · R5, 맞춘 꼴이 다르면 `None` = AI 길). 계획은 저장하지 않는다(`GET …/tables/{t}/follow`, D2-R7). 적용 편집 `follow_table`(`editing._plan_follow_table`)은 `_plan_merge`의 초안 · `_plan_set_number`(따라 고치지 않음) · `_plan_set_indents` · 덩이 순서를 `_merge_changes`로 한 변경에 담고, 삭제 줄은 라우터가 같은 트랜잭션에서 `table_follow.dispose_follow_deletes`(→ `decisions.dispose_units`)로 쓴 뒤 편집 전 덤프로 Assign 단계 하나를 남긴다(편집이 비었으면 `record_snapshot_step`). 이 편집이 만든 합친 줄은 `read_merged_pieces`가 보는 합치기 기록이 아니라 조각 표시 · 합치기 풀기가 없다(되돌리기는 된다).
 
 ### 12.17 참조 판정·번호 꼴 `refs.read_ref_state`·`is_document_number`
 
