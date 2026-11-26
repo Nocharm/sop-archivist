@@ -135,7 +135,8 @@
   .adm-recent li { display: grid; gap: 1px; padding-left: 10px; border-left: 2px solid var(--line-2); font-size: var(--fs-ui); color: var(--ink); }
 
   /* 역할 × 권한 표 */
-  .adm-matrix-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: var(--r-3); }
+  /* relative: 칸 안 sr-only(absolute)가 이 상자를 기준으로 잘리게 - 없으면 스크롤 밖으로 새어 문서 전체에 가로 스크롤이 생긴다(1120 감사 X0) */
+  .adm-matrix-wrap { position: relative; overflow-x: auto; border: 1px solid var(--line); border-radius: var(--r-3); }
   .adm-matrix { width: 100%; border-collapse: separate; border-spacing: 0; font-size: var(--fs-ui); line-height: var(--lh-ui); }
   .adm-matrix th { padding: 8px 8px; font-size: var(--fs-cap); line-height: var(--lh-cap); font-weight: 500; color: var(--ink-3); text-align: left; vertical-align: bottom; border-bottom: 1px solid var(--line); }
   .adm-matrix th.grp { text-align: center; border-left: 1px solid var(--line); color: var(--ink-2); font-weight: 600; }
