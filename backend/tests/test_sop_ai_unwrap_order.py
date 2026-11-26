@@ -21,12 +21,13 @@ from tests.ai_fixtures import (
     edit_document,
     make_ai_bundle,
     read_rows,
+    request_classify,
     run_jobs,
     upload_second_document,
 )
-from tests.docx_factory import make_grid_table, make_row
+from tests.docx_factory import build_docx, make_grid_table, make_row
 from tests.fake_ai import FakeAi
-from tests.sop_helpers import AUTHOR, REVIEWER, get_view
+from tests.sop_helpers import AUTHOR, REVIEWER, get_view, upload
 
 pytestmark = pytest.mark.usefixtures("clean_sop", "clean_ai_jobs")
 
@@ -34,6 +35,7 @@ LABEL_TABLE = make_grid_table(2, make_row(["항목", "값"]) + make_row(["압력
 DATA_TABLE = make_grid_table(2, make_row(["합성 항목", "합성 값"]) + make_row(["합성 압력", "10 bar"]))
 SINGLE_TABLE = make_grid_table(1, make_row(["합성 단독 칸"]))
 MARKER = "RAW-REPLY-MARKER"
+NEW_FILE = "SYNTHETIC_NEW-ORDER_Table.docx"
 
 
 def request_order(
@@ -61,10 +63,17 @@ def read_lines(client: TestClient, bundle_id: int, document_id: int, table_id: i
 class Block:
     """벗긴 표 덩이 하나가 든 묶음 — 문서·표 id와 원문 순서의 줄 id."""
 
-    def __init__(self, client: TestClient, body: str, table_index: int = 0, *, unwrap: bool = True) -> None:
+    def __init__(
+        self, client: TestClient, body: str, table_index: int = 0, *, unwrap: bool = True, side: str = "old"
+    ) -> None:
         self.client = client
         self.bundle: AiBundle = make_ai_bundle(client)
-        view = upload_second_document(client, self.bundle.id, body)
+        if side == "new":
+            uploaded = upload(client, self.bundle.id, build_docx(body), NEW_FILE, side="new", doc_type="sop")
+            assert uploaded.status_code == 201 and uploaded.json()["status"] == "ready", uploaded.text
+            view = get_view(client, self.bundle.id, uploaded.json()["id"])
+        else:
+            view = upload_second_document(client, self.bundle.id, body)
         self.document_id = view["document"]["id"]
         self.table_id = view["tables"][table_index]["id"]
         if unwrap:
@@ -214,6 +223,45 @@ def test_happy_path_writes_an_applied_suggestion_and_the_payload_has_no_names(cl
     assert all(set(line) == {"id", "text", "row", "col"} for line in data["lines"])
     payload_text = json.dumps(fake_ai.bodies, ensure_ascii=False)
     assert AUTHOR["X-Dev-User"] not in payload_text and REVIEWER["X-Dev-User"] not in payload_text
+
+
+# --- New 문서 (쪼개기 먼저 설계 §8 4-3: 벗긴 New 표에도 순서 제안) ---
+
+
+def test_order_request_accepts_a_new_document_table(client: TestClient, fake_ai: FakeAi) -> None:
+    block = Block(client, LABEL_TABLE, side="new")
+    lines = block.read_lines()
+    use_order(fake_ai)
+
+    response = block.request()
+    run_jobs()
+
+    assert response.status_code == 200, response.text
+    assert response.json()["queued"] == 1
+    suggestion = read_single_suggestion()
+    assert (suggestion.result, suggestion.document_id) == ("applied", block.document_id)
+    assert suggestion.content["unit_ids"] == [line["id"] for line in lines][::-1]
+
+
+def test_new_table_order_payload_has_no_names(client: TestClient, fake_ai: FakeAi) -> None:
+    block = Block(client, LABEL_TABLE, side="new")
+    use_order(fake_ai)
+    block.request()
+
+    run_jobs()
+
+    (data,) = fake_ai.requests
+    assert all(set(line) == {"id", "text", "row", "col"} for line in data["lines"])
+    payload_text = json.dumps(fake_ai.bodies, ensure_ascii=False)
+    assert AUTHOR["X-Dev-User"] not in payload_text and REVIEWER["X-Dev-User"] not in payload_text
+
+
+def test_classify_still_refuses_a_new_document(client: TestClient, fake_ai: FakeAi) -> None:
+    block = Block(client, LABEL_TABLE, side="new")
+
+    response = request_classify(client, block.bundle.id, document_id=block.document_id)
+
+    assert (response.status_code, response.json()["detail"]["code"]) == (404, "document_not_found")
 
 
 def test_suggested_order_is_accepted_by_the_reorder_edit(client: TestClient, fake_ai: FakeAi) -> None:
