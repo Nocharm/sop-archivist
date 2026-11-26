@@ -8,7 +8,7 @@ SOP Archivist 서비스 버전 기록. 단일 소스는 `frontend/package.json` 
 
 - **범위**: v1.5.0 뒤 dev 업데이트 v1.6.0~v1.6.44 — 쪼개기 먼저 패치(T/F 피드백 2차 명세 17항목 중 F2-R1~R5를 뺀 전부 · 회의 결정), 관리 화면 다듬기, 1차 피드백, 연습 페이지 `/practice`(말풍선 스포트라이트). 줄마다의 기록은 아래 그대로다.
 - **배포 메모**:
-  - **CHANGELOG에 v1.5.0의 운영 배포 기록이 없다(직전 운영 배포는 v1.4.0, 2026-11-20).** 운영이 아직 v1.4.0이면 v1.5.0의 배포 메모도 이 배포에 함께 적용된다 — **Alembic `0035`가 운영 DB의 기존 `units.text` 줄바꿈을 띄어쓰기로 바꾼다(사용자 승인 2026-11-21)**, `0036` · `0037`, AI 지침 `prompt.unwrap_order`, 추출기 7 → 9.
+  - 운영은 v1.5.0(2026-11-23 무렵 배포, 사용자 확인 11-27) — v1.5.0의 Alembic `0035`(기존 행 바꿈) · `0036` · `0037`은 이미 적용됐고, 이번 배포는 아래 `0038`~`0041`(더하기만)만 돈다.
   - v1.5.0 뒤 Alembic `0038`~`0041`은 **더하기만** 한다(upgrade 기준, 파일을 읽어 확인): `0038` `extractions.split_rule` 열(기존 행 1), `0039` `units.noise_reason`(기존 행 빈 글) · `unit_edits.noise_reason_changes`(기존 행 `{}`) 열, `0040` 새 표 `table_counterparts`와 인덱스 둘, `0041` `ai_jobs` 종류 CHECK에 `table_follow` 값 하나. 기존 행의 값을 지우거나 바꾸지 않는다(`0041`의 downgrade만 `table_follow` 작업을 지운다 — 운영은 downgrade하지 않는다).
   - 배포 전 백업(`docs/deploy/backup.md`)이 있는지 확인한다.
   - AI 지침 `prompt.grant`(v1.6.19) · `prompt.table_follow`(v1.6.21)가 기동 때 v1로 시드된다(기존 지침 행은 그대로).
@@ -76,6 +76,7 @@ SOP Archivist 서비스 버전 기록. 단일 소스는 `frontend/package.json` 
   - **업무흐름도를 간이 그림으로**(v1.4.17~v1.4.18): Word 도형 캔버스 · 묶음을 흑백 PNG 그림 하나로 그리고(추출기 9), 도형 안 글은 그림 아래 접힌 **Text in figure** 목록에만. 문서에 적힌 선 굵기 · 글자 크기는 상한 안으로 묶는다.
   - **WI 상위 SOP 선택 · 참조로 찾은 상위**(v1.4.19): WI 상위를 비워 둘 수 있고(**None — find by reference**), 올린 New SOP의 확정 참조 줄 번호가 WI 번호와 같으면 그 SOP의 자식으로 본다(Documents에 점선 줄 + **Linked by reference**).
 - **배포 메모**:
+  - **운영 배포 2026-11-23 무렵(월요일, 사용자 기억 — 정확한 날은 GitLab 파이프라인 기록).** 운영 상단 바 v1.5.0 확인(사용자 2026-11-27). 아래 `0035`를 포함한 이 배포 메모가 그때 적용됐다.
   - **Alembic `0035`가 운영 DB의 기존 Unit 글(`units.text`)의 줄바꿈을 띄어쓰기로 바꾼다(사용자 승인 2026-11-21, 길이 그대로 · 확정한 New 문장 글은 그대로 · 되돌리지 않음) — 배포 전 백업(`docs/deploy/backup.md`)이 있는지 확인한다.**
   - **Alembic `0036`(`units.indent_shift` · `unit_edits.indent_changes` 열 추가), `0037`(`ai_jobs` 종류 CHECK에 `unwrap_order` 추가) — 기존 행의 값은 바꾸지 않는다.**
   - **AI 프롬프트 `prompt.unwrap_order` 추가(기동 때 v1로 시드).**

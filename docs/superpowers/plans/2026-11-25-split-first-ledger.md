@@ -45,7 +45,26 @@
 | F9b | `feat/practice-coach` | 합침 | v1.6.44 · c6831dfd | vitest 2832 · build 경고 0 · `practice:` ALL PASS 56(첫 실행) · overlap `assign-pane-head-narrow` 4/4 · 그림 `practice` 다시 · 검토 생략(연습 화면만, Assign 파일 변경 없음) | 그림 `/private/tmp/claude-501/-Users-hyeonjin-Documents-sop-archivist/cd35c95b-037a-4e82-bb7a-e837e4859e96/scratchpad/shots/coach/`(1440 en 앞면 · 뒤집힘 · 다음, 1120 ko) |
 
 
-## 이어 가기 (2026-11-27 아침 — 연습 화면 말풍선까지, 준비 커밋을 v1.6.44로. 다음은 여기부터)
+## 이어 가기 (2026-11-27 — 세션 끝. 다음 세션은 여기부터)
+
+`origin/dev` = **v1.6.44 + 준비 커밋**(`chore(release): v1.6.44`, 그 뒤 이 장부 · 배포 기록 고침). 운영 = **v1.5.0**(2026-11-23 무렵 배포, 사용자 확인 — CHANGELOG에 적음). 개발 :4444는 dev 푸시마다 자동.
+
+**다음 세션이 할 일 (차례)**
+1. 사용자와 개발 서버 :4444에서 체크리스트 `docs/qa/2026-11-26-release-frontend-checklist.html` 1차 피드백 절(특히 연습 화면 말풍선 `fb-coach`)과 아래 "아침에 볼 것"의 (F…) 줄을 함께 본다. 고칠 것이 나오면 브랜치 하나씩 → dev(번호 PATCH, 1.6.45 …) → 준비 커밋 내용(CHANGELOG 릴리스 제목 · 설명서 머리 · CLAUDE.md 상태 줄 · README · 체크리스트)을 새 번호로 다시 맞춘다(11-27 v1.6.43→v1.6.44 때처럼).
+2. 사용자가 확인하면 main 합치기 · 태그(사용자 PC 또는 사용자 승인 뒤):
+   ```bash
+   git fetch && git switch dev && git pull --ff-only
+   git tag -a v1.6.44 -m "v1.6.44 — 정식 업데이트" && git switch main && git pull --ff-only && git merge --no-ff dev -m "Merge dev into main (v1.6.44)" && git push origin main && git push origin v1.6.44 && git switch dev
+   ```
+   → 사용자가 GitLab `deploy-production` ▶ → 상단 바 확인 → CHANGELOG v1.6.44 배포 메모에 **운영 배포 날짜** → 다음 dev 첫 푸시는 MINOR(1.7.0).
+3. 배포 뒤 정리: 이 장부와 `2026-11-23-assign-feedback-2.md`(F2-R1~R5 보류분만 남음 — 숨긴 새 문서 기능을 다시 켤 때까지 둘지 사용자에게)를 끝난 계획 정책대로 정리.
+4. 다음 묶음(미룸): 6 표 꼴 개정 이력 · 7 Reference 아래가 참조로 안 된 경우(실제 문서 분석 — :4444 Bundle을 사용자에게 묻기) · 스모크 "맞을 때까지 읽기" 공용 함수(`/harden`) · README 5줄의 숨긴 기능(Order · 결과물 C) 설명 다듬기.
+
+**배포 메모 요지**: v1.5.0 뒤 Alembic `0038`~`0041` 더하기만, env · 권한 · 의존성 변경 없음, 배포 전 백업 확인. 검증: `FULL=1` ALL PASS 2588(v1.6.43), v1.6.44는 연습 화면만 바뀌어 `practice:` 56 · vitest 2832 · build 경고 0.
+
+**지휘 도구**: `~/Documents/sop-orchestration/`(brief-impl · brief-review · gate.sh · merge.py(아침에 볼 것은 "사용자 답 (2026-11-26 아침)" 앞에 붙임) · ship.sh · perf.sh). 남은 워크트리는 `sop-wt-admin-polish`(다른 트랙)뿐.
+
+### 11-27 아침 기록 (연습 화면 말풍선 · 준비 커밋을 v1.6.44로)
 
 - (11-27 아침) 사용자 요청으로 연습 화면을 말풍선 스포트라이트 + 완료 플립으로 바꿔 **v1.6.44**(F9b)를 더했고, 준비 커밋 내용(CHANGELOG 릴리스 제목 · 설명서 머리 · CLAUDE.md · README · 체크리스트)을 v1.6.44로 다시 맞췄다. 아래 v1.6.43 글은 그때의 기록 — **main 합치기 · 태그는 v1.6.44**:
   ```bash
@@ -185,7 +204,7 @@
 
 ## 아침에 볼 것 (사람이 정할 것 · 봐 줄 것)
 
-- **(정식 업데이트, 먼저) CHANGELOG에 v1.5.0의 운영 배포 기록이 없다.** 운영이 아직 v1.4.0이면 이번 배포에 v1.5.0의 **Alembic `0035`(기존 `units.text`의 줄바꿈을 띄어쓰기로 바꿈, 사용자 승인 2026-11-21)**도 함께 돈다 — 배포 메모 첫 줄에 굵게 적었다. v1.5.0 뒤 리비전 0038~0041은 더하기만(0041 downgrade만 행을 지움). env · 의존성 · 권한 변경 없음. 배포 전 백업(`docs/deploy/backup.md`) 확인.
+- ~~(정식 업데이트, 먼저) CHANGELOG에 v1.5.0의 운영 배포 기록이 없다~~ — 사용자 확인(11-27): 운영은 v1.5.0(2026-11-23 무렵), `0035`는 이미 적용됨. CHANGELOG에 적음. 운영이 아직 v1.4.0이면 이번 배포에 v1.5.0의 **Alembic `0035`(기존 `units.text`의 줄바꿈을 띄어쓰기로 바꿈, 사용자 승인 2026-11-21)**도 함께 돈다 — 배포 메모 첫 줄에 굵게 적었다. v1.5.0 뒤 리비전 0038~0041은 더하기만(0041 downgrade만 행을 지움). env · 의존성 · 권한 변경 없음. 배포 전 백업(`docs/deploy/backup.md`) 확인.
 - (정식 업데이트) README 5줄 기능 설명에 지금 숨긴 Order · 결과물 C가 남아 있다(준비 커밋 범위 밖이라 그대로).
 - (정식 업데이트) `2026-11-23-assign-feedback-2.md`는 F2-R1~R5(To-Be 문서로 보내기 · ⇧D, 숨긴 새 문서 기능)가 보류라 남겼다. 끝난 계획 · 설계는 지우고 인용 부분은 `docs/architecture/decisions.md`로 옮김.
 
