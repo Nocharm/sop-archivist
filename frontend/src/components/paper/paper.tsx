@@ -2030,8 +2030,9 @@ export function Paper({
       pressRef.current = el ? { el, top: el.getBoundingClientRect().top } : null;
     }
     if (onUnitDoubleClick && event.detail > 1 && (event.target as HTMLElement).closest(".su[data-unit]")) event.preventDefault();
-    // Shift+클릭이 여럿 고르기인 화면(Assign, 또는 끌어 고르기가 없는 화면)에서는 브라우저가 글자 선택을 늘려 클릭을 삼키지 않게
-    if ((shiftClickPicks || !onRangeSelect) && event.shiftKey && (event.target as HTMLElement).closest(".su[data-unit]")) event.preventDefault();
+    // Shift+클릭이 여럿 고르기인 화면(Assign, 또는 끌어 고르기가 없는 화면)에서는 브라우저가 글자 선택을 늘려 클릭을 삼키지 않게 - 글 끝 뒤 빈자리 같은
+    // 박스 안 글 밖도(끌어 고르기를 켠 New 용지에서 짧은 글의 박스를 누르면 글 밖이다)
+    if ((shiftClickPicks || !onRangeSelect) && event.shiftKey && (event.target as HTMLElement).closest(".su[data-unit], [data-strip-unit]")) event.preventDefault();
   }
 
   function handleMouseUp() {
