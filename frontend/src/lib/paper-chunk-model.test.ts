@@ -83,23 +83,23 @@ describe("sliceFoldEntries", () => {
 describe("what a chunk shows", () => {
   const mine = new Set([1, 2]);
 
-  function pending(part: { lockedIds?: number[]; shimmerIds?: number[]; waits?: Array<[number, number]>; pills?: PaperPending["pills"] }): PaperPending {
-    return { lockedIds: new Set(part.lockedIds), shimmerIds: new Set(part.shimmerIds), waits: new Map(part.waits), pills: part.pills ?? [] };
+  function pending(part: { lockedIds?: number[]; shimmerIds?: number[]; waits?: Array<[number, string]>; pills?: PaperPending["pills"] }): PaperPending {
+    return { lockedIds: new Set(part.lockedIds), shimmerIds: new Set(part.shimmerIds), waits: new Map((part.waits ?? []).map(([id, text]) => [id, { kind: "save", text }])), pills: part.pills ?? [] };
   }
   const pill = (id: string, place: PaperPending["pills"][number]["place"], label = "Joining…") => ({ id, kind: "merge", label, place });
   const folds = (items: Array<[number, string, string]>) =>
     new Map(items.map(([id, rowKey, remark]): [number, DeletedFold] => [id, { rowKey, remark, kind: "text", lang: "en", text: "" }]));
 
   it("reads the pending work of its own boxes only", () => {
-    const busy = pending({ lockedIds: [1], shimmerIds: [1], waits: [[2, 1]] });
+    const busy = pending({ lockedIds: [1], shimmerIds: [1], waits: [[2, "Queued · Delete"]] });
     expect(readChunkPending(undefined, mine)).toBe("");
     expect(readChunkPending(busy, mine)).not.toBe("");
     // 남의 덩어리 일은 값이 같다
-    expect(readChunkPending(pending({ lockedIds: [1, 9], shimmerIds: [1], waits: [[2, 1], [8, 2]] }), mine)).toBe(readChunkPending(busy, mine));
-    expect(readChunkPending(pending({ lockedIds: [9], shimmerIds: [9], waits: [[8, 2]] }), mine)).toBe("");
-    // 같은 박스라도 잠금 · 쉬머 · 차례가 다르면 다르다
-    expect(readChunkPending(pending({ shimmerIds: [1], waits: [[2, 1]] }), mine)).not.toBe(readChunkPending(busy, mine));
-    expect(readChunkPending(pending({ lockedIds: [1], shimmerIds: [1], waits: [[2, 2]] }), mine)).not.toBe(readChunkPending(busy, mine));
+    expect(readChunkPending(pending({ lockedIds: [1, 9], shimmerIds: [1], waits: [[2, "Queued · Delete"], [8, "Queued · Merge"]] }), mine)).toBe(readChunkPending(busy, mine));
+    expect(readChunkPending(pending({ lockedIds: [9], shimmerIds: [9], waits: [[8, "Queued · Merge"]] }), mine)).toBe("");
+    // 같은 박스라도 잠금 · 쉬머 · 대기 칩이 다르면 다르다
+    expect(readChunkPending(pending({ shimmerIds: [1], waits: [[2, "Queued · Delete"]] }), mine)).not.toBe(readChunkPending(busy, mine));
+    expect(readChunkPending(pending({ lockedIds: [1], shimmerIds: [1], waits: [[2, "Queued · Delete +1"]] }), mine)).not.toBe(readChunkPending(busy, mine));
   });
 
   it("reads the pills placed inside it - a box, a gap or a table", () => {

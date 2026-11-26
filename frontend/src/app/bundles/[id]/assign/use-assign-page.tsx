@@ -54,9 +54,9 @@ import { loadBundle, useBundle } from "@/lib/bundle-store";
 import { describeDecisionStep, getAssignUndoKey, IN_PLACE_EDIT_OPS, isUnitEditStep, pickSaveOp, shouldDropSelectionOnStep } from "@/lib/decision-step-model";
 import { buildCellOwners, buildDestinationOptions, buildGroupSave, buildRows, buildSentenceSlots, describeLegacyMove, findSystemHold, getDestinationId, hasDraftChange, isSentenceUnit, listJoinedTargetIds, listLinkLeftovers, listPickOptions, listUnpairedKeys, readDestination, readHiddenPlace, readHumanReason, stepInList, type CellSource, type ClassifyFilter, type ClassifyRow, type Destination, type DestinationOption, type DropPosition, type RowDraft } from "@/lib/classify-model";
 import { buildDocDashboard } from "@/lib/doc-dashboard-model";
-import { buildPaperWaits, isDecisionKind, listEditUnitIds, listTableUnitIds, NO_PICK, NO_PLACE, planReload, readEditKind, readEditPlace, readNewUnit, readPendingLabelKey, toggleNewPick, type NewPick, type OldPick, type Pending, type PendingPlace, type SidePick } from "@/lib/assign-focus-model";
-import { readEditLabelKey, trimReason } from "@/lib/command-label";
-import { isBarrier, listUnsettled } from "@/lib/command-queue";
+import { isDecisionKind, listEditUnitIds, listTableUnitIds, NO_PICK, NO_PLACE, planReload, readEditKind, readEditPlace, readNewUnit, readPendingLabelKey, toggleNewPick, type NewPick, type OldPick, type Pending, type PendingPlace, type SidePick } from "@/lib/assign-focus-model";
+import { readEditLabelKey, readKeyLabelKey, trimReason } from "@/lib/command-label";
+import { formatQueueWait, isBarrier, listQueueWaits, listUnsettled, type QueueWait, type QueueWaits } from "@/lib/command-queue";
 import { pickDocRevision } from "@/lib/doc-revision";
 import { isMousePress, isTypingTarget, LAYER_SELECTOR, readKeyPlace, returnsToPaper, takesPrimaryEnter } from "@/lib/assign-key-target";
 import { findAssignKey, formatAssignKey, readKeyName, resolveAssignKey, routeKey, type AssignKeyContext, type AssignKeyId } from "@/lib/assign-keymap";
@@ -72,7 +72,7 @@ import { pickNextBox, type PendingOutcome } from "@/lib/next-box-model";
 import { listExpectedNumbers, listExpectedShifts, readExpectedNumber, readOpShifts, type SentNumber, type SentShifts } from "@/lib/number-arrival-model";
 import { buildReloadAsk, isDocReload, isEmptyReload, mergeReloads, NO_RELOAD_ASK, splitReload, type ReloadAsk } from "@/lib/reload-ask-model";
 import { createWriteLog } from "@/lib/write-log";
-import type { PaperNumberHandle, PaperPending } from "@/components/paper/paper";
+import type { PaperNumberHandle, PaperPending, QueueChip } from "@/components/paper/paper";
 import { setHelpOpen, setHelpTab } from "@/lib/help-prefs";
 import { useI18n } from "@/lib/i18n";
 import { genId } from "@/lib/id";
@@ -256,9 +256,70 @@ const NO_TRANSLATIONS: Promise<OpenTranslation[]> = Promise.resolve([]);
 /** 누르는 것만으로는 아무 일도 아닌 글쇠 - 무장한 합치기를 풀지 않는다(⇧J의 Shift) */
 const MODIFIER_KEYS: ReadonlySet<string> = new Set(["Shift", "Control", "Alt", "Meta", "CapsLock"]);
 
+type Translate = (key: string, vars?: Record<string, string | number>) => string;
+
+/** 실패 알림 · 대기 칩이 부르는 이름 */
+function readCommandLabel(command: WriteCommand, t: Translate): string {
+  switch (command.kind) {
+    case "save":
+      return t(command.action === "hold" ? "assign.step.hold" : command.isPick || command.destination?.kind === "delete" ? "assign.step.delete" : command.destination?.kind === "link" ? "assign.step.link" : "assign.step.confirm");
+    case "clear":
+      return t("classify.clear");
+    case "link":
+      return t(command.link === "unlink" ? "assign.step.unlink" : "assign.step.link");
+    case "bulk":
+      return command.action === "clear" ? t("classify.clear") : t("assign.step.delete");
+    case "figure":
+      return t("assign.step.delete");
+    case "edit":
+      return t(readEditLabelKey(command.op));
+    case "to_pair":
+      return t("assign.step.pair");
+    case "ai_split":
+      return t("assign.step.cut");
+    case "pair":
+      return t(`assign.step.${command.pairKind}`);
+    case "step":
+      return t(`assign.queue.act.${command.direction}`);
+    case "global":
+      return t(command.label);
+  }
+}
+
+const PRESS_LABEL_KEYS: Record<Extract<ReplayCommand, { kind: "press" }>["act"], string> = {
+  confirm: "assign.step.confirm",
+  hold: "assign.step.hold",
+  delete: "assign.step.delete",
+  clear: "classify.clear",
+  link: "assign.step.link",
+};
+
+/** 대기 칩에 보일 이름 - 장벽 뒤의 고름은 세지 않고(null), 이름 없는 글쇠(이동 등)는 수만 */
+function readQueueName(payload: AssignCommand, t: Translate): { name: string | null } | null {
+  switch (payload.kind) {
+    case "pick":
+      return null;
+    case "press":
+      return { name: t(PRESS_LABEL_KEYS[payload.act]) };
+    case "key": {
+      const key = readKeyLabelKey(payload);
+      return { name: key === null ? null : t(key) };
+    }
+    default:
+      return { name: readCommandLabel(payload, t) };
+  }
+}
+
+function formatQueueChip(wait: QueueWait, t: Translate): QueueChip {
+  const { key, vars } = formatQueueWait(wait);
+  return { kind: wait.kind, text: t(key, vars) };
+}
+
+const NO_CHIPS: ReadonlyMap<number, QueueChip> = new Map();
+
 /** 처리 중인 일 → 용지의 알약 · 쉬머 · 잠금(설계 2026-11-20 D4). 판단 저장은 빛만 지나가고 잠그지 않으며(A1-R2 · R4), 묶음 전체 일은 알약이 없다 */
-function buildPaperPending(pending: readonly Pending[], queue: CommandQueueState, t: (key: string) => string): PaperPending {
-  // 아직 보내지 않은 것은 알약("Joining…") 대신 칩("Queued 1")이다
+function buildPaperPending(pending: readonly Pending[], queue: CommandQueueState, waits: QueueWaits, t: Translate): PaperPending {
+  // 아직 보내지 않은 것은 알약("Joining…") 대신 칩("Queued · Merge")이다
   const waitingIds = new Set(queue.waiting.map((command) => command.id));
   const shimmerIds = new Set<number>();
   const lockedIds = new Set<number>();
@@ -269,7 +330,9 @@ function buildPaperPending(pending: readonly Pending[], queue: CommandQueueState
     const key = readPendingLabelKey(entry.kind);
     if (key !== null && entry.place.at !== "none" && !waitingIds.has(entry.id)) pills.push({ id: entry.id, kind: entry.kind, label: t(key), place: entry.place });
   }
-  return { shimmerIds, lockedIds, pills, waits: buildPaperWaits(queue) };
+  // 기다리는 박스가 없으면 늘 같은 빈 값 - 용지를 다시 그리지 않게
+  const chips = waits.boxes.size === 0 ? NO_CHIPS : new Map([...waits.boxes].map(([unitId, wait]) => [unitId, formatQueueChip(wait, t)]));
+  return { shimmerIds, lockedIds, pills, waits: chips };
 }
 
 /** Assign 화면 한 벌의 상태와 동작 - page.tsx가 그리는 데 쓰는 이름을 모두 돌려준다 */
@@ -860,7 +923,10 @@ export function useAssignPage() {
   // 처리 중인 일의 알약 · 쉬머 · 잠금 - 같은 목록이면 같은 값이라 용지의 먼 덩어리를 다시 그리지 않는다
   const pendingList = focusCtl.pending;
   const queueState = commands.state;
-  const paperPending = useMemo(() => buildPaperPending(pendingList, queueState, t), [pendingList, queueState, t]);
+  // 기다리는 명령의 칩 - 박스를 잡은 것은 용지에, 박스가 없는 것(되돌리기 · 장벽 뒤에 쌓인 글쇠)은 위쪽 줄의 알약 하나에
+  const queueWaits = useMemo(() => listQueueWaits(queueState, (command) => readQueueName(command.payload, t)), [queueState, t]);
+  const paperPending = useMemo(() => buildPaperPending(pendingList, queueState, queueWaits, t), [pendingList, queueState, queueWaits, t]);
+  const queueGlobal = queueWaits.global === null ? null : formatQueueChip(queueWaits.global, t);
   // 누른 순간 보일 것(A2-R6) - 삭제를 눌렀고 아직 저장되지 않은 줄(접힌다, 멈춘 것도 버릴 때까지)과 저장을 기다리는 번호의 기대 글(응답의 보기가 닿으면 그 값이 이긴다).
   // 내용이 같으면 같은 값이다 - 큐가 움직일 때마다 용지의 먼 덩어리를 다시 그리지 않게
   const [sentNumbers, setSentNumbers] = useState<readonly SentNumber[]>([]);
@@ -3228,39 +3294,11 @@ export function useAssignPage() {
     }
   }
 
-  /** 실패 알림이 부르는 이름 */
-  function readCommandLabel(command: WriteCommand): string {
-    switch (command.kind) {
-      case "save":
-        return t(command.action === "hold" ? "assign.step.hold" : command.isPick || command.destination?.kind === "delete" ? "assign.step.delete" : command.destination?.kind === "link" ? "assign.step.link" : "assign.step.confirm");
-      case "clear":
-        return t("classify.clear");
-      case "link":
-        return t(command.link === "unlink" ? "assign.step.unlink" : "assign.step.link");
-      case "bulk":
-        return command.action === "clear" ? t("classify.clear") : t("assign.step.delete");
-      case "figure":
-        return t("assign.step.delete");
-      case "edit":
-        return t(readEditLabelKey(command.op));
-      case "to_pair":
-        return t("assign.step.pair");
-      case "ai_split":
-        return t("assign.step.cut");
-      case "pair":
-        return t(`assign.step.${command.pairKind}`);
-      case "step":
-        return t(`assign.queue.act.${command.direction}`);
-      case "global":
-        return t(command.label);
-    }
-  }
-
   /** 실패 알림 한 줄 */
   function describeFailure(command: WriteCommand, reason: string, n: number): string {
     const unitId = readCommandUnit(command);
     const no = unitId === null ? undefined : unitMap.get(unitId)?.display_id;
-    const vars = { action: readCommandLabel(command), reason: trimReason(reason), n };
+    const vars = { action: readCommandLabel(command, t), reason: trimReason(reason), n };
     return no === undefined ? t("assign.queue.failedAll", vars) : t("assign.queue.failed", { ...vars, no });
   }
 
@@ -5144,7 +5182,7 @@ export function useAssignPage() {
     soloUnits, cutUnit, cutLine, linkedTargets, registerNumberHandle, setManualPart, changePart, activePart, isFoldEmpty, foldElsewhere, writtenDocs, composedDocs,
     setManualNewDoc, toggleKey, liveDoc, isNewDocOpen, newDocId, newAiReturn, setNewAiReturn, isComposedDoc, newFileId, newLoad, newView, newModel, newTabs, composedDoc,
     newRows, headingNotes, sectionMarks, joinableIds, templateTitles, linkPairs, view, changeView, zoomPane, setPanes, askAiScope,
-    aiMenuItems, remarkEdit, setRemarkEdit, focusAfterRef, firstTextRef, busy, isAnyPending, isGlobalPending: focusCtl.isGlobalPending, paperPending, pendingDeletes, expectedNumbers, editConfirm, answerEditConfirm, cancelEditConfirm, canUndoNow, queueFailure, retryCommand: commands.retry, discardCommands: commands.discard,
+    aiMenuItems, remarkEdit, setRemarkEdit, focusAfterRef, firstTextRef, busy, isAnyPending, isGlobalPending: focusCtl.isGlobalPending, paperPending, pendingDeletes, expectedNumbers, editConfirm, answerEditConfirm, cancelEditConfirm, canUndoNow, queueFailure, queueGlobal, retryCommand: commands.retry, discardCommands: commands.discard,
     oldPaneRef, undoState, bulk, setBulk, runBulkDelete, bulkMerge, bulkUnwrap, runBulkMerge, runBulkUnwrap, bulkClear, bulkLangKo, bulkLangEn, bulkActions, runBulkClear, runBulkLang, runReset, confirmRemark, closeRemark, confirmingIdentical, setConfirmingIdentical,
     resetScope, setResetScope, accOpen, toggleAcc, saveUnits, slots, aiUnfilled, draftPlace, draftSectionKey, draftPosition, newDraft,
     draftSlotKey, placeResolved, canPlaceClick, pickedSpotKey, setCarvePick, carve, carveText, clearCarve, togglePairViewByButton,

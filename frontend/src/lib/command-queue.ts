@@ -76,13 +76,52 @@ export function listUnsettled<T>(state: QueueState<T>): QueuedCommand<T>[] {
   return [state.running, state.halted?.command ?? null, state.asking, ...state.waiting].filter((command): command is QueuedCommand<T> => command !== null);
 }
 
-/** 박스 → "대기 n"(첫째 대기 = 1). 같은 박스가 여럿이면 앞 번호, 장벽은 첫 박스에만(표 하나의 칸마다 붙지 않게) */
-export function listWaitNumbers<T>(state: Pick<QueueState<T>, "waiting">): ReadonlyMap<number, number> {
-  const numbers = new Map<number, number>();
-  state.waiting.forEach((command, index) => {
-    for (const unitId of isBarrier(command) ? command.unitIds.slice(0, 1) : command.unitIds) if (!numbers.has(unitId)) numbers.set(unitId, index + 1);
-  });
-  return numbers;
+/** 칩 하나에 모인 대기 - kind는 첫째 명령의 종류, names는 모인 명령의 이름(나갈 차례대로, 이름을 모르면 null) */
+export interface QueueWait {
+  kind: CommandKind;
+  names: readonly (string | null)[];
+}
+
+export interface QueueWaits {
+  /** 박스 → 그 박스에 걸린 대기 */
+  boxes: ReadonlyMap<number, QueueWait>;
+  /** 박스가 없는 대기(되돌리기 · 장벽 뒤에 쌓인 글쇠 · 판단 단추) - 위쪽 줄의 알약 하나 */
+  global: QueueWait | null;
+}
+
+const NO_QUEUE_WAITS: QueueWaits = { boxes: new Map(), global: null };
+
+function addWait(wait: QueueWait | null | undefined, kind: CommandKind, name: string | null): QueueWait {
+  return wait ? { kind: wait.kind, names: [...wait.names, name] } : { kind, names: [name] };
+}
+
+/**
+ * 기다리는 명령 → 칩(A1-R5). 박스를 잡은 명령은 그 박스에(장벽은 첫 박스에만 - 표 하나의 칸마다 붙지 않게), 박스가 없는 것은 global에 모은다.
+ * readName이 null이면 세지 않는다(장벽 뒤의 고름 - 쓰기도 글쇠도 아니다). 기다리는 것이 없으면 늘 같은 빈 값(용지를 다시 그리지 않게)
+ */
+export function listQueueWaits<T>(state: Pick<QueueState<T>, "waiting">, readName: (command: QueuedCommand<T>) => { name: string | null } | null): QueueWaits {
+  const boxes = new Map<number, QueueWait>();
+  let global: QueueWait | null = null;
+  for (const command of state.waiting) {
+    const read = readName(command);
+    if (read === null) continue;
+    if (command.unitIds.length === 0) global = addWait(global, command.kind, read.name);
+    else for (const unitId of isBarrier(command) ? command.unitIds.slice(0, 1) : command.unitIds) boxes.set(unitId, addWait(boxes.get(unitId), command.kind, read.name));
+  }
+  return boxes.size === 0 && global === null ? NO_QUEUE_WAITS : { boxes, global };
+}
+
+/**
+ * 칩의 글 - 이름은 처음으로 이름이 있는 명령의 것. 하나면 "Queued · Split", 모두 같은 이름이면 "Queued · Undo ×2", 섞였으면 "Queued · Split +1"(나머지 수).
+ * 이름이 하나도 없으면 "Queued n"(모인 수)
+ */
+export function formatQueueWait(wait: QueueWait): { key: string; vars: Record<string, string | number> } {
+  const n = wait.names.length;
+  const action = wait.names.find((name): name is string => name !== null);
+  if (action === undefined) return { key: "assign.queue.chip", vars: { n } };
+  if (n === 1) return { key: "assign.queue.chipNamed", vars: { action } };
+  if (wait.names.every((name) => name === action)) return { key: "assign.queue.chipTimes", vars: { action, n } };
+  return { key: "assign.queue.chipMore", vars: { action, n: n - 1 } };
 }
 
 /**

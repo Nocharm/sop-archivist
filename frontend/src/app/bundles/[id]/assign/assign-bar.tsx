@@ -16,7 +16,7 @@ import { type AssignPageState, FILTERS, FILTER_ICON } from "./use-assign-page";
 export function AssignBar({ state }: { state: AssignPageState }) {
   const {
     t, bundleId, bundle, canEdit, docs, oldDocIds, identical, aiOn, rowMap, rowOfUnit, mode, filter, counts, applyFilter, checked,
-    viewOf, setManualOldDoc, oldView, view, changeView, aiMenuItems, undoState, canUndoNow, setBulk, setConfirmingIdentical, setResetScope,
+    viewOf, setManualOldDoc, oldView, view, changeView, aiMenuItems, undoState, canUndoNow, queueGlobal, setBulk, setConfirmingIdentical, setResetScope,
     selectRow, goToUnit, refPendingIds, captionPendingKeys, splitPendingIds, readPendingItem, selectNextSplit, selectNextRef,
     selectNextCaption, runUndoStep, progress, leftovers, setLeftoverSheet, bulkMerge, bulkUnwrap, runBulkMerge, runBulkUnwrap, bulkClear, bulkLangKo, bulkLangEn, bulkActions, runBulkClear, runBulkLang,
   } = state;
@@ -111,6 +111,12 @@ export function AssignBar({ state }: { state: AssignPageState }) {
                 <Redo2 size={14} strokeWidth={1.5} aria-hidden />
               </button>
             </Tooltip>
+            {/* 박스가 없는 대기(되돌리기 · 장벽 뒤에 쌓인 글쇠) - 박스의 칩과 같은 꼴 */}
+            {queueGlobal !== null && (
+              <span className="pending-pill queue-chip queue-global" role="status" data-kind={queueGlobal.kind} data-testid="assign-queue-global">
+                {queueGlobal.text}
+              </span>
+            )}
           </span>
         )}
         {checked.size > 0 && canEdit && (
