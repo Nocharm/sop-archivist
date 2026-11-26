@@ -1885,7 +1885,9 @@ export function useAssignPage() {
     if (unitIds.length === 0) return;
     // 블록의 첫 줄을 돌리면 키가 다음 줄로 바뀐다 - 남은 줄이 있으면 펼침을 잇고, 블록째 돌렸으면 되돌려 다시 생긴 블록은 처음처럼 접혀 있다
     const cleared = new Set(unitIds);
-    const rests = tocBlocks.flatMap((block) => (tocOpen.has(block.key) && cleared.has(block.key) ? block.unitIds.filter((id) => !cleared.has(id)).slice(0, 1) : []));
+    // 그 문서의 블록 - New 문서의 블록도(tocBlocks는 Old 문서만이다)
+    const noiseView = findShapeOfDoc(shapes, docId)?.view ?? viewOf(docId);
+    const rests = (noiseView ? listNoiseBlocks(noiseView.units) : []).flatMap((block) => (tocOpen.has(block.key) && cleared.has(block.key) ? block.unitIds.filter((id) => !cleared.has(id)).slice(0, 1) : []));
     setTocOpen((open) => new Set([...[...open].filter((key) => !cleared.has(key)), ...rests]));
     runNoiseEdit(docId, { type: "clear_noise", unit_ids: [...unitIds] }, t(unitIds.length > 1 ? "assign.noise.didClearAll" : "assign.noise.didClear"), unitIds[0]);
   }
@@ -4188,22 +4190,30 @@ export function useAssignPage() {
   useBoxDrag(panesBoxRef, isOldDrag && ready && rows.length > 0 && !isPairView ? gripConfig : null);
 
   // --- 벗긴 표 덩이 안 줄 순서(시안 2 D2) - 덩이 안에서는 용지가 짝 카드 손잡이 대신 이 손잡이를 그린다. 같은 엔진 · 같은 모양, 판단은 막지 않는다 ---
+  // 왼쪽 용지(Old, 한 단으로 연 New)와 양 단의 New 용지 모두 - 칸(data-pane)이 고치는 문서를 정한다(쪼개기 먼저 §8 4-3)
+  type UnwrapGripSource = { pane: "old" | "new"; unitId: number; tableId: number; order: number[]; moving: number[] };
+  const paneShapeOf = (pane: "old" | "new") => (pane === "new" ? rightShape : leftShape);
+  /** 그 칸의 줄 상자 - Old 칸은 연결선과 같은 찾기(findOldStrip), New 칸은 용지 줄(data-strip-unit) */
+  function findPaneStrip(root: ParentNode, pane: "old" | "new", unitId: number): HTMLElement | null {
+    if (pane === "old") return findOldStrip(root, unitId);
+    return root.querySelector<HTMLElement>(`[data-pane="new"] :is(.strip, .cell-piece)[data-strip-unit="${unitId}"]`);
+  }
   /** 손잡이를 누른 줄의 덩이 - 지금 덩이 줄 차례(J/K와 같은 model.order)와 함께 움직일 줄(이어 붙은 짝 카드면 구성원 전부) */
-  function readUnwrapSource(unitId: number): { unitId: number; tableId: number; order: number[]; moving: number[] } | null {
-    const model = paperModel;
+  function readUnwrapSource(pane: "old" | "new", unitId: number): UnwrapGripSource | null {
+    const model = paneShapeOf(pane)?.model;
     const tableId = model?.unwrapLines.get(unitId);
     if (!model || tableId === undefined) return null;
     const order = model.order.filter((id) => model.unwrapLines.get(id) === tableId);
     const pairId = model.units.get(unitId)?.pair_id ?? null;
     const card = pairId === null ? [] : order.filter((id) => model.units.get(id)?.pair_id === pairId);
     const isCard = card.length > 1 && order.indexOf(card[card.length - 1]) - order.indexOf(card[0]) === card.length - 1;
-    return { unitId, tableId, order, moving: isCard ? card : [unitId] };
+    return { pane, unitId, tableId, order, moving: isCard ? card : [unitId] };
   }
   /** 손잡이를 끈 자리 - 끄는 줄을 뺀 덩이 줄의 가운데 y로 자리를 세고(lib/unwrap-order-model), 새 차례와 놓일 선. 덩이 위아래 밖이면 놓을 자리 밖 */
-  function readUnwrapDrop(source: { order: number[]; moving: number[] }, point: DragPoint): { order: number[]; line: DropLineAt } | null {
+  function readUnwrapDrop(source: UnwrapGripSource, point: DragPoint): { order: number[]; line: DropLineAt } | null {
     const root = panesBoxRef.current;
-    if (!root || findUnderPoint(point, '[data-pane="old"]') === null) return null;
-    const rectOf = (id: number) => findOldStrip(root, id)?.getBoundingClientRect() ?? null;
+    if (!root || findUnderPoint(point, `[data-pane="${source.pane}"]`) === null) return null;
+    const rectOf = (id: number) => findPaneStrip(root, source.pane, id)?.getBoundingClientRect() ?? null;
     const reach = 24; // 덩이 위아래로 이만큼까지 - 맨 위 · 맨 아래 자리를 덩이 가장자리 바로 바깥에서도 잡는다(화면 밖 끝 줄은 재지 않는다)
     const first = rectOf(source.order[0]);
     const last = rectOf(source.order[source.order.length - 1]);
@@ -4216,18 +4226,19 @@ export function useAssignPage() {
     const y = above ? above.bottom : at.top;
     return { order: moveUnwrapLines(source.order, source.moving, slot), line: { left: at.left, top: y - DROP_LINE_HALF_PX, width: at.width } };
   }
-  const unwrapGripConfig: BoxDragConfig<{ unitId: number; tableId: number; order: number[]; moving: number[] }> = {
+  const unwrapGripConfig: BoxDragConfig<UnwrapGripSource> = {
     handleOnly: true,
     pick: (event) => {
-      const grip = event.target instanceof Element ? event.target.closest<HTMLElement>('[data-pane="old"] [data-unwrap-grip-unit]') : null;
-      const source = grip && canEdit ? readUnwrapSource(Number(grip.dataset.unwrapGripUnit)) : null;
+      const grip = event.target instanceof Element ? event.target.closest<HTMLElement>("[data-pane] [data-unwrap-grip-unit]") : null;
+      const pane = grip?.closest<HTMLElement>("[data-pane]")?.dataset.pane;
+      const source = grip && canEdit && (pane === "old" || pane === "new") ? readUnwrapSource(pane, Number(grip.dataset.unwrapGripUnit)) : null;
       return source === null || source.order.some(focusCtl.isUnitLocked) ? null : source;
     },
-    getCard: ({ moving }) => buildOldDragCard(moving.flatMap((id) => unitMap.get(id) ?? []), (count) => t("assign.drag.units", { count })),
+    getCard: ({ pane, moving }) => buildOldDragCard(moving.flatMap((id) => paneShapeOf(pane)?.model.units.get(id) ?? []), (count) => t("assign.drag.units", { count })),
     getScrollers: () => [...(panesBoxRef.current?.querySelectorAll<HTMLElement>(".pane-body") ?? [])],
-    onStart: ({ moving }) => {
+    onStart: ({ pane, moving }) => {
       const root = panesBoxRef.current;
-      for (const id of moving) if (root) findOldStrip(root, id)?.setAttribute("data-drag-src", "");
+      for (const id of moving) if (root) findPaneStrip(root, pane, id)?.setAttribute("data-drag-src", "");
     },
     onMove: (source, point) => {
       const drop = readUnwrapDrop(source, point);
@@ -4237,13 +4248,14 @@ export function useAssignPage() {
     onDrop: (source, point) => {
       const drop = readUnwrapDrop(source, point);
       if (drop === null || isSameOrder(drop.order, source.order)) return;
-      runUnitEdit(shapeOf("old"), { type: "reorder_unwrapped", table_id: source.tableId, unit_ids: drop.order }, t("assign.unwrapOrder.done"), source.unitId, false, null, { at: "table", tableId: source.tableId });
+      runUnitEdit(paneShapeOf(source.pane), { type: "reorder_unwrapped", table_id: source.tableId, unit_ids: drop.order }, t("assign.unwrapOrder.done"), source.unitId, false, null, { at: "table", tableId: source.tableId });
     },
     onEnd: () => {
       for (const el of panesBoxRef.current?.querySelectorAll("[data-drag-src]") ?? []) el.removeAttribute("data-drag-src");
     },
   };
-  useBoxDrag(panesBoxRef, isOldDrag && ready && rows.length > 0 && !isPairView ? unwrapGripConfig : null);
+  // 손잡이는 용지가 손질 표(lineGrip)를 따라 그린다 - 한 단으로 연 New에도 서므로 Old 끌기(isOldDrag)와 따로 켠다
+  useBoxDrag(panesBoxRef, canEdit && mode === "old" && !(pairSource !== null && pairFrom !== null) && ready && !isPairView ? unwrapGripConfig : null);
 
   /** 놓아서 맺기·확정 - 바로 저장하고 Undo가 든 알림을 띄운다 */
   function runPairDrop(drop: Extract<PairDrop, { kind: "pair" | "confirm" }>) {

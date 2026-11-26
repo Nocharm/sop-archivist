@@ -667,7 +667,7 @@ export default function AssignPage() {
                 // 제목에서 바꾼 조항 묶음 머리(F8b) - Old와 한 단으로 연 New 모두
                 headingShift={leftTools.headingShift ? { canRevert: canEdit, busy: isGlobalPending, onRevert: (unitIds) => revertHeadings(leftShape, unitIds) } : undefined}
                 // 벗긴 표의 줄 묶음 머리 "↺ 다시 표로"(F1)와 AI 순서 제안 - Old와 한 단으로 연 New 모두
-                unwrap={{ canRewrap: leftTools.unwrap, busy: isGlobalPending, onRewrap: (tableId) => rewrapTable(leftShape, tableId), ai: leftTools.unwrapAi ? unwrapAi : undefined }}
+                unwrap={{ canRewrap: leftTools.unwrap, busy: isGlobalPending, onRewrap: (tableId) => rewrapTable(leftShape, tableId), ai: leftTools.unwrapAi ? unwrapAi : undefined, lineGrip: leftTools.lineGrip }}
                 // 처리 중인 일 - 누르는 즉시 그 자리 알약과 박스 쉬머, 그 박스만 잠근다(설계 D4)
                 pending={mode === "old" ? paperPending : undefined}
                 mergeArm={isNewEdit ? null : mergeArm}
@@ -863,7 +863,7 @@ export default function AssignPage() {
                         onPick: ignoreNoisePick,
                       } : undefined}
                       headingShift={rightTools.headingShift ? { canRevert: canEdit, busy: isGlobalPending, onRevert: (unitIds) => revertHeadings(rightShape, unitIds) } : undefined}
-                      unwrap={{ canRewrap: rightTools.unwrap, busy: isGlobalPending, onRewrap: (tableId) => rewrapTable(rightShape, tableId), ai: rightTools.unwrapAi ? newUnwrapAi : undefined }}
+                      unwrap={{ canRewrap: rightTools.unwrap, busy: isGlobalPending, onRewrap: (tableId) => rewrapTable(rightShape, tableId), ai: rightTools.unwrapAi ? newUnwrapAi : undefined, lineGrip: rightTools.lineGrip }}
                       numberCell={rightTools.numberCell ? buildNumberCell(rightShape) : undefined}
                       join={rightTools.join ? { busy: isGlobalPending, plan: (firstId, secondId) => planJoinIn(rightShape, firstId, secondId), onJoin: (firstId, secondId, kind) => joinIn(rightShape, firstId, secondId, kind) } : undefined}
                       onRangeSelect={rightTools.carve && newView ? (range) => pickCarve(newView, range) : undefined}

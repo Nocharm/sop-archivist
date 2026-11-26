@@ -5,7 +5,7 @@
 "use client";
 
 import { Maximize2, Sparkles, Spline } from "lucide-react";
-import { useState, type ComponentProps, type MouseEvent, type ReactNode, type RefObject } from "react";
+import { useState, type ComponentProps, type MouseEvent, type ReactNode } from "react";
 
 import { NewAiTag, SourceChips } from "@/components/assign/new-sources";
 import { PaneZoom } from "@/components/assign/pane-zoom";
@@ -89,8 +89,6 @@ export interface NewPaperProps {
   onRangeSelect?: (range: { blockId: number; start: number; end: number }) => void;
   /** 두 번 눌러 나눌 선 */
   onUnitDoubleClick?: (unitId: number, caret: { blockId: number; offset: number } | null) => void;
-  /** 칸 전체 - 풀기 전환(useUnwrapMotion)이 이 안에서 바뀌는 표를 찾고 잰다 */
-  paneRef?: RefObject<HTMLElement | null>;
   /** 표 머리의 "표 벗기기"(표 id) - 없으면 단추 없이 이은 칸 수만 */
   onUnwrapTable?: (tableId: number) => void;
 }
@@ -100,7 +98,7 @@ const NOT_PRESSED = ".strip-acts, .new-cell-note, .strip-lead";
 
 const ignoreDoubleClick = () => undefined;
 
-export function NewPaper({ paneRef, ...props }: NewPaperProps) {
+export function NewPaper(props: NewPaperProps) {
   const { t } = useI18n();
   const { model, view, overlay } = props;
   const { boxes } = overlay;
@@ -342,7 +340,7 @@ export function NewPaper({ paneRef, ...props }: NewPaperProps) {
   }
 
   return (
-    <section ref={paneRef} className="assign-pane" style={{ "--z": props.zoom }} data-pane="new" data-doc={props.docId} data-tab={activeTab} data-testid="assign-new">
+    <section className="assign-pane" style={{ "--z": props.zoom }} data-pane="new" data-doc={props.docId} data-tab={activeTab} data-testid="assign-new">
       <div className="pane-head">
         {props.docOptions.length > 1 ? (
           <Select testId="assign-new-doc" ariaLabel={t("assign.newDoc")} size="sm" mono value={props.docId} options={props.docOptions} onChange={props.onDocChange} />

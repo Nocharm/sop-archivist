@@ -287,6 +287,8 @@ interface PaperProps {
       canRewrap: boolean;
       busy: boolean;
       onRewrap: (tableId: number) => void;
+      /** 덩이 안 줄 순서 손잡이를 그린다(짝 카드 손잡이 pairGrip이 없는 용지 - New) */
+      lineGrip?: boolean;
       /** AI 순서 제안(B11) - 머리에 "✦ AI 순서 제안". enabled가 거짓이면 꺼진 단추 + 까닭. busy는 작업 중인 표, previews는 표마다 살아 있는 제안 차례(줄 id) -
        *  지금 덩이와 같은 줄 집합일 때만 그 자리에 "4 → 1" 칩과 [제안대로 놓기] [그대로 두기]를 보인다. onKeep(표 id, 같은 차례였나)은 채택 기록만 남긴다 */
       ai?: { enabled: boolean; busy: ReadonlySet<number>; previews: ReadonlyMap<number, readonly number[]>; onAsk: (tableId: number) => void; onApply: (tableId: number, order: readonly number[]) => void; onKeep: (tableId: number, isSame: boolean) => void };
@@ -939,7 +941,7 @@ export function Paper({
   function renderUnwrapGrip(unit: ViewUnit): ReactNode {
     const tableId = model.unwrapLines.get(unit.id);
     const unwrap = strips?.unwrap;
-    if (tableId === undefined || !strips?.pairGrip || !unwrap?.canRewrap || unwrap.busy || unit.id !== selectedId || isLocked(unit.id)) return null;
+    if (tableId === undefined || (!strips?.pairGrip && !unwrap?.lineGrip) || !unwrap?.canRewrap || unwrap.busy || unit.id !== selectedId || isLocked(unit.id)) return null;
     if ([...model.unwrapLines.values()].filter((id) => id === tableId).length < 2) return null;
     return (
       <span className="strip-grip" data-drag-handle="" data-unwrap-grip-unit={unit.id} data-tip={t("paper.unwrapGrip.tip")} data-testid={`${testId}-unwrap-grip-${unit.id}`}>

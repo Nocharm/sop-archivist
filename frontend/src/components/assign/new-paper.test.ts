@@ -138,6 +138,23 @@ describe("NewPaper", () => {
     expect(h).not.toContain("assign-new-unwrap-900");
   });
 
+  it("draws the line-order grip of an unwrapped table on the picked line only with lineGrip", () => {
+    // 벗긴 표 - 표 단위가 없고 칸 줄 둘이 묶이지 않았다
+    const base = makeView();
+    const view: DocumentView = {
+      ...base,
+      tables: base.tables.map((table) => ({ ...table, is_layout: true })),
+      blocks: [...base.blocks, makeBlock(61, "Cell two", { kind: "table_cell", table_id: TABLE, row_index: 1, col_index: 0 })],
+      units: [...base.units.filter((unit) => unit.kind !== "table" && unit.kind !== "cell_sentence"), makeUnit(60, "Cell", { kind: "cell_sentence", table_id: TABLE, row_index: 0 }), makeUnit(61, "Cell two", { kind: "cell_sentence", table_id: TABLE, row_index: 1 })],
+    };
+    const model = buildPaperModel(view);
+    const unwrap = { canRewrap: true, busy: false, onRewrap: () => undefined };
+    const at = (over: Partial<NewPaperProps>) => html({ view, model, tabs: buildPaperTabs(view, model), selectedUnitId: 60, ...over });
+    expect(at({ unwrap: { ...unwrap, lineGrip: true } })).toContain('data-testid="assign-new-paper-unwrap-grip-60"');
+    expect(at({ unwrap: { ...unwrap, lineGrip: true } })).not.toContain("assign-new-paper-unwrap-grip-61");
+    expect(at({ unwrap })).not.toContain("unwrap-grip");
+  });
+
   it("marks a linked cell and tags the picked one with its place", () => {
     expect(html()).toMatch(/data-cell-target="7"[^>]*data-linked=""/);
     expect(html()).not.toContain("assign-new-cell-tag-7");
