@@ -207,3 +207,7 @@
 ## 2026-11-26 — F7b 양 단 New 칸 메뉴 (feat/new-cell-menu-two-pane)
 
 - 양 단 New 칸 · 머리 · 제목 · 캡션 · 그림 우클릭 = 한 단 메뉴(`buildMenuSections(…, doc)`), Shift+F10 · 메뉴 글쇠는 마지막 고른 쪽(`readMenuKeyTarget`) — 사용자가 자는 동안 추천안(New 박스에서도 열기)으로 정함.
+
+## 2026-11-27 — F5 단추 줄 라벨 (feat/pick-bar-labels)
+
+- 순수 CSS container query로 단추 줄 이름 접기, 못 하는 손질도 이름 + 까닭은 툴팁, ⋯는 줄 오른쪽 끝(에이전트 판단 그대로). 넓은 박스 가운데에 단추가 오게 되어 짝 판 스모크 단계는 박스 글 자리를 누르게 따라 고침.

@@ -300,6 +300,14 @@ const linkMenuScene = {
     await page.waitForTimeout(HOVER_SETTLE_MS);
     const spill = await findSpill(menu, ".mbtn-label");
     if (spill.length > 0) report("assign-pick-bar", spill.join(", "));
+    // 접힌 이름은 일부러 폭 0이라 위에서 빼지만, 보이는 이름(불투명)은 잘리면 안 되고 접는 칸(.pick-tools)도 넘치면 안 된다 - 그러면 접는 폭(components.css)이 글보다 좁다
+    const fold = await menu.evaluate((el) => {
+      const cut = [...el.querySelectorAll(".mbtn-label")].filter((label) => getComputedStyle(label).opacity === "1" && label.scrollWidth > label.clientWidth + 1).map((label) => label.textContent.trim());
+      const group = el.querySelector(".pick-tools");
+      return { cut, over: group !== null && group.scrollWidth > group.clientWidth + 1 ? `${group.scrollWidth} > ${group.clientWidth}` : null };
+    });
+    if (fold.cut.length > 0) report("assign-pick-bar shown label clipped", fold.cut.join(", "));
+    if (fold.over !== null) report("assign-pick-bar tools overflow", fold.over);
     const covering = await findCoveringLinkedLines(page, menu);
     if (covering.linked === 0) report("assign-pick-bar covers linked lines", "no linked lines were measured");
     if (covering.hits.length > 0) report("assign-pick-bar covers linked lines", covering.hits.join(", "));

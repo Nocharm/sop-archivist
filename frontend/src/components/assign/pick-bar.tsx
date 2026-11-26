@@ -1,9 +1,10 @@
 // 박스 아래 단추 줄 - 마지막에 누른 박스 하나에만 뜨는 한 줄(쪼개기 먼저 §8). 무엇을 보일지는 buildPickBar가 정하고 이 부품은 그리기만 한다.
-// 차례: [잇기] | [손질 아이콘(.mbtn-set)] [이을 상대] [⋯]. 폭이 모자라면 손질이 뒤에서부터 숨고(@container), ⋯를 누르는 순간 숨은 손질을 메뉴에 넣는다.
+// 차례: [잇기] | [손질] | [이을 상대] … [⋯]. 잇기 뒤 칸(.pick-tools)이 남은 폭을 재어 손질 · 이을 상대의 이름을 덜 쓰는 것부터 접고, 그래도 모자라면 손질이 뒤에서부터 숨는다(@container).
+// ⋯를 누르는 순간 숨은 손질을 메뉴에 넣는다. 못 하는 손질도 이름을 보이고 까닭은 툴팁(data-tip)과 aria-label에 둔다.
 "use client";
 
 import { Combine, Ellipsis, Link2, ListTree, Scissors, Spline, Unlink, ArrowDownToLine, ArrowUpToLine, type LucideIcon } from "lucide-react";
-import { useRef, useState, type CSSProperties, type MouseEvent } from "react";
+import { useRef, useState, type MouseEvent } from "react";
 
 import { Menu } from "@/components/ui/menu";
 import { isMousePress } from "@/lib/assign-key-target";
@@ -43,8 +44,8 @@ export function PickBar({ bar, toolLabel, keyOf, busy, testId, onLink, onStartLi
   if (bar.at === null) return null;
 
   function openMore() {
-    const els = [...(toolsRef.current?.querySelectorAll<HTMLElement>("[data-part]") ?? [])];
-    setHidden(els.filter((el) => el.offsetParent === null).map((el) => el.dataset.part as PickToolId));
+    // display: none으로 숨은 손질만 - 비켜 준(폭 0) 단추는 offsetParent가 남는다
+    setHidden(tools.filter((tool) => toolsRef.current?.querySelector<HTMLElement>(`[data-part="${tool.id}"]`)?.offsetParent === null).map((tool) => tool.id));
   }
 
   const linkKey = keyOf("link");
@@ -71,12 +72,13 @@ export function PickBar({ bar, toolLabel, keyOf, busy, testId, onLink, onStartLi
         </button>
       )}
       {link && tools.length > 0 && <span className="pick-sep" data-part="sep" aria-hidden />}
-      {tools.length > 0 && (
-        <span ref={toolsRef} className="pick-tools mbtn-set" style={{ "--n": tools.length } as CSSProperties}>
+      {(tools.length > 0 || startLink || more.length > 0) && (
+        <span ref={toolsRef} className="pick-tools">
           {tools.map((tool) => {
             const Icon = TOOL_ICONS[tool.id];
             const key = keyOf(tool.id);
-            const label = tool.reasonKey ? t(tool.reasonKey) : `${toolLabel(tool.id)}${key ? ` ${key}` : ""}`;
+            const name = `${toolLabel(tool.id)}${key ? ` ${key}` : ""}`;
+            const reason = tool.reasonKey ? t(tool.reasonKey) : null;
             const isOff = busy || tool.reasonKey !== null;
             return (
               <button
@@ -86,7 +88,8 @@ export function PickBar({ bar, toolLabel, keyOf, busy, testId, onLink, onStartLi
                 data-part={tool.id}
                 data-testid={`${testId}-tool-${tool.id}`}
                 aria-disabled={isOff ? "true" : undefined}
-                aria-label={label}
+                aria-label={reason ?? name}
+                data-tip={reason ?? undefined}
                 onClick={(event) => {
                   returnFocus(event);
                   if (!isOff) onTool(tool.id);
@@ -94,29 +97,29 @@ export function PickBar({ bar, toolLabel, keyOf, busy, testId, onLink, onStartLi
               >
                 <Icon size={15} strokeWidth={1.5} aria-hidden />
                 <span className="mbtn-label" aria-hidden>
-                  {label}
+                  {name}
                 </span>
               </button>
             );
           })}
+          {startLink && tools.length > 0 && <span className="pick-sep" data-part="sep" aria-hidden />}
+          {startLink && (
+            <button type="button" className="mbtn" data-part="start" data-testid={`${testId}-start`} aria-label={t("assign.pick.start")} onClick={(event) => {
+              returnFocus(event);
+              onStartLink(startLink);
+            }}>
+              <Spline size={15} strokeWidth={1.5} aria-hidden />
+              <span className="mbtn-label" aria-hidden>
+                {t("assign.pick.start")}
+              </span>
+            </button>
+          )}
+          {more.length > 0 && (
+            <button ref={moreRef} type="button" className="mbtn" data-part="more" data-testid={`${testId}-more`} aria-label={t("assign.pick.more")} aria-haspopup="menu" aria-expanded={hidden !== null} onClick={openMore}>
+              <Ellipsis size={15} strokeWidth={1.5} aria-hidden />
+            </button>
+          )}
         </span>
-      )}
-      {startLink && tools.length > 0 && <span className="pick-sep" data-part="sep" aria-hidden />}
-      {startLink && (
-        <button type="button" className="mbtn" data-part="start" data-testid={`${testId}-start`} aria-label={t("assign.pick.start")} onClick={(event) => {
-          returnFocus(event);
-          onStartLink(startLink);
-        }}>
-          <Spline size={15} strokeWidth={1.5} aria-hidden />
-          <span className="mbtn-label" aria-hidden>
-            {t("assign.pick.start")}
-          </span>
-        </button>
-      )}
-      {more.length > 0 && (
-        <button ref={moreRef} type="button" className="mbtn" data-part="more" data-testid={`${testId}-more`} aria-label={t("assign.pick.more")} aria-haspopup="menu" aria-expanded={hidden !== null} onClick={openMore}>
-          <Ellipsis size={15} strokeWidth={1.5} aria-hidden />
-        </button>
       )}
       {hidden !== null && (
         <Menu anchorRef={moreRef} onClose={() => setHidden(null)} testId={`${testId}-more-list`} align="end" label={t("assign.pick.more")}>

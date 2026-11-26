@@ -37,7 +37,7 @@
 | 8 | 계획 5의 아홉 | 합침 | v1.6.31 | 아홉 모두 dev에 | — |
 | 8a | `feat/assign-tables-tab` | 합침 | v1.6.24 · 9d9f177d | dev v1.6.23 합침 · vitest 2593 · build 경고 0 · `assign:` 스모크 1435 + 따라 고친 1검사 혼자 16 통과 · sonnet 검토 막음 0 · 권함 1 고침 · perf(52문서 CPU1 J 22.1→24.1 · Delete 25.1→24.5ms, 스크롤 같음) | 표 탭 J/K는 그 문서의 표만(그림 탭은 모든 Old 문서), 벗긴 표 캡션은 접힌 줄에 안 보임 |
 | 8b | `feat/unwrap-continue-numbers` | 합침 | v1.6.31 · c1efc2ad | dev v1.6.29 · v1.6.30 합침 · pytest 3832+시드 15 · ruff · vitest 2715 · build 경고 0 · `assign:` 스모크 ALL PASS 1507 · opus 검토 막음 1 고침 → opus 재검토 통과 | — |
-| F5 | `feat/pick-bar-labels` | 진행 |  | dev(26b35312) 합침 · vitest 2736 · build 경고 0 | 스모크 · overlap `assign-pick-bar` · 1120/1440 그림 |
+| F5 | `feat/pick-bar-labels` | 합침 | v1.6.40 · c25d82de | dev(7a00b66c) 합침 · vitest 2736 · build 경고 0 · `assign:` 스모크 ALL PASS 1527(짝 판 단계 따라 고침 뒤) · overlap `assign-pick-bar` 1120 · 1280 · 1440 · 1920 en/ko 8/8 · 호버 깜빡임 0회(480–720px 상자, en/ko) · 검토 생략(CSS) | 기본 1120 · 1440 두 단에서는 Old 박스가 약 340px라 라벨이 거의 다 접힘 — 넓힐 때만 이름 |
 | F7b | `feat/new-cell-menu-two-pane` | 합침 | v1.6.39 · e81d6ecb | dev(26b35312) 합침 · vitest 2741 · build 경고 0 · `assign:` 스모크 ALL PASS 1527(새 Shift+F10 검사 4 포함) · 검토 생략(작은 일) | Old 줄을 골라 둔 채 New를 마지막에 누르면 Shift+F10이 New 메뉴를 연다(전에는 Old) |
 | F9 | `feat/practice-page` | 진행 |  | — | opus 설계 · 스텝 계획 중 |
 
@@ -147,6 +147,7 @@
 - smoke-fold-settle · `smoke/assign.mjs` 표 탭 · 접기 단계 "Collapse folds the table…" · 글 기다린 뒤 한 번 읽기 → T 안에서 맞을 때까지 다시 읽기, 실패 글에 본 값 · dev 코드에서도 3번에 1번 접는 중 빈 글로 실패(기대값 · 검사 수 그대로)
 - assign-queue-labels · `smoke/assign.mjs` 약 4645 자르기 알림 글 "Cut" → "Split" · 되돌리기 · 실패 알림 · 대기 칩의 이름 `assign.step.cut`을 단추 줄 이름 Split(나누기)에 맞춤. 같은 브랜치의 느린 저장 단계: 1번 "Queued 1" → "Queued · Delete"(순번 대신 개수 · 이름, 사용자 결정 1-A), 3 · 5 · 6번 검사 더함
 - F7b · `side-panel-model.test.ts` 새 시험 4 · `smoke/assign.mjs` 칸 메뉴 단계에 Shift+F10 검사 4 더함(기존 그대로) · 새 동작
+- F5 · `smoke/assign.mjs` "the pair panel never moves the picked box up or down" 고른 박스 다시 누르기 둘 · 가운데 → 글 자리(`position {x:24,y:12}`) · 라벨이 펼쳐진 단추 줄이 넓은 박스 가운데에 와서 160%에서 '잇기 상대 고르기'가 눌림(검사 · 기대 그대로)
 
 ## 아침에 볼 것 (사람이 정할 것 · 봐 줄 것)
 
@@ -171,6 +172,8 @@
 - 보류한 줄에서 ↵ 한 번이면 추천 첫 카드로 확정된다(H → 사유 창 → ↵ 하면 보류가 풀림) — 보류 줄은 카드 확정에서 뺄지 정한다(4a).
 - 빠르게 두 번 누른 ↵는 다음 줄의 첫 카드를 확정한다(명세가 정한 결과). 써 보고 불편하면 말해 주세요.
 - (F7b, 추천안) 메뉴 글쇠 · Shift+F10을 New 박스(한 단 · 양 단)에서도 연다 — 마지막에 고른 쪽 기준. Old를 골라 둔 채 New를 누르면 New 메뉴.
+- (F5, 에이전트 판단 그대로) 못 하는 손질도 이름을 보이고 까닭은 툴팁, ⋯는 줄 오른쪽 끝. 그림: /private/tmp/claude-501/-Users-hyeonjin-Documents-sop-archivist/cd35c95b-037a-4e82-bb7a-e837e4859e96/scratchpad/shots/pickbar/ (pickbar-<en|ko>-<1120|1440>.png = 실제 폭, -box<480–720>.png = 단추 줄 폭을 CSS로 강제한 것 — 박스보다 넓게 강제한 그림은 오른쪽이 잘려 보임). 호버 깜빡임은 재 보니 0회.
+- (F5) 기본 창 폭(1120 · 1440, 두 단)에서는 Old 박스가 좁아 라벨이 거의 다 접힌다(잇기만 이름). 이름을 더 자주 보이려면 접는 폭(components.css)을 낮추거나 아이콘 옆 짧은 이름을 정한다.
 
 ## 사용자 답 (2026-11-26 아침)
 
