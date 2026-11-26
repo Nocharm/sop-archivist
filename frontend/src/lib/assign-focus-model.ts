@@ -34,7 +34,7 @@ export interface Picks {
 export const NO_PICKS: Picks = { old: NO_PICK, new: NO_PICK, last: null, act: null };
 
 export type PendingKind =
-  | "join" | "split" | "unmerge" | "unwrap" | "rewrap" | "pair" | "unpair" | "lang" | "heading" | "ref" | "caption" | "toc" | "figure" | "order" | "reorder" | "save" | "undo" | "bulk";
+  | "join" | "split" | "unmerge" | "unwrap" | "rewrap" | "pair" | "unpair" | "lang" | "heading" | "ref" | "caption" | "toc" | "figure" | "order" | "reorder" | "follow" | "save" | "undo" | "bulk";
 export type PendingPlace = { at: "gap"; firstId: number; secondId: number } | { at: "box"; unitId: number } | { at: "table"; tableId: number } | { at: "none" };
 export const NO_PLACE: PendingPlace = { at: "none" };
 
@@ -315,6 +315,8 @@ export function readPendingLabelKey(kind: PendingKind): string | null {
       return "assign.working.lang";
     case "reorder":
       return "assign.working.reorder";
+    case "follow":
+      return "assign.working.follow";
     case "heading":
     case "ref":
     case "caption":
@@ -331,7 +333,7 @@ export function readPendingLabelKey(kind: PendingKind): string | null {
 
 /** 원문 편집의 알약 자리 - 표 바꾸기 · 벗긴 표 줄 순서는 표 머리, 그 밖은 가리키는 첫 박스. 틈의 붙이기는 부르는 쪽이 틈을 준다(이웃끼리인지는 화면이 안다) */
 export function readEditPlace(op: EditOp): PendingPlace {
-  if (op.type === "set_layout_table" || op.type === "reorder_unwrapped") return { at: "table", tableId: op.table_id };
+  if (op.type === "set_layout_table" || op.type === "reorder_unwrapped" || op.type === "follow_table") return { at: "table", tableId: op.table_id };
   const [unitId] = listEditUnitIds(op);
   return unitId === undefined ? NO_PLACE : { at: "box", unitId };
 }
@@ -385,6 +387,8 @@ export function readEditKind(op: EditOp): PendingKind {
       return "order";
     case "reorder_unwrapped":
       return "reorder";
+    case "follow_table":
+      return "follow";
   }
 }
 
@@ -412,6 +416,8 @@ export function listEditUnitIds(op: EditOp): number[] {
       return [op.unit_id];
     case "set_indents":
       return op.units.map((item) => item.unit_id);
+    case "follow_table":
+      return op.items.flatMap((item) => item.unit_ids);
     case "move_boundary":
       return [op.left_unit_id, op.right_unit_id];
     case "attach_caption":
@@ -451,16 +457,18 @@ export interface ReloadPlan {
   identical: boolean;
   /** 이 문서의 AI 나누기 제안(AI 켬일 때만) */
   splitSuggestions: number | null;
+  /** 분류 · 묶기 제안 목록 - Unit을 은퇴시키는 편집이 제안을 거두고 되돌리기는 되살리지 않아, 화면이 든 목록이 낡는다 */
+  suggestions: boolean;
   bundle: boolean;
 }
 
-const NO_RELOAD: ReloadPlan = { docs: [], units: false, newDoc: null, written: false, tobe: false, identical: false, splitSuggestions: null, bundle: false };
+const NO_RELOAD: ReloadPlan = { docs: [], units: false, newDoc: null, written: false, tobe: false, identical: false, splitSuggestions: null, suggestions: false, bundle: false };
 
 /** 편집 하나 뒤에 다시 받을 것 - 설계 D2의 표 "편집 | 기다림 | 뒤에서" 한 줄씩 */
 export function planReload(cause: ReloadCause, ctx: { aiOn: boolean }): ReloadPlan {
   switch (cause.kind) {
     case "old_edit": {
-      const own = { ...NO_RELOAD, docs: [cause.docId], units: true, bundle: true };
+      const own = { ...NO_RELOAD, docs: [cause.docId], units: true, suggestions: !cause.isInPlace, bundle: true };
       // 판단을 풀었으면 대상(Target)이 지워진다 - To-Be · New 문장(엮은 문서) · 같은 글자 후보까지
       if (cause.isReleased) return { ...own, tobe: true, written: true, identical: true, splitSuggestions: cause.isInPlace || !ctx.aiOn ? null : cause.docId };
       // 제자리 편집(언어 · 참조 · 번호)은 글도 Unit도 그대로다
@@ -481,6 +489,6 @@ export function planReload(cause: ReloadCause, ctx: { aiOn: boolean }): ReloadPl
       if (!cause.isApplied) return { ...NO_RELOAD, docs: [cause.docId], splitSuggestions: ctx.aiOn ? cause.docId : null };
       return planReload({ kind: "old_edit", docId: cause.docId, isInPlace: false, isReleased: false }, ctx);
     case "edit_undo":
-      return { ...NO_RELOAD, docs: cause.docId === null ? "all" : [cause.docId], units: true, identical: true, bundle: true };
+      return { ...NO_RELOAD, docs: cause.docId === null ? "all" : [cause.docId], units: true, identical: true, suggestions: true, bundle: true };
   }
 }

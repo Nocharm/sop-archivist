@@ -39,6 +39,12 @@ MAX_INDENT_LEVEL = 9
 # 앞 글머리 기호 줄 깊이 + 1을 넘지 못한다(outputs.get_bullet_depths). 프런트 section-number.ts MAX_BULLET_LEVEL·BULLET_SYMBOLS와 같은 값
 MAX_BULLET_LEVEL = 2
 BULLET_SYMBOLS = ("•", "○", "▪")
+# 영어 표의 짝 한글 표(table_follow.py) — 점수가 이보다 낮으면 짝이 없다. 합성 자료 기준, 실제 문서로 재설정
+TABLE_FOLLOW_THRESHOLD = 0.6
+# 위 두 후보의 점수 차가 이보다 작으면 사람이 고른다 — 합성 자료 기준, 실제 문서로 재설정
+TABLE_FOLLOW_MARGIN = 0.1
+# 짝 표 안 행 짝(table_follow.match_rows) — 한글 줄(조각)과 영어 줄의 점수가 이보다 낮으면 잇지 않는다. 합성 자료 기준, 실제 문서로 재설정
+ROW_MATCH_THRESHOLD = 0.5
 # 새 문장 번호 표시 — 번호(기본) | 번호 생략 | 주석(번호 없이 기울임) | 글머리 기호. 번호가 아닌 줄은 번호를 받지 않고 다음 번호 줄이 이어 센다.
 # 글머리 기호 줄은 결과물 A·Excel의 No.에 그 절(번호 없는 범주면 가장 가까운 번호 있는 상위 절)의 번호를 적는다(outputs.number_bullets).
 # 값은 8자까지다(target_sentences.number_style). SOP 줄의 기본값은 놓인 골격 항목의 default_style이다(target_placement)
@@ -48,7 +54,7 @@ NUMBERED, NUMBER_OMITTED, NUMBER_NOTE, NUMBER_BULLET = NUMBER_STYLES
 
 # --- AI 층(계획 2) ---
 # "match"는 계획이 쓰는 제안의 종류다. 같은 이름의 LLM 작업은 걷었고(설계 2026-11-20-change-type-two D6) 옛 작업 행 때문에 작업 쪽 CHECK에도 남는다
-AI_JOB_KINDS = ("classify", "translate", "match_plan", "match", "pair", "split", "doc_meta", "tobe_list", "unwrap_order")
+AI_JOB_KINDS = ("classify", "translate", "match_plan", "match", "pair", "split", "doc_meta", "tobe_list", "unwrap_order", "table_follow")
 AI_RETIRED_JOB_KINDS = ("match",)  # 핸들러가 없는 옛 작업 종류 — 다시 시도로 줄 세우지 않는다(돌면 internal 실패다)
 AI_JOB_STATUSES = ("queued", "running", "done", "failed", "stale", "cancelled")
 AI_SUGGESTION_RESULTS = ("applied", "stale", "invalid")  # 적용됨 | 낡아서 안 씀 | 응답이 규칙 위반
@@ -59,6 +65,6 @@ AI_PRIORITY_PRE_CLASSIFY = 2  # 미리 돌리기: 분류
 AI_ADOPTIONS = ("as_is", "edited", "rejected")  # 사람의 결과: 그대로 채택 | 고쳐서 채택 | 버림
 GUIDELINE_KEYS = (
     "rules", "prompt.classify", "prompt.translate", "prompt.split", "prompt.doc_meta", "prompt.tobe_list",
-    "prompt.unwrap_order",
+    "prompt.unwrap_order", "prompt.grant", "prompt.table_follow",
 )
 SYSTEM_HOLD_AI_INVALID = "system:ai_invalid_response"  # AI 응답이 규칙을 어겨 보류된 행 — 화면은 "AI 응답 무효"로 보인다

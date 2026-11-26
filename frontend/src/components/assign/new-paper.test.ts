@@ -103,7 +103,7 @@ describe("NewPaper", () => {
 
   it("shows header and footer tabs like the Old paper", () => {
     expect(html({ header: true })).toContain('data-testid="assign-new-tab-header"');
-    expect(html()).not.toContain("assign-new-tab");
+    expect(html()).not.toContain('data-testid="assign-new-tab-');
   });
 
   it("draws a heading with no target and tells why", () => {
@@ -120,7 +120,7 @@ describe("NewPaper", () => {
   });
 
   it("shows the numbers of the document, read-only", () => {
-    // 번호 칸 글쇠(⇧N · Tab)는 용지가 numberCell을 받아야 손잡이를 내놓는다 - New 용지는 받지 않는다
+    // 번호 칸 글쇠(⇧N · Tab)는 용지가 numberCell을 받아야 손잡이를 내놓는다 - 주지 않으면(고칠 수 없는 사람) 읽기만
     const number = { value: "1.1", read: "1.1", source: "auto" as const, is_set: false, content_start: 0, from_text: false, note: null };
     const numbered = { ...makeView({ units: () => ({ number }) }), has_number_ranges: true };
     const h = html({ view: numbered, model: buildPaperModel(numbered), tabs: buildPaperTabs(numbered, buildPaperModel(numbered)) });
@@ -129,6 +129,37 @@ describe("NewPaper", () => {
   });
 
   it("shows no Caption needed on a written table", () => expect(html()).not.toContain("caption-missing"));
+
+  it("shows the linked count and an unwrap button", () => expect(html({ onUnwrapTable: () => undefined })).toMatch(/assign-new-table-links-900"[\s\S]*assign-new-unwrap-900/));
+
+  it("shows the linked count without the button to a reader", () => {
+    const h = html();
+    expect(h).toMatch(/data-testid="assign-new-table-links-900"[^>]*>1 of 1 cells linked/);
+    expect(h).not.toContain("assign-new-unwrap-900");
+  });
+
+  it("draws the line-order grip of an unwrapped table on the picked line only with lineGrip", () => {
+    // 벗긴 표 - 표 단위가 없고 칸 줄 둘이 묶이지 않았다
+    const base = makeView();
+    const view: DocumentView = {
+      ...base,
+      tables: base.tables.map((table) => ({ ...table, is_layout: true })),
+      blocks: [...base.blocks, makeBlock(61, "Cell two", { kind: "table_cell", table_id: TABLE, row_index: 1, col_index: 0 })],
+      units: [...base.units.filter((unit) => unit.kind !== "table" && unit.kind !== "cell_sentence"), makeUnit(60, "Cell", { kind: "cell_sentence", table_id: TABLE, row_index: 0 }), makeUnit(61, "Cell two", { kind: "cell_sentence", table_id: TABLE, row_index: 1 })],
+    };
+    const model = buildPaperModel(view);
+    const unwrap = { canRewrap: true, busy: false, onRewrap: () => undefined };
+    const at = (over: Partial<NewPaperProps>) => html({ view, model, tabs: buildPaperTabs(view, model), selectedUnitId: 60, ...over });
+    expect(at({ unwrap: { ...unwrap, lineGrip: true } })).toContain('data-testid="assign-new-paper-unwrap-grip-60"');
+    expect(at({ unwrap: { ...unwrap, lineGrip: true } })).not.toContain("assign-new-paper-unwrap-grip-61");
+    expect(at({ unwrap })).not.toContain("unwrap-grip");
+  });
+
+  it("marks a linked cell and tags the picked one with its place", () => {
+    expect(html()).toMatch(/data-cell-target="7"[^>]*data-linked=""/);
+    expect(html()).not.toContain("assign-new-cell-tag-7");
+    expect(html({ selectedUnitId: 60 })).toMatch(/data-testid="assign-new-cell-tag-7"[^>]*>R 1 C 1 · 1\/1</);
+  });
 
   it("folds other lines' AI suggestions into a band", () => {
     const rows = [row(5, 50, { source_unit_ids: [1] }), row(6, 52, { source_unit_ids: [2], status: "ai_suggested" })];

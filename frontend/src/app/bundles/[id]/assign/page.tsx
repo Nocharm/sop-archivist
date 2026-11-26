@@ -30,6 +30,8 @@ import { Modal } from "@/components/modal";
 import { TemplateView, type TemplateSpot } from "@/components/template/template-view";
 import { CutPop } from "@/components/paper/cut-pop";
 import type { ComposedStyleChoice } from "@/components/paper/number-cell";
+import type { PaperNumberCell } from "@/components/paper/paper";
+import type { DocShape } from "@/lib/doc-shape-model";
 import { FilterChip } from "@/components/status";
 import { ConfirmModal } from "@/components/ui/confirm-modal";
 import { LeftoverTranslations } from "@/components/assign/leftover-translations";
@@ -39,7 +41,7 @@ import { BundleLoadError } from "@/components/bundle-load-error";
 import { flashElement, Truncate } from "@/components/ui/motion";
 import { formatGapLabel, PLACE_REFUSAL_KEYS, readGapKey, type Placement, type PlaceSpot } from "@/lib/place-spot-model";
 import { listAckWarnings } from "@/lib/missing-warnings-model";
-import { type ChangeType, type EditOp } from "@/lib/api-sop";
+import { type ChangeType, type DocumentView, type EditOp } from "@/lib/api-sop";
 import { formatAssignKey } from "@/lib/assign-keymap";
 import { isBundleCaptionNeeded } from "@/lib/caption-model";
 import { countJoinedLines } from "@/lib/join-sentence-model";
@@ -66,6 +68,9 @@ import { useAssignPage, NO_NUMBERS, findDestinationDoc, revealElement } from "./
 
 const NO_SECTIONS: ReadonlySet<string> = new Set();
 
+// New 용지의 삭제된 줄 블록은 고르지 않는다 - 블록 고름(결정 칸 · U · R 글쇠)은 Old 문서만이다
+const ignoreNoisePick = () => undefined;
+
 export default function AssignPage() {
   const state = useAssignPage();
   // 엮은 문서 순서 저장 응답의 라벨 언어 - 엮은 문서를 받는 언어와 같게(화면 언어)
@@ -85,7 +90,7 @@ export default function AssignPage() {
     setConfirmingIdentical, resetScope, setResetScope, slots, newDraft, draftSlotKey, placeResolved, canPlaceClick, pickedSpotKey,
     setCarvePick, carve, carveText, clearCarve, togglePairViewByButton, pairFrom, setPairFrom, mergeArm, pairSource, isLeftPairPick, isRightPairPick, captionPickBundle, setCaptionPick, selectToc, openNewCtxMenu,
     openSolo, goToUnit, ctxGroups, bundleRefPending, isLinkedToWritten, captionPendingKeys, docDashboard, openCtxMenu, runUnitEdit,
-    rewrapTable, unwrapAi, describeEditConfirm, pairGrip, clearNoise, openNoiseReason, splitAtCut, handleOldDoubleClick,
+    rewrapTable, unwrapTable, unwrapAi, newUnwrapAi, tableFollow, leftTools, rightTools, rightShape, describeEditConfirm, pairGrip, clearNoise, openNoiseReason, splitAtCut, handleOldDoubleClick, handleNewDoubleClick, carveShape,
     runCtx, revertHeadings, planJoinIn, joinIn, renderOldActions, confirmIdenticalAll, acceptAll,
     pressNewBox, renderPickBar, showNewDoc, jump, handleJoinPick, readJoinAfter, pickJoinMenu, handleFramePress, pickPlaceSpot, pickOwnAiLine, jumpToNew, openNewDoc,
     showInNew, jumpToOld, pickTemplateLine, fillTemplateMissing, isOldDrag, finishPairPick, handleOldClick, markRecHover, revealPick,
@@ -390,6 +395,55 @@ export default function AssignPage() {
     </div>
   ) : null;
   const oldBanner = linkWaitBanner("old") ?? (isRightPairPick ? null : (pairBanner ?? captionBanner ?? (isNewEdit ? null : mergeBanner)));
+  /** 번호 칸 - 원문 글자는 그대로 두고 번호 범위만 바꾸는 쪼개기 편집이라 줄의 배정은 그대로다. 고치는 문서는 그 용지의 문서(Old · New) */
+  function buildNumberCell(paperShape: DocShape | null): PaperNumberCell {
+    return {
+      // 그 줄이 처리 중이면 용지가 그 번호 칸만 끈다
+      busy: isGlobalPending,
+      expected: expectedNumbers,
+      handleRef: registerNumberHandle,
+      onSave: (unitId, number, follow, indentShift) =>
+        runUnitEdit(paperShape, { type: "set_number", unit_id: unitId, number, follow, ...(indentShift === undefined ? {} : { indent_shift: indentShift }) }, number === null ? t("assign.number.didClear") : t("assign.number.didSet", { n: number }), unitId),
+      // 들여쓰기는 두 번 저장한다(B8 7-a) - 누른 줄, 이어져 함께 바뀐 줄. Ctrl+Z 한 번이 함께 바뀐 줄만 되돌린다(같은 문서 쓰기는 차례로 간다)
+      onIndent: (plan, delta, label) => {
+        const toItem = (change: IndentChange) => ({ unit_id: change.unitId, indent_shift: change.indentShift });
+        const unitId = plan.clicked.unitId;
+        runUnitEdit(paperShape, { type: "set_indents", units: [toItem(plan.clicked)] }, t(delta < 0 ? "assign.number.didOutdent" : "assign.number.didIndent", { id: label }), unitId);
+        if (plan.batch.length > 0) {
+          const done = t(delta < 0 ? "assign.number.didOutdentMore" : "assign.number.didIndentMore", { id: label, n: plan.batch.length });
+          runUnitEdit(paperShape, { type: "set_indents", units: plan.batch.map(toItem) }, done, unitId);
+        }
+      },
+    };
+  }
+  /** 글자를 끌어 고름 - 저절로 삭제된 줄의 글자는 떼어 내지 않는다(서버 toc_line_locked), 먼저 삭제 취소 */
+  function pickCarve(paperView: DocumentView, range: { blockId: number; start: number; end: number }) {
+    if (!hasTocLineIn(paperView.units, range.blockId)) setCarvePick({ docId: paperView.document.id, ...range });
+  }
+  // 글자 골라 새 박스의 띠 - 글자를 고른 문서의 용지 위에 선다(왼쪽 용지 · 양 단의 New)
+  const carveBanner = carve && (
+    <div className="flex items-center gap-2 border-b border-line bg-accent-tint px-3 py-1.5 text-xs" role="status" data-testid="assign-carve">
+      <span className="flex-none font-semibold text-ink">{t("split.carve")}</span>
+      <Truncate className="min-w-0 flex-1 text-ink-2" text={carveText} testId="assign-carve-text" />
+      <button
+        type="button"
+        className="btn h-7 flex-none"
+        data-testid="assign-carve-run"
+        disabled={busy}
+        onClick={() => {
+          const op: EditOp = { type: "carve", block_id: carve.blockId, start: carve.start, end: carve.end };
+          clearCarve();
+          runUnitEdit(carveShape, op, t("split.didCarve"), null);
+        }}
+      >
+        <SquarePlus size={14} strokeWidth={1.5} aria-hidden />
+        {t("split.carveRun")}
+      </button>
+      <button type="button" className="btn ghost icon h-7 w-7 flex-none" aria-label={t("common.cancel")} data-testid="assign-carve-cancel" onClick={clearCarve}>
+        <X size={14} strokeWidth={1.5} aria-hidden />
+      </button>
+    </div>
+  );
   const placeOf = (unitIds: number[]) => {
     const decided = unitIds.map((id) => unitMap.get(id)).find((unit) => unit?.status === "confirmed");
     if (!decided) {
@@ -559,7 +613,7 @@ export default function AssignPage() {
                   clearRowPick();
                 }}
                 model={paperModel}
-                fold={foldMatch && !isSolo ? { matchIds: foldMatch, open: foldOpen, onOpenChange: setFoldOpen } : undefined}
+                fold={foldMatch && leftTools.fold ? { matchIds: foldMatch, open: foldOpen, onOpenChange: setFoldOpen } : undefined}
                 foldEmpty={
                   isFoldEmpty
                     ? foldElsewhere.map((place) => ({ ...place, label: `${oldDocOptions.find((option) => option.value === String(place.docId))?.label ?? place.docId} · ${t(`split.tab.${place.part}`)} · ${place.count}` }))
@@ -580,17 +634,17 @@ export default function AssignPage() {
                 // 짝 카드 안 순서 손잡이 - 고른 박스가 짝 전부가 이어 붙은 카드 안이면(설계 D8)
                 pairGrip={pairGrip}
                 // 삭제로 확정한 줄의 접힌 한 줄 - 한 단으로 연 New 문서에는 줄이 없다
-                deleted={isSolo ? undefined : { folds: deletedFolds }}
+                deleted={leftTools.deleted ? { folds: deletedFolds } : undefined}
                 pickedIds={pickedOld}
                 warnBlockIds={warnBlockIds}
                 statusOf={readMarkStatus}
                 renderNote={placeOf}
                 // 삭제·이동한 묶음, 이미 쓴 New 문서(혼자 연 문서)의 묶음과 그 문서에 이은 묶음(입구 2 - 캡션을 그 문서가 정한다)은 캡션이 필요 없다
                 isCaptionNeeded={(unitId, hasCaption) => isBundleCaptionNeeded(unitMap.get(unitId), hasCaption, isLinkedToWritten(unitId))}
-                // 저절로 삭제된 줄(목차 · 본문 앞부분 · 개정 이력)은 Old 문서에서만 흐린 블록으로 접는다(MD 1 F6 · 쪼개기 먼저 §7 R3). 사유 쓰기 · 삭제 취소는
-                // 다듬는 원문이 그 Old 문서일 때만 - New 문장을 고치는 동안은 접고 펴기만
+                // 저절로 삭제된 줄(목차 · 본문 앞부분 · 개정 이력)은 흐린 블록으로 접는다(MD 1 F6 · 쪼개기 먼저 §7 R3 · §8 4-3). 한 단으로 연 New도 같은
+                // 블록 · 사유 쓰기 · 삭제 취소이고, 블록 고름(결정 칸 · U · R 글쇠)은 Old 문서만이다
                 noise={
-                  isSolo
+                  !leftTools.noise
                     ? undefined
                     : {
                         canEdit,
@@ -603,17 +657,18 @@ export default function AssignPage() {
                           if (oldView) openNoiseReason(oldView.document.id, unitIds);
                         },
                         open: tocOpen,
-                        selected: tocPick !== null && tocPick.docId === oldView?.document.id ? tocPick : null,
+                        selected: !isSolo && tocPick !== null && tocPick.docId === oldView?.document.id ? tocPick : null,
                         onToggle: (key) => setTocOpen((open) => toggleTocOpen(open, key)),
                         onPick: (key, unitId) => {
-                          if (oldView) selectToc(oldView.document.id, key, unitId, false);
+                          if (oldView && !isSolo) selectToc(oldView.document.id, key, unitId, false);
                         },
                       }
                 }
-                // 제목에서 바꾼 조항 묶음 머리(F8b) - 되돌리기는 다듬는 원문이 그 Old 문서일 때만
-                headingShift={isSolo ? undefined : { canRevert: canEdit, busy: isGlobalPending, onRevert: (unitIds) => revertHeadings(leftShape, unitIds) }}
-                // 벗긴 표의 줄 묶음 머리 "↺ 다시 표로"(F1) - 다듬는 원문이 그 Old 문서일 때만
-                unwrap={isSolo ? undefined : { canRewrap: canEdit, busy: isGlobalPending, onRewrap: (tableId) => rewrapTable(leftShape, tableId), ai: canEdit ? unwrapAi : undefined }}
+                // 제목에서 바꾼 조항 묶음 머리(F8b) - Old와 한 단으로 연 New 모두
+                headingShift={leftTools.headingShift ? { canRevert: canEdit, busy: isGlobalPending, onRevert: (unitIds) => revertHeadings(leftShape, unitIds) } : undefined}
+                // 벗긴 표의 줄 묶음 머리 "↺ 다시 표로"(F1)와 AI 순서 제안 - Old와 한 단으로 연 New 모두
+                // 짝 한글 표 고르기 · 한글 표처럼 하기는 Old 영어 표에만(table-follow 설계 §9) - 한 단으로 연 New 머리에는 붙이지 않는다
+                unwrap={{ canRewrap: leftTools.unwrap, busy: isGlobalPending, onRewrap: (tableId) => rewrapTable(leftShape, tableId), ai: leftTools.unwrapAi ? unwrapAi : undefined, lineGrip: leftTools.lineGrip, follow: isSolo ? undefined : tableFollow }}
                 // 처리 중인 일 - 누르는 즉시 그 자리 알약과 박스 쉬머, 그 박스만 잠근다(설계 D4)
                 pending={mode === "old" ? paperPending : undefined}
                 mergeArm={isNewEdit ? null : mergeArm}
@@ -627,73 +682,19 @@ export default function AssignPage() {
                 sheets={oldView && paperModel && activePart !== "body" ? listPartSheets(oldView, paperModel, activePart) : null}
                 onPartChange={changePart}
                 // 묶음째 고르는 것은 배정 때만 - 짝 고르기(칸 문장끼리도 짝을 맺는다)와 쓴 New 문서 다듬기(배정이 없다)는 칸 문장을 그대로 고른다
-                pickWholeBundle={!isSolo && !isLeftPairPick}
+                pickWholeBundle={leftTools.wholeBundle && !isLeftPairPick}
                 onUnitClick={handleOldClick}
                 onUnitContextMenu={(unitId, at, caret) => openCtxMenu(unitId, at, caret)}
-                onUnitDoubleClick={canEdit ? handleOldDoubleClick : undefined}
+                onUnitDoubleClick={leftTools.split ? handleOldDoubleClick : undefined}
                 // 번호 칸 - 원문 글자는 그대로 두고 번호 범위만 바꾸는 쪼개기 편집이라 줄의 배정은 그대로다
-                numberCell={
-                  canEdit && mode === "old" && !isSolo
-                    ? {
-                        // 그 줄이 처리 중이면 용지가 그 번호 칸만 끈다
-                        busy: isGlobalPending,
-                        expected: expectedNumbers,
-                        handleRef: registerNumberHandle,
-                        onSave: (unitId, number, follow, indentShift) =>
-                          runUnitEdit(leftShape, { type: "set_number", unit_id: unitId, number, follow, ...(indentShift === undefined ? {} : { indent_shift: indentShift }) }, number === null ? t("assign.number.didClear") : t("assign.number.didSet", { n: number }), unitId),
-                        // 들여쓰기는 두 번 저장한다(B8 7-a) - 누른 줄, 이어져 함께 바뀐 줄. Ctrl+Z 한 번이 함께 바뀐 줄만 되돌린다(같은 문서 쓰기는 차례로 간다)
-                        onIndent: (plan, delta, label) => {
-                          const toItem = (change: IndentChange) => ({ unit_id: change.unitId, indent_shift: change.indentShift });
-                          const unitId = plan.clicked.unitId;
-                          runUnitEdit(leftShape, { type: "set_indents", units: [toItem(plan.clicked)] }, t(delta < 0 ? "assign.number.didOutdent" : "assign.number.didIndent", { id: label }), unitId);
-                          if (plan.batch.length > 0) {
-                            const done = t(delta < 0 ? "assign.number.didOutdentMore" : "assign.number.didIndentMore", { id: label, n: plan.batch.length });
-                            runUnitEdit(leftShape, { type: "set_indents", units: plan.batch.map(toItem) }, done, unitId);
-                          }
-                        },
-                      }
-                    : undefined
-                }
-                onRangeSelect={
-                  canEdit && mode === "old" && oldView
-                    ? (range) => {
-                        // 저절로 삭제된 줄의 글자는 떼어 내지 않는다(서버 toc_line_locked) - 먼저 삭제 취소
-                        if (!hasTocLineIn(oldView.units, range.blockId)) setCarvePick({ docId: oldView.document.id, ...range });
-                      }
-                    : undefined
-                }
-                banner={
-                  oldBanner !== null ? (
-                    oldBanner
-                  ) : carve && (
-                    <div className="flex items-center gap-2 border-b border-line bg-accent-tint px-3 py-1.5 text-xs" role="status" data-testid="assign-carve">
-                      <span className="flex-none font-semibold text-ink">{t("split.carve")}</span>
-                      <Truncate className="min-w-0 flex-1 text-ink-2" text={carveText} testId="assign-carve-text" />
-                      <button
-                        type="button"
-                        className="btn h-7 flex-none"
-                        data-testid="assign-carve-run"
-                        disabled={busy}
-                        onClick={() => {
-                          const op: EditOp = { type: "carve", block_id: carve.blockId, start: carve.start, end: carve.end };
-                          clearCarve();
-                          runUnitEdit(leftShape, op, t("split.didCarve"), null);
-                        }}
-                      >
-                        <SquarePlus size={14} strokeWidth={1.5} aria-hidden />
-                        {t("split.carveRun")}
-                      </button>
-                      <button type="button" className="btn ghost icon h-7 w-7 flex-none" aria-label={t("common.cancel")} data-testid="assign-carve-cancel" onClick={clearCarve}>
-                        <X size={14} strokeWidth={1.5} aria-hidden />
-                      </button>
-                    </div>
-                  )
-                }
+                numberCell={leftTools.numberCell ? buildNumberCell(leftShape) : undefined}
+                onRangeSelect={leftTools.carve && oldView ? (range) => pickCarve(oldView, range) : undefined}
+                banner={oldBanner ?? (carveShape !== null && carveShape === leftShape ? carveBanner : null)}
                 cut={isNewEdit ? null : cutLine.cut}
                 onCutDrag={canEdit ? cutLine.drag : undefined}
                 onCutNudge={canEdit ? cutLine.nudge : undefined}
                 renderAtCut={() => <CutPop busy={busy} onRun={splitAtCut} onCancel={cutLine.clear} testIdPrefix="assign" />}
-                join={canEdit && mode === "old" ? { busy: isGlobalPending, plan: (firstId, secondId) => planJoinIn(leftShape, firstId, secondId), onJoin: (firstId, secondId, kind) => joinIn(leftShape, firstId, secondId, kind) } : undefined}
+                join={leftTools.join ? { busy: isGlobalPending, plan: (firstId, secondId) => planJoinIn(leftShape, firstId, secondId), onJoin: (firstId, secondId, kind) => joinIn(leftShape, firstId, secondId, kind) } : undefined}
                 renderUnitActions={renderOldActions}
                 figureSource={oldView ? { bundleId, docId: oldView.document.id } : undefined}
                 zoom={view.zoomOld}
@@ -814,7 +815,7 @@ export default function AssignPage() {
                           {newAiChip}
                         </>
                       }
-                      banner={linkWaitBanner("new") ?? (isRightPairPick ? pairBanner : ((isNewEdit ? mergeBanner : null) ?? newAiBanner))}
+                      banner={linkWaitBanner("new") ?? (isRightPairPick ? pairBanner : ((isNewEdit ? mergeBanner : null) ?? (carveShape !== null && carveShape === rightShape ? carveBanner : null) ?? newAiBanner))}
                       linesOn={view.lines}
                       onToggleLines={() => changeView({ lines: !view.lines })}
                       onWide={newFileId !== null ? () => openSolo(newFileId) : undefined}
@@ -851,6 +852,24 @@ export default function AssignPage() {
                       onCutNudge={canEdit && isNewEdit ? cutLine.nudge : undefined}
                       renderAtCut={() => <CutPop busy={busy} onRun={splitAtCut} onCancel={cutLine.clear} testIdPrefix="assign" />}
                       renderUnitActions={(unitId) => renderPickBar("new", unitId)}
+                      // 손질(lib/doc-tools-model) - Old 용지와 같은 부품, 고치는 문서는 이 New 문서(쪼개기 먼저 §8 4-3). 블록 고름은 Old만이라 New 블록은 접고 펴기와 단추만
+                      noise={rightTools.noise && newView ? {
+                        canEdit,
+                        busy: isGlobalPending,
+                        onClear: (unitIds) => clearNoise(newView.document.id, unitIds),
+                        onReason: (unitIds) => openNoiseReason(newView.document.id, unitIds),
+                        open: tocOpen,
+                        selected: null,
+                        onToggle: (key) => setTocOpen((open) => toggleTocOpen(open, key)),
+                        onPick: ignoreNoisePick,
+                      } : undefined}
+                      headingShift={rightTools.headingShift ? { canRevert: canEdit, busy: isGlobalPending, onRevert: (unitIds) => revertHeadings(rightShape, unitIds) } : undefined}
+                      unwrap={{ canRewrap: rightTools.unwrap, busy: isGlobalPending, onRewrap: (tableId) => rewrapTable(rightShape, tableId), ai: rightTools.unwrapAi ? newUnwrapAi : undefined, lineGrip: rightTools.lineGrip }}
+                      numberCell={rightTools.numberCell ? buildNumberCell(rightShape) : undefined}
+                      join={rightTools.join ? { busy: isGlobalPending, plan: (firstId, secondId) => planJoinIn(rightShape, firstId, secondId), onJoin: (firstId, secondId, kind) => joinIn(rightShape, firstId, secondId, kind) } : undefined}
+                      onRangeSelect={rightTools.carve && newView ? (range) => pickCarve(newView, range) : undefined}
+                      onUnitDoubleClick={rightTools.split ? handleNewDoubleClick : undefined}
+                      onUnwrapTable={rightTools.unwrap && rightShape ? (tableId) => unwrapTable(rightShape, tableId) : undefined}
                     />
                   )}
                   <LinkLines pairs={listNewAiLinks(linkPairs, newAiFilter, row?.unitIds ?? [])} focusUnits={highlightIds} focusTargets={liveDoc ? new Set([...pickedNew, ...liveDoc.targetIds]) : pickedNew} visible={view.lines} />

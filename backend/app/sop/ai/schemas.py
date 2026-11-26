@@ -79,6 +79,13 @@ class UnwrapOrderIn(BaseModel):
     table_id: RequestId
 
 
+class TableFollowIn(BaseModel):
+    """한글 표처럼 하기 제안 요청 — 옛 문서와 그 안의 벗긴 영어 표 하나."""
+
+    document_id: RequestId
+    table_id: RequestId
+
+
 class JobKindIn(BaseModel):
     """취소·다시 시도의 범위 — 비우면 묶음의 모든 종류."""
 

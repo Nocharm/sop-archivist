@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import type { BundleCell, ViewUnit, WrittenSentence } from "@/lib/api-sop";
 import { buildNewAiFilter } from "@/lib/new-ai-filter-model";
 
-import { buildNewOverlay, hasStrayUnit, readOverlayKey, readUnlinkableKey, type NewBox, type NewOverlayInput } from "./new-overlay-model";
+import { buildNewOverlay, hasStrayUnit, readOverlayKey, readTableLinks, readUnlinkableKey, type NewBox, type NewOverlayInput } from "./new-overlay-model";
 
 const NONE: ReadonlySet<number> = new Set();
 
@@ -161,4 +161,17 @@ describe("readUnlinkableKey", () => {
   });
 
   it("gives no reason for a linkable box", () => expect(readUnlinkableKey(unit({}), build([sentence(5, 50)]).boxes.get(50), "body")).toBeNull());
+});
+
+describe("readTableLinks", () => {
+  // 표 60의 칸 넷 - 하나만 Old에 이었다. 칸 박스의 표는 Unit의 group_unit_id로 찾는다
+  const units = new Map<number, ViewUnit>([
+    [60, unit({ id: 60, kind: "table" })],
+    ...[61, 62, 63, 64].map((id): [number, ViewUnit] => [id, unit({ id, kind: "cell_sentence", group_unit_id: 60 })]),
+  ]);
+  const model = { units };
+  const { boxes } = build([table([cell(7, 61, { source_unit_ids: [9] }), cell(8, 62), cell(9, 63), cell(10, 64)])]);
+
+  it("counts linked cells of each table", () => expect(readTableLinks(model, boxes).get(60)).toEqual({ linked: 1, total: 4 }));
+  it("has nothing for a table without cell sentences", () => expect(readTableLinks(model, build([table([])]).boxes).has(60)).toBe(false));
 });

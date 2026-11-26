@@ -80,6 +80,9 @@ function readHover(target: EventTarget | null): Hover | null {
   if (!(target instanceof Element)) return null;
   const line = target.closest<HTMLElement>("[data-pane=\"new\"] .new-line[data-target]");
   if (line) return { side: "new", id: Number(line.dataset.target) };
+  // 칸에 이은 선은 칸에서 끝난다 - 칸에 올려도 그 선이 진해진다(쪼개기 먼저 §8 4-3)
+  const cell = target.closest<HTMLElement>("[data-pane=\"new\"] .new-cell[data-cell-target]");
+  if (cell) return { side: "new", id: Number(cell.dataset.cellTarget) };
   const strip = target.closest<HTMLElement>("[data-pane=\"old\"] .cell-piece, [data-pane=\"old\"] .strip");
   const unit = strip?.querySelector<HTMLElement>("[data-unit]");
   return unit ? { side: "old", id: Number(unit.dataset.unit) } : null;

@@ -41,10 +41,12 @@ from app.sop.ai.schemas import (
     SuggestionOut,
     SuggestionsPageOut,
     TranslateIn,
+    TableFollowIn,
     UnwrapOrderIn,
 )
 from app.sop.ai.split import SPLIT_KIND, select_split_items
 from app.sop.ai.translate import TRANSLATE_KIND, select_translate_items
+from app.sop.ai.table_follow_job import TABLE_FOLLOW_KIND, select_table_follow_items
 from app.sop.ai.unwrap_order_job import UNWRAP_ORDER_KIND, select_unwrap_order_items
 from app.sop.constants import AI_PRIORITY_PLAN, AI_PRIORITY_USER, MEMBER_ROLES
 from app.sop.errors import raise_rule
@@ -189,6 +191,18 @@ async def request_unwrap_order(
     ensure_editable(ctx.bundle)
     items = await select_unwrap_order_items(session, ctx.bundle.id, document_id=body.document_id, table_id=body.table_id)
     return await _queue_request(session, ctx, UNWRAP_ORDER_KIND, items, [])
+
+
+@router.post("/table_follow", response_model=AiRequestOut, dependencies=[Depends(require_ai_enabled)])
+async def request_table_follow(
+    body: TableFollowIn,
+    ctx: BundleContext = Depends(_require_author),
+    session: AsyncSession = Depends(get_session),
+) -> AiRequestOut:
+    await lock_bundle(session, ctx.bundle)
+    ensure_editable(ctx.bundle)
+    items = await select_table_follow_items(session, ctx.bundle.id, document_id=body.document_id, table_id=body.table_id)
+    return await _queue_request(session, ctx, TABLE_FOLLOW_KIND, items, [])
 
 
 @router.get("/status", response_model=AiStatusOut)

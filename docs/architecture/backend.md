@@ -18,6 +18,8 @@
 - `resolve.py` `get_effective_access`(개인 부여 ∪ 소속 부서 체인 부여, 역할은 권한으로 펼침, 퇴직자 무권한, `APP_SYSADMINS`는 전권).
 - `deps.py` `require_permission("<key>")`(라우터 의존성).
 - `sources.py`(권한 출처 응답 `SourceOut`·대상 이름 조회 — `/api/me`의 `sources`와 유효 권한 조회가 공유).
+- `POST /api/access/grants/batch`(`{add, remove}` 각 200건까지, 회수 먼저·추가 나중을 한 트랜잭션으로, 항목마다 변경 기록) — 이미 있거나 없는 항목은 거절하지 않고 `skipped`·`unknown`·`missing`으로 돌려준다. 역할 여러 개 더하기와 회수 되돌리기(같은 부여를 새로 만든다)가 쓴다.
+- `GET /api/access/audit?before=<기록 id>`는 그 기록보다 먼저 남은 것만 준다 — 시각이 같은 기록이 빠지지 않게 (시각, id)로 끊고, 기준 기록이 없으면 404.
 - `require_permission`·`/api/me`·관리 화면의 유효 권한 조회가 모두 `get_effective_access` 하나를 부른다 — 판정을 다른 곳에 새로 쓰지 않는다.
 - 부여는 더하기만 있고 부서 부여는 하위 부서까지 내려간다. 대상은 FK 없이 두어 개편으로 사라진 부서·사람의 부여도 지우지 않고 `subject_missing`으로 보인다.
 
@@ -74,7 +76,7 @@ AI 없이 사람이 끝까지 가는 결정적 경로(계획 1). AI 층은 아�
 
 - 요청(`routers/sop_ai.py`)은 `ai_jobs` 행을 쌓고(`jobs.py`) 곧바로 응답한다.
 - 백엔드 안의 단일 실행기(`runner.py`, lifespan 워커 — AI나 임베딩이 켜져 있을 때만)가 작업을 (priority, id) 순으로 꺼내 **`load`(짧은 세션: 스냅샷 읽기·`revision` 적기) → `compute`(세션 없이 임베딩·LLM 호출) → `apply`(새 세션, 묶음을 `FOR UPDATE`로 잠근 뒤 상태를 다시 보고 쓴다)** 세 단계로 돌린다.
-- 종류별 핸들러는 `JobHandler`(`load`/`compute`/`apply`)를 구현해 `handlers.py` `HANDLERS` 표에 등록한다: `classify.py`(칸 고르기+한·영 고쳐 쓰기)·`translate.py`·`match_jobs.py`(입구 2 `match_plan`이 LLM 없이 코드로 묶어 변경 종류까지 정한 제안을 쓴다)·`pairing.py`(한/영 따로 짝, 임베딩만)·`split.py`.
+- 종류별 핸들러는 `JobHandler`(`load`/`compute`/`apply`)를 구현해 `handlers.py` `HANDLERS` 표에 등록한다: `classify.py`(칸 고르기+한·영 고쳐 쓰기)·`translate.py`·`match_jobs.py`(입구 2 `match_plan`이 LLM 없이 코드로 묶어 변경 종류까지 정한 제안을 쓴다)·`pairing.py`(한/영 따로 짝, 임베딩만)·`split.py`·`unwrap_order_job.py`(벗긴 표 순서)·`table_follow_job.py`(규칙이 못 푸는 영어 표의 한글 표 따라 하기).
 - 순수 부분은 `matching.py`·`similarity.py`(코사인·글자 2-gram)·`candidates.py`(칸 후보)·`context.py`(앞뒤 단위·절·Markdown 표).
 - 호출은 `llm.py`(원문을 구분자 데이터로 감싸기·재시도·응답 JSON 파싱)·`embeddings.py`(캐시 `embed_texts`).
 - 공용 쓰기는 `apply.py`(낡음 판정·밀린 제안 걷기·제안 행·무효 보류)·`adoption.py`(채택 판정과 채택률).
@@ -119,7 +121,7 @@ AI 없이 사람이 끝까지 가는 결정적 경로(계획 1). AI 층은 아�
 
 ### 10.4 AI 호출
 
-- 페이로드에 직원 실명(`name`·`korean_name`)을 싣지 않는다 — 역할·부서 등 비식별 정보만.
+- 사내 모델로만 부른다(외부 모델 금지). 직원 실명(`name`·`korean_name`)·로그인 ID는 그 기능에 필요할 때만 싣는다(사용자 결정 2026-11-26, 전에는 실명 금지). 사내 AI로 부여 읽기(`access/grant_ai.py`, `POST /api/access/grants/ai-read`)는 관리자의 글과 역할 이름·권한 키를 보내고, 직원 명단은 보내지 않는다 — AI가 글에서 옮겨 쓴 이름·ID·부서는 서버가 응답을 받은 뒤 직원·부서 표에 맞춘다. 요청 안의 동기 호출이고(AI 작업 표를 쓰지 않음) 아무것도 쓰지 않으며, 반영은 화면이 `/grants/batch`로 한다.
 - 호출은 `call_ai_recorded`를 거쳐(검사: `test_invariants.py`) 사용량 행을 남기고(실패도 `ok=false`), 사용자에게 보이는 오류는 AI 주소·토큰을 뺀 문구다.
 - **AI 호출 동안 DB 연결을 잡지 않는다** — `call_ai_recorded`는 세션을 받지 않고, 요청 세션을 쓴 핸들러는 호출 직전 `await session.close()`로 돌려준다(`ping_ai`). AI 작업은 이 규칙을 구조로 지킨다 — 아래 11절.
 
@@ -212,6 +214,13 @@ AI 없이 사람이 끝까지 가는 결정적 경로(계획 1). AI 층은 아�
 
 - 응답 `queued`는 분류 작업만 세고 `ai.request` 기록은 남기지 않는다.
 - 첫 `prepare`가 고른 줄이 하나도 없던 문서는 `ai_jobs` 행이 없어 미리 돌린 문서로 치지 않으므로, 그 뒤에 지운 줄은 다음 진입 때 미리 분류된다(설계대로 받아들인 동작).
+
+### 11.9b 한글 표처럼 하기 AI(`table_follow_job.py`, 11-23 명세 D2-R9 · R10)
+
+- `unwrap_order_job.py` 한 벌을 본뜬다. 요청(`POST /ai/table_follow`)은 `table_follow.answer_follow(inputs, None)`가 `ai`(규칙이 못 푸는 표)일 때만 쌓는다(422 `follow_not_needed`) — 임베딩 호출을 묶음 잠금 안에서 하지 않으려 토큰만으로 판정하고, 임베딩이 켜져 있으면 화면의 GET과 갈릴 수 있다(그때는 규칙이 풀거나 AI를 더 부르는 쪽).
+- 페이로드는 한글 표를 손본 결과와 영어 줄뿐이고 이름 · 로그인 ID는 없다. 응답 `actions`(줄마다 `order` · `delete` · `merge_with` · `indent_shift` · `number`)는 줄 집합 · 자리 순열 · 합치기 고리 · 번호 길이를 검사하고, 무효면 응답 글을 남기지 않는다.
+- 제안 내용은 규칙 제안과 같은 `{table_id, source_table_id, items[FollowItemOut], lines, reason}`이라 화면이 같은 칩 · `follow_table` 편집으로 받는다. 쓰기는 `ai_suggestions`뿐 — 판단 · New 문장 · 줄은 사람이 편집을 눌러야 바뀐다. 채택은 `adoption.record_manual_adoption`(`_MANUAL_KINDS`)이다.
+- 낡음 = 영어 줄(id · 글 · 번호 · 들여쓰기 · 삭제 여부)과 한글 표의 손본 결과의 해시, 짝 표 id. 영어 줄의 순서만 바뀐 것은 낡음이 아니다. `OFFERED_KINDS` · `WAITING_KINDS`에는 넣지 않는다(알약 · 수락 창 · 대기에 들지 않는다).
 
 ### 11.10 기록
 
@@ -341,6 +350,7 @@ AI 없이 사람이 끝까지 가는 결정적 경로(계획 1). AI 층은 아�
 - 한/영 따로 문서의 같은 꼴 표 판정(`is_same_form`)과 비슷한 차례는 이 순수 모듈에 두고 짝 다시 세우기(`units.refresh_code_pairs` → `_find_table_pairs`)가 쓴다 — 둘 다 벗긴 한글 표를 같은 꼴인 가장 비슷한 벗긴 영어 표와 맺는다.
 - 표는 하나씩 벗긴다(함께 벗기기는 걷었다, 사용자 결정 2026-11-19 — 옛 편집 기록의 `payload.counterpart_table_id`는 읽지 않는다).
 - 행 수가 다른 대응 표는 추출 경고 `pair_rows_differ`(확인 불필요)로 남고 짝을 다시 세울 때마다 맞춘다.
+- 영어 Old 표의 짝 한글 표(11-23 명세 D2-R1~R3)는 `table_follow.py`가 꼴 · 언어 무관 토큰 · (켜져 있으면) 임베딩으로 고르고 후보는 `counterparts.list_candidates`(벗김 상태 무관)를 쓴다. 애매하면 사람이 고르고 그 답은 `table_counterparts`(Alembic `0040`, 표마다 한 행, NULL = 짝 없음)에 남는다 — 사람의 답이 점수를 이긴다. 읽기는 세션을 닫은 뒤 임베딩을 부른다. 짝이 정해지고 두 표가 벗긴 표면 `match_rows`가 행을 내용으로 맞추고 `build_follow_plan`이 한글 표에서 한 일(순서 · 삭제 · 합치기 · 들여쓰기 · 번호)을 계획한다(D2-R4 · R5, 맞춘 꼴이 다르면 `None` = AI 길). 계획은 저장하지 않는다(`GET …/tables/{t}/follow`, D2-R7). 적용 편집 `follow_table`(`editing._plan_follow_table`)은 `_plan_merge`의 초안 · `_plan_set_number`(따라 고치지 않음) · `_plan_set_indents` · 덩이 순서를 `_merge_changes`로 한 변경에 담고, 삭제 줄은 라우터가 같은 트랜잭션에서 `table_follow.dispose_follow_deletes`(→ `decisions.dispose_units`)로 쓴 뒤 편집 전 덤프로 Assign 단계 하나를 남긴다(편집이 비었으면 `record_snapshot_step`). 이 편집이 만든 합친 줄은 `is_merge_edit`가 보는 합치기 기록이 아니라 조각 표시 · 합치기 풀기가 없다(되돌리기는 된다).
 
 ### 12.17 참조 판정·번호 꼴 `refs.read_ref_state`·`is_document_number`
 

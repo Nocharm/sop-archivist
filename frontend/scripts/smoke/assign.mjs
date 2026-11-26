@@ -526,6 +526,182 @@ async function prepareClickPlace(page, needed) {
   };
 }
 
+// 손질 검사 한 벌의 합성 문서(쪼개기 먼저 §8 4-3) - 1장 앞 표지(본문 앞부분 블록), 1장 · 2장 제목, 두 문장 문단(두 번 눌러 나누기), 이웃한 두 문단(틈 합치기),
+// 제목 스타일의 긴 조항(제목 → 문장, ↺ 제목으로), 표(벗기기 · 다시 표로). Old와 New 둘 다 같은 본문이고 New는 머리말로 파일만 다르게 한다(같은 파일은 duplicate_file)
+const SHAPE_SPLIT_TEXT = "합성 장비의 압력을 확인한다. 결과를 기록지에 적는다.";
+const SHAPE_JOIN_TEXTS = ["합성 둘째 문단이다.", "합성 셋째 문단이다."];
+const SHAPE_BODY = [
+  "p('합성 표지 문서') + p('합성 결재 표를 적는다.')",
+  "p('1. 목적', 'Heading1')",
+  `p('${SHAPE_SPLIT_TEXT}')`,
+  `p('${SHAPE_JOIN_TEXTS[0]}') + p('${SHAPE_JOIN_TEXTS[1]}')`,
+  "p('1.1 합성 장비를 끈다. 합성 밸브를 닫는다.', 'Heading2')",
+  "tbl([['합성 항목', '합성 값'], ['합성 압력', '합성 결과']])",
+  // 1장 제목이 장 시작이 되려면 같은 단계에 둘째 장이 있어야 한다(noise._opens_chapters) - 없으면 표지가 앞부분이 되지 않는다
+  "p('2. 범위', 'Heading1') + p('합성 범위를 적는다.')",
+].join(" + ");
+
+/** 손질 검사용 묶음 - 같은 본문의 Old 문서 하나와 이미 쓴 New 문서 하나. 끝에 묶음을 지운다(removeShapeBundle) */
+async function createShapeBundle(page, title) {
+  const headers = { "X-Dev-User": "dev.admin" };
+  const backend = resolve(SCRIPT_DIR, "../../../backend");
+  const oldFile = resolve(SHOT_DIR, "SYNTHETIC_OLD-86_shape_tools.docx");
+  const newFile = resolve(SHOT_DIR, "SYNTHETIC_SOP-86_shape_tools.docx");
+  const build = [
+    "import sys",
+    "from tests.docx_factory import build_docx, p, tbl",
+    `body = ${SHAPE_BODY}`,
+    "open(sys.argv[1], 'wb').write(build_docx(body))",
+    "open(sys.argv[2], 'wb').write(build_docx(body, headers=[p('합성 새 문서')]))",
+  ].join("\n");
+  execFileSync(findBackendPython(), ["-c", build, oldFile, newFile], { cwd: backend, stdio: "inherit" });
+  const created = await (await page.request.post(`${BASE}/api/bundles`, { headers, data: { title, is_synthetic: true } })).json();
+  const api = `${BASE}/api/bundles/${created.id}`;
+  const mime = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+  const oldUp = await page.request.post(`${api}/documents`, { headers, multipart: { side: "old", file: { name: "SYNTHETIC_OLD-86_shape_tools.docx", mimeType: mime, buffer: readFileSync(oldFile) } } });
+  const newUp = await page.request.post(`${api}/documents`, { headers, multipart: { side: "new", doc_type: "sop", file: { name: "SYNTHETIC_SOP-86_shape_tools.docx", mimeType: mime, buffer: readFileSync(newFile) } } });
+  const oldDoc = await oldUp.json();
+  const newDoc = await newUp.json();
+  check("the shaping bundle has an Old and a written New document", oldUp.status() === 201 && newUp.status() === 201 && oldDoc.status === "ready" && newDoc.status === "ready", `${oldUp.status()} ${newUp.status()}`);
+  return { bundleId: created.id, api, headers, oldDoc, newDoc };
+}
+
+async function removeShapeBundle(page, { api, headers }) {
+  const bundle = await (await page.request.get(api, { headers })).json();
+  check("the shaping bundle is removed", (await page.request.delete(`${api}?revision=${bundle.revision}`, { headers })).ok());
+}
+
+/**
+ * 손질 검사 한 벌 - place(old · new-wide · new-pair)만 다르고 검사 이름 · 차례가 같다(쪼개기 먼저 §8 "기능 하나마다 세 자리를 같은 스모크 함수로").
+ * docId는 고치는 문서, prefix는 그 용지의 testid 접두(assign-paper · assign-new-paper), sideTestId는 그 칸(assign-old · assign-new).
+ * 검사마다 Ctrl+Z로 되돌려 문서를 처음 모양으로 남긴다(한 단 · 양 단의 New가 같은 문서를 쓴다). 응답과 다시 읽은 보기를 기다린 뒤 본다
+ */
+async function runShapeTools({ page, place, docId, prefix, sideTestId, api, headers }) {
+  const pane = page.locator(`[data-testid="${sideTestId}"]`);
+  const name = (text) => `[${place}] ${text}`;
+  const readView = async () => (await page.request.get(`${api}/documents/${docId}/view`, { headers })).json();
+  const waitView = async (isDone) => {
+    for (let tries = 0; tries < 60; tries += 1) {
+      if (isDone(await readView())) return true;
+      await page.waitForTimeout(250);
+    }
+    return false;
+  };
+  const waitEdit = () => page.waitForResponse((res) => res.request().method() === "POST" && res.url().endsWith(`/documents/${docId}/edits`), { timeout: T });
+  const pressUndo = async () => {
+    await page.locator('[data-testid="assign-undo"]:not([disabled])').waitFor({ timeout: T });
+    const done = page.waitForResponse((res) => res.request().method() === "POST" && res.url().includes("/decisions/undo"), { timeout: T });
+    await page.keyboard.press("Control+z");
+    return (await done).ok();
+  };
+  const unitOf = (view, text) => view.units.find((unit) => unit.text === text);
+  const listFront = (view) => view.units.filter((unit) => unit.noise_kind === "front" && unit.group_unit_id === null);
+  const start = await readView();
+
+  // 본문 앞부분 블록 - 펼치기, 모두 삭제 취소, Ctrl+Z
+  const front = listFront(start);
+  check(name("the cover before chapter 1 is a deleted front matter block"), front.length > 0, `${front.length} front lines`);
+  if (front.length > 0) {
+    const head = pane.locator(`[data-testid="${prefix}-noise-head-${front[0].id}"]`);
+    await head.scrollIntoViewIfNeeded({ timeout: T });
+    await head.click();
+    await pane.locator(`[data-testid="${prefix}-noise-line-${front[0].id}"]`).waitFor({ timeout: T });
+    check(name("the block opens to its lines"), (await head.getAttribute("aria-expanded")) === "true");
+    const restored = waitEdit();
+    await pane.locator(`[data-testid="${prefix}-noise-clear-${front[0].id}"]`).click();
+    check(name("Restore all brings the cover back as body lines"), (await restored).ok() && (await waitView((view) => listFront(view).length === 0)));
+    check(name("Ctrl+Z deletes the cover again"), (await pressUndo()) && (await waitView((view) => listFront(view).length === front.length)));
+  }
+
+  // 두 번 눌러 나누기
+  const para = unitOf(start, SHAPE_SPLIT_TEXT);
+  check(name("the two-sentence paragraph is one box"), para !== undefined);
+  if (para !== undefined) {
+    const count = (await readView()).units.length;
+    const text = pane.locator(`[data-testid="${prefix}-unit-${para.id}"]`);
+    await text.scrollIntoViewIfNeeded({ timeout: T });
+    await text.dblclick();
+    await page.locator('[data-testid="assign-cut-run"]').waitFor({ timeout: T });
+    check(name("a double press puts a cut in the paragraph"), (await pane.locator(`[data-testid="${prefix}-cut-handle"]`).count()) === 1);
+    const split = waitEdit();
+    await page.locator('[data-testid="assign-cut-run"]').click();
+    check(name("Split here makes two boxes"), (await split).ok() && (await waitView((view) => view.units.length === count + 1)));
+    check(name("Ctrl+Z makes it one box again"), (await pressUndo()) && (await waitView((view) => unitOf(view, SHAPE_SPLIT_TEXT) !== undefined)));
+  }
+
+  // 틈 합치기 - 고른 박스 곁의 틈에만 단추가 선다
+  const beforeJoin = await readView();
+  const first = unitOf(beforeJoin, SHAPE_JOIN_TEXTS[0]);
+  const second = unitOf(beforeJoin, SHAPE_JOIN_TEXTS[1]);
+  check(name("the two neighbour paragraphs are two boxes"), first !== undefined && second !== undefined);
+  if (first !== undefined && second !== undefined) {
+    await pane.locator(`[data-testid="${prefix}-unit-${first.id}"]`).click();
+    const join = pane.locator(`[data-testid="${prefix}-join-${first.id}-${second.id}"]`);
+    await join.waitFor({ state: "attached", timeout: T });
+    // 단추는 틈에 올렸을 때만 눌린다(pointer-events) - 단추 줄이 다 펼쳐진 뒤 틈에 올려 누른다(gap join 단계와 같은 길)
+    await page.waitForFunction(() => { const acts = document.querySelector(".strip-acts[data-open]"); return acts === null || acts.getAnimations().length === 0; }, null, { timeout: T });
+    // has:는 바깥 locator에 대고 다시 찾으므로 pane에 뿌리를 둔 join이 아니라 testid만으로 넘긴다
+    await pane.locator(".strip-gap", { has: page.locator(`[data-testid="${prefix}-join-${first.id}-${second.id}"]`) }).hover({ position: { x: 200, y: 2 } });
+    await page.waitForFunction(() => [...document.querySelectorAll(".strip-gap:hover .strip-merge")].some((el) => getComputedStyle(el).pointerEvents === "auto"), null, { timeout: T });
+    const joined = waitEdit();
+    await join.click();
+    check(name("Join in the gap makes them one box"), (await joined).ok() && (await waitView((view) => unitOf(view, SHAPE_JOIN_TEXTS[0]) === undefined)));
+    check(name("Ctrl+Z splits them apart again"), (await pressUndo()) && (await waitView((view) => unitOf(view, SHAPE_JOIN_TEXTS[1]) !== undefined)));
+  }
+
+  // 번호 칸 고치기
+  const heading = (await readView()).units.find((unit) => unit.kind === "heading" && unit.number !== null);
+  check(name("the chapter heading has a number cell"), heading !== undefined);
+  if (heading !== undefined) {
+    const was = heading.number.value;
+    const cell = pane.locator(`[data-testid="${prefix}-num-${heading.id}"]`);
+    await cell.scrollIntoViewIfNeeded({ timeout: T });
+    await cell.click();
+    await page.locator(`[data-testid="${prefix}-num-kind-continuous"]`).click();
+    await page.locator(`[data-testid="${prefix}-num-input"]`).waitFor({ timeout: T });
+    const follow = page.locator(`[data-testid="${prefix}-num-follow"]`);
+    if ((await follow.count()) > 0) await follow.uncheck();
+    await page.locator(`[data-testid="${prefix}-num-input"]`).fill("3");
+    const numbered = waitEdit();
+    await page.keyboard.press("Enter");
+    const readNumber = (view) => view.units.find((unit) => unit.id === heading.id)?.number?.value;
+    check(name("the number cell saves a new number"), (await numbered).ok() && (await waitView((view) => readNumber(view) !== was)));
+    check(name("Ctrl+Z puts the number back"), (await pressUndo()) && (await waitView((view) => readNumber(view) === was)));
+  }
+
+  // 표 벗기기(표 머리를 고르고 ⇧T) · ↺ 다시 표로 · Ctrl+Z 두 번
+  const table = (await readView()).units.find((unit) => unit.kind === "table");
+  check(name("the table is one table line"), table !== undefined);
+  if (table !== undefined) {
+    const tableHead = pane.locator(`[data-testid="${prefix}-head-${table.id}"]`);
+    await tableHead.scrollIntoViewIfNeeded({ timeout: T });
+    await tableHead.click();
+    const unwrapped = waitEdit();
+    await page.keyboard.press("Shift+T");
+    const isWrapped = (view) => view.units.some((unit) => unit.id === table.id);
+    check(name("picking the table head and Shift+T unwraps it"), (await unwrapped).ok() && (await waitView((view) => !isWrapped(view))));
+    const rewrap = pane.locator(`[data-testid="${prefix}-rewrap-${table.table_id}"]`);
+    await rewrap.waitFor({ timeout: T });
+    const rewrapped = waitEdit();
+    await rewrap.click();
+    check(name("Back to table wraps it into one table line"), (await rewrapped).ok() && (await waitView((view) => view.units.some((unit) => unit.kind === "table"))));
+    check(name("Ctrl+Z unwraps it again"), (await pressUndo()) && (await waitView((view) => !view.units.some((unit) => unit.kind === "table"))));
+    check(name("a second Ctrl+Z gives the first table back"), (await pressUndo()) && (await waitView((view) => isWrapped(view))));
+  }
+
+  // 제목 → 문장 묶음의 ↺ 제목으로
+  const shifted = (await readView()).units.filter((unit) => unit.from_heading).sort((a, b) => a.pos_seq - b.pos_seq);
+  check(name("the long heading-styled clause became sentences"), shifted.length > 0);
+  if (shifted.length > 0) {
+    const revert = pane.locator(`[data-testid="${prefix}-shift-revert-${shifted[0].id}"]`);
+    await revert.scrollIntoViewIfNeeded({ timeout: T });
+    const reverted = waitEdit();
+    await revert.click();
+    check(name("To heading turns the clause back into a heading"), (await reverted).ok() && (await waitView((view) => !view.units.some((unit) => unit.from_heading))));
+    check(name("Ctrl+Z makes it sentences again"), (await pressUndo()) && (await waitView((view) => view.units.some((unit) => unit.from_heading))));
+  }
+}
+
 export async function run() {
 
 await runStep("assign: legend first, place, delete without a reason, edit, clear, bulk", { drafting: true, allowConsoleErrors: true }, async ({ page, takeShot }) => {
@@ -4112,7 +4288,7 @@ await runStep("assign: a written New document opens on its own with the same too
   await page.waitForLoadState("networkidle");
   await page.locator('[data-testid="assign-new-edit-original"]').click();
   await wait(page, "assign-solo");
-  check("the scissors button opens the New document alone, in the one-document view", (await page.locator(".assign-panes").getAttribute("data-single")) !== null && (await getText(page, "assign-old-tag")).includes("New"));
+  check("the Wide view button opens the New document alone, in the one-document view", (await page.locator(".assign-panes").getAttribute("data-single")) !== null && (await getText(page, "assign-old-tag")).includes("New"));
   check("nothing is picked yet, and the panel says what to do", (await page.locator('[data-testid^="assign-shape-line-"]').count()) === 0 && (await getText(page, "assign-solo-note")).length > 0);
   const unit = before.find((item) => item.kind === "sentence" && item.pair_id === null && item.text.trim().split(" ").length >= 6);
   check("the New document has a sentence long enough to cut", unit !== undefined);
@@ -4227,6 +4403,126 @@ await runStep("assign: shape a written New sentence in place, in the two-documen
   await page.locator(`[data-testid="assign-new-${again.target_id}"] [data-testid="assign-pick-bar-link"]`).waitFor({ timeout: T });
   check("with an Old row picked, clicking a New sentence still links", (await page.locator('[data-testid="assign-old-kept"]').count()) === 1);
   await page.keyboard.press("Escape");
+});
+
+// 같은 손질을 세 자리에서(쪼개기 먼저 §8 4-3) - Old 용지, 한 단으로 연 New(넓게 보기), 양 단의 New가 같은 검사 함수(runShapeTools)를 돈다.
+// 시드에는 이 손질이 다 든 New 문서가 없어 합성 docx 둘을 새 묶음에 올려 보고 끝에 묶음을 지운다
+await runStep("assign: shaping tools work the same on Old, on New alone and on New beside Old", { devUser: "dev.admin", allowConsoleErrors: true }, async ({ page }) => {
+  const shape = await createShapeBundle(page, "SYNTHETIC shaping tools on three papers");
+  const { api, headers, bundleId, oldDoc, newDoc } = shape;
+  if (oldDoc.status !== "ready" || newDoc.status !== "ready") return;
+  await page.goto(`${BASE}/bundles/${bundleId}/assign`);
+  await wait(page, "assign-bar");
+  await page.waitForLoadState("networkidle");
+  if ((await page.locator('[data-testid="assign-new"]').count()) === 0) await page.locator('[data-testid="assign-view-two"]').click();
+  await wait(page, "assign-new");
+  await runShapeTools({ page, place: "old", docId: oldDoc.id, prefix: "assign-paper", sideTestId: "assign-old", api, headers });
+  await page.locator('[data-testid="assign-new-paper"]').waitFor({ timeout: T });
+  await runShapeTools({ page, place: "new-pair", docId: newDoc.id, prefix: "assign-new-paper", sideTestId: "assign-new", api, headers });
+  await page.keyboard.press("Escape");
+  await page.locator('[data-testid="assign-new-edit-original"]').click();
+  await page.waitForFunction(() => document.querySelector('[data-testid="assign-old-tag"]')?.textContent?.includes("New") ?? false, null, { timeout: T });
+  check("Wide view opens the New document alone", (await page.locator(".assign-panes").getAttribute("data-single")) !== null);
+  await runShapeTools({ page, place: "new-wide", docId: newDoc.id, prefix: "assign-paper", sideTestId: "assign-old", api, headers });
+  await removeShapeBundle(page, shape);
+});
+
+// 이은 칸이 든 New 표 벗기기(쪼개기 먼저 §8 4-3) - 확인창이 풀릴 이음(n)과 보류로 갈 Old 줄(m)을 묻고, 확인하면 Old 줄이 보류, Ctrl+Z가 이음과 확정을 되살린다.
+// 합성 문서: 2열 표 하나(1열 2.1 · 2.2 · 2.3, 2열은 칸마다 한글 문단 하나와 영어 문단 하나). 2.1 · 2.2 한글 칸에 Old 줄 하나씩 잇는다(n 2 · m 2)
+await runStep("assign: unwrapping a New table with linked cells asks with both numbers, Ctrl+Z brings the links back", { devUser: "dev.admin", allowConsoleErrors: true }, async ({ page }) => {
+  const headers = { "X-Dev-User": "dev.admin" };
+  const backend = resolve(SCRIPT_DIR, "../../../backend");
+  const oldFile = resolve(SHOT_DIR, "SYNTHETIC_OLD-NEW-UNWRAP_steps.docx");
+  const newFile = resolve(SHOT_DIR, "SYNTHETIC_NEW-UNWRAP_steps.docx");
+  const rows = [["2.1", "합성 밸브를 연다.", "Open the synthetic valve."], ["2.2", "합성 압력을 잰다.", "Measure the synthetic pressure."], ["2.3", "합성 결과를 적는다.", "Write the synthetic result."]];
+  const build = [
+    "import sys",
+    "from tests.docx_factory import build_docx, make_grid_table, make_row, p",
+    `rows = ${JSON.stringify(rows)}`,
+    "table = make_grid_table(2, ''.join(make_row([number, p(ko) + p(en)]) for number, ko, en in rows))",
+    "open(sys.argv[1], 'wb').write(build_docx(p(rows[0][1]) + p(rows[1][1])))",
+    "open(sys.argv[2], 'wb').write(build_docx(table, headers=[p('합성 새 문서')]))",
+  ].join("\n");
+  execFileSync(findBackendPython(), ["-c", build, oldFile, newFile], { cwd: backend, stdio: "inherit" });
+  const created = await (await page.request.post(`${BASE}/api/bundles`, { headers, data: { title: "SYNTHETIC New table unwrap ask", is_synthetic: true } })).json();
+  const api = `${BASE}/api/bundles/${created.id}`;
+  const getJson = async (path) => (await page.request.get(`${api}${path}`, { headers })).json();
+  const mime = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+  const oldUp = await page.request.post(`${api}/documents`, { headers, multipart: { side: "old", file: { name: "SYNTHETIC_OLD-NEW-UNWRAP_steps.docx", mimeType: mime, buffer: readFileSync(oldFile) } } });
+  const newUp = await page.request.post(`${api}/documents`, { headers, multipart: { side: "new", doc_type: "sop", file: { name: "SYNTHETIC_NEW-UNWRAP_steps.docx", mimeType: mime, buffer: readFileSync(newFile) } } });
+  const oldDoc = await oldUp.json();
+  const newDoc = await newUp.json();
+  check("an Old document and a New document with a two-column table are uploaded", oldUp.status() === 201 && newUp.status() === 201 && oldDoc.status === "ready" && newDoc.status === "ready", `${oldUp.status()} ${newUp.status()}`);
+  if (oldDoc.status !== "ready" || newDoc.status !== "ready") return;
+  const oldUnits = (await getJson(`/documents/${oldDoc.id}/view`)).units;
+  const olds = [rows[0][1], rows[1][1]].map((text) => oldUnits.find((unit) => unit.text === text));
+  const readCells = async () => (await getJson("/written-sentences")).find((row) => row.kind === "table")?.table?.cells ?? [];
+  const cells = await readCells();
+  const targets = [rows[0][1], rows[1][1]].map((text) => cells.find((cell) => cell.text === text));
+  check("the Korean cells of 2.1 and 2.2 are cell sentences of their own", olds.every(Boolean) && targets.every(Boolean), JSON.stringify(cells.map((cell) => cell.text)));
+  if (!olds.every(Boolean) || !targets.every(Boolean)) return;
+  await page.goto(`${BASE}/bundles/${created.id}/assign`);
+  await wait(page, "assign-bar");
+  if ((await page.locator('[data-testid="assign-new"]').count()) === 0) await page.locator('[data-testid="assign-view-two"]').click();
+  for (const [at, unit] of olds.entries()) {
+    await page.locator(`[data-testid="assign-paper-piece-${unit.id}"], [data-testid="assign-paper-unit-${unit.id}"]`).first().click();
+    await page.waitForFunction((want) => document.querySelector('[data-testid="assign-row-id"]')?.textContent?.includes(want), unit.display_id, { timeout: T });
+    const cellBox = page.locator(`[data-testid="assign-new-cell-${targets[at].target_id}"]`);
+    await cellBox.scrollIntoViewIfNeeded({ timeout: T });
+    await page.locator(`[data-testid="assign-new-cell-pick-${targets[at].target_id}"]`).click();
+    const link = cellBox.locator('[data-testid="assign-pick-bar-link"]');
+    await link.waitFor({ timeout: T });
+    const saved = page.waitForResponse((res) => res.request().method() === "POST" && res.url().includes("/groups/save"), { timeout: T });
+    await link.click();
+    await saved;
+  }
+  const waitLinked = async (want) => {
+    for (let tries = 0; tries < 60; tries += 1) {
+      const now = await readCells();
+      if (targets.every((target) => JSON.stringify(now.find((cell) => cell.target_id === target.target_id)?.source_unit_ids) === JSON.stringify(want(target)))) return true;
+      await page.waitForTimeout(250);
+    }
+    return false;
+  };
+  const sourceOf = (target) => [olds[targets.indexOf(target)].id];
+  check("the two Korean cells are linked to their Old lines", await waitLinked(sourceOf));
+  const tableUnit = (await getJson(`/documents/${newDoc.id}/view`)).units.find((unit) => unit.kind === "table");
+  const links = page.locator(`[data-testid="assign-new-table-links-${tableUnit.id}"]`);
+  // 칸 문장 수는 번호 칸까지 센다(번호만 든 칸도 칸 문장이다) - 이은 수만 본다
+  await page.waitForFunction((id) => /^2 of \d+ /.test(document.querySelector(`[data-testid="assign-new-table-links-${id}"]`)?.textContent ?? ""), tableUnit.id, { timeout: T });
+  check("the table head counts the linked cells", /^2 of \d+ cells linked$/.test((await links.innerText()).trim()), await links.innerText());
+  const asked = page.waitForResponse((res) => res.request().method() === "POST" && res.url().endsWith(`/documents/${newDoc.id}/edits`), { timeout: T });
+  await page.locator(`[data-testid="assign-new-unwrap-${tableUnit.id}"]`).click();
+  const ask = await asked;
+  const detail = (await ask.json()).detail;
+  check("the server asks with the links and the held rows", ask.status() === 409 && detail?.linked_cells === 2 && detail?.held_rows === 2, JSON.stringify(detail));
+  const modal = page.locator('[data-testid="assign-edit-confirm"]');
+  await modal.waitFor({ timeout: T });
+  const text = await modal.innerText();
+  check("the dialog says 2 linked cells lose their links and 2 Old rows go on hold", text.includes("2 linked cells lose their links") && text.includes("2 Old rows"), text);
+  const confirmed = page.waitForResponse((res) => res.request().method() === "POST" && res.url().endsWith(`/documents/${newDoc.id}/edits`), { timeout: T });
+  await page.locator('[data-testid="assign-edit-confirm-confirm"]').click();
+  check("confirming unwraps the table", (await confirmed).ok());
+  const readStatuses = async () => {
+    const units = (await getJson(`/documents/${oldDoc.id}/view`)).units;
+    return olds.map((old) => units.find((unit) => unit.id === old.id)?.status);
+  };
+  const waitStatuses = async (want) => {
+    for (let tries = 0; tries < 60; tries += 1) {
+      if ((await readStatuses()).every((status) => status === want)) return true;
+      await page.waitForTimeout(250);
+    }
+    return false;
+  };
+  check("the two Old lines go on hold", await waitStatuses("on_hold"), JSON.stringify(await readStatuses()));
+  await page.locator('[data-testid="assign-undo"]:not([disabled])').waitFor({ timeout: T });
+  const undone = page.waitForResponse((res) => res.request().method() === "POST" && res.url().includes("/decisions/undo"), { timeout: T });
+  await page.keyboard.press("Control+z");
+  check("Ctrl+Z answers", (await undone).ok());
+  check("Ctrl+Z brings the links back", await waitLinked(sourceOf));
+  check("and the Old lines are confirmed again", await waitStatuses("confirmed"), JSON.stringify(await readStatuses()));
+  const bundle = await (await page.request.get(api, { headers })).json();
+  check("the unwrap-ask bundle is removed", (await page.request.delete(`${api}?revision=${bundle.revision}`, { headers })).ok());
 });
 
 // 머리말·꼬리말 탭의 설명 줄(v1.0.28) - 전에는 원문 고치기 화면에만 있었다. 장마다 어느 구역의 머리말인지 적힌다
@@ -4453,6 +4749,119 @@ await runStep("assign: join two pieces from the gap between them, then unmerge",
     await page.waitForLoadState("networkidle");
   }
   check("three undos return to the original sentence", (await readIds()).length === before);
+});
+
+// 편집이 은퇴시킨 Unit의 제안은 거둔다(쪼개기 먼저 E3, S16) - 한 문장을 잘라 두 조각에 분류 제안을 받아 두고 틈의 Join으로 붙이면 AI 알약의 받을 수가 줄고,
+// 되돌리기 뒤에도 늘지 않는다. 끝에 되돌리기 한 번(붙이기 → 자르기까지 두 번)으로 시드를 처음 그대로 둔다
+await runStep("assign: merging two suggested boxes drops the AI count and Ctrl+Z does not bring it back", { drafting: true }, async ({ page }) => {
+  const headers = { "X-Dev-User": "qa.member" };
+  const status = await page.request.get(`${BASE}/api/bundles/${freshBundleId}/ai/status`, { headers });
+  if (!status.ok() || !(await status.json()).ai_enabled) {
+    console.log("  (AI is off in this backend - skipped)");
+    return;
+  }
+  const docs = await (await page.request.get(`${BASE}/api/bundles/${freshBundleId}/documents`, { headers })).json();
+  const readView = async (docId) => (await page.request.get(`${BASE}/api/bundles/${freshBundleId}/documents/${docId}/view`, { headers })).json();
+  await page.goto(`${BASE}/bundles/${freshBundleId}/assign`);
+  await wait(page, "assign-bar");
+  const pieceOf = (unitId) => page.locator(`[data-testid="assign-paper-piece-${unitId}"], [data-testid="assign-paper-unit-${unitId}"]`).first();
+  let doc = null;
+  let unit = null;
+  for (const candidate of docs.filter((item) => item.side === "old" && item.status === "ready")) {
+    const found = (await readView(candidate.id)).units.filter((item) => item.kind === "sentence" && item.status === "unassigned" && item.lang === "en" && item.pair_id === null && item.text.trim().split(" ").length >= 6);
+    if (found.length === 0) continue;
+    await page.locator('[data-testid="assign-old-doc"]').click();
+    await page.locator(`[data-testid="assign-old-doc-option-${candidate.id}"]`).click();
+    await page.waitForTimeout(600);
+    for (const item of found) {
+      if ((await pieceOf(item.id).count()) === 0) continue;
+      doc = candidate;
+      unit = item;
+      break;
+    }
+    if (unit !== null) break;
+  }
+  check("the fresh bundle has an unpaired English sentence on screen", unit !== null);
+  if (unit === null) return;
+  const readIds = async () => (await readView(doc.id)).units.map((item) => item.id);
+  const waitCount = async (expected) => {
+    for (let tries = 0; tries < 60; tries += 1) {
+      if ((await readIds()).length === expected) return true;
+      await page.waitForTimeout(250);
+    }
+    return false;
+  };
+  const beforeIds = await readIds();
+  const before = beforeIds.length;
+  // 잘라서 두 조각을 만들고 그 둘에 분류 제안을 받아 둔다 - 응답(API)이 아니라 저장된 제안 수로 기다린다
+  await pieceOf(unit.id).scrollIntoViewIfNeeded();
+  await pieceOf(unit.id).click({ button: "right" });
+  await wait(page, "assign-ctx-split");
+  await page.locator('[data-testid="assign-ctx-split"]').click();
+  await wait(page, "assign-cut-run");
+  await page.locator('[data-testid="assign-cut-run"]').click();
+  check("the sentence is cut in two", await waitCount(before + 1));
+  const halves = (await readView(doc.id)).units.filter((item) => !beforeIds.includes(item.id)).sort((a, b) => a.pos_seq - b.pos_seq);
+  const asked = await page.request.post(`${BASE}/api/bundles/${freshBundleId}/ai/classify`, { headers, data: { unit_ids: halves.map((half) => half.id) } });
+  check("classify is queued for both pieces", asked.ok(), String(asked.status()));
+  const countLive = async () => {
+    const list = await (await page.request.get(`${BASE}/api/bundles/${freshBundleId}/ai/suggestions?kind=classify&result=applied&limit=1000`, { headers })).json();
+    return list.items.filter((item) => item.adoption === null && (item.content.unit_ids ?? []).some((id) => halves.some((half) => half.id === id))).length;
+  };
+  let live = 0;
+  for (let tries = 0; tries < 120 && live === 0; tries += 1) {
+    live = await countLive();
+    if (live === 0) await page.waitForTimeout(500);
+  }
+  check("the pieces carry live AI suggestions", live >= 1, String(live));
+  // 알약의 받을 수 - 화면이 다시 읽은 뒤의 값(없으면 0). 열었다 닫는다
+  await page.reload();
+  await wait(page, "assign-bar");
+  const readOffered = async () => {
+    await page.waitForLoadState("networkidle");
+    if ((await page.locator('[data-testid="top-bar-ai"]').count()) === 0) return 0;
+    await page.locator('[data-testid="top-bar-ai"]').click();
+    const row = page.locator('[data-testid="ai-accept-classify-count"]');
+    const shown = (await row.count()) === 0 ? 0 : Number((await row.innerText()).trim());
+    await page.keyboard.press("Escape");
+    return shown;
+  };
+  const offered = await readOffered();
+  check("the AI menu counts the suggestions on the two pieces", offered >= live, `${offered} vs ${live}`);
+  // 붙이기 - 응답으로 줄 수가 돌아온 뒤 화면이 제안을 다시 읽을 때까지 기다린다
+  // 메뉴를 닫은 Escape가 고름도 풀므로 앞 조각을 다시 고른 뒤 틈의 단추를 찾는다(단추는 고른 박스 곁 틈에만 있다)
+  const joinPieces = async () => {
+    await pieceOf(halves[0].id).click();
+    await page.locator(`.strip[data-testid="assign-paper-piece-${halves[0].id}"][data-sel]`).waitFor({ timeout: T });
+    const join = page.locator(`[data-testid="assign-paper-join-${halves[0].id}-${halves[1].id}"]`);
+    await join.waitFor({ state: "attached", timeout: T });
+    await page.waitForLoadState("networkidle");
+    await page.waitForFunction(() => { const acts = document.querySelector(".strip-acts[data-open]"); return acts === null || acts.getAnimations().length === 0; }, null, { timeout: T });
+    await page.locator(".strip-gap", { has: join }).hover({ position: { x: 200, y: 2 } });
+    await page.waitForFunction(() => [...document.querySelectorAll(".strip-gap:hover .strip-merge")].some((el) => getComputedStyle(el).pointerEvents === "auto"), null, { timeout: T });
+    await join.click();
+  };
+  await joinPieces();
+  check("Join merges the two pieces back into one sentence", await waitCount(before));
+  await page.waitForFunction(async ({ url, headers: h, ids }) => {
+    const list = await (await fetch(url, { headers: h })).json();
+    return !list.items.some((item) => item.result === "applied" && item.adoption === null && (item.content.unit_ids ?? []).some((id) => ids.includes(id)));
+  }, { url: `${BASE}/api/bundles/${freshBundleId}/ai/suggestions?kind=classify&limit=1000`, headers, ids: halves.map((half) => half.id) }, { timeout: T });
+  let merged = offered;
+  for (let tries = 0; tries < 20 && merged >= offered; tries += 1) {
+    merged = await readOffered();
+    if (merged >= offered) await page.waitForTimeout(300);
+  }
+  check("the AI count drops after the merge", merged < offered, `${offered} -> ${merged}`);
+  // 되돌리기 - 붙이기가 풀려도 거둔 제안은 돌아오지 않는다
+  await page.locator('[data-testid="assign-undo"]:not([disabled])').click();
+  check("Undo splits the sentence again", await waitCount(before + 1));
+  await page.waitForLoadState("networkidle");
+  const afterUndo = await readOffered();
+  check("Undo does not bring the AI count back", afterUndo === merged, `${merged} -> ${afterUndo}`);
+  // 시드를 처음 그대로 - 화면을 다시 읽어 자르기는 되돌리기 목록에 없으니, 조각을 다시 붙인다
+  await joinPieces();
+  check("the sentence is whole again", await waitCount(before));
 });
 
 // 편집 뒤 다시 받기 범위(설계 2026-11-20 D2, 시안 1 스텝 2) - 붙이기 뒤에는 고친 문서의 보기와 그 문서의 Unit 줄(units?…document_id=)만 다시 받는다.
@@ -8791,6 +9200,205 @@ await runStep("assign: leaving Pair view on a long document shows a piece picked
   }
   const bundle = await (await page.request.get(api, { headers })).json();
   check("the long-document bundle is removed", (await page.request.delete(`${api}?revision=${bundle.revision}`, { headers })).ok());
+});
+
+// 짝 표 고르기(11-23 명세 D2-R3) - 한/영 따로 문서에 같은 토큰(10 mL · 4 °C)의 같은 꼴 한글 표가 둘이면 벗긴 영어 표 머리가 짝을 묻는다.
+// 고르면 바로 저장(PUT)하고 다시 읽은 답(GET)이 고른 표를 보이며, 새로고침 뒤에도 그대로다. 합성 docx(tests.docx_factory)를 새 묶음에 올리고 끝에 지운다
+await runStep("assign: an English table asks for its Korean table when two look alike", { devUser: "dev.admin" }, async ({ page }) => {
+  const headers = { "X-Dev-User": "dev.admin" };
+  const backend = resolve(SCRIPT_DIR, "../../../backend");
+  const file = resolve(SHOT_DIR, "SYNTHETIC_OLD-86_table_follow.docx");
+  const build = [
+    "import sys",
+    "from tests.docx_factory import build_docx, p, tbl",
+    "ko = [['1', '장비를 준비한다.'], ['2', '시료 10 mL를 채취한다.'], ['3', '채취 뒤 4 °C에 둔다.']]",
+    "ko2 = [['1', '장비를 점검한다.'], ['2', '시료 10 mL를 옮긴다.'], ['3', '옮긴 뒤 4 °C에 둔다.']]",
+    "en = [['1', 'Take 10 mL of sample.'], ['2', 'Prepare the equipment.'], ['3', 'Keep at 4 °C after.']]",
+    "body = p('1. 시료 채취', 'Heading1') + p('이 절은 시료 채취를 다룬다.') + tbl(ko) + tbl(ko2) + p('1. Sampling', 'Heading1') + p('This section covers sampling.') + tbl(en)",
+    "open(sys.argv[1], 'wb').write(build_docx(body))",
+  ].join("\n");
+  execFileSync(findBackendPython(), ["-c", build, file], { cwd: backend, stdio: "inherit" });
+  const created = await (await page.request.post(`${BASE}/api/bundles`, { headers, data: { title: "SYNTHETIC table follow", is_synthetic: true } })).json();
+  const api = `${BASE}/api/bundles/${created.id}`;
+  const uploaded = await page.request.post(`${api}/documents`, { headers, multipart: { side: "old", file: { name: "SYNTHETIC_OLD-86_table_follow.docx", mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", buffer: readFileSync(file) } } });
+  let doc = await uploaded.json();
+  if (doc.language_layout !== "ko_en_separate") doc = await (await page.request.patch(`${api}/documents/${doc.id}`, { headers, data: { revision: doc.revision, language_layout: "ko_en_separate" } })).json();
+  let view = await (await page.request.get(`${api}/documents/${doc.id}/view`, { headers })).json();
+  const [koTable, ko2Table, enTable] = view.tables;
+  const unwrapped = await page.request.post(`${api}/documents/${doc.id}/edits`, { headers, data: { revision: view.document.revision, confirm: false, op: { type: "set_layout_table", table_id: enTable.id, is_layout: true } } });
+  view = await (await page.request.get(`${api}/documents/${doc.id}/view`, { headers })).json();
+  const counterpartPath = `/documents/${doc.id}/tables/${enTable.id}/counterpart`;
+  const before = await (await page.request.get(`${api}${counterpartPath}`, { headers })).json();
+  check(
+    "a separate document with two look-alike Korean tables and an unwrapped English table is uploaded",
+    uploaded.status() === 201 && unwrapped.ok() && view.tables[2].is_layout && enTable.lang === "en" && before.status === "ambiguous",
+    `${uploaded.status()} ${unwrapped.status()} ${enTable.lang} ${before.status}`,
+  );
+  await page.goto(`${BASE}/bundles/${created.id}/assign`);
+  await wait(page, "assign-bar");
+  const pick = page.locator(`[data-testid="assign-follow-pick-${enTable.id}"]`);
+  await pick.waitFor({ timeout: T });
+  check("the English table head asks to pick its counterpart", (await pick.getAttribute("data-value")) === "pick");
+  await pick.click();
+  await wait(page, `assign-follow-pick-${enTable.id}-list`);
+  check(
+    "the choices are both Korean tables and no counterpart",
+    (await page.locator(`[data-testid="assign-follow-pick-${enTable.id}-option-${koTable.id}"]`).count()) === 1
+      && (await page.locator(`[data-testid="assign-follow-pick-${enTable.id}-option-${ko2Table.id}"]`).count()) === 1
+      && (await page.locator(`[data-testid="assign-follow-pick-${enTable.id}-option-none"]`).count()) === 1,
+  );
+  const isCounterpart = (method) => (response) => response.request().method() === method && new URL(response.url()).pathname.endsWith(`/api/bundles/${created.id}${counterpartPath}`);
+  const saved = page.waitForResponse(isCounterpart("PUT"), { timeout: T });
+  const reread = page.waitForResponse(isCounterpart("GET"), { timeout: T });
+  await page.locator(`[data-testid="assign-follow-pick-${enTable.id}-option-${ko2Table.id}"]`).click();
+  const savedOk = (await saved).ok();
+  await reread;
+  await page.waitForFunction(({ id, want }) => document.querySelector(`[data-testid="assign-follow-pick-${id}"]`)?.getAttribute("data-value") === want, { id: enTable.id, want: String(ko2Table.id) }, { timeout: T });
+  const stored = await (await page.request.get(`${api}${counterpartPath}`, { headers })).json();
+  check("picking a Korean table saves it and the head shows it", savedOk && stored.decided && stored.source_table_id === ko2Table.id, JSON.stringify(stored));
+  await page.reload();
+  await wait(page, "assign-bar");
+  await pick.waitFor({ timeout: T });
+  await page.waitForFunction(({ id, want }) => document.querySelector(`[data-testid="assign-follow-pick-${id}"]`)?.getAttribute("data-value") === want, { id: enTable.id, want: String(ko2Table.id) }, { timeout: T });
+  check("the choice survives a reload", (await pick.getAttribute("data-value")) === String(ko2Table.id));
+  const bundle = await (await page.request.get(api, { headers })).json();
+  check("the table-follow bundle is removed", (await page.request.delete(`${api}?revision=${bundle.revision}`, { headers })).ok());
+});
+
+// 한글 표처럼 하기(11-23 명세 D2-R8 · S18) - 손본 한글 표(5.1 · 5.2 · 5.2.1, 빈 칸 삭제)의 일이 벗긴 영어 표 머리에 "· 4"와 줄 칩 넷으로 뜨고,
+// Apply는 편집 하나로 순서 · 번호 · 삭제를 하고 Undo 한 번에 모두 돌아온다. 검증 스택은 임베딩이 꺼져 있어 줄마다 공통 토큰(10 mL · 20 rpm · 4 °C)을 둔다.
+// 합성 docx(tests.docx_factory)를 새 묶음에 올리고 끝에 지운다
+await runStep("assign: follow the Korean table — four chips, Apply, one Undo brings everything back", { devUser: "dev.admin" }, async ({ page }) => {
+  const headers = { "X-Dev-User": "dev.admin" };
+  const backend = resolve(SCRIPT_DIR, "../../../backend");
+  const file = resolve(SHOT_DIR, "SYNTHETIC_OLD-85_table_follow_rule.docx");
+  const build = [
+    "import sys",
+    "from tests.docx_factory import build_docx, p, tbl",
+    "ko = [['1', '장비를 20 rpm으로 켠다.'], ['2', '시료 10 mL를 채취한다.'], ['3', '채취 뒤 4 °C에 둔다.'], ['4', '(빈 칸)']]",
+    "en = [['1', 'Take 10 mL of sample.'], ['2', 'Start the equipment at 20 rpm.'], ['3', 'Keep at 4 °C after.'], ['4', '(blank)']]",
+    "body = p('1. 시료 채취', 'Heading1') + p('이 절은 시료 채취를 다룬다.') + tbl(ko) + p('1. Sampling', 'Heading1') + p('This section covers sampling.') + tbl(en)",
+    "open(sys.argv[1], 'wb').write(build_docx(body))",
+  ].join("\n");
+  execFileSync(findBackendPython(), ["-c", build, file], { cwd: backend, stdio: "inherit" });
+  const created = await (await page.request.post(`${BASE}/api/bundles`, { headers, data: { title: "SYNTHETIC table follow rule", is_synthetic: true } })).json();
+  const api = `${BASE}/api/bundles/${created.id}`;
+  const uploaded = await page.request.post(`${api}/documents`, { headers, multipart: { side: "old", file: { name: "SYNTHETIC_OLD-85_table_follow_rule.docx", mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", buffer: readFileSync(file) } } });
+  let doc = await uploaded.json();
+  if (doc.language_layout !== "ko_en_separate") doc = await (await page.request.patch(`${api}/documents/${doc.id}`, { headers, data: { revision: doc.revision, language_layout: "ko_en_separate" } })).json();
+  const readView = async () => (await page.request.get(`${api}/documents/${doc.id}/view`, { headers })).json();
+  const edit = async (op) => page.request.post(`${api}/documents/${doc.id}/edits`, { headers, data: { revision: (await readView()).document.revision, confirm: false, op } });
+  const [koTable, enTable] = (await readView()).tables;
+  const unwrapOk = (await edit({ type: "set_layout_table", table_id: koTable.id, is_layout: true })).ok() && (await edit({ type: "set_layout_table", table_id: enTable.id, is_layout: true })).ok();
+  // 벗긴 표의 줄(원문 순) - 칸 문장은 첫 칸 블록의 표를 table_id로 갖는다
+  const linesOf = (view, tableId) => view.units.filter((unit) => unit.table_id === tableId && unit.group_unit_id === null).sort((one, two) => one.pos_seq - two.pos_seq || one.id - two.id);
+  const koLines = linesOf(await readView(), koTable.id);
+  let worked = koLines.length === 4;
+  for (const [index, number] of ["5.1", "5.2", "5.2.1"].entries()) worked = worked && (await edit({ type: "set_number", unit_id: koLines[index].id, number, follow: false })).ok();
+  const deleted = await page.request.post(`${api}/decisions/bulk`, { headers, data: { action: "delete", units: [{ unit_id: koLines[3].id, revision: 1 }] } });
+  const followPath = `/documents/${doc.id}/tables/${enTable.id}/follow`;
+  const plan = await (await page.request.get(`${api}${followPath}`, { headers })).json();
+  check(
+    "a worked Korean table and an unwrapped English table give a rule plan of four",
+    uploaded.status() === 201 && unwrapOk && worked && deleted.ok() && plan.mode === "rule" && plan.count === 4 && plan.source_table_id === koTable.id,
+    `${uploaded.status()} ${unwrapOk} ${worked} ${deleted.status()} ${JSON.stringify(plan)}`,
+  );
+  const enLines = linesOf(await readView(), enTable.id);
+  const readEnglish = async () => {
+    const view = await readView();
+    const rows = (await (await page.request.get(`${api}/units?limit=1000&offset=0&document_id=${doc.id}`, { headers })).json()).items;
+    const disposition = rows.find((row) => row.unit_id === enLines[3].id)?.decision.disposition;
+    return { numbers: enLines.map((line) => view.units.find((unit) => unit.id === line.id)?.number?.value ?? null), seqs: enLines.map((line) => view.units.find((unit) => unit.id === line.id)?.unwrap_seq ?? null), disposition };
+  };
+  const original = await readEnglish();
+  await page.goto(`${BASE}/bundles/${created.id}/assign`);
+  await wait(page, "assign-bar");
+  const head = page.locator(`[data-testid="assign-follow-${enTable.id}"]`);
+  await head.waitFor({ timeout: T });
+  const chips = await Promise.all(enLines.map((line) => page.locator(`[data-testid="assign-follow-chips-${line.id}"]`).count()));
+  check("the English table head says four and each line carries its chips", ((await head.textContent()) ?? "").includes("· 4") && chips.every((count) => count === 1), `${await head.textContent()} ${chips}`);
+  const applied = page.waitForResponse((response) => response.request().method() === "POST" && new URL(response.url()).pathname.endsWith(`/documents/${doc.id}/edits`), { timeout: T });
+  await page.locator(`[data-testid="assign-follow-apply-${enTable.id}"]`).click();
+  const appliedResponse = await applied;
+  check("Apply sends one follow_table edit", appliedResponse.ok() && appliedResponse.request().postDataJSON()?.op?.type === "follow_table", String(appliedResponse.status()));
+  await head.waitFor({ state: "detached", timeout: T });
+  const after = await readEnglish();
+  check(
+    "the English table now reads 5.2 · 5.1 · 5.2.1 with the equipment line first and the blank line deleted",
+    JSON.stringify(after.numbers.slice(0, 3)) === JSON.stringify(["5.2", "5.1", "5.2.1"]) && after.seqs[1] === 0 && after.seqs[0] === 1 && after.disposition === "delete",
+    JSON.stringify(after),
+  );
+  const undone = page.waitForResponse((response) => response.url().includes("/decisions/undo"), { timeout: T });
+  await page.locator('[data-testid="assign-undo"]:not([disabled])').click();
+  const undoOk = (await undone).ok();
+  await page.waitForLoadState("networkidle");
+  const back = await readEnglish();
+  check("one Undo brings back the order, the numbers and the blank line", undoOk && JSON.stringify(back) === JSON.stringify(original), `${JSON.stringify(back)} vs ${JSON.stringify(original)}`);
+  await head.waitFor({ timeout: T });
+  const bundle = await (await page.request.get(api, { headers })).json();
+  check("the table-follow rule bundle is removed", (await page.request.delete(`${api}?revision=${bundle.revision}`, { headers })).ok());
+});
+
+// 한글 표처럼 하기 AI(D2-R9 · R10) - 줄마다 내용이 달라 규칙이 못 푸는 표(임베딩이 꺼진 검증 스택에서 장비 ↔ equipment는 토큰이 없다)는 머리에 "✦ AI로 한글 표처럼 하기"가 서고,
+// 눌러 가짜 AI(받은 줄 차례 그대로 + 첫 줄 번호 한 칸)가 답하면 규칙 제안과 같은 칩 · 적용이 온다. 적용은 편집 하나, 채택(as_is)이 남는다. AI가 꺼진 backend면 건너뛴다
+await runStep("assign: follow the Korean table with AI when the rows differ", { devUser: "dev.admin", allowConsoleErrors: true }, async ({ page }) => {
+  const headers = { "X-Dev-User": "dev.admin" };
+  // halfBundleId는 시드 묶음이라 멤버(qa.member)만 상태를 읽는다 - dev.admin은 404다
+  const status = await page.request.get(`${BASE}/api/bundles/${halfBundleId}/ai/status`, { headers: { "X-Dev-User": "qa.member" } });
+  if (!status.ok() || !(await status.json()).ai_enabled) {
+    console.log("  (AI is off in this backend - skipped)");
+    return;
+  }
+  const backend = resolve(SCRIPT_DIR, "../../../backend");
+  const file = resolve(SHOT_DIR, "SYNTHETIC_OLD-87_table_follow_ai.docx");
+  const build = [
+    "import sys",
+    "from tests.docx_factory import build_docx, p, tbl",
+    "ko = [['1', '장비를 준비한다.'], ['2', '시료를 채취한다.'], ['3', '기록을 남긴다.'], ['4', '(빈 칸)']]",
+    "en = [['1', 'Take the sample.'], ['2', 'Prepare the equipment.'], ['3', 'Keep the record.'], ['4', '(blank)']]",
+    "body = p('1. 시료 채취', 'Heading1') + p('이 절은 시료 채취를 다룬다.') + tbl(ko) + p('1. Sampling', 'Heading1') + p('This section covers sampling.') + tbl(en)",
+    "open(sys.argv[1], 'wb').write(build_docx(body))",
+  ].join("\n");
+  execFileSync(findBackendPython(), ["-c", build, file], { cwd: backend, stdio: "inherit" });
+  const created = await (await page.request.post(`${BASE}/api/bundles`, { headers, data: { title: "SYNTHETIC table follow ai", is_synthetic: true } })).json();
+  const api = `${BASE}/api/bundles/${created.id}`;
+  const uploaded = await page.request.post(`${api}/documents`, { headers, multipart: { side: "old", file: { name: "SYNTHETIC_OLD-87_table_follow_ai.docx", mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", buffer: readFileSync(file) } } });
+  let doc = await uploaded.json();
+  if (doc.language_layout !== "ko_en_separate") doc = await (await page.request.patch(`${api}/documents/${doc.id}`, { headers, data: { revision: doc.revision, language_layout: "ko_en_separate" } })).json();
+  const readView = async () => (await page.request.get(`${api}/documents/${doc.id}/view`, { headers })).json();
+  const edit = async (op) => page.request.post(`${api}/documents/${doc.id}/edits`, { headers, data: { revision: (await readView()).document.revision, confirm: false, op } });
+  const [koTable, enTable] = (await readView()).tables;
+  const unwrapOk = (await edit({ type: "set_layout_table", table_id: koTable.id, is_layout: true })).ok() && (await edit({ type: "set_layout_table", table_id: enTable.id, is_layout: true })).ok();
+  const linesOf = (view, tableId) => view.units.filter((unit) => unit.table_id === tableId && unit.group_unit_id === null).sort((one, two) => one.pos_seq - two.pos_seq || one.id - two.id);
+  const koLines = linesOf(await readView(), koTable.id);
+  let worked = koLines.length === 4;
+  for (const [index, number] of ["5.1", "5.2", "5.3"].entries()) worked = worked && (await edit({ type: "set_number", unit_id: koLines[index].id, number, follow: false })).ok();
+  // 토큰이 없는 표는 점수가 임계값 아래라 짝이 안 잡힌다 - 사람이 짝 표를 먼저 정한다(D2-R3 → R9)
+  const picked = await page.request.put(`${api}/documents/${doc.id}/tables/${enTable.id}/counterpart`, { headers, data: { source_table_id: koTable.id } });
+  const plan = await (await page.request.get(`${api}/documents/${doc.id}/tables/${enTable.id}/follow`, { headers })).json();
+  check("rows without shared tokens go to the AI way, not the rule way", uploaded.status() === 201 && unwrapOk && worked && picked.ok() && plan.mode === "ai" && plan.items.length === 0, JSON.stringify(plan));
+  const enLines = linesOf(await readView(), enTable.id);
+  await page.goto(`${BASE}/bundles/${created.id}/assign`);
+  await wait(page, "assign-bar");
+  const ask = page.locator(`[data-testid="assign-follow-ai-${enTable.id}"]`);
+  await ask.waitFor({ timeout: T });
+  const asked = page.waitForResponse((response) => response.request().method() === "POST" && new URL(response.url()).pathname.endsWith("/ai/table_follow"), { timeout: T });
+  await ask.click();
+  check("the head button asks AI for this table", (await asked).ok());
+  const head = page.locator(`[data-testid="assign-follow-${enTable.id}"]`);
+  await head.waitFor({ timeout: 60_000 });
+  check("AI's answer comes as one chip on the first line (number 9.9) with the same head and Apply", ((await head.textContent()) ?? "").includes("· 1") && (await page.locator(`[data-testid="assign-follow-chips-${enLines[0].id}"]`).count()) === 1, await head.textContent());
+  const applied = page.waitForResponse((response) => response.request().method() === "POST" && new URL(response.url()).pathname.endsWith(`/documents/${doc.id}/edits`), { timeout: T });
+  await page.locator(`[data-testid="assign-follow-apply-${enTable.id}"]`).click();
+  const appliedResponse = await applied;
+  check("Apply sends one follow_table edit", appliedResponse.ok() && appliedResponse.request().postDataJSON()?.op?.type === "follow_table", String(appliedResponse.status()));
+  await head.waitFor({ state: "detached", timeout: T });
+  const first = (await readView()).units.find((unit) => unit.id === enLines[0].id);
+  check("the first English line took the number", first?.number?.value === "9.9", JSON.stringify(first?.number));
+  const suggestions = await (await page.request.get(`${api}/ai/suggestions?kind=table_follow&result=applied&limit=100`, { headers })).json();
+  check("applying left an as_is adoption on the suggestion", suggestions.items.length === 1 && suggestions.items[0].adoption === "as_is", JSON.stringify(suggestions.items.map((item) => item.adoption)));
+  const bundle = await (await page.request.get(api, { headers })).json();
+  check("the table-follow AI bundle is removed", (await page.request.delete(`${api}?revision=${bundle.revision}`, { headers })).ok());
 });
 
 // Pair view에서 끌어 짝 맺기(끌어다 놓기 4걸음) - 조각을 맞은편 언어의 조각에 놓으면 바로 짝이 되고(제안 짝의 구성원끼리면 그 제안을 확정), 알림의 Undo가 그 짝을 푼다.

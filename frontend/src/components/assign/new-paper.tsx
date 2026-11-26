@@ -4,20 +4,20 @@
 // 얹어 그리는 값을 더하면 덩이의 key(모델)나 아래 readKey에도 더한다 - 빠지면 긴 문서의 먼 덩어리에 낡은 모습이 남는다.
 "use client";
 
-import { Scissors, Sparkles, Spline } from "lucide-react";
-import { useState, type MouseEvent, type ReactNode } from "react";
+import { Maximize2, Sparkles, Spline } from "lucide-react";
+import { useState, type ComponentProps, type MouseEvent, type ReactNode } from "react";
 
 import { NewAiTag, SourceChips } from "@/components/assign/new-sources";
 import { PaneZoom } from "@/components/assign/pane-zoom";
 import { RefMark } from "@/components/assign/ref-mark";
-import { Paper, type CutDragPos, type PaperCut, type PaperOverlay, type PaperPending } from "@/components/paper/paper";
+import { Paper, type CutDragPos, type PaperCut, type PaperNumberCell, type PaperOverlay, type PaperPending } from "@/components/paper/paper";
 import { describeSheet, PartTabs } from "@/components/paper/part-tabs";
 import { Truncate } from "@/components/ui/motion";
 import { Select, type SelectOption } from "@/components/ui/select";
 import { Tooltip } from "@/components/ui/tooltip";
 import type { DocumentView } from "@/lib/api-sop";
 import { useI18n } from "@/lib/i18n";
-import { readOverlayKey, readUnlinkableKey, type NewBox, type NewCellNote, type NewOverlay } from "@/lib/new-overlay-model";
+import { readOverlayKey, readTableLinks, readUnlinkableKey, type NewBox, type NewCellNote, type NewOverlay } from "@/lib/new-overlay-model";
 import { listPartSheets, type FigureRowMode, type PaperItem, type PaperModel, type PaperTabKey, type PaperTabs } from "@/lib/paper-model";
 
 export interface NewPaperProps {
@@ -74,6 +74,23 @@ export interface NewPaperProps {
   renderAtCut?: () => ReactNode;
   /** 고른 박스의 글 아래 단추 줄(박스 아래 단추 줄) */
   renderUnitActions?: (unitId: number) => ReactNode;
+  // 손질(lib/doc-tools-model) - Old 용지와 같은 부품 · 같은 문구 · 같은 되돌리기(쪼개기 먼저 §8 4-3). 없으면 그 손질이 없다
+  /** 저절로 삭제된 줄의 블록과 사유 쓰기 · 삭제 취소 */
+  noise?: NonNullable<ComponentProps<typeof Paper>["strips"]>["noise"];
+  /** 제목에서 바꾼 조항 묶음 머리 "↺ 제목으로" */
+  headingShift?: NonNullable<ComponentProps<typeof Paper>["strips"]>["headingShift"];
+  /** 벗긴 표의 줄 묶음 머리 "↺ 다시 표로"와 AI 순서 제안 */
+  unwrap?: NonNullable<ComponentProps<typeof Paper>["strips"]>["unwrap"];
+  /** 번호 칸 고치기 · 들여쓰기 */
+  numberCell?: PaperNumberCell;
+  /** 틈 합치기 */
+  join?: NonNullable<ComponentProps<typeof Paper>["strips"]>["join"];
+  /** 글자 골라 새 박스 - 주면 글을 긁어도 누르기로 치지 않는다 */
+  onRangeSelect?: (range: { blockId: number; start: number; end: number }) => void;
+  /** 두 번 눌러 나눌 선 */
+  onUnitDoubleClick?: (unitId: number, caret: { blockId: number; offset: number } | null) => void;
+  /** 표 머리의 "표 벗기기"(표 id) - 없으면 단추 없이 이은 칸 수만 */
+  onUnwrapTable?: (tableId: number) => void;
 }
 
 // 눌러도 박스를 누른 것이 아닌 자리 - 박스 아래 단추 줄의 빈자리, 칸에 딸린 읽기 전용 글, 왼쪽 번호 칸
@@ -85,6 +102,8 @@ export function NewPaper(props: NewPaperProps) {
   const { t } = useI18n();
   const { model, view, overlay } = props;
   const { boxes } = overlay;
+  // 표마다 칸 문장 수와 이은 수 - 표 머리에 보인다(쪼개기 먼저 §8 4-3)
+  const tableLinks = model ? readTableLinks(model, boxes) : new Map<number, { linked: number; total: number }>();
   // "+N"을 눌러 출처 칩을 모두 펼친 새 문장
   const [openSources, setOpenSources] = useState<ReadonlySet<number>>(new Set());
   // 보는 탭 - 보여야 할 박스(이동해 갈 곳, 고른 것)가 바뀌어 들면 그 박스의 탭을 연다(각주 · 미주의 New 문장은 꼬리말 탭). 풀리면 보던 탭 그대로, 문서를 바꾸면 본문부터(렌더 중 상태 맞추기)
@@ -114,17 +133,30 @@ export function NewPaper(props: NewPaperProps) {
       const box = boxes.get(id);
       if (!box) return [];
       const noteLabels = box.notes.flatMap((note) => [...note.sourceIds.map(props.sourceLabel), openSources.has(note.targetId)]);
-      const cell = box.kind === "cell" ? [props.cellPickable, props.cellDroppable, props.onUnlink !== undefined] : [];
-      return [[id, ...box.sourceIds.map(props.sourceLabel), openSources.has(box.targetId), ...noteLabels, ...cell].join(",")];
+      const cell = box.kind === "cell" ? [props.cellPickable, props.cellDroppable, props.onUnlink !== undefined, props.selectedUnitId === id ? readCellTag(box) : ""] : [];
+      const links = tableLinks.get(id);
+      const head = links ? [links.linked, links.total, props.onUnwrapTable !== undefined] : [];
+      return [[id, ...box.sourceIds.map(props.sourceLabel), openSources.has(box.targetId), ...noteLabels, ...cell, ...head].join(",")];
     });
     return `${readOverlayKey(boxes, ids)}/${own.join(";")}`;
+  }
+
+  /** 고른 칸의 꼬리표 "r행 c열 · k/n" - k는 그 표의 칸 문장 가운데 차례(행 → 열) */
+  function readCellTag(box: NewBox): string {
+    const tableId = model?.units.get(box.unitId)?.group_unit_id;
+    if (!box.cellAt || tableId == null) return "";
+    const cells = [...boxes.values()].filter((item) => item.cellAt && model?.units.get(item.unitId)?.group_unit_id === tableId);
+    const at = (item: NewBox) => (item.cellAt ? item.cellAt.row * 10000 + item.cellAt.col : 0);
+    const k = cells.sort((a, b) => at(a) - at(b) || a.targetId - b.targetId).indexOf(box) + 1;
+    return t("assign.newTable.cellTag", { r: box.cellAt.row + 1, c: box.cellAt.col + 1, k, n: cells.length });
   }
 
   function buildBoxProps(box: NewBox): ReturnType<PaperOverlay["boxProps"]> {
     if (box.kind === "cell") {
       return {
         className: "new-cell",
-        attrs: { "data-cell-target": box.targetId, "data-state": box.state, "data-open": box.isOpen ? "" : undefined, "data-pickable": props.cellPickable ? "" : undefined, "data-drop": props.cellDroppable ? "cell" : undefined },
+        // 이은 칸(data-linked)은 옅은 강조색 칠 · 왼쪽 막대, 아직인 칸은 빨간 막대(문장 상자와 같은 뜻). Old를 고른 채 올리면 "여기에 잇기"(data-link-tip)
+        attrs: { "data-cell-target": box.targetId, "data-state": box.state, "data-open": box.isOpen ? "" : undefined, "data-linked": box.sourceIds.length > 0 ? "" : undefined, "data-pickable": props.cellPickable ? "" : undefined, "data-drop": props.cellDroppable ? "cell" : undefined, "data-link-tip": props.cellPickable ? t("assign.newTable.linkHere") : undefined },
         testId: `assign-new-cell-${box.targetId}`,
       };
     }
@@ -161,13 +193,43 @@ export function NewPaper(props: NewPaperProps) {
     );
   }
 
+  /** 표 머리 - "칸 문장 n 가운데 m 이음"과 막대, 고칠 수 있으면 표 벗기기 */
+  function renderTableHead(box: NewBox): ReactNode {
+    const links = tableLinks.get(box.unitId);
+    const tableId = model?.units.get(box.unitId)?.table_id ?? null;
+    if (!links) return null;
+    const { onUnwrapTable } = props;
+    return (
+      <span className="new-table-head">
+        <span className="new-table-links" data-testid={`assign-new-table-links-${box.unitId}`}>
+          {t("assign.newTable.links", { m: links.linked, n: links.total })}
+        </span>
+        <span className="new-table-bar" style={{ "--fill": `${Math.round((links.linked / links.total) * 100)}%` }} aria-hidden />
+        {onUnwrapTable && tableId !== null && (
+          <button type="button" className="btn ghost new-table-unwrap" data-testid={`assign-new-unwrap-${box.unitId}`} onClick={() => onUnwrapTable(tableId)}>
+            {t("split.layoutTable")}
+          </button>
+        )}
+      </span>
+    );
+  }
+
   function renderTop(box: NewBox): ReactNode {
-    if (box.kind === "bundle") return <NewAiTag targetId={box.targetId} mark={box.ai} />;
+    if (box.kind === "bundle") {
+      return (
+        <>
+          {renderTableHead(box)}
+          <NewAiTag targetId={box.targetId} mark={box.ai} />
+        </>
+      );
+    }
     const { onUnlink } = props;
-    const isEmpty = box.sourceIds.length === 0 && (box.kind === "cell" || (!box.isMarkedNew && box.refRow === null));
+    const tag = box.kind === "cell" && props.selectedUnitId === box.unitId ? readCellTag(box) : "";
+    const isEmpty = box.sourceIds.length === 0 && tag === "" && (box.kind === "cell" || (!box.isMarkedNew && box.refRow === null));
     if (isEmpty) return null;
     return (
       <span className="new-srcs">
+        {tag !== "" && <span className="new-cell-tag" data-testid={`assign-new-cell-tag-${box.targetId}`}>{tag}</span>}
         {renderChips(box.targetId, box.sourceIds, box.isAi, box.kind === "cell" && onUnlink ? (unitId) => onUnlink(box.targetId, unitId) : undefined)}
         {box.kind === "sentence" && box.isMarkedNew && <span className="new-src is-new">{t("assign.markedNew")}</span>}
         {/* 참조 줄이 EQUIS와 어긋난다(번호·이름·EQUIS에 없음·폐기) - 출처가 없는 줄에도 뜬다. 이 문서의 글은 여기서 고치지 않아 알리기만 한다 */}
@@ -235,22 +297,25 @@ export function NewPaper(props: NewPaperProps) {
         // 표는 칸마다 고르고 잇는다
         pickWholeBundle={false}
         shiftClickPicks
-        pressThroughSelection
+        // 글자 골라 새 박스가 있으면 긁은 글은 그 손질의 것이다 - 누르기로 치지 않는다
+        pressThroughSelection={!props.onRangeSelect}
+        onRangeSelect={props.onRangeSelect}
         onUnitClick={(unitId, _at, event) => {
           const target = event.target as Element;
           const anchor = target.closest<HTMLElement>(".cell-piece, .strip");
           if (anchor && !target.closest(NOT_PRESSED)) props.onPick(unitId, { shiftKey: event.shiftKey, additive: event.ctrlKey || event.metaKey }, anchor, event);
         }}
         onUnitContextMenu={props.onContextMenu}
-        // 두 번 누르기로 하는 일은 없다 - 낱말이 골라져 둘째 누름이 먹히지 않게 자리만 잡는다
-        onUnitDoubleClick={ignoreDoubleClick}
+        // 두 번 눌러 나누기가 없어도 자리는 잡는다 - 낱말이 골라져 둘째 누름이 먹히지 않게
+        onUnitDoubleClick={props.onUnitDoubleClick ?? ignoreDoubleClick}
+        numberCell={props.numberCell}
         cut={props.cut}
         onCutDrag={props.onCutDrag}
         onCutNudge={props.onCutNudge}
         renderAtCut={props.cut ? props.renderAtCut : undefined}
         figureSource={{ bundleId: props.bundleId, docId: props.fileId }}
         // 이미 쓴 문서는 캡션을 요구하지 않는다(입구 2)
-        strips={{ isCaptionNeeded: () => false, pending: props.pending, mergeArm: props.mergeArm, overlay: paperOverlay }}
+        strips={{ isCaptionNeeded: () => false, pending: props.pending, mergeArm: props.mergeArm, overlay: paperOverlay, noise: props.noise, headingShift: props.headingShift, unwrap: props.unwrap, join: props.join }}
         testId="assign-new-paper"
       />
     );
@@ -290,7 +355,7 @@ export function NewPaper(props: NewPaperProps) {
         {props.onWide && (
           <Tooltip label={t("assign.openSplitTip")}>
             <button type="button" className="pane-toggle" aria-label={t("assign.openSplit")} data-testid="assign-new-edit-original" onClick={props.onWide}>
-              <Scissors size={14} strokeWidth={1.5} aria-hidden />
+              <Maximize2 size={14} strokeWidth={1.5} aria-hidden />
             </button>
           </Tooltip>
         )}

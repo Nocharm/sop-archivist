@@ -56,6 +56,8 @@ GUARDED_ROUTES = [
     ("GET", "/api/access/grants", None),
     ("POST", "/api/access/grants", {"subject_type": "user", "subject_id": "prod.member", "permission": "permission.manage"}),
     ("DELETE", "/api/access/grants/{grant_id}", None),
+    ("POST", "/api/access/grants/batch", {"add": [{"subject_type": "user", "subject_id": "prod.member", "permission": "permission.manage"}]}),
+    ("POST", "/api/access/grants/ai-read", {"text": "prod.member permission.manage"}),
     ("GET", "/api/access/audit", None),
     ("GET", "/api/access/effective/qa.lead", None),
 ]
@@ -327,3 +329,71 @@ def test_audit_is_newest_first_and_limited(client: TestClient) -> None:
     assert [event["detail"]["name"] for event in latest_two] == ["Audit C", "Audit B"]
     assert oversized.status_code == 200 and len(oversized.json()) == 3  # 상한을 넘는 limit은 잘라서 받는다
     assert client.get("/api/access/audit?limit=0", headers=LEAD).status_code == 422
+
+
+def test_audit_continues_before_a_given_event(client: TestClient) -> None:
+    for name in ("Page A", "Page B", "Page C"):
+        assert _post_role(client, name, []).status_code == 201
+    first_page = _list_audit(client, limit=2)
+
+    second_page = _get(client, f"/api/access/audit?limit=2&before={first_page[-1]['id']}")
+
+    assert [event["detail"]["name"] for event in first_page] == ["Page C", "Page B"]
+    assert [event["detail"]["name"] for event in second_page] == ["Page A"]
+    assert client.get("/api/access/audit?before=999999", headers=LEAD).status_code == 404
+
+
+def test_batch_adds_and_removes_in_one_call(client: TestClient) -> None:
+    operations = _get_roles_by_name(client)["Operations"]["id"]
+    prod_grant = _find_grant(client, "user", "prod.member")
+    body = {
+        "add": [
+            {"subject_type": "user", "subject_id": "dev.admin", "role_id": operations},
+            {"subject_type": "user", "subject_id": "dev.admin", "role_id": operations},  # 요청 안에서 겹침
+            {"subject_type": "user", "subject_id": "dev.admin", "permission": "system.view"},
+            {"subject_type": "user", "subject_id": "ghost.user", "role_id": operations},
+            {"subject_type": "user", "subject_id": "dev.admin", "role_id": 999999},
+            {"subject_type": "user", "subject_id": "dev.admin", "permission": "no.such"},
+        ],
+        "remove": [prod_grant["id"], 999999],
+    }
+
+    response = client.post("/api/access/grants/batch", headers=LEAD, json=body)
+
+    assert response.status_code == 200, response.text
+    result = response.json()
+    assert [(g["subject_id"], g["role_name"], g["permission"]) for g in result["added"]] == [
+        ("dev.admin", "Operations", None), ("dev.admin", None, "system.view"),
+    ]
+    assert result["added"][0]["created_by"] == "qa.lead"
+    assert result["removed"] == [prod_grant["id"]] and result["missing"] == [999999]
+    assert len(result["skipped"]) == 1 and len(result["unknown"]) == 3
+    # 항목마다 기록 하나 — 회수가 먼저다
+    assert [e["action"] for e in reversed(_list_audit(client))] == ["grant.remove", "grant.add", "grant.add"]
+
+
+def test_batch_undo_restores_a_removed_grant(client: TestClient) -> None:
+    prod_grant = _find_grant(client, "user", "prod.member")
+    item = {"subject_type": "user", "subject_id": "prod.member", "permission": prod_grant["permission"]}
+
+    # 회수와 같은 부여의 추가를 함께 보내면 회수가 먼저라 다시 생긴다
+    response = client.post("/api/access/grants/batch", headers=LEAD, json={"add": [item], "remove": [prod_grant["id"]]})
+
+    assert response.status_code == 200
+    assert response.json()["skipped"] == [] and len(response.json()["added"]) == 1
+    assert _find_grant(client, "user", "prod.member")["permission"] == prod_grant["permission"]
+    assert [e["action"] for e in reversed(_list_audit(client))] == ["grant.remove", "grant.add"]
+
+
+def test_batch_rejects_empty_and_malformed_bodies(client: TestClient) -> None:
+    def post(body: dict[str, Any]) -> Any:
+        return client.post("/api/access/grants/batch", headers=LEAD, json=body)
+
+    bad_item = {"subject_type": "user", "subject_id": "dev.admin"}
+    both = {**bad_item, "role_id": 1, "permission": "system.view"}
+
+    assert post({}).status_code == 422
+    assert post({"add": [bad_item]}).status_code == 422
+    assert post({"add": [both]}).status_code == 422
+    assert post({"remove": list(range(201))}).status_code == 422
+    assert _list_audit(client) == []

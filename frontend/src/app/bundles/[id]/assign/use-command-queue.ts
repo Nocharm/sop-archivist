@@ -163,6 +163,13 @@ function isReplay(command: AssignCommand): command is ReplayCommand {
   return command.kind === "key" || command.kind === "press" || command.kind === "pick";
 }
 
+/** 고름이 사라지면 갈 곳이 없는 글쇠가 쌓여 있나. 맨 앞이 Ctrl+Z · 다시 하기면 아니다 - 대상이 없는 글쇠고, 그 되돌리기가 뒤에 쌓인 것의 고름을 다시 세운다 */
+function hasStrandedKey(behind: readonly QueuedCommand<AssignCommand>[]): boolean {
+  const next = behind[0]?.payload;
+  if (next?.kind === "key" && next.ctrl) return false;
+  return behind.some((item) => item.kind === "key");
+}
+
 /** 처리 중 표시 · 잠금 - 판단은 저장, 나머지는 편집 종류대로 */
 export type DescribePending = (command: WriteCommand) => Omit<Pending, "id">;
 
@@ -311,7 +318,7 @@ export function useCommandQueue(env: CommandEnv, describePending: DescribePendin
     const { running: current, waiting: behind } = queue.getState();
     if (settleWait !== null && current?.id === settleWait.id && !(settleWait.isSolo && env.isSoloLoading)) {
       // 장벽이 끝나자 고른 것이 사라졌다 - 쌓인 글쇠를 엉뚱한 박스(목록 처음)에 떨어뜨리지 않고 버리고 알린다
-      if (isBarrier(current) && live.current.hadTarget && !env.hasTarget() && behind.some((item) => item.kind === "key")) dropAll(1);
+      if (isBarrier(current) && live.current.hadTarget && !env.hasTarget() && hasStrandedKey(behind)) dropAll(1);
       queue.settle(settleWait.id);
     }
     pumpStep();
@@ -437,6 +444,11 @@ export function useCommandQueue(env: CommandEnv, describePending: DescribePendin
 export function isRepeatedSave(unsettled: ReadonlyArray<{ payload: AssignCommand }>, next: Extract<WriteCommand, { kind: "save" }>): boolean {
   const last = unsettled.map(({ payload }) => payload).filter((payload) => (payload.kind === "save" || payload.kind === "clear" || payload.kind === "link" ? payload.rowKey === next.rowKey : payload.kind === "bulk" && payload.rows.some((item) => item.rowKey === next.rowKey))).at(-1);
   return last?.kind === "save" && last.action === next.action && last.reason === next.reason && last.isPick === next.isPick && (next.isPick || last.draft === next.draft);
+}
+
+/** 같은 표의 한글 표처럼 하기가 아직 끝나지 않았나 - 응답 전에 다시 누르면(⇧O 두 번) 낡은 계획이 한 번 더 나가므로 버린다 */
+export function isRepeatedFollow(unsettled: ReadonlyArray<{ payload: AssignCommand }>, tableId: number): boolean {
+  return unsettled.some(({ payload }) => payload.kind === "edit" && payload.op.type === "follow_table" && payload.op.table_id === tableId);
 }
 
 /** 자리 없는 처리 중 표시(판단 저장) */

@@ -42,6 +42,7 @@ const KIND_STAGE: Record<AiJobKind, StageKey> = {
   pair: "assign",
   split: "assign",
   unwrap_order: "assign",
+  table_follow: "assign",
   doc_meta: "documents",
   tobe_list: "documents",
 };

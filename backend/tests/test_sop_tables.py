@@ -386,7 +386,9 @@ def test_new_doc_regroup_resets_decided_cell_targets(client: TestClient) -> None
     refused = _edit(client, bundle_id, new_doc["id"], _set_layout(table["table_id"], False))
 
     assert refused.status_code == 409
-    assert refused.json()["detail"] == {"code": "confirm_required", "unit_ids": [cell["id"]]}
+    assert refused.json()["detail"] == {
+        "code": "confirm_required", "unit_ids": [cell["id"]], "linked_cells": 1, "held_rows": 1,
+    }
     result = _ok(_edit(client, bundle_id, new_doc["id"], _set_layout(table["table_id"], False), confirm=True))
 
     assert result["detach"]["held_unit_ids"] == [old_unit["id"]]
@@ -401,6 +403,84 @@ def test_new_doc_regroup_resets_decided_cell_targets(client: TestClient) -> None
     assert _count_sources(cell_target["id"]) == 0
     (entry,) = get_group_by_unit(client, bundle_id, old_unit["id"])["units"]
     assert (entry["decision"]["status"], entry["decision"]["hold_reason"]) == ("on_hold", SYSTEM_HOLD_RELATED_CHANGED)
+
+
+def _link_new_cells(client: TestClient, bundle_id: int, new_doc: dict, links: dict[str, list[dict]]) -> list[dict]:
+    """벗긴 New 표의 칸 글 → 이을 Old 단위들(빈 목록이면 출처 없이 확정). 한 번에 저장하고 칸 단위들을 돌려준다."""
+    view = get_view(client, bundle_id, new_doc["id"])
+    cells = [find_unit(view, text) for text in links]
+    targets = {target["new_unit_id"]: target for target in _load_targets(new_doc["target_doc_id"])}
+    olds = {unit["id"]: unit for sources in links.values() for unit in sources}
+    saved = save_group(client, bundle_id, {
+        "action": "confirm",
+        "units": [{"unit_id": unit_id, "revision": 1, "disposition": "assigned"} for unit_id in sorted(olds)],
+        "targets": [
+            {
+                "key": f"c{index}", "id": targets[cell["id"]]["id"], "revision": targets[cell["id"]]["revision"],
+                "source_unit_ids": [unit["id"] for unit in sources],
+            }
+            for index, (cell, sources) in enumerate(zip(cells, links.values(), strict=True))
+        ],
+    })
+    assert saved.status_code == 200, saved.text
+    return cells
+
+
+def _unwrapped_new_table(client: TestClient, old_body: str) -> tuple[int, dict, dict, dict]:
+    """New 문서(2행 표 + 문장)의 표를 벗기고 Old 문서를 올린다 — (묶음 id, New 문서, 표, Old view)."""
+    bundle_id, new_doc, view = _setup_new_doc(client, tbl(ROWS[:2]) + p("합성 문장을 쓴다."))
+    old_doc = _upload_ready(client, bundle_id, build_docx(old_body), OLD_NAME)
+    (table,) = _units_of_kind(view, "table")
+    _ok(_edit(client, bundle_id, new_doc["id"], _set_layout(table["table_id"], True)))
+    return bundle_id, new_doc, table, get_view(client, bundle_id, old_doc["id"])
+
+
+def test_new_table_confirm_tells_links_and_held_rows(client: TestClient) -> None:
+    """New 표 바꾸기의 확인은 풀릴 이음(n)과 보류로 갈 Old 줄(m)을 싣고, 적용하면 그만큼 보류된다."""
+    bundle_id, new_doc, table, old_view = _unwrapped_new_table(client, p(CELL_TEXTS[0]) + p(CELL_TEXTS[2]))
+    first, second = find_unit(old_view, CELL_TEXTS[0]), find_unit(old_view, CELL_TEXTS[2])
+    a, b = _link_new_cells(client, bundle_id, new_doc, {CELL_TEXTS[0]: [first], CELL_TEXTS[2]: [second]})
+
+    detail = _edit(client, bundle_id, new_doc["id"], _set_layout(table["table_id"], False)).json()["detail"]
+
+    assert detail == {"code": "confirm_required", "unit_ids": sorted([a["id"], b["id"]]), "linked_cells": 2, "held_rows": 2}
+    done = _ok(_edit(client, bundle_id, new_doc["id"], _set_layout(table["table_id"], False), confirm=True))
+    assert len(done["detach"]["held_unit_ids"]) == detail["held_rows"]
+
+
+def test_new_table_confirm_counts_a_pair_as_one_row(client: TestClient) -> None:
+    """한/영 짝 두 Old 단위는 보류로 갈 줄 하나다."""
+    bundle_id, new_doc, table, old_view = _unwrapped_new_table(client, p(CELL_TEXTS[0]) + p(CELL_TEXTS[1]))
+    ko, en = find_unit(old_view, CELL_TEXTS[0]), find_unit(old_view, CELL_TEXTS[1])
+    assert ko["pair_id"] is not None and ko["pair_id"] == en["pair_id"]
+    _link_new_cells(client, bundle_id, new_doc, {CELL_TEXTS[0]: [ko, en]})
+
+    detail = _edit(client, bundle_id, new_doc["id"], _set_layout(table["table_id"], False)).json()["detail"]
+
+    assert (detail["linked_cells"], detail["held_rows"]) == (1, 1)
+
+
+def test_new_table_confirm_is_zero_for_a_cell_marked_new(client: TestClient) -> None:
+    """출처 없이 확정한 칸은 묻기는 하되 풀릴 이음이 없다."""
+    bundle_id, new_doc, table, _ = _unwrapped_new_table(client, p(CELL_TEXTS[0]))
+    (cell,) = _link_new_cells(client, bundle_id, new_doc, {CELL_TEXTS[0]: []})
+
+    detail = _edit(client, bundle_id, new_doc["id"], _set_layout(table["table_id"], False)).json()["detail"]
+
+    assert detail == {"code": "confirm_required", "unit_ids": [cell["id"]], "linked_cells": 0, "held_rows": 0}
+
+
+def test_old_table_confirm_keeps_its_shape(client: TestClient) -> None:
+    """Old 표의 확인은 지금 꼴 그대로 — 화면이 Old 기준 글로 묻는다."""
+    fx = _setup(client, tbl(ROWS[:2]))
+    (table,) = _units_of_kind(fx.view, "table")
+    _ok(_edit(client, fx.bundle_id, fx.doc["id"], _set_layout(table["table_id"], True)))
+    ko = find_unit(get_view(client, fx.bundle_id, fx.doc["id"]), CELL_TEXTS[0])
+    assign_as_is(client, fx.bundle_id, ko, fx.sop_id, slot_key="purpose")
+
+    detail = _edit(client, fx.bundle_id, fx.doc["id"], _set_layout(table["table_id"], False)).json()["detail"]
+
+    assert detail.keys() == {"code", "unit_ids"}
 
 
 # ── 난수 표 편집 열 ───────────────────────────────────────────────────────────

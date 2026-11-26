@@ -10,7 +10,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.sop.constants import SLOT_HEADING, SYSTEM_HOLD_RELATED_CHANGED
 from app.sop.groups import collect_component, iter_chunks, select_in_chunks
-from app.sop.models import AiSuggestion, TargetSentence, TargetSource, Unit, UnitDecision, UnitDecisionHistory
+from app.sop.models import (
+    AiSuggestion, TargetSentence, TargetSource, Unit, UnitDecision, UnitDecisionHistory, UnitPairMember,
+)
 from app.sop.status import pick_row_status
 
 UNASSIGNED = "unassigned"
@@ -294,6 +296,42 @@ async def find_units_needing_confirm(session: AsyncSession, unit_ids: Collection
         unit_ids,
     )
     return sorted({row[0] for row in (*decided, *sourced, *translated, *carried)})
+
+
+async def count_new_table_links(session: AsyncSession, unit_ids: Collection[int]) -> tuple[int, int]:
+    """(이음이 풀릴 새 문장 수, 보류로 갈 Old 줄 수) — 아무것도 쓰지 않는다. New 표를 바꾸기 전에 묻는 창이 쓴다.
+
+    줄 수는 detach_targets가 보류로 둘 단위(같은 관계 묶음의 미배정이 아닌 판단)를 짝 · 묶음으로 접은 수다 — 칸 연결은 표
+    전체가 한 묶음이라 바꾸지 않은 형제 칸의 줄도 든다(서버가 실제로 그렇게 보류한다).
+    """
+    rows = await select_in_chunks(
+        session,
+        lambda chunk: select(TargetSentence.id, TargetSentence.kind).where(
+            TargetSentence.new_unit_id.in_(chunk), TargetSentence.origin == ORIGIN_NEW_DOC
+        ),
+        unit_ids,
+    )
+    target_ids = {row[0] for row in rows}
+    sourced = {
+        row[0] for row in await select_in_chunks(
+            session, lambda chunk: select(TargetSource.target_id).where(TargetSource.target_id.in_(chunk)), target_ids
+        )
+    }
+    linked = sum(1 for target_id, kind in rows if kind == "sentence" and target_id in sourced)
+    component_units, _ = await collect_component(session, unit_ids=(), target_ids=target_ids)
+    held = await select_in_chunks(
+        session,
+        lambda chunk: select(Unit.id, Unit.group_unit_id, UnitPairMember.pair_id)
+        .join(UnitDecision, UnitDecision.unit_id == Unit.id)
+        .outerjoin(UnitPairMember, UnitPairMember.unit_id == Unit.id)
+        .where(Unit.id.in_(chunk), UnitDecision.status != UNASSIGNED),
+        component_units,
+    )
+    lines = {
+        ("pair", pair_id) if pair_id is not None else ("group", group_id) if group_id is not None else ("unit", unit_id)
+        for unit_id, group_id, pair_id in held
+    }
+    return linked, len(lines)
 
 
 async def detach_units(
