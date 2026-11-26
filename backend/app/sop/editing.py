@@ -2665,6 +2665,12 @@ async def _write_change(
         await _create_human_pair(
             session, document, [*change.pair_units, *(made[id(change.drafts[index])] for index in change.pair_drafts)], actor
         )
+        if change.merged and change.pair_units:
+            # 여럿 고른 줄 합치기의 외톨이 Unit은 판단 · 번역이 있을 수 있다 - 사람이 짝을 맺을 때(pairs.create_pair)처럼 번역을 쓸어 낸다.
+            # 모양 전환이 되살린 조각은 번역이 없다. pairs가 editing을 들여와 여기서 들여온다
+            from app.sop.pairs import sweep_paired_translations
+
+            await sweep_paired_translations(session, document.bundle_id, change.pair_units)
     if change.layouts and not change.keeps_pairs:
         # 레이아웃 표의 칸 문장은 묶이지 않아 한/영 두 열이 이웃 짝으로 제안되고(따로 배치면 둘 다 벗긴 대응 표의 같은 행끼리, F8a),
         # 다시 데이터 표가 되면 그 제안이 빠진다
