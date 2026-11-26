@@ -3,7 +3,7 @@
 // 상태는 이 모듈 변수에만 산다 - 페이지를 새로 읽으면 처음, 앱 안에서 떠났다 돌아오면 이어진다(D11).
 // Assign이 부르는 읽기 · 쓰기를 더하면 여기 경로 표(ROUTES)도 더한다 - 없으면 연습에서 "Not available in practice"가 뜬다.
 
-import type { AiStatus, Bundle, TableCounterpart, UnitRefDetail } from "../api-sop";
+import type { AiStatus, Bundle, OriginalPlaces, TableCounterpart, UnitRefDetail } from "../api-sop";
 import type { AssignKeyId } from "../assign-keymap";
 import { PRACTICE_BUNDLE_ID } from "../practice-route";
 
@@ -155,6 +155,12 @@ const ROUTES: Route[] = [
     pattern: new RegExp(String.raw`^${BUNDLE}/documents/(\d+)/units/(\d+)/ref$`),
     handle: () => ok({ state: null, number: "", equis: null, suggested_text: null } satisfies UnitRefDetail),
   },
+  // 연습 문서는 올린 파일이 없다 - Space 시트 원본 탭이 "원본 파일 없음"을 보인다(원본 보기 설계 §5.7)
+  {
+    method: "GET",
+    pattern: new RegExp(String.raw`^${BUNDLE}/documents/(\d+)/original-places$`),
+    handle: () => ok({ file_format: "none", page_basis: null, places: [] } satisfies OriginalPlaces),
+  },
   // 쓰기 - 받은 것을 그대로 반영한다(§6.3)
   {
     method: "POST",
@@ -236,7 +242,7 @@ const ROUTES: Route[] = [
   },
 ];
 
-/** 가짜 서버가 흉내 내는 경로 수 - 시험이 설계 §5의 25와 맞춘다 */
+/** 가짜 서버가 흉내 내는 경로 수 - 시험이 설계 §5의 25 + 원본 자리 1(원본 보기 설계 §5.7)과 맞춘다 */
 export const PRACTICE_ROUTE_COUNT = ROUTES.length;
 
 /** 합칠 Unit 모두가 같은 짝이다 */

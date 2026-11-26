@@ -306,4 +306,26 @@ await runStep("practice: unsupported says so", {}, async ({ page }) => {
   await page.keyboard.press("Escape");
 });
 
+await runStep("practice: Original tab says the practice document has no source file", {}, async ({ page }) => {
+  // the fake server answers original-places with file_format "none" - the Space sheet's Original tab says there is no original file instead of Not available
+  const leaks = watchLeaks(page);
+  await openPractice(page);
+  const unit = page.locator(PRACTICE_UNIT).nth(2);
+  await unit.waitFor({ timeout: T });
+  await unit.click();
+  await wait(page, "assign-row-id");
+  await page.evaluate(() => (document.activeElement instanceof HTMLElement ? document.activeElement.blur() : undefined));
+  await page.keyboard.press(" ");
+  await wait(page, "assign-space-preview");
+  await page.locator('[data-testid="space-tab-original"]').click();
+  // one pane shows space-original, two panes space-original-old (the practice New document has no file either)
+  const none = page.locator('[data-testid="space-original-none"], [data-testid="space-original-old-none"]').first();
+  await none.waitFor({ timeout: T });
+  const text = await none.innerText();
+  check("the Original tab says the practice document has no original file", text.includes("no original file"), text);
+  check("it is not the Not available in practice wording", !text.includes("Not available"), text);
+  check("the Original tab asked nothing of the backend", leaks.length === 0, leaks.join(" | "));
+  await page.keyboard.press("Escape");
+});
+
 }
