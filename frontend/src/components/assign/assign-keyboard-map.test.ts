@@ -31,7 +31,13 @@ describe("Assign keyboard map", () => {
     // Assert
     expect(find("assign-keyboard-map")).not.toBeNull();
     expect(keyJ?.getAttribute("data-kind")).toBe("move");
-    expect(keyJ?.querySelector('[data-testid="assign-keyboard-map-shift-KeyJ"]')?.getAttribute("data-kind")).toBe("shape");
+    expect(keyJ?.querySelector('[data-testid="assign-keyboard-map-shift-KeyJ"]')?.textContent).toMatch(/^⇧/);
+    const board = find("assign-keyboard-map-board") as HTMLElement;
+    await act(async () => board.dispatchEvent(new KeyboardEvent("keydown", { code: "KeyJ", key: "j", bubbles: true })));
+    expect(find("assign-keyboard-map-key-KeyJ")?.hasAttribute("data-pressed")).toBe(true);
+    expect(find("assign-keyboard-map-key-KeyJ")?.hasAttribute("data-flash")).toBe(true);
+    await act(async () => board.dispatchEvent(new KeyboardEvent("keyup", { code: "KeyJ", key: "j", bubbles: true })));
+    expect(find("assign-keyboard-map-key-KeyJ")?.hasAttribute("data-pressed")).toBe(false);
     await act(async () => window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" })));
     expect(find("assign-keyboard-map")).toBeNull();
     await act(async () => root.unmount());
