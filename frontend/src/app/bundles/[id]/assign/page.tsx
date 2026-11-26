@@ -862,14 +862,8 @@ export default function AssignPage() {
                       pending={mode === "old" ? paperPending : undefined}
                       mergeArm={isNewEdit ? mergeArm : null}
                       onPick={pickNewBox}
-                      onContextMenu={
-                        canEdit && mode === "old"
-                          ? (unitId, at) => {
-                              const box = newOverlay.boxes.get(unitId);
-                              return box?.kind === "sentence" && openNewCtxMenu(unitId, box.targetId, at);
-                            }
-                          : undefined
-                      }
+                      // 문장 · 표 칸 · 표 머리 · 제목 모두 한 단으로 연 New와 같은 메뉴(양 단 New에도 칸 메뉴)
+                      onContextMenu={canEdit && mode === "old" ? openNewCtxMenu : undefined}
                       cut={isNewEdit ? cutLine.cut : null}
                       onCutDrag={canEdit && isNewEdit ? cutLine.drag : undefined}
                       onCutNudge={canEdit && isNewEdit ? cutLine.nudge : undefined}

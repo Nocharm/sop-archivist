@@ -1491,12 +1491,15 @@ export function useAssignPage() {
     if (first) selectNewSentence(first.target_id);
   }
 
-  /** New 칸의 문장을 우클릭 - 그 문장을 고르고 고치기 메뉴를 연다(Old 고름은 그대로). 문장이 아닌 박스(제목 · 표 · 칸)에는 메뉴가 없다 */
-  function openNewCtxMenu(unitId: number, targetId: number, click: { x: number; y: number } | null): boolean {
-    const anchor = document.querySelector<HTMLElement>(`[data-testid="assign-new-${targetId}"]`);
-    if (!canEdit || mode !== "old" || !anchor || !selectNewSentence(targetId)) return false;
+  /**
+   * 양 단 New 용지의 박스를 우클릭(또는 단추 줄 ⋯의 손질) - 그 박스를 고르고 한 단으로 연 New와 같은 메뉴를 연다(Old 고름은 그대로).
+   * 문장 · 표 칸 · 표 머리 · 제목 모두 - 구역은 같은 단위의 같은 답이다(lib/menu-section-model). caret은 누른 글자 자리("Split here")
+   */
+  function openNewCtxMenu(unitId: number, click: { x: number; y: number } | null, caret: { blockId: number; offset: number } | null): boolean {
+    const anchor = document.querySelector<HTMLElement>(`[data-pane="new"] [data-strip-unit="${unitId}"]`);
+    if (!canEdit || mode !== "old" || !anchor || isBoxLocked(unitId) || !selectNewUnit(newDocFile, unitId)) return false;
     menuSeq.current += 1;
-    setCtxMenu({ seq: menuSeq.current, unitId, boxId: null, rowKey: SOLO_ROW_KEY, anchor, click, caret: null });
+    setCtxMenu({ seq: menuSeq.current, unitId, boxId: null, rowKey: SOLO_ROW_KEY, anchor, click, caret });
     return true;
   }
 
@@ -1685,17 +1688,16 @@ export function useAssignPage() {
     if (target.pair_id === null || !shape) return [];
     return [...shape.model.units.values()].filter((unit) => unit.pair_id === target.pair_id);
   }
-  const ctxMenuGroups = ctxFound ? buildUnitMenu(ctxFound.shape, ctxFound.unit) : null;
-  // New 문서의 문장에는 보낼 곳이 없다 - 고치기 묶음만
-  const ctxGroups = ctxMenuGroups && ctxFound?.shape.side === "new" ? { ...ctxMenuGroups, assign: [] } : ctxMenuGroups;
+  const ctxGroups = ctxFound ? buildUnitMenu(ctxFound.shape, ctxFound.unit) : null;
   // 우클릭 메뉴의 구역(C2) - 표 칸이면 이 칸 위 · 이 표 아래, 벗긴 표의 줄이면 이 칸 아래 다시 표로 · AI 순서, 그 밖은 지금 두 묶음
   const ctxTable = findTableOf(ctxFound?.shape ?? null, ctxTarget);
   const ctxUnwrapped = ctxFound && ctxTarget && ctxTarget.kind === "cell_sentence" && ctxTarget.group_unit_id === null && ctxTarget.table_id !== null ? (ctxFound.shape.model.unwrapped.get(ctxTarget.table_id) ?? null) : null;
   const ctxPlace: MenuPlace = ctxFound && ctxTarget ? readMenuPlace(ctxTarget, ctxTable, ctxUnwrapped, new Map(ctxFound.shape.view.blocks.map((block) => [block.id, block])), ctxFound.shape.model.tables) : { kind: "text" };
   // 칠은 문서 쪽이 아니라 그린 용지로 - 한 단에서 연 New 문서도 왼쪽 용지(data-pane="old")에 그려진다
   const ctxSide: "old" | "new" = ctxFound?.shape === rightShape ? "new" : "old";
-  const ctxSections: MenuSection[] | null = ctxGroups && ctxTarget
-    ? buildMenuSections(ctxGroups, ctxPlace, ctxUnwrapped === null ? [] : buildUnwrappedTableItems({ readOnly: !canEdit, hasDraft: hasUnitDraft(ctxTarget), orderReasonKey: ctxFound ? readOrderReasonOf(ctxFound.shape, ctxUnwrapped.id) : null }))
+  // New 문서의 단위에는 보낼 곳이 없다 - 고치기 묶음만(양 단 · 한 단 어느 용지든 같은 구역)
+  const ctxSections: MenuSection[] | null = ctxGroups && ctxFound
+    ? buildMenuSections(ctxGroups, ctxPlace, ctxUnwrapped === null ? [] : buildUnwrappedTableItems({ readOnly: !canEdit, hasDraft: hasUnitDraft(ctxFound.unit), orderReasonKey: readOrderReasonOf(ctxFound.shape, ctxUnwrapped.id) }), ctxFound.shape.side)
     : null;
   /** 메뉴 항목이 닿는 칸 - 올리거나 포커스할 때만 읽는다 */
   function readCtxReach(item: Parameters<typeof readMenuReach>[0]): MenuReach {
@@ -2892,7 +2894,7 @@ export function useAssignPage() {
     if (at === null) return;
     const box = at.side === "new" ? newBoxes.get(at.unitId) : undefined;
     if (id === "tools") {
-      if (at.side === "new" && !isSolo && box) openNewCtxMenu(at.unitId, box.targetId, null);
+      if (at.side === "new" && !isSolo) openNewCtxMenu(at.unitId, null, null);
       else openCtxMenu(at.unitId, null, null);
     } else if (id === "show_linked") {
       if (at.side === "old" && rowLinks[0] !== undefined) showInNew(rowLinks[0]);

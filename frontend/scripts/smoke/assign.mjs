@@ -1485,7 +1485,28 @@ await runStep("assign: the cell menu has this cell and this table, hovering pain
   await page.locator('[data-testid="assign-ctx-reach"]').waitFor({ state: "attached", timeout: T });
   check("old: hovering Back to table rings the table's lines", (await outlineOf("old", oldParts.cell.id)) === "dashed");
   await closeMenu();
-  // New 표 칸 - 양 단의 New 칸은 문장 박스만 메뉴를 열어(openNewCtxMenu) 표 칸은 그 문서를 한 단으로 열어야 한다. 한 단의 New도 왼쪽 용지(data-pane="old")에 그려진다. 같은 구역, 배정 항목 없음
+  // 양 단의 New 표 칸 · 표 머리(오른쪽 용지, data-pane="new") - 한 단으로 연 New와 같은 메뉴(openNewCtxMenu): 칸은 이 칸 위 · 이 표 아래, 표 머리는 이 표 하나, 배정 구역 없음
+  if ((await page.locator('[data-testid="assign-new"]').count()) === 0) await page.locator('[data-testid="assign-view-two"]').click();
+  await wait(page, "assign-new");
+  const openNewMenu = async (selector) => {
+    const box = page.locator(selector).first();
+    await box.scrollIntoViewIfNeeded({ timeout: T });
+    await box.click({ button: "right" });
+    await wait(page, "assign-ctx-menu");
+  };
+  await openNewMenu(`[data-pane="new"] [data-strip-unit="${newParts.cell.id}"]`);
+  const pairCellIds = await listIds();
+  check("new beside old: a table cell menu has this cell above this table without assignment items", pairCellIds.indexOf("assign-ctx-section-cell") === 0 && pairCellIds.indexOf("assign-ctx-section-table") > 0 && !pairCellIds.includes("assign-ctx-section-assign") && !pairCellIds.includes("assign-ctx-clear") && !pairCellIds.includes("assign-ctx-delete"), pairCellIds.join(","));
+  await page.locator('[data-testid="assign-ctx-table_layout"]').hover();
+  await page.locator('[data-testid="assign-ctx-reach"]').waitFor({ state: "attached", timeout: T });
+  check("new beside old: hovering Unwrap table rings the New table", (await outlineOf("new", newParts.table.id)) === "dashed");
+  await closeMenu();
+  check("new beside old: Esc closes the cell menu", (await page.locator('[data-testid="assign-ctx-menu"]').count()) === 0);
+  await openNewMenu(`[data-testid="assign-new-paper-head-${newParts.table.id}"]`);
+  const pairHeadIds = await listIds();
+  check("new beside old: a table head menu has this table only", pairHeadIds[0] === "assign-ctx-section-table" && !pairHeadIds.includes("assign-ctx-section-cell") && !pairHeadIds.includes("assign-ctx-section-assign") && pairHeadIds.includes("assign-ctx-table_layout"), pairHeadIds.join(","));
+  await closeMenu();
+  // 한 단으로 연 New 표 칸 - 한 단의 New는 왼쪽 용지(data-pane="old")에 그려진다. 같은 구역, 배정 항목 없음
   await page.goto(`${BASE}/bundles/${created.id}/assign?edit=${newDoc.id}`);
   await wait(page, "assign-bar");
   await openMenu(`assign-paper-unit-${newParts.cell.id}`);
