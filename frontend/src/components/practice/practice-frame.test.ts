@@ -1,7 +1,4 @@
-// 연습 틀과 과제 칸(설계 §3 · D9 · D10 · D14) - 과제 열둘 · 자동 ✓ · 끝나면 다음 · 순서 자유 · 좁은 창은 처음부터 접힘.
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
-
+// 연습 틀 - 띠의 진행 점 열둘 · 말풍선(설계 §3 · D9 · D10, 말풍선 2026-11-27 시안 A): 자동 체크 · 이루면 뒤집혀 체크 · 애니메이션이 끝나면 다음 · 순서 자유 · 건너뛰기 · 마치는 카드.
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -10,13 +7,10 @@ import { LangProvider } from "@/lib/i18n";
 import { notePracticeAct, resetPracticeServer } from "@/lib/practice/practice-server";
 import { buildPracticeTestFixture } from "@/lib/practice/practice-test-fixture";
 
-import { PRACTICE_NARROW_QUERY, PracticeFrame } from "./practice-frame";
+import { PracticeCoach } from "./practice-coach";
+import { PracticeFrame } from "./practice-frame";
 
 let root: Root | null = null;
-
-function stubWidth(isNarrow: boolean) {
-  vi.stubGlobal("matchMedia", (query: string) => ({ matches: query === PRACTICE_NARROW_QUERY && isNarrow, addEventListener: () => {}, removeEventListener: () => {} }));
-}
 
 async function renderFrame() {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -32,12 +26,23 @@ async function renderFrame() {
 }
 
 const find = (testId: string) => document.querySelector<HTMLElement>(`[data-testid="${testId}"]`);
-const readOpen = () => [...document.querySelectorAll<HTMLElement>("[data-testid^='practice-task-'][data-open]")].map((el) => el.dataset.testid);
+const readCoach = () => find("practice-coach")?.dataset.task ?? null;
+const readFlip = () => find("practice-coach-flip")?.dataset.done ?? null;
+const readNowDots = () => [...document.querySelectorAll<HTMLElement>('[data-testid^="practice-dot-"][data-now="true"]')].map((el) => el.dataset.testid);
 const press = (el: Element, init: KeyboardEventInit) => act(async () => void el.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, ...init })));
 const click = (el: Element) => act(async () => void (el as HTMLElement).click());
+/**
+ * 애니메이션의 끝 소식 - jsdom은 CSS 애니메이션을 돌리지 않아 손으로 보낸다. jsdom에는 AnimationEvent가 없어 React가 onAnimationEnd를
+ * webkitAnimationEnd로 듣는다(브라우저에서는 animationend).
+ */
+const sendAnimationEnd = (el: Element) => act(async () => void el.dispatchEvent(Object.assign(new Event("webkitAnimationEnd", { bubbles: true }), { animationName: "practice-coach-flip" })));
+const endFlip = () => sendAnimationEnd(find("practice-coach-flip")!);
 
 beforeEach(() => {
   resetPracticeServer(buildPracticeTestFixture());
+  vi.stubGlobal("requestAnimationFrame", () => 0);
+  vi.stubGlobal("cancelAnimationFrame", () => {});
+  vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
 });
 
 afterEach(async () => {
@@ -47,75 +52,95 @@ afterEach(async () => {
   document.body.replaceChildren();
 });
 
-describe("the task column", () => {
-  it("lists twelve tasks with none done and opens the first with its keys and manual link", async () => {
-    stubWidth(false);
+describe("the progress dots on the band", () => {
+  it("draws twelve dots, none done, the first one now, and 0/12", async () => {
     await renderFrame();
-    expect(document.querySelectorAll("[data-testid^='practice-task-'][data-done]")).toHaveLength(12);
+    expect(document.querySelectorAll('[data-testid^="practice-dot-"]')).toHaveLength(12);
+    expect(document.querySelectorAll('[data-testid^="practice-dot-"][data-done="true"]')).toHaveLength(0);
+    expect(readNowDots()).toEqual(["practice-dot-pick"]);
     expect(find("practice-progress")?.textContent).toBe("0/12");
-    expect(readOpen()).toEqual(["practice-task-pick"]);
-    expect(find("practice-task-pick")?.querySelector("kbd")?.textContent).toBe("J · ↓ · Tab");
-    expect(find("practice-task-manual")?.getAttribute("href")).toBe("/manual#assign");
-    expect(find("practice-task-manual")?.getAttribute("target")).toBe("_blank");
-    expect(find("practice-tasks-done")).toBeNull();
+    expect(find("practice-dot-hold")?.getAttribute("aria-label")).toBe("Task 4 · Put on hold");
   });
 
-  it("ticks Pick when J is pressed in Assign and opens the next open task", async () => {
-    stubWidth(false);
+  it("goes to any task when its dot is pressed", async () => {
     await renderFrame();
-    await press(find("paper-line")!, { key: "j" });
-    expect(find("practice-task-pick")?.dataset.done).toBe("true");
-    expect(find("practice-progress")?.textContent).toBe("1/12");
-    expect(readOpen()).toEqual(["practice-task-link"]);
-  });
-
-  it("does not take J pressed in the task column or in a text box as moving a line", async () => {
-    stubWidth(false);
-    await renderFrame();
-    await press(find("practice-tasks-fold")!, { key: "j" });
-    const input = find("paper-line")!.appendChild(document.createElement("input"));
-    await press(input, { key: "j" });
-    expect(find("practice-task-pick")?.dataset.done).toBe("false");
-  });
-
-  it("opens any task pressed, keeps it open while other tasks get done, and moves on once it is done", async () => {
-    stubWidth(false);
-    await renderFrame();
-    await click(find("practice-task-hold")!.querySelector("button")!);
-    expect(readOpen()).toEqual(["practice-task-hold"]);
-    await click(find("assign-help-keyboard-map")!);
-    expect(find("practice-task-keyboard")?.dataset.done).toBe("true");
-    expect(readOpen()).toEqual(["practice-task-hold"]);
-    await act(async () => notePracticeAct({ key: "move_prev" }));
-    await click(find("practice-task-pick")!.querySelector("button")!);
-    expect(readOpen()).toEqual(["practice-task-pick"]);
-    await press(find("paper-line")!, { key: "k" });
-    expect(readOpen()).toEqual(["practice-task-link"]);
+    await click(find("practice-dot-hold")!);
+    expect(readCoach()).toBe("hold");
+    expect(readNowDots()).toEqual(["practice-dot-hold"]);
   });
 });
 
-describe("folding the task column", () => {
-  it("starts folded on a narrow window, still showing the progress, and unfolds when pressed", async () => {
-    stubWidth(true);
+describe("the coach card", () => {
+  it("shows the first task with its chapter, keys and manual link", async () => {
     await renderFrame();
-    const grid = document.querySelector<HTMLElement>(".practice-grid")!;
-    expect([grid.dataset.pref, find("practice-tasks")?.hasAttribute("data-folded")]).toEqual(["auto", true]);
-    expect(find("practice-progress")?.textContent).toBe("0/12");
-    expect(find("practice-tasks-fold")?.getAttribute("aria-expanded")).toBe("false");
-    await click(find("practice-tasks-fold")!);
-    expect([grid.dataset.pref, find("practice-tasks")?.hasAttribute("data-folded")]).toEqual(["open", false]);
-    await click(find("practice-tasks-fold")!);
-    expect([grid.dataset.pref, find("practice-tasks")?.hasAttribute("data-folded")]).toEqual(["folded", true]);
+    expect(readCoach()).toBe("pick");
+    expect(readFlip()).toBe("false");
+    expect(find("practice-coach")?.textContent).toContain("Task 1 / 12 · Basics");
+    expect(find("practice-coach")?.querySelector("kbd")?.textContent).toBe("J · ↓ · Tab");
+    expect(find("practice-coach-manual")?.getAttribute("href")).toBe("/manual#assign");
+    expect(find("practice-coach-manual")?.getAttribute("target")).toBe("_blank");
+    expect(find("practice-finish")).toBeNull();
   });
 
-  it("starts open on a wide window", async () => {
-    stubWidth(false);
+  it("flips to the check when the task is done, then moves to the next open task when the flip ends", async () => {
     await renderFrame();
-    expect(find("practice-tasks")?.hasAttribute("data-folded")).toBe(false);
+    await press(find("paper-line")!, { key: "j" });
+    expect(find("practice-dot-pick")?.dataset.done).toBe("true");
+    expect(find("practice-progress")?.textContent).toBe("1/12");
+    expect([readCoach(), readFlip()]).toEqual(["pick", "true"]);
+    expect(find("practice-coach-flip")?.textContent).toContain("Done!");
+    await endFlip();
+    expect([readCoach(), readFlip()]).toEqual(["link", "false"]);
+    expect(readNowDots()).toEqual(["practice-dot-link"]);
   });
 
-  it("folds by the same width in CSS before React knows the window (no flash, no hydration gap)", () => {
-    const css = readFileSync(join(process.cwd(), "src", "styles", "components.css"), "utf8");
-    expect(css.includes(`@media ${PRACTICE_NARROW_QUERY} {\n    .practice-grid[data-pref="auto"]`), "components.css의 접힘 미디어 쿼리를 PRACTICE_NARROW_QUERY와 같은 값으로 두세요").toBe(true);
+  it("does not take J pressed on the coach card or in a text box as moving a line", async () => {
+    await renderFrame();
+    await press(find("practice-coach-skip")!, { key: "j" });
+    const input = find("paper-line")!.appendChild(document.createElement("input"));
+    await press(input, { key: "j" });
+    expect(find("practice-dot-pick")?.dataset.done).toBe("false");
+  });
+
+  it("stays on the task pressed while another task gets done, and flips once the pressed one is done", async () => {
+    await renderFrame();
+    await click(find("practice-dot-hold")!);
+    await click(find("assign-help-keyboard-map")!);
+    expect(find("practice-dot-keyboard")?.dataset.done).toBe("true");
+    expect([readCoach(), readFlip()]).toEqual(["hold", "false"]);
+    await act(async () => notePracticeAct({ key: "move_prev" }));
+    await click(find("practice-dot-pick")!);
+    expect([readCoach(), readFlip()]).toEqual(["pick", "false"]);
+    await press(find("paper-line")!, { key: "k" });
+    expect([readCoach(), readFlip()]).toEqual(["pick", "true"]);
+    await endFlip();
+    expect(readCoach()).toBe("link");
+  });
+
+  it("skips to the next task not done yet", async () => {
+    await renderFrame();
+    await click(find("practice-coach-skip")!);
+    expect(readCoach()).toBe("link");
+    expect(find("practice-dot-pick")?.dataset.done).toBe("false");
+  });
+
+  it("ignores the end of an animation inside the card", async () => {
+    await renderFrame();
+    await press(find("paper-line")!, { key: "j" });
+    await sendAnimationEnd(find("practice-coach-manual")!);
+    expect([readCoach(), readFlip()]).toEqual(["pick", "true"]);
+  });
+
+  it("shows the finish card with the way home and start over once all twelve are done", async () => {
+    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    const stageRef = { current: document.body };
+    root = createRoot(document.body.appendChild(document.createElement("div")));
+    const coach = createElement(PracticeCoach, { stageRef, log: [], view: { id: null, isDone: false }, onSkip: () => {}, onAdvance: () => {} });
+    await act(async () => root?.render(createElement(LangProvider, null, coach)));
+    expect(find("practice-coach")).toBeNull();
+    expect(find("practice-finish")?.textContent).toContain("12 / 12 — Assign basics done");
+    expect(find("practice-finish-home")?.textContent).toBe("Go to my Bundles");
+    expect(find("practice-finish-again")?.textContent).toBe("Start over again");
+    expect(find("practice-coach-hole")).toBeNull();
   });
 });
