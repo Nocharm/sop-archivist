@@ -25,24 +25,19 @@
 | 5c | `feat/split-new-parity` | 합침 | v1.6.6 · d750564c | pytest 3453+시드 14(6 xfail = R3 몫) · vitest 1969 · build 경고 0 · `assign:` 스모크 전체 통과(4d와 합친 트리) | Old 한/영 짝이 New 두 문장에 이어져 하나만 풀린 뒤 다시 하기는 409(있던 것) |
 | 6-1 | `feat/new-paper-1-render` | 모음 `feat/new-paper`에 합침 | 7dcf645f | vitest 2361 · build 경고 0 · `assign:` 스모크 1233 + 부하에서 흔들린 둘은 혼자 통과 | New 문장은 글쇠만으로 고를 길이 없음(계획 글자대로, 6-2에서 다시) |
 | 6-2 | `feat/new-paper-2-pick` | 모음 `feat/new-paper`에 합침 | d574eda1(9fcc501d) | dev v1.6.18 합침(충돌 13) · vitest 2475 · build 경고 0 · `assign:` 스모크 1305(시간 단계 하나는 혼자 2번 통과) · Enter · 잇기 단계 95 | fable 검토 두 번: 손질 뒤 Enter가 숨은 확정 · 되돌리기의 문서가 응답 때 정해짐 · Del→잇기→Del · 그 고침이 만든 출처 없음 두 번째 Enter 갈아 끼움 — 모두 고침. 스모크가 찾은 제품 결함: 빈 곳 누르기가 Pair 조각 · 칸 자리 · 템플릿 자리 고름을 지움, 짝 놓기가 New 다듬기에 머묾, 메뉴 위로 단추 줄이 펼쳐짐 — 고침 |
-| 6-3 | `feat/new-paper-3-tools` | 진행 — 워크트리 `sop-wt-new-paper-2-pick`(이름은 옛것), 바탕 23592285(모음 + dev v1.6.20) | | | 끝나면 모음 → dev(버전 · PROGRESS 그때) |
+| 6-3 | `feat/new-paper-3-tools` | 진행 — 코드 · 검토 · 고침 끝, **dev v1.6.21을 합치는 중**(충돌 넷: page.tsx · use-assign-page.tsx · paper.tsx · feature-map). 워크트리 `sop-wt-new-paper-2-pick`(이름은 옛것), 끝 5be84333 | vitest 2527 · 합치기 전 게이트 pytest 3690 · 시드 15 · build 경고 0 · `assign:` 1324 + 새 단계 `shaping tools…` 혼자 76 통과 | opus 검토 막음 1(스모크 본문에 둘째 장 제목 없음) · 권함 1(New 줄 순서 손잡이) 고침. 스모크가 찾은 제품 결함: Shift+누르기 선택 범위(6-3 퇴행) · New 줄을 확정으로 셈(`status` null) · 되돌리기 중 쌓인 Ctrl+Z를 버림(명령 큐, fable 한 번으로 고침). 합치기 뒤 게이트 · 전체 `assign:` 스모크 → 모음 합침 → 모음을 dev에 |
 | 3b+ | `fix/undo-follow-after-click` | 합침 | v1.6.16 · f1cbc921 | vitest 2297 · build 경고 0 · `assign:` 스모크 1240 + 손질 뒤 5단계 | — |
 | 7 | 계획 4의 일곱 | 대기 | | | |
 | 8 | 계획 5의 아홉 | 진행 | v1.6.21 · 69826fdd | space-preview-trim v1.6.14 · excel-a-strike v1.6.15 · progress-by-disposition v1.6.18 · ai-suggestions-retire v1.6.20 · 모음 table-follow v1.6.21 합침(pytest 3747+시드 15 · vitest 2371 · build 경고 0 · `assign:` 스모크 1274 전부 · AI 단계는 가짜 AI로 14) | 남은 둘: tables-tab · unwrap-continue-numbers(둘 다 6 · 계획 4에 매임) |
 
 
-## 이어 가기 (2026-11-26 08시, 지휘 세션을 끊으며)
+## 이어 가기 (2026-11-26 13시, 지휘 세션을 끊으며)
 
-`origin/dev` = **v1.6.19**(`c0fe9e05`, 관리 세션이 `feat/admin-polish`를 합침). 세운 브랜치 없음. 다음 dev 번호는 `npm version patch`(**1.6.20**부터). 푸시 전에 dev를 받는다. 지휘 도구는 저장소 밖 `~/Documents/sop-orchestration/`(README 있음: 하위 에이전트 지침 두 개, `gate.sh` · `merge.py` · `ship.sh` · `wmerge.py`, 반응속도 측정). 새 세션은 지침 · `merge.py`의 `Claude-Session:` 줄을 자기 주소로 바꿔 쓴다.
+`origin/dev` = **v1.6.21**(`3222f822`, 모음 table-follow). 세운 브랜치 없음. 다음 dev 번호는 `npm version patch`(**1.6.22**). 푸시 전에 dev를 받는다. 지휘 도구 `~/Documents/sop-orchestration/`(README · 지침 둘 · `gate.sh` · `merge.py` · `ship.sh` · `wmerge.py`). 새 세션은 지침 · `merge.py`의 `Claude-Session:` 줄을 자기 주소로 바꾼다.
 
-1. **모음 `feat/new-paper`** = `d574eda1`(6-1 · 6-2, 2026-11-26 10시). dev에는 6-3까지 끝난 뒤 한 번(계획 3 머리말).
-2. **6-2**: 모음에 합침(위 장부 줄).
-3. **6-3 `feat/new-paper-3-tools`**(진행, 워크트리 `sop-wt-new-paper-2-pick`) → 모음을 dev에(버전 · PROGRESS는 그때 한 번). 6-3 몫으로 넘어온 것: New 표 머리를 눌러 다듬기로 고르면 1 Shape · ⇧T가 닿음, "글자 골라 새 박스"에서 `pressThroughSelection`을 끔.
-4. **계획 4의 일곱**(전부 6에 매임) · **계획 5의 남은 여섯**: `fix/ai-suggestions-retire`(이제 진행 숫자의 `countWaitingSuggestions` · `WAITING_KINDS`가 dev에 있어 바로 할 수 있다 — 검토가 권한 대로 `WAITING_KINDS` ↔ 프런트 `HIDDEN_AI_KINDS`를 묶는 검사 하나), `feat/assign-tables-tab`, `feat/unwrap-continue-numbers`(계획 4의 `MergeRowsOp`가 먼저), 모음 `feat/table-follow` 1~3. `feat/table-follow-3-ai`의 앞 조건(관리 세션의 `feat/admin-polish`가 dev에)은 **풀렸다**(v1.6.19 · c0fe9e05, 2026-11-26). 그 브랜치가 알아야 할 것(관리 세션 전달):
-   - `GUIDELINE_KEYS`에 `prompt.grant`가 더해졌다(시드 `app/sop/ai/seeds/prompt.grant.md`). 새 키는 그 뒤에 붙이고, `test_sop_guidelines.py` `REPLY_FIELDS`와 `test_sop_ai_llm.py`의 시드 개수(지금 7)도 같이 올린다.
-   - `fake-ai-server.mjs`에 grant 응답이 있다. 새 응답은 그 옆에 더한다.
-   - AI 실명 규칙이 바뀌었다(사용자 결정 2026-11-26): "사내 모델로만 부르고, 실명 · 로그인 ID는 그 기능에 필요할 때만 싣는다"(루트 · `backend/CLAUDE.md`, 명세 §8.5). 이 계획 · 11-23 명세(G8)의 "페이로드에 실명 없음"은 더 엄격한 옛 문구 — 표 따라 하기는 실명이 필요 없으니 그대로 지킨다.
-   - `assign-help.test.ts`의 "manual names no key…" 시험은 설명서 전체의 `<kbd>A</kbd>` 꼴을 Assign 글쇠로 본다(관리 절은 "글쇠 A"로 피해 둠). 다른 화면 글쇠와 부딪히면 시험 범위를 Assign 절로 좁힌다.
+1. **6-3 → 모음 `feat/new-paper` → dev**: 워크트리 `sop-wt-new-paper-2-pick`에서 6-3 브랜치에 dev v1.6.21을 합치는 중(하위 에이전트, 끝나면 커밋돼 있다 — `git log -1`이 `Merge dev (v1.6.21) into feat/new-paper-3-tools`인지 본다. 아니면 합치기부터). 그 뒤: 게이트(`gate.sh <wt> fe build be`) → `up 3787` → 전체 `ONLY="assign:"` 스모크(실패는 reset 뒤 혼자 다시) → 6-3을 모음에 `--no-ff`(워크트리에서 `git checkout feat/new-paper && git merge --no-ff feat/new-paper-3-tools`) → `merge.py`로 `feat/new-paper`를 dev에(버전 patch, PROGRESS는 6-1 · 6-2 · 6-3 요약 하나, CHANGELOG 계획 3 머리말 문구) → `ship.sh feat/new-paper <wt>`. 6-3의 스모크 뒤 제품 고침(b1436791 · d5b23f7d · 5be84333 큐)은 검토를 따로 안 거쳤다 — 합치기 전에 opus로 그 셋만 짧게 보게 하면 좋다.
+2. **6이 dev에 들어가면 운영에 올려도 된다는 조건(사용자 결정: 6-3 전에는 운영 금지)이 풀린다** — 운영 배포 자체는 사용자 몫.
+3. **계획 4의 일곱**(`docs/superpowers/plans/2026-11-25-split-first-4.md`, 전부 6에 매임) · **계획 5의 남은 둘**: `feat/assign-tables-tab`(표 탭에도 `renderFollow`를 넣는다), `feat/unwrap-continue-numbers`(계획 4의 `MergeRowsOp`가 먼저).
 
 **운영하며 배운 것**
 - 하위 에이전트는 셋 안팎. 넷 이상이면 부하 평균이 40~60으로 올라 스모크(100ms · 30s 기준)와 시간 시험이 흔들렸다. 흔들린 것은 혼자 다시 돌려 통과를 보고 합쳤다(장부 줄마다 적음).
@@ -132,3 +127,5 @@
 - 100ms 시간 단계(`deletion folds and unwrap start before the response`)가 다른 게이트와 겹치면 102~117ms로 실패한다(세 브랜치 모두, 혼자면 통과).
 - 표 따라 하기: 임베딩이 꺼진 운영에서는 토큰이 없는 행이 하나만 있어도 AI 길로 간다(정한 것 7). `follow_table`로 합친 줄은 조각 표시 · 합치기 풀기가 없고 Ctrl+Z로만 돌아온다. AI가 "바꿀 것 없음"이라 답한 뒤 닫기는 채택으로 세지 않는다.
 - 임베딩을 켜면 화면 GET(임베딩 씀)과 AI 요청 판정(임베딩 안 씀)이 갈려 422 `follow_not_needed`가 날 수 있다 — 켤 때 함께 본다.
+- 가짜 AI 서버는 **고친 브랜치의 워크트리에서** 띄운다(dev 체크아웃 것은 새 응답이 없어 `invalid`가 된다). AI 단계는 `AI_ENABLED=true AI_BASE_URL=http://localhost:9999/v1 AI_API_TOKEN=fake AI_MODEL=fake AI_AUTO_PREPARE=false scripts/dev-worktree.sh reset`으로 backend를 켠 뒤 그 단계만.
+- 스모크 `has:`에는 pane에 뿌리를 둔 locator가 아니라 `page.locator(testid)`를 넘긴다(바깥에 대고 다시 찾는다).
