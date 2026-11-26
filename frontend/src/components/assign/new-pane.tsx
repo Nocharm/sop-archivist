@@ -644,7 +644,7 @@ export function NewPane(props: NewPaneProps) {
         {props.docOptions.length > 1 ? (
           <Select testId="assign-new-doc" ariaLabel={t("assign.newDoc")} size="sm" mono value={props.docId} options={props.docOptions} onChange={props.onDocChange} />
         ) : (
-          <span className="pane-title">{props.docOptions[0]?.label}</span>
+          <span className="pane-title"><Truncate text={props.docOptions[0]?.tip ?? (typeof props.docOptions[0]?.label === "string" ? props.docOptions[0].label : "")} /></span>
         )}
         <span className="tag new-pane-tag" data-testid="assign-new-tag">
           <Truncate text={props.tag} revealOnFocus />
