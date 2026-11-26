@@ -37,6 +37,9 @@
 | 8 | 계획 5의 아홉 | 합침 | v1.6.31 | 아홉 모두 dev에 | — |
 | 8a | `feat/assign-tables-tab` | 합침 | v1.6.24 · 9d9f177d | dev v1.6.23 합침 · vitest 2593 · build 경고 0 · `assign:` 스모크 1435 + 따라 고친 1검사 혼자 16 통과 · sonnet 검토 막음 0 · 권함 1 고침 · perf(52문서 CPU1 J 22.1→24.1 · Delete 25.1→24.5ms, 스크롤 같음) | 표 탭 J/K는 그 문서의 표만(그림 탭은 모든 Old 문서), 벗긴 표 캡션은 접힌 줄에 안 보임 |
 | 8b | `feat/unwrap-continue-numbers` | 합침 | v1.6.31 · c1efc2ad | dev v1.6.29 · v1.6.30 합침 · pytest 3832+시드 15 · ruff · vitest 2715 · build 경고 0 · `assign:` 스모크 ALL PASS 1507 · opus 검토 막음 1 고침 → opus 재검토 통과 | — |
+| F5 | `feat/pick-bar-labels` | 진행 |  | dev(26b35312) 합침 · vitest 2736 · build 경고 0 | 스모크 · overlap `assign-pick-bar` · 1120/1440 그림 |
+| F7b | `feat/new-cell-menu-two-pane` | 합침 | v1.6.39 · e81d6ecb | dev(26b35312) 합침 · vitest 2741 · build 경고 0 · `assign:` 스모크 ALL PASS 1527(새 Shift+F10 검사 4 포함) · 검토 생략(작은 일) | Old 줄을 골라 둔 채 New를 마지막에 누르면 Shift+F10이 New 메뉴를 연다(전에는 Old) |
+| F9 | `feat/practice-page` | 진행 |  | — | opus 설계 · 스텝 계획 중 |
 
 
 ## 이어 가기 (2026-11-26 밤 — 1차 피드백 중간, 다음 세션은 여기부터)
@@ -51,6 +54,7 @@
 - **9 연습 페이지는 이번 정식 업데이트에 넣는다**(사용자 11-26 밤 정정): 실제 Assign 부품 + 브라우저 안 가짜 서버, 간단한 튜토리얼 느낌, 서버에 쓰지 않음. 남은 두 브랜치 다음, 정식 업데이트 준비 앞.
 - 미룸(다음 묶음): 6 표 꼴 개정 이력 · 7 Reference 아래가 안 된 경우(실제 문서 분석 — :4444 Bundle을 사용자에게 묻기), 스모크 "맞을 때까지 읽기" 공용 함수(`/harden`, 같은 꼴 고침 세 번째).
 - 밤새 지휘(사용자 잠, 11-26 밤): 결정은 추천안으로 하고 장부 "아침에 볼 것"에 적는다. main 합치기 · 태그 · 푸시는 하지 않는다.
+- (11-26 23:20 밤샘 시작) F5 · F7b에 dev 합침, F9 설계 에이전트 띄움. 진행은 표의 F 줄.
 - 배운 것: 시안 아티팩트(db)는 사용자 원격(폰)에서 안 열렸다 — 답은 질문 창이 낫다. 새 화면은 앱 Graphite 톤 · 토큰으로(파스텔 채움은 "톤이 안 맞음"). Assign에서 마우스로 누른 단추는 포커스를 용지로 돌리니(`returnsToPaper`) 창을 여는 단추는 `aria-haspopup`.
 
 ## 이어 가기 (2026-11-26 저녁, 계획 1~5 전부 dev에)
@@ -142,6 +146,7 @@
 - assign-tab-keys · `smoke/assign.mjs` 번호 칸 들여쓰기 단계 · `Tab`/`Shift+Tab` → `Backquote`/`Shift+Backquote`(검사 3 그대로), Tab=J · ⇧Tab=K 검사 2 더함 · `assign-keymap.test.ts` `⇧Tab` → ``⇧` ``, Tab 들여쓰기 시험 → Tab 옮기기 · ` 들여쓰기 · 사용자 요청 글쇠 변경(1차 피드백 2, 승인)
 - smoke-fold-settle · `smoke/assign.mjs` 표 탭 · 접기 단계 "Collapse folds the table…" · 글 기다린 뒤 한 번 읽기 → T 안에서 맞을 때까지 다시 읽기, 실패 글에 본 값 · dev 코드에서도 3번에 1번 접는 중 빈 글로 실패(기대값 · 검사 수 그대로)
 - assign-queue-labels · `smoke/assign.mjs` 약 4645 자르기 알림 글 "Cut" → "Split" · 되돌리기 · 실패 알림 · 대기 칩의 이름 `assign.step.cut`을 단추 줄 이름 Split(나누기)에 맞춤. 같은 브랜치의 느린 저장 단계: 1번 "Queued 1" → "Queued · Delete"(순번 대신 개수 · 이름, 사용자 결정 1-A), 3 · 5 · 6번 검사 더함
+- F7b · `side-panel-model.test.ts` 새 시험 4 · `smoke/assign.mjs` 칸 메뉴 단계에 Shift+F10 검사 4 더함(기존 그대로) · 새 동작
 
 ## 아침에 볼 것 (사람이 정할 것 · 봐 줄 것)
 
@@ -165,6 +170,7 @@
 - 삭제 취소(`clear_noise`)를 장벽으로 되돌릴지 — 지금은 응답 전에 누른 글쇠를 알림만 띄우고 버린다(계획 T7 글자대로).
 - 보류한 줄에서 ↵ 한 번이면 추천 첫 카드로 확정된다(H → 사유 창 → ↵ 하면 보류가 풀림) — 보류 줄은 카드 확정에서 뺄지 정한다(4a).
 - 빠르게 두 번 누른 ↵는 다음 줄의 첫 카드를 확정한다(명세가 정한 결과). 써 보고 불편하면 말해 주세요.
+- (F7b, 추천안) 메뉴 글쇠 · Shift+F10을 New 박스(한 단 · 양 단)에서도 연다 — 마지막에 고른 쪽 기준. Old를 골라 둔 채 New를 누르면 New 메뉴.
 
 ## 사용자 답 (2026-11-26 아침)
 

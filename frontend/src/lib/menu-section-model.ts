@@ -52,8 +52,12 @@ function makeTableSection(place: Exclude<MenuPlace, { kind: "text" }>, items: As
   return { id: "table", headKey: "assign.ctx.section.table", headVars: { n: place.table }, items };
 }
 
-/** 메뉴 항목을 구역으로 - 빈 구역은 빼고(New는 배정 항목이 없다), 위에서 아래로 이 칸 → 이 표 */
-export function buildMenuSections(groups: AssignMenuGroups, place: MenuPlace, tableItems: readonly AssignMenuItem[]): MenuSection[] {
+/**
+ * 메뉴 항목을 구역으로 - 빈 구역은 빼고, 위에서 아래로 이 칸 → 이 표.
+ * doc은 그 단위가 든 문서 - New 문서는 보낼 곳이 없어 배정 항목이 없다. 그린 용지(양 단의 오른쪽 · 한 단)와 상관없이 같은 구역이다
+ */
+export function buildMenuSections(menu: AssignMenuGroups, place: MenuPlace, tableItems: readonly AssignMenuItem[], doc: "old" | "new"): MenuSection[] {
+  const groups = doc === "new" ? { ...menu, assign: [] } : menu;
   const sections: MenuSection[] = [];
   if (place.kind === "text") {
     if (groups.assign.length > 0) sections.push({ id: "assign", headKey: "assign.ctx.assignGroup", headVars: {}, items: groups.assign });
