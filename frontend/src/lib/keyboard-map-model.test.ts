@@ -80,7 +80,7 @@ describe("keyboard map model", () => {
     expect(findMapKey("Backquote")).toMatchObject({ plain: { id: "indent" }, shift: { id: "outdent" } });
     expect(findMapKey("ShiftLeft")?.cap).toBe("⇧");
     expect(isShiftCode("ShiftRight")).toBe(true);
-    expect(findMapKey("F5")).toBeUndefined();
+    expect(findMapKey("Numpad1")).toBeUndefined();
   });
 
   it("flashes only keys that do something on the held layer", () => {
