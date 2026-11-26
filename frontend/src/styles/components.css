@@ -2479,6 +2479,21 @@
   .new-src-x > svg { vertical-align: -2px; }
   .new-cell:is(:hover, :focus-within) .new-src-x { opacity: 1; }
   button.new-src-x:hover { box-shadow: inset 0 0 0 1px var(--danger-ink); color: var(--danger-ink); }
+  /* 벗기지 않은 New 표에 칸마다 잇기(쪼개기 먼저 §8 4-3) - 이은 칸은 옅은 강조색 칠과 왼쪽 강조색 막대, 아직인 칸은 빨간 막대(문장 상자와 같은 뜻). 막대는 모서리 각지게 */
+  .new-paper .new-cell[data-linked] { background: color-mix(in oklab, var(--accent) 6%, var(--paper)); }
+  .new-paper .new-cell:is([data-linked], [data-state="unsourced"])::before { content: ""; position: absolute; top: 0; bottom: 0; left: 0; width: 3px; border-radius: 0; background: var(--accent); pointer-events: none; }
+  .new-paper .new-cell[data-state="unsourced"]::before { background: var(--danger-fill); }
+  /* 고른 칸의 꼬리표 "r행 c열 · k/n" */
+  .new-cell-tag { padding: 0 4px; border-radius: var(--r-1); background: var(--accent); color: var(--on-accent); font: 600 var(--fs-micro) / 1.6 var(--font-ui); }
+  /* Old를 고른 채 올린 칸 · 끄는 동안 놓을 수 있는 칸은 점선 테 - 올린 칸에는 "여기에 잇기" */
+  .new-paper.pg[data-held] .new-cell[data-pickable]:hover { outline: 1.5px dashed var(--accent); outline-offset: -1.5px; }
+  .new-paper.pg[data-held] .new-cell[data-pickable][data-link-tip]:hover::after { content: attr(data-link-tip); position: absolute; top: -9px; right: 4px; padding: 0 4px; border-radius: var(--r-1); background: var(--paper); color: var(--accent); font: 600 var(--fs-micro) / 1.4 var(--font-ui); pointer-events: none; }
+  html[data-box-drag] .new-paper .new-cell[data-drop] { outline: 1px dashed var(--accent); outline-offset: -1px; }
+  /* 표 머리 - 칸 문장 수와 이은 수, 막대, 표 벗기기 */
+  .new-table-head { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; font: var(--fs-micro) / 1.6 var(--font-ui); color: var(--ink-3); }
+  .new-table-bar { position: relative; flex: 0 0 64px; height: 4px; background: var(--sunken); overflow: hidden; }
+  .new-table-bar::before { content: ""; position: absolute; inset: 0 auto 0 0; width: var(--fill); background: var(--accent); }
+  .new-table-unwrap { height: 22px; padding: 0 6px; font-size: var(--fs-micro); }
 }
 
 /* 빈 템플릿(엮은 New) 기본 보기를 같은 용지로(시안 2 D6) - 칸 머리는 번호 칸에 칸 번호가 든 제목 박스(Old · New의 제목 박스와 같은 .strip + p.h), 앱이 채우는 목록은 읽기 전용 박스.

@@ -42,6 +42,8 @@ export interface NewBox {
   band: NewAiBand | null;
   /** Old 줄을 이을 수 있나 - 문장과 표 칸만(표 · 그림은 아니다) */
   isLinkable: boolean;
+  /** 표 칸의 자리(0부터) - 고른 칸의 꼬리표 "r행 c열". 문장 · 묶음은 null */
+  cellAt: { row: number; col: number } | null;
   /** 이 박스를 그리는 값 전부를 이은 글 */
   key: string;
 }
@@ -80,6 +82,7 @@ interface RawBox {
   changeType: ChangeType | null;
   /** 표 칸의 자리 - 문장 · 묶음은 없다 */
   place: string | null;
+  cellAt: { row: number; col: number } | null;
 }
 
 function formatPlace(row: WrittenSentence, cell: BundleCell): string {
@@ -91,11 +94,11 @@ function listRawBoxes(rows: readonly WrittenSentence[]): RawBox[] {
     const own: RawBox[] =
       row.new_unit_id == null
         ? []
-        : [{ row, unitId: row.new_unit_id, targetId: row.target_id, kind: row.kind === "sentence" ? "sentence" : "bundle", lang: row.lang, sourceIds: row.source_unit_ids, isAi: row.status === "ai_suggested", isOpen: row.status !== "confirmed", changeType: row.change_type, place: null }];
+        : [{ row, unitId: row.new_unit_id, targetId: row.target_id, kind: row.kind === "sentence" ? "sentence" : "bundle", lang: row.lang, sourceIds: row.source_unit_ids, isAi: row.status === "ai_suggested", isOpen: row.status !== "confirmed", changeType: row.change_type, place: null, cellAt: null }];
     const cells = (row.table?.cells ?? []).flatMap((cell): RawBox[] =>
       cell.new_unit_id == null
         ? []
-        : [{ row, unitId: cell.new_unit_id, targetId: cell.target_id, kind: "cell", lang: cell.lang, sourceIds: cell.source_unit_ids, isAi: cell.status === "ai_suggested", isOpen: cell.status !== "confirmed", changeType: cell.change_type ?? null, place: formatPlace(row, cell) }],
+        : [{ row, unitId: cell.new_unit_id, targetId: cell.target_id, kind: "cell", lang: cell.lang, sourceIds: cell.source_unit_ids, isAi: cell.status === "ai_suggested", isOpen: cell.status !== "confirmed", changeType: cell.change_type ?? null, place: formatPlace(row, cell), cellAt: { row: cell.row, col: cell.col } }],
     );
     return [...own, ...cells];
   });
@@ -178,7 +181,8 @@ export function buildNewOverlay(input: NewOverlayInput): NewOverlay {
     boxes.set(box.unitId, {
       unitId: box.unitId, targetId: box.targetId, kind: box.kind, lang: box.lang, sourceIds: box.sourceIds, isAi: box.isAi, isMarkedNew, isOpen: box.isOpen, notes, refRow, state, ai, isAiFolded, band,
       isLinkable: box.kind !== "bundle",
-      key: [box.targetId, box.kind, box.lang, box.sourceIds.join(","), box.isAi, isMarkedNew, box.isOpen, refRow ? readWrittenRefMark(refRow) : "", state ?? "", ai ?? "", isAiFolded, band?.count ?? "", notes.length > 0 ? JSON.stringify(notes) : ""].join("|"),
+      cellAt: box.cellAt,
+      key: [box.targetId, box.kind, box.cellAt ? `${box.cellAt.row}:${box.cellAt.col}` : "", box.lang, box.sourceIds.join(","), box.isAi, isMarkedNew, box.isOpen, refRow ? readWrittenRefMark(refRow) : "", state ?? "", ai ?? "", isAiFolded, band?.count ?? "", notes.length > 0 ? JSON.stringify(notes) : ""].join("|"),
     });
   }
   return { boxes, unitOfTarget };
@@ -198,4 +202,16 @@ export function readUnlinkableKey(unit: ViewUnit, box: NewBox | undefined, part:
   if (unit.kind === "caption") return "assign.newPaper.why.caption";
   if (box !== undefined || unit.kind === "table" || unit.kind === "figure") return "assign.newPaper.why.bundle";
   return "assign.newPaper.why.noTarget";
+}
+
+/** 표마다 칸 문장 수와 그중 Old에 이은 수 - 표 머리 "칸 문장 n 가운데 m 이음"(쪼개기 먼저 §8 4-3). 칸 박스의 표는 Unit의 group_unit_id로 찾는다 */
+export function readTableLinks(model: { units: ReadonlyMap<number, ViewUnit> }, boxes: ReadonlyMap<number, NewBox>): ReadonlyMap<number, { linked: number; total: number }> {
+  const links = new Map<number, { linked: number; total: number }>();
+  for (const box of boxes.values()) {
+    const tableId = box.kind === "cell" ? model.units.get(box.unitId)?.group_unit_id : null;
+    if (tableId == null) continue;
+    const count = links.get(tableId) ?? { linked: 0, total: 0 };
+    links.set(tableId, { linked: count.linked + (box.sourceIds.length > 0 ? 1 : 0), total: count.total + 1 });
+  }
+  return links;
 }

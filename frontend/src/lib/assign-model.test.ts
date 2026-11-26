@@ -5,6 +5,7 @@ import type { Decision, Group, GroupTarget, GroupUnit, NewCandidate, WrittenSent
 import {
   addPartnerTargets,
   buildLinkPairs,
+  listLinkableRows,
   buildRecommendations,
   canMakeOtherLanguage,
   clampSplit,
@@ -281,6 +282,11 @@ describe("buildLinkPairs", () => {
   it("adds unsaved picks against same-language units only, once", () => {
     const pairs = buildLinkPairs(rows, new Set([10, 11, 12]), { units: [{ id: 10, lang: "ko" }, { id: 12, lang: "en" }], targetIds: [71, 73] });
     expect(pairs.filter((pair) => pair.draft)).toEqual([{ unitId: 10, targetId: 73, draft: true, ai: false }]);
+  });
+
+  it("draws a link to a cell, not to its table", () => {
+    const tableRow = makeWritten(90, { kind: "table", table: { rows: 1, cols: 1, cells: [{ target_id: 7, row: 0, col: 0, lang: "ko", text: "합성 칸", status: "confirmed", source_unit_ids: [9], revision: 1, new_unit_id: 70, change_type: null }] } });
+    expect(buildLinkPairs(listLinkableRows([tableRow]), new Set([9]), null)).toEqual([{ unitId: 9, targetId: 7, draft: false, ai: false }]);
   });
 
   it("draws a line to a New sentence the row has no language for, from every unit of the row", () => {

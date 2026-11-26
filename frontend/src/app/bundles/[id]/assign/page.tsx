@@ -90,7 +90,7 @@ export default function AssignPage() {
     setConfirmingIdentical, resetScope, setResetScope, slots, newDraft, draftSlotKey, placeResolved, canPlaceClick, pickedSpotKey,
     setCarvePick, carve, carveText, clearCarve, togglePairViewByButton, pairFrom, setPairFrom, mergeArm, pairSource, isLeftPairPick, isRightPairPick, captionPickBundle, setCaptionPick, selectToc, openNewCtxMenu,
     openSolo, goToUnit, ctxGroups, bundleRefPending, isLinkedToWritten, captionPendingKeys, docDashboard, openCtxMenu, runUnitEdit,
-    rewrapTable, unwrapAi, newUnwrapAi, leftTools, rightTools, rightShape, describeEditConfirm, pairGrip, clearNoise, openNoiseReason, splitAtCut, handleOldDoubleClick, handleNewDoubleClick, carveShape,
+    rewrapTable, unwrapTable, unwrapAi, newUnwrapAi, leftTools, rightTools, rightShape, describeEditConfirm, pairGrip, clearNoise, openNoiseReason, splitAtCut, handleOldDoubleClick, handleNewDoubleClick, carveShape,
     runCtx, revertHeadings, planJoinIn, joinIn, renderOldActions, confirmIdenticalAll, acceptAll,
     pressNewBox, renderPickBar, showNewDoc, jump, handleJoinPick, readJoinAfter, pickJoinMenu, handleFramePress, pickPlaceSpot, pickOwnAiLine, jumpToNew, openNewDoc,
     showInNew, jumpToOld, pickTemplateLine, fillTemplateMissing, isOldDrag, finishPairPick, handleOldClick, markRecHover, revealPick,
@@ -868,6 +868,7 @@ export default function AssignPage() {
                       join={rightTools.join ? { busy: isGlobalPending, plan: (firstId, secondId) => planJoinIn(rightShape, firstId, secondId), onJoin: (firstId, secondId, kind) => joinIn(rightShape, firstId, secondId, kind) } : undefined}
                       onRangeSelect={rightTools.carve && newView ? (range) => pickCarve(newView, range) : undefined}
                       onUnitDoubleClick={rightTools.split ? handleNewDoubleClick : undefined}
+                      onUnwrapTable={rightTools.unwrap && rightShape ? (tableId) => unwrapTable(rightShape, tableId) : undefined}
                     />
                   )}
                   <LinkLines pairs={listNewAiLinks(linkPairs, newAiFilter, row?.unitIds ?? [])} focusUnits={highlightIds} focusTargets={liveDoc ? new Set([...pickedNew, ...liveDoc.targetIds]) : pickedNew} visible={view.lines} />

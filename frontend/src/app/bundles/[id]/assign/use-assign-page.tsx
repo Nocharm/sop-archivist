@@ -38,7 +38,7 @@ import { buildBlockPlaces, getCaptionMotion, isCaptionableText, listCaptionHolde
 import { applyJoinedSources, listJoinableIds, shouldAdvanceAfterSave } from "@/lib/join-sentence-model";
 import { buildComposedMerge, buildComposedSplit, canEditComposed, findComposedCut, planComposedJoin, stepComposedCut } from "@/lib/composed-ops-model";
 import { applySavedTargets, buildComposedRows, isWrittenRow, listHeadingNotes, listSectionMarks, readSectionHead, removeClearedUnits, type NewPaneRow } from "@/lib/composed-model";
-import { addPartnerTargets, buildLinkPairs, buildRecommendations, dropHiddenRecommendations, listUnsourced, mergeGroups, readConfirmBlockKey, stepZoom, type Recommendation } from "@/lib/assign-model";
+import { addPartnerTargets, buildLinkPairs, buildRecommendations, dropHiddenRecommendations, listLinkableRows, listUnsourced, mergeGroups, readConfirmBlockKey, stepZoom, type Recommendation } from "@/lib/assign-model";
 import { countLiveOffer, splitAcceptIds } from "@/lib/ai-accept-model";
 import { buildUseDraft, filterAiItems, findRowSuggestion, indexLiveSuggestions, readSuggestedDestination, readSuggestionPlace } from "@/lib/ai-suggestion-model";
 import { buildAssignMenu, getPairPickBlocker, getPairSetBlocker, planAssignJoin, planLanguageChange, planShapeMode, type AssignMenuAction, type AssignMenuGroups } from "@/lib/assign-context-menu-model";
@@ -2551,7 +2551,7 @@ export function useAssignPage() {
   const primaryLink = barLink !== null && barLink.kind !== "unlink" && pickBar.enter.kind !== "confirm" ? barLink : null;
   const primaryLinkLabel = primaryLink === null ? "" : (() => { const target = findWrittenRow(primaryLink.targetIds[0] ?? -1); return target ? `${target.doc_code} ${target.section_path || target.order_index}` : ""; })();
   const draftLinkIds = barLink !== null && barLink.kind !== "unlink" ? barLink.targetIds : draft.destination?.kind === "link" ? draft.destination.targetIds : null;
-  const linkPairs = buildLinkPairs(newRows.filter(isWrittenRow), oldUnitIds, draftLinkIds !== null ? { units: rowUnits.map((unit) => ({ id: unit.unit_id, lang: unit.lang })), targetIds: [...draftLinkIds] } : null);
+  const linkPairs = buildLinkPairs(listLinkableRows(newRows.filter(isWrittenRow)), oldUnitIds, draftLinkIds !== null ? { units: rowUnits.map((unit) => ({ id: unit.unit_id, lang: unit.lang })), targetIds: [...draftLinkIds] } : null);
   const primaryPlan = planPrimary({
     canEdit,
     hasRow: row !== null,
@@ -4907,7 +4907,7 @@ export function useAssignPage() {
     isFixedCaption, ctxGroups, rowViewUnits, rowSplitUnit, rowSplit, splitBlocked, rowRefUnit, refBlocked, isCaptionGateOn,
     confirmBlockKey, rowCaptionRefs, refCandidates, shapeLines, shapeFirstId, slotPlaces, slotCellTables, shapeMode, headingBack, rewrap, bandBack,
     stepBase, refPendingIds, bundleRefPending, isLinkedToWritten, captionPendingKeys, docDashboard, refDetail, refInfo, openCtxMenu, runUnitEdit,
-    rewrapTable, unwrapAi, newUnwrapAi, leftTools, rightTools, rightShape, describeEditConfirm, pairGrip, clearNoise, openNoiseReason, confirmNoiseReason, closeNoiseReason, noisePick, runCaptionRefChange, switchShapeMode, switchToPair,
+    rewrapTable, unwrapTable, unwrapAi, newUnwrapAi, leftTools, rightTools, rightShape, describeEditConfirm, pairGrip, clearNoise, openNoiseReason, confirmNoiseReason, closeNoiseReason, noisePick, runCaptionRefChange, switchShapeMode, switchToPair,
     applySplitSuggestion, dismissSplitSuggestion, splitPendingIds, readPendingItem, selectNextSplit, selectNextRef, selectNextCaption,
     splitAtCut, handleOldDoubleClick, handleNewDoubleClick, carveShape, runCtx, runUnitAction, revertHeadings, planJoinIn, joinIn, renderOldActions, readReasonNeed,
     runSave, runClear, runUndoStep, confirmIdenticalAll, acceptAll, markNew, placeManage, pickDestination, pickNewSentence, pressNewBox, showNewDoc, jump, unlinkCell, pickBar, renderPickBar, linkWait, setLinkWait, handleBlankClick, checkedNew, setCheckedNew, pressEnter, primaryLink, primaryLinkLabel,
