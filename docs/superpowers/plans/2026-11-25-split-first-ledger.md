@@ -39,6 +39,18 @@
 | 8b | `feat/unwrap-continue-numbers` | 합침 | v1.6.31 · c1efc2ad | dev v1.6.29 · v1.6.30 합침 · pytest 3832+시드 15 · ruff · vitest 2715 · build 경고 0 · `assign:` 스모크 ALL PASS 1507 · opus 검토 막음 1 고침 → opus 재검토 통과 | — |
 
 
+## 이어 가기 (2026-11-26 밤 — 1차 피드백 중간, 다음 세션은 여기부터)
+
+`origin/dev` = **v1.6.38**(`81b80a5f`). 1차 피드백 답은 맨 아래 "사용자 답 (11-26 밤)".
+- dev에 들어감: 8 스크롤 막대 v1.6.33 · 2 Tab=J/K · `` ` `` 들여쓰기 v1.6.34 · 4 짝 판 두 번 누름 v1.6.35 · 7 Forms 참조 칸 v1.6.36 · 1 밀린 명령 이름 v1.6.37 · 3 키보드 그림 v1.6.38(75% 배열 · Graphite 톤 · 누른 글쇠 표시) · 표 접기 스모크 흔들림 고침.
+- **브랜치에만 있음(커밋 끝, 스모크 · 합치기 남음)** — 워크트리가 남아 있다:
+  - `feat/pick-bar-labels`(`/Users/hyeonjin/Documents/sop-wt-pick-bar-labels`, 5 단추 줄 라벨, `e0d449fb`): 순수 CSS, 접는 폭 start 825 · pair 717 · merge_prev 535 · merge_next 402 · split 294px, 접힌 아이콘 호버 160ms. 못 하는 손질도 이름을 보이고 까닭은 툴팁, ⋯는 줄 오른쪽 끝(에이전트 판단 — 사용자 확인). overlap 감사에 검사 둘 더함(이름 잘림 · `.pick-tools` 넘침). 화면으로 볼 것: 540–720px 상자에서 접힌 pair · start 호버 깜빡임, ko 화면 접힘 시점, 표 칸 안 ⋯ 자리.
+  - `feat/new-cell-menu-two-pane`(`/Users/hyeonjin/Documents/sop-wt-new-cell-menu-two-pane`, 7b, `dab89cbb`): 양 단 New 칸 · 표 머리 · 제목 · 캡션 · 그림 우클릭 = 한 단과 같은 메뉴, `buildMenuSections(…, doc)`. 스모크 단계 `assign: the cell menu has this cell and this table…`. 물음: Shift+F10 · 메뉴 글쇠는 New 박스에서 안 열림(한 단도) — 열지 정한다. 단추 줄 ⋯ **Other shaping** 조건도 풀림.
+  - 각각: dev 합치기 → `npm version patch`(v1.6.39 · v1.6.40, 체크리스트 `fb-pickbar` · `fb-newmenu` 번호 맞춤) → CHANGELOG · PROGRESS 한 줄 → `assign:` 스모크(5는 overlap 감사 `assign` 장면도) → dev.
+- 그다음 정식 업데이트 준비(아래 옛 "이어 가기" 2~3, 체크리스트 HTML 맨 위 자동 검사 묶음): 4d29f193 뒤 바뀐 화면 스모크 · 감사 `ONLY=` → 마지막 `FULL=1` 한 번, perf, 바뀐 장면 설명서 그림(키보드 그림 · 대기 칩 · 단추 줄 · New 칸 메뉴), 설명서 머리 · CHANGELOG 릴리스 제목 · 배포 메모(Alembic 더하기만, 배포 전 백업) · 루트 CLAUDE.md 상태 줄 · README · 끝난 계획 · 설계 지우기 → 준비 커밋까지 만든 뒤 사용자 확인 → main · 태그 · 푸시.
+- 미룸(다음 묶음): 6 표 꼴 개정 이력 · 7 Reference 아래가 안 된 경우(실제 문서 분석 — :4444 Bundle을 사용자에게 묻기), 9 연습 페이지(실제 Assign + 브라우저 안 가짜 서버, 간단한 튜토리얼 느낌), 스모크 "맞을 때까지 읽기" 공용 함수(`/harden`, 같은 꼴 고침 세 번째).
+- 배운 것: 시안 아티팩트(db)는 사용자 원격(폰)에서 안 열렸다 — 답은 질문 창이 낫다. 새 화면은 앱 Graphite 톤 · 토큰으로(파스텔 채움은 "톤이 안 맞음"). Assign에서 마우스로 누른 단추는 포커스를 용지로 돌리니(`returnsToPaper`) 창을 여는 단추는 `aria-haspopup`.
+
 ## 이어 가기 (2026-11-26 저녁, 계획 1~5 전부 dev에)
 
 `origin/dev` = **v1.6.31**(`e88cb55b`). 계획의 36 브랜치가 모두 합침 · 건너뜀이다(3e만 조건이 안 되어 건너뜀). 세운 브랜치 · 남은 워크트리 없음(admin-polish는 따로). 지휘 도구 `~/Documents/sop-orchestration/`.
