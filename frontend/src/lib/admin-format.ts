@@ -25,6 +25,11 @@ export function getEffectiveNotices(access: Pick<EffectiveAccess, "known" | "act
   return [];
 }
 
+/** 숫자에 천 단위 쉼표 - 화면 언어와 상관없이 같은 꼴 */
+export function formatCount(value: number): string {
+  return value.toLocaleString("en-US");
+}
+
 /** 번역 키가 사전에 없으면(t가 키를 그대로 돌려줌) 원문을 쓴다 - 새 job·outcome이 생겨도 화면이 키 문자열을 내지 않는다. */
 export function translateOrRaw(t: TFunc, key: string, raw: string): string {
   const text = t(key);

@@ -251,6 +251,16 @@ await runStep("admin access as qa.lead", { devUser: "qa.lead" }, async ({ page, 
   const grantsText = await getText(page, "grants-table");
   check("demo grants are listed", grantsText.includes("Quality Division") && grantsText.includes("Ops Member") && grantsText.includes("Production Member"), grantsText.replace(/\s+/g, " "));
   check("no missing-subject badge for live subjects", (await findByPrefix(page, "grant-missing-").count()) === 0);
+  // 하위 탭은 주소에 남아 새로고침해도 그대로이고, 대상 이름은 화면 언어를 따른다
+  check("the sub tab is in the address", new URL(page.url()).search === "?tab=access&sub=grants", page.url());
+  await page.reload();
+  await wait(page, "grants-table");
+  check("reload stays on grants", await isSelected(page, "access-sub-grants"));
+  await findById(page, "top-bar-lang-ko").click();
+  await page.waitForFunction(() => document.querySelector('[data-testid="grants-table"]')?.textContent?.includes("품질본부"), null, { timeout: T }).catch(() => undefined);
+  check("grant subjects follow the screen language", (await getText(page, "grants-table")).includes("품질본부"), (await getText(page, "grants-table")).replace(/\s+/g, " "));
+  await findById(page, "top-bar-lang-en").click();
+  await page.waitForFunction(() => document.querySelector('[data-testid="grants-table"]')?.textContent?.includes("Quality Division"), null, { timeout: T });
 
   await findById(page, "grant-create").click();
   await wait(page, "grant-form");
@@ -275,7 +285,10 @@ await runStep("admin access as qa.lead", { devUser: "qa.lead" }, async ({ page, 
   await waitHidden(page, "grant-form");
   const smokeGrant = findByPrefix(page, "grant-row-", { hasText: "Smoke Role" });
   await smokeGrant.waitFor({ state: "visible", timeout: T });
-  check("new grant row names the person and the role", (await smokeGrant.innerText()).includes("Production Member") && (await smokeGrant.innerText()).includes("prod.member"), await smokeGrant.innerText());
+  // 저장한 대상이 골라져 상세 머리가 그 사람이고, 그 안의 부여 줄이 역할을 적는다
+  await page.waitForFunction(() => document.querySelector('[data-testid="grant-detail-name"]')?.textContent === "Production Member", null, { timeout: T });
+  const detailText = await getText(page, "grant-detail");
+  check("new grant row names the person and the role", detailText.includes("Production Member") && detailText.includes("prod.member") && (await smokeGrant.innerText()).includes("Smoke Role"), detailText.replace(/\s+/g, " ").slice(0, 160));
   await takeShot("baseline-admin-grants.png");
 
   // 변경 기록 - 최신순이라 부여 추가가 위, 역할 생성이 그 아래
@@ -285,26 +298,78 @@ await runStep("admin access as qa.lead", { devUser: "qa.lead" }, async ({ page, 
   check("newest changes are grant.add then role.create", actions[0] === "grant.add" && actions[1] === "role.create", actions.slice(0, 3).join(","));
   const topRow = await findByPrefix(page, "audit-row-").first().innerText();
   check("audit row reads in plain language", topRow.includes("qa.lead") && topRow.includes("Grant added") && topRow.includes("Granted role") && topRow.includes("Smoke Role") && topRow.includes("prod.member"), topRow.replace(/\s+/g, " "));
+  // 거르기 - 종류 알약과 찾기. 날짜로 묶여 있고 시각만 남는다
+  check("records are grouped by day", (await findByPrefix(page, "audit-table-group-").count()) >= 1);
+  await findById(page, "audit-filter-role").click();
+  const roleActions = await findByPrefix(page, "audit-row-").evaluateAll((els) => els.map((el) => el.getAttribute("data-action")));
+  check("the role pill keeps only role changes", roleActions.length > 0 && roleActions.every((action) => action?.startsWith("role.")), roleActions.join(","));
+  await findById(page, "audit-filter-all").click();
+  await findById(page, "audit-search").fill("no such record");
+  await wait(page, "audit-empty");
+  await findById(page, "audit-search").fill("");
+  await wait(page, "audit-table");
   await takeShot("baseline-admin-access.png");
 
-  // 유효 권한 조회
-  await findById(page, "access-sub-lookup").click();
-  await findById(page, "effective-picker-search").fill("prod");
-  await wait(page, "effective-picker-option-prod.member");
-  await findById(page, "effective-picker-option-prod.member").click();
-  await wait(page, "effective-result");
+  // 유효 권한 - 옛 조회 항목은 부여 화면에 들어왔다(옛 주소 sub=lookup도 부여로 연다)
+  await page.goto(`${BASE}/admin?tab=access&sub=lookup`);
+  await wait(page, "grants-table");
+  check("the old lookup address opens grants", (await isSelected(page, "access-sub-grants")) && (await countById(page, "access-sub-lookup")) === 0);
+  await findById(page, "grants-search").fill("prod");
+  await wait(page, "grants-subject-user:prod.member");
+  await findById(page, "grants-subject-user:prod.member").click();
+  await page.waitForFunction(() => document.querySelector('[data-testid="grant-detail-name"]')?.textContent === "Production Member", null, { timeout: T });
+  await wait(page, "effective-perm-system.view");
   const prodPerm = await getText(page, "effective-perm-system.view");
   check("lookup shows the permission with both sources", prodPerm.includes("View system status") && prodPerm.includes("direct grant") && prodPerm.includes("via role Smoke Role"), prodPerm.replace(/\s+/g, " "));
   await takeShot("baseline-admin-lookup.png");
-  await findById(page, "effective-picker-search").fill("qa.mem");
-  await findById(page, "effective-picker-option-qa.member").click();
+  // 부여가 없는 직원도 찾기에 나온다
+  await findById(page, "grants-search").fill("qa.mem");
+  await wait(page, "grants-group-none");
+  check("people without grants are found", (await getText(page, "grants-group-none")).includes("No grants"), await getText(page, "grants-group-none"));
+  await findById(page, "grants-subject-user:qa.member").click();
   await page.waitForFunction(() => document.querySelector('[data-testid="effective-perm-permission.manage"]'), null, { timeout: T });
   const inherited = await getText(page, "effective-perm-permission.manage");
   check("department grant reaches a sub-department member", inherited.includes("Department") && inherited.includes("Quality Division") && inherited.includes("via role Permission Admin"), inherited.replace(/\s+/g, " "));
-  await findById(page, "effective-picker-search").fill("ghost.user");
-  await findById(page, "effective-picker-raw-option").click();
+  const inheritedRow = await getText(page, "grant-inherited-DIV-QA");
+  check("the detail lists what comes through the department", inheritedRow.includes("Permission Admin") && inheritedRow.includes("Quality Division"), inheritedRow.replace(/\s+/g, " "));
+  await findById(page, "grants-search").fill("ghost.user");
+  await findById(page, "grants-subject-user:ghost.user").click();
   await wait(page, "effective-unknown");
   check("unregistered login id is explained, not an error", (await countById(page, "effective-none")) === 1);
+
+  await findById(page, "access-sub-roles").click();
+  await wait(page, "roles-list");
+  // 역할 × 권한 표 - 칸을 눌러 켜고 끈 뒤 띠에서 저장한다. 버리면 없던 일, 저장은 받은 대상 건수를 확인한 뒤
+  const smokeCell = smokeRole.locator('[data-testid$="-ai.admin"]');
+  await smokeCell.click();
+  check("a changed cell waits in the bar", (await getText(page, "roles-bar-text")).includes("1 cells changed"), await getText(page, "roles-bar-text"));
+  check("the cell shows as pending", (await smokeCell.getAttribute("data-pending")) !== null);
+  await findById(page, "roles-bar-drop").click();
+  await waitHidden(page, "roles-bar");
+  check("discard puts the cell back", (await smokeCell.getAttribute("aria-pressed")) === "false");
+  await smokeCell.click();
+  await findById(page, "roles-bar-save").click();
+  await wait(page, "roles-save");
+  check("save confirm names the role and the permission", (await getText(page, "roles-save")).includes("Smoke Role") && (await getText(page, "roles-save")).includes("Manage AI"), await getText(page, "roles-save"));
+  await findById(page, "roles-save-confirm").click();
+  await waitHidden(page, "roles-bar");
+  await page.reload();
+  await wait(page, "roles-list");
+  check("the saved cell survives a reload", (await smokeCell.getAttribute("aria-pressed")) === "true");
+  await smokeCell.click();
+  await findById(page, "roles-bar-save").click();
+  await findById(page, "roles-save-confirm").click();
+  await waitHidden(page, "roles-bar");
+
+  // 받은 대상 - 올리면 명단, 부여에서 보기는 그 역할로 거른다
+  await adminRole.locator('[data-testid^="role-holders-"]').first().hover();
+  await findByPrefix(page, "role-holders-pop-").waitFor({ state: "visible", timeout: T });
+  check("holder list names the subject", (await findByPrefix(page, "role-holders-pop-").innerText()).includes("Quality Division"));
+  await findByPrefix(page, "role-holders-open-").click();
+  await wait(page, "grants-table");
+  check("show in grants filters by the role", (await page.locator('[data-testid^="grants-subject-"]').count()) === 1 && (await getText(page, "grants-table")).includes("Quality Division"), await getText(page, "grants-table"));
+  await findById(page, "access-sub-roles").click();
+  await wait(page, "roles-list");
 
   // 정리 - 설명 수정 -> 부여 회수 -> 역할 삭제
   await findById(page, "access-sub-roles").click();
@@ -318,16 +383,50 @@ await runStep("admin access as qa.lead", { devUser: "qa.lead" }, async ({ page, 
   await page.waitForFunction(() => document.querySelector('[data-testid="roles-list"]')?.textContent?.includes("Created by the smoke test"), null, { timeout: T });
   check("edited description shows in the list", true);
 
+  // 부여 회수 - 확인 창 대신 5초 되돌리기 알림. 되돌리면 다시 생기고, 다시 회수하면 사라진 채 남는다
   await findById(page, "access-sub-grants").click();
+  await findById(page, "grants-search").fill("prod.member");
+  await findById(page, "grants-subject-user:prod.member").click();
   await smokeGrant.waitFor({ state: "visible", timeout: T });
   await smokeGrant.locator('[data-testid^="grant-remove-"]').click();
-  await wait(page, "grant-remove-modal");
-  const revokeText = await getText(page, "grant-remove-modal");
-  check("revoke confirm names the role and the person", revokeText.includes("Smoke Role") && revokeText.includes("Production Member"), revokeText.replace(/\s+/g, " "));
-  await findById(page, "grant-remove-confirm").click();
-  await waitHidden(page, "grant-remove-modal");
+  const revokeToast = page.locator(".toast-stack", { hasText: "Smoke Role" });
+  await revokeToast.waitFor({ state: "visible", timeout: T });
+  const revokeText = await revokeToast.innerText();
+  check("revoke toast names the role and the person", revokeText.includes("Smoke Role") && revokeText.includes("Production Member"), revokeText.replace(/\s+/g, " "));
   await smokeGrant.waitFor({ state: "detached", timeout: T });
   check("revoked grant disappears", true);
+  await revokeToast.getByRole("button", { name: "Undo" }).click();
+  await smokeGrant.waitFor({ state: "visible", timeout: T });
+  check("undo brings the grant back", true);
+  await smokeGrant.locator('[data-testid^="grant-remove-"]').click();
+  await smokeGrant.waitFor({ state: "detached", timeout: T });
+  check("the grant stays revoked without undo", true);
+
+  // 역할 더하기 - 줄에 붙어 뜨는 고르기를 키 A로 열고 여러 개를 한 번에, 이미 받은 역할은 목록에 없다
+  await findById(page, "grants-table").press("a");
+  await wait(page, "grant-add-pop");
+  const modalHtml = await page.evaluate(() => [...document.querySelectorAll('[role="dialog"][aria-modal="true"]')].map((el) => el.outerHTML.slice(0, 160)).join(" | "));
+  check("the add picker opens without a dimmed screen", modalHtml === "", modalHtml);
+  check("add is disabled until a role is picked", await findById(page, "grant-add-save").isDisabled());
+  await page.keyboard.press("Escape");
+  await findById(page, "grant-add-pop").waitFor({ state: "detached", timeout: T });
+  await findById(page, "grants-table").press("a");
+  await wait(page, "grant-add-pop");
+  await page.locator('[data-testid^="grant-add-role-"]').last().check();
+  await findById(page, "grant-add-save").click();
+  await findById(page, "grant-add-pop").waitFor({ state: "detached", timeout: T });
+  await smokeGrant.waitFor({ state: "visible", timeout: T });
+  check("the added role shows in the detail", true);
+  await smokeGrant.locator('[data-testid^="grant-remove-"]').click();
+  await smokeGrant.waitFor({ state: "detached", timeout: T });
+
+  // 키보드 ↑↓ - 고른 줄이 바로 바뀐다
+  await findById(page, "grants-search").fill("");
+  await findById(page, "grants-table").press("ArrowDown");
+  const afterDown = await page.locator('[data-testid^="grants-subject-"][aria-selected="true"]').getAttribute("data-testid");
+  await findById(page, "grants-table").press("ArrowUp");
+  const afterUp = await page.locator('[data-testid^="grants-subject-"][aria-selected="true"]').getAttribute("data-testid");
+  check("arrow keys move the selection", afterDown !== null && afterUp !== null && afterDown !== afterUp, `${afterDown} / ${afterUp}`);
 
   await findById(page, "access-sub-roles").click();
   await smokeRole.waitFor({ state: "visible", timeout: T });
@@ -546,6 +645,9 @@ await runStep("admin ops panels with mocked responses", { devUser: "ops.member",
   check("batch rows are keyed by job and outcome", (await countById(page, "batch-row-hr_sync-success")) === 1 && (await countById(page, "batch-row-db_backup-failure")) === 1);
   const batchText = await getText(page, "batch-table");
   check("known jobs get names, unknown jobs keep theirs", batchText.includes("Directory sync") && batchText.includes("Database backup") && batchText.includes("report_mail"), batchText.replace(/\s+/g, " "));
+  // 한 작업이 한 줄 - 결과 둘이 같은 줄 안에 나란히
+  const jobRows = await findByPrefix(page, "batch-job-").count();
+  check("one row per job", jobRows === 3, String(jobRows));
   await takeShot("baseline-admin-batch.png");
 
   await findById(page, "admin-tab-ai").click();
@@ -555,6 +657,8 @@ await runStep("admin ops panels with mocked responses", { devUser: "ops.member",
   check("ping reports the model and latency", okPing.includes("glm-test") && okPing.includes("842 ms") && okPing.includes("answered as expected"), okPing.replace(/\s+/g, " "));
   await wait(page, "ai-usage-table");
   check("usage rows are keyed by date", (await countById(page, "ai-usage-row-2026-11-03")) === 1 && (await countById(page, "ai-usage-row-2026-11-04")) === 1);
+  const totals = await getText(page, "ai-usage-total");
+  check("usage totals add up with thousands separators", totals.includes("17 calls") && totals.includes("4,600 prompt tokens"), totals);
   await takeShot("baseline-admin-ai-usage.png");
   await findById(page, "ai-ping").click();
   await page.waitForFunction(() => document.querySelector('[data-testid="ai-ping-result"]')?.textContent?.includes("Could not reach"), null, { timeout: T });
@@ -577,21 +681,23 @@ await runStep("admin leftovers as qa.lead", { devUser: "qa.lead" }, async ({ pag
 
   await page.goto(`${BASE}/admin`);
   await findById(page, "access-sub-grants").click();
-  await wait(page, "grant-missing-91");
-  check("a vanished department is badged", (await getText(page, "grant-missing-91")).includes("Department not found"), await getText(page, "grant-missing-91"));
-  check("a vanished person is badged", (await getText(page, "grant-missing-92")).includes("Person not found"), await getText(page, "grant-missing-92"));
-  const missingRow = await findById(page, "grant-row-91").innerText();
+  await wait(page, "grant-missing-dept:GONE-DEPT");
+  const goneText = await getText(page, "grant-missing-dept:GONE-DEPT");
+  check("a vanished department is badged", goneText.includes("Department not found"), goneText);
+  const retiredText = await getText(page, "grant-missing-user:retired.person");
+  check("a vanished person is badged", retiredText.includes("Person not found"), retiredText);
+  await findById(page, "grants-subject-dept:GONE-DEPT").click();
+  await wait(page, "grant-row-91");
+  const missingRow = `${await getText(page, "grants-subject-dept:GONE-DEPT")} ${await getText(page, "grant-row-91")}`;
   check("the row still shows which subject it was", missingRow.includes("GONE-DEPT") && missingRow.includes("Permission Admin"), missingRow.replace(/\s+/g, " "));
   await takeShot("baseline-admin-grants-missing.png");
 
-  await findById(page, "access-sub-lookup").click();
-  await findById(page, "effective-picker-search").fill("retired.person");
-  await findById(page, "effective-picker-raw-option").click();
+  await findById(page, "grants-subject-user:retired.person").click();
   await wait(page, "effective-inactive");
   check("an inactive person is explained", (await getText(page, "effective-inactive")).includes("inactive") && (await countById(page, "effective-none")) === 1);
 
-  await findById(page, "effective-picker-search").fill("dev.admin");
-  await findById(page, "effective-picker-option-dev.admin").click();
+  await findById(page, "grants-search").fill("dev.admin");
+  await findById(page, "grants-subject-user:dev.admin").click();
   await wait(page, "effective-sysadmin");
   check("a system administrator is explained and holds all eight permissions", (await findByPrefix(page, "effective-perm-").count()) === 8);
   check("a known, active sysadmin gets no directory note", (await countById(page, "effective-sysadmin-note")) === 0);
@@ -603,8 +709,8 @@ await runStep("admin leftovers as qa.lead", { devUser: "qa.lead" }, async ({ pag
       permissions: ["directory.sync", "permission.manage", "system.view", "ai.admin"], sources: {},
     }),
   );
-  await findById(page, "effective-picker-search").fill("bootstrap.admin");
-  await findById(page, "effective-picker-raw-option").click();
+  await findById(page, "grants-search").fill("bootstrap.admin");
+  await findById(page, "grants-subject-user:bootstrap.admin").click();
   await page.waitForFunction(() => document.querySelector('[data-testid="effective-sysadmin-note"]'), null, { timeout: T });
   const bootstrapText = await getText(page, "effective-result");
   check("a sysadmin without an employee row is still shown as a system administrator", (await findById(page, "effective-sysadmin").isVisible()) && bootstrapText.includes("System administrator"), bootstrapText.replace(/\s+/g, " "));
@@ -621,6 +727,17 @@ await runStep("admin outline as dev.admin", { devUser: "dev.admin" }, async ({ p
   check("the outline lists numbered items from 1", numbers.length > 0 && numbers[0] === "1", numbers.join(" "));
   const save = page.locator('[data-testid="admin-outline-save"]');
   check("Save is off until something changes", await save.isDisabled());
+  // 한 줄 56px 안 - 키는 영문 제목 아래 한 줄, 하위 항목 칸은 눌러 펼친다
+  const rowHeights = await page.locator('[data-testid="admin-outline-table"] tbody > tr').evaluateAll((rows) => rows.map((row) => Math.round(row.getBoundingClientRect().height)));
+  check("every outline row fits one line", Math.max(...rowHeights) <= 58, rowHeights.join(" "));
+  const namesButton = page.locator('[data-testid^="admin-outline-row-"][data-testid$="-children"]').first();
+  await namesButton.click();
+  const subRow = page.locator('[data-testid$="-children-row"]').first();
+  await subRow.waitFor({ state: "visible", timeout: T });
+  check("sub-item fields unfold under the row", (await subRow.locator("input").count()) >= 1 && (await namesButton.getAttribute("aria-expanded")) === "true");
+  await namesButton.click();
+  await subRow.waitFor({ state: "detached", timeout: T });
+  check("the menu is grouped", (await countById(page, "admin-nav-people")) === 1 && (await countById(page, "admin-nav-ops")) === 1 && (await countById(page, "admin-nav-standard")) === 1);
   const firstRow = page.locator('[data-testid^="admin-outline-row-"][data-testid$="-title-en"]').first();
   const original = await firstRow.inputValue();
   const isOutlinePut = (response) => response.url().includes("/api/admin/outline") && response.request().method() === "PUT";
@@ -638,6 +755,64 @@ await runStep("admin outline as dev.admin", { devUser: "dev.admin" }, async ({ p
   check("the title goes back", (await putTitle(original)) === 200);
 });
 
+// Bundle 상태 거르기 · 진행 막대 · 구성원 요약, AI 지침 읽을 이름 · 버전 타임라인(본문은 상자 스크롤 없이)
+// 변경 기록 이어 불러오기 - 30건씩, 끝에 닿으면 마지막 기록 id 앞부터 받는다
+await runStep("audit log keeps loading older records", { devUser: "qa.lead" }, async ({ page }) => {
+  const asked = [];
+  const makeEvents = (from, count) =>
+    Array.from({ length: count }, (_, index) => ({ id: from - index, occurred_at: "2026-11-20T10:00:00+09:00", actor: "seed", action: "role.create", detail: { name: `Role ${from - index}`, permissions: [] } }));
+  await page.route("**/api/access/audit**", (route) => {
+    const before = new URL(route.request().url()).searchParams.get("before");
+    asked.push(before);
+    const body = before === null ? makeEvents(100, 30) : before === "71" ? makeEvents(70, 30) : makeEvents(40, 5);
+    return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
+  });
+  await page.goto(`${BASE}/admin?tab=access&sub=audit`);
+  await page.locator('[data-testid="audit-row-100"]').waitFor({ state: "visible", timeout: T });
+  // 끝까지 굴려 다음 묶음들을 부른다 - 화면 안에 닿으면 바로 이어진다
+  await page.waitForFunction(() => {
+    const more = document.querySelector('[data-testid="audit-more"]');
+    more?.scrollIntoView();
+    return document.querySelectorAll('[data-testid^="audit-row-"]').length >= 65 && !more;
+  }, null, { timeout: T });
+  // 첫 묶음은 개발 모드(StrictMode)에서 두 번 물을 수 있다 - 이어 부른 커서만 본다
+  check("older records are asked for by the last id", [...new Set(asked)].join(",") === ",71,41", asked.join(","));
+});
+
+await runStep("admin bundles and guidelines as dev.admin", { devUser: "dev.admin" }, async ({ page, takeShot }) => {
+  await page.goto(`${BASE}/admin?tab=bundles`);
+  // 목록 틀은 쉬머일 때도 있다 - 첫 줄이 올 때까지 기다린다
+  await page.locator('[data-testid^="admin-bundle-link-"]').first().waitFor({ state: "visible", timeout: T });
+  const total = await page.locator('[data-testid^="admin-bundle-link-"]').count();
+  await findById(page, "admin-bundles-status-in_review").click();
+  const inReview = await page.locator('[data-testid^="admin-bundle-link-"]').count();
+  check("the status pill filters bundles", inReview > 0 && inReview < total, `${inReview} of ${total}`);
+  await findById(page, "admin-bundles-status-all").click();
+  check("progress is shown as a bar", (await page.locator(".adm-bar-track").count()) > 0);
+  const people = page.locator('[data-testid^="admin-bundle-people-"]').first();
+  check("the member summary reads the names", ((await people.getAttribute("aria-label")) ?? "").includes("("), (await people.getAttribute("aria-label")) ?? "");
+  await page.setViewportSize({ width: 1120, height: 800 });
+  check("the member summary stays on a narrow window", await people.isVisible());
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await takeShot("admin-bundles.png");
+
+  await page.goto(`${BASE}/admin?tab=guidelines`);
+  await wait(page, "guideline-content");
+  const firstKey = await getText(page, "guideline-key-rules");
+  check("a guideline has a readable name and keeps its key", firstKey.includes("Restructuring rules") && firstKey.includes("rules"), firstKey);
+  check("the version list has the active version", (await getText(page, "guideline-versions")).includes("Active"));
+  const boxed = await findById(page, "guideline-content").evaluate((el) => {
+    let node = el.parentElement;
+    while (node && node.tagName !== "MAIN") {
+      if (node.scrollHeight > node.clientHeight + 1 && /(auto|scroll)/.test(getComputedStyle(node).overflowY) && node.clientHeight <= 600) return true;
+      node = node.parentElement;
+    }
+    return false;
+  });
+  check("the guideline text is not boxed into an inner scroll", !boxed);
+  await takeShot("admin-guidelines.png");
+});
+
 await runStep("admin outline is hidden without the permission", { devUser: "qa.lead" }, async ({ page }) => {
   await page.goto(`${BASE}/admin`);
   await wait(page, "admin-tab-access");
@@ -645,6 +820,64 @@ await runStep("admin outline is hidden without the permission", { devUser: "qa.l
 });
 
 // 15) 사용 설명서 - 로그인 전에 받은 조각 링크가 로그인 뒤 같은 조각으로 돌아오고, 읽음 표시가 읽은 양에 잡히며, 상단 바 도움말이 지금 화면을 설명하는 조각을 가리킨다
+// 사내 AI로 부여 등록 - 스모크 서버는 AI가 꺼져 있어 먼저 안내를 보고, 읽기 응답만 흉내 내 미리보기 · 고르기 · 반영을 밟는다(반영은 실제 일괄 저장, 끝에 되돌린다)
+await runStep("grants with AI as qa.lead", { devUser: "qa.lead", allowConsoleErrors: true }, async ({ page, takeShot }) => {
+  const api = (path, init = {}) => page.request.fetch(`${BASE}/api${path}`, { ...init, headers: { "X-Dev-User": "qa.lead", "Content-Type": "application/json" } });
+  const roles = await (await api("/access/roles")).json();
+  const roleId = (name) => roles.find((role) => role.name === name)?.id ?? null;
+  await page.goto(`${BASE}/admin?tab=access&sub=grants`);
+  await wait(page, "grant-ai-open");
+  await findById(page, "grant-ai-open").click();
+  await wait(page, "grant-ai");
+  check("the AI window opens with an empty preview", await page.locator('[data-testid="grant-ai-empty"]').isVisible());
+  check("apply waits for a reading", await page.locator('[data-testid="grant-ai-apply"]').isDisabled());
+  check("read waits for text", await page.locator('[data-testid="grant-ai-read"]').isDisabled());
+  await page.locator('[data-testid="grant-ai-text"]').fill("prod.member Operations");
+  await findById(page, "grant-ai-read").click();
+  await wait(page, "grant-ai-error");
+  check("AI off says to add one by one", (await getText(page, "grant-ai-error")).includes("Add grant"), await getText(page, "grant-ai-error"));
+
+  const user = (id) => ({ subject_type: "user", subject_id: id });
+  await page.route("**/api/access/grants/ai-read", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        model: "fake",
+        lines: [
+          { line: 1, action: "add", subjects: [{ written: "prod.member", matches: [user("prod.member")] }], roles: [{ written: "Operations", role_id: roleId("Operations") }], permissions: [] },
+          { line: 2, action: "add", subjects: [{ written: "ops.member", matches: [user("ops.member")] }], roles: [{ written: "Operations", role_id: roleId("Operations") }], permissions: [] },
+          { line: 3, action: "add", subjects: [{ written: "김민서", matches: [user("qa.member"), user("dev.admin")] }], roles: [{ written: "Permission Admin", role_id: roleId("Permission Admin") }], permissions: [] },
+          { line: 4, action: "add", subjects: [{ written: "홍길동", matches: [] }], roles: [{ written: "Ghost", role_id: null }], permissions: [] },
+        ],
+      }),
+    }),
+  );
+  await findById(page, "grant-ai-read").click();
+  await wait(page, "grant-ai-rows");
+  check("a new grant line counts as new", (await getText(page, "grant-ai-status-0")).includes("New 1"), await getText(page, "grant-ai-status-0"));
+  check("an already held line cannot be checked", (await getText(page, "grant-ai-status-1")).includes("Already held 1") && (await page.locator('[data-testid="grant-ai-check-1"]').isDisabled()), await getText(page, "grant-ai-status-1"));
+  check("two people with one name wait for a pick", (await getText(page, "grant-ai-status-2")).includes("Choose a person"), await getText(page, "grant-ai-status-2"));
+  check("an unknown person and role are lines to check", (await page.locator('[data-testid="grant-ai-row-3"]').getAttribute("data-check")) !== null && (await getText(page, "grant-ai-status-3")).includes("Not in the directory"), await getText(page, "grant-ai-status-3"));
+  check("apply counts only the clear change", (await getText(page, "grant-ai-apply")) === "Apply 1", await getText(page, "grant-ai-apply"));
+  await pickOption(page, "grant-ai-pick-2", "user:dev.admin");
+  check("picking the person adds that line", (await getText(page, "grant-ai-apply")) === "Apply 2", await getText(page, "grant-ai-apply"));
+  await page.locator('[data-testid="grant-ai-check-0"]').locator("..").click();
+  check("unchecking a line leaves it out", (await getText(page, "grant-ai-apply")) === "Apply 1", await getText(page, "grant-ai-apply"));
+  await page.locator('[data-testid="grant-ai-check-0"]').locator("..").click();
+  await takeShot("baseline-grants-ai.png");
+  await findById(page, "grant-ai-apply").click();
+  const doneToast = page.locator(".toast-stack", { hasText: "Added 2" });
+  await doneToast.waitFor({ timeout: T });
+  check("applying reports what changed", (await doneToast.innerText()).includes("revoked 0"), (await doneToast.innerText()).replace(/\s+/g, " "));
+  check("the window closes after applying", await page.locator('[data-testid="grant-ai"]').count() === 0);
+  const grants = await (await api("/access/grants")).json();
+  const made = grants.filter((grant) => (grant.subject_id === "prod.member" && grant.role_name === "Operations") || (grant.subject_id === "dev.admin" && grant.role_name === "Permission Admin"));
+  check("both grants exist on the server", made.length === 2, made.map((grant) => `${grant.subject_id}:${grant.role_name}`).join(","));
+  // 뒤 단계가 보는 부여 · 기록을 처음처럼 둔다
+  await api("/access/grants/batch", { method: "POST", data: { remove: made.map((grant) => grant.id) } });
+});
+
 await runStep("manual", {}, async ({ page, takeShot }) => {
   await page.goto(`${BASE}/manual#account`);
   await wait(page, "login-dev-user-qa.member");

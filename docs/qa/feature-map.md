@@ -28,7 +28,7 @@
 | Map(참조 지도) | `/bundles/{id}/map` | List · 지도, 옆 칸의 줄 문장, **Open in Assign** | 구성원이 아닌 Bundle은 코드·수만 온다(비구성원 단계가 흔들린다). transform 걸린 SVG `<g>`는 `locator.click()` 대신 `boundingBox()` 중심 클릭 | `map:` | `#map`, `#map-visibility` |
 | 작업 기록 | `/bundles/{id}/history` | 묶음의 사건 목록 | 조회 상한 500 | — | `#history` |
 | 계정 · 화면 설정 | `/account`, 사용자 메뉴 | 레이아웃(레일/위 탭)·테마·언어, 첫 페인트 전 적용 | 첫 페인트 전 boot 스크립트와 `ui-prefs`가 같은 값을 써야 한다 | `layout menu`, `dark theme`, `Korean before first paint` | `#settings` |
-| 관리 | `/admin` | 역할·권한·AI 연결·HR 동기화 | 권한 차등은 `DEV_ENFORCE_PERMISSIONS=true`에서만 보인다 | `pw-smoke-baseline.mjs` | `#admin` |
+| 관리 | `/admin?tab=<탭>&sub=<roles·grants·audit>` | 역할·권한·AI 연결·HR 동기화. 부여는 왼쪽 목록(`grants-table` · 줄 `grants-subject-<user·dept>:<id>` · 찾기 `grants-search`) + 오른쪽 상세(`grant-detail`, 부여 줄 `grant-row-<id>`), 회수는 바로 되고 알림 Undo, 역할 더하기 `grant-add`·<kbd>A</kbd> → `grant-add-pop`, 사내 AI로 등록 `grant-ai-open` → `grant-ai`(읽기 `grant-ai-read`, 줄 `grant-ai-row-<n>`, 반영 `grant-ai-apply`, 서버 `POST /api/access/grants/ai-read`는 읽기만) | 권한 차등은 `DEV_ENFORCE_PERMISSIONS=true`에서만 보인다. 사내 AI가 꺼져 있으면 창에 안내만(스모크는 읽기 응답을 흉내 낸다) | `pw-smoke-baseline.mjs` | `#admin` |
 | 사용 설명서 | `/manual` | 조각 목차·찾기·읽음 표시 | 글을 바꾸면 `manual-content.test.ts`가 라벨·그림·권한 키를 대조한다 | — | — |
 
 ## 감사 (화면 배치)

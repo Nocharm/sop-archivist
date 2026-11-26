@@ -6,7 +6,7 @@
 // backend는 AI_ENABLED=true AI_BASE_URL=http://localhost:9999/v1 AI_MODEL=fake AI_API_TOKEN=fake AI_ENDPOINTS=""
 //   임베딩까지 쓰면 EMBED_ENABLED=true EMBED_BASE_URL=http://localhost:9999/v1 EMBED_API_TOKEN=fake EMBED_MODEL=fake
 //   (토큰이 비어도 ai_client는 "Bearer " 헤더를 보내 빈 토큰이면 요청 단계에서 실패하니 아무 값이나 넣는다)
-// SOP 작업은 사용자 메시지의 data 구간 task로 답한다 — classify=첫 칸 후보+원문 그대로, translate=`[도착 언어] 원문`, match=as_is, split=조각 하나(나누지 않음), unwrap_order=받은 줄 차례를 거꾸로.
+// SOP 작업은 사용자 메시지의 data 구간 task로 답한다 — classify=첫 칸 후보+원문 그대로, translate=`[도착 언어] 원문`, match=as_is, split=조각 하나(나누지 않음), unwrap_order=받은 줄 차례를 거꾸로, grant=줄마다 ID·코드·한글 낱말과 줄에 든 역할 이름.
 // FAKE_AI_SPLIT=1이면 classify와 split이 원문을 가운데 빈칸에서 두 문장으로 나눠 답한다 — 화면의 "AI 나눔 제안 확정"·쪼개기 화면의 나누기 제안 경로를 스모크로 밟기 위한 것(기본은 끈다).
 // data 구간이 없는 호출에는 {"ok": true}를 답한다 — 관리 화면의 연결 점검(ping) 배선 확인용. 사용량 집계용 usage는 늘 싣는다.
 import { createHash } from "node:crypto";
@@ -66,6 +66,28 @@ const TASK_REPLIES = {
       docs.push({ code, title, doc_type: docType, parent_code: docType === "wi" ? lastSop : null, is_equipment_sop: false, steps: docType === "wi" ? ["Prepare", "Run"] : [] });
     }
     return { docs: [...docs, { code: "SOP-INVENTED-999", title: "not in the text", doc_type: "sop", parent_code: null, is_equipment_sop: false, steps: [] }] };
+  },
+  // 부여 지시 읽기 - 줄마다 로그인 ID·부서 코드·2~4자 한글 낱말(역할·동작 말 제외)을 대상으로, 줄에 든 역할 이름·권한 키를 그대로 답한다.
+  // 회수 말이 있으면 remove. 이름 맞추기·목록에 없음·동명이인 고르기는 backend와 화면이 하므로 여기서는 글자만 옮긴다
+  grant(data) {
+    const roles = (data.roles ?? []).map(String);
+    const permissions = (data.permissions ?? []).map(String);
+    const actionWords = /^(회수|빼기|삭제|제거|추가|부여|주기|부서|부서에|에게|역할|권한)$/;
+    const lines = [];
+    String(data.text ?? "").split("\n").forEach((raw, index) => {
+      const text = raw.trim();
+      if (!text) return;
+      const lower = text.toLowerCase();
+      const foundRoles = roles.filter((role) => lower.includes(role.toLowerCase()));
+      const foundPermissions = permissions.filter((key) => text.includes(key));
+      const roleWords = new Set(foundRoles.flatMap((role) => role.split(/\s+/)));
+      const ids = text.match(/\b[a-z][a-z0-9]*(?:\.[a-z0-9]+)+\b/g) ?? [];
+      const codes = text.match(/\b[A-Z]{2,5}-[A-Z0-9]{1,5}\b/g) ?? [];
+      const names = (text.match(/[가-힣]{2,4}/g) ?? []).filter((word) => !actionWords.test(word) && !roleWords.has(word));
+      const subjects = [...new Set([...ids.filter((id) => !foundPermissions.includes(id)), ...codes, ...names])];
+      lines.push({ line: index + 1, action: /회수|빼|삭제|제거|remove|revoke/i.test(text) ? "remove" : "add", subjects, roles: foundRoles, permissions: foundPermissions });
+    });
+    return { lines };
   },
 };
 

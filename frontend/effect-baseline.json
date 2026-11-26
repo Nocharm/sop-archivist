@@ -6,7 +6,6 @@
     "src/app/bundles/[id]/history/page.tsx": 2,
     "src/app/bundles/[id]/map/page.tsx": 3,
     "src/app/login/page.tsx": 2,
-    "src/components/admin/access-roles.tsx": 2,
     "src/components/ai-jobs-indicator.tsx": 3,
     "src/components/ai-jobs-popover.tsx": 3,
     "src/components/assign/destination-tree.tsx": 2,

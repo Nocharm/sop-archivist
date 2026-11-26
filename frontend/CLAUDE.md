@@ -17,7 +17,7 @@ frontend(Next.js) 세부 구조와 frontend에만 걸리는 체크리스트. 루
 - **이동**: 앱 안 이동은 `lib/nav-buffer.ts` `navigate()` — 사람이 고른 이동에 `router.push`를 새로 쓰지 않는다(`useLeaveGuard`도 이 길에 걸려 있다). → 6
 - **움직임·끌기는 새로 짜지 않는다**: `components/ui/motion.tsx`(접기·쉬머·`useFlip`·`useUnwrapMotion`), `lib/use-progressive-list.ts`, 보조 단추 `.row-actions`, 상자 끌기 `lib/box-drag.ts`·`use-box-drag.ts`(놓기 규칙은 화면마다 순수 모델). → 6·7
 - **결과물 C**: 화면에 먼저 얹고(`lib/c-edit-model.ts`) 저장은 `lib/c-save-queue.ts`로 하나씩. `section-number.ts` `numberLines`는 backend `outputs.number_lines`의 사본이라 함께 고친다(저장 응답이 이긴다). → 8
-- **Markdown 보기는 `components/ui/markdown-view.tsx` 하나** — 원문 HTML을 그대로 넣는 길을 새로 만들지 않는다. 관리 API는 `lib/api-manage.ts`. → 9
+- **Markdown 보기는 `components/ui/markdown-view.tsx` 하나** — 원문 HTML을 그대로 넣는 길을 새로 만들지 않는다. 관리 API는 `lib/api-manage.ts`. 관리 화면만의 CSS는 `styles/admin.css`(`.adm-*`, 표 모양은 `.adm-scope` 안에서만) — 공용 `DataList`·`components.css`를 고치지 않는다. 서버 커서로 이어 받는 목록은 `lib/use-cursor-list.ts`. → 4·9
 - **목록·값 고르기**: 읽기 목록 `DataList`, 값 고르기 `Select`(기본 `<select>`를 새로 쓰지 않는다), 고르거나 입력 `Combobox`. 본문 폭은 `--page-max`·`--page-max-wide`(`AppShell` `.page-wrap`). → 10·11
 - **화면 공통 부품**: 브라우저 기본 모양(체크박스·라디오·`title` 툴팁)을 쓰지 않는다 — `Checkbox`·`Tooltip`·`InfoTip`. 아이콘만 있는 표시는 호버·포커스에 툴팁, 수가 많으면 `useDelegatedTip`. 삭제류 `MorphButton`, 빈 화면 `EmptyState`, 알림 `toast.tsx`. → 12
   - 창은 `Modal`의 `size`(`sm`·`md`·`lg`·`xl`·`sheet`)로 폭을 고른다 — 새 창에 임의 폭 클래스를 쓰지 않는다.
