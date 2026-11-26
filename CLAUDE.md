@@ -1,13 +1,10 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
-
 ## Project
 
 **SOP Archivist — SOP Restructuring T/F가 쓰는 사내 AI 에이전트 웹 서비스** (FastAPI + Next.js, 사내 서버에 docker compose로 배포). 옛 SOP 묶음을 새 SOP·WI 구조로 다시 짜는 일(문서 쪼개기 → 배정·고쳐 쓰기 → 결과물 A·B·C·Excel → 검토)을 돕는다. **제품 명세: [`docs/superpowers/specs/2026-11-05-sop-restructuring-e2e-design.md`](docs/superpowers/specs/2026-11-05-sop-restructuring-e2e-design.md)**(판단 기준 `docs/domain/`), 기반 명세 `docs/superpowers/specs/2026-11-04-sop-archivist-baseline-design.md`, 프런트와 맞춘 API 계약은 `docs/architecture/api-contract.md`, 프런트 디자인 기초 `frontend/docs/design/2026-11-07-frontend-design-foundations.md`.
 
 > 상태: **v1.6.44 — 정식 업데이트 준비 2026-11-27**(다음 `dev` 번호는 1.7.0부터. 운영 배포는 사용자가 GitLab 파이프라인으로 올린 뒤 `CHANGELOG.md`에 날짜를 적는다. 직전 운영 배포는 v1.5.0, 2026-11-23 무렵. 운영 :7777, 개발 스택 :4444). 기능 이력은 `CHANGELOG.md`, 지금 진행은 `PROGRESS.md`. **2026-11-20부터 실사용자가 운영에 접속해 실제 데이터가 쌓인다** — 운영 DB는 지울 수 없는 자료다: Alembic 리비전이 기존 행을 지우거나 바꾸면 사용자 승인을 받고 CHANGELOG 배포 메모에 굵게 적으며, 배포 전 백업(`docs/deploy/backup.md`)을 확인한다. AI 층은 합성 SOP·가짜 AI로만 검증했고 유사도 임계값은 합성 자료로 잡은 값이다(실제 자료로 다시 정한다).
-> **서비스 버전**: 단일 소스 `frontend/package.json` `version`(상단 바에 표시). `dev`에 올릴 때마다 번호 하나(운영에 올린 뒤 첫 푸시는 MINOR, 그다음은 PATCH), `dev`→`main` 정식 업데이트는 번호를 올리지 않고 개발에서 본 번호 그대로 `vX.Y.Z` 태그(`rules/common/git.md`). 커밋·푸시는 GitHub에만, 사내 GitLab push·배포는 사용자. 운영 배포일은 CHANGELOG에 적는다.
 > **DB**: 로컬은 sqlite 파일(연결마다 `PRAGMA foreign_keys=ON`), 서버는 postgres. 스키마는 **Alembic**(backend 기동 때 head까지 자동 적용).
 > **원칙**: AI는 제안만 하고 사람이 줄마다 확정한다 — AI가 꺼지거나 실패해도 사람 경로는 돈다. AI는 사내 모델로만 부른다(외부 모델·MCP 금지) — 직원 실명·로그인 ID는 그 기능에 필요할 때 실어도 된다(사용자 결정 2026-11-26, 전에는 실명 금지). 공개 저장소라 실서버 IP·사내 호스트명·시크릿은 추적 파일에 넣지 않는다(`<server-ip>` 등).
 
@@ -36,40 +33,30 @@ node frontend/scripts/fake-ai-server.mjs    # 가짜 AI :9999(저장소 루트�
 # dev 인증 = localStorage `sopa.devUser` / 헤더 `X-Dev-User`. 권한 차등은 DEV_ENFORCE_PERMISSIONS=true(dev.admin이 sysadmin)
 ```
 
-## 일 크기에 맞는 절차 (사용자 결정 2026-11-17)
+## 일 크기에 맞는 절차
 
-하위 에이전트(대부분 검토)와 서버 기다리기가 호출·시간의 대부분을 썼다(2026-11-10~16 세션 기록). 플러그인 스킬(superpowers 등)이 시키는 기본 절차보다 아래가 먼저다.
+플러그인 스킬(superpowers 등)이 시키는 기본 절차보다 아래가 먼저다(사용자 결정 2026-11-17 — 하위 에이전트와 서버 기다리기가 시간의 대부분을 썼다).
 
-- **작은 수정은 메인 세션이 직접 고친다** — 한 화면·한 모듈 안의 수정(스타일·문구·작은 기능·뻔한 버그)은 `/agile` 기준으로, 브레인스토밍·계획 문서·하위 에이전트 없이 바로 한다. 설계 → 계획 → 하위 에이전트 순서는 자료 구조·API 계약·권한·Alembic을 건드리거나 여러 모듈에 걸친 일에만 쓴다.
-- **검토는 브랜치 끝에 한 번** — 하위 에이전트로 구현할 때도 작업(task)마다 명세 검토·품질 검토를 따로 띄우지 않는다. `dev`에 합치기 전에 브랜치 전체 diff를 한 번 검토한다.
-- **브랜치는 작업 단위 하나로 끊는다** — 검토가 끝에 한 번뿐이라 여러 일이 섞인 브랜치는 검토가 겉돈다. 브랜치 하나는 한 문장으로 말할 수 있고 혼자 `dev`에 올라가도 화면에서 확인할 수 있는 일 하나다(계획의 스텝 하나). 계획을 세울 때 스텝마다 브랜치 이름을 미리 적고, 하다가 다른 일(다른 화면의 개선, 따로 설명해야 하는 리팩터링, 옆에서 찾은 버그)이 끼면 그 일은 따로 브랜치로 뺀다. 길이는 참고만 한다 — 시험·문서를 뺀 diff가 약 1,000줄·파일 15개를 넘으면 일이 둘로 나뉘는지 한 번 보고, 한 단위면 넘어도 그대로 간다.
-  - **차례로(기본)**: 스텝 1 브랜치 → 검토 → `dev`에 합침 → 스텝 2는 새 `dev`에서 딴다(끌어다 놓기 4스텝이 이렇게 했다).
-  - **브랜치에서 다시 브랜치**: 스텝 하나만 `dev`에 올리면 화면이나 자료가 반쪽이 될 때만. 모음 브랜치 `feat/<기능>`에서 스텝 브랜치 `feat/<기능>-<n>-<이름>`을 따고, 스텝마다 그 스텝의 diff만 검토해 모음 브랜치에 합친다. 모음 브랜치를 `dev`에 합칠 때는 전체를 다시 검토하지 않고, `dev`를 합친 뒤의 시험과 고친 화면 스모크만 한다.
-- **하위 에이전트는 서버·브라우저를 띄우지 않는다** — 맡길 때 그렇게 적는다. 하위 에이전트는 고친 파일의 단위 시험(vitest·pytest 한 파일)과 lint·tsc까지만 한다. 스모크·감사·화면 확인은 메인 세션이 끝에 한 번, 고친 화면만 하고(위 Commands), 이미 떠 있는 서버가 있으면 그대로 쓴다.
-- **하위 에이전트의 model은 일에 맞춰 적는다** — 글자 그대로 옮기기·찾기·기계적 고치기·시험 돌리기는 `sonnet`, 설계 판단이나 여러 파일의 뜻을 맞춰야 하는 일만 `opus`(11-20~22 세션: 31번 중 27번이 opus).
+- **작은 수정은 메인 세션이 직접** — 한 화면·한 모듈 안의 수정(스타일·문구·작은 기능·뻔한 버그)은 브레인스토밍·계획 문서·하위 에이전트 없이 바로 하고, 새 시험은 꼭 필요할 때만(관련 기존 시험은 돌린다). 설계 → 계획 → 하위 에이전트는 자료 구조·API 계약·권한·Alembic을 건드리거나 여러 모듈에 걸친 일에만.
+- **검토는 브랜치 끝에 한 번** — 작업(task)마다 따로 검토를 띄우지 않고, `dev`에 합치기 전에 브랜치 전체 diff를 한 번.
+- **브랜치는 한 문장으로 말할 수 있는 일 하나**(혼자 `dev`에 올라가도 화면에서 확인할 수 있는, 계획의 스텝 하나). 계획 때 스텝마다 브랜치 이름을 미리 적고, 끼어든 다른 일(다른 화면 개선·따로 설명할 리팩터링·옆에서 찾은 버그)은 따로 뺀다. 시험·문서를 뺀 diff가 약 1,000줄·파일 15개를 넘으면 둘로 나뉘는지 한 번 본다.
+  - **차례로(기본)**: 스텝 브랜치 → 검토 → `dev` → 다음 스텝은 새 `dev`에서.
+  - **모음 브랜치**: 스텝 하나만 올리면 화면이나 자료가 반쪽일 때만. `feat/<기능>`에서 `feat/<기능>-<n>-<이름>`을 따 스텝마다 그 diff만 검토해 합치고, 모음을 `dev`에 합칠 때는 다시 검토하지 않고 시험과 고친 화면 스모크만.
+- **하위 에이전트는 서버·브라우저를 띄우지 않는다**(맡길 때 그렇게 적는다) — 고친 파일의 단위 시험과 lint·tsc까지. 스모크·감사·화면 확인은 메인 세션이 끝에 한 번, 고친 화면만, 떠 있는 서버를 그대로 쓴다.
+- **하위 에이전트는 model을 늘 적는다** — 옮기기·찾기·기계적 고치기·시험 돌리기는 `sonnet`, 설계 판단이나 여러 파일의 뜻을 맞추는 일만 `opus`. 병렬은 동시에 2~3개까지.
 
-## 신뢰 기반 먼저 (사용자 결정 2026-11-19)
+## 신뢰 기반 — 교정은 검사로
 
-검증 층(스모크·감사·합성 E2E)은 두껍지만 코드 구조·정적 검사 층이 기본값이라 같은 화면의 fix가 되풀이된다(점검 근거와 스텝은 신뢰 기반 계획 — 다 끝나 지웠다, git 이력). 그때 세운 검사: `frontend/src/source-rules.test.ts`·`effect-baseline.json`, `backend/tests/test_invariants.py`, `rule-cases.json` 대조, 편집 hook `.claude/hooks/lint-edited.sh`, 기능 맵 `docs/qa/feature-map.md`.
+같은 화면의 fix가 되풀이되지 않게 세운 검사: `frontend/src/source-rules.test.ts`·`effect-baseline.json`, `backend/tests/test_invariants.py`, `rule-cases.json` 대조, 편집 hook `.claude/hooks/lint-edited.sh`, 기능 맵 `docs/qa/feature-map.md`(사용자 결정 2026-11-19).
 
-- **교정 사다리** — 사용자에게 같은 교정을 받거나 같은 종류의 fix가 두 번째면 `/harden`: 설계로 못 하게 → lint·타입·소스 검사 시험 → 실행 검증 → 그래도 안 될 때만 산문 한 줄(왜 검사로 못 하는지와 함께). 산문에만 규칙을 더하지 않는다.
-- **lint·시험 메시지는 고치는 방법까지** 적는다.
+- **같은 교정이나 같은 종류의 fix가 두 번째면 `/harden`** — 설계로 못 하게 → lint·타입·소스 검사 → 실행 검증 → 그래도 안 될 때만 산문 한 줄(왜 검사로 못 하는지와 함께). lint·시험 메시지에는 고치는 방법까지 적는다.
 - **스모크 기대값을 낮추거나 단계를 빼서 통과시키지 않는다** — 필요하면 사용자 승인을 받고 커밋 메시지에 사유를 적는다.
-- **병렬 에이전트는 동시에 2~3개까지**.
 
 ## Architecture
 
-모노레포, 서비스 5개(앱 4 + 백업 사이드카)를 docker compose 프로젝트 `sop-archivist`로 묶어 nginx 뒤에 둔다.
+모노레포, docker compose 프로젝트 `sop-archivist`의 서비스 5개를 nginx 뒤에 둔다: **proxy** nginx 1.27(`/api` → backend, 나머지 → frontend, 노출 `APP_PORT`. X-Frame-Options·frame-ancestors를 붙이지 않는다 — Keycloak silent 갱신이 `/login`을 iframe으로 부른다) · **frontend** Next.js 16 · React 19 · Tailwind 4 · `oidc-client-ts`(UI 영어 기본 + 한국어, 라이트·다크) · **backend** Python 3.11 · FastAPI · SQLAlchemy(async) · Alembic · Pydantic · **db** PostgreSQL 16(`dbv-shared` 별칭 `sop-archivist-db`, db-viewer 읽기 전용) · **db-backup** 일간 04:00 KST `pg_dump -Fc` 14일 보존(`docs/deploy/backup.md`).
 
-| 레이어 | 스택 | 역할 |
-|--------|------|------|
-| **proxy** | nginx 1.27 | `/api` → backend, 나머지 → frontend. 노출 포트 `APP_PORT`(운영 7777). X-Frame-Options·frame-ancestors를 붙이지 않는다(Keycloak silent 갱신이 `/login`을 iframe으로 부른다) |
-| **frontend** | Next.js 16 · React 19 · TS · Tailwind 4 · `oidc-client-ts` | 로그인 게이트, 묶음 목록, SOP 단계 화면(문서·쪼개기·To-Be·Assign·결과물·검토), 계정·관리 화면, 사용 설명서 `/manual`. UI 영어 기본 + 한국어, 라이트·다크 |
-| **backend** | Python 3.11 · FastAPI · SQLAlchemy(async) · Alembic · Pydantic | 인증(Keycloak RS256·dev), 직원 디렉터리(HR 웹훅), 권한, 관리 API, 사내 AI 연결, SOP 재구성 코어(`app/sop/`, `routers/sop_*`), AI 제안 층(`app/sop/ai/`) |
-| **db** | PostgreSQL 16 | `dbv-shared` 네트워크 별칭 `sop-archivist-db`(db-viewer 읽기 전용) |
-| **db-backup** | `postgres:16-alpine` | 일간 04:00 KST `pg_dump -Fc`, 14일 보존, `batch_job_runs`에 기록(`docs/deploy/backup.md`) |
-
-**경계:** 브라우저 → `:7777` nginx → (Next.js | FastAPI) → PostgreSQL. 로컬은 Next rewrites가 `/api`를 `BACKEND_URL`로 넘긴다. 입력 검증은 backend API 경계(`rules/common/security.md`). 인증은 Keycloak realm `ai-portal`의 public 클라이언트 `sop-archivist-frontend`, 주소는 `.env`(`docs/deploy/setup-once.md` A5).
+**경계:** 브라우저 → `:7777` nginx → (Next.js | FastAPI) → PostgreSQL. 로컬은 Next rewrites가 `/api`를 `BACKEND_URL`로 넘긴다. 입력 검증은 backend API 경계. 인증은 Keycloak realm `ai-portal`의 public 클라이언트 `sop-archivist-frontend`, 주소는 `.env`(`docs/deploy/setup-once.md` A5).
 
 **디렉터리:** `backend/`(앱·Alembic·시드 `scripts/`·tests) · `frontend/`(src/app·components·lib, `scripts/` 스모크·가짜 AI) · `nginx/` · `scripts/db-backup.sh` · `ci/`(`deploy.sh`·`test-deploy.sh`, `.gitlab-ci.yml`이 부름) · `docs/`(인덱스 `docs/README.md`).
 
@@ -82,7 +69,7 @@ node frontend/scripts/fake-ai-server.mjs    # 가짜 AI :9999(저장소 루트�
 - **새 권한(permission) — 3곳을 한 커밋에서:** backend `app/access/catalog.py` `PERMISSIONS` ↔ frontend `src/lib/access.ts` `PERMISSIONS`(같은 값·순서) ↔ i18n `permission.<key>`(en·ko). 키가 `permission.`으로 시작하면 메시지 키는 `permission.permission.manage`. 라우트는 `Depends(require_permission("<key>"))`(모르는 키는 import 때 `ValueError`). 카탈로그에서 뺀 키는 저장된 역할·부여에서 조용히 버려진다.
 - **새 env — 3곳:** `app/settings.py` · `.env.example` · `docker-compose.yml` backend `environment:`(`VAR: ${VAR:-}`). backend에 `env_file`이 없어 compose에 빠지면 서버에서만 조용히 기본값이다. 빈 문자열이 기동을 죽이는 int/bool은 Settings 기본값과 같은 폴백. 시크릿 값은 어디에도 쓰지 않는다.
 - **새 업무 규칙 거절 코드(`raise_rule`) = 프런트 문구:** 화면에서 닿는 코드면 `rule.<code>` en·ko(세부 사유는 `rule.<code>.<reason>`). 없으면 상태 코드 문구로 떨어진다.
-- **화면·동작·라벨을 바꾸면 사용 설명서(`frontend/public/manual/user-manual.md`)의 글도 같은 커밋에서** — backend만 고쳐 동작이 달라질 때도. 그림은 정식 업데이트 준비 때 바뀐 장면만(세부 `frontend/CLAUDE.md`, 버전 표시 `rules/common/git.md`).
+- **화면·동작·라벨을 바꾸면 사용 설명서(`frontend/public/manual/user-manual.md`)의 글도 같은 커밋에서** — backend만 고쳐 동작이 달라질 때도. 그림은 정식 업데이트 준비 때 바뀐 장면만(세부 `frontend/CLAUDE.md`, 설명서 버전 `docs/deploy/release.md`).
 
 ## Operations / Deployment
 
@@ -118,25 +105,11 @@ node frontend/scripts/fake-ai-server.mjs    # 가짜 AI :9999(저장소 루트�
 
 ---
 
-## Working Style — 최우선 (모든 룰보다 먼저)
-
-**모든 작업의 행동 기반.** 아래 도메인 룰과 충돌해도 이 가이드의 원칙이 우선한다.
+## Rules
 
 @rules/guidelines.md
-
----
-
-## Rules — 범용
-
-@rules/common/comments.md
-@rules/common/naming.md
+@rules/common/conventions.md
 @rules/common/git.md
-@rules/common/security.md
-@rules/common/error-handling.md
-@rules/common/dependencies.md
 @rules/common/documentation.md
-@rules/common/testing.md
 
-## Rules — 필요할 때 읽는 것
-
-세션마다 싣지 않는다(2026-11-14 문맥 정리). 언어·폴더 규칙은 폴더 CLAUDE.md가 불러온다 — `rules/languages/python.md`·`rules/backend/config.md`는 `backend/CLAUDE.md`, `rules/languages/typescript.md`·`rules/frontend/identifiers.md`는 `frontend/CLAUDE.md`. Docker는 `rules/backend/docker.md`(Dockerfile·compose를 고치기 전에), 동기화 점검은 `rules/backend/sync-checklist.md`(`/sync`·`/sync-all` 때).
+**필요할 때 읽는 것**(세션마다 싣지 않는다): 언어·폴더 규칙은 폴더 CLAUDE.md가 불러온다 — `rules/languages/python.md`·`rules/backend/config.md`는 `backend/CLAUDE.md`, `rules/languages/typescript.md`·`rules/frontend/identifiers.md`는 `frontend/CLAUDE.md`. Docker는 `rules/backend/docker.md`(Dockerfile·compose를 고치기 전에), 동기화 점검은 `rules/backend/sync-checklist.md`(`/sync`·`/sync-all` 때), 정식 업데이트·급한 수정·문서 정리는 `docs/deploy/release.md`(`/release`).
