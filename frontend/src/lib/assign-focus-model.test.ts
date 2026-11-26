@@ -1,10 +1,9 @@
 import { describe, expect, it } from "vitest";
 
 import type { EditOp } from "./api-sop";
-import { createCommandQueue, isBarrier } from "./command-queue";
+import { isBarrier } from "./command-queue";
 import {
   applyLoaded,
-  buildPaperWaits,
   INITIAL_FOCUS_STATE,
   isGlobalPending,
   isSamePick,
@@ -332,32 +331,6 @@ describe("no request for a unit pending work may have retired (rule 5 - the 404 
     expect(isUnitUnsettled(run(start(job("b", { kind: "bulk", docId: null, unitIds: [3] }))), 1, 3)).toBe(false);
     // 묶음 전체 일(같은 글자 · 초기화)은 줄을 다시 묶을 수 있다
     expect(isUnitUnsettled(run(start(job("g", { kind: "bulk", docId: null, isGlobal: true }))), 1, 3)).toBe(true);
-  });
-});
-
-describe("waiting chips (A1-R5)", () => {
-  it("numbers the boxes of what waits, the running one has none", () => {
-    const queue = createCommandQueue<string>();
-    for (const [id, unitId] of [["a", 3], ["b", 4], ["c", 5]] as const) queue.push({ id, kind: "save", isGlobal: false, payload: id, unitIds: [unitId] });
-    queue.take();
-    expect(buildPaperWaits(queue.getState())).toEqual(new Map([[4, 1], [5, 2]]));
-    queue.settle("a");
-    queue.take();
-    expect(buildPaperWaits(queue.getState())).toEqual(new Map([[5, 1]]));
-  });
-  it("keeps the numbers of what a failure stopped", () => {
-    const queue = createCommandQueue<string>();
-    for (const [id, unitId] of [["a", 3], ["b", 4]] as const) queue.push({ id, kind: "save", isGlobal: false, payload: id, unitIds: [unitId] });
-    queue.take();
-    queue.fail("a", "500");
-    expect(buildPaperWaits(queue.getState())).toEqual(new Map([[4, 1]]));
-  });
-  it("keeps the same map while nothing waits, so the far paper is not drawn again", () => {
-    const queue = createCommandQueue<string>();
-    const before = buildPaperWaits(queue.getState());
-    queue.push({ id: "a", kind: "save", isGlobal: false, payload: "a", unitIds: [3] });
-    queue.take();
-    expect(buildPaperWaits(queue.getState())).toBe(before);
   });
 });
 

@@ -64,6 +64,7 @@ describe("Modal width", () => {
     ["md", "max-w-md"],
     ["lg", "max-w-lg"],
     ["xl", "max-w-3xl"],
+    ["board", "max-w-6xl"],
     ["sheet", "max-w-none"], // 거의 전체 화면 - 폭은 바탕의 24px 여백이 정한다
   ])("draws size %s as %s", (size, expected) => {
     // eslint-disable-next-line react/no-children-prop -- .ts test without JSX; children is a required prop

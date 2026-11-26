@@ -16,9 +16,11 @@ export interface HelpPanelProps {
   keys: readonly (readonly [string, ReactNode])[];
   /** 표시 탭 내용 - `.help-panel-row` 줄들 */
   marks: ReactNode;
+  /** 글쇠 탭 맨 아래 단추 줄(목록 밖) - 없으면 그리지 않는다 */
+  keysFooter?: ReactNode;
 }
 
-export function HelpPanel({ screen, keys, marks }: HelpPanelProps) {
+export function HelpPanel({ screen, keys, marks, keysFooter }: HelpPanelProps) {
   const { t } = useI18n();
   const { isOpen, tab } = useHelpPrefs(screen);
   const testId = `${screen}-help`;
@@ -65,6 +67,7 @@ export function HelpPanel({ screen, keys, marks }: HelpPanelProps) {
           ))}
         </dl>
       )}
+      {isOpen && tab === "keys" && keysFooter}
       {isOpen && tab === "marks" && (
         <div className="help-panel-body grid gap-1" role="tabpanel" data-testid={`${testId}-marks`}>
           {marks}

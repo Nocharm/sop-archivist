@@ -78,8 +78,14 @@ export interface PaperPending {
   shimmerIds: ReadonlySet<number>;
   lockedIds: ReadonlySet<number>;
   pills: readonly { id: string; kind: string; label: string; place: PendingPlace }[];
-  /** 기다리는 명령의 박스 → 차례(첫째 대기 = 1) - 칩 "대기 n" */
-  waits: ReadonlyMap<number, number>;
+  /** 기다리는 명령의 박스 → 칩("대기 · 나누기 +1", 글은 다 만들어 온다) - kind는 첫째 명령의 종류 */
+  waits: ReadonlyMap<number, QueueChip>;
+}
+
+/** 대기 칩 하나 - 용지의 박스 칩과 위쪽 줄의 알약이 같은 꼴이다 */
+export interface QueueChip {
+  kind: string;
+  text: string;
 }
 
 /** 저절로 삭제된 줄(잡음 표시가 붙은 글 조각 · 표 · 그림)의 종류 - 아니면 null. 블록으로 접는 화면(strips.noise)에서만 묻는다 */
@@ -1132,13 +1138,13 @@ export function Paper({
     ));
   }
 
-  /** 앞 명령을 기다리는 박스의 칩 "대기 n"(A1-R5) */
+  /** 앞 명령을 기다리는 박스의 칩 "대기 · 나누기"(A1-R5) */
   function renderWaitChip(unitId: number | null | undefined): ReactNode {
-    const n = unitId === null || unitId === undefined ? undefined : strips?.pending?.waits.get(unitId);
-    if (n === undefined) return null;
+    const chip = unitId === null || unitId === undefined ? undefined : strips?.pending?.waits.get(unitId);
+    if (chip === undefined) return null;
     return (
-      <span className="pending-pill queue-chip" role="status" data-testid={`assign-queue-${unitId}`}>
-        {t("assign.queue.chip", { n })}
+      <span className="pending-pill queue-chip" role="status" data-kind={chip.kind} data-testid={`assign-queue-${unitId}`}>
+        {chip.text}
       </span>
     );
   }

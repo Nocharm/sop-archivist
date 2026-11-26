@@ -185,10 +185,21 @@ function findRefusal({ id, when }: AssignKey, ctx: AssignKeyContext): string | n
   return ctx.hasNumberCell ? null : why("noNumber");
 }
 
+/** 이동 글쇠 - 키보드 그림이 색으로 가른다(나머지 손질은 shape) */
+const MOVE_IDS: ReadonlySet<AssignKeyId> = new Set<AssignKeyId>(["move_next", "move_prev", "go_pair"]);
 /** 늘 Old 줄에 작용하는 판단 글쇠(쪼개기 먼저 §8) - 나머지 손질 글쇠와 J · K는 마지막으로 누른 쪽에 */
 const JUDGE_IDS: ReadonlySet<AssignKeyId> = new Set<AssignKeyId>(["confirm", "delete", "clear", "clear_block", "remark", "remark_block", "hold", "use_ai"]);
 /** 어느 쪽 박스와도 상관없는 글쇠 - 보기 · 미리보기 · 탭 · 되돌리기 · 거두기 · 도움말 */
 const FREE_IDS: ReadonlySet<AssignKeyId> = new Set<AssignKeyId>(["view", "preview", "part_prev", "part_next", "undo", "redo", "escape", "help"]);
+
+/** 글쇠의 종류 - 이동 · 판단(늘 Old) · 손질(마지막으로 누른 쪽) · 보기(어느 쪽과도 상관없음). 키보드 그림의 색 */
+export type AssignKeyKind = "move" | "judge" | "shape" | "free";
+
+export function getAssignKeyKind(id: AssignKeyId): AssignKeyKind {
+  if (JUDGE_IDS.has(id)) return "judge";
+  if (FREE_IDS.has(id)) return "free";
+  return MOVE_IDS.has(id) ? "move" : "shape";
+}
 
 /**
  * 글쇠가 어느 쪽에 작용하나 - 판단은 Old, 손질 · 이동은 마지막으로 누른 쪽. Tab(= J · K)은 용지에서만 - 단추 줄이나 그 밖이면 브라우저의 포커스 옮기기다(id null).

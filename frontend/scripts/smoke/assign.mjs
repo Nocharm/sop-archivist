@@ -4663,7 +4663,7 @@ await runStep("assign: AI split suggestions - ask for the whole document, apply 
   await page.waitForFunction((before) => document.querySelector('[data-testid="assign-row-id"]')?.textContent?.trim() !== before && document.querySelector('[data-testid="assign-undo"]')?.disabled === false, rowBefore, { timeout: T });
   check("Apply split cuts the sentence and moves to the new piece", true);
   await page.locator('[data-testid="assign-undo"]').click();
-  await page.waitForFunction(() => [...document.querySelectorAll('[data-testid="toast-ok"]')].some((toast) => toast.textContent?.includes("Cut")), null, { timeout: T });
+  await page.waitForFunction(() => [...document.querySelectorAll('[data-testid="toast-ok"]')].some((toast) => toast.textContent?.includes("Split")), null, { timeout: T });
   check("Undo takes the cut back", true);
 });
 
@@ -5597,9 +5597,12 @@ await runStep("assign: keys pressed during a slow save are kept in order", { all
     first: document.querySelector(`[data-testid="assign-paper-deleted-u${first}"]`)?.hasAttribute("data-pending") ?? null,
     second: document.querySelector(`[data-testid="assign-paper-deleted-u${second}"]`)?.hasAttribute("data-pending") ?? null,
     chip: document.querySelector(`[data-testid="assign-queue-${second}"]`)?.textContent ?? null,
+    chipKind: document.querySelector(`[data-testid="assign-queue-${second}"]`)?.getAttribute("data-kind") ?? null,
     firstChip: document.querySelector(`[data-testid="assign-queue-${first}"]`) !== null,
+    globalChip: document.querySelector('[data-testid="assign-queue-global"]') !== null,
   }), [ids[0], ids[2]]);
-  check("the first box is pending and the second one waits with a Queued chip", marks.first === true && marks.second === true && marks.chip === "Queued 1" && !marks.firstChip, JSON.stringify(marks));
+  // 칩은 기다리는 일의 이름이다(전에는 차례 "Queued 1") - 박스가 있는 판단은 위쪽 줄 알약에 들지 않는다
+  check("the first box is pending and the second one waits with a Queued · Delete chip", marks.first === true && marks.second === true && marks.chip === "Queued · Delete" && marks.chipKind === "save" && !marks.firstChip && !marks.globalChip, JSON.stringify(marks));
   await takeShot("sop-assign-queue.png");
   check("both boxes are deleted, the one between is not", await waitDeleted([ids[0], ids[2]]));
   await page.waitForFunction(() => document.querySelector('[data-pane="old"] [data-pending]') === null, null, { timeout: T });
@@ -5653,6 +5656,9 @@ await runStep("assign: keys pressed during a slow save are kept in order", { all
       await join.click();
       await page.locator('[data-testid="assign-paper-pending"][data-kind="join"]').waitFor({ timeout: T });
       await page.keyboard.press("Delete");
+      // 장벽 뒤에 쌓인 글쇠는 아직 박스를 몰라 위쪽 줄 알약에 그 글쇠의 이름으로 선다
+      const keyChip = await page.evaluate(() => { const el = document.querySelector('[data-testid="assign-queue-global"]'); return el === null ? null : { text: el.textContent, kind: el.getAttribute("data-kind") }; });
+      check("Delete pressed during the join waits in the top bar as Queued · Delete", keyChip?.text === "Queued · Delete" && keyChip.kind === "key", JSON.stringify(keyChip));
       check("Delete pressed during the join does not move the pick yet", (await stripOf(halves[0].id).getAttribute("data-sel")) === "");
       const joined = ((await waitBoxes(before.length)) ?? []).find((item) => !before.includes(item.id));
       check("the joined box is the one deleted", joined !== undefined && (await waitDeleted([joined.id])));
@@ -5714,7 +5720,51 @@ await runStep("assign: keys pressed during a slow save are kept in order", { all
   const undone = page.waitForResponse((response) => response.url().includes("/decisions/undo"), { timeout: T });
   await page.keyboard.press("Delete");
   await page.keyboard.press("ControlOrMeta+z");
+  // 되돌리기는 박스가 없어 위쪽 줄 되돌리기 옆 알약 하나에 선다
+  const undoChip = await page.evaluate(() => { const el = document.querySelector('[data-testid="assign-queue-global"]'); return el === null ? null : { text: el.textContent, kind: el.getAttribute("data-kind") }; });
+  check("the undo waiting behind the save shows Queued · Undo in the top bar", undoChip?.text === "Queued · Undo" && undoChip.kind === "undo", JSON.stringify(undoChip));
   check("Ctrl+Z right after Delete waits for that save and undoes it", (await undone).status() === 200 && (await waitDeleted([])));
+
+  // 6. 느린 저장 뒤에 선 합치기는 그 박스에 "Queued · Merge", 그 뒤 장벽에 막힌 Ctrl+Z는 위쪽 줄에 "Queued · Undo" - 저장을 실패시켜 버리기로 비운다(아무것도 바뀌지 않는다)
+  const sourceOrder = (await getJson(`/documents/${doc.id}/view`)).units.filter((item) => item.group_unit_id === null).sort((a, b) => a.pos_seq - b.pos_seq || (a.spans[0]?.[1] ?? 0) - (b.spans[0]?.[1] ?? 0));
+  const at = sourceOrder.findIndex((item, index) => index + 1 < sourceOrder.length && ids.includes(item.id) && ids.includes(sourceOrder[index + 1].id) && item.lang === sourceOrder[index + 1].lang);
+  check("the document has two free boxes of one language side by side", at >= 0);
+  if (at >= 0) {
+    const top = sourceOrder[at].id;
+    const other = ids.find((id) => id !== top && id !== sourceOrder[at + 1].id);
+    await reopen(other);
+    let edits = 0;
+    const countEdits = (request) => {
+      if (request.method() === "POST" && EDIT_URL.test(request.url())) edits += 1;
+    };
+    page.on("request", countEdits);
+    await page.route(SAVE_URL, async (route) => {
+      await new Promise((done) => setTimeout(done, 1500));
+      return route.fulfill({ status: 500, body: "smoke" });
+    });
+    await page.keyboard.press("Delete");
+    if ((await stripOf(top).getAttribute("data-sel")) === null) await stripOf(top).click();
+    await stripOf(top).and(page.locator("[data-sel]")).waitFor({ timeout: T });
+    await page.keyboard.press("Shift+J");
+    await page.locator('[data-testid="assign-merge-armed"]').waitFor({ timeout: T });
+    await page.keyboard.press("Shift+J");
+    await page.keyboard.press("ControlOrMeta+z");
+    const chips = await page.evaluate((id) => {
+      const read = (selector) => {
+        const el = document.querySelector(selector);
+        return el === null ? null : { text: el.textContent, kind: el.getAttribute("data-kind") };
+      };
+      return { box: read(`[data-testid="assign-queue-${id}"]`), global: read('[data-testid="assign-queue-global"]') };
+    }, top);
+    check("a merge waiting behind a slow save shows Queued · Merge on its box", chips.box?.text === "Queued · Merge" && chips.box.kind === "join", JSON.stringify(chips));
+    check("Ctrl+Z pressed behind the waiting merge shows Queued · Undo in the top bar", chips.global?.text === "Queued · Undo" && chips.global.kind === "key", JSON.stringify(chips));
+    await failed.waitFor({ timeout: T });
+    await page.locator('[data-testid="assign-queue-discard"]').click();
+    await failed.waitFor({ state: "detached", timeout: T });
+    await page.waitForTimeout(800);
+    page.off("request", countEdits);
+    check("Discard drops the waiting merge and undo - nothing is merged or deleted", edits === 0 && (await page.locator('[data-testid^="assign-queue-"]').count()) === 0 && (await readBoxes(doc.id)).length === boxes.length && (await readDeleted()).length === 0, String(edits));
+  }
 
   await page.unrouteAll({ behavior: "wait" });
   await page.request.post(`${api}/decisions/reset`, { headers, data: { revision: (await getJson("")).revision, document_id: doc.id } });
@@ -6810,6 +6860,18 @@ await runStep("assign: keys", {}, async ({ page }) => {
   await page.keyboard.press("?");
   await wait(page, "assign-help-keys");
   check("? opens the help on the keys tab", (await page.locator('[data-testid="assign-help-toggle"]').getAttribute("aria-expanded")) === "true" && (await page.locator('[data-testid="assign-help-keys"] kbd', { hasText: "⇧H" }).count()) === 1);
+  // 키보드 그림 - 단추가 큰 창을 열고(J는 이동 색), Esc가 닫으면 포커스가 단추로 돌아온다
+  await page.locator('[data-testid="assign-help-keyboard-map"]').click();
+  await wait(page, "assign-keyboard-map");
+  check("the Keyboard map button opens the map with J tinted as a move key", (await page.locator('[data-testid="assign-keyboard-map-key-KeyJ"]').getAttribute("data-kind")) === "move");
+  // 창이 열린 동안 J를 누르면 그 키가 눌린 모양 + 한 번 반짝이고, Assign의 고름은 옮겨 가지 않는다
+  const pickedBefore = await page.locator("[data-sel]").first().getAttribute("data-testid");
+  await page.keyboard.down("KeyJ");
+  check("holding J lights its key on the map (pressed + flash) without moving the Assign pick", (await page.locator('[data-testid="assign-keyboard-map-key-KeyJ"][data-pressed][data-flash]').count()) === 1 && (await page.locator("[data-sel]").first().getAttribute("data-testid")) === pickedBefore);
+  await page.keyboard.up("KeyJ");
+  await page.keyboard.press("Escape");
+  await page.locator('[data-testid="assign-keyboard-map"]').waitFor({ state: "detached", timeout: T });
+  check("Esc closes the keyboard map and focus returns to its button", (await page.locator('[data-testid="assign-keyboard-map"]').count()) === 0 && (await page.evaluate(() => document.activeElement?.getAttribute("data-testid"))) === "assign-help-keyboard-map");
   // 탭 - 이전 화면(Documents)에서 들어와 Ctrl+→로 바꾸고, 뒤로 가기는 보던 탭 → 이전 화면
   await page.goto(`${BASE}/bundles/${halfBundleId}/documents`);
   await page.waitForLoadState("networkidle");
