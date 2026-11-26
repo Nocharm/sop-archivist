@@ -1097,6 +1097,54 @@ await runStep("assign: right-click an Old sentence to split it or change its lan
   check("the first piece's row is selected after the split", (await page.locator('[data-testid="assign-row-id"]').count()) === 1);
 });
 
+// 문장마다 나누기(쪼개기 먼저 §9) - 합친 박스는 합치기 전 자리로 나뉘고 되돌리기 한 번, 한 문장뿐이면 까닭을 알린다
+await runStep("assign: Split by sentence makes one box per sentence, one Ctrl+Z, a single sentence tells why", {}, async ({ page }) => {
+  const headers = { "X-Dev-User": "qa.member" };
+  const getJson = async (path) => (await page.request.get(`${BASE}/api/bundles/${freshBundleId}${path}`, { headers })).json();
+  await page.goto(`${BASE}/bundles/${freshBundleId}/assign`);
+  await wait(page, "assign-bar");
+  const rows = (await getJson("/units?limit=1000")).items;
+  const docId = rows[0].document_id;
+  const readView = async () => getJson(`/documents/${docId}/view`);
+  const isFree = (unit) => unit.kind === "sentence" && unit.pair_id === null && unit.noise_kind === null && rows.find((row) => row.unit_id === unit.id)?.status === "unassigned";
+  const units = (await readView()).units;
+  const first = units.find((unit, index) => isFree(unit) && units[index + 1] && isFree(units[index + 1]) && units[index + 1].lang === unit.lang && units[index + 1].block_id !== unit.block_id);
+  check("the fresh bundle has two neighbouring free sentences to merge", first !== undefined);
+  if (first === undefined) return;
+  const second = units[units.indexOf(first) + 1];
+  const view = await readView();
+  const merged = await page.request.post(`${BASE}/api/bundles/${freshBundleId}/documents/${docId}/edits`, { headers, data: { revision: view.document.revision, confirm: false, op: { type: "merge", unit_ids: [first.id, second.id] } } });
+  check("the two sentences merge into one box", merged.status() === 200, String(merged.status()));
+  const box = (await readView()).units.find((unit) => unit.text.includes(first.text) && unit.text.includes(second.text));
+  if (box === undefined) return;
+  const countBefore = (await readView()).units.length;
+  await page.reload();
+  await wait(page, "assign-bar");
+  const piece = page.locator(`[data-testid="assign-paper-unit-${box.id}"]`).first();
+  await piece.evaluate((node) => node.scrollIntoView({ block: "center" }));
+  await piece.click({ button: "right" });
+  await wait(page, "assign-ctx-menu");
+  check("the menu offers Split by sentence right under Split here", (await page.locator('[data-testid="assign-ctx-menu"] [data-testid^="assign-ctx-"]').evaluateAll((els) => { const ids = els.map((el) => el.getAttribute("data-testid")); return ids.indexOf("assign-ctx-split_sentences") === ids.indexOf("assign-ctx-split") + 1; })));
+  await page.locator('[data-testid="assign-ctx-split_sentences"]').click();
+  await page.waitForFunction(async ([path, count]) => (await (await fetch(path, { headers: { "X-Dev-User": "qa.member" } })).json()).units.length === count + 1, [`/api/bundles/${freshBundleId}/documents/${docId}/view`, countBefore], { timeout: T });
+  check("Split by sentence makes one box per sentence", true);
+  await page.waitForLoadState("networkidle");
+  await page.locator('[data-testid="assign-undo"]:not([disabled])').click();
+  await page.waitForFunction(async ([path, count]) => (await (await fetch(path, { headers: { "X-Dev-User": "qa.member" } })).json()).units.length === count, [`/api/bundles/${freshBundleId}/documents/${docId}/view`, countBefore], { timeout: T });
+  check("one Undo puts the box back", true);
+  // 한 문장뿐인 박스에서 Shift+S - 아무것도 바뀌지 않고 까닭을 알린다
+  await page.waitForLoadState("networkidle");
+  const single = (await readView()).units.find((unit) => isFree(unit) && !/[.?!。]\s+\S/.test(unit.text) && unit.text.length > 10);
+  if (single === undefined) return;
+  const target = page.locator(`[data-testid="assign-paper-unit-${single.id}"]`).first();
+  await target.evaluate((node) => node.scrollIntoView({ block: "center" }));
+  await target.click();
+  await page.keyboard.press("Shift+S");
+  await page.locator('[data-testid^="toast-"]', { hasText: "only one sentence" }).first().waitFor({ timeout: T });
+  check("Shift+S on a single sentence says there is only one", true);
+  check("nothing changed", (await readView()).units.length === countBefore);
+});
+
 await runStep("assign: an edit survives looking at another unit", { drafting: true }, async ({ page }) => {
   await page.goto(`${BASE}/bundles/${freshBundleId}/assign`);
   await wait(page, "assign-bar");
