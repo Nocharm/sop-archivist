@@ -1,5 +1,6 @@
 """벗긴 표 번호 이어 매기기 · 합치면 뒤 번호 당기기(11-23 명세 D1, 쪼개기 먼저 설계 §9 · §11-1) — 순수 규칙의 정답 표와
-Old 표를 벗긴 뒤 따로 한 칸으로 남는 번호 편집(되돌리기 두 칸). 자료는 시나리오 S17을 본뜬 합성 문서다."""
+Old 표를 벗긴 뒤 따로 한 칸으로 남는 번호 편집(되돌리기 두 칸), 합치기 · 여럿 합치기가 같은 목록의 뒤 번호를 당기기(같은 칸).
+자료는 시나리오 S17을 본뜬 합성 문서다."""
 
 import pytest
 from fastapi.testclient import TestClient
@@ -7,7 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.sop.models import UnitEdit
-from app.sop.numbering import FlowLine, plan_continue
+from app.sop.numbering import FlowLine, plan_continue, plan_pull
 from tests.access_helpers import run_in_session
 from tests.docx_factory import build_docx, p, tbl
 from tests.sop_helpers import AUTHOR, create_bundle, find_unit, get_view, upload
@@ -257,3 +258,116 @@ def test_decided_lines_keep_their_decisions(client: TestClient) -> None:
     after = find_unit(get_view(client, bundle_id, doc_id), ROW_TWO)
     assert _numbers(client, bundle_id, doc_id) == ["5.1", "5.2", "5.3", "5.4"]
     assert (after["id"], after["status"]) == (line["id"], decided) and decided != line["status"]
+
+
+# ── 합치면 뒤 번호 당기기(D1-R6) ─────────────────────────────────────────────
+
+def test_pull() -> None:
+    assert plan_pull(["5.1", "5.2", "5.4"], 1, ["5.3"]) == {2: "5.3"}
+
+
+def test_pull_takes_children_along() -> None:
+    assert plan_pull(["5.2", "5.3.1", "5.4", "5.4.1"], 0, ["5.3"]) == {1: "5.2.1", 2: "5.3", 3: "5.3.1"}
+
+
+def test_no_number_absorbed_pulls_nothing() -> None:
+    assert plan_pull(["5.1", "5.2"], 0, []) == {}
+    assert plan_pull(["5.1", "5.2", "6"], 1, ["7"]) == {}
+
+
+ROW_THREE = f"3 {STEPS[2]}"
+KO_BODY = ["6.1 기록지를 쓴다.", "6.2 서명한다.", "6.3 보관한다."]
+EN_BODY = ["6.1 Fill in the record.", "6.2 Sign it.", "6.3 Keep it."]
+LISTS = BODY + "".join(p(text) for text in KO_BODY + EN_BODY)  # 표 · 한글 본문 목록 · 영어 본문 목록
+ROWS = p("6. 기록", "Heading1") + "".join(p(ko) + p(en) for ko, en in zip(KO_BODY, EN_BODY, strict=True))  # 한/영 번갈아
+
+
+def _merge(client: TestClient, bundle_id: int, doc_id: int, *texts: str, op: str = "merge") -> dict:
+    view = get_view(client, bundle_id, doc_id)
+    return _edit(client, bundle_id, doc_id, {"type": op, "unit_ids": [find_unit(view, text)["id"] for text in texts]})
+
+
+def _body_numbers(client: TestClient, bundle_id: int, doc_id: int, lang: str) -> list[str]:
+    """표 밖 본문 줄(제목 아님)의 번호 — 원문 순."""
+    view = get_view(client, bundle_id, doc_id)
+    return [
+        unit["number"]["value"] for unit in view["units"]
+        if unit["kind"] == "sentence" and unit["table_id"] is None and unit["lang"] == lang and unit["number"] and unit["number"]["value"]
+    ]
+
+
+@clean
+def test_s17_merge_and_undo(client: TestClient) -> None:
+    bundle_id, doc_id = _setup(client)
+    _unwrap(client, bundle_id, doc_id)
+
+    _merge(client, bundle_id, doc_id, ROW_TWO, ROW_THREE)
+
+    assert _numbers(client, bundle_id, doc_id) == ["5.1", "5.2", "5.3"]
+    assert find_unit(get_view(client, bundle_id, doc_id), f"{ROW_TWO} {ROW_THREE}")["number"]["value"] == "5.2"
+    _assign_step(client, bundle_id, "undo")
+    assert _numbers(client, bundle_id, doc_id) == ["5.1", "5.2", "5.3", "5.4"]
+    _assign_step(client, bundle_id, "undo")
+    assert (_numbers(client, bundle_id, doc_id), _is_layout(client, bundle_id, doc_id)) == (["1", "2", "3", "4"], True)
+    _assign_step(client, bundle_id, "undo")
+    assert not _is_layout(client, bundle_id, doc_id)
+
+
+@clean
+def test_unmerge_does_not_leave_twin_numbers(client: TestClient) -> None:
+    bundle_id, doc_id = _setup(client)
+    _unwrap(client, bundle_id, doc_id)
+    merged = _merge(client, bundle_id, doc_id, ROW_TWO, ROW_THREE)["created_unit_ids"][0]
+
+    _edit(client, bundle_id, doc_id, {"type": "unmerge", "unit_id": merged})
+
+    assert _numbers(client, bundle_id, doc_id) == ["5.1", "5.2", "5.3", "5.4"]
+
+
+@clean
+def test_body_lines_pull_too(client: TestClient) -> None:
+    bundle_id, doc_id = _setup(client, LISTS)
+
+    _merge(client, bundle_id, doc_id, KO_BODY[0], KO_BODY[1])
+
+    assert _body_numbers(client, bundle_id, doc_id, "ko") == ["6.1", "6.2"]
+
+
+@clean
+def test_other_language_and_other_table_do_not_move(client: TestClient) -> None:
+    bundle_id, doc_id = _setup(client, LISTS)
+    _unwrap(client, bundle_id, doc_id)
+
+    _merge(client, bundle_id, doc_id, KO_BODY[1], KO_BODY[2])
+    _merge(client, bundle_id, doc_id, ROW_TWO, ROW_THREE)
+
+    assert _body_numbers(client, bundle_id, doc_id, "ko") == ["6.1", "6.2"]
+    assert _body_numbers(client, bundle_id, doc_id, "en") == ["6.1", "6.2", "6.3"]
+    assert _numbers(client, bundle_id, doc_id) == ["5.1", "5.2", "5.3"]
+
+
+@clean
+def test_merge_rows_pulls_each_language(client: TestClient) -> None:
+    from tests.test_sop_lang_shape import _pair
+    from tests.test_sop_merge_rows import _clear_pairs
+
+    bundle_id, doc_id = _setup(client, ROWS)
+    _clear_pairs(client, bundle_id, doc_id)
+    view = get_view(client, bundle_id, doc_id)
+    for ko, en in zip(KO_BODY, EN_BODY, strict=True):
+        _pair(client, bundle_id, doc_id, [find_unit(view, ko)["id"], find_unit(view, en)["id"]])
+
+    _merge(client, bundle_id, doc_id, KO_BODY[0], EN_BODY[0], KO_BODY[1], EN_BODY[1], op="merge_rows")
+
+    assert _body_numbers(client, bundle_id, doc_id, "ko") == ["6.1", "6.2"]
+    assert _body_numbers(client, bundle_id, doc_id, "en") == ["6.1", "6.2"]
+
+
+@clean
+def test_new_merge_keeps_written_numbers(client: TestClient) -> None:
+    bundle_id, doc_id = _setup(client, side="new")
+    _unwrap(client, bundle_id, doc_id)
+
+    _merge(client, bundle_id, doc_id, ROW_TWO, ROW_THREE)
+
+    assert _numbers(client, bundle_id, doc_id) == ["1", "2", "4"]

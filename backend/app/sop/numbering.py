@@ -454,6 +454,34 @@ def plan_follow(numbers: Sequence[str | None], index: int, new: str) -> dict[int
     return changes
 
 
+def plan_pull(numbers: Sequence[str | None], kept: int, absorbed: Sequence[str]) -> dict[int, str]:
+    """합쳐 사라진 번호 뒤를 당긴다(11-23 명세 D1-R6) — numbers는 같은 목록 후보(사라진 줄은 뺌, 문서 순서), kept는 남은 줄, absorbed는
+    사라진 줄의 번호. 사라진 번호 가운데 남은 줄과 같은 수준 · 같은 부모인 것이 없으면 빈 결과. 남은 줄 바로 뒤에 이어진 사라진 줄의 아래
+    줄(5.3.1)은 남은 줄 아래로(5.2.1), 나머지는 plan_follow(numbers, kept, numbers[kept])가 차례로 당긴다. 바뀌는 줄만 돌려준다."""
+    kept_parts = _split_parts(numbers[kept] or "")
+    if kept_parts is None:
+        return {}
+    gone = [
+        normalize_number(number) for number in absorbed
+        if (parts := _split_parts(number)) is not None and len(parts) == len(kept_parts) and parts[:-1] == kept_parts[:-1]
+    ]
+    if not gone:
+        return {}
+    head = normalize_number(numbers[kept] or "")
+    moved = list(numbers)
+    for position in range(kept + 1, len(numbers)):
+        number = numbers[position]
+        if number is None:
+            continue
+        prefix = next((old for old in gone if normalize_number(number).startswith(old + ".")), None)
+        if prefix is None:
+            break
+        moved[position] = head + number.strip()[len(prefix):]
+    changes = {position: number for position, number in enumerate(moved) if number != numbers[position]}
+    changes.update(plan_follow(moved, kept, moved[kept] or ""))
+    return {position: number for position, number in sorted(changes.items()) if number != numbers[position]}
+
+
 @dataclass(frozen=True)
 class FlowLine:
     """번호 흐름의 줄 하나(원문 차례) — 벗긴 표 번호 잇기(plan_continue)가 본다. number는 번호 칸 값(get_number), table_id는 벗긴 표
