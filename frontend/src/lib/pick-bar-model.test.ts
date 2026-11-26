@@ -45,11 +45,13 @@ const CASES: Array<[string, PickBarState, ReturnType<typeof want>]> = [
   ["17 read only", state(open(), sentence(), { canEdit: false }), want(null, null, null, 0, "none")],
   ["18 without a source, Old last", state(open(), sentence(), { mode: "unsourced", last: "old" }), want("old", { kind: "link", result: [t], isEnter: true }, null, 4, "link")],
   ["19 without a source, Old only", state(open(), null, { mode: "unsourced", last: "old" }), want("old", null, "new", 4, "none")],
-  // act null - 저장 뒤 다음 박스로 옮긴 것(Old 쪽) · 편집 뒤 따라간 것(모델은 이제 따라가기에 act를 그대로 두지만 결정표는 null도 받는다)
-  ["20 both, New last, act null", state(open(), sentence(), { act: null }), want("new", { kind: "link", result: [t], isEnter: true }, null, 4, "link")],
+  // act null - 저장 뒤 다음 박스로 저절로 옮긴 것(따라가기는 act를 그대로 둔다). 누르지 않았으니 잇지 않고, Old가 마지막이 아니면 숨은 확정도 없다
+  ["20 both, New moved on by itself, act null", state(open(), sentence(), { act: null }), want("new", { kind: "link", result: [t], isEnter: false }, null, 4, "none")],
   ["21 both, Old moved on by a save, act null", state(open(), sentence(), { act: null, last: "old" }), want("old", { kind: "link", result: [t], isEnter: false }, null, 4, "confirm")],
   ["22 a New sentence only, act null", state(null, sentence(), { act: null }), want("new", null, "old", 4, "none")],
-  ["23 already linked, New last, act null", state(linked([t]), sentence(), { act: null }), want("new", { kind: "unlink", result: [], isEnter: false }, null, 4, "noop assign.pick.alreadyLinked")],
+  ["23 already linked, New last, act null", state(linked([t]), sentence(), { act: null }), want("new", { kind: "unlink", result: [], isEnter: false }, null, 4, "none")],
+  ["24 without a source, the next New sentence picked after a link", state(linked([s]), sentence(), { mode: "unsourced", act: null }), want("new", { kind: "replace", result: [t], isEnter: false }, null, 4, "none")],
+  ["25 without a source, the next New sentence pressed", state(linked([s]), sentence(), { mode: "unsourced" }), want("new", { kind: "replace", result: [t], isEnter: true }, null, 4, "link")],
 ];
 
 describe("buildPickBar", () => {

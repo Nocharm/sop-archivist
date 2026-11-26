@@ -150,7 +150,8 @@ describe("Enter and the keys across both documents", () => {
     expect(resolveEnter(buildPickBar({ ...base, isMultiPick: true }), confirm)).toEqual({ kind: "none" });
     expect(resolveEnter(buildPickBar({ ...base, isPicking: true }), confirm)).toEqual({ kind: "none" });
     expect(resolveEnter(buildPickBar({ ...base, isMultiPick: true, last: "old" }), confirm)).toEqual({ kind: "confirm" });
-    expect(resolveEnter(buildPickBar({ ...base, act: null }), confirm)).toEqual({ kind: "link" });
+    // New를 저절로 고른 때(잇기 뒤 출처 없는 다음 문장)도 아무것도 하지 않는다 - 잇지도, 숨은 확정도 없다
+    expect(resolveEnter(buildPickBar({ ...base, act: null }), confirm)).toEqual({ kind: "none" });
   });
   it("judgement keys stay on Old, shape keys and J follow the last side", () => {
     expect(routeKey("Delete", on("new")).side).toBe("old");

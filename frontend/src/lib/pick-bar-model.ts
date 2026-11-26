@@ -87,9 +87,10 @@ export function buildPickBar(state: PickBarState): PickBar {
     const kind = readLinkKind(old, next);
     // 끊기는 막지 않는다 - 확정을 막는 까닭(참조 번호 · 캡션)은 잇는 쪽에만 걸린다
     const reasonKey = kind === "unlink" ? null : (old.blockKey ?? next.whyKey);
-    // 박스를 눌렀거나 New를 마지막에 눌렀으면 잇기 - 보낼 곳을 고른 뒤나 저장 뒤 Old가 옮겨 간 때만 확정이다(New 쪽 오른쪽 칸에는 확정 단추가 없다)
-    const isPress = state.act === "pick" || last === "new";
-    const enter: PickEnter = !isPress ? (state.mode === "old" ? { kind: "confirm" } : { kind: "none" }) : kind === "unlink" ? { kind: "noop", noticeKey: "assign.pick.alreadyLinked" } : reasonKey !== null ? { kind: "noop", noticeKey: reasonKey } : { kind: "link" };
+    // 박스를 눌렀으면 잇기(따라가기는 act를 그대로 둔다). 보낼 곳을 고른 뒤나 저장 뒤 저절로 옮긴 때는 Old가 마지막일 때만 확정이고,
+    // New가 마지막이면 아무것도 하지 않는다 - New 쪽 오른쪽 칸에는 확정 단추가 없고, 저절로 고른 New에 바꿔 잇지 않는다
+    const isPress = state.act === "pick";
+    const enter: PickEnter = !isPress ? (last === "old" && state.mode === "old" ? { kind: "confirm" } : { kind: "none" }) : kind === "unlink" ? { kind: "noop", noticeKey: "assign.pick.alreadyLinked" } : reasonKey !== null ? { kind: "noop", noticeKey: reasonKey } : { kind: "link" };
     const link: PickLink = { kind, rowKey: old.rowKey, unitId: old.unitId, targetIds: next.targetIds, result: readResult(kind, old.savedTargetIds, next.targetIds), reasonKey, isEnter: enter.kind === "link" };
     const hasLinks = last === "old" ? old.savedTargetIds.length > 0 : next.hasSources;
     return { at, link, startLink: null, tools, more: [...(hasLinks ? (["show_linked"] as const) : []), ...extra], enter, holdsEnter: true };
