@@ -199,7 +199,7 @@ describe("renderOriginal", () => {
   it("draws planted marks as element ids and flags repeated header rows", async () => {
     const { default: JSZip } = await import("jszip");
     const { plantPlaceMarks } = await import("@/lib/original-place-model");
-    const { readPartsToMark, renderOriginal } = await import("./original-render");
+    const { openOriginalRoot, readPartsToMark, renderOriginal } = await import("./original-render");
     const zip = new JSZip();
     zip.file(
       "[Content_Types].xml",
@@ -225,13 +225,16 @@ describe("renderOriginal", () => {
 
     const planted = plantPlaceMarks(await readPartsToMark(file, places), places);
     const host = document.createElement("div");
-    const styles = document.createElement("div");
-    document.body.append(styles, host);
-    await renderOriginal(file, planted.parts, host, styles);
+    document.body.append(host);
+    const { root, styles, body } = openOriginalRoot(host);
+    await renderOriginal(file, planted.parts, body, styles);
 
-    expect(host.querySelector('[id="sopa_0"]')?.closest("p")?.textContent).toBe("Two");
-    expect(host.querySelector("section.sopa-ov")).not.toBeNull();
-    expect([...host.querySelectorAll("tr.sopa-ov-head-row")].map((tr) => tr.textContent)).toEqual(["Head"]);
+    expect(root.getElementById("sopa_0")?.closest("p")?.textContent).toBe("Two");
+    expect(host.querySelector("section.sopa-ov")).toBeNull(); // 그린 것은 그림자 뿌리 안에만
+    expect(body.querySelector("section.sopa-ov")).not.toBeNull();
+    const host2 = body.querySelectorAll("tr.sopa-ov-head-row");
+    expect(host2).toHaveLength(1);
+    expect([...body.querySelectorAll("tr.sopa-ov-head-row")].map((tr) => tr.textContent)).toEqual(["Head"]);
     expect(styles.querySelector("style")).not.toBeNull();
   });
 });
@@ -247,22 +250,73 @@ describe("scopeRenderedStyles", () => {
     return host;
   }
 
-  it("drops rules outside the sopa-ov scope", async () => {
+  it("scopes renderer styles to the shadow root", async () => {
+    const { openOriginalRoot, scopeRenderedStyles } = await import("./original-render");
+    const outside = document.createElement("p");
+    outside.className = "app-x";
+    const host = document.createElement("div");
+    document.body.append(outside, host);
+    const { styles, body } = openOriginalRoot(host);
+    const emitted = buildStyles("body { display: none; } .app-x { display: none; } .sopa-ov p { margin: 0pt; } :host { display: none; }");
+    scopeRenderedStyles(emitted);
+    styles.append(...emitted.childNodes);
+    body.append(document.createElement("article"));
+
+    expect(getComputedStyle(outside).display).not.toBe("none");
+    expect(getComputedStyle(host).display).not.toBe("none");
+    expect(styles.textContent).toContain(".sopa-ov p");
+    expect(styles.textContent).not.toContain(":host");
+    expect(host.shadowRoot?.contains(styles)).toBe(true);
+  });
+
+  it("keeps the renderer's own scoped rules", async () => {
     const { scopeRenderedStyles } = await import("./original-render");
     const host = buildStyles(
-      "body { display: none; } .app-x { color: red; } .sopa-ov p { margin: 0pt; } .sopa-ov-wrapper { padding: 30px; }",
-      "p.sopa-ov_heading1 span { font-weight: bold; } section.sopa-ov { width: 600px; } p.sopa-ov-num-1-0::before { content: '1'; }",
-      ".sopa-ov p, .app-x { color: blue; } .sopa-ovx { color: green; } p.sopa-ov_x {} div { color: red; }",
+      ".sopa-ov-wrapper { padding: 30px; } p.sopa-ov_heading1 span { font-weight: bold; } section.sopa-ov { width: 600px; } p.sopa-ov-num-1-0::before { content: '1.'; }",
+    );
+    expect(scopeRenderedStyles(host)).toBe(0);
+    for (const kept of [".sopa-ov-wrapper", "p.sopa-ov_heading1 span", "section.sopa-ov", "p.sopa-ov-num-1-0::before"]) {
+      expect(host.textContent).toContain(kept);
+    }
+  });
+
+  it("drops fetches hidden behind other forms", async () => {
+    const { scopeRenderedStyles } = await import("./original-render");
+    const host = buildStyles(
+      '.sopa-ov p { background-image: image-set("https://e/x" 1x); }',
+      '.sopa-ov p { background-image: -webkit-image-set("https://e/x" 1x); }',
+      ".sopa-ov p { background: u\\rl(https://e/x); }",
+      ".sopa-ov p { background: url(   'https://e/x'   ); }",
+      ".sopa-ov p { background: \\75 rl(https://e/x); }",
+      '@font-face { font-family: Evil; src: src("https://e/f"); }',
+      '@import "https://e";',
+      '.sopa-ov p { content: "//e/x"; }',
+      ".sopa-ov p { background: cross-fade(url(blob:a), url(blob:b), 50%); }",
     );
 
-    const dropped = scopeRenderedStyles(host);
+    scopeRenderedStyles(host);
 
-    const text = host.textContent ?? "";
-    expect(dropped).toBe(5);
-    expect(text).not.toMatch(/body|app-x|sopa-ovx|div/);
-    for (const kept of [".sopa-ov p", ".sopa-ov-wrapper", "p.sopa-ov_heading1 span", "section.sopa-ov", "p.sopa-ov-num-1-0::before"]) {
-      expect(text).toContain(kept);
-    }
+    // 버린 수는 세지 않는다 - 엔진마다 읽지 못한 선언을 먼저 버리는 몫이 달라(jsdom), 남은 글에 바깥 주소가 없는 것만 본다
+    expect(host.textContent).not.toMatch(/e\/x|e\/f|https|@import|Evil|cross-fade/);
+  });
+
+  it("drops each hidden fetch our filter must catch", async () => {
+    const { scopeRenderedStyles } = await import("./original-render");
+    // 사용자 속성(--…)은 엔진이 값을 따지지 않고 그대로 두므로 거르기 자체를 본다
+    const host = buildStyles(
+      '.a { --x: image-set("https://e/x" 1x); }',
+      ".b { --x: u\\rl(https://e/x); }",
+      ".c { --x: url(   'https://e/x'   ); }",
+      ".d { --x: \\75 rl(https://e/x); }",
+      ".e { --x: element(#x); }",
+      '.f { content: "//e/x"; }',
+      ".g { --x: url(blob:http://local/1); --y: url(data:image/png;base64,AA//AA); }",
+    );
+
+    expect(scopeRenderedStyles(host)).toBe(6);
+    expect(host.textContent).toContain("blob:http://local/1");
+    expect(host.textContent).toContain("AA//AA");
+    expect(host.textContent).not.toMatch(/e\/x|element/);
   });
 
   it("drops external urls in styles", async () => {

@@ -42,7 +42,7 @@ export async function readPartsToMark(file: Blob, places: readonly OriginalPlace
   return parts;
 }
 
-/** 표지 심은 부분 파일로 DOCX를 다시 묶어 host에 그린다(그리개 <style>은 styleHost에) */
+/** 표지 심은 부분 파일로 DOCX를 다시 묶어 host에 그린다(그리개 <style>은 걸러서 styleHost에) - 둘 다 openOriginalRoot의 그림자 뿌리 안 */
 export async function renderOriginal(file: Blob, parts: Record<string, string>, host: HTMLElement, styleHost: HTMLElement): Promise<void> {
   const [{ default: JSZip }, docx] = await Promise.all([import("jszip"), import("docx-preview")]);
   const zip = await JSZip.loadAsync(file);
@@ -150,51 +150,56 @@ export function markHeaderRows(xml: string): string {
   return count > 0 ? new XMLSerializer().serializeToString(doc) : xml;
 }
 
-// 그리개가 내는 선택자는 모두 클래스 접두 아래다: .sopa-ov · .sopa-ov-wrapper · section.sopa-ov · p.sopa-ov_<스타일> · p.sopa-ov-num-1-0:before
-// - 첫 겹이 (태그 이름 +) sopa-ov 집안 클래스인 것만 남긴다. 스타일 id에 `}`를 넣어 바깥 선택자를 끼우는 것을 여기서 막는다
-const SCOPED_SELECTOR_RE = new RegExp(`^(?:[a-zA-Z][\\w-]*)?\\.${OV_CLASS}(?:[-_][\\w-]*)?(?![\\w-])`);
-const CSS_URL_RE = /url\(\s*(['"]?)([^'")]*)\1\s*\)/gi;
-const SAFE_URL_RE = /^\s*(?:blob|data):/i;
+// 그리개 CSS는 그림자 뿌리 안에만 붙는다(openOriginalRoot) - 앱으로 새어 나가지 않는 경계는 그림자 뿌리다.
+// 여기서는 바깥 자원을 받으러 가는 규칙과 그림자 뿌리 밖(:host)을 건드리는 규칙만 거른다. 판정은 브라우저가 다시 쓴 cssText로.
 const STYLE_RULE = 1;
 const FONT_FACE_RULE = 5;
+const CSS_ESCAPE_RE = /\\([0-9a-fA-F]{1,6}\s?|[^\n0-9a-fA-F])/g;
+// url( 인자 - 따옴표 둘 · 따옴표 없음
+const CSS_URL_RE = /url\(\s*(?:"((?:[^"\\]|\\.)*)"|'((?:[^'\\]|\\.)*)'|([^)\s"']*))\s*\)/gi;
+const SAFE_URL_RE = /^(?:blob|data):/i;
+// 주소를 품을 수 있는 다른 꼴 - src( 는 함수만(@font-face의 src: 서술자는 아니다)
+const FETCHING_RE = /image-set\(|cross-fade\(|element\(|(?:^|[^\w-])src\(|@import/i;
+const QUOTED_RE = /"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'/g;
 
-/** 쉼표로 나눈 선택자들 - 괄호 · 대괄호 안의 쉼표(:is(a, b))는 나누지 않는다 */
-function splitSelectors(text: string): string[] {
-  const out: string[] = [];
-  let depth = 0;
-  let from = 0;
-  for (let i = 0; i < text.length; i += 1) {
-    const ch = text[i];
-    if (ch === "(" || ch === "[") depth += 1;
-    else if (ch === ")" || ch === "]") depth -= 1;
-    else if (ch === "," && depth === 0) {
-      out.push(text.slice(from, i).trim());
-      from = i + 1;
+/** CSS 이스케이프(\72 · \r)를 글자로 푼다 - `u\rl(`처럼 숨긴 꼴도 같은 검사에 걸리게 */
+function decodeCssEscapes(text: string): string {
+  return text.replace(CSS_ESCAPE_RE, (_, escape: string) => {
+    const hex = escape.trim();
+    if (/^[0-9a-fA-F]+$/.test(hex)) {
+      const code = Number.parseInt(hex, 16);
+      return code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : "�";
     }
+    return escape;
+  });
+}
+
+/** 규칙이 바깥 자원을 받으러 가지 않는가 - url()은 blob:/data:만, 꼴을 못 읽은 url(·주소를 품는 함수·@import·`//`가 든 글자열은 안 된다 */
+function isLocalOnly(cssText: string): boolean {
+  const text = decodeCssEscapes(cssText);
+  let urls = 0;
+  for (const match of text.matchAll(CSS_URL_RE)) {
+    urls += 1;
+    if (!SAFE_URL_RE.test((match[1] ?? match[2] ?? match[3] ?? "").trim())) return false;
   }
-  out.push(text.slice(from).trim());
-  return out;
+  if ((text.match(/url\(/gi)?.length ?? 0) !== urls) return false;
+  const rest = text.replace(CSS_URL_RE, "");
+  if (FETCHING_RE.test(rest)) return false;
+  return !(rest.match(QUOTED_RE) ?? []).some((quoted) => quoted.includes("//"));
 }
 
-/** 모든 url()이 blob:/data:인가 - 꼴을 못 읽은 url(도 있으면 아니다(닫힌 쪽으로) */
-function hasOnlyLocalUrls(cssText: string): boolean {
-  const matches = [...cssText.matchAll(CSS_URL_RE)];
-  const opened = cssText.match(/url\(/gi)?.length ?? 0;
-  return matches.length === opened && matches.every((match) => SAFE_URL_RE.test(match[2]));
-}
-
-function isScopedRule(rule: CSSRule): boolean {
-  if (!hasOnlyLocalUrls(rule.cssText)) return false;
-  // 글꼴은 주소(src)가 있고 blob:/data:일 때만 - 주소 없는 @font-face는 쓸모가 없으니 닫힌 쪽으로 버린다
+function isAllowedRule(rule: CSSRule): boolean {
+  if (!isLocalOnly(rule.cssText)) return false;
   if (rule.type === FONT_FACE_RULE) {
+    // 글꼴은 주소(src)가 있고 모두 blob:/data:일 때만 - 주소 없는 @font-face는 쓸모가 없으니 닫힌 쪽으로 버린다
     const src = (rule as CSSFontFaceRule).style.getPropertyValue("src");
-    return /url\(/i.test(src) && hasOnlyLocalUrls(src);
+    return /url\(/i.test(src) && isLocalOnly(src);
   }
-  if (rule.type !== STYLE_RULE) return false; // @import · @media · @keyframes · @page … 는 그리개가 내지 않는다
-  return splitSelectors((rule as CSSStyleRule).selectorText).every((selector) => SCOPED_SELECTOR_RE.test(selector));
+  // @import · @media · @keyframes · @page … 는 그리개가 내지 않는다. :host는 그림자 뿌리 밖의 주인 요소를 꾸민다
+  return rule.type === STYLE_RULE && !/:host|::slotted/i.test((rule as CSSStyleRule).selectorText);
 }
 
-/** CSS 글을 문서에 붙이지 않고 규칙으로 읽는다 - 만든 시트(replaceSync)는 @import를 버리고 받지 않는다, 없으면(jsdom) 비활성 문서에서 */
+/** CSS 글을 문서에 붙이지 않고 규칙으로 읽는다 - 만든 시트(replaceSync)는 @import를 버리고 받지 않는다, 없으면 비활성 문서에서 */
 function readCssRules(text: string, owner: Document): CSSRule[] | null {
   if (typeof CSSStyleSheet !== "undefined" && "replaceSync" in CSSStyleSheet.prototype) {
     try {
@@ -213,8 +218,8 @@ function readCssRules(text: string, owner: Document): CSSRule[] | null {
 }
 
 /**
- * 그리개가 styleHost에 넣은 <style>을 sopa-ov 범위 규칙만 남기고 다시 쓴다(textContent) - 올린 문서의 CSS를 믿지 않는다.
- * 범위 밖 선택자 · @import · blob:/data: 밖 url()이 든 규칙을 버리고, @font-face는 글꼴 주소가 blob:/data:일 때만 둔다. 버린 규칙 수를 돌려준다.
+ * 그리개가 styleHost에 넣은 <style>을 다시 쓴다(textContent) - 올린 문서에서 만든 CSS를 믿지 않는다.
+ * 바깥 자원을 받는 규칙 · :host 규칙 · 규칙이 아닌 것(@import 등)을 버리고 버린 규칙 수를 돌려준다. 문서에 붙이기 전에 부른다.
  */
 export function scopeRenderedStyles(styleHost: HTMLElement): number {
   let dropped = 0;
@@ -226,11 +231,47 @@ export function scopeRenderedStyles(styleHost: HTMLElement): number {
       style.textContent = "";
       continue;
     }
-    const kept = rules.filter(isScopedRule);
+    const kept = rules.filter(isAllowedRule);
     dropped += rules.length - kept.length;
     style.textContent = kept.map((rule) => rule.cssText).join("\n");
   }
   return dropped;
+}
+
+// 그림자 뿌리 안의 앱 모양 - 색은 바깥에서 물려받는 토큰(var(--…))만. 종이는 다크 테마에서도 흰색(--ov-paper)
+const OV_SHADOW_CSS = `
+:host { display: block; }
+div.${OV_CLASS}-wrapper { background: transparent; padding: 16px 16px 0; }
+div.${OV_CLASS}-wrapper > section.${OV_CLASS} { background: var(--ov-paper); box-shadow: var(--shadow-1); margin-bottom: 16px; }
+.is-ov-picked { background-color: var(--ov-paint) !important; box-shadow: inset 3px 0 0 var(--sheet-accent); }
+.is-ov-flash { animation: ov-flash 700ms var(--ease-exit) both; }
+@keyframes ov-flash { 0%, 30% { outline: 3px solid var(--sheet-accent); outline-offset: 2px; } 100% { outline: 3px solid transparent; outline-offset: 2px; } }
+.${UNRENDERABLE_CLASS} { display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box; overflow: hidden; vertical-align: middle; padding: 2px; border: 1px solid var(--sheet-line-thin); background: repeating-linear-gradient(45deg, transparent 0 6px, var(--sheet-rail) 6px 8px); color: var(--sheet-ink); font: 600 10px / 1.2 var(--font-ui); text-align: center; white-space: normal; }
+@media (prefers-reduced-motion: reduce) { .is-ov-flash { animation: none; } }
+`;
+
+/**
+ * host에 그림자 뿌리를 열고(이미 있으면 비우고) 앱 모양 시트 · 그리개 <style> 자리 · 그릴 자리를 둔다.
+ * 그리개 CSS는 이 뿌리 밖(앱)에 닿지 않고 앱 CSS도 안으로 들어오지 않는다. 표지는 root.getElementById로 찾는다.
+ */
+export function openOriginalRoot(host: HTMLElement): { root: ShadowRoot; styles: HTMLElement; body: HTMLElement } {
+  const root = host.shadowRoot ?? host.attachShadow({ mode: "open" });
+  const doc = host.ownerDocument;
+  const styles = doc.createElement("div");
+  const body = doc.createElement("div");
+  const appStyle: Node[] = [];
+  if ("adoptedStyleSheets" in root && typeof CSSStyleSheet !== "undefined" && "replaceSync" in CSSStyleSheet.prototype) {
+    const sheet = new CSSStyleSheet();
+    sheet.replaceSync(OV_SHADOW_CSS);
+    root.adoptedStyleSheets = [sheet];
+  } else {
+    // 만든 시트를 못 쓰는 환경 - 그리개 <style> 뒤에 두어 같은 무게면 이긴다
+    const style = doc.createElement("style");
+    style.textContent = OV_SHADOW_CSS;
+    appStyle.push(style);
+  }
+  root.replaceChildren(styles, ...appStyle, body);
+  return { root, styles, body };
 }
 
 /** 올린 문서 안의 링크는 http(s) · 문서 안 #만 남긴다 - javascript: · file: · data: 는 href를 지우고 글은 둔다 */
