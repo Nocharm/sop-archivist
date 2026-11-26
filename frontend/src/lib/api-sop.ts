@@ -1168,7 +1168,7 @@ export function saveGroup(bundleId: number, body: GroupSaveInput, undo?: UndoMet
 
 export function bulkDecide(
   bundleId: number,
-  body: { action: "delete" | "move_external"; reason: string; move_target_code: string; units: Array<{ unit_id: number; revision: number }> },
+  body: { action: "delete" | "move_external" | "clear"; reason: string; move_target_code: string; units: Array<{ unit_id: number; revision: number }> },
   undo?: UndoMeta,
 ): Promise<Array<{ unit_id: number; decision: Decision }>> {
   return apiFetch(`/bundles/${bundleId}/decisions/bulk`, { method: "POST", body: JSON.stringify({ ...body, undo }) });

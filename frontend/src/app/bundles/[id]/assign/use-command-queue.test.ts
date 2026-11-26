@@ -61,7 +61,7 @@ function createScreen() {
     reread: () => {
       screenRevision = serverRevision;
     },
-    enqueueBulk: (unitIds: number[]) => act(async () => screen.commands.enqueue({ kind: "bulk", rows: unitIds.map((id) => ({ rowKey: `u${id}`, unitIds: [id] })), seen: new Map(unitIds.map((id) => [id, screenRevision])), reason: "", skipped: 0 })),
+    enqueueBulk: (unitIds: number[]) => act(async () => screen.commands.enqueue({ kind: "bulk", action: "delete", rows: unitIds.map((id) => ({ rowKey: `u${id}`, unitIds: [id] })), seen: new Map(unitIds.map((id) => [id, screenRevision])), reason: "", skipped: 0 })),
     remark: () => isRemarkOpen,
     closeRemark: () => {
       isRemarkOpen = null;
