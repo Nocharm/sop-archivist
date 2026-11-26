@@ -60,4 +60,9 @@ describe("the far pair bracket", () => {
     expect(paperHtml({ onGo, isHidden: true })).not.toContain("pair-hint");
     expect(paperHtml({ onGo, isHidden: false })).toContain("pair-hint");
   });
+
+  it("keeps the hint's line while hidden so nothing below moves", () => {
+    expect(paperHtml({ onGo, isHidden: true })).toContain('class="hint-space"');
+    expect(paperHtml({ onGo, isHidden: false })).not.toContain("hint-space");
+  });
 });

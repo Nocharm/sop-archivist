@@ -1635,6 +1635,8 @@
   .pair-hint { display: flex; align-items: center; gap: 6px; margin-top: 2px; margin-inline: -4px; padding: 0 4px; border-radius: var(--r-1); font: 500 var(--fs-micro) / 16px var(--font-mono); color: var(--ink-3); text-align: left; cursor: pointer; }
   .pair-hint:hover { color: var(--accent); background: var(--hover); }
   .pair-hint:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  /* 숨긴 안내 줄의 자리(괄호선이 보이거나 재기 전) - .pair-hint와 같은 높이(줄 16px + 위 2px)라 숨겼다 보여도 아래 내용이 움직이지 않는다 */
+  .hint-space { display: block; height: 16px; margin-top: 2px; }
   /* 짝 카드 안 순서 손잡이(설계 D8) - 고른 박스 왼쪽 가장자리의 안쪽 여백(--pg-pad-l)에 세로 가운데로. 번호 칸(.strip-lead)도 글도 덮지 않는다.
      박스 전체 끌기와 나뉘는 자리라 커서도 다르다(grab) */
   .pg[data-strips] .strip-grip { position: absolute; left: 0; top: 0; bottom: 0; z-index: 1; display: flex; align-items: center; justify-content: center; width: var(--pg-pad-l); color: var(--ink-4); cursor: grab; }

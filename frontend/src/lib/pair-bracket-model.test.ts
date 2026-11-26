@@ -1,7 +1,7 @@
 // 떨어진 짝 괄호선(11-23 명세 E1) - 떨어진 구성원이 모두 화면 안일 때만, 앞머리 왼쪽에 세로선 하나와 끝마다 가로 눈금
 import { describe, expect, it } from "vitest";
 
-import { listPairMates, resolvePairBracket, type BracketEnd } from "./pair-bracket-model";
+import { isPairHintShown, listPairMates, resolvePairBracket, type BracketEnd } from "./pair-bracket-model";
 
 const frame = { top: 50, bottom: 600, left: 20 };
 const zero = { left: 0, top: 0 };
@@ -65,5 +65,16 @@ describe("the mates of a picked box", () => {
   it("lists nothing for a lone box or no pick", () => {
     expect(listPairMates(units, 5)).toEqual([]);
     expect(listPairMates(units, null)).toEqual([]);
+  });
+});
+
+describe("when the hint under a picked box shows", () => {
+  it("waits for the bracket layer to measure this pick - a fresh pick only keeps the hint's line", () => {
+    expect(isPairHintShown(null, 4)).toBe(false);
+    expect(isPairHintShown({ unitId: 8, shown: false }, 4)).toBe(false);
+  });
+  it("shows the hint once this pick has no bracket, hides it while the bracket shows", () => {
+    expect(isPairHintShown({ unitId: 4, shown: false }, 4)).toBe(true);
+    expect(isPairHintShown({ unitId: 4, shown: true }, 4)).toBe(false);
   });
 });

@@ -44,3 +44,17 @@ export function listPairMates(units: ReadonlyMap<number, { id: number; pair_id: 
   if (pairId === null) return [];
   return [...units.values()].filter((unit) => unit.pair_id === pairId && unit.id !== unitId).sort((a, b) => a.pos_seq - b.pos_seq).map((unit) => unit.id);
 }
+
+/** 괄호선 층이 마지막으로 알린 것 - 그때 고른 박스와 괄호선이 보였나 */
+export interface BracketTold {
+  unitId: number | null;
+  shown: boolean;
+}
+
+/**
+ * 고른 박스 아래 안내 줄을 그릴까 - 괄호선 층이 지금 고름을 재고 "괄호선 없음"이라 알린 뒤에만. 그 전(새 고름의 첫 렌더)과 괄호선이 보이는 동안은
+ * 용지가 안내 줄 자리만 비워 둔다(Paper strips.pairHint.isHidden) - 한 프레임 뒤 재고 나서 아래 내용이 밀렸다 올라오지 않게
+ */
+export function isPairHintShown(told: BracketTold | null, pickedId: number | null): boolean {
+  return told !== null && told.unitId === pickedId && !told.shown;
+}

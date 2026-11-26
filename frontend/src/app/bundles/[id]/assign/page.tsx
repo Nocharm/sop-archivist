@@ -58,7 +58,7 @@ import { buildSheetDraft, isSpaceEnabled, pickSpaceSheet } from "@/lib/space-pre
 import { buildDeletedFolds } from "@/lib/deleted-fold-model";
 import type { IndentChange } from "@/lib/indent-model";
 import { hasTocLineIn, listPartSheets } from "@/lib/paper-model";
-import { listPairMates } from "@/lib/pair-bracket-model";
+import { isPairHintShown, listPairMates, type BracketTold } from "@/lib/pair-bracket-model";
 import { getNewDocumentsHref, getStageHref } from "@/lib/stages";
 import { toggleTocOpen } from "@/lib/toc-block-model";
 import { type SelectOption } from "@/components/ui/select";
@@ -103,15 +103,15 @@ export default function AssignPage() {
 
   // AI 거르기에서 띠를 눌러 펼친 칸(이미 쓴 New 문서) - key가 지금 것일 때만 산다
   const [aiOpen, setAiOpen] = useState<{ key: string; sections: ReadonlySet<string> }>({ key: "", sections: NO_SECTIONS });
-  // 떨어진 짝 괄호선(11-23 명세 E1) - 보이는 동안 그 칸의 안내 줄을 숨긴다. 알린 때의 고른 박스를 함께 쥐어, 고름이 바뀌면 다시 잴 때까지 안내 줄이 선다
-  const [bracketFor, setBracketFor] = useState<{ old: number | null; new: number | null }>({ old: null, new: null });
+  // 떨어진 짝 괄호선(11-23 명세 E1) - 괄호선 층이 알린 것(그때 고른 박스 · 보임). 안내 줄은 지금 고름을 잰 뒤 괄호선이 없을 때만 서고(lib/pair-bracket-model isPairHintShown),
+  // 그 전 · 괄호선이 보이는 동안은 자리만 비워 둬 고를 때 아래 내용이 밀렸다 올라오지 않는다
+  const [bracketFor, setBracketFor] = useState<{ old: BracketTold | null; new: BracketTold | null }>({ old: null, new: null });
   const oldSelectedId = (isNewEdit ? null : cutUnit?.id) ?? (isSolo ? soloUnit?.id : pickedId) ?? null;
   const newSelectedId = (isNewEdit ? cutUnit?.id : null) ?? newUnitId;
   const oldMateIds = useMemo(() => (paperModel ? listPairMates(paperModel.units, oldSelectedId) : []), [paperModel, oldSelectedId]);
   const newMateIds = useMemo(() => (newModel ? listPairMates(newModel.units, newSelectedId) : []), [newModel, newSelectedId]);
   function showBracket(side: "old" | "new", unitId: number | null, shown: boolean) {
-    const next = shown ? unitId : null;
-    setBracketFor((prev) => (prev[side] === next ? prev : { ...prev, [side]: next }));
+    setBracketFor((prev) => (prev[side]?.unitId === unitId && prev[side]?.shown === shown ? prev : { ...prev, [side]: { unitId, shown } }));
   }
   // New 문장에 포인터를 올리면 그 문장을 가리키는 추천 카드를 밝힌다. 카드에서 붙인 표시는 카드가 뗀다(그 사이 여기서 지우지 않게)
   const newHoverMarked = useRef(false);
@@ -647,7 +647,7 @@ export default function AssignPage() {
                 scope={pickScope}
                 held={panel.side === "new" && !isSolo}
                 // 떨어진 짝 안내 줄 - 누르면 짝의 원래 자리로 가 그 박스를 고른다(설계 D3)
-                pairHint={mode === "old" ? { onGo: goToUnit, isHidden: bracketFor.old !== null && bracketFor.old === oldSelectedId } : undefined}
+                pairHint={mode === "old" ? { onGo: goToUnit, isHidden: !isPairHintShown(bracketFor.old, oldSelectedId) } : undefined}
                 single={view.single}
                 // 짝 카드 안 순서 손잡이 - 고른 박스가 짝 전부가 이어 붙은 카드 안이면(설계 D8)
                 pairGrip={pairGrip}
@@ -895,7 +895,7 @@ export default function AssignPage() {
                       onUnwrapTable={rightTools.unwrap && rightShape ? (tableId) => unwrapTable(rightShape, tableId) : undefined}
                       tableFold={state.newTableFold}
                       // 떨어진 짝 안내 줄 - Old와 같다(누르면 짝으로 가 그 박스를 고른다)
-                      pairHint={mode === "old" ? { onGo: goToUnit, isHidden: bracketFor.new !== null && bracketFor.new === newSelectedId } : undefined}
+                      pairHint={mode === "old" ? { onGo: goToUnit, isHidden: !isPairHintShown(bracketFor.new, newSelectedId) } : undefined}
                     />
                   )}
                   {!isComposedDoc && <PairBracket side="new" pickedId={mode === "old" ? newSelectedId : null} mateIds={newMateIds} onShown={(shown) => showBracket("new", newSelectedId, shown)} />}
