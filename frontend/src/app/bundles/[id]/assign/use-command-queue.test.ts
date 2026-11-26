@@ -4,14 +4,14 @@ import { act, createElement, useEffect, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { NO_PLACE, type Focus, type Pending, type PendingKind } from "@/lib/assign-focus-model";
+import { NO_PICKS, NO_PLACE, type OldPick, type Pending, type PendingKind, type Picks } from "@/lib/assign-focus-model";
 import { useAssignFocus } from "@/lib/use-assign-focus";
 
 import { buildDecisionPending, isRepeatedSave, useCommandQueue, type AssignCommand, type SendContext, type WriteCommand } from "./use-command-queue";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-const unit = (unitId: number): Focus => ({ kind: "unit", docId: 1, unitId });
+const unit = (unitId: number): OldPick => ({ kind: "unit", docId: 1, unitId });
 
 interface Wait {
   resolve: () => void;
@@ -51,7 +51,8 @@ function createScreen() {
     press: (() => undefined) as (name: string) => void,
     click: (() => undefined) as (unitId: number) => void,
     commands: null as unknown as ReturnType<typeof useCommandQueue>,
-    focus: unit(1) as Focus,
+    focus: unit(1),
+    picks: NO_PICKS as Picks,
     pending: [] as readonly Pending[],
     reloads: () => reloads,
     changeElsewhere: () => {
@@ -90,10 +91,11 @@ function createScreen() {
     const [placed, setPlaced] = useState({ n: 0, revision: 1, unitIds: alive });
     const placeView = (unitIds: Set<number>) => setPlaced((prev) => ({ n: prev.n + 1, revision: prev.revision + 1, unitIds }));
     const [seen, setSeen] = useState(0);
-    const focus = focusCtl.focus;
+    const pickOld = (pick: OldPick) => focusCtl.pick({ side: "old", pick });
+    const focus = focusCtl.picks.old;
     if (placed.n !== seen) {
       setSeen(placed.n);
-      focusCtl.load({ type: "loaded", docs: [{ docId: 1, revision: placed.revision, unitIds: placed.unitIds }], liftUnit: (id) => (placed.unitIds.has(id) ? id : null) });
+      focusCtl.load({ type: "loaded", side: "old", docs: [{ docId: 1, revision: placed.revision, unitIds: placed.unitIds }], liftUnit: (id) => (placed.unitIds.has(id) ? id : null) });
     }
     const focusedId = focus.kind === "unit" ? focus.unitId : null;
 
@@ -122,8 +124,9 @@ function createScreen() {
     }
     const commands = useCommandQueue(
       {
-        pick: focusCtl.pick,
-        readFocus: () => screen.focus,
+        pick: (next) => focusCtl.pick(next),
+        readPicks: () => screen.picks,
+        restore: focusCtl.restore,
         readSeen: (unitIds) => new Map(unitIds.map((id) => [id, screenRevision])),
         start: (pending, command) => {
           focusCtl.start(pending);
@@ -168,16 +171,26 @@ function createScreen() {
     function pressKey(name: string): boolean {
       if (name === "v") return false;
       // 고른 것이 없으면 j는 목록 처음으로 간다 - 그 뒤의 d가 엉뚱한 박스에 떨어진다
-      if (focusedId === null && name === "j") focusCtl.pick(unit(0));
+      if (focusedId === null && name === "j") pickOld(unit(0));
       if (focusedId === null) return name === "j";
-      if (name === "j") focusCtl.pick(unit(focusedId + 1));
+      if (name === "j") pickOld(unit(focusedId + 1));
       else if (name === "d") {
         enqueue("save", `delete ${focusedId}`, [focusedId], async (ctx) => {
           log.push(`delete ${focusedId}${ctx.isRetry ? " again" : ""}`);
           await hold(responses);
           isReloadAsked = true;
         });
-        focusCtl.pick(unit(focusedId + 1));
+        pickOld(unit(focusedId + 1));
+      } else if (name === "x") {
+        // Del - 판단 저장이라 박스는 그대로지만 되돌리기 기록에 남는다(되돌리면 그 박스로 따라간다)
+        const deletedId = focusedId;
+        enqueue("save", `delete ${deletedId}`, [deletedId], async () => {
+          log.push(`delete ${deletedId}`);
+          await hold(responses);
+          steps.push({ retired: deletedId, made: -1 });
+          isReloadAsked = true;
+        });
+        pickOld(unit(deletedId + 1));
       } else if (name === "m") {
         enqueue("join", `join ${focusedId}`, [focusedId], async (ctx) => {
           log.push(`join ${focusedId}${ctx.isRetry ? " again" : ""}`);
@@ -204,25 +217,26 @@ function createScreen() {
       return true;
     }
     screen.press = (name) => {
-      if (name === "undo") commands.enqueue({ kind: "step", direction: "undo" });
+      if (name === "undo") commands.enqueue({ kind: "step", direction: "undo", docId: null });
       else if (commands.isDeferring()) {
         if (commands.canQueueKey()) commands.enqueue({ kind: "key", key: name, shift: false, ctrl: false });
       }
       else pressKey(name);
     };
     screen.click = (unitId) => {
-      if (commands.isPickQueued()) commands.enqueue({ kind: "pick", focus: unit(unitId) });
-      else focusCtl.pick(unit(unitId));
+      if (commands.isPickQueued()) commands.enqueue({ kind: "pick", pick: { side: "old", pick: unit(unitId) } });
+      else pickOld(unit(unitId));
     };
     useEffect(() => {
       screen.commands = commands;
-      screen.focus = focusCtl.focus;
+      screen.focus = focusCtl.picks.old;
+      screen.picks = focusCtl.picks;
       screen.pending = focusCtl.pending;
       const leave = commands.mount();
       commands.pump();
       return leave;
     });
-    return createElement("button", { "data-testid": "start", onClick: () => focusCtl.pick(unit(1)) });
+    return createElement("button", { "data-testid": "start", onClick: () => pickOld(unit(1)) });
   }
   return { screen, Screen };
 }
@@ -445,6 +459,38 @@ describe("a barrier (A1-R3, AC2)", () => {
   });
 });
 
+describe("a pick made while Undo's view loads (3b - the pick stays while work runs)", () => {
+  it("keeps a click on another row - Undo's late follow does not pull the pick back", async () => {
+    const screen = await open();
+    await press(screen, "x");
+    await drain(screen);
+    await press(screen, "undo");
+    await screen.respond(); // 되돌리기 응답 - 따라가기는 새 보기를 기다린다
+    await click(screen, 5);
+    await drain(screen);
+    expect(screen.focus).toEqual(unit(5));
+  });
+  it("keeps a click on the row that was already picked - the person chose it after Undo", async () => {
+    const screen = await open();
+    await press(screen, "x");
+    await drain(screen);
+    expect(screen.focus).toEqual(unit(2));
+    await press(screen, "undo");
+    await screen.respond();
+    await click(screen, 2);
+    await drain(screen);
+    expect(screen.focus).toEqual(unit(2));
+  });
+  it("still picks the undone row when nothing was picked in between", async () => {
+    const screen = await open();
+    await press(screen, "x");
+    await drain(screen);
+    await press(screen, "undo");
+    await drain(screen);
+    expect(screen.focus).toEqual(unit(1));
+  });
+});
+
 describe("a failure (A1-R7, AC3)", () => {
   it("stops what is behind it, retries in place, then runs the rest", async () => {
     const screen = await open();
@@ -505,6 +551,19 @@ describe("a failure (A1-R7, AC3)", () => {
     expect(screen.focus).toEqual(unit(1));
     await drain(screen);
     expect(screen.log).toEqual(["join 1", "join 1 again", "delete 200"]);
+  });
+  it("a join that waited behind a failed save still follows once Retry puts the pick back, and the key behind it lands on the joined box", async () => {
+    const screen = await open();
+    await press(screen, "d"); // 저장 1이 나가고 고름은 2로
+    await press(screen, "m"); // 2의 합치기가 저장 뒤에 선다
+    await press(screen, "j"); // 합치기 뒤에 쌓인 글쇠
+    await screen.respond(new Error("500")); // 저장 실패 - 멈춤
+    await click(screen, 70); // 멈춘 동안 둘러본다
+    await act(async () => screen.commands.retry()); // 고름을 멈춘 때의 2로 되살린다 - 사람이 고른 것이 아니다
+    expect(screen.focus).toEqual(unit(2));
+    await drain(screen);
+    expect(screen.log).toEqual(["delete 1", "delete 1 again", "join 2"]);
+    expect([screen.focus, screen.lost(), screen.dropped]).toEqual([unit(201), 0, []]);
   });
 });
 
@@ -664,6 +723,9 @@ describe("isRepeatedSave", () => {
   });
   it("is not when something else was pressed on that row in between", () => {
     expect(isRepeatedSave(queued(save(), { kind: "clear", rowKey: "u1" } as AssignCommand), save())).toBe(false);
+  });
+  it("is not when the row was linked in between - Del, link, Del deletes again", () => {
+    expect(isRepeatedSave(queued(save({ isPick: true }), { kind: "link", rowKey: "u1" } as AssignCommand), save({ isPick: true }))).toBe(false);
   });
   it("counts a second Delete on the same row as repeated", () => {
     expect(isRepeatedSave(queued(save({ isPick: true })), save({ isPick: true, draft: { ...draft } }))).toBe(true);

@@ -166,15 +166,6 @@ export function readNewLineEnd(newEl: HTMLElement, unitId: number): { x: number;
   return { x: newRect.left, y: chipRect ? chipRect.top + chipRect.height / 2 : readAnchorY(newRect) };
 }
 
-/** 그 New 문장과 그 Old 조각들 사이에 지금 그려진 선의 New 쪽 끝 - 선이 없으면(한 단 보기·선 끔·한쪽 끝이 스크롤 밖) null. 그 자리 메뉴가 선 끝 옆에 뜨려고 쓴다 */
-export function findDrawnLinkEnd(newEl: HTMLElement, unitIds: readonly number[]): { x: number; y: number } | null {
-  const svg = newEl.closest(".assign-panes")?.querySelector(".link-lines");
-  const targetId = newEl.dataset.target;
-  if (!svg || targetId === undefined) return null;
-  const unitId = unitIds.find((id) => svg.querySelector(`[data-link="${id}:${targetId}"]`) !== null);
-  return unitId === undefined ? null : readNewLineEnd(newEl, unitId);
-}
-
 /** New 줄에서 그 Old 조각의 출처 칩 - 접혀 있으면 "+N" 칩 */
 function findSourceChip(newLine: HTMLElement, unitId: number): HTMLElement | null {
   const chip = newLine.querySelector<HTMLElement>(`[data-src-unit="${unitId}"]`);

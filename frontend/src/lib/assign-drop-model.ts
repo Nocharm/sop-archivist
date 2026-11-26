@@ -48,16 +48,6 @@ export function findAssignDrop(hit: NewHit | null): AssignDrop {
   return { kind: "link", targetId: hit.targetId };
 }
 
-/** pick은 그 문장을 고르고, menu_only는 고름을 두고 끊기 메뉴만 연다 */
-export type DropLinkAction = "pick" | "menu_only";
-
-/** 놓았을 때 할 일 - handleNewPick의 Old 줄 갈래(초안 없음 + 이미 그 문장에 확정해 이음)와 같은 판단 */
-export function resolveDropLink(input: { draftDestination: Destination | null; savedDestination: Destination | null; targetId: number }): DropLinkAction {
-  const { draftDestination, savedDestination, targetId } = input;
-  if (draftDestination === null && savedDestination?.kind === "link" && savedDestination.targetIds.includes(targetId)) return "menu_only";
-  return "pick";
-}
-
 /** 엮은 문서의 한 줄 - groupKey는 첫 출처 Unit이 든 Old 줄(같으면 한 의미 묶음), 출처가 없으면 null */
 export interface DropItem {
   targetId: number;

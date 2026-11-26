@@ -5,10 +5,10 @@ export type AssignKeyId =
   | "move_next" | "move_prev" | "confirm" | "escape" | "delete" | "clear" | "clear_block" | "remark" | "remark_block"
   | "split" | "cut_left" | "cut_right" | "view" | "preview" | "go_pair"
   | "hold" | "lang" | "shape_mode" | "number" | "use_ai" | "ask_order" | "table" | "indent" | "outdent"
-  | "part_prev" | "part_next" | "undo" | "redo" | "help";
+  | "merge_next" | "merge_prev" | "part_prev" | "part_next" | "undo" | "redo" | "help";
 
 /** 그 글쇠가 바라는 것 - 어긋나면 resolveAssignKey가 까닭을 준다 */
-export type AssignKeyWhen = "always" | "row" | "cut" | "pair" | "text" | "shape" | "number" | "ai" | "unwrapped" | "table" | "box";
+export type AssignKeyWhen = "always" | "row" | "cut" | "pair" | "text" | "shape" | "number" | "ai" | "unwrapped" | "table" | "box" | "join";
 
 export interface AssignKey {
   id: AssignKeyId;
@@ -42,6 +42,8 @@ export const ASSIGN_KEYS: readonly AssignKey[] = [
   { id: "number", key: "n", shift: true, when: "number", labelKey: "assign.key.number" },
   { id: "indent", key: "tab", shift: false, when: "box", labelKey: "assign.key.indent" },
   { id: "outdent", key: "tab", shift: true, when: "box", labelKey: "assign.key.outdent" },
+  { id: "merge_next", key: "j", shift: true, when: "join", labelKey: "assign.key.mergeNext" },
+  { id: "merge_prev", key: "k", shift: true, when: "join", labelKey: "assign.key.mergePrev" },
   { id: "table", key: "t", shift: true, when: "table", labelKey: "assign.key.table" },
   { id: "ask_order", key: "o", shift: true, when: "unwrapped", labelKey: "assign.key.askOrder" },
   { id: "view", key: "v", shift: false, when: "always", labelKey: "assign.key.view" },
@@ -74,7 +76,6 @@ export const HELP_ONLY: readonly HelpOnlyKey[] = [
   { id: "zoom", presses: ["Ctrl + {wheel}"], labelKey: "assign.help.keyZoom" },
   { id: "sheet", presses: ["{wheel}"], labelKey: "assign.help.keySheet" },
   { id: "context_menu", presses: ["⇧F10"], labelKey: "assign.help.keyContext" },
-  { id: "link_menu", presses: ["↑", "↓", "←", "→"], labelKey: "assign.help.keyMenu" },
   { id: "edit", presses: ["E"], labelKey: "assign.legend.keyEdit", isDraftOnly: true },
 ];
 
@@ -162,9 +163,29 @@ function findRefusal({ id, when }: AssignKey, ctx: AssignKeyContext): string | n
   // 들여쓰기는 저장 중인 값에서 이어 센다 - 이어 누른 Tab을 버리지 않는다
   if (when === "box") return ctx.hasNumberCell ? null : why("noNumber");
   if (ctx.isLocked) return why("busy");
+  // 합치기는 이웃과 막는 까닭을 누를 때 따로 잰다(merge-arm-model) - 여기서는 고른 박스만 본다
+  if (when === "join") return null;
   if (when === "text") return ctx.isText ? ctx.langReasonKey : why("notText");
   if (when === "shape") return ctx.shapeMode === null ? why("noShape") : ctx.shapeMode.reasonKey;
   if (when === "table") return ctx.tableId === null && ctx.unwrappedTableId === null ? why("notTable") : ctx.tableReasonKey;
   if (when === "unwrapped") return ctx.unwrappedTableId === null ? why("notUnwrapped") : ctx.orderReasonKey;
   return ctx.hasNumberCell ? null : why("noNumber");
+}
+
+/** 늘 Old 줄에 작용하는 판단 글쇠(쪼개기 먼저 §8) - 나머지 손질 글쇠와 J · K는 마지막으로 누른 쪽에 */
+const JUDGE_IDS: ReadonlySet<AssignKeyId> = new Set<AssignKeyId>(["confirm", "delete", "clear", "clear_block", "remark", "remark_block", "hold", "use_ai"]);
+/** 어느 쪽 박스와도 상관없는 글쇠 - 보기 · 미리보기 · 탭 · 되돌리기 · 거두기 · 도움말 */
+const FREE_IDS: ReadonlySet<AssignKeyId> = new Set<AssignKeyId>(["view", "preview", "part_prev", "part_next", "undo", "redo", "escape", "help"]);
+
+/**
+ * 글쇠가 어느 쪽에 작용하나 - 판단은 Old, 손질 · 이동은 마지막으로 누른 쪽. focusIn이 단추 줄이면 Tab은 브라우저의 포커스 옮기기다(id null).
+ * key는 event.key(대소문자 무관), Shift는 보지 않는다
+ */
+export function routeKey(key: string, ctx: { last: "old" | "new" | null; focusIn: "paper" | "pick-bar" | "other"; shift?: boolean }): { side: "old" | "new" | null; id: AssignKeyId | null } {
+  const hit = findAssignKey({ key, shiftKey: ctx.shift ?? false, ctrlKey: false, metaKey: false, altKey: false });
+  const id = hit?.kind === "run" ? hit.entry.id : null;
+  if (id === null) return { side: null, id: null };
+  if ((id === "indent" || id === "outdent") && ctx.focusIn !== "paper") return { side: null, id: null };
+  if (FREE_IDS.has(id)) return { side: null, id };
+  return { side: JUDGE_IDS.has(id) ? "old" : ctx.last, id };
 }

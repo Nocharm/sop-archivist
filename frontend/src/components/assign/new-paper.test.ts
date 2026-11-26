@@ -70,7 +70,7 @@ function makeView({ header = false, heading = false, units }: Pick<Options, "hea
 function html({ header = false, heading = false, over, units, ...props }: Options = {}): string {
   const view = makeView({ header, heading, units });
   const model = buildPaperModel(view);
-  const overlay = buildNewOverlay({ rows: ROWS, candidateIds: NONE, pickedIds: NONE, focusId: null, shapeUnitId: null, aiFilter: null, openAiSections: new Set(), ...over });
+  const overlay = buildNewOverlay({ rows: ROWS, candidateIds: NONE, pickedIds: NONE, focusId: null, aiFilter: null, openAiSections: new Set(), ...over });
   const full: NewPaperProps = {
     bundleId: 1, docOptions: [{ value: "1", label: "SOP-1" }], docId: "1", fileId: 3, onDocChange: () => undefined, tag: "New", linesOn: true, onToggleLines: () => undefined,
     zoom: 1, onZoom: () => undefined, view, model, tabs: buildPaperTabs(view, model), placeholder: createElement("span", { className: "sk" }), overlay, onOpenAiSection: () => undefined, cellPickable: false, cellDroppable: false,
@@ -139,10 +139,13 @@ describe("NewPaper", () => {
     expect(h).toContain('data-testid="assign-new-ai-tag-5"');
   });
 
-  it("opens the menu inside the pressed box", () => {
-    const h = html({ foot: { unitId: 50, node: createElement("i", null, "menu") } });
-    expect(h).toMatch(/new-line-acts[^>]*>.*<i>menu<\/i>/);
+  it("draws the pick bar inside the picked box", () => {
+    const h = html({ selectedUnitId: 50, renderUnitActions: (unitId) => (unitId === 50 ? createElement("i", null, "menu") : null) });
+    expect(h).toMatch(/strip-acts[^>]*>.*<i>menu<\/i>/);
   });
+
+  // 단추 줄을 마우스로 누른 뒤 포커스가 이 용지로 돌아온다(pick-bar의 .pane-body focus) - Old 용지와 같다
+  it("lets the paper take the focus back like the Old paper", () => expect(html()).toMatch(/class="pane-body" tabindex="-1" role="group" aria-label="New document text"/));
 
   it("opens the tab of a footnote that is asked for", () => {
     const view2 = { ...makeView(), blocks: [makeBlock(50, "First"), makeBlock(70, "Note", { part: "footnote", part_group: "footnote" })], units: [makeUnit(50, "First"), makeUnit(70, "Note")], tables: [] };

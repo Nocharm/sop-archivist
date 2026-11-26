@@ -255,6 +255,15 @@ describe("what changes with every key", () => {
     expect(own(listFar())).toEqual(own(FOURTH));
   });
 
+  it("draws the dashed preview on the two boxes of an armed merge and takes it back", async () => {
+    await render({}, 1);
+    expect(host.querySelectorAll("[data-merge-arm]").length).toBe(0);
+    await render({ mergeArm: { fromId: 2, toId: 3 } }, 1);
+    expect([...host.querySelectorAll("[data-merge-arm]")].map((el) => el.getAttribute("data-strip-unit"))).toEqual(["2", "3"]);
+    await render({}, 1);
+    expect(host.querySelectorAll("[data-merge-arm]").length).toBe(0);
+  });
+
   it("shows a far number being saved and takes it back", async () => {
     const arg = { model: numberModel };
     const read = () => host.querySelector('[data-testid="p-num-150"]')?.textContent;

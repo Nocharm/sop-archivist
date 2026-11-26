@@ -17,7 +17,7 @@ const cell = (targetId: number, unitId: number | null, over: Partial<BundleCell>
 });
 const table = (cells: BundleCell[], over: Partial<WrittenSentence> = {}) => sentence(90, 900, { kind: "table", table: { rows: 1, cols: cells.length, cells }, ...over });
 const build = (rows: WrittenSentence[], over: Partial<NewOverlayInput> = {}) =>
-  buildNewOverlay({ rows, candidateIds: NONE, pickedIds: NONE, focusId: null, shapeUnitId: null, aiFilter: null, openAiSections: new Set(), ...over });
+  buildNewOverlay({ rows, candidateIds: NONE, pickedIds: NONE, focusId: null, aiFilter: null, openAiSections: new Set(), ...over });
 const state = (over: Partial<NewOverlayInput>) => build([sentence(5, 50)], over).boxes.get(50)?.state;
 const key = (row: Partial<WrittenSentence>, over: Partial<NewOverlayInput> = {}) => build([sentence(5, 50, row)], over).boxes.get(50)?.key;
 const boxes = (keys: Record<number, string>) => new Map(Object.entries(keys).map(([id, value]) => [Number(id), { key: value } as NewBox]));
@@ -41,7 +41,7 @@ describe("buildNewOverlay", () => {
 
   it("orders the states", () => {
     expect(state({ focusId: 5, pickedIds: new Set([5]) })).toBe("focus");
-    expect(state({ shapeUnitId: 50, pickedIds: new Set([5]) })).toBe("shape");
+    expect(state({ focusId: 5, candidateIds: new Set([5]) })).toBe("focus");
     expect(state({ pickedIds: new Set([5]), candidateIds: new Set([5]) })).toBe("picked");
     expect(state({ candidateIds: new Set([5]) })).toBe("candidate");
     expect(state({})).toBe("unsourced");

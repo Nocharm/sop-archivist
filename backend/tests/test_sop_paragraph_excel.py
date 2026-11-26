@@ -13,6 +13,7 @@ from app.sop.numbering import LevelRow, build_row_levels, build_section_numbers
 from app.sop.paragraph_excel import (
     FIGURE_MARKER,
     PARAGRAPH_HEADERS,
+    ParagraphInclude,
     UnitLine,
     build_paragraph_file,
     build_paragraph_preview,
@@ -124,7 +125,7 @@ def test_sheet_has_five_columns_section_numbers_bullets_notes_and_remarks() -> N
         _line(5, "sentence", "REF-1 참조", lang="ref"),
     ]
 
-    sheet = build_paragraph_sheet(lines, include_tables=True)
+    sheet = build_paragraph_sheet(lines)
 
     assert _texts(sheet) == [
         list(PARAGRAPH_HEADERS),
@@ -151,8 +152,8 @@ def test_data_table_rows_join_cells_and_unwrapped_lines_are_paragraphs() -> None
         _line(8, "cell_sentence", "벗긴 칸 둘.", table_id=8, row_index=0, col_index=1),
     ]
 
-    with_tables = _texts(build_paragraph_sheet(lines, include_tables=True))[1:]
-    without_tables = _texts(build_paragraph_sheet(lines, include_tables=False))[1:]
+    with_tables = _texts(build_paragraph_sheet(lines))[1:]
+    without_tables = _texts(build_paragraph_sheet(lines, ParagraphInclude(tables=False)))[1:]
 
     assert with_tables == [
         ["1.1", "범위", "", "", ""],
@@ -171,7 +172,7 @@ def test_deleted_line_stays_as_a_struck_row_without_a_language() -> None:
         _line(3, "sentence", "사유 있는 지운 줄.", lang="en", deleted=True, remark="중복"),
     ]
 
-    sheet = build_paragraph_sheet(lines, include_tables=True)
+    sheet = build_paragraph_sheet(lines)
 
     assert _texts(sheet)[1:] == [
         ["3.", "남는 줄.", "KO", "", ""],
@@ -195,7 +196,7 @@ def test_adjacent_lines_sent_to_one_new_sentence_are_one_row() -> None:
         _line(5, "sentence", "떨어진 줄.", lang="ko", target_id=40),
     ]
 
-    sheet = build_paragraph_sheet(lines, include_tables=True)
+    sheet = build_paragraph_sheet(lines)
 
     assert _texts(sheet)[1:] == [
         ["2.", "첫 줄. 둘째 줄. 영어 줄.", "", "Read from text", "합침 / 번역"],
@@ -203,7 +204,7 @@ def test_adjacent_lines_sent_to_one_new_sentence_are_one_row() -> None:
         ["2.", "떨어진 줄.", "KO", "", ""],
     ]
     assert [(row.unit_id, row.unit_ids) for row in sheet.rows[1:]] == [(1, [1, 2, 3]), (4, []), (5, [])]
-    preview = build_paragraph_preview(lines * 1, True, "OLD-1", around_unit_id=3, max_rows=2)
+    preview = build_paragraph_preview(lines * 1, ParagraphInclude(), "OLD-1", around_unit_id=3, max_rows=2)
     assert [row.unit_id for row in preview.rows[1:]] == [1]
 
 
@@ -217,7 +218,7 @@ def test_text_indent_is_the_paper_level() -> None:
         _line(6, "sentence", "짝 둘째 — 번호가 있어도 첫 줄 단계.", number="6", pair_id=8),
     ]
 
-    sheet = build_paragraph_sheet(lines, include_tables=True)
+    sheet = build_paragraph_sheet(lines)
 
     assert [row.cells[1].indent for row in sheet.rows[1:]] == [0, 1, 2, 1, 2, 2]
 
@@ -230,17 +231,17 @@ def test_figure_keeps_its_place_with_its_caption() -> None:
         _line(4, "caption", "표 1. 따로 선 캡션", lang="ko"),
     ]
 
-    texts = [row[1] for row in _texts(build_paragraph_sheet(lines, include_tables=True))[1:]]
+    texts = [row[1] for row in _texts(build_paragraph_sheet(lines))[1:]]
 
     assert texts == [f"{FIGURE_MARKER} 그림 1. 로터", FIGURE_MARKER, "표 1. 따로 선 캡션"]
 
 
 def test_preview_windows_the_file_rows_around_the_picked_unit() -> None:
     lines = [_line(index, "sentence", f"문장 {index}.") for index in range(1, 21)]
-    sheet = build_paragraph_sheet(lines, include_tables=True, name="OLD-1")
+    sheet = build_paragraph_sheet(lines, name="OLD-1")
 
-    preview = build_paragraph_preview(lines, True, "OLD-1", around_unit_id=15, max_rows=6)
-    whole = build_paragraph_preview(lines, True, "OLD-1", around_unit_id=None)
+    preview = build_paragraph_preview(lines, ParagraphInclude(), "OLD-1", around_unit_id=15, max_rows=6)
+    whole = build_paragraph_preview(lines, ParagraphInclude(), "OLD-1", around_unit_id=None)
 
     assert whole == sheet
     assert preview.truncated and preview.total_rows == 21 and preview.offset == 12
@@ -289,7 +290,7 @@ def test_remark_column_shows_the_decision_reason_and_the_preview_matches_the_fil
     assert preview.status_code == 200, preview.text
     body = preview.json()
     assert body["truncated"] is False and body["freeze"] == "A2"
-    assert [[cell["text"] for cell in row["cells"]] for row in body["rows"]] == rows
+    assert [[cell["text"] for cell in row["cells"]] for row in body["rows"]] == [row for row in rows if row[1] != FIGURE_MARKER]
     assert [row["unit_id"] for row in body["rows"] if row["deleted"]] == [unit["id"]]
 
 
@@ -425,13 +426,107 @@ def test_front_lines_are_struck_with_their_reason(client: TestClient, side: str)
     assert preview["rows"][3]["unit_id"] == table_id
 
 
-def test_contents_lines_in_the_paragraph_excel_are_unchanged(client: TestClient) -> None:
-    # 목차 줄은 아직 보통 줄처럼 나온다(옛 문서 목차 체크는 뒤 브랜치)
+def test_contents_lines_are_left_out_unless_the_check_is_on(client: TestClient) -> None:
     bundle_id, doc_id = _setup(client)
-    view = get_view(client, bundle_id, doc_id)
-    before = _values(_read(client.get(f"/api/bundles/{bundle_id}/documents/{doc_id}/paragraphs.xlsx", headers=MEMBER))[0])
-    _mark(view, "toc", "이 절차는 합성 장비의 사용법을 정한다.", reason="합성 사유")
+    url = f"/api/bundles/{bundle_id}/documents/{doc_id}/paragraphs.xlsx"
+    before = _values(_read(client.get(url, headers=MEMBER))[0])
+    _mark(get_view(client, bundle_id, doc_id), "toc", "이 절차는 합성 장비의 사용법을 정한다.", reason="합성 사유")
 
-    after = _values(_read(client.get(f"/api/bundles/{bundle_id}/documents/{doc_id}/paragraphs.xlsx", headers=MEMBER))[0])
+    default = _values(_read(client.get(url, headers=MEMBER))[0])
+    with_contents = _values(_read(client.get(f"{url}?toc=true", headers=MEMBER))[0])
 
-    assert after == before
+    assert with_contents == before
+    assert default == [row for row in before if row[1] != "이 절차는 합성 장비의 사용법을 정한다."]
+
+
+# --- 받을 때 넣을 것 넷(F1-R2~R3) · 미리보기 접기(F1-R1) ---
+
+def _mixed_lines() -> list[UnitLine]:
+    """제목 · 목차 둘 · 본문 · 표 · 그림 · 확정 삭제 · 앞부분 한 줄이 든 합성 줄들."""
+    return [
+        _line(1, "heading", "범위", lang="ko", number="1."),
+        _line(2, "sentence", "목차 줄 하나 ... 3", lang="ko", noise=True),
+        _line(3, "sentence", "목차 줄 둘 ... 4", lang="ko", noise=True),
+        _line(4, "sentence", "본문 문장.", lang="ko"),
+        _line(5, "table", "", table_id=7),
+        _line(6, "cell_sentence", "Rotor", table_id=7, row_index=0, col_index=0, group_unit_id=5),
+        _line(7, "figure", ""),
+        _line(8, "sentence", "확정 삭제 줄.", lang="ko", deleted=True),
+        _line(9, "sentence", "앞부분 줄.", lang="ko", noise=True, auto_deleted=True, deleted=True),
+    ]
+
+
+def _body(sheet: Sheet) -> list[str]:
+    return [row[1] for row in _texts(sheet)[1:]]
+
+
+def test_default_download_is_today_minus_the_contents() -> None:
+    lines = _mixed_lines()
+
+    today = _texts(build_paragraph_sheet(lines, ParagraphInclude(toc=True)))
+    default = _texts(build_paragraph_sheet(lines))
+
+    assert default == [row for row in today if not row[1].startswith("목차 줄")]
+    assert len(today) - len(default) == 2
+
+
+def test_each_check_changes_the_file() -> None:
+    lines = _mixed_lines()
+    everything = ParagraphInclude(tables=True, deleted=True, figures=True, toc=True)
+
+    full = _body(build_paragraph_sheet(lines, everything))
+
+    assert "Rotor" in full and "확정 삭제 줄." in full and FIGURE_MARKER in full and "목차 줄 하나 ... 3" in full
+    assert "Rotor" not in _body(build_paragraph_sheet(lines, ParagraphInclude(tables=False, toc=True)))
+    no_deleted = _body(build_paragraph_sheet(lines, ParagraphInclude(deleted=False, toc=True)))
+    assert "확정 삭제 줄." not in no_deleted and "앞부분 줄." not in no_deleted
+    assert FIGURE_MARKER not in _body(build_paragraph_sheet(lines, ParagraphInclude(figures=False, toc=True)))
+    assert "목차 줄 하나 ... 3" not in _body(build_paragraph_sheet(lines, ParagraphInclude(toc=False)))
+
+
+def test_front_matter_follows_the_deleted_check() -> None:
+    lines = _mixed_lines()
+
+    assert "앞부분 줄." in _body(build_paragraph_sheet(lines))
+    assert "앞부분 줄." not in _body(build_paragraph_sheet(lines, ParagraphInclude(deleted=False)))
+
+
+def test_old_contents_follow_their_own_check_even_when_deleted_is_off() -> None:
+    lines = _mixed_lines()
+
+    body = _body(build_paragraph_sheet(lines, ParagraphInclude(deleted=False, toc=True)))
+
+    assert "목차 줄 하나 ... 3" in body and "목차 줄 둘 ... 4" in body
+    assert "확정 삭제 줄." not in body
+
+
+def test_preview_hides_figures_and_marks_contents() -> None:
+    lines = _mixed_lines()
+
+    sheet = build_paragraph_sheet(lines, preview=True)
+
+    assert FIGURE_MARKER not in _body(sheet)
+    assert [(row.toc, row.noise) for row in sheet.rows[1:] if row.cells[1].text.startswith("목차 줄")] == [(True, "toc")] * 2
+    assert all(not row.toc for row in sheet.rows if not row.cells[1].text.startswith("목차 줄"))
+    # 지운 줄은 싣고(화면이 숨긴다), 받는 파일은 figures 체크를 따른다
+    assert [row.deleted for row in sheet.rows[1:] if row.cells[1].text == "앞부분 줄."] == [True]
+    assert FIGURE_MARKER in _body(build_paragraph_sheet(lines, preview=False))
+
+
+def test_new_document_paragraphs_take_the_same_checks(client: TestClient) -> None:
+    bundle_id = create_bundle(client, title="Paragraphs", is_synthetic=True)["id"]
+    uploaded = upload(
+        client, bundle_id, build_docx(p("합성 목차 줄이다.") + p("1. 본문 문장이다.") + f"<w:p>{make_drawing_run('image1.png')}</w:p>", media={"image1.png": TINY_PNG}),
+        "SYNTHETIC_SOP-N_Checks.docx", side="new", doc_type="sop",
+    )
+    assert uploaded.status_code == 201, uploaded.text
+    doc_id = uploaded.json()["id"]
+    _mark(get_view(client, bundle_id, doc_id), "toc", "합성 목차 줄이다.")
+    url = f"/api/bundles/{bundle_id}/documents/{doc_id}/paragraphs.xlsx"
+
+    def read(query: str) -> list[str]:
+        return [row[1] for row in _values(_read(client.get(f"{url}{query}", headers=AUTHOR))[0])[1:]]
+
+    assert read("") == ["본문 문장이다.", FIGURE_MARKER]
+    assert read("?toc=true") == ["합성 목차 줄이다.", "본문 문장이다.", FIGURE_MARKER]
+    assert read("?figures=false") == ["본문 문장이다."]

@@ -126,10 +126,10 @@ const SCENES = [
         await page.waitForLoadState("networkidle");
       }
       await candidate.first().locator(".new-text").click();
-      // 고르면 누른 곳 옆에 확정 메뉴가 늦게 뜬다 - 다 뜬 뒤에 찍는다
-      await page.locator(id("assign-link-menu-confirm")).waitFor({ state: "visible", timeout: T });
+      // 고르면 누른 박스 아래에 단추 줄(잇기 · 손질)이 펼쳐진다(쪼개기 먼저 §8) - 다 뜬 뒤에 찍는다
+      await page.locator(id("assign-pick-bar-link")).waitFor({ state: "visible", timeout: T });
     },
-    marks: [id("assign-more"), id("assign-new"), `${id("assign-new")} .new-line[data-state="picked"]`, id("assign-chosen"), id("assign-divider"), id("assign-new-zoom-value")],
+    marks: [id("assign-more"), id("assign-new"), `${id("assign-new")} .new-line[data-sel]`, id("assign-pick-bar"), id("assign-divider"), id("assign-new-zoom-value")],
   },
   {
     name: "assign-unsourced", user: "qa.member", path: "/bundles/2/assign",

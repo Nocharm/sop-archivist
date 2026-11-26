@@ -1,4 +1,5 @@
 // 검토 요청 조건을 카드로 나누는 규칙 - 막힌 것(Fail)을 위, 끝난 것(Pass)을 아래에 두고 각각 앞 몇 개만 보인다.
+import type { ReadinessIssue } from "@/lib/api-sop";
 import type { StageKey } from "@/lib/stages";
 
 export type GateKey = "documents" | "versions" | "units" | "targets" | "warnings" | "reasons" | "semantic" | "reviewer";
@@ -14,6 +15,12 @@ export const GATE_STAGE: Record<GateKey, StageKey | null> = {
   semantic: "outputs",
   reviewer: null,
 };
+
+/** 아직 정하지 않은 줄과 그 가운데 그림 - 진행 숫자는 그림을 따로 세지만 검토 요청은 그림까지 정해야 한다(F3-R3) */
+export function countOpenRows(blockers: readonly ReadinessIssue[]): { rows: number; figures: number } {
+  const units = blockers.filter((blocker) => blocker.code.startsWith("units_"));
+  return { rows: units.reduce((sum, blocker) => sum + (blocker.count ?? 0), 0), figures: units.reduce((sum, blocker) => sum + (blocker.figures ?? 0), 0) };
+}
 
 export interface GateSplit<T> {
   fail: T[];

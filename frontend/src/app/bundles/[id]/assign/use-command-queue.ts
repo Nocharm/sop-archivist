@@ -5,7 +5,7 @@
 import { useRef, useState, useSyncExternalStore } from "react";
 
 import type { AiSuggestion, DocumentView, EditOp, Group, UndoMeta, ViewUnit } from "@/lib/api-sop";
-import { isSameFocus, NO_PLACE, type Focus, type Pending, type PendingPlace } from "@/lib/assign-focus-model";
+import { isSamePicks, NO_PLACE, type Pending, type PendingPlace, type Picks, type SidePick } from "@/lib/assign-focus-model";
 import { opensTextBox } from "@/lib/assign-press-model";
 import type { Destination } from "@/lib/classify-model";
 import { createCommandQueue, isBarrier, isIdle, listUnsettled, mustDefer, shouldHalt, type QueuedCommand, type QueueState } from "@/lib/command-queue";
@@ -17,8 +17,8 @@ import type { EditToast, PageDraft } from "./use-assign-page";
 /** 묶음 하나를 바꾸지 않고 장벽 뒤에서 되살릴 것 - 누른 글쇠 · 판단 단추 · 고름 */
 export type ReplayCommand =
   | { kind: "key"; key: string; shift: boolean; ctrl: boolean }
-  | { kind: "press"; act: "confirm" | "hold" | "delete" | "clear"; reason?: string }
-  | { kind: "pick"; focus: Focus };
+  | { kind: "press"; act: "confirm" | "hold" | "delete" | "clear" | "link"; reason?: string }
+  | { kind: "pick"; pick: SidePick };
 
 export type SeenRevisions = ReadonlyMap<number, number>;
 
@@ -50,6 +50,22 @@ export type WriteCommand =
       nextKey: string | null;
       placedNote: string | null;
     }
+  /** 단추 줄의 잇기 · 끊기 · 끌어 놓기 · 칸 칩 × - 누른 때의 줄과 문장을 잡는다. result는 저장 뒤 그 줄의 이음(비면 배정 취소), 묶음은 보낼 때 새로 읽는다 */
+  | {
+      kind: "link";
+      docId: number;
+      rowKey: string;
+      unitIds: readonly number[];
+      boxId: number;
+      targetIds: readonly number[];
+      result: readonly number[];
+      link: "link" | "replace" | "add" | "unlink";
+      remark: string | null;
+      seen: SeenRevisions;
+      /** 한 언어만 이어 짝이 풀리는 저장 - 결과 박스가 응답 뒤에 정해지는 장벽이다 */
+      isSplit: boolean;
+      nextKey: string | null;
+    }
   | { kind: "clear"; docId: number; rowKey: string; unitIds: readonly number[]; boxId: number; seen: SeenRevisions; draft: PageDraft | null; newDocId: number | null; toggleKey: string }
   | { kind: "bulk"; rows: ReadonlyArray<{ rowKey: string; unitIds: readonly number[] }>; seen: SeenRevisions; reason: string; skipped: number }
   | { kind: "figure"; unitId: number; unitIds: readonly number[]; seen: SeenRevisions; reason: string }
@@ -79,7 +95,8 @@ export type WriteCommand =
       okText: string;
       write: (revision: number, undo: UndoMeta) => Promise<{ document_revision: number }>;
     }
-  | { kind: "step"; direction: "undo" | "redo" }
+  // docId - 누른 때 다듬던 New 문서(없으면 null) - 응답 뒤 따라가기가 그 문서에서 찾는다
+  | { kind: "step"; direction: "undo" | "redo"; docId: number | null }
   // 같은 글자 · 모두 받기 · 초기화 · 신규 표시 · 출처 잇기 · 칸 떼기 · 표 참조 · 나누기 제안 버리기 · 남은 번역 · 끌어 맺은 짝 - label은 실패 알림의 이름(메시지 키)
   | { kind: "global"; label: string; pending: Omit<Pending, "id">; run: (ctx: SendContext) => Promise<void> };
 
@@ -109,8 +126,11 @@ export class CommandRefusal extends Error {}
 
 /** 화면이 주는 것 - 그 렌더의 값이다 */
 export interface CommandEnv {
-  pick(focus: Focus): void;
-  readFocus(): Focus;
+  pick(next: SidePick): void;
+  /** 두 쪽의 고름 - 멈춘 때의 것을 들어 두었다가 다시 시도가 되돌린다 */
+  readPicks(): Picks;
+  /** 다시 시도가 멈춘 때의 고름을 되살린다(사람의 고름이 아니다) */
+  restore(picks: Picks): void;
   /** 지금 화면에 보이는 판단 revision */
   readSeen(unitIds: readonly number[]): SeenRevisions;
   /** 처리 중이 시작한다 - 누른 때, 다시 시도, 되묻기의 답. 끝(end)은 성공 · 실패 · 되묻기 · 버림 모두 */
@@ -168,7 +188,7 @@ export function useCommandQueue(env: CommandEnv, describePending: DescribePendin
     hadTarget: false,
     retriedIds: new Set<string>(),
     /** 멈춘 때의 고름 - 다시 시도는 여기서 잇는다 */
-    haltFocus: null as Focus | null,
+    haltPicks: null as Picks | null,
   });
 
   function settleLater(id: string, isSolo: boolean) {
@@ -254,7 +274,7 @@ export function useCommandQueue(env: CommandEnv, describePending: DescribePendin
     try {
       // 문서 쓰기는 이 화면을 떠났다 돌아온 사이의 앞 쓰기도 기다린다(doc-write-queue는 화면과 무관한 줄)
       const docId = "docId" in payload ? payload.docId : payload.kind === "global" ? payload.pending.docId : null;
-      const lane = payload.kind === "save" || payload.kind === "clear" ? null : docId;
+      const lane = payload.kind === "save" || payload.kind === "clear" || payload.kind === "link" ? null : docId;
       const outcome = await enqueueDocWrite(lane, () => env.send(payload, ctx));
       env.end(id);
       if (outcome === "asking") queue.ask(id);
@@ -268,7 +288,7 @@ export function useCommandQueue(env: CommandEnv, describePending: DescribePendin
       env.end(id);
       const { reason, isRefusal } = env.readFailure(err, payload);
       if (shouldHalt(command, queue.getState(), isRefusal)) {
-        live.current.haltFocus = env.readFocus();
+        live.current.haltPicks = env.readPicks();
         queue.fail(id, reason);
         // 떠난 화면에는 다시 시도를 물을 자리가 없다
         if (!live.current.isMounted) leave();
@@ -315,7 +335,7 @@ export function useCommandQueue(env: CommandEnv, describePending: DescribePendin
       pump();
       return;
     }
-    if (payload.kind === "pick") env.pick(payload.focus);
+    if (payload.kind === "pick") env.pick(payload.pick);
     else {
       const isDone = replay(command.id, () => env.replay(payload));
       if (!isDone) env.notifyLost();
@@ -339,7 +359,7 @@ export function useCommandQueue(env: CommandEnv, describePending: DescribePendin
     else {
       const pending = describePending(payload);
       // 짝을 푸는 저장은 처리 중 표시로는 저장이고 줄에서는 장벽이다
-      const kind = payload.kind === "save" && payload.isSplit ? "unpair" : pending.kind;
+      const kind = (payload.kind === "save" || payload.kind === "link") && payload.isSplit ? "unpair" : pending.kind;
       env.start({ ...pending, id }, payload);
       put({ id, kind, isGlobal: pending.isGlobal, payload, unitIds: pending.unitIds });
     }
@@ -400,22 +420,22 @@ export function useCommandQueue(env: CommandEnv, describePending: DescribePendin
       const { halted, waiting } = queue.getState();
       if (halted === null) return;
       const { command } = halted;
-      const focus = live.current.haltFocus;
+      const held = live.current.haltPicks;
       // 쌓인 글쇠는 멈춘 때의 고름에서 이어진다 - 그 사이 둘러본 박스에 떨어지지 않게
-      if (focus !== null && waiting.some((item) => item.isDeferred) && !isSameFocus(focus, env.readFocus())) env.pick(focus);
+      if (held !== null && waiting.some((item) => item.isDeferred) && !isSamePicks(held, env.readPicks())) env.restore(held);
       if (!isReplay(command.payload)) env.start({ ...describePending(command.payload), id: command.id }, command.payload);
       live.current.retriedIds.add(command.id);
       queue.retry();
     },
     discard: () => dropAll(1),
     /** 나가기 전 - 아직 끝나지 않은 저장이 실은 초안은 버려지지 않는다(멈춘 것은 나가지 못한다) */
-    listSavingRows: () => (queue.getState().halted !== null ? [] : listUnsettled(queue.getState()).flatMap(({ payload }) => (payload.kind === "save" ? [payload.rowKey] : []))),
+    listSavingRows: () => (queue.getState().halted !== null ? [] : listUnsettled(queue.getState()).flatMap(({ payload }) => (payload.kind === "save" || payload.kind === "link" ? [payload.rowKey] : []))),
   };
 }
 
 /** 같은 줄에 같은 판단을 또 눌렀나 - 그 줄에 마지막으로 선 것이 같은 초안 · 사유의 같은 저장이고 아직 끝나지 않았으면 되돌리기 단계만 하나 더 는다 */
 export function isRepeatedSave(unsettled: ReadonlyArray<{ payload: AssignCommand }>, next: Extract<WriteCommand, { kind: "save" }>): boolean {
-  const last = unsettled.map(({ payload }) => payload).filter((payload) => (payload.kind === "save" || payload.kind === "clear" ? payload.rowKey === next.rowKey : payload.kind === "bulk" && payload.rows.some((item) => item.rowKey === next.rowKey))).at(-1);
+  const last = unsettled.map(({ payload }) => payload).filter((payload) => (payload.kind === "save" || payload.kind === "clear" || payload.kind === "link" ? payload.rowKey === next.rowKey : payload.kind === "bulk" && payload.rows.some((item) => item.rowKey === next.rowKey))).at(-1);
   return last?.kind === "save" && last.action === next.action && last.reason === next.reason && last.isPick === next.isPick && (next.isPick || last.draft === next.draft);
 }
 

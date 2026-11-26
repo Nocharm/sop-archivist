@@ -38,6 +38,8 @@ interface OldPaneProps {
   placeholder: ReactNode;
   selectedId: number | null;
   highlightIds: ReadonlySet<number>;
+  /** New를 마지막에 눌렀다 - 여기 고른 것은 점선 테(먼저 고른 쪽) */
+  held?: boolean;
   pickedIds: ReadonlySet<number>;
   /** 확인이 남은 누락 의심 경고가 걸린 문단 - 그 줄에 경고 표시가 붙는다 */
   warnBlockIds: ReadonlySet<number>;
@@ -63,6 +65,8 @@ interface OldPaneProps {
   pairGrip?: NonNullable<ComponentProps<typeof Paper>["strips"]>["pairGrip"];
   /** 처리 중인 일 - 그 자리 알약과 박스 쉬머, 잠긴 박스(설계 2026-11-20 D4) */
   pending?: NonNullable<ComponentProps<typeof Paper>["strips"]>["pending"];
+  /** ⇧J ⇧J · ⇧K ⇧K로 무장한 합치기의 두 박스 - 점선 미리보기 */
+  mergeArm?: NonNullable<ComponentProps<typeof Paper>["strips"]>["mergeArm"];
   /** 칸 전체 - 풀기 전환(useUnwrapMotion)이 이 안에서 바뀌는 곳을 찾고 잰다 */
   paneRef?: RefObject<HTMLElement | null>;
   /** 내용이 있는 본문·머리말·꼬리말 탭 - 둘 이상일 때만 탭 줄을 그린다 */
@@ -140,6 +144,7 @@ export function OldPane({ paneRef, ...props }: OldPaneProps) {
       selectedId: props.selectedId,
       highlightIds: props.highlightIds,
       pickedIds: props.pickedIds,
+      held: props.held,
       warnBlockIds: props.warnBlockIds,
       onUnitClick: (unitId, _at, event) => props.onUnitClick(unitId, { shiftKey: event.shiftKey }, !(event.target as HTMLElement).closest(".su[data-unit]")),
       onUnitContextMenu: props.onUnitContextMenu,
@@ -161,6 +166,7 @@ export function OldPane({ paneRef, ...props }: OldPaneProps) {
         selectedId={props.selectedId}
         highlightIds={props.highlightIds}
         pickedIds={props.pickedIds}
+        held={props.held}
         warnBlockIds={props.warnBlockIds}
         onUnitClick={(unitId, _at, event) => props.onUnitClick(unitId, { shiftKey: event.shiftKey }, !(event.target as HTMLElement).closest(".su[data-unit]"))}
         onUnitContextMenu={props.onUnitContextMenu}
@@ -173,7 +179,7 @@ export function OldPane({ paneRef, ...props }: OldPaneProps) {
         onCutNudge={props.onCutNudge}
         renderAtCut={props.cut ? props.renderAtCut : undefined}
         figureSource={props.figureSource}
-        strips={{ statusOf: props.statusOf, renderNote: props.renderNote, renderPills: props.renderPills, fold: props.fold, join: props.join, isCaptionNeeded: props.isCaptionNeeded, noise: props.noise, headingShift: props.headingShift, unwrap: props.unwrap, pairHint, deleted: props.deleted, pending: props.pending, pairGrip: props.pairGrip }}
+        strips={{ statusOf: props.statusOf, renderNote: props.renderNote, renderPills: props.renderPills, fold: props.fold, join: props.join, isCaptionNeeded: props.isCaptionNeeded, noise: props.noise, headingShift: props.headingShift, unwrap: props.unwrap, pairHint, deleted: props.deleted, pending: props.pending, mergeArm: props.mergeArm, pairGrip: props.pairGrip }}
         renderUnitActions={props.renderUnitActions}
         dragBoxes={props.dragBoxes}
         numberCell={props.numberCell}

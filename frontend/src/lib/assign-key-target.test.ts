@@ -20,7 +20,7 @@ const SCREEN = `
   <div class="toast-stack"><div class="toast"><button data-testid="toast-action-1">Undo</button></div></div>
   <div role="dialog"><button data-testid="assign-remark-modal-confirm">OK</button></div>
   <div role="menu"><button data-testid="menu-item">Item</button></div>
-  <div role="menu" data-link-menu=""><button data-testid="assign-link-menu-confirm">Confirm</button></div>
+  <div role="listbox"><button data-testid="list-option">Option</button></div>
 `;
 
 function find(testId: string): Element {
@@ -45,7 +45,7 @@ describe("readKeyPlace", () => {
     ["toast-action-1", "pop"],
     ["assign-remark-modal-confirm", "layer"],
     ["menu-item", "layer"],
-    ["assign-link-menu-confirm", "other"],
+    ["list-option", "layer"],
     ["assign-filter-all", "other"],
     ["assign-old-zoom", "other"],
   ])("reads %s as %s", (testId, place) => {

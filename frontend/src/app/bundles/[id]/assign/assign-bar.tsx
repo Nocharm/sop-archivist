@@ -1,7 +1,7 @@
 // Assign 화면의 한 부분 - page.tsx의 그리기에서 글자 그대로 옮겼다(쪼개기, 신뢰 기반 계획 스텝 4). 상태와 동작은 useAssignPage()가 준다.
 "use client";
 
-import { BookMarked, Captions, Columns2, Languages, Redo2, Square, Trash2, Undo2, WandSparkles } from "lucide-react";
+import { BookMarked, Captions, Columns2, Image as FigureIcon, Languages, Redo2, Square, Trash2, Undo2, WandSparkles } from "lucide-react";
 import { MissingWarnings } from "@/components/assign/missing-warnings";
 import { AssignMoreMenu } from "@/components/assign/more-menu";
 import { PendingCount } from "@/components/assign/pending-count";
@@ -14,10 +14,10 @@ import { type AssignPageState, FILTERS, FILTER_ICON } from "./use-assign-page";
 
 export function AssignBar({ state }: { state: AssignPageState }) {
   const {
-    t, bundleId, bundle, canEdit, docs, oldDocIds, identical, aiOn, rows, rowMap, rowOfUnit, mode, filter, counts, applyFilter, checked,
+    t, bundleId, bundle, canEdit, docs, oldDocIds, identical, aiOn, rowMap, rowOfUnit, mode, filter, counts, applyFilter, checked,
     viewOf, setManualOldDoc, oldView, view, changeView, aiMenuItems, undoState, canUndoNow, setBulk, setConfirmingIdentical, setResetScope,
     selectRow, goToUnit, refPendingIds, captionPendingKeys, splitPendingIds, readPendingItem, selectNextSplit, selectNextRef,
-    selectNextCaption, runUndoStep, done, leftovers, setLeftoverSheet,
+    selectNextCaption, runUndoStep, progress, leftovers, setLeftoverSheet,
   } = state;
 
   const identicalCount = identical.data?.length ?? 0;
@@ -40,8 +40,17 @@ export function AssignBar({ state }: { state: AssignPageState }) {
         })}
       </div>
       <span className="text-xs tabular-nums text-ink-3" data-testid="assign-progress">
-        {t("assign.progress", { done, total: rows.length })}
+        {t("assign.progress", { done: progress.done, total: progress.total })}
       </span>
+      {/* 그림은 진행 수에 들지 않는다 - 따로 세어 옆에(아이콘 + 수, 올리면 글) */}
+      {progress.figuresTotal > 0 && (
+        <Tooltip label={t("progress.figures", { m: progress.figuresDone, n: progress.figuresTotal })}>
+          <span className="inline-flex items-center gap-1 text-xs tabular-nums text-ink-3" data-testid="assign-figures">
+            <FigureIcon size={13} strokeWidth={1.5} aria-label={t("progress.figures", { m: progress.figuresDone, n: progress.figuresTotal })} />
+            {t("assign.progress", { done: progress.figuresDone, total: progress.figuresTotal })}
+          </span>
+        </Tooltip>
+      )}
       <ReadOnlyNote bundle={bundle} testId="assign" />
       {/* 오른쪽 묶음은 한 요소로 - 줄이 넘치면 통째로 다음 줄 오른쪽 끝으로 간다 */}
       <div className="assign-bar-end" data-testid="assign-bar-end">
@@ -80,6 +89,12 @@ export function AssignBar({ state }: { state: AssignPageState }) {
               <Trash2 size={14} strokeWidth={1.5} aria-hidden />
               {t("classify.deleted")}
             </button>
+          </span>
+        )}
+        {/* New에서 Shift로 여럿 고름 - 수만(합치기 · 표 벗기기는 다음 브랜치) */}
+        {state.checkedNew.size > 0 && canEdit && (
+          <span className="text-xs text-ink-2" data-testid="assign-bulk-new">
+            {t("classify.pickedCount", { n: state.checkedNew.size })}
           </span>
         )}
         {/* 확인할 것 - 아이콘 + 수(올리면 이름), 누르면 그 줄 목록 창. 누락 경고는 문서별 확인 창 */}

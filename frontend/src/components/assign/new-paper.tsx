@@ -12,7 +12,7 @@ import { PaneZoom } from "@/components/assign/pane-zoom";
 import { RefMark } from "@/components/assign/ref-mark";
 import { Paper, type CutDragPos, type PaperCut, type PaperOverlay, type PaperPending } from "@/components/paper/paper";
 import { describeSheet, PartTabs } from "@/components/paper/part-tabs";
-import { Collapse, Truncate } from "@/components/ui/motion";
+import { Truncate } from "@/components/ui/motion";
 import { Select, type SelectOption } from "@/components/ui/select";
 import { Tooltip } from "@/components/ui/tooltip";
 import type { DocumentView } from "@/lib/api-sop";
@@ -53,11 +53,15 @@ export interface NewPaperProps {
   onUnlink?: (targetId: number, unitId: number) => void;
   sourceLabel: (unitId: number) => string;
   onJumpSource: (unitId: number, targetId: number) => void;
-  /** 다듬으려고 고른 박스(나눌 선이 놓인 박스) */
+  /** 고른 박스(나눌 선이 놓인 박스) */
   selectedUnitId: number | null;
+  /** Old를 마지막에 눌렀다 - 여기 고른 것은 점선 테(먼저 고른 쪽) */
+  held?: boolean;
   /** 여럿 고른 박스 */
   pickedUnitIds: ReadonlySet<number>;
   pending?: PaperPending;
+  /** ⇧J ⇧J · ⇧K ⇧K로 무장한 합치기의 두 박스 - 점선 미리보기 */
+  mergeArm?: { fromId: number; toId: number } | null;
   /** 박스를 누름 - anchor는 그 박스(칸이면 칸 조각) */
   onPick: (unitId: number, keys: { shiftKey: boolean; additive: boolean }, anchor: HTMLElement, event: MouseEvent) => void;
   /** 보여야 할 박스들(이동해 갈 곳 · 출처 없는 New의 고른 것) - 바뀌어 든 박스의 탭을 연다 */
@@ -68,11 +72,11 @@ export interface NewPaperProps {
   onCutDrag?: (pos: CutDragPos) => void;
   onCutNudge?: (step: 1 | -1) => void;
   renderAtCut?: () => ReactNode;
-  /** 누른 박스 안 글 아래에 펼친 것(그 자리 메뉴) */
-  foot?: { unitId: number; node: ReactNode } | null;
+  /** 고른 박스의 글 아래 단추 줄(박스 아래 단추 줄) */
+  renderUnitActions?: (unitId: number) => ReactNode;
 }
 
-// 눌러도 박스를 누른 것이 아닌 자리 - 박스 안에 펼친 그 자리 메뉴의 빈자리, 칸에 딸린 읽기 전용 글, 왼쪽 번호 칸
+// 눌러도 박스를 누른 것이 아닌 자리 - 박스 아래 단추 줄의 빈자리, 칸에 딸린 읽기 전용 글, 왼쪽 번호 칸
 const NOT_PRESSED = ".strip-acts, .new-cell-note, .strip-lead";
 
 const ignoreDoubleClick = () => undefined;
@@ -104,14 +108,14 @@ export function NewPaper(props: NewPaperProps) {
     setSlide({ docId: props.docId, dir: from < 0 || to < 0 ? null : to > from ? "next" : "prev" });
   }
 
-  /** 모델의 key에 없는 것 - 칩 글 · 펼친 칩 · 그 자리 메뉴 · 칸을 지금 누르고 놓고 끊을 수 있나 */
+  /** 모델의 key에 없는 것 - 칩 글 · 펼친 칩 · 칸을 지금 누르고 놓고 끊을 수 있나 */
   function readKey(ids: ReadonlySet<number>): string {
     const own = [...ids].flatMap((id) => {
       const box = boxes.get(id);
       if (!box) return [];
       const noteLabels = box.notes.flatMap((note) => [...note.sourceIds.map(props.sourceLabel), openSources.has(note.targetId)]);
       const cell = box.kind === "cell" ? [props.cellPickable, props.cellDroppable, props.onUnlink !== undefined] : [];
-      return [[id, ...box.sourceIds.map(props.sourceLabel), openSources.has(box.targetId), id === props.foot?.unitId, ...noteLabels, ...cell].join(",")];
+      return [[id, ...box.sourceIds.map(props.sourceLabel), openSources.has(box.targetId), ...noteLabels, ...cell].join(",")];
     });
     return `${readOverlayKey(boxes, ids)}/${own.join(";")}`;
   }
@@ -200,16 +204,7 @@ export function NewPaper(props: NewPaperProps) {
       const box = boxes.get(id);
       return box ? renderTop(box) : null;
     },
-    renderFoot: (id) => (
-      <>
-        {boxes.get(id)?.notes.map(renderNote)}
-        {props.foot?.unitId === id && (
-          <Collapse open appear className="strip-acts new-line-acts">
-            {props.foot.node}
-          </Collapse>
-        )}
-      </>
-    ),
+    renderFoot: (id) => boxes.get(id)?.notes.map(renderNote),
     renderFolded,
     textProps: (id) => {
       const box = boxes.get(id);
@@ -235,6 +230,8 @@ export function NewPaper(props: NewPaperProps) {
         pageClassName="new-sheet new-paper"
         selectedId={props.selectedUnitId}
         pickedIds={props.pickedUnitIds}
+        held={props.held}
+        renderUnitActions={props.renderUnitActions}
         // 표는 칸마다 고르고 잇는다
         pickWholeBundle={false}
         shiftClickPicks
@@ -253,7 +250,7 @@ export function NewPaper(props: NewPaperProps) {
         renderAtCut={props.cut ? props.renderAtCut : undefined}
         figureSource={{ bundleId: props.bundleId, docId: props.fileId }}
         // 이미 쓴 문서는 캡션을 요구하지 않는다(입구 2)
-        strips={{ isCaptionNeeded: () => false, pending: props.pending, overlay: paperOverlay }}
+        strips={{ isCaptionNeeded: () => false, pending: props.pending, mergeArm: props.mergeArm, overlay: paperOverlay }}
         testId="assign-new-paper"
       />
     );
@@ -310,7 +307,7 @@ export function NewPaper(props: NewPaperProps) {
         </div>
       )}
       {props.banner}
-      <div className="pane-body">
+      <div className="pane-body" tabIndex={-1} role="group" aria-label={t("assign.paperBody", { tag: props.tag })}>
         {/* 이 감싸개는 문서가 바뀌어도 그대로다 - 연결선이 크기를 지켜본다(LinkLines의 .pane-body > *) */}
         <div>
           {model && view ? (

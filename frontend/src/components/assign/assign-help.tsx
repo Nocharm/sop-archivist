@@ -9,6 +9,7 @@ import { HelpPanel } from "@/components/ui/help-panel";
 import { ASSIGN_KEYS, formatAssignKey, HELP_ONLY } from "@/lib/assign-keymap";
 import { useDraftingOn } from "@/lib/drafting";
 import { useI18n } from "@/lib/i18n";
+import { PROGRESS_PART_FILL } from "@/lib/progress-model";
 
 function Row({ swatch, children }: { swatch: ReactNode; children: ReactNode }) {
   return (
@@ -39,8 +40,17 @@ export function AssignHelp() {
         <>
           <Row swatch={<UnitStatusChip status="on_hold" size="sm" testId="assign-help-hold" />}>{t("assign.legend.holdChip")}</Row>
           <span className="help-panel-row flex-wrap" data-testid="assign-help-chips">
-            {(["unassigned", "ai_suggested", "confirmed", "on_hold"] as const).map((st) => (
+            {(["unassigned", "confirmed", "on_hold"] as const).map((st) => (
               <UnitStatusChip key={st} status={st} testId={`assign-help-chip-${st}`} />
+            ))}
+          </span>
+          {/* 문서 대시보드 · 개요 막대의 색 - 이동은 옛 기록에만 있어 뺐다 */}
+          <span className="help-panel-row flex-wrap" data-testid="assign-help-parts">
+            {(["assigned", "deleted", "on_hold", "unassigned"] as const).map((part) => (
+              <span key={part} className="inline-flex items-center gap-1">
+                <i className="inline-block size-2 rounded-sm" style={{ background: PROGRESS_PART_FILL[part] }} aria-hidden />
+                {t(`progress.part.${part}`)}
+              </span>
             ))}
           </span>
           <Row swatch={<CircleCheck size={14} strokeWidth={2} className="pmark classified" aria-hidden />}>{t("assign.legend.confirmed")}</Row>
