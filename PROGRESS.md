@@ -193,3 +193,7 @@
 - 전체 스모크 `FULL=1`(`2ccff578`) 2522 통과 · 1 흔들림(New 판 그림 캡션). 같은 흔들림의 두 번째 고침이라 `readCaptionLine`을 맞을 때까지 다시 읽고 실패 글에 본 값을 남기게 함(`test/smoke-caption-settle`, 기대값 그대로).
 - 감사 넷(`f2e20b78`): overlap · contrast · manual-shots 통과, layout `DS=worst` 196 중 5 실패. 관리 역할 표 1120 넘침(X0 · A11)은 제품 결함 — 켜진 칸의 `sr-only`(absolute)가 위치 기준 없는 스크롤 상자를 빠져나가 문서를 넓혔다: 감싸개 `position: relative`, 긴 역할 이름 `clamp-2`(`fix/admin-roles-fit`, v1.6.32). 낡은 기대값 둘은 사용자 승인("다 처리")으로 고침 — P1 Excel 미리보기 탭 5 → 4(1a §14), A4b는 W1 옛 줄이 738이라 번호 칸 마지막 20개에 네 자리를 넣어 잰다(`test/layout-audit-stale`). 고친 넷 모두 다시 통과.
 - 정식 업데이트 체크리스트 HTML을 읽기 쉽게 다시 씀(항목마다 제목 · 볼 것 목록 · 버전 칩 · 정할 것 띠, 섹션별 셈, 남은 것만).
+
+## 2026-11-26 — 1차 피드백 개선 (v1.6.32 → )
+
+- 스크롤 막대(`fix/scrollbar-near-reveal`, v1.6.33): macOS 오버레이가 아니라 앱 CSS가 막대를 늘 투명하게 두고 스크롤 중에만 보이던 것 — `nav-host`의 같은 배선에 포인터가 스크롤 상자 오른쪽 끝 40px 안이면 `.is-scroll-near`(흐린 색)를 붙임. 조상 상자 찾기는 가리킨 요소가 바뀔 때만.

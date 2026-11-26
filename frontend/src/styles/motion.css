@@ -1,4 +1,4 @@
-/* 단과 움직임 - 창은 움직이지 않고 단마다 따로 스크롤한다. 스크롤바는 움직이는 동안만 보이고 자리는 늘 잡아 둬 폭이 튀지 않는다.
+/* 단과 움직임 - 창은 움직이지 않고 단마다 따로 스크롤한다. 스크롤바는 움직이는 동안(끝 가까이 마우스가 오면 흐리게)만 보이고 자리는 늘 잡아 둬 폭이 튀지 않는다.
    이동 버퍼·접기·쉬머·모핑의 모양. 시간은 tokens.css의 --dur-*·--ease-*만 쓴다(움직임 줄이기에서 0이 된다). */
 
 @layer components {
@@ -6,8 +6,10 @@
   .app { height: 100dvh; overflow: hidden; }
   .tb { position: relative; }
 
-  /* 스크롤바: 평소엔 투명(자리만 차지), 스크롤하는 동안(.is-scrolling, nav-host가 붙인다)만 보인다 */
+  /* 스크롤바: 평소엔 투명(자리만 차지), 스크롤하는 동안(.is-scrolling, nav-host가 붙인다)만 보인다.
+     마우스가 상자 오른쪽 끝 가까이 오면(.is-scroll-near, nav-host) 흐리게 - 스크롤 중의 진한 색이 뒤에 와서 이긴다 */
   * { scrollbar-width: thin; scrollbar-color: transparent transparent; }
+  .is-scroll-near { scrollbar-color: color-mix(in oklab, var(--ink) 16%, transparent) transparent; }
   .is-scrolling { scrollbar-color: color-mix(in oklab, var(--ink) 30%, transparent) transparent; }
 
   /* 스크롤 단은 스크롤바 자리를 늘 잡아 둔다(나타날 때 내용이 밀리지 않게)와 바깥으로 스크롤이 번지지 않게 */
