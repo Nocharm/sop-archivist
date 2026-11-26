@@ -1,0 +1,237 @@
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+
+import {
+  NUMPAGES_TOKEN,
+  PAGE_TOKEN,
+  markHeaderRows,
+  markPageFields,
+  paginateRendered,
+  replaceUnrenderable,
+  stripUnsafeLinks,
+} from "./original-render";
+
+const W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+
+// jsdom에는 배치가 없다 - data-h를 높이로, 앞 형제들(떠 있는 것 빼고)의 높이 합을 offsetTop으로 심는다(복제한 요소도 따라온다)
+const saved = {
+  top: Object.getOwnPropertyDescriptor(HTMLElement.prototype, "offsetTop"),
+  height: Object.getOwnPropertyDescriptor(HTMLElement.prototype, "offsetHeight"),
+};
+beforeEach(() => {
+  Object.defineProperty(HTMLElement.prototype, "offsetHeight", {
+    configurable: true,
+    get(this: HTMLElement) {
+      return Number(this.dataset.h ?? 0);
+    },
+  });
+  Object.defineProperty(HTMLElement.prototype, "offsetTop", {
+    configurable: true,
+    get(this: HTMLElement) {
+      let top = Number(this.parentElement?.dataset.top ?? 0);
+      for (let el = this.previousElementSibling; el !== null; el = el.previousElementSibling) {
+        if ((el as HTMLElement).style.position !== "absolute") top += Number((el as HTMLElement).dataset.h ?? 0);
+      }
+      return top;
+    },
+  });
+});
+afterEach(() => {
+  if (saved.top) Object.defineProperty(HTMLElement.prototype, "offsetTop", saved.top);
+  if (saved.height) Object.defineProperty(HTMLElement.prototype, "offsetHeight", saved.height);
+  document.body.replaceChildren();
+});
+
+function el<K extends keyof HTMLElementTagNameMap>(tag: K, attrs: Record<string, string> = {}, ...kids: (Node | string)[]) {
+  const node = document.createElement(tag);
+  for (const [key, value] of Object.entries(attrs)) node.setAttribute(key, value);
+  node.append(...kids);
+  return node;
+}
+
+/** 그리개가 만드는 장 하나 - 종이 500px, 위·아래 여백 50px(쓸 높이 400) */
+function buildPage(...kids: HTMLElement[]): HTMLElement {
+  const page = el("section", { class: "sopa-ov" });
+  page.style.minHeight = "375pt"; // 500px
+  page.style.paddingTop = "50px";
+  page.style.paddingBottom = "50px";
+  const header = el("header", {}, el("p", {}, "Head ", el("span", { id: "sopa_9" }), `page ${PAGE_TOKEN} of ${NUMPAGES_TOKEN}`));
+  const article = el("article", { "data-top": "50" }, ...kids);
+  const footer = el("footer", {}, el("p", {}, `- ${PAGE_TOKEN} -`));
+  page.append(header, article, footer);
+  return page;
+}
+
+describe("stripUnsafeLinks", () => {
+  it("strips non-http links", () => {
+    const root = el(
+      "div",
+      {},
+      el("a", { href: "javascript:alert(1)" }, "js"),
+      el("a", { href: " FILE:///c" }, "file"),
+      el("a", { href: "data:text/html,<b>x</b>" }, "data"),
+      el("a", { href: "https://x" }, "web"),
+      el("a", { href: "#sec" }, "inside"),
+    );
+    stripUnsafeLinks(root);
+    const hrefs = [...root.querySelectorAll("a")].map((link) => link.getAttribute("href"));
+    expect(hrefs).toEqual([null, null, null, "https://x", "#sec"]);
+    expect(root.textContent).toBe("jsfiledatawebinside");
+  });
+});
+
+describe("paginateRendered", () => {
+  it("splits a long page into paper-sized pages with header, footer and page numbers", () => {
+    const root = el("div");
+    root.append(buildPage(...Array.from({ length: 12 }, (_, i) => el("p", { "data-h": "100" }, `para ${i}`))));
+    document.body.append(root);
+
+    const total = paginateRendered(root);
+
+    const pages = [...root.querySelectorAll("section.sopa-ov")];
+    expect(total).toBe(3);
+    expect(pages).toHaveLength(3);
+    expect(pages.map((page) => page.querySelectorAll("article > p").length)).toEqual([4, 4, 4]);
+    expect(pages.map((page) => page.querySelector(":scope > header")?.textContent)).toEqual([
+      "Head page 1 of 3",
+      "Head page 2 of 3",
+      "Head page 3 of 3",
+    ]);
+    expect(pages.map((page) => page.querySelector(":scope > footer")?.textContent)).toEqual(["- 1 -", "- 2 -", "- 3 -"]);
+    // 머리말을 복제해도 표지 id가 겹치지 않는다
+    expect(root.querySelectorAll('[id="sopa_9"]')).toHaveLength(1);
+  });
+
+  it("leaves floating boxes out of the measure", () => {
+    const floating = el("div", { "data-h": "900" });
+    floating.style.position = "absolute";
+    const root = el("div");
+    root.append(buildPage(el("p", { "data-h": "100" }), floating, el("p", { "data-h": "100" })));
+    expect(paginateRendered(root)).toBe(1);
+  });
+
+  it("splits a table by rows with the same columns and repeated header row", () => {
+    const head = el("tr", { "data-h": "50", class: "sopa-ov-head-row" }, el("td", {}, "Head"));
+    const rows = Array.from({ length: 11 }, (_, i) => el("tr", { "data-h": "50" }, el("td", {}, `row ${i}`)));
+    const colgroup = el("colgroup", {}, el("col"), el("col"));
+    const table = el("table", { "data-h": "600" }, colgroup, head, ...rows);
+    const root = el("div");
+    root.append(buildPage(el("p", { "data-h": "250" }, "intro"), table));
+
+    expect(paginateRendered(root)).toBe(3);
+
+    const pages = [...root.querySelectorAll("section.sopa-ov")];
+    const tables = pages.map((page) => page.querySelector("article > table"));
+    expect(tables[0]?.querySelectorAll("tr")).toHaveLength(3); // 머리 줄 + 2줄(250 + 150 = 400)
+    expect(tables[1]?.querySelector("colgroup")?.children).toHaveLength(2);
+    expect(tables[1]?.querySelector("tr")?.textContent).toBe("Head");
+    expect(tables[1]?.querySelectorAll("tr")[1]?.textContent).toBe("row 2");
+    const bodyRows = tables.flatMap((one) => [...(one?.querySelectorAll("tr") ?? [])].filter((row) => row.textContent !== "Head"));
+    expect(bodyRows.map((row) => row.textContent)).toEqual(rows.map((row) => row.textContent));
+  });
+});
+
+describe("replaceUnrenderable", () => {
+  it("swaps metafile pictures for a hatched box of the same size", () => {
+    const emf = el("img", { src: "data:image/x-emf;base64,AQAAAA==" });
+    emf.style.width = "120pt";
+    emf.style.height = "80pt";
+    const wmf = el("img", { src: "data:image/x-wmf;base64,183GmgAA" });
+    wmf.style.width = "10pt";
+    wmf.style.height = "12pt";
+    const png = el("img", { src: "data:image/png;base64,iVBORw0KGgo=" });
+    const root = el("div", {}, emf, el("p", {}, wmf), png);
+
+    expect(replaceUnrenderable(root, "Preview unavailable (EMF)")).toBe(2);
+
+    const boxes = [...root.querySelectorAll<HTMLElement>("span.sopa-ov-unrenderable")];
+    expect(boxes.map((box) => [box.style.width, box.style.height])).toEqual([
+      ["120pt", "80pt"],
+      ["10pt", "12pt"],
+    ]);
+    expect(boxes[0].textContent).toBe("Preview unavailable (EMF)");
+    expect(root.querySelectorAll("img")).toHaveLength(1);
+  });
+});
+
+describe("markPageFields", () => {
+  const hdr = (inner: string) => `<w:hdr xmlns:w="${W}">${inner}</w:hdr>`;
+
+  it("turns complex PAGE and NUMPAGES field results into tokens", () => {
+    const field = (code: string, shown: string) =>
+      `<w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText> ${code} \\* MERGEFORMAT </w:instrText></w:r>` +
+      `<w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>${shown}</w:t></w:r><w:r><w:t>x</w:t></w:r>` +
+      `<w:r><w:fldChar w:fldCharType="end"/></w:r>`;
+    const xml = markPageFields(hdr(`<w:p><w:r><w:t>Page </w:t></w:r>${field("PAGE", "1")}<w:r><w:t> of </w:t></w:r>${field("NUMPAGES", "9")}</w:p>`));
+    const text = [...new DOMParser().parseFromString(xml, "application/xml").getElementsByTagNameNS(W, "t")].map((t) => t.textContent).join("");
+    expect(text).toBe(`Page ${PAGE_TOKEN} of ${NUMPAGES_TOKEN}`);
+  });
+
+  it("turns a simple PAGE field into a plain run the renderer draws", () => {
+    const xml = markPageFields(hdr(`<w:p><w:fldSimple w:instr=" PAGE "><w:r><w:rPr><w:b/></w:rPr><w:t>3</w:t></w:r></w:fldSimple></w:p>`));
+    const doc = new DOMParser().parseFromString(xml, "application/xml");
+    expect(doc.getElementsByTagNameNS(W, "fldSimple")).toHaveLength(0);
+    const run = doc.getElementsByTagNameNS(W, "r")[0];
+    expect(run.parentElement?.localName).toBe("p");
+    expect(run.getElementsByTagNameNS(W, "b")).toHaveLength(1);
+    expect(run.textContent).toBe(PAGE_TOKEN);
+  });
+
+  it("leaves other fields alone", () => {
+    const source = hdr(`<w:p><w:fldSimple w:instr=" DATE "><w:r><w:t>today</w:t></w:r></w:fldSimple></w:p>`);
+    expect(markPageFields(source)).toBe(source);
+  });
+});
+
+describe("markHeaderRows", () => {
+  it("plants a mark in the first paragraph of each repeated header row", () => {
+    const row = (header: boolean, text: string) =>
+      `<w:tr>${header ? "<w:trPr><w:tblHeader/></w:trPr>" : ""}<w:tc><w:p><w:r><w:t>${text}</w:t></w:r></w:p></w:tc></w:tr>`;
+    const off = `<w:tr><w:trPr><w:tblHeader w:val="0"/></w:trPr><w:tc><w:p/></w:tc></w:tr>`;
+    const xml = `<w:document xmlns:w="${W}"><w:body><w:tbl>${row(true, "H")}${row(false, "B")}${off}</w:tbl></w:body></w:document>`;
+    const doc = new DOMParser().parseFromString(markHeaderRows(xml), "application/xml");
+    const marks = [...doc.getElementsByTagNameNS(W, "bookmarkStart")];
+    expect(marks).toHaveLength(1);
+    expect(marks[0].parentElement?.textContent).toBe("H");
+  });
+});
+
+describe("renderOriginal", () => {
+  it("draws planted marks as element ids and flags repeated header rows", async () => {
+    const { default: JSZip } = await import("jszip");
+    const { plantPlaceMarks } = await import("@/lib/original-place-model");
+    const { readPartsToMark, renderOriginal } = await import("./original-render");
+    const zip = new JSZip();
+    zip.file(
+      "[Content_Types].xml",
+      '<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">' +
+        '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>' +
+        '<Default Extension="xml" ContentType="application/xml"/>' +
+        '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>',
+    );
+    zip.file(
+      "_rels/.rels",
+      '<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
+        '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>',
+    );
+    const head = '<w:tr><w:trPr><w:tblHeader/></w:trPr><w:tc><w:p><w:r><w:t>Head</w:t></w:r></w:p></w:tc></w:tr>';
+    const row = '<w:tr><w:tc><w:p><w:r><w:t>Row</w:t></w:r></w:p></w:tc></w:tr>';
+    zip.file(
+      "word/document.xml",
+      `<?xml version="1.0"?><w:document xmlns:w="${W}"><w:body><w:p><w:r><w:t>One</w:t></w:r></w:p>` +
+        `<w:p><w:r><w:t>Two</w:t></w:r></w:p><w:tbl>${head}${row}</w:tbl><w:sectPr/></w:body></w:document>`,
+    );
+    const file = await zip.generateAsync({ type: "blob" });
+    const places = [{ unit_id: 1, blocks: [{ path: "document/body/p[2]", page: 1 }] }];
+
+    const planted = plantPlaceMarks(await readPartsToMark(file, places), places);
+    const host = document.createElement("div");
+    const styles = document.createElement("div");
+    document.body.append(styles, host);
+    await renderOriginal(file, planted.parts, host, styles);
+
+    expect(host.querySelector('[id="sopa_0"]')?.closest("p")?.textContent).toBe("Two");
+    expect(host.querySelector("section.sopa-ov")).not.toBeNull();
+    expect([...host.querySelectorAll("tr.sopa-ov-head-row")].map((tr) => tr.textContent)).toEqual(["Head"]);
+    expect(styles.querySelector("style")).not.toBeNull();
+  });
+});
