@@ -73,6 +73,7 @@ SOP 화면: `api-sop.ts`(SOP API 호출·응답 타입), 화면 규칙은 순수
 - `bundle-store`(묶음 캐시 — 화면 진입마다 다시 부르고 로그아웃·사용자 전환 때 비운다).
 - AI 작업 상태는 공용 폴러 `lib/ai-jobs-store.ts`(사용자당 하나, `GET /api/ai/jobs/recent`)가 읽고 규칙은 `ai-jobs-model.ts`, 상단 바 표시는 `components/ai-jobs-indicator.tsx`·`ai-jobs-popover.tsx`(`use-ai-jobs`는 그 묶음의 요청이 바뀔 때 `/ai/status`만 다시 읽는다).
 - `leave-guard`(미저장 이탈 가드)·`use-loaded`·`use-cursor-list`(서버 커서로 한 묶음씩 이어 받는 목록 — 이미 받은 목록을 나눠 그리는 `use-progressive-list`와 다르다).
+- `use-pane-measure`(`.assign-panes` 위 선 층이 다시 재는 때 — 스크롤 캡처 · 창 크기 · ResizeObserver · 렌더마다를 rAF 한 번으로 묶는다. Pair view 짝 선 `pair-lines`와 떨어진 짝 괄호선 `components/assign/pair-bracket.tsx`(규칙 `lib/pair-bracket-model.ts` — 짝이 모두 화면 안일 때만, 보이는 동안 · 재기 전에는 용지 `strips.pairHint.isHidden`으로 안내 줄 대신 같은 높이 빈 자리를 둔다(`isPairHintShown`, 고를 때 밀림 없음))가 쓴다. 선 층을 새로 만들면 이펙트를 새로 두지 않고 이 훅을 쓴다).
 - `ui-prefs`(화면 설정 값 목록)와 `layout.tsx`의 첫 페인트 전 boot 스크립트가 같은 값을 쓴다.
 
 ## 5. UI 규칙(디자인 기초 문서)

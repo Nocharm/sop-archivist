@@ -63,3 +63,24 @@ describe("the picked-together ring", () => {
     expect(contrast(ring, mixTint(theme))).toBeGreaterThanOrEqual(3);
   });
 });
+
+// 떨어진 짝 괄호선(11-23 명세 E1) - 안내 줄을 대신하는 유일한 표시라 1.5px 선이 둘레 바탕(용지 · 칸 · 화면)에서 비텍스트 3:1 이상이어야 한다.
+// components.css의 .pair-bracket 선색을 그대로 읽는다 - color-mix 토큰이면 tokens.css의 식대로 섞는다
+const COMPONENTS = readFileSync(join(__dirname, "components.css"), "utf8");
+
+function resolveColor(theme: "light" | "dark", name: string): Lab {
+  const value = token(theme, name);
+  const mix = /color-mix\(in oklab, var\((--[\w-]+)\) (\d+)%, var\((--[\w-]+)\)\)/.exec(value);
+  if (!mix) return toOklab(value);
+  const [one, other, share] = [resolveColor(theme, mix[1]), resolveColor(theme, mix[3]), Number(mix[2]) / 100];
+  return [0, 1, 2].map((at) => one[at] * share + other[at] * (1 - share)) as Lab;
+}
+
+describe("the far pair bracket", () => {
+  const stroke = /\.pair-bracket path \{[^}]*stroke: var\((--[\w-]+)\)/.exec(COMPONENTS)?.[1] ?? "";
+  it("strokes with a token", () => expect(stroke).toMatch(/^--/));
+  it.each(["light", "dark"] as const)("%s bracket line reads at 3:1 on the paper, the pane and the page", (theme) => {
+    const line = resolveColor(theme, stroke);
+    for (const ground of ["--paper", "--surface", "--bg"]) expect(contrast(line, toOklab(token(theme, ground))), `${stroke} on ${ground}`).toBeGreaterThanOrEqual(3);
+  });
+});
