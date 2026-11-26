@@ -28,6 +28,10 @@ describe("the Assign key table", () => {
     expect(readId("d")).toBeNull();
     expect(readId("D", { shiftKey: true })).toBeNull();
   });
+  it("Shift+S splits by sentence and S still cuts at the line", () => {
+    expect(readId("S", { shiftKey: true })).toBe("run split_sentences");
+    expect(readId("s")).toBe("run split");
+  });
   it("has no duplicate key and shift", () => {
     const presses = ASSIGN_KEYS.map((entry) => `${entry.key}${entry.shift ? "+shift" : ""}`);
     expect(presses.filter((item, index) => presses.indexOf(item) !== index)).toEqual([]);
@@ -96,6 +100,7 @@ describe("what a key does where it is pressed", () => {
     ["lang", { isText: false }, `${WHY}.notText`],
     ["lang", { langReasonKey: "assign.ctx.why.refLang" }, "assign.ctx.why.refLang"],
     ["split", { hasCut: false }, "split.menu.why.noCut"],
+    ["split_sentences", { isText: false }, `${WHY}.notText`],
     ["hold", { hasRow: false }, `${WHY}.noRow`],
     ["remark", { hasRow: false }, `${WHY}.noRow`],
     ["clear_block", {}, `${WHY}.notDeleted`],
@@ -105,6 +110,9 @@ describe("what a key does where it is pressed", () => {
   });
   it.each(ASSIGN_KEYS.filter(({ id }) => !["clear_block", "remark_block"].includes(id)).map((entry) => [entry.id, entry] as const))("%s runs where it can", (id, entry) => {
     expect(resolveAssignKey(entry, OPEN)).toEqual({ run: id });
+  });
+  it("Split by sentence does not borrow the language key's reason", () => {
+    expect(resolveAssignKey(entryOf("split_sentences"), { ...OPEN, langReasonKey: "assign.ctx.why.refLang" })).toEqual({ run: "split_sentences" });
   });
   it("unwraps inside a table and wraps back on an unwrapped line", () => {
     expect(resolveAssignKey(entryOf("table"), { ...OPEN, tableId: 3, unwrappedTableId: null })).toEqual({ run: "table" });

@@ -2275,7 +2275,8 @@ export function useAssignPage() {
       else if (cutUnit?.id === target.id && cutLine.at !== null) splitAtCut();
       // 양 단의 New도 같은 용지라 표 칸까지 그 자리에 선을 놓는다(쪼개기 먼저 §8 4-3)
       else if (cutLine.placeNear(target, caret)) setCutUnitId(target.id);
-    } else if ((action === "merge_prev" || action === "merge_next") && shape) {
+    } else if (action === "split_sentences") runUnitEdit(shape, { type: "split_sentences", unit_id: target.id }, t("split.didSplit"), null);
+    else if ((action === "merge_prev" || action === "merge_next") && shape) {
       const { order } = shape.tabs;
       const other = order[order.indexOf(target.id) + (action === "merge_prev" ? -1 : 1)];
       const ids = action === "merge_prev" ? [other, target.id] : [target.id, other];
@@ -4845,6 +4846,13 @@ export function useAssignPage() {
       case "lang":
         if (keyUnit !== null) changeLanguage(shape, keyUnit, langTo);
         return true;
+      case "split_sentences": {
+        // 못 하는 까닭(배정 확인 · 목차 줄 · 나눌 자리 없음)은 메뉴 항목과 같은 답이다 - 단추 줄에서 숨은 항목은 짧은 문장의 까닭
+        const item = keyItems.find((entry) => entry.action === "split_sentences");
+        if (keyUnit !== null && item?.enabled) runUnitAction(shape, keyUnit, "split_sentences");
+        else showToast(t(item?.reasonKey ?? "assign.ctx.why.nothingToSplit"), "info");
+        return true;
+      }
       case "shape_mode":
         if (shapeMode !== null) switchShapeMode(shapeMode.current === "one" ? "pair" : "one");
         return true;

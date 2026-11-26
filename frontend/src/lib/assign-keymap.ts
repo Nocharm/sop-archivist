@@ -3,12 +3,12 @@
 
 export type AssignKeyId =
   | "move_next" | "move_prev" | "confirm" | "escape" | "delete" | "clear" | "clear_block" | "remark" | "remark_block"
-  | "split" | "cut_left" | "cut_right" | "view" | "preview" | "go_pair"
+  | "split" | "split_sentences" | "cut_left" | "cut_right" | "view" | "preview" | "go_pair"
   | "hold" | "lang" | "shape_mode" | "number" | "use_ai" | "ask_order" | "table" | "indent" | "outdent"
   | "merge_next" | "merge_prev" | "part_prev" | "part_next" | "undo" | "redo" | "help";
 
 /** 그 글쇠가 바라는 것 - 어긋나면 resolveAssignKey가 까닭을 준다 */
-export type AssignKeyWhen = "always" | "row" | "cut" | "pair" | "text" | "shape" | "number" | "ai" | "unwrapped" | "table" | "box" | "join";
+export type AssignKeyWhen = "always" | "row" | "cut" | "pair" | "text" | "sentence" | "shape" | "number" | "ai" | "unwrapped" | "table" | "box" | "join";
 
 export interface AssignKey {
   id: AssignKeyId;
@@ -35,6 +35,7 @@ export const ASSIGN_KEYS: readonly AssignKey[] = [
   { id: "hold", key: "h", shift: true, when: "row", labelKey: "assign.key.hold" },
   { id: "use_ai", key: "a", shift: true, when: "ai", labelKey: "assign.key.useAi" },
   { id: "split", key: "s", shift: false, when: "cut", labelKey: "assign.key.split" },
+  { id: "split_sentences", key: "s", shift: true, when: "sentence", labelKey: "assign.ctx.splitSentences" },
   { id: "cut_left", key: "arrowleft", shift: false, when: "cut", labelKey: "assign.key.cutLeft" },
   { id: "cut_right", key: "arrowright", shift: false, when: "cut", labelKey: "assign.key.cutRight" },
   { id: "lang", key: "l", shift: true, when: "text", labelKey: "assign.key.lang" },
@@ -166,6 +167,8 @@ function findRefusal({ id, when }: AssignKey, ctx: AssignKeyContext): string | n
   // 합치기는 이웃과 막는 까닭을 누를 때 따로 잰다(merge-arm-model) - 여기서는 고른 박스만 본다
   if (when === "join") return null;
   if (when === "text") return ctx.isText ? ctx.langReasonKey : why("notText");
+  // 문장마다 나누기는 언어와 상관없다 - 언어 글쇠의 까닭(참조 줄 · 배정)을 빌리지 않고, 못 하는 까닭은 누를 때 메뉴 항목의 것을 알린다
+  if (when === "sentence") return ctx.isText ? null : why("notText");
   if (when === "shape") return ctx.shapeMode === null ? why("noShape") : ctx.shapeMode.reasonKey;
   if (when === "table") return ctx.tableId === null && ctx.unwrappedTableId === null ? why("notTable") : ctx.tableReasonKey;
   if (when === "unwrapped") return ctx.unwrappedTableId === null ? why("notUnwrapped") : ctx.orderReasonKey;
