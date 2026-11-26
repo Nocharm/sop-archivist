@@ -157,6 +157,14 @@ class MergeOp(BaseModel):
     unit_ids: list[DbId] = Field(min_length=2, max_length=MAX_EDIT_UNITS)
 
 
+class MergeRowsOp(BaseModel):
+    """고른 줄(짝이면 구성원 모두)을 언어마다 하나로 합치고, 한글 · 영어가 다 있으면 합친 둘을 사람이 맺은 짝으로 — 편집 하나, 되돌리기 한 번
+    (쪼개기 먼저 설계 §9). 이웃인지는 화면이 용지 순서로 본다(합치기와 같다)."""
+
+    type: Literal["merge_rows"]
+    unit_ids: list[DbId] = Field(min_length=2, max_length=MAX_EDIT_UNITS)
+
+
 class UnmergeOp(BaseModel):
     """합친 단위를 합치기 전 단위들로 — 그 합치기가 만든 단위가 그 뒤로 바뀌지 않았을 때만(옛 ID 그대로 되살린다)."""
 
@@ -379,7 +387,7 @@ class FollowTableOp(BaseModel):
 
 
 EditOp = Annotated[
-    SplitOp | MergeOp | UnmergeOp | MoveBoundaryOp | CarveOp | SetLanguageOp | SwitchLanguageOp
+    SplitOp | MergeOp | MergeRowsOp | UnmergeOp | MoveBoundaryOp | CarveOp | SetLanguageOp | SwitchLanguageOp
     | SetLayoutTableOp | AttachCaptionOp | DetachCaptionOp | SetFirstRowCaptionOp | GroupFiguresOp
     | UngroupFiguresOp | SetRefOp | ClearRefOp | ClearNoiseOp | SetNoiseReasonOp | StartBodyOp | SetNumberOp | SetHeadingOp | ReorderPairOp
     | ReorderUnwrappedOp | SetIndentsOp | FollowTableOp,
@@ -524,6 +532,9 @@ class _Change:
     # 쓴 뒤 사람이 맺은 짝으로 묶을 단위 — 되살리는 단위 id와 이 변경이 만드는 단위(drafts 순번). 앞으로 가는 편집만(되돌리기의 짝은 Assign 단계가 되쓴다)
     pair_units: list[int] = field(default_factory=list)
     pair_drafts: list[int] = field(default_factory=list)
+    # 여럿 고른 줄 합치기(merge_rows)가 초안마다 은퇴시킨 단위 id — 초안의 원문 순(= 만든 단위 순)이라 기록 payload["merged"]로 남아
+    # 합친 박스마다 조각을 읽는다(read_merged_pieces). 다른 편집은 비어 있고 payload에도 싣지 않는다
+    merged: list[list[int]] = field(default_factory=list)
 
     def list_regrouped_cells(self) -> list[int]:
         return sorted({*self.regroup, *(cell_id for draft in self.drafts for cell_id in draft.cells)})
@@ -725,16 +736,60 @@ async def _plan_merge(session: AsyncSession, extraction_id: ExtractionId, op: Me
     _ensure_text_kinds(units)
     ensure_not_noise(units)
     _ensure_mergeable(units)
-    langs = {unit.lang for unit in units}
     blocks = await _load_unit_blocks(session, extraction_id, units)
+    return _build_replacement(units, [_build_merged_draft(units, blocks)])
+
+
+def _build_merged_draft(units: Sequence[Unit], blocks: Mapping[int, _Block]) -> _Draft:
+    """원문 순으로 놓인 units를 합친 단위 하나 — 범위를 원문 순서로 모아 가까운 범위를 잇는다."""
+    langs = {unit.lang for unit in units}
     spans = sorted(
         (span for unit in units for span in to_spans(unit.spans)), key=lambda span: (blocks[span[0]].seq, span[1])
     )
-    draft = _build_draft(
+    return _build_draft(
         units[0], join_close_spans(spans, _get_texts(blocks)), blocks, kind=_decide_merged_kind(units),
         lang=next(iter(langs)) if len(langs) == 1 else None,  # 섞이면 글자로 판정(한글이 있으면 ko)
     )
-    return _build_replacement(units, [draft])
+
+
+async def _plan_merge_rows(session: AsyncSession, extraction_id: ExtractionId, op: MergeRowsOp) -> _Change:
+    """언어 무리마다 _plan_merge의 규칙으로 합친다. 고른 Unit이 든 짝의 구성원이 빠졌으면 422 cannot_merge(pair_part), 한글 · 영어가
+    섞였는데 고른 줄에 짝이 없거나 그 밖의 언어가 섞이면 422 cannot_merge(mixed). Unit이 하나뿐인 무리는 은퇴시키지 않고 그대로 짝의 한쪽이 된다.
+    """
+    ensure_unique_units(op.unit_ids)
+    units = sorted((await load_active_units(session, extraction_id, op.unit_ids)).values(), key=_get_position)
+    _ensure_text_kinds(units)
+    ensure_not_noise(units)
+    picked = {unit.id for unit in units}
+    member_rows = (
+        await session.execute(
+            select(UnitPairMember.pair_id, UnitPairMember.unit_id).where(
+                UnitPairMember.pair_id.in_(select(UnitPairMember.pair_id).where(UnitPairMember.unit_id.in_(picked)))
+            )
+        )
+    ).all()
+    left_out = sorted({unit_id for _, unit_id in member_rows if unit_id not in picked})
+    if left_out:
+        raise_rule(422, "cannot_merge", unit_ids=left_out, reason="pair_part")
+    groups: dict[str, list[Unit]] = defaultdict(list)
+    for unit in units:
+        groups[unit.lang].append(unit)
+    if len(groups) > 1 and (set(groups) != PAIR_LANGS or not member_rows):
+        raise_rule(422, "cannot_merge", unit_ids=sorted(picked), reason="mixed")
+    for group in groups.values():
+        _ensure_mergeable(group)
+    merging = [group for group in groups.values() if len(group) > 1]
+    blocks = await _load_unit_blocks(session, extraction_id, [unit for group in merging for unit in group])
+    # 초안을 원문 순으로 — 만든 단위도 원문 순이라(_insert_units) merged[n]이 n번째로 만든 단위의 조각이다
+    merging.sort(key=lambda group: _get_position(group[0]))
+    change = _build_replacement(
+        [unit for group in merging for unit in group], [_build_merged_draft(group, blocks) for group in merging]
+    )
+    change.merged = [sorted(unit.id for unit in group) for group in merging]
+    if len(groups) > 1:
+        change.pair_units = sorted(group[0].id for group in groups.values() if len(group) == 1)
+        change.pair_drafts = list(range(len(change.drafts)))
+    return change
 
 
 def is_merge_edit(op: str, created: Sequence[int], retired: Sequence[int]) -> bool:
@@ -2077,6 +2132,8 @@ async def _plan(session: AsyncSession, document_id: int, extraction_id: Extracti
             return await _plan_split(session, extraction_id, op)
         case MergeOp():
             return await _plan_merge(session, extraction_id, op)
+        case MergeRowsOp():
+            return await _plan_merge_rows(session, extraction_id, op)
         case UnmergeOp():
             return await _plan_unmerge(session, document_id, extraction_id, op)
         case MoveBoundaryOp():
@@ -2632,9 +2689,12 @@ async def apply_edit(
             )
         return EditResult(document_revision=document.revision, created_unit_ids=[], retired_unit_ids=[], detach=None)
     result = await _write_change(session, document, extraction_id, change, confirm=confirm, actor=actor)
+    payload = op.model_dump()
+    if change.merged:
+        payload["merged"] = change.merged
     session.add(
         UnitEdit(
-            document_id=document.id, seq=await _start_new_edit(session, document), op=op.type, payload=op.model_dump(),
+            document_id=document.id, seq=await _start_new_edit(session, document), op=op.type, payload=payload,
             created_unit_ids=result.created_unit_ids, retired_unit_ids=result.retired_unit_ids,
             regrouped={str(cell_id): list(move) for cell_id, move in change.regroup.items()},
             lang_changes={str(unit_id): list(langs) for unit_id, langs in change.langs.items()},
