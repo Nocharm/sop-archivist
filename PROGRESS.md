@@ -188,9 +188,8 @@
 - Old 표를 벗기면 첫 칸 숫자를 위 번호 아래로 잇는 `continue_numbers`를 벗기기 뒤 따로 한 칸으로(D1-R1~R5, New는 저절로 안 함 §11-1), 번호가 있는 줄을 합치면 뒤 번호 당기기(D1-R6, 여럿 합치기 포함). 규칙 사본 셋(`numbering.py` · `continue-number-model.ts` · `rule-cases.json`)이 같은 답. Alembic 없음.
 - opus 검토 막음 고침: "저절로 이은 번호"를 적용 중인 `continue_numbers` 기록이 쓴 값과 같을 때만으로 좁혀, 사람이 번호만 고친 한글 표가 손댄 표로 읽히게(따라 하기 · 문단 Excel). 이미 벗긴 운영 표는 다시 매기지 않는다.
 
-## 2026-11-26 — 정식 업데이트 전 전체 스모크 (v1.6.31)
+## 2026-11-26 — 정식 업데이트 전 자동 검사 · 고침 (v1.6.31 → v1.6.32)
 
-- dev `2ccff578`에서 `FULL=1` 2522 통과 · 1 실패(알려진 흔들림인 New 판 그림 캡션, 혼자 다시 돌려 통과). 결과는 split-first 장부 "이어 가기" 1번 아래에. 감사 넷 · perf는 남음.
-- 같은 흔들림의 두 번째 고침이라 스모크 `readCaptionLine`을 맞을 때까지 다시 읽게 고침(`test/smoke-caption-settle`, 기대값 그대로, 실패 글에 본 값). 단계 3/3 · `assign:` 1507 통과.
-- 감사 넷(`f2e20b78`): overlap · contrast · manual-shots 통과, layout `DS=worst` 196 중 5 실패 — 낡은 기대값 3(P1 탭 5→4 둘, A4b 자료 전제), 관리 역할 표 1120 넘침 2(X0 · A11)는 제품 결함 후보로 장부 "아침에 볼 것"에. 고치지 않음.
-- 관리 역할 표 1120 넘침 고침(`fix/admin-roles-fit`, v1.6.32): 문서 가로 스크롤은 켜진 칸의 `sr-only`(absolute)가 위치 기준 없는 스크롤 상자를 빠져나간 것 — 감싸개 `position: relative`. 긴 역할 이름은 설명처럼 두 줄(`clamp-2`). layout X0 · A11 129회 통과.
+- 전체 스모크 `FULL=1`(`2ccff578`) 2522 통과 · 1 흔들림(New 판 그림 캡션). 같은 흔들림의 두 번째 고침이라 `readCaptionLine`을 맞을 때까지 다시 읽고 실패 글에 본 값을 남기게 함(`test/smoke-caption-settle`, 기대값 그대로).
+- 감사 넷(`f2e20b78`): overlap · contrast · manual-shots 통과, layout `DS=worst` 196 중 5 실패. 관리 역할 표 1120 넘침(X0 · A11)은 제품 결함 — 켜진 칸의 `sr-only`(absolute)가 위치 기준 없는 스크롤 상자를 빠져나가 문서를 넓혔다: 감싸개 `position: relative`, 긴 역할 이름 `clamp-2`(`fix/admin-roles-fit`, v1.6.32). 낡은 기대값 둘은 사용자 승인("다 처리")으로 고침 — P1 Excel 미리보기 탭 5 → 4(1a §14), A4b는 W1 옛 줄이 738이라 번호 칸 마지막 20개에 네 자리를 넣어 잰다(`test/layout-audit-stale`). 고친 넷 모두 다시 통과.
+- 정식 업데이트 체크리스트 HTML을 읽기 쉽게 다시 씀(항목마다 제목 · 볼 것 목록 · 버전 칩 · 정할 것 띠, 섹션별 셈, 남은 것만).

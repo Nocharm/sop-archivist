@@ -1157,7 +1157,7 @@ const AUDIT_ENTRIES = [
   {
     // P1: W1 미리보기 창이 화면 안(받기 단추까지)이고, 쪽·창·시트 어디에도 스크롤 상자가 없으며(시트 보기는 transform으로 옮긴다 - MD 2 S1),
     //     표는 폭에 맞춘 한 장이라 틀이 1,180px 이상이면 20번째 열 머리가 틀 안에 보이고 좁으면 표가 최소 폭 1,180px로 남아 가로로 끌어 본다.
-    //     탭 다섯이 잘리거나 겹치지 않고, 휠로 아래로 옮겨도 머리 표는 제자리이며 가로로는 본문과 같이 옮겨진다.
+    //     탭 넷(C 시트는 숨김, 1a §14 - 전에는 다섯)이 잘리거나 겹치지 않고, 휠로 아래로 옮겨도 머리 표는 제자리이며 가로로는 본문과 같이 옮겨진다.
     //     종이 색은 화면 테마와 무관하다(THEMES=light,dark로 돌려 같은 값인지 본다). 파일 이름으로 W1을 찍었는지 확인한다
     id: "P1", ds: "worst", user: MEMBER, views: [1120, 1920],
     path: (ids) => `/bundles/${ids.w[1]}/outputs`,
@@ -1222,10 +1222,10 @@ const AUDIT_ENTRIES = [
       };
     }),
     expect: (value) => /^BND-\d{4}_SYNTHETIC W1 /.test(value.file) && value.inView && !value.pageX && !value.dialogX && !value.sheetX && value.scrollBoxes === 0
-      && value.heads === 20 && value.fits && value.tabs === 5 && !value.tabsClipped && !value.tabsOverlap
+      && value.heads === 20 && value.fits && value.tabs === 4 &&!value.tabsClipped && !value.tabsOverlap
       && value.movedY > 0 && Math.abs(value.headDrift) <= 2 && value.movedX === Math.min(400, value.canMoveX) && value.headX === value.movedX
       && value.colors === "rgb(255, 255, 255)|rgb(43, 47, 54)|rgb(255, 255, 255)",
-    note: "W1 Excel preview: window and Download inside the viewport, no scroll box anywhere (sheet moves by transform), 20 heads fit the frame or the table keeps its 1180px floor, 5 tabs unclipped, head stays put on vertical moves and follows sideways, Graphite paper in every theme",
+    note: "W1 Excel preview: window and Download inside the viewport, no scroll box anywhere (sheet moves by transform), 20 heads fit the frame or the table keeps its 1180px floor, 4 tabs unclipped, head stays put on vertical moves and follows sideways, Graphite paper in every theme",
   },
   {
     // T1: W1 Assign 나무의 칸 제목 자리(코드가 가장 긴 SOP) - 항목 글이 상자를 넘치지 않고 나무가 가로로 넘치지 않으며, 고른 칸 제목의 보낼 곳 카드가 넘치지 않는다
@@ -1338,7 +1338,8 @@ const AUDIT_ENTRIES = [
     note: "composed New pane (longest SOP code): pane head stays inside the pane; long slot heading notes stay on one line after the slot name, truncated, never over the name",
   },
   {
-    // A4b: W1 결과물 A를 끝까지 이어 그려 네 자리 Row 번호(옛 줄 1,000개 넘음)가 한 줄인지 본다
+    // A4b: W1 결과물 A를 끝까지 이어 그려 네 자리 Row 번호가 한 줄인지 본다.
+    //     규칙 2(문단 박스, v1.6.3) 뒤 W1 옛 줄이 1,000개 아래(738)라 네 자리가 없으면, 번호 칸 마지막 20개에 네 자리를 넣어 잰다(기준 그대로)
     id: "A4b", ds: "worst", user: MEMBER, views: [1120],
     path: (ids) => `/bundles/${ids.w[1]}/outputs`,
     open: async (page) => {
@@ -1351,7 +1352,9 @@ const AUDIT_ENTRIES = [
       }
     },
     measure: (page) => page.evaluate(() => {
-      const cells = [...document.querySelectorAll('[data-testid^="output-a-row-no-"]')].filter((td) => /^\d{4,}$/.test(td.textContent.trim()));
+      const numbered = [...document.querySelectorAll('[data-testid^="output-a-row-no-"]')].filter((td) => /^\d+$/.test(td.textContent.trim()));
+      if (!numbered.some((td) => /^\d{4,}$/.test(td.textContent.trim()))) numbered.slice(-20).forEach((td, i) => { td.textContent = String(1000 + i); });
+      const cells = numbered.filter((td) => /^\d{4,}$/.test(td.textContent.trim()));
       const lineCount = (td) => {
         const range = document.createRange();
         range.selectNodeContents(td);
