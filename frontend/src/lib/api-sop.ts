@@ -603,7 +603,25 @@ export function getUnitRef(bundleId: number, docId: number, unitId: number): Pro
   return apiFetch<UnitRefDetail>(`${buildDocPath(bundleId, docId)}/units/${unitId}/ref`);
 }
 
-// 아래 문서 쓰기는 sendDocWrite로 보낸다 - 다시 받기 전에 한 연달은 편집이 낡은 revision으로 409가 나지 않게(doc-revision.ts)
+/** 영어 Old 표의 짝 한글 표(11-23 명세 D2-R1~R3) - decided면 사람이 정한 답(source_table_id null = 짝 없음), 후보는 점수 큰 차례 */
+export interface TableCounterpart {
+  table_no: number;
+  status: "matched" | "ambiguous" | "none";
+  source_table_id: number | null;
+  decided: boolean;
+  candidates: { table_id: number; table_no: number; score: number }[];
+}
+
+export function getTableCounterpart(bundleId: number, docId: number, tableId: number): Promise<TableCounterpart> {
+  return apiFetch<TableCounterpart>(`${buildDocPath(bundleId, docId)}/tables/${tableId}/counterpart`);
+}
+
+/** 사람이 짝 표를 정한다(null = 짝 없음) - 문서를 바꾸지 않아 revision · 되돌리기 단계가 없다 */
+export function setTableCounterpart(bundleId: number, docId: number, tableId: number, sourceTableId: number | null): Promise<TableCounterpart> {
+  return apiFetch<TableCounterpart>(`${buildDocPath(bundleId, docId)}/tables/${tableId}/counterpart`, { method: "PUT", body: JSON.stringify({ source_table_id: sourceTableId }) });
+}
+
+// 아래 문서 쓰기는 sendDocWrite로 보낸다 -다시 받기 전에 한 연달은 편집이 낡은 revision으로 409가 나지 않게(doc-revision.ts)
 export function editUnits(bundleId: number, docId: number, revision: number, op: EditOp, confirm = false, undo?: UndoMeta): Promise<EditResult> {
   return sendDocWrite(docId, revision, (rev) => apiFetch<EditResult>(`${buildDocPath(bundleId, docId)}/edits`, { method: "POST", body: JSON.stringify({ revision: rev, confirm, op, undo }) }));
 }

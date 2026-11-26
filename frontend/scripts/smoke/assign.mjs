@@ -8426,6 +8426,69 @@ await runStep("assign: leaving Pair view on a long document shows a piece picked
   check("the long-document bundle is removed", (await page.request.delete(`${api}?revision=${bundle.revision}`, { headers })).ok());
 });
 
+// 짝 표 고르기(11-23 명세 D2-R3) - 한/영 따로 문서에 같은 토큰(10 mL · 4 °C)의 같은 꼴 한글 표가 둘이면 벗긴 영어 표 머리가 짝을 묻는다.
+// 고르면 바로 저장(PUT)하고 다시 읽은 답(GET)이 고른 표를 보이며, 새로고침 뒤에도 그대로다. 합성 docx(tests.docx_factory)를 새 묶음에 올리고 끝에 지운다
+await runStep("assign: an English table asks for its Korean table when two look alike", { devUser: "dev.admin" }, async ({ page }) => {
+  const headers = { "X-Dev-User": "dev.admin" };
+  const backend = resolve(SCRIPT_DIR, "../../../backend");
+  const file = resolve(SHOT_DIR, "SYNTHETIC_OLD-86_table_follow.docx");
+  const build = [
+    "import sys",
+    "from tests.docx_factory import build_docx, p, tbl",
+    "ko = [['1', '장비를 준비한다.'], ['2', '시료 10 mL를 채취한다.'], ['3', '채취 뒤 4 °C에 둔다.']]",
+    "ko2 = [['1', '장비를 점검한다.'], ['2', '시료 10 mL를 옮긴다.'], ['3', '옮긴 뒤 4 °C에 둔다.']]",
+    "en = [['1', 'Take 10 mL of sample.'], ['2', 'Prepare the equipment.'], ['3', 'Keep at 4 °C after.']]",
+    "body = p('1. 시료 채취', 'Heading1') + p('이 절은 시료 채취를 다룬다.') + tbl(ko) + tbl(ko2) + p('1. Sampling', 'Heading1') + p('This section covers sampling.') + tbl(en)",
+    "open(sys.argv[1], 'wb').write(build_docx(body))",
+  ].join("\n");
+  execFileSync(findBackendPython(), ["-c", build, file], { cwd: backend, stdio: "inherit" });
+  const created = await (await page.request.post(`${BASE}/api/bundles`, { headers, data: { title: "SYNTHETIC table follow", is_synthetic: true } })).json();
+  const api = `${BASE}/api/bundles/${created.id}`;
+  const uploaded = await page.request.post(`${api}/documents`, { headers, multipart: { side: "old", file: { name: "SYNTHETIC_OLD-86_table_follow.docx", mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", buffer: readFileSync(file) } } });
+  let doc = await uploaded.json();
+  if (doc.language_layout !== "ko_en_separate") doc = await (await page.request.patch(`${api}/documents/${doc.id}`, { headers, data: { revision: doc.revision, language_layout: "ko_en_separate" } })).json();
+  let view = await (await page.request.get(`${api}/documents/${doc.id}/view`, { headers })).json();
+  const [koTable, ko2Table, enTable] = view.tables;
+  const unwrapped = await page.request.post(`${api}/documents/${doc.id}/edits`, { headers, data: { revision: view.document.revision, confirm: false, op: { type: "set_layout_table", table_id: enTable.id, is_layout: true } } });
+  view = await (await page.request.get(`${api}/documents/${doc.id}/view`, { headers })).json();
+  const counterpartPath = `/documents/${doc.id}/tables/${enTable.id}/counterpart`;
+  const before = await (await page.request.get(`${api}${counterpartPath}`, { headers })).json();
+  check(
+    "a separate document with two look-alike Korean tables and an unwrapped English table is uploaded",
+    uploaded.status() === 201 && unwrapped.ok() && view.tables[2].is_layout && enTable.lang === "en" && before.status === "ambiguous",
+    `${uploaded.status()} ${unwrapped.status()} ${enTable.lang} ${before.status}`,
+  );
+  await page.goto(`${BASE}/bundles/${created.id}/assign`);
+  await wait(page, "assign-bar");
+  const pick = page.locator(`[data-testid="assign-follow-pick-${enTable.id}"]`);
+  await pick.waitFor({ timeout: T });
+  check("the English table head asks to pick its counterpart", (await pick.getAttribute("data-value")) === "pick");
+  await pick.click();
+  await wait(page, `assign-follow-pick-${enTable.id}-list`);
+  check(
+    "the choices are both Korean tables and no counterpart",
+    (await page.locator(`[data-testid="assign-follow-pick-${enTable.id}-option-${koTable.id}"]`).count()) === 1
+      && (await page.locator(`[data-testid="assign-follow-pick-${enTable.id}-option-${ko2Table.id}"]`).count()) === 1
+      && (await page.locator(`[data-testid="assign-follow-pick-${enTable.id}-option-none"]`).count()) === 1,
+  );
+  const isCounterpart = (method) => (response) => response.request().method() === method && new URL(response.url()).pathname.endsWith(`/api/bundles/${created.id}${counterpartPath}`);
+  const saved = page.waitForResponse(isCounterpart("PUT"), { timeout: T });
+  const reread = page.waitForResponse(isCounterpart("GET"), { timeout: T });
+  await page.locator(`[data-testid="assign-follow-pick-${enTable.id}-option-${ko2Table.id}"]`).click();
+  const savedOk = (await saved).ok();
+  await reread;
+  await page.waitForFunction(({ id, want }) => document.querySelector(`[data-testid="assign-follow-pick-${id}"]`)?.getAttribute("data-value") === want, { id: enTable.id, want: String(ko2Table.id) }, { timeout: T });
+  const stored = await (await page.request.get(`${api}${counterpartPath}`, { headers })).json();
+  check("picking a Korean table saves it and the head shows it", savedOk && stored.decided && stored.source_table_id === ko2Table.id, JSON.stringify(stored));
+  await page.reload();
+  await wait(page, "assign-bar");
+  await pick.waitFor({ timeout: T });
+  await page.waitForFunction(({ id, want }) => document.querySelector(`[data-testid="assign-follow-pick-${id}"]`)?.getAttribute("data-value") === want, { id: enTable.id, want: String(ko2Table.id) }, { timeout: T });
+  check("the choice survives a reload", (await pick.getAttribute("data-value")) === String(ko2Table.id));
+  const bundle = await (await page.request.get(api, { headers })).json();
+  check("the table-follow bundle is removed", (await page.request.delete(`${api}?revision=${bundle.revision}`, { headers })).ok());
+});
+
 // Pair view에서 끌어 짝 맺기(끌어다 놓기 4걸음) - 조각을 맞은편 언어의 조각에 놓으면 바로 짝이 되고(제안 짝의 구성원끼리면 그 제안을 확정), 알림의 Undo가 그 짝을 푼다.
 // 제안 짝은 검증 스택에 임베딩이 없어 만들 수 없다 - API로 맺은 짝을 원문 보기 응답에서 suggested로 바꿔 그린다(page.route). 확정 호출 자체는 진짜 서버로 간다.
 // 자료는 API로 만들고 끝에 짝을 모두 풀고 그 문서의 판단을 비운다. 409·거절 알림이 콘솔에 찍히므로 콘솔 오류를 허락하고, 처리되지 않은 예외(pageerror)는 따로 센다
