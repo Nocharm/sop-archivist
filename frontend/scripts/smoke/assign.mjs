@@ -526,6 +526,175 @@ async function prepareClickPlace(page, needed) {
   };
 }
 
+// 손질 검사 한 벌의 합성 문서(쪼개기 먼저 §8 4-3) - 1장 앞 표지(본문 앞부분 블록), 제목, 두 문장 문단(두 번 눌러 나누기), 이웃한 두 문단(틈 합치기),
+// 제목 스타일의 긴 조항(제목 → 문장, ↺ 제목으로), 표(벗기기 · 다시 표로). Old와 New 둘 다 같은 본문이고 New는 머리말로 파일만 다르게 한다(같은 파일은 duplicate_file)
+const SHAPE_SPLIT_TEXT = "합성 장비의 압력을 확인한다. 결과를 기록지에 적는다.";
+const SHAPE_JOIN_TEXTS = ["합성 둘째 문단이다.", "합성 셋째 문단이다."];
+const SHAPE_BODY = [
+  "p('합성 표지 문서') + p('합성 결재 표를 적는다.')",
+  "p('1. 목적', 'Heading1')",
+  `p('${SHAPE_SPLIT_TEXT}')`,
+  `p('${SHAPE_JOIN_TEXTS[0]}') + p('${SHAPE_JOIN_TEXTS[1]}')`,
+  "p('1.1 합성 장비를 끈다. 합성 밸브를 닫는다.', 'Heading2')",
+  "tbl([['합성 항목', '합성 값'], ['합성 압력', '합성 결과']])",
+].join(" + ");
+
+/** 손질 검사용 묶음 - 같은 본문의 Old 문서 하나와 이미 쓴 New 문서 하나. 끝에 묶음을 지운다(removeShapeBundle) */
+async function createShapeBundle(page, title) {
+  const headers = { "X-Dev-User": "dev.admin" };
+  const backend = resolve(SCRIPT_DIR, "../../../backend");
+  const oldFile = resolve(SHOT_DIR, "SYNTHETIC_OLD-86_shape_tools.docx");
+  const newFile = resolve(SHOT_DIR, "SYNTHETIC_SOP-86_shape_tools.docx");
+  const build = [
+    "import sys",
+    "from tests.docx_factory import build_docx, p, tbl",
+    `body = ${SHAPE_BODY}`,
+    "open(sys.argv[1], 'wb').write(build_docx(body))",
+    "open(sys.argv[2], 'wb').write(build_docx(body, headers=[p('합성 새 문서')]))",
+  ].join("\n");
+  execFileSync(findBackendPython(), ["-c", build, oldFile, newFile], { cwd: backend, stdio: "inherit" });
+  const created = await (await page.request.post(`${BASE}/api/bundles`, { headers, data: { title, is_synthetic: true } })).json();
+  const api = `${BASE}/api/bundles/${created.id}`;
+  const mime = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+  const oldUp = await page.request.post(`${api}/documents`, { headers, multipart: { side: "old", file: { name: "SYNTHETIC_OLD-86_shape_tools.docx", mimeType: mime, buffer: readFileSync(oldFile) } } });
+  const newUp = await page.request.post(`${api}/documents`, { headers, multipart: { side: "new", doc_type: "sop", file: { name: "SYNTHETIC_SOP-86_shape_tools.docx", mimeType: mime, buffer: readFileSync(newFile) } } });
+  const oldDoc = await oldUp.json();
+  const newDoc = await newUp.json();
+  check("the shaping bundle has an Old and a written New document", oldUp.status() === 201 && newUp.status() === 201 && oldDoc.status === "ready" && newDoc.status === "ready", `${oldUp.status()} ${newUp.status()}`);
+  return { bundleId: created.id, api, headers, oldDoc, newDoc };
+}
+
+async function removeShapeBundle(page, { api, headers }) {
+  const bundle = await (await page.request.get(api, { headers })).json();
+  check("the shaping bundle is removed", (await page.request.delete(`${api}?revision=${bundle.revision}`, { headers })).ok());
+}
+
+/**
+ * 손질 검사 한 벌 - place(old · new-wide · new-pair)만 다르고 검사 이름 · 차례가 같다(쪼개기 먼저 §8 "기능 하나마다 세 자리를 같은 스모크 함수로").
+ * docId는 고치는 문서, prefix는 그 용지의 testid 접두(assign-paper · assign-new-paper), sideTestId는 그 칸(assign-old · assign-new).
+ * 검사마다 Ctrl+Z로 되돌려 문서를 처음 모양으로 남긴다(한 단 · 양 단의 New가 같은 문서를 쓴다). 응답과 다시 읽은 보기를 기다린 뒤 본다
+ */
+async function runShapeTools({ page, place, docId, prefix, sideTestId, api, headers }) {
+  const pane = page.locator(`[data-testid="${sideTestId}"]`);
+  const name = (text) => `[${place}] ${text}`;
+  const readView = async () => (await page.request.get(`${api}/documents/${docId}/view`, { headers })).json();
+  const waitView = async (isDone) => {
+    for (let tries = 0; tries < 60; tries += 1) {
+      if (isDone(await readView())) return true;
+      await page.waitForTimeout(250);
+    }
+    return false;
+  };
+  const waitEdit = () => page.waitForResponse((res) => res.request().method() === "POST" && res.url().endsWith(`/documents/${docId}/edits`), { timeout: T });
+  const pressUndo = async () => {
+    await page.locator('[data-testid="assign-undo"]:not([disabled])').waitFor({ timeout: T });
+    const done = page.waitForResponse((res) => res.request().method() === "POST" && res.url().includes("/decisions/undo"), { timeout: T });
+    await page.keyboard.press("Control+z");
+    return (await done).ok();
+  };
+  const unitOf = (view, text) => view.units.find((unit) => unit.text === text);
+  const listFront = (view) => view.units.filter((unit) => unit.noise_kind === "front" && unit.group_unit_id === null);
+  const start = await readView();
+
+  // 본문 앞부분 블록 - 펼치기, 모두 삭제 취소, Ctrl+Z
+  const front = listFront(start);
+  check(name("the cover before chapter 1 is a deleted front matter block"), front.length > 0, `${front.length} front lines`);
+  if (front.length > 0) {
+    const head = pane.locator(`[data-testid="${prefix}-noise-head-${front[0].id}"]`);
+    await head.scrollIntoViewIfNeeded({ timeout: T });
+    await head.click();
+    await pane.locator(`[data-testid="${prefix}-noise-line-${front[0].id}"]`).waitFor({ timeout: T });
+    check(name("the block opens to its lines"), (await head.getAttribute("aria-expanded")) === "true");
+    const restored = waitEdit();
+    await pane.locator(`[data-testid="${prefix}-noise-clear-${front[0].id}"]`).click();
+    check(name("Restore all brings the cover back as body lines"), (await restored).ok() && (await waitView((view) => listFront(view).length === 0)));
+    check(name("Ctrl+Z deletes the cover again"), (await pressUndo()) && (await waitView((view) => listFront(view).length === front.length)));
+  }
+
+  // 두 번 눌러 나누기
+  const para = unitOf(start, SHAPE_SPLIT_TEXT);
+  check(name("the two-sentence paragraph is one box"), para !== undefined);
+  if (para !== undefined) {
+    const count = (await readView()).units.length;
+    const text = pane.locator(`[data-testid="${prefix}-unit-${para.id}"]`);
+    await text.scrollIntoViewIfNeeded({ timeout: T });
+    await text.dblclick();
+    await page.locator('[data-testid="assign-cut-run"]').waitFor({ timeout: T });
+    check(name("a double press puts a cut in the paragraph"), (await pane.locator(`[data-testid="${prefix}-cut-handle"]`).count()) === 1);
+    const split = waitEdit();
+    await page.locator('[data-testid="assign-cut-run"]').click();
+    check(name("Split here makes two boxes"), (await split).ok() && (await waitView((view) => view.units.length === count + 1)));
+    check(name("Ctrl+Z makes it one box again"), (await pressUndo()) && (await waitView((view) => unitOf(view, SHAPE_SPLIT_TEXT) !== undefined)));
+  }
+
+  // 틈 합치기 - 고른 박스 곁의 틈에만 단추가 선다
+  const beforeJoin = await readView();
+  const first = unitOf(beforeJoin, SHAPE_JOIN_TEXTS[0]);
+  const second = unitOf(beforeJoin, SHAPE_JOIN_TEXTS[1]);
+  check(name("the two neighbour paragraphs are two boxes"), first !== undefined && second !== undefined);
+  if (first !== undefined && second !== undefined) {
+    await pane.locator(`[data-testid="${prefix}-unit-${first.id}"]`).click();
+    const join = pane.locator(`[data-testid="${prefix}-join-${first.id}-${second.id}"]`);
+    await join.waitFor({ state: "attached", timeout: T });
+    const joined = waitEdit();
+    await join.click({ force: true });
+    check(name("Join in the gap makes them one box"), (await joined).ok() && (await waitView((view) => unitOf(view, SHAPE_JOIN_TEXTS[0]) === undefined)));
+    check(name("Ctrl+Z splits them apart again"), (await pressUndo()) && (await waitView((view) => unitOf(view, SHAPE_JOIN_TEXTS[1]) !== undefined)));
+  }
+
+  // 번호 칸 고치기
+  const heading = (await readView()).units.find((unit) => unit.kind === "heading" && unit.number !== null);
+  check(name("the chapter heading has a number cell"), heading !== undefined);
+  if (heading !== undefined) {
+    const was = heading.number.value;
+    const cell = pane.locator(`[data-testid="${prefix}-num-${heading.id}"]`);
+    await cell.scrollIntoViewIfNeeded({ timeout: T });
+    await cell.click();
+    await page.locator(`[data-testid="${prefix}-num-kind-continuous"]`).click();
+    await page.locator(`[data-testid="${prefix}-num-input"]`).waitFor({ timeout: T });
+    const follow = page.locator(`[data-testid="${prefix}-num-follow"]`);
+    if ((await follow.count()) > 0) await follow.uncheck();
+    await page.locator(`[data-testid="${prefix}-num-input"]`).fill("3");
+    const numbered = waitEdit();
+    await page.keyboard.press("Enter");
+    const readNumber = (view) => view.units.find((unit) => unit.id === heading.id)?.number?.value;
+    check(name("the number cell saves a new number"), (await numbered).ok() && (await waitView((view) => readNumber(view) !== was)));
+    check(name("Ctrl+Z puts the number back"), (await pressUndo()) && (await waitView((view) => readNumber(view) === was)));
+  }
+
+  // 표 벗기기(표 머리를 고르고 ⇧T) · ↺ 다시 표로 · Ctrl+Z 두 번
+  const table = (await readView()).units.find((unit) => unit.kind === "table");
+  check(name("the table is one table line"), table !== undefined);
+  if (table !== undefined) {
+    const tableHead = pane.locator(`[data-testid="${prefix}-head-${table.id}"]`);
+    await tableHead.scrollIntoViewIfNeeded({ timeout: T });
+    await tableHead.click();
+    const unwrapped = waitEdit();
+    await page.keyboard.press("Shift+T");
+    const isWrapped = (view) => view.units.some((unit) => unit.id === table.id);
+    check(name("picking the table head and Shift+T unwraps it"), (await unwrapped).ok() && (await waitView((view) => !isWrapped(view))));
+    const rewrap = pane.locator(`[data-testid="${prefix}-rewrap-${table.table_id}"]`);
+    await rewrap.waitFor({ timeout: T });
+    const rewrapped = waitEdit();
+    await rewrap.click();
+    check(name("Back to table wraps it into one table line"), (await rewrapped).ok() && (await waitView((view) => view.units.some((unit) => unit.kind === "table"))));
+    check(name("Ctrl+Z unwraps it again"), (await pressUndo()) && (await waitView((view) => !view.units.some((unit) => unit.kind === "table"))));
+    check(name("a second Ctrl+Z gives the first table back"), (await pressUndo()) && (await waitView((view) => isWrapped(view))));
+  }
+
+  // 제목 → 문장 묶음의 ↺ 제목으로
+  const shifted = (await readView()).units.filter((unit) => unit.from_heading).sort((a, b) => a.pos_seq - b.pos_seq);
+  check(name("the long heading-styled clause became sentences"), shifted.length > 0);
+  if (shifted.length > 0) {
+    const revert = pane.locator(`[data-testid="${prefix}-shift-revert-${shifted[0].id}"]`);
+    await revert.scrollIntoViewIfNeeded({ timeout: T });
+    const reverted = waitEdit();
+    await revert.click();
+    check(name("To heading turns the clause back into a heading"), (await reverted).ok() && (await waitView((view) => !view.units.some((unit) => unit.from_heading))));
+    check(name("Ctrl+Z makes it sentences again"), (await pressUndo()) && (await waitView((view) => view.units.some((unit) => unit.from_heading))));
+  }
+}
+
 export async function run() {
 
 await runStep("assign: legend first, place, delete without a reason, edit, clear, bulk", { drafting: true, allowConsoleErrors: true }, async ({ page, takeShot }) => {
@@ -4227,6 +4396,126 @@ await runStep("assign: shape a written New sentence in place, in the two-documen
   await page.locator(`[data-testid="assign-new-${again.target_id}"] [data-testid="assign-pick-bar-link"]`).waitFor({ timeout: T });
   check("with an Old row picked, clicking a New sentence still links", (await page.locator('[data-testid="assign-old-kept"]').count()) === 1);
   await page.keyboard.press("Escape");
+});
+
+// 같은 손질을 세 자리에서(쪼개기 먼저 §8 4-3) - Old 용지, 한 단으로 연 New(넓게 보기), 양 단의 New가 같은 검사 함수(runShapeTools)를 돈다.
+// 시드에는 이 손질이 다 든 New 문서가 없어 합성 docx 둘을 새 묶음에 올려 보고 끝에 묶음을 지운다
+await runStep("assign: shaping tools work the same on Old, on New alone and on New beside Old", { devUser: "dev.admin", allowConsoleErrors: true }, async ({ page }) => {
+  const shape = await createShapeBundle(page, "SYNTHETIC shaping tools on three papers");
+  const { api, headers, bundleId, oldDoc, newDoc } = shape;
+  if (oldDoc.status !== "ready" || newDoc.status !== "ready") return;
+  await page.goto(`${BASE}/bundles/${bundleId}/assign`);
+  await wait(page, "assign-bar");
+  await page.waitForLoadState("networkidle");
+  if ((await page.locator('[data-testid="assign-new"]').count()) === 0) await page.locator('[data-testid="assign-view-two"]').click();
+  await wait(page, "assign-new");
+  await runShapeTools({ page, place: "old", docId: oldDoc.id, prefix: "assign-paper", sideTestId: "assign-old", api, headers });
+  await page.locator('[data-testid="assign-new-paper"]').waitFor({ timeout: T });
+  await runShapeTools({ page, place: "new-pair", docId: newDoc.id, prefix: "assign-new-paper", sideTestId: "assign-new", api, headers });
+  await page.keyboard.press("Escape");
+  await page.locator('[data-testid="assign-new-edit-original"]').click();
+  await page.waitForFunction(() => document.querySelector('[data-testid="assign-old-tag"]')?.textContent?.includes("New") ?? false, null, { timeout: T });
+  check("Wide view opens the New document alone", (await page.locator(".assign-panes").getAttribute("data-single")) !== null);
+  await runShapeTools({ page, place: "new-wide", docId: newDoc.id, prefix: "assign-paper", sideTestId: "assign-old", api, headers });
+  await removeShapeBundle(page, shape);
+});
+
+// 이은 칸이 든 New 표 벗기기(쪼개기 먼저 §8 4-3) - 확인창이 풀릴 이음(n)과 보류로 갈 Old 줄(m)을 묻고, 확인하면 Old 줄이 보류, Ctrl+Z가 이음과 확정을 되살린다.
+// 합성 문서: 2열 표 하나(1열 2.1 · 2.2 · 2.3, 2열은 칸마다 한글 문단 하나와 영어 문단 하나). 2.1 · 2.2 한글 칸에 Old 줄 하나씩 잇는다(n 2 · m 2)
+await runStep("assign: unwrapping a New table with linked cells asks with both numbers, Ctrl+Z brings the links back", { devUser: "dev.admin", allowConsoleErrors: true }, async ({ page }) => {
+  const headers = { "X-Dev-User": "dev.admin" };
+  const backend = resolve(SCRIPT_DIR, "../../../backend");
+  const oldFile = resolve(SHOT_DIR, "SYNTHETIC_OLD-NEW-UNWRAP_steps.docx");
+  const newFile = resolve(SHOT_DIR, "SYNTHETIC_NEW-UNWRAP_steps.docx");
+  const rows = [["2.1", "합성 밸브를 연다.", "Open the synthetic valve."], ["2.2", "합성 압력을 잰다.", "Measure the synthetic pressure."], ["2.3", "합성 결과를 적는다.", "Write the synthetic result."]];
+  const build = [
+    "import sys",
+    "from tests.docx_factory import build_docx, make_grid_table, make_row, p",
+    `rows = ${JSON.stringify(rows)}`,
+    "table = make_grid_table(2, ''.join(make_row([number, p(ko) + p(en)]) for number, ko, en in rows))",
+    "open(sys.argv[1], 'wb').write(build_docx(p(rows[0][1]) + p(rows[1][1])))",
+    "open(sys.argv[2], 'wb').write(build_docx(table, headers=[p('합성 새 문서')]))",
+  ].join("\n");
+  execFileSync(findBackendPython(), ["-c", build, oldFile, newFile], { cwd: backend, stdio: "inherit" });
+  const created = await (await page.request.post(`${BASE}/api/bundles`, { headers, data: { title: "SYNTHETIC New table unwrap ask", is_synthetic: true } })).json();
+  const api = `${BASE}/api/bundles/${created.id}`;
+  const getJson = async (path) => (await page.request.get(`${api}${path}`, { headers })).json();
+  const mime = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+  const oldUp = await page.request.post(`${api}/documents`, { headers, multipart: { side: "old", file: { name: "SYNTHETIC_OLD-NEW-UNWRAP_steps.docx", mimeType: mime, buffer: readFileSync(oldFile) } } });
+  const newUp = await page.request.post(`${api}/documents`, { headers, multipart: { side: "new", doc_type: "sop", file: { name: "SYNTHETIC_NEW-UNWRAP_steps.docx", mimeType: mime, buffer: readFileSync(newFile) } } });
+  const oldDoc = await oldUp.json();
+  const newDoc = await newUp.json();
+  check("an Old document and a New document with a two-column table are uploaded", oldUp.status() === 201 && newUp.status() === 201 && oldDoc.status === "ready" && newDoc.status === "ready", `${oldUp.status()} ${newUp.status()}`);
+  if (oldDoc.status !== "ready" || newDoc.status !== "ready") return;
+  const oldUnits = (await getJson(`/documents/${oldDoc.id}/view`)).units;
+  const olds = [rows[0][1], rows[1][1]].map((text) => oldUnits.find((unit) => unit.text === text));
+  const readCells = async () => (await getJson("/written-sentences")).find((row) => row.kind === "table")?.table?.cells ?? [];
+  const cells = await readCells();
+  const targets = [rows[0][1], rows[1][1]].map((text) => cells.find((cell) => cell.text === text));
+  check("the Korean cells of 2.1 and 2.2 are cell sentences of their own", olds.every(Boolean) && targets.every(Boolean), JSON.stringify(cells.map((cell) => cell.text)));
+  if (!olds.every(Boolean) || !targets.every(Boolean)) return;
+  await page.goto(`${BASE}/bundles/${created.id}/assign`);
+  await wait(page, "assign-bar");
+  if ((await page.locator('[data-testid="assign-new"]').count()) === 0) await page.locator('[data-testid="assign-view-two"]').click();
+  for (const [at, unit] of olds.entries()) {
+    await page.locator(`[data-testid="assign-paper-piece-${unit.id}"], [data-testid="assign-paper-unit-${unit.id}"]`).first().click();
+    await page.waitForFunction((want) => document.querySelector('[data-testid="assign-row-id"]')?.textContent?.includes(want), unit.display_id, { timeout: T });
+    const cellBox = page.locator(`[data-testid="assign-new-cell-${targets[at].target_id}"]`);
+    await cellBox.scrollIntoViewIfNeeded({ timeout: T });
+    await page.locator(`[data-testid="assign-new-cell-pick-${targets[at].target_id}"]`).click();
+    const link = cellBox.locator('[data-testid="assign-pick-bar-link"]');
+    await link.waitFor({ timeout: T });
+    const saved = page.waitForResponse((res) => res.request().method() === "POST" && res.url().includes("/groups/save"), { timeout: T });
+    await link.click();
+    await saved;
+  }
+  const waitLinked = async (want) => {
+    for (let tries = 0; tries < 60; tries += 1) {
+      const now = await readCells();
+      if (targets.every((target) => JSON.stringify(now.find((cell) => cell.target_id === target.target_id)?.source_unit_ids) === JSON.stringify(want(target)))) return true;
+      await page.waitForTimeout(250);
+    }
+    return false;
+  };
+  const sourceOf = (target) => [olds[targets.indexOf(target)].id];
+  check("the two Korean cells are linked to their Old lines", await waitLinked(sourceOf));
+  const tableUnit = (await getJson(`/documents/${newDoc.id}/view`)).units.find((unit) => unit.kind === "table");
+  const links = page.locator(`[data-testid="assign-new-table-links-${tableUnit.id}"]`);
+  // 칸 문장 수는 번호 칸까지 센다(번호만 든 칸도 칸 문장이다) - 이은 수만 본다
+  await page.waitForFunction((id) => /^2 of \d+ /.test(document.querySelector(`[data-testid="assign-new-table-links-${id}"]`)?.textContent ?? ""), tableUnit.id, { timeout: T });
+  check("the table head counts the linked cells", /^2 of \d+ cells linked$/.test((await links.innerText()).trim()), await links.innerText());
+  const asked = page.waitForResponse((res) => res.request().method() === "POST" && res.url().endsWith(`/documents/${newDoc.id}/edits`), { timeout: T });
+  await page.locator(`[data-testid="assign-new-unwrap-${tableUnit.id}"]`).click();
+  const ask = await asked;
+  const detail = (await ask.json()).detail;
+  check("the server asks with the links and the held rows", ask.status() === 409 && detail?.linked_cells === 2 && detail?.held_rows === 2, JSON.stringify(detail));
+  const modal = page.locator('[data-testid="assign-edit-confirm"]');
+  await modal.waitFor({ timeout: T });
+  const text = await modal.innerText();
+  check("the dialog says 2 linked cells lose their links and 2 Old rows go on hold", text.includes("2 linked cells lose their links") && text.includes("2 Old rows"), text);
+  const confirmed = page.waitForResponse((res) => res.request().method() === "POST" && res.url().endsWith(`/documents/${newDoc.id}/edits`), { timeout: T });
+  await page.locator('[data-testid="assign-edit-confirm-confirm"]').click();
+  check("confirming unwraps the table", (await confirmed).ok());
+  const readStatuses = async () => {
+    const units = (await getJson(`/documents/${oldDoc.id}/view`)).units;
+    return olds.map((old) => units.find((unit) => unit.id === old.id)?.status);
+  };
+  const waitStatuses = async (want) => {
+    for (let tries = 0; tries < 60; tries += 1) {
+      if ((await readStatuses()).every((status) => status === want)) return true;
+      await page.waitForTimeout(250);
+    }
+    return false;
+  };
+  check("the two Old lines go on hold", await waitStatuses("on_hold"), JSON.stringify(await readStatuses()));
+  await page.locator('[data-testid="assign-undo"]:not([disabled])').waitFor({ timeout: T });
+  const undone = page.waitForResponse((res) => res.request().method() === "POST" && res.url().includes("/decisions/undo"), { timeout: T });
+  await page.keyboard.press("Control+z");
+  check("Ctrl+Z answers", (await undone).ok());
+  check("Ctrl+Z brings the links back", await waitLinked(sourceOf));
+  check("and the Old lines are confirmed again", await waitStatuses("confirmed"), JSON.stringify(await readStatuses()));
+  const bundle = await (await page.request.get(api, { headers })).json();
+  check("the unwrap-ask bundle is removed", (await page.request.delete(`${api}?revision=${bundle.revision}`, { headers })).ok());
 });
 
 // 머리말·꼬리말 탭의 설명 줄(v1.0.28) - 전에는 원문 고치기 화면에만 있었다. 장마다 어느 구역의 머리말인지 적힌다
