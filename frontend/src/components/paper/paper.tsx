@@ -5,7 +5,7 @@
 // strips.fold(Assign 필터)가 있으면 맞는 조각만 제 모양, 곁은 한 줄 판, 먼 구간은 묶음 한 줄로 접는다(paper-fold-model.ts) - 한 줄 판·묶음은 단추라 눌러도 조각을 고르지 않는다.
 "use client";
 
-import { BookMarked, ChevronRight, ChevronsDownUp, Ellipsis, FilePen, FoldVertical, GripVertical, ImageIcon, Link2, Scissors, TriangleAlert, Undo2, WandSparkles, type LucideIcon } from "lucide-react";
+import { BookMarked, Check, ChevronRight, ChevronsDownUp, Ellipsis, FilePen, FoldVertical, GripVertical, ImageIcon, Link2, Scissors, TriangleAlert, Undo2, WandSparkles, type LucideIcon } from "lucide-react";
 import { Fragment, memo, useEffect, useEffectEvent, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type RefCallback } from "react";
 
 import { BundleHead } from "@/components/paper/bundle-head";
@@ -26,6 +26,7 @@ import { getBundleShape, getCaptionScope, isSentenceLike, type BundleShape } fro
 import { readCaretPoint } from "@/lib/caret-point";
 import { useDraftingOn } from "@/lib/drafting";
 import { useI18n } from "@/lib/i18n";
+import { buildCheckMarks, readCheckKey, readRowEdge, type CheckMark } from "@/lib/multi-mark-model";
 import { CHUNK_MIN_CARDS, pickNearChunks, readChunkDeleted, readChunkNoise, readChunkNumbers, readChunkPending, sliceCards, sliceFoldEntries } from "@/lib/paper-chunk-model";
 import { buildFoldPlan, type FoldEntry, type FoldItem, type FoldOpen } from "@/lib/paper-fold-model";
 import { buildRows, flattenLineBreaks, getBundleHeader, getGapMerge, getItemSegments, getMarks, getTags, isBandHeading, isOtherTableCaption, MERGE_BLOCKER_KEYS, resolvePickUnit, type CaptionPiece, type FigureRowMode, type PaperItem, type PaperModel, type PaperRow, type Segment, type UnitMark } from "@/lib/paper-model";
@@ -239,6 +240,8 @@ interface PaperProps {
   partnerIds?: ReadonlySet<number>;
   /** 짝 맞추기로 고른 단위 */
   pickedIds?: ReadonlySet<number>;
+  /** 여럿 고른 줄(Shift) - Unit → 판단 줄 키. 이어진 카드마다 테 하나와 "n줄 고름" 꼬리표, 줄마다 칠 · 왼쪽 막대 · 오른쪽 체크(11-25 명세 §9) */
+  checkedRows?: ReadonlyMap<number, string>;
   /** 먼저 고른 쪽의 용지다 - 다른 문서를 마지막에 눌렀다. 뿌리 표시 하나(data-held)라 덩어리를 다시 그리지 않는다 */
   held?: boolean;
   /** 나눌 자리 미리 보기(고른 단위 안) */
@@ -419,6 +422,7 @@ export function Paper({
   groupTag,
   partnerIds,
   pickedIds,
+  checkedRows,
   held = false,
   cut,
   warnBlockIds,
@@ -499,10 +503,10 @@ export function Paper({
   const foldedKey = useMemo(() => {
     if (!tableFold || tableFold.folded.size === 0) return "";
     const open = new Set<number>();
-    for (const id of [selectedId, ...(pickedIds ?? []), ...(highlightIds ?? [])]) if (id !== null) open.add(model.units.get(id)?.group_unit_id ?? id);
+    for (const id of [selectedId, ...(pickedIds ?? []), ...(checkedRows?.keys() ?? []), ...(highlightIds ?? [])]) if (id !== null) open.add(model.units.get(id)?.group_unit_id ?? id);
     const pressed = foldPress !== null && foldPress.selectedId === selectedId && tableFold.folded.has(foldPress.tableId) ? [foldPress.tableId] : [];
     return [...new Set([...resolveFolded(tableFold.folded, model.tableBlocks, open), ...pressed])].sort((a, b) => a - b).join(",");
-  }, [tableFold, selectedId, pickedIds, highlightIds, model, foldPress]);
+  }, [tableFold, selectedId, pickedIds, checkedRows, highlightIds, model, foldPress]);
 
   // 조각 줄 - 모델이 바뀔 때만 다시 편다(고르기·확인으로는 그대로)
   const sections = useMemo(() => {
@@ -592,6 +596,25 @@ export function Paper({
       return { cards, groups, isChunked };
     });
   }, [sections, cardTops, model, hasNoise]);
+  // 여럿 고른 줄의 덩어리 표시 - 카드 단위로 세어 줄마다 자리(readRowEdge)를 나눈다. 잡음 블록 · 접힌 삭제 줄이 낀 카드는 안 고른 것으로 쳐 덩어리를 가른다
+  const rowChecks = useMemo<ReadonlyMap<string, CheckMark & { firstUnitId: number }>>(() => {
+    const result = new Map<string, CheckMark & { firstUnitId: number }>();
+    if (!checkedRows || checkedRows.size === 0) return result;
+    const checkedIdSet = new Set(checkedRows.keys());
+    for (const { cards } of cardGroups) {
+      const cardMarks = buildCheckMarks(
+        cards.map((card) => ({ key: card[0].key, unitIds: hasNoise && readNoiseKind(card[0], model.units) !== null ? [] : card.flatMap((row) => readRowUnitId(row) ?? []) })),
+        checkedIdSet,
+        (unitId) => checkedRows.get(unitId) ?? String(unitId),
+      );
+      for (const card of cards) {
+        const mark = cardMarks.get(card[0].key);
+        if (!mark) continue;
+        card.forEach((row, index) => result.set(row.key, { edge: readRowEdge(mark.edge, index, card.length), count: index === 0 ? mark.count : null, firstUnitId: readRowUnitId(card[0]) ?? -1 }));
+      }
+    }
+    return result;
+  }, [checkedRows, cardGroups, hasNoise, model]);
   // 접기 칸 - 부분마다 문서 순서로, 이웃한 짝 카드는 한 칸(첫 줄 key)
   const hasFold = strips?.fold !== undefined;
   const foldCells = useMemo(() => {
@@ -991,11 +1014,22 @@ export function Paper({
   function renderGroupTag(unitId: number): ReactNode {
     const mark = readGroupMark(unitId);
     const group = scope?.group;
-    if (!scope || !group || mark === undefined || (mark === "pair" && cardTops.has(unitId))) return null;
+    // 여럿 고른 동안은 덩어리 꼬리표(.check-tag)가 같은 자리를 쓴다
+    if (!scope || !group || mark === undefined || (mark === "pair" && cardTops.has(unitId)) || rowChecks.size > 0) return null;
     const label = mark === "pair" ? t("paper.group.pair") : t(groupTag?.isCellBox ? "paper.group.tableCells" : "paper.group.table", { n: group.table ?? "" });
     return (
       <span className="group-tag" data-testid={`${groupTag?.testIdPrefix ?? testId}-group-${scope.boxId}`}>
         {label}
+      </span>
+    );
+  }
+
+  /** 여럿 고른 덩어리의 꼬리표 - 덩어리 첫 카드의 위 테두리 선 왼쪽(묶음 꼬리표와 같은 자리). 고른 덩어리에만 있어 덩어리 deps는 readCheckKey가 맡는다 */
+  function renderCheckTag(check: (CheckMark & { firstUnitId: number }) | undefined): ReactNode {
+    if (!check || check.count === null) return null;
+    return (
+      <span className="check-tag" data-testid={`assign-check-run-${check.firstUnitId}`}>
+        {t("classify.pickedCount", { n: check.count })}
       </span>
     );
   }
@@ -1160,16 +1194,22 @@ export function Paper({
   }
 
   /** 조각 끝 아이콘 표시 - 고른 조각의 것만 Tab으로 닿는다(수천 개가 Tab 순서에 들지 않게). 짝 카드 안이면 짝 표시는 카드가 대신한다 */
-  function renderMarks(unit: ViewUnit | undefined, hasWarn: boolean, className: string, inPairCard = false): ReactNode {
+  function renderMarks(unit: ViewUnit | undefined, hasWarn: boolean, className: string, inPairCard = false, isChecked = false): ReactNode {
     if (!strips) return null;
     const marks = new Set<PaperMark>();
     if (unit) {
       for (const mark of getMarks(unit, inPairCard, showSplitMark)) marks.add(mark);
     }
     if (hasWarn) marks.add("warn");
-    if (marks.size === 0) return null;
+    if (marks.size === 0 && !isChecked) return null;
     return (
       <span className={className}>
+        {/* 여럿 고른 줄의 오른쪽 체크 - 끝 아이콘의 첫 자리라 따로 띄우지 않는다 */}
+        {isChecked && (
+          <span className="pmark-host strip-check" role="img" aria-label={t("paper.checked")} data-tip={t("paper.checked")} data-testid={`${testId}-check-${unit?.id ?? "x"}`}>
+            <Check size={14} strokeWidth={2} className="pmark" aria-hidden />
+          </span>
+        )}
         {MARK_ORDER.filter((mark) => marks.has(mark)).map((mark) => {
           const Icon = MARK_ICONS[mark];
           const label = t(MARK_LABELS[mark]);
@@ -1576,6 +1616,7 @@ export function Paper({
           "data-sel": unit !== undefined && unit.id === selectedId ? "" : undefined,
           "data-mate": unit !== undefined && isMate(unit.id) ? "" : undefined,
           "data-group": unit !== undefined ? readGroupMark(unit.id) : undefined,
+          "data-check": rowChecks.get(row.key)?.edge,
           "data-partner": unit !== undefined && partnerIds?.has(unit.id) ? "" : undefined,
           "data-strip-unit": unitId ?? undefined,
           // 처리 중인 박스는 끌리지 않는다(설계 D4 - 잠금은 그 박스만)
@@ -1589,6 +1630,7 @@ export function Paper({
         }}
       >
           {unit !== undefined && renderGroupTag(unit.id)}
+          {renderCheckTag(rowChecks.get(row.key))}
           {unit !== undefined && (renderUnwrapGrip(unit) ?? renderPairGrip(unit))}
           {unit !== undefined && renderUnwrapAiMove(unit)}
           {unit !== undefined && renderFollowChips(unit)}
@@ -1626,7 +1668,7 @@ export function Paper({
           {renderPendingPills((place) => (place.at === "box" && place.unitId === unitId) || (place.at === "table" && row.type === "table" && place.tableId === row.item.table.id))}
           {renderWaitChip(unitId)}
           {pills}
-          {renderMarks(unit, hasWarn, "strip-marks", inPairCard)}
+          {renderMarks(unit, hasWarn, "strip-marks", inPairCard, rowChecks.has(row.key))}
           {row.type === "piece" && renderLang(unit)}
       </StripBox>
     );
@@ -1708,6 +1750,8 @@ export function Paper({
         // 카드 안 틈 - 둘째 줄부터의 바로 위는 늘 같은 카드다
         data-pair={cardTops.has(readRowUnitId(row) ?? -1) || isFigureMate(prev, row) ? "" : undefined}
         data-near-selected={isNearSelected(prev, row) ? "" : undefined}
+        // 여럿 고른 덩어리 안 틈 - 좌우 테를 이어 테가 하나로 보인다
+        data-check={isRunGap(prev) ? "gap" : undefined}
         // 합치기 단추를 글 시작 x에 - 위아래 앞머리 중 넓은 쪽 뒤라 어느 앞머리에도 걸치지 않는다
         style={{ "--gap-tab": `${Math.max(readTabWidth(prev), readTabWidth(row)) + STRIP_LEAD_EXTRA}px` }}
         data-testid={`${testId}-gap-${row.key}`}
@@ -1717,6 +1761,12 @@ export function Paper({
         {renderGapPills(prev, row) ?? (!(hasNoise && (readNoiseKind(prev, model.units) ?? readNoiseKind(row, model.units)) !== null) && !isDeletedRow(prev) && !isDeletedRow(row) && !isAcrossTables(prev, row) && !tableFoldRows.has(prev.key) && !tableFoldRows.has(row.key) && renderMerge(prev, row))}
       </div>
     );
+  }
+
+  /** 틈의 윗줄이 여럿 고른 덩어리에서 아래로 이어지는가 */
+  function isRunGap(prev: PaperRow): boolean {
+    const edge = rowChecks.get(prev.key)?.edge;
+    return edge === "top" || edge === "middle";
   }
 
   /** 한 카드의 블록 줄 - 용지 줄이 없는 안쪽 표 · 칸 안 그림도 제 줄로 센다. 그림 탭에는 그림 줄만, 필터로 접힌 목록에서 엿본 줄은 그 줄만 있다 */
@@ -1845,14 +1895,21 @@ export function Paper({
           className="deleted-line"
           data-tip={line.remark || undefined}
           data-pick={unitIds.some((id) => pickedIds?.has(id)) ? "" : undefined}
+          data-check={rowChecks.get(rows[0].key)?.edge}
           data-strip-unit={unitId}
           data-pending={readPendingMark(unitId)}
           data-testid={`${testId}-deleted-u${unitId}`}
           onClick={(event) => onUnitClick(unitId, null, event)}
         >
+          {renderCheckTag(rowChecks.get(rows[0].key))}
           <span className="deleted-tag">{t("paper.deleted.tag")}</span>
           <span className="deleted-text">{[line.kind, line.text].filter((part) => part !== null && part !== "").join(" · ")}</span>
           {renderWaitChip(unitId)}
+          {rowChecks.has(rows[0].key) && (
+            <span className="strip-check" role="img" aria-label={t("paper.checked")} data-tip={t("paper.checked")}>
+              <Check size={14} strokeWidth={2} aria-hidden />
+            </span>
+          )}
         </button>
       </div>
     );
@@ -2136,7 +2193,7 @@ export function Paper({
       <PaperChunk
         key={key}
         live={nearChunks === null || (chunk.index >= nearChunks.from && chunk.index <= nearChunks.to) || liveChunkIds.has(chunk.index)}
-        deps={[...own, t, testId, dragBoxes, pickWholeBundle, strips?.noise?.busy, strips?.noise?.canEdit, shiftGroups, strips?.headingShift?.busy, strips?.headingShift?.canRevert, unwrapHeads, strips?.unwrap?.busy, strips?.unwrap?.canRewrap, strips?.unwrap?.ai?.enabled, strips?.unwrap?.ai?.busy, strips?.unwrap?.follow?.answers, followRows, strips?.unwrap?.follow?.plan?.each, unwrapAiPreviews, unwrapOrders, unwrapAiMoves, strips?.mergeArm, chunkPending[chunk.index], chunkDeleted[chunk.index], chunkNumbers[chunk.index], chunkNoise[chunk.index], overlay ? overlay.keyOf(chunk.unitIds) : ""]}
+        deps={[...own, t, testId, dragBoxes, pickWholeBundle, strips?.noise?.busy, strips?.noise?.canEdit, shiftGroups, strips?.headingShift?.busy, strips?.headingShift?.canRevert, unwrapHeads, strips?.unwrap?.busy, strips?.unwrap?.canRewrap, strips?.unwrap?.ai?.enabled, strips?.unwrap?.ai?.busy, strips?.unwrap?.follow?.answers, followRows, strips?.unwrap?.follow?.plan?.each, unwrapAiPreviews, unwrapOrders, unwrapAiMoves, strips?.mergeArm, chunkPending[chunk.index], chunkDeleted[chunk.index], chunkNumbers[chunk.index], chunkNoise[chunk.index], overlay ? overlay.keyOf(chunk.unitIds) : "", readCheckKey(rowChecks, chunk.rows.map((row) => row.key))]}
         isFold={hasFold}
         render={render}
       />

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { ViewUnit } from "./api-sop";
-import { buildAssignMenu, getPairPickBlocker, getPairSetBlocker, listShapeLineItems, planAssignJoin, planLanguageChange, planShapeMode, type AssignMenuAction, type AssignMenuContext } from "./assign-context-menu-model";
+import { buildAssignMenu, buildUnwrappedTableItems, getPairPickBlocker, getPairSetBlocker, listShapeLineItems, planAssignJoin, planLanguageChange, planShapeMode, type AssignMenuAction, type AssignMenuContext } from "./assign-context-menu-model";
 import { findNearestCut } from "./paper-model";
 
 function makeUnit(id: number, over: Partial<ViewUnit> = {}): ViewUnit {
@@ -580,4 +580,15 @@ describe("buildAssignMenu - language of an assigned pair member and each piece o
     expect(piecesOf(buildAssignMenu(ctx({ target: makeUnit(2, { merge_pieces: ["a", "b"] }) })))).toEqual([]);
     expect(piecesOf(buildAssignMenu(ctx({ target: makeUnit(2, { can_unmerge: true, merge_pieces: [] }) })))).toEqual([]);
   });
+});
+
+describe("buildUnwrappedTableItems", () => {
+  const base = { readOnly: false, hasDraft: false, orderReasonKey: null };
+  it("lists back-to-table then AI order, both on", () => expect(buildUnwrappedTableItems(base).map((item) => [item.action, item.enabled])).toEqual([["table_rewrap", true], ["table_ai_order", true]]));
+  it("locks back-to-table on an unsaved choice, and AI order with the shared reason", () => {
+    expect(buildUnwrappedTableItems({ ...base, hasDraft: true })[0].reasonKey).toBe("assign.ctx.why.unsaved");
+    expect(buildUnwrappedTableItems({ ...base, orderReasonKey: "assign.key.why.oneLine" })[1].reasonKey).toBe("assign.key.why.oneLine");
+    expect(buildUnwrappedTableItems({ ...base, orderReasonKey: "assign.key.why.orderReady" })[1].enabled).toBe(false);
+  });
+  it("locks both when read-only", () => expect(buildUnwrappedTableItems({ ...base, readOnly: true }).every((item) => item.reasonKey === "assign.ctx.why.readOnly")).toBe(true));
 });

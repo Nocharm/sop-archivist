@@ -152,3 +152,13 @@
 
 - 표 탭 · 본문 표 접기를 Old · New 용지에(E2-R1~R5, S15), 접힘은 문서마다 브라우저에 기억(`use-folded-tables`, 새 effect 없음). 표 탭도 같은 `Paper` · `strips`라 `renderFollow`가 그대로 뜬다(사용자 답).
 - 접힌 표 안 줄은 J/K와 확정 뒤 다음 줄 고르기에서 건너뛴다(검토 고침, `readStepTab`). 성능은 dev v1.6.23과 극단 시드로 견줘 긴 문서 J · Delete · 스크롤이 잡음 안(세워 둘 조건 ② 아님).
+
+## 2026-11-26 — feat/assign-table-menu (계획 4-2) dev에
+
+- 표 칸 · 벗긴 표 줄의 우클릭 메뉴를 "이 칸" · "이 표" 구역으로(C2-R1~R4, ⇧D 제외), 항목 호버 · 포커스에 닿는 칸을 칠한다(`menu-section-model` · `menu-reach-model` · `ReachPaint`, 칠 상태는 메뉴 안).
+- 메뉴의 AI order 켜짐 · 꺼짐을 ⇧O와 같은 `readUnwrapOrderReason`으로 모음, 한 단 New의 칠은 그린 용지 쪽으로(검토 고침).
+
+## 2026-11-26 — feat/assign-multi-mark (계획 4-3) dev에
+
+- Shift로 고른 줄(Old `checked` · New `checkedNew`)을 `multi-mark-model`로 이어진 덩어리마다 inset 테 · "n줄 고름" 꼬리표, 줄마다 칠 · 왼쪽 막대(막대 쪽 직각) · 오른쪽 체크로(§9). 용지의 `pickedIds`는 짝 고르기와 New Ctrl 고름만, Shift 고름은 `checkedRows`로 따로.
+- 접힌 표 안 줄을 Shift로 고른 채면 표가 펴진다(검토 고침). 여럿 고른 동안은 묶음 꼬리표를 그리지 않는다.

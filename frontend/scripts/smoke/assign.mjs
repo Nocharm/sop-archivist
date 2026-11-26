@@ -835,6 +835,9 @@ await runStep("assign: legend first, place, delete without a reason, edit, clear
   await units.nth(4).click({ modifiers: ["Shift"] });
   await units.nth(6).click({ modifiers: ["Shift"] });
   await wait(page, "assign-bulk");
+  // 떨어진 줄은 덩어리마다 꼬리표 하나(11-25 명세 §9) - 첫 Shift+클릭은 지금 고른 줄도 더하므로 셋(고른 줄 둘 + 지금 줄), 서로 떨어져 꼬리표마다 한 줄
+  const checkTags = await page.locator('[data-testid^="assign-check-run-"]').allTextContents();
+  check("the active row and two rows picked apart with Shift get one tag each", checkTags.length === 3 && checkTags.every((text) => text === "1 rows picked"), JSON.stringify(checkTags));
   await page.locator('[data-testid="assign-bulk-delete"]').click();
   await page.locator('[data-testid="assign-bulk-reason"]').fill("Header text");
   await page.locator('[data-testid="assign-bulk-confirm"]').click();
@@ -1231,6 +1234,105 @@ await runStep("assign: two-level pick - a pair half, a table cell and Del delete
   check("old: Del with a cell picked deletes the whole table row", isTableDeleted);
   await checkPaper({ pane: "new", prefix: "assign-new-paper", groupPrefix: "assign-new", parts: newParts, tableTag: "Group · Table 1" });
   await page.keyboard.press("Escape");
+  await removeShapeBundle(page, { api, headers });
+});
+
+// 표 칸 우클릭(11-23 명세 C2 · S9) - "이 칸" 위 · "이 표" 아래 두 구역, 항목에 올리면 닿는 칸이 칠해지고 떠나면 걷힌다. 벗긴 표의 줄은 이 칸 아래 이 표(다시 표로 · AI 순서),
+// 한 단으로 연 New 문서의 표 칸도 같은 구역이되 배정 항목이 없다. 합성 docx 둘(같은 본문)을 새 묶음에 올려 보고 끝에 묶음을 지운다
+await runStep("assign: the cell menu has this cell and this table, hovering paints the reached cells", { devUser: "dev.admin" }, async ({ page }) => {
+  const headers = { "X-Dev-User": "dev.admin" };
+  const backend = resolve(SCRIPT_DIR, "../../../backend");
+  const oldFile = resolve(SHOT_DIR, "SYNTHETIC_OLD-90_cell_menu.docx");
+  const newFile = resolve(SHOT_DIR, "SYNTHETIC_SOP-90_cell_menu.docx");
+  const build = [
+    "import sys",
+    "from tests.docx_factory import build_docx, p, tbl",
+    "body = p('5. 절차', 'Heading1') + p('5. Procedure', 'Heading1') + tbl([['합성 항목', '합성 값'], ['합성 온도', '합성 결과']])",
+    "open(sys.argv[1], 'wb').write(build_docx(body))",
+    "open(sys.argv[2], 'wb').write(build_docx(body, headers=[p('합성 새 문서')]))",
+  ].join("\n");
+  execFileSync(findBackendPython(), ["-c", build, oldFile, newFile], { cwd: backend, stdio: "inherit" });
+  const created = await (await page.request.post(`${BASE}/api/bundles`, { headers, data: { title: "SYNTHETIC cell menu", is_synthetic: true } })).json();
+  const api = `${BASE}/api/bundles/${created.id}`;
+  const getJson = async (path) => (await page.request.get(`${api}${path}`, { headers })).json();
+  const mime = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+  const oldUp = await page.request.post(`${api}/documents`, { headers, multipart: { side: "old", file: { name: "SYNTHETIC_OLD-90_cell_menu.docx", mimeType: mime, buffer: readFileSync(oldFile) } } });
+  const newUp = await page.request.post(`${api}/documents`, { headers, multipart: { side: "new", doc_type: "sop", file: { name: "SYNTHETIC_SOP-90_cell_menu.docx", mimeType: mime, buffer: readFileSync(newFile) } } });
+  const oldDoc = await oldUp.json();
+  const newDoc = await newUp.json();
+  const readParts = async (docId) => {
+    const view = await getJson(`/documents/${docId}/view`);
+    const table = view.units.find((unit) => unit.kind === "table");
+    return { view, table, cell: view.units.find((unit) => unit.kind === "cell_sentence" && unit.group_unit_id === table?.id && unit.text === "합성 온도") };
+  };
+  const oldParts = await readParts(oldDoc.id);
+  const newParts = await readParts(newDoc.id);
+  const isReady = oldUp.status() === 201 && newUp.status() === 201 && [oldParts, newParts].every((parts) => parts.table && parts.cell);
+  check("an Old and a written New document with a table and its cell are uploaded", isReady, `${oldUp.status()} ${newUp.status()}`);
+  if (!isReady) {
+    await removeShapeBundle(page, { api, headers });
+    return;
+  }
+  await page.goto(`${BASE}/bundles/${created.id}/assign`);
+  await wait(page, "assign-bar");
+  if ((await page.locator('[data-testid="assign-new"]').count()) === 0) await page.locator('[data-testid="assign-view-two"]').click();
+  await wait(page, "assign-new");
+  const listIds = () => page.evaluate(() => [...document.querySelectorAll('[data-testid^="assign-ctx-"]')].map((el) => el.getAttribute("data-testid")).filter((id) => id !== "assign-ctx-menu" && id !== "assign-ctx-reach"));
+  const outlineOf = (pane, unitId) => page.evaluate(([side, id]) => { const el = document.querySelector(`[data-pane="${side}"] [data-strip-unit="${id}"]`); return el ? getComputedStyle(el).outlineStyle : null; }, [pane, unitId]);
+  const openMenu = async (testId) => {
+    const text = page.locator(`[data-testid="${testId}"]`).first();
+    await text.scrollIntoViewIfNeeded({ timeout: T });
+    await text.click({ button: "right" });
+    await wait(page, "assign-ctx-menu");
+  };
+  const closeMenu = async () => {
+    await page.keyboard.press("Escape");
+    await page.locator('[data-testid="assign-ctx-menu"]').waitFor({ state: "detached", timeout: T });
+  };
+  // Old 표 칸: 이 칸 위(표 벗기기는 아래), 이 표 아래(배정 취소 · 표 벗기기 · 표 전체 삭제)
+  await openMenu(`assign-paper-unit-${oldParts.cell.id}`);
+  const cellIds = await listIds();
+  check("old: a table cell menu has this cell above this table", cellIds.indexOf("assign-ctx-section-cell") === 0 && cellIds.indexOf("assign-ctx-section-cell") < cellIds.indexOf("assign-ctx-split") && cellIds.indexOf("assign-ctx-split") < cellIds.indexOf("assign-ctx-section-table"), cellIds.join(","));
+  check("old: this table holds Unassign, Unwrap and Delete whole table in that order", JSON.stringify(cellIds.slice(cellIds.indexOf("assign-ctx-section-table"))) === JSON.stringify(["assign-ctx-section-table", "assign-ctx-clear", "assign-ctx-table_layout", "assign-ctx-delete"]), cellIds.join(","));
+  check("old: the headings name the cell and the table", (await page.locator('[data-testid="assign-ctx-section-cell"]').innerText()).includes("This cell") && (await page.locator('[data-testid="assign-ctx-section-table"]').innerText()).includes("This table"));
+  check("old: the table items carry the table scope in their names", (await page.locator('[data-testid="assign-ctx-delete"]').innerText()).includes("Delete whole table") && (await page.locator('[data-testid="assign-ctx-clear"]').innerText()).includes("Unassign table"));
+  // 닿는 칸 칠하기 - 칸 항목은 그 칸, 표 항목은 표 둘레, 떠나면 걷힌다
+  // 메뉴가 열리며 첫 항목(Split)에 포커스가 가 칠이 이미 있다 - 첫 항목이 아닌 Merge with previous에 올려 칠이 그 항목의 닿는 칸(이 칸 진하게 + 앞 칸 점선)으로 바뀌는지 본다
+  const cellLines = oldParts.view.units.filter((unit) => unit.kind === "cell_sentence" && unit.group_unit_id === oldParts.table.id).sort((a, b) => a.pos_seq - b.pos_seq);
+  const prevCell = cellLines[cellLines.findIndex((unit) => unit.id === oldParts.cell.id) - 1];
+  await page.locator('[data-testid="assign-ctx-merge_prev"]').hover();
+  await page.waitForFunction((id) => document.querySelector('[data-testid="assign-ctx-reach"]')?.textContent?.includes(`data-strip-unit="${id}"`) ?? false, prevCell?.id, { timeout: T }).catch(() => undefined);
+  check("old: hovering a non-first cell item fills that cell and dashes the neighbour it touches", prevCell !== undefined && (await outlineOf("old", oldParts.cell.id)) === "solid" && (await outlineOf("old", prevCell.id)) === "dashed");
+  await page.locator('[data-testid="assign-ctx-delete"]').hover();
+  await page.waitForFunction((id) => { const el = document.querySelector(`[data-pane="old"] [data-strip-unit="${id}"]`); return el !== null && getComputedStyle(el).outlineStyle === "dashed"; }, oldParts.table.id, { timeout: T });
+  check("old: hovering a table item rings the table", (await outlineOf("old", oldParts.table.id)) === "dashed");
+  await page.locator('[data-testid="assign-ctx-menu"] .menu-label').first().hover();
+  await page.locator('[data-testid="assign-ctx-reach"]').waitFor({ state: "detached", timeout: T });
+  check("old: leaving the item clears the paint", (await outlineOf("old", oldParts.table.id)) !== "dashed");
+  await closeMenu();
+  // 벗긴 표의 줄 - 표를 벗긴 뒤 칸 줄을 우클릭하면 이 칸 아래 이 표(다시 표로 · AI 순서)
+  const revision = (await getJson(`/documents/${oldDoc.id}/view`)).document.revision;
+  const unwrapped = await page.request.post(`${api}/documents/${oldDoc.id}/edits`, { headers, data: { revision, confirm: false, op: { type: "set_layout_table", table_id: oldParts.table.table_id, is_layout: true } } });
+  check("the Old table is unwrapped for the line menu", unwrapped.ok(), String(unwrapped.status()));
+  await page.goto(`${BASE}/bundles/${created.id}/assign`);
+  await wait(page, "assign-bar");
+  await openMenu(`assign-paper-unit-${oldParts.cell.id}`);
+  const lineIds = await listIds();
+  check("old: an unwrapped line menu keeps its own decisions under this cell and puts Back to table and AI order under this table", lineIds.indexOf("assign-ctx-section-cell") === 0 && lineIds.indexOf("assign-ctx-clear") > 0 && lineIds.indexOf("assign-ctx-section-table") > lineIds.indexOf("assign-ctx-delete") && lineIds.indexOf("assign-ctx-table_rewrap") > lineIds.indexOf("assign-ctx-section-table") && lineIds.indexOf("assign-ctx-table_ai_order") > lineIds.indexOf("assign-ctx-table_rewrap"), lineIds.join(","));
+  await page.locator('[data-testid="assign-ctx-table_rewrap"]').hover();
+  await page.locator('[data-testid="assign-ctx-reach"]').waitFor({ state: "attached", timeout: T });
+  check("old: hovering Back to table rings the table's lines", (await outlineOf("old", oldParts.cell.id)) === "dashed");
+  await closeMenu();
+  // New 표 칸 - 양 단의 New 칸은 문장 박스만 메뉴를 열어(openNewCtxMenu) 표 칸은 그 문서를 한 단으로 열어야 한다. 한 단의 New도 왼쪽 용지(data-pane="old")에 그려진다. 같은 구역, 배정 항목 없음
+  await page.goto(`${BASE}/bundles/${created.id}/assign?edit=${newDoc.id}`);
+  await wait(page, "assign-bar");
+  await openMenu(`assign-paper-unit-${newParts.cell.id}`);
+  const newIds = await listIds();
+  check("new: a table cell menu has this cell and this table without assignment items", newIds.includes("assign-ctx-section-cell") && newIds.includes("assign-ctx-section-table") && newIds.includes("assign-ctx-table_layout") && !newIds.includes("assign-ctx-clear") && !newIds.includes("assign-ctx-delete"), newIds.join(","));
+  await page.locator('[data-testid="assign-ctx-table_layout"]').hover();
+  await page.locator('[data-testid="assign-ctx-reach"]').waitFor({ state: "attached", timeout: T });
+  check("new: hovering Unwrap table rings the New table", (await outlineOf("old", newParts.table.id)) === "dashed");
+  await closeMenu();
   await removeShapeBundle(page, { api, headers });
 });
 
@@ -1896,7 +1998,7 @@ await runStep("assign: written New document - identical, link by clicking, split
   const second = page.locator(`[data-testid="${await unpicked.first().getAttribute("data-testid")}"]`);
   const secondLang = await second.getAttribute("data-lang");
   await second.locator(".new-text").click({ modifiers: [multi] });
-  // 더한 박스가 마지막에 누른 것(data-sel)이고 먼저 고른 박스는 여럿 고른 표시(.su[data-pick])로 남는다
+  // 더한 박스가 마지막에 누른 것(data-sel)이고 먼저 고른 박스는 여럿 고른 표시(.su[data-pick] - Ctrl은 New 고름 한 벌, Shift로 더한 박스만 data-check 덩어리)로 남는다
   await page.locator(`[data-testid="${await second.getAttribute("data-testid")}"][data-sel]`).waitFor({ timeout: T });
   check("Ctrl+click adds a second sentence", (await firstLine.locator(".su[data-pick]").count()) > 0 && (await second.locator('[data-testid="assign-pick-bar-link"]').count()) === 1);
   check(
