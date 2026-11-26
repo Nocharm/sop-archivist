@@ -1671,7 +1671,7 @@ export function Paper({
     if (!plan || !found) return null;
     return (
       <>
-        <span className="unwrap-ai-note" data-testid={`assign-follow-${tableId}`}>
+        <span className="unwrap-ai-note follow-head-note" data-testid={`assign-follow-${tableId}`}>
           {t("assign.follow.head", { n: found.count })}
         </span>
         <button type="button" className="btn pri toc-act" disabled={isOff} data-testid={`assign-follow-apply-${tableId}`} onClick={() => plan.onApply(tableId)}>
