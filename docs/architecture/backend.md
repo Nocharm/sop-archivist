@@ -53,6 +53,7 @@ AI 없이 사람이 끝까지 가는 결정적 경로(계획 1). AI 층은 아�
      - 여기부터 본문 `editing._plan_start_body`는 같은 판정 줄(앞부분 표시를 떼고 읽어 1장 자리를 안다)과 `find_body_starts` · `find_second_half`(1장 자리를 모르면 언어로)로 그 반쪽의 앞을 표시하고 뒤의 앞부분을 모두 비운다. 저절로 삭제된 줄에 판단을 되살리는 단계 되돌리기 · 다시 하기는 409 `undo_conflict`(`decision_steps._find_noise_units`).
      - 잠금 `editing.ensure_not_noise`(422 `toc_line_locked`): 나누기 · 합치기 · 합치기 풀기 · 경계 · 골라 만들기 · 모양 전환 · 표 벗기기와 다시 표로(안쪽 띠 표까지) · 캡션 · 첫 행 캡션 · 그림 묶기 · 덩이 순서 · 짝 맺기. 제목 ↔ 문장 · 들여쓰기 · 번호는 저마다의 코드로 이미 막는다.
 3. → 편집 `editing.py`(서버 되돌리기/다시 하기)·한/영 짝 `pairs.py`.
+   - 편집 `split_sentences`(`SplitSentencesOp`, `_plan_split_sentences`): 박스 하나를 규칙 1의 문장 경계(`split_block_text(..., rule=RULE_LEGACY, split_lines=block.splits_lines)`)로 마다 나눈다 — 추출의 `split_rule`과 무관하고(이미 올린 문서의 박스 규칙은 그대로), 합친 박스는 범위 경계에서도 나뉜다. 종류는 문장 · 칸 문장 · 제목만, 조각이 하나뿐이면 422 `empty_part`(`reason: one_sentence`). `_write_change` 길의 `_Change` 하나라 되돌리기 한 번.
 4. → 배정·확정 `decisions.py`(관계 묶음 단위 저장)·입구 2 짝 맞추기 `match.py`.
 5. → 결과물 `snapshot.py`(묶음을 DB 표마다 질의 한 번으로 읽은 불변 값) 위의 **순수 함수** `outputs.py`(A·B·C·요약)와 `sheet_model.py`(Excel·미리보기가 같이 쓰는 시트 모델)·`excel_export.py`(모델 → Graphite xlsx)·`flow_image.py`(Pillow, 저장소에 넣은 NanumGothic OFL 글꼴 `assets/fonts/`)·`output_labels.py`(언어별 문구).
 6. → 검토 `review.py`(요청 조건 판정 `evaluate_readiness`와 전이 — 요청·거두기(작성자가 검토 대기를 사유 없이 작업 중으로)·완료·되돌리기·다시 열기. 작업 중으로 돌아오는 전이는 모두 의미 검토 4항목을 지운다).
