@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import type { ViewTable, ViewUnit } from "@/lib/api-sop";
 import { resolvePickUnit } from "@/lib/paper-model";
 
-import { buildPickScope, readNavUnit, readRowKeyOf, resolveBoxUnit } from "./pick-scope-model";
+import { buildPickScope, buildShapeTargets, readNavUnit, readRowKeyOf, resolveBoxUnit } from "./pick-scope-model";
 
 function u(id: number, over: Partial<ViewUnit> = {}): ViewUnit {
   return {
@@ -60,4 +60,19 @@ describe("resolvePickUnit and resolveBoxUnit", () => {
     expect(resolvePickUnit(4, units)).toBe(1);
     expect(resolveBoxUnit(2, units)).toBe(1);
   });
+});
+
+describe("buildShapeTargets", () => {
+  const at = (id: number) => units.get(id) as ViewUnit;
+  const cellScope = buildPickScope(2, [1], units, tables);
+  const pairScope = (id: number) => buildPickScope(id, [5, 6], units, tables);
+
+  it("puts the pressed cell first and keeps Unwrap on the table line only", () => {
+    const targets = buildShapeTargets(cellScope, [at(1)], at(2));
+    expect(targets.map((target) => target.unit.id)).toEqual([2, 1]);
+    expect(targets[0].hidden.has("table_layout")).toBe(true);
+    expect(targets[1].hidden.size).toBe(0);
+  });
+
+  it("puts the pressed half of a pair first", () => expect(buildShapeTargets(pairScope(6), [at(5), at(6)], null).map((target) => target.unit.id)).toEqual([6, 5]));
 });

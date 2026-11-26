@@ -82,7 +82,7 @@ import { buildLinkSave } from "@/lib/link-save-model";
 import { buildIdenticalBatches } from "@/lib/match-model";
 import { EMPTY_FOLD_OPEN, type FoldOpen } from "@/lib/paper-fold-model";
 import { buildPaperModel, buildPaperTabs, findNearestCut, isBandHeading, listFigureTabUnitIds, resolvePickUnit, shouldRecenter, type PaperTabKey } from "@/lib/paper-model";
-import { buildPickScope, readNavUnit, readRowKeyOf, resolveBoxUnit } from "@/lib/pick-scope-model";
+import { buildPickScope, buildShapeTargets, readNavUnit, readRowKeyOf, resolveBoxUnit } from "@/lib/pick-scope-model";
 import { findPairTarget } from "@/lib/pair-hint-model";
 import { readPartState, stepPart, withPartState } from "@/lib/part-history";
 import { isSameOrder, movePairMember, orderPairCard, readPairSlot } from "@/lib/pair-order-model";
@@ -1682,11 +1682,13 @@ export function useAssignPage() {
   const rowCaptionRefs: CaptionRefEntry[] = shapeUnits.flatMap((unit) => unit.caption_refs.map((ref) => ({ ref, from: unit })));
   const refCandidates = rowCaptionRefs.length > 0 && shapeModel !== null ? [...listRefCandidates("table", shapeModel.units), ...listRefCandidates("figure", shapeModel.units)] : [];
   // 표·그림의 캡션은 다듬기 줄 대신 아래 캡션 자리(F7)가 칩으로 보인다 - 캡션의 언어 바꾸기는 우클릭 메뉴에 남는다
-  // 누른 박스가 맨 앞(설계 D3) - 나머지는 짝 카드 안 순서(바꾼 적 없으면 문서 순서, lib/pair-order-model). 합치기(switchShapeMode)는 서버가 원문 범위 순서로 잇는다
+  // 누른 박스가 맨 앞(설계 D3) - 나머지는 짝 카드 안 순서(바꾼 적 없으면 문서 순서, lib/pair-order-model). 합치기(switchShapeMode)는 서버가 원문 범위 순서로 잇는다.
+  // 아직 표인 표의 칸을 골랐으면 그 칸이 맨 앞이고 표 줄이 아래에 남는다(C1-R3) - 표 벗기기는 표 줄에만
   const shapeFirstId = hasSolo ? (soloUnit?.id ?? null) : pickedId;
   const shapeCardUnits = orderPairCard(rowViewUnits);
-  const shapeLineUnits = shapeFirstId === null ? shapeCardUnits : [...shapeCardUnits].sort((a, b) => Number(b.id === shapeFirstId) - Number(a.id === shapeFirstId));
-  const shapeLines: ShapeLine[] = canEdit && mode === "old" ? shapeLineUnits.flatMap((unit) => { const menu = buildUnitMenu(shape, unit); return menu ? [{ unit, items: menu.edit }] : []; }) : [];
+  const shapeCell = !hasSolo && pickScope !== null && pickScope.group?.kind === "table" && pickScope.unitId !== pickScope.boxId ? (shapeModel?.units.get(pickScope.unitId) ?? null) : null;
+  const shapeTargets = buildShapeTargets(pickScope ?? { unitId: shapeFirstId ?? -1, boxId: shapeFirstId ?? -1, group: null }, shapeCardUnits, shapeCell);
+  const shapeLines: ShapeLine[] = canEdit && mode === "old" ? shapeTargets.flatMap(({ unit, hidden }) => { const menu = buildUnitMenu(shape, unit); return menu ? [{ unit, items: menu.edit.filter((item) => !hidden.has(item.action)) }] : []; }) : [];
   const slotCellTables = useMemo(() => new Map((shapeView?.blocks ?? []).filter((block) => block.kind === "table_cell").map((block) => [block.id, block.table_id])), [shapeView]);
   // 고른 줄이 한/영 짝이거나 합친 한 문장이면 둘 사이를 바꾸는 전환을 다듬기에 둔다
   const shapeMode = shapeLines.length > 0 ? planShapeMode(rowViewUnits, shapeTabs?.order ?? [], hasUnitDraft) : null;
@@ -4618,7 +4620,8 @@ export function useAssignPage() {
   const keyItems = shapeLines.find((line) => line.unit.id === keyUnit?.id)?.items ?? [];
   const langTo = keyUnit?.lang === "ko" ? "en" : "ko";
   const langKeyItem = keyUnit?.lang === "neutral" ? undefined : keyItems.find((item) => item.action === "lang");
-  const tableKeyItem = keyItems.find((item) => item.action === "table_layout");
+  // 칸을 골랐으면 표 벗기기는 표 줄의 항목이다(칸 줄에서는 숨긴다)
+  const tableKeyItem = keyItems.find((item) => item.action === "table_layout") ?? (pickScope === null ? undefined : shapeLines.find((line) => line.unit.id === pickScope.boxId)?.items.find((item) => item.action === "table_layout"));
   // 번호 칸 글쇠는 마지막에 누른 쪽의 용지에서 - New도 같은 번호 칸이다(쪼개기 먼저 §8 4-3)
   const shapeTools = shape !== null && shape === rightShape ? rightTools : leftTools;
   const hasNumberCell = shapeTools.numberCell && !isPairView && (hasSolo || activePart !== "figures") && (shapeModel?.hasNumberRanges ?? false) && (keyUnit?.number ?? null) !== null;

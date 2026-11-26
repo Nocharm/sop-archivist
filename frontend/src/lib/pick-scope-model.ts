@@ -1,6 +1,7 @@
 // 고름 두 겹(11-23 명세 C1) - 누른 조각(진하게)과 그것이 든 배정 박스 · 묶음(짝 카드 · 표, 얇은 테와 꼬리표).
 // 아직 표인 표의 칸을 누르면 칸이 골라지고 줄 · 배정 · 삭제는 표째다. J/K · 저장 뒤 다음 박스는 박스(줄)에서 걷는다
 import type { ViewTable, ViewUnit } from "@/lib/api-sop";
+import type { AssignMenuAction } from "@/lib/assign-context-menu-model";
 import { getTableNumber } from "@/lib/unwrap-model";
 
 /** 누른 조각 unitId, 그것이 든 줄의 박스 boxId, 둘레에 그릴 묶음(없으면 null) - table은 꼬리표의 표 번호(1부터) */
@@ -39,4 +40,14 @@ export function buildPickScope(unitId: number, rowUnitIds: readonly number[], un
   const pairId = units.get(boxId)?.pair_id ?? null;
   const mates = pairId === null ? [] : rowUnitIds.filter((id) => units.get(id)?.pair_id === pairId);
   return { unitId, boxId, group: mates.length >= 2 ? { kind: "pair", unitIds: mates, table: null } : null };
+}
+
+const NO_HIDDEN: ReadonlySet<AssignMenuAction> = new Set();
+// 칸 줄에서 숨기는 표 항목 - 표 벗기기는 아래 표 줄에 있다(글쇠는 표 줄의 항목을 읽는다)
+const CELL_HIDDEN: ReadonlySet<AssignMenuAction> = new Set(["table_layout"]);
+
+/** 오른쪽 칸 다듬기 대상 - 칸을 골랐으면 그 칸이 맨 앞(C1-R3), 다음이 줄의 Unit(지금 차례에서 누른 박스가 앞). hidden은 그 줄에 두지 않는 항목 */
+export function buildShapeTargets(scope: PickScope, rowUnits: readonly ViewUnit[], cell: ViewUnit | null): { unit: ViewUnit; hidden: ReadonlySet<AssignMenuAction> }[] {
+  const rest = [...rowUnits].sort((a, b) => Number(b.id === scope.unitId) - Number(a.id === scope.unitId)).map((unit) => ({ unit, hidden: NO_HIDDEN }));
+  return cell === null ? rest : [{ unit: cell, hidden: CELL_HIDDEN }, ...rest];
 }
