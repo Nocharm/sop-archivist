@@ -26,6 +26,7 @@ import { DROP_LINE_HALF_PX, type DropLineAt } from "@/lib/drop-line";
 import { useDraftingOn } from "@/lib/drafting";
 import { useBoxDrag } from "@/lib/use-box-drag";
 import { findLastStep } from "@/lib/destination-manage-model";
+import { buildDocTools } from "@/lib/doc-tools-model";
 import { describeNewTableAsk, readEditAsk, type EditAsk } from "@/lib/edit-ask-model";
 import { findSplitBlock, readSplitOffsets } from "@/lib/split-ai-tabs-model";
 import { pickPairPiece, planPairLanguages, type JoinKind, type JoinPlan } from "@/lib/split-menu-model";
@@ -98,7 +99,7 @@ import { pickSheetAnchor, pickSpaceSheet } from "@/lib/space-preview-model";
 import { buildAssignProgress } from "@/lib/progress-model";
 import { countRefLookups, countRefPending, isRefPending, pickRefUnit } from "@/lib/ref-model";
 import { isDeletedUnit } from "@/lib/deleted-fold-model";
-import { findShapeOfDoc, findShapeUnit, type DocShape, type PickSide } from "@/lib/doc-shape-model";
+import { canSplitInPlace, findShapeOfDoc, findShapeUnit, pickEditTarget, type DocShape, type PickSide } from "@/lib/doc-shape-model";
 import { buildNavKeys, buildNoiseBlock, describeNoiseUnit, findNoiseBlock, listNoiseBlocks, readTocNavKey, readUnitNavKey, toTocNavKey, toUnitNavKey } from "@/lib/toc-block-model";
 import { isRestoringLines, readNoiseKey } from "@/lib/noise-keys";
 import { useEquisPolling } from "@/lib/use-equis-polling";
@@ -883,7 +884,7 @@ export function useAssignPage() {
     status: aiJobs.status,
     dataKey,
     watch: aiJobs.watch,
-    reorder: (tableId, order, afterOk) => runUnitEdit(shapeOf("old"), { type: "reorder_unwrapped", table_id: tableId, unit_ids: order }, t("assign.unwrapAi.applied"), null, false, null, { at: "table", tableId }, afterOk),
+    reorder: (tableId, order, afterOk) => runUnitEdit(leftShape, { type: "reorder_unwrapped", table_id: tableId, unit_ids: order }, t("assign.unwrapAi.applied"), null, false, null, { at: "table", tableId }, afterOk),
     t,
   });
   const splitByUnit = useMemo(() => {
@@ -907,6 +908,20 @@ export function useAssignPage() {
   function shapeOf(side: PickSide): DocShape | null {
     return shapes.find((item) => item.side === side) ?? null;
   }
+  // 용지마다 쓸 수 있는 손질(lib/doc-tools-model) - 왼쪽 용지(Old, 한 단으로 연 New)와 양 단의 New 용지
+  const leftTools = buildDocTools({ place: isSolo ? "new-wide" : "old", canEdit, mode });
+  const rightTools = buildDocTools({ place: "new-pair", canEdit, mode });
+  // 양 단 New 용지의 벗긴 표 AI 순서 제안 - 문서마다 한 벌(왼쪽 용지의 것은 unwrapAi)
+  const newUnwrapAi = useUnwrapAi({
+    bundleId,
+    docId: rightShape?.view.document.id ?? null,
+    isOn: aiOn,
+    status: aiJobs.status,
+    dataKey,
+    watch: aiJobs.watch,
+    reorder: (tableId, order, afterOk) => runUnitEdit(rightShape, { type: "reorder_unwrapped", table_id: tableId, unit_ids: order }, t("assign.unwrapAi.applied"), null, false, null, { at: "table", tableId }, afterOk),
+    t,
+  });
   // 다듬는 문서 - 마지막에 누른 쪽
   const shape = shapeOf(hasSolo ? "new" : "old");
   const shapeView = shape?.view ?? null;
@@ -1107,7 +1122,7 @@ export function useAssignPage() {
   }
   /** 삭제된 줄의 사유 창을 연다 - 글쇠 · 단추를 누른 순간의 줄을 잡는다 */
   function openNoiseReason(docId: number, unitIds: readonly number[]) {
-    const view = viewOf(docId);
+    const view = findShapeOfDoc(shapes, docId)?.view ?? viewOf(docId);
     if (!canEdit || !view || unitIds.length === 0) return;
     const ids = new Set(unitIds);
     const reasons = new Set(view.units.filter((unit) => ids.has(unit.id)).map((unit) => unit.noise_reason ?? ""));
@@ -1230,8 +1245,10 @@ export function useAssignPage() {
 
   // 용지에서 끌어 고른 글자 범위 - 그 범위로 새 Unit을 만든다(전에는 쪼개기 화면에서만). 고른 문서에 묶여, 문서를 바꾸면 버려진다
   const [carvePick, setCarvePick] = useState<{ docId: number; blockId: number; start: number; end: number } | null>(null);
-  const carve = carvePick !== null && carvePick.docId === oldView?.document.id ? carvePick : null;
-  const carveText = carve ? (oldView?.blocks.find((block) => block.id === carve.blockId)?.text.slice(carve.start, carve.end) ?? "") : "";
+  // 글자를 고른 문서 - 왼쪽 용지(Old, 한 단으로 연 New)든 양 단의 New든 그 용지 위에 띠가 서고 그 문서로 보낸다(쪼개기 먼저 §8 4-3)
+  const carveShape = carvePick === null ? null : findShapeOfDoc(shapes, carvePick.docId);
+  const carve = carveShape !== null ? carvePick : null;
+  const carveText = carve && carveShape ? (carveShape.view.blocks.find((block) => block.id === carve.blockId)?.text.slice(carve.start, carve.end) ?? "") : "";
   function clearCarve() {
     setCarvePick(null);
     window.getSelection()?.removeAllRanges();
@@ -1569,7 +1586,7 @@ export function useAssignPage() {
       listCaptionLangs: (bundle) => listCaptionLangs(shape, bundle),
       isFixedCaption: (unit) => isFixedCaption(shape, unit),
       captionBundle: target.kind === "caption" ? findBundleOf(shape, target) : null,
-      canStartBody: oldDocIds.includes(view.document.id) && view.blocks.find((block) => block.id === target.block_id)?.part === "body",
+      canStartBody: view.blocks.find((block) => block.id === target.block_id)?.part === "body",
       readOnly: !canEdit,
       rowStatus: row?.status ?? "unassigned",
       isDeleted: isRowDeleted,
@@ -1627,7 +1644,7 @@ export function useAssignPage() {
   const headingBackIds = shapeLines.length > 0 ? listHeadingBackUnits(rowViewUnits) : [];
   const headingBack = headingBackIds.length > 0 ? { reasonKey: rowViewUnits.some(hasUnitDraft) ? "assign.ctx.why.unsaved" : null, onBack: () => revertHeadings(shape, headingBackIds) } : null;
   // 고른 줄이 벗긴 표의 줄이면 다듬기 맨 아래 [↺ 다시 표로] - 용지 묶음 머리 단추와 같은 일(F12 A3). 띠 표는 벗긴 표 목록에 없어 아래 [표로 되돌리기]만 선다
-  const rewrapTableId = shapeLines.length > 0 && paperModel && !isSolo ? getUnitUnwrapTable(rowViewUnits, paperModel.unwrapped) : null;
+  const rewrapTableId = shapeLines.length > 0 && shapeModel ? getUnitUnwrapTable(rowViewUnits, shapeModel.unwrapped) : null;
   const rewrap = rewrapTableId !== null ? { reasonKey: rowViewUnits.some(hasUnitDraft) ? "assign.ctx.why.unsaved" : null, onBack: () => rewrapTable(shape, rewrapTableId) } : null;
   // 고른 줄이 띠 표 제목 줄이면 다듬기 맨 아래 [표로 되돌리기] - 그 띠 표를 표 한 줄로(F4 · F12 G5, 한 편집이라 Ctrl+Z로 다시 제목 줄)
   const bandUnit = shapeLines.length > 0 ? (rowViewUnits.find(isBandHeading) ?? null) : null;
@@ -1858,7 +1875,8 @@ export function useAssignPage() {
 
   /** 삭제된 줄의 편집(삭제 취소 · 사유) - 누른 순간의 문서와 줄을 잡아 줄에 세운다. 결과 박스가 누를 때 정해져 있어 장벽이 아니다 */
   function runNoiseEdit(docId: number, op: EditOp, okText: string, followId: number | null) {
-    const view = viewOf(docId);
+    // New 문서의 삭제된 줄도 같은 편집이다(쪼개기 먼저 §8 4-3) - 용지에 그려진 문서에서 먼저 찾는다
+    const view = findShapeOfDoc(shapes, docId)?.view ?? viewOf(docId);
     if (canEdit && view) commands.enqueue(buildEditCommand(view, op, okText, followId));
   }
 
@@ -2066,11 +2084,19 @@ export function useAssignPage() {
     runUnitEdit(findShapeUnit(shapes, cutUnit.id)?.shape ?? null, { type: "split", unit_id: cutUnit.id, at: cutLine.at }, t("split.didSplit"), null);
   }
 
-  /** 두 번 누른 자리에 나눌 선 - 메뉴의 "Split here"를 쓸 수 있는 문장만 */
-  function handleOldDoubleClick(unitId: number, caret: { blockId: number; offset: number } | null) {
-    const unit = paperModel?.units.get(unitId);
-    if (!unit || !canEdit || mode !== "old" || isBoxLocked(unitId) || hasUnitDraft(unit) || unit.noise_kind || !["sentence", "heading", "cell_sentence"].includes(unit.kind)) return;
+  /** 두 번 누른 자리에 나눌 선 - 메뉴의 "Split here"를 쓸 수 있는 문장만. side는 누른 용지의 쪽(한 단으로 연 New는 왼쪽 용지가 "new") */
+  function handleDoubleClickIn(side: PickSide, unitId: number, caret: { blockId: number; offset: number } | null) {
+    const target = pickEditTarget(shapes, { side, unitId });
+    const shapeAt = target === null ? null : findShapeOfDoc(shapes, target.docId);
+    const unit = shapeAt?.model.units.get(unitId);
+    if (!unit || !shapeAt || !canEdit || mode !== "old" || isBoxLocked(unitId) || hasUnitDraft(unit) || !canSplitInPlace(unit, shapeAt)) return;
     if (cutLine.placeAtCaret(unit, caret)) setCutUnitId(unit.id);
+  }
+  function handleOldDoubleClick(unitId: number, caret: { blockId: number; offset: number } | null) {
+    handleDoubleClickIn(isSolo ? "new" : "old", unitId, caret);
+  }
+  function handleNewDoubleClick(unitId: number, caret: { blockId: number; offset: number } | null) {
+    handleDoubleClickIn("new", unitId, caret);
   }
 
   function runCtx(action: AssignMenuAction, lang?: "ko" | "en", piece?: number, holderId?: number) {
@@ -2107,11 +2133,10 @@ export function useAssignPage() {
 
   /**
    * 언어 바꾸기(B6) - 짝을 한 언어로 만들면 모양 전환(switch_language: 이웃이면 합침, 떨어졌으면 짝만 풂), 아니면 보통 언어 바꾸기.
-   * 모양 전환은 Old 문서에서만 - New 문서를 다듬는 중이면 보통 언어 바꾸기(서버가 짝에서 빼 준다)
+   * Old · New 모두 - New는 이은 문장이면 서버가 묻는다(R4, runShapeSwitch가 confirm 없이 보낸다)
    */
   function changeLanguage(shape: DocShape | null, target: ViewUnit, lang: "ko" | "en") {
-    const isOld = shape?.side === "old";
-    const plan = isOld ? planLanguageChange(target, lang, listPairMembers(shape, target), shape.tabs.order) : { kind: "plain" as const };
+    const plan = shape ? planLanguageChange(target, lang, listPairMembers(shape, target), shape.tabs.order) : { kind: "plain" as const };
     if (plan.kind === "plain") runUnitEdit(shape, { type: "set_language", unit_ids: [target.id], lang }, t("common.saved"), target.id);
     else runShapeSwitch(shape, { type: "switch_language", unit_id: target.id, lang, merge_pair: plan.mergePair }, target.id);
   }
@@ -2145,12 +2170,8 @@ export function useAssignPage() {
       }
       // 이미 그 문장에 선이 있으면 바로 나누고, 없으면 누른 자리(키보드면 가운데) 가까이에 선을 놓는다 - 끌거나 ←→로 옮긴 뒤 Split here
       else if (cutUnit?.id === target.id && cutLine.at !== null) splitAtCut();
-      else if (isNewEdit && !written.some((item) => item.new_unit_id === target.id && item.text === target.text)) {
-        // New 칸의 줄에 그 문장의 글이 그대로 있지 않으면(표 칸 등) 그 자리에 선을 그릴 수 없다 - 한 단으로 열어 원문에서 자른다
-        setSoloDocId(newDocFile);
-        changeView({ single: true });
-        if (cutLine.placeNear(target, null)) setCutUnitId(target.id);
-      } else if (cutLine.placeNear(target, caret)) setCutUnitId(target.id);
+      // 양 단의 New도 같은 용지라 표 칸까지 그 자리에 선을 놓는다(쪼개기 먼저 §8 4-3)
+      else if (cutLine.placeNear(target, caret)) setCutUnitId(target.id);
     } else if ((action === "merge_prev" || action === "merge_next") && shape) {
       const { order } = shape.tabs;
       const other = order[order.indexOf(target.id) + (action === "merge_prev" ? -1 : 1)];
@@ -2478,12 +2499,15 @@ export function useAssignPage() {
   // 앞 줄의 비슷한 문장은 화면에만 남는다 - 확정할 카드로 보지 않는다(추천의 차례가 AI · 같은 글 · 비슷한 글이라 남는 것이 앞머리다)
   const primaryCards = isSavedUnknown ? [] : isSimilarFresh ? recommendations : recommendations.filter((rec) => rec.source !== "similar");
   // 고른 줄이 든 벗긴 표에 뜬 AI 순서 미리보기 - 지금 덩이와 같은 줄 집합일 때만 용지에 뜬다
-  const orderTableId = canEdit && !isPairView && row !== null && paperModel !== null ? (row.unitIds.map((id) => paperModel.unwrapLines.get(id)).find((id) => id !== undefined) ?? null) : null;
+  // 마지막에 누른 쪽의 용지 - 양 단의 New를 눌렀으면 그 문서의 제안(문서마다 한 벌)
+  const shapeUnwrapAi = shape !== null && shape === rightShape ? newUnwrapAi : unwrapAi;
+  const orderUnitIds = hasSolo ? soloUnits.map((unit) => unit.id) : (row?.unitIds ?? []);
+  const orderTableId = canEdit && !isPairView && shapeModel !== null ? (orderUnitIds.map((id) => shapeModel.unwrapLines.get(id)).find((id) => id !== undefined) ?? null) : null;
   const orderPreview = readOrderPreview(orderTableId);
   function readOrderPreview(tableId: number | null): { tableId: number; order: readonly number[]; isSame: boolean } | null {
-    const order = tableId === null ? undefined : unwrapAi.previews.get(tableId);
-    if (tableId === null || order === undefined || paperModel === null) return null;
-    const current = paperModel.order.filter((id) => paperModel.unwrapLines.get(id) === tableId);
+    const order = tableId === null ? undefined : shapeUnwrapAi.previews.get(tableId);
+    if (tableId === null || order === undefined || shapeModel === null) return null;
+    const current = shapeModel.order.filter((id) => shapeModel.unwrapLines.get(id) === tableId);
     return isUnwrapSuggestionApplicable(current, order) ? { tableId, order, isSame: isUnwrapSuggestionUnchanged(current, order) } : null;
   }
   // --- 박스 아래 단추 줄(lib/pick-bar-model) - 단추 줄 · Enter · 확정 단추가 같은 답을 읽는다(쪼개기 먼저 §8) ---
@@ -4348,7 +4372,7 @@ export function useAssignPage() {
     await placeReload(askAll(true), ctx);
   }
   // 그림 탭 카드 - 지우기는 Old 문서의 줄에만(한 단으로 연 New 문서는 줄이 없다)
-  const figureTab = canEdit && !isSolo ? { onDelete: deleteFigure } : undefined;
+  const figureTab = leftTools.figureDelete ? { onDelete: deleteFigure } : undefined;
 
   /** 떼어 접어 둔 오른쪽 칸을 편다 - 그 안의 칸 · 단추로 이어지는 글쇠를 눌렀을 때(안 보이는 채 시작하지 않게) */
   function unfoldSide() {
@@ -4378,7 +4402,7 @@ export function useAssignPage() {
       return;
     }
     if (primaryPlan.kind === "apply_order") {
-      if (orderPreview !== null) unwrapAi.onApply(orderPreview.tableId, orderPreview.order);
+      if (orderPreview !== null) shapeUnwrapAi.onApply(orderPreview.tableId, orderPreview.order);
       return;
     }
     if (isSavedUnknown || (primaryPlan.kind === "confirm" && primaryPlan.from === "draft")) {
@@ -4487,7 +4511,7 @@ export function useAssignPage() {
     // 단추 줄 안의 Tab은 브라우저 기본(포커스 옮기기)이다
     const focusIn = event.target instanceof Element && event.target.closest(".pick-bar") ? "pick-bar" : "paper";
     if ((id === "indent" || id === "outdent") && routeKey(event.key, { last: picks.last, focusIn, shift: event.shiftKey }).id === null) return;
-    if ((id === "indent" || id === "outdent") && !(hasNumberCell && event.target instanceof Element && event.target.closest('[data-pane="old"]') && readKeyPlace(event.target) === "paper")) return;
+    if ((id === "indent" || id === "outdent") && !(hasNumberCell && event.target instanceof Element && event.target.closest('[data-pane="old"], [data-pane="new"]') && readKeyPlace(event.target) === "paper")) return;
     if (hit?.kind === "hint") {
       // Shift를 빠뜨렸다 - 아무것도 하지 않고 글쇠만 알린다(B2-R3)
       if (canEdit && !event.repeat) showToast(t("assign.key.hint", { key: formatAssignKey(hit.entry.id), label: t(hit.entry.labelKey) }), "info");
@@ -4527,7 +4551,9 @@ export function useAssignPage() {
   const langTo = keyUnit?.lang === "ko" ? "en" : "ko";
   const langKeyItem = keyUnit?.lang === "neutral" ? undefined : keyItems.find((item) => item.action === "lang");
   const tableKeyItem = keyItems.find((item) => item.action === "table_layout");
-  const hasNumberCell = canEdit && mode === "old" && !hasSolo && !isPairView && activePart !== "figures" && (paperModel?.hasNumberRanges ?? false) && (keyUnit?.number ?? null) !== null;
+  // 번호 칸 글쇠는 마지막에 누른 쪽의 용지에서 - New도 같은 번호 칸이다(쪼개기 먼저 §8 4-3)
+  const shapeTools = shape !== null && shape === rightShape ? rightTools : leftTools;
+  const hasNumberCell = shapeTools.numberCell && !isPairView && (hasSolo || activePart !== "figures") && (shapeModel?.hasNumberRanges ?? false) && (keyUnit?.number ?? null) !== null;
 
   /** G가 갈 박스 - 누를 때만 찾는다(단위 전부를 훑는다) */
   function findPairBox(): number | null {
@@ -4535,11 +4561,11 @@ export function useAssignPage() {
   }
 
   function readOrderReason(): string | null {
-    if (!unwrapAi.enabled) return "assign.unwrapAi.offTip";
+    if (!shapeUnwrapAi.enabled) return "assign.unwrapAi.offTip";
     if (orderTableId === null) return "assign.key.why.notUnwrapped";
-    if (unwrapAi.busy.has(orderTableId)) return "assign.unwrapAi.already";
+    if (shapeUnwrapAi.busy.has(orderTableId)) return "assign.unwrapAi.already";
     if (orderPreview !== null) return orderPreview.isSame ? "assign.unwrapAi.same" : "assign.key.why.orderReady";
-    const lines = [...(paperModel?.unwrapLines.values() ?? [])].filter((tableId) => tableId === orderTableId);
+    const lines = [...(shapeModel?.unwrapLines.values() ?? [])].filter((tableId) => tableId === orderTableId);
     return lines.length < 2 ? "assign.key.why.oneLine" : null;
   }
 
@@ -4620,7 +4646,7 @@ export function useAssignPage() {
       case "escape":
         // 이을 상대 기다리기를 먼저, 그다음 AI 순서 미리보기(Keep as is), 나눌 선이 있으면 선을 거둔다(Split과 같다)
         if (linkWait !== null) setLinkWait(null);
-        else if (orderPreview !== null) unwrapAi.onKeep(orderPreview.tableId, orderPreview.isSame);
+        else if (orderPreview !== null) shapeUnwrapAi.onKeep(orderPreview.tableId, orderPreview.isSame);
         else if (composedCut) setComposedCutAt(null);
         else if (cutLine.at !== null) cutLine.clear();
         else if (isNewShown && !isSolo) focusCtl.clear("new");
@@ -4700,7 +4726,7 @@ export function useAssignPage() {
         else rewrap?.onBack();
         return true;
       case "ask_order":
-        if (orderTableId !== null) unwrapAi.onAsk(orderTableId);
+        if (orderTableId !== null) shapeUnwrapAi.onAsk(orderTableId);
         return true;
       case "merge_next":
       case "merge_prev":
@@ -4881,9 +4907,9 @@ export function useAssignPage() {
     isFixedCaption, ctxGroups, rowViewUnits, rowSplitUnit, rowSplit, splitBlocked, rowRefUnit, refBlocked, isCaptionGateOn,
     confirmBlockKey, rowCaptionRefs, refCandidates, shapeLines, shapeFirstId, slotPlaces, slotCellTables, shapeMode, headingBack, rewrap, bandBack,
     stepBase, refPendingIds, bundleRefPending, isLinkedToWritten, captionPendingKeys, docDashboard, refDetail, refInfo, openCtxMenu, runUnitEdit,
-    rewrapTable, unwrapAi, describeEditConfirm, pairGrip, clearNoise, openNoiseReason, confirmNoiseReason, closeNoiseReason, noisePick, runCaptionRefChange, switchShapeMode, switchToPair,
+    rewrapTable, unwrapAi, newUnwrapAi, leftTools, rightTools, rightShape, describeEditConfirm, pairGrip, clearNoise, openNoiseReason, confirmNoiseReason, closeNoiseReason, noisePick, runCaptionRefChange, switchShapeMode, switchToPair,
     applySplitSuggestion, dismissSplitSuggestion, splitPendingIds, readPendingItem, selectNextSplit, selectNextRef, selectNextCaption,
-    splitAtCut, handleOldDoubleClick, runCtx, runUnitAction, revertHeadings, planJoinIn, joinIn, renderOldActions, readReasonNeed,
+    splitAtCut, handleOldDoubleClick, handleNewDoubleClick, carveShape, runCtx, runUnitAction, revertHeadings, planJoinIn, joinIn, renderOldActions, readReasonNeed,
     runSave, runClear, runUndoStep, confirmIdenticalAll, acceptAll, markNew, placeManage, pickDestination, pickNewSentence, pressNewBox, showNewDoc, jump, unlinkCell, pickBar, renderPickBar, linkWait, setLinkWait, handleBlankClick, checkedNew, setCheckedNew, pressEnter, primaryLink, primaryLinkLabel,
     handleJoinPick, readJoinAfter, pickJoinMenu, pickPlaceSpot, pickOwnAiLine, jumpToNew, openNewDoc, showInNew, jumpToOld,
     pickTemplateLine, fillTemplateMissing, isTemplateDrag, isOldDrag, finishPairPick, handleOldClick, handlePrimary, startEdit,

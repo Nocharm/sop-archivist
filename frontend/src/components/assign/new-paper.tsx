@@ -4,13 +4,13 @@
 // 얹어 그리는 값을 더하면 덩이의 key(모델)나 아래 readKey에도 더한다 - 빠지면 긴 문서의 먼 덩어리에 낡은 모습이 남는다.
 "use client";
 
-import { Scissors, Sparkles, Spline } from "lucide-react";
-import { useState, type MouseEvent, type ReactNode } from "react";
+import { Maximize2, Sparkles, Spline } from "lucide-react";
+import { useState, type ComponentProps, type MouseEvent, type ReactNode, type RefObject } from "react";
 
 import { NewAiTag, SourceChips } from "@/components/assign/new-sources";
 import { PaneZoom } from "@/components/assign/pane-zoom";
 import { RefMark } from "@/components/assign/ref-mark";
-import { Paper, type CutDragPos, type PaperCut, type PaperOverlay, type PaperPending } from "@/components/paper/paper";
+import { Paper, type CutDragPos, type PaperCut, type PaperNumberCell, type PaperOverlay, type PaperPending } from "@/components/paper/paper";
 import { describeSheet, PartTabs } from "@/components/paper/part-tabs";
 import { Truncate } from "@/components/ui/motion";
 import { Select, type SelectOption } from "@/components/ui/select";
@@ -74,6 +74,23 @@ export interface NewPaperProps {
   renderAtCut?: () => ReactNode;
   /** 고른 박스의 글 아래 단추 줄(박스 아래 단추 줄) */
   renderUnitActions?: (unitId: number) => ReactNode;
+  // 손질(lib/doc-tools-model) - Old 용지와 같은 부품 · 같은 문구 · 같은 되돌리기(쪼개기 먼저 §8 4-3). 없으면 그 손질이 없다
+  /** 저절로 삭제된 줄의 블록과 사유 쓰기 · 삭제 취소 */
+  noise?: NonNullable<ComponentProps<typeof Paper>["strips"]>["noise"];
+  /** 제목에서 바꾼 조항 묶음 머리 "↺ 제목으로" */
+  headingShift?: NonNullable<ComponentProps<typeof Paper>["strips"]>["headingShift"];
+  /** 벗긴 표의 줄 묶음 머리 "↺ 다시 표로"와 AI 순서 제안 */
+  unwrap?: NonNullable<ComponentProps<typeof Paper>["strips"]>["unwrap"];
+  /** 번호 칸 고치기 · 들여쓰기 */
+  numberCell?: PaperNumberCell;
+  /** 틈 합치기 */
+  join?: NonNullable<ComponentProps<typeof Paper>["strips"]>["join"];
+  /** 글자 골라 새 박스 - 주면 글을 긁어도 누르기로 치지 않는다 */
+  onRangeSelect?: (range: { blockId: number; start: number; end: number }) => void;
+  /** 두 번 눌러 나눌 선 */
+  onUnitDoubleClick?: (unitId: number, caret: { blockId: number; offset: number } | null) => void;
+  /** 칸 전체 - 풀기 전환(useUnwrapMotion)이 이 안에서 바뀌는 표를 찾고 잰다 */
+  paneRef?: RefObject<HTMLElement | null>;
 }
 
 // 눌러도 박스를 누른 것이 아닌 자리 - 박스 아래 단추 줄의 빈자리, 칸에 딸린 읽기 전용 글, 왼쪽 번호 칸
@@ -81,7 +98,7 @@ const NOT_PRESSED = ".strip-acts, .new-cell-note, .strip-lead";
 
 const ignoreDoubleClick = () => undefined;
 
-export function NewPaper(props: NewPaperProps) {
+export function NewPaper({ paneRef, ...props }: NewPaperProps) {
   const { t } = useI18n();
   const { model, view, overlay } = props;
   const { boxes } = overlay;
@@ -235,22 +252,25 @@ export function NewPaper(props: NewPaperProps) {
         // 표는 칸마다 고르고 잇는다
         pickWholeBundle={false}
         shiftClickPicks
-        pressThroughSelection
+        // 글자 골라 새 박스가 있으면 긁은 글은 그 손질의 것이다 - 누르기로 치지 않는다
+        pressThroughSelection={!props.onRangeSelect}
+        onRangeSelect={props.onRangeSelect}
         onUnitClick={(unitId, _at, event) => {
           const target = event.target as Element;
           const anchor = target.closest<HTMLElement>(".cell-piece, .strip");
           if (anchor && !target.closest(NOT_PRESSED)) props.onPick(unitId, { shiftKey: event.shiftKey, additive: event.ctrlKey || event.metaKey }, anchor, event);
         }}
         onUnitContextMenu={props.onContextMenu}
-        // 두 번 누르기로 하는 일은 없다 - 낱말이 골라져 둘째 누름이 먹히지 않게 자리만 잡는다
-        onUnitDoubleClick={ignoreDoubleClick}
+        // 두 번 눌러 나누기가 없어도 자리는 잡는다 - 낱말이 골라져 둘째 누름이 먹히지 않게
+        onUnitDoubleClick={props.onUnitDoubleClick ?? ignoreDoubleClick}
+        numberCell={props.numberCell}
         cut={props.cut}
         onCutDrag={props.onCutDrag}
         onCutNudge={props.onCutNudge}
         renderAtCut={props.cut ? props.renderAtCut : undefined}
         figureSource={{ bundleId: props.bundleId, docId: props.fileId }}
         // 이미 쓴 문서는 캡션을 요구하지 않는다(입구 2)
-        strips={{ isCaptionNeeded: () => false, pending: props.pending, mergeArm: props.mergeArm, overlay: paperOverlay }}
+        strips={{ isCaptionNeeded: () => false, pending: props.pending, mergeArm: props.mergeArm, overlay: paperOverlay, noise: props.noise, headingShift: props.headingShift, unwrap: props.unwrap, join: props.join }}
         testId="assign-new-paper"
       />
     );
@@ -275,7 +295,7 @@ export function NewPaper(props: NewPaperProps) {
   }
 
   return (
-    <section className="assign-pane" style={{ "--z": props.zoom }} data-pane="new" data-doc={props.docId} data-tab={activeTab} data-testid="assign-new">
+    <section ref={paneRef} className="assign-pane" style={{ "--z": props.zoom }} data-pane="new" data-doc={props.docId} data-tab={activeTab} data-testid="assign-new">
       <div className="pane-head">
         {props.docOptions.length > 1 ? (
           <Select testId="assign-new-doc" ariaLabel={t("assign.newDoc")} size="sm" mono value={props.docId} options={props.docOptions} onChange={props.onDocChange} />
@@ -290,7 +310,7 @@ export function NewPaper(props: NewPaperProps) {
         {props.onWide && (
           <Tooltip label={t("assign.openSplitTip")}>
             <button type="button" className="pane-toggle" aria-label={t("assign.openSplit")} data-testid="assign-new-edit-original" onClick={props.onWide}>
-              <Scissors size={14} strokeWidth={1.5} aria-hidden />
+              <Maximize2 size={14} strokeWidth={1.5} aria-hidden />
             </button>
           </Tooltip>
         )}

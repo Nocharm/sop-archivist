@@ -25,3 +25,17 @@ export function findShapeUnit(shapes: readonly DocShape[], unitId: number): { sh
   }
   return null;
 }
+
+/** 누른 박스의 문서 - 편집은 늘 누른 쪽의 문서로 간다(한 단으로 연 New는 왼쪽 용지가 side "new"다, 쪼개기 먼저 §8 4-3) */
+export function pickEditTarget(shapes: readonly DocShape[], pressed: { side: PickSide; unitId: number }): { docId: number; side: PickSide } | null {
+  const shape = shapes.find((item) => item.side === pressed.side);
+  return shape ? { docId: shape.view.document.id, side: shape.side } : null;
+}
+
+// 두 번 눌러 나눌 수 있는 줄 - 서버 split 편집이 받는 글 줄(묶음 · 그림 · 캡션은 아니다)
+const SPLIT_KINDS: ReadonlySet<string> = new Set(["sentence", "heading", "cell_sentence"]);
+
+/** 그 용지에서 그 자리에 나눌 선을 놓을 수 있나 - Old · New 모두 같은 용지라 표 칸도 그 자리에서. 저절로 삭제된 줄은 먼저 삭제 취소 */
+export function canSplitInPlace(unit: ViewUnit, shape: DocShape): boolean {
+  return shape.model.units.has(unit.id) && SPLIT_KINDS.has(unit.kind) && !unit.noise_kind;
+}
