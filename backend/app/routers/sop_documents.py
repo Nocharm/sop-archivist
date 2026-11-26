@@ -106,7 +106,8 @@ from app.sop.pairs import (
     delete_pair,
 )
 from app.sop.refs import RefState, build_ref_text, is_proposing_version, load_proposing_extractions, read_ref_state
-from app.sop.schemas import NO_NUL, NoNulStr
+from app.sop.original_places import load_original_places
+from app.sop.schemas import NO_NUL, NoNulStr, OriginalPlaces
 from app.sop.segment import find_anchor_offset, is_band_table, read_figure_inline, read_table_place
 from app.sop.sheet_model import Sheet
 from app.sop.status import get_cover_status
@@ -1116,6 +1117,17 @@ async def edit_caption_ref(
     result = CaptionRefResult(document_revision=document.revision, ref=ref)
     await session.commit()
     return result
+
+
+@router.get("/{bundle_id}/documents/{doc_id}/original-places", response_model=OriginalPlaces)
+async def get_original_places(
+    doc_id: IdPath,
+    ctx: BundleContext = Depends(_require_member),
+    session: AsyncSession = Depends(get_session),
+) -> OriginalPlaces:
+    """원본 보기용 — Unit마다 원본 블록의 XML 경로·쪽(글자는 싣지 않는다)."""
+    document = await _get_document(session, ctx.bundle.id, doc_id)
+    return await load_original_places(session, document)
 
 
 @router.get("/{bundle_id}/documents/{doc_id}/file")
