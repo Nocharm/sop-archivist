@@ -1,6 +1,6 @@
 {
   "name": "sop-archivist-frontend",
-  "version": "1.6.45",
+  "version": "1.6.46",
   "private": true,
   "scripts": {
     "dev": "next dev -p 3777",
@@ -10,6 +10,9 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "docx-preview": "0.4.1",
+    "emf-converter": "4.28.1",
+    "jszip": "3.10.2",
     "lucide-react": "^1.17.0",
     "next": "16.4.5",
     "oidc-client-ts": "^3.5.0",

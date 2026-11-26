@@ -616,6 +616,34 @@ export function getDocumentView(bundleId: number, docId: number): Promise<Docume
 
 const buildDocPath = (bundleId: number, docId: number) => `/bundles/${bundleId}/documents/${docId}`;
 
+/** 원본 블록 하나의 자리 - path는 추출기의 xml_path(첫 조각이 부분 파일 이름), page는 본문 밖이면 null */
+export interface OriginalPlaceBlock {
+  path: string;
+  page: number | null;
+}
+
+/** 살아 있는 Unit 하나가 걸친 원본 블록들(범위 순서, 중복 없음) */
+export interface OriginalPlace {
+  unit_id: number;
+  blocks: OriginalPlaceBlock[];
+}
+
+/** 원본 보기의 자리 조회 - 원문 글자 없이 위치만. places는 DOCX일 때만 채운다(none = 앱에서 만든 문서라 파일 없음) */
+export interface OriginalPlaces {
+  file_format: "docx" | "pdf" | "none";
+  page_basis: string | null;
+  places: OriginalPlace[];
+}
+
+export function fetchOriginalPlaces(bundleId: number, docId: number): Promise<OriginalPlaces> {
+  return apiFetch<OriginalPlaces>(`${buildDocPath(bundleId, docId)}/original-places`);
+}
+
+/** 원본 파일 받기(이름은 서버의 Content-Disposition) - 원본 보기의 파일 받기 단추 */
+export function downloadOriginalFile(bundleId: number, docId: number): Promise<{ blob: Blob; fileName: string | null }> {
+  return apiFetchBlobWithName(`${buildDocPath(bundleId, docId)}/file`);
+}
+
 /** 단위가 가리키는 문서 번호와 그 번호의 EQUIS 표시 - 번호는 서버가 단위의 글에서 읽는다 */
 export function getUnitRef(bundleId: number, docId: number, unitId: number): Promise<UnitRefDetail> {
   return apiFetch<UnitRefDetail>(`${buildDocPath(bundleId, docId)}/units/${unitId}/ref`);

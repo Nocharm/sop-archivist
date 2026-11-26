@@ -1,4 +1,4 @@
-// Assign 보기 설정 - 문서별 확대(Old·New)·두 문서 폭·연결선 켜기·한 단 보기·New 쪽 AI 제안 거르기 · New 칸 템플릿 보기 · 뗀 오른쪽 칸(자리 · 접힘) · Space 미리보기를 연 횟수를 사람마다 브라우저에 기억한다. 저장소가 막혀 있으면 기본값으로 그린다.
+// Assign 보기 설정 - 문서별 확대(Old·New)·두 문서 폭·연결선 켜기·한 단 보기·New 쪽 AI 제안 거르기 · New 칸 템플릿 보기 · 뗀 오른쪽 칸(자리 · 접힘) · Space 미리보기를 연 횟수 · 시트 높이 · 마지막에 본 시트 탭을 사람마다 브라우저에 기억한다. 저장소가 막혀 있으면 기본값으로 그린다.
 import { clampSplit, clampZoom } from "./assign-model";
 import { clampSheetHeight, SHEET_HEIGHT_DEFAULT } from "./space-preview-model";
 
@@ -100,5 +100,28 @@ export function writeSpaceSheetHeight(ratio: number): void {
     window.localStorage.setItem(SPACE_HEIGHT_KEY, String(ratio));
   } catch {
     // 기억하지 못하면 다음에 기본 높이로 열릴 뿐이다
+  }
+}
+
+/** Space 시트의 탭 - 결과 미리보기 · 원본 보기(D1) */
+export type SpaceTab = "result" | "original";
+
+const SPACE_TAB_KEY = "sopa.assign.spaceTab";
+
+/** 마지막에 본 시트 탭(D2) - 없거나 모르는 값 · 막힌 저장소면 결과 미리보기 */
+export function readSpaceTab(): SpaceTab {
+  try {
+    return window.localStorage.getItem(SPACE_TAB_KEY) === "original" ? "original" : "result";
+  } catch {
+    // 개인 창·막힌 사이트 데이터 - 처음 탭으로 연다
+    return "result";
+  }
+}
+
+export function writeSpaceTab(tab: SpaceTab): void {
+  try {
+    window.localStorage.setItem(SPACE_TAB_KEY, tab);
+  } catch {
+    // 기억하지 못하면 다음에 결과 미리보기로 열릴 뿐이다
   }
 }

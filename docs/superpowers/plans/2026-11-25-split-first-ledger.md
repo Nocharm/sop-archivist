@@ -44,7 +44,7 @@
 | Fh | `fix/assign-new-head-fit` | 합침 | v1.6.43 · 62f34e6c | vitest 2808 · build 경고 0 · `assign:` + `practice:` ALL PASS 1572 · overlap 새 장면 4/4(고치기 전 dev 코드에서 16 실패 확인) · Assign 장면 다섯 1120/1440 20/20 · 검토 생략(CSS · 작은 일) | — |
 | F9b | `feat/practice-coach` | 합침 | v1.6.44 · c6831dfd | vitest 2832 · build 경고 0 · `practice:` ALL PASS 56(첫 실행) · overlap `assign-pane-head-narrow` 4/4 · 그림 `practice` 다시 · 검토 생략(연습 화면만, Assign 파일 변경 없음) | 그림 `/private/tmp/claude-501/-Users-hyeonjin-Documents-sop-archivist/cd35c95b-037a-4e82-bb7a-e837e4859e96/scratchpad/shots/coach/`(1440 en 앞면 · 뒤집힘 · 다음, 1120 ko) |
 | F10 | `feat/space-sheet-resize` | 합침 | v1.6.45 · 9ac2b4f0 | vitest(space-preview-model · assign-view-prefs · source-rules · i18n · manual) · lint · tsc · `assign: Space preview` ALL PASS 41 · 검토: 지휘 세션이 diff 봄 | — |
-| F11 | `feat/original-view`(모음) | 진행 |  |  | Space 시트 "원본 보기" 탭 — 원본 DOCX 인쇄 미리보기 + 고른 문단 따라가기(사용자 11-27 승인, 이번 업데이트에). 설계 `docs/superpowers/specs/2026-11-27-original-view-design.md`(모음 브랜치), 시작 프롬프트 `~/Documents/sop-orchestration/original-view-next.md` |
+| F11 | `feat/original-view`(모음) | 합침 | v1.6.46 · 893378d1 | pytest · ruff · vitest · lint · tsc · build 경고 0 · `assign: Space preview` ALL PASS 78 · `practice:` ALL PASS 60 · 화면 확인(한 단 · 다크 · EMF 문서) · 검토: 지휘 세션이 스텝 diff 봄 | CSP 머리(nginx) 다음 일. 실제 SOP · 실제 EMF로는 아직 못 봄 |
 
 
 ## 이어 가기 (2026-11-27 — 세션 끝. 다음 세션은 여기부터)

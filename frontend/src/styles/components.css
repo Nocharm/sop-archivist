@@ -1898,6 +1898,22 @@
   /* Space 미리보기(components/assign/space-preview.tsx) - 작업 화면 바닥에서 올라오는 시트, 높이는 작업 화면 비율로 인라인(기본 · 한계는 lib/space-preview-model.ts). 여는 움직임은 --dur-base(움직임 줄이기면 0) */
   .space-sheet { position: absolute; inset-inline: 0; bottom: 0; z-index: 40; display: flex; flex-direction: column; min-height: 0; border-top: 1px solid var(--line-2); border-radius: 10px 10px 0 0; background: var(--surface); box-shadow: 0 -14px 30px -14px oklch(0 0 0 / .4); animation: space-sheet-in var(--dur-base) var(--ease-enter); }
   @keyframes space-sheet-in { from { transform: translateY(100%); } }
+  /* 열어 둔 시트를 탁 - --space-double-tap(두 번 탁 간격, space-preview-model DOUBLE_TAP_MS) 동안 흐려지며 내려가고 끝(animationend)에 닫힌다.
+     그사이 다시 탁 하면 닫기를 거두고 탭을 바꾼다(D3). 키프레임 이름은 space-preview.tsx CLOSING_ANIMATIONS와 함께 */
+  .space-sheet.is-closing { pointer-events: none; animation: space-sheet-out var(--space-double-tap, 300ms) var(--ease-exit) forwards; }
+  @keyframes space-sheet-out { to { opacity: 0; transform: translateY(12%); } }
+  @keyframes space-sheet-out-fade { to { opacity: 0; } }
+  /* 닫기를 거두고 탭을 바꾼 시트는 다시 올라오지 않는다 - 바뀐 탭 내용만 나타난다 */
+  .space-sheet[data-reopened]:not(.is-closing) { animation: none; }
+  /* 탭 내용 - 숨겼다(<Activity>) 다시 보이면 0.14초 나타난다(D8 탭 사이) */
+  .space-tab-pane { display: flex; flex: 1 1 auto; flex-direction: column; min-height: 0; animation: space-tab-in 140ms var(--ease-enter); }
+  @keyframes space-tab-in { from { opacity: 0; } }
+  /* 양 단 원본 둘 - 폭 비율은 본 화면 세로선(--split, D6), 시트 안 세로선은 없다 */
+  .space-originals { display: grid; flex: 1 1 auto; grid-template-columns: minmax(0, var(--split, 50%)) minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); gap: 8px; min-height: 0; }
+  @media (prefers-reduced-motion: reduce) {
+    .space-sheet.is-closing { animation-name: space-sheet-out-fade; }
+    .space-tab-pane { animation: none; }
+  }
   /* 손잡이 - 보이는 막대는 ::before 4px, 누를 수 있는 자리는 12px 투명 띠 */
   .space-sheet-grip { position: relative; flex: none; height: 12px; cursor: ns-resize; touch-action: none; }
   .space-sheet-grip::before { content: ""; position: absolute; left: 50%; top: 4px; width: 44px; height: 4px; margin-left: -22px; border-radius: 2px; background: var(--line-2); }
@@ -2744,4 +2760,34 @@
   }
   .practice-manual-link { display: inline-flex; align-items: center; gap: 6px; align-self: flex-start; font-size: var(--fs-ui); color: var(--accent); }
   .practice-manual-link:hover { text-decoration: underline; }
+}
+
+/* ---- 원본 보기(components/assign/original-view.tsx) - 회색 책상 위 종이(인쇄 미리보기). 원본은 host의 그림자 뿌리 안에 그려져
+   이 파일의 규칙은 안에 닿지 않는다(안의 모양은 original-render.ts OV_SHADOW_CSS, 토큰만). 여기는 바깥 틀 · 쉬머 · 흐림 · 쪽 칩 ---- */
+@layer components {
+  .ov { position: relative; display: flex; flex: 1 1 auto; flex-direction: column; min-height: 0; overflow: hidden; border-radius: var(--r-1); background: var(--ov-desk); }
+  .ov-note { flex: none; padding: 5px 12px; border-bottom: 1px solid var(--line); background: var(--surface); font-size: 12px; color: var(--ink-2); }
+  .ov-scroll { position: relative; flex: 1 1 auto; min-height: 0; overflow: auto; }
+  /* 떠 있는(fixed) 요소도 이 칸 안에 가둔다 - 올린 문서가 화면 전체를 덮지 못하게 */
+  .ov-host { contain: paint; }
+  /* 그리는 동안 배치는 하되(쪽 나누기가 잰다) 보이지 않게, 다 그리면 0.15초 나타남(D8) */
+  .ov-host[data-busy] { visibility: hidden; }
+  .ov-host[data-ready] { animation: ov-appear 150ms var(--ease-enter); }
+  @keyframes ov-appear { from { opacity: 0; } }
+  /* 멀리 갈 때 0.09초 흐렸다 그 자리에서 0.14초 밝힘 - 끝은 use-original-follow가 animationend로 받는다(이름을 바꾸면 함께) */
+  .ov-host[data-ov-fade="out"] { animation: ov-dim 90ms var(--ease-exit) forwards; }
+  .ov-host[data-ov-fade="in"] { animation: ov-undim 140ms var(--ease-enter); }
+  @keyframes ov-dim { to { opacity: .15; } }
+  @keyframes ov-undim { from { opacity: .15; } }
+  /* 처음 그리는 동안 종이 모양 쉬머 */
+  .ov-shimmer { position: absolute; inset: 0; display: flex; justify-content: center; padding: 16px; pointer-events: none; }
+  .ov-shimmer > .sk { width: min(100%, 560px); aspect-ratio: 1 / 1.414; background: var(--ov-paper); box-shadow: var(--shadow-1); }
+  /* 쪽 칩 - 오른쪽 아래, 쪽이 바뀌면 key로 다시 붙어 살짝 커진다 */
+  .ov-chip { position: absolute; right: 14px; bottom: 10px; z-index: 2; padding: 1px 8px; border-radius: var(--r-1); background: color-mix(in oklab, var(--ink) 74%, transparent); color: var(--surface); font: 600 11px / 18px var(--font-mono); pointer-events: none; animation: ov-chip-pop 200ms var(--ease-enter); }
+  @keyframes ov-chip-pop { from { transform: scale(1.15); } }
+  .ov-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; margin: auto; padding: 24px; text-align: center; font-size: 13px; color: var(--ink-2); }
+  .ov-empty-actions { display: flex; gap: 8px; }
+  @media (prefers-reduced-motion: reduce) {
+    .ov-host[data-ready], .ov-chip { animation: none; }
+  }
 }

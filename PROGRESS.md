@@ -246,3 +246,9 @@
 
 - 모델이 기본으로 하는 것(단순하게 · 고칠 곳만 · 범용 보안/시험/오류 규칙)을 늘 싣는 글에서 빼자는 사용자 점검 — 루트 CLAUDE.md + rules 41KB → 24KB. guidelines는 이 저장소만의 것(물을 때 · 멈춤 · 말하기)만, 범용 6개는 `conventions.md` 하나로, `git.md`는 커밋 · dev 푸시 버전만 남기고 정식 업데이트 · 급한 수정 · 문서 정리는 `docs/deploy/release.md` + `/release`로, docs 폴더 정책은 `docs/README.md`로. `/agile`은 루트 "작은 수정은 직접"과 겹쳐 지움.
 - 같은 날 저장소 밖에서: 겹치는 플러그인(karpathy · code-review · code-simplifier)과 context-mode는 전역, claude-mem · claude-md-management는 이 프로젝트(`.claude/settings.local.json`)에서 끔.
+
+## 2026-11-27 — 원본 보기 (F11, 모음 `feat/original-view`)
+
+- Space 시트 "원본 보기" 탭 — 서버는 Unit → 원본 XML 경로만(`GET …/original-places`, 표 · 그림 Unit은 표 경로 · `pos_seq` 블록), 원본 파일에 ETag 캐시. 브라우저가 책갈피 표지를 심어 `docx-preview`로 그림자 뿌리 안에 그리고 앱이 쪽을 나눈다(종이 크기가 없는 장은 Word 기본 A4). 그리개 CSS · 링크는 거른다(보안 검토 두 번), CSP는 nginx라 다음 일.
+- EMF · WMF는 사용자 결정으로 1차에 — `rtf.js` EMFJS가 글자 · 비트맵 · 타원을 건너뛰어(합성 EMF 비교) `emf-converter/lite` 4.28.1로(같은 img의 PNG 2배, 5초 넘으면 빗금). 그린 원본은 시트를 닫아도 문서 넷까지 남겨 다시 열 때 그대로(자리 조회가 바뀌면 다시 그림).
+- 스텝 넷을 하위 에이전트로(서버 sonnet ∥ 그리개 opus → 시트 opus ∥ EMF sonnet), 지휘 세션이 스텝마다 diff 검토 · 게이트 · 스모크. 새 npm 의존성 `docx-preview` 0.4.1 · `jszip` 3.10.2 · `emf-converter` 4.28.1.
