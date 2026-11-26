@@ -33,12 +33,14 @@ describe("keyboard map model", () => {
     expect(widths).toEqual(widths.map(() => ROW_COLS));
   });
 
-  it("puts Esc on its own top row and the arrows in an inverted T", () => {
+  it("puts Esc first on the F row and the arrows in an inverted T inside the block", () => {
     // Arrange
     const rows = buildKeyboardMap().map((row) => row.filter((item) => item.code !== GAP_CODE).map((item) => item.code));
 
     // Assert
-    expect(rows[0]).toEqual(["Escape"]);
+    expect(rows[0].slice(0, 3)).toEqual(["Escape", "F1", "F2"]);
+    const start = (row: number, code: string) => buildKeyboardMap()[row].slice(0, buildKeyboardMap()[row].findIndex((item) => item.code === code)).reduce((sum, item) => sum + item.width, 0);
+    expect(start(4, "ArrowUp")).toBe(start(5, "ArrowDown"));
     expect(rows[4].at(-1)).toBe("ArrowUp");
     expect(rows[5].slice(-3)).toEqual(["ArrowLeft", "ArrowDown", "ArrowRight"]);
     expect(rows.flat().filter((code) => code === "Escape")).toHaveLength(1);

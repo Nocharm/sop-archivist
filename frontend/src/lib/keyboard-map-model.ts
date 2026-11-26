@@ -34,8 +34,8 @@ interface Cap {
 
 /** 아무 키도 없는 빈 칸 - 모양을 맞추는 자리 */
 export const GAP_CODE = "Gap";
-/** 한 줄의 칸 수 - 본판 15u(60) + 사이 2 + 화살표 묶음 3u(12) */
-export const ROW_COLS = 74;
+/** 한 줄의 칸 수 - 75% 배열 15u. 화살표도 이 안에 든다 */
+export const ROW_COLS = 60;
 const U = 4;
 const key = (code: string, cap: string, k: string, width = U, shiftKey?: string): Cap => ({ code, cap, key: k, width, shiftKey });
 const letters = (chars: string): Cap[] => [...chars].map((char) => key(`Key${char}`, char, char.toLowerCase()));
@@ -44,19 +44,19 @@ const plainCap = (code: string, cap: string, width: number): Cap => ({ code, cap
 const gap = (width: number): Cap => plainCap(GAP_CODE, "", width);
 
 const LAYOUT: readonly (readonly Cap[])[] = [
-  [key("Escape", "Esc", "escape"), gap(ROW_COLS - U)],
-  [key("Backquote", "`", "`"), ...digits("1234567890"), plainCap("Minus", "-", U), plainCap("Equal", "=", U), key("Backspace", "⌫", "backspace", 2 * U), gap(14)],
-  [key("Tab", "Tab", "tab", 1.5 * U), ...letters("QWERTYUIOP"), plainCap("BracketLeft", "[", U), plainCap("BracketRight", "]", U), plainCap("Backslash", "\\", 1.5 * U), gap(14)],
-  [plainCap("CapsLock", "Caps", 1.75 * U), ...letters("ASDFGHJKL"), plainCap("Semicolon", ";", U), plainCap("Quote", "'", U), key("Enter", "↵", "enter", 2.25 * U), gap(14)],
-  [plainCap("ShiftLeft", "⇧", 2.25 * U), ...letters("ZXCVBNM"), plainCap("Comma", ",", U), plainCap("Period", ".", U), key("Slash", "/", "/", U, "?"), plainCap("ShiftRight", "⇧", 2.75 * U), gap(6), key("ArrowUp", "↑", "arrowup"), gap(4)],
+  [key("Escape", "Esc", "escape"), ...Array.from({ length: 12 }, (_, at) => plainCap(`F${at + 1}`, `F${at + 1}`, U)), key("Delete", "Del", "delete"), gap(ROW_COLS - 14 * U)],
+  [key("Backquote", "`", "`"), ...digits("1234567890"), plainCap("Minus", "-", U), plainCap("Equal", "=", U), key("Backspace", "⌫", "backspace", 2 * U)],
+  [key("Tab", "Tab", "tab", 1.5 * U), ...letters("QWERTYUIOP"), plainCap("BracketLeft", "[", U), plainCap("BracketRight", "]", U), plainCap("Backslash", "\\", 1.5 * U)],
+  [plainCap("CapsLock", "Caps", 1.75 * U), ...letters("ASDFGHJKL"), plainCap("Semicolon", ";", U), plainCap("Quote", "'", U), key("Enter", "↵", "enter", 2.25 * U)],
+  [plainCap("ShiftLeft", "⇧", 2.25 * U), ...letters("ZXCVBNM"), plainCap("Comma", ",", U), plainCap("Period", ".", U), key("Slash", "/", "/", U, "?"), plainCap("ShiftRight", "⇧", 3), key("ArrowUp", "↑", "arrowup"), gap(U)],
   [
-    plainCap("ControlLeft", "Ctrl", 9),
-    plainCap("MetaLeft", "Win", 6),
-    plainCap("AltLeft", "Alt", 6),
-    key("Space", "Space", " ", 24),
-    plainCap("AltRight", "Alt", 6),
-    plainCap("ControlRight", "Ctrl", 9),
-    gap(2),
+    plainCap("ControlLeft", "Ctrl", 5),
+    plainCap("MetaLeft", "Win", 5),
+    plainCap("AltLeft", "Alt", 5),
+    key("Space", "Space", " ", 18),
+    plainCap("AltRight", "Alt", 5),
+    plainCap("Fn", "Fn", 5),
+    plainCap("ControlRight", "Ctrl", 5),
     key("ArrowLeft", "←", "arrowleft"),
     key("ArrowDown", "↓", "arrowdown"),
     key("ArrowRight", "→", "arrowright"),
