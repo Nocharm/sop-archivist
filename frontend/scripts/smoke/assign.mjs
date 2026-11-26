@@ -4366,6 +4366,8 @@ await runStep("assign: Space preview - a short tap keeps it open, Esc and anothe
   await page.keyboard.press(" ");
   await wait(page, "assign-space-preview");
   await page.keyboard.press(" ");
+  // 탁 뒤 0.3초 닫힘 움직임(그사이 다시 탁 하면 탭을 바꾼다, D3)이 끝나면 닫힌다
+  await sheet.waitFor({ state: "detached", timeout: T }).catch(() => {});
   check("another short tap closes it", (await sheet.count()) === 0);
   await setPaneView(page, "two"); // 다음 단계들은 양 단에서 시작한다
 });

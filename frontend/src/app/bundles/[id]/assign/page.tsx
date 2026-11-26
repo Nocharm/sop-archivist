@@ -80,7 +80,7 @@ export default function AssignPage() {
   const {
     t, bundleId, bundle, canEdit, docs, oldDocs, docViews, unitsKey, tobe, tobeData, writtenList, identical,
     readMarkStatus, readAiPlace, suggestedTargetUnits, unitMap, written, writtenMap, rows, rowMap, rowOfUnit, labelOptions, ready, showSkeleton, unsourced,
-    mode, foldOpen, setFoldOpen, foldMatch, clearRowPick, activeKey, row, pickedId, pickScope, spaceUnitIds, spacePickSeq, newPick, newUnitId, panel, soloDocId, setSoloDocId, isSolo, isNewEdit, tocOpen, setTocOpen,
+    mode, foldOpen, setFoldOpen, foldMatch, clearRowPick, activeKey, row, pickedId, pickScope, spaceUnitIds, spaceOriginalIds, spaceNewOriginal, spacePickSeq, newPick, newUnitId, panel, soloDocId, setSoloDocId, isSolo, isNewEdit, tocOpen, setTocOpen,
     tocPick, checked, newRemarks, setNewRemarks, joinMenu, setJoinMenu, ctxMenu, setCtxMenu, focusNew,
     setDrafts, draft, destination, rowUnits, reasonNow, unsavedCount, leaveTo, setLeaveTo,
     aiDest, isAiRow, recommendations, linkIds, candidateIds, setManualOldDoc, oldView, acceptKind, setAcceptKind, acceptDoc, paperModel,
@@ -549,6 +549,9 @@ export default function AssignPage() {
           pickSeq={spacePickSeq}
           picked={row && rowUnits.length > 0 ? { id: rowUnits[0].display_id, text: rowUnits.map((unit) => unit.text).join(" ") } : null}
           draft={spaceDraft}
+          originalUnitIds={spaceOriginalIds}
+          newOriginal={spaceNewOriginal}
+          split={view.split}
         />
         <div className="assign-desk">
           <AssignBar state={state} />
