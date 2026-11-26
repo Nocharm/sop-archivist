@@ -82,7 +82,7 @@ import { buildLinkSave } from "@/lib/link-save-model";
 import { buildIdenticalBatches } from "@/lib/match-model";
 import { EMPTY_FOLD_OPEN, type FoldOpen } from "@/lib/paper-fold-model";
 import { buildPaperModel, buildPaperTabs, findNearestCut, isBandHeading, listFigureTabUnitIds, resolvePickUnit, shouldRecenter, type PaperTabKey } from "@/lib/paper-model";
-import { buildPickScope, buildShapeTargets, readNavUnit, readRowKeyOf, resolveBoxUnit } from "@/lib/pick-scope-model";
+import { buildPickScope, buildShapeTargets, pickShapeScope, readNavUnit, readRowKeyOf, resolveBoxUnit } from "@/lib/pick-scope-model";
 import { findPairTarget } from "@/lib/pair-hint-model";
 import { readPartState, stepPart, withPartState } from "@/lib/part-history";
 import { isSameOrder, movePairMember, orderPairCard, readPairSlot } from "@/lib/pair-order-model";
@@ -1686,8 +1686,10 @@ export function useAssignPage() {
   // 아직 표인 표의 칸을 골랐으면 그 칸이 맨 앞이고 표 줄이 아래에 남는다(C1-R3) - 표 벗기기는 표 줄에만
   const shapeFirstId = hasSolo ? (soloUnit?.id ?? null) : pickedId;
   const shapeCardUnits = orderPairCard(rowViewUnits);
-  const shapeCell = !hasSolo && pickScope !== null && pickScope.group?.kind === "table" && pickScope.unitId !== pickScope.boxId ? (shapeModel?.units.get(pickScope.unitId) ?? null) : null;
-  const shapeTargets = buildShapeTargets(pickScope ?? { unitId: shapeFirstId ?? -1, boxId: shapeFirstId ?? -1, group: null }, shapeCardUnits, shapeCell);
+  // 오른쪽 칸이 New 쪽이면 Old 고름(pickScope)이 아니라 누른 New 박스로 줄 세운다
+  const shapeScope = pickShapeScope(pickScope, shapeFirstId, hasSolo);
+  const shapeCell = shapeScope.group?.kind === "table" && shapeScope.unitId !== shapeScope.boxId ? (shapeModel?.units.get(shapeScope.unitId) ?? null) : null;
+  const shapeTargets = buildShapeTargets(shapeScope, shapeCardUnits, shapeCell);
   const shapeLines: ShapeLine[] = canEdit && mode === "old" ? shapeTargets.flatMap(({ unit, hidden }) => { const menu = buildUnitMenu(shape, unit); return menu ? [{ unit, items: menu.edit.filter((item) => !hidden.has(item.action)) }] : []; }) : [];
   const slotCellTables = useMemo(() => new Map((shapeView?.blocks ?? []).filter((block) => block.kind === "table_cell").map((block) => [block.id, block.table_id])), [shapeView]);
   // 고른 줄이 한/영 짝이거나 합친 한 문장이면 둘 사이를 바꾸는 전환을 다듬기에 둔다
@@ -4621,7 +4623,7 @@ export function useAssignPage() {
   const langTo = keyUnit?.lang === "ko" ? "en" : "ko";
   const langKeyItem = keyUnit?.lang === "neutral" ? undefined : keyItems.find((item) => item.action === "lang");
   // 칸을 골랐으면 표 벗기기는 표 줄의 항목이다(칸 줄에서는 숨긴다)
-  const tableKeyItem = keyItems.find((item) => item.action === "table_layout") ?? (pickScope === null ? undefined : shapeLines.find((line) => line.unit.id === pickScope.boxId)?.items.find((item) => item.action === "table_layout"));
+  const tableKeyItem = keyItems.find((item) => item.action === "table_layout") ?? shapeLines.find((line) => line.unit.id === shapeScope.boxId)?.items.find((item) => item.action === "table_layout");
   // 번호 칸 글쇠는 마지막에 누른 쪽의 용지에서 - New도 같은 번호 칸이다(쪼개기 먼저 §8 4-3)
   const shapeTools = shape !== null && shape === rightShape ? rightTools : leftTools;
   const hasNumberCell = shapeTools.numberCell && !isPairView && (hasSolo || activePart !== "figures") && (shapeModel?.hasNumberRanges ?? false) && (keyUnit?.number ?? null) !== null;

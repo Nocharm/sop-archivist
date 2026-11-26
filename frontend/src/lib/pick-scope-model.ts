@@ -46,6 +46,12 @@ const NO_HIDDEN: ReadonlySet<AssignMenuAction> = new Set();
 // 칸 줄에서 숨기는 표 항목 - 표 벗기기는 아래 표 줄에 있다(글쇠는 표 줄의 항목을 읽는다)
 const CELL_HIDDEN: ReadonlySet<AssignMenuAction> = new Set(["table_layout"]);
 
+/** 다듬기를 줄 세울 고름 - 오른쪽 칸이 New 쪽(한 단 New · 양 단에서 New를 마지막에 누름)이거나 Old 고름이 없으면 맨 앞에 둘 박스(firstId) 하나, 아니면 Old의 두 겹 고름 */
+export function pickShapeScope(scope: PickScope | null, firstId: number | null, isNewSide: boolean): PickScope {
+  if (!isNewSide && scope !== null) return scope;
+  return { unitId: firstId ?? -1, boxId: firstId ?? -1, group: null };
+}
+
 /** 오른쪽 칸 다듬기 대상 - 칸을 골랐으면 그 칸이 맨 앞(C1-R3), 다음이 줄의 Unit(지금 차례에서 누른 박스가 앞). hidden은 그 줄에 두지 않는 항목 */
 export function buildShapeTargets(scope: PickScope, rowUnits: readonly ViewUnit[], cell: ViewUnit | null): { unit: ViewUnit; hidden: ReadonlySet<AssignMenuAction> }[] {
   const rest = [...rowUnits].sort((a, b) => Number(b.id === scope.unitId) - Number(a.id === scope.unitId)).map((unit) => ({ unit, hidden: NO_HIDDEN }));

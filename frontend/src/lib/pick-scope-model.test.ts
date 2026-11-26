@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import type { ViewTable, ViewUnit } from "@/lib/api-sop";
 import { resolvePickUnit } from "@/lib/paper-model";
 
-import { buildPickScope, buildShapeTargets, readNavUnit, readRowKeyOf, resolveBoxUnit } from "./pick-scope-model";
+import { buildPickScope, buildShapeTargets, pickShapeScope, readNavUnit, readRowKeyOf, resolveBoxUnit } from "./pick-scope-model";
 
 function u(id: number, over: Partial<ViewUnit> = {}): ViewUnit {
   return {
@@ -75,4 +75,19 @@ describe("buildShapeTargets", () => {
   });
 
   it("puts the pressed half of a pair first", () => expect(buildShapeTargets(pairScope(6), [at(5), at(6)], null).map((target) => target.unit.id)).toEqual([6, 5]));
+});
+
+describe("pickShapeScope", () => {
+  const cellScope = buildPickScope(2, [1], units, tables);
+
+  it("orders by the pressed New piece, not by the Old pick, when Shape is on the New side", () => {
+    const scope = pickShapeScope(cellScope, 6, true);
+    expect(scope).toEqual({ unitId: 6, boxId: 6, group: null });
+    expect(buildShapeTargets(scope, [units.get(5) as ViewUnit, units.get(6) as ViewUnit], null).map((target) => target.unit.id)).toEqual([6, 5]);
+  });
+
+  it("keeps the Old two-level pick on the Old side", () => {
+    expect(pickShapeScope(cellScope, 2, false)).toBe(cellScope);
+    expect(pickShapeScope(null, null, false)).toEqual({ unitId: -1, boxId: -1, group: null });
+  });
 });
