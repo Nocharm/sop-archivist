@@ -64,6 +64,14 @@ describe("getAssignUndoKey", () => {
   });
 });
 
+describe("multi edits", () => {
+  it("merge rows and several tables are edit steps", () => {
+    expect(isUnitEditStep("merge_rows")).toBe(true);
+    expect(isUnitEditStep("set_layout_tables")).toBe(true);
+    expect(shouldDropSelectionOnStep({ op: "set_layout_tables", unit_ids: [1] })).toBe(true);
+  });
+});
+
 describe("shouldDropSelectionOnStep", () => {
   const step = (op: string, unitIds = [4]) => ({ op, unit_ids: unitIds });
   it("drops the selection for every unit-shape edit that can retire units", () => {

@@ -529,6 +529,8 @@ export interface DocumentView {
 export type EditOp =
   | { type: "split"; unit_id: number; at: number }
   | { type: "merge"; unit_ids: number[] }
+  /** 여럿 고른 줄 합치기(쪼개기 먼저 설계 §9) - 언어마다 하나로 합치고 한글 · 영어가 다 있으면 다시 짝, 편집 하나. 이웃인지는 화면이 본다(multi-pick-model) */
+  | { type: "merge_rows"; unit_ids: number[] }
   | { type: "unmerge"; unit_id: number }
   | { type: "move_boundary"; left_unit_id: number; right_unit_id: number; at: number }
   | { type: "carve"; block_id: number; start: number; end: number }
@@ -536,6 +538,8 @@ export type EditOp =
   /** 언어를 바꿔 모양이 바뀌는 편집(B6) - 짝이 한 언어가 되면 합치거나(merge_pair) 짝만 풀고, piece면 합친 박스의 그 조각을 떼어 짝으로. 배정은 묻지 않고 푼다 */
   | { type: "switch_language"; unit_id: number; lang: "ko" | "en"; piece?: number; merge_pair?: boolean }
   | { type: "set_layout_table"; table_id: number; is_layout: boolean }
+  /** 표 여럿 벗기기 - 편집 하나(되돌리기 한 번), 하나라도 안 되면 아무것도 쓰지 않는다 */
+  | { type: "set_layout_tables"; table_ids: number[] }
   /** 블록 자리 2 안(caption-slot-model CAPTION_REACH)의 묶이지 않은 글 단위를 표·그림의 캡션으로 - 사이 문단은 그대로,
    *  묶음마다 언어당 하나(caption_exists), 먼 글은 caption_not_adjacent, 다른 그림의 캡션을 같이 쓰는 그림은 caption_shared. 판단이 있는 묶음이면 서버가 묻는다 */
   | { type: "attach_caption"; unit_id: number; bundle_unit_id: number }

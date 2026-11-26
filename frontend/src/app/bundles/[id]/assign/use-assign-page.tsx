@@ -28,6 +28,7 @@ import { useBoxDrag } from "@/lib/use-box-drag";
 import { findLastStep } from "@/lib/destination-manage-model";
 import { buildDocTools } from "@/lib/doc-tools-model";
 import { describeNewTableAsk, readEditAsk, type EditAsk } from "@/lib/edit-ask-model";
+import { listNewRows, planMultiMerge, planMultiUnwrap, type MultiRow } from "@/lib/multi-pick-model";
 import { findSplitBlock, readSplitOffsets } from "@/lib/split-ai-tabs-model";
 import { pickPairPiece, planPairLanguages, type JoinKind, type JoinPlan } from "@/lib/split-menu-model";
 import { listAppliedSuggestions, requestAi, setSuggestionAdoption, type AiKind, type AiScope } from "@/lib/api-manage";
@@ -306,11 +307,11 @@ function readPendingOutcomes(unsettled: ReadonlyArray<{ payload: AssignCommand }
   return outcomes;
 }
 
-/** 편집이 풀기 전환(F10)으로 바뀌는 곳 - 표 벗기기 · 다시 표로(바로 안쪽 띠 표도 함께 제목 줄 ↔ 표로 바뀐다, F2)와 캡션. 아니면 null */
+/** 편집이 풀기 전환(F10)으로 바뀌는 곳 - 표 벗기기 · 다시 표로(바로 안쪽 띠 표도 함께 제목 줄 ↔ 표로 바뀐다, F2, 표 여럿은 표마다를 이어)와 캡션. 아니면 null */
 function readUnwrapOptions(op: EditOp, view: DocumentView, followId: number | null): UnwrapRunOptions | null {
-  return op.type === "set_layout_table"
-    ? { scopes: listUnwrapScopes(new Map(view.tables.map((table) => [table.id, table])), op.table_id), reverse: !op.is_layout }
-    : getCaptionMotion(op, followId);
+  const tables = new Map(view.tables.map((table) => [table.id, table]));
+  if (op.type === "set_layout_tables") return { scopes: op.table_ids.flatMap((tableId) => listUnwrapScopes(tables, tableId)), reverse: false };
+  return op.type === "set_layout_table" ? { scopes: listUnwrapScopes(tables, op.table_id), reverse: !op.is_layout } : getCaptionMotion(op, followId);
 }
 
 /** 다시 읽기 - 판단 저장 · AI 작업 끝 · 일괄 일 뒤(Unit 줄 전체와 판단이 바꾸는 목록 모두). withViews면 Old 문서 보기도(서버가 짝을 정리했다) */
@@ -697,7 +698,7 @@ export function useAssignPage() {
     if (loaded.picked !== null && isSolo) scrollToUnit(loaded.picked.pickUnitId);
   }
   const [checked, setChecked] = useState<Set<string>>(new Set());
-  // New에서 Shift+클릭으로 여럿 고른 박스 - 위쪽 바는 "n줄 고름"만(합치기 · 표 벗기기는 다음 브랜치)
+  // New에서 Shift+클릭으로 여럿 고른 박스 - 위쪽 바는 "n줄 고름"과 합치기 · 표 벗기기(bulkMerge · bulkUnwrap)
   const [checkedNew, setCheckedNew] = useState<ReadonlySet<number>>(() => new Set());
   const [selNew, setSelNew] = useState<number | null>(null);
   // 출처 없는 New 문장마다 적는 중인 Remark - 없으면 저장된 값을 보인다
@@ -1810,8 +1811,9 @@ export function useAssignPage() {
   }
 
   function buildEditCommand(view: DocumentView, op: EditOp, okText: EditToast, followId: number | null, confirm = false, thenLang: "ko" | "en" | null = null, place: PendingPlace | null = null, afterOk?: () => Promise<void>): Extract<WriteCommand, { kind: "edit" }> {
-    // 표 바꾸기는 그 표의 Unit 전부를 잡는다(벗기면 표 단위가 은퇴하고 칸 문장이 풀린다)
-    const unitIds = op.type === "set_layout_table" ? listTableUnitIds(view.units, view.tables, op.table_id) : listEditUnitIds(op);
+    // 표 바꾸기는 그 표의 Unit 전부를 잡는다(벗기면 표 단위가 은퇴하고 칸 문장이 풀린다) - 표 여럿은 표마다 모은다
+    const tableIds = op.type === "set_layout_table" ? [op.table_id] : op.type === "set_layout_tables" ? op.table_ids : null;
+    const unitIds = tableIds !== null ? [...new Set(tableIds.flatMap((tableId) => listTableUnitIds(view.units, view.tables, tableId)))] : listEditUnitIds(op);
     return { kind: "edit", docId: view.document.id, view, op, unitIds, okText, followId, confirm, thenLang, place: place ?? readEditPlace(op), afterOk };
   }
 
@@ -1910,10 +1912,43 @@ export function useAssignPage() {
     else runUnitEdit(shape, op, okText, null);
   }
 
+  // 여럿 고른 줄(위쪽 바, 쪼개기 먼저 설계 §9) - Old는 배정 줄(짝이면 구성원 모두), New는 양 단 New 용지의 박스와 그 짝. 계획은 lib/multi-pick-model
+  const bulkRows: MultiRow[] = checked.size > 0
+    ? [...checked].flatMap((key) => {
+      const item = rowMap.get(key);
+      const units = viewOf(item?.documentId)?.units ?? [];
+      return item ? [{ key, docId: item.documentId, units: item.unitIds.flatMap((unitId) => units.find((unit) => unit.id === unitId) ?? []) }] : [];
+    })
+    : checkedNew.size > 0 && rightShape ? listNewRows([...checkedNew], rightShape.model.units, rightShape.view.document.id) : [];
+  const bulkShape = bulkRows.length > 0 ? findShapeOfDoc(shapes, bulkRows[0].docId) : null;
+  const bulkMerge = bulkRows.length > 0 ? planMultiMerge(bulkRows, bulkShape?.tabs.order ?? [], hasUnitDraft) : null;
+  const bulkUnwrap = bulkShape ? planMultiUnwrap(bulkRows, bulkShape.model.tables) : null;
+
+  /** 위쪽 바의 합치기 - 고름을 비우고 언어마다 합쳐 다시 짝짓는 편집 하나(merge_rows) */
+  function runBulkMerge() {
+    if (!bulkMerge?.ok || !bulkShape) return;
+    setChecked(new Set());
+    setCheckedNew(new Set());
+    runUnitEdit(bulkShape, { type: "merge_rows", unit_ids: [...bulkMerge.value] }, t("assign.bulk.didMerge"), null);
+  }
+
+  /** 위쪽 바의 표 벗기기 - 고름을 비우고 고른 표 모두를 편집 하나로(set_layout_tables). 확인이 필요하면 서버가 한 번 묻는다 */
+  function runBulkUnwrap() {
+    if (!bulkUnwrap?.ok || !bulkShape) return;
+    setChecked(new Set());
+    setCheckedNew(new Set());
+    runUnitEdit(bulkShape, { type: "set_layout_tables", table_ids: [...bulkUnwrap.value] }, t("assign.bulk.didUnwrap", { n: bulkUnwrap.value.length }), null);
+  }
+
   /** 편집 확인창의 글 - New 표면 풀릴 이음 · 보류 줄 수(서버가 실어 준다), 다시 표로면 그 표의 말(표 번호 · 확정된 줄 수, F12 A6), 아니면 판단이 지워진다는 공통 글 */
   function describeEditConfirm({ ask, command }: { ask: EditAsk; command: ConfirmableCommand }): { title: string; summary: string; confirmLabel: string } {
     const { count } = ask;
     const op = command.kind === "edit" ? command.op : null;
+    // 표 여럿 벗기기 - New면 표 수와 풀릴 이음 · 보류 줄 수(서버가 모든 표를 합쳐 한 번 묻는다), Old면 아래 공통 글
+    const manyAsk = op?.type === "set_layout_tables" ? describeNewTableAsk(ask) : null;
+    if (op?.type === "set_layout_tables" && manyAsk) {
+      return { title: t("assign.newTable.confirmTitle.unwrapMany", { n: op.table_ids.length }), summary: t(manyAsk.bodyKey, manyAsk.values), confirmLabel: t("assign.bulk.unwrap") };
+    }
     const tableOp = op?.type === "set_layout_table" ? op : null;
     const table = tableOp ? [...(viewList ?? []), ...(newView ? [newView] : [])].flatMap((view) => view.tables).find((item) => item.id === tableOp.table_id) : undefined;
     const tableNumber = table ? { n: getTableNumber(table), p: readObjectParticle(getTableNumber(table)) } : { n: "", p: "을" };
@@ -5000,7 +5035,7 @@ export function useAssignPage() {
     setManualNewDoc, toggleKey, liveDoc, isNewDocOpen, newDocId, newAiReturn, setNewAiReturn, isComposedDoc, newFileId, newLoad, newView, newModel, newTabs, composedDoc,
     newRows, headingNotes, sectionMarks, joinableIds, templateTitles, linkPairs, view, changeView, zoomPane, setPanes, askAiScope,
     aiMenuItems, remarkEdit, setRemarkEdit, focusAfterRef, firstTextRef, busy, isAnyPending, isGlobalPending: focusCtl.isGlobalPending, paperPending, pendingDeletes, expectedNumbers, editConfirm, answerEditConfirm, cancelEditConfirm, canUndoNow, queueFailure, retryCommand: commands.retry, discardCommands: commands.discard,
-    oldPaneRef, undoState, bulk, setBulk, runBulkDelete, runReset, confirmRemark, closeRemark, confirmingIdentical, setConfirmingIdentical,
+    oldPaneRef, undoState, bulk, setBulk, runBulkDelete, bulkMerge, bulkUnwrap, runBulkMerge, runBulkUnwrap, runReset, confirmRemark, closeRemark, confirmingIdentical, setConfirmingIdentical,
     resetScope, setResetScope, accOpen, toggleAcc, saveUnits, slots, aiUnfilled, draftPlace, draftSectionKey, draftPosition, newDraft,
     draftSlotKey, placeResolved, canPlaceClick, pickedSpotKey, setCarvePick, carve, carveText, clearCarve, togglePairViewByButton,
     pairFrom, setPairFrom, mergeArm, setRefEntryId, pairSource, isLeftPairPick, isRightPairPick, captionPickBundle, setCaptionPick, startCaptionPick, selectToc, selectRow, openNewCtxMenu, openSolo, goToUnit, moveRow, hasUnitDraft,

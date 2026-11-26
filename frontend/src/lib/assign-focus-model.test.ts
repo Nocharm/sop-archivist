@@ -378,6 +378,11 @@ describe("pending pill (D4)", () => {
     expect(readEditPlace({ type: "merge", unit_ids: [5, 6] })).toEqual({ at: "box", unitId: 5 });
     expect(readEditPlace({ type: "carve", block_id: 1, start: 0, end: 3 })).toEqual(NO_PLACE);
   });
+  it.each([[{ type: "merge_rows", unit_ids: [1, 2] }, "join", [1, 2]], [{ type: "set_layout_tables", table_ids: [4] }, "unwrap", []]])("locks and names %o", (op, kind, ids) => {
+    expect(readEditKind(op as EditOp)).toBe(kind);
+    expect(listEditUnitIds(op as EditOp)).toEqual(ids);
+  });
+  it("places a multi unwrap on its first table", () => expect(readEditPlace({ type: "set_layout_tables", table_ids: [4, 5] })).toEqual({ at: "table", tableId: 4 }));
   it("shows Reordering… at the table head for an unwrapped table order (mockup 2 D2)", () => {
     const op: EditOp = { type: "reorder_unwrapped", table_id: 4, unit_ids: [9, 8] };
     expect([readEditKind(op), readPendingLabelKey(readEditKind(op))]).toEqual(["reorder", "assign.working.reorder"]);

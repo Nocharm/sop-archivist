@@ -4,11 +4,13 @@ import type { EditOp } from "./api-sop";
 
 const EDIT_LABEL_KEYS: Record<EditOp["type"], string> = {
   merge: "assign.step.merge",
+  merge_rows: "assign.step.merge_rows",
   split: "assign.step.cut",
   carve: "assign.step.carve",
   move_boundary: "assign.queue.act.boundary",
   unmerge: "assign.step.unmerge",
   set_layout_table: "assign.step.set_layout_table",
+  set_layout_tables: "assign.step.set_layout_tables",
   set_language: "assign.step.set_language",
   switch_language: "assign.step.set_language",
   set_ref: "assign.step.set_ref",
