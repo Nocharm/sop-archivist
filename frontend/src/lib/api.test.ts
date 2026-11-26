@@ -1,7 +1,9 @@
-// api 단위 테스트 - apiFetch의 인증 헤더 선택·오류 detail 추출·204/네트워크 처리를 fetch 스텁으로 확인한다.
+// api 단위 테스트 - apiFetch의 인증 헤더 선택·오류 detail 추출·204/네트워크 처리를 fetch 스텁으로, 연습 화면 갈래(가짜 서버)를 확인한다.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ApiError, apiFetch, apiFetchBlobWithName, readDispositionFileName, setAuthToken } from "./api";
+import { resetPracticeServer } from "./practice/practice-server";
+import { buildPracticeTestFixture } from "./practice/practice-test-fixture";
 
 function stubFetch(response: Response) {
   const fetchMock = vi.fn<typeof fetch>(async () => response);
@@ -149,5 +151,44 @@ describe("apiFetchBlobWithName", () => {
     const result = await apiFetchBlobWithName("/bundles/1/export.xlsx");
     expect(result.fileName).toBe("a.xlsx");
     expect(await result.blob.text()).toBe("x");
+  });
+});
+
+describe("practice screen requests (design D1, D2)", () => {
+  beforeEach(() => resetPracticeServer(buildPracticeTestFixture()));
+  afterEach(() => window.history.pushState({}, "", "/"));
+
+  it("on /practice sends /me to the real server and everything else to the fake one", async () => {
+    window.history.pushState({}, "", "/practice");
+    const fetchMock = stubFetch(jsonResponse({ login_id: "qa.lead" }));
+    await apiFetch("/me");
+    expect(fetchMock.mock.calls.map((call) => call[0])).toEqual(["/api/me"]);
+    await expect(apiFetch("/sop/remarks/recent?limit=10")).resolves.toEqual([]);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("sends a real bundle's queued write to the real server even from /practice", async () => {
+    window.history.pushState({}, "", "/practice");
+    const fetchMock = stubFetch(jsonResponse({ units: [], targets: [] }));
+    await apiFetch("/bundles/5/groups/save", { method: "POST", body: JSON.stringify({ action: "confirm" }) });
+    expect(fetchMock.mock.calls.map((call) => [call[0], call[1]?.method])).toEqual([["/api/bundles/5/groups/save", "POST"]]);
+  });
+
+  it("sends the practice bundle to the fake server from any other page", async () => {
+    window.history.pushState({}, "", "/bundles/5/assign");
+    const fetchMock = stubFetch(jsonResponse({}));
+    const body = { action: "hold", hold_reason: "", units: [{ unit_id: 107, revision: 1, disposition: "unassigned", move_target_code: "", reason: "" }], targets: [], removed_target_ids: [] };
+    const group = await apiFetch<{ units: { unit_id: number }[] }>("/bundles/-1/groups/save", { method: "POST", body: JSON.stringify(body) });
+    expect(group.units.map((unit) => unit.unit_id)).toEqual([107]);
+    await apiFetch("/bundles/5/units");
+    expect(fetchMock.mock.calls.map((call) => call[0])).toEqual(["/api/bundles/5/units"]);
+  });
+
+  it("turns a fake rejection into the same ApiError as a real one", async () => {
+    window.history.pushState({}, "", "/practice");
+    stubFetch(jsonResponse({}));
+    const err = await apiFetch("/bundles/-1/export.xlsx").catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect([(err as ApiError).status, (err as ApiError).detail, (err as ApiError).rule?.code]).toEqual([422, "practice_unsupported", "practice_unsupported"]);
   });
 });
