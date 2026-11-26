@@ -22,4 +22,15 @@ describe("resolveBlankClick", () => {
     for (const className of ["strip-lead", "fold-run", "pick-bar"]) expect(el(className).closest(BLANK_STOPS)).not.toBeNull();
     expect(el("pg").closest(BLANK_STOPS)).toBeNull();
   });
+  // 누르면 그 박스를 고르거나 자리를 고르는 것 - 빈 곳으로 읽으면 방금 한 고름이 같은 누르기에 풀린다(Pair view 조각 · 빈 칸 자리 · 템플릿 자리 · 못 놓는 자리)
+  it("stops on a Pair view piece, a place spot and a template spot", () => {
+    expect(el("pair-piece").closest(BLANK_STOPS)).not.toBeNull();
+    for (const [name, value] of [["data-place", "open"], ["data-place", "refused"], ["data-tpl-spot", "section"], ["role", "button"]]) {
+      const parent = document.createElement("p");
+      parent.setAttribute(name, value);
+      const child = document.createElement("span");
+      parent.appendChild(child);
+      expect(child.closest(BLANK_STOPS), `${name}=${value}`).not.toBeNull();
+    }
+  });
 });

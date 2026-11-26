@@ -326,7 +326,7 @@ async function openLooseOldDoc(page, bundleId) {
 // 맥에서 Ctrl+클릭은 오른쪽 클릭이다 - 화면은 ⌘도 같은 뜻으로 받는다
 const PICK_MULTI = process.platform === "darwin" ? "Meta" : "Control";
 // 눌러도 빈 곳이 아닌 자리 - lib/blank-click-model.ts BLANK_STOPS와 같은 글(바뀌면 함께 고친다)
-const BLANK_STOPS = ".strip, .cell-piece, .strip-lead, .toc-block, .deleted-line, .fold-line, .fold-run, .fold-head, .strip-merge, .unwrap-head, .shift-head, .pick-bar, .pane-head, button, a, input, textarea, [role='slider']";
+const BLANK_STOPS = ".strip, .cell-piece, .strip-lead, .toc-block, .deleted-line, .fold-line, .fold-run, .fold-head, .strip-merge, .unwrap-head, .shift-head, .pick-bar, .pane-head, .pair-piece, [data-place], [data-tpl-spot], button, a, input, textarea, [role='slider'], [role='button']";
 
 // 두 고름(쪼개기 먼저 §8 4-2) 단계가 함께 쓰는 자리 - 짝 없는 미배정 Old 문장이 가장 많은 Old 문서와, 짝 없는 이미 쓴 New 문장이 보이는 New 문서를 나란히 연다.
 // New 문장은 출처가 없는 것부터 고른다(잇고 끊어도 다른 줄의 이음이 흔들리지 않게). 저장한 것은 각 단계가 끝에 거둔다
