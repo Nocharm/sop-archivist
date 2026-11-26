@@ -1,6 +1,8 @@
-"""한글 표 따라 하기(11-23 명세 D2) — 영어 표의 짝 한글 표를 꼴 + 언어 무관 토큰 + 뜻(임베딩)으로 고른다(D2-R1 · R2).
+"""한글 표 따라 하기(11-23 명세 D2) — 영어 표의 짝 한글 표를 꼴 + 언어 무관 토큰 + 뜻(임베딩)으로 고르고(D2-R1 · R2), 짝 표 안은 행마다
+내용으로 짝을 맞춰 한글 표에서 한 일(순서 · 삭제 · 합치기 · 들여쓰기 · 번호)을 영어 표에 계획한다(D2-R4 · R5).
 
-점수 · 후보는 DB를 읽지 않는 순수 함수다. 애매하면 사람이 고르고 그 답은 table_counterparts에 남는다(D2-R3). Old 문서만 쓴다.
+점수 · 후보 · 행 짝 · 계획은 DB를 읽지 않는 순수 함수다. 애매하면 사람이 고르고 그 답은 table_counterparts에 남는다(D2-R3).
+계획(규칙 제안)은 저장하지 않는다 — 읽을 때마다 센다(D2-R7). Old 문서만 쓴다.
 AI를 부르지 않는다 — 임베딩은 켜져 있을 때만 쓰고, 꺼졌거나 실패하면 꼴과 토큰만 본다.
 """
 
@@ -17,7 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.clock import now
 from app.sop.ai.embeddings import EmbeddingUnavailable, embed_texts
-from app.sop.constants import TABLE_FOLLOW_MARGIN, TABLE_FOLLOW_THRESHOLD
+from app.sop.constants import ROW_MATCH_THRESHOLD, TABLE_FOLLOW_MARGIN, TABLE_FOLLOW_THRESHOLD
 from app.sop.counterparts import TableFacts, is_candidate_kind, is_same_form, list_candidates
 from app.sop.errors import raise_rule
 from app.sop.models import Document, SourceBlock, TableCounterpart
@@ -109,14 +111,12 @@ def _read_meaning(source: Sequence[str], table: Sequence[str], vectors: Mapping[
     if not left or not right or any(text not in vectors for text in (*left, *right)):
         return None
     short, long = (left, right) if len(left) <= len(right) else (right, left)
-    total = 0.0
-    for text in short:
-        vector = vectors[text]
-        total += max(
-            float(np.dot(vector, vectors[other]) / (np.linalg.norm(vector) * np.linalg.norm(vectors[other])))
-            for other in long
-        )
+    total = sum(max(_cosine(vectors[text], vectors[other]) for other in long) for text in short)
     return max(total / len(short), 0.0)
+
+
+def _cosine(left: np.ndarray, right: np.ndarray) -> float:
+    return float(np.dot(left, right) / (np.linalg.norm(left) * np.linalg.norm(right)))
 
 
 def score_tables(source: FollowTable, table: FollowTable, vectors: Mapping[str, np.ndarray] | None) -> float:
@@ -160,6 +160,158 @@ def list_counterpart_candidates(table: TableFacts, tables: Sequence[TableFacts],
         return candidates
     above = [other for other in candidates if other.index < table.index and is_same_form(table, other)]
     return above[-1:]
+
+
+# 빈 칸 표시 — 벗긴 표의 빈 칸 줄끼리는 글이 달라도 같은 줄이다(행 짝 점수 1)
+_BLANK_MARKS = frozenset({"", "(빈 칸)", "(blank)"})
+
+
+@dataclass(frozen=True)
+class FollowLine:
+    """벗긴 표 덩이의 줄 하나(덩이 차례로 받는다) — text는 번호 칸을 뺀 내용, pieces는 합친 줄이면 합치기 전 조각들의 내용(원문 순).
+
+    deleted는 확정 삭제된 줄, indent_shift는 들여쓰기 차이(units.indent_shift).
+    """
+
+    unit_id: int
+    number: str | None
+    text: str
+    pieces: tuple[str, ...] = ()
+    indent_shift: int = 0
+    deleted: bool = False
+
+
+@dataclass(frozen=True)
+class FollowItem:
+    """영어 표에 제안할 일 하나 — unit_ids가 둘 이상이면 합친다(원문 순이 아니라 덩이 차례).
+
+    order는 맞춘 뒤 이 줄(합친 줄)의 자리(1부터, 바뀌지 않으면 None), number는 고칠 번호(같으면 None), indent는 들여쓰기가 달라
+    보이는지(칩), indent_shift는 고칠 들여쓰기 차이(같으면 None), delete는 지울 줄. delete인 일은 다른 것을 함께 하지 않는다.
+    """
+
+    unit_ids: tuple[int, ...]
+    order: int | None = None
+    number: str | None = None
+    indent: bool = False
+    indent_shift: int | None = None
+    delete: bool = False
+
+    def has_change(self) -> bool:
+        return len(self.unit_ids) > 1 or self.order is not None or self.number is not None or self.indent or self.delete
+
+
+def _is_blank(text: str) -> bool:
+    return text.strip() in _BLANK_MARKS
+
+
+def _score_row(korean: str, english: str, vectors: Mapping[str, np.ndarray] | None) -> float:
+    """한글 줄(조각) 하나와 영어 줄 하나의 행 짝 점수 — 빈 칸끼리 1, 토큰이 겹치면 0.6 + 0.4·겹친 비율, 아니면 뜻(코사인, 임베딩이 있을 때)."""
+    if _is_blank(korean) or _is_blank(english):
+        return 1.0 if _is_blank(korean) and _is_blank(english) else 0.0
+    left, right = read_tokens([korean]), read_tokens([english])
+    shared = sum((left & right).values())
+    if shared:
+        return 0.6 + 0.4 * shared / min(sum(left.values()), sum(right.values()))
+    if vectors is not None and korean in vectors and english in vectors:
+        return _cosine(vectors[korean], vectors[english])
+    return 0.0
+
+
+def _list_slots(source: Sequence[FollowLine]) -> list[tuple[int, str]]:
+    """한글 줄의 짝 자리 — 합친 줄은 조각마다 하나(조각마다 영어 줄 하나를 받아 그 줄들을 합치라고 제안한다)."""
+    return [(index, text) for index, line in enumerate(source) for text in (line.pieces or (line.text,))]
+
+
+def match_rows(
+    source: Sequence[FollowLine], lines: Sequence[FollowLine], vectors: Mapping[str, np.ndarray] | None
+) -> list[tuple[int, int]]:
+    """한글 줄(조각)과 영어 줄의 짝 (한글 줄 자리, 영어 줄 자리) — 한글 줄 차례로. 자리는 보지 않고 내용만 본다(D2-R4, AC2):
+    점수 큰 쌍부터, 둘 다 아직 짝이 없고 ROW_MATCH_THRESHOLD 이상이면 맺는다. 합친 한글 줄은 조각마다 영어 줄 하나까지."""
+    slots = _list_slots(source)
+    scored = sorted(
+        (
+            (-_score_row(text, line.text, vectors), slot, english)
+            for slot, (_, text) in enumerate(slots)
+            for english, line in enumerate(lines)
+        ),
+    )
+    used_slots: set[int] = set()
+    used_lines: set[int] = set()
+    matches: list[tuple[int, int]] = []
+    for negative, slot, english in scored:
+        if -negative < ROW_MATCH_THRESHOLD:
+            break
+        if slot in used_slots or english in used_lines:
+            continue
+        used_slots.add(slot)
+        used_lines.add(english)
+        matches.append((slots[slot][0], english))
+    return sorted(matches)
+
+
+def _read_depth(number: str | None) -> int | None:
+    """번호의 마디 수("5.2.1" → 3) — 번호가 없거나 숫자 마디가 아니면 None(상대 깊이를 견주지 않는다)."""
+    if number is None:
+        return None
+    parts = number.strip().rstrip(".").split(".")
+    return len(parts) if all(part.isdigit() for part in parts) else None
+
+
+def _read_relative_depths(lines: Sequence[FollowLine]) -> list[int | None]:
+    """줄마다 표 안 상대 깊이 — 줄 깊이 − 그 표의 가장 얕은 깊이."""
+    depths = [_read_depth(line.number) for line in lines]
+    known = [depth for depth in depths if depth is not None]
+    return [None if depth is None else depth - min(known) for depth in depths]
+
+
+def _is_same_number(left: str | None, right: str | None) -> bool:
+    return (left or "").strip().rstrip(".") == (right or "").strip().rstrip(".")
+
+
+def build_follow_plan(
+    source: Sequence[FollowLine], lines: Sequence[FollowLine], matches: Sequence[tuple[int, int]]
+) -> list[FollowItem] | None:
+    """행 짝 → 영어 표의 일(덩이 차례, 합칠 줄은 한 일) — 모든 한글 조각과 모든 영어 줄이 짝을 얻지 못하면 맞춘 꼴이 달라 None(AI 길, D2-R5).
+
+    순서 = 한글 줄의 지금 차례, 번호 = 한글 줄의 번호(다르면), 들여쓰기 = 한글 줄의 들여쓰기 차이나 표 안 상대 깊이가 다르면,
+    삭제 = 한글 줄이 확정 삭제(그 줄은 다른 일 없이 지우기만, 이미 지운 영어 줄은 그대로), 합치기 = 한 한글 줄의 조각들에 짝지은 영어 줄들.
+    """
+    if len(matches) != len(_list_slots(source)) or len(matches) != len(lines):
+        return None
+    korean_of = {english: korean for korean, english in matches}
+    groups: list[tuple[int, list[int]]] = []  # (한글 줄, 영어 줄들) — 첫 영어 줄의 차례로
+    merged: dict[int, list[int]] = {}
+    for english in range(len(lines)):
+        korean = korean_of[english]
+        if source[korean].pieces and not source[korean].deleted:
+            if korean not in merged:
+                merged[korean] = []
+                groups.append((korean, merged[korean]))
+            merged[korean].append(english)
+        else:
+            groups.append((korean, [english]))
+    target = sorted(range(len(groups)), key=lambda index: (groups[index][0], groups[index][1][0]))
+    place = {group: position for position, group in enumerate(target)}
+    source_depths, line_depths = _read_relative_depths(source), _read_relative_depths(lines)
+    items: list[FollowItem] = []
+    for index, (korean, englishes) in enumerate(groups):
+        unit_ids = tuple(lines[english].unit_id for english in englishes)
+        order = place[index] + 1 if place[index] != index else None
+        ko_line, first = source[korean], lines[englishes[0]]
+        if ko_line.deleted:
+            items.append(FollowItem(unit_ids=unit_ids, order=order, delete=not first.deleted))
+            continue
+        number = ko_line.number if ko_line.number is not None and not _is_same_number(ko_line.number, first.number) else None
+        shift = ko_line.indent_shift if ko_line.indent_shift != first.indent_shift else None
+        depths = (source_depths[korean], line_depths[englishes[0]])
+        indent = shift is not None or (None not in depths and depths[0] != depths[1])
+        items.append(FollowItem(unit_ids=unit_ids, order=order, number=number, indent=indent, indent_shift=shift))
+    return items
+
+
+def count_follow_items(items: Sequence[FollowItem]) -> int:
+    """칩이 있는 일의 수 — 머리 "한글 표처럼 하기 · n건"."""
+    return sum(1 for item in items if item.has_change())
 
 
 class CounterpartCandidateOut(BaseModel):

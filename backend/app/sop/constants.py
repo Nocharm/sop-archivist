@@ -43,6 +43,8 @@ BULLET_SYMBOLS = ("•", "○", "▪")
 TABLE_FOLLOW_THRESHOLD = 0.6
 # 위 두 후보의 점수 차가 이보다 작으면 사람이 고른다 — 합성 자료 기준, 실제 문서로 재설정
 TABLE_FOLLOW_MARGIN = 0.1
+# 짝 표 안 행 짝(table_follow.match_rows) — 한글 줄(조각)과 영어 줄의 점수가 이보다 낮으면 잇지 않는다. 합성 자료 기준, 실제 문서로 재설정
+ROW_MATCH_THRESHOLD = 0.5
 # 새 문장 번호 표시 — 번호(기본) | 번호 생략 | 주석(번호 없이 기울임) | 글머리 기호. 번호가 아닌 줄은 번호를 받지 않고 다음 번호 줄이 이어 센다.
 # 글머리 기호 줄은 결과물 A·Excel의 No.에 그 절(번호 없는 범주면 가장 가까운 번호 있는 상위 절)의 번호를 적는다(outputs.number_bullets).
 # 값은 8자까지다(target_sentences.number_style). SOP 줄의 기본값은 놓인 골격 항목의 default_style이다(target_placement)

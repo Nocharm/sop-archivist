@@ -13,7 +13,17 @@ from fastapi.testclient import TestClient
 from app.db import engine
 from app.sop.constants import TABLE_FOLLOW_THRESHOLD
 from app.sop.counterparts import TableFacts
-from app.sop.table_follow import FollowTable, list_counterpart_candidates, pick_counterpart, read_tokens, score_tables
+from app.sop.table_follow import (
+    FollowLine,
+    FollowTable,
+    build_follow_plan,
+    count_follow_items,
+    list_counterpart_candidates,
+    match_rows,
+    pick_counterpart,
+    read_tokens,
+    score_tables,
+)
 from tests.ai_fixtures import clean_embedding_cache  # noqa: F401 -- 픽스처는 usefixtures가 이름으로 찾는다
 from tests.ai_helpers import build_embed_body, enable_embed, install_ai_transport, read_payload, vector_for
 from tests.docx_factory import build_docx, make_grid_table, make_row, p
@@ -274,3 +284,93 @@ def test_embedding_failure_falls_back_to_tokens(client: TestClient, monkeypatch:
 
     assert response.status_code == 200, response.text
     assert response.json() == tokens_only
+
+
+# --- 행 짝과 계획(D2-R4 · R5, AC2 · AC3) — S18 그대로. 한글 줄 마지막은 확정 삭제 ---
+
+KO = [("5.1", "장비를 준비한다."), ("5.2", "시료 10 mL를 채취한다."), ("5.2.1", "채취 뒤 4 °C에 둔다."), (None, "(빈 칸)")]
+EN = [("1", "Take 10 mL of sample."), ("2", "Prepare the equipment."), ("3", "Keep at 4 °C after."), ("4", "(blank)")]
+# 뜻이 같은 글끼리 한 방향 — S18의 1↔시료 · 2↔장비 · 3↔4 °C. 그 밖의 글은 저마다 다른 방향
+MEANINGS = [
+    ("장비를 준비한다.", "Prepare the equipment."),
+    ("시료 10 mL를 채취한다.", "Take 10 mL of sample."),
+    ("채취 뒤 4 °C에 둔다.", "Keep at 4 °C after."),
+]
+
+
+def follow_lines(
+    rows: list[tuple[str | None, str]], *, start: int, deleted: tuple[int, ...] = (), pieces: dict[int, tuple[str, ...]] | None = None
+) -> list[FollowLine]:
+    """(번호, 글) → 덩이 차례의 줄. 단위 id는 start부터, deleted · pieces는 줄 자리(0부터)."""
+    pieces = pieces or {}
+    return [
+        FollowLine(unit_id=start + index, number=number, text=text, pieces=pieces.get(index, ()), deleted=index in deleted)
+        for index, (number, text) in enumerate(rows)
+    ]
+
+
+def build_vectors() -> dict[str, np.ndarray]:
+    texts = [text for pair in MEANINGS for text in pair] + [text for _, text in (*KO, *EN)]
+    out: dict[str, np.ndarray] = {}
+    size = len(texts) + len(MEANINGS)
+    for index, pair in enumerate(MEANINGS):
+        for text in pair:
+            out[text] = np.eye(size, dtype=np.float32)[index]
+    for index, text in enumerate(texts):
+        out.setdefault(text, np.eye(size, dtype=np.float32)[len(MEANINGS) + index])
+    return out
+
+
+KO_LINES = follow_lines(KO, start=101, deleted=(3,))
+EN_LINES = follow_lines(EN, start=1)
+VECTORS = build_vectors()
+
+
+def test_s18_row_pairs() -> None:
+    assert match_rows(KO_LINES, EN_LINES, VECTORS) == [(0, 1), (1, 0), (2, 2), (3, 3)]
+
+
+def test_s18_plan() -> None:
+    plan = build_follow_plan(KO_LINES, EN_LINES, match_rows(KO_LINES, EN_LINES, VECTORS))
+
+    assert plan is not None
+    assert [(i.unit_ids, i.order, i.number, i.indent, i.delete) for i in plan] == [
+        ((1,), 2, "5.2", False, False), ((2,), 1, "5.1", False, False), ((3,), None, "5.2.1", True, False),
+        ((4,), None, None, False, True),
+    ]
+
+
+def test_rows_are_matched_by_content_not_place() -> None:
+    reversed_lines = follow_lines(list(reversed(EN)), start=1)  # AC2 — 같은 글을 거꾸로 놓은 표
+
+    assert match_rows(KO_LINES, reversed_lines, VECTORS) == [(0, 2), (1, 3), (2, 1), (3, 0)]
+
+
+def test_other_row_count_has_no_rule_plan() -> None:
+    assert build_follow_plan(KO_LINES, EN_LINES[:3], match_rows(KO_LINES, EN_LINES[:3], VECTORS)) is None
+
+
+def test_without_embeddings_an_untied_row_means_no_rule_plan() -> None:
+    assert build_follow_plan(KO_LINES, EN_LINES, match_rows(KO_LINES, EN_LINES, None)) is None  # 장비 ↔ equipment는 토큰이 없다
+
+
+def test_merged_korean_lines_suggest_a_merge() -> None:
+    korean = follow_lines(
+        [("5.1", "장비를 준비한다. 시료 10 mL를 채취한다."), ("5.2", "채취 뒤 4 °C에 둔다.")], start=201,
+        pieces={0: ("장비를 준비한다.", "시료 10 mL를 채취한다.")},
+    )
+    english = follow_lines(EN[1::-1] + [EN[2]], start=11)  # Prepare · Take · Keep
+
+    plan = build_follow_plan(korean, english, match_rows(korean, english, VECTORS))
+
+    assert plan is not None
+    assert plan[0].unit_ids == (11, 12)
+    assert [(item.number, item.order) for item in plan] == [("5.1", None), ("5.2", None)]
+
+
+def test_an_already_deleted_english_line_is_not_deleted_again() -> None:
+    english = follow_lines(EN, start=1, deleted=(3,))
+
+    plan = build_follow_plan(KO_LINES, english, match_rows(KO_LINES, english, VECTORS))
+
+    assert plan is not None and plan[3].delete is False and count_follow_items(plan) == 3
