@@ -27,6 +27,7 @@ backend(FastAPI) 세부 구조와 backend에만 걸리는 체크리스트. 루�
   - `batch_job_runs`는 백업 사이드카 계약이라 컬럼을 바꾸면 `scripts/db-backup.sh`의 INSERT도 함께 바꾼다.
 - **프런트가 사본을 둔 규칙(`number_lines`·`get_bullet_depths`·`plan_follow`·`plan_continue`·`build_block_places`·빈 글자 판정·상수)을 바꾸면:** → 10.3
   - `.venv/bin/python -m scripts.dump_rule_cases`로 `frontend/src/lib/rule-cases.json`을 다시 뽑고 프런트 사본이 `npx vitest run src/lib/rule-cases.test.ts`를 통과하게 고친다(안 뽑으면 `tests/test_rule_cases.py`가 실패). 새 사본을 만들면 사례도 더한다.
+- **연습 자료** `frontend/src/lib/practice/practice-fixture.json`: 연습 화면(`/practice`) 가짜 서버의 처음 상태 — `scripts/dump_practice_fixture.py`가 합성 Old · New 문서를 임시 sqlite에 올려 화면이 처음 읽는 응답과 표 벗긴 모습을 쓴다. Assign이 읽는 응답 꼴이나 쪼개기 규칙을 바꾸면 `.venv/bin/python -m scripts.dump_practice_fixture`로 다시 뽑고 `npx vitest run src/lib/practice`(안 뽑으면 `tests/test_practice_fixture.py`가 실패하고, 과제 자리가 무너지면 같은 파일의 자리 검사가 알린다).
 - **AI 호출:** → 10.4
   - 사내 모델로만 부른다(외부 모델 금지). 직원 실명(`name`·`korean_name`)·로그인 ID는 그 기능에 필요할 때만 싣는다(사용자 결정 2026-11-26, 전에는 실명 금지) — 사내 AI로 부여 읽기(`access/grant_ai.py`)가 관리자의 글을 그대로 보낸다.
   - 호출은 `call_ai_recorded`를 거쳐(검사: `test_invariants.py`) 사용량 행을 남기고(실패도 `ok=false`), 사용자에게 보이는 오류는 AI 주소·토큰을 뺀 문구다.
