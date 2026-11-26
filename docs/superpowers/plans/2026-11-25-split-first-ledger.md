@@ -46,6 +46,7 @@
 남은 것은 **정식 업데이트(dev→main) — 사용자가 정한다**(main 합치기 · 태그 · GitLab · 배포는 지휘 세션 권한 밖):
 1. 감사 넷(layout `DS=worst` · overlap · contrast · manual-shots) — 새 장면 `assign-cell-menu`(7b), 체크 · 꼬리표 대비(7c), 괄호선(7g, 대비는 단위 시험으로 3:1 확인) 포함. 전체 스모크 `FULL=1`.
    - (11-26 저녁, `2ccff578` = v1.6.31) 전체 스모크 `FULL=1`(새 시드): **2522 통과 · 1 실패** — `assign: the New pane shows a real table and figure`의 그림 캡션 검사(`the figure row shows its caption line above it`). reset 뒤 그 단계만 다시 돌려 16/16 통과 → 알려진 흔들림. 제품 결함 후보 없음. 감사 넷은 아직.
+   - 같은 흔들림의 두 번째 고침이라 검사를 고쳤다(`test/smoke-caption-settle`): `readCaptionLine`이 캡션 줄을 한 번만 읽던 것을 T 안에서 맞을 때까지 다시 읽고, 실패하면 본 값(줄 수 · 글 · 뒤 형제 · missing)을 남긴다. 기대값 그대로. 그 단계 3/3 · `assign:` 1507 통과 — 부하 속 확인은 다음 `FULL=1`에서.
 2. perf 한 번 더(`perf.sh`, 8a에서 몇 칸이 ±20% 오감 · 7g는 재지 않음).
 3. 설명서 그림은 바뀐 장면만(`ONLY=<장면>`), 설명서 머리 `version` · `updated`, CHANGELOG 릴리스 제목, 루트 `CLAUDE.md` 상태 줄 · README, 끝난 계획 · 설계 스냅숏 지우기(`rules/common/git.md` 정식 업데이트).
 4. 아래 "아침에 볼 것"을 사용자와 정리 — 특히 8b 합치면 당기기의 범위, 7b 양 단 New 칸 메뉴 없음, 7c 첫 Shift+클릭이 지금 줄도 넣음, 7g 괄호선 동안 빈 줄.
@@ -120,6 +121,7 @@
 - 8b · `test_sop_paragraph_excel.py:358-359 · 388-389` 칸 번호 1 2 3 → 5.1 5.2 5.3, `number-kind-model.test.ts:73` "6" → "5.1" · 명세 D1이 이름을 댄 시험
 - 8b · `test_sop_table_follow.py:508 · 516 · 583 · 591` · `test_sop_ai_table_follow.py:205 · 251` "4" → "1.4" 등 · 고정물이 제목 1 아래 표를 벗겨 번호가 이어짐(D1)
 - 8b · `decision-step-model.test.ts:86 · 101` 목록에 `continue_numbers`만 더함
+- smoke-caption-settle · `smoke/assign.mjs` "the New pane shows a real table and figure"의 `readCaptionLine` · 한 번 읽기 → T 안에서 맞을 때까지 다시 읽기, 실패 글에 본 값 · `FULL=1`에서만 탭 전환 중 한 프레임을 읽어 흔들림(기대값 · 검사 수 그대로)
 
 ## 아침에 볼 것 (사람이 정할 것 · 봐 줄 것)
 

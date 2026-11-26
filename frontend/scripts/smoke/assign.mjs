@@ -3156,11 +3156,18 @@ await runStep("assign: the New pane shows a real table and figure", { drafting: 
   const expected = expectedCells.map((cell) => cell.text);
   check("the table row draws its cells as a table", tdCount === rows * cols && cells.length === expected.length && cells.every((text, index) => text.trim() === expected[index].trim()), `${tdCount} td, ${cells.length}/${expected.length}`);
   check("the table sits in a side-scrolling box", await tableBox.locator(".ptbl-scroll").evaluate((el) => getComputedStyle(el).overflowX === "auto"));
-  // 캡션 줄은 표·그림 위 - 서버 caption 그대로(여러 언어는 줄바꿈), 없으면 쓰지 않은 문서라 "Caption needed"
+  // 캡션 줄은 표·그림 위 - 서버 caption 그대로(여러 언어는 줄바꿈), 없으면 쓰지 않은 문서라 "Caption needed".
+  // 탭 전환 중의 한 프레임을 한 번만 읽어 흔들렸다(FULL 실행마다, 혼자는 통과) - 맞을 때까지 T 안에서 다시 읽고, 실패하면 마지막에 본 값을 남긴다(기대값은 그대로)
   const readCaptionLine = async (box, item) => {
-    const line = box.locator(":scope > .new-bundle-cap");
-    const ok = (await line.count()) === 1 && (await line.evaluate((el) => el.nextElementSibling !== null)) && (item.caption ? (await line.innerText()).trim() === item.caption.trim() : (await line.getAttribute("data-missing")) !== null);
-    return { ok, detail: item.caption ?? "missing" };
+    const want = item.caption?.trim() ?? null;
+    const deadline = Date.now() + T;
+    for (;;) {
+      const lines = await box.locator(":scope > .new-bundle-cap").evaluateAll((els) => els.map((el) => ({ text: el.innerText.trim(), hasNext: el.nextElementSibling !== null, missing: el.hasAttribute("data-missing") })));
+      const [line] = lines;
+      const ok = lines.length === 1 && line.hasNext && (want === null ? line.missing : line.text === want);
+      if (ok || Date.now() > deadline) return { ok, detail: `want ${want ?? "missing"} · saw ${lines.length} line(s) ${JSON.stringify(lines)}` };
+      await page.waitForTimeout(100);
+    }
   };
   const tableCaption = await readCaptionLine(tableBox, found.table);
   check("the table row shows its caption line above it", tableCaption.ok, tableCaption.detail);
