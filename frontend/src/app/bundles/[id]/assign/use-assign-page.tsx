@@ -2725,7 +2725,8 @@ export function useAssignPage() {
   /** 그 박스 아래의 단추 줄 - 마지막에 누른 쪽 용지의 그 박스에만 */
   function renderPickBar(side: PickSide, unitId: number): ReactNode {
     const at = pickBar.at;
-    if (at === null || at.unitId !== unitId || at.side !== side) return null;
+    // 우클릭 메뉴가 떠 있는 동안은 접는다 - 메뉴는 연 순간의 박스 아래에 서는데, 그 뒤 펼쳐지는 단추 줄이 박스를 늘려 메뉴 밑으로 들어간다
+    if (at === null || at.unitId !== unitId || at.side !== side || ctxMenu !== null) return null;
     return (
       <PickBar
         bar={pickBar}
