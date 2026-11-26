@@ -24,9 +24,9 @@ from app.sop.counterparts import TableFacts, is_candidate_kind, is_same_form, li
 from app.sop.errors import raise_rule
 from app.sop.decisions import BulkDecisionIn, BulkUnitIn, dispose_units
 from app.sop.detach import CONFIRMED, find_units_needing_confirm
-from app.sop.editing import EDIT_APPLIED, load_unwrapped_lines, read_merged_pieces
+from app.sop.editing import EDIT_APPLIED, load_continued_numbers, load_unwrapped_lines, read_merged_pieces
 from app.sop.models import Bundle, Document, SourceBlock, TableCounterpart, Unit, UnitDecision, UnitEdit
-from app.sop.numbering import get_number, strip_number
+from app.sop.numbering import get_number, is_continued_number, strip_number
 from app.sop.segment import DOCUMENT_NUMBER_BODY
 from app.sop.units import get_latest_extraction_id, load_table_facts
 
@@ -508,7 +508,8 @@ async def _load_pieces(session: AsyncSession, document_id: int, unit_ids: Collec
 async def _load_follow_lines(
     session: AsyncSession, document_id: int, extraction_id: int, table_id: int
 ) -> tuple[list[FollowLine], bool] | None:
-    """벗긴 표 하나의 덩이 줄(덩이 차례)과 손댔나 — 벗긴 표가 아니면 None. 손댄 것 = 덩이 순서 · 확정 삭제 · 합치기 · 들여쓰기 · 사람이 고친 번호."""
+    """벗긴 표 하나의 덩이 줄(덩이 차례)과 손댔나 — 벗긴 표가 아니면 None. 손댄 것 = 덩이 순서 · 확정 삭제 · 합치기 · 들여쓰기 · 사람이 고친 번호
+    (Old 표를 벗길 때 위 번호 아래로 저절로 이어 매긴 칸 번호는 사람이 고친 것이 아니다 — numbering.is_continued_number)."""
     units = await load_unwrapped_lines(session, extraction_id, table_id)
     if units is None:
         return None
@@ -522,6 +523,7 @@ async def _load_follow_lines(
         )
     )
     pieces = await _load_pieces(session, document_id, unit_ids)
+    continued = await load_continued_numbers(session, document_id)
     lines = [
         FollowLine(
             unit_id=unit.id, number=get_number(unit), text=strip_number(unit.text, unit),
@@ -531,7 +533,9 @@ async def _load_follow_lines(
         for unit in units
     ]
     worked = bool(deleted or pieces) or any(
-        unit.unwrap_seq is not None or unit.indent_shift != 0 or unit.number_set is not None for unit in units
+        unit.unwrap_seq is not None or unit.indent_shift != 0
+        or (unit.number_set is not None and not is_continued_number(unit.id, unit.number_set, continued))
+        for unit in units
     )
     return lines, worked
 

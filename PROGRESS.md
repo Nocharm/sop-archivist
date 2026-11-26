@@ -182,3 +182,8 @@
 
 - ⇧G로 고른 줄을 넣고 빼고(Shift+클릭과 같은 `toggleOldChecked` · `toggleNewChecked`, 한쪽에 넣으면 다른 쪽 비움), 위쪽 바에서 삭제 · 배정 취소 · →KO · →EN · 합치기 · 표 벗기기(G1-R1~R4). 일괄 배정 취소는 서버 요청 하나(`bulk` action `clear`, 낡은 줄 하나면 409로 아무것도 안 바뀜) · 되돌리기 한 칸.
 - 고름은 일괄 뒤 그 자리에 머문다(사용자 결정, 계획 T3의 "다음 박스로"는 따르지 않음). opus 검토 뒤 일괄 취소 응답에 보류로 바뀐 형제 줄의 revision을 실어 이어 누른 글쇠가 409로 멈추지 않게.
+
+## 2026-11-26 — feat/unwrap-continue-numbers (계획 5) dev에
+
+- Old 표를 벗기면 첫 칸 숫자를 위 번호 아래로 잇는 `continue_numbers`를 벗기기 뒤 따로 한 칸으로(D1-R1~R5, New는 저절로 안 함 §11-1), 번호가 있는 줄을 합치면 뒤 번호 당기기(D1-R6, 여럿 합치기 포함). 규칙 사본 셋(`numbering.py` · `continue-number-model.ts` · `rule-cases.json`)이 같은 답. Alembic 없음.
+- opus 검토 막음 고침: "저절로 이은 번호"를 적용 중인 `continue_numbers` 기록이 쓴 값과 같을 때만으로 좁혀, 사람이 번호만 고친 한글 표가 손댄 표로 읽히게(따라 하기 · 문단 Excel). 이미 벗긴 운영 표는 다시 매기지 않는다.

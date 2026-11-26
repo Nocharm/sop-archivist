@@ -15,7 +15,7 @@
 
 from collections import Counter, defaultdict
 from collections.abc import Collection, Iterable, Mapping, Sequence
-from dataclasses import dataclass, field, fields
+from dataclasses import dataclass, field, fields, replace
 from typing import Annotated, Any, Literal, TypeVar, assert_never
 
 from pydantic import BaseModel, Field, SerializerFunctionWrapHandler, model_serializer, StringConstraints
@@ -64,18 +64,22 @@ from app.sop.numbering import (
     NUMBER_PAIR,
     NUMBERED_KINDS,
     ClauseLine,
+    FlowLine,
     build_number_columns,
     find_inherited_numbers,
     get_hidden_len,
     get_number,
     normalize_number,
+    plan_continue,
     plan_follow,
+    plan_pull,
     read_draft_number,
 )
 from app.sop.pair_order import order_pair_card
 from app.sop.refs import REF_CONFIRMED, REF_LANG, REF_REJECTED, read_number_in_text
 from app.sop.schemas import NO_NUL
 from app.sop.segment import (
+    NUMBER_CELL,
     RULE_LEGACY,
     BlockView,
     TableView,
@@ -767,15 +771,19 @@ async def _ensure_caption_split_languages(session: AsyncSession, unit: Unit, lan
         raise_rule(422, "caption_exists", unit_ids=[unit.id], reason="split")
 
 
-async def _plan_merge(session: AsyncSession, extraction_id: ExtractionId, op: MergeOp) -> _Change:
-    """결과 범위는 원문 순서로 모으고 같은 블록에서 사이가 빈 글자뿐이면 한 범위로 잇는다. 언어는 합친 단위들이 같으면 그 언어, 섞이면 글자로 판정한다."""
+async def _plan_merge(session: AsyncSession, extraction_id: ExtractionId, op: MergeOp, *, pulls: bool = False) -> _Change:
+    """결과 범위는 원문 순서로 모으고 같은 블록에서 사이가 빈 글자뿐이면 한 범위로 잇는다. 언어는 합친 단위들이 같으면 그 언어, 섞이면 글자로 판정한다.
+    pulls(Old의 합치기 요청)면 같은 목록의 뒤 번호를 같은 편집에서 당긴다(_plan_pull)."""
     ensure_unique_units(op.unit_ids)
     units = sorted((await load_active_units(session, extraction_id, op.unit_ids)).values(), key=_get_position)
     _ensure_text_kinds(units)
     ensure_not_noise(units)
     _ensure_mergeable(units)
     blocks = await _load_unit_blocks(session, extraction_id, units)
-    return _build_replacement(units, [_build_merged_draft(units, blocks)])
+    change = _build_replacement(units, [_build_merged_draft(units, blocks)])
+    if pulls:
+        await _plan_pull(session, extraction_id, change, units)
+    return change
 
 
 def _build_merged_draft(units: Sequence[Unit], blocks: Mapping[int, _Block]) -> _Draft:
@@ -790,8 +798,10 @@ def _build_merged_draft(units: Sequence[Unit], blocks: Mapping[int, _Block]) -> 
     )
 
 
-async def _plan_merge_rows(session: AsyncSession, extraction_id: ExtractionId, op: MergeRowsOp) -> _Change:
-    """언어 무리마다 _plan_merge의 규칙으로 합친다. 고른 Unit이 든 짝의 구성원이 빠졌으면 422 cannot_merge(pair_part), 한글 · 영어가
+async def _plan_merge_rows(
+    session: AsyncSession, extraction_id: ExtractionId, op: MergeRowsOp, *, pulls: bool = False
+) -> _Change:
+    """언어 무리마다 _plan_merge의 규칙으로 합친다(pulls면 무리마다 제 언어 목록의 뒤 번호도 당긴다). 고른 Unit이 든 짝의 구성원이 빠졌으면 422 cannot_merge(pair_part), 한글 · 영어가
     섞였는데 고른 줄에 짝이 없거나 그 밖의 언어가 섞이면 422 cannot_merge(mixed). Unit이 하나뿐인 무리는 은퇴시키지 않고 그대로 짝의 한쪽이 된다.
     """
     ensure_unique_units(op.unit_ids)
@@ -824,6 +834,9 @@ async def _plan_merge_rows(session: AsyncSession, extraction_id: ExtractionId, o
         [unit for group in merging for unit in group], [_build_merged_draft(group, blocks) for group in merging]
     )
     change.merged = [sorted(unit.id for unit in group) for group in merging]
+    if pulls:
+        for group in merging:
+            await _plan_pull(session, extraction_id, change, group)
     if len(groups) > 1:
         change.pair_units = sorted(group[0].id for group in groups.values() if len(group) == 1)
         change.pair_drafts = list(range(len(change.drafts)))
@@ -866,8 +879,11 @@ async def find_merged_pieces(session: AsyncSession, document_id: int, unit_id: i
     return None
 
 
-async def _plan_unmerge(session: AsyncSession, document_id: int, extraction_id: ExtractionId, op: UnmergeOp) -> _Change:
+async def _plan_unmerge(
+    session: AsyncSession, document_id: int, extraction_id: ExtractionId, op: UnmergeOp, *, pulls: bool = False
+) -> _Change:
     """합친 단위를 은퇴시키고 합치기가 은퇴시킨 단위를 원래 ID로 되살린다 — 그 합치기만 골라 되돌리는 것.
+    pulls(Old)면 되살린 줄의 번호가 합칠 때 당긴 뒤 번호와 겹치지 않게 언어마다 되살린 마지막 줄부터 plan_follow로 다시 센다.
 
     같은 언어끼리 합쳤고 그 뒤 언어를 바꿨으면 되살린 단위도 지금 언어를 따른다. 언어가 섞인 합치기는 각 단위가 제
     언어로 돌아온다. 짝·판단은 되살리지 않는다(되돌리기와 같다).
@@ -885,7 +901,7 @@ async def _plan_unmerge(session: AsyncSession, document_id: int, extraction_id: 
     if len(originals) != len(piece_ids) or any(original.status != UNIT_RETIRED for original in originals):
         raise_rule(422, "cannot_unmerge", unit_id=unit.id)
     is_mixed = len({original.lang for original in originals}) > 1
-    return _Change(
+    change = _Change(
         retire=[unit.id],
         revive=sorted(original.id for original in originals),
         langs={}
@@ -897,6 +913,17 @@ async def _plan_unmerge(session: AsyncSession, document_id: int, extraction_id: 
             for original in originals if original.group_unit_id != unit.group_unit_id
         },
     )
+    if pulls:
+        revived = {original.id for original in originals}
+        lasts = {original.lang: original for original in sorted(originals, key=_get_position) if original.kind in NUMBERED_KINDS}
+        for last in lasts.values():
+            siblings = await _load_number_siblings(session, extraction_id, last, revived=revived, retiring=[unit.id])
+            index = next(position for position, sibling in enumerate(siblings) if sibling.id == last.id)
+            number = get_number(last)
+            if number:
+                followed = plan_follow([get_number(sibling) for sibling in siblings], index, number)
+                await _add_renumbered(session, extraction_id, change, siblings, followed)
+    return change
 
 
 async def _plan_move_boundary(session: AsyncSession, extraction_id: ExtractionId, op: MoveBoundaryOp) -> _Change:
@@ -1361,6 +1388,55 @@ async def _save_ref_mark(session: AsyncSession, op: SetRefOp | ClearRefOp, actor
     mark.decided_at = clock.now()
 
 
+async def _load_number_siblings(
+    session: AsyncSession, extraction_id: ExtractionId, unit: Unit, *, revived: Collection[int] = (), retiring: Collection[int] = ()
+) -> list[Unit]:
+    """unit과 같은 목록 후보를 문서 차례로 — 같은 언어 · 같은 표(표 밖이면 표 밖)의 잡음 없는 번호 칸 단위. 따라 고치기 · 합치면 뒤
+    번호 당기기 · 합치기 풀기가 함께 쓴다. revived는 아직 은퇴했지만 이 변경이 되살릴 단위(함께 센다), retiring은 이 변경이 은퇴시킬 단위(뺀다)."""
+    siblings = await session.scalars(
+        select(Unit)
+        .where(
+            Unit.extraction_id == extraction_id, or_(Unit.status == UNIT_ACTIVE, Unit.id.in_(revived)),
+            Unit.kind.in_(NUMBERED_KINDS), Unit.lang == unit.lang, Unit.noise_kind.is_(None),
+            # 띠 표 제목 줄은 장마다 자기 원문 표를 가리키지만 표 밖 줄과 한 목록이다(F4) — 표 밖이면 띠 표 제목도 후보
+            or_(Unit.table_id.is_(None), Unit.kind == "heading")
+            if unit.table_id is None or is_band_heading(unit.kind, unit.table_id)
+            else Unit.table_id == unit.table_id,
+        )
+        .order_by(Unit.pos_seq, Unit.pos_start, Unit.id)
+    )
+    return [sibling for sibling in siblings if sibling.id not in retiring]
+
+
+async def _add_renumbered(
+    session: AsyncSession, extraction_id: ExtractionId, change: _Change, siblings: Sequence[Unit], planned: Mapping[int, str]
+) -> None:
+    """후보(siblings) 자리 → 새 번호를 변경의 number_set과 절 이름 옮김에 더한다 — 합치면 당기기 · 합치기 풀기의 다시 세기."""
+    renamed: list[tuple[Unit, str | None, str]] = []
+    for position, number in planned.items():
+        target = siblings[position]
+        if len(number) > MAX_NUMBER_CHARS or target.id in change.numbers:
+            continue
+        change.numbers[target.id] = (target.number_set, number)
+        renamed.append((target, get_number(target), number))
+    change.sections += await _find_section_moves(session, extraction_id, renamed)
+
+
+async def _plan_pull(session: AsyncSession, extraction_id: ExtractionId, change: _Change, group: Sequence[Unit]) -> None:
+    """원문 순 합친 무리 하나의 뒤 번호 당기기(11-23 명세 D1-R6)를 change에 더한다 — Old의 합치기 · 여럿 합치기만(New는 쓴 번호가 제
+    번호, 설계 §11-1). 같은 목록 = 따라 고치기와 같은 후보(남은 첫 줄의 것), 그 목록 밖 줄의 번호는 사라져도 당기지 않는다."""
+    kept, absorbed = group[0], group[1:]
+    if kept.kind not in NUMBERED_KINDS or kept.noise_kind is not None:
+        return
+    gone = {unit.id for unit in absorbed}
+    everyone = await _load_number_siblings(session, extraction_id, kept)
+    listed = [sibling for sibling in everyone if sibling.id not in gone]
+    in_list = {sibling.id for sibling in everyone}
+    numbers = [number for unit in absorbed if unit.id in in_list and (number := get_number(unit))]
+    index = next(position for position, sibling in enumerate(listed) if sibling.id == kept.id)
+    await _add_renumbered(session, extraction_id, change, listed, plan_pull([get_number(sibling) for sibling in listed], index, numbers))
+
+
 async def _plan_set_number(session: AsyncSession, extraction_id: ExtractionId, op: SetNumberOp) -> _Change:
     """고칠 단위와(follow면) 같은 목록의 뒤 단위들의 number_set, 그 번호가 열던 절의 블록 범위.
 
@@ -1372,20 +1448,7 @@ async def _plan_set_number(session: AsyncSession, extraction_id: ExtractionId, o
         raise_rule(422, "invalid_unit_kind", unit_ids=[unit.id])
     targets: dict[int, tuple[Unit, str]] = {unit.id: (unit, NO_NUMBER if op.number is None else op.number)}
     if op.follow and op.number is not None:
-        siblings = list(
-            await session.scalars(
-                select(Unit)
-                .where(
-                    Unit.extraction_id == extraction_id, Unit.status == UNIT_ACTIVE, Unit.kind.in_(NUMBERED_KINDS),
-                    Unit.lang == unit.lang, Unit.noise_kind.is_(None),
-                    # 띠 표 제목 줄은 장마다 자기 원문 표를 가리키지만 표 밖 줄과 한 목록이다(F4) — 표 밖이면 띠 표 제목도 후보
-                    or_(Unit.table_id.is_(None), Unit.kind == "heading")
-                    if unit.table_id is None or is_band_heading(unit.kind, unit.table_id)
-                    else Unit.table_id == unit.table_id,
-                )
-                .order_by(Unit.pos_seq, Unit.pos_start, Unit.id)
-            )
-        )
+        siblings = await _load_number_siblings(session, extraction_id, unit)
         index = next(position for position, sibling in enumerate(siblings) if sibling.id == unit.id)
         followed = plan_follow([get_number(sibling) for sibling in siblings], index, op.number)
         targets.update(
@@ -2209,15 +2272,19 @@ async def _plan_follow_table(
 
 
 async def _plan(session: AsyncSession, document_id: int, extraction_id: ExtractionId, op: EditOp) -> _Change:
+    # 합치면 뒤 번호 당기기는 Old만 — New는 이미 쓴 번호가 제 번호다(쪼개기 먼저 설계 §11-1)
+    pulls = isinstance(op, MergeOp | MergeRowsOp | UnmergeOp) and await session.scalar(
+        select(Document.side).where(Document.id == document_id)
+    ) == "old"
     match op:
         case SplitOp():
             return await _plan_split(session, extraction_id, op)
         case MergeOp():
-            return await _plan_merge(session, extraction_id, op)
+            return await _plan_merge(session, extraction_id, op, pulls=pulls)
         case MergeRowsOp():
-            return await _plan_merge_rows(session, extraction_id, op)
+            return await _plan_merge_rows(session, extraction_id, op, pulls=pulls)
         case UnmergeOp():
-            return await _plan_unmerge(session, document_id, extraction_id, op)
+            return await _plan_unmerge(session, document_id, extraction_id, op, pulls=pulls)
         case MoveBoundaryOp():
             return await _plan_move_boundary(session, extraction_id, op)
         case CarveOp():
@@ -2784,9 +2851,20 @@ async def apply_edit(
     payload = op.model_dump()
     if change.merged:
         payload["merged"] = change.merged
+    await _save_edit(session, document, op.type, payload, result, change, actor)
+    if isinstance(op, SwitchLanguageOp):
+        result.shape = "split_pair" if op.piece is not None else "merged" if op.merge_pair else "unpaired"
+    return result
+
+
+async def _save_edit(
+    session: AsyncSession, document: Document, op_type: str, payload: dict[str, object], result: EditResult, change: _Change,
+    actor: str,
+) -> None:
+    """쓴 변경을 편집 기록 하나(되돌리기 한 칸)와 작업 기록으로 남긴다 — 편집 요청과 벗긴 뒤 번호 잇기(continue_numbers)가 함께 쓴다."""
     session.add(
         UnitEdit(
-            document_id=document.id, seq=await _start_new_edit(session, document), op=op.type, payload=payload,
+            document_id=document.id, seq=await _start_new_edit(session, document), op=op_type, payload=payload,
             created_unit_ids=result.created_unit_ids, retired_unit_ids=result.retired_unit_ids,
             regrouped={str(cell_id): list(move) for cell_id, move in change.regroup.items()},
             lang_changes={str(unit_id): list(langs) for unit_id, langs in change.langs.items()},
@@ -2800,10 +2878,125 @@ async def apply_edit(
             number_changes=_dump_numbers(change), actor=actor,
         )
     )
-    _record(session, document, "unit.edit", op.type, result, change, actor)
+    _record(session, document, "unit.edit", op_type, result, change, actor)
     await session.flush()
-    if isinstance(op, SwitchLanguageOp):
-        result.shape = "split_pair" if op.piece is not None else "merged" if op.merge_pair else "unpaired"
+
+
+CONTINUE_NUMBERS = "continue_numbers"  # 벗긴 Old 표의 번호 잇기 편집 기록 op — 요청 종류가 아니라 벗기기 요청 뒤 서버가 남긴다
+
+
+async def load_continued_numbers(session: AsyncSession, document_id: int) -> dict[int, str]:
+    """적용 중인 이어 매기기 기록(op "continue_numbers")이 단위마다 쓴 번호 — 같은 단위면 나중 기록. 되돌린 기록은 세지 않는다."""
+    edits = await session.scalars(
+        select(UnitEdit.number_changes)
+        .where(UnitEdit.document_id == document_id, UnitEdit.op == CONTINUE_NUMBERS, UnitEdit.state == EDIT_APPLIED)
+        .order_by(UnitEdit.seq)
+    )
+    written: dict[int, str] = {}
+    for changes in edits:
+        for unit_id, (_, after) in ((changes or {}).get("units") or {}).items():
+            if after:
+                written[int(unit_id)] = after
+    return written
+
+
+def list_unwrapping_tables(op: EditOp) -> list[int]:
+    """벗기는 편집(set_layout_table is_layout · set_layout_tables)이 고른 표 — 다른 편집은 빈 목록."""
+    if isinstance(op, SetLayoutTableOp):
+        return [op.table_id] if op.is_layout else []
+    if isinstance(op, SetLayoutTablesOp):
+        return list(op.table_ids)
+    return []
+
+
+async def find_wrapped_tables(session: AsyncSession, table_ids: Sequence[int]) -> list[int]:
+    """table_ids 가운데 아직 표인(벗기지 않은) 원문 표 — 벗기기 편집 전에 불러 이번에 벗기는 표만 번호를 잇는다(이미 벗긴 표는 그대로)."""
+    if not table_ids:
+        return []
+    wrapped = set(await session.scalars(select(SourceTable.id).where(SourceTable.id.in_(table_ids), SourceTable.is_layout.is_(False))))
+    return [table_id for table_id in dict.fromkeys(table_ids) if table_id in wrapped]
+
+
+@dataclass(frozen=True)
+class NumberingPlan:
+    """벗긴 표 번호 잇기의 계획 — 계획과 쓰기를 나눠, 바뀔 줄이 있을 때만 부르는 쪽이 Assign 단계의 덤프를 뜬다."""
+
+    extraction_id: ExtractionId
+    table_ids: list[int]
+    change: _Change
+
+
+async def plan_continue_numbers(session: AsyncSession, document: Document, table_ids: Sequence[int]) -> NumberingPlan | None:
+    """벗긴 표의 숫자 칸 번호 잇기(11-23 명세 D1)의 계획 — table_ids는 이번 편집이 벗긴 표(find_wrapped_tables로 편집 전에 고른 것).
+
+    Old 문서만 매긴다 — New는 이미 쓴 번호가 제 번호다(설계 §11-1). 흐름 줄은 묶이지 않은 활성 · 잡음 없는 번호 칸 단위를 원문 차례로,
+    표는 문서 차례로 하나씩(앞 표의 새 번호를 뒤 표가 이어 센다, numbering.plan_continue). 아직 표인 표 · 바뀌는 줄이 없으면 None.
+    """
+    if document.side != "old":
+        return None
+    extraction_id = await get_latest_extraction_id(session, document.id)
+    tables = await _load_unwrap_tables(session, extraction_id)
+    picked = [table_id for table_id in dict.fromkeys(table_ids) if table_id in tables and tables[table_id].is_unwrapped]
+    if not picked:
+        return None
+    units = list(
+        await session.scalars(
+            select(Unit)
+            .where(
+                Unit.extraction_id == extraction_id, Unit.status == UNIT_ACTIVE, Unit.kind.in_(NUMBERED_KINDS),
+                Unit.noise_kind.is_(None), Unit.group_unit_id.is_(None),
+            )
+            .order_by(Unit.pos_seq, Unit.pos_start, Unit.id)
+        )
+    )
+    cells = {
+        block_id: (table_id, row_index, col_index, text)
+        for block_id, table_id, row_index, col_index, text in (
+            await session.execute(
+                select(SourceBlock.id, SourceBlock.table_id, SourceBlock.row_index, SourceBlock.col_index, SourceBlock.text).where(
+                    SourceBlock.extraction_id == extraction_id, SourceBlock.table_id.is_not(None)
+                )
+            )
+        ).tuples()
+    }
+    # 행마다 글이 있는 첫 칸 — 번호 칸이 그 칸일 때만 행 번호다(값 칸 "농도 | 5 | %"의 5는 아니다)
+    first_cols: dict[tuple[int, int | None], int] = {}
+    for table_id, row_index, col_index, text in cells.values():
+        if col_index is not None and has_visible_char(text):
+            key = (table_id, row_index)
+            first_cols[key] = min(first_cols.get(key, col_index), col_index)
+    flow: list[FlowLine] = []
+    for unit in units:
+        cell = cells.get(unit.spans[0][0]) if unit.spans else None
+        is_cell = (
+            unit.number_source == NUMBER_CELL and unit.number_set is None and cell is not None
+            and cell[2] == first_cols.get((cell[0], cell[1]))
+        )
+        line_table = (
+            None if is_band_heading(unit.kind, unit.table_id)
+            else find_line_table(unit.kind, unit.table_id, None if cell is None else cell[0], tables)
+        )
+        flow.append(FlowLine(number=get_number(unit), lang=unit.lang, kind=unit.kind, table_id=line_table, is_cell=is_cell))
+    firsts = {line.table_id: index for index, line in reversed(list(enumerate(flow))) if line.table_id is not None}
+    numbers: dict[int, tuple[NumberSet, NumberSet]] = {}
+    for table_id in sorted((table_id for table_id in picked if table_id in firsts), key=firsts.__getitem__):
+        for index, number in plan_continue(flow, table_id).items():
+            if len(number) > MAX_NUMBER_CHARS:
+                continue
+            numbers[units[index].id] = (units[index].number_set, number)
+            flow[index] = replace(flow[index], number=number, is_cell=False)
+    if not numbers:
+        return None
+    return NumberingPlan(extraction_id=extraction_id, table_ids=picked, change=_Change(numbers=numbers))
+
+
+async def continue_numbers(session: AsyncSession, document: Document, plan: NumberingPlan, *, actor: str) -> EditResult:
+    """번호 잇기 계획을 편집 기록 하나(op "continue_numbers", 되돌리기 한 칸)로 쓴다. 벗기기 요청이 그 편집을 쓴 뒤 같은 요청에서 부른다 —
+    첫 되돌리기는 번호만(벗긴 채), 둘째가 다시 표로(D1-R5, 여럿 벗기기도 두 칸 — 설계 §11-1). 번호만 바꾸는 편집이라 판단 · 짝을 묻지도
+    바꾸지도 않는다."""
+    result = await _write_change(session, document, plan.extraction_id, plan.change, confirm=False, actor=actor)
+    payload: dict[str, object] = {"type": CONTINUE_NUMBERS, "table_ids": plan.table_ids}
+    await _save_edit(session, document, CONTINUE_NUMBERS, payload, result, plan.change, actor)
     return result
 
 

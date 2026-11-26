@@ -34,9 +34,9 @@
 | 7e | `feat/assign-multi-pick` | 합침 | v1.6.30 · d857ab92 | dev v1.6.29 합침 · pytest 3796+시드 15 · ruff · vitest 2698 · build 경고 0 · `assign:` 스모크 1496 + 표 탭 단계 1검사(접힌 줄 글을 읽기 전 대기만 더함, 기대 그대로) 혼자 30 통과 · opus 검토 막음 0 · 권함 1 고침 | 일괄 삭제는 보낸 초안을 지우지 않는다(한 줄 U와 일괄 취소는 지움) |
 | 7f | `feat/split-by-sentence` | 합침 | v1.6.27 · 7174cf7b | pytest 3763+시드 15 · ruff · vitest 2659 · build 경고 0 · `assign:` 스모크 1461 + 고친 둘 다시 · 메뉴 단계 92(흔들린 1은 혼자 24 통과) · opus 검토 막음 0 · 권함 2 고침 | 키 큰 메뉴가 옆으로 비키면 반대편 판(New) 글을 덮을 수 있음(위 · 아래 모두 모자랄 때만) |
 | 7g | `feat/assign-pair-bracket` | 합침 | v1.6.29 · 456f25b3 | dev v1.6.28 합침 · vitest 2689 · build 경고 0 · `assign:` 스모크 1486(프록시 ECONNRESET 1단계는 혼자 34 통과) · sonnet 검토 막음 0 · 권함 2 고침 | perf(스크롤 프레임, 세워 둘 조건 ②)는 재지 않음 — 정식 업데이트 전 perf에서 |
-| 8 | 계획 5의 아홉 | 진행 | v1.6.21 · 69826fdd | space-preview-trim v1.6.14 · excel-a-strike v1.6.15 · progress-by-disposition v1.6.18 · ai-suggestions-retire v1.6.20 · 모음 table-follow v1.6.21 합침(pytest 3747+시드 15 · vitest 2371 · build 경고 0 · `assign:` 스모크 1274 전부 · AI 단계는 가짜 AI로 14) | 남은 둘: tables-tab · unwrap-continue-numbers(둘 다 6 · 계획 4에 매임) |
+| 8 | 계획 5의 아홉 | 합침 | v1.6.31 | 아홉 모두 dev에 | — |
 | 8a | `feat/assign-tables-tab` | 합침 | v1.6.24 · 9d9f177d | dev v1.6.23 합침 · vitest 2593 · build 경고 0 · `assign:` 스모크 1435 + 따라 고친 1검사 혼자 16 통과 · sonnet 검토 막음 0 · 권함 1 고침 · perf(52문서 CPU1 J 22.1→24.1 · Delete 25.1→24.5ms, 스크롤 같음) | 표 탭 J/K는 그 문서의 표만(그림 탭은 모든 Old 문서), 벗긴 표 캡션은 접힌 줄에 안 보임 |
-| 8b | `feat/unwrap-continue-numbers` | 대기 | | | 7d(`MergeRowsOp`) 뒤 |
+| 8b | `feat/unwrap-continue-numbers` | 합침 | v1.6.31 · c1efc2ad | dev v1.6.29 · v1.6.30 합침 · pytest 3832+시드 15 · ruff · vitest 2715 · build 경고 0 · `assign:` 스모크 ALL PASS 1507 · opus 검토 막음 1 고침 → opus 재검토 통과 | — |
 
 
 ## 이어 가기 (2026-11-26 14시, 지휘 세션을 끊으며)
@@ -114,6 +114,9 @@
 - 7g · `smoke/assign.mjs` counterpart 단계 · "the pair panel never moves the picked box up or down" 단계 · 사이 줄을 `addStyleTag`로 1600px 늘려 짝을 화면 밖으로 민 채 기존 검사(검사 수 그대로, counterpart에 괄호선 검사 +1) · 짝이 둘 다 보이면 안내 줄이 숨음(E1-R2, 정한 것 6) — 뒤 단계는 계획 목록 밖
 - 7e · `use-command-queue.test.ts:64` `bulk` 명령에 `action: "delete"` · 필드가 필수가 됨(기대 그대로)
 - 7e · `smoke/assign.mjs` 약 731 표 탭 단계 `[new-pair] Collapse folds…` 앞에 `.table-fold-text`에 글이 찰 때까지 대기 두 줄 · 부하에서 접힌 줄이 그려진 첫 프레임에 글이 비어 읽힘(기대값 그대로, 원인 코드는 못 찾음)
+- 8b · `test_sop_paragraph_excel.py:358-359 · 388-389` 칸 번호 1 2 3 → 5.1 5.2 5.3, `number-kind-model.test.ts:73` "6" → "5.1" · 명세 D1이 이름을 댄 시험
+- 8b · `test_sop_table_follow.py:508 · 516 · 583 · 591` · `test_sop_ai_table_follow.py:205 · 251` "4" → "1.4" 등 · 고정물이 제목 1 아래 표를 벗겨 번호가 이어짐(D1)
+- 8b · `decision-step-model.test.ts:86 · 101` 목록에 `continue_numbers`만 더함
 
 ## 아침에 볼 것 (사람이 정할 것 · 봐 줄 것)
 
@@ -162,3 +165,4 @@
 - 7d: 위쪽 바로 여럿 합치기 · 표 여럿 벗기기를 한다(⇧G 일괄 단추는 7e). Split 기록 되돌리기(`/edits/undo`)로는 쓸어 낸 AI 번역이 돌아오지 않는다 — Assign 되돌리기(Ctrl+Z)로는 돌아온다(사람 짝 맺기와 같은 수준).
 - 7g: 괄호선이 보이는 동안 고른 박스 아래에 안내 줄 높이의 빈 줄이 남고, 안내 줄은 고른 뒤 한 프레임 늦게 선다(밀림을 막은 대가). 좁은 창에서 Old 괄호선이 왼쪽 스크롤바 가까이 붙을 수 있다(눈으로 안 봄).
 - 7e: 같은 표의 캡션 둘을 골라 →KO를 누르면 서버가 422(`_ensure_one_caption_per_language`)로 거절해 알림만 난다. 한 단으로 연 New 문서에서 ⇧G는 "줄 없음" 알림.
+- 8b: **합치면 당기기는 그 목록 끝까지 이어 센다** — 사람이 고친 뒤 번호나 원문의 빈 번호도 덮고(5.1 · 5.2 · 5.4 · 5.7에서 5.2+5.3 → 5.3 · 5.4), 제목 둘을 합치면 문서 끝까지 장 · 하위 번호가 당겨진다(7 → 6, 8.1.1 → 7.1.1). D1-R6 글자대로지만 운영 자료에서는 큰 변화 — 써 보고 정한다. 한 표 안에서 1 2 1 2로 다시 시작하면 5.1–5.4로 평평해진다. 표를 새 편집으로 다시 표로 돌려도 이은 번호 기록은 남는다. 합치기로 당겨진 칸은 문단 Excel 노트가 "Source 4 → 5.3".

@@ -202,7 +202,7 @@ def test_payload_has_no_names(client: TestClient, fake_ai: FakeAi) -> None:
     assert data["task"] == TABLE_FOLLOW_KIND
     assert [(line["text"], line["disposition"], line["order"], line["number"]) for line in data["source"]] == [
         ("장비를 준비한다.", "keep", 1, "5.1"), ("시료 10 mL를 채취한다.", "keep", 2, "5.2"),
-        ("채취 뒤 4 °C에 둔다.", "keep", 3, "5.2.1"), ("(빈 칸)", "delete", 4, "4"),
+        ("채취 뒤 4 °C에 둔다.", "keep", 3, "5.2.1"), ("(빈 칸)", "delete", 4, "1.4"),
     ]
     assert all(set(line) == {"text", "disposition", "order", "indent_shift", "number", "merged_texts"} for line in data["source"])
     assert [line["id"] for line in data["lines"]] == follow.english
@@ -248,7 +248,7 @@ def test_suggestion_is_applied_by_the_follow_edit_and_adopted_by_hand(client: Te
     second = follow.adopt(suggestion.id, "rejected")
 
     assert edited.status_code == 200, edited.text
-    assert [line[1] for line in _read_lines(follow.table_id)] == ["5.1", "5.2", "5.2.1", "4"]
+    assert [line[1] for line in _read_lines(follow.table_id)] == ["5.1", "5.2", "5.2.1", "1.4"]
     assert [line[0] for line in _read_lines(follow.table_id)] == [english[1], english[0], english[2], english[3]]
     assert (first.status_code, first.json()["adoption"], first.json()["adopted_by"]) == (200, "as_is", AUTHOR["X-Dev-User"])
     assert (second.status_code, second.json()["detail"]["code"]) == (409, "not_manual_adoption")

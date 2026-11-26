@@ -25,7 +25,7 @@ backend(FastAPI) 세부 구조와 backend에만 걸리는 체크리스트. 루�
 - **모델 변경 = Alembic 리비전 필수.** `--rev-id 000N`, `create_all`은 쓰지 않는다(`test_invariants.py`). → 10.2
   - `test_models_match_migrations`는 **CHECK 제약 차이를 못 잡는다** — 제약을 건드리면 마이그레이션된 DB에 부딪쳐 보는 테스트를 둔다(`test_migrations.py`).
   - `batch_job_runs`는 백업 사이드카 계약이라 컬럼을 바꾸면 `scripts/db-backup.sh`의 INSERT도 함께 바꾼다.
-- **프런트가 사본을 둔 규칙(`number_lines`·`get_bullet_depths`·`plan_follow`·`build_block_places`·빈 글자 판정·상수)을 바꾸면:** → 10.3
+- **프런트가 사본을 둔 규칙(`number_lines`·`get_bullet_depths`·`plan_follow`·`plan_continue`·`build_block_places`·빈 글자 판정·상수)을 바꾸면:** → 10.3
   - `.venv/bin/python -m scripts.dump_rule_cases`로 `frontend/src/lib/rule-cases.json`을 다시 뽑고 프런트 사본이 `npx vitest run src/lib/rule-cases.test.ts`를 통과하게 고친다(안 뽑으면 `tests/test_rule_cases.py`가 실패). 새 사본을 만들면 사례도 더한다.
 - **AI 호출:** → 10.4
   - 사내 모델로만 부른다(외부 모델 금지). 직원 실명(`name`·`korean_name`)·로그인 ID는 그 기능에 필요할 때만 싣는다(사용자 결정 2026-11-26, 전에는 실명 금지) — 사내 AI로 부여 읽기(`access/grant_ai.py`)가 관리자의 글을 그대로 보낸다.
@@ -57,7 +57,7 @@ backend(FastAPI) 세부 구조와 backend에만 걸리는 체크리스트. 루�
   - **경계 확인은 없다(v1.0.18)**: `units.boundary_confirmed` 열과 `editing._step_edit`의 `BOUNDARY_OPS` 가지는 지우지 않는다 — 운영 DB의 옛 되돌리기 기록이 막힌다. → 12.8
   - **새 문서 새 문장 맞추기** `match.sync_new_doc_targets`: 단위를 바꾸는 새 경로는 새 문장을 직접 고치지 않고 이것을 부른다. 새 문장을 스냅숏으로 되쓸 길은 그 단위를 `restoring_unit_ids`로 넘긴다(안 넘기면 단위 하나에 새 문장이 둘). → 12.9
   - **편집 쓰기 길** `editing._write_change`: 새 편집 종류는 `_Change`로 이 길에 얹는다. → 12.10
-  - **문단 번호** `numbering.py`: 번호는 단위 글(`text`)에서 빼지 않는다. 번호 열은 `build_number_columns` 하나가 쓰고 사람은 `number_set`만 고친다. 번호 칸은 `get_number`·`get_hidden_len`·`strip_number`만 읽는다. 타자 번호 정규식은 `segment.TYPED_NUMBER_RE` 하나. 프런트 사본 `planFollow`를 함께 고친다. → 12.11
+  - **문단 번호** `numbering.py`: 번호는 단위 글(`text`)에서 빼지 않는다. 번호 열은 `build_number_columns` 하나가 쓰고 사람은 `number_set`만 고친다. 번호 칸은 `get_number`·`get_hidden_len`·`strip_number`만 읽는다. 타자 번호 정규식은 `segment.TYPED_NUMBER_RE` 하나. 프런트 사본 `planFollow` · `planContinue`를 함께 고친다. 벗긴 Old 표 번호 잇기는 벗기기 뒤 따로 한 칸(`continue_numbers`), 합치면 뒤 번호 당기기는 합치기와 같은 칸(Old만). → 12.11
   - **NUL·서로게이트** `schemas.NO_NUL`/`NoNulStr`: DB까지 가는 새 글자 입력 칸은 이 타입을 쓴다(`StringConstraints` 뒤에 `NO_NUL`, 선택 칸은 `Annotated[str, StringConstraints(max_length=…), NO_NUL] | None`). 판정은 `segment.has_unstorable_char` 하나. → 12.12
   - **제목 ↔ 문장** `segment.is_heading_like`: 쪼개기와 추출기 절 이름이 함께 쓴다 — 규칙을 바꾸면 두 곳이 같이 움직인다. → 12.13
   - **띠 표 → 제목 줄** `segment.is_certain_band`·`is_band_heading`: "`table_id`가 있는 `heading`" 판정은 `outputs._format_place`와 프런트 `paper-model.isBandHeading`이 함께 쓴다. → 12.14

@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.sop.captions import CAPTION_KIND, join_caption_texts
 from app.sop.constants import BULLET_SYMBOLS
+from app.sop.editing import load_continued_numbers
 from app.sop.excel_export import build_workbook, clean_cell_text, split_cell_text
 from app.sop.models import Document, SourceBlock, SourceTable, TargetSource, Unit, UnitDecision, UnitPairMember
 from app.sop.noise import NOISE_FRONT, NOISE_HISTORY, NOISE_TOC
@@ -32,6 +33,7 @@ from app.sop.numbering import (
     build_section_numbers,
     get_number,
     get_number_note,
+    is_continued_number,
     is_read_from_text,
     strip_number,
 )
@@ -48,6 +50,7 @@ NUMBER_NOTE = "Source {read} → {now}"  # 사람이 고친 번호의 원문 번
 NO_NUMBER_NOTE = "none"
 DELETED_REMARK = "Deleted"  # 확정 삭제한 줄의 Remark — 사유가 있으면 "Deleted — 사유"
 READ_FROM_TEXT_NOTE = "Read from text"  # 본문 줄 글 앞 타자 번호를 저절로 번호로 읽음(사람이 고치지 않음) — 틀렸으면 번호 칸에서 고친다
+ORIGINAL_NOTE = "Original {read}"  # 벗긴 표에서 위 번호 아래로 이어 매긴 칸 번호의 원래 번호(11-23 명세 D1-R7)
 CELL_JOINER = " | "  # 아직 표인 데이터 표 한 행의 칸 글 사이
 _LANG_LABELS = {"ko": "KO", "en": "EN", "ref": "REF"}  # 중립은 빈 칸
 _STRUCK_NOISE_KINDS = (NOISE_FRONT, NOISE_HISTORY)  # 확정 삭제한 줄처럼 싣는 저절로 삭제된 줄
@@ -359,6 +362,7 @@ async def load_unit_lines(session: AsyncSession, document: Document) -> list[Uni
     )).tuples().all():
         targets.setdefault(unit_id, set()).add(target_id)
     block_at = {block.seq: block for block in blocks.values()}
+    continued = await load_continued_numbers(session, document.id)
     lines: list[UnitLine] = []
     for unit in units:
         # 그림·표 단위는 범위가 없고 정렬 키(pos_seq)가 제 블록의 seq다
@@ -376,13 +380,18 @@ async def load_unit_lines(session: AsyncSession, document: Document) -> list[Uni
             table_id=unit.table_id, row_index=unit.row_index, col_index=block.col_index, group_unit_id=unit.group_unit_id,
             lang=unit.lang, number=number,
             number_note="" if unit.noise_kind is not None
-            else READ_FROM_TEXT_NOTE if is_read_from_text(unit) else format_number_note(get_number_note(unit), number),
+            else READ_FROM_TEXT_NOTE if is_read_from_text(unit)
+            else ORIGINAL_NOTE.format(read=unit.number_read) if is_continued_number(unit.id, unit.number_set, continued)
+            else format_number_note(get_number_note(unit), number),
             remark=(unit.noise_reason or _NOISE_REMARKS[unit.noise_kind]) if auto_deleted else reason,
             deleted=auto_deleted or (confirmed and disposition == "delete"),
             target_id=next(iter(unit_targets)) if confirmed and disposition == "assigned" and len(unit_targets) == 1 else None,
             blocks=() if unit.group_unit_id is not None else _list_blocks(find_line_table(unit.kind, unit.table_id, block.table_id, tables), tables),
-            # 띠 표 제목 줄(번호 칸 + 제목 칸)의 칸 번호는 절 번호라 덩이 밖으로 이어진다
-            is_cell_number=unit.number_source == NUMBER_CELL and unit.number_set is None and unit.kind != SECTION_KIND,
+            # 띠 표 제목 줄(번호 칸 + 제목 칸)의 칸 번호는 절 번호라 덩이 밖으로 이어진다. 위 번호 아래로 이어 매긴 칸 번호(5.1)도 칸 번호다 —
+            # 표 뒤 문단은 표 앞 번호(5)로 돌아간다
+            is_cell_number=unit.number_source == NUMBER_CELL
+            and (unit.number_set is None or is_continued_number(unit.id, unit.number_set, continued))
+            and unit.kind != SECTION_KIND,
             pair_id=pair_of.get(unit.id),
             indent_shift=unit.indent_shift,
             noise=unit.noise_kind is not None, auto_deleted=auto_deleted,

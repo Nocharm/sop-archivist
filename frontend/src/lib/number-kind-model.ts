@@ -2,6 +2,7 @@
 // 연속 값은 프런트 전용이다 - 저장되는 것은 사람이 확인한 글이라 서버 사본이 필요 없다.
 
 import type { ViewUnit } from "./api-sop";
+import { countChildren, findParentNumber, type FlowLine } from "./continue-number-model";
 import { listSuggestSiblings } from "./number-model";
 import { BULLET_SYMBOLS } from "./section-number";
 
@@ -67,10 +68,34 @@ export function stepContinuous(numbers: readonly (string | null)[], index: numbe
   return buildNextAt(previous, depth);
 }
 
-/** 한 줄의 연속 번호 값 - 문서 차례로 위의 번호에서 센다(listSuggestSiblings - 같은 언어, 표 경계 무시: 제목 "5" 아래 벗긴 표의 줄은 "6"). units는 용지 순서로 넘긴다 */
+/**
+ * 벗긴 표 줄의 연속 번호 - 위 번호(findParentNumber: 표 밖의 가장 가까운 같은 언어 숫자 번호) 아래 다음 순번(앞 줄의 자식 수 + 1, D1).
+ * 표 밖 줄이거나 위 번호가 없으면 null. 끝 점은 그 줄이 읽은 번호를 따른다
+ */
+function suggestUnderParent(units: readonly ViewUnit[], unitId: number): string | null {
+  const numbered = units.filter((unit) => unit.number !== null);
+  const flow: FlowLine[] = numbered.map((unit) => ({
+    number: unit.number?.value ?? null,
+    lang: unit.lang,
+    kind: unit.kind,
+    // 띠 표 제목 줄은 표 밖 줄이다(paper-model isBandHeading), 아직 표인 표의 묶인 칸은 벗긴 줄이 아니다
+    tableId: unit.table_id !== null && unit.kind !== "heading" && (unit.group_unit_id ?? null) === null ? unit.table_id : null,
+    isCell: false,
+  }));
+  const index = numbered.findIndex((unit) => unit.id === unitId);
+  if (index < 0 || flow[index].tableId === null) return null;
+  const parent = findParentNumber(flow, index);
+  if (parent === null) return null;
+  const count = countChildren(flow.slice(0, index), flow[index].lang, parent) + 1;
+  return `${parent}.${count}${numbered[index].number?.read?.endsWith(".") ? "." : ""}`;
+}
+
+/** 한 줄의 연속 번호 값 - 벗긴 표의 줄이면 위 번호 아래 다음 순번(suggestUnderParent, 제목 "5" 아래 벗긴 표의 줄은 "5.1"), 아니면 문서 차례로 위의 번호에서 센다(listSuggestSiblings - 같은 언어). units는 용지 순서로 넘긴다 */
 export function suggestUnitContinuous(units: readonly ViewUnit[], unitId: number): string | null {
   const found = listSuggestSiblings(units, unitId);
   if (!found || found.index < 0) return null;
+  const underParent = suggestUnderParent(units, unitId);
+  if (underParent !== null) return underParent;
   const { siblings, index } = found;
   return suggestContinuous(
     siblings.map((unit) => unit.number?.value ?? null),

@@ -336,7 +336,8 @@ def test_outsider_cannot_download_or_preview(client: TestClient) -> None:
 
 
 def test_unwrapped_number_cells_do_not_leak_past_the_table(client: TestClient) -> None:
-    """§6-3 합성 표 — 절 "5" 아래 숫자 칸 표를 벗기면 칸 줄은 "1" "2" "3"(기호 줄은 "1 •"), 표 뒤 문단은 "5"로 돌아간다."""
+    """§6-3 합성 표 — 절 "5" 아래 숫자 칸 표를 벗기면 칸 줄은 "5.1" "5.2" "5.3"(위 번호 아래로 이어 매김, D1 — 기호 줄은 "5.1 •"),
+    표 뒤 문단은 "5"로 돌아간다."""
     from tests.docx_factory import make_grid_table, make_row
     from tests.test_sop_unwrap import _unwrap
 
@@ -356,13 +357,13 @@ def test_unwrapped_number_cells_do_not_leak_past_the_table(client: TestClient) -
     rows = _values(_read(client.get(f"/api/bundles/{bundle_id}/documents/{doc_id}/paragraphs.xlsx", headers=MEMBER))[0])
 
     assert [row[:2] for row in rows[1:]] == [
-        ["5.", "조제 탱크 운전"], ["1", "탱크 밸브를 연다."], ["1 •", "밸브를 확인한다."], ["2", "펌프를 켠다."], ["3", "유량을 기록한다."],
-        ["5.", "조제가 끝나면 기록을 남긴다."],
+        ["5.", "조제 탱크 운전"], ["5.1", "탱크 밸브를 연다."], ["5.1 •", "밸브를 확인한다."], ["5.2", "펌프를 켠다."],
+        ["5.3", "유량을 기록한다."], ["5.", "조제가 끝나면 기록을 남긴다."],
     ]
 
 
 def test_an_unwrapped_table_inside_an_unwrapped_cell_keeps_the_outer_cell_number(client: TestClient) -> None:
-    """바깥 숫자 칸 "1" 안의 안쪽 표까지 벗기면 안쪽 줄도 "1"(바깥 칸 번호를 이어받는다), 바깥 표 뒤는 "5."."""
+    """바깥 숫자 칸 "1"(벗기며 "5.1"로 이어 매김) 안의 안쪽 표까지 벗기면 안쪽 줄도 "5.1"(바깥 칸 번호를 이어받는다), 바깥 표 뒤는 "5."."""
     from tests.docx_factory import make_grid_table, make_row
     from tests.test_sop_unwrap import _unwrap
 
@@ -384,9 +385,43 @@ def test_an_unwrapped_table_inside_an_unwrapped_cell_keeps_the_outer_cell_number
     rows = _values(_read(client.get(f"/api/bundles/{bundle_id}/documents/{doc_id}/paragraphs.xlsx", headers=MEMBER))[0])
 
     assert [row[:2] for row in rows[1:]] == [
-        ["5.", "조제 탱크 운전"], ["1", "밸브를 연다."], ["1", "밸브를 닫는다."], ["1", "압력을 본다."], ["1", "온도를 본다."],
-        ["2", "펌프를 켠다."], ["5.", "조제가 끝나면 기록을 남긴다."],
+        ["5.", "조제 탱크 운전"], ["5.1", "밸브를 연다."], ["5.1", "밸브를 닫는다."], ["5.1", "압력을 본다."], ["5.1", "온도를 본다."],
+        ["5.2", "펌프를 켠다."], ["5.", "조제가 끝나면 기록을 남긴다."],
     ]
+
+
+def test_continued_numbers_say_the_original(client: TestClient) -> None:
+    """D1-R7 — 이어 매긴 칸 번호의 Number note는 원래 번호("Original 1"), 사람이 고친 칸 번호는 지금처럼 "Source A → B"."""
+    from tests.test_sop_unwrap import _unwrap
+
+    body = p("5. 조제 탱크 운전", "Heading1") + tbl([["1", "밸브를 연다."], ["2", "펌프를 켠다."], ["3", "유량을 기록한다."], ["A", "끝낸다."]])
+    bundle_id = create_bundle(client, title="Original", is_synthetic=True)["id"]
+    uploaded = upload(client, bundle_id, build_docx(body), "SYNTHETIC_OLD-7_Original.docx")
+    assert uploaded.status_code == 201 and uploaded.json()["status"] == "ready", uploaded.text
+    doc_id = uploaded.json()["id"]
+    _unwrap(client, bundle_id, doc_id, 0)
+    view = get_view(client, bundle_id, doc_id)
+    fixed = client.post(
+        f"/api/bundles/{bundle_id}/documents/{doc_id}/edits",
+        json={"revision": view["document"]["revision"], "op": {"type": "set_number", "unit_id": find_unit(view, "A 끝낸다.")["id"], "number": "B", "follow": False}},
+        headers=AUTHOR,
+    )
+    assert fixed.status_code == 200, fixed.text
+
+    rows = _values(_read(client.get(f"/api/bundles/{bundle_id}/documents/{doc_id}/paragraphs.xlsx", headers=MEMBER))[0])
+
+    assert [[row[0], row[3]] for row in rows[2:]] == [
+        ["5.1", "Original 1"], ["5.2", "Original 2"], ["5.3", "Original 3"], ["B", "Source A → B"],
+    ]
+    view = get_view(client, bundle_id, doc_id)
+    refixed = client.post(
+        f"/api/bundles/{bundle_id}/documents/{doc_id}/edits",
+        json={"revision": view["document"]["revision"], "op": {"type": "set_number", "unit_id": find_unit(view, "3 유량을 기록한다.")["id"], "number": "5.2.1", "follow": False}},
+        headers=AUTHOR,
+    )
+    assert refixed.status_code == 200, refixed.text
+    rows = _values(_read(client.get(f"/api/bundles/{bundle_id}/documents/{doc_id}/paragraphs.xlsx", headers=MEMBER))[0])
+    assert rows[4][3] == "Source 3 → 5.2.1"  # 사람이 다시 고친 칸은 이은 번호가 아니다
 
 
 def _mark(view: dict, kind: str, *texts: str, reason: str = "") -> None:
