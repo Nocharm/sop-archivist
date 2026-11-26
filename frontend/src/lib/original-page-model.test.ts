@@ -81,7 +81,7 @@ describe("readFollowMotion", () => {
 });
 
 describe("pickFollowTarget", () => {
-  const mark = (id: string): PlaceMark => ({ id, cell: false, exact: true, page: 1 });
+  const mark = (id: string): PlaceMark => ({ id, paint: "p", exact: true, page: 1 });
   const marks = new Map<number, PlaceMark[]>([
     [1, [mark("sopa_0")]],
     [2, [mark("sopa_1"), mark("sopa_2")]],

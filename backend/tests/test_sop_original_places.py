@@ -8,7 +8,7 @@ from sqlalchemy import delete
 
 from app.sop.models import DocumentFile, SourceBlock, Unit
 from tests.access_helpers import run_in_session, update_row
-from tests.docx_factory import build_docx, p
+from tests.docx_factory import TINY_PNG, build_docx, make_drawing_run, p, tbl
 from tests.pdf_factory import build_text_pdf
 from tests.sop_helpers import AUTHOR, OUTSIDER, create_bundle, find_unit, get_view, upload
 
@@ -122,3 +122,22 @@ def test_response_has_no_source_text(client: TestClient) -> None:
     raw = json.dumps(_places(client, bundle_id, doc["id"]).json(), ensure_ascii=False)
 
     assert all(block["text"] not in raw for block in view["blocks"] if len(block["text"]) > 4)
+
+
+def test_table_and_figure_units_point_at_their_place(client: TestClient) -> None:
+    # 표 · 그림 Unit은 범위가 비어 있다 - 표는 표 전체 경로, 그림은 그림 블록 경로로 원본에 칠한다(D9)
+    bundle = create_bundle(client, is_synthetic=True)
+    body = p("1. 목적", "Heading1") + tbl([["단계", "내용"], ["준비", "켠다."]]) + f"<w:p>{make_drawing_run('image1.png')}</w:p>"
+    response = upload(client, bundle["id"], build_docx(body, media={"image1.png": TINY_PNG}), "SYNTHETIC_OLD-2_Places.docx")
+    assert response.status_code == 201, response.text
+    doc = response.json()
+    view = get_view(client, bundle["id"], doc["id"])
+    kinds = {unit["id"]: unit["kind"] for unit in view["units"]}
+
+    places = {place["unit_id"]: place["blocks"] for place in _places(client, bundle["id"], doc["id"]).json()["places"]}
+
+    table_ids = [unit_id for unit_id, kind in kinds.items() if kind == "table"]
+    figure_ids = [unit_id for unit_id, kind in kinds.items() if kind == "figure"]
+    assert table_ids and figure_ids
+    assert [block["path"] for block in places[table_ids[0]]] == ["document/body/tbl[1]"]
+    assert places[figure_ids[0]][0]["path"].startswith("document/body/p[")

@@ -5,7 +5,7 @@ import { readRenderView, reduceOriginalRender, type OriginalRenderState } from "
 
 const KEY_A = "1:10";
 const KEY_B = "1:11";
-const marks = new Map<number, PlaceMark[]>([[3, [{ id: "sopa_0", cell: false, exact: true, page: 1 }]]]);
+const marks = new Map<number, PlaceMark[]>([[3, [{ id: "sopa_0", paint: "p", exact: true, page: 1 }]]]);
 
 function renderedA(): OriginalRenderState {
   return reduceOriginalRender(readRenderView(null, KEY_A), { type: "rendered", key: KEY_A, docId: 10, marks, pageCount: 4 });

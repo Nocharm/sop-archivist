@@ -56,7 +56,10 @@ export async function renderOriginal(file: Blob, parts: Record<string, string>, 
       }),
   );
   const body = await zip.file(partPath("document"))?.async("string");
-  if (body?.includes("tblHeader")) zip.file(partPath("document"), markHeaderRows(body));
+  if (body !== undefined) {
+    const marked = fillPageDefaults(body.includes("tblHeader") ? markHeaderRows(body) : body);
+    if (marked !== body) zip.file(partPath("document"), marked);
+  }
   const repacked = await zip.generateAsync({ type: "blob" });
   // 그리개 <style>은 올린 문서에서 만든 글이다 - 문서에 붙이기 전에(붙이면 @import · url()을 바로 받으러 간다) 떼어 둔 곳에 그려 거른다
   const staging = host.ownerDocument.createElement("div");
@@ -79,6 +82,23 @@ export async function renderOriginal(file: Blob, parts: Record<string, string>, 
     mark.closest("tr")?.classList.add(HEAD_ROW_CLASS);
     mark.remove();
   }
+}
+
+// 장 설정에 종이 크기 · 여백이 없을 때 Word가 쓰는 값(한국어 Word 기본 A4, 위아래 · 좌우 2.54cm) - 단위 twip(1/1440인치)
+const DEFAULT_PAGE_SIZE = '<w:pgSz w:w="11906" w:h="16838"/>';
+const DEFAULT_PAGE_MARGIN = '<w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="851" w:footer="992" w:gutter="0"/>';
+const SECTION_RE = /<w:sectPr\b[^>]*?(?:\/>|>[\s\S]*?<\/w:sectPr>)/g;
+
+/** 장 설정(w:sectPr)에 종이 크기 · 여백이 빠졌으면 Word 기본값을 채운다 - 없으면 그리개가 종이 없이 한 장으로 그려 쪽을 못 나눈다.
+ *  장 설정이 아예 없는 본문은 끝에 하나를 더한다. 바꿀 것이 없으면 같은 글을 돌려준다 */
+export function fillPageDefaults(xml: string): string {
+  const fill = (section: string) => {
+    const missing = (section.includes("<w:pgSz") ? "" : DEFAULT_PAGE_SIZE) + (section.includes("<w:pgMar") ? "" : DEFAULT_PAGE_MARGIN);
+    if (missing === "") return section;
+    return section.endsWith("/>") ? `${section.slice(0, -2)}>${missing}</w:sectPr>` : section.replace(/<\/w:sectPr>$/, `${missing}</w:sectPr>`);
+  };
+  if (!/<w:sectPr\b/.test(xml)) return xml.replace(/<\/w:body>/, `<w:sectPr>${DEFAULT_PAGE_SIZE}${DEFAULT_PAGE_MARGIN}</w:sectPr></w:body>`);
+  return xml.replace(SECTION_RE, fill);
 }
 
 /** 머리말 · 꼬리말의 PAGE · NUMPAGES 필드 결과를 표지 글자로 - 그리개는 저장된 결과(대개 1)를 그리고 fldSimple은 버린다 */
@@ -253,11 +273,12 @@ div.${OV_CLASS}-wrapper > section.${OV_CLASS} { background: var(--ov-paper); box
  * host에 그림자 뿌리를 열고(이미 있으면 비우고) 앱 모양 시트 · 그리개 <style> 자리 · 그릴 자리를 둔다.
  * 그리개 CSS는 이 뿌리 밖(앱)에 닿지 않고 앱 CSS도 안으로 들어오지 않는다. 표지는 root.getElementById로 찾는다.
  */
-export function openOriginalRoot(host: HTMLElement): { root: ShadowRoot; styles: HTMLElement; body: HTMLElement } {
+export function openOriginalRoot(host: HTMLElement, kept?: { styles: HTMLElement; body: HTMLElement }): { root: ShadowRoot; styles: HTMLElement; body: HTMLElement } {
   const root = host.shadowRoot ?? host.attachShadow({ mode: "open" });
   const doc = host.ownerDocument;
-  const styles = doc.createElement("div");
-  const body = doc.createElement("div");
+  // kept = 전에 그려 둔 칸 둘 - 시트를 닫았다 열어 새 host가 생겨도 그린 DOM을 옮겨 붙인다(다시 그리지 않는다)
+  const styles = kept?.styles ?? doc.createElement("div");
+  const body = kept?.body ?? doc.createElement("div");
   const appStyle: Node[] = [];
   if ("adoptedStyleSheets" in root && typeof CSSStyleSheet !== "undefined" && "replaceSync" in CSSStyleSheet.prototype) {
     const sheet = new CSSStyleSheet();

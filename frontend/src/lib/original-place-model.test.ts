@@ -37,7 +37,7 @@ describe("plantPlaceMarks", () => {
     const kids = [...second.children].map((child) => child.localName);
     expect(kids.slice(0, 3)).toEqual(["pPr", "bookmarkStart", "bookmarkEnd"]);
     expect(second.children[1].getAttributeNS(W, "name")).toBe(`${MARK_PREFIX}0`);
-    expect(result.marks.get(7)?.[0]).toEqual({ id: "sopa_0", cell: false, exact: true, page: 1 });
+    expect(result.marks.get(7)?.[0]).toEqual({ id: "sopa_0", paint: "p", exact: true, page: 1 });
     expect(result.missed).toBe(0);
   });
 
@@ -72,8 +72,17 @@ describe("plantPlaceMarks", () => {
     const table = `<w:tbl><w:tblPr/><w:tr>${cells(1)}</w:tr><w:tr>${cells(2)}</w:tr></w:tbl>`;
     const result = plantPlaceMarks({ document: docXml(para("x") + table) }, [place(3, "document/body/tbl[1]/tr[2]/tc[3]")]);
 
-    expect(result.marks.get(3)?.[0]).toMatchObject({ cell: true, exact: true });
+    expect(result.marks.get(3)?.[0]).toMatchObject({ paint: "td", exact: true });
     expect(readMarkedText(result.parts.document, "sopa_0")).toEqual(["r2c3a"]);
+  });
+
+  it("paints the whole table for a table path", () => {
+    const cells = (row: number) => [1, 2].map((col) => `<w:tc><w:tcPr/>${para(`r${row}c${col}`)}</w:tc>`).join("");
+    const table = `<w:tbl><w:tblPr/><w:tr>${cells(1)}</w:tr><w:tr>${cells(2)}</w:tr></w:tbl>`;
+    const result = plantPlaceMarks({ document: docXml(para("x") + table) }, [place(4, "document/body/tbl[1]")]);
+
+    expect(result.marks.get(4)?.[0]).toMatchObject({ paint: "table", exact: true });
+    expect(readMarkedText(result.parts.document, "sopa_0")).toEqual(["r1c1"]);
   });
 
   it("walks through wrappers such as content controls", () => {
@@ -140,7 +149,7 @@ describe("plantPlaceMarks", () => {
 
   it("falls back to the paragraph when a step inside it is missing", () => {
     const result = plantPlaceMarks({ document: docXml(para("host")) }, [place(1, "document/body/p[1]/txbx[4]/p[1]")]);
-    expect(result.marks.get(1)?.[0]).toMatchObject({ exact: false, cell: false });
+    expect(result.marks.get(1)?.[0]).toMatchObject({ exact: false, paint: "p" });
     expect(readMarkedText(result.parts.document, "sopa_0")).toEqual(["host"]);
   });
 
@@ -148,7 +157,7 @@ describe("plantPlaceMarks", () => {
     const result = plantPlaceMarks({ document: docXml(para("only")) }, [
       { unit_id: 9, blocks: [{ path: "document/body/p[99]", page: 3 }] },
     ]);
-    expect(result.marks.get(9)?.[0]).toEqual({ id: "", cell: false, exact: false, page: 3 });
+    expect(result.marks.get(9)?.[0]).toEqual({ id: "", paint: "p", exact: false, page: 3 });
     expect(result.missed).toBe(1);
   });
 

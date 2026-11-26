@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   NUMPAGES_TOKEN,
   PAGE_TOKEN,
+  fillPageDefaults,
   markHeaderRows,
   markPageFields,
   paginateRendered,
@@ -290,6 +291,32 @@ describe("sanitizeMetafileSvg", () => {
     expect(js.hasAttribute("xlink:href")).toBe(false);
     expect(data.hasAttribute("href")).toBe(true);
     expect(local.hasAttribute("href")).toBe(true);
+  });
+});
+
+describe("fillPageDefaults", () => {
+  const body = (section: string) => `<w:document xmlns:w="w"><w:body><w:p/>${section}</w:body></w:document>`;
+
+  it("adds A4 size and margins to a section without them", () => {
+    const out = fillPageDefaults(body('<w:sectPr><w:headerReference r:id="h1"/></w:sectPr>'));
+    expect(out).toContain('<w:headerReference r:id="h1"/><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1440"');
+  });
+
+  it("fills a self-closing section and adds one when the body has none", () => {
+    expect(fillPageDefaults(body("<w:sectPr/>"))).toContain('<w:sectPr><w:pgSz w:w="11906"');
+    expect(fillPageDefaults(body(""))).toContain('<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar');
+  });
+
+  it("keeps the document's own size and margins", () => {
+    const own = body('<w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="720" w:right="720" w:bottom="720" w:left="720"/></w:sectPr>');
+    expect(fillPageDefaults(own)).toBe(own);
+  });
+
+  it("fills only the missing half", () => {
+    const out = fillPageDefaults(body('<w:sectPr><w:pgSz w:w="12240" w:h="15840"/></w:sectPr>'));
+    expect(out).toContain('w:w="12240"');
+    expect(out).not.toContain('w:w="11906"');
+    expect(out).toContain("<w:pgMar ");
   });
 });
 

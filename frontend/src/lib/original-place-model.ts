@@ -10,8 +10,11 @@ const MC = "http://schemas.openxmlformats.org/markup-compatibility/2006";
 /** 표지 책갈피 이름 접두 - 그린 DOM에서 요소 id가 된다 */
 export const MARK_PREFIX = "sopa_";
 
+/** 칠할 요소 - 문단 p, 표 칸 td, 표 전체 table(표 Unit) */
+export type PlacePaint = "p" | "td" | "table";
+
 /** Unit 블록 하나의 표지. id ""는 못 찾음, exact false는 가장 가까운 상위 요소로 물러난 표지 */
-export type PlaceMark = { id: string; cell: boolean; exact: boolean; page: number | null };
+export type PlaceMark = { id: string; paint: PlacePaint; exact: boolean; page: number | null };
 
 export type PlantedMarks = { parts: Record<string, string>; marks: Map<number, PlaceMark[]>; missed: number };
 
@@ -21,7 +24,7 @@ const BOOKMARK_ID_RE = /\b[A-Za-z]\w*:id="(\d+)"/g;
 // 물러날 때 표지를 받을 수 있는 상위 요소 - 표면 그 표의 첫 문단
 const ANCHOR_NAMES = new Set(["p", "tc", "tbl"]);
 
-type Target = { el: Element; cell: boolean };
+type Target = { el: Element; paint: PlacePaint };
 type Resolved = { targets: Target[]; exact: boolean } | null;
 
 const isMc = (el: Element, name: string) => el.localName === name && el.namespaceURI === MC;
@@ -140,10 +143,10 @@ function toFallback(anchor: Element | null): Resolved {
 
 /** 표지를 심을 문단 - 칸이면 칸의 첫 문단, 문단이면 그 문단, 그 밖(표 등)은 안의 첫 문단 */
 function toTarget(el: Element): Target | null {
-  if (el.namespaceURI === W && el.localName === "p") return { el, cell: false };
+  if (el.namespaceURI === W && el.localName === "p") return { el, paint: "p" };
   const first = el.getElementsByTagNameNS(W, "p").item(0);
   if (first === null) return null;
-  return { el: first, cell: el.localName === "tc" };
+  return { el: first, paint: el.localName === "tc" ? "td" : el.localName === "tbl" ? "table" : "p" };
 }
 
 function readMaxBookmarkId(parts: Record<string, string>): number {
@@ -261,7 +264,7 @@ export function plantPlaceMarks(parts: Record<string, string>, places: readonly 
     let mark: Omit<PlaceMark, "page">;
     if (part === null || resolved === null) {
       missed += 1;
-      mark = { id: "", cell: false, exact: false };
+      mark = { id: "", paint: "p", exact: false };
     } else {
       const first = resolved.targets[0];
       const name = nameOf.get(first.el) ?? `${MARK_PREFIX}${nameOf.size}`;
@@ -271,7 +274,7 @@ export function plantPlaceMarks(parts: Record<string, string>, places: readonly 
         part.inserts.set(target.el, { id: String(nextId), name });
         nextId += 1;
       }
-      mark = { id: name, cell: first.cell, exact: resolved.exact };
+      mark = { id: name, paint: first.paint, exact: resolved.exact };
     }
     byPath.set(path, mark);
     return mark;

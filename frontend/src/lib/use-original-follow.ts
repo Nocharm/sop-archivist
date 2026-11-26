@@ -41,13 +41,13 @@ function isReducedMotion(): boolean {
   return typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 }
 
-/** 칠할 요소들 - 칸이면 가장 가까운 td, 아니면 가장 가까운 p. 그린 DOM에 없는 표지는 건너뛴다 */
+/** 칠할 요소들 - 표지가 고른 것(p · td · table)의 가장 가까운 요소. 그린 DOM에 없는 표지는 건너뛴다 */
 function findPaintTargets(root: ShadowRoot | HTMLElement, target: NonNullable<FollowTarget>): HTMLElement[] {
   const found = new Set<HTMLElement>();
   for (const mark of target.marks) {
     if (mark.id === "") continue;
     const anchor = root instanceof HTMLElement ? root.querySelector(`[id="${mark.id}"]`) : root.getElementById(mark.id);
-    const el = anchor?.closest<HTMLElement>(mark.cell ? "td" : "p") ?? null;
+    const el = anchor?.closest<HTMLElement>(mark.paint) ?? null;
     if (el !== null) found.add(el);
   }
   return [...found];

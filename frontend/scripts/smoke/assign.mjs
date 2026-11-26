@@ -4595,12 +4595,31 @@ await runStep("assign: Space preview - Space sheet: Original paints the picked p
     const view = scroller.getBoundingClientRect();
     return box.bottom > view.top && box.top < view.bottom;
   }));
+  // 표 박스(시드 첫 문서의 셋째 줄 SYN-PAIR-1-003)는 범위가 없는 Unit - 표 전체를 칠한다(D9)
+  await page.keyboard.press("j");
+  const tablePainted = await page
+    .waitForFunction((sel) => [...(document.querySelector(sel)?.shadowRoot?.querySelectorAll(".is-ov-picked") ?? [])].some((node) => node.tagName === "TABLE"), ORIGINAL_HOST("space-original"), { timeout: T })
+    .then(() => true)
+    .catch(() => false);
+  check("a picked table box paints the whole table", tablePainted, (await getText(page, "assign-row-id")).trim());
+  // 시트를 닫았다 열어도 그려 둔 원본을 다시 쓴다 - 쉬머 없이 바로 보인다(설계 §5.2)
+  await page.keyboard.press("Escape");
+  await page.locator('[data-testid="assign-space-preview"]').waitFor({ state: "detached", timeout: T });
+  await page.keyboard.press(" ");
+  await page.locator('[data-testid="space-original"]').waitFor({ timeout: T });
+  const reopened = await page.locator('[data-testid="space-original"]').getAttribute("data-state");
+  check("reopening the sheet shows the drawn original at once", reopened === "ready" && (await page.locator('[data-testid="space-original-loading"]').count()) === 0, String(reopened));
   await page.keyboard.press("Escape");
   await page.evaluate((key) => localStorage.removeItem(key), SPACE_TAB_KEY);
 });
 
 await runStep("assign: Space preview - Space sheet: two-pane shows both originals", {}, async ({ page }) => {
-  await openFirstAssign(page, "two");
+  // 이미 쓴 New(WI-04 · WI-05)가 있는 묶음은 "분류 절반"이다 - 첫 묶음(SYNTHETIC 9)에는 쓴 New가 없다
+  await page.goto(`${BASE}/bundles/${halfBundleId}/assign`);
+  await wait(page, "assign-bar");
+  await setPaneView(page, "two");
+  await page.evaluate(() => (document.activeElement instanceof HTMLElement ? document.activeElement.blur() : undefined));
+  await page.keyboard.press("j");
   // New 칸을 이미 쓴 문서(원본 DOCX가 있는 WI-04 · WI-05)로 - 앱에서 만든 New는 원본 파일이 없다
   await page.locator('[data-testid="assign-new-doc"]').click();
   const written = page.locator('[data-testid^="assign-new-doc-option-"]', { hasText: /WI-0[45]/ }).first();
