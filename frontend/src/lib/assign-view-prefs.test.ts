@@ -1,7 +1,7 @@
 // Assign 보기 설정 - 문서별 확대와 폭을 사람마다 브라우저에 기억한다. 저장소가 없거나 값이 이상하면 기본값.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { readAssignView, readSpacePreviewOpens, readSpaceSheetHeight, writeAssignView, writeSpacePreviewOpens, writeSpaceSheetHeight } from "./assign-view-prefs";
+import { readAssignView, readSpacePreviewOpens, readSpaceSheetHeight, readSpaceTab, writeAssignView, writeSpacePreviewOpens, writeSpaceSheetHeight, writeSpaceTab } from "./assign-view-prefs";
 
 const SIDE_DEFAULTS = { sideFloat: false, sideX: null, sideY: null, sideFolded: false };
 
@@ -83,6 +83,31 @@ describe("assign view prefs", () => {
       throw new Error("blocked");
     });
     expect(() => writeSpacePreviewOpens(3)).not.toThrow();
+  });
+
+  it("readSpaceTab defaults to result", () => {
+    expect(readSpaceTab()).toBe("result");
+  });
+
+  it("round-trips original", () => {
+    writeSpaceTab("original");
+    expect(window.localStorage.getItem("sopa.assign.spaceTab")).toBe("original");
+    expect(readSpaceTab()).toBe("original");
+    writeSpaceTab("result");
+    expect(readSpaceTab()).toBe("result");
+  });
+
+  it("ignores unknown values", () => {
+    window.localStorage.setItem("sopa.assign.spaceTab", "junk");
+    expect(readSpaceTab()).toBe("result");
+    vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+      throw new Error("blocked");
+    });
+    expect(readSpaceTab()).toBe("result");
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new Error("blocked");
+    });
+    expect(() => writeSpaceTab("original")).not.toThrow();
   });
 
   it("remembers the Space sheet height, default when unknown, clamped when out of range, safe when blocked", () => {

@@ -15,6 +15,7 @@ import {
   isSpaceEnabled,
   isSpaceKept,
   isSpaceOpen,
+  isTabFlip,
   NO_NUMBER,
   pickSpaceSheet,
   SPACE_CLOSED,
@@ -46,7 +47,7 @@ describe("stepSpace", () => {
 
   it("closes a kept sheet on another tap, but not after a long press or a drag", () => {
     const kept = run([{ type: "down", at: 0 }, { type: "up", at: 10 }]);
-    expect(run([{ type: "down", at: 1000 }, { type: "up", at: 1100 }], kept).phase).toBe("closed");
+    expect(run([{ type: "down", at: 1000 }, { type: "up", at: 1100 }, { type: "closed" }], kept).phase).toBe("closed");
     expect(run([{ type: "down", at: 1000 }, { type: "up", at: 1000 + TAP_MS }], kept).phase).toBe("kept");
     const dragged = run([{ type: "down", at: 1000 }, { type: "drag" }, { type: "up", at: 1050 }], kept);
     expect([dragged.phase, dragged.dragged]).toEqual(["kept", false]);
@@ -61,6 +62,35 @@ describe("stepSpace", () => {
     const held = run([{ type: "down", at: 0 }]);
     expect(stepSpace(held, { type: "down", at: 400 })).toBe(held);
     expect(run([{ type: "up", at: 10 }, { type: "drag" }])).toEqual(SPACE_CLOSED);
+  });
+
+  it("closes through closing after a short tap", () => {
+    const closing = run([{ type: "down", at: 0 }, { type: "up", at: 10 }, { type: "down", at: 500 }, { type: "up", at: 510 }]);
+    expect([closing.phase, isSpaceOpen(closing), isSpaceKept(closing)]).toEqual(["closing", true, false]);
+  });
+
+  it("flips the tab on a second tap while closing", () => {
+    const closing = run([{ type: "down", at: 0 }, { type: "up", at: 10 }, { type: "down", at: 500 }, { type: "up", at: 510 }]);
+    const flipped = stepSpace(closing, { type: "down", at: 600 });
+    expect([flipped.phase, isTabFlip(closing, flipped)]).toEqual(["kept", true]);
+    expect(isTabFlip(SPACE_CLOSED, run([{ type: "down", at: 0 }]))).toBe(false);
+    // 뒤따르는 keyup은 열어 둔 시트를 닫지 않는다
+    expect(stepSpace(flipped, { type: "up", at: 650 }).phase).toBe("kept");
+  });
+
+  it("closing ends on animation end", () => {
+    const closing = run([{ type: "down", at: 0 }, { type: "up", at: 10 }, { type: "down", at: 500 }, { type: "up", at: 510 }]);
+    expect(stepSpace(closing, { type: "closed" })).toEqual(SPACE_CLOSED);
+    expect(stepSpace(closing, { type: "drag" })).toBe(closing);
+    // 다른 단계에서 온 늦은 animationend는 아무것도 하지 않는다
+    const kept = run([{ type: "down", at: 0 }, { type: "up", at: 10 }]);
+    expect(stepSpace(kept, { type: "closed" })).toBe(kept);
+  });
+
+  it("escape while closing closes", () => {
+    const closing = run([{ type: "down", at: 0 }, { type: "up", at: 10 }, { type: "down", at: 500 }, { type: "up", at: 510 }]);
+    expect(stepSpace(closing, { type: "escape" })).toEqual(SPACE_CLOSED);
+    expect(stepSpace(closing, { type: "blur" })).toEqual(SPACE_CLOSED);
   });
 
   it("closes a held sheet when the window loses focus but keeps a kept one", () => {
