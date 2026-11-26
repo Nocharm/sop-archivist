@@ -1232,9 +1232,12 @@ await runStep("assign: the cell menu has this cell and this table, hovering pain
   check("old: the headings name the cell and the table", (await page.locator('[data-testid="assign-ctx-section-cell"]').innerText()).includes("This cell") && (await page.locator('[data-testid="assign-ctx-section-table"]').innerText()).includes("This table"));
   check("old: the table items carry the table scope in their names", (await page.locator('[data-testid="assign-ctx-delete"]').innerText()).includes("Delete whole table") && (await page.locator('[data-testid="assign-ctx-clear"]').innerText()).includes("Unassign table"));
   // 닿는 칸 칠하기 - 칸 항목은 그 칸, 표 항목은 표 둘레, 떠나면 걷힌다
-  await page.locator('[data-testid="assign-ctx-split"]').hover();
-  await page.locator('[data-testid="assign-ctx-reach"]').waitFor({ state: "attached", timeout: T });
-  check("old: hovering a cell item fills that cell", (await outlineOf("old", oldParts.cell.id)) === "solid");
+  // 메뉴가 열리며 첫 항목(Split)에 포커스가 가 칠이 이미 있다 - 첫 항목이 아닌 Merge with previous에 올려 칠이 그 항목의 닿는 칸(이 칸 진하게 + 앞 칸 점선)으로 바뀌는지 본다
+  const cellLines = oldParts.view.units.filter((unit) => unit.kind === "cell_sentence" && unit.group_unit_id === oldParts.table.id).sort((a, b) => a.pos_seq - b.pos_seq);
+  const prevCell = cellLines[cellLines.findIndex((unit) => unit.id === oldParts.cell.id) - 1];
+  await page.locator('[data-testid="assign-ctx-merge_prev"]').hover();
+  await page.waitForFunction((id) => document.querySelector('[data-testid="assign-ctx-reach"]')?.textContent?.includes(`data-strip-unit="${id}"`) ?? false, prevCell?.id, { timeout: T }).catch(() => undefined);
+  check("old: hovering a non-first cell item fills that cell and dashes the neighbour it touches", prevCell !== undefined && (await outlineOf("old", oldParts.cell.id)) === "solid" && (await outlineOf("old", prevCell.id)) === "dashed");
   await page.locator('[data-testid="assign-ctx-delete"]').hover();
   await page.waitForFunction((id) => { const el = document.querySelector(`[data-pane="old"] [data-strip-unit="${id}"]`); return el !== null && getComputedStyle(el).outlineStyle === "dashed"; }, oldParts.table.id, { timeout: T });
   check("old: hovering a table item rings the table", (await outlineOf("old", oldParts.table.id)) === "dashed");

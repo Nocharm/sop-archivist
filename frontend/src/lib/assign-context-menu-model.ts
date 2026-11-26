@@ -155,10 +155,10 @@ function buildTableItems(ctx: AssignMenuContext): AssignMenuItem[] {
   return [build("table_layout", blocker)];
 }
 
-/** 벗긴 표 항목 - 다시 표로 · AI 순서(C2-R4). 까닭은 머리 단추와 같은 문구: 읽기 전용 · 저장 전 고름(다시 표로), 읽기 전용 · AI 꺼짐 · 이미 묻는 중(AI 순서) */
-export function buildUnwrappedTableItems(ctx: { readOnly: boolean; hasDraft: boolean; isAiOn: boolean; isAiBusy: boolean }): AssignMenuItem[] {
+/** 벗긴 표 항목 - 다시 표로 · AI 순서(C2-R4). 까닭은 머리 단추 · ⇧O와 같다: 다시 표로는 읽기 전용 · 저장 전 고름, AI 순서는 읽기 전용과 orderReasonKey(unwrap-ai-model readUnwrapOrderReason) */
+export function buildUnwrappedTableItems(ctx: { readOnly: boolean; hasDraft: boolean; orderReasonKey: string | null }): AssignMenuItem[] {
   const rewrap = ctx.readOnly ? why("readOnly") : ctx.hasDraft ? why("unsaved") : null;
-  const order = ctx.readOnly ? why("readOnly") : !ctx.isAiOn ? "assign.unwrapAi.offTip" : ctx.isAiBusy ? "assign.unwrapAi.already" : null;
+  const order = ctx.readOnly ? why("readOnly") : ctx.orderReasonKey;
   return [build("table_rewrap", rewrap), build("table_ai_order", order)];
 }
 

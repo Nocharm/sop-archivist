@@ -583,12 +583,12 @@ describe("buildAssignMenu - language of an assigned pair member and each piece o
 });
 
 describe("buildUnwrappedTableItems", () => {
-  const base = { readOnly: false, hasDraft: false, isAiOn: true, isAiBusy: false };
+  const base = { readOnly: false, hasDraft: false, orderReasonKey: null };
   it("lists back-to-table then AI order, both on", () => expect(buildUnwrappedTableItems(base).map((item) => [item.action, item.enabled])).toEqual([["table_rewrap", true], ["table_ai_order", true]]));
-  it("locks back-to-table on an unsaved choice and AI order when AI is off or busy", () => {
+  it("locks back-to-table on an unsaved choice, and AI order with the shared reason", () => {
     expect(buildUnwrappedTableItems({ ...base, hasDraft: true })[0].reasonKey).toBe("assign.ctx.why.unsaved");
-    expect(buildUnwrappedTableItems({ ...base, isAiOn: false })[1].reasonKey).toBe("assign.unwrapAi.offTip");
-    expect(buildUnwrappedTableItems({ ...base, isAiBusy: true })[1].reasonKey).toBe("assign.unwrapAi.already");
+    expect(buildUnwrappedTableItems({ ...base, orderReasonKey: "assign.key.why.oneLine" })[1].reasonKey).toBe("assign.key.why.oneLine");
+    expect(buildUnwrappedTableItems({ ...base, orderReasonKey: "assign.key.why.orderReady" })[1].enabled).toBe(false);
   });
   it("locks both when read-only", () => expect(buildUnwrappedTableItems({ ...base, readOnly: true }).every((item) => item.reasonKey === "assign.ctx.why.readOnly")).toBe(true));
 });

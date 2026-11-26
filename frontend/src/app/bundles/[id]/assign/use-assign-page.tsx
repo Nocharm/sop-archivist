@@ -66,7 +66,7 @@ import { isSideFloating } from "@/lib/side-float-model";
 import { readPanelSide } from "@/lib/side-panel-model";
 import { BLANK_STOPS, resolveBlankClick } from "@/lib/blank-click-model";
 import { listFollowTableIds, pickOrderAction } from "@/lib/table-follow-model";
-import { isUnwrapSuggestionApplicable, isUnwrapSuggestionUnchanged } from "@/lib/unwrap-ai-model";
+import { isUnwrapSuggestionApplicable, isUnwrapSuggestionUnchanged, readUnwrapOrderReason } from "@/lib/unwrap-ai-model";
 import { pickNextBox, type PendingOutcome } from "@/lib/next-box-model";
 import { listExpectedNumbers, listExpectedShifts, readExpectedNumber, readOpShifts, type SentNumber, type SentShifts } from "@/lib/number-arrival-model";
 import { buildReloadAsk, isDocReload, isEmptyReload, mergeReloads, NO_RELOAD_ASK, splitReload, type ReloadAsk } from "@/lib/reload-ask-model";
@@ -1662,10 +1662,10 @@ export function useAssignPage() {
   const ctxTable = findTableOf(ctxFound?.shape ?? null, ctxTarget);
   const ctxUnwrapped = ctxFound && ctxTarget && ctxTarget.kind === "cell_sentence" && ctxTarget.group_unit_id === null && ctxTarget.table_id !== null ? (ctxFound.shape.model.unwrapped.get(ctxTarget.table_id) ?? null) : null;
   const ctxPlace: MenuPlace = ctxFound && ctxTarget ? readMenuPlace(ctxTarget, ctxTable, ctxUnwrapped, new Map(ctxFound.shape.view.blocks.map((block) => [block.id, block])), ctxFound.shape.model.tables) : { kind: "text" };
-  const ctxSide: "old" | "new" = ctxFound?.shape.side ?? "old";
-  const ctxUnwrapAi = ctxFound?.shape === rightShape ? newUnwrapAi : unwrapAi;
+  // 칠은 문서 쪽이 아니라 그린 용지로 - 한 단에서 연 New 문서도 왼쪽 용지(data-pane="old")에 그려진다
+  const ctxSide: "old" | "new" = ctxFound?.shape === rightShape ? "new" : "old";
   const ctxSections: MenuSection[] | null = ctxGroups && ctxTarget
-    ? buildMenuSections(ctxGroups, ctxPlace, ctxUnwrapped === null ? [] : buildUnwrappedTableItems({ readOnly: !canEdit, hasDraft: hasUnitDraft(ctxTarget), isAiOn: unwrapAi.enabled, isAiBusy: ctxUnwrapAi.busy.has(ctxUnwrapped.id) }))
+    ? buildMenuSections(ctxGroups, ctxPlace, ctxUnwrapped === null ? [] : buildUnwrappedTableItems({ readOnly: !canEdit, hasDraft: hasUnitDraft(ctxTarget), orderReasonKey: ctxFound ? readOrderReasonOf(ctxFound.shape, ctxUnwrapped.id) : null }))
     : null;
   /** 메뉴 항목이 닿는 칸 - 올리거나 포커스할 때만 읽는다 */
   function readCtxReach(item: Parameters<typeof readMenuReach>[0]): MenuReach {
@@ -4666,14 +4666,21 @@ export function useAssignPage() {
     return keyUnit !== null && shape !== null ? findPairTarget(keyUnit.id, listPairMembers(shape, keyUnit), shape.tabs.order) : null;
   }
 
+  /** 그 벗긴 표에 AI 순서를 물을 수 없는 까닭 - ⇧O · 머리 단추 · 우클릭 메뉴가 같은 판정(unwrap-ai-model) */
+  function readOrderReasonOf(target: DocShape, tableId: number): string | null {
+    const ai = target === rightShape ? newUnwrapAi : unwrapAi;
+    return readUnwrapOrderReason({
+      hasFollow: target.side === "old" && followPlan.plans.get(tableId) !== undefined,
+      isAiOn: ai.enabled,
+      isBusy: ai.busy.has(tableId),
+      current: target.model.order.filter((id) => target.model.unwrapLines.get(id) === tableId),
+      suggested: ai.previews.get(tableId),
+    });
+  }
+
   function readOrderReason(): string | null {
-    if (orderFollow !== undefined) return null;
-    if (!shapeUnwrapAi.enabled) return "assign.unwrapAi.offTip";
-    if (orderTableId === null) return "assign.key.why.notUnwrapped";
-    if (shapeUnwrapAi.busy.has(orderTableId)) return "assign.unwrapAi.already";
-    if (orderPreview !== null) return orderPreview.isSame ? "assign.unwrapAi.same" : "assign.key.why.orderReady";
-    const lines = [...(shapeModel?.unwrapLines.values() ?? [])].filter((tableId) => tableId === orderTableId);
-    return lines.length < 2 ? "assign.key.why.oneLine" : null;
+    if (shape === null || orderTableId === null) return shapeUnwrapAi.enabled ? "assign.key.why.notUnwrapped" : "assign.unwrapAi.offTip";
+    return readOrderReasonOf(shape, orderTableId);
   }
 
   function readKeyContext(): AssignKeyContext {
