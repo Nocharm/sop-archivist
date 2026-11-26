@@ -46,7 +46,7 @@ T/F 사람이 실제 자료를 건드리지 않고 Assign의 손짓 열둘(고�
 | D11 | 연습 상태는 가짜 서버 모듈의 변수에만 산다 — 페이지를 새로 읽으면 처음, 앱 안에서 떠났다 돌아오면 이어진다. **Start over**는 `window.location.reload()`. | 상태를 지우는 길이 "모듈이 새로 읽힘" 하나라 렌더 중 부작용 · 이펙트가 없다. 설명서 링크는 새 탭이라 하던 연습이 그대로다. |
 | D12 | Assign은 `useParams().id` 한 줄만 바꾼다: `use-assign-page.tsx`의 `Number(useParams<{ id: string }>().id)` → `useRouteBundleId()`(새 `src/lib/use-route-bundle-id.ts` — `BundleIdContext` 값이 있으면 그것, 없으면 `useParams`). `/practice`는 `<BundleIdContext value={PRACTICE_BUNDLE_ID}><AssignPage /></BundleIdContext>`로 `app/bundles/[id]/assign/page.tsx`의 기본 내보내기를 그대로 그린다. | 주소 · 라우터 의존은 이 한 줄과, 연습에서는 닿지 않는 `router.replace` 둘(옛 `?edit=` · `?doc=&unit=` 주소를 읽을 때만)뿐이다(실측 §12). 페이지 파일은 기본 내보내기만 가져다 쓰니 Next 페이지 내보내기 규칙에 걸리지 않는다. |
 | D13 | 연습 Bundle 주소로 가는 이동(`/bundles/-1/...`)은 `lib/nav-buffer.ts` `navigate()`가 막고 "Not available in practice" 알림을 띄운다. | `DestinationTree`의 To-Be 링크 · 빈 화면의 Documents 링크 같은 다른 단계 길이 연습 Bundle의 실제 단계 화면으로 가지 않게 한다. `nav-host`가 앱 안 `<a>` 클릭을 모두 `navigate()`로 보내니 한 곳이면 된다. 주소창에 `/bundles/-1/assign`을 직접 치면 띠 없는 연습이 되지만(모든 요청이 D2 ①로 가짜) 아무것도 저장되지 않아 둔다. |
-| D14 | 화면 틀: 상단 바 아래 **띠**(한 줄, 폭 전체) → 그 아래 두 칸 grid `minmax(0, 1fr) | 과제 칸`. 과제 칸 폭 `clamp(240px, 18vw, 300px)`, 접으면 36px 세로 막대(진행 `n/12`와 펴기 단추만). 접힘은 `useState` 하나(기억하지 않는다). | U1. Assign의 오른쪽 결정 칸은 Assign 안에 그대로 있고 과제 칸은 그 바깥 오른쪽이다. Assign이 창 폭 1440px 밑에서 결정 칸을 띄우는 셈(`side-float-model`)은 창 폭을 보므로 과제 칸만큼 좁아진 사이 폭(1440~1740px)에서 용지가 빠듯하다 — 그때 접는다(U1 "좁은 창에서는 접을 수 있게"). 기억은 한 화면의 일이라 두지 않는다. |
+| D14 | 화면 틀: 상단 바 아래 **띠**(한 줄, 폭 전체) → 그 아래 두 칸 grid `minmax(0, 1fr) | 과제 칸`. 과제 칸 폭 `clamp(240px, 18vw, 300px)`, 접으면 36px 세로 막대(진행 `n/12`와 펴기 단추만). 접힘은 `useState` 하나(기억하지 않는다). 사람이 누르기 전에는 창 폭이 정한다 — 1280px 밑이면 처음부터 접힌 막대(`data-pref="auto"`를 CSS 미디어 쿼리가 첫 그림부터 접고, React는 `matchMedia`를 `useSyncExternalStore`로 읽어 단추 이름을 맞춘다. 스텝 4에서 더함 11-27 — 1120px ko에서 과제 칸이 Assign 머리 줄을 겹치게 했다). | U1. Assign의 오른쪽 결정 칸은 Assign 안에 그대로 있고 과제 칸은 그 바깥 오른쪽이다. Assign이 창 폭 1440px 밑에서 결정 칸을 띄우는 셈(`side-float-model`)은 창 폭을 보므로 과제 칸만큼 좁아진 사이 폭(1440~1740px)에서 용지가 빠듯하다 — 그때 접는다(U1 "좁은 창에서는 접을 수 있게"). 기억은 한 화면의 일이라 두지 않는다. |
 | D15 | U5를 이렇게 놓는다: ① **상단 바 사용자 메뉴의 도움말 항목 `user-menu-manual`("User manual") 바로 아래에 `user-menu-practice`**("Practice" / "연습하기", 아이콘 `GraduationCap`, 같은 탭 이동, `/practice`에서는 빠짐). ② 설명서 화면 머리(`manual-view.tsx` 첫 줄, 한국어 글 안내 옆)의 링크 `manual-practice`("Try it in the practice screen →" / "연습 화면에서 따라 해 보기 →", 같은 탭). 책 아이콘 `top-bar-manual`은 그대로 링크 하나이고, `/practice`에서는 새 설명서 조각 `#practice`로 연다. Assign 도움말 창(`assign-help.tsx`) · Bundle 목록은 건드리지 않는다. | 상단 바에서 설명서가 "항목"으로 있는 곳은 사용자 메뉴의 `user-menu-manual`이다 — 그 자리에 항목 하나를 더하는 것이 U5의 "설명서 자리에 '연습하기' 항목"과 맞고 새 메뉴 부품이 없다. 책 아이콘을 메뉴로 바꾸면 기준 스모크(`pw-smoke-baseline.mjs`가 `top-bar-manual`의 `href`를 바로 본다)의 기대를 바꿔야 한다. 연습은 하던 일을 덮어도 되는 화면이라 같은 탭(떠날 때는 Assign의 나가기 확인이 그대로 걸린다). **(내 판단 — U5의 자리 해석, 사용자 확인 대상)** |
 | D16 | 권한 키를 더하지 않는다. `AppShell`의 로그인 게이트만 지난다. 연습 Bundle의 `my_role`은 자료에서 `"author"`, `status`는 `"in_progress"`라 편집이 켜진다. | 서버에 아무것도 쓰지 않으니 막을 권한이 없다(사용자 결정 "로그인 사용자 누구나"). |
 | D17 | 숨긴 기능과 다른 길이다: 연습은 `isDraftingOn()`을 읽지 않고 운영 빌드에서도 늘 있다. 연습 안의 Assign은 실제와 같이 `useDraftingOn()`을 읽으므로 운영에서는 숨긴 쪽이 꺼진 Assign이 된다. 개발에서 `sopa.drafting="1"`을 켜면 숨긴 쪽 읽기는 빈 답 · 쓰기는 `practice_unsupported`(최선만, 시험하지 않는다). | 사용자 결정 "운영에서도 보여야 한다". 연습은 운영 사용자가 보는 Assign을 가르치는 것이라 숨긴 쪽을 따로 다룰 까닭이 없다. |
@@ -54,7 +54,7 @@ T/F 사람이 실제 자료를 건드리지 않고 Assign의 손짓 열둘(고�
 | D19 | 과제 글의 글쇠는 `ASSIGN_KEYS`의 id로 적고 `formatAssignKey`로 그린다. | U3 "실제 글쇠는 keymap과 맞춘다". 시험이 id가 표에 있고 그 글쇠가 U3의 글쇠(J/K · Enter · ⇧H · U · ⇧J · ⇧P · ⇧T · Ctrl+Z · ?)와 같은지 본다 — 글쇠가 바뀌면 시험이 알리고 과제 글이 따라간다. |
 | D20 | **"빈 New"(U4)를 "아직 아무것도 이어지지 않은 New 문서"로 읽는다** — 문장은 있고(Old 짝 둘을 고쳐 쓴 글 · 그 밖의 두셋), 이음 · 확정은 하나도 없다. | 문장이 없는 New면 "New에 잇기" · "확정(Enter)"이 이을 상대가 없어 할 수 없다(숨긴 기능이 꺼진 Assign은 이미 쓴 New 문장에만 잇는다). 미리 확정한 줄도 두지 않아 처음 화면에 이음이 없다 — 그래서 "배정 취소"는 잇기나 확정을 먼저 한 뒤에 된다(과제 글이 그렇게 알린다, 순서 자유는 그대로). |
 | D21 | **"목차 삭제"(U3)는 저절로 삭제된 목차 블록에 사유를 적는 것(R, `set_noise_reason`)으로 판정한다.** 과제 글: 목차 블록이 이미 삭제로 접혀 있음을 보고, 블록을 골라 R로 사유를 적는다. | 지금 올리는 규칙(규칙 2)은 목차를 올릴 때 이미 삭제로 접는다(`noise_kind: "toc"`) — 사람이 할 일은 확인과 사유다. 목차를 일반 줄로 두고 Del로 지우게 하면 실제와 다른 화면을 가르친다. |
-| D22 | **"New에 잇기"와 "확정(Enter)"은 보내는 요청의 `undo.op`로 가른다**: 잇기 = Old · New를 고르고 단추 줄의 잇기(또는 끌어 놓기 · 양쪽 고른 Enter), 확정 = Old 줄 하나에서 추천 카드가 든 채 Enter(`planPrimary`의 첫 카드 확정). 스텝 4가 두 손짓의 실제 본문을 시험으로 고정한다(예상: `"link"` · `"confirm"`). | 둘 다 `groups/save`로 나간다. 사람에게는 다른 손짓이라 U3가 나눴다. |
+| D22 | **"New에 잇기"와 "확정(Enter)"은 보내는 요청의 되돌리기 메타 `focus_target_id`로 가른다**: 잇기 = Old · New를 고르고 단추 줄의 잇기(또는 끌어 놓기 · 양쪽 고른 Enter) — `sendLink`가 이은 New 문장을 `focus_target_id`로 싣는다. 확정 = Old 줄 하나에서 추천 카드가 든 채 Enter(`planPrimary`의 첫 카드 확정) — `sendSave`는 `focus_unit_id`만 싣는다. (스텝 4가 실제 본문을 시험으로 고정하며 고침 11-27 — 처음 짐작은 `undo.op` `"link"` · `"confirm"`이었으나 카드도 New 문장으로 가는 확정이라 `pickSaveOp`가 둘 다 `"link"`를 낸다) | 둘 다 `groups/save` · `action: "confirm"` · `op: "link"`로 나간다. 사람에게는 다른 손짓이라 U3가 나눴다. `practice-tasks.test.ts`가 두 보내기의 메타 줄을 소스로 붙들어, 바뀌면 판정을 다시 맞추라고 알린다. |
 | D23 | 브랜치는 **모음 브랜치** `feat/practice-page`에서 스텝 브랜치를 딴다(계획 문서). | 자료만 · 가짜 서버만 · 과제 없는 빈 화면만으로는 `dev`에서 확인할 것이 반쪽이다. |
 | D24 | 설명서는 `## 연습 화면 {#practice}` 조각 하나를 `## 시작하기 {#start}` 바로 뒤에 더한다(글은 스텝 3 · 4, 그림은 정식 업데이트 준비 때 장면 `practice`). | 도움말 단추가 여는 자리는 조각(`##`) 단위다(`getManualHref` · `MANUAL_PAGE_SECTION`). Map · History처럼 화면 하나가 조각 하나다. |
 
@@ -219,7 +219,7 @@ interface PracticeState {
 | `pairs/{p}` DELETE · `confirm` | 짝을 지우고 `pair_id`를 비움 · 상태만 `confirmed` | `{document_revision, pair}` |
 | `decisions/undo` · `redo` | D8 — 사진을 꺼내 되쓰고 반대쪽 스택에 지금 상태를 넣는다. 스택이 비면 백엔드가 쓰는 "되돌릴 것 없음" 거절을 그대로(스텝 2가 `decision_steps.py`에서 코드를 확인). | `{op, unit_ids, focus_unit_id, focus_target_id, scope_label, can_undo, can_redo, restored_decisions: true}` |
 
-모든 쓰기는 `log`에 `{route, editType?, undoOp?, action?, unitIds}`를 남기고 판 번호를 올린다. revision 검사 · 409 · 422 검증은 하지 않는다.
+모든 쓰기는 `log`에 `{route, editType?, undoOp?, action?, unitIds, focusTargetId?, isPairJoin?}`(뒤의 둘은 과제 판정용 — D22 · 짝 합치기)를 남기고 판 번호를 올린다. revision 검사 · 409 · 422 검증은 하지 않는다.
 
 ### 6.4 실제 서버로 새는 요청이 0임을 지키는 법
 
@@ -235,11 +235,11 @@ interface PracticeState {
 | # | id | 과제(en · ko 메시지) | 글쇠(`ASSIGN_KEYS` id) | 판정(`log`) | 설명서 |
 |---|---|---|---|---|---|
 | 1 | `pick` | 줄을 눌러 고르고 J · K로 옮겨 본다 | `move_next` · `move_prev` | 손짓 `key: move_next|move_prev` | `#assign` |
-| 2 | `link` | 짝 A를 고르고 오른쪽 New에서 A′를 골라 단추 줄의 잇기(또는 끌어 놓기) | – | `groups/save`, `undoOp: "link"`(D22) | `#assign-destination` |
-| 3 | `confirm` | 짝 B를 고르면 추천 카드가 뜬다 — Enter로 그 카드대로 확정 | `confirm` | `groups/save`, `action: "confirm"`, `undoOp: "confirm"`(D22) | `#assign-confirm` |
+| 2 | `link` | 짝 A를 고르고 오른쪽 New에서 A′를 골라 단추 줄의 잇기(또는 끌어 놓기) | – | `groups/save`, `undoOp: "link"` + `focusTargetId` 있음(D22) | `#assign-destination` |
+| 3 | `confirm` | 짝 B를 고르면 추천 카드가 뜬다 — Enter로 그 카드대로 확정 | `confirm` | `groups/save`, `action: "confirm"` + `focusTargetId` 없음(D22) | `#assign-confirm` |
 | 4 | `hold` | 짝 C에서 ⇧H, 사유를 적어 보류 | `hold` | `groups/save`, `action: "hold"` | `#assign-confirm` |
 | 5 | `unassign` | 이은 줄이나 확정한 줄을 고르고 U — 아직 없으면 2 · 3을 먼저 | `clear` | `decisions/clear` 또는 `decisions/bulk` `clear` | `#assign-confirm` |
-| 6 | `merge` | 끊긴 두 조각의 앞 조각에서 ⇧J를 두 번 | `merge_next` | `edits` `merge` | `#split-edit` |
+| 6 | `merge` | 끊긴 두 조각의 앞 조각에서 ⇧J를 두 번 | `merge_next` | `edits` `merge`(⇧P의 짝 합치기 `isPairJoin`은 빼고) | `#split-edit` |
 | 7 | `split` | 두 문장이 한 박스인 줄을 나눌 자리에서 두 번 눌러 선을 놓고 S | `split` | `edits` `split` | `#split-edit` |
 | 8 | `pair` | 짝 D에서 ⇧P로 한 문장이 되는 것을 보고, 다시 ⇧P로 한/영 짝으로 | `shape_mode` | `pairs` POST | `#split-pair` |
 | 9 | `unwrap` | 표를 고르고 ⇧T로 벗겨 줄로 본다(다시 ⇧T면 표로) | `table` | `edits` `set_layout_table` `is_layout: true` | `#assign-unwrap` |

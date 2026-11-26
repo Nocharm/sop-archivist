@@ -2684,12 +2684,36 @@
   .practice-band-hint { flex: 1 1 0; min-width: 0; overflow: hidden; color: var(--ink-3); white-space: nowrap; text-overflow: ellipsis; }
   .practice-band-act { flex: none; }
   .practice-grid { display: grid; flex: 1 1 0; grid-template-columns: minmax(0, 1fr) clamp(240px, 18vw, 300px); min-height: 0; }
-  .practice-grid[data-folded] { grid-template-columns: minmax(0, 1fr) 36px; }
   .practice-main { min-width: 0; min-height: 0; }
   .practice-tasks { display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow-y: auto; border-left: 1px solid var(--line); background: var(--surface); }
-  .practice-tasks-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 8px 8px 12px; border-bottom: 1px solid var(--line); }
-  .practice-tasks[data-folded] .practice-tasks-head { flex-direction: column; padding: 8px 4px; border-bottom: 0; }
+  .practice-tasks-head { display: flex; align-items: center; gap: 8px; padding: 8px 8px 8px 12px; border-bottom: 1px solid var(--line); }
   .practice-tasks-title { font-size: var(--fs-ui); font-weight: 600; color: var(--ink); }
+  .practice-progress { margin-left: auto; font: 500 var(--fs-micro) / var(--lh-micro) var(--font-mono); color: var(--ink-3); white-space: nowrap; }
+  /* 과제 줄 - 미완료는 빈 점, 끝낸 것은 확정 색 ✓, 펼친 줄은 왼쪽 2px 띠(막대 쪽 모서리 직각) */
+  .practice-task-list { display: grid; padding: 4px 0; list-style: none; }
+  .practice-task { border-left: 2px solid transparent; }
+  .practice-task[data-open] { border-left-color: var(--accent); background: var(--sunken); }
+  .practice-task-head { display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 10px; font-size: var(--fs-ui); line-height: var(--lh-ui); color: var(--ink-2); text-align: left; }
+  .practice-task-head:hover { color: var(--ink); }
+  .practice-task[data-open] .practice-task-head { font-weight: 600; color: var(--ink); }
+  .practice-task-dot { flex: none; width: 14px; height: 14px; border: 1.5px solid var(--line-2); border-radius: 50%; }
+  .practice-task-check { flex: none; color: var(--st-ok-fill); }
+  .practice-task-title { min-width: 0; overflow-wrap: anywhere; }
+  .practice-task-body { display: grid; gap: 6px; padding: 0 10px 10px 32px; font-size: var(--fs-ui); line-height: var(--lh-ui); color: var(--ink-2); }
+  .practice-task-keys { display: flex; flex-wrap: wrap; gap: 4px; }
+  .practice-task-body .practice-manual-link { justify-self: start; }
+  .practice-tasks-done { padding: 8px 12px; border-top: 1px solid var(--line); font-size: var(--fs-ui); color: var(--ink-2); }
+  /* 접힌 막대 36px - 진행 n/m과 펴기 단추만. 사람이 누르기 전(auto)에는 창 폭이 정한다(practice-frame.tsx PRACTICE_NARROW_QUERY와 같은 값) */
+  .practice-grid[data-folded] { grid-template-columns: minmax(0, 1fr) 36px; }
+  .practice-grid[data-folded] .practice-tasks-head { flex-direction: column-reverse; gap: 6px; padding: 8px 2px; border-bottom: 0; }
+  .practice-grid[data-folded] .practice-progress { margin-left: 0; }
+  .practice-grid[data-folded] :is(.practice-tasks-title, .practice-task-list, .practice-tasks-done) { display: none; }
+  @media (max-width: 1279.98px) {
+    .practice-grid[data-pref="auto"] { grid-template-columns: minmax(0, 1fr) 36px; }
+    .practice-grid[data-pref="auto"] .practice-tasks-head { flex-direction: column-reverse; gap: 6px; padding: 8px 2px; border-bottom: 0; }
+    .practice-grid[data-pref="auto"] .practice-progress { margin-left: 0; }
+    .practice-grid[data-pref="auto"] :is(.practice-tasks-title, .practice-task-list, .practice-tasks-done) { display: none; }
+  }
   .practice-manual-link { display: inline-flex; align-items: center; gap: 6px; align-self: flex-start; font-size: var(--fs-ui); color: var(--accent); }
   .practice-manual-link:hover { text-decoration: underline; }
 }
