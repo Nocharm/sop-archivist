@@ -31,7 +31,7 @@ import {
 } from "../api-sop";
 import { PRACTICE_BUNDLE_ID, PRACTICE_PATH } from "../practice-route";
 
-import { PRACTICE_ROUTE_COUNT, notePracticeAct, readPracticeSnapshot, resetPracticeServer, subscribePractice, type PracticeLogEntry } from "./practice-server";
+import { PRACTICE_ROUTE_COUNT, handlePracticeRequest, notePracticeAct, readPracticeSnapshot, resetPracticeServer, subscribePractice, type PracticeLogEntry } from "./practice-server";
 import { TEST_OLD_DOC, TEST_TABLE, TEST_TARGETS, TEST_UNITS as U, buildPracticeTestFixture } from "./practice-test-fixture";
 
 const B = PRACTICE_BUNDLE_ID;
@@ -93,6 +93,7 @@ describe("practice requests never reach the real server", () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
+  // 이 시나리오의 fetch 0회가 연습 Assign이 -1 밖의 Bundle id를 부르지 않는다는 근거이기도 하다(실제 id면 실제 서버로 간다)
   it("follows the task order with real API functions and calls fetch zero times", async () => {
     const undo = (op?: SaveOp, step_key?: string) => ({ session: SESSION, ...(op ? { op } : {}), ...(step_key ? { step_key } : {}) });
     const view = () => getDocumentView(B, TEST_OLD_DOC);
@@ -160,9 +161,9 @@ describe("what practice does not do is visible", () => {
     expect([reset.status, reset.rule?.code]).toEqual([422, "practice_unsupported"]);
     const edit = await catchApiError(editUnits(B, TEST_OLD_DOC, 3, { type: "split_sentences", unit_id: U.twoSentences }));
     expect([edit.status, edit.rule?.code, edit.rule?.what]).toEqual([422, "practice_unsupported", "edits:split_sentences"]);
-    // /practice에서 실제 Bundle을 부르면 흉내 내지 않는다
-    const real = await catchApiError(getBundle(5));
-    expect(real.rule?.code).toBe("practice_unsupported");
+    // 실제 Bundle은 api.ts가 실제 서버로 보낸다 - 가짜 서버에 잘못 와도 실제 자료를 흉내 내지 않는다
+    const real = await handlePracticeRequest("GET", "/bundles/5");
+    expect(real.status).toBe(422);
     expect(listWrites()).toEqual([]);
     expect(fetchSpy).not.toHaveBeenCalled();
   });

@@ -26,7 +26,13 @@ describe("isPracticeRequest", () => {
     expect(isPracticeRequest("/ai/jobs/recent", PRACTICE_PATH)).toBe(false);
     expect(isPracticeRequest("/sop/remarks/recent?limit=10", PRACTICE_PATH)).toBe(true);
     expect(isPracticeRequest("/bundles", PRACTICE_PATH)).toBe(true);
-    expect(isPracticeRequest("/bundles/5/units", PRACTICE_PATH)).toBe(true);
+  });
+
+  it("decides bundle paths by id alone, so a real bundle's queued writes reach the server from /practice", () => {
+    // 실제 Assign에서 글쇠를 누르고 바로 연습으로 오면 큐가 남은 저장을 /practice에서 보낸다 - 가짜로 버리면 운영 판단이 사라진다
+    expect(isPracticeRequest("/bundles/5/units", PRACTICE_PATH)).toBe(false);
+    expect(isPracticeRequest("/bundles/5/groups/save", PRACTICE_PATH)).toBe(false);
+    expect(isPracticeRequest("/bundles/0", PRACTICE_PATH)).toBe(false);
   });
 
   it("leaves real bundles alone elsewhere", () => {

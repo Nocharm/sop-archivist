@@ -34,7 +34,7 @@ T/F 사람이 실제 자료를 건드리지 않고 Assign의 손짓 열둘(고�
 | # | 정한 것 | 까닭 |
 |---|---|---|
 | D1 | 가짜 서버는 `src/lib/api.ts` `sendRequest` **한 곳**에서 갈아 끼운다. `fetch` 앞에서 `isPracticeRequest(path, pathname)`이 참이면 `await import("./practice/practice-server")`의 `handlePracticeRequest(method, path, body)`가 `Response`를 지어 돌려주고, 그 뒤 오류 처리(`ApiError` · `rule`)는 실제와 같은 줄을 지난다. | Assign의 모든 읽기 · 쓰기가 `apiFetch` → `sendRequest`를 지난다(실측: Assign 트리 229파일에서 `/api`로 가는 `fetch`는 `api.ts` 하나, 나머지 하나는 부팅 때의 `auth-mode.ts`). 부품마다 주입하면 52개 함수를 건드린다. 동적 import라 가짜 서버와 자료는 연습 화면 덩이에만 실린다. |
-| D2 | 연습 요청의 판정은 둘의 합: ① 경로가 연습 Bundle(`/bundles/-1` 아래)이면 **늘** 가짜, ② 지금 화면 주소가 `/practice`이고 경로가 실제로 보낼 목록(`/me`, `/ai/jobs/recent`) 밖이면 가짜. 주소 판정은 `typeof window` 가드. | ①은 화면을 떠난 뒤에도 큐가 마저 보내는 판단("앱 안 이동은 큐가 마저 보낸다")이 실제 서버로 새지 않게 한다. ②는 Bundle 밖 경로(`/sop/remarks/recent` 등)와 앞으로 생길 경로를 기본으로 막는다 — 새는 길은 목록에 적은 것만. `/me`는 신원(새로 연 `/practice`에서도 로그인 상태를 읽어야 한다), `/ai/jobs/recent`는 상단 바 공용 폴러(가짜 빈 답이 실제 AI 작업 표시를 지우지 않게) — 둘 다 읽기만이고 SOP 자료가 아니다. |
+| D2 | 연습 요청의 판정은 둘: ① Bundle 경로(`/bundles/<id>…`)는 **id로만** 정한다 — `-1`이면 화면 주소와 상관없이 **늘** 가짜, 실제 id(0 이상)면 `/practice`에서도 실제 서버. ② Bundle 밖 경로는 지금 화면 주소가 `/practice`이고 실제로 보낼 목록(`/me`, `/ai/jobs/recent`) 밖이면 가짜. 주소 판정은 `typeof window` 가드. (스텝 2 검토로 고침 11-27 — 처음에는 `/practice`에서 실제 Bundle 경로도 가짜였다) | ①은 화면을 떠난 뒤에도 큐가 마저 보내는 판단("앱 안 이동은 큐가 마저 보낸다")이 실제 서버로 새지 않게 하고, 거꾸로 실제 Assign에서 글쇠를 누르고 바로 연습으로 와도 `use-command-queue` `leave()`가 `/practice`에서 보내는 실제 Bundle의 남은 저장을 가짜가 422로 버려 운영 판단을 잃지 않게 한다. 연습 Assign은 -1 밖의 Bundle id를 부르지 않는다(과제 순서 시험의 fetch 0회). ②는 Bundle 밖 경로(`/sop/remarks/recent` 등)와 앞으로 생길 경로를 기본으로 막는다 — 새는 길은 목록에 적은 것만. `/me`는 신원(새로 연 `/practice`에서도 로그인 상태를 읽어야 한다), `/ai/jobs/recent`는 상단 바 공용 폴러(가짜 빈 답이 실제 AI 작업 표시를 지우지 않게) — 둘 다 읽기만이고 SOP 자료가 아니다. |
 | D3 | 연습 Bundle id는 상수 `PRACTICE_BUNDLE_ID = -1`(`src/lib/practice-route.ts`, 무거운 import 없음 — `api.ts`가 가져온다). 연습 문서 id는 900001부터(자료를 뽑을 때 정한다). | 실제 id는 1부터 오르는 양수라 겹치지 않는다. 문서 id는 브라우저 저장 키(`sopa.assign.tablesFolded.<문서 id>`)에 들어가므로 실제 문서의 접은 표와 섞이지 않게 멀리 둔다. |
 | D4 | 연습 자료는 **실제 백엔드가 뽑는다**: `backend/scripts/dump_practice_fixture.py`가 합성 DOCX 둘(Old · New)을 지어 임시 sqlite에 TestClient로 올리고, 화면이 처음 읽는 GET 응답과 표 벗긴 모습(D7)을 `frontend/src/lib/practice/practice-fixture.json`에 쓴다. `backend/tests/test_practice_fixture.py`가 파일이 지금 백엔드의 답과 같은지 본다(`test_rule_cases.py`와 같은 꼴). | 용지는 블록 · 범위 · 번호 칸 · 짝 · 잡음 표시가 서로 맞아야 그려진다. 손으로 쓰면 틀리고, 백엔드가 응답 꼴을 바꾸면 연습만 조용히 깨진다. 뽑은 자료면 처음 모습이 실제와 같고, 꼴이 바뀌면 CI가 알린다. |
 | D5 | 가짜 서버는 **과제에 쓰는 동작만** 흉내 내고(§6.3), 받은 요청을 검사하지 않고 그대로 반영한다. 그 밖의 경로 · 편집 종류는 `422 {detail: {code: "practice_unsupported", what}}` — 화면은 기존 길(`humanizeApiError` → `rule.practice_unsupported`)로 "Not available in practice" 알림을 띄운다. | 서버 업무 규칙의 사본을 만들지 않는다(사용자 결정). 막는 판단은 이미 화면의 순수 모델(`pick-bar-model` · `primary-model` · `planShapeMode` …)이 한다. 거절 길을 새로 만들지 않고 규칙 거절 문구 길을 쓴다. |
@@ -198,6 +198,7 @@ interface PracticeState {
 응답 짓기:
 - `view`: `views[d]`, `units[].status`는 판단에서, `edits.can_undo/can_redo`는 스택에서.
 - `units`: 보기의 Unit마다 `UnitRow` — `decision` · `status`(판단에서, 없으면 `unassigned`) · `target_ids` · `target_doc_ids`(`targets`의 `source_unit_ids`로 거꾸로) · `content_start`(보기의 `number.content_start`). 잡음 줄 · 칸 문장을 넣고 빼는 것은 자료의 처음 응답과 같게 한다(시험: 처음 상태에서 지은 `units`가 자료의 `units`와 같다).
+- 묶음 ID(`group_id`) · 새 Unit의 표시 ID는 표시용으로만 — 묶음 ID는 백엔드 `groups.build_group_ids`를 줄인 것(표 묶음 접기 없음), 표시 ID는 그 문서의 다음 순번.
 - `groups/by-unit` · `by-target`: Unit ↔ 새 문장(출처) · 칸 문장 ↔ 표(`group_unit_id`) · 칸 새 문장 ↔ 표 새 문장(`parent_target_id`)을 따라간 연결 요소(백엔드 `groups.collect_component`와 같은 그래프 걷기 — 짝은 넣지 않는다).
 - `written-sentences`: 자료의 목록에 `targets`의 `source_unit_ids` · `status` · `revision`을 덮어 쓴다(시험: 처음 상태에서 지은 목록 = 자료).
 
@@ -222,9 +223,9 @@ interface PracticeState {
 
 ### 6.4 실제 서버로 새는 요청이 0임을 지키는 법
 
-1. **구조**: `/bundles/-1` 아래는 주소와 상관없이 가짜(D2 ①). `/practice`에서는 목록 둘(`/me` · `/ai/jobs/recent`)만 실제(D2 ②). 판정은 `fetch` 앞 한 곳.
+1. **구조**: Bundle 경로는 id로만 — `/bundles/-1` 아래는 주소와 상관없이 가짜, 실제 id는 늘 실제(D2 ①). `/practice`에서 Bundle 밖 경로는 목록 둘(`/me` · `/ai/jobs/recent`)만 실제(D2 ②). 판정은 `fetch` 앞 한 곳.
 2. **소스 검사**: `src/source-rules.test.ts` "one path per concern"에 규칙 "raw fetch to the API"를 더한다 — `fetch(`는 `src/lib/api.ts`(공용 길)와 `src/lib/auth-mode.ts`(부팅 때 인증 방식 한 번)에만. 새 파일이 `/api`를 직접 부르면 실패하고, 메시지는 "apiFetch를 써라 — 연습 화면의 가짜 서버가 그 한 곳에서 끼어든다".
-3. **단위 시험**(`src/lib/practice/practice-server.test.ts`): 전역 `fetch`를 스파이로 바꾸고, `api-sop.ts`의 실제 함수로 과제 순서(목록 → 보기 → 잇기 → 확정 → 보류 → 배정 취소 → 합치기 → 나누기 → ⇧P 두 번 → 표 벗기기 → 목차 사유 → 되돌리기)를 연습 Bundle id로 부른 뒤 `fetch`가 한 번도 불리지 않았는지. `api.test.ts`: 주소가 `/practice`일 때 `/me`는 `fetch`로, `/sop/remarks/recent`는 가짜로, 주소가 다른 곳일 때 `/bundles/-1/groups/save`는 가짜로.
+3. **단위 시험**(`src/lib/practice/practice-server.test.ts`): 전역 `fetch`를 스파이로 바꾸고, `api-sop.ts`의 실제 함수로 과제 순서(목록 → 보기 → 잇기 → 확정 → 보류 → 배정 취소 → 합치기 → 나누기 → ⇧P 두 번 → 표 벗기기 → 목차 사유 → 되돌리기)를 연습 Bundle id로 부른 뒤 `fetch`가 한 번도 불리지 않았는지. `api.test.ts`: 주소가 `/practice`일 때 `/me`와 실제 Bundle의 쓰기(`POST /bundles/5/groups/save`)는 `fetch`로, `/sop/remarks/recent`는 가짜로, 주소가 다른 곳일 때 `/bundles/-1/groups/save`는 가짜로.
 4. **스모크**(`practice: nothing reaches the backend`): 띠가 보인 뒤부터 과제를 따라 하고 새로 읽는 동안 `page.on("request")`로 `/api/` 요청을 모아 `/api/me` · `/api/auth/mode` · `/api/ai/jobs/recent` 밖이 0인지.
 
 ## 7. 과제(U3)
@@ -311,6 +312,6 @@ Assign 트리 229파일을 훑은 실측:
 큰 위험 둘:
 
 1. **가짜와 실제가 어긋나 연습만 조용히 깨진다.** Assign이 읽는 응답 꼴(`UnitRow` · `Group` · `WrittenSentence` · `DocumentView`)이나 손짓이 보내는 요청(새 경로 · 새 편집 종류 · ⇧P의 순서)이 바뀌어도 운영 화면은 멀쩡하고 연습만 빈 화면 · "Not available" · 체크 안 됨이 된다. 끊는 법: 자료는 백엔드가 뽑고 신선도 시험(D4), 표 벗기기는 찍은 모습(D7), 처리 함수 반환을 `api-sop.ts` 타입으로 묶기(tsc), "처음 상태에서 지은 `units` · `written` = 자료의 실제 응답" 시험, 과제 순서 시나리오 시험(D22의 두 손짓 본문 고정 포함), 모르는 경로는 조용히 비우지 않고 "Not available in practice"로 보이게(D5), 스모크 `practice:`는 `FULL=1`(정식 업데이트 전)에 돈다, `frontend/CLAUDE.md` 한 줄. 남는 틈: 새 동작이 실제와 다른 꼴로 반영되는 것(예: 나눈 뒤 번호 칸) — 연습 범위에서는 받아들인다(D6).
-2. **연습이 실제 서버에 닿는다.** 판정이 빠진 경로(Bundle 밖 · 새 공용 폴러), `fetch`를 직접 부르는 새 코드, 화면을 떠난 뒤의 큐. 끊는 법: D2(연습 Bundle은 늘 가짜 + `/practice`에서는 허용 목록 밖 모두 가짜), 소스 검사 "raw fetch"(§6.4-2), fetch 스파이 시험, 스모크의 요청 세기. 허용 목록 둘은 읽기 전용 · SOP 자료가 아님을 문서에 적는다.
+2. **연습이 실제 서버에 닿는다.** 판정이 빠진 경로(Bundle 밖 · 새 공용 폴러), `fetch`를 직접 부르는 새 코드, 화면을 떠난 뒤의 큐. 끊는 법: D2(연습 Bundle은 늘 가짜 + `/practice`에서는 Bundle 밖 경로 중 허용 목록 밖 모두 가짜), 소스 검사 "raw fetch"(§6.4-2), fetch 스파이 시험, 스모크의 요청 세기. 허용 목록 둘은 읽기 전용 · SOP 자료가 아님을 문서에 적는다.
 
 작은 위험: 개발에서 숨긴 기능을 켠 채 연습하면 숨긴 쪽 쓰기가 "Not available"(D17, 시험 안 함). 주소창에 `/bundles/-1/assign`을 치면 띠 없는 연습(D13, 저장 안 됨). 백엔드 쪼개기 규칙이 바뀌면 자료의 과제 자리가 무너진다 — 신선도 시험의 자리 검사(§4.1)가 알린다. "빈 New"를 문장 있는 New로 읽은 것(D20)과 "목차 삭제"를 사유 쓰기로 읽은 것(D21)은 사용자 확인이 필요하다.

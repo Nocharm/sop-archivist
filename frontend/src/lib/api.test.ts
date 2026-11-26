@@ -167,6 +167,13 @@ describe("practice screen requests (design D1, D2)", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it("sends a real bundle's queued write to the real server even from /practice", async () => {
+    window.history.pushState({}, "", "/practice");
+    const fetchMock = stubFetch(jsonResponse({ units: [], targets: [] }));
+    await apiFetch("/bundles/5/groups/save", { method: "POST", body: JSON.stringify({ action: "confirm" }) });
+    expect(fetchMock.mock.calls.map((call) => [call[0], call[1]?.method])).toEqual([["/api/bundles/5/groups/save", "POST"]]);
+  });
+
   it("sends the practice bundle to the fake server from any other page", async () => {
     window.history.pushState({}, "", "/bundles/5/assign");
     const fetchMock = stubFetch(jsonResponse({}));

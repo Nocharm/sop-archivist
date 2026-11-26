@@ -24,13 +24,18 @@ function isPracticePage(pathname: string | null): boolean {
   return pathname === PRACTICE_PATH || (pathname?.startsWith(`${PRACTICE_PATH}/`) ?? false);
 }
 
+const BUNDLE_PATH = /^\/bundles\/(-?\d+)(?:\/|$)/;
+
 /**
- * 가짜 서버가 받을 요청인가 - ① 연습 Bundle 아래는 화면 주소와 상관없이 늘(떠난 뒤 큐가 마저 보내는 쓰기도),
- * ② 화면이 /practice이면 REAL_ON_PRACTICE 밖 모두(Bundle 밖 경로와 앞으로 생길 경로를 기본으로 막는다).
+ * 가짜 서버가 받을 요청인가 - ① Bundle 경로(`/bundles/<id>…`)는 id로만 정한다: -1이면 화면 주소와 상관없이 늘 가짜(떠난 뒤 명령 큐가
+ * 마저 보내는 쓰기도), 실제 id면 /practice에서도 실제 서버(실제 Assign에서 바로 연습으로 와도 큐가 남은 판단을 잃지 않는다).
+ * ② Bundle 밖 경로는 화면이 /practice일 때 REAL_ON_PRACTICE 밖 모두 가짜(앞으로 생길 경로를 기본으로 막는다).
  */
 export function isPracticeRequest(path: string, pathname: string | null): boolean {
-  if (isPracticeBundlePath(path)) return true;
-  return isPracticePage(pathname) && !REAL_ON_PRACTICE.includes(stripQuery(path));
+  const bare = stripQuery(path);
+  const bundle = BUNDLE_PATH.exec(bare);
+  if (bundle) return Number(bundle[1]) === PRACTICE_BUNDLE_ID;
+  return isPracticePage(pathname) && !REAL_ON_PRACTICE.includes(bare);
 }
 
 /** 지금 화면 주소 - 서버 렌더에는 창이 없어 null */
