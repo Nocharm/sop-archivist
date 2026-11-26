@@ -792,22 +792,40 @@ async def _plan_merge_rows(session: AsyncSession, extraction_id: ExtractionId, o
     return change
 
 
-def is_merge_edit(op: str, created: Sequence[int], retired: Sequence[int]) -> bool:
-    """단위 하나를 여러 단위로 만든 합치기 기록인가 — 합치기와, 짝을 한 언어로 바꿔 합친 모양 전환(switch_language)."""
-    return op in ("merge", "switch_language") and len(created) == 1 and len(retired) > 1
+MERGE_OPS = ("merge", "switch_language", "merge_rows")  # 합친 단위와 그 조각을 남기는 편집 기록(read_merged_pieces)
 
 
-async def find_merge_edit(session: AsyncSession, document_id: int, unit_id: int) -> UnitEdit | None:
-    """unit_id를 만든 적용 중인 합치기 기록 — 없으면 이 단위는 합쳐 생긴 단위가 아니거나 그 뒤로 다시 만들어졌다."""
+def read_merged_pieces(
+    op: str, payload: Mapping[str, object], created: Sequence[int], retired: Sequence[int]
+) -> dict[int, list[int]]:
+    """편집 기록 하나가 합쳐 만든 단위 → 그것이 된 단위(조각). 합친 박스가 아니면 빈 사전.
+
+    merge_rows는 payload["merged"](초안마다의 조각, 만든 단위와 같은 원문 순)를 읽는다. 옛 기록 — 합치기와 짝을 한 언어로 바꿔 합친
+    모양 전환(switch_language) — 은 지금 규칙(만든 1 · 은퇴 2 이상)이라 payload에 merged가 없는 운영의 기록도 같은 답이다.
+    """
+    if op == "merge_rows":
+        merged = payload.get("merged")
+        if not isinstance(merged, list) or len(merged) != len(created):
+            return {}
+        return {unit_id: [int(piece) for piece in pieces] for unit_id, pieces in zip(created, merged, strict=True)}
+    if op in ("merge", "switch_language") and len(created) == 1 and len(retired) > 1:
+        return {created[0]: list(retired)}
+    return {}
+
+
+async def find_merged_pieces(session: AsyncSession, document_id: int, unit_id: int) -> list[int] | None:
+    """unit_id를 만든 적용 중인 합치기 기록의 조각 — 없으면 이 단위는 합쳐 생긴 단위가 아니거나 그 뒤로 다시 만들어졌다."""
     edits = await session.scalars(
         select(UnitEdit)
-        .where(UnitEdit.document_id == document_id, UnitEdit.op.in_(("merge", "switch_language")), UnitEdit.state == EDIT_APPLIED)
+        .where(UnitEdit.document_id == document_id, UnitEdit.op.in_(MERGE_OPS), UnitEdit.state == EDIT_APPLIED)
         .order_by(UnitEdit.seq.desc())
     )
-    return next(
-        (edit for edit in edits if list(edit.created_unit_ids) == [unit_id] and is_merge_edit(edit.op, edit.created_unit_ids, edit.retired_unit_ids)),
-        None,
-    )
+    for edit in edits:
+        if unit_id in edit.created_unit_ids:
+            pieces = read_merged_pieces(edit.op, edit.payload, edit.created_unit_ids, edit.retired_unit_ids)
+            if unit_id in pieces:
+                return pieces[unit_id]
+    return None
 
 
 async def _plan_unmerge(session: AsyncSession, document_id: int, extraction_id: ExtractionId, op: UnmergeOp) -> _Change:
@@ -818,15 +836,15 @@ async def _plan_unmerge(session: AsyncSession, document_id: int, extraction_id: 
     """
     unit = (await load_active_units(session, extraction_id, [op.unit_id]))[op.unit_id]
     ensure_not_noise([unit])  # 되살린 단위에는 표시가 없다 — 삭제된 줄이 말없이 본문으로 돌아오지 않게
-    edit = await find_merge_edit(session, document_id, unit.id)
-    if edit is None:
+    piece_ids = await find_merged_pieces(session, document_id, unit.id)
+    if piece_ids is None:
         raise_rule(422, "cannot_unmerge", unit_id=unit.id)
     originals = list(
         await session.scalars(
-            select(Unit).where(Unit.id.in_(edit.retired_unit_ids), Unit.extraction_id == extraction_id)
+            select(Unit).where(Unit.id.in_(piece_ids), Unit.extraction_id == extraction_id)
         )
     )
-    if len(originals) != len(edit.retired_unit_ids) or any(original.status != UNIT_RETIRED for original in originals):
+    if len(originals) != len(piece_ids) or any(original.status != UNIT_RETIRED for original in originals):
         raise_rule(422, "cannot_unmerge", unit_id=unit.id)
     is_mixed = len({original.lang for original in originals}) > 1
     return _Change(
@@ -948,12 +966,12 @@ async def _plan_piece_language(
 
     남은 조각이 하나면 그것도 되살리고, 둘 이상이면 합친 채 새 단위 하나로 만든다(짝 한쪽). 남은 쪽의 언어는 합친 단위의 언어다.
     """
-    edit = await find_merge_edit(session, document_id, unit.id)
+    piece_ids = await find_merged_pieces(session, document_id, unit.id)
     originals = (
-        list(await session.scalars(select(Unit).where(Unit.id.in_(edit.retired_unit_ids), Unit.extraction_id == extraction_id)))
-        if edit is not None else []
+        list(await session.scalars(select(Unit).where(Unit.id.in_(piece_ids), Unit.extraction_id == extraction_id)))
+        if piece_ids is not None else []
     )
-    if edit is None or len(originals) != len(edit.retired_unit_ids) or any(item.status != UNIT_RETIRED for item in originals):
+    if piece_ids is None or len(originals) != len(piece_ids) or any(item.status != UNIT_RETIRED for item in originals):
         raise_rule(422, "cannot_unmerge", unit_id=unit.id)
     if unit.lang not in PAIR_LANGS:
         raise_rule(422, "missing_language", langs=[unit.lang])

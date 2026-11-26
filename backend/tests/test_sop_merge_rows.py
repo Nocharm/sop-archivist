@@ -182,3 +182,67 @@ def test_a_toc_line_is_refused(client: TestClient) -> None:
     response = _merge_rows(client, fx, _ids(fx.ko1, fx.ko2))
 
     assert _code(response) == (422, "toc_line_locked")
+
+
+# ── 합친 박스의 조각과 풀기 ──────────────────────────────────────────────────
+
+
+def _merge_pair_rows(client: TestClient, fx: Fixture) -> tuple[dict, dict]:
+    result = _ok(_merge_rows(client, fx, _ids(fx.ko1, fx.en1, fx.ko2, fx.en2)))
+    view = get_view(client, fx.bundle_id, fx.doc_id)
+    ko, en = (_active(view)[unit_id] for unit_id in result["created_unit_ids"])
+    return ko, en
+
+
+def test_one_half_unmerges_and_the_other_half_stays(client: TestClient) -> None:
+    fx = _setup(client)
+    ko, en = _merge_pair_rows(client, fx)
+
+    _ok(_edit(client, fx.bundle_id, fx.doc_id, {"type": "unmerge", "unit_id": ko["id"]}))
+
+    view = get_view(client, fx.bundle_id, fx.doc_id)
+    assert {KO1, KO2} <= {unit["text"] for unit in view["units"]}
+    assert _pair_of(view, en["id"]) is None and _active(view)[en["id"]]["can_unmerge"]
+
+
+def test_view_lists_the_pieces_of_both_halves(client: TestClient) -> None:
+    fx = _setup(client)
+    ko, en = _merge_pair_rows(client, fx)
+
+    assert (ko["merge_pieces"], en["merge_pieces"], ko["can_unmerge"]) == ([KO1, KO2], [EN1, EN2], True)
+
+
+def test_a_row_merged_from_one_half_lists_its_own_pieces(client: TestClient) -> None:
+    fx = _setup(client, pairs=False)
+    _pair(client, fx.bundle_id, fx.doc_id, _ids(fx.ko2, fx.en2))
+    (merged_id,) = _ok(_merge_rows(client, fx, _ids(fx.ko1, fx.ko2, fx.en2)))["created_unit_ids"]
+
+    units = _active(get_view(client, fx.bundle_id, fx.doc_id))
+
+    assert units[fx.en2["id"]]["merge_pieces"] == [] and units[merged_id]["merge_pieces"] == [KO1, KO2]
+
+
+def test_a_piece_of_one_half_switches_language_into_a_pair(client: TestClient) -> None:
+    fx = _setup(client)
+    ko, _ = _merge_pair_rows(client, fx)
+
+    result = _ok(_edit(client, fx.bundle_id, fx.doc_id, {"type": "switch_language", "unit_id": ko["id"], "lang": "en", "piece": 1}))
+
+    assert result["shape"] == "split_pair" and sorted(result["created_unit_ids"]) == sorted(_ids(fx.ko1, fx.ko2))
+
+
+@pytest.mark.parametrize(
+    ("op", "payload", "created", "retired", "expected"),
+    [
+        ("merge", {"type": "merge", "unit_ids": [1, 2]}, [9], [1, 2], {9: [1, 2]}),
+        ("switch_language", {"type": "switch_language", "unit_id": 2}, [9], [1, 2], {9: [1, 2]}),
+        ("switch_language", {"type": "switch_language", "unit_id": 9, "piece": 0}, [1, 8], [9], {}),
+        ("split", {"type": "split", "unit_id": 9}, [1, 2], [9], {}),
+        ("merge_rows", {"type": "merge_rows", "unit_ids": [1, 2, 3, 4], "merged": [[1, 3], [2, 4]]}, [8, 9], [1, 2, 3, 4], {8: [1, 3], 9: [2, 4]}),
+        ("merge_rows", {"type": "merge_rows", "unit_ids": [1, 2, 3], "merged": [[1, 2]]}, [9], [1, 2], {9: [1, 2]}),
+    ],
+)
+def test_read_merged_pieces_keeps_the_old_records(op: str, payload: dict, created: list[int], retired: list[int], expected: dict) -> None:
+    from app.sop.editing import read_merged_pieces
+
+    assert read_merged_pieces(op, payload, created, retired) == expected
