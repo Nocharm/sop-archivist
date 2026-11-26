@@ -41,6 +41,7 @@ import { buildNoiseBlock, describeNoiseUnit, listNoiseBlocks, readNoiseReason, s
 import { findUnwrapHeads, getRowUnwrapTable } from "@/lib/unwrap-model";
 import { isUnwrapSuggestionUnchanged, readUnwrapMoves, type UnwrapLineMove } from "@/lib/unwrap-ai-model";
 import { buildStripRows } from "@/lib/figure-spot-model";
+import { findRowTable } from "@/lib/table-tab-model";
 import { describeCounterpart, describeFollowItem, hasFollowChange, listCounterpartChoices, NO_COUNTERPART_VALUE, PICK_VALUE } from "@/lib/table-follow-model";
 import type { TableFollowStrip } from "@/lib/use-table-follow";
 import { useClickOrDouble } from "@/lib/use-click-or-double";
@@ -341,6 +342,8 @@ interface PaperProps {
   numberCell?: PaperNumberCell;
   /** 그림 줄(strips) - hide는 본문 탭(그림 · 그 캡션이 빠지고 자리 표시도 없다), only는 그림 탭(그림 카드만), 없으면 모두(시안 2 D3) */
   figureRows?: FigureRowMode;
+  /** 표 줄(strips) - only는 표 탭(본문의 표만, 표마다 앞에 위치 머리 "§5 아래"), 없으면 모두(11-23 명세 E2) */
+  tableRows?: "all" | "only";
   /** 위치 판(strips) - 이 줄들만 그린다. marker가 있으면 afterKey 줄 뒤(null이면 맨 위)에 그 표지(그림 자리 네모)를 끼운다 */
   spot?: { keys: ReadonlySet<string>; marker?: { afterKey: string | null; node: ReactNode } };
 }
@@ -429,6 +432,7 @@ export function Paper({
   dragBoxes = false,
   numberCell,
   figureRows,
+  tableRows = "all",
   spot,
 }: PaperProps) {
   const { t } = useI18n();
@@ -490,12 +494,15 @@ export function Paper({
           { edge: "bottom", items: model.footer },
         ];
     // 벗긴 표 덩이 안은 사람이 바꾼 순서(unwrap_seq, lib/unwrap-model) 뒤에, 이어 붙은 짝 카드 안은 사람이 바꾼 순서(pair_seq)로 - 떨어진 구성원은 제자리(lib/pair-order-model)
+    // 표 탭은 본문의 표 줄만(벗긴 표의 줄 · 띠 표 제목 줄 · 안쪽 표는 바깥 표의 것)
+    const tableIds = new Set(model.tableBlocks.map((block) => block.tableId));
+    const isShownRow = (row: PaperRow) => tableRows === "all" || tableIds.has(findRowTable(row, model.tables) ?? -1);
     return lists.filter((list) => list.items.length > 0).map((list) => ({
       edge: list.edge,
       // 그림 줄 - 본문 탭은 빼고 그림 탭은 그것만(시안 2 D3). 위치 판은 그 그림 앞뒤 줄만
-      rows: buildStripRows(list.items, model, figureRows).filter((row) => !spot || spot.keys.has(row.key)),
+      rows: buildStripRows(list.items, model, figureRows).filter((row) => (!spot || spot.keys.has(row.key)) && isShownRow(row)),
     }));
-  }, [hasStrips, items, model, figureRows, spot]);
+  }, [hasStrips, items, model, figureRows, tableRows, spot]);
   // 짝 - 단위 → 같은 짝의 다른 구성원(원문 순서, 떨어진 구성원 포함). 한 카드는 아래 brackets가 정한다(같은 쪽·같은 부분의 끊김 없는 줄만)
   const matesOf = useMemo(() => {
     const byPair = new Map<number, ViewUnit[]>();
@@ -1571,6 +1578,26 @@ export function Paper({
     return group !== undefined && group === model.figureGroupOf.get(row.unitId);
   }
 
+  /** 표 탭에서 다른 표끼리 맞닿은 틈 - 본문에서는 사이에 글이 있던 두 표라 합치기를 두지 않는다 */
+  function isAcrossTables(prev: PaperRow, row: PaperRow): boolean {
+    return tableRows === "only" && findRowTable(prev, model.tables) !== findRowTable(row, model.tables);
+  }
+
+  /** 표 탭의 위치 머리 "§5 아래" - 표의 첫 칸 앞에 한 번. 절이 없는 표는 머리가 없다 */
+  function renderTablePlace(prev: PaperRow | undefined, row: PaperRow): ReactNode {
+    if (tableRows !== "only") return null;
+    const tableId = findRowTable(row, model.tables);
+    if (tableId === null || (prev !== undefined && findRowTable(prev, model.tables) === tableId)) return null;
+    const section = model.tableBlocks.find((block) => block.tableId === tableId)?.section ?? "";
+    if (section === "") return null;
+    return (
+      <div className="strip-row table-place-row" data-testid={`assign-table-place-${tableId}`}>
+        <span className="strip-lead-gap" style={{ width: readTabWidth(row) + STRIP_LEAD_EXTRA }} />
+        <span className="table-place">{t("assign.tablePlace", { section })}</span>
+      </div>
+    );
+  }
+
   /** 두 조각 사이 틈 */
   function renderGap(prev: PaperRow, row: PaperRow): ReactNode {
     const unwrapTable = getRowUnwrapTable(row, model.unwrapped, model.tables);
@@ -1588,7 +1615,7 @@ export function Paper({
       >
         {hasRail && renderRail(Math.min(readTabWidth(prev), readTabWidth(row)))}
         {/* 처리 중인 틈은 알약이 합치기 자리를 대신한다. 저절로 삭제된 줄 곁에는 합치기를 두지 않는다 - 먼저 "삭제 취소"로 보통 줄로 돌린다. 접힌 삭제 줄 곁도 같다(펼쳐서 한다) */}
-        {renderGapPills(prev, row) ?? (!(hasNoise && (readNoiseKind(prev, model.units) ?? readNoiseKind(row, model.units)) !== null) && !isDeletedRow(prev) && !isDeletedRow(row) && renderMerge(prev, row))}
+        {renderGapPills(prev, row) ?? (!(hasNoise && (readNoiseKind(prev, model.units) ?? readNoiseKind(row, model.units)) !== null) && !isDeletedRow(prev) && !isDeletedRow(row) && !isAcrossTables(prev, row) && renderMerge(prev, row))}
       </div>
     );
   }
@@ -1978,6 +2005,7 @@ export function Paper({
           <Fragment key={card[0].key}>
             {spot?.marker && spot.marker.afterKey === null && index === 0 && spot.marker.node}
             {index > 0 && renderGap(cards[index - 1][cards[index - 1].length - 1], card[0])}
+            {renderTablePlace(cards[index - 1]?.at(-1), card[0])}
             {hasHeadingShift && renderShiftHead(card)}
             {renderCard(card)}
             {spot?.marker && spot.marker.afterKey !== null && card.some((row) => row.key === spot.marker?.afterKey) && spot.marker.node}

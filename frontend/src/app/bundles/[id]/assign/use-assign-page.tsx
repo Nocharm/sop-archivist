@@ -81,7 +81,8 @@ import { buildPickBar, resolveEnter, type PickLink, type PickMoreId, type PickTo
 import { buildLinkSave } from "@/lib/link-save-model";
 import { buildIdenticalBatches } from "@/lib/match-model";
 import { EMPTY_FOLD_OPEN, type FoldOpen } from "@/lib/paper-fold-model";
-import { buildPaperModel, buildPaperTabs, findNearestCut, isBandHeading, listFigureTabUnitIds, resolvePickUnit, shouldRecenter, type PaperTabKey } from "@/lib/paper-model";
+import { buildPaperModel, buildPaperTabs, findNearestCut, isBandHeading, listFigureTabUnitIds, listTabKeys, resolvePickUnit, shouldRecenter, type PaperTabKey } from "@/lib/paper-model";
+import { isTableWalkUnit } from "@/lib/table-tab-model";
 import { findPairTarget } from "@/lib/pair-hint-model";
 import { readPartState, stepPart, withPartState } from "@/lib/part-history";
 import { isSameOrder, movePairMember, orderPairCard, readPairSlot } from "@/lib/pair-order-model";
@@ -870,8 +871,8 @@ export function useAssignPage() {
   const pairScrollRef = useRef(0);
   // 고른 줄 없이 끈 뒤 그 자리로 되풀이해 맞추는 중이면 그 멈춤 함수
   const pairRestoreRef = useRef<(() => void) | null>(null);
-  // 본문·머리말·꼬리말 탭 - 고른 조각이 다른 탭에 있으면 그 탭으로 가고, 사람이 고른 탭은 그 줄에서 그대로 둔다
-  const partKeys = useMemo(() => (paperModel ? (["body", "header", "footer", "figures"] as const).filter((key) => paperModel[key].length > 0) : []), [paperModel]);
+  // 본문·머리말·꼬리말·그림·표 탭 - 고른 조각이 다른 탭에 있으면 그 탭으로 가고, 사람이 고른 탭은 그 줄에서 그대로 둔다(표 탭은 본문의 표를 다시 모은 것이라 저절로 가지 않는다)
+  const partKeys = useMemo(() => (paperModel ? listTabKeys(paperModel) : []), [paperModel]);
   // 그림 탭으로 간 단위(모든 Old 문서) - J/K가 그림 탭에서는 이것만, 다른 탭에서는 이것을 건너뛴다(시안 2 D3)
   const figureTabIds = useMemo(() => new Set((viewList ?? []).flatMap((view) => [...listFigureTabUnitIds(view)])), [viewList]);
   const paperTabs = useMemo(() => (oldView && paperModel ? buildPaperTabs(oldView, paperModel) : null), [oldView, paperModel]);
@@ -1000,7 +1001,11 @@ export function useAssignPage() {
     setManualPart({ key: activeKey ?? "", part });
   }
   // 필터 접기 - 지금 문서·부분에 맞는(또는 고른) Unit이 없으면 용지 대신 빈 상태와 맞는 곳 바로 가기(저절로 옮기지 않는다)
-  const isInPart = (unitId: number) => partKeys.length <= 1 || partOf?.get(unitId) === activePart;
+  const isInPart = (unitId: number) => partKeys.length <= 1 || (activePart === "tables" ? partOf?.get(unitId) === "body" && isTableStep(unitId) : partOf?.get(unitId) === activePart);
+  /** J/K가 밟을 왼쪽 용지 단위인가 - 표 탭은 그 문서의 표만, 다른 탭은 접힌 표를 건너뛴다(11-23 명세 E2) */
+  function isTableStep(unitId: number): boolean {
+    return paperModel === null || isTableWalkUnit(paperModel.tableBlocks, paperModel.units, NO_NUMBERS, activePart === "tables", unitId);
+  }
   const isFoldEmpty = !isSolo && foldMatch !== null && oldView !== null && !oldView.units.some((unit) => isInPart(unit.id) && (foldMatch.has(unit.id) || (row?.unitIds.includes(unit.id) ?? false)));
   const foldElsewhere = useMemo(() => {
     if (!isFoldEmpty || !viewList) return [];
@@ -1502,12 +1507,18 @@ export function useAssignPage() {
     else revealNewUnit(unitId);
   }
 
+  /** J/K가 밟을 양 단 New 용지 단위인가 - 그 용지가 보는 탭(NewPaper가 data-tab에 적는다)이 표 탭이면 표만, 아니면 접힌 표를 건너뛴다 */
+  function isNewTableStep(unitId: number): boolean {
+    const newTab = document.querySelector<HTMLElement>('[data-testid="assign-new"][data-tab]')?.dataset.tab;
+    return newModel === null || isTableWalkUnit(newModel.tableBlocks, newModel.units, NO_NUMBERS, newTab === "tables", unitId);
+  }
+
   function moveRow(step: 1 | -1) {
     if (hasSolo) {
       // 줄이 없는 문서 - 용지 순서로 다음(앞) 박스(제목 포함), 짝은 한 묶음으로, 저절로 삭제된 블록은 한 자리로 건너뛴다
       const held = new Set(soloUnits.map((unit) => unit.id));
       const blockRest = new Set(listNoiseBlocks(shapeView?.units ?? []).flatMap((block) => block.unitIds.filter((id) => id !== block.key)));
-      const order = (isNewEdit ? (shapeTabs?.order ?? []) : (paperTabs?.order ?? []).filter((id) => partKeys.length <= 1 || partOf?.get(id) === activePart)).filter((id) => !blockRest.has(id));
+      const order = (isNewEdit ? (shapeTabs?.order ?? []).filter(isNewTableStep) : (paperTabs?.order ?? []).filter((id) => isInPart(id) && isTableStep(id))).filter((id) => !blockRest.has(id));
       const from = soloUnits.length === 0 ? (step === 1 ? -1 : order.length) : order.indexOf(step === 1 ? soloUnits[soloUnits.length - 1].id : soloUnits[0].id);
       for (let at = from + step; at >= 0 && at < order.length; at += step) {
         if (held.has(order[at])) continue;
@@ -1529,7 +1540,12 @@ export function useAssignPage() {
       const unitId = readUnitNavKey(key) ?? rowMap.get(key)?.unitIds[0] ?? null;
       return (unitId !== null && figureTabIds.has(unitId)) === (activePart === "figures");
     };
-    const walk = navKeys.filter((key) => isListed(key) && isFigureWalk(key));
+    // 표 탭에서는 그 문서의 표 차례만, 다른 탭에서는 접힌 표를 건너뛴다(11-23 명세 E2)
+    const isTableWalk = (key: string) => {
+      const unitId = readUnitNavKey(key) ?? rowMap.get(key)?.unitIds[0] ?? null;
+      return unitId === null ? activePart !== "tables" : isTableStep(unitId);
+    };
+    const walk = navKeys.filter((key) => isListed(key) && isFigureWalk(key) && isTableWalk(key));
     const current = noisePick !== null ? toTocNavKey(noisePick.block.key) : isPairView ? activeKey : pickedId !== null ? toUnitNavKey(pickedId) : null;
     const next = stepInList(navKeys, walk, current, step);
     const tocKey = next === null ? null : readTocNavKey(next);

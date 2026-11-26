@@ -21,6 +21,7 @@ SOP 화면: `api-sop.ts`(SOP API 호출·응답 타입), 화면 규칙은 순수
   - `content-visibility`는 덩어리에 한 겹만 — 줄에도 걸면 스크롤 고정이 놓친다.
   - 저절로 삭제된 줄(`noise_kind` 목차 · 본문 앞부분 · 개정 이력)은 Assign의 Old에서만 `strips.noise`로 종류마다 흐린 블록 한 카드로 접는다 — `toc-block-model`(`listNoiseBlocks` · `buildNoiseBlock`, 표 · 그림은 한 줄이고 칸 · 캡션은 세지 않는다), `buildRows`의 줄이 아니다. 고름은 `Focus` `kind: "toc"`(블록 · 줄), 화면은 `noisePick`이 그 블록을 찾는다(첫 줄이 빠져 키가 바뀌어도 고른 줄로).
     - 글쇠는 판단 글쇠보다 먼저 `lib/noise-keys.ts`(`U` · `R`, Shift는 블록 전체, Del · ⇧H · Enter는 아무것도 하지 않음). 편집 `clear_noise` · `set_noise_reason` · `start_body`는 처리 중 종류 `toc`이고 **장벽이 아니다**(결과 박스가 누를 때 정해져 있다) — 다시 받기는 큐가 빌 때. 삭제 취소는 고름을 그대로 두고 따라가기로 돌아온 줄을 고른다.
+  - 표 탭(11-23 명세 E2)은 `table-tab-model`(`listTableBlocks` → `PaperModel.tableBlocks`, 본문의 바깥 표 · 문서 차례, 띠 표 제목 줄 · 안쪽 표는 바깥 표의 것)이 정한다. 탭 키는 `listTabKeys` 하나(본문 · 머리말 · 꼬리말 · 그림 · 표 중 있는 것, Old · New가 같이 쓴다). 표 탭은 `buildPaperTabs`의 탭이지만 `tabOf`는 본문 그대로이고 `order`에 다시 넣지 않는다(한 단위가 두 번 오지 않게). 그리기는 같은 `Paper`에 `tableRows="only"` — `buildStripRows` 뒤에서 `findRowTable`로 거르고 표마다 위치 머리, 표끼리 맞닿은 틈에는 합치기가 없다.
 - `tobe-draft`(To-Be 초안, 하위 항목은 줄 키에 묶고 단계 번호는 다시 매기지 않는다).
 - `classify-model`(Assign 줄·보낼 곳·저장 요청):
   - 새 문장 칸 단위로 AI 나눔·합침 보존, 이미 쓴 문서 문장에 잇는 `link`는 닫힌 관계 묶음 전체를 보낸다.

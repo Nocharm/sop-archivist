@@ -1,6 +1,7 @@
 // 원문 용지 모델 - 문서 보기(blocks·units)를 용지에 그릴 순서와 블록 안 조각으로 편다. 순수 함수라 쪼개기·분류 화면이 같이 쓰고 단위 테스트한다.
 
 import type { DocumentView, PartRef, UnitSpan, ViewBlock, ViewTable, ViewUnit } from "./api-sop";
+import { listTableBlocks, listTableTabUnitIds, type TableBlock } from "./table-tab-model";
 import { findLineTable, orderUnwrappedLines } from "./unwrap-order-model";
 
 /** 블록 안 글자 조각 - 단위에 속하면 unitId, 단위 사이 빈 글자면 null */
@@ -47,6 +48,8 @@ export interface PaperModel {
   figureGroupOf: ReadonlyMap<number, string>;
   /** 그림 탭 용지에 그릴 것 - 카드 차례로 그림 블록과 캡션 블록(같은 블록은 한 번) */
   figureItems: PaperItem[];
+  /** 표 탭 · 본문 표 접기의 표(본문의 바깥 표, 문서 차례, lib/table-tab-model) - 비면 표 탭이 없다 */
+  tableBlocks: TableBlock[];
 }
 
 /** 그림 탭의 카드 하나 - 그림 단위(캡션 하나를 같이 쓰는 그림 묶음이면 여럿, 캡션을 가진 첫 그림 먼저)와 거기 붙은 캡션 단위 */
@@ -167,7 +170,8 @@ export function buildPaperModel(view: DocumentView): PaperModel {
     (line) => units.get(line)?.unwrap_seq,
   );
   const { figures, figureGroupOf, figureItems } = buildFigureGroups(view, units);
-  return { header, body, footer, groups: [...groups.values()], segments, units, order, hasNumberRanges: view.has_number_ranges, unwrapped, tables, unwrapLines, figures, figureGroupOf, figureItems };
+  const tableBlocks = listTableBlocks(view, { order, unwrapLines, tables, unwrapped });
+  return { header, body, footer, groups: [...groups.values()], segments, units, order, hasNumberRanges: view.has_number_ranges, unwrapped, tables, unwrapLines, figures, figureGroupOf, figureItems, tableBlocks };
 }
 
 /** 그림 탭으로 가는 단위 - 본문(머리말 · 꼬리말 밖)의 그림 단위(아직 표인 데이터 표 칸 안 그림도)와 거기 붙은 캡션 단위(시안 2 D3) */
@@ -589,7 +593,13 @@ export function getGapMerge(prev: PaperRow, next: PaperRow, units: ReadonlyMap<n
   return { firstId: first.id, secondId: second.id, blocker: getMergeBlocker(first, second) };
 }
 
-export type PaperTabKey = "body" | "header" | "footer" | "figures";
+export type PaperTabKey = "body" | "header" | "footer" | "figures" | "tables";
+
+/** 탭 줄의 키 - 내용이 있는 탭만, B2 글쇠표의 차례(본문 · 머리말 · 꼬리말 · 그림 · 표). 표 탭은 본문의 표를 한 번 더 모아 보인다 */
+export function listTabKeys(model: PaperModel): PaperTabKey[] {
+  const keys: PaperTabKey[] = (["body", "header", "footer", "figures"] as const).filter((key) => model[key].length > 0);
+  return model.tableBlocks.length > 0 ? [...keys, "tables"] : keys;
+}
 
 /** 탭 안의 쪽 하나 - 머리말·꼬리말은 부분 묶음마다 한 쪽, 본문은 한 쪽 */
 export interface PaperSheet {
@@ -608,12 +618,12 @@ export interface PaperTab {
 }
 
 export interface PaperTabs {
-  /** 내용이 있는 탭만 - 본문, 머리말, 꼬리말(각주·미주 포함), 그림 순 */
+  /** 내용이 있는 탭만 - 본문, 머리말, 꼬리말(각주·미주 포함), 그림, 표 순 */
   tabs: PaperTab[];
   tabOf: Map<number, PaperTabKey>;
   /** 보이는 단위 → 숨긴 같은 내용 묶음의 같은 자리 단위. 경계 확인을 함께 보낸다 */
   mirrors: Map<number, number[]>;
-  /** 탭 순서대로 이은 이동 순서 - 숨긴 단위는 없다 */
+  /** 탭 순서대로 이은 이동 순서 - 숨긴 단위는 없다. 표 탭은 본문의 단위를 다시 모은 것이라 들지 않는다(한 단위가 두 번 오지 않게) */
   order: number[];
 }
 
@@ -626,7 +636,8 @@ function getTabKey(part: string): PaperTabKey {
  * 배정 화면이 쓴다: 그 화면에서는 같은 내용의 머리말도 저마다 배정할 줄이라 한 번만 보일 수 없다(buildPaperTabs는 숨긴다).
  */
 export function listPartSheets(view: DocumentView, model: PaperModel, tab: PaperTabKey): PaperSheet[] {
-  if (tab === "body") return [{ key: "body", part: "body", refs: [], items: model.body }];
+  // 표 탭은 본문 쪽에서 표 줄만 거른다(Paper tableRows)
+  if (tab === "body" || tab === "tables") return [{ key: "body", part: "body", refs: [], items: model.body }];
   const meta = new Map(view.part_groups.map((group) => [group.key, group]));
   return model.groups
     .filter((group) => getTabKey(group.part) === tab)
@@ -712,7 +723,10 @@ export function buildPaperTabs(view: DocumentView, model: PaperModel): PaperTabs
       unitIds: model.figures.flatMap((group) => [...group.figureIds, ...group.captionIds]).filter((id) => shown.has(id)),
     });
   }
-  return { tabs, tabOf, mirrors, order: tabs.flatMap((tab) => tab.unitIds) };
+  const order = tabs.flatMap((tab) => tab.unitIds);
+  // 표 탭 - 본문의 표를 문서 차례로(벗긴 표는 줄마다). tabOf는 본문 그대로라 고른 표가 탭을 옮기지 않는다(그림과 다르다, 11-23 명세 E2)
+  if (model.tableBlocks.length > 0) tabs.push({ key: "tables", sheets: [{ key: "body", part: "body", refs: [], items: model.body }], unitIds: listTableTabUnitIds(model.tableBlocks) });
+  return { tabs, tabOf, mirrors, order };
 }
 
 /**

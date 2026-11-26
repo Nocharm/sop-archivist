@@ -157,10 +157,11 @@ export function OldPane({ paneRef, ...props }: OldPaneProps) {
     };
   }
 
-  function renderPaper(paperModel: PaperModel, items: PaperItem[] | undefined) {
+  function renderPaper(paperModel: PaperModel, items: PaperItem[] | undefined, tableRows: "all" | "only" = "all") {
     return (
       <Paper
         figureRows="hide"
+        tableRows={tableRows}
         model={paperModel}
         items={items}
         selectedId={props.selectedId}
@@ -179,7 +180,7 @@ export function OldPane({ paneRef, ...props }: OldPaneProps) {
         onCutNudge={props.onCutNudge}
         renderAtCut={props.cut ? props.renderAtCut : undefined}
         figureSource={props.figureSource}
-        strips={{ statusOf: props.statusOf, renderNote: props.renderNote, renderPills: props.renderPills, fold: props.fold, join: props.join, isCaptionNeeded: props.isCaptionNeeded, noise: props.noise, headingShift: props.headingShift, unwrap: props.unwrap, pairHint, deleted: props.deleted, pending: props.pending, mergeArm: props.mergeArm, pairGrip: props.pairGrip }}
+        strips={{ statusOf: props.statusOf, renderNote: props.renderNote, renderPills: props.renderPills, fold: tableRows === "only" ? undefined : props.fold, join: props.join, isCaptionNeeded: props.isCaptionNeeded, noise: props.noise, headingShift: props.headingShift, unwrap: props.unwrap, pairHint, deleted: props.deleted, pending: props.pending, mergeArm: props.mergeArm, pairGrip: props.pairGrip }}
         renderUnitActions={props.renderUnitActions}
         dragBoxes={props.dragBoxes}
         numberCell={props.numberCell}
@@ -205,7 +206,7 @@ export function OldPane({ paneRef, ...props }: OldPaneProps) {
       </div>
       {props.partKeys.length > 1 && (
         <div className="flex items-center">
-          <PartTabs keys={props.partKeys} active={props.activePart} onChange={props.onPartChange} counts={{ figures: model?.figures.length }} testIdPrefix="assign-tab" />
+          <PartTabs keys={props.partKeys} active={props.activePart} onChange={props.onPartChange} counts={{ figures: model?.figures.length, tables: model?.tableBlocks.length }} testIdPrefix="assign-tab" />
         </div>
       )}
       {props.banner}
@@ -232,6 +233,9 @@ export function OldPane({ paneRef, ...props }: OldPaneProps) {
         ) : model && props.activePart === "figures" ? (
           // 그림 탭 - 본문에서 뺀 그림 카드(시안 2 D3). 필터 접기는 걸지 않는다(카드가 그 탭의 목록 전부)
           <FigureTab paper={buildPaperProps(model, undefined)} onShowPosition={(unitId) => changeSpot({ target: { kind: "figure", unitId }, from: null })} onDelete={props.figures?.onDelete} />
+        ) : model && props.activePart === "tables" ? (
+          // 표 탭 - 본문의 표만, 표마다 위치 머리. 손질 · 표 도구는 본문과 같다(필터 접기는 걸지 않는다 - 그림 탭과 같이)
+          renderPaper(model, model.body, "only")
         ) : model ? (
           props.sheets !== null ? (
             // 머리말·꼬리말 탭 - 묶음(구역마다 다른 머리말…)마다 한 쪽이고 어디에 쓰이는지 설명 줄이 붙는다
@@ -246,7 +250,7 @@ export function OldPane({ paneRef, ...props }: OldPaneProps) {
               ))}
             </div>
           ) : (
-            renderPaper(model, props.partKeys.length > 1 && props.activePart !== "figures" ? model[props.activePart] : undefined)
+            renderPaper(model, props.partKeys.length > 1 && props.activePart !== "figures" && props.activePart !== "tables" ? model[props.activePart] : undefined)
           )
         ) : (
           props.placeholder

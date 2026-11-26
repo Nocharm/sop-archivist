@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import type { DocumentView, ViewBlock, ViewTable, ViewUnit } from "./api-sop";
 import { buildPaperModel } from "./paper-model";
-import { findUnitTable, listTableBlocks, listTableTabUnitIds, resolveFolded, toggleFold, toggleFoldAll } from "./table-tab-model";
+import { findUnitTable, isTableWalkUnit, listTableBlocks, listTableTabUnitIds, resolveFolded, toggleFold, toggleFoldAll } from "./table-tab-model";
 
 function block(id: number, text: string, extra: Partial<ViewBlock> = {}): ViewBlock {
   return {
@@ -80,6 +80,13 @@ describe("table tab model", () => {
 
   it("finds the table of a unit, a cell sentence through its table", () => {
     expect([21, 11, 32, 10].map((id) => findUnitTable(blocks, id, model.units))).toEqual([2, 2, 5, null]);
+  });
+
+  it("walks only table units on the tables tab and skips folded tables elsewhere", () => {
+    const walk = (folded: number[], isTablesTab: boolean) => [10, 20, 21, 14, 31, 32].filter((id) => isTableWalkUnit(blocks, model.units, new Set(folded), isTablesTab, id));
+    expect(walk([], true)).toEqual([20, 21, 31, 32]);
+    expect(walk([], false)).toEqual([10, 20, 21, 14, 31, 32]);
+    expect(walk([5], false)).toEqual([10, 20, 21, 14]);
   });
 
   it("keeps the table of the picked unit open", () => expect(resolveFolded(new Set([2, 5]), blocks, new Set([32]))).toEqual(new Set([2])));

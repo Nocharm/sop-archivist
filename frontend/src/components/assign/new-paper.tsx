@@ -18,7 +18,8 @@ import { Tooltip } from "@/components/ui/tooltip";
 import type { DocumentView } from "@/lib/api-sop";
 import { useI18n } from "@/lib/i18n";
 import { readOverlayKey, readTableLinks, readUnlinkableKey, type NewBox, type NewCellNote, type NewOverlay } from "@/lib/new-overlay-model";
-import { listPartSheets, type FigureRowMode, type PaperItem, type PaperModel, type PaperTabKey, type PaperTabs } from "@/lib/paper-model";
+import { listPartSheets, listTabKeys, type FigureRowMode, type PaperItem, type PaperModel, type PaperTabKey, type PaperTabs } from "@/lib/paper-model";
+import { findUnitTable } from "@/lib/table-tab-model";
 
 export interface NewPaperProps {
   bundleId: number;
@@ -114,10 +115,12 @@ export function NewPaper(props: NewPaperProps) {
   const isAsked = props.tabs !== null && asks.some((id, at) => id !== (seen[at] ?? null));
   if (!isSameDoc || isAsked) {
     const fresh = isAsked ? asks.find((id, at) => id !== null && id !== (seen[at] ?? null)) : null;
-    const wanted = fresh == null ? undefined : props.tabs?.tabOf.get(fresh);
+    // 표 탭에서 고른 표 단위는 표 탭에 그대로 둔다(표의 tabOf는 본문이다)
+    const isTableStay = isSameDoc && tab.key === "tables" && fresh != null && model !== null && findUnitTable(model.tableBlocks, fresh, model.units) !== null;
+    const wanted = fresh == null ? undefined : isTableStay ? "tables" : props.tabs?.tabOf.get(fresh);
     setTab({ docId: props.docId, key: wanted ?? (isSameDoc ? tab.key : "body"), seen: isAsked ? asks : seen });
   }
-  const tabKeys = model ? (["body", "header", "footer", "figures"] as const).filter((key) => model[key].length > 0) : [];
+  const tabKeys = model ? listTabKeys(model) : [];
   const activeTab = tabKeys.includes(tab.key) ? tab.key : (tabKeys[0] ?? "body");
   // 문서를 바꾸면 새 문서가 옆에서 들어온다 - 문서 목록에서 뒤 문서면 오른쪽에서, 앞 문서면 왼쪽에서(렌더 중 상태 맞추기)
   const [slide, setSlide] = useState<{ docId: string; dir: "next" | "prev" | null }>({ docId: props.docId, dir: null });
@@ -282,13 +285,14 @@ export function NewPaper(props: NewPaperProps) {
     },
   };
 
-  function renderPaper(paperModel: PaperModel, items: readonly PaperItem[] | undefined, figureRows: FigureRowMode): ReactNode {
+  function renderPaper(paperModel: PaperModel, items: readonly PaperItem[] | undefined, figureRows: FigureRowMode, tableRows: "all" | "only" = "all"): ReactNode {
     return (
       <Paper
-        key={figureRows}
+        key={`${figureRows}-${tableRows}`}
         model={paperModel}
         items={items}
         figureRows={figureRows}
+        tableRows={tableRows}
         pageClassName="new-sheet new-paper"
         selectedId={props.selectedUnitId}
         pickedIds={props.pickedUnitIds}
@@ -323,6 +327,8 @@ export function NewPaper(props: NewPaperProps) {
 
   function renderBody(paperModel: PaperModel, documentView: DocumentView): ReactNode {
     if (activeTab === "figures") return renderPaper(paperModel, paperModel.figureItems, "only");
+    // 표 탭 - 본문의 표만, 표마다 위치 머리(Old와 같다)
+    if (activeTab === "tables") return renderPaper(paperModel, paperModel.body, "hide", "only");
     if (activeTab === "body") return renderPaper(paperModel, tabKeys.length > 1 ? paperModel.body : undefined, "hide");
     // 머리말·꼬리말 탭 - 묶음(구역마다 다른 머리말…)마다 한 쪽이고 어디에 쓰이는지 설명 줄이 붙는다(Old와 같다)
     return (
@@ -368,7 +374,7 @@ export function NewPaper(props: NewPaperProps) {
       </div>
       {tabKeys.length > 1 && (
         <div className="flex items-center">
-          <PartTabs keys={tabKeys} active={activeTab} onChange={(key) => setTab((prev) => ({ ...prev, key }))} counts={{ figures: model?.figures.length }} testIdPrefix="assign-new-tab" />
+          <PartTabs keys={tabKeys} active={activeTab} onChange={(key) => setTab((prev) => ({ ...prev, key }))} counts={{ figures: model?.figures.length, tables: model?.tableBlocks.length }} testIdPrefix="assign-new-tab" />
         </div>
       )}
       {props.banner}

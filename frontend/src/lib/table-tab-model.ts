@@ -26,7 +26,7 @@ function findOuterTable(tables: ReadonlyMap<number, ViewTable>, tableId: number)
 }
 
 /** 본문의 바깥 표(문서 차례) - 머리말 · 꼬리말의 표와 벗겨 제목 줄이 된 띠 표는 표 탭에 들지 않는다 */
-export function listTableBlocks(view: Pick<DocumentView, "blocks" | "units">, model: PaperModel): TableBlock[] {
+export function listTableBlocks(view: Pick<DocumentView, "blocks" | "units">, model: Pick<PaperModel, "order" | "unwrapLines" | "tables" | "unwrapped">): TableBlock[] {
   const tableUnit = new Map<number, number>();
   for (const unit of view.units) if (unit.kind === "table" && unit.table_id !== null) tableUnit.set(unit.table_id, unit.id);
   const captions = new Map<number, string[]>();
@@ -73,6 +73,12 @@ export function listTableTabUnitIds(blocks: readonly TableBlock[]): number[] {
 export function findUnitTable(blocks: readonly TableBlock[], unitId: number, units: ReadonlyMap<number, Pick<ViewUnit, "group_unit_id">>): number | null {
   const id = units.get(unitId)?.group_unit_id ?? unitId;
   return blocks.find((block) => block.unitIds.includes(id))?.tableId ?? null;
+}
+
+/** 탭에서 J/K가 밟을 단위인가 - 표 탭은 표의 단위만, 다른 탭은 접힌 표의 단위를 건너뛴다(접힌 표는 용지에 없다) */
+export function isTableWalkUnit(blocks: readonly TableBlock[], units: ReadonlyMap<number, Pick<ViewUnit, "group_unit_id">>, folded: ReadonlySet<number>, isTablesTab: boolean, unitId: number): boolean {
+  const tableId = findUnitTable(blocks, unitId, units);
+  return isTablesTab ? tableId !== null : tableId === null || !folded.has(tableId);
 }
 
 /** 용지 줄이 든 바깥 표 - 표 줄은 그 표, 글 · 그림 줄은 칸 블록의 표(벗긴 표의 줄 · 띠 표 제목 줄). 표 밖 줄이면 null */
