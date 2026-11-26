@@ -1,6 +1,6 @@
 # 원본 보기 — Assign Space 시트의 인쇄 미리보기 설계 (2026-11-27)
 
-> 상태: 사용자 승인 대기. 시안 두 장(Space 시트 탭 · 움직임 시연)과 실측(스파이크)은 세션에서 HTML로 보았다. 끝나면 지우고 인용되는 절만 `docs/architecture/decisions.md`로 옮긴다(`documentation.md`).
+> 상태: **사용자 승인 2026-11-27**(§7의 만드는 사람 몫 · 쪽 나누기 문단 단위 · 다크에서도 흰 종이 · 칸 폭 배율만 · 머리 줄 반복은 문서 설정대로 · EMF 빗금 1차 포함). 실측 스크립트는 저장소 밖 `~/Documents/sop-orchestration/original-view-spike/`. 시안 두 장(Space 시트 탭 · 움직임 시연)과 실측(스파이크)은 세션에서 HTML로 보았다. 끝나면 지우고 인용되는 절만 `docs/architecture/decisions.md`로 옮긴다(`documentation.md`).
 
 ## 1. 왜
 
