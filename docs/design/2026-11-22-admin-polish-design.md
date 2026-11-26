@@ -4,7 +4,7 @@
 
 **2026-11-25 범위 고침(사용자 확정)**: 스텝 0·2·4·5·6·7·8과, 스텝 2가 쓰는 스텝 1만 한다. **스텝 3(사내 AI 등록)은 다른 세션(쪼개기 먼저, `docs/split-first`)과 겹쳐 뺀다** — AI 층·`GUIDELINE_KEYS`·지침 시드·가짜 AI·AI 규칙 문서는 건드리지 않는다. 스텝 5는 공용 `DataList`·`.dtable`을 바꾸지 않고 `styles/admin.css`의 관리 전용 규칙으로만. 공용 부품(`SubjectPicker`·`BundleStatusPill`·`MembersModal` 등)은 고치지 않는다. 작업은 모음 브랜치 `feat/admin-polish`에 스텝 브랜치(`feat/admin-polish-<n>-<이름>`)를 차례로 합치고, `dev` 머지·버전·CHANGELOG는 이 작업에서 하지 않는다(머지는 쪼개기 먼저 쪽이 주도).
 
-관리 메뉴(권한·운영·SOP 기준)의 표·편의 기능을 다듬는 일의 결정과 스텝. 2026-11-21~22 시안 세션에서 사용자와 정했다. 기능이 `main`에 머지되면 지운다(`rules/common/documentation.md` 폐기 정책) — 살아 있는 규칙은 그때 `frontend/docs/design/2026-11-07-frontend-design-foundations.md`·폴더 CLAUDE.md·`docs/architecture/`로 옮긴다.
+관리 메뉴(권한·운영·SOP 기준)의 표·편의 기능을 다듬는 일의 결정과 스텝. 2026-11-21~22 시안 세션에서 사용자와 정했다. 기능이 `main`에 머지되면 지운다(`docs/README.md` "문서 정리 정책" 폐기 정책) — 살아 있는 규칙은 그때 `frontend/docs/design/2026-11-07-frontend-design-foundations.md`·폴더 CLAUDE.md·`docs/architecture/`로 옮긴다.
 
 - 프로토타입(직접 눌러 보는 것, 예시 자료·흉내 AI): [`admin-polish/prototype.html`](admin-polish/prototype.html) — 부여·사내 AI 등록·역할·변경 기록. 브라우저로 파일을 열면 된다.
 - 시안 비교 페이지(지금 캡처 ↔ 시안, 동선 그림·전환 표·단추 자리 표): 아티팩트 `https://claude.ai/artifact/XpTQMP7aCfP5NcqRUhjocP`, 로컬 사본 `../sop-wt-admin-polish/.dev/admin-mock/index.html`(워크트리 `.dev`, git 밖).

@@ -1,6 +1,6 @@
 # Progress
 
-프로젝트 진행 현황 로그. 커밋 직전 갱신한다 (`rules/common/git.md` 규칙). v1.5.0(2026-11-21 정식 업데이트)까지의 항목은 [`docs/history/PROGRESS-archive.md`](docs/history/PROGRESS-archive.md)에 있다 — 이 파일이 크기 상한을 넘으면 최근 릴리스까지의 항목을 거기로 옮긴다(`rules/common/git.md` "문서 정리").
+프로젝트 진행 현황 로그. 커밋 직전 갱신한다 (`rules/common/git.md` 규칙). v1.5.0(2026-11-21 정식 업데이트)까지의 항목은 [`docs/history/PROGRESS-archive.md`](docs/history/PROGRESS-archive.md)에 있다 — 이 파일이 크기 상한을 넘으면 최근 릴리스까지의 항목을 거기로 옮긴다(`docs/deploy/release.md` "문서 정리").
 
 
 ## 2026-11-21 — 버전 규칙: 개발 번호를 그대로 운영에 (`chore/version-policy`)
@@ -241,3 +241,8 @@
 ## 2026-11-27 — Space 시트 높이 끌기 (F10, v1.6.45)
 
 - Space 시트 위 손잡이를 끌어 작업 화면 높이의 30~90%로 조절하고 보기 설정에 기억한다(사용자 11-27, 이번 정식 업데이트에). 비율 기준은 시트가 아니라 작업 화면(손잡이 offsetParent 버그 고침), 스모크 `assign: Space preview`에 끌기 단계.
+
+## 2026-11-27 — 늘 실리는 md 다이어트 (`docs/env-diet`)
+
+- 모델이 기본으로 하는 것(단순하게 · 고칠 곳만 · 범용 보안/시험/오류 규칙)을 늘 싣는 글에서 빼자는 사용자 점검 — 루트 CLAUDE.md + rules 41KB → 24KB. guidelines는 이 저장소만의 것(물을 때 · 멈춤 · 말하기)만, 범용 6개는 `conventions.md` 하나로, `git.md`는 커밋 · dev 푸시 버전만 남기고 정식 업데이트 · 급한 수정 · 문서 정리는 `docs/deploy/release.md` + `/release`로, docs 폴더 정책은 `docs/README.md`로. `/agile`은 루트 "작은 수정은 직접"과 겹쳐 지움.
+- 같은 날 저장소 밖에서: 겹치는 플러그인(karpathy · code-review · code-simplifier)과 context-mode는 전역, claude-mem · claude-md-management는 이 프로젝트(`.claude/settings.local.json`)에서 끔.

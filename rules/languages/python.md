@@ -38,7 +38,7 @@ Blank line between each group. No wildcard imports (`from x import *`).
 | Private | `_` prefix | `_internal_helper` |
 | Collections | Plural nouns | `results`, `users` |
 
-**Function names must start with a verb** — verb→purpose table is shared in `rules/common/naming.md`. Python casing: `get_user`, `create_session`, `is_valid()`.
+**Function names must start with a verb** — verb→purpose table is shared in `rules/common/conventions.md`. Python casing: `get_user`, `create_session`, `is_valid()`.
 
 ---
 
