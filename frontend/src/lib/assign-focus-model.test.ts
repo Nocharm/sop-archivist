@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { EditOp } from "./api-sop";
-import { createCommandQueue } from "./command-queue";
+import { createCommandQueue, isBarrier } from "./command-queue";
 import {
   applyLoaded,
   buildPaperWaits,
@@ -290,6 +290,13 @@ describe("pending pill (D4)", () => {
     expect([readEditKind(op), readPendingLabelKey(readEditKind(op))]).toEqual(["reorder", "assign.working.reorder"]);
     expect(readEditPlace(op)).toEqual({ at: "table", tableId: 4 });
   });
+  it("shows the Korean table follow at the table head, locks its lines and holds the queue behind it (D2-R8)", () => {
+    const op: EditOp = { type: "follow_table", table_id: 4, items: [{ unit_ids: [9, 8], number: "5.1" }, { unit_ids: [7], delete: true }], order: null };
+    expect([readEditKind(op), readPendingLabelKey(readEditKind(op))]).toEqual(["follow", "assign.working.follow"]);
+    expect(readEditPlace(op)).toEqual({ at: "table", tableId: 4 });
+    expect(listEditUnitIds(op)).toEqual([9, 8, 7]);
+    expect(isBarrier({ kind: readEditKind(op), isGlobal: false })).toBe(true);
+  });
   it("locks a table's units, its inner band table's and the captions grouped under them", () => {
     const units = [
       { id: 1, table_id: 4, group_unit_id: null }, // 표 단위
@@ -328,15 +335,20 @@ describe("readEditKind · listEditUnitIds", () => {
 describe("planReload (D2 table)", () => {
   const ai = { aiOn: true };
   const off = { aiOn: false };
+  it("an Old structure edit and its undo also refresh the AI suggestion lists, an in-place edit does not", () => {
+    expect(planReload({ kind: "old_edit", docId: 4, isInPlace: false, isReleased: false }, off).suggestions).toBe(true);
+    expect(planReload({ kind: "old_edit", docId: 4, isInPlace: true, isReleased: true }, off).suggestions).toBe(false);
+    expect(planReload({ kind: "edit_undo", docId: 4 }, off).suggestions).toBe(true);
+  });
   it("an Old structure edit waits for that document's view and rows only, then refreshes the bundle, same-text candidates and AI split offers behind", () => {
     expect(planReload({ kind: "old_edit", docId: 4, isInPlace: false, isReleased: false }, ai)).toEqual({
-      docs: [4], units: true, newDoc: null, written: false, tobe: false, identical: true, splitSuggestions: 4, bundle: true,
+      docs: [4], units: true, newDoc: null, written: false, tobe: false, identical: true, splitSuggestions: 4, suggestions: true, bundle: true,
     });
     expect(planReload({ kind: "old_edit", docId: 4, isInPlace: false, isReleased: false }, off).splitSuggestions).toBeNull();
   });
   it("an in-place edit (language, reference, number) refreshes only the bundle behind", () => {
     expect(planReload({ kind: "old_edit", docId: 4, isInPlace: true, isReleased: false }, ai)).toEqual({
-      docs: [4], units: true, newDoc: null, written: false, tobe: false, identical: false, splitSuggestions: null, bundle: true,
+      docs: [4], units: true, newDoc: null, written: false, tobe: false, identical: false, splitSuggestions: null, suggestions: false, bundle: true,
     });
   });
   it("an edit that released decisions also refreshes To-Be, the New sentences and same-text candidates", () => {
@@ -345,23 +357,23 @@ describe("planReload (D2 table)", () => {
     expect(planReload({ kind: "old_edit", docId: 4, isInPlace: true, isReleased: true }, ai)).toMatchObject({ tobe: true, written: true, identical: true, splitSuggestions: null });
   });
   it("pairing waits for the view and rows and refreshes the bundle", () => {
-    expect(planReload({ kind: "pair", docId: 4 }, ai)).toEqual({ docs: [4], units: true, newDoc: null, written: true, tobe: false, identical: false, splitSuggestions: null, bundle: true });
+    expect(planReload({ kind: "pair", docId: 4 }, ai)).toEqual({ docs: [4], units: true, newDoc: null, written: true, tobe: false, identical: false, splitSuggestions: null, suggestions: false, bundle: true });
   });
   it("a caption reference change waits for the view only", () => {
-    expect(planReload({ kind: "caption_ref", docId: 4 }, ai)).toEqual({ docs: [4], units: false, newDoc: null, written: false, tobe: false, identical: false, splitSuggestions: null, bundle: false });
+    expect(planReload({ kind: "caption_ref", docId: 4 }, ai)).toEqual({ docs: [4], units: false, newDoc: null, written: false, tobe: false, identical: false, splitSuggestions: null, suggestions: false, bundle: false });
   });
   it("an applied AI split is an Old structure edit, a dismissed one reloads the view and the offers", () => {
     expect(planReload({ kind: "split_suggestion", docId: 4, isApplied: true }, ai)).toEqual(planReload({ kind: "old_edit", docId: 4, isInPlace: false, isReleased: false }, ai));
-    expect(planReload({ kind: "split_suggestion", docId: 4, isApplied: false }, ai)).toEqual({ docs: [4], units: false, newDoc: null, written: false, tobe: false, identical: false, splitSuggestions: 4, bundle: false });
+    expect(planReload({ kind: "split_suggestion", docId: 4, isApplied: false }, ai)).toEqual({ docs: [4], units: false, newDoc: null, written: false, tobe: false, identical: false, splitSuggestions: 4, suggestions: false, bundle: false });
   });
   it("a New document edit waits for that document and the New sentences, To-Be behind", () => {
-    expect(planReload({ kind: "new_edit", docId: 9, isReleased: false }, ai)).toEqual({ docs: [], units: false, newDoc: 9, written: true, tobe: true, identical: false, splitSuggestions: null, bundle: false });
+    expect(planReload({ kind: "new_edit", docId: 9, isReleased: false }, ai)).toEqual({ docs: [], units: false, newDoc: 9, written: true, tobe: true, identical: false, splitSuggestions: null, suggestions: false, bundle: false });
   });
   it("a New document edit that released links also refreshes the Old rows it put on hold", () => {
-    expect(planReload({ kind: "new_edit", docId: 9, isReleased: true }, ai)).toEqual({ docs: "all", units: true, newDoc: 9, written: true, tobe: true, identical: true, splitSuggestions: null, bundle: true });
+    expect(planReload({ kind: "new_edit", docId: 9, isReleased: true }, ai)).toEqual({ docs: "all", units: true, newDoc: 9, written: true, tobe: true, identical: true, splitSuggestions: null, suggestions: false, bundle: true });
   });
   it("an edit Undo reloads every Old document when the response does not name one", () => {
-    expect(planReload({ kind: "edit_undo", docId: null }, ai)).toEqual({ docs: "all", units: true, newDoc: null, written: false, tobe: false, identical: true, splitSuggestions: null, bundle: true });
+    expect(planReload({ kind: "edit_undo", docId: null }, ai)).toEqual({ docs: "all", units: true, newDoc: null, written: false, tobe: false, identical: true, splitSuggestions: null, suggestions: true, bundle: true });
     expect(planReload({ kind: "edit_undo", docId: 4 }, ai).docs).toEqual([4]);
   });
 });

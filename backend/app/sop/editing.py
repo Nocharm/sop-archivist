@@ -23,6 +23,7 @@ from sqlalchemy import Row, delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import clock
+from app.sop.ai.apply import close_unused_suggestions
 from app.sop.captions import CAPTION_KIND
 from app.sop.constants import BULLET_SYMBOLS, MAX_PAIR_SIDE, PAIR_CONFIRMED, PAIR_SOURCE_HUMAN
 from app.sop.counterparts import BODY_PART
@@ -132,6 +133,10 @@ MAX_INDENT_SHIFT = 9  # units.indent_shift의 절댓값 상한 — 화면 단계
 
 Offset = Annotated[int, Field(ge=0, le=MAX_DB_INT)]
 IndentShift = Annotated[int, Field(ge=-MAX_INDENT_SHIFT, le=MAX_INDENT_SHIFT)]
+# 번호 칸 값 — 번호 고치기 · 한글 표처럼 하기가 받는다
+NumberStr = Annotated[
+    str, StringConstraints(strip_whitespace=True, min_length=1, max_length=MAX_NUMBER_CHARS, pattern=r"^[^\r\n]+$"), NO_NUL
+]
 T = TypeVar("T")
 ExtractionId = int | None  # 받지 않았거나 추출에 실패한 문서는 추출이 없다 — 단위·블록 조회가 비어 404가 된다
 
@@ -256,10 +261,7 @@ class SetNumberOp(BaseModel):
 
     type: Literal["set_number"]
     unit_id: DbId
-    number: Annotated[
-        str, StringConstraints(strip_whitespace=True, min_length=1, max_length=MAX_NUMBER_CHARS, pattern=r"^[^\r\n]+$"),
-        NO_NUL,
-    ] | None
+    number: NumberStr | None
     follow: bool = True
     indent_shift: IndentShift | None = None
 
@@ -349,11 +351,37 @@ class SwitchLanguageOp(BaseModel):
     merge_pair: bool = False
 
 
+class FollowItemIn(BaseModel):
+    """한글 표처럼 하기의 일 하나 — unit_ids가 둘 이상이면 합친다(첫 줄이 order에서 합친 줄의 자리). number · indent_shift는 null이면 그대로.
+    delete면 그 줄을 같은 요청에서 삭제로 확정한다 — 다른 일과 함께 받지 않는다(422 invalid_follow_item)."""
+
+    unit_ids: list[DbId] = Field(min_length=1, max_length=MAX_EDIT_UNITS)
+    delete: bool = False
+    number: NumberStr | None = None
+    indent_shift: IndentShift | None = None
+
+
+class FollowTableOp(BaseModel):
+    """한글 표처럼 하기(11-23 명세 D2-R5 · R8) — 순서 · 합치기 · 번호 · 들여쓰기를 한 편집으로, 삭제는 같은 요청에서 판단으로(되돌리기 한 번).
+
+    벗긴 Old 표만 받는다. order는 덩이 줄 전부(합칠 줄은 그 첫 줄)를 새 순서로 — null이면 순서를 바꾸지 않는다. 판단은 막지 않는다
+    (순서 · 번호 · 들여쓰기는 글 · 출처가 그대로, 합치기는 은퇴라 지금처럼 확인을 묻는다). 삭제는 편집이 아니라 라우터가 판단으로 쓴다.
+    """
+
+    type: Literal["follow_table"]
+    table_id: DbId
+    items: list[FollowItemIn] = Field(min_length=1, max_length=MAX_EDIT_UNITS)
+    order: list[DbId] | None = Field(default=None, min_length=1, max_length=MAX_EDIT_UNITS)
+
+    def list_delete_ids(self) -> list[int]:
+        return [unit_id for item in self.items if item.delete for unit_id in item.unit_ids]
+
+
 EditOp = Annotated[
     SplitOp | MergeOp | UnmergeOp | MoveBoundaryOp | CarveOp | SetLanguageOp | SwitchLanguageOp
     | SetLayoutTableOp | AttachCaptionOp | DetachCaptionOp | SetFirstRowCaptionOp | GroupFiguresOp
     | UngroupFiguresOp | SetRefOp | ClearRefOp | ClearNoiseOp | SetNoiseReasonOp | StartBodyOp | SetNumberOp | SetHeadingOp | ReorderPairOp
-    | ReorderUnwrappedOp | SetIndentsOp,
+    | ReorderUnwrappedOp | SetIndentsOp | FollowTableOp,
     Field(discriminator="type"),
 ]
 
@@ -382,13 +410,20 @@ class EditResult(BaseModel):
     detach: DetachReport | None
     # switch_language가 바꾼 모양 — 짝을 합침 | 짝만 풂(떨어져 있어 합치지 않음) | 조각을 떼어 짝으로. 다른 편집은 None
     shape: Literal["merged", "unpaired", "split_pair"] | None = None
+    # 한글 표처럼 하기(follow_table)가 같은 요청에서 삭제로 확정한 단위 — 화면이 판단을 다시 받고 되돌리기 단계를 센다(revision은 그대로일 수 있다).
+    # 비면 응답에 싣지 않는다
+    disposed_unit_ids: list[int] = Field(default_factory=list)
+    # 이 편집이 거둔 분류·묶기 제안 id — 응답에는 싣지 않고 Assign 되돌리기 단계가 스냅숏에서 그 행만 뺀다
+    closed_suggestion_ids: list[int] = Field(default_factory=list, exclude=True)
 
     @model_serializer(mode="wrap")
     def _drop_empty_shape(self, handler: SerializerFunctionWrapHandler) -> dict:
-        """모양 전환이 아닌 편집의 응답은 전과 같은 꼴 — shape는 값이 있을 때만 싣는다."""
+        """모양 전환 · 삭제가 아닌 편집의 응답은 전과 같은 꼴 — shape · disposed_unit_ids는 값이 있을 때만 싣는다."""
         data = handler(self)
         if data.get("shape") is None:
             data.pop("shape", None)
+        if not data.get("disposed_unit_ids"):
+            data.pop("disposed_unit_ids", None)
         return data
 
 
@@ -1964,6 +1999,77 @@ async def _plan_reorder_unwrapped(session: AsyncSession, extraction_id: Extracti
     })
 
 
+async def load_unwrapped_lines(session: AsyncSession, extraction_id: ExtractionId, table_id: int) -> list[Unit] | None:
+    """벗긴 보통 표 하나의 덩이 줄을 덩이 차례로 — 벗긴 표가 아니면 None. 한글 표 따라 하기(table_follow.py)가 읽는다."""
+    tables = await _load_unwrap_tables(session, extraction_id)
+    if table_id not in tables or not tables[table_id].is_unwrapped:
+        return None
+    lines = await _load_unwrap_lines(session, extraction_id, table_id, tables)
+    return order_unwrapped(lines, lambda unit: unit.unwrap_seq, _get_position)
+
+
+async def _plan_follow_table(
+    session: AsyncSession, document_id: int, extraction_id: ExtractionId, op: FollowTableOp
+) -> _Change:
+    """한글 표처럼 하기의 편집 몫 — 합치기(_plan_merge의 초안) + 덩이 순서 + 번호 + 들여쓰기를 한 변경으로(_merge_changes). 삭제는 여기서 쓰지 않는다.
+
+    New 문서는 422 invalid_side, 그 추출의 표가 아니면 404 table_not_found, 벗긴 보통 표가 아니면 422 table_not_unwrapped, 일의 줄이나 order가
+    덩이 줄과 어긋나면 422 unwrap_lines_mismatch(unit_ids = 지금 덩이 차례), 삭제를 다른 일과 함께 주면 422 invalid_follow_item.
+    번호는 그 줄만 고친다(뒤 번호를 따라 고치지 않는다 — 한글 표의 번호를 줄마다 그대로 적는다).
+    """
+    document = await session.get(Document, document_id)
+    if document is not None and document.side != "old":
+        raise_rule(422, "invalid_side", side=document.side)
+    ensure_unique_units([unit_id for item in op.items for unit_id in item.unit_ids])
+    for item in op.items:
+        if item.delete and (len(item.unit_ids) > 1 or item.number is not None or item.indent_shift is not None):
+            raise_rule(422, "invalid_follow_item", unit_ids=item.unit_ids)
+    table = await _load_table(session, extraction_id, op.table_id)
+    lines = await load_unwrapped_lines(session, extraction_id, table.id)
+    if lines is None:
+        raise_rule(422, "table_not_unwrapped", table_id=table.id)
+    ensure_not_noise(lines)
+    current_order = [unit.id for unit in lines]
+    merged_tails = {unit_id for item in op.items if len(item.unit_ids) > 1 for unit_id in item.unit_ids[1:]}
+    expected = set(current_order) - merged_tails
+    if not {unit_id for item in op.items for unit_id in item.unit_ids} <= set(current_order) or (
+        op.order is not None and (len(op.order) != len(expected) or set(op.order) != expected)
+    ):
+        raise_rule(422, "unwrap_lines_mismatch", table_id=table.id, unit_ids=current_order)
+    places = {unit_id: index for index, unit_id in enumerate(op.order)} if op.order is not None else {}
+    by_id = {unit.id: unit for unit in lines}
+    change = _Change()
+    for item in op.items:
+        if item.delete:
+            continue
+        head = item.unit_ids[0]
+        if len(item.unit_ids) > 1:
+            part = await _plan_merge(session, extraction_id, MergeOp(type="merge", unit_ids=item.unit_ids))
+            draft = part.drafts[0]
+            if item.number is not None:
+                draft.number["number_set"] = None if item.number == draft.number.get("number_read") else item.number
+            if item.indent_shift is not None:
+                draft.indent_shift = item.indent_shift
+            if head in places:
+                draft.unwrap_seq = places.pop(head)
+        elif item.number is not None:
+            part = await _plan_set_number(
+                session, extraction_id,
+                SetNumberOp(type="set_number", unit_id=head, number=item.number, follow=False, indent_shift=item.indent_shift),
+            )
+        elif item.indent_shift is not None:
+            part = await _plan_set_indents(
+                session, extraction_id, SetIndentsOp(type="set_indents", units=[IndentIn(unit_id=head, indent_shift=item.indent_shift)])
+            )
+        else:
+            continue
+        change = _merge_changes(change, part)
+    change.unwrap_seqs = {
+        unit_id: (by_id[unit_id].unwrap_seq, index) for unit_id, index in places.items() if by_id[unit_id].unwrap_seq != index
+    }
+    return change
+
+
 async def _plan(session: AsyncSession, document_id: int, extraction_id: ExtractionId, op: EditOp) -> _Change:
     match op:
         case SplitOp():
@@ -2012,6 +2118,8 @@ async def _plan(session: AsyncSession, document_id: int, extraction_id: Extracti
             return await _plan_reorder_unwrapped(session, extraction_id, op)
         case SetIndentsOp():
             return await _plan_set_indents(session, extraction_id, op)
+        case FollowTableOp():
+            return await _plan_follow_table(session, document_id, extraction_id, op)
         case _:
             assert_never(op)
 
@@ -2452,9 +2560,12 @@ async def _write_change(
         await pair_new_units(session, document, activated, actor)
     await session.flush()
     await verify_document_coverage(session, document.id)
+    # 은퇴한 단위를 덮던 분류·묶기 제안은 받을 줄이 없다 — 되돌려도 되살리지 않는다(decision_steps.record_unit_edit_step이 스냅숏에서 뺀다)
+    closed = await close_unused_suggestions(session, document.bundle_id, unit_ids=change.retire, keep_linked=True)
     document.revision += 1
     return EditResult(
         document_revision=document.revision, created_unit_ids=activated, retired_unit_ids=sorted(change.retire),
+        closed_suggestion_ids=closed,
         detach=detach,
     )
 

@@ -568,7 +568,17 @@ export type EditOp =
   /** 짝 카드 안 순서(설계 2026-11-20-assign-mockup1 D8) - 그 짝의 구성원 전부를 새 순서로. 끊김 없이 이어진 카드만(pair_not_adjacent), 배정이 걸리면 409 */
   | { type: "reorder_pair"; pair_id: number; unit_ids: number[] }
   /** 벗긴 표 덩이 안 줄 순서(설계 2026-11-20-assign-mockup2 D2) - 그 덩이의 줄 전부를 새 순서로(짝 카드 구성원은 붙여서). 판단이 걸린 줄도 받는다 */
-  | { type: "reorder_unwrapped"; table_id: number; unit_ids: number[] };
+  | { type: "reorder_unwrapped"; table_id: number; unit_ids: number[] }
+  // 한글 표처럼 하기(11-23 명세 D2-R8) - 순서 · 합치기 · 번호 · 들여쓰기는 편집 하나, delete 줄은 같은 요청에서 삭제 판단(되돌리기 한 번)
+  | { type: "follow_table"; table_id: number; items: FollowItemInput[]; order: number[] | null };
+
+/** follow_table의 일 하나 - unit_ids가 둘 이상이면 합친다(첫 줄이 order에서 합친 줄의 자리). 없는 칸은 그대로 */
+export interface FollowItemInput {
+  unit_ids: number[];
+  delete?: true;
+  number?: string;
+  indent_shift?: number;
+}
 
 export interface EditResult {
   document_revision: number;
@@ -578,6 +588,8 @@ export interface EditResult {
   detach?: Pick<DetachReport, "reset_unit_ids" | "held_unit_ids"> | null;
   /** switch_language가 바꾼 모양 - 다른 편집은 null */
   shape?: "merged" | "unpaired" | "split_pair" | null;
+  /** 한글 표처럼 하기가 같은 요청에서 삭제로 확정한 단위 - 있으면 revision이 그대로여도 되돌리기 단계가 생겼다. 없으면 빠진다 */
+  disposed_unit_ids?: number[];
 }
 
 /** 되돌리기·다시 하기 응답 - 무엇을 거꾸로(다시) 했는지. 경계 확인 기록이면 바뀐 단위와 바뀐 뒤 값 */
@@ -614,6 +626,32 @@ export interface TableCounterpart {
 
 export function getTableCounterpart(bundleId: number, docId: number, tableId: number): Promise<TableCounterpart> {
   return apiFetch<TableCounterpart>(`${buildDocPath(bundleId, docId)}/tables/${tableId}/counterpart`);
+}
+
+/** 한글 표처럼 하기의 일 하나(서버 table_follow.FollowItem) - order는 맞춘 뒤 자리(1부터, 같으면 null), number · indent_shift는 고칠 값(같으면 null),
+ *  indent는 들여쓰기가 달라 보이는지(칩), delete는 지울 줄(다른 일 없음). 칩이 없는 줄도 실려 온다(순서를 다시 세우려고) */
+export interface FollowItem {
+  unit_ids: number[];
+  order: number | null;
+  number: string | null;
+  indent: boolean;
+  indent_shift: number | null;
+  delete: boolean;
+}
+
+/** 벗긴 영어 Old 표에 한글 짝 표에서 한 일(11-23 명세 D2-R4~R7) - rule이면 규칙 제안, ai면 맞춘 꼴이 달라 AI 길, none이면 없음. 저장되지 않는다 */
+export interface TableFollow {
+  source_table_id: number | null;
+  mode: "rule" | "ai" | "none";
+  items: FollowItem[];
+  /** 칩이 있는 일의 수 - 머리 "한글 표처럼 하기 · n건" */
+  count: number;
+  /** rule일 때 영어 표의 지금 덩이 차례(줄 id 전부) - 한 줄만 적용할 때 순서를 세운다 */
+  lines: number[];
+}
+
+export function getTableFollow(bundleId: number, docId: number, tableId: number): Promise<TableFollow> {
+  return apiFetch<TableFollow>(`${buildDocPath(bundleId, docId)}/tables/${tableId}/follow`);
 }
 
 /** 사람이 짝 표를 정한다(null = 짝 없음) - 문서를 바꾸지 않아 revision · 되돌리기 단계가 없다 */

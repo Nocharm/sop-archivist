@@ -195,3 +195,20 @@ def test_predicates_catch_the_bad_form_only(predicate: Predicate, bad: str, good
 def test_noqa_pattern_needs_text_after_the_codes() -> None:
     assert BARE_NOQA.search("x = 1  # noqa: F401")
     assert not BARE_NOQA.search("x = 1  # noqa: F401 -- fixture found by name")
+
+
+def test_waiting_kinds_are_the_offered_kinds_the_frontend_does_not_hide() -> None:
+    """개요의 "AI 제안 대기"는 화면이 숨기지 않은 받는 종류만 센다 — 한쪽 목록만 고치면 개요 수와 화면(알약 · 카드)이 어긋난다.
+
+    How to fix: backend `app/sop/ai/constants.py` WAITING_KINDS must equal `apply.OFFERED_KINDS` minus frontend
+    `HIDDEN_AI_KINDS` (`frontend/src/lib/ai-suggestion-model.ts`) — change both lists in the same commit.
+    """
+    from app.sop.ai.apply import OFFERED_KINDS
+    from app.sop.ai.constants import WAITING_KINDS
+
+    source = (APP.parents[1] / "frontend" / "src" / "lib" / "ai-suggestion-model.ts").read_text(encoding="utf-8")
+    found = re.search(r"HIDDEN_AI_KINDS[^=]*=\s*new Set\(\[([^\]]*)\]\)", source)
+    assert found, "HIDDEN_AI_KINDS declaration not found in ai-suggestion-model.ts — update this test's pattern with it"
+    hidden = set(re.findall(r'"([^"]+)"', found.group(1)))
+
+    assert set(WAITING_KINDS) == set(OFFERED_KINDS) - hidden

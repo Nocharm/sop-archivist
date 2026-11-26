@@ -4098,6 +4098,119 @@ await runStep("assign: join two pieces from the gap between them, then unmerge",
   check("three undos return to the original sentence", (await readIds()).length === before);
 });
 
+// 편집이 은퇴시킨 Unit의 제안은 거둔다(쪼개기 먼저 E3, S16) - 한 문장을 잘라 두 조각에 분류 제안을 받아 두고 틈의 Join으로 붙이면 AI 알약의 받을 수가 줄고,
+// 되돌리기 뒤에도 늘지 않는다. 끝에 되돌리기 한 번(붙이기 → 자르기까지 두 번)으로 시드를 처음 그대로 둔다
+await runStep("assign: merging two suggested boxes drops the AI count and Ctrl+Z does not bring it back", { drafting: true }, async ({ page }) => {
+  const headers = { "X-Dev-User": "qa.member" };
+  const status = await page.request.get(`${BASE}/api/bundles/${freshBundleId}/ai/status`, { headers });
+  if (!status.ok() || !(await status.json()).ai_enabled) {
+    console.log("  (AI is off in this backend - skipped)");
+    return;
+  }
+  const docs = await (await page.request.get(`${BASE}/api/bundles/${freshBundleId}/documents`, { headers })).json();
+  const readView = async (docId) => (await page.request.get(`${BASE}/api/bundles/${freshBundleId}/documents/${docId}/view`, { headers })).json();
+  await page.goto(`${BASE}/bundles/${freshBundleId}/assign`);
+  await wait(page, "assign-bar");
+  const pieceOf = (unitId) => page.locator(`[data-testid="assign-paper-piece-${unitId}"], [data-testid="assign-paper-unit-${unitId}"]`).first();
+  let doc = null;
+  let unit = null;
+  for (const candidate of docs.filter((item) => item.side === "old" && item.status === "ready")) {
+    const found = (await readView(candidate.id)).units.filter((item) => item.kind === "sentence" && item.status === "unassigned" && item.lang === "en" && item.pair_id === null && item.text.trim().split(" ").length >= 6);
+    if (found.length === 0) continue;
+    await page.locator('[data-testid="assign-old-doc"]').click();
+    await page.locator(`[data-testid="assign-old-doc-option-${candidate.id}"]`).click();
+    await page.waitForTimeout(600);
+    for (const item of found) {
+      if ((await pieceOf(item.id).count()) === 0) continue;
+      doc = candidate;
+      unit = item;
+      break;
+    }
+    if (unit !== null) break;
+  }
+  check("the fresh bundle has an unpaired English sentence on screen", unit !== null);
+  if (unit === null) return;
+  const readIds = async () => (await readView(doc.id)).units.map((item) => item.id);
+  const waitCount = async (expected) => {
+    for (let tries = 0; tries < 60; tries += 1) {
+      if ((await readIds()).length === expected) return true;
+      await page.waitForTimeout(250);
+    }
+    return false;
+  };
+  const beforeIds = await readIds();
+  const before = beforeIds.length;
+  // 잘라서 두 조각을 만들고 그 둘에 분류 제안을 받아 둔다 - 응답(API)이 아니라 저장된 제안 수로 기다린다
+  await pieceOf(unit.id).scrollIntoViewIfNeeded();
+  await pieceOf(unit.id).click({ button: "right" });
+  await wait(page, "assign-ctx-split");
+  await page.locator('[data-testid="assign-ctx-split"]').click();
+  await wait(page, "assign-cut-run");
+  await page.locator('[data-testid="assign-cut-run"]').click();
+  check("the sentence is cut in two", await waitCount(before + 1));
+  const halves = (await readView(doc.id)).units.filter((item) => !beforeIds.includes(item.id)).sort((a, b) => a.pos_seq - b.pos_seq);
+  const asked = await page.request.post(`${BASE}/api/bundles/${freshBundleId}/ai/classify`, { headers, data: { unit_ids: halves.map((half) => half.id) } });
+  check("classify is queued for both pieces", asked.ok(), String(asked.status()));
+  const countLive = async () => {
+    const list = await (await page.request.get(`${BASE}/api/bundles/${freshBundleId}/ai/suggestions?kind=classify&result=applied&limit=1000`, { headers })).json();
+    return list.items.filter((item) => item.adoption === null && (item.content.unit_ids ?? []).some((id) => halves.some((half) => half.id === id))).length;
+  };
+  let live = 0;
+  for (let tries = 0; tries < 120 && live === 0; tries += 1) {
+    live = await countLive();
+    if (live === 0) await page.waitForTimeout(500);
+  }
+  check("the pieces carry live AI suggestions", live >= 1, String(live));
+  // 알약의 받을 수 - 화면이 다시 읽은 뒤의 값(없으면 0). 열었다 닫는다
+  await page.reload();
+  await wait(page, "assign-bar");
+  const readOffered = async () => {
+    await page.waitForLoadState("networkidle");
+    if ((await page.locator('[data-testid="top-bar-ai"]').count()) === 0) return 0;
+    await page.locator('[data-testid="top-bar-ai"]').click();
+    const row = page.locator('[data-testid="ai-accept-classify-count"]');
+    const shown = (await row.count()) === 0 ? 0 : Number((await row.innerText()).trim());
+    await page.keyboard.press("Escape");
+    return shown;
+  };
+  const offered = await readOffered();
+  check("the AI menu counts the suggestions on the two pieces", offered >= live, `${offered} vs ${live}`);
+  // 붙이기 - 응답으로 줄 수가 돌아온 뒤 화면이 제안을 다시 읽을 때까지 기다린다
+  // 메뉴를 닫은 Escape가 고름도 풀므로 앞 조각을 다시 고른 뒤 틈의 단추를 찾는다(단추는 고른 박스 곁 틈에만 있다)
+  const joinPieces = async () => {
+    await pieceOf(halves[0].id).click();
+    await page.locator(`.strip[data-testid="assign-paper-piece-${halves[0].id}"][data-sel]`).waitFor({ timeout: T });
+    const join = page.locator(`[data-testid="assign-paper-join-${halves[0].id}-${halves[1].id}"]`);
+    await join.waitFor({ state: "attached", timeout: T });
+    await page.waitForLoadState("networkidle");
+    await page.waitForFunction(() => { const acts = document.querySelector(".strip-acts[data-open]"); return acts === null || acts.getAnimations().length === 0; }, null, { timeout: T });
+    await page.locator(".strip-gap", { has: join }).hover({ position: { x: 200, y: 2 } });
+    await page.waitForFunction(() => [...document.querySelectorAll(".strip-gap:hover .strip-merge")].some((el) => getComputedStyle(el).pointerEvents === "auto"), null, { timeout: T });
+    await join.click();
+  };
+  await joinPieces();
+  check("Join merges the two pieces back into one sentence", await waitCount(before));
+  await page.waitForFunction(async ({ url, headers: h, ids }) => {
+    const list = await (await fetch(url, { headers: h })).json();
+    return !list.items.some((item) => item.result === "applied" && item.adoption === null && (item.content.unit_ids ?? []).some((id) => ids.includes(id)));
+  }, { url: `${BASE}/api/bundles/${freshBundleId}/ai/suggestions?kind=classify&limit=1000`, headers, ids: halves.map((half) => half.id) }, { timeout: T });
+  let merged = offered;
+  for (let tries = 0; tries < 20 && merged >= offered; tries += 1) {
+    merged = await readOffered();
+    if (merged >= offered) await page.waitForTimeout(300);
+  }
+  check("the AI count drops after the merge", merged < offered, `${offered} -> ${merged}`);
+  // 되돌리기 - 붙이기가 풀려도 거둔 제안은 돌아오지 않는다
+  await page.locator('[data-testid="assign-undo"]:not([disabled])').click();
+  check("Undo splits the sentence again", await waitCount(before + 1));
+  await page.waitForLoadState("networkidle");
+  const afterUndo = await readOffered();
+  check("Undo does not bring the AI count back", afterUndo === merged, `${merged} -> ${afterUndo}`);
+  // 시드를 처음 그대로 - 화면을 다시 읽어 자르기는 되돌리기 목록에 없으니, 조각을 다시 붙인다
+  await joinPieces();
+  check("the sentence is whole again", await waitCount(before));
+});
+
 // 편집 뒤 다시 받기 범위(설계 2026-11-20 D2, 시안 1 스텝 2) - 붙이기 뒤에는 고친 문서의 보기와 그 문서의 Unit 줄(units?…document_id=)만 다시 받는다.
 // 다른 Old 문서의 보기와 Bundle 전체 Unit 목록은 받지 않는다. 앞 단계처럼 한 문장을 잘라 두 조각을 틈의 Join으로 붙이고, 붙이기 응답부터 합친 박스를 고를 때까지의 GET을 센다.
 // 끝에 되돌리기 두 번(붙이기 → 자르기)으로 시드를 처음 그대로 둔다
@@ -8487,6 +8600,80 @@ await runStep("assign: an English table asks for its Korean table when two look 
   check("the choice survives a reload", (await pick.getAttribute("data-value")) === String(ko2Table.id));
   const bundle = await (await page.request.get(api, { headers })).json();
   check("the table-follow bundle is removed", (await page.request.delete(`${api}?revision=${bundle.revision}`, { headers })).ok());
+});
+
+// 한글 표처럼 하기(11-23 명세 D2-R8 · S18) - 손본 한글 표(5.1 · 5.2 · 5.2.1, 빈 칸 삭제)의 일이 벗긴 영어 표 머리에 "· 4"와 줄 칩 넷으로 뜨고,
+// Apply는 편집 하나로 순서 · 번호 · 삭제를 하고 Undo 한 번에 모두 돌아온다. 검증 스택은 임베딩이 꺼져 있어 줄마다 공통 토큰(10 mL · 20 rpm · 4 °C)을 둔다.
+// 합성 docx(tests.docx_factory)를 새 묶음에 올리고 끝에 지운다
+await runStep("assign: follow the Korean table — four chips, Apply, one Undo brings everything back", { devUser: "dev.admin" }, async ({ page }) => {
+  const headers = { "X-Dev-User": "dev.admin" };
+  const backend = resolve(SCRIPT_DIR, "../../../backend");
+  const file = resolve(SHOT_DIR, "SYNTHETIC_OLD-85_table_follow_rule.docx");
+  const build = [
+    "import sys",
+    "from tests.docx_factory import build_docx, p, tbl",
+    "ko = [['1', '장비를 20 rpm으로 켠다.'], ['2', '시료 10 mL를 채취한다.'], ['3', '채취 뒤 4 °C에 둔다.'], ['4', '(빈 칸)']]",
+    "en = [['1', 'Take 10 mL of sample.'], ['2', 'Start the equipment at 20 rpm.'], ['3', 'Keep at 4 °C after.'], ['4', '(blank)']]",
+    "body = p('1. 시료 채취', 'Heading1') + p('이 절은 시료 채취를 다룬다.') + tbl(ko) + p('1. Sampling', 'Heading1') + p('This section covers sampling.') + tbl(en)",
+    "open(sys.argv[1], 'wb').write(build_docx(body))",
+  ].join("\n");
+  execFileSync(findBackendPython(), ["-c", build, file], { cwd: backend, stdio: "inherit" });
+  const created = await (await page.request.post(`${BASE}/api/bundles`, { headers, data: { title: "SYNTHETIC table follow rule", is_synthetic: true } })).json();
+  const api = `${BASE}/api/bundles/${created.id}`;
+  const uploaded = await page.request.post(`${api}/documents`, { headers, multipart: { side: "old", file: { name: "SYNTHETIC_OLD-85_table_follow_rule.docx", mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", buffer: readFileSync(file) } } });
+  let doc = await uploaded.json();
+  if (doc.language_layout !== "ko_en_separate") doc = await (await page.request.patch(`${api}/documents/${doc.id}`, { headers, data: { revision: doc.revision, language_layout: "ko_en_separate" } })).json();
+  const readView = async () => (await page.request.get(`${api}/documents/${doc.id}/view`, { headers })).json();
+  const edit = async (op) => page.request.post(`${api}/documents/${doc.id}/edits`, { headers, data: { revision: (await readView()).document.revision, confirm: false, op } });
+  const [koTable, enTable] = (await readView()).tables;
+  const unwrapOk = (await edit({ type: "set_layout_table", table_id: koTable.id, is_layout: true })).ok() && (await edit({ type: "set_layout_table", table_id: enTable.id, is_layout: true })).ok();
+  // 벗긴 표의 줄(원문 순) - 칸 문장은 첫 칸 블록의 표를 table_id로 갖는다
+  const linesOf = (view, tableId) => view.units.filter((unit) => unit.table_id === tableId && unit.group_unit_id === null).sort((one, two) => one.pos_seq - two.pos_seq || one.id - two.id);
+  const koLines = linesOf(await readView(), koTable.id);
+  let worked = koLines.length === 4;
+  for (const [index, number] of ["5.1", "5.2", "5.2.1"].entries()) worked = worked && (await edit({ type: "set_number", unit_id: koLines[index].id, number, follow: false })).ok();
+  const deleted = await page.request.post(`${api}/decisions/bulk`, { headers, data: { action: "delete", units: [{ unit_id: koLines[3].id, revision: 1 }] } });
+  const followPath = `/documents/${doc.id}/tables/${enTable.id}/follow`;
+  const plan = await (await page.request.get(`${api}${followPath}`, { headers })).json();
+  check(
+    "a worked Korean table and an unwrapped English table give a rule plan of four",
+    uploaded.status() === 201 && unwrapOk && worked && deleted.ok() && plan.mode === "rule" && plan.count === 4 && plan.source_table_id === koTable.id,
+    `${uploaded.status()} ${unwrapOk} ${worked} ${deleted.status()} ${JSON.stringify(plan)}`,
+  );
+  const enLines = linesOf(await readView(), enTable.id);
+  const readEnglish = async () => {
+    const view = await readView();
+    const rows = (await (await page.request.get(`${api}/units?limit=1000&offset=0&document_id=${doc.id}`, { headers })).json()).items;
+    const disposition = rows.find((row) => row.unit_id === enLines[3].id)?.decision.disposition;
+    return { numbers: enLines.map((line) => view.units.find((unit) => unit.id === line.id)?.number?.value ?? null), seqs: enLines.map((line) => view.units.find((unit) => unit.id === line.id)?.unwrap_seq ?? null), disposition };
+  };
+  const original = await readEnglish();
+  await page.goto(`${BASE}/bundles/${created.id}/assign`);
+  await wait(page, "assign-bar");
+  const head = page.locator(`[data-testid="assign-follow-${enTable.id}"]`);
+  await head.waitFor({ timeout: T });
+  const chips = await Promise.all(enLines.map((line) => page.locator(`[data-testid="assign-follow-chips-${line.id}"]`).count()));
+  check("the English table head says four and each line carries its chips", ((await head.textContent()) ?? "").includes("· 4") && chips.every((count) => count === 1), `${await head.textContent()} ${chips}`);
+  const applied = page.waitForResponse((response) => response.request().method() === "POST" && new URL(response.url()).pathname.endsWith(`/documents/${doc.id}/edits`), { timeout: T });
+  await page.locator(`[data-testid="assign-follow-apply-${enTable.id}"]`).click();
+  const appliedResponse = await applied;
+  check("Apply sends one follow_table edit", appliedResponse.ok() && appliedResponse.request().postDataJSON()?.op?.type === "follow_table", String(appliedResponse.status()));
+  await head.waitFor({ state: "detached", timeout: T });
+  const after = await readEnglish();
+  check(
+    "the English table now reads 5.2 · 5.1 · 5.2.1 with the equipment line first and the blank line deleted",
+    JSON.stringify(after.numbers.slice(0, 3)) === JSON.stringify(["5.2", "5.1", "5.2.1"]) && after.seqs[1] === 0 && after.seqs[0] === 1 && after.disposition === "delete",
+    JSON.stringify(after),
+  );
+  const undone = page.waitForResponse((response) => response.url().includes("/decisions/undo"), { timeout: T });
+  await page.locator('[data-testid="assign-undo"]:not([disabled])').click();
+  const undoOk = (await undone).ok();
+  await page.waitForLoadState("networkidle");
+  const back = await readEnglish();
+  check("one Undo brings back the order, the numbers and the blank line", undoOk && JSON.stringify(back) === JSON.stringify(original), `${JSON.stringify(back)} vs ${JSON.stringify(original)}`);
+  await head.waitFor({ timeout: T });
+  const bundle = await (await page.request.get(api, { headers })).json();
+  check("the table-follow rule bundle is removed", (await page.request.delete(`${api}?revision=${bundle.revision}`, { headers })).ok());
 });
 
 // Pair view에서 끌어 짝 맺기(끌어다 놓기 4걸음) - 조각을 맞은편 언어의 조각에 놓으면 바로 짝이 되고(제안 짝의 구성원끼리면 그 제안을 확정), 알림의 Undo가 그 짝을 푼다.

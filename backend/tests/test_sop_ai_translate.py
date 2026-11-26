@@ -2887,3 +2887,29 @@ def test_reordering_without_a_slot_change_keeps_the_translation(client: TestClie
 
     assert response.status_code == 200, response.text
     assert load_translation(unit["id"]).status == "confirmed"
+
+
+def test_assign_undo_of_an_edit_restores_the_swept_translation_suggestion(client: TestClient, fake_ai: FakeAi) -> None:
+    # 편집이 떼어 내며 밀어낸 번역 제안은 되돌리기가 되살린다 — 편집이 거두는 분류·묶기 제안만 단계에서 빠진다(쪼개기 먼저 E3-R2)
+    from tests.test_sop_decision_undo import _dump
+
+    bundle = make_ai_bundle(client)
+    view = upload_second_document(client, bundle.id, p(LONE_KO))
+    unit = view["units"][0]
+    assign_as_is(client, bundle.id, unit, bundle.sop_id, slot_key=SLOT)
+    translate(client, fake_ai, bundle.id, unit["id"])
+    doc_id = view["document"]["id"]
+    before = _dump(bundle.id)
+    revision = get_view(client, bundle.id, doc_id)["document"]["revision"]
+
+    edited = client.post(
+        f"/api/bundles/{bundle.id}/documents/{doc_id}/edits",
+        json={"revision": revision, "confirm": True, "op": {"type": "split", "unit_id": unit["id"], "at": 3}, "undo": {"session": "s1"}},
+        headers=AUTHOR,
+    )
+    assert edited.status_code == 200, edited.text
+    assert load_translations(unit["id"]) == []
+    undone = client.post(f"/api/bundles/{bundle.id}/decisions/undo", json={"session": "s1"}, headers=AUTHOR)
+    assert undone.status_code == 200, undone.text
+
+    assert _dump(bundle.id)["ai_suggestions"] == before["ai_suggestions"]

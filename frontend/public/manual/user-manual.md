@@ -745,6 +745,11 @@ Old 원문의 줄 왼쪽 번호 칸에는 **그 줄의 문단 번호**가 보입
 - 두 표의 행 수가 다르면 짝을 세우지 않고 문서 경고 **Matching tables differ in rows** 를 남깁니다.
 - 둘 중 한 표를 <kbd>Ctrl</kbd>+<kbd>Z</kbd>나 **↺ Back to table** 로 표로 돌리면 그 짝 제안도 빠집니다. 짝은 보통 짝처럼 풀거나 다시 맺습니다.
 - 벗긴 영어 표의 머리에는 그 표의 짝 한글 표가 적힙니다(Old 문서만). 앱은 꼴(행 · 열 수)과 두 표에 함께 있는 숫자+단위(10 mL · 4 °C · pH 7.0) · 문서 번호 · 영문 약어 · 날짜, 켜져 있으면 문장 뜻까지 보고 짝을 고릅니다 — 꼴만 같고 내용이 다른 표는 짝으로 잡지 않습니다. **KO/EN separate** 문서는 다른 절반의 한글 표 모두를, **KO/EN interleaved** 문서는 그 표 위의 같은 꼴 한글 표 하나만 견줍니다. 짝이 정해지면 머리에 흐린 글(예: "Pairs with Table 3")이 보이고, 후보 둘이 비슷하거나 짝이라 할 만큼 닮은 표가 없으면(후보가 하나라도 있을 때) **Pick counterpart table** 이 떠서 "Table n" 또는 **No counterpart** 를 고릅니다. 고른 것은 바로 저장되고 문서를 바꾸지 않아 되돌리기 단계가 아닙니다 — 고르기가 그 값으로 남아 있어 다시 고르면 바뀝니다.
+- **한글 표처럼 하기**: 짝 한글 표를 먼저 손봤으면(줄 순서 · 삭제 · 합치기 · 들여쓰기 · 번호) 벗긴 영어 표의 머리에 "Do as the Korean table · 4"처럼 그 일을 영어 표에 옮길 건수가 뜨고, 줄마다 오른쪽 위에 칩(순서 2 · 번호 5.2 · 들여쓰기 · 삭제 · 줄 합치기)이 붙습니다. 앱은 줄을 자리가 아니라 내용(숫자+단위 같은 공통 글자, 켜져 있으면 문장 뜻)으로 짝지어 순서가 다른 표에서도 맞는 줄에 옮깁니다. AI를 부르지 않는 계산이라 AI 제안 수에 들지 않고 저장되지 않습니다.
+  - **Apply** 는 칩 전부를 편집 하나로 합니다 — 지울 줄은 같은 번에 삭제로 확정되고(사유 빈칸), <kbd>Ctrl</kbd>+<kbd>Z</kbd> 한 번에 순서 · 번호 · 합치기 · 삭제가 모두 돌아갑니다. 배정된 줄을 지우거나 합치면 확인창이 한 번 묻습니다.
+  - **One by one** 을 누르면 줄마다 칩 옆에 **Apply** 가 생겨 그 줄만 합니다. **Keep as is** 는 이 화면에서만 감춥니다(다시 열면 다시 뜹니다).
+  - 영어 표의 줄 수가 다르거나 내용으로 짝짓지 못한 줄이 있으면(공통 글자가 없는 줄은 뜻 비교가 꺼져 있을 때 짝짓지 못합니다) 이 제안은 뜨지 않습니다.
+  - 표의 줄을 고른 채 <kbd>Shift</kbd>+<kbd>O</kbd>를 누르면 이 제안이 떠 있을 때는 **Apply** 와 같고, 없으면 지금처럼 AI 순서 제안을 받습니다.
 
 ### 띠 표 → 제목 줄 {#assign-band}
 
@@ -841,7 +846,7 @@ AI가 꺼져 있어도 빠진 언어를 직접 채울 수 있습니다. 칸에 �
 | <kbd>Shift</kbd>+<kbd>N</kbd> | 번호 칸 열기 |
 | <kbd>Tab</kbd> · <kbd>Shift</kbd>+<kbd>Tab</kbd> | 들여쓰기 · 내어쓰기. 용지에서 번호 칸이 있는 조각을 고른 동안만 — 번호 칸 창의 ◀ ▶와 같다 |
 | <kbd>Shift</kbd>+<kbd>T</kbd> | 표 벗기기, 벗긴 표의 줄이면 다시 표로 |
-| <kbd>Shift</kbd>+<kbd>O</kbd> | 벗긴 표의 AI 순서 제안 받기(오면 <kbd>↵</kbd>로 적용) |
+| <kbd>Shift</kbd>+<kbd>O</kbd> | 벗긴 표의 AI 순서 제안 받기(오면 <kbd>↵</kbd>로 적용). 영어 표에 [한글 표처럼 하기](#assign-unwrap-pair)가 떠 있으면 그것을 적용 |
 | <kbd>V</kbd> | 문서 하나 · 둘 보기 |
 | <kbd>Ctrl</kbd>+<kbd>←</kbd> · <kbd>Ctrl</kbd>+<kbd>→</kbd> | 앞 · 다음 탭(본문 · 머리말 · 꼬리말 · 그림 가운데 있는 것, 끝에서 처음으로). 브라우저의 뒤로 가기는 보던 탭으로 돌아가고, 탭을 바꾼 만큼 다 돌아가면 이전 화면으로 갑니다 |
 | <kbd>Space</kbd>(누르고 있기) | Excel 미리보기 시트 — 떼면 닫힘. 짧게 탁 누르면 열어 두고, 다시 탁 또는 <kbd>Esc</kbd>로 닫기 |
@@ -1089,6 +1094,8 @@ AI는 제안만 합니다. 사람이 줄마다 확인해 확정하기 전에는 
 | **New document list**(지금은 숨긴 기능) | 계획 파일·글에 적힌 새 문서 목록(번호·제목·종류·상위 SOP·단계) | **Documents** 의 **New documents** 목록 `⋯` 메뉴 → **Read a list with AI…** ([AI로 목록 읽기](#tobe-ai)) |
 | **Split**(지금은 숨긴 기능) | 여러 뜻이 섞인 문장을 나눌 자리 | **Assign** 더보기(⋯) 메뉴에 있는 **AI split whole document**(30자보다 짧은 문장은 일괄로는 보내지 않는다)와 **Suggest a split for this row** |
 
+분류·묶기 제안은 아직 정하지 않은 줄에만 남습니다. 줄을 합치거나 나누면 그 줄에 걸렸던 제안은 거둬지고, 되돌려도 다시 나오지 않습니다.
+
 ### 요청하고 확인하기 {#ai-flow}
 
 1. 위 단추로 요청합니다. 요청은 쌓였다가 차례로 처리되므로 기다리지 않고 다른 일을 해도 됩니다.
@@ -1105,7 +1112,7 @@ AI는 제안만 합니다. 사람이 줄마다 확인해 확정하기 전에는 
 
 ### 한꺼번에 받기 {#ai-accept}
 
-**Assign** 을 연 동안 받을 AI 추천이 있으면 상단 바의 AI 작업 표시가 작업이 없어도 보입니다. 누르면 목록 맨 위에 **Take AI suggestions** 가 있고, **Classify**(칸·WI 단계에 놓기)와 **Match**(이미 쓴 New 문장에 잇기·신규) 옆에 지금 연 Old 문서의 추천 수가 붙어 있습니다. 종류마다 따로 받습니다.
+**Assign** 을 연 동안 받을 AI 추천이 있으면 상단 바의 AI 작업 표시가 작업이 없어도 보입니다. 누르면 목록 맨 위에 **Take AI suggestions** 가 있고, **Classify**(칸·WI 단계에 놓기)와 **Match**(이미 쓴 New 문장에 잇기·신규) 옆에 지금 연 Old 문서의 추천 수가 붙어 있습니다. 종류마다 따로 받습니다. 이 수는 아직 정하지 않은 줄에 걸린 추천만 셉니다 — 이미 정한 줄의 추천은 세지 않고, 줄을 합치거나 나누면 그 줄에 걸렸던 추천은 거둬져 되돌려도 다시 나오지 않습니다.
 
 1. **Classify** 나 **Match** 를 누르면 확인 창이 열립니다. 범위는 지금 연 Old 문서가 기본이고, **Whole Bundle** 을 고르면 Bundle 전체입니다. 신규(Old 출처가 없는 New 문장)는 Old 문서가 없어 **Whole Bundle** 에서만 셉니다.
 2. 창이 받을 추천을 모양별 수로 먼저 보여 줍니다(칸·WI 단계에 놓기, 1:1로 잇기, 합쳐 잇기, 나눠 잇기, 표·그림 잇기, 신규). 경고가 있는 추천, 추천 뒤 사람이 그 줄을 정했거나 언어·짝이 바뀐 추천, 받으려면 사유나 캡션을 먼저 적어야 하는 추천(두 New 문서에 걸친 나눔, 캡션 없는 표·그림)은 빼고 그 수를 아래에 알립니다 — 그 줄은 하나씩 봅니다.
@@ -1291,7 +1298,7 @@ AI는 제안만 합니다. 사람이 줄마다 확인해 확정하기 전에는 
 | **New documents** | 글 칸에서 <kbd>Enter</kbd> 저장, <kbd>Esc</kbd> 적던 것 버리기 |
 | **Order**(지금은 숨긴 기능) | 줄을 눌러 고른 뒤 <kbd>Alt</kbd>+<kbd>↑</kbd> <kbd>↓</kbd> 한 자리 옮기기(칸 끝에서 멈춤 — 다른 칸으로는 끌어서 옮기고, 키보드로 줄의 칸을 바꾸는 일은 **Assign** 화면에서 합니다), <kbd>Tab</kbd> <kbd>Shift</kbd>+<kbd>Tab</kbd> 들여쓰기·내어쓰기, <kbd>Esc</kbd> 고름 놓기(끄는 동안이면 끌기 취소), <kbd>Alt</kbd>를 누른 채 끌어 글자 고르기 |
 | **Map** | 지도 안에서 <kbd>↑</kbd> <kbd>↓</kbd> 같은 줄기, <kbd>←</kbd> <kbd>→</kbd> 옆 줄기, <kbd>Home</kbd> <kbd>End</kbd> 줄기의 처음 · 끝, <kbd>Enter</kbd> 고르기(줄기 머리에서는 접기), <kbd>Esc</kbd> 고름 풀기, <kbd>+</kbd> <kbd>-</kbd> <kbd>0</kbd> 확대 · **Fit all**, <kbd>/</kbd> 찾기, 지도 위에서 <kbd>Ctrl</kbd>+휠 확대 |
-| **Assign** | <kbd>↵</kbd> 확정(고른 곳이 없으면 추천 첫 카드로), <kbd>J</kbd> <kbd>K</kbd> 이동, <kbd>G</kbd> 짝으로, <kbd>U</kbd> 배정 지우기, <kbd>Del</kbd> 삭제, <kbd>R</kbd> **Remark**, <kbd>Shift</kbd>+<kbd>H</kbd> 보류, <kbd>Shift</kbd>+<kbd>A</kbd> AI 추천 받기, <kbd>Shift</kbd>+<kbd>J</kbd> <kbd>Shift</kbd>+<kbd>K</kbd> 두 번 눌러 아래 · 위와 합치기, <kbd>Shift</kbd>+<kbd>L</kbd> 언어, <kbd>Shift</kbd>+<kbd>P</kbd> 한 문장 · 짝, <kbd>Shift</kbd>+<kbd>N</kbd> 번호 칸, <kbd>Shift</kbd>+<kbd>T</kbd> 표 벗기기, <kbd>Shift</kbd>+<kbd>O</kbd> AI 순서, <kbd>Tab</kbd> <kbd>Shift</kbd>+<kbd>Tab</kbd> 들여쓰기 · 내어쓰기, <kbd>V</kbd> 문서 하나 · 둘 보기, <kbd>Ctrl</kbd>+<kbd>←</kbd> <kbd>→</kbd> 탭(뒤로 가기는 보던 탭), <kbd>Space</kbd> 누르고 있기 Excel 미리보기, <kbd>?</kbd> 도움말, <kbd>E</kbd> 고쳐 쓰기(지금은 숨긴 기능). 전부는 [Assign 단축키](#assign-keys) |
+| **Assign** | <kbd>↵</kbd> 확정(고른 곳이 없으면 추천 첫 카드로), <kbd>J</kbd> <kbd>K</kbd> 이동, <kbd>G</kbd> 짝으로, <kbd>U</kbd> 배정 지우기, <kbd>Del</kbd> 삭제, <kbd>R</kbd> **Remark**, <kbd>Shift</kbd>+<kbd>H</kbd> 보류, <kbd>Shift</kbd>+<kbd>A</kbd> AI 추천 받기, <kbd>Shift</kbd>+<kbd>J</kbd> <kbd>Shift</kbd>+<kbd>K</kbd> 두 번 눌러 아래 · 위와 합치기, <kbd>Shift</kbd>+<kbd>L</kbd> 언어, <kbd>Shift</kbd>+<kbd>P</kbd> 한 문장 · 짝, <kbd>Shift</kbd>+<kbd>N</kbd> 번호 칸, <kbd>Shift</kbd>+<kbd>T</kbd> 표 벗기기, <kbd>Shift</kbd>+<kbd>O</kbd> AI 순서(한글 표처럼 하기가 떠 있으면 그것), <kbd>Tab</kbd> <kbd>Shift</kbd>+<kbd>Tab</kbd> 들여쓰기 · 내어쓰기, <kbd>V</kbd> 문서 하나 · 둘 보기, <kbd>Ctrl</kbd>+<kbd>←</kbd> <kbd>→</kbd> 탭(뒤로 가기는 보던 탭), <kbd>Space</kbd> 누르고 있기 Excel 미리보기, <kbd>?</kbd> 도움말, <kbd>E</kbd> 고쳐 쓰기(지금은 숨긴 기능). 전부는 [Assign 단축키](#assign-keys) |
 | 어디서나 | <kbd>Esc</kbd> 맨 위 창 닫기, 이동 취소 |
 
 Mac에서는 <kbd>Ctrl</kbd> 대신 <kbd>⌘</kbd>를 씁니다.
