@@ -727,10 +727,14 @@ async function runTableFold({ page, place, docId, prefix, sideTestId, tabPrefix,
   await head.waitFor({ timeout: T });
   await pane.locator(`[data-testid="assign-table-fold-${table.id}"]`).click();
   await folded.waitFor({ timeout: T });
-  // 접힌 줄이 막 그려진 프레임에는 글이 아직 비어 있을 수 있다 - 글이 찰 때까지 기다린 뒤 읽는다(기대값은 그대로)
-  await folded.locator(".table-fold-text").filter({ hasText: /\S/ }).waitFor({ timeout: T });
-  const line = (await folded.innerText()).replace(/\s+/g, " ").trim();
-  check(name("Collapse folds the table into one line with its number and size, and its rows leave the page"), line.startsWith(`▸ Table ${table.table_index + 1} · `) && line.includes(`${table.n_rows} x ${table.n_cols}`) && (await head.count()) === 0, line);
+  // 접힌 줄은 접는 움직임 동안 글이 비어 읽히거나(innerText는 그려지지 않은 글을 빼다) 표 머리가 아직 남아 있다 - T 안에서 맞을 때까지 다시 읽고, 실패하면 마지막에 본 값을 남긴다(기대값은 그대로)
+  const isFoldLine = (seen) => seen.line.startsWith(`▸ Table ${table.table_index + 1} · `) && seen.line.includes(`${table.n_rows} x ${table.n_cols}`) && seen.heads === 0;
+  let seen = { line: "", heads: -1 };
+  for (const until = Date.now() + T; Date.now() < until; await page.waitForTimeout(100)) {
+    seen = { line: (await folded.innerText()).replace(/\s+/g, " ").trim(), heads: await head.count() };
+    if (isFoldLine(seen)) break;
+  }
+  check(name("Collapse folds the table into one line with its number and size, and its rows leave the page"), isFoldLine(seen), JSON.stringify(seen));
   await page.reload();
   await reopen();
   await folded.waitFor({ timeout: T });
