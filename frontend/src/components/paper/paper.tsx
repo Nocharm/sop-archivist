@@ -503,10 +503,10 @@ export function Paper({
   const foldedKey = useMemo(() => {
     if (!tableFold || tableFold.folded.size === 0) return "";
     const open = new Set<number>();
-    for (const id of [selectedId, ...(pickedIds ?? []), ...(highlightIds ?? [])]) if (id !== null) open.add(model.units.get(id)?.group_unit_id ?? id);
+    for (const id of [selectedId, ...(pickedIds ?? []), ...(checkedRows?.keys() ?? []), ...(highlightIds ?? [])]) if (id !== null) open.add(model.units.get(id)?.group_unit_id ?? id);
     const pressed = foldPress !== null && foldPress.selectedId === selectedId && tableFold.folded.has(foldPress.tableId) ? [foldPress.tableId] : [];
     return [...new Set([...resolveFolded(tableFold.folded, model.tableBlocks, open), ...pressed])].sort((a, b) => a - b).join(",");
-  }, [tableFold, selectedId, pickedIds, highlightIds, model, foldPress]);
+  }, [tableFold, selectedId, pickedIds, checkedRows, highlightIds, model, foldPress]);
 
   // 조각 줄 - 모델이 바뀔 때만 다시 편다(고르기·확인으로는 그대로)
   const sections = useMemo(() => {
