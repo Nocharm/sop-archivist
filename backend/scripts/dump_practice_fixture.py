@@ -29,6 +29,7 @@ GENERATED = "backend/scripts/dump_practice_fixture.py"
 
 PRACTICE_BUNDLE_ID = -1  # frontend practice-route.ts PRACTICE_BUNDLE_ID (design D3) — real ids are positive
 FIRST_DOC_ID = 900001  # practice document ids start here so browser keys (sopa.assign.tablesFolded.<doc id>) never meet a real one
+FIXED_SIZE_BYTES = 1000  # every size_bytes: the zip-compressed docx size depends on the zlib build, so it is not stable across machines
 FIXED_AT = "2026-11-26T00:00:00+09:00"  # every timestamp in the file, so the bytes do not depend on when it ran
 PRACTICE_LOGIN = "practice"  # the one synthetic member and every *_by value
 PRACTICE_TITLE = "Practice"
@@ -128,8 +129,10 @@ def render_practice_fixture() -> str:
     with tempfile.TemporaryDirectory(prefix="practice-fixture-") as directory:
         database = Path(directory) / "practice.db"
         out = Path(directory) / "practice-fixture.json"
+        # SOP_* limits and a .env file would change the answers: drop the keys, and run in a folder with no .env (settings reads ".env" from cwd)
         env = {
-            **os.environ,
+            **{key: value for key, value in os.environ.items() if not key.startswith("SOP_")},
+            "PYTHONPATH": os.pathsep.join([str(BACKEND_DIR), os.environ.get("PYTHONPATH", "")]).rstrip(os.pathsep),
             "DATABASE_URL": f"sqlite+aiosqlite:///{database}",
             "AUTH_MODE": "dev",
             "DEV_ENFORCE_PERMISSIONS": "false",
@@ -143,7 +146,7 @@ def render_practice_fixture() -> str:
         }
         result = subprocess.run(
             [sys.executable, "-m", "scripts.dump_practice_fixture", CHILD_FLAG, str(database), str(out)],
-            cwd=BACKEND_DIR, env=env, capture_output=True, text=True, encoding="utf-8", timeout=CHILD_TIMEOUT_S,
+            cwd=directory, env=env, capture_output=True, text=True, encoding="utf-8", timeout=CHILD_TIMEOUT_S,
             check=False,
         )
         if result.returncode != 0:
@@ -303,6 +306,8 @@ def _mask_value(value: Any, bundle_id: int, key: str = "") -> Any:
         return FIXED_AT
     if key.endswith("_by") and isinstance(value, str):
         return PRACTICE_LOGIN
+    if key == "size_bytes" and isinstance(value, int):
+        return FIXED_SIZE_BYTES
     if key == "bundle_id" and value == bundle_id:
         return PRACTICE_BUNDLE_ID
     return value
