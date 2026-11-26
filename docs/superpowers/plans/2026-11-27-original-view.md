@@ -263,6 +263,24 @@
 
 ---
 
+## 스텝 4 — EMF · WMF 그림 그리기 (사용자 결정 2026-11-27 오후: "인쇄 미리보기처럼" — 빗금 상자만으로는 모자람)
+
+브랜치 `feat/original-view-4-emf` · 워크트리 `../sop-wt-original-view-4-emf`, sonnet, 스텝 3과 동시에(고치는 파일이 겹치지 않는다). 게이트 `gate.sh <wt> fe build`.
+
+### Task 4-1: 메타파일을 SVG로
+
+**Files:**
+- Modify: `frontend/src/components/assign/original-render.ts`(`replaceUnrenderable` 앞에 그리기 단계), `frontend/src/components/assign/original-render.test.ts`, `frontend/src/lib/use-original-render.ts`(부르는 자리), `frontend/package.json` · `package-lock.json`(`rtf.js` 3.0.9 정확한 버전), `frontend/CLAUDE.md`(의존성 줄에 왜)
+- Docs: 설계 §5.5는 지휘 세션이 합칠 때 고친다
+
+**Interfaces:**
+- `renderMetafiles(root: HTMLElement): Promise<{ drawn: number; failed: number }>` — 메타파일 `img`(지금 `METAFILE_SRC_RE`로 고르는 것, `useBase64URL` data 주소)마다 바이트를 풀어 EMF는 `EMFJS.Renderer`, WMF는 `WMFJS.Renderer`로 SVG를 만들어 같은 자리 · 같은 크기(`img`의 width · height · style)의 `span.sopa-ov-metafile` 안에 넣는다. `rtf.js`는 메타파일이 있을 때만 `import()`. 그리개가 throw하거나 빈 SVG면 그대로 두어 다음 `replaceUnrenderable`이 빗금 상자로 바꾼다(실패만 빗금).
+- SVG는 그리개가 DOM으로 만든 것을 그대로 붙인다(문자열 끼우기 금지). 붙이기 전에 `<script>` · `foreignObject` · `on*` 속성 · `href`/`xlink:href`가 `data:`·`#`이 아닌 것을 지운다(`sanitizeMetafileSvg(svg: SVGElement): void`).
+
+- [ ] **Step 1: 실패하는 시험** — `draws an EMF image as inline svg`(rtf.js를 vi.mock으로 SVG 돌려주게 — 바깥 그리개라 가짜로), `falls back to the hatch box when the renderer throws`, `keeps the original size`, `sanitizeMetafileSvg strips script, foreignObject, event handlers and external hrefs`, `does not load rtf.js when there is no metafile`.
+- [ ] **Step 2–4:** FAIL → 구현 → PASS, 전체 vitest · lint · tsc.
+- [ ] **Step 5: Commit** `feat(assign): draw EMF and WMF images in the original view — 원본 보기에서 EMF · WMF 그림 그리기`
+
 ## 모음 → dev (지휘 세션)
 
 1. 스텝 3 합친 뒤 모음에서 `gate.sh ../sop-wt-original-view be fe build`, 고친 화면 스모크 `ONLY="assign: Space preview"` · `ONLY="practice:"`, 화면 확인(한 단 · 양단 · 다크 · 좁은 창).
