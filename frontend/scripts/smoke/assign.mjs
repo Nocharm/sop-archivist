@@ -526,7 +526,7 @@ async function prepareClickPlace(page, needed) {
   };
 }
 
-// 손질 검사 한 벌의 합성 문서(쪼개기 먼저 §8 4-3) - 1장 앞 표지(본문 앞부분 블록), 제목, 두 문장 문단(두 번 눌러 나누기), 이웃한 두 문단(틈 합치기),
+// 손질 검사 한 벌의 합성 문서(쪼개기 먼저 §8 4-3) - 1장 앞 표지(본문 앞부분 블록), 1장 · 2장 제목, 두 문장 문단(두 번 눌러 나누기), 이웃한 두 문단(틈 합치기),
 // 제목 스타일의 긴 조항(제목 → 문장, ↺ 제목으로), 표(벗기기 · 다시 표로). Old와 New 둘 다 같은 본문이고 New는 머리말로 파일만 다르게 한다(같은 파일은 duplicate_file)
 const SHAPE_SPLIT_TEXT = "합성 장비의 압력을 확인한다. 결과를 기록지에 적는다.";
 const SHAPE_JOIN_TEXTS = ["합성 둘째 문단이다.", "합성 셋째 문단이다."];
@@ -537,6 +537,8 @@ const SHAPE_BODY = [
   `p('${SHAPE_JOIN_TEXTS[0]}') + p('${SHAPE_JOIN_TEXTS[1]}')`,
   "p('1.1 합성 장비를 끈다. 합성 밸브를 닫는다.', 'Heading2')",
   "tbl([['합성 항목', '합성 값'], ['합성 압력', '합성 결과']])",
+  // 1장 제목이 장 시작이 되려면 같은 단계에 둘째 장이 있어야 한다(noise._opens_chapters) - 없으면 표지가 앞부분이 되지 않는다
+  "p('2. 범위', 'Heading1') + p('합성 범위를 적는다.')",
 ].join(" + ");
 
 /** 손질 검사용 묶음 - 같은 본문의 Old 문서 하나와 이미 쓴 New 문서 하나. 끝에 묶음을 지운다(removeShapeBundle) */
@@ -4281,7 +4283,7 @@ await runStep("assign: a written New document opens on its own with the same too
   await page.waitForLoadState("networkidle");
   await page.locator('[data-testid="assign-new-edit-original"]').click();
   await wait(page, "assign-solo");
-  check("the scissors button opens the New document alone, in the one-document view", (await page.locator(".assign-panes").getAttribute("data-single")) !== null && (await getText(page, "assign-old-tag")).includes("New"));
+  check("the Wide view button opens the New document alone, in the one-document view", (await page.locator(".assign-panes").getAttribute("data-single")) !== null && (await getText(page, "assign-old-tag")).includes("New"));
   check("nothing is picked yet, and the panel says what to do", (await page.locator('[data-testid^="assign-shape-line-"]').count()) === 0 && (await getText(page, "assign-solo-note")).length > 0);
   const unit = before.find((item) => item.kind === "sentence" && item.pair_id === null && item.text.trim().split(" ").length >= 6);
   check("the New document has a sentence long enough to cut", unit !== undefined);
