@@ -62,7 +62,7 @@ export interface NewPaperProps {
   held?: boolean;
   /** 여럿 고른 박스 */
   pickedUnitIds: ReadonlySet<number>;
-  /** Ctrl로 더한 New 박스 - Unit → 줄 키(박스마다 한 줄). 덩어리 표시로 그린다 */
+  /** Shift로 더한 New 박스 - Unit → 줄 키(박스마다 한 줄). 덩어리 표시로 그린다 */
   checkedRows?: ReadonlyMap<number, string>;
   pending?: PaperPending;
   /** ⇧J ⇧J · ⇧K ⇧K로 무장한 합치기의 두 박스 - 점선 미리보기 */

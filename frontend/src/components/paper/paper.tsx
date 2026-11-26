@@ -240,7 +240,7 @@ interface PaperProps {
   partnerIds?: ReadonlySet<number>;
   /** 짝 맞추기로 고른 단위 */
   pickedIds?: ReadonlySet<number>;
-  /** 여럿 고른 줄(Shift · Ctrl) - Unit → 판단 줄 키. 이어진 카드마다 테 하나와 "n줄 고름" 꼬리표, 줄마다 칠 · 왼쪽 막대 · 오른쪽 체크(11-25 명세 §9) */
+  /** 여럿 고른 줄(Shift) - Unit → 판단 줄 키. 이어진 카드마다 테 하나와 "n줄 고름" 꼬리표, 줄마다 칠 · 왼쪽 막대 · 오른쪽 체크(11-25 명세 §9) */
   checkedRows?: ReadonlyMap<number, string>;
   /** 먼저 고른 쪽의 용지다 - 다른 문서를 마지막에 눌렀다. 뿌리 표시 하나(data-held)라 덩어리를 다시 그리지 않는다 */
   held?: boolean;

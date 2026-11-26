@@ -835,9 +835,9 @@ await runStep("assign: legend first, place, delete without a reason, edit, clear
   await units.nth(4).click({ modifiers: ["Shift"] });
   await units.nth(6).click({ modifiers: ["Shift"] });
   await wait(page, "assign-bulk");
-  // 떨어진 두 줄은 덩어리마다 꼬리표 하나(11-25 명세 §9)
+  // 떨어진 줄은 덩어리마다 꼬리표 하나(11-25 명세 §9) - 첫 Shift+클릭은 지금 고른 줄도 더하므로 둘 이상(보통 셋)
   const checkTags = await page.locator('[data-testid^="assign-check-run-"]').allTextContents();
-  check("two apart rows picked with Shift get one tag each", checkTags.length === 2 && checkTags.every((text) => text.includes("rows picked")), JSON.stringify(checkTags));
+  check("rows picked apart with Shift get one tag each", checkTags.length >= 2 && checkTags.every((text) => text.includes("rows picked")), JSON.stringify(checkTags));
   await page.locator('[data-testid="assign-bulk-delete"]').click();
   await page.locator('[data-testid="assign-bulk-reason"]').fill("Header text");
   await page.locator('[data-testid="assign-bulk-confirm"]').click();
@@ -1998,9 +1998,9 @@ await runStep("assign: written New document - identical, link by clicking, split
   const second = page.locator(`[data-testid="${await unpicked.first().getAttribute("data-testid")}"]`);
   const secondLang = await second.getAttribute("data-lang");
   await second.locator(".new-text").click({ modifiers: [multi] });
-  // 더한 박스가 마지막에 누른 것(data-sel)이고 먼저 고른 박스는 여럿 고른 표시(data-check 덩어리 테 · 꼬리표)로 남는다
+  // 더한 박스가 마지막에 누른 것(data-sel)이고 먼저 고른 박스는 여럿 고른 표시(.su[data-pick] - Ctrl은 New 고름 한 벌, Shift로 더한 박스만 data-check 덩어리)로 남는다
   await page.locator(`[data-testid="${await second.getAttribute("data-testid")}"][data-sel]`).waitFor({ timeout: T });
-  check("Ctrl+click adds a second sentence", (await firstLine.locator("[data-check]").count()) > 0 && (await second.locator('[data-testid="assign-pick-bar-link"]').count()) === 1);
+  check("Ctrl+click adds a second sentence", (await firstLine.locator(".su[data-pick]").count()) > 0 && (await second.locator('[data-testid="assign-pick-bar-link"]').count()) === 1);
   check(
     "a sentence in another language is not locked",
     !rowLangs.includes(secondLang) && (await second.getAttribute("data-sel")) !== null && (await second.locator('[data-testid="assign-pick-bar-link"]').getAttribute("aria-disabled")) === null,

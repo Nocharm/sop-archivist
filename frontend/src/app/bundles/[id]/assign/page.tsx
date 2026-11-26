@@ -165,7 +165,7 @@ export default function AssignPage() {
   const composedOrder = useComposedOrder({ bundleId, doc: isComposedDoc ? composedDoc : null, labelLang: uiLang });
   const shownComposed = composedOrder.doc;
   const composedStrips = useMemo(() => (shownComposed ? buildComposedStrips(shownComposed) : null), [shownComposed]);
-  // Ctrl+클릭으로 더한 New 박스 - 마지막에 누른 것은 진한 칠과 테(data-sel), 나머지는 여럿 고른 표시(덩어리 테 · 꼬리표, 박스마다 한 줄)
+  // Shift+클릭으로 더한 New 박스는 덩어리 테 · 꼬리표(박스마다 한 줄), Ctrl+클릭은 New 고름 한 벌(newPick)이라 data-pick
   const { checkedNew } = state;
   const isNewPickMulti = newPick.kind === "unit" && newPick.unitIds.length > 1;
   const newMates = useMemo(() => (newPick.kind === "unit" && newPick.unitIds.length > 1 ? new Set(newPick.unitIds) : NO_NUMBERS), [newPick]);
