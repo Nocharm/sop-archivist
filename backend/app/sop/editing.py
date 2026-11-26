@@ -383,6 +383,8 @@ class EditResult(BaseModel):
     detach: DetachReport | None
     # switch_language가 바꾼 모양 — 짝을 합침 | 짝만 풂(떨어져 있어 합치지 않음) | 조각을 떼어 짝으로. 다른 편집은 None
     shape: Literal["merged", "unpaired", "split_pair"] | None = None
+    # 이 편집이 거둔 분류·묶기 제안 id — 응답에는 싣지 않고 Assign 되돌리기 단계가 스냅숏에서 그 행만 뺀다
+    closed_suggestion_ids: list[int] = Field(default_factory=list, exclude=True)
 
     @model_serializer(mode="wrap")
     def _drop_empty_shape(self, handler: SerializerFunctionWrapHandler) -> dict:
@@ -2454,10 +2456,11 @@ async def _write_change(
     await session.flush()
     await verify_document_coverage(session, document.id)
     # 은퇴한 단위를 덮던 분류·묶기 제안은 받을 줄이 없다 — 되돌려도 되살리지 않는다(decision_steps.record_unit_edit_step이 스냅숏에서 뺀다)
-    await close_unused_suggestions(session, document.bundle_id, unit_ids=change.retire, keep_linked=True)
+    closed = await close_unused_suggestions(session, document.bundle_id, unit_ids=change.retire, keep_linked=True)
     document.revision += 1
     return EditResult(
         document_revision=document.revision, created_unit_ids=activated, retired_unit_ids=sorted(change.retire),
+        closed_suggestion_ids=closed,
         detach=detach,
     )
 

@@ -4197,7 +4197,7 @@ await runStep("assign: merging two suggested boxes drops the AI count and Ctrl+Z
   await page.locator('[data-testid="assign-undo"]:not([disabled])').click();
   check("Undo splits the sentence again", await waitCount(before + 1));
   await page.waitForLoadState("networkidle");
-  check("Undo does not bring the AI count back", (await readOffered()) <= merged);
+  check("Undo does not bring the AI count back", (await readOffered()) === merged);
   // 시드를 처음 그대로 - 자르기까지 되돌린다
   await page.locator('[data-testid="assign-undo"]:not([disabled])').click();
   check("the sentence is whole again", await waitCount(before));

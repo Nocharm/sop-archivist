@@ -101,14 +101,14 @@ async def close_unused_suggestions(
     unit_ids: Collection[int] = (),
     target_ids: Collection[int] = (),
     keep_linked: bool = False,
-) -> None:
+) -> list[int]:
     """사람이 제안을 받지 않고 확정한 줄의 살아 있는 분류·묶기 제안을 밀어낸다(stale) — 채택은 남기지 않는다(받은 것이 아니다).
 
     남기면 그 줄을 나중에 지웠을 때 문서 범위 분류가 `already_suggested`로 건너뛰고 짝 계획도 그 단위를 다루지 않는다. 받은 제안은
     저장이 이미 채택을 남겨 살아 있지 않다 — 채택 기록 뒤에 부른다.
     """
     if not unit_ids and not target_ids:
-        return
+        return []
     await session.flush()  # 같은 저장이 방금 남긴 채택이 살아 있는 제안 질의에 보이게
     live = await load_live_suggestions(session, bundle_id, OFFERED_KINDS)
     covering = find_covering(live, unit_ids=unit_ids, target_ids=target_ids)
@@ -119,6 +119,7 @@ async def close_unused_suggestions(
         ))
         covering = [item for item in covering if item.id not in linked]
     mark_stale(covering)
+    return [item.id for item in covering]
 
 
 def add_suggestion(

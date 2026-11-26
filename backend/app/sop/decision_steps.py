@@ -427,7 +427,8 @@ async def record_snapshot_step(
 
 
 async def record_unit_edit_step(
-    session: AsyncSession, bundle: Bundle, actor: str, meta: UndoMetaIn, document_id: int, before_state: Snapshot
+    session: AsyncSession, bundle: Bundle, actor: str, meta: UndoMetaIn, document_id: int, before_state: Snapshot,
+    closed_suggestion_ids: Collection[int] = (),
 ) -> None:
     """Assign 안의 단위 편집(자르기·합치기·언어 바꾸기)을 한 단계로 — 그 문서의 방금 만든 Split 편집 기록을 가리키고(설계 §4.4),
     편집이 함께 바꾼 판단 상태(떼어 낸 배정 · 풀린 짝 · 지운 새 문장)를 before_state(편집 전 덤프)와 견준 diff로 찍는다 — 되돌리면 그것도 되살린다(B6).
@@ -444,9 +445,11 @@ async def record_unit_edit_step(
         return
     await session.flush()
     before, after = diff_states(before_state, await dump_bundle_state(session, bundle.id))
-    # 편집이 거둔 AI 제안(stale)은 단계에 싣지 않는다 - 되돌려도 은퇴한 줄의 제안이 되살아나지 않는다(E3-R2)
-    before.pop("ai_suggestions", None)
-    after.pop("ai_suggestions", None)
+    # 이 편집이 거둔 분류·묶기 제안(stale)만 단계에서 뺀다 - 되돌려도 은퇴한 줄의 제안이 되살아나지 않는다(E3-R2).
+    # 떼어 내기가 stale로 만든 번역 제안 같은 다른 변경은 그대로 실어 되돌리면 돌아온다
+    for closed in closed_suggestion_ids:
+        before["ai_suggestions"].pop(str(closed), None)
+        after["ai_suggestions"].pop(str(closed), None)
     # 편집이 만든 단위의 빈 판단 행은 편집 기록의 몫이다(되돌리면 단위와 함께 은퇴해 남고 다시 하면 그대로 돌아온다) - 찍으면 그 뒤 그 조각을
     # 판단했을 때 confirm_required 대신 undo_conflict가 된다
     for unit_id in edit.created_unit_ids:
