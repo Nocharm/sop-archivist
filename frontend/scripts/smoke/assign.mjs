@@ -8680,7 +8680,8 @@ await runStep("assign: follow the Korean table — four chips, Apply, one Undo b
 // 눌러 가짜 AI(받은 줄 차례 그대로 + 첫 줄 번호 한 칸)가 답하면 규칙 제안과 같은 칩 · 적용이 온다. 적용은 편집 하나, 채택(as_is)이 남는다. AI가 꺼진 backend면 건너뛴다
 await runStep("assign: follow the Korean table with AI when the rows differ", { devUser: "dev.admin", allowConsoleErrors: true }, async ({ page }) => {
   const headers = { "X-Dev-User": "dev.admin" };
-  const status = await page.request.get(`${BASE}/api/bundles/${halfBundleId}/ai/status`, { headers });
+  // halfBundleId는 시드 묶음이라 멤버(qa.member)만 상태를 읽는다 - dev.admin은 404다
+  const status = await page.request.get(`${BASE}/api/bundles/${halfBundleId}/ai/status`, { headers: { "X-Dev-User": "qa.member" } });
   if (!status.ok() || !(await status.json()).ai_enabled) {
     console.log("  (AI is off in this backend - skipped)");
     return;
