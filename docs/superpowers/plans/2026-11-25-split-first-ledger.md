@@ -45,6 +45,7 @@
 
 남은 것은 **정식 업데이트(dev→main) — 사용자가 정한다**(main 합치기 · 태그 · GitLab · 배포는 지휘 세션 권한 밖):
 1. 감사 넷(layout `DS=worst` · overlap · contrast · manual-shots) — 새 장면 `assign-cell-menu`(7b), 체크 · 꼬리표 대비(7c), 괄호선(7g, 대비는 단위 시험으로 3:1 확인) 포함. 전체 스모크 `FULL=1`.
+   - (11-26 저녁, `2ccff578` = v1.6.31) 전체 스모크 `FULL=1`(새 시드): **2522 통과 · 1 실패** — `assign: the New pane shows a real table and figure`의 그림 캡션 검사(`the figure row shows its caption line above it`). reset 뒤 그 단계만 다시 돌려 16/16 통과 → 알려진 흔들림. 제품 결함 후보 없음. 감사 넷은 아직.
 2. perf 한 번 더(`perf.sh`, 8a에서 몇 칸이 ±20% 오감 · 7g는 재지 않음).
 3. 설명서 그림은 바뀐 장면만(`ONLY=<장면>`), 설명서 머리 `version` · `updated`, CHANGELOG 릴리스 제목, 루트 `CLAUDE.md` 상태 줄 · README, 끝난 계획 · 설계 스냅숏 지우기(`rules/common/git.md` 정식 업데이트).
 4. 아래 "아침에 볼 것"을 사용자와 정리 — 특히 8b 합치면 당기기의 범위, 7b 양 단 New 칸 메뉴 없음, 7c 첫 Shift+클릭이 지금 줄도 넣음, 7g 괄호선 동안 빈 줄.
