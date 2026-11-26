@@ -143,6 +143,17 @@ describe("edits", () => {
     expect(listViewIds(state)).toEqual(buildPracticeTestFixture().views[TEST_OLD_DOC].units.map((item) => item.id));
   });
 
+  it("leaves no confirmed decision without its New link after merge and unmerge", () => {
+    const state = setUp();
+    saveGroup(state, buildLink([U.brokenHead, U.brokenTail], TEST_TARGETS.aPrime, "confirm", "link"));
+    const merged = applyEdit(state, TEST_OLD_DOC, { revision: 3, op: { type: "merge", unit_ids: [U.brokenHead, U.brokenTail] } });
+    applyEdit(state, TEST_OLD_DOC, { revision: 4, op: { type: "unmerge", unit_id: merged.created_unit_ids[0] } });
+    expect([findRow(state, U.brokenHead), findRow(state, U.brokenTail)].map((row) => [row.status, row.decision.disposition, row.target_ids])).toEqual([
+      ["unassigned", "unassigned", []],
+      ["unassigned", "unassigned", []],
+    ]);
+  });
+
   it("walks the shift+P path: merge a pair, unmerge, set language, pair again", () => {
     const state = setUp();
     const merged = applyEdit(state, TEST_OLD_DOC, { revision: 3, op: { type: "merge", unit_ids: [U.pairAKo, U.pairAEn] } });
@@ -222,6 +233,14 @@ describe("undo and redo (whole-board snapshots)", () => {
     stepDecision(state, "undo");
     expect(listViewIds(state)).toContain(U.twoSentences);
     expect(readView(state, TEST_OLD_DOC).document.revision).toBe(5);
+  });
+
+  it("does not leave an undo step for an edit that is refused", () => {
+    const state = setUp();
+    expect(() => applyEdit(state, TEST_OLD_DOC, { revision: 3, op: { type: "split", unit_id: U.twoSentences, at: 0 }, undo: { session: SESSION } })).toThrow(PracticeUnsupportedError);
+    expect(() => applyEdit(state, TEST_OLD_DOC, { revision: 3, op: { type: "unmerge", unit_id: U.title }, undo: { session: SESSION } })).toThrow(PracticeUnsupportedError);
+    expect(state.undo).toHaveLength(0);
+    expect(stepDecision(state, "undo")).toBeNull();
   });
 
   it("does not record writes without undo meta", () => {

@@ -374,11 +374,11 @@ export function readGroup(state: PracticeState, unitIds: number[], targetIds: nu
 // ── 쓰기 ──
 
 /** 되돌리기 한 칸을 쌓는다 - undo 메타가 실린 쓰기만(백엔드도 메타가 없으면 단계를 남기지 않는다), 같은 step_key의 이어진 요청은 한 칸 */
-function recordStep(state: PracticeState, undo: UndoMeta | undefined, op: string): void {
+function recordStep(state: PracticeState, undo: UndoMeta | undefined, op: string, before?: PracticeBoard): void {
   if (!undo) return;
   const stepKey = undo.step_key ?? null;
   if (stepKey !== null && stepKey === state.lastStepKey && state.undo.length > 0) return;
-  state.undo.push({ board: clone(state.board), op: undo.op ?? op, meta: { ...undo } });
+  state.undo.push({ board: before ?? clone(state.board), op: undo.op ?? op, meta: { ...undo } });
   state.redo = [];
   state.lastStepKey = stepKey;
 }
@@ -409,6 +409,11 @@ function detachSources(state: PracticeState, unitIds: number[]): void {
 function resetDecision(state: PracticeState, unitId: number): Decision {
   detachSources(state, [unitId]);
   return setDecision(state, unitId, BLANK_DECISION);
+}
+
+/** 편집으로 물러난 Unit - 출처에서 빼고 판단도 미배정으로(되살려도 이어진 New 없이 확정으로 남지 않게). 묶음의 나머지 보류는 따라 하지 않는다 */
+function retireUnits(state: PracticeState, unitIds: number[]): void {
+  for (const unitId of unitIds) resetDecision(state, unitId);
 }
 
 /** 짝을 지우고 구성원의 pair_id를 비운다 - 지운 짝 id */
@@ -580,7 +585,7 @@ function splitUnit(state: PracticeState, view: DocumentView, unitId: number, at:
   const left = buildEditedUnit(state, view, unit, { spans: leftSpans, text: buildSpanText(leftSpans, blocks), number: unit.number });
   const right = buildEditedUnit(state, view, unit, { spans: rightSpans, text: buildSpanText(rightSpans, blocks), number: unit.number ? { ...EMPTY_NUMBER } : null }, [left]);
   view.units.splice(index, 1, left, right);
-  detachSources(state, [unitId]);
+  retireUnits(state, [unitId]);
   return { document_revision: 0, created_unit_ids: [left.id, right.id], retired_unit_ids: [unitId] };
 }
 
@@ -595,7 +600,7 @@ function mergeUnits(state: PracticeState, view: DocumentView, unitIds: number[])
   state.board.merged[merged.id] = pieces.map((unit) => ({ ...clone(unit), pair_id: null, status: null }));
   view.units = view.units.filter((unit) => !unitIds.includes(unit.id));
   view.units.splice(indexes[0], 0, merged);
-  detachSources(state, unitIds);
+  retireUnits(state, unitIds);
   return { document_revision: 0, created_unit_ids: [merged.id], retired_unit_ids: pieces.map((unit) => unit.id) };
 }
 
@@ -605,7 +610,7 @@ function unmergeUnit(state: PracticeState, view: DocumentView, unitId: number): 
   const index = findUnitIndex(view, unitId);
   view.units.splice(index, 1, ...clone(pieces));
   delete state.board.merged[unitId];
-  detachSources(state, [unitId]);
+  retireUnits(state, [unitId]);
   return { document_revision: 0, created_unit_ids: pieces.map((unit) => unit.id), retired_unit_ids: [unitId] };
 }
 
@@ -630,7 +635,7 @@ function setLayoutTable(state: PracticeState, view: DocumentView, tableId: numbe
   state.board.tableLooks[tableId] = want;
   const incomingIds = new Set(incoming.map((unit) => unit.id));
   const gone = retired.filter((id) => !incomingIds.has(id));
-  detachSources(state, gone);
+  retireUnits(state, gone);
   return { document_revision: 0, created_unit_ids: incoming.map((unit) => unit.id).filter((id) => !retired.includes(id)), retired_unit_ids: gone };
 }
 
@@ -654,7 +659,8 @@ export function applyEdit(state: PracticeState, docId: number, body: EditBody): 
   const { op } = body;
   const supported = ["split", "merge", "unmerge", "set_language", "set_layout_table", "set_noise_reason", "clear_noise"];
   if (!supported.includes(op.type)) throw new PracticeUnsupportedError(`edits:${op.type}`);
-  recordStep(state, body.undo, op.type);
+  // 사진은 지금 찍고 쌓기는 편집이 된 뒤에 - 거절(422)로 끝나는 편집이 되돌리기 칸을 만들지 않게. 각 편집은 검사를 마친 뒤에만 판을 바꾼다
+  const before = body.undo ? clone(state.board) : undefined;
   let result: EditResult = { document_revision: 0, created_unit_ids: [], retired_unit_ids: [] };
   if (op.type === "split") result = splitUnit(state, view, op.unit_id, op.at);
   else if (op.type === "merge") result = mergeUnits(state, view, op.unit_ids);
@@ -674,6 +680,7 @@ export function applyEdit(state: PracticeState, docId: number, body: EditBody): 
       unit.noise_reason = "";
     }
   }
+  recordStep(state, body.undo, op.type, before);
   return { ...result, document_revision: bumpDocRevision(state, docId), detach: null, shape: null };
 }
 
