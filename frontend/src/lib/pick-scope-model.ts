@@ -23,6 +23,11 @@ export function readRowKeyOf(unitId: number, rowOfUnit: ReadonlyMap<number, stri
   return (groupId === undefined ? undefined : rowOfUnit.get(groupId)) ?? null;
 }
 
+/** J/K가 서 있는 박스 - 칸을 골라도 걷기는 줄(묶음) 단위다(C1-R4) */
+export function readNavUnit(scope: PickScope): number {
+  return scope.boxId;
+}
+
 /** 누른 조각 → 두 겹 고름. 묶인 칸 문장은 표 묶음, 같은 짝이 둘 이상인 줄은 짝 묶음, 그 밖(표 머리를 누른 표 · 벗긴 줄 · 그림 · 외톨이)은 묶음 없음 */
 export function buildPickScope(unitId: number, rowUnitIds: readonly number[], units: ReadonlyMap<number, ViewUnit>, tables: ReadonlyMap<number, ViewTable>): PickScope {
   const boxId = resolveBoxUnit(unitId, units);

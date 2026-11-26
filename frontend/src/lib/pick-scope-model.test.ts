@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import type { ViewTable, ViewUnit } from "@/lib/api-sop";
 import { resolvePickUnit } from "@/lib/paper-model";
 
-import { buildPickScope, readRowKeyOf, resolveBoxUnit } from "./pick-scope-model";
+import { buildPickScope, readNavUnit, readRowKeyOf, resolveBoxUnit } from "./pick-scope-model";
 
 function u(id: number, over: Partial<ViewUnit> = {}): ViewUnit {
   return {
@@ -26,6 +26,7 @@ const unitList = [
   u(9, { kind: "cell_sentence", table_id: 11 }),
 ];
 const units = toMap(unitList);
+const unwrappedUnits = toMap(unitList.map((unit) => (unit.id === 2 ? { ...unit, group_unit_id: null } : unit)));
 const tables = new Map<number, ViewTable>([[10, { id: 10, table_index: 1, parent_table_id: null, part: "body", n_rows: 3, n_cols: 3, is_layout: false, is_band: false, anchor: null }]]);
 
 describe("buildPickScope", () => {
@@ -38,6 +39,12 @@ describe("buildPickScope", () => {
   });
 
   it("an unwrapped cell line is its own box", () => expect(buildPickScope(9, [9], units, tables)).toMatchObject({ boxId: 9, group: null }));
+
+  it("keeps the cell when its table is unwrapped", () => expect(buildPickScope(2, [2], unwrappedUnits, tables)).toMatchObject({ unitId: 2, boxId: 2 }));
+});
+
+describe("readNavUnit", () => {
+  it("J and K walk from the box, not from the cell", () => expect(readNavUnit(buildPickScope(2, [1], units, tables))).toBe(1));
 });
 
 describe("readRowKeyOf", () => {
