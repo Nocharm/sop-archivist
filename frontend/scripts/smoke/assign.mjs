@@ -7390,6 +7390,145 @@ await runStep("assign: counterpart table - each table unwraps on its own with no
   check("the warning goes with Undo", (await readWarnings()).length === 0);
 });
 
+// 표 여럿 한 번에 벗기기(쪼개기 먼저 §9) - 앞 단계와 같은 시드 9번 묶음. 두 작업 표를 Shift로 함께 골라 위쪽 바의 Unwrap tables 한 번에 벗기면
+// 짝이 끝에 한 번 선다. 편집 하나라 Ctrl+Z 한 번에 둘 다 표로 돌아온다(시드 그대로)
+await runStep("assign: two tables unwrap together from the bar", {}, async ({ page }) => {
+  const headers = { "X-Dev-User": "qa.member" };
+  const bundles = await (await page.request.get(`${BASE}/api/bundles`, { headers })).json();
+  const bundle = bundles.find((item) => item.title === PAIR_TABLES_TITLE);
+  check("the demo seed has the separate-tables bundle", bundle !== undefined);
+  if (!bundle) return;
+  const docs = await (await page.request.get(`${BASE}/api/bundles/${bundle.id}/documents`, { headers })).json();
+  const readView = async () => (await page.request.get(`${BASE}/api/bundles/${bundle.id}/documents/${docs[0].id}/view`, { headers })).json();
+  const waitView = async (isDone) => {
+    for (let tries = 0; tries < 60; tries += 1) {
+      const view = await readView();
+      if (isDone(view)) return view;
+      await page.waitForTimeout(250);
+    }
+    return null;
+  };
+  const before = await readView();
+  const [koWork, , enWork] = before.tables;
+  const tableUnit = (tableId) => before.units.find((item) => item.kind === "table" && item.table_id === tableId);
+  const [ko, en] = [tableUnit(koWork.id), tableUnit(enWork.id)];
+  check("both work tables are still tables", ko !== undefined && en !== undefined && before.tables.every((table) => !table.is_layout));
+  if (!ko || !en) return;
+  await page.goto(`${BASE}/bundles/${bundle.id}/assign`);
+  await wait(page, "assign-bar");
+  const piece = (id) => page.locator(`[data-testid="assign-paper-piece-${id}"]`);
+  await piece(ko.id).waitFor({ timeout: T });
+  await piece(ko.id).scrollIntoViewIfNeeded();
+  await piece(ko.id).click();
+  await wait(page, "assign-shape");
+  await piece(en.id).scrollIntoViewIfNeeded();
+  await piece(en.id).click({ modifiers: ["Shift"] });
+  const unwrap = page.locator('[data-testid="assign-bulk-unwrap"]');
+  await unwrap.waitFor({ timeout: T });
+  check("two tables picked together offer Unwrap tables next to Merge", (await unwrap.getAttribute("aria-disabled")) === null && (await page.locator('[data-testid="assign-bulk-merge"]').count()) === 1);
+  await unwrap.click();
+  const both = await waitView((view) => view.tables[0].is_layout && view.tables[2].is_layout && view.pairs.length > 0);
+  check("one press unwraps both tables and pairs their rows", both !== null && !both.tables[1].is_layout && !both.tables[3].is_layout);
+  check("the multi-pick is dropped", (await page.locator('[data-testid="assign-bulk"]').count()) === 0);
+  await page.keyboard.press("ControlOrMeta+z");
+  check("one Ctrl+Z wraps both tables back and the pairs go", (await waitView((view) => view.tables.every((table) => !table.is_layout) && view.pairs.length === 0)) !== null);
+});
+
+// 여럿 고른 줄 합치기(쪼개기 먼저 §9) - Old: "쪼개기 직후" 묶음에서 이웃한 한/영 짝 카드 둘을 Shift로 함께 골라 위쪽 바 Merge를 누르면 한글끼리 · 영어끼리
+// 합쳐 다시 짝, Ctrl+Z 한 번에 네 박스와 짝 둘이 돌아온다. New: 양 단 New 용지에서 이웃한 같은 언어 문장 둘을 Shift로 골라 Merge, Ctrl+Z로 돌린다(시드 그대로)
+await runStep("assign: rows picked together merge by language and pair again, one Ctrl+Z", {}, async ({ page }) => {
+  await page.goto(`${BASE}/`);
+  const fresh = page.locator('[data-testid^="bundles-row-"]', { hasText: "쪼개기 직후" });
+  const freshId = Number((await fresh.getAttribute("data-testid")).replace("bundles-row-", ""));
+  const headers = { "X-Dev-User": "qa.member" };
+  const docs = await (await page.request.get(`${BASE}/api/bundles/${freshId}/documents`, { headers })).json();
+  const readView = async (docId) => (await page.request.get(`${BASE}/api/bundles/${freshId}/documents/${docId}/view`, { headers })).json();
+  await page.goto(`${BASE}/bundles/${freshId}/assign`);
+  await wait(page, "assign-bar");
+  const pieceOf = (unitId) => page.locator(`[data-testid="assign-paper-piece-${unitId}"]`);
+  // 원문 순으로 붙은 두 짝(네 박스가 끊김 없이 이어진다) - 모두 미배정 문장
+  let doc = null;
+  let groups = null;
+  for (const candidate of docs.filter((item) => item.side === "old" && item.status === "ready")) {
+    const view = await readView(candidate.id);
+    const index = new Map(view.units.map((unit, at) => [unit.id, at]));
+    const byPair = new Map();
+    for (const item of view.units.filter((unit) => unit.pair_id !== null)) byPair.set(item.pair_id, [...(byPair.get(item.pair_id) ?? []), item]);
+    const pairs = [...byPair.values()]
+      .filter((group) => group.length === 2 && group.every((unit) => unit.kind === "sentence" && unit.status === "unassigned") && new Set(group.map((unit) => unit.lang)).size === 2)
+      .sort((a, b) => Math.min(...a.map((unit) => index.get(unit.id))) - Math.min(...b.map((unit) => index.get(unit.id))));
+    const at = pairs.findIndex((group, n) => {
+      const next = pairs[n + 1];
+      if (!next) return false;
+      const spots = [...group, ...next].map((unit) => index.get(unit.id));
+      return Math.max(...spots) - Math.min(...spots) === 3;
+    });
+    if (at < 0) continue;
+    await page.locator('[data-testid="assign-old-doc"]').click();
+    await page.locator(`[data-testid="assign-old-doc-option-${candidate.id}"]`).click();
+    await pieceOf(pairs[at][0].id).waitFor({ timeout: T }).catch(() => {});
+    if ((await pieceOf(pairs[at][0].id).count()) === 0) continue;
+    doc = candidate;
+    groups = [pairs[at], pairs[at + 1]];
+    break;
+  }
+  check("the fresh bundle has two neighbouring KO/EN pair cards on screen", groups !== null);
+  if (groups === null) return;
+  const ids = groups.flat().map((unit) => unit.id);
+  const waitView = async (isDone) => {
+    for (let tries = 0; tries < 60; tries += 1) {
+      const view = await readView(doc.id);
+      if (isDone(view)) return view;
+      await page.waitForTimeout(250);
+    }
+    return null;
+  };
+  await pieceOf(groups[0][0].id).scrollIntoViewIfNeeded();
+  await pieceOf(groups[0][0].id).click();
+  await pieceOf(groups[0][0].id).and(page.locator("[data-sel]")).waitFor({ timeout: T });
+  await pieceOf(groups[1][0].id).click({ modifiers: ["Shift"] });
+  const merge = page.locator('[data-testid="assign-bulk-merge"]');
+  await merge.waitFor({ timeout: T });
+  check("two pair rows picked together offer Merge and no Unwrap tables", (await merge.getAttribute("aria-disabled")) === null && (await page.locator('[data-testid="assign-bulk-unwrap"]').count()) === 0);
+  await merge.click();
+  const merged = await waitView((view) => !view.units.some((unit) => ids.includes(unit.id)));
+  const made = merged ? merged.units.filter((unit) => unit.is_edited && unit.can_unmerge && unit.pair_id !== null) : [];
+  const madePair = made.find((unit) => made.some((other) => other.id !== unit.id && other.pair_id === unit.pair_id && other.lang !== unit.lang));
+  check("Merge makes one Korean and one English box and pairs them again", madePair !== undefined, JSON.stringify(made.map((unit) => [unit.id, unit.lang, unit.pair_id])));
+  await page.keyboard.press("ControlOrMeta+z");
+  const back = await waitView((view) => ids.every((id) => view.units.some((unit) => unit.id === id)));
+  const pairOf = (view, id) => view.units.find((unit) => unit.id === id)?.pair_id ?? null;
+  check("one Ctrl+Z brings the four boxes and both pairs back", back !== null && groups.every(([a, b]) => pairOf(back, a.id) !== null && pairOf(back, a.id) === pairOf(back, b.id)));
+
+  // New(양 단) - 이웃한 같은 언어 문장 둘. 원문에서 떨어져 있으면 Merge가 흐리니 다음 둘을 본다
+  const ctx = await openPickPanes(page, 2);
+  const api = `${BASE}/api/bundles/${halfBundleId}`;
+  const written = await (await page.request.get(`${api}/written-sentences`, { headers })).json();
+  const lines = await page.locator('[data-pane="new"] .new-line[data-target]').evaluateAll((els) => els.map((el) => Number(el.dataset.target)));
+  const rowOf = new Map(written.map((row) => [row.target_id, row]));
+  let picked = null;
+  for (let n = 0; n + 1 < lines.length && picked === null; n += 1) {
+    const [a, b] = [rowOf.get(lines[n]), rowOf.get(lines[n + 1])];
+    if (!a || !b || a.kind !== "sentence" || b.kind !== "sentence" || a.lang !== b.lang || a.partner_target_id != null || b.partner_target_id != null || a.status !== "unassigned" || b.status !== "unassigned") continue;
+    await ctx.clickNew(a.target_id, ["Shift"]);
+    await ctx.clickNew(b.target_id, ["Shift"]);
+    await merge.waitFor({ timeout: T });
+    if ((await merge.getAttribute("aria-disabled")) === null) picked = [a, b];
+    else await ctx.clickBlank("old");
+  }
+  check("the New pane has two neighbouring loose sentences in one language", picked !== null);
+  if (picked === null) return;
+  check("the New top bar shows Merge with the count", (await getText(page, "assign-bulk-new")).includes("2"));
+  await merge.click();
+  await page.locator(`[data-testid="assign-new-${picked[0].target_id}"]`).waitFor({ state: "detached", timeout: T });
+  const listTargets = async () => new Set((await (await page.request.get(`${api}/written-sentences`, { headers })).json()).map((row) => row.target_id));
+  check("Merge makes one New sentence of the two", !(await listTargets()).has(picked[1].target_id));
+  await page.keyboard.press("ControlOrMeta+z");
+  await page.locator(`[data-testid="assign-new-${picked[0].target_id}"]`).waitFor({ timeout: T });
+  const restored = await listTargets();
+  check("Ctrl+Z brings both New sentences back", restored.has(picked[0].target_id) && restored.has(picked[1].target_id));
+});
+
 // 짝 판(1단 보기)을 열고 닫아도 용지 폭과 고른 박스의 화면 위쪽 자리가 그대로다(설계 2026-11-25 §6 S2) - 판이 용지 폭을 줄이면 위쪽 긴 줄이 다시 접혀 고른 박스가 위아래로 튀었다.
 // 안내 줄 짝이 있는 문서는 앞 단계와 같은 시드 9번 묶음(두 작업 표를 벗겨 짝을 만든다). 끝에 Undo 두 번으로 시드를 그대로 둔다
 await runStep("assign: the pair panel never moves the picked box up or down", {}, async ({ page }) => {
