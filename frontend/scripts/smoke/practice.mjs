@@ -35,7 +35,8 @@ async function openPractice(page) {
 const task = (page, id) => page.locator(`[data-testid="practice-task-${id}"]`);
 const waitDone = (page, id) => page.locator(`[data-testid="practice-task-${id}"][data-done="true"]`).waitFor({ timeout: T });
 const readOpenTask = (page) => page.evaluate(() => document.querySelector('[data-testid^="practice-task-"][data-open]')?.getAttribute("data-testid") ?? null);
-const countOld = (page) => page.locator(PRACTICE_UNIT).count();
+// Units, not elements - a merged unit draws each of its pieces under the same testid
+const countOld = (page) => page.evaluate((sel) => new Set([...document.querySelectorAll(sel)].map((el) => el.getAttribute("data-testid"))).size, PRACTICE_UNIT);
 const oldUnit = (page, text) => page.locator(PRACTICE_UNIT, { hasText: text }).first();
 
 // Click the first text line of the Old unit holding this text (away from the lead and badges), then wait for its box to be picked
@@ -99,7 +100,7 @@ await runStep("practice: entry and band", {}, async ({ page, takeShot }) => {
   await takeShot("sop-practice-band.png");
   // U5: the Assign help (?) has no practice link - only the user menu and the manual head lead here
   // pick a line first so the key lands in Assign (focus is on the fold button now)
-  await clickOld(page, "연습용 SOP — Assign 따라 하기");
+  await clickOld(page, "Old Unit마다 새 문서의 어디로 갈지 정하고 확정합니다.");
   await page.keyboard.press("?");
   await wait(page, "assign-help-keys");
   check("the Assign help has no link to the practice screen", (await page.locator('[data-testid="assign-help"] a[href*="/practice"]').count()) === 0);
@@ -131,12 +132,12 @@ await runStep("practice: follow tasks", {}, async ({ page }) => {
   await page.locator('[data-testid="assign-cut-run"]').waitFor({ timeout: T });
   await page.locator('[data-testid="assign-cut-run"]').click();
   await waitDone(page, "split");
-  await page.waitForFunction(([sel, count]) => document.querySelectorAll(sel).length === count + 1, [PRACTICE_UNIT, before], { timeout: T });
+  await page.waitForFunction(([sel, count]) => new Set([...document.querySelectorAll(sel)].map((el) => el.getAttribute("data-testid"))).size === count + 1, [PRACTICE_UNIT, before], { timeout: T });
   check("Split: the box is two boxes and the task is ticked", true);
   check("Split was not the first open task, so the first task stays open", (await readOpenTask(page)) === "practice-task-pick", String(await readOpenTask(page)));
 
   // Pick and move: click a line, J
-  await clickOld(page, "연습용 SOP — Assign 따라 하기");
+  await clickOld(page, "Old Unit마다 새 문서의 어디로 갈지 정하고 확정합니다.");
   await page.keyboard.press("j");
   await waitDone(page, "pick");
   check("Pick: J in Assign ticks the task and the next open task opens", (await readOpenTask(page)) === "practice-task-link", String(await readOpenTask(page)));
@@ -145,7 +146,8 @@ await runStep("practice: follow tasks", {}, async ({ page }) => {
   const pairB = "추천 카드를 누르면 고르기만 하고, 이어서 Enter로 바로 확정합니다.";
   await clickOld(page, pairB);
   await wait(page, "assign-rec-0");
-  await page.locator('[data-testid="assign-primary"][data-state="confirm"]').waitFor({ timeout: T });
+  // Enter confirms when the card is picked (confirm) or straight with the first card (choose, B1-R2)
+  await page.locator('[data-testid="assign-primary"]:is([data-state="confirm"], [data-state="choose"])').waitFor({ timeout: T });
   await page.keyboard.press("Enter");
   await waitDone(page, "confirm");
   check("Confirm: Enter on the card ticks Confirm and not Link", (await task(page, "link").getAttribute("data-done")) === "false");
@@ -196,7 +198,7 @@ await runStep("practice: follow tasks", {}, async ({ page }) => {
   await page.keyboard.press("Shift+J");
   await page.keyboard.press("Shift+J");
   await waitDone(page, "merge");
-  await page.waitForFunction(([sel, count]) => document.querySelectorAll(sel).length === count - 1, [PRACTICE_UNIT, beforeMerge], { timeout: T });
+  await page.waitForFunction(([sel, count]) => new Set([...document.querySelectorAll(sel)].map((el) => el.getAttribute("data-testid"))).size === count - 1, [PRACTICE_UNIT, beforeMerge], { timeout: T });
   check("Merge: the two pieces are one box and the task is ticked", true);
 
   // Keyboard map: ? opens the help, then its Keyboard map button
