@@ -237,3 +237,7 @@
 ## 2026-11-27 — F9b 연습 화면 말풍선 (feat/practice-coach)
 
 - 시안 A(스포트라이트) + 완료 플립(사용자 11-27). 오른쪽 과제 칸 · 좁은 창 접기를 지우고 `practice-coach.tsx` · 자리 셈 `coach-place.ts` · 공용 훅 `use-target-rect.ts`(effect 1, 화면 쪽 effect · 타이머 0, 넘어가기는 `animationend`). 막은 클릭을 막지 않는다.
+
+## 2026-11-27 — 원본 보기 설계 (`feat/original-view`)
+
+- Assign Space 시트에 "원본 보기" 탭 — 서버 PDF 변환은 배포 제약으로 빼고 브라우저 DOCX 그리개(`docx-preview`) + 앱의 쪽 나누기로 인쇄 미리보기처럼. 스파이크: 180쪽 그리기 0.22초(4배 0.85초) · 쪽 나누기 24ms · 표지 적중 100%, EMF · 글상자 틀은 한계. 결정 D1~D10은 `docs/superpowers/specs/2026-11-27-original-view-design.md`.
