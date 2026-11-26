@@ -116,7 +116,7 @@ export function AssignContextMenu({ anchor, readCover, click, sections, side, re
 
   function place(rect: DOMRect, size: { width: number; height: number }) {
     const boxes = readCover().filter((el) => el.isConnected).map((el) => el.getBoundingClientRect());
-    const row = boxes.length === 0 ? rect : { top: Math.min(...boxes.map((box) => box.top)), bottom: Math.max(...boxes.map((box) => box.bottom)), left: Math.min(...boxes.map((box) => box.left)) };
+    const row = boxes.length === 0 ? rect : { top: Math.min(...boxes.map((box) => box.top)), bottom: Math.max(...boxes.map((box) => box.bottom)), left: Math.min(...boxes.map((box) => box.left)), right: Math.max(...boxes.map((box) => box.right)) };
     return placeLinkMenu(row, click?.x ?? null, size, { width: window.innerWidth, height: window.innerHeight }, click?.y ?? null);
   }
 

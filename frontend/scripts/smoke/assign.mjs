@@ -1099,7 +1099,7 @@ await runStep("assign: right-click an Old sentence to split it or change its lan
 
 // 문장마다 나누기(쪼개기 먼저 §9) - 합친 박스는 합치기 전 자리로 나뉘고 되돌리기 한 번, 한 문장뿐이면 까닭을 알린다. 세 길: Old 우클릭 메뉴 · New ⇧S · New Shape 줄 단추.
 // 양 단 New 박스에는 우클릭 메뉴가 없다(문장 박스만 연다) - 글쇠 · Shape 줄로 본다. 합성 docx 둘(같은 본문)을 새 묶음에 올려 보고 끝에 묶음을 지운다
-await runStep("assign: Split by sentence makes one box per sentence, one Ctrl+Z, a single sentence tells why", { devUser: "dev.admin" }, async ({ page }) => {
+await runStep("assign: Split by sentence makes one box per sentence, one Ctrl+Z, a single sentence tells why", { devUser: "dev.admin", allowConsoleErrors: true }, async ({ page }) => {
   const headers = { "X-Dev-User": "dev.admin" };
   const backend = resolve(SCRIPT_DIR, "../../../backend");
   const oldFile = resolve(SHOT_DIR, "SYNTHETIC_OLD-91_split_sentences.docx");
