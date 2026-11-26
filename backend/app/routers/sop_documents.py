@@ -914,7 +914,9 @@ async def edit_units(
     result = await apply_edit(session, document, body.op, confirm=body.confirm, actor=ctx.login_id)
     # 바뀐 것이 없는 편집은 Split 기록도 revision도 그대로라 Assign 단계도 남기지 않는다(언어 바꾸기는 단위를 만들지 않는다)
     if body.undo is not None and before_state is not None and result.document_revision != revision:
-        await record_unit_edit_step(session, ctx.bundle, ctx.login_id, body.undo, document.id, before_state)
+        await record_unit_edit_step(
+            session, ctx.bundle, ctx.login_id, body.undo, document.id, before_state, result.closed_suggestion_ids
+        )
     await session.commit()
     return result
 
