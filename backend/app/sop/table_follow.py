@@ -557,7 +557,11 @@ async def compute_follow(inputs: FollowInputs, *, login_id: str) -> FollowOut:
         texts |= _list_line_texts(inputs.lines)
         for lines, _ in inputs.sources.values():
             texts |= _list_line_texts(lines)
-    vectors = await _embed(texts, login_id=login_id)
+    return answer_follow(inputs, await _embed(texts, login_id=login_id))
+
+
+def answer_follow(inputs: FollowInputs, vectors: Mapping[str, np.ndarray] | None) -> FollowOut:
+    """재료와 임베딩(없으면 None) → 한글 표처럼 하기 — AI 작업도 임베딩 없이 같은 판정으로 "AI 길인가"를 본다."""
     answer = _answer_counterpart(inputs.counterpart, vectors)
     source_id = answer.source_table_id
     none = FollowOut(source_table_id=source_id, mode="none", items=[], count=0, lines=[])
