@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import type { DocumentView, ViewBlock, ViewTable, ViewUnit } from "./api-sop";
 import { buildPaperModel } from "./paper-model";
-import { findUnitTable, isTableWalkUnit, listTableBlocks, listTableTabUnitIds, resolveFolded, toggleFold, toggleFoldAll } from "./table-tab-model";
+import { findUnitTable, isTableWalkUnit, readStepTab, listTableBlocks, listTableTabUnitIds, resolveFolded, toggleFold, toggleFoldAll } from "./table-tab-model";
 
 function block(id: number, text: string, extra: Partial<ViewBlock> = {}): ViewBlock {
   return {
@@ -87,6 +87,13 @@ describe("table tab model", () => {
     expect(walk([], true)).toEqual([20, 21, 31, 32]);
     expect(walk([], false)).toEqual([10, 20, 21, 14, 31, 32]);
     expect(walk([5], false)).toEqual([10, 20, 21, 14]);
+  });
+
+  it("names the tab of a unit for the box after a confirm - folded tables apart, each on its own", () => {
+    const tab = (folded: number[], isTablesTab: boolean, id: number) => readStepTab(blocks, model.units, new Set(folded), isTablesTab, id, "body");
+    expect([10, 20, 21, 14, 31].map((id) => tab([], false, id))).toEqual(["body", "body", "body", "body", "body"]);
+    expect([10, 21, 14, 31, 32].map((id) => tab([2, 5], false, id))).toEqual(["body", "folded:2", "body", "folded:5", "folded:5"]);
+    expect([10, 21, 31].map((id) => tab([5], true, id))).toEqual(["body", "tables", "tables"]);
   });
 
   it("keeps the table of the picked unit open", () => expect(resolveFolded(new Set([2, 5]), blocks, new Set([32]))).toEqual(new Set([2])));

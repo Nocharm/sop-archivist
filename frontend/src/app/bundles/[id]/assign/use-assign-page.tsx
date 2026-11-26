@@ -82,7 +82,7 @@ import { buildLinkSave } from "@/lib/link-save-model";
 import { buildIdenticalBatches } from "@/lib/match-model";
 import { EMPTY_FOLD_OPEN, type FoldOpen } from "@/lib/paper-fold-model";
 import { buildPaperModel, buildPaperTabs, findNearestCut, isBandHeading, listFigureTabUnitIds, listTabKeys, resolvePickUnit, shouldRecenter, type PaperTabKey } from "@/lib/paper-model";
-import { findUnitTable, isTableWalkUnit } from "@/lib/table-tab-model";
+import { findUnitTable, isTableWalkUnit, readStepTab } from "@/lib/table-tab-model";
 import { useFoldedTables } from "@/lib/use-folded-tables";
 import { findPairTarget } from "@/lib/pair-hint-model";
 import { readPartState, stepPart, withPartState } from "@/lib/part-history";
@@ -2543,8 +2543,8 @@ export function useAssignPage() {
       rowOfUnit,
       listed: new Set(listKeys),
       isByRow: isPairView,
-      // 표 탭에서는 다음 박스도 그 문서의 표에서
-      readTab: (unitId) => (activePart === "tables" ? (isTableStep(unitId) ? "tables" : "body") : (partOf?.get(unitId) ?? "body")),
+      // 표 탭에서는 다음 박스도 그 문서의 표에서, 다른 탭에서는 접힌 표를 건너뛴다(J/K와 같다, 11-23 명세 E2)
+      readTab: (unitId) => (paperModel === null ? (partOf?.get(unitId) ?? "body") : readStepTab(paperModel.tableBlocks, paperModel.units, oldTableFold.folded, activePart === "tables", unitId, partOf?.get(unitId) ?? "body")),
       isDeleted: (key) => rowMap.get(key)?.unitIds.every((id) => isDeletedUnit(unitMap.get(id))) ?? false,
       from: saved.key,
       fromUnitId: pickedId,

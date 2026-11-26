@@ -93,6 +93,16 @@ export function isTableWalkUnit(blocks: readonly TableBlock[], units: ReadonlyMa
   return isTablesTab ? tableId !== null : tableId === null || !folded.has(tableId);
 }
 
+/**
+ * 확정 뒤 다음 박스를 고르는 탭 이름(lib/next-box-model readTab) - 표 탭은 표("tables")와 나머지("body"), 다른 탭은 그 탭(tab) 그대로이되
+ * 접힌 표의 단위는 그 표만의 이름이라 J/K처럼 건너뛴다. 고름이 펼친 접힌 표 안에서 확정하면 그 표 안은 이어 간다
+ */
+export function readStepTab(blocks: readonly TableBlock[], units: ReadonlyMap<number, Pick<ViewUnit, "group_unit_id">>, folded: ReadonlySet<number>, isTablesTab: boolean, unitId: number, tab: string): string {
+  const tableId = findUnitTable(blocks, unitId, units);
+  if (isTablesTab) return tableId === null ? "body" : "tables";
+  return tableId !== null && folded.has(tableId) ? `folded:${tableId}` : tab;
+}
+
 /** 용지 줄이 든 바깥 표 - 표 줄은 그 표, 글 · 그림 줄은 칸 블록의 표(벗긴 표의 줄 · 띠 표 제목 줄). 표 밖 줄이면 null */
 export function findRowTable(row: PaperRow, tables: ReadonlyMap<number, ViewTable>): number | null {
   const tableId = row.type === "table" ? row.item.table.id : row.type === "figure" ? row.block.table_id : (row.parts[0]?.block.table_id ?? null);
