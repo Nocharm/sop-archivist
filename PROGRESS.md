@@ -238,6 +238,10 @@
 
 - 시안 A(스포트라이트) + 완료 플립(사용자 11-27). 오른쪽 과제 칸 · 좁은 창 접기를 지우고 `practice-coach.tsx` · 자리 셈 `coach-place.ts` · 공용 훅 `use-target-rect.ts`(effect 1, 화면 쪽 effect · 타이머 0, 넘어가기는 `animationend`). 막은 클릭을 막지 않는다.
 
+## 2026-11-27 — Space 시트 높이 끌기 (F10, v1.6.45)
+
+- Space 시트 위 손잡이를 끌어 작업 화면 높이의 30~90%로 조절하고 보기 설정에 기억한다(사용자 11-27, 이번 정식 업데이트에). 비율 기준은 시트가 아니라 작업 화면(손잡이 offsetParent 버그 고침), 스모크 `assign: Space preview`에 끌기 단계.
+
 ## 2026-11-27 — 원본 보기 설계 (`feat/original-view`)
 
 - Assign Space 시트에 "원본 보기" 탭 — 서버 PDF 변환은 배포 제약으로 빼고 브라우저 DOCX 그리개(`docx-preview`) + 앱의 쪽 나누기로 인쇄 미리보기처럼. 스파이크: 180쪽 그리기 0.22초(4배 0.85초) · 쪽 나누기 24ms · 표지 적중 100%, EMF · 글상자 틀은 한계. 결정 D1~D10은 `docs/superpowers/specs/2026-11-27-original-view-design.md`.

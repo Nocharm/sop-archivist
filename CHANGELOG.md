@@ -8,7 +8,7 @@ SOP Archivist 서비스 버전 기록. 단일 소스는 `frontend/package.json` 
 
 - **범위**: v1.5.0 뒤 dev 업데이트 v1.6.0~v1.6.44 — 쪼개기 먼저 패치(T/F 피드백 2차 명세 17항목 중 F2-R1~R5를 뺀 전부 · 회의 결정), 관리 화면 다듬기, 1차 피드백, 연습 페이지 `/practice`(말풍선 스포트라이트). 줄마다의 기록은 아래 그대로다.
 - **배포 메모**:
-  - **CHANGELOG에 v1.5.0의 운영 배포 기록이 없다(직전 운영 배포는 v1.4.0, 2026-11-20).** 운영이 아직 v1.4.0이면 v1.5.0의 배포 메모도 이 배포에 함께 적용된다 — **Alembic `0035`가 운영 DB의 기존 `units.text` 줄바꿈을 띄어쓰기로 바꾼다(사용자 승인 2026-11-21)**, `0036` · `0037`, AI 지침 `prompt.unwrap_order`, 추출기 7 → 9.
+  - 운영은 v1.5.0(2026-11-23 무렵 배포, 사용자 확인 11-27) — v1.5.0의 Alembic `0035`(기존 행 바꿈) · `0036` · `0037`은 이미 적용됐고, 이번 배포는 아래 `0038`~`0041`(더하기만)만 돈다.
   - v1.5.0 뒤 Alembic `0038`~`0041`은 **더하기만** 한다(upgrade 기준, 파일을 읽어 확인): `0038` `extractions.split_rule` 열(기존 행 1), `0039` `units.noise_reason`(기존 행 빈 글) · `unit_edits.noise_reason_changes`(기존 행 `{}`) 열, `0040` 새 표 `table_counterparts`와 인덱스 둘, `0041` `ai_jobs` 종류 CHECK에 `table_follow` 값 하나. 기존 행의 값을 지우거나 바꾸지 않는다(`0041`의 downgrade만 `table_follow` 작업을 지운다 — 운영은 downgrade하지 않는다).
   - 배포 전 백업(`docs/deploy/backup.md`)이 있는지 확인한다.
   - AI 지침 `prompt.grant`(v1.6.19) · `prompt.table_follow`(v1.6.21)가 기동 때 v1로 시드된다(기존 지침 행은 그대로).
@@ -16,6 +16,7 @@ SOP Archivist 서비스 버전 기록. 단일 소스는 `frontend/package.json` 
   - env · 권한 · 의존성 · 베이스 이미지 변경 없음(`.env.example` · `docker-compose.yml` · `backend/requirements.txt` · Dockerfile 차이 없음, `frontend/package.json`은 버전만).
 - **검증과 한계**: pytest 3851 + 시드 15 · ruff · vitest 2808 · `npm run build` 경고 0. 전체 스모크 `FULL=1`: 연습 페이지 모음 브랜치(dev v1.6.41 포함) ALL PASS 2588, 최종 dev v1.6.43 = ALL PASS 2588, v1.6.44(연습 화면만 바뀜)는 `practice:` ALL PASS 56 · overlap `assign-pane-head-narrow` 4/4 · vitest 2832 · build 경고 0. 감사(dev v1.6.41, 바뀐 화면만): 배치 `DS=worst` Assign · 상단 바 · 관리 19항목 151/151, 겹침 Assign 장면 다섯 × 1120 · 1280 · 1440 · 1920 40/40 + 새 장면 `assign-pane-head-narrow`(v1.6.43) 4/4, 대비 전부 통과, 사용 설명서 그림은 바뀐 장면 7(새 4 · 다시 3). 반응속도(운영 빌드 · 극단 시드, v1.6.41): 52문서 CPU 1배 J 24.1 → 9.7 · Delete 24.5 → 10.4ms, CPU 4배 J 53.2 → 51.7 · Delete 57.7 → 56.1ms, 작은 문서 CPU 1배 필터 Delete 6.4 → 21.5ms(지난번 기준 v1.6.23의 23ms 수준 — 오가는 잡음), 모두 100ms 기준 아래, 스크롤 끊김 0. 실제 SOP · 실제 모델로는 검증하지 못했다(합성 SOP와 가짜 AI, 짝 표를 가리는 값도 합성 자료로 잡았다).
 
+- v1.6.45 — 2026-11-27: Space 시트 위 손잡이를 끌어 높이 조절(30~90%, 기억)
 - v1.6.44 — 2026-11-27: 연습 화면 과제 안내를 오른쪽 칸 대신 말풍선 스포트라이트로 — 화면을 살짝 어둡게 하고 눌러야 할 상자만 밝힌 뒤 옆 말풍선이 할 일 · 글쇠 · 설명서를 알려 주고, 해내면 카드가 뒤집혀 체크가 된 뒤 다음 과제로 옮겨 간다. 위 띠에 진행 점 12개(누르면 그 과제로), 다 하면 마치는 카드(사용자 결정 11-27)
 - v1.6.43 — 2026-11-27: Assign 칸에 문서가 하나뿐이면 머리 줄 제목이 줄어들지 않아 좁은 칸에서 확대 단추가 옆 칸 머리를 덮던 것 — 제목이 말줄임으로 줄고 전체 이름은 툴팁
 - v1.6.42 — 2026-11-27: 연습 페이지 `/practice` — 실제 Assign을 브라우저 안 가짜 서버로 돌려 서버에 아무것도 쓰지 않고, 오른쪽 과제 칸의 12과제를 손짓대로 자동 체크(설명서 절 링크, 좁은 창은 접힌 막대로 시작). 상단 바 사용자 메뉴 '연습하기'와 설명서 머리에서 들어간다(1차 피드백 9)
@@ -76,6 +77,7 @@ SOP Archivist 서비스 버전 기록. 단일 소스는 `frontend/package.json` 
   - **업무흐름도를 간이 그림으로**(v1.4.17~v1.4.18): Word 도형 캔버스 · 묶음을 흑백 PNG 그림 하나로 그리고(추출기 9), 도형 안 글은 그림 아래 접힌 **Text in figure** 목록에만. 문서에 적힌 선 굵기 · 글자 크기는 상한 안으로 묶는다.
   - **WI 상위 SOP 선택 · 참조로 찾은 상위**(v1.4.19): WI 상위를 비워 둘 수 있고(**None — find by reference**), 올린 New SOP의 확정 참조 줄 번호가 WI 번호와 같으면 그 SOP의 자식으로 본다(Documents에 점선 줄 + **Linked by reference**).
 - **배포 메모**:
+  - **운영 배포 2026-11-23 무렵(월요일, 사용자 기억 — 정확한 날은 GitLab 파이프라인 기록).** 운영 상단 바 v1.5.0 확인(사용자 2026-11-27). 아래 `0035`를 포함한 이 배포 메모가 그때 적용됐다.
   - **Alembic `0035`가 운영 DB의 기존 Unit 글(`units.text`)의 줄바꿈을 띄어쓰기로 바꾼다(사용자 승인 2026-11-21, 길이 그대로 · 확정한 New 문장 글은 그대로 · 되돌리지 않음) — 배포 전 백업(`docs/deploy/backup.md`)이 있는지 확인한다.**
   - **Alembic `0036`(`units.indent_shift` · `unit_edits.indent_changes` 열 추가), `0037`(`ai_jobs` 종류 CHECK에 `unwrap_order` 추가) — 기존 행의 값은 바꾸지 않는다.**
   - **AI 프롬프트 `prompt.unwrap_order` 추가(기동 때 v1로 시드).**
