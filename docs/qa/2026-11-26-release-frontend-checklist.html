@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>정식 업데이트 화면 체크리스트</title>
+<!-- v1.5.0(마지막 main) → dev v1.6.31 사이 프런트 변경을 화면에서 손으로 볼 것. 체크는 이 브라우저에만 남는다. -->
+<style>
+  :root {
+    --bg: #f7f7f5; --card: #ffffff; --text: #1d1d1b; --muted: #6b6b66;
+    --line: #e2e1dc; --accent: #2f5bd3; --warn: #b4540a; --tag: #eef1fb;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #161615; --card: #1f1f1d; --text: #ecebe6; --muted: #a3a29b;
+      --line: #34332f; --accent: #8aa6ff; --warn: #f0a35e; --tag: #262b3b;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #161615; --card: #1f1f1d; --text: #ecebe6; --muted: #a3a29b;
+    --line: #34332f; --accent: #8aa6ff; --warn: #f0a35e; --tag: #262b3b;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+    font: 15px/1.55 -apple-system, "Segoe UI", "Malgun Gothic", sans-serif; }
+  main { max-width: 760px; margin: 0 auto; padding: 24px 16px 64px; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  .sub { color: var(--muted); margin: 0 0 16px; }
+  .bar { position: sticky; top: 0; background: var(--bg); padding: 8px 0; z-index: 1;
+    display: flex; gap: 12px; align-items: center; border-bottom: 1px solid var(--line); }
+  .meter { flex: 1; height: 8px; background: var(--line); border-radius: 4px; overflow: hidden; }
+  .meter > i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+  .count { font-variant-numeric: tabular-nums; color: var(--muted); min-width: 64px; text-align: right; }
+  button { font: inherit; color: var(--text); background: var(--card); border: 1px solid var(--line);
+    border-radius: 6px; padding: 4px 10px; cursor: pointer; }
+  section { background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+    padding: 4px 16px 8px; margin-top: 16px; }
+  h2 { font-size: 16px; margin: 12px 0 4px; }
+  label { display: flex; gap: 10px; padding: 8px 0; border-top: 1px solid var(--line); cursor: pointer; }
+  h2 + label { border-top: 0; }
+  input[type=checkbox] { margin-top: 4px; width: 16px; height: 16px; flex: none; accent-color: var(--accent); }
+  label:has(input:checked) .t { color: var(--muted); text-decoration: line-through; }
+  .v { font-size: 12px; color: var(--accent); background: var(--tag); border-radius: 4px;
+    padding: 0 5px; margin-left: 4px; white-space: nowrap; }
+  .w { color: var(--warn); font-weight: 600; }
+  kbd { font: 12px ui-monospace, monospace; border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; }
+  .note { color: var(--muted); font-size: 13px; margin: 8px 0 0; }
+</style>
+</head>
+<body>
+<main>
+  <h1>정식 업데이트 화면 체크리스트</h1>
+  <p class="sub">마지막 main <b>v1.5.0</b> → dev <b>v1.6.31</b>. 개발 서버(:4444)에서 화면으로 볼 것만 추렸다. 자세한 것은 <code>CHANGELOG.md</code> · 장부 "아침에 볼 것".</p>
+  <div class="bar"><div class="meter"><i id="fill"></i></div><span class="count" id="count">0 / 0</span><button id="reset" type="button">비우기</button></div>
+
+  <section>
+    <h2>먼저 — 자동 검사</h2>
+    <label><input type="checkbox"><span class="t">전체 스모크 <code>FULL=1</code> 통과</span></label>
+    <label><input type="checkbox"><span class="t">감사 넷: layout(<code>DS=worst</code>) · overlap(새 장면 <code>assign-cell-menu</code>) · contrast · manual-shots</span></label>
+    <label><input type="checkbox"><span class="t">perf 다시(극단 시드, 8a에서 몇 칸 ±20% · 7g는 안 잼)</span></label>
+    <label><input type="checkbox"><span class="t">설명서 그림은 바뀐 장면만, 머리 <code>version</code> · <code>updated</code></span></label>
+  </section>
+
+  <section>
+    <h2>숨긴 것 · 없앤 것</h2>
+    <label><input type="checkbox"><span class="t">새 문서 만들기(Order · 번호로 더하기 · 칸 배정 · 템플릿 보기 · 결과물 C · Excel C 시트)와 칸 추천 · 번역 · 나누기 AI가 안 보임 — 이미 보낸 줄은 보이고 배정 취소됨 <span class="v">v1.6.4</span></span></label>
+    <label><input type="checkbox"><span class="t">다른 Bundle로 이동 없음, 옛 이동 줄은 읽기 전용 · 배정 취소로만 풂 <span class="v">v1.6.5</span></span></label>
+  </section>
+
+  <section>
+    <h2>쪼개기 · 올리기</h2>
+    <label><input type="checkbox"><span class="t">새로 올린 문서는 문단마다 언어별 박스 하나, 이미 올린 문서는 그대로 <span class="v">v1.6.3</span></span></label>
+    <label><input type="checkbox"><span class="t">새 New 문서도 Old와 같은 규칙으로 쪼개짐 <span class="v">v1.6.6</span></span></label>
+    <label><input type="checkbox"><span class="t">1장 앞 · 개정 이력이 <b>DELETED</b> 접힌 블록으로, 사유 쓰기(R) · 삭제 취소(U) · 우클릭 "여기부터 본문" <span class="v">v1.6.11</span></span></label>
+  </section>
+
+  <section>
+    <h2>Assign — 고르기 · 글쇠</h2>
+    <label><input type="checkbox"><span class="t">저장이 느려도 누른 글쇠가 차례대로 나감, 뒤에 선 것은 <b>Queued n</b> 칩 <span class="v">v1.6.8</span></span></label>
+    <label><input type="checkbox"><span class="t">Enter는 어디서든 확정 단추, 마우스로 누른 뒤 Space는 미리보기 <span class="v">v1.6.12</span></span></label>
+    <label><input type="checkbox"><span class="t">바뀐 글쇠: 보류 <kbd>⇧H</kbd>, AI 카드 <kbd>⇧A</kbd>(옛 글쇠는 안내), <b>?</b> 도움말 <span class="v">v1.6.13</span></span></label>
+    <label><input type="checkbox"><span class="t"><kbd>⇧J</kbd><kbd>⇧J</kbd> · <kbd>⇧K</kbd><kbd>⇧K</kbd> 이웃 합치기(첫 누름은 점선 · 안내만) <span class="v">v1.6.17</span></span></label>
+    <label><input type="checkbox"><span class="t">누른 조각은 진하게, 짝 · 표는 얇은 테 + 꼬리표 — 표 칸을 눌러도 배정 · 삭제는 표 전체 <span class="v">v1.6.23</span></span></label>
+    <label><input type="checkbox"><span class="t">Shift로 고른 줄은 덩어리마다 굵은 테와 "n줄 고름" <span class="v">v1.6.26</span> <span class="w">첫 Shift+클릭은 지금 줄도 넣음</span></span></label>
+    <label><input type="checkbox"><span class="t"><kbd>⇧G</kbd>로 넣고 빼기, 위쪽 바 일괄 삭제 · 배정 취소 · →KO · →EN, Ctrl+Z 한 번 <span class="v">v1.6.30</span></span></label>
+    <label><input type="checkbox"><span class="t">떨어진 짝이 둘 다 보이면 왼쪽 괄호선, 안내 줄 숨음 <span class="v">v1.6.29</span> <span class="w">그동안 고른 박스 아래 빈 줄</span></span></label>
+  </section>
+
+  <section>
+    <h2>Assign — 손질</h2>
+    <label><input type="checkbox"><span class="t">문장마다 나누기: 우클릭 · Shape 줄 · <kbd>⇧S</kbd>, 한 문장이면 까닭 알림 <span class="v">v1.6.27</span></span></label>
+    <label><input type="checkbox"><span class="t">여럿 합치기(짝 줄은 언어끼리 다시 짝) · 표 여럿 벗기기 — 위쪽 바, 되돌리기 한 번 <span class="v">v1.6.28</span></span></label>
+    <label><input type="checkbox"><span class="t">표 우클릭은 "이 칸" · "이 표", 항목에 올리면 닿는 칸 칠 <span class="v">v1.6.25</span> <span class="w">양 단 New 칸에는 메뉴 없음</span></span></label>
+    <label><input type="checkbox"><span class="t">키 큰 메뉴는 박스를 덮지 않고 옆으로 비킴 <span class="v">v1.6.27</span></span></label>
+    <label><input type="checkbox"><span class="t">Old 표를 벗기면 숫자 칸이 5.1 · 5.2로 이어짐, 첫 Ctrl+Z는 번호만 <span class="v">v1.6.31</span></span></label>
+    <label><input type="checkbox"><span class="t">번호 있는 줄을 합치면 뒤 번호가 당겨짐 <span class="v">v1.6.31</span> <span class="w">제목 합치면 문서 끝까지 — 써 보고 정함</span></span></label>
+    <label><input type="checkbox"><span class="t">벗긴 영어 표 "한글 표처럼 하기" — 칩 넷 · Apply · Ctrl+Z 한 번, 꼴이 다르면 AI <span class="v">v1.6.21</span></span></label>
+    <label><input type="checkbox"><span class="t">삭제 접기 · 벗기기 전환이 누르는 순간 시작, 실패하면 거꾸로 <span class="v">v1.6.9</span></span></label>
+    <label><input type="checkbox"><span class="t">번호 칸 창 확인 · 취소 단추 <span class="v">v1.6.7</span></span></label>
+  </section>
+
+  <section>
+    <h2>Assign — 용지 · 판</h2>
+    <label><input type="checkbox"><span class="t">이미 쓴 New 문서도 양 단에서 Old와 같은 용지(머리말 · 꼬리말 · 그림 탭), 양쪽 고르면 Enter가 잇기 <span class="v">v1.6.22</span></span></label>
+    <label><input type="checkbox"><span class="t">Tables 탭 · 본문 표 접기(새로 고침해도 기억), 표 탭에도 짝 표 고르기 · 따라 하기 <span class="v">v1.6.24</span></span></label>
+    <label><input type="checkbox"><span class="t">1440px보다 좁으면 오른쪽 칸을 떼어 옮기고 접음 <span class="v">v1.6.2</span></span></label>
+    <label><input type="checkbox"><span class="t">짝 · 그림 위치 판을 열어도 용지 폭 · 자리 그대로 <span class="v">v1.6.0</span></span></label>
+    <label><input type="checkbox"><span class="t">진행 숫자가 "정함" + 처분별 막대, 그림은 따로 셈 <span class="v">v1.6.18</span></span></label>
+    <label><input type="checkbox"><span class="t">AI 제안은 정하지 않은 줄에만, 합치거나 나눈 줄의 제안은 거둬짐 <span class="v">v1.6.20</span></span></label>
+  </section>
+
+  <section>
+    <h2>결과물 · Excel · 관리</h2>
+    <label><input type="checkbox"><span class="t">Excel A에서 삭제 줄 Old 글에 취소선 <span class="v">v1.6.15</span></span></label>
+    <label><input type="checkbox"><span class="t">Space 미리보기 목차 한 줄 접기, 문단 Excel 받을 때 넣을 것 고르는 창 <span class="v">v1.6.14</span></span></label>
+    <label><input type="checkbox"><span class="t">문단 Excel 칸 번호 5.1 · 5.2, 사람이 고친 칸은 "Source 3 → 5.2.1" <span class="v">v1.6.31</span></span></label>
+    <label><input type="checkbox"><span class="t">관리 화면: 부여 목록+상세 · 사내 AI로 등록 · 역할 × 권한 표 <span class="v">v1.6.19</span></span></label>
+  </section>
+
+  <p class="note"><span class="w">주황 글</span>은 사용자가 정할 동작(장부 "아침에 볼 것"). 배포 메모: Alembic 0038(<code>extractions.split_rule</code>) 등 더하기만 — 배포 전 백업 확인.</p>
+</main>
+<script>
+  // 체크 상태는 이 브라우저에만 둔다(저장소가 막혀도 화면은 돈다).
+  const KEY = "release-checklist-v1.6.31";
+  const boxes = [...document.querySelectorAll("input[type=checkbox]")];
+  const readSaved = () => { try { return JSON.parse(localStorage.getItem(KEY) || "[]"); } catch { return []; } };
+  const writeSaved = (list) => { try { localStorage.setItem(KEY, JSON.stringify(list)); } catch { /* 저장 못 해도 화면은 그대로 */ } };
+  const updateMeter = () => {
+    const done = boxes.filter((b) => b.checked).length;
+    document.getElementById("count").textContent = `${done} / ${boxes.length}`;
+    document.getElementById("fill").style.width = `${(done / boxes.length) * 100}%`;
+  };
+  const saved = new Set(readSaved());
+  boxes.forEach((b, i) => {
+    b.checked = saved.has(i);
+    b.addEventListener("change", () => { writeSaved(boxes.flatMap((x, j) => (x.checked ? [j] : []))); updateMeter(); });
+  });
+  document.getElementById("reset").addEventListener("click", () => { boxes.forEach((b) => { b.checked = false; }); writeSaved([]); updateMeter(); });
+  updateMeter();
+</script>
+</body>
+</html>
