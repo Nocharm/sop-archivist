@@ -682,6 +682,7 @@
   .menu-lang-seg button[aria-checked="true"] { background: var(--ink); color: var(--surface); cursor: default; }
   .menu-lang-seg button[aria-disabled="true"]:not([aria-checked="true"]) { color: var(--ink-4); cursor: not-allowed; }
   .menu-lang-row:has(button[aria-disabled="true"]:not([aria-checked="true"])) { color: var(--ink-4); }
+  .menu-lang-row > kbd { flex: none; }
 
   /* 값 고르기 목록 - 긴 선택지는 자르지 않고 줄을 바꾸고, 항목이 많으면 목록 안에서 스크롤한다 */
   .menu[role="listbox"] { max-width: min(480px, calc(100vw - 16px)); max-height: min(320px, calc(100vh - 16px)); overflow-y: auto; }

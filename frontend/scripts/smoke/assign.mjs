@@ -1172,6 +1172,100 @@ await runStep("assign: two-level pick - a pair half, a table cell and Del delete
   await removeShapeBundle(page, { api, headers });
 });
 
+// 표 칸 우클릭(11-23 명세 C2 · S9) - "이 칸" 위 · "이 표" 아래 두 구역, 항목에 올리면 닿는 칸이 칠해지고 떠나면 걷힌다. 벗긴 표의 줄은 이 칸 아래 이 표(다시 표로 · AI 순서),
+// 양 단의 New 표 칸도 같은 구역이되 배정 항목이 없다. 합성 docx 둘(같은 본문)을 새 묶음에 올려 보고 끝에 묶음을 지운다
+await runStep("assign: the cell menu has this cell and this table, hovering paints the reached cells", { devUser: "dev.admin" }, async ({ page }) => {
+  const headers = { "X-Dev-User": "dev.admin" };
+  const backend = resolve(SCRIPT_DIR, "../../../backend");
+  const oldFile = resolve(SHOT_DIR, "SYNTHETIC_OLD-90_cell_menu.docx");
+  const newFile = resolve(SHOT_DIR, "SYNTHETIC_SOP-90_cell_menu.docx");
+  const build = [
+    "import sys",
+    "from tests.docx_factory import build_docx, p, tbl",
+    "body = p('5. 절차', 'Heading1') + p('5. Procedure', 'Heading1') + tbl([['합성 항목', '합성 값'], ['합성 온도', '합성 결과']])",
+    "open(sys.argv[1], 'wb').write(build_docx(body))",
+    "open(sys.argv[2], 'wb').write(build_docx(body, headers=[p('합성 새 문서')]))",
+  ].join("\n");
+  execFileSync(findBackendPython(), ["-c", build, oldFile, newFile], { cwd: backend, stdio: "inherit" });
+  const created = await (await page.request.post(`${BASE}/api/bundles`, { headers, data: { title: "SYNTHETIC cell menu", is_synthetic: true } })).json();
+  const api = `${BASE}/api/bundles/${created.id}`;
+  const getJson = async (path) => (await page.request.get(`${api}${path}`, { headers })).json();
+  const mime = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+  const oldUp = await page.request.post(`${api}/documents`, { headers, multipart: { side: "old", file: { name: "SYNTHETIC_OLD-90_cell_menu.docx", mimeType: mime, buffer: readFileSync(oldFile) } } });
+  const newUp = await page.request.post(`${api}/documents`, { headers, multipart: { side: "new", doc_type: "sop", file: { name: "SYNTHETIC_SOP-90_cell_menu.docx", mimeType: mime, buffer: readFileSync(newFile) } } });
+  const oldDoc = await oldUp.json();
+  const newDoc = await newUp.json();
+  const readParts = async (docId) => {
+    const view = await getJson(`/documents/${docId}/view`);
+    const table = view.units.find((unit) => unit.kind === "table");
+    return { view, table, cell: view.units.find((unit) => unit.kind === "cell_sentence" && unit.group_unit_id === table?.id && unit.text === "합성 온도") };
+  };
+  const oldParts = await readParts(oldDoc.id);
+  const newParts = await readParts(newDoc.id);
+  const isReady = oldUp.status() === 201 && newUp.status() === 201 && [oldParts, newParts].every((parts) => parts.table && parts.cell);
+  check("an Old and a written New document with a table and its cell are uploaded", isReady, `${oldUp.status()} ${newUp.status()}`);
+  if (!isReady) {
+    await removeShapeBundle(page, { api, headers });
+    return;
+  }
+  await page.goto(`${BASE}/bundles/${created.id}/assign`);
+  await wait(page, "assign-bar");
+  if ((await page.locator('[data-testid="assign-new"]').count()) === 0) await page.locator('[data-testid="assign-view-two"]').click();
+  await wait(page, "assign-new");
+  const listIds = () => page.evaluate(() => [...document.querySelectorAll('[data-testid^="assign-ctx-"]')].map((el) => el.getAttribute("data-testid")).filter((id) => id !== "assign-ctx-menu" && id !== "assign-ctx-reach"));
+  const outlineOf = (pane, unitId) => page.evaluate(([side, id]) => { const el = document.querySelector(`[data-pane="${side}"] [data-strip-unit="${id}"]`); return el ? getComputedStyle(el).outlineStyle : null; }, [pane, unitId]);
+  const openMenu = async (testId) => {
+    const text = page.locator(`[data-testid="${testId}"]`).first();
+    await text.scrollIntoViewIfNeeded({ timeout: T });
+    await text.click({ button: "right" });
+    await wait(page, "assign-ctx-menu");
+  };
+  const closeMenu = async () => {
+    await page.keyboard.press("Escape");
+    await page.locator('[data-testid="assign-ctx-menu"]').waitFor({ state: "detached", timeout: T });
+  };
+  // Old 표 칸: 이 칸 위(표 벗기기는 아래), 이 표 아래(배정 취소 · 표 벗기기 · 표 전체 삭제)
+  await openMenu(`assign-paper-unit-${oldParts.cell.id}`);
+  const cellIds = await listIds();
+  check("old: a table cell menu has this cell above this table", cellIds.indexOf("assign-ctx-section-cell") === 0 && cellIds.indexOf("assign-ctx-section-cell") < cellIds.indexOf("assign-ctx-split") && cellIds.indexOf("assign-ctx-split") < cellIds.indexOf("assign-ctx-section-table"), cellIds.join(","));
+  check("old: this table holds Unassign, Unwrap and Delete whole table in that order", JSON.stringify(cellIds.slice(cellIds.indexOf("assign-ctx-section-table"))) === JSON.stringify(["assign-ctx-section-table", "assign-ctx-clear", "assign-ctx-table_layout", "assign-ctx-delete"]), cellIds.join(","));
+  check("old: the headings name the cell and the table", (await page.locator('[data-testid="assign-ctx-section-cell"]').innerText()).includes("This cell") && (await page.locator('[data-testid="assign-ctx-section-table"]').innerText()).includes("This table"));
+  check("old: the table items carry the table scope in their names", (await page.locator('[data-testid="assign-ctx-delete"]').innerText()).includes("Delete whole table") && (await page.locator('[data-testid="assign-ctx-clear"]').innerText()).includes("Unassign table"));
+  // 닿는 칸 칠하기 - 칸 항목은 그 칸, 표 항목은 표 둘레, 떠나면 걷힌다
+  await page.locator('[data-testid="assign-ctx-split"]').hover();
+  await page.locator('[data-testid="assign-ctx-reach"]').waitFor({ state: "attached", timeout: T });
+  check("old: hovering a cell item fills that cell", (await outlineOf("old", oldParts.cell.id)) === "solid");
+  await page.locator('[data-testid="assign-ctx-delete"]').hover();
+  await page.waitForFunction((id) => { const el = document.querySelector(`[data-pane="old"] [data-strip-unit="${id}"]`); return el !== null && getComputedStyle(el).outlineStyle === "dashed"; }, oldParts.table.id, { timeout: T });
+  check("old: hovering a table item rings the table", (await outlineOf("old", oldParts.table.id)) === "dashed");
+  await page.locator('[data-testid="assign-ctx-menu"] .menu-label').first().hover();
+  await page.locator('[data-testid="assign-ctx-reach"]').waitFor({ state: "detached", timeout: T });
+  check("old: leaving the item clears the paint", (await outlineOf("old", oldParts.table.id)) !== "dashed");
+  await closeMenu();
+  // 벗긴 표의 줄 - 표를 벗긴 뒤 칸 줄을 우클릭하면 이 칸 아래 이 표(다시 표로 · AI 순서)
+  const revision = (await getJson(`/documents/${oldDoc.id}/view`)).document.revision;
+  const unwrapped = await page.request.post(`${api}/documents/${oldDoc.id}/edits`, { headers, data: { revision, confirm: false, op: { type: "set_layout_table", table_id: oldParts.table.table_id, is_layout: true } } });
+  check("the Old table is unwrapped for the line menu", unwrapped.ok(), String(unwrapped.status()));
+  await page.goto(`${BASE}/bundles/${created.id}/assign`);
+  await wait(page, "assign-bar");
+  await openMenu(`assign-paper-unit-${oldParts.cell.id}`);
+  const lineIds = await listIds();
+  check("old: an unwrapped line menu keeps its own decisions under this cell and puts Back to table and AI order under this table", lineIds.indexOf("assign-ctx-section-cell") === 0 && lineIds.indexOf("assign-ctx-clear") > 0 && lineIds.indexOf("assign-ctx-section-table") > lineIds.indexOf("assign-ctx-delete") && lineIds.indexOf("assign-ctx-table_rewrap") > lineIds.indexOf("assign-ctx-section-table") && lineIds.indexOf("assign-ctx-table_ai_order") > lineIds.indexOf("assign-ctx-table_rewrap"), lineIds.join(","));
+  await page.locator('[data-testid="assign-ctx-table_rewrap"]').hover();
+  await page.locator('[data-testid="assign-ctx-reach"]').waitFor({ state: "attached", timeout: T });
+  check("old: hovering Back to table rings the table's lines", (await outlineOf("old", oldParts.cell.id)) === "dashed");
+  await closeMenu();
+  // 양 단의 New 표 칸 - 같은 구역, 배정 항목 없음
+  await openMenu(`assign-new-paper-unit-${newParts.cell.id}`);
+  const newIds = await listIds();
+  check("new: a table cell menu has this cell and this table without assignment items", newIds.includes("assign-ctx-section-cell") && newIds.includes("assign-ctx-section-table") && newIds.includes("assign-ctx-table_layout") && !newIds.includes("assign-ctx-clear") && !newIds.includes("assign-ctx-delete"), newIds.join(","));
+  await page.locator('[data-testid="assign-ctx-table_layout"]').hover();
+  await page.locator('[data-testid="assign-ctx-reach"]').waitFor({ state: "attached", timeout: T });
+  check("new: hovering Unwrap table rings the New table", (await outlineOf("new", newParts.table.id)) === "dashed");
+  await closeMenu();
+  await removeShapeBundle(page, { api, headers });
+});
+
 // 배정 화면에서 표를 우클릭하면 표 메뉴(표 벗기기)가 뜬다 - 표 머리 줄을 우클릭한다(칸 위가 아니라 표 전체). 벗기기와 되돌리기는 아래 unwrap 단계가 본다
 await runStep("assign: right-clicking a table opens the table menu", {}, async ({ page, takeShot }) => {
   await page.goto(`${BASE}/`);

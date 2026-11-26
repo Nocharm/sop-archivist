@@ -41,8 +41,10 @@ import { applySavedTargets, buildComposedRows, isWrittenRow, listHeadingNotes, l
 import { addPartnerTargets, buildLinkPairs, buildRecommendations, dropHiddenRecommendations, listLinkableRows, listUnsourced, mergeGroups, readConfirmBlockKey, stepZoom, type Recommendation } from "@/lib/assign-model";
 import { countLiveOffer, splitAcceptIds } from "@/lib/ai-accept-model";
 import { buildUseDraft, filterAiItems, findRowSuggestion, indexLiveSuggestions, readSuggestedDestination, readSuggestionPlace } from "@/lib/ai-suggestion-model";
-import { buildAssignMenu, getPairPickBlocker, getPairSetBlocker, planAssignJoin, planLanguageChange, planShapeMode, type AssignMenuAction, type AssignMenuGroups } from "@/lib/assign-context-menu-model";
+import { buildAssignMenu, buildUnwrappedTableItems, getPairPickBlocker, getPairSetBlocker, planAssignJoin, planLanguageChange, planShapeMode, type AssignMenuAction, type AssignMenuGroups } from "@/lib/assign-context-menu-model";
 import { listHeadingBackUnits } from "@/lib/heading-shift-model";
+import { readMenuReach, type MenuReach } from "@/lib/menu-reach-model";
+import { buildMenuSections, readMenuPlace, type MenuPlace, type MenuSection } from "@/lib/menu-section-model";
 import { countDecidedLines, getTableNumber, getUnitUnwrapTable, listUnwrapScopes } from "@/lib/unwrap-model";
 import { isOnScreen } from "@/lib/unwrap-motion";
 import { resolveLineParam } from "@/lib/assign-line-param";
@@ -1656,6 +1658,24 @@ export function useAssignPage() {
   const ctxMenuGroups = ctxFound ? buildUnitMenu(ctxFound.shape, ctxFound.unit) : null;
   // New 문서의 문장에는 보낼 곳이 없다 - 고치기 묶음만
   const ctxGroups = ctxMenuGroups && ctxFound?.shape.side === "new" ? { ...ctxMenuGroups, assign: [] } : ctxMenuGroups;
+  // 우클릭 메뉴의 구역(C2) - 표 칸이면 이 칸 위 · 이 표 아래, 벗긴 표의 줄이면 이 칸 아래 다시 표로 · AI 순서, 그 밖은 지금 두 묶음
+  const ctxTable = findTableOf(ctxFound?.shape ?? null, ctxTarget);
+  const ctxUnwrapped = ctxFound && ctxTarget && ctxTarget.kind === "cell_sentence" && ctxTarget.group_unit_id === null && ctxTarget.table_id !== null ? (ctxFound.shape.model.unwrapped.get(ctxTarget.table_id) ?? null) : null;
+  const ctxPlace: MenuPlace = ctxFound && ctxTarget ? readMenuPlace(ctxTarget, ctxTable, ctxUnwrapped, new Map(ctxFound.shape.view.blocks.map((block) => [block.id, block])), ctxFound.shape.model.tables) : { kind: "text" };
+  const ctxSide: "old" | "new" = ctxFound?.shape.side ?? "old";
+  const ctxUnwrapAi = ctxFound?.shape === rightShape ? newUnwrapAi : unwrapAi;
+  const ctxSections: MenuSection[] | null = ctxGroups && ctxTarget
+    ? buildMenuSections(ctxGroups, ctxPlace, ctxUnwrapped === null ? [] : buildUnwrappedTableItems({ readOnly: !canEdit, hasDraft: hasUnitDraft(ctxTarget), isAiOn: unwrapAi.enabled, isAiBusy: ctxUnwrapAi.busy.has(ctxUnwrapped.id) }))
+    : null;
+  /** 메뉴 항목이 닿는 칸 - 올리거나 포커스할 때만 읽는다 */
+  function readCtxReach(item: Parameters<typeof readMenuReach>[0]): MenuReach {
+    if (!ctxFound || !ctxTarget) return { change: [], touch: [], around: [] };
+    const { shape: target, unit } = ctxFound;
+    const { prev, next } = findNeighbors(target, unit);
+    const tableUnitIds = ctxPlace.kind === "unwrapped" ? [...target.model.unwrapLines].filter(([, tableId]) => tableId === unit.table_id).map(([id]) => id) : ctxTable ? [ctxTable.id] : [];
+    const rowUnitIds = target.side === "old" && ctxMenu ? (rowMap.get(ctxMenu.rowKey)?.unitIds ?? [unit.id]) : [unit.id];
+    return readMenuReach(item, { target: unit, prev, next, rowUnitIds, pairIds: listPairMembers(target, unit).map((member) => member.id), place: ctxPlace, tableUnitIds });
+  }
   // 고른 줄의 문장에 걸린 AI 나누기 제안 - 저장 전 고름이 있으면 다른 문장 고치기처럼 적용을 잠근다(배정이 있으면 적용할 때 묻는다)
   const oldRowUnits = (row?.unitIds ?? []).map((id) => paperModel?.units.get(id)).filter((unit): unit is ViewUnit => unit !== undefined);
   const rowViewUnits = hasSolo ? soloUnits : oldRowUnits;
@@ -2251,6 +2271,10 @@ export function useAssignPage() {
       const members = [...(shape?.model.units.values() ?? [])].filter((unit) => unit.pair_id === pairId).map((unit) => unit.id);
       if (pairId !== null) runPairChange(shape, (docId, revision, undo) => deletePair(bundleId, docId, pairId, revision, undo), t("split.pairRemoved"), target.id, "unpair", members.length > 0 ? members : [target.id], { at: "box", unitId: target.id });
     } else if (action === "table_layout" && shape && table && table.table_id !== null) unwrapTable(shape, table.table_id);
+    else if (action === "table_rewrap" && shape) {
+      const tableId = getUnitUnwrapTable([target], shape.model.unwrapped);
+      if (tableId !== null) rewrapTable(shape, tableId);
+    } else if (action === "table_ai_order" && shape && target.table_id !== null) askUnwrapOrder(shape, target.table_id);
     else if ((action === "caption_attach_prev" || action === "caption_attach_next") && shape && isBundleKind(target.kind)) {
       // 묶음 대상 - 바로 앞(뒤) 글을 캡션으로 붙인다(글 대상은 "캡션으로 쓰기" 줄들이 맡는다, runCtx). 붙인 뒤 묶음 줄을 고른다
       const neighbor = findNeighbors(shape, target)[action === "caption_attach_prev" ? "prev" : "next"];
@@ -2262,6 +2286,15 @@ export function useAssignPage() {
     else if (action === "to_sentence") runUnitEdit(shape, { type: "set_heading", unit_ids: [target.id], heading: false }, t("assign.headingShift.didSentence"), null);
     else if (action === "to_heading") revertHeadings(shape, [target.id]);
     else if (action === "start_body") runUnitEdit(shape, { type: "start_body", unit_id: target.id }, t("assign.ctx.didStartBody"), target.id);
+  }
+
+  /** 벗긴 표의 AI 순서 - ⇧O와 같은 길: 한글 표처럼 하기가 떠 있으면 그것, 놓지 않은 제안이 있으면 알리고, 아니면 AI에 묻는다 */
+  function askUnwrapOrder(shape: DocShape, tableId: number) {
+    const orderAi = shape === rightShape ? newUnwrapAi : unwrapAi;
+    const follow = shape.side === "old" ? followPlan.plans.get(tableId) : undefined;
+    if (pickOrderAction({ follow: follow?.mode ?? "none", count: follow?.count ?? 0 }) === "follow") followPlan.onApply(tableId);
+    else if (orderAi.previews.has(tableId)) showToast(t("assign.key.why.orderReady"), "info");
+    else orderAi.onAsk(tableId);
   }
 
   /** 제목으로(되돌리기) - 제목에서 바꾼 문장은 서버가 그 조항 줄 전체를 모아 제목 하나로 돌린다(F8b). 한 편집이라 Ctrl+Z 한 번이다 */
@@ -4979,7 +5012,7 @@ export function useAssignPage() {
     resetScope, setResetScope, accOpen, toggleAcc, saveUnits, slots, aiUnfilled, draftPlace, draftSectionKey, draftPosition, newDraft,
     draftSlotKey, placeResolved, canPlaceClick, pickedSpotKey, setCarvePick, carve, carveText, clearCarve, togglePairViewByButton,
     pairFrom, setPairFrom, mergeArm, setRefEntryId, pairSource, isLeftPairPick, isRightPairPick, captionPickBundle, setCaptionPick, startCaptionPick, selectToc, selectRow, openNewCtxMenu, openSolo, goToUnit, moveRow, hasUnitDraft,
-    isFixedCaption, ctxGroups, rowViewUnits, rowSplitUnit, rowSplit, splitBlocked, rowRefUnit, refBlocked, isCaptionGateOn,
+    isFixedCaption, ctxSections, ctxSide, readCtxReach, rowViewUnits, rowSplitUnit, rowSplit, splitBlocked, rowRefUnit, refBlocked, isCaptionGateOn,
     confirmBlockKey, rowCaptionRefs, refCandidates, shapeLines, shapeFirstId, slotPlaces, slotCellTables, shapeMode, headingBack, rewrap, bandBack,
     stepBase, refPendingIds, bundleRefPending, isLinkedToWritten, captionPendingKeys, docDashboard, refDetail, refInfo, openCtxMenu, runUnitEdit,
     rewrapTable, unwrapTable, unwrapAi, newUnwrapAi, tableFollow, leftTools, rightTools, rightShape, describeEditConfirm, pairGrip, clearNoise, openNoiseReason, confirmNoiseReason, closeNoiseReason, noisePick, runCaptionRefChange, switchShapeMode, switchToPair,
