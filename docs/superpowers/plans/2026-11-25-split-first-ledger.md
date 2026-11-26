@@ -38,7 +38,7 @@
 | 8a | `feat/assign-tables-tab` | 합침 | v1.6.24 · 9d9f177d | dev v1.6.23 합침 · vitest 2593 · build 경고 0 · `assign:` 스모크 1435 + 따라 고친 1검사 혼자 16 통과 · sonnet 검토 막음 0 · 권함 1 고침 · perf(52문서 CPU1 J 22.1→24.1 · Delete 25.1→24.5ms, 스크롤 같음) | 표 탭 J/K는 그 문서의 표만(그림 탭은 모든 Old 문서), 벗긴 표 캡션은 접힌 줄에 안 보임 |
 | 8b | `feat/unwrap-continue-numbers` | 합침 | v1.6.31 · c1efc2ad | dev v1.6.29 · v1.6.30 합침 · pytest 3832+시드 15 · ruff · vitest 2715 · build 경고 0 · `assign:` 스모크 ALL PASS 1507 · opus 검토 막음 1 고침 → opus 재검토 통과 | — |
 | F5 | `feat/pick-bar-labels` | 진행 |  | dev(26b35312) 합침 · vitest 2736 · build 경고 0 | 스모크 · overlap `assign-pick-bar` · 1120/1440 그림 |
-| F7b | `feat/new-cell-menu-two-pane` | 진행 |  | dev(26b35312) 합침(feature-map 낱말 병합) | Shift+F10 · 메뉴 글쇠를 New 박스에서도(추천안, 같은 브랜치) |
+| F7b | `feat/new-cell-menu-two-pane` | 합침 | v1.6.39 · e81d6ecb | dev(26b35312) 합침 · vitest 2741 · build 경고 0 · `assign:` 스모크 ALL PASS 1527(새 Shift+F10 검사 4 포함) · 검토 생략(작은 일) | Old 줄을 골라 둔 채 New를 마지막에 누르면 Shift+F10이 New 메뉴를 연다(전에는 Old) |
 | F9 | `feat/practice-page` | 진행 |  | — | opus 설계 · 스텝 계획 중 |
 
 
@@ -146,6 +146,7 @@
 - assign-tab-keys · `smoke/assign.mjs` 번호 칸 들여쓰기 단계 · `Tab`/`Shift+Tab` → `Backquote`/`Shift+Backquote`(검사 3 그대로), Tab=J · ⇧Tab=K 검사 2 더함 · `assign-keymap.test.ts` `⇧Tab` → ``⇧` ``, Tab 들여쓰기 시험 → Tab 옮기기 · ` 들여쓰기 · 사용자 요청 글쇠 변경(1차 피드백 2, 승인)
 - smoke-fold-settle · `smoke/assign.mjs` 표 탭 · 접기 단계 "Collapse folds the table…" · 글 기다린 뒤 한 번 읽기 → T 안에서 맞을 때까지 다시 읽기, 실패 글에 본 값 · dev 코드에서도 3번에 1번 접는 중 빈 글로 실패(기대값 · 검사 수 그대로)
 - assign-queue-labels · `smoke/assign.mjs` 약 4645 자르기 알림 글 "Cut" → "Split" · 되돌리기 · 실패 알림 · 대기 칩의 이름 `assign.step.cut`을 단추 줄 이름 Split(나누기)에 맞춤. 같은 브랜치의 느린 저장 단계: 1번 "Queued 1" → "Queued · Delete"(순번 대신 개수 · 이름, 사용자 결정 1-A), 3 · 5 · 6번 검사 더함
+- F7b · `side-panel-model.test.ts` 새 시험 4 · `smoke/assign.mjs` 칸 메뉴 단계에 Shift+F10 검사 4 더함(기존 그대로) · 새 동작
 
 ## 아침에 볼 것 (사람이 정할 것 · 봐 줄 것)
 
@@ -169,6 +170,7 @@
 - 삭제 취소(`clear_noise`)를 장벽으로 되돌릴지 — 지금은 응답 전에 누른 글쇠를 알림만 띄우고 버린다(계획 T7 글자대로).
 - 보류한 줄에서 ↵ 한 번이면 추천 첫 카드로 확정된다(H → 사유 창 → ↵ 하면 보류가 풀림) — 보류 줄은 카드 확정에서 뺄지 정한다(4a).
 - 빠르게 두 번 누른 ↵는 다음 줄의 첫 카드를 확정한다(명세가 정한 결과). 써 보고 불편하면 말해 주세요.
+- (F7b, 추천안) 메뉴 글쇠 · Shift+F10을 New 박스(한 단 · 양 단)에서도 연다 — 마지막에 고른 쪽 기준. Old를 골라 둔 채 New를 누르면 New 메뉴.
 
 ## 사용자 답 (2026-11-26 아침)
 
