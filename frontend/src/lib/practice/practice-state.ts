@@ -29,10 +29,11 @@ import type {
   WrittenSentence,
 } from "../api-sop";
 
-/** 표 하나의 한 모습 - 표 줄과 그 표의 Unit들(D7: 백엔드가 벗기기 전 · 뒤를 찍어 둔다) */
+/** 표 하나의 한 모습 - 표 줄과 그 표의 Unit들 · 그 Unit끼리의 짝(D7: 백엔드가 벗기기 전 · 뒤를 찍어 둔다, 벗기면 칸 Unit이 새 짝으로 맺어진다) */
 export interface PracticeTableLook {
   table: ViewTable;
   units: ViewUnit[];
+  pairs: ViewPair[];
 }
 
 /**
@@ -623,6 +624,9 @@ function setLayoutTable(state: PracticeState, view: DocumentView, tableId: numbe
   view.units = view.units.filter((unit) => !isCurrent(unit));
   view.units.splice(at < 0 ? view.units.length : at, 0, ...incoming);
   view.tables = view.tables.map((table) => (table.id === tableId ? clone(looks[want].table) : table));
+  // 그 표의 짝만 바꾼다 - 문서의 다른 짝은 그대로
+  const lookPairIds = new Set(looks[now].pairs.map((pair) => pair.id));
+  view.pairs = [...view.pairs.filter((pair) => !lookPairIds.has(pair.id)), ...clone(looks[want].pairs)];
   state.board.tableLooks[tableId] = want;
   const incomingIds = new Set(incoming.map((unit) => unit.id));
   const gone = retired.filter((id) => !incomingIds.has(id));

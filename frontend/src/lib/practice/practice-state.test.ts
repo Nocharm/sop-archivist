@@ -127,7 +127,7 @@ describe("edits", () => {
     const [left, right] = result.created_unit_ids.map((id) => readView(state, TEST_OLD_DOC).units.find((unit) => unit.id === id));
     expect([left?.text, right?.text]).toEqual(["정할 수 없는 Unit은 보류합니다. ", "보류한 Unit은 On hold에 모입니다."]);
     expect([right?.lang, right?.is_edited, right?.number?.value, right?.status]).toEqual(["ko", true, null, "unassigned"]);
-    expect([left?.display_id, right?.display_id]).toEqual(["SOP-OLD-001-015", "SOP-OLD-001-016"]);
+    expect([left?.display_id, right?.display_id]).toEqual(["SOP-OLD-001-013", "SOP-OLD-001-014"]);
     expect(listUnitRows(state).some((row) => row.unit_id === U.twoSentences)).toBe(false);
     expect(readView(state, TEST_OLD_DOC).document.revision).toBe(4);
   });
@@ -160,18 +160,19 @@ describe("edits", () => {
 
   it("set_layout_table switches between the two looks the backend took", () => {
     const state = setUp();
-    const wrappedIds = listViewIds(state);
+    const wrapped = readView(state, TEST_OLD_DOC);
     const off = applyEdit(state, TEST_OLD_DOC, { revision: 3, op: { type: "set_layout_table", table_id: TEST_TABLE, is_layout: true } });
-    expect(off.retired_unit_ids).toEqual([U.table, U.cellKey, U.cellMeaning]);
-    expect(off.created_unit_ids).toEqual([U.unwrappedKey, U.unwrappedMeaning]);
-    expect(readView(state, TEST_OLD_DOC).tables[0].is_layout).toBe(true);
-    expect(listViewIds(state).slice(-2)).toEqual([U.unwrappedKey, U.unwrappedMeaning]);
-    expect(findRow(state, U.unwrappedKey).status).toBe("unassigned");
+    expect([off.retired_unit_ids, off.created_unit_ids]).toEqual([[U.table], []]);
+    const view = readView(state, TEST_OLD_DOC);
+    expect(view.tables[0].is_layout).toBe(true);
+    expect(view.units.find((unit) => unit.id === U.cellKey)).toMatchObject({ group_unit_id: null, pair_id: 703 });
+    expect(view.pairs.map((pair) => pair.id)).toEqual([701, 702, 703]);
+    expect(findRow(state, U.cellKey).pair_id).toBe(703);
     const again = applyEdit(state, TEST_OLD_DOC, { revision: 4, op: { type: "set_layout_table", table_id: TEST_TABLE, is_layout: true } });
     expect([again.created_unit_ids, again.retired_unit_ids]).toEqual([[], []]);
     applyEdit(state, TEST_OLD_DOC, { revision: 5, op: { type: "set_layout_table", table_id: TEST_TABLE, is_layout: false } });
-    expect(listViewIds(state)).toEqual(wrappedIds);
-    expect(readView(state, TEST_OLD_DOC).tables[0].is_layout).toBe(false);
+    const back = readView(state, TEST_OLD_DOC);
+    expect([back.units, back.tables, back.pairs]).toEqual([wrapped.units, wrapped.tables, wrapped.pairs]);
   });
 
   it("writes a reason on the auto-deleted contents block and clears it", () => {

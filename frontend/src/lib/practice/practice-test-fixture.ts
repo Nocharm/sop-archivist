@@ -1,5 +1,6 @@
 // 시험용으로 손으로 줄인 연습 자료 - 설계 2026-11-26-practice-page §4.1-7의 꼴을 따른 합성 글(사용 설명서 문장). 시험만 가져온다.
 // 진짜 자료는 backend/scripts/dump_practice_fixture.py가 뽑는 practice-fixture.json이다 - 이 파일은 그 자리를 대신하지 않는다.
+// 꼴은 스텝 1의 실제 뽑힌 자료에 맞췄다: 짝은 제안(suggested), 벗긴 모습에 짝이 함께 실린다.
 
 import type {
   Bundle,
@@ -34,8 +35,6 @@ export const TEST_UNITS = {
   table: 110,
   cellKey: 111,
   cellMeaning: 112,
-  unwrappedKey: 113,
-  unwrappedMeaning: 114,
 } as const;
 export const TEST_TARGETS = { aPrime: 301, bPrime: 302, heading: 303 } as const;
 
@@ -149,13 +148,12 @@ export function buildPracticeTestFixture(): PracticeFixture {
   const wrappedTable: ViewTable = {
     id: TEST_TABLE, table_index: 0, parent_table_id: null, part: "body", n_rows: 1, n_cols: 2, is_layout: false, is_band: false, anchor: null, lang: null,
   };
-  const unwrapped = [
-    buildUnit(u.unwrappedKey, code, 10, "J", { table_id: TEST_TABLE, row_index: 0 }),
-    buildUnit(u.unwrappedMeaning, code, 11, "다음 줄", { table_id: TEST_TABLE, row_index: 0 }),
-  ];
+  // 실제 백엔드처럼 벗기면 표 Unit은 물러나고 칸 Unit은 같은 id로 묶음을 벗어나 새 짝으로 맺어진다
+  const unwrapped = cells.map((cell) => ({ ...cell, group_unit_id: null, pair_id: 703 }));
+  const unwrappedPairs: DocumentView["pairs"] = [{ id: 703, status: "suggested", source: "code", unit_ids: [u.cellKey, u.cellMeaning] }];
   const pairs: DocumentView["pairs"] = [
     { id: 701, status: "confirmed", source: "rule", unit_ids: [u.pairAKo, u.pairAEn] },
-    { id: 702, status: "confirmed", source: "rule", unit_ids: [u.pairBKo, u.pairBEn] },
+    { id: 702, status: "suggested", source: "code", unit_ids: [u.pairBKo, u.pairBEn] },
   ];
   const newBlocks = [
     buildBlock(21, 1, "1. 목적", { heading_level: 1 }),
@@ -203,8 +201,8 @@ export function buildPracticeTestFixture(): PracticeFixture {
     },
     tableVariants: {
       [TEST_TABLE]: {
-        wrapped: { table: wrappedTable, units: [tableUnit, ...cells] },
-        unwrapped: { table: { ...wrappedTable, is_layout: true }, units: unwrapped },
+        wrapped: { table: wrappedTable, units: [tableUnit, ...cells], pairs: [] },
+        unwrapped: { table: { ...wrappedTable, is_layout: true }, units: unwrapped, pairs: unwrappedPairs },
       },
     },
   };
