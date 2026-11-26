@@ -1635,6 +1635,8 @@
   .pair-hint { display: flex; align-items: center; gap: 6px; margin-top: 2px; margin-inline: -4px; padding: 0 4px; border-radius: var(--r-1); font: 500 var(--fs-micro) / 16px var(--font-mono); color: var(--ink-3); text-align: left; cursor: pointer; }
   .pair-hint:hover { color: var(--accent); background: var(--hover); }
   .pair-hint:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  /* 숨긴 안내 줄의 자리(괄호선이 보이거나 재기 전) - .pair-hint와 같은 높이(줄 16px + 위 2px)라 숨겼다 보여도 아래 내용이 움직이지 않는다 */
+  .hint-space { display: block; height: 16px; margin-top: 2px; }
   /* 짝 카드 안 순서 손잡이(설계 D8) - 고른 박스 왼쪽 가장자리의 안쪽 여백(--pg-pad-l)에 세로 가운데로. 번호 칸(.strip-lead)도 글도 덮지 않는다.
      박스 전체 끌기와 나뉘는 자리라 커서도 다르다(grab) */
   .pg[data-strips] .strip-grip { position: absolute; left: 0; top: 0; bottom: 0; z-index: 1; display: flex; align-items: center; justify-content: center; width: var(--pg-pad-l); color: var(--ink-4); cursor: grab; }
@@ -1987,6 +1989,10 @@
   .link-lines g[data-draft] path { stroke-dasharray: 4 3; }
   /* 먼 이음의 두 끝 꼬리 - 끝으로 갈수록 투명해지는 만큼(link-lines.tsx 그라디언트) 옅은 선보다 진하게 시작한다 */
   .link-lines g[data-stub] { opacity: 0.75; }
+  /* 떨어진 짝 괄호선(11-23 명세 E1, pair-bracket.tsx) - 앞머리 왼쪽 세로선과 끝마다 짧은 눈금. 안내 줄을 대신하는 유일한 표시라 --accent(3:1, contrast.test.ts). 표시 전용이라 누름을 받지 않고, 다크는 토큰이 바꾼다 */
+  .pair-bracket { position: absolute; inset: 0; z-index: 3; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
+  .pair-bracket path { fill: none; stroke: var(--accent); stroke-width: 1.5; }
+  .assign-panes[data-motion] .pair-bracket { visibility: hidden; }
 
   .dest-card-pending::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
   /* 그 자리 메뉴를 누른 New 문단 안에 펼친 것 - 문단 상자가 아래로 늘며(.fold) 글 아래에 단추 줄이 드러난다. 따로 뜨는 상자 대신 눈이 누른 문단에 머문다(사용자 결정 2026-11-19).

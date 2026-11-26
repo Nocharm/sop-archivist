@@ -172,3 +172,8 @@
 
 - `MergeRowsOp`(`merge_rows`) · `SetLayoutTablesOp`(`set_layout_tables`)를 `_write_change`의 `_Change` 하나로(§9) — 짝 줄은 언어끼리 합쳐 다시 짝, `payload.merged`로 합친 박스의 조각 · 풀기(`find_merged_pieces`, 옛 기록은 지금 규칙). Alembic 없음.
 - opus 검토가 바깥 표 + 칸 안 캡션 달린 안쪽 표를 함께 벗기면 캡션이 은퇴한 표 단위에 매달리는 것을 찾아 고침(차례로 벗긴 것과 같게). 합치며 짝에 드는 외톨이 Unit의 AI 번역도 `create_pair`처럼 쓸어 냄.
+
+## 2026-11-26 — feat/assign-pair-bracket (계획 4-7) dev에
+
+- 고른 박스의 떨어진 짝이 둘 다 보이면 왼쪽 괄호선(`resolvePairBracket`, Old · New 같음)을 긋고 안내 줄을 숨긴다(E1-R1~R4). 재는 이펙트는 `use-pane-measure.ts`로 옮겨 effect-baseline 109→107 · 타이머 74→73.
+- 검토 뒤: 고를 때 안내 줄이 섰다 숨으며 내용이 밀리던 것을 같은 높이 빈 자리로 막고(재기 전 · 괄호선 동안), 선색을 `--accent`로(28% 선은 1.6:1이라 대비 시험 더함).

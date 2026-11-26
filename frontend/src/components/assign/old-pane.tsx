@@ -62,8 +62,8 @@ interface OldPaneProps {
   headingShift?: NonNullable<ComponentProps<typeof Paper>["strips"]>["headingShift"];
   /** 벗긴 표의 줄 묶음 머리 "↺ 다시 표로"(F1) - 없으면 머리 없이 왼쪽 세로선만 */
   unwrap?: NonNullable<ComponentProps<typeof Paper>["strips"]>["unwrap"];
-  /** 고른 박스 아래 떨어진 짝 안내 줄 - 누르면 짝으로 간다(1단 보기는 한 번 = 짝 엿보기 판, 두 번 = 가기). 없으면 그리지 않는다 */
-  pairHint?: { onGo: (unitId: number) => void };
+  /** 고른 박스 아래 떨어진 짝 안내 줄 - 누르면 짝으로 간다(1단 보기는 한 번 = 짝 엿보기 판, 두 번 = 가기). 없거나 isHidden(괄호선이 보임)이면 그리지 않는다 */
+  pairHint?: { onGo: (unitId: number) => void; isHidden?: boolean };
   /** 1단 보기 - 위치 판이 오른쪽에서 나오고(용지는 비켜서거나 자리가 모자라면 덮인다) 짝 안내 줄이 엿보기를 연다(B7). 아니면 판은 왼쪽 */
   single: boolean;
   /** 삭제로 확정한 줄을 흐린 한 줄로 접는다(설계 D6) - 없으면 평소 박스 */

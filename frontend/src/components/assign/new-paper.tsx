@@ -98,6 +98,8 @@ export interface NewPaperProps {
   onUnwrapTable?: (tableId: number) => void;
   /** 접은 본문 표(11-23 명세 E2) - 접힌 표 한 줄에 이은 칸 수가 붙는다. 없으면 접지 않는다 */
   tableFold?: FoldedTables;
+  /** 고른 박스 아래 떨어진 짝 안내 줄(Old와 같다) - 누르면 짝으로 간다. 없거나 isHidden(괄호선이 보임)이면 그리지 않는다 */
+  pairHint?: { onGo: (unitId: number) => void; isHidden?: boolean };
 }
 
 // 눌러도 박스를 누른 것이 아닌 자리 - 박스 아래 단추 줄의 빈자리, 칸에 딸린 읽기 전용 글, 왼쪽 번호 칸
@@ -347,7 +349,7 @@ export function NewPaper(props: NewPaperProps) {
         renderAtCut={props.cut ? props.renderAtCut : undefined}
         figureSource={{ bundleId: props.bundleId, docId: props.fileId }}
         // 이미 쓴 문서는 캡션을 요구하지 않는다(입구 2)
-        strips={{ isCaptionNeeded: () => false, pending: props.pending, mergeArm: props.mergeArm, overlay: paperOverlay, noise: props.noise, headingShift: props.headingShift, unwrap: props.unwrap, join: props.join, tables: props.tableFold && { folded: props.tableFold.folded, onToggle: props.tableFold.toggle, links: foldLinks } }}
+        strips={{ isCaptionNeeded: () => false, pending: props.pending, mergeArm: props.mergeArm, overlay: paperOverlay, noise: props.noise, headingShift: props.headingShift, unwrap: props.unwrap, join: props.join, pairHint: figureRows === "only" ? undefined : props.pairHint, tables: props.tableFold && { folded: props.tableFold.folded, onToggle: props.tableFold.toggle, links: foldLinks } }}
         testId="assign-new-paper"
       />
     );
