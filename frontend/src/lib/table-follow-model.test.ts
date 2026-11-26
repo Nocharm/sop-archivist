@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { DocumentView, FollowItem, TableCounterpart, ViewTable } from "@/lib/api-sop";
-import { buildFollowOp, describeCounterpart, describeFollowItem, listCounterpartChoices, listFollowTableIds, pickOrderAction } from "@/lib/table-follow-model";
+import { buildFollowOp, describeCounterpart, describeFollowItem, listCounterpartChoices, listFollowTableIds, pickApplyAdoption, pickKeepAdoption, pickOrderAction, readFollowSuggestion } from "@/lib/table-follow-model";
 
 const ASK = { lang: "en", side: "old", isUnwrapped: true, status: "ambiguous" } as const;
 
@@ -140,5 +140,37 @@ describe("buildFollowOp with order-only rows", () => {
     ];
     expect(buildFollowOp(5, plan, [34], [31, 32, 33, 34])).toEqual({ type: "follow_table", table_id: 5, items: [{ unit_ids: [34] }], order: [34, 31, 32, 33] });
     expect(buildFollowOp(5, plan, [31], [31, 32, 33, 34]).order).toEqual([31, 32, 34]); // 합칠 일 자신은 꼬리(33)를 뺀다
+  });
+});
+
+describe("readFollowSuggestion", () => {
+  const suggestion = { content: { table_id: 5, source_table_id: 3, items: PLAN, lines: [1, 2, 3, 4], reason: "r" } };
+
+  it("reads an AI suggestion into the same items", () => {
+    const plan = readFollowSuggestion(suggestion, [4, 3, 2, 1]);
+    expect(plan?.items).toEqual(PLAN);
+    expect(plan).toMatchObject({ mode: "ai", source_table_id: 3, count: 4, lines: [4, 3, 2, 1] }); // 지금 덩이 차례다
+  });
+
+  it("applies one row on the current order, not the order at job time", () => {
+    const moved = { content: { table_id: 5, source_table_id: 3, items: [1, 2, 3, 4].map((id) => ({ unit_ids: [id], order: id === 4 ? 1 : id + 1, number: null, indent: false, indent_shift: null, delete: false })), lines: [1, 2, 3, 4] } };
+    const plan = readFollowSuggestion(moved, [2, 1, 3, 4]);
+    expect(plan && buildFollowOp(5, plan.items, [4], plan.lines).order).toEqual([2, 4, 1, 3]);
+  });
+
+  it("picks the adoption to leave", () => {
+    const merged: FollowItem = { unit_ids: [1, 2], order: null, number: null, indent: false, indent_shift: null, delete: false };
+    expect(pickApplyAdoption(PLAN, undefined)).toBe("as_is");
+    expect(pickApplyAdoption(PLAN, [1])).toBeNull();
+    expect(pickApplyAdoption([merged, ...PLAN], [1])).toBe("edited");
+    expect(pickKeepAdoption(4, false)).toBe("rejected");
+    expect(pickKeepAdoption(4, true)).toBe("edited");
+    expect(pickKeepAdoption(0, false)).toBeNull();
+  });
+
+  it("drops an AI suggestion whose lines changed", () => {
+    expect(readFollowSuggestion(suggestion, [1, 2, 3])).toBeNull();
+    expect(readFollowSuggestion(suggestion, [1, 2, 3, 9])).toBeNull();
+    expect(readFollowSuggestion({ content: { table_id: 5 } }, [1, 2, 3, 4])).toBeNull();
   });
 });

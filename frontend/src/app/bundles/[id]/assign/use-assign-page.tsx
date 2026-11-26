@@ -915,9 +915,13 @@ export function useAssignPage() {
     docId: oldDocId,
     tableIds: canEdit ? followTableIds : [],
     dataKey: `${dataKey}:${oldView?.document.revision ?? 0}`,
-    apply: (tableId, op) => {
-      if (!isRepeatedFollow(commands.listUnsettled(), tableId)) runUnitEdit(op, t("assign.follow.applied"), null, false, null, { at: "table", tableId });
+    apply: (tableId, op, afterOk) => {
+      if (!isRepeatedFollow(commands.listUnsettled(), tableId)) runUnitEdit(op, t("assign.follow.applied"), null, false, null, { at: "table", tableId }, afterOk);
     },
+    isAiOn: aiOn,
+    status: aiJobs.status,
+    watch: aiJobs.watch,
+    t,
   });
   const tableFollow = canEdit && oldDocId !== null
     ? {

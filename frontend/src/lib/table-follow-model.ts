@@ -1,6 +1,6 @@
 // 한글 표 따라 하기(11-23 명세 D2) - 벗긴 영어 Old 표 머리의 "짝 표 고르기"(R3)와 "한글 표처럼 하기"(R8)를 언제 보이고 무엇을 보내는지.
 // 짝 답과 규칙 제안은 서버가 센다(table_follow.py) - 화면은 그 답을 칩과 편집 follow_table로 옮기기만 한다
-import type { DocumentView, EditOp, FollowItem, FollowItemInput, TableCounterpart, TableFollow } from "@/lib/api-sop";
+import type { AiSuggestion, DocumentView, EditOp, FollowItem, FollowItemInput, TableCounterpart, TableFollow } from "@/lib/api-sop";
 
 /** 표 머리에 보일 것 - ask = 고르기(애매 · 사람이 정함 · 짝 없다는 답이지만 후보가 있음), matched = 흐린 "표 n과 짝", none = 아무것도 */
 export type CounterpartView = "ask" | "matched" | "none";
@@ -111,4 +111,31 @@ export function buildFollowOp(
 /** ⇧O의 뜻 - 보이는 규칙 제안이 있으면 그대로 하기, 아니면 지금처럼 AI 순서 제안(D2-R8) */
 export function pickOrderAction(state: { follow: TableFollow["mode"]; count: number }): "follow" | "order" {
   return state.follow === "rule" && state.count > 0 ? "follow" : "order";
+}
+
+/**
+ * AI 제안(서버 table_follow_job 내용: items · lines · source_table_id) -> 규칙 제안과 같은 TableFollow(mode "ai"). 같은 칩 · 적용 · 하나씩 보기를 쓴다.
+lines는 지금 덩이 차례다(작업 때의 차례가 아니다 - 사람이 줄을 옮겼으면 한 줄 적용의 order가 그 차례 위에서 세워진다).
+ * 제안이 가리킨 영어 줄 집합이 지금 덩이 줄과 다르면(그 사이 합치기 · 풀기 등) 낡아서 null - 그대로 놓으면 서버가 422로 막는다
+ */
+export function readFollowSuggestion(suggestion: Pick<AiSuggestion, "content">, current: readonly number[]): TableFollow | null {
+  const { items, lines, source_table_id: sourceTableId } = suggestion.content;
+  if (!Array.isArray(items) || !Array.isArray(lines) || lines.length === 0 || lines.length !== current.length) return null;
+  const now = new Set(current);
+  if (!lines.every((id): id is number => typeof id === "number" && now.has(id))) return null;
+  const read = items as FollowItem[];
+  if (!read.every((item) => Array.isArray(item.unit_ids) && item.unit_ids.length > 0)) return null;
+  return { source_table_id: typeof sourceTableId === "number" ? sourceTableId : null, mode: "ai", items: read, count: read.filter(hasFollowChange).length, lines: [...current] };
+}
+
+/** AI 제안을 적용한 뒤 남길 채택 - 전부 적용이면 as_is, 한 줄만이면 합치기가 든 때만 edited(줄 집합이 바뀌어 제안이 사라지므로), 아니면 열어 둔다(null) */
+export function pickApplyAdoption(items: readonly FollowItem[], only: readonly number[] | undefined): "as_is" | "edited" | null {
+  if (only === undefined) return "as_is";
+  return items.some((item) => item.unit_ids.length > 1 && only.includes(item.unit_ids[0])) ? "edited" : null;
+}
+
+/** AI 제안을 그대로 두기 - 한 줄이라도 적용한 표는 edited, 아니면 rejected. 바꿀 것이 없다는 답(count 0)의 닫기는 기록하지 않는다(null) */
+export function pickKeepAdoption(count: number, touched: boolean): "edited" | "rejected" | null {
+  if (count === 0) return null;
+  return touched ? "edited" : "rejected";
 }

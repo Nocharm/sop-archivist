@@ -76,7 +76,7 @@ AI 없이 사람이 끝까지 가는 결정적 경로(계획 1). AI 층은 아�
 
 - 요청(`routers/sop_ai.py`)은 `ai_jobs` 행을 쌓고(`jobs.py`) 곧바로 응답한다.
 - 백엔드 안의 단일 실행기(`runner.py`, lifespan 워커 — AI나 임베딩이 켜져 있을 때만)가 작업을 (priority, id) 순으로 꺼내 **`load`(짧은 세션: 스냅샷 읽기·`revision` 적기) → `compute`(세션 없이 임베딩·LLM 호출) → `apply`(새 세션, 묶음을 `FOR UPDATE`로 잠근 뒤 상태를 다시 보고 쓴다)** 세 단계로 돌린다.
-- 종류별 핸들러는 `JobHandler`(`load`/`compute`/`apply`)를 구현해 `handlers.py` `HANDLERS` 표에 등록한다: `classify.py`(칸 고르기+한·영 고쳐 쓰기)·`translate.py`·`match_jobs.py`(입구 2 `match_plan`이 LLM 없이 코드로 묶어 변경 종류까지 정한 제안을 쓴다)·`pairing.py`(한/영 따로 짝, 임베딩만)·`split.py`.
+- 종류별 핸들러는 `JobHandler`(`load`/`compute`/`apply`)를 구현해 `handlers.py` `HANDLERS` 표에 등록한다: `classify.py`(칸 고르기+한·영 고쳐 쓰기)·`translate.py`·`match_jobs.py`(입구 2 `match_plan`이 LLM 없이 코드로 묶어 변경 종류까지 정한 제안을 쓴다)·`pairing.py`(한/영 따로 짝, 임베딩만)·`split.py`·`unwrap_order_job.py`(벗긴 표 순서)·`table_follow_job.py`(규칙이 못 푸는 영어 표의 한글 표 따라 하기).
 - 순수 부분은 `matching.py`·`similarity.py`(코사인·글자 2-gram)·`candidates.py`(칸 후보)·`context.py`(앞뒤 단위·절·Markdown 표).
 - 호출은 `llm.py`(원문을 구분자 데이터로 감싸기·재시도·응답 JSON 파싱)·`embeddings.py`(캐시 `embed_texts`).
 - 공용 쓰기는 `apply.py`(낡음 판정·밀린 제안 걷기·제안 행·무효 보류)·`adoption.py`(채택 판정과 채택률).
@@ -214,6 +214,13 @@ AI 없이 사람이 끝까지 가는 결정적 경로(계획 1). AI 층은 아�
 
 - 응답 `queued`는 분류 작업만 세고 `ai.request` 기록은 남기지 않는다.
 - 첫 `prepare`가 고른 줄이 하나도 없던 문서는 `ai_jobs` 행이 없어 미리 돌린 문서로 치지 않으므로, 그 뒤에 지운 줄은 다음 진입 때 미리 분류된다(설계대로 받아들인 동작).
+
+### 11.9b 한글 표처럼 하기 AI(`table_follow_job.py`, 11-23 명세 D2-R9 · R10)
+
+- `unwrap_order_job.py` 한 벌을 본뜬다. 요청(`POST /ai/table_follow`)은 `table_follow.answer_follow(inputs, None)`가 `ai`(규칙이 못 푸는 표)일 때만 쌓는다(422 `follow_not_needed`) — 임베딩 호출을 묶음 잠금 안에서 하지 않으려 토큰만으로 판정하고, 임베딩이 켜져 있으면 화면의 GET과 갈릴 수 있다(그때는 규칙이 풀거나 AI를 더 부르는 쪽).
+- 페이로드는 한글 표를 손본 결과와 영어 줄뿐이고 이름 · 로그인 ID는 없다. 응답 `actions`(줄마다 `order` · `delete` · `merge_with` · `indent_shift` · `number`)는 줄 집합 · 자리 순열 · 합치기 고리 · 번호 길이를 검사하고, 무효면 응답 글을 남기지 않는다.
+- 제안 내용은 규칙 제안과 같은 `{table_id, source_table_id, items[FollowItemOut], lines, reason}`이라 화면이 같은 칩 · `follow_table` 편집으로 받는다. 쓰기는 `ai_suggestions`뿐 — 판단 · New 문장 · 줄은 사람이 편집을 눌러야 바뀐다. 채택은 `adoption.record_manual_adoption`(`_MANUAL_KINDS`)이다.
+- 낡음 = 영어 줄(id · 글 · 번호 · 들여쓰기 · 삭제 여부)과 한글 표의 손본 결과의 해시, 짝 표 id. 영어 줄의 순서만 바뀐 것은 낡음이 아니다. `OFFERED_KINDS` · `WAITING_KINDS`에는 넣지 않는다(알약 · 수락 창 · 대기에 들지 않는다).
 
 ### 11.10 기록
 

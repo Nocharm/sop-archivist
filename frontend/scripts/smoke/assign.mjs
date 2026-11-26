@@ -8676,6 +8676,68 @@ await runStep("assign: follow the Korean table — four chips, Apply, one Undo b
   check("the table-follow rule bundle is removed", (await page.request.delete(`${api}?revision=${bundle.revision}`, { headers })).ok());
 });
 
+// 한글 표처럼 하기 AI(D2-R9 · R10) - 줄마다 내용이 달라 규칙이 못 푸는 표(임베딩이 꺼진 검증 스택에서 장비 ↔ equipment는 토큰이 없다)는 머리에 "✦ AI로 한글 표처럼 하기"가 서고,
+// 눌러 가짜 AI(받은 줄 차례 그대로 + 첫 줄 번호 한 칸)가 답하면 규칙 제안과 같은 칩 · 적용이 온다. 적용은 편집 하나, 채택(as_is)이 남는다. AI가 꺼진 backend면 건너뛴다
+await runStep("assign: follow the Korean table with AI when the rows differ", { devUser: "dev.admin", allowConsoleErrors: true }, async ({ page }) => {
+  const headers = { "X-Dev-User": "dev.admin" };
+  // halfBundleId는 시드 묶음이라 멤버(qa.member)만 상태를 읽는다 - dev.admin은 404다
+  const status = await page.request.get(`${BASE}/api/bundles/${halfBundleId}/ai/status`, { headers: { "X-Dev-User": "qa.member" } });
+  if (!status.ok() || !(await status.json()).ai_enabled) {
+    console.log("  (AI is off in this backend - skipped)");
+    return;
+  }
+  const backend = resolve(SCRIPT_DIR, "../../../backend");
+  const file = resolve(SHOT_DIR, "SYNTHETIC_OLD-87_table_follow_ai.docx");
+  const build = [
+    "import sys",
+    "from tests.docx_factory import build_docx, p, tbl",
+    "ko = [['1', '장비를 준비한다.'], ['2', '시료를 채취한다.'], ['3', '기록을 남긴다.'], ['4', '(빈 칸)']]",
+    "en = [['1', 'Take the sample.'], ['2', 'Prepare the equipment.'], ['3', 'Keep the record.'], ['4', '(blank)']]",
+    "body = p('1. 시료 채취', 'Heading1') + p('이 절은 시료 채취를 다룬다.') + tbl(ko) + p('1. Sampling', 'Heading1') + p('This section covers sampling.') + tbl(en)",
+    "open(sys.argv[1], 'wb').write(build_docx(body))",
+  ].join("\n");
+  execFileSync(findBackendPython(), ["-c", build, file], { cwd: backend, stdio: "inherit" });
+  const created = await (await page.request.post(`${BASE}/api/bundles`, { headers, data: { title: "SYNTHETIC table follow ai", is_synthetic: true } })).json();
+  const api = `${BASE}/api/bundles/${created.id}`;
+  const uploaded = await page.request.post(`${api}/documents`, { headers, multipart: { side: "old", file: { name: "SYNTHETIC_OLD-87_table_follow_ai.docx", mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", buffer: readFileSync(file) } } });
+  let doc = await uploaded.json();
+  if (doc.language_layout !== "ko_en_separate") doc = await (await page.request.patch(`${api}/documents/${doc.id}`, { headers, data: { revision: doc.revision, language_layout: "ko_en_separate" } })).json();
+  const readView = async () => (await page.request.get(`${api}/documents/${doc.id}/view`, { headers })).json();
+  const edit = async (op) => page.request.post(`${api}/documents/${doc.id}/edits`, { headers, data: { revision: (await readView()).document.revision, confirm: false, op } });
+  const [koTable, enTable] = (await readView()).tables;
+  const unwrapOk = (await edit({ type: "set_layout_table", table_id: koTable.id, is_layout: true })).ok() && (await edit({ type: "set_layout_table", table_id: enTable.id, is_layout: true })).ok();
+  const linesOf = (view, tableId) => view.units.filter((unit) => unit.table_id === tableId && unit.group_unit_id === null).sort((one, two) => one.pos_seq - two.pos_seq || one.id - two.id);
+  const koLines = linesOf(await readView(), koTable.id);
+  let worked = koLines.length === 4;
+  for (const [index, number] of ["5.1", "5.2", "5.3"].entries()) worked = worked && (await edit({ type: "set_number", unit_id: koLines[index].id, number, follow: false })).ok();
+  // 토큰이 없는 표는 점수가 임계값 아래라 짝이 안 잡힌다 - 사람이 짝 표를 먼저 정한다(D2-R3 → R9)
+  const picked = await page.request.put(`${api}/documents/${doc.id}/tables/${enTable.id}/counterpart`, { headers, data: { source_table_id: koTable.id } });
+  const plan = await (await page.request.get(`${api}/documents/${doc.id}/tables/${enTable.id}/follow`, { headers })).json();
+  check("rows without shared tokens go to the AI way, not the rule way", uploaded.status() === 201 && unwrapOk && worked && picked.ok() && plan.mode === "ai" && plan.items.length === 0, JSON.stringify(plan));
+  const enLines = linesOf(await readView(), enTable.id);
+  await page.goto(`${BASE}/bundles/${created.id}/assign`);
+  await wait(page, "assign-bar");
+  const ask = page.locator(`[data-testid="assign-follow-ai-${enTable.id}"]`);
+  await ask.waitFor({ timeout: T });
+  const asked = page.waitForResponse((response) => response.request().method() === "POST" && new URL(response.url()).pathname.endsWith("/ai/table_follow"), { timeout: T });
+  await ask.click();
+  check("the head button asks AI for this table", (await asked).ok());
+  const head = page.locator(`[data-testid="assign-follow-${enTable.id}"]`);
+  await head.waitFor({ timeout: 60_000 });
+  check("AI's answer comes as one chip on the first line (number 9.9) with the same head and Apply", ((await head.textContent()) ?? "").includes("· 1") && (await page.locator(`[data-testid="assign-follow-chips-${enLines[0].id}"]`).count()) === 1, await head.textContent());
+  const applied = page.waitForResponse((response) => response.request().method() === "POST" && new URL(response.url()).pathname.endsWith(`/documents/${doc.id}/edits`), { timeout: T });
+  await page.locator(`[data-testid="assign-follow-apply-${enTable.id}"]`).click();
+  const appliedResponse = await applied;
+  check("Apply sends one follow_table edit", appliedResponse.ok() && appliedResponse.request().postDataJSON()?.op?.type === "follow_table", String(appliedResponse.status()));
+  await head.waitFor({ state: "detached", timeout: T });
+  const first = (await readView()).units.find((unit) => unit.id === enLines[0].id);
+  check("the first English line took the number", first?.number?.value === "9.9", JSON.stringify(first?.number));
+  const suggestions = await (await page.request.get(`${api}/ai/suggestions?kind=table_follow&result=applied&limit=100`, { headers })).json();
+  check("applying left an as_is adoption on the suggestion", suggestions.items.length === 1 && suggestions.items[0].adoption === "as_is", JSON.stringify(suggestions.items.map((item) => item.adoption)));
+  const bundle = await (await page.request.get(api, { headers })).json();
+  check("the table-follow AI bundle is removed", (await page.request.delete(`${api}?revision=${bundle.revision}`, { headers })).ok());
+});
+
 // Pair view에서 끌어 짝 맺기(끌어다 놓기 4걸음) - 조각을 맞은편 언어의 조각에 놓으면 바로 짝이 되고(제안 짝의 구성원끼리면 그 제안을 확정), 알림의 Undo가 그 짝을 푼다.
 // 제안 짝은 검증 스택에 임베딩이 없어 만들 수 없다 - API로 맺은 짝을 원문 보기 응답에서 suggested로 바꿔 그린다(page.route). 확정 호출 자체는 진짜 서버로 간다.
 // 자료는 API로 만들고 끝에 짝을 모두 풀고 그 문서의 판단을 비운다. 409·거절 알림이 콘솔에 찍히므로 콘솔 오류를 허락하고, 처리되지 않은 예외(pageerror)는 따로 센다

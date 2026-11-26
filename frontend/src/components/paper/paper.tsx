@@ -1668,7 +1668,38 @@ export function Paper({
   function renderFollowPlan(tableId: number, isOff: boolean): ReactNode {
     const plan = strips?.unwrap?.follow?.plan;
     const found = plan?.plans.get(tableId);
-    if (!plan || !found) return null;
+    if (!plan) return null;
+    if (!found) {
+      // 규칙이 못 푸는 표 - AI에 물을 수 있다(D2-R9). 꺼진 단추는 포인터를 받지 않아 감싼 span이 까닭 툴팁을 단다
+      if (plan.ai.busy.has(tableId)) {
+        return (
+          <span className="unwrap-ai-busy" data-testid={`assign-follow-ai-busy-${tableId}`}>
+            {t("assign.follow.ai.busy")}
+          </span>
+        );
+      }
+      if (!plan.ai.asks.has(tableId)) return null;
+      return (
+        <span className="unwrap-ai-ask" data-tip={plan.ai.enabled ? undefined : t("assign.follow.ai.offTip")}>
+          <button type="button" className="btn toc-act" disabled={!plan.ai.enabled || isOff} data-testid={`assign-follow-ai-${tableId}`} onClick={() => plan.ai.onAsk(tableId)}>
+            {t("assign.follow.ai.ask")}
+          </button>
+        </span>
+      );
+    }
+    if (found.count === 0) {
+      // AI가 바꿀 것이 없다고 본 제안 - 그렇다는 말과 닫기만(채택 as_is가 남는다)
+      return (
+        <>
+          <span className="unwrap-ai-note follow-head-note" data-testid={`assign-follow-same-${tableId}`}>
+            {t("assign.follow.ai.same")}
+          </span>
+          <button type="button" className="btn toc-act" data-testid={`assign-follow-keep-${tableId}`} onClick={() => plan.onKeep(tableId)}>
+            {t("assign.unwrapAi.close")}
+          </button>
+        </>
+      );
+    }
     return (
       <>
         <span className="unwrap-ai-note follow-head-note" data-testid={`assign-follow-${tableId}`}>

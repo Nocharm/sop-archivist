@@ -15,6 +15,7 @@ function slot(key: string, lang: "ko" | "en", sourceText: string, extra: Partial
 describe("hidden AI kinds", () => {
   it("hides classify, split, translate and list reading", () => {
     expect([...HIDDEN_AI_KINDS].sort()).toEqual(["classify", "split", "tobe_list", "translate"]);
+    expect(HIDDEN_AI_KINDS.has("table_follow")).toBe(false); // 숨기지 않지만 알약 · 수락 창에도 들지 않는다 - 보이는 곳은 표 머리뿐
   });
 
   it("drops hidden suggestions and keeps the rest", () => {

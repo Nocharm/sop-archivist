@@ -54,6 +54,7 @@ REPLY_FIELDS = {
     "prompt.tobe_list": {"docs"},
     "prompt.unwrap_order": {"order", "reason"},
     "prompt.grant": {"lines"},
+    "prompt.table_follow": {"actions", "reason"},
 }
 
 

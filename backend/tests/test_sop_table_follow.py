@@ -524,6 +524,7 @@ def test_without_embeddings_untied_rows_go_to_ai(client: TestClient) -> None:
     follow = _get_follow(client, bundle_id, doc_id, tables[EN_STEPS_TABLE])
 
     assert (follow["mode"], follow["items"], follow["count"]) == ("ai", [], 0)  # 장비 ↔ equipment는 토큰이 없다(정한 것 7)
+    assert follow["lines"] == [unit_id for unit_id, _, _ in _read_lines(tables[EN_STEPS_TABLE])]  # AI 제안이 낡았는지 화면이 이것으로 본다
 
 
 @pytest.mark.usefixtures("clean_sop")
