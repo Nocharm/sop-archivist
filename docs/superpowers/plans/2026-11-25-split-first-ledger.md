@@ -27,8 +27,16 @@
 | 6-2 | `feat/new-paper-2-pick` | 모음 `feat/new-paper`에 합침 | d574eda1(9fcc501d) | dev v1.6.18 합침(충돌 13) · vitest 2475 · build 경고 0 · `assign:` 스모크 1305(시간 단계 하나는 혼자 2번 통과) · Enter · 잇기 단계 95 | fable 검토 두 번: 손질 뒤 Enter가 숨은 확정 · 되돌리기의 문서가 응답 때 정해짐 · Del→잇기→Del · 그 고침이 만든 출처 없음 두 번째 Enter 갈아 끼움 — 모두 고침. 스모크가 찾은 제품 결함: 빈 곳 누르기가 Pair 조각 · 칸 자리 · 템플릿 자리 고름을 지움, 짝 놓기가 New 다듬기에 머묾, 메뉴 위로 단추 줄이 펼쳐짐 — 고침 |
 | 6-3 | `feat/new-paper-3-tools` | 모음에 합침 → 모음을 dev에 | v1.6.22 · c8e014c2 | dev v1.6.21 합침 · pytest 3756+시드 15 · vitest 2545 · build 경고 0 · `assign:` 스모크 1400(100ms 단계는 혼자 통과, 그림 캡션 단계는 혼자 두 번에 한 번 통과 — dev 기반 브랜치에서도 흔들림) | opus 검토 막음 1 · 권함 1 고침, 스모크 뒤 제품 고침 셋은 opus 짧은 검토 통과 |
 | 3b+ | `fix/undo-follow-after-click` | 합침 | v1.6.16 · f1cbc921 | vitest 2297 · build 경고 0 · `assign:` 스모크 1240 + 손질 뒤 5단계 | — |
-| 7 | 계획 4의 일곱 | 대기 | | | |
+| 7a | `feat/assign-two-level-pick` | 진행 | | | |
+| 7b | `feat/assign-table-menu` | 대기 | | | |
+| 7c | `feat/assign-multi-mark` | 대기 | | | |
+| 7d | `feat/assign-multi-merge` | 대기 | | | |
+| 7e | `feat/assign-multi-pick` | 대기 | | | |
+| 7f | `feat/split-by-sentence` | 대기 | | | |
+| 7g | `feat/assign-pair-bracket` | 대기 | | | |
 | 8 | 계획 5의 아홉 | 진행 | v1.6.21 · 69826fdd | space-preview-trim v1.6.14 · excel-a-strike v1.6.15 · progress-by-disposition v1.6.18 · ai-suggestions-retire v1.6.20 · 모음 table-follow v1.6.21 합침(pytest 3747+시드 15 · vitest 2371 · build 경고 0 · `assign:` 스모크 1274 전부 · AI 단계는 가짜 AI로 14) | 남은 둘: tables-tab · unwrap-continue-numbers(둘 다 6 · 계획 4에 매임) |
+| 8a | `feat/assign-tables-tab` | 진행 | | | |
+| 8b | `feat/unwrap-continue-numbers` | 대기 | | | 7d(`MergeRowsOp`) 뒤 |
 
 
 ## 이어 가기 (2026-11-26 14시, 지휘 세션을 끊으며)
