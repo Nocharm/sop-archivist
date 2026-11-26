@@ -59,7 +59,7 @@ import { readEditLabelKey, trimReason } from "@/lib/command-label";
 import { isBarrier, listUnsettled } from "@/lib/command-queue";
 import { pickDocRevision } from "@/lib/doc-revision";
 import { isMousePress, isTypingTarget, LAYER_SELECTOR, readKeyPlace, returnsToPaper, takesPrimaryEnter } from "@/lib/assign-key-target";
-import { findAssignKey, formatAssignKey, resolveAssignKey, routeKey, type AssignKeyContext, type AssignKeyId } from "@/lib/assign-keymap";
+import { findAssignKey, formatAssignKey, readKeyName, resolveAssignKey, routeKey, type AssignKeyContext, type AssignKeyId } from "@/lib/assign-keymap";
 import { isQueuedKey, isRepeatIgnored, type PressId } from "@/lib/assign-press-model";
 import { findJoinNeighbor, stepMergeArm, type MergeArm } from "@/lib/merge-arm-model";
 import { planPrimary } from "@/lib/primary-model";
@@ -4710,7 +4710,7 @@ export function useAssignPage() {
       return;
     }
     const hit = findAssignKey(event);
-    const key = event.key.toLowerCase();
+    const key = readKeyName(event);
     if (hit?.kind === "run" && (hit.entry.id === "part_prev" || hit.entry.id === "part_next")) {
       event.preventDefault();
       // Pair view에는 탭이 없다
@@ -4727,10 +4727,12 @@ export function useAssignPage() {
     if (id === "preview") return;
     // 세로선에 포커스가 있으면 ←→는 폭이다
     if (event.target instanceof HTMLElement && event.target.closest(".pane-divider")) return;
-    // Tab은 용지에서 번호 칸이 있는 박스를 고른 동안만 들여쓰기다 - 입력 · 오른쪽 칸 · 메뉴에서는 포커스를 옮긴다(B2-R5)
-    // 단추 줄 안의 Tab은 브라우저 기본(포커스 옮기기)이다
-    const focusIn = event.target instanceof Element && event.target.closest(".pick-bar") ? "pick-bar" : "paper";
-    if ((id === "indent" || id === "outdent") && routeKey(event.key, { last: picks.last, focusIn, shift: event.shiftKey }).id === null) return;
+    // Tab(= J · K)은 용지에서만 - 단추 줄 · 오른쪽 칸 · 위쪽 줄에서는 브라우저 기본(포커스 옮기기)이다(접근성)
+    const focusIn = event.target instanceof Element && event.target.closest(".pick-bar") ? "pick-bar" : readKeyPlace(event.target) === "paper" ? "paper" : "other";
+    if (event.key === "Tab" && routeKey(event.key, { last: picks.last, focusIn, shift: event.shiftKey }).id === null) return;
+    // 용지의 Tab은 옮길 박스가 없어도 포커스를 용지 밖으로 내보내지 않는다
+    if (event.key === "Tab") event.preventDefault();
+    // ` · ⇧`(들여쓰기)는 용지에서 번호 칸이 있는 박스를 고른 동안만(B2-R5)
     if ((id === "indent" || id === "outdent") && !(hasNumberCell && event.target instanceof Element && event.target.closest('[data-pane="old"], [data-pane="new"]') && readKeyPlace(event.target) === "paper")) return;
     if (hit?.kind === "hint") {
       // Shift를 빠뜨렸다 - 아무것도 하지 않고 글쇠만 알린다(B2-R3)
@@ -4741,7 +4743,7 @@ export function useAssignPage() {
     // 누르고 있어 되풀이된 것은 이동만 받는다
     if (event.repeat && isRepeatIgnored(id)) {
       // 막지 않으면 포커스가 있는 단추를 브라우저가 되풀이해 누른다
-      if (isPrimaryEnter || id === "indent" || id === "outdent") event.preventDefault();
+      if (isPrimaryEnter) event.preventDefault();
       return;
     }
     // 앞에 장벽이 있으면 어느 박스의 글쇠인지 아직 모른다 - 쌓아 두었다가 장벽이 세운 고름에서 차례로 다시 누른다(A1-R3)

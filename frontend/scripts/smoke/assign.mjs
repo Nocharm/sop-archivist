@@ -6755,14 +6755,20 @@ await runStep("assign: keys", {}, async ({ page }) => {
   check("M does nothing", (await rowIds(page)) === rowBefore && (await page.locator('[role="dialog"], [role="menu"]').count()) === 0 && (await page.locator('[data-testid^="toast-"]').count()) <= toastsBefore);
   await page.keyboard.press("Shift+T");
   check("Shift+T outside a table says why", await waitInfo("Only inside a table"));
-  // Tab - 번호 칸 ▶와 같은 값(이어진 줄까지), ⇧Tab은 되돌린다. 포커스는 용지에 남는다
-  await page.keyboard.press("Tab");
-  check("Tab indents the picked line and the line that follows", await waitShifts(1), `${await readShift(first.id)} / ${await readShift(second.id)}`);
-  check("Tab keeps the focus on the paper", await page.evaluate(() => Boolean(document.activeElement?.closest('[data-pane="old"] .pane-body'))));
-  await page.keyboard.press("Shift+Tab");
-  check("Shift+Tab outdents them again", await waitShifts(0), `${await readShift(first.id)} / ${await readShift(second.id)}`);
+  // ` (숫자 1 왼쪽) - 번호 칸 ▶와 같은 값(이어진 줄까지), ⇧`는 되돌린다. 포커스는 용지에 남는다
+  await page.keyboard.press("Backquote");
+  check("` indents the picked line and the line that follows", await waitShifts(1), `${await readShift(first.id)} / ${await readShift(second.id)}`);
+  check("` keeps the focus on the paper", await page.evaluate(() => Boolean(document.activeElement?.closest('[data-pane="old"] .pane-body'))));
+  await page.keyboard.press("Shift+Backquote");
+  check("Shift+` outdents them again", await waitShifts(0), `${await readShift(first.id)} / ${await readShift(second.id)}`);
   await page.locator(`.strip[data-testid="assign-paper-piece-${first.id}"]:not([data-pending])`).waitFor({ timeout: T });
   await page.waitForLoadState("networkidle");
+  // Tab · ⇧Tab은 J · K와 같다 - 포커스는 용지에 남는다
+  const isPicked = (id) => page.locator(`[data-testid="assign-paper-piece-${id}"][data-sel]`).waitFor({ timeout: T }).then(() => true, () => false);
+  await page.keyboard.press("Tab");
+  check("Tab moves to the next box like J and keeps the focus on the paper", (await isPicked(second.id)) && (await page.evaluate(() => Boolean(document.activeElement?.closest('[data-pane="old"] .pane-body')))));
+  await page.keyboard.press("Shift+Tab");
+  check("Shift+Tab moves back like K", await isPicked(first.id));
   await page.keyboard.press("Shift+N");
   await wait(page, `assign-paper-num-edit-${first.id}`);
   check("Shift+N opens the number cell", true);
