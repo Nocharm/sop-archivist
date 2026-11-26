@@ -33,7 +33,7 @@
 | 7d | `feat/assign-multi-merge` | 합침 | v1.6.28 · 9a533c3b | dev v1.6.26 · v1.6.27 합침 · pytest 3781+시드 15 · ruff · vitest 2671 · build 경고 0 · `assign:` 스모크 1478(그림 캡션 단계는 혼자 다시 통과) · opus 검토 막음 1 고침 → opus 재검토 통과 | Old 표 여럿에 배정이 있으면 확인창은 공통 글. 함께 벗김의 번호 칸 이음은 "바깥 먼저"와 같다(안쪽 먼저와 드물게 다름) |
 | 7e | `feat/assign-multi-pick` | 대기 | | | |
 | 7f | `feat/split-by-sentence` | 합침 | v1.6.27 · 7174cf7b | pytest 3763+시드 15 · ruff · vitest 2659 · build 경고 0 · `assign:` 스모크 1461 + 고친 둘 다시 · 메뉴 단계 92(흔들린 1은 혼자 24 통과) · opus 검토 막음 0 · 권함 2 고침 | 키 큰 메뉴가 옆으로 비키면 반대편 판(New) 글을 덮을 수 있음(위 · 아래 모두 모자랄 때만) |
-| 7g | `feat/assign-pair-bracket` | 대기 | | | |
+| 7g | `feat/assign-pair-bracket` | 합침 | v1.6.29 · 456f25b3 | dev v1.6.28 합침 · vitest 2689 · build 경고 0 · `assign:` 스모크 1486(프록시 ECONNRESET 1단계는 혼자 34 통과) · sonnet 검토 막음 0 · 권함 2 고침 | perf(스크롤 프레임, 세워 둘 조건 ②)는 재지 않음 — 정식 업데이트 전 perf에서 |
 | 8 | 계획 5의 아홉 | 진행 | v1.6.21 · 69826fdd | space-preview-trim v1.6.14 · excel-a-strike v1.6.15 · progress-by-disposition v1.6.18 · ai-suggestions-retire v1.6.20 · 모음 table-follow v1.6.21 합침(pytest 3747+시드 15 · vitest 2371 · build 경고 0 · `assign:` 스모크 1274 전부 · AI 단계는 가짜 AI로 14) | 남은 둘: tables-tab · unwrap-continue-numbers(둘 다 6 · 계획 4에 매임) |
 | 8a | `feat/assign-tables-tab` | 합침 | v1.6.24 · 9d9f177d | dev v1.6.23 합침 · vitest 2593 · build 경고 0 · `assign:` 스모크 1435 + 따라 고친 1검사 혼자 16 통과 · sonnet 검토 막음 0 · 권함 1 고침 · perf(52문서 CPU1 J 22.1→24.1 · Delete 25.1→24.5ms, 스크롤 같음) | 표 탭 J/K는 그 문서의 표만(그림 탭은 모든 Old 문서), 벗긴 표 캡션은 접힌 줄에 안 보임 |
 | 8b | `feat/unwrap-continue-numbers` | 대기 | | | 7d(`MergeRowsOp`) 뒤 |
@@ -111,6 +111,7 @@
 - 8a · `smoke/assign.mjs` 필터 접기 단계 부분마다 셈에서 `assign-tab-tables`를 뺌 · 표 탭은 본문 표를 다시 모은 탭이라 두 번 세지 않게
 - 8a · `smoke/assign.mjs:6706` 벗긴 표 머리 "✦ AI order | ↺ Back to table" → "… | Collapse"(검사 1 그대로) · 머리 끝에 접기 단추(E2)
 - 7f · `assign-context-menu-model.test.ts:56 · 139 · 165 · 183` 편집 항목 목록에 `split_sentences`가 `split` 뒤에, `:408 · 409 · 418` Shape 줄 단추 목록에 `split_sentences` · 새 항목이 생김(같은 단계 수)
+- 7g · `smoke/assign.mjs` counterpart 단계 · "the pair panel never moves the picked box up or down" 단계 · 사이 줄을 `addStyleTag`로 1600px 늘려 짝을 화면 밖으로 민 채 기존 검사(검사 수 그대로, counterpart에 괄호선 검사 +1) · 짝이 둘 다 보이면 안내 줄이 숨음(E1-R2, 정한 것 6) — 뒤 단계는 계획 목록 밖
 
 ## 아침에 볼 것 (사람이 정할 것 · 봐 줄 것)
 
@@ -157,3 +158,4 @@
 - 7c: 첫 Shift+클릭은 지금 고른 줄도 여럿 고름에 넣는다(전부터) — 떨어진 두 줄을 Shift로 고르면 꼬리표가 셋 뜬다. 필터로 접힌 목록에서는 사이에 접힌 줄이 끼어도 덩어리가 이어 보일 수 있다.
 - 7f: 계획의 캡션 거절 시험은 표로 봤다(같은 `invalid_unit_kind` 길). 마침표 없는 줄을 합친 박스가 범위 경계에서 나뉘는지는 시험으로 따로 증명하지 않았다.
 - 7d: 위쪽 바로 여럿 합치기 · 표 여럿 벗기기를 한다(⇧G 일괄 단추는 7e). Split 기록 되돌리기(`/edits/undo`)로는 쓸어 낸 AI 번역이 돌아오지 않는다 — Assign 되돌리기(Ctrl+Z)로는 돌아온다(사람 짝 맺기와 같은 수준).
+- 7g: 괄호선이 보이는 동안 고른 박스 아래에 안내 줄 높이의 빈 줄이 남고, 안내 줄은 고른 뒤 한 프레임 늦게 선다(밀림을 막은 대가). 좁은 창에서 Old 괄호선이 왼쪽 스크롤바 가까이 붙을 수 있다(눈으로 안 봄).
