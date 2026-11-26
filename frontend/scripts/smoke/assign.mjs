@@ -8087,7 +8087,8 @@ await runStep("assign: the pair panel never moves the picked box up or down", {}
       await page.setViewportSize({ width, height: VIEWPORT.height });
       await setZoom(percent);
       await settle();
-      await piece(english.id).click();
+      // 글 자리를 누른다 - 이미 고른 박스의 가운데에는 이름이 펼쳐진 단추 줄(잇기 상대 고르기 등)이 온다(1차 피드백 5)
+      await piece(english.id).click({ position: { x: 24, y: 12 } });
       await piece(english.id).and(page.locator("[data-sel]")).waitFor({ timeout: T });
       // 처음 고르면 박스 안에서 단추 줄이 펼쳐진다(쪼개기 먼저 §8, --dur-slow) - 다 펼친 뒤에 잰다. 펼치는 동안은 그 아래 짝 안내가 움직여
       // 안내 누르기가 빗나가고 Playwright가 다시 굴려 누른다(그 굴림이 판이 박스를 옮긴 것처럼 잡힌다)
@@ -8126,7 +8127,7 @@ await runStep("assign: the pair panel never moves the picked box up or down", {}
   await page.setViewportSize({ width: 1920, height: VIEWPORT.height });
   await setZoom(100);
   await settle();
-  await piece(english.id).click();
+  await piece(english.id).click({ position: { x: 24, y: 12 } });
   await piece(english.id).and(page.locator("[data-sel]")).waitFor({ timeout: T });
   await hint.click();
   await pairSpot.waitFor({ timeout: T });
