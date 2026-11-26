@@ -197,11 +197,19 @@
   --sheet-band-ink: #3C4043;
   --sheet-rail: #E3E5E8;
   --sheet-rail-thumb: #9AA0A6;
+
+  /* Original view (Assign Space "Original"): a print preview - grey desk, white paper in both themes (the paper is the printed page), paint for the picked paragraph */
+  --ov-desk: oklch(.88 .004 255);
+  --ov-paper: #FFFFFF;
+  --ov-paint: color-mix(in oklab, var(--sheet-accent) 16%, var(--ov-paper));
 }
 
 /* Tokens only change here. Screens never branch on the theme. Light gets reviewed first, and the toggle ships after it. */
 :root[data-theme="dark"] {
   color-scheme: dark;
+
+  /* 원본 보기 책상만 어둡게 - 종이(--ov-paper)와 칠은 인쇄 모양이라 그대로 */
+  --ov-desk: oklch(.30 .006 255);
 
   --bg: oklch(.185 .0056 255);
   --surface: oklch(.222 .008 255);

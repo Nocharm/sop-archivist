@@ -9,6 +9,15 @@ export const PAGE_SLACK_PX = 6;
 /** 거리가 화면 높이의 이 배수 안이면 부드럽게 굴린다(D8 "한 화면 남짓"), 넘으면 흐렸다 밝힌다 */
 const SMOOTH_SCREENS = 1.5;
 
+const CSS_PX: Record<string, number> = { px: 1, pt: 96 / 72, in: 96, cm: 96 / 2.54, mm: 96 / 25.4 };
+
+/** 그리개가 인라인으로 적은 길이(대개 pt)를 px로 - 못 읽으면 NaN */
+export function readCssLength(value: string): number {
+  const match = /^(-?[\d.]+)([a-z]*)$/.exec(value.trim());
+  if (match === null) return Number.NaN;
+  return Number(match[1]) * (CSS_PX[match[2] || "px"] ?? Number.NaN);
+}
+
 /** 본문 아이 하나의 흐름 위치(px). 떠 있는 요소(floating)는 흐름을 차지하지 않아 셈에서 뺀다 */
 export type FlowBox = { top: number; bottom: number; floating: boolean };
 

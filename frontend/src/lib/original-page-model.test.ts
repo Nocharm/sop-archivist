@@ -7,6 +7,7 @@ import {
   pickFollowTarget,
   planPageBreaks,
   planRowBreaks,
+  readCssLength,
   readFollowMotion,
 } from "./original-page-model";
 
@@ -100,5 +101,14 @@ describe("pickFollowTarget", () => {
   it("skips picked units without marks", () => {
     expect(pickFollowTarget({ renderedDocId: 5, docId: 5, pickedUnitIds: [99, 2], marks })?.unitId).toBe(2);
     expect(pickFollowTarget({ renderedDocId: 5, docId: 5, pickedUnitIds: [99], marks })).toBeNull();
+  });
+});
+
+describe("readCssLength", () => {
+  it("reads the renderer's inline lengths as px", () => {
+    expect(readCssLength("72pt")).toBe(96);
+    expect(readCssLength("10px")).toBe(10);
+    expect(readCssLength("1in")).toBe(96);
+    expect(Number.isNaN(readCssLength("auto"))).toBe(true);
   });
 });

@@ -4,7 +4,7 @@
 // 설계: docs/superpowers/specs/2026-11-27-original-view-design.md §5.2·§5.3·§5.5
 
 import type { OriginalPlace } from "@/lib/api-sop";
-import { PAGE_SLACK_PX, planPageBreaks, planRowBreaks, type FlowBox } from "@/lib/original-page-model";
+import { PAGE_SLACK_PX, planPageBreaks, planRowBreaks, readCssLength, type FlowBox } from "@/lib/original-page-model";
 
 const W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
 
@@ -22,7 +22,6 @@ const SAFE_HREF_RE = /^(https?:|#)/i;
 const METAFILE_SRC_RE = /^data:(?:image\/(?:x-)?(?:emf|wmf)|application\/x-msmetafile)[;,]|\.(?:emf|wmf)(?:[?#]|$)/i;
 const METAFILE_PART_RE = /^word\/media\/.+\.(?:emf|wmf)$/i;
 const HEADER_FOOTER_PART_RE = /^word\/(?:header|footer)\d*\.xml$/;
-const CSS_PX: Record<string, number> = { px: 1, pt: 96 / 72, in: 96, cm: 96 / 2.54, mm: 96 / 25.4 };
 
 const partPath = (key: string) => `word/${key}.xml`;
 
@@ -295,12 +294,6 @@ export function replaceUnrenderable(root: HTMLElement, label: string): number {
     count += 1;
   }
   return count;
-}
-
-function readCssLength(value: string): number {
-  const match = /^(-?[\d.]+)([a-z]*)$/.exec(value.trim());
-  if (match === null) return Number.NaN;
-  return Number(match[1]) * (CSS_PX[match[2] || "px"] ?? Number.NaN);
 }
 
 function isFloating(el: HTMLElement): boolean {

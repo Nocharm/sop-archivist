@@ -639,6 +639,11 @@ export function fetchOriginalPlaces(bundleId: number, docId: number): Promise<Or
   return apiFetch<OriginalPlaces>(`${buildDocPath(bundleId, docId)}/original-places`);
 }
 
+/** 원본 파일 받기(이름은 서버의 Content-Disposition) - 원본 보기의 파일 받기 단추 */
+export function downloadOriginalFile(bundleId: number, docId: number): Promise<{ blob: Blob; fileName: string | null }> {
+  return apiFetchBlobWithName(`${buildDocPath(bundleId, docId)}/file`);
+}
+
 /** 단위가 가리키는 문서 번호와 그 번호의 EQUIS 표시 - 번호는 서버가 단위의 글에서 읽는다 */
 export function getUnitRef(bundleId: number, docId: number, unitId: number): Promise<UnitRefDetail> {
   return apiFetch<UnitRefDetail>(`${buildDocPath(bundleId, docId)}/units/${unitId}/ref`);

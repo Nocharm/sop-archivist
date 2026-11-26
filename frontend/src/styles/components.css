@@ -2745,3 +2745,33 @@
   .practice-manual-link { display: inline-flex; align-items: center; gap: 6px; align-self: flex-start; font-size: var(--fs-ui); color: var(--accent); }
   .practice-manual-link:hover { text-decoration: underline; }
 }
+
+/* ---- 원본 보기(components/assign/original-view.tsx) - 회색 책상 위 종이(인쇄 미리보기). 원본은 host의 그림자 뿌리 안에 그려져
+   이 파일의 규칙은 안에 닿지 않는다(안의 모양은 original-render.ts OV_SHADOW_CSS, 토큰만). 여기는 바깥 틀 · 쉬머 · 흐림 · 쪽 칩 ---- */
+@layer components {
+  .ov { position: relative; display: flex; flex: 1 1 auto; flex-direction: column; min-height: 0; overflow: hidden; border-radius: var(--r-1); background: var(--ov-desk); }
+  .ov-note { flex: none; padding: 5px 12px; border-bottom: 1px solid var(--line); background: var(--surface); font-size: 12px; color: var(--ink-2); }
+  .ov-scroll { position: relative; flex: 1 1 auto; min-height: 0; overflow: auto; }
+  /* 떠 있는(fixed) 요소도 이 칸 안에 가둔다 - 올린 문서가 화면 전체를 덮지 못하게 */
+  .ov-host { contain: paint; }
+  /* 그리는 동안 배치는 하되(쪽 나누기가 잰다) 보이지 않게, 다 그리면 0.15초 나타남(D8) */
+  .ov-host[data-busy] { visibility: hidden; }
+  .ov-host[data-ready] { animation: ov-appear 150ms var(--ease-enter); }
+  @keyframes ov-appear { from { opacity: 0; } }
+  /* 멀리 갈 때 0.09초 흐렸다 그 자리에서 0.14초 밝힘 - 끝은 use-original-follow가 animationend로 받는다(이름을 바꾸면 함께) */
+  .ov-host[data-ov-fade="out"] { animation: ov-dim 90ms var(--ease-exit) forwards; }
+  .ov-host[data-ov-fade="in"] { animation: ov-undim 140ms var(--ease-enter); }
+  @keyframes ov-dim { to { opacity: .15; } }
+  @keyframes ov-undim { from { opacity: .15; } }
+  /* 처음 그리는 동안 종이 모양 쉬머 */
+  .ov-shimmer { position: absolute; inset: 0; display: flex; justify-content: center; padding: 16px; pointer-events: none; }
+  .ov-shimmer > .sk { width: min(100%, 560px); aspect-ratio: 1 / 1.414; background: var(--ov-paper); box-shadow: var(--shadow-1); }
+  /* 쪽 칩 - 오른쪽 아래, 쪽이 바뀌면 key로 다시 붙어 살짝 커진다 */
+  .ov-chip { position: absolute; right: 14px; bottom: 10px; z-index: 2; padding: 1px 8px; border-radius: var(--r-1); background: color-mix(in oklab, var(--ink) 74%, transparent); color: var(--surface); font: 600 11px / 18px var(--font-mono); pointer-events: none; animation: ov-chip-pop 200ms var(--ease-enter); }
+  @keyframes ov-chip-pop { from { transform: scale(1.15); } }
+  .ov-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; margin: auto; padding: 24px; text-align: center; font-size: 13px; color: var(--ink-2); }
+  .ov-empty-actions { display: flex; gap: 8px; }
+  @media (prefers-reduced-motion: reduce) {
+    .ov-host[data-ready], .ov-chip { animation: none; }
+  }
+}
