@@ -125,6 +125,7 @@
 - 8b · `decision-step-model.test.ts:86 · 101` 목록에 `continue_numbers`만 더함
 - layout-audit-stale · `pw-layout-audit.mjs` P1 `value.tabs === 5` → `4` · 1a §14 C 시트 숨김(스모크 · overlap은 1a 때 바꿈), A4b 네 자리 Row가 없으면 번호 칸 마지막 20개에 네 자리를 넣어 잰다(한 줄 기준 그대로) · W1 옛 줄 738(규칙 2 문단 박스) · 사용자 승인 "다 처리"
 - smoke-caption-settle · `smoke/assign.mjs` "the New pane shows a real table and figure"의 `readCaptionLine` · 한 번 읽기 → T 안에서 맞을 때까지 다시 읽기, 실패 글에 본 값 · `FULL=1`에서만 탭 전환 중 한 프레임을 읽어 흔들림(기대값 · 검사 수 그대로)
+- assign-tab-keys · `smoke/assign.mjs` 번호 칸 들여쓰기 단계 · `Tab`/`Shift+Tab` → `Backquote`/`Shift+Backquote`(검사 3 그대로), Tab=J · ⇧Tab=K 검사 2 더함 · `assign-keymap.test.ts` `⇧Tab` → ``⇧` ``, Tab 들여쓰기 시험 → Tab 옮기기 · ` 들여쓰기 · 사용자 요청 글쇠 변경(1차 피드백 2, 승인)
 
 ## 아침에 볼 것 (사람이 정할 것 · 봐 줄 것)
 

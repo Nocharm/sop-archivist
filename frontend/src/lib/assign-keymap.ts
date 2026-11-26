@@ -22,8 +22,10 @@ export interface AssignKey {
 export const ASSIGN_KEYS: readonly AssignKey[] = [
   { id: "move_next", key: "j", shift: false, when: "always", labelKey: "assign.key.moveNext" },
   { id: "move_next", key: "arrowdown", shift: false, when: "always", labelKey: "assign.key.moveNext" },
+  { id: "move_next", key: "tab", shift: false, when: "always", labelKey: "assign.key.moveNext" },
   { id: "move_prev", key: "k", shift: false, when: "always", labelKey: "assign.key.movePrev" },
   { id: "move_prev", key: "arrowup", shift: false, when: "always", labelKey: "assign.key.movePrev" },
+  { id: "move_prev", key: "tab", shift: true, when: "always", labelKey: "assign.key.movePrev" },
   { id: "go_pair", key: "g", shift: false, when: "pair", labelKey: "assign.key.goPair" },
   { id: "confirm", key: "enter", shift: false, when: "row", labelKey: "assign.key.confirm" },
   { id: "delete", key: "delete", shift: false, when: "row", labelKey: "assign.key.delete" },
@@ -41,8 +43,9 @@ export const ASSIGN_KEYS: readonly AssignKey[] = [
   { id: "lang", key: "l", shift: true, when: "text", labelKey: "assign.key.lang" },
   { id: "shape_mode", key: "p", shift: true, when: "shape", labelKey: "assign.key.shapeMode" },
   { id: "number", key: "n", shift: true, when: "number", labelKey: "assign.key.number" },
-  { id: "indent", key: "tab", shift: false, when: "box", labelKey: "assign.key.indent" },
-  { id: "outdent", key: "tab", shift: true, when: "box", labelKey: "assign.key.outdent" },
+  // 숫자 1 왼쪽 글쇠 - 자판 배열 · 한글 입력(맥은 ₩)과 상관없이 자리로 받는다(readKeyName)
+  { id: "indent", key: "`", shift: false, when: "box", labelKey: "assign.key.indent" },
+  { id: "outdent", key: "`", shift: true, when: "box", labelKey: "assign.key.outdent" },
   { id: "merge_next", key: "j", shift: true, when: "join", labelKey: "assign.key.mergeNext" },
   { id: "merge_prev", key: "k", shift: true, when: "join", labelKey: "assign.key.mergePrev" },
   { id: "multi_pick", key: "g", shift: true, when: "box", labelKey: "assign.key.multiPick" },
@@ -84,10 +87,15 @@ export const HELP_ONLY: readonly HelpOnlyKey[] = [
 /** run = 그 글쇠, hint = Shift를 빠뜨렸다(아무것도 하지 않고 "⇧H: Hold"만 알린다 - B2-R3) */
 export type KeyHit = { kind: "run"; entry: AssignKey } | { kind: "hint"; entry: AssignKey };
 
-export function findAssignKey(event: Pick<KeyboardEvent, "key" | "shiftKey" | "ctrlKey" | "metaKey" | "altKey">): KeyHit | null {
+/** 표의 key 글자 - 숫자 1 왼쪽 글쇠는 Shift(~) · 한글 입력(₩)에서도 "`"다 */
+export function readKeyName(event: Pick<KeyboardEvent, "key"> & { code?: string }): string {
+  return event.code === "Backquote" ? "`" : event.key.toLowerCase();
+}
+
+export function findAssignKey(event: Pick<KeyboardEvent, "key" | "shiftKey" | "ctrlKey" | "metaKey" | "altKey"> & { code?: string }): KeyHit | null {
   if (event.altKey) return null;
   const isCtrl = event.ctrlKey || event.metaKey;
-  const key = `${isCtrl ? "ctrl+" : ""}${event.key.toLowerCase()}`;
+  const key = `${isCtrl ? "ctrl+" : ""}${readKeyName(event)}`;
   const same = ASSIGN_KEYS.filter((entry) => entry.key === key);
   // 물음표는 글자가 곧 Shift다 - Shift 없이 찍히는 자판에서도 같다
   const entry = same.find((item) => item.shift === event.shiftKey || key === "?");
@@ -183,14 +191,14 @@ const JUDGE_IDS: ReadonlySet<AssignKeyId> = new Set<AssignKeyId>(["confirm", "de
 const FREE_IDS: ReadonlySet<AssignKeyId> = new Set<AssignKeyId>(["view", "preview", "part_prev", "part_next", "undo", "redo", "escape", "help"]);
 
 /**
- * 글쇠가 어느 쪽에 작용하나 - 판단은 Old, 손질 · 이동은 마지막으로 누른 쪽. focusIn이 단추 줄이면 Tab은 브라우저의 포커스 옮기기다(id null).
+ * 글쇠가 어느 쪽에 작용하나 - 판단은 Old, 손질 · 이동은 마지막으로 누른 쪽. Tab(= J · K)은 용지에서만 - 단추 줄이나 그 밖이면 브라우저의 포커스 옮기기다(id null).
  * key는 event.key(대소문자 무관), Shift는 보지 않는다
  */
 export function routeKey(key: string, ctx: { last: "old" | "new" | null; focusIn: "paper" | "pick-bar" | "other"; shift?: boolean }): { side: "old" | "new" | null; id: AssignKeyId | null } {
   const hit = findAssignKey({ key, shiftKey: ctx.shift ?? false, ctrlKey: false, metaKey: false, altKey: false });
   const id = hit?.kind === "run" ? hit.entry.id : null;
   if (id === null) return { side: null, id: null };
-  if ((id === "indent" || id === "outdent") && ctx.focusIn !== "paper") return { side: null, id: null };
+  if (key.toLowerCase() === "tab" && ctx.focusIn !== "paper") return { side: null, id: null };
   if (FREE_IDS.has(id)) return { side: null, id };
   return { side: JUDGE_IDS.has(id) ? "old" : ctx.last, id };
 }

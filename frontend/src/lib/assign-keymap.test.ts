@@ -76,8 +76,9 @@ describe("the Assign key table", () => {
     expect(formatAssignKey("delete")).toBe("Del · ⌫");
     expect(formatAssignKey("part_next")).toBe("Ctrl+→");
     expect(formatAssignKey("redo")).toBe("Ctrl+⇧Z");
-    expect(formatAssignKey("outdent")).toBe("⇧Tab");
-    expect(formatAssignKey("move_next")).toBe("J · ↓");
+    expect(formatAssignKey("outdent")).toBe("⇧`");
+    expect(formatAssignKey("move_next")).toBe("J · ↓ · Tab");
+    expect(formatAssignKey("move_prev")).toBe("K · ↑ · ⇧Tab");
     expect(formatAssignKey("help")).toBe("?");
   });
 });
@@ -173,8 +174,17 @@ describe("Enter and the keys across both documents", () => {
     expect(routeKey("j", on("new")).side).toBe("new");
     expect(routeKey("v", on("new")).side).toBeNull();
   });
-  it("Tab indents on the paper and not inside the bar", () => {
-    expect(routeKey("Tab", on("new")).id).toBe("indent");
+  it("Tab moves like J/K on the paper and leaves focus moving inside the bar or elsewhere", () => {
+    expect(routeKey("Tab", on("new"))).toEqual({ side: "new", id: "move_next" });
+    expect(routeKey("Tab", { ...on("old"), shift: true }).id).toBe("move_prev");
     expect(routeKey("Tab", { last: "new", focusIn: "pick-bar" }).id).toBeNull();
+    expect(routeKey("Tab", { last: "new", focusIn: "other" }).id).toBeNull();
+  });
+  it("the key left of 1 indents, with Shift outdents, whatever it types", () => {
+    expect(routeKey("`", on("new")).id).toBe("indent");
+    expect(routeKey("`", { ...on("new"), shift: true }).id).toBe("outdent");
+    // 맥 한글 입력의 ₩ · Shift의 ~ 도 자리(code)로 받는다
+    expect(findAssignKey({ key: "₩", code: "Backquote", shiftKey: false, ctrlKey: false, metaKey: false, altKey: false })).toMatchObject({ kind: "run", entry: { id: "indent" } });
+    expect(findAssignKey({ key: "~", code: "Backquote", shiftKey: true, ctrlKey: false, metaKey: false, altKey: false })).toMatchObject({ kind: "run", entry: { id: "outdent" } });
   });
 });
