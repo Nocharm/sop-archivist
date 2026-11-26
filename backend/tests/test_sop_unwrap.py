@@ -411,3 +411,84 @@ def test_a_join_keeps_the_first_joined_line_value(client: TestClient) -> None:
     first = next(unit for unit in _table_lines(view, 0) if unit["text"].startswith(PREP[0]))
     assert first["unwrap_seq"] == 0
     assert _shown(view, 0)[0] == first["text"] and len(_shown(view, 0)) == len(WORK_LINES) - 1
+
+
+# ── 표 여럿 한 번에 벗기기(set_layout_tables, 쪼개기 먼저 설계 §9) ─────────────────
+
+
+def _unwrap_many(client: TestClient, bundle_id: int, doc_id: int, table_ids: list[int], *, confirm: bool = False) -> httpx2.Response:
+    return _edit(client, bundle_id, doc_id, {"type": "set_layout_tables", "table_ids": table_ids}, confirm=confirm)
+
+
+def test_an_inner_band_picked_with_its_outer_table_changes_once(client: TestClient) -> None:
+    from tests.test_sop_unwrap_nested import _setup as _setup_nested
+
+    bundle_id, _, doc_id = _setup_nested(client)
+    tables = get_view(client, bundle_id, doc_id)["tables"]
+
+    response = _unwrap_many(client, bundle_id, doc_id, [tables[0]["id"], tables[1]["id"]])
+
+    assert response.status_code == 200, response.text
+    result = response.json()
+    assert len(set(result["retired_unit_ids"])) == len(result["retired_unit_ids"])
+    view = get_view(client, bundle_id, doc_id)
+    assert [table["is_layout"] for table in view["tables"]] == [True, True, False, False, False, False]
+    assert _coverage_problems(view) == []
+
+
+def test_one_bad_table_changes_nothing(client: TestClient) -> None:
+    bundle_id, _, doc_id = _setup(client)
+    work_table = get_view(client, bundle_id, doc_id)["tables"][0]["id"]
+
+    response = _unwrap_many(client, bundle_id, doc_id, [work_table, 999_999])
+
+    assert response.status_code == 404 and response.json()["detail"]["code"] == "table_not_found"
+    view = get_view(client, bundle_id, doc_id)
+    assert view["document"]["revision"] == 1 and not any(table["is_layout"] for table in view["tables"])
+
+
+def test_the_same_table_twice_is_refused(client: TestClient) -> None:
+    bundle_id, _, doc_id = _setup(client)
+    work_table = get_view(client, bundle_id, doc_id)["tables"][0]["id"]
+
+    response = _unwrap_many(client, bundle_id, doc_id, [work_table, work_table])
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == {"code": "duplicate_units", "table_ids": [work_table], "reason": "tables"}
+
+
+def test_decided_lines_of_several_tables_ask_once(client: TestClient) -> None:
+    bundle_id, sop_id, doc_id = _setup(client)
+    view = get_view(client, bundle_id, doc_id)
+    work, step = (next(unit for unit in _table_units(view) if unit["table_id"] == view["tables"][index]["id"]) for index in (0, 2))
+    assign_as_is(client, bundle_id, work, sop_id, slot_key="purpose")
+    assign_as_is(client, bundle_id, step, sop_id, slot_key="purpose")
+    table_ids = [view["tables"][0]["id"], view["tables"][2]["id"]]
+
+    response = _unwrap_many(client, bundle_id, doc_id, table_ids)
+
+    assert (response.status_code, response.json()["detail"]["code"]) == (409, "confirm_required")
+    assert {work["id"], step["id"]} <= set(response.json()["detail"]["unit_ids"])
+    assert _unwrap_many(client, bundle_id, doc_id, table_ids, confirm=True).status_code == 200
+    assert [table["is_layout"] for table in get_view(client, bundle_id, doc_id)["tables"]] == [True, False, True]
+
+
+def test_new_document_tables_unwrap_together(client: TestClient) -> None:
+    from tests.test_sop_decision_undo import _dump
+
+    bundle_id, _, _ = _setup(client)
+    new = upload(client, bundle_id, build_docx(BODY, headers=[p("합성 새 문서")]), "SYNTHETIC_SOP-T_Tables.docx", side="new", doc_type="sop")
+    assert new.status_code == 201, new.text
+    new_doc = new.json()["id"]
+    tables = get_view(client, bundle_id, new_doc)["tables"]
+
+    response = _unwrap_many(client, bundle_id, new_doc, [tables[0]["id"], tables[2]["id"]])
+
+    assert response.status_code == 200, response.text
+    view = get_view(client, bundle_id, new_doc)
+    lines = [unit["id"] for index in (0, 2) for unit in _table_lines(view, index)]
+    targets = [row["new_unit_id"] for row in _dump(bundle_id)["target_sentences"].values() if row["new_unit_id"] in lines]
+    assert lines and sorted(targets) == sorted(lines)
+    assert not set(response.json()["retired_unit_ids"]) & {
+        row["new_unit_id"] for row in _dump(bundle_id)["target_sentences"].values()
+    }

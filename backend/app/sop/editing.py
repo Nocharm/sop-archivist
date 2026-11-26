@@ -195,12 +195,20 @@ class SetLanguageOp(BaseModel):
 
 
 class SetLayoutTableOp(BaseModel):
-    """표 벗기기(is_layout) · 다시 표로. 표는 하나씩 벗긴다 — 한/영 따로 문서에서 둘 다 벗긴 대응 표는 짝을 다시 세울 때 같은 행끼리
-    짝짓는다(F8a, units.refresh_code_pairs). 대응 표 함께 벗기기는 걷었다(사용자 결정 2026-11-19, 요청서 8번)."""
+    """표 벗기기(is_layout) · 다시 표로. 표는 한 표씩 또는 여럿을 골라 한 번에(SetLayoutTablesOp) 벗긴다 — 한/영 따로 문서에서 둘 다 벗긴
+    대응 표는 짝을 다시 세울 때 같은 행끼리 짝짓는다(F8a, units.refresh_code_pairs). 대응 표를 저절로 함께 벗기기는 걷었다(사용자 결정
+    2026-11-19, 요청서 8번)."""
 
     type: Literal["set_layout_table"]
     table_id: DbId
     is_layout: bool
+
+
+class SetLayoutTablesOp(BaseModel):
+    """표 여럿 벗기기(쪼개기 먼저 설계 §9) — 편집 하나(되돌리기 한 번), 짝 제안은 끝에 한 번. 하나라도 안 되면 아무것도 쓰지 않는다."""
+
+    type: Literal["set_layout_tables"]
+    table_ids: list[DbId] = Field(min_length=1, max_length=MAX_EDIT_UNITS)
 
 
 class AttachCaptionOp(BaseModel):
@@ -388,7 +396,7 @@ class FollowTableOp(BaseModel):
 
 EditOp = Annotated[
     SplitOp | MergeOp | MergeRowsOp | UnmergeOp | MoveBoundaryOp | CarveOp | SetLanguageOp | SwitchLanguageOp
-    | SetLayoutTableOp | AttachCaptionOp | DetachCaptionOp | SetFirstRowCaptionOp | GroupFiguresOp
+    | SetLayoutTableOp | SetLayoutTablesOp | AttachCaptionOp | DetachCaptionOp | SetFirstRowCaptionOp | GroupFiguresOp
     | UngroupFiguresOp | SetRefOp | ClearRefOp | ClearNoiseOp | SetNoiseReasonOp | StartBodyOp | SetNumberOp | SetHeadingOp | ReorderPairOp
     | ReorderUnwrappedOp | SetIndentsOp | FollowTableOp,
     Field(discriminator="type"),
@@ -1634,6 +1642,25 @@ async def _plan_set_layout_table(
     return change
 
 
+async def _plan_set_layout_tables(
+    session: AsyncSession, document_id: int, extraction_id: ExtractionId, op: SetLayoutTablesOp
+) -> _Change:
+    """표마다 _plan_set_layout_table(벗기기)의 변경을 _merge_changes로 잇는다 — 모든 표를 먼저 읽어 없는 표가 하나라도 있으면 404로
+    아무것도 쓰지 않는다. 벗길 바깥 표가 함께 고른 안쪽 띠 표를 데려가므로 그 띠 표는 건너뛴다(같은 단위를 두 번 은퇴시키지 않게)."""
+    repeated = sorted(table_id for table_id, count in Counter(op.table_ids).items() if count > 1)
+    if repeated:
+        raise_rule(422, "duplicate_units", table_ids=repeated, reason="tables")
+    tables = [await _load_table(session, extraction_id, table_id) for table_id in op.table_ids]
+    taking = {table.id for table in tables if not table.is_layout}
+    change = _Change()
+    for table in tables:
+        if table.parent_table_id in taking and is_band_table(table.signals):
+            continue
+        one = SetLayoutTableOp(type="set_layout_table", table_id=table.id, is_layout=True)
+        change = _merge_changes(change, await _plan_set_layout_table(session, document_id, extraction_id, one))
+    return change
+
+
 async def _plan_plain_layout(
     session: AsyncSession, extraction_id: ExtractionId, table: SourceTable, to_layout: bool
 ) -> _Change:
@@ -2164,6 +2191,8 @@ async def _plan(session: AsyncSession, document_id: int, extraction_id: Extracti
             return await _plan_switch_language(session, document_id, extraction_id, op)
         case SetLayoutTableOp():
             return await _plan_set_layout_table(session, document_id, extraction_id, op)
+        case SetLayoutTablesOp():
+            return await _plan_set_layout_tables(session, document_id, extraction_id, op)
         case AttachCaptionOp():
             return await _plan_attach_caption(session, extraction_id, op)
         case DetachCaptionOp():
