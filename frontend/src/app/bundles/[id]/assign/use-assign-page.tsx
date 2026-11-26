@@ -26,6 +26,7 @@ import { DROP_LINE_HALF_PX, type DropLineAt } from "@/lib/drop-line";
 import { useDraftingOn } from "@/lib/drafting";
 import { useBoxDrag } from "@/lib/use-box-drag";
 import { findLastStep } from "@/lib/destination-manage-model";
+import { describeNewTableAsk, readEditAsk, type EditAsk } from "@/lib/edit-ask-model";
 import { findSplitBlock, readSplitOffsets } from "@/lib/split-ai-tabs-model";
 import { pickPairPiece, planPairLanguages, type JoinKind, type JoinPlan } from "@/lib/split-menu-model";
 import { listAppliedSuggestions, requestAi, setSuggestionAdoption, type AiKind, type AiScope } from "@/lib/api-manage";
@@ -1131,7 +1132,7 @@ export function useAssignPage() {
   const firstTextRef = useRef<HTMLTextAreaElement>(null);
   // 배정이 걸린 문장을 자르거나 합치려 할 때 - 서버가 409 confirm_required로 물으면 확인을 받아 배정을 풀며 다시 보낸다(원문 고치기와 같은 규칙, 설계 2026-11-15 §3.5)
   // 다시 보낼 일은 함수가 아니라 값으로 둔다 - 확인하면 큐가 같은 명령을 그 자리에서 다시 보낸다. askId가 null이면 보내기 전에 물은 것이라 새로 세운다
-  const [editConfirm, setEditConfirm] = useState<{ count: number; command: ConfirmableCommand; askId: string | null } | null>(null);
+  const [editConfirm, setEditConfirm] = useState<{ ask: EditAsk; command: ConfirmableCommand; askId: string | null } | null>(null);
   // 되돌리기 기록은 이 화면을 연 동안만 - 세션 키가 서버 기록을 가른다(설계 2026-11-13-assign-undo §5.1, docs/architecture/decisions.md)
   const undoSession = useRef(genId());
   const [undoState, setUndoState] = useState({ canUndo: false, canRedo: false });
@@ -1684,12 +1685,6 @@ export function useAssignPage() {
     setCtxMenu({ seq: menuSeq.current, unitId, boxId: isSolo ? null : picked, rowKey: key, anchor, click, caret });
   }
 
-  /** 서버가 "판단이 걸린 단위를 바꾼다"고 물었으면 그 단위 수 - 다른 오류면 null */
-  function readConfirmCount(err: unknown): number | null {
-    const unitIds = err instanceof ApiError && err.rule?.code === "confirm_required" ? err.rule.unit_ids : null;
-    return Array.isArray(unitIds) ? unitIds.length : null;
-  }
-
   /**
    * 장벽의 다시 받기(설계 D2) - 고친 문서의 보기와 그 줄만 곧바로 받아 놓고(따라가기가 이것을 기다린다), 나머지 목록은 큐가 빌 때 한 번.
    * ready - 이미 받아 둔 그 문서(같은 문서를 두 번 받지 않는다). Old 문서가 아닌 문서(한 단으로 연 New 문서)는 그 보기를 다시 받는다
@@ -1813,18 +1808,29 @@ export function useAssignPage() {
     if (!shape) return;
     const { model } = shape;
     const decided = countDecidedLines(model.units.values(), tableId, (unitId) => unitMap.get(unitId)?.status, model.tables);
-    if (decided > 0) setEditConfirm({ count: decided, command: buildEditCommand(shape.view, op, okText, null), askId: null });
+    if (decided > 0) setEditConfirm({ ask: { count: decided, linkedCells: null, heldRows: null }, command: buildEditCommand(shape.view, op, okText, null), askId: null });
     else runUnitEdit(shape, op, okText, null);
   }
 
-  /** 편집 확인창의 글 - 다시 표로면 그 표의 말(표 번호 · 확정된 줄 수, F12 A6), 아니면 판단이 지워진다는 공통 글 */
-  function describeEditConfirm({ count, command }: { count: number; command: ConfirmableCommand }): { title: string; summary: string; confirmLabel: string } {
+  /** 편집 확인창의 글 - New 표면 풀릴 이음 · 보류 줄 수(서버가 실어 준다), 다시 표로면 그 표의 말(표 번호 · 확정된 줄 수, F12 A6), 아니면 판단이 지워진다는 공통 글 */
+  function describeEditConfirm({ ask, command }: { ask: EditAsk; command: ConfirmableCommand }): { title: string; summary: string; confirmLabel: string } {
+    const { count } = ask;
     const op = command.kind === "edit" ? command.op : null;
-    if (op?.type === "set_layout_table" && !op.is_layout) {
-      const table = (viewList ?? []).flatMap((view) => view.tables).find((item) => item.id === op.table_id);
+    const tableOp = op?.type === "set_layout_table" ? op : null;
+    const table = tableOp ? [...(viewList ?? []), ...(newView ? [newView] : [])].flatMap((view) => view.tables).find((item) => item.id === tableOp.table_id) : undefined;
+    const tableNumber = table ? { n: getTableNumber(table), p: readObjectParticle(getTableNumber(table)) } : { n: "", p: "을" };
+    const newAsk = tableOp ? describeNewTableAsk(ask) : null;
+    if (tableOp && newAsk) {
+      return {
+        title: t(tableOp.is_layout ? "assign.newTable.confirmTitle.unwrap" : "assign.newTable.confirmTitle.rewrap", tableNumber),
+        summary: t(newAsk.bodyKey, newAsk.values),
+        confirmLabel: t(tableOp.is_layout ? "split.layoutTable" : "assign.unwrap.confirmRun"),
+      };
+    }
+    if (tableOp && !tableOp.is_layout) {
       return {
         // ko는 표 번호 끝자리 소리로 을/를(F12 A6 "표 3을 다시 표로 묶을까요?"), en은 {p}를 쓰지 않는다
-        title: t("assign.unwrap.confirmTitle", { n: table ? getTableNumber(table) : "", p: table ? readObjectParticle(getTableNumber(table)) : "을" }),
+        title: t("assign.unwrap.confirmTitle", tableNumber),
         summary: t("assign.unwrap.confirmBody", { m: count }),
         confirmLabel: t("assign.unwrap.confirmRun"),
       };
@@ -3044,9 +3050,9 @@ export function useAssignPage() {
       await runCommand(command, ctx);
       return "done";
     } catch (err) {
-      const count = readConfirmCount(err);
-      if (count === null || !("confirm" in command) || command.confirm) throw err;
-      setEditConfirm({ count, command, askId: ctx.id });
+      const ask = readEditAsk(err);
+      if (ask === null || !("confirm" in command) || command.confirm) throw err;
+      setEditConfirm({ ask, command, askId: ctx.id });
       return "asking";
     }
   }
