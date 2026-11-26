@@ -1696,7 +1696,7 @@ export function Paper({
     if (view === "matched") {
       const paired = answer.candidates.find((item) => item.table_id === answer.source_table_id);
       return paired ? (
-        <span className="unwrap-ai-note" data-testid={`assign-follow-pair-${tableId}`}>
+        <span className="unwrap-ai-note follow-head-note" data-testid={`assign-follow-pair-${tableId}`}>
           {t("assign.follow.paired", { n: paired.table_no })}
         </span>
       ) : null;
