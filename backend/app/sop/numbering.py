@@ -340,6 +340,15 @@ def _clamp_level(level: int) -> int:
     return min(max(level, 1), MAX_ROW_LEVEL)
 
 
+def is_continued_number(unit: NumberedUnit) -> bool:
+    """벗긴 표의 숫자 칸 번호를 위 번호 아래로 이어 매겼는가("1" → "5.1", editing.continue_numbers) — 사람이 고친 번호가 아니다.
+    문단 Excel 번호 노트가 원래 번호("Original 1")를 적고 칸 번호처럼 표 안에만 두며, 한글 표처럼 하기는 손댄 표로 치지 않는다."""
+    return (
+        unit.number_source == NUMBER_CELL and bool(unit.number_set) and unit.number_read is not None
+        and get_section_level(unit.number_set or "") > get_section_level(unit.number_read)
+    )
+
+
 def is_number_fixed(unit: NumberedUnit) -> bool:
     """사람이 읽은 값과 다르게 고친 번호인가 — 결과물 A 위치 칸이 읽은 값을 함께 적는다."""
     return get_number_note(unit) is not None

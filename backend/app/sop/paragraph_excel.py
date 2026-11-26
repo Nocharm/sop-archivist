@@ -28,12 +28,11 @@ from app.sop.numbering import (
     NUMBERED_KINDS,
     SECTION_KIND,
     LevelRow,
-    NumberedUnit,
     build_row_levels,
     build_section_numbers,
     get_number,
     get_number_note,
-    get_section_level,
+    is_continued_number,
     is_read_from_text,
     strip_number,
 )
@@ -395,14 +394,6 @@ async def load_unit_lines(session: AsyncSession, document: Document) -> list[Uni
             noise=unit.noise_kind is not None, auto_deleted=auto_deleted,
         ))
     return lines
-
-
-def is_continued_number(unit: NumberedUnit) -> bool:
-    """벗긴 표의 숫자 칸 번호를 위 번호 아래로 이어 매겼는가("1" → "5.1", editing.continue_numbers) — 번호 노트가 원래 번호를 적는다."""
-    return (
-        unit.number_source == NUMBER_CELL and bool(unit.number_set) and unit.number_read is not None
-        and get_section_level(unit.number_set or "") > get_section_level(unit.number_read)
-    )
 
 
 def _list_blocks(innermost: int | None, tables: Mapping[int, UnwrapTable]) -> tuple[int, ...]:

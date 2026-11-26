@@ -426,7 +426,7 @@ def _bulk(client: TestClient, bundle_id: int, unit_id: int, action: str = "delet
 
 
 def _setup_unwrapped(client: TestClient) -> tuple[int, int, list[int], list[int], list[int]]:
-    """작업 표 둘을 벗긴 문서 — (묶음, 문서, 표들, 한글 줄들, 영어 줄들)."""
+    """작업 표 둘을 벗긴 문서 — (묶음, 문서, 표들, 한글 줄들, 영어 줄들). 벗기면 칸 번호가 제목 1 아래로 1.1 … 1.4로 이어진다(11-23 명세 D1)."""
     bundle_id, doc_id, tables = _setup(client)
     for table_index in (KO_STEPS_TABLE, EN_STEPS_TABLE):
         response = _edit(client, bundle_id, doc_id, {"type": "set_layout_table", "table_id": tables[table_index], "is_layout": True})
@@ -505,7 +505,7 @@ def test_s18_apply_and_one_undo(client: TestClient, monkeypatch: pytest.MonkeyPa
     assert applied["disposed_unit_ids"] == [english[3]]
     # 삭제 줄은 지우기만 한다(번호를 함께 고치지 않는다 — FollowItemIn의 삭제는 다른 일과 함께 받지 않는다)
     assert [line[1:] for line in _read_lines(tables[EN_STEPS_TABLE])] == [
-        ("5.1", "Prepare the equipment."), ("5.2", "Take 10 mL of sample."), ("5.2.1", "Keep at 4 °C after."), ("4", "(blank)"),
+        ("5.1", "Prepare the equipment."), ("5.2", "Take 10 mL of sample."), ("5.2.1", "Keep at 4 °C after."), ("1.4", "(blank)"),
     ]
     assert _is_deleted(english[3])
     assert _count_suggestions(bundle_id) == 0 and all(path.endswith("/embeddings") for path in paths)  # 규칙 제안은 AI가 아니다(D2-R7)
@@ -513,7 +513,7 @@ def test_s18_apply_and_one_undo(client: TestClient, monkeypatch: pytest.MonkeyPa
     assert_same_state(_dump(bundle_id), before)
     _ok(_redo(client, bundle_id))
     assert _is_deleted(english[3])
-    assert [line[1] for line in _read_lines(tables[EN_STEPS_TABLE])] == ["5.1", "5.2", "5.2.1", "4"]
+    assert [line[1] for line in _read_lines(tables[EN_STEPS_TABLE])] == ["5.1", "5.2", "5.2.1", "1.4"]
 
 
 @pytest.mark.usefixtures("clean_sop", "clean_embedding_cache")
@@ -580,7 +580,7 @@ def test_follow_merges_lines_in_one_edit_and_one_undo(client: TestClient) -> Non
     result = _ok(_edit(client, bundle_id, doc_id, op, undo=UNDO))
 
     lines = _read_lines(tables[EN_STEPS_TABLE])
-    assert [line[1] for line in lines] == ["5.1", "5.2", "4"]
+    assert [line[1] for line in lines] == ["5.1", "5.2", "1.4"]
     assert lines[0][0] == result["created_unit_ids"][0] and "Prepare the equipment." in lines[0][2]
     _ok(_undo(client, bundle_id))
     after = _dump(bundle_id)
@@ -588,7 +588,7 @@ def test_follow_merges_lines_in_one_edit_and_one_undo(client: TestClient) -> Non
     for unit_id in result["created_unit_ids"]:
         assert after["unit_decisions"].pop(str(unit_id))["disposition"] == "unassigned"
     assert_same_state(after, before)
-    assert [line[1] for line in _read_lines(tables[EN_STEPS_TABLE])] == ["1", "2", "3", "4"]
+    assert [line[1] for line in _read_lines(tables[EN_STEPS_TABLE])] == ["1.1", "1.2", "1.3", "1.4"]
 
 
 @pytest.mark.usefixtures("clean_sop")
