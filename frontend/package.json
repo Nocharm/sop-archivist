@@ -1,6 +1,6 @@
 {
   "name": "sop-archivist-frontend",
-  "version": "1.6.35",
+  "version": "1.6.36",
   "private": true,
   "scripts": {
     "dev": "next dev -p 3777",

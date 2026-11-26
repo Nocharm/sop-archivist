@@ -42,7 +42,9 @@ FIRST_SECTION_REF_VERSION = 6
 # Reference 절 제목 이름 — 번호를 뺀 제목 글(괄호 · 빗금으로 나뉜 조각 하나)이 이것과 같으면 그 절이다. 대소문자 · 빈칸은 무시(사용자 확인 2026-11-19)
 _REF_SECTION_NAME = re.compile(
     r"references?|reference documents?|related documents?|associated documents?|work instructions?"
-    r"|참고 ?문헌|참고 ?문서|참조(?: ?문서)?|관련 ?문서|참고 ?자료",
+    r"|참고 ?문헌|참고 ?문서|참조(?: ?문서)?|관련 ?문서|참고 ?자료"
+    # 서식도 참조 절에 둔다(사용자 결정 2026-11-26)
+    r"|(?:related )?forms?|(?:관련 ?)?(?:서식|양식)",
     re.IGNORECASE,
 )
 
@@ -175,9 +177,19 @@ async def load_proposing_extractions(session: AsyncSession, extraction_ids: Coll
     return {extraction_id for extraction_id, version in rows if is_proposing_version(version)}
 
 
+# 한 조각 안의 이름 나열 구분 — "References and Forms" · "참고 문서 및 서식". 나뉜 조각이 모두 이름이어야 한다
+_NAME_LIST_SEP = re.compile(r"\s+and\s+|\s*[&,]\s*|\s*및\s*", re.IGNORECASE)
+
+
+def _is_ref_name(part: str) -> bool:
+    """조각이 이름 하나이거나, 나열 구분으로 나눈 조각이 모두 이름인가(일부만 이름이면 아니다 — "Forms and equipment")."""
+    pieces = [piece for piece in _NAME_LIST_SEP.split(part) if piece]
+    return bool(pieces) and all(_REF_SECTION_NAME.fullmatch(piece) for piece in pieces)
+
+
 def is_ref_section_heading(text: str) -> bool:
     """제목이 Reference 절을 여는가 — 절 번호를 떼고, 괄호 · 빗금으로 나뉜 조각("참고 문헌 (References)") 하나라도 이름과 같으면."""
-    return any(_REF_SECTION_NAME.fullmatch(part) for part in list_heading_names(text))
+    return any(_is_ref_name(part) for part in list_heading_names(text))
 
 
 @dataclass(frozen=True)
