@@ -492,3 +492,53 @@ def test_new_document_tables_unwrap_together(client: TestClient) -> None:
     assert not set(response.json()["retired_unit_ids"]) & {
         row["new_unit_id"] for row in _dump(bundle_id)["target_sentences"].values()
     }
+
+
+CAPTIONED_VALUE = make_grid_table(3, make_row(["공장", "1공장", "2공장"]) + make_row(["차압", "120 Pa", "150 Pa"]))
+INNER_CAPTION = "표 1. 차압 기준"
+# 바깥 작업 표의 칸 안에 캡션이 붙은 값 표(추출기 8) - 표 순번: 바깥 표 = 0, 값 표 = 1
+CAPTIONED_BODY = p("이 절차는 공조기 점검을 정한다.") + make_grid_table(2, (
+    make_row(["점검 항목", p("전원 표시등이 켜졌는지 본다.")])
+    + make_row(["기준", p(INNER_CAPTION) + CAPTIONED_VALUE + p("값을 넘으면 필터를 교체한다.")])
+), widths=[1588, 8050])
+
+
+def _setup_captioned(client: TestClient) -> tuple[int, int]:
+    bundle = create_bundle(client, is_synthetic=True)
+    response = upload(client, bundle["id"], build_docx(CAPTIONED_BODY), "SYNTHETIC_SYN-UNWRAP-3_Captioned.docx")
+    assert response.status_code == 201 and response.json()["status"] == "ready", response.text
+    return bundle["id"], response.json()["id"]
+
+
+def _read_shape(view: dict) -> list[tuple[str, str, bool, int | None]]:
+    """단위의 모양 - 종류 · 글 · 묶였나 · 표 순번(원문 순). 묶인 곳은 활성 단위여야 한다."""
+    active = {unit["id"] for unit in view["units"]}
+    assert all(unit["group_unit_id"] in active for unit in view["units"] if unit["group_unit_id"] is not None)
+    index = {table["id"]: at for at, table in enumerate(view["tables"])}
+    return [
+        (unit["kind"], unit["text"], unit["group_unit_id"] is not None, index.get(unit["table_id"]))
+        for unit in sorted(view["units"], key=lambda unit: (unit["pos_seq"], unit["id"]))
+    ]
+
+
+def test_an_outer_table_and_its_captioned_inner_table_unwrap_together_as_one_by_one(client: TestClient) -> None:
+    one_bundle, one_doc = _setup_captioned(client)
+    caption = find_unit(get_view(client, one_bundle, one_doc), INNER_CAPTION)
+    assert caption["kind"] == "caption"
+    _unwrap(client, one_bundle, one_doc, 0)
+    _unwrap(client, one_bundle, one_doc, 1)
+    expected = _read_shape(get_view(client, one_bundle, one_doc))
+    bundle_id, doc_id = _setup_captioned(client)
+    before = get_view(client, bundle_id, doc_id)
+    tables = before["tables"]
+
+    response = _unwrap_many(client, bundle_id, doc_id, [tables[0]["id"], tables[1]["id"]])
+
+    assert response.status_code == 200, response.text
+    view = get_view(client, bundle_id, doc_id)
+    assert _read_shape(view) == expected
+    assert find_unit(view, INNER_CAPTION)["group_unit_id"] is None
+    assert _coverage_problems(view) == []
+    _step(client, bundle_id, doc_id, "undo")
+    undone = get_view(client, bundle_id, doc_id)
+    assert {unit["id"]: unit["group_unit_id"] for unit in undone["units"]} == {unit["id"]: unit["group_unit_id"] for unit in before["units"]}

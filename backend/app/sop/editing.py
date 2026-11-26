@@ -1646,7 +1646,10 @@ async def _plan_set_layout_tables(
     session: AsyncSession, document_id: int, extraction_id: ExtractionId, op: SetLayoutTablesOp
 ) -> _Change:
     """표마다 _plan_set_layout_table(벗기기)의 변경을 _merge_changes로 잇는다 — 모든 표를 먼저 읽어 없는 표가 하나라도 있으면 404로
-    아무것도 쓰지 않는다. 벗길 바깥 표가 함께 고른 안쪽 띠 표를 데려가므로 그 띠 표는 건너뛴다(같은 단위를 두 번 은퇴시키지 않게)."""
+    아무것도 쓰지 않는다. 벗길 바깥 표가 함께 고른 안쪽 띠 표를 데려가므로 그 띠 표는 건너뛴다(같은 단위를 두 번 은퇴시키지 않게).
+
+    표마다의 계획은 편집 전 DB를 읽어, 안쪽 표의 칸 안 캡션은 바깥 표 단위에 묶이는 칸 문장이 된다 — 그 표 단위를 같은 편집에서 은퇴시키면
+    묶음을 푼다(차례로 하나씩 벗긴 것과 같다: 바깥이 먼저면 묶을 표 단위가 없고, 안쪽이 먼저면 바깥 벗기기가 그 칸을 푼다)."""
     repeated = sorted(table_id for table_id, count in Counter(op.table_ids).items() if count > 1)
     if repeated:
         raise_rule(422, "duplicate_units", table_ids=repeated, reason="tables")
@@ -1658,6 +1661,10 @@ async def _plan_set_layout_tables(
             continue
         one = SetLayoutTableOp(type="set_layout_table", table_id=table.id, is_layout=True)
         change = _merge_changes(change, await _plan_set_layout_table(session, document_id, extraction_id, one))
+    retiring = set(change.retire)
+    for draft in change.drafts:
+        if draft.group_unit_id in retiring:
+            draft.group_unit_id = None
     return change
 
 
