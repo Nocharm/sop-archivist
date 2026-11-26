@@ -259,7 +259,7 @@ interface PaperProps {
       /** AI 순서 제안(B11) - 머리에 "✦ AI 순서 제안". enabled가 거짓이면 꺼진 단추 + 까닭. busy는 작업 중인 표, previews는 표마다 살아 있는 제안 차례(줄 id) -
        *  지금 덩이와 같은 줄 집합일 때만 그 자리에 "4 → 1" 칩과 [제안대로 놓기] [그대로 두기]를 보인다. onKeep(표 id, 같은 차례였나)은 채택 기록만 남긴다 */
       ai?: { enabled: boolean; busy: ReadonlySet<number>; previews: ReadonlyMap<number, readonly number[]>; onAsk: (tableId: number) => void; onApply: (tableId: number, order: readonly number[]) => void; onKeep: (tableId: number, isSame: boolean) => void };
-      /** Old 영어 표의 짝 한글 표(11-23 명세 D2-R3) - answers는 표마다 서버의 답. 애매하거나 사람이 정했으면 머리에 "짝 표 고르기", 짝이 정해지면
+      /** Old 영어 표의 짝 한글 표(11-23 명세 D2-R3) - answers는 표마다 서버의 답. 애매하거나 사람이 정했거나 짝 없다는 답이어도 후보가 있으면 머리에 "짝 표 고르기", 짝이 정해지면
        *  흐린 "표 n과 짝". onPick(표 id, 한글 표 id | null = 짝 없음)은 바로 저장한다(문서를 바꾸지 않는다) */
       follow?: { answers: ReadonlyMap<number, TableCounterpart>; onPick: (tableId: number, sourceTableId: number | null) => void };
     };
@@ -1619,12 +1619,12 @@ export function Paper({
     return <span className="unwrap-rail" style={{ left: leadWidth + STRIP_LEAD_EXTRA - 4 }} data-unwrap-enter="frame" aria-hidden />;
   }
 
-  /** 벗긴 영어 표 머리의 짝 표(D2-R3) - 애매하거나 사람이 정했으면 고르기(후보 "표 n" + "짝 없음"), 짝이 정해졌으면 흐린 "표 n과 짝" */
+  /** 벗긴 영어 표 머리의 짝 표(D2-R3) - 애매하거나 사람이 정했거나 짝이 없다는 답이어도 후보가 있으면 고르기(후보 "표 n" + "짝 없음"), 짝이 정해졌으면 흐린 "표 n과 짝" */
   function renderFollow(tableId: number, isOff: boolean): ReactNode {
     const follow = strips?.unwrap?.follow;
     const answer = follow?.answers.get(tableId);
     if (!follow || !answer) return null;
-    const view = describeCounterpart({ lang: model.tables.get(tableId)?.lang, side: "old", isUnwrapped: true, status: answer.status, decided: answer.decided });
+    const view = describeCounterpart({ lang: model.tables.get(tableId)?.lang, side: "old", isUnwrapped: true, status: answer.status, decided: answer.decided, candidates: answer.candidates.length });
     if (view === "matched") {
       const paired = answer.candidates.find((item) => item.table_id === answer.source_table_id);
       return paired ? (

@@ -894,16 +894,18 @@ export function useAssignPage() {
     reorder: (tableId, order, afterOk) => runUnitEdit({ type: "reorder_unwrapped", table_id: tableId, unit_ids: order }, t("assign.unwrapAi.applied"), null, false, null, { at: "table", tableId }, afterOk),
     t,
   });
-  // 벗긴 영어 표의 짝 한글 표(11-23 명세 D2-R3) - 보는 Old 문서의 벗긴 영어 표마다 한 번씩. 점수는 원문 표와 사람의 답만 보므로 편집마다 다시 읽지 않고
-  // 벗긴 표가 바뀔 때만. 고르기는 문서를 바꾸지 않아 큐를 지나지 않고 바로 저장한 뒤 다시 읽는다
+  // 벗긴 영어 표의 짝 한글 표(11-23 명세 D2-R3) - 보는 Old 문서의 벗긴 영어 표마다 한 번씩. 점수는 원문 표 · 표 언어 · 언어 배치와 사람의 답만 보므로
+  // 편집마다 다시 읽지 않고 그것이 바뀔 때만. 고르기는 문서를 바꾸지 않아 큐를 지나지 않고 바로 저장한 뒤 다시 읽는다
   const followTableIds = useMemo(() => (oldView ? listFollowTableIds(oldView) : []), [oldView]);
+  // 후보는 표마다 칸 언어와 언어 배치로 정해진다 - 벗기지 않은 표의 언어를 바꾸거나 배치를 바꾸면 다시 읽는다(편집마다는 아니다)
+  const followTablesKey = oldView ? `${oldView.document.language_layout}|${oldView.tables.map((table) => `${table.id}${table.lang ?? "-"}`).join(",")}` : "";
   const counterparts = useLoaded(
     async () => {
       if (!canEdit || oldDocId === null || followTableIds.length === 0) return NO_COUNTERPARTS;
       const answers = await Promise.all(followTableIds.map(async (tableId) => [tableId, await getTableCounterpart(bundleId, oldDocId, tableId)] as const));
       return new Map(answers);
     },
-    `${canEdit}:${oldDocId}:${followTableIds.join(",")}`,
+    `${canEdit}:${oldDocId}:${followTableIds.join(",")}:${followTablesKey}`,
   );
   const tableFollow = canEdit && oldDocId !== null
     ? {

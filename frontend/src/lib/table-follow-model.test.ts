@@ -31,6 +31,11 @@ describe("describeCounterpart", () => {
     expect(describeCounterpart({ ...ASK, side: "new" })).toBe("none");
     expect(describeCounterpart({ ...ASK, isUnwrapped: false })).toBe("none");
     expect(describeCounterpart({ ...ASK, status: "matched" })).toBe("matched");
+  });
+
+  it("asks when the score is below the threshold but there is a candidate (D2-R3)", () => {
+    expect(describeCounterpart({ ...ASK, status: "none", candidates: 1 })).toBe("ask");
+    expect(describeCounterpart({ ...ASK, status: "none", candidates: 0 })).toBe("none");
     expect(describeCounterpart({ ...ASK, status: "none" })).toBe("none");
   });
 

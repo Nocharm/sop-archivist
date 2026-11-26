@@ -621,7 +621,7 @@ export function setTableCounterpart(bundleId: number, docId: number, tableId: nu
   return apiFetch<TableCounterpart>(`${buildDocPath(bundleId, docId)}/tables/${tableId}/counterpart`, { method: "PUT", body: JSON.stringify({ source_table_id: sourceTableId }) });
 }
 
-// 아래 문서 쓰기는 sendDocWrite로 보낸다 -다시 받기 전에 한 연달은 편집이 낡은 revision으로 409가 나지 않게(doc-revision.ts)
+// 아래 문서 쓰기는 sendDocWrite로 보낸다 - 다시 받기 전에 한 연달은 편집이 낡은 revision으로 409가 나지 않게(doc-revision.ts)
 export function editUnits(bundleId: number, docId: number, revision: number, op: EditOp, confirm = false, undo?: UndoMeta): Promise<EditResult> {
   return sendDocWrite(docId, revision, (rev) => apiFetch<EditResult>(`${buildDocPath(bundleId, docId)}/edits`, { method: "POST", body: JSON.stringify({ revision: rev, confirm, op, undo }) }));
 }
