@@ -25,6 +25,7 @@ frontend(Next.js) 세부 구조와 frontend에만 걸리는 체크리스트. 루
 - **사용 설명서(`/manual`)**: 글은 `frontend/public/manual/user-manual.md` 한 벌, `##`·`###`마다 자리 이름 `{#id}`가 있어야 한다. `lib/manual-files.ts`(node:fs)는 브라우저 쪽 코드가 가져오지 않는다. 뷰어가 그리지 않는 문법은 `manual-content.test.ts`가 잡는다. → 13
 - **포커스 테두리**: 전역 `:focus-visible`(`base.css` `@layer base`)을 끄는 곳은 자기 포커스 표시를 반드시 그린다(레이어 밖으로 다시 빼지 않는다). → 14
 - **Map** `app/bundles/[id]/map/page.tsx` + `components/map/`: 읽기 전용, 서버가 준 것만 그린다(남의 Bundle은 코드만). → 15
+- **연습 화면 가짜 서버**: `api.ts` `sendRequest`가 `lib/practice-route.ts` `isPracticeRequest`로 연습 요청(Bundle -1 · `/practice`에서 `/me` · `/ai/jobs/recent` 밖)을 `lib/practice/practice-server.ts`로 보낸다 — `fetch(`는 `api.ts` · `auth-mode.ts`에만. Assign 쓰기 · 읽기를 더하면 가짜 서버의 경로 표(`practice-server.ts` `ROUTES` · `practice-state.ts`)도 — 없으면 연습에서 Not available. → 17
 
 ## 체크리스트 — 같이 움직여야 하는 곳
 
