@@ -5,8 +5,8 @@ import { useEffect, useEffectEvent, type RefObject } from "react";
 
 import { isTopEscLayer, popEscLayer, pushEscLayer } from "@/components/ui/floating";
 
-/** open인 동안 ref 밖을 누르거나 Esc를 누르면 onClose를 부른다. 알림(.toast-stack)을 누르는 것은 바깥으로 치지 않는다. */
-export function useDismiss(ref: RefObject<HTMLElement | null>, open: boolean, onClose: () => void): void {
+/** open인 동안 ref 밖을 누르거나 Esc를 누르면 onClose를 부른다. 알림(.toast-stack)과 keepOpenOn(그 칸을 연 단추 등)을 누르는 것은 바깥으로 치지 않는다. */
+export function useDismiss(ref: RefObject<HTMLElement | null>, open: boolean, onClose: () => void, keepOpenOn?: string): void {
   const requestClose = useEffectEvent(() => onClose());
   useEffect(() => {
     if (!open) return;
@@ -14,7 +14,7 @@ export function useDismiss(ref: RefObject<HTMLElement | null>, open: boolean, on
     const handleMouseDown = (event: MouseEvent) => {
       const target = event.target;
       if (!(target instanceof Node) || ref.current?.contains(target)) return;
-      if (target instanceof Element && target.closest(".toast-stack")) return;
+      if (target instanceof Element && target.closest(keepOpenOn ? `.toast-stack, ${keepOpenOn}` : ".toast-stack")) return;
       requestClose();
     };
     const handleKey = (event: KeyboardEvent) => {
@@ -29,5 +29,5 @@ export function useDismiss(ref: RefObject<HTMLElement | null>, open: boolean, on
       document.removeEventListener("mousedown", handleMouseDown);
       document.removeEventListener("keydown", handleKey);
     };
-  }, [open, ref]);
+  }, [open, ref, keepOpenOn]);
 }

@@ -198,3 +198,4 @@
 
 - 스크롤 막대(`fix/scrollbar-near-reveal`, v1.6.33): macOS 오버레이가 아니라 앱 CSS가 막대를 늘 투명하게 두고 스크롤 중에만 보이던 것 — `nav-host`의 같은 배선에 포인터가 스크롤 상자 오른쪽 끝 40px 안이면 `.is-scroll-near`(흐린 색)를 붙임. 조상 상자 찾기는 가리킨 요소가 바뀔 때만.
 - 글쇠(`feat/assign-tab-keys`, v1.6.34): Tab/⇧Tab = J/K, 들여쓰기는 ` · ⇧`(사용자 요청). 접근성 — Tab은 용지(`.pane-body`)에 포커스가 있을 때만 옮기기, 단추 줄 · 오른쪽 칸 · 위쪽 줄은 브라우저 기본. ` 는 자리(`event.code === "Backquote"`)로 받는다 — 맥 한글 입력은 ₩, Shift는 ~를 친다.
+- 짝 판 두 번 누름(`fix/pair-dblclick-panel`, v1.6.35): 판의 바깥 누르기 닫기(`useDismiss`)가 안내 줄의 첫 mousedown에 판을 닫아 용지가 가운데로 돌아오는 동안 둘째 누름이 빗나갔다 — `useDismiss`에 `keepOpenOn`(`.pair-hint`). Playwright `dblclick`은 사이가 없어 재현되지 않아 150ms 사이를 둔 두 번 누름으로 스모크 검사를 더함(고치기 전 실패 확인).

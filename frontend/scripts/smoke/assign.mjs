@@ -8018,8 +8018,25 @@ await runStep("assign: the pair panel never moves the picked box up or down", {}
       check(`${label} closing it puts the picked box and the paper width back`, Math.abs(after.top - before.top) <= 2 && Math.abs(after.sheet - before.sheet) <= 1, JSON.stringify({ before, after }));
     }
   }
-  await page.setViewportSize(VIEWPORT);
+  // 판을 띄운 채 안내 줄을 두 번 누르면 짝으로 간다 - 첫 누름이 판을 닫아 용지가 가운데로 돌아오면 둘째 누름이 빗나갔다(1차 피드백 4)
+  await page.setViewportSize({ width: 1920, height: VIEWPORT.height });
   await setZoom(100);
+  await settle();
+  await piece(english.id).click();
+  await piece(english.id).and(page.locator("[data-sel]")).waitFor({ timeout: T });
+  await hint.click();
+  await pairSpot.waitFor({ timeout: T });
+  await settle();
+  // 사람의 두 번 누름처럼 같은 자리를 사이를 두고 누른다(Playwright dblclick은 사이가 없어 용지가 움직이기 전에 끝난다)
+  const spot = await hint.boundingBox();
+  await page.mouse.click(spot.x + spot.width / 2, spot.y + spot.height / 2);
+  await page.waitForTimeout(150);
+  await page.mouse.click(spot.x + spot.width / 2, spot.y + spot.height / 2);
+  const isAtPair = await piece(korean.id).and(page.locator("[data-sel]")).waitFor({ timeout: T }).then(() => true, () => false);
+  const isClosed = await pairSpot.waitFor({ state: "detached", timeout: T }).then(() => true, () => false);
+  check("double-clicking the hint while the pair panel is open goes to the pair and closes the panel", isAtPair && isClosed, `atPair=${isAtPair} closed=${isClosed}`);
+  await settle();
+  await page.setViewportSize(VIEWPORT);
   await spacer.evaluate((tag) => tag.remove());
   await page.locator('[data-testid="assign-view-two"]').click();
   await page.locator('[data-testid="assign-new"]').waitFor({ timeout: T });
