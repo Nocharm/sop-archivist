@@ -1845,7 +1845,7 @@ export function useAssignPage() {
     const ask = buildReloadAsk(planReload(isOld ? { kind: "old_edit", docId, isInPlace: IN_PLACE_EDIT_OPS.has(op.type), isReleased: confirm } : { kind: "new_edit", docId, isReleased: confirm }, { aiOn }), oldDocIds);
     const isWaited = isBarrier({ kind: readEditKind(op), isGlobal: false });
     // 자르기·합치기·언어 바꾸기 모두 Assign 기록에 넣는다(설계 §4.4) - 서버는 Split 편집 기록 번호만 가리킨다
-    const undo = buildUndo({ focus_unit_id: op.type === "split" ? op.unit_id : (followId ?? undefined) });
+    const undo = buildUndo({ focus_unit_id: op.type === "split" || op.type === "split_sentences" ? op.unit_id : (followId ?? undefined) });
     // 보낸 revision과 같으면 서버가 아무것도 쓰지 않은 편집이다 - 이 탭이 먼저 쓴 값이 화면 값보다 새로울 수 있다(doc-revision.ts, 줄 선 앞 쓰기의 응답 포함)
     const sentRevision = pickDocRevision(docId, view.document.revision);
     const result = await editUnits(bundleId, docId, sentRevision, op, confirm, undo);
@@ -2310,7 +2310,8 @@ export function useAssignPage() {
       else if (cutUnit?.id === target.id && cutLine.at !== null) splitAtCut();
       // 양 단의 New도 같은 용지라 표 칸까지 그 자리에 선을 놓는다(쪼개기 먼저 §8 4-3)
       else if (cutLine.placeNear(target, caret)) setCutUnitId(target.id);
-    } else if ((action === "merge_prev" || action === "merge_next") && shape) {
+    } else if (action === "split_sentences") runUnitEdit(shape, { type: "split_sentences", unit_id: target.id }, t("split.didSplit"), null);
+    else if ((action === "merge_prev" || action === "merge_next") && shape) {
       const { order } = shape.tabs;
       const other = order[order.indexOf(target.id) + (action === "merge_prev" ? -1 : 1)];
       const ids = action === "merge_prev" ? [other, target.id] : [target.id, other];
@@ -4880,6 +4881,13 @@ export function useAssignPage() {
       case "lang":
         if (keyUnit !== null) changeLanguage(shape, keyUnit, langTo);
         return true;
+      case "split_sentences": {
+        // 못 하는 까닭(배정 확인 · 목차 줄 · 나눌 자리 없음)은 메뉴 항목과 같은 답이다 - 단추 줄에서 숨은 항목은 짧은 문장의 까닭
+        const item = keyItems.find((entry) => entry.action === "split_sentences");
+        if (keyUnit !== null && item?.enabled) runUnitAction(shape, keyUnit, "split_sentences");
+        else showToast(t(item?.reasonKey ?? "assign.ctx.why.nothingToSplit"), "info");
+        return true;
+      }
       case "shape_mode":
         if (shapeMode !== null) switchShapeMode(shapeMode.current === "one" ? "pair" : "one");
         return true;

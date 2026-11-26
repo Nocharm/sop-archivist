@@ -3,7 +3,7 @@
 // 자리는 그 자리 메뉴와 같은 규칙(placeLinkMenu) - 그 줄의 조각들(한/영 짝이면 둘 다) 아래(모자라면 위)에 놓아 다룰 문장을 가리지 않는다.
 "use client";
 
-import { ArrowDownFromLine, ArrowDownToLine, ArrowUpToLine, BookMarked, BookX, CaptionsOff, Eraser, Heading, Image as ImageIcon, LayoutList, Link2, MousePointerClick, PanelBottom, PanelTop, Pilcrow, RotateCcw, Scissors, Sparkles, Table2, Trash2, Unlink, type LucideIcon } from "lucide-react";
+import { ArrowDownFromLine, ArrowDownToLine, ArrowUpToLine, BookMarked, BookX, CaptionsOff, Eraser, Heading, Image as ImageIcon, LayoutList, Link2, MousePointerClick, PanelBottom, PanelTop, Pilcrow, RotateCcw, Scissors, Sparkles, SplitSquareVertical, Table2, Trash2, Unlink, type LucideIcon } from "lucide-react";
 import { Fragment, useRef, useState } from "react";
 
 import { Menu } from "@/components/ui/menu";
@@ -23,6 +23,7 @@ export const ASSIGN_ACTION_ICONS: Record<Exclude<AssignMenuAction, "lang" | "pie
   delete: Trash2,
   clear: Eraser,
   split: Scissors,
+  split_sentences: SplitSquareVertical,
   merge_prev: ArrowUpToLine,
   merge_next: ArrowDownToLine,
   // 한글·영어 이웃은 합치지 않고 짝으로 맺는다 - 같은 자리에 합치기 대신 나온다
@@ -49,6 +50,7 @@ export const ASSIGN_ACTION_LABELS: Record<Exclude<AssignMenuAction, "lang" | "pi
   delete: "assign.ctx.delete",
   clear: "classify.clear",
   split: "split.cutHere",
+  split_sentences: "assign.ctx.splitSentences",
   merge_prev: "assign.ctx.mergePrev",
   merge_next: "assign.ctx.mergeNext",
   pair_prev: "assign.ctx.pairPrev",
@@ -114,7 +116,7 @@ export function AssignContextMenu({ anchor, readCover, click, sections, side, re
 
   function place(rect: DOMRect, size: { width: number; height: number }) {
     const boxes = readCover().filter((el) => el.isConnected).map((el) => el.getBoundingClientRect());
-    const row = boxes.length === 0 ? rect : { top: Math.min(...boxes.map((box) => box.top)), bottom: Math.max(...boxes.map((box) => box.bottom)), left: Math.min(...boxes.map((box) => box.left)) };
+    const row = boxes.length === 0 ? rect : { top: Math.min(...boxes.map((box) => box.top)), bottom: Math.max(...boxes.map((box) => box.bottom)), left: Math.min(...boxes.map((box) => box.left)), right: Math.max(...boxes.map((box) => box.right)) };
     return placeLinkMenu(row, click?.x ?? null, size, { width: window.innerWidth, height: window.innerHeight }, click?.y ?? null);
   }
 

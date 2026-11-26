@@ -9,6 +9,8 @@ interface RowBox {
   top: number;
   bottom: number;
   left: number;
+  /** 줄 상자의 오른쪽 - 있으면 위·아래 모두 안 맞을 때 줄 옆(오른쪽, 아니면 왼쪽)에 놓아 줄을 덮지 않는다 */
+  right?: number;
 }
 
 /** 줄 아래에 놓고, 아래가 모자라면 줄 위로 뒤집는다. 위·아래 모두 안 맞는 아주 높은 줄은 누른 y(없으면 줄 위쪽) 근처에 놓고 화면 안으로 맞춘다. 가로는 누른 x(없으면 줄 왼쪽 + 들여쓰기)를 화면 안으로 맞춘다 */
@@ -20,10 +22,19 @@ export function placeLinkMenu(
   clickY: number | null = null,
 ): { top: number; left: number } {
   const x = clickX !== null ? clickX - CLICK_LEAD : row.left + NAV_INDENT;
-  const left = Math.min(Math.max(x, MENU_EDGE), viewport.width - menu.width - MENU_EDGE);
+  let left = Math.min(Math.max(x, MENU_EDGE), viewport.width - menu.width - MENU_EDGE);
   let top = row.bottom + MENU_GAP;
   if (top + menu.height > viewport.height - MENU_EDGE) {
     top = row.top - MENU_GAP - menu.height;
+    if (top < MENU_EDGE && row.right !== undefined) {
+      const rightFits = row.right + MENU_GAP + menu.width <= viewport.width - MENU_EDGE;
+      const leftFits = row.left - MENU_GAP - menu.width >= MENU_EDGE;
+      if (rightFits || leftFits) {
+        left = rightFits ? row.right + MENU_GAP : row.left - MENU_GAP - menu.width;
+        top = Math.min(Math.max(row.top, MENU_EDGE), Math.max(MENU_EDGE, viewport.height - MENU_EDGE - menu.height));
+        return { top, left };
+      }
+    }
     if (top < MENU_EDGE) {
       const maxTop = viewport.height - MENU_EDGE - menu.height;
       top = Math.min(Math.max((clickY ?? row.top) + MENU_GAP, MENU_EDGE), maxTop);

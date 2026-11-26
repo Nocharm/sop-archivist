@@ -48,6 +48,8 @@ export function readMenuReach(item: Pick<AssignMenuItem, "action" | "holder">, c
     case "table_rewrap":
     case "table_ai_order":
       return { change: NONE, touch: NONE, around: ctx.tableUnitIds };
+    case "split_sentences":
+      return { change: own, touch: NONE, around: NONE };
     case "clear":
     case "delete":
       // 표 안에서는 줄이 곧 표다 - 표 둘레, 그 밖은 누른 줄

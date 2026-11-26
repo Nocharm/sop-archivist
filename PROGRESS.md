@@ -162,3 +162,8 @@
 
 - Shift로 고른 줄(Old `checked` · New `checkedNew`)을 `multi-mark-model`로 이어진 덩어리마다 inset 테 · "n줄 고름" 꼬리표, 줄마다 칠 · 왼쪽 막대(막대 쪽 직각) · 오른쪽 체크로(§9). 용지의 `pickedIds`는 짝 고르기와 New Ctrl 고름만, Shift 고름은 `checkedRows`로 따로.
 - 접힌 표 안 줄을 Shift로 고른 채면 표가 펴진다(검토 고침). 여럿 고른 동안은 묶음 꼬리표를 그리지 않는다.
+
+## 2026-11-26 — feat/split-by-sentence (계획 4-6) dev에
+
+- `SplitSentencesOp`(`split_sentences`)를 `_write_change` 길의 편집 하나로(§9) — 경계는 규칙 1(`RULE_LEGACY`) 고정, 판단 · 짝 · New 새 문장까지 되돌리기 한 번(검토 뒤 시험 더함). 글쇠 ⇧S는 새 `when: "sentence"`(언어 글쇠의 막는 까닭을 빌리지 않게).
+- 메뉴가 한 줄 늘어 키 큰 메뉴가 박스 위 · 아래 어디에도 안 들어가면 박스 옆으로 비켜 선다(`placeLinkMenu`, Assign 우클릭만 — 지운 줄 메뉴가 박스를 덮던 스모크 실패).

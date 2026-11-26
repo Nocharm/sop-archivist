@@ -32,7 +32,7 @@
 | 7c | `feat/assign-multi-mark` | 합침 | v1.6.26 · b55ee5c6 | dev v1.6.25 합침 · vitest 2650 · build 경고 0 · `assign:` 스모크 1450 + 새 · 고친 검사 둘 고쳐 혼자 37 통과 · sonnet 검토 막음 1(스모크 1904) · 권함 1 고침 | 대비 감사(체크 · 꼬리표 글자)는 정식 업데이트 때. 번호 칸 폭이 다른 두 줄 사이 틈의 좌우 선이 몇 px 어긋날 수 있음(눈으로 안 봄) |
 | 7d | `feat/assign-multi-merge` | 대기 | | | |
 | 7e | `feat/assign-multi-pick` | 대기 | | | |
-| 7f | `feat/split-by-sentence` | 대기 | | | |
+| 7f | `feat/split-by-sentence` | 합침 | v1.6.27 · 7174cf7b | pytest 3763+시드 15 · ruff · vitest 2659 · build 경고 0 · `assign:` 스모크 1461 + 고친 둘 다시 · 메뉴 단계 92(흔들린 1은 혼자 24 통과) · opus 검토 막음 0 · 권함 2 고침 | 키 큰 메뉴가 옆으로 비키면 반대편 판(New) 글을 덮을 수 있음(위 · 아래 모두 모자랄 때만) |
 | 7g | `feat/assign-pair-bracket` | 대기 | | | |
 | 8 | 계획 5의 아홉 | 진행 | v1.6.21 · 69826fdd | space-preview-trim v1.6.14 · excel-a-strike v1.6.15 · progress-by-disposition v1.6.18 · ai-suggestions-retire v1.6.20 · 모음 table-follow v1.6.21 합침(pytest 3747+시드 15 · vitest 2371 · build 경고 0 · `assign:` 스모크 1274 전부 · AI 단계는 가짜 AI로 14) | 남은 둘: tables-tab · unwrap-continue-numbers(둘 다 6 · 계획 4에 매임) |
 | 8a | `feat/assign-tables-tab` | 합침 | v1.6.24 · 9d9f177d | dev v1.6.23 합침 · vitest 2593 · build 경고 0 · `assign:` 스모크 1435 + 따라 고친 1검사 혼자 16 통과 · sonnet 검토 막음 0 · 권함 1 고침 · perf(52문서 CPU1 J 22.1→24.1 · Delete 25.1→24.5ms, 스크롤 같음) | 표 탭 J/K는 그 문서의 표만(그림 탭은 모든 Old 문서), 벗긴 표 캡션은 접힌 줄에 안 보임 |
@@ -110,6 +110,7 @@
 - 8a · `smoke/assign.mjs` 그림 단계 "탭 줄 끝이 Figures" → "끝이 Figures, 또는 Figures 다음이 Tables" · 탭 차례 B2
 - 8a · `smoke/assign.mjs` 필터 접기 단계 부분마다 셈에서 `assign-tab-tables`를 뺌 · 표 탭은 본문 표를 다시 모은 탭이라 두 번 세지 않게
 - 8a · `smoke/assign.mjs:6706` 벗긴 표 머리 "✦ AI order | ↺ Back to table" → "… | Collapse"(검사 1 그대로) · 머리 끝에 접기 단추(E2)
+- 7f · `assign-context-menu-model.test.ts:56 · 139 · 165 · 183` 편집 항목 목록에 `split_sentences`가 `split` 뒤에, `:408 · 409 · 418` Shape 줄 단추 목록에 `split_sentences` · 새 항목이 생김(같은 단계 수)
 
 ## 아침에 볼 것 (사람이 정할 것 · 봐 줄 것)
 
@@ -154,3 +155,4 @@
 - 8a: 성능 6회 가운데 값이 몇 칸에서 ±20% 넘게 오갔다(작은 문서 CPU4 J 42.8→52.8, 52문서 CPU4 filter Delete 44.7→54.6, 대신 작은 문서 CPU1 filter Delete 23→6.4) — 방향이 섞여 잡음으로 봤다. 정식 업데이트 전 perf를 한 번 더 잰다.
 - 7b: 양 단 보기의 New 표 칸 · 제목은 우클릭 메뉴가 없다(전부터 문장 박스에만) — 새 단계는 한 단으로 연 New(`?edit=`)에서 칸 메뉴를 본다. 양 단 New 칸에도 메뉴를 열지 정한다. 접힌 표 줄은 우클릭 메뉴가 없다(펼친 뒤). 마우스가 항목을 떠나면 포커스는 첫 항목에 남는데 칠은 사라진다.
 - 7c: 첫 Shift+클릭은 지금 고른 줄도 여럿 고름에 넣는다(전부터) — 떨어진 두 줄을 Shift로 고르면 꼬리표가 셋 뜬다. 필터로 접힌 목록에서는 사이에 접힌 줄이 끼어도 덩어리가 이어 보일 수 있다.
+- 7f: 계획의 캡션 거절 시험은 표로 봤다(같은 `invalid_unit_kind` 길). 마침표 없는 줄을 합친 박스가 범위 경계에서 나뉘는지는 시험으로 따로 증명하지 않았다.

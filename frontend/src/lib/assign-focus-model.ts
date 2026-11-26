@@ -357,6 +357,7 @@ export function readEditKind(op: EditOp): PendingKind {
     case "merge_rows":
       return "join";
     case "split":
+    case "split_sentences":
     case "carve":
     case "move_boundary":
       return "split";
@@ -410,6 +411,7 @@ export function listEditUnitIds(op: EditOp): number[] {
     case "reorder_unwrapped":
       return [...op.unit_ids];
     case "split":
+    case "split_sentences":
     case "unmerge":
     case "switch_language":
     case "detach_caption":

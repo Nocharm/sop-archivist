@@ -528,6 +528,8 @@ export interface DocumentView {
 
 export type EditOp =
   | { type: "split"; unit_id: number; at: number }
+  /** 박스 하나를 문장마다(규칙 1 경계) - 되돌리기 한 번 */
+  | { type: "split_sentences"; unit_id: number }
   | { type: "merge"; unit_ids: number[] }
   /** 여럿 고른 줄 합치기(쪼개기 먼저 설계 §9) - 언어마다 하나로 합치고 한글 · 영어가 다 있으면 다시 짝, 편집 하나. 이웃인지는 화면이 본다(multi-pick-model) */
   | { type: "merge_rows"; unit_ids: number[] }

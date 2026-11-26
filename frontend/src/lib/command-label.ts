@@ -6,6 +6,7 @@ const EDIT_LABEL_KEYS: Record<EditOp["type"], string> = {
   merge: "assign.step.merge",
   merge_rows: "assign.step.merge_rows",
   split: "assign.step.cut",
+  split_sentences: "assign.step.split_sentences",
   carve: "assign.step.carve",
   move_boundary: "assign.queue.act.boundary",
   unmerge: "assign.step.unmerge",
