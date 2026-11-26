@@ -29,7 +29,7 @@
 | 3b+ | `fix/undo-follow-after-click` | 합침 | v1.6.16 · f1cbc921 | vitest 2297 · build 경고 0 · `assign:` 스모크 1240 + 손질 뒤 5단계 | — |
 | 7a | `feat/assign-two-level-pick` | 합침 | v1.6.23 · 00d81d1e | vitest 2562 · build 경고 0 · `assign:` 스모크 전부 통과(두 번째 전체 실행 ALL PASS, 첫 실행의 필터 단계는 따라 고침) · opus 검토 막음 0 · 권함 1 고침 | 꼬리표가 글 · 보류 칩과 겹치는지(세워 둘 조건 ③)는 그림으로 보지 않음 — 감사 때 |
 | 7b | `feat/assign-table-menu` | 합침 | v1.6.25 · 9d3383a0 | dev v1.6.24 합침 · vitest 2633 · build 경고 0 · `assign:` 스모크 1447 + 새 단계 고쳐 혼자 22 통과 · opus 검토 막음 0 · 권함 2 고침 + 아무것도 안 보던 호버 검사 고침 | 새 감사 장면 `assign-cell-menu`(겹침)는 정식 업데이트 때 돌림 |
-| 7c | `feat/assign-multi-mark` | 대기 | | | |
+| 7c | `feat/assign-multi-mark` | 합침 | v1.6.26 · b55ee5c6 | dev v1.6.25 합침 · vitest 2650 · build 경고 0 · `assign:` 스모크 1450 + 새 · 고친 검사 둘 고쳐 혼자 37 통과 · sonnet 검토 막음 1(스모크 1904) · 권함 1 고침 | 대비 감사(체크 · 꼬리표 글자)는 정식 업데이트 때. 번호 칸 폭이 다른 두 줄 사이 틈의 좌우 선이 몇 px 어긋날 수 있음(눈으로 안 봄) |
 | 7d | `feat/assign-multi-merge` | 대기 | | | |
 | 7e | `feat/assign-multi-pick` | 대기 | | | |
 | 7f | `feat/split-by-sentence` | 대기 | | | |
@@ -153,3 +153,4 @@
 - 7a: 계획의 `:721` 짝 1px · 꼬리표 검사는 그 문서에 짝이 없어 새 S8 단계로 옮겼다. 짝 카드 2px 규칙은 scope 없는 위치 판에서만 남는다. `paper.tsx` `selectedBlock`은 아직 `selectedId`로 재서 칸을 골라도 표 위아래 틈이 벌어지지 않는다(표는 합치기 대상이 아니라 해는 없어 보임).
 - 8a: 성능 6회 가운데 값이 몇 칸에서 ±20% 넘게 오갔다(작은 문서 CPU4 J 42.8→52.8, 52문서 CPU4 filter Delete 44.7→54.6, 대신 작은 문서 CPU1 filter Delete 23→6.4) — 방향이 섞여 잡음으로 봤다. 정식 업데이트 전 perf를 한 번 더 잰다.
 - 7b: 양 단 보기의 New 표 칸 · 제목은 우클릭 메뉴가 없다(전부터 문장 박스에만) — 새 단계는 한 단으로 연 New(`?edit=`)에서 칸 메뉴를 본다. 양 단 New 칸에도 메뉴를 열지 정한다. 접힌 표 줄은 우클릭 메뉴가 없다(펼친 뒤). 마우스가 항목을 떠나면 포커스는 첫 항목에 남는데 칠은 사라진다.
+- 7c: 첫 Shift+클릭은 지금 고른 줄도 여럿 고름에 넣는다(전부터) — 떨어진 두 줄을 Shift로 고르면 꼬리표가 셋 뜬다. 필터로 접힌 목록에서는 사이에 접힌 줄이 끼어도 덩어리가 이어 보일 수 있다.

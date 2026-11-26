@@ -181,6 +181,12 @@ describe("folding a body table", () => {
     expect(h).not.toContain("assign-table-folded-2");
   });
 
+  it("keeps the table of a row picked together open", () => {
+    const h = renderToStaticMarkup(createElement(LangProvider, null, createElement(Paper, { model, items: model.body, selectedId: null, checkedRows: new Map([[21, "r21"]]), onUnitClick: noop, testId: "assign-paper", strips: { tables: fold([2]) } })));
+    expect(h).toContain("assign-paper-piece-21");
+    expect(h).not.toContain("assign-table-folded-2");
+  });
+
   it("collapses a picked table on Collapse, also one the pick had opened", async () => {
     const onToggle = vi.fn();
     await draw({ selectedId: 21, strips: { tables: fold([], { onToggle }) } });

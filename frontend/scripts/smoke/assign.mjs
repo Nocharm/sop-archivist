@@ -835,6 +835,9 @@ await runStep("assign: legend first, place, delete without a reason, edit, clear
   await units.nth(4).click({ modifiers: ["Shift"] });
   await units.nth(6).click({ modifiers: ["Shift"] });
   await wait(page, "assign-bulk");
+  // 떨어진 줄은 덩어리마다 꼬리표 하나(11-25 명세 §9) - 첫 Shift+클릭은 지금 고른 줄도 더하므로 셋(고른 줄 둘 + 지금 줄), 서로 떨어져 꼬리표마다 한 줄
+  const checkTags = await page.locator('[data-testid^="assign-check-run-"]').allTextContents();
+  check("the active row and two rows picked apart with Shift get one tag each", checkTags.length === 3 && checkTags.every((text) => text === "1 rows picked"), JSON.stringify(checkTags));
   await page.locator('[data-testid="assign-bulk-delete"]').click();
   await page.locator('[data-testid="assign-bulk-reason"]').fill("Header text");
   await page.locator('[data-testid="assign-bulk-confirm"]').click();
@@ -1995,7 +1998,7 @@ await runStep("assign: written New document - identical, link by clicking, split
   const second = page.locator(`[data-testid="${await unpicked.first().getAttribute("data-testid")}"]`);
   const secondLang = await second.getAttribute("data-lang");
   await second.locator(".new-text").click({ modifiers: [multi] });
-  // 더한 박스가 마지막에 누른 것(data-sel)이고 먼저 고른 박스는 여럿 고른 표시(.su[data-pick])로 남는다
+  // 더한 박스가 마지막에 누른 것(data-sel)이고 먼저 고른 박스는 여럿 고른 표시(.su[data-pick] - Ctrl은 New 고름 한 벌, Shift로 더한 박스만 data-check 덩어리)로 남는다
   await page.locator(`[data-testid="${await second.getAttribute("data-testid")}"][data-sel]`).waitFor({ timeout: T });
   check("Ctrl+click adds a second sentence", (await firstLine.locator(".su[data-pick]").count()) > 0 && (await second.locator('[data-testid="assign-pick-bar-link"]').count()) === 1);
   check(

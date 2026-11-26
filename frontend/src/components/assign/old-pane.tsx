@@ -46,6 +46,8 @@ interface OldPaneProps {
   /** New를 마지막에 눌렀다 - 여기 고른 것은 점선 테(먼저 고른 쪽) */
   held?: boolean;
   pickedIds: ReadonlySet<number>;
+  /** 여럿 고른 줄(Shift) - Unit → 줄 키. 짝 고르기의 pickedIds와 따로, 덩어리 표시로 그린다 */
+  checkedRows?: ReadonlyMap<number, string>;
   /** 확인이 남은 누락 의심 경고가 걸린 문단 - 그 줄에 경고 표시가 붙는다 */
   warnBlockIds: ReadonlySet<number>;
   statusOf: (unitId: number) => ViewUnit["status"] | undefined;
@@ -152,6 +154,7 @@ export function OldPane({ paneRef, ...props }: OldPaneProps) {
       highlightIds: props.highlightIds,
       scope: props.scope,
       pickedIds: props.pickedIds,
+      checkedRows: props.checkedRows,
       held: props.held,
       warnBlockIds: props.warnBlockIds,
       onUnitClick: (unitId, _at, event) => props.onUnitClick(unitId, { shiftKey: event.shiftKey }, !(event.target as HTMLElement).closest(".su[data-unit]")),
@@ -176,6 +179,7 @@ export function OldPane({ paneRef, ...props }: OldPaneProps) {
         highlightIds={props.highlightIds}
         scope={props.scope}
         pickedIds={props.pickedIds}
+        checkedRows={props.checkedRows}
         held={props.held}
         warnBlockIds={props.warnBlockIds}
         onUnitClick={(unitId, _at, event) => props.onUnitClick(unitId, { shiftKey: event.shiftKey }, !(event.target as HTMLElement).closest(".su[data-unit]"))}

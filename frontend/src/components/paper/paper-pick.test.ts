@@ -76,3 +76,50 @@ describe("a two-level pick on the paper", () => {
 
   it("draws the same markup without a scope", () => expect(html({ scope: null })).toBe(html({ scope: undefined })));
 });
+
+// 여럿 고른 표시(11-25 명세 §9) - 외톨이 줄 1 · 2 · 3 · 4
+const runModel = buildPaperModel(view(
+  [block(1, "One."), block(2, "Two."), block(3, "Three."), block(4, "Four.")],
+  [u(1, "One."), u(2, "Two."), u(3, "Three."), u(4, "Four.")],
+));
+const rowsOf = (ids: number[]) => new Map(ids.map((id) => [id, `r${id}`] as const));
+
+describe("rows picked together on the paper", () => {
+  it("draws one tag per run and a check on every row", () => {
+    const h = html({ model: runModel, checkedRows: rowsOf([1, 2, 3]) });
+    expect(h.match(/check-tag/g)).toHaveLength(1);
+    expect(h).toContain('data-testid="assign-check-run-1"');
+    expect(h).toContain("3 rows picked");
+    expect(h.match(/data-check="(top|middle|bottom)"/g)).toHaveLength(3);
+    expect(h.match(/strip-check/g)).toHaveLength(3);
+    expect(h.match(/data-check="gap"/g)).toHaveLength(2);
+  });
+
+  it("tags each run apart when the rows are not neighbours", () => {
+    const h = html({ model: runModel, checkedRows: rowsOf([1, 3]) });
+    expect(h.match(/check-tag/g)).toHaveLength(2);
+    expect(h.match(/data-check="only"/g)).toHaveLength(2);
+    expect(h).not.toContain('data-check="gap"');
+  });
+
+  it("draws no mark without checks", () => {
+    expect(html({ model: runModel, checkedRows: new Map() })).not.toContain("data-check");
+    expect(html({ model: runModel })).not.toContain("check-tag");
+  });
+
+  it("counts a pair card as one row and gives the tag the place of the group tag", () => {
+    const h = html({ ...pairPick, checkedRows: new Map([[5, "p"], [6, "p"]]) });
+    expect(h).toContain("1 rows picked");
+    expect(h.match(/check-tag/g)).toHaveLength(1);
+    expect(h).not.toContain("group-tag");
+    expect(h.match(/strip-check/g)).toHaveLength(2);
+    // 카드의 윗 가장자리는 첫 줄만, 아랫 가장자리는 끝 줄만
+    expect(h.match(/data-check="top"/g)).toHaveLength(1);
+    expect(h.match(/data-check="bottom"/g)).toHaveLength(1);
+  });
+
+  it("marks a folded deleted line the same way", () => {
+    const h = html({ ...deletedCellPick, selectedId: null, scope: null, checkedRows: new Map([[1, "u1"]]) });
+    expect(h).toMatch(/class="deleted-line"[^>]*data-check="only"/);
+  });
+});

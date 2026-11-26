@@ -165,9 +165,11 @@ export default function AssignPage() {
   const composedOrder = useComposedOrder({ bundleId, doc: isComposedDoc ? composedDoc : null, labelLang: uiLang });
   const shownComposed = composedOrder.doc;
   const composedStrips = useMemo(() => (shownComposed ? buildComposedStrips(shownComposed) : null), [shownComposed]);
-  // Ctrl+클릭으로 더한 New 박스 - 마지막에 누른 것은 진한 칠과 테(data-sel), 나머지는 여럿 고른 표시
+  // Shift+클릭으로 더한 New 박스는 덩어리 테 · 꼬리표(박스마다 한 줄), Ctrl+클릭은 New 고름 한 벌(newPick)이라 data-pick
   const { checkedNew } = state;
-  const newMates = useMemo(() => (newPick.kind === "unit" && newPick.unitIds.length > 1 ? new Set(newPick.unitIds) : checkedNew.size > 0 ? checkedNew : NO_NUMBERS), [newPick, checkedNew]);
+  const isNewPickMulti = newPick.kind === "unit" && newPick.unitIds.length > 1;
+  const newMates = useMemo(() => (newPick.kind === "unit" && newPick.unitIds.length > 1 ? new Set(newPick.unitIds) : NO_NUMBERS), [newPick]);
+  const newChecks = useMemo(() => (isNewPickMulti ? undefined : new Map([...checkedNew].map((unitId) => [unitId, String(unitId)] as const))), [isNewPickMulti, checkedNew]);
   if (!ready) {
     return error !== null ? (
       <BundleLoadError error={error} onRetry={reloadAll} testId="assign" />
@@ -349,6 +351,9 @@ export default function AssignPage() {
   const warnBlockIds = new Set(listAckWarnings(docs.data ?? []).flatMap((item) => (item.docId === oldDocId && item.warning.acked_by === null && item.warning.block_id !== null ? [item.warning.block_id] : [])));
   // Shift로 고른 줄, 그리고 짝 고르기에서 모은 문장
   const pickedOld = new Set([...[...checked].flatMap((key) => rowMap.get(key)?.unitIds ?? []), ...(isLeftPairPick ? (pairFrom?.picked ?? []) : [])]);
+  // 용지의 data-pick은 짝 고르기만, Shift로 여럿 고른 줄은 덩어리 표시(Unit → 줄 키) - 일괄 삭제는 위 pickedOld를 그대로 쓴다
+  const pairPickedOld = new Set(isLeftPairPick ? (pairFrom?.picked ?? []) : []);
+  const checkedOldRows = new Map([...checked].flatMap((key) => (rowMap.get(key)?.unitIds ?? []).map((unitId) => [unitId, key] as const)));
   // 짝 고르는 중의 안내 한 줄 - 고르는 문장이 있는 칸의 머리 아래에 둔다(Old 용지, 또는 양 단에서 New 문장을 다듬는 중이면 New 칸)
   const pairBanner = pairSource ? (
     <div className="flex items-center gap-2 border-b border-line bg-accent-tint px-3 py-1.5 text-xs" role="status" data-testid="assign-pair-pick">
@@ -636,7 +641,8 @@ export default function AssignPage() {
                 pairGrip={pairGrip}
                 // 삭제로 확정한 줄의 접힌 한 줄 - 한 단으로 연 New 문서에는 줄이 없다
                 deleted={leftTools.deleted ? { folds: deletedFolds } : undefined}
-                pickedIds={pickedOld}
+                pickedIds={pairPickedOld}
+                checkedRows={checkedOldRows}
                 warnBlockIds={warnBlockIds}
                 statusOf={readMarkStatus}
                 renderNote={placeOf}
@@ -836,6 +842,7 @@ export default function AssignPage() {
                       onJumpSource={jumpToOld}
                       selectedUnitId={(isNewEdit ? cutUnit?.id : null) ?? newUnitId}
                       pickedUnitIds={newMates}
+                      checkedRows={newChecks}
                       held={panel.side === "old" && newUnitId !== null}
                       showUnitIds={showUnitIds}
                       pending={mode === "old" ? paperPending : undefined}
