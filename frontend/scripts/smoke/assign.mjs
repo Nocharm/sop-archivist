@@ -7481,6 +7481,18 @@ await runStep("assign: counterpart table - each table unwraps on its own with no
   const isPaired = both.pairs.some((pair) => pair.unit_ids.includes(korean?.id) && pair.unit_ids.includes(english?.id));
   check("the same row and order lines are a suggested KO/EN pair", isPaired, JSON.stringify(both.pairs.map((pair) => pair.unit_ids.map((id) => texts.get(id)))));
   if (!isPaired) return;
+  // 짝이 모두 한 화면에 보이면 안내 줄 대신 왼쪽 괄호선이다(11-23 명세 E1-R2). 이 문서는 짧아 두 절반이 늘 한 화면에 들고 스크롤로는 벌어지지 않으니,
+  // 안내 줄을 보는 동안은 사이 줄(영어 절반 첫 문단)을 길게 늘여 짝 하나를 화면 밖으로 민다
+  const spacerId = both.units.find((item) => item.text.startsWith("This section covers"))?.id ?? -1;
+  let spacer = null;
+  const pushApart = async (isApart) => {
+    if (isApart && spacer === null) spacer = await page.addStyleTag({ content: `[data-pane="old"] .pane-body .strip[data-strip-unit="${spacerId}"] { min-height: 1600px !important; }` });
+    if (!isApart && spacer !== null) {
+      await spacer.evaluate((tag) => tag.remove());
+      spacer = null;
+    }
+  };
+  await pushApart(true);
   // 짝의 아래 박스(영어 절반)를 누르면 그 박스가 골라지고(위 박스가 아니다), 멀리 있는 한글 절반의 짝은 곁에 딸린 표시(data-mate)다.
   // 고른 박스 아래 안내 줄은 위의 한글 짝을 가리키고, 누르면 그 짝으로 가서 고른다 - 거기서는 아래를 가리킨다(설계 2026-11-20 D3).
   // 오른쪽 칸에는 두 줄이 같이 뜬다
@@ -7513,7 +7525,17 @@ await runStep("assign: counterpart table - each table unwraps on its own with no
   await page.keyboard.press("g");
   await piece(korean.id).and(page.locator("[data-sel]")).waitFor({ timeout: T });
   check("G goes to the pair and back", (await hintOf(korean.id).getAttribute("data-dir")) === "down");
+  // 사이 줄을 되돌리고 창을 높여 두 절반이 한 화면에 들면 괄호선 하나가 둘을 잇고 안내 줄은 숨는다(E1-AC1)
+  await pushApart(false);
+  await page.setViewportSize({ width: VIEWPORT.width, height: 1400 });
+  await piece(korean.id).evaluate((el) => el.scrollIntoView({ block: "start" }));
+  const oldBracket = page.locator('.pair-bracket[data-side="old"] [data-testid="assign-pair-bracket"]');
+  const isBracketShown = await oldBracket.waitFor({ timeout: T }).then(() => true, () => false);
+  check("with both halves on screen one bracket joins them and the hint hides", isBracketShown && (await oldBracket.getAttribute("data-units")) === `${korean.id},${english.id}` && (await hintOf(korean.id).count()) === 0);
   await takeShot("sop-assign-counterpart.png");
+  await page.setViewportSize(VIEWPORT);
+  await pushApart(true);
+  await hintOf(korean.id).waitFor({ timeout: T });
 
   // 1단 보기 - 안내 줄 한 번 누름은 오른쪽 짝 판(짝 박스와 앞뒤 3줄까지, 짝 박스를 칠함), 두 번 누름은 짝으로 간다(B7).
   // 자리가 넉넉하면 가운데 용지가 판 옆으로 비켜서고, 모자라면 판이 용지를 덮는다(용지 제자리) - 좁은 창과 넓은 창 둘 다 본다
@@ -7570,6 +7592,7 @@ await runStep("assign: counterpart table - each table unwraps on its own with no
   await piece(korean.id).and(page.locator("[data-sel]")).waitFor({ timeout: T });
   await page.waitForTimeout(400);
   check("a double press on the hint goes to the pair without a panel", (await pairSpot.count()) === 0);
+  await pushApart(false);
   await page.locator('[data-testid="assign-view-two"]').click();
   await page.locator('[data-testid="assign-new"]').waitFor({ timeout: T });
 
@@ -7640,6 +7663,9 @@ await runStep("assign: the pair panel never moves the picked box up or down", {}
   const english = both?.units.find((item) => item.text === "Check the detergent concentration.");
   check("the two work tables are unwrapped and paired", Boolean(korean && english));
   if (!korean || !english) return;
+  // 두 절반이 한 화면이면 안내 줄 대신 괄호선이라(11-23 명세 E1-R2) 사이 줄(영어 절반 첫 문단)을 늘여 짝을 화면 밖으로 민다 - 이 문서는 짧아 스크롤로는 벌어지지 않는다
+  const spacerId = both.units.find((item) => item.text.startsWith("This section covers"))?.id ?? -1;
+  const spacer = await page.addStyleTag({ content: `[data-pane="old"] .pane-body .strip[data-strip-unit="${spacerId}"] { min-height: 1600px !important; }` });
 
   const piece = (id) => page.locator(`[data-testid="assign-paper-piece-${id}"]`);
   const hint = page.locator(`[data-testid="assign-paper-pair-hint-${english.id}"]`);
@@ -7703,6 +7729,7 @@ await runStep("assign: the pair panel never moves the picked box up or down", {}
   }
   await page.setViewportSize(VIEWPORT);
   await setZoom(100);
+  await spacer.evaluate((tag) => tag.remove());
   await page.locator('[data-testid="assign-view-two"]').click();
   await page.locator('[data-testid="assign-new"]').waitFor({ timeout: T });
 
@@ -7711,6 +7738,90 @@ await runStep("assign: the pair panel never moves the picked box up or down", {}
   await waitView((view) => view.tables[0].is_layout && !view.tables[2].is_layout);
   await page.locator('[data-testid="assign-undo"]').click();
   check("the seed bundle is left as found", (await waitView((view) => view.tables.every((table) => !table.is_layout))) !== null);
+});
+
+// 떨어진 짝 괄호선(11-23 명세 E1 · S14) - 고른 박스의 떨어진 짝이 모두 그 칸 화면 안이면 번호 칸 왼쪽에 괄호선 하나가 둘을 잇고 안내 줄은 숨는다.
+// 하나가 화면 밖으로 나가면(사이 줄을 길게 늘여 민다) 괄호선이 사라지고 안내 줄이 선다. Old와 양 단 New가 같다. 짝은 API로 맺고 끝에 푼다(쪼개기 직후 묶음은 배정이 없다)
+await runStep("assign: a far pair on screen gets a bracket in Old and New, the hint hides", {}, async ({ page }) => {
+  const headers = { "X-Dev-User": "qa.member" };
+  const api = `${BASE}/api/bundles/${freshBundleId}`;
+  const getJson = async (path) => (await page.request.get(`${api}${path}`, { headers })).json();
+  const readView = (docId) => getJson(`/documents/${docId}/view`);
+  const sourceOrder = (one, two) => one.pos_seq - two.pos_seq || (one.spans[0]?.[1] ?? 0) - (two.spans[0]?.[1] ?? 0) || one.id - two.id;
+  // 짝 없는 한글 문장 하나와 그 아래 2~4줄 건너 짝 없는 영어 문장, 그리고 늘일 사이 첫 줄 - 용지에 박스로 서는 줄만 센다(칸 문장 · 저절로 삭제된 줄 · 판단한 줄은 뺀다)
+  const findFarPair = (view, isPickable) => {
+    const units = view.units.filter((unit) => unit.group_unit_id === null && !unit.noise_kind && (unit.status === null || unit.status === "unassigned")).sort(sourceOrder);
+    const isFree = (unit, lang) => unit.kind === "sentence" && unit.lang === lang && unit.pair_id === null && isPickable(unit.id);
+    for (let at = 0; at < units.length; at += 1) {
+      const en = isFree(units[at], "ko") ? units.slice(at + 3, at + 6).find((unit) => isFree(unit, "en")) : undefined;
+      if (en) return { docId: view.document.id, ko: units[at], en, mid: units[at + 1] };
+    }
+    return null;
+  };
+  const docs = await getJson("/documents");
+  await page.goto(`${BASE}/bundles/${freshBundleId}/assign`);
+  await wait(page, "assign-bar");
+  await page.waitForLoadState("networkidle");
+  if ((await page.locator('[data-testid="assign-new"]').count()) === 0) await page.locator('[data-testid="assign-view-two"]').click();
+  await wait(page, "assign-new");
+  const shownNewDoc = Number(await page.locator('[data-testid="assign-new"]').getAttribute("data-doc"));
+  const written = new Set((await getJson("/written-sentences")).filter((row) => row.kind === "sentence" && row.target_doc_id === shownNewDoc && row.new_unit_id != null).map((row) => row.new_unit_id));
+  let oldPair = null;
+  let newPair = null;
+  for (const doc of docs.filter((item) => item.status === "ready")) {
+    const view = await readView(doc.id);
+    if (doc.side === "old" && oldPair === null) oldPair = findFarPair(view, () => true);
+    if (doc.side === "new" && newPair === null) newPair = findFarPair(view, (id) => written.has(id));
+  }
+  check("the fresh bundle has a far KO/EN candidate in an Old and in the shown New document", oldPair !== null && newPair !== null, JSON.stringify({ old: oldPair?.docId, new: newPair?.docId }));
+  if (oldPair === null || newPair === null) return;
+  const makePair = async (pair) => page.request.post(`${api}/documents/${pair.docId}/pairs`, { headers, data: { revision: (await readView(pair.docId)).document.revision, unit_ids: [pair.ko.id, pair.en.id] } });
+  await makePair(oldPair);
+  await makePair(newPair);
+  await page.reload();
+  await wait(page, "assign-bar");
+  await page.waitForLoadState("networkidle");
+  // Old 칸이 다른 문서면 그 문서로
+  if ((await page.locator(`[data-pane="old"] .pane-body .strip[data-strip-unit="${oldPair.ko.id}"]`).count()) === 0 && (await page.locator('[data-testid="assign-old-doc"]').count()) > 0) {
+    await page.locator('[data-testid="assign-old-doc"]').click();
+    await page.locator(`[data-testid="assign-old-doc-option-${oldPair.docId}"]`).click();
+  }
+  // 창을 높여 두 끝이 한 화면에 들게 하고, 고른 박스를 칸 위쪽에 둔다
+  await page.setViewportSize({ width: VIEWPORT.width, height: 1400 });
+  const styles = [];
+  const pushApart = async (side, unitId) => styles.push(await page.addStyleTag({ content: `[data-pane="${side}"] .pane-body .strip[data-strip-unit="${unitId}"] { min-height: 1600px !important; }` }));
+  const results = {};
+  for (const [side, pair, hintId] of [["old", oldPair, `assign-paper-pair-hint-${oldPair.ko.id}`], ["new", newPair, `assign-new-paper-pair-hint-${newPair.ko.id}`]]) {
+    const box = page.locator(`[data-pane="${side}"] .pane-body .strip[data-strip-unit="${pair.ko.id}"]`);
+    const bracket = page.locator(`.pair-bracket[data-side="${side}"] [data-testid="assign-pair-bracket"]`);
+    const hint = page.locator(`[data-testid="${hintId}"]`);
+    await box.waitFor({ timeout: T });
+    await box.evaluate((el) => el.scrollIntoView({ block: "start" }));
+    await (side === "old" ? box : box.locator(".new-text")).click();
+    await page.locator(`[data-pane="${side}"] .pane-body .strip[data-strip-unit="${pair.ko.id}"][data-sel]`).waitFor({ timeout: T });
+    await box.evaluate((el) => el.scrollIntoView({ block: "start" }));
+    const isShown = await bracket.waitFor({ timeout: T }).then(() => true, () => false);
+    results[side] = { bracket: isShown && (await bracket.getAttribute("data-units")) === `${pair.ko.id},${pair.en.id}` && (await hint.count()) === 0 };
+    // 사이 줄을 늘여 짝을 화면 밖으로 민다 - 괄호선이 사라지고 아래를 가리키는 안내 줄
+    await pushApart(side, pair.mid.id);
+    const isHint = await hint.waitFor({ timeout: T }).then(() => true, () => false);
+    results[side].hint = isHint && (await hint.getAttribute("data-dir")) === "down" && (await bracket.count()) === 0;
+  }
+  check("Old: with both ends on screen one bracket joins the pair and the hint hides", results.old.bracket);
+  check("Old: when the pair leaves the screen the bracket goes and the hint points down", results.old.hint);
+  check("New: with both ends on screen one bracket joins the pair and the hint hides", results.new.bracket);
+  check("New: when the pair leaves the screen the bracket goes and the hint points down", results.new.hint);
+
+  // 시드를 그대로 둔다 - 늘인 줄 · 창 크기를 되돌리고 맺은 짝을 푼다
+  for (const style of styles) await style.evaluate((tag) => tag.remove());
+  await page.setViewportSize(VIEWPORT);
+  for (const pair of [oldPair, newPair]) {
+    const view = await readView(pair.docId);
+    const pairId = view.units.find((unit) => unit.id === pair.ko.id)?.pair_id;
+    if (pairId != null) await page.request.delete(`${api}/documents/${pair.docId}/pairs/${pairId}?revision=${view.document.revision}`, { headers });
+  }
+  const after = await Promise.all([oldPair, newPair].map((pair) => readView(pair.docId)));
+  check("the pairs made for this step are undone", after.every((view, at) => view.units.find((unit) => unit.id === [oldPair, newPair][at].ko.id)?.pair_id === null));
 });
 
 // 좁은 창에서 오른쪽 칸 떼기(설계 2026-11-25 §6 S3) - 두 문서가 그 열을 쓰고, 판은 머리로 끌려 창 안에만 있고, 자리 · 접힘을 기억하고, 모달이 아니라 단축키가 그대로 된다
