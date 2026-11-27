@@ -541,7 +541,7 @@ export default function AssignPage() {
         <SpacePreview
           bundleId={bundleId}
           sheet={pickSpaceSheet(view.single)}
-          enabled={isSpaceEnabled(pickSpaceSheet(view.single), { hasDoc: oldView !== null, unitCount: oldView?.units.length ?? 0, isNewEdit, rowCount: rows.length })}
+          enabled={isSpaceEnabled(pickSpaceSheet(view.single), { hasDoc: oldView !== null, unitCount: oldView?.units.length ?? 0, rowCount: rows.length })}
           docId={oldDocId}
           docCode={oldView?.document.doc_code || oldView?.document.file_name || ""}
           reloadKey={`${unitsKey}:${oldView?.document.revision ?? ""}`}
