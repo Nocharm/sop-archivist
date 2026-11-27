@@ -1,7 +1,7 @@
 // 벗긴 표 덩이 안 줄 순서(units.unwrap_seq, 편집 reorder_unwrapped) - 용지 줄 차례 · J/K · 손잡이 끌기가 같은 순서를 쓴다.
 // orderUnwrapped · orderUnwrappedLines · findLineTable은 서버 backend/app/sop/unwrap_order.py의 사본이다(문단 Excel이 같은 순서를 쓴다,
 // 사례는 rule-cases.json) - 규칙을 바꾸면 함께 고친다.
-// 설계: docs/superpowers/specs/2026-11-20-assign-mockup2-design.md D2
+// 설계: 2026-11-20-assign-mockup2 D2 (docs/architecture/decisions.md)
 
 const NO_SEQ = -1; // 덩이 맨 앞에서 빌릴 값이 없는 줄 - 매긴 값(0부터)보다 앞
 

@@ -1,6 +1,7 @@
 // 원문 용지 모델 - 문서 보기(blocks·units)를 용지에 그릴 순서와 블록 안 조각으로 편다. 순수 함수라 쪼개기·분류 화면이 같이 쓰고 단위 테스트한다.
 
 import type { DocumentView, PartRef, UnitSpan, ViewBlock, ViewTable, ViewUnit } from "./api-sop";
+import { listTableBlocks, listTableTabUnitIds, type TableBlock } from "./table-tab-model";
 import { findLineTable, orderUnwrappedLines } from "./unwrap-order-model";
 
 /** 블록 안 글자 조각 - 단위에 속하면 unitId, 단위 사이 빈 글자면 null */
@@ -47,6 +48,8 @@ export interface PaperModel {
   figureGroupOf: ReadonlyMap<number, string>;
   /** 그림 탭 용지에 그릴 것 - 카드 차례로 그림 블록과 캡션 블록(같은 블록은 한 번) */
   figureItems: PaperItem[];
+  /** 표 탭 · 본문 표 접기의 표(본문의 바깥 표, 문서 차례, lib/table-tab-model) - 비면 표 탭이 없다 */
+  tableBlocks: TableBlock[];
 }
 
 /** 그림 탭의 카드 하나 - 그림 단위(캡션 하나를 같이 쓰는 그림 묶음이면 여럿, 캡션을 가진 첫 그림 먼저)와 거기 붙은 캡션 단위 */
@@ -167,7 +170,8 @@ export function buildPaperModel(view: DocumentView): PaperModel {
     (line) => units.get(line)?.unwrap_seq,
   );
   const { figures, figureGroupOf, figureItems } = buildFigureGroups(view, units);
-  return { header, body, footer, groups: [...groups.values()], segments, units, order, hasNumberRanges: view.has_number_ranges, unwrapped, tables, unwrapLines, figures, figureGroupOf, figureItems };
+  const tableBlocks = listTableBlocks(view, { order, unwrapLines, tables, unwrapped });
+  return { header, body, footer, groups: [...groups.values()], segments, units, order, hasNumberRanges: view.has_number_ranges, unwrapped, tables, unwrapLines, figures, figureGroupOf, figureItems, tableBlocks };
 }
 
 /** 그림 탭으로 가는 단위 - 본문(머리말 · 꼬리말 밖)의 그림 단위(아직 표인 데이터 표 칸 안 그림도)와 거기 붙은 캡션 단위(시안 2 D3) */
@@ -371,13 +375,13 @@ export type UnitMark = "edited" | "pair" | "suggest" | "ref";
 /**
  * 종이 오른쪽 끝 아이콘 표시 - 예외(나눔·합침, 떨어진 짝)와 할 일(나누기 제안·참조 줄)만. 순서가 늘 같아야 줄마다 같은 자리에 온다.
  * 확정·AI 제안은 글 아래 간 곳 줄이, 붙은 짝은 짝 카드가 말한다 - 거의 모든 줄에 붙어 드문 표시를 묻었다(사용자 결정 2026-11-20).
- * inPairCard면 짝 표시를 뺀다
+ * inPairCard면 짝 표시를 빼고, showSplit이 꺼졌으면(나누기를 숨긴 동안) 나누기 제안 표시를 뺀다
  */
-export function getMarks(unit: ViewUnit, inPairCard = false): UnitMark[] {
+export function getMarks(unit: ViewUnit, inPairCard = false, showSplit = true): UnitMark[] {
   const marks: UnitMark[] = [];
   if (unit.is_edited) marks.push("edited");
   if (unit.pair_id !== null && !inPairCard) marks.push("pair");
-  if (unit.split_suggestion_id !== null) marks.push("suggest");
+  if (showSplit && unit.split_suggestion_id !== null) marks.push("suggest");
   // 참조 줄 제안 - 사람이 번호를 확인하기 전까지 줄 끝에 남는다
   if (unit.ref?.state === "proposed") marks.push("ref");
   return marks;
@@ -385,7 +389,7 @@ export function getMarks(unit: ViewUnit, inPairCard = false): UnitMark[] {
 
 const TEXT_KINDS = new Set(["sentence", "heading", "cell_sentence"]);
 
-/** 틈의 합치기를 쓸 수 없는 까닭 - 글이 아닌 것(표·그림), 목차 줄, 칸 문장 규칙. 언어는 보지 않는다(다른 언어끼리는 묶기가 짝을 고른다) */
+/** 틈의 합치기를 쓸 수 없는 까닭 - 글이 아닌 것(표·그림), 저절로 삭제된 줄(toc), 칸 문장 규칙. 언어는 보지 않는다(다른 언어끼리는 묶기가 짝을 고른다) */
 export type MergeBlocker = "not_text" | "toc" | "cell";
 
 /** 합칠 수 없는 까닭 → 문구 키 - 틈의 합치기 단추와 우클릭 메뉴가 같이 쓴다 */
@@ -400,22 +404,23 @@ type MergeSide = Pick<ViewUnit, "kind" | "noise_kind" | "group_unit_id">;
 /** 두 단위를 합칠 수 없는 까닭(서버 `_plan_merge`와 같은 기준) - 합칠 수 있으면 null */
 export function getMergeBlocker(a: MergeSide, b: MergeSide): MergeBlocker | null {
   if (!TEXT_KINDS.has(a.kind) || !TEXT_KINDS.has(b.kind)) return "not_text";
-  // 목차 줄은 먼저 목차 아님으로 돌린다(서버 422 toc_line_locked, 사용자 결정 2026-11-19)
+  // 저절로 삭제된 줄은 먼저 삭제 취소로 돌린다(서버 422 toc_line_locked, 사용자 결정 2026-11-19)
   if (a.noise_kind || b.noise_kind) return "toc";
   // 칸 문장은 같은 표 그룹(또는 모두 그룹 없음)끼리만
   if ((a.kind === "cell_sentence" || b.kind === "cell_sentence") && (a.kind !== b.kind || a.group_unit_id !== b.group_unit_id)) return "cell";
   return null;
 }
 
-/** 블록에 목차 줄이 걸쳐 있나 - 그 블록의 글자는 골라 만들기(carve)로 떼지 않는다(서버 422 toc_line_locked) */
+/** 블록에 저절로 삭제된 줄이 걸쳐 있나 - 그 블록의 글자는 골라 만들기(carve)로 떼지 않는다(서버 422 toc_line_locked) */
 export function hasTocLineIn(units: Iterable<ViewUnit>, blockId: number): boolean {
   for (const unit of units) if (unit.noise_kind && unit.spans.some(([spanBlockId]) => spanBlockId === blockId)) return true;
   return false;
 }
 
-/** 누른 단위 → 고를 단위. 표에 묶인 칸 문장이면 그 묶음 단위, 아니면 자기(Assign은 표·그림을 묶음째 배정한다) */
+/** 누른 단위 → 고를 단위. 캡션(칸 문장 밖의 묶인 단위)이면 그 묶음 단위, 표에 묶인 칸 문장은 자기 - 칸이 골라지고 배정은 표째다(11-23 명세 C1-R3, 박스는 pick-scope-model resolveBoxUnit) */
 export function resolvePickUnit(unitId: number, units: ReadonlyMap<number, ViewUnit>): number {
-  return units.get(unitId)?.group_unit_id ?? unitId;
+  const unit = units.get(unitId);
+  return unit === undefined || unit.kind === "cell_sentence" ? unitId : (unit.group_unit_id ?? unitId);
 }
 
 // ── Split 2차 개편(2026-11-10): 단위마다 종이 한 조각, 조각 사이 합치기, 본문·머리말·꼬리말 탭, 나눌 선 끌기 ──
@@ -589,7 +594,13 @@ export function getGapMerge(prev: PaperRow, next: PaperRow, units: ReadonlyMap<n
   return { firstId: first.id, secondId: second.id, blocker: getMergeBlocker(first, second) };
 }
 
-export type PaperTabKey = "body" | "header" | "footer" | "figures";
+export type PaperTabKey = "body" | "header" | "footer" | "figures" | "tables";
+
+/** 탭 줄의 키 - 내용이 있는 탭만, B2 글쇠표의 차례(본문 · 머리말 · 꼬리말 · 그림 · 표). 표 탭은 본문의 표를 한 번 더 모아 보인다 */
+export function listTabKeys(model: PaperModel): PaperTabKey[] {
+  const keys: PaperTabKey[] = (["body", "header", "footer", "figures"] as const).filter((key) => model[key].length > 0);
+  return model.tableBlocks.length > 0 ? [...keys, "tables"] : keys;
+}
 
 /** 탭 안의 쪽 하나 - 머리말·꼬리말은 부분 묶음마다 한 쪽, 본문은 한 쪽 */
 export interface PaperSheet {
@@ -608,12 +619,12 @@ export interface PaperTab {
 }
 
 export interface PaperTabs {
-  /** 내용이 있는 탭만 - 본문, 머리말, 꼬리말(각주·미주 포함), 그림 순 */
+  /** 내용이 있는 탭만 - 본문, 머리말, 꼬리말(각주·미주 포함), 그림, 표 순 */
   tabs: PaperTab[];
   tabOf: Map<number, PaperTabKey>;
   /** 보이는 단위 → 숨긴 같은 내용 묶음의 같은 자리 단위. 경계 확인을 함께 보낸다 */
   mirrors: Map<number, number[]>;
-  /** 탭 순서대로 이은 이동 순서 - 숨긴 단위는 없다 */
+  /** 탭 순서대로 이은 이동 순서 - 숨긴 단위는 없다. 표 탭은 본문의 단위를 다시 모은 것이라 들지 않는다(한 단위가 두 번 오지 않게) */
   order: number[];
 }
 
@@ -626,7 +637,8 @@ function getTabKey(part: string): PaperTabKey {
  * 배정 화면이 쓴다: 그 화면에서는 같은 내용의 머리말도 저마다 배정할 줄이라 한 번만 보일 수 없다(buildPaperTabs는 숨긴다).
  */
 export function listPartSheets(view: DocumentView, model: PaperModel, tab: PaperTabKey): PaperSheet[] {
-  if (tab === "body") return [{ key: "body", part: "body", refs: [], items: model.body }];
+  // 표 탭은 본문 쪽에서 표 줄만 거른다(Paper tableRows)
+  if (tab === "body" || tab === "tables") return [{ key: "body", part: "body", refs: [], items: model.body }];
   const meta = new Map(view.part_groups.map((group) => [group.key, group]));
   return model.groups
     .filter((group) => getTabKey(group.part) === tab)
@@ -712,7 +724,10 @@ export function buildPaperTabs(view: DocumentView, model: PaperModel): PaperTabs
       unitIds: model.figures.flatMap((group) => [...group.figureIds, ...group.captionIds]).filter((id) => shown.has(id)),
     });
   }
-  return { tabs, tabOf, mirrors, order: tabs.flatMap((tab) => tab.unitIds) };
+  const order = tabs.flatMap((tab) => tab.unitIds);
+  // 표 탭 - 본문의 표를 문서 차례로(벗긴 표는 줄마다). tabOf는 본문 그대로라 고른 표가 탭을 옮기지 않는다(그림과 다르다, 11-23 명세 E2)
+  if (model.tableBlocks.length > 0) tabs.push({ key: "tables", sheets: [{ key: "body", part: "body", refs: [], items: model.body }], unitIds: listTableTabUnitIds(model.tableBlocks) });
+  return { tabs, tabOf, mirrors, order };
 }
 
 /**

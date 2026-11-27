@@ -5,7 +5,7 @@ DB를 모르는 순수 함수다. 번호는 범위로 표시할 뿐 글자를 �
 """
 
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -340,6 +340,13 @@ def _clamp_level(level: int) -> int:
     return min(max(level, 1), MAX_ROW_LEVEL)
 
 
+def is_continued_number(unit_id: int, number_set: str | None, continued: Mapping[int, str]) -> bool:
+    """벗긴 표의 숫자 칸 번호가 저절로 이어 매긴 그대로인가("1" → "5.1") — continued는 적용 중인 이어 매기기 기록이 단위마다 쓴 값
+    (editing.load_continued_numbers). 지금 값이 그 값과 같을 때만 참이라 사람이 다시 고친 번호 · 이 기능 전에 사람이 고친 번호는 거짓이다.
+    문단 Excel 번호 노트가 원래 번호("Original 1")를 적고 칸 번호처럼 표 안에만 두며, 한글 표처럼 하기는 손댄 표로 치지 않는다."""
+    return number_set is not None and continued.get(unit_id) == number_set
+
+
 def is_number_fixed(unit: NumberedUnit) -> bool:
     """사람이 읽은 값과 다르게 고친 번호인가 — 결과물 A 위치 칸이 읽은 값을 함께 적는다."""
     return get_number_note(unit) is not None
@@ -451,4 +458,120 @@ def plan_follow(numbers: Sequence[str | None], index: int, new: str) -> dict[int
             changes[position] = number
         if not any(group.is_open for group in lists):
             break
+    return changes
+
+
+def plan_pull(numbers: Sequence[str | None], kept: int, absorbed: Sequence[str]) -> dict[int, str]:
+    """합쳐 사라진 번호 뒤를 당긴다(11-23 명세 D1-R6) — numbers는 같은 목록 후보(사라진 줄은 뺌, 문서 순서), kept는 남은 줄, absorbed는
+    사라진 줄의 번호. 사라진 번호 가운데 남은 줄과 같은 수준 · 같은 부모인 것이 없으면 빈 결과. 남은 줄 바로 뒤에 이어진 사라진 줄의 아래
+    줄(5.3.1)은 남은 줄 아래로(5.2.1), 나머지는 plan_follow(numbers, kept, numbers[kept])가 차례로 당긴다. 바뀌는 줄만 돌려준다."""
+    kept_parts = _split_parts(numbers[kept] or "")
+    if kept_parts is None:
+        return {}
+    gone = [
+        normalize_number(number) for number in absorbed
+        if (parts := _split_parts(number)) is not None and len(parts) == len(kept_parts) and parts[:-1] == kept_parts[:-1]
+    ]
+    if not gone:
+        return {}
+    head = normalize_number(numbers[kept] or "")
+    moved = list(numbers)
+    for position in range(kept + 1, len(numbers)):
+        number = numbers[position]
+        if number is None:
+            continue
+        prefix = next((old for old in gone if normalize_number(number).startswith(old + ".")), None)
+        if prefix is None:
+            break
+        moved[position] = head + number.strip()[len(prefix):]
+    changes = {position: number for position, number in enumerate(moved) if number != numbers[position]}
+    changes.update(plan_follow(moved, kept, moved[kept] or ""))
+    return {position: number for position, number in sorted(changes.items()) if number != numbers[position]}
+
+
+@dataclass(frozen=True)
+class FlowLine:
+    """번호 흐름의 줄 하나(원문 차례) — 벗긴 표 번호 잇기(plan_continue)가 본다. number는 번호 칸 값(get_number), table_id는 벗긴 표
+    덩이 안이면 그 표(unwrap_order.find_line_table), 표 밖(띠 표 제목 줄 포함)이면 None. is_cell은 사람이 고치지 않은 숫자 칸 번호이고
+    그 칸이 행에서 글이 있는 첫 칸인가(값 칸 "농도 | 5 | %"의 5는 아니다)."""
+
+    number: str | None
+    lang: str
+    kind: str
+    table_id: int | None = None
+    is_cell: bool = False
+
+
+def find_parent_number(lines: Sequence[FlowLine], index: int) -> str | None:
+    """index번째 줄의 위 번호(11-23 명세 D1-R2) — 앞의 같은 언어 · 표 밖 숫자 번호 줄 가운데 마지막 줄. 그 줄이 제목이거나 한 마디면
+    그 번호, 본문 번호(5.1)의 부모 번호(5)가 앞에 있으면 부모, 아니면 그 번호(5가 없는 문서의 5.2). "1)" · 점 기호 · 직접 번호는
+    숫자 번호가 아니라 건너뛴다. 없으면 None. 끝 점은 뗀다. 프런트 continue-number-model findParentNumber가 사본이다."""
+    lang = lines[index].lang
+    outside = [
+        (normalize_number(line.number), line.kind) for line in lines[:index]
+        if line.number and line.lang == lang and line.table_id is None and get_section_level(line.number) > 0
+    ]
+    if not outside:
+        return None
+    last, kind = outside[-1]
+    head = last.rpartition(".")[0]
+    if kind == SECTION_KIND or not head:
+        return last
+    return head if any(number == head for number, _ in outside) else last
+
+
+def _count_children(lines: Iterable[FlowLine], lang: str, parent: str) -> int:
+    """lines 가운데 같은 언어의 parent.k 꼴 번호의 가장 큰 k — 없으면 0."""
+    prefix = parent + "."
+    counts = [
+        int(rest) for line in lines
+        if line.number and line.lang == lang
+        for rest in [normalize_number(line.number).removeprefix(prefix)]
+        if normalize_number(line.number).startswith(prefix) and rest.isascii() and rest.isdigit()
+    ]
+    return max(counts, default=0)
+
+
+def plan_continue(lines: Sequence[FlowLine], table_id: int) -> dict[int, str]:
+    """벗긴 표(table_id)의 숫자 칸 번호를 위 번호 아래로 잇는다(11-23 명세 D1-R1~R4) — 자리 → 새 번호, 바뀌는 줄만.
+
+    표의 줄을 원문 차례로 보며 is_cell이고 숫자 번호인 줄만 — 한 마디("1")면 위 번호(find_parent_number) 아래 다음 순번(5.1), 여러
+    마디("1.1")면 앞머리가 직전 한 마디 줄의 옛 번호일 때 그 줄의 새 번호로 앞머리만 바꾸고(5.1.1), 이미 "위 번호."로 시작하면 그대로.
+    순번은 표 앞의 같은 언어 줄(표 안팎 모두 — 같은 제목 아래 앞 표 5.1–5.3 · 본문 5.1) 가운데 가장 큰 자식 순번 다음부터다(D1-R3).
+    언어마다 따로 센다(한/영 번갈아 · 따로 문서 모두 제 언어 줄의 번호를 본다). 끝 점은 칸이 읽은 번호를 따른다. 위 번호가 없으면 그대로.
+    프런트 continue-number-model planContinue가 사본이다(rule-cases.json).
+    """
+    first = next((index for index, line in enumerate(lines) if line.table_id == table_id), None)
+    if first is None:
+        return {}
+    counts: dict[tuple[str, str], int] = {}
+    last_single: dict[str, tuple[str, str]] = {}  # 언어 → 직전 한 마디 칸의 (옛 번호, 새 번호)
+    changes: dict[int, str] = {}
+    for index in range(first, len(lines)):
+        line = lines[index]
+        if line.table_id != table_id or not line.is_cell or not line.number or get_section_level(line.number) == 0:
+            continue
+        parent = find_parent_number(lines, index)
+        if parent is None:
+            continue
+        number = line.number.strip()
+        body = normalize_number(number)
+        if body.startswith(parent + "."):
+            continue
+        head, _, rest = body.partition(".")
+        if not rest:
+            key = (line.lang, parent)
+            if key not in counts:
+                counts[key] = _count_children(lines[:first], line.lang, parent)
+            counts[key] += 1
+            new = f"{parent}.{counts[key]}"
+            last_single[line.lang] = (head, new)
+            changed = new + number[len(body):]
+        else:
+            single = last_single.get(line.lang)
+            if single is None or single[0] != head:
+                continue
+            changed = single[1] + number[len(head):]
+        if changed != line.number:
+            changes[index] = changed
     return changes

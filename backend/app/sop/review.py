@@ -50,9 +50,16 @@ class Readiness(BaseModel):
 # --- 막는 이유와 알림 ---
 
 
-def _list_pending_blockers(subject: str, counts: Mapping[str, int], statuses: Iterable[str]) -> list[Issue]:
-    """확정 전 상태별 건수 — 코드는 {subject}_{상태}."""
-    return [{"code": f"{subject}_{status}", "count": counts[status]} for status in statuses if counts[status]]
+def _list_pending_blockers(
+    subject: str, counts: Mapping[str, int], statuses: Iterable[str], figures: Mapping[str, int] | None = None
+) -> list[Issue]:
+    """확정 전 상태별 건수 — 코드는 {subject}_{상태}. 그림이 들었으면 그 수를 figures로 함께 싣는다."""
+    return [
+        {"code": f"{subject}_{status}", "count": counts[status]}
+        | ({"figures": figures[status]} if figures and figures[status] else {})
+        for status in statuses
+        if counts[status]
+    ]
 
 
 def _count_target_statuses(snap: BundleSnapshot) -> Counter[str]:
@@ -106,7 +113,9 @@ def evaluate_readiness(
     """스냅숏과 질의 몇 개로 읽은 숫자만으로 조건을 가린다 — 순수 함수라 큰 묶음도 스레드에서 돈다."""
     facts = build_review_facts(snap)
     documents = snap.documents.values()
-    blockers = _list_pending_blockers("units", facts.row_status_counts, UNIT_PENDING_STATUSES)
+    blockers = _list_pending_blockers(
+        "units", facts.row_status_counts, UNIT_PENDING_STATUSES, facts.figure_status_counts
+    )
     blockers += _list_pending_blockers("targets", _count_target_statuses(snap), TARGET_PENDING_STATUSES)
 
     # 중복 배정의 사유도 판단 단위에 적힌다 — 판단 행이 없으면 사유도 없는 것이다(조회 경로가 KeyError로 죽지 않게)

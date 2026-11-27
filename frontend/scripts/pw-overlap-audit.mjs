@@ -1,5 +1,5 @@
 // 겹침 감사(Playwright + 시스템 Chrome) - 호버로 펼치거나 떠서 보이는 UI가 옆 글자·입력을 덮는지 잰다.
-// 모핑 단추(.mbtn — 라벨 폭은 px로 손으로 맞춘 값이라 번역이 길어지면 조용히 겹친다)·C 줄 끝 단추·Assign 그 자리 메뉴·상단 바 AI 작업 목록과 알림(요청 줄의 Background 표시 포함)·Assign 표·그림 머리 줄의 TABLE/FIGURE 표시.
+// 모핑 단추(.mbtn — 라벨 폭은 px로 손으로 맞춘 값이라 번역이 길어지면 조용히 겹친다)·C 줄 끝 단추·Assign 그 자리 메뉴·상단 바 AI 작업 목록과 알림(요청 줄의 Background 표시 포함)·Assign 표·그림 머리 줄의 TABLE/FIGURE 표시·Assign의 떼는 오른쪽 칸(1440px 미만 폭에서).
 // 전제: reset_db → seed_sop_demo 직후 backend 8777(DEV_ENFORCE_PERMISSIONS=true) + frontend 3777. DB를 바꾸지 않는다
 // (AI 목록과 알림은 /api/ai/jobs/recent 응답을 브라우저 안에서 바꿔 그린다).
 // 실행(frontend/ 에서): node scripts/pw-overlap-audit.mjs — 겹침이 하나라도 있으면 종료 코드 1, 그 화면은 ../.shots/overlap-*.png
@@ -65,17 +65,18 @@ async function findCovered(locator) {
   });
 }
 
-// 요소 안 글자가 제 상자를 넘치는지(잘려 보이는 라벨)와 화면 밖으로 나갔는지
-async function findSpill(locator) {
-  return locator.evaluate((el) => {
+// 요소 안 글자가 제 상자를 넘치는지(잘려 보이는 라벨)와 화면 밖으로 나갔는지. skip은 일부러 잘라 둔 자리(접힌 모핑 라벨 - 펼침은 올려서 재는 단추 감사의 몫)
+async function findSpill(locator, skip = null) {
+  return locator.evaluate((el, skipSelector) => {
     const box = el.getBoundingClientRect();
     const hits = [];
     if (box.left < 0 || box.top < 0 || box.right > window.innerWidth || box.bottom > window.innerHeight) hits.push("outside the viewport");
     for (const node of [el, ...el.querySelectorAll("*")]) {
+      if (skipSelector && node.matches(skipSelector)) continue;
       if (node.scrollWidth > node.clientWidth + 1 && getComputedStyle(node).overflowX !== "visible") hits.push(`clipped "${node.textContent.trim().slice(0, 30)}"`);
     }
     return hits;
-  });
+  }, skip);
 }
 
 // 펼치는 단추를 하나씩 올려 본다(앞 6개)
@@ -169,6 +170,7 @@ const findShownActs = (row) => row.locator(":scope > .c-acts:visible, :scope > .
 const readOpacity = (locator) => locator.evaluate((el) => Number(getComputedStyle(el).opacity));
 const outputsScene = {
   name: "outputs-c-rows",
+  drafting: true,
   user: "qa.member",
   run: async (page, report) => {
     // 줄 끝 단추는 3단계(Order) 화면에만 있다 - 결과 화면의 C는 읽기 전용
@@ -205,6 +207,7 @@ const outputsScene = {
 // 문서 끝 줄들 - 문서마다 끝까지 그린 뒤 마지막 세 줄에 올려, 단추가 글을 덮지 않고 스크롤 높이를 늘리지 않는지 본다(DB는 그대로)
 const outputsEndRowsScene = {
   name: "outputs-c-end-rows",
+  drafting: true,
   user: "qa.member",
   run: async (page, report) => {
     await page.goto(`${BASE}/bundles/${BUNDLE}/order`);
@@ -241,14 +244,14 @@ const outputsEndRowsScene = {
 };
 
 // 반환 { hits, linked } - linked가 0이면 잴 줄이 없었다는 뜻이라 통과로 치지 않는다
-// 메뉴 상자가 잇고 있는 두 줄(누른 New 줄과 짝 Old 줄)의 글 상자를 덮는가 - 떠 있는 메뉴가 아래 다른 글을 가리는 것은 괜찮지만 이 두 줄은 안 된다
+// 단추 줄이 잇고 있는 두 줄(누른 New 줄과 고른 Old 줄)의 글 상자를 덮는가 - 이 두 줄은 가리면 안 된다
 async function findCoveringLinkedLines(page, menu) {
   const box = await menu.boundingBox();
   return page.evaluate((m) => {
     const hit = (r) => r.width > 0 && r.height > 0 && Math.min(r.right, m.x + m.width) - Math.max(r.left, m.x) > 1 && Math.min(r.bottom, m.y + m.height) - Math.max(r.top, m.y) > 1;
     const hits = [];
-    const menuEl = document.querySelector('[data-testid="assign-link-menu"]');
-    // 누른 New 문단 상자 안에 단추 줄로 든 메뉴(inline, 사용자 결정 2026-11-19)는 그 상자를 늘려 글 아래에 앉는다 - 그 줄은 상자 대신 메뉴 밖 글자 자리와 견준다
+    const menuEl = document.querySelector('[data-testid="assign-pick-bar"]');
+    // 단추 줄은 마지막에 누른 New 박스 안에 들어 그 상자를 늘려 글 아래에 앉는다(쪼개기 먼저 §8) - 그 줄은 상자 대신 단추 줄 밖 글자 자리와 견준다
     const readTextRects = (line) => {
       const rects = [];
       const walker = document.createTreeWalker(line, NodeFilter.SHOW_TEXT);
@@ -261,44 +264,53 @@ async function findCoveringLinkedLines(page, menu) {
       return rects;
     };
     // New 줄은 줄 상자 전체(마지막 글줄이 짧아도 그 줄의 자리), Old 줄은 글줄마다
-    for (const line of document.querySelectorAll('[data-testid="assign-new"] .new-line[data-state="focus"], [data-testid="assign-new"] .new-line[data-state="picked"]')) {
+    // 고른 New 박스(data-sel) · 그 줄의 간 곳(data-state="picked") · 출처 없는 New에서 고른 것(focus)
+    for (const line of document.querySelectorAll('[data-testid="assign-new"] .new-line[data-sel], [data-testid="assign-new"] .new-line[data-state="focus"], [data-testid="assign-new"] .new-line[data-state="picked"]')) {
       const isHost = menuEl !== null && line.contains(menuEl);
       if (isHost ? readTextRects(line).some(hit) : hit(line.getBoundingClientRect())) hits.push(`New line "${line.textContent.trim().slice(0, 30)}"`);
     }
     for (const line of document.querySelectorAll('[data-testid="assign-old"] .su[data-sel]')) {
       if ([...line.getClientRects()].some(hit)) hits.push(`Old line "${line.textContent.trim().slice(0, 30)}"`);
     }
-    const linked = document.querySelectorAll('[data-testid="assign-new"] .new-line[data-state="focus"], [data-testid="assign-new"] .new-line[data-state="picked"], [data-testid="assign-old"] .su[data-sel]').length;
+    const linked = document.querySelectorAll('[data-testid="assign-new"] .new-line[data-sel], [data-testid="assign-new"] .new-line[data-state="focus"], [data-testid="assign-new"] .new-line[data-state="picked"], [data-testid="assign-old"] .su[data-sel]').length;
     return { hits, linked };
   }, box);
 }
 
-// Assign 그 자리 메뉴 - 떠 있는 메뉴라 아래 글을 가리는 것은 맞다. 대신 화면 안에 있고 라벨이 잘리지 않아야 한다.
-// 줄을 고르고 열어 둔 New 문서의 문장을 눌러 연다(고르기만 하고 저장하지 않으며 Esc로 닫는다)
+// Assign 박스 아래 단추 줄(쪼개기 먼저 §8, 옛 그 자리 메뉴의 자리) - 화면 안에 있고 라벨이 잘리지 않으며 잇고 있는 두 줄의 글을 가리지 않아야 한다.
+// 줄을 고르고 열어 둔 New 문서의 후보 문장을 눌러 띄운다(고르기만 하고 저장하지 않으며 Esc로 New 고름을 놓는다)
 const linkMenuScene = {
-  name: "assign-link-menu",
+  name: "assign-pick-bar",
   user: "qa.member",
   run: async (page, report) => {
     await page.goto(`${BASE}/bundles/${BUNDLE}/assign`);
     await page.locator('[data-testid="assign-bar"]').waitFor({ timeout: T });
     await page.locator('[data-testid="assign-filter-unassigned"]').click();
     await page.locator('[data-testid="assign-new"] .new-line').first().waitFor({ timeout: T });
-    // 같은 언어 New 후보(점선)가 있는 줄까지 옮긴다 - 다른 언어 문장은 고를 수 없어 메뉴가 뜨지 않는다
-    const candidate = page.locator('[data-testid="assign-new"] .new-line[data-state="candidate"] .new-hit');
+    // New 후보(점선)가 있는 줄까지 옮긴다 - 후보를 누르면 그 Old 줄과 양쪽이 골라져 단추 줄에 잇기가 선다
+    const candidate = page.locator('[data-testid="assign-new"] .new-line[data-state="candidate"] .new-text');
     for (let step = 0; step < 40 && (await candidate.count()) === 0; step += 1) {
       await page.keyboard.press("j");
       await page.waitForTimeout(400);
     }
     await candidate.first().scrollIntoViewIfNeeded();
     await candidate.first().click();
-    const menu = page.locator('[data-testid="assign-link-menu"]');
-    await page.locator('[data-testid^="assign-link-menu-"][role="menuitem"]').first().waitFor({ state: "visible", timeout: T });
+    const menu = page.locator('[data-testid="assign-pick-bar"]');
+    await page.locator('[data-testid="assign-pick-bar-link"]').waitFor({ state: "visible", timeout: T });
     await page.waitForTimeout(HOVER_SETTLE_MS);
-    const spill = await findSpill(menu);
-    if (spill.length > 0) report("assign-link-menu", spill.join(", "));
+    const spill = await findSpill(menu, ".mbtn-label");
+    if (spill.length > 0) report("assign-pick-bar", spill.join(", "));
+    // 접힌 이름은 일부러 폭 0이라 위에서 빼지만, 보이는 이름(불투명)은 잘리면 안 되고 접는 칸(.pick-tools)도 넘치면 안 된다 - 그러면 접는 폭(components.css)이 글보다 좁다
+    const fold = await menu.evaluate((el) => {
+      const cut = [...el.querySelectorAll(".mbtn-label")].filter((label) => getComputedStyle(label).opacity === "1" && label.scrollWidth > label.clientWidth + 1).map((label) => label.textContent.trim());
+      const group = el.querySelector(".pick-tools");
+      return { cut, over: group !== null && group.scrollWidth > group.clientWidth + 1 ? `${group.scrollWidth} > ${group.clientWidth}` : null };
+    });
+    if (fold.cut.length > 0) report("assign-pick-bar shown label clipped", fold.cut.join(", "));
+    if (fold.over !== null) report("assign-pick-bar tools overflow", fold.over);
     const covering = await findCoveringLinkedLines(page, menu);
-    if (covering.linked === 0) report("assign-link-menu covers linked lines", "no linked lines were measured");
-    if (covering.hits.length > 0) report("assign-link-menu covers linked lines", covering.hits.join(", "));
+    if (covering.linked === 0) report("assign-pick-bar covers linked lines", "no linked lines were measured");
+    if (covering.hits.length > 0) report("assign-pick-bar covers linked lines", covering.hits.join(", "));
     await page.keyboard.press("Escape");
   },
 };
@@ -375,6 +387,7 @@ const aiJobsScene = {
 // C 순서 바꾸기 - 화면에 먼저 옮긴 줄의 끝 단추도 글을 덮지 않아야 한다. 저장(PUT)은 붙잡아 두었다가 실패로 돌려 DB를 바꾸지 않는다
 const outputsReorderScene = {
   name: "outputs-c-reorder",
+  drafting: true,
   user: "qa.member",
   run: async (page, report) => {
     let release = null;
@@ -417,8 +430,8 @@ const exportPreviewScene = {
     await page.locator('[data-testid="outputs-export-open"]').click();
     await page.locator('[data-testid="export-preview-sheet"] tbody tr').first().waitFor({ timeout: T });
     const tabs = await page.locator('[data-testid^="export-preview-tab-"]').all();
-    // 시트 다섯 장 - A·B·C·Info·Documents
-    if (tabs.length !== 5) report("export-preview tabs", `${tabs.length} tabs`);
+    // 시트 네 장 - A·B·Info·Documents(C는 숨겨 두었다)
+    if (tabs.length !== 4) report("export-preview tabs", `${tabs.length} tabs`);
     for (const tab of tabs) {
       const { hits, width } = await findCovered(tab);
       if (hits.length > 0) report(`${await tab.getAttribute("data-testid")} (${width}px)`, hits.join(", "));
@@ -486,6 +499,7 @@ const oldRowActsScene = makeRowActsScene("documents-row-acts", "documents-list",
 // 엮은 문서 미리 보기(아직 안 쓴 SOP)의 칸 제목 출처 - 칸 이름 뒤에서 말줄임하고 칸 이름을 덮지 않는다. 출처 글은 응답에 넣어 길게 그린다(DB는 그대로)
 const composedHeadingScene = {
   name: "assign-new-heading-note",
+  drafting: true,
   user: "qa.member",
   run: async (page, report) => {
     const note = `← ${Array.from({ length: 14 }, (_, i) => `OLD-${i + 1} §${i + 5}`).join(", ")}`;
@@ -569,7 +583,127 @@ const bundleHeadScene = {
   },
 };
 
-const scenes = [...mbtnScenes, tobeRowActsScene, oldRowActsScene, outputsScene, outputsEndRowsScene, outputsReorderScene, exportPreviewScene, composedHeadingScene, linkMenuScene, aiJobsScene, bundleHeadScene].filter((scene) => !only || only.includes(scene.name));
+// 표 칸 우클릭 메뉴(11-23 명세 C2) - 이 칸 · 이 표 두 구역이 화면 안에 있고 구역 머리 · 항목 글이 잘리지 않는다.
+// 표 칸이 있는 Old 문서를 ?edit=로 열어 칸을 우클릭만 한다(고르기만 하고 저장하지 않는다)
+const cellMenuScene = {
+  name: "assign-cell-menu",
+  user: "qa.member",
+  run: async (page, report) => {
+    const documents = await (await page.request.get(`${BASE}/api/bundles/${BUNDLE}/documents`, { headers: { "X-Dev-User": "qa.member" } })).json();
+    let cell = null;
+    for (const doc of documents) {
+      await page.goto(`${BASE}/bundles/${BUNDLE}/assign?edit=${doc.id}`);
+      await page.locator('[data-testid="assign-bar"]').waitFor({ timeout: T });
+      await page.waitForTimeout(800);
+      cell = page.locator('[data-testid="assign-old"] .cell-piece [data-testid^="assign-paper-unit-"]').first();
+      if ((await cell.count()) > 0) break;
+      cell = null;
+    }
+    if (cell === null) {
+      report("assign-cell-menu", "no document with a table cell");
+      return;
+    }
+    await cell.scrollIntoViewIfNeeded();
+    await cell.click({ button: "right" });
+    const menu = page.locator('[data-testid="assign-ctx-menu"]');
+    await menu.waitFor({ timeout: T });
+    await page.waitForTimeout(HOVER_SETTLE_MS);
+    if ((await page.locator('[data-testid="assign-ctx-section-cell"]').count()) === 0 || (await page.locator('[data-testid="assign-ctx-section-table"]').count()) === 0) report("assign-cell-menu", "the menu has no this-cell / this-table sections");
+    const hits = await findSpill(menu);
+    if (hits.length > 0) report("assign-cell-menu", hits.join(", "));
+    await page.keyboard.press("Escape");
+  },
+};
+
+// 떼는 오른쪽 칸(좁은 창) - 떠 있는 판이라 아래 글을 가리는 것은 맞다. 대신 붙어 있을 때 떼기 단추가 머리 글을 덮지 않고, 뜬 판은 펼치든 접든 화면 안에 있고,
+// 머리의 제목과 단추가 겹치지 않고, 내용이 320px에서 옆으로 넘치지 않고, 끝까지 굴린 문서의 마지막 줄이 판 위로 올라와야 한다. 1440px 이상이면 단추가 없어야 한다
+const sideFloatScene = {
+  name: "assign-side-float",
+  user: "qa.member",
+  run: async (page, report) => {
+    await page.goto(`${BASE}/bundles/${BUNDLE}/assign`);
+    await page.locator('[data-testid="assign-bar"]').waitFor({ timeout: T });
+    await page.locator('[data-testid="assign-new"] .new-line').first().waitFor({ timeout: T });
+    await page.keyboard.press("j");
+    await page.locator('[data-testid="assign-row-id"]').waitFor({ timeout: T });
+    const detach = page.locator('[data-testid="assign-side-detach"]');
+    if (page.viewportSize().width >= 1440) {
+      if ((await detach.count()) > 0) report("assign-side-detach", "shown at 1440px or wider");
+      return;
+    }
+    if (LONG) await page.locator('[data-testid="assign-row-id"]').evaluate((el) => { el.textContent = "SYNTHETIC-LONG-DOCUMENT-CODE-0001-1-001 · SYNTHETIC-LONG-DOCUMENT-CODE-0001-1-002"; });
+    const { hits, width } = await findCovered(detach);
+    if (hits.length > 0) report(`assign-side-detach (${width}px)`, hits.join(", "));
+    await detach.click();
+    await page.locator('[data-testid="assign-side-head"]').waitFor({ timeout: T });
+    await page.mouse.move(0, 0);
+    await page.waitForTimeout(HOVER_SETTLE_MS);
+    const readFloat = () => page.evaluate(() => {
+      const side = document.querySelector('[data-testid="assign-inspector"]');
+      const box = side.getBoundingClientRect();
+      const problems = [];
+      if (box.left < 0 || box.top < 0 || box.right > window.innerWidth || box.bottom > window.innerHeight) problems.push("outside the viewport");
+      const parts = [...side.querySelectorAll(".side-float-head > *")].map((el) => el.getBoundingClientRect());
+      for (let i = 1; i < parts.length; i += 1) if (parts[i].left < parts[i - 1].right - 1) problems.push("head parts overlap");
+      for (const el of [side, ...side.querySelectorAll(".side-float-head, .side-float-title, .assign-side-body, .assign-side-head, .assign-pick, .assign-decide, .assign-decide-body, .help-panel")]) {
+        if (el.scrollWidth > el.clientWidth + 1) problems.push(`${el.className} is ${el.scrollWidth - el.clientWidth}px too wide`);
+      }
+      return { problems, top: box.top };
+    });
+    const open = await readFloat();
+    if (open.problems.length > 0) report("assign-inspector floating", open.problems.join(", "));
+    // 점진 그리기라 높이가 멎을 때까지 끝으로 굴린다
+    const body = page.locator('[data-testid="assign-new"] .pane-body');
+    for (let step = 0, last = -1; step < 30; step += 1) {
+      const height = await body.evaluate((el) => { el.scrollTop = el.scrollHeight; return el.scrollHeight; });
+      await page.waitForTimeout(250);
+      if (height === last) break;
+      last = height;
+    }
+    const bottom = await page.locator('[data-testid="assign-new"] .new-line').last().evaluate((el) => el.getBoundingClientRect().bottom);
+    if (bottom > open.top + 1) report("last New line", `stays ${Math.round(bottom - open.top)}px under the panel at the end of the document`);
+    await page.locator('[data-testid="assign-side-fold"]').click();
+    const folded = await readFloat();
+    if (folded.problems.length > 0) report("assign-inspector folded", folded.problems.join(", "));
+  },
+};
+
+// 연습 화면 Assign 양 단 머리 줄 - 문서가 하나뿐인 칸의 긴 파일 이름이 확대 단추 등 머리 줄의 자식을 제 칸 밖으로 밀거나 옆 칸 자식과 겹치지 않는다(1120 폭. 오른쪽 과제 칸은 말풍선으로 바뀌어 없다)
+const panesHeadScene = {
+  name: "assign-pane-head-narrow",
+  user: "qa.member",
+  run: async (page, report) => {
+    await page.setViewportSize({ width: 1120, height: 900 });
+    await page.goto(`${BASE}/practice`);
+    await page.locator('[data-testid="assign-old"]').waitFor({ timeout: T });
+    await page.waitForTimeout(800);
+    const boxes = await page.evaluate(() => {
+      const out = [];
+      for (const pane of ["old", "new"]) {
+        const head = document.querySelector(`[data-testid="assign-${pane}"] > .pane-head`);
+        if (!head) continue;
+        const hb = head.getBoundingClientRect();
+        for (const child of head.children) {
+          const r = child.getBoundingClientRect();
+          if (r.width === 0 || getComputedStyle(child).visibility === "hidden") continue;
+          out.push({ pane, name: child.getAttribute("data-testid") ?? child.className, left: r.left, right: r.right, headLeft: hb.left, headRight: hb.right });
+        }
+      }
+      return out;
+    });
+    if (boxes.length === 0) report("assign-pane-head-narrow", "no pane head found");
+    for (const b of boxes) {
+      if (b.right > b.headRight + 1 || b.left < b.headLeft - 1) report(`${b.pane} head child ${b.name}`, `outside its head (${Math.round(b.left)}-${Math.round(b.right)} vs ${Math.round(b.headLeft)}-${Math.round(b.headRight)})`);
+    }
+    for (const a of boxes.filter((x) => x.pane === "old")) {
+      for (const b of boxes.filter((x) => x.pane === "new")) {
+        if (a.right > b.left + 1 && b.right > a.left + 1) report("old/new head children", `${a.name} overlaps ${b.name}`);
+      }
+    }
+  },
+};
+
+const scenes = [...mbtnScenes, tobeRowActsScene, oldRowActsScene, outputsScene, outputsEndRowsScene, outputsReorderScene, exportPreviewScene, composedHeadingScene, linkMenuScene, sideFloatScene, aiJobsScene, bundleHeadScene, cellMenuScene, panesHeadScene].filter((scene) => !only || only.includes(scene.name));
 const browser = await chromium.launch({ executablePath: CHROME, headless: true });
 let problems = 0;
 let runs = 0;
@@ -578,12 +712,14 @@ for (const scene of scenes) {
     for (const lang of langs) {
       for (const theme of themes) {
         const ctx = await browser.newContext({ viewport: { width, height: 900 }, deviceScaleFactor: 1 });
-        await ctx.addInitScript(({ user, lang, theme }) => {
+        await ctx.addInitScript(({ user, lang, theme, drafting }) => {
           if (location.protocol === "about:") return;
           localStorage.setItem("sopa.devUser", user);
           localStorage.setItem("sopa.lang", lang);
           localStorage.setItem("sopa.theme", theme);
-        }, { user: scene.user, lang, theme });
+          // 숨긴 기능(새 문서를 만드는 쪽)의 장면만 켠다 - 나머지는 실사용 화면 그대로
+          if (drafting) localStorage.setItem("sopa.drafting", "1");
+        }, { user: scene.user, lang, theme, drafting: scene.drafting === true });
         const page = await ctx.newPage();
         const tag = `${scene.name} ${width} ${lang} ${theme}${LONG ? " long" : ""}`;
         const found = [];

@@ -2,7 +2,7 @@
 
 SOP Restructuring T/F가 쓰는 사내 AI 에이전트 웹 서비스 (FastAPI + Next.js, 사내 서버에 docker compose로 배포). 사용자는 전 부서의 SOP 담당자다.
 
-현재 **v1.5.0**(2026-11-21 정식 업데이트, 버전별 변경은 [`CHANGELOG.md`](CHANGELOG.md)). 기반 세팅(**사내 로그인(Keycloak)·직원 디렉터리(HR 웹훅 동기화)·사내 AI 연결·표 기반 권한 체계·관리 화면·DB 자동 백업**) 위에 SOP 재구성의 결정적 코어와 AI 제안 층을 얹었다. 옛 SOP·WI를 묶음으로 올리면(DOCX 기본, 텍스트 PDF 보조) 원문을 빠짐없이 추출해 문장 단위로 쪼개고(Split), 작성자가 Unit마다 새 SOP·WI의 칸(회사 템플릿 1–9장)이나 이미 쓴 새 문서의 문장으로 보내 확정한다(Assign — 끌어다 놓기·표 풀기·되돌리기 포함, 순서와 깊이는 Order). 확정 결과로 결과물 A(문장 비교)·B(맵핑 흐름)·C(새 문서 기준 묶음)를 코드가 한 벌로 계산해 Excel(미리보기 포함)로 내보내고 검토를 요청한다. AI는 작성자가 요청할 때 제안만 하고(칸·고쳐 쓰기·번역·짝·나누기) 사람이 줄마다 확정하며, AI가 꺼지거나 실패해도 사람 경로는 그대로 돈다. AI 층은 합성 SOP와 가짜 AI로만 검증했고 실제 사내 모델·실제 SOP로는 아직 시험하지 않았다. 사용법은 앱 안의 사용 설명서(`/manual`, 글은 [`frontend/public/manual/user-manual.md`](frontend/public/manual/user-manual.md))에 있다. 설계: [`docs/superpowers/specs/2026-11-05-sop-restructuring-e2e-design.md`](docs/superpowers/specs/2026-11-05-sop-restructuring-e2e-design.md).
+현재 **v1.6.50**(2026-11-27 정식 업데이트, 버전별 변경은 [`CHANGELOG.md`](CHANGELOG.md)). 기반 세팅(**사내 로그인(Keycloak)·직원 디렉터리(HR 웹훅 동기화)·사내 AI 연결·표 기반 권한 체계·관리 화면·DB 자동 백업**) 위에 SOP 재구성의 결정적 코어와 AI 제안 층을 얹었다. 옛 SOP·WI를 묶음으로 올리면(DOCX 기본, 텍스트 PDF 보조) 원문을 빠짐없이 추출해 문장 단위로 쪼개고(Split), 작성자가 Unit마다 새 SOP·WI의 칸(회사 템플릿 1–9장)이나 이미 쓴 새 문서의 문장으로 보내 확정한다(Assign — 끌어다 놓기·표 풀기·되돌리기 포함, 순서와 깊이는 Order). 확정 결과로 결과물 A(문장 비교)·B(맵핑 흐름)·C(새 문서 기준 묶음)를 코드가 한 벌로 계산해 Excel(미리보기 포함)로 내보내고 검토를 요청한다. AI는 작성자가 요청할 때 제안만 하고(칸·고쳐 쓰기·번역·짝·나누기) 사람이 줄마다 확정하며, AI가 꺼지거나 실패해도 사람 경로는 그대로 돈다. AI 층은 합성 SOP와 가짜 AI로만 검증했고 실제 사내 모델·실제 SOP로는 아직 시험하지 않았다. 사용법은 앱 안의 사용 설명서(`/manual`, 글은 [`frontend/public/manual/user-manual.md`](frontend/public/manual/user-manual.md))에 있다. 설계: [`docs/superpowers/specs/2026-11-05-sop-restructuring-e2e-design.md`](docs/superpowers/specs/2026-11-05-sop-restructuring-e2e-design.md).
 
 ## 로컬 실행 (Docker 없이)
 
@@ -93,5 +93,5 @@ docker-compose.yml   # proxy · frontend · backend · db · db-backup
 - 문서 인덱스: [`docs/README.md`](docs/README.md)
 - 설계 명세: [`SOP 재구성 End-to-End 설계`](docs/superpowers/specs/2026-11-05-sop-restructuring-e2e-design.md)(제품), [`기반 세팅 설계`](docs/superpowers/specs/2026-11-04-sop-archivist-baseline-design.md)
 - 파싱 의존성·메모리 실측: [`docs/qa/2026-11-sop-parse-dependencies.md`](docs/qa/2026-11-sop-parse-dependencies.md), 프런트 디자인 기초: [`frontend/docs/design/2026-11-07-frontend-design-foundations.md`](frontend/docs/design/2026-11-07-frontend-design-foundations.md)
-- 구현 계획 2(AI 제안 층, 프런트 병행용 API 계약 포함): [`docs/superpowers/plans/2026-11-06-sop-restructuring-plan2-ai.md`](docs/superpowers/plans/2026-11-06-sop-restructuring-plan2-ai.md)
+- 프런트와 맞춘 AI API 계약: [`docs/architecture/api-contract.md`](docs/architecture/api-contract.md), 끝난 기능 설계에서 아직 인용되는 부분: [`docs/architecture/decisions.md`](docs/architecture/decisions.md)
 - 작업 가이드(명령·구조·체크리스트): [`CLAUDE.md`](CLAUDE.md)(backend·frontend 세부는 [`backend/CLAUDE.md`](backend/CLAUDE.md)·[`frontend/CLAUDE.md`](frontend/CLAUDE.md)), 변경 기록: [`CHANGELOG.md`](CHANGELOG.md), 진행 현황: [`PROGRESS.md`](PROGRESS.md)

@@ -1,6 +1,6 @@
 // 짝 카드 안 순서(units.pair_seq, 편집 reorder_pair) - 용지 카드 그리기 · 결정 칸 Shape 줄 · 손잡이 끌기가 같은 순서를 쓴다.
 // orderPairCard는 서버 backend/app/sop/pair_order.py order_pair_card의 사본이다(문단 Excel이 같은 순서를 쓴다) - 규칙을 바꾸면 함께 고친다.
-// 설계: docs/superpowers/specs/2026-11-20-assign-mockup1-design.md D8
+// 설계: 2026-11-20-assign-mockup1 D8 (docs/architecture/decisions.md)
 
 /**
  * 원문 순서의 카드 구성원 → 카드 안 순서. 모두가 pair_seq를 갖고 겹치지 않을 때만 그 순서이고, 아니면(바꾼 적 없음 · 새 구성원이 들었음 ·

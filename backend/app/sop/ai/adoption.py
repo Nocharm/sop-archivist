@@ -29,7 +29,7 @@ Place = tuple[int | None, str | None, int | None, str | None]  # (새 문서, �
 
 _MATCH_KIND = "match"
 # 이어진 판단·새 문장·짝이 없어 저장이 채택을 정하지 않는다 — 사람이 직접 남긴다(record_manual_adoption). 순서 바꾸기도 편집 길이라 나누기와 같다
-_MANUAL_KINDS = ("split", "unwrap_order")
+_MANUAL_KINDS = ("split", "unwrap_order", "table_follow")
 # 저장과 견줄 수 있는 종류 — classify는 content의 처분·자리·고쳐 쓴 글, translate는 새 문장의 ai_text, match는 content의 출처와 견준다
 _JUDGED_KINDS = ("classify", "translate", _MATCH_KIND)
 _NO_TEXT_KINDS = (*TABLE_UNIT_KINDS, "figure")  # 새 문장에 글자가 없는 단위
@@ -387,7 +387,7 @@ async def load_adoption_stats(session: AsyncSession, bundle_id: int) -> dict[str
 
     applied는 지금 살아 있는 제안이고, 채택은 밀린 제안(보류한 짝)에 기록돼도 사람의 결정이라 함께 센다. pending은 사람이 아직
     정할 수 있는 제안뿐이다 — 판단·새 문장·짝이 가리키는 제안과, 분류·묶기는 받기 전이라 아무것도 가리키지 않아 단위·새 문장이
-    모두 아직 미배정인 제안이다. 단위가 편집으로 은퇴하거나 사람이 제안을 받지 않고 정한 제안은 영영 줄지 않는 대기가 되니 세지 않는다.
+    모두 아직 미배정인 제안이다. 사람이 제안을 받지 않고 정한 제안과 편집이 은퇴시킨 단위의 제안(편집이 stale로 거둔다)은 영영 줄지 않는 대기가 되니 세지 않는다.
     나누기·순서 제안은 처음부터 이어진 행이 없어(나누면 단위가 은퇴하는 게 정상이다) 채택이 비어 있는 동안 늘 사람이 정할 몫이다.
     """
     is_linked = or_(

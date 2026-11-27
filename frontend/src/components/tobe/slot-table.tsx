@@ -2,7 +2,7 @@
 // 문장을 받지 않는 줄은 상태가 다르다 - 하위만 묶는 항목은 하위의 문장 수만(없으면 빈 자리), 앱이 채우는 목록은 그 설명만 있고 N/A 단추가 없다.
 // 사유 편집기는 화면에 하나다(ToBeSection의 naEdit) - Save N/A·Cancel로만 닫히고, 칸을 떠나거나 줄을 접어도 적던 사유는 남는다.
 // 표준에서 벗어나는 일(이름 바꾸기 · 빼기 · 되살리기 · 사용자 항목 더하기)도 같은 편집기(mode)와 줄 끝 아이콘 단추로 한다 - 표준과 다른 줄은 이름 옆 표시에 사유 툴팁.
-// 설계: docs/superpowers/specs/2026-11-17-documents-screen-design.md §8
+// 설계: 2026-11-17-documents-screen §8 (docs/architecture/decisions.md)
 "use client";
 
 import { Minus, Pencil, Plus } from "lucide-react";

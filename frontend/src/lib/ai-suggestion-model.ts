@@ -1,8 +1,23 @@
 // Assign의 AI 추천 - 살아 있는 제안(적용됐고 사람이 아직 받거나 버리지 않은 것)에서 줄의 추천 자리와 Use 초안을 만든다.
 // AI는 판단·New 문장을 쓰지 않는다 - 사람이 Use로 받으면 이 초안이 채워지고 확정은 사람의 Confirm이다(설계 2026-11-19-ai-suggest-only D1·D2).
 
-import type { AiSuggestion } from "./api-sop";
+import type { AiSuggestion, CoverStatus } from "./api-sop";
 import { getDestinationId, type Destination, type DestinationOption, type SentenceSlot } from "./classify-model";
+
+/** 새 문서를 만드는 쪽과 함께 숨긴 AI 종류(쪼개기 먼저 설계 §5 H4) - 이미 있는 제안도 화면 어디에도 내지 않는다. 행은 바꾸지 않는다 */
+export const HIDDEN_AI_KINDS: ReadonlySet<string> = new Set(["classify", "split", "translate", "tobe_list"]);
+
+/** 화면에 낼 제안 - 숨긴 동안 숨긴 종류를 뺀다. 켰으면 받은 목록 그대로 */
+export function dropHiddenSuggestions<T extends { kind: string }>(items: readonly T[], drafting: boolean): readonly T[] {
+  return drafting ? items : items.filter((item) => !HIDDEN_AI_KINDS.has(item.kind));
+}
+
+/** 더보기의 AI 요청 가운데 숨긴 종류를 부르는 것 - 문서 칸 추천, 번역 둘, 나누기 둘 */
+const HIDDEN_AI_ITEMS: ReadonlySet<string> = new Set(["document", "to-en", "to-ko", "split", "split-document"]);
+
+export function filterAiItems<T extends { key: string }>(items: readonly T[], drafting: boolean): readonly T[] {
+  return drafting ? items : items.filter((item) => !HIDDEN_AI_ITEMS.has(item.key));
+}
 
 /** 사람이 아직 받거나 버리지 않은 적용된 제안 */
 export function isLiveSuggestion(suggestion: AiSuggestion): boolean {
@@ -28,6 +43,22 @@ export function findRowSuggestion(unitIds: readonly number[], status: string, in
     if (item && (found === null || found.id < item.id)) found = item;
   }
   return found;
+}
+
+/**
+ * AI 제안 대기 - 살아 있는 제안 가운데 덮는 단위가 모두 안 정한 줄에 있는 것(서버 tidy._count_waiting과 같은 규칙, F3-R2).
+ * statusOfUnit은 단위 → 그 줄의 상태라 은퇴한 단위는 없다. Old 단위가 없는 신규 제안은 안 정한 줄이 없어 세지 않는다. documentId가 null이면 묶음 전체
+ */
+export function countWaitingSuggestions(items: readonly AiSuggestion[], statusOfUnit: ReadonlyMap<number, CoverStatus>, documentId: number | null): number {
+  return items.filter((item) => !HIDDEN_AI_KINDS.has(item.kind) && isOpenSuggestion(item, statusOfUnit, documentId)).length;
+}
+
+/** 살아 있고 덮는 단위가 모두 안 정한 줄에 있는 제안 - 대기 수와 알약 수락 수가 같은 거르기를 쓴다. documentId가 null이면 묶음 전체 */
+export function isOpenSuggestion(item: AiSuggestion, statusOfUnit: ReadonlyMap<number, CoverStatus>, documentId: number | null): boolean {
+  if (!isLiveSuggestion(item)) return false;
+  if (documentId !== null && item.document_id !== documentId) return false;
+  const unitIds = item.content.unit_ids ?? [];
+  return unitIds.length > 0 && unitIds.every((id) => statusOfUnit.get(id) === "unassigned");
 }
 
 const BUNDLE_SHAPES = ["table", "figure"];

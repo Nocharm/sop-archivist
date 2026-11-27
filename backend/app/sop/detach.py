@@ -10,7 +10,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.sop.constants import SLOT_HEADING, SYSTEM_HOLD_RELATED_CHANGED
 from app.sop.groups import collect_component, iter_chunks, select_in_chunks
-from app.sop.models import AiSuggestion, TargetSentence, TargetSource, Unit, UnitDecision, UnitDecisionHistory
+from app.sop.models import (
+    AiSuggestion, TargetSentence, TargetSource, Unit, UnitDecision, UnitDecisionHistory, UnitPairMember,
+)
 from app.sop.status import pick_row_status
 
 UNASSIGNED = "unassigned"
@@ -144,6 +146,30 @@ def list_bystander_units(sources: Mapping[int, Collection[int]], bystanders: Col
     return {unit_id for unit_id, target_ids in sourced.items() if target_ids <= set(bystanders)}
 
 
+async def _find_cell_bystanders(
+    session: AsyncSession,
+    targets: Mapping[int, TargetSentence],
+    changed: Collection[int],
+    affected_units: Collection[int],
+    decisions: Mapping[int, UnitDecision],
+) -> set[int]:
+    """find_cell_bystanders를 떼어 내기의 연결 요소에 — 번역의 출처도 읽는다. affected_units는 New 칸 쪽에서 떼는 이음의 Old 단위다.
+
+    그 가운데 표째 이은 Old 표의 칸이 있으면 구경꾼이 없다 — 칸의 판단은 그 표가 쥐고 있어, 표를 보류하지 않으면 칸 글이 말없이 빠진다.
+    """
+    translation_ids = [target.id for target in targets.values() if target.origin == ORIGIN_TRANSLATION]
+    bystanders = find_cell_bystanders(
+        targets.values(), changed, await load_source_target_ids(session, translation_ids)
+    )
+    if bystanders and affected_units:
+        groups = await select_in_chunks(
+            session, lambda chunk: select(Unit.group_unit_id).where(Unit.id.in_(chunk)), affected_units
+        )
+        if any(group_id in decisions and not is_unassigned(decisions[group_id]) for (group_id,) in groups):
+            return set()
+    return bystanders
+
+
 def _should_hold(target: TargetSentence) -> bool:
     """같은 관계 묶음의 나머지 중 보류할 새 문장 — 미배정은 뺀다.
 
@@ -272,6 +298,42 @@ async def find_units_needing_confirm(session: AsyncSession, unit_ids: Collection
     return sorted({row[0] for row in (*decided, *sourced, *translated, *carried)})
 
 
+async def count_new_table_links(session: AsyncSession, unit_ids: Collection[int]) -> tuple[int, int]:
+    """(이음이 풀릴 새 문장 수, 보류로 갈 Old 줄 수) — 아무것도 쓰지 않는다. New 표를 바꾸기 전에 묻는 창이 쓴다.
+
+    줄 수는 detach_targets가 보류로 둘 단위(같은 관계 묶음의 미배정이 아닌 판단)를 짝 · 묶음으로 접은 수다 — 칸 연결은 표
+    전체가 한 묶음이라 바꾸지 않은 형제 칸의 줄도 든다(서버가 실제로 그렇게 보류한다).
+    """
+    rows = await select_in_chunks(
+        session,
+        lambda chunk: select(TargetSentence.id, TargetSentence.kind).where(
+            TargetSentence.new_unit_id.in_(chunk), TargetSentence.origin == ORIGIN_NEW_DOC
+        ),
+        unit_ids,
+    )
+    target_ids = {row[0] for row in rows}
+    sourced = {
+        row[0] for row in await select_in_chunks(
+            session, lambda chunk: select(TargetSource.target_id).where(TargetSource.target_id.in_(chunk)), target_ids
+        )
+    }
+    linked = sum(1 for target_id, kind in rows if kind == "sentence" and target_id in sourced)
+    component_units, _ = await collect_component(session, unit_ids=(), target_ids=target_ids)
+    held = await select_in_chunks(
+        session,
+        lambda chunk: select(Unit.id, Unit.group_unit_id, UnitPairMember.pair_id)
+        .join(UnitDecision, UnitDecision.unit_id == Unit.id)
+        .outerjoin(UnitPairMember, UnitPairMember.unit_id == Unit.id)
+        .where(Unit.id.in_(chunk), UnitDecision.status != UNASSIGNED),
+        component_units,
+    )
+    lines = {
+        ("pair", pair_id) if pair_id is not None else ("group", group_id) if group_id is not None else ("unit", unit_id)
+        for unit_id, group_id, pair_id in held
+    }
+    return linked, len(lines)
+
+
 async def detach_units(
     session: AsyncSession,
     *,
@@ -377,11 +439,9 @@ async def detach_units(
     for target_id in emptied:
         reset_target(targets[target_id])
 
-    # 칸 하나를 뗀 것이면 표·형제 칸과 그 출처는 보류하지 않는다(find_cell_bystanders)
-    bystanders = find_cell_bystanders(
-        (target for target_id, target in targets.items() if target_id not in deleted), changed,
-        {target.id: source_id for target, source_id in translations.items()},
-    )
+    # 칸 하나를 뗀 것이면 표·형제 칸과 그 출처는 보류하지 않는다(find_cell_bystanders) — 은퇴하는 New 칸은 방금 지웠어도 바뀐 칸이다
+    unlinked = {unit_id for target_id in own_targets for unit_id in sources[target_id]} - touched
+    bystanders = await _find_cell_bystanders(session, targets, changed, unlinked, decisions)
     idle_units = list_bystander_units({target_id: sources[target_id] - touched for target_id in sources}, bystanders)
     held_unit_ids = [
         unit_id for unit_id in sorted(component_units - touched - idle_units)
@@ -407,12 +467,15 @@ async def detach_units(
     )
 
 
-async def detach_targets(session: AsyncSession, *, bundle_id: int, target_ids: Collection[int]) -> DetachReport:
+async def detach_targets(
+    session: AsyncSession, *, bundle_id: int, target_ids: Collection[int], is_regrouped: bool = True
+) -> DetachReport:
     """새 문장 쪽 떼어 내기(R32) — 출처 연결을 떼고 미배정이 아닌 것은 미배정으로, 같은 관계 묶음의 나머지는 보류. 커밋은 호출부가 한다.
 
     새 문서 칸 문장이 다른 표로 다시 묶이면 그 칸 새 문장은 새 부모 아래로 옮겨진다. 확정된 채 옮기면 표를 반만 확정한
     꼴이 되므로 미배정으로 돌리고, 이어져 있던 옛 단위·새 문장은 지우지 않고 사람이 다시 보게 보류로 둔다.
     그 새 문장들의 번역은 출처가 바뀌었으니 먼저 쓸어 낸다. 다른 칸의 AI 번역은 출처가 그대로라 그대로 둔다(_should_hold).
+    is_regrouped가 거짓이면(모양 전환 — 칸이 제 표에 그대로 있다) 표·형제 칸과 그 출처는 구경꾼이다(find_cell_bystanders).
     """
     given = set(target_ids)
     swept = await sweep_translations(session, bundle_id, given)
@@ -429,16 +492,31 @@ async def detach_targets(session: AsyncSession, *, bundle_id: int, target_ids: C
             session, lambda chunk: select(UnitDecision).where(UnitDecision.unit_id.in_(chunk)), component_units
         )
     }
+    bystanders: set[int] = set()
+    idle_units: set[int] = set()
+    if not is_regrouped:
+        sources: dict[int, set[int]] = defaultdict(set)
+        for target_id, unit_id in await select_in_chunks(
+            session,
+            lambda chunk: select(TargetSource.target_id, TargetSource.unit_id).where(TargetSource.target_id.in_(chunk)),
+            component_targets,
+        ):
+            sources[target_id].add(unit_id)
+        unlinked = {unit_id for target_id in given for unit_id in sources[target_id]}
+        bystanders = await _find_cell_bystanders(session, targets, given, unlinked, decisions)
+        idle_units = list_bystander_units(sources, bystanders)
     for chunk in iter_chunks(given):
         await session.execute(delete(TargetSource).where(TargetSource.target_id.in_(chunk)))
     for target_id in sorted(given):
         if targets[target_id].status != UNASSIGNED:
             reset_target(targets[target_id])
     held_unit_ids = [
-        unit_id for unit_id in sorted(component_units)
+        unit_id for unit_id in sorted(component_units - idle_units)
         if unit_id in decisions and decisions[unit_id].status != UNASSIGNED
     ]
-    held_target_ids = [target_id for target_id in sorted(component_targets - given) if _should_hold(targets[target_id])]
+    held_target_ids = [
+        target_id for target_id in sorted(component_targets - given - bystanders) if _should_hold(targets[target_id])
+    ]
     for unit_id in held_unit_ids:
         _hold(decisions[unit_id])
     for target_id in held_target_ids:

@@ -6,11 +6,13 @@
 // MANUAL=app이면 앱 안 사용 설명서(frontend/public/manual/user-manual.md)의 그림을 찍는다: `app`이 붙은 장면만, 1120x720(장면이 폭을 따로 정하면 그 폭), 번호 표시 없이
 //       frontend/public/manual/img/<app.name>.png로. 묶음을 바꾸는 장면이 없어 같은 DB에서 여러 번 돌려도 된다.
 //       개발 서버에만 있는 것(dev 사용자 고르기, Next 개발 표시)은 가리고 찍는다 - 실제 사용자가 보는 화면과 같게.
-import { mkdirSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { chromium } from "playwright-core";
+import { findBackendPython } from "./smoke/backend-python.mjs";
 
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 const APP_MANUAL = process.env.MANUAL === "app";
@@ -21,6 +23,11 @@ const CHROME = process.env.CHROME_PATH ?? "/Applications/Google Chrome.app/Conte
 const VIEWPORT = APP_MANUAL ? { width: 1120, height: 720 } : { width: 1440, height: 900 };
 const APP_HIDE_CSS = 'nextjs-portal, .tb span:has([data-testid="dev-user-switcher"]) { display: none !important; }';
 const T = 15000;
+const BACKEND_DIR = resolve(SCRIPT_DIR, "../../backend");
+const MIME_DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+// 장면이 찍은 뒤 되돌릴 일(합성 묶음 지우기, 늦춘 저장 풀기) - prep이 더하고 장면이 끝나면 돌린다
+const cleanup = [];
+
 
 // 로컬에는 배치 기록이 없어 관리 > 배치 작업은 예시 응답으로 찍는다(설명서 캡션에 예시라고 적는다)
 const SAMPLE_BATCH_RUNS = [
@@ -76,12 +83,12 @@ const SCENES = [
   { name: "tobe", user: "qa.member", path: "/bundles/1/documents", prep: (page) => page.locator(id("tobe-section")).scrollIntoViewIfNeeded(), marks: [text("Excel template"), text("Import Excel"), id("tobe-add"), `[data-testid$="-toggle"]`, id("tobe-save")] },
   {
     // To-Be 목록은 Documents 화면 아래쪽 영역이다 - 앱 설명서 그림은 그 영역만 잘라 찍는다
-    name: "tobe-sop", app: { name: "tobe", clip: id("tobe-section") }, user: "qa.member", path: "/bundles/1/documents",
+    name: "tobe-sop", drafting: true, app: { name: "tobe", clip: id("tobe-section") }, user: "qa.member", path: "/bundles/1/documents",
     prep: (page) => click(page, `[data-testid$="-toggle"]`),
     marks: [`[data-testid$="-slots"]`, `[data-testid*="-na-"]`],
   },
   {
-    name: "tobe-wi", user: "qa.member", path: "/bundles/1/documents",
+    name: "tobe-wi", drafting: true, user: "qa.member", path: "/bundles/1/documents",
     prep: async (page) => {
       await page.locator(`[data-testid$="-toggle"]`).nth(1).click();
     },
@@ -92,7 +99,7 @@ const SCENES = [
     marks: [id("assign-filters"), id("assign-old"), id("assign-pick-prompt"), id("assign-help")],
   },
   {
-    name: "assign-place", app: { name: "assign" }, user: "qa.member", path: "/bundles/2/assign",
+    name: "assign-place", drafting: true, app: { name: "assign" }, user: "qa.member", path: "/bundles/2/assign",
     prep: async (page) => {
       // 처음은 All(접지 않음) - 아직 정하지 않은 줄까지 J로 옮긴다
       for (let step = 0; step < 40; step += 1) {
@@ -108,7 +115,7 @@ const SCENES = [
     marks: [id("assign-chosen"), id("assign-primary"), id("assign-edit"), id("assign-hold"), '[data-testid^="assign-tree-place-"]:not([data-testid^="assign-tree-place-heading:"])'],
   },
   {
-    name: "assign-confirmed", user: "qa.member", path: "/bundles/2/assign",
+    name: "assign-confirmed", drafting: true, user: "qa.member", path: "/bundles/2/assign",
     prep: async (page) => {
       await click(page, id("assign-filter-confirmed"));
       await page.locator(id("assign-old")).getByText("이 절차는 Eppendorf").first().click();
@@ -125,11 +132,86 @@ const SCENES = [
         await page.keyboard.press("j");
         await page.waitForLoadState("networkidle");
       }
-      await candidate.first().locator(".new-hit").click();
-      // 고르면 누른 곳 옆에 확정 메뉴가 늦게 뜬다 - 다 뜬 뒤에 찍는다
-      await page.locator(id("assign-link-menu-confirm")).waitFor({ state: "visible", timeout: T });
+      await candidate.first().locator(".new-text").click();
+      // 고르면 누른 박스 아래에 단추 줄(잇기 · 손질)이 펼쳐진다(쪼개기 먼저 §8) - 다 뜬 뒤에 찍는다
+      await page.locator(id("assign-pick-bar-link")).waitFor({ state: "visible", timeout: T });
     },
-    marks: [id("assign-more"), id("assign-new"), `${id("assign-new")} .new-line[data-state="picked"]`, id("assign-chosen"), id("assign-divider"), id("assign-new-zoom-value")],
+    marks: [id("assign-more"), id("assign-new"), `${id("assign-new")} .new-line[data-sel]`, id("assign-pick-bar"), id("assign-divider"), id("assign-new-zoom-value")],
+  },
+  {
+    // 연습 화면 - 첫 과제의 상자가 밝고 그 옆 말풍선이 앞면으로 선 모습(앱 안 설명서만). 서는 애니메이션(420ms)이 끝난 뒤 찍는다
+    name: "practice", appOnly: true, app: {}, user: "qa.member", path: "/practice",
+    prep: async (page) => {
+      await page.locator(`${id("practice-coach")}[data-task="pick"]:not([data-pending])`).waitFor({ timeout: T });
+      await page.locator(id("practice-coach-hole")).waitFor({ state: "visible", timeout: T });
+      await page.locator(`${id("practice-coach-flip")}[data-done="false"]`).evaluate((el) => Promise.all(el.getAnimations().map((animation) => animation.finished)));
+    },
+  },
+  {
+    // 키보드 그림 창 - Assign 도움말(?)의 Keyboard map 단추(앱 안 설명서만)
+    name: "assign-keyboard-map", appOnly: true, app: {}, user: "qa.member", path: "/bundles/2/assign",
+    prep: async (page) => {
+      await page.locator(id("assign-bar")).waitFor({ timeout: T });
+      await page.keyboard.press("?");
+      await click(page, id("assign-help-keyboard-map"));
+      await page.locator(id("assign-keyboard-map-board")).waitFor({ state: "visible", timeout: T });
+    },
+  },
+  {
+    // 미리보기 시트의 원본 보기 탭(v1.6.46) - 한 단 보기에서 셋째 박스를 골라 원본 종이에 칠한 모습(앱 안 설명서만)
+    name: "assign-original", appOnly: true, app: {}, user: "qa.member", path: "/bundles/2/assign",
+    prep: async (page) => {
+      await page.locator(id("assign-bar")).waitFor({ timeout: T });
+      const one = page.locator(id("assign-view-one"));
+      if ((await one.getAttribute("aria-pressed")) !== "true") await click(page, id("assign-view-one"));
+      await page.evaluate(() => (document.activeElement instanceof HTMLElement ? document.activeElement.blur() : undefined));
+      for (let i = 0; i < 3; i += 1) await page.keyboard.press("j");
+      await page.keyboard.press(" ");
+      await click(page, id("space-tab-original"));
+      await page.locator(`${id("space-original")}[data-state="ready"]`).waitFor({ timeout: T });
+      await page.waitForFunction(() => document.querySelector('[data-testid="space-original"] .ov-host')?.shadowRoot?.querySelector(".is-ov-picked") != null, null, { timeout: T });
+      await page.waitForTimeout(500); // 굴림 · 나타남 · 쪽 칩 움직임이 끝나도록
+    },
+  },
+  {
+    // 우클릭 메뉴 - 양 단의 New 표 칸. 시드에는 표가 있는 New 문서가 없어 스모크의 cell menu 단계처럼 합성 묶음을 만들어 찍고 지운다(앱 안 설명서만)
+    name: "assign-new-cell-menu", appOnly: true, keepMouse: true, app: {}, user: "dev.admin", path: "/",
+    prep: async (page) => {
+      const headers = { "X-Dev-User": "dev.admin" };
+      const dir = resolve(SCRIPT_DIR, "../../.shots");
+      mkdirSync(dir, { recursive: true });
+      const oldFile = resolve(dir, "SYNTHETIC_OLD-91_manual_cell_menu.docx");
+      const newFile = resolve(dir, "SYNTHETIC_SOP-91_manual_cell_menu.docx");
+      const build = [
+        "import sys",
+        "from tests.docx_factory import build_docx, p, tbl",
+        "body = p('5. 절차', 'Heading1') + p('5. Procedure', 'Heading1') + tbl([['합성 항목', '합성 값'], ['합성 온도', '합성 결과']])",
+        "open(sys.argv[1], 'wb').write(build_docx(body))",
+        "open(sys.argv[2], 'wb').write(build_docx(body, headers=[p('합성 새 문서')]))",
+      ].join("\n");
+      execFileSync(findBackendPython(), ["-c", build, oldFile, newFile], { cwd: BACKEND_DIR, stdio: "inherit" });
+      const created = await (await page.request.post(`${BASE}/api/bundles`, { headers, data: { title: "SYNTHETIC cell menu", is_synthetic: true } })).json();
+      const api = `${BASE}/api/bundles/${created.id}`;
+      cleanup.push(async () => {
+        const bundle = await (await page.request.get(api, { headers })).json();
+        await page.request.delete(`${api}?revision=${bundle.revision}`, { headers });
+      });
+      await page.request.post(`${api}/documents`, { headers, multipart: { side: "old", file: { name: "SYNTHETIC_OLD-91_manual_cell_menu.docx", mimeType: MIME_DOCX, buffer: readFileSync(oldFile) } } });
+      const newUp = await page.request.post(`${api}/documents`, { headers, multipart: { side: "new", doc_type: "sop", file: { name: "SYNTHETIC_SOP-91_manual_cell_menu.docx", mimeType: MIME_DOCX, buffer: readFileSync(newFile) } } });
+      const newView = await (await page.request.get(`${api}/documents/${(await newUp.json()).id}/view`, { headers })).json();
+      const table = newView.units.find((unit) => unit.kind === "table");
+      const cell = newView.units.find((unit) => unit.kind === "cell_sentence" && unit.group_unit_id === table?.id && unit.text === "합성 온도");
+      await page.goto(`${BASE}/bundles/${created.id}/assign`, { waitUntil: "networkidle" });
+      // 장면이 스스로 옮겨 가 처음에 넣은 가림 CSS가 사라졌다 - 개발 서버에만 있는 표시를 다시 가린다
+      await page.addStyleTag({ content: APP_HIDE_CSS });
+      await page.locator(id("assign-bar")).waitFor({ timeout: T });
+      if ((await page.locator(id("assign-new")).count()) === 0) await click(page, id("assign-view-two"));
+      await page.locator(id("assign-new")).waitFor({ timeout: T });
+      const box = page.locator(`[data-pane="new"] [data-strip-unit="${cell.id}"]`).first();
+      await box.scrollIntoViewIfNeeded({ timeout: T });
+      await box.click({ button: "right" });
+      await page.locator(id("assign-ctx-menu")).waitFor({ timeout: T });
+    },
   },
   {
     name: "assign-unsourced", user: "qa.member", path: "/bundles/2/assign",
@@ -179,7 +261,7 @@ const SCENES = [
   },
   {
     // 3단계 - New 문서를 하나씩 열어 순서·들여쓰기·번호를 고친다(작업 중인 묶음이라 줄 끝 단추가 보인다)
-    name: "order", appOnly: true, app: {}, user: "qa.member", path: "/bundles/2/order",
+    name: "order", drafting: true, appOnly: true, app: {}, user: "qa.member", path: "/bundles/2/order",
     prep: (page) => page.locator('[data-testid^="output-c-move-"]').first().waitFor({ state: "attached", timeout: T }),
   },
   {
@@ -196,9 +278,9 @@ const SCENES = [
     },
   },
   { name: "outputs-b", app: {}, user: "qa.member", path: "/bundles/3/outputs", prep: (page) => click(page, id("outputs-tab-b")), marks: [id("output-b")] },
-  { name: "outputs-c", app: {}, user: "qa.member", path: "/bundles/3/outputs", prep: (page) => click(page, id("outputs-tab-c")), marks: [id("output-c")] },
+  { name: "outputs-c", drafting: true, app: {}, user: "qa.member", path: "/bundles/3/outputs", prep: (page) => click(page, id("outputs-tab-c")), marks: [id("output-c")] },
   {
-    name: "outputs-c-wi", user: "qa.member", path: "/bundles/3/outputs",
+    name: "outputs-c-wi", drafting: true, user: "qa.member", path: "/bundles/3/outputs",
     prep: async (page) => {
       await click(page, id("outputs-tab-c"));
       await page.getByText("Operation of Eppendorf Centrifuge").first().scrollIntoViewIfNeeded();
@@ -236,8 +318,13 @@ const SCENES = [
   },
   {
     name: "admin-lookup", user: "dev.admin", path: "/admin?tab=access",
-    prep: (page) => click(page, id("access-sub-lookup")),
-    marks: [id("access-sub-lookup")],
+    // 유효 권한 조회는 부여 화면에 들어왔다 - 사람을 찾아 고르면 오른쪽에 유효 권한이 나온다
+    prep: async (page) => {
+      await click(page, id("access-sub-grants"));
+      await page.getByTestId("grants-search").fill("prod.member");
+      await click(page, id("grants-subject-user:prod.member"));
+    },
+    marks: [id("grants-search"), id("grant-detail")],
   },
   { name: "admin-directory", user: "dev.admin", path: "/admin?tab=directory", marks: [id("admin-tab-directory"), id("hr-sync-run"), id("hr-sync-preview")] },
   { name: "admin-batch", user: "dev.admin", path: "/admin?tab=batch", sampleBatch: true, marks: [id("admin-tab-batch"), id("batch-table")] },
@@ -256,6 +343,25 @@ const SCENES = [
   },
   { name: "review-reopen", user: "qa.member", path: "/bundles/3/outputs", mutates: true, marks: [id("review-status"), id("review-reopen")] },
   { name: "home-done", user: "qa.member", path: "/", mutates: true, marks: [`${id("bundles-row-3")} .pill`, `${id("bundles-row-2")} .pill`] },
+  {
+    // 느린 저장 중 밀린 명령 칩 - 저장 응답을 늦춘 채 Delete를 두 번 눌러 둘째 박스에 "Queued · Delete"가 붙은 모습.
+    // 찍은 뒤 늦춘 저장을 풀어 끝나게 하므로 묶음 2의 Old 줄 둘이 삭제로 확정된다 - 그래서 mutates이고 묶음 2를 보는 장면 뒤(맨 끝)에 둔다(앱 안 설명서만)
+    name: "assign-queued", appOnly: true, mutates: true, app: {}, user: "qa.member", path: "/bundles/2/assign",
+    prep: async (page) => {
+      await page.locator(id("assign-bar")).waitFor({ timeout: T });
+      await page.route(/\/api\/bundles\/\d+\/groups\/save$/, async (route) => {
+        await new Promise((done) => setTimeout(done, 6000));
+        await route.continue();
+      });
+      cleanup.push(() => page.unrouteAll({ behavior: "wait" }));
+      await page.keyboard.press("j");
+      await page.waitForLoadState("networkidle");
+      await page.keyboard.press("Delete");
+      await page.waitForTimeout(300);
+      await page.keyboard.press("Delete");
+      await page.locator('[data-testid^="assign-queue-"]').first().waitFor({ state: "visible", timeout: T });
+    },
+  },
 ];
 
 async function measureMarks(page, selectors, name) {
@@ -319,11 +425,13 @@ for (const scene of SCENES) {
   if (APP_MANUAL ? !scene.app : scene.appOnly) continue;
   const viewport = APP_MANUAL && scene.app.width ? { ...VIEWPORT, width: scene.app.width } : VIEWPORT;
   const context = await browser.newContext({ viewport, deviceScaleFactor: 1 });
-  await context.addInitScript((user) => {
+  await context.addInitScript(({ user, drafting }) => {
     if (location.protocol === "about:") return;
     localStorage.setItem("sopa.devUser", user);
     localStorage.setItem("sopa.theme", "light");
-  }, scene.user);
+    // 숨긴 기능을 설명하는 조각의 장면만 켠다
+    if (drafting) localStorage.setItem("sopa.drafting", "1");
+  }, { user: scene.user, drafting: scene.drafting === true });
   if (scene.sampleBatch) await context.route("**/api/admin/batch-runs", (route) => route.fulfill({ json: SAMPLE_BATCH_RUNS }));
   const page = await context.newPage();
   const errors = [];
@@ -343,6 +451,7 @@ for (const scene of SCENES) {
     if (APP_MANUAL) {
       await shootForApp(page, scene);
       console.log(`ok ${scene.app.name ?? scene.name}${errors.length ? ` errors: ${errors.join(" | ")}` : ""}`);
+      for (const undo of cleanup.splice(0)) await undo();
       await context.close();
       continue;
     }
@@ -354,6 +463,7 @@ for (const scene of SCENES) {
     failures += 1;
     console.error(`FAIL ${scene.name}: ${err.message.split("\n")[0]}`);
   }
+  for (const undo of cleanup.splice(0)) await undo().catch((err) => console.error(`cleanup failed for ${scene.name}: ${err.message.split("\n")[0]}`));
   await context.close();
 }
 await browser.close();

@@ -6,7 +6,6 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useState } from "react";
 
 import { AccessAudit } from "@/components/admin/access-audit";
-import { AccessEffective } from "@/components/admin/access-effective";
 import { AccessGrants } from "@/components/admin/access-grants";
 import { AccessRoles } from "@/components/admin/access-roles";
 import { AiPanel } from "@/components/admin/ai-panel";
@@ -20,7 +19,7 @@ import { useI18n } from "@/lib/i18n";
 import { useMe } from "@/lib/session";
 
 type AdminTabKey = "access" | "directory" | "batch" | "ai" | "bundles" | "guidelines" | "outline";
-type AccessSubKey = "roles" | "grants" | "audit" | "lookup";
+type AccessSubKey = "roles" | "grants" | "audit";
 
 interface AdminTab {
   key: AdminTabKey;
@@ -39,15 +38,28 @@ const ADMIN_TABS: AdminTab[] = [
   { key: "outline", permission: "outline.manage", Icon: ListTree },
 ];
 
-const ACCESS_SUBS: AccessSubKey[] = ["roles", "grants", "audit", "lookup"];
+// 왼쪽 메뉴의 묶음 - 권한 · 운영 · SOP 기준
+type NavGroup = "people" | "ops" | "standard";
+const NAV_GROUPS: readonly { group: NavGroup; tabs: readonly AdminTabKey[] }[] = [
+  { group: "people", tabs: ["access"] },
+  { group: "ops", tabs: ["directory", "batch", "ai"] },
+  { group: "standard", tabs: ["bundles", "guidelines", "outline"] },
+];
 
-function AccessPanel({ sub }: { sub: AccessSubKey }) {
+const ACCESS_SUBS: AccessSubKey[] = ["roles", "grants", "audit"];
+
+// 주소의 하위 항목 - 모르는 값이면 null(기본 항목으로 떨어진다). 유효 권한 조회(lookup)는 부여 화면에 들어가 옛 주소를 부여로 연다
+function readSub(value: string | null): AccessSubKey | null {
+  if (value === "lookup") return "grants";
+  return ACCESS_SUBS.find((key) => key === value) ?? null;
+}
+
+function AccessPanel({ sub, grantsRole, onOpenGrants }: { sub: AccessSubKey; grantsRole: string; onOpenGrants: (roleId: number) => void }) {
   return (
     <>
-      {sub === "roles" && <AccessRoles />}
-      {sub === "grants" && <AccessGrants />}
+      {sub === "roles" && <AccessRoles onOpenGrants={onOpenGrants} />}
+      {sub === "grants" && <AccessGrants initialRole={grantsRole} />}
       {sub === "audit" && <AccessAudit />}
-      {sub === "lookup" && <AccessEffective />}
     </>
   );
 }
@@ -57,7 +69,11 @@ function AdminContent() {
   const me = useMe();
   const router = useRouter();
   const searchParams = useSearchParams();
-  const [sub, setSub] = useState<AccessSubKey>("roles");
+  // 하위 항목은 주소(?sub=)가 정한다 - 다른 탭에 다녀오면 마지막에 본 항목으로 돌아온다
+  const [lastSub, setLastSub] = useState<AccessSubKey>(() => readSub(searchParams.get("sub")) ?? "roles");
+  // 부여를 거를 역할(?role=) - 역할 표의 받은 대상에서 넘어올 때만
+  const [grantsRole, setGrantsRole] = useState(() => searchParams.get("role") ?? "");
+  const sub = readSub(searchParams.get("sub")) ?? lastSub;
 
   const allowedTabs = ADMIN_TABS.filter((tab) => hasPermission(me, tab.permission));
   // 숨겨진 탭을 가리키는 딥링크(?tab=)는 허용된 첫 탭으로 떨어진다
@@ -70,14 +86,22 @@ function AdminContent() {
   if (!activeTab) return null;
 
   // 주소만 바꾼다(서버 왕복 없이 useSearchParams가 따라온다) - 새로고침·링크 공유에서 같은 탭이 열린다
-  const selectTab = (key: AdminTabKey) => {
-    window.history.replaceState(null, "", `/admin?tab=${key}`);
+  const selectTab = (key: AdminTabKey, nextSub: AccessSubKey = sub) => {
+    window.history.replaceState(null, "", key === "access" ? `/admin?tab=access&sub=${nextSub}` : `/admin?tab=${key}`);
   };
 
   // 권한 하위 항목을 누르면 권한 탭으로 옮기면서 그 항목을 연다
   const selectSub = (key: AccessSubKey) => {
-    setSub(key);
-    if (activeTab.key !== "access") selectTab("access");
+    setLastSub(key);
+    setGrantsRole("");
+    selectTab("access", key);
+  };
+
+  // 역할의 받은 대상에서 부여 화면으로 - 그 역할로 거른 채 연다(부여 화면이 주소의 role을 읽는다)
+  const openGrantsOfRole = (roleId: number) => {
+    setLastSub("grants");
+    setGrantsRole(String(roleId));
+    window.history.replaceState(null, "", `/admin?tab=access&sub=grants&role=${roleId}`);
   };
 
   return (
@@ -89,45 +113,56 @@ function AdminContent() {
         {/* 세로 탭 - 식별자(admin-tab-*·access-sub-*)와 ?tab= 주소는 이전 가로 탭과 같다 */}
         <div className="border-r border-line">
           <div role="tablist" aria-orientation="vertical" aria-label={t("nav.admin")} className="side-nav">
-            {allowedTabs.map(({ key, Icon }) => (
-              <div key={key} className="grid gap-px">
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={activeTab.key === key}
-                  data-testid={`admin-tab-${key}`}
-                  className="side-nav-item"
-                  onClick={() => selectTab(key)}
-                >
-                  <Icon size={16} strokeWidth={1.5} aria-hidden />
-                  {t(`admin.tab.${key}`)}
-                </button>
-                {key === "access" &&
-                  ACCESS_SUBS.map((subKey) => (
-                    <button
-                      key={subKey}
-                      type="button"
-                      role="tab"
-                      aria-selected={activeTab.key === "access" && sub === subKey}
-                      data-testid={`access-sub-${subKey}`}
-                      className="side-nav-item sub"
-                      onClick={() => selectSub(subKey)}
-                    >
-                      {t(`admin.sub.${subKey}`)}
-                    </button>
+            {NAV_GROUPS.map(({ group, tabs }) => {
+              const shown = allowedTabs.filter((tab) => tabs.includes(tab.key));
+              if (shown.length === 0) return null;
+              return (
+                <div key={group} className="grid gap-[2px]" role="presentation">
+                  <div className="adm-nav-group" data-testid={`admin-nav-${group}`} aria-hidden>
+                    {t(`admin.group.${group}`)}
+                  </div>
+                        {shown.map(({ key, Icon }) => (
+                    <div key={key} className="grid gap-px">
+                      <button
+                        type="button"
+                        role="tab"
+                        aria-selected={activeTab.key === key}
+                        data-testid={`admin-tab-${key}`}
+                        className="side-nav-item"
+                        onClick={() => selectTab(key)}
+                      >
+                        <Icon size={16} strokeWidth={1.5} aria-hidden />
+                        {t(`admin.tab.${key}`)}
+                      </button>
+                      {key === "access" &&
+                        ACCESS_SUBS.map((subKey) => (
+                          <button
+                            key={subKey}
+                            type="button"
+                            role="tab"
+                            aria-selected={activeTab.key === "access" && sub === subKey}
+                            data-testid={`access-sub-${subKey}`}
+                            className="side-nav-item sub"
+                            onClick={() => selectSub(subKey)}
+                          >
+                            {t(`admin.sub.${subKey}`)}
+                          </button>
+                        ))}
+                    </div>
                   ))}
-              </div>
-            ))}
+                </div>
+              );
+            })}
           </div>
         </div>
         {/* 사용자를 바꾸거나 탭을 옮기면 패널을 새로 마운트해 이전 사용자의 데이터·오류가 남지 않게 한다 */}
         <div
           key={`${me.login_id}:${activeTab.key}:${activeTab.key === "access" ? sub : ""}`}
-          className="fade-in min-w-0 px-6 py-5"
+          className="adm-scope fade-in min-w-0 px-6 py-5"
           role="tabpanel"
           data-testid={`admin-panel-${activeTab.key}`}
         >
-          {activeTab.key === "access" && <AccessPanel sub={sub} />}
+          {activeTab.key === "access" && <AccessPanel sub={sub} grantsRole={grantsRole} onOpenGrants={openGrantsOfRole} />}
           {activeTab.key === "directory" && <HrSyncPanel />}
           {activeTab.key === "batch" && <BatchRunsPanel />}
           {activeTab.key === "ai" && <AiPanel />}

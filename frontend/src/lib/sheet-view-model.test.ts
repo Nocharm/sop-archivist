@@ -11,6 +11,7 @@ import {
   clampOffset,
   findDraftRow,
   findPickedGroup,
+  getFoldLabelKey,
   getFoldMark,
   getFrozenCount,
   getMoveRange,
@@ -157,13 +158,39 @@ describe("contents fold", () => {
     expect(items.map((item) => (item.type === "row" ? [item.index, item.tocStart] : null))).toEqual([[1, 1], [2, 1], [3, null], [4, null]]);
   });
 
+  it("breaks the fold where the kind changes", () => {
+    const rows = [
+      ...["front", "front", "toc", "toc", "history"].map((noise, at) => row([String(at + 1)], { toc: true, noise, unit_id: at + 1 })),
+      row(["6"], { toc: true, noise: "history", unit_id: 6 }),
+    ];
+    const items = listSheetItems(rows, 0, new Set(), true);
+    expect(items.map((item) => (item.type === "fold" ? `fold:${item.start}+${item.rows.length}` : `row:${item.index}`))).toEqual(["fold:0+2", "fold:2+2", "fold:4+2"]);
+    expect(items.map((item) => (item.type === "fold" ? getFoldLabelKey(item.rows) : null))).toEqual(["outputs.sheet.frontFolded", "outputs.sheet.tocFolded", "outputs.sheet.historyFolded"]);
+  });
+
   it("does not fold when the sheet cannot fold", () => {
     expect(listSheetItems(ROWS, 1, new Set(), false).every((item) => item.type === "row")).toBe(true);
+  });
+
+  it("folds contents rows of a paragraph sheet into one line", () => {
+    const rows = [row(["Section No."], { kind: "header" }), row(["", "목차 하나"], { toc: true, noise: "toc" }), row(["", "목차 둘"], { toc: true, noise: "toc" }), row(["1.", "본문"])];
+    expect(listSheetItems(rows, 1, new Set(), true).map((item) => item.type)).toEqual(["fold", "row"]);
+    expect(listSheetItems([rows[0], rows[1], rows[3]], 1, new Set(), true).map((item) => item.type)).toEqual(["row", "row"]);
+  });
+
+  it("puts the folded label in the Text column when the sheet has no column keys", () => {
+    const rows = [row(["", "목차 하나", "", "", "x"], { toc: true, noise: "toc" }), row(["", "목차 둘"], { toc: true, noise: "toc" })];
+    expect(buildFoldedCells(rows, [], { label: "▸ 목차 2줄", more: "" }).map((item) => item.text)).toEqual(["", "▸ 목차 2줄", "", "", "x"]);
   });
 
   it("writes the row range, the label, the unit ellipsis and the more-lines tail onto the first row", () => {
     const cells = buildFoldedCells(ROWS.slice(1, 3), KEYS, { label: "Contents · 2 lines", more: "+ 1 more lines" });
     expect(cells.map((item) => item.text)).toEqual(["1-2", "Contents · 2 lines", "OLD-1-001 …", "1. Purpose ... 3 + 1 more lines", "Deleted"]);
+  });
+
+  it("keeps the strike on a folded row", () => {
+    const struck = ROWS.slice(1, 3).map((item) => ({ ...item, cells: item.cells.map((c, column) => (column === 3 ? { ...c, strike: true } : c)) }));
+    expect(buildFoldedCells(struck, KEYS, { label: "Contents · 2 lines", more: "+ 1 more lines" })[3].strike).toBe(true);
   });
 });
 

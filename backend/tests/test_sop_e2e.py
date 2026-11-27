@@ -195,7 +195,8 @@ def test_end_to_end_both_entrances(client: TestClient, synthetic: SyntheticBundl
     outputs = run.load_outputs()
     a_rows = outputs["a"]
     assert {row["status"] for row in a_rows} == {"confirmed"}
-    assert summary["old_rows"] == run.get("")["progress"]["total"]
+    progress = run.get("")["progress"]
+    assert summary["old_rows"] == progress["total"] + progress["figures_total"]  # 진행 숫자는 그림을 따로 센다
     assert (summary["no_destination"], summary["duplicate"]) == (0, 1)
     # A 옛 문서 묶음(번호) → 그 묶음의 줄이 보낸 새 문서
     old_groups: dict[int, set[str]] = {row["row_no"]: set() for row in a_rows if row["row_kind"] in ("unit", "table", "cell")}
@@ -216,7 +217,7 @@ def test_end_to_end_both_entrances(client: TestClient, synthetic: SyntheticBundl
     response = client.get(f"/api/bundles/{run.bundle_id}/export.xlsx", headers=AUTHOR)
     assert response.status_code == 200, response.text
     workbook = load_workbook(BytesIO(response.content))
-    assert workbook.sheetnames == ["A Comparison", "B Flow", "C New documents", "Info", "Documents"]
+    assert workbook.sheetnames == ["A Comparison", "B Flow", "Info", "Documents"]
     cells = [cell for sheet in workbook for row in sheet.iter_rows() for cell in row]
     assert [cell.coordinate for cell in cells if cell.data_type == "f"] == []
     sheet_a = workbook["A Comparison"]  # 1행 상태, 2행 머리, 3행부터 데이터

@@ -1,0 +1,12 @@
+{
+  "shape": "Reference 절의 Shift+Enter 줄",
+  "layout": null,
+  "boxes": [
+    {"text": "3. Reference", "lang": "en", "kind": "heading", "number": "3.", "excluded": null},
+    {"text": "SOP-QC-0012 시료 채취 절차", "lang": "ref", "kind": "sentence", "number": null, "excluded": null},
+    {"text": "SOP-QC-0013 세척 절차", "lang": "ref", "kind": "sentence", "number": null, "excluded": null},
+    {"text": "ISO 9001:2015", "lang": "ref", "kind": "sentence", "number": null, "excluded": null},
+    {"text": "4. 책임", "lang": "ko", "kind": "heading", "number": "4.", "excluded": null},
+    {"text": "담당자가 확인한다.", "lang": "ko", "kind": "sentence", "number": null, "excluded": null}
+  ]
+}

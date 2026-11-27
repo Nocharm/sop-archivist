@@ -1,5 +1,5 @@
 // 떨어진 짝 안내 줄 - 고른 박스 바로 아래 "↑ 짝 KO · 위 §1". 짝은 위로 모아 보이지 않고 제자리에 두니, 어디에 있는지만 알린다
-// (설계 docs/superpowers/specs/2026-11-20-assign-mockup1-design.md D3). 화면은 모른다 - 용지(Paper)가 자리 · 카드 · 이름을 넘긴다.
+// (설계 2026-11-20-assign-mockup1 D3, docs/architecture/decisions.md). 화면은 모른다 - 용지(Paper)가 자리 · 카드 · 이름을 넘긴다.
 
 /** 짝 구성원 하나 - 용지가 넘긴다 */
 export interface PairHintUnit {
@@ -37,4 +37,21 @@ export function getPairHint(selected: PairHintUnit, mates: readonly PairHintUnit
     targetUnitId: nearest.id,
     more: far.length - 1,
   };
+}
+
+/**
+ * 짝으로 가기(글쇠 G)의 자리 - 떨어진 짝이 있으면 안내 줄과 같은 박스, 이어 붙은 짝뿐이면 곁의 박스. order는 용지 차례.
+ * 카드는 차례가 끊김 없이 이어진 구성원으로 본다
+ */
+export function findPairTarget(selectedId: number, members: readonly { id: number; lang: string }[], order: readonly number[]): number | null {
+  const at = new Map(order.map((id, index) => [id, index]));
+  const placed = members.flatMap((unit) => (at.has(unit.id) ? [{ id: unit.id, lang: unit.lang, at: at.get(unit.id)!, card: null as number | null, label: "" }] : [])).sort((a, b) => a.at - b.at);
+  placed.forEach((unit, index) => {
+    const above = placed[index - 1];
+    unit.card = above !== undefined && above.at === unit.at - 1 ? above.card : unit.id;
+  });
+  const own = placed.find((unit) => unit.id === selectedId);
+  const mates = placed.filter((unit) => unit.id !== selectedId);
+  if (!own || mates.length === 0) return null;
+  return (getPairHint(own, mates) ?? getPairHint({ ...own, card: null }, mates))?.targetUnitId ?? null;
 }

@@ -1,7 +1,7 @@
 // Assign 화면의 한 부분 - page.tsx의 그리기에서 글자 그대로 옮겼다(쪼개기, 신뢰 기반 계획 스텝 4). 상태와 동작은 useAssignPage()가 준다.
 "use client";
 
-import { BookMarked, Captions, Columns2, ExternalLink, Redo2, Square, Trash2, Undo2, WandSparkles } from "lucide-react";
+import { BookMarked, Captions, Columns2, Combine, Image as FigureIcon, Languages, LayoutList, Redo2, Square, Trash2, Undo2, WandSparkles, XCircle } from "lucide-react";
 import { MissingWarnings } from "@/components/assign/missing-warnings";
 import { AssignMoreMenu } from "@/components/assign/more-menu";
 import { PendingCount } from "@/components/assign/pending-count";
@@ -9,16 +9,47 @@ import { ReadOnlyNote } from "@/components/read-only-note";
 import { FilterChip } from "@/components/status";
 import { Tooltip } from "@/components/ui/tooltip";
 import { loadBundle } from "@/lib/bundle-store";
+import type { BulkAction } from "@/lib/multi-pick-model";
 
 import { type AssignPageState, FILTERS, FILTER_ICON } from "./use-assign-page";
 
 export function AssignBar({ state }: { state: AssignPageState }) {
   const {
-    t, bundleId, bundle, canEdit, docs, oldDocIds, identical, aiOn, rows, rowMap, rowOfUnit, mode, filter, counts, applyFilter, checked,
-    viewOf, setManualOldDoc, oldView, view, changeView, aiMenuItems, isAnyPending, undoState, setBulk, setConfirmingIdentical, setResetScope,
+    t, bundleId, bundle, canEdit, docs, oldDocIds, identical, aiOn, rowMap, rowOfUnit, mode, filter, counts, applyFilter, checked,
+    viewOf, setManualOldDoc, oldView, view, changeView, aiMenuItems, undoState, canUndoNow, queueGlobal, setBulk, setConfirmingIdentical, setResetScope,
     selectRow, goToUnit, refPendingIds, captionPendingKeys, splitPendingIds, readPendingItem, selectNextSplit, selectNextRef,
-    selectNextCaption, runUndoStep, done,
+    selectNextCaption, runUndoStep, progress, leftovers, setLeftoverSheet, bulkMerge, bulkUnwrap, runBulkMerge, runBulkUnwrap, bulkClear, bulkLangKo, bulkLangEn, bulkActions, runBulkClear, runBulkLang,
   } = state;
+
+  /** 여럿 고른 줄의 단추 - 차례는 listBulkActions(Old: 삭제 · 배정 취소 · 언어 · 합치기 · 표 벗기기, New: 합치기 · 표 벗기기 · 언어). 못 하는 것은 흐리게 + 까닭 툴팁(쪼개기 먼저 설계 §9, 명세 G1) */
+  const renderBulkButton = (action: BulkAction) => {
+    if (action === "delete") {
+      return (
+        <button key={action} type="button" className="btn h-7" data-testid="assign-bulk-delete" onClick={() => setBulk("delete")}>
+          <Trash2 size={14} strokeWidth={1.5} aria-hidden />
+          {t("classify.deleted")}
+        </button>
+      );
+    }
+    const lang = action === "lang_ko" ? "ko" : "en";
+    const spec = {
+      unassign: { plan: bulkClear, icon: XCircle, label: "assign.bulk.unassign", testId: "assign-bulk-unassign", run: runBulkClear },
+      lang_ko: { plan: bulkLangKo, icon: Languages, label: "assign.bulk.langKo", testId: "assign-bulk-lang-ko", run: () => runBulkLang(lang) },
+      lang_en: { plan: bulkLangEn, icon: Languages, label: "assign.bulk.langEn", testId: "assign-bulk-lang-en", run: () => runBulkLang(lang) },
+      merge: { plan: bulkMerge, icon: Combine, label: "assign.bulk.merge", testId: "assign-bulk-merge", run: runBulkMerge },
+      unwrap: { plan: bulkUnwrap, icon: LayoutList, label: "assign.bulk.unwrap", testId: "assign-bulk-unwrap", run: runBulkUnwrap },
+    }[action];
+    const { plan, icon: Icon } = spec;
+    if (plan === null) return null;
+    return (
+      <Tooltip key={action} label={plan.ok ? "" : t(plan.reasonKey)} suppressed={plan.ok}>
+        <button type="button" className="btn h-7" aria-disabled={plan.ok ? undefined : "true"} data-testid={spec.testId} onClick={() => plan.ok && spec.run()}>
+          <Icon size={14} strokeWidth={1.5} aria-hidden />
+          {t(spec.label)}
+        </button>
+      </Tooltip>
+    );
+  };
 
   const identicalCount = identical.data?.length ?? 0;
   const bar = (
@@ -40,8 +71,17 @@ export function AssignBar({ state }: { state: AssignPageState }) {
         })}
       </div>
       <span className="text-xs tabular-nums text-ink-3" data-testid="assign-progress">
-        {t("assign.progress", { done, total: rows.length })}
+        {t("assign.progress", { done: progress.done, total: progress.total })}
       </span>
+      {/* 그림은 진행 수에 들지 않는다 - 따로 세어 옆에(아이콘 + 수, 올리면 글) */}
+      {progress.figuresTotal > 0 && (
+        <Tooltip label={t("progress.figures", { m: progress.figuresDone, n: progress.figuresTotal })}>
+          <span className="inline-flex items-center gap-1 text-xs tabular-nums text-ink-3" data-testid="assign-figures">
+            <FigureIcon size={13} strokeWidth={1.5} aria-label={t("progress.figures", { m: progress.figuresDone, n: progress.figuresTotal })} />
+            {t("assign.progress", { done: progress.figuresDone, total: progress.figuresTotal })}
+          </span>
+        </Tooltip>
+      )}
       <ReadOnlyNote bundle={bundle} testId="assign" />
       {/* 오른쪽 묶음은 한 요소로 - 줄이 넘치면 통째로 다음 줄 오른쪽 끝으로 간다 */}
       <div className="assign-bar-end" data-testid="assign-bar-end">
@@ -62,28 +102,34 @@ export function AssignBar({ state }: { state: AssignPageState }) {
         {canEdit && (
           <span className="flex items-center gap-1">
             <Tooltip label={t("assign.undo")}>
-              <button type="button" className="btn icon h-7 w-7" aria-label={t("assign.undo")} data-testid="assign-undo" disabled={isAnyPending || !undoState.canUndo} onClick={() => void runUndoStep("undo")}>
+              <button type="button" className="btn icon h-7 w-7" aria-label={t("assign.undo")} data-testid="assign-undo" disabled={!canUndoNow} onClick={() => runUndoStep("undo")}>
                 <Undo2 size={14} strokeWidth={1.5} aria-hidden />
               </button>
             </Tooltip>
             <Tooltip label={t("assign.redo")}>
-              <button type="button" className="btn icon h-7 w-7" aria-label={t("assign.redo")} data-testid="assign-redo" disabled={isAnyPending || !undoState.canRedo} onClick={() => void runUndoStep("redo")}>
+              <button type="button" className="btn icon h-7 w-7" aria-label={t("assign.redo")} data-testid="assign-redo" disabled={!undoState.canRedo} onClick={() => runUndoStep("redo")}>
                 <Redo2 size={14} strokeWidth={1.5} aria-hidden />
               </button>
             </Tooltip>
+            {/* 박스가 없는 대기(되돌리기 · 장벽 뒤에 쌓인 글쇠) - 박스의 칩과 같은 꼴 */}
+            {queueGlobal !== null && (
+              <span className="pending-pill queue-chip queue-global" role="status" data-kind={queueGlobal.kind} data-testid="assign-queue-global">
+                {queueGlobal.text}
+              </span>
+            )}
           </span>
         )}
         {checked.size > 0 && canEdit && (
           <span className="flex items-center gap-1.5 text-xs" data-testid="assign-bulk">
             <span className="text-ink-2">{t("classify.pickedCount", { n: checked.size })}</span>
-            <button type="button" className="btn h-7" data-testid="assign-bulk-delete" onClick={() => setBulk("delete")}>
-              <Trash2 size={14} strokeWidth={1.5} aria-hidden />
-              {t("classify.deleted")}
-            </button>
-            <button type="button" className="btn h-7" data-testid="assign-bulk-move" onClick={() => setBulk("move")}>
-              <ExternalLink size={14} strokeWidth={1.5} aria-hidden />
-              {t("classify.moved")}
-            </button>
+            {bulkActions.map(renderBulkButton)}
+          </span>
+        )}
+        {/* New에서 Shift · ⇧G로 여럿 고름 - 수와 합치기 · 표 벗기기 · 언어 */}
+        {state.checkedNew.size > 0 && canEdit && (
+          <span className="flex items-center gap-1.5 text-xs" data-testid="assign-bulk-new">
+            <span className="text-ink-2">{t("classify.pickedCount", { n: state.checkedNew.size })}</span>
+            {bulkActions.map(renderBulkButton)}
           </span>
         )}
         {/* 확인할 것 - 아이콘 + 수(올리면 이름), 누르면 그 줄 목록 창. 누락 경고는 문서별 확인 창 */}
@@ -107,6 +153,13 @@ export function AssignBar({ state }: { state: AssignPageState }) {
             onNext={selectNextCaption}
             testId="assign-caption-pending"
           />
+        )}
+        {/* 남은 AI 번역 - 숨긴 기능의 자료가 있을 때만. 검토 요청을 막아 여기서 정한다 */}
+        {canEdit && leftovers.length > 0 && (
+          <button type="button" className="btn h-7 text-st-ai" data-testid="assign-leftover-open" onClick={() => setLeftoverSheet(true)}>
+            <Languages size={14} strokeWidth={1.5} aria-hidden />
+            {t("assign.openTranslation.title", { n: leftovers.length })}
+          </button>
         )}
         {/* 누락 의심 경고 - 확인이 남아 있을 때만 보인다(검토 요청 조건). 원문 자리를 보거나 그 자리에서 확인한다 */}
         <MissingWarnings
@@ -132,8 +185,6 @@ export function AssignBar({ state }: { state: AssignPageState }) {
         />
         <AssignMoreMenu
           canEdit={canEdit}
-          // 묶음 전체 일(같은 글자 확정 · 초기화)은 다른 일이 처리 중이면 시작하지 않는다
-          disabled={isAnyPending}
           identicalCount={identicalCount}
           onIdentical={() => setConfirmingIdentical(true)}
           aiItems={aiOn ? aiMenuItems : []}

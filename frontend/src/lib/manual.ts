@@ -1,6 +1,7 @@
 // 사용 설명서(Markdown 한 벌, public/manual/user-manual.md)를 화면이 쓰는 조각으로 나눈다.
 // 설명서 화면·읽음 표시·찾기와 내용 검사(manual-content.test.ts)가 같은 모델을 쓴다. 글은 고치지 않고 나누기만 한다.
 
+import { PRACTICE_PATH } from "./practice-route";
 import { parseBundlePath, type StageKey } from "./stages";
 
 export const MANUAL_PATH = "/manual";
@@ -160,7 +161,7 @@ export const MANUAL_STAGE_SECTION: Record<StageKey, string> = {
 };
 
 /** 단계 밖 화면이 가리키는 조각 */
-export const MANUAL_PAGE_SECTION = { home: "start", account: "account" } as const;
+export const MANUAL_PAGE_SECTION = { home: "start", account: "account", practice: "practice" } as const;
 
 /** 조각이 설명하는 단계 - 목차가 레일과 같은 번호·아이콘을 쓴다 */
 export function getSectionStage(sectionId: string): StageKey | null {
@@ -173,6 +174,7 @@ export function getManualHref(pathname: string): string {
   const bundle = parseBundlePath(pathname);
   if (bundle?.stage) return `${MANUAL_PATH}#${MANUAL_STAGE_SECTION[bundle.stage]}`;
   if (pathname === "/") return `${MANUAL_PATH}#${MANUAL_PAGE_SECTION.home}`;
+  if (pathname === PRACTICE_PATH) return `${MANUAL_PATH}#${MANUAL_PAGE_SECTION.practice}`;
   if (pathname.startsWith("/account") || pathname.startsWith("/admin")) return `${MANUAL_PATH}#${MANUAL_PAGE_SECTION.account}`;
   return MANUAL_PATH;
 }

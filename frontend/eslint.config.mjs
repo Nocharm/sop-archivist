@@ -5,7 +5,7 @@ import nextVitals from "eslint-config-next/core-web-vitals";
 import nextTs from "eslint-config-next/typescript";
 
 // Files that already used effects or timers when the budget started (2026-11-19). New files may not;
-// `src/source-rules.test.ts` keeps these files from growing. Plan: docs/superpowers/plans/2026-11-19-trust-foundation-plan.md
+// `src/source-rules.test.ts` keeps these files from growing. Plan: 2026-11-19-trust-foundation-plan.md
 const baseline = JSON.parse(readFileSync(new URL("./effect-baseline.json", import.meta.url), "utf8"));
 // Next route folders like `[id]` are glob classes in ESLint patterns, so escape them.
 const toPatterns = (record) => Object.keys(record).map((path) => path.replace(/[[\]()]/g, "\\$&"));

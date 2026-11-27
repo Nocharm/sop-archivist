@@ -57,7 +57,7 @@ from tests.test_sop_outputs import _put_order
 from tests.test_sop_pair_settle import EN_HEAD, KO_HEAD, _dispose, _setup_pair, _setup_unpaired
 from tests.test_sop_pairs import _create as _create_pair
 
-pytestmark = pytest.mark.usefixtures("clean_sop")
+pytestmark = pytest.mark.usefixtures("clean_sop", "legacy_split_rule")
 
 OLD_NAME = "SYNTHETIC_OLD-1_Undo.docx"
 STORAGE = "합성 시료는 4 ℃에서 보관한다."
@@ -445,6 +445,22 @@ def test_assign_merge_records_merge_step_and_undo_reverts_it(client: TestClient)
     assert merged["created_unit_ids"][0] not in {unit["id"] for unit in view["units"] if unit["status"] == "active"}
 
 
+def test_bulk_clear_unassigns_every_row_in_one_step(client: TestClient) -> None:
+    fx = _setup_rich(client)
+    _confirm_unit(client, fx, fx.a)
+    _confirm_unit(client, fx, fx.b)
+    before = _dump(fx.bundle_id)
+    body = {"action": "clear", "units": [{"unit_id": u["id"], "revision": 2} for u in (fx.a, fx.b)], "undo": UNDO}
+
+    rows = _ok(client.post(f"/api/bundles/{fx.bundle_id}/decisions/bulk", json=body, headers=AUTHOR))
+
+    assert {row["decision"]["disposition"] for row in rows} == {"unassigned"}
+    (step,) = _load_steps(fx.bundle_id)[-1:]
+    assert step.op == "clear"
+    _ok(_undo(client, fx.bundle_id))
+    assert_same_state(_dump(fx.bundle_id), before)
+
+
 # ── 되돌리기·다시 하기 ───────────────────────────────────────────────────────
 
 OTHER_AUTHOR = REVIEWER  # 아래 시험에서 작성자로 넣는다
@@ -742,6 +758,32 @@ def test_undo_brings_back_deleted_new_sentence_same_id(client: TestClient) -> No
 
     restored = _load_target(int(target_key))
     assert restored is not None and restored.confirmed_text == TEXT_A
+
+
+def test_undo_restores_the_links_of_a_confirmed_new_unwrap(client: TestClient) -> None:
+    """묻고 확인해 벗긴 New 표 — Assign 되돌리기가 칸의 이음과 Old 판단을 처음대로 되살린다(쪼개기 먼저 설계 §8 4-3)."""
+    # 이 파일을 가져오는 시험 파일이라 여기서 가져온다(모듈 머리에서는 서로 가져오기가 된다)
+    from tests.test_sop_new_edit_undo import _link_cell, _strip
+    from tests.test_sop_new_edit_undo import _setup as _setup_new_table
+
+    bundle_id, old, new = _setup_new_table(client)
+    _link_cell(client, bundle_id, old, new)
+    before = _dump(bundle_id)
+    view = get_view(client, bundle_id, new["id"])
+    url = f"/api/bundles/{bundle_id}/documents/{new['id']}/edits"
+    body = {
+        "revision": view["document"]["revision"], "confirm": False, "undo": UNDO,
+        "op": {"type": "set_layout_table", "table_id": view["tables"][0]["id"], "is_layout": True},
+    }
+    asked = client.post(url, json=body, headers=AUTHOR)
+    assert asked.status_code == 409 and asked.json()["detail"]["linked_cells"] == 1, asked.text
+    _ok(client.post(url, json={**body, "confirm": True}, headers=AUTHOR))
+
+    _ok(_undo(client, bundle_id))
+
+    after = _dump(bundle_id)
+    for name in ("target_sources", "unit_decisions"):
+        assert _strip({key: after[name].get(key, {}) for key in before[name]}) == _strip(before[name])
 
 
 def test_undo_restores_dissolved_pair(client: TestClient) -> None:
@@ -1451,3 +1493,98 @@ def test_two_heading_edits_undo_one_by_one(client: TestClient) -> None:
     restored = _dump(fx.bundle_id)
     restored["unit_decisions"] = {key: row for key, row in restored["unit_decisions"].items() if key in before["unit_decisions"]}
     assert_same_state(restored, before)
+
+
+# ── 문장마다 나누기 ─────────────────────────────────────────────────────────── (판단 · 짝 · 새 문장까지 되돌리기 한 번)
+
+SENTENCES = ("합성 장비를 켠다.", "합성 시료를 넣는다.", "합성 결과를 확인한다.")
+SENTENCE_BOX = " ".join(SENTENCES)
+
+
+def _edit_with_undo(client: TestClient, bundle_id: int, doc_id: int, op: dict, confirm: bool) -> httpx2.Response:
+    revision = get_view(client, bundle_id, doc_id)["document"]["revision"]
+    return client.post(
+        f"/api/bundles/{bundle_id}/documents/{doc_id}/edits",
+        json={"revision": revision, "confirm": confirm, "op": op, "undo": UNDO}, headers=AUTHOR,
+    )
+
+
+def _strip_clock(rows: dict) -> dict:
+    return {key: {col: val for col, val in row.items() if col not in ("revision", "updated_at")} for key, row in rows.items()}
+
+
+def _check_back_to(undone: Snapshot, before: Snapshot, names: tuple[str, ...]) -> None:
+    """되돌린 뒤 before에 있던 행이 그대로다(되돌리기가 새로 만든 행은 따지지 않는다)."""
+    for name in names:
+        assert _strip_clock({key: undone[name].get(key, {}) for key in before[name]}) == _strip_clock(before[name]), name
+
+
+def test_split_sentences_of_a_decided_paired_box_undoes_in_one_step(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("app.sop.ingest.NEW_SPLIT_RULE", 2)
+    bundle_id = create_bundle(client, is_synthetic=True)["id"]
+    tobe = put_tobe(client, bundle_id, [{"code": "SOP-NEW", "title": "Synthetic", "doc_type": "sop", "parent_code": None}]).json()
+    english = "Synthetic records are kept. Synthetic value is checked."
+    doc = upload(client, bundle_id, build_docx(p("1. 목적", "Heading1") + p(SENTENCE_BOX) + p(english)), "SYNTHETIC_OLD-1_SplitSentences.docx").json()
+    view = get_view(client, bundle_id, doc["id"])
+    box, en = find_unit(view, SENTENCE_BOX), find_unit(view, english)
+    paired = client.post(
+        f"/api/bundles/{bundle_id}/documents/{doc['id']}/pairs",
+        json={"revision": view["document"]["revision"], "unit_ids": [box["id"], en["id"]]}, headers=AUTHOR,
+    )
+    assert paired.status_code < 300, paired.text
+    box = find_unit(get_view(client, bundle_id, doc["id"]), SENTENCE_BOX)
+    assert box["pair_id"] is not None
+    body = {
+        "action": "confirm", "undo": UNDO,
+        "units": [{"unit_id": box["id"], "revision": 1, "disposition": "assigned"}],
+        "targets": [{"key": "m", "target_doc_id": tobe["docs"][0]["id"], "slot_key": "purpose",
+                     "source_unit_ids": [box["id"]], "text": "합성.", "change_type": "rewritten"}],
+    }
+    assert save_group(client, bundle_id, body).status_code == 200
+    before = _dump(bundle_id)
+    op = {"type": "split_sentences", "unit_id": box["id"]}
+
+    assert _edit_with_undo(client, bundle_id, doc["id"], op, False).status_code == 409
+    done = _edit_with_undo(client, bundle_id, doc["id"], op, True)
+    assert done.status_code == 200, done.text
+    after = _dump(bundle_id)
+
+    for _ in range(2):  # 되돌리기 · 다시 하기를 두 번 오가도 같다
+        assert _undo(client, bundle_id).status_code == 200
+        _check_back_to(_dump(bundle_id), before, ("unit_decisions", "target_sentences", "target_sources"))
+        restored = find_unit(get_view(client, bundle_id, doc["id"]), SENTENCE_BOX)
+        assert (restored["id"], restored["pair_id"]) == (box["id"], box["pair_id"])  # 짝도 되돌리기 한 번에 돌아온다
+        assert _redo(client, bundle_id).status_code == 200
+        assert_same_state(_dump(bundle_id), after)
+
+
+def test_split_sentences_of_a_linked_new_box_keeps_one_target_per_unit(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("app.sop.ingest.NEW_SPLIT_RULE", 2)
+    bundle_id = create_bundle(client, is_synthetic=True)["id"]
+    old = upload(client, bundle_id, build_docx(p("절", "Heading1") + p(SENTENCES[0])), "SYNTHETIC_OLD-1_SplitSentences.docx").json()
+    new = upload(client, bundle_id, build_docx(p("새 절", "Heading1") + p(SENTENCE_BOX)), "SYNTHETIC_NEW-1_SplitSentences.docx", side="new", doc_type="sop").json()
+    box = find_unit(get_view(client, bundle_id, new["id"]), SENTENCE_BOX)
+    source = find_unit(get_view(client, bundle_id, old["id"]), SENTENCES[0])
+    targets = _dump(bundle_id)["target_sentences"]
+    target_id, row = next((int(key), row) for key, row in targets.items() if row["new_unit_id"] == box["id"])
+    body = {
+        "action": "confirm", "undo": UNDO,
+        "units": [{"unit_id": source["id"], "revision": 1, "disposition": "assigned"}],
+        "targets": [{"key": str(target_id), "id": target_id, "revision": row["revision"], "kind": row["kind"], "cell_row": row["cell_row"],
+                     "cell_col": row["cell_col"], "source_unit_ids": [source["id"]], "parent_key": None}],
+    }
+    assert save_group(client, bundle_id, body).status_code == 200
+    before = _dump(bundle_id)
+    op = {"type": "split_sentences", "unit_id": box["id"]}
+
+    done = _edit_with_undo(client, bundle_id, new["id"], op, True)
+
+    assert done.status_code == 200, done.text
+    after = _dump(bundle_id)
+    unit_ids = [row["new_unit_id"] for row in after["target_sentences"].values() if row["new_unit_id"] is not None]
+    assert len(unit_ids) == len(set(unit_ids)) and len(done.json()["created_unit_ids"]) == 3
+    for _ in range(2):
+        assert _undo(client, bundle_id).status_code == 200
+        _check_back_to(_dump(bundle_id), before, ("target_sentences", "target_sources", "unit_decisions"))
+        assert _redo(client, bundle_id).status_code == 200
+        assert_same_state(_dump(bundle_id), after)

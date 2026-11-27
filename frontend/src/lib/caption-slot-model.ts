@@ -136,7 +136,7 @@ export function getPlaceOffset(unit: Pick<ViewUnit, "spans" | "block_id">, bundl
 }
 
 /**
- * 이 줄이 캡션이 될 수 없는 까닭(문구 키) - 될 수 있으면 null. 문장 · 제목 · 묶음이 풀린 칸 문장(벗긴 표의 줄)이고, 참조 줄 · 목차 줄이
+ * 이 줄이 캡션이 될 수 없는 까닭(문구 키) - 될 수 있으면 null. 문장 · 제목 · 묶음이 풀린 칸 문장(벗긴 표의 줄)이고, 참조 줄 · 저절로 삭제된 줄이
  * 아니다(서버 editing.CAPTIONABLE_KINDS · group_unit_id 검사와 같다). 까닭은 종류마다 캡션 문구로 따로 둔다
  */
 export function getCaptionRefusal(unit: ViewUnit): string | null {

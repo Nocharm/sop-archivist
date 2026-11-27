@@ -222,6 +222,7 @@ export default function DocumentsPage() {
       <ToBeSection
         bundleId={bundleId}
         documents={data}
+        onUpload={() => setUploading([])}
         file={{ onPreview: setPreviewing, onDownload: (document) => void handleDownload(document), onDelete: setDeleting, onSave: saveField }}
       />
 

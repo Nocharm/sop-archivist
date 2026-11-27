@@ -1,4 +1,4 @@
-// 참조 줄(REF) 화면 규칙 - 다른 문서를 번호로 가리키는 줄의 번호 짐작과 확인이 남은 줄 세기(설계 2026-11-15-ref-paragraph-design).
+// 참조 줄(REF) 화면 규칙 - 다른 문서를 번호로 가리키는 줄의 번호 짐작과 확인이 남은 줄 세기(설계 2026-11-15-ref-paragraph — 구현 끝나 지웠다, git 이력).
 import type { UnitRefDetail, ViewUnit, WrittenSentence } from "./api-sop";
 
 // 문서 번호 꼴 - 서버의 제안 규칙(backend app/sop/refs.py)과 같다: 영문 대문자 머리 + 하이픈 마디 + 숫자 끝
@@ -12,6 +12,11 @@ export function guessRefNumber(text: string): string {
 /** 사람이 번호를 확인하기 전인 제안 */
 export function isRefPending(unit: ViewUnit | undefined): boolean {
   return unit?.ref?.state === "proposed";
+}
+
+/** 묶음 전체에서 확인이 남은 제안 - 줄이 되는 단위만(서버 tidy._count_refs · 개요의 Left to tidy와 같은 셈). 문서 대시보드의 Bundle 전체 칸이 쓴다 */
+export function countRefPending(views: readonly { units: readonly ViewUnit[] }[], onRow: { has(unitId: number): boolean }): number {
+  return views.reduce((sum, view) => sum + view.units.filter((unit) => isRefPending(unit) && onRow.has(unit.id)).length, 0);
 }
 
 /** 줄(단위 여럿)에서 참조 카드를 보일 단위 - 확인이 남은 제안이 먼저, 없으면 확정된 참조 줄 */

@@ -162,6 +162,8 @@ class GroupSaveIn(BaseModel):
     units: list[UnitDecisionIn] = Field(max_length=500)
     targets: list[TargetIn] = Field(max_length=2000)
     removed_target_ids: list[DbId] = Field(default_factory=list, max_length=2000)
+    # 지울 새 문장 → 화면이 본 revision(선택). 단위를 싣지 않는 저장(번역만 지우기)은 단위 revision이 막지 못해 이것으로 견준다
+    removed_revisions: dict[DbId, DbId] = Field(default_factory=dict, max_length=2000)
     # 짝의 한쪽만 이을 때 남는 쪽을 따로 줄로 — 그 단위가 든 짝을 이 저장 안에서 푼다(pair_settle). 판단은 바꾸지 않는다
     release_unit_ids: list[DbId] = Field(default_factory=list, max_length=500)
     # 사람이 받은 AI 제안(Assign의 Use) — 그 제안이 덮는 판단·입구 2 새 문장에 이어 두면 채택 기록이 그대로·고침·버림을 정한다
@@ -176,7 +178,7 @@ class BulkUnitIn(BaseModel):
 
 
 class BulkDecisionIn(BaseModel):
-    action: Literal["delete", "move_external"]
+    action: Literal["delete", "move_external", "clear"]  # clear는 reason · move_target_code를 읽지 않는다(clear_units)
     reason: Annotated[str, StringConstraints(strip_whitespace=True, max_length=2000), NO_NUL] = ""  # 선택 — 비면 결과물이 처분 이름으로 적는다
     move_target_code: Annotated[str, StringConstraints(strip_whitespace=True, max_length=100), NO_NUL] = ""
     units: list[BulkUnitIn] = Field(min_length=1, max_length=MAX_BULK_UNITS)
@@ -581,6 +583,11 @@ def _check_revisions(payload: GroupSaveIn, state: _State) -> None:
         {"entity": "target", "id": item.id, "current_revision": state.existing[item.id].revision}
         for item in payload.targets
         if item.id is not None and item.revision != state.existing[item.id].revision
+    ]
+    conflicts += [
+        {"entity": "target", "id": target_id, "current_revision": state.existing[target_id].revision}
+        for target_id in payload.removed_target_ids
+        if payload.removed_revisions.get(target_id, state.existing[target_id].revision) != state.existing[target_id].revision
     ]
     if conflicts:
         raise_rule(409, "revision_conflict", conflicts=conflicts)
@@ -1686,6 +1693,49 @@ async def clear_unit(session: AsyncSession, bundle: Bundle, payload: ClearIn, ac
     return report
 
 
+async def clear_units(
+    session: AsyncSession, bundle: Bundle, payload: BulkDecisionIn, actor: str
+) -> list[UnitDecisionRowOut]:
+    """여러 단위의 배정 지우기를 요청 하나·떼어 내기 한 번으로 — 한 줄이라도 낡았으면 아무것도 바꾸지 않는다(clear_unit을 줄마다 부르면 N번 덤프하고 가운데서 실패하면 반만 취소된다)."""
+    await lock_bundle(session, bundle)
+    ensure_editable(bundle)
+    unit_ids = [item.unit_id for item in payload.units]
+    duplicates = _find_duplicates(unit_ids)
+    if duplicates:
+        raise_rule(422, "duplicate_units", unit_ids=duplicates)
+    loaded = await _load_decision_units(session, bundle.id, unit_ids)
+    conflicts = [
+        {"entity": "unit", "id": item.unit_id, "current_revision": loaded[item.unit_id][1].revision}
+        for item in payload.units
+        if item.revision != loaded[item.unit_id][1].revision
+    ]
+    if conflicts:
+        raise_rule(409, "revision_conflict", conflicts=conflicts)
+    suggestion_ids = sorted({row.suggestion_id for _, row in loaded.values() if row.suggestion_id is not None})
+    if suggestion_ids:  # 떼어 내기가 칸을 비우므로 먼저 남긴다
+        await reject_suggestions(session, suggestion_ids, actor)
+    report = await detach_units(session, bundle_id=bundle.id, unit_ids=unit_ids, cause="cleared", actor=actor)
+    if report.reset_unit_ids or report.deleted_target_ids or report.held_unit_ids or report.held_target_ids:
+        record_event(
+            session, bundle_id=bundle.id, actor=actor, action="decision.clear", target_type="unit", target_ids=unit_ids,
+        )
+    await session.flush()
+    for _, decision in loaded.values():  # detach가 판단을 바꿨으니 지금 모습으로
+        await session.refresh(decision)
+    # 같은 관계 묶음에서 보류로 바뀐 형제도 싣는다 - revision이 올랐으니 화면이 낡은 값으로 이어 저장해 409가 나지 않게
+    siblings = [unit_id for unit_id in report.held_unit_ids if unit_id not in loaded]
+    held = (
+        list(await session.scalars(
+            select(UnitDecision).where(UnitDecision.unit_id.in_(siblings)).execution_options(populate_existing=True)
+        ))
+        if siblings else []
+    )
+    return [
+        *(UnitDecisionRowOut(unit_id=unit_id, decision=DecisionOut.model_validate(loaded[unit_id][1])) for unit_id in unit_ids),
+        *(UnitDecisionRowOut(unit_id=row.unit_id, decision=DecisionOut.model_validate(row)) for row in held),
+    ]
+
+
 async def reset_assignments(session: AsyncSession, bundle: Bundle, payload: ResetIn, actor: str) -> ResetOut:
     """배정 초기화 — 문서(또는 묶음 전체)의 배정된 단위를 detach_units 한 번으로 미배정으로 돌린다.
 
@@ -1813,7 +1863,7 @@ async def list_units(
         [unit.id for unit, *_ in rows],
     )
     pair_ids = {unit_id: pair_id for unit_id, pair_id in pair_rows}
-    captioned = await _find_captioned_units(session, [unit.id for unit, *_ in rows])
+    captioned = await find_captioned_units(session, [unit.id for unit, *_ in rows])
     items = []
     for unit, document, decision, group in rows:
         decisions = {unit.id: decision} if group is None else {unit.id: decision, group.unit_id: group}
@@ -1833,7 +1883,7 @@ async def list_units(
     return UnitsPageOut(total=total or 0, items=items)
 
 
-async def _find_captioned_units(session: AsyncSession, unit_ids: list[int]) -> set[int]:
+async def find_captioned_units(session: AsyncSession, unit_ids: list[int]) -> set[int]:
     """출처 새 문장 아래 캡션 새 문장(captions.is_caption_target과 같은 꼴)이 있는 단위 — 써 넣은 캡션은 캡션 단위가 없어 화면이 이것으로 안다."""
     caption = aliased(TargetSentence)
     rows = await select_in_chunks(

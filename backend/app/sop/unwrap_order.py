@@ -6,7 +6,7 @@ unwrap_seq는 사람이 순서를 바꾼 덩이의 줄마다 0부터 매긴 값�
 (editing._build_draft) 같은 값끼리 원문 자리 순 — 옛 줄 자리에 남는다. 값이 없는 줄은 원문 순서에서 바로 앞 줄의 값을 빌린다 — 바꾼 적
 없으면 원문 순서이고, 짝 카드 순서처럼 "하나라도 없으면 원문 순서"로 돌아가지 않는다. 원문 글자 자리와 단위 글은 그대로다. 결과물 A는 따르지 않는다(원문 자리 순, 설계 확인할 것 4).
 프런트 사본: frontend/src/lib/unwrap-order-model.ts `orderUnwrapped` · `orderUnwrappedLines` · `findLineTable`.
-설계: docs/superpowers/specs/2026-11-20-assign-mockup2-design.md D2
+설계: 2026-11-20-assign-mockup2 D2 (docs/architecture/decisions.md)
 """
 
 from collections.abc import Callable, Hashable, Iterable, Mapping, Sequence

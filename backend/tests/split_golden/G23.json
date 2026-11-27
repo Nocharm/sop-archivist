@@ -1,0 +1,16 @@
+{
+  "shape": "한/영 따로 문서의 한글 반쪽에 번호 1이 없음(번호 없는 제목)",
+  "layout": null,
+  "boxes": [
+    {"text": "합성 표준 절차서", "lang": "ko", "kind": "sentence", "number": null, "excluded": null},
+    {"text": "목적", "lang": "ko", "kind": "heading", "number": null, "excluded": null},
+    {"text": "탱크 세척 방법을 정한다.", "lang": "ko", "kind": "sentence", "number": null, "excluded": null},
+    {"text": "범위", "lang": "ko", "kind": "heading", "number": null, "excluded": null},
+    {"text": "합성 공정에 적용한다.", "lang": "ko", "kind": "sentence", "number": null, "excluded": null},
+    {"text": "Synthetic Standard Procedure", "lang": "en", "kind": "sentence", "number": null, "excluded": null},
+    {"text": "1. Purpose", "lang": "en", "kind": "heading", "number": "1.", "excluded": null},
+    {"text": "This procedure defines how to clean the tank.", "lang": "en", "kind": "sentence", "number": null, "excluded": null},
+    {"text": "2. Scope", "lang": "en", "kind": "heading", "number": "2.", "excluded": null},
+    {"text": "It applies to the synthetic process.", "lang": "en", "kind": "sentence", "number": null, "excluded": null}
+  ]
+}

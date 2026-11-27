@@ -34,9 +34,10 @@ from app.sop.constants import (
     OutlineKind,
 )
 from app.sop.groups import TABLE_UNIT_KINDS, build_group_ids, collapse_table_members
+from app.sop.noise import NOISE_FRONT, NOISE_HISTORY, NOISE_TOC
 from app.sop.numbering import NUMBER_CELL, SECTION_KIND, is_number_fixed, normalize_number, strip_number
 from app.sop.outline import KIND_AUTO_LIST, DocOutline, get_parent_key, list_emitted_keys, number_outline
-from app.sop.output_labels import LABELS, OutputLabels
+from app.sop.output_labels import FIGURE_MARKER, LABELS, OutputLabels
 from app.sop.output_rows import (
     MeaningRow,
     build_meaning_rows,
@@ -54,6 +55,8 @@ from app.sop.renumber import (
 )
 from app.sop.segment import is_band_heading
 from app.sop.snapshot import (
+    FIGURE_KIND,
+    NEUTRAL,
     BundleSnapshot,
     CaptionRefInfo,
     DocumentInfo,
@@ -115,12 +118,12 @@ class ARow(BaseModel):
     ai_text: str
     change_type: str  # 저장한 변경 종류, 그리고 표시 전용 translated_added
     remark: str  # 묶음의 Remark — 묶음의 모든 줄에 같은 값
-    status: str  # 옛 단위 줄은 커버 상태, 번역·신규 줄은 새 문장 상태, 잡음 표시 줄(목차)은 STATUS_DELETED
+    status: str  # 옛 단위 줄은 커버 상태, 번역·신규 줄은 새 문장 상태, 저절로 삭제된 줄은 STATUS_DELETED
     confirmed_by: str | None  # "이름 (ID)", 디렉터리에 없거나 퇴직이면 ID만(format_confirmer)
     confirmed_at: KstDatetime | None
     group_id: str | None
     warnings: list[dict[str, str]]
-    # 잡음 표시(noise.py) — "toc"면 목차 줄(보낸 곳 Deleted, 저절로). 시트 미리보기가 연달아 오는 목차 줄을 한 줄로 접는다
+    # 잡음 표시(noise.NOISE_KINDS) — 저절로 삭제된 줄(보낸 곳 Deleted). 시트 미리보기가 연달아 오는 같은 종류의 줄을 한 줄로 접는다
     noise_kind: str | None = None
 
 
@@ -251,12 +254,12 @@ class COutput(BaseModel):
 class Summary(BaseModel):
     """요약 숫자 한 벌(제품 명세 §7.13 요약 숫자) — 옛 쪽은 줄로 센다.
 
-    목차 줄(잡음 표시)은 결과물 A에 한 줄씩 남으므로 old_rows·assigned에 들고(저절로 지운 줄), 사람이 지운 deleted와 나눠
-    toc_deleted로 센다(MD 1 F11). 확정률은 판단 줄(목차 줄 제외)로 잰다 — 목차 줄은 사람이 확정하는 줄이 아니다.
+    저절로 삭제된 줄(잡음 표시 — 목차 · 본문 앞부분 · 개정 이력)은 결과물 A에 한 줄씩 남으므로 old_rows·assigned에 들고, 사람이 지운
+    deleted와 나눠 종류마다 센다(MD 1 F11). 확정률은 판단 줄(그 줄들 제외)로 잰다 — 사람이 확정하는 줄이 아니다.
     """
 
     old_rows: int
-    assigned: int  # 처분이 미배정이 아닌 줄(삭제·이동·목차 저절로 삭제 포함)
+    assigned: int  # 처분이 미배정이 아닌 줄(삭제·이동·저절로 삭제 포함)
     no_destination: int  # 처분이 미배정인 줄 — 갈 곳 없는 보류·일부만 판단한 줄 포함, 진행 숫자의 Unassigned(상태 기준)와 다르다
     duplicate: int
     deleted: int  # 사람이 지운 줄
@@ -265,7 +268,9 @@ class Summary(BaseModel):
     translated: int  # 번역 줄·Translated · Added 줄이 든 A 묶음 수
     confirmed_rate: float
     single_language: int
-    toc_deleted: int = 0  # 목차 · 저절로 삭제 — 잡음 표시가 붙은 줄
+    toc_deleted: int = 0  # 목차 · 저절로 삭제
+    front_deleted: int = 0  # 본문 앞부분 · 저절로 삭제
+    history_deleted: int = 0  # 개정 이력 · 저절로 삭제
     unwrapped_rows: int = 0  # 풀린 표에서 온 줄 — 레이아웃 표(표 벗기기)의 칸 줄이 든 줄(MD 1 F1 · F11)
 
 
@@ -1314,31 +1319,53 @@ def _build_old_group(ctx: _AContext, meaning: MeaningRow, row_no: int) -> list[A
     return rows
 
 
-def _number_toc_lines(units: Sequence[UnitInfo]) -> dict[int, int]:
-    """목차 줄 → 그 문서·언어 안 차례(1부터) — 위치 칸 "목차 · 한글 · 3행"의 수. units는 원문 순."""
-    counts: Counter[tuple[int, str]] = Counter()
-    numbers: dict[int, int] = {}
+def _number_noise_lines(index: _Index, units: Sequence[UnitInfo]) -> dict[int, tuple[str, int]]:
+    """저절로 삭제된 줄 → (언어, 그 문서·종류·언어 안 차례 1부터) — 위치 칸 "본문 앞부분 · 한글 · 3행". units는 원문 순.
+
+    표 · 그림은 든 칸 · 캡션의 언어(한글이 있으면 한글)이고, 글이 없으면 앞 줄의 언어를 따른다(쪼개기의 언어 채우기와 같다).
+    """
+    counts: Counter[tuple[int, str | None, str]] = Counter()
+    numbers: dict[int, tuple[str, int]] = {}
+    previous: dict[int, str] = {}  # 문서 → 앞 줄의 언어
     for unit in units:
-        counts[(unit.document_id, unit.lang)] += 1
-        numbers[unit.id] = counts[(unit.document_id, unit.lang)]
+        langs = {member.lang for member in index.cells.get(unit.id, ())}
+        lang = next((lang for lang in ("ko", "en") if lang in langs), unit.lang)
+        if lang == NEUTRAL:
+            lang = previous.get(unit.document_id, "ko")
+        previous[unit.document_id] = lang
+        key = (unit.document_id, unit.noise_kind, lang)
+        counts[key] += 1
+        numbers[unit.id] = (lang, counts[key])
     return numbers
 
 
-def _build_toc_row(ctx: _AContext, unit: UnitInfo, number: int, row_no: int) -> ARow:
-    """목차 줄 하나 — 보낸 곳 Deleted, 비고는 "목차 · 새 문서 목차는 앱이 만든다 (저절로)". 결정 행이 아니라 표시라 상태도
+def _format_noise_text(index: _Index, unit: UnitInfo, labels: OutputLabels) -> str:
+    """저절로 삭제된 줄의 원문 칸 — 표는 "표 n (행×열)", 그림은 "[Figure]", 글은 번호까지 원문 그대로."""
+    if unit.kind == "figure":
+        return FIGURE_MARKER
+    if unit.kind not in TABLE_UNIT_KINDS:
+        return unit.text
+    table = index.snap.tables[unit.table_id]
+    return labels.noise_table_template.format(table=table.table_index + 1, rows=table.n_rows, cols=table.n_cols)
+
+
+def _build_noise_row(ctx: _AContext, unit: UnitInfo, lang: str, number: int, row_no: int) -> ARow:
+    """저절로 삭제된 줄 하나 — 보낸 곳 Deleted, 비고는 적은 사유, 없으면 종류마다 정한 문구. 결정 행이 아니라 표시라 상태도
     판단 상태가 아닌 STATUS_DELETED이고 확정한 사람이 없다(사람이 확정한 것처럼 꾸미지 않는다, MD 1 §11-2)."""
+    assert unit.noise_kind is not None
     labels = ctx.labels
     snap = ctx.index.snap
     block = snap.blocks[unit.block_id]
     document = snap.documents[unit.document_id]
-    place = labels.toc_place_template.format(lang=labels.toc_langs.get(unit.lang, unit.lang), n=number)
+    place = labels.noise_place_templates[unit.noise_kind].format(lang=labels.noise_langs.get(lang, lang), n=number)
     return ARow(
         row_no=row_no, is_group_start=False, row_kind="unit", old_doc_code=_format_doc_code(document),
         old_doc_version=document.doc_version,
         location=LocationOut(section=block.section_label, place=place, page=block.page, page_basis=block.page_basis),
-        unit_id=unit.id, display_id=unit.display_id, source_text=unit.text, dest_kind="delete", dest_doc_code="",
-        dest_doc_title="", dest_location="", dest_number="", dest_is_note=False, confirmed_text="", ai_text="",
-        change_type="deleted", remark=labels.toc_remark, status=STATUS_DELETED, confirmed_by=None, confirmed_at=None,
+        unit_id=unit.id, display_id=unit.display_id, source_text=_format_noise_text(ctx.index, unit, labels),
+        dest_kind="delete", dest_doc_code="", dest_doc_title="", dest_location="", dest_number="", dest_is_note=False,
+        confirmed_text="", ai_text="", change_type="deleted",
+        remark=unit.noise_reason or labels.noise_remarks[unit.noise_kind], status=STATUS_DELETED, confirmed_by=None, confirmed_at=None,
         group_id=None, warnings=[], noise_kind=unit.noise_kind,
     )
 
@@ -1394,8 +1421,8 @@ def _build_a_groups(index: _Index, labels: OutputLabels, people: Mapping[str, st
     groups: list[list[ARow]] = []
     placed: set[int] = set()
     noise_units = list_noise_units(snap)
-    toc_numbers = _number_toc_lines(noise_units)
-    # 옛 문서 줄은 원문 순 — 판단 줄(의미 묶음, 첫 단위 순)과 목차 줄(잡음 표시 단위 하나가 한 묶음)을 섞는다
+    noise_numbers = _number_noise_lines(index, noise_units)
+    # 옛 문서 줄은 원문 순 — 판단 줄(의미 묶음, 첫 단위 순)과 저절로 삭제된 줄(잡음 표시 단위 하나가 한 묶음)을 섞는다
     entries: list[tuple[tuple[int, ...], MeaningRow | UnitInfo]] = [
         (snap.units[meaning.unit_ids[0]].order_key, meaning) for meaning in build_meaning_rows(snap)
     ]
@@ -1403,7 +1430,7 @@ def _build_a_groups(index: _Index, labels: OutputLabels, people: Mapping[str, st
     entries.sort(key=lambda entry: entry[0])
     for _, entry in entries:
         if isinstance(entry, UnitInfo):
-            groups.append([_build_toc_row(ctx, entry, toc_numbers[entry.id], len(groups) + 1)])
+            groups.append([_build_noise_row(ctx, entry, *noise_numbers[entry.id], len(groups) + 1)])
             placed.add(entry.id)
             continue
         groups.append(_build_old_group(ctx, entry, len(groups) + 1))
@@ -1435,7 +1462,7 @@ def build_output_b(snap: BundleSnapshot, lang: Lang) -> FlowGraph:
 
     줄의 처분은 요약과 같은 _get_row_disposition이다: 배정 줄은 보낸 새 문서 집합에 한 번씩(나눔은 한 번, 중복 배정은 보낸 곳마다
     한 번), 삭제·이동·갈 곳 없음(일부만 판단한 줄 포함, 제품 명세 §7.13 요약 숫자)은 그 처분 노드 하나 — 처분 노드 건수가 요약 숫자와 같다
-    (삭제 노드는 요약의 deleted + toc_deleted — 목차 줄도 삭제로 흐른다).
+    (삭제 노드는 요약의 deleted + toc_deleted + front_deleted + history_deleted — 저절로 삭제된 줄도 삭제로 흐른다).
     짝의 두 단위가 서로 다른 옛 문서에 있으면(드묾) 줄의 첫 단위 문서로 센다.
     """
     labels = LABELS[lang]
@@ -1690,6 +1717,9 @@ class BundleCellOut(BaseModel):
     source_unit_ids: list[int]  # 칸에 이은 Old 단위(출처 순서) — Assign New 칸이 칸 위에 출처 칩을 보인다
     # 이미 쓴 문서(written)의 칸만 싣는다 — 엮은 문서(composed)의 칸은 잇지 않아 스냅숏에 revision이 없다
     revision: int | None = None
+    # 이미 쓴 문서의 칸만 — 새 문서 용지가 칸 조각(Unit)에 이 문장을 얹는 열쇠와 "신규"로 판단했는지. 엮은 문서의 칸은 null
+    new_unit_id: int | None = None
+    change_type: str | None = None
 
 
 class BundleTableOut(BaseModel):
@@ -1708,8 +1738,11 @@ class BundleFigureOut(BaseModel):
 
 
 def build_bundle_table(grid: dict[str, int] | None, cells: list[BundleCellOut]) -> BundleTableOut:
-    """칸 새 문장들을 표 하나로 — 격자는 표 새 문장의 grid와 칸 자리 중 큰 쪽(grid가 낡거나 없어도 칸이 빠지지 않게)."""
-    cells = sorted(cells, key=lambda cell: (cell.row, cell.col, cell.target_id))
+    """칸 새 문장들을 표 하나로 — 격자는 표 새 문장의 grid와 칸 자리 중 큰 쪽(grid가 낡거나 없어도 칸이 빠지지 않게).
+
+    한 칸 안 문장은 받은 차례 그대로다(이미 쓴 문서는 Unit 순서, 엮은 문서는 새 문장 id 순).
+    """
+    cells = sorted(cells, key=lambda cell: (cell.row, cell.col))
     rows = max([cell.row + 1 for cell in cells] + [grid["rows"] if grid else 0])
     cols = max([cell.col + 1 for cell in cells] + [grid["cols"] if grid else 0])
     return BundleTableOut(rows=rows, cols=cols, cells=cells)
@@ -1841,19 +1874,20 @@ def build_composed_doc(snap: BundleSnapshot, target_doc_id: int, lang: Lang) -> 
 def build_summary(snap: BundleSnapshot) -> Summary:
     """요약 숫자 한 벌(제품 명세 §7.13 요약 숫자) — 줄은 진행 숫자와 같은 의미 묶음, 줄의 처분은 구성 단위가 모두 같을 때 그 값(아니면 미배정).
 
-    목차 줄은 결과물 A의 줄처럼 old_rows·assigned에 더하고 toc_deleted로 따로 센다(Summary 참고).
+    저절로 삭제된 줄은 결과물 A의 줄처럼 old_rows·assigned에 더하고 종류마다 따로 센다(Summary 참고).
     확정률은 판단 줄의 상태 기준(소수 넷째 자리, 줄이 없으면 0). 번역은 결과물 A 묶음 짓기를 그대로 센다.
     """
     index = _build_index(snap)
     rows = build_meaning_rows(snap)
     dispositions = Counter(_get_row_disposition(snap, meaning) for meaning in rows)
     confirmed = sum(meaning.status == "confirmed" for meaning in rows)
-    toc_rows = len(list_noise_units(snap))
+    noise_counts = Counter(unit.noise_kind for unit in list_noise_units(snap))
+    noise_rows = noise_counts.total()
     labels = LABELS["en"]  # 숫자만 세므로 라벨 언어는 결과에 닿지 않는다
     groups = _build_a_groups(index, labels, {})
     return Summary(
-        old_rows=len(rows) + toc_rows,
-        assigned=len(rows) + toc_rows - dispositions["unassigned"],
+        old_rows=len(rows) + noise_rows,
+        assigned=len(rows) + noise_rows - dispositions["unassigned"],
         no_destination=dispositions["unassigned"],
         duplicate=sum(_is_duplicate_row(index, meaning) for meaning in rows),
         deleted=dispositions["delete"],
@@ -1865,7 +1899,9 @@ def build_summary(snap: BundleSnapshot) -> Summary:
         ),
         confirmed_rate=round(confirmed / len(rows), 4) if rows else 0.0,
         single_language=count_single_language(snap),
-        toc_deleted=toc_rows,
+        toc_deleted=noise_counts[NOISE_TOC],
+        front_deleted=noise_counts[NOISE_FRONT],
+        history_deleted=noise_counts[NOISE_HISTORY],
         unwrapped_rows=sum(any(_is_unwrapped_cell(snap.units[unit_id]) for unit_id in meaning.unit_ids) for meaning in rows),
     )
 
@@ -1880,7 +1916,8 @@ def _is_unwrapped_cell(unit: UnitInfo) -> bool:
 
 @dataclass(frozen=True)
 class ReviewFacts:
-    row_status_counts: Counter[str]  # 줄 상태 → 줄 수 (진행 숫자와 같은 규칙 — 짝 하나·짝 없는 단위 하나가 한 줄)
+    row_status_counts: Counter[str]  # 줄 상태 → 줄 수 (진행 숫자와 같은 줄 규칙 — 짝 하나·짝 없는 단위 하나가 한 줄. 그림까지 센다)
+    figure_status_counts: Counter[str]  # 그 가운데 그림 줄 — 진행 숫자는 그림을 따로 세므로 막는 이유가 그림 수를 함께 말한다
     duplicate_unit_ids: list[int]  # 서로 다른 새 문서 둘 이상으로 간 판단 단위(칸 문장은 표 단위로 접는다), id 순
     caption_ref_warnings: tuple[CaptionRefWarning, ...] = ()  # 표·그림 참조 경고(build_renumbering) — 막지 않는다
 
@@ -1888,9 +1925,11 @@ class ReviewFacts:
 def build_review_facts(snap: BundleSnapshot) -> ReviewFacts:
     """검토 요청 조건이 읽는 단위 사실 — 요약·결과물과 같은 옛 단위 집합(_build_index)과 같은 보낸 곳 규칙(_group_dests)."""
     index = _build_index(snap)
-    counts = Counter(row.status for row in build_meaning_rows(snap))
+    rows = build_meaning_rows(snap)
+    counts = Counter(row.status for row in rows)
+    figures = Counter(row.status for row in rows if any(snap.units[unit_id].kind == FIGURE_KIND for unit_id in row.unit_ids))
     duplicates = {_get_decision_unit_id(unit) for unit in index.old_units if len(_group_dests(index, unit)) >= 2}
     return ReviewFacts(
-        row_status_counts=counts, duplicate_unit_ids=sorted(duplicates),
+        row_status_counts=counts, figure_status_counts=figures, duplicate_unit_ids=sorted(duplicates),
         caption_ref_warnings=build_renumbering(index, LABELS["en"]).warnings,  # 경고는 라벨 언어와 무관하다
     )

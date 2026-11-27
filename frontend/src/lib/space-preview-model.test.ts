@@ -5,14 +5,18 @@ import type { PreviewRow } from "@/lib/api-sop";
 
 import {
   buildSheetDraft,
+  clampSheetHeight,
+  readDragHeight,
   countDataRows,
   findSheetUnit,
   pickSheetAnchor,
   getWindowRest,
   isOwnSpaceTarget,
+  SPACE_PICK_ATTR,
   isSpaceEnabled,
   isSpaceKept,
   isSpaceOpen,
+  isTabFlip,
   NO_NUMBER,
   pickSpaceSheet,
   SPACE_CLOSED,
@@ -44,7 +48,7 @@ describe("stepSpace", () => {
 
   it("closes a kept sheet on another tap, but not after a long press or a drag", () => {
     const kept = run([{ type: "down", at: 0 }, { type: "up", at: 10 }]);
-    expect(run([{ type: "down", at: 1000 }, { type: "up", at: 1100 }], kept).phase).toBe("closed");
+    expect(run([{ type: "down", at: 1000 }, { type: "up", at: 1100 }, { type: "closed" }], kept).phase).toBe("closed");
     expect(run([{ type: "down", at: 1000 }, { type: "up", at: 1000 + TAP_MS }], kept).phase).toBe("kept");
     const dragged = run([{ type: "down", at: 1000 }, { type: "drag" }, { type: "up", at: 1050 }], kept);
     expect([dragged.phase, dragged.dragged]).toEqual(["kept", false]);
@@ -59,6 +63,35 @@ describe("stepSpace", () => {
     const held = run([{ type: "down", at: 0 }]);
     expect(stepSpace(held, { type: "down", at: 400 })).toBe(held);
     expect(run([{ type: "up", at: 10 }, { type: "drag" }])).toEqual(SPACE_CLOSED);
+  });
+
+  it("closes through closing after a short tap", () => {
+    const closing = run([{ type: "down", at: 0 }, { type: "up", at: 10 }, { type: "down", at: 500 }, { type: "up", at: 510 }]);
+    expect([closing.phase, isSpaceOpen(closing), isSpaceKept(closing)]).toEqual(["closing", true, false]);
+  });
+
+  it("flips the tab on a second tap while closing", () => {
+    const closing = run([{ type: "down", at: 0 }, { type: "up", at: 10 }, { type: "down", at: 500 }, { type: "up", at: 510 }]);
+    const flipped = stepSpace(closing, { type: "down", at: 600 });
+    expect([flipped.phase, isTabFlip(closing, flipped)]).toEqual(["kept", true]);
+    expect(isTabFlip(SPACE_CLOSED, run([{ type: "down", at: 0 }]))).toBe(false);
+    // 뒤따르는 keyup은 열어 둔 시트를 닫지 않는다
+    expect(stepSpace(flipped, { type: "up", at: 650 }).phase).toBe("kept");
+  });
+
+  it("closing ends on animation end", () => {
+    const closing = run([{ type: "down", at: 0 }, { type: "up", at: 10 }, { type: "down", at: 500 }, { type: "up", at: 510 }]);
+    expect(stepSpace(closing, { type: "closed" })).toEqual(SPACE_CLOSED);
+    expect(stepSpace(closing, { type: "drag" })).toBe(closing);
+    // 다른 단계에서 온 늦은 animationend는 아무것도 하지 않는다
+    const kept = run([{ type: "down", at: 0 }, { type: "up", at: 10 }]);
+    expect(stepSpace(kept, { type: "closed" })).toBe(kept);
+  });
+
+  it("escape while closing closes", () => {
+    const closing = run([{ type: "down", at: 0 }, { type: "up", at: 10 }, { type: "down", at: 500 }, { type: "up", at: 510 }]);
+    expect(stepSpace(closing, { type: "escape" })).toEqual(SPACE_CLOSED);
+    expect(stepSpace(closing, { type: "blur" })).toEqual(SPACE_CLOSED);
   });
 
   it("closes a held sheet when the window loses focus but keeps a kept one", () => {
@@ -91,6 +124,13 @@ describe("isOwnSpaceTarget", () => {
     expect(isOwnSpaceTarget(document.body)).toBe(false);
     expect(isOwnSpaceTarget(make('<div tabindex="0">x</div>', "div"))).toBe(false);
     expect(isOwnSpaceTarget(null)).toBe(false);
+  });
+
+  it("takes Space on a paper button that only picks - a folded deleted line or a deleted block keeps focus after the click", () => {
+    expect(isOwnSpaceTarget(make(`<button ${SPACE_PICK_ATTR}><span class="deleted-tag">DELETED</span></button>`, "span"))).toBe(false);
+    expect(isOwnSpaceTarget(make(`<button ${SPACE_PICK_ATTR}>x</button>`, "button"))).toBe(false);
+    // 그 블록 안의 다른 단추(사유 쓰기 · 삭제 취소)는 제 Space다
+    expect(isOwnSpaceTarget(make(`<div ${SPACE_PICK_ATTR}><button class="noise-act">x</button></div>`, "button"))).toBe(true);
   });
 });
 
@@ -146,7 +186,7 @@ describe("sheet window", () => {
 });
 
 describe("pickSpaceSheet · isSpaceEnabled", () => {
-  const base = { hasDoc: true, unitCount: 5, isNewEdit: false, rowCount: 3 };
+  const base = { hasDoc: true, unitCount: 5, rowCount: 3 };
 
   it("shows the paragraph sheet in one pane and Excel A in two panes", () => {
     expect(pickSpaceSheet(true)).toBe("paragraphs");
@@ -161,9 +201,9 @@ describe("pickSpaceSheet · isSpaceEnabled", () => {
     expect(isSpaceEnabled("paragraphs", { ...base, hasDoc: false })).toBe(false);
   });
 
-  it("keeps Excel A off while a New document is edited in place, as before", () => {
+  // 양 단에서 New 박스를 골라도 켜 둔다 - 열어 둔 시트가 닫히거나 Space가 스크롤로 새지 않게(isNewEdit를 받지 않는다)
+  it("keeps Excel A on whenever the Old document has rows", () => {
     expect(isSpaceEnabled("comparison", base)).toBe(true);
-    expect(isSpaceEnabled("comparison", { ...base, isNewEdit: true })).toBe(false);
     expect(isSpaceEnabled("comparison", { ...base, rowCount: 0 })).toBe(false);
   });
 });
@@ -181,5 +221,21 @@ describe("buildSheetDraft", () => {
       change: "= · Modified",
     });
     expect(buildSheetDraft({ docType: "wi", docCode: "WI-1", docTitle: "", place: "1 Step · Instruction", texts: [], changes: ["heading"] })).toMatchObject({ destination: "WI", change: "Slot heading" });
+  });
+});
+
+describe("sheet height", () => {
+  it("clamps the ratio to 0.3..0.9 and falls back to 0.7 for non-numbers", () => {
+    expect(clampSheetHeight(0.5)).toBe(0.5);
+    expect(clampSheetHeight(0.1)).toBe(0.3);
+    expect(clampSheetHeight(1.4)).toBe(0.9);
+    expect(clampSheetHeight(Number.NaN)).toBe(0.7);
+  });
+
+  it("reads the ratio from the pointer, measured from the work area bottom", () => {
+    expect(readDragHeight(500, 1000, 1000)).toBe(0.5);
+    expect(readDragHeight(100, 1000, 1000)).toBe(0.9);
+    expect(readDragHeight(990, 1000, 1000)).toBe(0.3);
+    expect(readDragHeight(500, 1000, 0)).toBe(0.7);
   });
 });

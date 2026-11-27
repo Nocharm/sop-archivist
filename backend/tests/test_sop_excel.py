@@ -33,14 +33,14 @@ from app.sop.excel_export import (
 )
 from app.sop.flow_image import KIND_COLORS, MAX_COLUMN_NODES, _limit_nodes, draw_flow_png
 from app.sop.models import Bundle, BundleEvent, SourceBlock, Unit
-from app.sop.outputs import FlowGraph, FlowNode
+from app.sop.outputs import FlowGraph, FlowNode, LocationOut
 from app.sop.sheet_model import (
     A_COLUMN_KEYS,
     A_HEADERS,
     A_PREVIEW_WIDTHS,
     A_STATUS_COLUMN,
-    SHEET_NAMES,
     format_rate,
+    get_sheet_names,
 )
 from tests.access_helpers import run_in_session, update_row
 from tests.docx_factory import build_docx, p, tbl
@@ -77,7 +77,7 @@ from tests.test_sop_outputs import (
 )
 from tests.test_sop_outputs import _setup as _setup_outputs_bundle
 
-pytestmark = pytest.mark.usefixtures("clean_sop")
+pytestmark = pytest.mark.usefixtures("clean_sop", "legacy_split_rule")
 
 XLSX_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
@@ -89,6 +89,7 @@ KEEP = "합성 장비를 켠다."
 DROP = "합성 메모는 지운다."
 OPEN = "합성 시료를 넣는다."
 DROP_REASON = "Synthetic: obsolete note"
+HOLD_DROP = "합성 삭제 보류 메모."
 PAIR_KO = "합성 결과를 적는다."
 PAIR_EN = "Record the synthetic result."
 PAIR_REASON = "Synthetic: one meaning in two languages"
@@ -236,14 +237,14 @@ def _bulk(client: TestClient, bundle_id: int, action: str, unit: dict, reason: s
 # ── 시트·머리·요약 ───────────────────────────────────────────────────────────
 
 
-def test_workbook_sheets_and_headers(client: TestClient) -> None:
+def test_workbook_sheets_and_headers(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
     fx = _setup(client, [KEEP, DROP, OPEN, "Synthetic English line."], title="QC Bundle", assign=False)
     keep, drop = find_unit(fx.view, KEEP), find_unit(fx.view, DROP)
     assign_as_is(client, fx.bundle_id, keep, fx.sop_id, slot_key="responsibilities")
     _bulk(client, fx.bundle_id, "delete", drop, DROP_REASON)
 
     wb = _load(client, fx.bundle_id)
-    assert wb.sheetnames == ["A Comparison", "B Flow", "C New documents", "Info", "Documents"]
+    assert wb.sheetnames == ["A Comparison", "B Flow", "Info", "Documents"]
     sheet_a = wb["A Comparison"]
     assert sheet_a["A1"].value == "Status: In progress"
     assert [cell.value for cell in sheet_a[2]] == list(A_HEADERS)
@@ -281,7 +282,9 @@ def test_workbook_sheets_and_headers(client: TestClient) -> None:
     assert flow[1].value == 4
     assert counts == {"SOP-NEW Synthetic SOP": 1, "Deleted": 1, "Unassigned": 2}
 
-    sheet_c = wb["C New documents"]
+    with monkeypatch.context() as shown:  # C 시트는 숨겨 두었다 — 내용은 켜고 그대로 본다
+        shown.setattr(sheet_model, "SHOW_C_SHEET", True)
+        sheet_c = _load(client, fx.bundle_id)["C New documents"]
     assert sheet_c["A1"].value == "Status: In progress"
     assert sheet_c.freeze_panes == "A3"
     assert [cell.value for cell in sheet_c[3]][:2] == ["SOP SOP-NEW · Synthetic SOP", None]
@@ -315,6 +318,7 @@ def test_a_warnings_column_lists_kind_source_and_target(client: TestClient) -> N
     )
 
 
+@pytest.mark.usefixtures("c_sheet_on")
 def test_sheet_c_indents_docs_slots_items_and_tails(client: TestClient) -> None:
     na_reason, moved_reason = "Synthetic: covered elsewhere", "Synthetic: owned by another SOP"
     body_xml = p(KEEP) + tbl([["항목", "값"], ["합성 값", "합성 결과"]]) + p(DROP)
@@ -365,6 +369,7 @@ def test_sheet_c_indents_docs_slots_items_and_tails(client: TestClient) -> None:
     assert keep_a[number_a_col - 1].value == "4"  # 글머리 기호 줄의 No.는 그 절의 번호
 
 
+@pytest.mark.usefixtures("c_sheet_on")
 def test_sheet_c_writes_the_bullet_level_symbol_and_indents_the_item_cell(client: TestClient) -> None:
     fx = _setup_outputs_bundle(client)
     sop = _get_output(client, fx.bundle_id, "outputs/c")["docs"][0]
@@ -386,6 +391,7 @@ def test_sheet_c_writes_the_bullet_level_symbol_and_indents_the_item_cell(client
     assert {r["cells"][item_col - 1]["text"]: r["cells"][item_col - 1]["indent"] for r in c_rows if r["cells"][item_col - 1]["text"] in (MERGED, RECORDS_EN)} == {MERGED: 0, RECORDS_EN: 1}
 
 
+@pytest.mark.usefixtures("c_sheet_on")
 def test_sheet_c_lists_child_wis_under_the_work_instructions_section(client: TestClient) -> None:
     fx = _setup_outputs_bundle(client)  # SOP-NEW 아래 WI-01이 있고, 7장은 N/A다
     slot_col, number_col, item_col = 1, 2, 3
@@ -409,6 +415,7 @@ def test_sheet_c_lists_child_wis_under_the_work_instructions_section(client: Tes
     )
 
 
+@pytest.mark.usefixtures("c_sheet_on")
 def test_excel_c_writes_caption_text_not_marker(client: TestClient) -> None:
     fx = _setup_captions(client)
     sop = client.get(f"/api/bundles/{fx.bundle_id}/outputs/c", headers=AUTHOR).json()["docs"][0]
@@ -433,6 +440,7 @@ def test_excel_c_writes_caption_text_not_marker(client: TestClient) -> None:
     assert (rows[figure_row + 1][cell_col], rows[figure_row + 1][position_col]) == (FIGURE_CAPTION_OUT, "Caption")
 
 
+@pytest.mark.usefixtures("c_sheet_on")
 def test_excel_c_uses_renumbered_caption(client: TestClient) -> None:
     """원문 표 3·그림 2가 새 문서의 첫 표·첫 그림 — C는 다시 매긴 캡션, A의 옛 문서 칸은 원문 번호 그대로."""
     fx = _setup_captions(client)
@@ -508,6 +516,15 @@ def test_confirmed_rate_is_percent_text(client: TestClient) -> None:
     assert [format_rate(value) for value in (0.0, 0.28, 2 / 7, 1.0)] == ["0%", "28%", "29%", "100%"]
 
 
+def test_workbook_hides_the_c_sheet_by_default(client: TestClient) -> None:
+    fx = _setup(client, [KEEP])
+
+    names = _load(client, fx.bundle_id).sheetnames
+
+    assert "C New documents" not in names
+    assert [sheet["name"] for sheet in _get_preview(client, fx.bundle_id)["sheets"]] == names
+
+
 # ── 미리보기 ─────────────────────────────────────────────────────────────────
 
 
@@ -516,7 +533,7 @@ def test_preview_matches_the_file(client: TestClient) -> None:
     preview = _get_preview(client, fx.bundle_id)
     wb = _load(client, fx.bundle_id)
 
-    assert [sheet["name"] for sheet in preview["sheets"]] == list(SHEET_NAMES) == wb.sheetnames
+    assert [sheet["name"] for sheet in preview["sheets"]] == list(get_sheet_names()) == wb.sheetnames
     for sheet in preview["sheets"]:
         ws = wb[sheet["name"]]
         texts = [[cell["text"] for cell in row["cells"]] for row in sheet["rows"]]
@@ -542,7 +559,7 @@ def test_preview_matches_the_file(client: TestClient) -> None:
     assert {row["kind"]: row["wrap"] for row in b["rows"]} == {"status": False, "header": True, "plain": False}
     assert not wb["B Flow"]["A1"].alignment.wrap_text
     assert {sheet["name"]: sheet["filter_columns"] for sheet in preview["sheets"]} == {
-        "A Comparison": 20, "B Flow": 0, "C New documents": 0, "Info": 0, "Documents": 0,
+        "A Comparison": 20, "B Flow": 0, "Info": 0, "Documents": 0,
     }
 
 
@@ -579,21 +596,23 @@ def test_preview_caps_rows_per_sheet(client: TestClient, monkeypatch: pytest.Mon
     assert _load(client, fx.bundle_id)["A Comparison"].max_row == a["total_rows"]  # 파일에는 전체
 
 
+@pytest.mark.usefixtures("c_sheet_on")
 def test_preview_of_an_empty_bundle(client: TestClient) -> None:
     bundle_id = create_bundle(client, is_synthetic=True)["id"]
 
     preview = _get_preview(client, bundle_id)
 
     sheets = {sheet["name"]: sheet for sheet in preview["sheets"]}
-    assert list(sheets) == list(SHEET_NAMES)
+    assert list(sheets) == list(get_sheet_names())
     assert [row["kind"] for row in sheets["A Comparison"]["rows"]] == ["status", "header"]
     assert [row["kind"] for row in sheets["C New documents"]["rows"]] == ["status", "header"]
     summary = {row["cells"][0]["text"]: row["cells"][1]["text"] for row in sheets["B Flow"]["rows"]}
     assert (summary["Old rows"], summary["Confirmed rate"]) == ("0", "0%")
     assert preview["file_name"].startswith(f"BND-{bundle_id:04d}_")
-    assert _load(client, bundle_id).sheetnames == list(SHEET_NAMES)
+    assert _load(client, bundle_id).sheetnames == list(get_sheet_names())
 
 
+@pytest.mark.usefixtures("c_sheet_on")
 def test_preview_a_carries_fit_widths_bands_and_column_keys(client: TestClient) -> None:
     fx = _setup(client, [KEEP])
 
@@ -636,6 +655,48 @@ def test_preview_a_rows_carry_unit_group_tone_and_toc(client: TestClient) -> Non
     duplicate = [row for row in data if row["unit_id"] == find_unit(fx.old1, DUPLICATE)["id"]]
     assert len(duplicate) == 2 and len({row["group_id"] for row in duplicate}) == 1 and duplicate[0]["group_id"]
     assert not any(row["toc"] for row in a["rows"])  # 목차가 없는 묶음 — 목차 줄은 test_sop_toc가 본다
+
+
+def _setup_strike(client: TestClient) -> tuple[Fixture, int]:
+    """배정 · 확정 삭제(이어진 줄이 되는 긴 글) · 보류 · 미배정 줄 하나씩 — 취소선은 확정 삭제 줄의 Old 칸만."""
+    long_drop = "가" * 40_000
+    fx = _setup(client, [KEEP, long_drop, HOLD_DROP, OPEN, "Synthetic English line."], assign=False)
+    assign_as_is(client, fx.bundle_id, find_unit(fx.view, KEEP), fx.sop_id, slot_key="responsibilities")
+    _bulk(client, fx.bundle_id, "delete", find_unit(fx.view, long_drop), DROP_REASON)
+    held = find_unit(fx.view, HOLD_DROP)
+    body = {
+        "action": "hold", "hold_reason": "Synthetic: not sure", "targets": [],
+        "units": [{"unit_id": held["id"], "revision": get_group_by_unit(client, fx.bundle_id, held["id"])["units"][0]["decision"]["revision"], "disposition": "delete", "reason": DROP_REASON}],
+    }
+    assert save_group(client, fx.bundle_id, body).status_code == 200  # 삭제를 보류한 줄 — On hold
+    assign_as_is(client, fx.bundle_id, find_unit(fx.view, OPEN), fx.sop_id, slot_key="responsibilities", hold_reason="Synthetic: hold")
+    return fx, A_COLUMN_KEYS.index("old_text")
+
+
+def test_deleted_rows_strike_the_old_text(client: TestClient) -> None:
+    fx, col = _setup_strike(client)
+
+    a_rows = _get_preview(client, fx.bundle_id)["sheets"][0]["rows"][2:]
+
+    # 배정 · 확정 삭제(이어진 줄 둘) · 삭제 보류 · 배정 보류 · 미배정
+    assert [row["cells"][col]["strike"] for row in a_rows] == [False, True, True, False, False, False]
+    sheet = _load(client, fx.bundle_id)["A Comparison"]
+    assert [bool(sheet.cell(index, col + 1).font.strike) for index in range(3, 9)] == [False, True, True, False, False, False]
+
+
+def test_other_columns_and_sheets_are_not_struck(client: TestClient) -> None:
+    fx, col = _setup_strike(client)
+
+    preview = _get_preview(client, fx.bundle_id)
+    struck = [
+        (sheet["name"], index, column)
+        for sheet in preview["sheets"]
+        for index, row in enumerate(sheet["rows"])
+        for column, cell in enumerate(row["cells"])
+        if cell["strike"]
+    ]
+
+    assert {(name, column) for name, _, column in struck} == {("A Comparison", col)}
 
 
 def test_preview_only_fields_follow_continued_rows_and_stay_out_of_the_file(client: TestClient) -> None:
@@ -686,11 +747,41 @@ def test_assign_preview_lists_only_that_old_documents_groups(client: TestClient)
     full_ids = {row["unit_id"] for row in full["rows"] if row["unit_id"] is not None}
     assert old1_ids & full_ids == ids
     assert full_ids - old1_ids  # 파일에는 OLD-2의 줄이 있는데 빠졌다
-    # 줄은 파일과 같은 값·차례다(묶음째 남겨 흐림·Row 번호가 그대로)
-    data = iter(full["rows"])
-    assert all(row in data for row in sheet["rows"])
+    # 줄은 파일과 같은 값·차례다(묶음째 남겨 흐림·Row 번호가 그대로) — 위치 칸의 "Paragraph" 글자만 미리보기에서 뺀다
+    location = full["column_keys"].index("location")
+
+    def keep_place(row: dict) -> dict:
+        return {**row, "cells": [{**cell, "text": "" if at == location else cell["text"]} for at, cell in enumerate(row["cells"])]}
+
+    data = iter(keep_place(row) for row in full["rows"])
+    assert all(keep_place(row) in data for row in sheet["rows"])
     assert sheet["total_rows"] == len(sheet["rows"])
     assert _load_events(fx.bundle_id, "export") == []  # 미리보기는 기록을 남기지 않는다
+
+
+def test_assign_preview_drops_paragraph_and_figure_places() -> None:
+    hide = (sheet_model._LABELS.paragraph, sheet_model._LABELS.figure)
+
+    def place(section: str, text: str, page: int) -> LocationOut:
+        return LocationOut(section=section, place=text, page=page, page_basis="exact")
+
+    assert sheet_model._format_location(place("1", "Paragraph", 2), hide=hide) == "§1 · p. 2"
+    assert sheet_model._format_location(place("5", "Figure", 3), hide=hide) == "§5 · p. 3"
+    assert sheet_model._format_location(place("2", "Table 1", 4), hide=hide) == "§2 · Table 1 · p. 4"
+    assert sheet_model._format_location(place("2", "Header · Paragraph", 4), hide=hide) == "§2 · Header · p. 4"
+    assert sheet_model._format_location(place("1", "Paragraph", 2)) == "§1 · Paragraph · p. 2"
+
+
+def test_export_file_and_outputs_preview_keep_the_place(client: TestClient) -> None:
+    fx = _setup_outputs_bundle(client)
+    doc_id = fx.old1["document"]["id"]
+
+    file_a = _get_preview(client, fx.bundle_id)["sheets"][0]
+    assign_a = _get_a_preview(client, fx.bundle_id, doc_id).json()
+    location = file_a["column_keys"].index("location")
+
+    assert any("Paragraph" in row["cells"][location]["text"] for row in file_a["rows"][2:])
+    assert not any("Paragraph" in row["cells"][location]["text"] for row in assign_a["rows"][2:])
 
 
 def test_assign_preview_windows_long_documents_around_the_picked_unit(
@@ -971,6 +1062,7 @@ def test_export_failure_is_reported_apart_from_save_failure(
     assert _load_events(fx.bundle_id, "export") == []
 
 
+@pytest.mark.usefixtures("c_sheet_on")
 def test_c_sheet_has_deviation_reason_column(client: TestClient) -> None:
     bundle_id = create_bundle(client, is_synthetic=True)["id"]
     saved = put_tobe(client, bundle_id, [{"code": "SOP-D", "title": "Synthetic SOP", "doc_type": "sop", "parent_code": None}])

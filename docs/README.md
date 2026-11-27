@@ -1,31 +1,25 @@
 # docs/ 인덱스
 
-문서 구조 규칙은 [`rules/common/documentation.md`](../rules/common/documentation.md) 참조. 새 문서를 추가하면 이 표에 한 줄 더한다.
+늘 지키는 문서 규칙은 [`rules/common/documentation.md`](../rules/common/documentation.md), 폴더 구성과 지우기 · 아카이브는 아래 "문서 정리 정책". 새 문서를 추가하면 이 표에 한 줄 더한다.
+
+## 문서 정리 정책
+
+- **루트 유지**: `docs/README.md`(인덱스). 살아있는 기능 명세는 `docs/superpowers/specs/`의 제품 명세(`2026-11-05-sop-restructuring-e2e-design.md`)와 기반 명세(`2026-11-04-sop-archivist-baseline-design.md`) 둘뿐이고, 코드·문서가 `§X`로 참조하니 이동·개명 금지.
+- **카테고리 폴더**: `docs/deploy/`(배포·DB 시드·마이그레이션·정식 업데이트 절차 `release.md`) · `docs/qa/`(검증·감사) · `docs/design/`(기능별 설계 스냅샷 + 분야별 인덱스) · `docs/architecture/`(코드 구조 상세 — 폴더 CLAUDE.md가 줄여 싣는 내용의 원문, 끝난 설계에서 인용되는 부분 `decisions.md`, API 계약 `api-contract.md`, 살아있는 문서) · `docs/lessons/`(시행착오 방지) · `docs/domain/`(업무 도메인 기준·사례 — AI 지침과 테스트 정답의 근거, 살아있는 문서) · `docs/manual/`(시스템 설명서 — 실제 화면 그림은 스크립트로 다시 뽑는다) · `docs/superpowers/`(`specs/` 설계·`plans/` 구현 계획) · `docs/history/`(아카이브).
+- **설계 스냅샷 폐기**: 기능이 **main에 머지되면 해당 설계 스냅샷은 삭제**한다(git history가 보존). 저장소에는 아직 소비될 문서(미구현 트랙·대기 중 계약·핸드오프)만 남긴다. **단, 개발 중 자주 참조하는 불변식·계약은 삭제 전에 살아있는 문서(CLAUDE.md 계약 섹션·`docs/lessons/`·`docs/superpowers/specs/`)로 흡수했는지 확인하고, 흡수가 어색하면 파일을 유지한다.** 삭제 시 `git grep`으로 코드 주석 참조는 `docs/design/` 경로 접두를 떼 파일명만 남기고, 문서 링크는 라벨 텍스트로 강등한다. 완료된 기능의 구현 플랜(`docs/superpowers/plans/`)도 동일하게 삭제.
+- **끝난 기능 설계(`docs/superpowers/specs/`)**: 제품·기반 명세 밖의 기능 설계는 main에 머지되면 지운다(사용자 결정 2026-11-22). 지우기 전에 코드·문서가 아직 인용하는 부분(`D3`·`§5.2`·이름 붙은 절)만 `docs/architecture/decisions.md`의 `## <stem>`(파일 이름에서 `-design.md`를 뗀 것) 절로 글자 그대로 옮기고 전체 경로 인용은 그 절로 고친다 — 끝난 계획도 같고, 인용되는 계약 블록은 `docs/architecture/`의 문서 하나로 옮긴다(예: `api-contract.md`).
+- **새 문서 · 옮기기**: 위 카테고리 중 하나에 넣고 이 인덱스(설계 문서면 `docs/design/README.md`도)에 한 줄 추가한다. 문서를 옮기면 `git grep`으로 참조를 전수 갱신하고 끊긴 링크가 없는지 확인한다.
+- **PROGRESS·CHANGELOG 아카이브**: 루트 `PROGRESS.md`·`CHANGELOG.md`는 최근 것만 두고, 지난 항목은 크기 상한을 넘을 때(`frontend/src/lib/release-docs.test.ts`가 알린다) `docs/history/PROGRESS-archive.md`·`CHANGELOG-archive.md` 맨 위로 옮긴다(절차: `deploy/release.md` "문서 정리").
+
+## 인덱스
 
 | 문서 | 내용 |
 |------|------|
 | [superpowers/specs/2026-11-05-sop-restructuring-e2e-design.md](superpowers/specs/2026-11-05-sop-restructuring-e2e-design.md) | 제품 설계: SOP 재구성 End-to-End(쪼개기 → 분류·제안 → 결과물 A·B·C, 두 입구, 데이터 모델, AI 경계, 화면 인수인계) |
-| [superpowers/plans/2026-11-06-sop-restructuring-plan2-ai.md](superpowers/plans/2026-11-06-sop-restructuring-plan2-ai.md) | 구현 계획 2: AI 층(v0.3.0 — 구현 완료, 다시 실행하지 않는다). 살아 있는 부분은 프런트와 맞춘 "API 계약" 블록. 계획 1(결정적 코어, v0.2.0)과 기반 세팅 계획(v0.1.0)은 끝나서 지웠다(git history) — 계획이 정한 세부는 설계 문서에 "(계획 N에서 정함)"으로 반영 |
-| [superpowers/specs/2026-11-20-assign-mockup1-design.md](superpowers/specs/2026-11-20-assign-mockup1-design.md) | Assign 시안 1 설계(요청서 1 · 5 · 9/13 · 15, 구현 전) — 고름 · 처리 중 · 따라가기를 순수 모델 하나가 쥠(신뢰 기반 스텝 4-3), 편집 뒤 고친 문서와 그 줄만 다시 받기(잰 목록), 누른 박스 고름 · 떨어진 짝 안내 줄, 처리 중 알약 · 쉬머, 결정 칸 쉬머, 삭제 박스 접기, 끌어 놓기 모양 통일. 스텝 아홉(`feat/mockup1-<n>-…`) |
-| [superpowers/specs/2026-11-20-assign-mockup2-design.md](superpowers/specs/2026-11-20-assign-mockup2-design.md) | Assign 시안 2 설계(요청서 2 · 7 · 10 · 11 · 17 · 통일, 구현 전) — 번호 칸 종류 단추 · 번호 노트, 벗긴 표 줄 순서 손잡이(`reorder_unwrapped`, Alembic 0034), 그림 탭 · 위치 판(추출기 7 그림 자리), 문단 Excel 다섯 열 = 한 단 보기 Space, New 표 칸 잇기, 빈 템플릿 기본 보기를 같은 용지로. 스텝 일곱(`feat/mockup2-<n>-…`), 병렬 묶음 A·B·C |
-| [superpowers/specs/2026-11-20-change-type-two-design.md](superpowers/specs/2026-11-20-change-type-two-design.md) | 변경 종류 둘("=" / "수정", 요청서 16번) 설계 — 서버가 글로 정함, tone · table_restructured → rewritten(Alembic 0032), LLM `match` 작업 걷기, 스텝 셋 |
-| [superpowers/specs/2026-11-09-assign-unified-design.md](superpowers/specs/2026-11-09-assign-unified-design.md) | 3단계 Assign 통합 화면(v0.10.0) 설계 — 분류·짝 맞추기를 Old 조각 한 줄씩 처리하는 한 화면으로, 두 문서 나란히·문서별 확대·우선순위 아코디언. 구현 계획과 목업은 main 머지 뒤 지웠다(git history) |
-| [superpowers/specs/2026-11-13-assign-undo-design.md](superpowers/specs/2026-11-13-assign-undo-design.md) | Assign 되돌리기·다시 하기(v0.16.13) 설계 — 판단 단계 스냅숏, 거절(409 `undo_conflict`) 목록 §5.3. 코드 주석이 절 번호로 가리키는 살아 있는 계약 |
-| [superpowers/specs/2026-11-13-equis-lookup-design.md](superpowers/specs/2026-11-13-equis-lookup-design.md) | EQUIS 문서 번호 조회 1단계(v1.0.1) 설계 — 줄마다의 표시와 판정 규칙(§6), 옛 번호 따라가기(§7), 제목 따라가기와 잠금(§8.3), 조회 창구(db-viewer의 `dbv-query`). 2·3단계(REF 문단, 결과물)는 워크플로우 개편 뒤 |
-| [superpowers/specs/2026-11-15-ref-paragraph-design.md](superpowers/specs/2026-11-15-ref-paragraph-design.md) | REF 문단(참조 줄) 설계 — EQUIS 2단계. 타입을 KO·EN 자리에 두기, 제안은 읽을 때 계산, 확인·참조 아님, 그 번호의 EQUIS 표시, 빠지는 검사, 만드는 순서 |
-| [superpowers/specs/2026-11-15-assign-merge-documents-design.md](superpowers/specs/2026-11-15-assign-merge-documents-design.md) | 원문 고치기를 Assign에 합치기(한 단·양 단 보기, 옮겨 올 도구 표, 오른쪽 칸 세 걸음), Documents를 목록 둘·올리는 창구 하나로, 번호로 새 문서 더하기와 EQUIS 채움, 새 문서 목록 AI 읽기 — 만드는 순서 여섯 걸음(§6, 1번은 v1.0.20) |
-| [superpowers/specs/2026-11-15-ai-prepare-queue-design.md](superpowers/specs/2026-11-15-ai-prepare-queue-design.md) | AI 미리 돌리기와 대기 줄 순서 설계(시연 피드백 "AI 속도"의 서버 쪽, 구현됨 — 버전은 dev에 올릴 때 매긴다) — 작업 순위와 묶기 먼저(§3), 계획이 묶기 제안을 바로 쓰고 LLM은 다듬기(§4), 저절로 시작하는 두 자리와 `AI_AUTO_PREPARE`(§5), 일괄 삭제·이동이 AI 제안 줄을 받는다(§6), 회사에서 확인할 것(§12). 정확도·이유 보이기·매칭 필터는 따로(머리 표) |
-| [superpowers/specs/2026-11-19-ai-suggest-only-design.md](superpowers/specs/2026-11-19-ai-suggest-only-design.md) | AI는 제안 기록에만 설계(사용자 결정 2026-11-19, 구현 전) — 분류·묶기가 판단·New 문장을 쓰지 않고 Assign 추천 카드의 **Use**로만 초안에 들어감(D1·D2), 종류별 일괄 수락(D3), 미리 분류·번역·짝은 그대로(D4–D6), DB 정리(D7), 모음 브랜치 `feat/ai-suggest-only` 스텝 셋(§4). 위 미리 돌리기 설계 §4의 "계획이 제안을 바로 쓴다"를 바꾼다 |
-| [superpowers/specs/2026-11-16-drag-and-drop-design.md](superpowers/specs/2026-11-16-drag-and-drop-design.md) | 끌어다 놓기 설계(1걸음 — 끌기 층 + Order —, 1b걸음 — Order 다른 칸으로 끌기 —, 2걸음 — Assign 잇기 —, 3걸음 — Assign 보내기 —, 4걸음 — Pair view와 가까운 줄 짝 — 구현됨) — 손잡이 없이 상자 전체 끌기와 Alt 글자 긁기(§4 공통 규칙 G1~G13), Order 줄 순서·깊이와 줄 끝 단추를 호버·포커스에만(§5), Assign 잇기와 문장 사이에 보내기(§6, 서버는 자리 하나 받기 §8), Pair view(§7), 만드는 순서 네 걸음(§10). Documents 화면과 참조 지도는 따로 쓴다 |
-| [superpowers/specs/2026-11-16-tables-figures-captions-design.md](superpowers/specs/2026-11-16-tables-figures-captions-design.md) | 표·그림 묶음과 캡션 설계 — 표·그림+캡션을 한 묶음으로 문장과 같은 로직(Shape→Where it goes→Decide), 모든 배정 묶음에 캡션 필수, 표 좌우 스크롤, 결과물에서 새 문서마다 번호·참조 다시 매기기. Word만(PDF 제외), Excel은 캡션 글만 |
-| [superpowers/specs/2026-11-17-documents-screen-design.md](superpowers/specs/2026-11-17-documents-screen-design.md) | Documents 화면 설계 — 값이 글자로 보이는 두 줄 목록, WI 줄을 SOP 줄에 끌어 상위 SOP 바꾸기(알림의 **Undo**), Old · New 두 묶음 올리기 창, SOP 칸 15개의 N/A 상태 표. 1–5걸음 구현됨(v1.1.10 · v1.1.12 · v1.1.16 · v1.1.20) |
-| [superpowers/plans/2026-11-19-trust-foundation-plan.md](superpowers/plans/2026-11-19-trust-foundation-plan.md) | 신뢰 기반 계획(사용자 결정 2026-11-19) — Lauren Tan 방식 점검 근거와 스텝 1 정적 관문 · 2 불변식 시험 · 3 검증 정비 · 5 `/harden` 교정 사다리. 스텝 1·2·3·5 됨(v1.1.54, 기능 작업 보류 풀림)(스텝 4 assign 화면 쪼개기는 미채택) |
+| [superpowers/plans/2026-11-25-split-first-ledger.md](superpowers/plans/2026-11-25-split-first-ledger.md) | 쪼개기 먼저 · 연습 페이지 장부(넘김 문서) — 브랜치별 결과와 "아침에 볼 것". v1.6.43 정식 업데이트를 main에 합친 뒤 지운다 |
+| [superpowers/specs/2026-11-23-assign-feedback-2.md](superpowers/specs/2026-11-23-assign-feedback-2.md) | T/F 피드백 2차 명세 원문(17개 항목): 요구 · 문구 · 수용 기준 · 시나리오. v1.6.43까지 모두 끝났고 **F2-R1~R5(To-Be 문서로 이동 · 새 문서 추가 ⇧D)만 보류** — 숨긴 새 문서 기능을 다시 켤 때 함께. 겹치는 곳의 결정은 `architecture/decisions.md` `## 2026-11-25-split-first` 11-1절 |
 | [superpowers/handoff/2026-11-19-paragraph-split-requests.md](superpowers/handoff/2026-11-19-paragraph-split-requests.md) | 문서 문단 분리 · 문단 엑셀 개선 요청(사용자, 2026-11-19, 사진에서 옮김) 16항목 + 공통 요구(제로베이스 통일 설계)와 시안 1 · 2 결정. 작은 것 · 시안 1(v1.2.11) · 시안 2(v1.2.12~v1.3.2) 됨 — 남은 것은 끝 "다음 순서"의 4번 2차(매핑 · 비교 엑셀) |
 | [qa/feature-map.md](qa/feature-map.md) | 기능 맵(에이전트용) — 화면마다 도달 주소·조작 요점·알려진 함정·스모크 `ONLY` 머리·설명서 자리. 앱이 원본, 맵은 색인(화면을 바꾸면 같은 커밋에서 고친다) |
-| [superpowers/specs/2026-11-17-reference-map-design.md](superpowers/specs/2026-11-17-reference-map-design.md) | 참조 지도 설계 — Bundle 안의 Map 화면(List · 지도)에서 문서 사이 참조와 후속 문서를 보이고, 구성원이 아닌 Bundle은 번호·제목·상태·수만(서버 응답에서부터). 1–3걸음 구현됨(List v1.1.11, 지도 그리기 v1.1.13, 문장 v1.1.17, 줄을 Assign에서 열기 v1.1.24) |
-| [superpowers/specs/2026-11-17-template-fit-design.md](superpowers/specs/2026-11-17-template-fit-design.md) | 회사 템플릿·실사례 맞춤 설계 — SOP 표준 골격을 관리자 설정 + 문서마다 사본으로(작업 1), Word 파싱(2)과 변경 추적·메모 읽기(3), WI 맞춤(4), 템플릿 모양 미리보기(5), Excel 비교표(6), 입구 2 문서를 표준 골격에 얹기(7). 근거 사실은 부록 A–F(원본은 저장소 밖), 작업 세션에 붙일 프롬프트 §10, 사용자 확인 대상 §9. 작업 1(표준 골격, v1.1.30)과 2a(Word 파싱 · 구조 신호, v1.1.34) 구현, 3–7 미구현 |
-| [superpowers/specs/2026-11-17-assign-long-doc-design.md](superpowers/specs/2026-11-17-assign-long-doc-design.md) | Assign 긴 문서 끊김 설계(1.2.0 피드백 8번) — 운영 빌드·CPU 4배로 잰 원인 셋(문단 사이 틈이 화면 밖에서도 그려짐, 연결선 다시 재기가 문서 전체를 뒤짐, 고르면 `Paper`가 모든 줄을 다시 그림)과 스텝 넷(틈 → 연결선 → 줄 메모 → 조건부 가상화). 잴 도구 `frontend/scripts/pw-perf-assign.mjs` |
-| [superpowers/specs/2026-11-14-four-step-workflow-design.md](superpowers/specs/2026-11-14-four-step-workflow-design.md) | 네 단계 워크플로우 설계(B1·B2·B4, 확정 = 경계, 보낼 곳 추가·삭제까지 구현, v1.0.13. Split 화면은 배정 화면 안의 원문 고치기가 됐고 경계 확인 단추가 없어졌다. 남은 것은 확인 API 정리 — §11) — 문서 / 쪼개기&배정 / 순서·번호 / 결과. 배정 확정 = 경계 확인(§5), 사용성 기준(§7), 만드는 순서 B1~B4(§11) |
 | [../frontend/docs/design/2026-11-07-frontend-design-foundations.md](../frontend/docs/design/2026-11-07-frontend-design-foundations.md) | 프런트 디자인 기초 — 토큰(색 값의 단일 소스는 `frontend/src/styles/tokens.css`)·글꼴·화면 구조·상태 표현·동작 규칙·언어. 화면 코드 주석이 "디자인 문서 N절"로 절 번호를 참조한다 |
 | [domain/restructuring-rules.md](domain/restructuring-rules.md) | SOP 재구성 판단 기준(R01–R13, SOP 일곱 칸, WI Instruction/Why, 고쳐 쓰기 원칙) — AI 지침의 원문·테스트 정답의 근거 |
 | [domain/restructuring-cases.md](domain/restructuring-cases.md) | SOP 재구성 사례(QC Centrifuge 등)와 데이터를 쓰는 원칙 |
@@ -35,12 +29,19 @@
 | [deploy/setup-once.md](deploy/setup-once.md) | 서버 최초 1회 셋업 — GitLab·러너·배포 폴더, `.env`, Keycloak 클라이언트, 첫 파이프라인·`FORWARDED_ALLOW_IPS`, 첫 HR 동기화, `permission.manage` 위임, 절대 하지 말 것 |
 | [deploy/gitlab-runner.md](deploy/gitlab-runner.md) | GitLab Runner 배포 파이프라인 — 프로젝트 설정, 러너 두 개 등록, 배포 폴더, 평소 흐름, `.env`만 바꿀 때, 가드 메시지별 트러블슈팅, 되돌리기, 비상 수동 경로 |
 | [deploy/deploy.md](deploy/deploy.md) | 매 배포 런북 — GitLab 파이프라인 ▶, 베이스 이미지 tar 반입, 헬스체크, 트러블슈팅, 롤백 |
+| [deploy/release.md](deploy/release.md) | 정식 업데이트(dev→main) · 태그 · 배포 기록 · 운영 급한 수정 · MAJOR · 설명서 그림과 버전 · 문서 정리 절차(`/release`가 읽는다). 평소 dev 푸시마다의 버전 규칙은 `rules/common/git.md` |
 | [deploy/backup.md](deploy/backup.md) | 일간 DB 백업 정책(덤프에 SOP 원문·원본 파일이 들어 있어 대외비), 기존 스택 복구·신규 서버 복구, 오프서버 사본 |
 | [deploy/db-viewer-readonly.md](deploy/db-viewer-readonly.md) | db-viewer 읽기 전용 연결(`dbviewer_ro`, 별칭 `sop-archivist-db`) |
 | [qa/2026-11-sop-parse-dependencies.md](qa/2026-11-sop-parse-dependencies.md) | 파싱 의존성·메모리 실측 — MarkItDown 새 패키지 목록, 메인이 될 수 없는 이유, 자식 프로세스 RSS, backend 메모리 상한 결정, Task 8에 넘기는 주의 |
+| [qa/2026-11-26-release-frontend-checklist.html](qa/2026-11-26-release-frontend-checklist.html) | 정식 업데이트 화면 체크리스트 — v1.5.0 → v1.6.31 프런트 변경을 화면에서 볼 것(브라우저에서 열어 체크, 정식 업데이트 뒤 지운다) |
+| [qa/2026-11-assign-perf.md](qa/2026-11-assign-perf.md) | Assign 반응 시간 실측 — 명령 큐 · 필터 덩어리 앞뒤의 글쇠 → 다음 박스, 연타, 번호 입력, 스크롤 튐(합성 자료, 로컬 운영 빌드) |
 | [qa/verification-commands.md](qa/verification-commands.md) | 로컬 실행·검증 명령 전체(bash·PowerShell) — 시드·서버·테스트·브라우저 스모크·배치/겹침/대비 감사·설명서 그림·가짜 AI·배포 스크립트 검증의 전제와 옵션 |
 | [qa/2026-11-10-design-workflow-convenience-review.md](qa/2026-11-10-design-workflow-convenience-review.md) | 디자인·워크플로우·편의성 전체 검토(v0.10.1) — 코드 감사 3건 + 극단 자료·5개 화면 조합 확인, 발견 표(근거 `파일:줄`·심각도·처리), 이번에 반영한 것과 보류한 것 |
+| [architecture/backend.md](architecture/backend.md) | backend 코드 구조 상세 — `backend/CLAUDE.md`가 줄여 싣는 내용의 원문(기동·권한·SOP 코어 흐름·AI 제안 층·불변식과 이중 사용 지점의 자세한 설명). 구조를 바꾸면 `backend/CLAUDE.md`와 같은 커밋에서 고친다 |
+| [architecture/frontend.md](architecture/frontend.md) | frontend 코드 구조 상세 — `frontend/CLAUDE.md`가 줄여 싣는 내용의 원문(공통 lib·순수 모델·Assign·공통 부품·설명서·Map). 구조를 바꾸면 `frontend/CLAUDE.md`와 같은 커밋에서 고친다 |
+| [architecture/decisions.md](architecture/decisions.md) | 끝난 기능 설계에서 코드·문서가 아직 인용하는 부분만 글자 그대로 옮긴 것 — 설계마다 `## <stem>` 절(`D3`·`§5.2`·`G3` 같은 원래 이름 그대로), 설계 전문은 git 이력(사용자 결정 2026-11-22) |
+| [architecture/api-contract.md](architecture/api-contract.md) | 프런트와 맞춘 AI API 계약 — 구현 계획 2의 "API 계약" 블록을 옮긴 것(경로·응답 모양·`content` 종류별 필드·오류 코드·기존 응답에 더한 필드) |
 | [lessons/README.md](lessons/README.md) | 시행착오 방지 — React/TS 패턴, 브라우저 검증 |
-| [history/PROGRESS-archive.md](history/PROGRESS-archive.md) | `PROGRESS.md`에서 옮긴 지난 기록(v0.1.0–v1.0.0) — 정식 업데이트마다 그 릴리스까지의 항목이 맨 위로 온다 |
+| [history/PROGRESS-archive.md](history/PROGRESS-archive.md) | `PROGRESS.md`에서 옮긴 지난 기록(v0.1.0–v1.0.0) — `PROGRESS.md`가 크기 상한을 넘으면 최근 릴리스까지의 항목이 맨 위로 온다 |
 | [history/CHANGELOG-archive.md](history/CHANGELOG-archive.md) | `CHANGELOG.md`에서 옮긴 지난 릴리스 항목(0.x — v0.1.0–v0.16.0) |
 

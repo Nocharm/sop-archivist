@@ -14,10 +14,25 @@ export type MemberRole = "author" | "reviewer";
 export interface RowProgress {
   total: number;
   unassigned: number;
+  /** 정한 줄 - assigned + deleted + moved */
   confirmed: number;
   on_hold: number;
+  assigned: number;
+  deleted: number;
+  /** 다른 문서로 이동 - 화면에서 뺀 기능이라 옛 기록뿐이다 */
+  moved: number;
+  /** 그림 줄 - 위의 모든 숫자에서 빠지고 여기서만 센다(F3-R3) */
+  figures_total: number;
+  figures_decided: number;
   /** 한 언어만 있는 줄 - 보조 표시, 검토 요청 조건이 아니다 */
   single_language: number;
+}
+
+/** 개요의 남은 손질과 AI 제안 대기 - Assign 위쪽 줄의 표시와 같은 규칙을 묶음 전체로 센다 */
+export interface TidyCounts {
+  refs: number;
+  captions: number;
+  ai_waiting: number;
 }
 
 export interface BundleListItem {
@@ -81,6 +96,7 @@ export interface Bundle {
   my_role: MemberRole | null;
   members: BundleMember[];
   progress: RowProgress;
+  tidy: TidyCounts;
   next_action: NextAction;
   ai_jobs: AiJobCounts;
 }
@@ -89,6 +105,8 @@ export interface Bundle {
 export interface ReadinessIssue {
   code: string;
   count?: number;
+  /** 막는 줄 가운데 그림 - units_*에만, 그림이 있을 때만 */
+  figures?: number;
   missing?: string[];
   [key: string]: unknown;
 }
@@ -113,7 +131,7 @@ export interface AiStatus {
   ai_enabled: boolean;
   embed_enabled: boolean;
   jobs: AiJobCounts;
-  /** 종류별 같은 모양(classify·translate·match·pair·split·unwrap_order) */
+  /** 종류별 같은 모양(classify·translate·match·pair·split·unwrap_order·table_follow) */
   by_kind: Record<string, AiJobCounts>;
   /** 실패 코드별 건수(timeout·server_error·connection·client_error·config·interrupted·no_candidates·internal) */
   failed_errors: Record<string, number>;
@@ -148,7 +166,7 @@ export function getAiStatus(bundleId: number): Promise<AiStatus> {
   return apiFetch<AiStatus>(`/bundles/${bundleId}/ai/status`);
 }
 
-export type AiJobKind = "classify" | "translate" | "match_plan" | "match" | "pair" | "split" | "unwrap_order" | "doc_meta" | "tobe_list";
+export type AiJobKind = "classify" | "translate" | "match_plan" | "match" | "pair" | "split" | "unwrap_order" | "table_follow" | "doc_meta" | "tobe_list";
 export type AiJobStatus = keyof AiJobCounts;
 
 /** 요청 한 번(같은 request_id)의 집계 - total은 24시간 범위와 상관없이 센다. 짝 맞추기는 도중에 total이 는다 */
@@ -439,8 +457,10 @@ export interface ViewUnit {
   ref: UnitRefMark | null;
   /** 이 단위의 글이 가리키는 표·그림("표 3"·"아래 표") - 캡션 자기 머리 번호는 빠진다 */
   caption_refs: ViewCaptionRef[];
-  /** 잡음 표시 - "toc"면 목차 줄: 배정 줄이 없고(남은 수에서 빠짐) Assign 용지가 목차 블록으로 접는다. 편집 clear_noise가 비운다 */
-  noise_kind?: "toc" | null;
+  /** 잡음 표시 - 저절로 삭제된 줄(목차 · 본문 앞부분 · 개정 이력): 배정 줄이 없고(남은 수에서 빠짐) Assign 용지가 블록으로 접는다. 편집 clear_noise가 비운다 */
+  noise_kind?: "toc" | "front" | "history" | null;
+  /** 저절로 삭제된 줄에 적은 사유 - 빈 글이면 종류마다 정한 문구. 편집 set_noise_reason이 쓴다 */
+  noise_reason?: string;
   /** 제목 스타일 줄을 문장으로 바꾼 문장(F8b) - Assign의 "제목으로 되돌리기"와 묶음 머리 "[제목 → 문장]". 편집 set_heading이 오간다 */
   from_heading?: boolean;
   /** 캡션 하나를 같이 쓰는 그림 묶음(F7 ⑥)의 첫 그림 - 이 그림이 그 그림의 캡션을 같이 쓴다. 첫 그림 자신·묶이지 않은 단위는 null. 편집 group_figures·ungroup_figures가 오간다 */
@@ -508,7 +528,11 @@ export interface DocumentView {
 
 export type EditOp =
   | { type: "split"; unit_id: number; at: number }
+  /** 박스 하나를 문장마다(규칙 1 경계) - 되돌리기 한 번 */
+  | { type: "split_sentences"; unit_id: number }
   | { type: "merge"; unit_ids: number[] }
+  /** 여럿 고른 줄 합치기(쪼개기 먼저 설계 §9) - 언어마다 하나로 합치고 한글 · 영어가 다 있으면 다시 짝, 편집 하나. 이웃인지는 화면이 본다(multi-pick-model) */
+  | { type: "merge_rows"; unit_ids: number[] }
   | { type: "unmerge"; unit_id: number }
   | { type: "move_boundary"; left_unit_id: number; right_unit_id: number; at: number }
   | { type: "carve"; block_id: number; start: number; end: number }
@@ -516,6 +540,8 @@ export type EditOp =
   /** 언어를 바꿔 모양이 바뀌는 편집(B6) - 짝이 한 언어가 되면 합치거나(merge_pair) 짝만 풀고, piece면 합친 박스의 그 조각을 떼어 짝으로. 배정은 묻지 않고 푼다 */
   | { type: "switch_language"; unit_id: number; lang: "ko" | "en"; piece?: number; merge_pair?: boolean }
   | { type: "set_layout_table"; table_id: number; is_layout: boolean }
+  /** 표 여럿 벗기기 - 편집 하나(되돌리기 한 번), 하나라도 안 되면 아무것도 쓰지 않는다 */
+  | { type: "set_layout_tables"; table_ids: number[] }
   /** 블록 자리 2 안(caption-slot-model CAPTION_REACH)의 묶이지 않은 글 단위를 표·그림의 캡션으로 - 사이 문단은 그대로,
    *  묶음마다 언어당 하나(caption_exists), 먼 글은 caption_not_adjacent, 다른 그림의 캡션을 같이 쓰는 그림은 caption_shared. 판단이 있는 묶음이면 서버가 묻는다 */
   | { type: "attach_caption"; unit_id: number; bundle_unit_id: number }
@@ -536,24 +562,40 @@ export type EditOp =
   | { type: "set_number"; unit_id: number; number: string | null; follow: boolean; indent_shift?: number }
   /** 들여쓰기 차이(B8) - 여러 줄을 한 편집으로(되돌리기 한 칸). 번호 칸이 있는 줄만, 값은 -9…9 */
   | { type: "set_indents"; units: { unit_id: number; indent_shift: number }[] }
-  /** 목차 아님(줄 하나) · 모두 목차 아님(블록 전체) - 잡음 표시만 비운다(단위는 그대로, 되돌리기가 다시 붙인다) */
+  /** 삭제 취소(줄 하나 · 블록 전체) - 잡음 표시와 적은 사유만 비운다(단위는 그대로, 되돌리기가 다시 붙인다). 묶음은 구성원까지 */
   | { type: "clear_noise"; unit_ids: number[] }
+  /** 저절로 삭제된 줄의 사유 쓰기 - 빈 글이면 정한 문구로. 보통 줄이 섞이면 422 not_a_noise_line. 묶음은 구성원까지 */
+  | { type: "set_noise_reason"; unit_ids: number[]; reason: string }
+  /** 여기부터 본문 - 그 줄 앞의 보통 줄을 본문 앞부분으로, 뒤로 이어진 앞부분 표시는 비운다(되돌리기 한 번). 보통 본문 줄이 아니면 422 invalid_body_start, 정한 줄이 끼면 409 unit_has_decision */
+  | { type: "start_body"; unit_id: number }
   /** 제목 ↔ 문장(F8b) - heading이 거짓이면 제목을 문장마다 나눠 바꾼 표시를 단다(번역 조항은 앞 조항의 번호를 물려받는다).
    *  참이면 바꾼 문장은 그 조항 줄 전체가 제목 하나로 돌아가고, 보통 문장은 그 문장이 제목이 된다. 한/영 짝은 새 단위로 다시 선다 */
   | { type: "set_heading"; unit_ids: number[]; heading: boolean }
   /** 짝 카드 안 순서(설계 2026-11-20-assign-mockup1 D8) - 그 짝의 구성원 전부를 새 순서로. 끊김 없이 이어진 카드만(pair_not_adjacent), 배정이 걸리면 409 */
   | { type: "reorder_pair"; pair_id: number; unit_ids: number[] }
   /** 벗긴 표 덩이 안 줄 순서(설계 2026-11-20-assign-mockup2 D2) - 그 덩이의 줄 전부를 새 순서로(짝 카드 구성원은 붙여서). 판단이 걸린 줄도 받는다 */
-  | { type: "reorder_unwrapped"; table_id: number; unit_ids: number[] };
+  | { type: "reorder_unwrapped"; table_id: number; unit_ids: number[] }
+  // 한글 표처럼 하기(11-23 명세 D2-R8) - 순서 · 합치기 · 번호 · 들여쓰기는 편집 하나, delete 줄은 같은 요청에서 삭제 판단(되돌리기 한 번)
+  | { type: "follow_table"; table_id: number; items: FollowItemInput[]; order: number[] | null };
+
+/** follow_table의 일 하나 - unit_ids가 둘 이상이면 합친다(첫 줄이 order에서 합친 줄의 자리). 없는 칸은 그대로 */
+export interface FollowItemInput {
+  unit_ids: number[];
+  delete?: true;
+  number?: string;
+  indent_shift?: number;
+}
 
 export interface EditResult {
   document_revision: number;
   created_unit_ids: number[];
   retired_unit_ids: number[];
-  /** 떼어 낸 배정 - 판단을 미배정으로 되돌린 단위(옛 문서). 없으면 null */
-  detach?: { reset_unit_ids: number[] } | null;
+  /** 떼어 낸 배정 - 판단을 미배정으로 되돌린 단위(옛 문서)와 이음이 풀려 보류가 된 Old 단위(New 문서 편집). 없으면 null */
+  detach?: Pick<DetachReport, "reset_unit_ids" | "held_unit_ids"> | null;
   /** switch_language가 바꾼 모양 - 다른 편집은 null */
   shape?: "merged" | "unpaired" | "split_pair" | null;
+  /** 한글 표처럼 하기가 같은 요청에서 삭제로 확정한 단위 - 있으면 revision이 그대로여도 되돌리기 단계가 생겼다. 없으면 빠진다 */
+  disposed_unit_ids?: number[];
 }
 
 /** 되돌리기·다시 하기 응답 - 무엇을 거꾸로(다시) 했는지. 경계 확인 기록이면 바뀐 단위와 바뀐 뒤 값 */
@@ -574,9 +616,81 @@ export function getDocumentView(bundleId: number, docId: number): Promise<Docume
 
 const buildDocPath = (bundleId: number, docId: number) => `/bundles/${bundleId}/documents/${docId}`;
 
+/** 원본 블록 하나의 자리 - path는 추출기의 xml_path(첫 조각이 부분 파일 이름), page는 본문 밖이면 null */
+export interface OriginalPlaceBlock {
+  path: string;
+  page: number | null;
+}
+
+/** 살아 있는 Unit 하나가 걸친 원본 블록들(범위 순서, 중복 없음) */
+export interface OriginalPlace {
+  unit_id: number;
+  blocks: OriginalPlaceBlock[];
+}
+
+/** 원본 보기의 자리 조회 - 원문 글자 없이 위치만. places는 DOCX일 때만 채운다(none = 앱에서 만든 문서라 파일 없음) */
+export interface OriginalPlaces {
+  file_format: "docx" | "pdf" | "none";
+  page_basis: string | null;
+  places: OriginalPlace[];
+}
+
+export function fetchOriginalPlaces(bundleId: number, docId: number): Promise<OriginalPlaces> {
+  return apiFetch<OriginalPlaces>(`${buildDocPath(bundleId, docId)}/original-places`);
+}
+
+/** 원본 파일 받기(이름은 서버의 Content-Disposition) - 원본 보기의 파일 받기 단추 */
+export function downloadOriginalFile(bundleId: number, docId: number): Promise<{ blob: Blob; fileName: string | null }> {
+  return apiFetchBlobWithName(`${buildDocPath(bundleId, docId)}/file`);
+}
+
 /** 단위가 가리키는 문서 번호와 그 번호의 EQUIS 표시 - 번호는 서버가 단위의 글에서 읽는다 */
 export function getUnitRef(bundleId: number, docId: number, unitId: number): Promise<UnitRefDetail> {
   return apiFetch<UnitRefDetail>(`${buildDocPath(bundleId, docId)}/units/${unitId}/ref`);
+}
+
+/** 영어 Old 표의 짝 한글 표(11-23 명세 D2-R1~R3) - decided면 사람이 정한 답(source_table_id null = 짝 없음), 후보는 점수 큰 차례 */
+export interface TableCounterpart {
+  table_no: number;
+  status: "matched" | "ambiguous" | "none";
+  source_table_id: number | null;
+  decided: boolean;
+  candidates: { table_id: number; table_no: number; score: number }[];
+}
+
+export function getTableCounterpart(bundleId: number, docId: number, tableId: number): Promise<TableCounterpart> {
+  return apiFetch<TableCounterpart>(`${buildDocPath(bundleId, docId)}/tables/${tableId}/counterpart`);
+}
+
+/** 한글 표처럼 하기의 일 하나(서버 table_follow.FollowItem) - order는 맞춘 뒤 자리(1부터, 같으면 null), number · indent_shift는 고칠 값(같으면 null),
+ *  indent는 들여쓰기가 달라 보이는지(칩), delete는 지울 줄(다른 일 없음). 칩이 없는 줄도 실려 온다(순서를 다시 세우려고) */
+export interface FollowItem {
+  unit_ids: number[];
+  order: number | null;
+  number: string | null;
+  indent: boolean;
+  indent_shift: number | null;
+  delete: boolean;
+}
+
+/** 벗긴 영어 Old 표에 한글 짝 표에서 한 일(11-23 명세 D2-R4~R7) - rule이면 규칙 제안, ai면 맞춘 꼴이 달라 AI 길, none이면 없음. 저장되지 않는다 */
+export interface TableFollow {
+  source_table_id: number | null;
+  mode: "rule" | "ai" | "none";
+  items: FollowItem[];
+  /** 칩이 있는 일의 수 - 머리 "한글 표처럼 하기 · n건" */
+  count: number;
+  /** rule · ai일 때 영어 표의 지금 덩이 차례(줄 id 전부) - 한 줄만 적용할 때 순서를 세우고, AI 제안이 낡았는지 본다 */
+  lines: number[];
+}
+
+export function getTableFollow(bundleId: number, docId: number, tableId: number): Promise<TableFollow> {
+  return apiFetch<TableFollow>(`${buildDocPath(bundleId, docId)}/tables/${tableId}/follow`);
+}
+
+/** 사람이 짝 표를 정한다(null = 짝 없음) - 문서를 바꾸지 않아 revision · 되돌리기 단계가 없다 */
+export function setTableCounterpart(bundleId: number, docId: number, tableId: number, sourceTableId: number | null): Promise<TableCounterpart> {
+  return apiFetch<TableCounterpart>(`${buildDocPath(bundleId, docId)}/tables/${tableId}/counterpart`, { method: "PUT", body: JSON.stringify({ source_table_id: sourceTableId }) });
 }
 
 // 아래 문서 쓰기는 sendDocWrite로 보낸다 - 다시 받기 전에 한 연달은 편집이 낡은 revision으로 409가 나지 않게(doc-revision.ts)
@@ -995,6 +1109,8 @@ export interface GroupSaveInput {
   units: Array<{ unit_id: number; revision: number; disposition: Disposition; move_target_code: string; reason: string }>;
   targets: TargetInput[];
   removed_target_ids: number[];
+  /** 지울 새 문장 → 화면이 본 revision - 다르면 409(그 사이 남이 고친 것을 지우지 않는다). 싣지 않은 것은 견주지 않는다 */
+  removed_revisions?: Record<number, number>;
   /** 짝의 한쪽만 이을 때 남는 단위 - 서버가 같은 저장 안에서 그 짝을 풀어 따로 줄로 남긴다 */
   release_unit_ids?: number[];
   /** Use로 받은 AI 제안 - 서버가 판단에 잇고 채택을 남긴다(이 묶음의 분류·묶기 제안이 아니면 404 suggestion_not_found) */
@@ -1013,12 +1129,36 @@ export async function listAllUnits(bundleId: number, documentId?: number): Promi
   }
 }
 
+/** 확정하지 않은 번역(AI 제안 · 보류) 하나 - 출처 Old 단위가 은퇴했으면 source_* · row_unit_id · document_id가 빈다 */
+export interface OpenTranslation {
+  id: number;
+  revision: number;
+  status: CoverStatus;
+  lang: UnitLang;
+  text: string;
+  target_doc_code: string;
+  /** 표 칸의 번역이면 그 표 새 문장 - 저장이 표 묶음 전체를 실어야 한다 */
+  parent_target_id: number | null;
+  source_unit_id: number | null;
+  source_display_id: string;
+  source_text: string;
+  /** 그 단위가 든 Assign 줄의 단위 - 칸 문장은 표 단위 */
+  row_unit_id: number | null;
+  document_id: number | null;
+  /** 출처 새 문장과 단위가 모두 살아 있나 - 아니면 지우기만 한다 */
+  can_confirm: boolean;
+}
+
+export function listOpenTranslations(bundleId: number): Promise<OpenTranslation[]> {
+  return apiFetch<OpenTranslation[]>(`/bundles/${bundleId}/translations/open`);
+}
+
 export function getGroupByUnit(bundleId: number, unitId: number): Promise<Group> {
   return apiFetch<Group>(`/bundles/${bundleId}/groups/by-unit/${unitId}`);
 }
 
 /** Assign 되돌리기 기록 메타 - 저장 본문의 undo. 한 사용자 동작의 요청들은 같은 step_key를 쓴다(서버가 한 단계로 합친다) */
-export type SaveOp = "confirm" | "hold" | "link" | "unlink" | "mark_new" | "link_source" | "split_new" | "merge_new";
+export type SaveOp = "confirm" | "hold" | "link" | "unlink" | "mark_new" | "link_source" | "split_new" | "merge_new" | "drop_translation";
 
 export interface UndoMeta {
   session: string;
@@ -1056,7 +1196,7 @@ export function saveGroup(bundleId: number, body: GroupSaveInput, undo?: UndoMet
 
 export function bulkDecide(
   bundleId: number,
-  body: { action: "delete" | "move_external"; reason: string; move_target_code: string; units: Array<{ unit_id: number; revision: number }> },
+  body: { action: "delete" | "move_external" | "clear"; reason: string; move_target_code: string; units: Array<{ unit_id: number; revision: number }> },
   undo?: UndoMeta,
 ): Promise<Array<{ unit_id: number; decision: Decision }>> {
   return apiFetch(`/bundles/${bundleId}/decisions/bulk`, { method: "POST", body: JSON.stringify({ ...body, undo }) });
@@ -1076,9 +1216,9 @@ export function clearDecision(bundleId: number, unitId: number, revision: number
 
 /**
  * 여러 단위를 차례로 지운다 - 앞 단위를 지우면 같은 관계 묶음의 나머지가 보류로 바뀌며 revision이 오르므로,
- * 그렇게 바뀐 단위는 지우기 전에 묶음을 다시 읽어 지금 revision을 쓴다(낡은 revision이면 409).
+ * 그렇게 바뀐 단위는 지우기 전에 묶음을 다시 읽어 지금 revision을 쓴다(낡은 revision이면 409). 판단이 바뀐 단위를 돌려준다(새 revision은 응답에 없다).
  */
-export async function clearDecisions(bundleId: number, units: Array<{ unit_id: number; revision: number }>, undo?: UndoMeta): Promise<void> {
+export async function clearDecisions(bundleId: number, units: Array<{ unit_id: number; revision: number }>, undo?: UndoMeta): Promise<number[]> {
   // 모든 단위 요청이 같은 step_key를 써 Ctrl+Z 한 번에 한꺼번에 되돌아간다
   const stepUndo = undo ? { ...undo, step_key: undo.step_key ?? genId() } : undefined;
   const reset = new Set<number>();
@@ -1094,6 +1234,7 @@ export async function clearDecisions(bundleId: number, units: Array<{ unit_id: n
     for (const id of report.reset_unit_ids) reset.add(id);
     for (const id of report.held_unit_ids) changed.add(id);
   }
+  return [...new Set([...reset, ...changed])];
 }
 
 /** 배정 초기화 건수 - dry_run이면 하게 될 건수(같은 길을 돌고 되돌려 실제와 같다) */
@@ -1175,6 +1316,10 @@ export interface BundleCell {
   source_unit_ids: number[];
   /** 이미 쓴 문서의 칸만 - 엮은 문서의 칸은 잇지 않아 null */
   revision?: number | null;
+  /** 이미 쓴 문서의 칸만 - 이 칸 문장이 온 새 문서 원문의 Unit(용지 칸 조각에 얹는 열쇠) */
+  new_unit_id?: number | null;
+  /** 이미 쓴 문서의 칸만 - "new"면 사람이 신규로 판단한 칸이라 출처 없음으로 치지 않는다 */
+  change_type?: ChangeType | null;
 }
 
 /** New 칸이 그리는 표 - 격자 크기와 칸 새 문장(행·열 순) */
@@ -1216,20 +1361,6 @@ export interface RecentRemark {
 
 export function listRecentRemarks(limit = 10): Promise<RecentRemark[]> {
   return apiFetch<RecentRemark[]>(`/sop/remarks/recent?limit=${limit}`);
-}
-
-/** 외부 이동 대상 후보 - 내가 멤버인 다른 Bundle의 To-Be 문서와 전에 쓴 이동 코드 */
-export interface MoveTarget {
-  code: string;
-  title: string;
-  /** 이 코드를 가진 To-Be 문서의 Bundle 코드 - 전에 쓴 코드뿐이면 null */
-  bundle_code: string | null;
-  /** bundle = 이 Bundle에서 쓴 코드, mine = 내가 다른 Bundle에서 쓴 코드 */
-  used: "bundle" | "mine" | null;
-}
-
-export function listMoveTargets(bundleId: number, query: string): Promise<MoveTarget[]> {
-  return apiFetch<MoveTarget[]>(`/bundles/${bundleId}/move-targets?${new URLSearchParams({ q: query })}`);
 }
 
 export function listIdenticalCandidates(bundleId: number): Promise<IdenticalCandidate[]> {
@@ -1329,7 +1460,7 @@ export interface OutputARow {
   confirmed_at: string | null;
   group_id: string | null;
   warnings: Array<Record<string, string>>;
-  /** "toc"면 목차 줄 - 보낸 곳 Deleted, status "deleted"(판단 상태가 아니다), 저절로 */
+  /** 저절로 삭제된 줄("toc" · "front" · "history") - 보낸 곳 Deleted, status "deleted"(판단 상태가 아니다) */
   noise_kind?: string | null;
 }
 
@@ -1428,8 +1559,10 @@ export interface OutputSummary {
   translated: number;
   confirmed_rate: number;
   single_language: number;
-  /** 목차 · 저절로 삭제 - 목차 줄 수(old_rows·assigned에 들고 deleted에는 들지 않는다) */
+  /** 저절로 삭제된 줄 수 - 목차 · 본문 앞부분 · 개정 이력(old_rows·assigned에 들고 deleted에는 들지 않는다) */
   toc_deleted: number;
+  front_deleted: number;
+  history_deleted: number;
   /** 풀린 표에서 온 줄 - 벗긴 표(레이아웃 표)의 칸 줄이 든 줄(MD 1 F11) */
   unwrapped_rows: number;
 }
@@ -1525,8 +1658,10 @@ export interface PreviewRow {
   /** 이 줄의 옛 단위와 관계 묶음(A의 자료 줄에만) - 고른 줄 · 같은 무리를 칸 글이 아니라 이 값으로 맞춘다 */
   unit_id: number | null;
   group_id: string | null;
-  /** 목차 줄 - 연달아 오면 한 줄로 접어 그린다 */
+  /** 저절로 삭제된 줄 - 같은 종류가 연달아 오면 한 줄로 접어 그린다 */
   toc: boolean;
+  /** 그 종류("toc" · "front" · "history") - 접기는 종류가 바뀌면 끊는다 */
+  noise?: string | null;
   /** 지운 줄(문단 Excel) - 화면은 숨기고, 그 줄을 고른 동안만 빨간 음영으로 보인다 */
   deleted: boolean;
   /** 한 줄로 묶은 옛 단위 전부(문단 Excel - 이어진 줄이 같은 새 문장 하나로 감). unit_id는 그 첫 단위, 한 단위 줄은 빈 목록 */
@@ -1584,10 +1719,22 @@ export function downloadExport(bundleId: number): Promise<{ blob: Blob; fileName
   return apiFetchBlobWithName(`/bundles/${bundleId}/export.xlsx`);
 }
 
-/** 문단 Excel - 쪼갠 단위 한 줄씩 한 열(docId가 null이면 Old 문서 모두, 문서마다 시트). tables=false면 표를 뺀다 */
-export function downloadParagraphs(bundleId: number, docId: number | null, tables: boolean): Promise<{ blob: Blob; fileName: string | null }> {
+/** 문단 Excel 받을 때 넣을 것 넷(서버 ParagraphInclude) - 표 · 삭제한 줄 · 그림 자리 · 옛 문서 목차 */
+export interface ParagraphInclude {
+  tables: boolean;
+  deleted: boolean;
+  figures: boolean;
+  toc: boolean;
+}
+
+/** 처음 값 - 지금 파일에서 옛 문서 목차만 뺀 것 */
+export const DEFAULT_INCLUDE: ParagraphInclude = { tables: true, deleted: true, figures: true, toc: false };
+
+/** 문단 Excel - 쪼갠 단위 한 줄씩 한 열(docId가 null이면 Old 문서 모두, 문서마다 시트). 넣을 것은 include로 고른다 */
+export function downloadParagraphs(bundleId: number, docId: number | null, include: ParagraphInclude): Promise<{ blob: Blob; fileName: string | null }> {
   const path = docId === null ? `/bundles/${bundleId}/old-paragraphs.xlsx` : `/bundles/${bundleId}/documents/${docId}/paragraphs.xlsx`;
-  return apiFetchBlobWithName(`${path}?tables=${tables}`);
+  const query = `tables=${include.tables}&deleted=${include.deleted}&figures=${include.figures}&toc=${include.toc}`;
+  return apiFetchBlobWithName(`${path}?${query}`);
 }
 
 /** 순서 바꾸기 요청 한 줄 - 뺀 값은 그대로 둔다. 깊이·번호 표시는 그 줄에만 붙는다(짝 상대·번역이 따라 바뀌지 않는다) */

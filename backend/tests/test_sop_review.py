@@ -17,7 +17,7 @@ from app.sop.models import Bundle, ExtractionWarning, TargetSentence, UnitDecisi
 from app.sop.review import evaluate_readiness
 from app.sop.snapshot import BundleSnapshot, load_bundle_snapshot
 from tests.access_helpers import run_in_session, update_row
-from tests.docx_factory import build_docx, p, tbl
+from tests.docx_factory import TINY_PNG, build_docx, make_drawing_run, p, tbl
 from tests.sop_helpers import (
     ADMIN,
     AUTHOR,
@@ -96,16 +96,18 @@ def _list_events(client: TestClient, bundle_id: int) -> list[dict]:
 
 
 def _setup(
-    client: TestClient, *, docs: list[dict] | None = None, na_slots: list[dict] | None = None, fill_versions: bool = True
+    client: TestClient, *, docs: list[dict] | None = None, na_slots: list[dict] | None = None, fill_versions: bool = True,
+    figures: int = 0,
 ) -> Fixture:
-    """멤버(작성자·검토자)와 To-Be, 옛 문서(한국어 둘·영어 하나)를 갖췄지만 판단은 하나도 안 한 묶음(버전은 기본으로 채움)."""
+    """멤버(작성자·검토자)와 To-Be, 옛 문서(한국어 둘·영어 하나와 그림 figures개)를 갖췄지만 판단은 하나도 안 한 묶음(버전은 기본으로 채움)."""
     bundle_id = create_bundle(client, is_synthetic=True)["id"]
     assert set_members(client, bundle_id, WITH_REVIEWER).status_code == 200
     tobe = docs or [SOP_DOC]
     response = put_tobe(client, bundle_id, tobe, na_slots=na_slots or [])
     assert response.status_code == 200, response.text
     ids = {doc["code"]: doc["id"] for doc in response.json()["docs"]}
-    uploaded = upload(client, bundle_id, build_docx(p(KO_1) + p(KO_2) + p(EN_1)), OLD_NAME)
+    body = p(KO_1) + p(KO_2) + p(EN_1) + f"<w:p>{make_drawing_run('image1.png')}</w:p>" * figures
+    uploaded = upload(client, bundle_id, build_docx(body, media={"image1.png": TINY_PNG} if figures else {}), OLD_NAME)
     assert uploaded.status_code == 201 and uploaded.json()["status"] == "ready", uploaded.text
     doc = uploaded.json()
     if fill_versions:
@@ -282,6 +284,32 @@ def test_progress_and_readiness_count_the_same_rows(client: TestClient) -> None:
 
     assert (progress["unassigned"], progress["on_hold"], progress["total"]) == (1, 1, 2)
     assert (blockers["units_unassigned"], blockers["units_on_hold"]) == (progress["unassigned"], progress["on_hold"])
+
+
+def test_review_still_waits_for_figures(client: TestClient) -> None:
+    """진행 숫자는 그림을 빼지만 검토 요청은 그림까지 정해야 한다 — 막는 이유가 그 가운데 그림 수를 함께 말한다."""
+    fx = _make_ready(client, figures=1)
+
+    progress = get_bundle(client, fx.bundle_id)["progress"]
+    blockers = _get_readiness(client, fx.bundle_id)["blockers"]
+
+    assert progress["confirmed"] == progress["total"]
+    assert (progress["figures_total"], progress["figures_decided"]) == (1, 0)
+    assert blockers == [{"code": "units_unassigned", "count": 1, "figures": 1}]
+    assert _request(client, fx.bundle_id).status_code == 422
+
+
+def test_each_unit_blocker_names_its_own_figures(client: TestClient) -> None:
+    fx = _setup(client, figures=2)
+    held, _ = (unit["id"] for unit in fx.view["units"] if unit["kind"] == "figure")
+    update_row(UnitDecision, held, status="on_hold", hold_reason=HOLD_REASON)
+
+    units = [item for item in _get_readiness(client, fx.bundle_id)["blockers"] if item["code"].startswith("units_")]
+
+    rows = _expected_rows(fx.view)
+    assert units == [
+        {"code": "units_unassigned", "count": rows - 1, "figures": 1}, {"code": "units_on_hold", "count": 1, "figures": 1},
+    ]
 
 
 def test_a_pair_of_held_and_unassigned_members_is_one_unassigned_row(client: TestClient) -> None:

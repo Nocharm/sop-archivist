@@ -332,7 +332,7 @@ git pull                 # GitHub dev를 받은 뒤
 git push gitlab dev
 ```
 
-`deploy-dev`가 곧바로 돌고 로그 끝에 `[deploy] health: … auth mode dev, / 200`이 보이면 `http://<server-ip>:4444`에서 확인한다. 상단 바 버전은 `dev`에 올릴 때마다 PATCH가 오른 값이다(`rules/common/git.md`). 같은 파이프라인의 test가 빨가면 다음 push 전에 고친다 — 운영으로 가는 `main`은 테스트가 통과해야만 ▶가 열린다.
+`deploy-dev`가 곧바로 돌고 로그 끝에 `[deploy] health: … auth mode dev, / 200`이 보이면 `http://<server-ip>:4444`에서 확인한다. 상단 바 버전은 `dev`에 올릴 때마다 하나씩 오른 값이고, 정식 업데이트 때 이 번호가 그대로 운영에 올라간다(`rules/common/git.md`). 같은 파이프라인의 test가 빨가면 다음 push 전에 고친다 — 운영으로 가는 `main`은 테스트가 통과해야만 ▶가 열린다.
 
 운영·진단은 운영과 같다. 개발 폴더에서 `docker compose -p sop-archivist-dev …`로 한다(`-p`를 빼면 파일의 `name:`이 운영 프로젝트를 가리킨다).
 

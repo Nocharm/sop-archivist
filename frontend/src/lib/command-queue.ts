@@ -1,0 +1,192 @@
+// Assign 명령 큐 - 쓰기를 누른 차례대로 하나씩 보내는 순수 모델(React 없음). 결과 박스가 응답 뒤에 정해지는 명령은 장벽이라 그 뒤에 누른 것은 대상을
+// 잡지 않고 쌓아 두었다가 장벽이 세운 고름으로 푼다. 실패하면 멈추고 다시 시도 · 버리기를 기다린다(명세 2026-11-23-assign-feedback-2 A1, 설계 2026-11-25-split-first §6-1).
+
+import type { PendingKind } from "./assign-focus-model";
+
+/** key - 장벽 뒤에 누른 글쇠 · 고름 · 판단 단추(누른 때의 대상이 없다) */
+export type CommandKind = PendingKind | "key";
+
+export interface QueuedCommand<T> {
+  id: string;
+  kind: CommandKind;
+  /** 묶음 전체가 바뀌는 일(모두 받기 · 초기화 · 되돌리기) */
+  isGlobal: boolean;
+  payload: T;
+  unitIds: readonly number[];
+  /** 장벽 뒤에 눌렀다 - 대상을 나갈 때(take 뒤) 그때의 고름으로 푼다 */
+  isDeferred: boolean;
+}
+
+export interface QueueState<T> {
+  waiting: readonly QueuedCommand<T>[];
+  running: QueuedCommand<T> | null;
+  /** 실패해 멈춘 명령 - 다시 시도나 버리기까지 아무것도 나가지 않는다 */
+  halted: { command: QueuedCommand<T>; reason: string } | null;
+  /** 창이 되묻는 명령 - 답할 때까지 아무것도 나가지 않는다 */
+  asking: QueuedCommand<T> | null;
+}
+
+type NewCommand<T> = Omit<QueuedCommand<T>, "isDeferred">;
+
+export interface CommandQueue<T> {
+  getState(): QueueState<T>;
+  subscribe(listener: () => void): () => void;
+  /** 줄 끝에 세운다 - isDeferred면 부른 쪽은 고름을 옮기지 않는다 */
+  push(command: NewCommand<T>): { isDeferred: boolean };
+  /** 되살린 글쇠가 만든 명령 - 남은 글쇠 앞에 세운다. at은 그 되살림이 이미 앞에 세운 수(만든 차례대로 서게) */
+  pushNext(command: NewCommand<T>, at?: number): void;
+  /** 다음 명령을 꺼내 달린다 - 이미 달리거나 멈췄거나 되묻는 중이면 null */
+  take(): QueuedCommand<T> | null;
+  /** 응답이 왔다 - 장벽이 아니면 settle과 같고, 장벽이면 새 보기의 고름이 선 뒤의 settle까지 달린다 */
+  respond(id: string): void;
+  settle(id: string): void;
+  fail(id: string, reason: string): void;
+  /** 멈춘 명령을 그 자리에서 다시 보낸다 */
+  retry(): void;
+  ask(id: string): void;
+  /** 되묻기의 답을 실어 그 자리에서 다시 보낸다 */
+  resume(id: string, payload: T): void;
+  /** 버리기 - 멈춘(되묻던) 것과 대기 전부를 걷어 돌려준다(달리는 것은 그대로) */
+  drop(): readonly QueuedCommand<T>[];
+}
+
+// 응답 뒤에야 결과 박스가 정해지는 일 - 참조(번호) · 순서 · 판단 · 저절로 삭제된 줄(toc - 삭제 취소 · 사유 · 여기부터 본문)은 박스가 그대로라 장벽이 아니다
+const BARRIER_KINDS: ReadonlySet<CommandKind> = new Set<CommandKind>(["join", "split", "unmerge", "unwrap", "rewrap", "pair", "unpair", "lang", "heading", "caption", "figure", "follow", "undo"]);
+
+export function isBarrier(command: Pick<QueuedCommand<unknown>, "kind" | "isGlobal">): boolean {
+  return command.isGlobal || BARRIER_KINDS.has(command.kind);
+}
+
+/** 지금 누르면 대상을 미루나 - 앞에 장벽이 있거나(달리는 것 · 멈춘 것 포함) 미룬 것이 있거나 되묻는 중이면 */
+export function mustDefer<T>(state: QueueState<T>): boolean {
+  if (state.asking !== null) return true;
+  // 되살리는 글쇠도 그 뒤의 고름을 정한다
+  if (state.running !== null && (state.running.kind === "key" || isBarrier(state.running))) return true;
+  if (state.halted !== null && isBarrier(state.halted.command)) return true;
+  return state.waiting.some((command) => command.isDeferred || isBarrier(command));
+}
+
+/** 아무것도 달리거나 기다리지 않는다 - 모아 둔 다시 읽기를 할 때 */
+export function isIdle<T>(state: QueueState<T>): boolean {
+  return state.running === null && state.halted === null && state.asking === null && state.waiting.length === 0;
+}
+
+/** 아직 끝나지 않은 명령 전부 - 나간 차례, 나갈 차례대로 */
+export function listUnsettled<T>(state: QueueState<T>): QueuedCommand<T>[] {
+  return [state.running, state.halted?.command ?? null, state.asking, ...state.waiting].filter((command): command is QueuedCommand<T> => command !== null);
+}
+
+/** 칩 하나에 모인 대기 - kind는 첫째 명령의 종류, names는 모인 명령의 이름(나갈 차례대로, 이름을 모르면 null) */
+export interface QueueWait {
+  kind: CommandKind;
+  names: readonly (string | null)[];
+}
+
+export interface QueueWaits {
+  /** 박스 → 그 박스에 걸린 대기 */
+  boxes: ReadonlyMap<number, QueueWait>;
+  /** 박스가 없는 대기(되돌리기 · 장벽 뒤에 쌓인 글쇠 · 판단 단추) - 위쪽 줄의 알약 하나 */
+  global: QueueWait | null;
+}
+
+const NO_QUEUE_WAITS: QueueWaits = { boxes: new Map(), global: null };
+
+function addWait(wait: QueueWait | null | undefined, kind: CommandKind, name: string | null): QueueWait {
+  return wait ? { kind: wait.kind, names: [...wait.names, name] } : { kind, names: [name] };
+}
+
+/**
+ * 기다리는 명령 → 칩(A1-R5). 박스를 잡은 명령은 그 박스에(장벽은 첫 박스에만 - 표 하나의 칸마다 붙지 않게), 박스가 없는 것은 global에 모은다.
+ * readName이 null이면 세지 않는다(장벽 뒤의 고름 - 쓰기도 글쇠도 아니다). 기다리는 것이 없으면 늘 같은 빈 값(용지를 다시 그리지 않게)
+ */
+export function listQueueWaits<T>(state: Pick<QueueState<T>, "waiting">, readName: (command: QueuedCommand<T>) => { name: string | null } | null): QueueWaits {
+  const boxes = new Map<number, QueueWait>();
+  let global: QueueWait | null = null;
+  for (const command of state.waiting) {
+    const read = readName(command);
+    if (read === null) continue;
+    if (command.unitIds.length === 0) global = addWait(global, command.kind, read.name);
+    else for (const unitId of isBarrier(command) ? command.unitIds.slice(0, 1) : command.unitIds) boxes.set(unitId, addWait(boxes.get(unitId), command.kind, read.name));
+  }
+  return boxes.size === 0 && global === null ? NO_QUEUE_WAITS : { boxes, global };
+}
+
+/**
+ * 칩의 글 - 이름은 처음으로 이름이 있는 명령의 것. 하나면 "Queued · Split", 모두 같은 이름이면 "Queued · Undo ×2", 섞였으면 "Queued · Split +1"(나머지 수).
+ * 이름이 하나도 없으면 "Queued n"(모인 수)
+ */
+export function formatQueueWait(wait: QueueWait): { key: string; vars: Record<string, string | number> } {
+  const n = wait.names.length;
+  const action = wait.names.find((name): name is string => name !== null);
+  if (action === undefined) return { key: "assign.queue.chip", vars: { n } };
+  if (n === 1) return { key: "assign.queue.chipNamed", vars: { action } };
+  if (wait.names.every((name) => name === action)) return { key: "assign.queue.chipTimes", vars: { action, n } };
+  return { key: "assign.queue.chipMore", vars: { action, n: n - 1 } };
+}
+
+/**
+ * 실패하면 멈추나 - 뒤에 기다리는 것이 있거나, 고름이 이미 떠난 판단이거나, 다시 보내면 될 실패(서버 오류 · 끊김)면.
+ * 기다리는 것이 없는 편집 · 되돌리기를 서버가 거절했으면(isRefusal) 알림만 하고 지나간다 - 멈출 것이 없고 그대로 다시 보내도 같은 답이다
+ */
+export function shouldHalt<T>(command: Pick<QueuedCommand<T>, "kind">, state: Pick<QueueState<T>, "waiting">, isRefusal: boolean): boolean {
+  return !isRefusal || state.waiting.length > 0 || command.kind === "save" || command.kind === "bulk";
+}
+
+export function createCommandQueue<T>(): CommandQueue<T> {
+  let state: QueueState<T> = { waiting: [], running: null, halted: null, asking: null };
+  const listeners = new Set<() => void>();
+
+  function update(patch: Partial<QueueState<T>>): void {
+    state = { ...state, ...patch };
+    for (const listener of listeners) listener();
+  }
+
+  function settle(id: string): void {
+    if (state.running?.id === id) update({ running: null });
+    // 창을 열어 답을 받은 글쇠 - 그 글쇠가 만든 명령이 이미 앞에 섰다
+    else if (state.asking?.id === id) update({ asking: null });
+  }
+
+  return {
+    getState: () => state,
+    subscribe(listener) {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    push(command) {
+      const isDeferred = mustDefer(state);
+      update({ waiting: [...state.waiting, { ...command, isDeferred }] });
+      return { isDeferred };
+    },
+    pushNext(command, at = 0) {
+      update({ waiting: [...state.waiting.slice(0, at), { ...command, isDeferred: false }, ...state.waiting.slice(at)] });
+    },
+    take() {
+      if (state.running !== null || state.halted !== null || state.asking !== null || state.waiting.length === 0) return null;
+      const [command, ...waiting] = state.waiting;
+      update({ running: command, waiting });
+      return command;
+    },
+    respond(id) {
+      if (state.running?.id === id && !isBarrier(state.running)) settle(id);
+    },
+    settle,
+    fail(id, reason) {
+      if (state.running?.id === id) update({ running: null, halted: { command: state.running, reason } });
+    },
+    retry() {
+      if (state.halted !== null) update({ halted: null, waiting: [state.halted.command, ...state.waiting] });
+    },
+    ask(id) {
+      if (state.running?.id === id) update({ running: null, asking: state.running });
+    },
+    resume(id, payload) {
+      if (state.asking?.id === id) update({ asking: null, waiting: [{ ...state.asking, payload }, ...state.waiting] });
+    },
+    drop() {
+      const dropped = [state.halted?.command ?? null, state.asking, ...state.waiting].filter((command): command is QueuedCommand<T> => command !== null);
+      if (dropped.length > 0) update({ waiting: [], halted: null, asking: null });
+      return dropped;
+    },
+  };
+}

@@ -27,9 +27,9 @@ from app.sop.models import (
     SourceBlock,
     SourceTable,
 )
-from app.sop.segment import has_unstorable_char
+from app.sop.segment import RULE_PARAGRAPH, has_unstorable_char
 from app.sop.tobe import add_match_doc, check_match_doc, ensure_code_free, find_attachable_doc, temp_match_code
-from app.sop.units import create_initial_units
+from app.sop.units import LINE_SPLIT_FORMAT, create_initial_units
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +45,9 @@ MAX_PARALLEL_PARSES = 2
 _parse_slots = asyncio.Semaphore(MAX_PARALLEL_PARSES)
 _FORMAT_BY_EXTENSION = {".docx": "docx", ".pdf": "pdf"}
 _STATUS_BY_OUTCOME = {"ok": "ready", "rejected": "rejected", "failed": "failed"}
+
+# 새로 올리는 문서(Old · New)의 쪼개기 규칙 — 이미 올린 문서의 추출은 제 규칙(extractions.split_rule)을 지닌다
+NEW_SPLIT_RULE: int = RULE_PARAGRAPH
 
 WARNING_MISSING_TEXT = "missing_text"
 # 누락 의심이 상한(MAX_MISSING_ITEMS)에서 멈췄다 — 더 있을 수 있음을 알릴 뿐이라 확인을 요구하지 않는다
@@ -126,8 +129,10 @@ async def ingest_upload(
     )
     # 언어 배치는 Unit을 만들기 전에 정한다(배치가 Unit 언어를 가른다) — 사람은 문서 목록에서 바꿀 수 있다
     if outcome.result is not None:
-        document.language_layout = detect_language_layout(
-            outcome.result.blocks, has_language_halves=outcome.result.has_language_halves
+        # 규칙 2는 문단을 쪼개 재므로 200만 자 문서에 시간이 든다 — 이벤트 루프 밖에서
+        document.language_layout = await asyncio.to_thread(
+            detect_language_layout, outcome.result.blocks, has_language_halves=outcome.result.has_language_halves,
+            rule=NEW_SPLIT_RULE, split_lines=file_format == LINE_SPLIT_FORMAT,
         )
     session.add(document)
     try:
@@ -213,6 +218,7 @@ async def _write_extraction(
     extraction = Extraction(
         document_id=document_id, extractor_version=EXTRACTOR_VERSION,
         aux_status="ok" if aux_error is None else "failed", aux_detail=aux_error or "",
+        split_rule=NEW_SPLIT_RULE,
     )
     session.add(extraction)
     await session.flush()

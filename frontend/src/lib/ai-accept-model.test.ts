@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 
-import { canAccept, countDeletes, countLiveOffer, countShapes, pickAcceptIds, splitAcceptIds } from "./ai-accept-model";
-import type { AcceptItem, AiSuggestion } from "./api-sop";
+import { canAccept, countDeletes, countLiveOffer, countShapes, listAcceptKinds, pickAcceptIds, splitAcceptIds } from "./ai-accept-model";
+import { dropHiddenSuggestions } from "./ai-suggestion-model";
+import type { AcceptItem, AiSuggestion, CoverStatus } from "./api-sop";
 
 function item(suggestion_id: number, shape: string): AcceptItem {
   return { suggestion_id, shape, is_delete: shape === "delete" || shape === "delete_candidate" };
@@ -47,15 +48,39 @@ describe("splitAcceptIds", () => {
 });
 
 describe("countLiveOffer", () => {
-  it("counts live suggestions of the open Old document by kind", () => {
-    const counts = countLiveOffer([
-      suggestion(1, "classify"),
-      suggestion(2, "match"),
-      suggestion(3, "match", { document_id: 2 }),
-      suggestion(4, "classify", { result: "stale" }),
-      suggestion(5, "classify", { adoption: "as_is" }),
-      suggestion(6, "split"),
-    ], 1);
-    expect(counts).toEqual({ classify: 1, match: 1 });
+  const onUnits = (...unitIds: number[]) => ({ content: { unit_ids: unitIds } });
+  const statusOf = (entries: [number, CoverStatus][]) => new Map(entries);
+  const openUnits = statusOf([[1, "unassigned"], [2, "unassigned"], [3, "unassigned"], [4, "unassigned"], [9, "confirmed"]]);
+
+  it("counts only live suggestions whose rows are open", () => {
+    const items = [
+      suggestion(1, "classify", onUnits(9)),
+      suggestion(2, "match", onUnits(1)),
+      suggestion(3, "match", { ...onUnits(2), document_id: 2 }),
+      suggestion(4, "classify", { ...onUnits(3), result: "stale" }),
+      suggestion(5, "classify", { ...onUnits(3), adoption: "as_is" }),
+      suggestion(6, "split", onUnits(3)),
+      suggestion(7, "match", onUnits(3, 4)),
+      suggestion(8, "match", onUnits(77)),
+      suggestion(9, "match", onUnits(2)),
+    ];
+    expect(countLiveOffer(items, 1, openUnits)).toEqual({ classify: 0, match: 3 });
+  });
+
+  it("drops to zero when every row is decided", () => {
+    const items = [suggestion(1, "classify", onUnits(1)), suggestion(2, "match", onUnits(2))];
+    expect(countLiveOffer(items, 1, new Map())).toEqual({ classify: 0, match: 0 });
+  });
+
+  it("counts nothing hidden once hidden kinds are dropped", () => {
+    const items = [suggestion(1, "classify", { document_id: 7, ...onUnits(1) }), suggestion(2, "match", { document_id: 7, ...onUnits(2) })];
+    expect(countLiveOffer(dropHiddenSuggestions(items, false), 7, openUnits)).toEqual({ classify: 0, match: 1 });
+  });
+});
+
+describe("listAcceptKinds", () => {
+  it("offers only match while drafting is hidden", () => {
+    expect(listAcceptKinds(false)).toEqual(["match"]);
+    expect(listAcceptKinds(true)).toEqual(["classify", "match"]);
   });
 });

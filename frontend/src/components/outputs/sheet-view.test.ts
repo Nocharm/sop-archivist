@@ -124,6 +124,28 @@ describe("SheetView", () => {
     expect(host.querySelector<HTMLElement>('[data-testid="export-preview-toc-2"]')?.dataset.toc).toBe("folded");
   });
 
+  it("folds contents rows of a sheet without column keys into one line in the Text column", () => {
+    const rows = [
+      row("header", true, ["Section No.", "Text", "Lang"].map((text) => cell(text, { head: true }))),
+      row("in_group", true, [cell(""), cell("목차 하나 ... 3"), cell("KO")], { unit_id: 1, toc: true, noise: "toc" }),
+      row("in_group", true, [cell(""), cell("목차 둘 ... 4"), cell("KO")], { unit_id: 2, toc: true, noise: "toc" }),
+      row("in_group", true, [cell("1."), cell("본문"), cell("KO")], { unit_id: 3 }),
+    ];
+    const host = render({ sheet: { ...BASE, widths: [12, 90, 6], freeze: "A2", rows, total_rows: 4 } });
+    const folded = host.querySelector<HTMLElement>('[data-testid="export-preview-toc-1"]');
+    expect(Array.from(folded?.querySelectorAll("td") ?? []).map((td) => td.textContent)).toEqual(["", "▸ Table of contents · 2 lines", "KO"]);
+    expect(host.querySelectorAll('[data-testid="export-preview-body"] tr')).toHaveLength(2);
+    act(() => folded?.click());
+    expect(host.querySelector('[data-testid="export-preview-toc-1"] td:nth-child(2)')?.textContent).toContain("▾ Collapse");
+  });
+
+  it("names each folded run of automatically deleted rows", () => {
+    const rows = [...A_SHEET.rows.slice(0, 2), aRow("1", 1, { toc: true, noise: "front" }), aRow("2", 2, { toc: true, noise: "front" }), aRow("3", 3, { toc: true, noise: "toc" }), aRow("4", 4, { toc: true, noise: "toc" })];
+    const host = render({ sheet: { ...A_SHEET, rows, total_rows: 6 } });
+    const labels = [2, 4].map((at) => host.querySelector<HTMLElement>(`[data-testid="export-preview-toc-${at}"] td:nth-child(2)`)?.textContent);
+    expect(labels).toEqual(["Front matter · 2 lines ▸ click to expand", "Contents · 2 lines ▸ click to expand"]);
+  });
+
   it("paints the picked unit and its group, and overlays the draft only on the picked row", () => {
     const host = render({ sheet: A_SHEET, selectedUnitId: 4, draft: { new_doc: "WI-9" } });
     const marks = Array.from(host.querySelectorAll<HTMLElement>('[data-testid="export-preview-body"] tr')).map((tr) => tr.dataset.mark ?? null);

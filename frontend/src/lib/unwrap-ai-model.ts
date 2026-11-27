@@ -32,6 +32,15 @@ export function isUnwrapSuggestionUnchanged(current: readonly number[], suggeste
   return isUnwrapSuggestionApplicable(current, suggested) && current.every((id, index) => id === suggested[index]);
 }
 
+/** 내용이 같은 미리 보기면 앞의 것 그대로 - 자료를 다시 받을 때마다 새것이면 용지의 덩어리를 모두 다시 그린다 */
+export function keepSamePreviews(prev: ReadonlyMap<number, readonly number[]>, next: ReadonlyMap<number, readonly number[]>): ReadonlyMap<number, readonly number[]> {
+  const isSame = prev.size === next.size && [...next].every(([tableId, order]) => {
+    const before = prev.get(tableId);
+    return before !== undefined && before.length === order.length && before.every((id, index) => id === order[index]);
+  });
+  return isSame ? prev : next;
+}
+
 /** 순서 제안을 요청한 표 하나 - baseline은 이 요청이 끝났다고 셀 수 있는 지금까지 끝난 순서 작업의 수(요청 때 끝난 수 + 앞서 기다리는 수 + 1) */
 export interface UnwrapAiAsk {
   tableId: number;
@@ -47,4 +56,14 @@ export function addUnwrapAiAsk(asks: readonly UnwrapAiAsk[], tableId: number, fi
 /** 작업 중 칩을 보일 표 - 이 종류의 끝난 작업(done·failed·stale·cancelled) 수가 기준에 닿으면 성공 · 실패 가리지 않고 걷힌다 */
 export function listUnwrapAiBusy(asks: readonly UnwrapAiAsk[], finished: number): Set<number> {
   return new Set(asks.filter((ask) => finished < ask.doneAt).map((ask) => ask.tableId));
+}
+
+/** AI 순서를 지금 물을 수 없는 까닭의 문구 키 - 머리 단추 · ⇧O · 우클릭 메뉴 항목이 같은 답을 쓴다. 한글 표처럼 하기가 있으면 AI 꺼짐 · 작업 중과 상관없이 열려 있다.
+ *  current는 그 벗긴 표의 줄 차례, suggested는 놓지 않은 제안(없으면 undefined) */
+export function readUnwrapOrderReason(args: { hasFollow: boolean; isAiOn: boolean; isBusy: boolean; current: readonly number[]; suggested: readonly number[] | undefined }): string | null {
+  if (args.hasFollow) return null;
+  if (!args.isAiOn) return "assign.unwrapAi.offTip";
+  if (args.isBusy) return "assign.unwrapAi.already";
+  if (args.suggested !== undefined && isUnwrapSuggestionApplicable(args.current, args.suggested)) return isUnwrapSuggestionUnchanged(args.current, args.suggested) ? "assign.unwrapAi.same" : "assign.key.why.orderReady";
+  return args.current.length < 2 ? "assign.key.why.oneLine" : null;
 }

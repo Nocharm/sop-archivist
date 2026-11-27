@@ -1,0 +1,20 @@
+{
+  "shape": "개정 이력 표 뒤의 장이 번호 문단이고 부록이 이어짐",
+  "layout": null,
+  "boxes": [
+    {"text": "1. 목적", "lang": "ko", "kind": "heading", "number": "1.", "excluded": null},
+    {"text": "탱크 세척 방법을 정한다.", "lang": "ko", "kind": "sentence", "number": null, "excluded": null},
+    {"text": "2. 개정 이력", "lang": "ko", "kind": "heading", "number": null, "excluded": "history"},
+    {"text": "", "lang": "neutral", "kind": "table", "number": null, "excluded": "history"},
+    {"text": "Rev", "lang": "en", "kind": "cell_sentence", "number": null, "excluded": "history"},
+    {"text": "Change", "lang": "en", "kind": "cell_sentence", "number": null, "excluded": "history"},
+    {"text": "01", "lang": "en", "kind": "cell_sentence", "number": null, "excluded": "history"},
+    {"text": "New document", "lang": "en", "kind": "cell_sentence", "number": null, "excluded": "history"},
+    {"text": "3. 절차", "lang": "ko", "kind": "sentence", "number": "3.", "excluded": null},
+    {"text": "3.1 탱크를 비운다.", "lang": "ko", "kind": "sentence", "number": "3.1", "excluded": null},
+    {"text": "부록 A 기록지", "lang": "ko", "kind": "sentence", "number": null, "excluded": null},
+    {"text": "", "lang": "neutral", "kind": "table", "number": null, "excluded": null},
+    {"text": "항목", "lang": "ko", "kind": "cell_sentence", "number": null, "excluded": null},
+    {"text": "값", "lang": "ko", "kind": "cell_sentence", "number": null, "excluded": null}
+  ]
+}

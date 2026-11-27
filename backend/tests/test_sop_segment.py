@@ -1,22 +1,33 @@
 """규칙 쪼개기 — 문장 경계·언어 판정·빈 글자 규칙·블록 → 단위 초안·연달아 짝·커버리지 검사(순수 함수)."""
 
+from pathlib import Path
+
 import pytest
 
 from app.sop.coverage import find_coverage_problems
 from app.sop.extract import docx_reader
+from app.sop.extract.pdf_reader import read_pdf
+from app.sop.ingest import build_limits
 from app.sop.spans import join_close_spans
 from app.sop.segment import (
     CAPTIONS_SIGNAL,
     CLAUSE_NUMBER_FLAG,
+    PARAS_SIGNAL,
+    RULE_LEGACY,
+    RULE_PARAGRAPH,
     BlockView,
     TableView,
     build_unit_drafts,
     build_unit_text,
     count_pair_directions,
     detect_language,
+    find_marker_lines,
+    split_block_text,
+    split_paragraph,
     split_sentences,
     suggest_interleaved_pairs,
 )
+from scripts.synthetic_sop import build_synthetic_bundle
 
 
 def _cell(block_id: int, seq: int, text: str, table_id: int, row_index: int, flags: tuple[str, ...] = ()) -> BlockView:
@@ -453,3 +464,272 @@ def test_interleaved_pairs_link_uneven_runs_only_on_strong_evidence() -> None:
 )
 def test_interleaved_pairs_reject_unlikely_translations(korean: str, english: str) -> None:
     assert _pair(("ko", korean), ("en", english)) == []
+
+
+# --- 규칙 2 — 문단 안 언어별 박스(설계 2026-11-25 R2) ---
+
+
+def _pieces(text: str, *, split_lines: bool = True, **options: object) -> list[str]:
+    return [text[start:end] for start, end in split_paragraph(text, split_lines=split_lines, **options)]
+
+
+PARAGRAPH_SHAPES = [
+    pytest.param("5.1 탱크를 비운다. 밸브를 닫는다. 잔량을 기록한다.", True, ["5.1 탱크를 비운다. 밸브를 닫는다. 잔량을 기록한다."], id="G1"),
+    pytest.param(
+        "탱크를 비운다. 밸브를 닫는다. Drain the tank completely. Close the outlet valve.", True,
+        ["탱크를 비운다. 밸브를 닫는다.", "Drain the tank completely. Close the outlet valve."], id="G2",
+    ),
+    pytest.param(
+        "탱크를 비운다. Drain the tank completely. 밸브를 닫는다. Close the outlet valve.", True,
+        ["탱크를 비운다.", "Drain the tank completely.", "밸브를 닫는다.", "Close the outlet valve."], id="G3",
+    ),
+    pytest.param(
+        "탱크를 비우고\n잔량을 확인한다.\n결과를 기록한다.", True, ["탱크를 비우고\n잔량을 확인한다.\n결과를 기록한다."], id="G4",
+    ),
+    pytest.param(
+        "다음 순서로 준비한다.\n1) 전원을 켠다.\n2) 압력을 확인한다.\n• 장갑을 낀다.\n가. 기록지를 준비한다.", True,
+        ["다음 순서로 준비한다.", "1) 전원을 켠다.", "2) 압력을 확인한다.", "• 장갑을 낀다.", "가. 기록지를 준비한다."], id="G5",
+    ),
+    pytest.param("작업이 끝나면 기록한다. 서명한다.", True, ["작업이 끝나면 기록한다. 서명한다."], id="G6"),
+    pytest.param(
+        "Biosafety Cabinet(BSC-01)의 HEPA filter를 확인한다. SOP-QC-0012에 따라 pH meter를 교정한다.", True,
+        ["Biosafety Cabinet(BSC-01)의 HEPA filter를 확인한다. SOP-QC-0012에 따라 pH meter를 교정한다."], id="G7",
+    ),
+    pytest.param("세척액을 준비한다. Buffer A. 탱크에 넣는다.", True, ["세척액을 준비한다. Buffer A. 탱크에 넣는다."], id="G8-middle"),
+    pytest.param("희석액을 준비한다. Buffer A.", True, ["희석액을 준비한다. Buffer A."], id="G8-end"),
+    pytest.param("온도\nTemperature", True, ["온도", "Temperature"], id="G10"),
+    pytest.param(
+        "The operator drains the tank and then closes\nthe outlet valve of the cleaning line. Record\n0.8 bar as the target pressure.",
+        False,
+        ["The operator drains the tank and then closes\nthe outlet valve of the cleaning line. Record\n0.8 bar as the target pressure."],
+        id="G18",
+    ),
+    pytest.param(
+        "5.1 Drain the tank completely. Close the valve.\n5.2 Rinse the tank with purified water and\nwait for 10 minutes.\n"
+        "5.3 Record the result.",
+        False,
+        ["5.1 Drain the tank completely. Close the valve.", "5.2 Rinse the tank with purified water and\nwait for 10 minutes.",
+         "5.3 Record the result."],
+        id="G21",
+    ),
+]
+
+
+@pytest.mark.parametrize(("text", "split_lines", "expected"), PARAGRAPH_SHAPES)
+def test_split_paragraph(text: str, split_lines: bool, expected: list[str]) -> None:
+    assert _pieces(text, split_lines=split_lines) == expected
+
+
+def test_short_english_is_judged_as_a_run() -> None:
+    # 조각마다 보면 "Buffer A."(낱말 둘)가 앞에 붙지만, 덩어리로는 낱말 넷이라 영어 박스다
+    assert _pieces("시약을 준비한다. Buffer A. Buffer B.") == ["시약을 준비한다.", "Buffer A. Buffer B."]
+    # 예외로 이은 영어 뒤의 한글도 다시 이어진다
+    assert _pieces("시약을 준비한다. Dilution buffer. 탱크에 넣는다.") == ["시약을 준비한다. Dilution buffer. 탱크에 넣는다."]
+    # 영어가 먼저면 예외가 아니다 — 앞 조각이 한글이어야 잇는다
+    assert _pieces("Drain it. 탱크를 비운다.") == ["Drain it.", "탱크를 비운다."]
+
+
+def test_kept_pieces_are_never_joined() -> None:
+    text = "가. 첫째 줄\n나 둘째 줄\n다 셋째 줄"
+    second = text.index("나 둘째")
+
+    assert _pieces(text) == [text]
+    assert _pieces(text, kept=[second]) == ["가. 첫째 줄", "나 둘째 줄", "다 셋째 줄"]
+
+
+def test_paras_are_outer_boundaries() -> None:
+    text = "탱크를 비운다. 물을 채운다.\n밸브를 닫는다."
+
+    assert _pieces(text) == [text]
+    assert _pieces(text, paras=[0, text.index("밸브")]) == ["탱크를 비운다. 물을 채운다.", "밸브를 닫는다."]
+
+
+def test_unknown_pieces_follow_the_previous_one() -> None:
+    assert _pieces("온도를 잰다. 25. 기록한다.") == ["온도를 잰다. 25. 기록한다."]
+
+
+def test_leading_unknown_joins_the_next() -> None:
+    assert _pieces("2026! 탱크를 비운다.") == ["2026! 탱크를 비운다."]
+    assert _pieces("2026! Drain the tank now.") == ["2026! Drain the tank now."]
+
+
+def test_pdf_number_lines_need_the_next_number() -> None:
+    wrapped = "5.1 Set the target pressure to\n0.8 bar and wait."
+    assert _pieces(wrapped, split_lines=False) == [wrapped]
+    assert _pieces("5.1 Drain it.\n5.2 Rinse it.", split_lines=False) == ["5.1 Drain it.", "5.2 Rinse it."]
+    # 첫 하위 · 윗 단계 다음
+    nested = "5.1 Drain it.\n5.1.1 Open the valve.\n5.1.2 Wait.\n5.2 Rinse it.\n6. Record it."
+    assert _pieces(nested, split_lines=False) == nested.split("\n")
+    listed = "5.1 Prepare.\na) Turn it on.\nb) Check it.\n5.2 Rinse it.\na) Wait."
+    assert _pieces(listed, split_lines=False) == listed.split("\n")
+    skipped = "5.1 Wait until it reaches\n5.4 bar.\n3) Record it."
+    assert _pieces(skipped, split_lines=False) == [skipped]
+    # 앞 번호가 없으면 첫 번호(1)만, 그것도 앞 줄이 문장 끝 · 콜론일 때만 번호 줄이다
+    bare = "Set it to\n1. Record it."
+    assert _pieces(bare, split_lines=False) == [bare]
+    decimal = "Record the target pressure.\n0.8 bar is the limit."
+    assert _pieces(decimal, split_lines=False) == [decimal]
+    second = "Record it.\n2) Wait."
+    assert _pieces(second, split_lines=False) == [second]
+    initial = "Approved by:\nA. Smith"
+    assert _pieces(initial, split_lines=False) == [initial]
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "다음 순서로 준비한다.\n1) 전원을 켠다.\n2) 압력을 확인한다.", "다음을 준비한다:\n① 장갑\n② 보안경",
+        "Prepare as follows:\na) Turn it on\nb) Check it", "다음을 따른다.\n가. 켠다\n나. 끈다", "Do this.\n1. Open it\n2. Close it",
+        "Do this.\n(1) Open it\n(2) Close it", "Wait 10 min.\n1) Open it\n2) Close it", "Do this.\na) Open it\nb) Close it",
+    ],
+)
+def test_pdf_lists_may_start_after_a_sentence_or_a_colon(text: str) -> None:
+    assert _pieces(text, split_lines=False) == text.split("\n")
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "시료는 다음 절차서인\nSOP-QC-0012에 따라 채취하고\nBSC-01 안에서 처리한다.", "Calibrate the balance per\nSOP-QC-0012 before use.",
+        "Rinse the plate with\nPBS-1 and wait.", "Wait for ten minutes\n— and stop.", "Keep the tank at 5\n- with the lid closed.",
+        "Refer to SOP No.\nSOP-QC-0012 before use.",
+    ],
+)
+def test_pdf_wrapped_lines_do_not_split_at_document_numbers_and_dashes(text: str) -> None:
+    assert _pieces(text, split_lines=False) == [text]
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Prepare the following items\n• gloves\n※ goggles",  # 글머리는 늘
+        "SOP-QC-0012 Sampling\nSOP-QC-0013 Cleaning",  # 블록 첫 줄도 문서 번호
+        "Follow the list below.\nSOP-QC-0012 Sampling",  # 앞 줄이 문장 끝
+        "- gloves\n- goggles", "Wear these.\n- gloves",
+    ],
+)
+def test_pdf_lines_split_where_the_marker_starts_a_line_of_its_own(text: str) -> None:
+    assert _pieces(text, split_lines=False) == text.split("\n")
+
+
+def test_pdf_reference_lines_kept_whole_are_not_cut_inside() -> None:
+    # 참조 줄(kept)은 규칙 1의 줄 그대로다 — 그 안의 번호 줄에서도 나누지 않는다
+    text = "SOP-QC-0012 Sampling\nSOP-QC-0013 Cleaning"
+    assert _pieces(text, split_lines=False, kept=[0]) == [text]
+
+
+@pytest.mark.parametrize(
+    "line",
+    ["0.8 bar로 맞춘다.", "1. 켠다.", "(1) 켠다.", "1) 켠다.", "a. 켠다.", "a) 켠다.", "가. 켠다.", "ㄱ) 켠다.", "iv. 켠다.",
+     "① 켠다.", "• 켠다.", "- 켠다.", "※ 켠다.", "o 켠다.", "SOP-QC-0012 시료 채취"],
+)
+def test_docx_number_lines_always_split(line: str) -> None:
+    text = f"다음을 준비한다\n{line}"
+    assert find_marker_lines(text, split_lines=True) == [text.index("\n") + 1]
+    assert _pieces(text) == ["다음을 준비한다", line]
+
+
+@pytest.mark.parametrize("line", ["-5 °C 이하로 둔다.", "once 켠다.", "3 times 켠다.", "ivx) 켠다.", "가을에 켠다.", "SOP에 따라 켠다."])
+def test_plain_lines_are_not_marker_lines(line: str) -> None:
+    assert find_marker_lines(f"다음을 준비한다\n{line}", split_lines=True) == []
+
+
+def test_numbers_with_too_many_parts_are_not_numbers() -> None:
+    # 점 조각이 아주 많은 줄은 번호로 읽지 않는다 — 뒤따르는 "0.8" 줄 많은 글이 줄마다 긴 번호를 견주지 않게
+    ten, eleven = ".".join(["1"] * 10), ".".join(["1"] * 11)
+    assert find_marker_lines(f"시작\n{ten} 켠다.\n{eleven} 끈다.", split_lines=True) == [len("시작\n")]
+    crafted = ".".join(["1"] * 20_000) + " start" + "\n0.8 bar" * 20_000
+    assert find_marker_lines(crafted, split_lines=False) == []
+
+
+def test_first_line_is_never_a_marker_line() -> None:
+    assert find_marker_lines("1) 전원을 켠다.", split_lines=True) == []
+
+
+@pytest.mark.parametrize(("text", "split_lines"), [shape.values[:2] for shape in PARAGRAPH_SHAPES])
+def test_rule_1_is_untouched(text: str, split_lines: bool) -> None:
+    legacy = split_block_text(text, rule=RULE_LEGACY, split_lines=split_lines, paras=[0, 3], kept=[0, 3])
+    assert legacy == split_sentences(text, split_lines=split_lines)
+    assert split_block_text(text, rule=RULE_PARAGRAPH, split_lines=split_lines) == split_paragraph(
+        text, split_lines=split_lines
+    )
+
+
+def test_split_paragraph_covers_every_visible_character(tmp_path: Path) -> None:
+    texts = [shape.values[0] for shape in PARAGRAPH_SHAPES]
+    texts += ["\u200b가나다.\u00a0\u3000", "\n\n1) 켠다.\n\n  2) 끈다.\n", "-----\n\ufeff\n끝", f"가\n{'9' * 5000}. 나", "", "\ufeff"]
+    for path in (document.path for document in build_synthetic_bundle(tmp_path).documents):
+        read = docx_reader.read_docx if path.suffix == ".docx" else read_pdf
+        texts += [block.text for block in read(path.read_bytes(), build_limits()).blocks]
+    for split_lines in (True, False):
+        for text in texts:
+            spans = [[(1, start, end)] for start, end in split_paragraph(text, split_lines=split_lines)]
+            assert find_coverage_problems({1: text}, spans) == []
+
+
+def test_number_cell_takes_the_first_paragraph_box() -> None:
+    text = "탱크를 비운다. 밸브를 닫는다."
+    blocks = [
+        BlockView(1, 0, "table_cell", "body", "A", None, (), 8, 0, {"numbers": [[0, 1, "cell"]]}), _cell(2, 1, text, 8, 0),
+    ]
+
+    drafts = build_unit_drafts(blocks, [TableView(8, True)], "ko_only", split_lines=True, rule=RULE_PARAGRAPH)
+
+    assert [draft.spans for draft in drafts] == [[(1, 0, 1), (2, 0, len(text))]]
+    assert (drafts[0].pos_seq, drafts[0].pos_start) == (0, 0)
+
+
+def test_second_line_of_a_caption_paragraph_is_not_joined_to_the_caption() -> None:
+    # 칸 안 캡션은 문단의 첫 줄만이다 — 같은 언어의 Shift+Enter 둘째 줄이 첫 줄에 이어지면 캡션과 같은 글자를 겹쳐 덮는다
+    text = "앞 글이다.\n표 1. 조제 조성\n단위는 mL이다.\n뒤 글이다."
+    head, tail = text.index("표 1."), text.index("\n단위")
+    work = BlockView(
+        1, 0, "table_cell", "body", text, None, (), 8, 0,
+        {"captions": [[head, tail, 1]], PARAS_SIGNAL: [0, head, text.index("뒤 글")]},
+    )
+
+    drafts = build_unit_drafts(
+        [work, _cell(2, 1, "탱크", 9, 0)], [TableView(8, True), TableView(9, False)], "ko_only", split_lines=True,
+        rule=RULE_PARAGRAPH,
+    )
+
+    lines = [(d.kind, text[d.spans[0][1] : d.spans[0][2]]) for d in drafts if d.spans and d.spans[0][0] == 1]
+    assert lines == [
+        ("cell_sentence", "앞 글이다."), ("caption", "표 1. 조제 조성"), ("cell_sentence", "단위는 mL이다."),
+        ("cell_sentence", "뒤 글이다."),
+    ]
+    assert find_coverage_problems({1: text, 2: "탱크"}, [d.spans for d in drafts if d.spans]) == []
+
+
+def test_captions_in_a_cell_stay_whole_under_rule_2() -> None:
+    starts = [0, CELL_TEXT.index("표 1."), CELL_TEXT.index("이 절차는")]
+    caption_end = starts[1] + len("표 1. 조제 탱크별 대상 장치")
+    work = BlockView(
+        1, 0, "table_cell", "body", CELL_TEXT, None, (), 8, 0,
+        {"captions": [[starts[1], caption_end, 1]], PARAS_SIGNAL: starts},
+    )
+
+    drafts = build_unit_drafts(
+        [work, _cell(2, 1, "탱크", 9, 0)], [TableView(8, True), TableView(9, False)], "ko_only", split_lines=True,
+        rule=RULE_PARAGRAPH,
+    )
+
+    lines = [(d.kind, CELL_TEXT[d.spans[0][1] : d.spans[0][2]]) for d in drafts if d.spans and d.spans[0][0] == 1]
+    assert lines == [
+        ("cell_sentence", "필요한 가스켓을 설치한다."), ("caption", "표 1. 조제 탱크별 대상 장치"),
+        ("cell_sentence", "이 절차는 탱크 A–C에 적용한다."),
+    ]
+
+
+def test_headings_figures_and_toc_lines_do_not_follow_the_rule() -> None:
+    blocks = [
+        BlockView(1, 0, "paragraph", "body", "1. 목적. 범위. ........ 3", None, (), None, None, {"toc": ["style"]}),
+        _para(2, 1, "목적\nPurpose", heading_level=1),
+        BlockView(3, 2, "figure", "body", "그림 글. 둘째.", None, (), None, None),
+    ]
+
+    by_rule = [
+        build_unit_drafts(blocks, [], "ko_only", split_lines=True, rule=rule) for rule in (RULE_LEGACY, RULE_PARAGRAPH)
+    ]
+
+    assert by_rule[0] == by_rule[1]

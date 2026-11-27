@@ -197,7 +197,7 @@ const AUDIT_ENTRIES = [
     note: "every tobe-list row stays inside the list frame without sideways scroll, and the identity column (--doc-id-w) is >= 172px - 14-char number one line from 166px (measured 2026-11-17)",
   },
   {
-    id: "C3", ds: "mid", user: MEMBER, views: [1920],
+    id: "C3", ds: "mid", user: MEMBER, drafting: true, views: [1920],
     path: (ids) => `/bundles/${ids.mid[2]}/documents`,
     open: async (page) => {
       await page.locator('[data-testid^="tobe-"][data-testid$="-toggle"]').first().click();
@@ -312,7 +312,7 @@ const AUDIT_ENTRIES = [
   },
   {
     // 줄 끝 단추는 3단계(Order) 화면에만 있다 - 결과 화면의 C는 읽기 전용. 호버·포커스 때만 용지 바깥에 뜬다(1120 ⋯ 하나, 2560 한 줄 묶음)
-    id: "C8", ds: "worst", user: MEMBER, views: [1120, 2560],
+    id: "C8", ds: "worst", user: MEMBER, drafting: true, views: [1120, 2560],
     path: (ids) => `/bundles/${ids.w[1]}/order`,
     open: async (page) => {
       await page.locator('[data-testid^="output-c-item-"]').first().waitFor({ timeout: T });
@@ -1157,7 +1157,7 @@ const AUDIT_ENTRIES = [
   {
     // P1: W1 미리보기 창이 화면 안(받기 단추까지)이고, 쪽·창·시트 어디에도 스크롤 상자가 없으며(시트 보기는 transform으로 옮긴다 - MD 2 S1),
     //     표는 폭에 맞춘 한 장이라 틀이 1,180px 이상이면 20번째 열 머리가 틀 안에 보이고 좁으면 표가 최소 폭 1,180px로 남아 가로로 끌어 본다.
-    //     탭 다섯이 잘리거나 겹치지 않고, 휠로 아래로 옮겨도 머리 표는 제자리이며 가로로는 본문과 같이 옮겨진다.
+    //     탭 넷(C 시트는 숨김, 1a §14 - 전에는 다섯)이 잘리거나 겹치지 않고, 휠로 아래로 옮겨도 머리 표는 제자리이며 가로로는 본문과 같이 옮겨진다.
     //     종이 색은 화면 테마와 무관하다(THEMES=light,dark로 돌려 같은 값인지 본다). 파일 이름으로 W1을 찍었는지 확인한다
     id: "P1", ds: "worst", user: MEMBER, views: [1120, 1920],
     path: (ids) => `/bundles/${ids.w[1]}/outputs`,
@@ -1222,14 +1222,14 @@ const AUDIT_ENTRIES = [
       };
     }),
     expect: (value) => /^BND-\d{4}_SYNTHETIC W1 /.test(value.file) && value.inView && !value.pageX && !value.dialogX && !value.sheetX && value.scrollBoxes === 0
-      && value.heads === 20 && value.fits && value.tabs === 5 && !value.tabsClipped && !value.tabsOverlap
+      && value.heads === 20 && value.fits && value.tabs === 4 &&!value.tabsClipped && !value.tabsOverlap
       && value.movedY > 0 && Math.abs(value.headDrift) <= 2 && value.movedX === Math.min(400, value.canMoveX) && value.headX === value.movedX
       && value.colors === "rgb(255, 255, 255)|rgb(43, 47, 54)|rgb(255, 255, 255)",
-    note: "W1 Excel preview: window and Download inside the viewport, no scroll box anywhere (sheet moves by transform), 20 heads fit the frame or the table keeps its 1180px floor, 5 tabs unclipped, head stays put on vertical moves and follows sideways, Graphite paper in every theme",
+    note: "W1 Excel preview: window and Download inside the viewport, no scroll box anywhere (sheet moves by transform), 20 heads fit the frame or the table keeps its 1180px floor, 4 tabs unclipped, head stays put on vertical moves and follows sideways, Graphite paper in every theme",
   },
   {
     // T1: W1 Assign 나무의 칸 제목 자리(코드가 가장 긴 SOP) - 항목 글이 상자를 넘치지 않고 나무가 가로로 넘치지 않으며, 고른 칸 제목의 보낼 곳 카드가 넘치지 않는다
-    id: "T1", ds: "worst", user: MEMBER, views: [1120, 1920],
+    id: "T1", ds: "worst", user: MEMBER, drafting: true, views: [1120, 1920],
     path: (ids) => `/bundles/${ids.w[1]}/assign`,
     open: async (page) => {
       await page.locator('[data-testid="assign-bar"]').waitFor({ timeout: T });
@@ -1266,7 +1266,7 @@ const AUDIT_ENTRIES = [
   {
     // C13: W1 결과물 C를 이어 그리는 끝 - 마지막 줄이 끝 표지(output-c-more) 위에 있고, 이어 그리면 줄이 는다.
     // 결과 화면의 C는 읽기 전용이라 줄 끝 단추가 없다 - 단추 겹침은 Order 화면에서 잰다(C8, 겹침 감사의 outputs-c-rows·outputs-c-end-rows)
-    id: "C13", ds: "worst", user: MEMBER, views: [1120, 1920],
+    id: "C13", ds: "worst", user: MEMBER, drafting: true, views: [1120, 1920],
     path: (ids) => `/bundles/${ids.w[1]}/outputs`,
     open: async (page) => {
       await page.getByTestId("outputs-tab-c").click();
@@ -1295,7 +1295,7 @@ const AUDIT_ENTRIES = [
   {
     // N1: Assign New 칸의 엮은 문서 - 칸 머리의 칸 제목 출처가 길어도(여러 옛 문서) 칸 이름을 덮지 않고 한 줄에서 말줄임된다.
     //     W1에는 칸 제목이 없어 엮은 문서 응답의 칸마다 긴 출처 글을 넣어 그린다(DB는 그대로)
-    id: "N1", ds: "worst", user: MEMBER, views: [1120, 1440],
+    id: "N1", ds: "worst", user: MEMBER, drafting: true, views: [1120, 1440],
     path: (ids) => `/bundles/${ids.w[1]}/assign`,
     open: async (page) => {
       const note = `← ${Array.from({ length: 14 }, (_, i) => `OLD-${90 + i} §${i + 1}`).join(", ")}`;
@@ -1338,7 +1338,8 @@ const AUDIT_ENTRIES = [
     note: "composed New pane (longest SOP code): pane head stays inside the pane; long slot heading notes stay on one line after the slot name, truncated, never over the name",
   },
   {
-    // A4b: W1 결과물 A를 끝까지 이어 그려 네 자리 Row 번호(옛 줄 1,000개 넘음)가 한 줄인지 본다
+    // A4b: W1 결과물 A를 끝까지 이어 그려 네 자리 Row 번호가 한 줄인지 본다.
+    //     규칙 2(문단 박스, v1.6.3) 뒤 W1 옛 줄이 1,000개 아래(738)라 네 자리가 없으면, 번호 칸 마지막 20개에 네 자리를 넣어 잰다(기준 그대로)
     id: "A4b", ds: "worst", user: MEMBER, views: [1120],
     path: (ids) => `/bundles/${ids.w[1]}/outputs`,
     open: async (page) => {
@@ -1351,7 +1352,9 @@ const AUDIT_ENTRIES = [
       }
     },
     measure: (page) => page.evaluate(() => {
-      const cells = [...document.querySelectorAll('[data-testid^="output-a-row-no-"]')].filter((td) => /^\d{4,}$/.test(td.textContent.trim()));
+      const numbered = [...document.querySelectorAll('[data-testid^="output-a-row-no-"]')].filter((td) => /^\d+$/.test(td.textContent.trim()));
+      if (!numbered.some((td) => /^\d{4,}$/.test(td.textContent.trim()))) numbered.slice(-20).forEach((td, i) => { td.textContent = String(1000 + i); });
+      const cells = numbered.filter((td) => /^\d{4,}$/.test(td.textContent.trim()));
       const lineCount = (td) => {
         const range = document.createRange();
         range.selectNodeContents(td);
@@ -1411,7 +1414,7 @@ const AUDIT_ENTRIES = [
   },
   {
     // TW2: 결과물 C - 시드가 OLD-89의 첫 표 셋(18열 표 포함)을 한 칸에 확정해 둔다. 600자 칸 표는 C에 없다
-    id: "TW2", ds: "worst", user: MEMBER, views: [1120, 1920],
+    id: "TW2", ds: "worst", user: MEMBER, drafting: true, views: [1120, 1920],
     path: (ids) => `/bundles/${ids.w[1]}/outputs`,
     open: async (page) => {
       await page.getByTestId("outputs-tab-c").click();
@@ -1611,8 +1614,8 @@ async function main() {
   if (entries.length === 0) throw new Error(`no audit entry for DS=${DS}${only ? ` ONLY=${only}` : ""}`);
   const browser = await chromium.launch({ executablePath: CHROME, headless: true });
   const contexts = new Map();
-  const getContext = async (user, width, lang, theme) => {
-    const key = `${user}|${width}|${lang}|${theme}`;
+  const getContext = async (user, width, lang, theme, drafting) => {
+    const key = `${user}|${width}|${lang}|${theme}|${drafting}`;
     if (!contexts.has(key)) {
       const ctx = await browser.newContext({ viewport: { width, height: HEIGHTS[width] ?? 900 }, deviceScaleFactor: 1 });
       await ctx.addInitScript((init) => {
@@ -1622,7 +1625,9 @@ async function main() {
         localStorage.setItem("sopa.theme", init.theme);
         // ?edit= 주소는 한 단 보기를 기억시킨다 - 뒤 항목이 그 상태를 물려받지 않게 문서를 읽을 때마다 지운다(양 단이 기본)
         localStorage.removeItem("sopa.assign.single");
-      }, { user, lang, theme });
+        // 숨긴 기능(새 문서를 만드는 쪽)의 항목만 켠다 - 나머지는 실사용 화면 그대로
+        if (init.drafting) localStorage.setItem("sopa.drafting", "1");
+      }, { user, lang, theme, drafting });
       contexts.set(key, ctx);
     }
     return contexts.get(key);
@@ -1637,7 +1642,7 @@ async function main() {
       for (const lang of langs) {
         for (const theme of themes) {
           for (const item of items) {
-            const ctx = await getContext(item.user, width, lang, theme);
+            const ctx = await getContext(item.user, width, lang, theme, entry.drafting === true);
             const page = await ctx.newPage();
             const tag = `${entry.id} ${width} ${lang} ${theme} ${item.url}`;
             runs += 1;

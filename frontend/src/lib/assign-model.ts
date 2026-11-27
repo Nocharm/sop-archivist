@@ -1,4 +1,4 @@
-// Assign 화면 모델 - Old 조각 한 줄씩 보낼 곳을 정한다(설계 docs/superpowers/specs/2026-11-09-assign-unified-design.md).
+// Assign 화면 모델 - Old 조각 한 줄씩 보낼 곳을 정한다(설계 2026-11-09-assign-unified, docs/architecture/decisions.md).
 // 저장 요청은 classify-model의 buildGroupSave(보낼 곳 link 포함)가 만들고, 여기는 묶음 합치기·함께 확정·짝 자동·추천 섞기·범위 규칙이다.
 
 import { getDestinationId, type Destination, type DestinationOption } from "./classify-model";
@@ -90,6 +90,12 @@ export function buildRecommendations(input: RecommendInput, expandLink: (targetI
   return all.filter((rec) => !seen.has(rec.key) && seen.add(rec.key)).slice(0, MAX_RECOMMENDATIONS);
 }
 
+/** 아직 쓰지 않은 문서(숨긴 기능)로 보내라는 추천을 뺀다 - 잇기 · 삭제만 남는다. 칸 추천에 앞세운 칸 제목 자리도 함께 빠진다 */
+export function dropHiddenRecommendations(recommendations: Recommendation[], drafting: boolean): Recommendation[] {
+  if (drafting) return recommendations;
+  return recommendations.filter((rec) => rec.destination.kind === "link" || rec.destination.kind === "delete");
+}
+
 /**
  * 추천 카드가 지금 고른 곳인가 - 문장 추천은 고를 때 New 짝 문장이 더해지므로(addPartnerTargets) 짝까지 넣은 묶음과 견준다.
  * 추천의 ID만 견주면 New 짝이 있는 문장에서 고른 표시가 영영 켜지지 않는다.
@@ -110,12 +116,20 @@ export interface LinkPair {
   ai: boolean;
 }
 
+/** 선이 끝날 수 있는 새 문장 - 문장 줄과 표의 칸 문장(표 줄 자체는 표째 이은 때만 출처가 있다) */
+export type LinkableRow = Pick<WrittenSentence, "target_id" | "source_unit_ids" | "status" | "lang">;
+
+/** New 문장 목록을 선이 끝날 곳으로 편다 - 칸에 이은 선은 표가 아니라 그 칸에서 끝난다(쪼개기 먼저 §8 4-3) */
+export function listLinkableRows(rows: readonly WrittenSentence[]): LinkableRow[] {
+  return rows.flatMap((row) => [row, ...(row.table?.cells ?? [])]);
+}
+
 /**
  * 두 문서 사이에 그릴 이음 - 지금 열린 New 문서의 문장 출처 중 지금 열린 Old 문서의 조각만, 그리고 고른 줄의 아직 저장 안 한 고름.
  * 고름은 같은 언어 Old 조각과 잇고, 줄에 그 언어 조각이 없으면 줄의 조각 모두와 잇는다(저장도 그 조각들이 출처인 번역이다, 제품 명세 §7.7).
  */
 export function buildLinkPairs(
-  newRows: WrittenSentence[],
+  newRows: readonly LinkableRow[],
   oldUnitIds: ReadonlySet<number>,
   draft: { units: Array<{ id: number; lang: UnitLang }>; targetIds: number[] } | null,
 ): LinkPair[] {
@@ -157,24 +171,13 @@ export function pickDrawnLinks<T extends LinkPair>(pairs: T[], focusUnits: Reado
   return marked.length > max ? marked.filter((pair) => pair.strong) : marked;
 }
 
-export type LinkMenuItem = "confirm" | "cancel" | "link" | "unlink" | "close";
-
-/**
- * 그 자리 메뉴의 항목 - 고른 뒤(저장 전)는 확정·취소, 이미 이어진 것은 끊기(AI가 이어 둔 것은 확정도), 그 밖의 후보 문장은 잇기.
- * 고칠 수 없는 묶음이거나, 고름이 없고 가리키는 문장도 없으면(추천에서 연 메뉴가 저장된 뒤) 메뉴를 띄우지 않는다 - 누를 수 없는 Link를 보이지 않게.
- */
-export function listLinkMenuItems(state: { picked: boolean; linked: boolean; confirmed: boolean; hasTarget: boolean; canEdit: boolean }): LinkMenuItem[] {
-  if (!state.canEdit) return [];
-  if (state.picked) return ["confirm", "cancel"];
-  if (state.linked) return state.confirmed ? ["unlink", "close"] : ["confirm", "unlink", "close"];
-  return state.hasTarget ? ["link", "close"] : [];
-}
-
 /**
  * Confirm을 막는 까닭(메시지 키) - 결정 칸의 Confirm 단추·↵·그 자리 메뉴(끌어 놓은 초안 포함)가 같은 순서로 쓴다.
- * 참조 번호 확인이 먼저, 그다음 캡션 없는 표·그림(서버 caption_required 전에 멈춘다). 막지 않으면 null.
+ * 이미 다른 Bundle로 이동한 줄(없앤 기능)은 읽기 전용이고(배정 취소만), 숨긴 새 문서의 자리는 확정하지 않고(배정 취소나 잇기만), 참조 번호 확인이 먼저, 그다음 캡션 없는 표·그림(서버 caption_required 전에 멈춘다). 막지 않으면 null.
  */
-export function readConfirmBlockKey(gates: { isRefGate: boolean; isCaptionGate: boolean }): "assign.ref.checkFirst" | "assign.caption.needed" | null {
+export function readConfirmBlockKey(gates: { isRefGate: boolean; isCaptionGate: boolean; isHiddenPlace?: boolean; isLegacyMove?: boolean }): "assign.legacyMove.confirm" | "assign.hidden.confirm" | "assign.ref.checkFirst" | "assign.caption.needed" | null {
+  if (gates.isLegacyMove) return "assign.legacyMove.confirm";
+  if (gates.isHiddenPlace) return "assign.hidden.confirm";
   if (gates.isRefGate) return "assign.ref.checkFirst";
   return gates.isCaptionGate ? "assign.caption.needed" : null;
 }

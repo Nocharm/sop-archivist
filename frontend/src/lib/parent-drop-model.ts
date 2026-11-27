@@ -1,5 +1,5 @@
 // New 목록에서 WI 줄을 SOP 줄에 끌어 상위 SOP를 바꾸는 순수 모델 - 놓을 자리 판정, 끌 수 있는 줄, 끌려가는 표, 알림 Undo의 판정.
-// 설계: docs/superpowers/specs/2026-11-17-documents-screen-design.md §7
+// 설계: 2026-11-17-documents-screen §7 (docs/architecture/decisions.md)
 import type { ToBe } from "./api-sop";
 import type { DragCard } from "./box-drag";
 import type { DraftDoc } from "./tobe-draft";

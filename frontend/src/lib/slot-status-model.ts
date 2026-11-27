@@ -1,6 +1,6 @@
 // New 목록 줄의 SOP 칸을 상태 표로 읽는 순수 모델 - 일곱 상태·요약·쓴 사유·사유 편집기 하나. 화면은 이 결과를 그리기만 한다.
 // 칸 목록·번호·이름·위계·종류는 서버가 준 그 문서의 골격(ToBe.outline_items)에서 읽는다 - 문서마다 다를 수 있고 수준이 둘로 정해져 있지 않다.
-// 설계: docs/superpowers/specs/2026-11-17-documents-screen-design.md
+// 설계: 2026-11-17-documents-screen §8 (docs/architecture/decisions.md)
 import type { SlotCount, TargetDoc, ToBe } from "./api-sop";
 
 /** 칸 키 - 그 문서 골격 항목의 키. 문서마다 달라 고정 목록으로 좁히지 않는다 */

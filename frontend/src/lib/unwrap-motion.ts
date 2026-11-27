@@ -74,6 +74,12 @@ export function planUnwrapPhases(timings: UnwrapTimings, reverse: boolean): Unwr
   return reverse ? { before: attach, after: clear, direction: "reverse" } : { before: clear, after: attach, direction: "normal" };
 }
 
+/** 거절 · 되묻기 - 누른 순간 튼 첫 단계(before)를 같은 시간에 반대로 튼다. 표시가 제 모습으로 돌아온다 */
+export function planUnwrapRevert(timings: UnwrapTimings, reverse: boolean): { duration: number; direction: PlaybackDirection } {
+  const { before, direction } = planUnwrapPhases(timings, reverse);
+  return { duration: before.duration, direction: direction === "normal" ? "reverse" : "normal" };
+}
+
 /**
  * 표시 하나의 움직임(element.animate의 keyframes) - 한쪽 끝만 적고 다른 쪽은 그 요소의 제 모습이다. leave는 끝이 숨은 모양, enter는 처음이 숨은 모양.
  * kind가 "frame"이면 글은 두고 틀(테두리 · 바탕 · 그림자)만 움직인다 - 표 선과 음영, 왼쪽 세로선. 그 밖에는 요소째로(enter는 작게 시작해 튀어나온다)

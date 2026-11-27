@@ -5,7 +5,7 @@
 // 아무것도 넘기지 않으면 읽기만 하는 보기다. 자리(장·절 제목 · 범주 행 · 빈 칸 · 줄)에는 늘 data-tpl-spot · data-section(줄은 data-row), 앱이 만드는 것에는 data-tpl-fixed가 달린다.
 "use client";
 
-import { Fragment, useMemo, type CSSProperties, type HTMLAttributes, type ReactNode } from "react";
+import { Fragment, useMemo, type CSSProperties, type HTMLAttributes, type MouseEvent, type ReactNode } from "react";
 
 import { DeviationMark, EmptyRequiredMark } from "@/components/tobe/deviation-mark";
 import { useDelegatedTip } from "@/components/ui/delegated-tip";
@@ -36,7 +36,7 @@ interface TemplateViewProps<T extends TemplateItem> {
   /** 칠할 새 문장 - 거울 줄의 어느 쪽이든 들면 두 절반이 함께 칠해진다 */
   selectedIds?: ReadonlySet<number>;
   /** 문장 줄을 누름 - 없으면 줄은 읽기만 한다 */
-  onPickLine?: (item: T) => void;
+  onPickLine?: (item: T, event: MouseEvent) => void;
   /** "번역 없음" 자리를 누름(비춘 반대 절반의 줄) - 없으면 자리는 읽기만 한다 */
   onMissing?: (source: T) => void;
   /** 표·그림 줄 - 없으면 글(캡션)만 */
@@ -124,7 +124,7 @@ export function TemplateView<T extends TemplateItem>({ doc, titles, selectedIds 
     );
     if (onPickLine && isSentence)
       return (
-        <button key={line.key} type="button" {...attrs} aria-pressed={sel !== undefined} onClick={() => onPickLine(item)}>
+        <button key={line.key} type="button" {...attrs} aria-pressed={sel !== undefined} onClick={(event) => onPickLine(item, event)}>
           {mark}
           {body}
         </button>

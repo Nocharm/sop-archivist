@@ -33,6 +33,38 @@ await runStep("overview in rail", {}, async ({ page, takeShot }) => {
   await takeShot("sop-overview-rail.png");
 });
 
+// F3 - 명세 S10의 축소판: 처분별 막대, 그림 · 남은 손질 줄, 개요 · 목록 · Assign 위쪽 수가 같다
+await runStep("overview: decided bar, tidy and figures line", {}, async ({ page, takeShot }) => {
+  const bundle = await (await page.request.get(`${BASE}/api/bundles/${halfBundleId}`, { headers: { "X-Dev-User": "qa.member" } })).json();
+  const { progress, tidy } = bundle;
+  check("decided rows split by disposition", progress.assigned + progress.deleted + progress.moved === progress.confirmed && progress.confirmed > 0, JSON.stringify(progress));
+  await page.goto(`${BASE}/bundles/${halfBundleId}`);
+  await wait(page, "overview-coverage");
+  const rate = await getText(page, "overview-rate");
+  check("the rate reads Decided, without figures", rate.includes("Decided") && rate.includes(`${Math.round((progress.confirmed / progress.total) * 100)}%`) && rate.includes(`${progress.confirmed} / ${progress.total}`), rate);
+  const expected = ["assigned", "deleted", "moved", "on_hold", "unassigned"].filter((key) => key !== "moved" || progress.moved > 0);
+  const cells = await page.locator('[data-testid^="overview-part-"]').evaluateAll((els) => els.map((el) => [el.dataset.testid.replace("overview-part-", ""), Number(el.textContent)]));
+  check("the legend counts each part", JSON.stringify(cells) === JSON.stringify(expected.map((key) => [key, progress[key]])), JSON.stringify(cells));
+  const bar = await page.locator('[data-testid="overview-bar"] [data-part]').evaluateAll((els) => els.map((el) => [el.dataset.part, Number(getComputedStyle(el).flexGrow), getComputedStyle(el).backgroundColor]));
+  check("the bar draws the same parts in their own colors", JSON.stringify(bar.map(([key, grow]) => [key, grow])) === JSON.stringify(expected.filter((key) => progress[key] > 0).map((key) => [key, progress[key]])) && new Set(bar.map(([, , color]) => color)).size === bar.length, JSON.stringify(bar));
+  check("figures are counted apart", progress.figures_total > 0 && (await getText(page, "overview-figures")) === `Figures: ${progress.figures_decided} of ${progress.figures_total} decided`, JSON.stringify(progress));
+  const tidyLine = page.locator('[data-testid="overview-tidy"]');
+  check(
+    "left to tidy reads references and captions, only when there are some",
+    tidy.refs + tidy.captions > 0 ? (await tidyLine.innerText()) === `Left to tidy: references ${tidy.refs} · captions ${tidy.captions}` : (await tidyLine.count()) === 0,
+    JSON.stringify(tidy),
+  );
+  await takeShot("sop-overview-decided.png");
+  // 개요 · 목록 · Assign 위쪽이 같은 수다(F3-AC2)
+  await page.goto(`${BASE}/`);
+  await wait(page, `bundles-confirmed-${halfBundleId}`);
+  check("the list shows the same numbers", (await getText(page, `bundles-confirmed-${halfBundleId}`)).replace(/\s+/g, " ").includes(`${progress.confirmed} / ${progress.total}`), await getText(page, `bundles-confirmed-${halfBundleId}`));
+  await page.goto(`${BASE}/bundles/${halfBundleId}/assign`);
+  await wait(page, "assign-figures"); // 줄을 다 받은 뒤에만 그려진다
+  check("the top of Assign shows the same numbers", (await getText(page, "assign-progress")).trim() === `${progress.confirmed}/${progress.total}`, await getText(page, "assign-progress"));
+  check("and figures beside them", (await getText(page, "assign-figures")).trim() === `${progress.figures_decided}/${progress.figures_total}`, await getText(page, "assign-figures"));
+});
+
 await runStep("layout menu switches to top tabs and keeps it", {}, async ({ page, takeShot }) => {
   await page.goto(`${BASE}/bundles/${halfBundleId}`);
   await wait(page, "overview-gate-units");
@@ -137,7 +169,7 @@ await runStep("members picker keeps Add inside the panel and adds the person", {
   await page.keyboard.press("Escape");
 });
 
-await runStep("new bundle in one click, locked stages, empty assign", { devUser: "dev.admin" }, async ({ page }) => {
+await runStep("new bundle in one click, locked stages, empty assign", { drafting: true, devUser: "dev.admin" }, async ({ page }) => {
   await page.goto(`${BASE}/`);
   await page.locator('[data-testid="bundles-new"]').click();
   await page.waitForURL(/\/bundles\/\d+$/, { timeout: T });

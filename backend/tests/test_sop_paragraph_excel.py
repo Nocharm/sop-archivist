@@ -3,14 +3,17 @@
 
 from io import BytesIO
 
+import pytest
 from fastapi.testclient import TestClient
 from openpyxl import load_workbook
 from openpyxl.worksheet.worksheet import Worksheet
 
+from app.sop.models import Unit
 from app.sop.numbering import LevelRow, build_row_levels, build_section_numbers
 from app.sop.paragraph_excel import (
     FIGURE_MARKER,
     PARAGRAPH_HEADERS,
+    ParagraphInclude,
     UnitLine,
     build_paragraph_file,
     build_paragraph_preview,
@@ -19,8 +22,11 @@ from app.sop.paragraph_excel import (
     make_sheet_name,
 )
 from app.sop.sheet_model import Sheet
+from tests.access_helpers import update_row
 from tests.docx_factory import TINY_PNG, build_docx, make_drawing_run, make_list, numbered, p, tbl
-from tests.sop_helpers import OUTSIDER, create_bundle, find_unit, get_group_by_unit, get_view, save_group, upload
+from tests.sop_helpers import AUTHOR, OUTSIDER, create_bundle, find_unit, get_group_by_unit, get_view, save_group, upload
+
+pytestmark = pytest.mark.usefixtures("legacy_split_rule")
 
 NUMBERING = make_list(0, [("decimal", "%1."), ("decimal", "%1.%2")], [1])
 BODY = (
@@ -119,7 +125,7 @@ def test_sheet_has_five_columns_section_numbers_bullets_notes_and_remarks() -> N
         _line(5, "sentence", "REF-1 참조", lang="ref"),
     ]
 
-    sheet = build_paragraph_sheet(lines, include_tables=True)
+    sheet = build_paragraph_sheet(lines)
 
     assert _texts(sheet) == [
         list(PARAGRAPH_HEADERS),
@@ -146,8 +152,8 @@ def test_data_table_rows_join_cells_and_unwrapped_lines_are_paragraphs() -> None
         _line(8, "cell_sentence", "벗긴 칸 둘.", table_id=8, row_index=0, col_index=1),
     ]
 
-    with_tables = _texts(build_paragraph_sheet(lines, include_tables=True))[1:]
-    without_tables = _texts(build_paragraph_sheet(lines, include_tables=False))[1:]
+    with_tables = _texts(build_paragraph_sheet(lines))[1:]
+    without_tables = _texts(build_paragraph_sheet(lines, ParagraphInclude(tables=False)))[1:]
 
     assert with_tables == [
         ["1.1", "범위", "", "", ""],
@@ -166,7 +172,7 @@ def test_deleted_line_stays_as_a_struck_row_without_a_language() -> None:
         _line(3, "sentence", "사유 있는 지운 줄.", lang="en", deleted=True, remark="중복"),
     ]
 
-    sheet = build_paragraph_sheet(lines, include_tables=True)
+    sheet = build_paragraph_sheet(lines)
 
     assert _texts(sheet)[1:] == [
         ["3.", "남는 줄.", "KO", "", ""],
@@ -190,7 +196,7 @@ def test_adjacent_lines_sent_to_one_new_sentence_are_one_row() -> None:
         _line(5, "sentence", "떨어진 줄.", lang="ko", target_id=40),
     ]
 
-    sheet = build_paragraph_sheet(lines, include_tables=True)
+    sheet = build_paragraph_sheet(lines)
 
     assert _texts(sheet)[1:] == [
         ["2.", "첫 줄. 둘째 줄. 영어 줄.", "", "Read from text", "합침 / 번역"],
@@ -198,7 +204,7 @@ def test_adjacent_lines_sent_to_one_new_sentence_are_one_row() -> None:
         ["2.", "떨어진 줄.", "KO", "", ""],
     ]
     assert [(row.unit_id, row.unit_ids) for row in sheet.rows[1:]] == [(1, [1, 2, 3]), (4, []), (5, [])]
-    preview = build_paragraph_preview(lines * 1, True, "OLD-1", around_unit_id=3, max_rows=2)
+    preview = build_paragraph_preview(lines * 1, ParagraphInclude(), "OLD-1", around_unit_id=3, max_rows=2)
     assert [row.unit_id for row in preview.rows[1:]] == [1]
 
 
@@ -212,7 +218,7 @@ def test_text_indent_is_the_paper_level() -> None:
         _line(6, "sentence", "짝 둘째 — 번호가 있어도 첫 줄 단계.", number="6", pair_id=8),
     ]
 
-    sheet = build_paragraph_sheet(lines, include_tables=True)
+    sheet = build_paragraph_sheet(lines)
 
     assert [row.cells[1].indent for row in sheet.rows[1:]] == [0, 1, 2, 1, 2, 2]
 
@@ -225,17 +231,17 @@ def test_figure_keeps_its_place_with_its_caption() -> None:
         _line(4, "caption", "표 1. 따로 선 캡션", lang="ko"),
     ]
 
-    texts = [row[1] for row in _texts(build_paragraph_sheet(lines, include_tables=True))[1:]]
+    texts = [row[1] for row in _texts(build_paragraph_sheet(lines))[1:]]
 
     assert texts == [f"{FIGURE_MARKER} 그림 1. 로터", FIGURE_MARKER, "표 1. 따로 선 캡션"]
 
 
 def test_preview_windows_the_file_rows_around_the_picked_unit() -> None:
     lines = [_line(index, "sentence", f"문장 {index}.") for index in range(1, 21)]
-    sheet = build_paragraph_sheet(lines, include_tables=True, name="OLD-1")
+    sheet = build_paragraph_sheet(lines, name="OLD-1")
 
-    preview = build_paragraph_preview(lines, True, "OLD-1", around_unit_id=15, max_rows=6)
-    whole = build_paragraph_preview(lines, True, "OLD-1", around_unit_id=None)
+    preview = build_paragraph_preview(lines, ParagraphInclude(), "OLD-1", around_unit_id=15, max_rows=6)
+    whole = build_paragraph_preview(lines, ParagraphInclude(), "OLD-1", around_unit_id=None)
 
     assert whole == sheet
     assert preview.truncated and preview.total_rows == 21 and preview.offset == 12
@@ -284,7 +290,7 @@ def test_remark_column_shows_the_decision_reason_and_the_preview_matches_the_fil
     assert preview.status_code == 200, preview.text
     body = preview.json()
     assert body["truncated"] is False and body["freeze"] == "A2"
-    assert [[cell["text"] for cell in row["cells"]] for row in body["rows"]] == rows
+    assert [[cell["text"] for cell in row["cells"]] for row in body["rows"]] == [row for row in rows if row[1] != FIGURE_MARKER]
     assert [row["unit_id"] for row in body["rows"] if row["deleted"]] == [unit["id"]]
 
 
@@ -330,7 +336,8 @@ def test_outsider_cannot_download_or_preview(client: TestClient) -> None:
 
 
 def test_unwrapped_number_cells_do_not_leak_past_the_table(client: TestClient) -> None:
-    """§6-3 합성 표 — 절 "5" 아래 숫자 칸 표를 벗기면 칸 줄은 "1" "2" "3"(기호 줄은 "1 •"), 표 뒤 문단은 "5"로 돌아간다."""
+    """§6-3 합성 표 — 절 "5" 아래 숫자 칸 표를 벗기면 칸 줄은 "5.1" "5.2" "5.3"(위 번호 아래로 이어 매김, D1 — 기호 줄은 "5.1 •"),
+    표 뒤 문단은 "5"로 돌아간다."""
     from tests.docx_factory import make_grid_table, make_row
     from tests.test_sop_unwrap import _unwrap
 
@@ -350,13 +357,13 @@ def test_unwrapped_number_cells_do_not_leak_past_the_table(client: TestClient) -
     rows = _values(_read(client.get(f"/api/bundles/{bundle_id}/documents/{doc_id}/paragraphs.xlsx", headers=MEMBER))[0])
 
     assert [row[:2] for row in rows[1:]] == [
-        ["5.", "조제 탱크 운전"], ["1", "탱크 밸브를 연다."], ["1 •", "밸브를 확인한다."], ["2", "펌프를 켠다."], ["3", "유량을 기록한다."],
-        ["5.", "조제가 끝나면 기록을 남긴다."],
+        ["5.", "조제 탱크 운전"], ["5.1", "탱크 밸브를 연다."], ["5.1 •", "밸브를 확인한다."], ["5.2", "펌프를 켠다."],
+        ["5.3", "유량을 기록한다."], ["5.", "조제가 끝나면 기록을 남긴다."],
     ]
 
 
 def test_an_unwrapped_table_inside_an_unwrapped_cell_keeps_the_outer_cell_number(client: TestClient) -> None:
-    """바깥 숫자 칸 "1" 안의 안쪽 표까지 벗기면 안쪽 줄도 "1"(바깥 칸 번호를 이어받는다), 바깥 표 뒤는 "5."."""
+    """바깥 숫자 칸 "1"(벗기며 "5.1"로 이어 매김) 안의 안쪽 표까지 벗기면 안쪽 줄도 "5.1"(바깥 칸 번호를 이어받는다), 바깥 표 뒤는 "5."."""
     from tests.docx_factory import make_grid_table, make_row
     from tests.test_sop_unwrap import _unwrap
 
@@ -378,6 +385,183 @@ def test_an_unwrapped_table_inside_an_unwrapped_cell_keeps_the_outer_cell_number
     rows = _values(_read(client.get(f"/api/bundles/{bundle_id}/documents/{doc_id}/paragraphs.xlsx", headers=MEMBER))[0])
 
     assert [row[:2] for row in rows[1:]] == [
-        ["5.", "조제 탱크 운전"], ["1", "밸브를 연다."], ["1", "밸브를 닫는다."], ["1", "압력을 본다."], ["1", "온도를 본다."],
-        ["2", "펌프를 켠다."], ["5.", "조제가 끝나면 기록을 남긴다."],
+        ["5.", "조제 탱크 운전"], ["5.1", "밸브를 연다."], ["5.1", "밸브를 닫는다."], ["5.1", "압력을 본다."], ["5.1", "온도를 본다."],
+        ["5.2", "펌프를 켠다."], ["5.", "조제가 끝나면 기록을 남긴다."],
     ]
+
+
+def test_continued_numbers_say_the_original(client: TestClient) -> None:
+    """D1-R7 — 이어 매긴 칸 번호의 Number note는 원래 번호("Original 1"), 사람이 고친 칸 번호는 지금처럼 "Source A → B"."""
+    from tests.test_sop_unwrap import _unwrap
+
+    body = p("5. 조제 탱크 운전", "Heading1") + tbl([["1", "밸브를 연다."], ["2", "펌프를 켠다."], ["3", "유량을 기록한다."], ["A", "끝낸다."]])
+    bundle_id = create_bundle(client, title="Original", is_synthetic=True)["id"]
+    uploaded = upload(client, bundle_id, build_docx(body), "SYNTHETIC_OLD-7_Original.docx")
+    assert uploaded.status_code == 201 and uploaded.json()["status"] == "ready", uploaded.text
+    doc_id = uploaded.json()["id"]
+    _unwrap(client, bundle_id, doc_id, 0)
+    view = get_view(client, bundle_id, doc_id)
+    fixed = client.post(
+        f"/api/bundles/{bundle_id}/documents/{doc_id}/edits",
+        json={"revision": view["document"]["revision"], "op": {"type": "set_number", "unit_id": find_unit(view, "A 끝낸다.")["id"], "number": "B", "follow": False}},
+        headers=AUTHOR,
+    )
+    assert fixed.status_code == 200, fixed.text
+
+    rows = _values(_read(client.get(f"/api/bundles/{bundle_id}/documents/{doc_id}/paragraphs.xlsx", headers=MEMBER))[0])
+
+    assert [[row[0], row[3]] for row in rows[2:]] == [
+        ["5.1", "Original 1"], ["5.2", "Original 2"], ["5.3", "Original 3"], ["B", "Source A → B"],
+    ]
+    view = get_view(client, bundle_id, doc_id)
+    refixed = client.post(
+        f"/api/bundles/{bundle_id}/documents/{doc_id}/edits",
+        json={"revision": view["document"]["revision"], "op": {"type": "set_number", "unit_id": find_unit(view, "3 유량을 기록한다.")["id"], "number": "5.2.1", "follow": False}},
+        headers=AUTHOR,
+    )
+    assert refixed.status_code == 200, refixed.text
+    rows = _values(_read(client.get(f"/api/bundles/{bundle_id}/documents/{doc_id}/paragraphs.xlsx", headers=MEMBER))[0])
+    assert rows[4][3] == "Source 3 → 5.2.1"  # 사람이 다시 고친 칸은 이은 번호가 아니다
+
+
+def _mark(view: dict, kind: str, *texts: str, reason: str = "") -> None:
+    for text in texts:
+        update_row(Unit, find_unit(view, text)["id"], noise_kind=kind, noise_reason=reason)
+
+
+@pytest.mark.parametrize("side", ["old", "new"])
+def test_front_lines_are_struck_with_their_reason(client: TestClient, side: str) -> None:
+    # 저절로 삭제된 줄은 확정 삭제한 줄처럼 — Text는 번호까지 원문 그대로, 번호 · Lang 칸은 비고 미리 보기는 숨긴다
+    bundle_id = create_bundle(client, title="Paragraphs", is_synthetic=True)["id"]
+    body = p("합성 표준 절차서") + p("0.1 합성 결재") + tbl([["작성", "검토"], ["서명", "날짜"]]) + p("1. 본문 문장이다.") + p("9. 개정 이력")
+    uploaded = upload(client, bundle_id, build_docx(body), f"SYNTHETIC_{side}_Front.docx", side=side, doc_type="sop" if side == "new" else None)
+    assert uploaded.status_code == 201, uploaded.text
+    doc_id = uploaded.json()["id"]
+    view = get_view(client, bundle_id, doc_id)
+    _mark(view, "front", "합성 표준 절차서", "작성", "검토", "서명", "날짜")
+    _mark(view, "front", "0.1 합성 결재", reason="1장 앞이라 삭제")
+    _mark(view, "history", "9. 개정 이력")
+    table_id = next(unit["id"] for unit in view["units"] if unit["kind"] == "table")
+    update_row(Unit, table_id, noise_kind="front")
+
+    rows = _values(_read(client.get(f"/api/bundles/{bundle_id}/documents/{doc_id}/paragraphs.xlsx", headers=AUTHOR))[0])
+    preview = client.get(f"/api/bundles/{bundle_id}/documents/{doc_id}/paragraphs/preview", headers=AUTHOR).json()
+
+    assert rows[1:] == [
+        ["", "합성 표준 절차서", "", "", "Deleted — Before chapter 1"],
+        ["", "0.1 합성 결재", "", "", "Deleted — 1장 앞이라 삭제"],
+        ["", "작성 | 검토", "", "", "Deleted — Before chapter 1"],
+        ["", "서명 | 날짜", "", "", "Deleted"],
+        ["1.", "본문 문장이다.", "KO", "Read from text", ""],
+        ["", "9. 개정 이력", "", "", "Deleted — Change history"],
+    ]
+    assert [[cell["text"] for cell in row["cells"]] for row in preview["rows"]] == rows
+    assert [row["deleted"] for row in preview["rows"][1:]] == [True] * 4 + [False, True]
+    assert [row["cells"][1]["strike"] for row in preview["rows"][1:]] == [True] * 4 + [False, True]
+    assert preview["rows"][3]["unit_id"] == table_id
+
+
+def test_contents_lines_are_left_out_unless_the_check_is_on(client: TestClient) -> None:
+    bundle_id, doc_id = _setup(client)
+    url = f"/api/bundles/{bundle_id}/documents/{doc_id}/paragraphs.xlsx"
+    before = _values(_read(client.get(url, headers=MEMBER))[0])
+    _mark(get_view(client, bundle_id, doc_id), "toc", "이 절차는 합성 장비의 사용법을 정한다.", reason="합성 사유")
+
+    default = _values(_read(client.get(url, headers=MEMBER))[0])
+    with_contents = _values(_read(client.get(f"{url}?toc=true", headers=MEMBER))[0])
+
+    assert with_contents == before
+    assert default == [row for row in before if row[1] != "이 절차는 합성 장비의 사용법을 정한다."]
+
+
+# --- 받을 때 넣을 것 넷(F1-R2~R3) · 미리보기 접기(F1-R1) ---
+
+def _mixed_lines() -> list[UnitLine]:
+    """제목 · 목차 둘 · 본문 · 표 · 그림 · 확정 삭제 · 앞부분 한 줄이 든 합성 줄들."""
+    return [
+        _line(1, "heading", "범위", lang="ko", number="1."),
+        _line(2, "sentence", "목차 줄 하나 ... 3", lang="ko", noise=True),
+        _line(3, "sentence", "목차 줄 둘 ... 4", lang="ko", noise=True),
+        _line(4, "sentence", "본문 문장.", lang="ko"),
+        _line(5, "table", "", table_id=7),
+        _line(6, "cell_sentence", "Rotor", table_id=7, row_index=0, col_index=0, group_unit_id=5),
+        _line(7, "figure", ""),
+        _line(8, "sentence", "확정 삭제 줄.", lang="ko", deleted=True),
+        _line(9, "sentence", "앞부분 줄.", lang="ko", noise=True, auto_deleted=True, deleted=True),
+    ]
+
+
+def _body(sheet: Sheet) -> list[str]:
+    return [row[1] for row in _texts(sheet)[1:]]
+
+
+def test_default_download_is_today_minus_the_contents() -> None:
+    lines = _mixed_lines()
+
+    today = _texts(build_paragraph_sheet(lines, ParagraphInclude(toc=True)))
+    default = _texts(build_paragraph_sheet(lines))
+
+    assert default == [row for row in today if not row[1].startswith("목차 줄")]
+    assert len(today) - len(default) == 2
+
+
+def test_each_check_changes_the_file() -> None:
+    lines = _mixed_lines()
+    everything = ParagraphInclude(tables=True, deleted=True, figures=True, toc=True)
+
+    full = _body(build_paragraph_sheet(lines, everything))
+
+    assert "Rotor" in full and "확정 삭제 줄." in full and FIGURE_MARKER in full and "목차 줄 하나 ... 3" in full
+    assert "Rotor" not in _body(build_paragraph_sheet(lines, ParagraphInclude(tables=False, toc=True)))
+    no_deleted = _body(build_paragraph_sheet(lines, ParagraphInclude(deleted=False, toc=True)))
+    assert "확정 삭제 줄." not in no_deleted and "앞부분 줄." not in no_deleted
+    assert FIGURE_MARKER not in _body(build_paragraph_sheet(lines, ParagraphInclude(figures=False, toc=True)))
+    assert "목차 줄 하나 ... 3" not in _body(build_paragraph_sheet(lines, ParagraphInclude(toc=False)))
+
+
+def test_front_matter_follows_the_deleted_check() -> None:
+    lines = _mixed_lines()
+
+    assert "앞부분 줄." in _body(build_paragraph_sheet(lines))
+    assert "앞부분 줄." not in _body(build_paragraph_sheet(lines, ParagraphInclude(deleted=False)))
+
+
+def test_old_contents_follow_their_own_check_even_when_deleted_is_off() -> None:
+    lines = _mixed_lines()
+
+    body = _body(build_paragraph_sheet(lines, ParagraphInclude(deleted=False, toc=True)))
+
+    assert "목차 줄 하나 ... 3" in body and "목차 줄 둘 ... 4" in body
+    assert "확정 삭제 줄." not in body
+
+
+def test_preview_hides_figures_and_marks_contents() -> None:
+    lines = _mixed_lines()
+
+    sheet = build_paragraph_sheet(lines, preview=True)
+
+    assert FIGURE_MARKER not in _body(sheet)
+    assert [(row.toc, row.noise) for row in sheet.rows[1:] if row.cells[1].text.startswith("목차 줄")] == [(True, "toc")] * 2
+    assert all(not row.toc for row in sheet.rows if not row.cells[1].text.startswith("목차 줄"))
+    # 지운 줄은 싣고(화면이 숨긴다), 받는 파일은 figures 체크를 따른다
+    assert [row.deleted for row in sheet.rows[1:] if row.cells[1].text == "앞부분 줄."] == [True]
+    assert FIGURE_MARKER in _body(build_paragraph_sheet(lines, preview=False))
+
+
+def test_new_document_paragraphs_take_the_same_checks(client: TestClient) -> None:
+    bundle_id = create_bundle(client, title="Paragraphs", is_synthetic=True)["id"]
+    uploaded = upload(
+        client, bundle_id, build_docx(p("합성 목차 줄이다.") + p("1. 본문 문장이다.") + f"<w:p>{make_drawing_run('image1.png')}</w:p>", media={"image1.png": TINY_PNG}),
+        "SYNTHETIC_SOP-N_Checks.docx", side="new", doc_type="sop",
+    )
+    assert uploaded.status_code == 201, uploaded.text
+    doc_id = uploaded.json()["id"]
+    _mark(get_view(client, bundle_id, doc_id), "toc", "합성 목차 줄이다.")
+    url = f"/api/bundles/{bundle_id}/documents/{doc_id}/paragraphs.xlsx"
+
+    def read(query: str) -> list[str]:
+        return [row[1] for row in _values(_read(client.get(f"{url}{query}", headers=AUTHOR))[0])[1:]]
+
+    assert read("") == ["본문 문장이다.", FIGURE_MARKER]
+    assert read("?toc=true") == ["합성 목차 줄이다.", "본문 문장이다.", FIGURE_MARKER]
+    assert read("?figures=false") == ["본문 문장이다."]

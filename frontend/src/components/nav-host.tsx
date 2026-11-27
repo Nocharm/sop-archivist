@@ -1,4 +1,4 @@
-// 이동·스크롤 배선 - 앱 안 링크 클릭을 버퍼 이동(lib/nav-buffer)으로 돌리고, 스크롤하는 동안만 스크롤바를 보이게 하고,
+// 이동·스크롤 배선 - 앱 안 링크 클릭을 버퍼 이동(lib/nav-buffer)으로 돌리고, 스크롤하는 동안(과 끝 가까이에 마우스가 올 때 흐리게) 스크롤바를 보이게 하고,
 // 상단 막대 아래 진행 막대와 위로 가기 단추를 그린다. AppShell이 로그인한 화면에 한 번 둔다.
 "use client";
 
@@ -14,6 +14,8 @@ import { bindNavRouter, cancelNav, completeNav, hasLeaveGuard, navigate, useNavS
 
 // 스크롤이 멈춘 뒤 스크롤바를 거두기까지(ms)
 const SCROLLBAR_LINGER_MS = 900;
+// 스크롤 상자 오른쪽 끝에서 이 거리(px) 안에 마우스가 있으면 막대가 흐리게 보인다 - 넓히면 본문 글 위에서도 자주 뜬다
+const SCROLLBAR_NEAR_PX = 40;
 
 function installScrollbarReveal(): () => void {
   const timers = new WeakMap<Element, number>();
@@ -26,8 +28,52 @@ function installScrollbarReveal(): () => void {
     if (previous !== undefined) window.clearTimeout(previous);
     timers.set(element, window.setTimeout(() => element.classList.remove("is-scrolling"), SCROLLBAR_LINGER_MS));
   }
+  // 마우스가 스크롤 상자 오른쪽 끝 가까이 오면 막대를 흐리게 보인다 - 스크롤하기 전에 어디서 잡을지 보이게
+  let hoveredTarget: Element | null = null;
+  let scrollBoxes: Element[] = [];
+  let near: Element | null = null;
+  function setNear(box: Element | null) {
+    if (box === near) return;
+    near?.classList.remove("is-scroll-near");
+    box?.classList.add("is-scroll-near");
+    near = box;
+  }
+  function handlePointerMove(event: PointerEvent) {
+    if (event.pointerType !== "mouse") return;
+    const target = event.target instanceof Element ? event.target : null;
+    // 조상의 스크롤 상자는 가리킨 요소가 바뀔 때만 다시 찾는다(computed style 읽기를 줄이려고)
+    if (target !== hoveredTarget) {
+      hoveredTarget = target;
+      scrollBoxes = listScrollBoxes(target);
+    }
+    setNear(scrollBoxes.find((box) => {
+      const { right } = box.getBoundingClientRect();
+      return event.clientX <= right && event.clientX >= right - SCROLLBAR_NEAR_PX && box.scrollHeight > box.clientHeight + 1;
+    }) ?? null);
+  }
+  function handlePointerOut(event: PointerEvent) {
+    // 창 밖으로 나가면 거둔다
+    if (event.relatedTarget === null) setNear(null);
+  }
   document.addEventListener("scroll", handleScroll, { capture: true, passive: true });
-  return () => document.removeEventListener("scroll", handleScroll, { capture: true });
+  document.addEventListener("pointermove", handlePointerMove, { passive: true });
+  document.addEventListener("pointerout", handlePointerOut);
+  return () => {
+    document.removeEventListener("scroll", handleScroll, { capture: true });
+    document.removeEventListener("pointermove", handlePointerMove);
+    document.removeEventListener("pointerout", handlePointerOut);
+    setNear(null);
+  };
+}
+
+/** 안에서 바깥 차례로, 세로로 스크롤하는 조상 상자 */
+function listScrollBoxes(start: Element | null): Element[] {
+  const boxes: Element[] = [];
+  for (let element = start; element && element !== document.documentElement; element = element.parentElement) {
+    const { overflowY } = getComputedStyle(element);
+    if (overflowY === "auto" || overflowY === "scroll") boxes.push(element);
+  }
+  return boxes;
 }
 
 /** 경로+쿼리가 바뀌면 이동이 끝난 것이다 - useSearchParams 때문에 Suspense 안에 둔다 */

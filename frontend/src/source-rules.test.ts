@@ -1,8 +1,9 @@
 // @vitest-environment node
 /**
  * Source rules lint cannot express: the effect/timer budget, Tailwind display utilities doubled
- * on one element, custom CSS class names that Tailwind also generates, and eslint-disable reasons.
- * Plan: docs/superpowers/plans/2026-11-19-trust-foundation-plan.md (step 1).
+ * on one element, custom CSS class names that Tailwind also generates, hover rules that re-lay out
+ * siblings, and eslint-disable reasons.
+ * Plan: 2026-11-19-trust-foundation-plan.md (step 1).
  */
 
 import { readdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -196,7 +197,7 @@ const PATH_RULES: PathRule[] = [
     pattern: /<select[\s>]/,
     files: /\.tsx$/,
     allowed: {},
-    fix: "use components/ui/select.tsx Select (or Combobox)",
+    fix: "use components/ui/select.tsx Select",
   },
   {
     name: "router.push",
@@ -232,6 +233,17 @@ const PATH_RULES: PathRule[] = [
     allowed: {},
     fix: "use components/ui/tooltip.tsx Tooltip (or useDelegatedTip for many marks)",
   },
+  {
+    name: "raw fetch to the API",
+    // 맨 fetch( · window.fetch( · globalThis.fetch( - 남의 메서드(docViews.fetch()는 아니다
+    pattern: /(?:^|[^.\w$]|\b(?:window|globalThis|self)\.)fetch\(/,
+    files: /\.tsx?$/,
+    allowed: {
+      "src/lib/api.ts": "the shared path (apiFetch) - the practice screen's fake server cuts in there",
+      "src/lib/auth-mode.ts": "reads the auth mode once at boot, before any identity exists",
+    },
+    fix: "call apiFetch (src/lib/api.ts) - the practice screen's fake server cuts in at that one place, a raw fetch would reach the real server",
+  },
 ];
 
 describe("one path per concern", () => {
@@ -257,18 +269,53 @@ describe("one path per concern", () => {
       "native checkbox": '<input type="checkbox" />',
       dangerouslySetInnerHTML: "<div dangerouslySetInnerHTML={{ __html: x }} />",
       "native title tooltip": '<span title="Delete">',
+      "raw fetch to the API": "const res = await fetch(`/api/bundles/${id}`);",
     };
     for (const rule of PATH_RULES) expect(rule.pattern.test(sample[rule.name]), rule.name).toBe(true);
     expect(PATH_RULES[6].pattern.test('<Tooltip title="Delete">')).toBe(false);
+    const rawFetch = PATH_RULES[7].pattern;
+    expect(rawFetch.test("window.fetch(url)")).toBe(true);
+    expect(rawFetch.test("await docViews.fetch({ docs: [docId] })")).toBe(false);
+  });
+});
+
+// A hover inside :has() that changes a sibling's size or display moves the hovered control out from under the pointer,
+// the hover drops, the row snaps back and hovers again - a flicker nobody can click (pick bar, 2026-11-27).
+const HOVER_RELAYOUT = {
+  selector: /:has\([^{]*:(?:hover|focus-visible|focus-within)/,
+  body: /(?:^|[;\s])(?:max-width|min-width|width|display|padding|margin(?:-[\w-]+)?|flex(?:-[\w-]+)?|border-width|grid-template-columns|position)\s*:/,
+};
+const HOVER_RELAYOUT_ALLOWED: Record<string, string> = {
+  ".mbtn-set": "the hovered button grows to fill the fixed-width set, so it stays under the pointer while the others fold",
+};
+
+function findHoverRelayout(css: string): string[] {
+  return [...stripComments(css).matchAll(/([^{};]+)\{([^{}]*)\}/g)]
+    .map((match) => ({ selector: match[1].trim(), body: match[2] }))
+    .filter(({ selector, body }) => HOVER_RELAYOUT.selector.test(selector) && HOVER_RELAYOUT.body.test(body))
+    .map(({ selector }) => selector)
+    .filter((selector) => !Object.keys(HOVER_RELAYOUT_ALLOWED).some((prefix) => selector.startsWith(prefix)));
+}
+
+describe("hover never re-lays out siblings", () => {
+  it("keeps :has(:hover) rules to color and opacity", () => {
+    const problems = listFiles(SRC, /\.css$/).flatMap((path) => findHoverRelayout(readFileSync(path, "utf8")).map((selector) => `${toKey(path)}: ${selector}`));
+    expect(problems, "Fix: let hover change only color/opacity/transform; show a folded name in a tooltip (data-tip) instead of making room for it").toEqual([]);
+  });
+
+  it("catches a sibling fold and lets a color change through", () => {
+    expect(findHoverRelayout(".row:has(> .b:hover) > .a { max-width: 0; }")).toHaveLength(1);
+    expect(findHoverRelayout("@container (max-width: 9px) { .row:has(> .b:focus-visible) > .a { display: none; } }")).toHaveLength(1);
+    expect(findHoverRelayout(".row:has(> .b:hover) > .a { opacity: .5; color: var(--ink); }")).toEqual([]);
   });
 });
 
 describe("smoke scripts", () => {
   // 워크트리에는 backend/.venv가 없다 - 단계마다 venv를 찾으면 원본 체크아웃을 못 찾아 거짓 실패했다(2026-11-20)
   it("find the backend python only through findBackendPython", () => {
-    const scripts = listFiles(join(FRONTEND, "scripts"), /\.mjs$/).filter((path) => !path.endsWith(join("smoke", "common.mjs")));
+    const scripts = listFiles(join(FRONTEND, "scripts"), /\.mjs$/).filter((path) => !path.endsWith(join("smoke", "backend-python.mjs")));
     const problems = scripts.filter((path) => /\.venv[/\\]|BACKEND_PYTHON \|\|/.test(stripComments(readFileSync(path, "utf8")))).map((path) => relative(FRONTEND, path));
-    expect(problems, "Fix: import { findBackendPython } from ./smoke/common.mjs and call it - it falls back to the main checkout's backend/.venv").toEqual([]);
+    expect(problems, "Fix: import { findBackendPython } from ./smoke/backend-python.mjs (or ./smoke/common.mjs in smoke steps) and call it - it falls back to the main checkout's backend/.venv").toEqual([]);
   });
 });
 

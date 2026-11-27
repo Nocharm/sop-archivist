@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import type { AiSuggestion } from "./api-sop";
-import { buildUseDraft, findRowSuggestion, indexLiveSuggestions, readSuggestedDestination, readSuggestionPlace } from "./ai-suggestion-model";
+import type { AiSuggestion, CoverStatus } from "./api-sop";
+import { buildUseDraft, countWaitingSuggestions, dropHiddenSuggestions, filterAiItems, findRowSuggestion, HIDDEN_AI_KINDS, indexLiveSuggestions, readSuggestedDestination, readSuggestionPlace } from "./ai-suggestion-model";
 import type { SentenceSlot } from "./classify-model";
 
 function suggestion(id: number, kind: string, content: AiSuggestion["content"], extra: Partial<AiSuggestion> = {}): AiSuggestion {
@@ -11,6 +11,54 @@ function suggestion(id: number, kind: string, content: AiSuggestion["content"], 
 function slot(key: string, lang: "ko" | "en", sourceText: string, extra: Partial<SentenceSlot> = {}): SentenceSlot {
   return { key, target: null, lang, sourceIds: [Number(key.slice(1))], text: sourceText, sourceText, isAiPending: false, isTranslated: false, ...extra };
 }
+
+describe("hidden AI kinds", () => {
+  it("hides classify, split, translate and list reading", () => {
+    expect([...HIDDEN_AI_KINDS].sort()).toEqual(["classify", "split", "tobe_list", "translate"]);
+    expect(HIDDEN_AI_KINDS.has("table_follow")).toBe(false); // 숨기지 않지만 알약 · 수락 창에도 들지 않는다 - 보이는 곳은 표 머리뿐
+  });
+
+  it("drops hidden suggestions and keeps the rest", () => {
+    const items = [{ kind: "classify" }, { kind: "split" }, { kind: "match" }, { kind: "unwrap_order" }];
+    expect(dropHiddenSuggestions(items, false).map((item) => item.kind)).toEqual(["match", "unwrap_order"]);
+    expect(dropHiddenSuggestions(items, true)).toBe(items);
+  });
+
+  it("keeps only the requests whose answers are shown", () => {
+    const items = ["document", "match", "to-en", "to-ko", "split", "split-document", "pair-document"].map((key) => ({ key }));
+    expect(filterAiItems(items, false).map((item) => item.key)).toEqual(["match", "pair-document"]);
+    expect(filterAiItems(items, true)).toBe(items);
+  });
+});
+
+describe("countWaitingSuggestions", () => {
+  // 짝 줄(10 · 11)은 안 정함, 12는 보류, 13은 확정. 줄에 없는 99는 은퇴했거나 저절로 삭제된 단위
+  const statusOfUnit = new Map<number, CoverStatus>([[10, "unassigned"], [11, "unassigned"], [12, "on_hold"], [13, "confirmed"]]);
+  const count = (items: AiSuggestion[], documentId: number | null = null) => countWaitingSuggestions(items, statusOfUnit, documentId);
+
+  it("counts a live suggestion whose units are all on open rows, once however many units it covers", () => {
+    expect(count([suggestion(1, "match", { unit_ids: [10, 11] })])).toBe(1);
+  });
+
+  it("skips held and decided rows and units that are no longer on a row", () => {
+    expect(count([suggestion(1, "match", { unit_ids: [12] }), suggestion(2, "match", { unit_ids: [13] }), suggestion(3, "match", { unit_ids: [10, 99] })])).toBe(0);
+  });
+
+  it("skips stale, taken and hidden suggestions and ones without an Old unit", () => {
+    expect(count([
+      suggestion(1, "match", { unit_ids: [10] }, { result: "stale" }),
+      suggestion(2, "match", { unit_ids: [10] }, { adoption: "rejected" }),
+      suggestion(3, "classify", { unit_ids: [10] }),
+      suggestion(4, "match", { unit_ids: [] }),
+      suggestion(5, "match", {}),
+    ])).toBe(0);
+  });
+
+  it("counts one document, or the whole bundle when no document is given", () => {
+    const items = [suggestion(1, "match", { unit_ids: [10] }), suggestion(2, "match", { unit_ids: [11] }, { document_id: 2 })];
+    expect([count(items, 1), count(items)]).toEqual([1, 2]);
+  });
+});
 
 describe("indexLiveSuggestions and findRowSuggestion", () => {
   it("keeps the newest live suggestion per unit and drops stale or taken ones", () => {

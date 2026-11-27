@@ -64,15 +64,26 @@ describe("getAssignUndoKey", () => {
   });
 });
 
+describe("multi edits", () => {
+  it("merge rows and several tables are edit steps", () => {
+    expect(isUnitEditStep("merge_rows")).toBe(true);
+    expect(isUnitEditStep("set_layout_tables")).toBe(true);
+    expect(shouldDropSelectionOnStep({ op: "set_layout_tables", unit_ids: [1] })).toBe(true);
+  });
+});
+
 describe("shouldDropSelectionOnStep", () => {
   const step = (op: string, unitIds = [4]) => ({ op, unit_ids: unitIds });
   it("drops the selection for every unit-shape edit that can retire units", () => {
-    for (const op of ["cut", "carve", "merge", "unmerge", "move_boundary", "set_layout_table", "attach_caption", "detach_caption", "set_first_row_caption", "group_figures", "ungroup_figures", "set_heading", "clear_noise"]) {
+    for (const op of ["cut", "carve", "merge", "unmerge", "move_boundary", "set_layout_table", "attach_caption", "detach_caption", "set_first_row_caption", "group_figures", "ungroup_figures", "set_heading", "clear_noise", "start_body"]) {
       expect(shouldDropSelectionOnStep(step(op)), op).toBe(true);
     }
   });
+  it("keeps the selection when a leftover translation is put back", () => {
+    expect(shouldDropSelectionOnStep(step("drop_translation"))).toBe(false);
+  });
   it("keeps the selection for in-place edits", () => {
-    for (const op of ["set_language", "set_ref", "clear_ref", "set_number"]) expect(shouldDropSelectionOnStep(step(op)), op).toBe(false);
+    for (const op of ["set_language", "set_ref", "clear_ref", "set_number", "continue_numbers", "set_noise_reason"]) expect(shouldDropSelectionOnStep(step(op)), op).toBe(false);
   });
   it("keeps the selection for decision steps", () => {
     for (const op of ["confirm", "hold", "link", "unlink", "mark_new", "link_source", "confirm_identical", "accept_ai", "delete", "move_out", "clear", "reset"]) {
@@ -87,7 +98,7 @@ describe("shouldDropSelectionOnStep", () => {
 
 describe("isUnitEditStep", () => {
   it("is true for every source edit step, shape and in-place", () => {
-    for (const op of ["cut", "carve", "merge", "unmerge", "move_boundary", "set_layout_table", "attach_caption", "detach_caption", "set_first_row_caption", "group_figures", "ungroup_figures", "set_heading", "clear_noise", "set_language", "set_ref", "clear_ref", "set_number"]) {
+    for (const op of ["cut", "carve", "merge", "unmerge", "move_boundary", "set_layout_table", "attach_caption", "detach_caption", "set_first_row_caption", "group_figures", "ungroup_figures", "set_heading", "clear_noise", "start_body", "set_language", "set_ref", "clear_ref", "set_number", "continue_numbers", "set_noise_reason"]) {
       expect(isUnitEditStep(op), op).toBe(true);
     }
   });

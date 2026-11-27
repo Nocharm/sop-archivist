@@ -96,17 +96,22 @@ async def _ensure_assign_documents(session: AsyncSession, bundle_id: int) -> Non
         raise_rule(409, "no_assign_targets")
 
 
-async def load_latest_extractions(session: AsyncSession, bundle_id: int, document_id: int | None) -> dict[int, int]:
-    """옛 문서마다 최신 추출 {추출 id: 문서 id}. 문서를 짚었는데 이 묶음의 옛 문서가 아니면 404."""
+async def load_latest_extractions(
+    session: AsyncSession, bundle_id: int, document_id: int | None, *, sides: Sequence[str] = ("old",)
+) -> dict[int, int]:
+    """sides 쪽 문서마다 최신 추출 {추출 id: 문서 id}. 문서를 짚었는데 이 묶음의 그 쪽 문서가 아니면 404.
+
+    기본은 옛 문서만 — 칸 추천 · 나누기 · 번역은 옛 문서의 판단 줄을 다룬다. 벗긴 표 순서는 New도 받는다(unwrap_order_job).
+    """
     if document_id is not None:
         document = await session.get(Document, document_id)
-        if document is None or document.bundle_id != bundle_id or document.side != "old":
+        if document is None or document.bundle_id != bundle_id or document.side not in sides:
             raise_rule(404, "document_not_found")
     scope = [] if document_id is None else [Document.id == document_id]
     rows = await session.execute(
         select(func.max(Extraction.id), Extraction.document_id)
         .join(Document, Document.id == Extraction.document_id)
-        .where(Document.bundle_id == bundle_id, Document.side == "old", *scope)
+        .where(Document.bundle_id == bundle_id, Document.side.in_(list(sides)), *scope)
         .group_by(Extraction.document_id)
     )
     return dict(rows.tuples().all())

@@ -4,13 +4,14 @@
 """
 
 import re
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
 from app.sop.constants import LANGUAGE_LAYOUTS
 from app.sop.extract.types import ExtractedBlock
-from app.sop.segment import detect_language
+from app.sop.segment import RULE_LEGACY, detect_language, split_paragraph
 
+_LATIN_RE = re.compile("[A-Za-z]")
 # 머리글 말고 본문은 앞에서 이만큼만 본다 — 첫 장의 표지·정보 칸에 있는 값만 믿는다
 FIRST_BODY_BLOCKS = 40
 # 이웃한 본문 줄의 언어가 바뀌는 비율이 이 이상이면 한·영이 번갈아 나오는 문서로 본다(합성 SOP로 잡은 값)
@@ -86,21 +87,32 @@ def detect_header_fields(blocks: Sequence[ExtractedBlock]) -> HeaderFields:
     return HeaderFields(doc_code=code, version=version, record_no=record_no)
 
 
-def detect_language_layout(blocks: Sequence[ExtractedBlock], *, has_language_halves: bool = False) -> str:
+def detect_language_layout(
+    blocks: Sequence[ExtractedBlock],
+    *,
+    has_language_halves: bool = False,
+    rule: int = RULE_LEGACY,
+    split_lines: bool = False,
+) -> str:
     """본문 문단(표 칸 제외)의 언어 순서로 정한다 — 한쪽만이면 *_only, 자주 바뀌면 교차, 아니면 분리.
 
     본문이 거의 다 표 안인 문서(표 밖 문단이 적고 표의 행이 훨씬 많다)는 표의 행도 함께 센다. has_language_halves는 추출기가
     읽은 강한 신호(언어 절반 책갈피·스타일)다 — 두 언어가 다 있으면 순서를 세지 않고 분리로 본다.
+    쪼개기 규칙 2면 문단의 언어를 줄이 아니라 그 규칙의 박스로 잰다(R2-7) — 한 문단에 한글 문장 뒤 영어 문장이 이어진 문서가
+    "한글만"으로 잡히지 않게. split_lines는 DOCX인가다.
     """
+    def list_languages(text: str) -> list[str]:
+        return _list_line_languages(text) if rule == RULE_LEGACY else _list_piece_languages(text, split_lines)
+
     paragraphs = [
         block for block in blocks if block.part == "body" and block.kind == "paragraph" and block.table_index is None
     ]
     cells = [block for block in blocks if block.part == "body" and block.kind == "table_cell"]
     n_rows = len({(block.table_index, block.row_index) for block in cells})
     if len(paragraphs) < SPARSE_BODY_PARAGRAPHS and n_rows > TABLE_HEAVY_ROW_RATIO * len(paragraphs):
-        langs = _list_languages_with_rows(blocks)
+        langs = _list_languages_with_rows(blocks, list_languages)
     else:
-        langs = [lang for block in paragraphs for lang in _list_line_languages(block.text)]
+        langs = [lang for block in paragraphs for lang in list_languages(block.text)]
         # 한쪽 언어 문단뿐인데 표 칸에 두 언어가 다 있으면 KO|EN 레이아웃 표 문서다 — 기본(연달아)으로 두어 표의 코드 짝을 지킨다
         cell_langs = {lang for block in cells for lang in _list_line_languages(block.text)}
         if langs and len(set(langs)) == 1 and cell_langs == {"ko", "en"}:
@@ -119,8 +131,10 @@ def detect_language_layout(blocks: Sequence[ExtractedBlock], *, has_language_hal
     return layout
 
 
-def _list_languages_with_rows(blocks: Sequence[ExtractedBlock]) -> list[str]:
-    """본문 블록 순서의 언어 — 표 밖 문단은 줄마다, 표는 행마다(_list_row_languages)."""
+def _list_languages_with_rows(
+    blocks: Sequence[ExtractedBlock], list_languages: Callable[[str], list[str]]
+) -> list[str]:
+    """본문 블록 순서의 언어 — 표 밖 문단은 list_languages로, 표는 행마다(_list_row_languages)."""
     row_texts: dict[tuple[int | None, int | None], list[str]] = {}
     order: list[tuple[int | None, int | None] | ExtractedBlock] = []
     for block in blocks:
@@ -136,7 +150,7 @@ def _list_languages_with_rows(blocks: Sequence[ExtractedBlock]) -> list[str]:
     langs: list[str] = []
     for item in order:
         langs.extend(
-            _list_line_languages(item.text) if isinstance(item, ExtractedBlock) else _list_row_languages(row_texts[item])
+            list_languages(item.text) if isinstance(item, ExtractedBlock) else _list_row_languages(row_texts[item])
         )
     return langs
 
@@ -165,6 +179,19 @@ def _list_line_languages(text: str) -> list[str]:
     langs: list[str] = []
     for line in text.split("\n"):
         lang = detect_language(line)
+        if lang is not None and (not langs or langs[-1] != lang):
+            langs.append(lang)
+    return langs
+
+
+def _list_piece_languages(text: str, split_lines: bool) -> list[str]:
+    """블록 글의 규칙 2 박스별 언어 — 이어진 같은 언어 박스는 하나로 센다."""
+    lang = detect_language(text)
+    if lang != "ko" or _LATIN_RE.search(text) is None:  # 한 언어뿐인 글은 쪼개 볼 것이 없다
+        return [] if lang is None else [lang]
+    langs: list[str] = []
+    for start, end in split_paragraph(text, split_lines=split_lines):
+        lang = detect_language(text[start:end])
         if lang is not None and (not langs or langs[-1] != lang):
             langs.append(lang)
     return langs

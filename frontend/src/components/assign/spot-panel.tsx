@@ -1,6 +1,6 @@
 // 위치 판 - Old 칸 옆에서 미끄러져 나와 한 Unit의 본문 자리를 그 앞뒤 줄과 함께 읽기 전용 용지 조각으로 보인다.
 // 그림(그림 탭 카드의 "위치 보기", 시안 2 D3): 문단 사이 자리에 점선 네모(작은 미리 보기 + 이름 + 캡션), 문장 속 그림이면 그 문장을 칠하고 글자 자리에 "▣ 그림" 표지.
-// 짝(1단 보기 짝 안내 줄 한 번 누름, B7): 짝 박스를 칠한다. 판 안 줄을 누르면 본문 탭의 그 줄로 간다. Esc · 바깥 누르기 · 닫기 단추로 닫는다.
+// 짝(1단 보기 짝 안내 줄 한 번 누름, B7): 짝 박스를 칠한다. 판 안 줄을 누르면 본문 탭의 그 줄로 간다. Esc · 바깥 누르기(짝 안내 줄은 빼고) · 닫기 단추로 닫는다.
 // 2단 보기는 Old 칸 왼쪽(그림만), 1단 보기는 오른쪽(old-pane이 정한다).
 "use client";
 
@@ -43,7 +43,8 @@ interface SpotView {
 export function SpotPanel({ model, target, side, statusOf, figureSource, onPick, onClose }: SpotPanelProps) {
   const { t } = useI18n();
   const ref = useRef<HTMLElement>(null);
-  useDismiss(ref, true, onClose);
+  // 판을 연 짝 안내 줄은 바깥이 아니다 - 그 줄의 두 번 누름(짝으로 가기)이 첫 누름에 판이 닫혀 용지가 움직이면 빗나간다
+  useDismiss(ref, true, onClose, ".pair-hint");
   const view = target.kind === "figure" ? buildFigureView(target.unitId) : buildPairView(target.unitId, target.title);
   const testId = target.kind === "figure" ? "assign-figure-spot" : "assign-pair-spot";
 
@@ -97,7 +98,7 @@ export function SpotPanel({ model, target, side, statusOf, figureSource, onPick,
   }
 
   return (
-    <aside ref={ref} className="spot-panel" data-side={side} role="dialog" aria-label={view.title} data-testid={testId}>
+    <aside ref={ref} className="spot-panel" data-side={side} role="group" aria-label={view.title} data-testid={testId}>
       <div className="spot-panel-head">
         <span className="spot-panel-title">{view.title}</span>
         <button type="button" className="btn ghost icon h-7 w-7 flex-none" aria-label={t("common.close")} data-testid={`${testId}-close`} onClick={onClose}>

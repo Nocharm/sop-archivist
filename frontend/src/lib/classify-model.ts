@@ -184,6 +184,19 @@ export function buildDestinationOptions(tobe: ToBe): DestinationOption[] {
   return options;
 }
 
+/** 고르는 보낼 곳 - 새 문서를 만드는 쪽을 숨긴 동안은 없다. 이미 보낸 곳의 이름은 늘 buildDestinationOptions로 읽는다 */
+export function listPickOptions(tobe: ToBe, drafting: boolean): DestinationOption[] {
+  return drafting ? buildDestinationOptions(tobe) : [];
+}
+
+/** 아직 쓰지 않은 문서(숨긴 기능)의 자리면 그 번호와 칸 이름 - 이름을 못 찾으면(놓인 문장에 이은 초안 · 지운 칸) 이름은 빈 글. 아니면 null */
+export function readHiddenPlace(destination: Destination | null, options: readonly DestinationOption[]): { docCode: string; label: string } | null {
+  if (destination === null || destination.kind === "link" || destination.kind === "delete" || destination.kind === "move") return null;
+  const option = options.find((item) => item.id === getDestinationId(destination));
+  const sameDoc = option ?? options.find((item) => "docId" in item.destination && item.destination.docId === destination.docId);
+  return { docCode: sameDoc?.docCode ?? "", label: option?.label ?? "" };
+}
+
 /** 세는 보낼 곳인가 - 칸 제목 항목은 칸 줄에 딸린 것이라 개수에 넣지 않는다 */
 export function isPlaceOption(option: Pick<DestinationOption, "destination">): boolean {
   return option.destination.kind !== "slot_heading";
@@ -248,6 +261,12 @@ export function buildCellOwners(written: readonly WrittenSentence[]): Map<number
   return new Map(written.flatMap((row) => (row.table?.cells ?? []).map((cell) => [cell.target_id, row] as const)));
 }
 
+/** 옛 "다른 Bundle로 이동"(없앤 기능)으로 정한 줄이면 그 번호 - 읽기 전용으로 보이고 배정 취소만 된다. 아니면 null */
+export function describeLegacyMove(units: readonly Pick<UnitRow, "decision">[]): { code: string } | null {
+  const moved = units.find((unit) => unit.decision.disposition === "move_external");
+  return moved ? { code: moved.decision.move_target_code } : null;
+}
+
 /** 저장된 판단·새 문장에서 지금 보낼 곳을 읽는다. 여러 곳이면 첫 새 문장 기준 */
 export function readDestination(group: Group | null, unitIds: number[]): Destination | null {
   if (!group) return null;
@@ -285,7 +304,8 @@ export interface RowDraft {
   /** 표·그림 캡션의 글 - 키는 caption-model getCaptionTextKey(캡션 단위의 고친 글은 단위, 써 넣은 캡션은 묶음·언어) */
   captionTexts?: Record<string, string>;
   reason: string;
-  moveCode: string;
+  /** 없앤 "다른 Bundle로 이동"의 번호 - 화면은 더 채우지 않는다(이동한 줄은 저장하지 않는다) */
+  moveCode?: string;
   /** 문장 사이에 놓아 만든 초안의 자리 - 보낼 곳이 놓은 곳일 때만 저장 요청에 싣는다 */
   position?: DropPosition | null;
 }
@@ -297,8 +317,8 @@ export interface OtherLangSlot {
 }
 
 /** 저장 전 변경이 있는 초안인가 - 고른 곳·고친 글·사유·이동 코드 중 하나라도 손댔으면 참(편집 칸만 열어 둔 것은 변경이 아니다) */
-export function hasDraftChange(draft: Pick<RowDraft, "destination" | "texts" | "captionTexts"> & { reason: string | null; moveCode: string | null }): boolean {
-  if (draft.destination !== null || draft.reason !== null || draft.moveCode !== null) return true;
+export function hasDraftChange(draft: Pick<RowDraft, "destination" | "texts" | "captionTexts"> & { reason: string | null; moveCode?: string | null }): boolean {
+  if (draft.destination !== null || draft.reason !== null || (draft.moveCode ?? null) !== null) return true;
   return [draft.texts, draft.captionTexts ?? {}].some((map) => Object.keys(map).length > 0);
 }
 
@@ -580,7 +600,7 @@ export function buildGroupSave(draft: RowDraft, context: SaveContext, action: "c
     unit_id: unit.id,
     revision: unit.revision,
     disposition: !destination ? ("unassigned" as const) : destination.kind === "delete" ? ("delete" as const) : destination.kind === "move" ? ("move_external" as const) : ("assigned" as const),
-    move_target_code: destination?.kind === "move" ? draft.moveCode.trim() : "",
+    move_target_code: destination?.kind === "move" ? (draft.moveCode ?? "").trim() : "",
     // 보낼 곳 없는 보류의 사유는 hold_reason이 맡는다
     reason: destination ? draft.reason.trim() : "",
   }));
@@ -761,12 +781,4 @@ const CHECK_KINDS = new Set([
 export function readCheckKey(warning: Record<string, string>): string {
   const kind = warning.code ?? warning.kind ?? "";
   return CHECK_KINDS.has(kind) ? `check.${kind}` : "check.other";
-}
-
-/** 목록 이동 키 - J·↓는 다음 줄, K·↑는 앞 줄(Split 화면과 같은 키) */
-export function getRowStep(key: string): 1 | -1 | null {
-  const lower = key.toLowerCase();
-  if (lower === "j" || lower === "arrowdown") return 1;
-  if (lower === "k" || lower === "arrowup") return -1;
-  return null;
 }

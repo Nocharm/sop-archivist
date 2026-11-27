@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { placeLinkMenu, placeLinkMenuAtLineEnd } from "./link-menu-place";
+import { placeLinkMenu } from "./link-menu-place";
 
 const MENU = { width: 180, height: 70 };
 const VIEW = { width: 1000, height: 700 };
@@ -41,19 +41,18 @@ describe("placeLinkMenu", () => {
       expect(top + menu.height).toBeLessThanOrEqual(view.height - 8);
     }
   });
-});
 
-describe("placeLinkMenuAtLineEnd", () => {
-  it("메뉴 왼쪽 끝을 선이 닿는 x에 맞추고 세로는 줄 상자 아래에 둔다", () => {
-    expect(placeLinkMenuAtLineEnd(row(200, 260, 520), { x: 520, y: 213 }, MENU, VIEW)).toEqual({ top: 270, left: 520 });
+  it("위·아래 모두 안 맞고 옆이 비어 있으면 줄 옆(오른쪽)에 놓아 줄을 덮지 않는다", () => {
+    const tall = { width: 260, height: 571 };
+    const view = { width: 1000, height: 720 };
+    expect(placeLinkMenu({ top: 163, bottom: 222, left: 135, right: 500 }, 300, tall, view)).toEqual({ top: 141, left: 510 });
   });
 
-  it("아래가 모자라면 줄 위로 뒤집고, 오른쪽 끝을 넘으면 화면 안으로 맞춘다", () => {
-    expect(placeLinkMenuAtLineEnd(row(600, 660, 900), { x: 900, y: 613 }, MENU, VIEW)).toEqual({ top: 520, left: 1000 - 180 - 8 });
-  });
-
-  it("줄이 화면보다 높으면 선 끝 y 근처에 놓는다", () => {
-    const view = { width: 1000, height: 900 };
-    expect(placeLinkMenuAtLineEnd(row(-200, 1000, 520), { x: 520, y: 300 }, { width: 180, height: 110 }, view).top).toBe(310);
+  it("오른쪽이 모자라면 왼쪽에, 양옆도 없으면 누른 y 근처에 겹쳐 선다", () => {
+    const tall = { width: 260, height: 571 };
+    const view = { width: 1000, height: 720 };
+    expect(placeLinkMenu({ top: 163, bottom: 222, left: 400, right: 900 }, 300, tall, view)).toEqual({ top: 141, left: 130 });
+    expect(placeLinkMenu({ top: 163, bottom: 222, left: 100, right: 950 }, 300, tall, view, 180).top).toBe(141);
   });
 });
+

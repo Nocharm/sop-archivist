@@ -1,25 +1,29 @@
-// Assign Old 문장 우클릭 메뉴 - 위는 배정(배정 취소·이동·삭제 - 삭제는 구분선으로 떼어 경고색), 아래는 문장 고치기(여기서 나누기·앞뒤와 합치기·언어).
+// Assign 우클릭 메뉴 - 표 밖 문장은 위 배정(배정 취소·삭제 - 삭제는 구분선으로 떼어 경고색)과 아래 문장 고치기, 표 칸 · 벗긴 표의 줄은 "이 칸" 위 "이 표" 아래(lib/menu-section-model). 항목에 올리면 닿는 칸이 칠해진다(ReachPaint).
 // 항목의 가능/불가는 순수 모델(assign-context-menu-model)이 정한다. 꺼진 항목은 숨기지 않고 흐리게, 까닭은 data-tip 툴팁이다.
 // 자리는 그 자리 메뉴와 같은 규칙(placeLinkMenu) - 그 줄의 조각들(한/영 짝이면 둘 다) 아래(모자라면 위)에 놓아 다룰 문장을 가리지 않는다.
 "use client";
 
-import { ArrowDownToLine, ArrowUpToLine, BookMarked, BookX, CaptionsOff, Eraser, ExternalLink, Heading, Image as ImageIcon, LayoutList, Link2, MousePointerClick, PanelBottom, PanelTop, Pilcrow, Scissors, Table2, Trash2, Unlink, type LucideIcon } from "lucide-react";
-import { useRef } from "react";
+import { ArrowDownFromLine, ArrowDownToLine, ArrowUpToLine, BookMarked, BookX, CaptionsOff, Eraser, Heading, Image as ImageIcon, LayoutList, Link2, MousePointerClick, PanelBottom, PanelTop, Pilcrow, RotateCcw, Scissors, Sparkles, SplitSquareVertical, Table2, Trash2, Unlink, type LucideIcon } from "lucide-react";
+import { Fragment, useRef, useState } from "react";
 
 import { Menu } from "@/components/ui/menu";
 import { MenuLangRow } from "@/components/ui/menu-lang-row";
 import { useDelegatedTip } from "@/components/ui/delegated-tip";
-import type { AssignMenuAction, AssignMenuGroups, AssignMenuItem } from "@/lib/assign-context-menu-model";
+import { ReachPaint } from "@/components/assign/reach-paint";
+import type { AssignMenuAction, AssignMenuItem } from "@/lib/assign-context-menu-model";
+import { formatAssignKey } from "@/lib/assign-keymap";
 import { useI18n } from "@/lib/i18n";
 import { placeLinkMenu } from "@/lib/link-menu-place";
+import type { MenuReach } from "@/lib/menu-reach-model";
+import type { MenuSection } from "@/lib/menu-section-model";
 
 // 오른쪽 칸의 다듬기 줄(shape-tools)도 같은 아이콘·이름을 쓴다 - 같은 일은 어디서나 같은 모양으로
 export const ASSIGN_ACTION_ICONS: Record<Exclude<AssignMenuAction, "lang" | "piece_lang" | "caption_of">, LucideIcon> = {
-  // 여러 줄 삭제·이동 창의 단추와 같은 아이콘
+  // 여러 줄 삭제 창의 단추와 같은 아이콘
   delete: Trash2,
-  move: ExternalLink,
   clear: Eraser,
   split: Scissors,
+  split_sentences: SplitSquareVertical,
   merge_prev: ArrowUpToLine,
   merge_next: ArrowDownToLine,
   // 한글·영어 이웃은 합치지 않고 짝으로 맺는다 - 같은 자리에 합치기 대신 나온다
@@ -30,6 +34,8 @@ export const ASSIGN_ACTION_ICONS: Record<Exclude<AssignMenuAction, "lang" | "pie
   ref_mark: BookMarked,
   ref_clear: BookX,
   table_layout: LayoutList,
+  table_rewrap: RotateCcw,
+  table_ai_order: Sparkles,
   // 캡션 자리(위·아래)를 그린 아이콘 - 글을 묶음 위(아래) 캡션 줄로
   caption_attach_prev: PanelTop,
   caption_attach_next: PanelBottom,
@@ -37,13 +43,14 @@ export const ASSIGN_ACTION_ICONS: Record<Exclude<AssignMenuAction, "lang" | "pie
   // 제목 ↔ 문장(F8b) - 문단 기호는 보통 문장, H는 제목
   to_sentence: Pilcrow,
   to_heading: Heading,
+  start_body: ArrowDownFromLine,
 };
 
 export const ASSIGN_ACTION_LABELS: Record<Exclude<AssignMenuAction, "lang" | "piece_lang" | "caption_of">, string> = {
   delete: "assign.ctx.delete",
-  move: "assign.ctx.move",
   clear: "classify.clear",
   split: "split.cutHere",
+  split_sentences: "assign.ctx.splitSentences",
   merge_prev: "assign.ctx.mergePrev",
   merge_next: "assign.ctx.mergeNext",
   pair_prev: "assign.ctx.pairPrev",
@@ -54,6 +61,8 @@ export const ASSIGN_ACTION_LABELS: Record<Exclude<AssignMenuAction, "lang" | "pi
   ref_clear: "assign.ref.reject",
   // 표 항목은 쪼개기 화면의 단추와 같은 이름을 쓴다
   table_layout: "split.layoutTable",
+  table_rewrap: "assign.ctx.table.rewrap",
+  table_ai_order: "assign.ctx.table.aiOrder",
   // 묶음 대상의 이름 - 글 대상이면 항목의 labelKey("위 표의 캡션으로 쓰기")가 대신한다
   caption_attach_prev: "assign.ctx.captionAttachPrev",
   caption_attach_next: "assign.ctx.captionAttachNext",
@@ -61,9 +70,16 @@ export const ASSIGN_ACTION_LABELS: Record<Exclude<AssignMenuAction, "lang" | "pi
   // 제목에서 바꾼 문장이면 항목의 labelKey("제목으로 되돌리기")가 대신한다
   to_sentence: "assign.ctx.toSentence",
   to_heading: "assign.ctx.toHeading",
+  start_body: "assign.ctx.startBody",
 };
 
-const KEYS: Partial<Record<AssignMenuAction, string>> = { delete: "Del", move: "M", clear: "U" };
+const KEYS: Partial<Record<AssignMenuAction, string>> = {
+  delete: formatAssignKey("delete"),
+  clear: formatAssignKey("clear"),
+  table_layout: formatAssignKey("table"),
+  table_rewrap: formatAssignKey("table"),
+  table_ai_order: formatAssignKey("ask_order"),
+};
 
 interface AssignContextMenuProps {
   /** 누른 문장의 조각 - 닫으면 포커스가 돌아갈 곳 */
@@ -72,7 +88,11 @@ interface AssignContextMenuProps {
   readCover: () => HTMLElement[];
   /** 누른 자리(화면 좌표) - 키보드로 열었으면 null(줄 왼쪽 아래) */
   click: { x: number; y: number } | null;
-  groups: AssignMenuGroups;
+  /** 구역 - 표 칸이면 이 칸 · 이 표, 아니면 배정 · 문장 고치기(lib/menu-section-model) */
+  sections: MenuSection[];
+  /** 어느 용지에 칠할지, 그리고 항목이 닿는 칸 - 올리거나 포커스한 항목에 칠한다(꺼진 항목도) */
+  side: "old" | "new";
+  readReach: (item: AssignMenuItem) => MenuReach;
   /** piece - 조각 언어 줄(piece_lang)의 조각 순번, holderId - 캡션으로 쓰기 줄(caption_of)의 표·그림 단위 */
   onPick: (action: AssignMenuAction, lang?: "ko" | "en", piece?: number, holderId?: number) => void;
   onClose: () => void;
@@ -81,18 +101,26 @@ interface AssignContextMenuProps {
 /** 조각 언어 줄에 보이는 조각 글 앞부분 글자 수 - 메뉴 폭을 넘지 않게 */
 const PIECE_HEAD_CHARS = 18;
 
-export function AssignContextMenu({ anchor, readCover, click, groups, onPick, onClose }: AssignContextMenuProps) {
+export function AssignContextMenu({ anchor, readCover, click, sections, side, readReach, onPick, onClose }: AssignContextMenuProps) {
   const { t } = useI18n();
   const anchorRef = useRef<HTMLElement>(anchor);
   const tip = useDelegatedTip();
+  // 칠은 메뉴가 들고 있다 - 메뉴가 닫히면 함께 사라지고 용지는 다시 그려지지 않는다
+  const [reach, setReach] = useState<MenuReach | null>(null);
+  const reachHandlers = (item: AssignMenuItem) => ({
+    onPointerEnter: () => setReach(readReach(item)),
+    onFocus: () => setReach(readReach(item)),
+    onPointerLeave: () => setReach(null),
+    onBlur: () => setReach(null),
+  });
 
   function place(rect: DOMRect, size: { width: number; height: number }) {
     const boxes = readCover().filter((el) => el.isConnected).map((el) => el.getBoundingClientRect());
-    const row = boxes.length === 0 ? rect : { top: Math.min(...boxes.map((box) => box.top)), bottom: Math.max(...boxes.map((box) => box.bottom)), left: Math.min(...boxes.map((box) => box.left)) };
+    const row = boxes.length === 0 ? rect : { top: Math.min(...boxes.map((box) => box.top)), bottom: Math.max(...boxes.map((box) => box.bottom)), left: Math.min(...boxes.map((box) => box.left)), right: Math.max(...boxes.map((box) => box.right)) };
     return placeLinkMenu(row, click?.x ?? null, size, { width: window.innerWidth, height: window.innerHeight }, click?.y ?? null);
   }
 
-  const firstHolder = groups.edit.find((item) => item.action === "caption_of");
+  const firstHolder = sections.flatMap((section) => section.items).find((item) => item.action === "caption_of");
   function isFirstHolder(item: AssignMenuItem): boolean {
     return item === firstHolder;
   }
@@ -108,6 +136,8 @@ export function AssignContextMenu({ anchor, readCover, click, groups, onPick, on
           currentReason={t("split.menu.why.alreadyLang")}
           optionReasons={item.langReasons ? Object.fromEntries(Object.entries(item.langReasons).map(([lang, key]) => [lang, t(key)])) : undefined}
           onPick={(lang) => onPick("lang", lang)}
+          keyHint={formatAssignKey("lang")}
+          reachProps={reachHandlers(item)}
           testId="assign-ctx-lang"
         />
       );
@@ -123,6 +153,7 @@ export function AssignContextMenu({ anchor, readCover, click, groups, onPick, on
           disabledReason={item.reasonKey ? t(item.reasonKey) : null}
           currentReason={t("split.menu.why.alreadyLang")}
           onPick={(lang) => onPick("piece_lang", lang, index)}
+          reachProps={reachHandlers(item)}
           testId={`assign-ctx-piece-${index}`}
         />
       );
@@ -147,6 +178,7 @@ export function AssignContextMenu({ anchor, readCover, click, groups, onPick, on
           data-tip={reason ?? undefined}
           data-tip-side="right"
           data-testid={`assign-ctx-caption-of-${holder.unitId}`}
+          {...reachHandlers(item)}
           onClick={() => {
             if (item.enabled) onPick("caption_of", undefined, undefined, holder.unitId);
           }}
@@ -172,6 +204,7 @@ export function AssignContextMenu({ anchor, readCover, click, groups, onPick, on
         data-tip={reason ?? undefined}
         data-tip-side="right"
         data-testid={`assign-ctx-${item.action}`}
+        {...reachHandlers(item)}
         onClick={() => {
           if (item.enabled) onPick(item.action);
         }}
@@ -187,14 +220,21 @@ export function AssignContextMenu({ anchor, readCover, click, groups, onPick, on
     <Menu anchorRef={anchorRef} onClose={onClose} testId="assign-ctx-menu" label={t("assign.ctx.label")} place={place}>
       {/* display: contents - 툴팁 핸들러만 얹고 항목 배치는 Menu 그대로 */}
       <div style={{ display: "contents" }} {...tip.handlers}>
-        <p className="menu-label">{t("assign.ctx.assignGroup")}</p>
-        {/* 되돌리기 어려운 삭제는 위아래 구분선으로 떼어 둔다 - 아래 구분선은 고치기 묶음 앞의 것 */}
-        {groups.assign.flatMap((item) => (item.action === "delete" ? [<div key="sep-delete" className="menu-sep" role="separator" />, renderItem(item)] : [renderItem(item)]))}
-        <div className="menu-sep" role="separator" />
-        <p className="menu-label">{t("assign.ctx.editGroup")}</p>
-        {groups.edit.map(renderItem)}
+        {sections.map((section, sectionIndex) => (
+          <Fragment key={section.id}>
+            {sectionIndex > 0 && <div className="menu-sep" role="separator" />}
+            <p className="menu-label" data-testid={`assign-ctx-section-${section.id}`}>{t(section.headKey, section.headVars)}</p>
+            {/* 되돌리기 어려운 삭제는 구분선으로 떼어 둔다 - 뒤에 항목이 더 있으면 아래에도 */}
+            {section.items.flatMap((item, index) =>
+              item.action === "delete"
+                ? [...(index > 0 ? [<div key="sep-delete" className="menu-sep" role="separator" />] : []), renderItem(item), ...(index < section.items.length - 1 ? [<div key="sep-after-delete" className="menu-sep" role="separator" />] : [])]
+                : [renderItem(item)],
+            )}
+          </Fragment>
+        ))}
       </div>
       {tip.node}
+      <ReachPaint side={side} reach={reach} />
     </Menu>
   );
 }

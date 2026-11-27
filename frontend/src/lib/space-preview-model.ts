@@ -4,10 +4,26 @@ import type { ChangeType, PreviewSheet, TargetDocType } from "@/lib/api-sop";
 import { getFrozenCount, type SheetDraft } from "@/lib/sheet-view-model";
 
 export const TAP_MS = 250; // 이보다 짧게 누르고 그사이 끌지 않았으면 "짧게 탁" - 열어 두거나(닫힌 데서) 닫는다(열어 둔 데서)
+export const DOUBLE_TAP_MS = 300; // 닫힘 움직임 길이 = 두 번 탁 간격(D3) - 시트에 CSS 변수 --space-double-tap으로 넘겨 같은 값을 쓴다
+export const SHEET_HEIGHT_MIN = 0.3; // 시트 높이 비율(작업 화면 높이 대비 0~1)의 아래 한계 - 이보다 낮으면 머리 · 바닥만 남는다
+export const SHEET_HEIGHT_MAX = 0.9; // 위 한계 - 위쪽 도구 줄이 조금은 보이게
+export const SHEET_HEIGHT_DEFAULT = 0.7; // 처음 높이 비율 - 이 값이 시트 높이의 유일한 기본값이다
 export const HINT_OPENS = 3; // 닫혀 있을 때의 작은 안내는 이만큼 열어 볼 때까지만 보인다
 
-/** closed · held(누르는 동안) · kept(열어 둠) · keptHeld(열어 둔 채 다시 누르는 동안) */
-export type SpacePhase = "closed" | "held" | "kept" | "keptHeld";
+/** 시트 높이 비율을 한계 안으로 - 숫자가 아니면 기본값 */
+export function clampSheetHeight(ratio: number): number {
+  if (!Number.isFinite(ratio)) return SHEET_HEIGHT_DEFAULT;
+  return Math.min(Math.max(ratio, SHEET_HEIGHT_MIN), SHEET_HEIGHT_MAX);
+}
+
+/** 끈 자리(clientY)에서 시트 높이 비율 - 시트는 작업 화면 바닥에 붙어 있어 (바닥 - 끈 자리) / 작업 화면 높이다 */
+export function readDragHeight(clientY: number, parentBottom: number, parentHeight: number): number {
+  if (!(parentHeight > 0)) return SHEET_HEIGHT_DEFAULT;
+  return clampSheetHeight((parentBottom - clientY) / parentHeight);
+}
+
+/** closed · held(누르는 동안) · kept(열어 둠) · keptHeld(열어 둔 채 다시 누르는 동안) · closing(열어 둔 시트를 탁 - 닫힘 움직임 중, 그사이 다시 누르면 탭을 바꾼다) */
+export type SpacePhase = "closed" | "held" | "kept" | "keptHeld" | "closing";
 
 export interface SpaceState {
   phase: SpacePhase;
@@ -17,48 +33,66 @@ export interface SpaceState {
   dragged: boolean;
 }
 
-export type SpaceEvent = { type: "down"; at: number } | { type: "up"; at: number } | { type: "drag" } | { type: "escape" } | { type: "blur" };
+/** closed = 닫힘 움직임이 끝났다(animationend) */
+export type SpaceEvent = { type: "down"; at: number } | { type: "up"; at: number } | { type: "drag" } | { type: "escape" } | { type: "blur" } | { type: "closed" };
 
 export const SPACE_CLOSED: SpaceState = { phase: "closed", downAt: 0, dragged: false };
 
-/** 상태 기계 한 걸음 - 끌었으면 떼는 순간 닫히고(열어 두지 않음), 열어 둔 채 길게 누르고 뗀 것은 닫지 않는다(끌기용) */
+/** 상태 기계 한 걸음 - 끌었으면 떼는 순간 닫히고(열어 두지 않음), 열어 둔 채 길게 누르고 뗀 것은 닫지 않는다(끌기용). 열어 둔 시트의 탁은 닫힘 움직임(closing)을 거친다 */
 export function stepSpace(state: SpaceState, event: SpaceEvent): SpaceState {
   switch (event.type) {
     case "down":
       if (state.phase === "closed") return { phase: "held", downAt: event.at, dragged: false };
       if (state.phase === "kept") return { phase: "keptHeld", downAt: event.at, dragged: false };
+      // 닫히는 동안 다시 누르면 닫기를 거두고 탭을 바꾼다(isTabFlip) - 뒤따르는 keyup은 kept에서 아무것도 하지 않는다
+      if (state.phase === "closing") return { phase: "kept", downAt: event.at, dragged: false };
       return state;
     case "up": {
       const isTap = event.at - state.downAt < TAP_MS && !state.dragged;
       if (state.phase === "held") return isTap ? { ...state, phase: "kept" } : SPACE_CLOSED;
-      if (state.phase === "keptHeld") return isTap ? SPACE_CLOSED : { ...state, phase: "kept", dragged: false };
+      if (state.phase === "keptHeld") return isTap ? { ...state, phase: "closing" } : { ...state, phase: "kept", dragged: false };
       return state;
     }
+    case "closed":
+      return state.phase === "closing" ? SPACE_CLOSED : state;
     case "drag":
       return state.phase === "held" || state.phase === "keptHeld" ? { ...state, dragged: true } : state;
     case "escape":
       return SPACE_CLOSED;
     case "blur":
-      // 창 밖으로 포커스가 가면 keyup이 오지 않는다 - 누르는 동안은 닫고, 열어 둔 것은 남긴다
-      if (state.phase === "held") return SPACE_CLOSED;
+      // 창 밖으로 포커스가 가면 keyup이 오지 않는다 - 누르는 동안은 닫고, 열어 둔 것은 남긴다. 닫히던 것은 마저 닫는다
+      if (state.phase === "held" || state.phase === "closing") return SPACE_CLOSED;
       if (state.phase === "keptHeld") return { ...state, phase: "kept", dragged: false };
       return state;
   }
 }
 
+/** 닫히는 동안도 열림이다 - 시트가 흐려지며 내려가는 중이라 그린다 */
 export function isSpaceOpen(state: SpaceState): boolean {
   return state.phase !== "closed";
+}
+
+/** 닫히던 시트를 다시 눌렀다 - 탭을 바꾼다(D3) */
+export function isTabFlip(prev: SpaceState, next: SpaceState): boolean {
+  return prev.phase === "closing" && next.phase === "kept";
 }
 
 export function isSpaceKept(state: SpaceState): boolean {
   return state.phase === "kept" || state.phase === "keptHeld";
 }
 
-/** Space가 그 포커스의 것인가 - 글 입력칸 · 단추 · 링크 · 고르기 항목은 Space를 자기가 쓴다(화면 단축키가 아니다) */
+/** 고르기만 하는 용지 단추의 표시(접힌 삭제 줄 · 삭제 블록의 머리와 줄) - 마우스로 누른 뒤에도 그 단추에 포커스가 남는다(블록은 그대로 그려진다).
+ *  누름이 줄을 고르는 것뿐이라 Space는 그 단추를 다시 누르지 않고 고른 것의 미리보기다 */
+export const SPACE_PICK_ATTR = "data-space-pick";
+/** 그 단추에 펼쳐 붙이는 속성 - 이름을 SPACE_PICK_ATTR와 따로 적지 않게 */
+export const SPACE_PICK_PROPS = { [SPACE_PICK_ATTR]: "" } as const;
+
+/** Space가 그 포커스의 것인가 - 글 입력칸 · 단추 · 링크 · 고르기 항목은 Space를 자기가 쓴다(화면 단축키가 아니다). 고르기만 하는 단추(SPACE_PICK_ATTR)는 아니다 */
 export function isOwnSpaceTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
   if (target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName)) return true;
-  return target.closest("button, a, [role='option'], [role='button'], [role='menuitem'], [role='checkbox'], [role='switch']") !== null;
+  const control = target.closest("button, a, [role='option'], [role='button'], [role='menuitem'], [role='checkbox'], [role='switch']");
+  return control !== null && !control.hasAttribute(SPACE_PICK_ATTR);
 }
 
 /** 미리보기 창 밖에 남은 줄 수 - 위로 · 아래로. 창이 시트 전체면 null */
@@ -85,16 +119,17 @@ export interface SpaceEnableInput {
   hasDoc: boolean;
   /** 그 문서 보기의 단위 수 - 빈 템플릿처럼 단위가 없으면 문단 Excel이 없다 */
   unitCount: number;
-  /** New 문서를 양 단에서 그 자리에서 고치는 중 */
-  isNewEdit: boolean;
   /** Assign 줄 수 */
   rowCount: number;
 }
 
-/** Space가 켜지는가 - 문단 Excel은 단위가 있는 문서면, 비교 Excel A는 지금처럼 New를 그 자리에서 고치는 중이 아니고 Old 줄이 있을 때 */
+/**
+ * Space가 켜지는가 - 문단 Excel은 단위가 있는 문서면, 비교 Excel A는 Old 줄이 있으면. 양 단에서 New 박스를 골라도 켜 둔다 -
+ * Old 용지와 고른 Old 줄은 그대로 보이고 원본 탭이 New 고름을 따라간다(꺼 버리면 열어 둔 시트가 닫히고 Space가 용지 스크롤로 샌다)
+ */
 export function isSpaceEnabled(sheet: SpaceSheet, input: SpaceEnableInput): boolean {
   if (!input.hasDoc) return false;
-  return sheet === "paragraphs" ? input.unitCount > 0 : !input.isNewEdit && input.rowCount > 0;
+  return sheet === "paragraphs" ? input.unitCount > 0 : input.rowCount > 0;
 }
 
 /**

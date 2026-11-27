@@ -1,4 +1,4 @@
-"""로컬 데모 시드 — 합성 SOP 묶음 네 개를 서로 다른 단계로, 그 뒤에 참조 지도용 묶음 둘과 목차 묶음 · 표 안 표 묶음 · 한/영 따로 표 묶음 하나씩을 앱 API에 만든다. 로컬 개발 전용, 운영 실행 금지.
+"""로컬 데모 시드 — 합성 SOP 묶음 네 개를 서로 다른 단계로, 그 뒤에 참조 지도용 묶음 둘과 문단 박스 · 목차 묶음 · 표 안 표 묶음 · 한/영 따로 표 묶음 하나씩을 앱 API에 만든다. 로컬 개발 전용, 운영 실행 금지.
 
 단계: 1 쪼개기 직후(업로드·언어 배치·편집까지 — 이 묶음만 Reference 절 확정 전의 추출기 5로 올려 REF? 제안이 남는다, 요청서 14), 2 분류 절반(입구 1 답의 절반 저장), 3 검토 대기(전부 저장 후 검토 요청),
 4 AI 제안(가짜 AI의 분류·입구 2 짝 제안까지, 확정하지 않는다 — 합성 응답이고 실제 모델이 아니다).
@@ -11,6 +11,8 @@ Assign 목차 블록·띠 표 제목 줄 스모크용).
 Assign 표 안 표 스모크용, MD 1 F2).
 한/영 따로 표: 9 한/영 따로 표(qa.member 작성자 — 한글 절반 표 둘 다음 영어 절반 표 둘, 값 표는 행 수가 다름, 배정 없음.
 Assign 대응 표 짝 스모크용).
+문단 박스: 10 문단 박스(qa.member 작성자 — 한 문단에 한글 문장 둘 뒤 영어 문장 둘이 든 Old 문서 하나와, 표지 · 결재 표 · Summary of Changes ·
+1장 · 2장 · 개정 이력이 든 Old 문서 하나, 배정 없음. Assign 문단 박스 · 본문 앞부분 스모크용, 쪼개기 규칙 2. 목록 맨 위 묶음이 그대로이도록 7번보다 먼저 만든다).
 이미 같은 제목 묶음이 있으면 그 묶음은 건너뛰어 여러 번 돌려도 같은 결과다. 끝에 묶음별 상태·진행 숫자만 찍고 원문 글자는 찍지 않는다.
 
 개발 전용이다 — 합성 생성기가 개발 의존성 python-docx와 테스트 팩토리(tests.pdf_factory)를 쓰고, 합성 파일은 임시 디렉터리에
@@ -232,6 +234,37 @@ def _build_doc_bundle(client: TestClient, bundle_id: int) -> None:
     assert response.status_code == 200, response.text
 
 
+# --- 문단 박스 Bundle(10번) — Assign 문단 박스 스모크용(쪼개기 규칙 2) ---
+
+PARAGRAPH_TITLE = "SYNTHETIC 10 문단 박스"
+PARAGRAPH_KO, PARAGRAPH_EN = "탱크를 비운다. 밸브를 닫는다.", "Drain the tank completely. Close the outlet valve."
+# 저절로 삭제되는 본문 앞부분(1장 앞)과 개정 이력 — 1장 · 2장의 제목과 문장 넷만 배정 줄이다
+FRONT_LINES = ("합성 표준 절차서", "Summary of Changes")
+FRONT_TABLE = (("문서 번호", "SOP-ABC-1060"), ("제목", "합성 탱크 세척"))
+FRONT_BODY = ("탱크 세척 방법을 정한다.", "합성 공정에 적용한다.")
+FRONT_HISTORY = ("개정 이력", "처음 만들었다.")
+FRONT_HISTORY_TABLE = (("개정", "내용"), ("01", "제정"))
+
+
+def _build_paragraph_bundle(client: TestClient, bundle_id: int) -> None:
+    response = set_members(client, bundle_id, [("qa.member", "author"), ("qa.lead", "reviewer")])
+    assert response.status_code == 200, response.text
+    put_tobe_codes(client, bundle_id, [build_tobe_doc("SOP-TNK", "SYNTHETIC Tank draining")])
+    body = p("5. 절차", "Heading1") + p("5. Procedure", "Heading1") + p(f"{PARAGRAPH_KO} {PARAGRAPH_EN}")
+    response = upload(client, bundle_id, build_docx(body), "SYNTHETIC_SOP-ABC-1050_Paragraphs.docx")
+    assert response.status_code == 201, response.text
+    assert response.json()["status"] == "ready", response.json()["status"]
+    front = (
+        p(FRONT_LINES[0]) + make_grid_table(2, "".join(make_row(list(row)) for row in FRONT_TABLE)) + p(FRONT_LINES[1], "Heading1")
+        + p("1. 목적", "Heading1") + p(FRONT_BODY[0]) + p("2. 범위", "Heading1") + p(FRONT_BODY[1])
+        + p(f"9. {FRONT_HISTORY[0]}", "Heading1") + p(FRONT_HISTORY[1])
+        + make_grid_table(2, "".join(make_row(list(row)) for row in FRONT_HISTORY_TABLE))
+    )
+    response = upload(client, bundle_id, build_docx(front), "SYNTHETIC_SOP-ABC-1060_Front_matter.docx")
+    assert response.status_code == 201, response.text
+    assert response.json()["status"] == "ready", response.json()["status"]
+
+
 # --- 목차 Bundle(7번) — Assign 목차 블록·결과물 A 목차 줄 스모크용(MD 1 F6) ---
 
 TOC_TITLE = "SYNTHETIC 7 목차"
@@ -331,6 +364,7 @@ class MapBundle:
 MAP_BUNDLES = (
     MapBundle(MAP_UV_TITLE, AUTHOR, _build_uv_bundle),
     MapBundle(MAP_DOC_TITLE, OUTSIDER, _build_doc_bundle),
+    MapBundle(PARAGRAPH_TITLE, AUTHOR, _build_paragraph_bundle),
     MapBundle(TOC_TITLE, AUTHOR, _build_toc_bundle),
     MapBundle(NESTED_TITLE, AUTHOR, _build_nested_bundle),
     MapBundle(PAIR_TABLES_TITLE, AUTHOR, _build_pair_tables_bundle),
@@ -338,7 +372,7 @@ MAP_BUNDLES = (
 
 
 def seed_map_bundles(client: TestClient) -> dict[str, str]:
-    """지도용·목차·표 안 표·한/영 따로 표 Bundle을 만들고 제목 → "created"|"skipped". 단계 Bundle 넷 뒤에 불러 id가 5-9가 되게 한다."""
+    """지도용·문단 박스·목차·표 안 표·한/영 따로 표 Bundle을 만들고 제목 → "created"|"skipped". 단계 Bundle 넷 뒤에 불러 id가 5-10이 되게 한다."""
     outcomes: dict[str, str] = {}
     for bundle in MAP_BUNDLES:
         if any(row["title"] == bundle.title for row in _list_bundles(client, bundle.lister)):

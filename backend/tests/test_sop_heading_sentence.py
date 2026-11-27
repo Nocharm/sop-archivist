@@ -4,10 +4,12 @@
 import httpx2
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.sop.models import Extraction
 from app.sop.numbering import NUMBER_PAIR, ClauseLine, find_inherited_numbers
-from app.sop.segment import BlockView, build_unit_drafts, is_heading_like, suggest_interleaved_pairs
+from app.sop.segment import RULE_PARAGRAPH, BlockView, build_unit_drafts, is_heading_like, suggest_interleaved_pairs
 from app.sop.units import verify_document_coverage
 from tests.access_helpers import run_in_session
 from tests.docx_factory import build_docx, make_style, p
@@ -39,7 +41,9 @@ BODY = (
 )
 
 
-def _setup(client: TestClient) -> tuple[int, int]:
+def _setup(client: TestClient, monkeypatch: pytest.MonkeyPatch | None = None, rule: int = RULE_PARAGRAPH) -> tuple[int, int]:
+    if monkeypatch is not None:
+        monkeypatch.setattr("app.sop.ingest.NEW_SPLIT_RULE", rule)
     bundle_id = create_bundle(client, is_synthetic=True)["id"]
     response = upload(client, bundle_id, build_docx(BODY, styles=STYLES), OLD_NAME)
     assert response.status_code == 201 and response.json()["status"] == "ready", response.text
@@ -98,6 +102,25 @@ SHIFTED_PAIRS = {
     frozenset({TITLE_EN, TITLE_KO}), frozenset({CLOSE_EN, CLOSE_KO}), frozenset({CONFIRM_EN, CONFIRM_KO}),
     frozenset({FILL_EN, FILL_KO}),
 }
+# 규칙 2 — 조항마다 같은 언어 문장이 한 박스라 조항마다 문장 하나, 짝은 1:1이다
+CLAUSE_EN, CLAUSE_KO = f"{CLOSE_EN} {CONFIRM_EN}", f"{CLOSE_KO} {CONFIRM_KO}"
+SHIFTED_BY_RULE = {
+    1: SHIFTED,
+    2: [
+        ("heading", TITLE_EN, False, "5.2"),
+        ("heading", TITLE_KO, False, "5.2"),
+        ("sentence", CLAUSE_EN, True, "5.2.1"),
+        ("sentence", CLAUSE_KO, True, "5.2.1"),
+        ("sentence", FILL_EN, True, "5.2.2"),
+        ("sentence", FILL_KO, True, "5.2.2"),
+        ("sentence", f"{LONE_KO} {LONE_KO_TAIL}", True, "5.2.3"),
+    ],
+}
+SHIFTED_PAIRS_BY_RULE = {
+    1: SHIFTED_PAIRS,
+    2: {frozenset({TITLE_EN, TITLE_KO}), frozenset({CLAUSE_EN, CLAUSE_KO}), frozenset({FILL_EN, FILL_KO})},
+}
+FIRST_LINES = {1: (CLOSE_EN, CLOSE_KO), 2: (CLAUSE_EN, CLAUSE_KO)}  # 5.2.1 조항의 첫 박스(영, 한)
 
 
 # --- 순수 규칙 ---
@@ -164,46 +187,48 @@ def test_inherited_numbers_follow_the_previous_clause() -> None:
 # --- 올리기와 편집 ---
 
 
-def test_upload_turns_clauses_into_sentence_pairs(client: TestClient) -> None:
+@pytest.mark.parametrize("rule", [1, 2])
+def test_upload_turns_clauses_into_sentence_pairs(client: TestClient, monkeypatch: pytest.MonkeyPatch, rule: int) -> None:
     """제목답지 않은 조항은 문장 단위가 되고 조항마다 1:1 짝, 번역은 번호를 물려받는다. 진짜 제목은 그대로, 커버리지도 그대로."""
-    bundle_id, doc_id = _setup(client)
+    bundle_id, doc_id = _setup(client, monkeypatch, rule)
     view = get_view(client, bundle_id, doc_id)
+    first_en, first_ko = FIRST_LINES[rule]
 
-    assert _shape(view) == SHIFTED
-    assert _pairs(view) == SHIFTED_PAIRS
-    assert find_unit(view, CLOSE_KO)["number"]["source"] == NUMBER_PAIR
+    assert _shape(view) == SHIFTED_BY_RULE[rule]
+    assert _pairs(view) == SHIFTED_PAIRS_BY_RULE[rule]
+    assert find_unit(view, first_ko)["number"]["source"] == NUMBER_PAIR
     # 물려받은 번호는 글자를 가리지 않는다 — 내용은 한글 글 전체다
-    assert find_unit(view, CLOSE_KO)["number"]["content_start"] == 0
-    assert find_unit(view, CLOSE_EN)["number"]["content_start"] == len("5.2.1 ")
+    assert find_unit(view, first_ko)["number"]["content_start"] == 0
+    assert find_unit(view, first_en)["number"]["content_start"] == len("5.2.1 ")
     # 번호 없는 번역 조항은 제 글 전체가 아니라 앞 조항의 번호를 절 이름으로 잇는다(설계 2d)
     labels = [block["section_label"] for block in view["blocks"]]
     assert labels == ["5.2", "5.2", "5.2.1", "5.2.1", "5.2.2", "5.2.2", "5.2.3"]
     _check_coverage(doc_id)
 
 
-def test_back_to_heading_is_one_edit_and_undoes(client: TestClient) -> None:
+@pytest.mark.parametrize("rule", [1, 2])
+def test_back_to_heading_is_one_edit_and_undoes(client: TestClient, monkeypatch: pytest.MonkeyPatch, rule: int) -> None:
     """짝 줄 하나의 "제목으로 되돌리기"는 두 조항 줄을 통째로 제목으로 — 짝이 제목끼리 다시 서고, Ctrl+Z 한 번에 문장 짝으로 돌아온다."""
-    bundle_id, doc_id = _setup(client)
+    bundle_id, doc_id = _setup(client, monkeypatch, rule)
     view = get_view(client, bundle_id, doc_id)
-    row = [find_unit(view, CLOSE_EN)["id"], find_unit(view, CLOSE_KO)["id"]]
+    row = [find_unit(view, line)["id"] for line in FIRST_LINES[rule]]
     before_ids = [unit["id"] for unit in view["units"]]
 
     response = _edit(client, bundle_id, doc_id, {"type": "set_heading", "unit_ids": row, "heading": True})
     assert response.status_code == 200, response.text
     back = get_view(client, bundle_id, doc_id)
-    heading_en, heading_ko = f"{CLOSE_EN} {CONFIRM_EN}", f"{CLOSE_KO} {CONFIRM_KO}"
-    assert _shape(back)[2:4] == [("heading", heading_en, False, "5.2.1"), ("heading", heading_ko, False, None)]
-    assert len(response.json()["retired_unit_ids"]) == 4
+    assert _shape(back)[2:4] == [("heading", CLAUSE_EN, False, "5.2.1"), ("heading", CLAUSE_KO, False, None)]
+    assert len(response.json()["retired_unit_ids"]) == {1: 4, 2: 2}[rule]
     assert _pairs(back) == SHIFTED_PAIRS - {frozenset({CLOSE_EN, CLOSE_KO}), frozenset({CONFIRM_EN, CONFIRM_KO})} | {
-        frozenset({heading_en, heading_ko})
+        frozenset({CLAUSE_EN, CLAUSE_KO})
     }
     _check_coverage(doc_id)
 
     _step(client, bundle_id, doc_id, "undo")
     undone = get_view(client, bundle_id, doc_id)
-    assert _shape(undone) == SHIFTED
+    assert _shape(undone) == SHIFTED_BY_RULE[rule]
     assert [unit["id"] for unit in undone["units"]] == before_ids  # 되돌리기는 원래 ID로 되살린다
-    assert _pairs(undone) == SHIFTED_PAIRS
+    assert _pairs(undone) == SHIFTED_PAIRS_BY_RULE[rule]
 
     _step(client, bundle_id, doc_id, "redo")
     assert _shape(get_view(client, bundle_id, doc_id))[2:4] == _shape(back)[2:4]
@@ -230,3 +255,54 @@ def test_heading_to_sentence_and_back(client: TestClient) -> None:
     assert response.status_code == 200, response.text
     assert _shape(get_view(client, bundle_id, doc_id))[0] == ("heading", TITLE_EN, False, "5.2")
     _check_coverage(doc_id)
+
+
+MIXED = (
+    "5.3 배출 밸브를 모두 닫는다. 닫힌 것을 확인한다. Close all drain valves. Confirm that they are closed."
+)
+MIXED_SENTENCES = {
+    1: [
+        ("5.3 배출 밸브를 모두 닫는다.", "ko"), ("닫힌 것을 확인한다.", "ko"), ("Close all drain valves.", "ko"),
+        ("Confirm that they are closed.", "ko"),
+    ],
+    2: [
+        ("5.3 배출 밸브를 모두 닫는다. 닫힌 것을 확인한다.", "ko"),
+        ("Close all drain valves. Confirm that they are closed.", "en"),
+    ],
+}
+
+
+def _set_split_rule(doc_id: int, rule: int) -> None:
+    async def _run(session: AsyncSession) -> None:
+        await session.execute(update(Extraction).where(Extraction.document_id == doc_id).values(split_rule=rule))
+        await session.commit()
+
+    run_in_session(_run)
+
+
+@pytest.mark.parametrize("rule", [1, 2])
+def test_heading_to_sentence_keeps_the_documents_rule(client: TestClient, rule: int) -> None:
+    # 이미 올린 문서(규칙 1)는 편집으로 박스를 다시 만들어도 규칙 1 그대로다 — 언어도 전처럼 제목의 것을 잇는다
+    bundle_id = create_bundle(client, is_synthetic=True)["id"]
+    response = upload(client, bundle_id, build_docx(p(MIXED, "En2"), styles=STYLES), OLD_NAME)
+    doc_id = response.json()["id"]
+    _set_split_rule(doc_id, rule)
+    sentences = [unit["id"] for unit in get_view(client, bundle_id, doc_id)["units"]]
+    joined = _edit(client, bundle_id, doc_id, {"type": "set_heading", "unit_ids": sentences, "heading": True})
+    assert joined.status_code == 200, joined.text
+    heading = find_unit(get_view(client, bundle_id, doc_id), MIXED)
+
+    response = _edit(client, bundle_id, doc_id, {"type": "set_heading", "unit_ids": [heading["id"]], "heading": False})
+
+    assert response.status_code == 200, response.text
+    view = get_view(client, bundle_id, doc_id)
+    assert [(unit["text"], unit["lang"]) for unit in view["units"]] == MIXED_SENTENCES[rule]
+    assert all(unit["from_heading"] for unit in view["units"])
+    _check_coverage(doc_id)
+    _step(client, bundle_id, doc_id, "undo")
+    assert [(unit["kind"], unit["text"]) for unit in get_view(client, bundle_id, doc_id)["units"]] == [("heading", MIXED)]
+    _step(client, bundle_id, doc_id, "redo")
+    again = [unit["id"] for unit in get_view(client, bundle_id, doc_id)["units"]]
+    back = _edit(client, bundle_id, doc_id, {"type": "set_heading", "unit_ids": again[:1], "heading": True})
+    assert back.status_code == 200, back.text
+    assert [(unit["kind"], unit["text"]) for unit in get_view(client, bundle_id, doc_id)["units"]] == [("heading", MIXED)]

@@ -13,7 +13,8 @@ python3.11 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
 .venv/bin/python -m scripts.reset_db      # 로컬 데모 DB 초기화(backend/dev.db): Alembic base→head + 지침·dev 디렉터리·데모 권한. 서버 실행 금지
 .venv/bin/python -m scripts.seed_sop_worst # 로컬 전용(운영 DB 금지): seed_sop_demo 위에 극단 자료(W1 극단 묶음·W2~W7 단계별·가벼운 36개·참조 지도용 M1~M8(Old 문서 104개)·역할·부여·지침 버전)를 앱 API로 얹는다. 화면 배치 감사용 — 별도 sqlite 파일(DATABASE_URL)에 reset_db → seed_sop_demo → 이것 순서로, 같은 자료는 건너뛰어 다시 돌려도 된다(약 5분). 끝 줄 `worst seed done: 51 bundles`(W1~W7+light 36+M1~M8). qa.member의 목록에는 데모 5개 + 43 + M1~M5 = 53개(데모 6번·M6~M8은 prod.member 혼자). DEV_ENFORCE_PERMISSIONS 없이 돌린다
 .venv/bin/python -m scripts.seed_sop_demo # 로컬 전용(운영 DB 금지): 합성 SOP 묶음 4개(쪼개기 직후·분류 절반·검토 대기·AI 제안)를 앱 API로 만든다(작성자 qa.member, 검토자 qa.lead). 그 뒤에 참조 지도용 5 UV 분광광도계(qa.member·qa.lead)·6 문서 관리(prod.member 혼자)를 더한다. 묶음 2~4는 경계를 미리 모두 확인하고 "쪼개기 직후"만 미확인으로 남긴다(v1.0.3부터 경계 확인은 검토 요청 조건이 아니지만 시드는 그대로다). AI 제안 단계는 프로세스 안의 가짜 전송으로 돌아 AI 설정이 필요 없고 실제 모델을 부르지 않는다. 같은 제목이 있으면 건너뛰어 다시 돌려도 된다. AUTH_MODE=dev에서만 돈다(dev 의존성 python-docx 필요, DEV_ENFORCE_PERMISSIONS=true면 bundle.create가 없어 403)
-.venv/bin/python -m scripts.measure_extraction <파일…> [--no-aux]  # DOCX·PDF를 지금 추출기로 읽어 구조 숫자만 낸다(파싱 규칙 전후 비교용, DB·서버 없이). 줄마다 `#n {JSON}` — 경로·파일 이름·원문 글자는 출력하지 않아 실제 문서로 돌린 결과를 그대로 전해도 된다. `--no-aux`는 MarkItDown 보조 대조(느림)를 건너뛴다
+.venv/bin/python -m scripts.measure_extraction <파일…> [--no-aux] [--rule 1|2]  # DOCX·PDF를 지금 추출기로 읽어 구조 숫자만 낸다(파싱 규칙 전후 비교용, DB·서버 없이). 줄마다 `#n {JSON}` — 경로·파일 이름·원문 글자는 출력하지 않아 실제 문서로 돌린 결과를 그대로 전해도 된다. `--no-aux`는 MarkItDown 보조 대조(느림)를 건너뛴다
+.venv/bin/python -m scripts.dump_practice_fixture  # 연습 화면 자료 frontend/src/lib/practice/practice-fixture.json 다시 뽑기 — 합성 Old · New 문서를 임시 sqlite(자식 프로세스)에 올려 화면이 처음 읽는 응답을 쓴다(dev.db · 서버 불필요, 몇 초). 응답 꼴 · 쪼개기 규칙을 바꿔 tests/test_practice_fixture.py가 낡았다고 하면 돌리고 frontend에서 `npx vitest run src/lib/practice`
 AUTH_MODE=dev DEV_ENFORCE_PERMISSIONS=true APP_SYSADMINS=dev.admin .venv/bin/uvicorn app.main:app --reload --port 8777   # 개발 서버
 .venv/bin/python -m pytest tests/ -q -n auto   # 테스트(병렬, 작업자마다 DB 파일이 따로) — conftest가 AUTH_MODE·AI·HR 등을 baseline으로 고정해 backend/.env가 있어도 안전. 한 파일만 볼 때는 -n 없이
 .venv/bin/ruff check app/ tests/          # 린트(target py311)
@@ -30,13 +31,16 @@ npx vitest run                            # 단위 테스트 — 커밋 전 필�
 npm i --no-save playwright-core           # package.json 불변
 BASE_URL=http://localhost:3777 node scripts/pw-smoke-baseline.mjs   # 산출물은 저장소 루트 .shots/(gitignore). Chrome 경로는 CHROME_PATH
 #   SOP 화면 스모크·글자 대비 감사는 reset_db → seed_sop_demo 직후 DB에서(dev.db 대신 DATABASE_URL로 별도 sqlite 파일을 쓰면 다시 돌리기 쉽다)
-BASE_URL=http://localhost:3777 node scripts/pw-smoke-sop.mjs        # AI 나눔 확정 단계는 backend가 가짜 AI(FAKE_AI_SPLIT=1)를 볼 때만 돈다
-PREPARE=1 BASE_URL=http://localhost:3777 node scripts/pw-smoke-sop.mjs   # 배정 화면 첫 진입 미리 분류(알림 → AI jobs의 Background 줄 → AI suggested 수) 하나만 돈다. 전제: reset_db → seed_sop_demo(AI_AUTO_PREPARE=false) 직후,
+QUIET=1 ONLY="assign:" BASE_URL=http://localhost:3777 node scripts/pw-smoke-sop.mjs   # 고친 화면만(assign: · documents: · new documents: · order · outputs · map). 전부는 FULL=1(정식 업데이트 전 · 공용 부품을 고쳤을 때) — ONLY도 FULL도 없으면 멈춘다. AI 나눔 확정 단계는 backend가 가짜 AI(FAKE_AI_SPLIT=1)를 볼 때만 돈다
+QUIET=1 ONLY_FAILED=1 BASE_URL=http://localhost:3777 node scripts/pw-smoke-sop.mjs   # 지난 실행에서 실패한 단계만(이름은 저장소 루트 .dev/smoke-failed.txt). DB를 시드로 되돌린 뒤(scripts/dev-worktree.sh reset)
+PREPARE=1 BASE_URL=http://localhost:3777 node scripts/pw-smoke-sop.mjs   # 배정 화면 첫 진입 시나리오(자동 칸 추천이 돌지 않는다 — 쌓인 분류 0 · 알림 없음 · Background 줄 없음) 하나만 돈다. 전제: reset_db → seed_sop_demo(AI_AUTO_PREPARE=false) 직후,
 #   backend를 아래 가짜 AI로 AI_ENABLED=true AI_AUTO_PREPARE=true로 띄운다(다른 단계는 이 backend에서 전제가 깨져 건너뛴다). 끝에 DB가 바뀐다 — 다시 돌리려면 reset_db부터
 BASE_URL=http://localhost:3777 node scripts/pw-contrast-audit.mjs   # 14화면 × 라이트·다크, 4.5:1
 DS=worst BASE_URL=http://localhost:3787 node scripts/pw-layout-audit.mjs   # 배치 감사(DB 불변): seed_sop_demo(DS=mid)·seed_sop_worst(DS=worst)를 얹은 DB의 backend 8787/frontend 3787에서. ONLY=항목 id·WIDTHS·LANGS·THEMES, 실패는 종료 코드 1과 ../.shots/layout-<id>-<width>.png (docs/lessons/browser-verification.md)
-BASE_URL=http://localhost:3806 BUNDLE=<묶음 id> DOCS=<Old 문서 id,…> node scripts/pw-perf-assign.mjs   # Assign 긴 문서 프레임 비용(가만히·호버·스크롤·고르기, CPU 4배 느리게). 운영 빌드(next build → next start)에 대고, 처방은 INJECT=<css>로 주입해 전·후를 같이 잰다. TRACE·PROFILE=scroll|hover|click (docs/superpowers/specs/2026-11-17-assign-long-doc-design.md)
-BASE_URL=http://localhost:3777 node scripts/pw-overlap-audit.mjs    # 겹침 감사(seed 직후, DB 불변): 모핑 단추·C 줄 끝 단추·그 자리 메뉴·AI 작업 목록과 알림이 옆 글자를 덮는지, 1280·1920 × EN·KO. 긴 글은 LONG=1, 다크는 THEMES=light,dark
+BASE_URL=http://localhost:3806 BUNDLE=<묶음 id> DOCS=<Old 문서 id,…> node scripts/pw-perf-assign.mjs   # Assign 긴 문서 프레임 비용(가만히·호버·스크롤·고르기, CPU 4배 느리게). 운영 빌드(next build → next start)에 대고, 처방은 INJECT=<css>로 주입해 전·후를 같이 잰다. TRACE·PROFILE=scroll|hover|click (설계 2026-11-17-assign-long-doc — 구현 끝나 지웠다, git 이력)
+SCENARIO=keys|burst|filter|number|idle|commits BASE_URL=http://<lan-ip>:<포트> BUNDLE=<묶음 id> DOCS=<Old 문서 id> CPU=1|4 REPEAT=6 LAT=0 node scripts/pw-perf-assign.mjs   # Assign 반응 시간(결과 docs/qa/2026-11-assign-perf.md). keys=j·Delete 글쇠→다음 박스 ms·요청 · burst=Delete 연타에 몇 개 지워지나 · filter=필터 Unassigned 뒤 keys · number=번호 칸 5글자 입력 지연 · idle=60초 무조작(가짜 AI 켠 묶음) · commits=글쇠 한 번의 커밋 수와 PaperChunk 그리기 수(개발 서버, 운영 빌드는 이름이 줄어 못 센다).
+#   전제: `seed_sop_worst`로 만든 is_synthetic 묶음(keys·burst·filter·commits는 판단을 쓰니 아니면 멈춘다 — 시나리오 사이마다 reset_db → seed로 되돌린다), 운영 빌드(`npm run build` → `npx next start -p <포트>`)와 backend가 같은 DB를 보고, localhost가 아닌 LAN 주소로 연다. 결과는 문서마다 마지막 줄 `RESULT {json}` 한 줄. 서버 저장 시간은 backend 표준 출력의 JSON 한 줄 `{"msg": "group save timed", "bundle_id":…, "total_ms":…, "dump_ms":…, "run_ms":…, "unit_count":…, "target_count":…}`(로거 `app.timing`만 INFO, 허용한 숫자 키뿐 — 원문·이름 없음)
+BASE_URL=http://localhost:3777 node scripts/pw-overlap-audit.mjs    # 겹침 감사(seed 직후, DB 불변): 모핑 단추·C 줄 끝 단추·Assign 단추 줄·AI 작업 목록과 알림이 옆 글자를 덮는지, 1280·1920 × EN·KO. 긴 글은 LONG=1, 다크는 THEMES=light,dark
 BASE_URL=http://localhost:3777 node scripts/pw-manual-shots.mjs     # 시스템 설명서(docs/manual/) 화면 그림·번호 위치 다시 뽑기 — reset_db → seed_sop_demo 직후, 끝에 묶음 3을 검토 완료로 바꾼다
 MANUAL=app BASE_URL=http://localhost:3777 node scripts/pw-manual-shots.mjs   # 사용 설명서(/manual) 그림 17장을 frontend/public/manual/img/에 — 1120x720, 번호 표시 없음, DB를 바꾸지 않는다. 위 줄보다 먼저 돌린다(위 줄이 묶음 3을 바꾼다)
 
@@ -56,7 +60,8 @@ py -3.11 -m venv .venv; .venv\Scripts\pip install -r requirements-dev.txt
 .venv\Scripts\python -m scripts.reset_db
 .venv\Scripts\python -m scripts.seed_sop_demo   # 로컬 전용(운영 DB 금지) — 설명은 bash 쪽과 같다
 .venv\Scripts\python -m scripts.seed_sop_worst  # 극단 자료 시드(로컬 전용) — 설명은 bash 쪽과 같다
-.venv\Scripts\python -m scripts.measure_extraction <파일…> [--no-aux]  # 추출 측정(숫자만) — 설명은 bash 쪽과 같다
+.venv\Scripts\python -m scripts.measure_extraction <파일…> [--no-aux] [--rule 1|2]  # 추출 측정(숫자만) — 설명은 bash 쪽과 같다
+.venv\Scripts\python -m scripts.dump_practice_fixture  # 연습 화면 자료 다시 뽑기 — 설명은 bash 쪽과 같다
 $env:AUTH_MODE="dev"; $env:DEV_ENFORCE_PERMISSIONS="true"; $env:APP_SYSADMINS="dev.admin"; .venv\Scripts\uvicorn app.main:app --reload --port 8777
 .venv\Scripts\python -m pytest tests\ -q -n auto
 .venv\Scripts\ruff check app\ tests\
@@ -71,7 +76,7 @@ npx tsc --noEmit -p tsconfig.json
 npx vitest run
 npm i --no-save playwright-core
 $env:BASE_URL="http://localhost:3777"; $env:CHROME_PATH="C:\Program Files\Google\Chrome\Application\chrome.exe"; node scripts\pw-smoke-baseline.mjs
-node scripts\pw-smoke-sop.mjs        # seed_sop_demo 직후. 설명은 bash 쪽과 같다
+$env:QUIET="1"; $env:ONLY="assign:"; node scripts\pw-smoke-sop.mjs   # seed_sop_demo 직후. 전부는 $env:FULL="1", 실패한 단계만은 $env:ONLY_FAILED="1" — 설명은 bash 쪽과 같다
 $env:PREPARE="1"; node scripts\pw-smoke-sop.mjs; Remove-Item Env:PREPARE   # 배정 화면 첫 진입 미리 분류만. 전제(가짜 AI + $env:AI_AUTO_PREPARE="true" backend, 끝에 DB가 바뀜)는 bash 쪽과 같다
 node scripts\pw-contrast-audit.mjs
 node scripts\pw-overlap-audit.mjs   # 겹침 감사. 설명은 bash 쪽과 같다

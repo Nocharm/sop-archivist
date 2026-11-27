@@ -2,9 +2,16 @@
 // 값과 내용 경계는 서버(app/sop/numbering.py)가 정해 보낸다. planFollow는 서버 plan_follow의 사본이라 규칙을 바꾸면 함께 고친다.
 
 import type { ViewUnit } from "./api-sop";
+import type { NumberKind } from "./number-kind-model";
 
 /** 번호 한 줄에 쓸 수 있는 글자 수 - 서버 MAX_NUMBER_CHARS */
 export const MAX_NUMBER_CHARS = 40;
+
+/** 입력 상자로 고치는 종류(연속 · 직접)의 글이 비면 저장을 막는 까닭의 메시지 키 - 확인 단추 · Enter가 같이 쓴다. 점 기호 · 없음은 즉시 저장이라 막지 않는다(B3) */
+export function getNumberSaveBlock(edit: { kind: NumberKind; text: string }): string | null {
+  const isTextKind = edit.kind === "continuous" || edit.kind === "custom";
+  return isTextKind && edit.text.trim() === "" ? "assign.number.typeFirst" : null;
+}
 
 const PART_SEPARATOR = /[.-]/;
 const NUMBER_TAIL = /[.)]+$/;

@@ -1,7 +1,7 @@
 // 상자 전체를 끄는 공통 포인터 끌기 엔진 - 손잡이 없이 4px 넘게 움직이면 끌기, 한 줄 표가 따라오고 놓을 자리 표시는 DOM 속성과 점 달린 선 하나로만 한다.
 // 놓을 자리의 글(이유 · 갈 곳)은 화면 밖 상태 글(drag-status)에 둔다 - 읽기 프로그램과 스모크가 같은 글을 읽는다. 표 끝에는 갈 곳만 짧게(dest, 놓을 수 있을 때).
 // React를 모른다(React 상태를 프레임마다 바꾸지 않는다). 쓰는 쪽은 `attachBoxDrag`나 `useBoxDrag`로 붙인다.
-// 설계: docs/superpowers/specs/2026-11-16-drag-and-drop-design.md §4, 모양은 docs/superpowers/specs/2026-11-20-assign-mockup1-design.md D7
+// 설계: 2026-11-16-drag-and-drop §4, 모양은 2026-11-20-assign-mockup1 D7 (docs/architecture/decisions.md)
 import { createDropLine, type DropLine, type DropLineAt } from "@/lib/drop-line";
 
 export const DRAG_THRESHOLD_PX = 4;

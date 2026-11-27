@@ -1,0 +1,261 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>정식 업데이트 화면 체크리스트</title>
+<!-- v1.5.0(마지막 main) → dev v1.6.50 사이 프런트 변경을 화면에서 손으로 볼 것. 항목은 아래 SECTIONS 한 곳, 체크는 이 브라우저에만 남는다. -->
+<style>
+  :root {
+    --bg: #f7f7f5; --card: #ffffff; --text: #1d1d1b; --muted: #6b6b66;
+    --line: #e2e1dc; --accent: #2f5bd3; --warn: #b4540a; --tag: #eef1fb;
+    --warn-bg: #fdf3ea; --ok: #2c7a4b; --ok-bg: #eaf5ee; --hover: #fafaf8;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #161615; --card: #1f1f1d; --text: #ecebe6; --muted: #a3a29b;
+      --line: #34332f; --accent: #8aa6ff; --warn: #f0a35e; --tag: #262b3b;
+      --warn-bg: #2d2219; --ok: #7fcf9c; --ok-bg: #1b2a20; --hover: #252523;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #161615; --card: #1f1f1d; --text: #ecebe6; --muted: #a3a29b;
+    --line: #34332f; --accent: #8aa6ff; --warn: #f0a35e; --tag: #262b3b;
+    --warn-bg: #2d2219; --ok: #7fcf9c; --ok-bg: #1b2a20; --hover: #252523;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+    font: 15px/1.6 -apple-system, "Segoe UI", "Malgun Gothic", sans-serif; }
+  main { max-width: 800px; margin: 0 auto; padding: 28px 16px 72px; }
+  h1 { font-size: 24px; line-height: 1.3; margin: 0 0 6px; }
+  .sub { color: var(--muted); margin: 0 0 4px; }
+  .sub b { color: var(--text); }
+  code { font: 13px ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--tag); border-radius: 4px; padding: 1px 5px; overflow-wrap: anywhere; }
+  kbd { font: 12.5px ui-monospace, monospace; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; padding: 0 5px; background: var(--card); }
+
+  /* 위에 붙는 진행 줄 */
+  .bar { position: sticky; top: 0; z-index: 2; background: var(--bg); padding: 12px 0; margin-top: 16px;
+    display: flex; gap: 12px; align-items: center; border-bottom: 1px solid var(--line); }
+  .meter { flex: 1; height: 8px; background: var(--line); border-radius: 4px; overflow: hidden; }
+  .meter > i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+  .count { font-variant-numeric: tabular-nums; color: var(--muted); white-space: nowrap; }
+  .count b { color: var(--text); }
+  button { font: inherit; font-size: 14px; color: var(--text); background: var(--card); border: 1px solid var(--line);
+    border-radius: 6px; padding: 4px 10px; cursor: pointer; white-space: nowrap; }
+  button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); background: var(--tag); }
+
+  /* 섹션 = 카드 */
+  section { background: var(--card); border: 1px solid var(--line); border-radius: 10px; margin-top: 20px; overflow: hidden; }
+  .sec-head { display: flex; align-items: baseline; gap: 10px; padding: 14px 18px 10px; border-bottom: 1px solid var(--line); }
+  .sec-head h2 { font-size: 17px; margin: 0; flex: 1; min-width: 0; }
+  .sec-head .where { display: block; font-size: 13px; font-weight: 400; color: var(--muted); margin-top: 2px; }
+  .sec-count { font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .sec-count.done { color: var(--ok); font-weight: 600; }
+
+  /* 항목 한 줄: 체크 | 내용 | 버전 */
+  .item { display: grid; grid-template-columns: 20px minmax(0, 1fr) auto; gap: 4px 12px; align-items: start;
+    padding: 14px 18px; border-top: 1px solid var(--line); cursor: pointer; }
+  .sec-head + .item { border-top: 0; }
+  .item:hover { background: var(--hover); }
+  .item input { margin: 3px 0 0; width: 18px; height: 18px; accent-color: var(--accent); cursor: pointer; }
+  .title { font-weight: 600; }
+  .ver { font-size: 12px; line-height: 20px; color: var(--accent); background: var(--tag); border-radius: 4px; padding: 0 7px; white-space: nowrap; margin-top: 2px; }
+  .detail { grid-column: 2 / 4; margin: 2px 0 0; padding-left: 18px; color: var(--muted); font-size: 14px; }
+  .detail li { margin: 2px 0; }
+  .callout { grid-column: 2 / 4; margin-top: 6px; padding: 6px 10px; border-left: 3px solid var(--warn); background: var(--warn-bg);
+    border-radius: 0 6px 6px 0; font-size: 14px; }
+  .callout b { color: var(--warn); margin-right: 6px; }
+  .callout.info { border-left-color: var(--accent); background: var(--tag); }
+  .callout.info b { color: var(--accent); }
+  .callout.ok { border-left-color: var(--ok); background: var(--ok-bg); }
+  .callout.ok b { color: var(--ok); }
+  .item:has(input:checked) > :not(input) { opacity: .5; }
+  body.only-left .item:has(input:checked) { display: none; }
+  body.only-left section.all-done { display: none; }
+
+  .legend { color: var(--muted); font-size: 13.5px; margin: 24px 0 0; display: grid; gap: 6px; }
+  .legend .callout { margin: 0; }
+  @media (max-width: 560px) {
+    .item { grid-template-columns: 20px minmax(0, 1fr); }
+    .ver { grid-column: 2; justify-self: start; margin-top: 0; }
+    .detail, .callout { grid-column: 2; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <h1>정식 업데이트 화면 체크리스트</h1>
+  <p class="sub">마지막 main <b>v1.5.0</b> → dev <b>v1.6.50</b>. 개발 서버(:4444)에서 화면으로 볼 것만 추렸습니다.</p>
+  <p class="sub">자세한 것은 <code>CHANGELOG.md</code> · 장부 "아침에 볼 것"(<code>docs/superpowers/plans/2026-11-25-split-first-ledger.md</code>).</p>
+  <div class="bar">
+    <div class="meter"><i id="fill"></i></div>
+    <span class="count" id="count">0 / 0</span>
+    <button id="only-left" type="button" aria-pressed="false">남은 것만</button>
+    <button id="reset" type="button">비우기</button>
+  </div>
+  <div id="list"></div>
+  <div class="legend">
+    <div class="callout"><b>정할 것</b>사용자가 써 보고 정할 동작(장부 "아침에 볼 것").</div>
+    <div class="callout info"><b>참고</b>이미 정한 것 · 확인 범위의 한계.</div>
+    <div class="callout ok"><b>결과</b>자동 검사를 돌린 결과(기준 커밋과 함께).</div>
+    <p>배포 메모: Alembic 0038(<code>extractions.split_rule</code>) 등 더하기만 — 배포 전 백업 확인.</p>
+  </div>
+</main>
+<script>
+  // 항목 한 곳. id는 체크 저장 열쇠라 바꾸지 않는다(순서를 바꿔도 체크가 남는다).
+  // note: [종류, 글] — warn = 정할 것, info = 참고, ok = 결과
+  const SECTIONS = [
+    { title: "먼저 — 자동 검사", where: "로컬 워크트리, 결과는 장부 \"이어 가기\" 1번 아래", items: [
+      { id: "auto-smoke", title: "전체 스모크 <code>FULL=1</code> 통과",
+        note: ["ok", "11-26 <code>2ccff578</code>: 2522 통과 · 1 흔들림(New 판 그림 캡션) — 검사를 고침 <code>f2e20b78</code>, 부하 속 확인은 다음 <code>FULL=1</code>에서"] },
+      { id: "auto-audits", title: "감사 넷", detail: ["layout <code>DS=worst</code>", "overlap — 새 장면 <code>assign-cell-menu</code>", "contrast", "manual-shots(<code>MANUAL=app</code> · 시스템)"],
+        note: ["ok", "11-26 <code>f2e20b78</code>: overlap 80/80 · contrast · manual-shots 통과, layout 196 중 5 실패 → 관리 역할 표 고침(v1.6.32) · 낡은 기대값 둘 고침<br>11-27 dev v1.6.41(바뀐 화면만): layout <code>DS=worst</code> Assign · 상단 바 · 관리 19항목 151/151 · overlap Assign 장면 다섯 × 1120 · 1280 · 1440 · 1920 40/40 + 새 장면 <code>assign-pane-head-narrow</code>(v1.6.43) 4/4 · contrast 전부 통과 · 설명서 그림 바뀐 장면 7(새 4 · 다시 3). 스모크 <code>FULL=1</code> 연습 페이지 모음 브랜치 ALL PASS 2588, 최종 dev v1.6.43 = ALL PASS 2588. perf(운영 빌드 · 극단 시드): 52문서 CPU1 J 24.1→9.7 · Delete 24.5→10.4ms, CPU4 J 53.2→51.7 · Delete 57.7→56.1ms, 작은 문서 CPU1 필터 Delete 6.4→21.5ms(v1.6.23 23ms 수준의 잡음), 모두 100ms 아래 · 스크롤 끊김 0"] },
+      { id: "auto-after", title: "기준 커밋 뒤 dev가 바뀌었으면 그 화면만 다시", detail: ["바뀐 화면의 스모크 <code>ONLY=\"&lt;화면&gt;:\"</code>", "그 화면의 감사 항목 <code>ONLY=&lt;id&gt;</code>"] },
+      { id: "auto-perf", title: "perf 다시 재기", detail: ["극단 시드", "8a에서 몇 칸이 ±20% 오감", "7g 괄호선은 아직 안 잼"] },
+      { id: "auto-manual", title: "설명서 그림과 머리", detail: ["그림은 바뀐 장면만 <code>ONLY=&lt;장면&gt;</code>", "머리 <code>version</code> · <code>updated</code>"] },
+    ] },
+    { title: "숨긴 것 · 없앤 것", where: "Bundle 화면 전체", items: [
+      { id: "hide-drafting", ver: "v1.6.4", title: "새 문서를 만드는 쪽이 보이지 않는다",
+        detail: ["Order · 번호로 더하기 · 칸 배정 · 템플릿 보기", "결과물 C · Excel C 시트", "칸 추천 · 번역 · 나누기 AI", "이미 보낸 줄은 보이고, 배정 취소된다"] },
+      { id: "hide-move", ver: "v1.6.5", title: "다른 Bundle로 이동이 없다", detail: ["옛 이동 줄은 읽기 전용", "배정 취소로만 푼다"] },
+    ] },
+    { title: "쪼개기 · 올리기", where: "문서 단계 · 쪼개기", items: [
+      { id: "split-para", ver: "v1.6.3", title: "새로 올린 문서는 문단마다 언어별 박스 하나", detail: ["이미 올린 문서는 그대로"] },
+      { id: "split-new", ver: "v1.6.6", title: "새 New 문서도 Old와 같은 규칙으로 쪼개진다" },
+      { id: "split-front", ver: "v1.6.11", title: "1장 앞 · 개정 이력이 <b>DELETED</b> 접힌 블록으로",
+        detail: ["사유 쓰기 <kbd>R</kbd> · 삭제 취소 <kbd>U</kbd>", "우클릭 \"여기부터 본문\""] },
+    ] },
+    { title: "Assign — 고르기 · 글쇠", where: "/bundles/&lt;id&gt;/assign", items: [
+      { id: "key-queue", ver: "v1.6.8", title: "저장이 느려도 누른 글쇠가 차례대로 나간다", detail: ["뒤에 선 것은 <b>Queued n</b> 칩"] },
+      { id: "key-enter", ver: "v1.6.12", title: "Enter는 어디서든 확정 단추", detail: ["마우스로 누른 뒤 <kbd>Space</kbd>는 미리보기"] },
+      { id: "key-new", ver: "v1.6.13", title: "바뀐 글쇠", detail: ["보류 <kbd>⇧H</kbd>", "AI 카드 <kbd>⇧A</kbd> — 옛 글쇠는 안내만", "<kbd>?</kbd> 도움말"] },
+      { id: "key-join", ver: "v1.6.17", title: "이웃 합치기 <kbd>⇧J</kbd><kbd>⇧J</kbd> · <kbd>⇧K</kbd><kbd>⇧K</kbd>", detail: ["첫 누름은 점선 · 안내만"] },
+      { id: "pick-piece", ver: "v1.6.23", title: "누른 조각은 진하게, 짝 · 표는 얇은 테와 꼬리표", detail: ["표 칸을 눌러도 배정 · 삭제는 표 전체"] },
+      { id: "pick-shift", ver: "v1.6.26", title: "Shift로 고른 줄은 덩어리마다 굵은 테와 \"n줄 고름\"",
+        note: ["warn", "첫 Shift+클릭은 지금 고른 줄도 넣는다"] },
+      { id: "pick-g", ver: "v1.6.30", title: "<kbd>⇧G</kbd>로 넣고 빼기, 위쪽 바에서 일괄", detail: ["삭제 · 배정 취소 · →KO · →EN", "Ctrl+Z 한 번에 되돌림"] },
+      { id: "pick-bracket", ver: "v1.6.29", title: "떨어진 짝이 둘 다 보이면 왼쪽 괄호선", detail: ["그동안 안내 줄은 숨는다"],
+        note: ["warn", "괄호선이 보이는 동안 고른 박스 아래에 빈 줄이 남는다"] },
+    ] },
+    { title: "Assign — 손질", where: "/bundles/&lt;id&gt;/assign", items: [
+      { id: "edit-sentences", ver: "v1.6.27", title: "문장마다 나누기", detail: ["우클릭 · Shape 줄 · <kbd>⇧S</kbd>", "한 문장뿐이면 까닭 알림"] },
+      { id: "edit-multi", ver: "v1.6.28", title: "여럿 합치기 · 표 여럿 벗기기 — 위쪽 바", detail: ["짝 줄은 언어끼리 합쳐 다시 짝", "되돌리기 한 번"] },
+      { id: "edit-cellmenu", ver: "v1.6.25", title: "표 우클릭은 \"이 칸\" · \"이 표\"", detail: ["항목에 올리면 닿는 칸이 칠해진다"],
+        note: ["warn", "양 단 보기의 New 표 칸에는 메뉴가 없다"] },
+      { id: "edit-menu-aside", ver: "v1.6.27", title: "키 큰 메뉴는 박스를 덮지 않고 옆으로 비킨다" },
+      { id: "edit-continue", ver: "v1.6.31", title: "Old 표를 벗기면 숫자 칸이 5.1 · 5.2로 이어진다", detail: ["첫 Ctrl+Z는 번호만 되돌림"] },
+      { id: "edit-pull", ver: "v1.6.31", title: "번호 있는 줄을 합치면 뒤 번호가 당겨진다",
+        note: ["warn", "제목 둘을 합치면 문서 끝까지 당겨진다 — 써 보고 정함"] },
+      { id: "follow-pick", ver: "v1.6.21 · 1", title: "영어 표 머리 \"짝 표 고르기\"", detail: ["닮은 한글 표가 둘이면 고르라고 묻는다"] },
+      { id: "follow-apply", ver: "v1.6.21 · 2", title: "벗긴 영어 표 \"한글 표처럼 하기\"",
+        detail: ["순서 · 삭제 · 합치기 · 들여쓰기 · 번호 칩", "Apply 뒤 Ctrl+Z 한 번"] },
+      { id: "follow-ai", ver: "v1.6.21 · 3", title: "행 꼴이 다르면 AI에 묻는다", note: ["info", "사내 AI · 가짜 AI로만 확인했다"] },
+      { id: "edit-stay", ver: "v1.6.16", title: "되돌리기 · 편집 처리 중 누른 줄에 고름이 남는다", detail: ["되돌린 줄로 튀지 않음"] },
+      { id: "edit-motion", ver: "v1.6.9", title: "삭제 접기 · 벗기기 전환이 누르는 순간 시작", detail: ["실패하면 거꾸로 돌아감"] },
+      { id: "edit-numdlg", ver: "v1.6.7", title: "번호 칸 창에 확인 · 취소 단추" },
+    ] },
+    { title: "Assign — 용지 · 판", where: "/bundles/&lt;id&gt;/assign, 양 단(Old | New)", items: [
+      { id: "paper-new", ver: "v1.6.22 · 6-1", title: "이미 쓴 New 문서도 양 단에서 Old와 같은 용지",
+        detail: ["머리말 · 꼬리말 · 그림 탭", "제목 줄", "진짜 표 · 그림"] },
+      { id: "paper-newpick", ver: "v1.6.22 · 6-2", title: "New도 누르면 고름",
+        detail: ["누른 박스 아래 단추 줄에서 잇기 · 다듬기", "Old · New 둘 다 고르면 Enter가 잇기", "빈 곳을 누르면 두 고름 해제(Esc는 Old 고름 유지)"] },
+      { id: "paper-newtools", ver: "v1.6.22 · 6-3", title: "New에서도 손질",
+        detail: ["표 벗기기 · 다시 표로 · 번호 · 나누기", "제목 되돌리기 · 줄 순서 · 앞부분 삭제 되돌리기"] },
+      { id: "paper-tables", ver: "v1.6.24", title: "Tables 탭 · 본문 표 접기", detail: ["새로 고침해도 접힘을 기억", "표 탭에도 짝 표 고르기 · 따라 하기"] },
+      { id: "paper-narrow", ver: "v1.6.2", title: "1440px보다 좁으면 오른쪽 칸을 떼어 옮기고 접는다" },
+      { id: "paper-panel", ver: "v1.6.0", title: "짝 · 그림 위치 판을 열어도 용지 폭 · 자리 그대로" },
+      { id: "paper-progress", ver: "v1.6.18", title: "진행 숫자는 \"정함\" + 처분별 막대", detail: ["그림은 따로 셈"] },
+      { id: "paper-ai", ver: "v1.6.20", title: "AI 제안은 정하지 않은 줄에만", detail: ["합치거나 나눈 줄의 제안은 거둬진다"] },
+    ] },
+    { title: "결과물 · Excel", where: "/bundles/&lt;id&gt;/outputs", items: [
+      { id: "out-strike", ver: "v1.6.15", title: "Excel A에서 삭제 줄의 Old 글에 취소선" },
+      { id: "out-preview", ver: "v1.6.14", title: "Space 미리보기에서 목차가 한 줄로 접힌다", detail: ["문단 Excel을 받을 때 넣을 것을 고르는 창"] },
+      { id: "out-numbers", ver: "v1.6.31", title: "문단 Excel 칸 번호 5.1 · 5.2", detail: ["사람이 고친 칸은 \"Source 3 → 5.2.1\""] },
+    ] },
+    { title: "1차 피드백", where: "/bundles/&lt;id&gt;/assign 외 — 11-26 밤 사용자 피드백", items: [
+      { id: "fb-scrollbar", ver: "v1.6.33", title: "스크롤 막대가 칸 오른쪽 끝 가까이 마우스를 대면 흐리게 보인다", detail: ["스크롤하는 동안은 진하게(전과 같음)"] },
+      { id: "fb-tab", ver: "v1.6.34", title: "<kbd>Tab</kbd> · <kbd>⇧Tab</kbd>은 <kbd>J</kbd> · <kbd>K</kbd>, 들여쓰기는 <kbd>`</kbd> · <kbd>⇧`</kbd>",
+        detail: ["용지에 포커스가 있을 때만 — 단추 줄 · 오른쪽 칸에서는 Tab이 포커스를 옮긴다", "맥 한글 입력(₩)에서도 <kbd>`</kbd>"] },
+      { id: "fb-pairdbl", ver: "v1.6.35", title: "한 단 보기에서 짝 판을 띄운 채 안내 줄을 두 번 누르면 짝으로 간다" },
+      { id: "fb-forms", ver: "v1.6.36", title: "새로 올린 문서의 Forms · 서식 · 양식 제목 아래 줄이 참조 줄", detail: ["\"References and Forms\" · \"참고 문서 및 서식\"도"] },
+      { id: "fb-kbmap", ver: "v1.6.38", title: "도움말(<kbd>?</kbd>) 아래 <b>Keyboard map</b> — 자판 한 장 그림", detail: ["글쇠마다 위 ⇧ · 아래 그냥", "옮기기 · 판단 · 손질 · 보기 색", "Esc로 닫고 단추로 포커스"] },
+      { id: "fb-queue", ver: "v1.6.37", title: "밀린 명령에 이름 — 박스 칩 <b>Queued · Merge</b>, 박스 없는 일은 Undo 옆 알약", detail: ["되돌리기 · 다시 하기 · 장벽 뒤 글쇠는 위쪽 줄", "나누기 이름이 단추와 같은 Split(나누기)"] },
+      { id: "fb-pickbar", ver: "v1.6.40", title: "단추 줄은 폭이 되면 이름까지, 좁으면 덜 쓰는 것부터 아이콘", detail: ["접히는 차례: 이을 상대 → 짝 → 위 합치기 → 아래 합치기 → 나누기", "아이콘에 올리면 0.16초에 펼침", "못 하는 손질은 이름을 보이고 까닭은 툴팁", "⋯는 줄 오른쪽 끝"] },
+      { id: "fb-newmenu", ver: "v1.6.39", title: "양 단 New 표 칸 · 표 머리에도 우클릭 메뉴(이 칸 · 이 표)", detail: ["메뉴 글쇠 · <kbd>Shift</kbd>+<kbd>F10</kbd>도 마지막에 고른 박스(Old · New)에서 열림"] },
+      { id: "fb-menuclose", ver: "v1.6.41", title: "사용자 메뉴 · AI 작업 목록에서 앱 안 링크로 이동하면 메뉴가 닫힌다", detail: ["전에는 열린 채 남았다"] },
+      { id: "fb-practice", ver: "v1.6.42", title: "연습 페이지 <code>/practice</code> — 서버에 아무것도 쓰지 않는다", detail: ["사용자 메뉴 <b>Practice</b> · 설명서 머리에서 들어감", "과제 12개가 손짓대로 자동 ✓(안내 모양은 v1.6.44 말풍선)"] },
+      { id: "fb-coach", ver: "v1.6.44", title: "연습 화면 과제 안내 = 말풍선 스포트라이트", detail: ["화면이 살짝 어두워지고 눌러야 할 상자만 밝게 · 파란 테두리가 숨쉼", "말풍선: 과제 n/12 · 장 이름 · 글쇠 · 설명서 → · 건너뛰기", "해내면 카드가 뒤집혀 체크 → 다음 과제로", "위 띠의 점 12개(누르면 그 과제), 다 하면 마치는 카드"] },
+      { id: "fb-sheet-resize", ver: "v1.6.45", title: "Space 시트 위 손잡이를 끌어 높이 조절", detail: ["작업 화면의 30~90%", "새로 고침 뒤에도 그 높이"] },
+      { id: "fb-original", ver: "v1.6.46", title: "Space 시트 탭 둘 — 결과 미리보기 · <b>원본 보기</b>(인쇄 미리보기)", detail: ["원본 탭: 회색 책상 위 흰 종이(다크에서도), 머리말 · 꼬리말 · 쪽 번호, 오른쪽 아래 쪽 칩 \"3 / 12\"", "J · K로 고른 박스의 문단 · 표 칸 · 표 전체가 칠해지고(막대는 글자 밖 왼쪽, v1.6.48) 그 자리로 따라감(가까우면 굴림, 멀면 흐렸다 밝힘)", "열어 둔 시트에서 Space 탁 → 0.3초 흐려지며 닫힘, 그사이 한 번 더 탁 → 탭이 바뀜", "양 단에서 Old 다음 New 박스를 골라도 열어 둔 시트가 남고, New 용지에서도 Space가 시트를 엶(v1.6.49)", "마지막 탭 기억 · 시트를 닫았다 열어도 쉬머 없이 바로", "양 단: Old · New 두 원본이 본 화면 세로선 비율로 나란히(앱에서 만든 New는 안내)", "PDF 원본 · 연습 화면은 안내만", "EMF · WMF 그림(옛 아이콘 · Visio · Excel 미리보기)이 그려짐 — 못 그리면 빗금 상자"] },
+      { id: "fb-polish", ver: "v1.6.50", title: "단추 줄 호버 · 우클릭 · 삭제 줄 Space · 연습 안내형", detail: ["접힌 단추에 올려도 단추가 움직이지 않고 이름은 툴팁", "줄이 떠 있는 박스를 우클릭해도 단추 줄 유지, ⋯에 그 밖의 손질뿐이면 바로 우클릭 메뉴", "접힌 삭제 줄 · 삭제 블록을 누른 뒤 Space로 시트", "연습: 과제 글쇠만 통하고 막힌 글쇠는 말풍선 알림, 양 단 → V → 한 단 → V의 14과제"] },
+      { id: "fb-headfit", ver: "v1.6.43", title: "문서가 하나인 Assign 칸 머리 줄 — 좁은 칸에서 제목이 말줄임", detail: ["확대 단추가 옆 칸 머리를 덮지 않음", "전체 이름은 툴팁"] },
+    ] },
+    { title: "관리 화면", where: "/admin — v1.6.19(관리 세션에서 중간에 합침), 칩 숫자는 스텝", items: [
+      { id: "adm-url", ver: "0", title: "하위 탭이 주소에 남는다", detail: ["새로 고침 · 뒤로 가기", "대상 이름은 화면 언어"] },
+      { id: "adm-grants", ver: "1 · 2", title: "부여 목록 + 상세",
+        detail: ["유효 권한 조회를 흡수", "부여 없는 직원 찾기", "역할 여러 개 더하기 <kbd>A</kbd> — 한 번에 저장"] },
+      { id: "adm-undo", ver: "2", title: "회수는 5초 안에 <b>Undo</b>" },
+      { id: "adm-ai", ver: "3", title: "<b>사내 AI로 등록</b>",
+        detail: ["평소 말투로 지시 → 줄마다 미리보기 → 고른 줄만 반영", "동명이인은 그 줄에서 고름"],
+        note: ["info", "실명이 사내 AI로 간다(사용자 결정 2026-11-26)"] },
+      { id: "adm-matrix", ver: "4", title: "역할 × 권한 표",
+        detail: ["바뀐 칸 저장 띠 · 저장 전 확인", "받은 대상 명단 → 부여로 거르기", "권한 설명"] },
+      { id: "adm-matrix-fit", ver: "v1.6.32", title: "1120 창에서 역할 표가 틀 안에서만 옆으로 넘어간다",
+        detail: ["화면 전체에 가로 스크롤이 생기지 않음", "아주 긴 역할 이름은 두 줄까지"] },
+      { id: "adm-look", ver: "5 · 6", title: "표 모양 · 메뉴 묶음 제목 · 표준 골격 한 줄" },
+      { id: "adm-guides", ver: "7", title: "AI 지침 이름 · 버전 타임라인", detail: ["새 지침 <code>prompt.grant</code> v1"] },
+      { id: "adm-bundles", ver: "7", title: "Bundle 관리", detail: ["상태 거르기 · 진행 막대 · 구성원 요약"] },
+      { id: "adm-logs", ver: "8", title: "변경 기록 · 배치 · 동기화 · AI 사용량",
+        detail: ["변경 기록 날짜 묶음 · 거르기 · 이어 불러오기", "배치는 한 작업 한 줄", "동기화 요약 · AI 사용량 합계"] },
+      { id: "adm-narrow", ver: "9", title: "좁은 창에서 Bundle 관리 표가 틀 안에 남는다" },
+    ] },
+  ];
+  const NOTE_LABEL = { warn: "정할 것", info: "참고", ok: "결과" };
+
+  // 체크 상태는 이 브라우저에만 둔다(저장소가 막혀도 화면은 돈다)
+  const KEY = "release-checklist-v2";
+  const readSaved = () => { try { return new Set(JSON.parse(localStorage.getItem(KEY) || "[]")); } catch { return new Set(); } };
+  const writeSaved = (ids) => { try { localStorage.setItem(KEY, JSON.stringify(ids)); } catch { /* 저장 못 해도 화면은 그대로 */ } };
+  const saved = readSaved();
+
+  const renderItem = (item) => `
+    <label class="item">
+      <input type="checkbox" data-id="${item.id}"${saved.has(item.id) ? " checked" : ""}>
+      <span class="title">${item.title}</span>
+      ${item.ver ? `<span class="ver">${item.ver}</span>` : "<span></span>"}
+      ${item.detail ? `<ul class="detail">${item.detail.map((line) => `<li>${line}</li>`).join("")}</ul>` : ""}
+      ${item.note ? `<div class="callout ${item.note[0] === "warn" ? "" : item.note[0]}"><b>${NOTE_LABEL[item.note[0]]}</b>${item.note[1]}</div>` : ""}
+    </label>`;
+  document.getElementById("list").innerHTML = SECTIONS.map((sec) => `
+    <section>
+      <div class="sec-head"><h2>${sec.title}<span class="where">${sec.where}</span></h2><span class="sec-count"></span></div>
+      ${sec.items.map(renderItem).join("")}
+    </section>`).join("");
+
+  const boxes = [...document.querySelectorAll("input[type=checkbox]")];
+  const update = () => {
+    const done = boxes.filter((b) => b.checked);
+    writeSaved(done.map((b) => b.dataset.id));
+    document.getElementById("count").innerHTML = `<b>${done.length}</b> / ${boxes.length}`;
+    document.getElementById("fill").style.width = `${(done.length / boxes.length) * 100}%`;
+    document.querySelectorAll("section").forEach((sec) => {
+      const own = [...sec.querySelectorAll("input")];
+      const n = own.filter((b) => b.checked).length;
+      const label = sec.querySelector(".sec-count");
+      label.textContent = n === own.length ? `✓ ${n} / ${own.length}` : `${n} / ${own.length}`;
+      label.classList.toggle("done", n === own.length);
+      sec.classList.toggle("all-done", n === own.length);
+    });
+  };
+  boxes.forEach((b) => b.addEventListener("change", update));
+  const onlyLeft = document.getElementById("only-left");
+  onlyLeft.addEventListener("click", () => {
+    const on = onlyLeft.getAttribute("aria-pressed") !== "true";
+    onlyLeft.setAttribute("aria-pressed", String(on));
+    document.body.classList.toggle("only-left", on);
+  });
+  document.getElementById("reset").addEventListener("click", () => { boxes.forEach((b) => { b.checked = false; }); update(); });
+  update();
+</script>
+</body>
+</html>

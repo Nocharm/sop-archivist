@@ -13,7 +13,7 @@ from app.sop.constants import MAX_PAIR_SIDE, PAIR_CONFIRMED, PAIR_SOURCE_HUMAN
 from app.sop.decision_steps import UndoMetaIn
 from app.sop.decisions import DbId
 from app.sop.detach import sweep_translations
-from app.sop.editing import PAIR_LANGS, TEXT_KINDS, ensure_unique_units, load_active_units
+from app.sop.editing import PAIR_LANGS, TEXT_KINDS, ensure_not_noise, ensure_unique_units, load_active_units
 from app.sop.errors import raise_rule
 from app.sop.events import record_event
 from app.sop.models import Document, TargetSource, Unit, UnitPair, UnitPairMember
@@ -55,10 +55,12 @@ async def create_pair(session: AsyncSession, document: Document, unit_ids: Seque
 
     한글·영어가 모두 있고 한쪽 MAX_PAIR_SIDE 이하여야 한다. 다른 확정 짝에 든 단위가 있으면 409 unit_already_paired,
     이미 서로 다른 곳으로 보낸 단위들이면(운명이 갈림, pair_settle) 409 pair_fates_differ — 한 줄의 처분은 늘 하나다(제품 명세 §6.5).
+    저절로 삭제된 줄은 짝을 맺지 않는다(422 toc_line_locked).
     지우는 AI 제안 짝은 채택을 남긴다 — 사람이 같은 단위 집합으로 다시 만들면 그대로, 아니면 버림이다.
     """
     ensure_unique_units(unit_ids)
     units = await load_active_units(session, await get_latest_extraction_id(session, document.id), unit_ids)
+    ensure_not_noise(units.values())
     # 그림·표는 언어가 중립이라 짝의 어느 쪽도 아니다
     wrong = sorted(unit.id for unit in units.values() if unit.kind not in TEXT_KINDS)
     if wrong:
@@ -95,13 +97,13 @@ async def create_pair(session: AsyncSession, document: Document, unit_ids: Seque
     session.add_all(UnitPairMember(pair_id=pair.id, unit_id=unit_id) for unit_id in sorted(unit_ids))
     _record(session, document, "pair.create", pair.id, actor)
     await session.flush()
-    await _sweep_paired_translations(session, document.bundle_id, unit_ids)
+    await sweep_paired_translations(session, document.bundle_id, unit_ids)
     # 확정 짝이라 settle_pairs가 다시 확정하거나 쓸지 않는다 — 운명은 위에서 막았다. 짝을 맺는 모든 길이 같은 끝을 지나게 부른다
     await settle_pairs(session, document.bundle_id, unit_ids, actor)
     return pair
 
 
-async def _sweep_paired_translations(session: AsyncSession, bundle_id: int, unit_ids: Collection[int]) -> None:
+async def sweep_paired_translations(session: AsyncSession, bundle_id: int, unit_ids: Collection[int]) -> None:
     """짝이 확정되면 짝의 다른 언어 단위가 번역을 대신하므로, 묶인 단위를 출처로 둔 새 문장의 번역을 출처가 바뀐 것처럼 쓸어 낸다(제품 명세 §7.9).
 
     AI 번역은 지우고 확정 번역은 보류다(sweep_translations). 쓸리는 것은 기원이 번역(origin translation)인 행뿐이라 사람이 쓴
@@ -151,7 +153,7 @@ async def mark_pair_confirmed(session: AsyncSession, document: Document, pair: U
     """제안 짝을 확정으로 바꾼다 — 사람의 확인(confirm_pair)과 줄 확정 뒤 서버(pair_settle)가 함께 쓴다.
 
     AI 제안 짝이면 그대로 채택으로 남긴다 — 짝은 글을 고칠 수 없어 확정이 곧 제안 그대로다(설계 §6.11).
-    확정되는 순간 묶인 단위의 번역을 쓸어 낸다(_sweep_paired_translations).
+    확정되는 순간 묶인 단위의 번역을 쓸어 낸다(sweep_paired_translations).
     """
     pair.status = PAIR_CONFIRMED
     if pair.suggestion_id is not None:
@@ -159,7 +161,7 @@ async def mark_pair_confirmed(session: AsyncSession, document: Document, pair: U
     _record(session, document, "pair.confirm", pair.id, actor)
     await session.flush()
     unit_ids = await session.scalars(select(UnitPairMember.unit_id).where(UnitPairMember.pair_id == pair.id))
-    await _sweep_paired_translations(session, document.bundle_id, list(unit_ids))
+    await sweep_paired_translations(session, document.bundle_id, list(unit_ids))
 
 
 async def dissolve_pair(session: AsyncSession, document: Document, pair: UnitPair, actor: str) -> None:

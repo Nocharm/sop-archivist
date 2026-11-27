@@ -131,9 +131,9 @@ for (const theme of ["light", "dark"]) {
     }
     // 누른 뒤에는 후보가 아니라 고른 줄이 된다 - 같은 줄을 계속 가리키게 testid로 붙잡는다
     const line = page.locator(`[data-testid="${await candidate.first().getAttribute("data-testid")}"]`);
-    await line.locator(".new-hit").click();
-    // 그 자리 메뉴(확정·취소)까지 뜬 상태로 잰다 - 늦게 뜨므로 보일 때까지 기다린다
-    await page.locator('[data-testid="assign-link-menu-confirm"]').waitFor({ state: "visible", timeout: T });
+    await line.locator(".new-text").click();
+    // 누른 박스 아래 단추 줄(잇기 · 손질, 쪼개기 먼저 §8)까지 뜬 상태로 잰다 - 펼쳐 들어오므로 보일 때까지 기다린다
+    await page.locator('[data-testid="assign-pick-bar-link"]').waitFor({ state: "visible", timeout: T });
   }
   async function openPairViewWithToast(page) {
     const headers = { "X-Dev-User": "qa.member" };
@@ -325,7 +325,10 @@ for (const theme of ["light", "dark"]) {
     console.log("FAIL audit did not flag the low-contrast probe");
     total += 1;
   }
+  // 숨긴 기능(새 문서를 만드는 쪽)의 장면만 켜고 감사한다 - 나머지는 실사용 화면 그대로
+  const DRAFTING_SCREENS = new Set(["tobe-open", "outputs", "order-moved", "assign-tree-heading", "assign-composed", "review", "outputs-ai"]);
   for (const [name, path, ready, prep, options] of screens) {
+    await page.evaluate((on) => (on ? window.localStorage.setItem("sopa.drafting", "1") : window.localStorage.removeItem("sopa.drafting")), DRAFTING_SCREENS.has(name));
     // before - 이동 전에 응답을 가로채는 장면(처음 받는 응답을 바꿔야 한다). 정리 함수를 돌려주면 감사 뒤에 부른다
     const undo = options?.before ? await options.before(page) : null;
     await page.goto(`${BASE}${path}`);

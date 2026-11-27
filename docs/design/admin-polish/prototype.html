@@ -1,0 +1,998 @@
+<title>관리 화면 프로토타입</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* 레이아웃: 위에 짧은 안내, 아래에 실제로 눌러 보는 앱 틀(상단 바 · 묶음 레일 · 본문). 라이트 한 벌, 앱 토큰과 모션 토큰을 그대로 쓴다 */
+:root {
+  color-scheme: light;
+  --page: oklch(.975 .003 250);
+  --bg: oklch(.965 .004 250); --surface: #fff; --sunken: oklch(.978 .0032 250);
+  --ink: oklch(.25 .012 255); --ink-2: oklch(.39 .009 255); --ink-3: oklch(.49 .0066 255); --ink-4: oklch(.6 .0054 255);
+  --line: oklch(.915 .0064 250); --line-2: oklch(.85 .008 250);
+  --accent: oklch(.45 .125 250); --brand: oklch(.78 .11 235); --top: oklch(.24 .01 255);
+  --sel: color-mix(in oklab, var(--accent) 8%, var(--surface));
+  --hover: color-mix(in oklab, var(--ink) 4%, var(--surface));
+  --accent-line: color-mix(in oklab, var(--accent) 28%, var(--surface));
+  --ring: 0 0 0 1.5px var(--accent), 0 0 0 5px color-mix(in oklab, var(--accent) 12%, transparent);
+  --danger: oklch(.49 .175 27); --warn: oklch(.52 .14 55); --ok: oklch(.5 .12 155);
+  --danger-tint: color-mix(in oklab, var(--danger) 9%, var(--surface));
+  --ok-tint: color-mix(in oklab, var(--ok) 10%, var(--surface));
+  --warn-tint: color-mix(in oklab, var(--warn) 11%, var(--surface));
+  --shadow-1: 0 1px 2px oklch(.25 .01 255 / .06);
+  --shadow-2: 0 1px 2px oklch(.25 .01 255 / .05), 0 8px 24px oklch(.25 .01 255 / .08);
+  --shadow-3: 0 24px 64px oklch(.2 .01 255 / .22);
+  --dur-fast: 100ms; --dur-base: 160ms; --dur-slow: 240ms;
+  --ease-enter: cubic-bezier(.16, 1, .3, 1); --ease-exit: cubic-bezier(.4, 0, 1, 1); --ease-move: cubic-bezier(.65, 0, .35, 1); --ease-pop: cubic-bezier(.34, 1.56, .64, 1);
+  --sans: "Pretendard", "Noto Sans KR", system-ui, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, Menlo, monospace;
+}
+* { box-sizing: border-box; }
+body { background: var(--page); color: var(--ink); font: 14px/1.55 var(--sans); -webkit-font-smoothing: antialiased; }
+button { font: inherit; color: inherit; }
+.wrap { max-width: 1440px; margin: 0 auto; padding-block: 24px 48px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); display: grid; gap: 16px; }
+.intro { display: grid; gap: 8px; }
+.intro h1 { margin: 0; font-size: 22px; letter-spacing: -.02em; }
+.intro p { margin: 0; color: var(--ink-3); font-size: 13.5px; max-width: 900px; }
+.tryme { display: flex; flex-wrap: wrap; gap: 6px; }
+.tryme span { font-size: 12px; padding: 3px 10px; border-radius: 999px; background: var(--surface); border: 1px solid var(--line); color: var(--ink-2); }
+.tryme span b { color: var(--accent); }
+
+/* 앱 틀 */
+.app { height: 840px; border-radius: 12px; overflow: hidden; border: 1px solid var(--line); box-shadow: var(--shadow-2); background: var(--bg); display: grid; grid-template-rows: 44px 52px minmax(0, 1fr); font-size: 13px; position: relative; }
+.app svg { flex: none; }
+.topbar { background: var(--top); color: oklch(.85 .005 255); display: flex; align-items: center; gap: 12px; padding: 0 20px; white-space: nowrap; overflow: hidden; }
+.topbar .brand { color: var(--brand); font-size: 17px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+.topbar .ver { font-family: var(--mono); font-size: 11px; color: oklch(.7 .005 255); }
+.topbar .pillx { border: 1px solid oklch(.42 .01 255); border-radius: 5px; padding: 2px 9px; font-size: 12px; }
+.phead { background: var(--surface); border-bottom: 1px solid var(--line); display: flex; align-items: center; padding: 0 20px; }
+.phead h1 { margin: 0; font-size: 18px; border-bottom: 2.5px solid var(--accent); line-height: 1.6; }
+.pbody { display: grid; grid-template-columns: 208px minmax(0, 1fr); min-height: 0; background: var(--surface); }
+.snav { border-right: 1px solid var(--line); padding: 14px 8px; display: flex; flex-direction: column; gap: 1px; overflow: auto; }
+.snav .grp { font-size: 11px; font-weight: 600; color: var(--ink-4); letter-spacing: .04em; padding: 12px 10px 4px; }
+.snav .grp:first-child { padding-top: 2px; }
+.snav button { display: flex; align-items: center; gap: 9px; height: 32px; padding: 0 10px; border-radius: 6px; color: var(--ink-2); border: 0; background: none; position: relative; text-align: left; cursor: pointer; transition: background var(--dur-base); white-space: nowrap; }
+.snav button:hover { background: var(--hover); }
+.snav button[aria-current="page"] { background: var(--sel); color: var(--ink); font-weight: 600; }
+.snav button[aria-current="page"]::before { content: ""; position: absolute; left: -8px; top: 6px; bottom: 6px; width: 2.5px; background: var(--accent); }
+.snav button svg { color: var(--ink-3); }
+.snav button[aria-current="page"] svg { color: var(--accent); }
+.snav button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.main { overflow: auto; min-height: 0; position: relative; scrollbar-gutter: stable; }
+.page { padding: 20px 26px 28px; display: flex; flex-direction: column; gap: 14px; min-height: 100%; }
+.page.fill { height: 100%; min-height: 0; }
+.hrow { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.ptitle { font-size: 16px; font-weight: 700; letter-spacing: -.01em; }
+.psub { font-size: 12.5px; color: var(--ink-3); margin-top: -10px; font-variant-numeric: tabular-nums; }
+.sp { flex: 1; }
+.btn { height: 32px; padding: 0 13px; border-radius: 6px; border: 1px solid var(--line-2); background: var(--surface); display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; box-shadow: var(--shadow-1); cursor: pointer; transition: background var(--dur-base), border-color var(--dur-base), opacity var(--dur-base); font-size: 13px; }
+.btn:hover { background: var(--hover); }
+.btn.pri { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+.btn.pri:hover { background: color-mix(in oklab, var(--accent) 88%, var(--ink)); }
+.btn.soft { background: var(--sel); border-color: var(--accent-line); color: var(--accent); font-weight: 600; }
+.btn.ghost { border-color: transparent; box-shadow: none; color: var(--ink-3); background: none; }
+.btn.dz { color: var(--danger); }
+.btn.sm { height: 28px; font-size: 12.5px; padding: 0 10px; }
+.btn:disabled { opacity: .45; cursor: default; }
+.btn:focus-visible, .ib:focus-visible, .mx:focus-visible, .pf:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.search { height: 34px; border: 1px solid var(--line-2); border-radius: 7px; padding: 0 11px; display: flex; align-items: center; gap: 8px; color: var(--ink-4); background: var(--surface); transition: border-color var(--dur-base), box-shadow var(--dur-base); }
+.search:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in oklab, var(--accent) 12%, transparent); }
+.search input { border: 0; outline: 0; background: none; flex: 1; min-width: 0; font: inherit; font-size: 13px; color: var(--ink); }
+.search kbd { font-family: var(--mono); font-size: 10.5px; border: 1px solid var(--line-2); border-radius: 4px; padding: 0 5px; color: var(--ink-4); }
+.pills { display: inline-flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.pf { height: 28px; padding: 0 11px; border-radius: 999px; border: 1px solid var(--line-2); display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--ink-2); background: var(--surface); cursor: pointer; transition: border-color var(--dur-base), background var(--dur-base); }
+.pf:hover { border-color: var(--ink-4); }
+.pf[aria-pressed="true"] { border-color: var(--accent); background: var(--sel); color: var(--ink); font-weight: 600; }
+.pf i { width: 7px; height: 7px; border-radius: 50%; background: var(--ink-4); }
+.pf b { font-weight: 600; color: var(--ink-3); font-variant-numeric: tabular-nums; min-width: 2ch; text-align: right; }
+select.sel { height: 28px; border: 1px solid var(--line-2); border-radius: 6px; padding: 0 8px; font: inherit; font-size: 12.5px; color: var(--ink-2); background: var(--surface); }
+.av { width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; font-size: 12px; font-weight: 600; background: color-mix(in oklab, var(--accent) 12%, var(--surface)); color: var(--accent); flex: none; }
+.av.lg { width: 44px; height: 44px; font-size: 16px; }
+.av.dept { border-radius: 8px; background: color-mix(in oklab, var(--ink) 7%, var(--surface)); color: var(--ink-2); }
+.two { display: grid; gap: 1px; min-width: 0; line-height: 1.35; }
+.t1 { font-weight: 600; color: var(--ink); font-size: 13.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.t2 { color: var(--ink-4); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.k { font-family: var(--mono); font-size: 11px; }
+.id { font-family: var(--mono); font-size: 11.5px; color: var(--ink-4); font-weight: 400; }
+.chip { display: inline-flex; align-items: center; gap: 5px; height: 24px; font-size: 12px; padding: 0 8px; border-radius: 6px; color: var(--ink-2); background: color-mix(in oklab, var(--ink) 5.5%, var(--surface)); white-space: nowrap; }
+.chip.role { background: color-mix(in oklab, var(--accent) 9%, var(--surface)); color: color-mix(in oklab, var(--accent) 70%, var(--ink)); font-weight: 500; }
+.chip.direct { border: 1px dashed var(--line-2); background: var(--surface); }
+.chip.bad { background: var(--danger-tint); color: var(--danger); }
+.ib { width: 28px; height: 28px; border-radius: 6px; display: inline-grid; place-items: center; color: var(--ink-4); border: 0; background: none; cursor: pointer; transition: background var(--dur-base), color var(--dur-base), opacity var(--dur-base); }
+.ib:hover { background: var(--hover); color: var(--ink-2); }
+.ib.dz:hover { color: var(--danger); }
+.ib:disabled { opacity: .35; cursor: default; }
+
+/* 부여: 목록 + 상세 */
+.md { display: grid; grid-template-columns: minmax(300px, 380px) minmax(0, 1fr); gap: 16px; flex: 1; min-height: 0; }
+.mcol { display: flex; flex-direction: column; gap: 10px; min-height: 0; }
+.mlist { border: 1px solid var(--line); border-radius: 10px; background: var(--surface); padding: 6px; overflow: auto; flex: 1; min-height: 0; scrollbar-gutter: stable; outline: none; }
+.mlist:focus-visible { box-shadow: 0 0 0 2px var(--accent-line); }
+.lh { font-size: 11px; font-weight: 600; color: var(--ink-4); letter-spacing: .04em; padding: 10px 10px 4px; display: flex; gap: 6px; }
+.lh b { font-weight: 600; color: var(--ink-4); }
+.mrow { display: flex; align-items: center; gap: 10px; height: 52px; padding: 0 10px; border-radius: 7px; cursor: pointer; transition: background var(--dur-base), box-shadow var(--dur-fast); }
+.mrow:hover { background: var(--hover); }
+.mrow.on { background: var(--surface); box-shadow: var(--ring); }
+.mrow { padding-left: 14px; }
+.dicon { display: inline-flex; vertical-align: -2px; color: var(--ink-4); margin-right: 5px; }
+.l1 .dicon { margin-right: -3px; }
+.mrow .two { flex: 1; }
+.cnt { font-size: 11.5px; color: var(--ink-3); background: var(--sunken); border: 1px solid var(--line); border-radius: 999px; padding: 0 7px; font-variant-numeric: tabular-nums; min-width: 24px; text-align: center; }
+.cnt.zero { color: var(--ink-4); border-style: dashed; }
+.list-foot { font-size: 11.5px; color: var(--ink-4); text-align: center; padding: 10px 0 6px; }
+.lcount { font-size: 11.5px; color: var(--ink-4); font-variant-numeric: tabular-nums; }
+.sk { display: block; border-radius: 6px; background: linear-gradient(90deg, var(--sunken) 0%, color-mix(in oklab, var(--ink) 6%, var(--surface)) 50%, var(--sunken) 100%); background-size: 200% 100%; animation: shimmer 1.2s linear infinite; }
+.skrow { height: 52px; display: flex; align-items: center; gap: 10px; padding: 0 10px; }
+.detail { border: 1px solid var(--line); border-radius: 10px; background: var(--surface); box-shadow: var(--shadow-2); overflow: auto; min-height: 0; transition: opacity 120ms var(--ease-exit); }
+.detail.stale { opacity: .45; }
+.dh { display: flex; align-items: center; gap: 14px; padding: 18px 20px; border-bottom: 1px solid var(--line); min-height: 81px; }
+.dh .t1 { font-size: 16px; font-weight: 700; }
+.ds { padding: 16px 20px; display: grid; gap: 8px; border-bottom: 1px solid var(--line); }
+.ds:last-child { border-bottom: 0; }
+.slabel { font-size: 12px; font-weight: 600; color: var(--ink-3); display: flex; align-items: center; gap: 8px; }
+.slabel .c { font-weight: 500; color: var(--ink-4); font-variant-numeric: tabular-nums; }
+.grow-row { display: flex; align-items: center; gap: 12px; min-height: 54px; padding: 8px 8px 8px 12px; border-radius: 8px; border: 1px solid var(--line); transition: background var(--dur-base), border-color var(--dur-base); overflow: hidden; }
+.grow-row:hover { background: var(--hover); }
+.grow-row .two { flex: 1; }
+.grow-row .meta { color: var(--ink-4); font-size: 12px; white-space: nowrap; }
+.grow-row .revoke { opacity: 0; }
+.grow-row:hover .revoke, .grow-row:focus-within .revoke { opacity: 1; }
+.grow-row.inherit { background: var(--sunken); }
+.addrow { width: 100%; border-style: dashed; color: var(--accent); font-weight: 600; min-height: 42px; background: none; cursor: pointer; text-align: left; }
+.addrow:hover { background: var(--sel); border-color: var(--accent-line); }
+.addrow kbd { margin-left: auto; font-family: var(--mono); font-size: 10.5px; border: 1px solid var(--accent-line); border-radius: 4px; padding: 0 5px; font-weight: 400; }
+.empty-note { font-size: 12.5px; color: var(--ink-4); padding: 4px 2px; }
+.permgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 6px; }
+.permcell { border: 1px solid var(--line); border-radius: 7px; padding: 7px 10px; display: grid; gap: 1px; min-width: 0; }
+.permcell b { font-size: 12.5px; }
+.permcell span { font-size: 11.5px; color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.permcell.off { border-style: dashed; color: var(--ink-4); }
+.permcell.off b { color: var(--ink-4); font-weight: 500; }
+.dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); display: inline-block; margin-right: 4px; vertical-align: middle; }
+.dot.d { background: var(--warn); }
+.tl { display: grid; }
+.tl .e { display: grid; grid-template-columns: 18px 1fr; gap: 10px; position: relative; padding-bottom: 10px; }
+.tl .e::before { content: ""; position: absolute; left: 8px; top: 18px; bottom: 0; width: 1px; background: var(--line-2); }
+.tl .e:last-child::before { display: none; }
+.tl .nd { width: 17px; height: 17px; border-radius: 50%; border: 1.5px solid var(--ok); background: var(--surface); display: grid; place-items: center; margin-top: 2px; }
+.tl .nd::after { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--ok); }
+.tl .nd.rm { border-color: var(--danger); } .tl .nd.rm::after { background: var(--danger); }
+.tl .nd.role { border-color: var(--accent); } .tl .nd.role::after { background: var(--accent); }
+.tl .tx { font-size: 12.5px; display: grid; gap: 1px; }
+.tl .tx span { color: var(--ink-4); font-size: 11.5px; }
+.members { display: flex; gap: 4px; flex-wrap: wrap; }
+
+/* 표 */
+.tbl-scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow-1); background: var(--surface); }
+table.dt { border-collapse: collapse; width: 100%; font-size: 13px; }
+table.dt th { font-size: 11.5px; font-weight: 600; letter-spacing: .02em; color: var(--ink-4); text-align: left; padding: 0 16px; height: 40px; border-bottom: 1px solid var(--line); white-space: nowrap; background: var(--surface); position: sticky; top: 0; z-index: 1; }
+table.dt td { padding: 0 16px; height: 56px; border-bottom: 1px solid color-mix(in oklab, var(--line) 60%, var(--surface)); white-space: nowrap; vertical-align: middle; transition: background var(--dur-fast); }
+table.dt tbody tr:not(.dategrp):hover td { background: var(--sel); }
+table.dt tr.dategrp td { height: 32px; background: var(--sunken); font-size: 11.5px; font-weight: 600; color: var(--ink-3); position: sticky; top: 40px; z-index: 1; }
+table.dt th.grp { height: 28px; font-size: 11px; color: var(--ink-3); text-align: center; padding: 0 4px; border-bottom: 0; top: 0; }
+table.dt th.grp span { display: block; border-bottom: 2px solid var(--line); padding-bottom: 4px; }
+table.dt thead tr:nth-child(2) th { top: 28px; }
+table.dt th.mxh, table.dt td.mxc { text-align: center; padding: 0 4px; width: 78px; }
+.mx { width: 26px; height: 26px; border-radius: 7px; display: inline-grid; place-items: center; border: 1.5px dashed color-mix(in oklab, var(--line-2) 80%, var(--surface)); background: var(--surface); color: #fff; cursor: pointer; transition: background var(--dur-fast), border-color var(--dur-fast), transform var(--dur-fast); }
+.mx:hover { border-color: var(--accent); }
+.mx:active { transform: scale(.92); }
+.mx[aria-pressed="true"] { background: var(--accent); border: 1.5px solid var(--accent); }
+.mx.pend { box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px color-mix(in oklab, var(--warn) 70%, var(--surface)); }
+.avs { display: inline-flex; align-items: center; }
+.avs .av { width: 26px; height: 26px; font-size: 10.5px; border: 2px solid var(--surface); margin-left: -7px; }
+.avs .av:first-child { margin-left: 0; }
+.avs .av.more { background: var(--sunken); color: var(--ink-3); }
+.recv { display: inline-flex; align-items: center; gap: 8px; cursor: default; border: 0; background: none; padding: 4px 6px; margin: -4px -6px; border-radius: 6px; }
+.recv:hover { background: var(--hover); }
+.acirc { width: 28px; height: 28px; border-radius: 50%; display: inline-grid; place-items: center; flex: none; }
+.acirc.add { background: var(--ok-tint); color: var(--ok); }
+.acirc.rm { background: var(--danger-tint); color: var(--danger); }
+.acirc.role { background: var(--sel); color: var(--accent); }
+.l1 { display: inline-flex; align-items: center; gap: 8px; }
+.lnk { color: var(--accent); font-weight: 600; background: none; border: 0; padding: 0; cursor: pointer; text-decoration: underline 1px color-mix(in oklab, var(--accent) 35%, transparent); text-underline-offset: 3px; }
+.rowact { opacity: 0; transition: opacity var(--dur-base); display: inline-flex; gap: 2px; }
+tr:hover .rowact, tr:focus-within .rowact { opacity: 1; }
+
+/* 떠 있는 층 */
+.bar { position: sticky; bottom: 14px; align-self: center; display: flex; align-items: center; gap: 10px; background: var(--top); color: #fff; border-radius: 10px; padding: 8px 10px 8px 16px; box-shadow: var(--shadow-3); z-index: 3; animation: barIn var(--dur-slow) var(--ease-pop); }
+.bar .btn { box-shadow: none; }
+.bar .btn:not(.pri) { background: oklch(.32 .01 255); border-color: oklch(.42 .01 255); color: #fff; }
+.pop { position: absolute; z-index: 50; width: 320px; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow-2); padding: 8px; display: grid; gap: 2px; animation: popIn var(--dur-base) var(--ease-enter); transform-origin: top left; }
+.pop.up { transform-origin: bottom left; }
+.pop .ph { font-size: 11px; font-weight: 600; color: var(--ink-4); padding: 4px 6px 6px; }
+.popt { display: grid; grid-template-columns: 18px 1fr; gap: 8px; align-items: center; padding: 7px 6px; border-radius: 6px; cursor: pointer; }
+.popt:hover { background: var(--hover); }
+.popt input { accent-color: var(--accent); width: 15px; height: 15px; margin: 0; }
+.popt .t1 { font-size: 13px; font-weight: 500; }
+.pop .pfoot { display: flex; justify-content: flex-end; gap: 6px; padding: 8px 4px 2px; border-top: 1px solid var(--line); margin-top: 4px; }
+.pop .pr { display: flex; align-items: center; gap: 8px; padding: 4px; font-size: 12.5px; }
+.pop .pr .av { width: 22px; height: 22px; font-size: 10px; }
+.scrim { position: fixed; inset: 0; background: oklch(.2 .01 255 / .32); display: grid; place-items: start center; padding: 6vh max(16px, env(safe-area-inset-right, 0px)) 16px max(16px, env(safe-area-inset-left, 0px)); z-index: 60; overflow: auto; animation: fadeIn var(--dur-base) var(--ease-enter); }
+.scrim.out { animation: fadeOut var(--dur-fast) var(--ease-exit) forwards; }
+.modal { width: min(960px, 100%); border-radius: 12px; background: var(--surface); box-shadow: var(--shadow-3); overflow: hidden; display: grid; animation: modalIn var(--dur-slow) var(--ease-enter); }
+.modal.sm { width: min(520px, 100%); }
+.scrim.out .modal { animation: modalOut var(--dur-fast) var(--ease-exit) forwards; }
+.modal-h { padding: 14px 18px; border-bottom: 1px solid var(--line); display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.modal-h b { font-size: 15px; }
+.modal-b { padding: 16px 18px; display: grid; gap: 14px; }
+.modal-f { padding: 12px 18px; border-top: 1px solid var(--line); display: flex; gap: 8px; align-items: center; background: var(--sunken); flex-wrap: wrap; }
+.nl { grid-template-columns: minmax(0, 340px) minmax(0, 1fr); align-items: start; }
+.fld { display: grid; gap: 6px; min-width: 0; }
+.lab { font-size: 12.5px; font-weight: 600; color: var(--ink-2); display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+.lab .h { font-weight: 400; color: var(--ink-4); font-size: 12px; }
+.nlarea { width: 100%; min-height: 210px; resize: vertical; border: 1.5px solid var(--line-2); border-radius: 8px; padding: 10px 12px; font: 13px/1.9 var(--mono); color: var(--ink); background: var(--surface); transition: border-color var(--dur-base), box-shadow var(--dur-base); }
+.nlarea:focus { outline: 0; border-color: var(--accent); box-shadow: 0 0 0 4px color-mix(in oklab, var(--accent) 10%, transparent); }
+.precheck { display: grid; gap: 6px; font-size: 12px; }
+.pc { border-radius: 7px; padding: 8px 10px; display: grid; gap: 4px; animation: fadeIn var(--dur-base) var(--ease-enter); }
+.pc.ok { background: var(--sunken); color: var(--ink-3); }
+.pc.need { background: var(--warn-tint); color: color-mix(in oklab, var(--warn) 80%, var(--ink)); }
+.pc.cut { background: var(--danger-tint); color: var(--danger); }
+.pc label { display: flex; gap: 6px; align-items: center; color: var(--ink-2); cursor: pointer; }
+.pc input { accent-color: var(--accent); margin: 0; }
+.nlprev { border: 1px solid var(--line); border-radius: 8px; overflow: hidden; min-height: 240px; display: grid; align-content: start; }
+.nlprev .emp { padding: 40px 20px; text-align: center; color: var(--ink-4); font-size: 12.5px; display: grid; gap: 6px; justify-items: center; }
+.prow { display: grid; grid-template-columns: 22px minmax(0, 1.25fr) 46px minmax(0, 1.25fr) minmax(0, 1fr); gap: 10px; align-items: center; padding: 10px 12px; border-bottom: 1px solid color-mix(in oklab, var(--line) 60%, var(--surface)); font-size: 12.5px; }
+.prow:last-child { border-bottom: 0; }
+.prow.head { font-size: 11.5px; color: var(--ink-4); font-weight: 600; padding-block: 8px; }
+.prow.err { background: color-mix(in oklab, var(--danger) 4%, var(--surface)); }
+.prow.off { opacity: .5; }
+.prow .cells { display: flex; gap: 4px; flex-wrap: wrap; min-width: 0; }
+.prow .cells .chip { max-width: 100%; overflow: hidden; text-overflow: ellipsis; display: inline-block; line-height: 24px; }
+.prow input { accent-color: var(--accent); margin: 0; }
+.prow.in { animation: rowFade var(--dur-slow) var(--ease-enter) both; }
+.op { font-size: 11.5px; font-weight: 600; padding: 1px 7px; border-radius: 4px; justify-self: start; }
+.op.add { color: var(--ok); background: var(--ok-tint); }
+.op.rm { color: var(--danger); background: var(--danger-tint); }
+.st { font-size: 12px; }
+.st.new { color: var(--ok); } .st.skip { color: var(--ink-4); } .st.err { color: var(--danger); } .st.rm { color: var(--danger); }
+.sumbar { display: flex; gap: 14px; align-items: center; font-size: 12.5px; font-variant-numeric: tabular-nums; flex-wrap: wrap; min-height: 20px; }
+.privacy { display: inline-flex; gap: 6px; align-items: center; font-size: 12px; color: var(--ok); }
+pre.sent { margin: 0; font: 12px/1.7 var(--mono); background: var(--sunken); border: 1px solid var(--line); border-radius: 7px; padding: 8px 10px; white-space: pre-wrap; animation: fadeIn var(--dur-base) var(--ease-enter); }
+.toasts { position: fixed; left: 50%; bottom: calc(24px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); z-index: 70; display: grid; gap: 8px; justify-items: center; pointer-events: none; }
+.toast { pointer-events: auto; background: var(--top); color: #fff; border-radius: 10px; padding: 10px 12px 10px 16px; display: flex; gap: 12px; align-items: center; box-shadow: var(--shadow-3); font-size: 13px; position: relative; overflow: hidden; animation: toastIn var(--dur-slow) var(--ease-pop); }
+.toast.out { animation: toastOut var(--dur-fast) var(--ease-exit) forwards; }
+.toast .undo { background: none; border: 0; color: var(--brand); font-weight: 700; cursor: pointer; padding: 2px 4px; }
+.toast .prog { position: absolute; left: 0; bottom: 0; height: 2px; background: var(--brand); width: 100%; transform-origin: left; }
+.placeholder { margin: auto; text-align: center; color: var(--ink-3); display: grid; gap: 8px; justify-items: center; max-width: 420px; padding: 40px 0; }
+
+/* 효과 */
+.enter { animation: fadeIn 140ms var(--ease-enter); }
+.row-in { animation: rowIn 240ms var(--ease-enter); }
+.flash { animation: flash 900ms ease-out; }
+.row-out { transition: max-height var(--dur-base) var(--ease-exit), opacity var(--dur-base) var(--ease-exit), padding var(--dur-base), margin var(--dur-base), min-height var(--dur-base), border-width var(--dur-base); max-height: 0 !important; min-height: 0 !important; opacity: 0; padding-block: 0 !important; border-width: 0; }
+.bump { animation: bump 280ms var(--ease-pop); }
+.fade-row { animation: fadeIn 200ms var(--ease-enter) both; }
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+@keyframes fadeOut { to { opacity: 0; } }
+@keyframes rowIn { from { max-height: 0; min-height: 0; opacity: 0; padding-block: 0; } to { max-height: 90px; opacity: 1; } }
+@keyframes rowFade { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+@keyframes flash { from { background: color-mix(in oklab, var(--accent) 16%, var(--surface)); } to { background: transparent; } }
+@keyframes bump { 0% { transform: scale(1); } 40% { transform: scale(1.22); } 100% { transform: scale(1); } }
+@keyframes popIn { from { opacity: 0; transform: translateY(-4px) scale(.98); } to { opacity: 1; transform: none; } }
+@keyframes modalIn { from { opacity: 0; transform: translateY(8px) scale(.985); } to { opacity: 1; transform: none; } }
+@keyframes modalOut { to { opacity: 0; transform: scale(.985); } }
+@keyframes toastIn { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: none; } }
+@keyframes toastOut { to { opacity: 0; transform: translateY(8px); } }
+@keyframes barIn { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: none; } }
+@keyframes shimmer { to { background-position: -200% 0; } }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
+
+@media (max-width: 900px) {
+  .app { height: auto; min-height: 840px; grid-template-rows: 44px 52px auto; }
+  .pbody { grid-template-columns: minmax(0, 1fr); }
+  .snav { flex-direction: row; overflow-x: auto; border-right: 0; border-bottom: 1px solid var(--line); padding: 8px; }
+  .snav .grp { display: none; }
+  .snav button[aria-current="page"]::before { display: none; }
+  .main { overflow: visible; }
+  .page.fill { height: auto; }
+  .md { grid-template-columns: minmax(0, 1fr); }
+  .mlist { max-height: 340px; flex: none; }
+  .nl { grid-template-columns: minmax(0, 1fr); }
+  .topbar .hide-n { display: none; }
+  .prow { grid-template-columns: 22px minmax(0, 1fr) 50px; }
+  .prow > :nth-child(4), .prow > :nth-child(5) { grid-column: 2 / -1; }
+}
+</style>
+
+<div class="wrap">
+  <div class="intro">
+    <h1>관리 화면 프로토타입</h1>
+    <p>정한 내용으로 실제 움직임을 넣었습니다. 사내 AI는 로그인 ID 기준으로 읽고, 긴 목록은 이어 불러오며, 2단 화면은 고른 것이 바뀔 때 상세만 페이드합니다. 자료는 예시이고(직원 360명 · 부여 약 450건), 서버 대신 브라우저 안에서만 바뀝니다. 사내 AI 응답도 흉내 낸 것입니다.</p>
+    <div class="tryme">
+      <span><b>이름이 있으면 동그라미 없음</b> — 겹친 명단에서만 머리글자, 부서는 흐린 작은 아이콘</span><span><b>목록 누르기</b> — 상세만 페이드</span><span><b>↑ ↓</b> — 페이드 없이 바로</span><span><b>목록 끝까지 스크롤</b> — 30개씩 이어 불러오기</span><span><b>찾기 · 필</b> — 남은 줄이 미끄러짐</span><span><b>+ 역할 더하기 / A</b> — 붙어 뜨는 고르기</span><span><b>회수</b> — 5초 되돌리기</span><span><b>사내 AI로 등록</b> — 동명이인 고르기 · 이름 지우기</span><span><b>역할 칸</b> — 바뀐 칸 띠 · 저장 확인</span><span><b>변경 기록</b> — 날짜 묶음 이어 불러오기</span>
+    </div>
+  </div>
+
+  <div class="app" id="app">
+    <div class="topbar"><span class="brand" data-ic="menu"></span><span class="ver">v1.5.0 시안</span><span class="sp"></span><span class="pillx hide-n" style="font-family:var(--mono);font-size:10.5px">DEV</span><span class="pillx hide-n">dev.admin</span><span class="hide-n" style="opacity:.8">개발관리자 · IT Ops Team</span></div>
+    <div class="phead"><h1>관리</h1></div>
+    <div class="pbody">
+      <nav class="snav" id="nav" aria-label="관리 메뉴"></nav>
+      <main class="main" id="main"></main>
+    </div>
+  </div>
+</div>
+<div id="layer"></div>
+<div class="toasts" id="toasts" aria-live="polite"></div>
+
+<script>
+"use strict";
+/* ───────── 아이콘 ───────── */
+const ICONS = {
+  menu: '<path d="M4 6h16M4 12h16M4 18h10"/>', plus: '<path d="M12 5v14M5 12h14"/>', search: '<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>',
+  wand: '<path d="M15 4V2M15 16v-2M8 9h2M20 9h2M17.8 11.8 19 13M17.8 6.2 19 5M3 21l9-9M12.2 6.2 11 5"/>',
+  user: '<circle cx="12" cy="8" r="4"/><path d="M4 21v-1a6 6 0 0 1 6-6h4a6 6 0 0 1 6 6v1"/>', shield: '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>',
+  clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>', refresh: '<path d="M21 12a9 9 0 0 0-15-6.7L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 15 6.7l3-2.7"/><path d="M16 16h5v5"/>',
+  activity: '<path d="M22 12h-4l-3 9L9 3l-3 9H2"/>', bot: '<rect x="3" y="8" width="18" height="12" rx="2"/><path d="M12 8V4M9 14h.01M15 14h.01"/>',
+  folder: '<path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-8l-2-2H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2z"/>', file: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M8 13h8M8 17h6"/>',
+  tree: '<path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/>', building: '<rect x="4" y="3" width="16" height="18" rx="2"/><path d="M9 21v-4h6v4M8.5 7h.01M12 7h.01M15.5 7h.01M8.5 11h.01M12 11h.01M15.5 11h.01"/>',
+  undo: '<path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/>', x: '<path d="M18 6 6 18M6 6l12 12"/>', check: '<path d="M20 6 9 17l-5-5"/>',
+  pencil: '<path d="M17 3a2.8 2.8 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5z"/>', trash: '<path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6"/>', lock: '<rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>',
+  loader: '<path d="M21 12a9 9 0 1 1-6.2-8.6"/>', eye: '<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
+};
+const ic = (n, s = 16) => `<svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[n] ?? ""}</svg>`;
+document.querySelector('.brand[data-ic]').innerHTML = ic("menu", 18) + "SOP Archivist";
+
+/* ───────── 도구 ───────── */
+const $ = (s, r = document) => r.querySelector(s);
+const $$ = (s, r = document) => [...r.querySelectorAll(s)];
+const RM = matchMedia("(prefers-reduced-motion: reduce)").matches;
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const pad = (n) => String(n).padStart(2, "0");
+const wait = (ms) => new Promise((r) => setTimeout(r, RM ? 0 : ms));
+function restart(el, cls) { if (!el || RM) return; el.classList.remove(cls); void el.offsetWidth; el.classList.add(cls); }
+function debounce(fn, ms) { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; }
+
+/* ───────── 예시 자료 ───────── */
+let seed = 20261121;
+const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+const pick = (a) => a[Math.floor(rnd() * a.length)];
+const NOW = new Date(2026, 10, 21, 9, 0);
+let clock = 0;
+const nowStamp = () => new Date(NOW.getTime() + (++clock) * 60000);
+function ago(days) { const t = new Date(NOW); t.setDate(t.getDate() - days); t.setHours(8 + Math.floor(rnd() * 10), Math.floor(rnd() * 60)); return t; }
+const fmt = (t) => `${pad(t.getMonth() + 1)}-${pad(t.getDate())} ${pad(t.getHours())}:${pad(t.getMinutes())}`;
+const fmtTime = (t) => `${pad(t.getHours())}:${pad(t.getMinutes())}`;
+const WD = "일월화수목금토";
+const sameDay = (a, b) => a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+const fmtDay = (t) => `${sameDay(t, NOW) ? "오늘 · " : ""}${t.getMonth() + 1}월 ${t.getDate()}일 (${WD[t.getDay()]})`;
+
+const PERMS = [
+  ["bundle.create", "Bundle 만들기", "만들기", "SOP 작업"], ["bundle.admin", "전체 Bundle 관리", "전체 관리", "SOP 작업"],
+  ["guideline.manage", "AI 지침 관리", "AI 지침", "SOP 기준"], ["outline.manage", "SOP 표준 골격 관리", "표준 골격", "SOP 기준"],
+  ["permission.manage", "권한 관리", "권한", "사람·권한"], ["directory.sync", "직원 동기화 실행", "동기화", "사람·권한"],
+  ["system.view", "시스템 상태 보기", "상태 보기", "운영"], ["ai.admin", "AI 관리", "AI", "운영"],
+];
+const permLabel = (k) => PERMS.find((p) => p[0] === k)?.[1] ?? k;
+const ROLES = [
+  { id: 1, name: "Operations", desc: "Runs directory sync, checks AI and system status", perms: ["directory.sync", "system.view", "ai.admin"] },
+  { id: 2, name: "Permission Admin", desc: "Edits roles and grants", perms: ["permission.manage"] },
+  { id: 3, name: "QA Reviewer", desc: "Reviews restructured SOP bundles before EQUIS upload", perms: ["bundle.create", "bundle.admin", "guideline.manage"] },
+  { id: 4, name: "SOP Restructuring T/F 작성자", desc: "묶음을 만들고 문서를 올려 배정까지", perms: ["bundle.create"] },
+  { id: 5, name: "Template Owner", desc: "Maintains the standard SOP outline and AI guidelines", perms: ["guideline.manage", "outline.manage"] },
+  { id: 6, name: "시스템 운영", desc: "배치 작업 · AI 사용량 확인", perms: ["system.view", "ai.admin"] },
+];
+const roleById = (id) => ROLES.find((r) => r.id === id);
+const permsText = (r) => (r.perms.length ? r.perms.map(permLabel).join(" · ") : "권한 없음");
+
+const DEPTS = [
+  { code: "TEAM-QA1", name: "QA Team 1" }, { code: "TEAM-QA2", name: "QA Team 2" }, { code: "TEAM-PR1", name: "Production Team 1" },
+  { code: "TEAM-PR2", name: "Production Team 2" }, { code: "TEAM-IT1", name: "IT Ops Team" }, { code: "DIV-QA", name: "Quality Division" },
+  { code: "TEAM-RA", name: "Regulatory Affairs" }, { code: "TEAM-VAL", name: "Validation Team" }, { code: "TEAM-ENG", name: "Engineering Team" }, { code: "TEAM-WH", name: "Warehouse Team" },
+];
+const deptBy = (c) => DEPTS.find((d) => d.code === c);
+const SUR = [["김", "kim"], ["이", "lee"], ["박", "park"], ["최", "choi"], ["정", "jung"], ["강", "kang"], ["조", "cho"], ["윤", "yoon"], ["장", "jang"], ["임", "lim"], ["한", "han"], ["오", "oh"], ["서", "seo"], ["신", "shin"], ["권", "kwon"], ["황", "hwang"], ["안", "ahn"], ["송", "song"], ["류", "ryu"], ["홍", "hong"]];
+const GIV = [["민서", "minseo"], ["지훈", "jihun"], ["서연", "seoyeon"], ["도윤", "doyun"], ["하은", "haeun"], ["준우", "junwoo"], ["지민", "jimin"], ["수빈", "subin"], ["예준", "yejun"], ["채원", "chaewon"], ["시우", "siwoo"], ["유진", "yujin"], ["현우", "hyunwoo"], ["다은", "daeun"], ["건우", "gunwoo"], ["소율", "soyul"], ["우진", "woojin"], ["나연", "nayeon"], ["태윤", "taeyun"], ["지아", "jia"]];
+const PEOPLE = [
+  { id: "dev.admin", name: "개발관리자", dept: "TEAM-IT1" }, { id: "ops.member", name: "운영담당", dept: "TEAM-IT1" },
+  { id: "prod.member", name: "생산담당", dept: "TEAM-PR1" }, { id: "qa.lead", name: "품질리드", dept: "DIV-QA" }, { id: "qa.member", name: "품질담당", dept: "TEAM-QA1" },
+  { id: "minseo.kim", name: "김민서", dept: "TEAM-QA1" }, { id: "minseo.kim2", name: "김민서", dept: "TEAM-PR2" },
+];
+const usedIds = new Set(PEOPLE.map((p) => p.id));
+while (PEOPLE.length < 360) {
+  const [s, sr] = pick(SUR), [g, gr] = pick(GIV);
+  let id = `${gr}.${sr}`, n = 2;
+  while (usedIds.has(id)) id = `${gr}.${sr}${n++}`;
+  usedIds.add(id);
+  PEOPLE.push({ id, name: s + g, dept: pick(DEPTS).code });
+}
+const personBy = (id) => PEOPLE.find((p) => p.id === id);
+
+const grants = []; const audit = []; let gid = 0, aid = 0;
+function pushGrant(type, subject, role, perm, by, at, log = true) {
+  const g = { id: ++gid, type, subject, role, perm, by, at };
+  grants.push(g);
+  if (log) audit.push({ id: ++aid, at, actor: by, kind: "add", type, subject, role, perm });
+  return g;
+}
+pushGrant("dept", "DIV-QA", 2, null, "seed", ago(29)); pushGrant("dept", "DIV-QA", 5, null, "dev.admin", ago(12));
+pushGrant("dept", "TEAM-IT1", 4, null, "dev.admin", ago(10)); pushGrant("dept", "TEAM-PR1", 6, null, "dev.admin", ago(9));
+pushGrant("dept", "TEAM-QA1", 4, null, "qa.lead", ago(8)); pushGrant("dept", "TEAM-VAL", 3, null, "qa.lead", ago(6));
+pushGrant("user", "ops.member", 1, null, "seed", ago(29)); pushGrant("user", "ops.member", 3, null, "dev.admin", ago(0));
+pushGrant("user", "prod.member", 6, null, "dev.admin", ago(1)); pushGrant("user", "prod.member", null, "system.view", "seed", ago(29));
+pushGrant("user", "dev.admin", 4, null, "dev.admin", ago(3)); pushGrant("user", "qa.lead", null, "system.view", "dev.admin", ago(2));
+pushGrant("user", "qa.member", 4, null, "dev.admin", ago(4)); pushGrant("user", "minseo.kim", 3, null, "qa.lead", ago(5));
+const WEIGHT = [4, 4, 4, 4, 3, 3, 1, 6, 5, 2];
+for (let i = 7; i < 320; i++) {
+  const p = PEOPLE[i]; const n = rnd() < 0.3 ? 2 : 1; const held = new Set();
+  for (let k = 0; k < n; k++) { const r = pick(WEIGHT); if (held.has(r)) continue; held.add(r); pushGrant("user", p.id, r, null, pick(["dev.admin", "qa.lead"]), ago(Math.floor(rnd() * 30))); }
+}
+for (let i = 0; i < 28; i++) { const p = PEOPLE[320 + (i % 40)]; audit.push({ id: ++aid, at: ago(Math.floor(rnd() * 30)), actor: pick(["dev.admin", "qa.lead"]), kind: "rm", type: "user", subject: p.id, role: pick(WEIGHT), perm: null }); }
+[[1, "시스템 상태 보기 더함", 19], [3, "AI 지침 관리 더함", 14], [5, "SOP 표준 골격 관리 더함", 11], [6, "역할 만듦", 9], [4, "설명 고침", 7], [2, "역할 만듦", 29]].forEach(([r, text, d]) => audit.push({ id: ++aid, at: ago(d), actor: "dev.admin", kind: "role", role: r, text }));
+audit.sort((a, b) => b.at - a.at);
+
+const subjectName = (type, id) => (type === "dept" ? deptBy(id)?.name ?? id : personBy(id)?.name ?? id);
+const grantLabel = (g) => (g.role ? roleById(g.role).name : permLabel(g.perm));
+const keyOf = (type, id) => `${type}:${id}`;
+
+/* ───────── 상태 ───────── */
+const state = { page: "grants", q: "", type: "all", roleF: "", visible: 30, sel: "user:ops.member", keepZero: new Set(), items: [], audit: { q: "", kind: "all", visible: 30 }, pend: new Map() };
+const main = $("#main");
+const PAGE = 30;
+
+/* ───────── 레일 ───────── */
+const NAV = [
+  ["사람·권한", [["grants", "부여", "user"], ["roles", "역할", "shield"], ["audit", "변경 기록", "clock"]]],
+  ["운영", [["directory", "직원 동기화", "refresh"], ["batch", "배치 작업", "activity"], ["ai", "AI", "bot"]]],
+  ["SOP 기준", [["bundles", "Bundle", "folder"], ["guidelines", "AI 지침", "file"], ["outline", "표준 골격", "tree"]]],
+];
+function renderNav() {
+  $("#nav").innerHTML = NAV.map(([g, items]) => `<div class="grp">${g}</div>` + items.map(([k, l, i]) => `<button type="button" data-page="${k}" ${state.page === k ? 'aria-current="page"' : ""}>${ic(i)}${l}</button>`).join("")).join("");
+}
+$("#nav").addEventListener("click", (e) => { const b = e.target.closest("button[data-page]"); if (b) go(b.dataset.page); });
+function go(page, opts = {}) {
+  closeLayer();
+  state.page = page; renderNav();
+  main.scrollTop = 0;
+  if (page === "grants") renderGrants(opts); else if (page === "roles") renderRoles(); else if (page === "audit") renderAudit();
+  else main.innerHTML = `<div class="page enter"><div class="placeholder">${ic("eye", 28)}<b>이 프로토타입은 부여 · 역할 · 변경 기록만 움직입니다</b><span class="small">다른 화면의 모습은 시안 페이지에서 보세요. 탭을 바꾸면 본문만 140ms 페이드하고, 레일과 머리는 그대로입니다.</span></div></div>`;
+}
+
+/* ───────── 부여 ───────── */
+function countMap() { const m = new Map(); grants.forEach((g) => m.set(keyOf(g.type, g.subject), (m.get(keyOf(g.type, g.subject)) ?? 0) + 1)); return m; }
+function computeItems() {
+  const counts = countMap(); const q = state.q.trim().toLowerCase();
+  const roleOk = (type, id) => !state.roleF || grants.some((g) => g.type === type && g.subject === id && g.role === Number(state.roleF));
+  const match = (type, id, name, deptName) => !q || name.toLowerCase().includes(q) || id.toLowerCase().includes(q) || (deptName ?? "").toLowerCase().includes(q) || grants.some((g) => g.type === type && g.subject === id && grantLabel(g).toLowerCase().includes(q));
+  const all = [];
+  PEOPLE.forEach((p) => {
+    const k = keyOf("user", p.id); const c = counts.get(k) ?? 0; const dn = deptBy(p.dept).name;
+    const listed = c > 0 || state.keepZero.has(k);
+    if (!match("user", p.id, p.name, dn) || !roleOk("user", p.id)) return;
+    if (listed) all.push({ key: k, type: "user", id: p.id, name: p.name, sub: `${p.id}|${dn}`, count: c, group: "user" });
+    else if (q && !state.roleF) all.push({ key: k, type: "user", id: p.id, name: p.name, sub: `${p.id}|${dn}`, count: 0, group: "none" });
+  });
+  DEPTS.forEach((d) => {
+    const k = keyOf("dept", d.code); const c = counts.get(k) ?? 0;
+    if ((c > 0 || state.keepZero.has(k)) && match("dept", d.code, d.name) && roleOk("dept", d.code)) all.push({ key: k, type: "dept", id: d.code, name: d.name, sub: `${d.code}|부서`, count: c, group: "dept" });
+  });
+  const order = { user: 0, dept: 1, none: 2 };
+  all.sort((a, b) => order[a.group] - order[b.group] || a.name.localeCompare(b.name, "ko") || a.id.localeCompare(b.id));
+  const pillCounts = { all: all.filter((x) => x.group !== "none").length, user: all.filter((x) => x.group === "user").length, dept: all.filter((x) => x.group === "dept").length };
+  state.pillCounts = pillCounts;
+  state.items = all.filter((x) => state.type === "all" || x.type === state.type || (state.type === "user" && x.group === "none"));
+}
+const GROUP_LABEL = { user: "사람", dept: "부서", none: "부여 없음 · 직원 목록에서 찾음" };
+function rowHtml(it, fresh) {
+  const [id, dn] = it.sub.split("|");
+  return `<div class="mrow${state.sel === it.key ? " on" : ""}${fresh ? " fade-row" : ""}" data-key="${it.key}" role="option" aria-selected="${state.sel === it.key}">
+    <span class="two"><span class="t1">${it.type === "dept" ? `<span class="dicon">${ic("building", 13)}</span>` : ""}${esc(it.name)}</span><span class="t2"><span class="k">${esc(id)}</span> · ${esc(dn)}</span></span>
+    <span class="cnt${it.count === 0 ? " zero" : ""}">${it.count}</span></div>`;
+}
+const skRows = (n) => Array.from({ length: n }, () => `<div class="skrow"><span class="sk" style="width:28px;height:28px;border-radius:50%"></span><span style="display:grid;gap:5px;flex:1"><span class="sk" style="width:46%;height:11px"></span><span class="sk" style="width:64%;height:9px"></span></span></div>`).join("");
+function renderGrants(opts = {}) {
+  computeItems();
+  const roleOpts = ROLES.map((r) => `<option value="${r.id}" ${String(r.id) === state.roleF ? "selected" : ""}>${esc(r.name)}</option>`).join("");
+  main.innerHTML = `<div class="page fill enter">
+    <div class="hrow"><span class="ptitle">부여</span><span class="sp"></span><button type="button" class="btn soft" id="nlOpen">${ic("wand")}사내 AI로 등록</button></div>
+    <div class="psub" id="gsum"></div>
+    <div class="md">
+      <div class="mcol">
+        <label class="search">${ic("search", 15)}<input id="q" placeholder="이름·ID·부서·역할로 찾기" value="${esc(state.q)}" aria-label="찾기" autocomplete="off"><kbd>/</kbd></label>
+        <div class="hrow" style="gap:6px"><span class="pills" id="pills"></span><span class="sp"></span><select class="sel" id="roleF" aria-label="역할로 거르기"><option value="">역할: 전체</option>${roleOpts}</select></div>
+        <div class="mlist" id="mlist" tabindex="0" role="listbox" aria-label="부여 대상"></div>
+        <div class="hrow"><span class="lcount" id="lcount"></span><span class="sp"></span><span class="lcount">↑↓ 고르기 · A 역할 더하기</span></div>
+      </div>
+      <div class="detail" id="detail"><div id="detailIn"></div></div>
+    </div></div>`;
+  renderSummary(); renderPills(); renderList(); renderDetail();
+  $("#q").addEventListener("input", debounce((e) => { state.q = e.target.value; refilter(); }, 150));
+  $("#roleF").addEventListener("change", (e) => { state.roleF = e.target.value; refilter(); });
+  $("#nlOpen").addEventListener("click", openNl);
+  const list = $("#mlist");
+  list.addEventListener("click", (e) => { const r = e.target.closest(".mrow"); if (r) select(r.dataset.key, "pointer"); });
+  list.addEventListener("keydown", onListKey);
+  if (opts.focusKey) requestAnimationFrame(() => list.querySelector(`[data-key="${CSS.escape(opts.focusKey)}"]`)?.scrollIntoView({ block: "nearest" }));
+}
+function renderSummary() { const n = countMap(); $("#gsum").textContent = `대상 ${[...n.keys()].length} · 부여 ${grants.length}건 · 역할 ${ROLES.length}개`; }
+function renderPills() {
+  const c = state.pillCounts;
+  $("#pills").innerHTML = [["all", "전체", null], ["user", "사람", "var(--accent)"], ["dept", "부서", "var(--warn)"]].map(([k, l, color]) => `<button type="button" class="pf" data-type="${k}" aria-pressed="${state.type === k}">${color ? `<i style="background:${color}"></i>` : ""}${l} <b>${c[k]}</b></button>`).join("");
+  $$("#pills .pf").forEach((b) => b.addEventListener("click", () => { state.type = b.dataset.type; refilter(); }));
+}
+function refilter() {
+  state.visible = PAGE;
+  const list = $("#mlist"); const before = captureRects(list);
+  computeItems(); renderPills(); renderList({ before });
+  list.scrollTop = 0;
+}
+let io = null, loadingMore = false;
+function renderList({ before = null, freshFrom = Infinity, keepScroll = false } = {}) {
+  const list = $("#mlist"); const top = list.scrollTop; const items = state.items;
+  const groupCounts = items.reduce((m, it) => m.set(it.group, (m.get(it.group) ?? 0) + 1), new Map());
+  let html = "", last = null;
+  items.slice(0, state.visible).forEach((it, i) => {
+    if (it.group !== last) { html += `<div class="lh">${GROUP_LABEL[it.group]} <b>${groupCounts.get(it.group)}</b></div>`; last = it.group; }
+    html += rowHtml(it, i >= freshFrom);
+  });
+  if (!items.length) html = `<div class="list-foot" style="padding:40px 10px">찾는 대상이 없습니다. 직원 이름이나 ID로 찾으면 부여가 없는 사람도 나옵니다.</div>`;
+  else if (state.visible < items.length) html += `<div id="sentinel">${skRows(3)}</div>`;
+  else html += `<div class="list-foot">${items.length}개 모두 보입니다</div>`;
+  list.innerHTML = html;
+  if (keepScroll) list.scrollTop = top;
+  $("#lcount").textContent = `${Math.min(state.visible, items.length)} / ${items.length} 보임`;
+  if (before) playFlip(list, before);
+  watchSentinel(list);
+}
+function watchSentinel(list) {
+  io?.disconnect();
+  const s = $("#sentinel"); if (!s) return;
+  io = new IntersectionObserver(async (es) => {
+    if (!es[0].isIntersecting || loadingMore) return;
+    loadingMore = true; await wait(320);
+    const from = state.visible; state.visible += PAGE;
+    renderList({ freshFrom: from, keepScroll: true }); loadingMore = false;
+  }, { root: list, rootMargin: "0px 0px 120px 0px" });
+  io.observe(s);
+}
+function captureRects(c) { const m = new Map(); if (RM) return m; $$("[data-key]", c).forEach((el) => m.set(el.dataset.key, el.getBoundingClientRect().top)); return m; }
+function playFlip(c, before) {
+  if (RM || !before.size) return;
+  $$("[data-key]", c).forEach((el) => {
+    const prev = before.get(el.dataset.key); const now = el.getBoundingClientRect().top;
+    if (prev === undefined) el.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 180, easing: "cubic-bezier(.16,1,.3,1)" });
+    else if (Math.abs(prev - now) > 1) el.animate([{ transform: `translateY(${prev - now}px)` }, { transform: "none" }], { duration: 200, easing: "cubic-bezier(.65,0,.35,1)" });
+  });
+}
+let detT = null;
+function select(key, via) {
+  if (state.sel === key) return;
+  state.sel = key;
+  $$("#mlist .mrow").forEach((r) => { const on = r.dataset.key === key; r.classList.toggle("on", on); r.setAttribute("aria-selected", on); });
+  closeLayer();
+  const det = $("#detail");
+  clearTimeout(detT);
+  if (via === "key" || RM) { det.classList.remove("stale"); renderDetail(); return; }
+  det.classList.add("stale");
+  detT = setTimeout(() => { renderDetail(); det.classList.remove("stale"); restart($("#detailIn"), "enter"); }, 170);
+}
+function onListKey(e) {
+  if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+  e.preventDefault();
+  const vis = state.items.slice(0, state.visible); let i = vis.findIndex((x) => x.key === state.sel);
+  i = Math.max(0, Math.min(vis.length - 1, i + (e.key === "ArrowDown" ? 1 : -1)));
+  select(vis[i].key, "key");
+  $(`#mlist [data-key="${CSS.escape(vis[i].key)}"]`)?.scrollIntoView({ block: "nearest" });
+}
+function currentSubject() { const [type, ...rest] = state.sel.split(":"); return { type, id: rest.join(":") }; }
+function renderDetail({ fresh = [] } = {}) {
+  const box = $("#detailIn"); if (!box) return;
+  const { type, id } = currentSubject();
+  const direct = grants.filter((g) => g.type === type && g.subject === id);
+  const grantRow = (g) => {
+    const r = g.role ? roleById(g.role) : null;
+    return `<div class="grow-row${fresh.includes(g.id) ? " row-in flash" : ""}" data-gid="${g.id}">
+      <span class="two"><span class="t1">${esc(grantLabel(g))}${r ? "" : ' <span class="chip direct" style="height:20px;font-size:11px;margin-left:4px">직접</span>'}</span><span class="t2">${r ? esc(permsText(r)) : "권한 하나를 역할 없이 줌"}</span></span>
+      <span class="meta">${esc(g.by)} · ${fmt(g.at).slice(0, 5)}</span>
+      <button type="button" class="ib dz revoke" data-gid="${g.id}" aria-label="${esc(grantLabel(g))} 회수" title="회수">${ic("undo", 15)}</button></div>`;
+  };
+  const events = audit.filter((a) => a.subject === id && a.type === type).slice(0, 4);
+  const tl = events.length ? `<div class="tl">${events.map((a) => `<div class="e"><span class="nd ${a.kind === "rm" ? "rm" : ""}"></span><span class="tx">${esc(a.role ? roleById(a.role)?.name ?? "" : permLabel(a.perm))} ${a.kind === "rm" ? "회수됨" : "받음"}<span>${esc(a.actor)} · ${fmt(a.at)}</span></span></div>`).join("")}</div>` : `<span class="empty-note">기록 없음</span>`;
+  const addBtn = `<button type="button" class="grow-row addrow" id="addBtn">${ic("plus", 15)}역할 더하기<kbd>A</kbd></button>`;
+  if (type === "user") {
+    const p = personBy(id); const d = deptBy(p.dept);
+    const inherited = grants.filter((g) => g.type === "dept" && g.subject === p.dept);
+    const eff = new Map();
+    direct.forEach((g) => (g.role ? roleById(g.role).perms : [g.perm]).forEach((k) => { const v = eff.get(k) ?? { me: [], dept: [] }; v.me.push(grantLabel(g)); eff.set(k, v); }));
+    inherited.forEach((g) => (g.role ? roleById(g.role).perms : [g.perm]).forEach((k) => { const v = eff.get(k) ?? { me: [], dept: [] }; v.dept.push(grantLabel(g)); eff.set(k, v); }));
+    const permCells = PERMS.map(([k, label]) => {
+      const v = eff.get(k); if (!v) return `<div class="permcell off"><b>${label}</b><span>없음</span></div>`;
+      const src = [...v.me, ...v.dept]; const dots = `${v.me.length ? '<span class="dot"></span>' : ""}${v.dept.length ? '<span class="dot d"></span>' : ""}`;
+      return `<div class="permcell"><b>${label}</b><span>${dots}${esc(src[0])}${src.length > 1 ? ` 외 ${src.length - 1}` : ""}</span></div>`;
+    }).join("");
+    box.innerHTML = `
+      <div class="dh"><span class="two"><span class="t1">${esc(p.name)} <span class="id">${esc(p.id)}</span></span><span class="t2" style="font-size:12.5px">${esc(d.name)} · 활성</span></span></div>
+      <div class="ds"><span class="slabel">직접 받은 역할·권한 <span class="c">${direct.length}</span></span>${direct.length ? "" : '<span class="empty-note">아직 직접 받은 것이 없습니다</span>'}${direct.map(grantRow).join("")}${addBtn}</div>
+      <div class="ds"><span class="slabel">부서로 받은 것 <span class="c">${inherited.length}</span></span>${inherited.length ? inherited.map((g) => `<div class="grow-row inherit"><span class="two"><span class="t1"><span class="dot d"></span>${esc(grantLabel(g))}</span><span class="t2">${esc(d.name)}에서 · ${esc(g.role ? permsText(roleById(g.role)) : "")}</span></span><button type="button" class="lnk small" data-goto="dept:${d.code}">부서 보기 ›</button></div>`).join("") : `<span class="empty-note">${esc(d.name)}에 준 역할이 없습니다</span>`}</div>
+      <div class="ds"><span class="slabel">유효 권한 <span class="c">${eff.size} / ${PERMS.length}</span><span class="sp"></span><span class="lcount"><span class="dot"></span>개인 <span class="dot d" style="margin-left:6px"></span>부서</span></span><div class="permgrid">${permCells}</div></div>
+      <div class="ds"><span class="slabel">최근 변경</span>${tl}</div>`;
+  } else {
+    const d = deptBy(id); const members = PEOPLE.filter((p) => p.dept === id);
+    box.innerHTML = `
+      <div class="dh"><span class="two"><span class="t1"><span class="dicon">${ic("building", 15)}</span>${esc(d.name)} <span class="id">${esc(d.code)}</span></span><span class="t2" style="font-size:12.5px">부서 · 구성원 ${members.length}명이 함께 받습니다</span></span></div>
+      <div class="ds"><span class="slabel">이 부서에 준 역할·권한 <span class="c">${direct.length}</span></span>${direct.length ? "" : '<span class="empty-note">남은 부여가 없습니다</span>'}${direct.map(grantRow).join("")}${addBtn}</div>
+      <div class="ds"><span class="slabel">구성원 <span class="c">${members.length}</span></span><div class="members">${members.slice(0, 14).map((m) => `<button type="button" class="chip" data-goto="user:${m.id}" style="border:0;cursor:pointer">${esc(m.name)}</button>`).join("")}${members.length > 14 ? `<span class="chip">외 ${members.length - 14}명</span>` : ""}</div></div>
+      <div class="ds"><span class="slabel">최근 변경</span>${tl}</div>`;
+  }
+  $("#addBtn").addEventListener("click", (e) => openAddPop(e.currentTarget));
+  $$(".revoke", box).forEach((b) => b.addEventListener("click", () => revoke(Number(b.dataset.gid))));
+  $$("[data-goto]", box).forEach((b) => b.addEventListener("click", () => jumpTo(b.dataset.goto)));
+}
+function jumpTo(key) {
+  state.q = ""; state.roleF = ""; state.type = "all"; state.keepZero.add(key);
+  const input = $("#q"); if (input) input.value = ""; const rf = $("#roleF"); if (rf) rf.value = "";
+  computeItems();
+  const idx = state.items.findIndex((x) => x.key === key);
+  if (idx >= state.visible) state.visible = Math.ceil((idx + 1) / PAGE) * PAGE;
+  renderPills(); renderList();
+  select(key, "pointer");
+  requestAnimationFrame(() => $(`#mlist [data-key="${CSS.escape(key)}"]`)?.scrollIntoView({ block: "center" }));
+}
+function updateCount(key) {
+  const c = countMap().get(key) ?? 0; const it = state.items.find((x) => x.key === key); if (it) it.count = c;
+  const el = $(`#mlist [data-key="${CSS.escape(key)}"] .cnt`);
+  if (el) { el.textContent = c; el.classList.toggle("zero", c === 0); restart(el, "bump"); }
+  renderSummary();
+}
+
+/* 붙어 뜨는 고르기 */
+function openAddPop(anchor) {
+  closeLayer();
+  const { type, id } = currentSubject();
+  const held = new Set(grants.filter((g) => g.type === type && g.subject === id && g.role).map((g) => g.role));
+  const opts = ROLES.filter((r) => !held.has(r.id));
+  const pop = document.createElement("div");
+  pop.className = "pop"; pop.setAttribute("role", "dialog"); pop.setAttribute("aria-label", "역할 더하기");
+  pop.innerHTML = `<div class="ph">역할 더하기 · ${esc(subjectName(type, id))}</div>
+    ${opts.length ? opts.map((r) => `<label class="popt"><input type="checkbox" value="${r.id}"><span class="two"><span class="t1">${esc(r.name)}</span><span class="t2">${esc(permsText(r))}</span></span></label>`).join("") : '<span class="empty-note" style="padding:6px">모든 역할을 이미 받았습니다</span>'}
+    <div class="pfoot"><button type="button" class="btn sm" data-close>취소</button><button type="button" class="btn sm pri" id="popOk" disabled>더하기</button></div>`;
+  $("#layer").append(pop);
+  const r = anchor.getBoundingClientRect(); const w = 320;
+  let left = r.left + window.scrollX; if (left + w > window.scrollX + innerWidth - 16) left = window.scrollX + innerWidth - 16 - w;
+  let top = r.bottom + window.scrollY + 6;
+  if (r.bottom + pop.offsetHeight + 12 > innerHeight && r.top - pop.offsetHeight - 6 > 0) { top = r.top + window.scrollY - pop.offsetHeight - 6; pop.classList.add("up"); }
+  pop.style.left = `${Math.max(16, left)}px`; pop.style.top = `${top}px`;
+  pop.querySelector("input")?.focus();
+  const ok = $("#popOk", pop);
+  pop.addEventListener("change", () => { const n = $$("input:checked", pop).length; ok.disabled = n === 0; ok.textContent = n ? `더하기 (${n})` : "더하기"; });
+  pop.querySelector("[data-close]").addEventListener("click", closeLayer);
+  ok.addEventListener("click", () => { const ids = $$("input:checked", pop).map((i) => Number(i.value)); closeLayer(); addRoles(type, id, ids); anchor.focus(); });
+  setTimeout(() => document.addEventListener("mousedown", outsideClose), 0);
+}
+function outsideClose(e) { if (!e.target.closest(".pop")) closeLayer(); }
+function closeLayer() { $("#layer").innerHTML = ""; document.removeEventListener("mousedown", outsideClose); }
+function addRoles(type, id, roleIds) {
+  const fresh = roleIds.map((r) => pushGrant(type, id, r, null, "dev.admin", nowStamp()).id);
+  audit.sort((a, b) => b.at - a.at);
+  renderDetail({ fresh }); updateCount(keyOf(type, id));
+  toast(`${subjectName(type, id)}에게 역할 ${roleIds.length}개를 더했습니다`);
+}
+function revoke(gidv) {
+  const idx = grants.findIndex((g) => g.id === gidv); if (idx < 0) return;
+  const g = grants[idx]; const key = keyOf(g.type, g.subject);
+  const row = $(`.grow-row[data-gid="${gidv}"]`);
+  const finish = () => {
+    grants.splice(grants.indexOf(g), 1);
+    const ev = { id: ++aid, at: nowStamp(), actor: "dev.admin", kind: "rm", type: g.type, subject: g.subject, role: g.role, perm: g.perm };
+    audit.unshift(ev); state.keepZero.add(key);
+    if (state.sel === key) renderDetail(); updateCount(key);
+    toast(`${subjectName(g.type, g.subject)} — ${grantLabel(g)} 회수함`, { undo: () => { grants.push(g); audit.splice(audit.indexOf(ev), 1); if (state.page === "grants" && state.sel === key) renderDetail({ fresh: [g.id] }); updateCount(key); } });
+  };
+  if (!row || RM) return finish();
+  row.style.maxHeight = `${row.offsetHeight}px`; void row.offsetHeight; row.classList.add("row-out");
+  setTimeout(finish, 170);
+}
+
+/* 토스트 */
+function toast(text, { undo } = {}) {
+  const host = $("#toasts"); host.innerHTML = "";
+  const t = document.createElement("div"); t.className = "toast";
+  t.innerHTML = `<span>${esc(text)}</span>${undo ? '<button type="button" class="undo">되돌리기</button><span class="prog"></span>' : ""}`;
+  host.append(t);
+  const life = undo ? 5000 : 2600;
+  const prog = $(".prog", t); if (prog && !RM) prog.animate([{ transform: "scaleX(1)" }, { transform: "scaleX(0)" }], { duration: life, easing: "linear", fill: "forwards" });
+  let done = false;
+  const close = () => { if (done) return; done = true; t.classList.add("out"); setTimeout(() => t.remove(), 120); };
+  $(".undo", t)?.addEventListener("click", () => { undo(); close(); });
+  setTimeout(close, life);
+}
+
+/* ───────── 사내 AI로 등록 ───────── */
+const SAMPLE = "qa.member, prod.member → 작성자\nqa.lead 에게 QA Reviewer랑 Template Owner\nTEAM-IT1 부서에 시스템 운영\nops.member Operations 회수\n김민서 작성자\n홍길동 QA Reviewer\nkim.cs 작성자";
+const PARTICLE = /(에게|에서|부터|까지|에|랑|이랑|와|과|은|는|이|가|을|를|도|만|께)$/;
+const VOCAB = new Set(["부서", "회수", "빼기", "빼", "빼줘", "삭제", "제거", "추가", "주기", "주세요", "줘", "전원", "모두", "권한", "역할", "직접", "그리고", "작성자", "운영", "시스템", "관리", "보기", "상태", "만들기", "전체", "지침", "표준", "골격", "실행", "동기화", "직원"]);
+ROLES.forEach((r) => r.name.split(/\s+/).forEach((w) => VOCAB.add(w))); PERMS.forEach((p) => p[1].split(/\s+/).forEach((w) => VOCAB.add(w)));
+const NAME_INDEX = PEOPLE.reduce((m, p) => m.set(p.name, [...(m.get(p.name) ?? []), p]), new Map());
+const nl = { choices: new Map(), rows: [], sent: "" };
+function openNl() {
+  closeLayer();
+  const scrim = document.createElement("div"); scrim.className = "scrim";
+  scrim.innerHTML = `<div class="modal" role="dialog" aria-modal="true" aria-labelledby="nlTitle">
+    <div class="modal-h"><span style="color:var(--accent);display:inline-flex">${ic("wand", 18)}</span><b id="nlTitle">사내 AI로 등록</b><span class="lcount">로그인 ID로 쓰면 동명이인 걱정이 없습니다</span><span class="sp"></span><button type="button" class="ib" data-close aria-label="닫기">${ic("x")}</button></div>
+    <div class="modal-b nl">
+      <div class="fld"><label class="lab" for="nlText">지시 <span class="h">한 줄에 하나 · 엑셀 표 붙여넣기 가능</span></label>
+        <textarea id="nlText" class="nlarea" spellcheck="false">${esc(SAMPLE)}</textarea>
+        <div class="precheck" id="pre" aria-live="polite"></div>
+        <button type="button" class="btn soft" id="nlRun" style="justify-self:start">${ic("wand")}사내 AI로 읽기</button>
+      </div>
+      <div class="fld"><span class="lab">미리보기 <span class="h">확정 전까지 아무것도 바뀌지 않습니다</span></span>
+        <div class="nlprev" id="nlPrev"><div class="emp">${ic("wand", 22)}<span>"사내 AI로 읽기"를 누르면 지시를 표로 바꿔 보여 줍니다.</span><span>목록에 없는 ID는 화면에 남겨 확인만 하게 하고, 반영하지 않습니다.</span></div></div>
+        <div class="sumbar" id="nlSum"></div>
+        <div id="sentBox"></div>
+      </div>
+    </div>
+    <div class="modal-f"><span class="privacy">${ic("lock", 14)}AI에는 로그인 ID · 부서 코드 · 역할 이름만 갑니다</span><button type="button" class="btn ghost sm" id="nlSent" hidden>보낸 글 보기</button><span class="sp"></span><button type="button" class="btn" data-close>취소</button><button type="button" class="btn pri" id="nlOk" disabled>바꾸기</button></div>
+  </div>`;
+  document.body.append(scrim);
+  nl.choices = new Map(); nl.rows = []; nl.sent = "";
+  const close = () => { scrim.classList.add("out"); setTimeout(() => scrim.remove(), RM ? 0 : 110); document.removeEventListener("keydown", onEsc); $("#nlOpen")?.focus(); };
+  const onEsc = (e) => { if (e.key === "Escape") close(); };
+  document.addEventListener("keydown", onEsc);
+  scrim.addEventListener("mousedown", (e) => { if (e.target === scrim) close(); });
+  $$("[data-close]", scrim).forEach((b) => b.addEventListener("click", close));
+  const ta = $("#nlText", scrim); ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length);
+  ta.addEventListener("input", debounce(precheck, 200));
+  $("#nlRun", scrim).addEventListener("click", runAi);
+  $("#nlSent", scrim).addEventListener("click", () => { const b = $("#sentBox"); b.innerHTML = b.innerHTML ? "" : `<pre class="sent">${esc(nl.sent)}</pre>`; });
+  $("#nlOk", scrim).addEventListener("click", () => { applyNl(); close(); });
+  precheck();
+}
+function scanText(text) {
+  const names = []; const cuts = [];
+  (text.match(/[가-힣]+/g) ?? []).forEach((tok) => {
+    const base = tok.replace(PARTICLE, "");
+    if (NAME_INDEX.has(tok) || NAME_INDEX.has(base)) { const n = NAME_INDEX.has(tok) ? tok : base; if (!names.includes(n)) names.push(n); return; }
+    if (VOCAB.has(tok) || VOCAB.has(base) || base.length < 2 || base.length > 4) return;
+    if (!cuts.includes(base)) cuts.push(base);
+  });
+  return { names, cuts };
+}
+function precheck() {
+  const text = $("#nlText").value; const { names, cuts } = scanText(text); const box = $("#pre");
+  let html = "";
+  names.forEach((n) => {
+    const ps = NAME_INDEX.get(n);
+    if (ps.length === 1) html += `<div class="pc ok"><span>이름 <b>${esc(n)}</b> → <span class="k">${esc(ps[0].id)}</span>로 바꿔 보냅니다</span></div>`;
+    else html += `<div class="pc need"><b>${esc(n)} — 동명이인 ${ps.length}명. 보낼 사람을 고르세요</b>${ps.map((p) => `<label><input type="radio" name="dup-${esc(n)}" value="${esc(p.id)}" ${nl.choices.get(n) === p.id ? "checked" : ""}><span class="k">${esc(p.id)}</span> · ${esc(deptBy(p.dept).name)}</label>`).join("")}</div>`;
+  });
+  cuts.forEach((c) => { html += `<div class="pc cut"><span>이름처럼 보이는 <b>${esc(c)}</b>는 직원 목록에 없어 AI에 보내지 않습니다. 로그인 ID로 바꿔 주세요</span></div>`; });
+  box.innerHTML = html;
+  $$('input[type="radio"]', box).forEach((r) => r.addEventListener("change", () => { nl.choices.set(r.name.slice(4), r.value); updateRunState(); }));
+  updateRunState();
+}
+function updateRunState() {
+  const { names } = scanText($("#nlText").value);
+  const pending = names.filter((n) => NAME_INDEX.get(n).length > 1 && !nl.choices.has(n));
+  const run = $("#nlRun"); run.disabled = pending.length > 0;
+  run.title = pending.length ? "동명이인을 먼저 고르세요" : "";
+}
+function buildSent(text) {
+  const { names, cuts } = scanText(text); let out = text;
+  names.forEach((n) => { const ps = NAME_INDEX.get(n); const idv = ps.length === 1 ? ps[0].id : nl.choices.get(n); out = out.split(n).join(idv); });
+  cuts.forEach((c) => { out = out.split(c).join("[이름 지움]"); });
+  return out;
+}
+async function runAi() {
+  const run = $("#nlRun"); const prev = $("#nlPrev");
+  nl.sent = buildSent($("#nlText").value);
+  run.disabled = true; run.innerHTML = `<span style="display:inline-flex;animation:spin 0.9s linear infinite">${ic("loader")}</span>읽는 중…`;
+  prev.innerHTML = `<div class="prow head"><span></span><span>대상</span><span>동작</span><span>역할·권한</span><span>결과</span></div>` + Array.from({ length: 4 }, () => `<div class="prow"><span></span><span class="sk" style="height:12px;width:80%"></span><span class="sk" style="height:12px;width:34px"></span><span class="sk" style="height:12px;width:70%"></span><span class="sk" style="height:12px;width:60%"></span></div>`).join("");
+  $("#nlSum").textContent = ""; $("#sentBox").innerHTML = "";
+  await wait(900);
+  nl.rows = parseLines(nl.sent);
+  renderNlRows();
+  run.disabled = false; run.innerHTML = `${ic("wand")}다시 읽기`;
+  $("#nlSent").hidden = false;
+}
+function parseLines(text) {
+  const has = (type, id, role) => grants.some((g) => g.type === type && g.subject === id && g.role === role);
+  return text.split("\n").map((l) => l.trim()).filter(Boolean).map((line, i) => {
+    const action = /회수|빼|삭제|제거/.test(line) ? "rm" : "add";
+    const subs = [];
+    (line.match(/\b[a-z][a-z0-9]*(?:\.[a-z0-9]+)+\b/g) ?? []).forEach((idv) => subs.push({ type: "user", id: idv, ok: !!personBy(idv) }));
+    (line.match(/\b[A-Z]{2,5}-[A-Z0-9]{1,5}\b/g) ?? []).forEach((c) => subs.push({ type: "dept", id: c, ok: !!deptBy(c) }));
+    const low = line.toLowerCase(); const roles = [];
+    ROLES.forEach((r) => { if (low.includes(r.name.toLowerCase())) roles.push(r.id); });
+    if (!roles.length && line.includes("작성자")) roles.push(4);
+    const cut = line.includes("[이름 지움]");
+    const results = []; let nNew = 0, nSkip = 0, nRm = 0, nNone = 0;
+    subs.filter((s) => s.ok).forEach((s) => roles.forEach((r) => {
+      const exists = has(s.type, s.id, r);
+      if (action === "add") { if (exists) nSkip++; else { nNew++; results.push({ ...s, role: r }); } }
+      else if (exists) { nRm++; results.push({ ...s, role: r }); } else nNone++;
+    }));
+    const bad = subs.filter((s) => !s.ok);
+    let status = [];
+    if (nNew) status.push(`<span class="st new">새로 ${nNew}</span>`);
+    if (nRm) status.push(`<span class="st rm">회수 ${nRm}</span>`);
+    if (nSkip) status.push(`<span class="st skip">이미 있음 ${nSkip}</span>`);
+    if (nNone) status.push(`<span class="st skip">받은 적 없음 ${nNone}</span>`);
+    if (bad.length) status.push(`<span class="st err">목록에 없음 ${bad.length} — 화면에서 확인</span>`);
+    if (cut && !subs.length) status.push(`<span class="st err">대상 없음 — 이름은 보내지 않았습니다</span>`);
+    if (!roles.length) status.push(`<span class="st err">역할을 못 찾음</span>`);
+    return { i: i + 1, action, subs, roles, results, status: status.join(" · "), err: bad.length > 0 || (cut && !subs.length) || !roles.length, on: results.length > 0, cut };
+  });
+}
+function renderNlRows() {
+  const prev = $("#nlPrev");
+  prev.innerHTML = `<div class="prow head"><span></span><span>대상</span><span>동작</span><span>역할·권한</span><span>결과</span></div>` + nl.rows.map((r, k) => `
+    <div class="prow in${r.err ? " err" : ""}${r.on ? "" : " off"}" style="animation-delay:${RM ? 0 : k * 45}ms">
+      <input type="checkbox" data-row="${k}" ${r.on ? "checked" : ""} ${r.results.length ? "" : "disabled"} aria-label="${r.i}번 줄 반영">
+      <span class="cells">${r.subs.length ? r.subs.map((s) => `<span class="chip${s.ok ? "" : " bad"}">${s.type === "dept" ? ic("building", 12) : ""}${esc(s.ok ? subjectName(s.type, s.id) : s.id)}${s.ok && s.type === "user" ? ` <span class="k" style="opacity:.7">${esc(s.id)}</span>` : ""}</span>`).join("") : '<span class="chip bad">[이름 지움]</span>'}</span>
+      <span class="op ${r.action}">${r.action === "add" ? "추가" : "회수"}</span>
+      <span class="cells">${r.roles.map((id) => `<span class="chip role">${esc(roleById(id).name)}</span>`).join("") || '<span class="lcount">—</span>'}</span>
+      <span>${r.status}</span></div>`).join("");
+  $$('input[data-row]', prev).forEach((c) => c.addEventListener("change", () => { const r = nl.rows[Number(c.dataset.row)]; r.on = c.checked; c.closest(".prow").classList.toggle("off", !c.checked); renderNlSum(); }));
+  renderNlSum();
+}
+function renderNlSum() {
+  const on = nl.rows.filter((r) => r.on);
+  const add = on.filter((r) => r.action === "add").reduce((s, r) => s + r.results.length, 0);
+  const rm = on.filter((r) => r.action === "rm").reduce((s, r) => s + r.results.length, 0);
+  const check = nl.rows.filter((r) => r.err).length;
+  $("#nlSum").innerHTML = `<span>추가 <b style="color:var(--ok)">${add}</b></span><span>회수 <b style="color:var(--danger)">${rm}</b></span><span class="lcount">확인할 줄 ${check} · 이 줄들은 반영하지 않습니다</span>`;
+  const ok = $("#nlOk"); ok.disabled = add + rm === 0; ok.textContent = add + rm ? `${add + rm}건 바꾸기` : "바꾸기";
+}
+function applyNl() {
+  const touched = new Set(); let n = 0;
+  nl.rows.filter((r) => r.on).forEach((r) => r.results.forEach((x) => {
+    const key = keyOf(x.type, x.id); touched.add(key); n++;
+    if (r.action === "add") pushGrant(x.type, x.id, x.role, null, "dev.admin", nowStamp());
+    else { const g = grants.find((gg) => gg.type === x.type && gg.subject === x.id && gg.role === x.role); if (g) { grants.splice(grants.indexOf(g), 1); audit.unshift({ id: ++aid, at: nowStamp(), actor: "dev.admin", kind: "rm", type: x.type, subject: x.id, role: x.role, perm: null }); state.keepZero.add(key); } }
+  }));
+  audit.sort((a, b) => b.at - a.at);
+  if (state.page !== "grants") return;
+  const before = captureRects($("#mlist")); computeItems(); renderPills(); renderList({ before, keepScroll: true }); renderSummary();
+  touched.forEach((k) => restart($(`#mlist [data-key="${CSS.escape(k)}"]`), "flash"));
+  if (touched.has(state.sel)) renderDetail();
+  toast(`${n}건 바꿨습니다 · 바뀐 대상 ${touched.size}`);
+}
+
+/* ───────── 역할 × 권한 ───────── */
+function roleGrantCount(id) { return grants.filter((g) => g.role === id).length; }
+function renderRoles() {
+  const groups = [...new Set(PERMS.map((p) => p[3]))];
+  main.innerHTML = `<div class="page enter">
+    <div class="hrow"><span class="ptitle">역할</span><span class="sp"></span><button type="button" class="btn pri" id="newRole">${ic("plus")}새 역할</button></div>
+    <div class="psub">역할 ${ROLES.length}개 · 권한 ${PERMS.length}종 · 칸을 눌러 켜고 끈 뒤 아래 띠에서 저장합니다</div>
+    <div class="tbl-scroll"><table class="dt" id="mxt">
+      <thead><tr><th rowspan="2" style="vertical-align:bottom;padding-bottom:10px">역할</th>${groups.map((g) => `<th class="grp" colspan="${PERMS.filter((p) => p[3] === g).length}"><span>${g}</span></th>`).join("")}<th rowspan="2" style="vertical-align:bottom;padding-bottom:10px">받은 대상</th><th rowspan="2" style="width:84px"></th></tr>
+      <tr>${PERMS.map((p) => `<th class="mxh" title="${esc(p[1])}">${p[2]}</th>`).join("")}</tr></thead>
+      <tbody>${ROLES.map((r) => roleRow(r)).join("")}</tbody></table></div>
+    <div id="barHost" style="display:contents"></div></div>`;
+  $("#mxt").addEventListener("click", (e) => {
+    const cell = e.target.closest(".mx"); if (cell) return togglePerm(cell);
+    const lnk = e.target.closest("[data-rolefilter]"); if (lnk) { state.roleF = lnk.dataset.rolefilter; state.q = ""; state.type = "all"; state.visible = PAGE; go("grants"); }
+    if (e.target.closest("[data-skip]")) toast("이 프로토타입에서는 생략했습니다");
+  });
+  $("#newRole").addEventListener("click", () => toast("이 프로토타입에서는 생략했습니다"));
+  $$("#mxt .recv").forEach((b) => { b.addEventListener("mouseenter", () => showRecv(b)); b.addEventListener("focus", () => showRecv(b)); b.addEventListener("mouseleave", hideRecvSoon); b.addEventListener("blur", hideRecvSoon); });
+  renderBar();
+}
+function roleRow(r) {
+  const holders = grants.filter((g) => g.role === r.id); const n = holders.length;
+  const avs = holders.slice(0, 3).map((g) => `<span class="av${g.type === "dept" ? " dept" : ""}">${g.type === "dept" ? ic("building", 11) : esc(subjectName("user", g.subject)[1] ?? "")}</span>`).join("") + (n > 3 ? `<span class="av more">+${n - 3}</span>` : "");
+  return `<tr data-role="${r.id}"><td><span class="two"><span class="t1">${esc(r.name)}</span><span class="t2" style="max-width:280px">${esc(r.desc)}</span></span></td>
+    ${PERMS.map(([k, label]) => { const base = r.perms.includes(k); const key = `${r.id}:${k}`; const val = state.pend.has(key) ? state.pend.get(key) : base; return `<td class="mxc"><button type="button" class="mx${state.pend.has(key) ? " pend" : ""}" data-key="${key}" aria-pressed="${val}" aria-label="${esc(r.name)} — ${label}">${val ? ic("check", 14) : ""}</button></td>`; }).join("")}
+    <td><button type="button" class="recv" data-role="${r.id}"><span class="avs">${avs || '<span class="lcount">—</span>'}</span><span class="t2" style="font-size:12px">${n}건</span></button></td>
+    <td><span class="rowact"><button type="button" class="ib" data-skip aria-label="수정">${ic("pencil", 15)}</button><button type="button" class="ib dz" ${n ? "disabled" : ""} data-skip aria-label="삭제" title="${n ? `부여 ${n}건을 먼저 회수해야 지울 수 있습니다` : "삭제"}">${ic("trash", 15)}</button></span></td></tr>`;
+}
+function togglePerm(cell) {
+  const [rid, k] = cell.dataset.key.split(":"); const r = roleById(Number(rid)); const base = r.perms.includes(k);
+  const cur = state.pend.has(cell.dataset.key) ? state.pend.get(cell.dataset.key) : base; const next = !cur;
+  if (next === base) state.pend.delete(cell.dataset.key); else state.pend.set(cell.dataset.key, next);
+  cell.setAttribute("aria-pressed", next); cell.innerHTML = next ? ic("check", 14) : ""; cell.classList.toggle("pend", state.pend.has(cell.dataset.key));
+  renderBar();
+}
+function renderBar() {
+  const host = $("#barHost"); if (!host) return;
+  const n = state.pend.size;
+  if (!n) { host.innerHTML = ""; return; }
+  const roles = new Set([...state.pend.keys()].map((k) => Number(k.split(":")[0])));
+  const affected = [...roles].reduce((s, id) => s + roleGrantCount(id), 0);
+  const existing = $(".bar", host);
+  const inner = `<span>바뀐 칸 <b>${n}</b> · 역할 ${roles.size}개 · 받은 대상 ${affected}건에 적용</span><button type="button" class="btn sm" id="barDrop">버리기</button><button type="button" class="btn sm pri" id="barSave">저장…</button>`;
+  if (existing) existing.innerHTML = inner; else host.innerHTML = `<div class="bar" role="region" aria-label="저장 대기">${inner}</div>`;
+  $("#barDrop").addEventListener("click", () => { state.pend.clear(); $$("#mxt tbody tr").forEach((tr) => { tr.outerHTML = roleRow(roleById(Number(tr.dataset.role))); }); renderRoles(); });
+  $("#barSave").addEventListener("click", confirmRoles);
+}
+function confirmRoles() {
+  const byRole = new Map();
+  state.pend.forEach((v, key) => { const [rid, k] = key.split(":"); const list = byRole.get(rid) ?? []; list.push({ k, v }); byRole.set(rid, list); });
+  const affected = [...byRole.keys()].reduce((s, id) => s + roleGrantCount(Number(id)), 0);
+  const scrim = document.createElement("div"); scrim.className = "scrim";
+  scrim.innerHTML = `<div class="modal sm" role="dialog" aria-modal="true" aria-labelledby="crt"><div class="modal-h"><b id="crt">역할 권한 저장</b></div>
+    <div class="modal-b">${[...byRole].map(([rid, list]) => `<div class="two" style="gap:4px"><span class="t1">${esc(roleById(Number(rid)).name)} <span class="lcount">· 받은 대상 ${roleGrantCount(Number(rid))}건</span></span><span class="hrow" style="gap:4px">${list.map(({ k, v }) => `<span class="chip ${v ? "role" : "bad"}">${v ? "+" : "−"} ${esc(permLabel(k))}</span>`).join("")}</span></div>`).join("")}
+    <span class="lcount">저장하면 받은 대상 <b style="color:var(--ink)">${affected}건</b>에 바로 적용됩니다.</span></div>
+    <div class="modal-f"><span class="sp"></span><button type="button" class="btn" data-close>취소</button><button type="button" class="btn pri" id="crOk">저장</button></div></div>`;
+  document.body.append(scrim);
+  const close = () => { scrim.classList.add("out"); setTimeout(() => scrim.remove(), RM ? 0 : 110); };
+  scrim.addEventListener("mousedown", (e) => { if (e.target === scrim) close(); });
+  $("[data-close]", scrim).addEventListener("click", close);
+  $("#crOk", scrim).focus();
+  $("#crOk", scrim).addEventListener("click", () => {
+    const changed = [...state.pend.keys()];
+    state.pend.forEach((v, key) => { const [rid, k] = key.split(":"); const r = roleById(Number(rid)); r.perms = v ? [...new Set([...r.perms, k])].sort((a, b) => PERMS.findIndex((p) => p[0] === a) - PERMS.findIndex((p) => p[0] === b)) : r.perms.filter((x) => x !== k); });
+    byRole.forEach((list, rid) => audit.unshift({ id: ++aid, at: nowStamp(), actor: "dev.admin", kind: "role", role: Number(rid), text: list.map(({ k, v }) => `${permLabel(k)} ${v ? "더함" : "뺌"}`).join(", ") }));
+    state.pend.clear(); close(); renderRoles();
+    changed.forEach((key) => restart($(`#mxt .mx[data-key="${CSS.escape(key)}"]`)?.closest("td"), "flash"));
+    toast(`역할 ${byRole.size}개를 저장했습니다`);
+  });
+}
+let recvT = null;
+function showRecv(btn) {
+  clearTimeout(recvT); closeLayer();
+  const id = Number(btn.dataset.role); const holders = grants.filter((g) => g.role === id);
+  const pop = document.createElement("div"); pop.className = "pop"; pop.style.width = "260px";
+  pop.innerHTML = `<div class="ph">${esc(roleById(id).name)} · ${holders.length}건</div>${holders.slice(0, 6).map((g) => `<div class="pr">${g.type === "dept" ? `<span class="dicon">${ic("building", 13)}</span>` : ""}<b>${esc(subjectName(g.type, g.subject))}</b><span class="id">${esc(g.subject)}</span></div>`).join("")}${holders.length > 6 ? `<span class="lcount" style="padding:2px 4px">외 ${holders.length - 6}</span>` : ""}<button type="button" class="lnk small" style="justify-self:start;padding:6px 4px" data-rolefilter="${id}">부여 화면에서 보기 ›</button>`;
+  $("#layer").append(pop);
+  const r = btn.getBoundingClientRect();
+  pop.style.left = `${Math.min(r.left + window.scrollX, window.scrollX + innerWidth - 276)}px`; pop.style.top = `${r.bottom + window.scrollY + 6}px`;
+  pop.addEventListener("mouseenter", () => clearTimeout(recvT)); pop.addEventListener("mouseleave", hideRecvSoon);
+  $("[data-rolefilter]", pop).addEventListener("click", (e) => { state.roleF = e.currentTarget.dataset.rolefilter; state.q = ""; state.type = "all"; state.visible = PAGE; go("grants"); });
+}
+function hideRecvSoon() { clearTimeout(recvT); recvT = setTimeout(closeLayer, 180); }
+
+/* ───────── 변경 기록 ───────── */
+function auditItems() {
+  const q = state.audit.q.trim().toLowerCase();
+  return audit.filter((a) => (state.audit.kind === "all" || a.kind === state.audit.kind) && (!q || [a.actor, a.subject ?? "", a.subject ? subjectName(a.type, a.subject) : "", a.role ? roleById(a.role)?.name ?? "" : "", a.perm ? permLabel(a.perm) : ""].join(" ").toLowerCase().includes(q)));
+}
+function renderAudit() {
+  main.innerHTML = `<div class="page enter">
+    <div class="hrow"><span class="ptitle">변경 기록</span></div>
+    <div class="psub">역할·부여 변경 ${audit.length}건 · 30건씩 이어 불러옵니다</div>
+    <div class="hrow"><label class="search" style="width:min(340px,100%)">${ic("search", 15)}<input id="aq" placeholder="대상·역할·한 사람으로 찾기" value="${esc(state.audit.q)}" aria-label="기록 찾기"></label>
+      <span class="pills" id="apills"></span></div>
+    <div class="tbl-scroll" style="overflow:visible"><table class="dt" id="atbl"><thead><tr><th style="width:56px"></th><th>무엇이 바뀌었나</th><th style="width:150px">한 사람</th><th style="width:80px;text-align:right">시각</th></tr></thead><tbody id="abody"></tbody></table></div>
+    <div id="asent"></div></div>`;
+  const pills = [["all", "전체", null], ["add", "부여 추가", "var(--ok)"], ["rm", "부여 회수", "var(--danger)"], ["role", "역할 변경", "var(--accent)"]];
+  $("#apills").innerHTML = pills.map(([k, l, c]) => `<button type="button" class="pf" data-kind="${k}" aria-pressed="${state.audit.kind === k}">${c ? `<i style="background:${c}"></i>` : ""}${l}</button>`).join("");
+  $$("#apills .pf").forEach((b) => b.addEventListener("click", () => { state.audit.kind = b.dataset.kind; state.audit.visible = PAGE; $$("#apills .pf").forEach((x) => x.setAttribute("aria-pressed", x === b)); renderAuditRows(); }));
+  $("#aq").addEventListener("input", debounce((e) => { state.audit.q = e.target.value; state.audit.visible = PAGE; renderAuditRows(); }, 150));
+  $("#abody").addEventListener("click", (e) => { const b = e.target.closest("[data-goto]"); if (b) { go("grants"); jumpTo(b.dataset.goto); } });
+  renderAuditRows();
+}
+let aio = null, aloading = false;
+function auditRow(a, fresh) {
+  const icon = a.kind === "add" ? ["add", "plus"] : a.kind === "rm" ? ["rm", "undo"] : ["role", "shield"];
+  let line, sub;
+  if (a.kind === "role") { line = `<span class="t1">${esc(roleById(a.role)?.name ?? "")}</span>`; sub = `역할 고침 · ${esc(a.text)}`; }
+  else {
+    const isDept = a.type === "dept"; const nm = subjectName(a.type, a.subject);
+    const label = a.role ? roleById(a.role)?.name ?? "" : permLabel(a.perm);
+    line = `${isDept ? `<span class="dicon">${ic("building", 13)}</span>` : ""}<button type="button" class="lnk" style="text-decoration:none;color:var(--ink)" data-goto="${a.type}:${esc(a.subject)}">${esc(nm)}</button><span style="color:var(--ink-4)">${a.kind === "add" ? "←" : "→"}</span><span class="chip ${a.role ? "role" : "direct"}" ${a.kind === "rm" ? 'style="text-decoration:line-through"' : ""}>${esc(label)}</span>`;
+    sub = `${a.kind === "add" ? "부여 추가" : "부여 회수"} · <span class="k">${esc(a.subject)}</span>`;
+  }
+  return `<tr class="${fresh ? "fade-row" : ""}"><td><span class="acirc ${icon[0]}">${ic(icon[1], 14)}</span></td><td><span class="two"><span class="l1">${line}</span><span class="t2">${sub}</span></span></td><td style="color:var(--ink-4)">${esc(a.actor)}</td><td style="color:var(--ink-4);text-align:right;font-variant-numeric:tabular-nums">${fmtTime(a.at)}</td></tr>`;
+}
+function renderAuditRows(freshFrom = Infinity) {
+  const items = auditItems(); const vis = items.slice(0, state.audit.visible);
+  let html = "", lastDay = null;
+  vis.forEach((a, i) => { const d = fmtDay(a.at); if (d !== lastDay) { html += `<tr class="dategrp${i >= freshFrom ? " fade-row" : ""}"><td colspan="4">${d}</td></tr>`; lastDay = d; } html += auditRow(a, i >= freshFrom); });
+  if (!vis.length) html = `<tr><td colspan="4" style="text-align:center;color:var(--ink-4);height:120px">맞는 기록이 없습니다</td></tr>`;
+  $("#abody").innerHTML = html;
+  const s = $("#asent");
+  s.innerHTML = state.audit.visible < items.length ? `<div style="display:grid;gap:0">${Array.from({ length: 3 }, () => `<div class="skrow" style="padding:0 16px"><span class="sk" style="width:28px;height:28px;border-radius:50%"></span><span style="display:grid;gap:5px;flex:1"><span class="sk" style="width:40%;height:11px"></span><span class="sk" style="width:22%;height:9px"></span></span></div>`).join("")}</div>` : `<div class="list-foot">${items.length}건 모두 보입니다</div>`;
+  aio?.disconnect();
+  if (state.audit.visible < items.length) {
+    aio = new IntersectionObserver(async (es) => {
+      if (!es[0].isIntersecting || aloading) return;
+      aloading = true; await wait(320);
+      const from = state.audit.visible; state.audit.visible += PAGE; renderAuditRows(from); aloading = false;
+    }, { root: matchMedia("(max-width: 900px)").matches ? null : main, rootMargin: "0px 0px 160px 0px" });
+    aio.observe(s);
+  }
+}
+
+/* ───────── 전역 키 ───────── */
+document.addEventListener("keydown", (e) => {
+  const typing = /INPUT|TEXTAREA|SELECT/.test(document.activeElement?.tagName ?? "");
+  if (e.key === "Escape") closeLayer();
+  if (typing || document.querySelector(".scrim")) return;
+  if (e.key === "/" && (state.page === "grants" || state.page === "audit")) { e.preventDefault(); ($("#q") ?? $("#aq"))?.focus(); }
+  if ((e.key === "a" || e.key === "A") && state.page === "grants" && $("#addBtn")) { e.preventDefault(); openAddPop($("#addBtn")); }
+});
+const spin = document.createElement("style"); spin.textContent = "@keyframes spin { to { transform: rotate(360deg); } }"; document.head.append(spin);
+
+renderNav(); go("grants");
+</script>

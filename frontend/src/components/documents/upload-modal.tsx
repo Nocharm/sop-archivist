@@ -4,7 +4,7 @@
 // New 파일은 번호가 같은 빈 목록 줄에 붙고, 없으면 줄이 새로 생긴다(종류와 상위 SOP를 여기서 고른다).
 // 올리는 동안 묶음과 줄은 제자리에 남고 줄의 아랫줄이 상태가 된다. 서버가 올릴 때 바로 추출하고 문서 번호·버전·언어 배치를 미리 채우므로,
 // Old 파일은 결과와 채운 값(출처 표)을 그 자리에서 고칠 수 있다.
-// 설계: docs/superpowers/specs/2026-11-17-documents-screen-design.md §9
+// 설계: 2026-11-17-documents-screen §9 (docs/architecture/decisions.md)
 "use client";
 
 import { ArrowRight, FileText, Loader2, Upload, X } from "lucide-react";

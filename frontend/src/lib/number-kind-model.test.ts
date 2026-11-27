@@ -70,10 +70,7 @@ describe("suggestUnitContinuous", () => {
     expect(suggestUnitContinuous(units, 2)).toBe("1.");
     expect(suggestUnitContinuous(units, 99)).toBeNull();
   });
-  it("gives an unwrapped table line under heading 5 the number 6 (B8 7-4)", () => {
-    const units = [unit(1, "5"), unit(2, "1", { table_id: 40 }), unit(3, "2", { table_id: 40 })];
-    expect(suggestUnitContinuous(units, 2)).toBe("6");
-  });
+  it("gives an unwrapped table line under heading 5 the number 5.1 (D1)", () => expect(suggestUnitContinuous([unit(1, "5", { kind: "heading" }), unit(2, "1", { table_id: 40 })], 2)).toBe("5.1"));
 });
 
 describe("stepContinuous", () => {

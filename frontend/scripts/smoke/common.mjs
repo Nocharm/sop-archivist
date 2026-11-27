@@ -1,8 +1,7 @@
 // Shared parts of the SOP smoke: settings, check/runStep, browser, helpers used by more than one screen, and the setup step.
 // Split from pw-smoke-sop.mjs (2026-11-19). Screen steps live in ./<screen>.mjs; the runner is ../pw-smoke-sop.mjs.
 
-import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
@@ -14,26 +13,44 @@ export const CHROME = process.env.CHROME_PATH ?? "/Applications/Google Chrome.ap
 export const BASE = process.env.BASE_URL ?? "http://localhost:3777";
 export const SHOT_DIR = resolve(SCRIPT_DIR, "../../../.shots");
 export const T = 15000;
-export const ONLY = (process.env.ONLY ?? "").split(",").map((part) => part.trim()).filter(Boolean);
 export const PREPARE = process.env.PREPARE === "1";
-export const PREPARE_STEP = "assign: first entry classifies the remaining rows in the background";
+export const PREPARE_STEP = "assign: first entry does not classify the remaining rows";
+// 지난 실행에서 실패한 단계 이름(.dev/는 git 밖) - ONLY_FAILED=1이면 그 단계만 다시 돈다.
+// 하나 고치고 화면 전체(Assign은 수 분)를 다시 돌지 않게(2026-11-20~22 세션 기록: 스모크가 도구 시간의 38%, 실패 뒤 다시 돌기가 잦았다)
+export const FAILED_FILE = resolve(SCRIPT_DIR, "../../../.dev/smoke-failed.txt");
+const ONLY_FAILED = process.env.ONLY_FAILED === "1";
+
+function readFailedSteps() {
+  return existsSync(FAILED_FILE) ? readFileSync(FAILED_FILE, "utf8").split("\n").map((line) => line.trim()).filter(Boolean) : [];
+}
+
+function readOnly() {
+  if (!ONLY_FAILED) return (process.env.ONLY ?? "").split(",").map((part) => part.trim()).filter(Boolean);
+  const steps = readFailedSteps();
+  if (steps.length === 0) {
+    console.error(`ONLY_FAILED=1 but ${FAILED_FILE} lists no failed step (the last runs passed). Run the screen you changed instead: QUIET=1 ONLY="<screen>:" node scripts/pw-smoke-sop.mjs`);
+    process.exit(2);
+  }
+  return steps;
+}
+
+export const ONLY = readOnly();
+
+// 전부 돌리는 것은 정식 업데이트 전 · 공용 부품을 고쳤을 때만(사용자 결정 2026-11-16) - 규칙만으로는 ONLY 없는 실행이 이어져(11-20~22 세션 217번 중 71번) 실행기가 막는다
+if (ONLY.length === 0 && !PREPARE && process.env.FULL !== "1") {
+  console.error(
+    'Pick what to run. One screen changed: QUIET=1 ONLY="<screen>:" (assign: · documents: · new documents: · order · outputs · map). ' +
+      "Before dev→main, or after changing parts several screens share (common components, API layer, this runner): FULL=1.",
+  );
+  process.exit(2);
+}
 // 시안의 모든 수치는 1248 × 720 프레임 기준이다(디자인 문서 15절)
 export const VIEWPORT = { width: 1248, height: 720 };
 
 mkdirSync(SHOT_DIR, { recursive: true });
 
-/** backend 파이썬(xlsx 읽기 · 합성 SOP 만들기) - BACKEND_PYTHON → 이 체크아웃의 backend/.venv → 원본 체크아웃(git common dir의 부모)의 backend/.venv.
- *  워크트리에는 venv가 없어, BACKEND_PYTHON을 빠뜨리면 xlsx 단계가 "file argument … undefined"로 거짓 실패했다(2026-11-20) */
-export function findBackendPython() {
-  if (process.env.BACKEND_PYTHON) return process.env.BACKEND_PYTHON;
-  const findVenv = (root) => [".venv/bin/python", ".venv/Scripts/python.exe"].map((path) => resolve(root, "backend", path)).find(existsSync);
-  const own = findVenv(resolve(BACKEND_DIR, ".."));
-  if (own) return own;
-  const common = String(execFileSync("git", ["rev-parse", "--path-format=absolute", "--git-common-dir"], { cwd: SCRIPT_DIR })).trim();
-  const main = findVenv(dirname(common));
-  if (main) return main;
-  throw new Error(`backend venv python not found in ${resolve(BACKEND_DIR, ".venv")} or ${resolve(dirname(common), "backend/.venv")}. Fix: in backend/ run python3.11 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt, or set BACKEND_PYTHON=<absolute path>`);
-}
+// backend 파이썬 찾기는 부작용 없는 모듈에 둔다(pw-manual-shots도 가져온다)
+export { findBackendPython } from "./backend-python.mjs";
 
 // 시드 지문 - scripts/dev-worktree.sh가 DB를 시드 스냅숏으로 되돌릴 때마다 묶음별 "updated_at#마지막 History 사건 id"를 여기에 적는다(.dev/는 git 밖).
 // 판단 · 편집은 묶음 updated_at을 바꾸지 않아 사건 id가 필요하다
@@ -73,9 +90,15 @@ export const QUIET = process.env.QUIET === "1";
 export const SETUP_STEP = "bundle list";
 export let failures = 0;
 export let passes = 0;
+let currentStep = null;
+const ranSteps = new Set();
+const failedSteps = new Set();
 export const check = (name, ok, detail = "") => {
   if (ok) passes += 1;
-  else failures += 1;
+  else {
+    failures += 1;
+    if (currentStep) failedSteps.add(currentStep);
+  }
   if (ok && QUIET) return;
   console.log(`${ok ? "PASS" : "FAIL"} ${name}${detail ? ` - ${String(detail).replace(/\s+/g, " ").trim()}` : ""}`);
 };
@@ -84,8 +107,11 @@ export const check = (name, ok, detail = "") => {
 
 export const browser = await chromium.launch({ executablePath: CHROME, headless: true });
 
-export async function runStep(name, { devUser = "qa.member", storage = {}, allowConsoleErrors = false } = {}, run) {
-  if (ONLY.length > 0 && name !== SETUP_STEP && !ONLY.some((part) => name.includes(part))) return;
+/** drafting - 새 문서를 만드는 쪽(숨긴 기능)을 켜고 돈다(개발 빌드에서만 듣는 sopa.drafting). 숨긴 기능을 쓰는 단계에만 붙인다 */
+export async function runStep(name, { devUser = "qa.member", storage = {}, drafting = false, allowConsoleErrors = false } = {}, run) {
+  // ONLY_FAILED는 적어 둔 이름 그대로만 - 조각 맞추기면 이름이 겹치는 다른 단계까지 돈다
+  const picked = ONLY_FAILED ? ONLY.includes(name) : ONLY.some((part) => name.includes(part));
+  if (ONLY.length > 0 && name !== SETUP_STEP && !picked) return;
   // 미리 분류 시나리오는 PREPARE=1일 때만, 그때는 그것만(머리말)
   if (PREPARE !== (name === PREPARE_STEP)) return;
   if (!QUIET) console.log(`\n# ${name}`);
@@ -98,7 +124,7 @@ export async function runStep(name, { devUser = "qa.member", storage = {}, allow
         if (!window.localStorage.getItem(key)) window.localStorage.setItem(key, value);
       }
     },
-    { loginId: devUser, extra: storage },
+    { loginId: devUser, extra: drafting ? { ...storage, "sopa.drafting": "1" } : storage },
   );
   const page = await ctx.newPage();
   const consoleErrors = [];
@@ -111,14 +137,32 @@ export async function runStep(name, { devUser = "qa.member", storage = {}, allow
   page.on("pageerror", (err) => {
     if (!isDevTimingNoise(String(err))) consoleErrors.push(String(err));
   });
+  currentStep = name;
+  ranSteps.add(name);
   try {
     await run({ page, takeShot: (file) => page.screenshot({ path: resolve(SHOT_DIR, file) }) });
     if (!allowConsoleErrors) check(`${name}: no console errors`, consoleErrors.length === 0, consoleErrors.join(" | "));
   } catch (err) {
     check(`${name}: completed`, false, err instanceof Error ? err.message : String(err));
   } finally {
+    currentStep = null;
     await ctx.close();
   }
+}
+
+/** 실패한 단계 이름을 적는다 - 이번에 돈 단계는 결과로 바꾸고, 돌지 않은 단계의 지난 실패는 남긴다(다른 화면을 ONLY로 돌려도 지워지지 않게).
+ *  ONLY_FAILED 실행은 적힌 이름을 모두 찾아봤으니 맞는 단계가 없던 이름(이름을 바꾼 단계)도 지운다 */
+export function saveFailedSteps() {
+  const earlier = ONLY_FAILED ? [] : readFailedSteps().filter((step) => !ranSteps.has(step));
+  const steps = [...earlier, ...failedSteps];
+  if (steps.length === 0) {
+    rmSync(FAILED_FILE, { force: true });
+    return;
+  }
+  mkdirSync(dirname(FAILED_FILE), { recursive: true });
+  writeFileSync(FAILED_FILE, `${steps.join("\n")}\n`);
+  const what = failedSteps.size > 0 ? `${failedSteps.size} failed step(s) saved` : `${earlier.length} step(s) that failed in an earlier run (not run this time) are still listed`;
+  console.log(`\n${what} in ${FAILED_FILE}. After fixing: scripts/dev-worktree.sh reset (from the repo root), then QUIET=1 ONLY_FAILED=1 node scripts/pw-smoke-sop.mjs`);
 }
 
 export const wait = (page, testId) => page.locator(`[data-testid="${testId}"]`).first().waitFor({ timeout: T });
@@ -215,7 +259,7 @@ await runStep("bundle list", {}, async ({ page, takeShot }) => {
   freshBundleId = Number((await fresh.getAttribute("data-testid")).replace("bundles-row-", ""));
   const listApi = await page.request.get(`${BASE}/api/bundles`, { headers: { "X-Dev-User": "qa.member" } });
   const listed = (await listApi.json()).find((bundle) => bundle.id === halfBundleId);
-  check("half-classified row shows confirmed / total rows", (await getText(page, `bundles-confirmed-${halfBundleId}`)).includes(`/ ${listed.progress.total}`), String(listed.progress.total));
+  check("half-classified row shows decided / total rows", (await getText(page, `bundles-confirmed-${halfBundleId}`)).includes(`/ ${listed.progress.total}`), String(listed.progress.total));
   check("no stage nav outside a bundle", (await page.locator('[data-testid="stage-nav"]').count()) === 0);
   check("synthetic bundles are marked in the list", (await page.locator(`[data-testid="bundles-synthetic-${halfBundleId}"]`).count()) === 1);
   await takeShot("sop-bundle-list.png");

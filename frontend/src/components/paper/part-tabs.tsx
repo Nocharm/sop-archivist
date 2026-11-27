@@ -4,7 +4,7 @@
 import type { ReactNode } from "react";
 
 import { useI18n } from "@/lib/i18n";
-import type { PaperTabKey } from "@/lib/paper-model";
+import type { PaperSheet, PaperTabKey } from "@/lib/paper-model";
 
 interface PartTabsProps {
   keys: readonly PaperTabKey[];
@@ -16,6 +16,12 @@ interface PartTabsProps {
   counts?: Partial<Record<PaperTabKey, number | undefined>>;
   /** `<prefix>s`는 줄, `<prefix>-<key>`는 탭의 testid */
   testIdPrefix: string;
+}
+
+/** 머리말 · 꼬리말 쪽의 설명 줄 - 쓰이는 구역(1구역 · 첫 쪽…), 구역 정보가 없는 옛 추출이나 각주는 "머리말 2"처럼 차례로 */
+export function describeSheet(sheet: PaperSheet, index: number, t: ReturnType<typeof useI18n>["t"]): string {
+  if (sheet.refs.length === 0) return t("split.sheetOrdinal", { name: t(`split.part.${sheet.part}`), n: index + 1 });
+  return sheet.refs.map((ref) => t("split.sheetRef", { n: ref.section, type: t(`split.refType.${ref.type}`) })).join(", ");
 }
 
 export function PartTabs({ keys, active, onChange, renderBadge, counts, testIdPrefix }: PartTabsProps) {

@@ -1,0 +1,8 @@
+{
+  "shape": "번호 없는 같은 언어 Shift+Enter 줄",
+  "layout": null,
+  "boxes": [
+    {"text": "5. 절차", "lang": "ko", "kind": "heading", "number": "5.", "excluded": null},
+    {"text": "탱크를 비우고 잔량을 확인한다. 결과를 기록한다.", "lang": "ko", "kind": "sentence", "number": null, "excluded": null}
+  ]
+}

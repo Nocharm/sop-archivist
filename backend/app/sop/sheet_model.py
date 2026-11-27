@@ -2,7 +2,7 @@
 
 계산은 app/sop/outputs.py가 끝냈고 여기서는 그 결과를 칸 글로 옮긴다. 시스템 표시 값은 영어 한 벌이다(Excel·미리보기는 늘 en).
 32,767자 나누기도 여기서 해 미리보기와 파일이 같은 줄이 된다. xlsx 쓰기는 excel_export.build_workbook.
-미리보기 전용 값(A의 fit_widths·bands·column_keys, 줄의 unit_id·group_id·toc, 칸의 tone)은 화면만 읽고 xlsx에는 쓰지 않는다.
+미리보기 전용 값(A의 fit_widths·bands·column_keys, 줄의 unit_id·group_id·toc·noise, 칸의 tone)은 화면만 읽고 xlsx에는 쓰지 않는다.
 """
 
 import base64
@@ -17,9 +17,9 @@ from app.sop.captions import join_caption_texts
 from app.sop.constants import BULLET_SYMBOLS, NUMBER_BULLET, NUMBER_NOTE
 from app.sop.excel_export import ExportMeta, build_export_file_name, clean_cell_text, format_kst, split_cell_text
 from app.sop.flow_image import draw_flow_png
-from app.sop.noise import NOISE_TOC
-from app.sop.output_labels import LABELS
+from app.sop.output_labels import FIGURE_MARKER, LABELS
 from app.sop.outputs import (
+    STATUS_DELETED,
     ARow,
     CItem,
     FlowNode,
@@ -37,6 +37,7 @@ CellTone = Literal["ok", "ai", "del", "un"]  # 상태 칩 색 — 확정·AI 제
 BandTone = Literal["asis", "tobe", "decision", "tracking"]
 
 SHEET_NAMES = ("A Comparison", "B Flow", "C New documents", "Info", "Documents")
+SHOW_C_SHEET = False  # 새 문서를 만드는 쪽을 숨긴 동안 C 시트를 뺀다(쪼개기 먼저 설계 §14). 짓는 코드는 남기고 시험이 켠다
 A_HEADERS = (
     "Row", "Old doc", "Ver.", "Location", "Unit ID", "Old text", "Destination", "New doc", "New doc title", "Place",
     "No.", "New text", "AI suggestion", "Change", "Remark", "Status", "Confirmed by", "Confirmed at", "Group ID",
@@ -55,6 +56,7 @@ A_COLUMN_KEYS = (
     "number", "new_text", "ai_suggestion", "change", "remark", "status", "confirmed_by", "confirmed_at", "group_id",
     "checks",
 )
+A_OLD_TEXT_COLUMN = 6  # Old text(1부터) — 확정 삭제 줄에 취소선을 긋는 칸
 A_STATUS_COLUMN = 16  # Status(1부터) — 칩 색(tone)을 싣는 칸
 A_SHARED_COLUMNS = (1, 7, 8, 9, 15)  # Row·Destination·New doc·New doc title·Remark (1부터) — 묶음이 함께 쓰는 칸(제품 명세 §7.13 줄 규칙 (5))
 A_ROW_COLUMN = 1
@@ -96,17 +98,22 @@ SUMMARY_NAMES = (
     "Old rows", "Assigned", "No destination", "Duplicate assignments", "Deleted", "Moved", "New", "Translated",
     "Confirmed rate", "Single language",
 )
-TOC_SUMMARY_NAME = "Contents · auto-deleted"  # 목차 줄 수(summary.toc_deleted) — 목차 줄이 있는 묶음에만 싣는다
+# 저절로 삭제된 줄 수(요약 칸 → 이름) — 그런 줄이 있는 묶음에만 싣는다
+NOISE_SUMMARY_NAMES = {
+    "toc_deleted": "Contents · auto-deleted", "front_deleted": "Front matter · auto-deleted",
+    "history_deleted": "Change history · auto-deleted",
+}
 UNWRAPPED_SUMMARY_NAME = "Lines from unwrapped tables"  # 풀린 표에서 온 줄 수(summary.unwrapped_rows) — 그런 줄이 있을 때만 싣는다
 INFO_NAMES = (
     "Bundle title", "Status", "Created by", "Created at (KST)", "Exported by", "Exported at (KST)", "Guideline version",
     "Synthetic data",
 )
 _LABELS = LABELS["en"]
-_MARKERS = {"table": "[Table]", "figure": "[Figure]"}  # 확정한 캡션 글이 없는 표·그림 줄에만
+PLACE_JOINER = " · "  # 위치 칸 조각 사이(outputs._format_place와 같다)
+_MARKERS = {"table": "[Table]", "figure": FIGURE_MARKER}  # 확정한 캡션 글이 없는 표·그림 줄에만
 _CAPTION_POSITION = "Caption"  # 캡션 줄의 Cell position 칸 — 칸 줄의 "R 1 C 1" 자리
 _NO_WRAP_KINDS = ("status", "plain")  # 상태 줄·제목·이름 칸은 옆 칸으로 넘쳐 보이게 접지 않는다
-# 상태 코드 → 칩 색. 보류(on_hold)는 명세가 색을 정하지 않아 칩 없이 글로 남고, "del"은 Status가 Deleted로 적히는 줄(목차 줄 — 저절로 지운 줄)
+# 상태 코드 → 칩 색. 보류(on_hold)는 명세가 색을 정하지 않아 칩 없이 글로 남고, "del"은 Status가 Deleted로 적히는 줄(저절로 삭제된 줄)
 _STATUS_TONES: dict[str, CellTone] = {"confirmed": "ok", "ai_suggested": "ai", "unassigned": "un", "deleted": "del"}
 
 
@@ -130,10 +137,11 @@ class SheetRow(BaseModel):
     kind: RowKind
     wrap: bool  # 칸 글을 칸 폭 안에서 접는다(위 맞춤). False(상태 줄·plain 줄)면 접지 않아 옆 빈 칸으로 넘쳐 보인다
     cells: list[SheetCell]  # 늘 시트 열 수(widths)만큼 — 빈 칸도 싣는다
-    # 아래 셋은 미리보기 전용(A의 자료 줄에만) — 화면이 칸 글을 읽지 않고 고른 줄·같은 무리·목차 줄을 맞춘다
+    # 아래 셋은 미리보기 전용(A의 자료 줄에만) — 화면이 칸 글을 읽지 않고 고른 줄·같은 무리·저절로 삭제된 줄을 맞춘다
     unit_id: int | None = None  # 이 줄의 옛 단위(이어진 줄도 같은 값), 번역·신규 줄은 None
     group_id: str | None = None  # Group ID 칸과 같은 관계 묶음
-    toc: bool = False  # 목차 줄(ARow.noise_kind == "toc") — 화면이 연달아 오는 줄을 한 줄로 접는다
+    toc: bool = False  # 저절로 삭제된 줄(ARow.noise_kind) — 화면이 연달아 오는 줄을 한 줄로 접는다
+    noise: str | None = None  # 그 종류(noise.NOISE_KINDS) — 접기는 종류가 바뀌면 끊는다
     # 문단 Excel 미리보기 전용 — 지운 줄(화면은 숨기고 고른 동안만 보인다), 한 줄로 묶은 옛 단위 전부(unit_id는 그 첫 단위, 한 단위 줄은 빈 목록)
     deleted: bool = False
     unit_ids: list[int] = []
@@ -254,10 +262,12 @@ def _make_sheet(
 # --- A Comparison ---
 
 
-def _format_location(location: LocationOut) -> str:
+def _format_location(location: LocationOut, *, hide: Collection[str] = ()) -> str:
+    """위치 칸 — hide에 든 자리 조각("Paragraph" · "Figure")은 뺀다(Assign 미리보기, 파일 · Outputs 미리보기는 그대로)."""
     pieces = [f"§{location.section}"] if location.section else []
-    if location.place:
-        pieces.append(location.place)
+    place = [piece for piece in location.place.split(PLACE_JOINER) if piece not in hide]
+    if place:
+        pieces.append(PLACE_JOINER.join(place))
     if location.page is not None:
         pieces.append(f"~p. {location.page}" if location.page_basis == "estimated" else f"p. {location.page}")
     return " · ".join(pieces)
@@ -270,13 +280,13 @@ def _format_warnings(row: ARow) -> str:
     )
 
 
-def _list_a_texts(row: ARow) -> list[str]:
+def _list_a_texts(row: ARow, *, hide_places: Collection[str] = ()) -> list[str]:
     """결과물 A 한 줄의 칸 글(A_HEADERS 순서) — 미배정은 보낸 곳 칸이 빈 채로 보인다."""
     return [
         str(row.row_no),
         row.old_doc_code,
         row.old_doc_version,
-        _format_location(row.location),
+        _format_location(row.location, hide=hide_places),
         row.display_id,
         row.source_text,
         _LABELS.dest_kinds.get(row.dest_kind, ""),
@@ -310,12 +320,15 @@ def _keep_document_groups(snap: BundleSnapshot, a_rows: list[ARow], document_id:
     return kept
 
 
-def _build_a_sheet(snap: BundleSnapshot, people: Mapping[str, str], document_id: int | None = None) -> Sheet:
+def _build_a_sheet(
+    snap: BundleSnapshot, people: Mapping[str, str], document_id: int | None = None, *, preview: bool = False
+) -> Sheet:
     """ARow 하나가 한 줄(넘는 글은 이어진 줄) — 묶음 첫 줄 말고는 함께 쓰는 칸이 바로 윗줄과 같으면 흐리게(제품 명세 §7.14 되풀이 + 흐림, O6).
 
     흐림은 보이는 글(clean_cell_text를 거친 칸 글)끼리 견준다. 줄의 단위·관계 묶음과 Status 칸의 칩 색은 미리보기만 읽는다.
-    document_id를 주면 그 옛 문서의 묶음만 싣는다(Assign 미리보기).
+    document_id를 주면 그 옛 문서의 묶음만 싣는다(Assign 미리보기). preview면 위치 칸에서 "문단" · "그림" 글자를 뺀다(줄은 남긴다).
     """
+    hide_places = (_LABELS.paragraph, _LABELS.figure) if preview else ()
     rows = [_build_status_row(snap, len(A_HEADERS)), _make_row("header", A_HEADERS)]
     above: SheetRow | None = None
     a_rows = build_output_a(snap, "en", people)
@@ -323,11 +336,14 @@ def _build_a_sheet(snap: BundleSnapshot, people: Mapping[str, str], document_id:
         a_rows = _keep_document_groups(snap, a_rows, document_id)
     for a_row in a_rows:
         italic = A_NOTE_COLUMNS if a_row.dest_is_note else ()
-        for offset, line in enumerate(_split_line(_list_a_texts(a_row), A_ID_COLUMN, A_SHARED_COLUMNS)):
+        struck = a_row.dest_kind == "delete" and a_row.status in ("confirmed", STATUS_DELETED)  # 삭제를 보류한 줄은 아직 아님
+        for offset, line in enumerate(_split_line(_list_a_texts(a_row, hide_places=hide_places), A_ID_COLUMN, A_SHARED_COLUMNS)):
             starts = a_row.is_group_start and offset == 0
             row = _make_row("group_start" if starts else "in_group", line, italic=italic, numeric=(A_ROW_COLUMN,))
             row.unit_id, row.group_id = a_row.unit_id, a_row.group_id
-            row.toc = a_row.noise_kind == NOISE_TOC
+            if struck:
+                row.cells[A_OLD_TEXT_COLUMN - 1].strike = True
+            row.toc, row.noise = a_row.noise_kind is not None, a_row.noise_kind
             status_cell = row.cells[A_STATUS_COLUMN - 1]
             if status_cell.text:  # 이어진 줄의 빈 Status 칸에는 칩이 없다
                 status_cell.tone = _STATUS_TONES.get(a_row.status)
@@ -374,9 +390,10 @@ def _build_b_sheet(snap: BundleSnapshot) -> Sheet:
     )
     for name, value in zip(SUMMARY_NAMES, values, strict=True):
         rows.append(_make_row("plain", _pad([name, str(value)], width), numeric=() if isinstance(value, str) else (2,)))
-    # 목차 줄 · 풀린 표의 줄이 있을 때만 — 없는 묶음의 파일은 그대로다
-    if summary.toc_deleted:
-        rows.append(_make_row("plain", _pad([TOC_SUMMARY_NAME, str(summary.toc_deleted)], width), numeric=(2,)))
+    # 저절로 삭제된 줄 · 풀린 표의 줄이 있을 때만 — 없는 묶음의 파일은 그대로다
+    for field, name in NOISE_SUMMARY_NAMES.items():
+        if count := getattr(summary, field):
+            rows.append(_make_row("plain", _pad([name, str(count)], width), numeric=(2,)))
     if summary.unwrapped_rows:
         rows.append(_make_row("plain", _pad([UNWRAPPED_SUMMARY_NAME, str(summary.unwrapped_rows)], width), numeric=(2,)))
 
@@ -565,15 +582,20 @@ def _build_documents_sheet(snap: BundleSnapshot, equis: Mapping[str, EquisOut]) 
 # --- 통합 문서 ---
 
 
+def get_sheet_names() -> tuple[str, ...]:
+    """통합 문서에 싣는 시트 이름 — C를 숨긴 동안 넷."""
+    return SHEET_NAMES if SHOW_C_SHEET else tuple(name for name in SHEET_NAMES if name != SHEET_NAMES[2])
+
+
 def build_workbook_model(
     snap: BundleSnapshot, meta: ExportMeta, people: Mapping[str, str], equis: Mapping[str, EquisOut] | None = None
 ) -> WorkbookModel:
-    """Excel 다섯 시트의 모델과 파일 이름 — 순수 계산이라 이벤트 루프 밖 스레드에서 부른다. people(로그인 ID → 이름)은 Confirmed by용,
+    """Excel 시트(`get_sheet_names`)의 모델과 파일 이름 — 순수 계산이라 이벤트 루프 밖 스레드에서 부른다. people(로그인 ID → 이름)은 Confirmed by용,
     equis(`build_equis_key` → 그 문서의 EQUIS 값)는 문서 목록 시트용이다."""
-    sheets = [
-        _build_a_sheet(snap, people), _build_b_sheet(snap), _build_c_sheet(snap), _build_info_sheet(snap, meta),
-        _build_documents_sheet(snap, equis or {}),
-    ]
+    sheets = [_build_a_sheet(snap, people), _build_b_sheet(snap)]
+    if SHOW_C_SHEET:
+        sheets.append(_build_c_sheet(snap))
+    sheets += [_build_info_sheet(snap, meta), _build_documents_sheet(snap, equis or {})]
     file_name = build_export_file_name(snap.bundle.id, snap.bundle.title, meta.exported_at)
     return WorkbookModel(file_name=file_name, sheets=sheets)
 
@@ -598,7 +620,7 @@ def build_a_preview(
 
     긴 문서에서 고른 줄이 앞 max_rows줄 밖이어도 보이게 한다. 고른 단위가 없거나 시트에 없으면 처음부터다. 뺀 위쪽 줄 수는 offset.
     """
-    return limit_window(_build_a_sheet(snap, people, document_id), A_HEAD_ROWS, around_unit_id, max_rows)
+    return limit_window(_build_a_sheet(snap, people, document_id, preview=True), A_HEAD_ROWS, around_unit_id, max_rows)
 
 
 def limit_window(sheet: Sheet, head_rows: int, around_unit_id: int | None, max_rows: int = MAX_PREVIEW_ROWS) -> Sheet:

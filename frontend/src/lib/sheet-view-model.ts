@@ -123,22 +123,22 @@ export function spanCells(row: PreviewRow, columnCount: number): SheetCellSpan[]
   return spans;
 }
 
-// --- 목차 줄 접기 ---
+// --- 저절로 삭제된 줄 접기(목차 · 본문 앞부분 · 개정 이력) ---
 
-export const MIN_TOC_FOLD = 2; // 목차 줄이 이만큼 이어져야 접는다 - 한 줄은 접어도 줄지 않는다
+export const MIN_TOC_FOLD = 2; // 같은 종류의 줄이 이만큼 이어져야 접는다 - 한 줄은 접어도 줄지 않는다
 
-/** 그릴 줄 - 모델 줄 하나(tocStart는 펼친 목차 무리의 첫 줄 index) 또는 접힌 목차 무리 */
+/** 그릴 줄 - 모델 줄 하나(tocStart는 펼친 무리의 첫 줄 index) 또는 접힌 무리 */
 export type SheetItem =
   | { type: "row"; index: number; row: PreviewRow; tocStart: number | null }
   | { type: "fold"; start: number; rows: PreviewRow[] };
 
-/** from부터의 줄을 그릴 줄로 - 연달아 오는 목차 줄은 무리의 첫 줄 index가 openTocs에 없으면 한 줄로 접는다 */
+/** from부터의 줄을 그릴 줄로 - 연달아 오는 같은 종류의 저절로 삭제된 줄은 무리의 첫 줄 index가 openTocs에 없으면 한 줄로 접는다 */
 export function listSheetItems(rows: readonly PreviewRow[], from: number, openTocs: ReadonlySet<number>, canFold: boolean): SheetItem[] {
   const items: SheetItem[] = [];
   let index = from;
   while (index < rows.length) {
     let end = index;
-    while (canFold && end < rows.length && rows[end].toc) end += 1;
+    while (canFold && end < rows.length && rows[end].toc && rows[end].noise === rows[index].noise) end += 1;
     if (end - index < MIN_TOC_FOLD) {
       items.push({ type: "row", index, row: rows[index], tocStart: null });
       index += 1;
@@ -153,10 +153,13 @@ export function listSheetItems(rows: readonly PreviewRow[], from: number, openTo
   return items;
 }
 
-/** 접힌 목차 줄의 칸 - 첫 줄의 칸에 Row 범위("1-8") · Location의 안내 글 · Unit ID의 "…" · Old text의 "외 n줄"만 바꾼다. 나머지(보낸 곳 · Remark · Status 칩)는 첫 줄 그대로 */
+export const PARAGRAPH_TEXT_COLUMN = 1; // 문단 Excel(column_keys 없음)의 Text 열 - 접힌 목차의 한 줄을 놓는다
+
+/** 접힌 무리의 칸 - column_keys가 없는 문단 Excel은 Text 칸에 안내 글 한 줄만 바꾼다. A는 첫 줄의 칸에 Row 범위("1-8") · Location의 안내 글 · Unit ID의 "…" · Old text의 "외 n줄"만 바꾼다. 나머지(보낸 곳 · Remark · Status 칩)는 첫 줄 그대로 */
 export function buildFoldedCells(rows: readonly PreviewRow[], columnKeys: readonly string[], texts: { label: string; more: string }): PreviewCell[] {
   const first = rows[0];
   const last = rows[rows.length - 1];
+  if (columnKeys.length === 0) return first.cells.map((cell, column) => (column === PARAGRAPH_TEXT_COLUMN ? { ...cell, text: texts.label } : cell));
   return first.cells.map((cell, column) => {
     const key = columnKeys[column];
     const lastText = last.cells[column]?.text ?? "";
@@ -166,6 +169,12 @@ export function buildFoldedCells(rows: readonly PreviewRow[], columnKeys: readon
     if (key === "old_text") return { ...cell, text: `${cell.text} ${texts.more}` };
     return cell;
   });
+}
+
+/** 접힌 무리의 안내 글 키 - 종류를 모르면 목차다 */
+export function getFoldLabelKey(rows: readonly PreviewRow[]): string {
+  if (rows[0].noise === "front") return "outputs.sheet.frontFolded";
+  return rows[0].noise === "history" ? "outputs.sheet.historyFolded" : "outputs.sheet.tocFolded";
 }
 
 // --- 고른 줄 · 확정 전 값 ---

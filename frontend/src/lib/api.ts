@@ -2,6 +2,7 @@
 // 경로는 `/api` 뒤만 적는다(`apiFetch("/me")` → `/api/me`). 개발 서버는 next.config rewrites, 운영은 nginx가 backend로 넘긴다.
 
 import { getStoredDevUser } from "./dev-auth";
+import { isPracticeRequest, readPathname } from "./practice-route";
 
 // 인증 토큰 — Providers가 Keycloak 로그인 후 주입한다. dev 모드면 null로 두고 X-Dev-User를 쓴다.
 let authToken: string | null = null;
@@ -106,8 +107,7 @@ export async function apiFetchBlobWithName(path: string): Promise<{ blob: Blob; 
   return { blob: await response.blob(), fileName: readDispositionFileName(response.headers.get("Content-Disposition")) };
 }
 
-async function sendRequest(path: string, init?: RequestInit): Promise<Response> {
-  const method = init?.method ?? "GET";
+async function sendToServer(path: string, method: string, init?: RequestInit): Promise<Response> {
   const headers: Record<string, string> = {};
   // multipart 같은 비문자열 body에는 브라우저가 Content-Type을 직접 정해야 하므로 문자열 body에만 JSON을 선언한다.
   if (typeof init?.body === "string") {
@@ -120,15 +120,25 @@ async function sendRequest(path: string, init?: RequestInit): Promise<Response> 
     const devUser = getStoredDevUser();
     if (devUser) headers["X-Dev-User"] = devUser;
   }
-
-  let response: Response;
   try {
-    response = await fetch(`/api${path}`, { ...init, headers: { ...headers, ...init?.headers } });
+    return await fetch(`/api${path}`, { ...init, headers: { ...headers, ...init?.headers } });
   } catch (e) {
     // 호출자가 일부러 취소한 요청은 오류가 아니다.
     // (이름으로 판별 - jsdom처럼 DOMException이 Error 하위 타입이 아닌 환경에서도 같게 동작한다)
     if (isRecord(e) && e.name === "AbortError") throw e;
     throw new ApiError(0, e instanceof Error ? e.message : String(e), `API ${method} ${path} failed: network error`);
+  }
+}
+
+async function sendRequest(path: string, init?: RequestInit): Promise<Response> {
+  const method = init?.method ?? "GET";
+  let response: Response;
+  if (isPracticeRequest(path, readPathname())) {
+    // 연습 화면 - 브라우저 안 가짜 서버가 답하고 실제 서버로는 보내지 않는다(설계 2026-11-26-practice-page D1). 동적 import라 연습 덩이에만 실린다
+    const { handlePracticeRequest } = await import("./practice/practice-server");
+    response = await handlePracticeRequest(method, path, init?.body);
+  } else {
+    response = await sendToServer(path, method, init);
   }
 
   if (!response.ok) {
@@ -207,6 +217,34 @@ export interface GrantInput {
   subject_id: string;
   role_id?: number;
   permission?: string;
+}
+
+export interface GrantBatchInput {
+  add?: GrantInput[];
+  remove?: number[];
+}
+
+/** added·removed는 실제로 바뀐 것, skipped는 이미 있던 추가, unknown은 대상·역할·권한이 없는 추가, missing은 이미 없던 회수. */
+export interface GrantBatchResult {
+  added: Grant[];
+  removed: number[];
+  skipped: GrantInput[];
+  unknown: GrantInput[];
+  missing: number[];
+}
+
+/** 사내 AI가 읽은 지시 한 줄 - 대상 글마다 맞은 직원·부서(0개면 목록에 없음, 2개 이상이면 동명이인), 역할·권한은 없으면 null. */
+export interface GrantAiLine {
+  line: number;
+  action: "add" | "remove";
+  subjects: { written: string; matches: { subject_type: SubjectType; subject_id: string }[] }[];
+  roles: { written: string; role_id: number | null }[];
+  permissions: { written: string; permission: string | null }[];
+}
+
+export interface GrantAiResult {
+  lines: GrantAiLine[];
+  model: string;
 }
 
 /** 변경 기록 한 줄 - action은 role.create|update|delete, grant.add|remove. detail 모양은 action마다 다르다. */
@@ -348,13 +386,27 @@ export function addGrant(body: GrantInput): Promise<Grant> {
   return apiFetch<Grant>("/access/grants", { method: "POST", body: JSON.stringify(body) });
 }
 
+/** 회수를 먼저, 추가를 나중에 한 트랜잭션으로 - 이미 있는 것·없는 것은 거절하지 않고 결과로 온다. 요청당 추가·회수 각 200개까지. */
+export function batchGrants(body: GrantBatchInput): Promise<GrantBatchResult> {
+  return apiFetch<GrantBatchResult>("/access/grants/batch", { method: "POST", body: JSON.stringify(body) });
+}
+
+/** 지시를 사내 AI로 읽기만 한다 - 아무것도 바꾸지 않는다. 반영은 batchGrants로. AI가 꺼져 있으면 503. */
+export function readGrantsWithAi(text: string): Promise<GrantAiResult> {
+  return apiFetch<GrantAiResult>("/access/grants/ai-read", { method: "POST", body: JSON.stringify({ text }) });
+}
+
 export function removeGrant(id: number): Promise<void> {
   return apiFetch<void>(`/access/grants/${id}`, { method: "DELETE" });
 }
 
-/** limit을 생략하면 서버 기본(100). 서버는 500으로 자른다. */
-export function listAudit(limit?: number): Promise<AuditEvent[]> {
-  return apiFetch<AuditEvent[]>(limit === undefined ? "/access/audit" : `/access/audit?limit=${limit}`);
+/** limit을 생략하면 서버 기본(100). 서버는 500으로 자른다. before(기록 id)를 주면 그보다 먼저 남은 기록부터 이어 받는다. */
+export function listAudit(limit?: number, before?: number): Promise<AuditEvent[]> {
+  const params = new URLSearchParams();
+  if (limit !== undefined) params.set("limit", String(limit));
+  if (before !== undefined) params.set("before", String(before));
+  const query = params.toString();
+  return apiFetch<AuditEvent[]>(query ? `/access/audit?${query}` : "/access/audit");
 }
 
 export function getEffective(loginId: string): Promise<EffectiveAccess> {

@@ -1,4 +1,4 @@
-"""AI API의 입력·응답 모양 — 프런트와 약속한 계약이다(계획 2 "API 계약"). 유사도 점수는 어디에도 싣지 않는다."""
+"""AI API의 입력·응답 모양 — 프런트와 약속한 계약이다(계획 2 "API 계약", docs/architecture/api-contract.md). 유사도 점수는 어디에도 싣지 않는다."""
 
 from typing import Annotated, Literal, Self
 
@@ -74,6 +74,13 @@ class TranslateIn(ScopeIn):
 
 class UnwrapOrderIn(BaseModel):
     """벗긴 표 순서 제안 요청 — 옛 문서와 그 안의 벗긴 표 하나."""
+
+    document_id: RequestId
+    table_id: RequestId
+
+
+class TableFollowIn(BaseModel):
+    """한글 표처럼 하기 제안 요청 — 옛 문서와 그 안의 벗긴 영어 표 하나."""
 
     document_id: RequestId
     table_id: RequestId

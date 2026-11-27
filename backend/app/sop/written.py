@@ -211,9 +211,13 @@ async def _load_bundle_children(
         lambda chunk: select(
             TargetSentence.id, TargetSentence.parent_target_id, TargetSentence.cell_row, TargetSentence.cell_col, TargetSentence.lang,
             TargetSentence.confirmed_text, TargetSentence.ai_text, TargetSentence.status, TargetSentence.kind,
-            TargetSentence.revision,
-        # id 순은 덩이 안에서만이지만 덩이는 부모 id로 나누므로 한 부모의 자식은 한 덩이에 다 있다 — 같은 언어 캡션은 id 순으로 잇는다
-        ).where(TargetSentence.parent_target_id.in_(chunk)).order_by(TargetSentence.id),
+            TargetSentence.revision, TargetSentence.new_unit_id, TargetSentence.change_type,
+        )
+        .outerjoin(Unit, Unit.id == TargetSentence.new_unit_id)
+        .where(TargetSentence.parent_target_id.in_(chunk))
+        # 새 문장 id가 아니라 Unit 순 — 편집이 다시 만든 새 문장은 id가 뒤로 밀린다. 덩이는 부모 id로 나누므로 한 부모의 자식은 한 덩이에 다 있다.
+        # 단위 없는 번역 행은 맨 뒤 — NULL 정렬 자리가 sqlite(맨 앞) · postgres(맨 뒤)에서 달라 첫 키로 못박는다
+        .order_by(Unit.id.is_(None), Unit.pos_seq, Unit.pos_start, Unit.id, TargetSentence.id),
         [target.id for target in bundle_targets],
     )
     cell_sources: dict[int, list[int]] = defaultdict(list)
@@ -233,6 +237,7 @@ async def _load_bundle_children(
         cells[row.parent_target_id].append(BundleCellOut(
             target_id=row.id, row=row.cell_row or 0, col=row.cell_col or 0, lang=row.lang, text=text, status=row.status,
             source_unit_ids=cell_sources.get(row.id, []), revision=row.revision,
+            new_unit_id=row.new_unit_id, change_type=row.change_type,
         ))
     tables = {target.id: build_bundle_table(target.grid, cells[target.id]) for target in bundle_targets if target.kind == "table"}
     joined = {target_id: join_caption_texts(texts) for target_id, texts in captions.items()}

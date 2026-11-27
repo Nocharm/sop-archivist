@@ -12,11 +12,13 @@ import {
   buildFoldedCells,
   findDraftRow,
   findPickedGroup,
+  getFoldLabelKey,
   getFoldMark,
   getFrozenCount,
   getRowMark,
   listBandTones,
   listSheetItems,
+  PARAGRAPH_TEXT_COLUMN,
   listShownItems,
   readDraftText,
   spanCells,
@@ -108,7 +110,7 @@ function SheetRowView({ row, cells, rowNumber, columnCount, columnKeys, bandTone
         return (
           <td key={column} colSpan={span > 1 ? span : undefined} data-head={cell.head ? "" : undefined} data-band={bandTones?.[column] ?? undefined} style={getCellStyle(cell, row)}>
             {renderCellText(cell, readDraftText(draft, key))}
-            {key === "location" && toc?.locationSuffix && <span className="sv-toc-toggle"> {toc.locationSuffix}</span>}
+            {(key === "location" || (columnKeys.length === 0 && column === PARAGRAPH_TEXT_COLUMN)) && toc?.locationSuffix && <span className="sv-toc-toggle"> {toc.locationSuffix}</span>}
             {key === "status" && pendingLabel && <span className="sv-pending">{pendingLabel}</span>}
           </td>
         );
@@ -159,8 +161,9 @@ export function SheetView({ sheet, selectedUnitId = null, centreKey = 0, draft, 
   const columnKeys = sheet.column_keys ?? [];
   const pickedGroup = findPickedGroup(sheet.rows, selectedUnitId);
   const draftRow = findDraftRow(sheet.rows, selectedUnitId, draft);
-  // 목차 접기는 열의 뜻(column_keys)을 아는 시트(A)에서만 - 접힌 줄의 글을 놓을 열을 찾아야 한다
-  const items = listShownItems(listSheetItems(sheet.rows, frozenCount, openTocs, sheet.column_keys !== null), selectedUnitId);
+  // 접을 줄(toc)은 서버가 단 시트(A · 문단 Excel)에만 있다 - 열의 뜻을 모르는 문단 Excel은 Text 칸에 한 줄로 접는다
+  const items = listShownItems(listSheetItems(sheet.rows, frozenCount, openTocs, true), selectedUnitId);
+  const isLineFold = sheet.column_keys === null;
   const hasHead = frozenCount > 0 || sheet.bands.length > 0;
 
   useEffect(() => {
@@ -213,7 +216,7 @@ export function SheetView({ sheet, selectedUnitId = null, centreKey = 0, draft, 
       imagePlaced = true;
     }
     if (item.type === "fold") {
-      const texts = { label: t("outputs.sheet.tocFolded", { n: item.rows.length }), more: t("outputs.sheet.tocMore", { n: item.rows.length - 1 }) };
+      const texts = { label: t(isLineFold ? "outputs.sheet.tocFoldedLine" : getFoldLabelKey(item.rows), { n: item.rows.length }), more: t("outputs.sheet.tocMore", { n: item.rows.length - 1 }) };
       bodyRows.push(
         <SheetRowView
           key={`toc-${item.start}`}

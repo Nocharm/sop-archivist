@@ -4,7 +4,7 @@
 "use client";
 
 import { Languages } from "lucide-react";
-import type { KeyboardEvent } from "react";
+import type { HTMLAttributes, KeyboardEvent } from "react";
 
 import type { UnitLang } from "@/lib/api-sop";
 
@@ -23,11 +23,15 @@ interface MenuLangRowProps {
   /** 그 칸만 꺼진 까닭(캡션: 같은 묶음의 다른 캡션이 가진 언어) */
   optionReasons?: Partial<Record<PickLang, string>>;
   onPick: (lang: PickLang) => void;
+  /** 줄 오른쪽(칸 앞)에 보이는 글쇠 - 없으면 없다 */
+  keyHint?: string;
+  /** 줄 전체에 거는 호버 · 포커스 핸들러(Assign 우클릭 메뉴의 닿는 칸 칠하기) */
+  reachProps?: HTMLAttributes<HTMLDivElement>;
   /** 줄 `{testId}`, 칸 `{testId}-ko`·`{testId}-en` */
   testId: string;
 }
 
-export function MenuLangRow({ label, current, disabledReason, currentReason, optionReasons, onPick, testId }: MenuLangRowProps) {
+export function MenuLangRow({ label, current, disabledReason, currentReason, optionReasons, onPick, keyHint, reachProps, testId }: MenuLangRowProps) {
   // 줄 안 ←→ - 두 칸 사이를 오간다(메뉴의 ↑↓·Home·End는 그대로)
   function handleKeyDown(event: KeyboardEvent<HTMLSpanElement>) {
     if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
@@ -39,9 +43,10 @@ export function MenuLangRow({ label, current, disabledReason, currentReason, opt
   }
 
   return (
-    <div role="group" aria-label={label} className="menu-lang-row" data-testid={testId}>
+    <div role="group" aria-label={label} className="menu-lang-row" data-testid={testId} {...reachProps}>
       <Languages size={14} strokeWidth={1.5} aria-hidden />
       <span className="min-w-0 flex-1">{label}</span>
+      {keyHint && <kbd>{keyHint}</kbd>}
       <span className="menu-lang-seg" onKeyDown={handleKeyDown}>
         {OPTIONS.map((lang) => {
           const isCurrent = current === lang;

@@ -4,12 +4,14 @@ Run when sync is explicitly requested — via `/sync` (change-based) or `/sync-a
 
 | File | When to update |
 |------|----------------|
-| Dependency files | Adding/removing/updating packages |
-| Dockerfile | System packages, build steps, ENV, ports |
-| .dockerignore | New folders/files that shouldn't be in build context |
-| docker-compose.yml | Ports, volumes, env vars, services |
-| .env | New config values added to Settings |
-| README.md | Endpoints, env vars, structure, setup instructions |
-| Test scenario docs | Test cases added/removed, endpoint behavior changed |
+| `backend/requirements*.txt` · `frontend/package.json` + lock | Adding/removing/updating packages (backend: confirm a Python 3.11 linux x86_64 wheel; `numpy` stays pinned to what `onnxruntime` pulls) |
+| `backend/Dockerfile` · `frontend/Dockerfile` | System packages, build steps, ENV, ports — read `rules/backend/docker.md` first (base image tags same as bpm, no `# syntax=`, no `--workers`) |
+| `backend/.dockerignore` · `frontend/.dockerignore` | New folders/files that shouldn't be in build context |
+| `docker-compose.yml` | Ports, volumes, services; every new backend env mapped under `environment:` as `VAR: ${VAR:-}` (backend has no `env_file`) |
+| `backend/app/settings.py` · `.env.example` | New config value — both, plus compose above. Never `.env` or secret values |
+| `README.md` | Commands, structure, setup, current version |
+| `docs/qa/verification-commands.md` | A script's prerequisites (DB, ports, env) or audit options changed |
+| `docs/qa/feature-map.md` | A screen's address, operation, known trap or smoke `ONLY` head changed |
+| `frontend/public/manual/user-manual.md` | Screen, behavior or label changed (text in the same commit; images at release prep) |
 
-**Sync order:** code → dependencies → Dockerfile → .dockerignore → docker-compose → .env → README → test docs
+**Sync order:** code → dependencies → Dockerfile → .dockerignore → docker-compose → settings/.env.example → README → docs (verification-commands, feature-map, manual)

@@ -9,11 +9,11 @@ import {
   isPositionLive,
   listDraftLines,
   readSectionDestination,
-  resolveDropLink,
   resolveGapDrop,
   resolveSlotDrop,
   resolveTreeDrop,
   type DropSection,
+  type NewHit,
 } from "./assign-drop-model";
 
 describe("canDragOld", () => {
@@ -44,31 +44,18 @@ describe("buildOldDragCard", () => {
 });
 
 describe("findAssignDrop", () => {
-  it("links onto a pickable sentence of a written document", () => {
-    expect(findAssignDrop({ targetId: 7, isReadOnly: false, hasPickButton: true })).toEqual({ kind: "link", targetId: 7 });
+  const hit = (over: Partial<NewHit> = {}): NewHit => ({ targetId: 5, isReadOnly: false, isLinkable: true, ...over });
+  it("links onto a linkable box of a written paper only", () => {
+    expect(findAssignDrop(hit({ isLinkable: true }))).toEqual({ kind: "link", targetId: 5 });
+    expect(findAssignDrop(hit({ isLinkable: false }))).toEqual({ kind: "none" });
   });
-  it("is nowhere over a composed (read-only) document, a non-sentence block, or outside any line", () => {
-    expect(findAssignDrop({ targetId: 7, isReadOnly: true, hasPickButton: false })).toEqual({ kind: "none" });
-    expect(findAssignDrop({ targetId: 7, isReadOnly: false, hasPickButton: false })).toEqual({ kind: "none" });
+  it("is nowhere over a composed (read-only) document or outside any line", () => {
+    expect(findAssignDrop(hit({ isReadOnly: true, isLinkable: false }))).toEqual({ kind: "none" });
     expect(findAssignDrop(null)).toEqual({ kind: "none" });
   });
-  it("links onto a cell box of a written table even before a row is picked (no pick button yet)", () => {
-    expect(findAssignDrop({ targetId: 41, isReadOnly: false, hasPickButton: false, isCell: true })).toEqual({ kind: "link", targetId: 41 });
-    expect(findAssignDrop({ targetId: 41, isReadOnly: true, hasPickButton: false, isCell: true })).toEqual({ kind: "none" });
-  });
-});
-
-describe("resolveDropLink", () => {
-  const link = (ids: number[]) => ({ kind: "link" as const, targetIds: ids });
-  it("picks the sentence when nothing is saved there", () => {
-    expect(resolveDropLink({ draftDestination: null, savedDestination: null, targetId: 7 })).toBe("pick");
-    expect(resolveDropLink({ draftDestination: null, savedDestination: link([8]), targetId: 7 })).toBe("pick");
-  });
-  it("only opens the menu on the sentence the row is already saved to", () => {
-    expect(resolveDropLink({ draftDestination: null, savedDestination: link([7, 8]), targetId: 7 })).toBe("menu_only");
-  });
-  it("picks again when a draft is in progress, like a click", () => {
-    expect(resolveDropLink({ draftDestination: link([9]), savedDestination: link([7]), targetId: 7 })).toBe("pick");
+  it("links onto a cell box of a written table, never of a read-only one", () => {
+    expect(findAssignDrop(hit({ targetId: 41 }))).toEqual({ kind: "link", targetId: 41 });
+    expect(findAssignDrop(hit({ targetId: 41, isReadOnly: true }))).toEqual({ kind: "none" });
   });
 });
 

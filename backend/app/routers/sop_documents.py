@@ -9,7 +9,7 @@ from io import BytesIO
 from typing import Annotated, Literal, Self
 from urllib.parse import quote
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, Path, Query, Response, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, Header, Path, Query, Response, UploadFile
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StringConstraints, model_validator
 from sqlalchemy import Row, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -39,9 +39,14 @@ from app.sop.editing import (
     EditResult,
     EditStepResult,
     EditStepIn,
+    FollowTableOp,
     apply_edit,
-    is_merge_edit,
+    continue_numbers,
+    find_wrapped_tables,
+    list_unwrapping_tables,
+    plan_continue_numbers,
     load_active_units,
+    read_merged_pieces,
     redo_edit,
     undo_edit,
 )
@@ -82,6 +87,7 @@ from app.sop.models import (
     UnitRef,
 )
 from app.sop.paragraph_excel import (
+    ParagraphInclude,
     build_paragraph_file,
     build_paragraph_preview,
     build_paragraph_sheet,
@@ -100,10 +106,21 @@ from app.sop.pairs import (
     delete_pair,
 )
 from app.sop.refs import RefState, build_ref_text, is_proposing_version, load_proposing_extractions, read_ref_state
-from app.sop.schemas import NO_NUL, NoNulStr
+from app.sop.original_places import load_original_places
+from app.sop.schemas import NO_NUL, NoNulStr, OriginalPlaces
 from app.sop.segment import find_anchor_offset, is_band_table, read_figure_inline, read_table_place
 from app.sop.sheet_model import Sheet
 from app.sop.status import get_cover_status
+from app.sop.table_follow import (
+    CounterpartOut,
+    FollowOut,
+    compute_counterpart,
+    compute_follow,
+    dispose_follow_deletes,
+    load_counterpart_inputs,
+    load_follow_inputs,
+    save_counterpart,
+)
 from app.sop.tobe import MAX_DB_INT, release_match_doc, rename_match_doc, temp_match_code
 from app.sop.units import (
     UNIT_ACTIVE,
@@ -338,8 +355,10 @@ class ViewUnitOut(BaseModel):
     ref: ViewUnitRefOut | None = None
     # 이 단위의 글 안 표·그림 참조(그 자리를 덮는 단위에 싣는다) — 나눈 뒤에도 참조가 든 쪽 단위가 갖는다
     caption_refs: list[CaptionRefOut] = []
-    # 잡음 표시(noise.py) — "toc"면 목차 줄: 배정 줄이 없고 Assign 용지가 목차 블록으로 접는다. 편집 clear_noise가 비운다
+    # 잡음 표시(noise.NOISE_KINDS) — 저절로 삭제된 줄: 배정 줄이 없고 Assign 용지가 종류마다 한 블록으로 접는다. 편집 clear_noise가 비운다
     noise_kind: str | None = None
+    # 저절로 삭제된 줄에 사람이 적은 사유 — 빈 글이면 종류마다 정한 문구(화면이 안다)
+    noise_reason: str = ""
     # 제목 스타일 줄을 문장으로 바꾼 문장(F8b) — Assign의 "제목으로 되돌리기"와 묶음 머리 "[제목 → 문장]"이 읽는다. 편집 set_heading이 오간다
     from_heading: bool = False
     # 캡션 하나를 같이 쓰는 그림 묶음(F7 ⑥)의 첫 그림 — 이 그림이 그 그림의 캡션을 같이 쓴다. 첫 그림 자신·묶이지 않은 단위는 null
@@ -551,15 +570,19 @@ async def build_document_view(session: AsyncSession, document: Document) -> Docu
     pairs = await _load_view_pairs(session, document.id)
     created_lists = (
         await session.execute(
-            select(UnitEdit.op, UnitEdit.created_unit_ids, UnitEdit.retired_unit_ids).where(
+            select(UnitEdit.op, UnitEdit.created_unit_ids, UnitEdit.retired_unit_ids, UnitEdit.payload).where(
                 UnitEdit.document_id == document.id, UnitEdit.state == "applied"
             )
         )
     ).all()
     # 합치기 해제가 되살린 단위는 원래 모습이라 "나눔·합침" 표시를 하지 않는다(그 전 편집이 만든 단위면 그 기록이 표시한다)
-    edited_ids = {unit_id for op, created, _ in created_lists if op != "unmerge" for unit_id in created}
-    # 합친 단위 → 합치기 전 단위(조각). 짝을 한 언어로 바꿔 합친 것도 같다(editing.is_merge_edit)
-    pieces_of = {created[0]: retired for op, created, retired in created_lists if is_merge_edit(op, created, retired)}
+    edited_ids = {unit_id for op, created, _, _ in created_lists if op != "unmerge" for unit_id in created}
+    # 합친 단위 → 합치기 전 단위(조각). 짝을 한 언어로 바꿔 합친 것 · 여럿 고른 줄을 합친 박스마다도 같다(editing.read_merged_pieces)
+    pieces_of = {
+        unit_id: pieces
+        for op, created, retired, payload in created_lists
+        for unit_id, pieces in read_merged_pieces(op, payload, created, retired).items()
+    }
     merged_ids = set(pieces_of)
     active_ids = {unit.id for unit in units}
     piece_texts = await _load_piece_texts(session, [piece for unit_id, ids in pieces_of.items() if unit_id in active_ids for piece in ids])
@@ -620,6 +643,7 @@ async def build_document_view(session: AsyncSession, document: Document) -> Docu
                 ref=_to_ref_out(read_ref_state(unit, ref_marks.get(unit.id), propose=is_proposing_version(extractor_version))),
                 caption_refs=refs_by_unit.get(unit.id, []),
                 noise_kind=unit.noise_kind,
+                noise_reason=unit.noise_reason,
                 from_heading=unit.from_heading,
                 caption_figure_id=unit.caption_figure_id,
                 pair_seq=unit.pair_seq,
@@ -906,10 +930,37 @@ async def edit_units(
     revision = document.revision
     # Assign 단계는 편집이 함께 바꾼 판단 · 짝도 찍는다(되돌리면 되살린다) - 편집 전 상태를 먼저 읽는다
     before_state = await dump_bundle_state(session, ctx.bundle.id) if body.undo is not None else None
+    # 이번에 벗기는 표 - 이미 벗긴 표(그 번호는 사람 것이거나 이 기능 전 것)는 번호를 잇지 않는다
+    unwrapping = await find_wrapped_tables(session, list_unwrapping_tables(body.op)) if document.side == "old" else []
     result = await apply_edit(session, document, body.op, confirm=body.confirm, actor=ctx.login_id)
+    edited = result.document_revision != revision
+    deletes = body.op.list_delete_ids() if isinstance(body.op, FollowTableOp) else []
+    if deletes:
+        # 한글 표처럼 하기의 삭제는 판단이다 - 편집과 같은 트랜잭션에서 쓰고 편집 전 덤프로 한 단계에 담는다(D2-R8, 되돌리기 한 번).
+        # 편집이 비었으면(삭제만) 판단 저장처럼 스냅숏 단계 하나
+        async def _dispose() -> list[int]:
+            return await dispose_follow_deletes(session, ctx.bundle, deletes, confirm=body.confirm, actor=ctx.login_id)
+
+        if edited or body.undo is None:
+            result.disposed_unit_ids = await _dispose()
+        else:
+            result.disposed_unit_ids = await record_snapshot_step(session, ctx.bundle, ctx.login_id, body.undo, body.op.type, _dispose)
     # 바뀐 것이 없는 편집은 Split 기록도 revision도 그대로라 Assign 단계도 남기지 않는다(언어 바꾸기는 단위를 만들지 않는다)
-    if body.undo is not None and before_state is not None and result.document_revision != revision:
-        await record_unit_edit_step(session, ctx.bundle, ctx.login_id, body.undo, document.id, before_state)
+    if body.undo is not None and before_state is not None and edited:
+        await record_unit_edit_step(
+            session, ctx.bundle, ctx.login_id, body.undo, document.id, before_state, result.closed_suggestion_ids
+        )
+    numbering = await plan_continue_numbers(session, document, unwrapping) if edited and unwrapping else None
+    if numbering is not None:
+        # 벗긴 Old 표의 번호 잇기는 벗기기 뒤 따로 한 칸이다(11-23 명세 D1-R5) - 첫 되돌리기는 번호만, 둘째가 다시 표로.
+        # 바뀔 줄이 있을 때만 단계 덤프를 뜬다
+        numbering_state = await dump_bundle_state(session, ctx.bundle.id) if body.undo is not None else None
+        numbered = await continue_numbers(session, document, numbering, actor=ctx.login_id)
+        if body.undo is not None and numbering_state is not None:
+            await record_unit_edit_step(
+                session, ctx.bundle, ctx.login_id, body.undo, document.id, numbering_state, numbered.closed_suggestion_ids
+            )
+        result.document_revision = numbered.document_revision
     await session.commit()
     return result
 
@@ -993,6 +1044,66 @@ async def delete_unit_pair(
     return result
 
 
+class CounterpartIn(BaseModel):
+    """영어 표의 짝 한글 표 — null이면 "짝 없음"으로 정한다."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    source_table_id: Annotated[int, Field(ge=1, le=MAX_DB_INT)] | None
+
+
+@router.get("/{bundle_id}/documents/{doc_id}/tables/{table_id}/counterpart", response_model=CounterpartOut)
+async def get_table_counterpart(
+    doc_id: IdPath,
+    table_id: IdPath,
+    ctx: BundleContext = Depends(_require_member),
+    session: AsyncSession = Depends(get_session),
+) -> CounterpartOut:
+    """영어 Old 표의 짝 한글 표 — 사람이 정했으면 그것, 아니면 꼴 · 토큰 · 뜻 점수로 matched | ambiguous | none(11-23 명세 D2-R1~R3)."""
+    document = await _get_document(session, ctx.bundle.id, doc_id)
+    inputs = await load_counterpart_inputs(session, document, table_id)
+    # 읽기는 끝났다 — 임베딩 호출 동안 풀 연결을 붙들지 않게 먼저 돌려준다(이후 DB는 쓰지 않는다)
+    await session.close()
+    return await compute_counterpart(inputs, login_id=ctx.login_id)
+
+
+@router.put("/{bundle_id}/documents/{doc_id}/tables/{table_id}/counterpart", response_model=CounterpartOut)
+async def choose_table_counterpart(
+    body: CounterpartIn,
+    doc_id: IdPath,
+    table_id: IdPath,
+    ctx: BundleContext = Depends(_require_author),
+    session: AsyncSession = Depends(get_session),
+) -> CounterpartOut:
+    """사람이 짝 표를 정한다 — 문서를 바꾸지 않으므로 revision · 되돌리기 단계 없이 저장하고 기록만 남긴다."""
+    await lock_bundle(session, ctx.bundle)
+    ensure_editable(ctx.bundle)
+    document = await _get_document(session, ctx.bundle.id, doc_id)
+    inputs = await load_counterpart_inputs(session, document, table_id)
+    inputs = await save_counterpart(session, inputs, table_id, body.source_table_id, actor=ctx.login_id)
+    record_event(
+        session, bundle_id=ctx.bundle.id, actor=ctx.login_id, action="table.counterpart", target_type="table",
+        target_ids=[table_id], detail={"document_id": document.id, "source_table_id": body.source_table_id},
+    )
+    await session.commit()
+    await session.close()  # 아래 임베딩 호출 동안 연결을 잡지 않는다
+    return await compute_counterpart(inputs, login_id=ctx.login_id)
+
+
+@router.get("/{bundle_id}/documents/{doc_id}/tables/{table_id}/follow", response_model=FollowOut)
+async def get_table_follow(
+    doc_id: IdPath,
+    table_id: IdPath,
+    ctx: BundleContext = Depends(_require_member),
+    session: AsyncSession = Depends(get_session),
+) -> FollowOut:
+    """벗긴 영어 Old 표에 한글 짝 표에서 한 일을 제안한다(11-23 명세 D2-R4~R7) — 맞춘 꼴이 같으면 규칙(rule), 다르면 ai, 아니면 none. 저장하지 않는다."""
+    document = await _get_document(session, ctx.bundle.id, doc_id)
+    inputs = await load_follow_inputs(session, document, table_id)
+    await session.close()  # 임베딩 호출 동안 풀 연결을 붙들지 않는다(이후 DB는 쓰지 않는다)
+    return await compute_follow(inputs, login_id=ctx.login_id)
+
+
 @router.patch("/{bundle_id}/documents/{doc_id}/caption-refs/{ref_id}", response_model=CaptionRefResult)
 async def edit_caption_ref(
     body: CaptionRefIn,
@@ -1008,31 +1119,65 @@ async def edit_caption_ref(
     return result
 
 
+@router.get("/{bundle_id}/documents/{doc_id}/original-places", response_model=OriginalPlaces)
+async def get_original_places(
+    doc_id: IdPath,
+    ctx: BundleContext = Depends(_require_member),
+    session: AsyncSession = Depends(get_session),
+) -> OriginalPlaces:
+    """원본 보기용 — Unit마다 원본 블록의 XML 경로·쪽(글자는 싣지 않는다)."""
+    document = await _get_document(session, ctx.bundle.id, doc_id)
+    return await load_original_places(session, document)
+
+
+def _matches_etag(if_none_match: str | None, etag: str) -> bool:
+    """If-None-Match가 etag와 맞는지 — `*`·쉼표 목록·약한 접두(W/)를 받는다."""
+    if if_none_match is None:
+        return False
+    candidates = [part.strip().removeprefix("W/") for part in if_none_match.split(",")]
+    return "*" in candidates or etag in candidates
+
+
 @router.get("/{bundle_id}/documents/{doc_id}/file")
 async def download_document_file(
     doc_id: IdPath,
     ctx: BundleContext = Depends(_require_member),
     session: AsyncSession = Depends(get_session),
+    if_none_match: Annotated[str | None, Header()] = None,
 ) -> Response:
     document = await _get_document(session, ctx.bundle.id, doc_id)
+    # 같은 파일은 sha256이 같다 — 원본 보기가 탭을 열 때마다 다시 받지 않게 ETag를 단다
+    cache_headers = {"ETag": f'"{document.sha256}"', "Cache-Control": "private, max-age=86400"}
+    if _matches_etag(if_none_match, cache_headers["ETag"]):
+        # 바이트는 읽지 않고 있는지만 본다
+        if await session.scalar(select(DocumentFile.document_id).where(DocumentFile.document_id == document.id)) is None:
+            raise_rule(404, "file_not_found")
+        return Response(status_code=304, headers=cache_headers)
     stored = await session.get(DocumentFile, document.id)
     if stored is None:  # 받지 않았거나 추출에 실패한 문서는 바이트를 남기지 않았다
         raise_rule(404, "file_not_found")
     return Response(
         content=stored.content,
         media_type=_FILE_MEDIA_TYPES[document.file_format],
-        headers={"Content-Disposition": build_content_disposition(document.file_name)},
+        headers={"Content-Disposition": build_content_disposition(document.file_name), **cache_headers},
     )
 
 
+def _read_include(
+    tables: bool = Query(True), deleted: bool = Query(True), figures: bool = Query(True), toc: bool = Query(False)
+) -> ParagraphInclude:
+    """문단 Excel 받기의 질의 넷 — 처음 값은 지금 파일에서 옛 문서 목차만 뺀 것."""
+    return ParagraphInclude(tables=tables, deleted=deleted, figures=figures, toc=toc)
+
+
 async def _respond_paragraphs(
-    session: AsyncSession, bundle_id: int, documents: Sequence[Document], include_tables: bool, file_title: str
+    session: AsyncSession, bundle_id: int, documents: Sequence[Document], include: ParagraphInclude, file_title: str
 ) -> Response:
     """문서마다 시트 하나인 문단 Excel 응답 — 시트 이름은 문서 번호(없으면 제목)."""
     taken: set[str] = set()
     sheets = [
         build_paragraph_sheet(
-            await load_unit_lines(session, document), include_tables, make_sheet_name(document.doc_code or document.title, taken)
+            await load_unit_lines(session, document), include, make_sheet_name(document.doc_code or document.title, taken)
         )
         for document in documents
     ]
@@ -1053,25 +1198,25 @@ async def get_paragraphs_preview(
     MAX_PREVIEW_ROWS줄까지(Excel A 미리 보기와 같은 창 계약). Old · New 어느 쪽 문서든."""
     document = await _get_document(session, ctx.bundle.id, doc_id)
     lines = await load_unit_lines(session, document)
-    return build_paragraph_preview(lines, tables, make_sheet_name(document.doc_code or document.title, set()), around)
+    return build_paragraph_preview(lines, ParagraphInclude(tables=tables), make_sheet_name(document.doc_code or document.title, set()), around)
 
 
 @router.get("/{bundle_id}/documents/{doc_id}/paragraphs.xlsx")
 async def download_document_paragraphs(
     doc_id: IdPath,
-    tables: bool = Query(True),
+    include: ParagraphInclude = Depends(_read_include),
     ctx: BundleContext = Depends(_require_member),
     session: AsyncSession = Depends(get_session),
 ) -> Response:
-    """문서 하나의 문단 Excel — 쪼갠 단위 한 줄씩 다섯 열(Assign 문서 대시보드). tables=false면 아직 표인 표를 뺀다."""
+    """문서 하나의 문단 Excel — 쪼갠 단위 한 줄씩 다섯 열(Assign 문서 대시보드). 질의 넷으로 넣을 것을 고른다(_read_include)."""
     document = await _get_document(session, ctx.bundle.id, doc_id)
     title = f"{document.doc_code or document.title}_paragraphs"
-    return await _respond_paragraphs(session, ctx.bundle.id, [document], tables, title)
+    return await _respond_paragraphs(session, ctx.bundle.id, [document], include, title)
 
 
 @router.get("/{bundle_id}/old-paragraphs.xlsx")
 async def download_old_paragraphs(
-    tables: bool = Query(True),
+    include: ParagraphInclude = Depends(_read_include),
     ctx: BundleContext = Depends(_require_member),
     session: AsyncSession = Depends(get_session),
 ) -> Response:
@@ -1079,7 +1224,7 @@ async def download_old_paragraphs(
     documents = (await session.scalars(
         select(Document).where(Document.bundle_id == ctx.bundle.id, Document.side == "old").order_by(Document.id)
     )).all()
-    return await _respond_paragraphs(session, ctx.bundle.id, documents, tables, "Old_paragraphs")
+    return await _respond_paragraphs(session, ctx.bundle.id, documents, include, "Old_paragraphs")
 
 
 @router.get("/{bundle_id}/documents/{doc_id}/figures/{block_id}")
