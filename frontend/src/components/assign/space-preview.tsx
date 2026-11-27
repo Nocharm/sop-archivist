@@ -4,7 +4,7 @@
 // 상태 기계 · 셈은 lib/space-preview-model.ts. role="dialog"를 쓰지 않는다 - 열어 둔 동안에도 Assign 단축키(↵ 확정 등)가 그대로 돈다.
 // 머리의 탭 둘(D1) - 결과 미리보기(위 시트) · 원본 보기(components/assign/original-view.tsx, 양 단이면 Old · New 두 원본). 마지막 탭을 기억하고(D2),
 // 열어 둔 시트의 탁은 0.3초 흐려지며 닫히고 그사이 다시 탁 하면 닫기를 거두고 탭을 바꾼다(D3). 원본은 탭을 처음 보일 때 그리고 <Activity>로 숨겨 둔다(다시 그리지 않는다).
-// 설계: docs/superpowers/specs/2026-11-27-original-view-design.md §5.6
+// 설계 2026-11-27-original-view(docs/architecture/decisions.md) §5.6
 "use client";
 
 import { Download } from "lucide-react";

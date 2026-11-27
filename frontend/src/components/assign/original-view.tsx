@@ -1,6 +1,6 @@
 // 원본 보기 - 원본 DOCX를 회색 책상 위 종이(인쇄 미리보기)로 그리고 고른 Unit의 문단(칸)을 칠해 따라간다(읽기만, D10).
 // 그리기는 lib/use-original-render.ts(그림자 뿌리 안), 칠 · 굴림 · 배율 · 쪽 칩은 lib/use-original-follow.ts - 이 파일에는 이펙트가 없다.
-// 설계: docs/superpowers/specs/2026-11-27-original-view-design.md §5.2~5.5 (D7~D10)
+// 설계 2026-11-27-original-view(docs/architecture/decisions.md) §5.2~5.5 (D7~D10)
 "use client";
 
 import { Download, RefreshCw } from "lucide-react";

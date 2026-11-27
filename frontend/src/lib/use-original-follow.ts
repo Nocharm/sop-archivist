@@ -1,6 +1,6 @@
 // 원본 보기의 따라가기 · 배율 · 쪽 칩 - 고른 Unit의 문단(칸)을 칠하고 거리별 움직임(D8)으로 가운데로 데려간다.
 // 판정은 순수 모델 lib/original-page-model.ts readFollowMotion, 여기는 DOM에 칠하고 굴리는 일만. 흐림의 끝은 animationend로 기다린다.
-// 설계: docs/superpowers/specs/2026-11-27-original-view-design.md §5.3·§5.4
+// 설계 2026-11-27-original-view(docs/architecture/decisions.md) §5.3·§5.4
 "use client";
 
 import { useEffect, useEffectEvent, useState, type RefObject } from "react";

@@ -158,6 +158,22 @@ const SCENES = [
     },
   },
   {
+    // 미리보기 시트의 원본 보기 탭(v1.6.46) - 한 단 보기에서 셋째 박스를 골라 원본 종이에 칠한 모습(앱 안 설명서만)
+    name: "assign-original", appOnly: true, app: {}, user: "qa.member", path: "/bundles/2/assign",
+    prep: async (page) => {
+      await page.locator(id("assign-bar")).waitFor({ timeout: T });
+      const one = page.locator(id("assign-view-one"));
+      if ((await one.getAttribute("aria-pressed")) !== "true") await click(page, id("assign-view-one"));
+      await page.evaluate(() => (document.activeElement instanceof HTMLElement ? document.activeElement.blur() : undefined));
+      for (let i = 0; i < 3; i += 1) await page.keyboard.press("j");
+      await page.keyboard.press(" ");
+      await click(page, id("space-tab-original"));
+      await page.locator(`${id("space-original")}[data-state="ready"]`).waitFor({ timeout: T });
+      await page.waitForFunction(() => document.querySelector('[data-testid="space-original"] .ov-host')?.shadowRoot?.querySelector(".is-ov-picked") != null, null, { timeout: T });
+      await page.waitForTimeout(500); // 굴림 · 나타남 · 쪽 칩 움직임이 끝나도록
+    },
+  },
+  {
     // 우클릭 메뉴 - 양 단의 New 표 칸. 시드에는 표가 있는 New 문서가 없어 스모크의 cell menu 단계처럼 합성 묶음을 만들어 찍고 지운다(앱 안 설명서만)
     name: "assign-new-cell-menu", appOnly: true, keepMouse: true, app: {}, user: "dev.admin", path: "/",
     prep: async (page) => {

@@ -1,5 +1,5 @@
 // 원본 보기의 쪽 나누기 셈과 따라가기 판정 - DOM 없이 잰 값만 받는다(옮기기는 components/assign/original-render.ts).
-// 설계: docs/superpowers/specs/2026-11-27-original-view-design.md §5.3·§5.4 (D7·D8)
+// 설계 2026-11-27-original-view(docs/architecture/decisions.md) §5.3·§5.4 (D7·D8)
 
 import type { PlaceMark } from "./original-place-model";
 

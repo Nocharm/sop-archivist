@@ -1,7 +1,7 @@
 // 원본 보기의 그리기 - 자리 조회 → 원본 파일 → 표지 심기 → 그리기 → 다듬기(링크 · EMF · 쪽 나누기)를 문서마다 한 번.
 // host는 React가 자식을 두지 않는 빈 div다 - 그 그림자 뿌리 안에 그린다(그리개 CSS가 앱에 닿지 않게). 같은 문서는 다시 그리지 않는다 - <Activity>로 숨겼다 다시 보여도,
 // 시트를 닫아 부품이 떼어졌다 다시 붙어도(keptRenders, 자리 조회가 같을 때) 그린 DOM을 그대로 옮겨 붙인다.
-// 상태 전이는 순수 함수 reduceOriginalRender(시험). 설계: docs/superpowers/specs/2026-11-27-original-view-design.md §5.2·§5.5
+// 상태 전이는 순수 함수 reduceOriginalRender(시험). 설계 2026-11-27-original-view(docs/architecture/decisions.md) §5.2·§5.5
 "use client";
 
 import { useEffect, useEffectEvent, useReducer, useRef, type RefObject } from "react";

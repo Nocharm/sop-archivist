@@ -1,6 +1,6 @@
 // 원본 DOCX의 부분 XML에 Unit 자리 표지(책갈피)를 심는 순수 모델 - 그리개가 책갈피를 <span id>로 그리므로 표지 id로 문단을 찾는다.
 // 경로 규칙은 추출기 backend/app/sop/extract/docx_reader.py `_iter_tagged`·`_read_textboxes`의 사본이다(바꾸면 함께).
-// 설계: docs/superpowers/specs/2026-11-27-original-view-design.md §5.2
+// 설계 2026-11-27-original-view(docs/architecture/decisions.md) §5.2
 
 import type { OriginalPlace } from "./api-sop";
 
