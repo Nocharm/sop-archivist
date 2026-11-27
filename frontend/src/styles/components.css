@@ -1315,60 +1315,38 @@
   .cell-piece[data-sel] { outline: 2px solid var(--accent); outline-offset: -2px; }
   /* 박스 아래 단추 줄(components/assign/pick-bar) - 늘 한 줄. 잇기 단추는 늘 이름까지, 그 뒤 칸(.pick-tools)은 남은 폭을 재는 컨테이너다(잇기 글 길이와 상관없다).
      자리가 있으면 손질 · 이을 상대도 이름까지 보이고, 모자라면 덜 쓰는 것부터 아이콘만 남긴다: 이을 상대 → 짝 → 위와 합치기 → 아래와 합치기 → 나누기. 그래도 모자라면 손질이 뒤에서부터 숨는다
-     (JS로 재지 않는다 - ⋯를 누르는 순간 숨은 것을 메뉴에 넣는다). 공용 .mbtn-set의 늦은 펼침은 쓰지 않는다 - 여기 규칙만 이 줄에 걸린다.
-     접힌 단추에 올리거나 포커스가 오면 이름이 바로(지연 없이 --dur-base) 펼쳐지고 다른 단추는 폭 0으로 비켜 준다. 올린 단추는 그 순간 ⋯ 앞까지 차지해(flex-grow는 전환하지 않는다)
-     비켜 주는 동안에도 포인터 밑을 떠나지 않고, 아이콘은 왼쪽에 둔 채 이름이 오른쪽으로 펼쳐진다(가운데 맞춤이면 누르는 순간 아이콘이 뛴다). ⋯는 늘 끝에 있어 움직이지 않는다.
-     이름이 늘 보이는 단추는 올려도 색만 바뀐다. 표 칸 안은 열 폭이 눌리므로 컨테이너로 재지 않고 이을 상대를 늘 접는다 */
+     (JS로 재지 않는다 - ⋯를 누르는 순간 숨은 것을 메뉴에 넣는다). 공용 .mbtn의 호버 펼침 · .mbtn-set의 비켜 주기는 쓰지 않는다 - 여기 규칙만 이 줄에 걸린다.
+     호버 · 포커스는 색만 바꾸고 배치를 바꾸지 않는다: 접힌 단추는 올려도 아이콘만이고 이름은 툴팁(data-tip)으로 본다. 올렸을 때 이름을 펼치고 다른 단추를 비켜 주면
+     올린 단추가 포인터 밑에서 빠져 호버가 풀리고, 풀리면 원래대로 돌아와 다시 걸리는 진동이 났다(2026-11-27). 이름을 보일지는 --label-on(1 · 0) 하나로 정하고 접는 폭만 그 값을 바꾼다.
+     표 칸 안은 열 폭이 눌리므로 컨테이너로 재지 않고 이을 상대를 늘 접는다 */
   .pick-bar { display: flex; flex-wrap: nowrap; align-items: center; gap: 4px; min-height: 30px; padding-top: 4px; }
   .pick-sep { flex: none; width: 1px; height: 18px; margin-inline: 2px; background: var(--line-2); }
   .pick-tools { flex: 1 1 0; min-width: 0; display: flex; align-items: center; gap: 2px; container-type: inline-size; }
   .cell-piece .pick-tools { container-type: normal; }
-  .pick-tools > .pick-sep { max-width: 1px; transition: max-width var(--dur-base) var(--ease-enter), margin var(--dur-base) var(--ease-enter), opacity var(--dur-base); }
   .pick-tools > .mbtn {
-    /* 줄어들 수 있다(overflow: hidden이라 최소 폭 0) - 펼치고 접히는 사이 잠깐 넘칠 폭을 비켜 주는 단추가 먼저 내준다. 멈춘 모습은 아래 접는 폭이 넘치지 않게 한다 */
+    /* 줄어들 수 있다(overflow: hidden이라 최소 폭 0) - 접는 폭 경계에서 글꼴 차이로 몇 px 넘쳐도 줄이 두 줄이 되지 않는다. 폭 전환은 없다(호버가 배치를 바꾸지 않는다) */
     flex: 0 1 auto;
-    max-width: 240px; /* 비켜 줄 때 접힘 전환의 시작값 - 이름까지 보인 단추의 가장 넓은 폭(짝 213px)보다 크다 */
-    transition: background var(--dur-fast), border-color var(--dur-fast), color var(--dur-fast), transform var(--dur-fast) var(--ease-move), opacity var(--dur-base), max-width var(--dur-base) var(--ease-enter), padding var(--dur-base) var(--ease-enter), margin var(--dur-base) var(--ease-enter), border-width var(--dur-base) var(--ease-enter);
+    transition: background var(--dur-fast), border-color var(--dur-fast), color var(--dur-fast), transform var(--dur-fast) var(--ease-move);
   }
   .pick-tools > [data-part="more"] { flex-shrink: 0; margin-left: auto; }
-  /* 이름은 기본으로 보인다 - 공용 .mbtn의 호버 규칙(160px · --morph-delay)을 같은 값 · 지연 없음으로 덮어 이름이 늘 보이는 단추는 올려도 움직이지 않는다 */
-  .pick-bar .mbtn-label { max-width: 200px; margin-left: 6px; opacity: 1; transition: max-width var(--dur-base) var(--ease-enter), margin-left var(--dur-base) var(--ease-enter), opacity var(--dur-base); }
-  .pick-bar .mbtn:not(:disabled):is(:hover, :focus-visible) .mbtn-label { max-width: 200px; margin-left: 6px; opacity: 1; transition-delay: 0s; }
+  /* 이름은 기본으로 보인다(--label-on 1). 공용 .mbtn의 호버 펼침(160px)보다 구체적인 같은 규칙을 호버에도 걸어, 호버 · 포커스가 이름 폭을 바꾸는 길을 막는다 - 값은 --label-on만 정한다 */
+  .pick-bar .mbtn { --label-on: 1; }
+  .pick-bar .mbtn-label, .pick-bar .mbtn:not(:disabled):is(:hover, :focus-visible) .mbtn-label { max-width: calc(200px * var(--label-on)); margin-left: calc(6px * var(--label-on)); opacity: var(--label-on); transition: none; }
   .pick-tools > .mbtn[aria-disabled="true"] { opacity: 0.55; cursor: not-allowed; }
   .pick-link[aria-disabled="true"] { opacity: 0.55; cursor: not-allowed; }
-  .cell-piece .pick-tools > [data-part="start"] .mbtn-label { max-width: 0; margin-left: 0; opacity: 0; }
+  .cell-piece .pick-tools > [data-part="start"] { --label-on: 0; }
   /* 접는 폭 - .pick-tools의 폭(px)이 이 값 이하이면 그 단추를 접는다. 이름 폭은 Pretendard 600 13px로 잰 en · ko 가운데 넓은 쪽 + 4px:
      나누기 86(ko "여기서 나누기 S") · 위와 합치기 127(en) · 아래와 합치기 102(en) · 짝 176(en "Pair with another sentence…") · 이을 상대 102(en).
      단추는 아이콘만 31px, 이름까지 37px + 이름. 이을 상대가 있는 줄(손질 넷 · 칸막이 5 · 이을 상대 · ⋯ 31 · 틈 2px 여섯)이 가장 넓어 그 줄로 잰다 - 잇기 줄은 40px 남는다:
-     모두 이름 826 → 이을 상대 접음 718 → 짝 536 → 위와 합치기 403 → 아래와 합치기 295 → 나누기 203. 접힌 단추를 올리면 그 단추 + ⋯ + 틈이 들어가야 해서(짝 256)
-     나누기까지 접은 뒤 256 미만이면 짝을 숨기고(남은 셋 170, 위와 합치기를 올리면 205), 205 미만이면 아래 · 위와 합치기를 함께 숨긴다(176 - 이을 상대를 올린 폭). 글을 바꾸면 다시 잰다 */
-  @container (max-width: 825px) {
-    .pick-tools > [data-part="start"] .mbtn-label { max-width: 0; margin-left: 0; opacity: 0; }
-    .pick-tools:has(> [data-part="start"]:is(:hover, :focus-visible)) > :not([data-part="start"], [data-part="more"]) { max-width: 0; margin: 0; padding: 0; border-width: 0; opacity: 0; pointer-events: none; }
-    .pick-tools > [data-part="start"]:is(:hover, :focus-visible) { flex: 1 0 auto; }
-  }
-  @container (max-width: 717px) {
-    .pick-tools > [data-part="pair"] .mbtn-label { max-width: 0; margin-left: 0; opacity: 0; }
-    .pick-tools:has(> [data-part="pair"]:is(:hover, :focus-visible)) > :not([data-part="pair"], [data-part="more"]) { max-width: 0; margin: 0; padding: 0; border-width: 0; opacity: 0; pointer-events: none; }
-    .pick-tools > [data-part="pair"]:is(:hover, :focus-visible) { flex: 1 0 auto; }
-  }
-  @container (max-width: 535px) {
-    .pick-tools > [data-part="merge_prev"] .mbtn-label { max-width: 0; margin-left: 0; opacity: 0; }
-    .pick-tools:has(> [data-part="merge_prev"]:is(:hover, :focus-visible)) > :not([data-part="merge_prev"], [data-part="more"]) { max-width: 0; margin: 0; padding: 0; border-width: 0; opacity: 0; pointer-events: none; }
-    .pick-tools > [data-part="merge_prev"]:is(:hover, :focus-visible) { flex: 1 0 auto; }
-  }
-  @container (max-width: 402px) {
-    .pick-tools > [data-part="merge_next"] .mbtn-label { max-width: 0; margin-left: 0; opacity: 0; }
-    .pick-tools:has(> [data-part="merge_next"]:is(:hover, :focus-visible)) > :not([data-part="merge_next"], [data-part="more"]) { max-width: 0; margin: 0; padding: 0; border-width: 0; opacity: 0; pointer-events: none; }
-    .pick-tools > [data-part="merge_next"]:is(:hover, :focus-visible) { flex: 1 0 auto; }
-  }
-  @container (max-width: 294px) {
-    .pick-tools > [data-part="split"] .mbtn-label { max-width: 0; margin-left: 0; opacity: 0; }
-    .pick-tools:has(> [data-part="split"]:is(:hover, :focus-visible)) > :not([data-part="split"], [data-part="more"]) { max-width: 0; margin: 0; padding: 0; border-width: 0; opacity: 0; pointer-events: none; }
-    .pick-tools > [data-part="split"]:is(:hover, :focus-visible) { flex: 1 0 auto; }
-  }
-  @container (max-width: 255px) { .pick-tools > [data-part="pair"] { display: none; } }
-  @container (max-width: 204px) { .pick-tools > :is([data-part="merge_next"], [data-part="merge_prev"]) { display: none; } }
+     모두 이름 826 → 이을 상대 접음 718 → 짝 536 → 위와 합치기 403 → 아래와 합치기 295 → 나누기 203. 모두 접혀도 203 미만이면 짝을 숨기고(남은 줄 170),
+     170 미만이면 아래 · 위와 합치기를 함께 숨긴다(남은 줄 104 - 나누기 · 이을 상대 · ⋯). 숨은 손질은 ⋯ 메뉴에 있다. 글을 바꾸면 다시 잰다 */
+  @container (max-width: 825px) { .pick-tools > [data-part="start"] { --label-on: 0; } }
+  @container (max-width: 717px) { .pick-tools > [data-part="pair"] { --label-on: 0; } }
+  @container (max-width: 535px) { .pick-tools > [data-part="merge_prev"] { --label-on: 0; } }
+  @container (max-width: 402px) { .pick-tools > [data-part="merge_next"] { --label-on: 0; } }
+  @container (max-width: 294px) { .pick-tools > [data-part="split"] { --label-on: 0; } }
+  @container (max-width: 202px) { .pick-tools > [data-part="pair"] { display: none; } }
+  @container (max-width: 169px) { .pick-tools > :is([data-part="merge_next"], [data-part="merge_prev"]) { display: none; } }
   @media (prefers-reduced-motion: reduce) { .pick-bar :is(.mbtn, .mbtn-label, .pick-sep) { transition: none; } }
   /* 오른쪽 칸 위 "Old n 고름 · 결정 보기" - New를 눌렀지만 Old도 골라 두었을 때 한 줄 */
   .assign-old-kept { display: flex; min-width: 0; margin: 0 var(--pad); padding: 4px 8px; border: 1px dashed var(--accent-line); border-radius: var(--r-1); font: 500 var(--fs-micro) / 16px var(--font-ui); color: var(--ink-2); text-align: left; cursor: pointer; }
