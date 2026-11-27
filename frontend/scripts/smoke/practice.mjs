@@ -117,11 +117,14 @@ await runStep("practice: entry and band", {}, async ({ page, takeShot }) => {
   check("pressing a dot hands the focus back to the Old paper", await page.evaluate(() => document.activeElement?.closest('[data-pane="old"] .pane-body') !== null));
   // Hold is a one-document task and Assign shows two - the card asks for V first and lights the One document button
   check("a one-document task in two documents asks for V first", (await page.locator('[data-testid="practice-coach-pane"]').isVisible()) && (await getText(page, "practice-coach-pane")).includes("V"), await getText(page, "practice-coach"));
-  const viewLit = await page.evaluate(() => {
-    const button = document.querySelector('[data-testid="assign-view-one"]')?.getBoundingClientRect();
-    const hole = document.querySelector('[data-testid="practice-coach-hole"]')?.getBoundingClientRect();
-    return button && hole ? button.left >= hole.left - 1 && button.right <= hole.right + 1 && button.top >= hole.top - 1 && button.bottom <= hole.bottom + 1 : false;
-  });
+  // the lit box slides over from the previous task's box - wait until it has settled around the button (same bounds as before, not looser)
+  const viewLit = await page
+    .waitForFunction(() => {
+      const button = document.querySelector('[data-testid="assign-view-one"]')?.getBoundingClientRect();
+      const hole = document.querySelector('[data-testid="practice-coach-hole"]')?.getBoundingClientRect();
+      return button && hole ? button.left >= hole.left - 1 && button.right <= hole.right + 1 && button.top >= hole.top - 1 && button.bottom <= hole.bottom + 1 : false;
+    }, null, { timeout: T })
+    .then(() => true, () => false);
   check("the lit box is the One document button meanwhile", viewLit);
   await page.locator('[data-testid="practice-coach-skip"]').click();
   await waitCoach(page, "merge");
