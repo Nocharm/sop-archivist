@@ -48,6 +48,11 @@ describe("PickBar", () => {
     const markup = html(row(2));
     for (const part of ["split", "pair", "start", "more"]) expect(markup).toMatch(new RegExp(`<button[^>]*data-part="${part}"[^>]*data-tip="[^"]+"`));
   });
+  it("names ⋯ after Other shaping when that is all it holds, and More otherwise", () => {
+    const moreButton = (markup: string) => markup.match(/<button[^>]*data-part="more"[^>]*>/)?.[0] ?? "";
+    expect(moreButton(html(row(2)))).toContain('aria-label="Other shaping"');
+    expect(moreButton(html({ ...row(2), old: { ...open, savedTargetIds: [70] } }))).toContain('aria-label="More"');
+  });
   it("puts the partner pick and more inside the folding group after the tools", () => {
     const group = html(row(2)).match(/<span class="pick-tools">(.*)<\/span><\/div>$/)?.[1] ?? "";
     expect(order(group)).toEqual(["split", "merge_prev", "merge_next", "pair", "sep", "start", "more"]);

@@ -110,3 +110,13 @@ export function resolveEnter(bar: PickBar, primary: { kind: "confirm" | "apply_o
   if (bar.enter.kind === "none" && bar.holdsEnter) return bar.enter;
   return primary.kind === "blocked" && primary.reasonKey !== undefined && bar.at !== null ? { kind: "noop", noticeKey: primary.reasonKey } : { kind: "confirm" };
 }
+
+/** ⋯에 든 것이 그 밖의 손질 하나뿐인가 - 그러면 ⋯의 이름 · 툴팁도 그 밖의 손질이다(폭이 모자라 숨은 손질이 생기면 누를 때 목록으로 간다 - resolveMoreClick) */
+export function isMoreOnlyTools(more: readonly PickMoreId[]): boolean {
+  return more.length === 1 && more[0] === "tools";
+}
+
+/** ⋯를 누른 순간 - 그릴 항목이 그 밖의 손질 하나뿐이면(숨은 손질 없음) 목록을 거치지 않고 바로 우클릭 메뉴, 아니면 목록 */
+export function resolveMoreClick(more: readonly PickMoreId[], hiddenTools: readonly PickToolId[]): "tools" | "list" {
+  return hiddenTools.length === 0 && isMoreOnlyTools(more) ? "tools" : "list";
+}
