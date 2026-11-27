@@ -33,8 +33,11 @@ import {
   type PracticeState,
 } from "./practice-state";
 
-/** 서버에 자취가 없는 손짓 - 연습 틀이 본 것을 적는다(D9) */
-export type PracticeAct = { key: AssignKeyId } | { click: "keyboard-map" };
+/** Assign의 보기 - 한 단(Old 문서 하나를 넓게) · 양 단(Old와 New를 나란히). 연습 틀이 용지 칸의 data-single로 읽는다 */
+export type PaneView = "one" | "two";
+
+/** 서버에 자취가 없는 손짓 - 연습 틀이 본 것을 적는다(D9). view는 V · 보기 단추로 바꾼 뒤의 보기 */
+export type PracticeAct = { key: AssignKeyId } | { click: "keyboard-map" } | { view: PaneView };
 
 export type PracticeWriteRoute =
   | "groups/save"
@@ -308,7 +311,7 @@ export async function handlePracticeRequest(method: string, path: string, body?:
   }
 }
 
-/** 연습 틀이 본 손짓을 기록에 더한다(D9 - 고르기 · 옮기기, 키보드 그림) */
+/** 연습 틀이 본 손짓을 기록에 더한다(D9 - 고르기 · 옮기기, 키보드 그림, 보기 바꾸기) */
 export function notePracticeAct(act: PracticeAct): void {
   appendLog({ act });
 }
