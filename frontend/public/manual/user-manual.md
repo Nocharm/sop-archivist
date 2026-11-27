@@ -818,7 +818,7 @@ Old 원문의 줄 왼쪽 번호 칸에는 **그 줄의 문단 번호**가 보입
 
 ### 되돌리기 {#assign-undo}
 
-도구 줄 오른쪽 묶음 맨 앞의 되돌리기·다시 하기 아이콘(<kbd>Ctrl</kbd>+<kbd>Z</kbd>, <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd>, 맥은 <kbd>⌘</kbd>)으로 이 화면에서 한 판단을 한 단계씩 되돌리고 다시 합니다. 되돌릴 것이 없으면 아이콘이 흐리게 꺼져 있고, 읽기 전용이면 나오지 않습니다.
+도구 줄 오른쪽 묶음 맨 앞의 되돌리기·다시 하기 아이콘(<kbd>Ctrl</kbd>+<kbd>Z</kbd>, <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd>)으로 이 화면에서 한 판단을 한 단계씩 되돌리고 다시 합니다. 되돌릴 것이 없으면 아이콘이 흐리게 꺼져 있고, 읽기 전용이면 나오지 않습니다.
 
 - 저장이 끝나기 전에 눌러도 됩니다 — 앞에 누른 것이 저장된 뒤 차례대로 되돌립니다. 되돌리는 동안 누른 글쇠는 되돌린 자리에서 이어집니다.
 - 이미 쓴 New 문서의 손질(자르기 · 합치기 · 표 벗기기 · 다시 표로 · 번호 · 삭제 취소 · 제목으로)도 같은 되돌리기입니다 — 그 손질로 풀린 이음과 확정도 함께 돌아옵니다.
@@ -1345,8 +1345,6 @@ AI는 제안만 합니다. 사람이 줄마다 확인해 확정하기 전에는 
 | **Map** | 지도 안에서 <kbd>↑</kbd> <kbd>↓</kbd> 같은 줄기, <kbd>←</kbd> <kbd>→</kbd> 옆 줄기, <kbd>Home</kbd> <kbd>End</kbd> 줄기의 처음 · 끝, <kbd>Enter</kbd> 고르기(줄기 머리에서는 접기), <kbd>Esc</kbd> 고름 풀기, <kbd>+</kbd> <kbd>-</kbd> <kbd>0</kbd> 확대 · **Fit all**, <kbd>/</kbd> 찾기, 지도 위에서 <kbd>Ctrl</kbd>+휠 확대 |
 | **Assign** | <kbd>↵</kbd> 확정(고른 곳이 없으면 추천 첫 카드로), <kbd>J</kbd> <kbd>K</kbd> 이동, <kbd>G</kbd> 짝으로, <kbd>U</kbd> 배정 지우기, <kbd>Del</kbd> 삭제, <kbd>R</kbd> **Remark**, <kbd>Shift</kbd>+<kbd>H</kbd> 보류, <kbd>Shift</kbd>+<kbd>A</kbd> AI 추천 받기, <kbd>Shift</kbd>+<kbd>J</kbd> <kbd>Shift</kbd>+<kbd>K</kbd> 두 번 눌러 아래 · 위와 합치기, <kbd>Shift</kbd>+<kbd>S</kbd> 문장마다 나누기, <kbd>Shift</kbd>+<kbd>G</kbd> 여럿 고름에 넣기 · 빼기, <kbd>Shift</kbd>+<kbd>L</kbd> 언어, <kbd>Shift</kbd>+<kbd>P</kbd> 한 문장 · 짝, <kbd>Shift</kbd>+<kbd>N</kbd> 번호 칸, <kbd>Shift</kbd>+<kbd>T</kbd> 표 벗기기, <kbd>Shift</kbd>+<kbd>O</kbd> AI 순서(한글 표처럼 하기가 떠 있으면 그것), <kbd>Tab</kbd> <kbd>Shift</kbd>+<kbd>Tab</kbd> 들여쓰기 · 내어쓰기, <kbd>V</kbd> 문서 하나 · 둘 보기, <kbd>Ctrl</kbd>+<kbd>←</kbd> <kbd>→</kbd> 탭(뒤로 가기는 보던 탭), <kbd>Space</kbd> 누르고 있기 미리보기 시트(두 번 탁 = 탭 바꾸기), <kbd>?</kbd> 도움말, <kbd>E</kbd> 고쳐 쓰기(지금은 숨긴 기능). 전부는 [Assign 단축키](#assign-keys) |
 | 어디서나 | <kbd>Esc</kbd> 맨 위 창 닫기, 이동 취소 |
-
-Mac에서는 <kbd>Ctrl</kbd> 대신 <kbd>⌘</kbd>를 씁니다.
 
 ### 이 설명서 읽는 법 {#how-to-read}
 
