@@ -1,7 +1,8 @@
 // @vitest-environment node
 /**
  * Source rules lint cannot express: the effect/timer budget, Tailwind display utilities doubled
- * on one element, custom CSS class names that Tailwind also generates, and eslint-disable reasons.
+ * on one element, custom CSS class names that Tailwind also generates, hover rules that re-lay out
+ * siblings, and eslint-disable reasons.
  * Plan: 2026-11-19-trust-foundation-plan.md (step 1).
  */
 
@@ -275,6 +276,37 @@ describe("one path per concern", () => {
     const rawFetch = PATH_RULES[7].pattern;
     expect(rawFetch.test("window.fetch(url)")).toBe(true);
     expect(rawFetch.test("await docViews.fetch({ docs: [docId] })")).toBe(false);
+  });
+});
+
+// A hover inside :has() that changes a sibling's size or display moves the hovered control out from under the pointer,
+// the hover drops, the row snaps back and hovers again - a flicker nobody can click (pick bar, 2026-11-27).
+const HOVER_RELAYOUT = {
+  selector: /:has\([^{]*:(?:hover|focus-visible|focus-within)/,
+  body: /(?:^|[;\s])(?:max-width|min-width|width|display|padding|margin(?:-[\w-]+)?|flex(?:-[\w-]+)?|border-width|grid-template-columns|position)\s*:/,
+};
+const HOVER_RELAYOUT_ALLOWED: Record<string, string> = {
+  ".mbtn-set": "the hovered button grows to fill the fixed-width set, so it stays under the pointer while the others fold",
+};
+
+function findHoverRelayout(css: string): string[] {
+  return [...stripComments(css).matchAll(/([^{};]+)\{([^{}]*)\}/g)]
+    .map((match) => ({ selector: match[1].trim(), body: match[2] }))
+    .filter(({ selector, body }) => HOVER_RELAYOUT.selector.test(selector) && HOVER_RELAYOUT.body.test(body))
+    .map(({ selector }) => selector)
+    .filter((selector) => !Object.keys(HOVER_RELAYOUT_ALLOWED).some((prefix) => selector.startsWith(prefix)));
+}
+
+describe("hover never re-lays out siblings", () => {
+  it("keeps :has(:hover) rules to color and opacity", () => {
+    const problems = listFiles(SRC, /\.css$/).flatMap((path) => findHoverRelayout(readFileSync(path, "utf8")).map((selector) => `${toKey(path)}: ${selector}`));
+    expect(problems, "Fix: let hover change only color/opacity/transform; show a folded name in a tooltip (data-tip) instead of making room for it").toEqual([]);
+  });
+
+  it("catches a sibling fold and lets a color change through", () => {
+    expect(findHoverRelayout(".row:has(> .b:hover) > .a { max-width: 0; }")).toHaveLength(1);
+    expect(findHoverRelayout("@container (max-width: 9px) { .row:has(> .b:focus-visible) > .a { display: none; } }")).toHaveLength(1);
+    expect(findHoverRelayout(".row:has(> .b:hover) > .a { opacity: .5; color: var(--ink); }")).toEqual([]);
   });
 });
 
