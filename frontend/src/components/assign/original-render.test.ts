@@ -114,6 +114,17 @@ describe("paginateRendered", () => {
     expect(root.querySelectorAll('[id="sopa_9"]')).toHaveLength(1);
   });
 
+  it("counts the first paragraph's top margin against the paper", () => {
+    const paras = Array.from({ length: 12 }, (_, i) => el("p", { "data-h": "100" }, `para ${i}`));
+    paras[0].style.marginTop = "30px"; // 장 첫 제목 앞 간격 - 빼고 재면 장이 그만큼 종이보다 길어졌다
+    const root = el("div");
+    root.append(buildPage(...paras));
+
+    expect(paginateRendered(root)).toBe(4);
+
+    expect([...root.querySelectorAll("section.sopa-ov")].map((page) => page.querySelectorAll("article > p").length)).toEqual([3, 4, 4, 1]);
+  });
+
   it("leaves floating boxes out of the measure", () => {
     const floating = el("div", { "data-h": "900" });
     floating.style.position = "absolute";

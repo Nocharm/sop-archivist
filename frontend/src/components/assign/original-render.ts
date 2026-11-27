@@ -1,7 +1,7 @@
 // 원본 DOCX를 그리고 그린 DOM을 다듬는 React 없는 모듈 - 표지 심은 부분 파일로 다시 묶어 docx-preview로 그린 뒤
 // 위험한 링크를 지우고, 종이 높이로 쪽을 나누고, 쪽 번호를 채우고, EMF·WMF 그림은 emf-converter로 PNG를 그리고 못 그린 것만 빗금 상자로 바꾼다.
 // 그리개(docx-preview · jszip)는 원본 탭을 처음 열 때 import()로만 불러온다 - 첫 화면 번들에 넣지 않는다.
-// 설계: docs/superpowers/specs/2026-11-27-original-view-design.md §5.2·§5.3·§5.5
+// 설계 2026-11-27-original-view(docs/architecture/decisions.md) §5.2·§5.3·§5.5
 
 import type { OriginalPlace } from "@/lib/api-sop";
 import { PAGE_SLACK_PX, planPageBreaks, planRowBreaks, readCssLength, type FlowBox } from "@/lib/original-page-model";
@@ -414,7 +414,12 @@ function splitPage(page: HTMLElement): HTMLElement | null {
   const usable = paper - (readCssLength(page.style.paddingTop) || 0) - (readCssLength(page.style.paddingBottom) || 0);
   if (!(usable > 0)) return null;
   const kids = [...page.children].filter((child) => child.tagName === "ARTICLE").flatMap((article) => [...article.children]) as HTMLElement[];
-  const boxes: FlowBox[] = kids.map((kid) => ({ top: kid.offsetTop, bottom: kid.offsetTop + kid.offsetHeight, floating: isFloating(kid) }));
+  // 바깥 여백까지 잰다 - 장 첫 문단의 위 여백(제목 앞 간격)과 끝 문단의 아래 여백도 종이 높이를 먹는다(빼면 장이 한 줄쯤 길어졌다)
+  const boxes: FlowBox[] = kids.map((kid) => {
+    const style = getComputedStyle(kid);
+    const top = kid.offsetTop - (Number.parseFloat(style.marginTop) || 0);
+    return { top, bottom: kid.offsetTop + kid.offsetHeight + (Number.parseFloat(style.marginBottom) || 0), floating: isFloating(kid) };
+  });
   const flow = boxes.filter((box) => !box.floating);
   if (flow.length === 0) return null;
   const start = flow[0].top;

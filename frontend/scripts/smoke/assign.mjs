@@ -4595,14 +4595,7 @@ await runStep("assign: Space preview - Space sheet: Original paints the picked p
     const view = scroller.getBoundingClientRect();
     return box.bottom > view.top && box.top < view.bottom;
   }));
-  // 표 박스(시드 첫 문서의 셋째 줄 SYN-PAIR-1-003)는 범위가 없는 Unit - 표 전체를 칠한다(D9)
-  await page.keyboard.press("j");
-  const tablePainted = await page
-    .waitForFunction((sel) => [...(document.querySelector(sel)?.shadowRoot?.querySelectorAll(".is-ov-picked") ?? [])].some((node) => node.tagName === "TABLE"), ORIGINAL_HOST("space-original"), { timeout: T })
-    .then(() => true)
-    .catch(() => false);
-  check("a picked table box paints the whole table", tablePainted, (await getText(page, "assign-row-id")).trim());
-  // 시트를 닫았다 열어도 그려 둔 원본을 다시 쓴다 - 쉬머 없이 바로 보인다(설계 §5.2)
+  // 시트를 닫았다 열어도 그려 둔 원본을 다시 쓴다 - 쉬머 없이 바로 보인다(설계 2026-11-27-original-view §5.2)
   await page.keyboard.press("Escape");
   await page.locator('[data-testid="assign-space-preview"]').waitFor({ state: "detached", timeout: T });
   await page.keyboard.press(" ");
@@ -4610,6 +4603,25 @@ await runStep("assign: Space preview - Space sheet: Original paints the picked p
   const reopened = await page.locator('[data-testid="space-original"]').getAttribute("data-state");
   check("reopening the sheet shows the drawn original at once", reopened === "ready" && (await page.locator('[data-testid="space-original-loading"]').count()) === 0, String(reopened));
   await page.keyboard.press("Escape");
+  // 표 박스는 범위가 없는 Unit - 표 전체를 칠한다(D9). 첫 묶음은 FULL에서 앞 단계가 만든 묶음일 수 있어 이름으로 찾는다(셋째 줄 SYN-PAIR-1-003이 표)
+  const bundles = await (await page.request.get(`${BASE}/api/bundles`, { headers: { "X-Dev-User": "qa.member" } })).json();
+  const tableBundle = bundles.find((bundle) => bundle.title === "SYNTHETIC 9 한/영 따로 표");
+  check("the demo seed has the KO/EN table bundle", tableBundle !== undefined);
+  if (tableBundle !== undefined) {
+    await page.goto(`${BASE}/bundles/${tableBundle.id}/assign`);
+    await wait(page, "assign-bar");
+    await setPaneView(page, "one");
+    await page.evaluate(() => (document.activeElement instanceof HTMLElement ? document.activeElement.blur() : undefined));
+    for (let i = 0; i < 3; i += 1) await page.keyboard.press("j");
+    await page.keyboard.press(" ");
+    await page.locator('[data-testid="space-original"][data-state="ready"]').waitFor({ timeout: T });
+    const tablePainted = await page
+      .waitForFunction((sel) => [...(document.querySelector(sel)?.shadowRoot?.querySelectorAll(".is-ov-picked") ?? [])].some((node) => node.tagName === "TABLE"), ORIGINAL_HOST("space-original"), { timeout: T })
+      .then(() => true)
+      .catch(() => false);
+    check("a picked table box paints the whole table", tablePainted, (await getText(page, "assign-row-id")).trim());
+    await page.keyboard.press("Escape");
+  }
   await page.evaluate((key) => localStorage.removeItem(key), SPACE_TAB_KEY);
 });
 
