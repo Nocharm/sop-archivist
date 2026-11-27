@@ -49,17 +49,17 @@
 
 ## 이어 가기 (2026-11-27 — 세션 끝. 다음 세션은 여기부터)
 
-`origin/dev` = **v1.6.48 + 준비 커밋**(`chore(release): v1.6.48` — F10 높이 끌기 v1.6.45 · F11 원본 보기 v1.6.46 · 쪽 높이 고침 v1.6.47 · 칠 막대 여백 v1.6.48이 들어간 뒤 다시 맞춤, 11-27 오후 세션). 운영 = **v1.5.0**(2026-11-23 무렵 배포, 사용자 확인 — CHANGELOG에 적음). 개발 :4444는 dev 푸시마다 자동.
+`origin/dev` = **v1.6.49 + 준비 커밋**(`chore(release): v1.6.49` — F10 높이 끌기 v1.6.45 · F11 원본 보기 v1.6.46 · 쪽 높이 고침 v1.6.47 · 칠 막대 여백 v1.6.48 · New 고름 Space 시트 v1.6.49가 들어간 뒤 다시 맞춤, 11-27 오후 세션). 운영 = **v1.5.0**(2026-11-23 무렵 배포, 사용자 확인 — CHANGELOG에 적음). 개발 :4444는 dev 푸시마다 자동.
 
 **다음 세션이 할 일 (차례)**
-0. 끝남(v1.6.45 · v1.6.46 · v1.6.47 · v1.6.48, 준비 커밋도 v1.6.48로). 원본 보기 남은 것: CSP 머리(nginx), 한/영 짝 박스는 KO 문단만 칠함(D9는 박스의 문단 전부), 실제 SOP · 실제 EMF로 아직 못 봄(회사 PC `sop-original-check.html`). 옛 0번: ~~**(11-27 낮 사용자 결정) main 합치기 전에 F10 높이 끌기 · F11 원본 보기를 dev에 넣는다**~~ — 번호는 PATCH로 잇고(1.6.45 …) 둘이 들어간 뒤 준비 커밋 내용을 마지막 번호로 다시 맞춘다(설명서 그림은 Space 시트 장면도). 그때까지 main · 태그 금지. 진행은 `~/Documents/sop-orchestration/original-view-next.md`.
+0. 끝남(v1.6.45 · v1.6.46 · v1.6.47 · v1.6.48 · v1.6.49, 준비 커밋도 v1.6.49로). 원본 보기 남은 것: CSP 머리(nginx), 한/영 짝 박스는 KO 문단만 칠함(D9는 박스의 문단 전부), 실제 SOP · 실제 EMF로 아직 못 봄(회사 PC `sop-original-check.html`). 옛 0번: ~~**(11-27 낮 사용자 결정) main 합치기 전에 F10 높이 끌기 · F11 원본 보기를 dev에 넣는다**~~ — 번호는 PATCH로 잇고(1.6.45 …) 둘이 들어간 뒤 준비 커밋 내용을 마지막 번호로 다시 맞춘다(설명서 그림은 Space 시트 장면도). 그때까지 main · 태그 금지. 진행은 `~/Documents/sop-orchestration/original-view-next.md`.
 1. 사용자와 개발 서버 :4444에서 체크리스트 `docs/qa/2026-11-26-release-frontend-checklist.html` 1차 피드백 절(특히 연습 화면 말풍선 `fb-coach` · 높이 끌기 `fb-sheet-resize` · 원본 보기 `fb-original`)과 아래 "아침에 볼 것"의 (F…) 줄을 함께 본다. 고칠 것이 나오면 브랜치 하나씩 → dev(번호 PATCH, 1.6.45 …) → 준비 커밋 내용(CHANGELOG 릴리스 제목 · 설명서 머리 · CLAUDE.md 상태 줄 · README · 체크리스트)을 새 번호로 다시 맞춘다(11-27 v1.6.43→v1.6.47 때처럼).
 2. 사용자가 확인하면 main 합치기 · 태그(사용자 PC 또는 사용자 승인 뒤):
    ```bash
    git fetch && git switch dev && git pull --ff-only
-   git tag -a v1.6.48 -m "v1.6.48 — 정식 업데이트" && git switch main && git pull --ff-only && git merge --no-ff dev -m "Merge dev into main (v1.6.48)" && git push origin main && git push origin v1.6.48 && git switch dev
+   git tag -a v1.6.49 -m "v1.6.49 — 정식 업데이트" && git switch main && git pull --ff-only && git merge --no-ff dev -m "Merge dev into main (v1.6.49)" && git push origin main && git push origin v1.6.49 && git switch dev
    ```
-   → 사용자가 GitLab `deploy-production` ▶ → 상단 바 확인 → CHANGELOG v1.6.48 배포 메모에 **운영 배포 날짜** → 다음 dev 첫 푸시는 MINOR(1.7.0).
+   → 사용자가 GitLab `deploy-production` ▶ → 상단 바 확인 → CHANGELOG v1.6.49 배포 메모에 **운영 배포 날짜** → 다음 dev 첫 푸시는 MINOR(1.7.0).
 3. 배포 뒤 정리: 이 장부와 `2026-11-23-assign-feedback-2.md`(F2-R1~R5 보류분만 남음 — 숨긴 새 문서 기능을 다시 켤 때까지 둘지 사용자에게)를 끝난 계획 정책대로 정리.
 4. 다음 묶음(미룸): 6 표 꼴 개정 이력 · 7 Reference 아래가 참조로 안 된 경우(실제 문서 분석 — :4444 Bundle을 사용자에게 묻기) · 스모크 "맞을 때까지 읽기" 공용 함수(`/harden`) · README 5줄의 숨긴 기능(Order · 결과물 C) 설명 다듬기.
 
@@ -69,7 +69,7 @@
 
 ### 11-27 아침 기록 (연습 화면 말풍선 · 준비 커밋을 v1.6.44로)
 
-- (11-27 아침) 사용자 요청으로 연습 화면을 말풍선 스포트라이트 + 완료 플립으로 바꿔 **v1.6.44**(F9b)를 더했고, 준비 커밋 내용(CHANGELOG 릴리스 제목 · 설명서 머리 · CLAUDE.md · README · 체크리스트)을 v1.6.44로 다시 맞췄다. 아래 v1.6.43 글은 그때의 기록 — (그 뒤 오후에 v1.6.48로 다시 맞춤, 위 2번의 명령을 쓴다) **main 합치기 · 태그는 v1.6.44**:
+- (11-27 아침) 사용자 요청으로 연습 화면을 말풍선 스포트라이트 + 완료 플립으로 바꿔 **v1.6.44**(F9b)를 더했고, 준비 커밋 내용(CHANGELOG 릴리스 제목 · 설명서 머리 · CLAUDE.md · README · 체크리스트)을 v1.6.44로 다시 맞췄다. 아래 v1.6.43 글은 그때의 기록 — (그 뒤 오후에 v1.6.49로 다시 맞춤, 위 2번의 명령을 쓴다) **main 합치기 · 태그는 v1.6.44**:
   ```bash
   git fetch && git switch dev && git pull --ff-only
   git tag -a v1.6.44 -m "v1.6.44 — 정식 업데이트" && git switch main && git pull --ff-only && git merge --no-ff dev -m "Merge dev into main (v1.6.44)" && git push origin main && git push origin v1.6.44 && git switch dev

@@ -4372,6 +4372,48 @@ await runStep("assign: Space preview - a short tap keeps it open, Esc and anothe
   await setPaneView(page, "two"); // 다음 단계들은 양 단에서 시작한다
 });
 
+// 양 단에서 Old 다음 New 박스를 고르면 열어 둔 시트가 꺼지고, New에 포커스가 있으면 Space가 용지를 스크롤했다(2026-11-27, isNewEdit가 Space를 껐다)
+await runStep("assign: Space preview - picking a New box beside Old keeps the sheet and Space still opens it", {}, async ({ page }) => {
+  await page.goto(`${BASE}/`);
+  const headers = { "X-Dev-User": "qa.member" };
+  const readJson = async (path) => (await page.request.get(`${BASE}/api${path}`, { headers })).json();
+  const bundles = await readJson("/bundles");
+  let bundleId = null;
+  for (const bundle of bundles.items ?? bundles) {
+    const docs = await readJson(`/bundles/${bundle.id}/documents`);
+    if ((docs.items ?? docs).some((doc) => doc.side === "new" && doc.status === "ready")) {
+      bundleId = bundle.id;
+      break;
+    }
+  }
+  check("the seed has a Bundle with a written New document", bundleId !== null);
+  if (bundleId === null) return;
+  await page.goto(`${BASE}/bundles/${bundleId}/assign`);
+  await wait(page, "assign-bar");
+  await setPaneView(page, "two");
+  const oldBox = page.locator('[data-pane="old"] [data-testid^="assign-paper-piece-"]').nth(2);
+  const newBox = page.locator('[data-pane="new"] [data-strip-unit]').nth(3);
+  await newBox.waitFor({ timeout: T });
+  const sheet = page.locator('[data-testid="assign-space-preview"]');
+  await oldBox.click();
+  // 시트는 작업 화면 아래 70%를 덮는다 - 열어 둔 채 누를 New 박스를 용지 맨 위로
+  await newBox.evaluate((el) => el.scrollIntoView({ block: "start" }));
+  await page.keyboard.press(" ");
+  await wait(page, "assign-space-preview");
+  await newBox.click();
+  await page.waitForTimeout(300);
+  check("a kept sheet stays open after picking a New box", (await sheet.count()) === 1 && (await sheet.getAttribute("data-state")) === "kept");
+  await page.keyboard.press("Escape");
+  await sheet.waitFor({ state: "detached", timeout: T });
+  check("the focus is on the New paper", await page.evaluate(() => document.activeElement?.closest('[data-pane="new"]') !== null));
+  const readNewTop = () => page.locator('[data-pane="new"] .pane-body').evaluate((el) => el.scrollTop);
+  const top = await readNewTop();
+  await page.keyboard.press(" ");
+  await wait(page, "assign-space-preview");
+  check("Space on the New paper opens the sheet instead of scrolling", (await readNewTop()) === top, `${top} → ${await readNewTop()}`);
+  await page.keyboard.press("Escape");
+});
+
 // 손잡이가 끌 수 있게 생겼는데 움직이지 않았다(2026-11-27) - 끌면 높이가 바뀌고 한계(30~90%)에서 멈추며, 다시 열어도 그 높이다
 await runStep("assign: Space preview - dragging the grip resizes the sheet within limits and remembers it", {}, async ({ page }) => {
   await openFirstAssign(page, "two");
