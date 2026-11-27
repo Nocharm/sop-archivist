@@ -12,6 +12,7 @@ import {
   pickSheetAnchor,
   getWindowRest,
   isOwnSpaceTarget,
+  SPACE_PICK_ATTR,
   isSpaceEnabled,
   isSpaceKept,
   isSpaceOpen,
@@ -123,6 +124,13 @@ describe("isOwnSpaceTarget", () => {
     expect(isOwnSpaceTarget(document.body)).toBe(false);
     expect(isOwnSpaceTarget(make('<div tabindex="0">x</div>', "div"))).toBe(false);
     expect(isOwnSpaceTarget(null)).toBe(false);
+  });
+
+  it("takes Space on a paper button that only picks - a folded deleted line or a deleted block keeps focus after the click", () => {
+    expect(isOwnSpaceTarget(make(`<button ${SPACE_PICK_ATTR}><span class="deleted-tag">DELETED</span></button>`, "span"))).toBe(false);
+    expect(isOwnSpaceTarget(make(`<button ${SPACE_PICK_ATTR}>x</button>`, "button"))).toBe(false);
+    // 그 블록 안의 다른 단추(사유 쓰기 · 삭제 취소)는 제 Space다
+    expect(isOwnSpaceTarget(make(`<div ${SPACE_PICK_ATTR}><button class="noise-act">x</button></div>`, "button"))).toBe(true);
   });
 });
 

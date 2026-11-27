@@ -1,6 +1,7 @@
 // 박스 아래 단추 줄 - 마지막에 누른 박스 하나에만 뜨는 한 줄(쪼개기 먼저 §8). 무엇을 보일지는 buildPickBar가 정하고 이 부품은 그리기만 한다.
 // 차례: [잇기] | [손질] | [이을 상대] … [⋯]. 잇기 뒤 칸(.pick-tools)이 남은 폭을 재어 손질 · 이을 상대의 이름을 덜 쓰는 것부터 접고, 그래도 모자라면 손질이 뒤에서부터 숨는다(@container).
-// ⋯를 누르는 순간 숨은 손질을 메뉴에 넣는다. 못 하는 손질도 이름을 보이고 까닭은 툴팁(data-tip)과 aria-label에 둔다.
+// 호버 · 포커스는 배치를 바꾸지 않는다 - 접힌 단추의 이름은 툴팁(data-tip)으로 본다(올린 단추가 포인터 밑에서 빠지면 호버가 진동한다).
+// ⋯를 누르는 순간 숨은 손질을 메뉴에 넣는다 - 그릴 것이 그 밖의 손질 하나뿐이면 목록 없이 바로 우클릭 메뉴(resolveMoreClick). 못 하는 손질도 이름을 보이고 까닭은 툴팁(data-tip)과 aria-label에 둔다.
 "use client";
 
 import { Combine, Ellipsis, Link2, ListTree, Scissors, Spline, Unlink, ArrowDownToLine, ArrowUpToLine, type LucideIcon } from "lucide-react";
@@ -10,7 +11,7 @@ import { Menu } from "@/components/ui/menu";
 import { isMousePress } from "@/lib/assign-key-target";
 import { useI18n } from "@/lib/i18n";
 import type { PickSide } from "@/lib/doc-shape-model";
-import type { PickBar as PickBarModel, PickMoreId, PickToolId } from "@/lib/pick-bar-model";
+import { isMoreOnlyTools, resolveMoreClick, type PickBar as PickBarModel, type PickMoreId, type PickToolId } from "@/lib/pick-bar-model";
 
 export interface PickBarProps {
   bar: PickBarModel;
@@ -43,10 +44,17 @@ export function PickBar({ bar, toolLabel, keyOf, busy, testId, onLink, onStartLi
   const { link, tools, startLink, more } = bar;
   if (bar.at === null) return null;
 
-  function openMore() {
-    // display: none으로 숨은 손질만 - 비켜 준(폭 0) 단추는 offsetParent가 남는다
-    setHidden(tools.filter((tool) => toolsRef.current?.querySelector<HTMLElement>(`[data-part="${tool.id}"]`)?.offsetParent === null).map((tool) => tool.id));
+  function openMore(event: MouseEvent<HTMLElement>) {
+    // display: none으로 숨은 손질만 - 이름만 접힌 단추는 offsetParent가 남는다
+    const folded = tools.filter((tool) => toolsRef.current?.querySelector<HTMLElement>(`[data-part="${tool.id}"]`)?.offsetParent === null).map((tool) => tool.id);
+    if (resolveMoreClick(more, folded) === "list") {
+      setHidden(folded);
+      return;
+    }
+    returnFocus(event);
+    onMore("tools");
   }
+  const moreLabel = t(isMoreOnlyTools(more) ? MORE_KEYS.tools : "assign.pick.more");
 
   const linkKey = keyOf("link");
   const isLinkOff = busy || link?.reasonKey != null;
@@ -89,7 +97,7 @@ export function PickBar({ bar, toolLabel, keyOf, busy, testId, onLink, onStartLi
                 data-testid={`${testId}-tool-${tool.id}`}
                 aria-disabled={isOff ? "true" : undefined}
                 aria-label={reason ?? name}
-                data-tip={reason ?? undefined}
+                data-tip={reason ?? name}
                 onClick={(event) => {
                   returnFocus(event);
                   if (!isOff) onTool(tool.id);
@@ -104,7 +112,7 @@ export function PickBar({ bar, toolLabel, keyOf, busy, testId, onLink, onStartLi
           })}
           {startLink && tools.length > 0 && <span className="pick-sep" data-part="sep" aria-hidden />}
           {startLink && (
-            <button type="button" className="mbtn" data-part="start" data-testid={`${testId}-start`} aria-label={t("assign.pick.start")} onClick={(event) => {
+            <button type="button" className="mbtn" data-part="start" data-testid={`${testId}-start`} aria-label={t("assign.pick.start")} data-tip={t("assign.pick.start")} onClick={(event) => {
               returnFocus(event);
               onStartLink(startLink);
             }}>
@@ -115,7 +123,7 @@ export function PickBar({ bar, toolLabel, keyOf, busy, testId, onLink, onStartLi
             </button>
           )}
           {more.length > 0 && (
-            <button ref={moreRef} type="button" className="mbtn" data-part="more" data-testid={`${testId}-more`} aria-label={t("assign.pick.more")} aria-haspopup="menu" aria-expanded={hidden !== null} onClick={openMore}>
+            <button ref={moreRef} type="button" className="mbtn" data-part="more" data-testid={`${testId}-more`} aria-label={moreLabel} data-tip={moreLabel} aria-haspopup="menu" aria-expanded={hidden !== null} onClick={openMore}>
               <Ellipsis size={15} strokeWidth={1.5} aria-hidden />
             </button>
           )}

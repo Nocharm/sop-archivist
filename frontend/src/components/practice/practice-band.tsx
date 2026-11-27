@@ -1,4 +1,4 @@
-// 연습 화면의 위 띠(설계 2026-11-26-practice-page §3, 말풍선 2026-11-27 시안 A) - 저장되지 않는다는 알림, 진행 점 열둘 · n/12, 처음부터 단추. 한 줄, 폭 전체.
+// 연습 화면의 위 띠(설계 2026-11-26-practice-page §3, 말풍선 2026-11-27 시안 A) - 저장되지 않는다는 알림, 진행 점 열넷 · n/14, 처음부터 단추. 한 줄, 폭 전체.
 // 점: 끝낸 과제는 채움, 말풍선이 보이는 과제는 테두리, 아직은 회색. 누르면 그 과제로 간다(순서 자유).
 "use client";
 
@@ -26,7 +26,7 @@ export function PracticeBand({ log, nowId, onPick }: PracticeBandProps) {
       <FlaskConical size={14} strokeWidth={1.5} aria-hidden />
       <span className="practice-band-title">{t("practice.band")}</span>
       <span className="practice-band-hint">{t("practice.bandHint")}</span>
-      {/* 점 열둘의 툴팁은 띠가 맡아 하나만 띄운다 */}
+      {/* 점 열넷의 툴팁은 띠가 맡아 하나만 띄운다 */}
       <div className="practice-dots" role="group" aria-label={t("practice.dots")} {...tip.handlers}>
         {PRACTICE_TASKS.map((task, index) => {
           const isNow = task.id === nowId;

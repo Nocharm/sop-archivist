@@ -786,7 +786,7 @@ export function useAssignPage() {
   if (joinMenu !== null && joinMenu.rowKey !== activeKey) setJoinMenu(null);
   // Old 문장 우클릭 메뉴 - 누른 Unit, 그 줄 상자, 연 때 고른 박스(boxId, New 문서면 null), 누른 자리와 글자 자리(키보드로 열었으면 없음).
   // 고른 줄이 바뀌거나 같은 짝 줄에서 다른 박스를 고르면 닫는다(설계 D3 - 고름은 박스 하나)
-  const [ctxMenu, setCtxMenu] = useState<{ seq: number; unitId: number; boxId: number | null; rowKey: string; anchor: HTMLElement; click: { x: number; y: number } | null; caret: { blockId: number; offset: number } | null } | null>(null);
+  const [ctxMenu, setCtxMenu] = useState<{ seq: number; unitId: number; boxId: number | null; rowKey: string; anchor: HTMLElement; click: { x: number; y: number } | null; caret: { blockId: number; offset: number } | null; keepsBar: boolean } | null>(null);
   if (ctxMenu !== null && (ctxMenu.rowKey !== (hasSolo ? SOLO_ROW_KEY : activeKey) || (ctxMenu.boxId !== null && ctxMenu.boxId !== pickedId))) setCtxMenu(null);
   // 나눌 선이 놓인 Unit - 고른 줄 안의 것만 산다(줄을 바꾸면 선이 사라진다)
   const [cutUnitId, setCutUnitId] = useState<number | null>(null);
@@ -1571,7 +1571,7 @@ export function useAssignPage() {
     const anchor = document.querySelector<HTMLElement>(`[data-pane="new"] [data-strip-unit="${unitId}"]`);
     if (!canEdit || mode !== "old" || !anchor || isBoxLocked(unitId) || !selectNewUnit(newDocFile, unitId)) return false;
     menuSeq.current += 1;
-    setCtxMenu({ seq: menuSeq.current, unitId, boxId: null, rowKey: SOLO_ROW_KEY, anchor, click, caret });
+    setCtxMenu({ seq: menuSeq.current, unitId, boxId: null, rowKey: SOLO_ROW_KEY, anchor, click, caret, keepsBar: keepsPickBar(unitId) });
     return true;
   }
 
@@ -1860,6 +1860,14 @@ export function useAssignPage() {
   // 메뉴를 연 뒤 편집으로 그 문장이 사라졌으면 닫는다(렌더 중 상태 맞추기)
   if (ctxMenu !== null && shape !== null && ctxTarget === null) setCtxMenu(null);
 
+  /**
+   * 메뉴를 여는 박스에 단추 줄이 이미 펼쳐져 있으면 메뉴가 떠 있는 동안에도 둔다(⋯의 그 밖의 손질은 늘 이 경우).
+   * 다른 박스를 우클릭했으면 그 박스의 줄은 메뉴를 닫을 때까지 접어 둔다 - 메뉴는 연 순간의 박스 아래에 서는데, 그 뒤 펼쳐지는 줄이 박스를 늘려 메뉴 밑으로 들어간다
+   */
+  function keepsPickBar(unitId: number): boolean {
+    return pickBar.at !== null && pickBar.at.unitId === unitId;
+  }
+
   /** 우클릭(또는 메뉴 글쇠) - 그 문장의 줄을 고르고 줄 상자 옆에 메뉴를 연다 */
   function openCtxMenu(unitId: number, click: { x: number; y: number } | null, caret: { blockId: number; offset: number } | null) {
     if (mode !== "old" || isBoxLocked(unitId)) return;
@@ -1872,12 +1880,13 @@ export function useAssignPage() {
     if (!key || !anchor) return;
     // 누른 것이 든 박스(칸 문장 · 캡션이면 그 묶음) - 짝의 다른 구성원을 눌렀으면 그 박스로 옮겨 고른다
     const boxId = isSolo ? null : (findBoxId(key, unitId) ?? null);
+    const keepsBar = keepsPickBar(unitId);
     let picked = pickedId;
     if (isSolo) selectNewUnit(soloDocId, unitId);
     else if (key !== activeKey || hasSolo || (boxId !== null && boxId !== pickedId)) picked = selectRow(key, false, boxId ?? undefined);
     setChecked(new Set());
     menuSeq.current += 1;
-    setCtxMenu({ seq: menuSeq.current, unitId, boxId: isSolo ? null : picked, rowKey: key, anchor, click, caret });
+    setCtxMenu({ seq: menuSeq.current, unitId, boxId: isSolo ? null : picked, rowKey: key, anchor, click, caret, keepsBar });
   }
 
   /**
@@ -3034,8 +3043,8 @@ export function useAssignPage() {
   /** 그 박스 아래의 단추 줄 - 마지막에 누른 쪽 용지의 그 박스에만 */
   function renderPickBar(side: PickSide, unitId: number): ReactNode {
     const at = pickBar.at;
-    // 우클릭 메뉴가 떠 있는 동안은 접는다 - 메뉴는 연 순간의 박스 아래에 서는데, 그 뒤 펼쳐지는 단추 줄이 박스를 늘려 메뉴 밑으로 들어간다
-    if (at === null || at.unitId !== unitId || at.side !== side || ctxMenu !== null) return null;
+    // 우클릭 메뉴가 떠 있는 동안은 연 순간 이미 펼쳐져 있던 줄만 둔다(keepsPickBar)
+    if (at === null || at.unitId !== unitId || at.side !== side || (ctxMenu !== null && !ctxMenu.keepsBar)) return null;
     return (
       <PickBar
         bar={pickBar}

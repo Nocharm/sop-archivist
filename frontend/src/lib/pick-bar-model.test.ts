@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { buildPickBar, type PickBar, type PickBarState, type PickTool } from "./pick-bar-model";
+import { buildPickBar, isMoreOnlyTools, resolveMoreClick, type PickBar, type PickBarState, type PickTool } from "./pick-bar-model";
 
 const TOOLS: PickTool[] = [{ id: "split", reasonKey: null }, { id: "merge_prev", reasonKey: null }, { id: "merge_next", reasonKey: null }, { id: "pair", reasonKey: null }];
 const s = 61;
@@ -75,5 +75,17 @@ describe("buildPickBar", () => {
   it("puts the bar under the box pressed last", () => {
     expect(buildPickBar(state(open(), sentence(), { last: "old" })).at).toEqual({ side: "old", unitId: 3 });
     expect(buildPickBar(state(open(), sentence())).at).toEqual({ side: "new", unitId: 700 });
+  });
+});
+
+describe("resolveMoreClick", () => {
+  it("opens the shaping menu straight away when Other shaping is all ⋯ holds", () => {
+    expect(resolveMoreClick(["tools"], [])).toBe("tools");
+    expect(isMoreOnlyTools(buildPickBar(state(open(), null, { last: "old" })).more)).toBe(true);
+  });
+  it("goes through the list when a tool is folded away or there is more than Other shaping", () => {
+    expect(resolveMoreClick(["tools"], ["pair"])).toBe("list");
+    expect(resolveMoreClick(["show_linked", "tools"], [])).toBe("list");
+    expect(isMoreOnlyTools(buildPickBar(state(linked([t]), null, { last: "old" })).more)).toBe(false);
   });
 });
