@@ -85,15 +85,15 @@ await runStep("practice: entry and band", {}, async ({ page, takeShot }) => {
   check("the user menu has no Practice item on the practice screen", (await page.locator('[data-testid="user-menu-practice"]').count()) === 0);
   await page.keyboard.press("Escape");
   check("the help link points at the practice piece", (await page.locator('[data-testid="top-bar-manual"]').getAttribute("href")) === "/manual#practice");
-  // the band: twelve dots, none done, the first one now, and 0/12 - the same count the folded task column used to show
+  // the band: fourteen dots (U3's twelve plus the two V switches), none done, the first one now, and 0/14
   await page.locator(PRACTICE_UNIT).first().waitFor({ timeout: T });
-  check("the band draws twelve progress dots", (await page.locator('[data-testid^="practice-dot-"][data-done]').count()) === 12);
-  check("the band shows the progress 0/12", (await page.locator('[data-testid="practice-progress"]').isVisible()) && (await getText(page, "practice-progress")).trim() === "0/12", await getText(page, "practice-progress"));
+  check("the band draws fourteen progress dots", (await page.locator('[data-testid^="practice-dot-"][data-done]').count()) === 14);
+  check("the band shows the progress 0/14", (await page.locator('[data-testid="practice-progress"]').isVisible()) && (await getText(page, "practice-progress")).trim() === "0/14", await getText(page, "practice-progress"));
   check("no dot is done yet", (await page.locator('[data-testid^="practice-dot-"][data-done="true"]').count()) === 0);
   check("the first dot is the task now", (await page.locator('[data-testid^="practice-dot-"][data-now="true"]').count()) === 1 && (await dot(page, "pick").getAttribute("data-now")) === "true");
-  // the coach card: the first task with its chapter, keys and the manual link, standing next to the lit box
+  // the coach card: the first task with its chapter (the view it is shown in - a fresh browser opens Assign in two documents), keys and the manual link, standing next to the lit box
   await waitCoach(page, "pick");
-  check("the coach card shows the first task with its chapter", (await getText(page, "practice-coach")).includes("Task 1 / 12 · Basics"), await getText(page, "practice-coach"));
+  check("the coach card shows the first task with its chapter", (await getText(page, "practice-coach")).includes("Task 1 / 14 · Two documents"), await getText(page, "practice-coach"));
   check("the coach card shows the keys to press", (await page.locator('[data-testid="practice-coach"] kbd').count()) > 0);
   const manual = page.locator('[data-testid="practice-coach-manual"]');
   check("the coach card links to its place in the manual in a new tab", (await manual.getAttribute("href")) === "/manual#assign" && (await manual.getAttribute("target")) === "_blank", String(await manual.getAttribute("href")));
@@ -114,14 +114,27 @@ await runStep("practice: entry and band", {}, async ({ page, takeShot }) => {
   await dot(page, "hold").click();
   await waitCoach(page, "hold");
   check("pressing a dot moves the coach card to that task", (await dot(page, "hold").getAttribute("data-now")) === "true" && (await dot(page, "pick").getAttribute("data-now")) === "false");
+  check("pressing a dot hands the focus back to the Old paper", await page.evaluate(() => document.activeElement?.closest('[data-pane="old"] .pane-body') !== null));
+  // Hold is a one-document task and Assign shows two - the card asks for V first and lights the One document button
+  check("a one-document task in two documents asks for V first", (await page.locator('[data-testid="practice-coach-pane"]').isVisible()) && (await getText(page, "practice-coach-pane")).includes("V"), await getText(page, "practice-coach"));
+  const viewLit = await page.evaluate(() => {
+    const button = document.querySelector('[data-testid="assign-view-one"]')?.getBoundingClientRect();
+    const hole = document.querySelector('[data-testid="practice-coach-hole"]')?.getBoundingClientRect();
+    return button && hole ? button.left >= hole.left - 1 && button.right <= hole.right + 1 && button.top >= hole.top - 1 && button.bottom <= hole.bottom + 1 : false;
+  });
+  check("the lit box is the One document button meanwhile", viewLit);
   await page.locator('[data-testid="practice-coach-skip"]').click();
-  await waitCoach(page, "unassign");
-  check("Skip goes on to the next task not done yet, leaving the skipped one not done", (await dot(page, "hold").getAttribute("data-done")) === "false" && (await dot(page, "unassign").getAttribute("data-now")) === "true");
+  await waitCoach(page, "merge");
+  check("Skip goes on to the next task not done yet, leaving the skipped one not done", (await dot(page, "hold").getAttribute("data-done")) === "false" && (await dot(page, "merge").getAttribute("data-now")) === "true");
   // Unassign has nothing linked yet - its card floats under the band with no lit box
+  await dot(page, "unassign").click();
+  await waitCoach(page, "unassign");
   check("a task with no box yet floats its card in the middle with no dim", (await page.locator('[data-testid="practice-coach"]').getAttribute("data-place")) === "center" && (await page.locator('[data-testid="practice-coach-hole"]').count()) === 0);
   await takeShot("sop-practice-band.png");
   // U5: the Assign help (?) has no practice link - only the user menu and the manual head lead here
-  // pick a line first so the key lands in Assign (focus is on the Skip button now) - the dim lets the click through
+  // ? is only let through on the keyboard map task - open it first, then pick a line so the key lands in Assign (the dim lets the click through)
+  await dot(page, "keyboard").click();
+  await waitCoach(page, "keyboard");
   await clickOld(page, "Old Unit마다 새 문서의 어디로 갈지 정하고 확정합니다.");
   await page.keyboard.press("?");
   await wait(page, "assign-help-keys");
@@ -145,49 +158,24 @@ await runStep("practice: follow tasks", {}, async ({ page }) => {
   if ((await page.locator('[data-testid="assign-new"]').count()) === 0) await page.locator('[data-testid="assign-view-two"]').click();
   await page.locator(PRACTICE_UNIT).first().waitFor({ timeout: T });
   await page.waitForLoadState("networkidle");
+  const pairA = "Old Unit마다 새 문서의 어디로 갈지 정하고 확정합니다.";
 
-  // Split first (any order works): double-click the two-sentence box to put a cut, then Split here
-  const before = await countOld(page);
-  const twoSentences = oldUnit(page, "보류한 Unit은 On hold에 모입니다.");
-  await twoSentences.scrollIntoViewIfNeeded({ timeout: T });
-  await twoSentences.dblclick();
-  await page.locator('[data-testid="assign-cut-run"]').waitFor({ timeout: T });
-  await page.locator('[data-testid="assign-cut-run"]').click();
-  await waitDone(page, "split");
-  await page.waitForFunction(([sel, count]) => new Set([...document.querySelectorAll(sel)].map((el) => el.getAttribute("data-testid"))).size === count + 1, [PRACTICE_UNIT, before], { timeout: T });
-  check("Split: the box is two boxes and the task is ticked", true);
-  check("Split was not the coach's task, so only its dot fills and the card stays on Pick face up", (await readCoach(page)) === "pick:false", String(await readCoach(page)));
+  // Only the task's keys get through: Shift+H on Pick does nothing in Assign and the card says so
+  await clickOld(page, pairA);
+  await page.keyboard.press("Shift+H");
+  await wait(page, "practice-coach-nudge");
+  check("a key the task does not use is stopped and the card says so", (await getText(page, "practice-coach-nudge")).includes("⇧H") && (await page.locator('[data-testid="assign-remark-modal"]').count()) === 0, await getText(page, "practice-coach-nudge"));
+  check("the stopped key ticks nothing", (await page.locator('[data-testid^="practice-dot-"][data-done="true"]').count()) === 0);
 
-  // Pick and move: click a line, J
-  await clickOld(page, "Old Unit마다 새 문서의 어디로 갈지 정하고 확정합니다.");
+  // Two documents - Pick and move: J on the picked line
   await page.keyboard.press("j");
   await waitDone(page, "pick");
   await waitFlip(page, "pick");
   await waitCoach(page, "link");
   check("Pick: J fills its dot, the card flips to the check and moves on to Link", (await dot(page, "link").getAttribute("data-now")) === "true");
 
-  // Confirm with a card: pick pair B, wait for its suggestion card, Enter
-  const pairB = "추천 카드를 누르면 고르기만 하고, 이어서 Enter로 바로 확정합니다.";
-  await clickOld(page, pairB);
-  await wait(page, "assign-rec-0");
-  // Enter confirms when the card is picked (confirm) or straight with the first card (choose, B1-R2)
-  await page.locator('[data-testid="assign-primary"]:is([data-state="confirm"], [data-state="choose"])').waitFor({ timeout: T });
-  await page.keyboard.press("Enter");
-  await waitDone(page, "confirm");
-  check("Confirm: Enter on the card ticks Confirm and not Link, and the coach stays on Link", (await dot(page, "link").getAttribute("data-done")) === "false" && (await readCoach(page)) === "link:false", String(await readCoach(page)));
-  await page.waitForLoadState("networkidle");
-  await clickOld(page, pairB);
-  await page.locator('[data-testid="assign-chosen"]:not(.is-empty)').waitFor({ timeout: T });
-  check("Confirm: pair B now has a destination", true);
-
-  // Unassign: U on the confirmed pair
-  await page.keyboard.press("u");
-  await waitDone(page, "unassign");
-  await page.locator('[data-testid="assign-chosen"].is-empty').waitFor({ timeout: T });
-  check("Unassign: U clears pair B and ticks the task", true);
-
   // Link to New: pick pair A, then its New sentence, then Link on the bar
-  await clickOld(page, "Old Unit마다 새 문서의 어디로 갈지 정하고 확정합니다.");
+  await clickOld(page, pairA);
   const newA = page.locator('[data-pane="new"] [data-testid^="assign-new-pick-"]', { hasText: "Old Unit마다 새 문서에서 갈 곳을 정합니다." }).first();
   await newA.scrollIntoViewIfNeeded({ timeout: T });
   await newA.click();
@@ -196,9 +184,43 @@ await runStep("practice: follow tasks", {}, async ({ page }) => {
   await link.click();
   await waitDone(page, "link");
   await waitFlip(page, "link");
-  await waitCoach(page, "hold");
-  check("Link: the bar's Link ticks the task, the card flips and moves on to Hold", true);
+  await waitCoach(page, "unassign");
+  check("Link: the bar's Link ticks the task, the card flips and moves on to Unassign", true);
   await page.waitForLoadState("networkidle");
+
+  // Unassign: U on the linked pair A
+  await clickOld(page, pairA);
+  await page.locator('[data-testid="assign-chosen"]:not(.is-empty)').waitFor({ timeout: T });
+  await page.keyboard.press("u");
+  await waitDone(page, "unassign");
+  await page.locator('[data-testid="assign-chosen"].is-empty').waitFor({ timeout: T });
+  await waitFlip(page, "unassign");
+  await waitCoach(page, "view_one");
+  check("Unassign: U clears pair A, ticks the task and the card moves on to the V switch", true);
+
+  // V to one document - the panes fold to the Old document
+  await page.keyboard.press("v");
+  await waitDone(page, "view_one");
+  await page.locator(".assign-panes[data-single]").waitFor({ timeout: T });
+  await waitFlip(page, "view_one");
+  await waitCoach(page, "confirm");
+  check("View: V folds Assign to one document, ticks the task and the card moves on to Confirm", (await page.locator('[data-testid="practice-coach-pane"]').count()) === 0);
+
+  // One document - Confirm with a card: pick pair B, wait for its suggestion card, Enter
+  const pairB = "추천 카드를 누르면 고르기만 하고, 이어서 Enter로 바로 확정합니다.";
+  await clickOld(page, pairB);
+  await wait(page, "assign-rec-0");
+  // Enter confirms when the card is picked (confirm) or straight with the first card (choose, B1-R2)
+  await page.locator('[data-testid="assign-primary"]:is([data-state="confirm"], [data-state="choose"])').waitFor({ timeout: T });
+  await page.keyboard.press("Enter");
+  await waitDone(page, "confirm");
+  check("Confirm: Enter on the card in one document ticks Confirm and not Link again", (await page.locator('[data-testid^="practice-dot-"][data-done="true"]').count()) === 5);
+  await waitFlip(page, "confirm");
+  await waitCoach(page, "hold");
+  await page.waitForLoadState("networkidle");
+  await clickOld(page, pairB);
+  await page.locator('[data-testid="assign-chosen"]:not(.is-empty)').waitFor({ timeout: T });
+  check("Confirm: pair B now has a destination", true);
 
   // Hold: Shift+H on pair C with a reason - the hold mark shows on the paper
   const pairC = "정할 수 없는 Unit은 사유를 적어 미룹니다.";
@@ -214,12 +236,6 @@ await runStep("practice: follow tasks", {}, async ({ page }) => {
   await holdMark.first().waitFor({ timeout: T });
   check("Hold: the hold mark is on the paper, the task is ticked and the card moved on to Merge", true);
 
-  // Undo: Ctrl+Z takes the hold back - the mark goes, the Hold tick stays
-  await page.keyboard.press("ControlOrMeta+z");
-  await waitDone(page, "undo");
-  await holdMark.first().waitFor({ state: "detached", timeout: T });
-  check("Undo: Ctrl+Z takes the hold back and Hold stays ticked", (await dot(page, "hold").getAttribute("data-done")) === "true");
-
   // Merge: Shift+J twice on the first broken piece - two boxes become one
   const beforeMerge = await countOld(page);
   await clickOld(page, "나누기와 합치기는 확정과 같은 저장이라");
@@ -227,11 +243,34 @@ await runStep("practice: follow tasks", {}, async ({ page }) => {
   await page.keyboard.press("Shift+J");
   await waitDone(page, "merge");
   await waitFlip(page, "merge");
-  await waitCoach(page, "pair");
+  await waitCoach(page, "split");
   await page.waitForFunction(([sel, count]) => new Set([...document.querySelectorAll(sel)].map((el) => el.getAttribute("data-testid"))).size === count - 1, [PRACTICE_UNIT, beforeMerge], { timeout: T });
-  check("Merge: the two pieces are one box, the task is ticked and the card moved on to Pair", true);
+  check("Merge: the two pieces are one box, the task is ticked and the card moved on to Split", true);
+
+  // Split: double-click the two-sentence box to put a cut, then Split here
+  const beforeSplit = await countOld(page);
+  const twoSentences = oldUnit(page, "보류한 Unit은 On hold에 모입니다.");
+  await twoSentences.scrollIntoViewIfNeeded({ timeout: T });
+  await twoSentences.dblclick();
+  await page.locator('[data-testid="assign-cut-run"]').waitFor({ timeout: T });
+  await page.locator('[data-testid="assign-cut-run"]').click();
+  await waitDone(page, "split");
+  await page.waitForFunction(([sel, count]) => new Set([...document.querySelectorAll(sel)].map((el) => el.getAttribute("data-testid"))).size === count + 1, [PRACTICE_UNIT, beforeSplit], { timeout: T });
+  await waitFlip(page, "split");
+  await waitCoach(page, "pair");
+  check("Split: the box is two boxes, the task is ticked and the card moved on to Pair", true);
+
+  // Undo out of order (any order works): its dot, then Ctrl+Z takes the split back - the Split tick stays
+  await dot(page, "undo").click();
+  await waitCoach(page, "undo");
+  await page.keyboard.press("ControlOrMeta+z");
+  await waitDone(page, "undo");
+  await page.waitForFunction(([sel, count]) => new Set([...document.querySelectorAll(sel)].map((el) => el.getAttribute("data-testid"))).size === count, [PRACTICE_UNIT, beforeSplit], { timeout: T });
+  check("Undo: the key lands in Assign right after the dot (focus back on the paper), takes the split back and Split stays ticked", (await dot(page, "split").getAttribute("data-done")) === "true");
 
   // Keyboard map: ? opens the help, then its Keyboard map button
+  await dot(page, "keyboard").click();
+  await waitCoach(page, "keyboard");
   await page.keyboard.press("?");
   await wait(page, "assign-help-keyboard-map");
   await page.locator('[data-testid="assign-help-keyboard-map"]').click();
@@ -240,9 +279,18 @@ await runStep("practice: follow tasks", {}, async ({ page }) => {
   await page.keyboard.press("Escape");
   check("Keyboard map: opening it from the help ticks the task", true);
 
-  const done = ["split", "pick", "confirm", "unassign", "link", "hold", "undo", "merge", "keyboard"];
-  check("the progress counts the nine tasks followed", (await getText(page, "practice-progress")).trim() === `${done.length}/12`, await getText(page, "practice-progress"));
-  check("the band fills the nine dots followed", (await page.locator('[data-testid^="practice-dot-"][data-done="true"]').count()) === done.length);
+  // Back to two documents with the bar's button (the same switch as V)
+  await dot(page, "view_two").click();
+  await waitCoach(page, "view_two");
+  await page.locator('[data-testid="assign-view-two"]').click();
+  await waitDone(page, "view_two");
+  await page.locator(".assign-panes:not([data-single])").waitFor({ timeout: T });
+  check("View: the Two documents button brings New back and ticks the task", true);
+
+  const done = ["pick", "link", "unassign", "view_one", "confirm", "hold", "merge", "split", "undo", "keyboard", "view_two"];
+  check("the progress counts the eleven tasks followed", (await getText(page, "practice-progress")).trim() === `${done.length}/14`, await getText(page, "practice-progress"));
+  check("the band fills the eleven dots followed", (await page.locator('[data-testid^="practice-dot-"][data-done="true"]').count()) === done.length);
+  await waitCoach(page, "pair");
   check("the coach card is on the first task not done yet", (await readCoach(page)) === "pair:false", String(await readCoach(page)));
   // any task opens when its dot is pressed, done or not
   await dot(page, "toc").click();
@@ -253,7 +301,7 @@ await runStep("practice: follow tasks", {}, async ({ page }) => {
 });
 
 await runStep("practice: nothing reaches the backend", {}, async ({ page }) => {
-  // the follow step wrote through every task road it took (link, confirm, unassign, hold, undo, split, merge) - none of it may leave the browser
+  // the follow step wrote through every task road it took (link, unassign, confirm, hold, merge, split, undo) - none of it may leave the browser
   if (followLeaks !== null) check("no request left for the backend while following the tasks", followLeaks.length === 0, followLeaks.join(" | "));
   const leaks = watchLeaks(page);
   await openPractice(page);
@@ -278,6 +326,9 @@ await runStep("practice: reload starts over", {}, async ({ page }) => {
   await wait(page, "assign-row-id");
   const heldId = (await getText(page, "assign-row-id")).trim().split(" · ")[0];
   await page.waitForLoadState("networkidle");
+  // ⇧H is only let through on the Hold task - its dot first (the focus goes back to the paper)
+  await dot(page, "hold").click();
+  await waitCoach(page, "hold");
   await page.keyboard.press("Shift+H");
   await wait(page, "assign-remark-modal");
   await page.locator('[data-testid="assign-remark-modal-text"]').fill("Practice: hold this");
@@ -314,6 +365,7 @@ await runStep("practice: Original tab says the practice document has no source f
   await unit.waitFor({ timeout: T });
   await unit.click();
   await wait(page, "assign-row-id");
+  // Space is no task's key - with the focus off the page (body) the key passes outside the practice frame's key filter, straight to Assign like a real Bundle
   await page.evaluate(() => (document.activeElement instanceof HTMLElement ? document.activeElement.blur() : undefined));
   await page.keyboard.press(" ");
   await wait(page, "assign-space-preview");
