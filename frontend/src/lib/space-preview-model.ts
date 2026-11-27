@@ -119,16 +119,17 @@ export interface SpaceEnableInput {
   hasDoc: boolean;
   /** 그 문서 보기의 단위 수 - 빈 템플릿처럼 단위가 없으면 문단 Excel이 없다 */
   unitCount: number;
-  /** New 문서를 양 단에서 그 자리에서 고치는 중 */
-  isNewEdit: boolean;
   /** Assign 줄 수 */
   rowCount: number;
 }
 
-/** Space가 켜지는가 - 문단 Excel은 단위가 있는 문서면, 비교 Excel A는 지금처럼 New를 그 자리에서 고치는 중이 아니고 Old 줄이 있을 때 */
+/**
+ * Space가 켜지는가 - 문단 Excel은 단위가 있는 문서면, 비교 Excel A는 Old 줄이 있으면. 양 단에서 New 박스를 골라도 켜 둔다 -
+ * Old 용지와 고른 Old 줄은 그대로 보이고 원본 탭이 New 고름을 따라간다(꺼 버리면 열어 둔 시트가 닫히고 Space가 용지 스크롤로 샌다)
+ */
 export function isSpaceEnabled(sheet: SpaceSheet, input: SpaceEnableInput): boolean {
   if (!input.hasDoc) return false;
-  return sheet === "paragraphs" ? input.unitCount > 0 : !input.isNewEdit && input.rowCount > 0;
+  return sheet === "paragraphs" ? input.unitCount > 0 : input.rowCount > 0;
 }
 
 /**

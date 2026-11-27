@@ -186,7 +186,7 @@ describe("sheet window", () => {
 });
 
 describe("pickSpaceSheet · isSpaceEnabled", () => {
-  const base = { hasDoc: true, unitCount: 5, isNewEdit: false, rowCount: 3 };
+  const base = { hasDoc: true, unitCount: 5, rowCount: 3 };
 
   it("shows the paragraph sheet in one pane and Excel A in two panes", () => {
     expect(pickSpaceSheet(true)).toBe("paragraphs");
@@ -201,9 +201,9 @@ describe("pickSpaceSheet · isSpaceEnabled", () => {
     expect(isSpaceEnabled("paragraphs", { ...base, hasDoc: false })).toBe(false);
   });
 
-  it("keeps Excel A off while a New document is edited in place, as before", () => {
+  // 양 단에서 New 박스를 골라도 켜 둔다 - 열어 둔 시트가 닫히거나 Space가 스크롤로 새지 않게(isNewEdit를 받지 않는다)
+  it("keeps Excel A on whenever the Old document has rows", () => {
     expect(isSpaceEnabled("comparison", base)).toBe(true);
-    expect(isSpaceEnabled("comparison", { ...base, isNewEdit: true })).toBe(false);
     expect(isSpaceEnabled("comparison", { ...base, rowCount: 0 })).toBe(false);
   });
 });
