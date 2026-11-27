@@ -49,6 +49,7 @@ import type { TableFollowStrip } from "@/lib/use-table-follow";
 import { useClickOrDouble } from "@/lib/use-click-or-double";
 import { useNumberArrival, type ExpectedNumbers } from "@/lib/use-number-arrival";
 import { useReleasedFolds } from "@/lib/use-released-folds";
+import { SPACE_PICK_PROPS } from "@/lib/space-preview-model";
 
 /** 조각 끝 표시 - 단위의 것(UnitMark)에 그 조각이 놓인 블록의 경고를 더한다 */
 type PaperMark = UnitMark | "warn";
@@ -1816,6 +1817,7 @@ export function Paper({
               aria-expanded={isOpen}
               data-tip={reason}
               data-testid={`${prefix}-head-${block.key}`}
+              {...SPACE_PICK_PROPS}
               onClick={() => {
                 noise.onToggle(block.key);
                 noise.onPick(block.key, null);
@@ -1849,6 +1851,7 @@ export function Paper({
                         className="toc-line-text noise-line-text"
                         aria-pressed={isPicked}
                         data-testid={`${prefix}-line-${line.unitId}`}
+                        {...SPACE_PICK_PROPS}
                         onClick={() => noise.onPick(block.key, isPicked ? null : line.unitId)}
                       >
                         {line.text}
@@ -1906,6 +1909,7 @@ export function Paper({
           data-strip-unit={unitId}
           data-pending={readPendingMark(unitId)}
           data-testid={`${testId}-deleted-u${unitId}`}
+          {...SPACE_PICK_PROPS}
           onClick={(event) => onUnitClick(unitId, null, event)}
         >
           {renderCheckTag(rowChecks.get(rows[0].key))}
