@@ -262,9 +262,10 @@ const OV_SHADOW_CSS = `
 :host { display: block; }
 div.${OV_CLASS}-wrapper { background: transparent; padding: 16px 16px 0; }
 div.${OV_CLASS}-wrapper > section.${OV_CLASS} { background: var(--ov-paper); box-shadow: var(--shadow-1); margin-bottom: 16px; }
-.is-ov-picked { background-color: var(--ov-paint) !important; box-shadow: inset 3px 0 0 var(--sheet-accent); }
+/* 칠은 글자 밖으로 4px 번지고(그림자라 배치 · 쪽 나누기를 흔들지 않는다) 막대는 그 바깥 왼쪽 3px - 안쪽 막대는 첫 글자를 덮었다 */
+.is-ov-picked { background-color: var(--ov-paint) !important; box-shadow: 0 0 0 4px var(--ov-paint), -7px 0 0 0 var(--sheet-accent); }
 .is-ov-flash { animation: ov-flash 700ms var(--ease-exit) both; }
-@keyframes ov-flash { 0%, 30% { outline: 3px solid var(--sheet-accent); outline-offset: 2px; } 100% { outline: 3px solid transparent; outline-offset: 2px; } }
+@keyframes ov-flash { 0%, 30% { outline: 3px solid var(--sheet-accent); outline-offset: 9px; } 100% { outline: 3px solid transparent; outline-offset: 9px; } }
 .${UNRENDERABLE_CLASS} { display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box; overflow: hidden; vertical-align: middle; padding: 2px; border: 1px solid var(--sheet-line-thin); background: repeating-linear-gradient(45deg, transparent 0 6px, var(--sheet-rail) 6px 8px); color: var(--sheet-ink); font: 600 10px / 1.2 var(--font-ui); text-align: center; white-space: normal; }
 @media (prefers-reduced-motion: reduce) { .is-ov-flash { animation: none; } }
 `;
