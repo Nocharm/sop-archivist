@@ -81,11 +81,18 @@ export function isSpaceKept(state: SpaceState): boolean {
   return state.phase === "kept" || state.phase === "keptHeld";
 }
 
-/** Space가 그 포커스의 것인가 - 글 입력칸 · 단추 · 링크 · 고르기 항목은 Space를 자기가 쓴다(화면 단축키가 아니다) */
+/** 고르기만 하는 용지 단추의 표시(접힌 삭제 줄 · 삭제 블록의 머리와 줄) - 마우스로 누른 뒤에도 그 단추에 포커스가 남는다(블록은 그대로 그려진다).
+ *  누름이 줄을 고르는 것뿐이라 Space는 그 단추를 다시 누르지 않고 고른 것의 미리보기다 */
+export const SPACE_PICK_ATTR = "data-space-pick";
+/** 그 단추에 펼쳐 붙이는 속성 - 이름을 SPACE_PICK_ATTR와 따로 적지 않게 */
+export const SPACE_PICK_PROPS = { [SPACE_PICK_ATTR]: "" } as const;
+
+/** Space가 그 포커스의 것인가 - 글 입력칸 · 단추 · 링크 · 고르기 항목은 Space를 자기가 쓴다(화면 단축키가 아니다). 고르기만 하는 단추(SPACE_PICK_ATTR)는 아니다 */
 export function isOwnSpaceTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
   if (target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName)) return true;
-  return target.closest("button, a, [role='option'], [role='button'], [role='menuitem'], [role='checkbox'], [role='switch']") !== null;
+  const control = target.closest("button, a, [role='option'], [role='button'], [role='menuitem'], [role='checkbox'], [role='switch']");
+  return control !== null && !control.hasAttribute(SPACE_PICK_ATTR);
 }
 
 /** 미리보기 창 밖에 남은 줄 수 - 위로 · 아래로. 창이 시트 전체면 null */
