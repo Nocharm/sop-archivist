@@ -1,6 +1,6 @@
 ---
 title: SOP Archivist 사용 설명서
-version: 1.6.49
+version: 1.6.50
 updated: 2026-11-27
 ---
 
